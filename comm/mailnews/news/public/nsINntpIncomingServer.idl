@@ -7,7 +7,6 @@
 
 interface nsIFile;
 interface nsIMsgNewsFolder;
-interface nsIChannel;
 interface nsIURI;
 interface nsIMsgWindow;
 
@@ -40,8 +39,8 @@ interface nsINntpIncomingServer : nsISupports {
     attribute ACString charset;
 
     /* the server keeps track of all the newsgroups we are subscribed to */
-    void addNewsgroup(in AString name);
-    void removeNewsgroup(in AString name);
+    void addNewsgroup(in AUTF8String name);
+    void removeNewsgroup(in AUTF8String name);
 
     void writeNewsrcFile();
 
@@ -57,21 +56,6 @@ interface nsINntpIncomingServer : nsISupports {
      */
     attribute long maximumConnectionsNumber;
 
-    void displaySubscribedGroup(in nsIMsgNewsFolder msgFolder,
-                                in long firstMessage, in long lastMessage,
-                                in long totalMessages);
-
-
-    /**
-     * Get a new NNTP channel to run the URI.
-     *
-     * If the server has used up all of its connections, this will place the URI
-     * in the queue to be run when one is freed.
-     *
-     * @param uri    The URI to run.
-     * @param window The standard message window object.
-     */
-    nsIChannel getNntpChannel(in nsIURI uri, in nsIMsgWindow window);
     /**
      * Enqueues a URI to be run when we have a free connection.
      *
@@ -99,22 +83,7 @@ interface nsINntpIncomingServer : nsISupports {
        name is encoded in |charset|  (attribute declared above) */
     void addNewsgroupToList(in string name);
 
-    attribute boolean supportsExtensions;
-    void addExtension(in string extension);
-    boolean queryExtension(in string extension);
-
-    attribute boolean postingAllowed;
     attribute boolean pushAuth;
-    attribute unsigned long lastUpdatedTime;
-
-    void addPropertyForGet(in string name, in string value);
-    string queryPropertyForGet(in string name);
-
-    void addSearchableGroup(in AString name);
-    boolean querySearchableGroup(in AString name);
-
-    void addSearchableHeader(in string headerName);
-    boolean querySearchableHeader(in string headerName);
 
     /**
      * Returns the folder corresponding to the given group.
@@ -125,12 +94,4 @@ interface nsINntpIncomingServer : nsISupports {
      *       is subscribed to (e.g., by containsNewsgroup)
      */
     nsIMsgNewsFolder findGroup(in AUTF8String name);
-
-    readonly attribute AUTF8String firstGroupNeedingExtraInfo;
-    void setGroupNeedsExtraInfo(in AUTF8String name, in boolean needsExtraInfo);
-
-    void groupNotFound(in nsIMsgWindow window, in AString group,
-                       in boolean opening);
-
-    void setPrettyNameForGroup(in AString name, in AString prettyName);
 };

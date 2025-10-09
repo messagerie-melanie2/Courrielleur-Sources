@@ -13,13 +13,12 @@
 #include "mozilla/dom/DocumentOrShadowRoot.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/WeakPtr.h"
 #include "nsISupports.h"
 #include "nsWrapperCache.h"
 
-struct nsRuleData;
 template <class T>
 struct already_AddRefed;
-class nsHTMLCSSStyleSheet;
 
 namespace mozilla {
 
@@ -28,7 +27,7 @@ enum class StyleCssRuleType : uint8_t;
 namespace css {
 class GroupRule;
 
-class Rule : public nsISupports, public nsWrapperCache {
+class Rule : public nsISupports, public nsWrapperCache, public SupportsWeakPtr {
  protected:
   Rule(StyleSheet* aSheet, Rule* aParentRule, uint32_t aLineNumber,
        uint32_t aColumnNumber)
@@ -59,6 +58,8 @@ class Rule : public nsISupports, public nsWrapperCache {
   // Return true if this rule is known to be a cycle collection leaf, in the
   // sense that it doesn't have any outgoing owning edges.
   virtual bool IsCCLeaf() const MOZ_MUST_OVERRIDE;
+
+  virtual bool IsGroupRule() const { return false; }
 
 #ifdef DEBUG
   virtual void List(FILE* out = stdout, int32_t aIndent = 0) const = 0;
@@ -111,9 +112,18 @@ class Rule : public nsISupports, public nsWrapperCache {
     auto* associated = mSheet->GetAssociatedDocumentOrShadowRoot();
     return associated ? &associated->AsNode() : nullptr;
   }
-  nsISupports* GetParentObject() const {
-    return mSheet ? mSheet->GetRelevantGlobal() : nullptr;
-  }
+  nsISupports* GetParentObject() const { return mSheet; }
+
+  struct ContainingRuleState {
+    uint32_t mContainingTypes = 0;
+    Maybe<StyleCssRuleType> mParseRelativeType;
+
+    static ContainingRuleState From(Rule* aRule) {
+      return aRule ? aRule->GetContainingRuleStateForParsing()
+                   : ContainingRuleState();
+    }
+  };
+  ContainingRuleState GetContainingRuleStateForParsing() const;
 
  protected:
   // True if we're known-live for cycle collection purposes.

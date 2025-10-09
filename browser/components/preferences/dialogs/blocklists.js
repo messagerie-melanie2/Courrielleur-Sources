@@ -26,28 +26,28 @@ var gBlocklistManager = {
       return "";
     },
 
-    isSeparator(index) {
+    isSeparator() {
       return false;
     },
     isSorted() {
       return false;
     },
-    isContainer(index) {
+    isContainer() {
       return false;
     },
-    setTree(tree) {},
-    getImageSrc(row, column) {},
+    setTree() {},
+    getImageSrc() {},
     getCellValue(row, column) {
       if (column.id == "selectionCol") {
         return gBlocklistManager._blockLists[row].selected;
       }
       return undefined;
     },
-    cycleHeader(column) {},
-    getRowProperties(row) {
+    cycleHeader() {},
+    getRowProperties() {
       return "";
     },
-    getColumnProperties(column) {
+    getColumnProperties() {
       return "";
     },
     getCellProperties(row, column) {
@@ -141,10 +141,21 @@ var gBlocklistManager = {
     let branch = Services.prefs.getBranch(LISTS_PREF_BRANCH);
     let l10nKey = branch.getCharPref(id);
 
+    const messageIdsMap = {
+      "moz-std": {
+        name: "blocklist-item-moz-std-listName",
+        description: "blocklist-item-moz-std-description",
+      },
+      "moz-full": {
+        name: "blocklist-item-moz-full-listName",
+        description: "blocklist-item-moz-full-description",
+      },
+    };
+
     // eslint-disable-next-line mozilla/prefer-formatValues
     let [listName, description] = await document.l10n.formatValues([
-      { id: `blocklist-item-${l10nKey}-listName` },
-      { id: `blocklist-item-${l10nKey}-description` },
+      { id: messageIdsMap[l10nKey].name },
+      { id: messageIdsMap[l10nKey].description },
     ]);
 
     // eslint-disable-next-line mozilla/prefer-formatValues

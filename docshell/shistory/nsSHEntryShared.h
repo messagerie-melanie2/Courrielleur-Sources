@@ -14,6 +14,7 @@
 #include "nsIWeakReferenceUtils.h"
 #include "nsRect.h"
 #include "nsString.h"
+#include "nsStructuredCloneContainer.h"
 #include "nsStubMutationObserver.h"
 
 #include "mozilla/Attributes.h"
@@ -23,8 +24,8 @@ class nsSHEntry;
 class nsISHEntry;
 class nsISHistory;
 class nsIContentSecurityPolicy;
-class nsIContentViewer;
 class nsIDocShellTreeItem;
+class nsIDocumentViewer;
 class nsILayoutHistoryState;
 class nsIPrincipal;
 class nsDocShellEditorData;
@@ -63,7 +64,8 @@ struct SHEntrySharedState {
         mPrincipalToInherit(aPrincipalToInherit),
         mPartitionedPrincipalToInherit(aPartitionedPrincipalToInherit),
         mCsp(aCsp),
-        mContentType(aContentType) {}
+        mContentType(aContentType),
+        mNavigationState(MakeRefPtr<nsStructuredCloneContainer>()) {}
 
   // These members aren't copied by SHEntrySharedParentState::CopyFrom() because
   // they're specific to a particular content viewer.
@@ -82,6 +84,8 @@ struct SHEntrySharedState {
   uint32_t mCacheKey = 0;
   bool mIsFrameNavigation = false;
   bool mSaveLayoutState = true;
+
+  RefPtr<nsStructuredCloneContainer> mNavigationState;
 
  protected:
   static uint64_t GenerateId();
@@ -102,7 +106,7 @@ class SHEntrySharedParentState : public SHEntrySharedState {
 
   nsFrameLoader* GetFrameLoader();
 
-  void NotifyListenersContentViewerEvicted();
+  void NotifyListenersDocumentViewerEvicted();
 
   nsExpirationState* GetExpirationState() { return &mExpirationState; }
 
@@ -164,7 +168,7 @@ class SHEntrySharedChildState {
 
   // These members aren't copied by SHEntrySharedChildState::CopyFrom() because
   // they're specific to a particular content viewer.
-  nsCOMPtr<nsIContentViewer> mContentViewer;
+  nsCOMPtr<nsIDocumentViewer> mDocumentViewer;
   RefPtr<mozilla::dom::Document> mDocument;
   nsCOMPtr<nsISupports> mWindowState;
   // FIXME Move to parent?
@@ -213,7 +217,7 @@ class nsSHEntryShared final : public nsIBFCacheEntry,
   void SyncPresentationState();
   void DropPresentationState();
 
-  nsresult SetContentViewer(nsIContentViewer* aViewer);
+  nsresult SetDocumentViewer(nsIDocumentViewer* aViewer);
 };
 
 #endif

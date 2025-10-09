@@ -5,36 +5,36 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.TreePermissions = exports.MSC3089TreeSpace = exports.DEFAULT_TREE_POWER_LEVELS_TEMPLATE = void 0;
 var _pRetry = _interopRequireDefault(require("p-retry"));
-var _event = require("../@types/event");
-var _logger = require("../logger");
-var _utils = require("../utils");
-var _MSC3089Branch = require("./MSC3089Branch");
-var _megolm = require("../crypto/algorithms/megolm");
-function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
-function ownKeys(object, enumerableOnly) { var keys = Object.keys(object); if (Object.getOwnPropertySymbols) { var symbols = Object.getOwnPropertySymbols(object); enumerableOnly && (symbols = symbols.filter(function (sym) { return Object.getOwnPropertyDescriptor(object, sym).enumerable; })), keys.push.apply(keys, symbols); } return keys; }
-function _objectSpread(target) { for (var i = 1; i < arguments.length; i++) { var source = null != arguments[i] ? arguments[i] : {}; i % 2 ? ownKeys(Object(source), !0).forEach(function (key) { _defineProperty(target, key, source[key]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) : ownKeys(Object(source)).forEach(function (key) { Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key)); }); } return target; }
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(arg) { var key = _toPrimitive(arg, "string"); return typeof key === "symbol" ? key : String(key); }
-function _toPrimitive(input, hint) { if (typeof input !== "object" || input === null) return input; var prim = input[Symbol.toPrimitive]; if (prim !== undefined) { var res = prim.call(input, hint || "default"); if (typeof res !== "object") return res; throw new TypeError("@@toPrimitive must return a primitive value."); } return (hint === "string" ? String : Number)(input); } /*
-                                                                                                                                                                                                                                                                                                                                                                                          Copyright 2021 The Matrix.org Foundation C.I.C.
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Licensed under the Apache License, Version 2.0 (the "License");
-                                                                                                                                                                                                                                                                                                                                                                                          you may not use this file except in compliance with the License.
-                                                                                                                                                                                                                                                                                                                                                                                          You may obtain a copy of the License at
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                              http://www.apache.org/licenses/LICENSE-2.0
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Unless required by applicable law or agreed to in writing, software
-                                                                                                                                                                                                                                                                                                                                                                                          distributed under the License is distributed on an "AS IS" BASIS,
-                                                                                                                                                                                                                                                                                                                                                                                          WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-                                                                                                                                                                                                                                                                                                                                                                                          See the License for the specific language governing permissions and
-                                                                                                                                                                                                                                                                                                                                                                                          limitations under the License.
-                                                                                                                                                                                                                                                                                                                                                                                          */
+var _event = require("../@types/event.js");
+var _logger = require("../logger.js");
+var _utils = require("../utils.js");
+var _MSC3089Branch = require("./MSC3089Branch.js");
+var _membership = require("../@types/membership.js");
+function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }
+function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
+function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
+function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
+Copyright 2021 The Matrix.org Foundation C.I.C.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 /**
  * The recommended defaults for a tree space's power levels. Note that this
  * is UNSTABLE and subject to breaking changes without notice.
  */
-const DEFAULT_TREE_POWER_LEVELS_TEMPLATE = {
+const DEFAULT_TREE_POWER_LEVELS_TEMPLATE = exports.DEFAULT_TREE_POWER_LEVELS_TEMPLATE = {
   // Owner
   invite: 100,
   kick: 100,
@@ -63,8 +63,7 @@ const DEFAULT_TREE_POWER_LEVELS_TEMPLATE = {
  * Ease-of-use representation for power levels represented as simple roles.
  * Note that this is UNSTABLE and subject to breaking changes without notice.
  */
-exports.DEFAULT_TREE_POWER_LEVELS_TEMPLATE = DEFAULT_TREE_POWER_LEVELS_TEMPLATE;
-let TreePermissions = /*#__PURE__*/function (TreePermissions) {
+let TreePermissions = exports.TreePermissions = /*#__PURE__*/function (TreePermissions) {
   TreePermissions["Viewer"] = "viewer";
   TreePermissions["Editor"] = "editor";
   TreePermissions["Owner"] = "owner";
@@ -75,7 +74,6 @@ let TreePermissions = /*#__PURE__*/function (TreePermissions) {
  * file tree Space. Note that this is UNSTABLE and subject to breaking changes
  * without notice.
  */
-exports.TreePermissions = TreePermissions;
 class MSC3089TreeSpace {
   constructor(client, roomId) {
     this.client = client;
@@ -120,28 +118,14 @@ class MSC3089TreeSpace {
    * @param userId - The user ID to invite.
    * @param andSubspaces - True (default) to invite the user to all
    * directories/subspaces too, recursively.
-   * @param shareHistoryKeys - True (default) to share encryption keys
-   * with the invited user. This will allow them to decrypt the events (files)
-   * in the tree. Keys will not be shared if the room is lacking appropriate
-   * history visibility (by default, history visibility is "shared" in trees,
-   * which is an appropriate visibility for these purposes).
    * @returns Promise which resolves when complete.
    */
-  async invite(userId, andSubspaces = true, shareHistoryKeys = true) {
+  async invite(userId, andSubspaces = true) {
     const promises = [this.retryInvite(userId)];
     if (andSubspaces) {
-      promises.push(...this.getDirectories().map(d => d.invite(userId, andSubspaces, shareHistoryKeys)));
+      promises.push(...this.getDirectories().map(d => d.invite(userId, andSubspaces)));
     }
-    return Promise.all(promises).then(() => {
-      // Note: key sharing is default on because for file trees it is relatively important that the invite
-      // target can actually decrypt the files. The implied use case is that by inviting a user to the tree
-      // it means the sender would like the receiver to view/download the files contained within, much like
-      // sharing a folder in other circles.
-      if (shareHistoryKeys && (0, _megolm.isRoomSharedHistory)(this.room)) {
-        // noinspection JSIgnoredPromiseFromCall - we aren't concerned as much if this fails.
-        this.client.sendSharedHistoryKeys(this.roomId, [userId]);
-      }
-    });
+    await Promise.all(promises);
   }
   retryInvite(userId) {
     return (0, _utils.simpleRetryOperation)(async () => {
@@ -264,7 +248,7 @@ class MSC3089TreeSpace {
     for (const dir of subdirectories) {
       await dir.delete();
     }
-    const kickMemberships = ["invite", "knock", "join"];
+    const kickMemberships = [_membership.KnownMembership.Invite, _membership.KnownMembership.Knock, _membership.KnownMembership.Join];
     const members = this.room.currentState.getStateEvents(_event.EventType.RoomMember);
     for (const member of members) {
       const isNotUs = member.getStateKey() !== this.client.getUserId();

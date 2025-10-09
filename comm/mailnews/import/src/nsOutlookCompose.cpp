@@ -4,30 +4,26 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/ErrorNames.h"
 #include "nscore.h"
 #include "prthread.h"
 #include "nsString.h"
 #include "nsMsgUtils.h"
-#include "nsUnicharUtils.h"
 #include "nsCOMPtr.h"
 #include "nsIFile.h"
 #include "nsIURI.h"
 #include "nsMsgI18N.h"
 #include "nsIOutputStream.h"
 #include "nsIInputStream.h"
-#include "nsMsgAttachmentData.h"
-#include "nsIMsgCompFields.h"
 #include "nsIMsgAccountManager.h"
 #include "nsIMsgSend.h"
 #include "nsImportEmbeddedImageData.h"
-#include "nsNetCID.h"
 #include "nsCRT.h"
 #include "nsOutlookCompose.h"
 #include "nsTArray.h"
 
 #include "ImportDebug.h"
 
-#include "nsMimeTypes.h"
 #include "nsMsgUtils.h"
 
 #include "nsIThread.h"
@@ -36,12 +32,14 @@
 #include "nsMsgMessageFlags.h"
 #include "nsMsgLocalFolderHdrs.h"
 
-#define NS_MSGCOMPFIELDS_CID                         \
-  { /* e64b0f51-0d7b-4e2f-8c60-3862ee8c174f */       \
-    0xe64b0f51, 0x0d7b, 0x4e2f, {                    \
-      0x8c, 0x60, 0x38, 0x62, 0xee, 0x8c, 0x17, 0x4f \
-    }                                                \
-  }
+#include "mozilla/SpinEventLoopUntil.h"
+
+#define NS_MSGCOMPFIELDS_CID                  \
+  {/* e64b0f51-0d7b-4e2f-8c60-3862ee8c174f */ \
+   0xe64b0f51,                                \
+   0x0d7b,                                    \
+   0x4e2f,                                    \
+   {0x8c, 0x60, 0x38, 0x62, 0xee, 0x8c, 0x17, 0x4f}}
 static NS_DEFINE_CID(kMsgCompFieldsCID, NS_MSGCOMPFIELDS_CID);
 
 #ifdef IMPORT_DEBUG
@@ -119,25 +117,19 @@ class OutlookSendListener : public nsIMsgSendListener {
   // nsISupports interface
   NS_DECL_THREADSAFE_ISUPPORTS
 
-  /* void OnStartSending (in string aMsgID, in uint32_t aMsgSize); */
   NS_IMETHOD OnStartSending(const char* aMsgID, uint32_t aMsgSize) {
     return NS_OK;
   }
 
-  /* void OnProgress (in string aMsgID, in uint32_t aProgress, in uint32_t
-   * aProgressMax); */
-  NS_IMETHOD OnProgress(const char* aMsgID, uint32_t aProgress,
-                        uint32_t aProgressMax) {
+  NS_IMETHOD OnSendProgress(const char* aMsgID, uint32_t aProgress,
+                            uint32_t aProgressMax) {
     return NS_OK;
   }
 
-  /* void OnStatus (in string aMsgID, in wstring aMsg); */
   NS_IMETHOD OnStatus(const char* aMsgID, const char16_t* aMsg) {
     return NS_OK;
   }
 
-  /* void OnStopSending (in string aMsgID, in nsresult aStatus, in wstring aMsg,
-   * in nsIFile returnFile); */
   NS_IMETHOD OnStopSending(const char* aMsgID, nsresult aStatus,
                            const char16_t* aMsg, nsIFile* returnFile) {
     m_done = true;
@@ -145,20 +137,16 @@ class OutlookSendListener : public nsIMsgSendListener {
     return NS_OK;
   }
 
-  /* void OnTransportSecurityError( in string msgID, in nsresult status, in
-   * nsITransportSecurityInfo secInfo, in ACString location); */
   NS_IMETHOD OnTransportSecurityError(const char* msgID, nsresult status,
                                       nsITransportSecurityInfo* secInfo,
                                       nsACString const& location) {
     return NS_OK;
   }
 
-  /* void OnSendNotPerformed */
   NS_IMETHOD OnSendNotPerformed(const char* aMsgID, nsresult aStatus) {
     return NS_OK;
   }
 
-  /* void OnGetDraftFolderURI (); */
   NS_IMETHOD OnGetDraftFolderURI(const char* aMsgID,
                                  const nsACString& aFolderURI) {
     return NS_OK;
@@ -170,11 +158,11 @@ class OutlookSendListener : public nsIMsgSendListener {
     m_location = nullptr;
   }
 
- public:
-  virtual ~OutlookSendListener() {}
-
   bool m_done;
   nsCOMPtr<nsIFile> m_location;
+
+ protected:
+  virtual ~OutlookSendListener() {}
 };
 
 NS_IMPL_ISUPPORTS(OutlookSendListener, nsIMsgSendListener)
@@ -204,7 +192,7 @@ nsOutlookCompose::~nsOutlookCompose() {
   delete[] m_optimizationBuffer;
 }
 
-nsCOMPtr<nsIMsgIdentity> nsOutlookCompose::m_pIdentity = nullptr;
+MOZ_RUNINIT nsCOMPtr<nsIMsgIdentity> nsOutlookCompose::m_pIdentity = nullptr;
 
 nsresult nsOutlookCompose::CreateIdentity(void) {
   if (m_pIdentity) return NS_OK;
@@ -306,13 +294,17 @@ nsresult nsOutlookCompose::ComposeTheMessage(nsMsgDeliverMode mode,
   nsMsgI18NConvertFromUnicode(
       charset ? nsDependentCString(charset) : EmptyCString(), bodyW, bodyA);
 
-  nsCOMPtr<nsIImportService> impService(
+  nsCOMPtr<nsIMsgAccountManager> accountManager =
+      do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIImportService> importService(
       do_GetService(NS_IMPORTSERVICE_CONTRACTID, &rv));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // nsIImportService::CreateRFC822Message creates a runnable and dispatches to
+  // nsIImportService.createRFC822Message creates a runnable and dispatches to
   // the main thread.
-  rv = impService->CreateRFC822Message(
+  rv = importService->CreateRFC822Message(
       m_pIdentity,   // dummy identity
       m_pMsgFields,  // message fields
       msg.BodyIsHtml() ? "text/html" : "text/plain",
@@ -325,13 +317,17 @@ nsresult nsOutlookCompose::ComposeTheMessage(nsMsgDeliverMode mode,
   OutlookSendListener* pListen =
       static_cast<OutlookSendListener*>(m_pListener.get());
   if (NS_FAILED(rv)) {
-    IMPORT_LOG1("*** Error, CreateAndSendMessage FAILED: 0x%x\n", rv);
+    nsAutoCString name;
+    mozilla::GetErrorName(rv, name);
+    IMPORT_LOG1("*** Error, CreateAndSendMessage FAILED: %s\n", name.get());
   } else {
     // Wait for the listener to get done.
-    nsCOMPtr<nsIThread> thread(do_GetCurrentThread());
-    while (!pListen->m_done) {
-      NS_ProcessNextEvent(thread, true);
-    }
+    mozilla::SpinEventLoopUntil(
+        "nsIImportService.createRFC822Message is async"_ns, [=]() {
+          bool shutdownInProgress = false;
+          accountManager->GetShutdownInProgress(&shutdownInProgress);
+          return pListen->m_done || shutdownInProgress;
+        });
   }
 
   if (pListen->m_location) {
@@ -349,6 +345,8 @@ nsresult nsOutlookCompose::ComposeTheMessage(nsMsgDeliverMode mode,
 nsresult nsOutlookCompose::CopyComposedMessage(nsIFile* pSrc,
                                                nsIOutputStream* pDst,
                                                CMapiMessage& origMsg) {
+  uint32_t written;
+  nsresult rv;
   // I'm unsure if we really need the convertCRs feature here.
   // The headers in the file are generated by TB, the body was generated by rtf
   // reader that always used CRLF, and the attachments were processed by TB
@@ -358,14 +356,6 @@ nsresult nsOutlookCompose::CopyComposedMessage(nsIFile* pSrc,
     IMPORT_LOG0("*** Error, unexpected zero file size for composed message\n");
     return NS_ERROR_FAILURE;
   }
-
-  // The "From ..." separates the messages. Without it, TB cannot see the
-  // messages in the mailbox file. Thus, the lines that look like "From ..." in
-  // the message must be escaped (see EscapeFromSpaceLine())
-  int fromLineLen;
-  const char* fromLine = origMsg.GetFromLine(fromLineLen);
-  uint32_t written;
-  nsresult rv = pDst->Write(fromLine, fromLineLen, &written);
 
   // Bug 219269
   // Write out the x-mozilla-status headers.
@@ -646,8 +636,7 @@ class dest_nsCString {
 class dest_Stream {
  public:
   explicit dest_Stream(nsIOutputStream* dest) : m_stream(dest) {}
-  void SetCapacity(int32_t) { /*do nothing*/
-  }
+  void SetCapacity(int32_t) { /*do nothing*/ }
   // const_cast here is due to the poor design of the EscapeFromSpaceLine()
   // that requires a non-constant pointer while doesn't modify its data
   nsresult Append(const char* buf, uint32_t count) {

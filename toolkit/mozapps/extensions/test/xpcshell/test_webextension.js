@@ -2,6 +2,12 @@
  * http://creativecommons.org/publicdomain/zero/1.0/
  */
 
+// Non-extension add-ons are not supported on Android, but some tests install
+// non-extension add-ons, such as static themes, dictionaries, langpacks.
+const skipOnAndroid = () => ({
+  skip_if: () => AppConstants.platform === "android",
+});
+
 const ID = "webextension1@tests.mozilla.org";
 
 const profileDir = gProfD.clone();
@@ -316,6 +322,73 @@ add_task(async function test_options_ui() {
   );
 
   await addon.uninstall();
+
+  info("Test again with options_page manifest property");
+  const ID3 = "options_page_alias@tests.mozilla.org";
+  addon = await promiseInstallWebExtension({
+    manifest: {
+      browser_specific_settings: { gecko: { id: ID3 } },
+      options_page: "options.html",
+    },
+  });
+
+  checkAddon(ID3, addon, {
+    optionsType: AddonManager.OPTIONS_TYPE_TAB,
+  });
+
+  ok(
+    OPTIONS_RE.test(addon.optionsURL),
+    "Addon should have a moz-extension: options URL for /options.html"
+  );
+
+  await addon.uninstall();
+
+  info("Test options_page and options_page set to a different page");
+
+  const ID4 = "options_page_warning@tests.mozilla.org";
+  addon = await promiseInstallWebExtension({
+    manifest: {
+      browser_specific_settings: { gecko: { id: ID4 } },
+      options_page: "options_page.html",
+      options_ui: {
+        page: "options.html",
+        open_in_tab: false,
+      },
+    },
+  });
+
+  checkAddon(ID4, addon, {
+    optionsType: AddonManager.OPTIONS_TYPE_INLINE_BROWSER,
+  });
+
+  ok(
+    OPTIONS_RE.test(addon.optionsURL),
+    "Addon should have a moz-extension: options URL for /options.html"
+  );
+
+  await addon.uninstall();
+
+  info("Test options_page and options_page are both set to the same page");
+
+  const ID5 = "options_page_and_ui_same_page@tests.mozilla.org";
+  addon = await promiseInstallWebExtension({
+    manifest: {
+      browser_specific_settings: { gecko: { id: ID5 } },
+      options_page: "options.html",
+      options_ui: { page: "options.html" },
+    },
+  });
+
+  checkAddon(ID5, addon, {
+    optionsType: AddonManager.OPTIONS_TYPE_INLINE_BROWSER,
+  });
+
+  ok(
+    OPTIONS_RE.test(addon.optionsURL),
+    "Addon should have a moz-extension: options URL for /options.html"
+  );
+
+  await addon.uninstall();
 });
 
 // Test that experiments permissions add the appropriate dependencies.
@@ -367,7 +440,7 @@ add_task(async function developerShouldOverride() {
   await addon.uninstall();
 });
 
-add_task(async function test_invalid_developer_does_not_override() {
+add_task(skipOnAndroid(), async function test_invalid_developer_is_ignored() {
   for (const { type, manifestProps, files } of [
     {
       type: "dictionary",
@@ -453,7 +526,7 @@ add_task(async function authorNotString() {
   ExtensionTestUtils.failOnSchemaWarnings(true);
 });
 
-add_task(async function testThemeExtension() {
+add_task(skipOnAndroid(), async function testThemeExtension() {
   let addon = await promiseInstallWebExtension({
     manifest: {
       author: "Some author",
@@ -502,7 +575,7 @@ add_task(async function testThemeExtension() {
 });
 
 // Test that we can update from a webextension to a webextension-theme
-add_task(async function test_theme_upgrade() {
+add_task(skipOnAndroid(), async function test_theme_upgrade() {
   // First install a regular webextension
   let addon = await promiseInstallWebExtension({
     manifest: {
@@ -557,7 +630,7 @@ add_task(async function test_theme_upgrade() {
   Assert.equal(addon, null);
 });
 
-add_task(async function test_developer_properties() {
+add_task(skipOnAndroid(), async function test_developer_properties() {
   const name = "developer-name";
   const url = "https://example.org";
 

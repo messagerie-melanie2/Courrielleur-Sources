@@ -48,9 +48,9 @@ static const char crypto_multipart_blurb[] =
 static void mime_crypto_write_base64(void* closure, const char* buf,
                                      unsigned long size);
 static nsresult mime_encoder_output_fn(const char* buf, int32_t size,
-                                       void* closure);
+                                       MimeClosure closure);
 static nsresult mime_nested_encoder_output_fn(const char* buf, int32_t size,
-                                              void* closure);
+                                              MimeClosure closure);
 static nsresult make_multipart_signed_header_string(bool outer_p,
                                                     char** header_return,
                                                     char** boundary_return,
@@ -548,8 +548,9 @@ nsresult nsMsgComposeSecure::MimeInitEncryption(bool aSign,
   }
 
   // Initialize the base64 encoder
-  mCryptoEncoder.reset(
-      MimeEncoder::GetBase64Encoder(mime_encoder_output_fn, this));
+  mCryptoEncoder.reset(MimeEncoder::GetBase64Encoder(
+      mime_encoder_output_fn,
+      MimeClosure(MimeClosure::isMsgComposeSecure, this)));
 
   /* Initialize the encrypter (and add the sender's cert.) */
   PR_ASSERT(mSelfEncryptionCert);
@@ -682,7 +683,8 @@ nsresult nsMsgComposeSecure::MimeFinishMultipartSigned(
   // Initialize the base64 encoder for the signature data.
   MOZ_ASSERT(!mSigEncoder, "Shouldn't already have a mSigEncoder");
   mSigEncoder.reset(MimeEncoder::GetBase64Encoder(
-      (aOuter ? mime_encoder_output_fn : mime_nested_encoder_output_fn), this));
+      (aOuter ? mime_encoder_output_fn : mime_nested_encoder_output_fn),
+      MimeClosure(MimeClosure::isMsgComposeSecure, this)));
 
   /* Write out the signature.
    */
@@ -824,8 +826,8 @@ nsresult nsMsgComposeSecure::MimeCryptoHackCerts(const char* aRecipients,
       NS_ENSURE_SUCCESS(res, res);
 
       if (certVerifier->VerifyCert(
-              certBytes, certificateUsageEmailRecipient, mozilla::pkix::Now(),
-              nullptr, nullptr, builtChain,
+              certBytes, mozilla::psm::VerifyUsage::EmailRecipient,
+              mozilla::pkix::Now(), nullptr, nullptr, builtChain,
               // Only local checks can run on the main thread.
               // Skipping OCSP for the user's own cert seems accaptable.
               CertVerifier::FLAG_LOCAL_ONLY) != mozilla::pkix::Success) {
@@ -848,8 +850,8 @@ nsresult nsMsgComposeSecure::MimeCryptoHackCerts(const char* aRecipients,
       NS_ENSURE_SUCCESS(res, res);
 
       if (certVerifier->VerifyCert(
-              certBytes, certificateUsageEmailSigner, mozilla::pkix::Now(),
-              nullptr, nullptr, builtChain,
+              certBytes, mozilla::psm::VerifyUsage::EmailSigner,
+              mozilla::pkix::Now(), nullptr, nullptr, builtChain,
               // Only local checks can run on the main thread.
               // Skipping OCSP for the user's own cert seems accaptable.
               CertVerifier::FLAG_LOCAL_ONLY) != mozilla::pkix::Success) {
@@ -1087,8 +1089,13 @@ static void mime_crypto_write_base64(void* closure, const char* buf,
    base64-encoded representation of the signature to the file.
  */
 // TODO: size should probably be converted to uint32_t
-nsresult mime_encoder_output_fn(const char* buf, int32_t size, void* closure) {
-  nsMsgComposeSecure* state = (nsMsgComposeSecure*)closure;
+nsresult mime_encoder_output_fn(const char* buf, int32_t size,
+                                MimeClosure closure) {
+  nsMsgComposeSecure* state = closure.AsMsgComposeSecure();
+  if (!state) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
   nsCOMPtr<nsIOutputStream> stream;
   state->GetOutputStream(getter_AddRefs(stream));
   uint32_t n;
@@ -1105,8 +1112,11 @@ nsresult mime_encoder_output_fn(const char* buf, int32_t size, void* closure) {
    directly to the file.
  */
 static nsresult mime_nested_encoder_output_fn(const char* buf, int32_t size,
-                                              void* closure) {
-  nsMsgComposeSecure* state = (nsMsgComposeSecure*)closure;
+                                              MimeClosure closure) {
+  nsMsgComposeSecure* state = closure.AsMsgComposeSecure();
+  if (!state) {
+    return NS_ERROR_FAILURE;
+  }
 
   // Copy to new null-terminated string so JS glue doesn't crash when
   // MimeCryptoWriteBlock() is implemented in JS.
@@ -1188,26 +1198,17 @@ nsresult FindSMimeCertTask::CalculateResult() {
   // search for a valid certificate
   for (node = CERT_LIST_HEAD(certlist); !CERT_LIST_END(node, certlist);
        node = CERT_LIST_NEXT(node)) {
-    // TODO: Replace this block with:
-    //   if (!NSS_CMSRecipient_IsSupported(cert)) { continue; }
-    CERTSubjectPublicKeyInfo* spki = &(node->cert->subjectPublicKeyInfo);
-    SECOidTag certalgtag = SECOID_GetAlgorithmTag(&(spki->algorithm));
-    switch (certalgtag) {
-      case SEC_OID_PKCS1_RSA_ENCRYPTION:
-      case SEC_OID_X942_DIFFIE_HELMAN_KEY: /* dh-public-number */
-        break;
-      default:
-        // Not supported
-        continue;
+    if (!NSS_CMSRecipient_IsSupported(node->cert)) {
+      continue;
     }
-
     nsTArray<uint8_t> certBytes(node->cert->derCert.data,
                                 node->cert->derCert.len);
     nsTArray<nsTArray<uint8_t>> unusedCertChain;
 
     mozilla::pkix::Result result = certVerifier->VerifyCert(
-        certBytes, certificateUsageEmailRecipient, mozilla::pkix::Now(),
-        nullptr /*XXX pinarg*/, nullptr /*hostname*/, unusedCertChain);
+        certBytes, mozilla::psm::VerifyUsage::EmailRecipient,
+        mozilla::pkix::Now(), nullptr /*XXX pinarg*/, nullptr /*hostname*/,
+        unusedCertChain);
     if (result == mozilla::pkix::Success) {
       mozilla::StaticMutexAutoLock lock(sMutex);
       mCert = new nsNSSCertificate(node->cert);

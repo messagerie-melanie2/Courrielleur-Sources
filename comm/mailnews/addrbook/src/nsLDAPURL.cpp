@@ -11,8 +11,6 @@
 #include "nsNetCID.h"
 #include "nsComponentManagerUtils.h"
 #include "nsIStandardURL.h"
-#include "nsMsgUtils.h"
-#include "nsUnicharUtils.h"
 #include "mozilla/Encoding.h"
 
 // The two schemes we support, LDAP and LDAPS
@@ -549,6 +547,11 @@ nsLDAPURL::GetDisplayPrePath(nsACString& aPrePath) {
 NS_IMETHODIMP
 nsLDAPURL::GetHasRef(bool* result) { return mBaseURL->GetHasRef(result); }
 
+NS_IMETHODIMP nsLDAPURL::GetHasUserPass(bool* aHasUserPass) {
+  *aHasUserPass = false;
+  return NS_OK;
+}
+
 NS_IMETHODIMP
 nsLDAPURL::GetFilePath(nsACString& aFilePath) {
   return mBaseURL->GetFilePath(aFilePath);
@@ -563,6 +566,10 @@ nsLDAPURL::GetQuery(nsACString& aQuery) { return mBaseURL->GetQuery(aQuery); }
 
 nsresult nsLDAPURL::SetQuery(const nsACString& aQuery) {
   return NS_MutateURI(mBaseURL).SetQuery(aQuery).Finalize(mBaseURL);
+}
+
+NS_IMETHODIMP nsLDAPURL::GetHasQuery(bool* aHasQuery) {
+  return mBaseURL->GetHasQuery(aHasQuery);
 }
 
 nsresult nsLDAPURL::SetQueryWithEncoding(const nsACString& aQuery,

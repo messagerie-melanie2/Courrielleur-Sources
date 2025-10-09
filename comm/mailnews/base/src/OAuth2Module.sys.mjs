@@ -6,6 +6,12 @@ import { OAuth2 } from "resource:///modules/OAuth2.sys.mjs";
 
 import { OAuth2Providers } from "resource:///modules/OAuth2Providers.sys.mjs";
 
+const log = console.createInstance({
+  prefix: "mailnews.oauth",
+  maxLogLevel: "Warn",
+  maxLogLevelPref: "mailnews.oauth.loglevel",
+});
+
 /**
  * A collection of `OAuth2` objects that have previously been created.
  * Only weak references are stored here, so if all the owners of an `OAuth2`
@@ -25,67 +31,25 @@ export function OAuth2Module() {}
 OAuth2Module.prototype = {
   QueryInterface: ChromeUtils.generateQI(["msgIOAuth2Module"]),
 
-  initFromOutgoing(aServer) {
-    return this._initFromPrefs(
-      "mail.smtpserver." + aServer.key + ".",
-      aServer.username,
-      aServer.serverURI.host
+  initFromOutgoing(server) {
+    return this.initFromHostname(
+      server.serverURI.host,
+      server.username,
+      server.type
     );
   },
 
-  initFromMail(aServer) {
-    return this._initFromPrefs(
-      "mail.server." + aServer.key + ".",
-      aServer.username,
-      aServer.hostName
-    );
+  initFromMail(server) {
+    return this.initFromHostname(server.hostName, server.username, server.type);
   },
 
-  initFromABDirectory(aDirectory, aHostname) {
-    this._initFromPrefs(
-      aDirectory.dirPrefId + ".",
-      aDirectory.getStringValue("carddav.username", "") || aDirectory.UID,
-      aHostname
-    );
-  },
-
-  initFromHostname(aHostname, aUsername) {
-    const details = OAuth2Providers.getHostnameDetails(aHostname);
+  initFromHostname(hostname, username, type) {
+    const details = OAuth2Providers.getHostnameDetails(hostname, type);
     if (!details) {
       return false;
     }
 
-    return this._init(details[0], details[1], aHostname, aUsername);
-  },
-
-  _initFromPrefs(root, aUsername, aHostname) {
-    let issuer = Services.prefs.getStringPref(root + "oauth2.issuer", null);
-    let scope = Services.prefs.getStringPref(root + "oauth2.scope", null);
-
-    const details = OAuth2Providers.getHostnameDetails(aHostname);
-    if (
-      details &&
-      (details[0] != issuer ||
-        !scope?.split(" ").every(s => details[1].split(" ").includes(s)))
-    ) {
-      // Found in the list of hardcoded providers. Use the hardcoded values.
-      // But only if what we had wasn't a narrower scope of current
-      // defaults. Updating scope would cause re-authorization.
-      [issuer, scope] = details;
-      //  Store them for the future, can be useful once we support
-      // dynamic registration.
-      Services.prefs.setStringPref(root + "oauth2.issuer", issuer);
-      Services.prefs.setStringPref(root + "oauth2.scope", scope);
-    }
-    if (!issuer || !scope) {
-      // We need these properties for OAuth2 support.
-      return false;
-    }
-
-    return this._init(issuer, scope, aHostname, aUsername);
-  },
-
-  _init(issuer, scope, aHostname, aUsername) {
+    const { issuer, allScopes, requiredScopes } = details;
     // Find the app key we need for the OAuth2 string. Eventually, this should
     // be using dynamic client registration, but there are no current
     // implementations that we can test this with.
@@ -95,11 +59,12 @@ OAuth2Module.prototype = {
     }
 
     // Username is needed to generate the XOAUTH2 string.
-    this._username = aUsername;
+    this._username = username;
     // loginOrigin is needed to save the refresh token in the password manager.
     this._loginOrigin = "oauth://" + issuer;
     // We use the scope to indicate realm when storing in the password manager.
-    this._scope = scope;
+    this._scope = allScopes;
+    this._requiredScopes = scopeSet(requiredScopes);
 
     // Look for an existing `OAuth2` object with the same endpoint, username
     // and scope.
@@ -111,29 +76,35 @@ OAuth2Module.prototype = {
       }
       if (
         oauth.authorizationEndpoint == issuerDetails.authorizationEndpoint &&
-        oauth.username == aUsername &&
-        oauth.scope == scope
+        oauth.username == username &&
+        scopeSet(oauth.scope).isSupersetOf(this._requiredScopes)
       ) {
+        log.debug(`Found existing OAuth2 object for ${issuer}`);
         this._oauth = oauth;
         break;
       }
     }
     if (!this._oauth) {
+      log.debug(`Creating a new OAuth2 object for ${issuer}`);
+      // This gets the refresh token from the login manager. It may change
+      // `this._scope` if a refresh token was found for the required scopes
+      // but not all of the wanted scopes.
+      const refreshToken = this.getRefreshToken();
+
       // Define the OAuth property and store it.
-      this._oauth = new OAuth2(scope, issuerDetails);
-      this._oauth.username = aUsername;
+      this._oauth = new OAuth2(this._scope, issuerDetails);
+      this._oauth.username = username;
       oAuth2Objects.add(new WeakRef(this._oauth));
 
       // Try hinting the username...
-      this._oauth.extraAuthParams = [["login_hint", aUsername]];
+      this._oauth.extraAuthParams = [["login_hint", username]];
 
       // Set the window title to something more useful than "Unnamed"
       this._oauth.requestWindowTitle = Services.strings
         .createBundle("chrome://messenger/locale/messenger.properties")
-        .formatStringFromName("oauth2WindowTitle", [aUsername, aHostname]);
+        .formatStringFromName("oauth2WindowTitle", [username, hostname]);
 
-      // This stores the refresh token in the login manager.
-      this._oauth.refreshToken = this.getRefreshToken();
+      this._oauth.refreshToken = refreshToken;
     }
 
     return true;
@@ -145,65 +116,75 @@ OAuth2Module.prototype = {
       null,
       ""
     )) {
-      if (
-        login.username == this._username &&
-        (login.httpRealm == this._scope ||
-          login.httpRealm.split(" ").includes(this._scope))
-      ) {
+      if (login.username != this._username) {
+        continue;
+      }
+
+      if (scopeSet(login.httpRealm).isSupersetOf(this._requiredScopes)) {
+        this._scope = login.httpRealm;
         return login.password;
       }
     }
     return "";
   },
   async setRefreshToken(token) {
-    // Check if we already have a login with this username, and modify the
-    // password on that, if we do.
-    const logins = Services.logins.findLogins(
-      this._loginOrigin,
-      null,
-      this._scope
-    );
+    const scope = this._oauth.scope ?? this._scope;
+    const grantedScopes = scopeSet(scope);
+
+    // Update any existing logins matching this origin, username, and scope.
+    const logins = Services.logins.findLogins(this._loginOrigin, null, "");
+    let didChangePassword = false;
     for (const login of logins) {
-      if (login.username == this._username) {
-        if (token) {
-          if (token != login.password) {
+      if (login.username != this._username) {
+        continue;
+      }
+
+      const loginScopes = scopeSet(login.httpRealm);
+      if (grantedScopes.isSupersetOf(loginScopes)) {
+        if (grantedScopes.size == loginScopes.size) {
+          // The scope matches, just update the token...
+          if (login.password != token) {
+            // ... but only if it actually changed.
+            log.debug(
+              `Updating existing token for ${this._loginOrigin} with scope "${scope}"`
+            );
             const propBag = Cc[
               "@mozilla.org/hash-property-bag;1"
             ].createInstance(Ci.nsIWritablePropertyBag);
             propBag.setProperty("password", token);
+            propBag.setProperty("timePasswordChanged", Date.now());
             Services.logins.modifyLogin(login, propBag);
           }
+          didChangePassword = true;
         } else {
+          // We've got a new token for this scope, remove the existing one.
+          log.debug(
+            `Removing superceded token for ${this._loginOrigin} with scope "${login.httpRealm}"`
+          );
           Services.logins.removeLogin(login);
         }
-        return;
       }
     }
 
-    // Unless the token is null, we need to create and fill in a new login
-    if (token) {
+    // Unless the token is null, we need to create and fill in a new login.
+    if (!didChangePassword && token) {
+      log.debug(
+        `Creating new login for ${this._loginOrigin} with httpRealm "${scope}"`
+      );
       const login = Cc["@mozilla.org/login-manager/loginInfo;1"].createInstance(
         Ci.nsILoginInfo
       );
-      login.init(
-        this._loginOrigin,
-        null,
-        this._scope,
-        this._username,
-        token,
-        "",
-        ""
-      );
+      login.init(this._loginOrigin, null, scope, this._username, token, "", "");
       await Services.logins.addLoginAsync(login);
     }
   },
 
-  connect(aWithUI, aListener) {
-    this._fetchAccessToken(aListener, aWithUI, true);
+  connect(withUI, listener) {
+    this._fetchAccessToken(listener, withUI, true);
   },
 
-  getAccessToken(aListener) {
-    this._fetchAccessToken(aListener, true, false);
+  getAccessToken(listener) {
+    this._fetchAccessToken(listener, true, false);
   },
 
   /**
@@ -233,9 +214,13 @@ OAuth2Module.prototype = {
 
         this._oauth.connect(shouldPrompt, false).then(
           async () => {
-            if (this._oauth.refreshToken != oldRefreshToken) {
-              // Refresh token changed; save it.
+            if (
+              this._oauth.refreshToken != oldRefreshToken ||
+              this._oauth.scope != this._scope
+            ) {
+              // Refresh token and/or scope changed; save them.
               await this.setRefreshToken(this._oauth.refreshToken);
+              this._scope = this._oauth.scope;
             }
 
             let retval = this._oauth.accessToken;
@@ -276,5 +261,19 @@ OAuth2Module.prototype = {
  * testing scenarios.
  */
 OAuth2Module._forgetObjects = function () {
+  log.debug("Clearing OAuth2 objects from cache");
   oAuth2Objects.clear();
 };
+
+/**
+ * Turns a space-delimited string of scopes into a Set containing the scopes.
+ *
+ * @param {string} scopeString
+ * @returns {Set}
+ */
+function scopeSet(scopeString) {
+  if (!scopeString) {
+    return new Set();
+  }
+  return new Set(scopeString.split(" "));
+}

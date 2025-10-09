@@ -719,6 +719,7 @@ nsresult nsMIMEHeaderParamImpl::DoParameterInternal(
     // check that the 2231/5987 result decodes properly given the
     // specified character set
     if (!IsValidOctetSequenceForCharset(charsetB, caseBResult)) {
+      free(caseBResult);
       caseBResult = nullptr;
     }
   }
@@ -727,6 +728,7 @@ nsresult nsMIMEHeaderParamImpl::DoParameterInternal(
     // check that the 2231/5987 result decodes properly given the
     // specified character set
     if (!IsValidOctetSequenceForCharset(charsetCD, caseCDResult)) {
+      free(caseCDResult);
       caseCDResult = nullptr;
     }
   }
@@ -1002,7 +1004,8 @@ char* DecodeQ(const char* in, uint32_t length) {
         if (length < 3 || !ISHEXCHAR(in[1]) || !ISHEXCHAR(in[2])) {
           goto badsyntax;
         }
-        PR_sscanf(in + 1, "%2X", &c);
+        // Can't fail because of the test above
+        mozilla::Unused << PR_sscanf(in + 1, "%2X", &c);
         *out++ = (char)c;
         in += 3;
         length -= 3;

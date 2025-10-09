@@ -1688,7 +1688,7 @@ cert_inc_count()
 ########################################################################
 cert_san_and_generic_extensions()
 {
-    EXTDUMP=${CERT_EXTENSIONS_DIR}/sanext.der
+    EXTDUMP=sanext.der
 
     DIR="-d ${CERT_EXTENSIONS_DIR} -f ${R_PWFILE}"
     CERTNAME="-n WithSAN"
@@ -2607,7 +2607,39 @@ cert_cleanup()
   . common/cleanup.sh
 }
 
+CERTCACHE=${TESTDIR}/${HOST}.${TEST_MODE}.cert.cache.tar.gz
+
+cert_make_cache()
+{
+  if [ -n "${NSS_USE_CERT_CACHE}" ] ; then
+    pushd ${HOSTDIR}
+    tar czf "${CERTCACHE}" .
+    popd
+  fi
+}
+
+cert_use_cache()
+{
+  if [ -n "${NSS_USE_CERT_CACHE}" ] ; then
+    pushd ${HOSTDIR}
+    if [ -r "${CERTCACHE}" ]; then
+      tar xzf "${CERTCACHE}"
+      return 1;
+    fi
+    popd
+  fi
+
+  rm "${CERTCACHE}"
+  return 0;
+}
+
 ################## main #################################################
+
+cert_use_cache
+USING_CACHE=$?
+if [[ $USING_CACHE -eq 1 ]]; then
+  return 0;
+fi
 
 cert_init
 cert_all_CA
@@ -2630,7 +2662,7 @@ cert_test_password
 cert_test_distrust
 cert_test_ocspresp
 cert_test_rsapss
-if [ "${TEST_MODE}" = "SHARED_DB" ] ; then
+if using_sql ; then
   cert_test_rsapss_policy
 fi
 cert_test_token_uri
@@ -2648,3 +2680,4 @@ fi
 cert_iopr_setup
 
 cert_cleanup
+cert_make_cache

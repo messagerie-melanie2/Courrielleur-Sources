@@ -21,7 +21,7 @@ add_task(async function () {
     return [...tabmail.tabContainer.querySelectorAll("tab")];
   }
   function checkTabElements(expectedCount, expectedSelection) {
-    let tabElements = getTabElements();
+    const tabElements = getTabElements();
     Assert.equal(
       tabElements.length,
       expectedCount,
@@ -37,13 +37,13 @@ add_task(async function () {
     }
   }
   async function switchTab(index) {
-    let tabElement = getTabElements()[index];
-    eventPromise = BrowserTestUtils.waitForEvent(
+    const tabElement = getTabElements()[index];
+    tabSelectPromise = BrowserTestUtils.waitForEvent(
       tabmail.tabContainer,
       "TabSelect"
     );
     EventUtils.synthesizeMouseAtCenter(tabElement, {});
-    event = await eventPromise;
+    event = await tabSelectPromise;
     Assert.equal(
       event.target,
       tabElement,
@@ -51,8 +51,8 @@ add_task(async function () {
     );
   }
   async function closeTab(index) {
-    let tabElement = getTabElements()[index];
-    eventPromise = BrowserTestUtils.waitForEvent(
+    const tabElement = getTabElements()[index];
+    tabClosePromise = BrowserTestUtils.waitForEvent(
       tabmail.tabContainer,
       "TabClose"
     );
@@ -60,7 +60,7 @@ add_task(async function () {
       tabElement.querySelector(".tab-close-button"),
       {}
     );
-    event = await eventPromise;
+    event = await tabClosePromise;
     Assert.equal(
       event.target,
       tabElement,
@@ -70,19 +70,19 @@ add_task(async function () {
 
   // Collect some elements.
 
-  let tabmail = document.getElementById("tabmail");
-  let calendarTabButton = document.getElementById("calendarButton");
+  const tabmail = document.getElementById("tabmail");
+  const calendarTabButton = document.getElementById("calendarButton");
 
-  let mailTabPanel = document.getElementById("mail3PaneTab1");
-  let mailTabBrowser = document.getElementById("mail3PaneTabBrowser1");
-  let folderTree = mailTabBrowser.contentDocument.getElementById("folderTree");
-  let calendarTabPanel = document.getElementById("calendarTabPanel");
-  let contentTab;
-  let contentTabPanel;
+  const mailTabPanel = document.getElementById("mail3PaneTab1");
+  const mailTabBrowser = document.getElementById("mail3PaneTabBrowser1");
+  const folderTree =
+    mailTabBrowser.contentDocument.getElementById("folderTree");
+  const calendarTabPanel = document.getElementById("calendarTabPanel");
+  const calendarList = document.getElementById("calendar-list");
 
-  let calendarList = document.getElementById("calendar-list");
-
-  let eventPromise;
+  let tabClosePromise;
+  let tabOpenPromise;
+  let tabSelectPromise;
   let event;
 
   // Check we're in a good state to start with.
@@ -107,9 +107,17 @@ add_task(async function () {
 
   // Switch to the calendar tab.
 
-  eventPromise = BrowserTestUtils.waitForEvent(tabmail.tabContainer, "TabOpen");
+  tabOpenPromise = BrowserTestUtils.waitForEvent(
+    tabmail.tabContainer,
+    "TabOpen"
+  );
+  tabSelectPromise = BrowserTestUtils.waitForEvent(
+    tabmail.tabContainer,
+    "TabSelect"
+  );
   EventUtils.synthesizeMouseAtCenter(calendarTabButton, {});
-  event = await eventPromise;
+  event = await tabOpenPromise;
+  await tabSelectPromise;
   Assert.equal(
     event.target,
     getTabElements()[1],
@@ -186,12 +194,20 @@ add_task(async function () {
 
   // Open a content tab.
 
-  eventPromise = BrowserTestUtils.waitForEvent(tabmail.tabContainer, "TabOpen");
-  contentTab = window.openContentTab("https://example.org/");
-  contentTabPanel = contentTab.browser.closest(
+  tabOpenPromise = BrowserTestUtils.waitForEvent(
+    tabmail.tabContainer,
+    "TabOpen"
+  );
+  tabSelectPromise = BrowserTestUtils.waitForEvent(
+    tabmail.tabContainer,
+    "TabSelect"
+  );
+  const contentTab = window.openContentTab("https://example.org/");
+  const contentTabPanel = contentTab.browser.closest(
     ".contentTabInstance"
   ).parentNode;
-  event = await eventPromise;
+  event = await tabOpenPromise;
+  await tabSelectPromise;
   Assert.equal(
     event.target,
     getTabElements()[2],

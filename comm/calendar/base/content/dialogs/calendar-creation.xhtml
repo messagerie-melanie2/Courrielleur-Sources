@@ -3,12 +3,6 @@
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
-<?xml-stylesheet type="text/css" href="chrome://messenger/skin/messenger.css"?>
-<?xml-stylesheet type="text/css" href="chrome://messenger/skin/input-fields.css"?>
-<?xml-stylesheet type="text/css" href="chrome://messenger/skin/colors.css"?>
-<?xml-stylesheet type="text/css" href="chrome://messenger/skin/themeableDialog.css"?>
-<?xml-stylesheet type="text/css" href="chrome://calendar/skin/shared/calendar-creation.css"?>
-
 <!-- TODO: messenger.dtd is used for the "Next" button; some relocation is needed. -->
 <!DOCTYPE html [ <!ENTITY % dtd1 SYSTEM "chrome://calendar/locale/calendarCreation.dtd"> %dtd1;
 <!ENTITY % dtd2 SYSTEM "chrome://calendar/locale/calendar.dtd" >
@@ -28,7 +22,17 @@
 >
   <head>
     <title>&wizard.title;</title>
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src chrome:; script-src chrome: 'unsafe-inline'; style-src chrome: 'unsafe-inline'"
+    />
+    <link rel="stylesheet" href="chrome://messenger/skin/messenger.css" />
+    <link rel="stylesheet" href="chrome://messenger/skin/input-fields.css" />
+    <link rel="stylesheet" href="chrome://messenger/skin/colors.css" />
+    <link rel="stylesheet" href="chrome://messenger/skin/themeableDialog.css" />
+    <link rel="stylesheet" href="chrome://calendar/skin/shared/calendar-creation.css" />
     <link rel="localization" href="toolkit/global/wizard.ftl" />
+    <link rel="localization" href="calendar/calendar-creation.ftl" />
     <script defer="defer" src="chrome://messenger/content/globalOverlay.js"></script>
     <script defer="defer" src="chrome://global/content/editMenuOverlay.js"></script>
     <script defer="defer" src="chrome://messenger/content/dialogShadowDom.js"></script>
@@ -193,8 +197,7 @@
           <html:th>
             <html:img
               class="network-status-image"
-              src="chrome://global/skin/icons/loading.png"
-              srcset="chrome://global/skin/icons/loading@2x.png 2x"
+              src="chrome://messenger/skin/icons/spinning.svg"
               alt=""
             />
           </html:th>
@@ -242,6 +245,11 @@
           id="network-calendar-list"
           propertiesbuttonlabel="&calendar.context.properties.label;"
         />
+        <html:hr />
+        <hbox>
+          <html:button id="selectcalendars-all" data-l10n-id="select-all-calendars"></html:button>
+          <html:button id="selectcalendars-none" data-l10n-id="select-none-calendars"></html:button>
+        </hbox>
       </vbox>
 
       <!-- Panel: Add-on Calendar Settings -->

@@ -4,12 +4,12 @@
 
 var { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUtils.sys.mjs");
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  CalAttendee: "resource:///modules/CalAttendee.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  CalAttendee: "resource:///modules/CalAttendee.sys.mjs",
 });
 
 function run_test() {
-  let attendee = new CalAttendee();
+  const attendee = new CalAttendee();
   attendee.id = "mailto:somebody";
 
   // Set the property and make sure its there

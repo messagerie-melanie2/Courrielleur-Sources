@@ -26,14 +26,20 @@
 #include "SandboxPolicyRDD.h"
 #include "SandboxPolicySocket.h"
 #include "SandboxPolicyUtility.h"
+#if defined(MOZ_PROFILE_GENERATE)
+#  include "SandboxPolicyPGO.h"
+#endif  // defined(MOZ_PROFILE_GENERATE)
+
 #include "mozilla/Assertions.h"
 
 #include "mozilla/GeckoArgs.h"
 #include "mozilla/ipc/UtilityProcessSandboxing.h"
+#include "mozilla/SandboxSettings.h"
 
 // Undocumented sandbox setup routines.
 extern "C" int sandbox_init_with_parameters(const char* profile, uint64_t flags,
-                                            const char* const parameters[], char** errorbuf);
+                                            const char* const parameters[],
+                                            char** errorbuf);
 extern "C" void sandbox_free_error(char* errorbuf);
 extern "C" int sandbox_check(pid_t pid, const char* operation, int type, ...);
 
@@ -50,7 +56,8 @@ class OSXVersion {
   static void Get(int32_t& aMajor, int32_t& aMinor);
 
  private:
-  static void GetSystemVersion(int32_t& aMajor, int32_t& aMinor, int32_t& aBugFix);
+  static void GetSystemVersion(int32_t& aMajor, int32_t& aMinor,
+                               int32_t& aBugFix);
   static bool mCached;
   static int32_t mOSXVersionMajor;
   static int32_t mOSXVersionMinor;
@@ -72,23 +79,26 @@ void OSXVersion::Get(int32_t& aMajor, int32_t& aMinor) {
   aMinor = mOSXVersionMinor;
 }
 
-void OSXVersion::GetSystemVersion(int32_t& aMajor, int32_t& aMinor, int32_t& aBugFix) {
+void OSXVersion::GetSystemVersion(int32_t& aMajor, int32_t& aMinor,
+                                  int32_t& aBugFix) {
   SInt32 major = 0, minor = 0, bugfix = 0;
 
   CFURLRef url = CFURLCreateWithString(
-      kCFAllocatorDefault, CFSTR("file:///System/Library/CoreServices/SystemVersion.plist"), NULL);
+      kCFAllocatorDefault,
+      CFSTR("file:///System/Library/CoreServices/SystemVersion.plist"), NULL);
   CFReadStreamRef stream = CFReadStreamCreateWithFile(kCFAllocatorDefault, url);
   CFReadStreamOpen(stream);
-  CFDictionaryRef sysVersionPlist = (CFDictionaryRef)CFPropertyListCreateWithStream(
-      kCFAllocatorDefault, stream, 0, kCFPropertyListImmutable, NULL, NULL);
+  CFDictionaryRef sysVersionPlist =
+      (CFDictionaryRef)CFPropertyListCreateWithStream(
+          kCFAllocatorDefault, stream, 0, kCFPropertyListImmutable, NULL, NULL);
   CFReadStreamClose(stream);
   CFRelease(stream);
   CFRelease(url);
 
-  CFStringRef versionString =
-      (CFStringRef)CFDictionaryGetValue(sysVersionPlist, CFSTR("ProductVersion"));
-  CFArrayRef versions =
-      CFStringCreateArrayBySeparatingStrings(kCFAllocatorDefault, versionString, CFSTR("."));
+  CFStringRef versionString = (CFStringRef)CFDictionaryGetValue(
+      sysVersionPlist, CFSTR("ProductVersion"));
+  CFArrayRef versions = CFStringCreateArrayBySeparatingStrings(
+      kCFAllocatorDefault, versionString, CFSTR("."));
   CFIndex count = CFArrayGetCount(versions);
   if (count > 0) {
     CFStringRef component = (CFStringRef)CFArrayGetValueAtIndex(versions, 0);
@@ -188,22 +198,26 @@ void MacSandboxInfo::AppendAsParams(std::vector<std::string>& aParams) const {
   }
 }
 
-void MacSandboxInfo::AppendStartupParam(std::vector<std::string>& aParams) const {
+void MacSandboxInfo::AppendStartupParam(
+    std::vector<std::string>& aParams) const {
   aParams.push_back("-sbStartup");
 }
 
-void MacSandboxInfo::AppendLoggingParam(std::vector<std::string>& aParams) const {
+void MacSandboxInfo::AppendLoggingParam(
+    std::vector<std::string>& aParams) const {
   if (this->shouldLog) {
     aParams.push_back("-sbLogging");
   }
 }
 
-void MacSandboxInfo::AppendAppPathParam(std::vector<std::string>& aParams) const {
+void MacSandboxInfo::AppendAppPathParam(
+    std::vector<std::string>& aParams) const {
   aParams.push_back("-sbAppPath");
   aParams.push_back(this->appPath);
 }
 
-void MacSandboxInfo::AppendPluginPathParam(std::vector<std::string>& aParams) const {
+void MacSandboxInfo::AppendPluginPathParam(
+    std::vector<std::string>& aParams) const {
   aParams.push_back("-sbPluginPath");
   aParams.push_back(this->pluginPath);
 }
@@ -230,13 +244,15 @@ void MacSandboxInfo::AppendAudioParam(std::vector<std::string>& aParams) const {
   }
 }
 
-void MacSandboxInfo::AppendWindowServerParam(std::vector<std::string>& aParams) const {
+void MacSandboxInfo::AppendWindowServerParam(
+    std::vector<std::string>& aParams) const {
   if (this->hasWindowServer) {
     aParams.push_back("-sbAllowWindowServer");
   }
 }
 
-void MacSandboxInfo::AppendReadPathParams(std::vector<std::string>& aParams) const {
+void MacSandboxInfo::AppendReadPathParams(
+    std::vector<std::string>& aParams) const {
   if (!this->testingReadPath1.empty()) {
     aParams.push_back("-sbTestingReadPath");
     aParams.push_back(this->testingReadPath1.c_str());
@@ -256,7 +272,8 @@ void MacSandboxInfo::AppendReadPathParams(std::vector<std::string>& aParams) con
 }
 
 #ifdef DEBUG
-void MacSandboxInfo::AppendDebugWriteDirParam(std::vector<std::string>& aParams) const {
+void MacSandboxInfo::AppendDebugWriteDirParam(
+    std::vector<std::string>& aParams) const {
   if (!this->debugWriteDir.empty()) {
     aParams.push_back("-sbDebugWriteDir");
     aParams.push_back(this->debugWriteDir.c_str());
@@ -291,11 +308,13 @@ bool StartMacSandbox(MacSandboxInfo const& aInfo, std::string& aErrorMessage) {
         // Nothing to do here specifically
         break;
 
+#ifdef MOZ_APPLEMEDIA
       case ipc::SandboxingKind::UTILITY_AUDIO_DECODING_APPLE_MEDIA: {
         profile.append(SandboxPolicyUtilityAudioDecoderAppleMediaAddend);
         params.push_back("MAC_OS_VERSION");
         params.push_back(combinedVersion.c_str());
       } break;
+#endif
 
       default:
         MOZ_ASSERT(false, "Invalid SandboxingKind");
@@ -305,6 +324,8 @@ bool StartMacSandbox(MacSandboxInfo const& aInfo, std::string& aErrorMessage) {
     params.push_back(aInfo.shouldLog ? "TRUE" : "FALSE");
     params.push_back("APP_PATH");
     params.push_back(aInfo.appPath.c_str());
+    params.push_back("APP_BINARY_PATH");
+    params.push_back(aInfo.appBinaryPath.c_str());
     if (!aInfo.crashServerPort.empty()) {
       params.push_back("CRASH_PORT");
       params.push_back(aInfo.crashServerPort.c_str());
@@ -430,7 +451,8 @@ bool StartMacSandbox(MacSandboxInfo const& aInfo, std::string& aErrorMessage) {
         profile.append(SandboxPolicyContentAudioAddend);
       }
     } else {
-      fprintf(stderr, "Content sandbox disabled due to sandbox level setting\n");
+      fprintf(stderr,
+              "Content sandbox disabled due to sandbox level setting\n");
       return false;
     }
   } else {
@@ -447,6 +469,17 @@ bool StartMacSandbox(MacSandboxInfo const& aInfo, std::string& aErrorMessage) {
     fprintf(stderr, "Out of memory in StartMacSandbox()!\n");
     return false;
   }
+
+#if defined(MOZ_PROFILE_GENERATE)
+  // It should only be allowed on instrumented builds, never on production
+  // builds.
+  std::string parentPath;
+  if (GetLlvmProfileDir(parentPath)) {
+    params.push_back("PGO_DATA_DIR");
+    params.push_back(parentPath.c_str());
+    profile.append(SandboxPolicyPGO);
+  }
+#endif
 
 // In order to avoid relying on any other Mozilla modules (as described at the
 // top of this file), we use our own #define instead of the existing MOZ_LOG
@@ -465,7 +498,8 @@ bool StartMacSandbox(MacSandboxInfo const& aInfo, std::string& aErrorMessage) {
   params.push_back(nullptr);
 
   char* errorbuf = NULL;
-  int rv = sandbox_init_with_parameters(profile.c_str(), 0, params.data(), &errorbuf);
+  int rv = sandbox_init_with_parameters(profile.c_str(), 0, params.data(),
+                                        &errorbuf);
   if (rv) {
     if (errorbuf) {
       char* msg = NULL;
@@ -490,7 +524,8 @@ bool StartMacSandbox(MacSandboxInfo const& aInfo, std::string& aErrorMessage) {
  * command line arguments. Return false if any sandbox parameters needed
  * for early startup of the sandbox are not present in the arguments.
  */
-bool GetContentSandboxParamsFromArgs(int aArgc, char** aArgv, MacSandboxInfo& aInfo) {
+bool GetContentSandboxParamsFromArgs(int aArgc, char** aArgv,
+                                     MacSandboxInfo& aInfo) {
   // Ensure we find these paramaters in the command
   // line arguments. Return false if any are missing.
   bool foundSandboxLevel = false;
@@ -604,11 +639,27 @@ bool GetContentSandboxParamsFromArgs(int aArgc, char** aArgv, MacSandboxInfo& aI
   return true;
 }
 
-bool GetUtilitySandboxParamsFromArgs(int aArgc, char** aArgv, MacSandboxInfo& aInfo,
+bool GetAppPathForExecutable(const char* aAppName, const char* aExecutablePath,
+                             std::string& aAppPath) {
+  std::string execPath(aExecutablePath);
+  std::string appName(aAppName);
+  size_t pos = execPath.rfind(appName + '/');
+  if (pos == std::string::npos) {
+    return false;
+  }
+  aAppPath = execPath.substr(0, pos + appName.size());
+  return true;
+}
+
+bool GetUtilitySandboxParamsFromArgs(int aArgc, char** aArgv,
+                                     MacSandboxInfo& aInfo,
                                      bool aSandboxingKindRequired = true) {
   // Ensure we find these paramaters in the command
   // line arguments. Return false if any are missing.
   bool foundAppPath = false;
+
+  GetAppPathForExecutable(MOZ_CHILD_PROCESS_BUNDLENAME, aArgv[0],
+                          aInfo.appBinaryPath);
 
   // Collect sandbox params from CLI arguments
   for (int i = 0; i < aArgc; i++) {
@@ -650,11 +701,13 @@ bool GetUtilitySandboxParamsFromArgs(int aArgc, char** aArgv, MacSandboxInfo& aI
   return true;
 }
 
-bool GetSocketSandboxParamsFromArgs(int aArgc, char** aArgv, MacSandboxInfo& aInfo) {
+bool GetSocketSandboxParamsFromArgs(int aArgc, char** aArgv,
+                                    MacSandboxInfo& aInfo) {
   return GetUtilitySandboxParamsFromArgs(aArgc, aArgv, aInfo, false);
 }
 
-bool GetPluginSandboxParamsFromArgs(int aArgc, char** aArgv, MacSandboxInfo& aInfo) {
+bool GetPluginSandboxParamsFromArgs(int aArgc, char** aArgv,
+                                    MacSandboxInfo& aInfo) {
   // Ensure we find these paramaters in the command
   // line arguments. Return false if any are missing.
   bool foundAppPath = false;
@@ -725,7 +778,8 @@ bool GetPluginSandboxParamsFromArgs(int aArgc, char** aArgv, MacSandboxInfo& aIn
   return true;
 }
 
-bool GetRDDSandboxParamsFromArgs(int aArgc, char** aArgv, MacSandboxInfo& aInfo) {
+bool GetRDDSandboxParamsFromArgs(int aArgc, char** aArgv,
+                                 MacSandboxInfo& aInfo) {
   return GetUtilitySandboxParamsFromArgs(aArgc, aArgv, aInfo, false);
 }
 
@@ -733,8 +787,8 @@ bool GetRDDSandboxParamsFromArgs(int aArgc, char** aArgv, MacSandboxInfo& aInfo)
  * Returns true if no errors were encountered or if early sandbox startup is
  * not enabled for this process. Returns false if an error was encountered.
  */
-bool StartMacSandboxIfEnabled(const MacSandboxType aSandboxType, int aArgc, char** aArgv,
-                              std::string& aErrorMessage) {
+bool StartMacSandboxIfEnabled(const MacSandboxType aSandboxType, int aArgc,
+                              char** aArgv, std::string& aErrorMessage) {
   bool earlyStartupEnabled = false;
 
   // Check for the -sbStartup CLI parameter which
@@ -796,7 +850,9 @@ bool IsMacSandboxStarted() { return sandbox_check(getpid(), NULL, 0) == 1; }
 
 #ifdef DEBUG
 // sandbox_check returns 1 if the specified process is sandboxed
-void AssertMacSandboxEnabled() { MOZ_ASSERT(sandbox_check(getpid(), NULL, 0) == 1); }
+void AssertMacSandboxEnabled() {
+  MOZ_ASSERT(sandbox_check(getpid(), NULL, 0) == 1);
+}
 #endif /* DEBUG */
 
 }  // namespace mozilla

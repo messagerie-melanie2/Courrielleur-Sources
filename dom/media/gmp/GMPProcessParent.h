@@ -11,8 +11,8 @@
 #include "base/basictypes.h"
 #include "base/file_path.h"
 #include "base/thread.h"
-#include "chrome/common/child_process_host.h"
 #include "mozilla/ipc/GeckoChildProcessHost.h"
+#include "mozilla/media/MediaUtils.h"
 #include "nsIFile.h"
 
 class nsIRunnable;
@@ -31,6 +31,7 @@ class GMPProcessParent final : public mozilla::ipc::GeckoChildProcessHost {
 
   bool CanShutdown() override { return true; }
   const std::string& GetPluginFilePath() { return mGMPPath; }
+  bool UseXPCOM() const { return mUseXpcom; }
 
 #if defined(XP_MACOSX) && defined(MOZ_SANDBOX)
   // Init static members on the main thread
@@ -54,7 +55,6 @@ class GMPProcessParent final : public mozilla::ipc::GeckoChildProcessHost {
   static MacSandboxType GetMacSandboxType() { return MacSandboxType_GMP; };
 #endif
 
-  using mozilla::ipc::GeckoChildProcessHost::GetChannel;
   using mozilla::ipc::GeckoChildProcessHost::GetChildProcessHandle;
 
  private:
@@ -64,6 +64,9 @@ class GMPProcessParent final : public mozilla::ipc::GeckoChildProcessHost {
 
   std::string mGMPPath;
   nsCOMPtr<nsIRunnable> mDeletedCallback;
+
+  // Whether or not XPCOM is enabled in the GMP process.
+  bool mUseXpcom;
 
 #if defined(XP_MACOSX) && defined(MOZ_SANDBOX)
   // Indicates whether we'll start the Mac GMP sandbox during
@@ -86,6 +89,9 @@ class GMPProcessParent final : public mozilla::ipc::GeckoChildProcessHost {
   static bool sIsMainThreadInitDone;
 #  endif
 #endif
+
+  // Ticket for blocking shutdown while the process is live.
+  UniquePtr<media::ShutdownBlockingTicket> mShutdownBlocker;
 
   // For normalizing paths to be compatible with sandboxing.
   // We use normalized paths to generate the sandbox ruleset. Once

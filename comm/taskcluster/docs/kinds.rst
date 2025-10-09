@@ -4,6 +4,12 @@ Task Kinds
 This section lists and documents the additional task kinds that are specific
 to Thunderbird and are implemented in it's source tree.
 
+beetmover-strings-source
+------------------------
+
+Upload strings source files to FTP.
+
+
 shippable-l10n-pre
 ------------------
 Prepares a build artifact containing the translated strings from all locales.
@@ -28,7 +34,7 @@ Using
 Parameters
 ..........
 
-There are some task parameters specific to this job kind.
+There are some task parameters specific to this task kind.
 
 - locale-list:
   Points to either `shipped-locales` or `all-locales`. This file is used to
@@ -57,9 +63,16 @@ and `comm-l10n`, merge them, and create a tar file.
 shippable-l10n-pre-signing
 --------------------------
 
-Signing job for shippable-l10n-pre artifacts
+Signing task for shippable-l10n-pre artifacts
 
-beetmover-strings-source
-------------------------
 
-Upload strings source files to FTP.
+source-docs
+-----------
+
+Build Thunderbird source documentation and upload to RTD.
+
+
+upload-symbols-dummy
+--------------------
+
+Upload-symbols-dummy ensures both x64 and macosx64 tasks run for nightlies and releases.

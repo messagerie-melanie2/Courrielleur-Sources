@@ -7,6 +7,8 @@ import { MozLitElement } from "../lit-utils.mjs";
 // eslint-disable-next-line import/no-unassigned-import
 import "chrome://global/content/elements/moz-button.mjs";
 
+window.MozXULElement?.insertFTLIfNeeded("toolkit/global/mozMessageBar.ftl");
+
 const messageTypeToIconData = {
   info: {
     iconSrc: "chrome://global/skin/icons/info-filled.svg",
@@ -52,13 +54,14 @@ export default class MozMessageBar extends MozLitElement {
     actionsSlot: "slot[name=actions]",
     actionsEl: ".actions",
     closeButton: "moz-button.close",
+    messageEl: ".message",
     supportLinkSlot: "slot[name=support-link]",
   };
 
   static properties = {
     type: { type: String },
-    heading: { type: String },
-    message: { type: String },
+    heading: { type: String, fluent: true },
+    message: { type: String, fluent: true },
     dismissable: { type: Boolean },
     messageL10nId: { type: String },
     messageL10nArgs: { type: String },
@@ -66,14 +69,20 @@ export default class MozMessageBar extends MozLitElement {
 
   constructor() {
     super();
-    window.MozXULElement?.insertFTLIfNeeded("toolkit/global/mozMessageBar.ftl");
     this.type = "info";
     this.dismissable = false;
   }
 
-  onSlotchange() {
+  onActionSlotchange() {
     let actions = this.actionsSlot.assignedNodes();
     this.actionsEl.classList.toggle("active", actions.length);
+  }
+
+  onLinkSlotChange() {
+    this.messageEl.classList.toggle(
+      "has-link-after",
+      !!this.supportLinkEls.length
+    );
   }
 
   connectedCallback() {
@@ -153,13 +162,16 @@ export default class MozMessageBar extends MozLitElement {
                   ${this.message}
                 </span>
                 <span class="link">
-                  <slot name="support-link"></slot>
+                  <slot
+                    name="support-link"
+                    @slotchange=${this.onLinkSlotChange}
+                  ></slot>
                 </span>
               </div>
             </div>
           </div>
           <span class="actions">
-            <slot name="actions" @slotchange=${this.onSlotchange}></slot>
+            <slot name="actions" @slotchange=${this.onActionSlotchange}></slot>
           </span>
         </div>
         ${this.closeButtonTemplate()}

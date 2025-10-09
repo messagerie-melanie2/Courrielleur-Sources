@@ -29,7 +29,7 @@ var gPreGethashCounter = 0;
 var gCurGethashCounter = 0;
 
 function loadTestFrame() {
-  return new Promise(function(resolve, reject) {
+  return new Promise(function(resolve) {
     var iframe = document.createElement("iframe");
     iframe.setAttribute("src", "gethashFrame.html");
     document.body.appendChild(iframe);
@@ -42,7 +42,7 @@ function loadTestFrame() {
 }
 
 function getGethashCounter() {
-  return new Promise(function(resolve, reject) {
+  return new Promise(function(resolve) {
     var xhr = new XMLHttpRequest;
     xhr.open("PUT", GETHASH_URL + "?gethashcount");
     xhr.setRequestHeader("Content-Type", "text/plain");
@@ -78,7 +78,9 @@ function reset() {
 // This test has to come before testPositiveCache to ensure gethash server doesn't
 // contain completions.
 function testNegativeCache() {
-  SpecialPowers.DOMWindowUtils.clearSharedStyleSheetCache();
+  SpecialPowers.ChromeUtils.clearResourceCache({
+    types: ["stylesheet", "script"],
+  });
   shouldLoad = true;
 
   async function setup() {
@@ -107,7 +109,9 @@ function testNegativeCache() {
 }
 
 function testPositiveCache() {
-  SpecialPowers.DOMWindowUtils.clearSharedStyleSheetCache();
+  SpecialPowers.ChromeUtils.clearResourceCache({
+    types: ["stylesheet", "script"],
+  });
   shouldLoad = false;
 
   async function setup() {

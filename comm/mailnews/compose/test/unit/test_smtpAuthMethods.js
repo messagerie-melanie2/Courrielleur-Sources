@@ -4,14 +4,14 @@
  * Test code <copied from="test_pop3AuthMethods.js">
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 const { TestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/TestUtils.sys.mjs"
 );
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 var server;
@@ -94,24 +94,27 @@ function nextTest() {
   kAuthSchemes = curTest.serverAuthMethods;
   smtpServer.authMethod = curTest.clientAuthMethod;
 
+  const messageId = Cc["@mozilla.org/messengercompose/computils;1"]
+    .createInstance(Ci.nsIMsgCompUtils)
+    .msgGenerateMessageId(identity, null);
+
   // Run test
-  let urlListener = new PromiseTestUtils.PromiseUrlListener();
-  MailServices.smtp.sendMailMessage(
+  const listener = new PromiseTestUtils.PromiseMsgOutgoingListener();
+  smtpServer.sendMailMessage(
     testFile,
-    kTo,
+    MailServices.headerParser.parseEncodedHeaderW(kTo),
+    [],
     identity,
     kSender,
     null,
-    urlListener,
-    null,
     null,
     false,
-    "",
-    {},
-    {}
+    messageId,
+    listener
   );
+
   let resolved = false;
-  urlListener.promise.catch(e => {}).finally(() => (resolved = true));
+  listener.promise.catch(() => {}).finally(() => (resolved = true));
   Services.tm.spinEventLoopUntil("wait for sending", () => resolved);
 
   do_check_transaction(server.playTransaction(), curTest.transaction);
@@ -137,8 +140,9 @@ function run_test() {
     server.start();
 
     localAccountUtils.loadLocalMailAccount();
+    // Create the fake SMTP server. The server's socket type defaults to
+    // Ci.nsMsgSocketType.plain, so no need to set it.
     smtpServer = getBasicSmtpServer(server.port);
-    smtpServer.socketType = Ci.nsMsgSocketType.plain;
     smtpServer.username = kUsername;
     smtpServer.password = kPassword;
     identity = getSmtpIdentity(kIdentityMail, smtpServer);
@@ -158,7 +162,7 @@ function endTest() {
   server.stop();
 
   dump("emptying event loop\n");
-  var thread = gThreadManager.currentThread;
+  var thread = Services.tm.currentThread;
   while (thread.hasPendingEvents()) {
     dump("next event\n");
     thread.processNextEvent(true);

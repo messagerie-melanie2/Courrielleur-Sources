@@ -65,7 +65,7 @@ nsTArray_base<Alloc, RelocationStrategy>::GetAutoArrayBufferUnsafe(
   // pointer to take into account the extra alignment in the auto array.
 
   static_assert(
-      sizeof(void*) != 4 || (MOZ_ALIGNOF(mozilla::AlignedElem<8>) == 8 &&
+      sizeof(void*) != 4 || (alignof(mozilla::AlignedElem<8>) == 8 &&
                              sizeof(AutoTArray<mozilla::AlignedElem<8>, 1>) ==
                                  sizeof(void*) + sizeof(nsTArrayHeader) + 4 +
                                      sizeof(mozilla::AlignedElem<8>)),
@@ -151,12 +151,10 @@ nsTArray_base<Alloc, RelocationStrategy>::ExtendCapacity(size_type aLength,
 template <class Alloc, class RelocationStrategy>
 template <typename ActualAlloc>
 typename ActualAlloc::ResultTypeProxy
-nsTArray_base<Alloc, RelocationStrategy>::EnsureCapacity(size_type aCapacity,
-                                                         size_type aElemSize) {
-  // This should be the most common case so test this first
-  if (aCapacity <= mHdr->mCapacity) {
-    return ActualAlloc::SuccessResult();
-  }
+nsTArray_base<Alloc, RelocationStrategy>::EnsureCapacityImpl(
+    size_type aCapacity, size_type aElemSize) {
+  MOZ_ASSERT(aCapacity > mHdr->mCapacity,
+             "Should have been checked by caller (EnsureCapacity)");
 
   // If the requested memory allocation exceeds size_type(-1)/2, then
   // our doubling algorithm may not be able to allocate it.

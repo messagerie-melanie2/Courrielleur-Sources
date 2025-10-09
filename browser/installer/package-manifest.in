@@ -38,6 +38,7 @@
 #ifdef MOZ_UPDATER
 @APPNAME@/Contents/Library/LaunchServices
 #endif
+@APPNAME@/Contents/Frameworks
 @APPNAME@/Contents/PkgInfo
 @RESPATH@/firefox.icns
 @RESPATH@/document.icns
@@ -56,16 +57,9 @@
 #ifdef HAVE_MAKENSISU
 @BINPATH@/uninstall/helper.exe
 #endif
+@RESPATH@/default.locale
 #ifdef MOZ_UPDATER
-@RESPATH@/update.locale
 @RESPATH@/updater.ini
-#endif
-#ifdef MOZ_DEFAULT_BROWSER_AGENT
-@RESPATH@/defaultagent.ini
-@RESPATH@/defaultagent_localized.ini
-#endif
-#if defined(MOZ_UPDATE_AGENT) || defined(MOZ_DEFAULT_BROWSER_AGENT)
-@RESPATH@/locale.ini
 #endif
 
 [xpcom]
@@ -90,10 +84,10 @@
 #endif
 #ifdef XP_MACOSX
 @BINPATH@/@MOZ_CHILD_PROCESS_NAME@.app/
-#else
-@BINPATH@/@MOZ_CHILD_PROCESS_NAME@
+@BINPATH@/@MOZ_EME_PROCESS_NAME@.app/
 #endif
 #ifdef XP_WIN
+@BINPATH@/@MOZ_CHILD_PROCESS_NAME@
 #if MOZ_PACKAGE_MSVC_DLLS
 @BINPATH@/@MSVC_C_RUNTIME_DLL@
 #ifdef MSVC_C_RUNTIME_1_DLL
@@ -101,16 +95,24 @@
 #endif
 @BINPATH@/@MSVC_CXX_RUNTIME_DLL@
 #endif
-#if MOZ_PACKAGE_WIN_UCRT_DLLS
-@BINPATH@/api-ms-win-*.dll
-@BINPATH@/ucrtbase.dll
-#endif
 #endif
 #ifdef MOZ_GTK
+; This is a standalone binary launched by Firefox on Linux to verify
+; the system's graphics capabilities and behavior.
+; It is separate because it may crash, and handling this within Firefox
+; itself would be more challenging.
 @BINPATH@/glxtest
 @BINPATH@/@DLL_PREFIX@mozgtk@DLL_SUFFIX@
 #ifdef MOZ_WAYLAND
 @BINPATH@/@DLL_PREFIX@mozwayland@DLL_SUFFIX@
+#endif
+#ifdef MOZ_ENABLE_V4L2
+; Similar to glxtest, this tests the hardware decoding for Video for Linux.
+; Currently, it doesn't ship for Firefox targeting typical Intel CPU (or compatible).
+@BINPATH@/v4l2test
+#endif
+#ifdef MOZ_ENABLE_VAAPI
+; Similar to glxtest, this tests the capabilities of the Video Acceleration API (VA-API).
 @BINPATH@/vaapitest
 #endif
 #endif
@@ -119,13 +121,10 @@
 ; build because we haven't run the relevant parts of configure, so we guess
 ; here and trust what came from our source build.
 #if defined(MOZ_ARTIFACT_BUILDS) && defined(XP_WIN)
-@BINPATH@/api-ms-win-*.dll
-@BINPATH@/ucrtbase.dll
 @BINPATH@/vcruntime*.dll
 @BINPATH@/msvcp*.dll
 @BINPATH@/libEGL.dll
 @BINPATH@/libGLESv2.dll
-@BINPATH@/d3dcompiler_47.dll
 #endif
 
 [browser]
@@ -140,29 +139,26 @@
 @BINPATH@/browser/VisualElements/PrivateBrowsing_150.png
 @BINPATH@/browser/VisualElements/PrivateBrowsing_70.png
 #else
+#ifndef XP_MACOSX
 @BINPATH@/@MOZ_APP_NAME@-bin
+#endif
 @BINPATH@/@MOZ_APP_NAME@
 #endif
 @RESPATH@/application.ini
 #ifdef MOZ_UPDATER
+# update-settings.ini has been removed on macOS.
+#ifndef XP_MACOSX
 @RESPATH@/update-settings.ini
+#endif
 #endif
 @RESPATH@/platform.ini
 #ifndef MOZ_FOLD_LIBS
 @BINPATH@/@DLL_PREFIX@mozsqlite3@DLL_SUFFIX@
 #endif
 @BINPATH@/@DLL_PREFIX@lgpllibs@DLL_SUFFIX@
-#ifdef MOZ_FFVPX
+@BINPATH@/@DLL_PREFIX@gkcodecs@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@mozavutil@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@mozavcodec@DLL_SUFFIX@
-#endif
-#ifdef XP_WIN
-#ifdef _AMD64_
-@BINPATH@/@DLL_PREFIX@qipcap64@DLL_SUFFIX@
-#else
-@BINPATH@/@DLL_PREFIX@qipcap@DLL_SUFFIX@
-#endif
-#endif
 
 ; [Components]
 #ifdef ACCESSIBILITY
@@ -172,7 +168,7 @@
 #endif
 
 ; JavaScript components
-@RESPATH@/browser/components/BrowserComponents.manifest
+@RESPATH@/browser/components/*.manifest
 @RESPATH@/components/extensions.manifest
 #ifdef MOZ_UPDATER
 @RESPATH@/components/nsUpdateService.manifest
@@ -189,7 +185,6 @@
 @RESPATH@/components/antitracking.manifest
 
 @RESPATH@/components/l10n-registry.manifest
-@RESPATH@/browser/components/l10n-registry.manifest
 
 ; WebDriver (Marionette, Remote Agent) remote protocols
 #ifdef ENABLE_WEBDRIVER
@@ -199,11 +194,11 @@
 
 ; [Extensions]
 @RESPATH@/components/extensions-toolkit.manifest
-@RESPATH@/browser/components/extensions-browser.manifest
 
 ; Modules
 @RESPATH@/browser/modules/*
 @RESPATH@/modules/*
+@RESPATH@/moz-src/*
 @RESPATH@/browser/actors/*
 @RESPATH@/actors/*
 
@@ -211,18 +206,17 @@
 #ifdef MOZ_ANGLE_RENDERER
 @BINPATH@/libEGL.dll
 @BINPATH@/libGLESv2.dll
-
-#ifdef MOZ_D3DCOMPILER_VISTA_DLL
-@BINPATH@/@MOZ_D3DCOMPILER_VISTA_DLL@
-#endif
 #endif # MOZ_ANGLE_RENDERER
+
+#ifdef MOZ_DXCOMPILER
+@BINPATH@/@MOZ_DXC_DLL_NAME@
+@BINPATH@/@MOZ_DXIL_DLL_NAME@
+#endif
 
 ; [Browser Chrome Files]
 @RESPATH@/browser/chrome.manifest
 @RESPATH@/browser/chrome/browser@JAREXT@
 @RESPATH@/browser/chrome/browser.manifest
-@RESPATH@/chrome/pdfjs.manifest
-@RESPATH@/chrome/pdfjs/*
 @RESPATH@/chrome/toolkit@JAREXT@
 @RESPATH@/chrome/toolkit.manifest
 #ifdef MOZ_GTK
@@ -232,7 +226,6 @@
 @RESPATH@/browser/chrome/icons/default/default64.png
 @RESPATH@/browser/chrome/icons/default/default128.png
 #endif
-@RESPATH@/browser/features/*
 
 ; [DevTools Startup Files]
 @RESPATH@/browser/chrome/devtools-startup@JAREXT@
@@ -242,6 +235,11 @@
 @RESPATH@/browser/chrome/devtools@JAREXT@
 @RESPATH@/browser/chrome/devtools.manifest
 @RESPATH@/browser/@PREF_DIR@/debugger.js
+
+; PdfJs
+@RESPATH@/chrome/pdfjs.manifest
+@RESPATH@/chrome/pdfjs/*
+@RESPATH@/defaults/pref/PdfJsDefaultPrefs.js
 
 ; shell icons
 #ifdef XP_UNIX
@@ -261,15 +259,15 @@
 @RESPATH@/defaults/autoconfig/prefcalls.js
 @RESPATH@/browser/defaults/permissions
 ; Remote Settings JSON dumps
-@RESPATH@/browser/defaults/settings/last_modified.json
-@RESPATH@/browser/defaults/settings/blocklists
-@RESPATH@/browser/defaults/settings/main
-@RESPATH@/browser/defaults/settings/security-state
+@RESPATH@/browser/defaults/settings
 
+# channel-prefs.js has been removed on macOS.
+#ifndef XP_MACOSX
 ; Warning: changing the path to channel-prefs.js can cause bugs (Bug 756325)
 ; Technically this is an app pref file, but we are keeping it in the original
 ; gre location for now.
 @RESPATH@/defaults/pref/channel-prefs.js
+#endif
 
 ; Background tasks-specific preferences.
 ; These are in the GRE location since they apply to all tasks at this time.
@@ -345,7 +343,6 @@ bin/libfreebl_64int_3.so
 @BINPATH@/@DLL_PREFIX@freebl3@DLL_SUFFIX@
 #endif
 @BINPATH@/@DLL_PREFIX@nss3@DLL_SUFFIX@
-@BINPATH@/@DLL_PREFIX@nssckbi@DLL_SUFFIX@
 #ifndef MOZ_FOLD_LIBS
 @BINPATH@/@DLL_PREFIX@nssutil3@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@smime3@DLL_SUFFIX@
@@ -355,16 +352,6 @@ bin/libfreebl_64int_3.so
 #endif
 @RESPATH@/chrome/pippki@JAREXT@
 @RESPATH@/chrome/pippki.manifest
-
-; preprocessor.py doesn't handle parentheses, so while the following could be
-; expressed in a single line, it's more clear to break them up.
-#if defined(XP_WIN) || defined(XP_MACOSX)
-#if !defined(_ARM64_)
-@BINPATH@/@DLL_PREFIX@osclientcerts@DLL_SUFFIX@
-#endif
-#endif
-
-@BINPATH@/@DLL_PREFIX@ipcclientcerts@DLL_SUFFIX@
 
 ; For process sandboxing
 #if defined(MOZ_SANDBOX)
@@ -397,28 +384,27 @@ bin/libfreebl_64int_3.so
 @BINPATH@/crashreporter.app/
 #else
 @BINPATH@/crashreporter@BIN_SUFFIX@
-@RESPATH@/crashreporter.ini
-#ifdef XP_UNIX
-@RESPATH@/Throbber-small.gif
-#elif defined(XP_WIN)
+#if defined(XP_WIN)
 @BINPATH@/@DLL_PREFIX@mozwer@DLL_SUFFIX@
 #endif
 #endif
-@RESPATH@/browser/crashreporter-override.ini
-#ifdef MOZ_CRASHREPORTER_INJECTOR
-@BINPATH@/breakpadinjector.dll
-#endif
 #endif
 
-; [ minidump-analyzer ]
+; [ crashhelper ]
 ;
 #ifdef MOZ_CRASHREPORTER
-@BINPATH@/minidump-analyzer@BIN_SUFFIX@
+@BINPATH@/crashhelper@BIN_SUFFIX@
 #endif
 
 ; [ Ping Sender ]
 ;
 @BINPATH@/pingsender@BIN_SUFFIX@
+
+; [ Native Messaging Host Proxy ]
+;
+#if defined(XP_WIN) || defined(XP_MACOSX)
+@BINPATH@/nmhproxy@BIN_SUFFIX@
+#endif
 
 ; [ Notification COM Server ]
 ;
@@ -440,11 +426,8 @@ bin/libfreebl_64int_3.so
 ; media
 @RESPATH@/gmp-clearkey/0.1/@DLL_PREFIX@clearkey@DLL_SUFFIX@
 @RESPATH@/gmp-clearkey/0.1/manifest.json
-
-#ifdef MOZ_DMD
-; DMD
-@RESPATH@/dmd.py
-@RESPATH@/fix_stacks.py
+#if defined(MOZ_WMF_CDM) && defined(ENABLE_TESTS)
+@BINPATH@/@DLL_PREFIX@wmfclearkey@DLL_SUFFIX@
 #endif
 
 #ifdef PKG_LOCALE_MANIFEST
@@ -455,23 +438,7 @@ bin/libfreebl_64int_3.so
 @BINPATH@/default-browser-agent@BIN_SUFFIX@
 #endif
 
-#ifdef MOZ_EME_WIN32_ARTIFACT
-i686/plugin-container.exe
-i686/xul.dll
-i686/nss3.dll
-i686/mozglue.dll
-i686/lgpllibs.dll
-i686/msvcp140.dll
-i686/vcruntime140.dll
-i686/vcruntime140_1.dll
-i686/gmp-clearkey/0.1/clearkey.dll
-[eme destdir="i686"]
-; We assume the file we generate locally is the same as what was in the win32
-; build, which, practically speaking, is the case.
-@BINPATH@/gmp-clearkey/0.1/manifest.json
-#endif
-
 #ifdef MOZ_ARTIFACT_BUILDS
 ; Test workers unpack artifact build packages and need `jogfile.json`
-@BINPATH@/jogfile.json
+@RESPATH@/jogfile.json
 #endif

@@ -2,9 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+var { NetUtil } = ChromeUtils.importESModule("resource://gre/modules/NetUtil.sys.mjs");
 
-var { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js");
+var { HttpServer } = ChromeUtils.importESModule("resource://testing-common/httpd.sys.mjs");
 var { MockRegistrar } = ChromeUtils.importESModule(
   "resource://testing-common/MockRegistrar.sys.mjs"
 );
@@ -18,18 +18,19 @@ var {
   CalDavPrincipalPropertySearchRequest,
   CalDavOutboxRequest,
   CalDavFreeBusyRequest,
-} = ChromeUtils.import("resource:///modules/caldav/CalDavRequest.jsm");
-var { CalDavWebDavSyncHandler } = ChromeUtils.import(
-  "resource:///modules/caldav/CalDavRequestHandlers.jsm"
+} = ChromeUtils.importESModule("resource:///modules/caldav/CalDavRequest.sys.mjs");
+var { CalDavWebDavSyncHandler } = ChromeUtils.importESModule(
+  "resource:///modules/caldav/CalDavRequestHandlers.sys.mjs"
 );
 
-var { CalDavSession } = ChromeUtils.import("resource:///modules/caldav/CalDavSession.jsm");
-var { CalDavXmlns } = ChromeUtils.import("resource:///modules/caldav/CalDavUtils.jsm");
-var { Preferences } = ChromeUtils.importESModule("resource://gre/modules/Preferences.sys.mjs");
+var { CalDavSession } = ChromeUtils.importESModule(
+  "resource:///modules/caldav/CalDavSession.sys.mjs"
+);
+var { CalDavXmlns } = ChromeUtils.importESModule("resource:///modules/caldav/CalDavUtils.sys.mjs");
 var { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUtils.sys.mjs");
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  CalEvent: "resource:///modules/CalEvent.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  CalEvent: "resource:///modules/CalEvent.sys.mjs",
 });
 
 class LowerMap extends Map {
@@ -49,7 +50,7 @@ var MockConflictPrompt = {
   register() {
     if (!this._origFunc) {
       this._origFunc = cal.provider.promptOverwrite;
-      cal.provider.promptOverwrite = (aMode, aItem) => {
+      cal.provider.promptOverwrite = () => {
         return this.overwrite;
       };
     }
@@ -69,7 +70,7 @@ class MockAlertsService {
 }
 
 function replaceAlertsService() {
-  let originalAlertsServiceCID = MockRegistrar.register(
+  const originalAlertsServiceCID = MockRegistrar.register(
     "@mozilla.org/alerts-service;1",
     MockAlertsService
   );
@@ -131,27 +132,27 @@ class CalDavServer {
   }
 
   uri(path) {
-    let base = Services.io.newURI(`http://localhost:${this.server.identity.primaryPort}/`);
+    const base = Services.io.newURI(`http://localhost:${this.server.identity.primaryPort}/`);
     return Services.io.newURI(path, null, base);
   }
 
   router(nextHandler, request, response) {
     try {
-      let method = request.method;
-      let parameters = new Map(request.queryString.split("&").map(part => part.split("=", 2)));
-      let available = request.bodyInputStream.available();
-      let body =
+      const method = request.method;
+      const parameters = new Map(request.queryString.split("&").map(part => part.split("=", 2)));
+      const available = request.bodyInputStream.available();
+      const body =
         available > 0 ? NetUtil.readInputStreamToString(request.bodyInputStream, available) : null;
 
-      let headers = new LowerMap();
+      const headers = new LowerMap();
 
-      let headerIterator = function* (enumerator) {
+      const headerIterator = function* (enumerator) {
         while (enumerator.hasMoreElements()) {
           yield enumerator.getNext().QueryInterface(Ci.nsISupportsString);
         }
       };
 
-      for (let hdr of headerIterator(request.headers)) {
+      for (const hdr of headerIterator(request.headers)) {
         headers.set(hdr.data, request.getHeader(hdr.data));
       }
 
@@ -169,9 +170,9 @@ class CalDavServer {
 
   waitForLoad(aCalendar) {
     return new Promise((resolve, reject) => {
-      let observer = cal.createAdapter(Ci.calIObserver, {
+      const observer = cal.createAdapter(Ci.calIObserver, {
         onLoad() {
-          let uncached = aCalendar.wrappedJSObject.mUncachedCalendar.wrappedJSObject;
+          const uncached = aCalendar.wrappedJSObject.mUncachedCalendar.wrappedJSObject;
           aCalendar.removeObserver(observer);
 
           if (Components.isSuccessCode(uncached._lastStatus)) {
@@ -186,9 +187,9 @@ class CalDavServer {
   }
 
   getClient() {
-    let uri = this.uri("/calendars/xpcshell/events");
-    let client = cal.manager.createCalendar("caldav", uri);
-    let uclient = client.wrappedJSObject;
+    const uri = this.uri("/calendars/xpcshell/events");
+    const client = cal.manager.createCalendar("caldav", uri);
+    const uclient = client.wrappedJSObject;
     client.name = "xpcshell";
     client.setProperty("cache.enabled", true);
 
@@ -205,7 +206,7 @@ class CalDavServer {
 
     cal.manager.registerCalendar(client);
 
-    let cachedCalendar = cal.manager.getCalendarById(client.id);
+    const cachedCalendar = cal.manager.getCalendarById(client.id);
     return this.waitForLoad(cachedCalendar);
   }
 
@@ -410,9 +411,9 @@ class CalDavServer {
       response.setStatusLine(null, 200, "OK");
     } else if (method == "REPORT" && request.path == "/calendars/xpcshell/events/") {
       response.setHeader("Content-Type", "application/xml");
-      let bodydom = cal.xml.parseString(body);
-      let report = bodydom.documentElement.localName;
-      let eventName = String.fromCharCode(...new TextEncoder().encode("イベント"));
+      const bodydom = cal.xml.parseString(body);
+      const report = bodydom.documentElement.localName;
+      const eventName = String.fromCharCode(...new TextEncoder().encode("イベント"));
       if (report == "sync-collection") {
         response.write(dedent`
           <?xml version="1.0" encoding="utf-8" ?>
@@ -431,11 +432,11 @@ class CalDavServer {
           </D:multistatus>
         `);
       } else if (report == "calendar-multiget") {
-        let event = new CalEvent();
+        const event = new CalEvent();
         event.title = "会議";
         event.startDate = cal.dtz.now();
         event.endDate = cal.dtz.now();
-        let icalString = String.fromCharCode(...new TextEncoder().encode(event.icalString));
+        const icalString = String.fromCharCode(...new TextEncoder().encode(event.icalString));
         response.write(dedent`
           <?xml version="1.0" encoding="utf-8"?>
           <D:multistatus ${CalDavXmlns("D", "C")}>
@@ -459,8 +460,8 @@ class CalDavServer {
 
   requests(request, response, method, headers, parameters, body) {
     // ["", "requests", "generic"] := /requests/generic
-    let parts = request.path.split("/");
-    let id = parts[2];
+    const parts = request.path.split("/");
+    const id = parts[2];
     let status = parseInt(parts[3] || "", 10) || 200;
 
     if (id == "redirected") {
@@ -472,7 +473,7 @@ class CalDavServer {
 
     this.serverRequests[id] = { method, headers, parameters, body };
 
-    for (let [hdr, value] of headers.entries()) {
+    for (const [hdr, value] of headers.entries()) {
       response.setHeader(hdr, "response-" + value, false);
     }
 
@@ -483,8 +484,8 @@ class CalDavServer {
 }
 
 function run_test() {
-  Preferences.set("calendar.debug.log", true);
-  Preferences.set("calendar.debug.log.verbose", true);
+  Services.prefs.setBoolPref("calendar.debug.log", true);
+  Services.prefs.setBoolPref("calendar.debug.log.verbose", true);
   cal.console.maxLogLevel = "debug";
   replaceAlertsService();
 
@@ -506,74 +507,14 @@ function run_test() {
   });
 }
 
-add_task(async function test_caldav_session() {
-  gServer.reset();
-
-  let prepared = 0;
-  let redirected = 0;
-  let completed = 0;
-  let restart = false;
-
-  gServer.session.authAdapters.localhost = {
-    async prepareRequest(aChannel) {
-      prepared++;
-    },
-
-    async prepareRedirect(aOldChannel, aNewChannel) {
-      redirected++;
-    },
-
-    async completeRequest(aResponse) {
-      completed++;
-      if (restart) {
-        restart = false;
-        return CalDavSession.RESTART_REQUEST;
-      }
-      return null;
-    },
-  };
-
-  // First a simple request
-  let uri = gServer.uri("/requests/session");
-  let request = new CalDavGenericRequest(gServer.session, gMockCalendar, "HEAD", uri);
-  await request.commit();
-
-  equal(prepared, 1);
-  equal(redirected, 0);
-  equal(completed, 1);
-
-  // Now a redirect
-  prepared = redirected = completed = 0;
-
-  uri = gServer.uri("/requests/redirected");
-  request = new CalDavGenericRequest(gServer.session, gMockCalendar, "HEAD", uri);
-  await request.commit();
-
-  equal(prepared, 1);
-  equal(redirected, 1);
-  equal(completed, 1);
-
-  // Now with restarting the request
-  prepared = redirected = completed = 0;
-  restart = true;
-
-  uri = gServer.uri("/requests/redirected");
-  request = new CalDavGenericRequest(gServer.session, gMockCalendar, "HEAD", uri);
-  await request.commit();
-
-  equal(prepared, 2);
-  equal(redirected, 2);
-  equal(completed, 2);
-});
-
 /**
  * This test covers both GenericRequest and the base class CalDavRequestBase/CalDavResponseBase
  */
 add_task(async function test_generic_request() {
   gServer.reset();
-  let uri = gServer.uri("/requests/generic");
-  let headers = { "X-Hdr": "exists" };
-  let request = new CalDavGenericRequest(
+  const uri = gServer.uri("/requests/generic");
+  const headers = { "X-Hdr": "exists" };
+  const request = new CalDavGenericRequest(
     gServer.session,
     gMockCalendar,
     "PUT",
@@ -591,7 +532,7 @@ add_task(async function test_generic_request() {
   strictEqual(request.response, null);
   strictEqual(request.getHeader("X-Hdr"), null); // Only works after commit
 
-  let response = await request.commit();
+  const response = await request.commit();
 
   ok(!!request.response);
   equal(request.getHeader("X-Hdr"), "exists");
@@ -609,7 +550,7 @@ add_task(async function test_generic_request() {
   equal(response.xml.documentElement.localName, "response");
   equal(response.getHeader("X-Hdr"), "response-exists");
 
-  let serverResult = gServer.serverRequests.generic;
+  const serverResult = gServer.serverRequests.generic;
 
   equal(serverResult.method, "PUT");
   equal(serverResult.headers.get("x-hdr"), "exists");
@@ -619,15 +560,15 @@ add_task(async function test_generic_request() {
 
 add_task(async function test_generic_redirected_request() {
   gServer.reset();
-  let uri = gServer.uri("/requests/redirected");
-  let headers = {
+  const uri = gServer.uri("/requests/redirected");
+  const headers = {
     Depth: 1,
     Originator: "o",
     Recipient: "r",
     "If-None-Match": "*",
     "If-Match": "123",
   };
-  let request = new CalDavGenericRequest(
+  const request = new CalDavGenericRequest(
     gServer.session,
     gMockCalendar,
     "PUT",
@@ -637,7 +578,7 @@ add_task(async function test_generic_redirected_request() {
     "text/plain"
   );
 
-  let response = await request.commit();
+  const response = await request.commit();
 
   ok(response.redirected);
   equal(response.status, 200);
@@ -667,8 +608,8 @@ add_task(async function test_generic_redirected_request() {
 add_task(async function test_item_request() {
   gServer.reset();
   let uri = gServer.uri("/requests/item/201");
-  let icalString = "BEGIN:VEVENT\r\nUID:123\r\nEND:VEVENT";
-  let componentString = `BEGIN:VCALENDAR\r\nPRODID:-//Mozilla.org/NONSGML Mozilla Calendar V1.1//EN\r\nVERSION:2.0\r\n${icalString}\r\nEND:VCALENDAR\r\n`;
+  const icalString = "BEGIN:VEVENT\r\nUID:123\r\nEND:VEVENT";
+  const componentString = `BEGIN:VCALENDAR\r\nPRODID:-//Mozilla.org/NONSGML Mozilla Calendar V1.1//EN\r\nVERSION:2.0\r\n${icalString}\r\nEND:VCALENDAR\r\n`;
   let request = new CalDavItemRequest(
     gServer.session,
     gMockCalendar,
@@ -764,8 +705,8 @@ add_task(async function test_delete_item_request() {
 
 add_task(async function test_propfind_request() {
   gServer.reset();
-  let uri = gServer.uri("/calendars/xpcshell/events");
-  let props = [
+  const uri = gServer.uri("/calendars/xpcshell/events");
+  const props = [
     "D:principal-collection-set",
     "D:current-user-principal",
     "D:supported-report-set",
@@ -774,13 +715,13 @@ add_task(async function test_propfind_request() {
     "C:schedule-outbox-URL",
     "R:obscure-thing-not-found",
   ];
-  let request = new CalDavPropfindRequest(gServer.session, gMockCalendar, uri, props);
-  let response = await request.commit();
+  const request = new CalDavPropfindRequest(gServer.session, gMockCalendar, uri, props);
+  const response = await request.commit();
 
   equal(response.status, 207);
   ok(response.ok);
 
-  let results = gServer.serverRequests.calendars;
+  const results = gServer.serverRequests.calendars;
 
   ok(
     results.body.match(/<D:prop>\s*<D:principal-collection-set\/>\s*<D:current-user-principal\/>/)
@@ -790,7 +731,7 @@ add_task(async function test_propfind_request() {
   ok(!!response.data[uri.filePath]);
   ok(!!response.firstProps);
 
-  let resprops = response.firstProps;
+  const resprops = response.firstProps;
 
   deepEqual(resprops["D:principal-collection-set"], [
     gServer.uri("/principals/").spec,
@@ -812,11 +753,11 @@ add_task(async function test_propfind_request() {
 
 add_task(async function test_davheader_request() {
   gServer.reset();
-  let uri = gServer.uri("/requests/dav");
-  let request = new CalDavHeaderRequest(gServer.session, gMockCalendar, uri);
-  let response = await request.commit();
+  const uri = gServer.uri("/requests/dav");
+  const request = new CalDavHeaderRequest(gServer.session, gMockCalendar, uri);
+  const response = await request.commit();
 
-  let serverResult = gServer.serverRequests.dav;
+  const serverResult = gServer.serverRequests.dav;
 
   equal(serverResult.method, "OPTIONS");
   deepEqual([...response.features], ["calendar-schedule", "calendar-auto-schedule"]);
@@ -825,9 +766,9 @@ add_task(async function test_davheader_request() {
 
 add_task(async function test_propsearch_request() {
   gServer.reset();
-  let uri = gServer.uri("/principals/");
-  let props = ["D:displayname", "B:department", "B:phone", "B:office"];
-  let request = new CalDavPrincipalPropertySearchRequest(
+  const uri = gServer.uri("/principals/");
+  const props = ["D:displayname", "B:department", "B:phone", "B:office"];
+  const request = new CalDavPrincipalPropertySearchRequest(
     gServer.session,
     gMockCalendar,
     uri,
@@ -835,7 +776,7 @@ add_task(async function test_propsearch_request() {
     "D:displayname",
     props
   );
-  let response = await request.commit();
+  const response = await request.commit();
 
   equal(response.status, 207);
   ok(response.ok);
@@ -851,9 +792,9 @@ add_task(async function test_propsearch_request() {
 
 add_task(async function test_outbox_request() {
   gServer.reset();
-  let icalString = "BEGIN:VEVENT\r\nUID:123\r\nEND:VEVENT";
-  let uri = gServer.uri("/calendars/xpcshell/outbox");
-  let request = new CalDavOutboxRequest(
+  const icalString = "BEGIN:VEVENT\r\nUID:123\r\nEND:VEVENT";
+  const uri = gServer.uri("/calendars/xpcshell/outbox");
+  const request = new CalDavOutboxRequest(
     gServer.session,
     gMockCalendar,
     uri,
@@ -862,12 +803,12 @@ add_task(async function test_outbox_request() {
     "REPLY",
     new CalEvent(icalString)
   );
-  let response = await request.commit();
+  const response = await request.commit();
 
   equal(response.status, 200);
   ok(response.ok);
 
-  let results = gServer.serverRequests.calendars;
+  const results = gServer.serverRequests.calendars;
 
   ok(results.body.includes("METHOD:REPLY"));
   equal(results.method, "POST");
@@ -877,8 +818,8 @@ add_task(async function test_outbox_request() {
 
 add_task(async function test_freebusy_request() {
   gServer.reset();
-  let uri = gServer.uri("/calendars/xpcshell/outbox2");
-  let request = new CalDavFreeBusyRequest(
+  const uri = gServer.uri("/calendars/xpcshell/outbox2");
+  const request = new CalDavFreeBusyRequest(
     gServer.session,
     gMockCalendar,
     uri,
@@ -888,12 +829,12 @@ add_task(async function test_freebusy_request() {
     cal.createDateTime("20180201")
   );
 
-  let response = await request.commit();
+  const response = await request.commit();
 
   equal(response.status, 200);
   ok(response.ok);
 
-  let results = gServer.serverRequests.calendars;
+  const results = gServer.serverRequests.calendars;
   equal(
     ics_unfoldline(
       results.body
@@ -920,7 +861,7 @@ add_task(async function test_freebusy_request() {
   equal(results.headers.get("Originator"), "mailto:xpcshell@example.com");
   equal(results.headers.get("Recipient"), "mailto:recipient@example.com");
 
-  let first = response.firstRecipient;
+  const first = response.firstRecipient;
   equal(first.status, "2.0;Success");
   deepEqual(
     first.intervals.map(interval => interval.type),
@@ -938,8 +879,8 @@ add_task(async function test_freebusy_request() {
 });
 
 add_task(async function test_caldav_client() {
-  let client = await gServer.getClient();
-  let items = await client.getItemsAsArray(Ci.calICalendar.ITEM_FILTER_ALL_ITEMS, 0, null, null);
+  const client = await gServer.getClient();
+  const items = await client.getItemsAsArray(Ci.calICalendar.ITEM_FILTER_ALL_ITEMS, 0, null, null);
 
   equal(items.length, 1);
   equal(items[0].title, "会議");
@@ -950,21 +891,10 @@ add_task(async function test_caldav_client() {
  */
 add_task(async function test_caldav_sync() {
   gServer.reset();
-  let uri = gServer.uri("/calendars/xpcshell/events/");
+  const uri = gServer.uri("/calendars/xpcshell/events/");
   gMockCalendar.session = gServer.session;
-  let webDavSync = new CalDavWebDavSyncHandler(gMockCalendar, uri);
+  const webDavSync = new CalDavWebDavSyncHandler(gMockCalendar, uri);
   await webDavSync.doWebDAVSync();
-  ok(webDavSync.logXML.includes("イベント"), "Non-ASCII text should be parsed correctly");
-});
-
-add_task(function test_can_get_google_adapter() {
-  // Initialize a session with bogus values
-  const session = new CalDavSession("xpcshell@example.com", "xpcshell");
-
-  // We don't have a facility for actually testing our Google CalDAV requests,
-  // but we can at least verify that the adapter looks okay at a glance
-  equal(
-    session.authAdapters["apidata.googleusercontent.com"].authorizationEndpoint,
-    "https://accounts.google.com/o/oauth2/auth"
-  );
+  await new Promise(executeSoon);
+  Assert.stringContains(webDavSync.logXML, "イベント", "Non-ASCII text should be parsed correctly");
 });

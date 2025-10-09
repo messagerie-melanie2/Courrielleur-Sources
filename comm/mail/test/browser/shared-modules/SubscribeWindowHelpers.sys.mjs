@@ -23,7 +23,7 @@ import { TestUtils } from "resource://testing-common/TestUtils.sys.mjs";
  * Open a subscribe dialog from the context menu.
  *
  * @param {nsIMsgFolder} aFolder - The folder to open the subscribe dialog for.
- * @param {function} aFunction - Callback that will be invoked with a window
+ * @param {Function} aFunction - Callback that will be invoked with a window
  *   for the subscribe dialogue as parameter.
  */
 export async function open_subscribe_window_from_context_menu(
@@ -33,13 +33,13 @@ export async function open_subscribe_window_from_context_menu(
   const win = get_about_3pane();
 
   await right_click_on_folder(aFolder);
-  const callback = async function (win) {
+  const callback = async function (dialogWindow) {
     // When the "stop button" is disabled, the panel is populated.
     await TestUtils.waitForCondition(
-      () => win.document.getElementById("stopButton").disabled
+      () => dialogWindow.document.getElementById("stopButton").disabled
     );
-    await aFunction(win);
-    win.close();
+    await aFunction(dialogWindow);
+    dialogWindow.close();
   };
   const dialogPromise = promise_modal_dialog("mailnews:subscribe", callback);
   await click_menus_in_sequence(

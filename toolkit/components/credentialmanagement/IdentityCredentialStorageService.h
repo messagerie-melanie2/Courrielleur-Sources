@@ -14,7 +14,9 @@
 #include "mozilla/OriginAttributes.h"
 #include "mozIStorageConnection.h"
 #include "mozIStorageFunction.h"
+#include "mozilla/dom/IPCIdentityCredential.h"
 #include "nsIAsyncShutdown.h"
+#include "nsIFile.h"
 #include "nsIIdentityCredentialStorageService.h"
 #include "nsIObserver.h"
 #include "nsISupports.h"
@@ -44,7 +46,7 @@ class IdentityCredentialStorageService final
  private:
   IdentityCredentialStorageService()
       : mMonitor("mozilla::IdentityCredentialStorageService::mMonitor"),
-        mPendingWrites(0){};
+        mPendingWrites(0) {};
   ~IdentityCredentialStorageService() = default;
 
   // Spins up the service. This includes firing off async work in a worker
@@ -70,11 +72,13 @@ class IdentityCredentialStorageService final
   static nsresult ValidatePrincipal(nsIPrincipal* aPrincipal);
 
   // Helper functions to initialize the database connections. Also makes sure
-  // the tables are present and have up to date schemas.
+  // the tables are present and have up to date schemas. If file is nullptr,
+  // use the in-memory database "icsprivatedb". If retry is true, allow a retry
+  // on failure.
   nsresult GetMemoryDatabaseConnection();
   nsresult GetDiskDatabaseConnection();
   static nsresult GetDatabaseConnectionInternal(
-      mozIStorageConnection** aDatabase, nsIFile* aFile);
+      mozIStorageConnection** aDatabase, nsIFile* aFile, bool aRetry);
 
   // Helper function for the Get*DatabaseConnection functions to ensure the
   // tables are present and have up to date schemas.
@@ -83,6 +87,8 @@ class IdentityCredentialStorageService final
   // Grab all data from the disk database and insert it into the memory
   // database/ This is used at start up
   nsresult LoadMemoryTableFromDisk();
+  nsresult LoadLightweightMemoryTableFromDisk();
+  nsresult LoadHeavyweightMemoryTableFromDisk();
 
   // Used to (thread-safely) track how many operations have been launched to the
   // worker thread so that we can wait for it to hit zero before close the disk
@@ -110,7 +116,19 @@ class IdentityCredentialStorageService final
                              nsIPrincipal* aIDPPrincipal,
                              nsACString const& aCredentialID);
 
+  static nsresult DisconnectData(mozIStorageConnection* aDatabaseConnection,
+                                 nsIPrincipal* aRPPrincipal,
+                                 nsIPrincipal* aIDPPrincipal);
+
   static nsresult ClearData(mozIStorageConnection* aDatabaseConnection);
+
+  static nsresult UpsertLightweightData(
+      mozIStorageConnection* aDatabaseConnection,
+      const dom::IPCIdentityCredential& aData);
+
+  static nsresult DeleteLightweightData(
+      mozIStorageConnection* aDatabaseConnection,
+      const dom::IPCIdentityCredential& aData);
 
   static nsresult DeleteDataFromOriginAttributesPattern(
       mozIStorageConnection* aDatabaseConnection,
@@ -140,8 +158,8 @@ class IdentityCredentialStorageService final
   // The database file handle. We can only create this in the main thread and
   // need it in the worker to perform blocking disk IO. So we put it on this,
   // since we pass this to the worker anyway
-  nsCOMPtr<nsIFile> mDatabaseFile;  // initialized in the main thread, read-only
-                                    // in worker thread
+  RefPtr<nsIFile> mDatabaseFile;  // initialized in the main thread, read-only
+                                  // in worker thread
 
   // Service state management. We protect these variables with a monitor. This
   // monitor is also used to signal the completion of initialization and

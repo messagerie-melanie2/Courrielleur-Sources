@@ -30,11 +30,13 @@ export class SMTP_RFC2821_handler {
   kUsername = "testsmtp";
   kPassword = "smtptest";
   kAuthSchemes = ["CRAM-MD5", "PLAIN", "LOGIN"];
-  kCapabilities = ["8BITMIME", "SIZE", "CLIENTID"];
+  kCapabilities = ["8BITMIME", "SIZE", "CLIENTID", "DSN"];
   _nextAuthFunction = undefined;
 
-  constructor(daemon) {
+  constructor(daemon, { username = "testsmtp", password = "smtptest" } = {}) {
     this._daemon = daemon;
+    this.kUsername = username;
+    this.kPassword = password;
     this.closing = false;
     this.dropOnAuthFailure = false;
 
@@ -270,5 +272,29 @@ export class SMTP_RFC2821_handler {
       reader.closeSocket();
     }
     reader.setMultiline(this._multiline || this.expectingData);
+  }
+}
+
+/**
+ * Implements XOAUTH2 authentication.
+ */
+export class SMTP_OAUTH2_handler extends SMTP_RFC2821_handler {
+  kAuthSchemes = ["XOAUTH2"];
+
+  constructor(daemon, options) {
+    super(daemon, options);
+    this._kAuthSchemeStartFunction.XOAUTH2 = this.authXOAUTH2Start;
+  }
+
+  authXOAUTH2Start(line) {
+    const [user, auth] = atob(line).split("\u0001");
+    if (
+      user == `user=${this.kUsername}` &&
+      auth == `auth=Bearer ${this.kPassword}`
+    ) {
+      this._state = kStateAuthenticated;
+      return "235 2.7.0 Yeah, that's the right access token.";
+    }
+    return "535 5.7.8 Yeah, nah, that's the wrong access token.";
   }
 }

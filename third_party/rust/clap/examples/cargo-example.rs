@@ -1,14 +1,12 @@
-// Note: this requires the `cargo` feature
-
 fn main() {
     let cmd = clap::Command::new("cargo")
         .bin_name("cargo")
+        .styles(CLAP_STYLING)
         .subcommand_required(true)
         .subcommand(
             clap::command!("example").arg(
                 clap::arg!(--"manifest-path" <PATH>)
-                    .required(false)
-                    .allow_invalid_utf8(true),
+                    .value_parser(clap::value_parser!(std::path::PathBuf)),
             ),
         );
     let matches = cmd.get_matches();
@@ -16,8 +14,16 @@ fn main() {
         Some(("example", matches)) => matches,
         _ => unreachable!("clap should ensure we don't get here"),
     };
-    let manifest_path = matches
-        .value_of_os("manifest-path")
-        .map(std::path::PathBuf::from);
-    println!("{:?}", manifest_path);
+    let manifest_path = matches.get_one::<std::path::PathBuf>("manifest-path");
+    println!("{manifest_path:?}");
 }
+
+// See also `clap_cargo::style::CLAP_STYLING`
+pub const CLAP_STYLING: clap::builder::styling::Styles = clap::builder::styling::Styles::styled()
+    .header(clap_cargo::style::HEADER)
+    .usage(clap_cargo::style::USAGE)
+    .literal(clap_cargo::style::LITERAL)
+    .placeholder(clap_cargo::style::PLACEHOLDER)
+    .error(clap_cargo::style::ERROR)
+    .valid(clap_cargo::style::VALID)
+    .invalid(clap_cargo::style::INVALID);

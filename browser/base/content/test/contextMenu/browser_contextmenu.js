@@ -34,13 +34,21 @@ let NAVIGATION_ITEMS =
         null,
       ];
 let hasPocket = Services.prefs.getBoolPref("extensions.pocket.enabled");
+let hasStripOnShare = Services.prefs.getBoolPref(
+  "privacy.query_stripping.strip_on_share.enabled"
+);
 let hasContainers =
   Services.prefs.getBoolPref("privacy.userContext.enabled") &&
   ContextualIdentityService.getPublicIdentities().length;
 
+const hasSelectTranslations =
+  Services.prefs.getBoolPref("browser.translations.enable") &&
+  Services.prefs.getBoolPref("browser.translations.select.enable");
+
 const example_base =
   // eslint-disable-next-line @microsoft/sdl/no-insecure-url
   "http://example.com/browser/browser/base/content/test/contextMenu/";
+const about_preferences_base = "about:preferences";
 const chrome_base =
   "chrome://mochitests/content/browser/browser/base/content/test/contextMenu/";
 const head_base =
@@ -64,8 +72,7 @@ add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.search.separatePrivateDefault.ui.enabled", true],
-      ["extensions.screenshots.disabled", false],
-      ["layout.forms.reveal-password-context-menu.enabled", true],
+      ["privacy.query_stripping.strip_on_share.canDisable", false],
     ],
   });
 });
@@ -101,6 +108,7 @@ add_task(async function test_xul_text_link_label() {
     ...(hasPocket ? ["context-savelinktopocket", true] : []),
     "context-copylink",
     true,
+    ...(hasStripOnShare ? ["context-stripOnShareLink", true] : []),
     "---",
     null,
     "context-searchselect",
@@ -132,7 +140,7 @@ add_task(async function test_setup_html() {
     audio.loop = true;
     audio.src = "audio.ogg";
     video.loop = true;
-    video.src = "video.ogg";
+    video.src = "video.webm";
 
     let awaitPause = ContentTaskUtils.waitForEvent(audio, "pause");
     await ContentTaskUtils.waitForCondition(
@@ -192,6 +200,7 @@ const kLinkItems = [
   ...(hasPocket ? ["context-savelinktopocket", true] : []),
   "context-copylink",
   true,
+  ...(hasStripOnShare ? ["context-stripOnShareLink", true] : []),
   "---",
   null,
   "context-searchselect",
@@ -201,14 +210,132 @@ const kLinkItems = [
 ];
 
 add_task(async function test_link() {
-  await test_contextmenu("#test-link", kLinkItems);
+  await test_contextmenu("#test-link", [
+    ...kLinkItems,
+    ...(hasSelectTranslations ? ["context-translate-selection", true] : []),
+  ]);
 });
 
 add_task(async function test_link_in_shadow_dom() {
-  await test_contextmenu("#shadow-host", kLinkItems, {
-    offsetX: 6,
-    offsetY: 6,
+  await test_contextmenu(
+    "#shadow-host",
+    [
+      ...kLinkItems,
+      ...(hasSelectTranslations ? ["context-translate-selection", true] : []),
+    ],
+    {
+      offsetX: 6,
+      offsetY: 6,
+    }
+  );
+});
+
+add_task(async function test_linkpreviewcommand() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.ml.linkPreview.prefetchOnEnable", false]],
   });
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.ml.linkPreview.enabled", true]],
+  });
+  await test_contextmenu("#test-link", [
+    "context-openlinkintab",
+    true,
+    ...(hasContainers ? ["context-openlinkinusercontext-menu", true] : []),
+    // We need a blank entry here because the containers submenu is
+    // dynamically generated with no ids.
+    ...(hasContainers ? ["", null] : []),
+    "context-openlink",
+    true,
+    "context-openlinkprivate",
+    true,
+    "context-previewlink",
+    true,
+    "---",
+    null,
+    "context-bookmarklink",
+    true,
+    "context-savelink",
+    true,
+    ...(hasPocket ? ["context-savelinktopocket", true] : []),
+    "context-copylink",
+    true,
+    ...(hasStripOnShare ? ["context-stripOnShareLink", true] : []),
+    "---",
+    null,
+    "context-searchselect",
+    true,
+    "context-searchselect-private",
+    true,
+    ...(hasSelectTranslations ? ["context-translate-selection", true] : []),
+  ]);
+
+  await SpecialPowers.popPrefEnv();
+});
+
+add_task(async function test_linkpreviewcommand_disabled() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.ml.linkPreview.enabled", false]],
+  });
+  await test_contextmenu("#test-link", [
+    "context-openlinkintab",
+    true,
+    ...(hasContainers ? ["context-openlinkinusercontext-menu", true] : []),
+    // We need a blank entry here because the containers submenu is
+    // dynamically generated with no ids.
+    ...(hasContainers ? ["", null] : []),
+    "context-openlink",
+    true,
+    "context-openlinkprivate",
+    true,
+    //missing context-previewlink is expected
+    "---",
+    null,
+    "context-bookmarklink",
+    true,
+    "context-savelink",
+    true,
+    ...(hasPocket ? ["context-savelinktopocket", true] : []),
+    "context-copylink",
+    true,
+    ...(hasStripOnShare ? ["context-stripOnShareLink", true] : []),
+    "---",
+    null,
+    "context-searchselect",
+    true,
+    "context-searchselect-private",
+    true,
+    ...(hasSelectTranslations ? ["context-translate-selection", true] : []),
+  ]);
+  await SpecialPowers.popPrefEnv();
+});
+
+add_task(async function test_linkpreviewcommand_not_on_text() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.ml.linkPreview.prefetchOnEnable", false]],
+  });
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.ml.linkPreview.enabled", true]],
+  });
+
+  // Verify that context-previewlink doesn't appear in the context menu for text elements
+  await test_contextmenu("#test-text", [
+    ...NAVIGATION_ITEMS,
+    "context-savepage",
+    true,
+    ...(hasPocket ? ["context-pocket", true] : []),
+    "context-selectall",
+    true,
+    "---",
+    null,
+    "context-take-screenshot",
+    true,
+    "---",
+    null,
+    "context-viewsource",
+    true,
+  ]);
+
+  await SpecialPowers.popPrefEnv();
 });
 
 add_task(async function test_link_over_shadow_dom() {
@@ -228,6 +355,7 @@ add_task(async function test_mailto() {
     true,
     "context-searchselect-private",
     true,
+    ...(hasSelectTranslations ? ["context-translate-selection", true] : []),
   ]);
 });
 
@@ -241,6 +369,7 @@ add_task(async function test_tel() {
     true,
     "context-searchselect-private",
     true,
+    ...(hasSelectTranslations ? ["context-translate-selection", true] : []),
   ]);
 });
 
@@ -266,6 +395,10 @@ add_task(async function test_image() {
         "---",
         null,
         "context-setDesktopBackground",
+        true,
+        "---",
+        null,
+        "context-take-screenshot",
         true,
       ],
       {
@@ -350,6 +483,10 @@ add_task(async function test_video_ok() {
     true,
     "context-sendvideo",
     true,
+    "---",
+    null,
+    "context-take-screenshot",
+    true,
   ]);
 
   await SpecialPowers.popPrefEnv();
@@ -397,6 +534,10 @@ add_task(async function test_video_ok() {
     "context-copyvideourl",
     true,
     "context-sendvideo",
+    true,
+    "---",
+    null,
+    "context-take-screenshot",
     true,
   ]);
 
@@ -484,6 +625,10 @@ add_task(async function test_video_bad() {
     true,
     "context-sendvideo",
     true,
+    "---",
+    null,
+    "context-take-screenshot",
+    true,
   ]);
 
   await SpecialPowers.popPrefEnv();
@@ -531,6 +676,10 @@ add_task(async function test_video_bad() {
     "context-copyvideourl",
     true,
     "context-sendvideo",
+    true,
+    "---",
+    null,
+    "context-take-screenshot",
     true,
   ]);
 
@@ -582,6 +731,10 @@ add_task(async function test_video_bad2() {
     false,
     "context-sendvideo",
     false,
+    "---",
+    null,
+    "context-take-screenshot",
+    true,
   ]);
 
   await SpecialPowers.popPrefEnv();
@@ -630,6 +783,10 @@ add_task(async function test_video_bad2() {
     false,
     "context-sendvideo",
     false,
+    "---",
+    null,
+    "context-take-screenshot",
+    true,
   ]);
 
   await SpecialPowers.popPrefEnv();
@@ -761,6 +918,10 @@ add_task(async function test_video_in_iframe() {
       true,
       "---",
       null,
+      "context-take-frame-screenshot",
+      true,
+      "---",
+      null,
       "context-viewframeinfo",
       true,
     ]),
@@ -837,6 +998,10 @@ add_task(async function test_video_in_iframe() {
       "---",
       null,
       "context-printframe",
+      true,
+      "---",
+      null,
+      "context-take-frame-screenshot",
       true,
       "---",
       null,
@@ -958,6 +1123,10 @@ add_task(async function test_image_in_iframe() {
       "---",
       null,
       "context-printframe",
+      true,
+      "---",
+      null,
+      "context-take-frame-screenshot",
       true,
       "---",
       null,
@@ -1195,6 +1364,8 @@ add_task(async function test_copylinkcommand() {
 });
 
 add_task(async function test_dom_full_screen() {
+  let exited = BrowserTestUtils.waitForEvent(window, "MozDOMFullscreen:Exited");
+
   let fullscreenItems = NAVIGATION_ITEMS.concat([
     "context-leave-dom-fullscreen",
     true,
@@ -1266,6 +1437,25 @@ add_task(async function test_dom_full_screen() {
       );
     },
   });
+  await exited;
+
+  await BrowserTestUtils.waitForCondition(() => {
+    return !gBrowser.selectedBrowser.browsingContext.currentWindowGlobal.getActor(
+      "DOMFullscreen"
+    ).timerId;
+  });
+
+  if (AppConstants.platform == "macosx") {
+    // On macOS, the fullscreen transition takes some extra time
+    // to complete, and we don't receive events for it. We need to
+    // wait for it to complete or else input events in the next test
+    // might get eaten up. This is the best we can currently do.
+
+    // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+
+  await SimpleTest.promiseFocus(window);
 });
 
 add_task(async function test_pagemenu2() {
@@ -1311,6 +1501,7 @@ add_task(async function test_select_text() {
       true,
       "context-searchselect-private",
       true,
+      ...(hasSelectTranslations ? ["context-translate-selection", true] : []),
       "---",
       null,
       "context-viewpartialsource-selection",
@@ -1327,37 +1518,39 @@ add_task(async function test_select_text() {
 });
 
 add_task(async function test_select_text_search_service_not_initialized() {
-  // Pretend the search service is not initialised.
-  Services.search.wrappedJSObject.forceInitializationStatusForTests(
-    "not initialized"
-  );
-  await test_contextmenu(
-    "#test-select-text",
-    [
-      "context-copy",
-      true,
-      "context-selectall",
-      true,
-      "context-print-selection",
-      true,
-      "---",
-      null,
-      "context-take-screenshot",
-      true,
-      "---",
-      null,
-      "context-viewpartialsource-selection",
-      true,
-    ],
-    {
-      offsetX: 6,
-      offsetY: 6,
-      async preCheckContextMenuFn() {
-        await selectText("#test-select-text");
-      },
-    }
-  );
-
+  let statuses = ["not initialized", "failed", "started"];
+  for (let status of statuses) {
+    Services.search.wrappedJSObject.forceInitializationStatusForTests(status);
+    await test_contextmenu(
+      "#test-select-text",
+      [
+        "context-copy",
+        true,
+        "context-selectall",
+        true,
+        "context-print-selection",
+        true,
+        "---",
+        null,
+        "context-take-screenshot",
+        true,
+        ...(hasSelectTranslations
+          ? ["---", null, "context-translate-selection", true]
+          : []),
+        "---",
+        null,
+        "context-viewpartialsource-selection",
+        true,
+      ],
+      {
+        offsetX: 6,
+        offsetY: 6,
+        async preCheckContextMenuFn() {
+          await selectText("#test-select-text");
+        },
+      }
+    );
+  }
   // Restore the search service initialization status
   Services.search.wrappedJSObject.forceInitializationStatusForTests("success");
 });
@@ -1384,6 +1577,7 @@ add_task(async function test_select_text_link() {
       true,
       "context-savelink",
       true,
+      ...(hasStripOnShare ? ["context-stripOnShareLink", true] : []),
       "---",
       null,
       "context-copy",
@@ -1398,6 +1592,7 @@ add_task(async function test_select_text_link() {
       true,
       "context-searchselect-private",
       true,
+      ...(hasSelectTranslations ? ["context-translate-selection", true] : []),
       "---",
       null,
       "context-viewpartialsource-selection",
@@ -1444,6 +1639,7 @@ add_task(async function test_imagelink() {
     ...(hasPocket ? ["context-savelinktopocket", true] : []),
     "context-copylink",
     true,
+    ...(hasStripOnShare ? ["context-stripOnShareLink", true] : []),
     "---",
     null,
     "context-viewimage",
@@ -1565,6 +1761,10 @@ add_task(async function test_longdesc() {
     null,
     "context-setDesktopBackground",
     true,
+    "---",
+    null,
+    "context-take-screenshot",
+    true,
   ]);
 });
 
@@ -1649,6 +1849,7 @@ add_task(async function test_svg_link() {
     ...(hasPocket ? ["context-savelinktopocket", true] : []),
     "context-copylink",
     true,
+    ...(hasStripOnShare ? ["context-stripOnShareLink", true] : []),
     "---",
     null,
     "context-searchselect",
@@ -1677,6 +1878,7 @@ add_task(async function test_svg_link() {
     ...(hasPocket ? ["context-savelinktopocket", true] : []),
     "context-copylink",
     true,
+    ...(hasStripOnShare ? ["context-stripOnShareLink", true] : []),
     "---",
     null,
     "context-searchselect",
@@ -1705,6 +1907,7 @@ add_task(async function test_svg_link() {
     ...(hasPocket ? ["context-savelinktopocket", true] : []),
     "context-copylink",
     true,
+    ...(hasStripOnShare ? ["context-stripOnShareLink", true] : []),
     "---",
     null,
     "context-searchselect",
@@ -1735,6 +1938,7 @@ add_task(async function test_svg_relative_link() {
     ...(hasPocket ? ["context-savelinktopocket", true] : []),
     "context-copylink",
     true,
+    ...(hasStripOnShare ? ["context-stripOnShareLink", true] : []),
     "---",
     null,
     "context-searchselect",
@@ -1763,6 +1967,7 @@ add_task(async function test_svg_relative_link() {
     ...(hasPocket ? ["context-savelinktopocket", true] : []),
     "context-copylink",
     true,
+    ...(hasStripOnShare ? ["context-stripOnShareLink", true] : []),
     "---",
     null,
     "context-searchselect",
@@ -1791,6 +1996,7 @@ add_task(async function test_svg_relative_link() {
     ...(hasPocket ? ["context-savelinktopocket", true] : []),
     "context-copylink",
     true,
+    ...(hasStripOnShare ? ["context-stripOnShareLink", true] : []),
     "---",
     null,
     "context-searchselect",
@@ -1859,12 +2065,14 @@ add_task(async function test_background_image() {
     true,
     "context-copylink",
     true,
+    ...(hasStripOnShare ? ["context-stripOnShareLink", true] : []),
     "---",
     null,
     "context-searchselect",
     true,
     "context-searchselect-private",
     true,
+    ...(hasSelectTranslations ? ["context-translate-selection", true] : []),
   ]);
 
   // Don't show image related context menu commands when there is a selection
@@ -1888,6 +2096,7 @@ add_task(async function test_background_image() {
       true,
       "context-searchselect-private",
       true,
+      ...(hasSelectTranslations ? ["context-translate-selection", true] : []),
       "---",
       null,
       "context-viewpartialsource-selection",
@@ -1902,6 +2111,65 @@ add_task(async function test_background_image() {
 });
 
 add_task(async function test_cleanup_html() {
+  lastElementSelector = null;
+  gBrowser.removeCurrentTab();
+});
+
+/*
+ *   Testing that Copy without Site Tracking option does not
+ *   appear on internal about: pages.
+ */
+add_task(async function test_strip_on_share_on_secure_about_page() {
+  let url = about_preferences_base;
+
+  let tab = await BrowserTestUtils.openNewForegroundTab({
+    gBrowser,
+    url,
+  });
+
+  let browser2 = tab.linkedBrowser;
+
+  await SpecialPowers.spawn(browser2, [], () => {
+    let link = content.document.createElement("a");
+    link.href = "https://mozilla.com";
+    link.textContent = "link with query param";
+    link.id = "link-test-strip";
+    content.document.body.appendChild(link);
+  });
+
+  // the Copy without Site Tracking option should not
+  // show up within internal about: pages
+  await test_contextmenu("#link-test-strip", [
+    "context-openlinkintab",
+    true,
+    ...(hasContainers ? ["context-openlinkinusercontext-menu", true] : []),
+    // We need a blank entry here because the containers submenu is
+    // dynamically generated with no ids.
+    ...(hasContainers ? ["", null] : []),
+    "context-openlink",
+    true,
+    "context-openlinkprivate",
+    true,
+    "---",
+    null,
+    "context-bookmarklink",
+    true,
+    "context-savelink",
+    true,
+    ...(hasPocket ? ["context-savelinktopocket", true] : []),
+    "context-copylink",
+    true,
+    "---",
+    null,
+    "context-searchselect",
+    true,
+    "context-searchselect-private",
+    true,
+    ...(hasSelectTranslations ? ["context-translate-selection", true] : []),
+  ]);
+
+  // Clean up
+  lastElementSelector = null;
   gBrowser.removeCurrentTab();
 });
 

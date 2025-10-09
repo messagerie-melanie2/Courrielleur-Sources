@@ -74,13 +74,15 @@ static bool IsOpaqueSafeListedSpecBreakingMIMEType(
     case OpaqueResponseMediaException::AllowSome:
       if (aContentType.EqualsLiteral(AUDIO_MP3) ||
           aContentType.EqualsLiteral(AUDIO_AAC) ||
-          aContentType.EqualsLiteral(AUDIO_AACP)) {
+          aContentType.EqualsLiteral(AUDIO_AACP) ||
+          aContentType.EqualsLiteral(MULTIPART_MIXED_REPLACE)) {
         return true;
       }
       break;
     case OpaqueResponseMediaException::AllowAll:
       if (StringBeginsWith(aContentType, "audio/"_ns) ||
-          StringBeginsWith(aContentType, "video/"_ns)) {
+          StringBeginsWith(aContentType, "video/"_ns) ||
+          aContentType.EqualsLiteral(MULTIPART_MIXED_REPLACE)) {
         return true;
       }
       break;
@@ -382,7 +384,7 @@ OpaqueResponseBlocker::OnDataAvailable(nsIRequest* aRequest,
   }
 
   if (mState == State::Blocked) {
-    return NS_ERROR_FAILURE;
+    return NS_BINDING_ABORTED;
   }
 
   MOZ_ASSERT(mState == State::Sniffing);
@@ -439,8 +441,8 @@ nsresult OpaqueResponseBlocker::EnsureOpaqueResponseIsAllowedAfterSniff(
   switch (httpBaseChannel->PerformOpaqueResponseSafelistCheckAfterSniff(
       mContentType, mNoSniff)) {
     case OpaqueResponse::Block:
-      BlockResponse(httpBaseChannel, NS_ERROR_FAILURE);
-      return NS_ERROR_FAILURE;
+      BlockResponse(httpBaseChannel, NS_BINDING_ABORTED);
+      return NS_BINDING_ABORTED;
     case OpaqueResponse::Allow:
       AllowResponse();
       return NS_OK;
@@ -462,7 +464,7 @@ OpaqueResponseBlocker::EnsureOpaqueResponseIsAllowedAfterJavaScriptValidation(
 
   return aChannel->BlockOrFilterOpaqueResponse(
       this, u"Javascript validation failed"_ns,
-      OpaqueResponseBlockedTelemetryReason::JS_VALIDATION_FAILED,
+      OpaqueResponseBlockedTelemetryReason::eJsValidationFailed,
       "Javascript validation failed");
 }
 
@@ -498,12 +500,11 @@ static void RecordTelemetry(const TimeStamp& aStartOfValidation,
       MarkerTiming::Interval(aStartOfJavaScriptValidation, now),
       nsPrintfCString("JS Validation (%s)", key.get()));
 
-  Telemetry::AccumulateTimeDelta(Telemetry::ORB_RECEIVE_DATA_FOR_VALIDATION_MS,
-                                 key, aStartOfValidation,
-                                 aStartOfJavaScriptValidation);
+  glean::orb::receive_data_for_validation.Get(key).AccumulateRawDuration(
+      aStartOfJavaScriptValidation - aStartOfValidation);
 
-  Telemetry::AccumulateTimeDelta(Telemetry::ORB_JAVASCRIPT_VALIDATION_MS, key,
-                                 aStartOfJavaScriptValidation, now);
+  glean::orb::javascript_validation.Get(key).AccumulateRawDuration(
+      now - aStartOfJavaScriptValidation);
 }
 
 // The specification for ORB is currently being written:
@@ -533,9 +534,7 @@ nsresult OpaqueResponseBlocker::ValidateJavaScript(HttpBaseChannel* aChannel,
     return rv;
   }
 
-  Telemetry::ScalarAdd(
-      Telemetry::ScalarID::OPAQUE_RESPONSE_BLOCKING_JAVASCRIPT_VALIDATION_COUNT,
-      1);
+  glean::opaque_response_blocking::javascript_validation_count.Add(1);
 
   LOGORB("Send %s to the validator", aURI->GetSpecOrDefault().get());
   // https://whatpr.org/fetch/1442.html#orb-algorithm, step 15
@@ -566,7 +565,7 @@ nsresult OpaqueResponseBlocker::ValidateJavaScript(HttpBaseChannel* aChannel,
             MOZ_ASSERT_UNREACHABLE(
                 "We should only ever have Allow or Block here.");
             allowed = false;
-            self->BlockResponse(channel, NS_ERROR_FAILURE);
+            self->BlockResponse(channel, NS_BINDING_ABORTED);
             break;
         }
 
@@ -624,6 +623,7 @@ void OpaqueResponseBlocker::ResolveAndProcessData(
 
   if (!aAllowed || NS_FAILED(rv)) {
     MOZ_ASSERT_IF(!aAllowed, mState == State::Blocked);
+    // We decided to block, so nothing more to do.
     MaybeRunOnStopRequest(aChannel);
     return;
   }

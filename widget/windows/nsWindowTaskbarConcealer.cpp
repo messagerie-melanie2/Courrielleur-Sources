@@ -10,7 +10,6 @@
 
 #include "mozilla/Logging.h"
 #include "mozilla/StaticPrefs_widget.h"
-#include "mozilla/WindowsVersion.h"
 #include "WinUtils.h"
 
 using namespace mozilla;
@@ -29,9 +28,31 @@ using namespace mozilla;
 struct TaskbarConcealerImpl {
   void MarkAsHidingTaskbar(HWND aWnd, bool aMark);
 
+  // Determination of the mechanism used to set the window state. (Hopefully
+  // temporary: see comments in StaticPrefList.yaml for the relevant pref.)
+  enum class MarkingMethod : uint32_t {
+    NonRudeHwnd = 1,
+    PrepareFullScreen = 2,
+  };
+  static MarkingMethod GetMarkingMethod() {
+    uint32_t const val =
+        StaticPrefs::widget_windows_fullscreen_marking_method();
+    if (val >= 1 && val <= 3) return MarkingMethod(val);
+
+    // By default, use both.
+    // - Bug 1952284 shows that NonRudeHwnd is insufficient.
+    // - Bug 1949079 comment 15 shows that PrepareFullScreen is insufficient.
+    return MarkingMethod(3);
+  }
+
  private:
   nsCOMPtr<nsIWinTaskbar> mTaskbarInfo;
+
+  // local cache
+  MarkingMethod const mMarkingMethod = GetMarkingMethod();
 };
+
+MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(TaskbarConcealerImpl::MarkingMethod);
 
 /**
  * nsWindow::TaskbarConcealer
@@ -46,10 +67,10 @@ struct TaskbarConcealerImpl {
   to show the taskbar when switching focus from a window marked as fullscreen to
   one not thus marked. [1]
 
-  Experimentation has (so far) suggested that its behavior is reasonable when
-  switching between multiple monitors, or between a set of windows which are all
-  from different processes [2]. This leaves us to handle the same-monitor, same-
-  process case.
+  Experimentation suggests that its behavior has usually been reasonable [2]
+  when switching between multiple monitors, or between a set of windows which
+  are all from different processes [3]. This leaves us to handle the
+  same-monitor, same-process case.
 
   Rather than do anything subtle here, we take the blanket approach of simply
   listening for every potentially-relevant state change, and then explicitly
@@ -60,14 +81,14 @@ struct TaskbarConcealerImpl {
   [0] Relevant link:
       https://docs.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-itaskbarlist2-markfullscreenwindow
 
-      The "NonRudeHWND" property described therein doesn't help with anything
-      in this comment, unfortunately. (See its use in MarkAsHidingTaskbar for
-      more details.)
-
   [1] This is an oversimplification; Windows' actual behavior here is...
       complicated. See bug 1732517 comment 6 for some examples.
 
-  [2] A comment in Chromium asserts that this is actually different threads. For
+  [2] (2025-02-24) Unfortunately, the heuristics appear not to be static. Recent
+      versions of Windows 10, at least, may misinterpret a simple maximized
+      windows with custom titlebar as full-screen.
+
+  [3] A comment in Chromium asserts that this is actually different threads. For
       us, of course, that makes no difference.
       https://github.com/chromium/chromium/blob/2b822268bd3/ui/views/win/hwnd_message_handler.cc#L1342
 */
@@ -83,18 +104,8 @@ static mozilla::LazyLogModule sTaskbarConcealerLog("TaskbarConcealer");
 // Map of all relevant Gecko windows, along with the monitor on which each
 // window was last known to be located.
 /* static */
-nsTHashMap<HWND, HMONITOR> nsWindow::TaskbarConcealer::sKnownWindows;
-
-// Preference for changes associated with bug 1732517. When false, revert to the
-// previous simple behavior of "Firefox fullscreen == Windows fullscreen".
-//
-// For simplicity-of-implementation's sake, changes to this pref require a
-// restart of Firefox to take effect.
-static bool UseAlternateFullscreenHeuristics() {
-  static const bool val =
-      StaticPrefs::widget_windows_alternate_fullscreen_heuristics();
-  return val;
-}
+MOZ_RUNINIT nsTHashMap<HWND, HMONITOR>
+    nsWindow::TaskbarConcealer::sKnownWindows;
 
 // Returns Nothing if the window in question is irrelevant (for any reason),
 // or Some(the window's current state) otherwise.
@@ -261,96 +272,105 @@ void nsWindow::TaskbarConcealer::UpdateAllState(
   }
 }  // nsWindow::TaskbarConcealer::UpdateAllState()
 
-// Mark this window as requesting to occlude the taskbar. (The caller is
-// responsible for keeping any local state up-to-date.)
+// Mark this window as requesting to occlude, or not occlude, the taskbar. (The
+// caller is responsible for keeping any local state up-to-date.)
 void TaskbarConcealerImpl::MarkAsHidingTaskbar(HWND aWnd, bool aMark) {
-  // USE OF UNDOCUMENTED BEHAVIOR:
+  // ## NOTE ON UNDERDOCUMENTED BEHAVIOR:
   //
-  // `MarkFullscreenWindow` is documented not to be sufficient. It will indeed
-  // cause a window to be treated as fullscreen; but, in its absence, Windows
-  // will also use explicitly undocumented heuristics to determine whether or
-  // not to treat a given window as full-screen.
+  // A section of the `ITaskbarList2::MarkFullscreenWindow` documentation
+  // follows: [0]
   //
-  // In Windows 8.1 and later, these heuristics don't seem to apply to us.
-  // However, in Windows 7, they do -- they determine that our fullscreen
-  // windows are, indeed, fullscreen. (That this is technically correct is of
-  // little importance, given that Windows then goes on to do the wrong thing
-  // with that knowledge.)
+  //    Setting the value of _fFullscreen_ to **TRUE**, the Shell treats this
+  //    window as a full-screen window, and the taskbar is moved to the bottom
+  //    of the z-order when this window is active. Setting the value of
+  //    _fFullscreen_ to **FALSE** removes the full-screen marking, but does not
+  //    cause the Shell to treat the window as though it were definitely not
+  //    full-screen. With a **FALSE** _fFullscreen_ value, the Shell depends on
+  //    its automatic detection facility to specify how the window should be
+  //    treated, possibly still flagging the window as full-screen.
   //
-  // Fortunately, `MarkFullscreenWindow` does have a converse: the `NonRudeHWND`
-  // window property. A window with this property set will not be treated as
-  // fullscreen.
+  //    **Since Windows 7**, call `SetProp(hwnd, L”NonRudeHWND”,
+  //    reinterpret_cast<HANDLE>(TRUE))` before showing a window to indicate to
+  //    the Shell that the window should not be treated as full-screen.
   //
-  // ===
+  // This is not entirely accurate. Furthermore, even where accurate, it's
+  // underspecified, and the behavior has differed in important ways.
   //
-  // DIFFERENCE FROM DOCUMENTED BEHAVIOR:
+  // * Under Windows 8.1 and early versions of Windows 10, a window will never
+  //   be considered fullscreen if the window-property "NonRudeHWND" is set to
+  //   `TRUE` before the window is shown, even if that property is later
+  //   removed. (See commentary in patch D146635.)
   //
-  // The documentation, as it was at the time of writing, is archived at:
-  // https://web.archive.org/web/20211223073250/https://docs.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-itaskbarlist2-markfullscreenwindow
+  //   (Note: no record was made of what happened if the property was only added
+  //   after window creation. Presumably it didn't help.)
   //
-  // The most relevant paragraph follows:
+  // * Under Windows 7 and current versions of Windows 10+, a window will not be
+  //   considered fullscreen if the window-property "NonRudeHWND" is set to
+  //   `TRUE` when a check for fullscreenness is performed, regardless of
+  //   whether it was ever previously set. (Again, see commentary in patch
+  //   D146635.)
   //
-  // > **Since Windows 7**, call `SetProp(hwnd, L”NonRudeHWND”,
-  // > reinterpret_cast<HANDLE>(TRUE))` before showing a window to indicate to
-  // > the Shell that the window should not be treated as full-screen.
+  // * Under at least some versions of Windows 10, explicitly calling
+  //   `MarkFullscreenWindow(hwnd, FALSE)` on a window _already marked `FALSE`_
+  //   will sometimes cause a window improperly detected as fullscreen to no
+  //   longer be thus misdetected. (See `TaskbarConcealer::OnWindowMaximized()`,
+  //   and commentary in patch D239277.)
   //
-  // The key words in that paragraph are "before showing a window". On Windows 7
-  // this has no particular effect, but it completely changes the behavior on
-  // Windows 8.1 and Windows 10 -- if `NonRudeHWND` is set on a window before it
-  // is shown, that window will not be treated as fullscreen **even if the
-  // property is later removed!**
+  // The version of Win10 in which this behavior was adjusted is not presently
+  // known -- indeed, at time of writing, there's no evidence that the developer
+  // responsible for the claims in that first bullet point (also the present
+  // author) didn't simply perform the tests improperly. (See comments in bug
+  // 1950441 for the current known bounds.)
   //
-  // `NonRudeHWND` isn't actually documented to do anything at all if it's set
-  // after the window has already been shown. That it seems to do exactly what
-  // we need on Windows 7 -- prevent a window from being detected as fullscreen
-  // while it's set, and only then -- is a stroke of fortune.
-
-  static const bool kUseWin7MarkingHack = [&] {
-    switch (StaticPrefs::widget_windows_fullscreen_marking_workaround()) {
-      case -1:
-        return false;
-      case 1:
-        return true;
-      default:
-        // The behavior on Windows 8 is not known. Hopefully there are no
-        // side effects there.
-        return !mozilla::IsWin8Point1OrLater();
-    }
-  }();
-
-  if (kUseWin7MarkingHack) {
-    constexpr static LPCWSTR kPropName = L"NonRudeHWND";
-    if (aMark) {
-      ::RemovePropW(aWnd, kPropName);
-    } else {
-      ::SetPropW(aWnd, kPropName, reinterpret_cast<HANDLE>(TRUE));
-    }
-  }
+  // For now, we implement both methods of marking, and use an `about:config`
+  // pref to select which of them to use.
+  //
+  // [0] https://web.archive.org/web/20211223073250/https://docs.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-itaskbarlist2-markfullscreenwindow
 
   const char* const sMark = aMark ? "true" : "false";
 
-  if (!mTaskbarInfo) {
-    mTaskbarInfo = do_GetService(NS_TASKBAR_CONTRACTID);
+  bool const useNonRudeHWND = !!(mMarkingMethod & MarkingMethod::NonRudeHwnd);
+  bool const usePrepareFullScreen =
+      !!(mMarkingMethod & MarkingMethod::PrepareFullScreen);
 
+  // at least one must be set
+  MOZ_ASSERT(useNonRudeHWND || usePrepareFullScreen);
+
+  if (useNonRudeHWND) {
+    MOZ_LOG(sTaskbarConcealerLog, LogLevel::Info,
+            ("Setting %p[L\"NonRudeHWND\"] to %s", aWnd, sMark));
+
+    // (setting the property to `FALSE` is not known to be functionally distinct
+    // from removing it)
+    ::SetPropW(aWnd, L"NonRudeHWND", (HANDLE)uintptr_t(aMark ? FALSE : TRUE));
+  } else {
+    ::RemovePropW(aWnd, L"NonRudeHWND");
+  }
+
+  if (usePrepareFullScreen) {
     if (!mTaskbarInfo) {
-      MOZ_LOG(
-          sTaskbarConcealerLog, LogLevel::Warning,
-          ("could not acquire IWinTaskbar (aWnd %p, aMark %s)", aWnd, sMark));
-      return;
+      mTaskbarInfo = do_GetService(NS_TASKBAR_CONTRACTID);
+
+      if (!mTaskbarInfo) {
+        MOZ_LOG(
+            sTaskbarConcealerLog, LogLevel::Warning,
+            ("could not acquire IWinTaskbar (aWnd %p, aMark %s)", aWnd, sMark));
+        return;
+      }
+    }
+
+    MOZ_LOG(sTaskbarConcealerLog, LogLevel::Info,
+            ("Calling PrepareFullScreen(%p, %s)", aWnd, sMark));
+
+    const nsresult hr = mTaskbarInfo->PrepareFullScreen(aWnd, aMark);
+
+    if (FAILED(hr)) {
+      MOZ_LOG(sTaskbarConcealerLog, LogLevel::Error,
+              ("Call to PrepareFullScreen(%p, %s) failed with nsresult %x",
+               aWnd, sMark, uint32_t(hr)));
     }
   }
-
-  MOZ_LOG(sTaskbarConcealerLog, LogLevel::Info,
-          ("Calling PrepareFullScreen(%p, %s)", aWnd, sMark));
-
-  const nsresult hr = mTaskbarInfo->PrepareFullScreen(aWnd, aMark);
-
-  if (FAILED(hr)) {
-    MOZ_LOG(sTaskbarConcealerLog, LogLevel::Error,
-            ("Call to PrepareFullScreen(%p, %s) failed with nsresult %x", aWnd,
-             sMark, hr));
-  }
-};
+}
 
 /**************************************************************
  *
@@ -359,10 +379,6 @@ void TaskbarConcealerImpl::MarkAsHidingTaskbar(HWND aWnd, bool aMark) {
  **************************************************************/
 
 void nsWindow::TaskbarConcealer::OnWindowDestroyed(HWND aWnd) {
-  if (!UseAlternateFullscreenHeuristics()) {
-    return;
-  }
-
   MOZ_LOG(sTaskbarConcealerLog, LogLevel::Info,
           ("==> OnWindowDestroyed() for HWND %p", aWnd));
 
@@ -370,10 +386,6 @@ void nsWindow::TaskbarConcealer::OnWindowDestroyed(HWND aWnd) {
 }
 
 void nsWindow::TaskbarConcealer::OnFocusAcquired(nsWindow* aWin) {
-  if (!UseAlternateFullscreenHeuristics()) {
-    return;
-  }
-
   // Update state unconditionally.
   //
   // This is partially because focus-acquisition only updates the z-order, which
@@ -388,13 +400,36 @@ void nsWindow::TaskbarConcealer::OnFocusAcquired(nsWindow* aWin) {
   UpdateAllState();
 }
 
-void nsWindow::TaskbarConcealer::OnFullscreenChanged(nsWindow* aWin,
-                                                     bool enteredFullscreen) {
-  if (!UseAlternateFullscreenHeuristics()) {
-    TaskbarConcealerImpl().MarkAsHidingTaskbar(aWin->mWnd, enteredFullscreen);
+void nsWindow::TaskbarConcealer::OnWindowMaximized(nsWindow* aWin) {
+  MOZ_LOG(sTaskbarConcealerLog, LogLevel::Info,
+          ("==> OnWindowMaximized() for HWND %p on HMONITOR %p", aWin->mWnd,
+           ::MonitorFromWindow(aWin->mWnd, MONITOR_DEFAULTTONULL)));
+
+  // This is a workaround for a failure of `PrepareFullScreen`, and is only
+  // useful when that's the only marking-mechanism in play.
+  if (MOZ_LIKELY(TaskbarConcealerImpl::GetMarkingMethod() !=
+                 TaskbarConcealerImpl::MarkingMethod::PrepareFullScreen)) {
     return;
   }
 
+  // If we're not using a custom nonclient area, then it's obvious to Windows
+  // that we're not trying to be fullscreen, so the bug won't occur.
+  if (!aWin->mCustomNonClient) {
+    return;
+  }
+
+  // Mark this window, and only this window, as not-fullscreen. Everything else
+  // can stay as it is. (This matches what UpdateAllState would do, if called.)
+  //
+  // Note: this is an unjustified hack. According to the documentation of
+  // `ITaskbarList2::MarkFullscreenWindow()`, it should have no effect, but
+  // testing confirms that it sometimes does. See bug 1949079.
+  //
+  (TaskbarConcealerImpl{}).MarkAsHidingTaskbar(aWin->mWnd, false);
+}
+
+void nsWindow::TaskbarConcealer::OnFullscreenChanged(nsWindow* aWin,
+                                                     bool enteredFullscreen) {
   MOZ_LOG(sTaskbarConcealerLog, LogLevel::Info,
           ("==> OnFullscreenChanged() for HWND %p on HMONITOR %p", aWin->mWnd,
            ::MonitorFromWindow(aWin->mWnd, MONITOR_DEFAULTTONULL)));
@@ -403,12 +438,8 @@ void nsWindow::TaskbarConcealer::OnFullscreenChanged(nsWindow* aWin,
 }
 
 void nsWindow::TaskbarConcealer::OnWindowPosChanged(nsWindow* aWin) {
-  if (!UseAlternateFullscreenHeuristics()) {
-    return;
-  }
-
   // Optimization: don't bother updating the state if the window hasn't moved
-  // (including appearances and disappearances).
+  // from its monitor (including appearances and disappearances).
   const HWND myHwnd = aWin->mWnd;
   const HMONITOR oldMonitor = sKnownWindows.Get(myHwnd);  // or nullptr
   const HMONITOR newMonitor = GetWindowState(myHwnd)
@@ -426,11 +457,49 @@ void nsWindow::TaskbarConcealer::OnWindowPosChanged(nsWindow* aWin) {
   UpdateAllState();
 }
 
-void nsWindow::TaskbarConcealer::OnCloakChanged() {
-  if (!UseAlternateFullscreenHeuristics()) {
-    return;
-  }
+void nsWindow::TaskbarConcealer::OnAsyncStateUpdateRequest(HWND hwnd) {
+  MOZ_LOG(sTaskbarConcealerLog, LogLevel::Info,
+          ("==> OnAsyncStateUpdateRequest()"));
 
+  // Work around a race condition in explorer.exe.
+  //
+  // When a window is unminimized (and on several other events), the taskbar
+  // receives a notification that it needs to recalculate the current
+  // is-a-fullscreen-window-active-here-state ("rudeness") of each monitor.
+  // Unfortunately, this notification is sent concurrently with the
+  // WM_WINDOWPOSCHANGING message that performs the unminimization.
+  //
+  // Until that message is resolved, the window's position is still "minimized".
+  // If the taskbar processes its notification faster than the window handles
+  // its WM_WINDOWPOSCHANGING message, then the window will appear to the
+  // taskbar to still be minimized, and won't be taken into account for
+  // computing rudeness. This usually presents as a just-unminimized Firefox
+  // fullscreen-window occasionally having the taskbar stuck above it.
+  //
+  // Unfortunately, it's a bit difficult to improve Firefox's speed-of-response
+  // to WM_WINDOWPOSCHANGING messages (we can, and do, execute JavaScript during
+  // these), and even if we could that wouldn't always fix it. We instead adopt
+  // a variant of a strategy by Etienne Duchamps, who has investigated and
+  // documented this issue extensively[0]: we simply send another signal to the
+  // shell to notify it to recalculate the current rudeness state of all
+  // monitors.
+  //
+  // [0] https://github.com/dechamps/RudeWindowFixer#a-race-condition-activating-a-minimized-window
+  //
+  static UINT const shellHookMsg = ::RegisterWindowMessageW(L"SHELLHOOK");
+  if (shellHookMsg != 0) {
+    // Identifying the particular thread of the particular instance of the
+    // shell associated with our current desktop is probably possible, but
+    // also probably not worth the effort. Just broadcast the message
+    // globally.
+    DWORD info = BSM_APPLICATIONS;
+    ::BroadcastSystemMessage(BSF_POSTMESSAGE | BSF_IGNORECURRENTTASK, &info,
+                             shellHookMsg, HSHELL_WINDOWACTIVATED,
+                             (LPARAM)hwnd);
+  }
+}
+
+void nsWindow::TaskbarConcealer::OnCloakChanged() {
   MOZ_LOG(sTaskbarConcealerLog, LogLevel::Info, ("==> OnCloakChanged()"));
 
   UpdateAllState();

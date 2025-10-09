@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from mozbuild import shellutil
 from mozprocess.processhandler import ProcessHandlerMixin
 
 from .logging import LoggingMixin
@@ -107,7 +108,12 @@ class ProcessExecutionMixin(LoggingMixin):
         """
         args = self._normalize_command(args, require_unix_environment)
 
-        self.log(logging.INFO, "new_process", {"args": " ".join(args)}, "{args}")
+        self.log(
+            logging.INFO,
+            "new_process",
+            {"args": " ".join(shellutil.quote(arg) for arg in args)},
+            "{args}",
+        )
 
         def handleLine(line):
             # Converts str to unicode on Python 2 and bytes to str on Python 3.
@@ -120,7 +126,7 @@ class ProcessExecutionMixin(LoggingMixin):
                 except LineHandlingEarlyReturn:
                     return
 
-            if line.startswith("BUILDTASK") or not log_name:
+            if not log_name:
                 return
 
             self.log(log_level, log_name, {"line": line.rstrip()}, "{line}")
@@ -174,8 +180,9 @@ class ProcessExecutionMixin(LoggingMixin):
                     if sig is None:
                         sig = signal.SIGINT
                     elif sig == signal.SIGINT:
-                        # If we've already tried SIGINT, escalate.
-                        sig = signal.SIGKILL
+                        # If we've already tried SIGINT, escalate (if possible).
+                        # Note: SIGKILL is not available on Windows.
+                        getattr(signal, "SIGKILL", sig)
 
         if ensure_exit_code is False:
             return status
@@ -185,7 +192,7 @@ class ProcessExecutionMixin(LoggingMixin):
 
         if status != ensure_exit_code:
             raise Exception(
-                "Process executed with non-0 exit code %d: %s" % (status, args)
+                f"Process executed with non-0 exit code {status}: {' '.join(shellutil.quote(arg) for arg in args)}"
             )
 
         return status

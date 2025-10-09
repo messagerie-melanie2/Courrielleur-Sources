@@ -2,10 +2,16 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { MailUtils } = ChromeUtils.import("resource:///modules/MailUtils.jsm");
+var { MailUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailUtils.sys.mjs"
+);
+ChromeUtils.defineESModuleGetters(this, {
+  AccountManagerUtils: "resource:///modules/AccountManagerUtils.sys.mjs",
+});
 
 var gAccount;
 var gOriginalStoreType;
+var AMUtils;
 
 /**
  * Called when the store type menu is clicked.
@@ -20,7 +26,7 @@ function clickStoreTypeMenu(aStoreTypeElement) {
   // Response from migration dialog modal. If the conversion is complete
   // 'response.newRootFolder' will hold the path to the new account root folder,
   // otherwise 'response.newRootFolder' will be null.
-  let response = { newRootFolder: null };
+  const response = { newRootFolder: null };
   // Send 'response' as an argument to converterDialog.xhtml.
   window.browsingContext.topChromeWindow.openDialog(
     "converterDialog.xhtml",
@@ -58,14 +64,15 @@ function changeStoreType(aResponse) {
   }
 }
 
-function onInit(aPageId, aServerId) {
+function onInit() {
+  setServerColor();
   // UI for account store type
-  let storeTypeElement = document.getElementById("server.storeTypeMenulist");
+  const storeTypeElement = document.getElementById("server.storeTypeMenulist");
   // set the menuitem to match the account
-  let currentStoreID = document
+  const currentStoreID = document
     .getElementById("server.storeContractID")
     .getAttribute("value");
-  let targetItem = storeTypeElement.getElementsByAttribute(
+  const targetItem = storeTypeElement.getElementsByAttribute(
     "value",
     currentStoreID
   );
@@ -81,14 +88,35 @@ function onInit(aPageId, aServerId) {
   gOriginalStoreType = storeTypeElement.value;
 }
 
-function onPreInit(account, accountValues) {
+function onPreInit(account) {
   gAccount = account;
+  AMUtils = new AccountManagerUtils(gAccount);
 }
 
 function onSave() {
-  let storeContractID = document.getElementById("server.storeTypeMenulist")
+  const storeContractID = document.getElementById("server.storeTypeMenulist")
     .selectedItem.value;
   document
     .getElementById("server.storeContractID")
     .setAttribute("value", storeContractID);
+}
+
+function setServerColor() {
+  const colorInput = document.getElementById("serverColor");
+  colorInput.value = AMUtils.serverColor;
+
+  colorInput.addEventListener("input", event =>
+    AMUtils.previewServerColor(event.target.value)
+  );
+  colorInput.addEventListener("change", event =>
+    AMUtils.updateServerColor(event.target.value)
+  );
+  document
+    .getElementById("resetColor")
+    .addEventListener("click", () => resetServerColor());
+}
+
+function resetServerColor() {
+  document.getElementById("serverColor").value = AMUtils.defaultServerColor;
+  AMUtils.resetServerColor();
 }

@@ -1,54 +1,146 @@
 /*!
 Backend functions that export shader [`Module`](super::Module)s into binary and text formats.
 */
-#![allow(dead_code)] // can be dead if none of the enabled backends need it
+#![cfg_attr(
+    not(any(dot_out, glsl_out, hlsl_out, msl_out, spv_out, wgsl_out)),
+    allow(
+        dead_code,
+        reason = "shared helpers can be dead if none of the enabled backends need it"
+    )
+)]
 
-#[cfg(feature = "dot-out")]
+use alloc::string::String;
+
+#[cfg(dot_out)]
 pub mod dot;
-#[cfg(feature = "glsl-out")]
+#[cfg(glsl_out)]
 pub mod glsl;
-#[cfg(feature = "hlsl-out")]
+#[cfg(hlsl_out)]
 pub mod hlsl;
-#[cfg(feature = "msl-out")]
+#[cfg(msl_out)]
 pub mod msl;
-#[cfg(feature = "spv-out")]
+#[cfg(spv_out)]
 pub mod spv;
-#[cfg(feature = "wgsl-out")]
+#[cfg(wgsl_out)]
 pub mod wgsl;
 
-const COMPONENTS: &[char] = &['x', 'y', 'z', 'w'];
-const INDENT: &str = "    ";
-const BAKE_PREFIX: &str = "_e";
+#[cfg(any(hlsl_out, msl_out, spv_out, glsl_out))]
+pub mod pipeline_constants;
 
-type NeedBakeExpressions = crate::FastHashSet<crate::Handle<crate::Expression>>;
+#[cfg(any(hlsl_out, glsl_out))]
+mod continue_forward;
 
+/// Names of vector components.
+pub const COMPONENTS: &[char] = &['x', 'y', 'z', 'w'];
+/// Indent for backends.
+pub const INDENT: &str = "    ";
+
+/// Expressions that need baking.
+pub type NeedBakeExpressions = crate::FastHashSet<crate::Handle<crate::Expression>>;
+
+/// A type for displaying expression handles as baking identifiers.
+///
+/// Given an [`Expression`] [`Handle`] `h`, `Baked(h)` implements
+/// [`core::fmt::Display`], showing the handle's index prefixed by
+/// `_e`.
+///
+/// [`Expression`]: crate::Expression
+/// [`Handle`]: crate::Handle
+#[cfg_attr(
+    not(any(glsl_out, hlsl_out, msl_out, wgsl_out)),
+    allow(
+        dead_code,
+        reason = "shared helpers can be dead if none of the enabled backends need it"
+    )
+)]
+struct Baked(crate::Handle<crate::Expression>);
+
+impl core::fmt::Display for Baked {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.write_prefixed(f, "_e")
+    }
+}
+
+/// Specifies the values of pipeline-overridable constants in the shader module.
+///
+/// If an `@id` attribute was specified on the declaration,
+/// the key must be the pipeline constant ID as a decimal ASCII number; if not,
+/// the key must be the constant's identifier name.
+///
+/// The value may represent any of WGSL's concrete scalar types.
+pub type PipelineConstants = hashbrown::HashMap<String, f64>;
+
+/// Indentation level.
 #[derive(Clone, Copy)]
-struct Level(usize);
+pub struct Level(pub usize);
 
 impl Level {
-    const fn next(&self) -> Self {
+    pub const fn next(&self) -> Self {
         Level(self.0 + 1)
     }
 }
 
-impl std::fmt::Display for Level {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+impl core::fmt::Display for Level {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> Result<(), core::fmt::Error> {
         (0..self.0).try_for_each(|_| formatter.write_str(INDENT))
     }
 }
 
-/// Stores the current function type (either a regular function or an entry point)
+/// Locate the entry point(s) to write.
 ///
-/// Also stores data needed to identify it (handle for a regular function or index for an entry point)
-enum FunctionType {
-    /// A regular function and it's handle
+/// If `entry_point` is given, and the specified entry point exists, returns a
+/// length-1 `Range` containing the index of that entry point.  If no
+/// `entry_point` is given, returns the complete range of entry point indices.
+/// If `entry_point` is given but does not exist, returns an error.
+#[cfg(any(hlsl_out, msl_out))]
+fn get_entry_points(
+    module: &crate::ir::Module,
+    entry_point: Option<&(crate::ir::ShaderStage, String)>,
+) -> Result<core::ops::Range<usize>, (crate::ir::ShaderStage, String)> {
+    use alloc::borrow::ToOwned;
+
+    if let Some(&(stage, ref name)) = entry_point {
+        let Some(ep_index) = module
+            .entry_points
+            .iter()
+            .position(|ep| ep.stage == stage && ep.name == *name)
+        else {
+            return Err((stage, name.to_owned()));
+        };
+        Ok(ep_index..ep_index + 1)
+    } else {
+        Ok(0..module.entry_points.len())
+    }
+}
+
+/// Whether we're generating an entry point or a regular function.
+///
+/// Backend languages often require different code for a [`Function`]
+/// depending on whether it represents an [`EntryPoint`] or not.
+/// Backends can pass common code one of these values to select the
+/// right behavior.
+///
+/// These values also carry enough information to find the `Function`
+/// in the [`Module`]: the `Handle` for a regular function, or the
+/// index into [`Module::entry_points`] for an entry point.
+///
+/// [`Function`]: crate::Function
+/// [`EntryPoint`]: crate::EntryPoint
+/// [`Module`]: crate::Module
+/// [`Module::entry_points`]: crate::Module::entry_points
+pub enum FunctionType {
+    /// A regular function.
     Function(crate::Handle<crate::Function>),
-    /// A entry point and it's index
+    /// An [`EntryPoint`], and its index in [`Module::entry_points`].
+    ///
+    /// [`EntryPoint`]: crate::EntryPoint
+    /// [`Module::entry_points`]: crate::Module::entry_points
     EntryPoint(crate::proc::EntryPointIndex),
 }
 
 impl FunctionType {
-    fn is_compute_entry_point(&self, module: &crate::Module) -> bool {
+    /// Returns true if the function is an entry point for a compute shader.
+    pub fn is_compute_entry_point(&self, module: &crate::Module) -> bool {
         match *self {
             FunctionType::EntryPoint(index) => {
                 module.entry_points[index as usize].stage == crate::ShaderStage::Compute
@@ -59,20 +151,32 @@ impl FunctionType {
 }
 
 /// Helper structure that stores data needed when writing the function
-struct FunctionCtx<'a> {
+pub struct FunctionCtx<'a> {
     /// The current function being written
-    ty: FunctionType,
+    pub ty: FunctionType,
     /// Analysis about the function
-    info: &'a crate::valid::FunctionInfo,
+    pub info: &'a crate::valid::FunctionInfo,
     /// The expression arena of the current function being written
-    expressions: &'a crate::Arena<crate::Expression>,
+    pub expressions: &'a crate::Arena<crate::Expression>,
     /// Map of expressions that have associated variable names
-    named_expressions: &'a crate::NamedExpressions,
+    pub named_expressions: &'a crate::NamedExpressions,
 }
 
 impl FunctionCtx<'_> {
+    /// Helper method that resolves a type of a given expression.
+    pub fn resolve_type<'a>(
+        &'a self,
+        handle: crate::Handle<crate::Expression>,
+        types: &'a crate::UniqueArena<crate::Type>,
+    ) -> &'a crate::TypeInner {
+        self.info[handle].ty.inner_with(types)
+    }
+
     /// Helper method that generates a [`NameKey`](crate::proc::NameKey) for a local in the current function
-    const fn name_key(&self, local: crate::Handle<crate::LocalVariable>) -> crate::proc::NameKey {
+    pub const fn name_key(
+        &self,
+        local: crate::Handle<crate::LocalVariable>,
+    ) -> crate::proc::NameKey {
         match self.ty {
             FunctionType::Function(handle) => crate::proc::NameKey::FunctionLocal(handle, local),
             FunctionType::EntryPoint(idx) => crate::proc::NameKey::EntryPointLocal(idx, local),
@@ -83,7 +187,7 @@ impl FunctionCtx<'_> {
     ///
     /// # Panics
     /// - If the function arguments are less or equal to `arg`
-    const fn argument_key(&self, arg: u32) -> crate::proc::NameKey {
+    pub const fn argument_key(&self, arg: u32) -> crate::proc::NameKey {
         match self.ty {
             FunctionType::Function(handle) => crate::proc::NameKey::FunctionArgument(handle, arg),
             FunctionType::EntryPoint(ep_index) => {
@@ -92,8 +196,8 @@ impl FunctionCtx<'_> {
         }
     }
 
-    // Returns true if the given expression points to a fixed-function pipeline input.
-    fn is_fixed_function_input(
+    /// Returns true if the given expression points to a fixed-function pipeline input.
+    pub fn is_fixed_function_input(
         &self,
         mut expression: crate::Handle<crate::Expression>,
         module: &crate::Module,
@@ -112,7 +216,7 @@ impl FunctionCtx<'_> {
                     };
                 }
                 crate::Expression::AccessIndex { base, index } => {
-                    match *self.info[base].ty.inner_with(&module.types) {
+                    match *self.resolve_type(base, &module.types) {
                         crate::TypeInner::Struct { ref members, .. } => {
                             if let Some(crate::Binding::BuiltIn(bi)) =
                                 members[index as usize].binding
@@ -139,7 +243,7 @@ impl crate::Expression {
     /// See the [module-level documentation][emit] for details.
     ///
     /// [emit]: index.html#expression-evaluation-time
-    const fn bake_ref_count(&self) -> usize {
+    pub const fn bake_ref_count(&self) -> usize {
         match *self {
             // accesses are never cached, only loads are
             crate::Expression::Access { .. } | crate::Expression::AccessIndex { .. } => usize::MAX,
@@ -158,9 +262,7 @@ impl crate::Expression {
 }
 
 /// Helper function that returns the string corresponding to the [`BinaryOperator`](crate::BinaryOperator)
-/// # Notes
-/// Used by `glsl-out`, `msl-out`, `wgsl-out`, `hlsl-out`.
-const fn binary_operation_str(op: crate::BinaryOperator) -> &'static str {
+pub const fn binary_operation_str(op: crate::BinaryOperator) -> &'static str {
     use crate::BinaryOperator as Bo;
     match op {
         Bo::Add => "+",
@@ -184,21 +286,13 @@ const fn binary_operation_str(op: crate::BinaryOperator) -> &'static str {
     }
 }
 
-/// Helper function that returns the string corresponding to the [`VectorSize`](crate::VectorSize)
-/// # Notes
-/// Used by `msl-out`, `wgsl-out`, `hlsl-out`.
-const fn vector_size_str(size: crate::VectorSize) -> &'static str {
-    match size {
-        crate::VectorSize::Bi => "2",
-        crate::VectorSize::Tri => "3",
-        crate::VectorSize::Quad => "4",
-    }
-}
-
 impl crate::TypeInner {
-    const fn is_handle(&self) -> bool {
+    /// Returns true if this is a handle to a type rather than the type directly.
+    pub const fn is_handle(&self) -> bool {
         match *self {
-            crate::TypeInner::Image { .. } | crate::TypeInner::Sampler { .. } => true,
+            crate::TypeInner::Image { .. }
+            | crate::TypeInner::Sampler { .. }
+            | crate::TypeInner::AccelerationStructure { .. } => true,
             _ => false,
         }
     }
@@ -224,11 +318,12 @@ bitflags::bitflags! {
     ///
     /// Note that these exactly correspond to the SPIR-V "Ray Flags" mask, and
     /// the SPIR-V backend passes them directly through to the
-    /// `OpRayQueryInitializeKHR` instruction. (We have to choose something, so
+    /// [`OpRayQueryInitializeKHR`][op] instruction. (We have to choose something, so
     /// we might as well make one back end's life easier.)
     ///
     /// [`RayDesc`]: crate::Module::generate_ray_desc_type
-    #[derive(Default)]
+    /// [op]: https://registry.khronos.org/SPIR-V/specs/unified1/SPIRV.html#OpRayQueryInitializeKHR
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
     pub struct RayFlag: u32 {
         const OPAQUE = 0x01;
         const NO_OPAQUE = 0x02;
@@ -243,8 +338,9 @@ bitflags::bitflags! {
     }
 }
 
+/// The intersection test to use for ray queries.
 #[repr(u32)]
-enum RayIntersectionType {
+pub enum RayIntersectionType {
     Triangle = 1,
     BoundingBox = 4,
 }

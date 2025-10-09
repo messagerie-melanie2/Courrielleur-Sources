@@ -21,7 +21,7 @@ pub fn default_max_variable_number() -> usize {
             let conn = rusqlite::Connection::open_in_memory()
                 .expect("Failed to initialize in-memory connection (out of memory?)");
 
-            let limit = conn.limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER);
+            let limit = conn.limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER).unwrap();
             assert!(
                 limit > 0,
                 "Illegal value for SQLITE_LIMIT_VARIABLE_NUMBER (must be > 0) {}",
@@ -51,7 +51,7 @@ where
 }
 
 /// A version of `each_chunk` for the case when the conversion to `to_sql` requires an custom
-/// intermediate step. For example, you might want to grab a property off of an arrray of records
+/// intermediate step. For example, you might want to grab a property off of an array of records
 pub fn each_chunk_mapped<'a, T, U, E, Mapper, DoChunk>(
     items: &'a [T],
     to_sql: Mapper,

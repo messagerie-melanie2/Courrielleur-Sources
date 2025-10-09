@@ -26,6 +26,7 @@ def check_for_crashes(tmpdir, stackwalk, monkeypatch):
         dump_save_path=None,
         test_name=None,
         quiet=True,
+        keep=None,
     ):
         return mozcrash.check_for_crashes(
             dump_directory,
@@ -34,6 +35,7 @@ def check_for_crashes(tmpdir, stackwalk, monkeypatch):
             dump_save_path,
             test_name,
             quiet,
+            keep,
         )
 
     return wrapper
@@ -53,13 +55,13 @@ def minidump_files(request, tmpdir):
     for i in range(getattr(request, "param", 1)):
         name = uuid.uuid4()
 
-        dmp = tmpdir.join("{}.dmp".format(name))
+        dmp = tmpdir.join(f"{name}.dmp")
         dmp.write("foo")
 
-        extra = tmpdir.join("{}.extra".format(name))
+        extra = tmpdir.join(f"{name}.extra")
 
         extra.write_text(
-            u"""
+            """
 {
   "ContentSandboxLevel":"2",
   "TelemetryEnvironment":"{🍪}",
@@ -112,14 +114,14 @@ def mock_popen(monkeypatch):
                     stdout of each process in turn.
     """
 
-    class MockPopen(object):
+    class MockPopen:
         def __init__(self, args, *args_rest, **kwargs):
             # all_popens.append(self)
             self.args = args
             self.returncode = 0
 
         def communicate(self):
-            return (u"Stackwalk command: {}".format(" ".join(self.args)), "")
+            return ("Stackwalk command: {}".format(" ".join(self.args)), "")
 
         def wait(self):
             return self.returncode

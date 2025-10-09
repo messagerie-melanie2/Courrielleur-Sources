@@ -10,9 +10,9 @@ import ProxyCard from "./proxy-card.mjs";
 import VPNCard from "./vpn-card.mjs";
 
 let cbCategory = RPMGetStringPref("browser.contentblocking.category");
-document.sendTelemetryEvent = (action, object, value = "") => {
-  // eslint-disable-next-line no-undef
-  RPMRecordTelemetryEvent("security.ui.protections", action, object, value, {
+document.sendTelemetryEvent = (eventName, value = "") => {
+  RPMRecordGleanEvent("securityUiProtections", eventName, {
+    value,
     category: cbCategory,
   });
 };
@@ -31,7 +31,7 @@ if (searchParams.has("entrypoint")) {
   searchParamsChanged = true;
 }
 
-document.addEventListener("DOMContentLoaded", e => {
+document.addEventListener("DOMContentLoaded", () => {
   if (searchParamsChanged) {
     let newURL = protocol + pathname;
     let params = searchParams.toString();
@@ -44,12 +44,12 @@ document.addEventListener("DOMContentLoaded", e => {
 
   RPMSendQuery("FetchEntryPoint", {}).then(entrypoint => {
     // Send telemetry on arriving on this page
-    document.sendTelemetryEvent("show", "protection_report", entrypoint);
+    document.sendTelemetryEvent("showProtectionReport", entrypoint);
   });
 
   // We need to send the close telemetry before unload while we still have a connection to RPM.
   window.addEventListener("beforeunload", () => {
-    document.sendTelemetryEvent("close", "protection_report");
+    document.sendTelemetryEvent("closeProtectionReport");
   });
 
   let todayInMs = Date.now();
@@ -69,15 +69,10 @@ document.addEventListener("DOMContentLoaded", e => {
     if (evt.keyCode == evt.DOM_VK_RETURN || evt.type == "click") {
       RPMSendAsyncMessage("OpenContentBlockingPreferences");
       if (evt.target.id == "protection-settings") {
-        document.sendTelemetryEvent(
-          "click",
-          "settings_link",
-          "header-settings"
-        );
+        document.sendTelemetryEvent("clickSettingsLink", "header-settings");
       } else if (evt.target.id == "manage-protections") {
         document.sendTelemetryEvent(
-          "click",
-          "settings_link",
+          "clickSettingsLink",
           "custom-card-settings"
         );
       }
@@ -105,11 +100,10 @@ document.addEventListener("DOMContentLoaded", e => {
       graph.classList.add("private-window");
     } else {
       let earliestDate = data.earliestDate || Date.now();
-      summary.setAttribute(
-        "data-l10n-args",
-        JSON.stringify({ count: data.sumEvents, earliestDate })
-      );
-      summary.setAttribute("data-l10n-id", "graph-total-tracker-summary");
+      document.l10n.setAttributes(summary, "graph-total-tracker-summary", {
+        count: data.sumEvents,
+        earliestDate,
+      });
     }
 
     // Set a default top size for the height of the graph bars so that small
@@ -175,11 +169,17 @@ document.addEventListener("DOMContentLoaded", e => {
             div.setAttribute("role", "img");
             div.setAttribute("data-type", type);
             div.style.height = `${dataHeight}%`;
-            div.setAttribute(
-              "data-l10n-args",
-              JSON.stringify({ count: content[type], percentage: dataHeight })
-            );
-            div.setAttribute("data-l10n-id", `bar-tooltip-${type}`);
+            const messageIDs = {
+              social: "bar-tooltip-social",
+              cookie: "bar-tooltip-cookie",
+              tracker: "bar-tooltip-tracker",
+              cryptominer: "bar-tooltip-cryptominer",
+              fingerprinter: "bar-tooltip-fingerprinter",
+            };
+            document.l10n.setAttributes(div, messageIDs[type], {
+              count: content[type],
+              percentage: dataHeight,
+            });
             weekTypeCounts[type] += content[type];
             cellSpan.appendChild(div);
             innerBar.appendChild(cellSpan);
@@ -199,16 +199,14 @@ document.addEventListener("DOMContentLoaded", e => {
       graph.prepend(bar);
 
       if (data.isPrivate) {
-        weekSummary.setAttribute(
-          "data-l10n-id",
+        document.l10n.setAttributes(
+          weekSummary,
           "graph-week-summary-private-window"
         );
       } else {
-        weekSummary.setAttribute(
-          "data-l10n-args",
-          JSON.stringify({ count: weekCount })
-        );
-        weekSummary.setAttribute("data-l10n-id", "graph-week-summary");
+        document.l10n.setAttributes(weekSummary, "graph-week-summary", {
+          count: weekCount,
+        });
       }
 
       let label = document.createElement("span");
@@ -217,7 +215,7 @@ document.addEventListener("DOMContentLoaded", e => {
       label.id = "day" + (6 - i);
       label.setAttribute("role", "rowheader");
       if (i == 6) {
-        label.setAttribute("data-l10n-id", "graph-today");
+        document.l10n.setAttributes(label, "graph-today");
       } else {
         label.textContent = data.weekdays[(i + 1 + new Date().getDay()) % 7];
       }
@@ -238,7 +236,7 @@ document.addEventListener("DOMContentLoaded", e => {
         `browser.contentblocking.report.${type}.url`
       );
       learnMoreLink.addEventListener("click", () => {
-        document.sendTelemetryEvent("click", "trackers_about_link", type);
+        document.sendTelemetryEvent("clickTrackersAboutLink", type);
       });
     }
 
@@ -248,10 +246,11 @@ document.addEventListener("DOMContentLoaded", e => {
       "privacy.trackingprotection.cryptomining.enabled",
       false
     );
-    let fingerprintingEnabled = RPMGetBoolPref(
-      "privacy.trackingprotection.fingerprinting.enabled",
-      false
-    );
+    let fingerprintingEnabled =
+      RPMGetBoolPref(
+        "privacy.trackingprotection.fingerprinting.enabled",
+        false
+      ) || RPMGetBoolPref("privacy.fingerprintingProtection", false);
     let tpEnabled = RPMGetBoolPref("privacy.trackingprotection.enabled", false);
     let socialTracking = RPMGetBoolPref(
       "privacy.trackingprotection.socialtracking.enabled",
@@ -272,18 +271,18 @@ document.addEventListener("DOMContentLoaded", e => {
 
     // User has turned off all blocking, show a different card.
     if (notBlocking) {
-      document
-        .getElementById("etp-card-content")
-        .setAttribute(
-          "data-l10n-id",
-          "protection-report-etp-card-content-custom-not-blocking"
-        );
-      document
-        .querySelector(".etp-card .card-title")
-        .setAttribute("data-l10n-id", "etp-card-title-custom-not-blocking");
-      document
-        .getElementById("report-summary")
-        .setAttribute("data-l10n-id", "protection-report-page-summary");
+      document.l10n.setAttributes(
+        document.getElementById("etp-card-content"),
+        "protection-report-etp-card-content-custom-not-blocking"
+      );
+      document.l10n.setAttributes(
+        document.querySelector(".etp-card .card-title"),
+        "etp-card-title-custom-not-blocking"
+      );
+      document.l10n.setAttributes(
+        document.getElementById("report-summary"),
+        "protection-report-page-summary"
+      );
       document.querySelector(".etp-card").classList.add("custom-not-blocking");
 
       // Hide the link to settings from the header, so we are not showing two links.
@@ -394,7 +393,7 @@ document.addEventListener("DOMContentLoaded", e => {
   let exitIcon = document.querySelector("#mobile-hanger .exit-icon");
   // hide the mobile promotion and keep hidden with a pref.
   exitIcon.addEventListener("click", () => {
-    RPMSetBoolPref("browser.contentblocking.report.show_mobile_app", false);
+    RPMSetPref("browser.contentblocking.report.show_mobile_app", false);
     document.getElementById("mobile-hanger").classList.add("hidden");
   });
 
@@ -405,14 +404,14 @@ document.addEventListener("DOMContentLoaded", e => {
     "browser.contentblocking.report.mobile-android.url"
   );
   androidMobileAppLink.addEventListener("click", () => {
-    document.sendTelemetryEvent("click", "mobile_app_link", "android");
+    document.sendTelemetryEvent("clickMobileAppLink", "android");
   });
   let iosMobileAppLink = document.getElementById("ios-mobile-inline-link");
   iosMobileAppLink.href = RPMGetStringPref(
     "browser.contentblocking.report.mobile-ios.url"
   );
   iosMobileAppLink.addEventListener("click", () => {
-    document.sendTelemetryEvent("click", "mobile_app_link", "ios");
+    document.sendTelemetryEvent("clickMobileAppLink", "ios");
   });
 
   let lockwiseEnabled = RPMGetBoolPref(

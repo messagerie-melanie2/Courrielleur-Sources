@@ -27,20 +27,23 @@ if CONFIG["MOZ_PLACES"]:
 
     EXPORTS.mozilla.places = [
         "Database.h",
+        "FaviconHelpers.h",
         "History.h",
         "INativePlacesEventCallback.h",
         "NotifyRankingChanged.h",
+        "nsFaviconService.h",
         "PageIconProtocolHandler.h",
         "Shutdown.h",
         "SyncedBookmarksMirror.h",
     ]
 
     UNIFIED_SOURCES += [
+        "ConcurrentConnection.cpp",
         "Database.cpp",
         "FaviconHelpers.cpp",
         "Helpers.cpp",
         "History.cpp",
-        "nsAnnoProtocolHandler.cpp",
+        "nsCachedFaviconProtocolHandler.cpp",
         "nsFaviconService.cpp",
         "nsNavBookmarks.cpp",
         "nsNavHistory.cpp",
@@ -60,6 +63,7 @@ if CONFIG["MOZ_PLACES"]:
     EXTRA_JS_MODULES += [
         "BookmarkHTMLUtils.sys.mjs",
         "BookmarkJSONUtils.sys.mjs",
+        "BookmarkList.sys.mjs",
         "Bookmarks.sys.mjs",
         "ExtensionSearchHandler.sys.mjs",
         "History.sys.mjs",
@@ -69,6 +73,8 @@ if CONFIG["MOZ_PLACES"]:
         "PlacesFrecencyRecalculator.sys.mjs",
         "PlacesPreviews.sys.mjs",
         "PlacesQuery.sys.mjs",
+        "PlacesSemanticHistoryDatabase.sys.mjs",
+        "PlacesSemanticHistoryManager.sys.mjs",
         "PlacesSyncUtils.sys.mjs",
         "PlacesTransactions.sys.mjs",
         "PlacesUtils.sys.mjs",

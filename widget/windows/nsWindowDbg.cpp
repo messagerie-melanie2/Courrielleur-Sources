@@ -13,6 +13,11 @@
 #include "nsWindowLoggedMessages.h"
 #include "mozilla/Logging.h"
 #include "mozilla/Maybe.h"
+#include "nsWindow.h"
+#include "GeckoProfiler.h"
+#include "mozilla/PresShell.h"
+#include "mozilla/dom/Document.h"
+
 #include <winuser.h>
 #include <dbt.h>
 #include <imm.h>
@@ -25,6 +30,9 @@ using namespace mozilla::widget;
 extern mozilla::LazyLogModule gWindowsLog;
 static mozilla::LazyLogModule gWindowsEventLog("WindowsEvent");
 
+// currently defined in widget/windows/nsAppShell.cpp
+extern UINT sAppShellGeckoMsgId;
+
 #if defined(POPUP_ROLLUP_DEBUG_OUTPUT)
 MSGFEventMsgInfo gMSGFEvents[] = {
     "MSGF_DIALOGBOX", 0,    "MSGF_MESSAGEBOX", 1, "MSGF_MENU", 2,
@@ -35,11 +43,111 @@ MSGFEventMsgInfo gMSGFEvents[] = {
 static long gEventCounter = 0;
 static UINT gLastEventMsg = 0;
 
+namespace geckoprofiler::markers {
+
+struct WindowProcMarker {
+  static constexpr Span<const char> MarkerTypeName() {
+    return MakeStringSpan("WindowProc");
+  }
+  static void StreamJSONMarkerData(baseprofiler::SpliceableJSONWriter& aWriter,
+                                   const ProfilerString8View& aMsgLoopName,
+                                   UINT aMsg, WPARAM aWParam, LPARAM aLParam) {
+    aWriter.StringProperty("messageLoop", aMsgLoopName);
+    aWriter.IntProperty("uMsg", aMsg);
+    const char* name;
+    if (aMsg < WM_USER) {
+      const auto eventMsgInfo = mozilla::widget::gAllEvents.find(aMsg);
+      if (eventMsgInfo != mozilla::widget::gAllEvents.end()) {
+        name = eventMsgInfo->second.mStr;
+      } else {
+        name = "ui message";
+      }
+    } else if (aMsg >= WM_USER && aMsg < WM_APP) {
+      name = "WM_USER message";
+    } else if (aMsg >= WM_APP && aMsg < 0xC000) {
+      name = "WM_APP message";
+    } else if (aMsg >= 0xC000 && aMsg < 0x10000) {
+      if (aMsg == sAppShellGeckoMsgId) {
+        name = "nsAppShell:EventID";
+      } else {
+        name = "registered Windows message";
+      }
+    } else {
+      name = "system message";
+    }
+    aWriter.StringProperty("name", MakeStringSpan(name));
+
+    if (aWParam) {
+      aWriter.IntProperty("wParam", aWParam);
+    }
+    if (aLParam) {
+      aWriter.IntProperty("lParam", aLParam);
+    }
+  }
+
+  static MarkerSchema MarkerTypeDisplay() {
+    using MS = MarkerSchema;
+    MS schema{MS::Location::MarkerChart, MS::Location::MarkerTable};
+    schema.AddKeyFormat("uMsg", MS::Format::Integer);
+    schema.SetChartLabel(
+        "{marker.data.messageLoop} | {marker.data.name} ({marker.data.uMsg})");
+    schema.SetTableLabel(
+        "{marker.name} - {marker.data.messageLoop} - {marker.data.name} "
+        "({marker.data.uMsg})");
+    schema.SetTooltipLabel(
+        "{marker.data.messageLoop} - {marker.name} - {marker.data.name}");
+    schema.AddKeyFormat("wParam", MS::Format::Integer);
+    schema.AddKeyFormat("lParam", MS::Format::Integer);
+    return schema;
+  }
+};
+
+}  // namespace geckoprofiler::markers
+
 namespace mozilla::widget {
+
+AutoProfilerMessageMarker::AutoProfilerMessageMarker(
+    Span<const char> aMsgLoopName, HWND hWnd, UINT msg, WPARAM wParam,
+    LPARAM lParam)
+    : mMsgLoopName(aMsgLoopName), mMsg(msg), mWParam(wParam), mLParam(lParam) {
+  if (profiler_thread_is_being_profiled_for_markers()) {
+    mOptions.emplace(MarkerOptions(MarkerTiming::IntervalStart()));
+    nsWindow* win = WinUtils::GetNSWindowPtr(hWnd);
+    if (win) {
+      nsIWidgetListener* wl = win->GetWidgetListener();
+      if (wl) {
+        PresShell* presShell = wl->GetPresShell();
+        if (presShell) {
+          dom::Document* doc = presShell->GetDocument();
+          if (doc) {
+            mOptions->Set(MarkerInnerWindowId(doc->InnerWindowID()));
+          }
+        }
+      }
+    }
+  }
+}
+
+AutoProfilerMessageMarker::~AutoProfilerMessageMarker() {
+  if (!profiler_thread_is_being_profiled_for_markers()) {
+    return;
+  }
+
+  if (mOptions) {
+    mOptions->TimingRef().SetIntervalEnd();
+  } else {
+    mOptions.emplace(MarkerOptions(MarkerTiming::IntervalEnd()));
+  }
+  profiler_add_marker(
+      "WindowProc", ::mozilla::baseprofiler::category::OTHER,
+      std::move(*mOptions), geckoprofiler::markers::WindowProcMarker{},
+      ProfilerString8View::WrapNullTerminatedString(mMsgLoopName.data()), mMsg,
+      mWParam, mLParam);
+}
 
 // Using an unordered_set so we can initialize this with nice syntax instead of
 // having to add them one at a time to a mozilla::HashSet.
-std::unordered_set<UINT> gEventsToLogOriginalParams = {
+MOZ_RUNINIT std::unordered_set<UINT> gEventsToLogOriginalParams = {
     WM_WINDOWPOSCHANGING,  // (dummy comments for clang-format)
     WM_SIZING,             //
     WM_STYLECHANGING,
@@ -52,7 +160,7 @@ std::unordered_set<UINT> gEventsToLogOriginalParams = {
 // If you add an event here, you must add cases for these to
 // MakeMessageSpecificData() and AppendFriendlyMessageSpecificData()
 // in nsWindowLoggedMessages.cpp.
-std::unordered_set<UINT> gEventsToRecordInAboutPage = {
+MOZ_RUNINIT std::unordered_set<UINT> gEventsToRecordInAboutPage = {
     WM_WINDOWPOSCHANGING,  // (dummy comments for clang-format)
     WM_WINDOWPOSCHANGED,   //
     WM_SIZING,
@@ -65,25 +173,28 @@ std::unordered_set<UINT> gEventsToRecordInAboutPage = {
     WM_GETMINMAXINFO,
 };
 
-PrintEvent::PrintEvent(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
-    : mHwnd(hwnd),
+NativeEventLogger::NativeEventLogger(Span<const char> aMsgLoopName, HWND hwnd,
+                                     UINT msg, WPARAM wParam, LPARAM lParam)
+    : mProfilerMarker(aMsgLoopName, hwnd, msg, wParam, lParam),
+      mMsgLoopName(aMsgLoopName.data()),
+      mHwnd(hwnd),
       mMsg(msg),
       mWParam(wParam),
       mLParam(lParam),
       mResult(mozilla::Nothing()),
       mShouldLogPostCall(false) {
-  if (PrintEventInternal()) {
+  if (NativeEventLoggerInternal()) {
     // this event was logged, so reserve this counter number for the post-call
     mEventCounter = mozilla::Some(gEventCounter);
     ++gEventCounter;
   }
 }
 
-PrintEvent::~PrintEvent() {
+NativeEventLogger::~NativeEventLogger() {
   // If mResult is Nothing, perhaps an exception was thrown or something
   // before SetResult() was supposed to be called.
   if (mResult.isSome()) {
-    if (PrintEventInternal() && mEventCounter.isNothing()) {
+    if (NativeEventLoggerInternal() && mEventCounter.isNothing()) {
       // We didn't reserve a counter in the pre-call, so reserve it here.
       ++gEventCounter;
     }
@@ -168,17 +279,26 @@ bool AppendFlagsInfo(nsCString& str, uint64_t flags,
   return !firstAppend;
 }
 
+std::unordered_map<uint64_t, const char*> const& HitTestResults();
+nsAutoString GetNameFromAtom(LPCWSTR atomOrName);
+
 // if mResult is not set, this is used to log the parameters passed in the
 // message, otherwise we are logging the parameters after we have handled the
 // message. This is useful for events where we might change the parameters while
 // handling the message (for example WM_GETTEXT and WM_NCCALCSIZE)
 // Returns whether this message was logged, so we need to reserve a
 // counter number for it.
-bool PrintEvent::PrintEventInternal() {
+bool NativeEventLogger::NativeEventLoggerInternal() {
   mozilla::LogLevel const targetLogLevel = [&] {
     // These messages often take up more than 90% of logs if not filtered out.
     if (mMsg == WM_SETCURSOR || mMsg == WM_MOUSEMOVE || mMsg == WM_NCHITTEST) {
       return LogLevel::Verbose;
+    }
+    // This "raw" message is usually immediately followed by a processed
+    // interpretation such as WM_POINTERUPDATE, with which it's mostly
+    // redundant.
+    if (mMsg == WM_TOUCH) {
+      return LogLevel::Debug;
     }
     if (gLastEventMsg == mMsg) {
       return LogLevel::Debug;
@@ -217,9 +337,19 @@ bool PrintEvent::PrintEventInternal() {
     gLastEventMsg = mMsg;
     if (writeToWindowsLog) {
       const auto& eventMsgInfo = gAllEvents.find(mMsg);
-      const char* msgText = eventMsgInfo != gAllEvents.end()
-                                ? eventMsgInfo->second.mStr
-                                : nullptr;
+
+      nsAutoCString msgText = [&]() -> nsAutoCString {
+        // (dynamically-registered string messages)
+        if (mMsg >= 0xC000 && mMsg <= 0xFFFF) {
+          return NS_ConvertUTF16toUTF8(
+              GetNameFromAtom((LPCWSTR)(uintptr_t)mMsg));
+        }
+        if (eventMsgInfo != gAllEvents.end()) {
+          return nsAutoCString(eventMsgInfo->second.mStr);
+        }
+        return nsAutoCString{};
+      }();
+
       nsAutoCString paramInfo;
       if (eventMsgInfo != gAllEvents.end()) {
         eventMsgInfo->second.LogParameters(paramInfo, mWParam, mLParam,
@@ -227,16 +357,25 @@ bool PrintEvent::PrintEventInternal() {
       } else {
         paramInfo = DefaultParamInfo(mWParam, mLParam, isPreCall);
       }
-      const char* resultMsg = mResult.isSome()
-                                  ? (mResult.value() ? "true" : "false")
-                                  : "initial call";
+      const char* resultMsg = [&]() {
+        if (!mResult.isSome()) return "initial call";
+        if (mMsg == WM_NCHITTEST) {
+          auto const& htr = HitTestResults();
+          if (auto const it = htr.find(mRetValue); it != htr.end()) {
+            return it->second;
+          }
+          return "undocumented value?";
+        }
+        return mResult.value() ? "true" : "false";
+      }();
+
       nsAutoCString logMessage;
       logMessage.AppendPrintf(
-          "%6ld %08" PRIX64 " - 0x%04X %s%s%s: 0x%08" PRIX64 " (%s)\n",
-          mEventCounter.valueOr(gEventCounter),
+          "%s | %6ld %08" PRIX64 " - 0x%04X %s%s%s: 0x%08" PRIX64 " (%s)\n",
+          mMsgLoopName, mEventCounter.valueOr(gEventCounter),
           reinterpret_cast<uint64_t>(mHwnd), mMsg,
-          msgText ? msgText : "Unknown", paramInfo.IsEmpty() ? "" : " ",
-          paramInfo.get(),
+          !msgText.IsEmpty() ? msgText.Data() : "Unknown",
+          paramInfo.IsEmpty() ? "" : " ", paramInfo.get(),
           mResult.isSome() ? static_cast<uint64_t>(mRetValue) : 0, resultMsg);
       const char* logMessageData = logMessage.Data();
       MOZ_LOG(gWindowsEventLog, targetLogLevel, ("%s", logMessageData));
@@ -280,8 +419,36 @@ void RectParamInfo(nsCString& str, uint64_t value, const char* name,
                    rect->top, rect->right, rect->bottom);
 }
 
-#define VALANDNAME_ENTRY(_msg) \
-  { _msg, #_msg }
+#define VALANDNAME_ENTRY(_msg) {_msg, #_msg}
+
+nsAutoString GetNameFromAtom(LPCWSTR atomOrName) {
+  // null; should never happen?
+  if (atomOrName == nullptr) {
+    return nsAutoString(L"<null>");
+  }
+  // not an atom; return directly
+  if (uintptr_t(atomOrName) > 0xFFFF) {
+    return nsAutoString(atomOrName);
+  }
+
+  UINT const atom = (UINT)(uintptr_t)atomOrName;
+
+  nsAutoString out;
+  out.AppendASCII("atom 0x"_ns);
+  out.AppendInt(atom, 16);
+  out.AppendASCII(": "_ns);
+
+  WCHAR buf[256] = {0};
+  // undocumented, but widely considered reliable
+  BOOL const ok = ::GetClipboardFormatNameW(atom, buf, 255);
+  if (!ok) {
+    out.AppendASCII("unknown atom"_ns);
+  } else {
+    out.Append(buf);
+  }
+
+  return out;
+}
 
 void CreateStructParamInfo(nsCString& str, uint64_t value, const char* name,
                            bool /* isPreCall */) {
@@ -293,9 +460,10 @@ void CreateStructParamInfo(nsCString& str, uint64_t value, const char* name,
   str.AppendPrintf(
       "%s: hInstance=%p hMenu=%p hwndParent=%p lpszName=%S lpszClass=%S x=%d "
       "y=%d cx=%d cy=%d",
-      name, createStruct->hInstance, createStruct->hMenu,
-      createStruct->hwndParent, createStruct->lpszName, createStruct->lpszClass,
-      createStruct->x, createStruct->y, createStruct->cx, createStruct->cy);
+      name ? name : "<no name>", createStruct->hInstance, createStruct->hMenu,
+      createStruct->hwndParent, createStruct->lpszName,
+      GetNameFromAtom(createStruct->lpszClass).getW(), createStruct->x,
+      createStruct->y, createStruct->cx, createStruct->cy);
   str.AppendASCII(" ");
   const static nsTArray<EnumValueAndName> windowStyles = {
       // these combinations of other flags need to come first
@@ -315,45 +483,35 @@ void CreateStructParamInfo(nsCString& str, uint64_t value, const char* name,
   AppendFlagsInfo(str, createStruct->style, windowStyles, "style");
   str.AppendASCII(" ");
   const nsTArray<EnumValueAndName> extendedWindowStyles = {
-  // these combinations of other flags need to come first
-#if WINVER >= 0x0400
-    VALANDNAME_ENTRY(WS_EX_OVERLAPPEDWINDOW),
-    VALANDNAME_ENTRY(WS_EX_PALETTEWINDOW),
-#endif
-    // regular flags
-    VALANDNAME_ENTRY(WS_EX_DLGMODALFRAME),
-    VALANDNAME_ENTRY(WS_EX_NOPARENTNOTIFY),
-    VALANDNAME_ENTRY(WS_EX_TOPMOST),
-    VALANDNAME_ENTRY(WS_EX_ACCEPTFILES),
-    VALANDNAME_ENTRY(WS_EX_TRANSPARENT),
-#if WINVER >= 0x0400
-    VALANDNAME_ENTRY(WS_EX_MDICHILD),
-    VALANDNAME_ENTRY(WS_EX_TOOLWINDOW),
-    VALANDNAME_ENTRY(WS_EX_WINDOWEDGE),
-    VALANDNAME_ENTRY(WS_EX_CLIENTEDGE),
-    VALANDNAME_ENTRY(WS_EX_CONTEXTHELP),
-    VALANDNAME_ENTRY(WS_EX_RIGHT),
-    VALANDNAME_ENTRY(WS_EX_LEFT),
-    VALANDNAME_ENTRY(WS_EX_RTLREADING),
-    VALANDNAME_ENTRY(WS_EX_LTRREADING),
-    VALANDNAME_ENTRY(WS_EX_LEFTSCROLLBAR),
-    VALANDNAME_ENTRY(WS_EX_RIGHTSCROLLBAR),
-    VALANDNAME_ENTRY(WS_EX_CONTROLPARENT),
-    VALANDNAME_ENTRY(WS_EX_STATICEDGE),
-    VALANDNAME_ENTRY(WS_EX_APPWINDOW),
-#endif
-#if _WIN32_WINNT >= 0x0500
-    VALANDNAME_ENTRY(WS_EX_LAYERED),
-    VALANDNAME_ENTRY(WS_EX_NOINHERITLAYOUT),
-    VALANDNAME_ENTRY(WS_EX_LAYOUTRTL),
-    VALANDNAME_ENTRY(WS_EX_NOACTIVATE),
-#endif
-#if _WIN32_WINNT >= 0x0501
-    VALANDNAME_ENTRY(WS_EX_COMPOSITED),
-#endif
-#if WINVER >= 0x0602
-    VALANDNAME_ENTRY(WS_EX_NOREDIRECTIONBITMAP),
-#endif
+      // these combinations of other flags need to come first
+      VALANDNAME_ENTRY(WS_EX_OVERLAPPEDWINDOW),
+      VALANDNAME_ENTRY(WS_EX_PALETTEWINDOW),
+      // regular flags
+      VALANDNAME_ENTRY(WS_EX_DLGMODALFRAME),
+      VALANDNAME_ENTRY(WS_EX_NOPARENTNOTIFY),
+      VALANDNAME_ENTRY(WS_EX_TOPMOST),
+      VALANDNAME_ENTRY(WS_EX_ACCEPTFILES),
+      VALANDNAME_ENTRY(WS_EX_TRANSPARENT),
+      VALANDNAME_ENTRY(WS_EX_MDICHILD),
+      VALANDNAME_ENTRY(WS_EX_TOOLWINDOW),
+      VALANDNAME_ENTRY(WS_EX_WINDOWEDGE),
+      VALANDNAME_ENTRY(WS_EX_CLIENTEDGE),
+      VALANDNAME_ENTRY(WS_EX_CONTEXTHELP),
+      VALANDNAME_ENTRY(WS_EX_RIGHT),
+      VALANDNAME_ENTRY(WS_EX_LEFT),
+      VALANDNAME_ENTRY(WS_EX_RTLREADING),
+      VALANDNAME_ENTRY(WS_EX_LTRREADING),
+      VALANDNAME_ENTRY(WS_EX_LEFTSCROLLBAR),
+      VALANDNAME_ENTRY(WS_EX_RIGHTSCROLLBAR),
+      VALANDNAME_ENTRY(WS_EX_CONTROLPARENT),
+      VALANDNAME_ENTRY(WS_EX_STATICEDGE),
+      VALANDNAME_ENTRY(WS_EX_APPWINDOW),
+      VALANDNAME_ENTRY(WS_EX_LAYERED),
+      VALANDNAME_ENTRY(WS_EX_NOINHERITLAYOUT),
+      VALANDNAME_ENTRY(WS_EX_LAYOUTRTL),
+      VALANDNAME_ENTRY(WS_EX_NOACTIVATE),
+      VALANDNAME_ENTRY(WS_EX_COMPOSITED),
+      VALANDNAME_ENTRY(WS_EX_NOREDIRECTIONBITMAP),
   };
   AppendFlagsInfo(str, createStruct->dwExStyle, extendedWindowStyles,
                   "dwExStyle");
@@ -383,6 +541,12 @@ void PointsParamInfo(nsCString& str, uint64_t value, const char* name,
 
 void VirtualKeyParamInfo(nsCString& result, uint64_t param, const char* name,
                          bool /* isPreCall */) {
+  // check that `name` is of length 2
+  constexpr static const auto ASCII_KEY_ENTRY_HELPER =
+      [](const char(&name)[2]) -> uint64_t { return name[0]; };
+
+#define ASCII_KEY_ENTRY(name) {ASCII_KEY_ENTRY_HELPER(name), name}
+
   const static std::unordered_map<uint64_t, const char*> virtualKeys{
       VALANDNAME_ENTRY(VK_LBUTTON),
       VALANDNAME_ENTRY(VK_RBUTTON),
@@ -526,42 +690,44 @@ void VirtualKeyParamInfo(nsCString& result, uint64_t param, const char* name,
       VALANDNAME_ENTRY(VK_NONAME),
       VALANDNAME_ENTRY(VK_PA1),
       VALANDNAME_ENTRY(VK_OEM_CLEAR),
-      {0x30, "0"},
-      {0x31, "1"},
-      {0x32, "2"},
-      {0x33, "3"},
-      {0x34, "4"},
-      {0x35, "5"},
-      {0x36, "6"},
-      {0x37, "7"},
-      {0x38, "8"},
-      {0x39, "9"},
-      {0x41, "A"},
-      {0x42, "B"},
-      {0x43, "C"},
-      {0x44, "D"},
-      {0x45, "E"},
-      {0x46, "F"},
-      {0x47, "G"},
-      {0x48, "H"},
-      {0x49, "I"},
-      {0x4A, "J"},
-      {0x4B, "K"},
-      {0x4C, "L"},
-      {0x4D, "M"},
-      {0x4E, "N"},
-      {0x4F, "O"},
-      {0x50, "P"},
-      {0x51, "Q"},
-      {0x52, "S"},
-      {0x53, "T"},
-      {0x54, "U"},
-      {0x55, "V"},
-      {0x56, "W"},
-      {0x57, "X"},
-      {0x58, "Y"},
-      {0x59, "Z"},
+      ASCII_KEY_ENTRY("0"),
+      ASCII_KEY_ENTRY("1"),
+      ASCII_KEY_ENTRY("2"),
+      ASCII_KEY_ENTRY("3"),
+      ASCII_KEY_ENTRY("4"),
+      ASCII_KEY_ENTRY("5"),
+      ASCII_KEY_ENTRY("6"),
+      ASCII_KEY_ENTRY("7"),
+      ASCII_KEY_ENTRY("8"),
+      ASCII_KEY_ENTRY("9"),
+      ASCII_KEY_ENTRY("A"),
+      ASCII_KEY_ENTRY("B"),
+      ASCII_KEY_ENTRY("C"),
+      ASCII_KEY_ENTRY("D"),
+      ASCII_KEY_ENTRY("E"),
+      ASCII_KEY_ENTRY("F"),
+      ASCII_KEY_ENTRY("G"),
+      ASCII_KEY_ENTRY("H"),
+      ASCII_KEY_ENTRY("I"),
+      ASCII_KEY_ENTRY("J"),
+      ASCII_KEY_ENTRY("K"),
+      ASCII_KEY_ENTRY("L"),
+      ASCII_KEY_ENTRY("M"),
+      ASCII_KEY_ENTRY("N"),
+      ASCII_KEY_ENTRY("O"),
+      ASCII_KEY_ENTRY("P"),
+      ASCII_KEY_ENTRY("Q"),
+      ASCII_KEY_ENTRY("R"),
+      ASCII_KEY_ENTRY("S"),
+      ASCII_KEY_ENTRY("T"),
+      ASCII_KEY_ENTRY("U"),
+      ASCII_KEY_ENTRY("V"),
+      ASCII_KEY_ENTRY("W"),
+      ASCII_KEY_ENTRY("X"),
+      ASCII_KEY_ENTRY("Y"),
+      ASCII_KEY_ENTRY("Z"),
   };
+#undef ASCII_KEY_ENTRY
   AppendEnumValueInfo(result, param, virtualKeys, name);
 }
 
@@ -638,217 +804,221 @@ void WindowEdgeParamInfo(nsCString& str, uint64_t value, const char* name,
 
 void UiActionParamInfo(nsCString& str, uint64_t value, const char* name,
                        bool /* isPreCall */) {
-  const static std::unordered_map<uint64_t, const char*> uiActionValues {
-    VALANDNAME_ENTRY(SPI_GETACCESSTIMEOUT),
-        VALANDNAME_ENTRY(SPI_GETAUDIODESCRIPTION),
-        VALANDNAME_ENTRY(SPI_GETCLIENTAREAANIMATION),
-        VALANDNAME_ENTRY(SPI_GETDISABLEOVERLAPPEDCONTENT),
-        VALANDNAME_ENTRY(SPI_GETFILTERKEYS),
-        VALANDNAME_ENTRY(SPI_GETFOCUSBORDERHEIGHT),
-        VALANDNAME_ENTRY(SPI_GETFOCUSBORDERWIDTH),
-        VALANDNAME_ENTRY(SPI_GETHIGHCONTRAST),
-#if WINVER >= 0x602
-        VALANDNAME_ENTRY(SPI_GETLOGICALDPIOVERRIDE),
-        VALANDNAME_ENTRY(SPI_SETLOGICALDPIOVERRIDE),
-#endif
-        VALANDNAME_ENTRY(SPI_GETMESSAGEDURATION),
-        VALANDNAME_ENTRY(SPI_GETMOUSECLICKLOCK),
-        VALANDNAME_ENTRY(SPI_GETMOUSECLICKLOCKTIME),
-        VALANDNAME_ENTRY(SPI_GETMOUSEKEYS), VALANDNAME_ENTRY(SPI_GETMOUSESONAR),
-        VALANDNAME_ENTRY(SPI_GETMOUSEVANISH),
-        VALANDNAME_ENTRY(SPI_GETSCREENREADER),
-        VALANDNAME_ENTRY(SPI_GETSERIALKEYS),
-        VALANDNAME_ENTRY(SPI_GETSHOWSOUNDS),
-        VALANDNAME_ENTRY(SPI_GETSOUNDSENTRY),
-        VALANDNAME_ENTRY(SPI_GETSTICKYKEYS),
-        VALANDNAME_ENTRY(SPI_GETTOGGLEKEYS),
-        VALANDNAME_ENTRY(SPI_SETACCESSTIMEOUT),
-        VALANDNAME_ENTRY(SPI_SETAUDIODESCRIPTION),
-        VALANDNAME_ENTRY(SPI_SETCLIENTAREAANIMATION),
-        VALANDNAME_ENTRY(SPI_SETDISABLEOVERLAPPEDCONTENT),
-        VALANDNAME_ENTRY(SPI_SETFILTERKEYS),
-        VALANDNAME_ENTRY(SPI_SETFOCUSBORDERHEIGHT),
-        VALANDNAME_ENTRY(SPI_SETFOCUSBORDERWIDTH),
-        VALANDNAME_ENTRY(SPI_SETHIGHCONTRAST),
-        VALANDNAME_ENTRY(SPI_SETMESSAGEDURATION),
-        VALANDNAME_ENTRY(SPI_SETMOUSECLICKLOCK),
-        VALANDNAME_ENTRY(SPI_SETMOUSECLICKLOCKTIME),
-        VALANDNAME_ENTRY(SPI_SETMOUSEKEYS), VALANDNAME_ENTRY(SPI_SETMOUSESONAR),
-        VALANDNAME_ENTRY(SPI_SETMOUSEVANISH),
-        VALANDNAME_ENTRY(SPI_SETSCREENREADER),
-        VALANDNAME_ENTRY(SPI_SETSERIALKEYS),
-        VALANDNAME_ENTRY(SPI_SETSHOWSOUNDS),
-        VALANDNAME_ENTRY(SPI_SETSOUNDSENTRY),
-        VALANDNAME_ENTRY(SPI_SETSTICKYKEYS),
-        VALANDNAME_ENTRY(SPI_SETTOGGLEKEYS), VALANDNAME_ENTRY(SPI_GETCLEARTYPE),
-        VALANDNAME_ENTRY(SPI_GETDESKWALLPAPER),
-        VALANDNAME_ENTRY(SPI_GETDROPSHADOW), VALANDNAME_ENTRY(SPI_GETFLATMENU),
-        VALANDNAME_ENTRY(SPI_GETFONTSMOOTHING),
-        VALANDNAME_ENTRY(SPI_GETFONTSMOOTHINGCONTRAST),
-        VALANDNAME_ENTRY(SPI_GETFONTSMOOTHINGORIENTATION),
-        VALANDNAME_ENTRY(SPI_GETFONTSMOOTHINGTYPE),
-        VALANDNAME_ENTRY(SPI_GETWORKAREA), VALANDNAME_ENTRY(SPI_SETCLEARTYPE),
-        VALANDNAME_ENTRY(SPI_SETCURSORS), VALANDNAME_ENTRY(SPI_SETDESKPATTERN),
-        VALANDNAME_ENTRY(SPI_SETDESKWALLPAPER),
-        VALANDNAME_ENTRY(SPI_SETDROPSHADOW), VALANDNAME_ENTRY(SPI_SETFLATMENU),
-        VALANDNAME_ENTRY(SPI_SETFONTSMOOTHING),
-        VALANDNAME_ENTRY(SPI_SETFONTSMOOTHINGCONTRAST),
-        VALANDNAME_ENTRY(SPI_SETFONTSMOOTHINGORIENTATION),
-        VALANDNAME_ENTRY(SPI_SETFONTSMOOTHINGTYPE),
-        VALANDNAME_ENTRY(SPI_SETWORKAREA), VALANDNAME_ENTRY(SPI_GETICONMETRICS),
-        VALANDNAME_ENTRY(SPI_GETICONTITLELOGFONT),
-        VALANDNAME_ENTRY(SPI_GETICONTITLEWRAP),
-        VALANDNAME_ENTRY(SPI_ICONHORIZONTALSPACING),
-        VALANDNAME_ENTRY(SPI_ICONVERTICALSPACING),
-        VALANDNAME_ENTRY(SPI_SETICONMETRICS), VALANDNAME_ENTRY(SPI_SETICONS),
-        VALANDNAME_ENTRY(SPI_SETICONTITLELOGFONT),
-        VALANDNAME_ENTRY(SPI_SETICONTITLEWRAP), VALANDNAME_ENTRY(SPI_GETBEEP),
-        VALANDNAME_ENTRY(SPI_GETBLOCKSENDINPUTRESETS),
-#if WINVER >= 0x602
-        VALANDNAME_ENTRY(SPI_GETCONTACTVISUALIZATION),
-        VALANDNAME_ENTRY(SPI_SETCONTACTVISUALIZATION),
-#endif
-        VALANDNAME_ENTRY(SPI_GETDEFAULTINPUTLANG),
-#if WINVER >= 0x602
-        VALANDNAME_ENTRY(SPI_GETGESTUREVISUALIZATION),
-        VALANDNAME_ENTRY(SPI_SETGESTUREVISUALIZATION),
-#endif
-        VALANDNAME_ENTRY(SPI_GETKEYBOARDCUES),
-        VALANDNAME_ENTRY(SPI_GETKEYBOARDDELAY),
-        VALANDNAME_ENTRY(SPI_GETKEYBOARDPREF),
-        VALANDNAME_ENTRY(SPI_GETKEYBOARDSPEED), VALANDNAME_ENTRY(SPI_GETMOUSE),
-        VALANDNAME_ENTRY(SPI_GETMOUSEHOVERHEIGHT),
-        VALANDNAME_ENTRY(SPI_GETMOUSEHOVERTIME),
-        VALANDNAME_ENTRY(SPI_GETMOUSEHOVERWIDTH),
-        VALANDNAME_ENTRY(SPI_GETMOUSESPEED),
-        VALANDNAME_ENTRY(SPI_GETMOUSETRAILS),
-#if WINVER >= 0x602
-        VALANDNAME_ENTRY(SPI_GETMOUSEWHEELROUTING),
-        VALANDNAME_ENTRY(SPI_SETMOUSEWHEELROUTING),
-#endif
-#if WINVER >= 0x604
-        VALANDNAME_ENTRY(SPI_GETPENVISUALIZATION),
-        VALANDNAME_ENTRY(SPI_SETPENVISUALIZATION),
-#endif
-        VALANDNAME_ENTRY(SPI_GETSNAPTODEFBUTTON),
-#if WINVER >= 0x601
-        VALANDNAME_ENTRY(SPI_GETSYSTEMLANGUAGEBAR),
-        VALANDNAME_ENTRY(SPI_SETSYSTEMLANGUAGEBAR),
-        VALANDNAME_ENTRY(SPI_GETTHREADLOCALINPUTSETTINGS),
-        VALANDNAME_ENTRY(SPI_SETTHREADLOCALINPUTSETTINGS),
-#endif
-        VALANDNAME_ENTRY(SPI_GETWHEELSCROLLCHARS),
-        VALANDNAME_ENTRY(SPI_GETWHEELSCROLLLINES),
-        VALANDNAME_ENTRY(SPI_SETBEEP),
-        VALANDNAME_ENTRY(SPI_SETBLOCKSENDINPUTRESETS),
-        VALANDNAME_ENTRY(SPI_SETDEFAULTINPUTLANG),
-        VALANDNAME_ENTRY(SPI_SETDOUBLECLICKTIME),
-        VALANDNAME_ENTRY(SPI_SETDOUBLECLKHEIGHT),
-        VALANDNAME_ENTRY(SPI_SETDOUBLECLKWIDTH),
-        VALANDNAME_ENTRY(SPI_SETKEYBOARDCUES),
-        VALANDNAME_ENTRY(SPI_SETKEYBOARDDELAY),
-        VALANDNAME_ENTRY(SPI_SETKEYBOARDPREF),
-        VALANDNAME_ENTRY(SPI_SETKEYBOARDSPEED),
-        VALANDNAME_ENTRY(SPI_SETLANGTOGGLE), VALANDNAME_ENTRY(SPI_SETMOUSE),
-        VALANDNAME_ENTRY(SPI_SETMOUSEBUTTONSWAP),
-        VALANDNAME_ENTRY(SPI_SETMOUSEHOVERHEIGHT),
-        VALANDNAME_ENTRY(SPI_SETMOUSEHOVERTIME),
-        VALANDNAME_ENTRY(SPI_SETMOUSEHOVERWIDTH),
-        VALANDNAME_ENTRY(SPI_SETMOUSESPEED),
-        VALANDNAME_ENTRY(SPI_SETMOUSETRAILS),
-        VALANDNAME_ENTRY(SPI_SETSNAPTODEFBUTTON),
-        VALANDNAME_ENTRY(SPI_SETWHEELSCROLLCHARS),
-        VALANDNAME_ENTRY(SPI_SETWHEELSCROLLLINES),
-        VALANDNAME_ENTRY(SPI_GETMENUDROPALIGNMENT),
-        VALANDNAME_ENTRY(SPI_GETMENUFADE),
-        VALANDNAME_ENTRY(SPI_GETMENUSHOWDELAY),
-        VALANDNAME_ENTRY(SPI_SETMENUDROPALIGNMENT),
-        VALANDNAME_ENTRY(SPI_SETMENUFADE),
-        VALANDNAME_ENTRY(SPI_SETMENUSHOWDELAY),
-        VALANDNAME_ENTRY(SPI_GETLOWPOWERACTIVE),
-        VALANDNAME_ENTRY(SPI_GETLOWPOWERTIMEOUT),
-        VALANDNAME_ENTRY(SPI_GETPOWEROFFACTIVE),
-        VALANDNAME_ENTRY(SPI_GETPOWEROFFTIMEOUT),
-        VALANDNAME_ENTRY(SPI_SETLOWPOWERACTIVE),
-        VALANDNAME_ENTRY(SPI_SETLOWPOWERTIMEOUT),
-        VALANDNAME_ENTRY(SPI_SETPOWEROFFACTIVE),
-        VALANDNAME_ENTRY(SPI_SETPOWEROFFTIMEOUT),
-        VALANDNAME_ENTRY(SPI_GETSCREENSAVEACTIVE),
-        VALANDNAME_ENTRY(SPI_GETSCREENSAVERRUNNING),
-        VALANDNAME_ENTRY(SPI_GETSCREENSAVESECURE),
-        VALANDNAME_ENTRY(SPI_GETSCREENSAVETIMEOUT),
-        VALANDNAME_ENTRY(SPI_SETSCREENSAVEACTIVE),
-        VALANDNAME_ENTRY(SPI_SETSCREENSAVERRUNNING),
-        VALANDNAME_ENTRY(SPI_SETSCREENSAVESECURE),
-        VALANDNAME_ENTRY(SPI_SETSCREENSAVETIMEOUT),
-        VALANDNAME_ENTRY(SPI_GETHUNGAPPTIMEOUT),
-        VALANDNAME_ENTRY(SPI_GETWAITTOKILLTIMEOUT),
-        VALANDNAME_ENTRY(SPI_GETWAITTOKILLSERVICETIMEOUT),
-        VALANDNAME_ENTRY(SPI_SETHUNGAPPTIMEOUT),
-        VALANDNAME_ENTRY(SPI_SETWAITTOKILLTIMEOUT),
-        VALANDNAME_ENTRY(SPI_SETWAITTOKILLSERVICETIMEOUT),
-        VALANDNAME_ENTRY(SPI_GETCOMBOBOXANIMATION),
-        VALANDNAME_ENTRY(SPI_GETCURSORSHADOW),
-        VALANDNAME_ENTRY(SPI_GETGRADIENTCAPTIONS),
-        VALANDNAME_ENTRY(SPI_GETHOTTRACKING),
-        VALANDNAME_ENTRY(SPI_GETLISTBOXSMOOTHSCROLLING),
-        VALANDNAME_ENTRY(SPI_GETMENUANIMATION),
-        VALANDNAME_ENTRY(SPI_GETMENUUNDERLINES),
-        VALANDNAME_ENTRY(SPI_GETSELECTIONFADE),
-        VALANDNAME_ENTRY(SPI_GETTOOLTIPANIMATION),
-        VALANDNAME_ENTRY(SPI_GETTOOLTIPFADE),
-        VALANDNAME_ENTRY(SPI_GETUIEFFECTS),
-        VALANDNAME_ENTRY(SPI_SETCOMBOBOXANIMATION),
-        VALANDNAME_ENTRY(SPI_SETCURSORSHADOW),
-        VALANDNAME_ENTRY(SPI_SETGRADIENTCAPTIONS),
-        VALANDNAME_ENTRY(SPI_SETHOTTRACKING),
-        VALANDNAME_ENTRY(SPI_SETLISTBOXSMOOTHSCROLLING),
-        VALANDNAME_ENTRY(SPI_SETMENUANIMATION),
-        VALANDNAME_ENTRY(SPI_SETMENUUNDERLINES),
-        VALANDNAME_ENTRY(SPI_SETSELECTIONFADE),
-        VALANDNAME_ENTRY(SPI_SETTOOLTIPANIMATION),
-        VALANDNAME_ENTRY(SPI_SETTOOLTIPFADE),
-        VALANDNAME_ENTRY(SPI_SETUIEFFECTS),
-        VALANDNAME_ENTRY(SPI_GETACTIVEWINDOWTRACKING),
-        VALANDNAME_ENTRY(SPI_GETACTIVEWNDTRKZORDER),
-        VALANDNAME_ENTRY(SPI_GETACTIVEWNDTRKTIMEOUT),
-        VALANDNAME_ENTRY(SPI_GETANIMATION), VALANDNAME_ENTRY(SPI_GETBORDER),
-        VALANDNAME_ENTRY(SPI_GETCARETWIDTH),
-        VALANDNAME_ENTRY(SPI_GETDOCKMOVING),
-        VALANDNAME_ENTRY(SPI_GETDRAGFROMMAXIMIZE),
-        VALANDNAME_ENTRY(SPI_GETDRAGFULLWINDOWS),
-        VALANDNAME_ENTRY(SPI_GETFOREGROUNDFLASHCOUNT),
-        VALANDNAME_ENTRY(SPI_GETFOREGROUNDLOCKTIMEOUT),
-        VALANDNAME_ENTRY(SPI_GETMINIMIZEDMETRICS),
-        VALANDNAME_ENTRY(SPI_GETMOUSEDOCKTHRESHOLD),
-        VALANDNAME_ENTRY(SPI_GETMOUSEDRAGOUTTHRESHOLD),
-        VALANDNAME_ENTRY(SPI_GETMOUSESIDEMOVETHRESHOLD),
-        VALANDNAME_ENTRY(SPI_GETNONCLIENTMETRICS),
-        VALANDNAME_ENTRY(SPI_GETPENDOCKTHRESHOLD),
-        VALANDNAME_ENTRY(SPI_GETPENDRAGOUTTHRESHOLD),
-        VALANDNAME_ENTRY(SPI_GETPENSIDEMOVETHRESHOLD),
-        VALANDNAME_ENTRY(SPI_GETSHOWIMEUI), VALANDNAME_ENTRY(SPI_GETSNAPSIZING),
-        VALANDNAME_ENTRY(SPI_GETWINARRANGING),
-        VALANDNAME_ENTRY(SPI_SETACTIVEWINDOWTRACKING),
-        VALANDNAME_ENTRY(SPI_SETACTIVEWNDTRKZORDER),
-        VALANDNAME_ENTRY(SPI_SETACTIVEWNDTRKTIMEOUT),
-        VALANDNAME_ENTRY(SPI_SETANIMATION), VALANDNAME_ENTRY(SPI_SETBORDER),
-        VALANDNAME_ENTRY(SPI_SETCARETWIDTH),
-        VALANDNAME_ENTRY(SPI_SETDOCKMOVING),
-        VALANDNAME_ENTRY(SPI_SETDRAGFROMMAXIMIZE),
-        VALANDNAME_ENTRY(SPI_SETDRAGFULLWINDOWS),
-        VALANDNAME_ENTRY(SPI_SETFOREGROUNDFLASHCOUNT),
-        VALANDNAME_ENTRY(SPI_SETFOREGROUNDLOCKTIMEOUT),
-        VALANDNAME_ENTRY(SPI_SETMINIMIZEDMETRICS),
-        VALANDNAME_ENTRY(SPI_SETMOUSEDOCKTHRESHOLD),
-        VALANDNAME_ENTRY(SPI_SETMOUSEDRAGOUTTHRESHOLD),
-        VALANDNAME_ENTRY(SPI_SETMOUSESIDEMOVETHRESHOLD),
-        VALANDNAME_ENTRY(SPI_SETNONCLIENTMETRICS),
-        VALANDNAME_ENTRY(SPI_SETPENDOCKTHRESHOLD),
-        VALANDNAME_ENTRY(SPI_SETPENDRAGOUTTHRESHOLD),
-        VALANDNAME_ENTRY(SPI_SETPENSIDEMOVETHRESHOLD),
-        VALANDNAME_ENTRY(SPI_SETSHOWIMEUI), VALANDNAME_ENTRY(SPI_SETSNAPSIZING),
-        VALANDNAME_ENTRY(SPI_SETWINARRANGING),
+  const static std::unordered_map<uint64_t, const char*> uiActionValues{
+      VALANDNAME_ENTRY(SPI_GETACCESSTIMEOUT),
+      VALANDNAME_ENTRY(SPI_GETAUDIODESCRIPTION),
+      VALANDNAME_ENTRY(SPI_GETCLIENTAREAANIMATION),
+      VALANDNAME_ENTRY(SPI_GETDISABLEOVERLAPPEDCONTENT),
+      VALANDNAME_ENTRY(SPI_GETFILTERKEYS),
+      VALANDNAME_ENTRY(SPI_GETFOCUSBORDERHEIGHT),
+      VALANDNAME_ENTRY(SPI_GETFOCUSBORDERWIDTH),
+      VALANDNAME_ENTRY(SPI_GETHIGHCONTRAST),
+      VALANDNAME_ENTRY(SPI_GETLOGICALDPIOVERRIDE),
+      VALANDNAME_ENTRY(SPI_SETLOGICALDPIOVERRIDE),
+      VALANDNAME_ENTRY(SPI_GETMESSAGEDURATION),
+      VALANDNAME_ENTRY(SPI_GETMOUSECLICKLOCK),
+      VALANDNAME_ENTRY(SPI_GETMOUSECLICKLOCKTIME),
+      VALANDNAME_ENTRY(SPI_GETMOUSEKEYS),
+      VALANDNAME_ENTRY(SPI_GETMOUSESONAR),
+      VALANDNAME_ENTRY(SPI_GETMOUSEVANISH),
+      VALANDNAME_ENTRY(SPI_GETSCREENREADER),
+      VALANDNAME_ENTRY(SPI_GETSERIALKEYS),
+      VALANDNAME_ENTRY(SPI_GETSHOWSOUNDS),
+      VALANDNAME_ENTRY(SPI_GETSOUNDSENTRY),
+      VALANDNAME_ENTRY(SPI_GETSTICKYKEYS),
+      VALANDNAME_ENTRY(SPI_GETTOGGLEKEYS),
+      VALANDNAME_ENTRY(SPI_SETACCESSTIMEOUT),
+      VALANDNAME_ENTRY(SPI_SETAUDIODESCRIPTION),
+      VALANDNAME_ENTRY(SPI_SETCLIENTAREAANIMATION),
+      VALANDNAME_ENTRY(SPI_SETDISABLEOVERLAPPEDCONTENT),
+      VALANDNAME_ENTRY(SPI_SETFILTERKEYS),
+      VALANDNAME_ENTRY(SPI_SETFOCUSBORDERHEIGHT),
+      VALANDNAME_ENTRY(SPI_SETFOCUSBORDERWIDTH),
+      VALANDNAME_ENTRY(SPI_SETHIGHCONTRAST),
+      VALANDNAME_ENTRY(SPI_SETMESSAGEDURATION),
+      VALANDNAME_ENTRY(SPI_SETMOUSECLICKLOCK),
+      VALANDNAME_ENTRY(SPI_SETMOUSECLICKLOCKTIME),
+      VALANDNAME_ENTRY(SPI_SETMOUSEKEYS),
+      VALANDNAME_ENTRY(SPI_SETMOUSESONAR),
+      VALANDNAME_ENTRY(SPI_SETMOUSEVANISH),
+      VALANDNAME_ENTRY(SPI_SETSCREENREADER),
+      VALANDNAME_ENTRY(SPI_SETSERIALKEYS),
+      VALANDNAME_ENTRY(SPI_SETSHOWSOUNDS),
+      VALANDNAME_ENTRY(SPI_SETSOUNDSENTRY),
+      VALANDNAME_ENTRY(SPI_SETSTICKYKEYS),
+      VALANDNAME_ENTRY(SPI_SETTOGGLEKEYS),
+      VALANDNAME_ENTRY(SPI_GETCLEARTYPE),
+      VALANDNAME_ENTRY(SPI_GETDESKWALLPAPER),
+      VALANDNAME_ENTRY(SPI_GETDROPSHADOW),
+      VALANDNAME_ENTRY(SPI_GETFLATMENU),
+      VALANDNAME_ENTRY(SPI_GETFONTSMOOTHING),
+      VALANDNAME_ENTRY(SPI_GETFONTSMOOTHINGCONTRAST),
+      VALANDNAME_ENTRY(SPI_GETFONTSMOOTHINGORIENTATION),
+      VALANDNAME_ENTRY(SPI_GETFONTSMOOTHINGTYPE),
+      VALANDNAME_ENTRY(SPI_GETWORKAREA),
+      VALANDNAME_ENTRY(SPI_SETCLEARTYPE),
+      VALANDNAME_ENTRY(SPI_SETCURSORS),
+      VALANDNAME_ENTRY(SPI_SETDESKPATTERN),
+      VALANDNAME_ENTRY(SPI_SETDESKWALLPAPER),
+      VALANDNAME_ENTRY(SPI_SETDROPSHADOW),
+      VALANDNAME_ENTRY(SPI_SETFLATMENU),
+      VALANDNAME_ENTRY(SPI_SETFONTSMOOTHING),
+      VALANDNAME_ENTRY(SPI_SETFONTSMOOTHINGCONTRAST),
+      VALANDNAME_ENTRY(SPI_SETFONTSMOOTHINGORIENTATION),
+      VALANDNAME_ENTRY(SPI_SETFONTSMOOTHINGTYPE),
+      VALANDNAME_ENTRY(SPI_SETWORKAREA),
+      VALANDNAME_ENTRY(SPI_GETICONMETRICS),
+      VALANDNAME_ENTRY(SPI_GETICONTITLELOGFONT),
+      VALANDNAME_ENTRY(SPI_GETICONTITLEWRAP),
+      VALANDNAME_ENTRY(SPI_ICONHORIZONTALSPACING),
+      VALANDNAME_ENTRY(SPI_ICONVERTICALSPACING),
+      VALANDNAME_ENTRY(SPI_SETICONMETRICS),
+      VALANDNAME_ENTRY(SPI_SETICONS),
+      VALANDNAME_ENTRY(SPI_SETICONTITLELOGFONT),
+      VALANDNAME_ENTRY(SPI_SETICONTITLEWRAP),
+      VALANDNAME_ENTRY(SPI_GETBEEP),
+      VALANDNAME_ENTRY(SPI_GETBLOCKSENDINPUTRESETS),
+      VALANDNAME_ENTRY(SPI_GETCONTACTVISUALIZATION),
+      VALANDNAME_ENTRY(SPI_SETCONTACTVISUALIZATION),
+      VALANDNAME_ENTRY(SPI_GETDEFAULTINPUTLANG),
+      VALANDNAME_ENTRY(SPI_GETGESTUREVISUALIZATION),
+      VALANDNAME_ENTRY(SPI_SETGESTUREVISUALIZATION),
+      VALANDNAME_ENTRY(SPI_GETKEYBOARDCUES),
+      VALANDNAME_ENTRY(SPI_GETKEYBOARDDELAY),
+      VALANDNAME_ENTRY(SPI_GETKEYBOARDPREF),
+      VALANDNAME_ENTRY(SPI_GETKEYBOARDSPEED),
+      VALANDNAME_ENTRY(SPI_GETMOUSE),
+      VALANDNAME_ENTRY(SPI_GETMOUSEHOVERHEIGHT),
+      VALANDNAME_ENTRY(SPI_GETMOUSEHOVERTIME),
+      VALANDNAME_ENTRY(SPI_GETMOUSEHOVERWIDTH),
+      VALANDNAME_ENTRY(SPI_GETMOUSESPEED),
+      VALANDNAME_ENTRY(SPI_GETMOUSETRAILS),
+      VALANDNAME_ENTRY(SPI_GETMOUSEWHEELROUTING),
+      VALANDNAME_ENTRY(SPI_SETMOUSEWHEELROUTING),
+      VALANDNAME_ENTRY(SPI_GETPENVISUALIZATION),
+      VALANDNAME_ENTRY(SPI_SETPENVISUALIZATION),
+      VALANDNAME_ENTRY(SPI_GETSNAPTODEFBUTTON),
+      VALANDNAME_ENTRY(SPI_GETSYSTEMLANGUAGEBAR),
+      VALANDNAME_ENTRY(SPI_SETSYSTEMLANGUAGEBAR),
+      VALANDNAME_ENTRY(SPI_GETTHREADLOCALINPUTSETTINGS),
+      VALANDNAME_ENTRY(SPI_SETTHREADLOCALINPUTSETTINGS),
+      VALANDNAME_ENTRY(SPI_GETWHEELSCROLLCHARS),
+      VALANDNAME_ENTRY(SPI_GETWHEELSCROLLLINES),
+      VALANDNAME_ENTRY(SPI_SETBEEP),
+      VALANDNAME_ENTRY(SPI_SETBLOCKSENDINPUTRESETS),
+      VALANDNAME_ENTRY(SPI_SETDEFAULTINPUTLANG),
+      VALANDNAME_ENTRY(SPI_SETDOUBLECLICKTIME),
+      VALANDNAME_ENTRY(SPI_SETDOUBLECLKHEIGHT),
+      VALANDNAME_ENTRY(SPI_SETDOUBLECLKWIDTH),
+      VALANDNAME_ENTRY(SPI_SETKEYBOARDCUES),
+      VALANDNAME_ENTRY(SPI_SETKEYBOARDDELAY),
+      VALANDNAME_ENTRY(SPI_SETKEYBOARDPREF),
+      VALANDNAME_ENTRY(SPI_SETKEYBOARDSPEED),
+      VALANDNAME_ENTRY(SPI_SETLANGTOGGLE),
+      VALANDNAME_ENTRY(SPI_SETMOUSE),
+      VALANDNAME_ENTRY(SPI_SETMOUSEBUTTONSWAP),
+      VALANDNAME_ENTRY(SPI_SETMOUSEHOVERHEIGHT),
+      VALANDNAME_ENTRY(SPI_SETMOUSEHOVERTIME),
+      VALANDNAME_ENTRY(SPI_SETMOUSEHOVERWIDTH),
+      VALANDNAME_ENTRY(SPI_SETMOUSESPEED),
+      VALANDNAME_ENTRY(SPI_SETMOUSETRAILS),
+      VALANDNAME_ENTRY(SPI_SETSNAPTODEFBUTTON),
+      VALANDNAME_ENTRY(SPI_SETWHEELSCROLLCHARS),
+      VALANDNAME_ENTRY(SPI_SETWHEELSCROLLLINES),
+      VALANDNAME_ENTRY(SPI_GETMENUDROPALIGNMENT),
+      VALANDNAME_ENTRY(SPI_GETMENUFADE),
+      VALANDNAME_ENTRY(SPI_GETMENUSHOWDELAY),
+      VALANDNAME_ENTRY(SPI_SETMENUDROPALIGNMENT),
+      VALANDNAME_ENTRY(SPI_SETMENUFADE),
+      VALANDNAME_ENTRY(SPI_SETMENUSHOWDELAY),
+      VALANDNAME_ENTRY(SPI_GETLOWPOWERACTIVE),
+      VALANDNAME_ENTRY(SPI_GETLOWPOWERTIMEOUT),
+      VALANDNAME_ENTRY(SPI_GETPOWEROFFACTIVE),
+      VALANDNAME_ENTRY(SPI_GETPOWEROFFTIMEOUT),
+      VALANDNAME_ENTRY(SPI_SETLOWPOWERACTIVE),
+      VALANDNAME_ENTRY(SPI_SETLOWPOWERTIMEOUT),
+      VALANDNAME_ENTRY(SPI_SETPOWEROFFACTIVE),
+      VALANDNAME_ENTRY(SPI_SETPOWEROFFTIMEOUT),
+      VALANDNAME_ENTRY(SPI_GETSCREENSAVEACTIVE),
+      VALANDNAME_ENTRY(SPI_GETSCREENSAVERRUNNING),
+      VALANDNAME_ENTRY(SPI_GETSCREENSAVESECURE),
+      VALANDNAME_ENTRY(SPI_GETSCREENSAVETIMEOUT),
+      VALANDNAME_ENTRY(SPI_SETSCREENSAVEACTIVE),
+      VALANDNAME_ENTRY(SPI_SETSCREENSAVERRUNNING),
+      VALANDNAME_ENTRY(SPI_SETSCREENSAVESECURE),
+      VALANDNAME_ENTRY(SPI_SETSCREENSAVETIMEOUT),
+      VALANDNAME_ENTRY(SPI_GETHUNGAPPTIMEOUT),
+      VALANDNAME_ENTRY(SPI_GETWAITTOKILLTIMEOUT),
+      VALANDNAME_ENTRY(SPI_GETWAITTOKILLSERVICETIMEOUT),
+      VALANDNAME_ENTRY(SPI_SETHUNGAPPTIMEOUT),
+      VALANDNAME_ENTRY(SPI_SETWAITTOKILLTIMEOUT),
+      VALANDNAME_ENTRY(SPI_SETWAITTOKILLSERVICETIMEOUT),
+      VALANDNAME_ENTRY(SPI_GETCOMBOBOXANIMATION),
+      VALANDNAME_ENTRY(SPI_GETCURSORSHADOW),
+      VALANDNAME_ENTRY(SPI_GETGRADIENTCAPTIONS),
+      VALANDNAME_ENTRY(SPI_GETHOTTRACKING),
+      VALANDNAME_ENTRY(SPI_GETLISTBOXSMOOTHSCROLLING),
+      VALANDNAME_ENTRY(SPI_GETMENUANIMATION),
+      VALANDNAME_ENTRY(SPI_GETMENUUNDERLINES),
+      VALANDNAME_ENTRY(SPI_GETSELECTIONFADE),
+      VALANDNAME_ENTRY(SPI_GETTOOLTIPANIMATION),
+      VALANDNAME_ENTRY(SPI_GETTOOLTIPFADE),
+      VALANDNAME_ENTRY(SPI_GETUIEFFECTS),
+      VALANDNAME_ENTRY(SPI_SETCOMBOBOXANIMATION),
+      VALANDNAME_ENTRY(SPI_SETCURSORSHADOW),
+      VALANDNAME_ENTRY(SPI_SETGRADIENTCAPTIONS),
+      VALANDNAME_ENTRY(SPI_SETHOTTRACKING),
+      VALANDNAME_ENTRY(SPI_SETLISTBOXSMOOTHSCROLLING),
+      VALANDNAME_ENTRY(SPI_SETMENUANIMATION),
+      VALANDNAME_ENTRY(SPI_SETMENUUNDERLINES),
+      VALANDNAME_ENTRY(SPI_SETSELECTIONFADE),
+      VALANDNAME_ENTRY(SPI_SETTOOLTIPANIMATION),
+      VALANDNAME_ENTRY(SPI_SETTOOLTIPFADE),
+      VALANDNAME_ENTRY(SPI_SETUIEFFECTS),
+      VALANDNAME_ENTRY(SPI_GETACTIVEWINDOWTRACKING),
+      VALANDNAME_ENTRY(SPI_GETACTIVEWNDTRKZORDER),
+      VALANDNAME_ENTRY(SPI_GETACTIVEWNDTRKTIMEOUT),
+      VALANDNAME_ENTRY(SPI_GETANIMATION),
+      VALANDNAME_ENTRY(SPI_GETBORDER),
+      VALANDNAME_ENTRY(SPI_GETCARETWIDTH),
+      VALANDNAME_ENTRY(SPI_GETDOCKMOVING),
+      VALANDNAME_ENTRY(SPI_GETDRAGFROMMAXIMIZE),
+      VALANDNAME_ENTRY(SPI_GETDRAGFULLWINDOWS),
+      VALANDNAME_ENTRY(SPI_GETFOREGROUNDFLASHCOUNT),
+      VALANDNAME_ENTRY(SPI_GETFOREGROUNDLOCKTIMEOUT),
+      VALANDNAME_ENTRY(SPI_GETMINIMIZEDMETRICS),
+      VALANDNAME_ENTRY(SPI_GETMOUSEDOCKTHRESHOLD),
+      VALANDNAME_ENTRY(SPI_GETMOUSEDRAGOUTTHRESHOLD),
+      VALANDNAME_ENTRY(SPI_GETMOUSESIDEMOVETHRESHOLD),
+      VALANDNAME_ENTRY(SPI_GETNONCLIENTMETRICS),
+      VALANDNAME_ENTRY(SPI_GETPENDOCKTHRESHOLD),
+      VALANDNAME_ENTRY(SPI_GETPENDRAGOUTTHRESHOLD),
+      VALANDNAME_ENTRY(SPI_GETPENSIDEMOVETHRESHOLD),
+      VALANDNAME_ENTRY(SPI_GETSHOWIMEUI),
+      VALANDNAME_ENTRY(SPI_GETSNAPSIZING),
+      VALANDNAME_ENTRY(SPI_GETWINARRANGING),
+      VALANDNAME_ENTRY(SPI_SETACTIVEWINDOWTRACKING),
+      VALANDNAME_ENTRY(SPI_SETACTIVEWNDTRKZORDER),
+      VALANDNAME_ENTRY(SPI_SETACTIVEWNDTRKTIMEOUT),
+      VALANDNAME_ENTRY(SPI_SETANIMATION),
+      VALANDNAME_ENTRY(SPI_SETBORDER),
+      VALANDNAME_ENTRY(SPI_SETCARETWIDTH),
+      VALANDNAME_ENTRY(SPI_SETDOCKMOVING),
+      VALANDNAME_ENTRY(SPI_SETDRAGFROMMAXIMIZE),
+      VALANDNAME_ENTRY(SPI_SETDRAGFULLWINDOWS),
+      VALANDNAME_ENTRY(SPI_SETFOREGROUNDFLASHCOUNT),
+      VALANDNAME_ENTRY(SPI_SETFOREGROUNDLOCKTIMEOUT),
+      VALANDNAME_ENTRY(SPI_SETMINIMIZEDMETRICS),
+      VALANDNAME_ENTRY(SPI_SETMOUSEDOCKTHRESHOLD),
+      VALANDNAME_ENTRY(SPI_SETMOUSEDRAGOUTTHRESHOLD),
+      VALANDNAME_ENTRY(SPI_SETMOUSESIDEMOVETHRESHOLD),
+      VALANDNAME_ENTRY(SPI_SETNONCLIENTMETRICS),
+      VALANDNAME_ENTRY(SPI_SETPENDOCKTHRESHOLD),
+      VALANDNAME_ENTRY(SPI_SETPENDRAGOUTTHRESHOLD),
+      VALANDNAME_ENTRY(SPI_SETPENSIDEMOVETHRESHOLD),
+      VALANDNAME_ENTRY(SPI_SETSHOWIMEUI),
+      VALANDNAME_ENTRY(SPI_SETSNAPSIZING),
+      VALANDNAME_ENTRY(SPI_SETWINARRANGING),
   };
   AppendEnumValueInfo(str, value, uiActionValues, name);
 }
@@ -866,7 +1036,7 @@ nsAutoCString WmSizeParamInfo(uint64_t wParam, uint64_t lParam,
   return result;
 }
 
-const nsTArray<EnumValueAndName> windowPositionFlags = {
+MOZ_RUNINIT const nsTArray<EnumValueAndName> windowPositionFlags = {
     VALANDNAME_ENTRY(SWP_DRAWFRAME),  VALANDNAME_ENTRY(SWP_HIDEWINDOW),
     VALANDNAME_ENTRY(SWP_NOACTIVATE), VALANDNAME_ENTRY(SWP_NOCOPYBITS),
     VALANDNAME_ENTRY(SWP_NOMOVE),     VALANDNAME_ENTRY(SWP_NOOWNERZORDER),
@@ -874,6 +1044,25 @@ const nsTArray<EnumValueAndName> windowPositionFlags = {
     VALANDNAME_ENTRY(SWP_NOSIZE),     VALANDNAME_ENTRY(SWP_NOZORDER),
     VALANDNAME_ENTRY(SWP_SHOWWINDOW),
 };
+
+static std::unordered_map<uint64_t, const char*> const& HitTestResults() {
+  static const std::unordered_map<uint64_t, const char*> data{
+      VALANDNAME_ENTRY(HTBORDER),     VALANDNAME_ENTRY(HTBOTTOM),
+      VALANDNAME_ENTRY(HTBOTTOMLEFT), VALANDNAME_ENTRY(HTBOTTOMRIGHT),
+      VALANDNAME_ENTRY(HTCAPTION),    VALANDNAME_ENTRY(HTCLIENT),
+      VALANDNAME_ENTRY(HTCLOSE),      VALANDNAME_ENTRY(HTERROR),
+      VALANDNAME_ENTRY(HTGROWBOX),    VALANDNAME_ENTRY(HTHELP),
+      VALANDNAME_ENTRY(HTHSCROLL),    VALANDNAME_ENTRY(HTLEFT),
+      VALANDNAME_ENTRY(HTMENU),       VALANDNAME_ENTRY(HTMAXBUTTON),
+      VALANDNAME_ENTRY(HTMINBUTTON),  VALANDNAME_ENTRY(HTNOWHERE),
+      VALANDNAME_ENTRY(HTREDUCE),     VALANDNAME_ENTRY(HTRIGHT),
+      VALANDNAME_ENTRY(HTSIZE),       VALANDNAME_ENTRY(HTSYSMENU),
+      VALANDNAME_ENTRY(HTTOP),        VALANDNAME_ENTRY(HTTOPLEFT),
+      VALANDNAME_ENTRY(HTTOPRIGHT),   VALANDNAME_ENTRY(HTTRANSPARENT),
+      VALANDNAME_ENTRY(HTVSCROLL),    VALANDNAME_ENTRY(HTZOOM),
+  };
+  return data;
+}
 
 void WindowPosParamInfo(nsCString& str, uint64_t value, const char* name,
                         bool /* isPreCall */) {
@@ -961,22 +1150,7 @@ void ActivateWParamInfo(nsCString& result, uint64_t wParam, const char* name,
 
 void HitTestParamInfo(nsCString& result, uint64_t param, const char* name,
                       bool /* isPreCall */) {
-  const static std::unordered_map<uint64_t, const char*> hitTestResults{
-      VALANDNAME_ENTRY(HTBORDER),     VALANDNAME_ENTRY(HTBOTTOM),
-      VALANDNAME_ENTRY(HTBOTTOMLEFT), VALANDNAME_ENTRY(HTBOTTOMRIGHT),
-      VALANDNAME_ENTRY(HTCAPTION),    VALANDNAME_ENTRY(HTCLIENT),
-      VALANDNAME_ENTRY(HTCLOSE),      VALANDNAME_ENTRY(HTERROR),
-      VALANDNAME_ENTRY(HTGROWBOX),    VALANDNAME_ENTRY(HTHELP),
-      VALANDNAME_ENTRY(HTHSCROLL),    VALANDNAME_ENTRY(HTLEFT),
-      VALANDNAME_ENTRY(HTMENU),       VALANDNAME_ENTRY(HTMAXBUTTON),
-      VALANDNAME_ENTRY(HTMINBUTTON),  VALANDNAME_ENTRY(HTNOWHERE),
-      VALANDNAME_ENTRY(HTREDUCE),     VALANDNAME_ENTRY(HTRIGHT),
-      VALANDNAME_ENTRY(HTSIZE),       VALANDNAME_ENTRY(HTSYSMENU),
-      VALANDNAME_ENTRY(HTTOP),        VALANDNAME_ENTRY(HTTOPLEFT),
-      VALANDNAME_ENTRY(HTTOPRIGHT),   VALANDNAME_ENTRY(HTTRANSPARENT),
-      VALANDNAME_ENTRY(HTVSCROLL),    VALANDNAME_ENTRY(HTZOOM),
-  };
-  AppendEnumValueInfo(result, param, hitTestResults, name);
+  AppendEnumValueInfo(result, param, HitTestResults(), name);
 }
 
 void SetCursorLParamInfo(nsCString& result, uint64_t lParam,
@@ -1031,36 +1205,72 @@ void ResolutionParamInfo(nsCString& result, uint64_t value, const char* name,
                       HIWORD(value));
 }
 
+void PointerIdWParamInfo(nsCString& result, uint64_t value,
+                         const char* /* name */, bool /* isPreCall */) {
+  result.AppendPrintf("id=0x%02x ", GET_POINTERID_WPARAM(value));
+}
+
+void PointerButtonsWParamInfo(nsCString& result, uint64_t value,
+                              const char* /* name */, bool /* isPreCall */) {
+  constexpr auto bit = [](bool b) -> char { return b ? '1' : '0'; };
+  constexpr auto x = [](bool b) -> char { return b ? 'X' : '.'; };
+
+  PointerIdWParamInfo(result, value, "", false);
+  result.AppendPrintf(
+      " [new=%c primary=%c live=%c contact=%c] buttons=%c%c%c%c%c",
+      // clang-format off
+      bit(IS_POINTER_NEW_WPARAM(value)),
+      bit(IS_POINTER_PRIMARY_WPARAM(value)),
+      bit(IS_POINTER_INRANGE_WPARAM(value)),
+      bit(IS_POINTER_INCONTACT_WPARAM(value)),
+
+      x(IS_POINTER_FIRSTBUTTON_WPARAM(value)),
+      x(IS_POINTER_SECONDBUTTON_WPARAM(value)),
+      x(IS_POINTER_THIRDBUTTON_WPARAM(value)),
+      x(IS_POINTER_FOURTHBUTTON_WPARAM(value)),
+      x(IS_POINTER_FIFTHBUTTON_WPARAM(value))
+      // clang-format on
+  );
+}
+
+void PointerHittestWParamInfo(nsCString& result, uint64_t value,
+                              const char* /* name */, bool /* isPreCall */) {
+  PointerIdWParamInfo(result, value, "", false);
+  HitTestParamInfo(result, HIWORD(value), "hittest", false);
+}
+
+void PointerWheelWParamInfo(nsCString& result, uint64_t value,
+                            const char* /* name */, bool /* isPreCall */) {
+  PointerIdWParamInfo(result, value, "", false);
+
+  signed short const delta = GET_WHEEL_DELTA_WPARAM(value);
+  result.AppendPrintf(" delta=%d", delta);
+}
+
 // Window message with default wParam/lParam logging
-#define ENTRY(_msg)                 \
-  {                                 \
-    _msg, {                         \
-#      _msg, _msg, DefaultParamInfo \
-    }                               \
+#define ENTRY(_msg)                         \
+  {                                         \
+    _msg, { #_msg, _msg, DefaultParamInfo } \
   }
 // Window message with no parameters
 #define ENTRY_WITH_NO_PARAM_INFO(_msg) \
   {                                    \
-    _msg, {                            \
-#      _msg, _msg, nullptr             \
-    }                                  \
+    _msg, { #_msg, _msg, nullptr }     \
   }
 // Window message with custom parameter logging functions
 #define ENTRY_WITH_CUSTOM_PARAM_INFO(_msg, paramInfoFn) \
   {                                                     \
-    _msg, {                                             \
-#      _msg, _msg, paramInfoFn                          \
-    }                                                   \
+    _msg, { #_msg, _msg, paramInfoFn }                  \
   }
 // Window message with separate custom wParam and lParam logging functions
 #define ENTRY_WITH_SPLIT_PARAM_INFOS(_msg, wParamInfoFn, wParamName,           \
                                      lParamInfoFn, lParamName)                 \
   {                                                                            \
     _msg, {                                                                    \
-#      _msg, _msg, nullptr, wParamInfoFn, wParamName, lParamInfoFn, lParamName \
+      #_msg, _msg, nullptr, wParamInfoFn, wParamName, lParamInfoFn, lParamName \
     }                                                                          \
   }
-std::unordered_map<UINT, EventMsgInfo> gAllEvents = {
+MOZ_RUNINIT std::unordered_map<UINT, EventMsgInfo> gAllEvents = {
     ENTRY_WITH_NO_PARAM_INFO(WM_NULL),
     ENTRY_WITH_SPLIT_PARAM_INFOS(WM_CREATE, nullptr, nullptr,
                                  CreateStructParamInfo, "createStruct"),
@@ -1422,6 +1632,31 @@ std::unordered_map<UINT, EventMsgInfo> gAllEvents = {
     ENTRY(WM_EXITSIZEMOVE),
     ENTRY(WM_DROPFILES),
     ENTRY(WM_MDIREFRESHMENU),
+    ENTRY(WM_TOUCH),
+
+    // clang-format off
+    ENTRY_WITH_SPLIT_PARAM_INFOS(WM_NCPOINTERUPDATE, PointerHittestWParamInfo, "", PointParamInfo, "pos"),
+    ENTRY_WITH_SPLIT_PARAM_INFOS(WM_NCPOINTERDOWN, PointerHittestWParamInfo, "", PointParamInfo, "pos"),
+    ENTRY_WITH_SPLIT_PARAM_INFOS(WM_NCPOINTERUP, PointerHittestWParamInfo, "", PointParamInfo, "pos"),
+    ENTRY_WITH_SPLIT_PARAM_INFOS(WM_POINTERUPDATE, PointerButtonsWParamInfo, "", PointParamInfo, "pos"),
+    ENTRY_WITH_SPLIT_PARAM_INFOS(WM_POINTERDOWN, PointerButtonsWParamInfo, "", PointParamInfo, "pos"),
+    ENTRY_WITH_SPLIT_PARAM_INFOS(WM_POINTERUP, PointerButtonsWParamInfo, "", PointParamInfo, "pos"),
+    // ENTER/LEAVE don't actually use all the flags, but it's probably not worth
+    // customizing the function for them
+    ENTRY_WITH_SPLIT_PARAM_INFOS(WM_POINTERENTER, PointerButtonsWParamInfo, "", PointParamInfo, "pos"),
+    ENTRY_WITH_SPLIT_PARAM_INFOS(WM_POINTERLEAVE, PointerButtonsWParamInfo, "", PointParamInfo, "pos"),
+    ENTRY_WITH_SPLIT_PARAM_INFOS(WM_POINTERACTIVATE, PointerHittestWParamInfo, "", PointParamInfo, "pos"),
+    ENTRY_WITH_SPLIT_PARAM_INFOS(WM_POINTERCAPTURECHANGED, PointerIdWParamInfo, "", HexParamInfo, "captorHwnd"),
+    ENTRY(WM_TOUCHHITTESTING), /* relevant LParamInfoFn not currently implemented */
+    ENTRY_WITH_SPLIT_PARAM_INFOS(WM_POINTERWHEEL, PointerWheelWParamInfo, "", PointParamInfo, "pos"),
+    ENTRY_WITH_SPLIT_PARAM_INFOS(WM_POINTERHWHEEL, PointerWheelWParamInfo, "", PointParamInfo, "pos"),
+    // clang-format on
+
+    ENTRY_WITH_NO_PARAM_INFO(DM_POINTERHITTEST),
+    ENTRY_WITH_NO_PARAM_INFO(WM_POINTERROUTEDTO),
+    ENTRY_WITH_NO_PARAM_INFO(WM_POINTERROUTEDAWAY),
+    ENTRY_WITH_NO_PARAM_INFO(WM_POINTERROUTEDRELEASED),
+
     ENTRY(WM_IME_SETCONTEXT),
     ENTRY(WM_IME_NOTIFY),
     ENTRY(WM_IME_CONTROL),

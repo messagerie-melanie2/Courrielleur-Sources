@@ -7,7 +7,7 @@
 const {
   createFactory,
   createElement,
-} = require("resource://devtools/client/shared/vendor/react.js");
+} = require("resource://devtools/client/shared/vendor/react.mjs");
 const {
   Provider,
 } = require("resource://devtools/client/shared/vendor/react-redux.js");
@@ -32,7 +32,7 @@ const CompatibilityApp = createFactory(
 );
 
 class CompatibilityView {
-  constructor(inspector, window) {
+  constructor(inspector) {
     this.inspector = inspector;
 
     this.inspector.store.injectReducer("compatibility", compatibilityReducer);
@@ -133,7 +133,7 @@ class CompatibilityView {
     );
   }
 
-  _parseMarkup(str) {
+  _parseMarkup() {
     // Using a BrowserLoader for the inspector is currently blocked on performance regressions,
     // see Bug 1471853.
     throw new Error(

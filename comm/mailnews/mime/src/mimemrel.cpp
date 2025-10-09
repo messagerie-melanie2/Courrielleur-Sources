@@ -96,9 +96,12 @@
 
    = free all the cached data
  */
+
+#include "mimehdrs.h"
 #include "nsCOMPtr.h"
 #include "mimemrel.h"
 #include "mimemapl.h"
+#include "nsMailHeaders.h"
 #include "prmem.h"
 #include "prprf.h"
 #include "prlog.h"
@@ -108,15 +111,9 @@
 #include "msgCore.h"
 #include "nsMimeStringResources.h"
 #include "nsMimeTypes.h"
-#include "mimebuf.h"
 #include "nsMsgUtils.h"
+#include "nsMsgCompUtils.h"
 #include <ctype.h>
-
-//
-// External Defines...
-//
-
-extern nsresult nsMsgCreateTempFile(const char* tFileName, nsIFile** tFile);
 
 #define MIME_SUPERCLASS mimeMultipartClass
 MimeDefClass(MimeMultipartRelated, MimeMultipartRelatedClass,
@@ -689,7 +686,7 @@ static int MimeMultipartRelated_parse_child_line(MimeObject* obj,
 static int real_write(MimeMultipartRelated* relobj, const char* buf,
                       int32_t size) {
   MimeObject* obj = (MimeObject*)relobj;
-  void* closure = relobj->real_output_closure;
+  MimeClosure closure = relobj->real_output_closure;
 
 #ifdef MIME_DRAFTS
   if (obj->options && obj->options->decompose_file_p &&
@@ -700,10 +697,15 @@ static int real_write(MimeMultipartRelated* relobj, const char* buf,
     // then restore it when we are done. Not sure if we shouldn't just turn it
     // off permanently though.
 
-    mime_draft_data* mdd = (mime_draft_data*)obj->options->stream_closure;
+    mime_draft_data* mdd = obj->options->stream_closure.AsMimeDraftData();
+    if (!mdd) {
+      return -1;
+    }
+
     MimeDecoderData* old_decoder_data = mdd->decoder_data;
     mdd->decoder_data = nullptr;
-    int status = obj->options->decompose_file_output_fn(buf, size, (void*)mdd);
+    int status = obj->options->decompose_file_output_fn(
+        buf, size, MimeClosure(MimeClosure::isMimeDraftData, mdd));
     mdd->decoder_data = old_decoder_data;
     return status;
   } else
@@ -739,8 +741,9 @@ static bool accept_related_part(MimeMultipartRelated* relobj,
   /* before accepting it as a valid related part, make sure we
      are able to display it inline as an embedded object. Else just ignore
      it, that will prevent any bad surprise... */
-  MimeObjectClass* clazz = mime_find_class(
-      part_obj->content_type, part_obj->headers, part_obj->options, false);
+  MimeObjectClass* clazz =
+      mime_find_class(part_obj->content_type, part_obj->headers,
+                      part_obj->options, false, nullptr, nullptr);
   if (clazz ? clazz->displayable_inline_p(clazz, part_obj->headers) : false)
     return true;
 
@@ -899,8 +902,12 @@ static int flush_tag(MimeMultipartRelated* relobj) {
 }
 
 static int mime_multipart_related_output_fn(const char* buf, int32_t size,
-                                            void* stream_closure) {
-  MimeMultipartRelated* relobj = (MimeMultipartRelated*)stream_closure;
+                                            MimeClosure stream_closure) {
+  MimeMultipartRelated* relobj = stream_closure.AsMimeMultipartRelated();
+  if (!relobj) {
+    return -1;
+  }
+
   char* ptr;
   int32_t delta;
   int status;
@@ -965,7 +972,8 @@ static int MimeMultipartRelated_parse_eof(MimeObject* obj, bool abort_p) {
   relobj->real_output_closure = obj->options->output_closure;
 
   obj->options->output_fn = mime_multipart_related_output_fn;
-  obj->options->output_closure = obj;
+  obj->options->output_closure =
+      MimeClosure(MimeClosure::isMimeMultipartRelated, relobj);
 
   body = mime_create(((ct && *ct) ? ct : (dct ? dct : TEXT_HTML)),
                      relobj->buffered_hdrs, obj->options);
@@ -1024,8 +1032,9 @@ static int MimeMultipartRelated_parse_eof(MimeObject* obj, bool abort_p) {
     /* Read it out of memory. */
     PR_ASSERT(!relobj->file_buffer && !relobj->input_file_stream);
 
-    status = body->clazz->parse_buffer(relobj->head_buffer,
-                                       relobj->head_buffer_fp, body);
+    status =
+        body->clazz->parse_buffer(relobj->head_buffer, relobj->head_buffer_fp,
+                                  MimeClosure(MimeClosure::isMimeObject, body));
   } else if (relobj->file_buffer) {
     /* Read it off disk. */
     char* buf;
@@ -1066,7 +1075,8 @@ static int MimeMultipartRelated_parse_eof(MimeObject* obj, bool abort_p) {
            some user events and other input sources get processed.
            Oh well. */
 
-        status = body->clazz->parse_buffer(buf, bytesRead, body);
+        status = body->clazz->parse_buffer(
+            buf, bytesRead, MimeClosure(MimeClosure::isMimeObject, body));
         if (status < 0) break;
       }
     }
@@ -1099,10 +1109,8 @@ FAIL:
   return status;
 }
 
-static int MimeMultipartRelatedClassInitialize(
-    MimeMultipartRelatedClass* clazz) {
-  MimeObjectClass* oclass = (MimeObjectClass*)clazz;
-  MimeMultipartClass* mclass = (MimeMultipartClass*)clazz;
+static int MimeMultipartRelatedClassInitialize(MimeObjectClass* oclass) {
+  MimeMultipartClass* mclass = (MimeMultipartClass*)oclass;
   PR_ASSERT(!oclass->class_initialized);
   oclass->initialize = MimeMultipartRelated_initialize;
   oclass->finalize = MimeMultipartRelated_finalize;

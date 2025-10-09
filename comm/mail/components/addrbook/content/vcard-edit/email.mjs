@@ -3,11 +3,9 @@
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
 const lazy = {};
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "VCardPropertyEntry",
-  "resource:///modules/VCardUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  VCardPropertyEntry: "resource:///modules/VCardUtils.sys.mjs",
+});
 
 /**
  * @implements {VCardPropertyEntryView}
@@ -32,8 +30,8 @@ export class VCardEmailComponent extends HTMLTableRowElement {
     }
     this.hasConnected = true;
 
-    let template = document.getElementById("template-vcard-edit-email");
-    let clonedTemplate = template.content.cloneNode(true);
+    const template = document.getElementById("template-vcard-edit-email");
+    const clonedTemplate = template.content.cloneNode(true);
     this.appendChild(clonedTemplate);
 
     this.emailEl = this.querySelector('input[type="email"]');
@@ -79,7 +77,7 @@ export class VCardEmailComponent extends HTMLTableRowElement {
   fromVCardPropertyEntryToUI() {
     this.emailEl.value = this.vCardPropertyEntry.value;
 
-    let pref = this.vCardPropertyEntry.params.pref;
+    const pref = this.vCardPropertyEntry.params.pref;
     if (pref === "1") {
       this.checkboxEl.checked = true;
     }

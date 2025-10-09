@@ -7,11 +7,23 @@
   ### DO NOT edit it by hand.                                       ###
 if CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
     CXXFLAGS += CONFIG["MOZ_GTK3_CFLAGS"]
+CXXFLAGS += CONFIG["MOZ_GBM_CFLAGS"]
+if not CONFIG["MOZ_SYSTEM_GBM"]:
+    LOCAL_INCLUDES += [ "/third_party/gbm/gbm/" ]
+CXXFLAGS += CONFIG["MOZ_LIBDRM_CFLAGS"]
+if not CONFIG["MOZ_SYSTEM_LIBDRM"]:
+    LOCAL_INCLUDES += [ "/third_party/drm/drm/",
+                        "/third_party/drm/drm/include/",
+                        "/third_party/drm/drm/include/libdrm" ]
+CXXFLAGS += CONFIG["MOZ_PIPEWIRE_CFLAGS"]
+if not CONFIG["MOZ_SYSTEM_PIPEWIRE"]:
+    LOCAL_INCLUDES += [ "/third_party/pipewire/" ]
 
 COMPILE_FLAGS["OS_INCLUDES"] = []
 AllowCompilerWarnings()
 
 DEFINES["ABSL_ALLOCATOR_NOTHROW"] = "1"
+DEFINES["PROTOBUF_ENABLE_DEBUG_LOGGING_MAY_LEAK_PII"] = "0"
 DEFINES["RTC_DAV1D_IN_INTERNAL_DECODER_FACTORY"] = True
 DEFINES["RTC_ENABLE_VP9"] = True
 DEFINES["USE_AURA"] = "1"
@@ -34,7 +46,7 @@ DEFINES["_LARGEFILE_SOURCE"] = True
 DEFINES["__STDC_CONSTANT_MACROS"] = True
 DEFINES["__STDC_FORMAT_MACROS"] = True
 
-FINAL_LIBRARY = "webrtc"
+FINAL_LIBRARY = "xul"
 
 
 LOCAL_INCLUDES += [
@@ -42,14 +54,9 @@ LOCAL_INCLUDES += [
     "!/third_party/libwebrtc/gen",
     "/gfx/angle/checkout/include/",
     "/ipc/chromium/src",
-    "/third_party/drm/drm/",
-    "/third_party/drm/drm/include/",
-    "/third_party/drm/drm/include/libdrm/",
-    "/third_party/gbm/gbm/",
+    "/third_party/abseil-cpp/",
     "/third_party/libepoxy/libepoxy/include/",
     "/third_party/libwebrtc/",
-    "/third_party/libwebrtc/third_party/abseil-cpp/",
-    "/third_party/pipewire/",
     "/tools/profiler/public"
 ]
 
@@ -70,12 +77,12 @@ if CONFIG["MOZ_DEBUG"] == "1":
     DEFINES["DYNAMIC_ANNOTATIONS_ENABLED"] = "1"
     DEFINES["_DEBUG"] = True
 
-if CONFIG["CPU_ARCH"] == "aarch64":
+if CONFIG["TARGET_CPU"] == "aarch64":
 
     DEFINES["WEBRTC_ARCH_ARM64"] = True
     DEFINES["WEBRTC_HAS_NEON"] = True
 
-if CONFIG["CPU_ARCH"] == "arm":
+if CONFIG["TARGET_CPU"] == "arm":
 
     CXXFLAGS += [
         "-mfpu=neon"
@@ -85,12 +92,12 @@ if CONFIG["CPU_ARCH"] == "arm":
     DEFINES["WEBRTC_ARCH_ARM_V7"] = True
     DEFINES["WEBRTC_HAS_NEON"] = True
 
-if CONFIG["CPU_ARCH"] == "mips32":
+if CONFIG["TARGET_CPU"] == "mips32":
 
     DEFINES["MIPS32_LE"] = True
     DEFINES["MIPS_FPU_LE"] = True
 
-if CONFIG["CPU_ARCH"] == "x86":
+if CONFIG["TARGET_CPU"] == "x86":
 
     CXXFLAGS += [
         "-msse2"
@@ -98,7 +105,7 @@ if CONFIG["CPU_ARCH"] == "x86":
 
     DEFINES["WEBRTC_ENABLE_AVX2"] = True
 
-if CONFIG["CPU_ARCH"] == "x86_64":
+if CONFIG["TARGET_CPU"] == "x86_64":
 
     DEFINES["WEBRTC_ENABLE_AVX2"] = True
 

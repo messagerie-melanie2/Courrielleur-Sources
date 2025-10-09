@@ -2,10 +2,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
+const lazy = {};
+ChromeUtils.defineESModuleGetters(lazy, {
+  SelectableProfileService:
+    "resource:///modules/profiles/SelectableProfileService.sys.mjs",
+});
 
 /**
  * Implements nsIPromptCollection
+ *
  * @class PromptCollection
  */
 export class PromptCollection {
@@ -38,8 +43,8 @@ export class PromptCollection {
       return false;
     }
 
-    let contentViewer = browsingContext?.docShell?.contentViewer;
-    let modalType = contentViewer?.isTabModalPromptAllowed
+    let docViewer = browsingContext?.docShell?.docViewer;
+    let modalType = docViewer?.isTabModalPromptAllowed
       ? Ci.nsIPromptService.MODAL_TYPE_CONTENT
       : Ci.nsIPromptService.MODAL_TYPE_WINDOW;
     let buttonFlags =
@@ -64,45 +69,92 @@ export class PromptCollection {
   }
 
   async asyncBeforeUnloadCheck(browsingContext) {
-    let title;
-    let message;
-    let leaveLabel;
-    let stayLabel;
-
-    try {
-      title = this.stringBundles.dom.GetStringFromName("OnBeforeUnloadTitle");
-      message = this.stringBundles.dom.GetStringFromName(
-        "OnBeforeUnloadMessage2"
-      );
-      leaveLabel = this.stringBundles.dom.GetStringFromName(
-        "OnBeforeUnloadLeaveButton"
-      );
-      stayLabel = this.stringBundles.dom.GetStringFromName(
-        "OnBeforeUnloadStayButton"
-      );
-    } catch (exception) {
-      console.error("Failed to get strings from dom.properties");
-      return false;
-    }
-
-    let contentViewer = browsingContext?.docShell?.contentViewer;
-
+    const docViewer = browsingContext?.docShell?.docViewer;
     if (
-      (contentViewer && !contentViewer.isTabModalPromptAllowed) ||
+      (docViewer && !docViewer.isTabModalPromptAllowed) ||
       !browsingContext.ancestorsAreCurrent
     ) {
       console.error("Can't prompt from inactive content viewer");
       return true;
     }
 
-    let buttonFlags =
-      Ci.nsIPromptService.BUTTON_POS_0_DEFAULT |
-      (Ci.nsIPromptService.BUTTON_TITLE_IS_STRING *
-        Ci.nsIPromptService.BUTTON_POS_0) |
-      (Ci.nsIPromptService.BUTTON_TITLE_IS_STRING *
-        Ci.nsIPromptService.BUTTON_POS_1);
+    let originNoSuffix =
+      browsingContext.embedderElement?.contentPrincipal.originNoSuffix;
+    const isPDFjs = originNoSuffix === "resource://pdf.js";
+    const isProfilePage =
+      originNoSuffix === "about:newprofile" ||
+      originNoSuffix === "about:editprofile";
 
-    let result = await Services.prompt.asyncConfirmEx(
+    let title, message, leaveLabel, stayLabel, buttonFlags;
+    let args = {
+      // Tell the prompt service that this is a permit unload prompt
+      // so that it can set the appropriate flag on the detail object
+      // of the events it dispatches.
+      inPermitUnload: true,
+    };
+
+    try {
+      if (isPDFjs) {
+        title = this.stringBundles.dom.GetStringFromName(
+          "OnBeforeUnloadPDFjsTitle"
+        );
+        message = this.stringBundles.dom.GetStringFromName(
+          "OnBeforeUnloadPDFjsMessage"
+        );
+        buttonFlags =
+          Ci.nsIPromptService.BUTTON_POS_0_DEFAULT |
+          (Ci.nsIPrompt.BUTTON_TITLE_SAVE * Ci.nsIPrompt.BUTTON_POS_0) |
+          (Ci.nsIPrompt.BUTTON_TITLE_CANCEL * Ci.nsIPrompt.BUTTON_POS_1) |
+          (Ci.nsIPrompt.BUTTON_TITLE_DONT_SAVE * Ci.nsIPrompt.BUTTON_POS_2);
+        args.useTitle = true;
+        args.headerIconCSSValue =
+          "url('chrome://branding/content/document_pdf.svg')";
+      } else if (isProfilePage) {
+        title = this.stringBundles.dom.GetStringFromName(
+          "OnBeforeUnloadAboutNewProfileTitle"
+        );
+        let defaultName = lazy.SelectableProfileService.currentProfile.name;
+        message = this.stringBundles.dom.formatStringFromName(
+          "OnBeforeUnloadAboutNewProfileMessage",
+          [defaultName]
+        );
+        leaveLabel = this.stringBundles.dom.GetStringFromName(
+          "OnBeforeUnloadAboutNewProfileLeaveButton"
+        );
+        stayLabel = this.stringBundles.dom.GetStringFromName(
+          "OnBeforeUnloadAboutNewProfileStayButton"
+        );
+        buttonFlags =
+          Ci.nsIPromptService.BUTTON_POS_0_DEFAULT |
+          (Ci.nsIPromptService.BUTTON_TITLE_IS_STRING *
+            Ci.nsIPromptService.BUTTON_POS_0) |
+          (Ci.nsIPromptService.BUTTON_TITLE_IS_STRING *
+            Ci.nsIPromptService.BUTTON_POS_1);
+        args.useTitle = true;
+      } else {
+        title = this.stringBundles.dom.GetStringFromName("OnBeforeUnloadTitle");
+        message = this.stringBundles.dom.GetStringFromName(
+          "OnBeforeUnloadMessage2"
+        );
+        leaveLabel = this.stringBundles.dom.GetStringFromName(
+          "OnBeforeUnloadLeaveButton"
+        );
+        stayLabel = this.stringBundles.dom.GetStringFromName(
+          "OnBeforeUnloadStayButton"
+        );
+        buttonFlags =
+          Ci.nsIPromptService.BUTTON_POS_0_DEFAULT |
+          (Ci.nsIPromptService.BUTTON_TITLE_IS_STRING *
+            Ci.nsIPromptService.BUTTON_POS_0) |
+          (Ci.nsIPromptService.BUTTON_TITLE_IS_STRING *
+            Ci.nsIPromptService.BUTTON_POS_1);
+      }
+    } catch (exception) {
+      console.error("Failed to get strings from dom.properties");
+      return false;
+    }
+
+    const result = await Services.prompt.asyncConfirmEx(
       browsingContext,
       Services.prompt.MODAL_TYPE_CONTENT,
       title,
@@ -113,15 +165,49 @@ export class PromptCollection {
       null,
       null,
       false,
-      // Tell the prompt service that this is a permit unload prompt
-      // so that it can set the appropriate flag on the detail object
-      // of the events it dispatches.
-      { inPermitUnload: true }
+      args
     );
+    const buttonNumClicked = result
+      .QueryInterface(Ci.nsIPropertyBag2)
+      .get("buttonNumClicked");
+    if (isPDFjs) {
+      if (buttonNumClicked === 0) {
+        const savePdfPromise = new Promise(resolve => {
+          Services.obs.addObserver(
+            {
+              observe(_aSubject, aTopic) {
+                if (aTopic === "pdfjs:saveComplete") {
+                  Services.obs.removeObserver(this, aTopic);
+                  resolve();
+                }
+              },
+            },
+            "pdfjs:saveComplete"
+          );
+        });
+        const actor = browsingContext.currentWindowGlobal.getActor("Pdfjs");
+        actor.sendAsyncMessage("PDFJS:Save");
+        await savePdfPromise;
+      }
+      return buttonNumClicked !== 1;
+    } else if (isProfilePage) {
+      if (buttonNumClicked === 0) {
+        Services.prefs.setBoolPref(
+          "browser.profiles.profile-name.updated",
+          true
+        );
+      }
+      let gleanFn =
+        originNoSuffix === "about:newprofile"
+          ? "profilesNew"
+          : "profilesExisting";
+      let value = buttonNumClicked === 0 ? "leave" : "cancel";
+      Glean[gleanFn].alert.record({ value });
 
-    return (
-      result.QueryInterface(Ci.nsIPropertyBag2).get("buttonNumClicked") == 0
-    );
+      return buttonNumClicked !== 1;
+    }
+
+    return buttonNumClicked === 0;
   }
 
   confirmFolderUpload(browsingContext, directoryName) {
@@ -156,7 +242,7 @@ export class PromptCollection {
         Services.prompt.MODAL_TYPE_TAB,
         title,
         message,
-        buttonFlags,
+        buttonFlags | Ci.nsIPrompt.BUTTON_DELAY_ENABLE,
         acceptLabel,
         null,
         null,
@@ -176,7 +262,7 @@ const BUNDLES = {
 PromptCollection.prototype.stringBundles = {};
 
 for (const [bundleName, bundleUrl] of Object.entries(BUNDLES)) {
-  XPCOMUtils.defineLazyGetter(
+  ChromeUtils.defineLazyGetter(
     PromptCollection.prototype.stringBundles,
     bundleName,
     function () {

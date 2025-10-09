@@ -5,7 +5,22 @@
 @import url("chrome://messenger/skin/shared/spacesToolbar.css");
 
 @media (-moz-gtk-csd-available) {
-  :root[tabsintitlebar]:not([gtktiledwindow="true"]) .spaces-toolbar:not([hidden]) {
+  :root[customtitlebar]:not([gtktiledwindow="true"]) .spaces-toolbar:not([hidden]) {
     border-start-start-radius: env(-moz-gtk-csd-titlebar-radius);
+  }
+}
+
+:root[customtitlebar][sizemode="normal"]:not([gtktiledwindow="true"]) {
+  /* stylelint-disable-next-line media-query-no-invalid */
+  @media -moz-pref("widget.gtk.rounded-bottom-corners.enabled") {
+    .spaces-toolbar:not([hidden]) {
+      &:-moz-locale-dir(ltr) {
+        border-bottom-left-radius: env(-moz-gtk-csd-titlebar-radius);
+      }
+
+      &:-moz-locale-dir(rtl) {
+        border-bottom-right-radius: env(-moz-gtk-csd-titlebar-radius);
+      }
+    }
   }
 }

@@ -45,6 +45,7 @@ const serverDebugLevel = 0;
 async function createServer({
   type,
   baseOptions = {},
+  // eslint-disable-next-line no-shadow
   options = {},
   hostname,
   port,
@@ -252,6 +253,7 @@ const serverDefs = {
   smtp: {
     plain: {
       type: "smtp",
+      baseOptions: { username: "user", password: "password" },
       hostname: "test.test",
       port: 587,
     },
@@ -263,15 +265,54 @@ const serverDefs = {
     },
     tls: {
       type: "smtp",
-      baseOptions: { tlsCertFile: "valid" },
+      baseOptions: {
+        username: "user",
+        password: "password",
+        tlsCertFile: "valid",
+      },
       hostname: "test.test",
       port: 465,
+      aliases: [["mitm.test.test", 465]],
     },
     expiredTLS: {
       type: "smtp",
-      baseOptions: { tlsCertFile: "expired" },
+      baseOptions: {
+        username: "user",
+        password: "password",
+        tlsCertFile: "expired",
+      },
       hostname: "expired.test.test",
       port: 465,
+    },
+    notYetValidTLS: {
+      type: "smtp",
+      baseOptions: {
+        username: "user",
+        password: "password",
+        tlsCertFile: "notyetvalid",
+      },
+      hostname: "notyetvalid.test.test",
+      port: 465,
+    },
+    selfSignedTLS: {
+      type: "smtp",
+      baseOptions: {
+        username: "user",
+        password: "password",
+        tlsCertFile: "selfsigned",
+      },
+      hostname: "selfsigned.test.test",
+      port: 465,
+    },
+    oAuth: {
+      type: "smtp",
+      baseOptions: {
+        handler: ["OAUTH2"],
+        username: "user",
+        password: "access_token",
+      },
+      hostname: "test.test",
+      port: 587,
     },
   },
   nntp: {

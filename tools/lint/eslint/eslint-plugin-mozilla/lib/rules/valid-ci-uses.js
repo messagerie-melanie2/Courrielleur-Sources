@@ -17,18 +17,19 @@ const helpers = require("../helpers");
 const platformSpecificInterfaces = new Map([
   ["nsIAboutThirdParty", "windows"],
   ["nsIAboutWindowsMessages", "windows"],
-  ["nsIJumpListItem", "windows"],
-  ["nsIJumpListLink", "windows"],
-  ["nsIJumpListSeparator", "windows"],
-  ["nsIJumpListShortcut", "windows"],
+  ["nsIDefaultAgent", "windows"],
+  ["nsIJumpListBuilder", "windows"],
   ["nsITaskbarWindowPreview", "windows"],
   ["nsIWindowsAlertsService", "windows"],
+  ["nsIWindowsAlertNotification", "windows"],
+  ["nsIWindowsMutexFactory", "windows"],
   ["nsIWinAppHelper", "windows"],
   ["nsIWinTaskbar", "windows"],
   ["nsIWinTaskSchedulerService", "windows"],
   ["nsIWindowsRegKey", "windows"],
   ["nsIWindowsPackageManager", "windows"],
   ["nsIWindowsShellService", "windows"],
+  ["nsIWindowsUIUtils", "windows"],
   ["nsIAccessibleMacEvent", "darwin"],
   ["nsIAccessibleMacInterface", "darwin"],
   ["nsILocalFileMac", "darwin"],
@@ -54,8 +55,9 @@ const platformSpecificInterfaces = new Map([
   ["amIFoo", "any"],
   ["nsIMeh", "any"],
   // Can't easily detect android builds from ESLint at the moment.
-  ["nsIAndroidBridge", "any"],
-  ["nsIAndroidView", "any"],
+  ["nsIGeckoViewBridge", "any"],
+  ["nsIGeckoViewView", "any"],
+  ["nsIOhttpClientTest", "any"],
   // Code coverage is enabled only for certain builds (MOZ_CODE_COVERAGE).
   ["nsICodeCoverage", "any"],
   // Layout debugging is enabled only for certain builds (MOZ_LAYOUT_DEBUGGER).
@@ -91,7 +93,7 @@ function interfaceHasProperty(interfaceName, propertyName) {
 module.exports = {
   meta: {
     docs: {
-      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/valid-ci-uses.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/rules/valid-ci-uses.html",
     },
     messages: {
       missingInterface:

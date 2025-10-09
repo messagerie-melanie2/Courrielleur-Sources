@@ -6,27 +6,27 @@
 #include "WinIMEHandler.h"
 
 #include "IMMHandler.h"
-#include "mozilla/Preferences.h"
-#include "mozilla/StaticPrefs_intl.h"
-#include "mozilla/TextEvents.h"
-#include "mozilla/WindowsVersion.h"
-#include "nsWindowDefs.h"
-#include "WinTextEventDispatcherListener.h"
-
-#include "TSFTextStore.h"
-
+#include "KeyboardLayout.h"
 #include "OSKInputPaneManager.h"
 #include "OSKTabTipManager.h"
 #include "OSKVRManager.h"
-#include "nsLookAndFeel.h"
-#include "nsWindow.h"
-#include "WinUtils.h"
-#include "nsIWindowsRegKey.h"
+#include "TSFTextStore.h"
+#include "TSFUtils.h"
 #include "WindowsUIUtils.h"
-
+#include "WinTextEventDispatcherListener.h"
+#include "WinUtils.h"
+#include "mozilla/Preferences.h"
+#include "mozilla/StaticPrefs_intl.h"
+#include "mozilla/StaticPrefs_ui.h"
+#include "mozilla/TextEvents.h"
+#include "mozilla/Unused.h"
+#include "mozilla/WindowsVersion.h"
 #ifdef ACCESSIBILITY
 #  include "nsAccessibilityService.h"
 #endif  // #ifdef ACCESSIBILITY
+#include "nsIWindowsRegKey.h"
+#include "nsWindow.h"
+#include "nsWindowDefs.h"
 
 #include "shellapi.h"
 #include "shlobj.h"
@@ -39,7 +39,6 @@
 
 const char* kOskEnabled = "ui.osk.enabled";
 const char* kOskDetectPhysicalKeyboard = "ui.osk.detect_physical_keyboard";
-const char* kOskRequireWin10 = "ui.osk.require_win10";
 const char* kOskDebugReason = "ui.osk.debug.keyboardDisplayReason";
 
 namespace mozilla {
@@ -57,7 +56,6 @@ bool IMEHandler::sForceDisableCurrentIMM_IME = false;
 bool IMEHandler::sNativeCaretIsCreated = false;
 bool IMEHandler::sHasNativeCaretBeenRequested = false;
 
-bool IMEHandler::sIsInTSFMode = false;
 bool IMEHandler::sIsIMMEnabled = true;
 decltype(SetInputScopes)* IMEHandler::sSetInputScopes = nullptr;
 
@@ -66,11 +64,10 @@ static bool sDeterminedPowerPlatformRole = false;
 
 // static
 void IMEHandler::Initialize() {
-  TSFTextStore::Initialize();
-  sIsInTSFMode = TSFTextStore::IsInTSFMode();
+  TSFUtils::Initialize();
   sIsIMMEnabled =
-      !sIsInTSFMode || StaticPrefs::intl_tsf_support_imm_AtStartup();
-  if (!sIsInTSFMode) {
+      !TSFUtils::IsAvailable() || StaticPrefs::intl_tsf_support_imm_AtStartup();
+  if (!TSFUtils::IsAvailable()) {
     // When full TSFTextStore is not available, try to use SetInputScopes API
     // to enable at least InputScope. Use GET_MODULE_HANDLE_EX_FLAG_PIN to
     // ensure that msctf.dll will not be unloaded.
@@ -85,15 +82,13 @@ void IMEHandler::Initialize() {
   IMMHandler::Initialize();
 
   sForceDisableCurrentIMM_IME = IMMHandler::IsActiveIMEInBlockList();
+
+  mozilla::RunOnShutdown(IMEHandler::Terminate);
 }
 
 // static
 void IMEHandler::Terminate() {
-  if (sIsInTSFMode) {
-    TSFTextStore::Terminate();
-    sIsInTSFMode = false;
-  }
-
+  TSFUtils::Shutdown();
   IMMHandler::Terminate();
   WinTextEventDispatcherListener::Shutdown();
 }
@@ -101,8 +96,8 @@ void IMEHandler::Terminate() {
 // static
 void* IMEHandler::GetNativeData(nsWindow* aWindow, uint32_t aDataType) {
   if (aDataType == NS_RAW_NATIVE_IME_CONTEXT) {
-    if (IsTSFAvailable()) {
-      return TSFTextStore::GetThreadManager();
+    if (TSFUtils::IsAvailable()) {
+      return TSFUtils::GetThreadMgr();
     }
     IMEContext context(aWindow);
     if (context.IsValid()) {
@@ -120,21 +115,17 @@ void* IMEHandler::GetNativeData(nsWindow* aWindow, uint32_t aDataType) {
     // but composition may occur with dead key sequence.
     return aWindow;
   }
-
-  void* result = TSFTextStore::GetNativeData(aDataType);
-  if (!result || !(*(static_cast<void**>(result)))) {
-    return nullptr;
-  }
-  // XXX During the TSF module test, sIsInTSFMode must be true.  After that,
-  //     the value should be restored but currently, there is no way for that.
-  //     When the TSF test is enabled again, we need to fix this.  Perhaps,
-  //     sending a message can fix this.
-  sIsInTSFMode = true;
-  return result;
+  return nullptr;
 }
 
 // static
 bool IMEHandler::ProcessRawKeyMessage(const MSG& aMsg) {
+  if (StaticPrefs::ui_key_layout_load_when_first_needed()) {
+    // Getting instance creates the singleton instance and that will
+    // automatically load active keyboard layout data.  We should do that
+    // before TSF or TranslateMessage handles a key message.
+    Unused << KeyboardLayout::GetInstance();
+  }
   if (IsTSFAvailable()) {
     return TSFTextStore::ProcessRawKeyMessage(aMsg);
   }
@@ -214,6 +205,9 @@ bool IMEHandler::IsA11yHandlingNativeCaret() {
 }
 
 // static
+bool IMEHandler::IsTSFAvailable() { return TSFUtils::IsAvailable(); }
+
+// static
 bool IMEHandler::IsIMMActive() { return TSFTextStore::IsIMM_IMEActive(); }
 
 // static
@@ -267,8 +261,8 @@ nsresult IMEHandler::NotifyIME(nsWindow* aWindow,
       case NOTIFY_IME_OF_FOCUS: {
         sFocusedWindow = aWindow;
         IMMHandler::OnFocusChange(true, aWindow);
-        nsresult rv = TSFTextStore::OnFocusChange(true, aWindow,
-                                                  aWindow->GetInputContext());
+        nsresult rv = TSFUtils::OnFocusChange(TSFUtils::GotFocus::Yes, aWindow,
+                                              aWindow->GetInputContext());
         MaybeCreateNativeCaret(aWindow);
         IMEHandler::MaybeShowOnScreenKeyboard(aWindow,
                                               aWindow->GetInputContext());
@@ -278,8 +272,8 @@ nsresult IMEHandler::NotifyIME(nsWindow* aWindow,
         sFocusedWindow = nullptr;
         IMEHandler::MaybeDismissOnScreenKeyboard(aWindow);
         IMMHandler::OnFocusChange(false, aWindow);
-        return TSFTextStore::OnFocusChange(false, aWindow,
-                                           aWindow->GetInputContext());
+        return TSFUtils::OnFocusChange(TSFUtils::GotFocus::No, aWindow,
+                                       aWindow->GetInputContext());
       case NOTIFY_IME_OF_MOUSE_BUTTON_EVENT:
         // If IMM IME is active, we should send a mouse button event via IMM.
         if (IsIMMActive()) {
@@ -287,16 +281,28 @@ nsresult IMEHandler::NotifyIME(nsWindow* aWindow,
         }
         return TSFTextStore::OnMouseButtonEvent(aIMENotification);
       case REQUEST_TO_COMMIT_COMPOSITION:
-        if (TSFTextStore::IsComposingOn(aWindow)) {
+        // In the TSF world, a DLL might manage hidden composition and that
+        // might cause a crash if we don't terminate it and disassociate the
+        // context.  Therefore, we should always try to commit composition.
+        if (IsTSFAvailable()) {
           TSFTextStore::CommitComposition(false);
-        } else if (IsIMMActive()) {
+        }
+        // Even if we're in the TSF mode, the active IME may be IMM.  Therefore,
+        // we need to use IMM handler too.
+        if (IsIMMActive()) {
           IMMHandler::CommitComposition(aWindow);
         }
         return NS_OK;
       case REQUEST_TO_CANCEL_COMPOSITION:
-        if (TSFTextStore::IsComposingOn(aWindow)) {
+        // In the TSF world, a DLL might manage hidden composition and that
+        // might cause a crash if we don't terminate it and disassociate the
+        // context.  Therefore, we should always try to commit composition.
+        if (IsTSFAvailable()) {
           TSFTextStore::CommitComposition(true);
-        } else if (IsIMMActive()) {
+        }
+        // Even if we're in the TSF mode, the active IME may be IMM.  Therefore,
+        // we need to use IMM handler too.
+        if (IsIMMActive()) {
           IMMHandler::CancelComposition(aWindow);
         }
         return NS_OK;
@@ -338,12 +344,6 @@ nsresult IMEHandler::NotifyIME(nsWindow* aWindow,
       sFocusedWindow = nullptr;
       IMEHandler::MaybeDismissOnScreenKeyboard(aWindow);
       IMMHandler::OnFocusChange(false, aWindow);
-      // If a plugin gets focus while TSF has focus, we need to notify TSF of
-      // the blur.
-      if (TSFTextStore::ThinksHavingFocus()) {
-        return TSFTextStore::OnFocusChange(false, aWindow,
-                                           aWindow->GetInputContext());
-      }
       return NS_OK;
     default:
       return NS_ERROR_NOT_IMPLEMENTED;
@@ -354,7 +354,7 @@ nsresult IMEHandler::NotifyIME(nsWindow* aWindow,
 IMENotificationRequests IMEHandler::GetIMENotificationRequests() {
   if (IsTSFAvailable()) {
     if (!sIsIMMEnabled) {
-      return TSFTextStore::GetIMENotificationRequests();
+      return TSFUtils::GetIMENotificationRequests();
     }
     // Even if TSF is available, the active IME may be an IMM-IME.
     // Unfortunately, changing the result of GetIMENotificationRequests() while
@@ -362,7 +362,7 @@ IMENotificationRequests IMEHandler::GetIMENotificationRequests() {
     // ContentCacheInParent.  Therefore, we need to request whole notifications
     // which are necessary either IMMHandler or TSFTextStore.
     return IMMHandler::GetIMENotificationRequests() |
-           TSFTextStore::GetIMENotificationRequests();
+           TSFUtils::GetIMENotificationRequests();
   }
 
   return IMMHandler::GetIMENotificationRequests();
@@ -400,7 +400,7 @@ void IMEHandler::OnDestroyWindow(nsWindow* aWindow) {
 
   // We need to do nothing here for TSF. Just restore the default context
   // if it's been disassociated.
-  if (!sIsInTSFMode) {
+  if (!TSFUtils::IsAvailable()) {
     // MSDN says we need to set IS_DEFAULT to avoid memory leak when we use
     // SetInputScopes API. Use an empty string to do this.
     SetInputScopeForIMM32(aWindow, u""_ns, u""_ns, false);
@@ -431,8 +431,8 @@ void IMEHandler::SetInputContext(nsWindow* aWindow, InputContext& aInputContext,
       (adjustOpenState && aInputContext.mIMEState.mOpen == IMEState::OPEN);
 
   // Note that even while a plugin has focus, we need to notify TSF of that.
-  if (sIsInTSFMode) {
-    TSFTextStore::SetInputContext(aWindow, aInputContext, aAction);
+  if (TSFUtils::IsAvailable()) {
+    TSFTextStoreBase::SetInputContext(aWindow, aInputContext, aAction);
     if (IsTSFAvailable()) {
       if (sIsIMMEnabled) {
         // Associate IMC with aWindow only when it's necessary.
@@ -494,8 +494,8 @@ void IMEHandler::InitInputContext(nsWindow* aWindow,
   // For a11y, the default enabled state should be 'enabled'.
   aInputContext.mIMEState.mEnabled = IMEEnabled::Enabled;
 
-  if (sIsInTSFMode) {
-    TSFTextStore::SetInputContext(
+  if (TSFUtils::IsAvailable()) {
+    TSFTextStoreBase::SetInputContext(
         aWindow, aInputContext,
         InputContextAction(InputContextAction::CAUSE_UNKNOWN,
                            InputContextAction::WIDGET_CREATED));
@@ -516,7 +516,7 @@ void IMEHandler::InitInputContext(nsWindow* aWindow,
 #ifdef DEBUG
 // static
 bool IMEHandler::CurrentKeyboardLayoutHasIME() {
-  if (sIsInTSFMode) {
+  if (TSFUtils::IsAvailable()) {
     return TSFTextStore::CurrentKeyboardLayoutHasIME();
   }
 
@@ -541,7 +541,7 @@ void IMEHandler::SetInputScopeForIMM32(nsWindow* aWindow,
                                        const nsAString& aHTMLInputType,
                                        const nsAString& aHTMLInputMode,
                                        bool aInPrivateBrowsing) {
-  if (sIsInTSFMode || !sSetInputScopes || aWindow->Destroyed()) {
+  if (TSFUtils::IsAvailable() || !sSetInputScopes || aWindow->Destroyed()) {
     return;
   }
   AutoTArray<InputScope, 3> scopes;
@@ -584,7 +584,7 @@ void IMEHandler::AppendInputScopeFromInputMode(const nsAString& aHTMLInputMode,
     //      However, if the OS is Win7 or it's installed on Win7 but has not
     //      been updated yet even after the OS is upgraded to Win8 or later,
     //      it's installed as IMM-IME.
-    if (TSFTextStore::ShouldSetInputScopeOfURLBarToDefault()) {
+    if (TSFUtils::ShouldSetInputScopeOfURLBarToDefault()) {
       return;
     }
     // Don't append IS_SEARCH here for showing on-screen keyboard for URL.
@@ -698,20 +698,18 @@ bool IMEHandler::IsOnScreenKeyboardSupported() {
     return true;
   }
 #endif  // NIGHTLY_BUILD
-  if (!IsWin8OrLater() || !Preferences::GetBool(kOskEnabled, true) ||
+  if (!Preferences::GetBool(kOskEnabled, true) ||
       !IMEHandler::NeedOnScreenKeyboard()) {
     return false;
   }
 
-  // On Windows 10 we require tablet mode, unless the user has set the relevant
-  // Windows setting to enable the on-screen keyboard in desktop mode.
-  // We might be disabled specifically on Win8(.1), so we check that afterwards.
-  if (IsWin10OrLater() && !IsWin11OrLater()) {
-    if (!IsInTabletMode() && !AutoInvokeOnScreenKeyboardInDesktopMode()) {
+  // On Windows 11, we ignore tablet mode (see bug 1722208)
+  if (!IsWin11OrLater()) {
+    // On Windows 10 we require tablet mode, unless the user has set the
+    // relevant setting to enable the on-screen keyboard in desktop mode.
+    if (!IsInWin10TabletMode() && !AutoInvokeOnScreenKeyboardInDesktopMode()) {
       return false;
     }
-  } else if (Preferences::GetBool(kOskRequireWin10, true)) {
-    return false;
   }
 
   return true;
@@ -738,10 +736,6 @@ void IMEHandler::MaybeDismissOnScreenKeyboard(nsWindow* aWindow, Sync aSync) {
     OSKVRManager::DismissOnScreenKeyboard();
   }
 #endif  // NIGHTLY_BUILD
-  if (!IsWin8OrLater()) {
-    return;
-  }
-
   if (aSync == Sync::Yes) {
     DismissOnScreenKeyboard(aWindow);
     return;
@@ -780,12 +774,6 @@ bool IMEHandler::WStringStartsWithCaseInsensitive(const std::wstring& aHaystack,
 // an on-screen keyboard for text input.
 // static
 bool IMEHandler::NeedOnScreenKeyboard() {
-  // This function is only supported for Windows 8 and up.
-  if (!IsWin8OrLater()) {
-    Preferences::SetString(kOskDebugReason, L"IKPOS: Requires Win8+.");
-    return false;
-  }
-
   if (!Preferences::GetBool(kOskDetectPhysicalKeyboard, true)) {
     Preferences::SetString(kOskDebugReason, L"IKPOS: Detection disabled.");
     return true;
@@ -910,8 +898,8 @@ bool IMEHandler::IsKeyboardPresentOnSlate() {
 }
 
 // static
-bool IMEHandler::IsInTabletMode() {
-  bool isInTabletMode = WindowsUIUtils::GetInTabletMode();
+bool IMEHandler::IsInWin10TabletMode() {
+  bool isInTabletMode = WindowsUIUtils::GetInWin10TabletMode();
   if (isInTabletMode) {
     Preferences::SetString(kOskDebugReason, L"IITM: GetInTabletMode=true.");
   } else {

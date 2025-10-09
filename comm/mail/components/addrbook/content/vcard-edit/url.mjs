@@ -5,11 +5,9 @@
 import { vCardIdGen } from "./id-gen.mjs";
 
 const lazy = {};
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "VCardPropertyEntry",
-  "resource:///modules/VCardUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  VCardPropertyEntry: "resource:///modules/VCardUtils.sys.mjs",
+});
 
 /**
  * @implements {VCardPropertyEntryView}
@@ -37,7 +35,7 @@ export class VCardURLComponent extends HTMLElement {
     this.appendChild(clonedTemplate);
 
     this.urlEl = this.querySelector('input[type="url"]');
-    let urlId = vCardIdGen.next().value;
+    const urlId = vCardIdGen.next().value;
     this.urlEl.id = urlId;
     const urlLabel = this.querySelector('label[for="url"]');
     urlLabel.htmlFor = urlId;

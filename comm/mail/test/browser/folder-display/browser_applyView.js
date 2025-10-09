@@ -8,11 +8,15 @@
 
 "use strict";
 
-var { be_in_folder, create_folder, get_about_3pane } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+var { be_in_folder, create_folder, get_about_3pane } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
+  );
+var { click_menus_in_sequence } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/WindowHelpers.sys.mjs"
 );
-var { click_menus_in_sequence } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
+const { ensure_cards_view, ensure_table_view } = ChromeUtils.importESModule(
+  "resource://testing-common/MailViewHelpers.sys.mjs"
 );
 
 // These are for the reset/apply to other/apply to other+child tests.
@@ -27,10 +31,10 @@ add_setup(async function () {
   folderParent.createSubfolder("Child2", null);
 
   await be_in_folder(folderSource);
-  await ensure_table_view();
+  await ensure_table_view(document);
 
   registerCleanupFunction(async () => {
-    await ensure_cards_view();
+    await ensure_cards_view(document);
     folderParent.deleteSelf(null);
     folderSource.deleteSelf(null);
   });
@@ -54,8 +58,8 @@ add_task(async function testSetViewSingle() {
   );
   Assert.equal(
     info.sortOrder,
-    Ci.nsMsgViewSortOrder.ascending,
-    "sortOrder should start ascending"
+    Ci.nsMsgViewSortOrder.descending,
+    "sortOrder should start descending"
   );
 
   const about3Pane = get_about_3pane();
@@ -169,8 +173,8 @@ add_task(async function test_apply_to_folder_no_children() {
   );
   Assert.equal(
     child1Info.sortOrder,
-    Ci.nsMsgViewSortOrder.ascending,
-    "sortOrder for child1 should start ascending"
+    Ci.nsMsgViewSortOrder.descending,
+    "sortOrder for child1 should start descending"
   );
 
   // Apply to the one dude
@@ -206,7 +210,7 @@ add_task(async function test_apply_to_folder_no_children() {
   );
   Assert.equal(
     folderChild1.msgDatabase.dBFolderInfo.sortOrder,
-    Ci.nsMsgViewSortOrder.ascending,
+    Ci.nsMsgViewSortOrder.descending,
     "sortOrder should not have been applied to children"
   );
 });
@@ -231,8 +235,8 @@ add_task(async function test_apply_to_folder_and_children() {
   );
   Assert.equal(
     child1Info.sortOrder,
-    Ci.nsMsgViewSortOrder.ascending,
-    "sortOrder for child1 should start ascending"
+    Ci.nsMsgViewSortOrder.descending,
+    "sortOrder for child1 should start descending"
   );
 
   // Apply to folder and children.

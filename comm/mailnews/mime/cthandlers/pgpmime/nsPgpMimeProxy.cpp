@@ -3,9 +3,12 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsPgpMimeProxy.h"
+#include "mimecth.h"
+#include "nsMailHeaders.h"
 #include "nspr.h"
 #include "plstr.h"
 #include "nsCOMPtr.h"
+#include "nsPrintfCString.h"
 #include "nsString.h"
 #include "mozilla/Components.h"
 #include "nsIRequest.h"
@@ -13,12 +16,11 @@
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
 #include "nsIURI.h"
-#include "mimexpcom.h"
 #include "nsMsgUtils.h"
 #include "nsNetUtil.h"
 
-#include "mimecth.h"
 #include "mimemoz2.h"
+#include "mime_closure.h"
 #include "nspr.h"
 #include "plstr.h"
 #include "nsIPgpMimeProxy.h"
@@ -60,13 +62,14 @@ extern "C" MimeObjectClass* MIME_PgpMimeCreateContentTypeHandlerClass(
   return objClass;
 }
 
-static void* MimePgpe_init(MimeObject*,
-                           int (*output_fn)(const char*, int32_t, void*),
-                           void*);
-static int MimePgpe_write(const char*, int32_t, void*);
-static int MimePgpe_eof(void*, bool);
-static char* MimePgpe_generate(void*);
-static void MimePgpe_free(void*);
+static MimeClosure MimePgpe_init(MimeObject*,
+                                 int (*output_fn)(const char*, int32_t, int32_t,
+                                                  void*),
+                                 MimeClosure);
+static int MimePgpe_write(const char*, int32_t, MimeClosure);
+static int MimePgpe_eof(MimeClosure, bool);
+static char* MimePgpe_generate(MimeClosure);
+static void MimePgpe_free(MimeClosure);
 
 /* Returns a string describing the location of the part (like "2.5.3").
    This is not a full URL, just a part-number.
@@ -96,11 +99,10 @@ static void PgpMimeGetNeedsAddonString(nsCString& aResult) {
   aResult = NS_ConvertUTF16toUTF8(result);
 }
 
-static int MimeEncryptedPgpClassInitialize(MimeEncryptedPgpClass* clazz) {
-  mozilla::DebugOnly<MimeObjectClass*> oclass = (MimeObjectClass*)clazz;
+static int MimeEncryptedPgpClassInitialize(MimeObjectClass* oclass) {
   NS_ASSERTION(!oclass->class_initialized, "oclass is not initialized");
 
-  MimeEncryptedClass* eclass = (MimeEncryptedClass*)clazz;
+  MimeEncryptedClass* eclass = (MimeEncryptedClass*)oclass;
 
   eclass->crypto_init = MimePgpe_init;
   eclass->crypto_write = MimePgpe_write;
@@ -115,13 +117,17 @@ class MimePgpeData : public nsISupports {
  public:
   NS_DECL_ISUPPORTS
 
-  int (*output_fn)(const char* buf, int32_t buf_size, void* output_closure);
-  void* output_closure;
+  int (*output_fn)(const char* buf, int32_t buf_size,
+                   int32_t output_closure_type, void* output_closure);
+  MimeClosure output_closure;
   MimeObject* self;
 
   nsCOMPtr<nsIPgpMimeProxy> mimeDecrypt;
 
-  MimePgpeData() : output_fn(nullptr), output_closure(nullptr) {}
+  MimePgpeData()
+      : output_fn(nullptr),
+        output_closure(MimeClosure::zero()),
+        self(nullptr) {}
 
  private:
   virtual ~MimePgpeData() {}
@@ -129,14 +135,16 @@ class MimePgpeData : public nsISupports {
 
 NS_IMPL_ISUPPORTS0(MimePgpeData)
 
-static void* MimePgpe_init(MimeObject* obj,
-                           int (*output_fn)(const char* buf, int32_t buf_size,
-                                            void* output_closure),
-                           void* output_closure) {
-  if (!(obj && obj->options && output_fn)) return nullptr;
+static MimeClosure MimePgpe_init(MimeObject* obj,
+                                 int (*output_fn)(const char* buf,
+                                                  int32_t buf_size,
+                                                  int32_t output_closure_type,
+                                                  void* output_closure),
+                                 MimeClosure output_closure) {
+  if (!(obj && obj->options && output_fn)) return MimeClosure::zero();
 
   MimePgpeData* data = new MimePgpeData();
-  NS_ENSURE_TRUE(data, nullptr);
+  NS_ENSURE_TRUE(data, MimeClosure::zero());
 
   data->self = obj;
   data->output_fn = output_fn;
@@ -146,7 +154,7 @@ static void* MimePgpe_init(MimeObject* obj,
   // Create proxy object.
   nsresult rv;
   data->mimeDecrypt = do_CreateInstance(NS_PGPMIMEPROXY_CONTRACTID, &rv);
-  if (NS_FAILED(rv)) return data;
+  if (NS_FAILED(rv)) return MimeClosure(MimeClosure::isMimePgpeData, data);
 
   char* ct = MimeHeaders_get(obj->headers, HEADER_CONTENT_TYPE, false, false);
 
@@ -155,12 +163,12 @@ static void* MimePgpe_init(MimeObject* obj,
 
   PR_Free(ct);
 
-  if (NS_FAILED(rv)) return nullptr;
+  if (NS_FAILED(rv)) return MimeClosure::zero();
 
   nsCString mimePart = determineMimePart(obj);
 
   rv = data->mimeDecrypt->SetMimePart(mimePart);
-  if (NS_FAILED(rv)) return nullptr;
+  if (NS_FAILED(rv)) return MimeClosure::zero();
 
   if (mimePart.EqualsLiteral("1.1") && obj->parent &&
       obj->parent->content_type &&
@@ -177,12 +185,20 @@ static void* MimePgpe_init(MimeObject* obj,
     data->mimeDecrypt->SetAllowNestedDecrypt(true);
   }
 
-  mime_stream_data* msd =
-      (mime_stream_data*)(data->self->options->stream_closure);
-  nsIChannel* channel = msd->channel;
-
   nsCOMPtr<nsIURI> uri;
-  if (channel) channel->GetURI(getter_AddRefs(uri));
+  nsCOMPtr<nsIMailChannel> mailChannel;
+
+  mime_stream_data* msd =
+      data->self->options->stream_closure.IsMimeDraftData()
+          ? nullptr
+          : data->self->options->stream_closure.AsMimeStreamData();
+  if (msd) {
+    nsIChannel* channel = msd->channel;
+    if (channel) {
+      channel->GetURI(getter_AddRefs(uri));
+      mailChannel = do_QueryInterface(channel);
+    }
+  }
 
   if (!uri && obj && obj->options && obj->options->url) {
     // Allow the PGP mime decrypt code to know what message we're
@@ -192,28 +208,43 @@ static void* MimePgpe_init(MimeObject* obj,
   }
 
   // Initialise proxy object with MIME's output function, object and URI.
-  if (NS_FAILED(
-          data->mimeDecrypt->SetMimeCallback(output_fn, output_closure, uri)))
-    return nullptr;
+  if (NS_FAILED(data->mimeDecrypt->SetMimeCallback(
+          output_fn, output_closure.mType, output_closure.mClosure, uri,
+          mailChannel)))
+    return MimeClosure::zero();
 
-  return data;
+  return MimeClosure(MimeClosure::isMimePgpeData, data);
 }
 
 static int MimePgpe_write(const char* buf, int32_t buf_size,
-                          void* output_closure) {
-  MimePgpeData* data = (MimePgpeData*)output_closure;
+                          MimeClosure output_closure) {
+  if (!output_closure) {
+    return -1;
+  }
 
-  if (!data || !data->output_fn) return -1;
+  MimePgpeData* data = output_closure.AsMimePgpeData();
+  if (!data) {
+    return -1;
+  }
+
+  if (!data->output_fn) return -1;
 
   if (!data->mimeDecrypt) return 0;
 
   return (NS_SUCCEEDED(data->mimeDecrypt->Write(buf, buf_size)) ? 0 : -1);
 }
 
-static int MimePgpe_eof(void* output_closure, bool abort_p) {
-  MimePgpeData* data = (MimePgpeData*)output_closure;
+static int MimePgpe_eof(MimeClosure output_closure, bool abort_p) {
+  if (!output_closure) {
+    return -1;
+  }
 
-  if (!data || !data->output_fn) return -1;
+  MimePgpeData* data = output_closure.AsMimePgpeData();
+  if (!data) {
+    return -1;
+  }
+
+  if (!data->output_fn) return -1;
 
   if (NS_FAILED(data->mimeDecrypt->Finish())) return -1;
 
@@ -222,7 +253,7 @@ static int MimePgpe_eof(void* output_closure, bool abort_p) {
   return 0;
 }
 
-static char* MimePgpe_generate(void* output_closure) {
+static char* MimePgpe_generate(MimeClosure output_closure) {
   const char htmlMsg[] = "<html><body><b>GEN MSG<b></body></html>";
   char* msg = (char*)PR_MALLOC(strlen(htmlMsg) + 1);
   if (msg) PL_strcpy(msg, htmlMsg);
@@ -230,8 +261,12 @@ static char* MimePgpe_generate(void* output_closure) {
   return msg;
 }
 
-static void MimePgpe_free(void* output_closure) {
-  MimePgpeData* data = (MimePgpeData*)output_closure;
+static void MimePgpe_free(MimeClosure output_closure) {
+  MimePgpeData* data = output_closure.AsMimePgpeData();
+  if (!data) {
+    return;
+  }
+
   if (data->mimeDecrypt) {
     data->mimeDecrypt->RemoveMimeCallback();
     data->mimeDecrypt = nullptr;
@@ -242,19 +277,14 @@ static void MimePgpe_free(void* output_closure) {
    This is not a full URL, just a part-number.
  */
 static nsCString determineMimePart(MimeObject* obj) {
-  char mimePartNum[20];
-  MimeObject* kid;
-  MimeContainer* cont;
-  int32_t i;
-
   nsCString mimePart;
 
   while (obj->parent) {
-    cont = (MimeContainer*)obj->parent;
-    for (i = 0; i < cont->nchildren; i++) {
-      kid = cont->children[i];
+    auto* cont = (MimeContainer*)obj->parent;
+    for (int32_t i = 0; i < cont->nchildren; i++) {
+      auto* kid = cont->children[i];
       if (kid == obj) {
-        sprintf(mimePartNum, ".%d", i + 1);
+        nsCString mimePartNum = nsPrintfCString(".%d", i + 1);
         mimePart.Insert(mimePartNum, 0);
       }
     }
@@ -278,9 +308,10 @@ nsPgpMimeProxy::nsPgpMimeProxy()
       mOutputWasRemoved(false),
 #endif
       mOutputFun(nullptr),
-      mOutputClosure(nullptr),
+      mOutputClosure(MimeClosure::zero()),
       mLoadFlags(LOAD_NORMAL),
       mCancelStatus(NS_OK),
+      mStreamOffset(0),
       mAllowNestedDecrypt(false) {
 }
 
@@ -290,13 +321,16 @@ nsresult nsPgpMimeProxy::Finalize() { return NS_OK; }
 
 NS_IMETHODIMP
 nsPgpMimeProxy::SetMimeCallback(MimeDecodeCallbackFun outputFun,
-                                void* outputClosure, nsIURI* myUri) {
+                                int32_t outputClosureType, void* outputClosure,
+                                nsIURI* myUri, nsIMailChannel* mailChannel) {
   if (!outputFun || !outputClosure) return NS_ERROR_NULL_POINTER;
 
   mOutputFun = outputFun;
-  mOutputClosure = outputClosure;
+  mOutputClosure =
+      MimeClosure((MimeClosure::ClosureType)outputClosureType, outputClosure);
   mInitialized = true;
   mMessageURI = myUri;
+  mMailChannel = mailChannel;
 
   mStreamOffset = 0;
   mByteBuf.Truncate();
@@ -309,7 +343,7 @@ nsPgpMimeProxy::SetMimeCallback(MimeDecodeCallbackFun outputFun,
 NS_IMETHODIMP
 nsPgpMimeProxy::RemoveMimeCallback() {
   mOutputFun = nullptr;
-  mOutputClosure = nullptr;
+  mOutputClosure = MimeClosure::zero();
 #ifdef DEBUG
   mOutputWasRemoved = true;
 #endif
@@ -368,7 +402,8 @@ nsPgpMimeProxy::Finish() {
         "</CENTER></td></tr></table></center><BR></body></html>\r\n");
 
     PR_SetError(0, 0);
-    int status = mOutputFun(temp.get(), temp.Length(), mOutputClosure);
+    int status = mOutputFun(temp.get(), temp.Length(), mOutputClosure.mType,
+                            mOutputClosure.mClosure);
     if (status < 0) {
       PR_SetError(status, 0);
       mOutputFun = nullptr;
@@ -455,13 +490,20 @@ nsPgpMimeProxy::OutputDecryptedData(const char* buf, uint32_t buf_size) {
 
   if (!mOutputFun) return NS_ERROR_FAILURE;
 
-  int status = mOutputFun(buf, buf_size, mOutputClosure);
+  int status =
+      mOutputFun(buf, buf_size, mOutputClosure.mType, mOutputClosure.mClosure);
   if (status < 0) {
     PR_SetError(status, 0);
     mOutputFun = nullptr;
     return NS_ERROR_FAILURE;
   }
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsPgpMimeProxy::GetMailChannel(nsIMailChannel** aMailChannel) {
+  NS_IF_ADDREF(*aMailChannel = mMailChannel);
   return NS_OK;
 }
 
@@ -658,7 +700,8 @@ nsPgpMimeProxy::OnDataAvailable(nsIRequest* aRequest,
     rv = aInputStream->Read((char*)buf, readMax, &readCount);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    int status = mOutputFun(buf, readCount, mOutputClosure);
+    int status = mOutputFun(buf, readCount, mOutputClosure.mType,
+                            mOutputClosure.mClosure);
     if (status < 0) {
       PR_SetError(status, 0);
       mOutputFun = nullptr;

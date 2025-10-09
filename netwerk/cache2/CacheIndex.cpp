@@ -20,7 +20,7 @@
 #include "mozilla/AutoRestore.h"
 #include <algorithm>
 #include "mozilla/StaticPrefs_network.h"
-#include "mozilla/Telemetry.h"
+#include "mozilla/glean/NetwerkCache2Metrics.h"
 #include "mozilla/Unused.h"
 
 #define kMinUnwrittenChanges 300
@@ -2213,16 +2213,10 @@ void CacheIndex::ParseRecords(const StaticMutexAutoLock& aProofOfLock) {
           reinterpret_cast<uint32_t*>(moz_xmalloc(sizeof(uint32_t)));
       NetworkEndian::writeUint32(isDirty, 1);
 
-      // Mark index dirty. The buffer is freed by CacheFileIOManager when
-      // nullptr is passed as the listener and the call doesn't fail
-      // synchronously.
-      rv = CacheFileIOManager::Write(mIndexHandle, 2 * sizeof(uint32_t),
-                                     reinterpret_cast<char*>(isDirty),
-                                     sizeof(uint32_t), true, false, nullptr);
-      if (NS_FAILED(rv)) {
-        // This is not fatal, just free the memory
-        free(isDirty);
-      }
+      // Mark index dirty. The buffer will be freed by CacheFileIOManager.
+      CacheFileIOManager::WriteWithoutCallback(
+          mIndexHandle, 2 * sizeof(uint32_t), reinterpret_cast<char*>(isDirty),
+          sizeof(uint32_t), true, false);
     }
     pos += sizeof(uint32_t);
 
@@ -3877,17 +3871,17 @@ void CacheIndex::DoTelemetryReport() {
 
   for (uint32_t i = 0; i < nsICacheEntry::CONTENT_TYPE_LAST; ++i) {
     if (mIndexStats.Size() > 0) {
-      Telemetry::Accumulate(
-          Telemetry::NETWORK_CACHE_SIZE_SHARE, contentTypeNames[i],
-          round(static_cast<double>(mIndexStats.SizeByType(i)) * 100.0 /
-                static_cast<double>(mIndexStats.Size())));
+      glean::network::cache_size_share.Get(contentTypeNames[i])
+          .AccumulateSingleSample(
+              round(static_cast<double>(mIndexStats.SizeByType(i)) * 100.0 /
+                    static_cast<double>(mIndexStats.Size())));
     }
 
     if (mIndexStats.Count() > 0) {
-      Telemetry::Accumulate(
-          Telemetry::NETWORK_CACHE_ENTRY_COUNT_SHARE, contentTypeNames[i],
-          round(static_cast<double>(mIndexStats.CountByType(i)) * 100.0 /
-                static_cast<double>(mIndexStats.Count())));
+      glean::network::cache_entry_count_share.Get(contentTypeNames[i])
+          .AccumulateSingleSample(
+              round(static_cast<double>(mIndexStats.CountByType(i)) * 100.0 /
+                    static_cast<double>(mIndexStats.Count())));
     }
   }
 
@@ -3897,10 +3891,9 @@ void CacheIndex::DoTelemetryReport() {
   } else {
     probeKey = "USERDEFINEDSIZE"_ns;
   }
-  Telemetry::Accumulate(Telemetry::NETWORK_CACHE_ENTRY_COUNT, probeKey,
-                        mIndexStats.Count());
-  Telemetry::Accumulate(Telemetry::NETWORK_CACHE_SIZE, probeKey,
-                        mIndexStats.Size() >> 10);
+  glean::network::cache_entry_count.Get(probeKey).AccumulateSingleSample(
+      mIndexStats.Count());
+  glean::network::cache_size.Get(probeKey).Accumulate(mIndexStats.Size() >> 10);
 }
 
 // static

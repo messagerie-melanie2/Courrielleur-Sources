@@ -37,7 +37,9 @@ add_task(async function () {
   });
 
   info("Reload the page");
-  await BrowserTestUtils.reloadTab(tab, /* includeSubFrames */ true);
+  await BrowserTestUtils.reloadTab(tab, {
+    includeSubFrames: true,
+  });
 
   is(
     await topLevelDocumentMatchesCoarsePointerAtStartup(),
@@ -93,7 +95,7 @@ add_task(async function () {
     gBrowser.selectedBrowser,
     true
   );
-  BrowserTestUtils.loadURIString(
+  BrowserTestUtils.startLoadingURIString(
     gBrowser.selectedBrowser,
     URL_ROOT_ORG_SSL + TEST_DOCUMENT + "?crossOriginIsolated=true"
   );

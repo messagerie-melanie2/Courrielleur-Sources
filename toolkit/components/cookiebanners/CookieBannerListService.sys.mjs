@@ -4,7 +4,6 @@
 
 const lazy = {};
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 ChromeUtils.defineESModuleGetters(lazy, {
@@ -18,10 +17,12 @@ XPCOMUtils.defineLazyPreferenceGetter(
   "cookiebanners.cookieInjector.defaultExpiryRelative"
 );
 
+const PREF_SKIP_REMOTE_SETTINGS =
+  "cookiebanners.listService.testSkipRemoteSettings";
 XPCOMUtils.defineLazyPreferenceGetter(
   lazy,
   "TEST_SKIP_REMOTE_SETTINGS",
-  "cookiebanners.listService.testSkipRemoteSettings"
+  PREF_SKIP_REMOTE_SETTINGS
 );
 
 const PREF_TEST_RULES = "cookiebanners.listService.testRules";
@@ -30,7 +31,7 @@ XPCOMUtils.defineLazyPreferenceGetter(lazy, "testRulesPref", PREF_TEST_RULES);
 // Name of the RemoteSettings collection containing the rules.
 const COLLECTION_NAME = "cookie-banner-rules-list";
 
-XPCOMUtils.defineLazyGetter(lazy, "logConsole", () => {
+ChromeUtils.defineLazyGetter(lazy, "logConsole", () => {
   return console.createInstance({
     prefix: "CookieBannerListService",
     maxLogLevelPref: "cookiebanners.listService.logLevel",
@@ -39,7 +40,7 @@ XPCOMUtils.defineLazyGetter(lazy, "logConsole", () => {
 
 // Lazy getter for the JSON schema of cookie banner rules. It is used for
 // validation of rules defined by pref.
-XPCOMUtils.defineLazyGetter(lazy, "CookieBannerRuleSchema", async () => {
+ChromeUtils.defineLazyGetter(lazy, "CookieBannerRuleSchema", async () => {
   let response = await fetch(
     "chrome://global/content/cookiebanners/CookieBannerRule.schema.json"
   );
@@ -74,6 +75,7 @@ export class CookieBannerListService {
 
     // Register listener to import rules when test pref changes.
     Services.prefs.addObserver(PREF_TEST_RULES, this);
+    Services.prefs.addObserver(PREF_SKIP_REMOTE_SETTINGS, this);
 
     // Register callback for collection changes.
     // Only register if not already registered.
@@ -124,6 +126,7 @@ export class CookieBannerListService {
     }
 
     Services.prefs.removeObserver(PREF_TEST_RULES, this);
+    Services.prefs.removeObserver(PREF_SKIP_REMOTE_SETTINGS, this);
   }
 
   /**
@@ -146,16 +149,22 @@ export class CookieBannerListService {
   }
 
   observe(subject, topic, prefName) {
-    if (prefName != PREF_TEST_RULES) {
+    if (prefName != PREF_TEST_RULES && prefName != PREF_SKIP_REMOTE_SETTINGS) {
       return;
     }
 
     // When the test rules update we need to clear all rules and import them
-    // again. This is required because we don't have a mechanism for deleting specific
-    // test rules.
+    // again. This is required because we don't have a mechanism for deleting
+    // specific test rules.
+    // Also reimport when rule import from RemoteSettings is enabled / disabled.
     // Passing `doImport = false` since we trigger the import ourselves.
     Services.cookieBanners.resetRules(false);
     this.importAllRules();
+
+    // Reset executed records (private and normal browsing) for easier testing
+    // of rules.
+    Services.cookieBanners.removeAllExecutedRecords(false);
+    Services.cookieBanners.removeAllExecutedRecords(true);
   }
 
   #removeRules(rules = []) {
@@ -178,13 +187,7 @@ export class CookieBannerListService {
         rule.domains = domains;
         return rule;
       })
-      .forEach(r => {
-        Services.cookieBanners.removeRule(r);
-
-        // Clear the fact if we have reported telemetry for the domain. So, we
-        // can collect again with the updated rules.
-        Services.cookieBanners.resetDomainTelemetryRecord(r.domain);
-      });
+      .forEach(r => Services.cookieBanners.removeRule(r));
   }
 
   #importRules(rules) {
@@ -209,12 +212,6 @@ export class CookieBannerListService {
       this.#importClickRule(rule, click);
 
       Services.cookieBanners.insertRule(rule);
-
-      // Clear the fact if we have reported telemetry for the domain. Note that
-      // this function could handle rule update and the initial rule import. In
-      // both cases, we should clear to make sure we will collect with the
-      // latest rules.
-      Services.cookieBanners.resetDomainTelemetryRecord(domain);
     });
   }
 
@@ -341,7 +338,7 @@ export class CookieBannerListService {
   #importClickRule(rule, click) {
     // Skip importing the rule if there is no click object or the click rule is
     // empty - it doesn't have the mandatory presence attribute.
-    if (!click || !click.presence) {
+    if (!click?.presence) {
       return;
     }
 

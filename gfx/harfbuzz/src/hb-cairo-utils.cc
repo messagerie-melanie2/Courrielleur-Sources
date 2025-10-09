@@ -31,8 +31,6 @@
 
 #include "hb-cairo-utils.hh"
 
-#include <cairo.h>
-
 /* Some routines in this file were ported from BlackRenderer by Black Foundry.
  * Used by permission to relicense to HarfBuzz license.
  *
@@ -80,7 +78,7 @@ hb_cairo_read_blob (void *closure,
   if (r->offset + length > size)
     return CAIRO_STATUS_READ_ERROR;
 
-  memcpy (data, d + r->offset, length);
+  hb_memcpy (data, d + r->offset, length);
   r->offset += length;
 
   return CAIRO_STATUS_SUCCESS;
@@ -101,7 +99,7 @@ _hb_cairo_paint_glyph_image (hb_cairo_context_t *c,
 			     unsigned width,
 			     unsigned height,
 			     hb_tag_t format,
-			     float slant,
+			     HB_UNUSED float slant_deprecated,
 			     hb_glyph_extents_t *extents)
 {
   cairo_t *cr = c->cr;
@@ -185,12 +183,6 @@ _hb_cairo_paint_glyph_image (hb_cairo_context_t *c,
 
   cairo_matrix_t matrix = {(double) width, 0, 0, (double) height, 0, 0};
   cairo_pattern_set_matrix (pattern, &matrix);
-
-  /* Undo slant in the extents and apply it in the context. */
-  extents->width -= extents->height * slant;
-  extents->x_bearing -= extents->y_bearing * slant;
-  cairo_matrix_t cairo_matrix = {1., 0., (double) slant, 1., 0., 0.};
-  cairo_transform (cr, &cairo_matrix);
 
   cairo_translate (cr, extents->x_bearing, extents->y_bearing);
   cairo_scale (cr, extents->width, extents->height);
@@ -726,6 +718,9 @@ _hb_cairo_add_sweep_gradient_patches (hb_color_stop_t *stops,
     float span;
 
     span = angles[n_stops - 1] - angles[0];
+    if (!span)
+      goto done;
+
     k = 0;
     if (angles[0] >= 0)
     {
@@ -763,7 +758,7 @@ _hb_cairo_add_sweep_gradient_patches (hb_color_stop_t *stops,
     }
 
     //assert (angles[0] + k * span <= 0 && 0 < angles[n_stops - 1] + k * span);
-    span = fabs (span);
+    span = fabsf (span);
 
     for (signed l = k; l < 1000; l++)
     {

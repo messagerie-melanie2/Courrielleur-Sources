@@ -2,11 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { MID_SLEEP, execEventDialogCallback } = ChromeUtils.import(
-  "resource://testing-common/calendar/CalendarUtils.jsm"
+var { MID_SLEEP, execEventDialogCallback } = ChromeUtils.importESModule(
+  "resource://testing-common/calendar/CalendarUtils.sys.mjs"
 );
-var { saveAndCloseItemDialog, setData } = ChromeUtils.import(
-  "resource://testing-common/calendar/ItemEditingHelpers.jsm"
+var { saveAndCloseItemDialog, setData } = ChromeUtils.importESModule(
+  "resource://testing-common/calendar/ItemEditingHelpers.sys.mjs"
 );
 
 const TITLE = "Task";
@@ -14,7 +14,7 @@ const DESCRIPTION = "1. Do A\n2. Do B";
 const PERCENTCOMPLETE = "50";
 
 add_task(async function () {
-  let calendar = CalendarTestUtils.createCalendar();
+  const calendar = CalendarTestUtils.createCalendar();
   registerCleanupFunction(() => {
     CalendarTestUtils.removeCalendar(calendar);
   });
@@ -25,15 +25,15 @@ add_task(async function () {
   await new Promise(resolve => setTimeout(resolve, MID_SLEEP));
 
   // Make sure that testing calendar is selected.
-  let calList = document.querySelector(`#calendar-list > [calendar-id="${calendar.id}"]`);
+  const calList = document.querySelector(`#calendar-list > [calendar-id="${calendar.id}"]`);
   Assert.ok(calList);
   EventUtils.synthesizeMouseAtCenter(calList, {}, window);
 
-  let taskTreeNode = document.getElementById("calendar-task-tree");
+  const taskTreeNode = document.getElementById("calendar-task-tree");
   Assert.equal(taskTreeNode.mTaskArray.length, 0);
 
   // Add task.
-  let taskInput = document.getElementById("view-task-edit-field");
+  const taskInput = document.getElementById("view-task-edit-field");
   taskInput.focus();
   EventUtils.sendString(TITLE, window);
   EventUtils.synthesizeKey("VK_RETURN", {}, window);
@@ -50,12 +50,13 @@ add_task(async function () {
   // Open added task
   // Double-click on completion checkbox is ignored as opening action, so don't
   // click at immediate left where the checkbox is located.
-  let eventWindowPromise = CalendarTestUtils.waitForEventDialog("edit");
-  let treeChildren = document.querySelector("#calendar-task-tree .calendar-task-treechildren");
+  const eventWindowPromise = CalendarTestUtils.waitForEventDialog("edit");
+  const treeChildren = document.querySelector("#calendar-task-tree .calendar-task-treechildren");
   Assert.ok(treeChildren);
   EventUtils.synthesizeMouse(treeChildren, 50, 0, { clickCount: 2 }, window);
 
   await eventWindowPromise;
+  const l10nDone = BrowserTestUtils.waitForEvent(document, "L10nMutationsFinished");
   await execEventDialogCallback(async (taskWindow, iframeWindow) => {
     // Verify calendar.
     Assert.equal(iframeWindow.document.getElementById("item-calendar").value, "Test");
@@ -68,13 +69,14 @@ add_task(async function () {
 
     await saveAndCloseItemDialog(taskWindow);
   });
+  await l10nDone; // Make sure "calendar-task-details-status" is updated.
 
   Assert.less(taskTreeNode.mTaskArray.length, 2, "Should not have added task");
   Assert.greater(taskTreeNode.mTaskArray.length, 0, "Should not have removed task");
 
   // Verify description and status in details pane.
   await TestUtils.waitForCondition(() => {
-    let desc = document.getElementById("calendar-task-details-description");
+    const desc = document.getElementById("calendar-task-details-description");
     return desc && desc.contentDocument.body.innerText == DESCRIPTION;
   }, "Calendar task description");
   Assert.equal(document.getElementById("calendar-task-details-status").textContent, "Needs Action");
@@ -87,7 +89,7 @@ add_task(async function () {
   // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
   await new Promise(resolve => setTimeout(resolve, MID_SLEEP));
 
-  let priorityMenu = document.querySelector(
+  const priorityMenu = document.querySelector(
     "#task-actions-priority-menupopup > .priority-1-menuitem"
   );
   Assert.ok(priorityMenu);
@@ -98,7 +100,7 @@ add_task(async function () {
   );
 
   // Verify that tooltip shows status, priority and percent complete.
-  let toolTipNode = document.getElementById("taskTreeTooltip");
+  const toolTipNode = document.getElementById("taskTreeTooltip");
   toolTipNode.ownerGlobal.showToolTip(toolTipNode, taskTreeNode.getTaskAtRow(0));
 
   function getTooltipDescription(index) {
@@ -141,7 +143,7 @@ add_task(async function () {
     "Task did not delete"
   );
 
-  let tabmail = document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   tabmail.closeTab(tabmail.currentTabInfo);
 
   Assert.ok(true, "Test ran to completion");

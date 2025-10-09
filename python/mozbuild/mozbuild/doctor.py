@@ -3,7 +3,6 @@
 # file, # You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import enum
-import locale
 import os
 import socket
 import subprocess
@@ -142,8 +141,7 @@ def ssh(**kwargs) -> DoctorCheck:
         proc = subprocess.run(
             ["ssh", "hg.mozilla.org"],
             encoding="utf-8",
-            stderr=subprocess.PIPE,
-            stdout=subprocess.PIPE,
+            capture_output=True,
         )
 
         # Command output from a successful `pash` run.
@@ -166,7 +164,7 @@ def ssh(**kwargs) -> DoctorCheck:
                     name="ssh",
                     status=CheckStatus.FATAL,
                     display_text=[
-                        "SSH username `{}` is not an email address.".format(username),
+                        f"SSH username `{username}` is not an email address.",
                         "hg.mozilla.org logins should be in the form `user@domain.com`.",
                     ],
                 )
@@ -175,8 +173,8 @@ def ssh(**kwargs) -> DoctorCheck:
                 name="ssh",
                 status=CheckStatus.WARNING,
                 display_text=[
-                    "SSH username `{}` does not have permission to push to "
-                    "hg.mozilla.org.".format(username)
+                    f"SSH username `{username}` does not have permission to push to "
+                    "hg.mozilla.org."
                 ],
             )
 
@@ -231,7 +229,7 @@ def memory(**kwargs) -> DoctorCheck:
     """Check the host machine has the recommended memory to develop Firefox."""
     memory = psutil.virtual_memory().total
     # Convert to gigabytes.
-    memory_GB = memory / 1024 ** 3.0
+    memory_GB = memory / 1024**3.0
     if memory_GB < MEMORY_THRESHOLD:
         status = CheckStatus.WARNING
         desc = "%.1fGB of physical memory, <%.1fGB" % (memory_GB, MEMORY_THRESHOLD)
@@ -266,8 +264,8 @@ def storage_freespace(topsrcdir: str, topobjdir: str, **kwargs) -> List[DoctorCh
         try:
             usage = psutil.disk_usage(mount)
             freespace, size = usage.free, usage.total
-            freespace_GB = freespace / 1024 ** 3
-            size_GB = size / 1024 ** 3
+            freespace_GB = freespace / 1024**3
+            size_GB = size / 1024**3
             if freespace_GB < FREESPACE_THRESHOLD:
                 status = CheckStatus.WARNING
                 desc.append(
@@ -431,7 +429,7 @@ def mozillabuild(**kwargs) -> DoctorCheck:
         )
 
     try:
-        with open(mozpath.join(MOZILLABUILD, "VERSION"), "r") as fh:
+        with open(mozpath.join(MOZILLABUILD, "VERSION")) as fh:
             local_version = fh.readline()
 
         if not local_version:
@@ -452,44 +450,11 @@ def mozillabuild(**kwargs) -> DoctorCheck:
             status = CheckStatus.OK
             desc = "MozillaBuild %s in use" % local_version
 
-    except (IOError, ValueError):
+    except (OSError, ValueError):
         status = CheckStatus.FATAL
         desc = "MozillaBuild version not found"
 
     return DoctorCheck(name="mozillabuild", status=status, display_text=[desc])
-
-
-@check
-def bad_locale_utf8(**kwargs) -> DoctorCheck:
-    """Check to detect the invalid locale `UTF-8` on pre-3.8 Python."""
-    if sys.version_info >= (3, 8):
-        return DoctorCheck(
-            name="utf8 locale",
-            status=CheckStatus.SKIPPED,
-            display_text=["Python version has fixed utf-8 locale bug."],
-        )
-
-    try:
-        # This line will attempt to get and parse the locale.
-        locale.getdefaultlocale()
-
-        return DoctorCheck(
-            name="utf8 locale",
-            status=CheckStatus.OK,
-            display_text=["Python's locale is set to a valid value."],
-        )
-    except ValueError:
-        return DoctorCheck(
-            name="utf8 locale",
-            status=CheckStatus.FATAL,
-            display_text=[
-                "Your Python is using an invalid value for its locale.",
-                "Either update Python to version 3.8+, or set the following variables in ",
-                "your environment:",
-                "  export LC_ALL=en_US.UTF-8",
-                "  export LANG=en_US.UTF-8",
-            ],
-        )
 
 
 @check
@@ -532,7 +497,7 @@ def artifact_build(
                 f"have been modified: \n{compiled_language_files_changed}\nThese files will "
                 "not be compiled, and your changes will not be realized in the build output."
                 "\n\nIf you want these changes to be realized, you should re-run './mach "
-                'boostrap` and select a build that does not state "Artifact Mode".'
+                'bootstrap` and select a build that does not state "Artifact Mode".'
                 "\nFor additional information on Artifact Builds see: "
                 "https://firefox-source-docs.mozilla.org/contributing/build/"
                 "artifact_builds.html"

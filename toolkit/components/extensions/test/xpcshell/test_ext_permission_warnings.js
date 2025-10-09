@@ -5,6 +5,7 @@ let { ExtensionTestCommon } = ChromeUtils.importESModule(
 );
 
 const {
+  PERMISSION_L10N,
   PERMISSION_L10N_ID_OVERRIDES,
   PERMISSIONS_WITH_MESSAGE,
   permissionToL10nId,
@@ -40,7 +41,7 @@ async function getManifestPermissions(extensionData) {
   ExtensionTestUtils.failOnSchemaWarnings(false);
   await extension.loadManifest();
   ExtensionTestUtils.failOnSchemaWarnings(true);
-  let result = extension.manifestPermissions;
+  let result = extension.getRequiredPermissions();
 
   if (extension.manifest.manifest_version >= 3) {
     // In MV3, host permissions are optional by default.
@@ -55,11 +56,11 @@ async function getManifestPermissions(extensionData) {
 }
 
 function getPermissionWarnings(permissions, options) {
-  let { msgs } = ExtensionData.formatPermissionStrings(
+  let { msgs, fullDomainsList } = ExtensionData.formatPermissionStrings(
     { permissions },
     options
   );
-  return msgs;
+  return { warnings: msgs, fullDomainsList };
 }
 
 async function getPermissionWarningsForUpdate(
@@ -72,51 +73,75 @@ async function getPermissionWarningsForUpdate(
   return getPermissionWarnings(difference);
 }
 
-// Tests that the callers of ExtensionData.formatPermissionStrings can customize the
-// mapping between the permission names and related localized strings.
+// Tests that ExtensionData.formatPermissionStrings supports customized mappings
+// between permission names and related localized strings. Also test registering
+// additional fluent files so ExtensionData.formatPermissionStrings works for
+// permissions of APIs defined outside of toolkit.
 add_task(async function customized_permission_keys_mapping() {
-  const mockLocalization = {
-    formatMessagesSync: args =>
-      args.map(arg => ({
-        value: `Fake localized ${arg.id ?? arg}`,
-        attributes: [],
-      })),
-    formatValueSync: key => `Fake localized ${key}`,
-    formatValuesSync: args =>
-      args.map(arg => `Fake localized ${arg.id ?? arg}`),
-  };
+  // Mock a fluent file.
+  const l10nReg = L10nRegistry.getInstance();
+  const source = L10nFileSource.createMock(
+    "mock",
+    "app",
+    ["en-US"],
+    "/localization/",
+    [
+      {
+        path: "/localization/mock.ftl",
+        source: `
+webext-perms-description-test-downloads = Custom description for the downloads permission
 
-  // Define a non-default mapping for permission names -> locale keys.
-  const getKeyForPermission = perm => `custom-webext-perms-description-${perm}`;
+webext-perms-description-test-proxy = Custom description for the proxy permission
+`,
+      },
+    ]
+  );
+  l10nReg.registerSources([source]);
+
+  // Add the mocked fluent file to PERMISSION_L10N and override downloads and
+  // proxy permission to use the alternative string. In a real world use-case,
+  // this would be used to be able to change a localized string after release
+  // or add non-toolkit fluent files with permission strings of APIs defined
+  // outside of toolkit.
+  PERMISSION_L10N.addResourceIds(["mock.ftl"]);
+  PERMISSION_L10N_ID_OVERRIDES.set(
+    "downloads",
+    "webext-perms-description-test-downloads"
+  );
+  PERMISSION_L10N_ID_OVERRIDES.set(
+    "proxy",
+    "webext-perms-description-test-proxy"
+  );
+
+  let mockCleanup = () => {
+    // Make sure cleanup is executed only once.
+    mockCleanup = () => {};
+
+    // Remove the permission string mapping.
+    PERMISSION_L10N.removeResourceIds(["mock.ftl"]);
+    PERMISSION_L10N_ID_OVERRIDES.delete("downloads");
+    PERMISSION_L10N_ID_OVERRIDES.delete("proxy");
+    l10nReg.removeSources(["mock"]);
+  };
+  registerCleanupFunction(mockCleanup);
 
   const manifest = {
     permissions: ["downloads", "proxy"],
   };
-  const expectedWarnings = mockLocalization.formatValuesSync(
-    manifest.permissions.map(getKeyForPermission)
+
+  const manifestPermissions = await getManifestPermissions({ manifest });
+  let expectedWarnings = [
+    "Custom description for the downloads permission",
+    "Custom description for the proxy permission",
+  ];
+  const { warnings } = getPermissionWarnings(manifestPermissions);
+  deepEqual(
+    warnings,
+    expectedWarnings,
+    "Got the expected string from customized permission mapping"
   );
 
-  try {
-    for (let perm of manifest.permissions) {
-      PERMISSION_L10N_ID_OVERRIDES.set(perm, getKeyForPermission(perm));
-    }
-    const manifestPermissions = await getManifestPermissions({ manifest });
-
-    // Pass the callback function for the non-default key mapping to
-    // ExtensionData.formatPermissionStrings() and verify it being used.
-    const warnings = getPermissionWarnings(manifestPermissions, {
-      localization: mockLocalization,
-    });
-    deepEqual(
-      warnings,
-      expectedWarnings,
-      "Got the expected string from customized permission mapping"
-    );
-  } finally {
-    for (let perm of manifest.permissions) {
-      PERMISSION_L10N_ID_OVERRIDES.delete(perm);
-    }
-  }
+  mockCleanup();
 });
 
 // Tests that permission description data is internally consistent
@@ -254,7 +279,10 @@ add_task(async function host_permissions() {
       ]),
     },
     {
-      description: "many host permission",
+      // This test covers the expected strings for many host permissions
+      // as shown in permissions dialog (install, update or optional
+      // permission requests).
+      description: "many host permission (as shown in install dialog)",
       manifest: {
         permissions: [
           "http://a/",
@@ -280,45 +308,17 @@ add_task(async function host_permissions() {
         "http://*.4/",
       ],
       expectedWarnings: l10n.formatValuesSync([
-        // Wildcard hosts take precedence in the permission list.
         {
-          id: "webext-perms-host-description-wildcard",
-          args: { domain: "1" },
-        },
-        {
-          id: "webext-perms-host-description-wildcard",
-          args: { domain: "2" },
-        },
-        {
-          id: "webext-perms-host-description-wildcard",
-          args: { domain: "3" },
-        },
-        {
-          id: "webext-perms-host-description-wildcard",
-          args: { domain: "4" },
-        },
-        {
-          id: "webext-perms-host-description-one-site",
-          args: { domain: "a" },
-        },
-        {
-          id: "webext-perms-host-description-one-site",
-          args: { domain: "b" },
-        },
-        {
-          id: "webext-perms-host-description-one-site",
-          args: { domain: "c" },
-        },
-        {
-          id: "webext-perms-host-description-too-many-sites",
-          args: { domainCount: 2 },
+          id: "webext-perms-host-description-multiple-domains",
+          args: { domainCount: 9 },
         },
       ]),
-      options: {
-        collapseOrigins: true,
-      },
+      expectedDomainsList: ["1", "2", "3", "4", "a", "b", "c", "d", "e"],
+      options: { fullDomainsList: true },
     },
     {
+      // This test covers the expected strings for many host permissions
+      // as shown in about:addons addon card permissions view.
       description:
         "many host permissions without item limit in the warning list",
       manifest: {
@@ -367,6 +367,7 @@ add_task(async function host_permissions() {
       manifest,
       expectedOrigins,
       expectedWarnings,
+      expectedDomainsList,
       options,
     } of permissionTestCases) {
       manifest = Object.assign({}, manifest, { manifest_version });
@@ -388,12 +389,35 @@ add_task(async function host_permissions() {
         `Expected no non-host permissions (${description})`
       );
 
-      let warnings = getPermissionWarnings(manifestPermissions, options);
+      let { warnings, fullDomainsList } = getPermissionWarnings(
+        manifestPermissions,
+        options
+      );
       deepEqual(
         warnings,
         expectedWarnings,
         `Expected warnings (${description})`
       );
+      if (fullDomainsList) {
+        deepEqual(
+          Array.from(fullDomainsList.domainsSet),
+          expectedDomainsList,
+          `Expected full domains list (${description})`
+        );
+        // Verify also that the warning message at the fullDomainsList.msgIdIndex
+        // position is the one expected to be associated to the list of domains
+        // in fullDomainsList.domainsSet.
+        equal(
+          warnings[fullDomainsList.msgIdIndex],
+          l10n.formatValueSync(
+            "webext-perms-host-description-multiple-domains",
+            {
+              domainCount: expectedDomainsList.length,
+            }
+          ),
+          "Got warning associated to the full domains list set to the expected fluent string."
+        );
+      }
     }
   }
 });
@@ -421,12 +445,13 @@ add_task(async function api_permissions() {
     {
       origins: ["http://x/", "http://*.x/", "http://*.tld/"],
       permissions: ["activeTab", "webNavigation", "tabs", "nativeMessaging"],
+      data_collection: [],
     },
     "Expected origins and permissions"
   );
 
   deepEqual(
-    getPermissionWarnings(manifestPermissions),
+    getPermissionWarnings(manifestPermissions).warnings,
     l10n.formatValuesSync([
       // Host permissions first, with wildcards on top.
       { id: "webext-perms-host-description-wildcard", args: { domain: "x" } },
@@ -454,16 +479,16 @@ add_task(async function nativeMessaging_permission() {
   if (IS_NATIVE_MESSAGING_PRIVILEGED) {
     // The behavior of nativeMessaging for unprivileged extensions on Android
     // is covered in
-    // mobile/android/components/extensions/test/xpcshell/test_ext_native_messaging_permissions.js
+    // mobile/shared/components/extensions/test/xpcshell/test_ext_native_messaging_permissions.js
     deepEqual(
       manifestPermissions,
-      { origins: [], permissions: [] },
+      { origins: [], permissions: [], data_collection: [] },
       "nativeMessaging perm ignored for unprivileged extensions on Android"
     );
   } else {
     deepEqual(
       manifestPermissions,
-      { origins: [], permissions: ["nativeMessaging"] },
+      { origins: [], permissions: ["nativeMessaging"], data_collection: [] },
       "nativeMessaging permission recognized for unprivileged extensions"
     );
   }
@@ -484,12 +509,13 @@ add_task(
       {
         origins: [],
         permissions: ["declarativeNetRequest", "declarativeNetRequestFeedback"],
+        data_collection: [],
       },
       "Expected origins and permissions"
     );
 
     deepEqual(
-      getPermissionWarnings(manifestPermissions),
+      getPermissionWarnings(manifestPermissions).warnings,
       l10n.formatValuesSync([
         "webext-perms-description-declarativeNetRequest",
         "webext-perms-description-declarativeNetRequestFeedback",
@@ -511,11 +537,19 @@ add_task(
 
     deepEqual(
       manifestPermissions,
-      { origins: [], permissions: ["declarativeNetRequestWithHostAccess"] },
+      {
+        origins: [],
+        permissions: ["declarativeNetRequestWithHostAccess"],
+        data_collection: [],
+      },
       "Expected origins and permissions"
     );
 
-    deepEqual(getPermissionWarnings(manifestPermissions), [], "No warnings");
+    deepEqual(
+      getPermissionWarnings(manifestPermissions).warnings,
+      [],
+      "No warnings"
+    );
   }
 );
 
@@ -541,12 +575,13 @@ add_task(async function privileged_with_mozillaAddons() {
     {
       origins: ["resource://x/*", "http://a/", "about:reader*"],
       permissions: ["mozillaAddons"],
+      data_collection: [],
     },
     "Expected origins and permissions for privileged add-on with mozillaAddons"
   );
 
   deepEqual(
-    getPermissionWarnings(manifestPermissions),
+    getPermissionWarnings(manifestPermissions).warnings,
     [l10n.formatValueSync("webext-perms-host-description-all-urls")],
     "Expected warnings for privileged add-on with mozillaAddons permission."
   );
@@ -572,12 +607,13 @@ add_task(async function unprivileged_with_mozillaAddons() {
     {
       origins: ["http://a/"],
       permissions: [],
+      data_collection: [],
     },
     "Expected origins and permissions for unprivileged add-on with mozillaAddons"
   );
 
   deepEqual(
-    getPermissionWarnings(manifestPermissions),
+    getPermissionWarnings(manifestPermissions).warnings,
     [
       l10n.formatValueSync("webext-perms-host-description-one-site", {
         domain: "a",
@@ -589,7 +625,7 @@ add_task(async function unprivileged_with_mozillaAddons() {
 
 // Tests that an update with less permissions has no warning.
 add_task(async function update_drop_permission() {
-  let warnings = await getPermissionWarningsForUpdate(
+  let { warnings } = await getPermissionWarningsForUpdate(
     {
       manifest: {
         permissions: ["<all_urls>", "https://a/", "http://b/"],
@@ -615,7 +651,7 @@ add_task(async function update_drop_permission() {
 // Tests that an update that switches from "*://*/*" to "<all_urls>" does not
 // result in additional permission warnings.
 add_task(async function update_all_urls_permission() {
-  let warnings = await getPermissionWarningsForUpdate(
+  let { warnings } = await getPermissionWarningsForUpdate(
     {
       manifest: {
         permissions: ["*://*/*"],
@@ -637,7 +673,7 @@ add_task(async function update_all_urls_permission() {
 // Tests that an update where a new permission whose domain overlaps with
 // an existing permission does not result in additional permission warnings.
 add_task(async function update_change_permissions() {
-  let warnings = await getPermissionWarningsForUpdate(
+  let { warnings } = await getPermissionWarningsForUpdate(
     {
       manifest: {
         permissions: ["https://a/", "http://*.b/", "http://c/", "http://f/"],
@@ -680,7 +716,7 @@ add_task(async function update_change_permissions() {
 // Tests that a privileged extension with the mozillaAddons permission can be
 // updated without errors.
 add_task(async function update_privileged_with_mozillaAddons() {
-  let warnings = await getPermissionWarningsForUpdate(
+  let { warnings } = await getPermissionWarningsForUpdate(
     {
       isPrivileged: true,
       manifest: {
@@ -709,7 +745,7 @@ add_task(async function update_privileged_with_mozillaAddons() {
 // through an update.
 add_task(async function update_unprivileged_with_mozillaAddons() {
   // Unprivileged
-  let warnings = await getPermissionWarningsForUpdate(
+  let { warnings } = await getPermissionWarningsForUpdate(
     {
       manifest: {
         permissions: ["mozillaAddons", "resource://a/"],
@@ -781,7 +817,7 @@ add_task(
       },
     });
 
-    // Verify that XPIInstall.jsm will not collect the warning for the
+    // Verify that XPIInstall.sys.mjs will not collect the warning for the
     // privileged permission as expected.
     async function getWarningsFromExtensionData({ isPrivileged }) {
       let extData;

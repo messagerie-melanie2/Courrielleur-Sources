@@ -9,8 +9,8 @@
 
 "use strict";
 
-var { ensure_card_exists, ensure_no_card_exists } = ChromeUtils.import(
-  "resource://testing-common/mozmill/AddressBookHelpers.jsm"
+var { ensure_card_exists, ensure_no_card_exists } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/AddressBookHelpers.sys.mjs"
 );
 var {
   add_message_to_folder,
@@ -18,14 +18,13 @@ var {
   create_folder,
   create_message,
   get_about_message,
-  mc,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var folder;
@@ -36,16 +35,15 @@ var myEmail = "sender@nul.invalid"; // Dictated by messagerInjector.js
 var friendEmail = "carl@sagan.invalid";
 var friendName = "Carl Sagan";
 var headertoFieldMe;
-var collectedAddresses;
 
 add_setup(async function () {
-  localAccount = MailServices.accounts.FindAccountForServer(
+  localAccount = MailServices.accounts.findAccountForServer(
     MailServices.accounts.localFoldersServer
   );
 
   // We need to make sure we have only one identity:
   // 1) Delete all accounts except for Local Folders
-  for (let account of MailServices.accounts.accounts) {
+  for (const account of MailServices.accounts.accounts) {
     if (account != localAccount) {
       MailServices.accounts.removeAccount(account);
     }
@@ -53,7 +51,7 @@ add_setup(async function () {
 
   // 2) Delete all identities except for one
   for (let i = localAccount.identities.length - 1; i >= 0; i--) {
-    let identity = localAccount.identities[i];
+    const identity = localAccount.identities[i];
     if (identity.email != myEmail) {
       localAccount.removeIdentity(identity);
     }
@@ -89,11 +87,8 @@ add_setup(async function () {
 
   // Ensure all the directories are initialised.
   MailServices.ab.directories;
-  collectedAddresses = MailServices.ab.getDirectory(
-    "jsaddrbook://history.sqlite"
-  );
 
-  let bundle = Services.strings.createBundle(
+  const bundle = Services.strings.createBundle(
     "chrome://messenger/locale/messenger.properties"
   );
   headertoFieldMe = bundle.GetStringFromName("headertoFieldMe");
@@ -126,7 +121,7 @@ async function help_test_display_name(message, field, expectedValue) {
   // looking at in order to update information changed in address book entries.
   await be_in_folder(decoyFolder);
   await be_in_folder(folder);
-  select_click_row(message);
+  await select_click_row(message);
 
   Assert.equal(
     get_about_message().document.querySelector(
@@ -140,85 +135,55 @@ async function help_test_display_name(message, field, expectedValue) {
 add_task(async function test_single_identity() {
   ensure_no_card_exists(myEmail);
   ensure_single_identity();
-  await help_test_display_name(0, "to", headertoFieldMe);
+  await help_test_display_name(-1, "to", headertoFieldMe);
 
-  await help_test_display_name(3, "to", `Customized <${myEmail}>`);
+  await help_test_display_name(0, "to", `Customized <${myEmail}>`);
 });
 
 add_task(async function test_single_identity_in_abook() {
-  ensure_card_exists(myEmail, "President Frankenstein", true);
-  ensure_single_identity();
-  await help_test_display_name(0, "to", "President Frankenstein");
-});
-
-add_task(async function test_single_identity_in_abook_no_pdn() {
   ensure_card_exists(myEmail, "President Frankenstein");
   ensure_single_identity();
-  await help_test_display_name(0, "to", headertoFieldMe);
+  await help_test_display_name(-1, "to", "President Frankenstein");
 });
 
 add_task(async function test_multiple_identities() {
   ensure_no_card_exists(myEmail);
   ensure_multiple_identities();
-  await help_test_display_name(0, "to", myEmail);
+  await help_test_display_name(-1, "to", myEmail);
 
-  await help_test_display_name(3, "to", `Customized <${myEmail}>`);
+  await help_test_display_name(0, "to", `Customized <${myEmail}>`);
 });
 
 add_task(async function test_multiple_identities_in_abook() {
-  ensure_card_exists(myEmail, "President Frankenstein", true);
-  ensure_multiple_identities();
-  await help_test_display_name(0, "to", "President Frankenstein");
-});
-
-add_task(async function test_multiple_identities_in_abook_no_pdn() {
   ensure_card_exists(myEmail, "President Frankenstein");
   ensure_multiple_identities();
-  await help_test_display_name(0, "to", myEmail);
-
-  await help_test_display_name(3, "to", `Customized <${myEmail}>`);
+  await help_test_display_name(-1, "to", "President Frankenstein");
 });
 
 add_task(async function test_no_header_name() {
   ensure_no_card_exists(friendEmail);
   ensure_single_identity();
-  await help_test_display_name(1, "from", friendEmail);
+  await help_test_display_name(-2, "from", friendEmail);
 });
 
 add_task(async function test_no_header_name_in_abook() {
-  ensure_card_exists(friendEmail, "My Buddy", true);
-  ensure_single_identity();
-  await help_test_display_name(1, "from", "My Buddy");
-});
-
-add_task(async function test_no_header_name_in_abook_no_pdn() {
   ensure_card_exists(friendEmail, "My Buddy");
   ensure_single_identity();
-  // With address book entry but display name not preferred, we display name and
-  // e-mail address or only the e-mail address if no name exists.
-  await help_test_display_name(1, "from", "carl@sagan.invalid");
+  await help_test_display_name(-2, "from", "My Buddy");
 });
 
 add_task(async function test_header_name() {
   ensure_no_card_exists(friendEmail);
   ensure_single_identity();
   await help_test_display_name(
-    2,
+    -3,
     "from",
     friendName + " <" + friendEmail + ">"
   );
 });
 
 add_task(async function test_header_name_in_abook() {
-  ensure_card_exists(friendEmail, "My Buddy", true);
-  ensure_single_identity();
-  await help_test_display_name(2, "from", "My Buddy");
-});
-
-add_task(async function test_header_name_in_abook_no_pdn() {
   ensure_card_exists(friendEmail, "My Buddy");
   ensure_single_identity();
-  // With address book entry but display name not preferred, we display name and
-  // e-mail address.
-  await help_test_display_name(2, "from", "Carl Sagan <carl@sagan.invalid>");
+  await help_test_display_name(-3, "from", "My Buddy");
 });

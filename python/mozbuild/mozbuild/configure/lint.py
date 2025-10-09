@@ -23,6 +23,12 @@ from . import (
 from .help import HelpFormatter
 
 
+def code_replace(code, co_filename, co_name, co_firstlineno):
+    return code.replace(
+        co_filename=co_filename, co_name=co_name, co_firstlineno=co_firstlineno
+    )
+
+
 class LintSandbox(ConfigureSandbox):
     def __init__(self, environ=None, argv=None, stdout=None, stderr=None):
         out = StringIO()
@@ -68,49 +74,27 @@ class LintSandbox(ConfigureSandbox):
             funcname = obj.__name__
             filename = obj.__code__.co_filename
             firstline = obj.__code__.co_firstlineno
-            line += firstline
+            line += firstline - 1
         elif inspect.isframe(obj):
             funcname = obj.f_code.co_name
             filename = obj.f_code.co_filename
             firstline = obj.f_code.co_firstlineno
-            line = obj.f_lineno
+            line = obj.f_lineno - 1
         else:
             # Don't know how to handle the given location, still raise the
             # exception.
             raise exception
 
         # Create a new function from the above thrower that pretends
-        # the `def` line is on the first line of the function given as
-        # argument, and the `raise` line is on the line given as argument.
+        # the `raise` line is on the line given as argument.
 
-        offset = line - firstline
-        # co_lnotab is a string where each pair of consecutive character is
-        # (chr(byte_increment), chr(line_increment)), mapping bytes in co_code
-        # to line numbers relative to co_firstlineno.
-        # If the offset we need to encode is larger than what fits in a 8-bit
-        # signed integer, we need to split it.
-        co_lnotab = bytes([0, 127] * (offset // 127) + [0, offset % 127])
-        code = thrower.__code__
-        codetype_args = [
-            code.co_argcount,
-            code.co_kwonlyargcount,
-            code.co_nlocals,
-            code.co_stacksize,
-            code.co_flags,
-            code.co_code,
-            code.co_consts,
-            code.co_names,
-            code.co_varnames,
-            filename,
-            funcname,
-            firstline,
-            co_lnotab,
-        ]
-        if hasattr(code, "co_posonlyargcount"):
-            # co_posonlyargcount was introduced in Python 3.8.
-            codetype_args.insert(1, code.co_posonlyargcount)
+        code = code_replace(
+            thrower.__code__,
+            co_filename=filename,
+            co_name=funcname,
+            co_firstlineno=line,
+        )
 
-        code = types.CodeType(*codetype_args)
         thrower = types.FunctionType(
             code,
             thrower.__globals__,
@@ -216,19 +200,25 @@ class LintSandbox(ConfigureSandbox):
         return result
 
     def _check_option(self, option, *args, **kwargs):
-        if "default" not in kwargs:
-            return
+        self._check_help_message(option, *args, **kwargs)
+
         if len(args) == 0:
             return
 
         self._check_prefix_for_bool_option(*args, **kwargs)
-        self._check_help_for_option_with_func_default(option, *args, **kwargs)
+        self._check_help_for_option(option, *args, **kwargs)
+
+    def _pretty_current_frame(self):
+        frame = inspect.currentframe()
+        while frame and frame.f_code.co_name != self.option_impl.__name__:
+            frame = frame.f_back
+        return frame
 
     def _check_prefix_for_bool_option(self, *args, **kwargs):
         name = args[0]
-        default = kwargs["default"]
+        default = kwargs.get("default")
 
-        if type(default) != bool:
+        if type(default) is not bool:
             return
 
         table = {
@@ -242,33 +232,39 @@ class LintSandbox(ConfigureSandbox):
             },
         }
         for prefix, replacement in table[default].items():
-            if name.startswith("--{}-".format(prefix)):
-                frame = inspect.currentframe()
-                while frame and frame.f_code.co_name != self.option_impl.__name__:
-                    frame = frame.f_back
+            if name.startswith(f"--{prefix}-"):
+                frame = self._pretty_current_frame()
                 e = ConfigureError(
                     "{} should be used instead of "
                     "{} with default={}".format(
-                        name.replace(
-                            "--{}-".format(prefix), "--{}-".format(replacement)
-                        ),
+                        name.replace(f"--{prefix}-", f"--{replacement}-"),
                         name,
                         default,
                     )
                 )
                 self._raise_from(e, frame.f_back if frame else None)
 
-    def _check_help_for_option_with_func_default(self, option, *args, **kwargs):
-        default = kwargs["default"]
-
-        if not isinstance(default, SandboxDependsFunction):
-            return
-
+    def _check_help_for_option(self, option, *args, **kwargs):
         if not option.prefix:
             return
 
-        default = self._resolve(default)
-        if type(default) is str:
+        check = None
+
+        default = kwargs.get("default")
+        if isinstance(default, SandboxDependsFunction):
+            default = self._resolve(default)
+            if type(default) is not str:
+                check = "of non-constant default"
+
+        if (
+            option.default
+            and len(option.default) == 0
+            and option.choices
+            and option.nargs in ("?", "*")
+        ):
+            check = "it can be both disabled and enabled with an optional value"
+
+        if not check:
             return
 
         help = kwargs["help"]
@@ -281,11 +277,29 @@ class LintSandbox(ConfigureSandbox):
         else:
             rule = "{With|Without}"
 
-        frame = inspect.currentframe()
-        while frame and frame.f_code.co_name != self.option_impl.__name__:
-            frame = frame.f_back
+        frame = self._pretty_current_frame()
+        e = ConfigureError(f'`help` should contain "{rule}" because {check}')
+        self._raise_from(e, frame.f_back if frame else None)
+
+    def _check_help_message(self, option, *args, **kwargs):
+        help = kwargs["help"]
+        if help[:1].islower():
+            error_msg = f"`{help}` is not properly capitalized"
+        elif help.endswith("."):
+            error_msg = f"`{help}` should not end with a '.'"
+        elif match := re.search(HelpFormatter.RE_FORMAT, help):
+            for choice in match.groups():
+                if choice[:1].islower():
+                    error_msg = f"`{choice}` is not properly capitalized"
+                    break
+            else:
+                return
+        else:
+            return
+
+        frame = self._pretty_current_frame()
         e = ConfigureError(
-            '`help` should contain "{}" because of non-constant default'.format(rule)
+            f'Invalid `help` message for option "{option.option}": {error_msg}'
         )
         self._raise_from(e, frame.f_back if frame else None)
 
@@ -324,9 +338,7 @@ class LintSandbox(ConfigureSandbox):
                 what = _import.split(".")[0]
                 imports.add(what)
             if _from == "__builtin__" and _import in glob["__builtins__"]:
-                e = NameError(
-                    "builtin '{}' doesn't need to be imported".format(_import)
-                )
+                e = NameError(f"builtin '{_import}' doesn't need to be imported")
                 self._raise_from(e, func)
         for instr in Bytecode(func):
             code = func.__code__
@@ -339,7 +351,7 @@ class LintSandbox(ConfigureSandbox):
             ):
                 # Raise the same kind of error as what would happen during
                 # execution.
-                e = NameError("global name '{}' is not defined".format(instr.argval))
+                e = NameError(f"global name '{instr.argval}' is not defined")
                 if instr.starts_line is None:
                     self._raise_from(e, func)
                 else:

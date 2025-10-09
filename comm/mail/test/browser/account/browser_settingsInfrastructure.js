@@ -13,19 +13,11 @@
 "use strict";
 
 var { click_account_tree_row, get_account_tree_row, open_advanced_settings } =
-  ChromeUtils.import(
-    "resource://testing-common/mozmill/AccountManagerHelpers.jsm"
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/AccountManagerHelpers.sys.mjs"
   );
-var { FAKE_SERVER_HOSTNAME } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-);
-
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
-);
-
-var { mc } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+var { FAKE_SERVER_HOSTNAME } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 var gPopAccount, gImapAccount, gOriginalAccountCount;
@@ -35,7 +27,7 @@ add_setup(function () {
   gOriginalAccountCount = MailServices.accounts.allServers.length;
 
   // Create a POP server
-  let popServer = MailServices.accounts
+  const popServer = MailServices.accounts
     .createIncomingServer("nobody", "pop.invalid", "pop3")
     .QueryInterface(Ci.nsIPop3IncomingServer);
 
@@ -47,7 +39,7 @@ add_setup(function () {
   gPopAccount.addIdentity(identity);
 
   // Create an IMAP server
-  let imapServer = MailServices.accounts
+  const imapServer = MailServices.accounts
     .createIncomingServer("nobody", "imap.invalid", "imap")
     .QueryInterface(Ci.nsIImapIncomingServer);
 
@@ -80,9 +72,7 @@ registerCleanupFunction(function () {
  * pane switches.
  */
 add_task(async function test_account_dot_IDs() {
-  await open_advanced_settings(function (tab) {
-    subtest_check_account_dot_IDs(tab);
-  });
+  await open_advanced_settings(subtest_check_account_dot_IDs);
 });
 
 /**
@@ -92,13 +82,13 @@ add_task(async function test_account_dot_IDs() {
  *
  * @param {object} tab - The account manager tab.
  */
-function subtest_check_account_dot_IDs(tab) {
+async function subtest_check_account_dot_IDs(tab) {
   let accountRow = get_account_tree_row(
     gPopAccount.key,
     "am-server.xhtml",
     tab
   );
-  click_account_tree_row(tab, accountRow);
+  await click_account_tree_row(tab, accountRow);
 
   let iframe =
     tab.browser.contentWindow.document.getElementById(
@@ -111,10 +101,10 @@ function subtest_check_account_dot_IDs(tab) {
   EventUtils.synthesizeMouseAtCenter(loginCheck, {}, loginCheck.ownerGlobal);
 
   accountRow = get_account_tree_row(gPopAccount.key, "am-junk.xhtml", tab);
-  click_account_tree_row(tab, accountRow);
+  await click_account_tree_row(tab, accountRow);
 
   accountRow = get_account_tree_row(gPopAccount.key, "am-server.xhtml", tab);
-  click_account_tree_row(tab, accountRow);
+  await click_account_tree_row(tab, accountRow);
 
   // Re-assign iframe.contentDocument because it was lost when changing panes
   // (uses loadURI to load a new document).
@@ -174,13 +164,9 @@ function subtest_check_account_dot_IDs(tab) {
  * Check if form controls are properly disabled when their attached prefs are locked.
  */
 add_task(async function test_account_locked_prefs() {
-  await open_advanced_settings(function (tab) {
-    subtest_check_locked_prefs_addressing(tab);
-  });
+  await open_advanced_settings(subtest_check_locked_prefs_addressing);
 
-  await open_advanced_settings(function (tab) {
-    subtest_check_locked_prefs_server(tab);
-  });
+  await open_advanced_settings(subtest_check_locked_prefs_server);
 });
 
 /**
@@ -189,13 +175,13 @@ add_task(async function test_account_locked_prefs() {
  *
  * @param {object} tab - The account manager tab.
  */
-function subtest_check_locked_prefs_addressing(tab) {
+async function subtest_check_locked_prefs_addressing(tab) {
   let accountRow = get_account_tree_row(
     gPopAccount.key,
     "am-addressing.xhtml",
     tab
   );
-  click_account_tree_row(tab, accountRow);
+  await click_account_tree_row(tab, accountRow);
 
   let iframe =
     tab.browser.contentWindow.document.getElementById(
@@ -226,8 +212,8 @@ function subtest_check_locked_prefs_addressing(tab) {
   Assert.ok(!LDAPeditButton.disabled);
 
   // Lock the pref for the server selector.
-  let prefstring = LDAPdirectory.getAttribute("prefstring");
-  let controlPref = prefstring.replace(
+  const prefstring = LDAPdirectory.getAttribute("prefstring");
+  const controlPref = prefstring.replace(
     "%identitykey%",
     gPopAccount.defaultIdentity.key
   );
@@ -236,14 +222,14 @@ function subtest_check_locked_prefs_addressing(tab) {
 
   // Refresh the pane by switching to another one.
   accountRow = get_account_tree_row(gPopAccount.key, "am-junk.xhtml", tab);
-  click_account_tree_row(tab, accountRow);
+  await click_account_tree_row(tab, accountRow);
 
   accountRow = get_account_tree_row(
     gPopAccount.key,
     "am-addressing.xhtml",
     tab
   );
-  click_account_tree_row(tab, accountRow);
+  await click_account_tree_row(tab, accountRow);
 
   // Re-assign iframe.contentDocument because it was lost when changing panes
   // (uses loadURI to load a new document).
@@ -277,13 +263,13 @@ function subtest_check_locked_prefs_addressing(tab) {
  *
  * @param {object} tab - The account manager tab.
  */
-function subtest_check_locked_prefs_server(tab) {
+async function subtest_check_locked_prefs_server(tab) {
   let accountRow = get_account_tree_row(
     gPopAccount.key,
     "am-server.xhtml",
     tab
   );
-  click_account_tree_row(tab, accountRow);
+  await click_account_tree_row(tab, accountRow);
 
   let iframe =
     tab.browser.contentWindow.document.getElementById(
@@ -320,8 +306,8 @@ function subtest_check_locked_prefs_server(tab) {
   Assert.ok(!daysToLeave.disabled);
 
   // Lock the pref deleteByAge checkbox (middle of the element hierarchy).
-  let prefstring = deleteByAge.getAttribute("prefstring");
-  let controlPref = prefstring.replace(
+  const prefstring = deleteByAge.getAttribute("prefstring");
+  const controlPref = prefstring.replace(
     "%serverkey%",
     gPopAccount.incomingServer.key
   );
@@ -330,10 +316,10 @@ function subtest_check_locked_prefs_server(tab) {
 
   // Refresh the pane by switching to another one.
   accountRow = get_account_tree_row(gPopAccount.key, "am-junk.xhtml", tab);
-  click_account_tree_row(tab, accountRow);
+  await click_account_tree_row(tab, accountRow);
 
   accountRow = get_account_tree_row(gPopAccount.key, "am-server.xhtml", tab);
-  click_account_tree_row(tab, accountRow);
+  await click_account_tree_row(tab, accountRow);
 
   // Re-assign iframe.contentDocument because it was lost when changing panes
   // (uses loadURI to load a new document).
@@ -382,19 +368,17 @@ function subtest_check_locked_prefs_server(tab) {
  * even when empty. This is tested on the Reply-To field.
  */
 add_task(async function test_replyTo_leak() {
-  await open_advanced_settings(function (tab) {
-    subtest_check_replyTo_leak(tab);
-  });
+  await open_advanced_settings(subtest_check_replyTo_leak);
 });
 
 /**
  * @param {object} tab - The account manager tab.
  */
-function subtest_check_replyTo_leak(tab) {
+async function subtest_check_replyTo_leak(tab) {
   let accountRow = get_account_tree_row(gPopAccount.key, null, tab);
-  click_account_tree_row(tab, accountRow);
+  await click_account_tree_row(tab, accountRow);
 
-  let iframe =
+  const iframe =
     tab.browser.contentWindow.document.getElementById(
       "contentFrame"
     ).contentDocument;
@@ -408,15 +392,15 @@ function subtest_check_replyTo_leak(tab) {
 
   // This test expects the following POP account to exist by default
   // in the test profile with port number 110 and no security.
-  let firstServer = MailServices.accounts.findServer(
+  const firstServer = MailServices.accounts.findServer(
     "tinderbox",
     FAKE_SERVER_HOSTNAME,
     "pop3"
   );
-  let firstAccount = MailServices.accounts.FindAccountForServer(firstServer);
+  const firstAccount = MailServices.accounts.findAccountForServer(firstServer);
 
   accountRow = get_account_tree_row(firstAccount.key, null, tab);
-  click_account_tree_row(tab, accountRow);
+  await click_account_tree_row(tab, accountRow);
 
   // the Reply-To field should be empty as this account does not have it set.
   replyAddress = iframe.getElementById("identity.replyTo");
@@ -428,9 +412,7 @@ function subtest_check_replyTo_leak(tab) {
  * Check if onchange handlers are properly executed when panes are switched.
  */
 add_task(async function test_account_onchange_handler() {
-  await open_advanced_settings(function (tab) {
-    subtest_check_onchange_handler(tab);
-  });
+  await open_advanced_settings(subtest_check_onchange_handler);
 });
 
 /**
@@ -438,13 +420,13 @@ add_task(async function test_account_onchange_handler() {
  *
  * @param {object} tab - The account manager tab.
  */
-function subtest_check_onchange_handler(tab) {
+async function subtest_check_onchange_handler(tab) {
   let accountRow = get_account_tree_row(
     gImapAccount.key,
     "am-offline.xhtml",
     tab
   );
-  click_account_tree_row(tab, accountRow);
+  await click_account_tree_row(tab, accountRow);
 
   let iframe =
     tab.browser.contentWindow.document.getElementById(
@@ -460,18 +442,18 @@ function subtest_check_onchange_handler(tab) {
   Assert.equal(autoSyncInterval.value, 1);
 
   // Now type in 35 (days).
-  let byAge = iframe.getElementById("useAutosync.ByAge");
+  const byAge = iframe.getElementById("useAutosync.ByAge");
   EventUtils.synthesizeMouseAtCenter(byAge, {}, byAge.ownerGlobal);
   autoSync.select();
   autoSync.focus();
-  EventUtils.sendString("35", mc.window);
+  EventUtils.sendString("35", window);
 
   // Immediately switch to another pane and back.
   accountRow = get_account_tree_row(gImapAccount.key, "am-junk.xhtml", tab);
-  click_account_tree_row(tab, accountRow);
+  await click_account_tree_row(tab, accountRow);
 
   accountRow = get_account_tree_row(gImapAccount.key, "am-offline.xhtml", tab);
-  click_account_tree_row(tab, accountRow);
+  await click_account_tree_row(tab, accountRow);
 
   iframe =
     tab.browser.contentWindow.document.getElementById(

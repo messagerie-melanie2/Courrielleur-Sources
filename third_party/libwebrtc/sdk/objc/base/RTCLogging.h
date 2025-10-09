@@ -10,7 +10,7 @@
 
 #import <Foundation/Foundation.h>
 
-#import "RTCMacros.h"
+#import "sdk/objc/base/RTCMacros.h"
 
 // Subset of rtc::LoggingSeverity.
 typedef NS_ENUM(NSInteger, RTCLoggingSeverity) {
@@ -34,9 +34,12 @@ RTC_EXTERN NSString* RTCFileName(const char* filePath);
 
 // Some convenience macros.
 
-#define RTCLogString(format, ...)                                           \
-  [NSString stringWithFormat:@"(%@:%d %s): " format, RTCFileName(__FILE__), \
-                             __LINE__, __FUNCTION__, ##__VA_ARGS__]
+#define RTCLogString(format, ...)                    \
+  [NSString stringWithFormat:@"(%@:%d %s): " format, \
+                             RTCFileName(__FILE__),  \
+                             __LINE__,               \
+                             __FUNCTION__,           \
+                             ##__VA_ARGS__]
 
 #define RTCLogFormat(severity, format, ...)                     \
   do {                                                          \

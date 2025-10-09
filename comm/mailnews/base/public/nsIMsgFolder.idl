@@ -18,10 +18,10 @@ interface nsIMsgFilterList;
 interface nsIFile;
 interface nsIOutputStream;
 interface nsIInputStream;
-interface nsIFile;
 interface nsIMsgIdentity;
 interface nsIMsgThread;
 interface nsIMsgPluggableStore;
+interface nsIPropertyBag2;
 
 typedef long nsMsgBiffState;
 
@@ -50,9 +50,17 @@ interface nsIMsgFolder : nsISupports {
 
   /* folder name properties */
   readonly attribute AUTF8String URI;
-  attribute AString name;
-  attribute AString prettyName;
-  readonly attribute AString abbreviatedName;
+  attribute AUTF8String name;
+  attribute AUTF8String prettyName;
+  readonly attribute AUTF8String abbreviatedName;
+  readonly attribute AUTF8String prettyPath;
+
+%{C++
+  /**
+   * C++ shortcut to folder URI, for logging and debugging.
+   */
+  nsCString URI();
+%}
 
   /**
    * Set pretty name again from original name,
@@ -83,16 +91,6 @@ interface nsIMsgFolder : nsISupports {
   void updateFolder(in nsIMsgWindow aWindow);
 
   /**
-   * URL for this folder
-   */
-  readonly attribute AUTF8String folderURL;
-
-  /**
-   * should probably move to the server
-   */
-  readonly attribute boolean showDeletedMessages;
-
-  /**
    * this folder's parent server
    */
   readonly attribute nsIMsgIncomingServer server;
@@ -121,6 +119,11 @@ interface nsIMsgFolder : nsISupports {
    */
   readonly attribute boolean canRename;
 
+  /**
+   * Can folder be compacted? Only applicable to folders using mbox storage.
+   * Doesn't mean a compaction operation will actually do anything - if there's
+   * nothing to compact, the compaction will be a no-op.
+   */
   readonly attribute boolean canCompact;
 
   /**
@@ -173,6 +176,12 @@ interface nsIMsgFolder : nsISupports {
    * @param aFilterList The new list of filters.
    */
   void setEditableFilterList(in nsIMsgFilterList aFilterList);
+
+  /**
+   * Force close the mail database associated with this folder,
+   * excluding its subfolders.
+   */
+  void CloseDatabase();
 
   /**
    * Force close the mail database associated with this folder.
@@ -230,7 +239,7 @@ interface nsIMsgFolder : nsISupports {
    *
    * @exception NS_MSG_FOLDER_EXISTS
    */
-  void createSubfolder(in AString folderName, in nsIMsgWindow msgWindow);
+  void createSubfolder(in AUTF8String folderName, in nsIMsgWindow msgWindow);
 
   /**
    * Adds the subfolder with the passed name to the folder hierarchy.
@@ -242,7 +251,7 @@ interface nsIMsgFolder : nsISupports {
    * @param aFolderName Name of the folder to add.
    * @returns The folder added.
    */
-  nsIMsgFolder addSubfolder(in AString aFolderName);
+  nsIMsgFolder addSubfolder(in AUTF8String aFolderName);
 
   /* this method ensures the storage for the folder exists.
     For local folders, it creates the berkeley mailbox if missing.
@@ -261,6 +270,7 @@ interface nsIMsgFolder : nsISupports {
    * @param aMsgWindow  For progress/status, can be null.
    */
   void compact(in nsIUrlListener aListener, in nsIMsgWindow aMsgWindow);
+
   /**
    * Compact all folders in the account corresponding to this folder.
    *
@@ -279,14 +289,15 @@ interface nsIMsgFolder : nsISupports {
    *
    * @param name the new name of the folder
    */
-  void rename(in AString name, in nsIMsgWindow msgWindow);
-  void renameSubFolders( in nsIMsgWindow msgWindow, in nsIMsgFolder oldFolder);
+  void rename(in AUTF8String name, in nsIMsgWindow msgWindow);
+  void renameSubFolders(in nsIMsgWindow msgWindow, in nsIMsgFolder oldFolder);
 
-  AString generateUniqueSubfolderName(in AString prefix,
-                                      in nsIMsgFolder otherFolder);
+  AUTF8String generateUniqueSubfolderName(in AUTF8String prefix,
+                                          in nsIMsgFolder otherFolder);
 
   void updateSummaryTotals(in boolean force);
   void summaryChanged();
+
   /**
    * get the total number of unread messages in this folder,
    * or in all subfolders
@@ -316,10 +327,9 @@ interface nsIMsgFolder : nsISupports {
   void changeNumPendingUnread(in long delta);
   void changeNumPendingTotalMessages(in long delta);
 
- /**
-  * does this folder have new messages
-  *
-  */
+  /**
+   * Does this folder have new messages?
+   */
   attribute boolean hasNewMessages;
 
   /**
@@ -346,20 +356,6 @@ interface nsIMsgFolder : nsISupports {
    */
   readonly attribute boolean deletable;
 
-  /**
-   * should we be displaying recipients instead of the sender?
-   * for example, in the Sent folder, recipients are more relevant
-   * than the sender
-   */
-  readonly attribute boolean displayRecipients;
-
-  /**
-   * used to determine if it will take a long time to download all
-   * the headers in this folder - so that we can do folder notifications
-   * synchronously instead of asynchronously
-   */
-  readonly attribute boolean manyHeadersToDownload;
-
   readonly attribute ACString relativePathName;
 
   /**
@@ -367,6 +363,16 @@ interface nsIMsgFolder : nsISupports {
    * for imap, it's the sum of the size of the messages
    */
   attribute long long sizeOnDisk;
+
+  /**
+   * Aggregate size on disk of this folder and any folder
+   * nested under it.
+   *
+   * This attribute is computed by reading the sizeOnDisk attribute of the
+   * current folder and all of its sub-folders. This means its calculation can
+   * become costly if the folder has a lot of sub-folders.
+   */
+  readonly attribute long long sizeOnDiskWithSubFolders;
 
   readonly attribute ACString username;
   readonly attribute ACString hostname;
@@ -478,9 +484,33 @@ interface nsIMsgFolder : nsISupports {
                        in nsIMsgWindow msgWindow,
                        in nsIMsgCopyServiceListener listener);
 
-  void acquireSemaphore(in nsISupports semHolder);
-  void releaseSemaphore(in nsISupports semHolder);
+  /**
+   * Attempt to lock folder for use by semHolder (which can be basically anything).
+   * Fails with NS_MSG_FOLDER_BUSY if already locked.
+   * NOTE: Despite name, there is no threadsafe mechanism being used here.
+   *
+   * @param logText - the name of the calling function, for logging purposes only.
+   */
+  void acquireSemaphore(in nsISupports semHolder, in AUTF8String logText);
+
+  /**
+   * Releases lock held by semHolder.
+   * Has no effect if semHolder does not currently hold the lock.
+   * NOTE: Despite name, there is no threadsafe mechanism being used here.
+   *
+   * @param logText - the name of the calling function, for logging purposes only.
+   */
+  void releaseSemaphore(in nsISupports semHolder, in AUTF8String logText);
+
+  /**
+   * Returns true if folder is currently locked by semHolder.
+   * NOTE: Despite name, there is no threadsafe mechanism being used here.
+   */
   boolean testSemaphore(in nsISupports semHolder);
+
+  /**
+   * The locked attribute is true if folder is currently locked by anyone.
+   */
   readonly attribute boolean locked;
 
   void getNewMessages(in nsIMsgWindow aWindow, in nsIUrlListener aListener);
@@ -549,9 +579,6 @@ interface nsIMsgFolder : nsISupports {
    */
   attribute nsIMsgDatabase msgDatabase;
 
-  /// Close the database if not open in folder.
-  void closeDBIfFolderNotOpen(in boolean forceClosed);
-
   /// Does the folder have a local reference to the msgDatabase?
   readonly attribute boolean databaseOpen;
 
@@ -562,10 +589,12 @@ interface nsIMsgFolder : nsISupports {
    * @return   backup message database
    */
   nsIMsgDatabase getBackupMsgDatabase();
+
   /**
    * Remove the backup message database file
    */
   void removeBackupMsgDatabase();
+
   /**
    * Open the backup message database file
    */
@@ -576,14 +605,11 @@ interface nsIMsgFolder : nsISupports {
   readonly attribute boolean supportsOffline;
   boolean shouldStoreMsgOffline(in nsMsgKey msgKey);
   boolean hasMsgOffline(in nsMsgKey msgKey);
-
   /**
-   * Get an offline store output stream for the passed message header.
-   *
-   * @param aHdr hdr of message to get outputstream for
-   * @returns An output stream to write to.
+   * Discard the msgStore offline copy of this message (if there is one).
+   * If there is no offline copy, this has no effect.
    */
-  nsIOutputStream getOfflineStoreOutputStream(in nsIMsgDBHdr aHdr);
+  void discardOfflineMsg(in nsMsgKey msgKey);
 
   /**
    * !!! DEPRECATED (Bug 1733849) !!!
@@ -614,6 +640,7 @@ interface nsIMsgFolder : nsISupports {
   nsIMsgFolder getChildWithURI(in AUTF8String uri, in boolean deep,
                                in boolean caseInsensitive);
   void downloadAllForOffline(in nsIUrlListener listener, in nsIMsgWindow window);
+
   /**
    *  Turn notifications on/off for various notification types. Currently only
    *  supporting allMessageCountNotifications which refers to both total and
@@ -628,7 +655,14 @@ interface nsIMsgFolder : nsISupports {
   void alertFilterChanged(in nsIMsgWindow msgWindow);
   void throwAlertMsg(in string msgName, in nsIMsgWindow msgWindow);
   AString getStringWithFolderNameFromBundle(in string msgName);
+
+  /**
+   * These should not really be part of the public interface - they are
+   * implementation details used by the compaction code.
+   */
+  void notifyAboutToCompact();
   void notifyCompactCompleted();
+
   /**
    * Calculate ordering of this folder against another.
    */
@@ -637,12 +671,22 @@ interface nsIMsgFolder : nsISupports {
   attribute nsIMsgRetentionSettings retentionSettings;
   attribute nsIMsgDownloadSettings downloadSettings;
   boolean callFilterPlugins(in nsIMsgWindow aMsgWindow);
+
   /**
-   * used for order in the folder pane, folder pickers, etc.
+   * The order of the folder (relative to its siblings) in the folder pane,
+   * folder pickers, etc.
    */
   attribute long sortOrder;
 
-  attribute nsIDBFolderInfo dBTransferInfo;
+  /**
+   * The order of the folder as assigned by the user. The default value is
+   * NO_SORT_VALUE if no value has been assigned, and the folder's sortOrder
+   * property will used for ordering.
+   */
+  attribute unsigned long userSortOrder;
+  const unsigned long NO_SORT_VALUE = 0xffffffff;
+
+  attribute nsIPropertyBag2 dBTransferInfo;
 
   /**
    * Set a string property on the folder.
@@ -650,17 +694,14 @@ interface nsIMsgFolder : nsISupports {
   void setStringProperty(in string propertyName, in AUTF8String propertyValue);
 
   /**
-   * Returns the value of a string property.
-   * Throws an error if property does not exist.
+   * Returns the value of a string property, or an empty string if the property
+   * is not found.
    */
   AUTF8String getStringProperty(in string propertyName);
 
-  /* does not persist across sessions */
-  attribute nsMsgKey lastMessageLoaded;
-
   /**
    * Returns an array containing nsIMsgFolder items that are
-   * subfolders of the instance this is called on.
+   * subfolders (direct children) of the instance this is called on.
    */
   readonly attribute Array<nsIMsgFolder> subFolders;
 
@@ -677,7 +718,7 @@ interface nsIMsgFolder : nsISupports {
   /**
    * Determines if this folder is an ancestor of the supplied folder.
    *
-   * @param folder  The folder that may or may not be a descendent of this
+   * @param folder  The folder that may or may not be a descendant of this
    *                folder.
    */
   boolean isAncestorOf(in nsIMsgFolder folder);
@@ -687,16 +728,15 @@ interface nsIMsgFolder : nsISupports {
    *
    * @param name the name of the target subfolder
    */
-  boolean containsChildNamed(in AString name);
+  boolean containsChildNamed(in AUTF8String name);
 
   /**
    * Return the child folder which the specified name.
    *
-   * @param aName  The name of the child folder to find
-   * @return       The child folder
-   * @exception NS_ERROR_FAILURE Thrown if the folder with aName does not exist
+   * @param name - The name of the child folder to find
+   * @return The child folder, or null if the folder with 'name' does not exist.
    */
-  nsIMsgFolder getChildNamed(in AString aName);
+  nsIMsgFolder getChildNamed(in AUTF8String name);
 
   /**
    * Finds the sub folder with the specified name.
@@ -727,10 +767,6 @@ interface nsIMsgFolder : nsISupports {
                                  in ACString property,
                                  in unsigned long oldValue,
                                  in unsigned long newValue);
-  void NotifyUnicharPropertyChanged(in ACString property,
-                                    in AString oldValue,
-                                    in AString newValue);
-
   void notifyMessageAdded(in nsIMsgDBHdr msg);
   void notifyMessageRemoved(in nsIMsgDBHdr msg);
   void notifyFolderAdded(in nsIMsgFolder child);
@@ -745,7 +781,23 @@ interface nsIMsgFolder : nsISupports {
   void copyDataToOutputStreamForAppend(in nsIInputStream aIStream,
                      in long aLength, in nsIOutputStream outputStream);
   void copyDataDone();
-  void setJunkScoreForMessages(in Array<nsIMsgDBHdr> aMessages, in ACString aJunkScore);
+
+  /**
+   * Mark messages as junk or not junk, without performing any further action.
+   */
+  void setJunkScoreForMessages(in Array<nsIMsgDBHdr> messages,
+                               in nsMsgJunkScore junkScore,
+                               in ACString junkScoreOrigin,
+                               in long junkPercent);
+  /**
+   * Perform the appropriate actions for messages that are marked as junk or
+   * not junk. This does not include actually marking the messages.
+   */
+  void performActionsOnJunkMsgs(in Array<nsIMsgDBHdr> messages,
+                                in boolean msgsAreJunk,
+                                [optional] in nsIMsgWindow msgWindow,
+                                [optional] in nsIUrlListener listener);
+
   void applyRetentionSettings();
 
   /**
@@ -768,6 +820,7 @@ interface nsIMsgFolder : nsISupports {
   // keywords are space delimited, in the case of multiple keywords
   void addKeywordsToMessages(in Array<nsIMsgDBHdr> aMessages, in ACString aKeywords);
   void removeKeywordsFromMessages(in Array<nsIMsgDBHdr> aMessages, in ACString aKeywords);
+
   /**
    * Extract the message text from aStream.
    *
@@ -829,9 +882,9 @@ interface nsIMsgFolder : nsISupports {
    *
    * If a folder is the root folder for a server, then instead of
    * checking the folder property, check the property of the same name
-   * for the server using nsIMsgIncomingServer.getCharValue(...)
+   * for the server using nsIMsgIncomingServer.getStringValue(...)
    *
-   * Note nsIMsgIncomingServer.getCharValue for a server inherits from
+   * Note nsIMsgIncomingServer.getStringValue for a server inherits from
    * the preference mail.server.default.(propertyName) as a global value
    *
    * (ex: if propertyName = "IAmAGlobal" and no folder nor server properties
@@ -842,26 +895,7 @@ interface nsIMsgFolder : nsISupports {
    *
    * @param propertyName  The name of the property for the value to retrieve.
    */
-  ACString getInheritedStringProperty(in string propertyName);
-
-  /**
-   * Set a boolean to force an inherited propertyName to return empty instead
-   * of inheriting from a parent folder, server, or the global
-   *
-   * @param propertyName         The name of the property
-   * @param aForcePropertyEmpty  true if an empty inherited property should be returned
-   */
-  void setForcePropertyEmpty(in string propertyName, in boolean aForcePropertyEmpty);
-
-  /**
-   * Get a boolean to force an inherited propertyName to return empty instead
-   * of inheriting from a parent folder, server, or the global
-   *
-   * @param propertyName      The name of the property
-   *
-   * @return                  true if an empty inherited property should be returned
-   */
-  boolean getForcePropertyEmpty(in string propertyName);
+  AUTF8String getInheritedStringProperty(in string propertyName);
 
   /**
    * Pluggable store for this folder. Currently, this will always be the same

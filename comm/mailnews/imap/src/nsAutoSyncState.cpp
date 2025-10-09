@@ -11,7 +11,6 @@
 #include "nsIAutoSyncManager.h"
 #include "nsIAutoSyncMsgStrategy.h"
 #include "nsServiceManagerUtils.h"
-#include "nsComponentManagerUtils.h"
 #include "mozilla/Logging.h"
 
 using namespace mozilla;
@@ -502,7 +501,8 @@ NS_IMETHODIMP nsAutoSyncState::OnStopRunningUrl(nsIURI* aUrl,
   } else  // URL not folderstatus but FETCH of message body
   {
     // XXXemre how we recover from this error?
-    rv = ownerFolder->ReleaseSemaphore(ownerFolder);
+    rv = ownerFolder->ReleaseSemaphore(ownerFolder,
+                                       "nsAutoSyncState::OnStopRunningUrl"_ns);
     NS_ASSERTION(NS_SUCCEEDED(rv), "*** Cannot release folder semaphore");
 
     nsCOMPtr<nsIMsgMailNewsUrl> mailUrl = do_QueryInterface(aUrl);
@@ -543,19 +543,15 @@ NS_IMETHODIMP nsAutoSyncState::SetState(int32_t aState) {
     ResetDownloadQ();
     // tell folder to let go of its cached msg db pointer
     nsresult rv;
-    nsCOMPtr<nsIMsgMailSession> session =
-        do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-    if (NS_SUCCEEDED(rv) && session) {
-      nsCOMPtr<nsIMsgFolder> ownerFolder = do_QueryReferent(mOwnerFolder, &rv);
-      NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIMsgFolder> ownerFolder = do_QueryReferent(mOwnerFolder, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
 
-      bool folderOpen;
-      uint32_t folderFlags;
-      ownerFolder->GetFlags(&folderFlags);
-      session->IsFolderOpenInWindow(ownerFolder, &folderOpen);
-      if (!folderOpen && !(folderFlags & nsMsgFolderFlags::Inbox))
-        ownerFolder->SetMsgDatabase(nullptr);
-    }
+    bool folderOpen;
+    ownerFolder->GetDatabaseOpen(&folderOpen);
+    uint32_t folderFlags;
+    ownerFolder->GetFlags(&folderFlags);
+    if (!folderOpen && !(folderFlags & nsMsgFolderFlags::Inbox))
+      ownerFolder->SetMsgDatabase(nullptr);
   }
   nsCString logStr("Sync State set to |");
   logStr.Append(stateStrings[aState]);
@@ -677,7 +673,8 @@ NS_IMETHODIMP nsAutoSyncState::DownloadMessagesForOffline(
   nsCOMPtr<nsIMsgFolder> folder = do_QueryReferent(mOwnerFolder, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = folder->AcquireSemaphore(folder);
+  rv = folder->AcquireSemaphore(
+      folder, "nsAutoSyncState::DownloadMessagesForOffline"_ns);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (MOZ_LOG_TEST(gAutoSyncLog, LogLevel::Debug)) {

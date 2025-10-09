@@ -39,15 +39,15 @@ You need to add or edit four stanzas inside your module's ``build.gradle`` file.
     }
 
 
-**3. Java 11 required support**
+**3. Java 17 required support**
 
-As GeckoView uses some Java 11 APIs, it requires these compatibility flags:
+As GeckoView uses some Java 17 APIs, it requires these compatibility flags:
 
 .. code-block:: groovy
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_11
-        targetCompatibility JavaVersion.VERSION_11
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
 
 **4. Add GeckoView Implementations**
@@ -108,6 +108,15 @@ Initialize GeckoView in an Activity
     session.open(sRuntime);
     view.setSession(session);
     session.loadUri("about:buildconfig"); // Or any other URL...
+
+**4. Set the** `windowSoftInputMode <https://developer.android.com/guide/topics/manifest/activity-element#wsoft>`_ **to** ``adjustResize`` **for** `interactive-widget <https://drafts.csswg.org/css-viewport/#interactive-widget-section>`_ **:**
+
+.. code-block:: xml
+
+    <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+        <activity android:name=".YourActivity"
+                  android:windowSoftInputMode="stateUnspecified|adjustResize" />
+    </manifest>
 
 You're done!
 ==============

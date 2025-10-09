@@ -10,10 +10,7 @@ const { XPCShellContentUtils } = ChromeUtils.importESModule(
 var { getMatrixTextForEvent } = ChromeUtils.importESModule(
   "resource:///modules/matrixTextForEvent.sys.mjs"
 );
-var { l10nHelper } = ChromeUtils.importESModule(
-  "resource:///modules/imXPCOMUtils.sys.mjs"
-);
-var _ = l10nHelper("chrome://chat/locale/matrix.properties");
+var l10n = new Localization(["chat/matrix-properties.ftl"], true);
 
 // Required to make it so the DOMParser can handle images and such.
 XPCShellContentUtils.init(this);
@@ -141,7 +138,7 @@ dolor sit amet`,
       },
       sender: "@bar:example.com",
     },
-    result: "https://example.com/_matrix/media/r0/download/example.com/asdf",
+    result: "https://example.com/_matrix/media/v3/download/example.com/asdf",
   },
   {
     description: "Sticker",
@@ -153,7 +150,7 @@ dolor sit amet`,
       },
       sender: "@bar:example.com",
     },
-    result: "https://example.com/_matrix/media/r0/download/example.com/asdf",
+    result: "https://example.com/_matrix/media/v3/download/example.com/asdf",
   },
   {
     description: "Normal body with HTML-y contents",
@@ -206,7 +203,7 @@ dolor sit amet`,
       type: MatrixSDK.EventType.RoomMessageEncrypted,
       decrypting: true,
     },
-    result: _("message.decrypting"),
+    result: l10n.formatValueSync("message-decrypting"),
   },
   {
     description: "Unsent event",
@@ -229,7 +226,7 @@ dolor sit amet`,
       sender: "@bar:example.com",
       redacted: true,
     },
-    result: _("message.redacted"),
+    result: l10n.formatValueSync("message-redacted"),
   },
   {
     description: "Tombstone",
@@ -273,7 +270,11 @@ dolor sit amet`,
       },
       sender: "@foo:example.com",
     },
-    result: _("message.reaction", "@bar:example.com", "@foo:example.com", "🐦"),
+    result: l10n.formatValueSync("message-reaction", {
+      userThatReacted: "@bar:example.com",
+      userThatSentMessage: "@foo:example.com",
+      reaction: "🐦",
+    }),
   },
 ];
 
@@ -426,7 +427,7 @@ dolor sit amet`,
       sender: "@bar:example.com",
     },
     result:
-      '<a href="https://example.com/_matrix/media/r0/download/example.com/asdf">example.png</a>',
+      '<a href="https://example.com/_matrix/media/v3/download/example.com/asdf">example.png</a>',
   },
   {
     description: "Sticker",
@@ -439,7 +440,7 @@ dolor sit amet`,
       sender: "@bar:example.com",
     },
     result:
-      '<a href="https://example.com/_matrix/media/r0/download/example.com/asdf">example.png</a>',
+      '<a href="https://example.com/_matrix/media/v3/download/example.com/asdf">example.png</a>',
   },
   {
     description: "Normal formatted body",
@@ -463,12 +464,12 @@ dolor sit amet`,
         body: ":emote:",
         msgtype: MatrixSDK.MsgType.Text,
         format: "org.matrix.custom.html",
-        formatted_body: '<img alt=":emote:" src="mxc://example.com/emote.png">',
+        formatted_body: '<img alt=":emote:" src="mxc://example.com/emote">',
       },
       sender: "@bar:example.com",
     },
     result:
-      '<a href="https://example.com/_matrix/media/r0/download/example.com/emote.png">:emote:</a>',
+      '<a href="https://example.com/_matrix/media/v3/download/example.com/emote">:emote:</a>',
   },
   {
     description: "Non-mxc attachment",
@@ -532,7 +533,7 @@ dolor sit amet`,
       sender: "@bar:example.com",
       redacted: true,
     },
-    result: _("message.redacted"),
+    result: l10n.formatValueSync("message-redacted"),
   },
   {
     description: "Tombstone",
@@ -576,12 +577,11 @@ dolor sit amet`,
       },
       sender: "@foo:example.com",
     },
-    result: _(
-      "message.reaction",
-      '<span class="ib-person">@bar:example.com</span>',
-      '<span class="ib-person">@foo:example.com</span>',
-      "🐦"
-    ),
+    result: l10n.formatValueSync("message-reaction", {
+      userThatReacted: '<span class="ib-person">@bar:example.com</span>',
+      userThatSentMessage: '<span class="ib-person">@foo:example.com</span>',
+      reaction: "🐦",
+    }),
   },
   {
     description: "URL encoded mention",

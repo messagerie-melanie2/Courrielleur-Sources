@@ -12,12 +12,14 @@
      * Creates a new class to handle a notification box, but does not add any
      * elements to the DOM until a notification has to be displayed.
      *
-     * @param insertElementFn
-     *        Called with the "notification-stack" element as an argument when the
-     *        first notification has to be displayed.
+     * @param insertElementFn Called with the "notification-stack" element as an
+     *        argument when the first notification has to be displayed.
+     * @param {Number} securityDelayMS - Delay in milliseconds until buttons are enabled to
+     * protect against click- and tapjacking.
      */
-    constructor(insertElementFn) {
+    constructor(insertElementFn, securityDelayMS = 0) {
       this._insertElementFn = insertElementFn;
+      this._securityDelayMS = securityDelayMS;
       this._animating = false;
       this.currentNotification = null;
     }
@@ -29,8 +31,7 @@
         stack.className = "notificationbox-stack";
         stack.addEventListener("transitionend", event => {
           if (
-            (event.target.localName == "notification" ||
-              event.target.localName == "notification-message") &&
+            event.target.localName == "notification-message" &&
             event.propertyName == "margin-top"
           ) {
             this._finishAnimation();
@@ -55,7 +56,6 @@
 
       var closedNotification = this._closedNotification;
       var notifications = [
-        ...this.stack.getElementsByTagName("notification"),
         ...this.stack.getElementsByTagName("notification-message"),
       ];
       return notifications.filter(n => n != closedNotification);
@@ -72,8 +72,8 @@
     }
 
     /**
-     * Creates a <notification> element and shows it. The calling code can modify
-     * the element synchronously to add features to the notification.
+     * Creates a <notification-message> element and shows it. The calling code can modify
+     * the element asynchronously to add features to the notification.
      *
      * aType
      *        String identifier that can uniquely identify the type of the notification.
@@ -94,18 +94,6 @@
      *          removed - notification has been removed
      *          dismissed - user dismissed notification
      *          disconnected - notification removed in any way
-     *    notificationIs
-     *        Defines a Custom Element name to use as the "is" value on creation.
-     *        This allows subclassing the created element.
-     *    telemetry
-     *        Specifies the telemetry key to use that triggers when the notification
-     *        is shown, dismissed and an action taken. This telemetry is a keyed scalar with keys for:
-     *          'shown', 'dismissed' and 'action'. If a button specifies a separate key,
-     *        then 'action' is replaced by values specific to each button. The value telemetryFilter
-     *        can be used to filter out each type.
-     *    telemetryFilter
-     *        If assigned, then an array of the telemetry types to send telemetry for. If not set,
-     *        then all telemetry is sent.
      * aButtons
      *        Array of objects defining action buttons:
      *        {
@@ -118,7 +106,7 @@
      *            specifying a separate label and access key.
      *          callback:
      *            When the button is used, this is called with the arguments:
-     *             1. The <notification> element.
+     *             1. The <notification-message> element.
      *             2. This button object definition.
      *             3. The <button> element.
      *             4. The "command" event.
@@ -141,10 +129,19 @@
      *            Defines a Custom Element name to use as the "is" value on
      *            button creation.
      *        }
+     *    aDisableClickJackingDelay
+     *        Optional boolean arg to disable clickjacking protections. By
+     *        default the security delay is enabled.
      *
-     * @return The <notification> element that is shown.
+     * @returns {Promise<Object>} The <notification-message> element that is shown.
      */
-    appendNotification(aType, aNotification, aButtons) {
+    async appendNotification(
+      aType,
+      aNotification,
+      aButtons,
+      aDisableClickJackingDelay = false,
+      dismissable = true
+    ) {
       if (
         aNotification.priority < this.PRIORITY_SYSTEM ||
         aNotification.priority > this.PRIORITY_CRITICAL_HIGH
@@ -157,23 +154,22 @@
       MozXULElement.insertFTLIfNeeded("toolkit/global/notification.ftl");
 
       // Create the Custom Element and connect it to the document immediately.
-      var newitem;
-      if (!aNotification.notificationIs) {
-        if (!customElements.get("notification-message")) {
-          // There's some weird timing stuff when this element is created at
-          // script load time, we don't need it until now anyway so be lazy.
-          createNotificationMessageElement();
+      let newitem;
+      if (!customElements.get("notification-message")) {
+        // There's some weird timing stuff when this element is created at
+        // script load time, we don't need it until now anyway so be lazy.
+        // Wrapped in a try/catch to handle rare cases where we start creating
+        // a notification but then the window gets closed/goes away.
+        try {
+          await createNotificationMessageElement(dismissable);
+        } catch (err) {
+          console.warn(err);
+          throw err;
         }
-        newitem = document.createElement("notification-message");
-        newitem.setAttribute("message-bar-type", "infobar");
-      } else {
-        newitem = document.createXULElement(
-          "notification",
-          aNotification.notificationIs
-            ? { is: aNotification.notificationIs }
-            : {}
-        );
       }
+      newitem = document.createElement("notification-message");
+      newitem.dismissable = dismissable;
+      newitem.setAttribute("message-bar-type", "infobar");
 
       // Append or prepend notification, based on stack preference.
       if (this.stack.hasAttribute("prepend-notifications")) {
@@ -182,8 +178,9 @@
         this.stack.append(newitem);
       }
 
-      // Custom notification classes may not have the messageText property.
-      if (newitem.messageText) {
+      if (aNotification.label) {
+        newitem.label = aNotification.label;
+      } else if (newitem.messageText) {
         // Can't use instanceof in case this was created from a different document:
         if (
           aNotification.label &&
@@ -217,13 +214,6 @@
         newitem.setButtons(aButtons);
       }
 
-      if (aNotification.telemetry) {
-        newitem.telemetry = aNotification.telemetry;
-        if (aNotification.telemetryFilter) {
-          newitem.telemetryFilter = aNotification.telemetryFilter;
-        }
-      }
-
       newitem.priority = aNotification.priority;
       if (aNotification.priority == this.PRIORITY_SYSTEM) {
         newitem.setAttribute("type", "system");
@@ -235,25 +225,29 @@
         newitem.setAttribute("type", "warning");
       }
 
+      // If clickjacking protection is not explicitly disabled, enable it.
+      // aDisableClickJackingDelay is per notification, this._securityDelayMS is
+      // global for the entire notification box.
+      if (!aDisableClickJackingDelay && this._securityDelayMS > 0) {
+        newitem._initClickJackingProtection(this._securityDelayMS);
+      }
+
       // Animate the notification.
       newitem.style.display = "block";
       newitem.style.position = "fixed";
       newitem.style.top = "100%";
       newitem.style.marginTop = "-15px";
       newitem.style.opacity = "0";
+
+      // Ensure the DOM has been created for the Lit-based notification-message
+      // element so that we add the .animated class + it animates as expected.
+      await newitem.updateComplete;
       this._showNotification(newitem, true);
 
       // Fire event for accessibility APIs
       var event = document.createEvent("Events");
       event.initEvent("AlertActive", true, true);
       newitem.dispatchEvent(event);
-
-      // If the notification is not visible, don't call shown() on the
-      // new notification until it is visible. This will typically be
-      // a tabbrowser that does this when a tab is selected.
-      if (this.isShown) {
-        newitem.shown();
-      }
 
       return newitem;
     }
@@ -323,22 +317,6 @@
       }
     }
 
-    shown() {
-      for (let notification of this.allNotifications) {
-        notification.shown();
-      }
-    }
-
-    get isShown() {
-      let stack = this.stack;
-      let parent = this.stack.parentNode;
-      if (parent.localName == "named-deck") {
-        return parent.selectedViewName == stack.getAttribute("name");
-      }
-
-      return true;
-    }
-
     _showNotification(aNotification, aSlideIn, aSkipAnimation) {
       this._finishAnimation();
 
@@ -405,262 +383,65 @@
     PRIORITY_CRITICAL_HIGH: 9,
   });
 
-  MozElements.Notification = class Notification extends MozXULElement {
-    static get markup() {
-      return `
-      <hbox class="messageDetails" align="center" flex="1"
-            oncommand="this.parentNode._doButtonCommand(event);">
-        <image class="messageImage"/>
-        <description class="messageText" flex="1"/>
-        <spacer flex="1"/>
-      </hbox>
-      <toolbarbutton ondblclick="event.stopPropagation();"
-                     class="messageCloseButton close-icon tabbable"
-                     data-l10n-id="close-notification-message"
-                     oncommand="this.parentNode.dismiss();"/>
-      `;
-    }
+  async function createNotificationMessageElement(dismissable) {
+    document.createElement("moz-message-bar");
+    let MozMessageBar = await customElements.whenDefined("moz-message-bar");
+    class NotificationMessage extends MozMessageBar {
+      static queries = {
+        ...MozMessageBar.queries,
+        messageText: ".message",
+        messageImage: ".icon",
+      };
 
-    constructor() {
-      super();
-      this.persistence = 0;
-      this.priority = 0;
-      this.timeout = 0;
-      this.telemetry = null;
-      this._shown = false;
-    }
-
-    connectedCallback() {
-      MozXULElement.insertFTLIfNeeded("toolkit/global/notification.ftl");
-      this.appendChild(this.constructor.fragment);
-
-      for (let [propertyName, selector] of [
-        ["messageDetails", ".messageDetails"],
-        ["messageImage", ".messageImage"],
-        ["messageText", ".messageText"],
-        ["spacer", "spacer"],
-        ["buttonContainer", ".messageDetails"],
-        ["closeButton", ".messageCloseButton"],
-      ]) {
-        this[propertyName] = this.querySelector(selector);
-      }
-    }
-
-    disconnectedCallback() {
-      if (this.eventCallback) {
-        this.eventCallback("disconnected");
-      }
-    }
-
-    setButtons(aButtons) {
-      for (let button of aButtons) {
-        let buttonElem;
-
-        let link = button.link;
-        let localeId = button["l10n-id"];
-        if (!link && button.supportPage) {
-          link =
-            Services.urlFormatter.formatURLPref("app.support.baseURL") +
-            button.supportPage;
-          if (!button.label && !localeId) {
-            localeId = "notification-learnmore-default-label";
-          }
-        }
-
-        if (link) {
-          buttonElem = document.createXULElement("label", {
-            is: "text-link",
-          });
-          buttonElem.setAttribute("href", link);
-          buttonElem.classList.add("notification-link");
-          buttonElem.onclick = (...args) => this._doButtonCommand(...args);
-        } else {
-          buttonElem = document.createXULElement(
-            "button",
-            button.is ? { is: button.is } : {}
-          );
-          buttonElem.classList.add("notification-button");
-
-          if (button.primary) {
-            buttonElem.classList.add("primary");
-          }
-        }
-
-        if (localeId) {
-          buttonElem.setAttribute("data-l10n-id", localeId);
-        } else {
-          buttonElem.setAttribute(link ? "value" : "label", button.label);
-          if (typeof button.accessKey == "string") {
-            buttonElem.setAttribute("accesskey", button.accessKey);
-          }
-        }
-
-        if (link) {
-          this.messageText.appendChild(buttonElem);
-        } else {
-          this.messageDetails.appendChild(buttonElem);
-        }
-        buttonElem.buttonInfo = button;
-      }
-    }
-
-    get control() {
-      return this.closest(".notificationbox-stack")._notificationBox;
-    }
-
-    /**
-     * Changes the text of an existing notification. If the notification was
-     * created with a custom fragment, it will be overwritten with plain text
-     * or a localized message.
-     *
-     * @param {string | { "l10n-id": string, "l10n-args"?: string }} value
-     */
-    set label(value) {
-      if (value && typeof value == "object" && "l10n-id" in value) {
-        const message = document.createElement("span");
-        document.l10n.setAttributes(
-          message,
-          value["l10n-id"],
-          value["l10n-args"]
-        );
-        while (this.messageText.firstChild) {
-          this.messageText.firstChild.remove();
-        }
-        this.messageText.appendChild(message);
-      } else {
-        this.messageText.textContent = value;
-      }
-    }
-
-    /**
-     * This method should only be called when the user has manually closed the
-     * notification. If you want to programmatically close the notification, you
-     * should call close() instead.
-     */
-    dismiss() {
-      this._doTelemetry("dismissed");
-
-      if (this.eventCallback) {
-        this.eventCallback("dismissed");
-      }
-      this.close();
-    }
-
-    close() {
-      if (!this.parentNode) {
-        return;
-      }
-      this.control.removeNotification(this);
-    }
-
-    // This will be called when the host (such as a tabbrowser) determines that
-    // the notification is made visible to the user.
-    shown() {
-      if (!this._shown) {
-        this._shown = true;
-        this._doTelemetry("shown");
-      }
-    }
-
-    _doTelemetry(type) {
-      if (
-        this.telemetry &&
-        (!this.telemetryFilter || this.telemetryFilter.includes(type))
-      ) {
-        Services.telemetry.keyedScalarAdd(this.telemetry, type, 1);
-      }
-    }
-
-    _doButtonCommand(event) {
-      if (!("buttonInfo" in event.target)) {
-        return;
-      }
-
-      var button = event.target.buttonInfo;
-      this._doTelemetry(button.telemetry || "action");
-
-      if (button.popup) {
-        document
-          .getElementById(button.popup)
-          .openPopup(
-            event.originalTarget,
-            "after_start",
-            0,
-            0,
-            false,
-            false,
-            event
-          );
-        event.stopPropagation();
-      } else {
-        var callback = button.callback;
-        if (callback) {
-          var result = callback(this, button, event.target, event);
-          if (!result) {
-            this.close();
-          }
-          event.stopPropagation();
-        }
-      }
-    }
-  };
-
-  customElements.define("notification", MozElements.Notification);
-
-  function createNotificationMessageElement() {
-    // Get a reference to MessageBarElement from a created element so the import
-    // gets handled automatically if needed.
-    class NotificationMessage extends document.createElement("message-bar")
-      .constructor {
       constructor() {
         super();
         this.persistence = 0;
         this.priority = 0;
         this.timeout = 0;
-        this.telemetry = null;
-        this._shown = false;
+        this.dismissable = dismissable;
+
+        // Variables used for security delay / clickjacking protection.
+        this._clickjackingDelayActive = false;
+        this._securityDelayMS = 0;
+        this._delayTimer = null;
+        this._focusHandler = null;
+        this._buttons = [];
+
+        this.addEventListener("click", this);
+        this.addEventListener("command", this);
       }
 
       connectedCallback() {
-        this.toggleAttribute("dismissable", true);
-        this.closeButton.classList.add("notification-close");
+        super.connectedCallback();
+        this.#setStyles();
 
-        this.container = this.shadowRoot.querySelector(".container");
-        this.container.classList.add("infobar");
+        this.classList.add("infobar");
         this.setAlertRole();
 
-        let messageContent = this.shadowRoot.querySelector(".content");
-        messageContent.classList.add("notification-content");
-
-        // Remove the <slot>, API surface is `set label()` and `setButtons()`.
-        messageContent.textContent = "";
-
-        // A 'label' allows screen readers to detect the text of the alert.
-        this.messageText = document.createElement("label");
-        this.messageText.classList.add("notification-message");
         this.buttonContainer = document.createElement("span");
         this.buttonContainer.classList.add("notification-button-container");
-
-        this.messageImage = this.shadowRoot.querySelector(".icon");
-
-        messageContent.append(this.messageText, this.buttonContainer);
-        this.shadowRoot.addEventListener("click", this);
-        this.shadowRoot.addEventListener("command", this);
+        this.buttonContainer.setAttribute("slot", "actions");
+        this.appendChild(this.buttonContainer);
       }
 
       disconnectedCallback() {
+        super.disconnectedCallback();
         if (this.eventCallback) {
           this.eventCallback("disconnected");
         }
+        // Clean up clickjacking listeners if active.
+        this._uninitClickJackingProtection();
       }
 
-      _doTelemetry(type) {
-        if (
-          this.telemetry &&
-          (!this.telemetryFilter || this.telemetryFilter.includes(type))
-        ) {
-          Services.telemetry.keyedScalarAdd(this.telemetry, type, 1);
-        }
+      closeButtonTemplate() {
+        return super.closeButtonTemplate({ size: "small" });
+      }
+
+      #setStyles() {
+        let style = document.createElement("link");
+        style.rel = "stylesheet";
+        style.href = "chrome://global/content/elements/infobar.css";
+        this.renderRoot.append(style);
       }
 
       get control() {
@@ -674,27 +455,36 @@
         this.control.removeNotification(this);
       }
 
-      // This will be called when the host (such as a tabbrowser) determines that
-      // the notification is made visible to the user.
-      shown() {
-        if (!this._shown) {
-          this._shown = true;
-          this._doTelemetry("shown");
-        }
-      }
-
       setAlertRole() {
         // Wait a little for this to render before setting the role for more
         // consistent alerts to screen readers.
-        this.container.removeAttribute("role");
+        this.removeAttribute("role");
         window.requestAnimationFrame(() => {
           window.requestAnimationFrame(() => {
-            this.container.setAttribute("role", "alert");
+            this.setAttribute("role", "alert");
           });
         });
       }
 
       handleEvent(e) {
+        // If clickjacking delay is active, prevent any "click"/"command" from
+        // going through. Also restart the delay if the user tries to click too early.
+        if (this._clickjackingDelayActive) {
+          // Only relevant if user clicked on the notification’s actual button/link area.
+          if (
+            e.type === "click" &&
+            (e.target.localName === "button" ||
+              e.target.classList.contains("text-link") ||
+              e.target.classList.contains("notification-link"))
+          ) {
+            // Stop immediate action, restart the delay
+            e.stopPropagation();
+            e.preventDefault();
+            this._startClickJackingDelay();
+            return;
+          }
+        }
+
         if (e.type == "click" && e.target.localName != "label") {
           return;
         }
@@ -702,8 +492,6 @@
         if ("buttonInfo" in e.target) {
           let { buttonInfo } = e.target;
           let { callback, popup } = buttonInfo;
-
-          this._doTelemetry(buttonInfo.telemetry || "action");
 
           if (popup) {
             document
@@ -736,31 +524,22 @@
        */
       set label(value) {
         if (value && typeof value == "object" && "l10n-id" in value) {
-          const message = document.createElement("span");
-          document.l10n.setAttributes(
-            message,
-            value["l10n-id"],
-            value["l10n-args"]
-          );
-          while (this.messageText.firstChild) {
-            this.messageText.firstChild.remove();
-          }
-          this.messageText.appendChild(message);
+          this.messageL10nId = value["l10n-id"];
+          this.messageL10nArgs = value["l10n-args"];
         } else {
-          this.messageText.textContent = value;
+          this.message = value;
         }
         this.setAlertRole();
       }
 
       setButtons(buttons) {
-        this._buttons = buttons;
+        this._buttons = [];
         for (let button of buttons) {
           let link = button.link || button.supportPage;
           let localeId = button["l10n-id"];
 
           let buttonElem;
           if (button.hasOwnProperty("supportPage")) {
-            window.ensureCustomElements("moz-support-link");
             buttonElem = document.createElement("a", {
               is: "moz-support-link",
             });
@@ -777,7 +556,11 @@
               "button",
               button.is ? { is: button.is } : {}
             );
-            buttonElem.classList.add("notification-button", "small-button");
+            buttonElem.classList.add(
+              "notification-button",
+              "small-button",
+              "footer-button"
+            );
 
             if (button.primary) {
               buttonElem.classList.add("primary");
@@ -794,23 +577,95 @@
           }
 
           if (link) {
-            this.messageText.append(new Text(" "), buttonElem);
+            buttonElem.setAttribute("slot", "support-link");
+            this.appendChild(buttonElem);
           } else {
             this.buttonContainer.appendChild(buttonElem);
           }
+
           buttonElem.buttonInfo = button;
+          this._buttons.push(buttonElem);
         }
       }
 
       dismiss() {
-        this._doTelemetry("dismissed");
-
         if (this.eventCallback) {
           this.eventCallback("dismissed");
         }
         super.dismiss();
       }
+
+      /**
+       * Initialize clickjacking protection for this notification, disabling
+       * buttons initially and re-enabling them after a short delay. The delay
+       * restarts on window focus or if the user attempts to click during the
+       * disabled period.
+       *
+       * @param {Number} securityDelayMS - ClickJacking delay to apply
+       * (milliseconds).
+       */
+      _initClickJackingProtection(securityDelayMS) {
+        if (this._clickjackingDelayActive) {
+          return; // Already enabled.
+        }
+
+        this._securityDelayMS = securityDelayMS;
+        // Attach a global focus handler so we can restart the delay when the window
+        // refocuses (e.g., user navigated away or used a popup).
+        this._focusHandler = event => {
+          // Only restart delay if the notification is still connected and this
+          // is actually a window focus.
+          if (this.isConnected && event.target === window) {
+            this._startClickJackingDelay();
+          }
+        };
+
+        window.addEventListener("focus", this._focusHandler, true);
+        this._startClickJackingDelay();
+      }
+
+      /**
+       * Remove any event listeners or timers related to clickjacking protection.
+       */
+      _uninitClickJackingProtection() {
+        window.removeEventListener("focus", this._focusHandler, true);
+        this._focusHandler = null;
+        if (this._delayTimer) {
+          clearTimeout(this._delayTimer);
+          this._delayTimer = null;
+        }
+        this._enableAllButtons();
+        this._clickjackingDelayActive = false;
+      }
+
+      _startClickJackingDelay() {
+        this._clickjackingDelayActive = true;
+        this._disableAllButtons();
+        if (this._delayTimer) {
+          clearTimeout(this._delayTimer);
+        }
+        this._delayTimer = setTimeout(() => {
+          this._clickjackingDelayActive = false;
+          this._enableAllButtons();
+          this._delayTimer = null;
+        }, this._securityDelayMS);
+      }
+
+      _disableAllButtons() {
+        for (let button of this._buttons) {
+          button.disabled = true;
+        }
+      }
+
+      _enableAllButtons() {
+        for (let button of this._buttons) {
+          button.disabled = false;
+        }
+      }
     }
-    customElements.define("notification-message", NotificationMessage);
+
+    if (!customElements.get("notification-message")) {
+      customElements.define("notification-message", NotificationMessage);
+    }
   }
 }

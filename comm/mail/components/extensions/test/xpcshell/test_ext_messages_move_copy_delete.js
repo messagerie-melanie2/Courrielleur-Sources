@@ -10,47 +10,27 @@ var { ExtensionTestUtils } = ChromeUtils.importESModule(
 var { TestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/TestUtils.sys.mjs"
 );
-var { ExtensionsUI } = ChromeUtils.import(
-  "resource:///modules/ExtensionsUI.jsm"
+var { ExtensionsUI } = ChromeUtils.importESModule(
+  "resource:///modules/ExtensionsUI.sys.mjs"
 );
 var { AddonTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/AddonTestUtils.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
-
-ExtensionTestUtils.mockAppInfo();
-AddonTestUtils.maybeInit(this);
-
-Services.prefs.setBoolPref(
-  "mail.server.server1.autosync_offline_stores",
-  false
-);
-
-registerCleanupFunction(async () => {
-  // Remove the temporary MozillaMailnews folder, which is not deleted in time when
-  // the cleanupFunction registered by AddonTestUtils.maybeInit() checks for left over
-  // files in the temp folder.
-  // Note: PathUtils.tempDir points to the system temp folder, which is different.
-  let path = PathUtils.join(
-    Services.dirsvc.get("TmpD", Ci.nsIFile).path,
-    "MozillaMailnews"
-  );
-  await IOUtils.remove(path, { recursive: true });
-});
 
 // Function to start an event page extension (MV3), which can be called whenever
 // the main test is about to trigger an event. The extension terminates its
 // background and listens for that single event, verifying it is waking up correctly.
 async function event_page_extension(eventName, actionCallback) {
-  let ext = ExtensionTestUtils.loadExtension({
+  const ext = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
         // Whenever the extension starts or wakes up, hasFired is set to false. In
         // case of a wake-up, the first fired event is the one that woke up the background.
         let hasFired = false;
-        let _eventName = browser.runtime.getManifest().description;
+        const _eventName = browser.runtime.getManifest().description;
 
         browser.messages[_eventName].addListener(async (...args) => {
           // Only send the first event after background wake-up, this should
@@ -83,7 +63,7 @@ async function event_page_extension(eventName, actionCallback) {
   assertPersistentListeners(ext, "messages", eventName, { primed: true });
 
   await actionCallback();
-  let rv = await ext.awaitMessage(`${eventName} received`);
+  const rv = await ext.awaitMessage(`${eventName} received`);
   await ext.awaitMessage("background started");
   // The listener should be persistent, but not primed.
   assertPersistentListeners(ext, "messages", eventName, { primed: false });
@@ -92,6 +72,28 @@ async function event_page_extension(eventName, actionCallback) {
   return rv;
 }
 
+add_setup(async () => {
+  ExtensionTestUtils.mockAppInfo();
+  AddonTestUtils.maybeInit(this);
+
+  Services.prefs.setBoolPref(
+    "mail.server.server1.autosync_offline_stores",
+    false
+  );
+
+  registerCleanupFunction(async () => {
+    // Remove the temporary MozillaMailnews folder, which is not deleted in time when
+    // the cleanupFunction registered by AddonTestUtils.maybeInit() checks for left over
+    // files in the temp folder.
+    // Note: PathUtils.tempDir points to the system temp folder, which is different.
+    const path = PathUtils.join(
+      Services.dirsvc.get("TmpD", Ci.nsIFile).path,
+      "MozillaMailnews"
+    );
+    await IOUtils.remove(path, { recursive: true });
+  });
+});
+
 add_task(
   {
     skip_if: () => IS_NNTP,
@@ -99,9 +101,9 @@ add_task(
   async function test_move_copy_delete() {
     await AddonTestUtils.promiseStartupManager();
 
-    let account = createAccount();
-    let rootFolder = account.incomingServer.rootFolder;
-    let subFolders = {
+    const account = createAccount();
+    const rootFolder = account.incomingServer.rootFolder;
+    const subFolders = {
       test1: await createSubfolder(rootFolder, "test1"),
       test2: await createSubfolder(rootFolder, "test2"),
       test3: await createSubfolder(rootFolder, "test3"),
@@ -111,22 +113,36 @@ add_task(
     // 4 messages must be created before this line or test_move_copy_delete will break.
     await createMessages(subFolders.test1, 5);
 
-    let files = {
+    const files = {
       "background.js": async () => {
         async function capturePrimedEvent(eventName, callback) {
-          let eventPageExtensionReadyPromise = window.waitForMessage();
+          const eventPageExtensionReadyPromise = window.waitForMessage();
           browser.test.sendMessage("capturePrimedEvent", eventName);
           await eventPageExtensionReadyPromise;
-          let eventPageExtensionFinishedPromise = window.waitForMessage();
+          const eventPageExtensionFinishedPromise = window.waitForMessage();
           callback();
           return eventPageExtensionFinishedPromise;
         }
 
-        async function checkMessagesInFolder(expectedKeys, folder) {
-          let expectedSubjects = expectedKeys.map(k => messages[k].subject);
+        // Checks the folder type property of the given message and returns a clone
+        // where the type has been removed. The type property has been deprecated
+        // in MV3.
+        function preCheckFolderType(message, expected) {
+          window.assertDeepEqual(
+            message.folder.type,
+            expected,
+            "Deprecated Folder type should be correct"
+          );
+          const m = JSON.parse(JSON.stringify(message));
+          delete m.folder.type;
+          return m;
+        }
 
-          let { messages: actualMessages } = await browser.messages.list(
-            folder
+        async function checkMessagesInFolder(expectedKeys, folder) {
+          const expectedSubjects = expectedKeys.map(k => messages[k].subject);
+
+          const { messages: actualMessages } = await browser.messages.list(
+            folder.id
           );
           browser.test.log("expect: " + expectedSubjects.sort());
           browser.test.log(
@@ -141,7 +157,7 @@ add_task(
               .toString(),
             "Messages on server should be correct"
           );
-          for (let m of actualMessages) {
+          for (const m of actualMessages) {
             browser.test.assertTrue(
               expectedSubjects.includes(m.subject),
               `${m.subject} at ${m.id}`
@@ -156,8 +172,8 @@ add_task(
         function newMovePromise(numberOfEventsToCollapse = 1) {
           return new Promise(resolve => {
             let seenEvents = 0;
-            let seenSrcMsgs = [];
-            let seenDstMsgs = [];
+            const seenSrcMsgs = [];
+            const seenDstMsgs = [];
             const listener = (srcMsgs, dstMsgs) => {
               seenEvents++;
               seenSrcMsgs.push(...srcMsgs.messages);
@@ -174,8 +190,8 @@ add_task(
         function newCopyPromise(numberOfEventsToCollapse = 1) {
           return new Promise(resolve => {
             let seenEvents = 0;
-            let seenSrcMsgs = [];
-            let seenDstMsgs = [];
+            const seenSrcMsgs = [];
+            const seenDstMsgs = [];
             const listener = (srcMsgs, dstMsgs) => {
               seenEvents++;
               seenSrcMsgs.push(...srcMsgs.messages);
@@ -192,7 +208,7 @@ add_task(
         function newDeletePromise(numberOfEventsToCollapse = 1) {
           return new Promise(resolve => {
             let seenEvents = 0;
-            let seenMsgs = [];
+            const seenMsgs = [];
             const listener = msgs => {
               seenEvents++;
               seenMsgs.push(...msgs.messages);
@@ -211,11 +227,11 @@ add_task(
           messages,
           dstFolder
         ) {
-          let eventInfo = await infoPromise;
+          const eventInfo = await infoPromise;
           browser.test.assertEq(eventInfo.srcMsgs.length, expected.length);
           browser.test.assertEq(eventInfo.dstMsgs.length, expected.length);
-          for (let msg of expected) {
-            let idx = eventInfo.srcMsgs.findIndex(
+          for (const msg of expected) {
+            const idx = eventInfo.srcMsgs.findIndex(
               e => e.id == messages[msg].id
             );
             browser.test.assertEq(
@@ -233,20 +249,20 @@ add_task(
           }
         }
 
-        let [accountId] = await window.sendMessage("getAccount");
-        let { folders } = await browser.accounts.get(accountId);
-        let testFolder1 = folders.find(f => f.name == "test1");
-        let testFolder2 = folders.find(f => f.name == "test2");
-        let testFolder3 = folders.find(f => f.name == "test3");
-        let trashFolder = folders.find(f => f.name == "Trash");
+        const [accountId] = await window.sendMessage("getAccount");
+        const { folders } = await browser.accounts.get(accountId);
+        const testFolder1 = folders.find(f => f.name == "test1");
+        const testFolder2 = folders.find(f => f.name == "test2");
+        const testFolder3 = folders.find(f => f.name == "test3");
+        const trashFolder = folders.find(f => f.name == "Trash");
 
-        let { messages: folder1Messages } = await browser.messages.list(
-          testFolder1
+        const { messages: folder1Messages } = await browser.messages.list(
+          testFolder1.id
         );
 
         // Since the ID of a message changes when it is moved, track by subject.
-        let messages = {};
-        for (let m of folder1Messages) {
+        const messages = {};
+        for (const m of folder1Messages) {
           messages[m.subject.split(" ")[0]] = { id: m.id, subject: m.subject };
         }
 
@@ -257,10 +273,14 @@ add_task(
         browser.test.log(" --> Move one message to another folder.");
         let movePromise = newMovePromise();
         let primedMoveInfo = await capturePrimedEvent("onMoved", () =>
-          browser.messages.move([messages.Red.id], testFolder2)
+          browser.messages.move([messages.Red.id], testFolder2.id)
         );
+        let moveInfo = await movePromise;
         window.assertDeepEqual(
-          await movePromise,
+          {
+            srcMsgs: moveInfo.srcMsgs,
+            dstMsgs: moveInfo.dstMsgs,
+          },
           {
             srcMsgs: primedMoveInfo[0].messages,
             dstMsgs: primedMoveInfo[1].messages,
@@ -289,10 +309,14 @@ add_task(
         browser.test.log(" --> And back again.");
         movePromise = newMovePromise();
         primedMoveInfo = await capturePrimedEvent("onMoved", () =>
-          browser.messages.move([messages.Red.id], testFolder1)
+          browser.messages.move([messages.Red.id], testFolder1.id)
         );
+        moveInfo = await movePromise;
         window.assertDeepEqual(
-          await movePromise,
+          {
+            srcMsgs: moveInfo.srcMsgs,
+            dstMsgs: moveInfo.dstMsgs,
+          },
           {
             srcMsgs: primedMoveInfo[0].messages,
             dstMsgs: primedMoveInfo[1].messages,
@@ -323,11 +347,15 @@ add_task(
         primedMoveInfo = await capturePrimedEvent("onMoved", () =>
           browser.messages.move(
             [messages.Green.id, messages.My.id],
-            testFolder2
+            testFolder2.id
           )
         );
+        moveInfo = await movePromise;
         window.assertDeepEqual(
-          await movePromise,
+          {
+            srcMsgs: moveInfo.srcMsgs,
+            dstMsgs: moveInfo.dstMsgs,
+          },
           {
             srcMsgs: primedMoveInfo[0].messages,
             dstMsgs: primedMoveInfo[1].messages,
@@ -353,10 +381,14 @@ add_task(
         browser.test.log(" --> Move one back again: " + messages.My.id);
         movePromise = newMovePromise();
         primedMoveInfo = await capturePrimedEvent("onMoved", () =>
-          browser.messages.move([messages.My.id], testFolder1)
+          browser.messages.move([messages.My.id], testFolder1.id)
         );
+        moveInfo = await movePromise;
         window.assertDeepEqual(
-          await movePromise,
+          {
+            srcMsgs: moveInfo.srcMsgs,
+            dstMsgs: moveInfo.dstMsgs,
+          },
           {
             srcMsgs: primedMoveInfo[0].messages,
             dstMsgs: primedMoveInfo[1].messages,
@@ -384,7 +416,7 @@ add_task(
         movePromise = newMovePromise(2);
         await browser.messages.move(
           [messages.Green.id, messages.My.id],
-          testFolder3
+          testFolder3.id
         );
         await checkEventInformation(
           movePromise,
@@ -413,12 +445,12 @@ add_task(
         browser.messages.onMoved.addListener(listenerFunc);
 
         // Move a message to the folder it's already in.
-        await browser.messages.move([messages.Green.id], testFolder3);
+        await browser.messages.move([messages.Green.id], testFolder3.id);
         await checkMessagesInFolder(["Green", "My"], testFolder3);
         browser.test.log(JSON.stringify(messages)); // Red:7, Green:11, Blue:3, My:12, Happy:5
 
         // Move no messages.
-        await browser.messages.move([], testFolder3);
+        await browser.messages.move([], testFolder3.id);
         await checkMessagesInFolder(["Red", "Blue", "Happy"], testFolder1);
         await checkMessagesInFolder([], testFolder2);
         await checkMessagesInFolder(["Green", "My"], testFolder3);
@@ -426,18 +458,15 @@ add_task(
 
         // Move a non-existent message.
         await browser.test.assertRejects(
-          browser.messages.move([9999], testFolder1),
+          browser.messages.move([9999], testFolder1.id),
           /Error moving message/,
           "something should happen"
         );
 
         // Move to a non-existent folder.
         await browser.test.assertRejects(
-          browser.messages.move([messages.Red.id], {
-            accountId,
-            path: "/missing",
-          }),
-          /Error moving message/,
+          browser.messages.move([messages.Red.id], `${accountId}://missing`),
+          /Folder not found/,
           "something should happen"
         );
 
@@ -452,7 +481,7 @@ add_task(
         movePromise = newMovePromise();
         await browser.messages.move(
           [messages.My.id, messages.Green.id],
-          testFolder1
+          testFolder1.id
         );
         await checkEventInformation(
           movePromise,
@@ -474,12 +503,16 @@ add_task(
 
         browser.test.log("");
         browser.test.log(" --> Copy one message to another folder.");
-        let copyPromise = newCopyPromise();
-        let primedCopyInfo = await capturePrimedEvent("onCopied", () =>
-          browser.messages.copy([messages.Happy.id], testFolder2)
+        const copyPromise = newCopyPromise();
+        const primedCopyInfo = await capturePrimedEvent("onCopied", () =>
+          browser.messages.copy([messages.Happy.id], testFolder2.id)
         );
+        const copyInfo = await copyPromise;
         window.assertDeepEqual(
-          await copyPromise,
+          {
+            srcMsgs: copyInfo.srcMsgs,
+            dstMsgs: copyInfo.dstMsgs,
+          },
           {
             srcMsgs: primedCopyInfo[0].messages,
             dstMsgs: primedCopyInfo[1].messages,
@@ -502,8 +535,8 @@ add_task(
           ["Red", "Green", "Blue", "My", "Happy"],
           testFolder1
         );
-        let { messages: folder2Messages } = await browser.messages.list(
-          testFolder2
+        const { messages: folder2Messages } = await browser.messages.list(
+          testFolder2.id
         );
         browser.test.assertEq(1, folder2Messages.length);
         browser.test.assertEq(
@@ -515,12 +548,14 @@ add_task(
 
         browser.test.log("");
         browser.test.log(" --> Delete the copied message.");
-        let deletePromise = newDeletePromise();
-        let primedDeleteLog = await capturePrimedEvent("onDeleted", () =>
-          browser.messages.delete([folder2Messages[0].id], true)
+        const deletePromise = newDeletePromise();
+        const [primedDeleteLog] = await capturePrimedEvent("onDeleted", () =>
+          browser.messages.delete([folder2Messages[0].id], {
+            deletePermanently: true,
+          })
         );
         // Check if the delete information is correct.
-        let deleteLog = await deletePromise;
+        const deleteLog = await deletePromise;
         window.assertDeepEqual(
           [
             {
@@ -528,7 +563,12 @@ add_task(
               messages: deleteLog,
             },
           ],
-          primedDeleteLog,
+          [
+            {
+              id: primedDeleteLog.id,
+              messages: primedDeleteLog.messages,
+            },
+          ],
           "The primed and non-primed onDeleted events should return the same values",
           { strict: true }
         );
@@ -552,13 +592,21 @@ add_task(
         browser.test.log(" --> Move a message to the trash.");
         movePromise = newMovePromise();
         primedMoveInfo = await capturePrimedEvent("onMoved", () =>
-          browser.messages.move([messages.Green.id], trashFolder)
+          browser.messages.move([messages.Green.id], trashFolder.id)
         );
+        moveInfo = await movePromise;
         window.assertDeepEqual(
-          await movePromise,
+          {
+            srcMsgs: moveInfo.srcMsgs,
+            // The type property is deprecated in MV3.
+            dstMsgs: moveInfo.dstMsgs.map(m => preCheckFolderType(m, "trash")),
+          },
           {
             srcMsgs: primedMoveInfo[0].messages,
-            dstMsgs: primedMoveInfo[1].messages,
+            // The type property is deprecated in MV3.
+            dstMsgs: primedMoveInfo[1].messages.map(m =>
+              preCheckFolderType(m, undefined)
+            ),
           },
           "The primed and non-primed onMoved events should return the same values",
           { strict: true }
@@ -581,8 +629,8 @@ add_task(
         await checkMessagesInFolder([], testFolder2);
         await checkMessagesInFolder([], testFolder3);
 
-        let { messages: trashFolderMessages } = await browser.messages.list(
-          trashFolder
+        const { messages: trashFolderMessages } = await browser.messages.list(
+          trashFolder.id
         );
         browser.test.assertTrue(
           trashFolderMessages.find(m => m.subject == messages.Green.subject)
@@ -592,7 +640,7 @@ add_task(
       },
       "utils.js": await getUtilsJS(),
     };
-    let extension = ExtensionTestUtils.loadExtension({
+    const extension = ExtensionTestUtils.loadExtension({
       files,
       manifest: {
         background: { scripts: ["utils.js", "background.js"] },
@@ -610,16 +658,16 @@ add_task(
 
     extension.onMessage("forceServerUpdate", async foldername => {
       if (IS_IMAP) {
-        let folder = rootFolder
+        const folder = rootFolder
           .getChildNamed(foldername)
           .QueryInterface(Ci.nsIMsgImapMailFolder);
 
-        let listener = new PromiseTestUtils.PromiseUrlListener();
+        const listener = new PromiseTestUtils.PromiseUrlListener();
         folder.updateFolderWithListener(null, listener);
         await listener.promise;
 
         // ...and download for offline use.
-        let promiseUrlListener = new PromiseTestUtils.PromiseUrlListener();
+        const promiseUrlListener = new PromiseTestUtils.PromiseUrlListener();
         folder.downloadAllForOffline(promiseUrlListener, null);
         await promiseUrlListener.promise;
       }
@@ -627,7 +675,7 @@ add_task(
     });
 
     extension.onMessage("capturePrimedEvent", async eventName => {
-      let primedEventData = await event_page_extension(eventName, () => {
+      const primedEventData = await event_page_extension(eventName, () => {
         // Resume execution in the main test, after the event page extension is
         // ready to capture the event with deactivated background.
         extension.sendMessage();
@@ -651,6 +699,209 @@ add_task(
     await extension.unload();
 
     cleanUpAccount(account);
+    await AddonTestUtils.promiseShutdownManager();
+  }
+);
+
+add_task(
+  {
+    skip_if: () => !IS_IMAP,
+  },
+  async function test_move_copy_delete_accross_accounts() {
+    await AddonTestUtils.promiseStartupManager();
+
+    const imapAccount = createAccount("imap");
+    const pop3Account = createAccount("pop3");
+
+    const popRootFolder = pop3Account.incomingServer.rootFolder;
+    const nativePopTestFolder = await createSubfolder(popRootFolder, "popTest");
+    await createMessages(nativePopTestFolder, 5);
+
+    const nativeImapRootFolder = imapAccount.incomingServer.rootFolder;
+    const nativeImapCopyTestFolder = await createSubfolder(
+      nativeImapRootFolder,
+      "imapCopyTest"
+    );
+    const nativeImapMoveTestFolder = await createSubfolder(
+      nativeImapRootFolder,
+      "imapMoveTest"
+    );
+    await createMessages(nativeImapCopyTestFolder, 1);
+    await createMessages(nativeImapMoveTestFolder, 2);
+
+    const files = {
+      "background.js": async () => {
+        function newMovePromise() {
+          return new Promise(resolve => {
+            const listener = (srcMsgs, dstMsgs) => {
+              browser.messages.onMoved.removeListener(listener);
+              resolve({ srcMsgs, dstMsgs });
+            };
+            browser.messages.onMoved.addListener(listener);
+          });
+        }
+        function newCopyPromise() {
+          return new Promise(resolve => {
+            const listener = (srcMsgs, dstMsgs) => {
+              browser.messages.onCopied.removeListener(listener);
+              resolve({ srcMsgs, dstMsgs });
+            };
+            browser.messages.onCopied.addListener(listener);
+          });
+        }
+
+        const [popTestFolder] = await browser.folders.query({
+          name: "popTest",
+        });
+        const [imapCopyTestFolder] = await browser.folders.query({
+          name: "imapCopyTest",
+        });
+        const [imapMoveTestFolder] = await browser.folders.query({
+          name: "imapMoveTest",
+        });
+
+        browser.test.log(" --> Check initial condition.");
+        const { messages: popMessages } = await browser.messages.list(
+          popTestFolder.id
+        );
+        browser.test.assertEq(
+          5,
+          popMessages.length,
+          "Should have the correct number of messages in the pop folder"
+        );
+        const { messages: imapCopyTestFolderMessages } =
+          await browser.messages.list(imapCopyTestFolder.id);
+        browser.test.assertEq(
+          1,
+          imapCopyTestFolderMessages.length,
+          "Should have the correct number of messages in the imapCopyTestFolder folder"
+        );
+        const { messages: imapMoveTestFolderMessages } =
+          await browser.messages.list(imapMoveTestFolder.id);
+        browser.test.assertEq(
+          2,
+          imapMoveTestFolderMessages.length,
+          "Should have the correct number of messages in the imapMoveTestFolder folder"
+        );
+
+        browser.test.log(" --> Copy multiple messages from pop to imap.");
+        const copyPromise = newCopyPromise();
+        browser.messages.copy(
+          popMessages.map(m => m.id),
+          imapCopyTestFolder.id
+        );
+        const copyInfo = await copyPromise;
+
+        browser.test.log(" --> Check condition after copy.");
+        const { messages: popMessagesAfterCopy } = await browser.messages.list(
+          popTestFolder.id
+        );
+        browser.test.assertEq(
+          5,
+          popMessagesAfterCopy.length,
+          "Should have the correct number of messages in the pop folder"
+        );
+        const { messages: imapMessagesAfterCopy } = await browser.messages.list(
+          imapCopyTestFolder.id
+        );
+        browser.test.assertEq(
+          6,
+          imapMessagesAfterCopy.length,
+          "Should have the correct number of messages in the imap folder"
+        );
+
+        window.assertDeepEqual(
+          popMessages.map(m => ({ id: m.id, subject: m.subject })),
+          copyInfo.srcMsgs.messages.map(m => ({
+            id: m.id,
+            subject: m.subject,
+          })),
+          "The src messages of the copy operation should be as expected",
+          { strict: true }
+        );
+
+        window.assertDeepEqual(
+          popMessages.map(m => ({
+            folderId: imapCopyTestFolder.id,
+            subject: m.subject,
+          })),
+          copyInfo.dstMsgs.messages.map(m => ({
+            folderId: m.folder.id,
+            subject: m.subject,
+          })),
+          "The dst messages of the copy operation should be as expected",
+          { strict: true }
+        );
+
+        browser.test.log(" --> Move multiple messages from pop to imap.");
+        const movePromise = newMovePromise();
+        browser.messages.move(
+          popMessages.map(m => m.id),
+          imapMoveTestFolder.id
+        );
+        const moveInfo = await movePromise;
+
+        browser.test.log(" --> Check condition after move.");
+        const { messages: popMessagesAfterMove } = await browser.messages.list(
+          popTestFolder.id
+        );
+        browser.test.assertEq(
+          0,
+          popMessagesAfterMove.length,
+          "Should have the correct number of messages in the pop folder"
+        );
+        const { messages: imapMessagesAfterMove } = await browser.messages.list(
+          imapMoveTestFolder.id
+        );
+        browser.test.assertEq(
+          7,
+          imapMessagesAfterMove.length,
+          "Should have the correct number of messages in the imap folder"
+        );
+
+        window.assertDeepEqual(
+          popMessages.map(m => ({ id: m.id, subject: m.subject })),
+          moveInfo.srcMsgs.messages.map(m => ({
+            id: m.id,
+            subject: m.subject,
+          })),
+          "The src messages of the move operation should be as expected",
+          { strict: true }
+        );
+
+        window.assertDeepEqual(
+          popMessages.map(m => ({
+            folderId: imapMoveTestFolder.id,
+            subject: m.subject,
+          })),
+          moveInfo.dstMsgs.messages.map(m => ({
+            folderId: m.folder.id,
+            subject: m.subject,
+          })),
+          "The dst messages of the move operation should be as expected",
+          { strict: true }
+        );
+
+        browser.test.notifyPass("finished");
+      },
+      "utils.js": await getUtilsJS(),
+    };
+    const extension = ExtensionTestUtils.loadExtension({
+      files,
+      manifest: {
+        background: { scripts: ["utils.js", "background.js"] },
+        permissions: ["accountsRead", "messagesMove", "messagesRead"],
+        browser_specific_settings: {
+          gecko: { id: "messages.move@mochi.test" },
+        },
+      },
+    });
+
+    await extension.startup();
+    await extension.awaitFinish("finished");
+    await extension.unload();
+
+    cleanUpAccount(imapAccount);
     await AddonTestUtils.promiseShutdownManager();
   }
 );

@@ -16,10 +16,9 @@ var {
   get_about_3pane,
   make_display_threaded,
   make_message_sets_in_folders,
-  mc,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 var msgsPerThread = 5;
@@ -27,8 +26,8 @@ var singleVirtFolder;
 var multiVirtFolder;
 
 add_setup(async function () {
-  let folderOne = await create_folder();
-  let folderTwo = await create_folder();
+  const folderOne = await create_folder();
+  const folderTwo = await create_folder();
   await make_message_sets_in_folders([folderOne], [{ msgsPerThread }]);
   await make_message_sets_in_folders([folderTwo], [{ msgsPerThread }]);
 
@@ -38,12 +37,12 @@ add_setup(async function () {
 
 add_task(async function test_single_folder_select_thread() {
   await be_in_folder(singleVirtFolder);
-  let win = get_about_3pane();
-  make_display_threaded();
-  expand_all_threads();
+  const win = get_about_3pane();
+  await make_display_threaded();
+  await expand_all_threads();
 
   // Try selecting the thread from the root message.
-  select_click_row(0);
+  await select_click_row(0);
   EventUtils.synthesizeKey("a", { accelKey: true, shiftKey: true });
   Assert.ok(
     win.gDBView.selection.count == msgsPerThread,
@@ -51,7 +50,7 @@ add_task(async function test_single_folder_select_thread() {
   );
 
   // Now try selecting the thread from a non-root message.
-  select_click_row(1);
+  await select_click_row(1);
   EventUtils.synthesizeKey("a", { accelKey: true, shiftKey: true });
   Assert.ok(
     win.gDBView.selection.count == msgsPerThread,
@@ -61,12 +60,12 @@ add_task(async function test_single_folder_select_thread() {
 
 add_task(async function test_cross_folder_select_thread() {
   await be_in_folder(multiVirtFolder);
-  let win = get_about_3pane();
-  make_display_threaded();
-  expand_all_threads();
+  const win = get_about_3pane();
+  await make_display_threaded();
+  await expand_all_threads();
 
   // Try selecting the thread from the root message.
-  select_click_row(0);
+  await select_click_row(0);
   EventUtils.synthesizeKey("a", { accelKey: true, shiftKey: true });
   Assert.ok(
     win.gDBView.selection.count == msgsPerThread,
@@ -74,7 +73,7 @@ add_task(async function test_cross_folder_select_thread() {
   );
 
   // Now try selecting the thread from a non-root message.
-  select_click_row(1);
+  await select_click_row(1);
   EventUtils.synthesizeKey("a", { accelKey: true, shiftKey: true });
   Assert.ok(
     win.gDBView.selection.count == msgsPerThread,

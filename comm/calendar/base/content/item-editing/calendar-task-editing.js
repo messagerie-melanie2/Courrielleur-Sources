@@ -6,12 +6,11 @@
 /* import-globals-from ../calendar-ui-utils.js */
 /* import-globals-from calendar-item-editing.js */
 
-var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
-
+var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
 var { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUtils.sys.mjs");
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  CalTodo: "resource:///modules/CalTodo.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  CalTodo: "resource:///modules/CalTodo.sys.mjs",
 });
 
 /**
@@ -27,9 +26,9 @@ var taskEdit = {
    * Helper function to set readonly and aria-disabled states and the value
    * for a given target.
    *
-   * @param aTarget   The ID or XUL node to set the value
-   * @param aDisable  A boolean if the target should be disabled.
-   * @param aValue    The value that should be set on the target.
+   * @param {string|Node} aTarget - The ID or Node of which to set the value on
+   * @param {boolean} aDisable - A boolean if the target should be disabled.
+   * @param {string} aValue - The value that should be set on the target.
    */
   setupTaskField(aTarget, aDisable, aValue) {
     aTarget.value = aValue;
@@ -40,45 +39,61 @@ var taskEdit = {
   /**
    * Handler function to call when the quick-add input gains focus.
    *
-   * @param aEvent    The DOM focus event
+   * @param {Event} aEvent - The DOM focus event.
    */
   onFocus(aEvent) {
-    let edit = aEvent.target;
-    let calendar = getSelectedCalendar();
+    const edit = aEvent.target;
+    const calendar = getSelectedCalendar();
     edit.showsInstructions = true;
 
     if (calendar.getProperty("capabilities.tasks.supported") === false) {
-      taskEdit.setupTaskField(edit, true, cal.l10n.getCalString("taskEditInstructionsCapability"));
+      taskEdit.setupTaskField(
+        edit,
+        true,
+        taskEdit.l10n.formatValueSync("task-edit-instructions-capability")
+      );
     } else if (cal.acl.isCalendarWritable(calendar)) {
       edit.showsInstructions = false;
       taskEdit.setupTaskField(edit, false, edit.savedValue || "");
     } else {
-      taskEdit.setupTaskField(edit, true, cal.l10n.getCalString("taskEditInstructionsReadonly"));
+      taskEdit.setupTaskField(
+        edit,
+        true,
+        taskEdit.l10n.formatValueSync("task-edit-instructions-readonly")
+      );
     }
   },
 
   /**
    * Handler function to call when the quick-add input loses focus.
    *
-   * @param aEvent    The DOM blur event
+   * @param {Event} aEvent - The DOM blur event.
    */
   onBlur(aEvent) {
-    let edit = aEvent.target;
-    let calendar = getSelectedCalendar();
+    const edit = aEvent.target;
+    const calendar = getSelectedCalendar();
     if (!calendar) {
       // this must be a first run, we don't have a calendar yet
       return;
     }
 
     if (calendar.getProperty("capabilities.tasks.supported") === false) {
-      taskEdit.setupTaskField(edit, true, cal.l10n.getCalString("taskEditInstructionsCapability"));
+      taskEdit.setupTaskField(
+        edit,
+        true,
+        taskEdit.l10n.formatValueSync("task-edit-instructions-capability")
+      );
     } else if (cal.acl.isCalendarWritable(calendar)) {
       if (!edit.showsInstructions) {
         edit.savedValue = edit.value || "";
       }
-      taskEdit.setupTaskField(edit, false, cal.l10n.getCalString("taskEditInstructions"));
+      taskEdit.setupTaskField(edit, false, taskEdit.l10n.formatValueSync("task-edit-instructions"));
     } else {
-      taskEdit.setupTaskField(edit, true, cal.l10n.getCalString("taskEditInstructionsReadonly"));
+      taskEdit.setupTaskField(
+        edit,
+        true,
+        taskEdit.l10n.formatValueSync("task-edit-instructions-readonly")
+      );
     }
 
     edit.showsInstructions = true;
@@ -87,13 +102,13 @@ var taskEdit = {
   /**
    * Handler function to call on keypress for the quick-add input.
    *
-   * @param aEvent    The DOM keypress event
+   * @param {Event} aEvent - The DOM keypress event.
    */
   onKeyPress(aEvent) {
     if (aEvent.key == "Enter") {
-      let edit = aEvent.target;
+      const edit = aEvent.target;
       if (edit.value && edit.value.length > 0) {
-        let item = new CalTodo();
+        const item = new CalTodo();
         setDefaultItemValues(item);
         item.title = edit.value;
 
@@ -108,7 +123,7 @@ var taskEdit = {
    * "task-edit-field".
    */
   callOnBlurForAllTaskFields() {
-    let taskEditFields = document.getElementsByClassName("task-edit-field");
+    const taskEditFields = document.getElementsByClassName("task-edit-field");
     for (let i = 0; i < taskEditFields.length; i++) {
       taskEdit.onBlur({ target: taskEditFields[i] });
     }
@@ -118,7 +133,7 @@ var taskEdit = {
    * Load function to set up all quick-add inputs. The input must
    * have the class "task-edit-field".
    */
-  onLoad(aEvent) {
+  onLoad() {
     cal.view.getCompositeCalendar(window).addObserver(taskEdit.compositeObserver);
     taskEdit.callOnBlurForAllTaskFields();
   },
@@ -133,8 +148,8 @@ var taskEdit = {
   /**
    * Observer to watch for changes to the selected calendar.
    *
-   * @see calIObserver
-   * @see calICompositeObserver
+   * @implements {calIObserver}
+   * @implements {calICompositeObserver}
    */
   compositeObserver: {
     QueryInterface: ChromeUtils.generateQI(["calIObserver", "calICompositeObserver"]),
@@ -142,13 +157,13 @@ var taskEdit = {
     // calIObserver:
     onStartBatch() {},
     onEndBatch() {},
-    onLoad(aCalendar) {},
-    onAddItem(aItem) {},
-    onModifyItem(aNewItem, aOldItem) {},
-    onDeleteItem(aDeletedItem) {},
-    onError(aCalendar, aErrNo, aMessage) {},
+    onLoad() {},
+    onAddItem() {},
+    onModifyItem() {},
+    onDeleteItem() {},
+    onError() {},
 
-    onPropertyChanged(aCalendar, aName, aValue, aOldValue) {
+    onPropertyChanged(aCalendar, aName) {
       if (aCalendar.id != getSelectedCalendar().id) {
         // Optimization: if the given calendar isn't the selected calendar,
         // then we don't need to change any readonly/disabled states.
@@ -172,10 +187,16 @@ var taskEdit = {
     },
 
     // calICompositeObserver:
-    onCalendarAdded(aCalendar) {},
-    onCalendarRemoved(aCalendar) {},
-    onDefaultCalendarChanged(aNewDefault) {
+    onCalendarAdded() {},
+    onCalendarRemoved() {},
+    onDefaultCalendarChanged() {
       taskEdit.callOnBlurForAllTaskFields();
     },
   },
 };
+
+ChromeUtils.defineLazyGetter(
+  taskEdit,
+  "l10n",
+  () => new Localization(["calendar/calendar.ftl"], true)
+);

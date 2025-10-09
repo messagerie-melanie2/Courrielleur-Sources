@@ -865,6 +865,9 @@ IntRect FilterNodeSoftware::GetInputRectInRect(uint32_t aInputEnumIndex,
   }
   RefPtr<FilterNodeSoftware> filter = mInputFilters[inputIndex];
   MOZ_ASSERT(filter, "missing input");
+  if (!filter) {
+    return IntRect();
+  }
   return filter->GetOutputRectInRect(aInRect);
 }
 
@@ -1244,8 +1247,8 @@ int32_t FilterNodeMorphologySoftware::InputIndex(uint32_t aInputEnumIndex) {
 void FilterNodeMorphologySoftware::SetAttribute(uint32_t aIndex,
                                                 const IntSize& aRadii) {
   MOZ_ASSERT(aIndex == ATT_MORPHOLOGY_RADII);
-  mRadii.width = std::min(std::max(aRadii.width, 0), 100000);
-  mRadii.height = std::min(std::max(aRadii.height, 0), 100000);
+  mRadii.width = std::clamp(aRadii.width, 0, 100000);
+  mRadii.height = std::clamp(aRadii.height, 0, 100000);
   Invalidate();
 }
 
@@ -2542,12 +2545,12 @@ IntRect FilterNodeConvolveMatrixSoftware::InflatedSourceRect(
   }
 
   IntMargin margin;
-  margin.left = ceil(mTarget.x * mKernelUnitLength.width);
-  margin.top = ceil(mTarget.y * mKernelUnitLength.height);
-  margin.right =
-      ceil((mKernelSize.width - mTarget.x - 1) * mKernelUnitLength.width);
-  margin.bottom =
-      ceil((mKernelSize.height - mTarget.y - 1) * mKernelUnitLength.height);
+  margin.left = static_cast<int32_t>(ceil(mTarget.x * mKernelUnitLength.width));
+  margin.top = static_cast<int32_t>(ceil(mTarget.y * mKernelUnitLength.height));
+  margin.right = static_cast<int32_t>(
+      ceil((mKernelSize.width - mTarget.x - 1) * mKernelUnitLength.width));
+  margin.bottom = static_cast<int32_t>(
+      ceil((mKernelSize.height - mTarget.y - 1) * mKernelUnitLength.height));
 
   IntRect srcRect = aDestRect;
   srcRect.Inflate(margin);
@@ -2561,12 +2564,14 @@ IntRect FilterNodeConvolveMatrixSoftware::InflatedDestRect(
   }
 
   IntMargin margin;
-  margin.left =
-      ceil((mKernelSize.width - mTarget.x - 1) * mKernelUnitLength.width);
-  margin.top =
-      ceil((mKernelSize.height - mTarget.y - 1) * mKernelUnitLength.height);
-  margin.right = ceil(mTarget.x * mKernelUnitLength.width);
-  margin.bottom = ceil(mTarget.y * mKernelUnitLength.height);
+  margin.left = static_cast<int32_t>(
+      ceil((mKernelSize.width - mTarget.x - 1) * mKernelUnitLength.width));
+  margin.top = static_cast<int32_t>(
+      ceil((mKernelSize.height - mTarget.y - 1) * mKernelUnitLength.height));
+  margin.right =
+      static_cast<int32_t>(ceil(mTarget.x * mKernelUnitLength.width));
+  margin.bottom =
+      static_cast<int32_t>(ceil(mTarget.y * mKernelUnitLength.height));
 
   IntRect destRect = aSourceRect;
   destRect.Inflate(margin);
@@ -2576,7 +2581,7 @@ IntRect FilterNodeConvolveMatrixSoftware::InflatedDestRect(
 IntRect FilterNodeConvolveMatrixSoftware::GetOutputRectInRect(
     const IntRect& aRect) {
   IntRect srcRequest = InflatedSourceRect(aRect);
-  IntRect srcOutput = GetInputRectInRect(IN_COLOR_MATRIX_IN, srcRequest);
+  IntRect srcOutput = GetInputRectInRect(IN_CONVOLVE_MATRIX_IN, srcRequest);
   return InflatedDestRect(srcOutput).Intersect(aRect);
 }
 
@@ -3084,7 +3089,7 @@ FilterNodeGaussianBlurSoftware::FilterNodeGaussianBlurSoftware()
 
 static float ClampStdDeviation(float aStdDeviation) {
   // Cap software blur radius for performance reasons.
-  return std::min(std::max(0.0f, aStdDeviation), 100.0f);
+  return std::clamp(aStdDeviation, 0.f, 100.f);
 }
 
 void FilterNodeGaussianBlurSoftware::SetAttribute(uint32_t aIndex,
@@ -3686,10 +3691,10 @@ SpecularLightingSoftware::SpecularLightingSoftware()
 bool SpecularLightingSoftware::SetAttribute(uint32_t aIndex, Float aValue) {
   switch (aIndex) {
     case ATT_SPECULAR_LIGHTING_SPECULAR_CONSTANT:
-      mSpecularConstant = std::min(std::max(aValue, 0.0f), 255.0f);
+      mSpecularConstant = std::clamp(aValue, 0.0f, 255.0f);
       break;
     case ATT_SPECULAR_LIGHTING_SPECULAR_EXPONENT:
-      mSpecularExponent = std::min(std::max(aValue, 1.0f), 128.0f);
+      mSpecularExponent = std::clamp(aValue, 1.0f, 128.0f);
       break;
     default:
       return false;

@@ -12,17 +12,9 @@ ChromeUtils.defineESModuleGetters(this, {
   registerExtension: "resource:///modules/CustomizableItems.sys.mjs",
   unregisterExtension: "resource:///modules/CustomizableItems.sys.mjs",
   EXTENSION_PREFIX: "resource:///modules/CustomizableItems.sys.mjs",
-});
-var { ExtensionCommon } = ChromeUtils.importESModule(
-  "resource://gre/modules/ExtensionCommon.sys.mjs"
-);
-var { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
-XPCOMUtils.defineLazyModuleGetters(this, {
-  ToolbarButtonAPI: "resource:///modules/ExtensionToolbarButtons.jsm",
-  getCachedAllowedSpaces: "resource:///modules/ExtensionToolbarButtons.jsm",
-  setCachedAllowedSpaces: "resource:///modules/ExtensionToolbarButtons.jsm",
+  ToolbarButtonAPI: "resource:///modules/ExtensionToolbarButtons.sys.mjs",
+  getCachedAllowedSpaces: "resource:///modules/ExtensionToolbarButtons.sys.mjs",
+  setCachedAllowedSpaces: "resource:///modules/ExtensionToolbarButtons.sys.mjs",
 });
 
 var { makeWidgetId } = ExtensionCommon;
@@ -57,13 +49,13 @@ this.browserAction = class extends ToolbarButtonAPI {
   /**
    * Return the toolbar button if it is currently visible in the given window.
    *
-   * @param window
-   * @returns {DOMElement} the toolbar button element, or null
+   * @param {Window} window
+   * @returns {?DOMElement} the toolbar button element, or null.
    */
   getToolbarButton(window) {
     // Return the visible button from the unified toolbar, if this is the main window.
     if (window.location.href == MAIN_WINDOW_URI) {
-      let buttonItem = window.document.querySelector(
+      const buttonItem = window.document.querySelector(
         `#unifiedToolbarContent [item-id="ext-${this.extension.id}"]`
       );
       return (
@@ -100,12 +92,12 @@ this.browserAction = class extends ToolbarButtonAPI {
       // Load the cached allowed spaces. Make sure there are no awaited promises
       // before storing the updated allowed spaces, as it could have been changed
       // elsewhere.
-      let cachedAllowedSpaces = getCachedAllowedSpaces();
-      let priorAllowedSpaces = cachedAllowedSpaces.get(this.extension.id);
+      const cachedAllowedSpaces = getCachedAllowedSpaces();
+      const priorAllowedSpaces = cachedAllowedSpaces.get(this.extension.id);
 
       // If the extension has set allowedSpaces to an empty array, the button needs
       // to be added to all available spaces.
-      let allowedSpaces =
+      const allowedSpaces =
         this.allowedSpaces.length == 0
           ? [
               "mail",
@@ -123,7 +115,7 @@ this.browserAction = class extends ToolbarButtonAPI {
       // covers the install and the update case, including staged updates.
       // Spaces which have not been customized will receive the button from
       // getDefaultItemIdsForSpace() in CustomizableItems.sys.mjs.
-      let missingSpacesInState = allowedSpaces.filter(
+      const missingSpacesInState = allowedSpaces.filter(
         space =>
           (!priorAllowedSpaces || !priorAllowedSpaces.includes(space)) &&
           space !== "default" &&
@@ -214,19 +206,19 @@ this.browserAction = class extends ToolbarButtonAPI {
   }
 
   static onUninstall(extensionId) {
-    let widgetId = makeWidgetId(extensionId);
-    let id = `${widgetId}-browserAction-toolbarbutton`;
+    const widgetId = makeWidgetId(extensionId);
+    const id = `${widgetId}-browserAction-toolbarbutton`;
 
     // Check all possible XUL toolbars and remove the toolbarbutton if found.
     // Sadly we have to hardcode these values here, as the add-on is already
     // shutdown when onUninstall is called.
-    let toolbars = ["mail-bar3", "toolbar-menubar"];
-    for (let toolbar of toolbars) {
-      for (let setName of ["currentset", "extensionset"]) {
-        let set = Services.xulStore
+    const toolbars = ["mail-bar3", "toolbar-menubar"];
+    for (const toolbar of toolbars) {
+      for (const setName of ["currentset", "extensionset"]) {
+        const set = Services.xulStore
           .getValue(MESSAGE_WINDOW_URI, toolbar, setName)
           .split(",");
-        let newSet = set.filter(e => e != id);
+        const newSet = set.filter(e => e != id);
         if (newSet.length < set.length) {
           Services.xulStore.setValue(
             MESSAGE_WINDOW_URI,
@@ -259,7 +251,7 @@ this.browserAction = class extends ToolbarButtonAPI {
     }
 
     // Update cachedAllowedSpaces for the unified toolbar.
-    let cachedAllowedSpaces = getCachedAllowedSpaces();
+    const cachedAllowedSpaces = getCachedAllowedSpaces();
     if (cachedAllowedSpaces.has(extensionId)) {
       cachedAllowedSpaces.delete(extensionId);
       setCachedAllowedSpaces(cachedAllowedSpaces);
@@ -268,18 +260,19 @@ this.browserAction = class extends ToolbarButtonAPI {
 
   handleEvent(event) {
     super.handleEvent(event);
-    let window = event.target.ownerGlobal;
+    const window = event.target.ownerGlobal;
 
     switch (event.type) {
-      case "popupshowing":
+      case "popupshowing": {
         const menu = event.target;
+        // Exit early, if this is not a menupopup (for example a tooltip).
         if (menu.tagName != "menupopup") {
           return;
         }
 
         // This needs to work in normal window and message window.
-        let tab = tabTracker.activeTab;
-        let browser = tab.linkedBrowser || tab.getBrowser?.();
+        const tab = tabTracker.activeTab;
+        const browser = tab.linkedBrowser || tab.getBrowser?.();
 
         const trigger = menu.triggerNode;
         const node =
@@ -322,6 +315,7 @@ this.browserAction = class extends ToolbarButtonAPI {
           });
         }
         break;
+      }
     }
   }
 };

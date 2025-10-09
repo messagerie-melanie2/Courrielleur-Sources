@@ -4,16 +4,26 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![cfg_attr(feature = "deny-warnings", deny(warnings))]
-#![warn(clippy::pedantic)]
+#![expect(
+    clippy::unwrap_used,
+    clippy::iter_over_hash_type,
+    reason = "OK in a build script."
+)]
+
+use std::{
+    collections::HashMap,
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use bindgen::Builder;
+use semver::{Version, VersionReq};
 use serde_derive::Deserialize;
-use std::collections::HashMap;
-use std::env;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+
+#[path = "src/min_version.rs"]
+mod min_version;
+use min_version::MINIMUM_NSS_VERSION;
 
 const BINDINGS_DIR: &str = "bindings";
 const BINDINGS_CONFIG: &str = "bindings.toml";
@@ -35,7 +45,7 @@ struct Bindings {
     opaque: Vec<String>,
     /// enumerations that are turned into a module (without this, the enum is
     /// mapped using the default, which means that the individual values are
-    /// formed with an underscore as <enum_type>_<enum_value_name>).
+    /// formed with an underscore as <`enum_type`>_<`enum_value_name`>).
     #[serde(default)]
     enums: Vec<String>,
 
@@ -50,17 +60,12 @@ struct Bindings {
     cplusplus: bool,
 }
 
-fn is_debug() -> bool {
-    env::var("DEBUG")
-        .map(|d| d.parse::<bool>().unwrap_or(false))
-        .unwrap_or(false)
-}
-
 // bindgen needs access to libclang.
 // On windows, this doesn't just work, you have to set LIBCLANG_PATH.
 // Rather than download the 400Mb+ files, like gecko does, let's just reuse their work.
 fn setup_clang() {
-    if env::consts::OS != "windows" {
+    // If this isn't Windows, or we're in CI, then we don't need to do anything.
+    if env::consts::OS != "windows" || env::var("GITHUB_WORKFLOW").unwrap_or_default() == "CI" {
         return;
     }
     println!("rerun-if-env-changed=LIBCLANG_PATH");
@@ -89,68 +94,37 @@ fn setup_clang() {
     }
 }
 
-fn nss_dir() -> PathBuf {
-    let dir = if let Ok(dir) = env::var("NSS_DIR") {
-        let path = PathBuf::from(dir.trim());
-        assert!(
-            !path.is_relative(),
-            "The NSS_DIR environment variable is expected to be an absolute path."
-        );
-        path
-    } else {
-        let out_dir = env::var("OUT_DIR").unwrap();
-        let dir = Path::new(&out_dir).join("nss");
-        if !dir.exists() {
-            Command::new("hg")
-                .args([
-                    "clone",
-                    "https://hg.mozilla.org/projects/nss",
-                    dir.to_str().unwrap(),
-                ])
-                .status()
-                .expect("can't clone nss");
-        }
-        let nspr_dir = Path::new(&out_dir).join("nspr");
-        if !nspr_dir.exists() {
-            Command::new("hg")
-                .args([
-                    "clone",
-                    "https://hg.mozilla.org/projects/nspr",
-                    nspr_dir.to_str().unwrap(),
-                ])
-                .status()
-                .expect("can't clone nspr");
-        }
-        dir
-    };
-    assert!(dir.is_dir(), "NSS_DIR {:?} doesn't exist", dir);
-    // Note that this returns a relative path because UNC
-    // paths on windows cause certain tools to explode.
-    dir
-}
-
 fn get_bash() -> PathBuf {
+    // If BASH is set, use that.
+    if let Ok(bash) = env::var("BASH") {
+        return PathBuf::from(bash);
+    }
+
     // When running under MOZILLABUILD, we need to make sure not to invoke
     // another instance of bash that might be sitting around (like WSL).
-    match env::var("MOZILLABUILD") {
-        Ok(d) => PathBuf::from(d).join("msys").join("bin").join("bash.exe"),
-        Err(_) => PathBuf::from("bash"),
-    }
+    env::var("MOZILLABUILD").map_or_else(
+        |_| PathBuf::from("bash"),
+        |d| PathBuf::from(d).join("msys").join("bin").join("bash.exe"),
+    )
 }
 
-fn build_nss(dir: PathBuf) {
+fn build_nss(dir: PathBuf, nsstarget: &str) {
     let mut build_nss = vec![
         String::from("./build.sh"),
         String::from("-Ddisable_tests=1"),
+        // Generate static libraries in addition to shared libraries.
+        String::from("--static"),
     ];
-    if is_debug() {
-        build_nss.push(String::from("--static"));
-    } else {
+    if nsstarget == "Release" {
         build_nss.push(String::from("-o"));
     }
     if let Ok(d) = env::var("NSS_JOBS") {
         build_nss.push(String::from("-j"));
         build_nss.push(d);
+    }
+    let target = env::var("TARGET").unwrap();
+    if target.strip_prefix("aarch64-").is_some() {
+        build_nss.push(String::from("--target=arm64"));
     }
     let status = Command::new(get_bash())
         .args(build_nss)
@@ -161,22 +135,20 @@ fn build_nss(dir: PathBuf) {
 }
 
 fn dynamic_link() {
-    let libs = if env::consts::OS == "windows" {
-        &["nssutil3.dll", "nss3.dll", "ssl3.dll"]
+    let dynamic_libs = if env::consts::OS == "windows" {
+        [
+            "nssutil3.dll",
+            "nss3.dll",
+            "ssl3.dll",
+            "libplds4.dll",
+            "libplc4.dll",
+            "libnspr4.dll",
+        ]
     } else {
-        &["nssutil3", "nss3", "ssl3"]
+        ["nssutil3", "nss3", "ssl3", "plds4", "plc4", "nspr4"]
     };
-    dynamic_link_both(libs);
-}
-
-fn dynamic_link_both(extra_libs: &[&str]) {
-    let nspr_libs = if env::consts::OS == "windows" {
-        &["libplds4", "libplc4", "libnspr4"]
-    } else {
-        &["plds4", "plc4", "nspr4"]
-    };
-    for lib in nspr_libs.iter().chain(extra_libs) {
-        println!("cargo:rustc-link-lib=dylib={}", lib);
+    for lib in dynamic_libs {
+        println!("cargo:rustc-link-lib=dylib={lib}");
     }
 }
 
@@ -185,35 +157,71 @@ fn static_link() {
         "certdb",
         "certhi",
         "cryptohi",
-        "freebl",
+        "freebl_static",
+        if env::consts::OS == "windows" {
+            "libnspr4"
+        } else {
+            "nspr4"
+        },
         "nss_static",
         "nssb",
         "nssdev",
         "nsspki",
         "nssutil",
-        "pk11wrap",
-        "pkcs12",
-        "pkcs7",
-        "smime",
+        "pk11wrap_static",
+        if env::consts::OS == "windows" {
+            "libplc4"
+        } else {
+            "plc4"
+        },
+        if env::consts::OS == "windows" {
+            "libplds4"
+        } else {
+            "plds4"
+        },
         "softokn_static",
         "ssl",
     ];
-    if env::consts::OS != "macos" {
+    // macOS always dynamically links against the system sqlite library.
+    // See https://github.com/nss-dev/nss/blob/a8c22d8fc0458db3e261acc5e19b436ab573a961/coreconf/Darwin.mk#L130-L135
+    if env::consts::OS == "macos" {
+        println!("cargo:rustc-link-lib=dylib=sqlite3");
+    } else {
         static_libs.push("sqlite");
     }
+    // Hardware specific libs.
+    // See https://github.com/mozilla/application-services/blob/0a2dac76f979b8bcfb6bacb5424b50f58520b8fe/components/support/rc_crypto/nss/nss_build_common/src/lib.rs#L127-L157
+    let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
+    // https://searchfox.org/nss/rev/0d5696b3edce5124353f03159d2aa15549db8306/lib/freebl/freebl.gyp#508-542
+    if target_arch == "arm" || target_arch == "aarch64" {
+        static_libs.push("armv8_c_lib");
+    }
+    if target_arch == "x86_64" || target_arch == "x86" {
+        static_libs.push("gcm-aes-x86_c_lib");
+        static_libs.push("sha-x86_c_lib");
+    }
+    if target_arch == "arm" {
+        static_libs.push("gcm-aes-arm32-neon_c_lib");
+    }
+    if target_arch == "aarch64" {
+        static_libs.push("gcm-aes-aarch64_c_lib");
+    }
+    if target_arch == "x86_64" {
+        static_libs.push("hw-acc-crypto-avx");
+        static_libs.push("hw-acc-crypto-avx2");
+    }
+    // https://searchfox.org/nss/rev/08c4d05078d00089f8d7540651b0717a9d66f87e/lib/freebl/freebl.gyp#315-324
+    if (target_os == "android" || target_os == "linux") && target_arch == "x86_64" {
+        static_libs.push("intel-gcm-wrap_c_lib");
+        // https://searchfox.org/nss/rev/08c4d05078d00089f8d7540651b0717a9d66f87e/lib/freebl/freebl.gyp#43-47
+        if (target_os == "android" || target_os == "linux") && target_arch == "x86_64" {
+            static_libs.push("intel-gcm-s_lib");
+        }
+    }
     for lib in static_libs {
-        println!("cargo:rustc-link-lib=static={}", lib);
+        println!("cargo:rustc-link-lib=static={lib}");
     }
-
-    // Dynamic libs that aren't transitively included by NSS libs.
-    let mut other_libs = Vec::new();
-    if env::consts::OS != "windows" {
-        other_libs.extend_from_slice(&["pthread", "dl", "c", "z"]);
-    }
-    if env::consts::OS == "macos" {
-        other_libs.push("sqlite3");
-    }
-    dynamic_link_both(&other_libs);
 }
 
 fn get_includes(nsstarget: &Path, nssdist: &Path) -> Vec<PathBuf> {
@@ -232,7 +240,7 @@ fn build_bindings(base: &str, bindings: &Bindings, flags: &[String], gecko: bool
     let header = header_path.to_str().unwrap();
     let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join(String::from(base) + ".rs");
 
-    println!("cargo:rerun-if-changed={}", header);
+    println!("cargo:rerun-if-changed={header}");
 
     let mut builder = Builder::default().header(header);
     builder = builder.generate_comments(false);
@@ -253,7 +261,7 @@ fn build_bindings(base: &str, bindings: &Bindings, flags: &[String], gecko: bool
             builder = builder.clang_arg("-DANDROID");
         }
         if bindings.cplusplus {
-            builder = builder.clang_args(&["-x", "c++", "-std=c++11"]);
+            builder = builder.clang_args(&["-x", "c++", "-std=c++14"]);
         }
     }
 
@@ -285,20 +293,75 @@ fn build_bindings(base: &str, bindings: &Bindings, flags: &[String], gecko: bool
         .expect("couldn't write bindings");
 }
 
-fn setup_standalone() -> Vec<String> {
+fn pkg_config() -> Vec<String> {
+    let modversion = Command::new("pkg-config")
+        .args(["--modversion", "nss"])
+        .output()
+        .expect("pkg-config reports NSS as absent")
+        .stdout;
+    let modversion = String::from_utf8(modversion).expect("non-UTF8 from pkg-config");
+    let modversion = modversion.trim();
+    // The NSS version number does not follow semver numbering, because it omits the patch version
+    // when that's 0. Deal with that.
+    let modversion_for_cmp = if modversion.chars().filter(|c| *c == '.').count() == 1 {
+        modversion.to_owned() + ".0"
+    } else {
+        modversion.to_owned()
+    };
+    let modversion_for_cmp =
+        Version::parse(&modversion_for_cmp).expect("NSS version not in semver format");
+    let version_req = VersionReq::parse(&format!(">={}", MINIMUM_NSS_VERSION.trim())).unwrap();
+    assert!(
+        version_req.matches(&modversion_for_cmp),
+        "neqo has NSS version requirement {version_req}, found {modversion}"
+    );
+
+    let cfg = Command::new("pkg-config")
+        .args(["--cflags", "--libs", "nss"])
+        .output()
+        .expect("NSS flags not returned by pkg-config")
+        .stdout;
+    let cfg_str = String::from_utf8(cfg).expect("non-UTF8 from pkg-config");
+
+    let mut flags: Vec<String> = Vec::new();
+    for f in cfg_str.split(' ') {
+        if let Some(include) = f.strip_prefix("-I") {
+            flags.push(String::from(f));
+            println!("cargo:include={include}");
+        } else if let Some(path) = f.strip_prefix("-L") {
+            println!("cargo:rustc-link-search=native={path}");
+        } else if let Some(lib) = f.strip_prefix("-l") {
+            println!("cargo:rustc-link-lib=dylib={lib}");
+        } else {
+            println!("Warning: Unknown flag from pkg-config: {f}");
+        }
+    }
+
+    flags
+}
+
+fn setup_standalone(nss: &str) -> Vec<String> {
     setup_clang();
 
     println!("cargo:rerun-if-env-changed=NSS_DIR");
-    let nss = nss_dir();
-    build_nss(nss.clone());
+    let nss = PathBuf::from(nss);
+    assert!(
+        !nss.is_relative(),
+        "The NSS_DIR environment variable is expected to be an absolute path."
+    );
 
     // $NSS_DIR/../dist/
     let nssdist = nss.parent().unwrap().join("dist");
     println!("cargo:rerun-if-env-changed=NSS_TARGET");
     let nsstarget = env::var("NSS_TARGET")
         .unwrap_or_else(|_| fs::read_to_string(nssdist.join("latest")).unwrap());
-    let nsstarget = nssdist.join(nsstarget.trim());
 
+    // If NSS_PREBUILT is set, we assume that the NSS libraries are already built.
+    if env::var("NSS_PREBUILT").is_err() {
+        build_nss(nss, &nsstarget);
+    }
+
+    let nsstarget = nssdist.join(nsstarget.trim());
     let includes = get_includes(&nsstarget, &nssdist);
 
     let nsslibdir = nsstarget.join("lib");
@@ -306,7 +369,11 @@ fn setup_standalone() -> Vec<String> {
         "cargo:rustc-link-search=native={}",
         nsslibdir.to_str().unwrap()
     );
-    if is_debug() {
+    if env::var("CARGO_CFG_FUZZING").is_ok()
+        || env::var("PROFILE").unwrap_or_default() == "debug"
+        // FIXME: NSPR doesn't build proper dynamic libraries on Windows.
+        || env::consts::OS == "windows"
+    {
         static_link();
     } else {
         dynamic_link();
@@ -322,7 +389,10 @@ fn setup_standalone() -> Vec<String> {
 
 #[cfg(feature = "gecko")]
 fn setup_for_gecko() -> Vec<String> {
-    use mozbuild::TOPOBJDIR;
+    use mozbuild::{
+        config::{BINDGEN_SYSTEM_FLAGS, NSPR_CFLAGS, NSS_CFLAGS},
+        TOPOBJDIR,
+    };
 
     let fold_libs = mozbuild::config::MOZ_FOLD_LIBS;
     let libs = if fold_libs {
@@ -366,13 +436,11 @@ fn setup_for_gecko() -> Vec<String> {
         );
     }
 
-    let flags_path = TOPOBJDIR.join("netwerk/socket/neqo/extra-bindgen-flags");
-
-    println!("cargo:rerun-if-changed={}", flags_path.to_str().unwrap());
-    let mut flags = fs::read_to_string(flags_path)
-        .expect("Failed to read extra-bindgen-flags file")
-        .split_whitespace()
-        .map(String::from)
+    let mut flags = BINDGEN_SYSTEM_FLAGS
+        .iter()
+        .chain(&NSPR_CFLAGS)
+        .chain(&NSS_CFLAGS)
+        .map(|s| s.to_string())
         .collect::<Vec<_>>();
 
     flags.push(String::from("-include"));
@@ -394,10 +462,13 @@ fn setup_for_gecko() -> Vec<String> {
 }
 
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(nss_nodb)");
     let flags = if cfg!(feature = "gecko") {
         setup_for_gecko()
+    } else if let Ok(nss_dir) = env::var("NSS_DIR") {
+        setup_standalone(nss_dir.trim())
     } else {
-        setup_standalone()
+        pkg_config()
     };
 
     let config_file = PathBuf::from(BINDINGS_DIR).join(BINDINGS_CONFIG);

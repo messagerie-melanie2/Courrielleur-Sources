@@ -64,6 +64,10 @@ FolderLookupService.prototype = {
       }
     } catch {}
 
+    if (Services.prefs.getBoolPref("mail.panorama.enabled", false)) {
+      throw new Error("refusing to create a folder object for " + uri);
+    }
+
     // Create new folder.
 
     // Check that uri has an active scheme, in case this folder is from
@@ -104,6 +108,28 @@ FolderLookupService.prototype = {
     }
 
     return folder;
+  },
+
+  /**
+   * Store a folder in the service's cache. This is used by the new database
+   * because creating a new folder by URI is not allowed.
+   *
+   * Only for use when mail.panorama.enabled is true!
+   *
+   * @param {string} url - The folder URL.
+   * @param {nsIMsgFolder} folder - The folder to cache.
+   */
+  cache(url, folder) {
+    if (!Services.prefs.getBoolPref("mail.panorama.enabled", false)) {
+      throw new Components.Exception(
+        "nsIFolderLookupService.cache must not be used when Panorama is not enabled.",
+        Cr.NS_ERROR_FAILURE
+      );
+    }
+    const weakRef = folder
+      .QueryInterface(Ci.nsISupportsWeakReference)
+      .GetWeakReference();
+    this._map.set(url, weakRef);
   },
 
   /**

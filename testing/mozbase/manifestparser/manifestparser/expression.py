@@ -6,8 +6,6 @@ import re
 import sys
 import traceback
 
-import six
-
 __all__ = ["parse", "ParseError", "ExpressionParser"]
 
 # expr.py
@@ -48,7 +46,7 @@ __all__ = ["parse", "ParseError", "ExpressionParser"]
 # - rbp: right binding power
 
 
-class ident_token(object):
+class ident_token:
     def __init__(self, scanner, value):
         self.value = value
 
@@ -58,7 +56,7 @@ class ident_token(object):
         return parser.value(self.value)
 
 
-class literal_token(object):
+class literal_token:
     def __init__(self, scanner, value):
         self.value = value
 
@@ -66,56 +64,56 @@ class literal_token(object):
         return self.value
 
 
-class eq_op_token(object):
+class eq_op_token:
     "=="
 
     def led(self, parser, left):
         return left == parser.expression(self.lbp)
 
 
-class neq_op_token(object):
+class neq_op_token:
     "!="
 
     def led(self, parser, left):
         return left != parser.expression(self.lbp)
 
 
-class lt_op_token(object):
+class lt_op_token:
     "<"
 
     def led(self, parser, left):
         return left < parser.expression(self.lbp)
 
 
-class gt_op_token(object):
+class gt_op_token:
     ">"
 
     def led(self, parser, left):
         return left > parser.expression(self.lbp)
 
 
-class le_op_token(object):
+class le_op_token:
     "<="
 
     def led(self, parser, left):
         return left <= parser.expression(self.lbp)
 
 
-class ge_op_token(object):
+class ge_op_token:
     ">="
 
     def led(self, parser, left):
         return left >= parser.expression(self.lbp)
 
 
-class not_op_token(object):
+class not_op_token:
     "!"
 
     def nud(self, parser):
         return not parser.expression(100)
 
 
-class and_op_token(object):
+class and_op_token:
     "&&"
 
     def led(self, parser, left):
@@ -123,7 +121,7 @@ class and_op_token(object):
         return left and right
 
 
-class or_op_token(object):
+class or_op_token:
     "||"
 
     def led(self, parser, left):
@@ -131,7 +129,7 @@ class or_op_token(object):
         return left or right
 
 
-class lparen_token(object):
+class lparen_token:
     "("
 
     def nud(self, parser):
@@ -140,11 +138,11 @@ class lparen_token(object):
         return expr
 
 
-class rparen_token(object):
+class rparen_token:
     ")"
 
 
-class end_token(object):
+class end_token:
     """always ends parsing"""
 
 
@@ -183,8 +181,8 @@ class ParseError(Exception):
     """error parsing conditional expression"""
 
 
-class ExpressionParser(object):
-    """
+class ExpressionParser:
+    r"""
     A parser for a simple expression language.
 
     The expression language can be described as follows::
@@ -276,7 +274,7 @@ class ExpressionParser(object):
         """
         if not isinstance(self.token, expected):
             raise Exception("Unexpected token!")
-        self.token = six.next(self.iter)
+        self.token = next(self.iter)
 
     def expression(self, rbp=0):
         """
@@ -284,11 +282,11 @@ class ExpressionParser(object):
         right binding power greater than rbp is encountered.
         """
         t = self.token
-        self.token = six.next(self.iter)
+        self.token = next(self.iter)
         left = t.nud(self)
         while rbp < self.token.lbp:
             t = self.token
-            self.token = six.next(self.iter)
+            self.token = next(self.iter)
             left = t.led(self, left)
         return left
 
@@ -300,24 +298,21 @@ class ExpressionParser(object):
         """
         try:
             self.iter = self._tokenize()
-            self.token = six.next(self.iter)
+            self.token = next(self.iter)
             return self.expression()
         except Exception:
             extype, ex, tb = sys.exc_info()
             formatted = "".join(traceback.format_exception_only(extype, ex))
-            six.reraise(
-                ParseError,
-                ParseError(
-                    "could not parse: %s\nexception: %svariables: %s"
-                    % (self.text, formatted, self.valuemapping)
-                ),
-                tb,
+            pe = ParseError(
+                "could not parse: %s\nexception: %svariables: %s"
+                % (self.text, formatted, self.valuemapping)
             )
+            raise pe.with_traceback(tb)
 
     __call__ = parse
 
 
-def parse(text, **values):
+def parse(text, strict=False, **values):
     """
     Parse and evaluate a boolean expression.
     :param text: The expression to parse, as a string.
@@ -326,4 +321,4 @@ def parse(text, **values):
     :rtype: the final value of the expression.
     :raises: :py:exc::ParseError: will be raised if parsing fails.
     """
-    return ExpressionParser(text, values).parse()
+    return ExpressionParser(text, values, strict=strict).parse()

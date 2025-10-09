@@ -10,7 +10,7 @@ window.addEventListener("DOMContentLoaded", () => {
 });
 
 /**
- * @typedef {Object} TextRecognitionResult
+ * @typedef {object} TextRecognitionResult
  * @property {number} confidence
  * @property {string} string
  * @property {DOMQuad} quad
@@ -19,10 +19,14 @@ window.addEventListener("DOMContentLoaded", () => {
 class TextRecognitionModal {
   /**
    * @param {Promise<TextRecognitionResult[]>} resultsPromise
-   * @param {() => {}} resizeVertically
-   * @param {(url: string, where: string, params: Object) => {}} openLinkIn
+   * @param {Function} resizeVertically
+   * @param {object} [openLinkIn]
+   * @param {string} openLinkIn.url
+   * @param {string} openLinkIn.where
+   * @param {object} openLinkIn.params
+   * @param {TimerId} timerId
    */
-  constructor(resultsPromise, resizeVertically, openLinkIn) {
+  constructor(resultsPromise, resizeVertically, openLinkIn, timerId) {
     /** @type {HTMLElement} */
     this.textEl = document.querySelector(".textRecognitionText");
 
@@ -47,10 +51,7 @@ class TextRecognitionModal {
           // Update the UI to indicate that there were no results.
           this.showHeaderByID("text-recognition-header-no-results");
           // It's still worth recording telemetry times, as the API was still invoked.
-          TelemetryStopwatch.finish(
-            "TEXT_RECOGNITION_API_PERFORMANCE",
-            resultsPromise
-          );
+          Glean.textRecognition.apiPerformance.stopAndAccumulate(timerId);
           return;
         }
 
@@ -58,10 +59,7 @@ class TextRecognitionModal {
         // the results to the UI.
         this.runClusteringAndUpdateUI(results, direction);
         this.showHeaderByID("text-recognition-header-results");
-        TelemetryStopwatch.finish(
-          "TEXT_RECOGNITION_API_PERFORMANCE",
-          resultsPromise
-        );
+        Glean.textRecognition.apiPerformance.stopAndAccumulate(timerId);
 
         TextRecognitionModal.recordInteractionTime();
       },
@@ -74,14 +72,8 @@ class TextRecognitionModal {
           "There was an error recognizing the text from an image.",
           error
         );
-        Services.telemetry.scalarAdd(
-          "browser.ui.interaction.textrecognition_error",
-          1
-        );
-        TelemetryStopwatch.cancel(
-          "TEXT_RECOGNITION_API_PERFORMANCE",
-          resultsPromise
-        );
+        Glean.browserUiInteraction.textrecognitionError.add(1);
+        Glean.textRecognition.apiPerformance.cancel(timerId);
       }
     );
   }
@@ -90,15 +82,10 @@ class TextRecognitionModal {
    * After the results are shown, measure how long a user interacts with the modal.
    */
   static recordInteractionTime() {
-    TelemetryStopwatch.start(
-      "TEXT_RECOGNITION_INTERACTION_TIMING",
-      // Pass the instance of the window in case multiple tabs are doing text recognition
-      // and there is a race condition.
-      window
-    );
+    let timerId = Glean.textRecognition.interactionTiming.start();
 
     const finish = () => {
-      TelemetryStopwatch.finish("TEXT_RECOGNITION_INTERACTION_TIMING", window);
+      Glean.textRecognition.interactionTiming.stopAndAccumulate(timerId);
       window.removeEventListener("blur", finish);
       window.removeEventListener("unload", finish);
     };
@@ -114,13 +101,11 @@ class TextRecognitionModal {
 
   /**
    * After the results are shown, measure how long a user interacts with the modal.
+   *
    * @param {number} textLength
    */
   static recordTextLengthTelemetry(textLength) {
-    const histogram = Services.telemetry.getHistogramById(
-      "TEXT_RECOGNITION_TEXT_LENGTH"
-    );
-    histogram.add(textLength);
+    Glean.textRecognition.textLength.accumulateSingleSample(textLength);
   }
 
   setupCloseHandler() {
@@ -241,7 +226,7 @@ class TextRecognitionModal {
 /**
  * A two dimensional vector.
  *
- * @typedef {[number, number]} Vec2
+ * @typedef {number[]} Vec2
  */
 
 /**
@@ -357,7 +342,7 @@ function densityCluster(points, distance, minPoints) {
 /**
  * @param {Vec2[]} points
  * @param {number} distance
- * @param {number} index,
+ * @param {number} index
  * @returns {Index[]}
  */
 function getNeighborsWithinDistance(points, distance, index) {

@@ -1,21 +1,21 @@
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
-#[clap(author, version, about, long_about = None)]
-#[clap(propagate_version = true)]
+#[command(version, about, long_about = None)]
+#[command(propagate_version = true)]
 struct Cli {
-    #[clap(subcommand)]
+    #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Subcommand)]
 enum Commands {
     /// Adds files to myapp
-    Add(Add),
+    Add(AddArgs),
 }
 
 #[derive(Args)]
-struct Add {
+struct AddArgs {
     name: Option<String>,
 }
 
@@ -26,7 +26,7 @@ fn main() {
     // matches just as you would the top level cmd
     match &cli.command {
         Commands::Add(name) => {
-            println!("'myapp add' was used, name is: {:?}", name.name)
+            println!("'myapp add' was used, name is: {:?}", name.name);
         }
     }
 }

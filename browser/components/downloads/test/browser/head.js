@@ -13,13 +13,9 @@ ChromeUtils.defineESModuleGetters(this, {
   Downloads: "resource://gre/modules/Downloads.sys.mjs",
   DownloadsCommon: "resource:///modules/DownloadsCommon.sys.mjs",
   FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
+  HttpServer: "resource://testing-common/httpd.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
 });
-ChromeUtils.defineModuleGetter(
-  this,
-  "HttpServer",
-  "resource://testing-common/httpd.js"
-);
 
 let gTestTargetFile = new FileUtils.File(
   PathUtils.join(
@@ -55,7 +51,7 @@ const TEST_DATA_SHORT = "This test string is downloaded.";
 /**
  * This is an internal reference that should not be used directly by tests.
  */
-var _gDeferResponses = PromiseUtils.defer();
+var _gDeferResponses = Promise.withResolvers();
 
 /**
  * Ensures that all the interruptible requests started after this function is
@@ -83,7 +79,7 @@ function mustInterruptResponses() {
   _gDeferResponses.resolve();
 
   info("Interruptible responses will be blocked midway.");
-  _gDeferResponses = PromiseUtils.defer();
+  _gDeferResponses = Promise.withResolvers();
 }
 
 /**
@@ -95,12 +91,20 @@ function continueResponses() {
 }
 
 /**
+ * Fails this response and allows the future interruptible requests to complete.
+ */
+function failResponses() {
+  info("Interruptible response is failed and next ones allowed to continue.");
+  _gDeferResponses.reject();
+}
+
+/**
  * Creates a download, which could be interrupted in the middle of it's progress.
  */
 function promiseInterruptibleDownload(extension = ".txt") {
-  let interruptibleFile = FileUtils.getFile("TmpD", [
-    `interruptible${extension}`,
-  ]);
+  let interruptibleFile = new FileUtils.File(
+    PathUtils.join(PathUtils.tempDir, `interruptible${extension}`)
+  );
   interruptibleFile.createUnique(
     Ci.nsIFile.NORMAL_FILE_TYPE,
     FileUtils.PERMS_FILE
@@ -165,15 +169,29 @@ function promisePanelOpened() {
 
   return new Promise(resolve => {
     // Hook to wait until the panel is shown.
-    let originalOnPopupShown = DownloadsPanel.onPopupShown;
-    DownloadsPanel.onPopupShown = function () {
-      DownloadsPanel.onPopupShown = originalOnPopupShown;
+    let originalOnPopupShown = DownloadsPanel._onPopupShown;
+    DownloadsPanel._onPopupShown = function () {
+      DownloadsPanel._onPopupShown = originalOnPopupShown;
       originalOnPopupShown.apply(this, arguments);
 
       // Defer to the next tick of the event loop so that we don't continue
       // processing during the DOM event handler itself.
       setTimeout(resolve, 0);
     };
+  });
+}
+
+function promiseDownloadFinished(list) {
+  return new Promise(resolve => {
+    list.addView({
+      onDownloadChanged(download) {
+        download.launchWhenSucceeded = false;
+        if (download.succeeded || download.error) {
+          list.removeView(this);
+          resolve(download);
+        }
+      },
+    });
   });
 }
 
@@ -250,6 +268,12 @@ async function task_openPanel() {
   let promise = promisePanelOpened();
   DownloadsPanel.showPanel();
   await promise;
+
+  await BrowserTestUtils.waitForMutationCondition(
+    DownloadsView.richListBox,
+    { attributeFilter: ["disabled"] },
+    () => !DownloadsView.richListBox.hasAttribute("disabled")
+  );
 }
 
 async function setDownloadDir() {
@@ -330,11 +354,18 @@ function startServer() {
 
       // Wait on the current deferred object, then finish the request.
       _gDeferResponses.promise
-        .then(function RIH_onSuccess() {
-          aResponse.write(TEST_DATA_SHORT);
-          aResponse.finish();
-          info("Interruptible request finished.");
-        })
+        .then(
+          () => {
+            aResponse.write(TEST_DATA_SHORT);
+            aResponse.finish();
+            info("Interruptible request finished.");
+          },
+          () => {
+            // Don't send data, so that it looks truncated.
+            aResponse.finish();
+            info("Interruptible request failed.");
+          }
+        )
         .catch(console.error);
     }
   );
@@ -445,4 +476,17 @@ async function simulateDropAndCheck(win, dropTarget, urls) {
   for (let url of urls) {
     ok(added.has(url), url + " is added to download");
   }
+}
+
+/**
+ * This is a temporary workaround for frequent intermittents.
+ * For some reason the download target size is not updated, even if the code
+ * is "apparently" already executing and awaiting for refresh().
+ * TODO(Bug 1814364): Figure out a proper fix for this.
+ */
+async function expectNonZeroDownloadTargetSize(downloadTarget) {
+  if (!downloadTarget.size) {
+    await downloadTarget.refresh();
+  }
+  return downloadTarget.size;
 }

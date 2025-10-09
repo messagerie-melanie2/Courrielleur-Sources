@@ -46,16 +46,18 @@ import android.os.Looper;
 import android.os.PowerManager;
 import android.os.Vibrator;
 import android.provider.Settings;
-import android.text.TextUtils;
 import android.util.Log;
 import android.view.ContextThemeWrapper;
 import android.view.Display;
 import android.view.InputDevice;
 import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
+import android.view.inputmethod.InputMethodSubtype;
 import android.webkit.MimeTypeMap;
 import androidx.annotation.Nullable;
 import androidx.collection.SimpleArrayMap;
 import androidx.core.content.res.ResourcesCompat;
+import java.net.InetSocketAddress;
 import java.net.Proxy;
 import java.nio.ByteBuffer;
 import java.util.List;
@@ -70,7 +72,7 @@ import org.mozilla.gecko.util.InputDeviceUtils;
 import org.mozilla.gecko.util.ProxySelector;
 import org.mozilla.gecko.util.ThreadUtils;
 import org.mozilla.geckoview.BuildConfig;
-import org.mozilla.geckoview.GeckoResult;
+import org.mozilla.geckoview.CrashHandler;
 import org.mozilla.geckoview.R;
 
 public class GeckoAppShell {
@@ -101,7 +103,7 @@ public class GeckoAppShell {
     }
 
     @Override
-    protected String getAppPackageName() {
+    public String getAppPackageName() {
       final Context appContext = getAppContext();
       if (appContext == null) {
         return "<unknown>";
@@ -110,10 +112,11 @@ public class GeckoAppShell {
     }
 
     @Override
-    protected Context getAppContext() {
+    public Context getAppContext() {
       return getApplicationContext();
     }
 
+    @SuppressLint("ApplySharedPref")
     @Override
     public boolean reportException(final Thread thread, final Throwable exc) {
       try {
@@ -167,7 +170,7 @@ public class GeckoAppShell {
   }
 
   @WrapForJNI(exceptionMode = "ignore")
-  /* package */ static synchronized String getAppNotes() {
+  public static synchronized String getAppNotes() {
     return sAppNotes;
   }
 
@@ -185,6 +188,13 @@ public class GeckoAppShell {
 
   // See also HardwareUtils.LOW_MEMORY_THRESHOLD_MB.
   private static final int HIGH_MEMORY_DEVICE_THRESHOLD_MB = 768;
+
+  /*
+   * Device RAM threshold requirement for adding additional headers.
+   * Keep in sync with RAM_THRESHOLD_MEGABYTES defined in
+   * https://searchfox.org/mozilla-central/rev/55944eaee1e358b5443eaedc8adcd37e3fd23fd3/mobile/android/fenix/app/src/main/java/org/mozilla/fenix/FenixApplication.kt#120
+   */
+  private static final int ADDITIONAL_SEARCH_HEADER_RAM_THRESHOLD_MEGABYTES = 1024;
 
   private static int sDensityDpi;
   private static Float sDensity;
@@ -740,7 +750,11 @@ public class GeckoAppShell {
 
   @WrapForJNI(calledFrom = "gecko")
   private static void moveTaskToBack() {
-    // This is a vestige, to be removed as full-screen support for GeckoView is implemented.
+    final Context applicationContext = getApplicationContext();
+    final Intent intent = new Intent(Intent.ACTION_MAIN);
+    intent.addCategory(Intent.CATEGORY_HOME);
+    intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    applicationContext.startActivity(intent);
   }
 
   @WrapForJNI(calledFrom = "gecko")
@@ -863,6 +877,12 @@ public class GeckoAppShell {
     return sTotalRam;
   }
 
+  @WrapForJNI(calledFrom = "gecko")
+  private static synchronized boolean isDeviceRamThresholdOkay() {
+    final Context applicationContext = getApplicationContext();
+    return getTotalRam(applicationContext) > ADDITIONAL_SEARCH_HEADER_RAM_THRESHOLD_MEGABYTES;
+  }
+
   private static boolean isHighMemoryDevice(final Context context) {
     return getTotalRam(context) > HIGH_MEMORY_DEVICE_THRESHOLD_MB;
   }
@@ -905,6 +925,33 @@ public class GeckoAppShell {
       sScreenRefreshRate = Float.valueOf(refreshRate);
     }
     return refreshRate;
+  }
+
+  @WrapForJNI(calledFrom = "gecko")
+  private static boolean hasHDRScreen() {
+    if (Build.VERSION.SDK_INT < 24) {
+      return false;
+    }
+    final WindowManager wm =
+        (WindowManager) getApplicationContext().getSystemService(Context.WINDOW_SERVICE);
+    final Display display = wm.getDefaultDisplay();
+    if (Build.VERSION.SDK_INT >= 26) {
+      return display.isHdr();
+    }
+    final Display.HdrCapabilities hdrCapabilities = display.getHdrCapabilities();
+    if (hdrCapabilities == null) {
+      return false;
+    }
+    final int[] supportedHdrTypes = hdrCapabilities.getSupportedHdrTypes();
+    for (final int type : supportedHdrTypes) {
+      if (type == Display.HdrCapabilities.HDR_TYPE_HDR10
+          || type == Display.HdrCapabilities.HDR_TYPE_HDR10_PLUS
+          || type == Display.HdrCapabilities.HDR_TYPE_HLG
+          || type == Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION) {
+        return true;
+      }
+    }
+    return false;
   }
 
   @WrapForJNI(calledFrom = "gecko")
@@ -1088,7 +1135,7 @@ public class GeckoAppShell {
       android.R.attr.colorBackground,
       android.R.attr.panelColorForeground,
       android.R.attr.panelColorBackground,
-      Build.VERSION.SDK_INT >= 21 ? android.R.attr.colorAccent : 0,
+      android.R.attr.colorAccent,
     };
 
     final int[] result = new int[attrsAppearance.length];
@@ -1108,6 +1155,25 @@ public class GeckoAppShell {
     }
 
     return result;
+  }
+
+  @WrapForJNI(calledFrom = "gecko")
+  private static String getKeyboardLayout() {
+    final InputMethodManager imm =
+        (InputMethodManager) getApplicationContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+    final InputMethodSubtype ims = imm.getCurrentInputMethodSubtype();
+    if (ims == null) {
+      return null;
+    }
+
+    // TODO(m_kato):
+    // Android 16 will have `layout related APIs such as setLayoutLabelNonLocalized
+    // to get keyboard layout label.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+      return ims.getLanguageTag();
+    } else {
+      return ims.getLocale();
+    }
   }
 
   @WrapForJNI(calledFrom = "gecko")
@@ -1229,7 +1295,7 @@ public class GeckoAppShell {
 
   @WrapForJNI(calledFrom = "gecko")
   private static double[] getCurrentBatteryInformation() {
-    return GeckoBatteryManager.getCurrentInformation();
+    return GeckoBatteryManager.getCurrentInformation(getApplicationContext());
   }
 
   /* Called by JNI from AndroidBridge, and by reflection from tests/BaseTest.java.in */
@@ -1299,11 +1365,14 @@ public class GeckoAppShell {
       return "DIRECT";
     }
 
+    final InetSocketAddress proxyAddress = (InetSocketAddress) proxy.address();
+    final String proxyString = proxyAddress.getHostString() + ":" + proxyAddress.getPort();
+
     switch (proxy.type()) {
       case HTTP:
-        return "PROXY " + proxy.address().toString();
+        return "PROXY " + proxyString;
       case SOCKS:
-        return "SOCKS " + proxy.address().toString();
+        return "SOCKS " + proxyString;
     }
 
     return "DIRECT";
@@ -1382,6 +1451,58 @@ public class GeckoAppShell {
     return result;
   }
 
+  /*
+   * Keep in sync with PointingDevices in LookAndFeel.h
+   */
+  private static final int POINTING_DEVICE_NONE = 0x00000000;
+  private static final int POINTING_DEVICE_MOUSE = 0x00000001;
+  private static final int POINTING_DEVICE_TOUCH = 0x00000002;
+  private static final int POINTING_DEVICE_PEN = 0x00000004;
+
+  private static int getPointingDeviceKinds(final InputDevice inputDevice) {
+    int result = POINTING_DEVICE_NONE;
+    final int sources = inputDevice.getSources();
+
+    // TODO(krosylight): For now this code is for telemetry purpose, but ultimately we want to
+    // replace the capabilities code above and move the capabilities computation into layout. We'll
+    // then have to add all the extra devices too that are not mouse/touch/pen. (Bug 1918207)
+    // We don't treat other devices properly for pointerType after all:
+    // https://searchfox.org/mozilla-central/rev/3b59c739df66574d94022a684596845cd05e7c65/mobile/android/geckoview/src/main/java/org/mozilla/geckoview/PanZoomController.java#749-761
+
+    if (hasInputDeviceSource(sources, InputDevice.SOURCE_MOUSE)) {
+      result |= POINTING_DEVICE_MOUSE;
+    }
+    if (hasInputDeviceSource(sources, InputDevice.SOURCE_TOUCHSCREEN)) {
+      result |= POINTING_DEVICE_TOUCH;
+    }
+    if (hasInputDeviceSource(sources, InputDevice.SOURCE_STYLUS)) {
+      result |= POINTING_DEVICE_PEN;
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+        && hasInputDeviceSource(sources, InputDevice.SOURCE_BLUETOOTH_STYLUS)) {
+      result |= POINTING_DEVICE_PEN;
+    }
+
+    return result;
+  }
+
+  @WrapForJNI(calledFrom = "gecko")
+  // For pointing devices telemetry.
+  private static int getPointingDeviceKinds() {
+    int result = POINTING_DEVICE_NONE;
+
+    for (final int deviceId : InputDevice.getDeviceIds()) {
+      final InputDevice inputDevice = InputDevice.getDevice(deviceId);
+      if (inputDevice == null || !InputDeviceUtils.isPointerTypeDevice(inputDevice)) {
+        continue;
+      }
+
+      result |= getPointingDeviceKinds(inputDevice);
+    }
+
+    return result;
+  }
+
   private static boolean hasInputDeviceSource(final int sources, final int inputDeviceSource) {
     return (sources & inputDeviceSource) == inputDeviceSource;
   }
@@ -1398,23 +1519,6 @@ public class GeckoAppShell {
     int getRotation();
   }
 
-  @TargetApi(Build.VERSION_CODES.JELLY_BEAN)
-  private static class JellyBeanScreenCompat implements ScreenCompat {
-    public Rect getScreenSize() {
-      final WindowManager wm =
-          (WindowManager) getApplicationContext().getSystemService(Context.WINDOW_SERVICE);
-      final Display disp = wm.getDefaultDisplay();
-      return new Rect(0, 0, disp.getWidth(), disp.getHeight());
-    }
-
-    public int getRotation() {
-      final WindowManager wm =
-          (WindowManager) getApplicationContext().getSystemService(Context.WINDOW_SERVICE);
-      return wm.getDefaultDisplay().getRotation();
-    }
-  }
-
-  @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
   private static class JellyBeanMR1ScreenCompat implements ScreenCompat {
     public Rect getScreenSize() {
       final WindowManager wm =
@@ -1463,10 +1567,8 @@ public class GeckoAppShell {
   static {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
       sScreenCompat = new AndroidSScreenCompat();
-    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-      sScreenCompat = new JellyBeanMR1ScreenCompat();
     } else {
-      sScreenCompat = new JellyBeanScreenCompat();
+      sScreenCompat = new JellyBeanMR1ScreenCompat();
     }
   }
 
@@ -1487,9 +1589,6 @@ public class GeckoAppShell {
   public static int getAudioOutputFramesPerBuffer() {
     final int DEFAULT = 512;
 
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR1) {
-      return DEFAULT;
-    }
     final AudioManager am =
         (AudioManager) getApplicationContext().getSystemService(Context.AUDIO_SERVICE);
     if (am == null) {
@@ -1506,9 +1605,6 @@ public class GeckoAppShell {
   public static int getAudioOutputSampleRate() {
     final int DEFAULT = 44100;
 
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR1) {
-      return DEFAULT;
-    }
     final AudioManager am =
         (AudioManager) getApplicationContext().getSystemService(Context.AUDIO_SERVICE);
     if (am == null) {
@@ -1546,20 +1642,6 @@ public class GeckoAppShell {
     }
   }
 
-  private static String getLanguageTag(final Locale locale) {
-    final StringBuilder out = new StringBuilder(locale.getLanguage());
-    final String country = locale.getCountry();
-    final String variant = locale.getVariant();
-    if (!TextUtils.isEmpty(country)) {
-      out.append('-').append(country);
-    }
-    if (!TextUtils.isEmpty(variant)) {
-      out.append('-').append(variant);
-    }
-    // e.g. "en", "en-US", or "en-US-POSIX".
-    return out.toString();
-  }
-
   @WrapForJNI
   public static String[] getDefaultLocales() {
     // XXX We may have to convert some language codes such as "id" vs "in".
@@ -1573,12 +1655,7 @@ public class GeckoAppShell {
     }
     final String[] locales = new String[1];
     final Locale locale = Locale.getDefault();
-    if (Build.VERSION.SDK_INT >= 21) {
-      locales[0] = locale.toLanguageTag();
-      return locales;
-    }
-
-    locales[0] = getLanguageTag(locale);
+    locales[0] = locale.toLanguageTag();
     return locales;
   }
 
@@ -1622,20 +1699,22 @@ public class GeckoAppShell {
   @WrapForJNI
   public static native boolean isParentProcess();
 
-  /**
-   * Returns a GeckoResult that will be completed to true if the GPU process is enabled and false if
-   * it is disabled.
-   */
   @WrapForJNI
-  public static native GeckoResult<Boolean> isGpuProcessEnabled();
+  public static native boolean isGpuProcessEnabled();
+
+  @WrapForJNI
+  public static native boolean isInteractiveWidgetDefaultResizesVisual();
 
   @SuppressLint("NewApi")
   public static boolean isIsolatedProcess() {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN) {
-      return false;
-    }
     // This method was added in SDK 16 but remained hidden until SDK 28, meaning we are okay to call
     // this on any SDK level but must suppress the new API lint.
     return android.os.Process.isIsolated();
   }
+
+  @WrapForJNI(dispatchTo = "gecko")
+  public static native void onSystemLocaleChanged();
+
+  @WrapForJNI(dispatchTo = "gecko")
+  public static native void onTimezoneChanged();
 }

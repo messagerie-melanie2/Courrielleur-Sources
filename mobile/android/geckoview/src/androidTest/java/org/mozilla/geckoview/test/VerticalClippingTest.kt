@@ -4,14 +4,16 @@
 
 package org.mozilla.geckoview.test
 
-import android.graphics.* // ktlint-disable no-wildcard-imports
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import androidx.core.graphics.createBitmap
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.MediumTest
 import org.hamcrest.Matchers
 import org.hamcrest.Matchers.equalTo
 import org.hamcrest.Matchers.notNullValue
-import org.junit.Assume.assumeThat
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mozilla.geckoview.GeckoResult
@@ -28,7 +30,7 @@ private const val BANNER_HEIGHT = SCREEN_HEIGHT * 0.1f // height: 10%
 @MediumTest
 class VerticalClippingTest : BaseSessionTest() {
     private fun getComparisonScreenshot(bottomOffset: Int): Bitmap {
-        val screenshotFile = Bitmap.createBitmap(SCREEN_WIDTH, SCREEN_HEIGHT, Bitmap.Config.ARGB_8888)
+        val screenshotFile = createBitmap(SCREEN_WIDTH, SCREEN_HEIGHT, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(screenshotFile)
         val paint = Paint()
 
@@ -71,8 +73,6 @@ class VerticalClippingTest : BaseSessionTest() {
     @WithDisplay(height = SCREEN_HEIGHT, width = SCREEN_WIDTH)
     @Test
     fun verticalClippingSucceeds() {
-        // Disable failing test on Webrender. Bug 1670267
-        assumeThat(sessionRule.env.isWebrender, equalTo(false))
         sessionRule.display?.setVerticalClipping(45)
         mainSession.loadTestPath(FIXED_BOTTOM)
         sessionRule.waitUntilCalled(object : ContentDelegate {

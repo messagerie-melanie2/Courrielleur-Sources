@@ -45,35 +45,35 @@ var abFlavorDataProvider = {
   },
 };
 
-let abResultsPaneObserver = {
+const abResultsPaneObserver = {
   onDragStart(event) {
-    let selectedRows = GetSelectedRows();
+    const selectedRows = GetSelectedRows();
 
     if (!selectedRows) {
       return;
     }
 
-    let selectedAddresses = GetSelectedAddresses();
+    const selectedAddresses = GetSelectedAddresses();
 
     event.dataTransfer.setData("moz/abcard", selectedRows);
     event.dataTransfer.setData("moz/abcard", selectedRows);
     event.dataTransfer.setData("text/x-moz-address", selectedAddresses);
     event.dataTransfer.setData("text/plain", selectedAddresses);
 
-    let card = GetSelectedCard();
+    const card = GetSelectedCard();
     if (card && card.displayName && !card.isMailList) {
       try {
         // A card implementation may throw NS_ERROR_NOT_IMPLEMENTED.
         // Don't break drag-and-drop if that happens.
-        let vCard = card.translateTo("vcard");
-        event.dataTransfer.setData("text/vcard", decodeURIComponent(vCard));
+        const vCard = card.toVCard();
+        event.dataTransfer.setData("text/vcard", vCard);
         event.dataTransfer.setData(
           "application/x-moz-file-promise-dest-filename",
           `${card.displayName}.vcf`.replace(/(.{74}).*(.{10})$/u, "$1...$2")
         );
         event.dataTransfer.setData(
           "application/x-moz-file-promise-url",
-          "data:text/vcard," + vCard
+          "data:text/vcard," + encodeURIComponent(vCard)
         );
         event.dataTransfer.setData(
           "application/x-moz-file-promise",
@@ -91,34 +91,3 @@ let abResultsPaneObserver = {
     event.stopPropagation();
   },
 };
-
-function DragAddressOverTargetControl(event) {
-  var dragSession = Cc["@mozilla.org/widget/dragservice;1"]
-    .getService(Ci.nsIDragService)
-    .getCurrentSession();
-
-  if (!dragSession.isDataFlavorSupported("text/x-moz-address")) {
-    return;
-  }
-
-  var trans = Cc["@mozilla.org/widget/transferable;1"].createInstance(
-    Ci.nsITransferable
-  );
-  trans.init(getLoadContext());
-  trans.addDataFlavor("text/x-moz-address");
-
-  var canDrop = true;
-
-  for (var i = 0; i < dragSession.numDropItems; ++i) {
-    dragSession.getData(trans, i);
-    var dataObj = {};
-    var bestFlavor = {};
-    try {
-      trans.getAnyTransferData(bestFlavor, dataObj);
-    } catch (ex) {
-      canDrop = false;
-      break;
-    }
-  }
-  dragSession.canDrop = canDrop;
-}

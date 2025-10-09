@@ -8,7 +8,14 @@
 
 // Wrap in a block to prevent leaking to window scope.
 {
-  var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
+  var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
+
+  const lazy = {};
+  ChromeUtils.defineLazyGetter(
+    lazy,
+    "l10n",
+    () => new Localization(["calendar/calendar.ftl"], true)
+  );
   /**
    * The MozCalendarEditableItem widget is used as a full day event item in the
    * Day and Week views of the calendar. It displays the event name, alarm icon
@@ -85,12 +92,12 @@
         }
 
         if (this.calendarView && this.calendarView.controller) {
-          let item = event.ctrlKey ? this.mOccurrence.parentItem : this.mOccurrence;
+          const item = event.ctrlKey ? this.mOccurrence.parentItem : this.mOccurrence;
           if (Services.prefs.getBoolPref("calendar.events.defaultActionEdit", true)) {
             this.calendarView.controller.modifyOccurrence(item);
             return;
           }
-          this.calendarView.controller.viewOccurrence(item);
+          this.calendarView.controller.viewOccurrence(item, event);
         }
       });
 
@@ -101,13 +108,19 @@
         }
       });
 
-      // We have two event listeners for dragstart. This event listener is for the bubbling phase.
       this.addEventListener("dragstart", event => {
-        if (document.monthDragEvent?.localName == "calendar-event-box") {
+        let target = event.target;
+        if (target?.nodeType == Node.TEXT_NODE) {
+          target = target.parentNode;
+        }
+        if (!target.closest(`[draggable="true"]`)) {
+          // Day/week view items (except all-day items) do not have the
+          // draggable attribute, because the day view does dragging with
+          // mouse event handlers instead of drag event handlers.
           return;
         }
-        let item = this.occurrence;
-        let isInvitation =
+        const item = this.occurrence;
+        const isInvitation =
           item.calendar instanceof Ci.calISchedulingSupport && item.calendar.isInvitation(item);
         if (
           !cal.acl.isCalendarWritable(item.calendar) ||
@@ -119,7 +132,7 @@
         if (!this.selected) {
           this.select(event);
         }
-        invokeEventDragSession(item, this);
+        invokeEventDragSession(event, item);
       });
     }
 
@@ -127,6 +140,8 @@
       if (this.delayConnectedCallback() || this.hasChildNodes()) {
         return;
       }
+      MozXULElement.insertFTLIfNeeded("calendar/calendar.ftl");
+
       this.appendChild(
         MozXULElement.parseXULToFragment(`
           <html:div class="calendar-item-flex">
@@ -134,7 +149,7 @@
             <html:div class="event-name-label"></html:div>
             <html:input class="plain event-name-input"
                         hidden="hidden"
-                        placeholder='${cal.l10n.getCalString("newEvent")}'/>
+                        data-l10n-id="new-event"/>
             <html:div class="alarm-icons-box"></html:div>
             <html:img class="item-classification-icon" />
             <html:img class="item-recurrence-icon" />
@@ -145,18 +160,6 @@
       );
 
       this.classList.add("calendar-color-box", "calendar-item-container");
-
-      // We have two event listeners for dragstart. This event listener is for the capturing phase
-      // where we are setting up the document.monthDragEvent which will be used in the event listener
-      // in the bubbling phase.
-      this.addEventListener(
-        "dragstart",
-        event => {
-          document.monthDragEvent = this;
-        },
-        true
-      );
-
       this.style.pointerEvents = "auto";
       this.setAttribute("tooltip", "itemTooltip");
       this.setAttribute("tabindex", "-1");
@@ -216,7 +219,7 @@
     }
 
     addEventNameTextboxListener() {
-      let stopPropagationIfEditing = event => {
+      const stopPropagationIfEditing = event => {
         if (this.mEditing) {
           event.stopPropagation();
         }
@@ -243,32 +246,35 @@
     }
 
     setEditableLabel() {
-      let label = this.eventNameLabel;
-      let item = this.mOccurrence;
-      label.textContent = item.title
-        ? item.title.replace(/\n/g, " ")
-        : cal.l10n.getCalString("eventUntitled");
+      const label = this.eventNameLabel;
+      const item = this.mOccurrence;
+      if (item.title) {
+        delete label.dataset.l10nId;
+        label.textContent = item.title.replace(/\n/g, " ");
+      } else {
+        document.l10n.setAttributes(label, "event-untitled");
+      }
     }
 
     setLocationLabel() {
-      let locationLabel = this.querySelector(".location-desc");
-      let location = this.mOccurrence.getProperty("LOCATION");
-      let showLocation = Services.prefs.getBoolPref("calendar.view.showLocation", false);
+      const locationLabel = this.querySelector(".location-desc");
+      const location = this.mOccurrence.getProperty("LOCATION");
+      const showLocation = Services.prefs.getBoolPref("calendar.view.showLocation", false);
 
       locationLabel.textContent = showLocation && location ? location : "";
       locationLabel.hidden = !showLocation || !location;
     }
 
     setCSSClasses() {
-      let item = this.mOccurrence;
-      let cssSafeId = cal.view.formatStringForCSSRule(item.calendar.id);
+      const item = this.mOccurrence;
+      const cssSafeId = cal.view.formatStringForCSSRule(item.calendar.id);
       this.style.setProperty("--item-backcolor", `var(--calendar-${cssSafeId}-backcolor)`);
       this.style.setProperty("--item-forecolor", `var(--calendar-${cssSafeId}-forecolor)`);
-      let categoriesBox = this.querySelector(".calendar-category-box");
+      const categoriesBox = this.querySelector(".calendar-category-box");
 
-      let categoriesArray = item.getCategories().map(cal.view.formatStringForCSSRule);
+      const categoriesArray = item.getCategories().map(cal.view.formatStringForCSSRule);
       // Find the first category with a colour.
-      let firstCategory = categoriesArray.find(
+      const firstCategory = categoriesArray.find(
         category => Services.prefs.getStringPref("calendar.category.color." + category, "") != ""
       );
       if (firstCategory) {
@@ -279,9 +285,9 @@
       }
 
       // Add alarm icons as needed.
-      let alarms = item.getAlarms();
+      const alarms = item.getAlarms();
       if (alarms.length && Services.prefs.getBoolPref("calendar.alarms.indicator.show", true)) {
-        let iconsBox = this.querySelector(".alarm-icons-box");
+        const iconsBox = this.querySelector(".alarm-icons-box");
         // Set suppressed status on the icons box.
         iconsBox.toggleAttribute("suppressed", item.calendar.getProperty("suppressAlarms"));
 
@@ -289,7 +295,7 @@
       }
 
       // Item classification / privacy.
-      let classificationIcon = this.querySelector(".item-classification-icon");
+      const classificationIcon = this.querySelector(".item-classification-icon");
       if (classificationIcon) {
         switch (item.privacy) {
           case "PRIVATE":
@@ -322,7 +328,7 @@
         }
       }
 
-      let recurrenceIcon = this.querySelector(".item-recurrence-icon");
+      const recurrenceIcon = this.querySelector(".item-recurrence-icon");
       if (item.parentItem != item && item.parentItem.recurrenceInfo) {
         if (item.parentItem.recurrenceInfo.getExceptionFor(item.recurrenceId)) {
           recurrenceIcon.setAttribute(
@@ -350,7 +356,7 @@
         this.setAttribute("allday", "true");
       }
       if (item.isTodo()) {
-        let icon = this.querySelector(".item-type-icon");
+        const icon = this.querySelector(".item-type-icon");
         if (cal.item.getProgressAtom(item) === "completed") {
           icon.setAttribute("src", "chrome://calendar/skin/shared/todo-complete.svg");
           document.l10n.setAttributes(icon, "calendar-editable-item-todo-icon-completed-task");
@@ -421,7 +427,7 @@
       let items = this.calendarView.mSelectedItems.slice();
       if (event.ctrlKey || event.metaKey) {
         if (this.selected) {
-          let pos = items.indexOf(this.mOccurrence);
+          const pos = items.indexOf(this.mOccurrence);
           items.splice(pos, 1);
         } else {
           items.push(this.mOccurrence);
@@ -444,7 +450,7 @@
           this.mOccurrence,
           null,
           null,
-          this.eventNameTextbox.value || cal.l10n.getCalString("eventUntitled")
+          this.eventNameTextbox.value || lazy.l10n.formatValueSync("event-untitled")
         );
 
         // Note that as soon as we do the modifyItem, this element ceases to exist,

@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /*
- * Tests the operation of the GlodaContent (in GlodaContent.jsm) and its exposure
+ * Tests the operation of the GlodaContent (in GlodaContent.sys.mjs) and its exposure
  * via Gloda.getMessageContent.  This may also be implicitly tested by indexing
  * and fulltext query tests (on messages), but the buck stops here for the
  * content stuff.
@@ -14,20 +14,23 @@
  * care about the quoted blocks.)
  */
 
-var { Gloda } = ChromeUtils.import("resource:///modules/gloda/GlodaPublic.jsm");
-var { assertExpectedMessagesIndexed, waitForGlodaIndexer } = ChromeUtils.import(
-  "resource://testing-common/gloda/GlodaTestHelper.jsm"
+var { Gloda } = ChromeUtils.importESModule(
+  "resource:///modules/gloda/GlodaPublic.sys.mjs"
 );
+var { assertExpectedMessagesIndexed, waitForGlodaIndexer } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/gloda/GlodaTestHelper.sys.mjs"
+  );
 // We need to be able to get at GlodaFundAttr to check the number of whittler
 //   invocations.
-var { GlodaFundAttr } = ChromeUtils.import(
-  "resource:///modules/gloda/GlodaFundAttr.jsm"
+var { GlodaFundAttr } = ChromeUtils.importESModule(
+  "resource:///modules/gloda/GlodaFundAttr.sys.mjs"
 );
-var { MsgHdrToMimeMessage } = ChromeUtils.import(
-  "resource:///modules/gloda/MimeMessage.jsm"
+var { MsgHdrToMimeMessage } = ChromeUtils.importESModule(
+  "resource:///modules/gloda/MimeMessage.sys.mjs"
 );
-var { SyntheticMessageSet } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { SyntheticMessageSet } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
 
 var msgGen;
@@ -162,8 +165,10 @@ async function setup_inject_messages() {
   messageInfos.forEach(info => {
     setup_create_message(info);
   });
-  let msgSet = new SyntheticMessageSet(messageInfos.map(info => info._synMsg));
-  let folder = await messageInjection.makeEmptyFolder();
+  const msgSet = new SyntheticMessageSet(
+    messageInfos.map(info => info._synMsg)
+  );
+  const folder = await messageInjection.makeEmptyFolder();
   await messageInjection.addSetsToFolders([folder], [msgSet]);
   await waitForGlodaIndexer();
   Assert.ok(
@@ -174,7 +179,7 @@ async function setup_inject_messages() {
 function test_stream_message(info) {
   // Currying the function for simpler usage with `base_gloda_content_tests`.
   return () => {
-    let msgHdr = info._glodaMsg.folderMessage;
+    const msgHdr = info._glodaMsg.folderMessage;
 
     MsgHdrToMimeMessage(msgHdr, null, function (aMsgHdr, aMimeMsg) {
       verify_message_content(
@@ -204,7 +209,7 @@ function verify_message_content(aInfo, aSynMsg, aGlodaMsg, aMsgHdr, aMimeMsg) {
   }
 
   whittleCount = 0;
-  let content = Gloda.getMessageContent(aGlodaMsg, aMimeMsg);
+  const content = Gloda.getMessageContent(aGlodaMsg, aMimeMsg);
   if (whittleCount != 1) {
     throw new Error("Whittle count is " + whittleCount + " but should be 1!");
   }

@@ -6,7 +6,9 @@
  * Test that when fcc2 field is set, the mail is copied to the fcc2 folder.
  */
 
-var { MailUtils } = ChromeUtils.import("resource:///modules/MailUtils.jsm");
+var { MailUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailUtils.sys.mjs"
+);
 
 let fcc2Folder;
 
@@ -20,22 +22,22 @@ add_setup(async function () {
  * folder.
  */
 add_task(async function testFcc2() {
-  let CompFields = CC(
+  const CompFields = CC(
     "@mozilla.org/messengercompose/composefields;1",
     Ci.nsIMsgCompFields
   );
-  let fields = new CompFields();
+  const fields = new CompFields();
   fields.to = "Nobody <nobody@tinderbox.invalid>";
   fields.subject = "Test fcc2";
   fields.fcc2 = fcc2Folder.URI;
-  let identity = getSmtpIdentity(
+  const identity = getSmtpIdentity(
     "from@tinderbox.invalid",
     getBasicSmtpServer()
   );
   await richCreateMessage(fields, [], identity);
 
   // Check the message shows up correctly in the fcc2 folder.
-  let msgData = mailTestUtils.loadMessageToString(
+  const msgData = mailTestUtils.loadMessageToString(
     fcc2Folder,
     mailTestUtils.firstMsgHdr(fcc2Folder)
   );

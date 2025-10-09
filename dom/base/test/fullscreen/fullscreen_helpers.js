@@ -8,16 +8,41 @@ const TEST_URLS = [
   `data:text/html,
     <div name="div" id="div" style="width: 100px; height: 100px; background: red;">
     <iframe id="iframe" allowfullscreen="yes"
-     src="http://mochi.test:8888/browser/dom/base/test/fullscreen/file_fullscreen-iframe-middle.html"></iframe>
+     src="https://example.com/browser/dom/base/test/fullscreen/file_fullscreen-iframe-middle.html"></iframe>
     </div>`,
   // toplevel and inner most iframe are in same process, and middle iframe is
   // in a different process.
-  // eslint-disable-next-line @microsoft/sdl/no-insecure-url
-  `http://example.org/browser/dom/base/test/fullscreen/file_fullscreen-iframe-top.html`,
+  `https://example.org/browser/dom/base/test/fullscreen/file_fullscreen-iframe-top.html`,
   // toplevel and middle iframe are in same process, and inner most iframe is
   // in a different process.
-  `http://mochi.test:8888/browser/dom/base/test/fullscreen/file_fullscreen-iframe-top.html`,
+  `https://example.com/browser/dom/base/test/fullscreen/file_fullscreen-iframe-top.html`,
 ];
+
+function waitRemoteFullscreenEnterEvents(aBrowsingContexts) {
+  let promises = [];
+  aBrowsingContexts.forEach(([aBrowsingContext, aName]) => {
+    promises.push(
+      SpecialPowers.spawn(aBrowsingContext, [aName], async name => {
+        return new Promise(resolve => {
+          let document = content.document;
+          document.addEventListener(
+            "fullscreenchange",
+            function changeHandler() {
+              info(`received fullscreenchange event on ${name}`);
+              ok(
+                !!document.fullscreenElement,
+                `check remote DOM fullscreen event`
+              );
+              document.removeEventListener("fullscreenchange", changeHandler);
+              resolve();
+            }
+          );
+        });
+      })
+    );
+  });
+  return Promise.all(promises);
+}
 
 function waitRemoteFullscreenExitEvents(aBrowsingContexts) {
   let promises = [];
@@ -33,6 +58,7 @@ function waitRemoteFullscreenExitEvents(aBrowsingContexts) {
                 return;
               }
 
+              info(`received fullscreenchange event on ${name}`);
               ok(true, `check remote DOM fullscreen event (${name})`);
               document.removeEventListener("fullscreenchange", changeHandler);
               resolve();
@@ -83,7 +109,7 @@ function waitWidgetFullscreenEvent(
   aIsInFullscreen,
   aWaitUntil = false
 ) {
-  return BrowserTestUtils.waitForEvent(aWindow, "fullscreen", false, aEvent => {
+  return BrowserTestUtils.waitForEvent(aWindow, "fullscreen", false, () => {
     if (
       aWaitUntil &&
       aIsInFullscreen !=
@@ -106,7 +132,7 @@ function waitForFullScreenObserver(
   aIsInFullscreen,
   aWaitUntil = false
 ) {
-  return TestUtils.topicObserved("fullscreen-painted", (subject, data) => {
+  return TestUtils.topicObserved("fullscreen-painted", () => {
     if (
       aWaitUntil &&
       aIsInFullscreen !=

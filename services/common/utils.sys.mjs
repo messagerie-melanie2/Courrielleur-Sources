@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 import { Log } from "resource://gre/modules/Log.sys.mjs";
 
 export var CommonUtils = {
@@ -134,6 +132,14 @@ export var CommonUtils = {
    * Return a timer that is scheduled to call the callback after waiting the
    * provided time or as soon as possible. The timer will be set as a property
    * of the provided object with the given timer name.
+   *
+   * Note that an existing timer with the same name on the same object will be
+   * canceled and rescheduled with the new callback if you call this function
+   * before it fired.
+   * This may race with the imminent firing of the existing timer, so be
+   * prepared to see it firing twice once in a while if called multiple times
+   * for the same timer (the alternative would be to see it firing once right
+   * now and to see nothing happen after the expected delay).
    */
   namedTimer: function namedTimer(callback, wait, thisObj, name) {
     if (!thisObj || !name) {
@@ -142,22 +148,23 @@ export var CommonUtils = {
       );
     }
 
-    // Delay an existing timer if it exists
+    let timer = null;
+    // Take an existing timer if it exists
     if (name in thisObj && thisObj[name] instanceof Ci.nsITimer) {
-      thisObj[name].delay = wait;
-      return thisObj[name];
+      // Setting just the delay on an existing but inactive timer will not
+      // schedule the timer again. Let's go through initWithCallback always.
+      timer = thisObj[name];
+    } else {
+      // Create a special timer that we can add extra properties
+      timer = Object.create(
+        Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer)
+      );
+      // Provide an easy way to clear out the timer
+      timer.clear = function () {
+        thisObj[name] = null;
+        timer.cancel();
+      };
     }
-
-    // Create a special timer that we can add extra properties
-    let timer = Object.create(
-      Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer)
-    );
-
-    // Provide an easy way to clear out the timer
-    timer.clear = function () {
-      thisObj[name] = null;
-      timer.cancel();
-    };
 
     // Initialize the timer with a smart callback
     timer.initWithCallback(
@@ -512,7 +519,7 @@ export var CommonUtils = {
       throw new Error("Default value is not a number: " + def);
     }
 
-    let valueStr = branch.get(pref, null);
+    let valueStr = branch.getStringPref(pref, null);
 
     if (valueStr !== null) {
       let valueInt = parseInt(valueStr, 10);
@@ -616,7 +623,7 @@ export var CommonUtils = {
       );
     }
 
-    branch.set(pref, "" + date.getTime());
+    branch.setStringPref(pref, "" + date.getTime());
   },
 
   /**
@@ -646,7 +653,7 @@ export var CommonUtils = {
     let is = Cc["@mozilla.org/io/string-input-stream;1"].createInstance(
       Ci.nsIStringInputStream
     );
-    is.setData(s, s.length);
+    is.setByteStringData(s);
 
     let listener = Cc["@mozilla.org/network/stream-loader;1"].createInstance(
       Ci.nsIStreamLoader
@@ -680,7 +687,7 @@ export var CommonUtils = {
   },
 };
 
-XPCOMUtils.defineLazyGetter(CommonUtils, "_utf8Converter", function () {
+ChromeUtils.defineLazyGetter(CommonUtils, "_utf8Converter", function () {
   let converter = Cc[
     "@mozilla.org/intl/scriptableunicodeconverter"
   ].createInstance(Ci.nsIScriptableUnicodeConverter);
@@ -688,7 +695,7 @@ XPCOMUtils.defineLazyGetter(CommonUtils, "_utf8Converter", function () {
   return converter;
 });
 
-XPCOMUtils.defineLazyGetter(CommonUtils, "_converterService", function () {
+ChromeUtils.defineLazyGetter(CommonUtils, "_converterService", function () {
   return Cc["@mozilla.org/streamConverters;1"].getService(
     Ci.nsIStreamConverterService
   );

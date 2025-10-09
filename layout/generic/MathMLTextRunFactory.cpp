@@ -171,7 +171,8 @@ static uint32_t MathvarMappingSearch(uint32_t aKey,
   http://lists.w3.org/Archives/Public/www-math/2013Sep/0012.html and
   https://en.wikipedia.org/wiki/Mathematical_Alphanumeric_Symbols
 */
-static uint32_t MathVariant(uint32_t aCh, StyleMathVariant aMathVar) {
+/*static */ uint32_t MathMLTextRunFactory::MathVariant(
+    uint32_t aCh, StyleMathVariant aMathVar) {
   uint32_t baseChar;
   enum CharacterType {
     kIsLatin,
@@ -365,23 +366,23 @@ static uint32_t MathVariant(uint32_t aCh, StyleMathVariant aMathVar) {
        */
       case StyleMathVariant::Initial:
         mapTable = gArabicInitialMapTable;
-        tableLength = ArrayLength(gArabicInitialMapTable);
+        tableLength = std::size(gArabicInitialMapTable);
         break;
       case StyleMathVariant::Tailed:
         mapTable = gArabicTailedMapTable;
-        tableLength = ArrayLength(gArabicTailedMapTable);
+        tableLength = std::size(gArabicTailedMapTable);
         break;
       case StyleMathVariant::Stretched:
         mapTable = gArabicStretchedMapTable;
-        tableLength = ArrayLength(gArabicStretchedMapTable);
+        tableLength = std::size(gArabicStretchedMapTable);
         break;
       case StyleMathVariant::Looped:
         mapTable = gArabicLoopedMapTable;
-        tableLength = ArrayLength(gArabicLoopedMapTable);
+        tableLength = std::size(gArabicLoopedMapTable);
         break;
       case StyleMathVariant::DoubleStruck:
         mapTable = gArabicDoubleMapTable;
-        tableLength = ArrayLength(gArabicDoubleMapTable);
+        tableLength = std::size(gArabicDoubleMapTable);
         break;
       default:
         // No valid transformations exist
@@ -406,7 +407,7 @@ static uint32_t MathVariant(uint32_t aCh, StyleMathVariant aMathVar) {
     // mathematical block, so the spaces where they ought to be are used
     // as keys for a lookup table containing the correct character mappings.
     newChar = MathvarMappingSearch(tempChar, gLatinExceptionMapTable,
-                                   ArrayLength(gLatinExceptionMapTable));
+                                   std::size(gLatinExceptionMapTable));
   }
 
   if (newChar) {
@@ -457,8 +458,9 @@ void MathMLTextRunFactory::RebuildTextRun(
       }
       if (mSSTYScriptLevel && !foundSSTY) {
         uint8_t sstyLevel = 0;
+        // FIXME: Use the same logic as scale_factor_for_math_depth_change?
         float scriptScaling =
-            pow(styles[0]->mScriptSizeMultiplier, mSSTYScriptLevel);
+            pow(kMathMLDefaultScriptSizeMultiplier, mSSTYScriptLevel);
         static_assert(kMathMLDefaultScriptSizeMultiplier < 1,
                       "Shouldn't it make things smaller?");
         /*
@@ -517,14 +519,16 @@ void MathMLTextRunFactory::RebuildTextRun(
   StyleMathVariant mathVar = StyleMathVariant::None;
   bool doMathvariantStyling = true;
 
-  // Ensure it will be safe to call FindFontForChar in the loop below.
-  fontGroup->CheckForUpdatedPlatformList();
+  // Ensure the fontGroup is ready to be searched.
+  fontGroup->EnsureFontList();
 
   for (uint32_t i = 0; i < length; ++i) {
     int extraChars = 0;
     mathVar = styles[i]->mMathVariant;
 
-    if (singleCharMI && mathVar == StyleMathVariant::None) {
+    if (singleCharMI && mathVar == StyleMathVariant::None &&
+        (!StaticPrefs::mathml_legacy_mathvariant_attribute_disabled() ||
+         styles[i]->mTextTransform & StyleTextTransform::MATH_AUTO)) {
       mathVar = StyleMathVariant::Italic;
     }
 
@@ -647,7 +651,9 @@ void MathMLTextRunFactory::RebuildTextRun(
         flags, nsTextFrameUtils::Flags(), aMFR);
     child = cachedChild.get();
   }
-  if (!child) return;
+  if (!child) {
+    return;
+  }
 
   typedef gfxTextRun::Range Range;
 

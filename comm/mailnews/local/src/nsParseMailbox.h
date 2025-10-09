@@ -6,35 +6,36 @@
 #ifndef nsParseMailbox_H
 #define nsParseMailbox_H
 
-#include "mozilla/Attributes.h"
-#include "nsIURI.h"
 #include "nsIMsgParseMailMsgState.h"
-#include "nsIStreamListener.h"
 #include "nsMsgLineBuffer.h"
 #include "nsIMsgDatabase.h"
 #include "nsIMsgHdr.h"
-#include "nsIMsgStatusFeedback.h"
 #include "nsCOMPtr.h"
 #include "nsCOMArray.h"
 #include "nsIDBChangeListener.h"
-#include "nsIWeakReferenceUtils.h"
 #include "nsIMsgWindow.h"
 #include "nsImapMoveCoalescer.h"
-#include "nsString.h"
 #include "nsIMsgFilterList.h"
 #include "nsIMsgFilter.h"
 #include "nsIMsgFilterHitNotify.h"
 #include "nsTArray.h"
+#include "nsTHashMap.h"
+#include "mozilla/UniquePtr.h"
+#include "mozilla/Vector.h"
 
 class nsOutputFileStream;
 class nsIMsgFolder;
+struct RawHdr;
 
-/* Used for the various things that parse RFC822 headers...
- */
-typedef struct message_header {
-  const char* value; /* The contents of a header (after ": ") */
-  int32_t length;    /* The length of the data (it is not NULL-terminated.) */
-} message_header;
+// Parses a raw RFC5288 message header block, using the values to fill out
+// a RawHdr struct ready for loading into our message DB.
+RawHdr ParseMsgHeaders(mozilla::Span<const char> raw);
+
+// Used for the various things that parse RFC822 headers...
+struct HeaderData {
+  const char* value = nullptr;  // The contents of a header (after ": ")
+  size_t length = 0;  // The length of the data (it is not NULL-terminated.)
+};
 
 // This object maintains the parse state for a single mail message.
 class nsParseMailMessageState : public nsIMsgParseMailMsgState,
@@ -46,146 +47,84 @@ class nsParseMailMessageState : public nsIMsgParseMailMsgState,
 
   nsParseMailMessageState();
 
-  nsresult ParseFolderLine(const char* line, uint32_t lineLength);
-  nsresult StartNewEnvelope(const char* line, uint32_t lineLength);
-  nsresult ParseHeaders();
-  nsresult FinalizeHeaders();
-  nsresult ParseEnvelope(const char* line, uint32_t line_size);
-  nsresult InternSubject(struct message_header* header);
+  // A way to pass in 'out-of-band' envelope sender/timestamp data.
+  // Totally optional, but envDate is used to fill in on malformed messages
+  // without a "Date:" header.
+  void SetEnvDetails(nsACString const& envAddr, PRTime envDate) {
+    m_EnvAddr = envAddr;
+    m_EnvDate = envDate;
+  }
 
-  // Returns true if line looks like an mbox "From " line.
-  static bool IsEnvelopeLine(const char* buf, int32_t buf_size);
-
-  // Helpers for dealing with multi-value headers.
-  struct message_header* GetNextHeaderInAggregate(
-      nsTArray<struct message_header*>& list);
-  void GetAggregateHeader(nsTArray<struct message_header*>& list,
-                          struct message_header*);
-  void ClearAggregateHeader(nsTArray<struct message_header*>& list);
-
-  nsCOMPtr<nsIMsgDBHdr> m_newMsgHdr; /* current message header we're building */
   nsCOMPtr<nsIMsgDatabase> m_mailDB;
   nsCOMPtr<nsIMsgDatabase> m_backupMailDB;
-
-  nsMailboxParseState m_state;
   int64_t m_position;
   // The start of the "From " line (the line before the start of the message).
   uint64_t m_envelope_pos;
-  // The start of the message headers (immediately follows "From " line).
-  uint64_t m_headerstartpos;
+  uint16_t m_body_lines;
+
+ protected:
+  nsresult ParseFolderLine(const char* line, uint32_t lineLength);
+  nsresult ParseHeaders();
+  nsresult FinalizeHeaders();
+  nsresult InternSubject(HeaderData* header);
+
+  nsMailboxParseState m_state;
+  nsCOMPtr<nsIMsgDBHdr> m_newMsgHdr; /* current message header we're building */
+  // These two aren't part of the message, but may be provided 'out-of-band',
+  // via SetEnvDetails();
+  // Traditionally they are parsed from the "From " lines in
+  // mbox files.
+  nsAutoCString m_EnvAddr;  // "" if missing.
+  PRTime m_EnvDate;         // 0 if missing.
+
   nsMsgKey m_new_key;  // DB key for the new header.
 
-  // The "From " line, if any.
-  ::nsByteArray m_envelope;
-
-  // These two point into the m_envelope buffer.
-  struct message_header m_envelope_from;
-  struct message_header m_envelope_date;
-
   // The raw header data.
-  ::nsByteArray m_headers;
+  mozilla::Vector<char> m_headers;
 
   // These all point into the m_headers buffer.
-  struct message_header m_message_id;
-  struct message_header m_references;
-  struct message_header m_date;
-  struct message_header m_delivery_date;
-  struct message_header m_from;
-  struct message_header m_sender;
-  struct message_header m_newsgroups;
-  struct message_header m_subject;
-  struct message_header m_status;
-  struct message_header m_mozstatus;
-  struct message_header m_mozstatus2;
-  struct message_header m_in_reply_to;
-  struct message_header m_replyTo;
-  struct message_header m_content_type;
-  struct message_header m_bccList;
+  HeaderData m_message_id;
+  HeaderData m_references;
+  HeaderData m_date;
+  HeaderData m_delivery_date;
+  HeaderData m_from;
+  HeaderData m_sender;
+  HeaderData m_newsgroups;
+  HeaderData m_subject;
+  HeaderData m_status;
+  HeaderData m_mozstatus;
+  HeaderData m_mozstatus2;
+  HeaderData m_in_reply_to;
+  HeaderData m_replyTo;
+  HeaderData m_content_type;
+  HeaderData m_bccList;
 
   // Support for having multiple To or Cc header lines in a message
-  nsTArray<struct message_header*> m_toList;
-  nsTArray<struct message_header*> m_ccList;
+  AutoTArray<HeaderData, 1> m_toList;
+  AutoTArray<HeaderData, 1> m_ccList;
 
-  struct message_header m_priority;
-  struct message_header m_account_key;
-  struct message_header m_keywords;
+  HeaderData m_priority;
+  HeaderData m_account_key;
+  HeaderData m_keywords;
 
   // Mdn support
-  struct message_header m_mdn_original_recipient;
-  struct message_header m_return_path;
-  struct message_header m_mdn_dnt; /* MDN Disposition-Notification-To: header */
+  HeaderData m_mdn_original_recipient;
+  HeaderData m_return_path;
+  HeaderData m_mdn_dnt; /* MDN Disposition-Notification-To: header */
 
   PRTime m_receivedTime;
-  uint16_t m_body_lines;
-  uint16_t m_lastLineBlank;
 
   // this enables extensions to add the values of particular headers to
   // the .msf file as properties of nsIMsgHdr. It is initialized from a
   // pref, mailnews.customDBHeaders
   nsTArray<nsCString> m_customDBHeaders;
-  struct message_header* m_customDBHeaderValues;
+  nsTArray<HeaderData> m_customDBHeaderData;
   nsCString m_receivedValue;  // accumulated received header
- protected:
-  virtual ~nsParseMailMessageState();
+  virtual ~nsParseMailMessageState() {};
 };
 
-// This class is part of the mailbox parsing state machine
-class nsMsgMailboxParser : public nsIStreamListener,
-                           public nsParseMailMessageState,
-                           public nsMsgLineBuffer {
- public:
-  explicit nsMsgMailboxParser(nsIMsgFolder*);
-  nsMsgMailboxParser();
-  nsresult Init();
-
-  NS_DECL_ISUPPORTS_INHERITED
-
-  ////////////////////////////////////////////////////////////////////////////////////////
-  // we support the nsIStreamListener interface
-  ////////////////////////////////////////////////////////////////////////////////////////
-  NS_DECL_NSIREQUESTOBSERVER
-  NS_DECL_NSISTREAMLISTENER
-
-  void SetDB(nsIMsgDatabase* mailDB) { m_mailDB = mailDB; }
-
-  // message socket libnet callbacks, which come through folder pane
-  nsresult ProcessMailboxInputStream(nsIInputStream* aIStream,
-                                     uint32_t aLength);
-
-  virtual void DoneParsingFolder(nsresult status);
-  virtual void AbortNewHeader();
-
-  // for nsMsgLineBuffer
-  virtual nsresult HandleLine(const char* line, uint32_t line_length) override;
-
-  void UpdateDBFolderInfo();
-  void UpdateDBFolderInfo(nsIMsgDatabase* mailDB);
-  void UpdateStatusText(const char* stringName);
-
-  // Update the progress bar based on what we know.
-  virtual void UpdateProgressPercent();
-  virtual void OnNewMessage(nsIMsgWindow* msgWindow);
-
- protected:
-  virtual ~nsMsgMailboxParser();
-  nsCOMPtr<nsIMsgStatusFeedback> m_statusFeedback;
-
-  virtual int32_t PublishMsgHeader(nsIMsgWindow* msgWindow);
-
-  // data
-  nsString m_folderName;
-  nsCString m_inboxUri;
-  ::nsByteArray m_inputStream;
-  uint64_t m_graph_progress_total;
-  uint64_t m_graph_progress_received;
-
- private:
-  nsWeakPtr m_folder;
-  void ReleaseFolderLock();
-  nsresult AcquireFolderLock();
-};
-
-class nsParseNewMailState : public nsMsgMailboxParser,
+class nsParseNewMailState : public nsParseMailMessageState,
+                            public nsMsgLineBuffer,
                             public nsIMsgFilterHitNotify {
  public:
   nsParseNewMailState();
@@ -195,14 +134,13 @@ class nsParseNewMailState : public nsMsgMailboxParser,
                 nsIMsgWindow* aMsgWindow, nsIMsgDBHdr* aHdr,
                 nsIOutputStream* aOutputStream);
 
-  virtual void DoneParsingFolder(nsresult status) override;
+  void DoneParsing();
 
   void DisableFilters() { m_disableFilters = true; }
 
   NS_DECL_NSIMSGFILTERHITNOTIFY
 
-  nsOutputFileStream* GetLogFile();
-  virtual int32_t PublishMsgHeader(nsIMsgWindow* msgWindow) override;
+  virtual void PublishMsgHeader(nsIMsgWindow* msgWindow);
   void GetMsgWindow(nsIMsgWindow** aMsgWindow);
   nsresult EndMsgDownload();
 
@@ -211,11 +149,23 @@ class nsParseNewMailState : public nsMsgMailboxParser,
 
   void ApplyFilters(bool* pMoved, nsIMsgWindow* msgWindow);
   nsresult ApplyForwardAndReplyFilter(nsIMsgWindow* msgWindow);
-  virtual void OnNewMessage(nsIMsgWindow* msgWindow) override;
+
+  // These three vars are public because they need to be carried between
+  // messages.
 
   // this keeps track of how many messages we downloaded that
   // aren't new - e.g., marked read, or moved to an other server.
   int32_t m_numNotNewMessages;
+  // Filter-initiated moves are collected to run all at once.
+  RefPtr<nsImapMoveCoalescer> m_moveCoalescer;
+  mozilla::UniquePtr<nsTHashMap<nsCStringHashKey, int32_t>>
+      m_filterTargetFoldersMsgMovedCount;
+
+  // for nsMsgLineBuffer
+  virtual nsresult HandleLine(const char* line, uint32_t line_length) override;
+
+  void UpdateDBFolderInfo();
+  void UpdateDBFolderInfo(nsIMsgDatabase* mailDB);
 
  protected:
   virtual ~nsParseNewMailState();
@@ -235,8 +185,7 @@ class nsParseNewMailState : public nsMsgMailboxParser,
   nsCOMPtr<nsIMsgFolder> m_downloadFolder;
   nsCOMPtr<nsIOutputStream> m_outputStream;
   nsCOMArray<nsIMsgFolder> m_filterTargetFolders;
-
-  RefPtr<nsImapMoveCoalescer> m_moveCoalescer;
+  nsCString m_inboxUri;
 
   bool m_msgMovedByFilter;
   bool m_msgCopiedByFilter;

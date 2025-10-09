@@ -38,6 +38,16 @@ class ScriptCommand {
    *        entered by the users have been modified
    * @param {boolean} options.mapped.await: true if the expression was a top-level await
    *        expression that was wrapped in an async-iife
+   * @param {boolean} options.disableBreaks: Set to true to avoid triggering any
+   *        type of breakpoint when evaluating the source. Also, the evaluated source won't be
+   *        visible in the debugger UI.
+   * @param {boolean} options.preferConsoleCommandsOverLocalSymbols: Set to true to force
+   *        overriding local symbols defined by the page with same-name console commands.
+   * @param {boolean} options.evalInTracer: Set to true to store the evaluation result object
+   *        actors within the Tracer Object Actor Pool.
+   *        So that if the evaluation result object has already been processed by the JS Tracer,
+   *        we will receive the same Object Actor.
+   *        This helps later match the object when doing a search per value.
    *
    * @return {Promise}: A promise that resolves with the response.
    */
@@ -103,6 +113,10 @@ class ScriptCommand {
           selectedNodeActor,
           selectedObjectActor,
           url: options.url,
+          disableBreaks: options.disableBreaks,
+          preferConsoleCommandsOverLocalSymbols:
+            options.preferConsoleCommandsOverLocalSymbols,
+          evalInTracer: options.evalInTracer,
         })
         .then(packet => {
           resultID = packet.resultID;

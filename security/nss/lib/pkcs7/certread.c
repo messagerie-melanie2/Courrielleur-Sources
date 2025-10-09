@@ -324,10 +324,11 @@ CERT_DecodeCertPackage(char *certbuf,
         /* check entire length if definite length */
         if (seqLen || seqLenLen) {
             if (certlen != (seqLen + seqLenLen + 2L)) {
-                if (certlen > (seqLen + seqLenLen + 2L))
+                if (certlen > (seqLen + seqLenLen + 2L)) {
                     PORT_SetError(SEC_ERROR_EXTRA_INPUT);
-                else
+                } else {
                     PORT_SetError(SEC_ERROR_INPUT_LEN);
+                }
                 goto notder;
             }
         }
@@ -520,6 +521,8 @@ CERT_DecodeCertFromPackage(char *certbuf, int certlen)
     CERTCertificate *cert = NULL;
 
     collectArgs.arena = PORT_NewArena(DER_DEFAULT_CHUNKSIZE);
+    collectArgs.cert.data = NULL;
+    collectArgs.cert.len = 0;
 
     rv = CERT_DecodeCertPackage(certbuf, certlen, collect_certs,
                                 (void *)&collectArgs);

@@ -2,12 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { CalDAVServer } = ChromeUtils.import("resource://testing-common/calendar/CalDAVServer.jsm");
+var { CalDAVServer } = ChromeUtils.importESModule(
+  "resource://testing-common/calendar/CalDAVServer.sys.mjs"
+);
 
 add_setup(async function () {
-  CalDAVServer.open();
+  CalDAVServer.open("alice", "alice");
   await CalDAVServer.putItemInternal(
-    "5a9fa76c-93f3-4ad8-9f00-9e52aedd2821.ics",
+    "/calendars/alice/test/5a9fa76c-93f3-4ad8-9f00-9e52aedd2821.ics",
     CalendarTestUtils.dedent`
       BEGIN:VCALENDAR
       BEGIN:VEVENT
@@ -19,13 +21,16 @@ add_setup(async function () {
       END:VCALENDAR
       `
   );
+  const loginInfo = Cc["@mozilla.org/login-manager/loginInfo;1"].createInstance(Ci.nsILoginInfo);
+  loginInfo.init(CalDAVServer.origin, null, "test", "alice", "alice", "", "");
+  await Services.logins.addLoginAsync(loginInfo);
 });
 registerCleanupFunction(() => CalDAVServer.close());
 
 add_task(async function () {
-  calendarObserver._onAddItemPromise = PromiseUtils.defer();
-  calendarObserver._onLoadPromise = PromiseUtils.defer();
-  let calendar = createCalendar("caldav", CalDAVServer.url, true);
+  calendarObserver._onAddItemPromise = Promise.withResolvers();
+  calendarObserver._onLoadPromise = Promise.withResolvers();
+  const calendar = createCalendar("caldav", `${CalDAVServer.origin}/calendars/alice/test/`, true);
   await calendarObserver._onAddItemPromise.promise;
   await calendarObserver._onLoadPromise.promise;
   info("calendar set-up complete");
@@ -34,12 +39,12 @@ add_task(async function () {
 
   info("creating the item");
   calendarObserver._batchRequired = true;
-  calendarObserver._onLoadPromise = PromiseUtils.defer();
+  calendarObserver._onLoadPromise = Promise.withResolvers();
   await runAddItem(calendar);
   await calendarObserver._onLoadPromise.promise;
 
   info("modifying the item");
-  calendarObserver._onLoadPromise = PromiseUtils.defer();
+  calendarObserver._onLoadPromise = Promise.withResolvers();
   await runModifyItem(calendar);
   await calendarObserver._onLoadPromise.promise;
 
@@ -55,9 +60,9 @@ add_task(async function () {
  */
 add_task(async function testCalendarWithNoPrivSupport() {
   CalDAVServer.privileges = null;
-  calendarObserver._onLoadPromise = PromiseUtils.defer();
+  calendarObserver._onLoadPromise = Promise.withResolvers();
 
-  let calendar = createCalendar("caldav", CalDAVServer.url, true);
+  const calendar = createCalendar("caldav", `${CalDAVServer.origin}/calendars/alice/test/`, true);
   await calendarObserver._onLoadPromise.promise;
   info("calendar set-up complete");
 
@@ -71,21 +76,21 @@ add_task(async function testCalendarWithNoPrivSupport() {
  * modifications were made.
  */
 add_task(async function testModifyItemWithNoChanges() {
-  let event = new CalEvent();
-  let calendar = createCalendar("caldav", CalDAVServer.url, false);
+  const event = new CalEvent();
+  const calendar = createCalendar("caldav", `${CalDAVServer.origin}/calendars/alice/test/`, false);
   event.id = "6f6dd7b6-0fbd-39e4-359a-a74c4c3745bb";
   event.title = "A New Event";
   event.startDate = cal.createDateTime("20200303T205500Z");
   event.endDate = cal.createDateTime("20200303T210200Z");
   await calendar.addItem(event);
 
-  let clone = event.clone();
+  const clone = event.clone();
   clone.title = "A Modified Event";
 
-  let putItemInternal = CalDAVServer.putItemInternal;
+  const putItemInternal = CalDAVServer.putItemInternal;
   CalDAVServer.putItemInternal = () => {};
 
-  let modifiedEvent = await calendar.modifyItem(clone, event);
+  const modifiedEvent = await calendar.modifyItem(clone, event);
   CalDAVServer.putItemInternal = putItemInternal;
 
   Assert.ok(modifiedEvent, "an event was returned");
@@ -96,13 +101,45 @@ add_task(async function testModifyItemWithNoChanges() {
 });
 
 /**
+ * Test that adding an ICS item with some special characters in its UID
+ * generates a correct HTTP PUT request.
+ */
+add_task(async function testPutSpecialCharactersInUID() {
+  const calendar = createCalendar("caldav", `${CalDAVServer.origin}/calendars/alice/test/`, false);
+
+  const event = new CalEvent();
+  event.id = "this/id@has/weird characters#in-it";
+  event.title = "A New Event with weird characters in its UID";
+  event.startDate = cal.createDateTime("20200303T205500Z");
+  event.endDate = cal.createDateTime("20200303T210200Z");
+
+  calendarObserver._batchRequired = true;
+  calendarObserver._onLoadPromise = Promise.withResolvers();
+  calendarObserver._onAddItemPromise = Promise.withResolvers();
+  const storedEvent = await calendar.addItem(event);
+  await Promise.any([
+    calendarObserver._onLoadPromise.promise,
+    calendarObserver._onAddItemPromise.promise,
+  ]);
+
+  // The event is stored with its original uid in the calendar.
+  Assert.ok(
+    await calendar.getItem("this/id@has/weird characters#in-it"),
+    "the event has not been stored successfully"
+  );
+
+  await calendar.deleteItem(storedEvent);
+  cal.manager.unregisterCalendar(calendar);
+});
+
+/**
  * Tests that an error response from the server when syncing doesn't delete
  * items from the local calendar.
  */
 add_task(async function testSyncError1() {
-  calendarObserver._onAddItemPromise = PromiseUtils.defer();
-  calendarObserver._onLoadPromise = PromiseUtils.defer();
-  let calendar = createCalendar("caldav", CalDAVServer.url, true);
+  calendarObserver._onAddItemPromise = Promise.withResolvers();
+  calendarObserver._onLoadPromise = Promise.withResolvers();
+  const calendar = createCalendar("caldav", `${CalDAVServer.origin}/calendars/alice/test/`, true);
   await calendarObserver._onAddItemPromise.promise;
   await calendarObserver._onLoadPromise.promise;
   info("calendar set-up complete");
@@ -114,7 +151,7 @@ add_task(async function testSyncError1() {
 
   info("syncing with rate limit error");
   CalDAVServer.throwRateLimitErrors = true;
-  calendarObserver._onLoadPromise = PromiseUtils.defer();
+  calendarObserver._onLoadPromise = Promise.withResolvers();
   calendar.refresh();
   await calendarObserver._onLoadPromise.promise;
   CalDAVServer.throwRateLimitErrors = false;
@@ -132,7 +169,7 @@ add_task(async function testSyncError1() {
   );
 
   info("syncing without rate limit error");
-  calendarObserver._onLoadPromise = PromiseUtils.defer();
+  calendarObserver._onLoadPromise = Promise.withResolvers();
   calendar.refresh();
   await calendarObserver._onLoadPromise.promise;
   info("sync without rate limit error complete");
@@ -157,7 +194,7 @@ add_task(async function testSyncError2() {
   // them all. There's already one item on the server.
   for (let i = 0; i < 3; i++) {
     await CalDAVServer.putItemInternal(
-      `fake-uid-${i}.ics`,
+      `/calendars/alice/test/fake-uid-${i}.ics`,
       CalendarTestUtils.dedent`
         BEGIN:VCALENDAR
         BEGIN:VEVENT
@@ -171,9 +208,9 @@ add_task(async function testSyncError2() {
     );
   }
 
-  calendarObserver._onAddItemPromise = PromiseUtils.defer();
-  calendarObserver._onLoadPromise = PromiseUtils.defer();
-  let calendar = createCalendar("caldav", CalDAVServer.url, true);
+  calendarObserver._onAddItemPromise = Promise.withResolvers();
+  calendarObserver._onLoadPromise = Promise.withResolvers();
+  const calendar = createCalendar("caldav", `${CalDAVServer.origin}/calendars/alice/test/`, true);
   await calendarObserver._onAddItemPromise.promise;
   await calendarObserver._onLoadPromise.promise;
   info("calendar set-up complete");
@@ -184,7 +221,7 @@ add_task(async function testSyncError2() {
   info("forced syncing with multiple pages");
   calendar.wrappedJSObject.mUncachedCalendar.wrappedJSObject.mWebdavSyncToken = null;
   calendar.wrappedJSObject.mUncachedCalendar.wrappedJSObject.saveCalendarProperties();
-  calendarObserver._onLoadPromise = PromiseUtils.defer();
+  calendarObserver._onLoadPromise = Promise.withResolvers();
   calendar.refresh();
   await calendarObserver._onLoadPromise.promise;
   info("forced sync with multiple pages complete");
@@ -196,6 +233,6 @@ add_task(async function testSyncError2() {
 
   // Delete the added items.
   for (let i = 0; i < 3; i++) {
-    CalDAVServer.deleteItemInternal(`fake-uid-${i}.ics`);
+    CalDAVServer.deleteItemInternal(`/calendars/alice/test/fake-uid-${i}.ics`);
   }
 });

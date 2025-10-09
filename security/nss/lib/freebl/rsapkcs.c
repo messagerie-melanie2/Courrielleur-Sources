@@ -235,6 +235,7 @@ rsa_FormatOneBlock(unsigned modulusLen,
     return block;
 }
 
+/* modulusLen has to be larger than RSA_BLOCK_MIN_PAD_LEN + 3, and data has to be smaller than modulus - (RSA_BLOCK_MIN_PAD_LEN + 3) */
 static SECStatus
 rsa_FormatBlock(SECItem *result,
                 unsigned modulusLen,
@@ -250,7 +251,7 @@ rsa_FormatBlock(SECItem *result,
              * The "3" below is the first octet + the second octet + the 0x00
              * octet that always comes just before the ActualData.
              */
-            if (data->len > (modulusLen - (3 + RSA_BLOCK_MIN_PAD_LEN))) {
+            if (modulusLen < (3 + RSA_BLOCK_MIN_PAD_LEN) || data->len > (modulusLen - (3 + RSA_BLOCK_MIN_PAD_LEN))) {
                 return SECFailure;
             }
             result->data = rsa_FormatOneBlock(modulusLen, blockType, data);
@@ -977,14 +978,14 @@ rsa_GetHMACContext(const SECHashObject *hash, RSAPrivateKey *key,
     /* now create the hmac key */
     hmac = HMAC_Create(hash, keyHash, keyLen, PR_TRUE);
     if (hmac == NULL) {
-        PORT_Memset(keyHash, 0, sizeof(keyHash));
+        PORT_SafeZero(keyHash, sizeof(keyHash));
         return NULL;
     }
     HMAC_Begin(hmac);
     HMAC_Update(hmac, input, inputLen);
     rv = HMAC_Finish(hmac, keyHash, &keyLen, sizeof(keyHash));
     if (rv != SECSuccess) {
-        PORT_Memset(keyHash, 0, sizeof(keyHash));
+        PORT_SafeZero(keyHash, sizeof(keyHash));
         HMAC_Destroy(hmac, PR_TRUE);
         return NULL;
     }
@@ -992,7 +993,7 @@ rsa_GetHMACContext(const SECHashObject *hash, RSAPrivateKey *key,
      * reuse the original context allocated above so we don't
      * need to allocate and free another one */
     rv = HMAC_ReInit(hmac, hash, keyHash, keyLen, PR_TRUE);
-    PORT_Memset(keyHash, 0, sizeof(keyHash));
+    PORT_SafeZero(keyHash, sizeof(keyHash));
     if (rv != SECSuccess) {
         HMAC_Destroy(hmac, PR_TRUE);
         return NULL;
@@ -1042,7 +1043,7 @@ rsa_HMACPrf(HMACContext *hmac, const char *label, int labelLen,
             return rv;
         }
         PORT_Memcpy(output, hmacLast, left);
-        PORT_Memset(hmacLast, 0, sizeof(hmacLast));
+        PORT_SafeZero(hmacLast, sizeof(hmacLast));
     }
     return rv;
 }
@@ -1087,7 +1088,7 @@ rsa_GetErrorLength(HMACContext *hmac, int hashLen, int maxLegalLen)
         outLength = PORT_CT_SEL(PORT_CT_LT(candidate, maxLegalLen),
                                 candidate, outLength);
     }
-    PORT_Memset(out, 0, sizeof(out));
+    PORT_SafeZero(out, sizeof(out));
     return outLength;
 }
 
@@ -1233,15 +1234,15 @@ loser:
  * emBits from the RFC is just modBits - 1, see section 8.1.1.
  * We only support MGF1 as the MGF.
  */
-static SECStatus
-emsa_pss_encode(unsigned char *em,
-                unsigned int emLen,
-                unsigned int emBits,
-                const unsigned char *mHash,
-                HASH_HashType hashAlg,
-                HASH_HashType maskHashAlg,
-                const unsigned char *salt,
-                unsigned int saltLen)
+SECStatus
+RSA_EMSAEncodePSS(unsigned char *em,
+                  unsigned int emLen,
+                  unsigned int emBits,
+                  const unsigned char *mHash,
+                  HASH_HashType hashAlg,
+                  HASH_HashType maskHashAlg,
+                  const unsigned char *salt,
+                  unsigned int saltLen)
 {
     const SECHashObject *hash;
     void *hash_context;
@@ -1457,8 +1458,8 @@ RSA_SignPSS(RSAPrivateKey *key,
         emLen--;
         em++;
     }
-    rv = emsa_pss_encode(em, emLen, modulusBits - 1, input, hashAlg,
-                         maskHashAlg, salt, saltLength);
+    rv = RSA_EMSAEncodePSS(em, emLen, modulusBits - 1, input, hashAlg,
+                           maskHashAlg, salt, saltLength);
     if (rv != SECSuccess)
         goto done;
 

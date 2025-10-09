@@ -28,7 +28,7 @@ let gPermissions = SitePermissions.listPermissions()
   });
 
 var permissionObserver = {
-  observe(aSubject, aTopic, aData) {
+  observe(aSubject, aTopic) {
     if (aTopic == "perm-changed") {
       var permission = aSubject.QueryInterface(Ci.nsIPermission);
       if (
@@ -141,6 +141,7 @@ function initRow(aPartId) {
     case "camera":
     case "microphone":
     case "xr":
+    case "screen":
       checkbox.disabled = Services.prefs.prefIsLocked(
         "permissions.default." + aPartId
       );
@@ -160,7 +161,7 @@ function createRow(aPartId) {
 
   let command = document.createXULElement("command");
   command.setAttribute("id", commandId);
-  command.setAttribute("oncommand", "onRadioClick('" + aPartId + "');");
+  command.addEventListener("command", () => onRadioClick(aPartId));
   document.getElementById("pageInfoCommandSet").appendChild(command);
 
   let row = document.createXULElement("vbox");
@@ -180,9 +181,9 @@ function createRow(aPartId) {
 
   let checkbox = document.createXULElement("checkbox");
   checkbox.setAttribute("id", aPartId + "Def");
-  checkbox.setAttribute("oncommand", "onCheckboxClick('" + aPartId + "');");
   checkbox.setAttribute("native", true);
   document.l10n.setAttributes(checkbox, "permissions-use-default");
+  checkbox.addEventListener("command", () => onCheckboxClick(aPartId));
   controls.appendChild(checkbox);
 
   let spacer = document.createXULElement("spacer");

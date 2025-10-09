@@ -1,8 +1,12 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/* import-globals-from pippki.js */
+
 "use strict";
+
+const { alertPromptService } = ChromeUtils.importESModule(
+  "resource://gre/modules/psm/pippki.sys.mjs"
+);
 
 document.addEventListener("dialogaccept", onDialogAccept);
 
@@ -16,7 +20,11 @@ async function onBrowseBtnPress() {
   let [loadPK11ModuleFilePickerTitle] = await document.l10n.formatValues([
     { id: "load-pk11-module-file-picker-title" },
   ]);
-  fp.init(window, loadPK11ModuleFilePickerTitle, Ci.nsIFilePicker.modeOpen);
+  fp.init(
+    window.browsingContext,
+    loadPK11ModuleFilePickerTitle,
+    Ci.nsIFilePicker.modeOpen
+  );
   fp.appendFilters(Ci.nsIFilePicker.filterAll);
   fp.open(rv => {
     if (rv == Ci.nsIFilePicker.returnOK) {
@@ -52,7 +60,7 @@ function onDialogAccept(event) {
 
 async function addModuleFailure(l10nID) {
   let [AddModuleFailure] = await document.l10n.formatValues([{ id: l10nID }]);
-  alertPromptService(null, AddModuleFailure);
+  alertPromptService(window, null, AddModuleFailure);
 }
 
 function validateModuleName() {
@@ -73,3 +81,12 @@ function validateModuleName() {
     dialogNode.setAttribute("buttondisabledaccept", true);
   }
 }
+
+window.addEventListener("load", () => {
+  document
+    .getElementById("device_name")
+    .addEventListener("change", () => validateModuleName());
+  document
+    .getElementById("browse")
+    .addEventListener("command", () => onBrowseBtnPress());
+});

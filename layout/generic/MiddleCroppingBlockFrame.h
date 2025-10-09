@@ -34,8 +34,8 @@ class MiddleCroppingBlockFrame : public nsBlockFrame,
   void Reflow(nsPresContext*, ReflowOutput&, const ReflowInput&,
               nsReflowStatus&) override;
 
-  nscoord GetMinISize(gfxContext*) override;
-  nscoord GetPrefISize(gfxContext*) override;
+  nscoord IntrinsicISize(const IntrinsicSizeInput& aInput,
+                         IntrinsicISizeType aType) override;
 
   /**
    * Crop aText to fit inside aWidth using the styles of aFrame.
@@ -51,10 +51,12 @@ class MiddleCroppingBlockFrame : public nsBlockFrame,
   /**
    * Updates the displayed value by using aValue.
    */
-  void UpdateDisplayedValue(const nsAString& aValue, bool aNotify);
+  void UpdateDisplayedValue(const nsAString& aValue, bool aIsCropped,
+                            bool aNotify);
   void Destroy(DestroyContext&) override;
 
   RefPtr<dom::Text> mTextNode;
+  bool mCropped = false;
 };
 
 }  // namespace mozilla

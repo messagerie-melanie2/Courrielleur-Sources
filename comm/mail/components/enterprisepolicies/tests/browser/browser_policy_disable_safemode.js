@@ -12,13 +12,13 @@ add_setup(async function () {
 
 add_task(async function test_help_menu() {
   buildHelpMenu();
-  let safeModeMenu = document.getElementById("helpTroubleshootMode");
+  const safeModeMenu = document.getElementById("helpTroubleshootMode");
   is(
     safeModeMenu.getAttribute("disabled"),
     "true",
     "The `Restart with Add-ons Disabled...` item should be disabled"
   );
-  let safeModeAppMenu = document.getElementById("appmenu_troubleshootMode");
+  const safeModeAppMenu = document.getElementById("appmenu_troubleshootMode");
   is(
     safeModeAppMenu.getAttribute("disabled"),
     "true",
@@ -27,8 +27,10 @@ add_task(async function test_help_menu() {
 });
 
 add_task(async function test_safemode_from_about_support() {
-  await withNewTab({ url: "about:support" }, browser => {
-    let button = content.document.getElementById("restart-in-safe-mode-button");
+  await withNewTab({ url: "about:support" }, () => {
+    const button = content.document.getElementById(
+      "restart-in-safe-mode-button"
+    );
     is(
       button.getAttribute("disabled"),
       "true",
@@ -38,8 +40,10 @@ add_task(async function test_safemode_from_about_support() {
 });
 
 add_task(async function test_safemode_from_about_profiles() {
-  await withNewTab({ url: "about:profiles" }, browser => {
-    let button = content.document.getElementById("restart-in-safe-mode-button");
+  await withNewTab({ url: "about:profiles" }, () => {
+    const button = content.document.getElementById(
+      "restart-in-safe-mode-button"
+    );
     is(
       button.getAttribute("disabled"),
       "true",

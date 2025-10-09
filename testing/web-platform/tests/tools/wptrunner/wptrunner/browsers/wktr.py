@@ -82,7 +82,7 @@ class WKTRBrowser(Browser):
     """
 
     def __init__(self, logger, binary="WebKitTestRunner", binary_args=[], **kwargs):
-        super().__init__(logger)
+        super().__init__(logger, **kwargs)
 
         self._args = [binary] + binary_args
         self._proc = None
@@ -186,6 +186,7 @@ class WKTRBrowser(Browser):
     def is_alive(self):
         return self._proc is not None and self._proc.poll() is None
 
+    @property
     def pid(self):
         return self._proc.pid if self._proc else None
 

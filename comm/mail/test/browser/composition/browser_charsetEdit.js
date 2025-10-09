@@ -9,44 +9,46 @@
 
 "use strict";
 
-var utils = ChromeUtils.import("resource://testing-common/mozmill/utils.jsm");
-
 var {
   close_compose_window,
+  compose_window_ready,
   open_compose_with_reply,
   save_compose_message,
-  wait_for_compose_window,
-} = ChromeUtils.import("resource://testing-common/mozmill/ComposeHelpers.jsm");
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+);
 var {
   add_message_to_folder,
   assert_selected_and_displayed,
   be_in_folder,
   create_message,
-  get_special_folder,
   get_about_message,
+  get_special_folder,
   make_display_unthreaded,
-  mc,
   press_delete,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-var { SyntheticPartLeaf } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { SyntheticPartLeaf } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-var { wait_for_notification_to_show, get_notification } = ChromeUtils.import(
-  "resource://testing-common/mozmill/NotificationBoxHelpers.jsm"
-);
-var { plan_for_new_window } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
+var { get_notification, wait_for_notification_to_show } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/NotificationBoxHelpers.sys.mjs"
+  );
+var { promise_new_window } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/WindowHelpers.sys.mjs"
 );
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-var { MimeParser } = ChromeUtils.import("resource:///modules/mimeParser.jsm");
+var { MimeParser } = ChromeUtils.importESModule(
+  "resource:///modules/mimeParser.sys.mjs"
+);
 
-let aboutMessage = get_about_message();
+const aboutMessage = get_about_message();
 
 var gDrafts;
 
@@ -57,15 +59,16 @@ add_setup(async function () {
 /**
  * Helper to get the full message content.
  *
- * @param aMsgHdr: nsIMsgDBHdr object whose text body will be read
- * @param aGetText: if true, return header objects. if false, return body data.
- * @returns Map(partnum -> message headers)
+ * @param {nsIMsgDBHdr} aMsgHdr - nsIMsgDBHdr object whose text body will be read.
+ * @param {boolean} aGetText - If true, return header objects;
+ *   if false, return body data.
+ * @returns {Map} partnum -> message headers mapping.
  */
-function getMsgHeaders(aMsgHdr, aGetText = false) {
-  let msgFolder = aMsgHdr.folder;
-  let msgUri = msgFolder.getUriForMsg(aMsgHdr);
+async function getMsgHeaders(aMsgHdr, aGetText = false) {
+  const msgFolder = aMsgHdr.folder;
+  const msgUri = msgFolder.getUriForMsg(aMsgHdr);
 
-  let handler = {
+  const handler = {
     _done: false,
     _data: new Map(),
     _text: new Map(),
@@ -80,7 +83,7 @@ function getMsgHeaders(aMsgHdr, aGetText = false) {
       this._text.set(num, "");
     },
   };
-  let streamListener = MimeParser.makeStreamListenerParser(handler, {
+  const streamListener = MimeParser.makeStreamListenerParser(handler, {
     strformat: "unicode",
   });
   MailServices.messageServiceFromURI(msgUri).streamMessage(
@@ -92,7 +95,7 @@ function getMsgHeaders(aMsgHdr, aGetText = false) {
     "",
     false
   );
-  utils.waitFor(() => handler._done);
+  await TestUtils.waitForCondition(() => handler._done);
   return aGetText ? handler._text : handler._data;
 }
 
@@ -101,8 +104,8 @@ function getMsgHeaders(aMsgHdr, aGetText = false) {
  * in that charset. Instead, we should be using UTF-8.
  */
 add_task(async function test_wrong_reply_charset() {
-  let folder = gDrafts;
-  let msg0 = create_message({
+  const folder = gDrafts;
+  const msg0 = create_message({
     bodyPart: new SyntheticPartLeaf("Some text", {
       charset: "invalid-charset",
     }),
@@ -110,37 +113,37 @@ add_task(async function test_wrong_reply_charset() {
   await add_message_to_folder([folder], msg0);
   await be_in_folder(folder);
   // Make the folder unthreaded for easier message selection.
-  make_display_unthreaded();
+  await make_display_unthreaded();
 
-  let msg = select_click_row(0);
-  assert_selected_and_displayed(mc, msg);
-  Assert.equal(getMsgHeaders(msg).get("").charset, "invalid-charset");
+  let msg = await select_click_row(-1);
+  await assert_selected_and_displayed(window, msg);
+  Assert.equal((await getMsgHeaders(msg)).get("").charset, "invalid-charset");
 
-  let rwc = open_compose_with_reply();
-  await save_compose_message(rwc.window);
+  let rwc = await open_compose_with_reply();
+  await save_compose_message(rwc);
   await TestUtils.waitForCondition(
     () => folder.getTotalMessages(false) == 2,
     "message saved to drafts folder"
   );
-  close_compose_window(rwc);
+  await close_compose_window(rwc);
 
-  let draftMsg = select_click_row(1);
-  Assert.equal(getMsgHeaders(draftMsg).get("").charset, "UTF-8");
-  press_delete(mc); // Delete message
+  const draftMsg = await select_click_row(-2);
+  Assert.equal((await getMsgHeaders(draftMsg)).get("").charset, "UTF-8");
+  await press_delete(window); // Delete message
 
   // Edit the original message. Charset should be UTF-8 now.
-  msg = select_click_row(0);
+  msg = await select_click_row(-1);
 
   // Wait for the notification with the Edit button.
-  wait_for_notification_to_show(
+  await wait_for_notification_to_show(
     aboutMessage,
     "mail-notification-top",
     "draftMsgContent"
   );
 
-  plan_for_new_window("msgcompose");
+  const composePromise = promise_new_window("msgcompose");
 
-  let box = get_notification(
+  const box = get_notification(
     aboutMessage,
     "mail-notification-top",
     "draftMsgContent"
@@ -151,66 +154,69 @@ add_task(async function test_wrong_reply_charset() {
     {},
     aboutMessage
   );
-  rwc = wait_for_compose_window();
-  await save_compose_message(rwc.window);
-  close_compose_window(rwc);
-  msg = select_click_row(0);
+  rwc = await compose_window_ready(composePromise);
+  await save_compose_message(rwc);
+  await close_compose_window(rwc);
+  msg = await select_click_row(-1);
   await TestUtils.waitForCondition(
-    () => getMsgHeaders(msg).get("").charset == "UTF-8",
+    async () => (await getMsgHeaders(msg)).get("").charset == "UTF-8",
     "The charset matches"
   );
-  press_delete(mc); // Delete message
+  await press_delete(window); // Delete message
 });
 
 /**
  * Test that replying to bad charsets don't screw up the existing text.
  */
 add_task(async function test_no_mojibake() {
-  let folder = gDrafts;
-  let nonASCII = "ケツァルコアトル";
-  let UTF7 = "+MLEwxDChMOswszCiMMgw6w-";
-  let msg0 = create_message({
+  const folder = gDrafts;
+  const nonASCII = "ケツァルコアトル";
+  const UTF7 = "+MLEwxDChMOswszCiMMgw6w-";
+  const msg0 = create_message({
     bodyPart: new SyntheticPartLeaf(UTF7, { charset: "utf-7" }),
   });
   await add_message_to_folder([folder], msg0);
   await be_in_folder(folder);
-  let msg = select_click_row(0);
-  assert_selected_and_displayed(mc, msg);
+  let msg = await select_click_row(-1);
+  await assert_selected_and_displayed(window, msg);
   await TestUtils.waitForCondition(
-    () => getMsgHeaders(msg).get("").charset == "utf-7",
+    async () => (await getMsgHeaders(msg)).get("").charset == "utf-7",
     "message charset correctly set"
   );
-  Assert.equal(getMsgHeaders(msg, true).get("").trim(), nonASCII);
+  Assert.equal((await getMsgHeaders(msg, true)).get("").trim(), nonASCII);
 
-  let rwc = open_compose_with_reply();
-  await save_compose_message(rwc.window);
+  let rwc = await open_compose_with_reply();
+  await save_compose_message(rwc);
   await TestUtils.waitForCondition(
     () => folder.getTotalMessages(false) == 2,
     "message saved to drafts folder"
   );
-  close_compose_window(rwc);
+  await close_compose_window(rwc);
 
-  let draftMsg = select_click_row(1);
-  Assert.equal(getMsgHeaders(draftMsg).get("").charset.toUpperCase(), "UTF-8");
-  let text = getMsgHeaders(draftMsg, true).get("");
+  const draftMsg = await select_click_row(-2);
+  Assert.equal(
+    (await getMsgHeaders(draftMsg)).get("").charset.toUpperCase(),
+    "UTF-8"
+  );
+  const text = (await getMsgHeaders(draftMsg, true)).get("");
   // Delete message first before throwing so subsequent tests are not affected.
-  press_delete(mc);
+  await press_delete(window);
   if (!text.includes(nonASCII)) {
     throw new Error("Expected to find " + nonASCII + " in " + text);
   }
 
   // Edit the original message. Charset should be UTF-8 now.
-  msg = select_click_row(0);
+  msg = await select_click_row(-1);
 
   // Wait for the notification with the Edit button.
-  wait_for_notification_to_show(
+  await wait_for_notification_to_show(
     aboutMessage,
     "mail-notification-top",
     "draftMsgContent"
   );
 
-  plan_for_new_window("msgcompose");
-  let box = get_notification(
+  const composePromise = promise_new_window("msgcompose");
+  const box = get_notification(
     aboutMessage,
     "mail-notification-top",
     "draftMsgContent"
@@ -221,11 +227,14 @@ add_task(async function test_no_mojibake() {
     {},
     aboutMessage
   );
-  rwc = wait_for_compose_window();
-  await save_compose_message(rwc.window);
-  close_compose_window(rwc);
-  msg = select_click_row(0);
-  Assert.equal(getMsgHeaders(msg).get("").charset.toUpperCase(), "UTF-8");
-  Assert.equal(getMsgHeaders(msg, true).get("").trim(), nonASCII);
-  press_delete(mc); // Delete message
+  rwc = await compose_window_ready(composePromise);
+  await save_compose_message(rwc);
+  await close_compose_window(rwc);
+  msg = await select_click_row(-1);
+  Assert.equal(
+    (await getMsgHeaders(msg)).get("").charset.toUpperCase(),
+    "UTF-8"
+  );
+  Assert.equal((await getMsgHeaders(msg, true)).get("").trim(), nonASCII);
+  await press_delete(window); // Delete message
 });

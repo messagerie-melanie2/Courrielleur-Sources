@@ -11,13 +11,12 @@
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Maybe.h"
 
-#if defined(OS_WIN)
+#if defined(XP_WIN) || defined(XP_DARWIN)
 #  include "mozilla/UniquePtrExtensions.h"
-#endif
-#if !defined(OS_WIN) && !defined(OS_MACOSX)
+#else
 #  include <pthread.h>
 #  include <semaphore.h>
-#  include "mozilla/ipc/SharedMemoryBasic.h"
+#  include "mozilla/ipc/SharedMemoryMapping.h"
 #  include "mozilla/Atomics.h"
 #endif
 
@@ -37,20 +36,12 @@ inline bool IsHandleValid(const T& handle) {
   return bool(handle);
 }
 
-#if defined(OS_WIN)
+#if defined(XP_WIN)
 typedef mozilla::UniqueFileHandle CrossProcessSemaphoreHandle;
-#elif !defined(OS_MACOSX)
-typedef mozilla::ipc::SharedMemoryBasic::Handle CrossProcessSemaphoreHandle;
-
-template <>
-inline bool IsHandleValid<CrossProcessSemaphoreHandle>(
-    const CrossProcessSemaphoreHandle& handle) {
-  return !(handle == mozilla::ipc::SharedMemoryBasic::NULLHandle());
-}
+#elif defined(XP_DARWIN)
+typedef mozilla::UniqueMachSendRight CrossProcessSemaphoreHandle;
 #else
-// Stub for other platforms. We can't use uintptr_t here since different
-// processes could disagree on its size.
-typedef uintptr_t CrossProcessSemaphoreHandle;
+typedef mozilla::ipc::MutableSharedMemoryHandle CrossProcessSemaphoreHandle;
 #endif
 
 class CrossProcessSemaphore {
@@ -102,12 +93,17 @@ class CrossProcessSemaphore {
   CrossProcessSemaphore(const CrossProcessSemaphore&);
   CrossProcessSemaphore& operator=(const CrossProcessSemaphore&);
 
-#if defined(OS_WIN)
+#if defined(XP_WIN)
   explicit CrossProcessSemaphore(HANDLE aSemaphore);
 
   HANDLE mSemaphore;
-#elif !defined(OS_MACOSX)
-  RefPtr<mozilla::ipc::SharedMemoryBasic> mSharedBuffer;
+#elif defined(XP_DARWIN)
+  explicit CrossProcessSemaphore(CrossProcessSemaphoreHandle aSemaphore);
+
+  CrossProcessSemaphoreHandle mSemaphore;
+#else
+  mozilla::ipc::MutableSharedMemoryHandle mHandle;
+  mozilla::ipc::SharedMemoryMapping mSharedBuffer;
   sem_t* mSemaphore;
   mozilla::Atomic<int32_t>* mRefCount;
 #endif

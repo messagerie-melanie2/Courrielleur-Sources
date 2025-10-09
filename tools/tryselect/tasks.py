@@ -29,8 +29,8 @@ by your working copy:
     {}
 
 To fix this, either rebase onto the latest mozilla-central or pass in
--p/--parameters. For more information on how to define parameters, see:
-https://firefox-source-docs.mozilla.org/taskcluster/taskcluster/mach.html#parameters
+-p/--parameters. For more information on how to define parameters, see
+the --parameters argument in `./mach taskgraph target --help`.
 """
 
 
@@ -53,45 +53,84 @@ def invalidate(cache):
         os.remove(cache)
 
 
-def cache_key(attr, params, disable_target_task_filter):
+def cache_key(attr, params, disable_target_task_filter, target_tasks_method):
     key = attr
     if params and params["project"] not in ("autoland", "mozilla-central"):
         key += f"-{params['project']}"
 
     if disable_target_task_filter and "full" not in attr:
         key += "-uncommon"
+
+    if target_tasks_method:
+        key += f"-target_{target_tasks_method}"
+
     return key
 
 
-def generate_tasks(params=None, full=False, disable_target_task_filter=False):
+def add_chunk_patterns(tg):
+    for task_name, task in tg.tasks.items():
+        chunk_index = -1
+        if task_name.endswith("-cf"):
+            chunk_index = -2
+
+        chunks = task.task.get("extra", {}).get("chunks", {})
+        if isinstance(chunks, int):
+            task.chunk_pattern = "{}-*/{}".format(
+                "-".join(task_name.split("-")[:chunk_index]), chunks
+            )
+        else:
+            assert isinstance(chunks, dict)
+            if chunks.get("total", 1) == 1:
+                task.chunk_pattern = task_name
+            else:
+                task.chunk_pattern = "{}-*".format(
+                    "-".join(task_name.split("-")[:chunk_index])
+                )
+    return tg
+
+
+def generate_tasks(
+    param_spec=None,
+    full=False,
+    disable_target_task_filter=False,
+    target_tasks_method=None,
+):
     attr = "full_task_set" if full else "target_task_set"
-    target_tasks_method = (
-        "try_select_tasks"
-        if not disable_target_task_filter
-        else "try_select_tasks_uncommon"
-    )
-    params = parameters_loader(
-        params,
-        strict=False,
-        overrides={
-            "try_mode": "try_select",
-            "target_tasks_method": target_tasks_method,
-        },
-    )
-    root = os.path.join(build.topsrcdir, "taskcluster", "ci")
+
+    overrides = {
+        "filters": [
+            (
+                "try_select_tasks"
+                if not disable_target_task_filter
+                else "try_select_tasks_uncommon"
+            )
+        ],
+        "try_mode": "try_select",
+    }
+
+    # If a separate target_tasks_method was requested, pre-filter the available
+    # list of tasks based on that.
+    if target_tasks_method:
+        overrides["target_tasks_method"] = target_tasks_method
+        overrides["filters"].insert(0, "target_tasks_method")
+
+    params = parameters_loader(param_spec, strict=False, overrides=overrides)
+    root = os.path.join(build.topsrcdir, "taskcluster")
     taskgraph.fast = True
     generator = TaskGraphGenerator(root_dir=root, parameters=params)
 
     cache_dir = os.path.join(
         get_state_dir(specific_to_topsrcdir=True), "cache", "taskgraph"
     )
-    key = cache_key(attr, generator.parameters, disable_target_task_filter)
+    key = cache_key(
+        attr, generator.parameters, disable_target_task_filter, target_tasks_method
+    )
     cache = os.path.join(cache_dir, key)
 
     invalidate(cache)
     if os.path.isfile(cache):
         with open(cache) as fh:
-            return TaskGraph.from_json(json.load(fh))[1]
+            return add_chunk_patterns(TaskGraph.from_json(json.load(fh))[1])
 
     if not os.path.isdir(cache_dir):
         os.makedirs(cache_dir)
@@ -109,10 +148,12 @@ def generate_tasks(params=None, full=False, disable_target_task_filter=False):
             sys.exit(1)
 
         # write cache
-        key = cache_key(attr, generator.parameters, disable_target_task_filter)
+        key = cache_key(
+            attr, generator.parameters, disable_target_task_filter, target_tasks_method
+        )
         with open(os.path.join(cache_dir, key), "w") as fh:
             json.dump(tg.to_json(), fh)
-        return tg
+        return add_chunk_patterns(tg)
 
     # Cache both full_task_set and target_task_set regardless of whether or not
     # --full was requested. Caching is cheap and can potentially save a lot of
@@ -131,9 +172,28 @@ def generate_tasks(params=None, full=False, disable_target_task_filter=False):
     return tg_target
 
 
-def filter_tasks_by_paths(tasks, paths):
+def filter_tasks_by_worker_type(tasks, params):
+    worker_types = params.get("try_task_config", {}).get("worker-types", [])
+    if worker_types:
+        retVal = {}
+        for t in tasks:
+            if tasks[t].task["workerType"] in worker_types:
+                retVal[t] = tasks[t]
+        return retVal
+    return tasks
+
+
+def filter_tasks_by_paths(tasks, paths=[], tag=""):
     resolver = TestResolver.from_environment(cwd=here, loader_cls=TestManifestLoader)
-    run_suites, run_tests = resolver.resolve_metadata(paths)
+
+    if paths:
+        run_suites, run_tests = resolver.resolve_metadata(paths)
+    elif not paths and tag:
+        run_tests = list(resolver.resolve_tests(paths=[], tags=tag))
+
+    if not run_tests:
+        return {}
+
     flavors = {(t["flavor"], t.get("subsuite")) for t in run_tests}
 
     task_regexes = set()
@@ -142,7 +202,7 @@ def filter_tasks_by_paths(tasks, paths):
         if "task_regex" not in suite:
             print(
                 "warning: no tasks could be resolved from flavor '{}'{}".format(
-                    flavor, " and subsuite '{}'".format(subsuite) if subsuite else ""
+                    flavor, f" and subsuite '{subsuite}'" if subsuite else ""
                 )
             )
             continue
@@ -152,7 +212,9 @@ def filter_tasks_by_paths(tasks, paths):
     def match_task(task):
         return any(re.search(pattern, task) for pattern in task_regexes)
 
-    return filter(match_task, tasks)
+    return {
+        task_name: task for task_name, task in tasks.items() if match_task(task_name)
+    }
 
 
 def resolve_tests_by_suite(paths):

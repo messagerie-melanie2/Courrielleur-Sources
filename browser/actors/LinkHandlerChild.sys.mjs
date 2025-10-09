@@ -4,11 +4,9 @@
 
 const lazy = {};
 
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "FaviconLoader",
-  "resource:///modules/FaviconLoader.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  FaviconLoader: "resource:///modules/FaviconLoader.sys.mjs",
+});
 
 export class LinkHandlerChild extends JSWindowActorChild {
   constructor() {
@@ -114,8 +112,8 @@ export class LinkHandlerChild extends JSWindowActorChild {
           isRichIcon = true;
         // fall through
         case "icon":
-          if (iconAdded || link.hasAttribute("mask")) {
-            // Masked icons are not supported yet.
+          if (iconAdded || link.hasAttribute("color") || rel.includes("mask")) {
+            // TODO (Bug 1337397): Add support for mask-icon favicons.
             break;
           }
 

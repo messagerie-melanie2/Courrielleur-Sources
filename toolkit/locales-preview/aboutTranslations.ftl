@@ -5,24 +5,27 @@
 # The title of the about:translations page, referencing the translations feature.
 about-translations-title = Translations
 about-translations-header = { -translations-brand-name }
+# The title attribute for the swap languages button, that swaps the
+# source and target languages, reversing the translation direction.
+about-translations-swap-languages =
+  .title = Swap languages
 about-translations-results-placeholder = Translation
+about-translations-translating-message = Translating…
 # Text displayed on from-language dropdown when no language is selected
 about-translations-detect = Detect language
-# Text displayed on a language dropdown when the language is in beta
-# Variables:
-#   $language (string) - The localized display name of the language
-about-translations-displayname-beta = { $language } BETA
 # Text displayed on from-language dropdown when a language is detected
 # Variables:
 #   $language (string) - The localized display name of the detected language
 about-translations-detect-lang = Detect language ({ $language })
-# Text displayed on from-language dropdown when a beta language is detected
-# Variables:
-#   $language (string) - The localized display name of the detected language
-about-translations-detect-lang-beta = Detect language ({ $language } BETA)
 # Text displayed on to-language dropdown when no language is selected
 about-translations-select = Select language
 about-translations-textarea =
   .placeholder = Add text to translate
-about-translations-no-support = Your device does not meet the minimum requirements to use this feature. Try on another device.
-about-translations-engine-error = The translations engine failed to load.
+about-translations-no-support =
+  .message = Your device does not meet the minimum requirements to use this feature. Try on another device.
+about-translations-engine-error =
+  .message = The translations engine failed to load.
+
+# Error message displayed when the language list fails to load.
+about-translations-language-load-error =
+  .message = The language list failed to load. Check your internet connection and reload the page.

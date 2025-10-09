@@ -29,7 +29,7 @@ async function waitForScrollEvent(aBrowser, aTask) {
 add_task(async function test_no_scrolling() {
   await Interactions.reset();
   await BrowserTestUtils.withNewTab(TEST_URL, async browser => {
-    BrowserTestUtils.loadURIString(browser, TEST_URL2);
+    BrowserTestUtils.startLoadingURIString(browser, TEST_URL2);
     await BrowserTestUtils.browserLoaded(browser, false, TEST_URL2);
 
     await assertDatabaseValues([
@@ -54,7 +54,7 @@ add_task(async function test_arrow_key_down_scroll() {
       EventUtils.synthesizeKey("KEY_ArrowDown")
     );
 
-    BrowserTestUtils.loadURIString(browser, TEST_URL2);
+    BrowserTestUtils.startLoadingURIString(browser, TEST_URL2);
     await BrowserTestUtils.browserLoaded(browser, false, TEST_URL2);
 
     await assertDatabaseValues([
@@ -77,7 +77,7 @@ add_task(async function test_scrollIntoView() {
       })
     );
 
-    BrowserTestUtils.loadURIString(browser, TEST_URL2);
+    BrowserTestUtils.startLoadingURIString(browser, TEST_URL2);
     await BrowserTestUtils.browserLoaded(browser, false, TEST_URL2);
 
     // JS-triggered scrolling should not be reported
@@ -101,7 +101,7 @@ add_task(async function test_anchor_click() {
       })
     );
 
-    BrowserTestUtils.loadURIString(browser, TEST_URL2);
+    BrowserTestUtils.startLoadingURIString(browser, TEST_URL2);
     await BrowserTestUtils.browserLoaded(browser, false, TEST_URL2);
 
     // The scrolling resulting from clicking on an anchor should not be reported
@@ -124,7 +124,7 @@ add_task(async function test_window_scrollBy() {
       })
     );
 
-    BrowserTestUtils.loadURIString(browser, TEST_URL2);
+    BrowserTestUtils.startLoadingURIString(browser, TEST_URL2);
     await BrowserTestUtils.browserLoaded(browser, false, TEST_URL2);
 
     // The scrolling resulting from the window.scrollBy() call should not be reported
@@ -147,7 +147,7 @@ add_task(async function test_window_scrollTo() {
       })
     );
 
-    BrowserTestUtils.loadURIString(browser, TEST_URL2);
+    BrowserTestUtils.startLoadingURIString(browser, TEST_URL2);
     await BrowserTestUtils.browserLoaded(browser, false, TEST_URL2);
 
     // The scrolling resulting from the window.scrollTo() call should not be reported
@@ -159,4 +159,94 @@ add_task(async function test_window_scrollTo() {
       },
     ]);
   });
+});
+
+add_task(async function test_window_scroll_switch_tabs() {
+  await Interactions.reset();
+
+  let tab1 = await BrowserTestUtils.openNewForegroundTab({
+    gBrowser,
+    url: TEST_URL,
+  });
+
+  info("Scroll some distance on first tab");
+  let browser = gBrowser.selectedBrowser;
+  await SpecialPowers.spawn(browser, [], function () {
+    const heading = content.document.getElementById("heading");
+    heading.focus();
+  });
+  await waitForScrollEvent(browser, () =>
+    EventUtils.synthesizeKey("KEY_ArrowDown")
+  );
+
+  let tab2 = await BrowserTestUtils.openNewForegroundTab({
+    gBrowser,
+    url: TEST_URL2,
+  });
+
+  await assertDatabaseValues([
+    {
+      url: TEST_URL,
+      scrollingDistanceIsGreaterThan: 0,
+      scrollingTimeIsGreaterThan: 0,
+    },
+  ]);
+
+  info("Switch to first tab");
+  await BrowserTestUtils.switchTab(gBrowser, tab1);
+
+  await assertDatabaseValues([
+    {
+      url: TEST_URL,
+      scrollingDistanceIsGreaterThan: 0,
+      scrollingTimeIsGreaterThan: 0,
+    },
+    {
+      url: TEST_URL2,
+      exactscrollingDistance: 0,
+      exactscrollingTime: 0,
+    },
+  ]);
+
+  info("Scroll some distance on first tab");
+  browser = gBrowser.selectedBrowser;
+  await SpecialPowers.spawn(browser, [], function () {
+    const heading = content.document.getElementById("heading");
+    heading.focus();
+  });
+  await waitForScrollEvent(browser, () =>
+    EventUtils.synthesizeKey("KEY_ArrowDown")
+  );
+
+  info("Switch to second tab");
+  await BrowserTestUtils.switchTab(gBrowser, tab2);
+
+  await assertDatabaseValues([
+    {
+      url: TEST_URL,
+      scrollingDistanceIsGreaterThan: 0,
+      scrollingTimeIsGreaterThan: 0,
+    },
+    {
+      url: TEST_URL2,
+      exactscrollingDistance: 0,
+      exactscrollingTime: 0,
+    },
+  ]);
+
+  BrowserTestUtils.removeTab(tab1);
+  BrowserTestUtils.removeTab(tab2);
+
+  await assertDatabaseValues([
+    {
+      url: TEST_URL,
+      scrollingDistanceIsGreaterThan: 0,
+      scrollingTimeIsGreaterThan: 0,
+    },
+    {
+      url: TEST_URL2,
+      exactscrollingDistance: 0,
+      exactscrollingTime: 0,
+    },
+  ]);
 });

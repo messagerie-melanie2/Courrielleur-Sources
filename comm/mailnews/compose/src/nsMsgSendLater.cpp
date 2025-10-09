@@ -2,8 +2,14 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #include "nsMsgSendLater.h"
+#include "nsCOMPtr.h"
+#include "nsComponentManagerUtils.h"
+#include "nsDebug.h"
+#include "nsIMsgCompUtils.h"
 #include "nsIMsgMailNewsUrl.h"
+#include "nsMsgCompFields.h"
 #include "nsMsgCopy.h"
 #include "nsIMsgSend.h"
 #include "nsIPrefService.h"
@@ -17,10 +23,9 @@
 #include "nsISmtpUrl.h"
 #include "nsIChannel.h"
 #include "nsNetUtil.h"
+#include "nsString.h"
 #include "prlog.h"
 #include "prmem.h"
-#include "nsIMimeConverter.h"
-#include "nsComposeStrings.h"
 #include "nsIObserverService.h"
 #include "nsIMsgLocalMailFolder.h"
 #include "nsIMsgDatabase.h"
@@ -37,6 +42,10 @@
 // send it.
 const uint32_t kInitialMessageSendTime = 1000;
 
+extern char* MimeHeaders_get_parameter(const char* header_value,
+                                       const char* parm_name, char** charset,
+                                       char** language);
+
 NS_IMPL_ISUPPORTS(nsMsgSendLater, nsIMsgSendLater, nsIFolderListener,
                   nsIRequestObserver, nsIStreamListener, nsIObserver,
                   nsIUrlListener, nsIMsgShutdownTask)
@@ -51,8 +60,8 @@ nsMsgSendLater::nsMsgSendLater() {
   m_to = nullptr;
   m_bcc = nullptr;
   m_fcc = nullptr;
+  m_messageId = nullptr;
   m_newsgroups = nullptr;
-  m_newshost = nullptr;
   m_headers = nullptr;
   m_flags = 0;
   m_headersFP = 0;
@@ -66,6 +75,7 @@ nsMsgSendLater::nsMsgSendLater() {
 
   mIdentityKey = nullptr;
   mAccountKey = nullptr;
+  mDraftInfo = nullptr;
 
   mUserInitiated = false;
 }
@@ -75,11 +85,11 @@ nsMsgSendLater::~nsMsgSendLater() {
   PR_Free(m_fcc);
   PR_Free(m_bcc);
   PR_Free(m_newsgroups);
-  PR_Free(m_newshost);
   PR_Free(m_headers);
   PR_Free(mLeftoverBuffer);
   PR_Free(mIdentityKey);
   PR_Free(mAccountKey);
+  PR_Free(mDraftInfo);
 }
 
 nsresult nsMsgSendLater::Init() {
@@ -385,10 +395,10 @@ SendOperationListener::OnStartSending(const char* aMsgID, uint32_t aMsgSize) {
 }
 
 NS_IMETHODIMP
-SendOperationListener::OnProgress(const char* aMsgID, uint32_t aProgress,
-                                  uint32_t aProgressMax) {
+SendOperationListener::OnSendProgress(const char* aMsgID, uint32_t aProgress,
+                                      uint32_t aProgressMax) {
 #ifdef NS_DEBUG
-  printf("SendOperationListener::OnProgress()\n");
+  printf("SendOperationListener::OnSendProgress()\n");
 #endif
   return NS_OK;
 }
@@ -482,7 +492,7 @@ nsresult nsMsgSendLater::CompleteMailFileSend() {
   // Since we have already parsed all of the headers, we are simply going to
   // set the composition fields and move on.
   nsCString author;
-  mMessage->GetAuthor(getter_Copies(author));
+  mMessage->GetAuthor(author);
 
   nsMsgCompFields* fields = (nsMsgCompFields*)compFields.get();
 
@@ -500,13 +510,44 @@ nsresult nsMsgSendLater::CompleteMailFileSend() {
     fields->SetFcc(m_fcc);
   }
 
+  char* messageId = m_messageId;
+
+  if (!messageId) {
+    // If the message headers don't include a message ID, generate one.
+    // Otherwise, the message won't be able to send with some protocols (e.g.
+    // SMTP).
+    nsCOMPtr<nsIMsgCompUtils> compUtils =
+        do_CreateInstance("@mozilla.org/messengercompose/computils;1", &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCString newMessageId;
+    rv = compUtils->MsgGenerateMessageId(identity, ""_ns, newMessageId);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    messageId = ToNewCString(newMessageId);
+  }
+
+  fields->SetMessageId(messageId);
+
   if (m_newsgroups) fields->SetNewsgroups(m_newsgroups);
 
-#if 0
-  // needs cleanup. Is this needed?
-  if (m_newshost)
-    fields->SetNewspostUrl(m_newshost);
-#endif
+  // Extract the returnReceipt, receiptHeaderType and DSN from the draft info.
+  if (mDraftInfo) {
+    char* param =
+        MimeHeaders_get_parameter(mDraftInfo, "receipt", nullptr, nullptr);
+    if (!param || strcmp(param, "0") == 0) {
+      fields->SetReturnReceipt(false);
+    } else {
+      int receiptType = 0;
+      fields->SetReturnReceipt(true);
+      sscanf(param, "%d", &receiptType);
+      fields->SetReceiptHeaderType(((int32_t)receiptType) - 1);
+    }
+    PR_FREEIF(param);
+    param = MimeHeaders_get_parameter(mDraftInfo, "DSN", nullptr, nullptr);
+    fields->SetDSN(param && strcmp(param, "1") == 0);
+    PR_FREEIF(param);
+  }
 
   // Create the listener for the send operation...
   RefPtr<SendOperationListener> sendListener = new SendOperationListener(this);
@@ -586,12 +627,9 @@ nsresult nsMsgSendLater::StartNextMailFileSend(nsresult prevStatus) {
   m_headersSize = 0;
   PR_FREEIF(mLeftoverBuffer);
 
-  // Now, get our stream listener interface and plug it into the LoadMessage
-  // operation
-  rv = messageService->LoadMessage(messageURI,
-                                   static_cast<nsIStreamListener*>(this),
-                                   nullptr, nullptr, false);
-
+  nsCOMPtr<nsIURI> dummyNull;
+  rv = messageService->StreamMessage(messageURI, this, nullptr, nullptr, false,
+                                     ""_ns, false, getter_AddRefs(dummyNull));
   return rv;
 }
 
@@ -833,7 +871,6 @@ nsresult nsMsgSendLater::BuildHeaders() {
   PR_FREEIF(m_to);
   PR_FREEIF(m_bcc);
   PR_FREEIF(m_newsgroups);
-  PR_FREEIF(m_newshost);
   PR_FREEIF(m_fcc);
   PR_FREEIF(mIdentityKey);
   PR_FREEIF(mAccountKey);
@@ -878,6 +915,11 @@ nsresult nsMsgSendLater::BuildHeaders() {
       case 'l':
         if (!PL_strncasecmp("Lines", buf, end - buf)) prune_p = true;
         break;
+      case 'M':
+      case 'm':
+        if (!PL_strncasecmp("Message-ID", buf, end - buf))
+          header = &m_messageId;
+        break;
       case 'N':
       case 'n':
         if (!PL_strncasecmp("Newsgroups", buf, end - buf))
@@ -899,13 +941,13 @@ nsresult nsMsgSendLater::BuildHeaders() {
         else if (buf + strlen(HEADER_X_MOZILLA_STATUS) == end &&
                  !PL_strncasecmp(HEADER_X_MOZILLA_STATUS, buf, end - buf))
           prune_p = do_flags_p = true;
-        else if (!PL_strncasecmp(HEADER_X_MOZILLA_DRAFT_INFO, buf, end - buf))
+        else if (!PL_strncasecmp(HEADER_X_MOZILLA_DRAFT_INFO, buf, end - buf)) {
           prune_p = true;
-        else if (!PL_strncasecmp(HEADER_X_MOZILLA_KEYWORDS, buf, end - buf))
+          header = &mDraftInfo;
+        } else if (!PL_strncasecmp(HEADER_X_MOZILLA_KEYWORDS, buf, end - buf))
           prune_p = true;
         else if (!PL_strncasecmp(HEADER_X_MOZILLA_NEWSHOST, buf, end - buf)) {
           prune_p = true;
-          header = &m_newshost;
         } else if (!PL_strncasecmp(HEADER_X_MOZILLA_IDENTITY_KEY, buf,
                                    end - buf)) {
           prune_p = true;
@@ -1056,7 +1098,6 @@ nsresult nsMsgSendLater::DeliverQueuedLine(const char* line, int32_t length) {
       PR_FREEIF(m_to);
       PR_FREEIF(m_bcc);
       PR_FREEIF(m_newsgroups);
-      PR_FREEIF(m_newshost);
       PR_FREEIF(m_fcc);
       PR_FREEIF(mIdentityKey);
     }
@@ -1068,15 +1109,15 @@ nsresult nsMsgSendLater::DeliverQueuedLine(const char* line, int32_t length) {
 
       nsresult rv = MsgNewBufferedFileOutputStream(getter_AddRefs(mOutFile),
                                                    mTempFile, -1, 00600);
-      if (NS_FAILED(rv)) return NS_MSG_ERROR_WRITING_FILE;
+      NS_ENSURE_SUCCESS(rv, rv);
 
       nsresult status = BuildHeaders();
       if (NS_FAILED(status)) return status;
 
       uint32_t n;
       rv = mOutFile->Write(m_headers, m_headersFP, &n);
-      if (NS_FAILED(rv) || n != (uint32_t)m_headersFP)
-        return NS_MSG_ERROR_WRITING_FILE;
+      NS_ENSURE_SUCCESS(rv, rv);
+      if (n != (uint32_t)m_headersFP) return NS_ERROR_FAILURE;
     } else {
       // Otherwise, this line belongs to a header.  So append it to the
       // header data.
@@ -1100,8 +1141,8 @@ nsresult nsMsgSendLater::DeliverQueuedLine(const char* line, int32_t length) {
     if (mOutFile) {
       uint32_t wrote;
       nsresult rv = mOutFile->Write(line, length, &wrote);
-      if (NS_FAILED(rv) || wrote < (uint32_t)length)
-        return NS_MSG_ERROR_WRITING_FILE;
+      NS_ENSURE_SUCCESS(rv, rv);
+      if (wrote < (uint32_t)length) return NS_ERROR_FAILURE;
     }
   }
 
@@ -1350,14 +1391,6 @@ NS_IMETHODIMP
 nsMsgSendLater::OnFolderBoolPropertyChanged(nsIMsgFolder* aFolder,
                                             const nsACString& aProperty,
                                             bool aOldValue, bool aNewValue) {
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgSendLater::OnFolderUnicharPropertyChanged(nsIMsgFolder* aFolder,
-                                               const nsACString& aProperty,
-                                               const nsAString& aOldValue,
-                                               const nsAString& aNewValue) {
   return NS_OK;
 }
 

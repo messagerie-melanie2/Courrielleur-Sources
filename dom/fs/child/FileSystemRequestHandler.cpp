@@ -217,16 +217,23 @@ void ResolveCallback(
 template <>
 void ResolveCallback(
     FileSystemMoveEntryResponse&& aResponse,
-    RefPtr<Promise> aPromise) {  // NOLINT(performance-unnecessary-value-param)
+    RefPtr<Promise> aPromise,  // NOLINT(performance-unnecessary-value-param)
+    FileSystemEntryMetadata* const& aEntry, const Name& aName) {
   MOZ_ASSERT(aPromise);
   QM_TRY(OkIf(Promise::PromiseState::Pending == aPromise->State()), QM_VOID);
 
-  MOZ_ASSERT(FileSystemMoveEntryResponse::Tnsresult == aResponse.type());
-  const auto& status = aResponse.get_nsresult();
-  if (NS_OK == status) {
+  if (FileSystemMoveEntryResponse::TEntryId == aResponse.type()) {
+    if (aEntry) {
+      aEntry->entryId() = std::move(aResponse.get_EntryId());
+      aEntry->entryName() = aName;
+    }
+
     aPromise->MaybeResolveWithUndefined();
     return;
   }
+  MOZ_ASSERT(FileSystemMoveEntryResponse::Tnsresult == aResponse.type());
+  const auto& status = aResponse.get_nsresult();
+  MOZ_ASSERT(NS_FAILED(status));
   HandleFailedStatus(status, aPromise);
 }
 
@@ -297,6 +304,11 @@ struct BeginRequestFailureCallback {
       : mPromise(std::move(aPromise)) {}
 
   void operator()(nsresult aRv) const {
+    if (aRv == NS_ERROR_ABORT) {
+      mPromise->MaybeRejectWithAbortError(
+          "Abort error when calling GetDirectory");
+      return;
+    }
     if (aRv == NS_ERROR_DOM_SECURITY_ERR) {
       mPromise->MaybeRejectWithSecurityError(
           "Security error when calling GetDirectory");
@@ -542,10 +554,12 @@ void FileSystemRequestHandler::RemoveEntry(
 
 void FileSystemRequestHandler::MoveEntry(
     RefPtr<FileSystemManager>& aManager, FileSystemHandle* aHandle,
-    const FileSystemEntryMetadata& aEntry,
+    FileSystemEntryMetadata* const aEntry,
     const FileSystemChildMetadata& aNewEntry,
     RefPtr<Promise> aPromise,  // NOLINT(performance-unnecessary-value-param)
     ErrorResult& aError) {
+  MOZ_ASSERT(aEntry);
+  MOZ_ASSERT(!aEntry->entryId().IsEmpty());
   MOZ_ASSERT(aPromise);
   LOG(("MoveEntry"));
 
@@ -561,9 +575,9 @@ void FileSystemRequestHandler::MoveEntry(
   }
 
   aManager->BeginRequest(
-      [request = FileSystemMoveEntryRequest(aEntry, aNewEntry),
-       onResolve =
-           SelectResolveCallback<FileSystemMoveEntryResponse, void>(aPromise),
+      [request = FileSystemMoveEntryRequest(*aEntry, aNewEntry),
+       onResolve = SelectResolveCallback<FileSystemMoveEntryResponse, void>(
+           aPromise, aEntry, aNewEntry.childName()),
        onReject = GetRejectCallback(aPromise)](const auto& actor) mutable {
         actor->SendMoveEntry(request, std::move(onResolve),
                              std::move(onReject));
@@ -573,10 +587,11 @@ void FileSystemRequestHandler::MoveEntry(
 
 void FileSystemRequestHandler::RenameEntry(
     RefPtr<FileSystemManager>& aManager, FileSystemHandle* aHandle,
-    const FileSystemEntryMetadata& aEntry, const Name& aName,
+    FileSystemEntryMetadata* const aEntry, const Name& aName,
     RefPtr<Promise> aPromise,  // NOLINT(performance-unnecessary-value-param)
     ErrorResult& aError) {
-  MOZ_ASSERT(!aEntry.entryId().IsEmpty());
+  MOZ_ASSERT(aEntry);
+  MOZ_ASSERT(!aEntry->entryId().IsEmpty());
   MOZ_ASSERT(aPromise);
   LOG(("RenameEntry"));
 
@@ -592,9 +607,9 @@ void FileSystemRequestHandler::RenameEntry(
   }
 
   aManager->BeginRequest(
-      [request = FileSystemRenameEntryRequest(aEntry, aName),
-       onResolve =
-           SelectResolveCallback<FileSystemMoveEntryResponse, void>(aPromise),
+      [request = FileSystemRenameEntryRequest(*aEntry, aName),
+       onResolve = SelectResolveCallback<FileSystemMoveEntryResponse, void>(
+           aPromise, aEntry, aName),
        onReject = GetRejectCallback(aPromise)](const auto& actor) mutable {
         actor->SendRenameEntry(request, std::move(onResolve),
                                std::move(onReject));

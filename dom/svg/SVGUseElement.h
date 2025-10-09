@@ -50,7 +50,7 @@ class SVGUseElement final : public SVGUseElementBase,
   NS_IMPL_FROMNODE_WITH_TAG(SVGUseElement, kNameSpaceID_SVG, use)
 
   nsresult BindToTree(BindContext&, nsINode& aParent) override;
-  void UnbindFromTree(bool aNullParent = true) override;
+  void UnbindFromTree(UnbindContext&) override;
 
   // interfaces:
   NS_DECL_ISUPPORTS_INHERITED
@@ -64,9 +64,7 @@ class SVGUseElement final : public SVGUseElementBase,
   NS_DECL_NSIMUTATIONOBSERVER_NODEWILLBEDESTROYED
 
   // SVGElement specializations:
-  gfxMatrix PrependLocalTransformsTo(
-      const gfxMatrix& aMatrix,
-      SVGTransformTypes aWhich = eAllTransforms) const override;
+  gfxMatrix ChildToUserSpaceTransform() const override;
   bool HasValidDimensions() const override;
 
   // nsIContent interface
@@ -82,8 +80,9 @@ class SVGUseElement final : public SVGUseElementBase,
   already_AddRefed<DOMSVGAnimatedLength> Width();
   already_AddRefed<DOMSVGAnimatedLength> Height();
 
-  nsIURI* GetSourceDocURI();
-  const Encoding* GetSourceDocCharacterSet();
+  Document* GetSourceDocument() const;
+  nsIURI* GetSourceDocURI() const;
+  const Encoding* GetSourceDocCharacterSet() const;
   URLExtraData* GetContentURLData() const { return mContentURLData; }
 
   // Updates the internal shadow tree to be an up-to-date clone of the
@@ -143,6 +142,7 @@ class SVGUseElement final : public SVGUseElementBase,
     SVGUseElement* mOwningUseElement;
   };
 
+  void DidAnimateAttribute(int32_t aNameSpaceID, nsAtom* aAttribute) override;
   SVGUseFrame* GetFrame() const;
 
   LengthAttributesInfo GetLengthInfo() override;

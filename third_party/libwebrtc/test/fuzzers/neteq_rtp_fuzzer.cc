@@ -10,17 +10,27 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
+#include <optional>
+#include <utility>
 #include <vector>
 
 #include "api/array_view.h"
+#include "api/audio_codecs/audio_encoder.h"
+#include "api/audio_codecs/audio_format.h"
 #include "api/audio_codecs/builtin_audio_decoder_factory.h"
+#include "api/neteq/neteq.h"
+#include "api/rtp_headers.h"
 #include "modules/audio_coding/codecs/pcm16b/audio_encoder_pcm16b.h"
 #include "modules/audio_coding/neteq/tools/audio_checksum.h"
 #include "modules/audio_coding/neteq/tools/encode_neteq_input.h"
+#include "modules/audio_coding/neteq/tools/neteq_input.h"
 #include "modules/audio_coding/neteq/tools/neteq_test.h"
 #include "modules/rtp_rtcp/source/byte_io.h"
+#include "rtc_base/checks.h"
 
 namespace webrtc {
 namespace test {
@@ -69,12 +79,16 @@ class FuzzRtpInput : public NetEqInput {
     MaybeFuzzPayload();
   }
 
-  absl::optional<int64_t> NextPacketTime() const override {
+  std::optional<int64_t> NextPacketTime() const override {
     return packet_->time_ms;
   }
 
-  absl::optional<int64_t> NextOutputEventTime() const override {
+  std::optional<int64_t> NextOutputEventTime() const override {
     return input_->NextOutputEventTime();
+  }
+
+  std::optional<SetMinimumDelayInfo> NextSetMinimumDelayInfo() const override {
+    return input_->NextSetMinimumDelayInfo();
   }
 
   std::unique_ptr<PacketData> PopPacket() override {
@@ -88,9 +102,13 @@ class FuzzRtpInput : public NetEqInput {
 
   void AdvanceOutputEvent() override { return input_->AdvanceOutputEvent(); }
 
+  void AdvanceSetMinimumDelay() override {
+    return input_->AdvanceSetMinimumDelay();
+  }
+
   bool ended() const override { return ended_; }
 
-  absl::optional<RTPHeader> NextHeader() const override {
+  std::optional<RTPHeader> NextHeader() const override {
     RTC_DCHECK(packet_);
     return packet_->header;
   }

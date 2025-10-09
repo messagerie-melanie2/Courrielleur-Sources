@@ -2,20 +2,27 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import copy
 import hashlib
 import json
 import re
 
 from mozbuild.schedules import INCLUSIVE_COMPONENTS
-from mozbuild.util import ReadOnlyDict
 from taskgraph.transforms.base import TransformSequence
 from taskgraph.util.attributes import keymatch
 from taskgraph.util.keyed_by import evaluate_keyed_by
+from taskgraph.util.readonlydict import ReadOnlyDict
 from taskgraph.util.schema import Schema, resolve_keyed_by
-from taskgraph.util.taskcluster import get_artifact_path, get_index_url
+from taskgraph.util.taskcluster import (
+    get_artifact_path,
+    get_artifact_url,
+    get_index_url,
+)
+from taskgraph.util.templates import merge
 from voluptuous import Any, Optional, Required
 
 from gecko_taskgraph.transforms.test.variant import TEST_VARIANTS
+from gecko_taskgraph.util.perftest import is_external_browser
 from gecko_taskgraph.util.platforms import platform_family
 
 transforms = TransformSequence()
@@ -58,6 +65,14 @@ def handle_suite_category(config, tasks):
             category_arg = f"--{category}-suite"
 
         if category_arg:
+            resolve_keyed_by(
+                task,
+                "mozharness.extra-options",
+                item_name=task["test-name"],
+                enforce_single_match=False,
+                variant=task["attributes"].get("unittest_variant"),
+            )
+
             task["mozharness"].setdefault("extra-options", [])
             extra = task["mozharness"]["extra-options"]
             if not any(arg.startswith(category_arg) for arg in extra):
@@ -65,6 +80,14 @@ def handle_suite_category(config, tasks):
 
         # From here on out we only use the suite name.
         task["suite"] = suite
+
+        # in the future we might need to refactor new-test-config to be suite specific
+        if "mochitest" in task["suite"] and config.params["try_task_config"].get(
+            "new-test-config", False
+        ):
+            task = merge(
+                task, {"mozharness": {"extra-options": ["--restartAfterFailure"]}}
+            )
         yield task
 
 
@@ -75,6 +98,14 @@ def setup_talos(config, tasks):
         if task["suite"] != "talos":
             yield task
             continue
+
+        resolve_keyed_by(
+            task,
+            "mozharness.extra-options",
+            item_name=task["test-name"],
+            enforce_single_match=False,
+            variant=task["attributes"].get("unittest_variant"),
+        )
 
         extra_options = task.setdefault("mozharness", {}).setdefault(
             "extra-options", []
@@ -88,6 +119,25 @@ def setup_talos(config, tasks):
 
         if config.params.get("project", None):
             extra_options.append("--project=%s" % config.params["project"])
+
+        if "pdfpaint" in task["try-name"]:
+            max_chunks = 10
+            for chunk in range(1, max_chunks + 1):
+                new_task = copy.deepcopy(task)
+                new_task["mozharness"]["extra-options"].append(
+                    f"--pdfPaintChunk={chunk}"
+                )
+                new_task["test-name"] = task["test-name"].replace(
+                    "pdfpaint", f"pdfpaint-{chunk}"
+                )
+                new_task["try-name"] = task["try-name"].replace(
+                    "pdfpaint", f"pdfpaint-{chunk}"
+                )
+                new_task["treeherder-symbol"] = task["treeherder-symbol"].replace(
+                    "pdfpaint", f"pdfpaint-{chunk}"
+                )
+                yield new_task
+            continue
 
         yield task
 
@@ -135,10 +185,12 @@ def set_treeherder_machine_platform(config, tasks):
     translation = {
         # Linux64 build platform for asan is specified differently to
         # treeherder.
-        "macosx1100-64/opt": "osx-1100/opt",
-        "macosx1100-64-shippable/opt": "osx-1100-shippable/opt",
-        "win64-asan/opt": "windows10-64/asan",
-        "win64-aarch64/opt": "windows10-aarch64/opt",
+        "macosx1400-64/opt": "osx-1300/opt",
+        "macosx1400-64-shippable/opt": "osx-1400-shippable/opt",
+        "macosx1500-64/opt": "osx-1500/opt",
+        "macosx1500-64-shippable/opt": "osx-1500-shippable/opt",
+        "win64-asan/opt": "windows11-64-24h2/asan",
+        "win64-aarch64/opt": "windows11-aarch64/opt",
     }
     for task in tasks:
         # For most desktop platforms, the above table is not used for "regular"
@@ -167,8 +219,10 @@ def set_treeherder_machine_platform(config, tasks):
             task["treeherder-machine-platform"] = task["test-platform"].replace(
                 ".", "-"
             )
-        elif "-qr" in task["test-platform"]:
-            task["treeherder-machine-platform"] = task["test-platform"]
+        elif "android-em-7.0-x86-qr" in task["test-platform"]:
+            task["treeherder-machine-platform"] = task["test-platform"].replace(
+                ".", "-"
+            )
         elif "android-hw" in task["test-platform"]:
             task["treeherder-machine-platform"] = task["test-platform"]
         elif "android-em-7.0-x86_64" in task["test-platform"]:
@@ -186,6 +240,8 @@ def set_treeherder_machine_platform(config, tasks):
             task["treeherder-machine-platform"] = "linux64/asan"
         elif "linux1804-asan/opt" in task["test-platform"]:
             task["treeherder-machine-platform"] = "linux1804-64/asan"
+        elif "-qr" in task["test-platform"]:
+            task["treeherder-machine-platform"] = task["test-platform"]
         else:
             task["treeherder-machine-platform"] = translation.get(
                 task["build-platform"], task["test-platform"]
@@ -228,8 +284,10 @@ def handle_keyed_by(config, tasks):
         "fetches.toolchain",
         "target",
         "webrender-run-on-projects",
+        "mozharness.extra-options",
         "mozharness.requires-signed-builds",
         "build-signing-label",
+        "dependencies",
     ]
     for task in tasks:
         for field in fields:
@@ -241,6 +299,24 @@ def handle_keyed_by(config, tasks):
                 project=config.params["project"],
                 variant=task["attributes"].get("unittest_variant"),
             )
+        yield task
+
+
+@transforms.add
+def setup_raptor_external_browser_platforms(config, tasks):
+    for task in tasks:
+        if task["suite"] != "raptor":
+            yield task
+            continue
+
+        if is_external_browser(task["try-name"]):
+            if "win" in task["build-label"]:
+                task["build-platform"] = "windows2012-64/opt"
+                task["build-label"] = "build-win64/opt"
+            else:
+                task["build-platform"] = "linux64/opt"
+                task["build-label"] = "build-linux64/opt"
+
         yield task
 
 
@@ -259,13 +335,20 @@ def set_target(config, tasks):
             elif build_platform.startswith("win"):
                 target = "target.zip"
             else:
-                target = "target.tar.bz2"
+                target = "target.tar.xz"
 
         if isinstance(target, dict):
-            # TODO Remove hardcoded mobile artifact prefix
-            index_url = get_index_url(target["index"])
-            installer_url = "{}/artifacts/public/{}".format(index_url, target["name"])
-            task["mozharness"]["installer-url"] = installer_url
+            if "index" in target:
+                # TODO Remove hardcoded mobile artifact prefix
+                index_url = get_index_url(target["index"])
+                installer_url = "{}/artifacts/public/{}".format(
+                    index_url, target["name"]
+                )
+                task["mozharness"]["installer-url"] = installer_url
+            else:
+                task["mozharness"]["installer-url"] = get_artifact_url(
+                    f'<{target["upstream-task"]}>', target["name"]
+                )
         else:
             task["mozharness"]["build-artifact-name"] = get_artifact_path(task, target)
 
@@ -287,22 +370,36 @@ def setup_browsertime(config, tasks):
         # files, the transition is straight-forward.
         extra_options = task.get("mozharness", {}).get("extra-options", [])
 
-        if task["suite"] != "raptor" or "--webext" in extra_options:
+        if task["suite"] != "raptor":
             yield task
             continue
 
         ts = {
             "by-test-platform": {
-                "android.*": ["browsertime", "linux64-geckodriver", "linux64-node-16"],
-                "linux.*": ["browsertime", "linux64-geckodriver", "linux64-node-16"],
-                "macosx.*": ["browsertime", "macosx64-geckodriver", "macosx64-node-16"],
+                "android.*": ["browsertime", "linux64-geckodriver", "linux64-node"],
+                "linux.*": ["browsertime", "linux64-geckodriver", "linux64-node"],
+                "macosx1470.*": [
+                    "browsertime",
+                    "macosx64-geckodriver",
+                    "macosx64-node",
+                ],
+                "macosx1400.*": [
+                    "browsertime",
+                    "macosx64-aarch64-geckodriver",
+                    "macosx64-aarch64-node",
+                ],
+                "macosx1500.*": [
+                    "browsertime",
+                    "macosx64-aarch64-geckodriver",
+                    "macosx64-aarch64-node",
+                ],
                 "windows.*aarch64.*": [
                     "browsertime",
                     "win32-geckodriver",
-                    "win32-node-16",
+                    "win32-node",
                 ],
-                "windows.*-32.*": ["browsertime", "win32-geckodriver", "win32-node-16"],
-                "windows.*-64.*": ["browsertime", "win64-geckodriver", "win64-node-16"],
+                "windows.*-32.*": ["browsertime", "win32-geckodriver", "win32-node"],
+                "windows.*-64.*": ["browsertime", "win64-geckodriver", "win64-node"],
             },
         }
 
@@ -314,7 +411,9 @@ def setup_browsertime(config, tasks):
             "by-test-platform": {
                 "android.*": ["linux64-ffmpeg-4.4.1"],
                 "linux.*": ["linux64-ffmpeg-4.4.1"],
-                "macosx.*": ["mac64-ffmpeg-4.4.1"],
+                "macosx1470.*": ["mac64-ffmpeg-4.4.1"],
+                "macosx1400.*": ["mac64-ffmpeg-4.4.1"],
+                "macosx1500.*": ["mac64-ffmpeg-4.4.1"],
                 "windows.*aarch64.*": ["win64-ffmpeg-4.4.1"],
                 "windows.*-32.*": ["win64-ffmpeg-4.4.1"],
                 "windows.*-64.*": ["win64-ffmpeg-4.4.1"],
@@ -323,49 +422,38 @@ def setup_browsertime(config, tasks):
 
         cd_fetches = {
             "android.*": [
-                "linux64-chromedriver-109",
-                "linux64-chromedriver-110",
-                "linux64-chromedriver-111",
-                "linux64-chromedriver-112",
-                "linux64-chromedriver-113",
-                "linux64-chromedriver-114",
+                "linux64-cft-cd-backup",
+                "linux64-cft-cd-stable",
             ],
             "linux.*": [
-                "linux64-chromedriver-112",
-                "linux64-chromedriver-113",
-                "linux64-chromedriver-114",
+                "linux64-cft-cd-backup",
+                "linux64-cft-cd-stable",
             ],
-            "macosx.*": [
-                "mac64-chromedriver-109",
-                "mac64-chromedriver-110",
-                "mac64-chromedriver-111",
-                "mac64-chromedriver-112",
-                "mac64-chromedriver-113",
-                "mac64-chromedriver-114",
+            "macosx1470.*": [
+                "mac-cft-cd-backup",
+                "mac-cft-cd-stable",
             ],
-            "windows.*aarch64.*": [
-                "win32-chromedriver-112",
-                "win32-chromedriver-113",
-                "win32-chromedriver-114",
+            "macosx1400.*": [
+                "mac-cft-cd-arm-backup",
+                "mac-cft-cd-arm-stable",
             ],
-            "windows.*-32.*": [
-                "win32-chromedriver-112",
-                "win32-chromedriver-113",
-                "win32-chromedriver-114",
+            "macosx1500.*": [
+                "mac-cft-cd-arm-backup",
+                "mac-cft-cd-arm-stable",
             ],
             "windows.*-64.*": [
-                "win32-chromedriver-112",
-                "win32-chromedriver-113",
-                "win32-chromedriver-114",
+                "win64-cft-cd-backup",
+                "win64-cft-cd-stable",
             ],
         }
 
         chromium_fetches = {
-            "linux.*": ["linux64-chromium"],
-            "macosx.*": ["mac-chromium"],
-            "windows.*aarch64.*": ["win32-chromium"],
-            "windows.*-32.*": ["win32-chromium"],
-            "windows.*-64.*": ["win64-chromium"],
+            "linux.*": ["linux64-cft-cd-canary"],
+            "macosx1400.*": ["mac-cft-cd-arm-canary"],
+            "macosx1470.*": ["mac-cft-cd-canary"],
+            "macosx1500.*": ["mac-cft-cd-arm-canary"],
+            "windows.*-64.*": ["win64-cft-cd-canary"],
+            "android.*": ["linux64-cft-cd-canary"],
         }
 
         cd_extracted_name = {
@@ -378,22 +466,22 @@ def setup_browsertime(config, tasks):
             # Only add the chromedriver fetches when chrome is running
             for platform in cd_fetches:
                 fs["by-test-platform"][platform].extend(cd_fetches[platform])
-        if "--app=chromium" in extra_options or "--app=custom-car" in extra_options:
+        if "--app=custom-car" in extra_options or "--app=cstm-car-m" in extra_options:
             for platform in chromium_fetches:
                 fs["by-test-platform"][platform].extend(chromium_fetches[platform])
 
-            # The chromedrivers for chromium are repackaged into the archives
-            # that we get the chromium binary from so we always have a compatible
-            # version.
+            # The Chrome-for-Testing chromedrivers are repackaged into the following
+            # platform specific archives. The versions will always be compatible as
+            # these are fetched from the `Canary` channel.
             cd_extracted_name = {
-                "windows": "chrome-win/chromedriver.exe",
-                "mac": "chrome-mac/chromedriver",
-                "default": "chrome-linux/chromedriver",
+                "windows": "cft-chromedriver-win64/chromedriver.exe",
+                "mac": "cft-chromedriver-mac/chromedriver",
+                "default": "cft-chromedriver-linux/chromedriver",
             }
 
         # Disable the Raptor install step
-        if "--app=chrome-m" in extra_options:
-            extra_options.append("--noinstall")
+        if "--app=chrome-m" in extra_options or "--app=cstm-car-m" in extra_options:
+            extra_options.append("--no-install")
 
         task.setdefault("fetches", {}).setdefault("fetch", []).extend(
             evaluate_keyed_by(fs, "fetches.fetch", task)
@@ -452,7 +540,7 @@ def get_mobile_project(task):
     if not task["build-platform"].startswith("android"):
         return
 
-    mobile_projects = ("fenix", "geckoview", "refbrow", "chrome-m")
+    mobile_projects = ("fenix", "geckoview", "refbrow", "chrome-m", "cstm-car-m")
 
     for name in mobile_projects:
         if name in task["test-name"]:
@@ -483,6 +571,14 @@ def disable_wpt_timeouts_on_autoland(config, tasks):
             "web-platform-tests" in task["test-name"]
             and config.params["project"] == "autoland"
         ):
+            resolve_keyed_by(
+                task,
+                "mozharness.extra-options",
+                item_name=task["test-name"],
+                enforce_single_match=False,
+                variant=task["attributes"].get("unittest_variant"),
+            )
+
             task["mozharness"].setdefault("extra-options", []).append("--skip-timeout")
         yield task
 
@@ -508,7 +604,12 @@ def enable_code_coverage(config, tasks):
                 yield task
                 continue
             task["mozharness"].setdefault("extra-options", []).append("--code-coverage")
-            task["instance-size"] = "xlarge"
+            task["instance-size"] = "xlarge-noscratch"
+            if "jittest" in task["test-name"]:
+                task["instance-size"] = "xlarge"
+            elif task["suite"] == "xpcshell" and "linux" in task["build-platform"]:
+                # TODO figure out OOM/timeout issues on d2g (bug 1962414)
+                task["instance-size"] = "large-dw"
 
             # Temporarily disable Mac tests on mozilla-central
             if "mac" in task["build-platform"]:
@@ -618,17 +719,9 @@ def handle_tier(config, tasks):
                 "linux1804-64-shippable-qr/opt",
                 "linux1804-64-asan-qr/opt",
                 "linux1804-64-tsan-qr/opt",
-                "windows7-32-qr/debug",
-                "windows7-32-qr/opt",
-                "windows7-32-devedition-qr/opt",
-                "windows7-32-shippable-qr/opt",
-                "windows10-32-qr/debug",
-                "windows10-32-qr/opt",
-                "windows10-32-shippable-qr/opt",
-                "windows10-32-2004-qr/debug",
-                "windows10-32-2004-qr/opt",
-                "windows10-32-2004-shippable-qr/opt",
-                "windows10-aarch64-qr/opt",
+                "linux2204-64-wayland/debug",
+                "linux2204-64-wayland/opt",
+                "linux2204-64-wayland-shippable/opt",
                 "windows10-64/debug",
                 "windows10-64/opt",
                 "windows10-64-shippable/opt",
@@ -637,20 +730,19 @@ def handle_tier(config, tasks):
                 "windows10-64-qr/debug",
                 "windows10-64-shippable-qr/opt",
                 "windows10-64-devedition-qr/opt",
-                "windows10-64-asan-qr/opt",
                 "windows10-64-2004-qr/opt",
                 "windows10-64-2004-qr/debug",
                 "windows10-64-2004-shippable-qr/opt",
                 "windows10-64-2004-devedition-qr/opt",
                 "windows10-64-2004-asan-qr/opt",
-                "windows11-32-2009-qr/debug",
-                "windows11-32-2009-qr/opt",
-                "windows11-32-2009-shippable-qr/opt",
-                "windows11-64-2009-qr/opt",
-                "windows11-64-2009-qr/debug",
-                "windows11-64-2009-shippable-qr/opt",
-                "windows11-64-2009-devedition-qr/opt",
-                "windows11-64-2009-asan-qr/opt",
+                "windows11-32-24h2/debug",
+                "windows11-32-24h2/opt",
+                "windows11-32-24h2-shippable/opt",
+                "windows11-64-24h2/opt",
+                "windows11-64-24h2/debug",
+                "windows11-64-24h2-shippable/opt",
+                "windows11-64-24h2-devedition/opt",
+                "windows11-64-24h2-asan/opt",
                 "macosx1015-64/opt",
                 "macosx1015-64/debug",
                 "macosx1015-64-shippable/opt",
@@ -659,8 +751,14 @@ def handle_tier(config, tasks):
                 "macosx1015-64-qr/opt",
                 "macosx1015-64-shippable-qr/opt",
                 "macosx1015-64-qr/debug",
-                "macosx1100-64-shippable-qr/opt",
-                "macosx1100-64-qr/debug",
+                "macosx1470-64/opt",
+                "macosx1470-64/debug",
+                "macosx1470-64-shippable/opt",
+                "macosx1470-64-devedition/opt",
+                "macosx1400-64-shippable-qr/opt",
+                "macosx1400-64-qr/debug",
+                "macosx1500-64-shippable/opt",
+                "macosx1500-64/debug",
                 "android-em-7.0-x86_64-shippable/opt",
                 "android-em-7.0-x86_64-shippable-lite/opt",
                 "android-em-7.0-x86_64/debug",
@@ -719,8 +817,16 @@ def disable_try_only_platforms(config, tasks):
 @transforms.add
 def ensure_spi_disabled_on_all_but_spi(config, tasks):
     for task in tasks:
-        variant = task["attributes"].get("unittest_variant", "")
-        has_no_setpref = ("gtest", "cppunit", "jittest", "junit", "raptor")
+        variant = task["attributes"].get("unittest_variant") or ""
+        has_no_setpref = (
+            "gtest",
+            "cppunit",
+            "jittest",
+            "junit",
+            "raptor",
+            "reftest",
+            "web-platform-tests",
+        )
 
         if (
             all(s not in task["suite"] for s in has_no_setpref)
@@ -740,7 +846,7 @@ test_setting_description_schema = Schema(
     {
         Required("_hash"): str,
         "platform": {
-            Required("arch"): Any("32", "64", "aarch64", "arm7", "x86_64"),
+            Required("arch"): Any("32", "64", "aarch64", "arm7", "x86", "x86_64"),
             Required("os"): {
                 Required("name"): Any("android", "linux", "macosx", "windows"),
                 Required("version"): str,
@@ -748,7 +854,7 @@ test_setting_description_schema = Schema(
             },
             Optional("device"): str,
             Optional("display"): "wayland",
-            Optional("machine"): Any("ref-hw-2017"),
+            Optional("machine"): "hw-ref",
         },
         "build": {
             Required("type"): Any("opt", "debug", "debug-isolated-process"),
@@ -757,7 +863,6 @@ test_setting_description_schema = Schema(
                 "ccov",
                 "clang-trunk",
                 "devedition",
-                "domstreams",
                 "lite",
                 "mingwclang",
                 "nightlyasrelease",
@@ -809,7 +914,7 @@ def set_test_setting(config, tasks):
     # TODO Rename these so they don't have a dash.
     dash_attrs = [
         "clang-trunk",
-        "ref-hw-2017",
+        "hw-ref",
     ]
     dash_token = "%D%"
     platform_re = re.compile(r"(\D+)(\d*)")
@@ -861,14 +966,17 @@ def set_test_setting(config, tasks):
 
         else:
             arch = parts.pop(0)
-            if parts[0].isdigit():
+            if parts and (parts[0].isdigit() or parts[0] in ["24h2"]):
                 os_build = parts.pop(0)
 
-            if parts[0] == "ref-hw-2017":
+            if parts and parts[0] == "hw-ref":
                 machine = parts.pop(0)
 
-            if parts[0] == "wayland":
+            if parts and parts[0] == "wayland":
                 display = parts.pop(0)
+
+            if parts and parts[0] == "aarch64":
+                arch = parts.pop(0)
 
         # It's not always possible to glean the exact architecture used from
         # the task, so sometimes this will just be set to "32" or "64".
@@ -968,8 +1076,7 @@ def set_retry_exit_status(config, tasks):
     """Set the retry exit status to TBPL_RETRY, the value returned by mozharness
     scripts to indicate a transient failure that should be retried."""
     for task in tasks:
-        # add in 137 as it is an error with GCP workers
-        task["retry-exit-status"] = [4, 137]
+        task["retry-exit-status"] = [4]
         yield task
 
 
@@ -1052,6 +1159,7 @@ def set_schedules_components(config, tasks):
 
         schedules.add(category)
         schedules.add(platform_family(task["build-platform"]))
+        schedules.add("firefox")
 
         task["schedules-component"] = sorted(schedules)
         yield task
@@ -1068,14 +1176,5 @@ def enable_parallel_marking_in_tsan_tests(config, tasks):
                 extra_options.append(
                     "--setpref=javascript.options.mem.gc_parallel_marking=true"
                 )
-
-        yield task
-
-
-@transforms.add
-def apply_windows7_optimization(config, tasks):
-    for task in tasks:
-        if task["test-platform"].startswith("windows7"):
-            task["optimization"] = {"skip-unless-backstop": None}
 
         yield task

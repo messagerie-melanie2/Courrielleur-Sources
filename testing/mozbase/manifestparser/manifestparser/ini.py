@@ -2,24 +2,21 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import io
 import os
 import sys
-
-from six import string_types
 
 __all__ = ["read_ini", "combine_fields"]
 
 
 class IniParseError(Exception):
     def __init__(self, fp, linenum, msg):
-        if isinstance(fp, string_types):
+        if isinstance(fp, str):
             path = fp
         elif hasattr(fp, "name"):
             path = fp.name
         else:
             path = getattr(fp, "path", "unknown")
-        msg = "Error parsing manifest file '{}', line {}: {}".format(path, linenum, msg)
+        msg = f"Error parsing manifest file '{path}', line {linenum}: {msg}"
         super(IniParseError, self).__init__(msg)
 
 
@@ -31,6 +28,8 @@ def read_ini(
     separators=None,
     strict=True,
     handle_defaults=True,
+    document=False,
+    add_line_no=False,
 ):
     """
     read an .ini file and return a list of [(section, values)]
@@ -41,6 +40,7 @@ def read_ini(
     - separators : strings that denote key, value separation in order
     - strict : whether to be strict about parsing
     - handle_defaults : whether to incorporate defaults into each section
+    - add_line_no: whether to include the line number that points to the test in the generated ini file.
     """
 
     # variables
@@ -51,13 +51,15 @@ def read_ini(
     sections = []
     key = value = None
     section_names = set()
-    if isinstance(fp, string_types):
-        fp = io.open(fp, encoding="utf-8")
+    if isinstance(fp, str):
+        fp = open(fp, encoding="utf-8")
 
     # read the lines
+    section = default
+    current_section = {}
     current_section_name = ""
-    for (linenum, line) in enumerate(fp.read().splitlines(), start=1):
-
+    key_indent = 0
+    for linenum, line in enumerate(fp.read().splitlines(), start=1):
         stripped = line.strip()
 
         # ignore blank lines
@@ -75,8 +77,8 @@ def read_ini(
         inline_prefixes = {p: -1 for p in comments}
         while comment_start == sys.maxsize and inline_prefixes:
             next_prefixes = {}
-            for prefix, index in inline_prefixes.items():
-                index = stripped.find(prefix, index + 1)
+            for prefix, i in inline_prefixes.items():
+                index = stripped.find(prefix, i + 1)
                 if index == -1:
                     continue
                 next_prefixes[prefix] = index
@@ -90,7 +92,8 @@ def read_ini(
         # check for a new section
         if len(stripped) > 2 and stripped[0] == "[" and stripped[-1] == "]":
             section = stripped[1:-1].strip()
-            key = value = key_indent = None
+            key = value = None
+            key_indent = 0
 
             # deal with DEFAULT section
             if section.lower() == default.lower():
@@ -118,7 +121,7 @@ def read_ini(
             raise IniParseError(
                 fp,
                 linenum,
-                "Expected a comment or section, " "instead found '{}'".format(stripped),
+                "Expected a comment or section, " f"instead found '{stripped}'",
             )
 
         # continuation line ?
@@ -131,9 +134,7 @@ def read_ini(
                     raise IniParseError(
                         fp,
                         linenum,
-                        "Should not assign in {} condition for {}".format(
-                            key, current_section_name
-                        ),
+                        f"Should not assign in {key} condition for {current_section_name}",
                     )
             current_section[key] = value
             continue
@@ -160,23 +161,21 @@ def read_ini(
                         raise IniParseError(
                             fp,
                             linenum,
-                            "Should not assign in {} condition for {}".format(
-                                key, current_section_name
-                            ),
+                            f"Should not assign in {key} condition for {current_section_name}",
                         )
 
                 current_section[key] = value
                 break
         else:
             # something bad happened!
-            raise IniParseError(fp, linenum, "Unexpected line '{}'".format(stripped))
+            raise IniParseError(fp, linenum, f"Unexpected line '{stripped}'")
 
     # merge global defaults with the DEFAULT section
     defaults = combine_fields(defaults, default_section)
     if handle_defaults:
         # merge combined defaults into each section
         sections = [(i, combine_fields(defaults, j)) for i, j in sections]
-    return sections, defaults
+    return sections, defaults, None
 
 
 def combine_fields(global_vars, local_vars):
@@ -190,9 +189,10 @@ def combine_fields(global_vars, local_vars):
         return global_vars.copy()
     field_patterns = {
         "args": "%s %s",
-        "prefs": "%s %s",
-        "skip-if": "%s\n%s",
+        "prefs": "%s\n%s",
+        "skip-if": "%s\n%s",  # consider implicit logical OR: "%s ||\n%s"
         "support-files": "%s %s",
+        "tags": "%s %s",
     }
     final_mapping = global_vars.copy()
     for field_name, value in local_vars.items():

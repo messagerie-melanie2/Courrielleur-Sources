@@ -6,6 +6,8 @@
  * Utils for testing interactions with OAuth2 authentication servers.
  */
 
+// eslint-disable-next-line no-shadow
+import { Assert } from "resource://testing-common/Assert.sys.mjs";
 import { BrowserTestUtils } from "resource://testing-common/BrowserTestUtils.sys.mjs";
 import { CommonUtils } from "resource://services-common/utils.sys.mjs";
 import { HttpsProxy } from "resource://testing-common/mailnews/HttpsProxy.sys.mjs";
@@ -15,19 +17,23 @@ import { TestUtils } from "resource://testing-common/TestUtils.sys.mjs";
 import { OAuth2Module } from "resource:///modules/OAuth2Module.sys.mjs";
 
 const validCodes = new Set();
+const tokens = new Map();
 
 export const OAuth2TestUtils = {
   /**
    * Start an OAuth2 server and add it to the proxy at oauth.test.test:443.
    */
-  async startServer(options) {
-    this._oAuth2Server = new OAuth2Server(options);
+  async startServer(serverOptions) {
+    this._oAuth2Server = new OAuth2Server(serverOptions);
     this._proxy = await HttpsProxy.create(
       this._oAuth2Server.httpServer.identity.primaryPort,
       "oauth",
       "oauth.test.test"
     );
-    TestUtils.promiseTestFinished?.then(() => this.stopServer());
+    TestUtils.promiseTestFinished?.then(() => {
+      this.stopServer();
+      this.forgetObjects();
+    });
     return this._oAuth2Server;
   },
 
@@ -73,11 +79,21 @@ export const OAuth2TestUtils = {
    *
    * @param {object} options
    * @param {string} [options.expectedHint] - If given, the login_hint URL parameter
-   *   will be checked.
+   * @param {string} [options.expectedScope] - If given, the scope URL parameter
+   *   will be checked. A space-separated list.
    * @param {string} options.username - The username to use to log in.
    * @param {string} options.password - The password to use to log in.
+   * @param {string} [options.grantedScope] - A subset of `expectedScope` to grant
+   *   permission for. If not given, all scopes will be allowed. If an empty string,
+   *   no scopes will be allowed.
    */
-  submitOAuthLogin: ({ expectedHint, username, password }) => {
+  submitOAuthLogin: async ({
+    expectedHint,
+    expectedScope = "test_mail test_addressbook test_calendar",
+    username,
+    password,
+    grantedScope,
+  }) => {
     /* globals content, EventUtils */
     const searchParams = new URL(content.location).searchParams;
     Assert.equal(
@@ -95,7 +111,7 @@ export const OAuth2TestUtils = {
       "https://localhost",
       "request redirect_uri"
     );
-    Assert.equal(searchParams.get("scope"), "test_scope", "request scope");
+    Assert.equal(searchParams.get("scope"), expectedScope, "request scope");
     if (expectedHint) {
       Assert.equal(
         searchParams.get("login_hint"),
@@ -116,11 +132,73 @@ export const OAuth2TestUtils = {
       content
     );
     EventUtils.sendString(password, content);
+
+    if (grantedScope === undefined) {
+      grantedScope = expectedScope;
+    }
+    if (grantedScope) {
+      for (const scope of grantedScope.split(" ")) {
+        content.document.querySelector(
+          `input[name="scope"][value="${scope}"]`
+        ).checked = true;
+      }
+    }
+
     EventUtils.synthesizeMouseAtCenter(
       content.document.querySelector(`input[type="submit"]`),
       {},
       content
     );
+  },
+
+  /**
+   * Check that the granted `token` is valid for the `scope`.
+   *
+   * @param {string} token
+   * @param {string} scope
+   * @returns {boolean}
+   */
+  validateToken(token, scope) {
+    const grantedScope = tokens.get(token);
+    if (!token) {
+      return false;
+    }
+
+    return grantedScope.split(" ").includes(scope);
+  },
+
+  /**
+   * Check the recorded telemetry values match what we expect. Don't forget to
+   * reset the data `Services.fog.testResetFOG()` at the start of the test.
+   *
+   * @param {object[]} expectedEvents - What should have been recorded.
+   */
+  checkTelemetry(expectedEvents) {
+    const events = Glean.mail.oauth2Authentication.testGetValue();
+    if (expectedEvents.length) {
+      if (events) {
+        Assert.equal(
+          events.length,
+          expectedEvents.length,
+          "OAuth telemetry should have been recorded"
+        );
+        for (let i = 0; i < expectedEvents.length; i++) {
+          Assert.deepEqual(events[i].extra, expectedEvents[i]);
+        }
+      } else {
+        Assert.notEqual(
+          events,
+          null,
+          "OAuth telemetry should have been recorded"
+        );
+      }
+    } else {
+      Assert.equal(
+        events,
+        null,
+        "no OAuth telemetry should have been recorded"
+      );
+    }
   },
 };
 
@@ -130,12 +208,14 @@ class OAuth2Server {
     password = "password",
     accessToken = "access_token",
     refreshToken = "refresh_token",
+    rotateTokens = false,
     expiry = null,
   } = {}) {
     this.username = username;
     this.password = password;
     this.accessToken = accessToken;
     this.refreshToken = refreshToken;
+    this.rotateTokens = rotateTokens;
     this.expiry = expiry;
 
     this.httpServer = new HttpServer();
@@ -155,6 +235,7 @@ class OAuth2Server {
     const port = this.httpServer.identity.primaryPort;
     this.httpServer.stop();
     dump(`OAuth2 server at localhost:${port} closed\n`);
+    tokens.clear();
   }
 
   formHandler(request, response) {
@@ -162,11 +243,18 @@ class OAuth2Server {
       throw HTTP_405;
     }
     const params = new URLSearchParams(request.queryString);
+    this.requestedScope = params.get("scope");
     this._formHandler(response, params.get("redirect_uri"));
   }
 
   _formHandler(response, redirectUri) {
     response.setHeader("Content-Type", "text/html", false);
+    const scopeCheckboxes = this.requestedScope
+      .split(" ")
+      .map(
+        scope =>
+          `<label><input type="checkbox" name="scope" value="${scope}"> ${scope}</label>`
+      );
     response.write(`<!DOCTYPE html>
       <html>
       <head>
@@ -179,6 +267,7 @@ class OAuth2Server {
           <input type="text" name="redirect_uri" readonly="readonly" value="${redirectUri}" />
           <input type="text" name="username" />
           <input type="password" name="password" />
+          ${scopeCheckboxes.join("")}
           <input type="submit" />
         </form>
       </body>
@@ -202,16 +291,22 @@ class OAuth2Server {
       return;
     }
 
-    // Create a unique code. It will become invalid after the first use.
-    const bytes = new Uint8Array(12);
-    for (let i = 0; i < bytes.length; i++) {
-      bytes[i] = Math.floor(Math.random() * 255);
-    }
-    const code = ChromeUtils.base64URLEncode(bytes, { pad: false });
-    validCodes.add(code);
-
     const url = new URL(params.get("redirect_uri"));
-    url.searchParams.set("code", code);
+    if (params.getAll("scope").includes("bad_scope")) {
+      url.searchParams.set("error", "invalid_scope");
+    } else {
+      this.grantedScope = params.getAll("scope").join(" ");
+
+      // Create a unique code. It will become invalid after the first use.
+      const bytes = new Uint8Array(12);
+      for (let i = 0; i < bytes.length; i++) {
+        bytes[i] = Math.floor(Math.random() * 255);
+      }
+      const code = ChromeUtils.base64URLEncode(bytes, { pad: false });
+      validCodes.add(code);
+
+      url.searchParams.set("code", code);
+    }
 
     response.setStatusLine(request.httpVersion, 303, "Redirected");
     response.setHeader("Location", url.href);
@@ -246,6 +341,7 @@ class OAuth2Server {
       validCodes.delete(code);
       data.access_token = this.accessToken;
       data.refresh_token = this.refreshToken;
+      tokens.set(this.accessToken, this.grantedScope);
     } else if (
       goodRequest &&
       grantType == "refresh_token" &&
@@ -253,9 +349,25 @@ class OAuth2Server {
     ) {
       // Client provided a valid refresh token.
       data.access_token = this.accessToken;
+      if (this.rotateTokens) {
+        if (/\d+$/.test(this.refreshToken)) {
+          this.refreshToken = this.refreshToken.replace(
+            /\d+$/,
+            suffix => parseInt(suffix, 10) + 1
+          );
+        } else {
+          this.refreshToken = this.refreshToken + "_1";
+        }
+        data.refresh_token = this.refreshToken;
+      }
+      tokens.set(this.accessToken, this.grantedScope);
     } else {
       response.setStatusLine("1.1", 400, "Bad Request");
       data.error = "invalid_grant";
+    }
+
+    if (typeof this.grantedScope == "string") {
+      data.scope = this.grantedScope;
     }
 
     if (data.access_token && this.expiry !== null) {

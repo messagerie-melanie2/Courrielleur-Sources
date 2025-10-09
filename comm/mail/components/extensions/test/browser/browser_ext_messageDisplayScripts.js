@@ -2,22 +2,26 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-let account, messages;
-let tabmail, about3Pane, messagePane;
+"use strict";
+
+let gAccount, gMessages;
+let gDefaultTabmail, gDefaultAbout3Pane, gDefaultMessagePane;
 
 add_setup(async () => {
-  account = createAccount();
-  let rootFolder = account.incomingServer.rootFolder;
-  rootFolder.createSubfolder("messageDisplayScripts", null);
-  let folder = rootFolder.getChildNamed("messageDisplayScripts");
-  createMessages(folder, 11);
-  messages = [...folder.messages];
+  gAccount = createAccount();
+  const rootFolder = gAccount.incomingServer.rootFolder;
+  const folder = await createSubfolder(rootFolder, "messageDisplayScripts");
+  await createMessages(folder, 11);
+  gMessages = [...folder.messages];
 
-  tabmail = document.getElementById("tabmail");
-  about3Pane = tabmail.currentTabInfo.chromeBrowser.contentWindow;
-  about3Pane.displayFolder(folder.URI);
-  messagePane =
-    about3Pane.messageBrowser.contentDocument.getElementById("messagepane");
+  gDefaultTabmail = document.getElementById("tabmail");
+  gDefaultAbout3Pane =
+    gDefaultTabmail.currentTabInfo.chromeBrowser.contentWindow;
+  gDefaultAbout3Pane.displayFolder(folder.URI);
+  gDefaultMessagePane =
+    gDefaultAbout3Pane.messageBrowser.contentDocument.getElementById(
+      "messagepane"
+    );
 });
 
 async function checkMessageBody(expected, message, browser) {
@@ -32,7 +36,7 @@ async function checkMessageBody(expected, message, browser) {
     expected.textContent = body + expected.textContent;
   }
   if (!browser) {
-    browser = messagePane;
+    browser = gDefaultMessagePane;
   }
 
   await checkContent(browser, expected);
@@ -40,10 +44,10 @@ async function checkMessageBody(expected, message, browser) {
 
 /** Tests browser.tabs.insertCSS and browser.tabs.removeCSS. */
 add_task(async function testInsertRemoveCSS() {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
-        let [tab] = await browser.tabs.query({ mailTab: true });
+        const [tab] = await browser.tabs.query({ mailTab: true });
         await window.sendMessage();
 
         await browser.tabs.insertCSS(tab.id, {
@@ -72,39 +76,138 @@ add_task(async function testInsertRemoveCSS() {
     },
   });
 
-  about3Pane.threadTree.selectedIndex = 0;
-  await awaitBrowserLoaded(messagePane);
+  gDefaultAbout3Pane.threadTree.selectedIndex = 0;
+  await awaitBrowserLoaded(gDefaultMessagePane);
 
   await extension.startup();
 
   await extension.awaitMessage();
-  await checkMessageBody({ backgroundColor: "rgba(0, 0, 0, 0)" }, messages[0]);
+  await checkMessageBody(
+    { backgroundColor: "rgba(0, 0, 0, 0)" },
+    gMessages.at(-1)
+  );
   extension.sendMessage();
 
   await extension.awaitMessage();
-  await checkMessageBody({ backgroundColor: "rgb(0, 255, 0)" }, messages[0]);
+  await checkMessageBody(
+    { backgroundColor: "rgb(0, 255, 0)" },
+    gMessages.at(-1)
+  );
   extension.sendMessage();
 
   await extension.awaitMessage();
-  await checkMessageBody({ backgroundColor: "rgba(0, 0, 0, 0)" }, messages[0]);
+  await checkMessageBody(
+    { backgroundColor: "rgba(0, 0, 0, 0)" },
+    gMessages.at(-1)
+  );
   extension.sendMessage();
 
   await extension.awaitMessage();
-  await checkMessageBody({ backgroundColor: "rgb(0, 128, 0)" }, messages[0]);
+  await checkMessageBody(
+    { backgroundColor: "rgb(0, 128, 0)" },
+    gMessages.at(-1)
+  );
   extension.sendMessage();
 
   await extension.awaitFinish("finished");
-  await checkMessageBody({ backgroundColor: "rgba(0, 0, 0, 0)" }, messages[0]);
+  await checkMessageBody(
+    { backgroundColor: "rgba(0, 0, 0, 0)" },
+    gMessages.at(-1)
+  );
+
+  await extension.unload();
+});
+
+/** Tests browser.scripting.insertCSS and browser.scripting.removeCSS. */
+add_task(async function testInsertRemoveCSSViaScriptingAPI() {
+  const extension = ExtensionTestUtils.loadExtension({
+    files: {
+      "background.js": async () => {
+        const [tab] = await browser.tabs.query({ mailTab: true });
+        await window.sendMessage();
+
+        await browser.scripting.insertCSS({
+          target: { tabId: tab.id },
+          css: "body { background-color: lime; }",
+        });
+        await window.sendMessage();
+
+        await browser.scripting.removeCSS({
+          target: { tabId: tab.id },
+          css: "body { background-color: lime; }",
+        });
+        await window.sendMessage();
+
+        await browser.scripting.insertCSS({
+          target: { tabId: tab.id },
+          files: ["test.css"],
+        });
+        await window.sendMessage();
+
+        await browser.scripting.removeCSS({
+          target: { tabId: tab.id },
+          files: ["test.css"],
+        });
+
+        browser.test.notifyPass("finished");
+      },
+      "test.css": "body { background-color: green; }",
+      "utils.js": await getUtilsJS(),
+    },
+    manifest: {
+      background: { scripts: ["utils.js", "background.js"] },
+      permissions: ["messagesModify", "scripting"],
+    },
+  });
+
+  gDefaultAbout3Pane.threadTree.selectedIndex = 2;
+  await awaitBrowserLoaded(gDefaultMessagePane);
+
+  await extension.startup();
+
+  await extension.awaitMessage();
+  await checkMessageBody(
+    { backgroundColor: "rgba(0, 0, 0, 0)" },
+    gMessages.at(-3)
+  );
+  extension.sendMessage();
+
+  await extension.awaitMessage();
+  await checkMessageBody(
+    { backgroundColor: "rgb(0, 255, 0)" },
+    gMessages.at(-3)
+  );
+  extension.sendMessage();
+
+  await extension.awaitMessage();
+  await checkMessageBody(
+    { backgroundColor: "rgba(0, 0, 0, 0)" },
+    gMessages.at(-3)
+  );
+  extension.sendMessage();
+
+  await extension.awaitMessage();
+  await checkMessageBody(
+    { backgroundColor: "rgb(0, 128, 0)" },
+    gMessages.at(-3)
+  );
+  extension.sendMessage();
+
+  await extension.awaitFinish("finished");
+  await checkMessageBody(
+    { backgroundColor: "rgba(0, 0, 0, 0)" },
+    gMessages.at(-3)
+  );
 
   await extension.unload();
 });
 
 /** Tests browser.tabs.insertCSS fails without the "messagesModify" permission. */
 add_task(async function testInsertRemoveCSSNoPermissions() {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
-        let [tab] = await browser.tabs.query({ mailTab: true });
+        const [tab] = await browser.tabs.query({ mailTab: true });
 
         await browser.test.assertRejects(
           browser.tabs.insertCSS(tab.id, {
@@ -140,8 +243,8 @@ add_task(async function testInsertRemoveCSSNoPermissions() {
     },
   });
 
-  about3Pane.threadTree.selectedIndex = 1;
-  await awaitBrowserLoaded(messagePane);
+  gDefaultAbout3Pane.threadTree.selectedIndex = 1;
+  await awaitBrowserLoaded(gDefaultMessagePane);
 
   await extension.startup();
 
@@ -151,7 +254,7 @@ add_task(async function testInsertRemoveCSSNoPermissions() {
       backgroundColor: "rgba(0, 0, 0, 0)",
       textContent: "",
     },
-    messages[1]
+    gMessages.at(-2)
   );
 
   await extension.unload();
@@ -159,10 +262,10 @@ add_task(async function testInsertRemoveCSSNoPermissions() {
 
 /** Tests browser.tabs.executeScript. */
 add_task(async function testExecuteScript() {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
-        let [tab] = await browser.tabs.query({ mailTab: true });
+        const [tab] = await browser.tabs.query({ mailTab: true });
         await window.sendMessage();
 
         await browser.tabs.executeScript(tab.id, {
@@ -186,17 +289,17 @@ add_task(async function testExecuteScript() {
     },
   });
 
-  about3Pane.threadTree.selectedIndex = 2;
-  await awaitBrowserLoaded(messagePane);
+  gDefaultAbout3Pane.threadTree.selectedIndex = 2;
+  await awaitBrowserLoaded(gDefaultMessagePane);
 
   await extension.startup();
 
   await extension.awaitMessage();
-  await checkMessageBody({ textContent: "" }, messages[2]);
+  await checkMessageBody({ textContent: "" }, gMessages.at(-3));
   extension.sendMessage();
 
   await extension.awaitMessage();
-  await checkMessageBody({ foo: "bar" }, messages[2]);
+  await checkMessageBody({ foo: "bar" }, gMessages.at(-3));
   extension.sendMessage();
 
   await extension.awaitFinish("finished");
@@ -205,7 +308,68 @@ add_task(async function testExecuteScript() {
       foo: "bar",
       textContent: "Hey look, the script ran!",
     },
-    messages[2]
+    gMessages.at(-3)
+  );
+
+  await extension.unload();
+});
+
+/** Tests browser.scripting.executeScript. */
+add_task(async function testExecuteScriptViaScriptingAPI() {
+  const extension = ExtensionTestUtils.loadExtension({
+    files: {
+      "background.js": async () => {
+        const [tab] = await browser.tabs.query({ mailTab: true });
+        await window.sendMessage();
+
+        await browser.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            document.body.setAttribute("foo", "bar");
+          },
+        });
+        await window.sendMessage();
+
+        await browser.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ["test.js"],
+        });
+
+        browser.test.notifyPass("finished");
+      },
+      "test.js": () => {
+        document.body.querySelector(".moz-text-flowed").textContent +=
+          "Hey look, the script ran!";
+      },
+      "utils.js": await getUtilsJS(),
+    },
+    manifest: {
+      manifest_version: 2,
+      background: { scripts: ["utils.js", "background.js"] },
+      permissions: ["messagesModify", "scripting"],
+    },
+  });
+
+  gDefaultAbout3Pane.threadTree.selectedIndex = 1;
+  await awaitBrowserLoaded(gDefaultMessagePane);
+
+  await extension.startup();
+
+  await extension.awaitMessage();
+  await checkMessageBody({ textContent: "" }, gMessages.at(-2));
+  extension.sendMessage();
+
+  await extension.awaitMessage();
+  await checkMessageBody({ foo: "bar" }, gMessages.at(-2));
+  extension.sendMessage();
+
+  await extension.awaitFinish("finished");
+  await checkMessageBody(
+    {
+      foo: "bar",
+      textContent: "Hey look, the script ran!",
+    },
+    gMessages.at(-2)
   );
 
   await extension.unload();
@@ -213,10 +377,10 @@ add_task(async function testExecuteScript() {
 
 /** Tests browser.tabs.executeScript fails without the "messagesModify" permission. */
 add_task(async function testExecuteScriptNoPermissions() {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
-        let [tab] = await browser.tabs.query({ mailTab: true });
+        const [tab] = await browser.tabs.query({ mailTab: true });
 
         await browser.test.assertRejects(
           browser.tabs.executeScript(tab.id, {
@@ -255,23 +419,25 @@ add_task(async function testExecuteScriptNoPermissions() {
     },
   });
 
-  about3Pane.threadTree.selectedIndex = 3;
-  await awaitBrowserLoaded(messagePane);
+  gDefaultAbout3Pane.threadTree.selectedIndex = 3;
+  await awaitBrowserLoaded(gDefaultMessagePane);
 
   await extension.startup();
 
   await extension.awaitFinish("finished");
-  await checkMessageBody({ foo: null, textContent: "" }, messages[3]);
+  await checkMessageBody({ foo: null, textContent: "" }, gMessages.at(-4));
 
   await extension.unload();
 });
 
-/** Tests the messenger alias is available. */
+/**
+ * Tests the messenger alias is available after browser.tabs.executeScript().
+ */
 add_task(async function testExecuteScriptAlias() {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
-        let [tab] = await browser.tabs.query({ mailTab: true });
+        const [tab] = await browser.tabs.query({ mailTab: true });
         await window.sendMessage();
 
         await browser.tabs.executeScript(tab.id, {
@@ -290,19 +456,70 @@ add_task(async function testExecuteScriptAlias() {
     },
   });
 
-  about3Pane.threadTree.selectedIndex = 4;
-  await awaitBrowserLoaded(messagePane);
+  gDefaultAbout3Pane.threadTree.selectedIndex = 4;
+  await awaitBrowserLoaded(gDefaultMessagePane);
 
   await extension.startup();
 
   await extension.awaitMessage();
-  await checkMessageBody({ textContent: "" }, messages[4]);
+  await checkMessageBody({ textContent: "" }, gMessages.at(-5));
   extension.sendMessage();
 
   await extension.awaitFinish("finished");
   await checkMessageBody(
     { textContent: "message_display_scripts@mochitest" },
-    messages[4]
+    gMessages.at(-5)
+  );
+
+  await extension.unload();
+});
+
+/**
+ * Tests messenger alias is available after browser.scripting.executeScript().
+ */
+add_task(async function testExecuteScriptAliasViaScriptingAPI() {
+  const extension = ExtensionTestUtils.loadExtension({
+    files: {
+      "background.js": async () => {
+        const [tab] = await browser.tabs.query({ type: ["mail"] });
+        await window.sendMessage();
+
+        await browser.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            // eslint-disable-next-line no-undef
+            const id = messenger.runtime.getManifest().applications.gecko.id;
+            document.body.querySelector(".moz-text-flowed").textContent += id;
+          },
+        });
+
+        browser.test.notifyPass("finished");
+      },
+      "utils.js": await getUtilsJS(),
+    },
+    manifest: {
+      manifest_version: 2,
+      browser_specific_settings: {
+        gecko: { id: "message_display_scripts@mochitest" },
+      },
+      background: { scripts: ["utils.js", "background.js"] },
+      permissions: ["messagesModify", "scripting"],
+    },
+  });
+
+  gDefaultAbout3Pane.threadTree.selectedIndex = 3;
+  await awaitBrowserLoaded(gDefaultMessagePane);
+
+  await extension.startup();
+
+  await extension.awaitMessage();
+  await checkMessageBody({ textContent: "" }, gMessages.at(-4));
+  extension.sendMessage();
+
+  await extension.awaitFinish("finished");
+  await checkMessageBody(
+    { textContent: "message_display_scripts@mochitest" },
+    gMessages.at(-4)
   );
 
   await extension.unload();
@@ -314,7 +531,7 @@ add_task(async function testExecuteScriptAlias() {
  * on the returned object.
  */
 add_task(async function testRegister() {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
         // Keep track of registered scrips being executed and ready.
@@ -324,7 +541,7 @@ add_task(async function testRegister() {
           }
         });
 
-        let registeredScript = await browser.messageDisplayScripts.register({
+        const registeredScript = await browser.messageDisplayScripts.register({
           css: [{ code: "body { color: white }" }, { file: "test.css" }],
           js: [
             { code: `document.body.setAttribute("foo", "bar");` },
@@ -374,8 +591,8 @@ add_task(async function testRegister() {
     },
   });
 
-  about3Pane.threadTree.selectedIndex = 5;
-  await awaitBrowserLoaded(messagePane);
+  gDefaultAbout3Pane.threadTree.selectedIndex = 5;
+  await awaitBrowserLoaded(gDefaultMessagePane);
 
   extension.startup();
   await extension.awaitMessage("Ready");
@@ -387,13 +604,13 @@ add_task(async function testRegister() {
       backgroundColor: "rgba(0, 0, 0, 0)",
       textContent: "",
     },
-    messages[5]
+    gMessages.at(-6)
   );
 
   // Load a new message and check it is modified.
   let loadPromise = extension.awaitMessage("ScriptLoaded");
-  about3Pane.threadTree.selectedIndex = 6;
-  let tabId = await loadPromise;
+  gDefaultAbout3Pane.threadTree.selectedIndex = 6;
+  const tabId = await loadPromise;
 
   await checkMessageBody(
     {
@@ -402,7 +619,7 @@ add_task(async function testRegister() {
       foo: "bar",
       textContent: "Hey look, the script ran!",
     },
-    messages[6]
+    gMessages.at(-7)
   );
   // Check runtime messaging.
   let testDonePromise = extension.awaitMessage("RuntimeMessageTestDone");
@@ -411,9 +628,9 @@ add_task(async function testRegister() {
 
   // Open the message in a new tab.
   loadPromise = extension.awaitMessage("ScriptLoaded");
-  let messageTab = await openMessageInTab(messages[6]);
-  let messageTabId = await loadPromise;
-  Assert.equal(tabmail.tabInfo.length, 2);
+  const messageTab = await openMessageInTab(gMessages.at(-7));
+  const messageTabId = await loadPromise;
+  Assert.equal(gDefaultTabmail.tabInfo.length, 2);
 
   await checkMessageBody(
     {
@@ -422,7 +639,7 @@ add_task(async function testRegister() {
       foo: "bar",
       textContent: "Hey look, the script ran!",
     },
-    messages[6],
+    gMessages.at(-7),
     messageTab.browser
   );
   // Check runtime messaging.
@@ -431,7 +648,7 @@ add_task(async function testRegister() {
   await testDonePromise;
 
   // Open a content tab. The CSS and script shouldn't apply.
-  let contentTab = window.openContentTab("http://mochi.test:8888/");
+  const contentTab = window.openContentTab("http://mochi.test:8888/");
   // Let's wait a while and see if anything happens:
   // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
   await new Promise(resolve => setTimeout(resolve, 1000));
@@ -446,8 +663,8 @@ add_task(async function testRegister() {
   );
 
   // Closing this tab should bring us back to the message in a tab.
-  tabmail.closeTab(contentTab);
-  Assert.equal(tabmail.currentTabInfo, messageTab);
+  gDefaultTabmail.closeTab(contentTab);
+  Assert.equal(gDefaultTabmail.currentTabInfo, messageTab);
   await checkMessageBody(
     {
       backgroundColor: "rgb(0, 128, 0)",
@@ -455,7 +672,7 @@ add_task(async function testRegister() {
       foo: "bar",
       textContent: "Hey look, the script ran!",
     },
-    messages[6],
+    gMessages.at(-7),
     messageTab.browser
   );
   // Check runtime messaging.
@@ -465,9 +682,9 @@ add_task(async function testRegister() {
 
   // Open the message in a new window.
   loadPromise = extension.awaitMessage("ScriptLoaded");
-  let newWindow = await openMessageInWindow(messages[7]);
-  let newWindowMessagePane = newWindow.getBrowser();
-  let windowTabId = await loadPromise;
+  const newWindow = await openMessageInWindow(gMessages.at(-8));
+  const newWindowMessagePane = newWindow.getBrowser();
+  const windowTabId = await loadPromise;
 
   await checkMessageBody(
     {
@@ -476,7 +693,7 @@ add_task(async function testRegister() {
       foo: "bar",
       textContent: "Hey look, the script ran!",
     },
-    messages[7],
+    gMessages.at(-8),
     newWindowMessagePane
   );
   // Check runtime messaging.
@@ -497,12 +714,12 @@ add_task(async function testRegister() {
       foo: "bar",
       textContent: "Hey look, the script ran!",
     },
-    messages[6],
+    gMessages.at(-7),
     messageTab.browser
   );
 
   // Close the new tab.
-  tabmail.closeTab(messageTab);
+  gDefaultTabmail.closeTab(messageTab);
 
   await checkMessageBody(
     {
@@ -511,7 +728,7 @@ add_task(async function testRegister() {
       foo: "bar",
       textContent: "Hey look, the script ran!",
     },
-    messages[6]
+    gMessages.at(-7)
   );
 
   // Check the CSS is unloaded from the message in a window.
@@ -522,7 +739,7 @@ add_task(async function testRegister() {
       foo: "bar",
       textContent: "Hey look, the script ran!",
     },
-    messages[7],
+    gMessages.at(-8),
     newWindowMessagePane
   );
 
@@ -531,7 +748,7 @@ add_task(async function testRegister() {
 
 /** Tests content_scripts in the manifest do not affect message display. */
 async function subtestContentScriptManifest(message, ...permissions) {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "test.css": "body { background-color: red; }",
       "test.js": () => {
@@ -569,19 +786,19 @@ async function subtestContentScriptManifest(message, ...permissions) {
 }
 
 add_task(async function testContentScriptManifestNoPermission() {
-  about3Pane.threadTree.selectedIndex = 7;
-  await awaitBrowserLoaded(messagePane);
-  await subtestContentScriptManifest(messages[7]);
+  gDefaultAbout3Pane.threadTree.selectedIndex = 7;
+  await awaitBrowserLoaded(gDefaultMessagePane);
+  await subtestContentScriptManifest(gMessages.at(-8));
 });
 add_task(async function testContentScriptManifest() {
-  about3Pane.threadTree.selectedIndex = 8;
-  await awaitBrowserLoaded(messagePane);
-  await subtestContentScriptManifest(messages[8], "messagesModify");
+  gDefaultAbout3Pane.threadTree.selectedIndex = 8;
+  await awaitBrowserLoaded(gDefaultMessagePane);
+  await subtestContentScriptManifest(gMessages.at(-9), "messagesModify");
 });
 
 /** Tests registered content scripts do not affect message display. */
 async function subtestContentScriptRegister(message, ...permissions) {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
         await browser.contentScripts.register({
@@ -621,16 +838,242 @@ async function subtestContentScriptRegister(message, ...permissions) {
 }
 
 add_task(async function testContentScriptRegisterNoPermission() {
-  about3Pane.threadTree.selectedIndex = 9;
-  await awaitBrowserLoaded(messagePane);
-  await subtestContentScriptRegister(messages[9], "<all_urls>");
+  gDefaultAbout3Pane.threadTree.selectedIndex = 9;
+  await awaitBrowserLoaded(gDefaultMessagePane);
+  await subtestContentScriptRegister(gMessages.at(-10), "<all_urls>");
 });
 add_task(async function testContentScriptRegister() {
-  about3Pane.threadTree.selectedIndex = 10;
-  await awaitBrowserLoaded(messagePane);
+  gDefaultAbout3Pane.threadTree.selectedIndex = 10;
+  await awaitBrowserLoaded(gDefaultMessagePane);
   await subtestContentScriptRegister(
-    messages[10],
+    gMessages.at(-11),
     "<all_urls>",
     "messagesModify"
   );
+});
+
+/**
+ * Tests if scripts are correctly injected according to their runAt option.
+ */
+add_task(async function testRunAt() {
+  const extension = ExtensionTestUtils.loadExtension({
+    files: {
+      "background.js": async () => {
+        // Report script results.
+        browser.runtime.onMessage.addListener((message, sender) => {
+          if (message?.runAt) {
+            window.sendMessage(`ScriptLoaded:${message.runAt}`, {
+              senderTabId: sender.tab.id,
+              ...message,
+            });
+          }
+        });
+
+        const registeredScripts = new Set();
+        registeredScripts.add(
+          await browser.messageDisplayScripts.register({
+            runAt: "document_start",
+            js: [{ file: "start.js" }],
+          })
+        );
+
+        registeredScripts.add(
+          await browser.messageDisplayScripts.register({
+            runAt: "document_end",
+            js: [{ file: "end.js" }],
+          })
+        );
+
+        registeredScripts.add(
+          await browser.messageDisplayScripts.register({
+            runAt: "document_idle",
+            js: [{ file: "idle.js" }],
+          })
+        );
+
+        browser.test.onMessage.addListener(async message => {
+          switch (message) {
+            case "Unregister":
+              for (const registeredScript of registeredScripts) {
+                await registeredScript.unregister();
+              }
+              browser.test.notifyPass("finished");
+              break;
+          }
+        });
+
+        browser.test.sendMessage("Ready");
+      },
+      "start.js": () => {
+        browser.runtime.sendMessage({
+          runAt: "document_start",
+          readyState: document?.readyState,
+          document: !!document,
+          body: !!document?.body,
+          textContent:
+            document.querySelector(".moz-text-flowed")?.textContent ?? "",
+        });
+      },
+      "end.js": () => {
+        browser.runtime.sendMessage({
+          runAt: "document_end",
+          readyState: document?.readyState,
+          document: !!document,
+          body: !!document?.body,
+          textContent:
+            document.querySelector(".moz-text-flowed")?.textContent ?? "",
+        });
+      },
+      "idle.js": () => {
+        browser.runtime.sendMessage({
+          runAt: "document_idle",
+          readyState: document?.readyState,
+          document: !!document,
+          body: !!document?.body,
+          textContent:
+            document.querySelector(".moz-text-flowed")?.textContent ?? "",
+        });
+      },
+      "utils.js": await getUtilsJS(),
+    },
+    manifest: {
+      background: { scripts: ["utils.js", "background.js"] },
+      permissions: ["messagesModify", "<all_urls>"],
+    },
+  });
+
+  gDefaultAbout3Pane.threadTree.selectedIndex = 2;
+  await awaitBrowserLoaded(gDefaultMessagePane);
+
+  extension.startup();
+  await extension.awaitMessage("Ready");
+
+  function verifyResult(result, expected_individual) {
+    const expected_standard = [
+      {
+        runAt: "document_start",
+        readyState: "loading",
+        document: true,
+        body: false,
+      },
+      {
+        runAt: "document_end",
+        readyState: "interactive",
+        document: true,
+        body: true,
+      },
+      {
+        runAt: "document_idle",
+        readyState: "complete",
+        document: true,
+        body: true,
+      },
+    ];
+    for (let i = 0; i < result.length; i++) {
+      Assert.equal(
+        expected_standard[i].runAt,
+        result[i].runAt,
+        `The 'runAt' value for state #${i} should be correct`
+      );
+      Assert.equal(
+        expected_standard[i].readyState,
+        result[i].readyState,
+        `The 'readyState' value at state #${i} should be correct`
+      );
+      Assert.equal(
+        expected_standard[i].document,
+        result[i].document,
+        `The document element at state #${i} ${
+          expected_standard[i].document ? "should" : "should not"
+        } exist`
+      );
+      Assert.equal(
+        expected_standard[i].body,
+        result[i].body,
+        `The body element at state #${i} ${
+          expected_standard[i].body ? "should" : "should not"
+        } exist`
+      );
+      Assert.equal(
+        expected_individual[i].textContent.trim(),
+        result[i].textContent.trim(),
+        `The content at state #${i} should be correct`
+      );
+    }
+  }
+
+  // Select a new message.
+  const firstLoadPromise = Promise.all([
+    extension.awaitMessage("ScriptLoaded:document_start"),
+    extension.awaitMessage("ScriptLoaded:document_end"),
+    extension.awaitMessage("ScriptLoaded:document_idle"),
+  ]);
+  gDefaultAbout3Pane.threadTree.selectedIndex = 3;
+  verifyResult(await firstLoadPromise, [
+    { textContent: "" },
+    { textContent: "Hello Pete Price!" },
+    { textContent: "Hello Pete Price!" },
+  ]);
+
+  // Select a different message.
+  const secondLoadPromise = Promise.all([
+    extension.awaitMessage("ScriptLoaded:document_start"),
+    extension.awaitMessage("ScriptLoaded:document_end"),
+    extension.awaitMessage("ScriptLoaded:document_idle"),
+  ]);
+  gDefaultAbout3Pane.threadTree.selectedIndex = 4;
+  verifyResult(await secondLoadPromise, [
+    { textContent: "" },
+    { textContent: "Hello Neil Nagel!" },
+    { textContent: "Hello Neil Nagel!" },
+  ]);
+
+  // Open the message in a new tab.
+  const thirdLoadPromise = Promise.all([
+    extension.awaitMessage("ScriptLoaded:document_start"),
+    extension.awaitMessage("ScriptLoaded:document_end"),
+    extension.awaitMessage("ScriptLoaded:document_idle"),
+  ]);
+  const messageTab = await openMessageInTab(gMessages.at(-6));
+  verifyResult(await thirdLoadPromise, [
+    { textContent: "" },
+    { textContent: "Hello Lilia Lowe!" },
+    { textContent: "Hello Lilia Lowe!" },
+  ]);
+  Assert.equal(gDefaultTabmail.tabInfo.length, 2);
+
+  // Open a content tab. The message display scripts should not be injected.
+  // If they DO get injected, we will end up with 3 additional messages from the
+  // extension and the test will fail.
+  const contentTab = window.openContentTab("http://mochi.test:8888/");
+  Assert.equal(gDefaultTabmail.tabInfo.length, 3);
+  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+  await new Promise(resolve => setTimeout(resolve, 1000));
+
+  // Closing this tab should bring us back to the message in a tab.
+  gDefaultTabmail.closeTab(contentTab);
+  Assert.equal(gDefaultTabmail.tabInfo.length, 2);
+  Assert.equal(gDefaultTabmail.currentTabInfo, messageTab);
+
+  // Open the message in a new window.
+  const fourthLoadPromise = Promise.all([
+    extension.awaitMessage("ScriptLoaded:document_start"),
+    extension.awaitMessage("ScriptLoaded:document_end"),
+    extension.awaitMessage("ScriptLoaded:document_idle"),
+  ]);
+  const newWindow = await openMessageInWindow(gMessages.at(-7));
+  verifyResult(await fourthLoadPromise, [
+    { textContent: "" },
+    { textContent: "Hello Johnny Jones!" },
+    { textContent: "Hello Johnny Jones!" },
+  ]);
+
+  // Unregister.
+  extension.sendMessage("Unregister");
+  await extension.awaitFinish("finished");
+  await extension.unload();
+
+  // Close the new tab.
+  gDefaultTabmail.closeTab(messageTab);
+  await BrowserTestUtils.closeWindow(newWindow);
 });

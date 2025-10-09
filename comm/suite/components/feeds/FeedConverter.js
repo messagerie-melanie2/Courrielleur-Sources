@@ -3,7 +3,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 var {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 const TYPE_MAYBE_FEED = "application/vnd.mozilla.maybe.feed";
@@ -108,7 +107,7 @@ FeedConverter.prototype = {
   /**
    * See nsISupports.idl
    */
-  QueryInterface: XPCOMUtils.generateQI(
+  QueryInterface: ChromeUtils.generateQI(
     [Ci.nsIFeedResultListener,
      Ci.nsIStreamConverter,
      Ci.nsIStreamListener,
@@ -451,7 +450,7 @@ FeedResultService.prototype = {
       delete this._results[uri.spec];
   },
 
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIFeedResultService]),
+  QueryInterface: ChromeUtils.generateQI([Ci.nsIFeedResultService]),
   classID: Components.ID("{e5b05e9d-f037-48e4-b9a4-b99476582927}")
 };
 

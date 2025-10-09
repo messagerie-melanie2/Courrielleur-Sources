@@ -3,20 +3,22 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 ChromeUtils.defineESModuleGetters(this, {
-  PromiseUtils: "resource://gre/modules/PromiseUtils.sys.mjs",
+  MailE10SUtils: "resource:///modules/MailE10SUtils.sys.mjs",
 });
-ChromeUtils.defineModuleGetter(
-  this,
-  "MailE10SUtils",
-  "resource:///modules/MailE10SUtils.jsm"
-);
 
-var { ExtensionError } = ExtensionUtils;
+var { getMessageManagerGroup } = ChromeUtils.importESModule(
+  "resource:///modules/ExtensionUtilities.sys.mjs"
+);
+var { getClonedPrincipalWithProtocolPermission, openLinkExternally } =
+  ChromeUtils.importESModule("resource:///modules/LinkHelper.sys.mjs");
+var { openURI } = ChromeUtils.importESModule(
+  "resource:///modules/MessengerContentHandler.sys.mjs"
+);
 
 /**
  * A listener that allows waiting until tabs are fully loaded, e.g. off of about:blank.
  */
-let tabListener = {
+const tabListener = {
   tabReadyInitialized: false,
   tabReadyPromises: new WeakMap(),
   initializingTabs: new WeakSet(),
@@ -37,21 +39,20 @@ let tabListener = {
    *
    * @param {Element} browser - The browser element that caused the change
    * @param {nsIWebProgress} webProgress - The web progress for the location change
-   * @param {nsIRequest} request - The xpcom request for this change
-   * @param {nsIURI} locationURI - The target uri
-   * @param {Integer} flags - The web progress flags for this change
    */
-  onLocationChange(browser, webProgress, request, locationURI, flags) {
+  onLocationChange(browser, webProgress) {
     if (webProgress && webProgress.isTopLevel) {
-      let window = browser.ownerGlobal.top;
-      let tabmail = window.document.getElementById("tabmail");
-      let nativeTabInfo = tabmail ? tabmail.getTabForBrowser(browser) : window;
+      const window = browser.ownerGlobal.top;
+      const tabmail = window.document.getElementById("tabmail");
+      const nativeTabInfo = tabmail
+        ? tabmail.getTabForBrowser(browser)
+        : window;
 
       // Now we are certain that the first page in the tab was loaded.
       this.initializingTabs.delete(nativeTabInfo);
 
       // browser.innerWindowID is now set, resolve the promises if any.
-      let deferred = this.tabReadyPromises.get(nativeTabInfo);
+      const deferred = this.tabReadyPromises.get(nativeTabInfo);
       if (deferred) {
         deferred.resolve(nativeTabInfo);
         this.tabReadyPromises.delete(nativeTabInfo);
@@ -68,8 +69,8 @@ let tabListener = {
   awaitTabReady(nativeTabInfo) {
     let deferred = this.tabReadyPromises.get(nativeTabInfo);
     if (!deferred) {
-      deferred = PromiseUtils.defer();
-      let browser = getTabBrowser(nativeTabInfo);
+      deferred = Promise.withResolvers();
+      const browser = getTabBrowser(nativeTabInfo);
       if (
         !this.initializingTabs.has(nativeTabInfo) &&
         (browser.innerWindowID ||
@@ -87,13 +88,13 @@ let tabListener = {
   },
 };
 
-let hasWebHandlerApp = protocol => {
-  let protoInfo = Cc["@mozilla.org/uriloader/external-protocol-service;1"]
+const hasWebHandlerApp = protocol => {
+  const protoInfo = Cc["@mozilla.org/uriloader/external-protocol-service;1"]
     .getService(Ci.nsIExternalProtocolService)
     .getProtocolHandlerInfo(protocol);
-  let appHandlers = protoInfo.possibleApplicationHandlers;
+  const appHandlers = protoInfo.possibleApplicationHandlers;
   for (let i = 0; i < appHandlers.length; i++) {
-    let handler = appHandlers.queryElementAt(i, Ci.nsISupports);
+    const handler = appHandlers.queryElementAt(i, Ci.nsISupports);
     if (handler instanceof Ci.nsIWebHandlerApp) {
       return true;
     }
@@ -111,11 +112,11 @@ this.tabs = class extends ExtensionAPIPersistent {
     if (isAppShutdown) {
       return;
     }
-    for (let window of Services.wm.getEnumerator("mail:3pane")) {
-      let tabmail = window.document.getElementById("tabmail");
+    for (const window of Services.wm.getEnumerator("mail:3pane")) {
+      const tabmail = window.document.getElementById("tabmail");
       for (let i = tabmail.tabInfo.length; i > 0; i--) {
-        let nativeTabInfo = tabmail.tabInfo[i - 1];
-        let uri = nativeTabInfo.browser?.browsingContext.currentURI;
+        const nativeTabInfo = tabmail.tabInfo[i - 1];
+        const uri = nativeTabInfo.browser?.browsingContext.currentURI;
         if (
           uri &&
           uri.scheme == "moz-extension" &&
@@ -128,10 +129,10 @@ this.tabs = class extends ExtensionAPIPersistent {
   }
 
   tabEventRegistrar({ tabEvent, listener }) {
-    let { extension } = this;
-    let { tabManager } = extension;
+    const { extension } = this;
+    const { tabManager } = extension;
     return ({ context, fire }) => {
-      let listener2 = async (eventName, event, ...args) => {
+      const listener2 = async (eventName, event, ...args) => {
         if (!tabManager.canAccessTab(event.nativeTab)) {
           return;
         }
@@ -160,24 +161,24 @@ this.tabs = class extends ExtensionAPIPersistent {
 
     onActivated: this.tabEventRegistrar({
       tabEvent: "tab-activated",
-      listener: ({ context, fire, event }) => {
-        let { tabId, windowId, previousTabId } = event;
+      listener: ({ fire, event }) => {
+        const { tabId, windowId, previousTabId } = event;
         fire.async({ tabId, windowId, previousTabId });
       },
     }),
 
     onCreated: this.tabEventRegistrar({
       tabEvent: "tab-created",
-      listener: ({ context, fire, event }) => {
-        let { extension } = this;
-        let { tabManager } = extension;
+      listener: ({ fire, event }) => {
+        const { extension } = this;
+        const { tabManager } = extension;
         fire.async(tabManager.convert(event.nativeTabInfo, event.currentTab));
       },
     }),
 
     onAttached: this.tabEventRegistrar({
       tabEvent: "tab-attached",
-      listener: ({ context, fire, event }) => {
+      listener: ({ fire, event }) => {
         fire.async(event.tabId, {
           newWindowId: event.newWindowId,
           newPosition: event.newPosition,
@@ -187,7 +188,7 @@ this.tabs = class extends ExtensionAPIPersistent {
 
     onDetached: this.tabEventRegistrar({
       tabEvent: "tab-detached",
-      listener: ({ context, fire, event }) => {
+      listener: ({ fire, event }) => {
         fire.async(event.tabId, {
           oldWindowId: event.oldWindowId,
           oldPosition: event.oldPosition,
@@ -197,7 +198,7 @@ this.tabs = class extends ExtensionAPIPersistent {
 
     onRemoved: this.tabEventRegistrar({
       tabEvent: "tab-removed",
-      listener: ({ context, fire, event }) => {
+      listener: ({ fire, event }) => {
         fire.async(event.tabId, {
           windowId: event.windowId,
           isWindowClosing: event.isWindowClosing,
@@ -205,12 +206,12 @@ this.tabs = class extends ExtensionAPIPersistent {
       },
     }),
 
-    onMoved({ context, fire }) {
-      let { tabManager } = this.extension;
-      let moveListener = async event => {
-        let nativeTab = event.target;
-        let nativeTabInfo = event.detail.tabInfo;
-        let tabmail = nativeTab.ownerDocument.getElementById("tabmail");
+    onMoved({ fire }) {
+      const { tabManager } = this.extension;
+      const moveListener = async event => {
+        const nativeTab = event.target;
+        const nativeTabInfo = event.detail.tabInfo;
+        const tabmail = nativeTab.ownerDocument.getElementById("tabmail");
         if (tabManager.canAccessTab(nativeTab)) {
           if (fire.wakeup) {
             await fire.wakeup();
@@ -228,16 +229,15 @@ this.tabs = class extends ExtensionAPIPersistent {
         unregister() {
           windowTracker.removeListener("TabMove", moveListener);
         },
-        convert(newFire, extContext) {
+        convert(newFire) {
           fire = newFire;
-          context = extContext;
         },
       };
     },
 
-    onUpdated({ context, fire }, [filterProps]) {
-      let filter = { ...filterProps };
-      let scheduledEvents = [];
+    onUpdated({ fire }, [filterProps]) {
+      const filter = { ...filterProps };
+      const scheduledEvents = [];
 
       if (
         filter &&
@@ -266,9 +266,9 @@ this.tabs = class extends ExtensionAPIPersistent {
       }
 
       function sanitize(tab, changeInfo) {
-        let result = {};
+        const result = {};
         let nonempty = false;
-        for (let prop in changeInfo) {
+        for (const prop in changeInfo) {
           // In practice, changeInfo contains at most one property from
           // restricted. Therefore it is not necessary to cache the value
           // of tab.hasTabPermission outside the loop.
@@ -291,7 +291,7 @@ this.tabs = class extends ExtensionAPIPersistent {
         return windowId;
       }
 
-      function matchFilters(tab, changed) {
+      function matchFilters(tab) {
         if (!filterProps) {
           return true;
         }
@@ -311,14 +311,14 @@ this.tabs = class extends ExtensionAPIPersistent {
         return true;
       }
 
-      let fireForTab = async (tab, changed) => {
+      const fireForTab = async (tab, changed) => {
         if (!matchFilters(tab, changed)) {
           return;
         }
 
-        let changeInfo = sanitize(tab, changed);
+        const changeInfo = sanitize(tab, changed);
         if (changeInfo) {
-          let tabInfo = tab.convert();
+          const tabInfo = tab.convert();
           // TODO: Consider following M-C
           // Use tabTracker.maybeWaitForTabOpen(nativeTab).then(() => {}).
 
@@ -332,7 +332,7 @@ this.tabs = class extends ExtensionAPIPersistent {
         }
       };
 
-      let listener = event => {
+      const listener = event => {
         /* TODO: Consider following M-C
         // Ignore any events prior to TabOpen and events that are triggered while
         // tabs are swapped between windows.
@@ -344,11 +344,11 @@ this.tabs = class extends ExtensionAPIPersistent {
         }
         */
 
-        let changeInfo = {};
-        let { extension } = this;
-        let { tabManager } = extension;
-        let tab = tabManager.getWrapper(event.detail.tabInfo);
-        let changed = event.detail.changed;
+        const changeInfo = {};
+        const { extension } = this;
+        const { tabManager } = extension;
+        const tab = tabManager.getWrapper(event.detail.tabInfo);
+        const changed = event.detail.changed;
         if (
           changed.includes("favIconUrl") &&
           filter.properties.has("favIconUrl")
@@ -362,12 +362,12 @@ this.tabs = class extends ExtensionAPIPersistent {
         fireForTab(tab, changeInfo);
       };
 
-      let statusListener = ({ browser, status, url }) => {
-        let { extension } = this;
-        let { tabManager } = extension;
-        let tabId = tabTracker.getBrowserTabId(browser);
+      const statusListener = ({ browser, status, url }) => {
+        const { extension } = this;
+        const { tabManager } = extension;
+        const tabId = tabTracker.getBrowserTabId(browser);
         if (tabId != -1) {
-          let changed = { status };
+          const changed = { status };
           if (url) {
             changed.url = url;
           }
@@ -392,17 +392,16 @@ this.tabs = class extends ExtensionAPIPersistent {
             windowTracker.removeListener("status", statusListener);
           }
         },
-        convert(newFire, extContext) {
+        convert(newFire) {
           fire = newFire;
-          context = extContext;
         },
       };
     },
   };
 
   getAPI(context) {
-    let { extension } = context;
-    let { tabManager } = extension;
+    const { extension } = context;
+    const { tabManager } = extension;
 
     /**
      * Gets the tab for the given tab id, or the active tab if the id is null.
@@ -488,17 +487,34 @@ this.tabs = class extends ExtensionAPIPersistent {
         }).api(),
 
         async create(createProperties) {
-          let window = await getNormalWindowReady(
+          const window = await getNormalWindowReady(
             context,
             createProperties.windowId
           );
-          let tabmail = window.document.getElementById("tabmail");
+          const tabmail = window.document.getElementById("tabmail");
+
           let url;
           if (createProperties.url) {
             url = context.uri.resolve(createProperties.url);
+            try {
+              if (!context.checkLoadURL(url, { dontReportErrors: true })) {
+                throw new Error(
+                  `Loading URL not allowed: ${createProperties.url}`
+                );
+              }
 
-            if (!context.checkLoadURL(url, { dontReportErrors: true })) {
-              return Promise.reject({ message: `Illegal URL: ${url}` });
+              if (/^mailto:/i.test(url)) {
+                // Be compatible with Firefox and allow tabs.create({url:"mailto:*"})
+                // to create an empty window and open a compose window. This will
+                // throw, if the url is malformed.
+                // All other non-standard protocols will be handled automatically.
+                openURI(Services.io.newURI(url));
+                url = "about:blank";
+              }
+            } catch (ex) {
+              return Promise.reject({
+                message: `Loading URL not allowed: ${createProperties.url}`,
+              });
             }
           }
 
@@ -510,18 +526,31 @@ this.tabs = class extends ExtensionAPIPersistent {
               createProperties.cookieStoreId
             );
           }
+          const triggeringPrincipal =
+            url &&
+            getClonedPrincipalWithProtocolPermission(
+              context.principal,
+              Services.io.newURI(url),
+              {
+                userContextId,
+              }
+            );
 
-          let currentTab = tabmail.selectedTab;
-          let active = createProperties.active ?? true;
+          const linkHandler = getMessageManagerGroup(
+            createProperties?.linkHandler
+          );
+
+          const currentTab = tabmail.selectedTab;
+          const active = createProperties.active ?? true;
           tabListener.initTabReady();
 
-          let nativeTabInfo = tabmail.openTab("contentTab", {
+          const nativeTabInfo = tabmail.openTab("contentTab", {
             url: url || "about:blank",
-            linkHandler: "single-site",
+            linkHandler,
             background: !active,
             initialBrowsingContextGroupId:
               context.extension.policy.browsingContextGroupId,
-            principal: context.extension.principal,
+            triggeringPrincipal,
             duplicate: true,
             userContextId,
           });
@@ -531,7 +560,7 @@ this.tabs = class extends ExtensionAPIPersistent {
             tabmail.updateCurrentTab();
           }
 
-          if (createProperties.url && createProperties.url !== "about:blank") {
+          if (url && url !== "about:blank") {
             // Mark tabs as initializing, so operations like `executeScript` wait until the
             // requested URL is loaded.
             tabListener.initializingTabs.add(nativeTabInfo);
@@ -544,42 +573,45 @@ this.tabs = class extends ExtensionAPIPersistent {
             tabs = [tabs];
           }
 
-          for (let tabId of tabs) {
-            let nativeTabInfo = tabTracker.getTab(tabId);
+          for (const tabId of tabs) {
+            const nativeTabInfo = tabTracker.getTab(tabId);
             if (nativeTabInfo instanceof Ci.nsIDOMWindow) {
               nativeTabInfo.close();
               continue;
             }
-            let tabmail = getTabTabmail(nativeTabInfo);
+            const tabmail = getTabTabmail(nativeTabInfo);
             tabmail.closeTab(nativeTabInfo);
           }
         },
 
         async update(tabId, updateProperties) {
-          let nativeTabInfo = getTabOrActive(tabId);
-          let tab = tabManager.getWrapper(nativeTabInfo);
-          let tabmail = getTabTabmail(nativeTabInfo);
+          const nativeTabInfo = getTabOrActive(tabId);
+          const tab = tabManager.getWrapper(nativeTabInfo);
+          const tabmail = getTabTabmail(nativeTabInfo);
 
           if (updateProperties.url) {
-            let url = context.uri.resolve(updateProperties.url);
-            if (!context.checkLoadURL(url, { dontReportErrors: true })) {
-              return Promise.reject({ message: `Illegal URL: ${url}` });
-            }
-
             let uri;
+            const url = context.uri.resolve(updateProperties.url);
             try {
+              if (!context.checkLoadURL(url, { dontReportErrors: true })) {
+                throw new Error(
+                  `Loading URL not allowed: ${updateProperties.url}`
+                );
+              }
               uri = Services.io.newURI(url);
             } catch (e) {
-              throw new ExtensionError(`Url "${url}" seems to be malformed.`);
+              return Promise.reject({
+                message: `Loading URL not allowed: ${updateProperties.url}`,
+              });
             }
 
             // http(s): urls, moz-extension: urls and self-registered protocol
             // handlers are actually loaded into the tab (and change its url).
             // All other urls are forwarded to the external protocol handler and
             // do not change the current tab.
-            let isContentUrl =
+            const isContentUrl =
               /((^blob:)|(^https:)|(^http:)|(^moz-extension:))/i.test(url);
-            let isWebExtProtocolUrl =
+            const isWebExtProtocolUrl =
               /((^ext\+[a-z]+:)|(^web\+[a-z]+:))/i.test(url) &&
               hasWebHandlerApp(uri.scheme);
 
@@ -592,11 +624,14 @@ this.tabs = class extends ExtensionAPIPersistent {
                 );
               }
 
-              let options = {
+              const options = {
                 flags: updateProperties.loadReplace
                   ? Ci.nsIWebNavigation.LOAD_FLAGS_REPLACE_HISTORY
                   : Ci.nsIWebNavigation.LOAD_FLAGS_NONE,
-                triggeringPrincipal: context.principal,
+                triggeringPrincipal: getClonedPrincipalWithProtocolPermission(
+                  context.principal,
+                  uri
+                ),
               };
 
               if (tab.type == "mail") {
@@ -606,18 +641,18 @@ this.tabs = class extends ExtensionAPIPersistent {
                   options
                 );
               } else {
-                let browser = getTabBrowser(nativeTabInfo);
+                const browser = getTabBrowser(nativeTabInfo);
                 if (!browser) {
                   throw new ExtensionError("Cannot set a URL for this tab.");
                 }
                 MailE10SUtils.loadURI(browser, url, options);
               }
+            } else if (/^mailto:/i.test(url)) {
+              openURI(uri);
             } else {
               // Send unknown URLs schema to the external protocol handler.
               // This does not change the current tab.
-              Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-                .getService(Ci.nsIExternalProtocolService)
-                .loadURI(uri);
+              openLinkExternally(uri, { addToHistory: false });
             }
           }
 
@@ -631,10 +666,10 @@ this.tabs = class extends ExtensionAPIPersistent {
         },
 
         async reload(tabId, reloadProperties) {
-          let nativeTabInfo = getTabOrActive(tabId);
-          let tab = tabManager.getWrapper(nativeTabInfo);
+          const nativeTabInfo = getTabOrActive(tabId);
+          const tab = tabManager.getWrapper(nativeTabInfo);
 
-          let isContentMailTab =
+          const isContentMailTab =
             tab.type == "mail" &&
             !nativeTabInfo.chromeBrowser.contentWindow.webBrowser.hidden;
           if (tab.type != "content" && !isContentMailTab) {
@@ -643,7 +678,7 @@ this.tabs = class extends ExtensionAPIPersistent {
             );
           }
 
-          let browser = getTabBrowser(nativeTabInfo);
+          const browser = getTabBrowser(nativeTabInfo);
 
           let flags = Ci.nsIWebNavigation.LOAD_FLAGS_NONE;
           if (reloadProperties && reloadProperties.bypassCache) {
@@ -683,22 +718,22 @@ this.tabs = class extends ExtensionAPIPersistent {
         },
 
         async executeScript(tabId, details) {
-          let tab = await promiseTabWhenReady(tabId);
+          const tab = await promiseTabWhenReady(tabId);
           return tab.executeScript(context, details);
         },
 
         async insertCSS(tabId, details) {
-          let tab = await promiseTabWhenReady(tabId);
+          const tab = await promiseTabWhenReady(tabId);
           return tab.insertCSS(context, details);
         },
 
         async removeCSS(tabId, details) {
-          let tab = await promiseTabWhenReady(tabId);
+          const tab = await promiseTabWhenReady(tabId);
           return tab.removeCSS(context, details);
         },
 
         async move(tabIds, moveProperties) {
-          let tabsMoved = [];
+          const tabsMoved = [];
           if (!Array.isArray(tabIds)) {
             tabIds = [tabIds];
           }
@@ -718,10 +753,10 @@ this.tabs = class extends ExtensionAPIPersistent {
               move([tabA, tabB], {index: 0})
                 -> tabA to 0, tabB to 0 if tabA and tabB are in different windows
           */
-          let indexMap = new Map();
-          let lastInsertion = new Map();
+          const indexMap = new Map();
+          const lastInsertion = new Map();
 
-          let tabs = tabIds.map(tabId => ({
+          const tabs = tabIds.map(tabId => ({
             nativeTabInfo: tabTracker.getTab(tabId),
             tabId,
           }));
@@ -733,12 +768,12 @@ this.tabs = class extends ExtensionAPIPersistent {
             }
 
             // If the window is not specified, use the window from the tab.
-            let browser = getTabBrowser(nativeTabInfo);
+            const browser = getTabBrowser(nativeTabInfo);
 
-            let srcwindow = browser.ownerGlobal;
-            let tgtwindow = destinationWindow || browser.ownerGlobal;
-            let tgttabmail = tgtwindow.document.getElementById("tabmail");
-            let srctabmail = srcwindow.document.getElementById("tabmail");
+            const srcwindow = browser.ownerGlobal;
+            const tgtwindow = destinationWindow || browser.ownerGlobal;
+            const tgttabmail = tgtwindow.document.getElementById("tabmail");
+            const srctabmail = srcwindow.document.getElementById("tabmail");
 
             // If we are not moving the tab to a different window, and the window
             // only has one tab, do nothing.
@@ -753,7 +788,7 @@ this.tabs = class extends ExtensionAPIPersistent {
               insertionPoint = tgttabmail.tabInfo.length;
             }
 
-            let tabPosition = srctabmail.tabInfo.indexOf(nativeTabInfo);
+            const tabPosition = srctabmail.tabInfo.indexOf(nativeTabInfo);
 
             // If this is not the first tab to be inserted into this window and
             // the insertion point is the same as the last insertion and
@@ -793,18 +828,18 @@ this.tabs = class extends ExtensionAPIPersistent {
         },
 
         duplicate(tabId) {
-          let nativeTabInfo = tabTracker.getTab(tabId);
+          const nativeTabInfo = tabTracker.getTab(tabId);
           if (nativeTabInfo instanceof Ci.nsIDOMWindow) {
             throw new ExtensionError(
               "tabs.duplicate is not applicable to this tab."
             );
           }
-          let browser = getTabBrowser(nativeTabInfo);
-          let tabmail = browser.ownerDocument.getElementById("tabmail");
+          const browser = getTabBrowser(nativeTabInfo);
+          const tabmail = browser.ownerDocument.getElementById("tabmail");
 
           // This is our best approximation of duplicating tabs. It might produce unreliable results
-          let state = tabmail.persistTab(nativeTabInfo);
-          let mode = tabmail.tabModes[state.mode];
+          const state = tabmail.persistTab(nativeTabInfo);
+          const mode = tabmail.tabModes[state.mode];
           state.state.duplicate = true;
 
           if (mode.tabs.length && mode.tabs.length == mode.maxTabs) {

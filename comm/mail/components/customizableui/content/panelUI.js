@@ -11,8 +11,8 @@
 var { ExtensionParent } = ChromeUtils.importESModule(
   "resource://gre/modules/ExtensionParent.sys.mjs"
 );
-var { ExtensionSupport } = ChromeUtils.import(
-  "resource:///modules/ExtensionSupport.jsm"
+var { ExtensionSupport } = ChromeUtils.importESModule(
+  "resource:///modules/ExtensionSupport.sys.mjs"
 );
 var { ShortcutUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/ShortcutUtils.sys.mjs"
@@ -20,7 +20,6 @@ var { ShortcutUtils } = ChromeUtils.importESModule(
 var { AppConstants } = ChromeUtils.importESModule(
   "resource://gre/modules/AppConstants.sys.mjs"
 );
-var { UIDensity } = ChromeUtils.import("resource:///modules/UIDensity.jsm");
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
@@ -29,12 +28,10 @@ ChromeUtils.defineESModuleGetters(this, {
   AppMenuNotifications: "resource://gre/modules/AppMenuNotifications.sys.mjs",
   CustomizableUI: "resource:///modules/CustomizableUI.sys.mjs",
   PanelMultiView: "resource:///modules/PanelMultiView.sys.mjs",
+  ExtensionsUI: "resource:///modules/ExtensionsUI.sys.mjs",
+  UIDensity: "resource:///modules/UIDensity.sys.mjs",
+  XULStoreUtils: "resource:///modules/XULStoreUtils.sys.mjs",
 });
-ChromeUtils.defineModuleGetter(
-  this,
-  "ExtensionsUI",
-  "resource:///modules/ExtensionsUI.jsm"
-);
 
 /**
  * Maintains the state and dispatches events for the main menu panel.
@@ -105,12 +102,31 @@ const PanelUI = {
       autoHidePref => autoHidePref && Services.appinfo.OS !== "Darwin"
     );
 
+    XPCOMUtils.defineLazyPreferenceGetter(
+      this,
+      "openAddressBookAccountHub",
+      "mail.accounthub.addressbook.enabled",
+      false,
+      (pref, previousValue, newValue) => {
+        // If the account hub preference is enabled, hide the address book
+        // option that opens a submenu, and show the option that opens account
+        // hub for address book.
+        document.getElementById("appmenu_newAB").hidden = newValue;
+        document.getElementById("appmenu_newAccountHubAB").hidden = !newValue;
+      }
+    );
+
     if (this.autoHideToolbarInFullScreen) {
       window.addEventListener("fullscreen", this);
     } else {
       window.addEventListener("MozDOMFullscreen:Entered", this);
       window.addEventListener("MozDOMFullscreen:Exited", this);
     }
+
+    document.getElementById("appmenu_newAB").hidden =
+      this.openAddressBookAccountHub;
+    document.getElementById("appmenu_newAccountHubAB").hidden =
+      !this.openAddressBookAccountHub;
 
     window.addEventListener("activate", this);
 
@@ -124,10 +140,10 @@ const PanelUI = {
   },
 
   _initElements() {
-    for (let [k, v] of Object.entries(this.kElements)) {
+    for (const [k, v] of Object.entries(this.kElements)) {
       // Need to do fresh let-bindings per iteration
-      let getKey = k;
-      let id = v;
+      const getKey = k;
+      const id = v;
       this.__defineGetter__(getKey, function () {
         delete this[getKey];
         // eslint-disable-next-line consistent-return
@@ -141,7 +157,7 @@ const PanelUI = {
     if (!button) {
       // If not in the document, the button should be in the toolbox palette,
       // which isn't part of the document.
-      let toolbox = document.getElementById(toolboxId);
+      const toolbox = document.getElementById(toolboxId);
       if (toolbox) {
         button = toolbox.palette.querySelector(`#${id}`);
       }
@@ -164,14 +180,14 @@ const PanelUI = {
   },
 
   _addEventListeners() {
-    for (let event of this.kEvents) {
+    for (const event of this.kEvents) {
       this.panel.addEventListener(event, this);
     }
     this._eventListenersAdded = true;
   },
 
   _removeEventListeners() {
-    for (let event of this.kEvents) {
+    for (const event of this.kEvents) {
       this.panel.removeEventListener(event, this);
     }
     this._eventListenersAdded = false;
@@ -200,7 +216,7 @@ const PanelUI = {
   /**
    * Opens the menu panel if it's closed, or closes it if it's open.
    *
-   * @param event the event that triggers the toggle.
+   * @param {Event} event - The event that triggers the toggle.
    */
   toggle(event) {
     // Don't show the panel if the window is in customization mode,
@@ -228,7 +244,7 @@ const PanelUI = {
    * toolbarbutton-icon attribute, the panel will be anchored on that child.
    * Otherwise, the panel is anchored on the event target itself.
    *
-   * @param aEvent the event (if any) that triggers showing the menu.
+   * @param {?Event} aEvent - The event (if any) that triggers showing the menu.
    */
   show(aEvent) {
     this._ensureShortcutsShown();
@@ -250,7 +266,7 @@ const PanelUI = {
       // We try to use the event.target to account for clicks triggered
       // from the #button-chat-appmenu. In case the opening of the menu isn't
       // triggered by a click event, fallback to the main menu button as anchor.
-      let anchor = this._getPanelAnchor(
+      const anchor = this._getPanelAnchor(
         aEvent ? aEvent.target : this.menuButton
       );
       await PanelMultiView.openPopup(this.panel, anchor, {
@@ -288,6 +304,7 @@ const PanelUI = {
     }
   },
 
+  /** @param {Event} event */
   handleEvent(event) {
     // Ignore context menus and menu button menus showing and hiding:
     if (event.type.startsWith("popup") && event.target != this.panel) {
@@ -348,14 +365,6 @@ const PanelUI = {
       case "appMenu-foldersView":
         this._onFoldersViewShow(event);
         break;
-      case "appMenu-addonsView":
-        initAddonPrefsMenu(
-          event.target.querySelector(".panel-subview-body"),
-          "toolbarbutton",
-          "subviewbutton subviewbutton-iconic",
-          "subviewbutton subviewbutton-iconic"
-        );
-        break;
       case "appMenu-toolbarsView":
         onViewToolbarsPopupShowing(
           event,
@@ -406,11 +415,7 @@ const PanelUI = {
    * event that customization mode is started before the panel has been opened
    * by the user.
    *
-   * @param aCustomizing (optional) set to true if this was called while entering
-   *        customization mode. If that's the case, we trust that customization
-   *        mode will handle calling beginBatchUpdate and endBatchUpdate.
-   *
-   * @returns a Promise that resolves once the panel is ready to roll.
+   * @returns {Promise} a Promise that resolves once the panel is ready to roll.
    */
   async ensureReady() {
     if (this._isReady) {
@@ -426,12 +431,12 @@ const PanelUI = {
   /**
    * Shows a subview in the panel with a given ID.
    *
-   * @param aViewId the ID of the subview to show.
-   * @param aAnchor the element that spawned the subview.
+   * @param {string} aViewId - The ID of the subview to show.
+   * @param {Element} aAnchor - The element that spawned the subview.
    */
   async showSubView(aViewId, aAnchor) {
     this._ensureEventListenersAdded();
-    let viewNode = document.getElementById(aViewId);
+    const viewNode = document.getElementById(aViewId);
     if (!viewNode) {
       console.error("Could not show panel subview with id: " + aViewId);
       return;
@@ -444,7 +449,7 @@ const PanelUI = {
       return;
     }
 
-    let container = aAnchor.closest("panelmultiview");
+    const container = aAnchor.closest("panelmultiview");
     if (container) {
       container.showSubView(aViewId, aAnchor);
     }
@@ -492,25 +497,25 @@ const PanelUI = {
    * @param {ViewShowingEvent} event - ViewShowing event.
    */
   _onFoldersViewShow(event) {
-    let about3Pane = document.getElementById("tabmail").currentAbout3Pane;
-    let folder = about3Pane.gFolder;
+    const about3Pane = document.getElementById("tabmail").currentAbout3Pane;
+    const folder = about3Pane.gFolder;
 
     const paneHeaderMenuitem = event.target.querySelector(
       '[name="paneheader"]'
     );
-    if (about3Pane.folderPane.isFolderPaneHeaderHidden()) {
+    if (XULStoreUtils.isItemHidden("messenger", "folderPaneHeaderBar")) {
       paneHeaderMenuitem.removeAttribute("checked");
     } else {
       paneHeaderMenuitem.setAttribute("checked", "true");
     }
 
-    let { activeModes, canBeCompact, isCompact } = about3Pane.folderPane;
+    const { activeModes, canBeCompact, isCompact } = about3Pane.folderPane;
     if (isCompact) {
       activeModes.push("compact");
     }
 
-    for (let item of event.target.querySelectorAll('[name="viewmessages"]')) {
-      let mode = item.getAttribute("value");
+    for (const item of event.target.querySelectorAll('[name="viewmessages"]')) {
+      const mode = item.getAttribute("value");
       if (activeModes.includes(mode)) {
         item.setAttribute("checked", "true");
         if (mode == "all") {
@@ -525,7 +530,7 @@ const PanelUI = {
     }
 
     goUpdateCommand("cmd_properties");
-    let propertiesMenuItem = document.getElementById("appmenu_properties");
+    const propertiesMenuItem = document.getElementById("appmenu_properties");
     if (folder?.server.type == "nntp") {
       document.l10n.setAttributes(
         propertiesMenuItem,
@@ -538,7 +543,9 @@ const PanelUI = {
       );
     }
 
-    let favoriteFolderMenu = document.getElementById("appmenu_favoriteFolder");
+    const favoriteFolderMenu = document.getElementById(
+      "appmenu_favoriteFolder"
+    );
     if (folder?.getFlag(Ci.nsMsgFolderFlags.Favorite)) {
       favoriteFolderMenu.setAttribute("checked", "true");
     } else {
@@ -547,13 +554,13 @@ const PanelUI = {
   },
 
   _onToolsMenuShown(event) {
-    let noAccounts = MailServices.accounts.accounts.length == 0;
+    const noAccounts = MailServices.accounts.accounts.length == 0;
     event.target.querySelector("#appmenu_searchCmd").disabled = noAccounts;
     event.target.querySelector("#appmenu_filtersCmd").disabled = noAccounts;
   },
 
   _updateNotifications(notificationsChanged) {
-    let notifications = this._notifications;
+    const notifications = this._notifications;
     if (!notifications || !notifications.length) {
       if (notificationsChanged) {
         this._clearAllNotifications();
@@ -561,7 +568,7 @@ const PanelUI = {
       return;
     }
 
-    let doorhangers = notifications.filter(
+    const doorhangers = notifications.filter(
       n => !n.dismissed && !n.options.badgeOnly
     );
 
@@ -574,7 +581,6 @@ const PanelUI = {
           n.options.onDismissed(window);
         }
       });
-      this._clearBadge();
       if (!notifications[0].options.badgeOnly) {
         this._showBannerItem(notifications[0]);
       }
@@ -601,8 +607,8 @@ const PanelUI = {
   },
 
   _formatDescriptionMessage(n) {
-    let text = {};
-    let array = n.options.message.split("<>");
+    const text = {};
+    const array = n.options.message.split("<>");
     text.start = array[0] || "";
     text.name = n.options.name || "";
     text.end = array[1] || "";
@@ -610,8 +616,8 @@ const PanelUI = {
   },
 
   _showBadge(notification) {
-    let badgeStatus = this._getBadgeStatus(notification);
-    for (let menuButton of this.kAppMenuButtons) {
+    const badgeStatus = this._getBadgeStatus(notification);
+    for (const menuButton of this.kAppMenuButtons) {
       menuButton.setAttribute("badge-status", badgeStatus);
     }
   },
@@ -634,7 +640,7 @@ const PanelUI = {
       this._panelBannerItem = this.mainView.querySelector(".panel-banner-item");
     }
 
-    let l10nId = "appmenuitem-banner-" + notification.id;
+    const l10nId = "appmenuitem-banner-" + notification.id;
     document.l10n.setAttributes(this._panelBannerItem, l10nId);
 
     this._panelBannerItem.setAttribute("notificationid", notification.id);
@@ -643,7 +649,7 @@ const PanelUI = {
   },
 
   _clearBadge() {
-    for (let menuButton of this.kAppMenuButtons) {
+    for (const menuButton of this.kAppMenuButtons) {
       menuButton.removeAttribute("badge-status");
     }
   },
@@ -656,7 +662,7 @@ const PanelUI = {
   },
 
   _onNotificationButtonEvent(event, type) {
-    let notificationEl = getNotificationFromElement(event.target);
+    const notificationEl = getNotificationFromElement(event.target);
 
     if (!notificationEl) {
       throw new Error(
@@ -670,7 +676,7 @@ const PanelUI = {
       );
     }
 
-    let notification = notificationEl.notification;
+    const notification = notificationEl.notification;
 
     if (type == "secondarybuttoncommand") {
       AppMenuNotifications.callSecondaryAction(window, notification);
@@ -680,7 +686,7 @@ const PanelUI = {
   },
 
   _onBannerItemSelected(event) {
-    let target = event.target;
+    const target = event.target;
     if (!target.notification) {
       throw new Error(
         "menucommand target has no associated action/notification"
@@ -700,7 +706,7 @@ const PanelUI = {
   },
 
   _getPanelAnchor(candidate) {
-    let iconAnchor = candidate.badgeStack || candidate.icon;
+    const iconAnchor = candidate.badgeStack || candidate.icon;
     return iconAnchor || candidate;
   },
 
@@ -709,9 +715,9 @@ const PanelUI = {
       return;
     }
     view.setAttribute("added-shortcuts", "true");
-    for (let button of view.querySelectorAll("toolbarbutton[key]")) {
-      let keyId = button.getAttribute("key");
-      let key = document.getElementById(keyId);
+    for (const button of view.querySelectorAll("toolbarbutton[key]")) {
+      const keyId = button.getAttribute("key");
+      const key = document.getElementById(keyId);
       if (!key) {
         continue;
       }
@@ -720,19 +726,19 @@ const PanelUI = {
   },
 
   folderViewMenuOnCommand(event) {
-    let about3Pane = document.getElementById("tabmail").currentAbout3Pane;
+    const about3Pane = document.getElementById("tabmail").currentAbout3Pane;
     if (!about3Pane) {
       return;
     }
 
-    let mode = event.target.getAttribute("value");
+    const mode = event.target.getAttribute("value");
     if (mode == "toggle-header") {
-      about3Pane.folderPane.toggleHeader(event.target.hasAttribute("checked"));
+      about3Pane.folderPane.toggleHeader(!event.target.hasAttribute("checked"));
       return;
     }
 
-    let activeModes = about3Pane.folderPane.activeModes;
-    let index = activeModes.indexOf(mode);
+    const activeModes = about3Pane.folderPane.activeModes;
+    const index = activeModes.indexOf(mode);
     if (event.target.hasAttribute("checked")) {
       if (index == -1) {
         activeModes.push(mode);
@@ -746,7 +752,7 @@ const PanelUI = {
   },
 
   folderCompactMenuOnCommand(event) {
-    let about3Pane = document.getElementById("tabmail").currentAbout3Pane;
+    const about3Pane = document.getElementById("tabmail").currentAbout3Pane;
     if (!about3Pane) {
       return;
     }
@@ -757,7 +763,7 @@ const PanelUI = {
   setUIDensity(event) {
     // Loops through all available options and uncheck them. This is necessary
     // since the toolbarbuttons don't uncheck themselves even if they're radio.
-    for (let item of event.originalTarget
+    for (const item of event.originalTarget
       .closest(".panel-subview-body")
       .querySelectorAll("toolbarbutton")) {
       // Skip this item if it's the one clicked.
@@ -777,7 +783,7 @@ XPCOMUtils.defineConstant(this, "PanelUI", PanelUI);
 /**
  * Gets the currently selected locale for display.
  *
- * @returns the selected locale
+ * @returns {string} the selected locale
  */
 function getLocale() {
   return Services.locale.appLocaleAsBCP47;
@@ -823,8 +829,8 @@ var gExtensionsNotifications = {
   },
 
   _createAddonButton(l10nId, addon, callback) {
-    let text = this.l10n.formatValueSync(l10nId, { addonName: addon.name });
-    let button = document.createXULElement("toolbarbutton");
+    const text = this.l10n.formatValueSync(l10nId, { addonName: addon.name });
+    const button = document.createXULElement("toolbarbutton");
     button.setAttribute("wrap", "true");
     button.setAttribute("label", text);
     button.setAttribute("tooltiptext", text);
@@ -838,35 +844,35 @@ var gExtensionsNotifications = {
   },
 
   updateAlerts() {
-    let gBrowser = document.getElementById("tabmail");
-    let sideloaded = ExtensionsUI.sideloaded;
-    let updates = ExtensionsUI.updates;
+    const gBrowser = document.getElementById("tabmail");
+    const sideloaded = ExtensionsUI.sideloaded;
+    const updates = ExtensionsUI.updates;
 
-    let container = PanelUI.addonNotificationContainer;
+    const container = PanelUI.addonNotificationContainer;
 
     while (container.firstChild) {
       container.firstChild.remove();
     }
 
     let items = 0;
-    for (let update of updates) {
+    for (const update of updates) {
       if (++items > 4) {
         break;
       }
       this._createAddonButton(
         "webext-perms-update-menu-item",
         update.addon,
-        evt => {
+        () => {
           ExtensionsUI.showUpdate(gBrowser, update);
         }
       );
     }
 
-    for (let addon of sideloaded) {
+    for (const addon of sideloaded) {
       if (++items > 4) {
         break;
       }
-      this._createAddonButton("webext-perms-sideload-menu-item", addon, evt => {
+      this._createAddonButton("webext-perms-sideload-menu-item", addon, () => {
         // We need to hide the main menu manually because the toolbarbutton is
         // removed immediately while processing this event, and PanelUI is
         // unable to identify which panel should be closed automatically.

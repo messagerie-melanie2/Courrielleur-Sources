@@ -20,7 +20,6 @@
 #include "vm/JSContext.h"
 #include "vm/PlainObject.h"  // js::PlainObject
 #include "vm/StringType.h"
-#include "vm/WellKnownAtom.h"  // js_*_str
 
 #include "vm/JSObject-inl.h"
 #include "vm/NativeObject-inl.h"
@@ -47,7 +46,9 @@ const JSClass PluralRulesObject::class_ = {
     JSCLASS_HAS_RESERVED_SLOTS(PluralRulesObject::SLOT_COUNT) |
         JSCLASS_HAS_CACHED_PROTO(JSProto_PluralRules) |
         JSCLASS_FOREGROUND_FINALIZE,
-    &PluralRulesObject::classOps_, &PluralRulesObject::classSpec_};
+    &PluralRulesObject::classOps_,
+    &PluralRulesObject::classSpec_,
+};
 
 const JSClass& PluralRulesObject::protoClass_ = PlainObject::class_;
 
@@ -60,20 +61,22 @@ static bool pluralRules_toSource(JSContext* cx, unsigned argc, Value* vp) {
 static const JSFunctionSpec pluralRules_static_methods[] = {
     JS_SELF_HOSTED_FN("supportedLocalesOf",
                       "Intl_PluralRules_supportedLocalesOf", 1, 0),
-    JS_FS_END};
+    JS_FS_END,
+};
 
 static const JSFunctionSpec pluralRules_methods[] = {
     JS_SELF_HOSTED_FN("resolvedOptions", "Intl_PluralRules_resolvedOptions", 0,
                       0),
     JS_SELF_HOSTED_FN("select", "Intl_PluralRules_select", 1, 0),
-#ifdef NIGHTLY_BUILD
     JS_SELF_HOSTED_FN("selectRange", "Intl_PluralRules_selectRange", 2, 0),
-#endif
-    JS_FN(js_toSource_str, pluralRules_toSource, 0, 0), JS_FS_END};
+    JS_FN("toSource", pluralRules_toSource, 0, 0),
+    JS_FS_END,
+};
 
 static const JSPropertySpec pluralRules_properties[] = {
     JS_STRING_SYM_PS(toStringTag, "Intl.PluralRules", JSPROP_READONLY),
-    JS_PS_END};
+    JS_PS_END,
+};
 
 static bool PluralRules(JSContext* cx, unsigned argc, Value* vp);
 
@@ -85,11 +88,13 @@ const ClassSpec PluralRulesObject::classSpec_ = {
     pluralRules_methods,
     pluralRules_properties,
     nullptr,
-    ClassSpec::DontDefineConstructor};
+    ClassSpec::DontDefineConstructor,
+};
 
 /**
- * PluralRules constructor.
- * Spec: ECMAScript 402 API, PluralRules, 13.2.1
+ * 16.1.1 Intl.PluralRules ( [ locales [ , options ] ] )
+ *
+ * ES2024 Intl draft rev 74ca7099f103d143431b2ea422ae640c6f43e3e6
  */
 static bool PluralRules(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -226,7 +231,15 @@ static mozilla::intl::PluralRules* NewPluralRules(
 
     options.mSignificantDigits = mozilla::Some(
         std::make_pair(minimumSignificantDigits, maximumSignificantDigits));
-  } else {
+  }
+
+  bool hasMinimumFractionDigits;
+  if (!HasProperty(cx, internals, cx->names().minimumFractionDigits,
+                   &hasMinimumFractionDigits)) {
+    return nullptr;
+  }
+
+  if (hasMinimumFractionDigits) {
     if (!GetProperty(cx, internals, internals,
                      cx->names().minimumFractionDigits, &value)) {
       return nullptr;
@@ -277,6 +290,70 @@ static mozilla::intl::PluralRules* NewPluralRules(
   options.mMinIntegerDigits =
       mozilla::Some(AssertedCast<uint32_t>(value.toInt32()));
 
+  if (!GetProperty(cx, internals, internals, cx->names().roundingIncrement,
+                   &value)) {
+    return nullptr;
+  }
+  options.mRoundingIncrement = AssertedCast<uint32_t>(value.toInt32());
+
+  if (!GetProperty(cx, internals, internals, cx->names().roundingMode,
+                   &value)) {
+    return nullptr;
+  }
+
+  {
+    JSLinearString* roundingMode = value.toString()->ensureLinear(cx);
+    if (!roundingMode) {
+      return nullptr;
+    }
+
+    using RoundingMode = mozilla::intl::PluralRulesOptions::RoundingMode;
+
+    RoundingMode rounding;
+    if (StringEqualsLiteral(roundingMode, "halfExpand")) {
+      // "halfExpand" is the default mode, so we handle it first.
+      rounding = RoundingMode::HalfExpand;
+    } else if (StringEqualsLiteral(roundingMode, "ceil")) {
+      rounding = RoundingMode::Ceil;
+    } else if (StringEqualsLiteral(roundingMode, "floor")) {
+      rounding = RoundingMode::Floor;
+    } else if (StringEqualsLiteral(roundingMode, "expand")) {
+      rounding = RoundingMode::Expand;
+    } else if (StringEqualsLiteral(roundingMode, "trunc")) {
+      rounding = RoundingMode::Trunc;
+    } else if (StringEqualsLiteral(roundingMode, "halfCeil")) {
+      rounding = RoundingMode::HalfCeil;
+    } else if (StringEqualsLiteral(roundingMode, "halfFloor")) {
+      rounding = RoundingMode::HalfFloor;
+    } else if (StringEqualsLiteral(roundingMode, "halfTrunc")) {
+      rounding = RoundingMode::HalfTrunc;
+    } else {
+      MOZ_ASSERT(StringEqualsLiteral(roundingMode, "halfEven"));
+      rounding = RoundingMode::HalfEven;
+    }
+
+    options.mRoundingMode = rounding;
+  }
+
+  if (!GetProperty(cx, internals, internals, cx->names().trailingZeroDisplay,
+                   &value)) {
+    return nullptr;
+  }
+
+  {
+    JSLinearString* trailingZeroDisplay = value.toString()->ensureLinear(cx);
+    if (!trailingZeroDisplay) {
+      return nullptr;
+    }
+
+    if (StringEqualsLiteral(trailingZeroDisplay, "auto")) {
+      options.mStripTrailingZero = false;
+    } else {
+      MOZ_ASSERT(StringEqualsLiteral(trailingZeroDisplay, "stripIfInteger"));
+      options.mStripTrailingZero = true;
+    }
+  }
+
   auto result = PluralRules::TryCreate(locale.get(), options);
   if (result.isErr()) {
     intl::ReportInternalError(cx, result.unwrapErr());
@@ -305,15 +382,24 @@ static mozilla::intl::PluralRules* GetOrCreatePluralRules(
   return pr;
 }
 
+/**
+ * 16.5.3 ResolvePlural ( pluralRules, n )
+ * 16.5.2 PluralRuleSelect ( locale, type, n, operands )
+ *
+ * ES2024 Intl draft rev 74ca7099f103d143431b2ea422ae640c6f43e3e6
+ */
 bool js::intl_SelectPluralRule(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_ASSERT(args.length() == 2);
 
+  // Steps 1-2.
   Rooted<PluralRulesObject*> pluralRules(
       cx, &args[0].toObject().as<PluralRulesObject>());
 
+  // Step 3.
   double x = args[1].toNumber();
 
+  // Steps 4-11.
   using PluralRules = mozilla::intl::PluralRules;
   PluralRules* pr = GetOrCreatePluralRules(cx, pluralRules);
   if (!pr) {
@@ -334,8 +420,10 @@ bool js::intl_SelectPluralRule(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 /**
- * ResolvePluralRange ( pluralRules, x, y )
- * PluralRuleSelectRange ( locale, type, xp, yp )
+ * 16.5.5 ResolvePluralRange ( pluralRules, x, y )
+ * 16.5.4 PluralRuleSelectRange ( locale, type, xp, yp )
+ *
+ * ES2024 Intl draft rev 74ca7099f103d143431b2ea422ae640c6f43e3e6
  */
 bool js::intl_SelectPluralRuleRange(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -369,7 +457,7 @@ bool js::intl_SelectPluralRuleRange(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  // Steps 6-10.
+  // Steps 6-11.
   auto keywordResult = pr->SelectRange(x, y);
   if (keywordResult.isErr()) {
     intl::ReportInternalError(cx, keywordResult.unwrapErr());
@@ -410,11 +498,20 @@ bool js::intl_GetPluralCategories(JSContext* cx, unsigned argc, Value* vp) {
   res->setDenseInitializedLength(categories.size());
 
   size_t index = 0;
-  for (PluralRules::Keyword keyword : categories) {
-    JSString* str = KeywordToString(keyword, cx);
-    MOZ_ASSERT(str);
+  for (auto keyword : {
+           PluralRules::Keyword::Zero,
+           PluralRules::Keyword::One,
+           PluralRules::Keyword::Two,
+           PluralRules::Keyword::Few,
+           PluralRules::Keyword::Many,
+           PluralRules::Keyword::Other,
+       }) {
+    if (categories.contains(keyword)) {
+      JSString* str = KeywordToString(keyword, cx);
+      MOZ_ASSERT(str);
 
-    res->initDenseElement(index++, StringValue(str));
+      res->initDenseElement(index++, StringValue(str));
+    }
   }
   MOZ_ASSERT(index == categories.size());
 

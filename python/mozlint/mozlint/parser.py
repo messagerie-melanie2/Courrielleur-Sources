@@ -12,7 +12,7 @@ from .types import supported_types
 GLOBAL_SUPPORT_FILES = []
 
 
-class Parser(object):
+class Parser:
     """Reads and validates lint configuration files."""
 
     required_attributes = (
@@ -54,7 +54,7 @@ class Parser(object):
             ):
                 raise LinterParseError(
                     relpath,
-                    "The {} directive must be a " "list of strings!".format(attr),
+                    f"The {attr} directive must be a " "list of strings!",
                 )
             invalid_paths = set()
             for path in linter[attr]:
@@ -63,7 +63,7 @@ class Parser(object):
                         raise LinterParseError(
                             relpath,
                             "Paths in the include directive cannot "
-                            "contain globs:\n  {}".format(path),
+                            f"contain globs:\n  {path}",
                         )
                     continue
 
@@ -91,8 +91,15 @@ class Parser(object):
                     "form 'module:object'".format(linter["setup"]),
                 )
 
-        if "extensions" in linter:
-            linter["extensions"] = [e.strip(".") for e in linter["extensions"]]
+        if "extensions" in linter and "exclude_extensions" in linter:
+            raise LinterParseError(
+                relpath,
+                "Can't have both 'extensions' and 'exclude_extensions'!",
+            )
+
+        for prop in ["extensions", "exclude_extensions"]:
+            if prop in linter:
+                linter[prop] = [e.strip(".") for e in linter[prop]]
 
     def parse(self, path):
         """Read a linter and return its LINTER definition.

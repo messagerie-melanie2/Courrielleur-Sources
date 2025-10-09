@@ -8,24 +8,38 @@ var { ExtensionTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/ExtensionXPCShellUtils.sys.mjs"
 );
 
+add_setup(async () => {
+  // There are a couple of deprecated properties in MV3, which we still want to
+  // test in MV2 but also report to the user. By default, tests throw when
+  // deprecated properties are used.
+  Services.prefs.setBoolPref(
+    "extensions.webextensions.warnings-as-errors",
+    false
+  );
+  registerCleanupFunction(async () => {
+    Services.prefs.clearUserPref("extensions.webextensions.warnings-as-errors");
+  });
+  await new Promise(resolve => executeSoon(resolve));
+});
+
 add_task(
   {
     skip_if: () => IS_NNTP,
   },
   async function test_folders() {
-    let files = {
+    const files = {
       "background.js": async () => {
-        let [accountId, IS_IMAP] = await window.waitForMessage();
+        const [accountId, IS_IMAP] = await window.waitForMessage();
 
         let account = await browser.accounts.get(accountId);
         browser.test.assertEq(3, account.folders.length);
 
         // Test create.
 
-        let onCreatedPromise = window.waitForEvent("folders.onCreated");
-        let folder1 = await browser.folders.create(account, "folder1");
-        let [createdFolder] = await onCreatedPromise;
-        for (let folder of [folder1, createdFolder]) {
+        const onCreatedPromise = window.waitForEvent("folders.onCreated");
+        const folder1 = await browser.folders.create(account, "folder1");
+        const [createdFolder] = await onCreatedPromise;
+        for (const folder of [folder1, createdFolder]) {
           browser.test.assertEq(accountId, folder.accountId);
           browser.test.assertEq("folder1", folder.name);
           browser.test.assertEq("/folder1", folder.path);
@@ -44,7 +58,7 @@ add_task(
         browser.test.assertEq("folder1", account.folders[2].name);
         browser.test.assertEq("unused", account.folders[3].name);
 
-        let folder2 = await browser.folders.create(folder1, "folder+2");
+        const folder2 = await browser.folders.create(folder1, "folder+2");
         browser.test.assertEq(accountId, folder2.accountId);
         browser.test.assertEq("folder+2", folder2.name);
         browser.test.assertEq("/folder1/folder+2", folder2.path);
@@ -67,18 +81,23 @@ add_task(
         // Test rename.
 
         {
-          let onRenamedPromise = window.waitForEvent("folders.onRenamed");
-          let folder3 = await browser.folders.rename(
-            { accountId, path: "/folder1/folder+2" },
-            "folder3"
+          const onRenamedPromise = window.waitForEvent("folders.onRenamed");
+          const [folderPlus2] = await browser.folders.query({
+            accountId,
+            path: "/folder1/folder+2",
+          });
+          browser.test.assertTrue(
+            folderPlus2,
+            "Query should have been successful"
           );
-          let [originalFolder, renamedFolder] = await onRenamedPromise;
+          const folder3 = await browser.folders.rename(folderPlus2, "folder3");
+          const [originalFolder, renamedFolder] = await onRenamedPromise;
           // Test the original folder.
           browser.test.assertEq(accountId, originalFolder.accountId);
           browser.test.assertEq("folder+2", originalFolder.name);
           browser.test.assertEq("/folder1/folder+2", originalFolder.path);
           // Test the renamed folder.
-          for (let folder of [folder3, renamedFolder]) {
+          for (const folder of [folder3, renamedFolder]) {
             browser.test.assertEq(accountId, folder.accountId);
             browser.test.assertEq("folder3", folder.name);
             browser.test.assertEq("/folder1/folder3", folder.path);
@@ -93,18 +112,23 @@ add_task(
           );
 
           // Test reject on renaming absolute root.
+          const [forbiddenRootFolder] = await browser.folders.query({
+            accountId,
+            isRoot: true,
+          });
+          browser.test.assertTrue(
+            forbiddenRootFolder,
+            "Query should have been successful"
+          );
           await browser.test.assertRejects(
-            browser.folders.rename({ accountId, path: "/" }, "UhhOh"),
-            `folders.rename() failed, because it cannot rename the root of the account`,
+            browser.folders.rename(forbiddenRootFolder, "UhhOh"),
+            `folders.rename() failed, the folder Root cannot be renamed`,
             "browser.folders.rename threw exception"
           );
 
           // Test reject on renaming to existing folder.
           await browser.test.assertRejects(
-            browser.folders.rename(
-              { accountId, path: "/folder1/folder3" },
-              "folder3"
-            ),
+            browser.folders.rename(folder3, "folder3"),
             `folders.rename() failed, because folder3 already exists in /folder1`,
             "browser.folders.rename threw exception"
           );
@@ -115,13 +139,18 @@ add_task(
         {
           // The delete request will trigger an onDelete event for IMAP and an
           // onMoved event for local folders.
-          let deletePromise = window.waitForEvent(
+          const deletePromise = window.waitForEvent(
             `folders.${IS_IMAP ? "onDeleted" : "onMoved"}`
           );
-          await browser.folders.delete({ accountId, path: "/folder1/folder3" });
+          const [folder3] = await browser.folders.query({
+            accountId,
+            path: "/folder1/folder3",
+          });
+          browser.test.assertTrue(folder3, "Query should have been successful");
+          await browser.folders.delete(folder3);
           // The onMoved event returns the original/deleted and the new folder.
           // The onDeleted event returns just the original/deleted folder.
-          let [originalFolder, folderMovedToTrash] = await deletePromise;
+          const [originalFolder, folderMovedToTrash] = await deletePromise;
 
           // Test the originalFolder folder.
           browser.test.assertEq(accountId, originalFolder.accountId);
@@ -131,7 +160,7 @@ add_task(
           // Check if it really is in trash folder.
           account = await browser.accounts.get(accountId);
           browser.test.assertEq(4, account.folders.length);
-          let trashFolder = account.folders.find(f => f.name == "Trash");
+          const trashFolder = account.folders.find(f => f.name == "Trash");
           browser.test.assertTrue(trashFolder);
           browser.test.assertEq("/Trash", trashFolder.path);
           browser.test.assertEq(1, trashFolder.subFolders.length);
@@ -149,14 +178,14 @@ add_task(
             browser.test.assertEq("/Trash/folder3", folderMovedToTrash.path);
 
             // Delete the folder from trash.
-            let onDeletedPromise = window.waitForEvent("folders.onDeleted");
-            await browser.folders.delete({ accountId, path: "/Trash/folder3" });
-            let [deletedFolder] = await onDeletedPromise;
+            const onDeletedPromise = window.waitForEvent("folders.onDeleted");
+            await browser.folders.delete(folderMovedToTrash);
+            const [deletedFolder] = await onDeletedPromise;
             browser.test.assertEq(accountId, deletedFolder.accountId);
             browser.test.assertEq("folder3", deletedFolder.name);
             browser.test.assertEq("/Trash/folder3", deletedFolder.path);
             // Check if the folder is gone.
-            let trashSubfolders = await browser.folders.getSubFolders(
+            const trashSubfolders = await browser.folders.getSubFolders(
               trashFolder,
               false
             );
@@ -168,9 +197,18 @@ add_task(
           } else {
             // The IMAP test server signals success for the delete request, but
             // keeps the folder. Testing for this broken behavior to get notified
-            // via test fails, if this behaviour changes.
-            await browser.folders.delete({ accountId, path: "/Trash/folder3" });
-            let trashSubfolders = await browser.folders.getSubFolders(
+            // via test fails, if this behavior changes.
+            const [folderInTrash] = await browser.folders.query({
+              folderId: trashFolder.id,
+              name: "folder3",
+            });
+            browser.test.assertTrue(
+              folderInTrash,
+              "Query should have been successful"
+            );
+
+            await browser.folders.delete(folderInTrash);
+            const trashSubfolders = await browser.folders.getSubFolders(
               trashFolder,
               false
             );
@@ -183,8 +221,8 @@ add_task(
 
           // Test reject on deleting non-existing folder.
           await browser.test.assertRejects(
-            browser.folders.delete({ accountId, path: "/folder1/folder5" }),
-            `Folder not found: /folder1/folder5`,
+            browser.folders.delete({ accountId, path: "/missing" }),
+            `Folder not found: ${accountId}://missing`,
             "browser.folders.delete threw exception"
           );
 
@@ -196,19 +234,19 @@ add_task(
         // Test move.
 
         {
-          await browser.folders.create(folder1, "folder4");
-          let onMovedPromise = window.waitForEvent("folders.onMoved");
-          let folder4_moved = await browser.folders.move(
-            { accountId, path: "/folder1/folder4" },
-            { accountId, path: "/" }
+          const folder4 = await browser.folders.create(folder1, "folder4");
+          const onMovedPromise = window.waitForEvent("folders.onMoved");
+          const folder4_moved = await browser.folders.move(
+            folder4,
+            account.rootFolder
           );
-          let [originalFolder, movedFolder] = await onMovedPromise;
+          const [originalFolder, movedFolder] = await onMovedPromise;
           // Test the original folder.
           browser.test.assertEq(accountId, originalFolder.accountId);
           browser.test.assertEq("folder4", originalFolder.name);
           browser.test.assertEq("/folder1/folder4", originalFolder.path);
           // Test the moved folder.
-          for (let folder of [folder4_moved, movedFolder]) {
+          for (const folder of [folder4_moved, movedFolder]) {
             browser.test.assertEq(accountId, folder.accountId);
             browser.test.assertEq("folder4", folder.name);
             browser.test.assertEq("/folder4", folder.path);
@@ -229,18 +267,25 @@ add_task(
         // Test copy.
 
         {
-          let onCopiedPromise = window.waitForEvent("folders.onCopied");
-          let folder4_copied = await browser.folders.copy(
-            { accountId, path: "/folder4" },
-            { accountId, path: "/folder1" }
-          );
-          let [originalFolder, copiedFolder] = await onCopiedPromise;
+          const onCopiedPromise = window.waitForEvent("folders.onCopied");
+          const [f4] = await browser.folders.query({
+            accountId,
+            path: "/folder4",
+          });
+          browser.test.assertTrue(f4, "Query should have been successful");
+          const [f1] = await browser.folders.query({
+            accountId,
+            path: "/folder1",
+          });
+          browser.test.assertTrue(f1, "Query should have been successful");
+          const folder4_copied = await browser.folders.copy(f4, f1);
+          const [originalFolder, copiedFolder] = await onCopiedPromise;
           // Test the original folder.
           browser.test.assertEq(accountId, originalFolder.accountId);
           browser.test.assertEq("folder4", originalFolder.name);
           browser.test.assertEq("/folder4", originalFolder.path);
           // Test the copied folder.
-          for (let folder of [folder4_copied, copiedFolder]) {
+          for (const folder of [folder4_copied, copiedFolder]) {
             browser.test.assertEq(accountId, folder.accountId);
             browser.test.assertEq("folder4", folder.name);
             browser.test.assertEq("/folder1/folder4", folder.path);
@@ -267,15 +312,16 @@ add_task(
       },
       "utils.js": await getUtilsJS(),
     };
-    let extension = ExtensionTestUtils.loadExtension({
+    const extension = ExtensionTestUtils.loadExtension({
       files,
       manifest: {
+        manifest_version: 2,
         background: { scripts: ["utils.js", "background.js"] },
         permissions: ["accountsRead", "accountsFolders", "messagesDelete"],
       },
     });
 
-    let account = createAccount();
+    const account = createAccount();
     // Not all folders appear immediately on IMAP. Creating a new one causes them to appear.
     await createSubfolder(account.incomingServer.rootFolder, "unused");
 
@@ -294,9 +340,9 @@ add_task(
     skip_if: () => IS_NNTP,
   },
   async function test_without_delete_permission() {
-    let files = {
+    const files = {
       "background.js": async () => {
-        let [accountId] = await window.waitForMessage();
+        const [accountId] = await window.waitForMessage();
 
         // Test reject on delete without messagesDelete permission.
         await browser.test.assertRejects(
@@ -309,15 +355,16 @@ add_task(
       },
       "utils.js": await getUtilsJS(),
     };
-    let extension = ExtensionTestUtils.loadExtension({
+    const extension = ExtensionTestUtils.loadExtension({
       files,
       manifest: {
+        manifest_version: 2,
         background: { scripts: ["utils.js", "background.js"] },
         permissions: ["accountsRead", "accountsFolders"],
       },
     });
 
-    let account = createAccount();
+    const account = createAccount();
     // Not all folders appear immediately on IMAP. Creating a new one causes them to appear.
     await createSubfolder(account.incomingServer.rootFolder, "unused");
 
@@ -330,231 +377,519 @@ add_task(
   }
 );
 
-add_task(async function test_getParentFolders_getSubFolders() {
-  let files = {
+add_task(
+  {
+    // NNTP does not fully support nested folders.
+    skip_if: () => IS_NNTP,
+  },
+  async function test_getParentFolders_getSubFolders() {
+    const files = {
+      "background.js": async () => {
+        const [accountId] = await window.waitForMessage();
+        const account = await browser.accounts.get(accountId);
+        const expectedNestedRootFolder = {
+          id: `${accountId}://NestedRoot`,
+          accountId,
+          name: "NestedRoot",
+          path: "/NestedRoot",
+          specialUse: [],
+          isFavorite: false,
+          isRoot: false,
+          isTag: false,
+          isUnified: false,
+          isVirtual: false,
+          subFolders: [
+            {
+              id: `${accountId}://NestedRoot/level0`,
+              accountId,
+              name: "level0",
+              path: "/NestedRoot/level0",
+              specialUse: [],
+              isFavorite: false,
+              isRoot: false,
+              isTag: false,
+              isUnified: false,
+              isVirtual: false,
+              subFolders: [
+                {
+                  id: `${accountId}://NestedRoot/level0/level1`,
+                  accountId,
+                  name: "level1",
+                  path: "/NestedRoot/level0/level1",
+                  specialUse: [],
+                  isFavorite: false,
+                  isRoot: false,
+                  isTag: false,
+                  isUnified: false,
+                  isVirtual: false,
+                  subFolders: [
+                    {
+                      id: `${accountId}://NestedRoot/level0/level1/level2`,
+                      accountId,
+                      name: "level2",
+                      path: "/NestedRoot/level0/level1/level2",
+                      specialUse: [],
+                      isFavorite: false,
+                      isRoot: false,
+                      isTag: false,
+                      isUnified: false,
+                      isVirtual: false,
+                      subFolders: [],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        };
+
+        const nestedRootFolder = account.rootFolder.subFolders.find(
+          f => f.name == "NestedRoot"
+        );
+        const lastChild = Object.assign(
+          {},
+          nestedRootFolder.subFolders[0].subFolders[0].subFolders[0]
+        );
+        window.assertDeepEqual(
+          expectedNestedRootFolder,
+          nestedRootFolder,
+          "browser.accounts.get() sould return the correct subfolders",
+          {
+            strict: true,
+          }
+        );
+
+        // Test getSubFolders() with includeSubfolders = default.
+
+        {
+          const subFolders2 = await browser.folders.getSubFolders(
+            nestedRootFolder.subFolders[0].subFolders[0]
+          );
+          window.assertDeepEqual(
+            expectedNestedRootFolder.subFolders[0].subFolders[0].subFolders,
+            subFolders2,
+            "browser.folders.getSubFolders(lvl3) should return the correct subfolders",
+            {
+              strict: true,
+            }
+          );
+
+          const subFolders1 = await browser.folders.getSubFolders(
+            nestedRootFolder.subFolders[0]
+          );
+          window.assertDeepEqual(
+            expectedNestedRootFolder.subFolders[0].subFolders,
+            subFolders1,
+            "browser.folders.getSubFolders(lvl2) should return the correct subfolders",
+            {
+              strict: true,
+            }
+          );
+
+          const subFolders0 =
+            await browser.folders.getSubFolders(nestedRootFolder);
+          window.assertDeepEqual(
+            expectedNestedRootFolder.subFolders,
+            subFolders0,
+            "browser.folders.getSubFolders(lvl1) should return the correct subfolders",
+            {
+              strict: true,
+            }
+          );
+        }
+
+        // Test getSubFolders() with includeSubfolders = true.
+
+        {
+          const subFolders2 = await browser.folders.getSubFolders(
+            nestedRootFolder.subFolders[0].subFolders[0],
+            true
+          );
+          window.assertDeepEqual(
+            expectedNestedRootFolder.subFolders[0].subFolders[0].subFolders,
+            subFolders2,
+            "browser.folders.getSubFolders(lvl3, true) should return the correct subfolders",
+            {
+              strict: true,
+            }
+          );
+
+          const subFolders1 = await browser.folders.getSubFolders(
+            nestedRootFolder.subFolders[0],
+            true
+          );
+          window.assertDeepEqual(
+            expectedNestedRootFolder.subFolders[0].subFolders,
+            subFolders1,
+            "browser.folders.getSubFolders(lvl2, true) should return the correct subfolders",
+            {
+              strict: true,
+            }
+          );
+
+          const subFolders0 = await browser.folders.getSubFolders(
+            nestedRootFolder,
+            true
+          );
+          window.assertDeepEqual(
+            expectedNestedRootFolder.subFolders,
+            subFolders0,
+            "browser.folders.getSubFolders(lvl1, true) should return the correct subfolders",
+            {
+              strict: true,
+            }
+          );
+        }
+
+        // Test getSubFolders() with includeSubfolders = false.
+        // In this section we delete the subFolders property from the expected
+        // data.
+
+        {
+          const subFolders2 = await browser.folders.getSubFolders(
+            nestedRootFolder.subFolders[0].subFolders[0],
+            false
+          );
+          delete expectedNestedRootFolder.subFolders[0].subFolders[0]
+            .subFolders[0].subFolders;
+          window.assertDeepEqual(
+            expectedNestedRootFolder.subFolders[0].subFolders[0].subFolders,
+            subFolders2,
+            "browser.folders.getSubFolders(lvl3, false) should return the correct subfolders",
+            {
+              strict: true,
+            }
+          );
+
+          const subFolders1 = await browser.folders.getSubFolders(
+            nestedRootFolder.subFolders[0],
+            false
+          );
+          delete expectedNestedRootFolder.subFolders[0].subFolders[0]
+            .subFolders;
+          window.assertDeepEqual(
+            expectedNestedRootFolder.subFolders[0].subFolders,
+            subFolders1,
+            "browser.folders.getSubFolders(lvl2, false) should return the correct subfolders",
+            {
+              strict: true,
+            }
+          );
+
+          const subFolders0 = await browser.folders.getSubFolders(
+            nestedRootFolder,
+            false
+          );
+          delete expectedNestedRootFolder.subFolders[0].subFolders;
+          window.assertDeepEqual(
+            expectedNestedRootFolder.subFolders,
+            subFolders0,
+            "browser.folders.getSubFolders(lvl1, false) should return the correct subfolders",
+            {
+              strict: true,
+            }
+          );
+        }
+
+        // Test getParentFolders().
+
+        const expectedParentFolders = [
+          {
+            id: `${accountId}://NestedRoot/level0/level1`,
+            accountId,
+            name: "level1",
+            path: "/NestedRoot/level0/level1",
+            specialUse: [],
+            isFavorite: false,
+            isRoot: false,
+            isTag: false,
+            isUnified: false,
+            isVirtual: false,
+          },
+          {
+            id: `${accountId}://NestedRoot/level0`,
+            accountId,
+            name: "level0",
+            path: "/NestedRoot/level0",
+            specialUse: [],
+            isFavorite: false,
+            isRoot: false,
+            isTag: false,
+            isUnified: false,
+            isVirtual: false,
+          },
+          {
+            id: `${accountId}://NestedRoot`,
+            accountId,
+            name: "NestedRoot",
+            path: "/NestedRoot",
+            specialUse: [],
+            isFavorite: false,
+            isRoot: false,
+            isTag: false,
+            isUnified: false,
+            isVirtual: false,
+          },
+        ];
+
+        // Use default include option which is not to include subfolders.
+        const parentsWithDefSubs =
+          await browser.folders.getParentFolders(lastChild);
+        window.assertDeepEqual(
+          expectedParentFolders,
+          parentsWithDefSubs,
+          "browser.folders.getParentFolders(lastChild) should return the correct subfolders",
+          {
+            strict: true,
+          }
+        );
+
+        // Request to not include subfolders.
+        const parentsWithoutSubs = await browser.folders.getParentFolders(
+          lastChild,
+          false
+        );
+        window.assertDeepEqual(
+          expectedParentFolders,
+          parentsWithoutSubs,
+          "browser.folders.getParentFolders(lastChild, false) should return the correct subfolders",
+          {
+            strict: true,
+          }
+        );
+
+        // Request to include subfolders. Modify expected array to include subfolders.
+        expectedParentFolders[0].subFolders = [lastChild];
+        expectedParentFolders[1].subFolders = [expectedParentFolders[0]];
+        expectedParentFolders[2].subFolders = [expectedParentFolders[1]];
+
+        const parentsWithSubs = await browser.folders.getParentFolders(
+          lastChild,
+          true
+        );
+        window.assertDeepEqual(
+          expectedParentFolders,
+          parentsWithSubs,
+          "browser.folders.getParentFolders(lastChild, true) should return the correct subfolders",
+          {
+            strict: true,
+          }
+        );
+
+        browser.test.assertEq(3, parentsWithDefSubs.length, "Correct depth.");
+        browser.test.assertEq(3, parentsWithoutSubs.length, "Correct depth.");
+        browser.test.assertEq(3, parentsWithSubs.length, "Correct depth.");
+
+        browser.test.notifyPass("finished");
+      },
+      "utils.js": await getUtilsJS(),
+    };
+    const extension = ExtensionTestUtils.loadExtension({
+      files,
+      manifest: {
+        manifest_version: 2,
+        background: { scripts: ["utils.js", "background.js"] },
+        permissions: ["accountsRead", "accountsFolders"],
+      },
+    });
+
+    const account = createAccount();
+
+    // Create a test folder with multiple levels of subFolders.
+    const nestedRoot = await createSubfolder(
+      account.incomingServer.rootFolder,
+      "NestedRoot"
+    );
+    const nestedFolders = [nestedRoot];
+    for (let i = 0; i < 3; i++) {
+      nestedFolders.push(await createSubfolder(nestedFolders[i], `level${i}`));
+    }
+
+    // We should now have three folders.For IMAP accounts they are Inbox, Trash,
+    // and NestedRoot. Otherwise they are Trash, Unsent Messages and NestedRoot.
+
+    await extension.startup();
+    extension.sendMessage(account.key);
+    await extension.awaitFinish("finished");
+    await extension.unload();
+  }
+);
+
+add_task(
+  {
+    // NNTP does not have special folders.
+    skip_if: () => IS_NNTP,
+  },
+  async function test_folder_get_update_onUpdated() {
+    const files = {
+      "background.js": async () => {
+        const [accountId] = await window.waitForMessage();
+
+        const account = await browser.accounts.get(accountId);
+        browser.test.assertEq(
+          3,
+          account.folders.length,
+          "Should find the correct number of folders"
+        );
+        const trash = account.folders.find(f => f.specialUse.includes("trash"));
+        browser.test.assertTrue(
+          trash,
+          "Should find a folder which is used as trash"
+        );
+        delete trash.subFolders;
+
+        const trashViaGetter = await browser.folders.get(trash.id);
+        window.assertDeepEqual(
+          trash,
+          trashViaGetter,
+          "Should find the correct trash folder"
+        );
+
+        const folderUpdatedPromise = new Promise(resolve => {
+          const listener = (oldFolder, newFolder) => {
+            browser.folders.onUpdated.removeListener(listener);
+            resolve({ oldFolder, newFolder });
+          };
+          browser.folders.onUpdated.addListener(listener);
+        });
+
+        await window.sendMessage("setAsDraft");
+        const folderUpdatedEvent = await folderUpdatedPromise;
+
+        // Prepare expected event folder value.
+        trash.specialUse = ["drafts", "trash"];
+        trash.type = "drafts";
+
+        window.assertDeepEqual(
+          {
+            oldFolder: { specialUse: ["trash"] },
+            newFolder: trash,
+          },
+          {
+            oldFolder: { specialUse: folderUpdatedEvent.oldFolder.specialUse },
+            newFolder: folderUpdatedEvent.newFolder,
+          },
+          "The values returned by the folders.onUpdated event should be correct."
+        );
+
+        browser.test.notifyPass("finished");
+      },
+      "utils.js": await getUtilsJS(),
+    };
+    const extension = ExtensionTestUtils.loadExtension({
+      files,
+      manifest: {
+        manifest_version: 2,
+        background: { scripts: ["utils.js", "background.js"] },
+        permissions: ["accountsRead", "accountsFolders", "messagesDelete"],
+      },
+    });
+
+    const account = createAccount();
+    // Not all folders appear immediately on IMAP. Creating a new one causes them to appear.
+    await createSubfolder(account.incomingServer.rootFolder, "unused");
+
+    extension.onMessage("setAsDraft", () => {
+      const trash = account.incomingServer.rootFolder.subFolders.find(
+        f => f.prettyName == "Trash"
+      );
+      trash.setFlag(Ci.nsMsgFolderFlags.Drafts);
+      extension.sendMessage();
+    });
+
+    // We should now have three folders. For IMAP accounts they are Inbox, Trash,
+    // and unused. Otherwise they are Trash, Unsent Messages and unused.
+
+    await extension.startup();
+    extension.sendMessage(account.key, IS_IMAP);
+    await extension.awaitFinish("finished");
+    await extension.unload();
+  }
+);
+
+add_task(async function test_deny_folders_operations() {
+  const files = {
     "background.js": async () => {
-      let [accountId] = await window.waitForMessage();
-      let account = await browser.accounts.get(accountId);
+      const [accountId] = await window.waitForMessage();
+      const account = await browser.accounts.get(accountId);
 
-      async function createSubFolder(folderOrAccount, name) {
-        let subFolder = await browser.folders.create(folderOrAccount, name);
-        let basePath = folderOrAccount.path || "/";
-        if (!basePath.endsWith("/")) {
-          basePath = basePath + "/";
-        }
-        browser.test.assertEq(accountId, subFolder.accountId);
-        browser.test.assertEq(name, subFolder.name);
-        browser.test.assertEq(`${basePath}${name}`, subFolder.path);
-        return subFolder;
+      // Test folders.create() - Our IMAP test server does not have folders
+      // where subFolders cannot be created.
+
+      if (account.type != "imap") {
+        const folder =
+          account.type == "none"
+            ? account.rootFolder.subFolders.find(f =>
+                f.specialUse.includes("outbox")
+              )
+            : account.rootFolder;
+
+        const capabilities =
+          await browser.folders.getFolderCapabilities(folder);
+        browser.test.assertTrue(
+          !capabilities.canAddSubfolders,
+          "Folder should not allow to create subfolders"
+        );
+
+        await browser.test.assertRejects(
+          browser.folders.create(folder, "Nope"),
+          `The destination used in folders.create() does not support to create subfolders.`,
+          "browser.folders.create() should reject, if the folder does not allow to create subfolders."
+        );
       }
 
-      // Create a new root folder in the account.
-      let root = await createSubFolder(account, "MyRoot");
+      // Test folders.rename()
 
-      // Build a flat list of newly created nested folders in MyRoot.
-      let flatFolders = [root];
-      for (let i = 0; i < 10; i++) {
-        flatFolders.push(await createSubFolder(flatFolders[i], `level${i}`));
+      {
+        const folder = account.rootFolder;
+        const capabilities =
+          await browser.folders.getFolderCapabilities(folder);
+        browser.test.assertTrue(
+          !capabilities.canBeRenamed,
+          "Folder should not allow to be renamed"
+        );
+
+        await browser.test.assertRejects(
+          browser.folders.rename(folder, "Nope"),
+          `folders.rename() failed, the folder ${folder.name} cannot be renamed`,
+          "browser.folders.rename() should reject, if the folder does not allow to be renamed."
+        );
       }
 
-      // Test getParentFolders().
+      // Test folders.delete()
 
-      // Pop out the last child folder and get its parents.
-      let lastChild = flatFolders.pop();
-      let parentsWithSubDefault = await browser.folders.getParentFolders(
-        lastChild
-      );
-      let parentsWithSubFalse = await browser.folders.getParentFolders(
-        lastChild,
-        false
-      );
-      let parentsWithSubTrue = await browser.folders.getParentFolders(
-        lastChild,
-        true
-      );
+      {
+        const folder = account.rootFolder;
+        const capabilities =
+          await browser.folders.getFolderCapabilities(folder);
+        browser.test.assertTrue(
+          !capabilities.canBeDeleted,
+          "Folder should not allow to be deleted"
+        );
 
-      browser.test.assertEq(10, parentsWithSubDefault.length, "Correct depth.");
-      browser.test.assertEq(10, parentsWithSubFalse.length, "Correct depth.");
-      browser.test.assertEq(10, parentsWithSubTrue.length, "Correct depth.");
-
-      // Reverse the flatFolders array, to match the expected return value of
-      // getParentFolders().
-      flatFolders.reverse();
-
-      // Build expected nested subfolder structure.
-      lastChild.subFolders = [];
-      let flatFoldersWithSub = [];
-      for (let i = 0; i < 10; i++) {
-        let f = {};
-        Object.assign(f, flatFolders[i]);
-        if (i == 0) {
-          f.subFolders = [lastChild];
-        } else {
-          f.subFolders = [flatFoldersWithSub[i - 1]];
-        }
-        flatFoldersWithSub.push(f);
+        await browser.test.assertRejects(
+          browser.folders.delete(folder),
+          `folders.delete() failed, the folder ${folder.name} cannot be deleted`,
+          "browser.folders.delete() should reject, if the folder does not allow to be deleted."
+        );
       }
-
-      // Test return values of getParentFolders(). The way the flatFolder array
-      // has been created, its entries do not have subFolder properties.
-      for (let i = 0; i < 10; i++) {
-        window.assertDeepEqual(parentsWithSubFalse[i], flatFolders[i]);
-        window.assertDeepEqual(flatFolders[i], parentsWithSubFalse[i]);
-
-        window.assertDeepEqual(parentsWithSubTrue[i], flatFoldersWithSub[i]);
-        window.assertDeepEqual(flatFoldersWithSub[i], parentsWithSubTrue[i]);
-
-        // Default = false
-        window.assertDeepEqual(parentsWithSubDefault[i], flatFolders[i]);
-        window.assertDeepEqual(flatFolders[i], parentsWithSubDefault[i]);
-      }
-
-      // Test getSubFolders().
-
-      let expectedSubsWithSub = [flatFoldersWithSub[8]];
-      let expectedSubsWithoutSub = [flatFolders[8]];
-
-      // Test excluding subfolders (so only the direct subfolder are reported).
-      let subsWithSubFalse = await browser.folders.getSubFolders(root, false);
-      window.assertDeepEqual(expectedSubsWithoutSub, subsWithSubFalse);
-      window.assertDeepEqual(subsWithSubFalse, expectedSubsWithoutSub);
-
-      // Test including all subfolders.
-      let subsWithSubTrue = await browser.folders.getSubFolders(root, true);
-      window.assertDeepEqual(expectedSubsWithSub, subsWithSubTrue);
-      window.assertDeepEqual(subsWithSubTrue, expectedSubsWithSub);
-
-      // Test default subfolder handling of getSubFolders (= true).
-      let subsWithSubDefault = await browser.folders.getSubFolders(root);
-      window.assertDeepEqual(subsWithSubDefault, subsWithSubTrue);
-      window.assertDeepEqual(subsWithSubTrue, subsWithSubDefault);
 
       browser.test.notifyPass("finished");
     },
     "utils.js": await getUtilsJS(),
   };
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files,
     manifest: {
-      background: { scripts: ["utils.js", "background.js"] },
-      permissions: ["accountsRead", "accountsFolders"],
-    },
-  });
-
-  let account = createAccount();
-  // Not all folders appear immediately on IMAP. Creating a new one causes them to appear.
-  await createSubfolder(account.incomingServer.rootFolder, "unused");
-
-  // We should now have three folders. For IMAP accounts they are Inbox,
-  // Trash, and unused. Otherwise they are Trash, Unsent Messages and unused.
-  await extension.startup();
-  extension.sendMessage(account.key);
-  await extension.awaitFinish("finished");
-  await extension.unload();
-});
-
-add_task(async function test_getFolderInfo() {
-  let files = {
-    "background.js": async () => {
-      let [accountId, IS_NNTP] = await window.waitForMessage();
-
-      let account = await browser.accounts.get(accountId);
-      browser.test.assertEq(IS_NNTP ? 1 : 3, account.folders.length);
-      let folders = await browser.folders.getSubFolders(account, false);
-      let InfoTestFolder = folders.find(f => f.name == "InfoTest");
-
-      // Verify initial state.
-      let info = await browser.folders.getFolderInfo(InfoTestFolder);
-      window.assertDeepEqual(
-        { totalMessageCount: 12, unreadMessageCount: 12, favorite: false },
-        info
-      );
-
-      // Test flipping favorite to true and marking all messages as read.
-      let onFolderInfoChangedPromise = window.waitForEvent(
-        "folders.onFolderInfoChanged"
-      );
-      await window.sendMessage("markAllAsRead");
-      await window.sendMessage("setFavorite", true);
-      let [mailFolder, mailFolderInfo] = await onFolderInfoChangedPromise;
-      window.assertDeepEqual(
-        { unreadMessageCount: 0, favorite: true },
-        mailFolderInfo
-      );
-      browser.test.assertEq(InfoTestFolder.path, mailFolder.path);
-
-      info = await browser.folders.getFolderInfo(InfoTestFolder);
-      window.assertDeepEqual(
-        { totalMessageCount: 12, unreadMessageCount: 0, favorite: true },
-        info
-      );
-
-      // Test flipping favorite back to false.
-      onFolderInfoChangedPromise = window.waitForEvent(
-        "folders.onFolderInfoChanged"
-      );
-      await window.sendMessage("setFavorite", false);
-      [mailFolder, mailFolderInfo] = await onFolderInfoChangedPromise;
-      window.assertDeepEqual({ favorite: false }, mailFolderInfo);
-      browser.test.assertEq(InfoTestFolder.path, mailFolder.path);
-
-      // Test setting some messages back to unread.
-      onFolderInfoChangedPromise = window.waitForEvent(
-        "folders.onFolderInfoChanged"
-      );
-      await window.sendMessage("markSomeAsUnread", 5);
-      [mailFolder, mailFolderInfo] = await onFolderInfoChangedPromise;
-      window.assertDeepEqual({ unreadMessageCount: 5 }, mailFolderInfo);
-
-      browser.test.notifyPass("finished");
-    },
-    "utils.js": await getUtilsJS(),
-  };
-  let extension = ExtensionTestUtils.loadExtension({
-    files,
-    manifest: {
+      manifest_version: 2,
       background: { scripts: ["utils.js", "background.js"] },
       permissions: ["accountsRead", "accountsFolders", "messagesDelete"],
     },
   });
 
-  let account = createAccount();
-  // Not all folders appear immediately on IMAP. Creating a new one causes them to appear.
-  let InfoTestFolder = await createSubfolder(
-    account.incomingServer.rootFolder,
-    "InfoTest"
-  );
-  await createMessages(InfoTestFolder, 12);
-
-  extension.onMessage("markAllAsRead", () => {
-    InfoTestFolder.markAllMessagesRead(null);
-    extension.sendMessage();
-  });
-
-  extension.onMessage("markSomeAsUnread", count => {
-    let messages = InfoTestFolder.messages;
-    while (messages.hasMoreElements() && count > 0) {
-      let msg = messages.getNext();
-      msg.markRead(false);
-      count--;
-    }
-    extension.sendMessage();
-  });
-
-  extension.onMessage("setFavorite", value => {
-    if (value) {
-      InfoTestFolder.setFlag(Ci.nsMsgFolderFlags.Favorite);
-    } else {
-      InfoTestFolder.clearFlag(Ci.nsMsgFolderFlags.Favorite);
-    }
-    extension.sendMessage();
-  });
-
-  // We should now have three folders. For IMAP accounts they are Inbox, Trash,
-  // and InfoTest. Otherwise they are Trash, Unsent Messages and InfoTest.
-
+  const account = createAccount();
   await extension.startup();
-  extension.sendMessage(account.key, IS_NNTP);
+  extension.sendMessage(account.key);
   await extension.awaitFinish("finished");
   await extension.unload();
 });

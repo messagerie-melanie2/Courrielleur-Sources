@@ -5,11 +5,67 @@
 
 // Test for the behavior of UrlbarProviderHistoryUrlHeuristic.
 
-add_task(async function setup() {
+add_setup(async function () {
+  Services.prefs.setBoolPref("browser.search.suggest.enabled", false);
   Services.prefs.setBoolPref("browser.urlbar.autoFill", false);
-  registerCleanupFunction(() => {
+  Services.prefs.setBoolPref("browser.urlbar.suggest.quickactions", false);
+  registerCleanupFunction(async () => {
+    Services.prefs.clearUserPref("browser.search.suggest.enabled");
     Services.prefs.clearUserPref("browser.urlbar.autoFill");
+    Services.prefs.clearUserPref("browser.urlbar.suggest.quickactions");
+    await PlacesUtils.history.clear();
+    await PlacesUtils.bookmarks.eraseEverything();
   });
+});
+
+add_task(async function test_after_clear_history() {
+  await PlacesTestUtils.addVisits([
+    { uri: "https://example.com/", title: "VISIT" },
+  ]);
+  await PlacesTestUtils.addBookmarkWithDetails({
+    uri: "https://example.com/",
+    title: "BOOKMARK",
+  });
+
+  const before = createContext("example.com", { isPrivate: false });
+  await check_results({
+    context: before,
+    matches: [
+      makeVisitResult(before, {
+        uri: "http://example.com/",
+        title: "VISIT",
+        iconUri: "page-icon:https://example.com/",
+        heuristic: true,
+        providerName: "HistoryUrlHeuristic",
+      }),
+      makeBookmarkResult(before, {
+        uri: "https://example.com/",
+        title: "BOOKMARK",
+      }),
+    ],
+  });
+
+  await PlacesUtils.history.clear();
+
+  const after = createContext("example.com", { isPrivate: false });
+  await check_results({
+    context: after,
+    matches: [
+      makeVisitResult(after, {
+        uri: "http://example.com/",
+        title: "BOOKMARK",
+        iconUri: "page-icon:https://example.com/",
+        heuristic: true,
+        providerName: "HistoryUrlHeuristic",
+      }),
+      makeBookmarkResult(after, {
+        uri: "https://example.com/",
+        title: "BOOKMARK",
+      }),
+    ],
+  });
+
+  await PlacesUtils.bookmarks.eraseEverything();
 });
 
 add_task(async function test_basic() {
@@ -185,8 +241,10 @@ add_task(async function test_unsupported_protocol() {
         title: "Robots!",
       }),
       makeVisitResult(context, {
+        source: UrlbarUtils.RESULT_SOURCE.OTHER_LOCAL,
         uri: "about:robots",
         title: "about:robots",
+        iconUri: "page-icon:about:robots",
         tags: null,
         providerName: "AboutPages",
       }),

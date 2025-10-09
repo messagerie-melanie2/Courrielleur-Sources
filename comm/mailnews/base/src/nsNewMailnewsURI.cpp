@@ -22,6 +22,11 @@
 #include "../../news/src/nsNntpUrl.h"
 #include "../src/nsCidProtocolHandler.h"
 
+// Instantiates a new `nsIURI` of the appropriate concrete type for the provided
+// URI spec.
+//
+// This is primarily intended to be called by `NS_NewURI` in necko for
+// handling Thunderbird-specific URI schemes.
 nsresult NS_NewMailnewsURI(nsIURI** aURI, const nsACString& aSpec,
                            const char* aCharset /* = nullptr */,
                            nsIURI* aBaseURI /* = nullptr */) {
@@ -49,7 +54,7 @@ nsresult NS_NewMailnewsURI(nsIURI** aURI, const nsACString& aSpec,
     if (NS_IsMainThread()) {
       return nsMailboxService::NewURI(aSpec, aCharset, aBaseURI, aURI);
     }
-    auto NewURI = [&aSpec, &aCharset, &aBaseURI, aURI, &rv ]() -> auto{
+    auto NewURI = [&aSpec, &aCharset, &aBaseURI, aURI, &rv]() -> auto {
       rv = nsMailboxService::NewURI(aSpec, aCharset, aBaseURI, aURI);
     };
     nsCOMPtr<nsIRunnable> task = NS_NewRunnableFunction("NewURI", NewURI);
@@ -61,7 +66,7 @@ nsresult NS_NewMailnewsURI(nsIURI** aURI, const nsACString& aSpec,
     if (NS_IsMainThread()) {
       return nsImapService::NewURI(aSpec, aCharset, aBaseURI, aURI);
     }
-    auto NewURI = [&aSpec, &aCharset, &aBaseURI, aURI, &rv ]() -> auto{
+    auto NewURI = [&aSpec, &aCharset, &aBaseURI, aURI, &rv]() -> auto {
       rv = nsImapService::NewURI(aSpec, aCharset, aBaseURI, aURI);
     };
     nsCOMPtr<nsIRunnable> task = NS_NewRunnableFunction("NewURI", NewURI);
@@ -78,7 +83,7 @@ nsresult NS_NewMailnewsURI(nsIURI** aURI, const nsACString& aSpec,
     }
     // If we're for some reason not on the main thread, dispatch to main
     // or else we'll crash.
-    auto NewURI = [&aSpec, &aBaseURI, aURI, &rv ]() -> auto{
+    auto NewURI = [&aSpec, &aBaseURI, aURI, &rv]() -> auto {
       rv = nsMailtoUrl::NewMailtoURI(aSpec, aBaseURI, aURI);
     };
     nsCOMPtr<nsIRunnable> task = NS_NewRunnableFunction("NewURI", NewURI);
@@ -121,6 +126,13 @@ nsresult NS_NewMailnewsURI(nsIURI** aURI, const nsACString& aSpec,
         .SetSpec(aSpec)
         .Finalize(aURI);
   }
+#if defined(MOZ_THUNDERBIRD_RUST)
+  if (scheme.EqualsLiteral("ews") || scheme.EqualsLiteral("ews-message")) {
+    return NS_MutateURI(new mozilla::net::nsStandardURL::Mutator())
+        .SetSpec(aSpec)
+        .Finalize(aURI);
+  }
+#endif
 
   rv = NS_ERROR_UNKNOWN_PROTOCOL;  // Let M-C handle it by default.
 
@@ -132,8 +144,8 @@ nsresult NS_NewMailnewsURI(nsIURI** aURI, const nsACString& aSpec,
     bool isRegistered = false;
     compMgr->IsContractIDRegistered(contractID.get(), &isRegistered);
     if (isRegistered) {
-      auto NewURI =
-          [&aSpec, &aCharset, &aBaseURI, aURI, &contractID, &rv ]() -> auto{
+      auto NewURI = [&aSpec, &aCharset, &aBaseURI, aURI, &contractID,
+                     &rv]() -> auto {
         nsCOMPtr<nsIMsgProtocolHandler> handler(
             do_GetService(contractID.get()));
         if (handler) {

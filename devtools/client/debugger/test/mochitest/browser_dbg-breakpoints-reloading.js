@@ -15,10 +15,10 @@ add_task(async function () {
 
   await selectSource(dbg, "simple1.js");
 
-  // Setting 2 breakpoints, one on line 61 which is expected
+  // Setting 2 breakpoints, one on line 64 which is expected
   // to get hit, while the other on line 56 which is not expected
   // to get hit, but to assert that it correctly set after reload.
-  await addBreakpointViaGutter(dbg, 61);
+  await addBreakpointViaGutter(dbg, 64);
   await addBreakpointViaGutter(dbg, 56);
 
   await selectSource(dbg, "long.js");
@@ -35,16 +35,16 @@ add_task(async function () {
 
   const source = findSource(dbg, "simple1.js");
 
-  await assertPausedAtSourceAndLine(dbg, source.id, 61);
+  await assertPausedAtSourceAndLine(dbg, source.id, 64);
 
   info("The breakpoint for long.js does not exist yet");
-  await waitForState(dbg, state => dbg.selectors.getBreakpointCount() == 2);
+  await waitForState(dbg, () => dbg.selectors.getBreakpointCount() == 2);
 
   // The breakpoints are available once their corresponding source
   // has been processed. Let's assert that all the breakpoints for
   // simple1.js have been restored.
   await assertBreakpoint(dbg, 56);
-  await assertBreakpoint(dbg, 61);
+  await assertBreakpoint(dbg, 64);
 
   await resume(dbg);
   await waitForPaused(dbg);
@@ -54,7 +54,7 @@ add_task(async function () {
   await assertPausedAtSourceAndLine(dbg, source2.id, 1);
 
   info("All 3 breakpoints from simple1.js and long.js still exist");
-  await waitForState(dbg, state => dbg.selectors.getBreakpointCount() == 3);
+  await waitForState(dbg, () => dbg.selectors.getBreakpointCount() == 3);
 
   await assertBreakpoint(dbg, 1);
 
@@ -66,7 +66,7 @@ add_task(async function () {
   // remove breakpoints so they do not affect other
   // tests.
   await removeBreakpoint(dbg, source.id, 56);
-  await removeBreakpoint(dbg, source.id, 61);
+  await removeBreakpoint(dbg, source.id, 64);
   await removeBreakpoint(dbg, source2.id, 1);
 
   await dbg.toolbox.closeToolbox();
@@ -89,7 +89,7 @@ add_task(async function () {
   await assertPausedAtSourceAndLine(dbg, source.id, 22);
 
   info("Only the breakpoint for the first inline script should exist");
-  await waitForState(dbg, state => dbg.selectors.getBreakpointCount() == 1);
+  await waitForState(dbg, () => dbg.selectors.getBreakpointCount() == 1);
 
   await assertBreakpoint(dbg, 22);
 
@@ -102,7 +102,7 @@ add_task(async function () {
   await waitForPaused(dbg);
 
   info("All 2 breakpoints from both inline scripts still exist");
-  await waitForState(dbg, state => dbg.selectors.getBreakpointCount() == 2);
+  await waitForState(dbg, () => dbg.selectors.getBreakpointCount() == 2);
 
   await assertPausedAtSourceAndLine(dbg, source.id, 27);
   await assertBreakpoint(dbg, 27);

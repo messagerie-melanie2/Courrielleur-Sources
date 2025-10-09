@@ -10,7 +10,7 @@ use crate::httpapi::{
 use crate::response::{CloseWindowResponse, WebDriverResponse};
 use crate::Parameters;
 use bytes::Bytes;
-use http::{self, Method, StatusCode};
+use http::{Method, StatusCode};
 use std::marker::PhantomData;
 use std::net::{SocketAddr, TcpListener as StdTcpListener};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -19,7 +19,7 @@ use std::thread;
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
 use url::{Host, Url};
-use warp::{self, Buf, Filter, Rejection};
+use warp::{Buf, Filter, Rejection};
 
 // Silence warning about Quit being unused for now.
 #[allow(dead_code)]
@@ -203,7 +203,7 @@ impl Drop for Listener {
 }
 
 pub fn start<T, U>(
-    address: SocketAddr,
+    mut address: SocketAddr,
     allow_hosts: Vec<Host>,
     allow_origins: Vec<Url>,
     handler: T,
@@ -216,6 +216,11 @@ where
     let listener = StdTcpListener::bind(address)?;
     listener.set_nonblocking(true)?;
     let addr = listener.local_addr()?;
+    if address.port() == 0 {
+        // If we passed in 0 as the port number the OS will assign an unused port;
+        // we want to update the address to the actual used port
+        address.set_port(addr.port())
+    }
     let (msg_send, msg_recv) = channel();
 
     let builder = thread::Builder::new().name("webdriver server".to_string());
@@ -257,7 +262,9 @@ fn build_warp_routes<U: 'static + WebDriverExtensionRoute + Send + Sync>(
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = Rejection> + Clone {
     let chan = Arc::new(Mutex::new(chan));
     let mut std_routes = standard_routes::<U>();
+
     let (method, path, res) = std_routes.pop().unwrap();
+    trace!("Build standard route for {path}");
     let mut wroutes = build_route(
         address,
         allow_hosts.clone(),
@@ -267,7 +274,9 @@ fn build_warp_routes<U: 'static + WebDriverExtensionRoute + Send + Sync>(
         res,
         chan.clone(),
     );
+
     for (method, path, res) in std_routes {
+        trace!("Build standard route for {path}");
         wroutes = wroutes
             .or(build_route(
                 address,
@@ -281,7 +290,9 @@ fn build_warp_routes<U: 'static + WebDriverExtensionRoute + Send + Sync>(
             .unify()
             .boxed()
     }
+
     for (method, path, res) in ext_routes {
+        trace!("Build vendor route for {path}");
         wroutes = wroutes
             .or(build_route(
                 address,
@@ -295,6 +306,7 @@ fn build_warp_routes<U: 'static + WebDriverExtensionRoute + Send + Sync>(
             .unify()
             .boxed()
     }
+
     wroutes
 }
 

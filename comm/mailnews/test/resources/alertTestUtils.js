@@ -34,8 +34,8 @@
  */
 /* globals alert, confirm, prompt */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 var { MockRegistrar } = ChromeUtils.importESModule(
   "resource://testing-common/MockRegistrar.sys.mjs"
@@ -328,11 +328,11 @@ var alertUtilsPromptService = {
 };
 
 var alertUtilsWindowWatcher = {
-  getNewPrompter(aParent) {
+  getNewPrompter() {
     return alertUtilsPrompts;
   },
 
-  getNewAuthPrompter(aParent) {
+  getNewAuthPrompter() {
     return Cc["@mozilla.org/login-manager/authprompter;1"].getService(
       Ci.nsIAuthPrompt
     );
@@ -345,7 +345,7 @@ var alertUtilsWindowWatcher = {
 // promptPasswordPS/promptUsernameAndPasswordPS directly, rather than through
 // the prompt service, because the function signature changed and no longer
 // allows a "save password" check box.
-let alertUtilsMsgAuthPrompt = {
+const alertUtilsMsgAuthPrompt = {
   QueryInterface: ChromeUtils.generateQI(["nsIAuthPrompt"]),
 
   _getFormattedOrigin(aURI) {
@@ -414,14 +414,15 @@ let alertUtilsMsgAuthPrompt = {
       return ok;
     }
 
-    let newLogin = new LoginInfo(
+    const newLogin = new LoginInfo(
       origin,
       null,
       realm,
       aUsername.value,
       aPassword.value
     );
-    Services.logins.addLogin(newLogin);
+    Services.logins.addLoginAsync(newLogin);
+    Services.tm.spinEventLoopUntilEmpty();
 
     return ok;
   },
@@ -454,7 +455,7 @@ let alertUtilsMsgAuthPrompt = {
     );
 
     if (ok && checkBox.value && origin && aPassword.value) {
-      let newLogin = new LoginInfo(
+      const newLogin = new LoginInfo(
         origin,
         null,
         realm,
@@ -462,7 +463,7 @@ let alertUtilsMsgAuthPrompt = {
         aPassword.value
       );
 
-      Services.logins.addLogin(newLogin);
+      Services.logins.addLoginAsync(newLogin);
     }
 
     return ok;

@@ -57,8 +57,8 @@ void HTMLTitleElement::ContentInserted(nsIContent* aChild) {
   SendTitleChangeEvent(false);
 }
 
-void HTMLTitleElement::ContentRemoved(nsIContent* aChild,
-                                      nsIContent* aPreviousSibling) {
+void HTMLTitleElement::ContentWillBeRemoved(nsIContent* aChild,
+                                            const BatchRemovalState*) {
   SendTitleChangeEvent(false);
 }
 
@@ -72,11 +72,11 @@ nsresult HTMLTitleElement::BindToTree(BindContext& aContext, nsINode& aParent) {
   return NS_OK;
 }
 
-void HTMLTitleElement::UnbindFromTree(bool aNullParent) {
+void HTMLTitleElement::UnbindFromTree(UnbindContext& aContext) {
   SendTitleChangeEvent(false);
 
   // Let this fall through.
-  nsGenericHTMLElement::UnbindFromTree(aNullParent);
+  nsGenericHTMLElement::UnbindFromTree(aContext);
 }
 
 void HTMLTitleElement::DoneAddingChildren(bool aHaveNotified) {
@@ -86,8 +86,7 @@ void HTMLTitleElement::DoneAddingChildren(bool aHaveNotified) {
 }
 
 void HTMLTitleElement::SendTitleChangeEvent(bool aBound) {
-  Document* doc = GetUncomposedDoc();
-  if (doc) {
+  if (Document* doc = GetUncomposedDoc()) {
     doc->NotifyPossibleTitleChange(aBound);
   }
 }

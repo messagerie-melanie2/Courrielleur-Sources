@@ -18,12 +18,18 @@
 
 #include "nsGTKToolkit.h"
 
+#include "mozilla/X11Util.h"
+
 nsresult nsGTKRemoteServer::Startup(const char* aAppName,
                                     const char* aProfileName) {
   NS_ASSERTION(aAppName, "Don't pass a null appname!");
 
   if (mServerWindow) {
     return NS_ERROR_ALREADY_INITIALIZED;
+  }
+
+  if (!mozilla::DefaultXDisplay()) {
+    return NS_ERROR_FAILURE;
   }
 
   XRemoteBaseStartup(aAppName, aProfileName);

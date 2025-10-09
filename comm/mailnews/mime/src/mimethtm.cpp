@@ -2,7 +2,9 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #include "mimethtm.h"
+#include "nsMailHeaders.h"
 #include "prmem.h"
 #include "plstr.h"
 #include "prlog.h"
@@ -20,8 +22,7 @@ static int MimeInlineTextHTML_parse_line(const char*, int32_t, MimeObject*);
 static int MimeInlineTextHTML_parse_eof(MimeObject*, bool);
 static int MimeInlineTextHTML_parse_begin(MimeObject* obj);
 
-static int MimeInlineTextHTMLClassInitialize(MimeInlineTextHTMLClass* clazz) {
-  MimeObjectClass* oclass = (MimeObjectClass*)clazz;
+static int MimeInlineTextHTMLClassInitialize(MimeObjectClass* oclass) {
   PR_ASSERT(!oclass->class_initialized);
   oclass->parse_begin = MimeInlineTextHTML_parse_begin;
   oclass->parse_line = MimeInlineTextHTML_parse_line;

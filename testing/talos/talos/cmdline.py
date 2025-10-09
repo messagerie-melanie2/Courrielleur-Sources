@@ -4,7 +4,6 @@
 import argparse
 import os
 
-import six
 from mozlog.commandline import add_logging_group
 
 
@@ -33,7 +32,7 @@ class _ListTests(_StopAction):
         print("================\n")
         test_class_names = [
             (test_class.name(), test_class.description())
-            for test_class in six.itervalues(test.test_dict())
+            for test_class in test.test_dict().values()
         ]
         test_class_names.sort()
         for name, description in test_class_names:
@@ -144,7 +143,8 @@ def create_parser(mach_interface=False):
         "After talos is finished, profiler.firefox.com will be launched in "
         "Firefox so you can analyze the local profiles. To disable "
         "auto-launching of profiler.firefox.com set the "
-        "DISABLE_PROFILE_LAUNCH=1 env var.",
+        "DISABLE_PROFILE_LAUNCH=1 env var. "
+        "Copy paste the parameters used in this profiling run directly from about:profiling in Nightly.",
     )
     add_arg(
         "--gecko-profile-interval",
@@ -169,6 +169,12 @@ def create_parser(mach_interface=False):
         dest="gecko_profile_threads",
         type=str,
         help="Comma-separated list of threads to sample",
+    )
+    add_arg(
+        "--gecko-profile-extra-threads",
+        dest="gecko_profile_extra_threads",
+        type=str,
+        help="Comma-separated list of extra threads to add to the default list of threads to profile.",
     )
     add_arg(
         "--extension",
@@ -216,6 +222,26 @@ def create_parser(mach_interface=False):
         action="store_true",
         dest="pdfpaint",
         help="Wait for the first page of a PDF to be rendered",
+    )
+    add_arg(
+        "--pdfPaintChunk",
+        type=int,
+        default=None,
+        dest="pdfpaint_chunk",
+        help=(
+            "Chunk of the pdfpaint test to run (each chunk runs at most 100 pdfs). "
+            "Defaults to None to run all the pdfs at the same time."
+        ),
+    )
+    add_arg(
+        "--pdfPaintName",
+        type=str,
+        default=None,
+        dest="pdfpaint_name",
+        help=(
+            "Name of a pdfpaint test to run (e.g. xfa_imm5257e.pdf). Chunking will be "
+            "ignored/disabled if this option is used."
+        ),
     )
     add_arg("--webServer", dest="webserver", help="DEPRECATED")
     if not mach_interface:
@@ -316,6 +342,13 @@ def create_parser(mach_interface=False):
         default="mozilla-central",
         help="The project branch we're running tests on. Used for "
         "disabling/skipping tests.",
+    )
+    add_arg(
+        "--screenshot-on-failure",
+        action="store_true",
+        dest="screenshot_on_failure",
+        default=False,
+        help="Take a screenshot when the test fails.",
     )
 
     add_logging_group(parser)

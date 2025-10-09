@@ -140,8 +140,8 @@ if [ -z "${INIT_SOURCED}" -o "${INIT_SOURCED}" != "TRUE" ]; then
         echo "NSS_SSL_RUN=\"${NSS_SSL_RUN}\""
         echo "NSS_DEFAULT_DB_TYPE=${NSS_DEFAULT_DB_TYPE}"
         echo "export NSS_DEFAULT_DB_TYPE"
-        echo "NSS_ENABLE_PKIX_VERIFY=${NSS_ENABLE_PKIX_VERIFY}"
-        echo "export NSS_ENABLE_PKIX_VERIFY"
+        echo "NSS_DISABLE_PKIX_VERIFY=${NSS_DISABLE_PKIX_VERIFY}"
+        echo "export NSS_DISABLE_PKIX_VERIFY"
         echo "init_directories"
     }
 
@@ -322,7 +322,57 @@ if [ -z "${INIT_SOURCED}" -o "${INIT_SOURCED}" != "TRUE" ]; then
       fi
     }
 
+    save_pkcs11()
+    {
+      outdir="$1"
+      cp ${outdir}/pkcs11.txt ${outdir}/pkcs11.txt.sav
+    }
 
+    restore_pkcs11()
+    {
+      outdir="$1"
+      cp ${outdir}/pkcs11.txt.sav ${outdir}/pkcs11.txt
+    }
+
+    # create a new pkcs11.txt with and explict policy. overwrites
+    # the existing pkcs11
+    setup_policy()
+    {
+      policy="$1"
+      outdir="$2"
+      OUTFILE="${outdir}/pkcs11.txt"
+      cat > "$OUTFILE" << ++EOF++
+library=
+name=NSS Internal PKCS #11 Module
+parameters=configdir='./client' certPrefix='' keyPrefix='' secmod='secmod.db' flags= updatedir='' updateCertPrefix='' updateKeyPrefix='' updateid='' updateTokenDescription=''
+NSS=Flags=internal,critical trustOrder=75 cipherOrder=100 slotParams=(1={slotFlags=[RSA,DSA,DH,RC2,RC4,DES,RANDOM,SHA1,MD5,MD2,SSL,TLS,AES,Camellia,SEED,SHA256,SHA512] askpw=any timeout=30})
+++EOF++
+      echo "config=${policy}" >> "$OUTFILE"
+      echo "" >> "$OUTFILE"
+      echo "library=${DIST}/${OBJDIR}/lib/libnssckbi.so" >> "$OUTFILE"
+      cat >> "$OUTFILE" << ++EOF++
+name=RootCerts
+NSS=trustOrder=100
+++EOF++
+
+      echo "******************************Testing $outdir with: "
+      cat "$OUTFILE"
+      echo "******************************"
+    }
+
+    ignore_blank_lines()
+    {
+      LC_ALL=C egrep -v '^[[:space:]]*(#|$)' "$1"
+    }
+
+    using_sql()
+    {
+        dbtype=$(nssdefaults --dbtype)
+        if [ ${dbtype##*: } = "sql" ]; then
+            return 0; # success case for bash
+        fi
+        return 1; # fail case for bash
+    }
 
 #directory name init
     SCRIPTNAME=init.sh
@@ -349,6 +399,7 @@ if [ -z "${INIT_SOURCED}" -o "${INIT_SOURCED}" != "TRUE" ]; then
     if [ -z "${OBJDIR}" -o -z "${OS_ARCH}" -o -z "${DLL_PREFIX}" -o -z "${DLL_SUFFIX}" ]; then
         MAKE=gmake
         $MAKE -v >/dev/null 2>&1 || MAKE=make
+        $MAKE -v >/dev/null 2>&1 || MAKE=mozmake
         $MAKE -v >/dev/null 2>&1 || { echo "You are missing make."; exit 5; }
         MAKE="$MAKE --no-print-directory"
     fi
@@ -369,7 +420,7 @@ if [ -z "${INIT_SOURCED}" -o "${INIT_SOURCED}" != "TRUE" ]; then
     if [ "${DLL_SUFFIX}" = "" ]; then
         DLL_SUFFIX=`(cd $COMMON; $MAKE dll_suffix)`
     fi
-    OS_NAME=`uname -s | sed -e "s/-[0-9]*\.[0-9]*//" | sed -e "s/-WOW64//"`
+    OS_NAME=`uname -s | sed -e "s/-[0-9.-]*//" | sed -e "s/-WOW64//"`
 
     BINDIR="${DIST}/${OBJDIR}/bin"
 
@@ -400,7 +451,7 @@ if [ -z "${INIT_SOURCED}" -o "${INIT_SOURCED}" != "TRUE" ]; then
 #in case of backward comp. tests the calling scripts set the
 #PATH and LD_LIBRARY_PATH and do not want them to be changed
     if [ -z "${DON_T_SET_PATHS}" -o "${DON_T_SET_PATHS}" != "TRUE" ] ; then
-        if [ "${OS_ARCH}" = "WINNT" -a "$OS_NAME"  != "CYGWIN_NT" -a "$OS_NAME" != "MINGW32_NT" ]; then
+        if [ "${OS_ARCH}" = "WINNT" -a "$OS_NAME"  != "CYGWIN_NT" -a "$OS_NAME" != "MINGW32_NT" -a "$OS_NAME" != "MSYS_NT" ]; then
             PATH=.\;${DIST}/${OBJDIR}/bin\;${DIST}/${OBJDIR}/lib\;$PATH
             PATH=`perl ../path_uniq -d ';' "$PATH"`
         elif [ "${OS_ARCH}" = "Android" ]; then

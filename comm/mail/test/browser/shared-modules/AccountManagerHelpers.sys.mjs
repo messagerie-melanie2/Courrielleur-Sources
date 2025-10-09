@@ -85,9 +85,10 @@ export async function click_account_tree_row(tab, rowIndex) {
  * Returns the index of the row in account tree corresponding to the wanted
  * account and its settings pane.
  *
- * @param {number} accountKey - The key of the account to return.
+ * @param {string} accountKey - The key of the account to return.
  *                              If 'null', the SMTP pane is returned.
- * @param {number} paneId - The ID of the account settings pane to select.
+ * @param {string} [paneId] - The ID of the account settings pane to select.
+ * @param {TabInfo} tab - The tab of the account manager.
  *
  *
  * @returns {number} The row index of the account and pane. If it was not found return -1.
@@ -137,24 +138,15 @@ export async function remove_account(
   await click_account_tree_row(tab, accountRow);
 
   account = null;
-  // Use the Remove item in the Account actions menu.
-  const actionsButton = content_tab_e(tab, "accountActionsButton");
+  const win =
+    tab.browser.contentWindow.document.getElementById(
+      "contentFrame"
+    ).contentWindow;
   EventUtils.synthesizeMouseAtCenter(
-    actionsButton,
-    { clickCount: 1 },
-    actionsButton.ownerGlobal
+    win.document.getElementById("deleteAccount"),
+    {},
+    win
   );
-  const actionsDd = content_tab_e(tab, "accountActionsDropdown");
-  await TestUtils.waitForCondition(
-    () => actionsDd.state == "open" || actionsDd.state == "showing"
-  );
-  const remove = content_tab_e(tab, "accountActionsDropdownRemove");
-  EventUtils.synthesizeMouseAtCenter(
-    remove,
-    { clickCount: 1 },
-    remove.ownerGlobal
-  );
-  await TestUtils.waitForCondition(() => actionsDd.state == "closed");
 
   const cdc = await wh.wait_for_frame_load(
     tab.browser.contentWindow.gSubDialog._topDialog._frame,

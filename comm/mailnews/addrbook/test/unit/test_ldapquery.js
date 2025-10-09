@@ -7,18 +7,18 @@
  * Test basic LDAP querying.
  */
 
-const { LDAPDaemon, LDAPHandlerFn } = ChromeUtils.import(
-  "resource://testing-common/mailnews/Ldapd.jsm"
+const { LDAPDaemon, LDAPHandlerFn } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/Ldapd.sys.mjs"
 );
-const { BinaryServer } = ChromeUtils.import(
-  "resource://testing-common/mailnews/Binaryd.jsm"
+const { BinaryServer } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/Binaryd.sys.mjs"
 );
 
 /**
  * Adaptor class to implement nsILDAPMessageListener with a promise.
  * It should be passed into LDAP functions as a normal listener. The
  * caller can then await the promise attribute.
- * Based on the pattern used in PromiseTestUtils.jsm.
+ * Based on the pattern used in PromiseTestUtils.sys.mjs.
  *
  * This base class just rejects all callbacks. Derived classes should
  * implement the callbacks they need to handle.
@@ -33,13 +33,13 @@ class PromiseListener {
       this._reject = reject;
     });
   }
-  onLDAPMessage(message) {
+  onLDAPMessage() {
     this._reject(new Error("Unexpected onLDAPMessage"));
   }
   onLDAPInit() {
     this._reject(new Error("Unexpected onLDAPInit"));
   }
-  onLDAPError(status, secInfo, location) {
+  onLDAPError(status) {
     this._reject(new Error(`Unexpected onLDAPError (0x${status.toString(16)}`));
   }
 }
@@ -96,35 +96,35 @@ class PromiseSearchListener extends PromiseListener {
 
 add_task(async function test_basic_query() {
   // Load in some test contact data (characters from Sherlock Holmes).
-  let raw = await IOUtils.readUTF8(
+  const raw = await IOUtils.readUTF8(
     do_get_file(
       "../../../../mailnews/addrbook/test/unit/data/ldap_contacts.json"
     ).path
   );
-  let testContacts = JSON.parse(raw);
+  const testContacts = JSON.parse(raw);
 
   // Set up fake LDAP server, loaded with the test contacts.
-  let daemon = new LDAPDaemon();
+  const daemon = new LDAPDaemon();
   daemon.add(...Object.values(testContacts));
   // daemon.setDebug(true);
-  let server = new BinaryServer(LDAPHandlerFn, daemon);
+  const server = new BinaryServer(LDAPHandlerFn, daemon);
   server.start();
 
   // Connect to the fake server.
-  let url = `ldap://localhost:${server.port}`;
-  let ldapURL = Services.io.newURI(url).QueryInterface(Ci.nsILDAPURL);
-  let conn = Cc["@mozilla.org/network/ldap-connection;1"]
+  const url = `ldap://localhost:${server.port}`;
+  const ldapURL = Services.io.newURI(url).QueryInterface(Ci.nsILDAPURL);
+  const conn = Cc["@mozilla.org/network/ldap-connection;1"]
     .createInstance()
     .QueryInterface(Ci.nsILDAPConnection);
 
   // Initialisation is async.
-  let initListener = new PromiseInitListener();
-  conn.init(ldapURL, null, initListener, null, Ci.nsILDAPConnection.VERSION3);
+  const initListener = new PromiseInitListener();
+  conn.init(ldapURL, null, initListener);
   await initListener.promise;
 
   // Perform bind.
-  let bindListener = new PromiseBindListener();
-  let bindOp = Cc["@mozilla.org/network/ldap-operation;1"].createInstance(
+  const bindListener = new PromiseBindListener();
+  const bindOp = Cc["@mozilla.org/network/ldap-operation;1"].createInstance(
     Ci.nsILDAPOperation
   );
   bindOp.init(conn, bindListener, null);
@@ -132,8 +132,8 @@ add_task(async function test_basic_query() {
   await bindListener.promise;
 
   // Run a search.
-  let searchListener = new PromiseSearchListener();
-  let searchOp = Cc["@mozilla.org/network/ldap-operation;1"].createInstance(
+  const searchListener = new PromiseSearchListener();
+  const searchOp = Cc["@mozilla.org/network/ldap-operation;1"].createInstance(
     Ci.nsILDAPOperation
   );
   searchOp.init(conn, searchListener, null);
@@ -145,7 +145,7 @@ add_task(async function test_basic_query() {
     0, // timeOut
     100 // maxEntriesWanted
   );
-  let matches = await searchListener.promise;
+  const matches = await searchListener.promise;
 
   // Make sure we got the contacts we expected (just use cn for comparing):
   const holmesCNs = ["Eurus Holmes", "Mycroft Holmes", "Sherlock Holmes"];
@@ -159,7 +159,7 @@ add_task(async function test_basic_query() {
     "Molly Hooper",
     "Mrs Hudson",
   ];
-  let cns = matches.map(ent => ent.getValues("cn")[0]);
+  const cns = matches.map(ent => ent.getValues("cn")[0]);
   cns.sort();
   Assert.deepEqual(cns, holmesCNs);
 

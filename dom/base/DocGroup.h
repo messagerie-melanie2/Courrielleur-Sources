@@ -15,8 +15,6 @@
 #include "mozilla/RefPtr.h"
 #include "mozilla/dom/BrowsingContextGroup.h"
 #include "mozilla/dom/HTMLSlotElement.h"
-#include "mozilla/PerformanceCounter.h"
-#include "mozilla/PerformanceTypes.h"
 
 namespace mozilla {
 class AbstractThread;
@@ -25,18 +23,24 @@ namespace dom {
 class CustomElementReactionsStack;
 class JSExecutionManager;
 
-// Two browsing contexts are considered "related" if they are reachable from one
-// another through window.opener, window.parent, or window.frames. This is the
-// spec concept of a browsing context group.
+// DocGroup is the Gecko object for a "Similar-origin Window Agent" (the
+// window-global component of an "Agent Cluster").
+// https://html.spec.whatwg.org/multipage/webappapis.html#similar-origin-window-agent
 //
-// Two browsing contexts are considered "similar-origin" if they can be made to
-// have the same origin by setting document.domain. This is the spec concept of
-// a "unit of similar-origin related browsing contexts"
+// A DocGroup is shared between a series of window globals which are reachable
+// from one-another (e.g. through `window.opener`, `window.parent` or
+// `window.frames`), and are able to synchronously communicate with one-another,
+// (either due to being same-origin, or by setting `document.domain`).
 //
-// A BrowsingContextGroup is a set of browsing contexts which are all
-// "related".  Within a BrowsingContextGroup, browsing contexts are
-// broken into "similar-origin" DocGroups.  A DocGroup is a member
-// of exactly one BrowsingContextGroup.
+// NOTE: Similar to how the principal for a global is stored on a Document, the
+// DocGroup for a window global is also attached to the corresponding Document
+// object. This is required for certain features (such as the ArenaAllocator)
+// which require the DocGroup before the nsGlobalWindowInner has been created.
+//
+// NOTE: DocGroup is not the source of truth for synchronous script access.
+// Non-window globals, such as extension globals and system JS, may have
+// synchronous access yet not be part of the DocGroup. The DocGroup should,
+// however, align with web-visible synchronous script access boundaries.
 class DocGroup final {
  public:
   typedef nsTArray<Document*>::iterator Iterator;
@@ -45,25 +49,16 @@ class DocGroup final {
   NS_DECL_CYCLE_COLLECTION_NATIVE_CLASS(DocGroup)
 
   static already_AddRefed<DocGroup> Create(
-      BrowsingContextGroup* aBrowsingContextGroup, const nsACString& aKey);
+      BrowsingContextGroup* aBrowsingContextGroup, const DocGroupKey& aKey);
 
-  // Returns NS_ERROR_FAILURE and sets |aString| to an empty string if the TLD
-  // service isn't available. Returns NS_OK on success, but may still set
-  // |aString| may still be set to an empty string.
-  [[nodiscard]] static nsresult GetKey(nsIPrincipal* aPrincipal,
-                                       bool aCrossOriginIsolated,
-                                       nsACString& aKey);
+  void AssertMatches(const Document* aDocument) const;
 
-  bool MatchesKey(const nsACString& aKey) { return aKey == mKey; }
+  const DocGroupKey& GetKey() const { return mKey; }
 
-  const nsACString& GetKey() const { return mKey; }
-
-  PerformanceCounter* GetPerformanceCounter() { return mPerformanceCounter; }
+  bool IsOriginKeyed() const { return mKey.mOriginKeyed; }
 
   JSExecutionManager* GetExecutionManager() const { return mExecutionManager; }
   void SetExecutionManager(JSExecutionManager*);
-
-  RefPtr<PerformanceInfoPromise> ReportPerformanceInfo();
 
   BrowsingContextGroup* GetBrowsingContextGroup() const {
     return mBrowsingContextGroup;
@@ -93,13 +88,6 @@ class DocGroup final {
     return mDocuments.end();
   }
 
-  nsresult Dispatch(TaskCategory aCategory,
-                    already_AddRefed<nsIRunnable>&& aRunnable);
-
-  nsISerialEventTarget* EventTargetFor(TaskCategory aCategory) const;
-
-  AbstractThread* AbstractMainThreadFor(TaskCategory aCategory);
-
   // Return a pointer that can be continually checked to see if access to this
   // DocGroup is valid. This pointer should live at least as long as the
   // DocGroup.
@@ -117,32 +105,22 @@ class DocGroup final {
   // Returns true if any of its documents are active but not in the bfcache.
   bool IsActive() const;
 
-  nsresult QueueIframePostMessages(already_AddRefed<nsIRunnable>&& aRunnable,
-                                   uint64_t aWindowId);
-
-  void TryFlushIframePostMessages(uint64_t aWindowId);
-
-  static bool TryToLoadIframesInBackground();
-
   const nsID& AgentClusterId() const { return mAgentClusterId; }
 
   bool IsEmpty() const { return mDocuments.IsEmpty(); }
 
  private:
-  DocGroup(BrowsingContextGroup* aBrowsingContextGroup, const nsACString& aKey);
+  DocGroup(BrowsingContextGroup* aBrowsingContextGroup,
+           const DocGroupKey& aKey);
 
   ~DocGroup();
 
-  void FlushIframePostMessageQueue();
-  nsCString mKey;
+  DocGroupKey mKey;
+
   nsTArray<Document*> mDocuments;
   RefPtr<mozilla::dom::CustomElementReactionsStack> mReactionsStack;
   nsTArray<RefPtr<HTMLSlotElement>> mSignalSlotList;
-  RefPtr<mozilla::PerformanceCounter> mPerformanceCounter;
   RefPtr<BrowsingContextGroup> mBrowsingContextGroup;
-  RefPtr<mozilla::ThrottledEventQueue> mIframePostMessageQueue;
-  nsTHashSet<uint64_t> mIframesUsedPostMessageQueue;
-  nsCOMPtr<nsISerialEventTarget> mEventTarget;
 
   // non-null if the JS execution for this docgroup is regulated with regards
   // to worker threads. This should only be used when we are forcing serialized

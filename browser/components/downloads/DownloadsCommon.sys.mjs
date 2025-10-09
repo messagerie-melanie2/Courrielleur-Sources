@@ -31,16 +31,13 @@ import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
   DownloadHistory: "resource://gre/modules/DownloadHistory.sys.mjs",
   DownloadUtils: "resource://gre/modules/DownloadUtils.sys.mjs",
   Downloads: "resource://gre/modules/Downloads.sys.mjs",
+  NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  NetUtil: "resource://gre/modules/NetUtil.jsm",
-  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
 });
 
 XPCOMUtils.defineLazyServiceGetters(lazy, {
@@ -51,7 +48,7 @@ XPCOMUtils.defineLazyServiceGetters(lazy, {
   gMIMEService: ["@mozilla.org/mime;1", "nsIMIMEService"],
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "DownloadsLogger", () => {
+ChromeUtils.defineLazyGetter(lazy, "DownloadsLogger", () => {
   let { ConsoleAPI } = ChromeUtils.importESModule(
     "resource://gre/modules/Console.sys.mjs"
   );
@@ -78,6 +75,10 @@ const kDownloadsFluentStrings = new Localization(
 );
 
 const kDownloadsStringsRequiringFormatting = {
+  contentAnalysisNoAgentError: true,
+  contentAnalysisInvalidAgentSignatureError: true,
+  contentAnalysisUnspecifiedError: true,
+  contentAnalysisTimeoutError: true,
   sizeWithUnits: true,
   statusSeparator: true,
   statusSeparatorBeforeNumber: true,
@@ -94,10 +95,7 @@ const kGenericContentTypes = [
 ];
 
 var PrefObserver = {
-  QueryInterface: ChromeUtils.generateQI([
-    "nsIObserver",
-    "nsISupportsWeakReference",
-  ]),
+  QueryInterface: ChromeUtils.generateQI(["nsIObserver"]),
   getPref(name) {
     try {
       switch (typeof this.prefs[name]) {
@@ -115,10 +113,10 @@ var PrefObserver = {
   },
   register(prefs) {
     this.prefs = prefs;
-    kPrefBranch.addObserver("", this, true);
+    kPrefBranch.addObserver("", this);
     for (let key in prefs) {
       let name = key;
-      XPCOMUtils.defineLazyGetter(this, name, function () {
+      ChromeUtils.defineLazyGetter(this, name, function () {
         return PrefObserver.getPref(name);
       });
     }
@@ -149,6 +147,7 @@ export var DownloadsCommon = {
   DOWNLOAD_BLOCKED_PARENTAL: 6,
   DOWNLOAD_DIRTY: 8,
   DOWNLOAD_BLOCKED_POLICY: 9,
+  DOWNLOAD_BLOCKED_CONTENT_ANALYSIS: 10,
 
   // The following are the possible values of the "attention" property.
   ATTENTION_NONE: "",
@@ -301,6 +300,18 @@ export var DownloadsCommon = {
       if (download.error.becauseBlockedByReputationCheck) {
         return DownloadsCommon.DOWNLOAD_DIRTY;
       }
+      if (download.error.becauseBlockedByContentAnalysis) {
+        // BLOCK_VERDICT_MALWARE indicates that the download was
+        // blocked by the content analysis service, so return
+        // DOWNLOAD_BLOCKED_CONTENT_ANALYSIS to indicate this.
+        // Otherwise, the content analysis service returned
+        // WARN, so the user has a chance to unblock the download,
+        // which corresponds with DOWNLOAD_DIRTY.
+        return download.error.reputationCheckVerdict ===
+          lazy.Downloads.Error.BLOCK_VERDICT_MALWARE
+          ? DownloadsCommon.DOWNLOAD_BLOCKED_CONTENT_ANALYSIS
+          : DownloadsCommon.DOWNLOAD_DIRTY;
+      }
       return DownloadsCommon.DOWNLOAD_FAILED;
     }
     if (download.canceled) {
@@ -317,14 +328,14 @@ export var DownloadsCommon = {
    */
   async deleteDownload(download) {
     // Check hasBlockedData to avoid double counting if you click the X button
-    // in the Libarary view and then delete the download from the history.
+    // in the Library view and then delete the download from the history.
     if (
       download.error?.becauseBlockedByReputationCheck &&
       download.hasBlockedData
     ) {
-      Services.telemetry
-        .getKeyedHistogramById("DOWNLOADS_USER_ACTION_ON_BLOCKED_DOWNLOAD")
-        .add(download.error.reputationCheckVerdict, 1); // confirm block
+      Glean.downloads.userActionOnBlockedDownload[
+        download.error.reputationCheckVerdict
+      ].accumulateSingleSample(1); // confirm block
     }
 
     // Remove the associated history element first, if any, so that the views
@@ -337,6 +348,9 @@ export var DownloadsCommon = {
     }
     let list = await lazy.Downloads.getList(lazy.Downloads.ALL);
     await list.remove(download);
+    if (download.error?.becauseBlockedByContentAnalysis) {
+      await download.respondToContentAnalysisWarnWithBlock();
+    }
     await download.finalize(true);
   },
 
@@ -365,6 +379,9 @@ export var DownloadsCommon = {
       await list.remove(download);
     }
     await download.manuallyRemoveData();
+    if (download.error?.becauseBlockedByContentAnalysis) {
+      await download.respondToContentAnalysisWarnWithBlock();
+    }
     if (clearHistory < 2) {
       lazy.DownloadHistory.updateMetaData(download).catch(console.error);
     }
@@ -635,6 +652,8 @@ export var DownloadsCommon = {
    *            the "Downloads.Error.BLOCK_VERDICT_" constants. If an unknown
    *            reason is specified, "Downloads.Error.BLOCK_VERDICT_MALWARE" is
    *            assumed.
+   *          becauseBlockedByReputationCheck:
+   *            Whether the the download was blocked by a reputation check.
    *          window:
    *            The window with which this action is associated.
    *          dialogType:
@@ -651,7 +670,12 @@ export var DownloadsCommon = {
    *            - "confirmBlock" to delete the blocked data permanently.
    *            - "cancel" to do nothing and cancel the operation.
    */
-  async confirmUnblockDownload({ verdict, window, dialogType }) {
+  async confirmUnblockDownload({
+    verdict,
+    becauseBlockedByReputationCheck,
+    window,
+    dialogType,
+  }) {
     let s = DownloadsCommon.strings;
 
     // All the dialogs have an action button and a cancel button, while only
@@ -691,12 +715,18 @@ export var DownloadsCommon = {
     }
 
     let message;
+    let tip = s.unblockTip2;
     switch (verdict) {
       case lazy.Downloads.Error.BLOCK_VERDICT_UNCOMMON:
         message = s.unblockTypeUncommon2;
         break;
       case lazy.Downloads.Error.BLOCK_VERDICT_POTENTIALLY_UNWANTED:
-        message = s.unblockTypePotentiallyUnwanted2;
+        if (becauseBlockedByReputationCheck) {
+          message = s.unblockTypePotentiallyUnwanted2;
+        } else {
+          message = s.unblockTypeContentAnalysisWarn;
+          tip = s.unblockContentAnalysisTip;
+        }
         break;
       case lazy.Downloads.Error.BLOCK_VERDICT_INSECURE:
         message = s.unblockInsecure2;
@@ -706,7 +736,7 @@ export var DownloadsCommon = {
         message = s.unblockTypeMalware;
         break;
     }
-    message += "\n\n" + s.unblockTip2;
+    message += "\n\n" + tip;
 
     Services.ww.registerNotification(function onOpen(subj, topic) {
       if (topic == "domwindowopened" && subj instanceof Ci.nsIDOMWindow) {
@@ -747,10 +777,10 @@ export var DownloadsCommon = {
   },
 };
 
-XPCOMUtils.defineLazyGetter(DownloadsCommon, "log", () => {
+ChromeUtils.defineLazyGetter(DownloadsCommon, "log", () => {
   return lazy.DownloadsLogger.log.bind(lazy.DownloadsLogger);
 });
-XPCOMUtils.defineLazyGetter(DownloadsCommon, "error", () => {
+ChromeUtils.defineLazyGetter(DownloadsCommon, "error", () => {
   return lazy.DownloadsLogger.error.bind(lazy.DownloadsLogger);
 });
 
@@ -866,7 +896,10 @@ DownloadsDataCtor.prototype = {
       download,
       DownloadsCommon.stateOfDownload(download)
     );
-    if (download.error?.becauseBlockedByReputationCheck) {
+    if (
+      download.error?.becauseBlockedByReputationCheck ||
+      download.error?.becauseBlockedByContentAnalysis
+    ) {
       this._notifyDownloadEvent("error");
     }
   },
@@ -1002,18 +1035,18 @@ DownloadsDataCtor.prototype = {
   },
 };
 
-XPCOMUtils.defineLazyGetter(lazy, "HistoryDownloadsData", function () {
+ChromeUtils.defineLazyGetter(lazy, "HistoryDownloadsData", function () {
   return new DownloadsDataCtor({ isHistory: true });
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "LimitedHistoryDownloadsData", function () {
+ChromeUtils.defineLazyGetter(lazy, "LimitedHistoryDownloadsData", function () {
   return new DownloadsDataCtor({
     isHistory: true,
     maxHistoryResults: kMaxHistoryResultsForLimitedView,
   });
 });
 
-XPCOMUtils.defineLazyGetter(
+ChromeUtils.defineLazyGetter(
   lazy,
   "LimitedPrivateHistoryDownloadData",
   function () {
@@ -1025,11 +1058,11 @@ XPCOMUtils.defineLazyGetter(
   }
 );
 
-XPCOMUtils.defineLazyGetter(lazy, "PrivateDownloadsData", function () {
+ChromeUtils.defineLazyGetter(lazy, "PrivateDownloadsData", function () {
   return new DownloadsDataCtor({ isPrivate: true });
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "DownloadsData", function () {
+ChromeUtils.defineLazyGetter(lazy, "DownloadsData", function () {
   return new DownloadsDataCtor();
 });
 
@@ -1169,7 +1202,7 @@ const DownloadsViewPrototype = {
    *
    * @note Subclasses should override this.
    */
-  onDownloadStateChanged(download) {
+  onDownloadStateChanged() {
     throw Components.Exception("", Cr.NS_ERROR_NOT_IMPLEMENTED);
   },
 
@@ -1462,11 +1495,15 @@ Object.setPrototypeOf(
   DownloadsViewPrototype
 );
 
-XPCOMUtils.defineLazyGetter(lazy, "PrivateDownloadsIndicatorData", function () {
-  return new DownloadsIndicatorDataCtor(true);
-});
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "PrivateDownloadsIndicatorData",
+  function () {
+    return new DownloadsIndicatorDataCtor(true);
+  }
+);
 
-XPCOMUtils.defineLazyGetter(lazy, "DownloadsIndicatorData", function () {
+ChromeUtils.defineLazyGetter(lazy, "DownloadsIndicatorData", function () {
   return new DownloadsIndicatorDataCtor(false);
 });
 

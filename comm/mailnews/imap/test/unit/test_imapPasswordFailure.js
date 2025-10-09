@@ -21,16 +21,7 @@ var kValidPassword = "password";
 var incomingServer, server;
 var attempt = 0;
 
-function confirmExPS(
-  aDialogTitle,
-  aText,
-  aButtonFlags,
-  aButton0Title,
-  aButton1Title,
-  aButton2Title,
-  aCheckMsg,
-  aCheckState
-) {
+function confirmExPS() {
   switch (++attempt) {
     // First attempt, retry.
     case 1:
@@ -78,7 +69,7 @@ add_task(async function () {
 
   registerAlertTestUtils();
 
-  let daemon = new ImapDaemon();
+  const daemon = new ImapDaemon();
   daemon.createMailbox("Subscribed", { subscribed: true });
   server = makeServer(daemon, "", {
     // Make username of server match the singons.txt file
@@ -86,7 +77,7 @@ add_task(async function () {
     kUsername: kUserName,
     kPassword: kValidPassword,
   });
-  server.setDebugLevel(fsDebugAll);
+  server.setDebugLevel(nsMailServer.debugAll);
 
   incomingServer = createLocalIMAPServer(server.port);
 
@@ -95,7 +86,7 @@ add_task(async function () {
   // out of the signons file (first removing the value that
   // createLocalIMAPServer puts in there).
   incomingServer.password = "";
-  let password = incomingServer.getPasswordWithUI(
+  const password = incomingServer.getPasswordWithUI(
     "Prompt Message",
     "Prompt Title"
   );
@@ -115,7 +106,7 @@ add_task(async function () {
 
   Assert.equal(attempt, 2);
 
-  let rootFolder = incomingServer.rootFolder;
+  const rootFolder = incomingServer.rootFolder;
   Assert.ok(rootFolder.containsChildNamed("Inbox"));
   Assert.ok(!rootFolder.containsChildNamed("Subscribed"));
 
@@ -170,7 +161,7 @@ function endTest() {
   incomingServer.closeCachedConnections();
   server.stop();
 
-  var thread = gThreadManager.currentThread;
+  var thread = Services.tm.currentThread;
   while (thread.hasPendingEvents()) {
     thread.processNextEvent(true);
   }

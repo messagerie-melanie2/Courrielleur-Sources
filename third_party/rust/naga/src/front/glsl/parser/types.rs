@@ -1,6 +1,10 @@
+use alloc::{vec, vec::Vec};
+use core::num::NonZeroU32;
+
 use crate::{
     front::glsl::{
         ast::{QualifierKey, QualifierValue, StorageQualifier, StructLayout, TypeQualifiers},
+        context::Context,
         error::ExpectedToken,
         parser::ParsingContext,
         token::{Token, TokenValue},
@@ -9,16 +13,17 @@ use crate::{
     AddressSpace, ArraySize, Handle, Span, Type, TypeInner,
 };
 
-impl<'source> ParsingContext<'source> {
-    /// Parses an optional array_specifier returning wether or not it's present
+impl ParsingContext<'_> {
+    /// Parses an optional array_specifier returning whether or not it's present
     /// and modifying the type handle if it exists
     pub fn parse_array_specifier(
         &mut self,
         frontend: &mut Frontend,
+        ctx: &mut Context,
         span: &mut Span,
         ty: &mut Handle<Type>,
     ) -> Result<()> {
-        while self.parse_array_specifier_single(frontend, span, ty)? {}
+        while self.parse_array_specifier_single(frontend, ctx, span, ty)? {}
         Ok(())
     }
 
@@ -26,6 +31,7 @@ impl<'source> ParsingContext<'source> {
     fn parse_array_specifier_single(
         &mut self,
         frontend: &mut Frontend,
+        ctx: &mut Context,
         span: &mut Span,
         ty: &mut Handle<Type>,
     ) -> Result<bool> {
@@ -36,29 +42,19 @@ impl<'source> ParsingContext<'source> {
                 span.subsume(meta);
                 ArraySize::Dynamic
             } else {
-                let (value, constant_span) = self.parse_uint_constant(frontend)?;
-                let constant = frontend.module.constants.fetch_or_append(
-                    crate::Constant {
-                        name: None,
-                        specialization: None,
-                        inner: crate::ConstantInner::Scalar {
-                            width: 4,
-                            value: crate::ScalarValue::Uint(value as u64),
-                        },
-                    },
-                    constant_span,
-                );
+                let (value, constant_span) = self.parse_uint_constant(frontend, ctx)?;
+                let size = NonZeroU32::new(value).ok_or(Error {
+                    kind: ErrorKind::SemanticError("Array size must be greater than zero".into()),
+                    meta: constant_span,
+                })?;
                 let end_span = self.expect(frontend, TokenValue::RightBracket)?.meta;
                 span.subsume(end_span);
-                ArraySize::Constant(constant)
+                ArraySize::Constant(size)
             };
 
-            frontend
-                .layouter
-                .update(&frontend.module.types, &frontend.module.constants)
-                .unwrap();
+            frontend.layouter.update(ctx.module.to_ctx()).unwrap();
             let stride = frontend.layouter[*ty].to_stride();
-            *ty = frontend.module.types.insert(
+            *ty = ctx.module.types.insert(
                 Type {
                     name: None,
                     inner: TypeInner::Array {
@@ -76,11 +72,15 @@ impl<'source> ParsingContext<'source> {
         }
     }
 
-    pub fn parse_type(&mut self, frontend: &mut Frontend) -> Result<(Option<Handle<Type>>, Span)> {
+    pub fn parse_type(
+        &mut self,
+        frontend: &mut Frontend,
+        ctx: &mut Context,
+    ) -> Result<(Option<Handle<Type>>, Span)> {
         let token = self.bump(frontend)?;
         let mut handle = match token.value {
             TokenValue::Void => return Ok((None, token.meta)),
-            TokenValue::TypeName(ty) => frontend.module.types.insert(ty, token.meta),
+            TokenValue::TypeName(ty) => ctx.module.types.insert(ty, token.meta),
             TokenValue::Struct => {
                 let mut meta = token.meta;
                 let ty_name = self.expect_ident(frontend)?.0;
@@ -88,12 +88,13 @@ impl<'source> ParsingContext<'source> {
                 let mut members = Vec::new();
                 let span = self.parse_struct_declaration_list(
                     frontend,
+                    ctx,
                     &mut members,
                     StructLayout::Std140,
                 )?;
                 let end_meta = self.expect(frontend, TokenValue::RightBrace)?.meta;
                 meta.subsume(end_meta);
-                let ty = frontend.module.types.insert(
+                let ty = ctx.module.types.insert(
                     Type {
                         name: Some(ty_name.clone()),
                         inner: TypeInner::Struct { members, span },
@@ -128,12 +129,16 @@ impl<'source> ParsingContext<'source> {
         };
 
         let mut span = token.meta;
-        self.parse_array_specifier(frontend, &mut span, &mut handle)?;
+        self.parse_array_specifier(frontend, ctx, &mut span, &mut handle)?;
         Ok((Some(handle), span))
     }
 
-    pub fn parse_type_non_void(&mut self, frontend: &mut Frontend) -> Result<(Handle<Type>, Span)> {
-        let (maybe_ty, meta) = self.parse_type(frontend)?;
+    pub fn parse_type_non_void(
+        &mut self,
+        frontend: &mut Frontend,
+        ctx: &mut Context,
+    ) -> Result<(Handle<Type>, Span)> {
+        let (maybe_ty, meta) = self.parse_type(frontend, ctx)?;
         let ty = maybe_ty.ok_or_else(|| Error {
             kind: ErrorKind::SemanticError("Type can't be void".into()),
             meta,
@@ -143,7 +148,7 @@ impl<'source> ParsingContext<'source> {
     }
 
     pub fn peek_type_qualifier(&mut self, frontend: &mut Frontend) -> bool {
-        self.peek(frontend).map_or(false, |t| match t.value {
+        self.peek(frontend).is_some_and(|t| match t.value {
             TokenValue::Invariant
             | TokenValue::Interpolation(_)
             | TokenValue::Sampling(_)
@@ -164,6 +169,7 @@ impl<'source> ParsingContext<'source> {
     pub fn parse_type_qualifiers<'a>(
         &mut self,
         frontend: &mut Frontend,
+        ctx: &mut Context,
     ) -> Result<TypeQualifiers<'a>> {
         let mut qualifiers = TypeQualifiers::default();
 
@@ -172,7 +178,7 @@ impl<'source> ParsingContext<'source> {
 
             // Handle layout qualifiers outside the match since this can push multiple values
             if token.value == TokenValue::Layout {
-                self.parse_layout_qualifier_id_list(frontend, &mut qualifiers)?;
+                self.parse_layout_qualifier_id_list(frontend, ctx, &mut qualifiers)?;
                 continue;
             }
 
@@ -223,7 +229,7 @@ impl<'source> ParsingContext<'source> {
                         }
                         TokenValue::Buffer => {
                             StorageQualifier::AddressSpace(AddressSpace::Storage {
-                                access: crate::StorageAccess::all(),
+                                access: crate::StorageAccess::LOAD | crate::StorageAccess::STORE,
                             })
                         }
                         _ => unreachable!(),
@@ -269,10 +275,12 @@ impl<'source> ParsingContext<'source> {
                     qualifiers.precision = Some((p, token.meta));
                 }
                 TokenValue::MemoryQualifier(access) => {
+                    let load_store = crate::StorageAccess::LOAD | crate::StorageAccess::STORE;
                     let storage_access = qualifiers
                         .storage_access
-                        .get_or_insert((crate::StorageAccess::all(), Span::default()));
-                    if !storage_access.0.contains(!access) {
+                        .get_or_insert((load_store, Span::default()));
+
+                    if !storage_access.0.contains(!access & load_store) {
                         frontend.errors.push(Error {
                             kind: ErrorKind::SemanticError(
                                 "The same memory qualifier can only be used once".into(),
@@ -295,11 +303,12 @@ impl<'source> ParsingContext<'source> {
     pub fn parse_layout_qualifier_id_list(
         &mut self,
         frontend: &mut Frontend,
+        ctx: &mut Context,
         qualifiers: &mut TypeQualifiers,
     ) -> Result<()> {
         self.expect(frontend, TokenValue::LeftParen)?;
         loop {
-            self.parse_layout_qualifier_id(frontend, &mut qualifiers.layout_qualifiers)?;
+            self.parse_layout_qualifier_id(frontend, ctx, &mut qualifiers.layout_qualifiers)?;
 
             if self.bump_if(frontend, TokenValue::Comma).is_some() {
                 continue;
@@ -316,6 +325,7 @@ impl<'source> ParsingContext<'source> {
     pub fn parse_layout_qualifier_id(
         &mut self,
         frontend: &mut Frontend,
+        ctx: &mut Context,
         qualifiers: &mut crate::FastHashMap<QualifierKey, (QualifierValue, Span)>,
     ) -> Result<()> {
         // layout_qualifier_id:
@@ -334,19 +344,27 @@ impl<'source> ParsingContext<'source> {
                         QualifierKey::Layout,
                         QualifierValue::Layout(StructLayout::Std430),
                     ),
+                    "index" => {
+                        self.expect(frontend, TokenValue::Assign)?;
+                        let (value, end_meta) = self.parse_uint_constant(frontend, ctx)?;
+                        token.meta.subsume(end_meta);
+
+                        (QualifierKey::Index, QualifierValue::Uint(value))
+                    }
                     word => {
                         if let Some(format) = map_image_format(word) {
                             (QualifierKey::Format, QualifierValue::Format(format))
                         } else {
                             let key = QualifierKey::String(name.into());
                             let value = if self.bump_if(frontend, TokenValue::Assign).is_some() {
-                                let (value, end_meta) = match self.parse_uint_constant(frontend) {
-                                    Ok(v) => v,
-                                    Err(e) => {
-                                        frontend.errors.push(e);
-                                        (0, Span::default())
-                                    }
-                                };
+                                let (value, end_meta) =
+                                    match self.parse_uint_constant(frontend, ctx) {
+                                        Ok(v) => v,
+                                        Err(e) => {
+                                            frontend.errors.push(e);
+                                            (0, Span::default())
+                                        }
+                                    };
                                 token.meta.subsume(end_meta);
 
                                 QualifierValue::Uint(value)
@@ -371,7 +389,7 @@ impl<'source> ParsingContext<'source> {
     }
 
     pub fn peek_type_name(&mut self, frontend: &mut Frontend) -> bool {
-        self.peek(frontend).map_or(false, |t| match t.value {
+        self.peek(frontend).is_some_and(|t| match t.value {
             TokenValue::TypeName(_) | TokenValue::Void => true,
             TokenValue::Struct => true,
             TokenValue::Identifier(ref ident) => frontend.lookup_type.contains_key(ident),
@@ -389,10 +407,11 @@ fn map_image_format(word: &str) -> Option<crate::StorageFormat> {
         "rgba16f" => Sf::Rgba16Float,
         "rg32f" => Sf::Rg32Float,
         "rg16f" => Sf::Rg16Float,
-        "r11f_g11f_b10f" => Sf::Rg11b10Float,
+        "r11f_g11f_b10f" => Sf::Rg11b10Ufloat,
         "r32f" => Sf::R32Float,
         "r16f" => Sf::R16Float,
         "rgba16" => Sf::Rgba16Unorm,
+        "rgb10_a2ui" => Sf::Rgb10a2Uint,
         "rgb10_a2" => Sf::Rgb10a2Unorm,
         "rgba8" => Sf::Rgba8Unorm,
         "rg16" => Sf::Rg16Unorm,
@@ -419,6 +438,7 @@ fn map_image_format(word: &str) -> Option<crate::StorageFormat> {
         "rgba32ui" => Sf::Rgba32Uint,
         "rgba16ui" => Sf::Rgba16Uint,
         "rgba8ui" => Sf::Rgba8Uint,
+        "r64ui" => Sf::R64Uint,
         "rg32ui" => Sf::Rg32Uint,
         "rg16ui" => Sf::Rg16Uint,
         "rg8ui" => Sf::Rg8Uint,

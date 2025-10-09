@@ -2,7 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { MsgKeySet } = ChromeUtils.import("resource:///modules/MsgKeySet.jsm");
+var { MsgKeySet } = ChromeUtils.importESModule(
+  "resource:///modules/MsgKeySet.sys.mjs"
+);
 
 /**
  * Test MsgKeySet.addRange works correctly.
@@ -38,6 +40,16 @@ add_task(function testAddRange() {
   ok(keySet.has(22));
   ok(keySet.has(199));
   equal(keySet.toString(), "2-29,102,199");
+
+  // Add overlapping ranges.
+  keySet.addRange(20, 40);
+  equal(keySet.toString(), "2-40,102,199");
+  keySet.addRange(10, 30);
+  equal(keySet.toString(), "2-40,102,199");
+  keySet.addRange(1, 20);
+  equal(keySet.toString(), "1-40,102,199");
+  keySet.addRange(1, 150);
+  equal(keySet.toString(), "1-150,199");
 });
 
 /**
@@ -45,7 +57,7 @@ add_task(function testAddRange() {
  */
 add_task(function testAdd() {
   // Init an empty set.
-  let keySet = new MsgKeySet();
+  const keySet = new MsgKeySet();
   ok(!keySet.has(1));
 
   // Add three values.
@@ -66,7 +78,7 @@ add_task(function testAdd() {
  */
 add_task(function testGetLastMissingRange() {
   // Init a set.
-  let keySet = new MsgKeySet("2-9,12-29");
+  const keySet = new MsgKeySet("2-9,12-29");
 
   // Test `start` should be a value not already in keySet.
   let [start, end] = keySet.getLastMissingRange(2, 33);

@@ -16,8 +16,8 @@
 #include "api/ice_transport_factory.h"
 #include "api/make_ref_counted.h"
 #include "api/scoped_refptr.h"
-#include "p2p/base/fake_ice_transport.h"
-#include "p2p/base/fake_port_allocator.h"
+#include "p2p/test/fake_ice_transport.h"
+#include "p2p/test/fake_port_allocator.h"
 #include "rtc_base/internal/default_socket_server.h"
 #include "test/gtest.h"
 #include "test/scoped_key_value_config.h"
@@ -32,7 +32,7 @@ class IceTransportTest : public ::testing::Test {
 
   rtc::SocketServer* socket_server() const { return socket_server_.get(); }
 
-  webrtc::test::ScopedKeyValueConfig field_trials_;
+  test::ScopedKeyValueConfig field_trials_;
 
  private:
   std::unique_ptr<rtc::SocketServer> socket_server_;

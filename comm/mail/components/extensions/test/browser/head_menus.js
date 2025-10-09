@@ -2,53 +2,21 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* globals synthesizeMouseAtCenterAndRetry, awaitBrowserLoaded */
-
 "use strict";
 
-const { ExtensionPermissions } = ChromeUtils.importESModule(
+/* globals synthesizeMouseAtCenterAndRetry, awaitBrowserLoaded, closeMenuPopup, clickItemInMenuPopup, openSubMenuPopup */
+
+var { ExtensionPermissions } = ChromeUtils.importESModule(
   "resource://gre/modules/ExtensionPermissions.sys.mjs"
 );
-
-const { mailTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MailTestUtils.jsm"
+var { mailTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MailTestUtils.sys.mjs"
 );
 
 const treeClick = mailTestUtils.treeClick.bind(null, EventUtils, window);
 
-var URL_BASE =
+const URL_BASE =
   "http://mochi.test:8888/browser/comm/mail/components/extensions/test/browser/data";
-
-/**
- * Left-click on something and wait for the context menu to appear.
- * For elements in the parent process only.
- *
- * @param {Element} menu - The <menu> that should appear.
- * @param {Element} element - The element to be clicked on.
- * @returns {Promise} A promise that resolves when the menu appears.
- */
-function leftClick(menu, element) {
-  let shownPromise = BrowserTestUtils.waitForEvent(menu, "popupshown");
-  EventUtils.synthesizeMouseAtCenter(element, {}, element.ownerGlobal);
-  return shownPromise;
-}
-/**
- * Right-click on something and wait for the context menu to appear.
- * For elements in the parent process only.
- *
- * @param {Element} menu - The <menu> that should appear.
- * @param {Element} element - The element to be clicked on.
- * @returns {Promise} A promise that resolves when the menu appears.
- */
-function rightClick(menu, element) {
-  let shownPromise = BrowserTestUtils.waitForEvent(menu, "popupshown");
-  EventUtils.synthesizeMouseAtCenter(
-    element,
-    { type: "contextmenu" },
-    element.ownerGlobal
-  );
-  return shownPromise;
-}
 
 /**
  * Right-click on something in a content document and wait for the context
@@ -60,7 +28,7 @@ function rightClick(menu, element) {
  * @returns {Promise} A promise that resolves when the menu appears.
  */
 async function rightClickOnContent(menu, selector, browser) {
-  let shownPromise = BrowserTestUtils.waitForEvent(menu, "popupshown");
+  const shownPromise = BrowserTestUtils.waitForEvent(menu, "popupshown");
   await synthesizeMouseAtCenterAndRetry(
     selector,
     { type: "contextmenu" },
@@ -74,23 +42,24 @@ async function rightClickOnContent(menu, selector, browser) {
  *
  * @see mail/components/extensions/schemas/menus.json
  *
- * @param extension
+ * @param {ExtensionWrapper} extension
  * @param {object} expectedInfo
- * @param {Array?} expectedInfo.menuIds
- * @param {Array?} expectedInfo.contexts
- * @param {Array?} expectedInfo.attachments
- * @param {object?} expectedInfo.displayedFolder
- * @param {object?} expectedInfo.selectedFolder
- * @param {Array?} expectedInfo.selectedMessages
- * @param {RegExp?} expectedInfo.pageUrl
- * @param {string?} expectedInfo.selectionText
+ * @param {?Array} expectedInfo.menuIds
+ * @param {?Array} expectedInfo.contexts
+ * @param {?Array} expectedInfo.attachments
+ * @param {?object} expectedInfo.displayedFolder
+ * @param {?object} expectedInfo.selectedFolder
+ * @param {?object} expectedInfo.selectedFolders
+ * @param {?Array} expectedInfo.selectedMessages
+ * @param {?RegExp} expectedInfo.pageUrl
+ * @param {?string} expectedInfo.selectionText
  * @param {object} expectedTab
  * @param {boolean} expectedTab.active
  * @param {integer} expectedTab.index
- * @param {boolean} expectedTab.mailTab
+ * @param {string} expectedTab.type
  */
 async function checkShownEvent(extension, expectedInfo, expectedTab) {
-  let [info, tab] = await extension.awaitMessage("onShown");
+  const [info, tab] = await extension.awaitMessage("onShown");
   Assert.deepEqual(info.menuIds, expectedInfo.menuIds);
   Assert.deepEqual(info.contexts, expectedInfo.contexts);
 
@@ -107,16 +76,56 @@ async function checkShownEvent(extension, expectedInfo, expectedTab) {
     }
   }
 
-  for (let infoKey of ["displayedFolder", "selectedFolder"]) {
+  for (const infoKey of ["displayedFolder", "selectedFolder"]) {
+    Assert.equal(
+      !!info[infoKey],
+      !!expectedInfo[infoKey],
+      `${infoKey} in info`
+    );
+
+    Assert.ok(
+      !!extension.manifest,
+      "The manifest needs to be manually attached to the extension object for this test."
+    );
+
+    if (expectedInfo[infoKey]) {
+      Assert.equal(info[infoKey].accountId, expectedInfo[infoKey].accountId);
+      Assert.equal(info[infoKey].path, expectedInfo[infoKey].path);
+      if (
+        infoKey == "displayedFolder" &&
+        extension.manifest.manifest_version > 2
+      ) {
+        Assert.ok(
+          !Array.isArray(info[infoKey].subFolders),
+          `${infoKey} should not have subFolders in Manifest V3 or later`
+        );
+      } else {
+        Assert.ok(
+          Array.isArray(info[infoKey].subFolders),
+          `${infoKey} should have subFolders in Manifest V2`
+        );
+      }
+    }
+  }
+
+  for (const infoKey of ["selectedFolders"]) {
     Assert.equal(
       !!info[infoKey],
       !!expectedInfo[infoKey],
       `${infoKey} in info`
     );
     if (expectedInfo[infoKey]) {
-      Assert.equal(info[infoKey].accountId, expectedInfo[infoKey].accountId);
-      Assert.equal(info[infoKey].path, expectedInfo[infoKey].path);
-      Assert.ok(Array.isArray(info[infoKey].subFolders));
+      for (let i = 0; i < expectedInfo[infoKey].length; i++) {
+        Assert.equal(
+          info[infoKey][i].accountId,
+          expectedInfo[infoKey][i].accountId
+        );
+        Assert.equal(info[infoKey][i].path, expectedInfo[infoKey][i].path);
+        Assert.ok(
+          !info[infoKey][i].subFolders,
+          `${infoKey}[${i}] should not have subFolders`
+        );
+      }
     }
   }
 
@@ -159,7 +168,7 @@ async function checkShownEvent(extension, expectedInfo, expectedTab) {
 
   Assert.equal(tab.active, expectedTab.active, "tab is active");
   Assert.equal(tab.index, expectedTab.index, "tab index");
-  Assert.equal(tab.mailTab, expectedTab.mailTab, "tab is mailTab");
+  Assert.equal(tab.type, expectedTab.type, "tab type is correct");
 }
 
 /**
@@ -167,20 +176,20 @@ async function checkShownEvent(extension, expectedInfo, expectedTab) {
  *
  * @see mail/components/extensions/schemas/menus.json
  *
- * @param extension
+ * @param {ExtensionWrapper} extension
  * @param {object} expectedInfo
- * @param {string?} expectedInfo.selectionText
- * @param {string?} expectedInfo.linkText
- * @param {RegExp?} expectedInfo.pageUrl
- * @param {RegExp?} expectedInfo.linkUrl
- * @param {RegExp?} expectedInfo.srcUrl
+ * @param {?string} expectedInfo.selectionText
+ * @param {?string} expectedInfo.linkText
+ * @param {?RegExp} expectedInfo.pageUrl
+ * @param {?RegExp} expectedInfo.linkUrl
+ * @param {?RegExp} expectedInfo.srcUrl
  * @param {object} expectedTab
  * @param {boolean} expectedTab.active
  * @param {integer} expectedTab.index
- * @param {boolean} expectedTab.mailTab
+ * @param {string} expectedTab.type
  */
 async function checkClickedEvent(extension, expectedInfo, expectedTab) {
-  let [info, tab] = await extension.awaitMessage("onClicked");
+  const [info, tab] = await extension.awaitMessage("onClicked");
 
   Assert.equal(info.selectionText, expectedInfo.selectionText, "selectionText");
   Assert.equal(info.linkText, expectedInfo.linkText, "linkText");
@@ -188,7 +197,7 @@ async function checkClickedEvent(extension, expectedInfo, expectedTab) {
     Assert.equal(info.menuItemId, expectedInfo.menuItemId, "menuItemId");
   }
 
-  for (let infoKey of ["pageUrl", "linkUrl", "srcUrl"]) {
+  for (const infoKey of ["pageUrl", "linkUrl", "srcUrl"]) {
     Assert.equal(
       !!info[infoKey],
       !!expectedInfo[infoKey],
@@ -205,14 +214,35 @@ async function checkClickedEvent(extension, expectedInfo, expectedTab) {
 
   Assert.equal(tab.active, expectedTab.active, "tab is active");
   Assert.equal(tab.index, expectedTab.index, "tab index");
-  Assert.equal(tab.mailTab, expectedTab.mailTab, "tab is mailTab");
+  Assert.equal(tab.type, expectedTab.type, "tab type is correct");
 }
 
 async function getMenuExtension(manifest) {
-  let details = {
+  // Default to Manifest V2, if none provided.
+  if (!manifest.manifest_version) {
+    manifest.manifest_version = 2;
+  }
+
+  const details = {
     files: {
       "background.js": async () => {
-        let contexts = [
+        // Register listeners before the first await, so they get registered as
+        // persistent listeners.
+        browser.menus.onClicked.addListener((...args) => {
+          browser.test.sendMessage("onClicked", args);
+        });
+
+        browser.menus.onShown.addListener((...args) => {
+          browser.test.sendMessage("onShown", args);
+        });
+
+        if (browser.runtime.getManifest().manifest_version > 2) {
+          browser.runtime.onSuspend.addListener(() => {
+            browser.test.sendMessage("suspended-test_menu_onclick");
+          });
+        }
+
+        const contexts = [
           "audio",
           "compose_action",
           "compose_action_menu",
@@ -238,22 +268,19 @@ async function getMenuExtension(manifest) {
         } else {
           contexts.push("browser_action", "browser_action_menu");
         }
-
-        for (let context of contexts) {
-          browser.menus.create({
-            id: context,
-            title: context,
-            contexts: [context],
-          });
+        for (const context of contexts) {
+          await new Promise(resolve =>
+            browser.menus.create(
+              {
+                id: context,
+                title: context,
+                contexts: [context],
+              },
+              resolve
+            )
+          );
         }
 
-        browser.menus.onShown.addListener((...args) => {
-          browser.test.sendMessage("onShown", args);
-        });
-
-        browser.menus.onClicked.addListener((...args) => {
-          browser.test.sendMessage("onClicked", args);
-        });
         browser.test.sendMessage("menus-created");
       },
     },
@@ -274,7 +301,7 @@ async function getMenuExtension(manifest) {
   }
   details.manifest.permissions.push("menus");
   console.log(JSON.stringify(details, 2));
-  let extension = ExtensionTestUtils.loadExtension(details);
+  const extension = ExtensionTestUtils.loadExtension(details);
   if (details.manifest.host_permissions) {
     // MV3 has to manually grant the requested permission.
     await ExtensionPermissions.add("menus@mochi.test", {
@@ -282,6 +309,9 @@ async function getMenuExtension(manifest) {
       origins: details.manifest.host_permissions,
     });
   }
+
+  // Manually attach the manifest to the extension object.
+  extension.manifest = details.manifest;
   return extension;
 }
 
@@ -294,7 +324,7 @@ async function subtest_content(
 ) {
   await awaitBrowserLoaded(browser, url => url != "about:blank");
 
-  let menuId = browser.getAttribute("context");
+  const menuId = browser.getAttribute("context") || "mailContext";
   let ownerDocument;
   if (browser.ownerGlobal.parent.location.href == "about:3pane") {
     ownerDocument = browser.ownerGlobal.parent.document;
@@ -303,7 +333,7 @@ async function subtest_content(
   } else {
     ownerDocument = browser.ownerDocument;
   }
-  let menu = ownerDocument.getElementById(menuId);
+  const menu = ownerDocument.getElementById(menuId);
 
   await synthesizeMouseAtCenterAndRetry("body", {}, browser);
 
@@ -311,14 +341,7 @@ async function subtest_content(
 
   await rightClickOnContent(menu, "body", browser);
   Assert.ok(menu.querySelector("#menus_mochi_test-menuitem-_page"));
-  let hiddenPromise = BrowserTestUtils.waitForEvent(menu, "popuphidden");
-  menu.hidePopup();
-  await hiddenPromise;
-  // Sometimes, the popup will open then instantly disappear. It seems to
-  // still be hiding after the previous appearance. If we wait a little bit,
-  // this doesn't happen.
-  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
-  await new Promise(r => setTimeout(r, 250));
+  await closeMenuPopup(menu);
 
   await checkShownEvent(
     extension,
@@ -333,7 +356,7 @@ async function subtest_content(
   info("Test selection.");
 
   await SpecialPowers.spawn(browser, [], () => {
-    let text = content.document.querySelector("p");
+    const text = content.document.querySelector("p");
     content.getSelection().selectAllChildren(text);
   });
   await rightClickOnContent(menu, "p", browser);
@@ -349,7 +372,6 @@ async function subtest_content(
     tab
   );
 
-  hiddenPromise = BrowserTestUtils.waitForEvent(menu, "popuphidden");
   let clickedPromise = checkClickedEvent(
     extension,
     {
@@ -358,18 +380,10 @@ async function subtest_content(
     },
     tab
   );
-  menu.activateItem(
+  await clickItemInMenuPopup(
     menu.querySelector("#menus_mochi_test-menuitem-_selection")
   );
   await clickedPromise;
-  await hiddenPromise;
-
-  // Sometimes, the popup will open then instantly disappear. It seems to
-  // still be hiding after the previous appearance. If we wait a little bit,
-  // this doesn't happen.
-  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
-  await new Promise(r => setTimeout(r, 250));
-
   await synthesizeMouseAtCenterAndRetry("body", {}, browser); // Select nothing.
 
   info("Test link.");
@@ -386,7 +400,6 @@ async function subtest_content(
     tab
   );
 
-  hiddenPromise = BrowserTestUtils.waitForEvent(menu, "popuphidden");
   clickedPromise = checkClickedEvent(
     extension,
     {
@@ -396,14 +409,10 @@ async function subtest_content(
     },
     tab
   );
-  menu.activateItem(menu.querySelector("#menus_mochi_test-menuitem-_link"));
+  await clickItemInMenuPopup(
+    menu.querySelector("#menus_mochi_test-menuitem-_link")
+  );
   await clickedPromise;
-  await hiddenPromise;
-  // Sometimes, the popup will open then instantly disappear. It seems to
-  // still be hiding after the previous appearance. If we wait a little bit,
-  // this doesn't happen.
-  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
-  await new Promise(r => setTimeout(r, 250));
 
   info("Test image.");
 
@@ -419,7 +428,6 @@ async function subtest_content(
     tab
   );
 
-  hiddenPromise = BrowserTestUtils.waitForEvent(menu, "popuphidden");
   clickedPromise = checkClickedEvent(
     extension,
     {
@@ -428,21 +436,19 @@ async function subtest_content(
     },
     tab
   );
-  menu.activateItem(menu.querySelector("#menus_mochi_test-menuitem-_image"));
+  await clickItemInMenuPopup(
+    menu.querySelector("#menus_mochi_test-menuitem-_image")
+  );
   await clickedPromise;
-  await hiddenPromise;
-  // Sometimes, the popup will open then instantly disappear. It seems to
-  // still be hiding after the previous appearance. If we wait a little bit,
-  // this doesn't happen.
-  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
-  await new Promise(r => setTimeout(r, 250));
 }
 
 async function openExtensionSubMenu(menu) {
   // The extension submenu ends with a number, which increases over time, but it
   // does not have a underscore.
   let submenu;
-  for (let item of menu.querySelectorAll("[id^=menus_mochi_test-menuitem-]")) {
+  for (const item of menu.querySelectorAll(
+    "[id^=menus_mochi_test-menuitem-]"
+  )) {
     if (!item.id.includes("-_")) {
       submenu = item;
       break;
@@ -451,10 +457,7 @@ async function openExtensionSubMenu(menu) {
   Assert.ok(submenu, `Found submenu: ${submenu.id}`);
 
   // Open submenu.
-  let submenuPromise = BrowserTestUtils.waitForEvent(menu, "popupshown");
-  submenu.openMenu(true);
-  await submenuPromise;
-
+  await openSubMenuPopup(submenu);
   return submenu;
 }
 
@@ -467,45 +470,36 @@ async function subtest_compose_body(
 ) {
   await awaitBrowserLoaded(browser, url => url != "about:blank");
 
-  let ownerDocument = browser.ownerDocument;
-  let menu = ownerDocument.getElementById(browser.getAttribute("context"));
+  const ownerDocument = browser.ownerDocument;
+  const menu = ownerDocument.getElementById(browser.getAttribute("context"));
 
   await synthesizeMouseAtCenterAndRetry("body", {}, browser);
 
   info("Test a part of the page with no content.");
-  {
-    await rightClickOnContent(menu, "body", browser);
-    Assert.ok(menu.querySelector(`#menus_mochi_test-menuitem-_compose_body`));
-    Assert.ok(menu.querySelector(`#menus_mochi_test-menuitem-_editable`));
-    let hiddenPromise = BrowserTestUtils.waitForEvent(menu, "popuphidden");
-    menu.hidePopup();
-    await hiddenPromise;
-    // Sometimes, the popup will open then instantly disappear. It seems to
-    // still be hiding after the previous appearance. If we wait a little bit,
-    // this doesn't happen.
-    // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
-    await new Promise(r => setTimeout(r, 250));
+  await rightClickOnContent(menu, "body", browser);
+  Assert.ok(menu.querySelector(`#menus_mochi_test-menuitem-_compose_body`));
+  Assert.ok(menu.querySelector(`#menus_mochi_test-menuitem-_editable`));
+  await closeMenuPopup(menu);
 
-    await checkShownEvent(
-      extension,
-      {
-        menuIds: ["editable", "compose_body"],
-        contexts: ["editable", "compose_body", "all"],
-        pageUrl: extensionHasPermission ? pageUrl : undefined,
-      },
-      tab
-    );
-  }
+  await checkShownEvent(
+    extension,
+    {
+      menuIds: ["editable", "compose_body"],
+      contexts: ["editable", "compose_body", "all"],
+      pageUrl: extensionHasPermission ? pageUrl : undefined,
+    },
+    tab
+  );
 
   info("Test selection.");
   {
     await SpecialPowers.spawn(browser, [], () => {
-      let text = content.document.querySelector("p");
+      const text = content.document.querySelector("p");
       content.getSelection().selectAllChildren(text);
     });
 
     await rightClickOnContent(menu, "p", browser);
-    let submenu = await openExtensionSubMenu(menu);
+    const submenu = await openExtensionSubMenu(menu);
 
     await checkShownEvent(
       extension,
@@ -523,8 +517,7 @@ async function subtest_compose_body(
     );
     Assert.ok(submenu.querySelector("#menus_mochi_test-menuitem-_editable"));
 
-    let hiddenPromise = BrowserTestUtils.waitForEvent(submenu, "popuphidden");
-    let clickedPromise = checkClickedEvent(
+    const clickedPromise = checkClickedEvent(
       extension,
       {
         pageUrl,
@@ -532,24 +525,17 @@ async function subtest_compose_body(
       },
       tab
     );
-    menu.activateItem(
+    await clickItemInMenuPopup(
       submenu.querySelector("#menus_mochi_test-menuitem-_selection")
     );
     await clickedPromise;
-    await hiddenPromise;
-
-    // Sometimes, the popup will open then instantly disappear. It seems to
-    // still be hiding after the previous appearance. If we wait a little bit,
-    // this doesn't happen.
-    // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
-    await new Promise(r => setTimeout(r, 250));
     await synthesizeMouseAtCenterAndRetry("body", {}, browser); // Select nothing.
   }
 
   info("Test link.");
   {
     await rightClickOnContent(menu, "a", browser);
-    let submenu = await openExtensionSubMenu(menu);
+    const submenu = await openExtensionSubMenu(menu);
 
     await checkShownEvent(
       extension,
@@ -566,8 +552,7 @@ async function subtest_compose_body(
       submenu.querySelector("#menus_mochi_test-menuitem-_compose_body")
     );
 
-    let hiddenPromise = BrowserTestUtils.waitForEvent(submenu, "popuphidden");
-    let clickedPromise = checkClickedEvent(
+    const clickedPromise = checkClickedEvent(
       extension,
       {
         pageUrl,
@@ -576,24 +561,17 @@ async function subtest_compose_body(
       },
       tab
     );
-    menu.activateItem(
+    await clickItemInMenuPopup(
       submenu.querySelector("#menus_mochi_test-menuitem-_link")
     );
     await clickedPromise;
-    await hiddenPromise;
-
-    // Sometimes, the popup will open then instantly disappear. It seems to
-    // still be hiding after the previous appearance. If we wait a little bit,
-    // this doesn't happen.
-    // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
-    await new Promise(r => setTimeout(r, 250));
     await synthesizeMouseAtCenterAndRetry("body", {}, browser); // Select nothing.
   }
 
   info("Test image.");
   {
     await rightClickOnContent(menu, "img", browser);
-    let submenu = await openExtensionSubMenu(menu);
+    const submenu = await openExtensionSubMenu(menu);
 
     await checkShownEvent(
       extension,
@@ -610,8 +588,7 @@ async function subtest_compose_body(
       submenu.querySelector("#menus_mochi_test-menuitem-_compose_body")
     );
 
-    let hiddenPromise = BrowserTestUtils.waitForEvent(menu, "popuphidden");
-    let clickedPromise = checkClickedEvent(
+    const clickedPromise = checkClickedEvent(
       extension,
       {
         pageUrl,
@@ -619,17 +596,10 @@ async function subtest_compose_body(
       },
       tab
     );
-    menu.activateItem(
+    await clickItemInMenuPopup(
       submenu.querySelector("#menus_mochi_test-menuitem-_image")
     );
     await clickedPromise;
-    await hiddenPromise;
-
-    // Sometimes, the popup will open then instantly disappear. It seems to
-    // still be hiding after the previous appearance. If we wait a little bit,
-    // this doesn't happen.
-    // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
-    await new Promise(r => setTimeout(r, 250));
     await synthesizeMouseAtCenterAndRetry("body", {}, browser); // Select nothing.
   }
 }
@@ -644,7 +614,33 @@ async function subtest_element(
   pageUrl,
   tab
 ) {
-  for (let selectedTest of [false, true]) {
+  /**
+   * Function to trigger a context click on the specified element. The provided
+   * observerElement is used to wait for the popupshown event.
+   * This function cannot be replaced by BrowserTestUtils.waitForPopupEvent(),
+   * because the context menu may not exist yet. It is created on the fly here:
+   * https://searchfox.org/comm-central/rev/7e60bfd71efc4a4a3aece6a0ab87f3ffb75803a2/mozilla/toolkit/content/editMenuOverlay.js#108-126
+   *
+   * @param {Element} observerElement - An element which can observe the expected
+   *   popupshown event, which will be triggered by the click.
+   * @param {Element} elementToClick - The element to click on.
+   *
+   * @returns {Promise<event>} The captured popupshown event.
+   */
+  const rightClick = (observerElement, elementToClick) => {
+    const shownPromise = BrowserTestUtils.waitForEvent(
+      observerElement,
+      "popupshown"
+    );
+    EventUtils.synthesizeMouseAtCenter(
+      elementToClick,
+      { type: "contextmenu" },
+      elementToClick.ownerGlobal
+    );
+    return shownPromise;
+  };
+
+  for (const selectedTest of [false, true]) {
     element.focus();
     if (selectedTest) {
       element.value = "This is selected text.";
@@ -652,11 +648,10 @@ async function subtest_element(
     } else {
       element.value = "";
     }
-
-    let event = await rightClick(element.ownerGlobal, element);
-    let menu = event.target;
-    let trigger = menu.triggerNode;
-    let menuitem = menu.querySelector("#menus_mochi_test-menuitem-_editable");
+    const event = await rightClick(element.ownerGlobal, element);
+    const menu = event.target;
+    const trigger = menu.triggerNode;
+    const menuitem = menu.querySelector("#menus_mochi_test-menuitem-_editable");
     Assert.equal(
       element.id,
       trigger.id,
@@ -688,27 +683,17 @@ async function subtest_element(
     // extension submenu. Open the submenu.
     let submenu = null;
     if (selectedTest) {
-      for (let foundMenu of menu.querySelectorAll(
+      for (const foundMenu of menu.querySelectorAll(
         "[id^='menus_mochi_test-menuitem-']"
       )) {
         if (!foundMenu.id.startsWith("menus_mochi_test-menuitem-_")) {
           submenu = foundMenu;
         }
       }
-      Assert.ok(submenu, "Submenu found.");
-      let submenuPromise = BrowserTestUtils.waitForEvent(
-        element.ownerGlobal,
-        "popupshown"
-      );
-      submenu.openMenu(true);
-      await submenuPromise;
+      await openSubMenuPopup(submenu);
     }
 
-    let hiddenPromise = BrowserTestUtils.waitForEvent(
-      element.ownerGlobal,
-      "popuphidden"
-    );
-    let clickedPromise = checkClickedEvent(
+    const clickedPromise = checkClickedEvent(
       extension,
       {
         pageUrl,
@@ -716,18 +701,8 @@ async function subtest_element(
       },
       tab
     );
-    if (submenu) {
-      submenu.menupopup.activateItem(menuitem);
-    } else {
-      menu.activateItem(menuitem);
-    }
-    await clickedPromise;
-    await hiddenPromise;
 
-    // Sometimes, the popup will open then instantly disappear. It seems to
-    // still be hiding after the previous appearance. If we wait a little bit,
-    // this doesn't happen.
-    // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
-    await new Promise(r => setTimeout(r, 250));
+    await clickItemInMenuPopup(menuitem);
+    await clickedPromise;
   }
 }

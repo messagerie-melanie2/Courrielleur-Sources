@@ -7,8 +7,6 @@ import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
-  Preferences: "resource://gre/modules/Preferences.sys.mjs",
-
   Log: "chrome://remote/content/shared/Log.sys.mjs",
 });
 
@@ -19,7 +17,7 @@ XPCOMUtils.defineLazyPreferenceGetter(
   false
 );
 
-XPCOMUtils.defineLazyGetter(lazy, "logger", () => lazy.Log.get());
+ChromeUtils.defineLazyGetter(lazy, "logger", () => lazy.Log.get());
 
 // Ensure we are in the parent process.
 if (Services.appinfo.processType != Ci.nsIXULRuntime.PROCESS_TYPE_DEFAULT) {
@@ -45,6 +43,7 @@ if (Services.appinfo.processType != Ci.nsIXULRuntime.PROCESS_TYPE_DEFAULT) {
 // - remote/test/puppeteer/packages/browsers/src/browser-data/firefox.ts
 // - testing/geckodriver/src/prefs.rs
 // - testing/marionette/client/marionette_driver/geckoinstance.py
+// - testing/profiles/
 //
 // The preferences in `firefox.ts`, `prefs.rs` and `geckoinstance.py`
 // will be applied before the application starts, and should typically be used
@@ -63,6 +62,10 @@ if (Services.appinfo.processType != Ci.nsIXULRuntime.PROCESS_TYPE_DEFAULT) {
 // several lists of preferences, either common or specific to a given application
 // (Firefox Desktop, Fennec, Thunderbird).
 //
+// Some test types may disable recommended preferences. Search for
+// `"remote.prefs.recommended", false` in `/testing/profiles` to find
+// `user.js` files that do so.
+//
 // Depending on how users interact with the Remote Agent, they will use different
 // combinations of preferences. So it's important to update the preferences files
 // so that all users have the proper preferences.
@@ -75,6 +78,8 @@ if (Services.appinfo.processType != Ci.nsIXULRuntime.PROCESS_TYPE_DEFAULT) {
 //   - Create a PR to upstream the change on `browser-data/firefox.ts` to puppeteer
 // - Otherwise, if the preference can be set after startup:
 //   - Add the preference to `RecommendedPreferences.sys.mjs`
+// - If a `user.js` file in `/testing/profiles` disables recommended preferences,
+//   identify affected test suites and set the new preference where needed.
 const COMMON_PREFERENCES = new Map([
   // Make sure Shield doesn't hit the network.
   ["app.normandy.api_url", ""],
@@ -100,10 +105,28 @@ const COMMON_PREFERENCES = new Map([
   // This can be removed once Firefox 69 and 68 ESR and are no longer supported.
   ["browser.contentblocking.introCount", 99],
 
+  // Set global `dump` function to log strings to `stdout` for release builds as well.
+  ["browser.dom.window.dump.enabled", true],
+
   // Indicate that the download panel has been shown once so that
   // whichever download test runs first doesn't show the popup
   // inconsistently.
   ["browser.download.panel.shown", true],
+
+  // Make sure error page is not shown for blank pages with 4xx or 5xx response code
+  ["browser.http.blank_page_with_error_response.enabled", true],
+
+  // Make sure newtab weather doesn't hit the network to retrieve weather data.
+  [
+    "browser.newtabpage.activity-stream.discoverystream.region-weather-config",
+    "",
+  ],
+
+  // Make sure newtab wallpapers don't hit the network to retrieve wallpaper data.
+  ["browser.newtabpage.activity-stream.newtabWallpapers.enabled", false],
+
+  // Make sure Topsites doesn't hit the network to retrieve sponsored tiles.
+  ["browser.newtabpage.activity-stream.showSponsoredTopSites", false],
 
   // Always display a blank page
   ["browser.newtabpage.enabled", false],
@@ -122,7 +145,6 @@ const COMMON_PREFERENCES = new Map([
   ["browser.safebrowsing.blockedURIs.enabled", false],
   ["browser.safebrowsing.downloads.enabled", false],
   ["browser.safebrowsing.malware.enabled", false],
-  ["browser.safebrowsing.passwords.enabled", false],
   ["browser.safebrowsing.phishing.enabled", false],
 
   // Disable updates to search engines.
@@ -145,13 +167,8 @@ const COMMON_PREFERENCES = new Map([
   // Do not redirect user when a milstone upgrade of Firefox is detected
   ["browser.startup.homepage_override.mstone", "ignore"],
 
-  // Do not close the window when the last tab gets closed
-  ["browser.tabs.closeWindowWithLastTab", false],
-
-  // Do not allow background tabs to be zombified on Android, otherwise for
-  // tests that open additional tabs, the test harness tab itself might get
-  // unloaded
-  ["browser.tabs.disableBackgroundZombification", false],
+  // Unload the previously selected tab immediately
+  ["browser.tabs.remote.unloadDelayMs", 0],
 
   // Don't unload tabs when available memory is running low
   ["browser.tabs.unloadOnLowMemory", false],
@@ -213,12 +230,20 @@ const COMMON_PREFERENCES = new Map([
   // Disable the ProcessHangMonitor
   ["dom.ipc.reportProcessHangs", false],
 
+  // Disable the QoS manager on MacOS and the priority manager on all other
+  // platforms to not cause stalled processes in background tabs when the
+  // overall CPU load on the machine is high.
+  //
+  // TODO: Should be considered to get removed once bug 1960741 is fixed.
+  ["threads.lower_mainthread_priority_in_background.enabled", false],
+  ["dom.ipc.processPriorityManager.enabled", false],
+
   // Disable slow script dialogues
   ["dom.max_chrome_script_run_time", 0],
   ["dom.max_script_run_time", 0],
 
   // Disable location change rate limitation
-  ["dom.navigation.locationChangeRateLimit.count", 0],
+  ["dom.navigation.navigationRateLimit.count", 0],
 
   // DOM Push
   ["dom.push.connection.enabled", false],
@@ -260,10 +285,7 @@ const COMMON_PREFERENCES = new Map([
     "http://%(server)s/extensions-dummy/blocklistItemURL",
   ],
   ["extensions.hotfix.url", "http://%(server)s/extensions-dummy/hotfixURL"],
-  [
-    "extensions.systemAddon.update.url",
-    "http://%(server)s/dummy-system-addons.xml",
-  ],
+  ["extensions.systemAddon.update.enabled", false],
   [
     "extensions.update.background.url",
     "http://%(server)s/extensions-dummy/updateBackgroundURL",
@@ -318,6 +340,9 @@ const COMMON_PREFERENCES = new Map([
   // Privacy and Tracking Protection
   ["privacy.trackingprotection.enabled", false],
 
+  // Used to check if recommended preferences are applied
+  ["remote.prefs.recommended.applied", true],
+
   // Don't do network connections for mitm priming
   ["security.certerrors.mitm.priming.enabled", false],
 
@@ -330,6 +355,9 @@ const COMMON_PREFERENCES = new Map([
 
   // Do not download intermediate certificates
   ["security.remote_settings.intermediates.enabled", false],
+
+  // Disable logging for remote settings
+  ["services.settings.loglevel", "off"],
 
   // Ensure remote settings do not hit the network
   ["services.settings.server", "data:,#remote-settings-dummy/v1"],
@@ -364,12 +392,13 @@ export const RecommendedPreferences = {
 
   /**
    * Apply the provided map of preferences.
-   * They will be automatically reset on application shutdown.
    *
-   * @param {Map} preferences
-   *     Map of preference key to preference value.
+   * Note, that they will be automatically reset on application shutdown.
+   *
+   * @param {Map<string, object>=} preferences
+   *     Map of preference name to preference value.
    */
-  applyPreferences(preferences) {
+  applyPreferences(preferences = new Map()) {
     if (!lazy.useRecommendedPrefs) {
       // If remote.prefs.recommended is set to false, do not set any preference
       // here. Needed for our Firefox CI.
@@ -379,16 +408,31 @@ export const RecommendedPreferences = {
     // Only apply common recommended preferences on first call to
     // applyPreferences.
     if (!this.isInitialized) {
-      // Merge common preferences and provided preferences in a single map.
+      // Merge common preferences and optionally provided preferences in a
+      // single map. Hereby the extra preferences have higher priority.
       preferences = new Map([...COMMON_PREFERENCES, ...preferences]);
+
       Services.obs.addObserver(this, "quit-application");
       this.isInitialized = true;
     }
 
     for (const [k, v] of preferences) {
-      if (!lazy.Preferences.isSet(k)) {
+      if (!Services.prefs.prefHasUserValue(k)) {
         lazy.logger.debug(`Setting recommended pref ${k} to ${v}`);
-        lazy.Preferences.set(k, v);
+
+        switch (typeof v) {
+          case "string":
+            Services.prefs.setStringPref(k, v);
+            break;
+          case "boolean":
+            Services.prefs.setBoolPref(k, v);
+            break;
+          case "number":
+            Services.prefs.setIntPref(k, v);
+            break;
+          default:
+            throw new TypeError(`Invalid preference type: ${typeof v}`);
+        }
 
         // Keep track all the altered preferences to restore them on
         // quit-application.
@@ -421,7 +465,7 @@ export const RecommendedPreferences = {
   restorePreferences(preferences) {
     for (const k of preferences.keys()) {
       lazy.logger.debug(`Resetting recommended pref ${k}`);
-      lazy.Preferences.reset(k);
+      Services.prefs.clearUserPref(k);
       this.alteredPrefs.delete(k);
     }
   },

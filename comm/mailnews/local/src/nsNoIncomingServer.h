@@ -6,11 +6,8 @@
 #ifndef __nsNoIncomingServer_h
 #define __nsNoIncomingServer_h
 
-#include "mozilla/Attributes.h"
-#include "msgCore.h"
 #include "nsINoIncomingServer.h"
 #include "nsILocalMailIncomingServer.h"
-#include "nsMsgIncomingServer.h"
 #include "nsMailboxServer.h"
 
 /* get some implementation from nsMsgIncomingServer */
@@ -32,7 +29,6 @@ class nsNoIncomingServer : public nsMailboxServer,
   NS_IMETHOD GetServerRequiresPasswordForBiff(
       bool* aServerRequiresPasswordForBiff) override;
   NS_IMETHOD GetAccountManagerChrome(nsAString& aResult) override;
-  NS_IMETHOD GetSortOrder(int32_t* aSortOrder) override;
 
  private:
   virtual ~nsNoIncomingServer();

@@ -20,11 +20,27 @@ XPCOMUtils.defineLazyServiceGetter(
   "nsIResProtocolHandler"
 );
 
-ChromeUtils.defineModuleGetter(
+ChromeUtils.defineESModuleGetters(
   lazy,
-  "NetUtil",
-  "resource://gre/modules/NetUtil.jsm"
+  {
+    NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
+  },
+  { global: "contextual" }
 );
+
+const VENDOR_URI = "resource://devtools/client/shared/vendor/";
+const REACT_ESM_MODULES = new Set([
+  VENDOR_URI + "react-dev.js",
+  VENDOR_URI + "react.js",
+  VENDOR_URI + "react-dom-dev.js",
+  VENDOR_URI + "react-dom.js",
+  VENDOR_URI + "react-dom-factories.js",
+  VENDOR_URI + "react-dom-server-dev.js",
+  VENDOR_URI + "react-dom-server.js",
+  VENDOR_URI + "react-prop-types-dev.js",
+  VENDOR_URI + "react-prop-types.js",
+  VENDOR_URI + "react-test-renderer.js",
+]);
 
 // Define some shortcuts.
 function* getOwnIdentifiers(x) {
@@ -35,11 +51,8 @@ function* getOwnIdentifiers(x) {
 function isJSONURI(uri) {
   return uri.endsWith(".json");
 }
-function isJSMURI(uri) {
-  return uri.endsWith(".jsm");
-}
-function isSYSMJSURI(uri) {
-  return uri.endsWith(".sys.mjs");
+function isESMURI(uri) {
+  return uri.endsWith(".mjs");
 }
 function isJSURI(uri) {
   return uri.endsWith(".js");
@@ -117,18 +130,23 @@ function Sandbox(options) {
       "ChromeUtils",
       "CSS",
       "CSSRule",
+      "CustomStateSet",
       "DOMParser",
       "Element",
       "Event",
       "FileReader",
       "FormData",
       "Headers",
+      "InspectorCSSParser",
       "InspectorUtils",
       "MIDIInputMap",
       "MIDIOutputMap",
       "Node",
       "TextDecoder",
       "TextEncoder",
+      "TrustedHTML",
+      "TrustedScript",
+      "TrustedScriptURL",
       "URL",
       "URLSearchParams",
       "Window",
@@ -215,7 +233,7 @@ function load(loader, module) {
 
 // Utility function to normalize module `uri`s so they have `.js` extension.
 function normalizeExt(uri) {
-  if (isJSURI(uri) || isJSONURI(uri) || isJSMURI(uri) || isSYSMJSURI(uri)) {
+  if (isJSURI(uri) || isJSONURI(uri) || isESMURI(uri)) {
     return uri;
   }
   return uri + ".js";
@@ -329,16 +347,25 @@ export function Require(loader, requirer) {
   function _require(id) {
     let { uri, requirement } = getRequirements(id);
 
+    // Load all react modules as ES Modules, in the Browser Loader global.
+    // For this we have to ensure using ChromeUtils.importESModule with `global:"current"`,
+    // but executed from the Loader global scope. `syncImport` does that.
+    if (REACT_ESM_MODULES.has(uri)) {
+      // All CommonJS modules are still importing the .js/CommonJS version,
+      // but we hack these require() call to load the ESM version.
+      uri = uri.replace(/.js$/, ".mjs");
+    }
+
     let module = null;
     // If module is already cached by loader then just use it.
     if (uri in modules) {
       module = modules[uri];
-    } else if (isJSMURI(uri)) {
+    } else if (isESMURI(uri)) {
       module = modules[uri] = Module(requirement, uri);
-      module.exports = ChromeUtils.import(uri);
-    } else if (isSYSMJSURI(uri)) {
-      module = modules[uri] = Module(requirement, uri);
-      module.exports = ChromeUtils.importESModule(uri);
+      const rv = ChromeUtils.importESModule(uri, {
+        global: "contextual",
+      });
+      module.exports = rv.default || rv;
     } else if (isJSONURI(uri)) {
       let data;
 

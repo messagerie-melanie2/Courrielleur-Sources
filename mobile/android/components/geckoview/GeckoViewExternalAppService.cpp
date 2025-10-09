@@ -19,7 +19,9 @@
 class StreamListener final : public mozilla::GeckoViewStreamListener {
  public:
   explicit StreamListener(nsWindow* aWindow)
-      : GeckoViewStreamListener(), mWindow(aWindow) {}
+      : GeckoViewStreamListener(), mWindow(aWindow) {
+    MOZ_ASSERT(aWindow);
+  }
 
   void SendWebResponse(mozilla::java::WebResponse::Param aResponse) {
     mWindow->PassExternalResponse(aResponse);
@@ -53,7 +55,7 @@ GeckoViewExternalAppService::GeckoViewExternalAppService() {}
 NS_IMPL_ISUPPORTS(GeckoViewExternalAppService, nsIExternalHelperAppService);
 
 NS_IMETHODIMP GeckoViewExternalAppService::DoContent(
-    const nsACString& aMimeContentType, nsIRequest* aRequest,
+    const nsACString& aMimeContentType, nsIChannel* aChannel,
     nsIInterfaceRequestor* aContentContext, bool aForceSave,
     nsIInterfaceRequestor* aWindowContext,
     nsIStreamListener** aStreamListener) {
@@ -61,17 +63,14 @@ NS_IMETHODIMP GeckoViewExternalAppService::DoContent(
 }
 
 NS_IMETHODIMP GeckoViewExternalAppService::CreateListener(
-    const nsACString& aMimeContentType, nsIRequest* aRequest,
+    const nsACString& aMimeContentType, nsIChannel* aChannel,
     mozilla::dom::BrowsingContext* aContentContext, bool aForceSave,
     nsIInterfaceRequestor* aWindowContext,
     nsIStreamListener** aStreamListener) {
   using namespace mozilla;
   using namespace mozilla::dom;
   MOZ_ASSERT(XRE_IsParentProcess());
-
-  nsresult rv;
-  nsCOMPtr<nsIChannel> channel(do_QueryInterface(aRequest, &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
+  NS_ENSURE_ARG_POINTER(aChannel);
 
   nsCOMPtr<nsIWidget> widget =
       aContentContext->Canonical()->GetParentProcessWidgetContaining();
@@ -80,11 +79,14 @@ NS_IMETHODIMP GeckoViewExternalAppService::CreateListener(
   }
 
   RefPtr<nsWindow> window = nsWindow::From(widget);
-  MOZ_ASSERT(window);
+  if (NS_WARN_IF(!window) || NS_WARN_IF(window->Destroyed())) {
+    return NS_ERROR_ABORT;
+  }
 
   RefPtr<StreamListener> listener = new StreamListener(window);
 
-  rv = channel->SetNotificationCallbacks(listener);
+  nsresult rv;
+  rv = aChannel->SetNotificationCallbacks(listener);
   NS_ENSURE_SUCCESS(rv, rv);
 
   listener.forget(aStreamListener);
@@ -97,4 +99,10 @@ NS_IMETHODIMP GeckoViewExternalAppService::ApplyDecodingForExtension(
   // This currently doesn't matter, because we never read the stream.
   *aApplyDecoding = true;
   return NS_OK;
+}
+
+NS_IMETHODIMP GeckoViewExternalAppService::GetPreferredDownloadsDirectory(
+    nsIFile** _retval) {
+  MOZ_ASSERT(false);
+  return nsresult::NS_ERROR_NOT_IMPLEMENTED;
 }

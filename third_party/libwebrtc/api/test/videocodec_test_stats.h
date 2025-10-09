@@ -18,7 +18,6 @@
 #include <string>
 #include <vector>
 
-#include "absl/types/optional.h"
 #include "api/units/data_rate.h"
 #include "api/units/frequency.h"
 #include "api/video/video_frame_type.h"
@@ -27,6 +26,7 @@ namespace webrtc {
 namespace test {
 
 // Statistics for a sequence of processed frames. This class is not thread safe.
+// TODO(webrtc:14852): Deprecated in favor VideoCodecStats.
 class VideoCodecTestStats {
  public:
   // Statistics for one processed frame.

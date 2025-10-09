@@ -16,10 +16,9 @@ function isString(node) {
 
 function isEagerModule(resourceURI) {
   return [
-    "resource://gre/modules/Services",
     "resource://gre/modules/XPCOMUtils",
     "resource://gre/modules/AppConstants",
-  ].includes(resourceURI.replace(/(\.jsm|\.jsm\.js|\.js|\.sys\.mjs)$/, ""));
+  ].includes(resourceURI.replace(/(\.js|\.sys\.mjs)$/, ""));
 }
 
 function checkEagerModule(context, node, resourceURI) {
@@ -36,7 +35,7 @@ function checkEagerModule(context, node, resourceURI) {
 module.exports = {
   meta: {
     docs: {
-      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/tools/lint/eslint/eslint-plugin-mozilla/lib/rules/reject-eager-module-in-lazy-getter.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/rules/reject-eager-module-in-lazy-getter.html",
     },
     messages: {
       eagerModule:
@@ -60,22 +59,7 @@ module.exports = {
           return;
         }
 
-        if (
-          callerSource === "XPCOMUtils.defineLazyModuleGetter" ||
-          callerSource === "ChromeUtils.defineModuleGetter"
-        ) {
-          if (node.arguments.length < 3) {
-            return;
-          }
-          const resourceURINode = node.arguments[2];
-          if (!isString(resourceURINode)) {
-            return;
-          }
-          checkEagerModule(context, node, resourceURINode.value);
-        } else if (
-          callerSource === "XPCOMUtils.defineLazyModuleGetters" ||
-          callerSource === "ChromeUtils.defineESModuleGetters"
-        ) {
+        if (callerSource === "ChromeUtils.defineESModuleGetters") {
           if (node.arguments.length < 2) {
             return;
           }

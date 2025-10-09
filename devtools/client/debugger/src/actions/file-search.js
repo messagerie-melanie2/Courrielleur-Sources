@@ -2,20 +2,23 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
-import { searchSourceForHighlight } from "../utils/editor";
+import { searchSourceForHighlight } from "../utils/editor/index";
 
-import { getSelectedSourceTextContent, getSearchOptions } from "../selectors";
+import {
+  getSelectedSourceTextContent,
+  getSearchOptions,
+} from "../selectors/index";
 
 import { closeActiveSearch, clearHighlightLineRange } from "./ui";
 
-export function doSearchForHighlight(query, editor, line, ch) {
+export function doSearchForHighlight(query, editor) {
   return async ({ getState, dispatch }) => {
     const sourceTextContent = getSelectedSourceTextContent(getState());
     if (!sourceTextContent) {
       return;
     }
 
-    dispatch(searchContentsForHighlight(query, editor, line, ch));
+    dispatch(searchContentsForHighlight(query, editor));
   };
 }
 
@@ -26,8 +29,8 @@ export function querySearchWorker(query, text, modifiers) {
   };
 }
 
-export function searchContentsForHighlight(query, editor, line, ch) {
-  return async ({ getState, dispatch }) => {
+export function searchContentsForHighlight(query, editor) {
+  return async ({ getState }) => {
     const modifiers = getSearchOptions(getState(), "file-search");
     const sourceTextContent = getSelectedSourceTextContent(getState());
 
@@ -35,13 +38,13 @@ export function searchContentsForHighlight(query, editor, line, ch) {
       return;
     }
 
-    const ctx = { ed: editor, cm: editor.codeMirror };
-    searchSourceForHighlight(ctx, false, query, true, modifiers, line, ch);
+    const ctx = { editor, cm: editor.codeMirror };
+    searchSourceForHighlight(ctx, false, query, true, modifiers);
   };
 }
 
-export function closeFileSearch(cx, editor) {
-  return ({ getState, dispatch }) => {
+export function closeFileSearch() {
+  return ({ dispatch }) => {
     dispatch(closeActiveSearch());
     dispatch(clearHighlightLineRange());
   };

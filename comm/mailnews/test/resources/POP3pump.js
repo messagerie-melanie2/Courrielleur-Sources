@@ -24,26 +24,28 @@
  *
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-var { localAccountUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/LocalAccountUtils.jsm"
+var { localAccountUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/LocalAccountUtils.sys.mjs"
 );
 
 // Import the pop3 server scripts
-var { nsMailServer } = ChromeUtils.import(
-  "resource://testing-common/mailnews/Maild.jsm"
+var { nsMailServer } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/Maild.sys.mjs"
 );
-var { AuthPLAIN, AuthLOGIN, AuthCRAM } = ChromeUtils.import(
-  "resource://testing-common/mailnews/Auth.jsm"
+var { AuthPLAIN, AuthLOGIN, AuthCRAM } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/Auth.sys.mjs"
 );
 var {
   Pop3Daemon,
   POP3_RFC1939_handler,
   POP3_RFC2449_handler,
   POP3_RFC5034_handler,
-} = ChromeUtils.import("resource://testing-common/mailnews/Pop3d.jsm");
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/Pop3d.sys.mjs"
+);
 
 function POP3Pump() {
   // public attributes
@@ -68,7 +70,7 @@ function POP3Pump() {
 }
 
 // nsIUrlListener implementation
-POP3Pump.prototype.OnStartRunningUrl = function (url) {};
+POP3Pump.prototype.OnStartRunningUrl = function () {};
 
 POP3Pump.prototype.OnStopRunningUrl = function (aUrl, aResult) {
   this._actualResult = aResult;
@@ -184,7 +186,7 @@ POP3Pump.prototype._checkBusy = function () {
 };
 
 POP3Pump.prototype._testNext = function () {
-  let thisFiles = this._tests.shift();
+  const thisFiles = this._tests.shift();
   if (!thisFiles) {
     // Exit.
     this._checkBusy();
@@ -210,7 +212,7 @@ POP3Pump.prototype._testNext = function () {
     this._daemon.setMessages(thisFiles);
 
     // Now get the mail, get inbox in case it got un-deferred.
-    let inbox = this._incomingServer.rootMsgFolder.getFolderWithFlags(
+    const inbox = this._incomingServer.rootMsgFolder.getFolderWithFlags(
       Ci.nsMsgFolderFlags.Inbox
     );
     MailServices.pop3.GetNewMail(null, this, inbox, this._incomingServer);

@@ -5,22 +5,35 @@
  * found in the LICENSE file.
  */
 
+#include "include/core/SkColor.h"
 #include "include/core/SkPath.h"
+#include "include/core/SkPathTypes.h"
+#include "include/core/SkRect.h"
 #include "include/core/SkRegion.h"
+#include "include/core/SkScalar.h"
+#include "include/private/base/SkAssert.h"
+#include "include/private/base/SkDebug.h"
+#include "include/private/base/SkFixed.h"
+#include "include/private/base/SkFloatingPoint.h"
 #include "include/private/base/SkMacros.h"
+#include "include/private/base/SkMath.h"
+#include "include/private/base/SkPoint_impl.h"
 #include "include/private/base/SkSafe32.h"
-#include "include/private/base/SkTemplates.h"
 #include "src/base/SkTSort.h"
 #include "src/core/SkBlitter.h"
 #include "src/core/SkEdge.h"
 #include "src/core/SkEdgeBuilder.h"
-#include "src/core/SkGeometry.h"
-#include "src/core/SkQuadClipper.h"
+#include "src/core/SkFDot6.h"
 #include "src/core/SkRasterClip.h"
 #include "src/core/SkRectPriv.h"
+#include "src/core/SkScan.h"
 #include "src/core/SkScanPriv.h"
 
-#include <utility>
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+
+struct SkMask;
 
 #define kEDGE_HEAD_Y    SK_MinS32
 #define kEDGE_TAIL_Y    SK_MaxS32
@@ -126,7 +139,7 @@ static void walk_edges(SkEdge* prevHead, SkPathFillType fillType,
                 left = x;
             }
 
-            w += currE->fWinding;
+            w += static_cast<int>(currE->fWinding);
 
             if ((w & windingMask) == 0) { // we finished an interval
                 int width = x - left;
@@ -346,10 +359,6 @@ public:
     void blitMask(const SkMask&, const SkIRect& clip) override {
         SkDEBUGFAIL("blitMask unexpected");
     }
-    const SkPixmap* justAnOpaqueColor(uint32_t* value) override {
-        SkDEBUGFAIL("justAnOpaqueColor unexpected");
-        return nullptr;
-    }
 
 private:
     SkBlitter*  fBlitter;
@@ -366,20 +375,16 @@ static void PrePostInverseBlitterProc(SkBlitter* blitter, int y, bool isStart) {
 #pragma warning ( pop )
 #endif
 
-static bool operator<(const SkEdge& a, const SkEdge& b) {
-    int valuea = a.fFirstY;
-    int valueb = b.fFirstY;
-
-    if (valuea == valueb) {
-        valuea = a.fX;
-        valueb = b.fX;
+static bool compare_edges(const SkEdge* a, const SkEdge* b) {
+    if (a->fFirstY != b->fFirstY) {
+        return a->fFirstY < b->fFirstY;
     }
 
-    return valuea < valueb;
+    return a->fX < b->fX;
 }
 
 static SkEdge* sort_edges(SkEdge* list[], int count, SkEdge** last) {
-    SkTQSort(list, list + count);
+    SkTQSort<SkEdge*, bool (*)(const SkEdge*, const SkEdge*)>(list, list + count, compare_edges);
 
     // now make the edges linked in sorted order
     for (int i = 1; i < count; i++) {

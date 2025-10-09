@@ -2,30 +2,24 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* import-globals-from ../editorUtilities.js */
 /* import-globals-from EdDialogCommon.js */
 /* import-globals-from EdImageDialog.js */
+/* global SetAttachCheckbox */ // From EdImageLinkLoader.js
 
 var gAnchorElement = null;
 var gLinkElement = null;
 var gOriginalHref = "";
 var gHNodeArray = {};
 
-// dialog initialization code
-
+window.addEventListener("load", Startup);
 document.addEventListener("dialogaccept", onAccept);
 document.addEventListener("dialogcancel", onCancel);
 
 function Startup() {
   var editor = GetCurrentEditor();
-  if (!editor) {
-    window.close();
-    return;
-  }
 
   ImageStartup();
   gDialog.hrefInput = document.getElementById("hrefInput");
-  gDialog.makeRelativeLink = document.getElementById("MakeRelativeLink");
   gDialog.showLinkBorder = document.getElementById("showLinkBorder");
   gDialog.linkTab = document.getElementById("imageLinkTab");
   gDialog.linkAdvanced = document.getElementById("LinkAdvancedEditButton");
@@ -130,7 +124,7 @@ function InitDialog() {
 
 function ChangeLinkLocation() {
   var href = TrimString(gDialog.hrefInput.value);
-  SetRelativeCheckbox(gDialog.makeRelativeLink);
+  SetAttachCheckbox();
   gDialog.showLinkBorder.disabled = !href;
   gDialog.linkAdvanced.disabled = !href;
   gLinkElement.setAttribute("href", href);
@@ -258,9 +252,7 @@ function onAccept(event) {
       if (gImageMap && gInsertNewIMap) {
         // Insert the ImageMap element at beginning of document
         var body = editor.rootElement;
-        editor.setShouldTxnSetSelection(false);
-        editor.insertNode(gImageMap, body, 0);
-        editor.setShouldTxnSetSelection(true);
+        editor.insertNode(gImageMap, body, 0, true /* preserve selection */);
       }
     } catch (e) {
       dump(e);

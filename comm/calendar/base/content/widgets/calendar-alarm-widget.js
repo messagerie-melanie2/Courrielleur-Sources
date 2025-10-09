@@ -4,16 +4,22 @@
 
 "use strict";
 
-/* global Cr MozElements MozXULElement PluralForm Services */
+/* global Cr MozElements MozXULElement Services */
 
 // Wrap in a block to prevent leaking to window scope.
 {
-  var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
+  var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
+  const lazy = {};
+  ChromeUtils.defineLazyGetter(
+    lazy,
+    "l10n",
+    () => new Localization(["calendar/calendar.ftl", "calendar/calendar-alarms.ftl"], true)
+  );
   /**
    * Represents an alarm in the alarms dialog. It appears there when an alarm is fired, and
    * allows the alarm to be snoozed, dismissed, etc.
    *
-   * @augments MozElements.MozRichlistitem
+   * @augments {MozElements.MozRichlistitem}
    */
   class MozCalendarAlarmWidgetRichlistitem extends MozElements.MozRichlistitem {
     connectedCallback() {
@@ -92,9 +98,9 @@
         return;
       }
       const formatter = cal.dtz.formatter;
-      let titleLabel = this.querySelector(".alarm-title-label");
-      let locationDescription = this.querySelector(".alarm-location-description");
-      let dateLabel = this.querySelector(".alarm-date-label");
+      const titleLabel = this.querySelector(".alarm-title-label");
+      const locationDescription = this.querySelector(".alarm-location-description");
+      const dateLabel = this.querySelector(".alarm-date-label");
 
       // Dates
       if (this.mItem.isEvent()) {
@@ -104,9 +110,9 @@
         if (startDate) {
           // A task with a start or due date, show with label.
           startDate = startDate.getInTimezone(cal.dtz.defaultTimezone);
-          dateLabel.value = cal.l10n.getCalString("alarmStarts", [
-            formatter.formatDateTime(startDate),
-          ]);
+          document.l10n.setAttributes(dateLabel, "alarm-starts", {
+            datetime: formatter.formatDateTime(startDate),
+          });
         } else {
           // If the task has no start date, then format the alarm date.
           dateLabel.value = formatter.formatDateTime(this.mAlarm.alarmDate);
@@ -122,8 +128,8 @@
       titleLabel.value = this.mItem.title || "";
       locationDescription.value = this.mItem.getProperty("LOCATION") || "";
       if (locationDescription.value.length) {
-        let urlMatch = locationDescription.value.match(/(https?:\/\/[^ ]*)/);
-        let url = urlMatch && urlMatch[1];
+        const urlMatch = locationDescription.value.match(/(https?:\/\/[^ ]*)/);
+        const url = urlMatch && urlMatch[1];
         if (url) {
           locationDescription.setAttribute("link", url);
           locationDescription.setAttribute(
@@ -140,16 +146,16 @@
         locationDescription.hidden = true;
       }
       // Hide snooze button if read-only.
-      let snoozeButton = this.querySelector(".alarm-snooze-button");
+      const snoozeButton = this.querySelector(".alarm-snooze-button");
       if (
         !cal.acl.isCalendarWritable(this.mItem.calendar) ||
         !cal.acl.userCanModifyItem(this.mItem)
       ) {
-        let tooltip = "reminderDisabledSnoozeButtonTooltip";
         snoozeButton.disabled = true;
-        snoozeButton.setAttribute("tooltiptext", cal.l10n.getString("calendar-alarms", tooltip));
+        document.l10n.setAttributes(snoozeButton, "reminder-disabled-snooze-button-tooltip");
       } else {
         snoozeButton.disabled = false;
+        snoozeButton.removeAttribute("data-l10n-id");
         snoozeButton.removeAttribute("tooltiptext");
       }
     }
@@ -160,13 +166,13 @@
     updateRelativeDateLabel() {
       const formatter = cal.dtz.formatter;
       const item = this.mItem;
-      let relativeDateLabel = this.querySelector(".alarm-relative-date-label");
+      const relativeDateLabel = this.querySelector(".alarm-relative-date-label");
       let relativeDateString;
       let startDate = item[cal.dtz.startDateProp(item)] || item[cal.dtz.endDateProp(item)];
 
       if (startDate) {
         startDate = startDate.getInTimezone(cal.dtz.defaultTimezone);
-        let currentDate = cal.dtz.now();
+        const currentDate = cal.dtz.now();
 
         const sinceDayStart = currentDate.hour * 3600 + currentDate.minute * 60;
 
@@ -179,19 +185,19 @@
 
         if (this.mAlarmToday) {
           // The alarm is today.
-          relativeDateString = cal.l10n.getCalString("alarmTodayAt", [
-            formatter.formatTime(startDate),
-          ]);
+          relativeDateString = lazy.l10n.formatValueSync("alarm-today-at", {
+            datetime: formatter.formatTime(startDate),
+          });
         } else if (sinceAlarm <= sinceDayStart - 86400 && sinceAlarm > sinceDayStart - 172800) {
           // The alarm is tomorrow.
-          relativeDateString = cal.l10n.getCalString("alarmTomorrowAt", [
-            formatter.formatTime(startDate),
-          ]);
+          relativeDateString = lazy.l10n.formatValueSync("alarm-tomorrow-at", {
+            datetime: formatter.formatTime(startDate),
+          });
         } else if (sinceAlarm < sinceDayStart + 86400 && sinceAlarm > sinceDayStart) {
           // The alarm is yesterday.
-          relativeDateString = cal.l10n.getCalString("alarmYesterdayAt", [
-            formatter.formatTime(startDate),
-          ]);
+          relativeDateString = lazy.l10n.formatValueSync("alarm-yesterday-at", {
+            datetime: formatter.formatTime(startDate),
+          });
         } else {
           // The alarm is way back.
           relativeDateString = [formatter.formatDateTime(startDate)];
@@ -208,7 +214,7 @@
     /**
      * Click/keypress handler for "Details" link. Dispatches an event to open an item dialog.
      *
-     * @param event {Event} The click or keypress event.
+     * @param {Event} event - The click or keypress event.
      */
     showDetails(event) {
       if (event.type == "click" || (event.type == "keypress" && event.key == "Enter")) {
@@ -300,8 +306,8 @@
       );
       const snoozeLength = defaultSnoozeLength <= 0 ? 5 : defaultSnoozeLength;
 
-      let unitList = this.querySelector(".snooze-unit-menulist");
-      let unitValue = this.querySelector(".snooze-value-textbox");
+      const unitList = this.querySelector(".snooze-unit-menulist");
+      const unitValue = this.querySelector(".snooze-value-textbox");
 
       if ((snoozeLength / 60) % 24 == 0) {
         // Days
@@ -323,10 +329,10 @@
     /**
      * Dispatch a snooze event when an alarm is snoozed.
      *
-     * @param minutes {number|string} The number of minutes to snooze for.
+     * @param {number|string} minutes  - The number of minutes to snooze for.
      */
     snoozeAlarm(minutes) {
-      let snoozeEvent = new Event("snooze", { bubbles: true, cancelable: false });
+      const snoozeEvent = new Event("snooze", { bubbles: true, cancelable: false });
       snoozeEvent.detail = minutes;
 
       // For single alarms the event.target has to be the calendar-alarm-widget element,
@@ -340,7 +346,7 @@
     /**
      * Click handler for snooze popup menu items (like "5 Minutes", "1 Hour", etc.).
      *
-     * @param event {Event} The click event.
+     * @param {Event} event - The click event.
      */
     snoozeItem(event) {
       this.snoozeAlarm(event.target.value);
@@ -368,32 +374,24 @@
      * input, like for plurals, when you change from "[1] [minute]" to "[2] [minutes]".
      */
     updateUIText() {
-      const unitList = this.querySelector(".snooze-unit-menulist");
       const unitPopup = this.querySelector(".snooze-unit-menupopup");
       const unitValue = this.querySelector(".snooze-value-textbox");
-      let okButton = this.querySelector(".snooze-popup-ok-button");
 
       function unitName(list) {
-        return { 1: "unitMinutes", 60: "unitHours", 1440: "unitDays" }[list.value] || "unitMinutes";
+        return (
+          {
+            1: "event-duration-menuitem-minutes",
+            60: "event-duration-menuitem-hours",
+            1440: "event-duration-menuitem-days",
+          }[list.value] || "event-duration-menuitem-minutes"
+        );
       }
 
-      let pluralString = cal.l10n.getCalString(unitName(unitList));
-
-      const unitPlural = PluralForm.get(unitValue.value, pluralString).replace(
-        "#1",
-        unitValue.value
-      );
-
-      let okButtonAriaLabel = cal.l10n.getString("calendar-alarms", "reminderSnoozeOkA11y", [
-        unitPlural,
-      ]);
-      okButton.setAttribute("aria-label", okButtonAriaLabel);
-
       const items = unitPopup.getElementsByTagName("menuitem");
-      for (let menuItem of items) {
-        pluralString = cal.l10n.getCalString(unitName(menuItem));
-
-        menuItem.label = PluralForm.get(unitValue.value, pluralString).replace("#1", "").trim();
+      for (const menuItem of items) {
+        document.l10n.setAttributes(menuItem, unitName(menuItem), {
+          count: unitValue.value,
+        });
       }
     }
   }

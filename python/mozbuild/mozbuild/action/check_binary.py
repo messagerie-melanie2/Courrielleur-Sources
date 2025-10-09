@@ -12,7 +12,6 @@ import buildconfig
 from mozpack.executables import ELF, UNKNOWN, get_type
 from packaging.version import Version
 
-from mozbuild.action.util import log_build_task
 from mozbuild.util import memoize
 
 STDCXX_MAX_VERSION = Version("3.4.19")
@@ -20,12 +19,8 @@ CXXABI_MAX_VERSION = Version("1.3.7")
 GLIBC_MAX_VERSION = Version("2.17")
 LIBGCC_MAX_VERSION = Version("4.8")
 
-HOST = {"platform": buildconfig.substs["HOST_OS_ARCH"], "readelf": "readelf"}
-
-TARGET = {
-    "platform": buildconfig.substs["OS_TARGET"],
-    "readelf": buildconfig.substs.get("READELF", "readelf"),
-}
+PLATFORM = buildconfig.substs["OS_TARGET"]
+READELF = buildconfig.substs.get("READELF", "readelf")
 
 ADDR_RE = re.compile(r"[0-9a-f]{8,16}")
 
@@ -41,7 +36,7 @@ get_type = memoize(get_type)
 @memoize
 def get_output(*cmd):
     env = dict(os.environ)
-    env[b"LC_ALL"] = b"C"
+    env["LC_ALL"] = "C"
     return subprocess.check_output(cmd, env=env, universal_newlines=True).splitlines()
 
 
@@ -63,18 +58,26 @@ def at_least_one(iter):
 
 
 # Iterates the symbol table on ELF binaries.
-def iter_elf_symbols(target, binary, all=False):
+def iter_elf_symbols(binary, all=False):
     ty = get_type(binary)
     # Static libraries are ar archives. Assume they are ELF.
     if ty == UNKNOWN and open(binary, "rb").read(8) == b"!<arch>\n":
         ty = ELF
     assert ty == ELF
+
+    def looks_like_readelf_data(data):
+        return len(data) >= 8 and data[0].endswith(":") and data[0][:-1].isdigit()
+
     for line in get_output(
-        target["readelf"], "--wide", "--syms" if all else "--dyn-syms", binary
+        READELF, "--wide", "--syms" if all else "--dyn-syms", binary
     ):
         data = line.split()
-        if not (len(data) >= 8 and data[0].endswith(":") and data[0][:-1].isdigit()):
-            continue
+        if not looks_like_readelf_data(data):
+            # Older versions of llvm-readelf would use .hash for --dyn-syms,
+            # which would add an extra column at the beginning.
+            data = data[1:]
+            if not looks_like_readelf_data(data):
+                continue
         n, addr, size, type, bind, vis, index, name = data[:8]
 
         if "@" in name:
@@ -93,14 +96,14 @@ def iter_elf_symbols(target, binary, all=False):
         }
 
 
-def iter_readelf_dynamic(target, binary):
-    for line in get_output(target["readelf"], "-d", binary):
+def iter_readelf_dynamic(binary):
+    for line in get_output(READELF, "-d", binary):
         data = line.split(None, 2)
         if data and len(data) == 3 and data[0].startswith("0x"):
             yield data[1].rstrip(")").lstrip("("), data[2]
 
 
-def check_binary_compat(target, binary):
+def check_binary_compat(binary):
     if get_type(binary) != ELF:
         raise Skip()
     checks = (
@@ -112,7 +115,7 @@ def check_binary_compat(target, binary):
 
     unwanted = {}
     try:
-        for sym in at_least_one(iter_elf_symbols(target, binary)):
+        for sym in at_least_one(iter_elf_symbols(binary)):
             # Only check versions on undefined symbols
             if sym["addr"] != 0:
                 continue
@@ -127,25 +130,23 @@ def check_binary_compat(target, binary):
                     if version > max_version:
                         unwanted.setdefault(prefix, []).append(sym)
     except Empty:
-        raise RuntimeError("Could not parse llvm-objdump output?")
+        raise RuntimeError("Could not parse readelf output?")
     if unwanted:
         error = []
         for lib, prefix, _ in checks:
             if prefix in unwanted:
-                error.append(
-                    "We do not want these {} symbol versions to be used:".format(lib)
-                )
+                error.append(f"We do not want these {lib} symbol versions to be used:")
                 error.extend(
                     " {} ({})".format(s["name"], s["version"]) for s in unwanted[prefix]
                 )
         raise RuntimeError("\n".join(error))
 
 
-def check_textrel(target, binary):
-    if target is HOST or get_type(binary) != ELF:
+def check_textrel(binary):
+    if get_type(binary) != ELF:
         raise Skip()
     try:
-        for tag, value in at_least_one(iter_readelf_dynamic(target, binary)):
+        for tag, value in at_least_one(iter_readelf_dynamic(binary)):
             if tag == "TEXTREL" or (tag == "FLAGS" and "TEXTREL" in value):
                 raise RuntimeError(
                     "We do not want text relocations in libraries and programs"
@@ -167,11 +168,11 @@ def is_libxul(binary):
     return "xul" in basename
 
 
-def check_pt_load(target, binary):
-    if target is HOST or get_type(binary) != ELF or not is_libxul(binary):
+def check_pt_load(binary):
+    if get_type(binary) != ELF or not is_libxul(binary):
         raise Skip()
     count = 0
-    for line in get_output(target["readelf"], "-l", binary):
+    for line in get_output(READELF, "-l", binary):
         data = line.split()
         if data and data[0] == "LOAD":
             count += 1
@@ -179,8 +180,8 @@ def check_pt_load(target, binary):
         raise RuntimeError("Expected more than one PT_LOAD segment")
 
 
-def check_mozglue_order(target, binary):
-    if target is HOST or target["platform"] != "Android":
+def check_mozglue_order(binary):
+    if PLATFORM != "Android":
         raise Skip()
     # While this is very unlikely (libc being added by the compiler at the end
     # of the linker command line), if libmozglue.so ends up after libc.so, all
@@ -188,9 +189,7 @@ def check_mozglue_order(target, binary):
     # case.
     try:
         mozglue = libc = None
-        for n, (tag, value) in enumerate(
-            at_least_one(iter_readelf_dynamic(target, binary))
-        ):
+        for n, (tag, value) in enumerate(at_least_one(iter_readelf_dynamic(binary))):
             if tag == "NEEDED":
                 if "[libmozglue.so]" in value:
                     mozglue = n
@@ -204,16 +203,11 @@ def check_mozglue_order(target, binary):
         raise RuntimeError("Could not parse readelf output?")
 
 
-def check_networking(target, binary):
+def check_networking(binary):
     retcode = 0
     networking_functions = set(
         [
             # socketpair is not concerning; it is restricted to AF_UNIX
-            "connect",
-            "accept",
-            "listen",
-            "getsockname",
-            "getsockopt",
             "recv",
             "send",
             # We would be concerned by recvmsg and sendmsg; but we believe
@@ -239,14 +233,27 @@ def check_networking(target, binary):
             "endprotoent",
         ]
     )
+    # These are used by the crash monitor & crash monitor client to talk with
+    # the main process on Linux and macOS.
+    socket_functions = set(
+        [
+            "connect",
+            "accept",
+            "listen",
+        ]
+    )
+
+    if PLATFORM == "WINNT":
+        networking_functions |= socket_functions
+
     bad_occurences_names = set()
 
     try:
-        for sym in at_least_one(iter_elf_symbols(target, binary, all=True)):
+        for sym in at_least_one(iter_elf_symbols(binary, all=True)):
             if sym["addr"] == 0 and sym["name"] in networking_functions:
                 bad_occurences_names.add(sym["name"])
     except Empty:
-        raise RuntimeError("Could not parse llvm-objdump output?")
+        raise RuntimeError("Could not parse readelf output?")
 
     basename = os.path.basename(binary)
     if bad_occurences_names:
@@ -264,17 +271,17 @@ def check_networking(target, binary):
         )
         retcode = 1
     elif buildconfig.substs.get("MOZ_AUTOMATION"):
-        print("TEST-PASS | check_networking | {}".format(basename))
+        print(f"TEST-PASS | check_networking | {basename}")
     return retcode
 
 
-def checks(target, binary):
+def checks(binary):
     # The clang-plugin is built as target but is really a host binary.
-    # Cheat and pretend we were passed the right argument.
+    # Cheat and pretend we weren't called.
     if "clang-plugin" in binary:
-        target = HOST
+        return 0
     checks = []
-    if buildconfig.substs.get("MOZ_STDCXX_COMPAT") and target["platform"] == "Linux":
+    if buildconfig.substs.get("MOZ_STDCXX_COMPAT") and PLATFORM == "Linux":
         checks.append(check_binary_compat)
 
     # Disabled for local builds because of readelf performance: See bug 1472496
@@ -288,14 +295,14 @@ def checks(target, binary):
     for c in checks:
         try:
             name = c.__name__
-            c(target, binary)
+            c(binary)
             if buildconfig.substs.get("MOZ_AUTOMATION"):
-                print("TEST-PASS | {} | {}".format(name, basename))
+                print(f"TEST-PASS | {name} | {basename}")
         except Skip:
             pass
         except RuntimeError as e:
             print(
-                "TEST-UNEXPECTED-FAIL | {} | {} | {}".format(name, basename, str(e)),
+                f"TEST-UNEXPECTED-FAIL | {name} | {basename} | {str(e)}",
                 file=sys.stderr,
             )
             retcode = 1
@@ -305,12 +312,6 @@ def checks(target, binary):
 def main(args):
     parser = argparse.ArgumentParser(description="Check built binaries")
 
-    parser.add_argument(
-        "--host", action="store_true", help="Perform checks for a host binary"
-    )
-    parser.add_argument(
-        "--target", action="store_true", help="Perform checks for a target binary"
-    )
     parser.add_argument(
         "--networking",
         action="store_true",
@@ -323,21 +324,10 @@ def main(args):
 
     options = parser.parse_args(args)
 
-    if options.host == options.target:
-        print("Exactly one of --host or --target must be given", file=sys.stderr)
-        return 1
-
-    if options.networking and options.host:
-        print("--networking is only valid with --target", file=sys.stderr)
-        return 1
-
     if options.networking:
-        return check_networking(TARGET, options.binary)
-    elif options.host:
-        return checks(HOST, options.binary)
-    elif options.target:
-        return checks(TARGET, options.binary)
+        return check_networking(options.binary)
+    return checks(options.binary)
 
 
 if __name__ == "__main__":
-    sys.exit(log_build_task(main, sys.argv[1:]))
+    sys.exit(main(sys.argv[1:]))

@@ -15,6 +15,7 @@
 #include "mozilla/mozalloc.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ServoCSSParser.h"
+#include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/StaticPrefs_editor.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/Element.h"
@@ -171,8 +172,7 @@ static void ProcessMarginRightValue(const nsAString* aInputString,
   }
 }
 
-#define CSS_EQUIV_TABLE_NONE \
-  { CSSEditUtils::eCSSEditableProperty_NONE, 0 }
+#define CSS_EQUIV_TABLE_NONE {CSSEditUtils::eCSSEditableProperty_NONE, 0}
 
 const CSSEditUtils::CSSEquivTable boldEquivTable[] = {
     {CSSEditUtils::eCSSEditableProperty_font_weight, true, false, ProcessBValue,
@@ -534,8 +534,7 @@ nsresult CSSEditUtils::GetComputedCSSInlinePropertyBase(nsIContent& aContent,
   // FIXME: Maybe we can avoid copying aValue too, though it's no worse than
   // what we used to do.
   nsAutoCString value;
-  MOZ_ALWAYS_SUCCEEDS(
-      computedDOMStyle->GetPropertyValue(nsAtomCString(&aCSSProperty), value));
+  computedDOMStyle->GetPropertyValue(nsAtomCString(&aCSSProperty), value);
   CopyUTF8toUTF16(value, aValue);
   return NS_OK;
 }
@@ -616,27 +615,26 @@ CSSEditUtils::RemoveCSSInlineStyleWithTransaction(
 
 // static
 void CSSEditUtils::GetDefaultBackgroundColor(nsAString& aColor) {
+  aColor.AssignLiteral("#ffffff");  // Default to white
+
   if (MOZ_UNLIKELY(StaticPrefs::editor_use_custom_colors())) {
-    nsresult rv = Preferences::GetString("editor.background_color", aColor);
+    DebugOnly<nsresult> rv =
+        Preferences::GetString("editor.background_color", aColor);
     // XXX Why don't you validate the pref value?
-    if (NS_FAILED(rv)) {
-      NS_WARNING("failed to get editor.background_color");
-      aColor.AssignLiteral("#ffffff");  // Default to white
-    }
+    NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                         "failed to get editor.background_color");
     return;
   }
 
-  if (Preferences::GetBool("browser.display.use_system_colors", false)) {
+  if (StaticPrefs::browser_display_document_color_use() != 2) {
     return;
   }
 
-  nsresult rv =
+  DebugOnly<nsresult> rv =
       Preferences::GetString("browser.display.background_color", aColor);
   // XXX Why don't you validate the pref value?
-  if (NS_FAILED(rv)) {
-    NS_WARNING("failed to get browser.display.background_color");
-    aColor.AssignLiteral("#ffffff");  // Default to white
-  }
+  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                       "failed to get browser.display.background_color");
 }
 
 // static
@@ -1212,8 +1210,8 @@ Result<bool, nsresult> CSSEditUtils::HaveCSSEquivalentStyles(
 // static
 bool CSSEditUtils::DoStyledElementsHaveSameStyle(
     nsStyledElement& aStyledElement, nsStyledElement& aOtherStyledElement) {
-  if (aStyledElement.HasAttr(kNameSpaceID_None, nsGkAtoms::id) ||
-      aOtherStyledElement.HasAttr(kNameSpaceID_None, nsGkAtoms::id)) {
+  if (aStyledElement.HasAttr(nsGkAtoms::id) ||
+      aOtherStyledElement.HasAttr(nsGkAtoms::id)) {
     // at least one of the spans carries an ID ; suspect a CSS rule applies to
     // it and refuse to merge the nodes
     return false;
@@ -1221,7 +1219,7 @@ bool CSSEditUtils::DoStyledElementsHaveSameStyle(
 
   nsAutoString firstClass, otherClass;
   bool isElementClassSet =
-      aStyledElement.GetAttr(kNameSpaceID_None, nsGkAtoms::_class, firstClass);
+      aStyledElement.GetAttr(nsGkAtoms::_class, firstClass);
   bool isOtherElementClassSet = aOtherStyledElement.GetAttr(
       kNameSpaceID_None, nsGkAtoms::_class, otherClass);
   if (isElementClassSet && isOtherElementClassSet) {
@@ -1269,15 +1267,8 @@ bool CSSEditUtils::DoStyledElementsHaveSameStyle(
     nsAutoCString firstValue, otherValue;
     nsAutoCString propertyNameString;
     firstCSSDecl->Item(i, propertyNameString);
-    DebugOnly<nsresult> rvIgnored =
-        firstCSSDecl->GetPropertyValue(propertyNameString, firstValue);
-    NS_WARNING_ASSERTION(
-        NS_SUCCEEDED(rvIgnored),
-        "nsICSSDeclaration::GetPropertyValue() failed, but ignored");
-    rvIgnored = otherCSSDecl->GetPropertyValue(propertyNameString, otherValue);
-    NS_WARNING_ASSERTION(
-        NS_SUCCEEDED(rvIgnored),
-        "nsICSSDeclaration::GetPropertyValue() failed, but ignored");
+    firstCSSDecl->GetPropertyValue(propertyNameString, firstValue);
+    otherCSSDecl->GetPropertyValue(propertyNameString, otherValue);
     // FIXME: We need to handle all properties whose values are color.
     // However, it's too expensive if we keep using string property names.
     if (propertyNameString.EqualsLiteral("color") ||
@@ -1293,15 +1284,8 @@ bool CSSEditUtils::DoStyledElementsHaveSameStyle(
     nsAutoCString firstValue, otherValue;
     nsAutoCString propertyNameString;
     otherCSSDecl->Item(i, propertyNameString);
-    DebugOnly<nsresult> rvIgnored =
-        otherCSSDecl->GetPropertyValue(propertyNameString, otherValue);
-    NS_WARNING_ASSERTION(
-        NS_SUCCEEDED(rvIgnored),
-        "nsICSSDeclaration::GetPropertyValue() failed, but ignored");
-    rvIgnored = firstCSSDecl->GetPropertyValue(propertyNameString, firstValue);
-    NS_WARNING_ASSERTION(
-        NS_SUCCEEDED(rvIgnored),
-        "nsICSSDeclaration::GetPropertyValue() failed, but ignored");
+    otherCSSDecl->GetPropertyValue(propertyNameString, otherValue);
+    firstCSSDecl->GetPropertyValue(propertyNameString, firstValue);
     // FIXME: We need to handle all properties whose values are color.
     // However, it's too expensive if we keep using string property names.
     if (propertyNameString.EqualsLiteral("color") ||

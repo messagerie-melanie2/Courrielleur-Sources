@@ -49,7 +49,7 @@
       <children includes="menupopup"/>
     </content>
 
-    <implementation implements="nsIObserver, nsIDOMEventListener">
+    <implementation implements="nsIObserver">
       <constructor><![CDATA[
         this._prefs = Services.prefs.getBranch("browser.urlbar.");
         this._prefs.addObserver("", this);
@@ -247,7 +247,7 @@
               } catch (e) {}
 
               if (uri && !uri.schemeIs("javascript") && !uri.schemeIs("data")) {
-                val = uri.spec;
+                val = uri.displaySpec;
 
                 // Parentheses are known to confuse third-party applications (bug 458565).
                 val = val.replace(/[()]/g, c => escape(c));

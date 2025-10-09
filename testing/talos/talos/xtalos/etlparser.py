@@ -120,7 +120,7 @@ def getIndex(eventName, *colNames):
 
 def readFile(filename):
     data = csv.reader(
-        open(filename, "r", encoding="cp1252"),
+        open(filename, encoding="cp1252"),
         delimiter=",",
         quotechar='"',
         skipinitialspace=True,
@@ -221,7 +221,7 @@ def trackProcess(row, firstFirefoxPID):
     parentPID = int(row[PARENT_PID_INDEX])
     if parentPID == firstFirefoxPID:
         proc = row[PROCESS_INDEX]
-        gBrowserPID = int(re.search("^.* \(\s*(\d+)\)$", proc).group(1))
+        gBrowserPID = int(re.search(r"^.* \(\s*(\d+)\)$", proc).group(1))
 
 
 def getBrowserPID():
@@ -232,7 +232,7 @@ def getBrowserPID():
 def trackThread(row, browserPID):
     event, proc, tid = row[EVENTNAME_INDEX], row[PROCESS_INDEX], row[THREAD_ID_INDEX]
     if event in ["T-DCStart", "T-Start"]:
-        procName, procID = re.search("^(.*) \(\s*(\d+)\)$", proc).group(1, 2)
+        procName, procID = re.search(r"^(.*) \(\s*(\d+)\)$", proc).group(1, 2)
         if procID == str(browserPID):
             imgIdx = getIndex(event, IMAGEFUNC_COL)
             img = re.match("([^!]+)!", row[imgIdx]).group(1)
@@ -267,10 +267,10 @@ def trackThreadNetIO(row, io, stage):
         gConnectionIDs[connID] = tid
     origThread = gConnectionIDs[connID]
     if origThread in gThreads:
-        match = re.match("[\w-]+\/([\w-]+)?", event)
+        match = re.match(r"[\w-]+\/([\w-]+)?", event)
         if not match:
             raise xtalos.XTalosError(
-                "Could not find a regular expression match for event: {}".format(event)
+                f"Could not find a regular expression match for event: {event}"
             )
         netEvt = match.group(1)
 
@@ -456,7 +456,7 @@ def etlparser(
 
     wl_temp = {}
     if allowlist_path:
-        with open(allowlist_path, "r") as fHandle:
+        with open(allowlist_path) as fHandle:
             wl_temp = json.load(fHandle)
 
     # Approot is the full path where the application is located at
@@ -464,7 +464,7 @@ def etlparser(
     # normal startup.
     if approot:
         if os.path.exists("%s\\dependentlibs.list" % approot):
-            with open("%s\\dependentlibs.list" % approot, "r") as fhandle:
+            with open("%s\\dependentlibs.list" % approot) as fhandle:
                 libs = fhandle.readlines()
 
             for lib in libs:
@@ -610,7 +610,6 @@ def etlparser_from_config(config_file, **kwargs):
 
 
 def main(args=sys.argv[1:]):
-
     # parse command line arguments
     parser = xtalos.XtalosOptions()
     args = parser.parse_args(args)

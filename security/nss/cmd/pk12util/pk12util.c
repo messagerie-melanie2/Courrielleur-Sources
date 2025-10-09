@@ -32,12 +32,12 @@ static void
 Usage()
 {
 #define FPS PR_fprintf(PR_STDERR,
-    FPS "Usage:	 %s -i importfile [-d certdir] [-P dbprefix] [-h tokenname]\n",
+    FPS "Usage:	 %s -i importfile [-I] [-d certdir] [-P dbprefix] [-h tokenname]\n",
 				 progName);
     FPS "\t\t [-k slotpwfile | -K slotpw] [-w p12filepwfile | -W p12filepw]\n");
     FPS "\t\t [-v]\n");
 
-    FPS "Usage:	 %s -l listfile [-d certdir] [-P dbprefix] [-h tokenname]\n",
+    FPS "Usage:	 %s -l listfile [-I] [-d certdir] [-P dbprefix] [-h tokenname]\n",
 				 progName);
     FPS "\t\t [-k slotpwfile | -K slotpw] [-w p12filepwfile | -W p12filepw]\n");
     FPS "\t\t [-v]\n");
@@ -351,7 +351,8 @@ P12U_InitSlot(PK11SlotInfo *slot, secuPWData *slotPw)
  */
 SEC_PKCS12DecoderContext *
 p12U_ReadPKCS12File(SECItem *uniPwp, char *in_file, PK11SlotInfo *slot,
-                    secuPWData *slotPw, secuPWData *p12FilePw)
+                    secuPWData *slotPw, secuPWData *p12FilePw,
+                    PRBool ignoreIntegrity)
 {
     SEC_PKCS12DecoderContext *p12dcx = NULL;
     p12uContext *p12cxt = NULL;
@@ -449,16 +450,19 @@ p12U_ReadPKCS12File(SECItem *uniPwp, char *in_file, PK11SlotInfo *slot,
 
     /* revert the option setting */
     if (forceUnicode != pk12uForceUnicode) {
-        rv = NSS_OptionSet(__NSS_PKCS12_DECODE_FORCE_UNICODE, pk12uForceUnicode);
-        if (rv != SECSuccess) {
+        if (SECSuccess != NSS_OptionSet(__NSS_PKCS12_DECODE_FORCE_UNICODE, pk12uForceUnicode)) {
             SECU_PrintError(progName, "PKCS12 decoding failed to set option");
             pk12uErrno = PK12UERR_DECODEVERIFY;
+            rv = SECFailure;
         }
     }
     /* rv has been set at this point */
 
 done:
-    if (rv != SECSuccess) {
+    /* if we are ignoring Integrity and we failed because we couldn't
+     * verify the integrity code, go ahead and succeed */
+    if (rv != SECSuccess && !(ignoreIntegrity &&
+                              (pk12uErrno == PK12UERR_DECODEVERIFY))) {
         if (p12dcx != NULL) {
             SEC_PKCS12DecoderFinish(p12dcx);
             p12dcx = NULL;
@@ -490,7 +494,8 @@ done:
  */
 PRIntn
 P12U_ImportPKCS12Object(char *in_file, PK11SlotInfo *slot,
-                        secuPWData *slotPw, secuPWData *p12FilePw)
+                        secuPWData *slotPw, secuPWData *p12FilePw,
+                        PRBool ignoreIntegrity)
 {
     SEC_PKCS12DecoderContext *p12dcx = NULL;
     SECItem uniPwitem = { 0 };
@@ -509,7 +514,8 @@ P12U_ImportPKCS12Object(char *in_file, PK11SlotInfo *slot,
     do {
         trypw = PR_FALSE; /* normally we do this once */
         rv = SECFailure;
-        p12dcx = p12U_ReadPKCS12File(&uniPwitem, in_file, slot, slotPw, p12FilePw);
+        p12dcx = p12U_ReadPKCS12File(&uniPwitem, in_file, slot, slotPw,
+                                     p12FilePw, ignoreIntegrity);
 
         if (p12dcx == NULL) {
             goto loser;
@@ -777,14 +783,16 @@ loser:
 
 PRIntn
 P12U_ListPKCS12File(char *in_file, PK11SlotInfo *slot,
-                    secuPWData *slotPw, secuPWData *p12FilePw)
+                    secuPWData *slotPw, secuPWData *p12FilePw,
+                    PRBool ignoreIntegrity)
 {
     SEC_PKCS12DecoderContext *p12dcx = NULL;
     SECItem uniPwitem = { 0 };
     SECStatus rv = SECFailure;
     const SEC_PKCS12DecoderItem *dip;
 
-    p12dcx = p12U_ReadPKCS12File(&uniPwitem, in_file, slot, slotPw, p12FilePw);
+    p12dcx = p12U_ReadPKCS12File(&uniPwitem, in_file, slot, slotPw, p12FilePw,
+                                 ignoreIntegrity);
     /* did the blob authenticate properly? */
     if (p12dcx == NULL) {
         SECU_PrintError(progName, "PKCS12 decode not verified");
@@ -819,7 +827,7 @@ P12U_ListPKCS12File(char *in_file, PK11SlotInfo *slot,
                     } else if (SECU_PrintSignedData(stdout, dip->der,
                                                     (dip->hasKey) ? "(has private key)"
                                                                   : "",
-                                                    0, (SECU_PPFunc)SECU_PrintCertificate) !=
+                                                    0, SECU_PrintCertificate) !=
                                0) {
                         SECU_PrintError(progName, "PKCS12 print cert bag failed");
                     }
@@ -942,24 +950,14 @@ PKCS12U_MapHashFromString(char *hashString)
     }
     /* make sure it's a hashing oid */
     if (HASH_GetHashTypeByOidTag(hashAlg) == HASH_AlgNULL) {
-        return SEC_OID_UNKNOWN;
+        /* allow HMAC here. HMAC implies PKCS 5 v2 pba */
+        SECOidTag baseHashAlg = HASH_GetHashOidTagByHMACOidTag(hashAlg);
+        if (baseHashAlg == SEC_OID_UNKNOWN) {
+            /* not an hmac either, reject the entry */
+            return SEC_OID_UNKNOWN;
+        }
     }
     return hashAlg;
-}
-
-static void
-p12u_EnableAllCiphers()
-{
-    SEC_PKCS12EnableCipher(PKCS12_RC4_40, 1);
-    SEC_PKCS12EnableCipher(PKCS12_RC4_128, 1);
-    SEC_PKCS12EnableCipher(PKCS12_RC2_CBC_40, 1);
-    SEC_PKCS12EnableCipher(PKCS12_RC2_CBC_128, 1);
-    SEC_PKCS12EnableCipher(PKCS12_DES_56, 1);
-    SEC_PKCS12EnableCipher(PKCS12_DES_EDE3_168, 1);
-    SEC_PKCS12EnableCipher(PKCS12_AES_CBC_128, 1);
-    SEC_PKCS12EnableCipher(PKCS12_AES_CBC_192, 1);
-    SEC_PKCS12EnableCipher(PKCS12_AES_CBC_256, 1);
-    SEC_PKCS12SetPreferredCipher(PKCS12_AES_CBC_256, 1);
 }
 
 static PRUintn
@@ -983,7 +981,8 @@ P12U_Init(char *dir, char *dbprefix, PRBool listonly)
     PORT_SetUCS2_ASCIIConversionFunction(p12u_ucs2_ascii_conversion_function);
     /* use the defaults for UCS4-UTF8 and UCS2-UTF8 */
 
-    p12u_EnableAllCiphers();
+    /* ciphers are already enabled by default, allow policy to work */
+    /* p12u_EnableAllCiphers(); */
 
     return 0;
 }
@@ -1006,7 +1005,8 @@ enum {
     opt_CertCipher,
     opt_KeyLength,
     opt_CertKeyLength,
-    opt_Mac
+    opt_Mac,
+    opt_IgnoreIntegrity
 };
 
 static secuCommandFlag pk12util_options[] = {
@@ -1027,7 +1027,8 @@ static secuCommandFlag pk12util_options[] = {
     { /* opt_CertCipher	       */ 'C', PR_TRUE, 0, PR_FALSE },
     { /* opt_KeyLength         */ 'm', PR_TRUE, 0, PR_FALSE, "key_len" },
     { /* opt_CertKeyLength     */ 0, PR_TRUE, 0, PR_FALSE, "cert_key_len" },
-    { /* opt_Mac               */ 'M', PR_TRUE, 0, PR_FALSE, PR_FALSE }
+    { /* opt_Mac               */ 'M', PR_TRUE, 0, PR_FALSE },
+    { /* opt_IgnoreIntegrity   */ 'I', PR_FALSE, 0, PR_FALSE }
 };
 
 int
@@ -1048,6 +1049,7 @@ main(int argc, char **argv)
     int certKeyLen = 0;
     secuCommand pk12util;
     PRInt32 forceUnicode;
+    PRBool ignoreIntegrity = PR_FALSE;
 
 #ifdef _CRTDBG_MAP_ALLOC
     _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
@@ -1122,6 +1124,9 @@ main(int argc, char **argv)
     if (pk12util.options[opt_Raw].activated) {
         dumpRawFile = PR_TRUE;
     }
+    if (pk12util.options[opt_IgnoreIntegrity].activated) {
+        ignoreIntegrity = PR_TRUE;
+    }
     if (pk12util.options[opt_KeyLength].activated) {
         keyLen = atoi(pk12util.options[opt_KeyLength].arg);
     }
@@ -1148,7 +1153,7 @@ main(int argc, char **argv)
 
         cipher = PKCS12U_MapCipherFromString(cipherString, keyLen);
         /* We only want encryption PBE's. make sure we don't have
-	 * any MAC pbes */
+         * any MAC pbes */
         if (cipher == SEC_OID_UNKNOWN) {
             PORT_SetError(SEC_ERROR_INVALID_ALGORITHM);
             SECU_PrintError(progName, "Algorithm: \"%s\"", cipherString);
@@ -1165,7 +1170,7 @@ main(int argc, char **argv)
         } else {
             certCipher = PKCS12U_MapCipherFromString(cipherString, certKeyLen);
             /* If the user requested a cipher and we didn't find it, then
-	     * don't just silently not encrypt. */
+             * don't just silently not encrypt. */
             if (certCipher == SEC_OID_UNKNOWN) {
                 PORT_SetError(SEC_ERROR_INVALID_ALGORITHM);
                 SECU_PrintError(progName, "Algorithm: \"%s\"", cipherString);
@@ -1173,6 +1178,10 @@ main(int argc, char **argv)
                 goto done;
             }
         }
+    }
+    /* in FIPS mode default to encoding with pkcs5v2 for the MAC */
+    if (PK11_IsFIPS()) {
+        hash = SEC_OID_HMAC_SHA256;
     }
     if (pk12util.options[opt_Mac].activated) {
         char *hashString = pk12util.options[opt_Mac].arg;
@@ -1188,7 +1197,8 @@ main(int argc, char **argv)
     }
 
     if (pk12util.options[opt_Import].activated) {
-        P12U_ImportPKCS12Object(import_file, slot, &slotPw, &p12FilePw);
+        P12U_ImportPKCS12Object(import_file, slot, &slotPw, &p12FilePw,
+                                ignoreIntegrity);
 
     } else if (pk12util.options[opt_Export].activated) {
         P12U_ExportPKCS12Object(pk12util.options[opt_Nickname].arg,
@@ -1196,7 +1206,8 @@ main(int argc, char **argv)
                                 hash, &slotPw, &p12FilePw);
 
     } else if (pk12util.options[opt_List].activated) {
-        P12U_ListPKCS12File(import_file, slot, &slotPw, &p12FilePw);
+        P12U_ListPKCS12File(import_file, slot, &slotPw, &p12FilePw,
+                            ignoreIntegrity);
 
     } else {
         Usage();

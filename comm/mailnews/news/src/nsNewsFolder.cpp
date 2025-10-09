@@ -3,6 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "nsIDBFolderInfo.h"
 #include "nsIPrefBranch.h"
 #include "nsIPrefService.h"
 #include "prlog.h"
@@ -28,27 +29,22 @@
 #include "nsILineInputStream.h"
 
 #include "nsIMsgWindow.h"
-#include "nsIWindowWatcher.h"
 
+#include "nsLocalFile.h"
 #include "nsNetUtil.h"
 #include "nsIAuthPrompt.h"
 #include "nsIURL.h"
 #include "nsNetCID.h"
 #include "nsINntpUrl.h"
 
-#include "nsNewsDownloader.h"
 #include "nsIStringBundle.h"
 #include "nsMsgI18N.h"
-#include "nsNativeCharsetUtils.h"
 
 #include "nsIMsgFolderNotificationService.h"
 #include "nsILoginInfo.h"
 #include "nsILoginManager.h"
-#include "nsEmbedCID.h"
 #include "mozilla/Components.h"
-#include "mozilla/SlicedInputStream.h"
 #include "nsIInputStream.h"
-#include "nsMemory.h"
 #include "nsIURIMutator.h"
 
 #define kNewsSortOffset 9000
@@ -125,14 +121,11 @@ nsMsgNewsFolder::AddNewsgroup(const nsACString& name, const nsACString& setStr,
   // URI should use UTF-8
   // (see RFC2396 Uniform Resource Identifiers (URI): Generic Syntax)
 
-  // we are handling newsgroup names in UTF-8
-  NS_ConvertUTF8toUTF16 nameUtf16(name);
-
   nsAutoCString escapedName;
-  rv = NS_MsgEscapeEncodeURLPath(nameUtf16, escapedName);
+  rv = NS_MsgEscapeEncodeURLPath(name, escapedName);
   if (NS_FAILED(rv)) return rv;
 
-  rv = nntpServer->AddNewsgroup(nameUtf16);
+  rv = nntpServer->AddNewsgroup(name);
   if (NS_FAILED(rv)) return rv;
 
   uri.Append(escapedName);
@@ -156,7 +149,7 @@ nsMsgNewsFolder::AddNewsgroup(const nsACString& name, const nsACString& setStr,
   NS_ENSURE_SUCCESS(rv, rv);
 
   // this what shows up in the UI
-  rv = folder->SetName(nameUtf16);
+  rv = folder->SetName(name);
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = folder->SetFlag(nsMsgFolderFlags::Newsgroup);
@@ -260,8 +253,6 @@ nsMsgNewsFolder::UpdateFolder(nsIMsgWindow* aWindow) {
         if (NS_SUCCEEDED(rv))
           rv = mDatabase->ApplyRetentionSettings(retentionSettings, false);
       }
-      rv = AutoCompact(aWindow);
-      NS_ENSURE_SUCCESS(rv, rv);
       // GetNewMessages has to be the last rv set before we get to the next
       // check, so that we'll have rv set to NS_MSG_ERROR_OFFLINE when offline
       // and send a folder loaded notification to the front end.
@@ -322,36 +313,6 @@ nsMsgNewsFolder::GetCanCompact(bool* aResult) {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgNewsFolder::GetFolderURL(nsACString& aUrl) {
-  nsCString hostName;
-  nsresult rv = GetHostname(hostName);
-  nsString groupName;
-  rv = GetName(groupName);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCOMPtr<nsIMsgIncomingServer> server;
-  rv = GetServer(getter_AddRefs(server));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  int32_t socketType;
-  rv = server->GetSocketType(&socketType);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  int32_t port;
-  rv = server->GetPort(&port);
-  NS_ENSURE_SUCCESS(rv, rv);
-  const char* newsScheme =
-      (socketType == nsMsgSocketType::SSL) ? SNEWS_SCHEME : NEWS_SCHEME;
-  nsCString escapedName;
-  rv = NS_MsgEscapeEncodeURLPath(groupName, escapedName);
-  NS_ENSURE_SUCCESS(rv, rv);
-  nsCString tmpStr;
-  tmpStr.Adopt(PR_smprintf("%s//%s:%ld/%s", newsScheme, hostName.get(), port,
-                           escapedName.get()));
-  aUrl.Assign(tmpStr);
-  return NS_OK;
-}
-
 NS_IMETHODIMP nsMsgNewsFolder::SetNewsrcHasChanged(bool newsrcHasChanged) {
   nsresult rv;
 
@@ -361,23 +322,14 @@ NS_IMETHODIMP nsMsgNewsFolder::SetNewsrcHasChanged(bool newsrcHasChanged) {
   return nntpServer->SetNewsrcHasChanged(newsrcHasChanged);
 }
 
-nsresult nsMsgNewsFolder::CreateChildFromURI(const nsACString& uri,
-                                             nsIMsgFolder** folder) {
-  nsMsgNewsFolder* newFolder = new nsMsgNewsFolder;
-  NS_ADDREF(*folder = newFolder);
-  newFolder->Init(uri);
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgNewsFolder::CreateSubfolder(const nsAString& newsgroupName,
+NS_IMETHODIMP nsMsgNewsFolder::CreateSubfolder(const nsACString& newsgroupName,
                                                nsIMsgWindow* msgWindow) {
   nsresult rv = NS_OK;
   if (newsgroupName.IsEmpty()) return NS_MSG_ERROR_INVALID_FOLDER_NAME;
 
   nsCOMPtr<nsIMsgFolder> child;
   // Now let's create the actual new folder
-  rv = AddNewsgroup(NS_ConvertUTF16toUTF8(newsgroupName), EmptyCString(),
-                    getter_AddRefs(child));
+  rv = AddNewsgroup(newsgroupName, EmptyCString(), getter_AddRefs(child));
 
   if (NS_SUCCEEDED(rv))
     SetNewsrcHasChanged(true);  // subscribe UI does this - but maybe we got
@@ -411,11 +363,7 @@ NS_IMETHODIMP nsMsgNewsFolder::DeleteStorage() {
   rv = GetNntpServer(getter_AddRefs(nntpServer));
   if (NS_FAILED(rv)) return rv;
 
-  nsAutoString name;
-  rv = GetUnicodeName(name);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  rv = nntpServer->RemoveNewsgroup(name);
+  rv = nntpServer->RemoveNewsgroup(mName);
   NS_ENSURE_SUCCESS(rv, rv);
 
   (void)RefreshSizeOnDisk();
@@ -423,12 +371,13 @@ NS_IMETHODIMP nsMsgNewsFolder::DeleteStorage() {
   return SetNewsrcHasChanged(true);
 }
 
-NS_IMETHODIMP nsMsgNewsFolder::Rename(const nsAString& newName,
+NS_IMETHODIMP nsMsgNewsFolder::Rename(const nsACString& newName,
                                       nsIMsgWindow* msgWindow) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-NS_IMETHODIMP nsMsgNewsFolder::GetAbbreviatedName(nsAString& aAbbreviatedName) {
+NS_IMETHODIMP nsMsgNewsFolder::GetAbbreviatedName(
+    nsACString& aAbbreviatedName) {
   nsresult rv;
 
   rv = nsMsgDBFolder::GetPrettyName(aAbbreviatedName);
@@ -466,9 +415,9 @@ NS_IMETHODIMP nsMsgNewsFolder::GetAbbreviatedName(nsAString& aAbbreviatedName) {
 // 'a' is the first letter of the part of the word before the
 // dash and 'b' is the first letter of the part of the word after
 // the dash
-nsresult nsMsgNewsFolder::AbbreviatePrettyName(nsAString& prettyName,
+nsresult nsMsgNewsFolder::AbbreviatePrettyName(nsACString& prettyName,
                                                int32_t fullwords) {
-  nsAutoString name(prettyName);
+  nsAutoCString name(prettyName);
   int32_t totalwords = 0;  // total no. of words
 
   // get the total no. of words
@@ -489,7 +438,7 @@ nsresult nsMsgNewsFolder::AbbreviatePrettyName(nsAString& prettyName,
   if (abbrevnum < 1) return NS_OK;  // nothing to abbreviate
 
   // build the ellipsis
-  nsAutoString out;
+  nsAutoCString out;
   out += name[0];
 
   int32_t length = name.Length();
@@ -724,7 +673,7 @@ NS_IMETHODIMP nsMsgNewsFolder::CancelMessage(nsIMsgDBHdr* msgHdr,
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCString messageID;
-  rv = msgHdr->GetMessageId(getter_Copies(messageID));
+  rv = msgHdr->GetMessageId(messageID);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // we need to escape the message ID,
@@ -833,7 +782,7 @@ int32_t nsMsgNewsFolder::HandleNewsrcLine(const char* line,
   if (line[0] == '#' || line[0] == '\r' || line[0] == '\n') return 0;
 
   if ((line[0] == 'o' || line[0] == 'O') && !PL_strncasecmp(line, "options", 7))
-    return RememberLine(nsDependentCString(line));
+    return 0;
 
   const char* s = nullptr;
   const char* setStr = nullptr;
@@ -842,8 +791,9 @@ int32_t nsMsgNewsFolder::HandleNewsrcLine(const char* line,
   for (s = line; s < end; s++)
     if ((*s == ':') || (*s == '!')) break;
 
-  if (*s == 0) /* What is this?? Well, don't just throw it away... */
-    return RememberLine(nsDependentCString(line));
+  if (*s == 0) {
+    return 0;
+  }
 
   bool subscribed = (*s == ':');
   setStr = s + 1;
@@ -880,35 +830,9 @@ int32_t nsMsgNewsFolder::HandleNewsrcLine(const char* line,
     rv = AddNewsgroup(Substring(line, s), nsDependentCString(setStr),
                       getter_AddRefs(child));
     if (NS_FAILED(rv)) return -1;
-  } else {
-    rv = RememberUnsubscribedGroup(nsDependentCString(line),
-                                   nsDependentCString(setStr));
-    if (NS_FAILED(rv)) return -1;
   }
 
   return 0;
-}
-
-nsresult nsMsgNewsFolder::RememberUnsubscribedGroup(const nsACString& newsgroup,
-                                                    const nsACString& setStr) {
-  mUnsubscribedNewsgroupLines.Append(newsgroup);
-  mUnsubscribedNewsgroupLines.AppendLiteral("! ");
-  if (!setStr.IsEmpty())
-    mUnsubscribedNewsgroupLines.Append(setStr);
-  else
-    mUnsubscribedNewsgroupLines.Append(MSG_LINEBREAK);
-  return NS_OK;
-}
-
-int32_t nsMsgNewsFolder::RememberLine(const nsACString& line) {
-  mOptionLines = line;
-  mOptionLines.Append(MSG_LINEBREAK);
-  return 0;
-}
-
-nsresult nsMsgNewsFolder::ForgetLine() {
-  mOptionLines.Truncate();
-  return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgNewsFolder::GetGroupUsername(nsACString& aGroupUsername) {
@@ -1064,10 +988,7 @@ nsMsgNewsFolder::GetAuthenticationCredentials(nsIMsgWindow* aMsgWindow,
     nsCOMPtr<nsIAuthPrompt> authPrompt =
         do_GetService("@mozilla.org/messenger/msgAuthPrompt;1");
     if (!authPrompt) {
-      nsCOMPtr<nsIWindowWatcher> wwatch(
-          do_GetService(NS_WINDOWWATCHER_CONTRACTID));
-      if (wwatch) wwatch->GetNewAuthPrompter(0, getter_AddRefs(authPrompt));
-      if (!authPrompt) return NS_ERROR_FAILURE;
+      return NS_ERROR_FAILURE;
     }
 
     if (authPrompt) {
@@ -1075,7 +996,7 @@ nsMsgNewsFolder::GetAuthenticationCredentials(nsIMsgWindow* aMsgWindow,
       nsString promptTitle, promptText;
       bundle->GetStringFromName("enterUserPassTitle", promptTitle);
 
-      nsString serverName;
+      nsAutoCString serverName;
       nsCOMPtr<nsIMsgIncomingServer> server;
       rv = GetServer(getter_AddRefs(server));
       NS_ENSURE_SUCCESS(rv, rv);
@@ -1090,10 +1011,11 @@ nsMsgNewsFolder::GetAuthenticationCredentials(nsIMsgWindow* aMsgWindow,
       nntpServer->GetSingleSignon(&singleSignon);
 
       if (singleSignon) {
-        AutoTArray<nsString, 1> params = {serverName};
+        AutoTArray<nsString, 1> params = {NS_ConvertUTF8toUTF16(serverName)};
         bundle->FormatStringFromName("enterUserPassServer", params, promptText);
       } else {
-        AutoTArray<nsString, 2> params = {mName, serverName};
+        AutoTArray<nsString, 2> params = {NS_ConvertUTF8toUTF16(mName),
+                                          NS_ConvertUTF8toUTF16(serverName)};
         bundle->FormatStringFromName("enterUserPassGroup", params, promptText);
       }
 
@@ -1188,7 +1110,7 @@ NS_IMETHODIMP nsMsgNewsFolder::ReorderGroup(nsIMsgFolder* aNewsgroupToMove,
 
   for (uint32_t i = 0; i < mSubFolders.Length(); i++) {
     mSubFolders[i]->SetSortOrder(kNewsSortOffset + i);
-    nsAutoString name;
+    nsAutoCString name;
     mSubFolders[i]->GetName(name);
     NotifyFolderRemoved(mSubFolders[i]);
     NotifyFolderAdded(mSubFolders[i]);
@@ -1224,10 +1146,9 @@ NS_IMETHODIMP nsMsgNewsFolder::GetCharset(nsACString& charset) {
 NS_IMETHODIMP
 nsMsgNewsFolder::GetNewsrcLine(nsACString& newsrcLine) {
   nsresult rv;
-  nsString newsgroupNameUtf16;
-  rv = GetName(newsgroupNameUtf16);
+  nsAutoCString newsgroupName;
+  rv = GetName(newsgroupName);
   if (NS_FAILED(rv)) return rv;
-  NS_ConvertUTF16toUTF8 newsgroupName(newsgroupNameUtf16);
 
   newsrcLine = newsgroupName;
   newsrcLine.Append(':');
@@ -1256,31 +1177,15 @@ NS_IMETHODIMP nsMsgNewsFolder::SetReadSetFromStr(const nsACString& newsrcLine) {
 }
 
 NS_IMETHODIMP
-nsMsgNewsFolder::GetUnsubscribedNewsgroupLines(
-    nsACString& aUnsubscribedNewsgroupLines) {
-  aUnsubscribedNewsgroupLines = mUnsubscribedNewsgroupLines;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgNewsFolder::GetOptionLines(nsACString& optionLines) {
-  optionLines = mOptionLines;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 nsMsgNewsFolder::OnReadChanged(nsIDBChangeListener* aInstigator) {
   return SetNewsrcHasChanged(true);
 }
 
 NS_IMETHODIMP
-nsMsgNewsFolder::GetUnicodeName(nsAString& aName) { return GetName(aName); }
-
-NS_IMETHODIMP
 nsMsgNewsFolder::GetRawName(nsACString& aRawName) {
   nsresult rv;
   if (mRawName.IsEmpty()) {
-    nsString name;
+    nsAutoCString name;
     rv = GetName(name);
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1292,9 +1197,11 @@ nsMsgNewsFolder::GetRawName(nsACString& aRawName) {
     nsAutoCString dataCharset;
     rv = nntpServer->GetCharset(dataCharset);
     NS_ENSURE_SUCCESS(rv, rv);
-    rv = nsMsgI18NConvertFromUnicode(dataCharset, name, mRawName);
+    rv = nsMsgI18NConvertFromUnicode(dataCharset, NS_ConvertUTF8toUTF16(name),
+                                     mRawName);
 
-    if (NS_FAILED(rv)) LossyCopyUTF16toASCII(name, mRawName);
+    if (NS_FAILED(rv))
+      LossyCopyUTF16toASCII(NS_ConvertUTF8toUTF16(name), mRawName);
   }
   aRawName = mRawName;
   return NS_OK;
@@ -1359,11 +1266,6 @@ NS_IMETHODIMP nsMsgNewsFolder::CancelComplete() {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgNewsFolder::CancelFailed() {
-  NotifyFolderEvent(kDeleteOrMoveMsgFailed);
-  return NS_OK;
-}
-
 NS_IMETHODIMP nsMsgNewsFolder::GetSaveArticleOffline(bool* aBool) {
   NS_ENSURE_ARG(aBool);
   *aBool = m_downloadMessageForOfflineUse;
@@ -1377,101 +1279,58 @@ NS_IMETHODIMP nsMsgNewsFolder::SetSaveArticleOffline(bool aBool) {
 
 NS_IMETHODIMP nsMsgNewsFolder::DownloadAllForOffline(nsIUrlListener* listener,
                                                      nsIMsgWindow* msgWindow) {
-  nsTArray<nsMsgKey> srcKeyArray;
-  SetSaveArticleOffline(true);
   nsresult rv = NS_OK;
 
-  // build up message keys.
-  if (mDatabase) {
-    nsCOMPtr<nsIMsgEnumerator> enumerator;
-    rv = mDatabase->EnumerateMessages(getter_AddRefs(enumerator));
-    if (NS_SUCCEEDED(rv) && enumerator) {
-      bool hasMore;
-      while (NS_SUCCEEDED(rv = enumerator->HasMoreElements(&hasMore)) &&
-             hasMore) {
-        nsCOMPtr<nsIMsgDBHdr> header;
-        rv = enumerator->GetNext(getter_AddRefs(header));
-        if (header && NS_SUCCEEDED(rv)) {
-          bool shouldStoreMsgOffline = false;
-          nsMsgKey msgKey;
-          header->GetMessageKey(&msgKey);
-          MsgFitsDownloadCriteria(msgKey, &shouldStoreMsgOffline);
-          if (shouldStoreMsgOffline) srcKeyArray.AppendElement(msgKey);
-        }
-      }
-    }
+  nsCOMPtr<nsINntpService> nntpService(
+      do_GetService("@mozilla.org/messenger/nntpservice;1", &rv));
+  if (NS_SUCCEEDED(rv) && nntpService) {
+    rv = nntpService->DownloadFolderForOffline(this, msgWindow);
   }
-  RefPtr<DownloadNewsArticlesToOfflineStore> downloadState =
-      new DownloadNewsArticlesToOfflineStore(msgWindow, mDatabase, this);
-  rv = downloadState->DownloadArticles(msgWindow, this, &srcKeyArray);
-  (void)RefreshSizeOnDisk();
+
   return rv;
 }
 
 NS_IMETHODIMP nsMsgNewsFolder::DownloadMessagesForOffline(
-    nsTArray<RefPtr<nsIMsgDBHdr>> const& messages, nsIMsgWindow* window) {
-  nsresult rv;
-  SetSaveArticleOffline(
-      true);  // ### TODO need to clear this when we've finished
-  // build up message keys.
+    nsTArray<RefPtr<nsIMsgDBHdr>> const& messages, nsIMsgWindow* msgWindow) {
+  nsresult rv = NS_OK;
+
   nsTArray<nsMsgKey> srcKeyArray(messages.Length());
-  for (nsIMsgDBHdr* hdr : messages) {
+  for (const auto& hdr : messages) {
     nsMsgKey key;
     rv = hdr->GetMessageKey(&key);
     if (NS_SUCCEEDED(rv)) srcKeyArray.AppendElement(key);
   }
-  RefPtr<DownloadNewsArticlesToOfflineStore> downloadState =
-      new DownloadNewsArticlesToOfflineStore(window, mDatabase, this);
 
-  rv = downloadState->DownloadArticles(window, this, &srcKeyArray);
-  (void)RefreshSizeOnDisk();
+  nsCOMPtr<nsINntpService> nntpService(
+      do_GetService("@mozilla.org/messenger/nntpservice;1", &rv));
+  if (NS_SUCCEEDED(rv) && nntpService) {
+    rv = nntpService->DownloadMessagesForOffline(this, srcKeyArray, msgWindow);
+  }
+
   return rv;
 }
 
 NS_IMETHODIMP nsMsgNewsFolder::GetLocalMsgStream(nsIMsgDBHdr* hdr,
                                                  nsIInputStream** stream) {
-  nsMsgKey key;
-  hdr->GetMessageKey(&key);
-
-  uint64_t offset = 0;
-  uint32_t size = 0;
-  nsCOMPtr<nsIInputStream> rawStream;
-  nsresult rv =
-      GetOfflineFileStream(key, &offset, &size, getter_AddRefs(rawStream));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  RefPtr<mozilla::SlicedInputStream> slicedStream =
-      new mozilla::SlicedInputStream(rawStream.forget(), offset,
-                                     uint64_t(size));
-  slicedStream.forget(stream);
-  return NS_OK;
+  return GetMsgInputStream(hdr, stream);
 }
 
-NS_IMETHODIMP nsMsgNewsFolder::NotifyDownloadBegin(nsMsgKey key) {
+NS_IMETHODIMP nsMsgNewsFolder::NotifyArticleDownloaded(uint32_t articleNumber,
+                                                       nsACString const& data) {
   if (!m_downloadMessageForOfflineUse) {
     return NS_OK;
   }
-  nsresult rv = GetMessageHeader(key, getter_AddRefs(m_offlineHeader));
+  nsresult rv =
+      GetMessageHeader(articleNumber, getter_AddRefs(m_offlineHeader));
   NS_ENSURE_SUCCESS(rv, rv);
-  return StartNewOfflineMessage();  // Sets up m_tempMessageStream et al.
-}
-
-NS_IMETHODIMP nsMsgNewsFolder::NotifyDownloadedLine(nsACString const& line) {
-  nsresult rv = NS_OK;
+  StartNewOfflineMessage();  // Sets up m_tempMessageStream et al.
   if (m_tempMessageStream) {
-    m_numOfflineMsgLines++;
+    m_numOfflineMsgLines += data.CountChar('\n');
+
     uint32_t count = 0;
-    rv = m_tempMessageStream->Write(line.BeginReading(), line.Length(), &count);
-    NS_ENSURE_SUCCESS(rv, rv);
+    rv = m_tempMessageStream->Write(data.BeginReading(), data.Length(), &count);
     m_tempMessageStreamBytesWritten += count;
-  }
-
-  return rv;
-}
-
-NS_IMETHODIMP nsMsgNewsFolder::NotifyDownloadEnd(nsresult status) {
-  if (m_tempMessageStream) {
-    return EndNewOfflineMessage(status);
+    return EndNewOfflineMessage(rv);
   }
   return NS_OK;
 }
@@ -1498,15 +1357,6 @@ NS_IMETHODIMP nsMsgNewsFolder::NotifyFinishedDownloadinghdrs() {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgNewsFolder::Compact(nsIUrlListener* aListener,
-                                       nsIMsgWindow* aMsgWindow) {
-  nsresult rv;
-  rv = GetDatabase();
-  if (mDatabase) ApplyRetentionSettings();
-  (void)RefreshSizeOnDisk();
-  return rv;
-}
-
 NS_IMETHODIMP
 nsMsgNewsFolder::ApplyRetentionSettings() {
   return nsMsgDBFolder::ApplyRetentionSettings(false);
@@ -1519,10 +1369,7 @@ NS_IMETHODIMP nsMsgNewsFolder::GetMessageIdForKey(nsMsgKey key,
   nsCOMPtr<nsIMsgDBHdr> hdr;
   rv = mDatabase->GetMsgHdrForKey(key, getter_AddRefs(hdr));
   NS_ENSURE_SUCCESS(rv, rv);
-  nsCString id;
-  rv = hdr->GetMessageId(getter_Copies(id));
-  result.Assign(id);
-  return rv;
+  return hdr->GetMessageId(result);
 }
 
 NS_IMETHODIMP nsMsgNewsFolder::SetSortOrder(int32_t order) {
@@ -1587,10 +1434,7 @@ nsMsgNewsFolder::GetFilterList(nsIMsgWindow* aMsgWindow,
     nsresult rv = GetFilePath(getter_AddRefs(thisFolder));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsCOMPtr<nsIFile> filterFile =
-        do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-    ;
+    nsCOMPtr<nsIFile> filterFile = new nsLocalFile();
     rv = filterFile->InitWithFile(thisFolder);
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1604,13 +1448,13 @@ nsMsgNewsFolder::GetFilterList(nsIMsgWindow* aMsgWindow,
     // NOTE:
     // we don't we need to call NS_MsgHashIfNecessary()
     // it's already been hashed, if necessary
-    nsCString filterFileName;
-    rv = filterFile->GetNativeLeafName(filterFileName);
+    nsAutoString filterFileName;
+    rv = filterFile->GetLeafName(filterFileName);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    filterFileName.AppendLiteral(".dat");
+    filterFileName.AppendLiteral(u".dat");
 
-    rv = filterFile->SetNativeLeafName(filterFileName);
+    rv = filterFile->SetLeafName(filterFileName);
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsCOMPtr<nsIMsgFilterService> filterService =

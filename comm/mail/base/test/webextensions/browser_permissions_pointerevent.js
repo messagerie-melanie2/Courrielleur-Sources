@@ -9,22 +9,22 @@ add_task(async function test_pointerevent() {
       e.preventDefault();
     });
 
-    document.addEventListener("mousedown", e => {
+    document.addEventListener("mousedown", () => {
       browser.test.assertTrue(true, "Should receive mousedown");
     });
 
-    document.addEventListener("mouseup", e => {
+    document.addEventListener("mouseup", () => {
       browser.test.assertTrue(true, "Should receive mouseup");
     });
 
-    document.addEventListener("pointerup", e => {
+    document.addEventListener("pointerup", () => {
       browser.test.assertTrue(true, "Should receive pointerup");
       browser.test.sendMessage("done");
     });
     browser.test.sendMessage("pageReady");
   }
 
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     background() {
       browser.test.sendMessage("ready", browser.runtime.getURL("page.html"));
     },
@@ -40,8 +40,8 @@ add_task(async function test_pointerevent() {
       resolve
     );
   });
-  let url = await extension.awaitMessage("ready");
-  let tab = openContentTab(url, undefined, null);
+  const url = await extension.awaitMessage("ready");
+  const tab = openContentTab(url, undefined, null);
 
   await extension.awaitMessage("pageReady");
   await new Promise(resolve => requestAnimationFrame(resolve));
@@ -60,6 +60,6 @@ add_task(async function test_pointerevent() {
 
   await extension.unload();
 
-  let tabmail = document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   tabmail.closeTab(tab);
 });

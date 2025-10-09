@@ -5,7 +5,7 @@ Because app-services components get embedded in various apps, written in
 multiple languages, we face several challenges:
 
   - Rust stacktraces are generally not available so we often need to provide
-    extra context to help debug where an error is occuring.
+    extra context to help debug where an error is occurring.
   - Without stack traces, Sentry and other error reporting systems don't do a
     great job at auto-grouping errors together, so we need to manually group them.
   - We can't hook directly into the error reporting system or even depend on a
@@ -80,10 +80,20 @@ also ensure that no PII is contained in the public error enum, since consumers
 may end up uses those for their own error reports.
 
 We operate on a best-effort basis to ensure this.  Our error details often come
-from an error from one of our dependencies, which makes it very diffucult to be
+from an error from one of our dependencies, which makes it very difficult to be
 completely sure though. For example, `rusqlite::Error` could include data from
 a user's database in their errors, which would then appear in our error
 variants. However, we've never seen that in practice so we are comfortable
 including the `rusqlite` error message in our error reports, without attempting
 to sanitize them.
 
+# Logging support
+
+This crate also supplies macros for logging, like `trace!()`, `error!()` etc,
+which act just like the same macros from the `log` and `tracing` crates. Using
+these macros means you don't need to take additional dependencies, nor know exactly
+what logging system is in-place - it will arrange to be the correct logging system
+for the application the crate is being used in.
+
+Avoiding PII in logging is up to the crate doing the logging. In general, components
+might log PII (eg, URLs etc) at trace level.

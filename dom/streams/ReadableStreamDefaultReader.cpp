@@ -48,8 +48,7 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(ReadableStreamDefaultReader)
 NS_INTERFACE_MAP_END_INHERITING(ReadableStreamGenericReader)
 
 ReadableStreamDefaultReader::ReadableStreamDefaultReader(nsISupports* aGlobal)
-    : ReadableStreamGenericReader(do_QueryInterface(aGlobal)),
-      nsWrapperCache() {}
+    : ReadableStreamGenericReader(do_QueryInterface(aGlobal)) {}
 
 ReadableStreamDefaultReader::~ReadableStreamDefaultReader() {
   mReadRequests.clear();
@@ -231,7 +230,7 @@ void ReadableStreamDefaultReaderRead(JSContext* aCx,
     }
 
     case ReadableStream::ReaderState::Readable: {
-      RefPtr<ReadableStreamController> controller(stream->Controller());
+      RefPtr<ReadableStreamControllerBase> controller(stream->Controller());
       MOZ_ASSERT(controller);
       controller->PullSteps(aCx, aRequest, aRv);
       return;

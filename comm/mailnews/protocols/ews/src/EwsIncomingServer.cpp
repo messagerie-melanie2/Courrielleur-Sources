@@ -3,9 +3,12 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "EwsIncomingServer.h"
-#include "EwsService.h"
+
+#include "IEwsClient.h"
 #include "nsIMsgWindow.h"
+#include "nsNetUtil.h"
 #include "nsPrintfCString.h"
+#include "OfflineStorage.h"
 #include "plbase64.h"
 
 #define ID_PROPERTY "ewsId"
@@ -17,8 +20,11 @@ class FolderSyncListener : public IEwsFolderCallbacks {
   NS_DECL_IEWSFOLDERCALLBACKS
 
   FolderSyncListener(RefPtr<EwsIncomingServer> server,
-                     RefPtr<nsIMsgWindow> window)
-      : mServer(std::move(server)), mWindow(std::move(window)) {}
+                     RefPtr<nsIMsgWindow> window,
+                     std::function<nsresult()> doneCallback)
+      : mServer(std::move(server)),
+        mWindow(std::move(window)),
+        mDoneCallback(std::move(doneCallback)) {}
 
  protected:
   virtual ~FolderSyncListener() = default;
@@ -26,6 +32,8 @@ class FolderSyncListener : public IEwsFolderCallbacks {
  private:
   RefPtr<EwsIncomingServer> mServer;
   RefPtr<nsIMsgWindow> mWindow;
+
+  std::function<nsresult()> mDoneCallback;
 };
 
 NS_IMPL_ISUPPORTS(FolderSyncListener, IEwsFolderCallbacks)
@@ -40,67 +48,33 @@ NS_IMETHODIMP FolderSyncListener::RecordRootFolder(const nsACString& id) {
 
 NS_IMETHODIMP FolderSyncListener::Create(const nsACString& id,
                                          const nsACString& parentId,
-                                         const nsAString& name,
+                                         const nsACString& name,
                                          uint32_t flags) {
-  return mServer->CreateFolderWithDetails(id, parentId, name, flags);
+  return mServer->MaybeCreateFolderWithDetails(id, parentId, name, flags);
 }
 
 NS_IMETHODIMP FolderSyncListener::Update(const nsACString& id,
+                                         const nsACString& parentId,
                                          const nsACString& name) {
-  NS_WARNING(nsPrintfCString("Trying to update folder %s with name %s",
-                             id.Data(), name.Data())
-                 .get());
-
-  return NS_ERROR_NOT_IMPLEMENTED;
+  return mServer->UpdateFolderWithDetails(id, parentId, name, mWindow);
 }
 
 NS_IMETHODIMP FolderSyncListener::Delete(const nsACString& id) {
-  NS_WARNING(
-      nsPrintfCString("Received delete change for folder with id %s", id.Data())
-          .get());
-
-  return NS_ERROR_NOT_IMPLEMENTED;
+  return mServer->DeleteFolderWithId(id);
 }
 
 NS_IMETHODIMP FolderSyncListener::UpdateSyncState(
     const nsACString& syncStateToken) {
-  return mServer->SetCharValue(SYNC_STATE_PROPERTY, syncStateToken);
+  return mServer->SetStringValue(SYNC_STATE_PROPERTY, syncStateToken);
 }
+
+NS_IMETHODIMP FolderSyncListener::OnSuccess() { return mDoneCallback(); }
 
 NS_IMETHODIMP FolderSyncListener::OnError(IEwsClient::Error err,
                                           const nsACString& desc) {
   NS_ERROR("Error occurred while syncing EWS folders");
 
   return NS_OK;
-}
-
-class OAuthListener : public msgIOAuth2ModuleListener {
- public:
-  NS_DECL_THREADSAFE_ISUPPORTS
-  NS_DECL_MSGIOAUTH2MODULELISTENER
-
-  explicit OAuthListener(RefPtr<IEwsAuthStringListener> listener)
-      : mListener(std::move(listener)) {}
-
- protected:
-  virtual ~OAuthListener() = default;
-
- private:
-  RefPtr<IEwsAuthStringListener> mListener;
-};
-
-NS_IMPL_ISUPPORTS(OAuthListener, msgIOAuth2ModuleListener)
-
-NS_IMETHODIMP OAuthListener::OnSuccess(const nsACString& aBearerToken) {
-  nsCString authString;
-  authString.AppendLiteral("Bearer ");
-  authString.Append(aBearerToken);
-
-  return mListener->OnAuthAvailable(authString);
-}
-
-NS_IMETHODIMP OAuthListener::OnFailure(nsresult aError) {
-  return mListener->OnError(aError);
 }
 
 NS_IMPL_ADDREF_INHERITED(EwsIncomingServer, nsMsgIncomingServer)
@@ -115,23 +89,51 @@ EwsIncomingServer::~EwsIncomingServer() {}
 
 /**
  * Creates a new folder with the specified parent, name, and flags.
+ *
+ * If a folder with the specified EWS ID already exists, then succeed without
+ * creating the folder, assuming the folder has already been created locally and
+ * we are processing the corresponding EWS message. If a folder with the same
+ * name, but a different EWS ID exists, then return an error.
  */
-nsresult EwsIncomingServer::CreateFolderWithDetails(const nsACString& id,
-                                                    const nsACString& parentId,
-                                                    const nsAString& name,
-                                                    uint32_t flags) {
-  RefPtr<nsIMsgFolder> parent;
-  nsresult rv = FindFolderWithId(parentId, getter_AddRefs(parent));
+nsresult EwsIncomingServer::MaybeCreateFolderWithDetails(
+    const nsACString& id, const nsACString& parentId, const nsACString& name,
+    uint32_t flags) {
+  // Check to see if a folder with the same id already exists.
+  nsCOMPtr<nsIMsgFolder> existingFolder;
+  nsresult rv = FindFolderWithId(id, getter_AddRefs(existingFolder));
+  if (NS_SUCCEEDED(rv)) {
+    // We found the folder with the specified ID, which means it's already been
+    // created locally. This can happen during the normal course of operations,
+    // including the most common case in which the user uses thunderbird to
+    // create a folder and the next sync includes the record of folder creation
+    // from EWS.
+    return NS_OK;
+  }
+
+  nsCOMPtr<nsIMsgFolder> parent;
+  rv = FindFolderWithId(parentId, getter_AddRefs(parent));
   NS_ENSURE_SUCCESS(rv, rv);
+
+  // Check that the parent doesn't already contain a folder with the requested
+  // name. In the case where we have a folder with a duplicate name, but either
+  // a differing or no EWS ID, we can't sync with the server since the server
+  // believes that a folder with the requested name should map to the requested
+  // EWS ID, so we signal an error.
+  bool containsChildWithRequestedName;
+  rv = parent->ContainsChildNamed(name, &containsChildWithRequestedName);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (containsChildWithRequestedName) {
+    return NS_MSG_CANT_CREATE_FOLDER;
+  }
 
   // In order to persist the folder, we need to create new storage for it with
   // the message store. This will also take care of adding it as a subfolder of
   // the parent.
-  RefPtr<nsIMsgPluggableStore> msgStore;
+  nsCOMPtr<nsIMsgPluggableStore> msgStore;
   rv = GetMsgStore(getter_AddRefs(msgStore));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  RefPtr<nsIMsgFolder> newFolder;
+  nsCOMPtr<nsIMsgFolder> newFolder;
   rv = msgStore->CreateFolder(parent, name, getter_AddRefs(newFolder));
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -150,6 +152,63 @@ nsresult EwsIncomingServer::CreateFolderWithDetails(const nsACString& id,
 
   rv = parent->NotifyFolderAdded(newFolder);
   NS_ENSURE_SUCCESS(rv, rv);
+
+  return NS_OK;
+}
+
+nsresult EwsIncomingServer::UpdateFolderWithDetails(const nsACString& id,
+                                                    const nsACString& parentId,
+                                                    const nsACString& name,
+                                                    nsIMsgWindow* msgWindow) {
+  nsCOMPtr<nsIMsgFolder> folder;
+  nsresult rv = FindFolderWithId(id, getter_AddRefs(folder));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIMsgFolder> parentFolder;
+  rv = folder->GetParent(getter_AddRefs(parentFolder));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Only initiate the move operation if either the name or the parent of the
+  // updated folder changed.
+  nsAutoCString currentName;
+  MOZ_TRY(folder->GetName(currentName));
+  nsAutoCString currentParentId;
+  MOZ_TRY(parentFolder->GetStringProperty(ID_PROPERTY, currentParentId));
+
+  // If either the parent or the name of the folder changed, then we have to
+  // initiate a move of the data for the folder, so we rely on the fact that a
+  // move and a rename are the same, except for in the case in which a folder
+  // is solely renamed, it doesn't need to be reparented. However, there is no
+  // performance difference between a rename and a reparent, so we call the
+  // general logic that handles both move and rename here for simplicity.
+  nsCOMPtr<nsIMsgFolder> newParentFolder;
+  rv = FindFolderWithId(parentId, getter_AddRefs(newParentFolder));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return LocalRenameOrReparentFolder(folder, newParentFolder, name, msgWindow);
+}
+
+/**
+ * Deletes the folder with the given remote EWS id.
+ */
+nsresult EwsIncomingServer::DeleteFolderWithId(const nsACString& id) {
+  nsCOMPtr<nsIMsgFolder> folder;
+  nsresult rv = FindFolderWithId(id, getter_AddRefs(folder));
+  // If we found the folder locally, then delete it. Otherwise, assume it's
+  // already been deleted locally.
+  if (NS_SUCCEEDED(rv)) {
+    // We can't use `DeleteSelf` here because the implementation of `EwsFolder`
+    // (which we know is the concrete implementation of `nsIMsgFolder` we are
+    // using in the EWS case) will trigger a remote delete on the server. Sync
+    // is responding to a remote delete, so we have to get the parent and call
+    // `PropagateDelete` directly.
+    nsCOMPtr<nsIMsgFolder> parentFolder;
+    rv = folder->GetParent(getter_AddRefs(parentFolder));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = parentFolder->PropagateDelete(folder, true);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
 
   return NS_OK;
 }
@@ -227,6 +286,51 @@ nsresult EwsIncomingServer::FindFolderWithId(const nsACString& id,
   return failureStatus;
 }
 
+nsresult EwsIncomingServer::SyncFolderList(
+    nsIMsgWindow* aMsgWindow, std::function<nsresult()> postSyncCallback) {
+  // EWS provides us an opaque value which specifies the last version of
+  // upstream folders we received. Provide that to simplify sync.
+  nsCString syncStateToken;
+  nsresult rv = GetStringValue(SYNC_STATE_PROPERTY, syncStateToken);
+  if (NS_FAILED(rv)) {
+    syncStateToken = EmptyCString();
+  }
+
+  // Sync the folder tree for the whole account.
+  RefPtr<IEwsClient> client;
+  MOZ_TRY(GetEwsClient(getter_AddRefs(client)));
+  auto listener = RefPtr(new FolderSyncListener(this, RefPtr(aMsgWindow),
+                                                std::move(postSyncCallback)));
+  return client->SyncFolderHierarchy(listener, syncStateToken);
+}
+
+nsresult EwsIncomingServer::SyncAllFolders(nsIMsgWindow* aMsgWindow) {
+  nsCOMPtr<nsIMsgFolder> rootFolder;
+  MOZ_TRY(GetRootFolder(getter_AddRefs(rootFolder)));
+
+  nsTArray<RefPtr<nsIMsgFolder>> msgFolders;
+  MOZ_TRY(rootFolder->GetDescendants(msgFolders));
+
+  // TODO: For now, we sync every folder at once, but obviously that's not an
+  // amazing solution. In the future, we should probably try to maintain some
+  // kind of queue so we can properly batch and sync folders. In the meantime,
+  // though, the EWS client should handle any kind of rate limiting well enough,
+  // so this improvement can come later.
+  for (const auto& folder : msgFolders) {
+    nsresult rv = folder->GetNewMessages(aMsgWindow, nullptr);
+    if (NS_FAILED(rv)) {
+      // If we encounter an error, just log it rather than fail the whole sync.
+      nsCString name;
+      folder->GetName(name);
+      NS_ERROR(nsPrintfCString("failed to get new messages for folder %s: %s",
+                               name.get(), mozilla::GetStaticErrorName(rv))
+                   .get());
+    }
+  }
+
+  return NS_OK;
+}
+
 NS_IMETHODIMP EwsIncomingServer::GetLocalStoreType(
     nsACString& aLocalStoreType) {
   aLocalStoreType.AssignLiteral("ews");
@@ -244,68 +348,74 @@ NS_IMETHODIMP EwsIncomingServer::GetLocalDatabaseType(
 NS_IMETHODIMP EwsIncomingServer::GetNewMessages(nsIMsgFolder* aFolder,
                                                 nsIMsgWindow* aMsgWindow,
                                                 nsIUrlListener* aUrlListener) {
-  // Current UX dictates that we ignore the selected folder when getting new
-  // messages.
+  // Explicitly make the parameters to the lambda `nsCOMPtr`s, otherwise the
+  // clang plugin will think we're trying to bypass the ref counting.
+  nsCOMPtr<nsIMsgFolder> folder = aFolder;
+  nsCOMPtr<nsIMsgWindow> window = aMsgWindow;
+  nsCOMPtr<nsIUrlListener> urlListener = aUrlListener;
 
-  RefPtr<IEwsClient> client;
-  nsresult rv = GetEwsClient(getter_AddRefs(client));
-  NS_ENSURE_SUCCESS(rv, rv);
+  // Sync the folder list for the account, then sync the message list for the
+  // specific folder.
+  return SyncFolderList(
+      aMsgWindow, [self = RefPtr(this), folder, window, urlListener]() {
+        // Check if we're getting messages for the whole
+        // folder here. If so, the intent is likely that the
+        // user wants to synchronize all the folders on the
+        // account.
+        bool isServer;
+        nsresult rv = folder->GetIsServer(&isServer);
+        NS_ENSURE_SUCCESS(rv, rv);
 
-  // EWS provides us an opaque value which specifies the last version of
-  // upstream folders we received. Provide that to simplify sync.
-  nsCString syncStateToken;
-  rv = GetCharValue(SYNC_STATE_PROPERTY, syncStateToken);
-  if (NS_FAILED(rv)) {
-    syncStateToken = EmptyCString();
-  }
+        if (isServer) {
+          return self->SyncAllFolders(window);
+        }
 
-  auto listener = RefPtr(new FolderSyncListener(this, RefPtr(aMsgWindow)));
-  rv = client->SyncFolderHierarchy(listener, syncStateToken);
+        // Synchronizing the folder list may have invalidated the folder that
+        // sync was selected for by moving the folder to a new location. If that
+        // is the case, then the EWS ID will be invalidated and we can no longer
+        // sync that folder.
+        nsAutoCString originalEwsId;
+        rv = folder->GetStringProperty(ID_PROPERTY, originalEwsId);
+        if (NS_FAILED(rv)) {
+          // Assume the original folder moved and return success.
+          return NS_OK;
+        }
 
-  // TODO: Fetch message headers for all folders.
-
-  return rv;
+        // If this is not the root folder, synchronize its
+        // message list normally.
+        return folder->GetNewMessages(window, urlListener);
+      });
 }
 
-NS_IMETHODIMP
-EwsIncomingServer::PerformBiff(nsIMsgWindow* aMsgWindow) {
-  NS_WARNING("PerformBiff");
-  return NS_ERROR_NOT_IMPLEMENTED;
+NS_IMETHODIMP EwsIncomingServer::PerformBiff(nsIMsgWindow* aMsgWindow) {
+  nsCOMPtr<nsIMsgWindow> window = aMsgWindow;
+
+  // Sync the folder list for the account. Then sync the message list of each
+  // folder in the tree.
+  return SyncFolderList(aMsgWindow, [self = RefPtr(this), window]() {
+    return self->SyncAllFolders(window);
+  });
 }
 
 NS_IMETHODIMP EwsIncomingServer::PerformExpand(nsIMsgWindow* aMsgWindow) {
-  NS_WARNING("PerformExpand");
-  return NS_ERROR_NOT_IMPLEMENTED;
+  // Sync the folder list; we don't want to do antyhing after that so we just
+  // pass a no-op lambda.
+  return SyncFolderList(aMsgWindow, []() { return NS_OK; });
 }
 
 NS_IMETHODIMP
 EwsIncomingServer::VerifyLogon(nsIUrlListener* aUrlListener,
                                nsIMsgWindow* aMsgWindow, nsIURI** _retval) {
-  // TODO: Actually verify that logging in works.
+  NS_ENSURE_ARG_POINTER(aUrlListener);
 
-  // At this point, consumers are pretty lax about what expected from this
-  // method. The URI is returned solely so that consumers can make some minor
-  // changes to its in-flight behavior. For EWS, we don't use URLs with side
-  // effects, so that's all useless and we can give back whatever we feel like.
-  nsCString hostname;
-  nsresult rv = GetHostName(hostname);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCString spec;
-  spec.AssignLiteral("ews://");
-  spec.Append(hostname);
-
-  RefPtr<nsIURI> uri;
-  rv = EwsService::NewURI(spec, getter_AddRefs(uri));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Notify the caller that verification has succeeded. This is the one thing we
-  // actually need to do to fulfill our contract.
-  aUrlListener->OnStopRunningUrl(uri, NS_OK);
-
-  uri.forget(_retval);
-
-  return NS_OK;
+  // Perform a connectivity check via an EWS client. Ideally we should set
+  // `_retval` to something non-null. But we don't have a good value for it, and
+  // the `ConfigVerifier` (which this call very likely originates from) will
+  // only be doing `nsIMsgMailNewsUrl`-related operations to it, which doesn't
+  // apply to us.
+  RefPtr<IEwsClient> client;
+  MOZ_TRY(GetEwsClient(getter_AddRefs(client)));
+  return client->CheckConnectivity(aUrlListener, _retval);
 }
 
 /**
@@ -323,7 +433,7 @@ NS_IMETHODIMP EwsIncomingServer::GetEwsClient(IEwsClient** ewsClient) {
   // EWS uses an HTTP(S) endpoint for calls rather than a simple hostname. This
   // is stored as a pref against this server.
   nsCString endpoint;
-  rv = GetCharValue("ews_url", endpoint);
+  rv = GetStringValue("ews_url", endpoint);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Set up the client object with access details.
@@ -333,89 +443,4 @@ NS_IMETHODIMP EwsIncomingServer::GetEwsClient(IEwsClient** ewsClient) {
   client.forget(ewsClient);
 
   return NS_OK;
-}
-
-NS_IMETHODIMP EwsIncomingServer::GetAuthString(
-    IEwsAuthStringListener* listener) {
-  // Build an auth token for our preferred auth method.
-  nsMsgAuthMethodValue authMethod;
-  nsresult rv = GetAuthMethod(&authMethod);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  if (authMethod == nsMsgAuthMethod::OAuth2) {
-    if (!mOAuth2Module) {
-      mOAuth2Module = do_CreateInstance(MSGIOAUTH2MODULE_CONTRACTID, &rv);
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      bool isOAuthSupported = false;
-      rv = mOAuth2Module->InitFromMail(this, &isOAuthSupported);
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      if (!isOAuthSupported) {
-        NS_ERROR(
-            "OAuth2 auth is preferred, but OAuth is not supported for this "
-            "domain");
-      }
-    }
-
-    return mOAuth2Module->GetAccessToken(new OAuthListener(listener));
-  }
-
-  if (authMethod == nsMsgAuthMethod::NTLM) {
-    NS_WARNING(
-        "NTLM is selected as the preferred auth mechanism; this is not yet "
-        "supported for EWS");
-    // TODO: We have code for supporting NTLM in Thunderbird and EWS supports
-    // NTLM as an auth method, so we should figure out how this works.
-    return NS_ERROR_NOT_IMPLEMENTED;
-  }
-
-  if (authMethod == nsMsgAuthMethod::passwordCleartext) {
-    nsCString username;
-    rv = GetUsername(username);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    nsString password;
-    rv = GetPassword(password);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    // `GetPassword()` only checks the password value already stored as part of
-    // this server object. If this is the first time it's being requested this
-    // run, we need to check with the login manager.
-    if (password.IsEmpty()) {
-      rv = GetPasswordWithoutUI();
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      rv = GetPassword(password);
-      NS_ENSURE_SUCCESS(rv, rv);
-    }
-
-    // Build an HTTP Authorization header value for Basic auth with the
-    // retrieved credentials.
-    nsCString credentials;
-    credentials.Assign(username);
-    credentials.AppendLiteral(":");
-    AppendUTF16toUTF8(password, credentials);
-
-    char* encoded =
-        PL_Base64Encode(credentials.Data(), credentials.Length(), nullptr);
-    if (!encoded) {
-      // `PL_Base64Encode` allocates a return buffer of appropriate size. If we
-      // got back null, we're running into memory issues.
-      NS_ERROR("Failed to b64encode EWS credentials");
-      return NS_ERROR_UNEXPECTED;
-    }
-
-    nsCString authString;
-    authString.AssignLiteral("Basic ");
-    authString.Append(encoded);
-
-    return listener->OnAuthAvailable(authString);
-  }
-
-  NS_ERROR(
-      "Exchange Web Services only supports authentication via OAuth2, "
-      "NTLM, or HTTP basic auth");
-
-  return NS_ERROR_FAILURE;
 }

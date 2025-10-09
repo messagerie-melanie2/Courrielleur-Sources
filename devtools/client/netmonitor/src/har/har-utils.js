@@ -4,11 +4,7 @@
 
 "use strict";
 
-const { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
-
-XPCOMUtils.defineLazyGetter(this, "ZipWriter", function () {
+ChromeUtils.defineLazyGetter(this, "ZipWriter", function () {
   return Components.Constructor("@mozilla.org/zipwriter;1", "nsIZipWriter");
 });
 
@@ -36,12 +32,12 @@ function formatDate(date) {
  * Helper API for HAR export features.
  */
 var HarUtils = {
-  getHarFileName(defaultFileName, jsonp, compress, hostname) {
+  getHarFileName(defaultFileName, jsonp, compress, hostname, pathname = "") {
     const extension = jsonp ? ".harp" : ".har";
 
     const now = new Date();
     let name = defaultFileName.replace(/%date/g, formatDate(now));
-    name = name.replace(/%hostname/g, hostname);
+    name = name.replace(/%hostname/g, hostname + pathname);
     name = name.replace(/\:/gm, "-", "");
     name = name.replace(/\//gm, "_", "");
 

@@ -2,51 +2,31 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-let gAccount, gFolders, gMessage, gExpectedAttachments;
+"use strict";
 
-const { mailTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MailTestUtils.jsm"
-);
+let gAccount, gFolders, gMessage, gExpectedAttachments;
+let gDefaultTabmail, gDefaultAbout3Pane;
 
 const URL_BASE =
   "http://mochi.test:8888/browser/comm/mail/components/extensions/test/browser/data";
-
-var tabmail = document.getElementById("tabmail");
-var about3Pane = tabmail.currentAbout3Pane;
-var messagePane =
-  about3Pane.messageBrowser.contentWindow.getMessagePaneBrowser();
-
-/**
- * Right-click on something and wait for the context menu to appear.
- * For elements in the parent process only.
- *
- * @param {Element} menu - The <menu> that should appear.
- * @param {Element} element - The element to be clicked on.
- * @returns {Promise} A promise that resolves when the menu appears.
- */
-function rightClick(menu, element, win) {
-  let shownPromise = BrowserTestUtils.waitForEvent(menu, "popupshown");
-  EventUtils.synthesizeMouseAtCenter(element, { type: "contextmenu" }, win);
-  return shownPromise;
-}
 
 /**
  * Check the parameters of a browser.onShown event was fired.
  *
  * @see mail/components/extensions/schemas/menus.json
  *
- * @param extension
+ * @param {ExtensionWrapper} extension
  * @param {object} expectedInfo
  * @param {Array} expectedInfo.menuIds
  * @param {Array} expectedInfo.contexts
- * @param {Array?} expectedInfo.attachments
+ * @param {?Array} expectedInfo.attachments
  * @param {object} expectedTab
  * @param {boolean} expectedTab.active
  * @param {integer} expectedTab.index
  * @param {boolean} expectedTab.mailTab
  */
 async function checkShownEvent(extension, expectedInfo, expectedTab) {
-  let [info, tab] = await extension.awaitMessage("onShown");
+  const [info, tab] = await extension.awaitMessage("onShown");
   Assert.deepEqual(info.menuIds, expectedInfo.menuIds);
   Assert.deepEqual(info.contexts, expectedInfo.contexts);
 
@@ -80,17 +60,17 @@ async function checkShownEvent(extension, expectedInfo, expectedTab) {
  *
  * @see mail/components/extensions/schemas/menus.json
  *
- * @param extension
+ * @param {ExtensionWrapper} extension
  * @param {object} expectedInfo
- * @param {string?} expectedInfo.menuItemId
- * @param {Array?} expectedInfo.attachments
+ * @param {?string} expectedInfo.menuItemId
+ * @param {?Array} expectedInfo.attachments
  * @param {object} expectedTab
  * @param {boolean} expectedTab.active
  * @param {integer} expectedTab.index
  * @param {boolean} expectedTab.mailTab
  */
 async function checkClickedEvent(extension, expectedInfo, expectedTab) {
-  let [info, tab] = await extension.awaitMessage("onClicked");
+  const [info, tab] = await extension.awaitMessage("onClicked");
 
   Assert.equal(
     !!info.attachments,
@@ -125,7 +105,7 @@ function getExtensionDetails(...permissions) {
   return {
     files: {
       "background.js": async () => {
-        for (let context of [
+        for (const context of [
           "message_attachments",
           "all_message_attachments",
         ]) {
@@ -164,7 +144,7 @@ function getExtensionDetails(...permissions) {
   };
 }
 
-add_setup(async function () {
+add_setup(async () => {
   await Services.search.init();
 
   gAccount = createAccount();
@@ -174,7 +154,7 @@ add_setup(async function () {
     count: 1,
     body: {
       contentType: "text/html",
-      body: await fetch(`${URL_BASE}/content.html`).then(r => r.text()),
+      body: await IOUtils.readUTF8(getTestFilePath(`data/content.html`)),
     },
     attachments: [
       {
@@ -188,7 +168,7 @@ add_setup(async function () {
     count: 1,
     body: {
       contentType: "text/html",
-      body: await fetch(`${URL_BASE}/content.html`).then(r => r.text()),
+      body: await IOUtils.readUTF8(getTestFilePath(`data/content.html`)),
     },
     attachments: [
       {
@@ -204,7 +184,10 @@ add_setup(async function () {
     ],
   });
 
-  about3Pane.restoreState({
+  gDefaultTabmail = document.getElementById("tabmail");
+  gDefaultAbout3Pane = gDefaultTabmail.currentAbout3Pane;
+
+  gDefaultAbout3Pane.restoreState({
     folderPaneVisible: true,
     folderURI: gFolders[0].URI,
     messagePaneVisible: true,
@@ -234,47 +217,41 @@ async function subtest_attachmentItem(
   expectedContext,
   expectedAttachments
 ) {
-  let menu = element.ownerGlobal.document.getElementById(
+  const menu = element.ownerGlobal.document.getElementById(
     expectedContext == "message_attachments"
       ? "attachmentItemContext"
       : "attachmentListContext"
   );
 
-  let expectedShowData = {
+  const expectedShowData = {
     menuIds: [expectedContext],
     contexts: [expectedContext, "all"],
     attachments: expectedAttachments,
   };
-  let expectedClickData = {
+  const expectedClickData = {
     attachments: expectedAttachments,
   };
-  let expectedTab = { active: true, index: 0, mailTab: false };
+  const expectedTab = { active: true, index: 0, mailTab: false };
 
-  let showEventPromise = checkShownEvent(
+  const showEventPromise = checkShownEvent(
     extension,
     expectedShowData,
     expectedTab
   );
-  await rightClick(menu, element, win);
-  let menuItem = menu.querySelector(
+  await openMenuPopup(menu, element, { type: "contextmenu" });
+  const menuItem = menu.querySelector(
     `#menus_mochi_test-menuitem-_${expectedContext}`
   );
   await showEventPromise;
   Assert.ok(menuItem);
 
-  let clickEventPromise = checkClickedEvent(
+  const clickEventPromise = checkClickedEvent(
     extension,
     expectedClickData,
     expectedTab
   );
-  menu.activateItem(menuItem);
+  await clickItemInMenuPopup(menuItem);
   await clickEventPromise;
-
-  // Sometimes, the popup will open then instantly disappear. It seems to
-  // still be hiding after the previous appearance. If we wait a little bit,
-  // this doesn't happen.
-  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
-  await new Promise(r => setTimeout(r, 250));
 }
 
 async function subtest_attachments(
@@ -284,7 +261,7 @@ async function subtest_attachments(
   expectedAttachments
 ) {
   // Test clicking on the attachmentInfo element.
-  let attachmentInfo = win.document.getElementById("attachmentInfo");
+  const attachmentInfo = win.document.getElementById("attachmentInfo");
   await subtest_attachmentItem(
     extension,
     win,
@@ -295,7 +272,7 @@ async function subtest_attachments(
 
   if (expectedAttachments) {
     win.toggleAttachmentList(true);
-    let attachmentList = win.document.getElementById("attachmentList");
+    const attachmentList = win.document.getElementById("attachmentList");
     Assert.equal(
       attachmentList.children.length,
       expectedAttachments.length,
@@ -324,7 +301,7 @@ async function subtest_message_panes(
   expectedContext,
   expectedAttachments = null
 ) {
-  let extensionDetails = getExtensionDetails(...permissions);
+  const extensionDetails = getExtensionDetails(...permissions);
 
   info("Test the message pane in the 3-pane tab.");
 
@@ -333,7 +310,7 @@ async function subtest_message_panes(
   await extension.awaitMessage("menus-created");
   await subtest_attachments(
     extension,
-    tabmail.currentAboutMessage,
+    gDefaultTabmail.currentAboutMessage,
     expectedContext,
     expectedAttachments
   );
@@ -347,16 +324,16 @@ async function subtest_message_panes(
   await extension.awaitMessage("menus-created");
   await subtest_attachments(
     extension,
-    tabmail.currentAboutMessage,
+    gDefaultTabmail.currentAboutMessage,
     expectedContext,
     expectedAttachments
   );
   await extension.unload();
-  tabmail.closeOtherTabs(0);
+  gDefaultTabmail.closeOtherTabs(0);
 
   info("Test the message pane in a separate window.");
 
-  let displayWindow = await openMessageInWindow(gMessage);
+  const displayWindow = await openMessageInWindow(gMessage);
   extension = ExtensionTestUtils.loadExtension(extensionDetails);
   await extension.startup();
   await extension.awaitMessage("menus-created");
@@ -373,7 +350,9 @@ async function subtest_message_panes(
 // Tests using a message with one attachment.
 add_task(async function test_message_panes() {
   gMessage = [...gFolders[0].messages][0];
-  about3Pane.threadTree.selectedIndex = 0;
+  gDefaultAbout3Pane.threadTree.selectedIndex = 1;
+  const messagePane =
+    gDefaultAbout3Pane.messageBrowser.contentWindow.getMessagePaneBrowser();
   await promiseMessageLoaded(messagePane, gMessage);
 
   await subtest_message_panes(

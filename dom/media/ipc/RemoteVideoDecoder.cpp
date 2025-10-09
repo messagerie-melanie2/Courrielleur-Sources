@@ -22,7 +22,6 @@
 #include "RemoteDecoderManagerParent.h"
 #include "RemoteImageHolder.h"
 #include "mozilla/StaticPrefs_media.h"
-#include "mozilla/Telemetry.h"
 #include "mozilla/layers/ImageClient.h"
 #include "mozilla/layers/TextureClient.h"
 #include "mozilla/layers/VideoBridgeChild.h"
@@ -124,8 +123,8 @@ MediaResult RemoteVideoDecoderChild::InitIPDL(
 
   mIPDLSelfRef = this;
   VideoDecoderInfoIPDL decoderInfo(aVideoInfo, aFramerate);
-  Unused << manager->SendPRemoteDecoderConstructor(
-      this, decoderInfo, aOptions, aIdentifier, aMediaEngineId, aTrackingId);
+  MOZ_ALWAYS_TRUE(manager->SendPRemoteDecoderConstructor(
+      this, decoderInfo, aOptions, aIdentifier, aMediaEngineId, aTrackingId));
 
   return NS_OK;
 }
@@ -152,7 +151,9 @@ RemoteVideoDecoderParent::RemoteVideoDecoderParent(
 
 IPCResult RemoteVideoDecoderParent::RecvConstruct(
     ConstructResolver&& aResolver) {
-  auto imageContainer = MakeRefPtr<layers::ImageContainer>();
+  auto imageContainer = MakeRefPtr<layers::ImageContainer>(
+      layers::ImageUsageType::RemoteVideoDecoder,
+      layers::ImageContainer::SYNCHRONOUS);
   if (mKnowsCompositor && XRE_IsRDDProcess()) {
     // Ensure to allocate recycle allocator
     imageContainer->EnsureRecycleAllocatorForRDD(mKnowsCompositor);
@@ -160,7 +161,7 @@ IPCResult RemoteVideoDecoderParent::RecvConstruct(
   auto params = CreateDecoderParams{
       mVideoInfo,     mKnowsCompositor,
       imageContainer, CreateDecoderParams::VideoFrameRate(mFramerate),
-      mOptions,       CreateDecoderParams::NoWrapper(true),
+      mOptions,       CreateDecoderParams::WrapperSet({/* No wrapper */}),
       mMediaEngineId, mTrackingId,
   };
 
@@ -218,6 +219,11 @@ MediaResult RemoteVideoDecoderParent::ProcessDecodedData(
     IntSize size;
     bool needStorage = false;
 
+    YUVColorSpace YUVColorSpace = gfx::YUVColorSpace::Default;
+    ColorSpace2 colorPrimaries = gfx::ColorSpace2::UNKNOWN;
+    TransferFunction transferFunction = gfx::TransferFunction::BT709;
+    ColorRange colorRange = gfx::ColorRange::LIMITED;
+
     if (mKnowsCompositor) {
       texture = video->mImage->GetTextureClient(mKnowsCompositor);
 
@@ -249,10 +255,14 @@ MediaResult RemoteVideoDecoderParent::ProcessDecodedData(
                            "Expected Planar YCbCr image in "
                            "RemoteVideoDecoderParent::ProcessDecodedData");
       }
+      YUVColorSpace = image->GetData()->mYUVColorSpace;
+      colorPrimaries = image->GetData()->mColorPrimaries;
+      transferFunction = image->GetData()->mTransferFunction;
+      colorRange = image->GetData()->mColorRange;
 
       SurfaceDescriptorBuffer sdBuffer;
       nsresult rv = image->BuildSurfaceDescriptorBuffer(
-          sdBuffer, [&](uint32_t aBufferSize) {
+          sdBuffer, Image::BuildSdbFlags::Default, [&](uint32_t aBufferSize) {
             ShmemBuffer buffer = AllocateBuffer(aBufferSize);
             if (buffer.Valid()) {
               return MemoryOrShmem(std::move(buffer.Get()));
@@ -282,7 +292,8 @@ MediaResult RemoteVideoDecoderParent::ProcessDecodedData(
                 : (XRE_IsRDDProcess()
                        ? VideoBridgeSource::RddProcess
                        : VideoBridgeSource::MFMediaEngineCDMProcess),
-            size, video->mImage->GetColorDepth(), sd),
+            size, video->mImage->GetColorDepth(), sd, YUVColorSpace,
+            colorPrimaries, transferFunction, colorRange),
         video->mFrameID);
 
     array.AppendElement(std::move(output));

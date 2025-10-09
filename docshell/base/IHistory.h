@@ -24,16 +24,12 @@ class Link;
 }  // namespace dom
 
 // 0057c9d3-b98e-4933-bdc5-0275d06705e1
-#define IHISTORY_IID                                 \
-  {                                                  \
-    0x0057c9d3, 0xb98e, 0x4933, {                    \
-      0xbd, 0xc5, 0x02, 0x75, 0xd0, 0x67, 0x05, 0xe1 \
-    }                                                \
-  }
+#define IHISTORY_IID \
+  {0x0057c9d3, 0xb98e, 0x4933, {0xbd, 0xc5, 0x02, 0x75, 0xd0, 0x67, 0x05, 0xe1}}
 
 class IHistory : public nsISupports {
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(IHISTORY_IID)
+  NS_INLINE_DECL_STATIC_IID(IHISTORY_IID)
 
   using ContentParentSet = nsTHashSet<RefPtr<dom::ContentParent>>;
 
@@ -127,7 +123,13 @@ class IHistory : public nsISupports {
      * Note this differs from REDIRECT_PERMANENT because that one refers to how
      * we reached the URI, while this is used when the URI itself redirects.
      */
-    REDIRECT_SOURCE_PERMANENT = 1 << 5
+    REDIRECT_SOURCE_PERMANENT = 1 << 5,
+    /**
+     * If REDIRECT_SOURCE is set, this indicates that this is a special redirect
+     * caused by HSTS or HTTPS-Only/First upgrading to the HTTPS version of the
+     * URI.
+     */
+    REDIRECT_SOURCE_UPGRADED = 1 << 6
   };
 
   /**
@@ -161,8 +163,6 @@ class IHistory : public nsISupports {
    */
   NS_IMETHOD SetURITitle(nsIURI* aURI, const nsAString& aTitle) = 0;
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(IHistory, IHISTORY_IID)
 
 }  // namespace mozilla
 

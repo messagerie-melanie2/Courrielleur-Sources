@@ -1,5 +1,9 @@
-const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
-const { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js");
+const { NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
+);
+const { HttpServer } = ChromeUtils.importESModule(
+  "resource://testing-common/httpd.sys.mjs"
+);
 
 const ReferrerInfo = Components.Constructor(
   "@mozilla.org/referrer-info;1",
@@ -127,8 +131,7 @@ function run_loadImage_tests() {
   }
 
   for (let loader of [gPublicLoader, gPrivateLoader]) {
-    loader.QueryInterface(Ci.imgICache).clearCache(true);
-    loader.QueryInterface(Ci.imgICache).clearCache(false);
+    loader.QueryInterface(Ci.imgICache).clearCache(); // no parameter=all
   }
   Services.obs.addObserver(observer, "cacheservice:empty-cache");
   let cs = Services.cache2;

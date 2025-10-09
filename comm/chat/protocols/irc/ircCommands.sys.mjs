@@ -4,12 +4,13 @@
 
 // This is to be exported directly onto the IRC prplIProtocol object, directly
 // implementing the commands field before we register them.
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-import { l10nHelper } from "resource:///modules/imXPCOMUtils.sys.mjs";
+import { IMServices } from "resource:///modules/IMServices.sys.mjs";
 
 const lazy = {};
-XPCOMUtils.defineLazyGetter(lazy, "_", () =>
-  l10nHelper("chrome://chat/locale/irc.properties")
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () => new Localization(["chat/irc.ftl"], true)
 );
 
 // Shortcut to get the JavaScript conversation object.
@@ -34,8 +35,8 @@ function kickCommand(aMsg, aConv) {
     return false;
   }
 
-  let params = [aConv.name];
-  let offset = aMsg.indexOf(" ");
+  const params = [aConv.name];
+  const offset = aMsg.indexOf(" ");
   if (offset != -1) {
     params.push(aMsg.slice(0, offset));
     params.push(aMsg.slice(offset + 1));
@@ -57,7 +58,7 @@ function messageCommand(aMsg, aConv, aReturnedConv, aIsNotice = false) {
   let nickname = aMsg;
   let message = "";
 
-  let sep = aMsg.indexOf(" ");
+  const sep = aMsg.indexOf(" ");
   if (sep > -1) {
     nickname = aMsg.slice(0, sep);
     message = aMsg.slice(sep + 1);
@@ -66,7 +67,7 @@ function messageCommand(aMsg, aConv, aReturnedConv, aIsNotice = false) {
     return false;
   }
 
-  let conv = getAccount(aConv).getConversation(nickname);
+  const conv = getAccount(aConv).getConversation(nickname);
   if (aReturnedConv) {
     aReturnedConv.value = conv;
   }
@@ -100,7 +101,7 @@ function actionCommand(aMsg, aConv) {
     return false;
   }
 
-  let conv = getConv(aConv);
+  const conv = getConv(aConv);
 
   conv.sendMsg(aMsg, true);
 
@@ -115,7 +116,7 @@ function privateMessage(aConv, aMsg, aNickname, aReturnedConv, aIsNotice) {
     return false;
   }
 
-  let conv = getAccount(aConv).getConversation(aNickname);
+  const conv = getAccount(aConv).getConversation(aNickname);
   conv.sendMsg(aMsg, false, aIsNotice);
   if (aReturnedConv) {
     aReturnedConv.value = conv;
@@ -147,25 +148,27 @@ export var commands = [
   {
     name: "action",
     get helpString() {
-      return lazy._("command.action", "action");
+      return lazy.l10n.formatValueSync("command-action", {
+        commandName: "action",
+      });
     },
     run: actionCommand,
   },
   {
     name: "ban",
     get helpString() {
-      return lazy._("command.ban", "ban");
+      return lazy.l10n.formatValueSync("command-ban", { commandName: "ban" });
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_CHAT,
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.CHAT,
     run: (aMsg, aConv) => setMode(aMsg, aConv, "b", true),
   },
   {
     name: "ctcp",
     get helpString() {
-      return lazy._("command.ctcp", "ctcp");
+      return lazy.l10n.formatValueSync("command-ctcp", { commandName: "ctcp" });
     },
     run(aMsg, aConv) {
-      let separator = aMsg.indexOf(" ");
+      const separator = aMsg.indexOf(" ");
       // Ensure we have two non-empty parameters.
       if (separator < 1 || separator + 1 == aMsg.length) {
         return false;
@@ -180,37 +183,43 @@ export var commands = [
   {
     name: "chanserv",
     get helpString() {
-      return lazy._("command.chanserv", "chanserv");
+      return lazy.l10n.formatValueSync("command-chanserv", {
+        commandName: "chanserv",
+      });
     },
     run: (aMsg, aConv) => privateMessage(aConv, aMsg, "ChanServ"),
   },
   {
     name: "deop",
     get helpString() {
-      return lazy._("command.deop", "deop");
+      return lazy.l10n.formatValueSync("command-deop", { commandName: "deop" });
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_CHAT,
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.CHAT,
     run: (aMsg, aConv) => setMode(aMsg, aConv, "o", false),
   },
   {
     name: "devoice",
     get helpString() {
-      return lazy._("command.devoice", "devoice");
+      return lazy.l10n.formatValueSync("command-devoice", {
+        commandName: "devoice",
+      });
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_CHAT,
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.CHAT,
     run: (aMsg, aConv) => setMode(aMsg, aConv, "v", false),
   },
   {
     name: "invite",
     get helpString() {
-      return lazy._("command.invite2", "invite");
+      return lazy.l10n.formatValueSync("command-invite2", {
+        commandName: "invite",
+      });
     },
     run(aMsg, aConv) {
-      let params = splitInput(aMsg);
+      const params = splitInput(aMsg);
 
       // Try to find one, and only one, channel in the list of parameters.
       let channel;
-      let account = getAccount(aConv);
+      const account = getAccount(aConv);
       // Find the first param that could be a channel name.
       for (let i = 0; i < params.length; ++i) {
         if (account.isMUCName(params[i])) {
@@ -241,11 +250,11 @@ export var commands = [
   {
     name: "join",
     get helpString() {
-      return lazy._("command.join", "join");
+      return lazy.l10n.formatValueSync("command-join", { commandName: "join" });
     },
     run(aMsg, aConv, aReturnedConv) {
       let params = aMsg.trim().split(/,\s*/);
-      let account = getAccount(aConv);
+      const account = getAccount(aConv);
       let conv;
       if (!params[0]) {
         conv = getConv(aConv);
@@ -263,7 +272,8 @@ export var commands = [
       }
       params.forEach(function (joinParam) {
         if (joinParam) {
-          let chatroomfields = account.getChatRoomDefaultFieldValues(joinParam);
+          const chatroomfields =
+            account.getChatRoomFieldValuesFromString(joinParam);
           conv = account.joinChat(chatroomfields);
         }
       });
@@ -276,20 +286,20 @@ export var commands = [
   {
     name: "kick",
     get helpString() {
-      return lazy._("command.kick", "kick");
+      return lazy.l10n.formatValueSync("command-kick", { commandName: "kick" });
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_CHAT,
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.CHAT,
     run: kickCommand,
   },
   {
     name: "list",
     get helpString() {
-      return lazy._("command.list", "list");
+      return lazy.l10n.formatValueSync("command-list", { commandName: "list" });
     },
     run(aMsg, aConv, aReturnedConv) {
-      let account = getAccount(aConv);
-      let serverName = account._currentServerName;
-      let serverConv = account.getConversation(serverName);
+      const account = getAccount(aConv);
+      const serverName = account._currentServerName;
+      const serverConv = account.getConversation(serverName);
       let pendingChats = [];
       account.requestRoomInfo(
         {
@@ -306,8 +316,8 @@ export var commands = [
                     );
                     t = Date.now() + kMaxBlockTime;
                   }
-                  let name = pendingChats.pop();
-                  let roomInfo = account.getRoomInfo(name);
+                  const name = pendingChats.pop();
+                  const roomInfo = account.getRoomInfo(name);
                   serverConv.writeMessage(
                     serverName,
                     name +
@@ -337,14 +347,16 @@ export var commands = [
   {
     name: "me",
     get helpString() {
-      return lazy._("command.action", "me");
+      return lazy.l10n.formatValueSync("command-action", { commandName: "me" });
     },
     run: actionCommand,
   },
   {
     name: "memoserv",
     get helpString() {
-      return lazy._("command.memoserv", "memoserv");
+      return lazy.l10n.formatValueSync("command-memoserv", {
+        commandName: "memoserv",
+      });
     },
     run: (aMsg, aConv) => privateMessage(aConv, aMsg, "MemoServ"),
   },
@@ -352,9 +364,13 @@ export var commands = [
     name: "mode",
     get helpString() {
       return (
-        lazy._("command.modeUser2", "mode") +
+        lazy.l10n.formatValueSync("command-mode-user2", {
+          commandName: "mode",
+        }) +
         "\n" +
-        lazy._("command.modeChannel2", "mode")
+        lazy.l10n.formatValueSync("command-mode-channel2", {
+          commandName: "mode",
+        })
       );
     },
     run(aMsg, aConv) {
@@ -362,7 +378,7 @@ export var commands = [
         return "+-".includes(aString[0]);
       }
       let params = splitInput(aMsg);
-      let channel = aConv.name;
+      const channel = aConv.name;
       // Add the channel as parameter when the target is not specified. i.e
       // 1. message is empty.
       // 2. the first parameter is a mode.
@@ -383,23 +399,23 @@ export var commands = [
   {
     name: "msg",
     get helpString() {
-      return lazy._("command.msg", "msg");
+      return lazy.l10n.formatValueSync("command-msg", { commandName: "msg" });
     },
     run: messageCommand,
   },
   {
     name: "nick",
     get helpString() {
-      return lazy._("command.nick", "nick");
+      return lazy.l10n.formatValueSync("command-nick", { commandName: "nick" });
     },
     run(aMsg, aConv) {
-      let newNick = aMsg.trim();
+      const newNick = aMsg.trim();
       // eslint-disable-next-line mozilla/use-includes-instead-of-indexOf
       if (newNick.indexOf(/\s+/) != -1) {
         return false;
       }
 
-      let account = getAccount(aConv);
+      const account = getAccount(aConv);
       // The user wants to change their nick, so overwrite the account
       // nickname for this session.
       account._requestedNickname = newNick;
@@ -411,14 +427,16 @@ export var commands = [
   {
     name: "nickserv",
     get helpString() {
-      return lazy._("command.nickserv", "nickserv");
+      return lazy.l10n.formatValueSync("command-nickserv", {
+        commandName: "nickserv",
+      });
     },
     run: (aMsg, aConv) => privateMessage(aConv, aMsg, "NickServ"),
   },
   {
     name: "notice",
     get helpString() {
-      return lazy._("command.notice", "notice");
+      return lazy.l10n.formatValueSync("command-notice", "notice");
     },
     run: (aMsg, aConv, aReturnedConv) =>
       messageCommand(aMsg, aConv, aReturnedConv, true),
@@ -426,24 +444,26 @@ export var commands = [
   {
     name: "op",
     get helpString() {
-      return lazy._("command.op", "op");
+      return lazy.l10n.formatValueSync("command-op", "op");
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_CHAT,
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.CHAT,
     run: (aMsg, aConv) => setMode(aMsg, aConv, "o", true),
   },
   {
     name: "operserv",
     get helpString() {
-      return lazy._("command.operserv", "operserv");
+      return lazy.l10n.formatValueSync("command-operserv", {
+        commandName: "operserv",
+      });
     },
     run: (aMsg, aConv) => privateMessage(aConv, aMsg, "OperServ"),
   },
   {
     name: "part",
     get helpString() {
-      return lazy._("command.part", "part");
+      return lazy.l10n.formatValueSync("command-part", "part");
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_CHAT,
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.CHAT,
     run(aMsg, aConv) {
       getConv(aConv).part(aMsg);
       return true;
@@ -452,7 +472,7 @@ export var commands = [
   {
     name: "ping",
     get helpString() {
-      return lazy._("command.ping", "ping");
+      return lazy.l10n.formatValueSync("command-ping", { commandName: "ping" });
     },
     run(aMsg, aConv) {
       // Send a ping to the entered nick using the current time (in
@@ -470,17 +490,17 @@ export var commands = [
   {
     name: "query",
     get helpString() {
-      return lazy._("command.msg", "query");
+      return lazy.l10n.formatValueSync("command-msg", { commandName: "query" });
     },
     run: messageCommand,
   },
   {
     name: "quit",
     get helpString() {
-      return lazy._("command.quit", "quit");
+      return lazy.l10n.formatValueSync("command-quit", { commandName: "quit" });
     },
     run(aMsg, aConv) {
-      let account = getAccount(aConv);
+      const account = getAccount(aConv);
       account.disconnect(aMsg);
       // While prpls shouldn't usually touch imAccount, this disconnection
       // is an action the user requested via the UI. Without this call,
@@ -492,7 +512,9 @@ export var commands = [
   {
     name: "quote",
     get helpString() {
-      return lazy._("command.quote", "quote");
+      return lazy.l10n.formatValueSync("command-quote", {
+        commandName: "quote",
+      });
     },
     run(aMsg, aConv) {
       if (!aMsg.length) {
@@ -506,15 +528,17 @@ export var commands = [
   {
     name: "remove",
     get helpString() {
-      return lazy._("command.kick", "remove");
+      return lazy.l10n.formatValueSync("command-kick", {
+        commandName: "remove",
+      });
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_CHAT,
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.CHAT,
     run: kickCommand,
   },
   {
     name: "time",
     get helpString() {
-      return lazy._("command.time", "time");
+      return lazy.l10n.formatValueSync("command-time", { commandName: "time" });
     },
     run(aMsg, aConv) {
       // Send a time command to the entered nick using the current time (in
@@ -532,9 +556,11 @@ export var commands = [
   {
     name: "topic",
     get helpString() {
-      return lazy._("command.topic", "topic");
+      return lazy.l10n.formatValueSync("command-topic", {
+        commandName: "topic",
+      });
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_CHAT,
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.CHAT,
     run(aMsg, aConv) {
       aConv.topic = aMsg;
       return true;
@@ -543,10 +569,12 @@ export var commands = [
   {
     name: "umode",
     get helpString() {
-      return lazy._("command.umode", "umode");
+      return lazy.l10n.formatValueSync("command-umode", {
+        commandName: "umode",
+      });
     },
     run(aMsg, aConv) {
-      let params = aMsg ? splitInput(aMsg) : [];
+      const params = aMsg ? splitInput(aMsg) : [];
       params.unshift(getAccount(aConv)._nickname);
       return simpleCommand(aConv, "MODE", params);
     },
@@ -554,7 +582,9 @@ export var commands = [
   {
     name: "version",
     get helpString() {
-      return lazy._("command.version", "version");
+      return lazy.l10n.formatValueSync("command-version", {
+        commandName: "version",
+      });
     },
     run(aMsg, aConv) {
       if (!aMsg || !aMsg.trim().length) {
@@ -567,15 +597,19 @@ export var commands = [
   {
     name: "voice",
     get helpString() {
-      return lazy._("command.voice", "voice");
+      return lazy.l10n.formatValueSync("command-voice", {
+        commandName: "voice",
+      });
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_CHAT,
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.CHAT,
     run: (aMsg, aConv) => setMode(aMsg, aConv, "v", true),
   },
   {
     name: "whois",
     get helpString() {
-      return lazy._("command.whois2", "whois");
+      return lazy.l10n.formatValueSync("command-whois2", {
+        commandName: "whois",
+      });
     },
     run(aMsg, aConv) {
       // Note that this will automatically run whowas if the nick is offline.

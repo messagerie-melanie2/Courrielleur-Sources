@@ -10,11 +10,16 @@
 
 /* import-globals-from ../item-editing/calendar-item-editing.js */
 
-var { PluralForm } = ChromeUtils.importESModule("resource://gre/modules/PluralForm.sys.mjs");
-var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
+var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
 var { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUtils.sys.mjs");
+var lazy = {};
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () => new Localization(["calendar/calendar.ftl", "calendar/calendar-alarms.ftl"], true)
+);
 
-window.addEventListener("load", event => {
+window.addEventListener("load", () => {
   setupWindow();
   window.arguments[0].wrappedJSObject.window_onLoad();
 });
@@ -35,7 +40,7 @@ var gShutdownDetected = false;
  */
 var gShutdownObserver = {
   observe() {
-    let windows = Array.from(Services.wm.getEnumerator("mail:3pane"));
+    const windows = Array.from(Services.wm.getEnumerator("mail:3pane"));
     if (windows.filter(win => !win.closed).length == 0) {
       gShutdownDetected = true;
       window.close();
@@ -49,7 +54,7 @@ addEventListener("DOMContentLoaded", () => {
   });
 });
 
-XPCOMUtils.defineLazyGetter(this, "gReadOnlyNotification", () => {
+ChromeUtils.defineLazyGetter(this, "gReadOnlyNotification", () => {
   return new MozElements.NotificationBox(element => {
     element.setAttribute("notificationside", "top");
     document.getElementById("readonly-notification").append(element);
@@ -59,7 +64,7 @@ XPCOMUtils.defineLazyGetter(this, "gReadOnlyNotification", () => {
 /**
  * Helper function to get the alarm service and cache it.
  *
- * @returns The alarm service component
+ * @returns {calIAlarmService} The alarm service component.
  */
 function getAlarmService() {
   if (!("mAlarmService" in window)) {
@@ -74,11 +79,11 @@ function getAlarmService() {
  * Event handler for the 'snooze' event. Snoozes the given alarm by the given
  * number of minutes using the alarm service.
  *
- * @param event     The snooze event
+ * @param {Event} event - The snooze event.
  */
 function onSnoozeAlarm(event) {
   // reschedule alarm:
-  let duration = getDuration(event.detail);
+  const duration = getDuration(event.detail);
   if (aboveSnoozeLimit(duration)) {
     // we prevent snoozing too far if the alarm wouldn't be displayed
     return;
@@ -90,7 +95,7 @@ function onSnoozeAlarm(event) {
  * Event handler for the 'dismiss' event. Dismisses the given alarm using the
  * alarm service.
  *
- * @param event     The snooze event
+ * @param {Event} event - The snooze event.
  */
 function onDismissAlarm(event) {
   getAlarmService().dismissAlarm(event.target.item, event.target.alarm);
@@ -101,12 +106,12 @@ function onDismissAlarm(event) {
  */
 function onDismissAllAlarms() {
   // removes widgets on the fly:
-  let alarmRichlist = document.getElementById("alarm-richlist");
-  let parentItems = {};
-  let widgets = [];
+  const alarmRichlist = document.getElementById("alarm-richlist");
+  const parentItems = {};
+  const widgets = [];
 
   // Make a copy of the child nodes as they get modified live
-  for (let node of alarmRichlist.children) {
+  for (const node of alarmRichlist.children) {
     // Check if the node is a valid alarm and is still part of DOM
     if (
       node.parentNode &&
@@ -119,7 +124,7 @@ function onDismissAllAlarms() {
       widgets.push({ item: node.item, alarm: node.alarm });
     }
   }
-  for (let widget of widgets) {
+  for (const widget of widgets) {
     getAlarmService().dismissAlarm(widget.item, widget.alarm);
   }
 }
@@ -128,12 +133,12 @@ function onDismissAllAlarms() {
  * Event handler fired when the alarm widget's "Details..." label was clicked.
  * Open the event dialog in the most recent Thunderbird window.
  *
- * @param event     The itemdetails event.
+ * @param {Event} event - The itemdetails event.
  */
 function onItemDetails(event) {
   // We want this to happen in a calendar window if possible. Otherwise open
   // it using our window.
-  let calWindow = cal.window.getCalendarWindow();
+  const calWindow = cal.window.getCalendarWindow();
   if (calWindow) {
     calWindow.modifyEventWithDialog(event.target.item, true);
   } else {
@@ -151,9 +156,9 @@ function setupWindow() {
   // setTimeout to wait until we are there, then setInterval to execute every
   // minute. Since setInterval is not totally exact, we may run into problems
   // here. I hope not!
-  let current = new Date();
+  const current = new Date();
 
-  let timeout = (60 - current.getSeconds()) * 1000;
+  const timeout = (60 - current.getSeconds()) * 1000;
   gRelativeDateUpdateTimer = setTimeout(() => {
     updateRelativeDates();
     gRelativeDateUpdateTimer = setInterval(updateRelativeDates, 60 * 1000);
@@ -177,7 +182,7 @@ function finishWindow() {
     return;
   }
 
-  let alarmRichlist = document.getElementById("alarm-richlist");
+  const alarmRichlist = document.getElementById("alarm-richlist");
 
   if (alarmRichlist.children.length > 0) {
     // If there are still items, the window wasn't closed using dismiss
@@ -210,8 +215,8 @@ function onFocusWindow() {
  * Timer callback to update all relative date labels
  */
 function updateRelativeDates() {
-  let alarmRichlist = document.getElementById("alarm-richlist");
-  for (let node of alarmRichlist.children) {
+  const alarmRichlist = document.getElementById("alarm-richlist");
+  for (const node of alarmRichlist.children) {
     if (node.item && node.alarm) {
       node.updateRelativeDateLabel();
     }
@@ -221,20 +226,20 @@ function updateRelativeDates() {
 /**
  * Function to snooze all alarms the given number of minutes.
  *
- * @param aDurationMinutes    The duration in minutes
+ * @param {integer} aDurationMinutes - The duration in minutes.
  */
 function snoozeAllItems(aDurationMinutes) {
-  let duration = getDuration(aDurationMinutes);
+  const duration = getDuration(aDurationMinutes);
   if (aboveSnoozeLimit(duration)) {
     // we prevent snoozing too far if the alarm wouldn't be displayed
     return;
   }
 
-  let alarmRichlist = document.getElementById("alarm-richlist");
-  let parentItems = {};
+  const alarmRichlist = document.getElementById("alarm-richlist");
+  const parentItems = {};
 
   // Make a copy of the child nodes as they get modified live
-  for (let node of alarmRichlist.children) {
+  for (const node of alarmRichlist.children) {
     // Check if the node is a valid alarm and is still part of DOM
     if (
       node.parentNode &&
@@ -257,18 +262,18 @@ function snoozeAllItems(aDurationMinutes) {
 /**
  * Receive a calIDuration object for a given number of minutes
  *
- * @param  {long}           aMinutes     The number of minutes
+ * @param {integer} aMinutes - The number of minutes.
  * @returns {calIDuration}
  */
 function getDuration(aMinutes) {
   const MINUTESINWEEK = 7 * 24 * 60;
 
-  // converting to weeks if any is required to avoid an integer overflow of duration.minutes as
-  // this is of type short
-  let weeks = Math.floor(aMinutes / MINUTESINWEEK);
+  // Converting to weeks if any is required to avoid an integer overflow of
+  // duration.minutes as this is of type short.
+  const weeks = Math.floor(aMinutes / MINUTESINWEEK);
   aMinutes -= weeks * MINUTESINWEEK;
 
-  let duration = cal.createDuration();
+  const duration = cal.createDuration();
   duration.minutes = aMinutes;
   duration.weeks = weeks;
   duration.normalize();
@@ -279,20 +284,20 @@ function getDuration(aMinutes) {
  * Check whether the snooze period exceeds the current limitation of the AlarmService and prompt
  * the user with a message if so
  *
- * @param   {calIDuration}   aDuration   The duration to snooze
+ * @param {calIDuration} aDuration - The duration to snooze.
  * @returns {boolean}
  */
 function aboveSnoozeLimit(aDuration) {
   const LIMIT = Ci.calIAlarmService.MAX_SNOOZE_MONTHS;
 
-  let currentTime = cal.dtz.now().getInTimezone(cal.dtz.UTC);
-  let limitTime = currentTime.clone();
+  const currentTime = cal.dtz.now().getInTimezone(cal.dtz.UTC);
+  const limitTime = currentTime.clone();
   limitTime.month += LIMIT;
 
-  let durationUntilLimit = limitTime.subtractDate(currentTime);
+  const durationUntilLimit = limitTime.subtractDate(currentTime);
   if (aDuration.compare(durationUntilLimit) > 0) {
-    let msg = PluralForm.get(LIMIT, cal.l10n.getCalString("alarmSnoozeLimitExceeded"));
-    cal.showError(msg.replace("#1", LIMIT), window);
+    const msg = lazy.l10n.formatValueSync("alarm-snooze-limit-exceeded", { count: LIMIT });
+    cal.showError(msg, window);
     return true;
   }
   return false;
@@ -302,22 +307,24 @@ function aboveSnoozeLimit(aDuration) {
  * Sets up the window title, counting the number of alarms in the window.
  */
 function setupTitle() {
-  let alarmRichlist = document.getElementById("alarm-richlist");
-  let reminders = alarmRichlist.children.length;
+  const alarmRichlist = document.getElementById("alarm-richlist");
+  const reminders = alarmRichlist.children.length;
 
-  let title = PluralForm.get(reminders, cal.l10n.getCalString("alarmWindowTitle.label"));
-  document.title = title.replace("#1", reminders);
+  document.title = lazy.l10n.formatValueSync("alarm-window-title-label", { count: reminders });
 }
 
 /**
  * Comparison function for the start date of a calendar item and
  * the start date of a calendar-alarm-widget.
  *
- * @param aItem                 A calendar item for the comparison of the start date property
- * @param aWidgetItem           The alarm widget item for the start date comparison with the given calendar item
- * @returns 1 - if the calendar item starts before the calendar-alarm-widget
- *                             -1 - if the calendar-alarm-widget starts before the calendar item
- *                              0 - otherwise
+ * @param {calIItemBase} aItem - A calendar item for the comparison of the
+ *   start date property.
+ * @param {MozCalendarAlarmWidgetRichlistitem} aWidgetItem - The alarm widget
+ *   item for the start date comparison with the given calendar item.
+ * @returns {1|0|-1} 1 if the calendar item starts before the
+ *   calendar-alarm-widget.
+ *  -1 if the calendar-alarm-widget starts before the calendar item.
+ *  0 otherwise.
  */
 function widgetAlarmComptor(aItem, aWidgetItem) {
   if (aItem == null || aWidgetItem == null) {
@@ -325,8 +332,8 @@ function widgetAlarmComptor(aItem, aWidgetItem) {
   }
 
   // Get the dates to compare
-  let aDate = aItem[cal.dtz.startDateProp(aItem)];
-  let bDate = aWidgetItem[cal.dtz.startDateProp(aWidgetItem)];
+  const aDate = aItem[cal.dtz.startDateProp(aItem)];
+  const bDate = aWidgetItem[cal.dtz.startDateProp(aWidgetItem)];
 
   return aDate.compare(bDate);
 }
@@ -334,14 +341,14 @@ function widgetAlarmComptor(aItem, aWidgetItem) {
 /**
  * Add an alarm widget for the passed alarm and item.
  *
- * @param aItem       The calendar item to add a widget for.
- * @param aAlarm      The alarm to add a widget for.
+ * @param {calIItemBase} aItem - The calendar item to add a widget for.
+ * @param {calIAlarm} aAlarm - The alarm to add a widget for.
  */
 function addWidgetFor(aItem, aAlarm) {
-  let widget = document.createXULElement("richlistitem", {
+  const widget = document.createXULElement("richlistitem", {
     is: "calendar-alarm-widget-richlistitem",
   });
-  let alarmRichlist = document.getElementById("alarm-richlist");
+  const alarmRichlist = document.getElementById("alarm-richlist");
 
   // Add widgets sorted by start date ascending
   cal.data.binaryInsertNode(alarmRichlist, widget, aItem, widgetAlarmComptor, false);
@@ -371,16 +378,16 @@ function addWidgetFor(aItem, aAlarm) {
 /**
  * Remove the alarm widget for the passed alarm and item.
  *
- * @param aItem       The calendar item to remove the alarm widget for.
- * @param aAlarm      The alarm to remove the widget for.
+ * @param {calIItemBase} aItem - The calendar item to remove the alarm widget for.
+ * @param {calIAlarm} aAlarm - The alarm to remove the widget for.
  */
 function removeWidgetFor(aItem, aAlarm) {
-  let hashId = aItem.hashId;
-  let alarmRichlist = document.getElementById("alarm-richlist");
-  let nodes = alarmRichlist.children;
+  const hashId = aItem.hashId;
+  const alarmRichlist = document.getElementById("alarm-richlist");
+  const nodes = alarmRichlist.children;
   let notfound = true;
   for (let i = nodes.length - 1; notfound && i >= 0; --i) {
-    let widget = nodes[i];
+    const widget = nodes[i];
     if (
       widget.item &&
       widget.item.hashId == hashId &&
@@ -413,34 +420,34 @@ function removeWidgetFor(aItem, aAlarm) {
  * notification based on the readability of the calendars of the alarms visible
  * in the alarm list
  */
-function doReadOnlyChecks() {
+async function doReadOnlyChecks() {
   let countRO = 0;
-  let alarmRichlist = document.getElementById("alarm-richlist");
-  for (let node of alarmRichlist.children) {
+  const alarmRichlist = document.getElementById("alarm-richlist");
+  for (const node of alarmRichlist.children) {
     if (!cal.acl.isCalendarWritable(node.item.calendar) || !cal.acl.userCanModifyItem(node.item)) {
       countRO++;
     }
   }
 
   // we disable the button if there are only alarms for not-writable items
-  let snoozeAllButton = document.getElementById("alarm-snooze-all-button");
+  const snoozeAllButton = document.getElementById("alarm-snooze-all-button");
   snoozeAllButton.disabled = countRO && countRO == alarmRichlist.children.length;
   if (snoozeAllButton.disabled) {
-    let tooltip = cal.l10n.getString("calendar-alarms", "reminderDisabledSnoozeButtonTooltip");
+    const tooltip = lazy.l10n.formatValueSync("reminder-disabled-snooze-button-tooltip");
     snoozeAllButton.setAttribute("tooltiptext", tooltip);
   } else {
     snoozeAllButton.removeAttribute("tooltiptext");
   }
 
-  let notification = gReadOnlyNotification.getNotificationWithValue("calendar-readonly");
+  const notification = gReadOnlyNotification.getNotificationWithValue("calendar-readonly");
   if (countRO && !notification) {
-    let message = cal.l10n.getString("calendar-alarms", "reminderReadonlyNotification", [
-      snoozeAllButton.label,
-    ]);
-    gReadOnlyNotification.appendNotification(
+    await gReadOnlyNotification.appendNotification(
       "calendar-readonly",
       {
-        label: message,
+        label: {
+          "l10n-id": "reminder-readonly-notification",
+          "l10n-args": { label: snoozeAllButton.label },
+        },
         priority: gReadOnlyNotification.PRIORITY_WARNING_MEDIUM,
       },
       null
@@ -454,7 +461,7 @@ function doReadOnlyChecks() {
  * Close the alarm dialog if there are no further alarm widgets
  */
 function closeIfEmpty() {
-  let alarmRichlist = document.getElementById("alarm-richlist");
+  const alarmRichlist = document.getElementById("alarm-richlist");
 
   // we don't want to close if the alarm service is still loading, as the
   // removed alarms may be immediately added again.
@@ -466,17 +473,17 @@ function closeIfEmpty() {
 /**
  * Handler function called when an alarm entry in the richlistbox is selected
  *
- * @param event         The DOM event from the click action
+ * @param {Event} event - The DOM event from the click action
  */
 function onSelectAlarm(event) {
-  let richList = document.getElementById("alarm-richlist");
+  const richList = document.getElementById("alarm-richlist");
   if (richList == event.target) {
     richList.ensureElementIsVisible(richList.getSelectedItem(0));
     richList.userSelectedWidget = true;
   }
 }
 
-function ensureCalendarVisible(aCalendar) {
+function ensureCalendarVisible() {
   // This function is called on the alarm dialog from calendar-item-editing.js.
   // Normally, it makes sure that the calendar being edited is made visible,
   // but the alarm dialog is too far away from the calendar views that it

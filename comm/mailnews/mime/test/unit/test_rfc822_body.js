@@ -7,14 +7,14 @@
  * whether or not mail.inline_attachments is true.
  */
 
-var { MessageGenerator, SyntheticMessageSet } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { MessageGenerator, SyntheticMessageSet } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-var { MessageInjection } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageInjection.jsm"
+var { MessageInjection } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageInjection.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 var messenger = Cc["@mozilla.org/messenger;1"].createInstance(Ci.nsIMessenger);
 var msgGen = new MessageGenerator();
@@ -66,15 +66,15 @@ add_task(async function test_rfc822_body_no_display_inline() {
 });
 
 async function help_test_rfc822_body(info) {
-  let synMsg = msgGen.makeMessage(info);
-  let synSet = new SyntheticMessageSet([synMsg]);
+  const synMsg = msgGen.makeMessage(info);
+  const synSet = new SyntheticMessageSet([synMsg]);
   await messageInjection.addSetsToFolders([inbox], [synSet]);
 
-  let msgURI = synSet.getMsgURI(0);
-  let msgService = MailServices.messageServiceFromURI(msgURI);
+  const msgURI = synSet.getMsgURI(0);
+  const msgService = MailServices.messageServiceFromURI(msgURI);
 
-  let streamListener = new PromiseTestUtils.PromiseStreamListener({
-    onStopRequest(request, statusCode) {
+  const streamListener = new PromiseTestUtils.PromiseStreamListener({
+    onStopRequest(request) {
       request.QueryInterface(Ci.nsIMailChannel);
       Assert.equal(request.attachments.length, info.attachmentCount);
     },

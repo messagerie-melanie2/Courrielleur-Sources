@@ -18,8 +18,8 @@ SOURCES += [
 ]
 
 EXTRA_JS_MODULES += [
-    "MsgTraitService.jsm",
-    "PeriodicFilterManager.jsm",
+    "MsgTraitService.sys.mjs",
+    "PeriodicFilterManager.sys.mjs",
 ]
 
 XPCOM_MANIFESTS += [

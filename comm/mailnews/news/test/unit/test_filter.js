@@ -32,7 +32,7 @@ var attribResults = {
 };
 function testAttrib(handler, daemon, localserver) {
   var server = makeServer(handler, daemon);
-  server.setDebugLevel(fsDebugAll);
+  server.setDebugLevel(nsMailServer.debugAll);
   server.start();
   localserver.port = server.port;
 
@@ -82,7 +82,7 @@ var actionResults = {
   },
   "5@regular.invalid": ["isFlagged", true],
   "6.odd@regular.invalid": ["isRead", false],
-  "7@regular.invalid": function (header, folder) {
+  "7@regular.invalid": function (header) {
     return header.getStringProperty("keywords") == "tag";
   },
   "8.unread@regular.invalid": ["isRead", false],
@@ -101,7 +101,7 @@ function testAction(handler, daemon, localserver) {
   });
   server.performTest();
 
-  let headers = [...folder.messages];
+  const headers = [...folder.messages];
 
   try {
     Assert.equal(headers.length, 7);

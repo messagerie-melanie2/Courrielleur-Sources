@@ -12,6 +12,7 @@
 #include "nsCOMArray.h"
 #include "nsThreadUtils.h"
 #include "mozilla/dom/File.h"
+#include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/PFilePickerParent.h"
 
 class nsIFile;
@@ -20,8 +21,12 @@ namespace mozilla::dom {
 
 class FilePickerParent : public PFilePickerParent {
  public:
-  FilePickerParent(const nsString& aTitle, const nsIFilePicker::Mode& aMode)
-      : mTitle(aTitle), mMode(aMode), mResult(nsIFilePicker::returnOK) {}
+  FilePickerParent(const nsString& aTitle, const nsIFilePicker::Mode& aMode,
+                   BrowsingContext* aBrowsingContext)
+      : mTitle(aTitle),
+        mMode(aMode),
+        mBrowsingContext(aBrowsingContext),
+        mResult(nsIFilePicker::returnOK) {}
 
  private:
   virtual ~FilePickerParent();
@@ -38,7 +43,9 @@ class FilePickerParent : public PFilePickerParent {
     enum { eBlobImpl, eDirectoryPath } mType;
   };
 
-  void SendFilesOrDirectories(const nsTArray<BlobImplOrString>& aData);
+  void SendFilesOrDirectories(
+      const nsTArray<BlobImplOrString>& aData,
+      const nsTArray<RefPtr<BlobImpl>>& aFilesInWebKitDirectory);
 
   mozilla::ipc::IPCResult RecvOpen(
       const int16_t& aSelectedType, const bool& aAddToRecentDocs,
@@ -74,11 +81,14 @@ class FilePickerParent : public PFilePickerParent {
     nsTArray<nsCOMPtr<nsIFile>> mFiles;
     nsTArray<BlobImplOrString> mResults;
     nsCOMPtr<nsIEventTarget> mEventTarget;
+    nsTArray<RefPtr<BlobImpl>> mFilesInWebKitDirectory;
     bool mIsDirectory;
 
    public:
     IORunnable(FilePickerParent* aFPParent,
-               nsTArray<nsCOMPtr<nsIFile>>&& aFiles, bool aIsDirectory);
+               nsTArray<nsCOMPtr<nsIFile>>&& aFiles,
+               nsTArray<RefPtr<BlobImpl>>&& aFilesInWebKitDirectory,
+               bool aIsDirectory);
 
     bool Dispatch();
     NS_IMETHOD Run() override;
@@ -91,6 +101,7 @@ class FilePickerParent : public PFilePickerParent {
 
   nsString mTitle;
   nsIFilePicker::Mode mMode;
+  RefPtr<mozilla::dom::BrowsingContext> mBrowsingContext;
   nsIFilePicker::ResultCode mResult;
 };
 

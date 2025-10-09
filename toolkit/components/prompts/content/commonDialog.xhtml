@@ -3,9 +3,8 @@
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
-<?xml-stylesheet href="chrome://global/skin/global.css" type="text/css"?>
-<?xml-stylesheet href="chrome://global/content/commonDialog.css" type="text/css"?>
-<?xml-stylesheet href="chrome://global/skin/commonDialog.css" type="text/css"?>
+<?csp default-src chrome:; img-src moz-icon: chrome:; style-src chrome:
+'unsafe-inline'; ?>
 
 <!DOCTYPE window>
 
@@ -16,10 +15,19 @@
   xmlns:xul="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
   aria-describedby="infoBody"
   headerparent="dialogGrid"
-  onunload="commonDialogOnUnload();"
 >
   <dialog id="commonDialog" buttonpack="end">
     <linkset>
+      <html:link rel="stylesheet" href="chrome://global/skin/global.css" />
+      <html:link
+        rel="stylesheet"
+        href="chrome://global/content/commonDialog.css"
+      />
+      <html:link
+        rel="stylesheet"
+        href="chrome://global/skin/commonDialog.css"
+      />
+
       <html:link rel="localization" href="branding/brand.ftl" />
       <html:link rel="localization" href="toolkit/global/commonDialog.ftl" />
     </linkset>
@@ -28,27 +36,14 @@
     <script src="chrome://global/content/globalOverlay.js" />
     <script src="chrome://global/content/editMenuOverlay.js" />
     <script src="chrome://global/content/customElements.js" />
-    <script>
-      /* eslint-disable no-undef */
-      document.addEventListener("DOMContentLoaded", function () {
-        commonDialogOnLoad();
-      });
-    </script>
 
     <commandset id="selectEditMenuItems">
-      <command
-        id="cmd_copy"
-        oncommand="goDoCommand('cmd_copy')"
-        disabled="true"
-      />
-      <command id="cmd_selectAll" oncommand="goDoCommand('cmd_selectAll')" />
+      <command id="cmd_copy" disabled="true" />
+      <command id="cmd_selectAll" />
     </commandset>
 
     <popupset id="contentAreaContextSet">
-      <menupopup
-        id="contentAreaContextMenu"
-        onpopupshowing="goUpdateCommand('cmd_copy')"
-      >
+      <menupopup id="contentAreaContextMenu">
         <menuitem
           id="context-copy"
           data-l10n-id="common-dialog-copy-cmd"
@@ -96,7 +91,7 @@
       <div id="checkboxContainer" class="dialogRow" hidden="hidden">
         <div />
         <!-- spacer -->
-        <xul:checkbox id="checkbox" oncommand="Dialog.onCheckbox()" />
+        <xul:checkbox id="checkbox" />
       </div>
     </div>
   </dialog>

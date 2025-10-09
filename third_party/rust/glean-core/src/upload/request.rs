@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use chrono::prelude::{DateTime, Utc};
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
-use serde_json::{self, Value as JsonValue};
+use serde_json::Value as JsonValue;
 use std::io::prelude::*;
 
 use crate::error::{ErrorKind, Result};
@@ -62,6 +62,9 @@ pub struct Builder {
     body: Option<Vec<u8>>,
     headers: HeaderMap,
     body_max_size: usize,
+    body_has_info_sections: Option<bool>,
+    ping_name: Option<String>,
+    uploader_capabilities: Option<Vec<String>>,
 }
 
 impl Builder {
@@ -87,6 +90,9 @@ impl Builder {
             body: None,
             headers,
             body_max_size,
+            body_has_info_sections: None,
+            ping_name: None,
+            uploader_capabilities: None,
         }
     }
 
@@ -138,6 +144,18 @@ impl Builder {
         self
     }
 
+    /// Sets whether the request body has {client|ping}_info sections.
+    pub fn body_has_info_sections(mut self, body_has_info_sections: bool) -> Self {
+        self.body_has_info_sections = Some(body_has_info_sections);
+        self
+    }
+
+    /// Sets the ping's name aka doctype.
+    pub fn ping_name<S: Into<String>>(mut self, ping_name: S) -> Self {
+        self.ping_name = Some(ping_name.into());
+        self
+    }
+
     /// Sets a header for this request.
     pub fn header<S: Into<String>>(mut self, key: S, value: S) -> Self {
         self.headers.insert(key.into(), value.into());
@@ -147,6 +165,12 @@ impl Builder {
     /// Sets multiple headers for this request at once.
     pub fn headers(mut self, values: HeaderMap) -> Self {
         self.headers.extend(values);
+        self
+    }
+
+    /// Sets the required uploader capabilities.
+    pub fn uploader_capabilities(mut self, uploader_capabilities: Vec<String>) -> Self {
+        self.uploader_capabilities = Some(uploader_capabilities);
         self
     }
 
@@ -174,6 +198,15 @@ impl Builder {
                 .expect("path must be set before attempting to build PingRequest"),
             body,
             headers: self.headers,
+            body_has_info_sections: self.body_has_info_sections.expect(
+                "body_has_info_sections must be set before attempting to build PingRequest",
+            ),
+            ping_name: self
+                .ping_name
+                .expect("ping_name must be set before attempting to build PingRequest"),
+            uploader_capabilities: self
+                .uploader_capabilities
+                .expect("uploader_capabilities must be set before attempting to build PingRequest"),
         })
     }
 }
@@ -192,6 +225,12 @@ pub struct PingRequest {
     pub body: Vec<u8>,
     /// A map with all the headers to be sent with the request.
     pub headers: HeaderMap,
+    /// Whether the body has {client|ping}_info sections.
+    pub body_has_info_sections: bool,
+    /// The ping's name. Likely also somewhere in `path`.
+    pub ping_name: String,
+    /// The capabilities required during this ping's upload.
+    pub uploader_capabilities: Vec<String>,
 }
 
 impl PingRequest {
@@ -208,12 +247,7 @@ impl PingRequest {
 
     /// Verifies if current request is for a deletion-request ping.
     pub fn is_deletion_request(&self) -> bool {
-        // The path format should be `/submit/<app_id>/<ping_name>/<schema_version/<doc_id>`
-        self.path
-            .split('/')
-            .nth(3)
-            .map(|url| url == "deletion-request")
-            .unwrap_or(false)
+        self.ping_name == "deletion-request"
     }
 
     /// Decompresses and pretty-format the ping payload
@@ -257,11 +291,16 @@ mod test {
             .document_id("woop")
             .path("/random/path/doesnt/matter")
             .body("{}")
+            .body_has_info_sections(false)
+            .ping_name("whatevs")
+            .uploader_capabilities(vec![])
             .build()
             .unwrap();
 
         assert_eq!(request.document_id, "woop");
         assert_eq!(request.path, "/random/path/doesnt/matter");
+        assert!(!request.body_has_info_sections);
+        assert_eq!(request.ping_name, "whatevs");
 
         // Make sure all the expected headers were added.
         assert!(request.headers.contains_key("X-Telemetry-Agent"));

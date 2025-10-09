@@ -1,5 +1,7 @@
-/* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
-/* vim: set sts=2 sw=2 et tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
 // Supported for creating normal windows is very limited in Thunderbird, a url
@@ -11,7 +13,7 @@ add_task(async function no_cookies_permission() {
     set: [["privacy.userContext.enabled", true]],
   });
 
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     async background() {
       await browser.test.assertRejects(
         browser.windows.create({ cookieStoreId: "firefox-container-1" }),
@@ -32,7 +34,7 @@ add_task(async function invalid_cookieStoreId() {
     set: [["privacy.userContext.enabled", true]],
   });
 
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     manifest: {
       permissions: ["cookies"],
     },
@@ -62,7 +64,7 @@ add_task(async function userContext_disabled() {
   await SpecialPowers.pushPrefEnv({
     set: [["privacy.userContext.enabled", false]],
   });
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     manifest: {
       permissions: ["tabs", "cookies"],
     },
@@ -86,13 +88,15 @@ add_task(async function cookieStoreId_and_tabId() {
     set: [["privacy.userContext.enabled", true]],
   });
 
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     manifest: {
       permissions: ["cookies"],
     },
     async background() {
-      for (let cookieStoreId of ["firefox-default", "firefox-container-1"]) {
-        let { id: normalTabId } = await browser.tabs.create({ cookieStoreId });
+      for (const cookieStoreId of ["firefox-default", "firefox-container-1"]) {
+        const { id: normalTabId } = await browser.tabs.create({
+          cookieStoreId,
+        });
 
         await browser.test.assertRejects(
           browser.windows.create({

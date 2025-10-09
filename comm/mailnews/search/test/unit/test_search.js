@@ -11,8 +11,8 @@
 /* import-globals-from ../../../test/resources/searchTestUtils.js */
 load("../../../resources/searchTestUtils.js");
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var Isnt = Ci.nsMsgSearchOp.Isnt;
@@ -563,12 +563,15 @@ var Tests = [
 function run_test() {
   localAccountUtils.loadLocalMailAccount();
 
+  /** @implements {nsIMsgCopyServiceListener} */
   var copyListener = {
-    OnStartCopy() {},
-    OnProgress(aProgress, aProgressMax) {},
-    SetMessageKey(aKey) {},
-    SetMessageId(aMessageId) {},
-    OnStopCopy(aStatus) {
+    onStartCopy() {},
+    onProgress() {},
+    setMessageKey() {},
+    getMessageId() {
+      return null;
+    },
+    onStopCopy() {
       testSearch();
     },
   };
@@ -600,7 +603,7 @@ function testSearch() {
   if (test && test.dbHeader) {
     //  test of a custom db header
     dump("testing dbHeader " + test.dbHeader + "\n");
-    let customValue = mailTestUtils
+    const customValue = mailTestUtils
       .firstMsgHdr(localAccountUtils.inboxFolder)
       .getStringProperty(test.dbHeader);
     Assert.equal(customValue, test.testString);

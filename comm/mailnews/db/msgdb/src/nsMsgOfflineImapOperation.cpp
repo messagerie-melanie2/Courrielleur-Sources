@@ -3,8 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "msgCore.h"
 #include "nsMsgOfflineImapOperation.h"
+#include "MailNewsTypes.h"
 #include "nsMsgUtils.h"
 #include "mozilla/Logging.h"
 
@@ -40,7 +40,6 @@ nsMsgOfflineImapOperation::nsMsgOfflineImapOperation(nsMsgDatabase* db,
   m_operation = 0;
   m_operationFlags = 0;
   m_messageKey = nsMsgKey_None;
-  m_sourceMessageKey = nsMsgKey_None;
   m_mdb = db;
   NS_ADDREF(m_mdb);
   m_mdbRow = row;
@@ -94,6 +93,7 @@ NS_IMETHODIMP nsMsgOfflineImapOperation::ClearOperation(
       m_moveDestination.Truncate();
       break;
     case kMsgCopy:
+      NS_ENSURE_TRUE(m_copyDestinations.Length() > 0, NS_ERROR_UNEXPECTED);
       m_copyDestinations.RemoveElementAt(0);
       break;
   }
@@ -122,8 +122,7 @@ NS_IMETHODIMP nsMsgOfflineImapOperation::GetSrcMessageKey(
 
 NS_IMETHODIMP nsMsgOfflineImapOperation::SetSrcMessageKey(
     nsMsgKey aMessageKey) {
-  m_messageKey = aMessageKey;
-  return m_mdb->SetUint32Property(m_mdbRow, PROP_SRC_MESSAGE_KEY, m_messageKey);
+  return m_mdb->SetUint32Property(m_mdbRow, PROP_SRC_MESSAGE_KEY, aMessageKey);
 }
 
 /* attribute imapMessageFlagsType flagOperation; */
@@ -269,6 +268,7 @@ NS_IMETHODIMP nsMsgOfflineImapOperation::AddMessageCopyOperation(
 // we write out the folders as one string, separated by 0x1.
 #define FOLDER_SEP_CHAR '\001'
 
+// Helper to read m_copyDestinations list from db.
 nsresult nsMsgOfflineImapOperation::GetCopiesFromDB() {
   nsCString copyDests;
   m_copyDestinations.Clear();
@@ -296,6 +296,7 @@ nsresult nsMsgOfflineImapOperation::GetCopiesFromDB() {
   return rv;
 }
 
+// Helper to write m_copyDestinations list to db.
 nsresult nsMsgOfflineImapOperation::SetCopiesToDB() {
   nsAutoCString copyDests;
 

@@ -24,8 +24,6 @@ async function enableServiceWorkerDebugging() {
   // SW debugging in multi-e10s.
   await pushPref("dom.ipc.processCount", 1);
 
-  // Enable service workers in the debugger
-  await pushPref("devtools.debugger.features.windowless-service-workers", true);
   // Disable randomly spawning processes during tests
   await pushPref("dom.ipc.processPrelaunch.enabled", false);
 
@@ -82,7 +80,11 @@ function checkTelemetryEvent(expectedEvent, objectName = "application") {
   // assert we only got 1 event with a valid session ID
   is(events.length, 1, "There was only 1 event logged");
   const [event] = events;
-  ok(event.session_id > 0, "There is a valid session_id in the event");
+  Assert.greater(
+    Number(event.session_id),
+    0,
+    "There is a valid session_id in the event"
+  );
 
   // assert expected data
   Assert.deepEqual(event, { ...expectedEvent, session_id: event.session_id });

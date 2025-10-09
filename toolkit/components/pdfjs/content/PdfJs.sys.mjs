@@ -13,13 +13,11 @@
  * limitations under the License.
  */
 
-const PREF_PREFIX = "pdfjs";
-const PREF_DISABLED = PREF_PREFIX + ".disabled";
-const PREF_MIGRATION_VERSION = PREF_PREFIX + ".migrationVersion";
-const PREF_PREVIOUS_ACTION = PREF_PREFIX + ".previousHandler.preferredAction";
-const PREF_PREVIOUS_ASK =
-  PREF_PREFIX + ".previousHandler.alwaysAskBeforeHandling";
-const PREF_ISDEFAULT_CACHE_STATE = PREF_PREFIX + ".enabledCache.state";
+const PREF_DISABLED = "pdfjs.disabled";
+const PREF_MIGRATION_VERSION = "pdfjs.migrationVersion";
+const PREF_PREVIOUS_ACTION = "pdfjs.previousHandler.preferredAction";
+const PREF_PREVIOUS_ASK = "pdfjs.previousHandler.alwaysAskBeforeHandling";
+const PREF_ISDEFAULT_CACHE_STATE = "pdfjs.enabledCache.state";
 const TOPIC_PDFJS_HANDLER_CHANGED = "pdfjs:handlerChanged";
 const PDF_CONTENT_TYPE = "application/pdf";
 
@@ -38,35 +36,6 @@ XPCOMUtils.defineLazyServiceGetter(
   "@mozilla.org/uriloader/handler-service;1",
   "nsIHandlerService"
 );
-const lazy = {};
-ChromeUtils.defineESModuleGetters(lazy, {
-  PdfJsDefaultPreferences: "resource://pdf.js/PdfJsDefaultPreferences.sys.mjs",
-});
-
-function initializeDefaultPreferences() {
-  var defaultBranch = Services.prefs.getDefaultBranch(PREF_PREFIX + ".");
-  var defaultValue;
-  for (var key in lazy.PdfJsDefaultPreferences) {
-    // Skip prefs that are already defined, so we can enable/disable things
-    // in all.js.
-    let prefType = defaultBranch.getPrefType(key);
-    if (prefType !== Ci.nsIPrefBranch.PREF_INVALID) {
-      continue;
-    }
-    defaultValue = lazy.PdfJsDefaultPreferences[key];
-    switch (typeof defaultValue) {
-      case "boolean":
-        defaultBranch.setBoolPref(key, defaultValue);
-        break;
-      case "number":
-        defaultBranch.setIntPref(key, defaultValue);
-        break;
-      case "string":
-        defaultBranch.setCharPref(key, defaultValue);
-        break;
-    }
-  }
-}
 
 // We're supposed to get this type of thing from the OS, and generally we do.
 // But doing so is expensive, so on startup paths we can use this to make the
@@ -119,8 +88,6 @@ export var PdfJs = {
 
     // Listen for when a different pdf handler is chosen.
     Services.obs.addObserver(this, TOPIC_PDFJS_HANDLER_CHANGED);
-
-    initializeDefaultPreferences();
   },
 
   uninit: function uninit() {
@@ -142,7 +109,7 @@ export var PdfJs = {
     }
     if (currentVersion < 2) {
       // cleaning up of unused database preference (see #3994)
-      Services.prefs.clearUserPref(PREF_PREFIX + ".database");
+      Services.prefs.clearUserPref("pdfjs.database");
     }
     Services.prefs.setIntPref(PREF_MIGRATION_VERSION, VERSION);
   },
@@ -244,7 +211,7 @@ export var PdfJs = {
   },
 
   // nsIObserver
-  observe(aSubject, aTopic, aData) {
+  observe() {
     this.checkIsDefault();
   },
 };

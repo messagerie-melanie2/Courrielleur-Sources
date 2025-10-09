@@ -14,9 +14,6 @@ AddonTestUtils.createAppInfo(
 const { TelemetryController } = ChromeUtils.importESModule(
   "resource://gre/modules/TelemetryController.sys.mjs"
 );
-const { TelemetryTestUtils } = ChromeUtils.importESModule(
-  "resource://testing-common/TelemetryTestUtils.sys.mjs"
-);
 
 add_setup({ skip_if: () => IS_ANDROID_BUILD }, function test_setup() {
   // FOG needs a profile directory to put its data in.
@@ -26,24 +23,6 @@ add_setup({ skip_if: () => IS_ANDROID_BUILD }, function test_setup() {
   Services.fog.initializeFOG();
 });
 
-function assertTelemetryScalars(expectedScalars) {
-  if (!IS_ANDROID_BUILD) {
-    let scalars = TelemetryTestUtils.getProcessScalars("parent");
-
-    for (const scalarName of Object.keys(expectedScalars || {})) {
-      equal(
-        scalars[scalarName],
-        expectedScalars[scalarName],
-        `Got the expected value for ${scalarName} scalar`
-      );
-    }
-  } else {
-    info(
-      `Skip assertions on collected samples for ${expectedScalars} on android builds`
-    );
-  }
-}
-
 add_task(async function test_setup() {
   // Ensure that the telemetry scalar definitions are loaded and the
   // AddonManager initialized.
@@ -52,7 +31,7 @@ add_task(async function test_setup() {
 });
 
 add_task(async function test_blocklist_lastModified_rs_scalars() {
-  resetBlocklistTelemetry();
+  Services.fog.testResetFOG();
   const now = Date.now();
 
   const lastEntryTimes = {
@@ -94,12 +73,9 @@ add_task(async function test_blocklist_lastModified_rs_scalars() {
     await rsClient.emit("sync");
   }
 
-  assertTelemetryScalars({
-    "blocklist.lastModified_rs_addons_mlbf": undefined,
-  });
   Assert.equal(
     undefined,
-    testGetValue(Glean.blocklist.lastModifiedRsAddonsMblf)
+    Glean.blocklist.lastModifiedRsAddonsMblf.testGetValue()
   );
 
   info("Test RS addon blocklist lastModified scalar");
@@ -110,13 +86,9 @@ add_task(async function test_blocklist_lastModified_rs_scalars() {
     fakeRemoteSettingsSync(ExtensionBlocklistRS._client, lastEntryTimes.addons),
   ]);
 
-  assertTelemetryScalars({
-    "blocklist.lastModified_rs_addons_mlbf": undefined,
-  });
-
   Assert.equal(
     undefined,
-    testGetValue(Glean.blocklist.lastModifiedRsAddonsMblf)
+    Glean.blocklist.lastModifiedRsAddonsMblf.testGetValue()
   );
 
   await ExtensionBlocklistMLBF.ensureInitialized();
@@ -128,11 +100,8 @@ add_task(async function test_blocklist_lastModified_rs_scalars() {
     ),
   ]);
 
-  assertTelemetryScalars({
-    "blocklist.lastModified_rs_addons_mlbf": lastEntryTimesUTC.addons_mlbf,
-  });
   Assert.equal(
     new Date(lastEntryTimesUTC.addons_mlbf).getTime(),
-    testGetValue(Glean.blocklist.lastModifiedRsAddonsMblf).getTime()
+    Glean.blocklist.lastModifiedRsAddonsMblf.testGetValue().getTime()
   );
 });

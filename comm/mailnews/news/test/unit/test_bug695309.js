@@ -15,16 +15,12 @@
 // For the purposes of this test, we read enough to see if the group command is
 // being misread or not, as it is complicated enough.
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
-);
-
-const { NetworkTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/NetworkTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 var daemon, localserver, server;
@@ -50,9 +46,9 @@ add_setup(async function () {
 
 add_task(async function test_newMsgs() {
   // Start by initializing the folder, and mark some messages as read.
-  let folder = localserver.rootFolder.getChildNamed("test.filter");
+  const folder = localserver.rootFolder.getChildNamed("test.filter");
   Assert.equal(folder.getTotalMessages(false), 0);
-  let asyncUrlListener = new PromiseTestUtils.PromiseUrlListener();
+  const asyncUrlListener = new PromiseTestUtils.PromiseUrlListener();
   folder.getNewMessages(null, asyncUrlListener);
   await asyncUrlListener.promise;
   // Do another folder to use up both connections
@@ -76,11 +72,11 @@ add_task(async function trigger_bug() {
   // present, be overwritten with one from the load queue that causes the
   // confusion. It then loads it again, and should (before the patch that fixes
   // this) read the 200 logon instead of the 211 group.
-  let testFolder = localserver.rootFolder.getChildNamed("test.filter");
-  let asyncUrlListener = new PromiseTestUtils.PromiseUrlListener();
-  let promiseFolderEvent = function (folder, event) {
-    return new Promise((resolve, reject) => {
-      let folderListener = {
+  const testFolder = localserver.rootFolder.getChildNamed("test.filter");
+  const asyncUrlListener = new PromiseTestUtils.PromiseUrlListener();
+  const promiseFolderEvent = function (folder, event) {
+    return new Promise(resolve => {
+      const folderListener = {
         QueryInterface: ChromeUtils.generateQI(["nsIFolderListener"]),
         onFolderEvent(aEventFolder, aEvent) {
           if (
@@ -103,7 +99,7 @@ add_task(async function trigger_bug() {
       );
     });
   };
-  let folderLoadedPromise = promiseFolderEvent(testFolder, "FolderLoaded");
+  const folderLoadedPromise = promiseFolderEvent(testFolder, "FolderLoaded");
 
   localserver.performExpand(null);
 
@@ -116,6 +112,5 @@ add_task(async function trigger_bug() {
 });
 
 add_task(async function cleanUp() {
-  NetworkTestUtils.shutdownServers();
   localserver.closeCachedConnections();
 });

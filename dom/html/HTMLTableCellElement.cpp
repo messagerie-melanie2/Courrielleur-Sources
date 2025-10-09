@@ -8,8 +8,7 @@
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/HTMLTableElement.h"
 #include "mozilla/dom/HTMLTableRowElement.h"
-#include "mozilla/MappedDeclarations.h"
-#include "nsMappedAttributes.h"
+#include "mozilla/MappedDeclarationsBuilder.h"
 #include "nsAttrValueInlines.h"
 #include "celldata.h"
 #include "mozilla/dom/HTMLTableCellElementBinding.h"
@@ -84,17 +83,16 @@ int32_t HTMLTableCellElement::CellIndex() const {
   return -1;
 }
 
-nsMappedAttributes*
+StyleLockedDeclarationBlock*
 HTMLTableCellElement::GetMappedAttributesInheritedFromTable() const {
   if (HTMLTableElement* table = GetTable()) {
     return table->GetAttributesMappedForCell();
   }
-
   return nullptr;
 }
 
 void HTMLTableCellElement::GetAlign(DOMString& aValue) {
-  if (!GetAttr(kNameSpaceID_None, nsGkAtoms::align, aValue)) {
+  if (!GetAttr(nsGkAtoms::align, aValue)) {
     // There's no align attribute, ask the row for the alignment.
     HTMLTableRowElement* row = GetRow();
     if (row) {
@@ -103,12 +101,12 @@ void HTMLTableCellElement::GetAlign(DOMString& aValue) {
   }
 }
 
-static const nsAttrValue::EnumTable kCellScopeTable[] = {
+static constexpr nsAttrValue::EnumTableEntry kCellScopeTable[] = {
     {"row", StyleCellScope::Row},
     {"col", StyleCellScope::Col},
     {"rowgroup", StyleCellScope::Rowgroup},
     {"colgroup", StyleCellScope::Colgroup},
-    {nullptr, 0}};
+};
 
 void HTMLTableCellElement::GetScope(DOMString& aScope) {
   GetEnumAttr(nsGkAtoms::scope, nullptr, aScope);
@@ -162,35 +160,33 @@ bool HTMLTableCellElement::ParseAttribute(int32_t aNamespaceID,
 }
 
 void HTMLTableCellElement::MapAttributesIntoRule(
-    const nsMappedAttributes* aAttributes, MappedDeclarations& aDecls) {
-  MapImageSizeAttributesInto(aAttributes, aDecls);
+    MappedDeclarationsBuilder& aBuilder) {
+  MapImageSizeAttributesInto(aBuilder);
 
-  if (!aDecls.PropertyIsSet(eCSSProperty_white_space)) {
+  if (!aBuilder.PropertyIsSet(eCSSProperty_text_wrap_mode)) {
     // nowrap: enum
-    if (aAttributes->GetAttr(nsGkAtoms::nowrap)) {
+    if (aBuilder.GetAttr(nsGkAtoms::nowrap)) {
       // See if our width is not a nonzero integer width.
-      const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::width);
-      nsCompatibility mode = aDecls.Document()->GetCompatibilityMode();
+      const nsAttrValue* value = aBuilder.GetAttr(nsGkAtoms::width);
+      nsCompatibility mode = aBuilder.Document().GetCompatibilityMode();
       if (!value || value->Type() != nsAttrValue::eInteger ||
           value->GetIntegerValue() == 0 || eCompatibility_NavQuirks != mode) {
-        aDecls.SetKeywordValue(eCSSProperty_white_space,
-                               StyleWhiteSpace::Nowrap);
+        aBuilder.SetKeywordValue(eCSSProperty_text_wrap_mode,
+                                 StyleTextWrapMode::Nowrap);
       }
     }
   }
 
-  nsGenericHTMLElement::MapDivAlignAttributeInto(aAttributes, aDecls);
-  nsGenericHTMLElement::MapVAlignAttributeInto(aAttributes, aDecls);
-  nsGenericHTMLElement::MapBackgroundAttributesInto(aAttributes, aDecls);
-  nsGenericHTMLElement::MapCommonAttributesInto(aAttributes, aDecls);
+  nsGenericHTMLElement::MapDivAlignAttributeInto(aBuilder);
+  nsGenericHTMLElement::MapVAlignAttributeInto(aBuilder);
+  nsGenericHTMLElement::MapBackgroundAttributesInto(aBuilder);
+  nsGenericHTMLElement::MapCommonAttributesInto(aBuilder);
 }
 
 NS_IMETHODIMP_(bool)
 HTMLTableCellElement::IsAttributeMapped(const nsAtom* aAttribute) const {
   static const MappedAttributeEntry attributes[] = {
-    {nsGkAtoms::align},
-    {nsGkAtoms::valign},
-    {nsGkAtoms::nowrap},
+      {nsGkAtoms::align}, {nsGkAtoms::valign}, {nsGkAtoms::nowrap},
 #if 0
     // XXXldb If these are implemented, they might need to move to
     // GetAttributeChangeHint (depending on how, and preferably not).
@@ -199,10 +195,7 @@ HTMLTableCellElement::IsAttributeMapped(const nsAtom* aAttribute) const {
     { nsGkAtoms::headers },
     { nsGkAtoms::scope },
 #endif
-    {nsGkAtoms::width},
-    {nsGkAtoms::height},
-    {nullptr}
-  };
+      {nsGkAtoms::width}, {nsGkAtoms::height}, {nullptr}};
 
   static const MappedAttributeEntry* const map[] = {
       attributes,

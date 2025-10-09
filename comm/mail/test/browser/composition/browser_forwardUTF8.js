@@ -9,25 +9,22 @@
 "use strict";
 
 var { close_compose_window, get_compose_body, open_compose_with_forward } =
-  ChromeUtils.import("resource://testing-common/mozmill/ComposeHelpers.jsm");
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+  );
 var {
   assert_selected_and_displayed,
   be_in_folder,
   create_folder,
   get_about_message,
-  mc,
   open_message_from_file,
   press_delete,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-var { click_menus_in_sequence, close_window } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
-);
-
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { click_menus_in_sequence } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/WindowHelpers.sys.mjs"
 );
 
 var folderToSendFrom;
@@ -35,10 +32,11 @@ var folderToSendFrom;
 add_setup(async function () {
   requestLongerTimeout(2);
   folderToSendFrom = await create_folder("FolderWithUTF8");
+  registerCleanupFunction(() => folderToSendFrom.deleteSelf(null));
 });
 
 function check_content(window) {
-  let mailBody = get_compose_body(window);
+  const mailBody = get_compose_body(window);
 
   let node = mailBody.firstChild;
   while (node) {
@@ -63,26 +61,26 @@ function check_content(window) {
 }
 
 async function forwardDirect(aFilePath) {
-  let file = new FileUtils.File(getTestFilePath(`data/${aFilePath}`));
-  let msgc = await open_message_from_file(file);
+  const file = new FileUtils.File(getTestFilePath(`data/${aFilePath}`));
+  const msgc = await open_message_from_file(file);
 
-  let cwc = open_compose_with_forward(msgc);
+  const cwc = await open_compose_with_forward(msgc);
 
   check_content(cwc);
 
-  close_compose_window(cwc);
-  close_window(msgc);
+  await close_compose_window(cwc);
+  await BrowserTestUtils.closeWindow(msgc);
 }
 
 async function forwardViaFolder(aFilePath) {
   await be_in_folder(folderToSendFrom);
 
-  let file = new FileUtils.File(getTestFilePath(`data/${aFilePath}`));
-  let msgc = await open_message_from_file(file);
-  let aboutMessage = get_about_message(msgc.window);
+  const file = new FileUtils.File(getTestFilePath(`data/${aFilePath}`));
+  const msgc = await open_message_from_file(file);
+  const aboutMessage = get_about_message(msgc);
 
   // Copy the message to a folder.
-  let documentChild =
+  const documentChild =
     aboutMessage.document.getElementById("messagepane").contentDocument
       .documentElement;
   EventUtils.synthesizeMouseAtCenter(
@@ -98,10 +96,13 @@ async function forwardViaFolder(aFilePath) {
       { label: "FolderWithUTF8" },
     ]
   );
-  close_window(msgc);
+  await TestUtils.waitForCondition(
+    () => folderToSendFrom.getTotalMessages(false) == 1,
+    "waiting for copy to folder to complete"
+  );
 
-  let msg = select_click_row(0);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   Assert.ok(
     get_about_message()
@@ -109,13 +110,14 @@ async function forwardViaFolder(aFilePath) {
       .contentDocument.body.textContent.includes("áóúäöüß")
   );
 
-  let fwdWin = open_compose_with_forward();
+  const fwdWin = await open_compose_with_forward();
 
   check_content(fwdWin);
 
-  close_compose_window(fwdWin);
+  await close_compose_window(fwdWin);
 
-  press_delete(mc);
+  await press_delete(window);
+  await BrowserTestUtils.closeWindow(msgc);
 }
 
 add_task(async function test_utf8_forwarding_from_opened_file() {

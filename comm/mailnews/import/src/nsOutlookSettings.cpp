@@ -10,12 +10,12 @@
 #include "nsCOMPtr.h"
 #include "nscore.h"
 #include "nsMsgUtils.h"
-#include "nsOutlookImport.h"
 #include "nsIMsgAccountManager.h"
 #include "nsIMsgAccount.h"
 #include "nsIImportSettings.h"
 #include "nsOutlookSettings.h"
-#include "nsISmtpService.h"
+#include "nsIMsgOutgoingServerService.h"
+#include "nsIMsgOutgoingServer.h"
 #include "nsISmtpServer.h"
 #include "nsOutlookStringBundle.h"
 #include "ImportDebug.h"
@@ -23,7 +23,6 @@
 #include "nsMsgI18N.h"
 #include <windows.h>
 #include "nsIWindowsRegKey.h"
-#include "nsComponentManagerUtils.h"
 #include "nsNativeCharsetUtils.h"
 
 class OutlookSettings {
@@ -47,10 +46,11 @@ class OutlookSettings {
   static nsresult SetSmtpServer(nsIMsgAccountManager* aMgr, nsIMsgAccount* aAcc,
                                 nsIMsgIdentity* aId, const nsString& aServer,
                                 const nsString& aUser);
-  static nsresult SetSmtpServerKey(nsIMsgIdentity* aId, nsISmtpServer* aServer);
+  static nsresult SetSmtpServerKey(nsIMsgIdentity* aId,
+                                   nsIMsgOutgoingServer* aServer);
   static nsresult GetAccountName(nsIWindowsRegKey* aKey,
-                                 const nsString& aDefaultName,
-                                 nsAString& aAccountName);
+                                 const nsCString& aDefaultName,
+                                 nsACString& aAccountName);
 };
 
 #define OUTLOOK2003_REGISTRY_KEY \
@@ -238,11 +238,16 @@ bool OutlookSettings::DoImport(nsIMsgAccount** aAccount) {
 }
 
 nsresult OutlookSettings::GetAccountName(nsIWindowsRegKey* aKey,
-                                         const nsString& aDefaultName,
-                                         nsAString& aAccountName) {
+                                         const nsCString& aDefaultName,
+                                         nsACString& aAccountName) {
   nsresult rv;
-  rv = aKey->ReadStringValue(u"Account Name"_ns, aAccountName);
-  if (NS_FAILED(rv)) aAccountName.Assign(aDefaultName);
+  nsAutoString accountName;
+  rv = aKey->ReadStringValue(u"Account Name"_ns, accountName);
+  if (NS_SUCCEEDED(rv)) {
+    aAccountName.Assign(NS_ConvertUTF16toUTF8(accountName));
+  } else {
+    aAccountName.Assign(aDefaultName);
+  }
 
   return NS_OK;
 }
@@ -277,8 +282,8 @@ bool OutlookSettings::DoIMAPServer(nsIMsgAccountManager* aMgr,
       IMPORT_LOG2("Created IMAP server named: %s, userName: %s\n",
                   nativeServerName.get(), nativeUserName.get());
 
-      nsAutoString prettyName;
-      if (NS_SUCCEEDED(GetAccountName(aKey, aServerName, prettyName)))
+      nsAutoCString prettyName;
+      if (NS_SUCCEEDED(GetAccountName(aKey, nativeServerName, prettyName)))
         rv = in->SetPrettyName(prettyName);
       // We have a server, create an account.
       nsCOMPtr<nsIMsgAccount> account;
@@ -339,7 +344,7 @@ bool OutlookSettings::DoPOP3Server(nsIMsgAccountManager* aMgr,
     // XXX: We may need to move this local folder creation code to the generic
     // nsImportSettings code if the other import modules end up needing to do
     // this too. if Local Folders does not exist already, create it
-    rv = aMgr->CreateLocalMailAccount();
+    rv = aMgr->CreateLocalMailAccount(nullptr);
     if (NS_FAILED(rv)) {
       IMPORT_LOG0("*** Failed to create Local Folders!\n");
       return false;
@@ -361,8 +366,8 @@ bool OutlookSettings::DoPOP3Server(nsIMsgAccountManager* aMgr,
   IMPORT_LOG2("Created POP3 server named: %s, userName: %s\n",
               nativeServerName.get(), nativeUserName.get());
 
-  nsString prettyName;
-  rv = GetAccountName(aKey, aServerName, prettyName);
+  nsAutoCString prettyName;
+  rv = GetAccountName(aKey, nativeServerName, prettyName);
   if (NS_FAILED(rv)) return false;
 
   rv = in->SetPrettyName(prettyName);
@@ -456,9 +461,9 @@ void OutlookSettings::SetIdentities(nsIMsgAccountManager* aMgr,
 }
 
 nsresult OutlookSettings::SetSmtpServerKey(nsIMsgIdentity* aId,
-                                           nsISmtpServer* aServer) {
+                                           nsIMsgOutgoingServer* aServer) {
   nsAutoCString smtpServerKey;
-  aServer->GetKey(getter_Copies(smtpServerKey));
+  aServer->GetKey(smtpServerKey);
   return aId->SetSmtpServerKey(smtpServerKey);
 }
 
@@ -468,31 +473,34 @@ nsresult OutlookSettings::SetSmtpServer(nsIMsgAccountManager* aMgr,
                                         const nsString& aServer,
                                         const nsString& aUser) {
   nsresult rv;
-  nsCOMPtr<nsISmtpService> smtpService(
-      do_GetService("@mozilla.org/messengercompose/smtp;1", &rv));
+  nsCOMPtr<nsIMsgOutgoingServerService> outgoingServerService(do_GetService(
+      "@mozilla.org/messengercompose/outgoingserverservice;1", &rv));
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsAutoCString nativeUserName;
   NS_CopyUnicodeToNative(aUser, nativeUserName);
   nsAutoCString nativeServerName;
   NS_CopyUnicodeToNative(aServer, nativeServerName);
-  nsCOMPtr<nsISmtpServer> foundServer;
-  rv = smtpService->FindServer(nativeUserName.get(), nativeServerName.get(),
-                               getter_AddRefs(foundServer));
+  nsCOMPtr<nsIMsgOutgoingServer> foundServer;
+  rv = outgoingServerService->FindServer(
+      nativeUserName, nativeServerName, "smtp"_ns, getter_AddRefs(foundServer));
   if (NS_SUCCEEDED(rv) && foundServer) {
     if (aId) SetSmtpServerKey(aId, foundServer);
     IMPORT_LOG1("SMTP server already exists: %s\n", nativeServerName.get());
     return rv;
   }
 
-  nsCOMPtr<nsISmtpServer> smtpServer;
-  rv = smtpService->CreateServer(getter_AddRefs(smtpServer));
+  nsCOMPtr<nsIMsgOutgoingServer> server;
+  rv = outgoingServerService->CreateServer("smtp"_ns, getter_AddRefs(server));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  smtpServer->SetHostname(nativeServerName);
-  if (!aUser.IsEmpty()) smtpServer->SetUsername(nativeUserName);
+  nsCOMPtr<nsISmtpServer> smtpServer = do_QueryInterface(server);
+  rv = smtpServer->SetHostname(nativeServerName);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  if (aId) SetSmtpServerKey(aId, smtpServer);
+  if (!aUser.IsEmpty()) server->SetUsername(nativeUserName);
+
+  if (aId) SetSmtpServerKey(aId, server);
 
   // TODO SSL, auth method
   IMPORT_LOG1("Created new SMTP server: %s\n", nativeServerName.get());

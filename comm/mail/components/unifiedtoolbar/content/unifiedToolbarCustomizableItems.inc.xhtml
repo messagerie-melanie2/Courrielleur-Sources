@@ -3,12 +3,15 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 <html:template id="searchBarItemTemplate"
   xmlns="http://www.w3.org/1999/xhtml">
-  <global-search-bar data-l10n-id="search-bar-item"
+  <global-search-bar data-l10n-id="search-bar-item2"
                      data-l10n-attrs="label"
                      aria-keyshortcuts="Control+K">
-    <span slot="placeholder" data-l10n-id="search-bar-placeholder-with-key2"></span>
+    <span slot="placeholder" data-l10n-id="search-bar-placeholder-with-key2" class="kbd-container"></span>
+    <img slot="clear-button"
+         class="clear-button-icon"
+         src=""/>
     <img data-l10n-id="search-bar-button"
-         slot="button"
+         slot="search-button"
          class="search-button-icon"
          src="" />
   </global-search-bar>
@@ -58,7 +61,7 @@
 
 <html:template id="getMessagesTemplate"
                xmlns="http://www.w3.org/1999/xhtml">
-  <button is="unified-toolbar-button"
+  <button is="get-messages-button"
           command="cmd_getMsgsForAuthAccounts"
           label-id="toolbar-get-messages-label"
           data-l10n-id="toolbar-get-messages"></button>
@@ -363,4 +366,36 @@
 <html:template id="throbberTemplate"
                xmlns="http://www.w3.org/1999/xhtml">
   <img class="throbber-icon" alt="" data-l10n-id="toolbar-throbber" />
+</html:template>
+
+<html:template id="createContactTemplate"
+               xmlns="http://www.w3.org/1999/xhtml">
+  <button is="unified-toolbar-button"
+          command="cmd_newCard"
+          label-id="toolbar-create-contact-label"
+          data-l10n-id="toolbar-create-contact"></button>
+</html:template>
+
+<html:template id="createAddressBookTemplate"
+               xmlns="http://www.w3.org/1999/xhtml">
+  <button is="create-address-book-button"
+          popup="unifiedToolbarCreateBook"
+          label-id="toolbar-create-address-book-label"
+          data-l10n-id="toolbar-create-address-book"></button>
+</html:template>
+
+<html:template id="createListTemplate"
+               xmlns="http://www.w3.org/1999/xhtml">
+  <button is="unified-toolbar-button"
+          command="cmd_createList"
+          label-id="toolbar-create-list-label"
+          data-l10n-id="toolbar-create-list"></button>
+</html:template>
+
+<html:template id="importContactsTemplate"
+               xmlns="http://www.w3.org/1999/xhtml">
+  <button is="unified-toolbar-button"
+          command="cmd_importContacts"
+          label-id="toolbar-import-contacts-label"
+          data-l10n-id="toolbar-import-contacts"></button>
 </html:template>

@@ -18,7 +18,7 @@ module.exports = {
   // eslint-disable-next-line eslint-plugin/prefer-message-ids
   meta: {
     docs: {
-      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/import-browser-window-globals.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/rules/import-browser-window-globals.html",
     },
     schema: [],
     type: "problem",
@@ -39,7 +39,7 @@ module.exports = {
           for (let global in browserWindowEnv.globals) {
             helpers.addVarToScope(
               global,
-              context.getScope(),
+              context.sourceCode.getScope(node),
               browserWindowEnv.globals[global]
             );
           }

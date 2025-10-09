@@ -3,102 +3,181 @@
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
 :root {
+  --listbox-border-radius: 3px;
   --listbox-selected-outline: none;
-  --tree-header-table-height: 30px;
-  --tree-header-cell-padding: 6px;
-  --tree-header-cell-indent: 0;
   --list-item-min-height: 26px;
   --list-item-buttons-size: 22px;
+  --indicator-width: 4px;
+  --indicator-height-offset: 6px;
+  --indicator-background: transparent;
+  --indicator-border: transparent;
+  --indicator-inline-start: 2px;
   --table-header-cell-icon-width: 24px;
   --table-header-cell-icon-min-width: 24px;
   --table-row-cell-img-margin-inline-start: 6px;
   --table-row-cell-button-margin-inline-start: 4px;
-}
+  --tree-card-block: 2px;
+  --tree-card-inline: 8px;
+  --tree-card-content-radius: 6px;
+  --tree-card-content-inline: 6px;
+  --tree-header-table-height: calc(round(up, 1.7em, 1px) + 7px);
+  --tree-header-cell-padding: 6px;
+  --tree-header-cell-indent: 0;
 
-:root[uidensity="compact"] {
-  --tree-header-table-height: 27px;
-  --tree-header-cell-padding: 3px;
-  --tree-header-cell-indent: 3px;
-  --list-item-min-height: 18px;
-  --list-item-buttons-size: 18px;
-  --table-header-cell-icon-width: 18px;
-  --table-header-cell-icon-min-width: 18px;
-  --table-header-cell-icon-button-padding: 0;
-  --table-row-cell-img-margin-inline-start: 3px;
-  --table-row-cell-button-margin-inline-start: 1px;
-}
+  &[uidensity="compact"] {
+    --list-item-min-height: 18px;
+    --list-item-buttons-size: 18px;
+    --indicator-width: 3px;
+    --indicator-inline-start: 1px;
+    --table-header-cell-icon-width: 18px;
+    --table-header-cell-icon-min-width: 18px;
+    --table-header-cell-icon-button-padding: 0;
+    --table-row-cell-img-margin-inline-start: 3px;
+    --table-row-cell-button-margin-inline-start: 1px;
+    --tree-card-block: 1px;
+    --tree-card-inline: 6px;
+    --tree-card-content-inline: 3px;
+    --tree-card-content-radius: 3px;
+    --tree-header-table-height: max(27px, round(up, 1.4em, 1px));
+    --tree-header-cell-padding: 3px;
+    --tree-header-cell-indent: 3px;
+  }
 
-:root[uidensity="touch"] {
-  --tree-header-table-height: 36px;
-  --tree-header-cell-padding: 9px;
-  --tree-header-cell-indent: -3px;
-  --list-item-min-height: 32px;
-  --table-header-cell-icon-width: 33px;
-  --table-header-cell-icon-min-width: 33px;
-  --table-row-cell-img-margin-inline-start: 11px;
-  --table-row-cell-button-margin-inline-start: 9px;
-}
+  &[uidensity="touch"] {
+    --list-item-min-height: 32px;
+    --table-header-cell-icon-width: 33px;
+    --table-header-cell-icon-min-width: 33px;
+    --table-row-cell-img-margin-inline-start: 11px;
+    --table-row-cell-button-margin-inline-start: 9px;
+    --tree-card-block: 3px;
+    --tree-card-inline: 8px;
+    --tree-card-content-inline: 9px;
+    --tree-header-table-height: calc(round(up, 2em, 1px) + 13px);
+    --tree-header-cell-padding: 9px;
+    --tree-header-cell-indent: -3px;
+  }
 
-@media not (prefers-contrast) {
-  :root {
-    --listbox-color: var(--color-gray-80);
-    --listbox-selected-bg: var(--color-gray-20);
+  @media not (forced-colors) {
+    --tree-focus-outline: transparent;
+    --tree-pane-background: light-dark(var(--color-gray-05), var(--color-black));
+    --tree-card-background: var(--layout-background-0);
+    --tree-card-border: light-dark(
+      color-mix(in srgb, var(--tree-view-bg) 90%, black),
+      color-mix(in srgb, var(--tree-view-bg) 90%, white)
+    );
+    --tree-card-border-hover: color-mix(in srgb, var(--selected-item-color) 60%, transparent);
+    --tree-card-border-focus: var(--selected-item-color);
+    --tree-card-hover: var(--selected-item-color);
+    --tree-card-focus: color-mix(in srgb, var(--selected-item-color) 20%, transparent);
+    /* Selection Colors */
+    --tree-card-background-current: light-dark(
+      color-mix(in srgb, var(--selected-item-color) 5%, var(--tree-view-bg)),
+      color-mix(in srgb, var(--selected-item-color) 10%, var(--tree-view-bg))
+    );
+    --tree-card-background-selected: light-dark(
+      color-mix(in srgb, var(--selected-item-color) 7%, var(--tree-view-bg)),
+      color-mix(in srgb, var(--selected-item-color) 14%, var(--tree-view-bg))
+    );
+    --tree-card-background-selected-current: light-dark(
+      color-mix(in srgb, var(--selected-item-color) 15%, var(--tree-view-bg)),
+      color-mix(in srgb, var(--selected-item-color) 30%, var(--tree-view-bg))
+    );
+    --tree-card-border-selected: color-mix(in srgb, var(--selected-item-color) 30%, transparent);
+    --indicator-background-selected: var(--selected-item-color);
+    --indicator-border-selected: light-dark(
+      color-mix(in srgb, var(--selected-item-color) 80%, black),
+      color-mix(in srgb, var(--selected-item-color) 80%, white)
+    );
+    /* Unfocused Colors */
+    --tree-card-background-current-unfocused: light-dark(
+      color-mix(in srgb, var(--layout-background-0) 98%, var(--color-gray-50)),
+      color-mix(in srgb, var(--layout-background-0) 88%, var(--color-gray-50))
+    );
+    --tree-card-background-selected-unfocused: light-dark(
+      color-mix(in srgb, var(--layout-background-0) 95%, var(--color-gray-50)),
+      color-mix(in srgb, var(--layout-background-0) 85%, var(--color-gray-50))
+    );
+    --tree-card-background-selected-current-unfocused: light-dark(
+      color-mix(in srgb, var(--layout-background-0) 90%, var(--color-gray-50)),
+      color-mix(in srgb, var(--layout-background-0) 80%, var(--color-gray-50))
+    );
+    --tree-card-border-selected-unfocused: light-dark(var(--color-gray-40), var(--color-gray-80));
+    --indicator-background-selected-unfocused: light-dark(var(--color-gray-30), var(--color-gray-70));
+    --indicator-border-selected-unfocused: light-dark(var(--color-gray-40), var(--color-gray-60));
+
+    --listbox-color: light-dark(
+      var(--sidebar-text-color, var(--color-gray-80)),
+      var(--sidebar-text-color, var(--color-gray-05))
+    );
+    --listbox-selected-bg: light-dark(var(--color-gray-30), var(--color-gray-70));
     --listbox-focused-selected-bg: var(--selected-item-color);
     --listbox-selected-color: var(--selected-item-text-color);
     --listbox-focused-selected-color: var(--selected-item-text-color);
-    --listbox-hover: color-mix(in srgb, transparent 80%, var(--listbox-focused-selected-bg));
+    --listbox-hover: color-mix(in srgb, var(--selected-item-color) 10%, transparent);
     --listbox-border-type: dashed;
-    --tree-view-bg: var(--color-white);
-    --tree-view-color: var(--color-ink-90);
-    --tree-view-header-hover-bg: var(--color-gray-20);
-    --tree-view-header-hover-active-bg: var(--color-gray-30);
-    --tree-view-header-border-color: var(--color-gray-30);
-    --tree-row-delete-button-color: var(--color-red-60);
+    --tree-view-bg: light-dark(var(--color-white), var(--color-gray-90));
+    --tree-view-color: light-dark(var(--color-ink-90), var(--color-gray-30));
+    --tree-view-header-hover-bg: light-dark(var(--color-gray-20), var(--color-gray-70));
+    --tree-view-header-hover-active-bg: light-dark(var(--color-gray-30), var(--color-gray-90));
+    --tree-view-header-border-color: var(--splitter-color);
+    --tree-row-delete-button-color: light-dark(var(--color-red-60), var(--color-red-40));
+    --unread-color: var(--layout-color-0);
   }
 
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --listbox-color: var(--color-gray-05);
-      --listbox-selected-bg: var(--color-gray-70);
-      --listbox-focused-selected-bg: var(--color-blue-60);
-      --tree-view-bg: var(--color-gray-90);
-      --tree-view-color: var(--color-gray-30);
-      --tree-view-header-hover-bg: var(--color-gray-70);
-      --tree-view-header-hover-active-bg: var(--color-gray-90);
-      --tree-view-header-border-color: var(--splitter-color);
-      --tree-row-delete-button-color: var(--color-red-40);
-    }
-  }
-}
+  @media (forced-colors) {
+    --tree-focus-outline: SelectedItem;
+    --tree-view-bg: Canvas;
+    --tree-pane-background: color-mix(in srgb, Canvas 90%, CanvasText);
+    --tree-card-background: Canvas;
+    --tree-card-border: CanvasText;
+    --tree-card-border-hover: SelectedItem;
+    --tree-card-hover: transparent;
+    --tree-card-focus: SelectedItem;
+    /* Selection Colors */
+    --tree-card-background-current: color-mix(in srgb, Canvas 95%, SelectedItem);
+    --tree-card-background-selected: color-mix(in srgb, Canvas 90%, SelectedItem);
+    --tree-card-background-selected-current: SelectedItem;
+    --tree-card-border-selected: color-mix(in srgb, CanvasText 30%, SelectedItem);
+    --tree-card-border-focus: color-mix(in srgb, CanvasText 20%, SelectedItem);
+    --indicator-background-selected: SelectedItem;
+    --indicator-border-selected: color-mix(in srgb, CanvasText 30%, SelectedItem);
+    /* Unfocused Colors */
+    --tree-card-background-current-unfocused: color-mix(in srgb, Canvas 90%, CanvasText);
+    --tree-card-background-selected-unfocused: color-mix(in srgb, Canvas 80%, CanvasText);
+    --tree-card-background-selected-current-unfocused: color-mix(in srgb, Canvas 70%, CanvasText);
+    --tree-card-border-selected-unfocused: CanvasText;
+    --indicator-background-selected-unfocused: color-mix(in srgb, Canvas 70%, CanvasText);
+    --indicator-border-selected-unfocused: color-mix(in srgb, Canvas 50%, CanvasText);
 
-@media (prefers-contrast) {
-  :root {
+    --tree-view-color: CanvasText;
+    --tree-view-header-hover-bg: color-mix(in srgb, Field 70%, hsl(0, 0%, 50%));
+    --tree-view-header-border-color: ThreeDShadow;
     --listbox-color: currentColor;
     --listbox-selected-color: SelectedItemText;
     --listbox-focused-selected-bg: SelectedItem;
-    --listbox-selected-bg: color-mix(in srgb, transparent 80%, var(--listbox-focused-selected-bg));
+    --listbox-hover: color-mix(in srgb, var(--tree-view-bg) 90%, SelectedItem);
+    --listbox-selected-bg: color-mix(in srgb, var(--tree-view-bg) 80%, var(--listbox-focused-selected-bg));
     --listbox-selected-outline: 2px solid SelectedItem;
     --listbox-border-type: solid;
-    --tree-view-bg: Field;
-    --tree-view-color: FieldText;
-    --tree-view-header-hover-bg: color-mix(in srgb, Field 70%, hsl(0, 0%, 50%));
-    --tree-view-header-border-color: ThreeDShadow;
+    --icon-color-prefers-contrast-selected-focused: SelectedItemText;
+  }
+
+  &[lwt-tree] {
+    --listbox-selected-bg: color-mix(in srgb, var(--tree-view-bg) 70%, var(--sidebar-highlight-background-color));
+    --listbox-hover: color-mix(in srgb, var(--tree-view-bg) 80%, var(--sidebar-highlight-background-color));
+    --listbox-focused-selected-bg: var(--sidebar-highlight-background-color, var(--selected-item-color));
+    --listbox-selected-color: var(--sidebar-highlight-text-color, var(--selected-item-text-color));
   }
 }
 
-:root[lwt-tree] {
-  --listbox-selected-bg: color-mix(in srgb, transparent 70%, var(--sidebar-highlight-background-color));
-  --listbox-hover: color-mix(in srgb, transparent 80%, var(--sidebar-highlight-background-color));
-  --listbox-focused-selected-bg: var(--sidebar-highlight-background-color, var(--selected-item-color));
-  --listbox-selected-color: var(--sidebar-highlight-text-color, var(--selected-item-text-color));
-}
-
 .tree-view-scrollable-container {
+  position: relative;
   display: flex;
   align-items: start;
-  overflow-y: scroll;
+  overflow-y: auto;
   overscroll-behavior-y: none;
   height: 100%;
+  background-color: var(--tree-view-bg);
 }
 
 [is="tree-view-table"] img {
@@ -107,67 +186,198 @@
   stroke: currentColor;
 }
 
-[is="tree-view-table-body"]:focus {
-  outline: none;
-}
+[is="tree-view-table-body"] {
 
-[is="tree-view-table-body"] > * {
-  cursor: default;
-}
-
-[is="tree-view-table-body"] > *:hover {
-  background-color: var(--listbox-hover);
-}
-
-@media (prefers-contrast) {
-  [is="tree-view-table-body"] > *:hover {
-    outline: var(--listbox-selected-outline);
-    outline-offset: -2px;
+  &:focus {
+    outline: none;
   }
-}
 
-[is="tree-view-table-body"] > .selected {
-  background-color: var(--listbox-selected-bg);
-}
+  & > * {
+    cursor: default;
+  }
 
-[is="tree-view-table-body"]:focus > .selected,
-[is="tree-view-table-body"]:focus-within > .selected {
-  color: var(--listbox-selected-color);
-}
+  /* Table mode */
 
-[is="tree-view-table-body"]:focus > .current:not(.selected),
-[is="tree-view-table-body"]:focus-within > .current:not(.selected) {
-  outline: 1px var(--listbox-border-type) var(--listbox-focused-selected-bg);
-  outline-offset: -1px;
-}
+  & > .table-layout {
 
-[is="tree-view-table-body"]:focus > .selected,
-[is="tree-view-table-body"]:focus-within > .selected,
-[is="tree-view-table-body"] > .selected:focus-within {
-  color: var(--listbox-selected-color);
-  background-color: var(--listbox-focused-selected-bg);
-}
+    &:hover {
+      background-color: var(--listbox-hover);
 
-.multi-selected [is="tree-view-table-body"] > .selected.current,
-.multi-selected [is="tree-view-table-body"]:focus > .selected.current {
-  outline: 1px var(--listbox-border-type) var(--listbox-selected-color);
-  outline-offset: -1px;
-}
+      @media (forced-colors) {
+        outline: var(--listbox-selected-outline);
+        outline-offset: -2px;
+      }
+    }
 
-[is="tree-view-table-body"]:focus > .selected img,
-[is="tree-view-table-body"]:focus-within > .selected img,
-[is="tree-view-table-body"] > .selected:focus-within img {
-  fill: color-mix(in srgb, currentColor 40%, transparent);
-  stroke: currentColor;
-}
+    &.selected {
+      background-color: var(--listbox-selected-bg);
+    }
 
-[is="tree-view-table-body"]:focus > .selected .tree-view-row-thread img,
-[is="tree-view-table-body"]:focus-within > .selected .tree-view-row-thread img {
-  stroke: var(--listbox-selected-color);
-}
+    /* Right click state styles */
+    &.context-menu-target:not(.selected) {
+      background-color: color-mix(in srgb, var(--treeitem-background-active) 10%, transparent);
+      outline: 1px var(--listbox-border-type) var(--listbox-focused-selected-bg);
+      outline-offset: -1px;
+    }
+  }
 
-tr:is([is="thread-row"], [is="thread-card"]).selected .twisty {
-  color: currentColor;
+  &:is(:focus, :focus-within) {
+
+    & > .table-layout {
+      &.selected {
+        color: var(--listbox-selected-color);
+      }
+
+      &.current:not(.selected) {
+        outline: 1px var(--listbox-border-type) var(--listbox-focused-selected-bg);
+        outline-offset: -1px;
+      }
+    }
+  }
+
+  /* Thread row selection styles */
+  &:is(:focus, :focus-within) > .table-layout.selected,
+  & > .table-layout.selected:focus-within {
+    color: var(--listbox-selected-color);
+    background-color: var(--listbox-focused-selected-bg);
+  }
+
+  .multi-selected & {
+    &,
+    &:focus {
+      & > .table-layout.selected.current {
+        outline: 1px var(--listbox-border-type) var(--listbox-selected-color);
+        outline-offset: -1px;
+      }
+    }
+  }
+
+  /* Card mode */
+
+  & > .card-layout {
+    background-color: var(--tree-pane-background);
+
+    @media (prefers-reduced-motion: no-preference) {
+      & .card-container {
+        transition: background-color 300ms ease, color 300ms ease,
+                    border-color 300ms ease, box-shadow 300ms ease;
+
+        &::before {
+          transition: transform 200ms ease, background-color 300ms ease, border-color 300ms;
+        }
+      }
+    }
+
+    /* Hover */
+    &:is(:hover, :focus, :focus-within) {
+      --tree-card-border: var(--tree-card-border-hover);
+      --tree-card-background: var(--tree-card-background-current);
+
+      & .card-container {
+        box-shadow: 0 0 5px color-mix(in srgb, var(--tree-card-hover) 50%, transparent);
+      }
+    }
+  }
+
+  /* Selection */
+  &:is(:focus, :focus-within) .card-layout {
+
+    &.current {
+      --tree-card-background: var(--tree-card-background-current);
+      --tree-card-border: var(--tree-card-focus);
+    }
+
+    &.selected {
+      --tree-card-background: var(--tree-card-background-selected);
+      --tree-card-border: var(--tree-card-border-selected);
+      --indicator-background: var(--indicator-background-selected);
+      --indicator-border: var(--indicator-border-selected);
+
+      &.current {
+        --tree-card-background: var(--tree-card-background-selected-current);
+        --tree-card-border: var(--tree-card-border-focus);
+      }
+
+      .card-container::before {
+        transform: translateX(0);
+      }
+    }
+
+    @media (forced-colors) {
+      &.current.selected .card-container {
+        color: SelectedItemText;
+      }
+    }
+  }
+
+  /* Unfocused */
+  &:not(:focus, :focus-within) .card-layout {
+
+    &.current {
+      --tree-card-background: var(--tree-card-background-current-unfocused);
+    }
+
+    &.selected {
+      --tree-card-background: var(--tree-card-background-selected-unfocused);
+      --tree-card-border: var(--tree-card-border-selected-unfocused);
+      --indicator-background: var(--indicator-background-selected-unfocused);
+      --indicator-border: var(--indicator-border-selected-unfocused);
+
+      .card-container::before {
+        transform: translateX(0);
+      }
+    }
+
+    &.selected.current {
+      --tree-card-background: var(--tree-card-background-selected-current-unfocused);
+    }
+  }
+
+  @media (forced-colors) {
+    & .card-layout:is(:hover, :focus, :focus-within, :focus-visible, .current) .card-container {
+      outline: 2px solid var(--tree-focus-outline);
+      outline-offset: -3px;
+    }
+
+    & .card-layout.current.selected .card-container {
+      outline-offset: -4px;
+      outline-color: SelectedItemText;
+    }
+  }
+
+  & > .card-layout > td {
+    padding-inline: var(--tree-card-inline);
+    padding-block: var(--tree-card-block);
+
+    @media (-moz-overlay-scrollbars) {
+      padding-inline-end: max(env(scrollbar-inline-size), var(--tree-card-inline));
+    }
+
+    & > .card-container {
+      height: 100%;
+      background-color: var(--tree-card-background);
+      border: 1px solid var(--tree-card-border);
+      border-radius: var(--tree-card-content-radius);
+      padding-inline: var(--tree-card-content-inline);
+
+      &::before {
+        position: absolute;
+        content: "";
+        inset-block: var(--indicator-height-offset);
+        inset-inline-start: var(--indicator-inline-start);
+        background-color: var(--indicator-background);
+        border: 1px solid var(--indicator-border);
+        border-radius: var(--indicator-width);
+        width: var(--indicator-width);
+        box-sizing: border-box;
+        transform: translateX(calc(var(--tree-card-inline) * -1));
+      }
+
+      &:dir(rtl)::before {
+        transform: translateX(var(--tree-card-inline));
+      }
+    }
+  }
 }
 
 /* Resizable table columns */
@@ -178,12 +388,12 @@ table[is="tree-view-table"] {
   border-spacing: 0;
   line-height: 1;
   font-size: 1rem;
-  background-color: var(--tree-view-bg);
   color: var(--tree-view-color);
-}
 
-body:not(.layout-table) thead[is="tree-view-table-header"] {
-  display: none;
+  /* stylelint-disable-next-line media-query-no-invalid */
+  @media -moz-pref("mail.threadpane.table.horizontal_scroll") {
+    flex-basis: auto;
+  }
 }
 
 thead[is="tree-view-table-header"] {
@@ -192,53 +402,53 @@ thead[is="tree-view-table-header"] {
   inset-inline: 0;
   inset-block-start: 0;
   z-index: 1;
-}
 
-thead[is="tree-view-table-header"]::after {
-  content: '';
-  position: absolute;
-  inset-inline: 0;
-  height: 0;
-  z-index: 1;
-  border-bottom: 1px solid var(--sidebar-border-color, var(--tree-view-header-border-color));
-}
+  &::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    height: 0;
+    z-index: 1;
+    border-bottom: 1px solid var(--sidebar-border-color, var(--tree-view-header-border-color));
+  }
 
-thead[is="tree-view-table-header"] hr[is="pane-splitter"] {
-  position: absolute;
-  inset-inline-end: 4px;
-  inset-block: 3px;
-}
+  & hr[is="pane-splitter"] {
+    position: absolute;
+    inset-inline-end: 4px;
+    inset-block: 3px;
 
-thead[is="tree-view-table-header"] hr[is="pane-splitter"]:hover:not(:active,[disabled]) {
-  background-color: var(--selected-item-color);
+    &:hover:not(:active,[disabled]) {
+      background-color: var(--selected-item-color);
+    }
+  }
 }
 
 th[is="tree-view-table-header-cell"] {
   height: var(--tree-header-table-height);
-  min-width: 7ch;
+  min-width: 5ch;
   padding: 0;
   position: relative;
   overflow: hidden;
   background-color: var(--tree-view-bg);
-}
 
-th[is="tree-view-table-header-cell"][data-type="icon"] {
-  width: var(--table-header-cell-icon-width);
-  min-width: var(--table-header-cell-icon-min-width);
-}
+  &[data-type="icon"] {
+    width: var(--table-header-cell-icon-width);
+    min-width: var(--table-header-cell-icon-min-width);
 
-th[is="tree-view-table-header-cell"][data-type="icon"] button {
-  padding: var(--table-header-cell-icon-button-padding, var(--tree-header-cell-padding));
-}
+    & button {
+      padding: var(--table-header-cell-icon-button-padding, var(--tree-header-cell-padding));
+    }
 
-th[is="tree-view-table-header-cell"][data-type="icon"] img {
-  display: block;
-  margin-inline: auto;
-}
+    & img {
+      display: block;
+      margin-inline: auto;
+    }
+  }
 
-th[is="tree-view-table-header-cell"] hr[is="pane-splitter"] {
-  border-inline-start-style: none !important;
-  border-inline-end-style: solid;
+  & hr[is="pane-splitter"] {
+    border-inline-start-style: none !important;
+    border-inline-end-style: solid;
+  }
 }
 
 /* Select column */
@@ -256,9 +466,7 @@ th[is="tree-view-table-header-cell"] hr[is="pane-splitter"] {
   stroke-opacity: 0;
 }
 
-[is="tree-view-table-body"]:focus >
-  .selected :is(.tree-view-header-select, .tree-view-row-select) img,
-[is="tree-view-table-body"]:focus-within >
+[is="tree-view-table-body"]:is(:focus, :focus-within) >
   .selected :is(.tree-view-header-select, .tree-view-row-select) img,
 [is="tree-view-table-body"] > .selected:focus-within
   :is(.tree-view-header-select, .tree-view-row-select) img {
@@ -278,32 +486,26 @@ th[is="tree-view-table-header-cell"] hr[is="pane-splitter"] {
   fill-opacity: 1;
 }
 
-[is="tree-view-table-body"]:focus .selected > .tree-view-row-select img,
-[is="tree-view-table-body"]:focus-within .selected > .tree-view-row-select img,
+[is="tree-view-table-body"]:is(:focus, :focus-within) .selected > .tree-view-row-select img,
 [is="tree-view-table-body"] .selected:focus-within > .tree-view-row-select img {
   fill: currentColor;
 }
 
 /* Delete column */
 
-.tree-table-cell-container button.tree-view-header-delete {
-  text-align: center;
-}
-
 .tree-view-row-delete button {
   color: var(--tree-view-color);
   opacity: 0.8;
-}
 
-.tree-view-row-delete button:hover {
-  opacity: 1;
-  color: var(--tree-row-delete-button-color);
-}
+  &:hover {
+    opacity: 1;
+    color: var(--tree-row-delete-button-color);
+  }
 
-[is="tree-view-table-body"]:focus .selected .tree-view-row-delete button,
-[is="tree-view-table-body"]:focus-within .selected .tree-view-row-delete button,
-[is="tree-view-table-body"] .selected:focus-within .tree-view-row-delete button {
-  color: currentColor;
+  [is="tree-view-table-body"]:is(:focus, :focus-within) .selected &,
+  [is="tree-view-table-body"] .selected:focus-within & {
+    color: currentColor;
+  }
 }
 
 .tree-view-header-delete img,
@@ -316,10 +518,10 @@ th[is="tree-view-table-header-cell"] hr[is="pane-splitter"] {
   position: absolute;
   inset-block: 0;
   inset-inline: 0 1px;
-}
 
-th[data-resizable="false"] .tree-table-cell {
-  inset-inline: 0;
+  th[data-resizable="false"] & {
+    inset-inline: 0;
+  }
 }
 
 .tree-table-cell-container button {
@@ -340,48 +542,54 @@ th[data-resizable="false"] .tree-table-cell {
   border: none;
   border-radius: 0;
   background-color: transparent;
-  background-position: right 6px center;
+  background-position: right 3px center;
   background-repeat: no-repeat;
   -moz-context-properties: stroke;
   stroke: currentColor;
-}
 
-.tree-table-cell-container button:hover {
-  background-color: var(--tree-view-header-hover-bg);
-}
-
-.tree-table-cell-container button:hover:active {
-  background-color: var(--tree-view-header-hover-active-bg);
-}
-
-.tree-table-cell-container button:focus-visible {
-  outline: 2px solid var(--selected-item-color);
-  outline-offset: -2px;
-  border-radius: var(--button-border-radius);
-}
-
-.tree-table-cell-container button.sorting {
-  background-image: var(--icon-nav-up-sm);
-  padding-inline-end: 18px;
-}
-
-.tree-table-cell-container button.sorting.descending {
-  background-image: var(--icon-nav-down-sm);
-}
-
-@media (-moz-platform: linux) {
-  .tree-table-cell-container button.sorting {
-    background-image: var(--icon-nav-down-sm);
+  &:dir(rtl) {
+    background-position-x: left 3px;
   }
 
-  .tree-table-cell-container button.sorting.descending {
-    background-image: var(--icon-nav-up-sm);
-  }
-}
+  &:hover {
+    background-color: var(--tree-view-header-hover-bg);
 
-th[data-type="icon"] .tree-table-cell-container button.sorting {
-  background-image: none;
-  padding-inline-end: var(--tree-header-cell-padding);
+    &:active {
+      background-color: var(--tree-view-header-hover-active-bg);
+    }
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--selected-item-color);
+    outline-offset: -2px;
+    border-radius: var(--button-border-radius);
+  }
+
+  &.tree-view-header-delete {
+    text-align: center;
+  }
+
+  &.sorting {
+    background-image: var(--icon-nav-up-xs);
+    padding-inline-end: 9px;
+
+    @media (-moz-platform: linux) {
+      background-image: var(--icon-nav-down-xs);
+    }
+
+    &.descending {
+      background-image: var(--icon-nav-down-xs);
+
+      @media (-moz-platform: linux) {
+        background-image: var(--icon-nav-up-xs);
+      }
+    }
+  }
+
+  th[data-type="icon"] &.sorting {
+    background-image: none;
+    padding-inline-end: var(--tree-header-cell-padding);
+  }
 }
 
 th[is="tree-view-table-column-picker"] {
@@ -390,10 +598,8 @@ th[is="tree-view-table-column-picker"] {
   min-width: 25px;
   padding: 0;
   background-color: var(--tree-view-bg);
-}
 
-@media (-moz-overlay-scrollbars) {
-  th[is="tree-view-table-column-picker"] {
+  @media (-moz-overlay-scrollbars) {
     padding-inline-end: env(scrollbar-inline-size);
   }
 }
@@ -401,51 +607,67 @@ th[is="tree-view-table-column-picker"] {
 .button-column-picker {
   position: absolute;
   inset: 0;
-}
 
-.button-column-picker img {
-  content: var(--icon-column-menu);
-  margin-inline: 0;
+  & img {
+    content: var(--icon-column-menu);
+    margin-inline: 0;
+  }
 }
 
 /* Table body */
 
-table[is="tree-view-table"] td {
-  max-width: 0;
-  height: inherit;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 0 6px;
-  position: relative;
-  user-select: none;
-  box-sizing: border-box;
+table[is="tree-view-table"] tr.selected td.current-cell {
+  outline: 1px dashed var(--selected-item-text-color);
 }
 
-table[is="tree-view-table"] td:is(.button-column, .tree-view-row-select) {
-  padding: 0;
-  text-align: center;
-}
+table[is="tree-view-table"] {
+  tbody .table-layout td:not([colspan="2"]) button:not(.twisty) {
+    height: 100%;
+    width: 100%;
+  }
 
-table[is="tree-view-table"] td.button-column[colspan="2"] {
-  text-align: start;
-}
+  td {
+    max-width: 0;
+    height: inherit;
+    overflow-x: clip;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0 6px;
+    position: relative;
+    user-select: none;
+    box-sizing: border-box;
 
-table[is="tree-view-table"] td.button-column[colspan="2"] img {
-  margin-inline-start: var(--table-row-cell-img-margin-inline-start);
-}
+    &:is(.button-column, .tree-view-row-select) {
+      padding: 0;
+      text-align: center;
+    }
 
-#threadTree table[is="tree-view-table"] td.button-column[colspan="2"] button {
-  margin-inline-start: var(--table-row-cell-button-margin-inline-start);
-}
+    &.button-column[colspan="2"] {
+      text-align: start;
 
-#threadTree table[is="tree-view-table"] td.button-column[colspan="2"] button.tree-button-delete {
-  margin-inline-start: calc(var(--table-row-cell-button-margin-inline-start) + 2px);
-}
+      & img {
+        margin-inline-start: var(--table-row-cell-img-margin-inline-start);
+      }
+    }
 
-table[is="tree-view-table"] td div:not(.recipient-avatar) {
-  overflow: hidden;
-  text-overflow: ellipsis;
+    #threadTree &.button-column[colspan="2"] button {
+      margin-inline-start: var(--table-row-cell-button-margin-inline-start);
+
+      &.tree-button-delete {
+        padding-inline: 2px;
+      }
+    }
+
+    & div:not(.recipient-avatar, .thread-card-icon-info, .thread-card-dynamic-row) {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    &.current-cell {
+      outline: 1px dashed var(--focus-outline-color);
+      outline-offset: -2px;
+    }
+  }
 }
 
 /* Placeholder */
@@ -454,36 +676,36 @@ slot[name="placeholders"] {
   position: absolute;
   display: none;
   box-sizing: border-box;
-  inset: 120px 0 auto;
+  inset: 60px 0 auto;
   padding: 0 40px;
   opacity: 0.5;
   text-align: center;
-}
 
-slot[name="placeholders"].show {
-  display: block;
-}
+  &.show {
+    display: block;
+  }
 
-slot[name="placeholders"] > div {
-  font-size: 1.5rem;
-  line-height: 1.2;
-  font-weight: 600;
-  margin-block-end: 12px;
-  text-shadow: 0 1px 0 var(--sidebar-background-color, var(--tree-view-bg));
-}
+  & > div {
+    font-size: 1.5rem;
+    line-height: 1.2;
+    font-weight: 600;
+    margin-block-end: 12px;
+    text-shadow: 0 1px 0 var(--sidebar-background-color, var(--tree-view-bg));
+  }
 
-slot[name="placeholders"] div::before {
-  content: "";
-  display: block;
-  height: 32px;
-  margin-block-end: 9px;
-  background-position: center top;
-  background-size: contain;
-  background-repeat: no-repeat;
-  -moz-context-properties: fill, stroke, fill-opacity;
-  fill: color-mix(in srgb, currentColor 20%, transparent);
-  stroke: currentColor;
-  fill-opacity: var(--toolbarbutton-icon-fill-opacity);
+  & div::before {
+    content: "";
+    display: block;
+    height: 32px;
+    margin-block-end: 9px;
+    background-position: center top;
+    background-size: contain;
+    background-repeat: no-repeat;
+    -moz-context-properties: fill, stroke, fill-opacity;
+    fill: color-mix(in srgb, currentColor 20%, transparent);
+    stroke: currentColor;
+    fill-opacity: var(--toolbarbutton-icon-fill-opacity);
+  }
 }
 
 /* Transitions and animations */
@@ -501,23 +723,18 @@ slot[name="placeholders"] div::before {
     transition:
       color var(--transition-duration) var(--transition-timing),
       background-color var(--transition-duration) var(--transition-timing);
-  }
 
-  table[is="tree-view-table"] tbody tr img {
-    transition:
-      color var(--transition-duration) var(--transition-timing),
-      fill var(--transition-duration) var(--transition-timing),
-      stroke var(--transition-duration) var(--transition-timing);
+    & img {
+      transition:
+        color var(--transition-duration) var(--transition-timing),
+        fill var(--transition-duration) var(--transition-timing),
+        stroke var(--transition-duration) var(--transition-timing);
+    }
   }
 }
 
-:is(ul, ol):is([role="tree"],
-[role="group"]) li > div {
+:is(ul, ol):is([role="tree"],[role="treegrid"],[role="group"]) li > div {
   min-height: var(--list-item-min-height);
-}
-
-.no-overscroll {
-  overscroll-behavior-y: none;
 }
 
 /* Drag and Drop */

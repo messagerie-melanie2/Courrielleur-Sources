@@ -19,6 +19,7 @@ export class NntpNewsGroup {
     this._folder = folder;
     this._db = this._folder.msgDatabase;
     this._msgHdrs = [];
+    this._commitReadKeySet = false;
   }
 
   /**
@@ -56,6 +57,9 @@ export class NntpNewsGroup {
         .split(" ")
         .filter(Boolean)
     );
+    this._readKeySet = new MsgKeySet(
+      this._folder.newsrcLine.split(":")[1].trim()
+    );
 
     const groupInfo = this._db.dBFolderInfo;
     if (groupInfo) {
@@ -68,20 +72,6 @@ export class NntpNewsGroup {
       this._knownKeySet.addRange(
         this._db.lowWaterArticleNum,
         this._db.highWaterArticleNum
-      );
-    }
-    if (this._knownKeySet.has(lastPossible)) {
-      const bundle = Services.strings.createBundle(
-        "chrome://messenger/locale/news.properties"
-      );
-      const messengerBundle = Services.strings.createBundle(
-        "chrome://messenger/locale/messenger.properties"
-      );
-      msgWindow?.statusFeedback.showStatusString(
-        messengerBundle.formatStringFromName("statusMessage", [
-          this._server.prettyName,
-          bundle.GetStringFromName("noNewMessages"),
-        ])
       );
     }
 
@@ -103,7 +93,7 @@ export class NntpNewsGroup {
           "@mozilla.org/messenger/newsdownloaddialogargs;1"
         ].createInstance(Ci.nsINewsDownloadDialogArgs);
         args.articleCount = end - start + 1;
-        args.groupName = this._folder.unicodeName;
+        args.groupName = this._folder.name;
         args.serverKey = this._server.key;
         this._msgWindow.domWindow.openDialog(
           "chrome://messenger/content/downloadheaders.xhtml",
@@ -116,10 +106,8 @@ export class NntpNewsGroup {
         }
         start = args.downloadAll ? start : end - this._server.maxArticles + 1;
         if (this._server.markOldRead) {
-          this._readKeySet = new MsgKeySet(
-            this._folder.newsrcLine.split(":")[1].trim()
-          );
           this._readKeySet.addRange(firstPossible, start - 1);
+          this._commitReadKeySet = true;
         }
       }
       return [start, end];
@@ -248,7 +236,7 @@ export class NntpNewsGroup {
    */
   processHeadLine(line) {
     const colonIndex = line.indexOf(":");
-    const name = line.slice(0, colonIndex);
+    const name = line.slice(0, colonIndex).toLowerCase();
     const value = line.slice(colonIndex + 1).trim();
     switch (name) {
       case "from":
@@ -324,6 +312,9 @@ export class NntpNewsGroup {
         );
       }
       if (this._addHdrToDB && !this._db.containsKey(msgHdr.messageKey)) {
+        if (this._readKeySet.has(msgHdr.messageKey)) {
+          msgHdr.flags |= Ci.nsMsgMessageFlags.Read;
+        }
         this._db.addNewHdrToDB(msgHdr, true);
         MailServices.mfn.notifyMsgAdded(msgHdr);
         this._folder.orProcessingFlags(
@@ -352,10 +343,10 @@ export class NntpNewsGroup {
           this._addHdrToDB = false;
           break;
         case Ci.nsMsgFilterAction.MarkRead:
-          this._db.markHdrRead(this._filteringHdr, true, null);
+          this._db.markRead(this._filteringHdr.messageKey, true, null);
           break;
         case Ci.nsMsgFilterAction.MarkUnread:
-          this._db.markHdrRead(this._filteringHdr, false, null);
+          this._db.markRead(this._filteringHdr.messageKey, false, null);
           break;
         case Ci.nsMsgFilterAction.KillThread:
           this._filteringHdr.setUint32Property(
@@ -407,7 +398,7 @@ export class NntpNewsGroup {
    * Commit changes to msg db.
    */
   cleanUp() {
-    if (this._readKeySet) {
+    if (this._commitReadKeySet) {
       this._folder.setReadSetFromStr(this._readKeySet);
     }
     this._folder.notifyFinishedDownloadinghdrs();

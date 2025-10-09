@@ -28,7 +28,7 @@ NS_IMPL_ISUPPORTS(OSKeyStore, nsIOSKeyStore)
 using namespace mozilla;
 using dom::Promise;
 
-OSKeyStore::OSKeyStore() : mKs(nullptr), mKsIsNSSKeyStore(false) {
+OSKeyStore::OSKeyStore() : mKs(nullptr) {
   MOZ_ASSERT(NS_IsMainThread());
   if (NS_WARN_IF(!NS_IsMainThread())) {
     return;
@@ -43,12 +43,13 @@ OSKeyStore::OSKeyStore() : mKs(nullptr), mKsIsNSSKeyStore(false) {
     mKs.reset(new LibSecret());
   } else {
     mKs.reset(new NSSKeyStore());
-    mKsIsNSSKeyStore = true;
   }
 #else
   mKs.reset(new NSSKeyStore());
-  mKsIsNSSKeyStore = true;
 #endif
+
+  (void)NS_CreateBackgroundTaskQueue(
+      "OSKeyStore", getter_AddRefs(mBackgroundSerialEventTarget));
 }
 
 static nsresult GenerateRandom(std::vector<uint8_t>& r) {
@@ -128,6 +129,26 @@ nsresult OSKeyStore::DeleteSecret(const nsACString& aLabel) {
   return mKs->DeleteSecret(aLabel);
 }
 
+nsresult OSKeyStore::RetrieveRecoveryPhrase(
+    const nsACString& aLabel,
+    /* out */ nsACString& aRecoveryPhrase) {
+  NS_ENSURE_STATE(mKs);
+  nsAutoCString secretString;
+  nsresult rv = mKs->RetrieveSecret(aLabel, secretString);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  nsCString recoveryPhrase;
+  rv = Base64Encode(secretString, recoveryPhrase);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  aRecoveryPhrase = std::move(recoveryPhrase);
+  return NS_OK;
+}
+
 enum Cipher { Encrypt = true, Decrypt = false };
 
 nsresult OSKeyStore::EncryptBytes(const nsACString& aLabel,
@@ -185,23 +206,6 @@ nsresult OSKeyStore::DecryptBytes(const nsACString& aLabel,
   return NS_OK;
 }
 
-nsresult OSKeyStore::Lock() {
-  NS_ENSURE_STATE(mKs);
-  return mKs->Lock();
-}
-
-nsresult OSKeyStore::Unlock() {
-  NS_ENSURE_STATE(mKs);
-  return mKs->Unlock();
-}
-
-NS_IMETHODIMP
-OSKeyStore::GetIsNSSKeyStore(bool* aNSSKeyStore) {
-  NS_ENSURE_ARG_POINTER(aNSSKeyStore);
-  *aNSSKeyStore = mKsIsNSSKeyStore;
-  return NS_OK;
-}
-
 // Async interfaces that return promises because the key store implementation
 // might block, e.g. asking for a password.
 
@@ -216,85 +220,6 @@ nsresult GetPromise(JSContext* aCx, /* out */ RefPtr<Promise>& aPromise) {
     return result.StealNSResult();
   }
   return NS_OK;
-}
-
-void BackgroundUnlock(RefPtr<Promise>& aPromise, RefPtr<OSKeyStore> self) {
-  nsAutoCString recovery;
-  nsresult rv = self->Unlock();
-  nsCOMPtr<nsIRunnable> runnable(NS_NewRunnableFunction(
-      "BackgroundUnlockOSKSResolve", [rv, aPromise = std::move(aPromise)]() {
-        if (NS_FAILED(rv)) {
-          aPromise->MaybeReject(rv);
-        } else {
-          aPromise->MaybeResolveWithUndefined();
-        }
-      }));
-  NS_DispatchToMainThread(runnable.forget());
-}
-
-NS_IMETHODIMP
-OSKeyStore::AsyncUnlock(JSContext* aCx, Promise** promiseOut) {
-  MOZ_ASSERT(NS_IsMainThread());
-  if (!NS_IsMainThread()) {
-    return NS_ERROR_NOT_SAME_THREAD;
-  }
-
-  NS_ENSURE_ARG_POINTER(aCx);
-
-  RefPtr<Promise> promiseHandle;
-  nsresult rv = GetPromise(aCx, promiseHandle);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
-
-  RefPtr<OSKeyStore> self = this;
-  nsCOMPtr<nsIRunnable> runnable(NS_NewRunnableFunction(
-      "BackgroundUnlock", [self, promiseHandle]() mutable {
-        BackgroundUnlock(promiseHandle, self);
-      }));
-
-  promiseHandle.forget(promiseOut);
-  return NS_DispatchBackgroundTask(runnable.forget(),
-                                   NS_DISPATCH_EVENT_MAY_BLOCK);
-}
-
-void BackgroundLock(RefPtr<Promise>& aPromise, RefPtr<OSKeyStore> self) {
-  nsresult rv = self->Lock();
-  nsCOMPtr<nsIRunnable> runnable(NS_NewRunnableFunction(
-      "BackgroundLockOSKSResolve", [rv, aPromise = std::move(aPromise)]() {
-        if (NS_FAILED(rv)) {
-          aPromise->MaybeReject(rv);
-        } else {
-          aPromise->MaybeResolveWithUndefined();
-        }
-      }));
-  NS_DispatchToMainThread(runnable.forget());
-}
-
-NS_IMETHODIMP
-OSKeyStore::AsyncLock(JSContext* aCx, Promise** promiseOut) {
-  MOZ_ASSERT(NS_IsMainThread());
-  if (!NS_IsMainThread()) {
-    return NS_ERROR_NOT_SAME_THREAD;
-  }
-
-  NS_ENSURE_ARG_POINTER(aCx);
-
-  RefPtr<Promise> promiseHandle;
-  nsresult rv = GetPromise(aCx, promiseHandle);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
-
-  RefPtr<OSKeyStore> self = this;
-  nsCOMPtr<nsIRunnable> runnable(
-      NS_NewRunnableFunction("BackgroundLock", [self, promiseHandle]() mutable {
-        BackgroundLock(promiseHandle, self);
-      }));
-
-  promiseHandle.forget(promiseOut);
-  return NS_DispatchBackgroundTask(runnable.forget(),
-                                   NS_DISPATCH_EVENT_MAY_BLOCK);
 }
 
 void BackgroundGenerateSecret(const nsACString& aLabel,
@@ -328,6 +253,10 @@ OSKeyStore::AsyncGenerateSecret(const nsACString& aLabel, JSContext* aCx,
 
   NS_ENSURE_ARG_POINTER(aCx);
 
+  if (!mBackgroundSerialEventTarget) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
   RefPtr<Promise> promiseHandle;
   nsresult rv = GetPromise(aCx, promiseHandle);
   if (NS_FAILED(rv)) {
@@ -342,8 +271,8 @@ OSKeyStore::AsyncGenerateSecret(const nsACString& aLabel, JSContext* aCx,
       }));
 
   promiseHandle.forget(promiseOut);
-  return NS_DispatchBackgroundTask(runnable.forget(),
-                                   NS_DISPATCH_EVENT_MAY_BLOCK);
+  return mBackgroundSerialEventTarget->Dispatch(runnable.forget(),
+                                                NS_DISPATCH_EVENT_MAY_BLOCK);
 }
 
 void BackgroundSecretAvailable(const nsACString& aLabel,
@@ -373,6 +302,10 @@ OSKeyStore::AsyncSecretAvailable(const nsACString& aLabel, JSContext* aCx,
 
   NS_ENSURE_ARG_POINTER(aCx);
 
+  if (!mBackgroundSerialEventTarget) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
   RefPtr<Promise> promiseHandle;
   nsresult rv = GetPromise(aCx, promiseHandle);
   if (NS_FAILED(rv)) {
@@ -387,8 +320,8 @@ OSKeyStore::AsyncSecretAvailable(const nsACString& aLabel, JSContext* aCx,
       }));
 
   promiseHandle.forget(promiseOut);
-  return NS_DispatchBackgroundTask(runnable.forget(),
-                                   NS_DISPATCH_EVENT_MAY_BLOCK);
+  return mBackgroundSerialEventTarget->Dispatch(runnable.forget(),
+                                                NS_DISPATCH_EVENT_MAY_BLOCK);
 }
 
 void BackgroundRecoverSecret(const nsACString& aLabel,
@@ -419,6 +352,10 @@ OSKeyStore::AsyncRecoverSecret(const nsACString& aLabel,
 
   NS_ENSURE_ARG_POINTER(aCx);
 
+  if (!mBackgroundSerialEventTarget) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
   RefPtr<Promise> promiseHandle;
   nsresult rv = GetPromise(aCx, promiseHandle);
   if (NS_FAILED(rv)) {
@@ -434,8 +371,8 @@ OSKeyStore::AsyncRecoverSecret(const nsACString& aLabel,
       }));
 
   promiseHandle.forget(promiseOut);
-  return NS_DispatchBackgroundTask(runnable.forget(),
-                                   NS_DISPATCH_EVENT_MAY_BLOCK);
+  return mBackgroundSerialEventTarget->Dispatch(runnable.forget(),
+                                                NS_DISPATCH_EVENT_MAY_BLOCK);
 }
 
 void BackgroundDeleteSecret(const nsACString& aLabel, RefPtr<Promise>& aPromise,
@@ -463,6 +400,10 @@ OSKeyStore::AsyncDeleteSecret(const nsACString& aLabel, JSContext* aCx,
 
   NS_ENSURE_ARG_POINTER(aCx);
 
+  if (!mBackgroundSerialEventTarget) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
   RefPtr<Promise> promiseHandle;
   nsresult rv = GetPromise(aCx, promiseHandle);
   if (NS_FAILED(rv)) {
@@ -477,8 +418,8 @@ OSKeyStore::AsyncDeleteSecret(const nsACString& aLabel, JSContext* aCx,
       }));
 
   promiseHandle.forget(promiseOut);
-  return NS_DispatchBackgroundTask(runnable.forget(),
-                                   NS_DISPATCH_EVENT_MAY_BLOCK);
+  return mBackgroundSerialEventTarget->Dispatch(runnable.forget(),
+                                                NS_DISPATCH_EVENT_MAY_BLOCK);
 }
 
 static void BackgroundEncryptBytes(const nsACString& aLabel,
@@ -513,6 +454,10 @@ OSKeyStore::AsyncEncryptBytes(const nsACString& aLabel,
 
   NS_ENSURE_ARG_POINTER(aCx);
 
+  if (!mBackgroundSerialEventTarget) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
   RefPtr<Promise> promiseHandle;
   nsresult rv = GetPromise(aCx, promiseHandle);
   if (NS_FAILED(rv)) {
@@ -530,8 +475,8 @@ OSKeyStore::AsyncEncryptBytes(const nsACString& aLabel,
       }));
 
   promiseHandle.forget(promiseOut);
-  return NS_DispatchBackgroundTask(runnable.forget(),
-                                   NS_DISPATCH_EVENT_MAY_BLOCK);
+  return mBackgroundSerialEventTarget->Dispatch(runnable.forget(),
+                                                NS_DISPATCH_EVENT_MAY_BLOCK);
 }
 
 void BackgroundDecryptBytes(const nsACString& aLabel,
@@ -572,6 +517,10 @@ OSKeyStore::AsyncDecryptBytes(const nsACString& aLabel,
 
   NS_ENSURE_ARG_POINTER(aCx);
 
+  if (!mBackgroundSerialEventTarget) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
   RefPtr<Promise> promiseHandle;
   nsresult rv = GetPromise(aCx, promiseHandle);
   if (NS_FAILED(rv)) {
@@ -589,8 +538,61 @@ OSKeyStore::AsyncDecryptBytes(const nsACString& aLabel,
       }));
 
   promiseHandle.forget(promiseOut);
-  return NS_DispatchBackgroundTask(runnable.forget(),
-                                   NS_DISPATCH_EVENT_MAY_BLOCK);
+  return mBackgroundSerialEventTarget->Dispatch(runnable.forget(),
+                                                NS_DISPATCH_EVENT_MAY_BLOCK);
+}
+
+void BackgroundGetRecoveryPhrase(const nsACString& aLabel,
+                                 RefPtr<Promise>& aPromise,
+                                 const RefPtr<OSKeyStore>& self) {
+  nsAutoCString recoveryPhrase;
+  nsresult rv = self->RetrieveRecoveryPhrase(aLabel, recoveryPhrase);
+  nsAutoString exportedRecoveryPhrase;
+  if (NS_SUCCEEDED(rv)) {
+    CopyUTF8toUTF16(recoveryPhrase, exportedRecoveryPhrase);
+  }
+  nsCOMPtr<nsIRunnable> runnable(NS_NewRunnableFunction(
+      "BackgroundRetrieveRecoveryPhraseResolve",
+      [rv, aPromise = std::move(aPromise), exportedRecoveryPhrase]() {
+        if (NS_FAILED(rv)) {
+          aPromise->MaybeReject(rv);
+        } else {
+          aPromise->MaybeResolve(exportedRecoveryPhrase);
+        }
+      }));
+  NS_DispatchToMainThread(runnable.forget());
+}
+
+NS_IMETHODIMP
+OSKeyStore::AsyncGetRecoveryPhrase(const nsACString& aLabel, JSContext* aCx,
+                                   Promise** promiseOut) {
+  MOZ_ASSERT(NS_IsMainThread());
+  if (!NS_IsMainThread()) {
+    return NS_ERROR_NOT_SAME_THREAD;
+  }
+
+  NS_ENSURE_ARG_POINTER(aCx);
+
+  if (!mBackgroundSerialEventTarget) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  RefPtr<Promise> promiseHandle;
+  nsresult rv = GetPromise(aCx, promiseHandle);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  RefPtr<OSKeyStore> self = this;
+  nsCOMPtr<nsIRunnable> runnable(NS_NewRunnableFunction(
+      "BackgroundGetRecoveryPhrase",
+      [promiseHandle, self, aLabel = nsAutoCString(aLabel)]() mutable {
+        BackgroundGetRecoveryPhrase(aLabel, promiseHandle, self);
+      }));
+
+  promiseHandle.forget(promiseOut);
+  return mBackgroundSerialEventTarget->Dispatch(runnable.forget(),
+                                                NS_DISPATCH_EVENT_MAY_BLOCK);
 }
 
 // Generic AES-GCM cipher wrapper for NSS functions.

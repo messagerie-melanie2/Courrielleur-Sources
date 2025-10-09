@@ -16,6 +16,7 @@
 #include <map>
 #include <memory>
 #include <queue>
+#include <tuple>
 #include <utility>
 
 #include "absl/functional/any_invocable.h"
@@ -52,11 +53,15 @@ class TaskQueueStdlib final : public TaskQueueBase {
   ~TaskQueueStdlib() override = default;
 
   void Delete() override;
-  void PostTask(absl::AnyInvocable<void() &&> task) override;
-  void PostDelayedTask(absl::AnyInvocable<void() &&> task,
-                       TimeDelta delay) override;
-  void PostDelayedHighPrecisionTask(absl::AnyInvocable<void() &&> task,
-                                    TimeDelta delay) override;
+
+ protected:
+  void PostTaskImpl(absl::AnyInvocable<void() &&> task,
+                    const PostTaskTraits& traits,
+                    const Location& location) override;
+  void PostDelayedTaskImpl(absl::AnyInvocable<void() &&> task,
+                           TimeDelta delay,
+                           const PostDelayedTaskTraits& traits,
+                           const Location& location) override;
 
  private:
   using OrderId = uint64_t;
@@ -156,7 +161,9 @@ void TaskQueueStdlib::Delete() {
   delete this;
 }
 
-void TaskQueueStdlib::PostTask(absl::AnyInvocable<void() &&> task) {
+void TaskQueueStdlib::PostTaskImpl(absl::AnyInvocable<void() &&> task,
+                                   const PostTaskTraits& traits,
+                                   const Location& location) {
   {
     MutexLock lock(&pending_lock_);
     pending_queue_.push(
@@ -166,8 +173,10 @@ void TaskQueueStdlib::PostTask(absl::AnyInvocable<void() &&> task) {
   NotifyWake();
 }
 
-void TaskQueueStdlib::PostDelayedTask(absl::AnyInvocable<void() &&> task,
-                                      TimeDelta delay) {
+void TaskQueueStdlib::PostDelayedTaskImpl(absl::AnyInvocable<void() &&> task,
+                                          TimeDelta delay,
+                                          const PostDelayedTaskTraits& traits,
+                                          const Location& location) {
   DelayedEntryTimeout delayed_entry;
   delayed_entry.next_fire_at_us = rtc::TimeMicros() + delay.us();
 
@@ -178,12 +187,6 @@ void TaskQueueStdlib::PostDelayedTask(absl::AnyInvocable<void() &&> task,
   }
 
   NotifyWake();
-}
-
-void TaskQueueStdlib::PostDelayedHighPrecisionTask(
-    absl::AnyInvocable<void() &&> task,
-    TimeDelta delay) {
-  PostDelayedTask(std::move(task), delay);
 }
 
 TaskQueueStdlib::NextTask TaskQueueStdlib::GetNextTask() {
@@ -198,12 +201,12 @@ TaskQueueStdlib::NextTask TaskQueueStdlib::GetNextTask() {
     return result;
   }
 
-  if (delayed_queue_.size() > 0) {
+  if (!delayed_queue_.empty()) {
     auto delayed_entry = delayed_queue_.begin();
     const auto& delay_info = delayed_entry->first;
     auto& delay_run = delayed_entry->second;
     if (tick_us >= delay_info.next_fire_at_us) {
-      if (pending_queue_.size() > 0) {
+      if (!pending_queue_.empty()) {
         auto& entry = pending_queue_.front();
         auto& entry_order = entry.first;
         auto& entry_run = entry.second;
@@ -223,7 +226,7 @@ TaskQueueStdlib::NextTask TaskQueueStdlib::GetNextTask() {
         DivideRoundUp(delay_info.next_fire_at_us - tick_us, 1'000));
   }
 
-  if (pending_queue_.size() > 0) {
+  if (!pending_queue_.empty()) {
     auto& entry = pending_queue_.front();
     result.run_task = std::move(entry.second);
     pending_queue_.pop();
@@ -247,7 +250,7 @@ void TaskQueueStdlib::ProcessTasks() {
       continue;
     }
 
-    flag_notify_.Wait(task.sleep_time);
+    flag_notify_.Wait(task.sleep_time, task.sleep_time);
   }
 
   // Ensure remaining deleted tasks are destroyed with Current() set up to this

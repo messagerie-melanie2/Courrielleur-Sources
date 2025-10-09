@@ -2,28 +2,30 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-// This file tests that checking folders for new mail with STATUS
-// doesn't try to STAT noselect folders.
+/**
+ * Tests that checking folders for new mail with STATUS
+ * doesn't try to STAT noselect folders.
+ */
 
 var gServer, gImapServer;
 var gIMAPInbox;
 var gFolder2Mailbox;
 var gFolder1, gFolder2;
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-var { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 add_setup(function () {
   var daemon = new ImapDaemon();
   daemon.createMailbox("folder 1", { subscribed: true });
-  let folder1Mailbox = daemon.getMailbox("folder 1");
+  const folder1Mailbox = daemon.getMailbox("folder 1");
   folder1Mailbox.flags.push("\\Noselect");
   daemon.createMailbox("folder 2", { subscribed: true });
   gFolder2Mailbox = daemon.getMailbox("folder 2");
@@ -39,14 +41,14 @@ add_setup(function () {
   localAccountUtils.loadLocalMailAccount();
 
   // We need an identity so that updateFolder doesn't fail
-  let localAccount = MailServices.accounts.createAccount();
-  let identity = MailServices.accounts.createIdentity();
+  const localAccount = MailServices.accounts.createAccount();
+  const identity = MailServices.accounts.createIdentity();
   localAccount.addIdentity(identity);
   localAccount.defaultIdentity = identity;
   localAccount.incomingServer = localAccountUtils.incomingServer;
 
   // Let's also have another account, using the same identity
-  let imapAccount = MailServices.accounts.createAccount();
+  const imapAccount = MailServices.accounts.createAccount();
   imapAccount.addIdentity(identity);
   imapAccount.defaultIdentity = identity;
   imapAccount.incomingServer = gImapServer;
@@ -62,7 +64,7 @@ add_setup(function () {
   Services.prefs.setBoolPref("mail.biff.show_tray_icon", false);
   Services.prefs.setBoolPref("mail.biff.animate_dock_icon", false);
 
-  let rootFolder = gImapServer.rootFolder;
+  const rootFolder = gImapServer.rootFolder;
   gIMAPInbox = rootFolder.getFolderWithFlags(Ci.nsMsgFolderFlags.Inbox);
   gFolder1 = rootFolder.getChildNamed("folder 1");
   gFolder2 = rootFolder.getChildNamed("folder 2");
@@ -93,7 +95,7 @@ add_task(async function checkStatNoSelect() {
   gFolder1.clearFlag(Ci.nsMsgFolderFlags.ImapNoselect);
   gServer._test = true;
 
-  let folderListener = new FolderListener();
+  const folderListener = new FolderListener();
 
   // we've cleared the ImapNoselect flag, so we will attempt to STAT folder 1,
   // which will fail. So we verify that we go on and STAT folder 2, and that
@@ -120,13 +122,13 @@ add_task(function endTest() {
 function addMessageToFolder(mbox) {
   // make a couple of messages
   let messages = [];
-  let gMessageGenerator = new MessageGenerator();
+  const gMessageGenerator = new MessageGenerator();
   messages = messages.concat(gMessageGenerator.makeMessage());
 
-  let msgURI = Services.io.newURI(
+  const msgURI = Services.io.newURI(
     "data:text/plain;base64," + btoa(messages[0].toMessageString())
   );
-  let message = new ImapMessage(msgURI.spec, mbox.uidnext++);
+  const message = new ImapMessage(msgURI.spec, mbox.uidnext++);
   mbox.addMessage(message);
 }
 

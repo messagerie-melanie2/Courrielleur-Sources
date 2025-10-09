@@ -45,12 +45,10 @@ add_task(async function () {
 
   // Note that there is no point in asserting breakable lines,
   // as we aren't fetching any source.
-  await dbg.actions.selectLocation(
-    getContext(dbg),
-    createLocation({ source }),
-    { keepContext: false }
-  );
-  is(getCM(dbg).getValue(), `Please refresh to debug this module`);
+  await dbg.actions.selectLocation(createLocation({ source }), {
+    keepContext: false,
+  });
+  is(getEditorContent(dbg), `Please refresh to debug this module`);
 
   info("Reload and assert that WASM files are then debuggable");
   await reload(dbg, "doc-wasm-sourcemaps.html", "fib.wasm", "fib.c");
@@ -59,7 +57,7 @@ add_task(async function () {
   // Ensure selecting the source before asserting breakable lines
   // otherwise the gutter may not be yet updated
   await selectSource(dbg, "fib.c");
-  assertLineIsBreakable(dbg, source.url, 14, true);
+  await assertLineIsBreakable(dbg, source.url, 14, true);
 
   await waitForSourcesInSourceTree(dbg, [
     "doc-wasm-sourcemaps.html",
@@ -77,8 +75,13 @@ add_task(async function () {
   await addBreakpoint(dbg, "fib.c", breakpointLine);
   invokeInTab("runWasm");
 
-  await waitForPaused(dbg);
-  assertPausedAtSourceAndLine(dbg, findSource(dbg, "fib.c").id, breakpointLine);
+  await waitForPausedInOriginalFileAndToggleMapScopes(dbg);
+
+  await assertPausedAtSourceAndLine(
+    dbg,
+    findSource(dbg, "fib.c").id,
+    breakpointLine
+  );
   await assertBreakpoint(dbg, breakpointLine);
   // Capture the generated location line, so that we can better report
   // when the binary code changed later in this test
@@ -103,20 +106,20 @@ add_task(async function () {
   is(
     "0x" + virtualBinaryLine.toString(16),
     "0x" + generatedLine.toString(16),
-    "The hardcoded binary line matches the mapped location when we set the breakpoint on the original line. If you rebuilt the binary, you may just need to update the virtualBinaryLine variable to the new location."
-  );
-  const binaryLine =
-    dbg.wasmOffsetToLine(binarySource.id, virtualBinaryLine) + 1;
-
-  // We can't use selectSource here because binary source won't have symbols loaded
-  // (getSymbols(source) selector will be false)
-  await dbg.actions.selectLocation(
-    getContext(dbg),
-    createLocation({ source: binarySource }),
-    { keepContext: false }
+    "The hardcoded binary line (0x" +
+      generatedLine.toString(16) +
+      ") matches the mapped location when we set the breakpoint on the original line. If you rebuilt the binary, you may just need to update the virtualBinaryLine variable to the new location."
   );
 
-  assertLineIsBreakable(dbg, binarySource.url, binaryLine, true);
+  await dbg.actions.selectLocation(createLocation({ source: binarySource }), {
+    keepContext: false,
+  });
+
+  const binaryLine = wasmOffsetToLine(dbg, virtualBinaryLine);
+
+  // Make sure line is within viewport
+  await scrollEditorIntoView(dbg, binaryLine, 0);
+  await assertLineIsBreakable(dbg, binarySource.url, binaryLine, true);
 
   await addBreakpoint(dbg, binarySource, virtualBinaryLine);
   invokeInTab("runWasm");
@@ -125,30 +128,33 @@ add_task(async function () {
   // so only assert that we are in paused state.
   await waitForPaused(dbg);
   // We don't try to assert paused line as there is two types of line in wasm
-  assertPausedAtSourceAndLine(dbg, binarySource.id, virtualBinaryLine);
+  await assertPausedAtSourceAndLine(dbg, binarySource.id, virtualBinaryLine);
 
   // Switch to original source
   info(
     "Manually switch to original C source as we set the breakpoint on binary source, we paused on it"
   );
-  await dbg.actions.jumpToMappedSelectedLocation(getContext(dbg));
+  await dbg.actions.jumpToMappedSelectedLocation();
 
   // But once we switch to original source, we should have the original text content and be able
   // to do all classic assertions for paused state.
-  await waitForPaused(dbg);
-  assertPausedAtSourceAndLine(dbg, findSource(dbg, "fib.c").id, breakpointLine);
+  await waitForPausedInOriginalFileAndToggleMapScopes(dbg);
+
+  await assertPausedAtSourceAndLine(
+    dbg,
+    findSource(dbg, "fib.c").id,
+    breakpointLine
+  );
 
   info("Reselect the binary source");
-  await dbg.actions.selectLocation(
-    getContext(dbg),
-    createLocation({ source: binarySource }),
-    { keepContext: false }
-  );
+  await dbg.actions.selectLocation(createLocation({ source: binarySource }), {
+    keepContext: false,
+  });
 
   assertFirstFrameTitleAndLocation(dbg, "(wasmcall)", "fib.wasm");
 
   // We can't use this method as it uses internaly the breakpoint line, which isn't the line in CodeMirror
-  // assertPausedAtSourceAndLine(dbg, binarySource.id, binaryLine);
+  // await assertPausedAtSourceAndLine(dbg, binarySource.id, binaryLine);
   await assertBreakpoint(dbg, binaryLine);
 
   await removeBreakpoint(dbg, binarySource.id, virtualBinaryLine);

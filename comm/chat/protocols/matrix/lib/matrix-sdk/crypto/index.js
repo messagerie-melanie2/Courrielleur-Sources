@@ -9,66 +9,72 @@ exports.isCryptoAvailable = isCryptoAvailable;
 exports.verificationMethods = void 0;
 var _anotherJson = _interopRequireDefault(require("another-json"));
 var _uuid = require("uuid");
-var _event = require("../@types/event");
-var _ReEmitter = require("../ReEmitter");
-var _logger = require("../logger");
-var _OlmDevice = require("./OlmDevice");
-var olmlib = _interopRequireWildcard(require("./olmlib"));
-var _DeviceList = require("./DeviceList");
-var _deviceinfo = require("./deviceinfo");
-var algorithms = _interopRequireWildcard(require("./algorithms"));
-var _CrossSigning = require("./CrossSigning");
-var _EncryptionSetup = require("./EncryptionSetup");
-var _SecretStorage = require("./SecretStorage");
-var _api = require("./api");
-var _OutgoingRoomKeyRequestManager = require("./OutgoingRoomKeyRequestManager");
-var _indexeddbCryptoStore = require("./store/indexeddb-crypto-store");
-var _QRCode = require("./verification/QRCode");
-var _SAS = require("./verification/SAS");
-var _key_passphrase = require("./key_passphrase");
-var _recoverykey = require("./recoverykey");
-var _VerificationRequest = require("./verification/request/VerificationRequest");
-var _InRoomChannel = require("./verification/request/InRoomChannel");
-var _ToDeviceChannel = require("./verification/request/ToDeviceChannel");
-var _IllegalMethod = require("./verification/IllegalMethod");
-var _errors = require("../errors");
-var _aes = require("./aes");
-var _dehydration = require("./dehydration");
-var _backup = require("./backup");
-var _room = require("../models/room");
-var _roomMember = require("../models/room-member");
-var _event2 = require("../models/event");
-var _client = require("../client");
-var _typedEventEmitter = require("../models/typed-event-emitter");
-var _roomState = require("../models/room-state");
-var _utils = require("../utils");
-var _secretStorage = require("../secret-storage");
-var _deviceConverter = require("./device-converter");
-function _getRequireWildcardCache(nodeInterop) { if (typeof WeakMap !== "function") return null; var cacheBabelInterop = new WeakMap(); var cacheNodeInterop = new WeakMap(); return (_getRequireWildcardCache = function (nodeInterop) { return nodeInterop ? cacheNodeInterop : cacheBabelInterop; })(nodeInterop); }
-function _interopRequireWildcard(obj, nodeInterop) { if (!nodeInterop && obj && obj.__esModule) { return obj; } if (obj === null || typeof obj !== "object" && typeof obj !== "function") { return { default: obj }; } var cache = _getRequireWildcardCache(nodeInterop); if (cache && cache.has(obj)) { return cache.get(obj); } var newObj = {}; var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var key in obj) { if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) { var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null; if (desc && (desc.get || desc.set)) { Object.defineProperty(newObj, key, desc); } else { newObj[key] = obj[key]; } } } newObj.default = obj; if (cache) { cache.set(obj, newObj); } return newObj; }
-function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
-function ownKeys(object, enumerableOnly) { var keys = Object.keys(object); if (Object.getOwnPropertySymbols) { var symbols = Object.getOwnPropertySymbols(object); enumerableOnly && (symbols = symbols.filter(function (sym) { return Object.getOwnPropertyDescriptor(object, sym).enumerable; })), keys.push.apply(keys, symbols); } return keys; }
-function _objectSpread(target) { for (var i = 1; i < arguments.length; i++) { var source = null != arguments[i] ? arguments[i] : {}; i % 2 ? ownKeys(Object(source), !0).forEach(function (key) { _defineProperty(target, key, source[key]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) : ownKeys(Object(source)).forEach(function (key) { Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key)); }); } return target; }
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(arg) { var key = _toPrimitive(arg, "string"); return typeof key === "symbol" ? key : String(key); }
-function _toPrimitive(input, hint) { if (typeof input !== "object" || input === null) return input; var prim = input[Symbol.toPrimitive]; if (prim !== undefined) { var res = prim.call(input, hint || "default"); if (typeof res !== "object") return res; throw new TypeError("@@toPrimitive must return a primitive value."); } return (hint === "string" ? String : Number)(input); } /*
-                                                                                                                                                                                                                                                                                                                                                                                          Copyright 2016 OpenMarket Ltd
-                                                                                                                                                                                                                                                                                                                                                                                          Copyright 2017 Vector Creations Ltd
-                                                                                                                                                                                                                                                                                                                                                                                          Copyright 2018-2019 New Vector Ltd
-                                                                                                                                                                                                                                                                                                                                                                                          Copyright 2019-2021 The Matrix.org Foundation C.I.C.
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Licensed under the Apache License, Version 2.0 (the "License");
-                                                                                                                                                                                                                                                                                                                                                                                          you may not use this file except in compliance with the License.
-                                                                                                                                                                                                                                                                                                                                                                                          You may obtain a copy of the License at
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                              http://www.apache.org/licenses/LICENSE-2.0
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Unless required by applicable law or agreed to in writing, software
-                                                                                                                                                                                                                                                                                                                                                                                          distributed under the License is distributed on an "AS IS" BASIS,
-                                                                                                                                                                                                                                                                                                                                                                                          WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-                                                                                                                                                                                                                                                                                                                                                                                          See the License for the specific language governing permissions and
-                                                                                                                                                                                                                                                                                                                                                                                          limitations under the License.
-                                                                                                                                                                                                                                                                                                                                                                                          */
+var _event = require("../@types/event.js");
+var _ReEmitter = require("../ReEmitter.js");
+var _logger = require("../logger.js");
+var _OlmDevice = require("./OlmDevice.js");
+var olmlib = _interopRequireWildcard(require("./olmlib.js"));
+var _DeviceList = require("./DeviceList.js");
+var _deviceinfo = require("./deviceinfo.js");
+var algorithms = _interopRequireWildcard(require("./algorithms/index.js"));
+var _CrossSigning = require("./CrossSigning.js");
+var _EncryptionSetup = require("./EncryptionSetup.js");
+var _SecretStorage = require("./SecretStorage.js");
+var _api = require("./api.js");
+var _OutgoingRoomKeyRequestManager = require("./OutgoingRoomKeyRequestManager.js");
+var _indexeddbCryptoStore = require("./store/indexeddb-crypto-store.js");
+var _QRCode = require("./verification/QRCode.js");
+var _SAS = require("./verification/SAS.js");
+var _key_passphrase = require("./key_passphrase.js");
+var _VerificationRequest = require("./verification/request/VerificationRequest.js");
+var _InRoomChannel = require("./verification/request/InRoomChannel.js");
+var _ToDeviceChannel = require("./verification/request/ToDeviceChannel.js");
+var _IllegalMethod = require("./verification/IllegalMethod.js");
+var _errors = require("../errors.js");
+var _dehydration = require("./dehydration.js");
+var _backup = require("./backup.js");
+var _room = require("../models/room.js");
+var _roomMember = require("../models/room-member.js");
+var _event2 = require("../models/event.js");
+var _client = require("../client.js");
+var _RoomList = require("./RoomList.js");
+var _typedEventEmitter = require("../models/typed-event-emitter.js");
+var _CryptoBackend = require("../common-crypto/CryptoBackend.js");
+var _roomState = require("../models/room-state.js");
+var _utils = require("../utils.js");
+var _secretStorage = require("../secret-storage.js");
+var _index2 = require("../crypto-api/index.js");
+var _deviceConverter = require("./device-converter.js");
+var _index3 = require("../http-api/index.js");
+var _base = require("../base64.js");
+var _membership = require("../@types/membership.js");
+var _decryptAESSecretStorageItem = _interopRequireDefault(require("../utils/decryptAESSecretStorageItem.js"));
+var _encryptAESSecretStorageItem = _interopRequireDefault(require("../utils/encryptAESSecretStorageItem.js"));
+function _getRequireWildcardCache(e) { if ("function" != typeof WeakMap) return null; var r = new WeakMap(), t = new WeakMap(); return (_getRequireWildcardCache = function (e) { return e ? t : r; })(e); }
+function _interopRequireWildcard(e, r) { if (!r && e && e.__esModule) return e; if (null === e || "object" != typeof e && "function" != typeof e) return { default: e }; var t = _getRequireWildcardCache(r); if (t && t.has(e)) return t.get(e); var n = { __proto__: null }, a = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var u in e) if ("default" !== u && {}.hasOwnProperty.call(e, u)) { var i = a ? Object.getOwnPropertyDescriptor(e, u) : null; i && (i.get || i.set) ? Object.defineProperty(n, u, i) : n[u] = e[u]; } return n.default = e, t && t.set(e, n), n; }
+function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }
+function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
+function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
+function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
+Copyright 2016 OpenMarket Ltd
+Copyright 2017 Vector Creations Ltd
+Copyright 2018-2019 New Vector Ltd
+Copyright 2019-2021 The Matrix.org Foundation C.I.C.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 /* re-exports for backwards compatibility */
 
 const DeviceVerification = _deviceinfo.DeviceInfo.DeviceVerification;
@@ -86,15 +92,20 @@ const defaultVerificationMethods = {
  * verification method names
  */
 // legacy export identifier
-const verificationMethods = {
+const verificationMethods = exports.verificationMethods = {
   RECIPROCATE_QR_CODE: _QRCode.ReciprocateQRCode.NAME,
   SAS: _SAS.SAS.NAME
 };
-exports.verificationMethods = verificationMethods;
 function isCryptoAvailable() {
-  return Boolean(global.Olm);
+  return Boolean(globalThis.Olm);
 }
-const MIN_FORCE_SESSION_INTERVAL_MS = 60 * 60 * 1000;
+
+// minimum time between attempting to unwedge an Olm session, if we succeeded
+// in creating a new session
+const MIN_FORCE_SESSION_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+// minimum time between attempting to unwedge an Olm session, if we failed
+// to create a new session
+const FORCE_SESSION_RETRY_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
 /* eslint-disable camelcase */
 
@@ -109,24 +120,26 @@ const MIN_FORCE_SESSION_INTERVAL_MS = 60 * 60 * 1000;
 /* eslint-disable camelcase */
 
 /* eslint-enable camelcase */
-let CryptoEvent = /*#__PURE__*/function (CryptoEvent) {
+let CryptoEvent = exports.CryptoEvent = function (CryptoEvent) {
   CryptoEvent["DeviceVerificationChanged"] = "deviceVerificationChanged";
-  CryptoEvent["UserTrustStatusChanged"] = "userTrustStatusChanged";
+  CryptoEvent[CryptoEvent["UserTrustStatusChanged"] = _index2.CryptoEvent.UserTrustStatusChanged] = "UserTrustStatusChanged";
   CryptoEvent["UserCrossSigningUpdated"] = "userCrossSigningUpdated";
   CryptoEvent["RoomKeyRequest"] = "crypto.roomKeyRequest";
   CryptoEvent["RoomKeyRequestCancellation"] = "crypto.roomKeyRequestCancellation";
-  CryptoEvent["KeyBackupStatus"] = "crypto.keyBackupStatus";
-  CryptoEvent["KeyBackupFailed"] = "crypto.keyBackupFailed";
-  CryptoEvent["KeyBackupSessionsRemaining"] = "crypto.keyBackupSessionsRemaining";
+  CryptoEvent[CryptoEvent["KeyBackupStatus"] = _index2.CryptoEvent.KeyBackupStatus] = "KeyBackupStatus";
+  CryptoEvent[CryptoEvent["KeyBackupFailed"] = _index2.CryptoEvent.KeyBackupFailed] = "KeyBackupFailed";
+  CryptoEvent[CryptoEvent["KeyBackupSessionsRemaining"] = _index2.CryptoEvent.KeyBackupSessionsRemaining] = "KeyBackupSessionsRemaining";
+  CryptoEvent[CryptoEvent["KeyBackupDecryptionKeyCached"] = _index2.CryptoEvent.KeyBackupDecryptionKeyCached] = "KeyBackupDecryptionKeyCached";
   CryptoEvent["KeySignatureUploadFailure"] = "crypto.keySignatureUploadFailure";
   CryptoEvent["VerificationRequest"] = "crypto.verification.request";
+  CryptoEvent[CryptoEvent["VerificationRequestReceived"] = _index2.CryptoEvent.VerificationRequestReceived] = "VerificationRequestReceived";
   CryptoEvent["Warning"] = "crypto.warning";
-  CryptoEvent["WillUpdateDevices"] = "crypto.willUpdateDevices";
-  CryptoEvent["DevicesUpdated"] = "crypto.devicesUpdated";
-  CryptoEvent["KeysChanged"] = "crossSigning.keysChanged";
+  CryptoEvent[CryptoEvent["WillUpdateDevices"] = _index2.CryptoEvent.WillUpdateDevices] = "WillUpdateDevices";
+  CryptoEvent[CryptoEvent["DevicesUpdated"] = _index2.CryptoEvent.DevicesUpdated] = "DevicesUpdated";
+  CryptoEvent[CryptoEvent["KeysChanged"] = _index2.CryptoEvent.KeysChanged] = "KeysChanged";
+  CryptoEvent[CryptoEvent["LegacyCryptoStoreMigrationProgress"] = _index2.CryptoEvent.LegacyCryptoStoreMigrationProgress] = "LegacyCryptoStoreMigrationProgress";
   return CryptoEvent;
 }({});
-exports.CryptoEvent = CryptoEvent;
 class Crypto extends _typedEventEmitter.TypedEventEmitter {
   /**
    * @returns The version of Olm.
@@ -151,26 +164,24 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
    *
    * @param cryptoStore - storage for the crypto layer.
    *
-   * @param roomList - An initialised RoomList object
-   *
    * @param verificationMethods - Array of verification methods to use.
    *    Each element can either be a string from MatrixClient.verificationMethods
    *    or a class that implements a verification method.
    */
-  constructor(baseApis, userId, deviceId, clientStore, cryptoStore, roomList, verificationMethods) {
+  constructor(baseApis, userId, deviceId, clientStore, cryptoStore, verificationMethods) {
     super();
     this.baseApis = baseApis;
     this.userId = userId;
     this.deviceId = deviceId;
     this.clientStore = clientStore;
     this.cryptoStore = cryptoStore;
-    this.roomList = roomList;
     _defineProperty(this, "backupManager", void 0);
     _defineProperty(this, "crossSigningInfo", void 0);
     _defineProperty(this, "olmDevice", void 0);
     _defineProperty(this, "deviceList", void 0);
     _defineProperty(this, "dehydrationManager", void 0);
     _defineProperty(this, "secretStorage", void 0);
+    _defineProperty(this, "roomList", void 0);
     _defineProperty(this, "reEmitter", void 0);
     _defineProperty(this, "verificationMethods", void 0);
     _defineProperty(this, "supportedAlgorithms", void 0);
@@ -204,7 +215,7 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
     // has happened for a given room. This is delayed
     // to avoid loading room members as long as possible.
     _defineProperty(this, "roomDeviceTrackingState", {});
-    // The timestamp of the last time we forced establishment
+    // The timestamp of the minimum time at which we will retry forcing establishment
     // of a new session for each device, in milliseconds.
     // {
     //     userId: {
@@ -212,7 +223,7 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
     //     },
     // }
     // Map: user Id → device Id → timestamp
-    _defineProperty(this, "lastNewSessionForced", new _utils.MapWithDefault(() => new _utils.MapWithDefault(() => 0)));
+    _defineProperty(this, "forceNewSessionRetryTime", new _utils.MapWithDefault(() => new _utils.MapWithDefault(() => 0)));
     // This flag will be unset whilst the client processes a sync response
     // so that we don't start requesting keys until we've actually finished
     // processing the response.
@@ -319,6 +330,8 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
       };
       this.handleVerificationEvent(event, this.inRoomVerificationRequests, createRequest, liveEvent);
     });
+    _logger.logger.debug("Crypto: initialising roomlist...");
+    this.roomList = new _RoomList.RoomList(cryptoStore);
     this.reEmitter = new _ReEmitter.TypedReEmitter(this);
     if (verificationMethods) {
       this.verificationMethods = new Map();
@@ -353,7 +366,7 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
           const keys = await this.secretStorage.getKey();
           await this.secretStorage.store("m.megolm_backup.v1", fixedKey, [keys[0]]);
         }
-        return olmlib.decodeBase64(fixedKey || storedKey);
+        return (0, _base.decodeBase64)(fixedKey || storedKey);
       }
 
       // try to get key from app
@@ -443,8 +456,24 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
     // make sure we are keeping track of our own devices
     // (this is important for key backups & things)
     this.deviceList.startTrackingDeviceList(this.userId);
+    _logger.logger.debug("Crypto: initialising roomlist...");
+    await this.roomList.init();
     _logger.logger.log("Crypto: checking for key backup...");
     this.backupManager.checkAndStart();
+  }
+
+  /**
+   * Implementation of {@link Crypto.CryptoApi#setDeviceIsolationMode}.
+   */
+  setDeviceIsolationMode(isolationMode) {
+    throw new Error("Not supported");
+  }
+  /**
+   * Implementation of {@link Crypto.CryptoApi#getVersion}.
+   */
+  getVersion() {
+    const olmVersionTuple = Crypto.getOlmVersion();
+    return `Olm ${olmVersionTuple[0]}.${olmVersionTuple[1]}.${olmVersionTuple[2]}`;
   }
 
   /**
@@ -509,25 +538,29 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
   async createRecoveryKeyFromPassphrase(password) {
     const decryption = new global.Olm.PkDecryption();
     try {
-      const keyInfo = {};
       if (password) {
         const derivation = await (0, _key_passphrase.keyFromPassphrase)(password);
-        keyInfo.passphrase = {
-          algorithm: "m.pbkdf2",
-          iterations: derivation.iterations,
-          salt: derivation.salt
+        decryption.init_with_private_key(derivation.key);
+        const privateKey = decryption.get_private_key();
+        return {
+          keyInfo: {
+            passphrase: {
+              algorithm: "m.pbkdf2",
+              iterations: derivation.iterations,
+              salt: derivation.salt
+            }
+          },
+          privateKey: privateKey,
+          encodedPrivateKey: (0, _index2.encodeRecoveryKey)(privateKey)
         };
-        keyInfo.pubkey = decryption.init_with_private_key(derivation.key);
       } else {
-        keyInfo.pubkey = decryption.generate_key();
+        decryption.generate_key();
+        const privateKey = decryption.get_private_key();
+        return {
+          privateKey: privateKey,
+          encodedPrivateKey: (0, _index2.encodeRecoveryKey)(privateKey)
+        };
       }
-      const privateKey = decryption.get_private_key();
-      const encodedPrivateKey = (0, _recoverykey.encodeRecoveryKey)(privateKey);
-      return {
-        keyInfo: keyInfo,
-        encodedPrivateKey,
-        privateKey
-      };
     } finally {
       decryption?.free();
     }
@@ -541,9 +574,9 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
    *
    * @internal
    */
-  async userHasCrossSigningKeys() {
-    await this.downloadKeys([this.userId]);
-    return this.deviceList.getStoredCrossSigningForUser(this.userId) !== null;
+  async userHasCrossSigningKeys(userId = this.userId) {
+    await this.downloadKeys([userId]);
+    return this.deviceList.getStoredCrossSigningForUser(userId) !== null;
   }
 
   /**
@@ -589,6 +622,27 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
   }
 
   /**
+   * Implementation of {@link Crypto.CryptoApi#getCrossSigningStatus}
+   */
+  async getCrossSigningStatus() {
+    const publicKeysOnDevice = Boolean(this.crossSigningInfo.getId());
+    const privateKeysInSecretStorage = Boolean(await this.crossSigningInfo.isStoredInSecretStorage(this.secretStorage));
+    const cacheCallbacks = this.crossSigningInfo.getCacheCallbacks();
+    const masterKey = Boolean(await cacheCallbacks.getCrossSigningKeyCache?.("master"));
+    const selfSigningKey = Boolean(await cacheCallbacks.getCrossSigningKeyCache?.("self_signing"));
+    const userSigningKey = Boolean(await cacheCallbacks.getCrossSigningKeyCache?.("user_signing"));
+    return {
+      publicKeysOnDevice,
+      privateKeysInSecretStorage,
+      privateKeysCachedLocally: {
+        masterKey,
+        selfSigningKey,
+        userSigningKey
+      }
+    };
+  }
+
+  /**
    * Bootstrap cross-signing by creating keys if needed. If everything is already
    * set up, then no changes are made, so this is safe to run to ensure
    * cross-signing is ready for use.
@@ -598,15 +652,6 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
    *   secret storage (if it has been setup)
    *
    * The cross-signing API is currently UNSTABLE and may change without notice.
-   *
-   * @param authUploadDeviceSigningKeys - Function
-   * called to await an interactive auth flow when uploading device signing keys.
-   * @param setupNewCrossSigning - Optional. Reset even if keys
-   * already exist.
-   * Args:
-   *     A function that makes the request requiring auth. Receives the
-   *     auth data as an object. Can be called multiple times, first with an empty
-   *     authDict, to obtain the flows.
    */
   async bootstrapCrossSigning({
     authUploadDeviceSigningKeys,
@@ -705,20 +750,6 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
    *
    * The Secure Secret Storage API is currently UNSTABLE and may change without notice.
    *
-   * @param createSecretStorageKey - Optional. Function
-   * called to await a secret storage key creation flow.
-   *     Returns a Promise which resolves to an object with public key metadata, encoded private
-   *     recovery key which should be disposed of after displaying to the user,
-   *     and raw private key to avoid round tripping if needed.
-   * @param keyBackupInfo - The current key backup object. If passed,
-   * the passphrase and recovery key from this backup will be used.
-   * @param setupNewKeyBackup - If true, a new key backup version will be
-   * created and the private key stored in the new SSSS store. Ignored if keyBackupInfo
-   * is supplied.
-   * @param setupNewSecretStorage - Optional. Reset even if keys already exist.
-   * @param getKeyBackupPassphrase - Optional. Function called to get the user's
-   *     current key backup passphrase. Should return a promise that resolves with a Buffer
-   *     containing the key, or rejects if the key cannot be obtained.
    * Returns:
    *     A promise which resolves to key creation data for
    *     SecretStorage#addKey: an object with `passphrase` etc fields.
@@ -740,18 +771,14 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
     let newKeyId = null;
 
     // create a new SSSS key and set it as default
-    const createSSSS = async (opts, privateKey) => {
-      if (privateKey) {
-        opts.key = privateKey;
-      }
+    const createSSSS = async opts => {
       const {
         keyId,
         keyInfo
       } = await secretStorage.addKey(_secretStorage.SECRET_STORAGE_ALGORITHM_V1_AES, opts);
-      if (privateKey) {
-        // make the private key available to encrypt 4S secrets
-        builder.ssssCryptoCallbacks.addPrivateKey(keyId, keyInfo, privateKey);
-      }
+
+      // make the private key available to encrypt 4S secrets
+      builder.ssssCryptoCallbacks.addPrivateKey(keyId, keyInfo, opts.key);
       await secretStorage.setDefaultKeyId(keyId);
       return keyId;
     };
@@ -768,7 +795,7 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
           const {
             iv,
             mac
-          } = await (0, _aes.calculateKeyCheck)(privateKey);
+          } = await (0, _secretStorage.calculateKeyCheck)(privateKey);
           keyInfo.iv = iv;
           keyInfo.mac = mac;
           await builder.setAccountData(`m.secret_storage.key.${keyId}`, keyInfo);
@@ -813,10 +840,14 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
       // that would mean we'd need to prompt for the old passphrase, and b)
       // it's not clear that would be the right thing to do anyway.
       const {
-        keyInfo = {},
+        keyInfo,
         privateKey
       } = await createSecretStorageKey();
-      newKeyId = await createSSSS(keyInfo, privateKey);
+      newKeyId = await createSSSS({
+        passphrase: keyInfo?.passphrase,
+        key: privateKey,
+        name: keyInfo?.name
+      });
     } else if (!storageExists && keyBackupInfo) {
       // we have an existing backup, but no SSSS
       _logger.logger.log("Secret storage does not exist, using key backup key");
@@ -826,7 +857,9 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
       const backupKey = (await this.getSessionBackupPrivateKey()) || (await getKeyBackupPassphrase?.());
 
       // create a new SSSS key and use the backup key as the new SSSS key
-      const opts = {};
+      const opts = {
+        key: backupKey
+      };
       if (keyBackupInfo.auth_data.private_key_salt && keyBackupInfo.auth_data.private_key_iterations) {
         // FIXME: ???
         opts.passphrase = {
@@ -836,10 +869,10 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
           bits: 256
         };
       }
-      newKeyId = await createSSSS(opts, backupKey);
+      newKeyId = await createSSSS(opts);
 
       // store the backup key in secret storage
-      await secretStorage.store("m.megolm_backup.v1", olmlib.encodeBase64(backupKey), [newKeyId]);
+      await secretStorage.store("m.megolm_backup.v1", (0, _base.encodeBase64)(backupKey), [newKeyId]);
 
       // The backup is trusted because the user provided the private key.
       // Sign the backup with the cross-signing key so the key backup can
@@ -874,9 +907,9 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
       {
         secureSecretStorage: false
       });
-      // write the key ourselves to 4S
-      const privateKey = (0, _recoverykey.decodeRecoveryKey)(info.recovery_key);
-      await secretStorage.store("m.megolm_backup.v1", olmlib.encodeBase64(privateKey));
+      // write the key to 4S
+      const privateKey = (0, _index2.decodeRecoveryKey)(info.recovery_key);
+      await secretStorage.store("m.megolm_backup.v1", (0, _base.encodeBase64)(privateKey));
 
       // create keyBackupInfo object to add to builder
       const data = {
@@ -903,7 +936,7 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
         const keyId = newKeyId || oldKeyId;
         await secretStorage.store("m.megolm_backup.v1", fixedBackupKey, keyId ? [keyId] : null);
       }
-      const decodedBackupKey = new Uint8Array(olmlib.decodeBase64(fixedBackupKey || sessionBackupKey));
+      const decodedBackupKey = new Uint8Array((0, _base.decodeBase64)(fixedBackupKey || sessionBackupKey));
       builder.addSessionBackupPrivateKeyToCache(decodedBackupKey);
     } else if (this.backupManager.getKeyBackupEnabled()) {
       // key backup is enabled but we don't have a session backup key in SSSS: see if we have one in
@@ -918,7 +951,7 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
         return;
       }
       _logger.logger.info("Got session backup key from cache/user that wasn't in SSSS: saving to SSSS");
-      await secretStorage.store("m.megolm_backup.v1", olmlib.encodeBase64(backupKey));
+      await secretStorage.store("m.megolm_backup.v1", (0, _base.encodeBase64)(backupKey));
     }
     const operation = builder.buildOperation();
     await operation.apply(this);
@@ -926,6 +959,41 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
     // only do this if apply succeeded for now as retry isn't in place yet
     await builder.persist(this);
     _logger.logger.log("Secure Secret Storage ready");
+  }
+
+  /**
+   * Implementation of {@link Crypto.CryptoApi#resetKeyBackup}.
+   */
+  async resetKeyBackup() {
+    // Delete existing ones
+    // There is no use case for having several key backup version live server side.
+    // Even if not deleted it would be lost as the key to restore is lost.
+    // There should be only one backup at a time.
+    await this.backupManager.deleteAllKeyBackupVersions();
+    const info = await this.backupManager.prepareKeyBackupVersion();
+    await this.signObject(info.auth_data);
+
+    // add new key backup
+    const {
+      version
+    } = await this.baseApis.http.authedRequest(_index3.Method.Post, "/room_keys/version", undefined, info, {
+      prefix: _index3.ClientPrefix.V3
+    });
+    _logger.logger.log(`Created backup version ${version}`);
+
+    // write the key to 4S
+    const privateKey = info.privateKey;
+    await this.secretStorage.store("m.megolm_backup.v1", (0, _base.encodeBase64)(privateKey));
+    await this.storeSessionBackupPrivateKey(privateKey);
+    await this.backupManager.checkAndStart();
+    await this.backupManager.scheduleAllGroupSessionsForBackup();
+  }
+
+  /**
+   * Implementation of {@link Crypto.CryptoApi#deleteKeyBackupVersion}.
+   */
+  async deleteKeyBackupVersion(version) {
+    await this.backupManager.deleteKeyBackupVersion(version);
   }
 
   /**
@@ -1023,22 +1091,22 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
    * @returns the key, if any, or null
    */
   async getSessionBackupPrivateKey() {
-    let key = await new Promise(resolve => {
-      // TODO types
+    const encodedKey = await new Promise(resolve => {
       this.cryptoStore.doTxn("readonly", [_indexeddbCryptoStore.IndexedDBCryptoStore.STORE_ACCOUNT], txn => {
         this.cryptoStore.getSecretStorePrivateKey(txn, resolve, "m.megolm_backup.v1");
       });
     });
+    let key = null;
 
     // make sure we have a Uint8Array, rather than a string
-    if (key && typeof key === "string") {
-      key = new Uint8Array(olmlib.decodeBase64(fixBackupKey(key) || key));
+    if (typeof encodedKey === "string") {
+      key = new Uint8Array((0, _base.decodeBase64)(fixBackupKey(encodedKey) || encodedKey));
       await this.storeSessionBackupPrivateKey(key);
     }
-    if (key && key.ciphertext) {
+    if (encodedKey && typeof encodedKey === "object" && "ciphertext" in encodedKey) {
       const pickleKey = Buffer.from(this.olmDevice.pickleKey);
-      const decrypted = await (0, _aes.decryptAES)(key, pickleKey, "m.megolm_backup.v1");
-      key = olmlib.decodeBase64(decrypted);
+      const decrypted = await (0, _decryptAESSecretStorageItem.default)(encodedKey, pickleKey, "m.megolm_backup.v1");
+      key = (0, _base.decodeBase64)(decrypted);
     }
     return key;
   }
@@ -1048,16 +1116,52 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
    * @param key - the private key
    * @returns a promise so you can catch failures
    */
-  async storeSessionBackupPrivateKey(key) {
+  async storeSessionBackupPrivateKey(key, version) {
     if (!(key instanceof Uint8Array)) {
       // eslint-disable-next-line @typescript-eslint/no-base-to-string
       throw new Error(`storeSessionBackupPrivateKey expects Uint8Array, got ${key}`);
     }
     const pickleKey = Buffer.from(this.olmDevice.pickleKey);
-    const encryptedKey = await (0, _aes.encryptAES)(olmlib.encodeBase64(key), pickleKey, "m.megolm_backup.v1");
+    const encryptedKey = await (0, _encryptAESSecretStorageItem.default)((0, _base.encodeBase64)(key), pickleKey, "m.megolm_backup.v1");
     return this.cryptoStore.doTxn("readwrite", [_indexeddbCryptoStore.IndexedDBCryptoStore.STORE_ACCOUNT], txn => {
       this.cryptoStore.storeSecretStorePrivateKey(txn, "m.megolm_backup.v1", encryptedKey);
     });
+  }
+
+  /**
+   * Get the current status of key backup.
+   *
+   * Implementation of {@link Crypto.CryptoApi.getActiveSessionBackupVersion}.
+   */
+  async getActiveSessionBackupVersion() {
+    if (this.backupManager.getKeyBackupEnabled()) {
+      return this.backupManager.version ?? null;
+    }
+    return null;
+  }
+
+  /**
+   * Determine if a key backup can be trusted.
+   *
+   * Implementation of {@link Crypto.CryptoApi.isKeyBackupTrusted}.
+   */
+  async isKeyBackupTrusted(info) {
+    const trustInfo = await this.backupManager.isKeyBackupTrusted(info);
+    return (0, _backup.backupTrustInfoFromLegacyTrustInfo)(trustInfo);
+  }
+
+  /**
+   * Force a re-check of the key backup and enable/disable it as appropriate.
+   *
+   * Implementation of {@link Crypto.CryptoApi.checkKeyBackupAndEnable}.
+   */
+  async checkKeyBackupAndEnable() {
+    const checkResult = await this.backupManager.checkKeyBackup();
+    if (!checkResult || !checkResult.backupInfo) return null;
+    return {
+      backupInfo: checkResult.backupInfo,
+      trustInfo: (0, _backup.backupTrustInfoFromLegacyTrustInfo)(checkResult.trustInfo)
+    };
   }
 
   /**
@@ -1110,7 +1214,6 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
             this.baseApis.emit(CryptoEvent.KeySignatureUploadFailure, failures, "afterCrossSigningLocalKeyChange", upload // continuation
             );
           }
-
           throw new _errors.KeySignatureUploadError("Key upload failed", {
             failures
           });
@@ -1198,7 +1301,7 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
           try {
             await olmlib.verifySignature(this.olmDevice, key, userId, deviceId, devices[deviceId].keys[signame]);
             deviceIds.push(deviceId);
-          } catch (e) {}
+          } catch {}
         }
       }
     }
@@ -1246,6 +1349,20 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
       return new _CrossSigning.UserTrustLevel(false, false, false);
     }
     return this.crossSigningInfo.checkUserTrust(userCrossSigning);
+  }
+
+  /**
+   * Implementation of {@link Crypto.CryptoApi.getUserVerificationStatus}.
+   */
+  async getUserVerificationStatus(userId) {
+    return this.checkUserTrust(userId);
+  }
+
+  /**
+   * Implementation of {@link Crypto.CryptoApi.pinCurrentUserIdentity}.
+   */
+  async pinCurrentUserIdentity(userId) {
+    throw new Error("not implemented");
   }
 
   /**
@@ -1448,6 +1565,36 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
   }
 
   /**
+   * Implementation of {@link CryptoBackend#getBackupDecryptor}.
+   */
+  async getBackupDecryptor(backupInfo, privKey) {
+    if (!(privKey instanceof Uint8Array)) {
+      throw new Error(`getBackupDecryptor expects Uint8Array`);
+    }
+    const algorithm = await _backup.BackupManager.makeAlgorithm(backupInfo, async () => {
+      return privKey;
+    });
+
+    // If the pubkey computed from the private data we've been given
+    // doesn't match the one in the auth_data, the user has entered
+    // a different recovery key / the wrong passphrase.
+    if (!(await algorithm.keyMatches(privKey))) {
+      return Promise.reject(new _index3.MatrixError({
+        errcode: _client.MatrixClient.RESTORE_BACKUP_ERROR_BAD_KEY
+      }));
+    }
+    return new _backup.LibOlmBackupDecryptor(algorithm);
+  }
+
+  /**
+   * Implementation of {@link CryptoBackend#importBackedUpRoomKeys}.
+   */
+  importBackedUpRoomKeys(keys, backupVersion, opts = {}) {
+    opts.source = "backup";
+    return this.importRoomKeys(keys, opts);
+  }
+
+  /**
    * Store a set of keys as our own, trusted, cross-signing keys.
    *
    * @param keys - The new trusted set of keys
@@ -1527,12 +1674,15 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
     this.outgoingRoomKeyRequestManager.stop();
     this.deviceList.stop();
     this.dehydrationManager.stop();
+    this.backupManager.stop();
   }
 
   /**
    * Get the Ed25519 key for this device
    *
    * @returns base64-encoded ed25519 key.
+   *
+   * @deprecated Use {@link Crypto.CryptoApi#getOwnDeviceKeys}.
    */
   getDeviceEd25519Key() {
     return this.olmDevice.deviceEd25519Key;
@@ -1542,9 +1692,27 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
    * Get the Curve25519 key for this device
    *
    * @returns base64-encoded curve25519 key.
+   *
+   * @deprecated Use {@link Crypto.CryptoApi#getOwnDeviceKeys}
    */
   getDeviceCurve25519Key() {
     return this.olmDevice.deviceCurve25519Key;
+  }
+
+  /**
+   * Implementation of {@link Crypto.CryptoApi#getOwnDeviceKeys}.
+   */
+  async getOwnDeviceKeys() {
+    if (!this.olmDevice.deviceCurve25519Key) {
+      throw new Error("Curve25519 key not yet created");
+    }
+    if (!this.olmDevice.deviceEd25519Key) {
+      throw new Error("Ed25519 key not yet created");
+    }
+    return {
+      ed25519: this.olmDevice.deviceEd25519Key,
+      curve25519: this.olmDevice.deviceCurve25519Key
+    };
   }
 
   /**
@@ -1836,6 +2004,24 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
   }
 
   /**
+   * Mark the given device as locally verified.
+   *
+   * Implementation of {@link Crypto.CryptoApi#setDeviceVerified}.
+   */
+  async setDeviceVerified(userId, deviceId, verified = true) {
+    await this.setDeviceVerification(userId, deviceId, verified);
+  }
+
+  /**
+   * Blindly cross-sign one of our other devices.
+   *
+   * Implementation of {@link Crypto.CryptoApi#crossSignDevice}.
+   */
+  async crossSignDevice(deviceId) {
+    await this.setDeviceVerified(this.userId, deviceId, true);
+  }
+
+  /**
    * Update the blocked/verified state of the given device
    *
    * @param userId - owner of the device
@@ -1862,7 +2048,7 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
     // The js-sdk's verification treats cross-signing keys as devices
     // and so uses this method to mark them verified.
     const xsk = this.deviceList.getStoredCrossSigningForUser(userId);
-    if (xsk && xsk.getId() === deviceId) {
+    if (xsk?.getId() === deviceId) {
       if (blocked !== null || known !== null) {
         throw new Error("Cannot set blocked or known for a cross-signing key");
       }
@@ -1914,8 +2100,7 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
           // This will emit events when it comes back down the sync
           // (we could do local echo to speed things up)
         }
-
-        return device; // TODO types
+        return device;
       } else {
         return xsk;
       }
@@ -1984,7 +2169,6 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
               this.baseApis.emit(CryptoEvent.KeySignatureUploadFailure, failures, "setDeviceVerification", upload // continuation
               );
             }
-
             throw new _errors.KeySignatureUploadError("Key upload failed", {
               failures
             });
@@ -1996,13 +2180,12 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
         // XXX: we'll need to wait for the device list to be updated
       }
     }
-
     const deviceObj = _deviceinfo.DeviceInfo.fromStorage(dev, deviceId);
     this.emit(CryptoEvent.DeviceVerificationChanged, userId, deviceId, deviceObj);
     return deviceObj;
   }
-  findVerificationRequestDMInProgress(roomId) {
-    return this.inRoomVerificationRequests.findRequestInProgress(roomId);
+  findVerificationRequestDMInProgress(roomId, userId) {
+    return this.inRoomVerificationRequests.findRequestInProgress(roomId, userId);
   }
   getVerificationRequestsToDeviceInProgress(userId) {
     return this.toDeviceVerificationRequests.getRequestsInProgress(userId);
@@ -2015,6 +2198,8 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
     const channel = new _InRoomChannel.InRoomChannel(this.baseApis, roomId, userId);
     return this.requestVerificationWithChannel(userId, channel, this.inRoomVerificationRequests);
   }
+
+  /** @deprecated Use `requestOwnUserVerificationToDevice` or `requestDeviceVerification` */
   requestVerification(userId, devices) {
     if (!devices) {
       devices = Object.keys(this.deviceList.getRawStoredDevicesForUser(userId));
@@ -2025,6 +2210,12 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
     }
     const channel = new _ToDeviceChannel.ToDeviceChannel(this.baseApis, userId, devices, _ToDeviceChannel.ToDeviceChannel.makeTransactionId());
     return this.requestVerificationWithChannel(userId, channel, this.toDeviceVerificationRequests);
+  }
+  requestOwnUserVerification() {
+    return this.requestVerification(this.userId);
+  }
+  requestDeviceVerification(userId, deviceId) {
+    return this.requestVerification(userId, [deviceId]);
   }
   async requestVerificationWithChannel(userId, channel, requestsMap) {
     let request = new _VerificationRequest.VerificationRequest(channel, this.verificationMethods, this.baseApis);
@@ -2206,6 +2397,73 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
       ret.mismatchedSender = true;
     }
     return ret;
+  }
+
+  /**
+   * Implementation of {@link Crypto.CryptoApi.getEncryptionInfoForEvent}.
+   */
+  async getEncryptionInfoForEvent(event) {
+    const encryptionInfo = this.getEventEncryptionInfo(event);
+    if (!encryptionInfo.encrypted) {
+      return null;
+    }
+    const senderId = event.getSender();
+    if (!senderId || encryptionInfo.mismatchedSender) {
+      // something definitely wrong is going on here
+
+      // previously: E2EState.Warning -> E2ePadlockUnverified -> Red/"Encrypted by an unverified session"
+      return {
+        shieldColour: _index2.EventShieldColour.RED,
+        shieldReason: _index2.EventShieldReason.MISMATCHED_SENDER_KEY
+      };
+    }
+    const userTrust = this.checkUserTrust(senderId);
+    if (!userTrust.isCrossSigningVerified()) {
+      // If the message is unauthenticated, then display a grey
+      // shield, otherwise if the user isn't cross-signed then
+      // nothing's needed
+      if (!encryptionInfo.authenticated) {
+        // previously: E2EState.Unauthenticated -> E2ePadlockUnauthenticated -> Grey/"The authenticity of this encrypted message can't be guaranteed on this device."
+        return {
+          shieldColour: _index2.EventShieldColour.GREY,
+          shieldReason: _index2.EventShieldReason.AUTHENTICITY_NOT_GUARANTEED
+        };
+      } else {
+        // previously: E2EState.Normal -> no icon
+        return {
+          shieldColour: _index2.EventShieldColour.NONE,
+          shieldReason: null
+        };
+      }
+    }
+    const eventSenderTrust = senderId && encryptionInfo.sender && (await this.getDeviceVerificationStatus(senderId, encryptionInfo.sender.deviceId));
+    if (!eventSenderTrust) {
+      // previously: E2EState.Unknown -> E2ePadlockUnknown -> Grey/"Encrypted by a deleted session"
+      return {
+        shieldColour: _index2.EventShieldColour.GREY,
+        shieldReason: _index2.EventShieldReason.UNKNOWN_DEVICE
+      };
+    }
+    if (!eventSenderTrust.isVerified()) {
+      // previously: E2EState.Warning -> E2ePadlockUnverified -> Red/"Encrypted by an unverified session"
+      return {
+        shieldColour: _index2.EventShieldColour.RED,
+        shieldReason: _index2.EventShieldReason.UNSIGNED_DEVICE
+      };
+    }
+    if (!encryptionInfo.authenticated) {
+      // previously: E2EState.Unauthenticated -> E2ePadlockUnauthenticated -> Grey/"The authenticity of this encrypted message can't be guaranteed on this device."
+      return {
+        shieldColour: _index2.EventShieldColour.GREY,
+        shieldReason: _index2.EventShieldReason.AUTHENTICITY_NOT_GUARANTEED
+      };
+    }
+
+    // previously: E2EState.Verified -> no icon
+    return {
+      shieldColour: _index2.EventShieldColour.NONE,
+      shieldReason: null
+    };
   }
 
   /**
@@ -2450,6 +2708,16 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
   }
 
   /**
+   * Get a JSON list containing all of the room keys
+   *
+   * @returns a JSON string encoding a list of session
+   *    export objects, each of which is an IMegolmSessionData
+   */
+  async exportRoomKeysAsJson() {
+    return JSON.stringify(await this.exportRoomKeys());
+  }
+
+  /**
    * Import a list of room keys previously exported by exportRoomKeys
    *
    * @param keys - a list of session export objects
@@ -2484,6 +2752,19 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
         }
       });
     })).then();
+  }
+
+  /**
+   * Import a JSON string encoding a list of room keys previously
+   * exported by exportRoomKeysAsJson
+   *
+   * @param keys - a JSON string encoding a list of session export
+   *    objects, each of which is an IMegolmSessionData
+   * @param opts - options object
+   * @returns a promise which resolves once the keys have been imported
+   */
+  async importRoomKeysAsJson(keys, opts) {
+    return await this.importRoomKeys(JSON.parse(keys));
   }
 
   /**
@@ -2779,7 +3060,7 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
 
       // ignore any rooms which we have left
       const myMembership = room.getMyMembership();
-      return myMembership === "join" || myMembership === "invite";
+      return myMembership === _membership.KnownMembership.Join || myMembership === _membership.KnownMembership.Invite;
     });
   }
 
@@ -2792,45 +3073,12 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
    *     resolves once the message has been encrypted and sent to the given
    *     userDeviceMap, and returns the `{ contentMap, deviceInfoByDeviceId }`
    *     of the successfully sent messages.
+   *
+   * @deprecated Instead use {@link encryptToDeviceMessages} followed by {@link MatrixClient.queueToDevice}.
    */
   async encryptAndSendToDevices(userDeviceInfoArr, payload) {
-    const toDeviceBatch = {
-      eventType: _event.EventType.RoomMessageEncrypted,
-      batch: []
-    };
     try {
-      await Promise.all(userDeviceInfoArr.map(async ({
-        userId,
-        deviceInfo
-      }) => {
-        const deviceId = deviceInfo.deviceId;
-        const encryptedContent = {
-          algorithm: olmlib.OLM_ALGORITHM,
-          sender_key: this.olmDevice.deviceCurve25519Key,
-          ciphertext: {},
-          [_event.ToDeviceMessageId]: (0, _uuid.v4)()
-        };
-        toDeviceBatch.batch.push({
-          userId,
-          deviceId,
-          payload: encryptedContent
-        });
-        await olmlib.ensureOlmSessionsForDevices(this.olmDevice, this.baseApis, new Map([[userId, [deviceInfo]]]));
-        await olmlib.encryptMessageForDevice(encryptedContent.ciphertext, this.userId, this.deviceId, this.olmDevice, userId, deviceInfo, payload);
-      }));
-
-      // prune out any devices that encryptMessageForDevice could not encrypt for,
-      // in which case it will have just not added anything to the ciphertext object.
-      // There's no point sending messages to devices if we couldn't encrypt to them,
-      // since that's effectively a blank message.
-      toDeviceBatch.batch = toDeviceBatch.batch.filter(msg => {
-        if (Object.keys(msg.payload.ciphertext).length > 0) {
-          return true;
-        } else {
-          _logger.logger.log(`No ciphertext for device ${msg.userId}:${msg.deviceId}: pruning`);
-          return false;
-        }
-      });
+      const toDeviceBatch = await this.prepareToDeviceBatch(userDeviceInfoArr, payload);
       try {
         await this.baseApis.queueToDevice(toDeviceBatch);
       } catch (e) {
@@ -2841,6 +3089,76 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
       _logger.logger.error("encryptAndSendToDevices promises failed", e);
       throw e;
     }
+  }
+  async prepareToDeviceBatch(userDeviceInfoArr, payload) {
+    const toDeviceBatch = {
+      eventType: _event.EventType.RoomMessageEncrypted,
+      batch: []
+    };
+    await Promise.all(userDeviceInfoArr.map(async ({
+      userId,
+      deviceInfo
+    }) => {
+      const deviceId = deviceInfo.deviceId;
+      const encryptedContent = {
+        algorithm: olmlib.OLM_ALGORITHM,
+        sender_key: this.olmDevice.deviceCurve25519Key,
+        ciphertext: {},
+        [_event.ToDeviceMessageId]: (0, _uuid.v4)()
+      };
+      toDeviceBatch.batch.push({
+        userId,
+        deviceId,
+        payload: encryptedContent
+      });
+      await olmlib.ensureOlmSessionsForDevices(this.olmDevice, this.baseApis, new Map([[userId, [deviceInfo]]]));
+      await olmlib.encryptMessageForDevice(encryptedContent.ciphertext, this.userId, this.deviceId, this.olmDevice, userId, deviceInfo, payload);
+    }));
+
+    // prune out any devices that encryptMessageForDevice could not encrypt for,
+    // in which case it will have just not added anything to the ciphertext object.
+    // There's no point sending messages to devices if we couldn't encrypt to them,
+    // since that's effectively a blank message.
+    toDeviceBatch.batch = toDeviceBatch.batch.filter(msg => {
+      if (Object.keys(msg.payload.ciphertext).length > 0) {
+        return true;
+      } else {
+        _logger.logger.log(`No ciphertext for device ${msg.userId}:${msg.deviceId}: pruning`);
+        return false;
+      }
+    });
+    return toDeviceBatch;
+  }
+
+  /**
+   * Implementation of {@link Crypto.CryptoApi#encryptToDeviceMessages}.
+   */
+  async encryptToDeviceMessages(eventType, devices, payload) {
+    const userIds = new Set(devices.map(({
+      userId
+    }) => userId));
+    const deviceInfoMap = await this.downloadKeys(Array.from(userIds), false);
+    const userDeviceInfoArr = [];
+    devices.forEach(({
+      userId,
+      deviceId
+    }) => {
+      const devices = deviceInfoMap.get(userId);
+      if (!devices) {
+        _logger.logger.warn(`No devices found for user ${userId}`);
+        return;
+      }
+      if (devices.has(deviceId)) {
+        // Send the message to a specific device
+        userDeviceInfoArr.push({
+          userId,
+          deviceInfo: devices.get(deviceId)
+        });
+      } else {
+        _logger.logger.warn(`No device found for user ${userId} with id ${deviceId}`);
+      }
+    });
+    return this.prepareToDeviceBatch(userDeviceInfoArr, payload);
   }
   async preprocessToDeviceMessages(events) {
     // all we do here is filter out encrypted to-device messages with the wrong algorithm. Decryption
@@ -3001,6 +3319,7 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
     !request.observeOnly;
     if (shouldEmit) {
       this.baseApis.emit(CryptoEvent.VerificationRequest, request);
+      this.baseApis.emit(CryptoEvent.VerificationRequestReceived, request);
     }
   }
 
@@ -3030,16 +3349,19 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
       return;
     }
 
-    // check when we last forced a new session with this device: if we've already done so
+    // check when we can force a new session with this device: if we've already done so
     // recently, don't do it again.
-    const lastNewSessionDevices = this.lastNewSessionForced.getOrCreate(sender);
-    const lastNewSessionForced = lastNewSessionDevices.getOrCreate(deviceKey);
-    if (lastNewSessionForced + MIN_FORCE_SESSION_INTERVAL_MS > Date.now()) {
-      _logger.logger.debug("New session already forced with device " + sender + ":" + deviceKey + " at " + lastNewSessionForced + ": not forcing another");
+    const forceNewSessionRetryTimeDevices = this.forceNewSessionRetryTime.getOrCreate(sender);
+    const forceNewSessionRetryTime = forceNewSessionRetryTimeDevices.getOrCreate(deviceKey);
+    if (forceNewSessionRetryTime > Date.now()) {
+      _logger.logger.debug(`New session already forced with device ${sender}:${deviceKey}: ` + `not forcing another until at least ${new Date(forceNewSessionRetryTime).toUTCString()}`);
       await this.olmDevice.recordSessionProblem(deviceKey, "wedged", true);
       retryDecryption();
       return;
     }
+
+    // make sure we don't retry to unwedge too soon even if we fail to create a new session
+    forceNewSessionRetryTimeDevices.set(deviceKey, Date.now() + FORCE_SESSION_RETRY_INTERVAL_MS);
 
     // establish a new olm session with this device since we're failing to decrypt messages
     // on a current session.
@@ -3060,7 +3382,7 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
     }
     const devicesByUser = new Map([[sender, [device]]]);
     await olmlib.ensureOlmSessionsForDevices(this.olmDevice, this.baseApis, devicesByUser, true);
-    lastNewSessionDevices.set(deviceKey, Date.now());
+    forceNewSessionRetryTimeDevices.set(deviceKey, Date.now() + MIN_FORCE_SESSION_INTERVAL_MS);
 
     // Now send a blank message on that session so the other side knows about it.
     // (The keyshare request is sent in the clear so that won't do)
@@ -3119,11 +3441,11 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
     // the result of anyway, as we'll need to do a query again once all the members are fetched
     // by calling _trackRoomDevices
     if (roomId in this.roomDeviceTrackingState) {
-      if (member.membership == "join") {
+      if (member.membership == _membership.KnownMembership.Join) {
         _logger.logger.log("Join event for " + member.userId + " in " + roomId);
         // make sure we are tracking the deviceList for this user
         this.deviceList.startTrackingDeviceList(member.userId);
-      } else if (member.membership == "invite" && this.clientStore.getRoom(roomId)?.shouldEncryptForInvitedMembers()) {
+      } else if (member.membership == _membership.KnownMembership.Invite && this.clientStore.getRoom(roomId)?.shouldEncryptForInvitedMembers()) {
         _logger.logger.log("Invite event for " + member.userId + " in " + roomId);
         this.deviceList.startTrackingDeviceList(member.userId);
       }
@@ -3305,7 +3627,7 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
     }
     const AlgClass = algorithms.DECRYPTION_CLASSES.get(algorithm);
     if (!AlgClass) {
-      throw new algorithms.DecryptionError("UNKNOWN_ENCRYPTION_ALGORITHM", 'Unknown encryption algorithm "' + algorithm + '".');
+      throw new _CryptoBackend.DecryptionError(_index2.DecryptionFailureCode.UNKNOWN_ENCRYPTION_ALGORITHM, 'Unknown encryption algorithm "' + algorithm + '".');
     }
     alg = new AlgClass({
       userId: this.userId,
@@ -3353,6 +3675,44 @@ class Crypto extends _typedEventEmitter.TypedEventEmitter {
     obj.signatures = (0, _utils.recursiveMapToObject)(sigs);
     if (unsigned !== undefined) obj.unsigned = unsigned;
   }
+
+  /**
+   * @returns true if the room with the supplied ID is encrypted. False if the
+   * room is not encrypted, or is unknown to us.
+   */
+  isRoomEncrypted(roomId) {
+    return this.roomList.isRoomEncrypted(roomId);
+  }
+
+  /**
+   * Implementation of {@link Crypto.CryptoApi#isEncryptionEnabledInRoom}.
+   */
+  async isEncryptionEnabledInRoom(roomId) {
+    return this.isRoomEncrypted(roomId);
+  }
+
+  /**
+   * @returns information about the encryption on the room with the supplied
+   * ID, or null if the room is not encrypted or unknown to us.
+   */
+  getRoomEncryption(roomId) {
+    return this.roomList.getRoomEncryption(roomId);
+  }
+
+  /**
+   * Returns whether dehydrated devices are supported by the crypto backend
+   * and by the server.
+   */
+  async isDehydrationSupported() {
+    return false;
+  }
+
+  /**
+   * Stub function -- dehydration is not implemented here, so throw error
+   */
+  async startDehydration(createNewKey) {
+    throw new Error("Not implemented");
+  }
 }
 
 /**
@@ -3373,7 +3733,7 @@ function fixBackupKey(key) {
     return null;
   }
   const fixedKey = Uint8Array.from(key.split(","), x => parseInt(x));
-  return olmlib.encodeBase64(fixedKey);
+  return (0, _base.encodeBase64)(fixedKey);
 }
 
 /**

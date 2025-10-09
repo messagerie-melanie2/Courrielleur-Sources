@@ -9,19 +9,16 @@
  */
 
 const { TreeSelection } = ChromeUtils.importESModule(
-  "chrome://messenger/content/tree-selection.mjs"
+  "chrome://messenger/content/TreeSelection.mjs"
 );
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-var { MessageGenerator, SyntheticMessageSet } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { MessageGenerator, SyntheticMessageSet } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-var { MessageInjection } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageInjection.jsm"
-);
-var { PromiseUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/PromiseUtils.sys.mjs"
+var { MessageInjection } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageInjection.sys.mjs"
 );
 
 var nsIMFNService = Ci.nsIMsgFolderNotificationService;
@@ -44,33 +41,9 @@ var messageInjection = new MessageInjection(
 
 var gLocalInboxFolder = messageInjection.getInboxFolder();
 var gListener;
-var gCommandUpdater;
 
 var gDBView;
 var gTreeView;
-
-var CommandUpdaterWithPromise = function () {
-  this.deferred = PromiseUtils.defer();
-};
-CommandUpdaterWithPromise.prototype = {
-  async promiseSelectionSummarized() {
-    await this.deferred.promise;
-    this.deferred = PromiseUtils.defer();
-    return this.deferred.promise;
-  },
-
-  updateCommandStatus() {
-    // the back end is smart and is only telling us to update command status
-    // when the # of items in the selection has actually changed.
-  },
-
-  displayMessageChanged(aFolder, aSubject, aKeywords) {},
-
-  updateNextMessageAfterDelete() {},
-  summarizeSelection() {
-    this.deferred.resolve();
-  },
-};
 
 // Our listener, which captures events and does the real tests.
 function gMFListener() {
@@ -116,30 +89,27 @@ add_setup(async function () {
   gLocalInboxFolder.server.spamSettings.level = 0;
 
   // Add folder listeners that will capture async events.
-  let flags = nsIMFNService.msgsMoveCopyCompleted | nsIMFNService.folderAdded;
+  const flags = nsIMFNService.msgsMoveCopyCompleted | nsIMFNService.folderAdded;
   gListener = new gMFListener();
   MailServices.mfn.addListener(gListener, flags);
 
   // Build up a message.
   await messageInjection.makeNewSetsInFolders([gLocalInboxFolder], [{}]);
-  let view_type = "threaded";
+  const view_type = "threaded";
   let view_flag = Ci.nsMsgViewFlagsType.kThreadedDisplay;
-  let dbviewContractId = "@mozilla.org/messenger/msgdbview;1?type=" + view_type;
+  const dbviewContractId =
+    "@mozilla.org/messenger/msgdbview;1?type=" + view_type;
 
   // Always start out fully expanded.
   view_flag |= Ci.nsMsgViewFlagsType.kExpandAll;
 
-  gCommandUpdater = new CommandUpdaterWithPromise();
-
   gDBView = Cc[dbviewContractId].createInstance(Ci.nsIMsgDBView);
   gDBView.init(null, null, null);
-  var outCount = {};
   gDBView.open(
     gLocalInboxFolder,
     Ci.nsMsgViewSortType.byDate,
     Ci.nsMsgViewSortOrder.ascending,
-    view_flag,
-    outCount
+    view_flag
   );
 
   gTreeView = gDBView.QueryInterface(Ci.nsITreeView);
@@ -158,7 +128,6 @@ add_task(async function test_first_junking_create_folder() {
   // Select and junk all messages.
   gDBView.doCommand(Ci.nsMsgViewCommandType.selectAll);
   gDBView.doCommand(Ci.nsMsgViewCommandType.junk);
-  await gCommandUpdater.promiseSelectionSummarized;
   await gListener.promiseFolderAdded;
 });
 
@@ -171,6 +140,5 @@ add_task(async function test_second_junking_move_msgs() {
   // Select and junk all messages.
   gDBView.doCommand(Ci.nsMsgViewCommandType.selectAll);
   gDBView.doCommand(Ci.nsMsgViewCommandType.junk);
-  await gCommandUpdater.promiseSelectionSummarized;
   await gListener.promiseMsgsMoveCopyCompleted;
 });

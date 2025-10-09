@@ -31,11 +31,11 @@ define(function (require) {
   /**
    * Read a file into a string (all line endings become CRLF).
    *
-   * @param file  The name of the file to read, relative to the data/ directory.
-   * @param start The first line of the file to return, defaulting to 0
-   * @param end   The last line of the file to return, defaulting to the number of
-   *              lines in the file.
-   * @returns Promise<String> The contents of the file as a binary string.
+   * @param {string} file - The name of the file to read, relative to the data/ directory.
+   * @param {integer} [start=0] - The first line of the file to return.
+   * @param {integer} [end] - The last line of the file to return,
+   *   defaulting to the number of lines in the file.
+   * @returns {Promise<string>} the contents of the file as a binary string.
    */
   function read_file(file, start, end) {
     if (!(file in file_cache)) {
@@ -79,14 +79,14 @@ define(function (require) {
    * _eol: The CRLFs in the input file will be replaced with the given line
    *       ending instead.
    *
-   * @param test     The name of test
-   * @param file     The name of the file to read (relative to mailnews/data)
-   * @param opts     Options for the mime parser, as well as a few extras detailed
-   *                 above.
-   * @param partspec An array of [partnum, line start, line end] detailing the
-   *                 expected parts in the body. It will be expected that the
-   *                 accumulated body part data for partnum would be the contents
-   *                 of the file from [line start, line end) [1-based lines]
+   * @param {string} test - The name of test.
+   * @param {string} file - The name of the file to read (relative to mailnews/data).
+   * @param {object} opts - Options for the mime parser, as well as a few extras
+   *   detailed above.
+   * @param {Array} partspec - An array of [partnum, line start, line end]
+   *   detailing the expected parts in the body. It will be expected that the
+   *   accumulated body part data for partnum would be the contents
+   *   of the file from [line start, line end) [1-based lines]
    */
   function make_body_test(test, file, opts, partspec) {
     var results = Promise.all(
@@ -105,7 +105,7 @@ define(function (require) {
     });
     if (eol !== undefined) {
       results = results.then(function (results_) {
-        for (let part of results_) {
+        for (const part of results_) {
           part[1] = part[1].replace(/\r\n/g, eol);
         }
         return results_;
@@ -117,15 +117,15 @@ define(function (require) {
   /**
    * Execute a single MIME tree test.
    *
-   * @param message  Either the text of the message, an array of textual message
-   *                 part data (imagine coming on different TCP packets), or a
-   *                 promise that resolves to any of the above.
-   * @param opts     A set of options for the parser and for the test.
-   * @param results  The expected results of the call. This may either be a
-   *                 dictionary of part number -> header -> values (to check
-   *                 headers), or an array of [partnum, partdata] for expected
-   *                 results to deliverPartData, or a promise for the above.
-   * @returns A promise containing the results of the test.
+   * @param {string|string[]|Promise} message - Either the text of the message, an array of textual message
+   *   part data (imagine coming on different TCP packets), or a
+   *   promise that resolves to any of the above.
+   * @param {object} opts - A set of options for the parser and for the test.
+   * @param {object|Array} results - The expected results of the call.
+   *   This may either be adictionary of part number -> header -> values
+   *   (to check headers), or an array of [partnum, partdata] for expected
+   *   results to deliverPartData, or a promise for the above.
+   * @returns {Promise} A promise containing the results of the test.
    */
   function testParser(message, opts, results) {
     var uncheckedValues;
@@ -149,12 +149,12 @@ define(function (require) {
           assert.ok(partNum in uncheckedValues);
           // Headers is a map, convert it to an object.
           var objmap = {};
-          for (let pair of headers) {
+          for (const pair of headers) {
             objmap[pair[0]] = pair[1];
           }
           var expected = uncheckedValues[partNum];
           var convresults = {};
-          for (let key in expected) {
+          for (const key in expected) {
             try {
               convresults[key] = jsmime.headerparser.parseStructuredHeader(
                 key,
@@ -177,7 +177,7 @@ define(function (require) {
           if (fusingParts) {
             this.partData += data;
           } else {
-            let check = uncheckedValues.shift();
+            const check = uncheckedValues.shift();
             assert.equal(partNum, check[0]);
             assert.equal(data, check[1]);
           }
@@ -185,7 +185,7 @@ define(function (require) {
       },
       endPart: function emitter_endPart(partNum) {
         if (this.partData != "") {
-          let check = uncheckedValues.shift();
+          const check = uncheckedValues.shift();
           assert.equal(partNum, check[0]);
           assert.equal(this.partData, check[1]);
           this.partData = "";
@@ -205,7 +205,7 @@ define(function (require) {
         checkingHeaders = false;
       } else {
         uncheckedValues = {};
-        for (let key in results_) {
+        for (const key in results_) {
           uncheckedValues[key] = results_[key];
         }
         checkingHeaders = true;
@@ -230,7 +230,7 @@ define(function (require) {
   suite("MimeParser", function () {
     // This is the expected part specifier for the multipart-complex1 test file,
     // specified here because it is used in several cases.
-    let mpart_complex1 = [
+    const mpart_complex1 = [
       ["1", 8, 10],
       ["2", 14, 16],
       ["3.1", 22, 24],
@@ -239,7 +239,7 @@ define(function (require) {
     ];
 
     suite("Simple tests", function () {
-      let parser_tests = [
+      const parser_tests = [
         // The following tests are either degenerate or error cases that should
         // work
         ["Empty string", "", {}, { "": {} }],
@@ -290,7 +290,7 @@ define(function (require) {
     });
 
     suite("Body tests", function () {
-      let parser_tests = [
+      const parser_tests = [
         // Body tests from data
         // (Note: line numbers are 1-based. Also, to capture trailing EOF, add 2
         // to the last line number of the file).
@@ -422,7 +422,7 @@ define(function (require) {
       for (let i = 0; i < 16; i++) {
         teststr += teststr;
       }
-      let parser_tests = [
+      const parser_tests = [
         [
           "Base64 very long decode",
           "Content-Transfer-Encoding: base64\r\n\r\n" + btoa(teststr) + "\r\n",
@@ -507,7 +507,7 @@ define(function (require) {
     });
 
     suite("Header tests", function () {
-      let parser_tests = [
+      const parser_tests = [
         // Basic cases for headers
         [
           "Multiparts get headers",

@@ -13,25 +13,28 @@ file-perm:
         - .html
         - .idl
         - .js
-        - .jsm
+        - .json
         - .jsx
         - .m
         - .m4s
         - .md
         - .mjs
         - .mm
+        - .mn
         - .mozbuild
         - .mp4
         - .png
         - .rs
         - .rst
         - .svg
+        - .toml
+        - .ts
         - .ttf
         - .wasm
         - .webidl
         - .xhtml
         - .xml
-        - .xul
+        - .yaml
         - .yml
     support-files:
         - 'tools/lint/file-perm/**'

@@ -11,30 +11,19 @@
 
 "use strict";
 
-var { open_message_from_file } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+var { open_message_from_file } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-var { close_window } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
-);
-
-var gReferenceTextContent;
-
-add_setup(async function () {
-  gReferenceTextContent = await extract_eml_body_textcontent(
-    "./bug594646_reference.eml"
-  );
-});
 
 async function extract_eml_body_textcontent(eml) {
-  let file = new FileUtils.File(getTestFilePath(`data/${eml}`));
-  let msgc = await open_message_from_file(file);
+  const file = new FileUtils.File(getTestFilePath(`data/${eml}`));
+  const msgc = await open_message_from_file(file);
 
   // Be sure to view message body as Original HTML
-  msgc.window.MsgBodyAllowHTML();
-  let textContent = msgc.window.content.document.documentElement.textContent;
+  msgc.MsgBodyAllowHTML();
+  const textContent = msgc.content.document.documentElement.textContent;
 
-  close_window(msgc);
+  await BrowserTestUtils.closeWindow(msgc);
   return textContent;
 }
 
@@ -42,7 +31,7 @@ async function extract_eml_body_textcontent(eml) {
  * Checks that the text content is equal for the .eml files.
  */
 async function check_eml_textcontent(eml) {
-  let textContent = await extract_eml_body_textcontent(eml);
+  const textContent = await extract_eml_body_textcontent(eml);
   Assert.stringContains(textContent, "árvíztűrő tükörfúrógép");
   Assert.stringContains(textContent, "ÁRVÍZTŰRŐ TÜKÖRFÚRÓGÉP");
 }

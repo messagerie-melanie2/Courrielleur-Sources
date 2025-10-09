@@ -87,14 +87,17 @@ class WebRenderLayerManager final : public WindowRenderer {
                                   nsDisplayListBuilder* aDisplayListBuilder,
                                   WrFiltersHolder&& aFilters,
                                   WebRenderBackgroundData* aBackground,
-                                  const double aGeckoDLBuildTime);
+                                  const double aGeckoDLBuildTime,
+                                  bool aRenderOffscreen);
 
   LayersBackend GetBackendType() override { return LayersBackend::LAYERS_WR; }
   void GetBackendName(nsAString& name) override;
 
   bool NeedsWidgetInvalidation() override { return false; }
 
-  void SetLayersObserverEpoch(LayersObserverEpoch aEpoch);
+  bool AddPendingScrollUpdateForNextTransaction(
+      ScrollableLayerGuid::ViewID aScrollId,
+      const ScrollPositionUpdate& aUpdateInfo) override;
 
   void DidComposite(TransactionId aTransactionId,
                     const mozilla::TimeStamp& aCompositeStart,
@@ -125,7 +128,8 @@ class WebRenderLayerManager final : public WindowRenderer {
   void SetFocusTarget(const FocusTarget& aFocusTarget);
 
   already_AddRefed<PersistentBufferProvider> CreatePersistentBufferProvider(
-      const gfx::IntSize& aSize, gfx::SurfaceFormat aFormat) override;
+      const gfx::IntSize& aSize, gfx::SurfaceFormat aFormat,
+      bool aWillReadFrequently) override;
 
   bool AsyncPanZoomEnabled() const;
 
@@ -175,8 +179,8 @@ class WebRenderLayerManager final : public WindowRenderer {
 
   void GetFrameUniformity(FrameUniformityData* aOutData) override;
 
-  void RegisterPayloads(const nsTArray<CompositionPayload>& aPayload) {
-    mPayload.AppendElements(aPayload);
+  void RegisterPayloads(nsTArray<CompositionPayload>&& aPayloads) {
+    mPayload.AppendElements(std::move(aPayloads));
     MOZ_ASSERT(mPayload.Length() < 10000);
   }
 
@@ -227,6 +231,7 @@ class WebRenderLayerManager final : public WindowRenderer {
   nsIWidget* MOZ_NON_OWNING_REF mWidget;
 
   RefPtr<WebRenderBridgeChild> mWrChild;
+  bool mHasFlushedThisChild;
 
   RefPtr<TransactionIdAllocator> mTransactionIdAllocator;
   TransactionId mLatestTransactionId;
@@ -274,6 +279,8 @@ class WebRenderLayerManager final : public WindowRenderer {
   UniquePtr<wr::DisplayListBuilder> mDLBuilder;
 
   ScrollUpdatesMap mPendingScrollUpdates;
+
+  LayoutDeviceIntSize mFlushWidgetSize;
 };
 
 }  // namespace layers

@@ -7,6 +7,8 @@
 #ifndef __FFmpegVideoDecoder_h__
 #define __FFmpegVideoDecoder_h__
 
+#include <atomic>
+
 #include "ImageContainer.h"
 #include "FFmpegDataDecoder.h"
 #include "FFmpegLibWrapper.h"
@@ -17,8 +19,12 @@
 #if LIBAVCODEC_VERSION_MAJOR >= 57 && LIBAVUTIL_VERSION_MAJOR >= 56
 #  include "mozilla/layers/TextureClient.h"
 #endif
-#ifdef MOZ_WAYLAND_USE_HWDECODE
+#if defined(MOZ_USE_HWDECODE) && defined(MOZ_WIDGET_GTK)
 #  include "FFmpegVideoFramePool.h"
+#endif
+#include "libavutil/pixfmt.h"
+#if LIBAVCODEC_VERSION_MAJOR < 54
+#  define AVPixelFormat PixelFormat
 #endif
 
 struct _VADRMPRIMESurfaceDescriptor;
@@ -27,6 +33,10 @@ typedef struct _VADRMPRIMESurfaceDescriptor VADRMPRIMESurfaceDescriptor;
 namespace mozilla {
 
 class ImageBufferWrapper;
+
+#ifdef MOZ_ENABLE_D3D11VA
+class DXVA2Manager;
+#endif
 
 template <int V>
 class FFmpegVideoDecoder : public FFmpegDataDecoder<V> {};
@@ -43,7 +53,7 @@ class FFmpegVideoDecoder<LIBAV_VER>
   typedef mozilla::layers::Image Image;
   typedef mozilla::layers::ImageContainer ImageContainer;
   typedef mozilla::layers::KnowsCompositor KnowsCompositor;
-  typedef SimpleMap<int64_t> DurationMap;
+  typedef SimpleMap<int64_t, int64_t, ThreadSafePolicy> DurationMap;
 
  public:
   FFmpegVideoDecoder(FFmpegLibWrapper* aLib, const VideoInfo& aConfig,
@@ -65,7 +75,13 @@ class FFmpegVideoDecoder<LIBAV_VER>
   }
   nsCString GetCodecName() const override;
   ConversionRequired NeedsConversion() const override {
-    return ConversionRequired::kNeedAVCC;
+#if LIBAVCODEC_VERSION_MAJOR >= 55
+    if (mCodecID == AV_CODEC_ID_HEVC) {
+      return ConversionRequired::kNeedHVCC;
+    }
+#endif
+    return mCodecID == AV_CODEC_ID_H264 ? ConversionRequired::kNeedAVCC
+                                        : ConversionRequired::kNeedNone;
   }
 
   static AVCodecID GetCodecId(const nsACString& aMimeType);
@@ -82,6 +98,10 @@ class FFmpegVideoDecoder<LIBAV_VER>
     mAllocatedImages.Remove(aImage);
   }
 #endif
+  bool IsHardwareAccelerated() const {
+    nsAutoCString dummy;
+    return IsHardwareAccelerated(dummy);
+  }
 
  private:
   RefPtr<FlushPromise> ProcessFlush() override;
@@ -100,19 +120,16 @@ class FFmpegVideoDecoder<LIBAV_VER>
         mCodecID == AV_CODEC_ID_VP8;
 #endif
   }
+  gfx::ColorDepth GetColorDepth(const AVPixelFormat& aFormat) const;
   gfx::YUVColorSpace GetFrameColorSpace() const;
   gfx::ColorSpace2 GetFrameColorPrimaries() const;
   gfx::ColorRange GetFrameColorRange() const;
+  gfx::SurfaceFormat GetSurfaceFormat() const;
 
   MediaResult CreateImage(int64_t aOffset, int64_t aPts, int64_t aDuration,
-                          MediaDataDecoder::DecodedData& aResults) const;
+                          MediaDataDecoder::DecodedData& aResults);
 
   bool IsHardwareAccelerated(nsACString& aFailureReason) const override;
-  bool IsHardwareAccelerated() const {
-    nsAutoCString dummy;
-    return IsHardwareAccelerated(dummy);
-  }
-  void UpdateDecodeTimes(TimeStamp aDecodeStart);
 
 #if LIBAVCODEC_VERSION_MAJOR >= 57 && LIBAVUTIL_VERSION_MAJOR >= 56
   layers::TextureClient* AllocateTextureClientForImage(
@@ -123,11 +140,44 @@ class FFmpegVideoDecoder<LIBAV_VER>
                                           int32_t aHeight) const;
 #endif
 
-#ifdef MOZ_WAYLAND_USE_HWDECODE
-  void InitHWDecodingPrefs();
+  RefPtr<KnowsCompositor> mImageAllocator;
+
+#ifdef MOZ_USE_HWDECODE
+  // This will be called inside the ctor.
+  void InitHWDecoderIfAllowed();
+
+  enum class ContextType {
+    D3D11VA,
+    VAAPI,
+    V4L2,
+  };
+  void InitHWCodecContext(ContextType aType);
+
+  // True if hardware decoding is disabled explicitly.
+  const bool mHardwareDecodingDisabled;
+#endif
+
+#ifdef MOZ_ENABLE_D3D11VA
+  MediaResult InitD3D11VADecoder();
+
+  MediaResult CreateImageD3D11(int64_t aOffset, int64_t aPts, int64_t aDuration,
+                               MediaDataDecoder::DecodedData& aResults);
+  bool CanUseZeroCopyVideoFrame() const;
+
+  AVBufferRef* mD3D11VADeviceContext = nullptr;
+  RefPtr<ID3D11Device> mDevice;
+  UniquePtr<DXVA2Manager> mDXVA2Manager;
+  // Number of HW Textures are already in use by Gecko
+  std::atomic<uint8_t> mNumOfHWTexturesInUse{0};
+#endif
+
+#if defined(MOZ_USE_HWDECODE) && defined(MOZ_WIDGET_GTK)
+  bool ShouldEnableLinuxHWDecoding() const;
+  bool UploadSWDecodeToDMABuf() const;
+  bool IsLinuxHDR() const;
   MediaResult InitVAAPIDecoder();
+  MediaResult InitV4L2Decoder();
   bool CreateVAAPIDeviceContext();
-  void InitVAAPICodecContext();
   AVCodec* FindVAAPICodec();
   bool GetVAAPISurfaceDescriptor(VADRMPRIMESurfaceDescriptor* aVaDesc);
   void AddAcceleratedFormats(nsTArray<AVCodecID>& aCodecList,
@@ -137,29 +187,53 @@ class FFmpegVideoDecoder<LIBAV_VER>
 
   MediaResult CreateImageVAAPI(int64_t aOffset, int64_t aPts, int64_t aDuration,
                                MediaDataDecoder::DecodedData& aResults);
-#endif
+  MediaResult CreateImageV4L2(int64_t aOffset, int64_t aPts, int64_t aDuration,
+                              MediaDataDecoder::DecodedData& aResults);
+  void AdjustHWDecodeLogging();
 
-#ifdef MOZ_WAYLAND_USE_HWDECODE
-  AVBufferRef* mVAAPIDeviceContext;
-  bool mEnableHardwareDecoding;
-  VADisplay mDisplay;
+  AVBufferRef* mVAAPIDeviceContext = nullptr;
+  bool mUsingV4L2 = false;
+  // If video overlay is used we want to upload SW decoded frames to
+  // DMABuf and present it as a external texture to rendering pipeline.
+  bool mUploadSWDecodeToDMABuf = false;
+  VADisplay mDisplay = nullptr;
   UniquePtr<VideoFramePool<LIBAV_VER>> mVideoFramePool;
   static nsTArray<AVCodecID> mAcceleratedFormats;
 #endif
-  RefPtr<KnowsCompositor> mImageAllocator;
+
   RefPtr<ImageContainer> mImageContainer;
   VideoInfo mInfo;
-  int mDecodedFrames;
-#if LIBAVCODEC_VERSION_MAJOR >= 58
-  int mDecodedFramesLate;
-  // Tracks when decode time of recent frame and averange decode time of
-  // previous frames is bigger than frame interval,
-  // i.e. we fail to decode in time.
-  // We switch to SW decode when we hit HW_DECODE_LATE_FRAMES treshold.
-  int mMissedDecodeInAverangeTime;
-#endif
-  float mAverangeDecodeTime;
 
+#if LIBAVCODEC_VERSION_MAJOR >= 58
+  class DecodeStats {
+   public:
+    void DecodeStart();
+    void UpdateDecodeTimes(const AVFrame* aFrame);
+    bool IsDecodingSlow() const;
+
+   private:
+    uint32_t mDecodedFrames = 0;
+
+    float mAverageFrameDecodeTime = 0;
+    float mAverageFrameDuration = 0;
+
+    // Number of delayed frames until we consider decoding as slow.
+    const uint32_t mMaxLateDecodedFrames = 15;
+    // How many frames is decoded behind its pts time, i.e. video decode lags.
+    uint32_t mDecodedFramesLate = 0;
+
+    // Reset mDecodedFramesLate every 3 seconds of correct playback.
+    const uint32_t mDelayedFrameReset = 3000;
+
+    uint32_t mLastDelayedFrameNum = 0;
+
+    TimeStamp mDecodeStart;
+  };
+
+  DecodeStats mDecodeStats;
+#endif
+
+#if LIBAVCODEC_VERSION_MAJOR < 58
   class PtsCorrectionContext {
    public:
     PtsCorrectionContext();
@@ -175,11 +249,13 @@ class FFmpegVideoDecoder<LIBAV_VER>
   };
 
   PtsCorrectionContext mPtsContext;
-
   DurationMap mDurationMap;
+#endif
+
   const bool mLowLatency;
   const Maybe<TrackingId> mTrackingId;
   PerformanceRecorderMulti<DecodeStage> mPerformanceRecorder;
+  PerformanceRecorderMulti<DecodeStage> mPerformanceRecorder2;
 
   // True if we're allocating shmem for ffmpeg decode buffer.
   Maybe<Atomic<bool>> mIsUsingShmemBufferForDecode;

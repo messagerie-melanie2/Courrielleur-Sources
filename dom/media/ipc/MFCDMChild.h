@@ -25,20 +25,22 @@ class MFCDMChild final : public PMFCDMChild {
   explicit MFCDMChild(const nsAString& aKeySystem);
 
   using CapabilitiesPromise = MozPromise<MFCDMCapabilitiesIPDL, nsresult, true>;
-  RefPtr<CapabilitiesPromise> GetCapabilities();
+  RefPtr<CapabilitiesPromise> GetCapabilities(
+      MFCDMCapabilitiesRequest&& aRequest);
 
   template <typename PromiseType>
   already_AddRefed<PromiseType> InvokeAsync(
-      std::function<void()>&& aCall, const char* aCallerName,
+      std::function<void()>&& aCall, StaticString aCallerName,
       MozPromiseHolder<PromiseType>& aPromise);
 
   using InitPromise = MozPromise<MFCDMInitIPDL, nsresult, true>;
-  RefPtr<InitPromise> Init(const nsAString& aOrigin,
-                           const CopyableTArray<nsString>& aInitDataTypes,
-                           const KeySystemConfig::Requirement aPersistentState,
-                           const KeySystemConfig::Requirement aDistinctiveID,
-                           const bool aHWSecure,
-                           WMFCDMProxyCallback* aProxyCallback);
+  RefPtr<InitPromise> Init(
+      const nsAString& aOrigin, const CopyableTArray<nsString>& aInitDataTypes,
+      const KeySystemConfig::Requirement aPersistentState,
+      const KeySystemConfig::Requirement aDistinctiveID,
+      const CopyableTArray<MFCDMMediaCapability>& aAudioCapabilities,
+      const CopyableTArray<MFCDMMediaCapability>& aVideoCapabilities,
+      WMFCDMProxyCallback* aProxyCallback);
 
   using SessionPromise = MozPromise<nsString, nsresult, true>;
   RefPtr<SessionPromise> CreateSessionAndGenerateRequest(
@@ -59,6 +61,12 @@ class MFCDMChild final : public PMFCDMChild {
   RefPtr<GenericPromise> RemoveSession(uint32_t aPromiseId,
                                        const nsAString& aSessionId);
 
+  RefPtr<GenericPromise> SetServerCertificate(uint32_t aPromiseId,
+                                              nsTArray<uint8_t>& aCert);
+
+  RefPtr<GenericPromise> GetStatusForPolicy(
+      uint32_t aPromiseId, const dom::HDCPVersion& aMinHdcpVersion);
+
   mozilla::ipc::IPCResult RecvOnSessionKeyMessage(
       const MFCDMKeyMessage& aMessage);
   mozilla::ipc::IPCResult RecvOnSessionKeyStatusesChanged(
@@ -67,6 +75,7 @@ class MFCDMChild final : public PMFCDMChild {
       const MFCDMKeyExpiration& aExpiration);
 
   uint64_t Id() const { return mId; }
+  const nsString& KeySystem() const { return mKeySystem; }
 
   void IPDLActorDestroyed() {
     AssertOnManagerThread();
@@ -76,6 +85,8 @@ class MFCDMChild final : public PMFCDMChild {
       mState = NS_ERROR_NOT_AVAILABLE;
     }
   }
+
+  void EnsureRemote();
   void Shutdown();
 
   nsISerialEventTarget* ManagerThread() { return mManagerThread; }
@@ -86,9 +97,6 @@ class MFCDMChild final : public PMFCDMChild {
  private:
   ~MFCDMChild();
 
-  using RemotePromise = GenericNonExclusivePromise;
-  RefPtr<RemotePromise> EnsureRemote();
-
   void AssertSendable();
 
   const nsString mKeySystem;
@@ -96,6 +104,7 @@ class MFCDMChild final : public PMFCDMChild {
   const RefPtr<nsISerialEventTarget> mManagerThread;
   RefPtr<MFCDMChild> mIPDLSelfRef;
 
+  using RemotePromise = GenericNonExclusivePromise;
   RefPtr<RemotePromise> mRemotePromise;
   MozPromiseHolder<RemotePromise> mRemotePromiseHolder;
   MozPromiseRequestHolder<RemotePromise> mRemoteRequest;
@@ -132,12 +141,15 @@ class MFCDMChild final : public PMFCDMChild {
   MozPromiseHolder<GenericPromise> mRemoveSessionPromiseHolder;
   MozPromiseRequestHolder<RemoveSessionPromise> mRemoveSessionRequest;
 
+  mutable Mutex mMutex{"MFCDMChild"};
+
   std::unordered_map<uint32_t, MozPromiseHolder<SessionPromise>>
-      mPendingSessionPromises;
+      mPendingSessionPromises MOZ_GUARDED_BY(mMutex);
 
   std::unordered_map<uint32_t, MozPromiseHolder<GenericPromise>>
-      mPendingGenericPromises;
+      mPendingGenericPromises MOZ_GUARDED_BY(mMutex);
 
+  // This should only be used on the manager thread.
   RefPtr<WMFCDMProxyCallback> mProxyCallback;
 };
 

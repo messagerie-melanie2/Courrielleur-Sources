@@ -6,14 +6,14 @@
    getSelectedCalendar, editSelectedEvents, viewSelectedEvents,
    modifyTaskFromContext, deleteSelectedEvents, setupAttendanceMenu,
    createTodoWithDialog, deleteToDoCommand, promptDeleteCalendar,
-   toImport, loadEventsFromFile, exportEntireCalendar, saveEventsToFile,
+   toImport, exportEntireCalendar, saveEventsToFile,
    publishEntireCalendar, publishCalendarData, toggleUnifinder, toggleOrientation
    toggleWorkdaysOnly, switchCalendarView, getTaskTree, selectAllEvents,
    gCurrentMode, getSelectedTasks, canPaste, goSetMenuValue, canUndo, canRedo,
    cutToClipboard, copyToClipboard, pasteFromClipboard, undo, redo,
    PrintUtils */
 
-var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
+var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
 
 var CalendarDeleteCommandEnabled = false;
 var CalendarNewEventsCommandEnabled = false;
@@ -238,7 +238,7 @@ var calendarController = {
       case "cmd_save":
       // falls through
       case "cmd_accept": {
-        let tabType = document.getElementById("tabmail").currentTabInfo.mode.type;
+        const tabType = document.getElementById("tabmail").currentTabInfo.mode.type;
         return tabType == "calendarTask" || tabType == "calendarEvent";
       }
 
@@ -279,7 +279,7 @@ var calendarController = {
         viewSelectedEvents();
         break;
       case "calendar_modify_focused_item_command": {
-        let focusedElement = document.commandDispatcher.focusedElement;
+        const focusedElement = document.commandDispatcher.focusedElement;
         if (focusedElement == TodayPane.agenda) {
           TodayPane.agenda.editSelectedItem();
         } else if (focusedElement && focusedElement.className == "calendar-task-tree") {
@@ -293,7 +293,7 @@ var calendarController = {
         deleteSelectedEvents();
         break;
       case "calendar_delete_focused_item_command": {
-        let focusedElement = document.commandDispatcher.focusedElement;
+        const focusedElement = document.commandDispatcher.focusedElement;
         if (focusedElement == TodayPane.agenda) {
           TodayPane.agenda.deleteSelectedItem(false);
         } else if (focusedElement && focusedElement.className == "calendar-task-tree") {
@@ -350,11 +350,7 @@ var calendarController = {
         break;
 
       case "calendar_import_command":
-        if (Services.prefs.getBoolPref("mail.import.in_new_tab")) {
-          toImport("calendar");
-        } else {
-          loadEventsFromFile();
-        }
+        toImport("calendar");
         break;
       case "calendar_export_command":
         exportEntireCalendar();
@@ -418,7 +414,7 @@ var calendarController = {
     }
   },
 
-  onEvent(aEvent) {},
+  onEvent() {},
 
   isCalendarInForeground() {
     return gCurrentMode && gCurrentMode != "mail";
@@ -437,18 +433,18 @@ var calendarController = {
   },
 
   onSelectionChanged(aEvent) {
-    let selectedItems = aEvent.detail;
+    const selectedItems = aEvent.detail;
 
     calendarUpdateDeleteCommand(selectedItems);
     calendarController.item_selected = selectedItems && selectedItems.length > 0;
 
-    let selLength = selectedItems === undefined ? 0 : selectedItems.length;
+    const selLength = selectedItems === undefined ? 0 : selectedItems.length;
     let selected_events_readonly = 0;
     let selected_events_requires_network = 0;
     let selected_events_invitation = 0;
 
     if (selLength > 0) {
-      for (let item of selectedItems) {
+      for (const item of selectedItems) {
         if (item.calendar.readOnly) {
           selected_events_readonly++;
         }
@@ -465,7 +461,7 @@ var calendarController = {
         } else if (item.organizer) {
           // If we are the organizer and there are attendees, then
           // this is likely also an invitation.
-          let calOrgId = item.calendar.getProperty("organizerId");
+          const calOrgId = item.calendar.getProperty("organizerId");
           if (item.organizer.id == calOrgId && item.getAttendees().length) {
             selected_events_invitation++;
           }
@@ -549,21 +545,21 @@ var calendarController = {
    * Returns a boolean indicating that tasks are selected.
    */
   get todo_items_selected() {
-    let selectedTasks = getSelectedTasks();
+    const selectedTasks = getSelectedTasks();
     return selectedTasks.length > 0;
   },
 
   get todo_items_invitation() {
-    let selectedTasks = getSelectedTasks();
+    const selectedTasks = getSelectedTasks();
     let selected_tasks_invitation = 0;
 
-    for (let item of selectedTasks) {
+    for (const item of selectedTasks) {
       if (cal.itip.isInvitation(item)) {
         selected_tasks_invitation++;
       } else if (item.organizer) {
         // If we are the organizer and there are attendees, then
         // this is likely also an invitation.
-        let calOrgId = item.calendar.getProperty("organizerId");
+        const calOrgId = item.calendar.getProperty("organizerId");
         if (item.organizer.id == calOrgId && item.getAttendees().length) {
           selected_tasks_invitation++;
         }
@@ -578,8 +574,8 @@ var calendarController = {
    * on a calendar that is writable.
    */
   get todo_items_writable() {
-    let selectedTasks = getSelectedTasks();
-    for (let task of selectedTasks) {
+    const selectedTasks = getSelectedTasks();
+    for (const task of selectedTasks) {
       if (cal.acl.isCalendarWritable(task.calendar)) {
         return true;
       }
@@ -733,27 +729,26 @@ function removeCalendarCommandController() {
  */
 function setupContextItemType(aEvent, aItems) {
   function adaptModificationMenuItem(aMenuItemId, aItemType) {
-    let menuItem = document.getElementById(aMenuItemId);
+    const menuItem = document.getElementById(aMenuItemId);
     if (menuItem) {
-      menuItem.setAttribute("label", cal.l10n.getCalString(`delete${aItemType}Label`));
-      menuItem.setAttribute("accesskey", cal.l10n.getCalString(`delete${aItemType}Accesskey`));
+      document.l10n.setAttributes(menuItem, `delete-${aItemType}`);
     }
   }
   if (aItems.some(item => item.isEvent()) && aItems.some(item => item.isTodo())) {
     aEvent.target.setAttribute("type", "mixed");
-    adaptModificationMenuItem("calendar-item-context-menu-delete-menuitem", "Item");
+    adaptModificationMenuItem("calendar-item-context-menu-delete-menuitem", "item");
   } else if (aItems.length && aItems[0].isEvent()) {
     aEvent.target.setAttribute("type", "event");
-    adaptModificationMenuItem("calendar-item-context-menu-delete-menuitem", "Event");
+    adaptModificationMenuItem("calendar-item-context-menu-delete-menuitem", "event");
   } else if (aItems.length && aItems[0].isTodo()) {
     aEvent.target.setAttribute("type", "todo");
-    adaptModificationMenuItem("calendar-item-context-menu-delete-menuitem", "Task");
+    adaptModificationMenuItem("calendar-item-context-menu-delete-menuitem", "task");
   } else {
     aEvent.target.removeAttribute("type");
-    adaptModificationMenuItem("calendar-item-context-menu-delete-menuitem", "Item");
+    adaptModificationMenuItem("calendar-item-context-menu-delete-menuitem", "item");
   }
 
-  let menu = document.getElementById("calendar-item-context-menu-attendance-menu");
+  const menu = document.getElementById("calendar-item-context-menu-attendance-menu");
   setupAttendanceMenu(menu, aItems);
   return true;
 }
@@ -763,9 +758,9 @@ function setupContextItemType(aEvent, aItems) {
  * Invitations are not considered editable here.
  */
 function canEditSelectedItems() {
-  let items = currentView().getSelectedItems();
+  const items = currentView().getSelectedItems();
   return items.every(item => {
-    let calendar = item.calendar;
+    const calendar = item.calendar;
     return (
       cal.acl.isCalendarWritable(calendar) &&
       cal.acl.userCanModifyItem(item) &&
@@ -803,7 +798,7 @@ function deleteSelectedItems() {
  */
 function calendarUpdateNewItemsCommand() {
   // Re-calculate command status.
-  let calendars = cal.manager
+  const calendars = cal.manager
     .getCalendars()
     .filter(cal.acl.isCalendarWritable)
     .filter(cal.acl.userCanAddItemsToCalendar);
@@ -826,11 +821,11 @@ function calendarUpdateNewItemsCommand() {
 }
 
 function calendarUpdateDeleteCommand(selectedItems) {
-  let oldValue = CalendarDeleteCommandEnabled;
+  const oldValue = CalendarDeleteCommandEnabled;
   CalendarDeleteCommandEnabled = selectedItems.length > 0;
 
   /* we must disable "delete" when at least one item cannot be deleted */
-  for (let item of selectedItems) {
+  for (const item of selectedItems) {
     if (!cal.acl.userCanDeleteItemsFromCalendar(item.calendar)) {
       CalendarDeleteCommandEnabled = false;
       break;
@@ -853,7 +848,7 @@ function calendarUpdateDeleteCommand(selectedItems) {
  * process for that browser.
  */
 async function printCalendar() {
-  // Ensure the printing of this file will be detected by calPrintUtils.jsm.
+  // Ensure the printing of this file will be detected by calPrintUtils.sys.mjs.
   cal.print.ensureInitialized();
 
   await PrintUtils.loadPrintBrowser("chrome://calendar/content/printing-template.html");

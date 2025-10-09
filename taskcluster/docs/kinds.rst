@@ -11,6 +11,11 @@ users or automated tests.  This is more restrictive than most definitions of
 "build" in a Mozilla context: it does not include tasks that run build-like
 actions for static analysis or to produce instrumented artifacts.
 
+build-extensions
+----------------
+
+Builds Firefox extensions with `mach build`.
+
 build-fat-aar
 -------------
 
@@ -76,14 +81,13 @@ hazardous behaviors.
 l10n
 ----
 
-The l10n kind takes the last published nightly build, and generates localized builds
-from it. You can read more about how to trigger these on the `wiki
-<https://wiki.mozilla.org/ReleaseEngineering/TryServer#Desktop_l10n_jobs_.28on_Taskcluster.29>`_.
+The l10n kind repacks a build (from the same source) for a subset of locales,
+to exercise the localized repack logic in CI.
 
 shippable-l10n
 --------------
 
-The nightly l10n kind repacks a specific nightly build (from the same source code)
+The nightly l10n kind repacks a shippable build (from the same source code)
 in order to provide localized versions of the same source.
 
 shippable-l10n-signing
@@ -240,10 +244,6 @@ release-beetmover-push-to-release publishes promoted releases from the
 candidates directory to the release directory. This is part of release
 promotion.
 
-beetmover-snap
---------------
-Beetmover-source publishes Ubuntu's snap. This is part of release promotion.
-
 beetmover-source
 ----------------
 Beetmover-source publishes release source. This is part of release promotion.
@@ -310,14 +310,6 @@ release-binary-transparency
 Binary transparency creates a publicly verifiable log of binary shas for downstream
 release auditing. https://wiki.mozilla.org/Security/Binary_Transparency
 
-release-snap-repackage
-----------------------
-Generate an installer using Ubuntu's Snap format.
-
-release-flatpak-repackage
--------------------------
-Generate an installer using Flathub's Flatpak format.
-
 release-flatpak-push
 --------------------
 Pushes Flatpak repackage on Flathub
@@ -350,6 +342,10 @@ Notify when a release has been promoted.
 release-notify-started
 ----------------------
 Notify when a release has been started.
+
+release-notify-testrail
+-----------------------
+Create milestones in testrail for the next fenix/focus releases, and send a slack notification.
 
 release-bouncer-sub
 -------------------
@@ -568,6 +564,14 @@ repackage-deb-l10n
 ------------------
 These repackage tasks take the signed langpacks (.xpi) binaries and puts them in Debian packages.
 
+repackage-rpm
+----------------
+These repackage tasks take signed Firefox Linux binaries and puts them in RPM packages.
+
+repackage-flatpak
+-----------------
+These repackage tasks take signed Firefox Linux binaries and langpacks, and builds a flatpak.
+
 repackage-signing
 -----------------
 Repackage-signing take the repackaged installers (windows) and signs them.
@@ -623,6 +627,10 @@ repackage-signing-shippable-l10n-msix
 Repackage-signing-shippable-l10n-msix takes Windows MSIX packages produced in
 ```repackage-signing-shippable-l10n-msix``` and signs them.
 
+repackage-snap
+--------------
+Repackage current packaged build as a Snap package
+
 release-msix-push
 --------------------
 Pushes msix repackage to the Microsoft Store.
@@ -637,6 +645,14 @@ partials
 Partials takes the complete.mar files produced in previous tasks and generates partial
 updates between previous nightly releases and the new one. Requires a release_history
 in the parameters. See ``mach release-history`` if doing this manually.
+
+partials-zucchini
+-----------------
+Partials-zucchini takes the complete.mar files produced in previous tasks and generates partial
+updates between previous nightly releases and the new one. Requires a release_history
+in the parameters. See ``mach release-history`` if doing this manually.
+The zucchini tool is compiled via toolchain task. The source code can be found at:
+https://chromium.googlesource.com/chromium/src/components/zucchini/
 
 partials-signing
 ----------------
@@ -653,6 +669,10 @@ Dummy tasks to consolidate beetmover dependencies to avoid taskcluster limits on
 post-beetmover-checksums-dummy
 ------------------------------
 Dummy tasks to consolidate beetmover-checksums dependencies to avoid taskcluster limits on number of dependencies per task.
+
+post-beetmover-components-dummy
+-------------------------------
+Dummy tasks to consolidate beetmover-components dependencies to avoid taskcluster limits on number of dependencies per task.
 
 post-langpack-dummy
 -------------------
@@ -676,7 +696,7 @@ diffoscope
 ----------
 Tasks used to compare pairs of Firefox builds using https://diffoscope.org/.
 As of writing, this is mainly meant to be used in try builds, by editing
-taskcluster/ci/diffoscope/kind.yml for your needs.
+taskcluster/kinds/diffoscope/kind.yml for your needs.
 
 addon
 -----
@@ -694,11 +714,6 @@ webrender
 ---------
 Tasks used to do testing of WebRender standalone (without gecko). The
 WebRender code lives in gfx/wr and has its own testing infrastructure.
-
-github-sync
-------------
-Tasks used to do synchronize parts of Gecko that have downstream GitHub
-repositories.
 
 instrumented-build
 ------------------
@@ -771,22 +786,6 @@ startup-test
 
 Runs Firefox for a short period of time to see if it crashes
 
-l10n-cross-channel
-------------------
-
-Compiles a set of en-US strings from all shipping release trains and pushes to
-the quarantine strings repo.
-
-fxrecord
---------
-
-Visual metrics computation of desktop Firefox startup. The performance team
-monitors this task to watch for regressions in Firefox startup performance.
-
-are-we-esmified-yet
----------------------
-Collects data about the transition to ECMAScript Modules from JSMs.
-
 attribution
 -----------
 Injects attribution information into en-US installers.
@@ -794,3 +793,112 @@ Injects attribution information into en-US installers.
 attribution-l10n
 ----------------
 Injects attribution information into localized installers.
+
+snap-upstream-build
+-------------------
+Perform a Firefox Snap build using upstream tooling
+
+snap-upstream-test
+-------------------
+Test a Firefox Snap built using upstream tooling
+
+trigger-comm-central
+--------------------
+Trigger a CI decision task on comm-central when conditions are met. Currently
+used for verifying third party Rust code is consistent.
+
+build-components
+----------------
+Build android-components.
+
+build-bundle
+------------
+Build Focus, Klar, and Fenix android app bundles.
+
+build-apk
+---------
+Build Focus, Klar, and Fenix apks.
+
+build-samples-browser
+---------------------
+Build android samples browser.
+
+signing
+-------
+Sign android-components.
+
+signing-bundle
+--------------
+Sign Focus, Klar, and Fenix android app bundles.
+
+signing-apk
+-----------
+Sign Focus, Klar, and Fenix apks.
+
+test-components
+---------------
+Test android-components
+
+test-apk
+--------
+Test Focus, Klar, and Fenix apks.
+
+ui-test-apk
+-----------
+User interface tests for Focus, Klar, and Fenix apks.
+
+android-browsertime
+-------------------
+Browsertime tests for android.
+
+android-startup-test
+--------------------
+Startup test for android.
+
+post-signing-dummy
+------------------
+Gating kind to wait for all android signing tasks.
+
+beetmover-components
+--------------------
+A beetmover task for android components.
+
+beetmover-android-app
+---------------------
+A beetmover task for android APKs and AABs.
+
+push-apks
+-----------
+Push Focus and Fenix APKs to the Samsung Galaxy Store.
+
+push-bundle
+-----------
+Push Focus and Fenix AABs to Google Play.
+
+android-l10n
+------------
+Update android string resources from android-l10n repo.
+
+release-update-product-channel-version
+--------------------------------------
+Update the product channel version in Ship-It.
+
+instrumented-build-apk
+-----------------------
+Generate instrumented apks used to generate Baseline Profile for Android apps.
+
+generate-baseline-profile-firebase
+----------------------------------
+Run baseline profile generation for Android on Firebase TestLab.
+
+update
+------------
+Run tests to see if the executable can be updated to the latest release.
+
+run-macrobenchmark-firebase
+---------------------------
+Run Macrobenchmark for Android on Firebase TestLab.
+
+instrumented-build-macrobenchmark-apk
+-------------------------------------
+Generate instrumented apks used to run Macrobenchmark for Android apps.

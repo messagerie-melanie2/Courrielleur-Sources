@@ -34,7 +34,7 @@ var expectedTransaction = ["AUTH", "CAPA", "AUTH CRAM-MD5"];
 // const expectedTransaction = ["AUTH", "CAPA", "AUTH CRAM-MD5", "CAPA", "AUTH PLAIN", "STAT"];
 
 var urlListener = {
-  OnStartRunningUrl(url) {},
+  OnStartRunningUrl() {},
   OnStopRunningUrl(url, result) {
     try {
       // We should be getting an error here, because we couldn't log in.
@@ -46,7 +46,7 @@ var urlListener = {
       do_timeout(0, endTest);
     } catch (e) {
       server.stop();
-      var thread = gThreadManager.currentThread;
+      var thread = Services.tm.currentThread;
       while (thread.hasPendingEvents()) {
         thread.processNextEvent(true);
       }
@@ -60,7 +60,7 @@ function endTest() {
   // No more tests, let everything finish
   server.stop();
 
-  var thread = gThreadManager.currentThread;
+  var thread = Services.tm.currentThread;
   while (thread.hasPendingEvents()) {
     thread.processNextEvent(true);
   }
@@ -100,7 +100,7 @@ function run_test() {
     server.start();
 
     incomingServer = createPop3ServerAndLocalFolders(server.port);
-    let msgServer = incomingServer;
+    const msgServer = incomingServer;
     msgServer.QueryInterface(Ci.nsIMsgIncomingServer);
     // Need to allow any auth here, although that's not use in TB really,
     // because we need to fall back to something after CRAM-MD5 and
@@ -119,7 +119,7 @@ function run_test() {
 
     do_throw(e);
   } finally {
-    var thread = gThreadManager.currentThread;
+    var thread = Services.tm.currentThread;
     while (thread.hasPendingEvents()) {
       thread.processNextEvent(true);
     }

@@ -2,45 +2,29 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { AppConstants } = ChromeUtils.importESModule(
-  "resource://gre/modules/AppConstants.sys.mjs"
+var { ExtensionSupport } = ChromeUtils.importESModule(
+  "resource:///modules/ExtensionSupport.sys.mjs"
 );
-var { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
+var { AccountManager, FolderManager } = ChromeUtils.importESModule(
+  "resource:///modules/ExtensionAccounts.sys.mjs"
 );
-
-var { ExtensionError, getInnerWindowID } = ExtensionUtils;
-var { defineLazyGetter, makeWidgetId } = ExtensionCommon;
-
-var { ExtensionSupport } = ChromeUtils.import(
-  "resource:///modules/ExtensionSupport.jsm"
+var { MessageListTracker, MessageTracker, MessageManager, TagTracker } =
+  ChromeUtils.importESModule("resource:///modules/ExtensionMessages.sys.mjs");
+var { SpaceTracker } = ChromeUtils.importESModule(
+  "resource:///modules/ExtensionSpaces.sys.mjs"
 );
 
 ChromeUtils.defineESModuleGetters(this, {
   ExtensionContent: "resource://gre/modules/ExtensionContent.sys.mjs",
 });
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  MailServices: "resource:///modules/MailServices.jsm",
-});
-
-XPCOMUtils.defineLazyPreferenceGetter(
-  this,
-  "gJunkThreshold",
-  "mail.adaptivefilters.junk_threshold",
-  90
-);
-XPCOMUtils.defineLazyPreferenceGetter(
-  this,
-  "gMessagesPerPage",
-  "extensions.webextensions.messagesPerPage",
-  100
-);
 XPCOMUtils.defineLazyGlobalGetters(this, [
   "IOUtils",
   "PathUtils",
   "FileReader",
 ]);
+
+var { ExtensionError } = ExtensionUtils;
 
 const MAIN_WINDOW_URI = "chrome://messenger/content/messenger.xhtml";
 const POPUP_WINDOW_URI = "chrome://messenger/content/extensionPopup.xhtml";
@@ -48,8 +32,6 @@ const COMPOSE_WINDOW_URI =
   "chrome://messenger/content/messengercompose/messengercompose.xhtml";
 const MESSAGE_WINDOW_URI = "chrome://messenger/content/messageWindow.xhtml";
 const MESSAGE_PROTOCOLS = ["imap", "mailbox", "news", "nntp", "snews"];
-
-const NOTIFICATION_COLLAPSE_TIME = 200;
 
 (function () {
   // Monkey-patch all processes to add the "messenger" alias in all contexts.
@@ -60,13 +42,13 @@ const NOTIFICATION_COLLAPSE_TIME = 200;
 
   // This allows scripts to run in the compose document or message display
   // document if and only if the extension has permission.
-  let { defaultConstructor } = ExtensionContent.contentScripts;
+  const { defaultConstructor } = ExtensionContent.contentScripts;
   ExtensionContent.contentScripts.defaultConstructor = function (matcher) {
-    let script = defaultConstructor.call(this, matcher);
+    const script = defaultConstructor.call(this, matcher);
 
-    let { matchesWindowGlobal } = script;
+    const { matchesWindowGlobal } = script;
     script.matchesWindowGlobal = function (windowGlobal) {
-      let { browsingContext, windowContext } = windowGlobal;
+      const { browsingContext, windowContext } = windowGlobal;
 
       if (
         browsingContext.topChromeWindow?.location.href == COMPOSE_WINDOW_URI &&
@@ -77,7 +59,11 @@ const NOTIFICATION_COLLAPSE_TIME = 200;
       }
 
       if (MESSAGE_PROTOCOLS.includes(windowContext.documentURI?.scheme)) {
-        return script.extension.hasPermission("messagesModify");
+        return (
+          script.extension.hasPermission("messagesModify") ||
+          (script.extension.hasPermission("messagesRead") &&
+            script.extension.hasPermission("scripting"))
+        );
       }
 
       return matchesWindowGlobal.apply(script, arguments);
@@ -87,38 +73,6 @@ const NOTIFICATION_COLLAPSE_TIME = 200;
   };
 })();
 
-let tabTracker;
-let spaceTracker;
-let windowTracker;
-
-// This function is pretty tightly tied to Extension.jsm.
-// Its job is to fill in the |tab| property of the sender.
-const getSender = (extension, target, sender) => {
-  let tabId = -1;
-  if ("tabId" in sender) {
-    // The message came from a privileged extension page running in a tab. In
-    // that case, it should include a tabId property (which is filled in by the
-    // page-open listener below).
-    tabId = sender.tabId;
-    delete sender.tabId;
-  } else if (
-    ExtensionCommon.instanceOf(target, "XULFrameElement") ||
-    ExtensionCommon.instanceOf(target, "HTMLIFrameElement")
-  ) {
-    tabId = tabTracker.getBrowserData(target).tabId;
-  }
-
-  if (tabId != null && tabId >= 0) {
-    let tab = extension.tabManager.get(tabId, null);
-    if (tab) {
-      sender.tab = tab.convert();
-    }
-  }
-};
-
-// Used by Extension.jsm.
-global.tabGetSender = getSender;
-
 global.clickModifiersFromEvent = event => {
   const map = {
     shiftKey: "Shift",
@@ -126,7 +80,7 @@ global.clickModifiersFromEvent = event => {
     metaKey: "Command",
     ctrlKey: "Ctrl",
   };
-  let modifiers = Object.keys(map)
+  const modifiers = Object.keys(map)
     .filter(key => event[key])
     .map(key => map[key]);
 
@@ -138,7 +92,7 @@ global.clickModifiersFromEvent = event => {
 };
 
 global.openOptionsPage = extension => {
-  let window = windowTracker.topNormalWindow;
+  const window = windowTracker.topNormalWindow;
   if (!window) {
     return Promise.reject({ message: "No mail window available" });
   }
@@ -150,7 +104,7 @@ global.openOptionsPage = extension => {
     return Promise.resolve();
   }
 
-  let viewId = `addons://detail/${encodeURIComponent(
+  const viewId = `addons://detail/${encodeURIComponent(
     extension.id
   )}/preferences`;
 
@@ -165,26 +119,26 @@ global.openOptionsPage = extension => {
  */
 async function getRealFileForFile(file) {
   if (file.mozFullPath) {
-    let realFile = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+    const realFile = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
     realFile.initWithPath(file.mozFullPath);
     return realFile;
   }
 
-  let pathTempFile = await IOUtils.createUniqueFile(
+  const pathTempFile = await IOUtils.createUniqueFile(
     PathUtils.tempDir,
     file.name.replaceAll(/[/:*?\"<>|]/g, "_"),
     0o600
   );
 
-  let tempFile = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+  const tempFile = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
   tempFile.initWithPath(pathTempFile);
-  let extAppLauncher = Cc[
+  const extAppLauncher = Cc[
     "@mozilla.org/uriloader/external-helper-app-service;1"
   ].getService(Ci.nsPIExternalAppLauncher);
   extAppLauncher.deleteTemporaryFileOnExit(tempFile);
 
-  let bytes = await new Promise(function (resolve) {
-    let reader = new FileReader();
+  const bytes = await new Promise(function (resolve) {
+    const reader = new FileReader();
     reader.onloadend = function () {
       resolve(new Uint8Array(reader.result));
     };
@@ -272,7 +226,7 @@ global.TabContext = class extends EventEmitter {
    */
   get(keyObject) {
     if (!this.tabData.has(keyObject)) {
-      let data = Object.create(this.getDefaultPrototype(keyObject));
+      const data = Object.create(this.getDefaultPrototype(keyObject));
       this.tabData.set(keyObject, data);
     }
 
@@ -295,7 +249,7 @@ global.TabContext = class extends EventEmitter {
 // None of the code in the WebExtension modules requests that initialization.
 // It is assumed that it is started at some point. That might never happen,
 // e.g. if the application shuts down before the search service initializes.
-XPCOMUtils.defineLazyGetter(global, "searchInitialized", () => {
+ChromeUtils.defineLazyGetter(global, "searchInitialized", () => {
   if (Services.search.isInitialized) {
     return Promise.resolve();
   }
@@ -306,91 +260,6 @@ XPCOMUtils.defineLazyGetter(global, "searchInitialized", () => {
 });
 
 /**
- * Class for dummy message Headers.
- */
-class nsDummyMsgHeader {
-  constructor(msgHdr) {
-    this.mProperties = [];
-    this.messageSize = 0;
-    this.author = null;
-    this.subject = "";
-    this.recipients = null;
-    this.ccList = null;
-    this.listPost = null;
-    this.messageId = null;
-    this.date = 0;
-    this.accountKey = "";
-    this.flags = 0;
-    // If you change us to return a fake folder, please update
-    // folderDisplay.js's FolderDisplayWidget's selectedMessageIsExternal getter.
-    this.folder = null;
-
-    if (msgHdr) {
-      for (let member of [
-        "accountKey",
-        "ccList",
-        "date",
-        "flags",
-        "listPost",
-        "messageId",
-        "messageSize",
-      ]) {
-        // Members are either (associative) arrays or primitives.
-        if (typeof msgHdr[member] == "object") {
-          this[member] = [];
-          for (let property in msgHdr[member]) {
-            this[member][property] = msgHdr[member][property];
-          }
-        } else {
-          this[member] = msgHdr[member];
-        }
-      }
-      this.author = msgHdr.mime2DecodedAuthor;
-      this.recipients = msgHdr.mime2DecodedRecipients;
-      this.subject = msgHdr.mime2DecodedSubject;
-      this.mProperties.dummyMsgUrl = msgHdr.getStringProperty("dummyMsgUrl");
-      this.mProperties.dummyMsgLastModifiedTime = msgHdr.getUint32Property(
-        "dummyMsgLastModifiedTime"
-      );
-    }
-  }
-  getProperty(aProperty) {
-    return this.getStringProperty(aProperty);
-  }
-  setProperty(aProperty, aVal) {
-    return this.setStringProperty(aProperty, aVal);
-  }
-  getStringProperty(aProperty) {
-    if (aProperty in this.mProperties) {
-      return this.mProperties[aProperty];
-    }
-    return "";
-  }
-  setStringProperty(aProperty, aVal) {
-    this.mProperties[aProperty] = aVal;
-  }
-  getUint32Property(aProperty) {
-    if (aProperty in this.mProperties) {
-      return parseInt(this.mProperties[aProperty]);
-    }
-    return 0;
-  }
-  setUint32Property(aProperty, aVal) {
-    this.mProperties[aProperty] = aVal.toString();
-  }
-  markHasAttachments(hasAttachments) {}
-  get mime2DecodedAuthor() {
-    return this.author;
-  }
-  get mime2DecodedSubject() {
-    return this.subject;
-  }
-  get mime2DecodedRecipients() {
-    return this.recipients;
-  }
-}
-
-/**
  * Returns the WebExtension window type for the given window, or null, if it is
  * not supported.
  *
@@ -398,7 +267,7 @@ class nsDummyMsgHeader {
  * @returns {[string]} - The WebExtension type of the window
  */
 function getWebExtensionWindowType(window) {
-  let { documentElement } = window.document;
+  const { documentElement } = window.document;
   if (!documentElement) {
     return null;
   }
@@ -453,7 +322,7 @@ class WindowTracker extends WindowTrackerBase {
    * @returns {boolean} True, if the window is supported by the windows API
    */
   isBrowserWindow(window) {
-    let type = getWebExtensionWindowType(window);
+    const type = getWebExtensionWindowType(window);
     return !!type && type != "unknown";
   }
 
@@ -466,7 +335,7 @@ class WindowTracker extends WindowTrackerBase {
    * @returns {boolean} True, if the window is a mail window but not the main window
    */
   isSecondaryWindow(window) {
-    let { documentElement } = window.document;
+    const { documentElement } = window.document;
     if (!documentElement) {
       return false;
     }
@@ -490,7 +359,7 @@ class WindowTracker extends WindowTrackerBase {
     if (win && !this.isBrowserWindow(win)) {
       win = null;
       // This is oldest to newest, so this gets a bit ugly.
-      for (let nextWin of Services.wm.getEnumerator(null)) {
+      for (const nextWin of Services.wm.getEnumerator(null)) {
         if (this.isBrowserWindow(nextWin)) {
           win = nextWin;
         }
@@ -524,227 +393,6 @@ class WindowTracker extends WindowTrackerBase {
 }
 
 /**
- * Convenience class to keep track of and manage spaces.
- */
-class SpaceTracker {
-  /**
-   * @typedef SpaceData
-   * @property {string} name - name of the space as used by the extension
-   * @property {integer} spaceId - id of the space as used by the tabs API
-   * @property {string} spaceButtonId - id of the button of this space in the
-   *   spaces toolbar
-   * @property {string} defaultUrl - the url for the default space tab
-   * @property {ButtonProperties} buttonProperties
-   *   @see mail/components/extensions/schemas/spaces.json
-   * @property {ExtensionData} extension - the extension the space belongs to
-   */
-
-  constructor() {
-    this._nextId = 1;
-    this._spaceData = new Map();
-    this._spaceIds = new Map();
-
-    // Keep this in sync with the default spaces in gSpacesToolbar.
-    let builtInSpaces = [
-      {
-        name: "mail",
-        spaceButtonId: "mailButton",
-        tabInSpace: tabInfo =>
-          ["folder", "mail3PaneTab", "mailMessageTab"].includes(
-            tabInfo.mode.name
-          )
-            ? 1
-            : 0,
-      },
-      {
-        name: "addressbook",
-        spaceButtonId: "addressBookButton",
-        tabInSpace: tabInfo => (tabInfo.mode.name == "addressBookTab" ? 1 : 0),
-      },
-      {
-        name: "calendar",
-        spaceButtonId: "calendarButton",
-        tabInSpace: tabInfo => (tabInfo.mode.name == "calendar" ? 1 : 0),
-      },
-      {
-        name: "tasks",
-        spaceButtonId: "tasksButton",
-        tabInSpace: tabInfo => (tabInfo.mode.name == "tasks" ? 1 : 0),
-      },
-      {
-        name: "chat",
-        spaceButtonId: "chatButton",
-        tabInSpace: tabInfo => (tabInfo.mode.name == "chat" ? 1 : 0),
-      },
-      {
-        name: "settings",
-        spaceButtonId: "settingsButton",
-        tabInSpace: tabInfo => {
-          switch (tabInfo.mode.name) {
-            case "preferencesTab":
-              // A primary tab that the open method creates.
-              return 1;
-            case "contentTab":
-              let url = tabInfo.urlbar?.value;
-              if (url == "about:accountsettings" || url == "about:addons") {
-                // A secondary tab, that is related to this space.
-                return 2;
-              }
-          }
-          return 0;
-        },
-      },
-    ];
-    for (let builtInSpace of builtInSpaces) {
-      this._add(builtInSpace);
-    }
-  }
-
-  findSpaceForTab(tabInfo) {
-    for (let spaceData of this._spaceData.values()) {
-      if (spaceData.tabInSpace(tabInfo)) {
-        return spaceData;
-      }
-    }
-    return undefined;
-  }
-
-  _add(spaceData) {
-    let spaceId = this._nextId++;
-    let { spaceButtonId } = spaceData;
-    this._spaceData.set(spaceButtonId, { ...spaceData, spaceId });
-    this._spaceIds.set(spaceId, spaceButtonId);
-    return { ...spaceData, spaceId };
-  }
-
-  /**
-   * Generate an id of the form <add-on-id>-spacesButton-<spaceId>.
-   *
-   * @param {string} name - name of the space as used by the extension
-   * @param {ExtensionData} extension
-   * @returns {string} id of the html element of the spaces toolbar button of
-   *   this space
-   */
-  _getSpaceButtonId(name, extension) {
-    return `${makeWidgetId(extension.id)}-spacesButton-${name}`;
-  }
-
-  /**
-   * Get the SpaceData for the space with the given name for the given extension.
-   *
-   * @param {string} name - name of the space as used by the extension
-   * @param {ExtensionData} extension
-   * @returns {SpaceData}
-   */
-  fromSpaceName(name, extension) {
-    let spaceButtonId = this._getSpaceButtonId(name, extension);
-    return this.fromSpaceButtonId(spaceButtonId);
-  }
-
-  /**
-   * Get the SpaceData for the space with the given spaceId.
-   *
-   * @param {integer} spaceId - id of the space as used by the tabs API
-   * @returns {SpaceData}
-   */
-  fromSpaceId(spaceId) {
-    let spaceButtonId = this._spaceIds.get(spaceId);
-    return this.fromSpaceButtonId(spaceButtonId);
-  }
-
-  /**
-   * Get the SpaceData for the space with the given spaceButtonId.
-   *
-   * @param {string} spaceButtonId - id of the html element of a spaces toolbar
-   *   button
-   * @returns {SpaceData}
-   */
-  fromSpaceButtonId(spaceButtonId) {
-    if (!spaceButtonId || !this._spaceData.has(spaceButtonId)) {
-      return null;
-    }
-    return this._spaceData.get(spaceButtonId);
-  }
-
-  /**
-   * Create a new space and return its SpaceData.
-   *
-   * @param {string} name - name of the space as used by the extension
-   * @param {string} defaultUrl - the url for the default space tab
-   * @param {ButtonProperties} buttonProperties
-   *   @see mail/components/extensions/schemas/spaces.json
-   * @param {ExtensionData} extension - the extension the space belongs to
-   * @returns {SpaceData}
-   */
-  async create(name, defaultUrl, buttonProperties, extension) {
-    let spaceButtonId = this._getSpaceButtonId(name, extension);
-    if (this._spaceData.has(spaceButtonId)) {
-      return false;
-    }
-    return this._add({
-      name,
-      spaceButtonId,
-      tabInSpace: tabInfo => (tabInfo.spaceButtonId == spaceButtonId ? 1 : 0),
-      defaultUrl,
-      buttonProperties,
-      extension,
-    });
-  }
-
-  /**
-   * Return a WebExtension Space object, representing the given spaceData.
-   *
-   * @param {SpaceData} spaceData
-   * @returns {Space} - @see mail/components/extensions/schemas/spaces.json
-   */
-  convert(spaceData, extension) {
-    let space = {
-      id: spaceData.spaceId,
-      name: spaceData.name,
-      isBuiltIn: !spaceData.extension,
-      isSelfOwned: spaceData.extension?.id == extension.id,
-    };
-    if (spaceData.extension && extension.hasPermission("management")) {
-      space.extensionId = spaceData.extension.id;
-    }
-    return space;
-  }
-
-  /**
-   * Remove a space and its SpaceData from the tracker.
-   *
-   * @param {SpaceData} spaceData
-   */
-  remove(spaceData) {
-    if (!this._spaceData.has(spaceData.spaceButtonId)) {
-      return;
-    }
-    this._spaceData.delete(spaceData.spaceButtonId);
-  }
-
-  /**
-   * Update spaceData for a space in the tracker.
-   *
-   * @param {SpaceData} spaceData
-   */
-  update(spaceData) {
-    if (!this._spaceData.has(spaceData.spaceButtonId)) {
-      return;
-    }
-    this._spaceData.set(spaceData.spaceButtonId, spaceData);
-  }
-
-  /**
-   * Return the SpaceData of all spaces known to the tracker.
-   *
-   * @returns {SpaceData[]}
-   */
-  getAll() {
-    return this._spaceData.values();
-  }
-}
-
-/**
  * Tracks the opening and closing of tabs and maps them between their numeric WebExtension ID and
  * the native tab info objects.
  */
@@ -765,16 +413,16 @@ class TabTracker extends TabTrackerBase {
       onLoadWindow(window) {
         window.gTabmail.registerTabMonitor({
           monitorName: "extensionSession",
-          onTabTitleChanged(aTab) {},
-          onTabClosing(aTab) {},
+          onTabTitleChanged() {},
+          onTabClosing() {},
           onTabPersist(aTab) {
             return aTab._ext.extensionSession;
           },
           onTabRestored(aTab, aState) {
             aTab._ext.extensionSession = aState;
           },
-          onTabSwitched(aNewTab, aOldTab) {},
-          onTabOpened(aTab) {},
+          onTabSwitched() {},
+          onTabOpened() {},
         });
       },
     });
@@ -835,9 +483,9 @@ class TabTracker extends TabTrackerBase {
       return id;
     }
 
-    let window = browser.browsingContext.topChromeWindow;
-    let tabmail = window.document.getElementById("tabmail");
-    let tab = tabmail && tabmail.getTabForBrowser(browser);
+    const window = browser.browsingContext.topChromeWindow;
+    const tabmail = window.document.getElementById("tabmail");
+    const tab = tabmail && tabmail.getTabForBrowser(browser);
 
     if (tab) {
       id = this.getId(tab);
@@ -858,7 +506,7 @@ class TabTracker extends TabTrackerBase {
    */
   setId(nativeTabInfo, id) {
     this._tabs.set(nativeTabInfo, id);
-    let browser = getTabBrowser(nativeTabInfo);
+    const browser = getTabBrowser(nativeTabInfo);
     if (browser) {
       this._browsers.set(browser.browserId, id);
     }
@@ -869,10 +517,11 @@ class TabTracker extends TabTrackerBase {
    * Function to call when a tab was close, deletes tab information for the tab.
    *
    * @param {Event} event - The event triggering the detroyal
-   * @param {{ nativeTabInfo:NativeTabInfo}} - The object containing tab info
+   * @param {object} object nativeTabInfo - The object containing tab info.
+   * @param {NativeTabInfo} object.nativeTabInfo
    */
   _handleTabDestroyed(event, { nativeTabInfo }) {
-    let id = this._tabs.get(nativeTabInfo);
+    const id = this._tabs.get(nativeTabInfo);
     if (id) {
       this._tabs.delete(nativeTabInfo);
       if (nativeTabInfo.browser) {
@@ -892,7 +541,7 @@ class TabTracker extends TabTrackerBase {
    * @returns {NativeTabInfo} The tab information for the given id.
    */
   getTab(tabId, default_ = undefined) {
-    let nativeTabInfo = this._tabIds.get(tabId);
+    const nativeTabInfo = this._tabIds.get(tabId);
     if (nativeTabInfo) {
       return nativeTabInfo;
     }
@@ -909,20 +558,20 @@ class TabTracker extends TabTrackerBase {
    * @param {Event} event - A DOM event to handle.
    */
   handleEvent(event) {
-    let nativeTabInfo = event.detail.tabInfo;
+    const nativeTabInfo = event.detail.tabInfo;
 
     switch (event.type) {
       case "TabOpen": {
         // Save the current tab, since the newly-created tab will likely be
         // active by the time the promise below resolves and the event is
         // dispatched.
-        let tabmail = event.target.ownerDocument.getElementById("tabmail");
-        let currentTab = tabmail.selectedTab;
+        const tabmail = event.target.ownerDocument.getElementById("tabmail");
+        const currentTab = tabmail.selectedTab;
         // We need to delay sending this event until the next tick, since the
         // tab does not have its final index when the TabOpen event is dispatched.
         Promise.resolve().then(() => {
           if (event.detail.moving) {
-            let srcTabId = this._movingTabs.get(event.detail.moving);
+            const srcTabId = this._movingTabs.get(event.detail.moving);
             this.setId(nativeTabInfo, srcTabId);
             this._movingTabs.delete(event.detail.moving);
 
@@ -969,12 +618,12 @@ class TabTracker extends TabTrackerBase {
       return;
     }
 
-    let tabmail = window.document.getElementById("tabmail");
+    const tabmail = window.document.getElementById("tabmail");
     if (!tabmail) {
       return;
     }
 
-    for (let nativeTabInfo of tabmail.tabInfo) {
+    for (const nativeTabInfo of tabmail.tabInfo) {
       this.emitCreated(nativeTabInfo);
     }
   }
@@ -996,12 +645,12 @@ class TabTracker extends TabTrackerBase {
       return;
     }
 
-    let tabmail = window.document.getElementById("tabmail");
+    const tabmail = window.document.getElementById("tabmail");
     if (!tabmail) {
       return;
     }
 
-    for (let nativeTabInfo of tabmail.tabInfo) {
+    for (const nativeTabInfo of tabmail.tabInfo) {
       this.emitRemoved(nativeTabInfo, true);
     }
   }
@@ -1030,11 +679,11 @@ class TabTracker extends TabTrackerBase {
    * @param {NativeTabInfo} nativeTabInfo - The tab info which is being attached.
    */
   emitAttached(nativeTabInfo) {
-    let tabId = this.getId(nativeTabInfo);
-    let browser = getTabBrowser(nativeTabInfo);
-    let tabmail = browser.ownerDocument.getElementById("tabmail");
-    let tabIndex = tabmail._getTabContextForTabbyThing(nativeTabInfo)[0];
-    let newWindowId = windowTracker.getId(browser.ownerGlobal);
+    const tabId = this.getId(nativeTabInfo);
+    const browser = getTabBrowser(nativeTabInfo);
+    const tabmail = browser.ownerDocument.getElementById("tabmail");
+    const tabIndex = tabmail._getTabContextForTabbyThing(nativeTabInfo)[0];
+    const newWindowId = windowTracker.getId(browser.ownerGlobal);
 
     this.emit("tab-attached", {
       nativeTabInfo,
@@ -1050,11 +699,11 @@ class TabTracker extends TabTrackerBase {
    * @param {NativeTabInfo} nativeTabInfo - The tab info which is being detached.
    */
   emitDetached(nativeTabInfo) {
-    let tabId = this.getId(nativeTabInfo);
-    let browser = getTabBrowser(nativeTabInfo);
-    let tabmail = browser.ownerDocument.getElementById("tabmail");
-    let tabIndex = tabmail._getTabContextForTabbyThing(nativeTabInfo)[0];
-    let oldWindowId = windowTracker.getId(browser.ownerGlobal);
+    const tabId = this.getId(nativeTabInfo);
+    const browser = getTabBrowser(nativeTabInfo);
+    const tabmail = browser.ownerDocument.getElementById("tabmail");
+    const tabIndex = tabmail._getTabContextForTabbyThing(nativeTabInfo)[0];
+    const oldWindowId = windowTracker.getId(browser.ownerGlobal);
 
     this.emit("tab-detached", {
       nativeTabInfo,
@@ -1097,10 +746,41 @@ class TabTracker extends TabTrackerBase {
    * @returns {{ tabId:Integer, windowId:Integer }} The browsing data for the element
    */
   getBrowserData(browser) {
+    const window = browser.ownerGlobal;
+    if (window?.top.document.documentURI === "about:addons") {
+      // When we're loaded into a <browser> inside about:addons, we need to go up
+      // one more level.
+      browser = window.docShell.chromeEventHandler;
+    }
+    // Detect windowless windows, mostly for the background page and xpcshell
+    // tests, where m-c expects -1.
+    if (
+      !window ||
+      window.location.href == "chrome://extensions/content/dummy.xhtml"
+    ) {
+      return { tabId: -1, windowId: -1 };
+    }
+
+    let windowId = windowTracker.getId(browser.ownerGlobal);
+    // Do not return invalid windowIds. windowTracker.getId() just pulls the
+    // outerWindowID, while windowTracker.getWindow() does more checks on the
+    // validity.
+    try {
+      windowTracker.getWindow(windowId);
+    } catch (ex) {
+      windowId = -1;
+    }
     return {
       tabId: this.getBrowserTabId(browser),
-      windowId: windowTracker.getId(browser.ownerGlobal),
+      windowId,
     };
+  }
+
+  getBrowserDataForContext(context) {
+    if (["background", "tab", "popup"].includes(context.viewType)) {
+      return this.getBrowserData(context.xulBrowser);
+    }
+    return { tabId: -1, windowId: -1 };
   }
 
   /**
@@ -1110,16 +790,11 @@ class TabTracker extends TabTrackerBase {
    * @readonly
    */
   get activeTab() {
-    let window = windowTracker.topWindow;
-    let tabmail = window && window.document.getElementById("tabmail");
+    const window = windowTracker.topWindow;
+    const tabmail = window && window.document.getElementById("tabmail");
     return tabmail ? tabmail.selectedTab : window;
   }
 }
-
-tabTracker = new TabTracker();
-spaceTracker = new SpaceTracker();
-windowTracker = new WindowTracker();
-Object.assign(global, { tabTracker, spaceTracker, windowTracker });
 
 /**
  * Extension-specific wrapper around a Thunderbird tab. Note that for actual
@@ -1128,12 +803,12 @@ Object.assign(global, { tabTracker, spaceTracker, windowTracker });
  */
 class Tab extends TabBase {
   get spaceId() {
-    let tabWindow = getTabWindow(this.nativeTab);
+    const tabWindow = getTabWindow(this.nativeTab);
     if (getWebExtensionWindowType(tabWindow) != "normal") {
       return undefined;
     }
 
-    let spaceData = spaceTracker.findSpaceForTab(this.nativeTab);
+    const spaceData = spaceTracker.findSpaceForTab(this.nativeTab);
     return spaceData?.spaceId ?? undefined;
   }
 
@@ -1158,10 +833,16 @@ class Tab extends TabBase {
     if ((queryInfo.url || queryInfo.title) && !this.browser) {
       return false;
     }
-    let result = super.matches(queryInfo, context);
+    const result = super.matches(queryInfo, context);
 
-    let type = queryInfo.mailTab ? "mail" : queryInfo.type;
-    if (result && type && this.type != type) {
+    const type = queryInfo.mailTab ? "mail" : queryInfo.type;
+    let types = [];
+    if (Array.isArray(type)) {
+      types = type;
+    } else if (type) {
+      types.push(type);
+    }
+    if (result && types.length > 0 && !types.includes(this.type)) {
       return false;
     }
 
@@ -1174,15 +855,18 @@ class Tab extends TabBase {
 
   /** Adds the mailTab property and removes some useless properties from a tab object. */
   convert(fallback) {
-    let result = super.convert(fallback);
+    const result = super.convert(fallback);
     result.spaceId = this.spaceId;
     result.type = this.type;
-    result.mailTab = result.type == "mail";
+    if (this.extension.manifestVersion < 3) {
+      result.mailTab = result.type == "mail";
+    }
 
     // These properties are not useful to Thunderbird extensions and are not returned.
-    for (let key of [
+    for (const key of [
       "attention",
       "audible",
+      "autoDiscardable",
       "discarded",
       "hidden",
       "incognito",
@@ -1203,6 +887,15 @@ class Tab extends TabBase {
   /** Always returns false. This feature doesn't exist in Thunderbird. */
   get _incognito() {
     return false;
+  }
+
+  /**
+   * This property is a signal of whether any extension has specified a blocker
+   * to prevent discarding. Since TB does not support control over discarding,
+   * the value should be true.
+   */
+  get autoDiscardable() {
+    return true;
   }
 
   /** Returns the XUL browser for the tab. */
@@ -1345,7 +1038,7 @@ class Tab extends TabBase {
         {
           // If the messagePane is hidden or all browsers are hidden, there is
           // nothing to be loaded and we should return complete.
-          let about3Pane = this.nativeTab.chromeBrowser.contentWindow;
+          const about3Pane = this.nativeTab.chromeBrowser.contentWindow;
           isComplete =
             !about3Pane.paneLayout?.messagePaneVisible ||
             this.browser?.webProgress?.isLoadingDocument === false ||
@@ -1400,12 +1093,18 @@ class Tab extends TabBase {
   get successorTabId() {
     return -1;
   }
+
+  /** Returns the group id of the tab. */
+  get groupId() {
+    // Thunderbird doesn't support tab groups.
+    return -1;
+  }
 }
 
 class TabmailTab extends Tab {
   constructor(extension, nativeTab, id) {
     if (nativeTab.localName == "tab") {
-      let tabmail = nativeTab.ownerDocument.getElementById("tabmail");
+      const tabmail = nativeTab.ownerDocument.getElementById("tabmail");
       nativeTab = tabmail._getTabContextForTabbyThing(nativeTab)[1];
     }
     super(extension, nativeTab, id);
@@ -1421,11 +1120,9 @@ class TabmailTab extends Tab {
       case "mailMessageTab":
         return "messageDisplay";
       case "contentTab": {
-        let currentURI = this.nativeTab.browser.currentURI;
+        const currentURI = this.nativeTab.browser.currentURI;
         if (currentURI?.schemeIs("about")) {
           switch (currentURI.filePath) {
-            case "accountprovisioner":
-              return "accountProvisioner";
             case "blank":
               return "content";
             default:
@@ -1443,7 +1140,6 @@ class TabmailTab extends Tab {
       case "tasks":
       case "chat":
         return this.nativeTab.mode.name;
-      case "provisionerCheckoutTab":
       case "glodaFacet":
       case "preferencesTab":
         return "special";
@@ -1506,7 +1202,7 @@ class Window extends WindowBase {
    * @readonly
    */
   get type() {
-    let type = getWebExtensionWindowType(this.window);
+    const type = getWebExtensionWindowType(this.window);
     if (!type) {
       throw new ExtensionError(
         "Windows API encountered an invalid window type."
@@ -1611,7 +1307,7 @@ class Window extends WindowBase {
    * @param {string} state - "maximized", "minimized", "normal" or "fullscreen"
    */
   async setState(state) {
-    let { window } = this;
+    const { window } = this;
     const expectedState = (function () {
       switch (state) {
         case "maximized":
@@ -1708,7 +1404,7 @@ class Window extends WindowBase {
    * @yields {Tab}      The wrapped Tab in this window
    */
   *getTabs() {
-    let { tabManager } = this.extension;
+    const { tabManager } = this.extension;
     yield tabManager.getWrapper(this.window);
   }
 
@@ -1724,7 +1420,7 @@ class Window extends WindowBase {
 
   /** Retrieves the active tab in this window */
   get activeTab() {
-    let { tabManager } = this.extension;
+    const { tabManager } = this.extension;
     return tabManager.getWrapper(this.window);
   }
 
@@ -1735,7 +1431,7 @@ class Window extends WindowBase {
    * @returns {Tab} The wrapped tab at the index
    */
   getTabAtIndex(index) {
-    let { tabManager } = this.extension;
+    const { tabManager } = this.extension;
     if (index == 0) {
       return tabManager.getWrapper(this.window);
     }
@@ -1755,9 +1451,9 @@ class TabmailWindow extends Window {
    * @yields {Tab}      The wrapped Tab in this window
    */
   *getTabs() {
-    let { tabManager } = this.extension;
+    const { tabManager } = this.extension;
 
-    for (let nativeTabInfo of this.tabmail.tabInfo) {
+    for (const nativeTabInfo of this.tabmail.tabInfo) {
       // Only tabs that have a browser element.
       yield tabManager.getWrapper(nativeTabInfo);
     }
@@ -1765,8 +1461,8 @@ class TabmailWindow extends Window {
 
   /** Retrieves the active tab in this window */
   get activeTab() {
-    let { tabManager } = this.extension;
-    let selectedTab = this.tabmail.selectedTab;
+    const { tabManager } = this.extension;
+    const selectedTab = this.tabmail.selectedTab;
     if (selectedTab) {
       return tabManager.getWrapper(selectedTab);
     }
@@ -1780,16 +1476,14 @@ class TabmailWindow extends Window {
    * @returns {Tab} The wrapped tab at the index
    */
   getTabAtIndex(index) {
-    let { tabManager } = this.extension;
-    let nativeTabInfo = this.tabmail.tabInfo[index];
+    const { tabManager } = this.extension;
+    const nativeTabInfo = this.tabmail.tabInfo[index];
     if (nativeTabInfo) {
       return tabManager.getWrapper(nativeTabInfo);
     }
     return null;
   }
 }
-
-Object.assign(global, { Tab, Window });
 
 /**
  * Manages native tabs, their wrappers, and their dynamic permissions for a particular extension.
@@ -1803,7 +1497,7 @@ class TabManager extends TabManagerBase {
    * @returns {Tab|*} The wrapped tab, or the default value
    */
   get(tabId, default_ = undefined) {
-    let nativeTabInfo = tabTracker.getTab(tabId, default_);
+    const nativeTabInfo = tabTracker.getTab(tabId, default_);
 
     if (nativeTabInfo) {
       return this.getWrapper(nativeTabInfo);
@@ -1836,12 +1530,10 @@ class TabManager extends TabManagerBase {
   /**
    * Determines access using extension context.
    *
-   * @param {NativeTab} nativeTab
-   *        The tab to check access on.
-   * @returns {boolean}
-   *        True if the extension has permissions for this tab.
+   * @param {NativeTab} _nativeTab - The tab to check access on.
+   * @returns {boolean} True if the extension has permissions for this tab.
    */
-  canAccessTab(nativeTab) {
+  canAccessTab(_nativeTab) {
     return true;
   }
 
@@ -1877,7 +1569,7 @@ class WindowManager extends WindowManagerBase {
    * @returns {Window} The wrapped window
    */
   get(windowId, context) {
-    let window = windowTracker.getWindow(windowId, context);
+    const window = windowTracker.getWindow(windowId, context);
     return this.getWrapper(window);
   }
 
@@ -1887,7 +1579,7 @@ class WindowManager extends WindowManagerBase {
    * @yields {Window}
    */
   *getAll() {
-    for (let window of windowTracker.browserWindows()) {
+    for (const window of windowTracker.browserWindows()) {
       yield this.getWrapper(window);
     }
   }
@@ -1909,6 +1601,25 @@ class WindowManager extends WindowManagerBase {
   }
 }
 
+async function waitForMailTabReady(tabInfo) {
+  const { chromeBrowser, mode, closed } = tabInfo;
+  if (!closed && mode.name == "mail3PaneTab") {
+    await new Promise(resolve => {
+      if (
+        chromeBrowser.contentDocument.readyState == "complete" &&
+        chromeBrowser.currentURI.spec == "about:3pane"
+      ) {
+        resolve();
+      } else {
+        chromeBrowser.contentWindow.addEventListener("load", () => resolve(), {
+          once: true,
+        });
+      }
+    });
+    await chromeBrowser.contentWindow.hasDOMContentLoaded.promise;
+  }
+}
+
 /**
  * Wait until the normal window identified by the given windowId has finished its
  * delayed startup. Returns its DOMWindow when done. Waits for the top normal
@@ -1921,7 +1632,7 @@ class WindowManager extends WindowManagerBase {
 async function getNormalWindowReady(context, windowId) {
   let window;
   if (windowId) {
-    let win = context.extension.windowManager.get(windowId, context);
+    const win = context.extension.windowManager.get(windowId, context);
     if (win.type != "normal") {
       throw new ExtensionError(
         `Window with ID ${windowId} is not a normal window`
@@ -1935,7 +1646,7 @@ async function getNormalWindowReady(context, windowId) {
   // Wait for session restore.
   await new Promise(resolve => {
     if (!window.SessionStoreManager._restored) {
-      let obs = (observedWindow, topic, data) => {
+      const obs = observedWindow => {
         if (observedWindow != window) {
           return;
         }
@@ -1949,907 +1660,48 @@ async function getNormalWindowReady(context, windowId) {
   });
 
   // Wait for all mail3PaneTab's to have been fully restored and loaded.
-  for (let tabInfo of window.gTabmail.tabInfo) {
-    let { chromeBrowser, mode, closed } = tabInfo;
-    if (!closed && mode.name == "mail3PaneTab") {
-      await new Promise(resolve => {
-        if (
-          chromeBrowser.contentDocument.readyState == "complete" &&
-          chromeBrowser.currentURI.spec == "about:3pane"
-        ) {
-          resolve();
-        } else {
-          chromeBrowser.contentWindow.addEventListener(
-            "load",
-            () => resolve(),
-            {
-              once: true,
-            }
-          );
-        }
-      });
-    }
+  for (const tabInfo of window.gTabmail.tabInfo) {
+    await waitForMailTabReady(tabInfo);
   }
 
   return window;
 }
 
-/**
- * Converts an nsIMsgAccount to a simple object
- *
- * @param {nsIMsgAccount} account
- * @returns {object}
- */
-function convertAccount(account, includeFolders = true) {
-  if (!account) {
-    return null;
-  }
-
-  account = account.QueryInterface(Ci.nsIMsgAccount);
-  let server = account.incomingServer;
-  if (server.type == "im") {
-    return null;
-  }
-
-  let folders = null;
-  if (includeFolders) {
-    folders = traverseSubfolders(
-      account.incomingServer.rootFolder,
-      account.key
-    ).subFolders;
-  }
-
-  return {
-    id: account.key,
-    name: account.incomingServer.prettyName,
-    type: account.incomingServer.type,
-    folders,
-    identities: account.identities.map(identity =>
-      convertMailIdentity(account, identity)
-    ),
-  };
-}
-
-/**
- * Converts an nsIMsgIdentity to a simple object for use in messages.
- *
- * @param {nsIMsgAccount} account
- * @param {nsIMsgIdentity} identity
- * @returns {object}
- */
-function convertMailIdentity(account, identity) {
-  if (!account || !identity) {
-    return null;
-  }
-  identity = identity.QueryInterface(Ci.nsIMsgIdentity);
-  return {
-    accountId: account.key,
-    id: identity.key,
-    label: identity.label || "",
-    name: identity.fullName || "",
-    email: identity.email || "",
-    replyTo: identity.replyTo || "",
-    organization: identity.organization || "",
-    composeHtml: identity.composeHtml,
-    signature: identity.htmlSigText || "",
-    signatureIsPlainText: !identity.htmlSigFormat,
-  };
-}
-
-/**
- * The following functions turn nsIMsgFolder references into more human-friendly forms.
- * A folder can be referenced with the account key, and the path to the folder in that account.
- */
-
-/**
- * Convert a folder URI to a human-friendly path.
- *
- * @returns {string}
- */
-function folderURIToPath(accountId, uri) {
-  let server = MailServices.accounts.getAccount(accountId).incomingServer;
-  let rootURI = server.rootFolder.URI;
-  if (rootURI == uri) {
-    return "/";
-  }
-  // The .URI property of an IMAP folder doesn't have %-encoded characters, but
-  // may include literal % chars. Services.io.newURI(uri) applies encodeURI to
-  // the returned filePath, but will not encode any literal % chars, which will
-  // cause decodeURIComponent to fail (bug 1707408).
-  if (server.type == "imap") {
-    return uri.substring(rootURI.length);
-  }
-  let path = Services.io.newURI(uri).filePath;
-  return path.split("/").map(decodeURIComponent).join("/");
-}
-
-/**
- * Convert a human-friendly path to a folder URI. This function does not assume
- * that the folder referenced exists.
- *
- * @returns {string}
- */
-function folderPathToURI(accountId, path) {
-  let server = MailServices.accounts.getAccount(accountId).incomingServer;
-  let rootURI = server.rootFolder.URI;
-  if (path == "/") {
-    return rootURI;
-  }
-  // The .URI property of an IMAP folder doesn't have %-encoded characters.
-  // If encoded here, the folder lookup service won't find the folder.
-  if (server.type == "imap") {
-    return rootURI + path;
-  }
-  return (
-    rootURI +
-    path
-      .split("/")
-      .map(p =>
-        encodeURIComponent(p)
-          .replace(/[~!'()*]/g, c => "%" + c.charCodeAt(0).toString(16))
-          // We do not encode "+" chars in folder URIs. Manually convert them
-          // back to literal + chars, otherwise folder lookup will fail.
-          .replaceAll("%2B", "+")
-      )
-      .join("/")
-  );
-}
-
-const folderTypeMap = new Map([
-  [Ci.nsMsgFolderFlags.Inbox, "inbox"],
-  [Ci.nsMsgFolderFlags.Drafts, "drafts"],
-  [Ci.nsMsgFolderFlags.SentMail, "sent"],
-  [Ci.nsMsgFolderFlags.Trash, "trash"],
-  [Ci.nsMsgFolderFlags.Templates, "templates"],
-  [Ci.nsMsgFolderFlags.Archive, "archives"],
-  [Ci.nsMsgFolderFlags.Junk, "junk"],
-  [Ci.nsMsgFolderFlags.Queue, "outbox"],
-]);
-
-/**
- * Converts an nsIMsgFolder to a simple object for use in API messages.
- *
- * @param {nsIMsgFolder} folder - The folder to convert.
- * @param {string} [accountId] - An optimization to avoid looking up the
- *     account. The value from nsIMsgHdr.accountKey must not be used here.
- * @returns {MailFolder}
- * @see mail/components/extensions/schemas/folders.json
- */
-function convertFolder(folder, accountId) {
-  if (!folder) {
-    return null;
-  }
-  if (!accountId) {
-    let server = folder.server;
-    let account = MailServices.accounts.FindAccountForServer(server);
-    accountId = account.key;
-  }
-
-  let folderObject = {
-    accountId,
-    name: folder.prettyName,
-    path: folderURIToPath(accountId, folder.URI),
-  };
-
-  for (let [flag, typeName] of folderTypeMap.entries()) {
-    if (folder.flags & flag) {
-      folderObject.type = typeName;
-    }
-  }
-
-  return folderObject;
-}
-
-/**
- * Converts an nsIMsgFolder and all its subfolders to a simple object for use in
- * API messages.
- *
- * @param {nsIMsgFolder} folder - The folder to convert.
- * @param {string} [accountId] - An optimization to avoid looking up the
- *     account. The value from nsIMsgHdr.accountKey must not be used here.
- * @returns {MailFolder}
- * @see mail/components/extensions/schemas/folders.json
- */
-function traverseSubfolders(folder, accountId) {
-  let f = convertFolder(folder, accountId);
-  f.subFolders = [];
-  if (folder.hasSubFolders) {
-    // Use the same order as used by Thunderbird.
-    let subFolders = [...folder.subFolders].sort((a, b) =>
-      a.sortOrder == b.sortOrder
-        ? a.name.localeCompare(b.name)
-        : a.sortOrder - b.sortOrder
-    );
-    for (let subFolder of subFolders) {
-      f.subFolders.push(
-        traverseSubfolders(subFolder, accountId || f.accountId)
-      );
-    }
-  }
-  return f;
-}
-
-class FolderManager {
-  constructor(extension) {
-    this.extension = extension;
-  }
-
-  convert(folder, accountId) {
-    return convertFolder(folder, accountId);
-  }
-
-  get(accountId, path) {
-    return MailServices.folderLookup.getFolderForURL(
-      folderPathToURI(accountId, path)
-    );
-  }
-}
-
-/**
- * Checks if the provided nsIMsgHdr is a dummy message header of an attached message.
- */
-function isAttachedMessage(msgHdr) {
-  try {
-    return (
-      !msgHdr.folder &&
-      new URL(msgHdr.getStringProperty("dummyMsgUrl")).searchParams.has("part")
-    );
-  } catch (ex) {
-    return false;
-  }
-}
-
-/**
- * Converts an nsIMsgHdr to a simple object for use in messages.
- * This function WILL change as the API develops.
- *
- * @param {nsIMsgHdr} msgHdr
- * @param {ExtensionData} extension
- * @returns {MessageHeader} MessageHeader object
- *
- * @see /mail/components/extensions/schemas/messages.json
- */
-function convertMessage(msgHdr, extension) {
-  if (!msgHdr) {
-    return null;
-  }
-
-  let composeFields = Cc[
-    "@mozilla.org/messengercompose/composefields;1"
-  ].createInstance(Ci.nsIMsgCompFields);
-
-  let junkScore = parseInt(msgHdr.getStringProperty("junkscore"), 10) || 0;
-  let tags = (msgHdr.getStringProperty("keywords") || "")
-    .split(" ")
-    .filter(MailServices.tags.isValidKey);
-
-  let external = !msgHdr.folder;
-
-  // Getting the size of attached messages does not work consistently. For imap://
-  // and mailbox:// messages the returned size in msgHdr.messageSize is 0, and for
-  // file:// messages the returned size is always the total file size
-  // Be consistent here and always return 0. The user can obtain the message size
-  // from the size of the associated attachment file.
-  let size = isAttachedMessage(msgHdr) ? 0 : msgHdr.messageSize;
-
-  let messageObject = {
-    id: messageTracker.getId(msgHdr),
-    date: new Date(Math.round(msgHdr.date / 1000)),
-    author: msgHdr.mime2DecodedAuthor,
-    recipients: composeFields.splitRecipients(
-      msgHdr.mime2DecodedRecipients,
-      false
-    ),
-    ccList: composeFields.splitRecipients(msgHdr.ccList, false),
-    bccList: composeFields.splitRecipients(msgHdr.bccList, false),
-    subject: msgHdr.mime2DecodedSubject,
-    read: msgHdr.isRead,
-    new: !!(msgHdr.flags & Ci.nsMsgMessageFlags.New),
-    headersOnly: !!(msgHdr.flags & Ci.nsMsgMessageFlags.Partial),
-    flagged: !!msgHdr.isFlagged,
-    junk: junkScore >= gJunkThreshold,
-    junkScore,
-    headerMessageId: msgHdr.messageId,
-    size,
-    tags,
-    external,
-  };
-  // convertMessage can be called without providing an extension, if the info is
-  // needed for multiple extensions. The caller has to ensure that the folder info
-  // is not forwarded to extensions, which do not have the required permission.
-  if (
-    msgHdr.folder &&
-    (!extension || extension.hasPermission("accountsRead"))
-  ) {
-    messageObject.folder = convertFolder(msgHdr.folder);
-  }
-  return messageObject;
-}
-
-/**
- * A map of numeric identifiers to messages for easy reference.
- *
- * @implements {nsIFolderListener}
- * @implements {nsIMsgFolderListener}
- * @implements {nsIObserver}
- */
-var messageTracker = new (class extends EventEmitter {
-  constructor() {
-    super();
-    this._nextId = 1;
-    this._messages = new Map();
-    this._messageIds = new Map();
-    this._listenerCount = 0;
-    this._pendingKeyChanges = new Map();
-    this._dummyMessageHeaders = new Map();
-
-    // nsIObserver
-    Services.obs.addObserver(this, "quit-application-granted");
-    Services.obs.addObserver(this, "attachment-delete-msgkey-changed");
-    // nsIFolderListener
-    MailServices.mailSession.AddFolderListener(
-      this,
-      Ci.nsIFolderListener.propertyFlagChanged |
-        Ci.nsIFolderListener.intPropertyChanged
-    );
-    // nsIMsgFolderListener
-    MailServices.mfn.addListener(
-      this,
-      MailServices.mfn.msgsJunkStatusChanged |
-        MailServices.mfn.msgsDeleted |
-        MailServices.mfn.msgsMoveCopyCompleted |
-        MailServices.mfn.msgKeyChanged
-    );
-
-    this._messageOpenListener = {
-      registered: false,
-      async handleEvent(event) {
-        let msgHdr = event.detail;
-        // It is not possible to retrieve the dummyMsgHdr of messages opened
-        // from file at a later time, track them manually.
-        if (
-          msgHdr &&
-          !msgHdr.folder &&
-          msgHdr.getStringProperty("dummyMsgUrl").startsWith("file://")
-        ) {
-          messageTracker.getId(msgHdr);
-        }
-      },
-    };
-    try {
-      windowTracker.addListener("MsgLoaded", this._messageOpenListener);
-      this._messageOpenListener.registered = true;
-    } catch (ex) {
-      // Fails during XPCSHELL tests, which mock the WindowWatcher but do not
-      // implement registerNotification.
-    }
-  }
-
-  cleanup() {
-    // nsIObserver
-    Services.obs.removeObserver(this, "quit-application-granted");
-    Services.obs.removeObserver(this, "attachment-delete-msgkey-changed");
-    // nsIFolderListener
-    MailServices.mailSession.RemoveFolderListener(this);
-    // nsIMsgFolderListener
-    MailServices.mfn.removeListener(this);
-    if (this._messageOpenListener.registered) {
-      windowTracker.removeListener("MsgLoaded", this._messageOpenListener);
-      this._messageOpenListener.registered = false;
-    }
-  }
-
-  /**
-   * Maps the provided message identifier to the given messageTracker id.
-   */
-  _set(id, msgIdentifier, msgHdr) {
-    let hash = JSON.stringify(msgIdentifier);
-    this._messageIds.set(hash, id);
-    this._messages.set(id, msgIdentifier);
-    // Keep track of dummy message headers, which do not have a folderURI property
-    // and cannot be retrieved later.
-    if (msgHdr && !msgHdr.folder) {
-      this._dummyMessageHeaders.set(msgIdentifier.dummyMsgUrl, msgHdr);
-    }
-  }
-
-  /**
-   * Lookup the messageTracker id for the given message identifier, return null
-   * if not known.
-   */
-  _get(msgIdentifier) {
-    let hash = JSON.stringify(msgIdentifier);
-    if (this._messageIds.has(hash)) {
-      return this._messageIds.get(hash);
-    }
-    return null;
-  }
-
-  /**
-   * Removes the provided message identifier from the messageTracker.
-   */
-  _remove(msgIdentifier) {
-    let hash = JSON.stringify(msgIdentifier);
-    let id = this._get(msgIdentifier);
-    this._messages.delete(id);
-    this._messageIds.delete(hash);
-    this._dummyMessageHeaders.delete(msgIdentifier.dummyMsgUrl);
-  }
-
-  /**
-   * Finds a message in the messageTracker or adds it.
-   *
-   * @returns {int} The messageTracker id of the message
-   */
-  getId(msgHdr) {
-    let msgIdentifier;
-    if (msgHdr.folder) {
-      msgIdentifier = {
-        folderURI: msgHdr.folder.URI,
-        messageKey: msgHdr.messageKey,
-      };
-    } else {
-      // Normalize the dummyMsgUrl by sorting its parameters and striping them
-      // to a minimum.
-      let url = new URL(msgHdr.getStringProperty("dummyMsgUrl"));
-      let parameters = Array.from(url.searchParams, p => p[0]).filter(
-        p => !["group", "number", "key", "part"].includes(p)
-      );
-      for (let parameter of parameters) {
-        url.searchParams.delete(parameter);
-      }
-      url.searchParams.sort();
-
-      msgIdentifier = {
-        dummyMsgUrl: url.href,
-        dummyMsgLastModifiedTime: msgHdr.getUint32Property(
-          "dummyMsgLastModifiedTime"
-        ),
-      };
-    }
-
-    let id = this._get(msgIdentifier);
-    if (id) {
-      return id;
-    }
-    id = this._nextId++;
-
-    this._set(id, msgIdentifier, new nsDummyMsgHeader(msgHdr));
-    return id;
-  }
-
-  /**
-   * Check if the provided msgIdentifier belongs to a modified file message.
-   *
-   * @param {*} msgIdentifier - the msgIdentifier object of the message
-   * @returns {boolean}
-   */
-  isModifiedFileMsg(msgIdentifier) {
-    if (!msgIdentifier.dummyMsgUrl?.startsWith("file://")) {
-      return false;
-    }
-
-    try {
-      let file = Services.io
-        .newURI(msgIdentifier.dummyMsgUrl)
-        .QueryInterface(Ci.nsIFileURL).file;
-      if (!file?.exists()) {
-        throw new ExtensionError("File does not exist");
-      }
-      if (
-        msgIdentifier.dummyMsgLastModifiedTime &&
-        Math.floor(file.lastModifiedTime / 1000000) !=
-          msgIdentifier.dummyMsgLastModifiedTime
-      ) {
-        throw new ExtensionError("File has been modified");
-      }
-    } catch (ex) {
-      console.error(ex);
-      return true;
-    }
-    return false;
-  }
-
-  /**
-   * Retrieves a message from the messageTracker. If the message no longer,
-   * exists it is removed from the messageTracker.
-   *
-   * @returns {nsIMsgHdr} The identifier of the message
-   */
-  getMessage(id) {
-    let msgIdentifier = this._messages.get(id);
-    if (!msgIdentifier) {
-      return null;
-    }
-
-    if (msgIdentifier.folderURI) {
-      let folder = MailServices.folderLookup.getFolderForURL(
-        msgIdentifier.folderURI
-      );
-      if (folder) {
-        let msgHdr = folder.msgDatabase.getMsgHdrForKey(
-          msgIdentifier.messageKey
-        );
-        if (msgHdr) {
-          return msgHdr;
-        }
-      }
-    } else {
-      let msgHdr = this._dummyMessageHeaders.get(msgIdentifier.dummyMsgUrl);
-      if (msgHdr && !this.isModifiedFileMsg(msgIdentifier)) {
-        return msgHdr;
-      }
-    }
-
-    this._remove(msgIdentifier);
-    return null;
-  }
-
-  // nsIFolderListener
-
-  onFolderPropertyFlagChanged(item, property, oldFlag, newFlag) {
-    let changes = {};
-    switch (property) {
-      case "Status":
-        if ((oldFlag ^ newFlag) & Ci.nsMsgMessageFlags.Read) {
-          changes.read = item.isRead;
-        }
-        if ((oldFlag ^ newFlag) & Ci.nsMsgMessageFlags.New) {
-          changes.new = !!(newFlag & Ci.nsMsgMessageFlags.New);
-        }
-        break;
-      case "Flagged":
-        changes.flagged = item.isFlagged;
-        break;
-      case "Keywords":
-        {
-          let tags = item.getStringProperty("keywords");
-          tags = tags ? tags.split(" ") : [];
-          changes.tags = tags.filter(MailServices.tags.isValidKey);
-        }
-        break;
-    }
-    if (Object.keys(changes).length) {
-      this.emit("message-updated", item, changes);
-    }
-  }
-
-  onFolderIntPropertyChanged(folder, property, oldValue, newValue) {
-    switch (property) {
-      case "BiffState":
-        if (newValue == Ci.nsIMsgFolder.nsMsgBiffState_NewMail) {
-          // The folder argument is a root folder.
-          this.findNewMessages(folder);
-        }
-        break;
-      case "NewMailReceived":
-        // The folder argument is a real folder.
-        this.findNewMessages(folder);
-        break;
-    }
-  }
-
-  /**
-   * Finds all folders with new messages in the specified changedFolder and
-   * returns those.
-   *
-   * @see MailNotificationManager._getFirstRealFolderWithNewMail()
-   */
-  findNewMessages(changedFolder) {
-    let folders = changedFolder.descendants;
-    folders.unshift(changedFolder);
-    for (let folder of folders) {
-      let flags = folder.flags;
-      if (
-        !(flags & Ci.nsMsgFolderFlags.Inbox) &&
-        flags & (Ci.nsMsgFolderFlags.SpecialUse | Ci.nsMsgFolderFlags.Virtual)
-      ) {
-        // Do not notify if the folder is not Inbox but one of
-        // Drafts|Trash|SentMail|Templates|Junk|Archive|Queue or Virtual.
-        continue;
-      }
-      let numNewMessages = folder.getNumNewMessages(false);
-      if (!numNewMessages) {
-        continue;
-      }
-      let msgDb = folder.msgDatabase;
-      let newMsgKeys = msgDb.getNewList().slice(-numNewMessages);
-      if (newMsgKeys.length == 0) {
-        continue;
-      }
-      this.emit(
-        "messages-received",
-        folder,
-        newMsgKeys.map(key => msgDb.getMsgHdrForKey(key))
-      );
-    }
-  }
-
-  // nsIMsgFolderListener
-
-  msgsJunkStatusChanged(messages) {
-    for (let msgHdr of messages) {
-      let junkScore = parseInt(msgHdr.getStringProperty("junkscore"), 10) || 0;
-      this.emit("message-updated", msgHdr, {
-        junk: junkScore >= gJunkThreshold,
-      });
-    }
-  }
-
-  msgsDeleted(deletedMsgs) {
-    if (deletedMsgs.length > 0) {
-      this.emit("messages-deleted", deletedMsgs);
-    }
-  }
-
-  msgsMoveCopyCompleted(move, srcMsgs, dstFolder, dstMsgs) {
-    if (srcMsgs.length > 0 && dstMsgs.length > 0) {
-      let emitMsg = move ? "messages-moved" : "messages-copied";
-      this.emit(emitMsg, srcMsgs, dstMsgs);
-    }
-  }
-
-  msgKeyChanged(oldKey, newMsgHdr) {
-    // For IMAP messages there is a delayed update of database keys and if those
-    // keys change, the messageTracker needs to update its maps, otherwise wrong
-    // messages will be returned. Key changes are replayed in multi-step swaps.
-    let newKey = newMsgHdr.messageKey;
-
-    // Replay pending swaps.
-    while (this._pendingKeyChanges.has(oldKey)) {
-      let next = this._pendingKeyChanges.get(oldKey);
-      this._pendingKeyChanges.delete(oldKey);
-      oldKey = next;
-
-      // Check if we are left with a no-op swap and exit early.
-      if (oldKey == newKey) {
-        this._pendingKeyChanges.delete(oldKey);
-        return;
-      }
-    }
-
-    if (oldKey != newKey) {
-      // New key swap, log the mirror swap as pending.
-      this._pendingKeyChanges.set(newKey, oldKey);
-
-      // Swap tracker entries.
-      let oldId = this._get({
-        folderURI: newMsgHdr.folder.URI,
-        messageKey: oldKey,
-      });
-      let newId = this._get({
-        folderURI: newMsgHdr.folder.URI,
-        messageKey: newKey,
-      });
-      this._set(oldId, { folderURI: newMsgHdr.folder.URI, messageKey: newKey });
-      this._set(newId, { folderURI: newMsgHdr.folder.URI, messageKey: oldKey });
-    }
-  }
-
-  // nsIObserver
-
-  /**
-   * Observer to update message tracker if a message has received a new key due
-   * to attachments being removed, which we do not consider to be a new message.
-   */
-  observe(subject, topic, data) {
-    if (topic == "attachment-delete-msgkey-changed") {
-      data = JSON.parse(data);
-
-      if (data && data.folderURI && data.oldMessageKey && data.newMessageKey) {
-        let id = this._get({
-          folderURI: data.folderURI,
-          messageKey: data.oldMessageKey,
-        });
-        if (id) {
-          // Replace tracker entries.
-          this._set(id, {
-            folderURI: data.folderURI,
-            messageKey: data.newMessageKey,
-          });
-        }
-      }
-    } else if (topic == "quit-application-granted") {
-      this.cleanup();
-    }
-  }
-})();
-
-/**
- * Tracks lists of messages so that an extension can consume them in chunks.
- * Any WebExtensions method that could return multiple messages should instead call
- * messageListTracker.startList and return the results, which contain the first
- * chunk. Further chunks can be fetched by the extension calling
- * browser.messages.continueList. Chunk size is controlled by a pref.
- */
-var messageListTracker = {
-  _contextLists: new WeakMap(),
-
-  /**
-   * Takes an array or enumerator of messages and returns the first chunk.
-   *
-   * @returns {object}
-   */
-  startList(messages, extension) {
-    let messageList = this.createList(extension);
-    if (Array.isArray(messages)) {
-      messages = this._createEnumerator(messages);
-    }
-    while (messages.hasMoreElements()) {
-      let next = messages.getNext();
-      messageList.add(next.QueryInterface(Ci.nsIMsgDBHdr));
-    }
-    messageList.done();
-    return this.getNextPage(messageList);
-  },
-
-  _createEnumerator(array) {
-    let current = 0;
-    return {
-      hasMoreElements() {
-        return current < array.length;
-      },
-      getNext() {
-        return array[current++];
-      },
-    };
-  },
-
-  /**
-   * Creates and returns a new messageList object.
-   *
-   * @returns {object}
-   */
-  createList(extension) {
-    let messageListId = Services.uuid.generateUUID().number.substring(1, 37);
-    let messageList = this._createListObject(messageListId, extension);
-    let lists = this._contextLists.get(extension);
-    if (!lists) {
-      lists = new Map();
-      this._contextLists.set(extension, lists);
-    }
-    lists.set(messageListId, messageList);
-    return messageList;
-  },
-
-  /**
-   * Returns the messageList object for a given id.
-   *
-   * @returns {object}
-   */
-  getList(messageListId, extension) {
-    let lists = this._contextLists.get(extension);
-    let messageList = lists ? lists.get(messageListId, null) : null;
-    if (!messageList) {
-      throw new ExtensionError(
-        `No message list for id ${messageListId}. Have you reached the end of a list?`
-      );
-    }
-    return messageList;
-  },
-
-  /**
-   * Returns the first/next message page of the given messageList.
-   *
-   * @returns {object}
-   */
-  async getNextPage(messageList) {
-    let messageListId = messageList.id;
-    let messages = await messageList.getNextPage();
-    if (!messageList.hasMorePages()) {
-      let lists = this._contextLists.get(messageList.extension);
-      if (lists && lists.has(messageListId)) {
-        lists.delete(messageListId);
-      }
-      messageListId = null;
-    }
-    return {
-      id: messageListId,
-      messages,
-    };
-  },
-
-  _createListObject(messageListId, extension) {
-    function getCurrentPage() {
-      return pages.length > 0 ? pages[pages.length - 1] : null;
-    }
-
-    function addPage() {
-      let contents = getCurrentPage();
-      let resolvePage = currentPageResolveCallback;
-
-      pages.push([]);
-      pagePromises.push(
-        new Promise(resolve => {
-          currentPageResolveCallback = resolve;
-        })
-      );
-
-      if (contents && resolvePage) {
-        resolvePage(contents);
-      }
-    }
-
-    let _messageListId = messageListId;
-    let _extension = extension;
-    let isDone = false;
-    let pages = [];
-    let pagePromises = [];
-    let currentPageResolveCallback = null;
-    let readIndex = 0;
-
-    // Add first page.
-    addPage();
-
-    return {
-      get id() {
-        return _messageListId;
-      },
-      get extension() {
-        return _extension;
-      },
-      add(message) {
-        if (isDone) {
-          return;
-        }
-        if (getCurrentPage().length >= gMessagesPerPage) {
-          addPage();
-        }
-        getCurrentPage().push(convertMessage(message, _extension));
-      },
-      done() {
-        if (isDone) {
-          return;
-        }
-        isDone = true;
-        currentPageResolveCallback(getCurrentPage());
-      },
-      hasMorePages() {
-        return readIndex < pages.length;
-      },
-      async getNextPage() {
-        if (readIndex >= pages.length) {
-          return null;
-        }
-        const pageContent = await pagePromises[readIndex];
-        // Increment readIndex only after pagePromise has resolved, so multiple
-        // calls to getNextPage get the same page.
-        readIndex++;
-        return pageContent;
-      },
-    };
-  },
-};
-
-class MessageManager {
-  constructor(extension) {
-    this.extension = extension;
-  }
-
-  convert(msgHdr) {
-    return convertMessage(msgHdr, this.extension);
-  }
-
-  get(id) {
-    return messageTracker.getMessage(id);
-  }
-
-  startMessageList(messageList) {
-    return messageListTracker.startList(messageList, this.extension);
-  }
-}
+const tabTracker = new TabTracker();
+const tagTracker = new TagTracker();
+const spaceTracker = new SpaceTracker();
+const windowTracker = new WindowTracker();
+Object.assign(global, {
+  tabTracker,
+  tagTracker,
+  spaceTracker,
+  windowTracker,
+});
+
+const messageTracker = new MessageTracker(windowTracker);
+const messageListTracker = new MessageListTracker(messageTracker);
+Object.assign(global, {
+  messageTracker,
+  messageListTracker,
+});
 
 extensions.on("startup", (type, extension) => {
   // eslint-disable-line mozilla/balanced-listeners
   if (extension.hasPermission("accountsRead")) {
-    defineLazyGetter(
+    ExtensionCommon.defineLazyGetter(
       extension,
       "folderManager",
       () => new FolderManager(extension)
     );
+    ExtensionCommon.defineLazyGetter(
+      extension,
+      "accountManager",
+      () => new AccountManager(extension)
+    );
   }
+
   if (extension.hasPermission("addressBooks")) {
-    defineLazyGetter(extension, "addressBookManager", () => {
+    ExtensionCommon.defineLazyGetter(extension, "addressBookManager", () => {
       if (!("addressBookCache" in this)) {
         extensions.loadModule("addressBook");
       }
@@ -2863,21 +1715,30 @@ extensions.on("startup", (type, extension) => {
         findMailingListById: this.addressBookCache.findMailingListById.bind(
           this.addressBookCache
         ),
-        convert: this.addressBookCache.convert.bind(this.addressBookCache),
+        convert: (element, complete) =>
+          this.addressBookCache.convert(element, extension, complete),
       };
     });
   }
   if (extension.hasPermission("messagesRead")) {
-    defineLazyGetter(
+    ExtensionCommon.defineLazyGetter(
       extension,
       "messageManager",
-      () => new MessageManager(extension)
+      () => new MessageManager(extension, messageTracker, messageListTracker)
     );
   }
-  defineLazyGetter(extension, "tabManager", () => new TabManager(extension));
-  defineLazyGetter(
+  ExtensionCommon.defineLazyGetter(
+    extension,
+    "tabManager",
+    () => new TabManager(extension)
+  );
+  ExtensionCommon.defineLazyGetter(
     extension,
     "windowManager",
     () => new WindowManager(extension)
   );
+});
+
+extensions.on("shutdown", (type, extension) => {
+  messageListTracker._contextLists.delete(extension);
 });

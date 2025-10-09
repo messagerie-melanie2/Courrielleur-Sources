@@ -3,6 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/a11y/Compatibility.h"
 #include "mozilla/a11y/DocAccessibleParent.h"
 #include "mozilla/dom/BrowserParent.h"
 #include "mozilla/WindowsVersion.h"
@@ -28,11 +29,24 @@ MsaaRootAccessible::InternalQueryInterface(REFIID aIid, void** aOutInterface) {
     return E_INVALIDARG;
   }
 
+  if (NS_WARN_IF(!NS_IsMainThread())) {
+    // Bug 1949617: The COM marshaler sometimes calls QueryInterface on the
+    // wrong thread.
+    return RPC_E_WRONG_THREAD;
+  }
+
   // InternalQueryInterface should always return its internal unknown
   // when queried for IID_IUnknown...
   if (aIid == IID_IUnknown) {
     RefPtr<IUnknown> punk(&mInternalUnknown);
     punk.forget(aOutInterface);
+    return S_OK;
+  }
+
+  if (Compatibility::IsUiaEnabled() &&
+      aIid == IID_IRawElementProviderFragmentRoot) {
+    RefPtr<IRawElementProviderFragmentRoot> root = this;
+    root.forget(aOutInterface);
     return S_OK;
   }
 

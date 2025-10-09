@@ -28,7 +28,7 @@ class TestSafeBrowsingWarningPages(WindowManagerMixin, MarionetteTestCase):
         self.marionette.set_pref("browser.safebrowsing.phishing.enabled", True)
         self.marionette.set_pref("browser.safebrowsing.malware.enabled", True)
 
-        # Give the browser a little time, because SafeBrowsing.jsm takes a
+        # Give the browser a little time, because SafeBrowsing.sys.mjs takes a
         # while between start up and adding the example urls to the db.
         # hg.mozilla.org/mozilla-central/file/46aebcd9481e/browser/base/content/browser.js#l1194
         time.sleep(3)
@@ -117,7 +117,7 @@ class TestSafeBrowsingWarningPages(WindowManagerMixin, MarionetteTestCase):
         expected_url = self.get_final_url(url)
         Wait(self.marionette, timeout=self.marionette.timeout.page_load).until(
             lambda mn: expected_url == mn.get_url(),
-            message="The expected URL '{}' has not been loaded".format(expected_url),
+            message=f"The expected URL '{expected_url}' has not been loaded",
         )
 
         topic = self.marionette.find_element(By.ID, "topic")

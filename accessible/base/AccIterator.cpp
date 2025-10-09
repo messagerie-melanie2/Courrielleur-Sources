@@ -5,12 +5,15 @@
 #include "AccIterator.h"
 
 #include "AccGroupInfo.h"
+#include "ARIAMap.h"
 #include "DocAccessible-inl.h"
-#include "XULTreeAccessible.h"
+#include "LocalAccessible-inl.h"
 #include "nsAccUtils.h"
+#include "XULTreeAccessible.h"
 
 #include "mozilla/a11y/DocAccessibleParent.h"
 #include "mozilla/dom/DocumentOrShadowRoot.h"
+#include "mozilla/dom/Element.h"
 #include "mozilla/dom/HTMLLabelElement.h"
 
 using namespace mozilla;
@@ -71,36 +74,71 @@ AccIterator::IteratorState::IteratorState(const LocalAccessible* aParent,
 RelatedAccIterator::RelatedAccIterator(DocAccessible* aDocument,
                                        nsIContent* aDependentContent,
                                        nsAtom* aRelAttr)
-    : mDocument(aDocument), mRelAttr(aRelAttr), mProviders(nullptr), mIndex(0) {
+    : mDocument(aDocument),
+      mDependentContent(aDependentContent),
+      mRelAttr(aRelAttr),
+      mProviders(nullptr),
+      mIndex(0),
+      mIsWalkingDependentElements(false) {
   nsAutoString id;
   if (aDependentContent->IsElement() &&
-      aDependentContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::id,
-                                              id)) {
+      aDependentContent->AsElement()->GetAttr(nsGkAtoms::id, id)) {
     mProviders = mDocument->GetRelProviders(aDependentContent->AsElement(), id);
   }
 }
 
 LocalAccessible* RelatedAccIterator::Next() {
-  if (!mProviders) return nullptr;
+  if (!mProviders || mIndex == mProviders->Length()) {
+    if (mIsWalkingDependentElements) {
+      // We've walked both dependent ids and dependent elements, so there are
+      // no more targets.
+      return nullptr;
+    }
+    // We've returned all dependent ids, but there might be dependent elements
+    // too. Walk those next.
+    mIsWalkingDependentElements = true;
+    mIndex = 0;
+    if (auto providers =
+            mDocument->mDependentElementsMap.Lookup(mDependentContent)) {
+      mProviders = &providers.Data();
+    } else {
+      mProviders = nullptr;
+      return nullptr;
+    }
+  }
 
   while (mIndex < mProviders->Length()) {
     const auto& provider = (*mProviders)[mIndex++];
 
     // Return related accessible for the given attribute.
-    if (provider->mRelAttr == mRelAttr) {
-      LocalAccessible* related = mDocument->GetAccessible(provider->mContent);
-      if (related) {
-        return related;
-      }
+    if (mRelAttr && provider->mRelAttr != mRelAttr) {
+      continue;
+    }
+    // If we're walking elements (not ids), the explicitly set attr-element
+    // `mDependentContent` must be a descendant of any of the refering element
+    // `mProvider->mContent`'s shadow-including ancestors.
+    if (mIsWalkingDependentElements &&
+        !nsCoreUtils::IsDescendantOfAnyShadowIncludingAncestor(
+            mDependentContent, provider->mContent)) {
+      continue;
+    }
+    LocalAccessible* related = mDocument->GetAccessible(provider->mContent);
+    if (related) {
+      return related;
+    }
 
-      // If the document content is pointed by relation then return the
-      // document itself.
-      if (provider->mContent == mDocument->GetContent()) {
-        return mDocument;
-      }
+    // If the document content is pointed by relation then return the
+    // document itself.
+    if (provider->mContent == mDocument->GetContent()) {
+      return mDocument;
     }
   }
 
+  // We exhausted mProviders without returning anything.
+  if (!mIsWalkingDependentElements) {
+    // Call this function again to start walking the dependent elements.
+    return Next();
+  }
   return nullptr;
 }
 
@@ -140,8 +178,7 @@ LocalAccessible* HTMLLabelIterator::Next() {
   LocalAccessible* walkUp = mAcc->LocalParent();
   while (walkUp && !walkUp->IsDoc()) {
     nsIContent* walkUpEl = walkUp->GetContent();
-    if (IsLabel(walkUp) &&
-        !walkUpEl->AsElement()->HasAttr(kNameSpaceID_None, nsGkAtoms::_for)) {
+    if (IsLabel(walkUp) && !walkUpEl->AsElement()->HasAttr(nsGkAtoms::_for)) {
       mLabelFilter = eSkipAncestorLabel;  // prevent infinite loop
       return walkUp;
     }
@@ -206,18 +243,24 @@ LocalAccessible* XULDescriptionIterator::Next() {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// IDRefsIterator
+// AssociatedElementsIterator
 ////////////////////////////////////////////////////////////////////////////////
 
-IDRefsIterator::IDRefsIterator(DocAccessible* aDoc, nsIContent* aContent,
-                               nsAtom* aIDRefsAttr)
-    : mContent(aContent), mDoc(aDoc), mCurrIdx(0) {
+AssociatedElementsIterator::AssociatedElementsIterator(DocAccessible* aDoc,
+                                                       nsIContent* aContent,
+                                                       nsAtom* aIDRefsAttr)
+    : mContent(aContent), mDoc(aDoc), mCurrIdx(0), mElemIdx(0) {
   if (mContent->IsElement()) {
     mContent->AsElement()->GetAttr(aIDRefsAttr, mIDs);
+    if (mIDs.IsEmpty() &&
+        (aria::AttrCharacteristicsFor(aIDRefsAttr) & ATTR_REFLECT_ELEMENTS)) {
+      nsAccUtils::GetARIAElementsAttr(mContent->AsElement(), aIDRefsAttr,
+                                      mElements);
+    }
   }
 }
 
-const nsDependentSubstring IDRefsIterator::NextID() {
+const nsDependentSubstring AssociatedElementsIterator::NextID() {
   for (; mCurrIdx < mIDs.Length(); mCurrIdx++) {
     if (!NS_IsAsciiWhitespace(mIDs[mCurrIdx])) break;
   }
@@ -232,20 +275,27 @@ const nsDependentSubstring IDRefsIterator::NextID() {
   return Substring(mIDs, idStartIdx, mCurrIdx++ - idStartIdx);
 }
 
-nsIContent* IDRefsIterator::NextElem() {
+dom::Element* AssociatedElementsIterator::NextElem() {
   while (true) {
     const nsDependentSubstring id = NextID();
     if (id.IsEmpty()) break;
 
-    nsIContent* refContent = GetElem(id);
+    dom::Element* refContent = GetElem(id);
     if (refContent) return refContent;
+  }
+
+  while (dom::Element* element = mElements.SafeElementAt(mElemIdx++)) {
+    if (nsCoreUtils::IsDescendantOfAnyShadowIncludingAncestor(element,
+                                                              mContent)) {
+      return element;
+    }
   }
 
   return nullptr;
 }
 
-dom::Element* IDRefsIterator::GetElem(nsIContent* aContent,
-                                      const nsAString& aID) {
+dom::Element* AssociatedElementsIterator::GetElem(nsIContent* aContent,
+                                                  const nsAString& aID) {
   // Get elements in DOM tree by ID attribute if this is an explicit content.
   // In case of bound element check its anonymous subtree.
   if (!aContent->IsInNativeAnonymousSubtree()) {
@@ -261,12 +311,13 @@ dom::Element* IDRefsIterator::GetElem(nsIContent* aContent,
   return nullptr;
 }
 
-dom::Element* IDRefsIterator::GetElem(const nsDependentSubstring& aID) {
+dom::Element* AssociatedElementsIterator::GetElem(
+    const nsDependentSubstring& aID) {
   return GetElem(mContent, aID);
 }
 
-LocalAccessible* IDRefsIterator::Next() {
-  nsIContent* nextEl = nullptr;
+LocalAccessible* AssociatedElementsIterator::Next() {
+  dom::Element* nextEl = nullptr;
   while ((nextEl = NextElem())) {
     LocalAccessible* acc = mDoc->GetAccessible(nextEl);
     if (acc) {

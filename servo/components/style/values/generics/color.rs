@@ -4,9 +4,8 @@
 
 //! Generic types for color properties.
 
-use crate::color::mix::ColorInterpolationMethod;
-use crate::color::AbsoluteColor;
-use crate::values::specified::percentage::ToPercentage;
+use crate::color::{mix::ColorInterpolationMethod, AbsoluteColor, ColorFunction};
+use crate::values::{specified::percentage::ToPercentage, computed::ToComputedValue, Parser, ParseError};
 use std::fmt::{self, Write};
 use style_traits::{CssWriter, ToCss};
 
@@ -17,10 +16,25 @@ use style_traits::{CssWriter, ToCss};
 pub enum GenericColor<Percentage> {
     /// The actual numeric color.
     Absolute(AbsoluteColor),
+    /// A unresolvable color.
+    ColorFunction(Box<ColorFunction<Self>>),
     /// The `CurrentColor` keyword.
     CurrentColor,
     /// The color-mix() function.
     ColorMix(Box<GenericColorMix<Self, Percentage>>),
+}
+
+/// Flags used to modify the calculation of a color mix result.
+#[derive(Clone, Copy, Debug, Default, MallocSizeOf, PartialEq, ToShmem)]
+#[repr(C)]
+pub struct ColorMixFlags(u8);
+bitflags! {
+    impl ColorMixFlags : u8 {
+        /// Normalize the weights of the mix.
+        const NORMALIZE_WEIGHTS = 1 << 0;
+        /// The result should always be converted to the modern color syntax.
+        const RESULT_IN_MODERN_SYNTAX = 1 << 1;
+    }
 }
 
 /// A restricted version of the css `color-mix()` function, which only supports
@@ -45,7 +59,7 @@ pub struct GenericColorMix<Color, Percentage> {
     pub left_percentage: Percentage,
     pub right: Color,
     pub right_percentage: Percentage,
-    pub normalize_weights: bool,
+    pub flags: ColorMixFlags,
 }
 
 pub use self::GenericColorMix as ColorMix;
@@ -106,7 +120,7 @@ impl<Percentage> ColorMix<GenericColor<Percentage>, Percentage> {
             self.left_percentage.to_percentage(),
             &right,
             self.right_percentage.to_percentage(),
-            self.normalize_weights,
+            self.flags,
         ))
     }
 }
@@ -194,3 +208,50 @@ impl<C> GenericCaretColor<C> {
 }
 
 pub use self::GenericCaretColor as CaretColor;
+
+/// A light-dark(<light>, <dark>) function.
+#[derive(Clone, Debug, MallocSizeOf, PartialEq, SpecifiedValueInfo, ToShmem, ToCss, ToResolvedValue)]
+#[css(function = "light-dark", comma)]
+#[repr(C)]
+pub struct GenericLightDark<T> {
+    /// The value returned when using a light theme.
+    pub light: T,
+    /// The value returned when using a dark theme.
+    pub dark: T,
+}
+
+impl<T> GenericLightDark<T> {
+    /// Parse the arguments of the light-dark() function.
+    pub fn parse_args_with<'i>(
+        input: &mut Parser<'i, '_>,
+        mut parse_one: impl FnMut(&mut Parser<'i, '_>) -> Result<T, ParseError<'i>>,
+    ) -> Result<Self, ParseError<'i>> {
+        let light = parse_one(input)?;
+        input.expect_comma()?;
+        let dark = parse_one(input)?;
+        Ok(Self { light, dark })
+    }
+
+    /// Parse the light-dark() function.
+    pub fn parse_with<'i>(
+        input: &mut Parser<'i, '_>,
+        parse_one: impl FnMut(&mut Parser<'i, '_>) -> Result<T, ParseError<'i>>,
+    ) -> Result<Self, ParseError<'i>> {
+        input.expect_function_matching("light-dark")?;
+        input.parse_nested_block(|input| Self::parse_args_with(input, parse_one))
+    }
+}
+
+impl<T: ToComputedValue> GenericLightDark<T> {
+    /// Choose the light or dark version of this value for computation purposes, and compute it.
+    pub fn compute(&self, cx: &crate::values::computed::Context) -> T::ComputedValue {
+        let dark = cx.device().is_dark_color_scheme(cx.builder.color_scheme);
+        if cx.for_non_inherited_property {
+            cx.rule_cache_conditions
+                .borrow_mut()
+                .set_color_scheme_dependency(cx.builder.color_scheme);
+        }
+        let chosen = if dark { &self.dark } else { &self.light };
+        chosen.to_computed_value(cx)
+    }
+}

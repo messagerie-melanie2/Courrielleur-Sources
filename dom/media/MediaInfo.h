@@ -37,7 +37,7 @@ class MetadataTag {
   }
 };
 
-typedef nsTHashMap<nsCStringHashKey, nsCString> MetadataTags;
+using MetadataTags = nsTHashMap<nsCStringHashKey, nsCString>;
 
 // Start codec specific data structs. If modifying these remember to also
 // modify the MediaIPCUtils so that any new members are sent across IPC.
@@ -109,10 +109,14 @@ struct FlacCodecSpecificData {
   RefPtr<MediaByteBuffer> mStreamInfoBinaryBlob{new MediaByteBuffer};
 };
 
-struct Mp3CodecSpecificData {
+struct Mp3CodecSpecificData final {
   bool operator==(const Mp3CodecSpecificData& rhs) const {
     return mEncoderDelayFrames == rhs.mEncoderDelayFrames &&
            mEncoderPaddingFrames == rhs.mEncoderPaddingFrames;
+  }
+
+  auto MutTiedFields() {
+    return std::tie(mEncoderDelayFrames, mEncoderPaddingFrames);
   }
 
   // The number of frames that should be skipped from the beginning of the
@@ -128,11 +132,10 @@ struct Mp3CodecSpecificData {
 
 struct OpusCodecSpecificData {
   bool operator==(const OpusCodecSpecificData& rhs) const {
-    return mContainerCodecDelayMicroSeconds ==
-               rhs.mContainerCodecDelayMicroSeconds &&
+    return mContainerCodecDelayFrames == rhs.mContainerCodecDelayFrames &&
            *mHeadersBinaryBlob == *rhs.mHeadersBinaryBlob;
   }
-  // The codec delay (aka pre-skip) in microseconds.
+  // The codec delay (aka pre-skip) in audio frames.
   // See https://tools.ietf.org/html/rfc7845#section-4.2 for more info.
   // This member should store the codec delay parsed from the container file.
   // In some cases (such as the ogg container), this information is derived
@@ -140,7 +143,7 @@ struct OpusCodecSpecificData {
   // separately redundant. However, other containers store the delay in
   // addition to the header blob, in which case we can check this container
   // delay against the header delay to ensure they're consistent.
-  int64_t mContainerCodecDelayMicroSeconds{-1};
+  int64_t mContainerCodecDelayFrames{-1};
 
   // A binary blob of opus header data, specifically the Identification Header.
   // See https://datatracker.ietf.org/doc/html/rfc7845.html#section-5.1
@@ -220,14 +223,6 @@ inline already_AddRefed<MediaByteBuffer> ForceGetAudioCodecSpecificBlob(
 // information as a blob or where a blob is ambiguous.
 inline already_AddRefed<MediaByteBuffer> GetAudioCodecSpecificBlob(
     const AudioCodecSpecificVariant& v) {
-  MOZ_ASSERT(!v.is<NoCodecSpecificData>(),
-             "NoCodecSpecificData shouldn't be used as a blob");
-  MOZ_ASSERT(!v.is<AacCodecSpecificData>(),
-             "AacCodecSpecificData has 2 blobs internally, one should "
-             "explicitly be selected");
-  MOZ_ASSERT(!v.is<Mp3CodecSpecificData>(),
-             "Mp3CodecSpecificData shouldn't be used as a blob");
-
   return ForceGetAudioCodecSpecificBlob(v);
 }
 
@@ -296,6 +291,8 @@ class TrackInfo {
   bool IsText() const { return !!GetAsTextInfo(); }
   TrackType GetType() const { return mType; }
 
+  virtual nsCString ToString() const;
+
   bool virtual IsValid() const = 0;
 
   virtual UniquePtr<TrackInfo> Clone() const = 0;
@@ -328,15 +325,16 @@ class TrackInfo {
 // String version of track type.
 const char* TrackTypeToStr(TrackInfo::TrackType aTrack);
 
+enum class VideoRotation {
+  kDegree_0 = 0,
+  kDegree_90 = 90,
+  kDegree_180 = 180,
+  kDegree_270 = 270,
+};
+
 // Stores info relevant to presenting media frames.
 class VideoInfo : public TrackInfo {
  public:
-  enum Rotation {
-    kDegree_0 = 0,
-    kDegree_90 = 90,
-    kDegree_180 = 180,
-    kDegree_270 = 270,
-  };
   VideoInfo() : VideoInfo(-1, -1) {}
 
   VideoInfo(int32_t aWidth, int32_t aHeight)
@@ -349,9 +347,34 @@ class VideoInfo : public TrackInfo {
         mImage(aSize),
         mCodecSpecificConfig(new MediaByteBuffer),
         mExtraData(new MediaByteBuffer),
-        mRotation(kDegree_0) {}
+        mRotation(VideoRotation::kDegree_0) {}
 
-  VideoInfo(const VideoInfo& aOther) = default;
+  VideoInfo(const VideoInfo& aOther) : TrackInfo(aOther) {
+    if (aOther.mCodecSpecificConfig) {
+      mCodecSpecificConfig = new MediaByteBuffer();
+      mCodecSpecificConfig->AppendElements(
+          reinterpret_cast<uint8_t*>(aOther.mCodecSpecificConfig->Elements()),
+          aOther.mCodecSpecificConfig->Length());
+    }
+    if (aOther.mExtraData) {
+      mExtraData = new MediaByteBuffer();
+      mExtraData->AppendElements(
+          reinterpret_cast<uint8_t*>(aOther.mExtraData->Elements()),
+          aOther.mExtraData->Length());
+    }
+    mDisplay = aOther.mDisplay;
+    mStereoMode = aOther.mStereoMode;
+    mImage = aOther.mImage;
+    mRotation = aOther.mRotation;
+    mColorDepth = aOther.mColorDepth;
+    mColorSpace = aOther.mColorSpace;
+    mColorPrimaries = aOther.mColorPrimaries;
+    mTransferFunction = aOther.mTransferFunction;
+    mColorRange = aOther.mColorRange;
+    mImageRect = aOther.mImageRect;
+    mAlphaPresent = aOther.mAlphaPresent;
+    mFrameRate = aOther.mFrameRate;
+  };
 
   bool operator==(const VideoInfo& rhs) const;
 
@@ -401,26 +424,28 @@ class VideoInfo : public TrackInfo {
       return imageRect;
     }
 
-    imageRect.x = (imageRect.x * aWidth) / mImage.width;
-    imageRect.y = (imageRect.y * aHeight) / mImage.height;
-    imageRect.SetWidth(w);
-    imageRect.SetHeight(h);
+    imageRect.x = AssertedCast<int>((imageRect.x * aWidth) / mImage.width);
+    imageRect.y = AssertedCast<int>((imageRect.y * aHeight) / mImage.height);
+    imageRect.SetWidth(AssertedCast<int>(w));
+    imageRect.SetHeight(AssertedCast<int>(h));
     return imageRect;
   }
 
-  Rotation ToSupportedRotation(int32_t aDegree) const {
+  VideoRotation ToSupportedRotation(int32_t aDegree) const {
     switch (aDegree) {
       case 90:
-        return kDegree_90;
+        return VideoRotation::kDegree_90;
       case 180:
-        return kDegree_180;
+        return VideoRotation::kDegree_180;
       case 270:
-        return kDegree_270;
+        return VideoRotation::kDegree_270;
       default:
         NS_WARNING_ASSERTION(aDegree == 0, "Invalid rotation degree, ignored");
-        return kDegree_0;
+        return VideoRotation::kDegree_0;
     }
   }
+
+  nsCString ToString() const override;
 
   // Size in pixels at which the video is rendered. This is after it has
   // been scaled by its aspect ratio.
@@ -437,7 +462,7 @@ class VideoInfo : public TrackInfo {
 
   // Describing how many degrees video frames should be rotated in clock-wise to
   // get correct view.
-  Rotation mRotation;
+  VideoRotation mRotation;
 
   // Should be 8, 10 or 12. Default value is 8.
   gfx::ColorDepth mColorDepth = gfx::ColorDepth::COLOR_8;
@@ -487,7 +512,7 @@ class AudioInfo : public TrackInfo {
 
   bool operator==(const AudioInfo& rhs) const;
 
-  static const uint32_t MAX_RATE = 640000;
+  static const uint32_t MAX_RATE = 768000;
   static const uint32_t MAX_CHANNEL_COUNT = 256;
 
   bool IsValid() const override {
@@ -498,6 +523,8 @@ class AudioInfo : public TrackInfo {
   AudioInfo* GetAsAudioInfo() override { return this; }
 
   const AudioInfo* GetAsAudioInfo() const override { return this; }
+
+  nsCString ToString() const override;
 
   UniquePtr<TrackInfo> Clone() const override {
     return MakeUnique<AudioInfo>(*this);
@@ -518,10 +545,10 @@ class AudioInfo : public TrackInfo {
   uint32_t mBitDepth;
 
   // Codec profile.
-  int8_t mProfile;
+  uint8_t mProfile;
 
   // Extended codec profile.
-  int8_t mExtendedProfile;
+  uint8_t mExtendedProfile;
 
   AudioCodecSpecificVariant mCodecSpecificConfig{NoCodecSpecificData{}};
 };
@@ -541,7 +568,7 @@ class EncryptionInfo {
     // Encryption data.
     CopyableTArray<uint8_t> mInitData;
   };
-  typedef CopyableTArray<InitData> InitDatas;
+  using InitDatas = CopyableTArray<InitData>;
 
   // True if the stream has encryption metadata
   bool IsEncrypted() const { return mEncrypted; }

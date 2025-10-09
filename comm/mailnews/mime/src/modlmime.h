@@ -11,9 +11,7 @@
 #endif
 
 #include "nsString.h"
-#include "nsMailHeaders.h"
 #include "nsIMimeStreamConverter.h"
-#include "mozilla/Encoding.h"
 #include "nsIPrefBranch.h"
 #include "mozITXTToHTMLConv.h"
 #include "nsCOMPtr.h"
@@ -122,8 +120,11 @@ typedef enum {
 
 /* The signature for various callbacks in the MimeDisplayOptions structure.
  */
-typedef char* (*MimeHTMLGeneratorFunction)(const char* data, void* closure,
+typedef char* (*MimeHTMLGeneratorFunction)(const char* data,
+                                           MimeClosure closure,
                                            MimeHeaders* headers);
+
+class mime_image_stream_data;
 
 class MimeDisplayOptions {
  public:
@@ -150,8 +151,6 @@ class MimeDisplayOptions {
   bool wrap_long_lines_p;          /* Whether to wrap long lines in text/plain
                                       messages. */
 
-  bool rot13_p;       /* Whether text/plain parts should be rotated
-                         Set by "?rot13=true" */
   char* part_to_load; /* The particular part of the multipart which
                          we are extracting.  Set by "?part=3.2.4" */
 
@@ -200,20 +199,20 @@ class MimeDisplayOptions {
    is what is found in `options->stream_closure'.  (One possible exception
    is for output_fn; see "output_closure" below.)
    */
-  void* stream_closure;
+  MimeClosure stream_closure;
 
   /* For setting up the display stream, so that the MIME parser can inform
    the caller of the type of the data it will be getting. */
   int (*output_init_fn)(const char* type, const char* charset, const char* name,
                         const char* x_mac_type, const char* x_mac_creator,
-                        void* stream_closure);
+                        MimeClosure stream_closure);
 
   /* How the MIME parser feeds its output (HTML or raw) back to the caller. */
   MimeConverterOutputCallback output_fn;
 
   /* Closure to pass to the above output_fn.  If NULL, then the
    stream_closure is used. */
-  void* output_closure;
+  MimeClosure output_closure;
 
   /* A hook for the caller to perform charset-conversion before HTML is
    returned.  Each set of characters which originated in a mail message
@@ -234,7 +233,8 @@ class MimeDisplayOptions {
    */
   int (*charset_conversion_fn)(const char* input_line, int32_t input_length,
                                const char* input_charset,
-                               nsACString& output_ret, void* stream_closure);
+                               nsACString& output_ret,
+                               MimeClosure stream_closure);
 
   /* If true, perform both charset-conversion and decoding of
    MIME-2 header fields (using RFC-1522 encoding.)
@@ -242,7 +242,7 @@ class MimeDisplayOptions {
   bool rfc1522_conversion_p;
 
   /* A hook for the caller to turn a file name into a content-type. */
-  char* (*file_type_fn)(const char* filename, void* stream_closure);
+  char* (*file_type_fn)(const char* filename, MimeClosure stream_closure);
 
   /* A hook by which the user may be prompted for a password by the security
    library.  (This is really of type `SECKEYGetPasswordKey'; see sec.h.) */
@@ -252,7 +252,7 @@ class MimeDisplayOptions {
    Various callbacks; for all of these functions, the `closure' argument
    is what is found in `html_closure'.
    */
-  void* html_closure;
+  MimeClosure html_closure;
 
   /* For emitting some HTML before the start of the outermost message
    (this is called before any HTML is written to layout.) */
@@ -284,17 +284,19 @@ class MimeDisplayOptions {
 
   /* Begins processing an embedded image; the URL and content_type are of the
    image itself. */
-  void* (*image_begin)(const char* image_url, const char* content_type,
-                       void* stream_closure);
+  mime_image_stream_data* (*image_begin)(const char* image_url,
+                                         const char* content_type,
+                                         MimeClosure stream_closure);
 
   /* Stop processing an image. */
-  void (*image_end)(void* image_closure, int status);
+  void (*image_end)(MimeClosure image_closure, int status);
 
   /* Dump some raw image data down the stream. */
-  int (*image_write_buffer)(const char* buf, int32_t size, void* image_closure);
+  int (*image_write_buffer)(const char* buf, int32_t size,
+                            MimeClosure image_closure);
 
   /* What HTML should be dumped out for this image. */
-  char* (*make_image_html)(void* image_closure);
+  char* (*make_image_html)(MimeClosure image_closure);
 
   /* =======================================================================
    Other random opaque state.
@@ -327,14 +329,15 @@ class MimeDisplayOptions {
   /* Callback to gather the outer most headers so we could use the
    information to initialize the addressing/subject/newsgroups fields
    for the composition window. */
-  int (*decompose_headers_info_fn)(void* closure, MimeHeaders* headers);
+  int (*decompose_headers_info_fn)(MimeClosure closure, MimeHeaders* headers);
 
   /* Callbacks to create temporary files for drafts attachments. */
-  int (*decompose_file_init_fn)(void* stream_closure, MimeHeaders* headers);
+  int (*decompose_file_init_fn)(MimeClosure stream_closure,
+                                MimeHeaders* headers);
 
   MimeConverterOutputCallback decompose_file_output_fn;
 
-  int (*decompose_file_close_fn)(void* stream_closure);
+  int (*decompose_file_close_fn)(MimeClosure stream_closure);
 #endif /* MIME_DRAFTS */
 
   int32_t attachment_icon_layer_id; /* Hackhackhack.  This is zero if we have

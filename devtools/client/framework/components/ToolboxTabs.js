@@ -7,9 +7,9 @@ const {
   Component,
   createFactory,
   createRef,
-} = require("resource://devtools/client/shared/vendor/react.js");
+} = require("resource://devtools/client/shared/vendor/react.mjs");
 const dom = require("resource://devtools/client/shared/vendor/react-dom-factories.js");
-const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.js");
+const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.mjs");
 const {
   ToolboxTabsOrderManager,
 } = require("resource://devtools/client/framework/toolbox-tabs-order-manager.js");
@@ -97,7 +97,7 @@ class ToolboxTabs extends Component {
     }
   }
 
-  componentDidUpdate(prevProps, prevState) {
+  componentDidUpdate(prevProps) {
     if (this.shouldUpdateToolboxTabs(prevProps, this.props)) {
       this.updateCachedToolTabsWidthMap();
       this.updateOverflowedTabs();
@@ -226,7 +226,7 @@ class ToolboxTabs extends Component {
     }
   }
 
-  resizeHandler(evt) {
+  resizeHandler() {
     window.cancelIdleCallback(this._resizeTimerId);
     this._resizeTimerId = window.requestIdleCallback(
       () => {

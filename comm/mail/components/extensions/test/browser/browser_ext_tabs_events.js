@@ -2,17 +2,18 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
+"use strict";
+
 add_task(async () => {
-  let tabmail = document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
 
-  let account = createAccount();
-  let rootFolder = account.incomingServer.rootFolder;
-  rootFolder.createSubfolder("tabsEvents", null);
-  let testFolder = rootFolder.findSubFolder("tabsEvents");
-  createMessages(testFolder, 5);
-  let messages = [...testFolder.messages];
+  const account = createAccount();
+  const rootFolder = account.incomingServer.rootFolder;
+  const testFolder = await createSubfolder(rootFolder, "tabsEvents");
+  await createMessages(testFolder, 5);
+  const messages = [...testFolder.messages];
 
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "page1.html": "<html><body>Page 1</body></html>",
       "page2.html": "<html><body>Page 2</body></html>",
@@ -20,15 +21,15 @@ add_task(async () => {
         // Executes a command, but first loads a second extension with terminated
         // background and waits for it to be restarted due to the executed command.
         async function capturePrimedEvent(eventName, callback) {
-          let eventPageExtensionReadyPromise = window.waitForMessage();
+          const eventPageExtensionReadyPromise = window.waitForMessage();
           browser.test.sendMessage("capturePrimedEvent", eventName);
           await eventPageExtensionReadyPromise;
-          let eventPageExtensionFinishedPromise = window.waitForMessage();
+          const eventPageExtensionFinishedPromise = window.waitForMessage();
           callback();
           return eventPageExtensionFinishedPromise;
         }
 
-        let listener = {
+        const listener = {
           events: [],
           currentPromise: null,
 
@@ -36,7 +37,7 @@ add_task(async () => {
             browser.test.log(JSON.stringify(args));
             this.events.push(args);
             if (this.currentPromise) {
-              let p = this.currentPromise;
+              const p = this.currentPromise;
               this.currentPromise = null;
               p.resolve(args);
             }
@@ -63,31 +64,25 @@ add_task(async () => {
           },
           async checkEvent(expectedEvent, ...expectedArgs) {
             await this.nextEvent();
-            let [actualEvent, ...actualArgs] = this.events.shift();
-            browser.test.assertEq(expectedEvent, actualEvent);
-            browser.test.assertEq(expectedArgs.length, actualArgs.length);
-            for (let i = 0; i < expectedArgs.length; i++) {
-              browser.test.assertEq(
-                typeof expectedArgs[i],
-                typeof actualArgs[i]
-              );
-              if (typeof expectedArgs[i] == "object") {
-                for (let key of Object.keys(expectedArgs[i])) {
-                  browser.test.assertEq(
-                    expectedArgs[i][key],
-                    actualArgs[i][key]
-                  );
-                }
-              } else {
-                browser.test.assertEq(expectedArgs[i], actualArgs[i]);
-              }
-            }
+            const [actualEvent, ...actualArgs] = this.events.shift();
+            browser.test.assertEq(
+              expectedEvent,
+              actualEvent,
+              "event type should be correct"
+            );
+            window.assertDeepEqual(
+              expectedArgs,
+              actualArgs,
+              "event args should be correct"
+            );
             return actualArgs;
           },
-          async pageLoad(tab, active = true) {
+          async pageLoad(tab, type, active = true) {
+            // @see https://github.com/eslint/eslint/issues/17807
+            // eslint-disable-next-line no-constant-condition
             while (true) {
               // Read the first event without consuming it.
-              let [actualEvent, actualTabId, actualInfo, actualTab] =
+              const [actualEvent, actualTabId, actualInfo, actualTab] =
                 await this.nextEvent();
               browser.test.assertEq("onUpdated", actualEvent);
               browser.test.assertEq(tab, actualTabId);
@@ -109,9 +104,9 @@ add_task(async () => {
               { status: "complete" },
               {
                 id: tab,
-                windowId: initialWindow,
+                windowId: initialWindowId,
                 active,
-                mailTab: false,
+                type,
               }
             );
           },
@@ -130,12 +125,11 @@ add_task(async () => {
           "Collect the ID of the initial tab (there must be only one) and window."
         );
 
-        let initialTabs = await browser.tabs.query({});
+        const initialTabs = await browser.tabs.query({});
         browser.test.assertEq(1, initialTabs.length);
         browser.test.assertEq(0, initialTabs[0].index);
-        browser.test.assertTrue(initialTabs[0].mailTab);
         browser.test.assertEq("mail", initialTabs[0].type);
-        let [{ id: initialTab, windowId: initialWindow }] = initialTabs;
+        const [{ id: initialTabId, windowId: initialWindowId }] = initialTabs;
 
         browser.test.log("Add a first content tab and wait for it to load.");
 
@@ -143,9 +137,8 @@ add_task(async () => {
           [
             {
               index: 1,
-              windowId: initialWindow,
+              windowId: initialWindowId,
               active: true,
-              mailTab: false,
               type: "content",
             },
           ],
@@ -155,18 +148,23 @@ add_task(async () => {
             })
           )
         );
-        let [{ id: contentTab1 }] = await listener.checkEvent("onCreated", {
+        const [{ id: contentTab1Id }] = await listener.checkEvent("onCreated", {
           index: 1,
-          windowId: initialWindow,
+          windowId: initialWindowId,
           active: true,
-          mailTab: false,
           type: "content",
         });
-        browser.test.assertTrue(contentTab1 != initialTab);
-        await listener.pageLoad(contentTab1);
+        browser.test.assertTrue(contentTab1Id != initialTabId);
+        await listener.checkEvent("onActivated", {
+          tabId: contentTab1Id,
+          windowId: initialWindowId,
+          previousTabId: initialTabId,
+        });
+
+        await listener.pageLoad(contentTab1Id, "content");
         browser.test.assertEq(
           "content",
-          (await browser.tabs.get(contentTab1)).type
+          (await browser.tabs.get(contentTab1Id)).type
         );
 
         browser.test.log("Add a second content tab and wait for it to load.");
@@ -174,44 +172,75 @@ add_task(async () => {
         // The external extension is looking for the onUpdated event, it either be
         // a loading or completed event. Compare with whatever the local extension
         // is getting.
-        let locContentTabUpdateInfoPromise = new Promise(resolve => {
-          let listener = (...args) => {
-            browser.tabs.onUpdated.removeListener(listener);
-            resolve(args);
-          };
-          browser.tabs.onUpdated.addListener(listener, {
-            properties: ["status"],
-          });
+        const locContentTabUpdateInfoPromise = new Promise(resolve => {
+          browser.tabs.onUpdated.addListener(
+            function updateListener(...args) {
+              browser.tabs.onUpdated.removeListener(updateListener);
+              resolve(args);
+            },
+            {
+              properties: ["status"],
+            }
+          );
         });
-        let primedContentTabUpdateInfo = await capturePrimedEvent(
+        const primedContentTabUpdateInfo = await capturePrimedEvent(
           "onUpdated",
           () =>
             browser.tabs.create({
               url: browser.runtime.getURL("page2.html"),
             })
         );
-        let [{ id: contentTab2 }] = await listener.checkEvent("onCreated", {
+        const [{ id: contentTab2Id }] = await listener.checkEvent("onCreated", {
           index: 2,
-          windowId: initialWindow,
+          windowId: initialWindowId,
           active: true,
-          mailTab: false,
           type: "content",
         });
-        let locContentTabUpdateInfo = await locContentTabUpdateInfoPromise;
+        await listener.checkEvent("onActivated", {
+          tabId: contentTab2Id,
+          windowId: initialWindowId,
+          previousTabId: contentTab1Id,
+        });
+
+        const locContentTabUpdateInfo = await locContentTabUpdateInfoPromise;
+        browser.test.assertEq(
+          3,
+          locContentTabUpdateInfo.length,
+          "locContentTabUpdateInfo should have the correct length"
+        );
+        browser.test.assertEq(
+          3,
+          primedContentTabUpdateInfo.length,
+          "primedContentTabUpdateInfo should have the correct length"
+        );
+        browser.test.assertEq(
+          locContentTabUpdateInfo[0],
+          primedContentTabUpdateInfo[0],
+          "tabId should be identical for the normal and the primed extension"
+        );
         window.assertDeepEqual(
-          locContentTabUpdateInfo,
-          primedContentTabUpdateInfo,
-          "primed onUpdated event and non-primed onUpdeated event should receive the same values",
+          locContentTabUpdateInfo[1],
+          primedContentTabUpdateInfo[1],
+          "change information of the primed onUpdated event and non-primed onUpdeated event should be identical",
+          { strict: true }
+        );
+        // Since primedContentTabUpdateInfo is from a MV3 extension, it does not
+        // return the mailTab property. Manually add it, to match the value of
+        // locContentTabUpdateInfo, which is returned from a MV2 extension.
+        window.assertDeepEqual(
+          locContentTabUpdateInfo[2],
+          { ...primedContentTabUpdateInfo[2], mailTab: false },
+          "tab information of the primed onUpdated event and non-primed onUpdeated event should be identical",
           { strict: true }
         );
 
         browser.test.assertTrue(
-          ![initialTab, contentTab1].includes(contentTab2)
+          ![initialTabId, contentTab1Id].includes(contentTab2Id)
         );
-        await listener.pageLoad(contentTab2);
+        await listener.pageLoad(contentTab2Id, "content");
         browser.test.assertEq(
           "content",
-          (await browser.tabs.get(contentTab2)).type
+          (await browser.tabs.get(contentTab2Id)).type
         );
 
         browser.test.log("Add the calendar tab.");
@@ -220,9 +249,8 @@ add_task(async () => {
           [
             {
               index: 3,
-              windowId: initialWindow,
+              windowId: initialWindowId,
               active: true,
-              mailTab: false,
               type: "calendar",
             },
           ],
@@ -230,16 +258,20 @@ add_task(async () => {
             browser.test.sendMessage("openCalendarTab")
           )
         );
-        let [{ id: calendarTab }] = await listener.checkEvent("onCreated", {
+        const [{ id: calendarTabId }] = await listener.checkEvent("onCreated", {
           index: 3,
-          windowId: initialWindow,
+          windowId: initialWindowId,
           active: true,
-          mailTab: false,
           type: "calendar",
         });
         browser.test.assertTrue(
-          ![initialTab, contentTab1, contentTab2].includes(calendarTab)
+          ![initialTabId, contentTab1Id, contentTab2Id].includes(calendarTabId)
         );
+        await listener.checkEvent("onActivated", {
+          tabId: calendarTabId,
+          windowId: initialWindowId,
+          previousTabId: contentTab2Id,
+        });
 
         browser.test.log("Add the task tab.");
 
@@ -247,9 +279,8 @@ add_task(async () => {
           [
             {
               index: 4,
-              windowId: initialWindow,
+              windowId: initialWindowId,
               active: true,
-              mailTab: false,
               type: "tasks",
             },
           ],
@@ -257,16 +288,22 @@ add_task(async () => {
             browser.test.sendMessage("openTaskTab")
           )
         );
-        let [{ id: taskTab }] = await listener.checkEvent("onCreated", {
+        const [{ id: taskTabId }] = await listener.checkEvent("onCreated", {
           index: 4,
-          windowId: initialWindow,
+          windowId: initialWindowId,
           active: true,
-          mailTab: false,
           type: "tasks",
         });
         browser.test.assertTrue(
-          ![initialTab, contentTab1, contentTab2, calendarTab].includes(taskTab)
+          ![initialTabId, contentTab1Id, contentTab2Id, calendarTabId].includes(
+            taskTabId
+          )
         );
+        await listener.checkEvent("onActivated", {
+          tabId: taskTabId,
+          windowId: initialWindowId,
+          previousTabId: calendarTabId,
+        });
 
         browser.test.log("Open a folder in a tab.");
 
@@ -274,9 +311,8 @@ add_task(async () => {
           [
             {
               index: 5,
-              windowId: initialWindow,
+              windowId: initialWindowId,
               active: true,
-              mailTab: true,
               type: "mail",
             },
           ],
@@ -284,21 +320,26 @@ add_task(async () => {
             browser.test.sendMessage("openFolderTab")
           )
         );
-        let [{ id: folderTab }] = await listener.checkEvent("onCreated", {
+        const [{ id: folderTabId }] = await listener.checkEvent("onCreated", {
           index: 5,
-          windowId: initialWindow,
+          windowId: initialWindowId,
           active: true,
-          mailTab: true,
           type: "mail",
         });
+        await listener.checkEvent("onActivated", {
+          tabId: folderTabId,
+          windowId: initialWindowId,
+          previousTabId: taskTabId,
+        });
+
         browser.test.assertTrue(
           ![
-            initialTab,
-            contentTab1,
-            contentTab2,
-            calendarTab,
-            taskTab,
-          ].includes(folderTab)
+            initialTabId,
+            contentTab1Id,
+            contentTab2Id,
+            calendarTabId,
+            taskTabId,
+          ].includes(folderTabId)
         );
 
         browser.test.log("Open a first message in a tab.");
@@ -307,9 +348,8 @@ add_task(async () => {
           [
             {
               index: 6,
-              windowId: initialWindow,
+              windowId: initialWindowId,
               active: true,
-              mailTab: false,
               type: "messageDisplay",
             },
           ],
@@ -318,24 +358,29 @@ add_task(async () => {
           )
         );
 
-        let [{ id: messageTab1 }] = await listener.checkEvent("onCreated", {
+        const [{ id: messageTab1Id }] = await listener.checkEvent("onCreated", {
           index: 6,
-          windowId: initialWindow,
+          windowId: initialWindowId,
           active: true,
-          mailTab: false,
           type: "messageDisplay",
         });
+        await listener.checkEvent("onActivated", {
+          tabId: messageTab1Id,
+          windowId: initialWindowId,
+          previousTabId: folderTabId,
+        });
+
         browser.test.assertTrue(
           ![
-            initialTab,
-            contentTab1,
-            contentTab2,
-            calendarTab,
-            taskTab,
-            folderTab,
-          ].includes(messageTab1)
+            initialTabId,
+            contentTab1Id,
+            contentTab2Id,
+            calendarTabId,
+            taskTabId,
+            folderTabId,
+          ].includes(messageTab1Id)
         );
-        await listener.pageLoad(messageTab1);
+        await listener.pageLoad(messageTab1Id, "messageDisplay");
 
         browser.test.log(
           "Open a second message in a tab. In the background, just because."
@@ -345,9 +390,8 @@ add_task(async () => {
           [
             {
               index: 7,
-              windowId: initialWindow,
+              windowId: initialWindowId,
               active: false,
-              mailTab: false,
               type: "messageDisplay",
             },
           ],
@@ -355,43 +399,43 @@ add_task(async () => {
             browser.test.sendMessage("openMessageTab", true)
           )
         );
-        let [{ id: messageTab2 }] = await listener.checkEvent("onCreated", {
+        const [{ id: messageTab2Id }] = await listener.checkEvent("onCreated", {
           index: 7,
-          windowId: initialWindow,
+          windowId: initialWindowId,
           active: false,
-          mailTab: false,
           type: "messageDisplay",
         });
+
         browser.test.assertTrue(
           ![
-            initialTab,
-            contentTab1,
-            contentTab2,
-            calendarTab,
-            taskTab,
-            folderTab,
-            messageTab1,
-          ].includes(messageTab2)
+            initialTabId,
+            contentTab1Id,
+            contentTab2Id,
+            calendarTabId,
+            taskTabId,
+            folderTabId,
+            messageTab1Id,
+          ].includes(messageTab2Id)
         );
-        await listener.pageLoad(messageTab2, false);
+        await listener.pageLoad(messageTab2Id, "messageDisplay", false);
 
         browser.test.log(
           "Activate each of the tabs in a somewhat random order to test the onActivated event."
         );
 
-        let previousTabId = messageTab1;
-        for (let tab of [
-          initialTab,
-          calendarTab,
-          messageTab1,
-          taskTab,
-          contentTab1,
-          messageTab2,
-          folderTab,
-          contentTab2,
+        let previousTabId = messageTab1Id;
+        for (const tab of [
+          initialTabId,
+          calendarTabId,
+          messageTab1Id,
+          taskTabId,
+          contentTab1Id,
+          messageTab2Id,
+          folderTabId,
+          contentTab2Id,
         ]) {
           window.assertDeepEqual(
-            [{ tabId: tab, windowId: initialWindow }],
+            [{ tabId: tab, windowId: initialWindowId }],
             await capturePrimedEvent("onActivated", () =>
               browser.tabs.update(tab, { active: true })
             )
@@ -399,7 +443,7 @@ add_task(async () => {
           await listener.checkEvent("onActivated", {
             tabId: tab,
             previousTabId,
-            windowId: initialWindow,
+            windowId: initialWindowId,
           });
           previousTabId = tab;
         }
@@ -409,13 +453,16 @@ add_task(async () => {
         );
 
         window.assertDeepEqual(
-          [contentTab1, { windowId: initialWindow, isWindowClosing: false }],
+          [
+            contentTab1Id,
+            { windowId: initialWindowId, isWindowClosing: false },
+          ],
           await capturePrimedEvent("onRemoved", () =>
-            browser.tabs.remove(contentTab1)
+            browser.tabs.remove(contentTab1Id)
           )
         );
-        await listener.checkEvent("onRemoved", contentTab1, {
-          windowId: initialWindow,
+        await listener.checkEvent("onRemoved", contentTab1Id, {
+          windowId: initialWindowId,
           isWindowClosing: false,
         });
 
@@ -424,37 +471,40 @@ add_task(async () => {
         );
 
         window.assertDeepEqual(
-          [contentTab2, { windowId: initialWindow, isWindowClosing: false }],
+          [
+            contentTab2Id,
+            { windowId: initialWindowId, isWindowClosing: false },
+          ],
           await capturePrimedEvent("onRemoved", () =>
-            browser.tabs.remove(contentTab2)
+            browser.tabs.remove(contentTab2Id)
           )
         );
-        await listener.checkEvent("onRemoved", contentTab2, {
-          windowId: initialWindow,
+        await listener.checkEvent("onRemoved", contentTab2Id, {
+          windowId: initialWindowId,
           isWindowClosing: false,
         });
         await listener.checkEvent("onActivated", {
-          tabId: calendarTab,
-          windowId: initialWindow,
+          tabId: calendarTabId,
+          windowId: initialWindowId,
         });
 
         browser.test.log("Remove the remaining tabs.");
 
-        for (let tab of [
-          taskTab,
-          messageTab1,
-          messageTab2,
-          folderTab,
-          calendarTab,
+        for (const tab of [
+          taskTabId,
+          messageTab1Id,
+          messageTab2Id,
+          folderTabId,
+          calendarTabId,
         ]) {
           window.assertDeepEqual(
-            [tab, { windowId: initialWindow, isWindowClosing: false }],
+            [tab, { windowId: initialWindowId, isWindowClosing: false }],
             await capturePrimedEvent("onRemoved", () =>
               browser.tabs.remove(tab)
             )
           );
           await listener.checkEvent("onRemoved", tab, {
-            windowId: initialWindow,
+            windowId: initialWindowId,
             isWindowClosing: false,
           });
         }
@@ -462,8 +512,8 @@ add_task(async () => {
         // Since the last tab was activated because all other tabs have been
         // removed, previousTabId should be undefined.
         await listener.checkEvent("onActivated", {
-          tabId: initialTab,
-          windowId: initialWindow,
+          tabId: initialTabId,
+          windowId: initialWindowId,
           previousTabId: undefined,
         });
 
@@ -482,26 +532,26 @@ add_task(async () => {
   // the main test is about to trigger an event. The extension terminates its
   // background and listens for that single event, verifying it is waking up correctly.
   async function event_page_extension(eventName, actionCallback) {
-    let ext = ExtensionTestUtils.loadExtension({
+    const ext = ExtensionTestUtils.loadExtension({
       files: {
         "background.js": async () => {
           // Whenever the extension starts or wakes up, hasFired is set to false. In
           // case of a wake-up, the first fired event is the one that woke up the background.
           let hasFired = false;
-          let eventName = browser.runtime.getManifest().description;
+          const description = browser.runtime.getManifest().description;
 
-          if (["onCreated", "onActivated", "onRemoved"].includes(eventName)) {
-            browser.tabs[eventName].addListener(async (...args) => {
+          if (["onCreated", "onActivated", "onRemoved"].includes(description)) {
+            browser.tabs[description].addListener(async (...args) => {
               // Only send the first event after background wake-up, this should
               // be the only one expected.
               if (!hasFired) {
                 hasFired = true;
-                browser.test.sendMessage(`${eventName} received`, args);
+                browser.test.sendMessage(`${description} received`, args);
               }
             });
           }
 
-          if (eventName == "onUpdated") {
+          if (description == "onUpdated") {
             browser.tabs.onUpdated.addListener(
               (...args) => {
                 // Only send the first event after background wake-up, this should
@@ -540,7 +590,7 @@ add_task(async () => {
     assertPersistentListeners(ext, "tabs", eventName, { primed: true });
 
     await actionCallback();
-    let rv = await ext.awaitMessage(`${eventName} received`);
+    const rv = await ext.awaitMessage(`${eventName} received`);
     await ext.awaitMessage("background started");
     // The listener should be persistent, but not primed.
     assertPersistentListeners(ext, "tabs", eventName, { primed: false });
@@ -550,14 +600,14 @@ add_task(async () => {
   }
 
   extension.onMessage("openCalendarTab", () => {
-    let calendarTabButton = document.getElementById("calendarButton");
+    const calendarTabButton = document.getElementById("calendarButton");
     EventUtils.synthesizeMouseAtCenter(calendarTabButton, {
       clickCount: 1,
     });
   });
 
   extension.onMessage("openTaskTab", () => {
-    let taskTabButton = document.getElementById("tasksButton");
+    const taskTabButton = document.getElementById("tasksButton");
     EventUtils.synthesizeMouseAtCenter(taskTabButton, { clickCount: 1 });
   });
 
@@ -569,7 +619,7 @@ add_task(async () => {
   });
 
   extension.onMessage("openMessageTab", background => {
-    let msgHdr = messages.shift();
+    const msgHdr = messages.shift();
     tabmail.openTab("mailMessageTab", {
       messageURI: testFolder.getUriForMsg(msgHdr),
       background,
@@ -577,7 +627,7 @@ add_task(async () => {
   });
 
   extension.onMessage("capturePrimedEvent", async eventName => {
-    let primedEventData = await event_page_extension(eventName, () => {
+    const primedEventData = await event_page_extension(eventName, () => {
       // Resume execution in the main test, after the event page extension is
       // ready to capture the event with deactivated background.
       extension.sendMessage();

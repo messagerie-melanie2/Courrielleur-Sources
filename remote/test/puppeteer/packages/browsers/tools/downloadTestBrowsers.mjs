@@ -1,47 +1,61 @@
 /**
- * Copyright 2023 Google Inc. All rights reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * @license
+ * Copyright 2023 Google Inc.
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 /**
- * Downloads test browser binaries to test/cache/server folder that
+ * Downloads test browser binaries to test/.cache/server folder that
  * mirrors the structure of the download server.
  */
 
-import {BrowserPlatform, install} from '@puppeteer/browsers';
-import path from 'path';
-import fs from 'fs';
+import {existsSync, mkdirSync, copyFileSync, rmSync} from 'fs';
+import {normalize, join, dirname} from 'path';
 
-import * as versions from '../test/build/versions.js';
+import {BrowserPlatform, install} from '@puppeteer/browsers';
+
 import {downloadPaths} from '../lib/esm/browser-data/browser-data.js';
+import * as versions from '../test/build/versions.js';
 
 function getBrowser(str) {
   const regex = /test(.+)BuildId/;
   const match = str.match(regex);
 
   if (match && match[1]) {
-    return match[1].toLowerCase();
+    const lowercased = match[1].toLowerCase();
+    if (lowercased === 'chromeheadlessshell') {
+      return 'chrome-headless-shell';
+    }
+    return lowercased;
   } else {
     return null;
   }
 }
 
-const cacheDir = path.normalize(path.join('.', 'test', 'cache'));
+const cacheDir = normalize(join('.', 'test', '.cache'));
+
+// Needed to test Firefox nightly build download
+function mockFirefoxNightly(browser, platform, targetPath) {
+  if (browser === 'firefox' && platform === 'linux') {
+    const nightlyTarget = join(
+      cacheDir,
+      'server',
+      ...downloadPaths.firefox(
+        'linux',
+        versions.testFirefoxBuildId.split('_').at(-1),
+      ),
+    );
+
+    if (existsSync(nightlyTarget)) {
+      return;
+    }
+
+    copyFileSync(targetPath, nightlyTarget);
+  }
+}
 
 for (const version of Object.keys(versions)) {
   const browser = getBrowser(version);
-
   if (!browser) {
     continue;
   }
@@ -49,32 +63,35 @@ for (const version of Object.keys(versions)) {
   const buildId = versions[version];
 
   for (const platform of Object.values(BrowserPlatform)) {
-    const targetPath = path.join(
+    const targetPath = join(
       cacheDir,
       'server',
-      ...downloadPaths[browser](platform, buildId)
+      ...downloadPaths[browser](platform, buildId),
     );
 
-    if (fs.existsSync(targetPath)) {
+    if (existsSync(targetPath)) {
+      mockFirefoxNightly(browser, platform, targetPath);
       continue;
     }
 
-    const result = await install({
+    const archivePath = await install({
       browser,
       buildId,
       platform,
-      cacheDir: path.join(cacheDir, 'tmp'),
+      cacheDir: join(cacheDir, 'tmp'),
       unpack: false,
     });
 
-    fs.mkdirSync(path.dirname(targetPath), {
+    mkdirSync(dirname(targetPath), {
       recursive: true,
     });
-    fs.copyFileSync(result.path, targetPath);
+    copyFileSync(archivePath, targetPath);
+
+    mockFirefoxNightly(browser, platform, targetPath);
   }
 }
 
-fs.rmSync(path.join(cacheDir, 'tmp'), {
+rmSync(join(cacheDir, 'tmp'), {
   recursive: true,
   force: true,
   maxRetries: 10,

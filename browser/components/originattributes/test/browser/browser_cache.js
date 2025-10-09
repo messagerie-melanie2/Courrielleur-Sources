@@ -28,7 +28,7 @@ let suffixes = [
   "xhr.html",
   "worker.xhr.html",
   "audio.ogg",
-  "video.ogv",
+  "video.webm",
   "track.vtt",
   "fetch.html",
   "worker.fetch.html",
@@ -56,7 +56,7 @@ function cacheDataForContext(loadContextInfo) {
   return new Promise(resolve => {
     let cacheEntries = [];
     let cacheVisitor = {
-      onCacheStorageInfo(num, consumption) {},
+      onCacheStorageInfo() {},
       onCacheEntryInfo(uri, idEnhance) {
         cacheEntries.push({ uri, idEnhance });
       },
@@ -174,9 +174,11 @@ async function doTest(aBrowser) {
   };
 
   await SpecialPowers.spawn(aBrowser, [argObj], async function (arg) {
-    content.windowUtils.clearSharedStyleSheetCache();
+    ChromeUtils.clearResourceCache({
+      types: ["stylesheet", "script"],
+    });
 
-    let videoURL = arg.urlPrefix + "file_thirdPartyChild.video.ogv";
+    let videoURL = arg.urlPrefix + "file_thirdPartyChild.video.webm";
     let audioURL = arg.urlPrefix + "file_thirdPartyChild.audio.ogg";
     let trackURL = arg.urlPrefix + "file_thirdPartyChild.track.vtt";
     let URLSuffix = "?r=" + arg.randomSuffix;
@@ -257,7 +259,7 @@ async function doTest(aBrowser) {
 }
 
 // The check function, which checks the number of cache entries.
-async function doCheck(aShouldIsolate, aInputA, aInputB) {
+async function doCheck(aShouldIsolate) {
   let expectedEntryCount = 1;
   let data = [];
   data = data.concat(

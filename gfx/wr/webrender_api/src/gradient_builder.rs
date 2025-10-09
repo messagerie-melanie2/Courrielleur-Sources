@@ -127,14 +127,10 @@ impl GradientBuilder {
     /// the amount to adjust the gradient line start and stop.
     fn normalize(&mut self, extend_mode: di::ExtendMode) -> (f32, f32) {
         let stops = &mut self.stops;
-        assert!(stops.len() >= 2);
+        assert!(stops.len() >= 1);
 
         let first = *stops.first().unwrap();
         let last = *stops.last().unwrap();
-
-        // Express the assertion so that if one of the offsets is NaN, we don't panic
-        // and instead take the branch that handles degenerate gradients.
-        assert!(!(first.offset > last.offset));
 
         let stops_delta = last.offset - first.offset;
 
@@ -144,6 +140,14 @@ impl GradientBuilder {
             }
 
             (first.offset, last.offset)
+        } else if stops_delta.is_nan() {
+            // We have no good way to render a NaN offset, but make something
+            // that is at least renderable.
+            stops.clear();
+            stops.push(di::GradientStop { color: last.color, offset: 0.0, });
+            stops.push(di::GradientStop { color: last.color, offset: 1.0, });
+
+            (0.0, 1.0)
         } else {
             // We have a degenerate gradient and can't accurately transform the stops
             // what happens here depends on the repeat behavior, but in any case

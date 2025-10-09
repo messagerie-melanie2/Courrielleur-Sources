@@ -4,9 +4,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsMsgComposeService.h"
+#include "nsIMsgMessageService.h"
 #include "nsIMsgSend.h"
-#include "nsIServiceManager.h"
-#include "nsIObserverService.h"
 #include "nsIMsgIdentity.h"
 #include "nsISmtpUrl.h"
 #include "nsIURI.h"
@@ -16,7 +15,7 @@
 #include "nsISupportsPrimitives.h"
 #include "nsIWindowWatcher.h"
 #include "mozIDOMWindow.h"
-#include "nsIContentViewer.h"
+#include "nsIDocumentViewer.h"
 #include "nsIMsgWindow.h"
 #include "nsIDocShell.h"
 #include "nsPIDOMWindow.h"
@@ -24,8 +23,6 @@
 #include "nsIAppWindow.h"
 #include "nsIWindowMediator.h"
 #include "nsIDocShellTreeItem.h"
-#include "nsIDocShellTreeOwner.h"
-#include "nsIBaseWindow.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
 #include "nsIMsgAccountManager.h"
@@ -36,28 +33,16 @@
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIMsgDatabase.h"
 #include "nsIDocumentEncoder.h"
-#include "nsContentCID.h"
 #include "mozilla/dom/Selection.h"
-#include "nsUTF8Utils.h"
 #include "mozilla/intl/LineBreaker.h"
 #include "mimemoz2.h"
 #include "nsIURIMutator.h"
 #include "mozilla/dom/Element.h"
-#include "mozilla/dom/XULFrameElement.h"
 #include "nsFrameLoader.h"
 #include "nsSmtpUrl.h"
-#include "nsUnicharUtils.h"
 #include "mozilla/NullPrincipal.h"
 
-#ifdef MSGCOMP_TRACE_PERFORMANCE
-#  include "mozilla/Logging.h"
-#  include "nsIMsgHdr.h"
-#  include "nsIMsgMessageService.h"
-#  include "nsMsgUtils.h"
-#endif
-
 #include "nsICommandLine.h"
-#include "nsIAppStartup.h"
 #include "nsMsgUtils.h"
 #include "nsIPrincipal.h"
 #include "nsIMutableArray.h"
@@ -88,33 +73,10 @@ using namespace mozilla::dom;
 #define USER_CURRENT_PLAINTEXTDOMAINLIST_PREF_NAME "plaintext_domains"
 #define DOMAIN_DELIMITER ','
 
-#ifdef MSGCOMP_TRACE_PERFORMANCE
-static mozilla::LazyLogModule MsgComposeLogModule("MsgCompose");
-
-static uint32_t GetMessageSizeFromURI(const nsACString& originalMsgURI) {
-  uint32_t msgSize = 0;
-
-  if (!originalMsgURI.IsEmpty()) {
-    nsCOMPtr<nsIMsgDBHdr> originalMsgHdr;
-    GetMsgDBHdrFromURI(originalMsgURI, getter_AddRefs(originalMsgHdr));
-    if (originalMsgHdr) originalMsgHdr->GetMessageSize(&msgSize);
-  }
-
-  return msgSize;
-}
-#endif
-
-nsMsgComposeService::nsMsgComposeService() {
-  // Defaulting the value of mLogComposePerformance to FALSE to prevent logging.
-  mLogComposePerformance = false;
-#ifdef MSGCOMP_TRACE_PERFORMANCE
-  mStartTime = PR_IntervalNow();
-  mPreviousTime = mStartTime;
-#endif
-}
+nsMsgComposeService::nsMsgComposeService() = default;
 
 NS_IMPL_ISUPPORTS(nsMsgComposeService, nsIMsgComposeService,
-                  ICOMMANDLINEHANDLER, nsISupportsWeakReference)
+                  nsICommandLineHandler, nsISupportsWeakReference)
 
 nsMsgComposeService::~nsMsgComposeService() { mOpenComposeWindows.Clear(); }
 
@@ -134,14 +96,7 @@ nsresult nsMsgComposeService::Init() {
   return rv;
 }
 
-void nsMsgComposeService::Reset() {
-  mOpenComposeWindows.Clear();
-
-  nsCOMPtr<nsIPrefBranch> prefs(do_GetService(NS_PREFSERVICE_CONTRACTID));
-  if (prefs)
-    prefs->GetBoolPref("mailnews.logComposePerformance",
-                       &mLogComposePerformance);
-}
+void nsMsgComposeService::Reset() { mOpenComposeWindows.Clear(); }
 
 // Function to open a message compose window and pass an nsIMsgComposeParams
 // parameter to it.
@@ -149,15 +104,8 @@ NS_IMETHODIMP
 nsMsgComposeService::OpenComposeWindowWithParams(const char* chrome,
                                                  nsIMsgComposeParams* params) {
   NS_ENSURE_ARG_POINTER(params);
-#ifdef MSGCOMP_TRACE_PERFORMANCE
-  if (mLogComposePerformance) {
-    TimeStamp("Start opening the window", true);
-  }
-#endif
 
   nsresult rv;
-
-  NS_ENSURE_ARG_POINTER(params);
 
   // Use default identity if no identity has been specified
   nsCOMPtr<nsIMsgIdentity> identity;
@@ -165,6 +113,12 @@ nsMsgComposeService::OpenComposeWindowWithParams(const char* chrome,
   if (!identity) {
     GetDefaultIdentity(getter_AddRefs(identity));
     params->SetIdentity(identity);
+  }
+  if (!identity) {
+    // Failed to get even a default identity.
+    // Can't compose without identity (need to set up account first).
+    // If we don't have an account, the 3pane will already be showing setup.
+    return GetTo3PaneWindow();
   }
 
   // Create a new window.
@@ -234,8 +188,7 @@ nsMsgComposeService::DetermineComposeHTML(nsIMsgIdentity* aIdentity,
 }
 
 MOZ_CAN_RUN_SCRIPT_FOR_DEFINITION nsresult
-nsMsgComposeService::GetOrigWindowSelection(MSG_ComposeType type,
-                                            mozilla::dom::Selection* selection,
+nsMsgComposeService::GetOrigWindowSelection(mozilla::dom::Selection* selection,
                                             nsACString& aSelHTML) {
   nsresult rv;
 
@@ -280,8 +233,7 @@ nsMsgComposeService::GetOrigWindowSelection(MSG_ComposeType type,
         // words
         const char16_t* end;
         for (end = unicodeStr + endWordPos; mozilla::intl::NS_IsSpace(*end);
-             end++)
-          ;
+             end++);
         if (!*end) return NS_ERROR_ABORT;
       }
     }
@@ -296,9 +248,10 @@ nsMsgComposeService::GetOrigWindowSelection(MSG_ComposeType type,
 
   nsAutoString selHTML;
   IgnoredErrorResult rv2;
-  selection->ToStringWithFormat(u"text/html"_ns,
-                                nsIDocumentEncoder::SkipInvisibleContent, 0,
-                                selHTML, rv2);
+  selection->ToStringWithFormat(
+      u"text/html"_ns,
+      nsIDocumentEncoder::OutputRaw | nsIDocumentEncoder::SkipInvisibleContent,
+      0, selHTML, rv2);
   if (rv2.Failed()) {
     return NS_ERROR_FAILURE;
   }
@@ -321,6 +274,23 @@ nsMsgComposeService::GetOrigWindowSelection(MSG_ComposeType type,
   return rv;
 }
 
+nsresult nsMsgComposeService::GetTo3PaneWindow() {
+  nsresult rv;
+  nsCOMPtr<nsIWindowMediator> windowMediator =
+      do_GetService(NS_WINDOWMEDIATOR_CONTRACTID, &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<mozIDOMWindowProxy> domWindow;
+  rv = windowMediator->GetMostRecentBrowserWindow(getter_AddRefs(domWindow));
+  NS_ENSURE_SUCCESS(rv, NS_ERROR_ABORT);
+  nsCOMPtr<nsPIDOMWindowOuter> outerWin = nsPIDOMWindowOuter::From(domWindow);
+  if (outerWin) {
+    outerWin->Focus(mozilla::dom::CallerType::System);
+    return NS_OK;
+  }
+  return NS_ERROR_ABORT;
+}
+
 MOZ_CAN_RUN_SCRIPT_FOR_DEFINITION NS_IMETHODIMP
 nsMsgComposeService::OpenComposeWindow(
     const nsACString& msgComposeWindowURL, nsIMsgDBHdr* origMsgHdr,
@@ -332,6 +302,12 @@ nsMsgComposeService::OpenComposeWindow(
 
   nsCOMPtr<nsIMsgIdentity> identity = aIdentity;
   if (!identity) GetDefaultIdentity(getter_AddRefs(identity));
+  if (!identity) {
+    // Failed to get even a default identity.
+    // Can't compose without identity (need to set up account first).
+    // If we don't have an account, the 3pane will already be showing setup.
+    return GetTo3PaneWindow();
+  }
 
   /* Actually, the only way to implement forward inline is to simulate a
      template message. Maybe one day when we will have more time we can change
@@ -389,7 +365,7 @@ nsMsgComposeService::OpenComposeWindow(
            type == nsIMsgCompType::ReplyToSenderAndGroup ||
            type == nsIMsgCompType::ReplyToList)) {
         nsAutoCString selHTML;
-        if (NS_SUCCEEDED(GetOrigWindowSelection(type, selection, selHTML))) {
+        if (NS_SUCCEEDED(GetOrigWindowSelection(selection, selHTML))) {
           nsCOMPtr<nsINode> node = selection->GetFocusNode();
           NS_ENSURE_TRUE(node, NS_ERROR_FAILURE);
           IgnoredErrorResult er;
@@ -401,8 +377,9 @@ nsMsgComposeService::OpenComposeWindow(
             // Treat the quote as <pre> for selections in moz-text-plain bodies.
             // If focusNode.localName isn't empty, we had e.g. body selected
             // and should not add <pre>.
-            pMsgComposeParams->SetHtmlToQuote("<pre>"_ns + selHTML +
-                                              "</pre>"_ns);
+            pMsgComposeParams->SetHtmlToQuote(
+                "<pre class=\"moz-quote-pre\" wrap=\"\">"_ns + selHTML +
+                "</pre>"_ns);
           } else {
             pMsgComposeParams->SetHtmlToQuote(selHTML);
           }
@@ -413,24 +390,21 @@ nsMsgComposeService::OpenComposeWindow(
         if (type == nsIMsgCompType::NewsPost) {
           nsAutoCString newsURI(originalMsgURI);
           nsAutoCString group;
-          nsAutoCString host;
 
+          // URI is "[s]news://host[:port]/group".
           int32_t slashpos = newsURI.RFindChar('/');
           if (slashpos > 0) {
-            // uri is "[s]news://host[:port]/group"
-            host = StringHead(newsURI, slashpos);
             group = Substring(newsURI, slashpos + 1);
 
-          } else
+          } else {
             group = originalMsgURI;
-
+          }
           nsAutoCString unescapedName;
           MsgUnescapeString(group,
                             nsINetUtil::ESCAPE_URL_FILE_BASENAME |
                                 nsINetUtil::ESCAPE_URL_FORCED,
                             unescapedName);
           pMsgCompFields->SetNewsgroups(NS_ConvertUTF8toUTF16(unescapedName));
-          pMsgCompFields->SetNewspostUrl(host.get());
         } else {
           pMsgComposeParams->SetOriginalMsgURI(originalMsgURI);
           pMsgComposeParams->SetOrigMsgHdr(origMsgHdr);
@@ -440,18 +414,6 @@ nsMsgComposeService::OpenComposeWindow(
 
       pMsgComposeParams->SetComposeFields(pMsgCompFields);
 
-      if (mLogComposePerformance) {
-#ifdef MSGCOMP_TRACE_PERFORMANCE
-        // ducarroz, properly fix this in the case of new message (not a reply)
-        if (type != nsIMsgCompType::NewsPost) {
-          char buff[256];
-          sprintf(buff, "Start opening the window, message size = %d",
-                  GetMessageSizeFromURI(originalMsgURI));
-          TimeStamp(buff, true);
-        }
-#endif
-      }  // end if(mLogComposePerformance)
-
       rv = OpenComposeWindowWithParams(
           PromiseFlatCString(msgComposeWindowURL).get(), pMsgComposeParams);
     }
@@ -460,7 +422,7 @@ nsMsgComposeService::OpenComposeWindow(
 }
 
 NS_IMETHODIMP nsMsgComposeService::GetParamsForMailto(
-    nsIURI* aURI, nsIMsgComposeParams** aParams) {
+    nsIURI* aURI, nsIMsgIdentity* aIdentity, nsIMsgComposeParams** aParams) {
   nsresult rv = NS_OK;
   if (aURI) {
     nsCString spec;
@@ -489,7 +451,8 @@ NS_IMETHODIMP nsMsgComposeService::GetParamsForMailto(
       nsAutoString sanitizedBody;
 
       bool composeHTMLFormat;
-      DetermineComposeHTML(NULL, requestedComposeFormat, &composeHTMLFormat);
+      DetermineComposeHTML(aIdentity, requestedComposeFormat,
+                           &composeHTMLFormat);
 
       // If there was an 'html-body' param, finding it will have requested
       // HTML format in GetMessageContents, so we try to use it first. If it's
@@ -528,6 +491,9 @@ NS_IMETHODIMP nsMsgComposeService::GetParamsForMailto(
         pMsgComposeParams->SetFormat(composeHTMLFormat
                                          ? nsIMsgCompFormat::HTML
                                          : nsIMsgCompFormat::PlainText);
+        if (aIdentity) {
+          pMsgComposeParams->SetIdentity(aIdentity);
+        }
 
         nsCOMPtr<nsIMsgCompFields> pMsgCompFields(do_CreateInstance(
             "@mozilla.org/messengercompose/composefields;1", &rv));
@@ -546,8 +512,8 @@ NS_IMETHODIMP nsMsgComposeService::GetParamsForMailto(
           return NS_OK;
         }
       }  // if we created msg compose params....
-    }    // if we had a mailto url
-  }      // if we had a url...
+    }  // if we had a mailto url
+  }  // if we had a url...
 
   // if we got here we must have encountered an error
   *aParams = nullptr;
@@ -557,12 +523,10 @@ NS_IMETHODIMP nsMsgComposeService::GetParamsForMailto(
 NS_IMETHODIMP nsMsgComposeService::OpenComposeWindowWithURI(
     const char* aMsgComposeWindowURL, nsIURI* aURI, nsIMsgIdentity* identity) {
   nsCOMPtr<nsIMsgComposeParams> pMsgComposeParams;
-  nsresult rv = GetParamsForMailto(aURI, getter_AddRefs(pMsgComposeParams));
-  if (NS_SUCCEEDED(rv)) {
-    pMsgComposeParams->SetIdentity(identity);
-    rv = OpenComposeWindowWithParams(aMsgComposeWindowURL, pMsgComposeParams);
-  }
-  return rv;
+  nsresult rv =
+      GetParamsForMailto(aURI, identity, getter_AddRefs(pMsgComposeParams));
+  NS_ENSURE_SUCCESS(rv, rv);
+  return OpenComposeWindowWithParams(aMsgComposeWindowURL, pMsgComposeParams);
 }
 
 NS_IMETHODIMP nsMsgComposeService::InitCompose(nsIMsgComposeParams* aParams,
@@ -596,43 +560,6 @@ nsMsgComposeService::GetDefaultIdentity(nsIMsgIdentity** _retval) {
   NS_ENSURE_SUCCESS(rv, rv);
 
   return defaultAccount ? defaultAccount->GetDefaultIdentity(_retval) : NS_OK;
-}
-
-/* readonly attribute boolean logComposePerformance; */
-NS_IMETHODIMP nsMsgComposeService::GetLogComposePerformance(
-    bool* aLogComposePerformance) {
-  *aLogComposePerformance = mLogComposePerformance;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgComposeService::TimeStamp(const char* label,
-                                             bool resetTime) {
-  if (!mLogComposePerformance) return NS_OK;
-
-#ifdef MSGCOMP_TRACE_PERFORMANCE
-
-  PRIntervalTime now;
-
-  if (resetTime) {
-    MOZ_LOG(MsgComposeLogModule, mozilla::LogLevel::Info,
-            ("\n[process]: [totalTime][deltaTime]\n--------------------\n"));
-
-    mStartTime = PR_IntervalNow();
-    mPreviousTime = mStartTime;
-    now = mStartTime;
-  } else
-    now = PR_IntervalNow();
-
-  PRIntervalTime totalTime = PR_IntervalToMilliseconds(now - mStartTime);
-  PRIntervalTime deltaTime = PR_IntervalToMilliseconds(now - mPreviousTime);
-
-  MOZ_LOG(MsgComposeLogModule, mozilla::LogLevel::Info,
-          ("[%3.2f][%3.2f] - %s\n", ((double)totalTime / 1000.0) + 0.005,
-           ((double)deltaTime / 1000.0) + 0.005, label));
-
-  mPreviousTime = now;
-#endif
-  return NS_OK;
 }
 
 class nsMsgTemplateReplyHelper final : public nsIStreamListener,
@@ -693,7 +620,7 @@ NS_IMETHODIMP nsMsgTemplateReplyHelper::OnStopRunningUrl(nsIURI* aUrl,
 
   nsCString replyTo;
   mHdrToReplyTo->GetStringProperty("replyTo", replyTo);
-  if (replyTo.IsEmpty()) mHdrToReplyTo->GetAuthor(getter_Copies(replyTo));
+  if (replyTo.IsEmpty()) mHdrToReplyTo->GetAuthor(replyTo);
   compFields->SetTo(NS_ConvertUTF8toUTF16(replyTo));
 
   nsString body;
@@ -713,7 +640,7 @@ NS_IMETHODIMP nsMsgTemplateReplyHelper::OnStopRunningUrl(nsIURI* aUrl,
   compFields->SetRawHeader("Auto-Submitted", "auto-replied"_ns);
 
   nsCString charset;
-  rv = mTemplateHdr->GetCharset(getter_Copies(charset));
+  rv = mTemplateHdr->GetCharset(charset);
   NS_ENSURE_SUCCESS(rv, rv);
   rv = nsMsgI18NConvertToUnicode(charset, mTemplateBody, body);
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
@@ -806,7 +733,7 @@ nsMsgTemplateReplyHelper::OnDataAvailable(nsIRequest* request,
       }
       mInMsgBody = bodyOffset != 0;
       if (!mInMsgBody && readCount > 3)  // still in msg hdrs
-        strncpy(mLastBlockChars, readBuf + readCount - 3, 3);
+        memmove(mLastBlockChars, readBuf + readCount - 3, 3);
     }
     mTemplateBody.Append(readBuf + bodyOffset);
   }
@@ -834,10 +761,10 @@ NS_IMETHODIMP nsMsgComposeService::ReplyWithTemplate(
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsAutoCString recipients;
-  aMsgHdr->GetRecipients(getter_Copies(recipients));
+  aMsgHdr->GetRecipients(recipients);
 
   nsAutoCString ccList;
-  aMsgHdr->GetCcList(getter_Copies(ccList));
+  aMsgHdr->GetCcList(ccList);
 
   // Go through the identities to see to whom this was addressed.
   // In case we get no match, this is likely a list/bulk/bcc/spam mail and we
@@ -866,7 +793,7 @@ NS_IMETHODIMP nsMsgComposeService::ReplyWithTemplate(
 
   nsAutoCString replyTo;
   aMsgHdr->GetStringProperty("replyTo", replyTo);
-  if (replyTo.IsEmpty()) aMsgHdr->GetAuthor(getter_Copies(replyTo));
+  if (replyTo.IsEmpty()) aMsgHdr->GetAuthor(replyTo);
   if (replyTo.IsEmpty()) return NS_ERROR_FAILURE;  // nowhere to send the reply
 
   nsCOMPtr<nsIMsgFolder> templateFolder;
@@ -906,15 +833,10 @@ NS_IMETHODIMP nsMsgComposeService::ReplyWithTemplate(
   rv = GetMessageServiceFromURI(templateMsgHdrUri, getter_AddRefs(msgService));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsISupports> listenerSupports;
-  helper->QueryInterface(NS_GET_IID(nsISupports),
-                         getter_AddRefs(listenerSupports));
-
   nsCOMPtr<nsIURI> dummyNull;
-  rv = msgService->StreamMessage(
-      templateMsgHdrUri, listenerSupports, aMsgWindow, helper,
-      false,  // convert data
-      EmptyCString(), false, getter_AddRefs(dummyNull));
+  rv = msgService->StreamMessage(templateMsgHdrUri, helper, aMsgWindow, helper,
+                                 false,  // convert data
+                                 ""_ns, false, getter_AddRefs(dummyNull));
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIMsgFolder> folder;
@@ -1273,16 +1195,12 @@ nsresult nsMsgComposeService::RunMessageThroughMimeDraft(
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIMsgMailNewsUrl> mailnewsurl = do_QueryInterface(url);
-  if (!mailnewsurl) {
-    NS_WARNING(
-        "Trying to run a message through MIME which doesn't have a "
-        "nsIMsgMailNewsUrl?");
-    return NS_ERROR_UNEXPECTED;
+  if (mailnewsurl) {
+    // If the current protocol uses `nsIMsgMailNewsUrl`, call `SetSpecInternal`
+    // so the base URL is parsed as the message service will expect.
+    rv = mailnewsurl->SetSpecInternal(mailboxUri);
+    NS_ENSURE_SUCCESS(rv, rv);
   }
-  // SetSpecInternal must not fail, or else the URL won't have a base URL and
-  // we'll crash later.
-  rv = mailnewsurl->SetSpecInternal(mailboxUri);
-  NS_ENSURE_SUCCESS(rv, rv);
 
   // if we are forwarding a message and that message used a charset override
   // then forward that as auto-detect flag, too.
@@ -1306,8 +1224,10 @@ nsresult nsMsgComposeService::RunMessageThroughMimeDraft(
 
   // Now, just plug the two together and get the hell out of the way!
   nsCOMPtr<nsIStreamListener> streamListener = do_QueryInterface(mimeConverter);
-  return messageService->LoadMessage(aMsgURI, streamListener, aMsgWindow,
-                                     nullptr, autodetectCharset);
+  nsCOMPtr<nsIURI> dummyNull;
+  return messageService->StreamMessage(aMsgURI, streamListener, aMsgWindow,
+                                       nullptr, false, ""_ns, false,
+                                       getter_AddRefs(dummyNull));
 }
 
 NS_IMETHODIMP
@@ -1362,7 +1282,7 @@ nsMsgComposeService::Handle(nsICommandLine* aCmdLine) {
       while (end + 1 < count) {
         nsAutoString curarg;
         aCmdLine->GetArgument(end + 1, curarg);
-        if (curarg.First() == '-') break;
+        if (!curarg.IsEmpty() && curarg.First() == '-') break;
 
         uristr.Append(' ');
         uristr.Append(curarg);
@@ -1373,6 +1293,13 @@ nsMsgComposeService::Handle(nsICommandLine* aCmdLine) {
     }
   }
   if (composeShouldHandle) {
+    nsCOMPtr<nsIMsgIdentity> identity;
+    GetDefaultIdentity(getter_AddRefs(identity));
+    if (!identity) {
+      // No account yet; can't compose.
+      return NS_OK;
+    }
+
     aCmdLine->RemoveArguments(found, end);
 
     nsCOMPtr<nsIWindowWatcher> wwatch(

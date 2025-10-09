@@ -87,7 +87,7 @@ def WebIDLTest(parser, harness):
         )
 
         sigpairs = zip(method.signatures(), signatures)
-        for (gotSignature, expectedSignature) in sigpairs:
+        for gotSignature, expectedSignature in sigpairs:
             (gotRetType, gotArgs) = gotSignature
             (expectedRetType, expectedArgs) = expectedSignature
 
@@ -264,7 +264,7 @@ def WebIDLTest(parser, harness):
     parser.parse(
         """
         interface TestFuncConstructor {
-            [Func="Document::IsWebAnimationsEnabled"] constructor();
+            [Func="IsNotUAWidget"] constructor();
         };
     """
     )
@@ -277,19 +277,17 @@ def WebIDLTest(parser, harness):
         "::TestFuncConstructor::constructor",
         "constructor",
         [("TestFuncConstructor (Wrapper)", [])],
-        func=["Document::IsWebAnimationsEnabled"],
+        func=["IsNotUAWidget"],
     )
 
     parser = parser.reset()
     parser.parse(
-        (
-            "\n"
-            "    interface TestPrefChromeOnlySCFuncConstructor {\n"
-            '        [ChromeOnly, Pref="dom.webidl.test1", SecureContext, '
-            'Func="Document::IsWebAnimationsEnabled"]\n'
-            "        constructor();\n"
-            "    };\n"
-        )
+        "\n"
+        "    interface TestPrefChromeOnlySCFuncConstructor {\n"
+        '        [ChromeOnly, Pref="dom.webidl.test1", SecureContext, '
+        'Func="IsNotUAWidget"]\n'
+        "        constructor();\n"
+        "    };\n"
     )
     results = parser.finish()
     harness.check(len(results), 1, "Should be one production")
@@ -300,7 +298,7 @@ def WebIDLTest(parser, harness):
         "::TestPrefChromeOnlySCFuncConstructor::constructor",
         "constructor",
         [("TestPrefChromeOnlySCFuncConstructor (Wrapper)", [])],
-        func=["Document::IsWebAnimationsEnabled"],
+        func=["IsNotUAWidget"],
         pref=["dom.webidl.test1"],
         chromeOnly=True,
         secureContext=True,
@@ -338,7 +336,7 @@ def WebIDLTest(parser, harness):
         """
         )
         results = parser.finish()
-    except Exception:
+    except WebIDL.WebIDLError:
         threw = True
 
     harness.ok(threw, "Can't have both a constructor and a ChromeOnly constructor")
@@ -355,7 +353,7 @@ def WebIDLTest(parser, harness):
         """
         )
         results = parser.finish()
-    except Exception:
+    except WebIDL.WebIDLError:
         threw = True
 
     harness.ok(threw, "HTMLConstructor should take no argument")
@@ -372,7 +370,7 @@ def WebIDLTest(parser, harness):
         """
         )
         results = parser.finish()
-    except Exception:
+    except WebIDL.WebIDLError:
         threw = True
 
     harness.ok(threw, "HTMLConstructor can't be used on a callback interface")
@@ -390,7 +388,7 @@ def WebIDLTest(parser, harness):
         """
         )
         results = parser.finish()
-    except Exception:
+    except WebIDL.WebIDLError:
         threw = True
 
     harness.ok(threw, "Can't have both a constructor and a HTMLConstructor")
@@ -408,7 +406,7 @@ def WebIDLTest(parser, harness):
         """
         )
         results = parser.finish()
-    except Exception:
+    except WebIDL.WebIDLError:
         threw = True
 
     harness.ok(threw, "Can't have both a throwing constructor and a HTMLConstructor")
@@ -425,7 +423,7 @@ def WebIDLTest(parser, harness):
         """
         )
         results = parser.finish()
-    except Exception:
+    except WebIDL.WebIDLError:
         threw = True
 
     harness.ok(threw, "Can't have both a HTMLConstructor and a constructor operation")
@@ -443,7 +441,7 @@ def WebIDLTest(parser, harness):
         """
         )
         results = parser.finish()
-    except Exception:
+    except WebIDL.WebIDLError:
         threw = True
 
     harness.ok(
@@ -465,7 +463,7 @@ def WebIDLTest(parser, harness):
         """
         )
         results = parser.finish()
-    except Exception:
+    except WebIDL.WebIDLError:
         threw = True
 
     harness.ok(threw, "Can't have both a ChromeOnly constructor and a HTMLConstructor")
@@ -483,7 +481,7 @@ def WebIDLTest(parser, harness):
         """
         )
         results = parser.finish()
-    except Exception:
+    except WebIDL.WebIDLError:
         threw = True
 
     harness.ok(
@@ -504,7 +502,7 @@ def WebIDLTest(parser, harness):
         """
         )
         results = parser.finish()
-    except Exception:
+    except WebIDL.WebIDLError:
         threw = True
 
     harness.ok(
@@ -525,7 +523,7 @@ def WebIDLTest(parser, harness):
         """
         )
         results = parser.finish()
-    except Exception:
+    except WebIDL.WebIDLError:
         threw = True
 
     harness.ok(
@@ -546,7 +544,7 @@ def WebIDLTest(parser, harness):
         """
         )
         results = parser.finish()
-    except Exception:
+    except WebIDL.WebIDLError:
         threw = True
 
     harness.ok(
@@ -569,7 +567,7 @@ def WebIDLTest(parser, harness):
         """
         )
         results = parser.finish()
-    except Exception:
+    except WebIDL.WebIDLError:
         threw = True
 
     harness.ok(threw, "Can't have a constructor operation on a partial interface")
@@ -590,7 +588,7 @@ def WebIDLTest(parser, harness):
         """
         )
         results = parser.finish()
-    except Exception:
+    except WebIDL.WebIDLError:
         threw = True
 
     harness.ok(threw, "Can't have a constructor operation on a mixin")

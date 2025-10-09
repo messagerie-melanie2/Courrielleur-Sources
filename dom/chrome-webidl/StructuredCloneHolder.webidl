@@ -8,7 +8,7 @@
  * A holder for structured-clonable data which can itself be cloned with
  * little overhead, and deserialized into an arbitrary global.
  */
-[ChromeOnly, Exposed=(Window,Worker)]
+[ChromeOnly, Exposed=*]
 interface StructuredCloneHolder {
   /**
    * Serializes the given value to an opaque structured clone blob, and
@@ -27,6 +27,12 @@ interface StructuredCloneHolder {
   [Throws]
   constructor(UTF8String name, UTF8String? anonymizedName,
               any data, optional object? global = null);
+
+  /**
+   * Returns the size of serialized data in bytes. Note that this is smaller
+   * than the actual size of the object in memory, because of buffer sizes etc.
+   */
+  readonly attribute unsigned long long dataSize;
 
   /**
    * Deserializes the structured clone data in the scope of the given global,

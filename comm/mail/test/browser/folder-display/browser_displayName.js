@@ -9,8 +9,8 @@
 
 "use strict";
 
-var { ensure_card_exists } = ChromeUtils.import(
-  "resource://testing-common/mozmill/AddressBookHelpers.jsm"
+var { ensure_card_exists } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/AddressBookHelpers.sys.mjs"
 );
 var {
   add_message_to_folder,
@@ -18,10 +18,8 @@ var {
   create_folder,
   create_message,
   get_about_3pane,
-  mc,
-  select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 var folder;
@@ -31,17 +29,26 @@ var messages = [
   {
     name: "from_display_name_unquoted",
     headers: { From: "Carter Burke <cburke@wyutani.invalid>" },
-    expected: { column: "from", value: "Carter Burke" },
+    expected: {
+      column: "from",
+      value: "Carter Burke <cburke@wyutani.invalid>",
+    },
   },
   {
     name: "from_display_name_quoted",
     headers: { From: '"Ellen Ripley" <eripley@wyutani.invalid>' },
-    expected: { column: "from", value: "Ellen Ripley" },
+    expected: {
+      column: "from",
+      value: "Ellen Ripley <eripley@wyutani.invalid>",
+    },
   },
   {
     name: "from_display_name_with_comma",
     headers: { From: '"William Gorman, Lt." <wgorman@uscmc.invalid>' },
-    expected: { column: "from", value: "William Gorman, Lt." },
+    expected: {
+      column: "from",
+      value: "William Gorman, Lt. <wgorman@uscmc.invalid>",
+    },
   },
   {
     name: "from_email_raw",
@@ -58,17 +65,26 @@ var messages = [
   {
     name: "to_display_name_unquoted",
     headers: { To: "Carter Burke <cburke@wyutani.invalid>" },
-    expected: { column: "recipients", value: "Carter Burke" },
+    expected: {
+      column: "recipients",
+      value: "Carter Burke <cburke@wyutani.invalid>",
+    },
   },
   {
     name: "to_display_name_quoted",
     headers: { To: '"Ellen Ripley" <eripley@wyutani.invalid>' },
-    expected: { column: "recipients", value: "Ellen Ripley" },
+    expected: {
+      column: "recipients",
+      value: "Ellen Ripley <eripley@wyutani.invalid>",
+    },
   },
   {
     name: "to_display_name_with_comma",
     headers: { To: '"William Gorman, Lt." <wgorman@uscmc.invalid>' },
-    expected: { column: "recipients", value: "William Gorman, Lt." },
+    expected: {
+      column: "recipients",
+      value: "William Gorman, Lt. <wgorman@uscmc.invalid>",
+    },
   },
   {
     name: "to_email_raw",
@@ -87,38 +103,35 @@ var messages = [
         "Carter Burke <cburke@wyutani.invalid>, " +
         "Dwayne Hicks <dhicks@uscmc.invalid>",
     },
-    expected: { column: "recipients", value: "Carter Burke, Dwayne Hicks" },
+    expected: {
+      column: "recipients",
+      value:
+        "Carter Burke <cburke@wyutani.invalid>, Dwayne Hicks <dhicks@uscmc.invalid>",
+    },
   },
 
   // Address book tests
   {
-    name: "from_in_abook_pdn",
+    name: "from_in_abook",
     headers: { From: "Al Apone <aapone@uscmc.invalid>" },
     expected: { column: "from", value: "Sarge" },
   },
   {
-    name: "from_in_abook_no_pdn",
-    headers: { From: "Rebeccah Jorden <rjorden@hadleys-hope.invalid>" },
-    expected: { column: "from", value: "Rebeccah Jorden" },
-  },
-  {
-    name: "to_in_abook_pdn",
+    name: "to_in_abook",
     headers: { To: "Al Apone <aapone@uscmc.invalid>" },
     expected: { column: "recipients", value: "Sarge" },
   },
   {
-    name: "to_in_abook_no_pdn",
-    headers: { To: "Rebeccah Jorden <rjorden@hadleys-hope.invalid>" },
-    expected: { column: "recipients", value: "Rebeccah Jorden" },
-  },
-  {
-    name: "to_in_abook_multiple_mixed_pdn",
+    name: "to_in_abook_multiple_mixed",
     headers: {
       To:
         "Al Apone <aapone@uscmc.invalid>, " +
         "Rebeccah Jorden <rjorden@hadleys-hope.invalid>",
     },
-    expected: { column: "recipients", value: "Sarge, Rebeccah Jorden" },
+    expected: {
+      column: "recipients",
+      value: "Sarge, Newt",
+    },
   },
 
   // Esoteric tests; these mainly test that we're getting the expected info back
@@ -130,7 +143,10 @@ var messages = [
         "Carter Burke <cburke@wyutani.invalid>, " +
         "Dwayne Hicks <dhicks@uscmc.invalid>",
     },
-    expected: { column: "from", value: "Carter Burke et al." },
+    expected: {
+      column: "from",
+      value: "Carter Burke <cburke@wyutani.invalid> et al.",
+    },
   },
   {
     name: "from_missing",
@@ -153,12 +169,18 @@ var messages = [
       From: "Carter Burke <cburke@wyutani.invalid>",
       Sender: "The Company <thecompany@wyutani.invalid>",
     },
-    expected: { column: "from", value: "Carter Burke" },
+    expected: {
+      column: "from",
+      value: "Carter Burke <cburke@wyutani.invalid>",
+    },
   },
   {
     name: "sender_and_no_from_display_name",
     headers: { From: null, Sender: "The Company <thecompany@wyutani.invalid>" },
-    expected: { column: "from", value: "The Company" },
+    expected: {
+      column: "from",
+      value: "The Company <thecompany@wyutani.invalid>",
+    },
   },
   {
     name: "to_missing",
@@ -181,24 +203,33 @@ var messages = [
       To: "Carter Burke <cburke@wyutani.invalid>",
       Cc: "The Company <thecompany@wyutani.invalid>",
     },
-    expected: { column: "recipients", value: "Carter Burke" },
+    expected: {
+      column: "recipients",
+      value: "Carter Burke <cburke@wyutani.invalid>",
+    },
   },
   {
     name: "cc_and_no_to_display_name",
     headers: { To: null, Cc: "The Company <thecompany@wyutani.invalid>" },
-    expected: { column: "recipients", value: "The Company" },
+    expected: {
+      column: "recipients",
+      value: "The Company <thecompany@wyutani.invalid>",
+    },
   },
 ];
 
 var contacts = [
-  { email: "aapone@uscmc.invalid", name: "Sarge", pdn: true },
-  { email: "rjorden@hadleys-hope.invalid", name: "Newt", pdn: false },
+  { email: "aapone@uscmc.invalid", name: "Sarge" },
+  { email: "rjorden@hadleys-hope.invalid", name: "Newt" },
 ];
 
 add_setup(async function () {
+  // Use an ascending order because this test relies on message arrays matching.
+  Services.prefs.setIntPref("mailnews.default_sort_order", 1);
+
   folder = await create_folder("DisplayNameA");
 
-  for (let message of messages) {
+  for (const message of messages) {
     await add_message_to_folder(
       [folder],
       create_message({
@@ -207,11 +238,15 @@ add_setup(async function () {
     );
   }
 
-  for (let contact of contacts) {
-    ensure_card_exists(contact.email, contact.name, contact.pdn);
+  for (const contact of contacts) {
+    ensure_card_exists(contact.email, contact.name);
   }
 
   await be_in_folder(folder);
+
+  registerCleanupFunction(() => {
+    Services.prefs.clearUserPref("mailnews.default_sort_order");
+  });
 });
 
 async function check_display_name(index, columnName, expectedName) {
@@ -227,18 +262,14 @@ async function check_display_name(index, columnName, expectedName) {
       throw new Error("unknown column name: " + columnName);
   }
 
-  let cellText = get_about_3pane().gDBView.cellTextForColumn(index, columnId);
+  const cellText = get_about_3pane().gDBView.cellTextForColumn(index, columnId);
   Assert.equal(cellText, expectedName, columnName);
 }
 
 // Generate a test for each message in |messages|.
-for (let [i, message] of messages.entries()) {
-  this["test_" + message.name] = async function (i, message) {
-    await check_display_name(
-      i,
-      message.expected.column,
-      message.expected.value
-    );
+for (const [i, message] of messages.entries()) {
+  this["test_" + message.name] = async function (index, msg) {
+    await check_display_name(index, msg.expected.column, msg.expected.value);
   }.bind(this, i, message);
   add_task(this[`test_${message.name}`]);
 }

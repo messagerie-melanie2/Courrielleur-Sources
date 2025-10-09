@@ -73,21 +73,6 @@ const FEATURES = [
     },
   },
   {
-    name: "passwords",
-    list: ["urlclassifier.passwordAllowTable"],
-    enabled() {
-      return Services.prefs.getBoolPref(
-        "browser.safebrowsing.passwords.enabled"
-      );
-    },
-    update() {
-      return Services.prefs.getBoolPref(
-        "browser.safebrowsing.features.passwords.update",
-        this.enabled()
-      );
-    },
-  },
-  {
     name: "downloads",
     list: [
       "urlclassifier.downloadBlockTable",
@@ -289,6 +274,24 @@ const FEATURES = [
     update() {
       return Services.prefs.getBoolPref(
         "browser.safebrowsing.features.emailtracking.datacollection.update",
+        this.enabled()
+      );
+    },
+  },
+  {
+    name: "consentmanager-annotation",
+    list: [
+      "urlclassifier.features.consentmanager.annotate.blocklistTables",
+      "urlclassifier.features.consentmanager.annotate.allowlistTables",
+    ],
+    enabled() {
+      return Services.prefs.getBoolPref(
+        "privacy.trackingprotection.consentmanager.annotate_channels"
+      );
+    },
+    update() {
+      return Services.prefs.getBoolPref(
+        "browser.safebrowsing.features.consentmanager.annotate.update",
         this.enabled()
       );
     },

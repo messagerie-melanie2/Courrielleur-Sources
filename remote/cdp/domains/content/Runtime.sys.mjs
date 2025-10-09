@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 import { addDebuggerToGlobal } from "resource://gre/modules/jsdebugger.sys.mjs";
 
 import { ContentProcessDomain } from "chrome://remote/content/cdp/domains/ContentProcessDomain.sys.mjs";
@@ -17,7 +15,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "chrome://remote/content/cdp/domains/content/runtime/ExecutionContext.sys.mjs",
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "ConsoleAPIStorage", () => {
+ChromeUtils.defineLazyGetter(lazy, "ConsoleAPIStorage", () => {
   return Cc["@mozilla.org/consoleAPI-storage;1"].getService(
     Ci.nsIConsoleAPIStorage
   );
@@ -173,7 +171,7 @@ export class Runtime extends ContentProcessDomain {
    *     Whether the result is expected to be a JSON object
    *     which should be sent by value.
    *
-   * @returns {Object<RemoteObject, ExceptionDetails>}
+   * @returns {RemoteObject & { exeptionDetails?: ExceptionDetails }}
    */
   callFunctionOn(options = {}) {
     if (typeof options.functionDeclaration != "string") {
@@ -253,7 +251,7 @@ export class Runtime extends ContentProcessDomain {
    * @param {boolean=} options.userGesture [unsupported]
    *     Whether execution should be treated as initiated by user in the UI.
    *
-   * @returns {Object<RemoteObject, exceptionDetails>}
+   * @returns {RemoteObject & { exeptionDetails?: ExceptionDetails }}
    *     The evaluation result, and optionally exception details.
    */
   evaluate(options = {}) {
@@ -486,7 +484,6 @@ export class Runtime extends ContentProcessDomain {
    *     "default" or "isolated"
    *
    * @returns {number} ID of created context
-   *
    */
   _onContextCreated(name, options = {}) {
     const {
@@ -615,7 +612,7 @@ export class Runtime extends ContentProcessDomain {
    * @param {nsIConsoleMessage} subject
    *     Console message.
    */
-  observe(subject, topic, data) {
+  observe(subject) {
     if (subject instanceof Ci.nsIScriptError && subject.hasException) {
       let entry = fromScriptError(subject);
       this._emitExceptionThrown(entry);

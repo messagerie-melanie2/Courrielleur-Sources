@@ -17,8 +17,8 @@
 #include "nsQueryObject.h"
 #include "nsNetCID.h"
 
-#include "nsServiceManagerUtils.h"
 #include "nsComponentManagerUtils.h"
+#include "mozilla/Components.h"
 #include "mozilla/DelayedRunnable.h"
 #include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/StaticPrefs_network.h"
@@ -29,7 +29,6 @@
 #endif
 
 #if defined(XP_MACOSX)
-#  include "nsCocoaFeatures.h"
 #  include "MacWifiScanner.h"
 #endif
 
@@ -71,14 +70,17 @@ static uint64_t NextPollingIndex() {
 // We poll when we are on a network where the wifi environment
 // could reasonably be expected to change much -- so, on mobile.
 static bool ShouldPollForNetworkType(const char16_t* aLinkType) {
-  return NS_ConvertUTF16toUTF8(aLinkType) == NS_NETWORK_LINK_TYPE_WIMAX ||
-         NS_ConvertUTF16toUTF8(aLinkType) == NS_NETWORK_LINK_TYPE_MOBILE;
+  auto linkTypeU8 = NS_ConvertUTF16toUTF8(aLinkType);
+  return linkTypeU8 == NS_NETWORK_LINK_TYPE_WIMAX ||
+         linkTypeU8 == NS_NETWORK_LINK_TYPE_MOBILE ||
+         linkTypeU8 == NS_NETWORK_LINK_TYPE_UNKNOWN;
 }
 
 // Enum value version.
 static bool ShouldPollForNetworkType(uint32_t aLinkType) {
   return aLinkType == nsINetworkLinkService::LINK_TYPE_WIMAX ||
-         aLinkType == nsINetworkLinkService::LINK_TYPE_MOBILE;
+         aLinkType == nsINetworkLinkService::LINK_TYPE_MOBILE ||
+         aLinkType == nsINetworkLinkService::LINK_TYPE_UNKNOWN;
 }
 
 nsWifiMonitor::nsWifiMonitor(UniquePtr<mozilla::WifiScanner>&& aScanner)
@@ -94,8 +96,8 @@ nsWifiMonitor::nsWifiMonitor(UniquePtr<mozilla::WifiScanner>&& aScanner)
   }
 
   nsresult rv;
-  nsCOMPtr<nsINetworkLinkService> nls =
-      do_GetService(NS_NETWORK_LINK_SERVICE_CONTRACTID, &rv);
+  nsCOMPtr<nsINetworkLinkService> nls;
+  nls = do_GetService(NS_NETWORK_LINK_SERVICE_CONTRACTID, &rv);
   if (NS_SUCCEEDED(rv) && nls) {
     uint32_t linkType = nsINetworkLinkService::LINK_TYPE_UNKNOWN;
     rv = nls->GetLinkType(&linkType);
@@ -172,6 +174,15 @@ nsWifiMonitor::Observe(nsISupports* subject, const char* topic,
   return NS_OK;
 }
 
+void nsWifiMonitor::EnsureWifiScanner() {
+  if (mWifiScanner) {
+    return;
+  }
+
+  LOG(("Constructing WifiScanner"));
+  mWifiScanner = MakeUnique<mozilla::WifiScannerImpl>();
+}
+
 NS_IMETHODIMP nsWifiMonitor::StartWatching(nsIWifiListener* aListener,
                                            bool aForcePolling) {
   LOG(("nsWifiMonitor::StartWatching %p | listener %p | mPollingId %" PRIu64
@@ -184,7 +195,10 @@ NS_IMETHODIMP nsWifiMonitor::StartWatching(nsIWifiListener* aListener,
     return NS_ERROR_NULL_POINTER;
   }
 
-  mListeners.AppendElement(WifiListenerHolder(aListener, aForcePolling));
+  if (!mListeners.InsertOrUpdate(aListener, WifiListenerData(aForcePolling),
+                                 mozilla::fallible)) {
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
 
   // Run a new scan to update the new listener.  If we were polling then
   // stop that polling and start a new polling interval now.
@@ -207,21 +221,16 @@ NS_IMETHODIMP nsWifiMonitor::StopWatching(nsIWifiListener* aListener) {
     return NS_ERROR_NULL_POINTER;
   }
 
-  auto idx = mListeners.IndexOf(
-      WifiListenerHolder(aListener), 0,
-      [](const WifiListenerHolder& elt, const WifiListenerHolder& toRemove) {
-        return toRemove.mListener == elt.mListener ? 0 : 1;
-      });
-
-  if (idx == nsTArray<WifiListenerHolder>::NoIndex) {
+  auto maybeData = mListeners.MaybeGet(aListener);
+  if (!maybeData) {
     return NS_ERROR_INVALID_ARG;
   }
 
-  if (mListeners[idx].mShouldPoll) {
+  if (maybeData->mShouldPoll) {
     --mNumPollingListeners;
   }
 
-  mListeners.RemoveElementAt(idx);
+  mListeners.Remove(aListener);
 
   if (!ShouldPoll()) {
     // Stop polling (if we were).
@@ -287,17 +296,10 @@ void nsWifiMonitor::Scan(uint64_t aPollingId) {
        static_cast<uint32_t>(rv)));
 
   if (NS_FAILED(rv)) {
-    auto* mainThread = GetMainThreadSerialEventTarget();
-    if (!mainThread) {
-      LOG(("nsWifiMonitor::Scan cannot find main thread"));
-      return;
-    }
-
-    NS_DispatchAndSpinEventLoopUntilComplete(
-        "WaitForPassErrorToWifiListeners"_ns, mainThread,
-        NewRunnableMethod<nsresult>("PassErrorToWifiListeners", this,
-                                    &nsWifiMonitor::PassErrorToWifiListeners,
-                                    rv));
+    rv = NS_DispatchToMainThread(NewRunnableMethod<nsresult>(
+        "PassErrorToWifiListeners", this,
+        &nsWifiMonitor::PassErrorToWifiListeners, rv));
+    MOZ_ASSERT(NS_SUCCEEDED(rv));
   }
 
   // If we are polling then we re-issue Scan after a delay.
@@ -321,10 +323,7 @@ void nsWifiMonitor::Scan(uint64_t aPollingId) {
 nsresult nsWifiMonitor::DoScan() {
   MOZ_ASSERT(IsBackgroundThread());
 
-  if (!mWifiScanner) {
-    LOG(("Constructing WifiScanner"));
-    mWifiScanner = MakeUnique<mozilla::WifiScannerImpl>();
-  }
+  EnsureWifiScanner();
   MOZ_ASSERT(mWifiScanner);
 
   LOG(("Scanning Wifi for access points"));
@@ -369,32 +368,57 @@ nsresult nsWifiMonitor::DoScan() {
     return NS_ERROR_UNEXPECTED;
   }
 
-  return NS_DispatchAndSpinEventLoopUntilComplete(
-      "WaitForCallWifiListeners"_ns, mainThread,
-      NewRunnableMethod<const nsTArray<RefPtr<nsIWifiAccessPoint>>&&, bool>(
+  return NS_DispatchToMainThread(
+      NewRunnableMethod<nsTArray<RefPtr<nsIWifiAccessPoint>>, bool>(
           "CallWifiListeners", this, &nsWifiMonitor::CallWifiListeners,
           mLastAccessPoints.Clone(), accessPointsChanged));
 }
 
-nsresult nsWifiMonitor::CallWifiListeners(
-    nsTArray<RefPtr<nsIWifiAccessPoint>>&& aAccessPoints,
-    bool aAccessPointsChanged) {
-  MOZ_ASSERT(NS_IsMainThread());
-  LOG(("Sending wifi access points to the listeners"));
-  for (auto& listener : mListeners) {
-    if (!listener.mHasSentData || aAccessPointsChanged) {
-      listener.mHasSentData = true;
-      listener.mListener->OnChange(aAccessPoints);
+template <typename CallbackFn>
+nsresult nsWifiMonitor::NotifyListeners(CallbackFn&& aCallback) {
+  // Listeners may (un)register other listeners while we iterate,
+  // so we iterate over a copy and re-check membership as we go.
+  // Iteration order is not important.
+  auto listenersCopy(mListeners.Clone());
+  for (auto iter = listenersCopy.begin(); iter != listenersCopy.end(); ++iter) {
+    auto maybeIter = mListeners.MaybeGet(iter->GetKey());
+    if (maybeIter) {
+      aCallback(iter->GetKey(), *maybeIter);
     }
   }
   return NS_OK;
 }
 
+nsresult nsWifiMonitor::CallWifiListeners(
+    const nsTArray<RefPtr<nsIWifiAccessPoint>>& aAccessPoints,
+    bool aAccessPointsChanged) {
+  MOZ_ASSERT(NS_IsMainThread());
+  LOG(("Sending wifi access points to the listeners"));
+  return NotifyListeners(
+      [&](nsIWifiListener* aListener, WifiListenerData& aListenerData) {
+        if (!aListenerData.mHasSentData || aAccessPointsChanged) {
+          aListenerData.mHasSentData = true;
+          aListener->OnChange(aAccessPoints);
+        }
+      });
+}
+
 nsresult nsWifiMonitor::PassErrorToWifiListeners(nsresult rv) {
   MOZ_ASSERT(NS_IsMainThread());
   LOG(("About to send error to the wifi listeners"));
-  for (const auto& listener : mListeners) {
-    listener.mListener->OnError(rv);
-  }
-  return NS_OK;
+  return NotifyListeners([&](nsIWifiListener* aListener, WifiListenerData&) {
+    aListener->OnError(rv);
+  });
+}
+
+bool nsWifiMonitor::GetHasWifiAdapter() {
+#ifdef XP_WIN
+  EnsureWifiScanner();
+  MOZ_ASSERT(mWifiScanner);
+  return static_cast<WifiScannerImpl*>(mWifiScanner.get())->HasWifiAdapter();
+#else
+  MOZ_ASSERT_UNREACHABLE(
+      "nsWifiMonitor::HasWifiAdapter is not available on this platform");
+  return false;
+#endif
 }

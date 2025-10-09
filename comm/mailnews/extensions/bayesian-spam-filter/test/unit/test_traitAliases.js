@@ -37,8 +37,8 @@
  * alias3.eml        50             53
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var traitService = Cc["@mozilla.org/msg-trait-service;1"].getService(
@@ -142,8 +142,8 @@ function startCommand() {
   var proArray = [kProTrait];
 
   // remove any existing aliases
-  let proAliases = traitService.getAliases(kProTrait);
-  let antiAliases = traitService.getAliases(kAntiTrait);
+  const proAliases = traitService.getAliases(kProTrait);
+  const antiAliases = traitService.getAliases(kAntiTrait);
   let proAlias;
   let antiAlias;
   while ((proAlias = proAliases.pop())) {

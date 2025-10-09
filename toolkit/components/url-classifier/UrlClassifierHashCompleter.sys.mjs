@@ -14,7 +14,7 @@ const PREF_DEBUG_ENABLED = "browser.safebrowsing.debug";
 
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
-const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+import { NetUtil } from "resource://gre/modules/NetUtil.sys.mjs";
 
 const lazy = {};
 
@@ -622,7 +622,7 @@ HashCompleterRequest.prototype = {
       "@mozilla.org/io/string-input-stream;1"
     ].createInstance(Ci.nsIStringInputStream);
 
-    inputStream.setData(aBody, aBody.length);
+    inputStream.setByteStringData(aBody);
 
     let uploadChannel = this._channel.QueryInterface(Ci.nsIUploadChannel);
     uploadChannel.setUploadStream(inputStream, "text/plain", -1);
@@ -858,16 +858,16 @@ HashCompleterRequest.prototype = {
     this._response += sis.readBytes(aCount);
   },
 
-  onStartRequest: function HCR_onStartRequest(aRequest) {
+  onStartRequest: function HCR_onStartRequest() {
     // At this point no data is available for us and we have no reason to
     // terminate the connection, so we do nothing until |onStopRequest|.
     this._completer._nextGethashTimeMs[this.gethashUrl] = 0;
 
     if (this.telemetryClockStart > 0) {
       let msecs = Date.now() - this.telemetryClockStart;
-      Services.telemetry
-        .getKeyedHistogramById("URLCLASSIFIER_COMPLETE_SERVER_RESPONSE_TIME")
-        .add(this.telemetryProvider, msecs);
+      Glean.urlclassifier.completeServerResponseTime[
+        this.telemetryProvider
+      ].accumulateSingleSample(msecs);
     }
   },
 
@@ -908,9 +908,9 @@ HashCompleterRequest.prototype = {
         btoa(this._response)
     );
 
-    Services.telemetry
-      .getKeyedHistogramById("URLCLASSIFIER_COMPLETE_REMOTE_STATUS2")
-      .add(this.telemetryProvider, httpStatusToBucket(httpStatus));
+    Glean.urlclassifier.completeRemoteStatus2[
+      this.telemetryProvider
+    ].accumulateSingleSample(httpStatusToBucket(httpStatus));
     if (httpStatus == 400) {
       dump(
         "Safe Browsing server returned a 400 during completion: request= " +
@@ -945,7 +945,7 @@ HashCompleterRequest.prototype = {
     }
   },
 
-  observe: function HCR_observe(aSubject, aTopic, aData) {
+  observe: function HCR_observe(aSubject, aTopic) {
     if (aTopic == "quit-application") {
       this._shuttingDown = true;
       if (this._channel) {

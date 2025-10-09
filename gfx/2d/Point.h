@@ -85,23 +85,37 @@ struct MOZ_EMPTY_BASES IntPointTyped
     return IntPointTyped(int32_t(floorf(aX + 0.5f)),
                          int32_t(floorf(aY + 0.5f)));
   }
+  static IntPointTyped Round(double aX, double aY) {
+    return IntPointTyped(int32_t(floor(aX + 0.5)), int32_t(floor(aY + 0.5)));
+  }
 
   static IntPointTyped Ceil(float aX, float aY) {
     return IntPointTyped(int32_t(ceilf(aX)), int32_t(ceilf(aY)));
+  }
+  static IntPointTyped Ceil(double aX, double aY) {
+    return IntPointTyped(int32_t(ceil(aX)), int32_t(ceil(aY)));
   }
 
   static IntPointTyped Floor(float aX, float aY) {
     return IntPointTyped(int32_t(floorf(aX)), int32_t(floorf(aY)));
   }
+  static IntPointTyped Floor(double aX, double aY) {
+    return IntPointTyped(int32_t(floor(aX)), int32_t(floor(aY)));
+  }
 
-  static IntPointTyped Truncate(float aX, float aY) {
+  template <typename F>
+  static IntPointTyped Truncate(F aX, F aY) {
     return IntPointTyped(int32_t(aX), int32_t(aY));
   }
 
-  static IntPointTyped Round(const PointTyped<Units, float>& aPoint);
-  static IntPointTyped Ceil(const PointTyped<Units, float>& aPoint);
-  static IntPointTyped Floor(const PointTyped<Units, float>& aPoint);
-  static IntPointTyped Truncate(const PointTyped<Units, float>& aPoint);
+  template <typename F>
+  static IntPointTyped Round(const PointTyped<Units, F>& aPoint);
+  template <typename F>
+  static IntPointTyped Ceil(const PointTyped<Units, F>& aPoint);
+  template <typename F>
+  static IntPointTyped Floor(const PointTyped<Units, F>& aPoint);
+  template <typename F>
+  static IntPointTyped Truncate(const PointTyped<Units, F>& aPoint);
 
   // XXX When all of the code is ported, the following functions to convert to
   // and from unknown types should be removed.
@@ -165,13 +179,13 @@ struct MOZ_EMPTY_BASES PointTyped
 typedef PointTyped<UnknownUnits> Point;
 typedef PointTyped<UnknownUnits, double> PointDouble;
 
-template <class Units>
-IntPointTyped<Units> RoundedToInt(const PointTyped<Units>& aPoint) {
+template <class Units, class F>
+IntPointTyped<Units> RoundedToInt(const PointTyped<Units, F>& aPoint) {
   return IntPointTyped<Units>::Round(aPoint.x, aPoint.y);
 }
 
-template <class Units>
-IntPointTyped<Units> TruncatedToInt(const PointTyped<Units>& aPoint) {
+template <class Units, class F>
+IntPointTyped<Units> TruncatedToInt(const PointTyped<Units, F>& aPoint) {
   return IntPointTyped<Units>::Truncate(aPoint.x, aPoint.y);
 }
 
@@ -204,26 +218,30 @@ typedef Point3DTyped<UnknownUnits> Point3D;
 typedef Point3DTyped<UnknownUnits, double> PointDouble3D;
 
 template <typename Units>
+template <typename F>
 IntPointTyped<Units> IntPointTyped<Units>::Round(
-    const PointTyped<Units, float>& aPoint) {
+    const PointTyped<Units, F>& aPoint) {
   return IntPointTyped::Round(aPoint.x, aPoint.y);
 }
 
 template <typename Units>
+template <typename F>
 IntPointTyped<Units> IntPointTyped<Units>::Ceil(
-    const PointTyped<Units, float>& aPoint) {
+    const PointTyped<Units, F>& aPoint) {
   return IntPointTyped::Ceil(aPoint.x, aPoint.y);
 }
 
 template <typename Units>
+template <typename F>
 IntPointTyped<Units> IntPointTyped<Units>::Floor(
-    const PointTyped<Units, float>& aPoint) {
+    const PointTyped<Units, F>& aPoint) {
   return IntPointTyped::Floor(aPoint.x, aPoint.y);
 }
 
 template <typename Units>
+template <typename F>
 IntPointTyped<Units> IntPointTyped<Units>::Truncate(
-    const PointTyped<Units, float>& aPoint) {
+    const PointTyped<Units, F>& aPoint) {
   return IntPointTyped::Truncate(aPoint.x, aPoint.y);
 }
 
@@ -269,19 +287,19 @@ typedef Point4DTyped<UnknownUnits, double> PointDouble4D;
 
 template <class Units>
 struct MOZ_EMPTY_BASES IntSizeTyped
-    : public BaseSize<int32_t, IntSizeTyped<Units> >,
+    : public BaseSize<int32_t, IntSizeTyped<Units>, IntCoordTyped<Units> >,
       public Units {
   static_assert(IsPixel<Units>::value,
                 "'Units' must be a coordinate system tag");
 
-  typedef IntParam<int32_t> ToInt;
-  typedef BaseSize<int32_t, IntSizeTyped<Units> > Super;
+  typedef IntCoordTyped<Units> Coord;
+  typedef BaseSize<int32_t, IntSizeTyped<Units>, Coord> Super;
 
   constexpr IntSizeTyped() : Super() {
     static_assert(sizeof(IntSizeTyped) == sizeof(int32_t) * 2,
                   "Would be unfortunate otherwise!");
   }
-  constexpr IntSizeTyped(ToInt aWidth, ToInt aHeight)
+  constexpr IntSizeTyped(Coord aWidth, Coord aHeight)
       : Super(aWidth.value, aHeight.value) {}
 
   static IntSizeTyped Round(float aWidth, float aHeight) {
@@ -334,21 +352,22 @@ struct MOZ_EMPTY_BASES IntSizeTyped
   }
 };
 typedef IntSizeTyped<UnknownUnits> IntSize;
-typedef Maybe<IntSize> MaybeIntSize;
 
 template <class Units, class F = Float>
-struct MOZ_EMPTY_BASES SizeTyped : public BaseSize<F, SizeTyped<Units, F> >,
-                                   public Units {
+struct MOZ_EMPTY_BASES SizeTyped
+    : public BaseSize<F, SizeTyped<Units, F>, CoordTyped<Units, F> >,
+      public Units {
   static_assert(IsPixel<Units>::value,
                 "'Units' must be a coordinate system tag");
 
-  typedef BaseSize<F, SizeTyped<Units, F> > Super;
+  typedef CoordTyped<Units, F> Coord;
+  typedef BaseSize<F, SizeTyped<Units, F>, Coord> Super;
 
   constexpr SizeTyped() : Super() {
     static_assert(sizeof(SizeTyped) == sizeof(F) * 2,
                   "Would be unfortunate otherwise!");
   }
-  constexpr SizeTyped(F aWidth, F aHeight) : Super(aWidth, aHeight) {}
+  constexpr SizeTyped(Coord aWidth, Coord aHeight) : Super(aWidth, aHeight) {}
   explicit SizeTyped(const IntSizeTyped<Units>& size)
       : Super(F(size.width), F(size.height)) {}
 

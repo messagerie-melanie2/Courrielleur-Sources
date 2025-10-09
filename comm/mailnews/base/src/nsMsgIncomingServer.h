@@ -13,7 +13,6 @@
 #include "nsIMsgFolder.h"
 #include "nsIFile.h"
 #include "nsCOMPtr.h"
-#include "nsCOMArray.h"
 #include "nsIPop3IncomingServer.h"
 #include "nsWeakReference.h"
 #include "nsIMsgDatabase.h"
@@ -47,6 +46,7 @@ class nsMsgIncomingServer : public nsIMsgIncomingServer,
  protected:
   virtual ~nsMsgIncomingServer();
   nsCString m_serverKey;
+  bool m_hasShutDown;
 
   // Sets m_password, if password found. Can return NS_ERROR_ABORT if the
   // user cancels the master password dialog.
@@ -64,15 +64,13 @@ class nsMsgIncomingServer : public nsIMsgIncomingServer,
 
   /// Helper routine to create local folder on disk if it doesn't exist
   /// under the account's rootFolder.
-  nsresult CreateLocalFolder(const nsAString& folderName);
+  nsresult CreateLocalFolder(const nsACString& folderName);
 
   static nsresult GetDeferredServers(
       nsIMsgIncomingServer* destServer,
       nsTArray<RefPtr<nsIPop3IncomingServer>>& aServers);
 
   nsresult CreateRootFolder();
-  virtual nsresult CreateRootFolderFromUri(const nsACString& serverUri,
-                                           nsIMsgFolder** rootFolder) = 0;
 
   nsresult InternalSetHostName(const nsACString& aHostname,
                                const char* prefName);
@@ -96,7 +94,6 @@ class nsMsgIncomingServer : public nsIMsgIncomingServer,
  protected:
   nsString m_password;
   bool m_canHaveFilters;
-  bool m_displayStartupPage;
   bool mPerformingBiff;
 };
 

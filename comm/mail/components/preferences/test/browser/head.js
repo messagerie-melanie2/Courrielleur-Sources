@@ -5,8 +5,8 @@
 /* import-globals-from ../../../../base/content/utilityOverlay.js */
 
 async function openNewPrefsTab(paneID, scrollPaneTo, otherArgs) {
-  let tabmail = document.getElementById("tabmail");
-  let prefsTabMode = tabmail.tabModes.preferencesTab;
+  const tabmail = document.getElementById("tabmail");
+  const prefsTabMode = tabmail.tabModes.preferencesTab;
 
   is(prefsTabMode.tabs.length, 0, "Prefs tab is not open");
 
@@ -22,8 +22,8 @@ async function openNewPrefsTab(paneID, scrollPaneTo, otherArgs) {
   ok(prefsDocument.URL.startsWith("about:preferences"), "Prefs tab is open");
 
   prefsDocument = prefsTabMode.tabs[0].browser.contentDocument;
-  let prefsWindow = prefsDocument.ownerGlobal;
-  prefsWindow.resizeTo(screen.availWidth, screen.availHeight);
+  const prefsWindow = prefsDocument.ownerGlobal;
+  window.resizeTo(screen.availWidth, screen.availHeight);
 
   if (paneID) {
     await new Promise(resolve => prefsWindow.setTimeout(resolve));
@@ -41,7 +41,7 @@ async function openNewPrefsTab(paneID, scrollPaneTo, otherArgs) {
   registerCleanupOnce();
 
   await new Promise(resolve => prefsWindow.setTimeout(resolve));
-  let container = prefsDocument.getElementById("preferencesContainer");
+  const container = prefsDocument.getElementById("preferencesContainer");
   if (scrollPaneTo && container.scrollHeight > container.clientHeight) {
     Assert.greater(
       container.scrollTop,
@@ -53,14 +53,14 @@ async function openNewPrefsTab(paneID, scrollPaneTo, otherArgs) {
 }
 
 async function openExistingPrefsTab(paneID, scrollPaneTo, otherArgs) {
-  let tabmail = document.getElementById("tabmail");
-  let prefsTabMode = tabmail.tabModes.preferencesTab;
+  const tabmail = document.getElementById("tabmail");
+  const prefsTabMode = tabmail.tabModes.preferencesTab;
 
   is(prefsTabMode.tabs.length, 1, "Prefs tab is open");
 
-  let prefsDocument = prefsTabMode.tabs[0].browser.contentDocument;
-  let prefsWindow = prefsDocument.ownerGlobal;
-  prefsWindow.resizeTo(screen.availWidth, screen.availHeight);
+  const prefsDocument = prefsTabMode.tabs[0].browser.contentDocument;
+  const prefsWindow = prefsDocument.ownerGlobal;
+  window.resizeTo(screen.availWidth, screen.availHeight);
 
   if (paneID && prefsWindow.gLastCategory.category != paneID) {
     openPreferencesTab(paneID, scrollPaneTo, otherArgs);
@@ -91,8 +91,8 @@ function registerCleanupOnce() {
 
 async function closePrefsTab() {
   info("Closing prefs tab");
-  let tabmail = document.getElementById("tabmail");
-  let prefsTab = tabmail.tabModes.preferencesTab.tabs[0];
+  const tabmail = document.getElementById("tabmail");
+  const prefsTab = tabmail.tabModes.preferencesTab.tabs[0];
   if (prefsTab) {
     tabmail.closeTab(prefsTab);
   }
@@ -114,10 +114,10 @@ async function closePrefsTab() {
  *                        the toggling of the checkbox.
  */
 async function testCheckboxes(paneID, scrollPaneTo, ...tests) {
-  for (let initiallyChecked of [true, false]) {
+  for (const initiallyChecked of [true, false]) {
     info(`Opening ${paneID} with prefs set to ${initiallyChecked}`);
 
-    for (let test of tests) {
+    for (const test of tests) {
       let wantedValue = initiallyChecked;
       if (test.prefValues) {
         wantedValue = wantedValue ? test.prefValues[1] : test.prefValues[0];
@@ -129,34 +129,36 @@ async function testCheckboxes(paneID, scrollPaneTo, ...tests) {
       }
     }
 
-    let { prefsDocument, prefsWindow } = await openNewPrefsTab(
+    const { prefsDocument, prefsWindow } = await openNewPrefsTab(
       paneID,
       scrollPaneTo
     );
 
-    let testUIState = function (test, checked) {
+    const testUIState = function (test, checked) {
       let wantedValue = checked;
       if (test.prefValues) {
         wantedValue = wantedValue ? test.prefValues[1] : test.prefValues[0];
       }
-      let checkbox = prefsDocument.getElementById(test.checkboxID);
+      const checkbox = prefsDocument.getElementById(test.checkboxID);
       is(
         checkbox.checked,
         checked,
         wantedValue,
-        "Checkbox " + (checked ? "is" : "isn't") + " checked"
+        `Checkbox #${test.checkboxID} should ` +
+          (checked ? "be" : "") +
+          " checked"
       );
       if (typeof wantedValue == "number") {
         is(
           Services.prefs.getIntPref(test.pref, -999),
           wantedValue,
-          `Pref is ${wantedValue}`
+          `Pref ${test.pref} should be ${wantedValue}`
         );
       } else {
         is(
           Services.prefs.getBoolPref(test.pref),
           wantedValue,
-          `Pref is ${wantedValue}`
+          `Pref ${test.pref} should be ${wantedValue}`
         );
       }
 
@@ -165,13 +167,14 @@ async function testCheckboxes(paneID, scrollPaneTo, ...tests) {
         if (test.enabledInverted) {
           disabled = !disabled;
         }
-        for (let selector of test.enabledElements) {
-          let elements = prefsDocument.querySelectorAll(selector);
-          ok(
-            elements.length >= 1,
+        for (const selector of test.enabledElements) {
+          const elements = prefsDocument.querySelectorAll(selector);
+          Assert.greaterOrEqual(
+            elements.length,
+            1,
             `At least one element matched '${selector}'`
           );
-          for (let element of elements) {
+          for (const element of elements) {
             is(
               element.disabled,
               !disabled,
@@ -182,23 +185,24 @@ async function testCheckboxes(paneID, scrollPaneTo, ...tests) {
       }
     };
 
-    let testUnaffected = function (ids, states) {
+    const testUnaffected = function (ids, states) {
       ids.forEach((sel, index) => {
-        let isOk = prefsDocument.querySelector(sel).disabled === states[index];
+        const isOk =
+          prefsDocument.querySelector(sel).disabled === states[index];
         is(isOk, true, `Element "${sel}" is unaffected`);
       });
     };
 
-    for (let test of tests) {
+    for (const test of tests) {
       info(`Checking ${test.checkboxID}`);
 
-      let unaffectedSelectors = test.unaffectedElements || [];
-      let unaffectedStates = unaffectedSelectors.map(
+      const unaffectedSelectors = test.unaffectedElements || [];
+      const unaffectedStates = unaffectedSelectors.map(
         sel => prefsDocument.querySelector(sel).disabled
       );
 
-      let checkbox = prefsDocument.getElementById(test.checkboxID);
-      checkbox.scrollIntoView(false);
+      const checkbox = prefsDocument.getElementById(test.checkboxID);
+      checkbox.scrollIntoView({ block: "end", behavior: "instant" });
       testUIState(test, initiallyChecked);
 
       EventUtils.synthesizeMouseAtCenter(checkbox, {}, prefsWindow);
@@ -228,8 +232,8 @@ async function testCheckboxes(paneID, scrollPaneTo, ...tests) {
  *                       radio button is selected (optional)
  */
 async function testRadioButtons(paneID, scrollPaneTo, ...tests) {
-  for (let { pref, states } of tests) {
-    for (let initialState of states) {
+  for (const { pref, states } of tests) {
+    for (const initialState of states) {
       info(`Opening ${paneID} with ${pref} set to ${initialState.prefValue}`);
 
       if (typeof initialState.prefValue == "number") {
@@ -240,26 +244,27 @@ async function testRadioButtons(paneID, scrollPaneTo, ...tests) {
         Services.prefs.setCharPref(pref, initialState.prefValue);
       }
 
-      let { prefsDocument, prefsWindow } = await openNewPrefsTab(
+      const { prefsDocument, prefsWindow } = await openNewPrefsTab(
         paneID,
         scrollPaneTo
       );
 
-      let testUIState = function (currentState) {
+      const testUIState = function (currentState) {
         info(`Testing with ${pref} set to ${currentState.prefValue}`);
-        for (let state of states) {
-          let isCurrentState = state == currentState;
-          let radio = prefsDocument.getElementById(state.id);
+        for (const state of states) {
+          const isCurrentState = state == currentState;
+          const radio = prefsDocument.getElementById(state.id);
           is(radio.selected, isCurrentState, `${state.id}.selected`);
 
           if (state.enabledElements) {
-            for (let selector of state.enabledElements) {
-              let elements = prefsDocument.querySelectorAll(selector);
-              ok(
-                elements.length >= 1,
+            for (const selector of state.enabledElements) {
+              const elements = prefsDocument.querySelectorAll(selector);
+              Assert.greaterOrEqual(
+                elements.length,
+                1,
                 `At least one element matched '${selector}'`
               );
-              for (let element of elements) {
+              for (const element of elements) {
                 is(
                   element.disabled,
                   !isCurrentState,
@@ -273,19 +278,19 @@ async function testRadioButtons(paneID, scrollPaneTo, ...tests) {
           is(
             Services.prefs.getIntPref(pref, -999),
             currentState.prefValue,
-            `Pref is ${currentState.prefValue}`
+            `Pref ${pref} should be ${currentState.prefValue}`
           );
         } else if (typeof initialState.prefValue == "boolean") {
           is(
             Services.prefs.getBoolPref(pref),
             currentState.prefValue,
-            `Pref is ${currentState.prefValue}`
+            `Pref ${pref} should be ${currentState.prefValue}`
           );
         } else {
           is(
             Services.prefs.getCharPref(pref, "FAKE VALUE"),
             currentState.prefValue,
-            `Pref is ${currentState.prefValue}`
+            `Pref ${pref} should be ${currentState.prefValue}`
           );
         }
       };
@@ -293,22 +298,77 @@ async function testRadioButtons(paneID, scrollPaneTo, ...tests) {
       // Check the initial setup is correct.
       testUIState(initialState);
       // Cycle through possible values, checking each one.
-      for (let state of states) {
+      for (const state of states) {
         if (state == initialState) {
           continue;
         }
-        let radio = prefsDocument.getElementById(state.id);
-        radio.scrollIntoView(false);
+        const radio = prefsDocument.getElementById(state.id);
+        radio.scrollIntoView({ block: "end", behavior: "instant" });
         EventUtils.synthesizeMouseAtCenter(radio, {}, prefsWindow);
         testUIState(state);
       }
       // Go back to the initial value.
-      let initialRadio = prefsDocument.getElementById(initialState.id);
-      initialRadio.scrollIntoView(false);
+      const initialRadio = prefsDocument.getElementById(initialState.id);
+      initialRadio.scrollIntoView({ block: "end", behavior: "instant" });
       EventUtils.synthesizeMouseAtCenter(initialRadio, {}, prefsWindow);
       testUIState(initialState);
 
       await closePrefsTab();
     }
   }
+}
+
+/**
+ * Clicks on a button to open a subdialog, waits for that subdialog to load,
+ * runs a callback, then clicks a button to close the subdialog.
+ *
+ * @param {Element} buttonToClick - The button which opens the subdialog.
+ * @param {string} dialogURL - URL of the subdialog we are expecting to open.
+ * @param {Function} callback - A (possibly async) callback function to run
+ *   once the subdialog is open and has focus. The callback takes one
+ *   argument, the `window` of the subdialog.
+ * @param {string} buttonNameOrID - The name or ID of the button to click,
+ *   which causes the subdialog to close.
+ */
+async function promiseSubDialog(
+  buttonToClick,
+  dialogURL,
+  callback,
+  buttonNameOrID = "accept"
+) {
+  const openPromise = BrowserTestUtils.promiseAlertDialogOpen(
+    undefined,
+    dialogURL,
+    { isSubDialog: true }
+  );
+  EventUtils.synthesizeMouseAtCenter(
+    buttonToClick,
+    {},
+    buttonToClick.ownerGlobal
+  );
+  const dialogWindow = await openPromise;
+  const dialogDocument = dialogWindow.document;
+  const basename = dialogWindow.location.href.split("/").at(-1);
+  info(`${basename} opened`);
+
+  await TestUtils.waitForCondition(
+    () => Services.focus.focusedWindow == dialogWindow,
+    "waiting for subdialog to be focused"
+  );
+
+  await callback(dialogWindow);
+
+  const closePromise = BrowserTestUtils.waitForEvent(
+    dialogWindow.browsingContext.topChromeWindow,
+    "dialogclose",
+    true
+  );
+  EventUtils.synthesizeMouseAtCenter(
+    dialogDocument.querySelector("dialog")?.getButton(buttonNameOrID) ||
+      dialogDocument.getElementById(buttonNameOrID),
+    {},
+    dialogWindow
+  );
+  await closePromise;
+  info(`${basename} closed`);
 }

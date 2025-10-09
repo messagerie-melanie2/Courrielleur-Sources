@@ -8,11 +8,9 @@
 #include "msgCore.h"
 #include "nsCOMArray.h"
 #include "nsIMsgThread.h"
-#include "MailNewsTypes.h"
 #include "nsTArray.h"
 #include "nsIMsgDatabase.h"
 #include "nsIMsgHdr.h"
-#include "nsMsgDBView.h"
 
 class nsMsgSearchDBView;
 
@@ -20,11 +18,14 @@ class nsMsgXFViewThread : public nsIMsgThread {
  public:
   nsMsgXFViewThread(nsMsgSearchDBView* view, nsMsgKey threadId);
 
+  already_AddRefed<nsMsgXFViewThread> Clone(nsMsgSearchDBView* view);
+
   NS_DECL_NSIMSGTHREAD
   NS_DECL_ISUPPORTS
 
   bool IsHdrParentOf(nsIMsgDBHdr* possibleParent, nsIMsgDBHdr* possibleChild);
 
+  void ChangeNewChildCount(int32_t delta);
   void ChangeUnreadChildCount(int32_t delta);
   void ChangeChildCount(int32_t delta);
 
@@ -38,6 +39,7 @@ class nsMsgXFViewThread : public nsIMsgThread {
   virtual ~nsMsgXFViewThread();
 
   nsMsgSearchDBView* m_view;
+  uint32_t m_numNewChildren;
   uint32_t m_numUnreadChildren;
   uint32_t m_numChildren;
   uint32_t m_flags;

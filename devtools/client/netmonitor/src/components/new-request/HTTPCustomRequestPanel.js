@@ -7,13 +7,13 @@
 const {
   Component,
   createFactory,
-} = require("resource://devtools/client/shared/vendor/react.js");
+} = require("resource://devtools/client/shared/vendor/react.mjs");
 const asyncStorage = require("resource://devtools/shared/async-storage.js");
-const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.js");
+const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.mjs");
 const dom = require("resource://devtools/client/shared/vendor/react-dom-factories.js");
 const {
   connect,
-} = require("resource://devtools/client/shared/redux/visibility-handler-connect.js");
+} = require("resource://devtools/client/shared/vendor/react-redux.js");
 const {
   L10N,
 } = require("resource://devtools/client/netmonitor/src/utils/l10n.js");
@@ -122,10 +122,12 @@ class HTTPCustomRequestPanel extends Component {
 
   async componentDidMount() {
     let { connector, request } = this.props;
-    const persistedCustomRequest = await asyncStorage.getItem(
-      "devtools.netmonitor.customRequest"
-    );
-    request = request || persistedCustomRequest;
+    if (!connector.currentTarget?.targetForm?.isPrivate) {
+      const persistedCustomRequest = await asyncStorage.getItem(
+        "devtools.netmonitor.customRequest"
+      );
+      request = request || persistedCustomRequest;
+    }
 
     if (!request) {
       this.setState({ _isStateDataReady: true });
@@ -191,7 +193,9 @@ class HTTPCustomRequestPanel extends Component {
   }
 
   componentWillUnmount() {
-    asyncStorage.setItem("devtools.netmonitor.customRequest", this.state);
+    if (!this.props.connector.currentTarget?.targetForm?.isPrivate) {
+      asyncStorage.setItem("devtools.netmonitor.customRequest", this.state);
+    }
   }
 
   handleChangeURL(event) {
@@ -265,20 +269,23 @@ class HTTPCustomRequestPanel extends Component {
 
   onUpdateQueryParams() {
     const { urlQueryParams, url } = this.state;
-    let queryString = "";
+
+    const searchParams = new URLSearchParams();
     for (const { name, value, checked } of urlQueryParams) {
-      if (checked) {
-        queryString += `${encodeURIComponent(name)}=${encodeURIComponent(
-          value
-        )}&`;
+      // We only want to add checked parameters with a non-empty name
+      if (checked && name) {
+        searchParams.append(name, value);
       }
     }
 
+    // We can't use `getUrl` here as `url` is the value of the input and might not be a
+    // valid URL. We still want to try to set the params in the URL input in such case,
+    // so append them after the first "?" char we find.
     let finalURL = url.split("?")[0];
-
-    if (queryString.length) {
-      finalURL += `?${queryString.substring(0, queryString.length - 1)}`;
+    if (searchParams.size) {
+      finalURL += `?${searchParams}`;
     }
+
     this.setState({
       url: finalURL,
     });
@@ -476,12 +483,12 @@ class HTTPCustomRequestPanel extends Component {
                 url: this.state.url,
                 cause: this.props.request?.cause,
                 urlQueryParams: this.state.urlQueryParams.map(
-                  ({ checked, ...params }) => params
+                  ({ ...params }) => params
                 ),
                 requestHeaders: {
                   headers: this.state.headers
                     .filter(({ checked }) => checked)
-                    .map(({ checked, ...headersValues }) => headersValues),
+                    .map(({ ...headersValues }) => headersValues),
                 },
               };
 
@@ -504,7 +511,7 @@ class HTTPCustomRequestPanel extends Component {
 
 module.exports = connect(
   state => ({ request: getClickedRequest(state) }),
-  (dispatch, props) => ({
+  dispatch => ({
     sendCustomRequest: request =>
       dispatch(Actions.sendHTTPCustomRequest(request)),
   })

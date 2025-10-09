@@ -4,19 +4,21 @@
 
 /* globals messenger */
 
-const { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+const { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
 
 const tabmail = document.getElementById("tabmail");
 const about3Pane = tabmail.currentAbout3Pane;
 const { threadTree } = about3Pane;
 
+// The number of messages to generate in the (only) thread.
+const messagesInThread = 5;
+
 add_setup(async function () {
   Services.prefs.setBoolPref("mailnews.scroll_to_new_message", false);
   // Create an account for the test.
-  MailServices.accounts.createLocalMailAccount();
-  const account = MailServices.accounts.accounts[0];
+  const account = MailServices.accounts.createLocalMailAccount();
   account.addIdentity(MailServices.accounts.createIdentity());
 
   // Remove test account on cleanup.
@@ -25,7 +27,7 @@ add_setup(async function () {
     // Tests following this one may attempt to create a folder at the same URI
     // and will fail because our folder lookup code is a mess. Renaming should
     // prevent that.
-    let archiveFolder = rootFolder.getFolderWithFlags(
+    const archiveFolder = rootFolder.getFolderWithFlags(
       Ci.nsMsgFolderFlags.Archive
     );
     archiveFolder?.subFolders[0]?.rename("archive2000", null);
@@ -39,18 +41,22 @@ add_setup(async function () {
   });
 
   // Create a folder for the account to store test messages.
-  const rootFolder = account.incomingServer.rootFolder;
-  rootFolder.createSubfolder("test-archive", null);
+  const rootFolder = account.incomingServer.rootFolder.QueryInterface(
+    Ci.nsIMsgLocalMailFolder
+  );
   const testFolder = rootFolder
-    .getChildNamed("test-archive")
+    .createLocalSubfolder("test-archive")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
 
   // Generate test messages.
   const generator = new MessageGenerator();
   testFolder.addMessageBatch(
     generator
-      .makeMessages({ count: 2, msgsPerThread: 2 })
-      .map(message => message.toMboxString())
+      .makeMessages({
+        count: messagesInThread,
+        msgsPerThread: messagesInThread,
+      })
+      .map(message => message.toMessageString())
   );
 
   // Use the test folder.
@@ -61,7 +67,7 @@ add_setup(async function () {
  * Tests undoing after archiving a thread.
  */
 add_task(async function testArchiveUndo() {
-  let row = threadTree.getRowAtIndex(0);
+  const row = threadTree.getRowAtIndex(0);
 
   // Simulate a click on the row's subject line to select the row.
   const selectPromise = BrowserTestUtils.waitForEvent(threadTree, "select");
@@ -91,8 +97,20 @@ add_task(async function testArchiveUndo() {
   EventUtils.synthesizeKey("z", { accelKey: true });
 
   // Make sure the thread makes it back to the thread tree.
-  await TestUtils.waitForCondition(
-    () => threadTree.getRowAtIndex(0) !== null,
-    "The thread should have returned back from the archive"
-  );
+  // We want to make sure we've finished moving every message before
+  // finishing the test.
+  await TestUtils.waitForCondition(() => {
+    // The thread will be collapsed by default, in which case
+    // nothing will exist beyond index 0. So we need to expand
+    // the thread before we check.
+    goDoCommand("cmd_expandAllThreads");
+    // Make sure every message has successfully made it back from the
+    // archive folder.
+    for (let i = 0; i < messagesInThread; i++) {
+      if (threadTree.getRowAtIndex(i) === null) {
+        return false;
+      }
+    }
+    return true;
+  }, "The thread should have returned back from the archive");
 });

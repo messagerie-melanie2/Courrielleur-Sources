@@ -5,7 +5,12 @@
 
 /* import-globals-from ../../base/prefs/content/am-prefs.js */
 
-var { FeedUtils } = ChromeUtils.import("resource:///modules/FeedUtils.jsm");
+var { FeedUtils } = ChromeUtils.importESModule(
+  "resource:///modules/FeedUtils.sys.mjs"
+);
+ChromeUtils.defineESModuleGetters(this, {
+  AccountManagerUtils: "resource:///modules/AccountManagerUtils.sys.mjs",
+});
 
 var gAccount,
   gUpdateEnabled,
@@ -14,6 +19,7 @@ var gAccount,
   gAutotagEnable,
   gAutotagUsePrefix,
   gAutotagPrefix;
+var AMUtils;
 
 /**
  * Initialize am-newsblog account settings page when it gets shown.
@@ -23,8 +29,9 @@ var gAccount,
  */
 function onInit() {
   setAccountTitle();
+  setServerColor();
 
-  let optionsAcct = FeedUtils.getOptionsAcct(gAccount.incomingServer);
+  const optionsAcct = FeedUtils.getOptionsAcct(gAccount.incomingServer);
   document.getElementById("doBiff").checked = optionsAcct.doBiff;
 
   gUpdateEnabled = document.getElementById("updateEnabled");
@@ -36,7 +43,7 @@ function onInit() {
 
   gUpdateEnabled.checked = optionsAcct.updates.enabled;
   gBiffUnits.value = optionsAcct.updates.updateUnits;
-  let minutes =
+  const minutes =
     optionsAcct.updates.updateUnits == FeedUtils.kBiffUnitsMinutes
       ? optionsAcct.updates.updateMinutes
       : optionsAcct.updates.updateMinutes / (24 * 60);
@@ -53,8 +60,9 @@ function onInit() {
   gAutotagPrefix.value = optionsAcct.category.prefix;
 }
 
-function onPreInit(account, accountValues) {
+function onPreInit(account) {
   gAccount = account;
+  AMUtils = new AccountManagerUtils(gAccount);
 }
 
 /**
@@ -75,8 +83,10 @@ function serverPrettyNameOnBlur(event) {
  * @returns {void}
  */
 function setAccountTitle() {
-  let accountName = document.getElementById("server.prettyName");
-  let title = document.querySelector("#am-newsblog-title .dialogheader-title");
+  const accountName = document.getElementById("server.prettyName");
+  const title = document.querySelector(
+    "#am-newsblog-title .dialogheader-title"
+  );
   let titleValue = title.getAttribute("defaultTitle");
   if (accountName.value) {
     titleValue += " - " + accountName.value;
@@ -87,7 +97,7 @@ function setAccountTitle() {
 }
 
 function setPrefs(aNode) {
-  let optionsAcct = FeedUtils.getOptionsAcct(gAccount.incomingServer);
+  const optionsAcct = FeedUtils.getOptionsAcct(gAccount.incomingServer);
   switch (aNode.id) {
     case "doBiff":
       FeedUtils.pauseFeedFolderUpdates(
@@ -98,18 +108,19 @@ function setPrefs(aNode) {
       break;
     case "updateEnabled":
     case "updateValue":
-    case "biffUnits":
+    case "biffUnits": {
       optionsAcct.updates.enabled = gUpdateEnabled.checked;
       onCheckItem("updateValue", ["updateEnabled"]);
       onCheckItem("biffMinutes", ["updateEnabled"]);
       onCheckItem("biffDays", ["updateEnabled"]);
-      let minutes =
+      const minutes =
         gBiffUnits.value == FeedUtils.kBiffUnitsMinutes
           ? gUpdateValue.value
           : gUpdateValue.value * 24 * 60;
       optionsAcct.updates.updateMinutes = Number(minutes);
       optionsAcct.updates.updateUnits = gBiffUnits.value;
       break;
+    }
     case "autotagEnable":
       optionsAcct.category.enabled = aNode.checked;
       gAutotagUsePrefix.disabled = !aNode.checked;
@@ -125,4 +136,24 @@ function setPrefs(aNode) {
   }
 
   FeedUtils.setOptionsAcct(gAccount.incomingServer, optionsAcct);
+}
+
+function setServerColor() {
+  const colorInput = document.getElementById("serverColor");
+  colorInput.value = AMUtils.serverColor;
+
+  colorInput.addEventListener("input", event =>
+    AMUtils.previewServerColor(event.target.value)
+  );
+  colorInput.addEventListener("change", event =>
+    AMUtils.updateServerColor(event.target.value)
+  );
+  document
+    .getElementById("resetColor")
+    .addEventListener("click", () => resetServerColor());
+}
+
+function resetServerColor() {
+  document.getElementById("serverColor").value = AMUtils.defaultServerColor;
+  AMUtils.resetServerColor();
 }

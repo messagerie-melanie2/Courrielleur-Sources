@@ -7,11 +7,19 @@ EXTRA_COMPONENTS += [
 ]
 
 EXTRA_JS_MODULES += [
+    "ExtensionAccounts.sys.mjs",
     "ExtensionBrowsingData.sys.mjs",
+    "ExtensionMailTabs.sys.mjs",
+    "ExtensionMessages.sys.mjs",
     "ExtensionPopups.sys.mjs",
-    "ExtensionToolbarButtons.jsm",
-    "MailExtensionShortcuts.jsm",
+    "ExtensionSpaces.sys.mjs",
+    "ExtensionToolbarButtons.sys.mjs",
+    "ExtensionUtilities.sys.mjs",
+    "MailExtensionShortcuts.sys.mjs",
 ]
+
+with Files("**"):
+    BUG_COMPONENT = ("Thunderbird", "Add-Ons: Extensions API")
 
 JAR_MANIFESTS += ["jar.mn"]
 
@@ -19,9 +27,9 @@ TESTING_JS_MODULES += [
     "test/AppUiTestDelegate.sys.mjs",
 ]
 
-BROWSER_CHROME_MANIFESTS += ["test/browser/browser.ini"]
+BROWSER_CHROME_MANIFESTS += ["test/browser/browser.toml"]
 XPCSHELL_TESTS_MANIFESTS += [
-    "test/xpcshell/xpcshell-imap.ini",
-    "test/xpcshell/xpcshell-local.ini",
-    "test/xpcshell/xpcshell-nntp.ini",
+    "test/xpcshell/xpcshell-imap.toml",
+    "test/xpcshell/xpcshell-local.toml",
+    "test/xpcshell/xpcshell-nntp.toml",
 ]

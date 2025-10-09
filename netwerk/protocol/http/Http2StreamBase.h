@@ -33,11 +33,14 @@ class Http2Session;
 class Http2Stream;
 class Http2PushedStream;
 class Http2Decompressor;
+class Http2WebTransportSession;
 
-class Http2StreamBase : public nsAHttpSegmentReader,
+class Http2StreamBase : public nsISupports,
+                        public nsAHttpSegmentReader,
                         public nsAHttpSegmentWriter,
                         public SupportsWeakPtr {
  public:
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSAHTTPSEGMENTREADER
 
   enum stateType {
@@ -102,6 +105,10 @@ class Http2StreamBase : public nsAHttpSegmentReader,
 
   void SetQueued(bool aStatus) { mQueued = aStatus ? 1 : 0; }
   bool Queued() { return mQueued; }
+  void SetInWriteQueue(bool aStatus) { mInWriteQueue = aStatus ? 1 : 0; }
+  bool InWriteQueue() { return mInWriteQueue; }
+  void SetInReadQueue(bool aStatus) { mInReadQueue = aStatus ? 1 : 0; }
+  bool InReadQueue() { return mInReadQueue; }
 
   void SetCountAsActive(bool aStatus) { mCountAsActive = aStatus ? 1 : 0; }
   bool CountAsActive() { return mCountAsActive; }
@@ -138,7 +145,7 @@ class Http2StreamBase : public nsAHttpSegmentReader,
 
   bool BlockedOnRwin() { return mBlockedOnRwin; }
 
-  uint32_t Priority() { return mPriority; }
+  uint32_t RFC7540Priority() { return mRFC7540Priority; }
   uint32_t PriorityDependency() { return mPriorityDependency; }
   uint8_t PriorityWeight() { return mPriorityWeight; }
   void SetPriority(uint32_t);
@@ -160,14 +167,20 @@ class Http2StreamBase : public nsAHttpSegmentReader,
   nsresult GetOriginAttributes(mozilla::OriginAttributes* oa);
 
   virtual void CurrentBrowserIdChanged(uint64_t id);
-  void CurrentBrowserIdChangedInternal(
-      uint64_t id);  // For use by pushed streams only
+  // For use by pushed streams only
+  void CurrentBrowserIdChangedInternal(uint64_t id);
+
+  virtual void UpdatePriorityRFC7540(Http2Session* session);
+  virtual void UpdatePriority(Http2Session* session);
 
   virtual bool IsTunnel() { return false; }
 
   virtual uint32_t GetWireStreamId() { return mStreamID; }
   virtual Http2Stream* GetHttp2Stream() { return nullptr; }
   virtual Http2PushedStream* GetHttp2PushedStream() { return nullptr; }
+  virtual Http2WebTransportSession* GetHttp2WebTransportSession() {
+    return nullptr;
+  }
 
   [[nodiscard]] virtual nsresult OnWriteSegment(char*, uint32_t,
                                                 uint32_t*) override;
@@ -196,7 +209,8 @@ class Http2StreamBase : public nsAHttpSegmentReader,
 
  protected:
   virtual ~Http2StreamBase();
-
+  friend class DeleteHttp2StreamBase;
+  void DeleteSelfOnSocketThread();
   virtual void HandleResponseHeaders(nsACString& aHeadersOut,
                                      int32_t httpResponseCode) {}
   virtual nsresult CallToWriteData(uint32_t count, uint32_t* countRead) = 0;
@@ -249,6 +263,10 @@ class Http2StreamBase : public nsAHttpSegmentReader,
   // concurrency limits being exceeded
   uint32_t mQueued : 1;
 
+  // Flag to indicate whether this stream is in write or read queue
+  uint32_t mInWriteQueue : 1;
+  uint32_t mInReadQueue : 1;
+
   void ChangeState(enum upstreamStateType);
 
   virtual void AdjustInitialWindow();
@@ -269,7 +287,7 @@ class Http2StreamBase : public nsAHttpSegmentReader,
   uint32_t mTxInlineFrameSize{0};
   uint32_t mTxInlineFrameUsed{0};
 
-  uint32_t mPriority = 0;  // geckoish weight
+  uint32_t mRFC7540Priority = 0;  // geckoish weight
 
   // Buffer for request header compression.
   nsCString mFlatHttpRequestHeaders;

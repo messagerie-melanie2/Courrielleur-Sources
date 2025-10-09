@@ -22,42 +22,34 @@ const OLD_BOOKMARK_QUERY_TRANSLATIONS = {
 };
 
 /**
- * Generates an hash for the given string.
- *
- * @note The generated hash is returned in base64 form.  Mind the fact base64
- * is case-sensitive if you are going to reuse this code.
+ * An error that occurs due to a hash conflict.
  */
-function generateHash(aString) {
-  let cryptoHash = Cc["@mozilla.org/security/hash;1"].createInstance(
-    Ci.nsICryptoHash
-  );
-  cryptoHash.init(Ci.nsICryptoHash.MD5);
-  let stringStream = Cc["@mozilla.org/io/string-input-stream;1"].createInstance(
-    Ci.nsIStringInputStream
-  );
-  stringStream.setUTF8Data(aString);
-  cryptoHash.updateFromStream(stringStream, -1);
-  // base64 allows the '/' char, but we can't use it for filenames.
-  return cryptoHash.finish(true).replace(/\//g, "-");
+class HashConflictError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "HashConflictError";
+    this.becauseSameHash = true;
+  }
 }
 
-export var BookmarkJSONUtils = Object.freeze({
+export var BookmarkJSONUtils = {
   /**
    * Import bookmarks from a url.
    *
    * @param {string} aSpec
-   *        url of the bookmark data.
+   *   The url of the bookmark data.
+   * @param {object} [options]
    * @param {boolean} [options.replace]
-   *        Whether we should erase existing bookmarks before importing.
-   * @param {PlacesUtils.bookmarks.SOURCES} [options.source]
-   *        The bookmark change source, used to determine the sync status for
-   *        imported bookmarks. Defaults to `RESTORE` if `replace = true`, or
-   *        `IMPORT` otherwise.
-   *
-   * @returns {Promise<number>} The number of imported bookmarks, not including
-   *                            folders and separators.
-   * @resolves When the new bookmarks have been created.
-   * @rejects JavaScript exception.
+   *   Whether we should erase existing bookmarks before importing.
+   * @param {nsINavBookmarksService.ChangeSource} [options.source]
+   *   The bookmark change source, used to determine the sync status for
+   *   imported bookmarks. Defaults to Ci.nsINavBookmarksService.SOURCE_RESTORE
+   *   if `replace = true`, or Ci.nsINavBookmarksService.SOURCE_IMPORT
+   *   otherwise.
+   * @returns {Promise<number>}
+   *   The number of imported bookmarks, not including folders and separators.
+   *   Resolves when the new bookmarks have been created.
+   * @throws {Error} When a Javascript exception has occurred.
    */
   async importFromURL(
     aSpec,
@@ -76,7 +68,7 @@ export var BookmarkJSONUtils = Object.freeze({
 
       notifyObservers(PlacesUtils.TOPIC_BOOKMARKS_RESTORE_SUCCESS, aReplace);
     } catch (ex) {
-      console.error("Failed to restore bookmarks from " + aSpec + ": " + ex);
+      console.error(`Failed to restore bookmarks from ${aSpec}:`, ex);
       notifyObservers(PlacesUtils.TOPIC_BOOKMARKS_RESTORE_FAILED, aReplace);
       throw ex;
     }
@@ -86,19 +78,21 @@ export var BookmarkJSONUtils = Object.freeze({
   /**
    * Restores bookmarks and tags from a JSON file.
    *
-   * @param aFilePath
-   *        OS.File path string of bookmarks in JSON or JSONlz4 format to be restored.
-   * @param [options.replace]
-   *        Whether we should erase existing bookmarks before importing.
-   * @param [options.source]
-   *        The bookmark change source, used to determine the sync status for
-   *        imported bookmarks. Defaults to `RESTORE` if `replace = true`, or
-   *        `IMPORT` otherwise.
-   *
-   * @returns {Promise<number>} The number of imported bookmarks, not including
-   *                            folders and separators.
-   * @resolves When the new bookmarks have been created.
-   * @rejects JavaScript exception.
+   * @param {string} aFilePath
+   *   OS.File path string of bookmarks in JSON or JSONlz4 format to be
+   *   restored.
+   * @param {object} [options]
+   * @param {boolean} [options.replace]
+   *   Whether we should erase existing bookmarks before importing.
+   * @param {nsINavBookmarksService.ChangeSource} [options.source]
+   *   The bookmark change source, used to determine the sync status for
+   *   imported bookmarks. Defaults to Ci.nsINavBookmarksService.SOURCE_RESTORE
+   *   if `replace = true`, or Ci.nsINavBookmarksService.SOURCE_IMPORT
+   *   otherwise.
+   * @returns {Promise<number>}
+   *   The number of imported bookmarks, not including folders and separators.
+   *   Resolves when the new bookmarks have been created.
+   * @throws {Error} When a Javascript exception has occurred.
    */
   async importFromFile(
     aFilePath,
@@ -126,9 +120,7 @@ export var BookmarkJSONUtils = Object.freeze({
       }
       notifyObservers(PlacesUtils.TOPIC_BOOKMARKS_RESTORE_SUCCESS, aReplace);
     } catch (ex) {
-      console.error(
-        "Failed to restore bookmarks from " + aFilePath + ": " + ex
-      );
+      console.error(`Failed to restore bookmarks from ${aFilePath}:`, ex);
       notifyObservers(PlacesUtils.TOPIC_BOOKMARKS_RESTORE_FAILED, aReplace);
       throw ex;
     }
@@ -136,42 +128,40 @@ export var BookmarkJSONUtils = Object.freeze({
   },
 
   /**
+   * @typedef ExportToFileResult
+   * @property {number} count
+   *   Number of exported bookmarks.
+   * @property {string} hash
+   *   File hash for contents comparison.
+   */
+
+  /**
    * Serializes bookmarks using JSON, and writes to the supplied file path.
    *
-   * @param {path} aFilePath
+   * @param {string} aFilePath
    *   Path string for the bookmarks file to be created.
    * @param {object} [aOptions]
-   * @param {string} [failIfHashIs]
+   * @param {string} [aOptions.failIfHashIs]
    *   If the generated file would have the same hash defined here, will reject
    *   with ex.becauseSameHash
-   * @param {boolean} [compress]
+   * @param {boolean} [aOptions.compress]
    *   If true, writes file using lz4 compression
-   * @return {Promise}
-   * @resolves once the file has been created, to an object with the
-   *           following properties:
-   *            - count: number of exported bookmarks
-   *            - hash: file hash for contents comparison
-   * @rejects JavaScript exception.
+   * @returns {Promise<ExportToFileResult>}
+   *   Resolves with a result once the new file has been created.
+   * @throws {Error} When a Javascript exception has occurred.
    */
   async exportToFile(aFilePath, aOptions = {}) {
     let [bookmarks, count] = await lazy.PlacesBackups.getBookmarksTree();
-    let startTime = Date.now();
-    let jsonString = JSON.stringify(bookmarks);
     // Report the time taken to convert the tree to JSON.
-    try {
-      Services.telemetry
-        .getHistogramById("PLACES_BACKUPS_TOJSON_MS")
-        .add(Date.now() - startTime);
-    } catch (ex) {
-      console.error("Unable to report telemetry.");
-    }
+    let timerId = Glean.places.backupsTojson.start();
+    let jsonString = JSON.stringify(bookmarks);
+    Glean.places.backupsTojson.stopAndAccumulate(timerId);
 
-    let hash = generateHash(jsonString);
+    // Use "base64url" as this may be part of a filename.
+    let hash = PlacesUtils.sha256(jsonString, { format: "base64url" });
 
     if (hash === aOptions.failIfHashIs) {
-      let e = new Error("Hash conflict");
-      e.becauseSameHash = true;
-      throw e;
+      throw new HashConflictError("Hash conflict");
     }
 
     // Do not write to the tmp folder, otherwise if it has a different
@@ -183,7 +173,7 @@ export var BookmarkJSONUtils = Object.freeze({
     });
     return { count, hash };
   },
-});
+};
 
 function BookmarkImporter(aReplace, aSource) {
   this._replace = aReplace;
@@ -193,13 +183,11 @@ BookmarkImporter.prototype = {
   /**
    * Import bookmarks from a url.
    *
-   * @param {string} aSpec
-   *        url of the bookmark data.
-   *
-   * @returns {Promise<number>} The number of imported bookmarks, not including
-   *                            folders and separators.
-   * @resolves When the new bookmarks have been created.
-   * @rejects JavaScript exception.
+   * @param {string} spec Url of the bookmark data.
+   * @returns {Promise<number>}
+   *   The number of imported bookmarks, not including folders and separators.
+   *   Resolve when the new bookmarks have been created.
+   * @throws {Error} Javascript exception.
    */
   async importFromURL(spec) {
     if (!spec.startsWith("chrome://") && !spec.startsWith("file://")) {
@@ -209,6 +197,10 @@ BookmarkImporter.prototype = {
     }
     let nodes = await (await fetch(spec)).json();
 
+    // Nodes can have children, such as if the node is a container instead of a
+    // bookmark. We should define a holistic definition of a node that contains
+    // all possible properties.
+    // @ts-ignore
     if (!nodes.children || !nodes.children.length) {
       return 0;
     }
@@ -219,13 +211,12 @@ BookmarkImporter.prototype = {
   /**
    * Import bookmarks from a compressed file.
    *
-   * @param aFilePath
+   * @param {string} aFilePath
    *        OS.File path string of the bookmark data.
-   *
-   * @returns {Promise<number>} The number of imported bookmarks, not including
-   *                           folders and separators.
-   * @resolves When the new bookmarks have been created.
-   * @rejects JavaScript exception.
+   * @returns {Promise<number>}
+   *   The number of imported bookmarks, not including folders and separators.
+   *   Resolves when the new bookmarks have been created.
+   * @throws {Error} If the file has invalid data.
    */
   importFromCompressedFile: async function BI_importFromCompressedFile(
     aFilePath
@@ -239,18 +230,21 @@ BookmarkImporter.prototype = {
   /**
    * Import bookmarks from a JSON string.
    *
-   * @param {String} aString JSON string of serialized bookmark data.
-   * @returns {Promise<number>} The number of imported bookmarks, not including
-   *                            folders and separators.
-   * @resolves When the new bookmarks have been created.
-   * @rejects JavaScript exception.
+   * @param {string} aString JSON string of serialized bookmark data.
+   * @returns {Promise<number>}
+   *   The number of imported bookmarks, not including folders and separators.
+   *   Resolves when the new bookmarks have been created.
+   * @throws {Error} If the JSON has invalid data.
    */
   async importFromJSON(aString) {
     let nodes = PlacesUtils.unwrapNodes(
       aString,
       PlacesUtils.TYPE_X_MOZ_PLACE_CONTAINER
-    );
-
+    ).validNodes;
+    // Nodes can have children, such as if the node is a container instead of a
+    // bookmark. We should define a holistic definition of a node that contains
+    // all possible properties.
+    // @ts-ignore
     if (!nodes.length || !nodes[0].children || !nodes[0].children.length) {
       return 0;
     }
@@ -310,12 +304,9 @@ BookmarkImporter.prototype = {
       bookmarkCount += bookmarks.filter(
         bookmark => bookmark.type == PlacesUtils.bookmarks.TYPE_BOOKMARK
       ).length;
+
       // Now add any favicons.
-      try {
-        insertFaviconsForTree(node);
-      } catch (ex) {
-        console.error(`Failed to insert favicons: ${ex}`);
-      }
+      insertFaviconsForTree(node);
     }
     return bookmarkCount;
   },
@@ -330,8 +321,10 @@ function notifyObservers(topic, replace) {
  * replaces any old (pre Firefox 62) queries that contain "folder=<id>" parts with
  * "parent=<guid>".
  *
- * @param {Object} aNode The node to search.
- * @param {Array} aFolderIdMap An array mapping of old folder IDs to new folder GUIDs.
+ * @param {object} aNode
+ *   The node to search.
+ * @param {object} aFolderIdMap
+ *   An object mapping of old folder IDs to new folder GUIDs.
  */
 function fixupSearchQueries(aNode, aFolderIdMap) {
   if (aNode.url && aNode.url.startsWith("place:")) {
@@ -347,13 +340,14 @@ function fixupSearchQueries(aNode, aFolderIdMap) {
 /**
  * Replaces imported folder ids with their local counterparts in a place: URI.
  *
- * @param   {String} aQueryURL
- *          A place: URI with folder ids.
- * @param   {Object} aFolderIdMap
- *          An array mapping of old folder IDs to new folder GUIDs.
- * @return {String} the fixed up URI if all matched. If some matched, it returns
- *         the URI with only the matching folders included. If none matched
- *         it returns the input URI unchanged.
+ * @param {string} aQueryURL
+ *   A place: URI with folder ids.
+ * @param {object} aFolderIdMap
+ *   An object mapping of old folder IDs to new folder GUIDs.
+ * @returns {string}
+ *   The fixed up URI if all matched. If some matched, it returns the URI with
+ *   only the matching folders included. If none matched it returns the input
+ *   URI unchanged.
  */
 function fixupQuery(aQueryURL, aFolderIdMap) {
   let invalid = false;
@@ -398,7 +392,8 @@ const rootToFolderGuidMap = {
  * will only change GUIDs for the built-in folders. Other folders will remain
  * unchanged.
  *
- * @param {Object} A bookmark node that is updated with the new GUID if necessary.
+ * @param {object} node
+ *   A bookmark node that is updated with the new GUID if necessary.
  */
 function fixupRootFolderGuid(node) {
   if (!node.guid && node.root && node.root in rootToFolderGuidMap) {
@@ -410,11 +405,9 @@ function fixupRootFolderGuid(node) {
  * Translates the JSON types for a node and its children into Places compatible
  * types. Also handles updating of other parameters e.g. dateAdded and lastModified.
  *
- * @param {Object} node A node to be updated. If it contains children, they will
+ * @param {object} node A node to be updated. If it contains children, they will
  *                      be updated as well.
- * @return {Array} An array containing two items:
- *       - {Object} A map of current folder ids to GUIDS
- *       - {Array} An array of GUIDs for nodes that contain query URIs
+ * @returns {object} A map of current folder ids to GUIDS.
  */
 function translateTreeTypes(node) {
   let folderIdToGuidMap = {};
@@ -426,7 +419,7 @@ function translateTreeTypes(node) {
   }
 
   switch (node.type) {
-    case PlacesUtils.TYPE_X_MOZ_PLACE_CONTAINER:
+    case PlacesUtils.TYPE_X_MOZ_PLACE_CONTAINER: {
       node.type = PlacesUtils.bookmarks.TYPE_FOLDER;
 
       // Older type mobile folders have a random guid with an annotation. We need
@@ -445,6 +438,7 @@ function translateTreeTypes(node) {
       // queries later.
       folderIdToGuidMap[node.id] = node.guid;
       break;
+    }
     case PlacesUtils.TYPE_X_MOZ_PLACE:
       node.type = PlacesUtils.bookmarks.TYPE_BOOKMARK;
       break;
@@ -456,7 +450,7 @@ function translateTreeTypes(node) {
       break;
     default:
       // No need to throw/reject here, insertTree will remove this node automatically.
-      console.error(`Unexpected bookmark type ${node.type}`);
+      console.error("Unexpected bookmark type", node.type);
       break;
   }
 
@@ -519,47 +513,31 @@ function translateTreeTypes(node) {
  * It is assumed the node has already been inserted into the bookmarks
  * database.
  *
- * @param {Object} node The bookmark node for icons to be inserted.
+ * @param {object} node The bookmark node for icons to be inserted.
  */
 function insertFaviconForNode(node) {
-  if (node.icon) {
-    try {
-      // Create a fake faviconURI to use (FIXME: bug 523932)
-      let faviconURI = Services.io.newURI("fake-favicon-uri:" + node.url);
-      PlacesUtils.favicons.replaceFaviconDataFromDataURL(
-        faviconURI,
-        node.icon,
-        0,
-        Services.scriptSecurityManager.getSystemPrincipal()
-      );
-      PlacesUtils.favicons.setAndFetchFaviconForPage(
-        Services.io.newURI(node.url),
-        faviconURI,
-        false,
-        PlacesUtils.favicons.FAVICON_LOAD_NON_PRIVATE,
-        null,
-        Services.scriptSecurityManager.getSystemPrincipal()
-      );
-    } catch (ex) {
-      console.error("Failed to import favicon data:" + ex);
-    }
-  }
-
-  if (!node.iconUri) {
+  if (!node.icon && !node.iconUri) {
+    // No favicon information.
     return;
   }
 
   try {
-    PlacesUtils.favicons.setAndFetchFaviconForPage(
-      Services.io.newURI(node.url),
-      Services.io.newURI(node.iconUri),
-      false,
-      PlacesUtils.favicons.FAVICON_LOAD_NON_PRIVATE,
-      null,
-      Services.scriptSecurityManager.getSystemPrincipal()
-    );
+    // If icon is not specified, suppose iconUri may contain a data uri.
+    let faviconDataURI = Services.io.newURI(node.icon || node.iconUri);
+    if (!faviconDataURI.schemeIs("data")) {
+      return;
+    }
+
+    PlacesUtils.favicons
+      .setFaviconForPage(
+        Services.io.newURI(node.url),
+        // Use iconUri otherwise create a fake favicon URI to use (FIXME: bug 523932)
+        Services.io.newURI(node.iconUri ?? "fake-favicon-uri:" + node.url),
+        faviconDataURI
+      )
+      .catch(console.error);
   } catch (ex) {
-    console.error("Failed to import favicon URI:" + ex);
+    console.error("Failed to import favicon data:", ex);
   }
 }
 
@@ -570,7 +548,7 @@ function insertFaviconForNode(node) {
  * It is assumed the nodes have already been inserted into the bookmarks
  * database.
  *
- * @param {Object} nodeTree The bookmark node tree for icons to be inserted.
+ * @param {object} nodeTree The bookmark node tree for icons to be inserted.
  */
 function insertFaviconsForTree(nodeTree) {
   insertFaviconForNode(nodeTree);

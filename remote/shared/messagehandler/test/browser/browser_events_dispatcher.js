@@ -87,6 +87,127 @@ add_task(async function test_add_remove_event_listener() {
   gBrowser.removeTab(tab);
 });
 
+add_task(async function test_add_remove_event_listener_for_user_context() {
+  const tab = await addTab("https://example.com/document-builder.sjs?html=tab");
+  const browsingContext = tab.linkedBrowser.browsingContext;
+  const contextDescriptor = {
+    type: ContextDescriptorType.UserContext,
+    id: browsingContext.originAttributes.userContextId,
+  };
+
+  const root = createRootMessageHandler("session-id-event");
+  const monitoringEvents = await setupEventMonitoring(root);
+  await emitTestEvent(root, browsingContext, monitoringEvents);
+  is(await isSubscribed(root, browsingContext), false);
+
+  info("Add an listener for eventemitter.testEvent");
+  const events = [];
+  const onEvent = (event, data) => events.push(data.text);
+  await root.eventsDispatcher.on(
+    "eventemitter.testEvent",
+    contextDescriptor,
+    onEvent
+  );
+  is(await isSubscribed(root, browsingContext), true);
+
+  await emitTestEvent(root, browsingContext, monitoringEvents);
+  is(events.length, 1);
+
+  info("Remove the listener for eventemitter.testEvent");
+  await root.eventsDispatcher.off(
+    "eventemitter.testEvent",
+    contextDescriptor,
+    onEvent
+  );
+  is(await isSubscribed(root, browsingContext), false);
+
+  root.destroy();
+  gBrowser.removeTab(tab);
+});
+
+add_task(async function test_has_listener() {
+  const tab1 = await addTab("https://example.com/document-builder.sjs?html=1");
+  const browsingContext1 = tab1.linkedBrowser.browsingContext;
+
+  const tab2 = await addTab("https://example.com/document-builder.sjs?html=2");
+  const browsingContext2 = tab2.linkedBrowser.browsingContext;
+
+  const contextDescriptor1 = {
+    type: ContextDescriptorType.TopBrowsingContext,
+    id: browsingContext1.browserId,
+  };
+  const contextDescriptor2 = {
+    type: ContextDescriptorType.TopBrowsingContext,
+    id: browsingContext2.browserId,
+  };
+
+  const root = createRootMessageHandler("session-id-event");
+
+  // Shortcut for the EventsDispatcher.hasListener API.
+  function hasListener(contextId) {
+    return root.eventsDispatcher.hasListener("eventemitter.testEvent", {
+      contextId,
+    });
+  }
+
+  const onEvent = () => {};
+  await root.eventsDispatcher.on(
+    "eventemitter.testEvent",
+    contextDescriptor1,
+    onEvent
+  );
+  ok(hasListener(browsingContext1.id), "Has a listener for browsingContext1");
+  ok(!hasListener(browsingContext2.id), "No listener for browsingContext2");
+
+  await root.eventsDispatcher.on(
+    "eventemitter.testEvent",
+    contextDescriptor2,
+    onEvent
+  );
+  ok(hasListener(browsingContext1.id), "Still a listener for browsingContext1");
+  ok(hasListener(browsingContext2.id), "Has a listener for browsingContext2");
+
+  await root.eventsDispatcher.off(
+    "eventemitter.testEvent",
+    contextDescriptor1,
+    onEvent
+  );
+  ok(!hasListener(browsingContext1.id), "No listener for browsingContext1");
+  ok(hasListener(browsingContext2.id), "Still a listener for browsingContext2");
+
+  await root.eventsDispatcher.off(
+    "eventemitter.testEvent",
+    contextDescriptor2,
+    onEvent
+  );
+  ok(!hasListener(browsingContext1.id), "No listener for browsingContext1");
+  ok(!hasListener(browsingContext2.id), "No listener for browsingContext2");
+
+  await root.eventsDispatcher.on(
+    "eventemitter.testEvent",
+    {
+      type: ContextDescriptorType.All,
+    },
+    onEvent
+  );
+  ok(hasListener(browsingContext1.id), "Has a listener for browsingContext1");
+  ok(hasListener(browsingContext2.id), "Has a listener for browsingContext2");
+
+  await root.eventsDispatcher.off(
+    "eventemitter.testEvent",
+    {
+      type: ContextDescriptorType.All,
+    },
+    onEvent
+  );
+  ok(!hasListener(browsingContext1.id), "No listener for browsingContext1");
+  ok(!hasListener(browsingContext2.id), "No listener for browsingContext2");
+
+  root.destroy();
+  gBrowser.removeTab(tab2);
+  gBrowser.removeTab(tab1);
+});
+
 /**
  * Check that two callbacks can subscribe to the same event in the same context
  * in parallel.

@@ -6,54 +6,122 @@
 
 // Directly relating to QUIC frames.
 
-use neqo_common::{qtrace, Decoder};
-
-use crate::cid::MAX_CONNECTION_ID_LEN;
-use crate::packet::PacketType;
-use crate::stream_id::{StreamId, StreamType};
-use crate::{AppError, ConnectionError, Error, Res, TransportError};
-
-use std::convert::TryFrom;
 use std::ops::RangeInclusive;
 
-#[allow(clippy::module_name_repetitions)]
-pub type FrameType = u64;
+use neqo_common::{qtrace, Decoder, Encoder, MAX_VARINT};
+use strum::FromRepr;
 
-const FRAME_TYPE_PADDING: FrameType = 0x0;
-pub const FRAME_TYPE_PING: FrameType = 0x1;
-pub const FRAME_TYPE_ACK: FrameType = 0x2;
-const FRAME_TYPE_ACK_ECN: FrameType = 0x3;
-pub const FRAME_TYPE_RESET_STREAM: FrameType = 0x4;
-pub const FRAME_TYPE_STOP_SENDING: FrameType = 0x5;
-pub const FRAME_TYPE_CRYPTO: FrameType = 0x6;
-pub const FRAME_TYPE_NEW_TOKEN: FrameType = 0x7;
-const FRAME_TYPE_STREAM: FrameType = 0x8;
-const FRAME_TYPE_STREAM_MAX: FrameType = 0xf;
-pub const FRAME_TYPE_MAX_DATA: FrameType = 0x10;
-pub const FRAME_TYPE_MAX_STREAM_DATA: FrameType = 0x11;
-pub const FRAME_TYPE_MAX_STREAMS_BIDI: FrameType = 0x12;
-pub const FRAME_TYPE_MAX_STREAMS_UNIDI: FrameType = 0x13;
-pub const FRAME_TYPE_DATA_BLOCKED: FrameType = 0x14;
-pub const FRAME_TYPE_STREAM_DATA_BLOCKED: FrameType = 0x15;
-pub const FRAME_TYPE_STREAMS_BLOCKED_BIDI: FrameType = 0x16;
-pub const FRAME_TYPE_STREAMS_BLOCKED_UNIDI: FrameType = 0x17;
-pub const FRAME_TYPE_NEW_CONNECTION_ID: FrameType = 0x18;
-pub const FRAME_TYPE_RETIRE_CONNECTION_ID: FrameType = 0x19;
-pub const FRAME_TYPE_PATH_CHALLENGE: FrameType = 0x1a;
-pub const FRAME_TYPE_PATH_RESPONSE: FrameType = 0x1b;
-pub const FRAME_TYPE_CONNECTION_CLOSE_TRANSPORT: FrameType = 0x1c;
-pub const FRAME_TYPE_CONNECTION_CLOSE_APPLICATION: FrameType = 0x1d;
-pub const FRAME_TYPE_HANDSHAKE_DONE: FrameType = 0x1e;
-// draft-ietf-quic-ack-delay
-pub const FRAME_TYPE_ACK_FREQUENCY: FrameType = 0xaf;
-// draft-ietf-quic-datagram
-pub const FRAME_TYPE_DATAGRAM: FrameType = 0x30;
-pub const FRAME_TYPE_DATAGRAM_WITH_LEN: FrameType = 0x31;
-const DATAGRAM_FRAME_BIT_LEN: u64 = 0x01;
+use crate::{
+    cid::MAX_CONNECTION_ID_LEN,
+    ecn,
+    packet::PacketType,
+    stream_id::{StreamId, StreamType},
+    AppError, CloseReason, Error, Res, TransportError,
+};
 
-const STREAM_FRAME_BIT_FIN: u64 = 0x01;
-const STREAM_FRAME_BIT_LEN: u64 = 0x02;
-const STREAM_FRAME_BIT_OFF: u64 = 0x04;
+#[repr(u64)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromRepr)]
+pub enum FrameType {
+    Padding = 0x0,
+    Ping = 0x1,
+    Ack = 0x2,
+    AckEcn = 0x3,
+    ResetStream = 0x4,
+    StopSending = 0x5,
+    Crypto = 0x6,
+    NewToken = 0x7,
+    Stream = 0x08, // + 0b000
+    StreamWithFin = 0x08 + 0b001,
+    StreamWithLen = 0x08 + 0b010,
+    StreamWithLenFin = 0x08 + 0b011,
+    StreamWithOff = 0x08 + 0b100,
+    StreamWithOffFin = 0x08 + 0b101,
+    StreamWithOffLen = 0x08 + 0b110,
+    StreamWithOffLenFin = 0x08 + 0b111,
+    MaxData = 0x10,
+    MaxStreamData = 0x11,
+    MaxStreamsBiDi = 0x12,
+    MaxStreamsUniDi = 0x13,
+    DataBlocked = 0x14,
+    StreamDataBlocked = 0x15,
+    StreamsBlockedBiDi = 0x16,
+    StreamsBlockedUniDi = 0x17,
+    NewConnectionId = 0x18,
+    RetireConnectionId = 0x19,
+    PathChallenge = 0x1a,
+    PathResponse = 0x1b,
+    ConnectionCloseTransport = 0x1c,
+    ConnectionCloseApplication = 0x1d,
+    HandshakeDone = 0x1e,
+    // draft-ietf-quic-ack-delay
+    AckFrequency = 0xaf,
+    // draft-ietf-quic-datagram
+    Datagram = 0x30,
+    DatagramWithLen = 0x31,
+}
+
+impl From<FrameType> for u64 {
+    fn from(val: FrameType) -> Self {
+        val as Self
+    }
+}
+
+impl From<FrameType> for u8 {
+    fn from(val: FrameType) -> Self {
+        val as Self
+    }
+}
+
+impl TryFrom<u64> for FrameType {
+    type Error = Error;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        Self::from_repr(value).ok_or(Error::UnknownFrameType)
+    }
+}
+
+impl FrameType {
+    const fn is_stream_with_length(self) -> bool {
+        matches!(
+            self,
+            Self::StreamWithLen
+                | Self::StreamWithLenFin
+                | Self::StreamWithOffLen
+                | Self::StreamWithOffLenFin
+        )
+    }
+
+    const fn is_stream_with_offset(self) -> bool {
+        matches!(
+            self,
+            Self::StreamWithOff
+                | Self::StreamWithOffFin
+                | Self::StreamWithOffLen
+                | Self::StreamWithOffLenFin
+        )
+    }
+    const fn is_stream_with_fin(self) -> bool {
+        matches!(
+            self,
+            Self::StreamWithFin
+                | Self::StreamWithLenFin
+                | Self::StreamWithOffFin
+                | Self::StreamWithOffLenFin
+        )
+    }
+}
+
+impl TryFrom<FrameType> for StreamType {
+    type Error = Error;
+
+    fn try_from(value: FrameType) -> Result<Self, Self::Error> {
+        match value {
+            FrameType::MaxStreamsBiDi | FrameType::StreamsBlockedBiDi => Ok(Self::BiDi),
+            FrameType::MaxStreamsUniDi | FrameType::StreamsBlockedUniDi => Ok(Self::UniDi),
+            _ => Err(Error::FrameEncodingError),
+        }
+    }
+}
 
 #[derive(PartialEq, Eq, Debug, PartialOrd, Ord, Clone, Copy)]
 pub enum CloseError {
@@ -62,52 +130,45 @@ pub enum CloseError {
 }
 
 impl CloseError {
-    fn frame_type_bit(self) -> u64 {
-        match self {
-            Self::Transport(_) => 0,
-            Self::Application(_) => 1,
-        }
-    }
-
-    fn from_type_bit(bit: u64, code: u64) -> Self {
-        if (bit & 0x01) == 0 {
-            Self::Transport(code)
-        } else {
-            Self::Application(code)
-        }
-    }
-
-    pub fn code(&self) -> u64 {
+    #[must_use]
+    pub const fn code(&self) -> u64 {
         match self {
             Self::Transport(c) | Self::Application(c) => *c,
         }
     }
 }
 
-impl From<ConnectionError> for CloseError {
-    fn from(err: ConnectionError) -> Self {
+impl From<CloseReason> for CloseError {
+    fn from(err: CloseReason) -> Self {
         match err {
-            ConnectionError::Transport(c) => Self::Transport(c.code()),
-            ConnectionError::Application(c) => Self::Application(c),
+            CloseReason::Transport(c) => Self::Transport(c.code()),
+            CloseReason::Application(c) => Self::Application(c),
         }
+    }
+}
+
+impl From<std::array::TryFromSliceError> for Error {
+    fn from(_err: std::array::TryFromSliceError) -> Self {
+        Self::FrameEncodingError
     }
 }
 
 #[derive(PartialEq, Eq, Debug, Default, Clone)]
 pub struct AckRange {
-    pub(crate) gap: u64,
-    pub(crate) range: u64,
+    gap: u64,
+    range: u64,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Frame<'a> {
-    Padding,
+    Padding(u16),
     Ping,
     Ack {
         largest_acknowledged: u64,
         ack_delay: u64,
         first_ack_range: u64,
         ack_ranges: Vec<AckRange>,
+        ecn_count: Option<ecn::Count>,
     },
     ResetStream {
         stream_id: StreamId,
@@ -174,7 +235,7 @@ pub enum Frame<'a> {
         frame_type: u64,
         // Not a reference as we use this to hold the value.
         // This is not used in optimized builds anyway.
-        reason_phrase: Vec<u8>,
+        reason_phrase: String,
     },
     HandshakeDone,
     AckFrequency {
@@ -196,63 +257,50 @@ pub enum Frame<'a> {
 }
 
 impl<'a> Frame<'a> {
-    fn get_stream_type_bit(stream_type: StreamType) -> u64 {
-        match stream_type {
-            StreamType::BiDi => 0,
-            StreamType::UniDi => 1,
-        }
-    }
-
-    fn stream_type_from_bit(bit: u64) -> StreamType {
-        if (bit & 0x01) == 0 {
-            StreamType::BiDi
-        } else {
-            StreamType::UniDi
-        }
-    }
-
-    pub fn get_type(&self) -> FrameType {
+    #[must_use]
+    pub const fn get_type(&self) -> FrameType {
         match self {
-            Self::Padding => FRAME_TYPE_PADDING,
-            Self::Ping => FRAME_TYPE_PING,
-            Self::Ack { .. } => FRAME_TYPE_ACK, // We don't do ACK ECN.
-            Self::ResetStream { .. } => FRAME_TYPE_RESET_STREAM,
-            Self::StopSending { .. } => FRAME_TYPE_STOP_SENDING,
-            Self::Crypto { .. } => FRAME_TYPE_CRYPTO,
-            Self::NewToken { .. } => FRAME_TYPE_NEW_TOKEN,
+            Self::Padding { .. } => FrameType::Padding,
+            Self::Ping => FrameType::Ping,
+            Self::Ack { .. } => FrameType::Ack,
+            Self::ResetStream { .. } => FrameType::ResetStream,
+            Self::StopSending { .. } => FrameType::StopSending,
+            Self::Crypto { .. } => FrameType::Crypto,
+            Self::NewToken { .. } => FrameType::NewToken,
             Self::Stream {
                 fin, offset, fill, ..
             } => Self::stream_type(*fin, *offset > 0, *fill),
-            Self::MaxData { .. } => FRAME_TYPE_MAX_DATA,
-            Self::MaxStreamData { .. } => FRAME_TYPE_MAX_STREAM_DATA,
-            Self::MaxStreams { stream_type, .. } => {
-                FRAME_TYPE_MAX_STREAMS_BIDI + Self::get_stream_type_bit(*stream_type)
-            }
-            Self::DataBlocked { .. } => FRAME_TYPE_DATA_BLOCKED,
-            Self::StreamDataBlocked { .. } => FRAME_TYPE_STREAM_DATA_BLOCKED,
-            Self::StreamsBlocked { stream_type, .. } => {
-                FRAME_TYPE_STREAMS_BLOCKED_BIDI + Self::get_stream_type_bit(*stream_type)
-            }
-            Self::NewConnectionId { .. } => FRAME_TYPE_NEW_CONNECTION_ID,
-            Self::RetireConnectionId { .. } => FRAME_TYPE_RETIRE_CONNECTION_ID,
-            Self::PathChallenge { .. } => FRAME_TYPE_PATH_CHALLENGE,
-            Self::PathResponse { .. } => FRAME_TYPE_PATH_RESPONSE,
-            Self::ConnectionClose { error_code, .. } => {
-                FRAME_TYPE_CONNECTION_CLOSE_TRANSPORT + error_code.frame_type_bit()
-            }
-            Self::HandshakeDone => FRAME_TYPE_HANDSHAKE_DONE,
-            Self::AckFrequency { .. } => FRAME_TYPE_ACK_FREQUENCY,
-            Self::Datagram { fill, .. } => {
-                if *fill {
-                    FRAME_TYPE_DATAGRAM
-                } else {
-                    FRAME_TYPE_DATAGRAM_WITH_LEN
-                }
-            }
+            Self::MaxData { .. } => FrameType::MaxData,
+            Self::MaxStreamData { .. } => FrameType::MaxStreamData,
+            Self::MaxStreams { stream_type, .. } => match stream_type {
+                StreamType::BiDi => FrameType::MaxStreamsBiDi,
+                StreamType::UniDi => FrameType::MaxStreamsUniDi,
+            },
+            Self::DataBlocked { .. } => FrameType::DataBlocked,
+            Self::StreamDataBlocked { .. } => FrameType::StreamDataBlocked,
+            Self::StreamsBlocked { stream_type, .. } => match stream_type {
+                StreamType::BiDi => FrameType::StreamsBlockedBiDi,
+                StreamType::UniDi => FrameType::StreamsBlockedUniDi,
+            },
+            Self::NewConnectionId { .. } => FrameType::NewConnectionId,
+            Self::RetireConnectionId { .. } => FrameType::RetireConnectionId,
+            Self::PathChallenge { .. } => FrameType::PathChallenge,
+            Self::PathResponse { .. } => FrameType::PathResponse,
+            Self::ConnectionClose { error_code, .. } => match error_code {
+                CloseError::Transport(_) => FrameType::ConnectionCloseTransport,
+                CloseError::Application(_) => FrameType::ConnectionCloseApplication,
+            },
+            Self::HandshakeDone => FrameType::HandshakeDone,
+            Self::AckFrequency { .. } => FrameType::AckFrequency,
+            Self::Datagram { fill, .. } => match fill {
+                false => FrameType::Datagram,
+                true => FrameType::DatagramWithLen,
+            },
         }
     }
 
-    pub fn is_stream(&self) -> bool {
+    #[must_use]
+    pub const fn is_stream(&self) -> bool {
         matches!(
             self,
             Self::ResetStream { .. }
@@ -267,44 +315,50 @@ impl<'a> Frame<'a> {
         )
     }
 
-    pub fn stream_type(fin: bool, nonzero_offset: bool, fill: bool) -> u64 {
-        let mut t = FRAME_TYPE_STREAM;
-        if fin {
-            t |= STREAM_FRAME_BIT_FIN;
+    #[must_use]
+    pub const fn stream_type(fin: bool, nonzero_offset: bool, fill: bool) -> FrameType {
+        match (nonzero_offset, fill, fin) {
+            (false, true, false) => FrameType::Stream,
+            (false, true, true) => FrameType::StreamWithFin,
+            (false, false, false) => FrameType::StreamWithLen,
+            (false, false, true) => FrameType::StreamWithLenFin,
+            (true, true, false) => FrameType::StreamWithOff,
+            (true, true, true) => FrameType::StreamWithOffFin,
+            (true, false, false) => FrameType::StreamWithOffLen,
+            (true, false, true) => FrameType::StreamWithOffLenFin,
         }
-        if nonzero_offset {
-            t |= STREAM_FRAME_BIT_OFF;
-        }
-        if !fill {
-            t |= STREAM_FRAME_BIT_LEN;
-        }
-        t
     }
 
     /// If the frame causes a recipient to generate an ACK within its
     /// advertised maximum acknowledgement delay.
-    pub fn ack_eliciting(&self) -> bool {
+    #[must_use]
+    pub const fn ack_eliciting(&self) -> bool {
         !matches!(
             self,
-            Self::Ack { .. } | Self::Padding | Self::ConnectionClose { .. }
+            Self::Ack { .. } | Self::Padding { .. } | Self::ConnectionClose { .. }
         )
     }
 
     /// If the frame can be sent in a path probe
     /// without initiating migration to that path.
-    pub fn path_probing(&self) -> bool {
+    #[must_use]
+    pub const fn path_probing(&self) -> bool {
         matches!(
             self,
-            Self::Padding
+            Self::Padding { .. }
                 | Self::NewConnectionId { .. }
                 | Self::PathChallenge { .. }
                 | Self::PathResponse { .. }
         )
     }
 
-    /// Converts AckRanges as encoded in a ACK frame (see -transport
+    /// Converts `AckRanges` as encoded in a ACK frame (see -transport
     /// 19.3.1) into ranges of acked packets (end, start), inclusive of
     /// start and end values.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the ranges are invalid.
     pub fn decode_ack_frame(
         largest_acked: u64,
         first_ack_range: u64,
@@ -345,36 +399,34 @@ impl<'a> Frame<'a> {
         Ok(acked_ranges)
     }
 
-    pub fn dump(&self) -> Option<String> {
+    #[must_use]
+    pub fn dump(&self) -> String {
         match self {
-            Self::Crypto { offset, data } => Some(format!(
-                "Crypto {{ offset: {}, len: {} }}",
-                offset,
-                data.len()
-            )),
+            Self::Crypto { offset, data } => {
+                format!("Crypto {{ offset: {offset}, len: {} }}", data.len())
+            }
             Self::Stream {
                 stream_id,
                 offset,
                 fill,
                 data,
                 fin,
-            } => Some(format!(
-                "Stream {{ stream_id: {}, offset: {}, len: {}{}, fin: {} }}",
+            } => format!(
+                "Stream {{ stream_id: {}, offset: {offset}, len: {}{}, fin: {fin} }}",
                 stream_id.as_u64(),
-                offset,
                 if *fill { ">>" } else { "" },
                 data.len(),
-                fin,
-            )),
-            Self::Padding => None,
-            Self::Datagram { data, .. } => Some(format!("Datagram {{ len: {} }}", data.len())),
-            _ => Some(format!("{:?}", self)),
+            ),
+            Self::Padding(length) => format!("Padding {{ len: {length} }}"),
+            Self::Datagram { data, .. } => format!("Datagram {{ len: {} }}", data.len()),
+            _ => format!("{self:?}"),
         }
     }
 
+    #[must_use]
     pub fn is_allowed(&self, pt: PacketType) -> bool {
         match self {
-            Self::Padding | Self::Ping => true,
+            Self::Padding { .. } | Self::Ping => true,
             Self::Crypto { .. }
             | Self::Ack { .. }
             | Self::ConnectionClose {
@@ -386,7 +438,25 @@ impl<'a> Frame<'a> {
         }
     }
 
+    /// # Errors
+    ///
+    /// Returns an error if the frame cannot be decoded.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Yeah, but it's a nice match statement."
+    )]
     pub fn decode(dec: &mut Decoder<'a>) -> Res<Self> {
+        /// Maximum ACK Range Count in ACK Frame
+        ///
+        /// Given a max UDP datagram size of 64k bytes and a minimum ACK Range size of 2
+        /// bytes (2 QUIC varints), a single datagram can at most contain 32k ACK
+        /// Ranges.
+        ///
+        /// Note that the maximum (jumbogram) Ethernet MTU of 9216 or on the
+        /// Internet the regular Ethernet MTU of 1518 are more realistically to
+        /// be the limiting factor. Though for simplicity the higher limit is chosen.
+        const MAX_ACK_RANGE_COUNT: u64 = 32 * 1024;
+
         fn d<T>(v: Option<T>) -> Res<T> {
             v.ok_or(Error::NoMoreData)
         }
@@ -394,74 +464,112 @@ impl<'a> Frame<'a> {
             d(dec.decode_varint())
         }
 
-        // TODO(ekr@rtfm.com): check for minimal encoding
-        let t = d(dec.decode_varint())?;
+        fn decode_ack<'a>(dec: &mut Decoder<'a>, ecn: bool) -> Res<Frame<'a>> {
+            let la = dv(dec)?;
+            let ad = dv(dec)?;
+            let nr = dv(dec).and_then(|nr| {
+                if nr < MAX_ACK_RANGE_COUNT {
+                    Ok(nr)
+                } else {
+                    Err(Error::TooMuchData)
+                }
+            })?;
+            let fa = dv(dec)?;
+            let mut arr: Vec<AckRange> = Vec::with_capacity(usize::try_from(nr)?);
+            for _ in 0..nr {
+                let ar = AckRange {
+                    gap: dv(dec)?,
+                    range: dv(dec)?,
+                };
+                arr.push(ar);
+            }
+
+            // Now check for the values for ACK_ECN.
+            let ecn_count = ecn
+                .then(|| -> Res<ecn::Count> {
+                    Ok(ecn::Count::new(0, dv(dec)?, dv(dec)?, dv(dec)?))
+                })
+                .transpose()?;
+
+            Ok(Frame::Ack {
+                largest_acknowledged: la,
+                ack_delay: ad,
+                first_ack_range: fa,
+                ack_ranges: arr,
+                ecn_count,
+            })
+        }
+
+        // Check for minimal encoding of frame type.
+        let pos = dec.offset();
+        let t = dv(dec)?;
+        // RFC 9000, Section 12.4:
+        //
+        // The Frame Type field uses a variable-length integer encoding [...],
+        // with one exception. To ensure simple and efficient implementations of
+        // frame parsing, a frame type MUST use the shortest possible encoding.
+        if Encoder::varint_len(t) != dec.offset() - pos {
+            return Err(Error::ProtocolViolation);
+        }
+
+        let t = t.try_into()?;
         match t {
-            FRAME_TYPE_PADDING => Ok(Self::Padding),
-            FRAME_TYPE_PING => Ok(Self::Ping),
-            FRAME_TYPE_RESET_STREAM => Ok(Self::ResetStream {
+            FrameType::Padding => {
+                let mut length: u16 = 1;
+                while let Some(b) = dec.peek_byte() {
+                    if b != u8::from(FrameType::Padding) {
+                        break;
+                    }
+                    length += 1;
+                    dec.skip(1);
+                }
+                Ok(Self::Padding(length))
+            }
+            FrameType::Ping => Ok(Self::Ping),
+            FrameType::ResetStream => Ok(Self::ResetStream {
                 stream_id: StreamId::from(dv(dec)?),
-                application_error_code: d(dec.decode_varint())?,
+                application_error_code: dv(dec)?,
                 final_size: match dec.decode_varint() {
                     Some(v) => v,
                     _ => return Err(Error::NoMoreData),
                 },
             }),
-            FRAME_TYPE_ACK | FRAME_TYPE_ACK_ECN => {
-                let la = dv(dec)?;
-                let ad = dv(dec)?;
-                let nr = dv(dec)?;
-                let fa = dv(dec)?;
-                let mut arr: Vec<AckRange> = Vec::with_capacity(nr as usize);
-                for _ in 0..nr {
-                    let ar = AckRange {
-                        gap: dv(dec)?,
-                        range: dv(dec)?,
-                    };
-                    arr.push(ar);
-                }
-
-                // Now check for the values for ACK_ECN.
-                if t == FRAME_TYPE_ACK_ECN {
-                    dv(dec)?;
-                    dv(dec)?;
-                    dv(dec)?;
-                }
-
-                Ok(Self::Ack {
-                    largest_acknowledged: la,
-                    ack_delay: ad,
-                    first_ack_range: fa,
-                    ack_ranges: arr,
-                })
-            }
-            FRAME_TYPE_STOP_SENDING => Ok(Self::StopSending {
+            FrameType::Ack => decode_ack(dec, false),
+            FrameType::AckEcn => decode_ack(dec, true),
+            FrameType::StopSending => Ok(Self::StopSending {
                 stream_id: StreamId::from(dv(dec)?),
-                application_error_code: d(dec.decode_varint())?,
+                application_error_code: dv(dec)?,
             }),
-            FRAME_TYPE_CRYPTO => {
+            FrameType::Crypto => {
                 let offset = dv(dec)?;
                 let data = d(dec.decode_vvec())?;
-                if offset + u64::try_from(data.len()).unwrap() > ((1 << 62) - 1) {
+                if offset + u64::try_from(data.len())? > MAX_VARINT {
                     return Err(Error::FrameEncodingError);
                 }
                 Ok(Self::Crypto { offset, data })
             }
-            FRAME_TYPE_NEW_TOKEN => {
+            FrameType::NewToken => {
                 let token = d(dec.decode_vvec())?;
                 if token.is_empty() {
                     return Err(Error::FrameEncodingError);
                 }
                 Ok(Self::NewToken { token })
             }
-            FRAME_TYPE_STREAM..=FRAME_TYPE_STREAM_MAX => {
+            FrameType::Stream
+            | FrameType::StreamWithFin
+            | FrameType::StreamWithLen
+            | FrameType::StreamWithLenFin
+            | FrameType::StreamWithOff
+            | FrameType::StreamWithOffFin
+            | FrameType::StreamWithOffLen
+            | FrameType::StreamWithOffLenFin => {
                 let s = dv(dec)?;
-                let o = if t & STREAM_FRAME_BIT_OFF == 0 {
-                    0
-                } else {
+                let o = if t.is_stream_with_offset() {
                     dv(dec)?
+                } else {
+                    0
                 };
-                let fill = (t & STREAM_FRAME_BIT_LEN) == 0;
+                let fill = !t.is_stream_with_length();
                 let data = if fill {
                     qtrace!("STREAM frame, extends to the end of the packet");
                     dec.decode_remainder()
@@ -469,56 +577,56 @@ impl<'a> Frame<'a> {
                     qtrace!("STREAM frame, with length");
                     d(dec.decode_vvec())?
                 };
-                if o + u64::try_from(data.len()).unwrap() > ((1 << 62) - 1) {
+                if o + u64::try_from(data.len())? > MAX_VARINT {
                     return Err(Error::FrameEncodingError);
                 }
                 Ok(Self::Stream {
-                    fin: (t & STREAM_FRAME_BIT_FIN) != 0,
+                    fin: t.is_stream_with_fin(),
                     stream_id: StreamId::from(s),
                     offset: o,
                     data,
                     fill,
                 })
             }
-            FRAME_TYPE_MAX_DATA => Ok(Self::MaxData {
+            FrameType::MaxData => Ok(Self::MaxData {
                 maximum_data: dv(dec)?,
             }),
-            FRAME_TYPE_MAX_STREAM_DATA => Ok(Self::MaxStreamData {
+            FrameType::MaxStreamData => Ok(Self::MaxStreamData {
                 stream_id: StreamId::from(dv(dec)?),
                 maximum_stream_data: dv(dec)?,
             }),
-            FRAME_TYPE_MAX_STREAMS_BIDI | FRAME_TYPE_MAX_STREAMS_UNIDI => {
+            FrameType::MaxStreamsBiDi | FrameType::MaxStreamsUniDi => {
                 let m = dv(dec)?;
                 if m > (1 << 60) {
                     return Err(Error::StreamLimitError);
                 }
                 Ok(Self::MaxStreams {
-                    stream_type: Self::stream_type_from_bit(t),
+                    stream_type: t.try_into()?,
                     maximum_streams: m,
                 })
             }
-            FRAME_TYPE_DATA_BLOCKED => Ok(Self::DataBlocked {
+            FrameType::DataBlocked => Ok(Self::DataBlocked {
                 data_limit: dv(dec)?,
             }),
-            FRAME_TYPE_STREAM_DATA_BLOCKED => Ok(Self::StreamDataBlocked {
+            FrameType::StreamDataBlocked => Ok(Self::StreamDataBlocked {
                 stream_id: dv(dec)?.into(),
                 stream_data_limit: dv(dec)?,
             }),
-            FRAME_TYPE_STREAMS_BLOCKED_BIDI | FRAME_TYPE_STREAMS_BLOCKED_UNIDI => {
+            FrameType::StreamsBlockedBiDi | FrameType::StreamsBlockedUniDi => {
                 Ok(Self::StreamsBlocked {
-                    stream_type: Self::stream_type_from_bit(t),
+                    stream_type: t.try_into()?,
                     stream_limit: dv(dec)?,
                 })
             }
-            FRAME_TYPE_NEW_CONNECTION_ID => {
+            FrameType::NewConnectionId => {
                 let sequence_number = dv(dec)?;
                 let retire_prior = dv(dec)?;
                 let connection_id = d(dec.decode_vec(1))?;
                 if connection_id.len() > MAX_CONNECTION_ID_LEN {
-                    return Err(Error::DecodingFrame);
+                    return Err(Error::FrameEncodingError);
                 }
                 let srt = d(dec.decode(16))?;
-                let stateless_reset_token = <&[_; 16]>::try_from(srt).unwrap();
+                let stateless_reset_token = <&[_; 16]>::try_from(srt)?;
 
                 Ok(Self::NewConnectionId {
                     sequence_number,
@@ -527,45 +635,44 @@ impl<'a> Frame<'a> {
                     stateless_reset_token,
                 })
             }
-            FRAME_TYPE_RETIRE_CONNECTION_ID => Ok(Self::RetireConnectionId {
+            FrameType::RetireConnectionId => Ok(Self::RetireConnectionId {
                 sequence_number: dv(dec)?,
             }),
-            FRAME_TYPE_PATH_CHALLENGE => {
+            FrameType::PathChallenge => {
                 let data = d(dec.decode(8))?;
                 let mut datav: [u8; 8] = [0; 8];
                 datav.copy_from_slice(data);
                 Ok(Self::PathChallenge { data: datav })
             }
-            FRAME_TYPE_PATH_RESPONSE => {
+            FrameType::PathResponse => {
                 let data = d(dec.decode(8))?;
                 let mut datav: [u8; 8] = [0; 8];
                 datav.copy_from_slice(data);
                 Ok(Self::PathResponse { data: datav })
             }
-            FRAME_TYPE_CONNECTION_CLOSE_TRANSPORT | FRAME_TYPE_CONNECTION_CLOSE_APPLICATION => {
-                let error_code = CloseError::from_type_bit(t, d(dec.decode_varint())?);
-                let frame_type = if t == FRAME_TYPE_CONNECTION_CLOSE_TRANSPORT {
-                    dv(dec)?
+            FrameType::ConnectionCloseTransport | FrameType::ConnectionCloseApplication => {
+                let (error_code, frame_type) = if t == FrameType::ConnectionCloseTransport {
+                    (CloseError::Transport(dv(dec)?), dv(dec)?)
                 } else {
-                    0
+                    (CloseError::Application(dv(dec)?), 0)
                 };
                 // We can tolerate this copy for now.
-                let reason_phrase = d(dec.decode_vvec())?.to_vec();
+                let reason_phrase = String::from_utf8_lossy(d(dec.decode_vvec())?).to_string();
                 Ok(Self::ConnectionClose {
                     error_code,
                     frame_type,
                     reason_phrase,
                 })
             }
-            FRAME_TYPE_HANDSHAKE_DONE => Ok(Self::HandshakeDone),
-            FRAME_TYPE_ACK_FREQUENCY => {
+            FrameType::HandshakeDone => Ok(Self::HandshakeDone),
+            FrameType::AckFrequency => {
                 let seqno = dv(dec)?;
                 let tolerance = dv(dec)?;
                 if tolerance == 0 {
                     return Err(Error::FrameEncodingError);
                 }
                 let delay = dv(dec)?;
-                let ignore_order = match d(dec.decode_uint(1))? {
+                let ignore_order = match d(dec.decode_uint::<u8>())? {
                     0 => false,
                     1 => true,
                     _ => return Err(Error::FrameEncodingError),
@@ -577,8 +684,8 @@ impl<'a> Frame<'a> {
                     ignore_order,
                 })
             }
-            FRAME_TYPE_DATAGRAM | FRAME_TYPE_DATAGRAM_WITH_LEN => {
-                let fill = (t & DATAGRAM_FRAME_BIT_LEN) == 0;
+            FrameType::Datagram | FrameType::DatagramWithLen => {
+                let fill = t == FrameType::Datagram;
                 let data = if fill {
                     qtrace!("DATAGRAM frame, extends to the end of the packet");
                     dec.decode_remainder()
@@ -588,26 +695,33 @@ impl<'a> Frame<'a> {
                 };
                 Ok(Self::Datagram { data, fill })
             }
-            _ => Err(Error::UnknownFrameType),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use neqo_common::{Decoder, Encoder};
+
+    use crate::{
+        cid::MAX_CONNECTION_ID_LEN,
+        ecn::Count,
+        frame::{AckRange, Frame, FrameType},
+        CloseError, Error, StreamId, StreamType,
+    };
 
     fn just_dec(f: &Frame, s: &str) {
         let encoded = Encoder::from_hex(s);
-        let decoded = Frame::decode(&mut encoded.as_decoder()).unwrap();
+        let decoded = Frame::decode(&mut encoded.as_decoder()).expect("Failed to decode frame");
         assert_eq!(*f, decoded);
     }
 
     #[test]
     fn padding() {
-        let f = Frame::Padding;
+        let f = Frame::Padding(1);
         just_dec(&f, "00");
+        let f = Frame::Padding(2);
+        just_dec(&f, "0000");
     }
 
     #[test]
@@ -624,7 +738,8 @@ mod tests {
             largest_acknowledged: 0x1234,
             ack_delay: 0x1235,
             first_ack_range: 0x1236,
-            ack_ranges: ar,
+            ack_ranges: ar.clone(),
+            ecn_count: None,
         };
 
         just_dec(&f, "025234523502523601020304");
@@ -634,10 +749,18 @@ mod tests {
         let mut dec = enc.as_decoder();
         assert_eq!(Frame::decode(&mut dec).unwrap_err(), Error::NoMoreData);
 
-        // Try to parse ACK_ECN without ECN values
+        // Try to parse ACK_ECN with ECN values
+        let ecn_count = Some(Count::new(0, 1, 2, 3));
+        let fe = Frame::Ack {
+            largest_acknowledged: 0x1234,
+            ack_delay: 0x1235,
+            first_ack_range: 0x1236,
+            ack_ranges: ar,
+            ecn_count,
+        };
         let enc = Encoder::from_hex("035234523502523601020304010203");
         let mut dec = enc.as_decoder();
-        assert_eq!(Frame::decode(&mut dec).unwrap(), f);
+        assert_eq!(Frame::decode(&mut dec).unwrap(), fe);
     }
 
     #[test]
@@ -658,7 +781,7 @@ mod tests {
             application_error_code: 0x77,
         };
 
-        just_dec(&f, "053F4077")
+        just_dec(&f, "053F4077");
     }
 
     #[test]
@@ -812,7 +935,7 @@ mod tests {
         enc.encode(&[0x11; 16][..]);
         assert_eq!(
             Frame::decode(&mut enc.as_decoder()).unwrap_err(),
-            Error::DecodingFrame
+            Error::FrameEncodingError
         );
     }
 
@@ -844,7 +967,7 @@ mod tests {
         let f = Frame::ConnectionClose {
             error_code: CloseError::Transport(0x5678),
             frame_type: 0x1234,
-            reason_phrase: vec![0x01, 0x02, 0x03],
+            reason_phrase: String::from("\x01\x02\x03"),
         };
 
         just_dec(&f, "1c80005678523403010203");
@@ -855,16 +978,16 @@ mod tests {
         let f = Frame::ConnectionClose {
             error_code: CloseError::Application(0x5678),
             frame_type: 0,
-            reason_phrase: vec![0x01, 0x02, 0x03],
+            reason_phrase: String::from("\x01\x02\x03"),
         };
 
         just_dec(&f, "1d8000567803010203");
     }
 
     #[test]
-    fn test_compare() {
-        let f1 = Frame::Padding;
-        let f2 = Frame::Padding;
+    fn compare() {
+        let f1 = Frame::Padding(1);
+        let f2 = Frame::Padding(1);
         let f3 = Frame::Crypto {
             offset: 0,
             data: &[1, 2, 3],
@@ -934,13 +1057,36 @@ mod tests {
             fill: true,
         };
 
-        just_dec(&f, "4030010203");
+        just_dec(&f, "30010203");
 
         // With the length bit.
         let f = Frame::Datagram {
             data: &[1, 2, 3],
             fill: false,
         };
-        just_dec(&f, "403103010203");
+        just_dec(&f, "3103010203");
+    }
+
+    #[test]
+    fn frame_decode_enforces_bound_on_ack_range() {
+        let mut e = Encoder::new();
+
+        e.encode_varint(FrameType::Ack);
+        e.encode_varint(0u64); // largest acknowledged
+        e.encode_varint(0u64); // ACK delay
+        e.encode_varint(u32::MAX); // ACK range count = huge, but maybe available for allocation
+
+        assert_eq!(Err(Error::TooMuchData), Frame::decode(&mut e.as_decoder()));
+    }
+
+    #[test]
+    #[should_panic(expected = "Failed to decode frame")]
+    fn invalid_frame_type_len() {
+        let f = Frame::Datagram {
+            data: &[1, 2, 3],
+            fill: true,
+        };
+
+        just_dec(&f, "4030010203");
     }
 }

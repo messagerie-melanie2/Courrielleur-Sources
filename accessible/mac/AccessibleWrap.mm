@@ -12,12 +12,13 @@
 
 #include "LocalAccessible-inl.h"
 #include "nsAccUtils.h"
-#include "Role.h"
+#include "mozilla/a11y/Role.h"
 #include "TextRange.h"
 #include "gfxPlatform.h"
 
 #import "MOXLandmarkAccessibles.h"
 #import "MOXMathAccessibles.h"
+#import "MOXOuterDoc.h"
 #import "MOXTextMarkerDelegate.h"
 #import "MOXWebAreaAccessible.h"
 #import "mozAccessible.h"
@@ -34,34 +35,11 @@ AccessibleWrap::AccessibleWrap(nsIContent* aContent, DocAccessible* aDoc)
     : LocalAccessible(aContent, aDoc),
       mNativeObject(nil),
       mNativeInited(false) {
-  if (aContent && aContent->IsElement() && aDoc) {
+  if (aContent && aDoc && IsLiveRegion(aContent)) {
     // Check if this accessible is a live region and queue it
     // it for dispatching an event after it has been inserted.
     DocAccessibleWrap* doc = static_cast<DocAccessibleWrap*>(aDoc);
-    static const dom::Element::AttrValuesArray sLiveRegionValues[] = {
-        nsGkAtoms::OFF, nsGkAtoms::polite, nsGkAtoms::assertive, nullptr};
-    int32_t attrValue = nsAccUtils::FindARIAAttrValueIn(
-        aContent->AsElement(), nsGkAtoms::aria_live, sLiveRegionValues,
-        eIgnoreCase);
-    if (attrValue == 0) {
-      // aria-live is "off", do nothing.
-    } else if (attrValue > 0) {
-      // aria-live attribute is polite or assertive. It's live!
-      doc->QueueNewLiveRegion(this);
-    } else if (const nsRoleMapEntry* roleMap =
-                   aria::GetRoleMap(aContent->AsElement())) {
-      // aria role defines it as a live region. It's live!
-      if (roleMap->liveAttRule == ePoliteLiveAttr ||
-          roleMap->liveAttRule == eAssertiveLiveAttr) {
-        doc->QueueNewLiveRegion(this);
-      }
-    } else if (nsStaticAtom* value = GetAccService()->MarkupAttribute(
-                   aContent, nsGkAtoms::aria_live)) {
-      // HTML element defines it as a live region. It's live!
-      if (value == nsGkAtoms::polite || value == nsGkAtoms::assertive) {
-        doc->QueueNewLiveRegion(this);
-      }
-    }
+    doc->QueueNewLiveRegion(this);
   }
 }
 
@@ -118,6 +96,14 @@ Class AccessibleWrap::GetNativeType() {
     return [MOXWebAreaAccessible class];
   }
 
+  if (IsOuterDoc()) {
+    return [MOXOuterDoc class];
+  }
+
+  if (IsTextField() && !HasNumericValue()) {
+    return [mozTextAccessible class];
+  }
+
   return GetTypeFromRole(Role());
 
   NS_OBJC_END_TRY_BLOCK_RETURN(nil);
@@ -158,132 +144,56 @@ nsresult AccessibleWrap::HandleAccEvent(AccEvent* aEvent) {
     doc->ProcessNewLiveRegions();
   }
 
-  if (IPCAccessibilityActive()) {
-    return NS_OK;
-  }
-
-  LocalAccessible* eventTarget = nullptr;
-
-  switch (eventType) {
-    case nsIAccessibleEvent::EVENT_SELECTION:
-    case nsIAccessibleEvent::EVENT_SELECTION_ADD:
-    case nsIAccessibleEvent::EVENT_SELECTION_REMOVE: {
-      AccSelChangeEvent* selEvent = downcast_accEvent(aEvent);
-      // The "widget" is the selected widget's container. In OSX
-      // it is the target of the selection changed event.
-      eventTarget = selEvent->Widget();
-      break;
-    }
-    case nsIAccessibleEvent::EVENT_TEXT_INSERTED:
-    case nsIAccessibleEvent::EVENT_TEXT_REMOVED: {
-      LocalAccessible* acc = aEvent->GetAccessible();
-      // If there is a text input ancestor, use it as the event source.
-      while (acc && GetTypeFromRole(acc->Role()) != [mozTextAccessible class]) {
-        acc = acc->LocalParent();
+  if ((eventType == nsIAccessibleEvent::EVENT_TEXT_INSERTED ||
+       eventType == nsIAccessibleEvent::EVENT_TEXT_REMOVED ||
+       eventType == nsIAccessibleEvent::EVENT_NAME_CHANGE) &&
+      !aEvent->FromUserInput()) {
+    for (LocalAccessible* container = aEvent->GetAccessible(); container;
+         container = container->LocalParent()) {
+      if (container->HasOwnContent() && IsLiveRegion(container->GetContent())) {
+        // We rely on EventQueue::CoalesceEvents to remove duplicates
+        Document()->FireDelayedEvent(
+            nsIAccessibleEvent::EVENT_LIVE_REGION_CHANGED, container);
       }
-      eventTarget = acc ? acc : aEvent->GetAccessible();
-      break;
     }
-    default:
-      eventTarget = aEvent->GetAccessible();
-      break;
-  }
-
-  mozAccessible* nativeAcc = nil;
-  eventTarget->GetNativeInterface((void**)&nativeAcc);
-  if (!nativeAcc) {
-    return NS_ERROR_FAILURE;
-  }
-
-  switch (eventType) {
-    case nsIAccessibleEvent::EVENT_STATE_CHANGE: {
-      AccStateChangeEvent* event = downcast_accEvent(aEvent);
-      [nativeAcc stateChanged:event->GetState()
-                    isEnabled:event->IsStateEnabled()];
-      break;
-    }
-
-    case nsIAccessibleEvent::EVENT_TEXT_SELECTION_CHANGED: {
-      MOXTextMarkerDelegate* delegate =
-          [MOXTextMarkerDelegate getOrCreateForDoc:aEvent->Document()];
-      AccTextSelChangeEvent* event = downcast_accEvent(aEvent);
-      AutoTArray<TextRange, 1> ranges;
-      event->SelectionRanges(&ranges);
-
-      if (ranges.Length()) {
-        // Cache selection in delegate.
-        [delegate setSelectionFrom:ranges[0].StartContainer()
-                                at:ranges[0].StartOffset()
-                                to:ranges[0].EndContainer()
-                                at:ranges[0].EndOffset()];
-      }
-
-      [nativeAcc handleAccessibleEvent:eventType];
-      break;
-    }
-
-    case nsIAccessibleEvent::EVENT_TEXT_CARET_MOVED: {
-      AccCaretMoveEvent* event = downcast_accEvent(aEvent);
-      int32_t caretOffset = event->GetCaretOffset();
-      MOXTextMarkerDelegate* delegate =
-          [MOXTextMarkerDelegate getOrCreateForDoc:aEvent->Document()];
-      [delegate setCaretOffset:eventTarget
-                            at:caretOffset
-               moveGranularity:event->GetGranularity()];
-      if (event->IsSelectionCollapsed()) {
-        // If the selection is collapsed, invalidate our text selection cache.
-        [delegate setSelectionFrom:eventTarget
-                                at:caretOffset
-                                to:eventTarget
-                                at:caretOffset];
-      }
-
-      if (mozTextAccessible* textAcc = static_cast<mozTextAccessible*>(
-              [nativeAcc moxEditableAncestor])) {
-        [textAcc
-            handleAccessibleEvent:nsIAccessibleEvent::EVENT_TEXT_CARET_MOVED];
-      } else {
-        [nativeAcc
-            handleAccessibleEvent:nsIAccessibleEvent::EVENT_TEXT_CARET_MOVED];
-      }
-      break;
-    }
-
-    case nsIAccessibleEvent::EVENT_TEXT_INSERTED:
-    case nsIAccessibleEvent::EVENT_TEXT_REMOVED: {
-      AccTextChangeEvent* tcEvent = downcast_accEvent(aEvent);
-      [nativeAcc handleAccessibleTextChangeEvent:nsCocoaUtils::ToNSString(
-                                                     tcEvent->ModifiedText())
-                                        inserted:tcEvent->IsTextInserted()
-                                     inContainer:aEvent->GetAccessible()
-                                              at:tcEvent->GetStartOffset()];
-      break;
-    }
-
-    case nsIAccessibleEvent::EVENT_ALERT:
-    case nsIAccessibleEvent::EVENT_FOCUS:
-    case nsIAccessibleEvent::EVENT_TEXT_VALUE_CHANGE:
-    case nsIAccessibleEvent::EVENT_DOCUMENT_LOAD_COMPLETE:
-    case nsIAccessibleEvent::EVENT_MENUPOPUP_START:
-    case nsIAccessibleEvent::EVENT_MENUPOPUP_END:
-    case nsIAccessibleEvent::EVENT_REORDER:
-    case nsIAccessibleEvent::EVENT_SELECTION:
-    case nsIAccessibleEvent::EVENT_SELECTION_ADD:
-    case nsIAccessibleEvent::EVENT_SELECTION_REMOVE:
-    case nsIAccessibleEvent::EVENT_LIVE_REGION_ADDED:
-    case nsIAccessibleEvent::EVENT_LIVE_REGION_REMOVED:
-    case nsIAccessibleEvent::EVENT_NAME_CHANGE:
-    case nsIAccessibleEvent::EVENT_OBJECT_ATTRIBUTE_CHANGED:
-      [nativeAcc handleAccessibleEvent:eventType];
-      break;
-
-    default:
-      break;
   }
 
   return NS_OK;
 
   NS_OBJC_END_TRY_BLOCK_RETURN(NS_ERROR_FAILURE);
+}
+
+bool AccessibleWrap::IsLiveRegion(nsIContent* aContent) {
+  if (!aContent || !aContent->IsElement()) {
+    return false;
+  }
+
+  static const dom::Element::AttrValuesArray sLiveRegionValues[] = {
+      nsGkAtoms::OFF, nsGkAtoms::polite, nsGkAtoms::assertive, nullptr};
+  int32_t attrValue = nsAccUtils::FindARIAAttrValueIn(
+      aContent->AsElement(), nsGkAtoms::aria_live, sLiveRegionValues,
+      eIgnoreCase);
+  if (attrValue == 0) {
+    // aria-live is "off", do nothing.
+  } else if (attrValue > 0) {
+    // aria-live attribute is polite or assertive. It's live!
+    return true;
+  } else if (const nsRoleMapEntry* roleMap =
+                 aria::GetRoleMap(aContent->AsElement())) {
+    // aria role defines it as a live region. It's live!
+    if (roleMap->liveAttRule == ePoliteLiveAttr ||
+        roleMap->liveAttRule == eAssertiveLiveAttr) {
+      return true;
+    }
+  } else if (nsStaticAtom* value = GetAccService()->MarkupAttribute(
+                 aContent, nsGkAtoms::aria_live)) {
+    // HTML element defines it as a live region. It's live!
+    if (value == nsGkAtoms::polite || value == nsGkAtoms::assertive) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -315,6 +225,12 @@ Class a11y::GetTypeFromRole(roles::Role aRole) {
     case roles::RADIO_MENU_ITEM:
       return [mozRadioButtonAccessible class];
 
+    case roles::PROGRESSBAR:
+      return [mozRangeAccessible class];
+
+    case roles::METER:
+      return [mozMeterAccessible class];
+
     case roles::SPINBUTTON:
     case roles::SLIDER:
       return [mozIncrementableAccessible class];
@@ -326,11 +242,7 @@ Class a11y::GetTypeFromRole(roles::Role aRole) {
       return [mozTabGroupAccessible class];
 
     case roles::ENTRY:
-    case roles::CAPTION:
-    case roles::ACCEL_LABEL:
-    case roles::EDITCOMBOBOX:
     case roles::PASSWORD_TEXT:
-      // normal textfield (static or editable)
       return [mozTextAccessible class];
 
     case roles::TEXT_LEAF:
@@ -394,6 +306,9 @@ Class a11y::GetTypeFromRole(roles::Role aRole) {
 
     case roles::OUTLINEITEM:
       return [mozOutlineRowAccessible class];
+
+    case roles::LABEL:
+      return [MOXLabelAccessible class];
 
     default:
       return [mozAccessible class];

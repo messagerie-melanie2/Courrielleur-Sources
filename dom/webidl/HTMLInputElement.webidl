@@ -38,7 +38,8 @@ interface HTMLInputElement : HTMLElement {
            attribute boolean defaultChecked;
   [Pure]
            attribute boolean checked;
-           // Bug 850337 - attribute DOMString dirName;
+  [CEReactions, Pure, SetterThrows]
+           attribute DOMString dirName;
   [CEReactions, Pure, SetterThrows]
            attribute boolean disabled;
   readonly attribute HTMLFormElement? form;
@@ -132,7 +133,7 @@ interface HTMLInputElement : HTMLElement {
   [Throws]
   undefined setSelectionRange(unsigned long start, unsigned long end, optional DOMString direction);
 
-  [Throws, Pref="dom.input.showPicker"]
+  [Throws]
   undefined showPicker();
 
   // also has obsolete members
@@ -183,6 +184,11 @@ partial interface HTMLInputElement {
   [ChromeOnly]
   attribute DOMString previewValue;
 
+  // A string indicating that the value of the element has been autofilled:
+  // either "filled", "preview" or "".
+  [ChromeOnly]
+  attribute DOMString autofillState;
+
   // Last value entered by the user, not by a script.
   // NOTE(emilio): As of right now some execCommand triggered changes might be
   // considered interactive.
@@ -230,6 +236,8 @@ HTMLInputElement includes MozImageLoadingContent;
 
 HTMLInputElement includes PopoverInvokerElement;
 
+HTMLInputElement includes InvokerElement;
+
 // https://wicg.github.io/entries-api/#idl-index
 partial interface HTMLInputElement {
   [Pref="dom.webkitBlink.filesystem.enabled", Frozen, Cached, Pure]
@@ -268,6 +276,9 @@ partial interface HTMLInputElement {
 
   [Func="IsChromeOrUAWidget"]
   undefined closeDateTimePicker();
+
+  [Func="IsChromeOrUAWidget"]
+  undefined setDateTimePickerState(boolean aIsOpen);
 
   [Func="IsChromeOrUAWidget"]
   undefined setFocusState(boolean aIsFocused);

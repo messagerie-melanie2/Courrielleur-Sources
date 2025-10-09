@@ -9,13 +9,13 @@
 
 #include "mozilla/Atomics.h"
 #include "jstypes.h"
-#include "threading/LockGuard.h"
-#include "threading/Mutex.h"
 #include "threading/ThreadId.h"
 
 struct JS_PUBLIC_API JSContext;
 
 namespace js {
+
+class Mutex;
 
 // This file provides classes for encapsulating pieces of data with a check
 // that ensures the data is only accessed if certain conditions are met.
@@ -75,7 +75,7 @@ class MOZ_RAII AutoNoteSingleThreadedRegion {
 // occur when the data is both read from and written to.
 template <typename Check, typename T>
 class ProtectedData {
-  typedef ProtectedData<Check, T> ThisType;
+  using ThisType = ProtectedData<Check, T>;
 
  public:
   template <typename... Args>
@@ -178,18 +178,24 @@ class ProtectedDataNoCheckArgs : public ProtectedData<Check, T> {
   using Base::operator=;
 };
 
-// Intermediate class for protected data whose checks take a JSContext.
-template <typename Check, typename T>
-class ProtectedDataContextArg : public ProtectedData<Check, T> {
+// Intermediate class for protected data whose checks take a single argument.
+template <typename CheckArg, typename Check, typename T>
+class ProtectedDataWithArg : public ProtectedData<Check, T> {
   using Base = ProtectedData<Check, T>;
 
  public:
   template <typename... Args>
-  explicit ProtectedDataContextArg(JSContext* cx, Args&&... args)
-      : ProtectedData<Check, T>(Check(cx), std::forward<Args>(args)...) {}
+  explicit ProtectedDataWithArg(CheckArg checkArg, Args&&... args)
+      : ProtectedData<Check, T>(Check(checkArg), std::forward<Args>(args)...) {}
 
   using Base::operator=;
 };
+
+template <typename Check, typename T>
+using ProtectedDataContextArg = ProtectedDataWithArg<JSContext*, Check, T>;
+
+template <typename Check, typename T>
+using ProtectedDataMutexArg = ProtectedDataWithArg<const Mutex&, Check, T>;
 
 class CheckUnprotected {
 #ifdef JS_HAS_PROTECTED_DATA_CHECKS
@@ -229,6 +235,20 @@ class CheckContextLocal {
 #endif
 };
 
+class CheckMutexHeld {
+#ifdef JS_HAS_PROTECTED_DATA_CHECKS
+  const Mutex& mutex_;
+
+ public:
+  explicit CheckMutexHeld(const Mutex& mutex) : mutex_(mutex) {}
+
+  void check() const;
+#else
+ public:
+  explicit CheckMutexHeld(const Mutex& mutex) {}
+#endif
+};
+
 // Data which may only be accessed by the thread on which it is created.
 template <typename T>
 using ThreadData = ProtectedDataNoCheckArgs<CheckThreadLocal, T>;
@@ -239,15 +259,16 @@ using ThreadData = ProtectedDataNoCheckArgs<CheckThreadLocal, T>;
 template <typename T>
 using ContextData = ProtectedDataContextArg<CheckContextLocal, T>;
 
+template <typename T>
+using MutexData = ProtectedDataMutexArg<CheckMutexHeld, T>;
+
 // Enum describing which helper threads (GC tasks or Ion compilations) may
 // access data.
 enum class AllowedHelperThread {
   None,
   GCTask,
-  ParseTask,
   IonCompile,
   GCTaskOrIonCompile,
-  ParseTaskOrIonCompile,
 };
 
 template <AllowedHelperThread Helper>
@@ -271,13 +292,8 @@ using MainThreadOrIonCompileData =
     ProtectedDataNoCheckArgs<CheckMainThread<AllowedHelperThread::IonCompile>,
                              T>;
 template <typename T>
-using MainThreadOrParseData =
-    ProtectedDataNoCheckArgs<CheckMainThread<AllowedHelperThread::ParseTask>,
-                             T>;
-
-template <typename T>
-using MainThreadOrParseOrIonCompileData = ProtectedDataNoCheckArgs<
-    CheckMainThread<AllowedHelperThread::ParseTaskOrIonCompile>, T>;
+using MainThreadOrGCTaskOrIonCompileData = ProtectedDataNoCheckArgs<
+    CheckMainThread<AllowedHelperThread::GCTaskOrIonCompile>, T>;
 
 // Runtime wide locks which might protect some data.
 enum class GlobalLock { GCLock, HelperThreadLock };
@@ -309,7 +325,7 @@ using HelperThreadLockData = ProtectedDataNoCheckArgs<
 // initialized, as such guarantees are not provided by this class.
 template <typename Check, typename T>
 class ProtectedDataWriteOnce {
-  typedef ProtectedDataWriteOnce<Check, T> ThisType;
+  using ThisType = ProtectedDataWriteOnce<Check, T>;
 
  public:
   template <typename... Args>

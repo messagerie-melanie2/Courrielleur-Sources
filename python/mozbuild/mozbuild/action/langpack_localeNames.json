@@ -326,6 +326,10 @@
     "english": "Russian",
     "native": "Русский"
   },
+  "sat": {
+    "english": "Santali",
+    "native": "ᱥᱟᱱᱛᱟᱲᱤ"
+  },
   "sc": {
     "english": "Sardinian",
     "native": "Sardu"
@@ -341,6 +345,10 @@
     "english": "Slovak",
     "native": "Slovenčina"
   },
+  "skr": {
+    "english": "Saraiki",
+    "native": "سرائیکی"
+  },
   "sl": {
     "english": "Slovenian",
     "native": "Slovenščina"
@@ -355,7 +363,7 @@
   },
   "sr": {
     "english": "Serbian",
-    "native": "Cрпски"
+    "native": "Српски"
   },
   "sv-SE": {
     "english": "Swedish",

@@ -2,7 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 var {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 const LAST_USED_ANNO = "bookmarkPropertiesDialog/folderLastUsed";
@@ -460,8 +459,7 @@ var gEditItemOverlay = {
   },
 
   QueryInterface:
-  XPCOMUtils.generateQI([Ci.nsIDOMEventListener,
-                         Ci.nsINavBookmarkObserver]),
+  ChromeUtils.generateQI([Ci.nsINavBookmarkObserver]),
 
   _element(aID) {
     return document.getElementById("editBMPanel_" + aID);
@@ -940,7 +938,7 @@ var gEditItemOverlay = {
                                   this._folderTree.columns.getFirstColumn());
   },
 
-  // nsIDOMEventListener
+  // EventListener
   handleEvent(aEvent) {
     switch (aEvent.type) {
     case "CheckboxStateChange":

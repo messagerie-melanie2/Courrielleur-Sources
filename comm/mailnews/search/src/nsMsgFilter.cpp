@@ -14,17 +14,14 @@
 #include "nsMsgSearchTerm.h"
 #include "nsIMsgAccountManager.h"
 #include "nsIMsgIncomingServer.h"
-#include "nsMsgSearchValue.h"
 #include "nsMsgI18N.h"
 #include "nsNativeCharsetUtils.h"
 #include "nsIOutputStream.h"
 #include "nsIStringBundle.h"
-#include "nsComponentManagerUtils.h"
 #include "nsServiceManagerUtils.h"
 #include "nsIMsgFilterService.h"
 #include "nsIMsgNewsFolder.h"
 #include "prmem.h"
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/Components.h"
 #include "mozilla/intl/AppDateTimeFormat.h"
 
@@ -509,7 +506,7 @@ nsresult nsMsgFilter::LogRuleHitGeneric(nsIMsgRuleAction* aFilterAction,
     aFilterAction->GetTargetFolderUri(actionFolderUri);
 
     nsCString msgId;
-    aMsgHdr->GetMessageId(getter_Copies(msgId));
+    aMsgHdr->GetMessageId(msgId);
 
     AutoTArray<nsString, 2> logMoveFormatStrings;
     CopyUTF8toUTF16(msgId, *logMoveFormatStrings.AppendElement());
@@ -660,9 +657,7 @@ nsresult nsMsgFilter::ConvertMoveOrCopyToFolderValue(
 #endif
         destFolderUri.Append('/');
         if (filterVersion == k45Version) {
-          nsAutoString unicodeStr;
-          NS_CopyNativeToUnicode(moveValue, unicodeStr);
-          rv = NS_MsgEscapeEncodeURLPath(unicodeStr, moveValue);
+          rv = NS_MsgEscapeEncodeURLPath(moveValue, moveValue);
         }
         destFolderUri.Append(moveValue);
         localMailRoot->GetChildWithURI(destFolderUri, true,
@@ -819,7 +814,7 @@ static struct RuleActionsTableEntry ruleActionsTable[] = {
     {nsMsgFilterAction::Custom, "Custom"},
 };
 
-static const unsigned int sNumActions = MOZ_ARRAY_LENGTH(ruleActionsTable);
+static const unsigned int sNumActions = std::size(ruleActionsTable);
 
 const char* nsMsgFilter::GetActionStr(nsMsgRuleActionType action) {
   for (unsigned int i = 0; i < sNumActions; i++) {

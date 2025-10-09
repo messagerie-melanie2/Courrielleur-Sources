@@ -53,10 +53,10 @@ let tests = [
   },
 ];
 
-// For some reason about:rights and about:about used to behave differently (maybe
-// because only the latter is privileged?) so both should be tested.  about:about
-// is used in the test as the base tab.
-let urls = ["http://example.com/", "http://mochi.test:8888/", "about:rights"];
+// For some reason about:about used to behave differently (maybe because only
+// the latter is privileged?) so should be tested.  about:about is used in the
+// test as the base tab.
+let urls = ["http://example.com/", "http://mochi.test:8888/"];
 
 function getId(tab) {
   const {
@@ -268,9 +268,13 @@ add_task(async function test_pageAction_restrictScheme_false() {
       },
     },
     background: function () {
-      browser.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
+      let articleReady = Promise.withResolvers();
+      browser.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         if (changeInfo.url && changeInfo.url.startsWith("about:reader")) {
           browser.test.sendMessage("readerModeEntered");
+        }
+        if (tab.isArticle && tab.url.includes("/readerModeArticle.html")) {
+          articleReady.resolve();
         }
       });
 
@@ -280,8 +284,20 @@ add_task(async function test_pageAction_restrictScheme_false() {
           return;
         }
 
+        browser.test.log("Waiting for tab.isArticle to be true");
+        await articleReady.promise;
+        browser.test.log("Toggling reader mode");
         browser.tabs.toggleReaderMode();
       });
+
+      browser.tabs.query(
+        { url: "*://example.com/*/readerModeArticle.html" },
+        tabs => {
+          if (tabs[0].isArticle) {
+            articleReady.resolve();
+          }
+        }
+      );
     },
   });
 

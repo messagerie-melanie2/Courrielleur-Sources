@@ -94,7 +94,7 @@ struct nsCounterNode : public nsGenConNode {
 };
 
 struct nsCounterUseNode : public nsCounterNode {
-  mozilla::CounterStylePtr mCounterStyle;
+  mozilla::StyleCounterStyle mCounterStyle;
   nsString mSeparator;
 
   // false for counter(), true for counters()
@@ -103,16 +103,18 @@ struct nsCounterUseNode : public nsCounterNode {
   bool mForLegacyBullet = false;
 
   enum ForLegacyBullet { ForLegacyBullet };
-  nsCounterUseNode(enum ForLegacyBullet, mozilla::CounterStylePtr aCounterStyle)
+  nsCounterUseNode(enum ForLegacyBullet,
+                   const mozilla::StyleCounterStyle& aCounterStyle)
       : nsCounterNode(0, USE),
-        mCounterStyle(std::move(aCounterStyle)),
+        mCounterStyle(aCounterStyle),
         mForLegacyBullet(true) {}
 
   // args go directly to member variables here and of nsGenConNode
-  nsCounterUseNode(mozilla::CounterStylePtr aCounterStyle, nsString aSeparator,
-                   uint32_t aContentIndex, bool aAllCounters)
+  nsCounterUseNode(const mozilla::StyleCounterStyle& aCounterStyle,
+                   nsString aSeparator, uint32_t aContentIndex,
+                   bool aAllCounters)
       : nsCounterNode(aContentIndex, USE),
-        mCounterStyle(std::move(aCounterStyle)),
+        mCounterStyle(aCounterStyle),
         mSeparator(std::move(aSeparator)),
         mAllCounters(aAllCounters) {
     NS_ASSERTION(aContentIndex <= INT32_MAX, "out of range");
@@ -189,10 +191,11 @@ inline nsCounterChangeNode* nsCounterNode::ChangeNode() {
 }
 
 inline void nsCounterNode::Calc(nsCounterList* aList, bool aNotify) {
-  if (mType == USE)
+  if (mType == USE) {
     UseNode()->Calc(aList, aNotify);
-  else
+  } else {
     ChangeNode()->Calc(aList);
+  }
 }
 
 inline bool nsCounterNode::IsContentBasedReset() {
@@ -212,9 +215,13 @@ inline bool nsCounterNode::IsUnitializedIncrementNode() {
 class nsCounterList : public nsGenConList {
  public:
   nsCounterList(nsAtom* aCounterName, mozilla::ContainStyleScope* aScope)
-      : nsGenConList(), mCounterName(aCounterName), mScope(aScope) {
+      : mCounterName(aCounterName), mScope(aScope) {
     MOZ_ASSERT(aScope);
   }
+
+#if defined(DEBUG) || defined(MOZ_LAYOUT_DEBUGGER)
+  void Dump();
+#endif
 
   // Return the first node for aFrame on this list, or nullptr.
   nsCounterNode* GetFirstNodeFor(nsIFrame* aFrame) const {
@@ -344,7 +351,7 @@ class nsCounterManager {
 
  private:
   mozilla::ContainStyleScope* mScope;
-  nsClassHashtable<nsRefPtrHashKey<nsAtom>, nsCounterList> mNames;
+  nsClassHashtable<nsAtomHashKey, nsCounterList> mNames;
 };
 
 #endif /* nsCounterManager_h_ */

@@ -9,7 +9,6 @@
 #include "mozilla/ipc/PBackgroundChild.h"
 #include "mozilla/Atomics.h"
 #include "mozilla/IdlePeriodState.h"
-#include "mozilla/Telemetry.h"
 #include "BackgroundChild.h"
 
 namespace mozilla::ipc {
@@ -29,17 +28,16 @@ void IdleSchedulerChild::Init(IdlePeriodState* aIdlePeriodState) {
   mIdlePeriodState = aIdlePeriodState;
 
   RefPtr<IdleSchedulerChild> scheduler = this;
-  auto resolve =
-      [&](std::tuple<mozilla::Maybe<SharedMemoryHandle>, uint32_t>&& aResult) {
-        if (std::get<0>(aResult)) {
-          mActiveCounter.SetHandle(std::move(*std::get<0>(aResult)), false);
-          mActiveCounter.Map(sizeof(int32_t));
-          mChildId = std::get<1>(aResult);
-          if (mChildId && mIdlePeriodState && mIdlePeriodState->IsActive()) {
-            SetActive();
-          }
-        }
-      };
+  auto resolve = [&](std::tuple<mozilla::Maybe<MutableSharedMemoryHandle>,
+                                uint32_t>&& aResult) {
+    if (auto& handle = std::get<0>(aResult)) {
+      mActiveCounter = handle->Map();
+      mChildId = std::get<1>(aResult);
+      if (mChildId && mIdlePeriodState && mIdlePeriodState->IsActive()) {
+        SetActive();
+      }
+    }
+  };
 
   auto reject = [&](ResponseRejectReason) {};
   SendInitForIdleUse(std::move(resolve), std::move(reject));
@@ -53,23 +51,21 @@ IPCResult IdleSchedulerChild::RecvIdleTime(uint64_t aId, TimeDuration aBudget) {
 }
 
 void IdleSchedulerChild::SetActive() {
-  if (mChildId && CanSend() && mActiveCounter.memory()) {
-    ++(static_cast<Atomic<int32_t>*>(
-        mActiveCounter.memory())[NS_IDLE_SCHEDULER_INDEX_OF_ACTIVITY_COUNTER]);
-    ++(static_cast<Atomic<int32_t>*>(mActiveCounter.memory())[mChildId]);
+  if (mChildId && CanSend() && mActiveCounter) {
+    auto counters = mActiveCounter.DataAsSpan<Atomic<int32_t>>();
+    ++counters[NS_IDLE_SCHEDULER_INDEX_OF_ACTIVITY_COUNTER];
+    ++counters[mChildId];
   }
 }
 
 bool IdleSchedulerChild::SetPaused() {
-  if (mChildId && CanSend() && mActiveCounter.memory()) {
-    --(static_cast<Atomic<int32_t>*>(mActiveCounter.memory())[mChildId]);
+  if (mChildId && CanSend() && mActiveCounter) {
+    auto counters = mActiveCounter.DataAsSpan<Atomic<int32_t>>();
+    --counters[mChildId];
     // The following expression reduces the global activity count and checks if
     // it drops below the cpu counter limit.
-    return (static_cast<Atomic<int32_t>*>(
-               mActiveCounter
-                   .memory())[NS_IDLE_SCHEDULER_INDEX_OF_ACTIVITY_COUNTER])-- ==
-           static_cast<Atomic<int32_t>*>(
-               mActiveCounter.memory())[NS_IDLE_SCHEDULER_INDEX_OF_CPU_COUNTER];
+    return counters[NS_IDLE_SCHEDULER_INDEX_OF_ACTIVITY_COUNTER]-- ==
+           counters[NS_IDLE_SCHEDULER_INDEX_OF_CPU_COUNTER];
   }
 
   return false;
@@ -79,19 +75,16 @@ RefPtr<IdleSchedulerChild::MayGCPromise> IdleSchedulerChild::MayGCNow() {
   if (mIsRequestingGC || mIsDoingGC) {
     return MayGCPromise::CreateAndResolve(false, __func__);
   }
-  TimeStamp wait_since = TimeStamp::Now();
 
   mIsRequestingGC = true;
   return SendRequestGC()->Then(
       GetMainThreadSerialEventTarget(), __func__,
-      [self = RefPtr(this), wait_since](bool aIgnored) {
+      [self = RefPtr(this)](bool aIgnored) {
         // Only one of these may be true at a time.
         MOZ_ASSERT(!(self->mIsRequestingGC && self->mIsDoingGC));
 
         // The parent process always says yes, sometimes after a delay.
         if (self->mIsRequestingGC) {
-          Telemetry::AccumulateTimeDelta(Telemetry::GC_WAIT_FOR_IDLE_MS,
-                                         wait_since);
           self->mIsRequestingGC = false;
           self->mIsDoingGC = true;
           return MayGCPromise::CreateAndResolve(true, __func__);
@@ -143,8 +136,10 @@ IdleSchedulerChild* IdleSchedulerChild::GetMainThreadIdleScheduler() {
   ipc::PBackgroundChild* background =
       ipc::BackgroundChild::GetOrCreateForCurrentThread();
   if (background) {
+    // this is nulled out on our destruction, so we don't need to worry
     sMainThreadIdleScheduler = new ipc::IdleSchedulerChild();
-    background->SendPIdleSchedulerConstructor(sMainThreadIdleScheduler);
+    MOZ_ALWAYS_TRUE(
+        background->SendPIdleSchedulerConstructor(sMainThreadIdleScheduler));
   }
   return sMainThreadIdleScheduler;
 }

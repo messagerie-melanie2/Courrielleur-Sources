@@ -6,7 +6,6 @@
 #ifndef _nsMsgThreadedDBView_H_
 #define _nsMsgThreadedDBView_H_
 
-#include "mozilla/Attributes.h"
 #include "nsMsgGroupView.h"
 
 class nsMsgThreadedDBView : public nsMsgGroupView {
@@ -16,7 +15,7 @@ class nsMsgThreadedDBView : public nsMsgGroupView {
 
   NS_IMETHOD Open(nsIMsgFolder* folder, nsMsgViewSortTypeValue sortType,
                   nsMsgViewSortOrderValue sortOrder,
-                  nsMsgViewFlagsTypeValue viewFlags, int32_t* pCount) override;
+                  nsMsgViewFlagsTypeValue viewFlags) override;
   NS_IMETHOD CloneDBView(nsIMessenger* aMessengerInstance,
                          nsIMsgWindow* aMsgWindow,
                          nsIMsgDBViewCommandUpdater* aCommandUpdater,

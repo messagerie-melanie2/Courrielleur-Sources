@@ -25,7 +25,6 @@
 #include "nsIScriptObjectPrincipal.h"
 #include "nsISizeOfEventTarget.h"
 #include "nsIInputStream.h"
-#include "nsIContentSecurityPolicy.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/DOMEventTargetHelper.h"
@@ -42,6 +41,7 @@
 #include "mozilla/dom/PerformanceStorage.h"
 #include "mozilla/dom/ServiceWorkerDescriptor.h"
 #include "mozilla/dom/URLSearchParams.h"
+#include "mozilla/dom/WorkerRef.h"
 #include "mozilla/dom/XMLHttpRequest.h"
 #include "mozilla/dom/XMLHttpRequestBinding.h"
 #include "mozilla/dom/XMLHttpRequestEventTarget.h"
@@ -62,6 +62,10 @@ class nsILoadGroup;
 
 namespace mozilla {
 class ProfileChunkedBuffer;
+
+namespace net {
+class ContentRange;
+}
 
 namespace dom {
 
@@ -192,17 +196,6 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
   friend class XMLHttpRequestDoneNotifier;
 
  public:
-  enum class ProgressEventType : uint8_t {
-    loadstart,
-    progress,
-    error,
-    abort,
-    timeout,
-    load,
-    loadend,
-    ENUM_MAX
-  };
-
   // Make sure that any additions done to ErrorType enum are also mirrored in
   // XHR_ERROR_TYPE enum of TelemetrySend.sys.mjs.
   enum class ErrorType : uint16_t {
@@ -269,16 +262,12 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
   nsresult InitiateFetch(already_AddRefed<nsIInputStream> aUploadStream,
                          int64_t aUploadLength, nsACString& aUploadContentType);
 
-  virtual void Open(const nsACString& aMethod, const nsAString& aUrl,
+  virtual void Open(const nsACString& aMethod, const nsACString& aUrl,
                     ErrorResult& aRv) override;
 
-  virtual void Open(const nsACString& aMethod, const nsAString& aUrl,
-                    bool aAsync, const nsAString& aUsername,
-                    const nsAString& aPassword, ErrorResult& aRv) override;
-
-  void Open(const nsACString& aMethod, const nsACString& aUrl, bool aAsync,
-            const nsAString& aUsername, const nsAString& aPassword,
-            ErrorResult& aRv);
+  virtual void Open(const nsACString& aMethod, const nsACString& aUrl,
+                    bool aAsync, const nsACString& aUsername,
+                    const nsACString& aPassword, ErrorResult& aRv) override;
 
   virtual void SetRequestHeader(const nsACString& aName,
                                 const nsACString& aValue,
@@ -333,13 +322,13 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
   void Abort() {
     IgnoredErrorResult rv;
     AbortInternal(rv);
-    MOZ_ASSERT(!rv.Failed());
+    MOZ_ASSERT(!rv.Failed() || rv.ErrorCodeIs(NS_ERROR_DOM_ABORT_ERR));
   }
 
   virtual void Abort(ErrorResult& aRv) override;
 
   // response
-  virtual void GetResponseURL(nsAString& aUrl) override;
+  virtual void GetResponseURL(nsACString& aUrl) override;
 
   virtual uint32_t GetStatus(ErrorResult& aRv) override;
 
@@ -348,18 +337,6 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
 
   virtual void GetResponseHeader(const nsACString& aHeader, nsACString& aResult,
                                  ErrorResult& aRv) override;
-
-  void GetResponseHeader(const nsAString& aHeader, nsAString& aResult,
-                         ErrorResult& aRv) {
-    nsAutoCString result;
-    GetResponseHeader(NS_ConvertUTF16toUTF8(aHeader), result, aRv);
-    if (result.IsVoid()) {
-      aResult.SetIsVoid(true);
-    } else {
-      // The result value should be inflated:
-      CopyASCIItoUTF16(result, aResult);
-    }
-  }
 
   virtual void GetAllResponseHeaders(nsACString& aResponseHeaders,
                                      ErrorResult& aRv) override;
@@ -409,6 +386,8 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
 
   void SetSource(UniquePtr<ProfileChunkedBuffer> aSource);
 
+  nsresult ErrorDetail() const { return mErrorLoadDetail; }
+
   virtual uint16_t ErrorCode() const override {
     return static_cast<uint16_t>(mErrorLoad);
   }
@@ -428,7 +407,7 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
   // doesn't bubble.
   nsresult FireReadystatechangeEvent();
   void DispatchProgressEvent(DOMEventTargetHelper* aTarget,
-                             const ProgressEventType aType, int64_t aLoaded,
+                             const ProgressEventType& aType, int64_t aLoaded,
                              int64_t aTotal);
 
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_INHERITED(
@@ -452,6 +431,12 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
 
   void LocalFileToBlobCompleted(BlobImpl* aBlobImpl);
 
+#ifdef DEBUG
+  // For logging when there's trouble
+  RefPtr<ThreadSafeWorkerRef> mTSWorkerRef MOZ_GUARDED_BY(mTSWorkerRefMutex);
+  Mutex mTSWorkerRefMutex;
+#endif
+
  protected:
   nsresult DetectCharset();
   nsresult AppendToResponseText(Span<const uint8_t> aBuffer,
@@ -473,6 +458,9 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
   // If no or unknown mime type is set on the channel this method ensures it's
   // set to "text/xml".
   void EnsureChannelContentType();
+
+  // Gets the value of the final content-type header from the channel.
+  bool GetContentType(nsACString& aValue) const;
 
   already_AddRefed<nsIHttpChannel> GetCurrentHttpChannel();
   already_AddRefed<nsIJARChannel> GetCurrentJARChannel();
@@ -505,6 +493,10 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
   void ResumeEventDispatching();
 
   void AbortInternal(ErrorResult& aRv);
+
+  bool BadContentRangeRequested();
+  RefPtr<mozilla::net::ContentRange> GetRequestedContentRange() const;
+  void GetContentRangeHeader(nsACString&) const;
 
   struct PendingEvent {
     RefPtr<DOMEventTargetHelper> mTarget;
@@ -543,7 +535,7 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
       bool operator<(const HeaderEntry& aOther) const {
         uint32_t selfLen = mName.Length();
         uint32_t otherLen = aOther.mName.Length();
-        uint32_t min = XPCOM_MIN(selfLen, otherLen);
+        uint32_t min = std::min(selfLen, otherLen);
         for (uint32_t i = 0; i < min; ++i) {
           unsigned char self = mName[i];
           unsigned char other = aOther.mName[i];
@@ -680,6 +672,7 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
   nsCOMPtr<nsITimer> mTimeoutTimer;
   void StartTimeoutTimer();
   void HandleTimeoutCallback();
+  void CancelTimeoutTimer();
 
   nsCOMPtr<nsIRunnable> mResumeTimeoutRunnable;
 
@@ -692,6 +685,7 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
   void CancelSyncTimeoutTimer();
 
   ErrorType mErrorLoad;
+  nsresult mErrorLoadDetail;
   bool mErrorParsingXML;
   bool mWaitingForOnStopRequest;
   bool mProgressTimerIsActive;
@@ -715,9 +709,9 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
   /**
    * Close the XMLHttpRequest's channels.
    */
-  void CloseRequest();
+  void CloseRequest(nsresult detail);
 
-  void TerminateOngoingFetch();
+  void TerminateOngoingFetch(nsresult detail);
 
   /**
    * Close the XMLHttpRequest's channels and dispatch appropriate progress
@@ -725,7 +719,7 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
    *
    * @param aType The progress event type.
    */
-  void CloseRequestWithError(const ProgressEventType aType);
+  void CloseRequestWithError(const ErrorProgressEventType& aType);
 
   nsCOMPtr<nsIAsyncVerifyRedirectCallback> mRedirectCallback;
   nsCOMPtr<nsIChannel> mNewRedirectChannel;

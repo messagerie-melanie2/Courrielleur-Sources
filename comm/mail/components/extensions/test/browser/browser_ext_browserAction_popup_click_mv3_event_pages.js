@@ -2,22 +2,19 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-let account;
-let subFolders;
+"use strict";
+
+let gAccount, gSubFolders;
 
 add_setup(async () => {
-  account = createAccount();
-  let rootFolder = account.incomingServer.rootFolder;
-  subFolders = rootFolder.subFolders;
-  createMessages(subFolders[0], 10);
-  await TestUtils.waitForCondition(
-    () => subFolders[0].messages.hasMoreElements(),
-    "Messages should be added to folder"
-  );
+  gAccount = createAccount();
+  const rootFolder = gAccount.incomingServer.rootFolder;
+  gSubFolders = rootFolder.subFolders;
+  await createMessages(gSubFolders[0], 10);
 });
 
 function getMessage() {
-  let messages = subFolders[0].messages;
+  const messages = gSubFolders[0].messages;
   ok(messages.hasMoreElements(), "Should have messages to iterate to");
   return messages.getNext();
 }
@@ -26,30 +23,32 @@ async function subtest_popup_open_with_click_MV3_event_pages(
   terminateBackground
 ) {
   info("3-pane tab");
-  let testConfig = {
-    actionType: "action",
-    manifest_version: 3,
-    terminateBackground,
-    testType: "open-with-mouse-click",
-    window,
-  };
+  {
+    const testConfig = {
+      actionType: "action",
+      manifest_version: 3,
+      terminateBackground,
+      testType: "open-with-mouse-click",
+      window,
+    };
 
-  await run_popup_test({
-    ...testConfig,
-  });
-  await run_popup_test({
-    ...testConfig,
-    disable_button: true,
-  });
-  await run_popup_test({
-    ...testConfig,
-    use_default_popup: true,
-  });
+    await run_popup_test({
+      ...testConfig,
+    });
+    await run_popup_test({
+      ...testConfig,
+      disable_button: true,
+    });
+    await run_popup_test({
+      ...testConfig,
+      use_default_popup: true,
+    });
+  }
 
   info("Message window");
   {
-    let messageWindow = await openMessageInWindow(getMessage());
-    let testConfig = {
+    const messageWindow = await openMessageInWindow(getMessage());
+    const testConfig = {
       actionType: "action",
       manifest_version: 3,
       terminateBackground,

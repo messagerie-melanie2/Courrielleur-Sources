@@ -7,301 +7,297 @@
    TodayPane */
 
 {
-  const { CalMetronome } = ChromeUtils.import("resource:///modules/CalMetronome.jsm");
+  const { CalMetronome } = ChromeUtils.importESModule("resource:///modules/CalMetronome.sys.mjs");
   const { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUtils.sys.mjs");
-  const { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
+  const { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
+  customElements.whenDefined("tree-listbox").then(() => {
+    class Agenda extends CalendarFilteredViewMixin(customElements.get("tree-listbox")) {
+      constructor() {
+        super();
 
-  class Agenda extends CalendarFilteredViewMixin(customElements.get("tree-listbox")) {
-    _showsToday = false;
+        this.addEventListener("contextmenu", event => this._showContextMenu(event));
+        this.addEventListener("keypress", event => {
+          if (this.selectedIndex < 0) {
+            return;
+          }
 
-    constructor() {
-      super();
+          switch (event.key) {
+            case "Enter":
+              this.editSelectedItem();
+              break;
+            case "Delete":
+            case "Backspace":
+              // Fall through to "Backspace" to avoid deleting messages if the
+              // preferred deletion button is not "Delete".
+              this.deleteSelectedItem();
+              event.stopPropagation();
+              event.preventDefault();
+              break;
+          }
+        });
+        this.addEventListener("dragover", event =>
+          calendarCalendarButtonDNDObserver.onDragOver(event)
+        );
+        this.addEventListener("drop", event => calendarCalendarButtonDNDObserver.onDrop(event));
+        document
+          .getElementById("itemTooltip")
+          .addEventListener("popupshowing", event => this._fillTooltip(event));
 
-      this.addEventListener("contextmenu", event => this._showContextMenu(event));
-      this.addEventListener("keypress", event => {
-        if (this.selectedIndex < 0) {
+        XPCOMUtils.defineLazyPreferenceGetter(
+          this,
+          "numberOfDays",
+          "calendar.agenda.days",
+          14,
+          () => this.update(this.startDate),
+          value => {
+            // Invalid values, return the default.
+            if (value < 1 || value > 28) {
+              return 14;
+            }
+            return value;
+          }
+        );
+      }
+
+      connectedCallback() {
+        if (this.hasConnected) {
+          return;
+        }
+        super.connectedCallback();
+
+        const metronomeCallback = () => {
+          if (!TodayPane.showsToday) {
+            return;
+          }
+
+          for (const item of this.children) {
+            item.setRelativeTime();
+          }
+        };
+        CalMetronome.on("minute", metronomeCallback);
+        window.addEventListener("unload", () => CalMetronome.off("minute", metronomeCallback));
+      }
+
+      /**
+       * Implementation as required by CalendarFilteredViewMixin.
+       */
+      clearItems() {
+        while (this.lastChild) {
+          this.lastChild.remove();
+        }
+
+        delete this._lastRemovedID;
+      }
+
+      /**
+       * Implementation as required by CalendarFilteredViewMixin.
+       *
+       * @param {calIItemBase[]} items
+       */
+      addItems(items) {
+        for (const item of items) {
+          if (document.getElementById(`agenda-listitem-${item.hashId}`)) {
+            // Item already added.
+            continue;
+          }
+
+          const startItem = document.createElement("li", { is: "agenda-listitem" });
+          startItem.item = item;
+          this.insertListItem(startItem);
+
+          // Try to maintain selection across item edits.
+          if (this._lastRemovedID == startItem.id) {
+            setTimeout(() => (this.selectedIndex = this.rows.indexOf(startItem)));
+          }
+        }
+
+        delete this._lastRemovedID;
+      }
+
+      /**
+       * Implementation as required by CalendarFilteredViewMixin.
+       *
+       * @param {calIItemBase[]} items
+       */
+      removeItems(items) {
+        delete this._lastRemovedID;
+
+        for (const item of items) {
+          const startItem = document.getElementById(`agenda-listitem-${item.hashId}`);
+          if (!startItem) {
+            // Item not found.
+            continue;
+          }
+
+          this.removeListItem(startItem);
+          if (this.selectedRow == startItem) {
+            this._lastRemovedID = startItem.id;
+          }
+        }
+      }
+
+      /**
+       * Implementation as required by CalendarFilteredViewMixin.
+       *
+       * @param {string} calendarId
+       */
+      removeItemsFromCalendar(calendarId) {
+        for (const li of [...this.children]) {
+          if (li.item.calendar.id == calendarId) {
+            if (li.displayDateHeader && li.nextElementSibling?.dateString == li.dateString) {
+              li.nextElementSibling.displayDateHeader = true;
+            }
+            li.remove();
+          }
+        }
+
+        delete this._lastRemovedID;
+      }
+
+      /**
+       * Set the date displayed in the agenda. If the date is today, display the
+       * full agenda, otherwise display just the given date.
+       *
+       * @param {calIDateTime} date
+       */
+      async update(date) {
+        this.startDate = date.clone();
+        this.startDate.isDate = true;
+
+        this.endDate = this.startDate.clone();
+        if (TodayPane.showsToday) {
+          this.endDate.day += this.numberOfDays;
+        } else {
+          this.endDate.day++;
+        }
+
+        this.itemType = Ci.calICalendar.ITEM_FILTER_TYPE_EVENT;
+        if (this.isActive) {
+          await this.refreshItems();
+        } else {
+          await this.activate();
+        }
+        this.selectedIndex = 0;
+      }
+
+      /**
+       * Insert the given list item at the appropriate point in the list, and
+       * shows or hides date headers as appropriate. Use this method rather than
+       * DOM methods.
+       *
+       * @param {AgendaListItem} listItem
+       */
+      insertListItem(listItem) {
+        cal.data.binaryInsertNode(this, listItem, listItem, this._compareListItems, false, n => n);
+
+        if (listItem.previousElementSibling?.dateString == listItem.dateString) {
+          listItem.displayDateHeader = false;
+        } else if (listItem.nextElementSibling?.dateString == listItem.dateString) {
+          listItem.nextElementSibling.displayDateHeader = false;
+        }
+      }
+
+      /**
+       * Remove the given list item from the list, and shows date headers as
+       * appropriate. Use this method rather than DOM methods.
+       *
+       * @param {AgendaListItem} listItem
+       */
+      removeListItem(listItem) {
+        if (
+          listItem.displayDateHeader &&
+          listItem.nextElementSibling?.dateString == listItem.dateString
+        ) {
+          listItem.nextElementSibling.displayDateHeader = true;
+        }
+        listItem.remove();
+      }
+
+      /**
+       * Compare two list items for insertion order, using the `sortValue`
+       * property on each item, deferring to `compareItems` if the same.
+       *
+       * @param {AgendaListItem} a
+       * @param {AgendaListItem} b
+       * @returns {number}
+       */
+      _compareListItems(a, b) {
+        const cmp = a.sortValue - b.sortValue;
+        if (cmp != 0) {
+          return cmp;
+        }
+
+        return cal.view.compareItems(a.item, b.item);
+      }
+
+      /**
+       * Returns the calendar item of the selected row.
+       *
+       * @returns {calIEvent}
+       */
+      get selectedItem() {
+        return this.getRowAtIndex(this.selectedIndex)?.item;
+      }
+
+      /**
+       * Shows the context menu.
+       *
+       * @param {MouseEvent} event
+       */
+      _showContextMenu(event) {
+        const row = event.target.closest("li");
+        if (!row) {
+          return;
+        }
+        this.selectedIndex = this.rows.indexOf(row);
+
+        const popup = document.getElementById("agenda-menupopup");
+        const menu = document.getElementById("calendar-today-pane-menu-attendance-menu");
+        setupAttendanceMenu(menu, [this.selectedItem]);
+        popup.openPopupAtScreen(event.screenX, event.screenY, true);
+      }
+
+      /**
+       * Opens the UI for editing the selected event.
+       */
+      editSelectedItem() {
+        if (Services.prefs.getBoolPref("calendar.events.defaultActionEdit", true)) {
+          modifyEventWithDialog(this.selectedItem, true);
+          return;
+        }
+        openEventDialogForViewing(this.selectedItem);
+      }
+
+      /**
+       * Deletes the selected event.
+       */
+      deleteSelectedItem() {
+        calendarViewController.deleteOccurrences([this.selectedItem], false, false);
+      }
+
+      /**
+       * Called in the 'popupshowing' event of #itemTooltip.
+       *
+       * @param {Event} event
+       */
+      _fillTooltip(event) {
+        const element = document.elementFromPoint(event.clientX, event.clientY);
+        if (!this.contains(element)) {
+          // Not on the agenda, ignore.
           return;
         }
 
-        switch (event.key) {
-          case "Enter":
-            this.editSelectedItem();
-            break;
-          case "Delete":
-          case "Backspace":
-            // Fall through to "Backspace" to avoid deleting messages if the
-            // preferred deletion button is not "Delete".
-            this.deleteSelectedItem();
-            event.stopPropagation();
-            event.preventDefault();
-            break;
-        }
-      });
-      this.addEventListener("dragover", event =>
-        calendarCalendarButtonDNDObserver.onDragOver(event)
-      );
-      this.addEventListener("drop", event => calendarCalendarButtonDNDObserver.onDrop(event));
-      document
-        .getElementById("itemTooltip")
-        .addEventListener("popupshowing", event => this._fillTooltip(event));
-
-      XPCOMUtils.defineLazyPreferenceGetter(
-        this,
-        "numberOfDays",
-        "calendar.agenda.days",
-        14,
-        () => this.update(this.startDate),
-        value => {
-          // Invalid values, return the default.
-          if (value < 1 || value > 28) {
-            return 14;
-          }
-          return value;
-        }
-      );
-    }
-
-    connectedCallback() {
-      if (this.hasConnected) {
-        return;
-      }
-      super.connectedCallback();
-
-      let metronomeCallback = () => {
-        if (!this.showsToday) {
+        if (!element.closest(".agenda-listitem-details")) {
+          // Not on an agenda item, cancel.
+          event.preventDefault();
           return;
         }
 
-        for (let item of this.children) {
-          item.setRelativeTime();
-        }
-      };
-      CalMetronome.on("minute", metronomeCallback);
-      window.addEventListener("unload", () => CalMetronome.off("minute", metronomeCallback));
-    }
-
-    /**
-     * Implementation as required by CalendarFilteredViewMixin.
-     */
-    clearItems() {
-      while (this.lastChild) {
-        this.lastChild.remove();
+        showToolTip(event.target, element.closest(".agenda-listitem").item);
       }
     }
-
-    /**
-     * Implementation as required by CalendarFilteredViewMixin.
-     *
-     * @param {calIItemBase[]} items
-     */
-    addItems(items) {
-      for (let item of items) {
-        if (document.getElementById(`agenda-listitem-${item.hashId}`)) {
-          // Item already added.
-          continue;
-        }
-
-        let startItem = document.createElement("li", { is: "agenda-listitem" });
-        startItem.item = item;
-        this.insertListItem(startItem);
-
-        // Try to maintain selection across item edits.
-        if (this._lastRemovedID == startItem.id) {
-          setTimeout(() => (this.selectedIndex = this.rows.indexOf(startItem)));
-        }
-      }
-    }
-
-    /**
-     * Implementation as required by CalendarFilteredViewMixin.
-     *
-     * @param {calIItemBase[]} items
-     */
-    removeItems(items) {
-      for (let item of items) {
-        let startItem = document.getElementById(`agenda-listitem-${item.hashId}`);
-        if (!startItem) {
-          // Item not found.
-          continue;
-        }
-
-        this.removeListItem(startItem);
-        this._lastRemovedID = startItem.id;
-      }
-    }
-
-    /**
-     * Implementation as required by CalendarFilteredViewMixin.
-     *
-     * @param {string} calendarId
-     */
-    removeItemsFromCalendar(calendarId) {
-      for (let li of [...this.children]) {
-        if (li.item.calendar.id == calendarId) {
-          if (li.displayDateHeader && li.nextElementSibling?.dateString == li.dateString) {
-            li.nextElementSibling.displayDateHeader = true;
-          }
-          li.remove();
-        }
-      }
-    }
-
-    /**
-     * Set the date displayed in the agenda. If the date is today, display the
-     * full agenda, otherwise display just the given date.
-     *
-     * @param {calIDateTime} date
-     */
-    async update(date) {
-      let today = cal.dtz.now();
-
-      this.startDate = date.clone();
-      this.startDate.isDate = true;
-
-      this.endDate = this.startDate.clone();
-      this._showsToday =
-        date.year == today.year && date.month == today.month && date.day == today.day;
-      if (this._showsToday) {
-        this.endDate.day += this.numberOfDays;
-      } else {
-        this.endDate.day++;
-      }
-
-      this.itemType = Ci.calICalendar.ITEM_FILTER_TYPE_EVENT;
-      if (this.isActive) {
-        await this.refreshItems();
-      } else {
-        await this.activate();
-      }
-      this.selectedIndex = 0;
-    }
-
-    /**
-     * If the agenda is showing today (true), or any other day (false).
-     *
-     * @type {boolean}
-     */
-    get showsToday() {
-      return this._showsToday;
-    }
-
-    /**
-     * Insert the given list item at the appropriate point in the list, and
-     * shows or hides date headers as appropriate. Use this method rather than
-     * DOM methods.
-     *
-     * @param {AgendaListItem} listItem
-     */
-    insertListItem(listItem) {
-      cal.data.binaryInsertNode(this, listItem, listItem, this._compareListItems, false, n => n);
-
-      if (listItem.previousElementSibling?.dateString == listItem.dateString) {
-        listItem.displayDateHeader = false;
-      } else if (listItem.nextElementSibling?.dateString == listItem.dateString) {
-        listItem.nextElementSibling.displayDateHeader = false;
-      }
-    }
-
-    /**
-     * Remove the given list item from the list, and shows date headers as
-     * appropriate. Use this method rather than DOM methods.
-     *
-     * @param {AgendaListItem} listItem
-     */
-    removeListItem(listItem) {
-      if (
-        listItem.displayDateHeader &&
-        listItem.nextElementSibling?.dateString == listItem.dateString
-      ) {
-        listItem.nextElementSibling.displayDateHeader = true;
-      }
-      listItem.remove();
-    }
-
-    /**
-     * Compare two list items for insertion order, using the `sortValue`
-     * property on each item, deferring to `compareItems` if the same.
-     *
-     * @param {AgendaListItem} a
-     * @param {AgendaListItem} b
-     * @returns {number}
-     */
-    _compareListItems(a, b) {
-      let cmp = a.sortValue - b.sortValue;
-      if (cmp != 0) {
-        return cmp;
-      }
-
-      return cal.view.compareItems(a.item, b.item);
-    }
-
-    /**
-     * Returns the calendar item of the selected row.
-     *
-     * @returns {calIEvent}
-     */
-    get selectedItem() {
-      return this.getRowAtIndex(this.selectedIndex)?.item;
-    }
-
-    /**
-     * Shows the context menu.
-     *
-     * @param {MouseEvent} event
-     */
-    _showContextMenu(event) {
-      let row = event.target.closest("li");
-      if (!row) {
-        return;
-      }
-      this.selectedIndex = this.rows.indexOf(row);
-
-      let popup = document.getElementById("agenda-menupopup");
-      let menu = document.getElementById("calendar-today-pane-menu-attendance-menu");
-      setupAttendanceMenu(menu, [this.selectedItem]);
-      popup.openPopupAtScreen(event.screenX, event.screenY, true);
-    }
-
-    /**
-     * Opens the UI for editing the selected event.
-     */
-    editSelectedItem() {
-      if (Services.prefs.getBoolPref("calendar.events.defaultActionEdit", true)) {
-        modifyEventWithDialog(this.selectedItem, true);
-        return;
-      }
-      openEventDialogForViewing(this.selectedItem);
-    }
-
-    /**
-     * Deletes the selected event.
-     */
-    deleteSelectedItem() {
-      calendarViewController.deleteOccurrences([this.selectedItem], false, false);
-    }
-
-    /**
-     * Called in the 'popupshowing' event of #itemTooltip.
-     *
-     * @param {Event} event
-     */
-    _fillTooltip(event) {
-      let element = document.elementFromPoint(event.clientX, event.clientY);
-      if (!this.contains(element)) {
-        // Not on the agenda, ignore.
-        return;
-      }
-
-      if (!element.closest(".agenda-listitem-details")) {
-        // Not on an agenda item, cancel.
-        event.preventDefault();
-        return;
-      }
-
-      showToolTip(event.target, element.closest(".agenda-listitem").item);
-    }
-  }
-  customElements.define("agenda-list", Agenda, { extends: "ul" });
+    customElements.define("agenda-list", Agenda, { extends: "ul" });
+  });
 
   class AgendaListItem extends HTMLLIElement {
     /**
@@ -337,8 +333,8 @@
       this.setAttribute("is", "agenda-listitem");
       this.classList.add("agenda-listitem");
 
-      let template = document.getElementById("agenda-listitem");
-      for (let element of template.content.children) {
+      const template = document.getElementById("agenda-listitem");
+      for (const element of template.content.children) {
         this.appendChild(element.cloneNode(true));
       }
 
@@ -393,7 +389,7 @@
      * to the date header shown for this event, so only the first event on
      * each day needs to show a header.
      *
-     * @type string
+     * @type {string}
      */
     get dateString() {
       return this._dateString;
@@ -402,20 +398,21 @@
     set dateString(value) {
       this._dateString = value.substring(0, 8);
 
-      let date = cal.createDateTime(value);
-      let today = cal.dtz.now();
-      let tomorrow = cal.dtz.now();
+      const date = cal.createDateTime(value);
+      const today = cal.dtz.now();
+      const tomorrow = cal.dtz.now();
       tomorrow.day++;
 
       if (date.year == today.year && date.month == today.month && date.day == today.day) {
-        this.dateHeaderElement.textContent = cal.l10n.getCalString("today");
+        document.l10n.setAttributes(this.dateHeaderElement, "calendar-today");
       } else if (
         date.year == tomorrow.year &&
         date.month == tomorrow.month &&
         date.day == tomorrow.day
       ) {
-        this.dateHeaderElement.textContent = cal.l10n.getCalString("tomorrow");
+        document.l10n.setAttributes(this.dateHeaderElement, "calendar-tomorrow");
       } else {
+        delete this.dateHeaderElement.dataset.l10nId;
         this.dateHeaderElement.textContent = cal.dtz.formatter.formatDateLongWithoutYear(date);
       }
     }
@@ -447,10 +444,10 @@
     set item(item) {
       this._item = item;
 
-      let isAllDay = item.startDate.isDate;
+      const isAllDay = item.startDate.isDate;
       this.classList.toggle("agenda-listitem-all-day", isAllDay);
 
-      let defaultTimezone = cal.dtz.defaultTimezone;
+      const defaultTimezone = cal.dtz.defaultTimezone;
       this._localStartDate = item.startDate;
       if (this._localStartDate.timezone.tzid != defaultTimezone.tzid) {
         this._localStartDate = this._localStartDate.getInTimezone(defaultTimezone);
@@ -467,7 +464,7 @@
         this.id = `agenda-listitem-end-${item.hashId}`;
         this.overlapsDayStart = true;
 
-        let sortDate = this._localEndDate.clone();
+        const sortDate = this._localEndDate.clone();
         if (isAllDay) {
           // Sort all-day events at midnight on the previous day.
           sortDate.day--;
@@ -507,7 +504,7 @@
         }
         this.dateString = sortDate.icalString;
 
-        let nextDay = cal.createDateTime();
+        const nextDay = cal.createDateTime();
         nextDay.resetTo(sortDate.year, sortDate.month, sortDate.day + 1, 0, 0, 0, defaultTimezone);
         this.overlapsDayEnd = this._localEndDate.compare(nextDay) > 0;
         this.overlapsDisplayEnd =
@@ -534,7 +531,7 @@
 
       // Set the element's colours.
 
-      let cssSafeCalendar = cal.view.formatStringForCSSRule(this.item.calendar.id);
+      const cssSafeCalendar = cal.view.formatStringForCSSRule(this.item.calendar.id);
       this.style.setProperty("--item-backcolor", `var(--calendar-${cssSafeCalendar}-backcolor)`);
       this.style.setProperty("--item-forecolor", `var(--calendar-${cssSafeCalendar}-forecolor)`);
 
@@ -614,7 +611,7 @@
       // These conditions won't change in the lifetime of an AgendaListItem,
       // so let's avoid any further work and return immediately.
       if (
-        !TodayPane.agenda.showsToday ||
+        !TodayPane.showsToday ||
         this.item.startDate.isDate ||
         this.classList.contains("agenda-listitem-end")
       ) {
@@ -625,7 +622,7 @@
       this.classList.remove("agenda-listitem-now");
       this.relativeElement.textContent = "";
 
-      let now = cal.dtz.now();
+      const now = cal.dtz.now();
 
       // The event has started.
       if (this._localStartDate.compare(now) <= 0) {
@@ -639,7 +636,7 @@
         return;
       }
 
-      let relative = this._localStartDate.subtractDate(now);
+      const relative = this._localStartDate.subtractDate(now);
 
       // Should we display a label? Is the event today or less than 12 hours away?
       if (this._localStartDate.day == now.day || relative.inSeconds < 12 * 60 * 60) {
@@ -659,7 +656,7 @@
       }
     }
   }
-  XPCOMUtils.defineLazyGetter(
+  ChromeUtils.defineLazyGetter(
     AgendaListItem,
     "relativeFormatter",
     () => new Intl.RelativeTimeFormat(undefined, { numeric: "auto", style: "short" })

@@ -12,6 +12,7 @@
 
 #include "nsCOMPtr.h"
 #include "nsIOSKeyStore.h"
+#include "nsISerialEventTarget.h"
 #include "nsString.h"
 #include "ScopedNSSTypes.h"
 
@@ -28,10 +29,6 @@ class AbstractOSKeyStore {
                                const nsACString& label) = 0;
   // Delete the secret with the given label.
   virtual nsresult DeleteSecret(const nsACString& label) = 0;
-  // Lock the key store.
-  virtual nsresult Lock() = 0;
-  // Unlock the key store.
-  virtual nsresult Unlock() = 0;
   virtual ~AbstractOSKeyStore() = default;
 
   // Returns true if the secret with the given label is available in the key
@@ -62,12 +59,8 @@ class AbstractOSKeyStore {
 };
 
 #define NS_OSKEYSTORE_CONTRACTID "@mozilla.org/security/oskeystore;1"
-#define NS_OSKEYSTORE_CID                            \
-  {                                                  \
-    0x57972956, 0x5718, 0x42d2, {                    \
-      0x80, 0x70, 0xb3, 0xfc, 0x72, 0x21, 0x2e, 0xaf \
-    }                                                \
-  }
+#define NS_OSKEYSTORE_CID \
+  {0x57972956, 0x5718, 0x42d2, {0x80, 0x70, 0xb3, 0xfc, 0x72, 0x21, 0x2e, 0xaf}}
 
 nsresult GetPromise(JSContext* aCx,
                     /* out */ RefPtr<mozilla::dom::Promise>& aPromise);
@@ -85,6 +78,8 @@ class OSKeyStore final : public nsIOSKeyStore {
   nsresult RecoverSecret(const nsACString& aLabel,
                          const nsACString& aRecoveryPhrase);
   nsresult DeleteSecret(const nsACString& aLabel);
+  nsresult RetrieveRecoveryPhrase(const nsACString& aLabel,
+                                  /* out */ nsACString& aRecoveryPhrase);
   nsresult EncryptBytes(const nsACString& aLabel,
                         const std::vector<uint8_t>& aInBytes,
                         /*out*/ nsACString& aEncryptedBase64Text);
@@ -92,14 +87,12 @@ class OSKeyStore final : public nsIOSKeyStore {
                         const nsACString& aEncryptedBase64Text,
                         /*out*/ uint32_t* outLen,
                         /*out*/ uint8_t** outBytes);
-  nsresult Lock();
-  nsresult Unlock();
 
  private:
   ~OSKeyStore() = default;
 
   std::unique_ptr<AbstractOSKeyStore> mKs;
-  bool mKsIsNSSKeyStore;
+  nsCOMPtr<nsISerialEventTarget> mBackgroundSerialEventTarget;
 };
 
 #endif  // OSKeyStore_h

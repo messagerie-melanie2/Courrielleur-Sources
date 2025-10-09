@@ -7,8 +7,8 @@
  * see bug 1454257 and bug 1456001.
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var hdr;
@@ -16,14 +16,17 @@ var hdr;
 function run_test() {
   localAccountUtils.loadLocalMailAccount();
 
+  /** @implements {nsIMsgCopyServiceListener} */
   var copyListener = {
-    OnStartCopy() {},
-    OnProgress(aProgress, aProgressMax) {},
-    SetMessageKey(aKey) {
+    onStartCopy() {},
+    onProgress() {},
+    setMessageKey(aKey) {
       hdr = localAccountUtils.inboxFolder.GetMessageHeader(aKey);
     },
-    SetMessageId(aMessageId) {},
-    OnStopCopy(aStatus) {
+    getMessageId() {
+      return null;
+    },
+    onStopCopy() {
       continueTest();
     },
   };

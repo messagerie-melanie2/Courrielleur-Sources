@@ -2,23 +2,23 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { DBViewWrapper, IDBViewWrapperListener } = ChromeUtils.import(
-  "resource:///modules/DBViewWrapper.jsm"
+var { DBViewWrapper, IDBViewWrapperListener } = ChromeUtils.importESModule(
+  "resource:///modules/DBViewWrapper.sys.mjs"
 );
-var { MailViewManager, MailViewConstants } = ChromeUtils.import(
-  "resource:///modules/MailViewManager.jsm"
+var { MailViewManager, MailViewConstants } = ChromeUtils.importESModule(
+  "resource:///modules/MailViewManager.sys.mjs"
 );
-var { VirtualFolderHelper } = ChromeUtils.import(
-  "resource:///modules/VirtualFolderWrapper.jsm"
+var { VirtualFolderHelper } = ChromeUtils.importESModule(
+  "resource:///modules/VirtualFolderWrapper.sys.mjs"
 );
-var { MessageGenerator, MessageScenarioFactory } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { MessageGenerator, MessageScenarioFactory } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-var { MessageInjection } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageInjection.jsm"
+var { MessageInjection } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageInjection.sys.mjs"
 );
-var { dump_view_state } = ChromeUtils.import(
-  "resource://testing-common/mozmill/ViewHelpers.jsm"
+var { dump_view_state } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ViewHelpers.sys.mjs"
 );
 
 var gMessageGenerator;
@@ -84,13 +84,9 @@ function assert_bit_not_set(aWhat, aBit, aWhy) {
 }
 
 var gFakeCommandUpdater = {
-  updateCommandStatus() {},
-
-  displayMessageChanged(aFolder, aSubject, aKeywords) {},
-
-  summarizeSelection() {},
-
+  QueryInterface: ChromeUtils.generateQI(["nsIMsgDBViewCommandUpdater"]),
   updateNextMessageAfterDelete() {},
+  selectedMessageRemoved() {},
 };
 
 /**
@@ -115,15 +111,15 @@ var VWTU_testHelper = {
     });
     // Verify that the notification helper has no outstanding listeners.
     if (IDBViewWrapperListener.prototype._FNH.haveListeners()) {
-      let msg = "FolderNotificationHelper has listeners, but should not.";
+      const msg = "FolderNotificationHelper has listeners, but should not.";
       dump("*** " + msg + "\n");
       dump("Pending URIs:\n");
-      for (let folderURI in IDBViewWrapperListener.prototype._FNH
+      for (const folderURI in IDBViewWrapperListener.prototype._FNH
         ._pendingFolderUriToViewWrapperLists) {
         dump("  " + folderURI + "\n");
       }
       dump("Interested wrappers:\n");
-      for (let folderURI in IDBViewWrapperListener.prototype._FNH
+      for (const folderURI in IDBViewWrapperListener.prototype._FNH
         ._interestedWrappers) {
         dump("  " + folderURI + "\n");
       }
@@ -147,13 +143,13 @@ var VWTU_testHelper = {
   onTimeout() {
     dump("-----------------------------------------------------------\n");
     dump("Active things at time of timeout:\n");
-    for (let folder of this.active_real_folders) {
+    for (const folder of this.active_real_folders) {
       dump("Real folder: " + folder.prettyName + "\n");
     }
-    for (let virtFolder of this.active_virtual_folders) {
+    for (const virtFolder of this.active_virtual_folders) {
       dump("Virtual folder: " + virtFolder.prettyName + "\n");
     }
-    for (let [i, viewWrapper] of this.active_view_wrappers.entries()) {
+    for (const [i, viewWrapper] of this.active_view_wrappers.entries()) {
       dump("-----------------------------------\n");
       dump("Active view wrapper " + i + "\n");
       dump_view_state(viewWrapper);
@@ -162,16 +158,7 @@ var VWTU_testHelper = {
 };
 
 function make_view_wrapper() {
-  let wrapper = new DBViewWrapper(gMockViewWrapperListener);
-  VWTU_testHelper.active_view_wrappers.push(wrapper);
-  return wrapper;
-}
-
-/**
- * Clone an open and valid view wrapper.
- */
-function clone_view_wrapper(aViewWrapper) {
-  let wrapper = aViewWrapper.clone(gMockViewWrapperListener);
+  const wrapper = new DBViewWrapper(gMockViewWrapperListener);
   VWTU_testHelper.active_view_wrappers.push(wrapper);
   return wrapper;
 }
@@ -232,9 +219,11 @@ function async_view_end_update(aViewWrapper) {
  *  too, but we don't care what it does.)  We provide a |delete_folder| alias
  *  so code can look clean.
  *
- * @param aViewWrapper Required when you want us to operate asynchronously.
- * @param aDontEmptyTrash This function will empty the trash after deleting the
- *                        folder, unless you set this parameter to true.
+ * @param {nsIMsgFolder} aFolder - The folder
+ * @param {DBViewWrapper} aViewWrapper - Required when you want us to operate
+ *   asynchronously.
+ * @param {boolean} aDontEmptyTrash - delete_folder will empty the trash after
+ *   deleting the folder, unless you set this parameter to true.
  */
 async function delete_folder(aFolder, aViewWrapper, aDontEmptyTrash) {
   VWTU_testHelper.active_real_folders.splice(
@@ -279,7 +268,7 @@ function dump_message_header(aMsgHdr) {
   dump("  Date: " + new Date(aMsgHdr.date / 1000) + "\n");
   dump("  Author: " + aMsgHdr.mime2DecodedAuthor + "\n");
   dump("  Recipients: " + aMsgHdr.mime2DecodedRecipients + "\n");
-  let junkScore = aMsgHdr.getStringProperty("junkscore");
+  const junkScore = aMsgHdr.getStringProperty("junkscore");
   dump(
     "  Read: " +
       aMsgHdr.isRead +
@@ -313,9 +302,10 @@ function dump_message_header(aMsgHdr) {
  *  sets or contains messages not in the provided sets, do_throw will be invoked
  *  with a human readable explanation of the problem.
  *
- * @param aSynSets A single SyntheticMessageSet or a list of
- *     SyntheticMessageSets.
- * @param aViewWrapper The DBViewWrapper whose contents you want to validate.
+ * @param {SyntheticMessageSet|SyntheticMessageSet[]} aSynSets - A single
+ *   SyntheticMessageSet or a list of SyntheticMessageSets.
+ * @param {DBViewWrapper} aViewWrapper - The DBViewWrapper whose contents you
+ *   want to validate.
  */
 function verify_messages_in_view(aSynSets, aViewWrapper) {
   if (!("length" in aSynSets)) {
@@ -324,22 +314,22 @@ function verify_messages_in_view(aSynSets, aViewWrapper) {
 
   // - Iterate over all the message sets, retrieving the message header.  Use
   //  this to construct a URI to populate a dictionary mapping.
-  let synMessageURIs = {}; // map URI to message header
-  for (let messageSet of aSynSets) {
-    for (let msgHdr of messageSet.msgHdrs()) {
+  const synMessageURIs = {}; // map URI to message header
+  for (const messageSet of aSynSets) {
+    for (const msgHdr of messageSet.msgHdrs()) {
       synMessageURIs[msgHdr.folder.getUriForMsg(msgHdr)] = msgHdr;
     }
   }
 
   // - Iterate over the contents of the view, nulling out values in
   //  synMessageURIs for found messages, and exploding for missing ones.
-  let dbView = aViewWrapper.dbView;
-  let treeView = aViewWrapper.dbView.QueryInterface(Ci.nsITreeView);
-  let rowCount = treeView.rowCount;
+  const dbView = aViewWrapper.dbView;
+  const treeView = aViewWrapper.dbView.QueryInterface(Ci.nsITreeView);
+  const rowCount = treeView.rowCount;
 
   for (let iViewIndex = 0; iViewIndex < rowCount; iViewIndex++) {
-    let msgHdr = dbView.getMsgHdrAt(iViewIndex);
-    let uri = msgHdr.folder.getUriForMsg(msgHdr);
+    const msgHdr = dbView.getMsgHdrAt(iViewIndex);
+    const uri = msgHdr.folder.getUriForMsg(msgHdr);
     // Expected hit, null it out. (in the dummy case, we will just null out
     //  twice, which is also why we do an 'in' test and not a value test.
     if (uri in synMessageURIs) {
@@ -360,8 +350,8 @@ function verify_messages_in_view(aSynSets, aViewWrapper) {
   }
 
   // - Iterate over our URI set and make sure every message got nulled out.
-  for (let uri in synMessageURIs) {
-    let msgHdr = synMessageURIs[uri];
+  for (const uri in synMessageURIs) {
+    const msgHdr = synMessageURIs[uri];
     if (msgHdr != null) {
       dump("************************\n");
       dump(
@@ -394,16 +384,16 @@ function verify_empty_view(aViewWrapper) {
  *  something less eccentric is certainly the way that should be tested.
  */
 function verify_view_level_histogram(aExpectedHisto, aViewWrapper) {
-  let treeView = aViewWrapper.dbView.QueryInterface(Ci.nsITreeView);
-  let rowCount = treeView.rowCount;
+  const treeView = aViewWrapper.dbView.QueryInterface(Ci.nsITreeView);
+  const rowCount = treeView.rowCount;
 
-  let actualHisto = {};
+  const actualHisto = {};
   for (let iViewIndex = 0; iViewIndex < rowCount; iViewIndex++) {
-    let level = treeView.getLevel(iViewIndex);
+    const level = treeView.getLevel(iViewIndex);
     actualHisto[level] = (actualHisto[level] || 0) + 1;
   }
 
-  for (let [level, count] of Object.entries(aExpectedHisto)) {
+  for (const [level, count] of Object.entries(aExpectedHisto)) {
     if (actualHisto[level] != count) {
       dump_view_state(aViewWrapper);
       dump("*******************\n");
@@ -425,12 +415,12 @@ function verify_view_level_histogram(aExpectedHisto, aViewWrapper) {
  * Given a view wrapper and one or more view indices, verify that the row
  *  returns true for isContainer.
  *
- * @param aViewWrapper The view wrapper in question
- * @param ... View indices to check.
+ * @param {DBViewWrapper} aViewWrapper - The view wrapper in question.
+ * @param {...integer} aArgs - View indices to check.
  */
 function verify_view_row_at_index_is_container(aViewWrapper, ...aArgs) {
-  let treeView = aViewWrapper.dbView.QueryInterface(Ci.nsITreeView);
-  for (let viewIndex of aArgs) {
+  const treeView = aViewWrapper.dbView.QueryInterface(Ci.nsITreeView);
+  for (const viewIndex of aArgs) {
     if (!treeView.isContainer(viewIndex)) {
       dump_view_state(aViewWrapper);
       do_throw("Expected isContainer to be true at view index " + viewIndex);
@@ -442,13 +432,13 @@ function verify_view_row_at_index_is_container(aViewWrapper, ...aArgs) {
  * Given a view wrapper and one or more view indices, verify that there is a
  *  dummy header at each provided index.
  *
- * @param aViewWrapper The view wrapper in question
- * @param ... View indices to check.
+ * @param {DBViewWrapper} aViewWrapper - The view wrapper in question.
+ * @param {...integer} aArgs - View indices to check.
  */
 function verify_view_row_at_index_is_dummy(aViewWrapper, ...aArgs) {
   const MSG_VIEW_FLAG_DUMMY = 0x20000000;
-  for (let viewIndex of aArgs) {
-    let flags = aViewWrapper.dbView.getFlagsAt(viewIndex);
+  for (const viewIndex of aArgs) {
+    const flags = aViewWrapper.dbView.getFlagsAt(viewIndex);
     if (!(flags & MSG_VIEW_FLAG_DUMMY)) {
       dump_view_state(aViewWrapper);
       do_throw("Expected a dummy header at view index " + viewIndex);
@@ -471,17 +461,8 @@ function view_expand_all(aViewWrapper) {
  * Create a name and address pair where the provided word is part of the name.
  */
 function make_person_with_word_in_name(aWord) {
-  let dude = gMessageGenerator.makeNameAndAddress();
+  const dude = gMessageGenerator.makeNameAndAddress();
   return [aWord, dude[1]];
-}
-
-/**
- * Create a name and address pair where the provided word is part of the mail
- *  address.
- */
-function make_person_with_word_in_address(aWord) {
-  let dude = gMessageGenerator.makeNameAndAddress();
-  return [dude[0], aWord + "@madeup.nul"];
 }
 
 class MockViewWrapperListener extends IDBViewWrapperListener {

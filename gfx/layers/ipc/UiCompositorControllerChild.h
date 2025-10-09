@@ -80,8 +80,8 @@ class UiCompositorControllerChild final
   void HandleFatalError(const char* aMsg) override;
   mozilla::ipc::IPCResult RecvToolbarAnimatorMessageFromCompositor(
       const int32_t& aMessage);
-  mozilla::ipc::IPCResult RecvRootFrameMetrics(const ScreenPoint& aScrollOffset,
-                                               const CSSToScreenScale& aZoom);
+  mozilla::ipc::IPCResult RecvNotifyCompositorScrollUpdate(
+      const CompositorScrollUpdate& aUpdate);
   mozilla::ipc::IPCResult RecvScreenPixels(Shmem&& aMem,
                                            const ScreenIntSize& aSize,
                                            bool aNeedsYFlip);
@@ -93,6 +93,9 @@ class UiCompositorControllerChild final
   void OpenForSameProcess();
   void OpenForGPUProcess(Endpoint<PUiCompositorControllerChild>&& aEndpoint);
   void SendCachedValues();
+
+  void SetReplyTimeout();
+  bool ShouldContinueFromReplyTimeout() override;
 
   bool mIsOpen;
   uint64_t mProcessToken;

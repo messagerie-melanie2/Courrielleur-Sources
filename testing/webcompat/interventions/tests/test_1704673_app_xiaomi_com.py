@@ -1,4 +1,5 @@
 import pytest
+from webdriver.bidi.error import UnknownErrorException
 
 # This site fails with a redirect loop with a Firefox UA
 
@@ -19,5 +20,10 @@ async def test_enabled(client):
 @pytest.mark.asyncio
 @pytest.mark.without_interventions
 async def test_disabled(client):
-    await client.navigate(URL, timeout=15)
-    assert client.find_text(REDIR_FAILURE_TEXT)
+    # We will either get a static error page with the text, or
+    # an UnknownErrorException from WebDriver.
+    try:
+        await client.navigate(URL, wait="none")
+        assert client.await_text(REDIR_FAILURE_TEXT, timeout=30)
+    except UnknownErrorException:
+        assert True

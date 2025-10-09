@@ -8,7 +8,8 @@
 
 @import url("chrome://messenger/skin/messenger.css");
 
-#subscribeWindow {
+#subscribeWindow,
+dialog {
   min-width: 40em;
   min-height: 30em;
 }
@@ -69,12 +70,12 @@ treechildren::-moz-tree-image(nameColumn2, serverType-nntp) {
 
 .subscribeMenuItem {
   list-style-image: url("chrome://messenger/skin/icons/message.svg");
-}
 
-.subscribeMenuItem[ServerType="imap"][IsSecure="true"] {
-  list-style-image: url("chrome://messenger/skin/icons/message-secure.svg");
-}
+  &[ServerType="imap"][IsSecure="true"] {
+    list-style-image: url("chrome://messenger/skin/icons/message-secure.svg");
+  }
 
-.subscribeMenuItem[ServerType="nntp"] {
-  list-style-image: url("chrome://messenger/skin/icons/globe.svg");
+  &[ServerType="nntp"] {
+    list-style-image: url("chrome://messenger/skin/icons/globe.svg");
+  }
 }

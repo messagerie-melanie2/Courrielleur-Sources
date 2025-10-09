@@ -22,37 +22,6 @@
   background-color: -moz-OddTreeRow;
 }
 
-#mailContent {
-  appearance: auto;
-  -moz-default-appearance: toolbox;
-  background-color: -moz-Dialog;
-}
-
-/* ..... status bar adjustments ..... */
-
-#threadTree > treechildren::-moz-tree-row(odd) {
-  background-color: transparent;
-}
-
-#threadTree > treechildren::-moz-tree-row(dummy, odd) {
-  background-color: var(--row-grouped-header-bg-color);
-}
-
-#threadTree > treechildren::-moz-tree-row(odd, hover),
-#threadTree > treechildren::-moz-tree-row(dummy, odd, hover) {
-  background-color: hsla(0, 0%, 50%, 0.15);
-}
-
-#threadTree > treechildren::-moz-tree-row(selected) {
-  color: -moz-cellhighlighttext;
-  background-color: -moz-cellhighlight;
-}
-
-#threadTree > treechildren::-moz-tree-row(selected, focus) {
-  color: var(--selected-item-text-color);
-  background-color: var(--selected-item-color);
-}
-
 /* ..... tabs ..... */
 
 #tabpanelcontainer {

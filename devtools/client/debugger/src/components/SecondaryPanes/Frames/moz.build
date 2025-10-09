@@ -7,8 +7,8 @@ DIRS += []
 
 CompiledModules(
     "Frame.js",
+    "Frames.js",
     "FrameIndent.js",
-    "FrameMenu.js",
     "Group.js",
     "index.js",
 )

@@ -3,51 +3,38 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* eslint-disable mozilla/valid-lazy */
 
 /**
  * This file handles addon logic that is independent of the chrome process and
  * may run in all web content and extension processes.
  *
- * Don't put contentscript logic here, use ExtensionContent.jsm instead.
+ * Don't put contentscript logic here, use ExtensionContent.sys.mjs instead.
  */
 
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
-const lazy = {};
-
-XPCOMUtils.defineLazyServiceGetter(
-  lazy,
-  "finalizationService",
-  "@mozilla.org/toolkit/finalizationwitness;1",
-  "nsIFinalizationWitnessService"
-);
-
-ChromeUtils.defineESModuleGetters(lazy, {
+const lazy = XPCOMUtils.declareLazy({
   ExtensionContent: "resource://gre/modules/ExtensionContent.sys.mjs",
   ExtensionPageChild: "resource://gre/modules/ExtensionPageChild.sys.mjs",
   ExtensionProcessScript:
     "resource://gre/modules/ExtensionProcessScript.sys.mjs",
   NativeApp: "resource://gre/modules/NativeMessaging.sys.mjs",
-  PerformanceCounters: "resource://gre/modules/PerformanceCounters.sys.mjs",
-  PromiseUtils: "resource://gre/modules/PromiseUtils.sys.mjs",
+  finalizationService: {
+    service: "@mozilla.org/toolkit/finalizationwitness;1",
+    iid: Ci.nsIFinalizationWitnessService,
+  },
 });
 
-// We're using the pref to avoid loading PerformanceCounters.jsm for nothing.
-XPCOMUtils.defineLazyPreferenceGetter(
-  lazy,
-  "gTimingEnabled",
-  "extensions.webextensions.enablePerformanceCounters",
-  false
-);
 import { ExtensionCommon } from "resource://gre/modules/ExtensionCommon.sys.mjs";
 import { ExtensionUtils } from "resource://gre/modules/ExtensionUtils.sys.mjs";
 
 const { DefaultMap, ExtensionError, LimitedSet, getUniqueId } = ExtensionUtils;
 
 const {
-  defineLazyGetter,
+  redefineGetter,
   EventEmitter,
   EventManager,
   LocalAPIImplementation,
@@ -153,7 +140,7 @@ const StrongPromise = {
 Services.obs.addObserver(StrongPromise, "extensions-onMessage-witness");
 
 // Simple single-event emitter-like helper, exposes the EventManager api.
-class SimpleEventAPI extends EventManager {
+export class SimpleEventAPI extends EventManager {
   constructor(context, name) {
     let fires = new Set();
     let register = fire => {
@@ -164,13 +151,14 @@ class SimpleEventAPI extends EventManager {
     super({ context, name, register });
     this.fires = fires;
   }
+  /** @returns {any} */
   emit(...args) {
     return [...this.fires].map(fire => fire.asyncWithoutClone(...args));
   }
 }
 
 // runtime.OnMessage event helper, handles custom async/sendResponse logic.
-class MessageEvent extends SimpleEventAPI {
+export class MessageEvent extends SimpleEventAPI {
   emit(holder, sender) {
     if (!this.fires.size || !this.context.active) {
       return { received: false };
@@ -237,7 +225,7 @@ function holdMessage(name, anonymizedName, data, native = null) {
 }
 
 // Implements the runtime.Port extension API object.
-class Port {
+export class Port {
   /**
    * @param {BaseContext} context The context that owns this port.
    * @param {number} portId Uniquely identifies this port's channel.
@@ -306,18 +294,19 @@ class Port {
     }
     throw new this.context.Error("Attempt to postMessage on disconnected port");
   }
-}
 
-defineLazyGetter(Port.prototype, "api", function () {
-  let api = this.getAPI();
-  return Cu.cloneInto(api, this.context.cloneScope, { cloneFunctions: true });
-});
+  get api() {
+    const scope = this.context.cloneScope;
+    const value = Cu.cloneInto(this.getAPI(), scope, { cloneFunctions: true });
+    return redefineGetter(this, "api", value);
+  }
+}
 
 /**
  * Each extension context gets its own Messenger object. It handles the
  * basics of sendMessage, onMessage, connect and onConnect.
  */
-class Messenger {
+export class Messenger {
   constructor(context) {
     this.context = context;
     this.conduit = context.openConduit(this, {
@@ -336,6 +325,22 @@ class Messenger {
     this.onMessageEx = new MessageEvent(context, "runtime.onMessageExternal");
   }
 
+  get onUserScriptConnect() {
+    return redefineGetter(
+      this,
+      "onUserScriptConnect",
+      new SimpleEventAPI(this.context, "runtime.onUserScriptConnect")
+    );
+  }
+
+  get onUserScriptMessage() {
+    return redefineGetter(
+      this,
+      "onUserScriptMessage",
+      new MessageEvent(this.context, "runtime.onUserScriptMessage")
+    );
+  }
+
   sendNativeMessage(nativeApp, json) {
     let holder = holdMessage(
       `Messenger/${this.context.extension.id}/sendNativeMessage/${nativeApp}`,
@@ -346,7 +351,12 @@ class Messenger {
     return this.conduit.queryNativeMessage({ nativeApp, holder });
   }
 
-  sendRuntimeMessage({ extensionId, message, callback, ...args }) {
+  /** @type {(args: { context, extensionId?, message, callback, userScriptWorldId? }) => any} */
+  sendRuntimeMessage({ context, extensionId, message, callback, ...args }) {
+    // this.context is usually used, except with user scripts, where we pass a
+    // custom context to ensure that the return value is cloned into the right
+    // USER_SCRIPT world.
+    context ??= this.context;
     let response = this.conduit.queryRuntimeMessage({
       extensionId: extensionId || this.context.extension.id,
       holder: holdMessage(
@@ -358,28 +368,40 @@ class Messenger {
     });
     // If |response| is a rejected promise, the value will be sanitized by
     // wrapPromise, according to the rules of context.normalizeError.
-    return this.context.wrapPromise(response, callback);
+    return context.wrapPromise(response, callback);
   }
 
-  connect({ name, native, ...args }) {
+  connect({ context, name, native = false, ...args }) {
+    // this.context is usually used, except with user scripts, where we pass a
+    // custom context to ensure that the return value is cloned into the right
+    // USER_SCRIPT world.
+    context ??= this.context;
     let portId = getUniqueId();
-    let port = new Port(this.context, portId, name, !!native);
+    let port = new Port(context, portId, name, !!native);
     this.conduit
       .queryPortConnect({ portId, name, native, ...args })
       .catch(error => port.recvPortDisconnect({ error }));
     return port.api;
   }
 
-  recvPortConnect({ extensionId, portId, name, sender }) {
+  recvPortConnect({ extensionId, portId, name, sender, userScriptWorldId }) {
     let event = sender.id === extensionId ? this.onConnect : this.onConnectEx;
+    if (typeof userScriptWorldId == "string") {
+      sender = { ...sender, userScriptWorldId };
+      event = this.onUserScriptConnect;
+    }
     if (this.context.active && event.fires.size) {
       let port = new Port(this.context, portId, name, false, sender);
       return event.emit(port.api).length;
     }
   }
 
-  recvRuntimeMessage({ extensionId, holder, sender }) {
+  recvRuntimeMessage({ extensionId, holder, sender, userScriptWorldId }) {
     let event = sender.id === extensionId ? this.onMessage : this.onMessageEx;
+    if (typeof userScriptWorldId == "string") {
+      sender = { ...sender, userScriptWorldId };
+      return this.onUserScriptMessage.emit(holder, sender);
+    }
     return event.emit(holder, sender);
   }
 }
@@ -389,8 +411,11 @@ var ExtensionManager = {
   extensions: new Map(),
 };
 
-// Represents a browser extension in the content process.
-class BrowserExtensionContent extends EventEmitter {
+/**
+ * Represents an extension instance in the child process.
+ * Corresponds to the @see {Extension} instance in the parent.
+ */
+export class ExtensionChild extends EventEmitter {
   constructor(policy) {
     super();
 
@@ -404,7 +429,7 @@ class BrowserExtensionContent extends EventEmitter {
     this.optionalPermissions = policy.optionalPermissions;
 
     if (WebExtensionPolicy.isExtensionProcess) {
-      // Keep in sync with serializeExtended in Extension.jsm
+      // Keep in sync with serializeExtended in Extension.sys.mjs
       let ed = this.getSharedData("extendedData");
       this.backgroundScripts = ed.backgroundScripts;
       this.backgroundWorkerScript = ed.backgroundWorkerScript;
@@ -456,7 +481,7 @@ class BrowserExtensionContent extends EventEmitter {
     return this.policy.allowedOrigins;
   }
 
-  getSharedData(key, value) {
+  getSharedData(key) {
     return sharedData.get(`extension/${this.id}/${key}`);
   }
 
@@ -487,6 +512,7 @@ class BrowserExtensionContent extends EventEmitter {
   }
 
   getAPIManager() {
+    /** @type {InstanceType<typeof ExtensionCommon.LazyAPIManager>[]} */
     let apiManagers = [lazy.ExtensionPageChild.apiManager];
 
     if (this.dependencies) {
@@ -526,9 +552,24 @@ class BrowserExtensionContent extends EventEmitter {
     return lazy.ExtensionContent.getContext(this, window);
   }
 
+  // Implementation of runtime.getURL / extension.getURL.
+  // ExtensionData.prototype.getURL has a similar signature and return value.
+  getURL(path = "") {
+    if (path.startsWith(this.baseURL)) {
+      // Historically, when the input is an already-resolved extension URL,
+      // we return the parsed version of it as-is.
+      return path;
+    }
+    if (path.startsWith("/")) {
+      // this.baseURL already contains a "/".
+      path = path.slice(1);
+    }
+    return this.baseURL + path;
+  }
+
   emit(event, ...args) {
     Services.cpmm.sendAsyncMessage(this.MESSAGE_EMIT_EVENT, { event, args });
-    super.emit(event, ...args);
+    return super.emit(event, ...args);
   }
 
   // TODO(Bug 1768471): consider folding this back into emit if we will change it to
@@ -586,7 +627,7 @@ class BrowserExtensionContent extends EventEmitter {
 /**
  * An object that runs an remote implementation of an API.
  */
-class ProxyAPIImplementation extends SchemaAPIInterface {
+export class ProxyAPIImplementation extends SchemaAPIInterface {
   /**
    * @param {string} namespace The full path to the namespace that contains the
    *     `name` member. This may contain dots, e.g. "storage.local".
@@ -686,7 +727,7 @@ class ProxyAPIImplementation extends SchemaAPIInterface {
   }
 }
 
-class ChildLocalAPIImplementation extends LocalAPIImplementation {
+export class ChildLocalAPIImplementation extends LocalAPIImplementation {
   constructor(pathObj, namespace, name, childApiManager) {
     super(pathObj, name, childApiManager.context);
     this.childApiManagerId = childApiManager.id;
@@ -695,7 +736,7 @@ class ChildLocalAPIImplementation extends LocalAPIImplementation {
 
   /**
    * Call the given function and also log the call as appropriate
-   * (i.e., with PerformanceCounters and/or activity logging)
+   * (i.e., with activity logging and/or profiler markers)
    *
    * @param {Function} callable The actual implementation to invoke.
    * @param {Array} args Arguments to the function call.
@@ -712,15 +753,6 @@ class ChildLocalAPIImplementation extends LocalAPIImplementation {
         { startTime: start },
         `${this.context.extension.id}, api_call: ${this.fullname}`
       );
-      if (lazy.gTimingEnabled) {
-        let end = Cu.now() * 1000;
-        lazy.PerformanceCounters.storeExecutionTime(
-          this.context.extension.id,
-          this.name,
-          end - start * 1000,
-          this.childApiManagerId
-        );
-      }
     }
   }
 
@@ -742,10 +774,10 @@ class ChildLocalAPIImplementation extends LocalAPIImplementation {
 
 // We create one instance of this class for every extension context that
 // needs to use remote APIs. It uses the the JSWindowActor and
-// JSProcessActor Conduits actors (see ConduitsChild.jsm) to communicate
-// with the ParentAPIManager singleton in ExtensionParent.jsm.
+// JSProcessActor Conduits actors (see ConduitsChild.sys.mjs) to communicate
+// with the ParentAPIManager singleton in ExtensionParent.sys.mjs.
 // It handles asynchronous function calls as well as event listeners.
-class ChildAPIManager {
+export class ChildAPIManager {
   constructor(context, messageManager, localAPICan, contextData) {
     this.context = context;
     this.messageManager = messageManager;
@@ -887,15 +919,15 @@ class ChildAPIManager {
    *
    * @param {string} path The full name of the method, e.g. "tabs.create".
    * @param {Array} args The parameters for the function.
-   * @param {function(*)} [callback] The callback to be called when the function
-   *     completes.
+   * @param {callback} [callback] The callback to be called when the
+   *      function completes.
    * @param {object} [options] Extra options.
    * @returns {Promise|undefined} Must be void if `callback` is set, and a
    *     promise otherwise. The promise is resolved when the function completes.
    */
   callParentAsyncFunction(path, args, callback, options = {}) {
     let callId = getUniqueId();
-    let deferred = lazy.PromiseUtils.defer();
+    let deferred = Promise.withResolvers();
     this.callPromises.set(callId, deferred);
 
     let {
@@ -929,10 +961,10 @@ class ChildAPIManager {
    *   hasListener methods. See SchemaAPIInterface for documentation.
    */
   getParentEvent(path) {
-    path = path.split(".");
+    let parts = path.split(".");
 
-    let name = path.pop();
-    let namespace = path.join(".");
+    let name = parts.pop();
+    let namespace = parts.join(".");
 
     let impl = new ProxyAPIImplementation(namespace, name, this, true);
     return {
@@ -1027,14 +1059,3 @@ class ChildAPIManager {
     this.permissionsChangedCallbacks.add(callback);
   }
 }
-
-export var ExtensionChild = {
-  BrowserExtensionContent,
-  ChildAPIManager,
-  ChildLocalAPIImplementation,
-  MessageEvent,
-  Messenger,
-  Port,
-  ProxyAPIImplementation,
-  SimpleEventAPI,
-};

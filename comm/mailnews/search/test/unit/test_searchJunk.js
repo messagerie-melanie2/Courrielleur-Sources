@@ -7,8 +7,8 @@
 /* import-globals-from ../../../test/resources/searchTestUtils.js */
 load("../../../resources/searchTestUtils.js");
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var IsGreaterThan = Ci.nsMsgSearchOp.IsGreaterThan;
@@ -284,14 +284,17 @@ function run_test() {
 }
 
 var hdr;
+/** @implements {nsIMsgCopyServiceListener} */
 var copyListener = {
-  OnStartCopy() {},
-  OnProgress(aProgress, aProgressMax) {},
-  SetMessageKey(aKey) {
+  onStartCopy() {},
+  onProgress() {},
+  setMessageKey(aKey) {
     hdr = localAccountUtils.inboxFolder.GetMessageHeader(aKey);
   },
-  SetMessageId(aMessageId) {},
-  OnStopCopy(aStatus) {
+  getMessageId() {
+    return null;
+  },
+  onStopCopy() {
     testJunkSearch();
   },
 };

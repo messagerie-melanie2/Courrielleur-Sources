@@ -4,62 +4,55 @@
 
 # This file contains miscellaneous utility functions that don't belong anywhere
 # in particular.
-
 import argparse
 import collections
 import collections.abc
 import copy
-import ctypes
 import difflib
-import errno
 import functools
 import hashlib
-import io
 import itertools
+import logging
 import os
 import re
-import stat
+import subprocess
 import sys
-import time
-from collections import OrderedDict
 from io import BytesIO, StringIO
 from pathlib import Path
 
-import six
-from packaging.version import Version
+from mozbuild.dirutils import ensureParentDir
+
+try:
+    import psutil
+except Exception:
+    psutil = None
 
 MOZBUILD_METRICS_PATH = os.path.abspath(
     os.path.join(__file__, "..", "..", "metrics.yaml")
 )
 
 if sys.platform == "win32":
-    _kernel32 = ctypes.windll.kernel32
-    _FILE_ATTRIBUTE_NOT_CONTENT_INDEXED = 0x2000
     system_encoding = "mbcs"
 else:
     system_encoding = "utf-8"
 
 
-def exec_(object, globals=None, locals=None):
-    """Wrapper around the exec statement to avoid bogus errors like:
+class MissingL10nError(Exception):
+    """Raised when the l10n repositories haven’t been checked out."""
 
-    SyntaxError: unqualified exec is not allowed in function ...
-    it is a nested function.
+    pass
 
-    or
 
-    SyntaxError: unqualified exec is not allowed in function ...
-    it contains a nested function with free variable
+class NotAGitRepositoryError(Exception):
+    """Raised when the directory isn’t a git repository."""
 
-    which happen with older versions of python 2.7.
-    """
-    exec(object, globals, locals)
+    pass
 
 
 def _open(path, mode):
     if "b" in mode:
-        return io.open(path, mode)
-    return io.open(path, mode, encoding="utf-8", newline="\n")
+        return open(path, mode)
+    return open(path, mode, encoding="utf-8", newline="\n")
 
 
 def hash_file(path, hasher=None):
@@ -81,7 +74,7 @@ def hash_file(path, hasher=None):
     return h.hexdigest()
 
 
-class EmptyValue(six.text_type):
+class EmptyValue(str):
     """A dummy type that behaves like an empty string and sequence.
 
     This type exists in order to support
@@ -93,11 +86,11 @@ class EmptyValue(six.text_type):
         super(EmptyValue, self).__init__()
 
 
-class ReadOnlyNamespace(object):
+class ReadOnlyNamespace:
     """A class for objects with immutable attributes set at initialization."""
 
     def __init__(self, **kwargs):
-        for k, v in six.iteritems(kwargs):
+        for k, v in kwargs.items():
             super(ReadOnlyNamespace, self).__setattr__(k, v)
 
     def __delattr__(self, key):
@@ -143,8 +136,15 @@ class ReadOnlyDict(dict):
 
         return ReadOnlyDict(**result)
 
+    def __reduce__(self, *args, **kwargs):
+        """
+        Support for `pickle`.
+        """
 
-class undefined_default(object):
+        return (self.__class__, (dict(self),))
+
+
+class undefined_default:
     """Represents an undefined argument value that isn't None."""
 
 
@@ -162,42 +162,6 @@ class ReadOnlyDefaultDict(ReadOnlyDict):
         value = self._default_factory()
         dict.__setitem__(self, key, value)
         return value
-
-
-def ensureParentDir(path):
-    """Ensures the directory parent to the given file exists."""
-    d = os.path.dirname(path)
-    if d and not os.path.exists(path):
-        try:
-            os.makedirs(d)
-        except OSError as error:
-            if error.errno != errno.EEXIST:
-                raise
-
-
-def mkdir(path, not_indexed=False):
-    """Ensure a directory exists.
-
-    If ``not_indexed`` is True, an attribute is set that disables content
-    indexing on the directory.
-    """
-    try:
-        os.makedirs(path)
-    except OSError as e:
-        if e.errno != errno.EEXIST:
-            raise
-
-    if not_indexed:
-        if sys.platform == "win32":
-            if isinstance(path, six.string_types):
-                fn = _kernel32.SetFileAttributesW
-            else:
-                fn = _kernel32.SetFileAttributesA
-
-            fn(path, _FILE_ATTRIBUTE_NOT_CONTENT_INDEXED)
-        elif sys.platform == "darwin":
-            with open(os.path.join(path, ".metadata_never_index"), "a"):
-                pass
 
 
 def simple_diff(filename, old_lines, new_lines):
@@ -238,8 +202,8 @@ class FileAvoidWrite(BytesIO):
     def __init__(self, filename, capture_diff=False, dry_run=False, readmode="r"):
         BytesIO.__init__(self)
         self.name = filename
-        assert type(capture_diff) == bool
-        assert type(dry_run) == bool
+        assert type(capture_diff) is bool
+        assert type(dry_run) is bool
         assert "r" in readmode
         self._capture_diff = capture_diff
         self._write_to_file = not dry_run
@@ -248,7 +212,9 @@ class FileAvoidWrite(BytesIO):
         self._binary_mode = "b" in readmode
 
     def write(self, buf):
-        BytesIO.write(self, six.ensure_binary(buf))
+        if isinstance(buf, str):
+            buf = buf.encode()
+        BytesIO.write(self, buf)
 
     def avoid_writing_to_file(self):
         self._write_to_file = False
@@ -265,8 +231,12 @@ class FileAvoidWrite(BytesIO):
         of the result.
         """
         # Use binary data if the caller explicitly asked for it.
-        ensure = six.ensure_binary if self._binary_mode else six.ensure_text
-        buf = ensure(self.getvalue())
+        buf = self.getvalue()
+        if self._binary_mode:
+            if isinstance(buf, str):
+                buf = buf.encode()
+        elif isinstance(buf, bytes):
+            buf = buf.decode()
 
         BytesIO.close(self)
         existed = False
@@ -275,14 +245,14 @@ class FileAvoidWrite(BytesIO):
         try:
             existing = _open(self.name, self.mode)
             existed = True
-        except IOError:
+        except OSError:
             pass
         else:
             try:
                 old_content = existing.read()
                 if old_content == buf:
                     return True, False
-            except IOError:
+            except OSError:
                 pass
             finally:
                 existing.close()
@@ -294,10 +264,11 @@ class FileAvoidWrite(BytesIO):
             writemode = "w"
             if self._binary_mode:
                 writemode += "b"
-                buf = six.ensure_binary(buf)
-            else:
-                buf = six.ensure_text(buf)
-            with _open(self.name, writemode) as file:
+            path = Path(self.name)
+            if path.is_symlink():
+                # Migration to code autogeneration can encounter with existing symlinks, e.g. bug 1953858.
+                path.unlink()
+            with _open(path, writemode) as file:
                 file.write(buf)
 
         self._generate_diff(buf, old_content)
@@ -445,11 +416,7 @@ class List(list):
                 )
             if key.step:
                 raise ValueError("List cannot be sliced with a nonzero step " "value")
-            # Python 2 and Python 3 do this differently for some reason.
-            if six.PY2:
-                return super(List, self).__setslice__(key.start, key.stop, val)
-            else:
-                return super(List, self).__setitem__(key, val)
+            return super(List, self).__setitem__(key, val)
         return super(List, self).__setitem__(key, val)
 
     def __setslice__(self, i, j, sequence):
@@ -650,12 +617,12 @@ def FlagsFactory(flags):
     assert isinstance(flags, dict)
     assert all(isinstance(v, type) for v in flags.values())
 
-    class Flags(object):
+    class Flags:
         __slots__ = flags.keys()
         _flags = flags
 
         def update(self, **kwargs):
-            for k, v in six.iteritems(kwargs):
+            for k, v in kwargs.items():
                 setattr(self, k, v)
 
         def __getattr__(self, name):
@@ -797,7 +764,7 @@ def StrictOrderingOnAppendListWithFlagsFactory(flags):
     return StrictOrderingOnAppendListWithFlagsSpecialization
 
 
-class HierarchicalStringList(object):
+class HierarchicalStringList:
     """A hierarchy of lists of strings.
 
     Each instance of this object contains a list of strings, which can be set or
@@ -915,109 +882,10 @@ class HierarchicalStringList(object):
         if not isinstance(value, list):
             raise ValueError("Expected a list of strings, not %s" % type(value))
         for v in value:
-            if not isinstance(v, six.string_types):
+            if not isinstance(v, str):
                 raise ValueError(
                     "Expected a list of strings, not an element of %s" % type(v)
                 )
-
-
-class LockFile(object):
-    """LockFile is used by the lock_file method to hold the lock.
-
-    This object should not be used directly, but only through
-    the lock_file method below.
-    """
-
-    def __init__(self, lockfile):
-        self.lockfile = lockfile
-
-    def __del__(self):
-        while True:
-            try:
-                os.remove(self.lockfile)
-                break
-            except OSError as e:
-                if e.errno == errno.EACCES:
-                    # Another process probably has the file open, we'll retry.
-                    # Just a short sleep since we want to drop the lock ASAP
-                    # (but we need to let some other process close the file
-                    # first).
-                    time.sleep(0.1)
-                else:
-                    # Re-raise unknown errors
-                    raise
-
-
-def lock_file(lockfile, max_wait=600):
-    """Create and hold a lockfile of the given name, with the given timeout.
-
-    To release the lock, delete the returned object.
-    """
-
-    # FUTURE This function and object could be written as a context manager.
-
-    while True:
-        try:
-            fd = os.open(lockfile, os.O_EXCL | os.O_RDWR | os.O_CREAT)
-            # We created the lockfile, so we're the owner
-            break
-        except OSError as e:
-            if e.errno == errno.EEXIST or (
-                sys.platform == "win32" and e.errno == errno.EACCES
-            ):
-                pass
-            else:
-                # Should not occur
-                raise
-
-        try:
-            # The lock file exists, try to stat it to get its age
-            # and read its contents to report the owner PID
-            f = open(lockfile, "r")
-            s = os.stat(lockfile)
-        except EnvironmentError as e:
-            if e.errno == errno.ENOENT or e.errno == errno.EACCES:
-                # We didn't create the lockfile, so it did exist, but it's
-                # gone now. Just try again
-                continue
-
-            raise Exception(
-                "{0} exists but stat() failed: {1}".format(lockfile, e.strerror)
-            )
-
-        # We didn't create the lockfile and it's still there, check
-        # its age
-        now = int(time.time())
-        if now - s[stat.ST_MTIME] > max_wait:
-            pid = f.readline().rstrip()
-            raise Exception(
-                "{0} has been locked for more than "
-                "{1} seconds (PID {2})".format(lockfile, max_wait, pid)
-            )
-
-        # It's not been locked too long, wait a while and retry
-        f.close()
-        time.sleep(1)
-
-    # if we get here. we have the lockfile. Convert the os.open file
-    # descriptor into a Python file object and record our PID in it
-    f = os.fdopen(fd, "w")
-    f.write("{0}\n".format(os.getpid()))
-    f.close()
-
-    return LockFile(lockfile)
-
-
-class OrderedDefaultDict(OrderedDict):
-    """A combination of OrderedDict and defaultdict."""
-
-    def __init__(self, default_factory, *args, **kwargs):
-        OrderedDict.__init__(self, *args, **kwargs)
-        self._default_factory = default_factory
-
-    def __missing__(self, key):
-        value = self[key] = self._default_factory()
-        return value
 
 
 class KeyedDefaultDict(dict):
@@ -1069,7 +937,7 @@ class memoize(dict):
         )
 
 
-class memoized_property(object):
+class memoized_property:
     """A specialized version of the memoize decorator that works for
     class instance properties.
     """
@@ -1213,13 +1081,13 @@ def group_unified_files(files, unified_prefix, unified_suffix, files_per_unified
     dummy_fill_value = ("dummy",)
 
     def filter_out_dummy(iterable):
-        return six.moves.filter(lambda x: x != dummy_fill_value, iterable)
+        return filter(lambda x: x != dummy_fill_value, iterable)
 
     # From the itertools documentation, slightly modified:
     def grouper(n, iterable):
         "grouper(3, 'ABCDEFG', 'x') --> ABC DEF Gxx"
         args = [iter(iterable)] * n
-        return six.moves.zip_longest(fillvalue=dummy_fill_value, *args)
+        return itertools.zip_longest(fillvalue=dummy_fill_value, *args)
 
     for i, unified_group in enumerate(grouper(files_per_unified_file, files)):
         just_the_filenames = list(filter_out_dummy(unified_group))
@@ -1235,7 +1103,7 @@ def pair(iterable):
         [(1,2), (3,4), (5,6)]
     """
     i = iter(iterable)
-    return six.moves.zip_longest(i, i)
+    return itertools.zip_longest(i, i)
 
 
 def pairwise(iterable):
@@ -1252,7 +1120,7 @@ def pairwise(iterable):
     return zip(a, b)
 
 
-VARIABLES_RE = re.compile("\$\((\w+)\)")
+VARIABLES_RE = re.compile(r"\$\((\w+)\)")
 
 
 def expand_variables(s, variables):
@@ -1267,10 +1135,37 @@ def expand_variables(s, variables):
         value = variables.get(name)
         if not value:
             continue
-        if not isinstance(value, six.string_types):
+        if not isinstance(value, str):
             value = " ".join(value)
         result += value
     return result
+
+
+class ForwardingArgumentParser(argparse.ArgumentParser):
+    """
+    An argument parser with customized help generation when forwarding
+    arguments.
+    """
+
+    def add_forwarding_group(
+        self, title, dest, help, forwarding_help, default_type=list, **kwargs
+    ):
+        """
+        Add a group that captures all remaining arguments in order to pass them
+        down to another program.
+        """
+        group = self.add_argument_group(
+            title, description=f"-- --help {forwarding_help}", **kwargs
+        )
+
+        group.add_argument(
+            dest,
+            nargs=argparse.REMAINDER,
+            default=default_type(),
+            metavar=f"[--] {dest}...",
+            help=help,
+        )
+        return group
 
 
 class DefinesAction(argparse.Action):
@@ -1295,7 +1190,7 @@ class EnumStringComparisonError(Exception):
     pass
 
 
-class EnumString(six.text_type):
+class EnumString(str):
     """A string type that only can have a limited set of values, similarly to
     an Enum, and can only be compared against that set of values.
 
@@ -1326,12 +1221,8 @@ class EnumString(six.text_type):
     def __hash__(self):
         return super(EnumString, self).__hash__()
 
-    @staticmethod
-    def subclass(*possible_values):
-        class EnumStringSubclass(EnumString):
-            POSSIBLE_VALUES = possible_values
-
-        return EnumStringSubclass
+    def __repr__(self):
+        return f"{self.__class__.__name__}({str(self)!r})"
 
 
 def _escape_char(c):
@@ -1339,34 +1230,26 @@ def _escape_char(c):
     # quoting could be done with either ' or ".
     if c == "'":
         return "\\'"
-    return six.text_type(c.encode("unicode_escape"))
+    return str(c.encode("unicode_escape"))
 
 
 def ensure_bytes(value, encoding="utf-8"):
-    if isinstance(value, six.text_type):
+    if isinstance(value, str):
         return value.encode(encoding)
     return value
 
 
 def ensure_unicode(value, encoding="utf-8"):
-    if isinstance(value, six.binary_type):
+    if isinstance(value, bytes):
         return value.decode(encoding)
     return value
-
-
-def process_time():
-    if six.PY2:
-        return time.clock()
-    else:
-        return time.process_time()
 
 
 def hexdump(buf):
     """
     Returns a list of hexdump-like lines corresponding to the given input buffer.
     """
-    assert six.PY3
-    off_format = "%0{}x ".format(len(str(len(buf))))
+    off_format = f"%0{len(str(len(buf)))}x "
     lines = []
     for off in range(0, len(buf), 16):
         line = off_format % off
@@ -1392,16 +1275,116 @@ def hexdump(buf):
     return lines
 
 
-def mozilla_build_version():
-    mozilla_build = os.environ.get("MOZILLABUILD")
+def cpu_count():
+    """
+    Returns the number of CPUs available to us. This may be different than
+    `os.cpu_count()` because of affinity.
 
-    version_file = Path(mozilla_build) / "VERSION"
+    See the Python documentation for `os.cpu_count()`.
+    """
+    try:
+        return len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        pass
+    if psutil:
+        try:
+            return len(psutil.Process().cpu_affinity())
+        except (AttributeError, OSError):
+            pass
+    return os.cpu_count()
 
-    assert version_file.exists(), (
-        f'The MozillaBuild VERSION file was not found at "{version_file}".\n'
-        "Please check if MozillaBuild is installed correctly and that the"
-        "`MOZILLABUILD` environment variable is to the correct path."
+
+def macos_performance_cores():
+    """
+    Returns the number of performance cores on Mac OS
+
+    See the Python documentation for `os.cpu_count()`.
+    """
+    proc = subprocess.run(
+        ["sysctl", "-n", "hw.perflevel0.logicalcpu_max"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return -1
+    return int(proc.stdout.decode("ascii", "replace").strip())
+
+
+def ensure_l10n_central(command_context):
+    command_context.log(
+        logging.INFO,
+        "ensure_l10n_central",
+        {},
+        "Ensuring that the l10n-central repository exists and is up to date.",
     )
 
-    with version_file.open() as file:
-        return Version(file.readline().rstrip("\n"))
+    # For nightly builds, we automatically check out missing localizations
+    # from firefox-l10n.  We never automatically check out in automation:
+    # automation builds check out revisions that have been signed-off by
+    # l10n drivers prior to use.
+    l10n_base_dir = Path(command_context.substs["L10NBASEDIR"])
+    moz_automation = os.environ.get("MOZ_AUTOMATION")
+    if moz_automation:
+        if not l10n_base_dir.exists():
+            raise MissingL10nError(
+                f"Automation requires l10n repositories to be checked out: {l10n_base_dir}"
+            )
+        else:
+            command_context.log(
+                logging.INFO,
+                "ensure_l10n_central",
+                {"l10n_base_dir": str(l10n_base_dir)},
+                f"Detected existing l10n-central checkout at {l10n_base_dir}",
+            )
+
+    nightly_build = command_context.substs.get("NIGHTLY_BUILD")
+    if nightly_build:
+        git = os.environ.get("GIT", "git")
+        if not l10n_base_dir.exists():
+            l10n_base_dir.mkdir(parents=True)
+            subprocess.run(
+                [
+                    git,
+                    "clone",
+                    "https://github.com/mozilla-l10n/firefox-l10n.git",
+                    str(l10n_base_dir),
+                    "--depth",
+                    "1",
+                ],
+                check=True,
+            )
+            command_context.log(
+                logging.INFO,
+                "ensure_l10n_central",
+                {"l10n_base_dir": str(l10n_base_dir)},
+                f"Successfully cloned firefox-l10n into {l10n_base_dir}",
+            )
+        elif not moz_automation:
+            command_context.log(
+                logging.INFO,
+                "ensure_l10n_central",
+                {"l10n_base_dir": str(l10n_base_dir)},
+                f"Detected existing l10n-central checkout at {l10n_base_dir}",
+            )
+        if not moz_automation:
+            if (l10n_base_dir / ".git").exists():
+                command_context.log(
+                    logging.INFO,
+                    "ensure_l10n_central",
+                    {"l10n_base_dir": str(l10n_base_dir)},
+                    f"Pulling latest l10n-central updates in {l10n_base_dir}",
+                )
+                subprocess.run(
+                    [git, "-C", str(l10n_base_dir), "pull", "--quiet"], check=True
+                )
+                command_context.log(
+                    logging.INFO,
+                    "ensure_l10n_central",
+                    {"l10n_base_dir": str(l10n_base_dir)},
+                    f"Successfully pulled latest updates in {l10n_base_dir}",
+                )
+            else:
+                raise NotAGitRepositoryError(
+                    f"Directory is not a git repository: {l10n_base_dir}"
+                )

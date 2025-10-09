@@ -10,11 +10,15 @@
 #ifndef API_MAKE_REF_COUNTED_H_
 #define API_MAKE_REF_COUNTED_H_
 
+#include <type_traits>
 #include <utility>
 
+#include "absl/base/nullability.h"
+#include "api/ref_count.h"
+#include "api/scoped_refptr.h"
 #include "rtc_base/ref_counted_object.h"
 
-namespace rtc {
+namespace webrtc {
 
 namespace webrtc_make_ref_counted_internal {
 // Determines if the given class has AddRef and Release methods.
@@ -82,7 +86,7 @@ template <
     typename std::enable_if<std::is_convertible_v<T*, RefCountInterface*> &&
                                 std::is_abstract_v<T>,
                             T>::type* = nullptr>
-scoped_refptr<T> make_ref_counted(Args&&... args) {
+absl::Nonnull<scoped_refptr<T>> make_ref_counted(Args&&... args) {
   return scoped_refptr<T>(new RefCountedObject<T>(std::forward<Args>(args)...));
 }
 
@@ -95,7 +99,7 @@ template <
         !std::is_convertible_v<T*, RefCountInterface*> &&
             webrtc_make_ref_counted_internal::HasAddRefAndRelease<T>::value,
         T>::type* = nullptr>
-scoped_refptr<T> make_ref_counted(Args&&... args) {
+absl::Nonnull<scoped_refptr<T>> make_ref_counted(Args&&... args) {
   return scoped_refptr<T>(new T(std::forward<Args>(args)...));
 }
 
@@ -109,11 +113,18 @@ template <
             !webrtc_make_ref_counted_internal::HasAddRefAndRelease<T>::value,
 
         T>::type* = nullptr>
-scoped_refptr<FinalRefCountedObject<T>> make_ref_counted(Args&&... args) {
+absl::Nonnull<scoped_refptr<FinalRefCountedObject<T>>> make_ref_counted(
+    Args&&... args) {
   return scoped_refptr<FinalRefCountedObject<T>>(
       new FinalRefCountedObject<T>(std::forward<Args>(args)...));
 }
 
+}  // namespace webrtc
+
+namespace rtc {
+// Backwards compatibe alias.
+// TODO: bugs.webrtc.org/42225969 - deprecate and remove.
+using ::webrtc::make_ref_counted;
 }  // namespace rtc
 
 #endif  // API_MAKE_REF_COUNTED_H_

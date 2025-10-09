@@ -41,6 +41,16 @@ browser.urlbar.suggest.openpage (boolean, default: true)
   Whether results will include switch-to-tab results.
   Can be controlled from Privacy Preferences.
 
+browser.urlbar.suggest.quicksuggest.nonsponsored (boolean, default: false)
+  If ``browser.urlbar.quicksuggest.enabled`` is true, this controls whether
+  results will include non-sponsored quick suggest suggestions. Otherwise
+  non-sponsored suggestions will not be shown.
+
+browser.urlbar.suggest.quicksuggest.sponsored (boolean, default: false)
+ If ``browser.urlbar.quicksuggest.enabled`` is true, this controls whether
+  results will include sponsored quick suggest suggestions. Otherwise sponsored
+  suggestions will not be shown.
+
 browser.urlbar.suggest.searches (boolean, default: true)
   Whether results will include search suggestions.
   Can be controlled from Search Preferences.
@@ -72,6 +82,9 @@ know what you are doing.
 browser.urlbar.accessibility.tabToSearch.announceResults (boolean: default: true)
   Whether we announce to screen readers when tab-to-search results are inserted.
 
+browser.urlbar.addons.featureGate (boolean, default: false)
+  Feature gate pref for add-on suggestions in the urlbar.
+
 browser.urlbar.autoFill (boolean, default: true)
   Autofill is the the feature that automatically completes domains and URLs that
   the user has visited as the user is typing them in the urlbar textbox.
@@ -82,9 +95,6 @@ browser.urlbar.autoFill.adaptiveHistory.enabled (boolean, default: false)
 browser.urlbar.autoFill.adaptiveHistory.useCountThreshold (float, default: 1.0)
   Threshold for use count of input history that we handle as adaptive history
   autofill. If the use count is this value or more, it will be a candidate.
-
-browser.urlbar.bestMatch.enabled (boolean, default: false)
-  Whether the best match feature is enabled.
 
 browser.urlbar.autoFill.stddevMultiplier (float, default: 0.0)
   Affects the frecency threshold of the autofill algorithm.  The threshold is
@@ -112,10 +122,6 @@ browser.urlbar.dnsResolveSingleWordsAfterSearch (number, default: 0)
   "Did you mean to go to 'host'" prompt.
   Set to 0. 0: Never resolve, 1: Use heuristics, 2. Always resolve.
 
-browser.urlbar.eventTelemetry.enabled (boolean, default: false)
-  Whether telemetry events should be recorded. This is expensive and should only
-  be enabled by experiments with a small population.
-
 browser.urlbar.extension.timeout (integer, default: 400)
   When sending events to extensions, they have this amount of time in
   milliseconds to respond before timing out. This affects the omnibox API.
@@ -123,6 +129,10 @@ browser.urlbar.extension.timeout (integer, default: 400)
 browser.urlbar.filter.javascript (boolean, default: true)
   When true, `javascript:` URLs are not included in search results for safety
   reasons.
+
+browser.urlbar.focusContentDocumentOnEsc (boolean, default: true)
+  Focus the content document when pressing the Escape key, if there's no
+  remaining typed history.
 
 browser.urlbar.formatting.enabled (boolean, default: true)
   Applies URL highlighting and other styling to the text in the urlbar input
@@ -145,9 +155,6 @@ browser.urlbar.merino.clientVariants (string, default: "")
   for more details. This is intended to be used by experiments, not directly set
   by users.
 
-browser.urlbar.merino.enabled (boolean, default: false)
-  Whether Merino is enabled as a quick suggest source.
-
 browser.urlbar.merino.providers (string, default: "")
   Comma-separated list of providers to request from the Merino server. Merino
   will return suggestions only for these providers. See `Merino API docs`_ for
@@ -164,14 +171,8 @@ browser.urlbar.quicksuggest.enabled (boolean, default: false)
   the individual prefs ``browser.urlbar.suggest.quicksuggest.nonsponsored`` and
   ``browser.urlbar.suggest.quicksuggest.sponsored``.
 
-browser.urlbar.quicksuggest.remoteSettings.enabled (boolean, default: true)
-  Whether remote settings is enabled as a quick suggest source.
-
 browser.urlbar.quicksuggest.dataCollection.enabled (boolean, default: false)
   Whether data collection is enabled for quick suggest results.
-
-browser.urlbar.quicksuggest.shouldShowOnboardingDialog (boolean, default: true)
-  Whether to show the quick suggest onboarding dialog.
 
 browser.urlbar.richSuggestions.tail (boolean, default: true)
   If true, we show tail search suggestions when available.
@@ -182,22 +183,20 @@ browser.urlbar.searchTips.test.ignoreShowLimits (boolean, default: false)
   This is useful for testing purposes.
 
 browser.urlbar.speculativeConnect.enabled (boolean, default: true)
-  Speculative connections allow to resolve domains pre-emptively when the user
+  Speculative connections allow to resolve domains preemptively when the user
   is likely to pick a result from the Address Bar. This allows for faster
   navigation.
 
 browser.urlbar.sponsoredTopSites (boolean, default: false)
   Whether top sites may include sponsored ones.
 
-browser.urlbar.suggest.bestmatch (boolean, default: true)
-  Whether to show the best match result is enabled. This pref is ignored if
-  browser.urlbar.bestMatch.enabled is false.
+browser.urlbar.suggest.addons (boolean, default: true)
+  If ``browser.urlbar.addons.featureGate`` is true, this controls whether add-on
+  suggestions are turned on. Otherwise they won't be shown.
 
-browser.urlbar.suggest.quicksuggest.nonsponsored (boolean, default: false)
-  Whether results will include non-sponsored quick suggest suggestions.
-
-browser.urlbar.suggest.quicksuggest.sponsored (boolean, default: false)
-  Whether results will include sponsored quick suggest suggestions.
+browser.urlbar.suggest.yelp (boolean, default: true)
+  If ``browser.urlbar.yelp.featureGate`` is true, this controls whether Yelp
+  suggestions are turned on. Otherwise they won't be shown.
 
 browser.urlbar.switchTabs.adoptIntoActiveWindow (boolean, default: false)
   When using switch to tabs, if set to true this will move the tab into the
@@ -233,9 +232,6 @@ browser.urlbar.unitConversion.suggestedIndex (integer, default: 1)
 browser.urlbar.experimental.expandTextOnFocus (boolean, default: false)
   Whether we expand the font size when the urlbar is focused.
 
-browser.urlbar.experimental.searchButton (boolean, default: false)
-  Whether to displays a permanent search button before the urlbar.
-
 browser.urlbar.keepPanelOpenDuringImeComposition (boolean, default: false)
   Whether the results panel should be kept open during IME composition. The
   panel may overlap with the IME compositor panel.
@@ -243,22 +239,3 @@ browser.urlbar.keepPanelOpenDuringImeComposition (boolean, default: false)
 browser.urlbar.restyleSearches (boolean, default: false)
   When true, URLs in the user's history that look like search result pages
   are restyled to look like search engine results instead of history results.
-
-browser.urlbar.update2.emptySearchBehavior (integer, default: 0)
-  Controls the empty search behavior in Search Mode: 0. Show nothing, 1. Show
-  search history, 2. Show search and browsing history
-
-Deprecated
-----------
-These preferences should not be used and may be removed at any time.
-
-browser.urlbar.autoFill.searchEngines (boolean, default: false)
-  If true, the domains of the user's installed search engines will be
-  autofilled even if the user hasn't actually visited them.
-
-browser.urlbar.usepreloadedtopurls.enabled (boolean, default: false)
-  Results will include a built-in set of popular domains when this is true.
-
-browser.urlbar.usepreloadedtopurls.expire_days (integer, default: 14)
-  After this many days from the profile creation date, the built-in set of
-  popular domains will no longer be included in the results.

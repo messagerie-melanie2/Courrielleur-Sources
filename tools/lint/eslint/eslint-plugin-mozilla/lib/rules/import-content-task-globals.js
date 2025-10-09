@@ -20,7 +20,7 @@ module.exports = {
   // eslint-disable-next-line eslint-plugin/prefer-message-ids
   meta: {
     docs: {
-      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/import-content-task-globals.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/rules/import-content-task-globals.html",
     },
     schema: [],
     type: "problem",
@@ -33,13 +33,27 @@ module.exports = {
           // testing/mochitest/BrowserTestUtils/content/content-task.js
           // This script is loaded as a sub script into a frame script.
           for (let [name, value] of Object.entries(frameScriptEnv.globals)) {
-            helpers.addVarToScope(name, context.getScope(), value);
+            helpers.addVarToScope(
+              name,
+              context.sourceCode.getScope(node),
+              value
+            );
           }
+
+          helpers.addVarToScope(
+            "ContentTaskUtils",
+            context.sourceCode.getScope(node),
+            false /* writable ? */
+          );
         },
       "CallExpression[callee.object.name='SpecialPowers'][callee.property.name='spawn']":
         function (node) {
           for (let [name, value] of Object.entries(sandboxEnv.globals)) {
-            helpers.addVarToScope(name, context.getScope(), value);
+            helpers.addVarToScope(
+              name,
+              context.sourceCode.getScope(node),
+              value
+            );
           }
           let globals = [
             // testing/specialpowers/content/SpecialPowersChild.sys.mjs
@@ -50,13 +64,21 @@ module.exports = {
             "docShell",
           ];
           for (let global of globals) {
-            helpers.addVarToScope(global, context.getScope(), false);
+            helpers.addVarToScope(
+              global,
+              context.sourceCode.getScope(node),
+              false
+            );
           }
         },
       "CallExpression[callee.object.name='SpecialPowers'][callee.property.name='spawnChrome']":
         function (node) {
           for (let [name, value] of Object.entries(sandboxEnv.globals)) {
-            helpers.addVarToScope(name, context.getScope(), value);
+            helpers.addVarToScope(
+              name,
+              context.sourceCode.getScope(node),
+              value
+            );
           }
           let globals = [
             // testing/specialpowers/content/SpecialPowersParent.sys.mjs
@@ -65,7 +87,11 @@ module.exports = {
             "browsingContext",
           ];
           for (let global of globals) {
-            helpers.addVarToScope(global, context.getScope(), false);
+            helpers.addVarToScope(
+              global,
+              context.sourceCode.getScope(node),
+              false
+            );
           }
         },
     };

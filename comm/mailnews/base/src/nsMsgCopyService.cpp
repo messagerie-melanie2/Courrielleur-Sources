@@ -8,10 +8,10 @@
 #include "nspr.h"
 #include "nsIFile.h"
 #include "nsIMsgFolderNotificationService.h"
-#include "nsComponentManagerUtils.h"
 #include "nsServiceManagerUtils.h"
 #include "nsMsgUtils.h"
 #include "mozilla/Logging.h"
+#include "mozilla/ProfilerMarkers.h"
 
 static mozilla::LazyLogModule gCopyServiceLog("MsgCopyService");
 
@@ -38,16 +38,17 @@ void nsCopySource::AddMessage(nsIMsgDBHdr* aMsg) {
 nsCopyRequest::nsCopyRequest()
     : m_requestType(nsCopyMessagesType),
       m_isMoveOrDraftOrTemplate(false),
+      m_allowUndo(false),
       m_processed(false),
-      m_newMsgFlags(0) {
+      m_newMsgFlags(0),
+      mPendingRemoval(false) {
   MOZ_COUNT_CTOR(nsCopyRequest);
 }
 
 nsCopyRequest::~nsCopyRequest() {
-  MOZ_COUNT_DTOR(nsCopyRequest);
-
   int32_t j = m_copySourceArray.Length();
   while (j-- > 0) delete m_copySourceArray.ElementAt(j);
+  MOZ_COUNT_DTOR(nsCopyRequest);
 }
 
 nsresult nsCopyRequest::Init(nsCopyRequestType type, nsISupports* aSupport,
@@ -60,6 +61,7 @@ nsresult nsCopyRequest::Init(nsCopyRequestType type, nsISupports* aSupport,
   m_requestType = type;
   m_srcSupport = aSupport;
   m_dstFolder = dstFolder;
+  m_arrFolder = nullptr;
   m_isMoveOrDraftOrTemplate = bVal;
   m_allowUndo = allowUndo;
   m_newMsgFlags = newMsgFlags;
@@ -76,7 +78,7 @@ nsresult nsCopyRequest::Init(nsCopyRequestType type, nsISupports* aSupport,
     // able to find the right request when copy finishes.
     nsCOMPtr<nsIMsgFolder> srcFolder = do_QueryInterface(aSupport, &rv);
     NS_ENSURE_SUCCESS(rv, rv);
-    nsString folderName;
+    nsCString folderName;
     rv = srcFolder->GetName(folderName);
     NS_ENSURE_SUCCESS(rv, rv);
     m_dstFolderName = folderName;
@@ -163,8 +165,12 @@ nsresult nsMsgCopyService::ClearRequest(nsCopyRequest* aRequest, nsresult rv) {
         aRequest->m_txnMgr)
       aRequest->m_txnMgr->EndBatch(false);
 
+    if (aRequest->m_listener) {
+      // Call onStopCopy BEFORE RemoveElement.
+      aRequest->mPendingRemoval = true;
+      aRequest->m_listener->OnStopCopy(rv);
+    }
     m_copyRequests.RemoveElement(aRequest);
-    if (aRequest->m_listener) aRequest->m_listener->OnStopCopy(rv);
     delete aRequest;
   }
 
@@ -327,51 +333,38 @@ nsresult nsMsgCopyService::DoNextCopy() {
  */
 nsCopyRequest* nsMsgCopyService::FindRequest(nsISupports* aSupport,
                                              nsIMsgFolder* dstFolder) {
-  nsCopyRequest* copyRequest = nullptr;
-  uint32_t cnt = m_copyRequests.Length();
-  for (uint32_t i = 0; i < cnt; i++) {
-    copyRequest = m_copyRequests.ElementAt(i);
-    if (SameCOMIdentity(copyRequest->m_srcSupport, aSupport) &&
-        SameCOMIdentity(copyRequest->m_dstFolder.get(), dstFolder))
+  nsCopyRequest* matchingRequest = nullptr;
+  for (auto copyRequest : m_copyRequests) {
+    if (copyRequest->mPendingRemoval ||
+        !SameCOMIdentity(copyRequest->m_srcSupport, aSupport)) {
+      continue;
+    }
+    if (SameCOMIdentity(copyRequest->m_dstFolder.get(), dstFolder)) {
+      matchingRequest = copyRequest;
       break;
+    }
 
     // When copying folders the notification of the message copy serves as a
     // proxy for the folder copy. Check for that here.
     if (copyRequest->m_requestType == nsCopyFoldersType) {
-      // If the src is different then check next request.
-      if (!SameCOMIdentity(copyRequest->m_srcSupport, aSupport)) {
-        copyRequest = nullptr;
-        continue;
-      }
-
       // See if the parent of the copied folder is the same as the one when the
       // request was made. Note if the destination folder is already a server
       // folder then no need to get parent.
-      nsCOMPtr<nsIMsgFolder> parentMsgFolder;
-      nsresult rv = NS_OK;
       bool isServer = false;
       dstFolder->GetIsServer(&isServer);
-      if (!isServer) rv = dstFolder->GetParent(getter_AddRefs(parentMsgFolder));
-      if ((NS_FAILED(rv)) || (!parentMsgFolder && !isServer) ||
-          (copyRequest->m_dstFolder.get() != parentMsgFolder)) {
-        copyRequest = nullptr;
-        continue;
+      if (!isServer) {
+        nsCOMPtr<nsIMsgFolder> parentMsgFolder;
+        nsresult rv = dstFolder->GetParent(getter_AddRefs(parentMsgFolder));
+        if (NS_FAILED(rv) || !parentMsgFolder ||
+            (copyRequest->m_dstFolder.get() != parentMsgFolder)) {
+          continue;
+        }
       }
-
-      // Now checks if the folder name is the same.
-      nsString folderName;
-      rv = dstFolder->GetName(folderName);
-      if (NS_FAILED(rv)) {
-        copyRequest = nullptr;
-        continue;
-      }
-
-      if (copyRequest->m_dstFolderName == folderName) break;
-    } else
-      copyRequest = nullptr;
+      matchingRequest = copyRequest;
+      break;
+    }
   }
-
-  return copyRequest;
+  return matchingRequest;
 }
 
 NS_IMPL_ISUPPORTS(nsMsgCopyService, nsIMsgCopyService)
@@ -381,6 +374,7 @@ MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP nsMsgCopyService::CopyMessages(
     nsTArray<RefPtr<nsIMsgDBHdr>> const& messages, nsIMsgFolder* dstFolder,
     bool isMove, nsIMsgCopyServiceListener* listener, nsIMsgWindow* window,
     bool allowUndo) {
+  AUTO_PROFILER_LABEL("nsMsgCopyService::CopyMessages", MAILNEWS);
   NS_ENSURE_ARG_POINTER(srcFolder);
   NS_ENSURE_ARG_POINTER(dstFolder);
 
@@ -504,6 +498,7 @@ nsMsgCopyService::CopyFileMessage(nsIFile* file, nsIMsgFolder* dstFolder,
                                   const nsACString& aNewMsgKeywords,
                                   nsIMsgCopyServiceListener* listener,
                                   nsIMsgWindow* window) {
+  AUTO_PROFILER_LABEL("nsMsgCopyService::CopyFileMessage", MAILNEWS);
   nsresult rv = NS_ERROR_NULL_POINTER;
   nsCopyRequest* copyRequest;
   nsCopySource* copySource = nullptr;
@@ -575,6 +570,7 @@ nsMsgCopyService::NotifyCompletion(nsISupports* aSupport,
       if (sourceIndex >= sourceCount) copyRequest->m_processed = true;
       // if this request is done, or failed, clear it.
       if (copyRequest->m_processed || NS_FAILED(result)) {
+        copyRequest->m_arrFolder = dstFolder;
         ClearRequest(copyRequest, result);
         numOrigRequests--;
       } else
@@ -584,4 +580,19 @@ nsMsgCopyService::NotifyCompletion(nsISupports* aSupport,
   } while (copyRequest);
 
   return DoNextCopy();
+}
+
+NS_IMETHODIMP
+nsMsgCopyService::GetArrivedFolder(nsIMsgFolder* aSrcFolder,
+                                   nsIMsgFolder** aArrFolder) {
+  NS_ENSURE_ARG_POINTER(aArrFolder);
+  for (auto copyRequest : m_copyRequests) {
+    if (SameCOMIdentity(copyRequest->m_srcSupport, aSrcFolder) &&
+        copyRequest->m_processed) {
+      NS_IF_ADDREF(*aArrFolder = copyRequest->m_arrFolder);
+      return NS_OK;
+    }
+  }
+  *aArrFolder = nullptr;
+  return NS_OK;
 }

@@ -15,7 +15,6 @@ import mozcrash
 import mozinfo
 import mozlog
 import moznetwork
-import six
 from mozdevice import ADBDeviceFactory, ADBError, ADBTimeoutError
 from mozprofile import DEFAULT_PORTS, Profile
 from mozprofile.cli import parse_preferences
@@ -49,6 +48,7 @@ class JUnitTestRunner(MochitestDesktop):
         self.log = log
         self.verbose = False
         self.http3Server = None
+        self.http2Server = None
         self.dohServer = None
         if (
             options.log_tbpl_level == "debug"
@@ -129,11 +129,13 @@ class JUnitTestRunner(MochitestDesktop):
         self.options.webSocketPort = "9988"
         self.options.httpdPath = None
         self.options.http3ServerPath = None
+        self.options.http2ServerPath = None
         self.options.keep_open = False
         self.options.pidFile = ""
         self.options.subsuite = None
         self.options.xrePath = None
         self.options.useHttp3Server = False
+        self.options.useHttp2Server = False
         if build_obj and "MOZ_HOST_BIN" in os.environ:
             self.options.xrePath = os.environ["MOZ_HOST_BIN"]
             if not self.options.utilityPath:
@@ -261,7 +263,7 @@ class JUnitTestRunner(MochitestDesktop):
         for [key, value] in [p.split("=", 1) for p in self.options.add_env]:
             env[key] = value
 
-        for (env_count, (env_key, env_val)) in enumerate(six.iteritems(env)):
+        for env_count, (env_key, env_val) in enumerate(env.items()):
             cmd = cmd + " -e env%d %s=%s" % (env_count, env_key, env_val)
         # runner
         cmd = cmd + " %s/%s" % (self.options.app, self.options.runner)
@@ -310,8 +312,8 @@ class JUnitTestRunner(MochitestDesktop):
             # Output callback: Parse the raw junit log messages, translating into
             # treeherder-friendly test start/pass/fail messages.
 
-            line = six.ensure_str(line)
-            self.log.process_output(self.options.app, str(line))
+            line = line.decode("utf-8")
+            self.log.process_output(self.options.app, line)
             # Expect per-test info like: "INSTRUMENTATION_STATUS: class=something"
             match = re.match(r"INSTRUMENTATION_STATUS:\s*class=(.*)", line)
             if match:

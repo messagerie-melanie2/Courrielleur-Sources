@@ -118,6 +118,49 @@ impl CanonicalFunctionSection {
         self.num_added += 1;
         self
     }
+
+    /// Defines a function which will create an owned handle to the resource
+    /// specified by `ty_index`.
+    pub fn resource_new(&mut self, ty_index: u32) -> &mut Self {
+        self.bytes.push(0x02);
+        ty_index.encode(&mut self.bytes);
+        self.num_added += 1;
+        self
+    }
+
+    /// Defines a function which will drop the specified type of handle.
+    pub fn resource_drop(&mut self, ty_index: u32) -> &mut Self {
+        self.bytes.push(0x03);
+        ty_index.encode(&mut self.bytes);
+        self.num_added += 1;
+        self
+    }
+
+    /// Defines a function which will return the representation of the specified
+    /// resource type.
+    pub fn resource_rep(&mut self, ty_index: u32) -> &mut Self {
+        self.bytes.push(0x04);
+        ty_index.encode(&mut self.bytes);
+        self.num_added += 1;
+        self
+    }
+
+    /// Defines a function which will spawns a new thread by invoking a shared
+    /// function of type `ty_index`.
+    pub fn thread_spawn(&mut self, ty_index: u32) -> &mut Self {
+        self.bytes.push(0x05);
+        ty_index.encode(&mut self.bytes);
+        self.num_added += 1;
+        self
+    }
+
+    /// Defines a function which will return the number of threads that can be
+    /// expected to execute concurrently.
+    pub fn thread_hw_concurrency(&mut self) -> &mut Self {
+        self.bytes.push(0x06);
+        self.num_added += 1;
+        self
+    }
 }
 
 impl Encode for CanonicalFunctionSection {

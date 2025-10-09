@@ -1,17 +1,14 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* eslint-disable mozilla/valid-lazy */
 
+import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
-const lazy = {};
-
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "BrowserWindowTracker",
-  "resource:///modules/BrowserWindowTracker.jsm"
-);
-ChromeUtils.defineESModuleGetters(lazy, {
+const lazy = XPCOMUtils.declareLazy({
+  BrowserUtils: "resource://gre/modules/BrowserUtils.sys.mjs",
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
   ClickHandlerParent: "resource:///actors/ClickHandlerParent.sys.mjs",
   UrlbarUtils: "resource:///modules/UrlbarUtils.sys.mjs",
   WebNavigationFrames: "resource://gre/modules/WebNavigationFrames.sys.mjs",
@@ -27,8 +24,11 @@ function getBrowser(bc) {
 }
 
 export var WebNavigationManager = {
-  // Map[string -> Map[listener -> URLFilter]]
+  /** @type {Map<string, Set<callback>>} */
   listeners: new Map(),
+
+  /** @type {WeakMap<XULBrowserElement, object>} */
+  recentTabTransitionData: new WeakMap(),
 
   init() {
     // Collect recent tab transition data in a WeakMap:
@@ -99,9 +99,8 @@ export var WebNavigationManager = {
    *
    * @param {nsIAutoCompleteInput | object} subject
    * @param {string} topic
-   * @param {string | undefined} data
    */
-  observe: function (subject, topic, data) {
+  observe: function (subject, topic) {
     if (topic == "urlbar-user-start-navigation") {
       this.onURLBarUserStartNavigation(subject.wrappedJSObject);
     } else if (topic == "webNavigation-createdNavigationTarget") {
@@ -128,9 +127,9 @@ export var WebNavigationManager = {
    *   The data for the autocompleted item.
    * @param {object} [acData.result]
    *   The result information associated with the navigation action.
-   * @param {UrlbarUtils.RESULT_TYPE} [acData.result.type]
+   * @param {Items<typeof lazy.UrlbarUtils.RESULT_TYPE>} [acData.result.type]
    *   The result type associated with the navigation action.
-   * @param {UrlbarUtils.RESULT_SOURCE} [acData.result.source]
+   * @param {Items<typeof lazy.UrlbarUtils.RESULT_SOURCE>} [acData.result.source]
    *   The result source associated with the navigation action.
    */
   onURLBarUserStartNavigation(acData) {
@@ -250,8 +249,7 @@ export var WebNavigationManager = {
   onContentClick(target, data) {
     // We are interested only on clicks to links which are not "add to bookmark" commands
     if (data.href && !data.bookmark) {
-      let ownerWin = target.ownerGlobal;
-      let where = ownerWin.whereToOpenLink(data);
+      let where = lazy.BrowserUtils.whereToOpenLink(data);
       if (where == "current") {
         this.setRecentTabTransitionData({ link: true });
       }

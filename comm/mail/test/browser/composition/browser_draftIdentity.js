@@ -9,30 +9,30 @@
 
 "use strict";
 
-var { close_compose_window, open_compose_from_draft } = ChromeUtils.import(
-  "resource://testing-common/mozmill/ComposeHelpers.jsm"
-);
+var { close_compose_window, open_compose_from_draft } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+  );
 var {
   assert_selected_and_displayed,
   be_in_folder,
   get_special_folder,
   get_about_message,
-  mc,
   press_delete,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 var { assert_notification_displayed, wait_for_notification_to_show } =
-  ChromeUtils.import(
-    "resource://testing-common/mozmill/NotificationBoxHelpers.jsm"
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/NotificationBoxHelpers.sys.mjs"
   );
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
-let aboutMessage = get_about_message();
+const aboutMessage = get_about_message();
 
 var gDrafts;
 var gAccount;
@@ -52,12 +52,12 @@ add_setup(async function () {
   gAccount = MailServices.accounts.createAccount();
   gAccount.incomingServer = MailServices.accounts.createIncomingServer(
     "nobody",
-    "Draft Identity Testing",
+    "DraftIdentityTesting",
     "pop3"
   );
 
-  for (let id of gIdentities) {
-    let identity = MailServices.accounts.createIdentity();
+  for (const id of gIdentities) {
+    const identity = MailServices.accounts.createIdentity();
     if ("email" in id) {
       identity.email = id.email;
     }
@@ -83,9 +83,8 @@ add_setup(async function () {
  * @returns {integer} The index (position) of the created message in the drafts folder.
  */
 function create_draft(aFrom, aIdKey) {
-  let msgCount = gDrafts.getTotalMessages(false);
-  let source =
-    "From - Wed Mar 01 01:02:03 2017\n" +
+  const msgCount = gDrafts.getTotalMessages(false);
+  const source =
     "X-Mozilla-Status: 0000\n" +
     "X-Mozilla-Status2: 00000000\n" +
     "X-Mozilla-Keys:\n" +
@@ -109,7 +108,7 @@ function create_draft(aFrom, aIdKey) {
     "Testing draft identity.\n";
 
   gDrafts.QueryInterface(Ci.nsIMsgLocalMailFolder).addMessage(source);
-  let msgCountNew = gDrafts.getTotalMessages(false);
+  const msgCountNew = gDrafts.getTotalMessages(false);
 
   Assert.equal(msgCountNew, msgCount + 1);
   return msgCountNew - 1;
@@ -119,23 +118,23 @@ function create_draft(aFrom, aIdKey) {
  * Helper to check that a suitable From identity was set up in the given
  * composer window.
  *
- * @param cwc             Compose window controller.
- * @param aIdentityKey    The key of the expected identity.
- * @param aFrom           The expected displayed From address.
+ * @param {Window} cwc - Compose window.
+ * @param {string} aIdentityKey - The key of the expected identity.
+ * @param {string} aFrom - The expected displayed From address.
  */
 function checkCompIdentity(cwc, aIdentityKey, aFrom) {
   Assert.equal(
-    cwc.window.getCurrentAccountKey(),
+    cwc.getCurrentAccountKey(),
     gAccount.key,
     "The From account is not correctly selected"
   );
   Assert.equal(
-    cwc.window.getCurrentIdentityKey(),
+    cwc.getCurrentIdentityKey(),
     aIdentityKey,
     "The From identity is not correctly selected"
   );
   Assert.equal(
-    cwc.window.document.getElementById("msgIdentity").value,
+    cwc.document.getElementById("msgIdentity").value,
     aFrom,
     "The From value was initialized to an unexpected value"
   );
@@ -147,7 +146,7 @@ function checkCompIdentity(cwc, aIdentityKey, aFrom) {
  * of From and X-Identity-Key gets the expected initial identity selected.
  */
 add_task(async function test_draft_identity_selection() {
-  let tests = [
+  const tests = [
     // X-Identity-Key header exists:
     // 1. From header matches X-Identity-Key identity exactly
     {
@@ -227,59 +226,59 @@ add_task(async function test_draft_identity_selection() {
     },
   ];
 
-  for (let test of tests) {
+  for (const test of tests) {
     test.draftIndex = create_draft(test.draftFrom, test.draftIdKey);
   }
 
-  for (let test of tests) {
+  for (const test of tests) {
     dump("Running draft identity test" + tests.indexOf(test) + "\n");
     await be_in_folder(gDrafts);
-    select_click_row(test.draftIndex);
-    assert_selected_and_displayed(test.draftIndex);
-    wait_for_notification_to_show(
+    await select_click_row(test.draftIndex);
+    await assert_selected_and_displayed(test.draftIndex);
+    await wait_for_notification_to_show(
       aboutMessage,
       "mail-notification-top",
       "draftMsgContent"
     );
-    let cwc = open_compose_from_draft();
+    const cwc = await open_compose_from_draft();
     checkCompIdentity(
       cwc,
       gIdentities[test.idIndex].key,
       test.from ? test.from : test.draftFrom
     );
     if (test.warning) {
-      wait_for_notification_to_show(
-        cwc.window,
+      await wait_for_notification_to_show(
+        cwc,
         "compose-notification-bottom",
         "identityWarning"
       );
     } else {
       assert_notification_displayed(
-        cwc.window,
+        cwc,
         "compose-notification-bottom",
         "identityWarning",
         false
       );
     }
 
-    close_compose_window(cwc, false);
+    await close_compose_window(cwc, false);
   }
   /*
   // TODO: fix this in bug 1238264, the identity selector does not properly close.
   // Open a draft again that shows the notification.
   await be_in_folder(gDrafts);
-  select_click_row(tests[tests.length-1].draftIndex);
-  let cwc = open_compose_from_draft();
-  wait_for_notification_to_show(cwc, "compose-notification-bottom",
+  await select_click_row(tests[tests.length-1].draftIndex);
+  let cwc = await open_compose_from_draft();
+  await wait_for_notification_to_show(cwc, "compose-notification-bottom",
                                 "identityWarning");
   // Notification should go away when another identity is chosen.
-  EventUtils.synthesizeMouseAtCenter(cwc.e("msgIdentity"), { }, cwc.window.document.getElementById("msgIdentity").ownerGlobal)
-  await click_menus_in_sequence(cwc.window.document.getElementById("msgIdentityPopup"),
+  EventUtils.synthesizeMouseAtCenter(cwc.e("msgIdentity"), { }, cwc.document.getElementById("msgIdentity").ownerGlobal)
+  await click_menus_in_sequence(cwc.document.getElementById("msgIdentityPopup"),
                               [ { identitykey: gIdentities[0].key } ]);
 
-  wait_for_notification_to_stop(cwc, "compose-notification-bottom",
+  await wait_for_notification_to_stop(cwc, "compose-notification-bottom",
                                 "identityWarning");
-  close_compose_window(cwc, false);
+  await close_compose_window(cwc, false);
 */
 });
 
@@ -299,7 +298,7 @@ registerCleanupFunction(async function () {
   // Clear our drafts.
   await be_in_folder(gDrafts);
   while (gDrafts.getTotalMessages(false) > 0) {
-    press_delete();
+    await press_delete();
   }
 
   // Some tests that open new windows don't return focus to the main window
@@ -307,7 +306,7 @@ registerCleanupFunction(async function () {
   Services.focus.focusedWindow = window;
   // Focus an element in the main window, then blur it again to avoid it
   // hijacking keypresses.
-  let mainWindowElement = document.getElementById("button-appmenu");
+  const mainWindowElement = document.getElementById("button-appmenu");
   mainWindowElement.focus();
   mainWindowElement.blur();
 });

@@ -18,20 +18,15 @@ const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   AppMenuNotifications: "resource://gre/modules/AppMenuNotifications.sys.mjs",
-  DefaultBrowserCheck: "resource:///modules/BrowserGlue.sys.mjs",
-  ProfileAge: "resource://gre/modules/ProfileAge.sys.mjs",
+  DefaultBrowserCheck:
+    "moz-src:///browser/components/DefaultBrowserCheck.sys.mjs",
+  LaterRun: "resource:///modules/LaterRun.sys.mjs",
+  SearchStaticData:
+    "moz-src:///toolkit/components/search/SearchStaticData.sys.mjs",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.sys.mjs",
   UrlbarProviderTopSites: "resource:///modules/UrlbarProviderTopSites.sys.mjs",
   UrlbarResult: "resource:///modules/UrlbarResult.sys.mjs",
-  UrlbarSearchUtils: "resource:///modules/UrlbarSearchUtils.sys.mjs",
   setTimeout: "resource://gre/modules/Timer.sys.mjs",
-});
-
-XPCOMUtils.defineLazyGetter(lazy, "updateManager", () => {
-  return (
-    Cc["@mozilla.org/updates/update-manager;1"] &&
-    Cc["@mozilla.org/updates/update-manager;1"].getService(Ci.nsIUpdateManager)
-  );
 });
 
 XPCOMUtils.defineLazyPreferenceGetter(
@@ -41,38 +36,39 @@ XPCOMUtils.defineLazyPreferenceGetter(
   true
 );
 
-// The possible tips to show.  These names (except NONE) are used in the names
-// of keys in the `urlbar.tips` keyed scalar telemetry (see telemetry.rst).
-// Don't modify them unless you've considered that.  If you do modify them or
-// add new tips, then you are also adding new `urlbar.tips` keys and therefore
-// need an expanded data collection review.
+// The possible tips to show.
 const TIPS = {
   NONE: "",
   ONBOARD: "searchTip_onboard",
-  PERSIST: "searchTip_persist",
   REDIRECT: "searchTip_redirect",
 };
 
-// This maps engine names to regexes matching their homepages. We show the
-// redirect tip on these pages. The Google domains are taken from
-// https://ipfs.io/ipfs/QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco/wiki/List_of_Google_domains.html.
-const SUPPORTED_ENGINES = new Map([
-  ["Bing", { domainPath: /^www\.bing\.com\/$/ }],
-  [
-    "DuckDuckGo",
-    {
-      domainPath: /^(start\.)?duckduckgo\.com\/$/,
-      prohibitedSearchParams: ["q"],
-    },
-  ],
-  [
-    "Google",
-    {
-      domainPath:
-        /^www\.google\.(com|ac|ad|ae|com\.af|com\.ag|com\.ai|al|am|co\.ao|com\.ar|as|at|com\.au|az|ba|com\.bd|be|bf|bg|com\.bh|bi|bj|com\.bn|com\.bo|com\.br|bs|bt|co\.bw|by|com\.bz|ca|com\.kh|cc|cd|cf|cat|cg|ch|ci|co\.ck|cl|cm|cn|com\.co|co\.cr|com\.cu|cv|com\.cy|cz|de|dj|dk|dm|com\.do|dz|com\.ec|ee|com\.eg|es|com\.et|fi|com\.fj|fm|fr|ga|ge|gf|gg|com\.gh|com\.gi|gl|gm|gp|gr|com\.gt|gy|com\.hk|hn|hr|ht|hu|co\.id|iq|ie|co\.il|im|co\.in|io|is|it|je|com\.jm|jo|co\.jp|co\.ke|ki|kg|co\.kr|com\.kw|kz|la|com\.lb|com\.lc|li|lk|co\.ls|lt|lu|lv|com\.ly|co\.ma|md|me|mg|mk|ml|com\.mm|mn|ms|com\.mt|mu|mv|mw|com\.mx|com\.my|co\.mz|com\.na|ne|com\.nf|com\.ng|com\.ni|nl|no|com\.np|nr|nu|co\.nz|com\.om|com\.pk|com\.pa|com\.pe|com\.ph|pl|com\.pg|pn|com\.pr|ps|pt|com\.py|com\.qa|ro|rs|ru|rw|com\.sa|com\.sb|sc|se|com\.sg|sh|si|sk|com\.sl|sn|sm|so|st|sr|com\.sv|td|tg|co\.th|com\.tj|tk|tl|tm|to|tn|com\.tr|tt|com\.tw|co\.tz|com\.ua|co\.ug|co\.uk|com\.uy|co\.uz|com\.vc|co\.ve|vg|co\.vi|com\.vn|vu|ws|co\.za|co\.zm|co\.zw)\/(webhp)?$/,
-    },
-  ],
-]);
+ChromeUtils.defineLazyGetter(lazy, "SUPPORTED_ENGINES", () => {
+  // Converts a list of Google domains to a pipe separated string of escaped TLDs.
+  // [www.google.com, ..., www.google.co.uk] => "com|...|co\.uk"
+  const googleTLDs = lazy.SearchStaticData.getAlternateDomains("www.google.com")
+    .map(str => str.slice("www.google.".length).replaceAll(".", "\\."))
+    .join("|");
+
+  // This maps engine names to regexes matching their homepages. We show the
+  // redirect tip on these pages.
+  return new Map([
+    ["Bing", { domainPath: /^www\.bing\.com\/$/ }],
+    [
+      "DuckDuckGo",
+      {
+        domainPath: /^(start\.)?duckduckgo\.com\/$/,
+        prohibitedSearchParams: ["q"],
+      },
+    ],
+    [
+      "Google",
+      {
+        domainPath: new RegExp(`^www\.google\.(?:${googleTLDs})\/(webhp)?$`),
+      },
+    ],
+  ]);
+});
 
 // The maximum number of times we'll show a tip across all sessions.
 const MAX_SHOWN_COUNT = 4;
@@ -81,14 +77,9 @@ const MAX_SHOWN_COUNT = 4;
 // navigating to a page where we should show a tip.
 const SHOW_TIP_DELAY_MS = 200;
 
-// Amount of time to wait before showing the persist tip after the
-// onLocationChange event during the process of loading
-// a default search engine results page.
-const SHOW_PERSIST_TIP_DELAY_MS = 1500;
-
 // We won't show a tip if the browser has been updated in the past
-// LAST_UPDATE_THRESHOLD_MS.
-const LAST_UPDATE_THRESHOLD_MS = 24 * 60 * 60 * 1000;
+// LAST_UPDATE_THRESHOLD_HOURS.
+const LAST_UPDATE_THRESHOLD_HOURS = 24;
 
 /**
  * A provider that sometimes returns a tip result when the user visits the
@@ -121,7 +112,7 @@ class ProviderSearchTips extends UrlbarProvider {
   /**
    * Enum of the types of search tips.
    *
-   * @returns {{ NONE: string; ONBOARD: string; PERSIST: string; REDIRECT: string; }}
+   * @returns {{ NONE: string; ONBOARD: string; REDIRECT: string; }}
    */
   get TIP_TYPE() {
     return TIPS;
@@ -130,10 +121,6 @@ class ProviderSearchTips extends UrlbarProvider {
   get PRIORITY() {
     // Search tips are prioritized over the Places and top sites providers.
     return lazy.UrlbarProviderTopSites.PRIORITY + 1;
-  }
-
-  get SHOW_PERSIST_TIP_DELAY_MS() {
-    return SHOW_PERSIST_TIP_DELAY_MS;
   }
 
   /**
@@ -147,9 +134,7 @@ class ProviderSearchTips extends UrlbarProvider {
   }
 
   /**
-   * The type of the provider.
-   *
-   * @returns {UrlbarUtils.PROVIDER_TYPE}
+   * @returns {Values<typeof UrlbarUtils.PROVIDER_TYPE>}
    */
   get type() {
     return UrlbarUtils.PROVIDER_TYPE.PROFILE;
@@ -159,21 +144,17 @@ class ProviderSearchTips extends UrlbarProvider {
    * Whether this provider should be invoked for the given context.
    * If this method returns false, the providers manager won't start a query
    * with this provider, to save on resources.
-   *
-   * @param {UrlbarQueryContext} queryContext The query context object
-   * @returns {boolean} Whether this provider should be invoked for the search.
    */
-  isActive(queryContext) {
-    return this.currentTip && lazy.cfrFeaturesUserPref;
+  async isActive() {
+    return !!this.currentTip && lazy.cfrFeaturesUserPref;
   }
 
   /**
    * Gets the provider's priority.
    *
-   * @param {UrlbarQueryContext} queryContext The query context object
    * @returns {number} The provider's priority for the given query.
    */
-  getPriority(queryContext) {
+  getPriority() {
     return this.PRIORITY;
   }
 
@@ -194,6 +175,7 @@ class ProviderSearchTips extends UrlbarProvider {
     this.currentTip = TIPS.NONE;
 
     let defaultEngine = await Services.search.getDefault();
+    let icon = await defaultEngine.getIconURL();
     if (instance != this.queryInstance) {
       return;
     }
@@ -204,7 +186,7 @@ class ProviderSearchTips extends UrlbarProvider {
       {
         type: tip,
         buttons: [{ l10n: { id: "urlbar-search-tips-confirm" } }],
-        icon: defaultEngine.iconURI?.spec,
+        icon,
       }
     );
 
@@ -227,19 +209,7 @@ class ProviderSearchTips extends UrlbarProvider {
           },
         };
         break;
-      case TIPS.PERSIST:
-        result.heuristic = false;
-        result.payload.titleL10n = {
-          id: "urlbar-search-tips-persist",
-        };
-        result.payload.icon = UrlbarUtils.ICON.TIP;
-        result.payload.buttons = [
-          { l10n: { id: "urlbar-search-tips-confirm-short" } },
-        ];
-        break;
     }
-
-    Services.telemetry.keyedScalarAdd("urlbar.tips", `${tip}-shown`, 1);
 
     addCallback(this, result);
   }
@@ -253,57 +223,26 @@ class ProviderSearchTips extends UrlbarProvider {
    *   The browser window in which the tip is being displayed.
    */
   #pickResult(result, window) {
-    let tip = result.payload.type;
-    switch (tip) {
-      case TIPS.PERSIST:
-        window.gURLBar.removeAttribute("suppress-focus-border");
-        window.gURLBar.select();
-        break;
-      default:
-        window.gURLBar.value = "";
-        window.gURLBar.setPageProxyState("invalid");
-        window.gURLBar.removeAttribute("suppress-focus-border");
-        window.gURLBar.focus();
-        break;
-    }
+    window.gURLBar.value = "";
+    window.gURLBar.setPageProxyState("invalid");
+    window.gURLBar.removeAttribute("suppress-focus-border");
+    window.gURLBar.focus();
 
     // The user either clicked the tip's "Okay, Got It" button, or they clicked
     // in the urlbar while the tip was showing. We treat both as the user's
     // acknowledgment of the tip, and we don't show tips again in any session.
     // Set the shown count to the max.
-    lazy.UrlbarPrefs.set(`tipShownCount.${tip}`, MAX_SHOWN_COUNT);
+    lazy.UrlbarPrefs.set(
+      `tipShownCount.${result.payload.type}`,
+      MAX_SHOWN_COUNT
+    );
   }
 
-  /**
-   * Called when the user starts and ends an engagement with the urlbar.  For
-   * details on parameters, see UrlbarProvider.onEngagement().
-   *
-   * @param {boolean} isPrivate
-   *   True if the engagement is in a private context.
-   * @param {string} state
-   *   The state of the engagement, one of: start, engagement, abandonment,
-   *   discard
-   * @param {UrlbarQueryContext} queryContext
-   *   The engagement's query context.  This is *not* guaranteed to be defined
-   *   when `state` is "start".  It will always be defined for "engagement" and
-   *   "abandonment".
-   * @param {object} details
-   *   This is defined only when `state` is "engagement" or "abandonment", and
-   *   it describes the search string and picked result.
-   * @param {window} window
-   *   The browser window where the engagement event took place.
-   */
-  onEngagement(isPrivate, state, queryContext, details, window) {
-    // Ignore engagements on other results that didn't end the session.
-    let { result } = details;
-    if (result?.providerName != this.name && details.isSessionOngoing) {
-      return;
-    }
+  onEngagement(queryContext, controller, details) {
+    this.#pickResult(details.result, controller.browserWindow);
+  }
 
-    if (result?.providerName == this.name) {
-      this.#pickResult(result, window);
-    }
-
+  onSearchSessionEnd() {
     this.showedTipTypeInCurrentEngagement = TIPS.NONE;
   }
 
@@ -314,14 +253,12 @@ class ProviderSearchTips extends UrlbarProvider {
    *  The browser window where the location change happened.
    * @param {nsIURI} uri
    *  The URI being navigated to.
-   * @param {nsIURI | null} originalUri
-   *  The original URI being navigated to.
    * @param {nsIWebProgress} webProgress
    *   The progress object, which can have event listeners added to it.
    * @param {number} flags
    *   Load flags. See nsIWebProgressListener.idl for possible values.
    */
-  async onLocationChange(window, uri, originalUri, webProgress, flags) {
+  async onLocationChange(window, uri, webProgress, flags) {
     let instance = (this._onLocationChangeInstance = {});
 
     // If this is the first time we've seen this browser window, we take some
@@ -373,7 +310,7 @@ class ProviderSearchTips extends UrlbarProvider {
       return;
     }
 
-    this._maybeShowTipForUrl(uri.spec, originalUri, window).catch(ex =>
+    this._maybeShowTipForUrl(uri.spec, window).catch(ex =>
       this.logger.error(ex)
     );
   }
@@ -384,12 +321,10 @@ class ProviderSearchTips extends UrlbarProvider {
    *
    * @param {string} urlStr
    *   The URL of the page being loaded, in string form.
-   * @param {nsIURI | null} originalUri
-   *   The original URI of the page being loaded.
    * @param {window} window
    *   The browser window in which the tip is being displayed.
    */
-  async _maybeShowTipForUrl(urlStr, originalUri, window) {
+  async _maybeShowTipForUrl(urlStr, window) {
     let instance = {};
     this._maybeShowTipForUrlInstance = instance;
 
@@ -405,25 +340,10 @@ class ProviderSearchTips extends UrlbarProvider {
     let isNewtab = ["about:newtab", "about:home"].includes(urlStr);
     let isSearchHomepage = !isNewtab && (await isDefaultEngineHomepage(urlStr));
 
-    // Only show the persist tip if: the feature is enabled,
-    // it's been shown fewer than the maximum number of times
-    // a specific tip can be shown to the user, and the
-    // the url is a default SERP.
-    let shouldShowPersistTip =
-      lazy.UrlbarPrefs.isPersistedSearchTermsEnabled() &&
-      (lazy.UrlbarPrefs.get(`tipShownCount.${TIPS.PERSIST}`) <
-        MAX_SHOWN_COUNT ||
-        ignoreShowLimits) &&
-      !!lazy.UrlbarSearchUtils.getSearchTermIfDefaultSerpUri(
-        originalUri ?? urlStr
-      );
-
     if (isNewtab) {
       tip = TIPS.ONBOARD;
     } else if (isSearchHomepage) {
       tip = TIPS.REDIRECT;
-    } else if (shouldShowPersistTip) {
-      tip = TIPS.PERSIST;
     } else {
       // No tip.
       return;
@@ -437,19 +357,13 @@ class ProviderSearchTips extends UrlbarProvider {
     }
 
     // Don't show a tip if the browser has been updated recently.
-    // Exception: TIPS.PERSIST should show immediately
-    // after the feature is enabled for users.
-    let date = await lastBrowserUpdateDate();
-    if (
-      tip != TIPS.PERSIST &&
-      Date.now() - date <= LAST_UPDATE_THRESHOLD_MS &&
-      !ignoreShowLimits
-    ) {
+    let hoursSinceUpdate = Math.min(
+      lazy.LaterRun.hoursSinceInstall,
+      lazy.LaterRun.hoursSinceUpdate
+    );
+    if (hoursSinceUpdate < LAST_UPDATE_THRESHOLD_HOURS && !ignoreShowLimits) {
       return;
     }
-
-    let tipDelay =
-      tip == TIPS.PERSIST ? SHOW_PERSIST_TIP_DELAY_MS : SHOW_TIP_DELAY_MS;
 
     // Start a search.
     lazy.setTimeout(async () => {
@@ -458,19 +372,11 @@ class ProviderSearchTips extends UrlbarProvider {
       }
 
       // We don't want to interrupt a user's typed query with a Search Tip.
-      // See bugs 1613662 and 1619547. The persist search tip is an
-      // exception because the query is not erased.
+      // See bugs 1613662 and 1619547.
       if (
         window.gURLBar.getAttribute("pageproxystate") == "invalid" &&
         window.gURLBar.value != ""
       ) {
-        return;
-      }
-
-      // The tab that initiated the tip might not be in the same window
-      // as the one that is currently at the top. Only apply this search
-      // tip to a tab showing a search term.
-      if (tip == TIPS.PERSIST && !window.gBrowser.selectedBrowser.searchTerms) {
         return;
       }
 
@@ -483,22 +389,6 @@ class ProviderSearchTips extends UrlbarProvider {
         return;
       }
 
-      // Don't show a tip if a request is in progress, and the URI associated
-      // with the request differs from the URI that triggered the search tip.
-      // One contraint with this approach is related to Bug 1797748: SERPs
-      // that use the History API to navigate between views will call
-      // onLocationChange without a request, and thus, no originalUri is
-      // available to check against, so the search tip and search terms may
-      // show on search pages outside of the default SERP.
-      let { documentRequest } = window.gBrowser.selectedBrowser.webProgress;
-      if (
-        documentRequest instanceof Ci.nsIChannel &&
-        documentRequest.originalURI?.spec != originalUri?.spec &&
-        (!isNewtab || originalUri)
-      ) {
-        return;
-      }
-
       // At this point, we're showing a tip.
       this.disableTipsForCurrentSession = true;
 
@@ -507,10 +397,8 @@ class ProviderSearchTips extends UrlbarProvider {
 
       this.currentTip = tip;
 
-      let value =
-        tip == TIPS.PERSIST ? window.gBrowser.selectedBrowser.searchTerms : "";
-      window.gURLBar.search(value, { focus: tip == TIPS.ONBOARD });
-    }, tipDelay);
+      window.gURLBar.search("", { focus: tip == TIPS.ONBOARD });
+    }, SHOW_TIP_DELAY_MS);
   }
 }
 
@@ -582,7 +470,7 @@ async function isBrowserShowingNotification(window) {
  * @param {string} urlStr
  *   The URL to check, in string form.
  *
- * @returns {boolean}
+ * @returns {Promise<boolean>}
  */
 async function isDefaultEngineHomepage(urlStr) {
   let defaultEngine = await Services.search.getDefault();
@@ -590,16 +478,13 @@ async function isDefaultEngineHomepage(urlStr) {
     return false;
   }
 
-  let homepageMatches = SUPPORTED_ENGINES.get(defaultEngine.name);
+  let homepageMatches = lazy.SUPPORTED_ENGINES.get(defaultEngine.name);
   if (!homepageMatches) {
     return false;
   }
 
-  // The URL object throws if the string isn't a valid URL.
-  let url;
-  try {
-    url = new URL(urlStr);
-  } catch (e) {
+  let url = URL.parse(urlStr);
+  if (!url) {
     return false;
   }
 
@@ -611,19 +496,6 @@ async function isDefaultEngineHomepage(urlStr) {
   urlStr = url.hostname.concat(url.pathname);
 
   return homepageMatches.domainPath.test(urlStr);
-}
-
-async function lastBrowserUpdateDate() {
-  // Get the newest update in the update history. This isn't perfect
-  // because these dates are when updates are applied, not when the
-  // user restarts with the update. See bug 1595328.
-  if (lazy.updateManager && lazy.updateManager.getUpdateCount()) {
-    let update = lazy.updateManager.getUpdateAt(0);
-    return update.installDate;
-  }
-  // Fall back to the profile age.
-  let age = await lazy.ProfileAge();
-  return (await age.firstUse) || age.created;
 }
 
 export var UrlbarProviderSearchTips = new ProviderSearchTips();

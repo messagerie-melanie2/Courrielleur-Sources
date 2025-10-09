@@ -4,16 +4,20 @@
 
 /* import-globals-from ../../../mail/base/content/aboutMessage.js */
 
+const { getCertViewerUrl } = ChromeUtils.importESModule(
+  "resource://gre/modules/psm/pippki.sys.mjs"
+);
+
 var gEncryptionStatus = -1;
 var gSignatureStatus = -1;
 var gSignerCert = null;
 var gEncryptionCert = null;
 
 function showImapSignatureUnknown() {
-  let readSmimeBundle = Services.strings.createBundle(
+  const readSmimeBundle = Services.strings.createBundle(
     "chrome://messenger-smime/locale/msgReadSMIMEOverlay.properties"
   );
-  let brandBundle = document.getElementById("bundle_brand");
+  const brandBundle = document.getElementById("bundle_brand");
   if (!readSmimeBundle || !brandBundle) {
     return;
   }
@@ -33,7 +37,7 @@ function showImapSignatureUnknown() {
  * Populate the message security popup panel with S/MIME data.
  */
 function loadSmimeMessageSecurityInfo() {
-  let sBundle = Services.strings.createBundle(
+  const sBundle = Services.strings.createBundle(
     "chrome://messenger-smime/locale/msgSecurityInfo.properties"
   );
 
@@ -117,7 +121,7 @@ function loadSmimeMessageSecurityInfo() {
 
   document.getElementById("techLabel").textContent = "- S/MIME";
 
-  let signatureLabel = document.getElementById("signatureLabel");
+  const signatureLabel = document.getElementById("signatureLabel");
   signatureLabel.textContent = sBundle.GetStringFromName(sigInfoLabel);
 
   // Remove the second class to properly update the signature icon.
@@ -125,7 +129,7 @@ function loadSmimeMessageSecurityInfo() {
   signatureLabel.classList.add(sigClass);
 
   if (sigInfoHeader) {
-    let label = document.getElementById("signatureHeader");
+    const label = document.getElementById("signatureHeader");
     label.collapsed = false;
     label.textContent = sBundle.GetStringFromName(sigInfoHeader);
   }
@@ -174,7 +178,7 @@ function loadSmimeMessageSecurityInfo() {
       console.error("Unexpected gEncryptionStatus: " + gEncryptionStatus);
   }
 
-  let encryptionLabel = document.getElementById("encryptionLabel");
+  const encryptionLabel = document.getElementById("encryptionLabel");
   encryptionLabel.textContent = sBundle.GetStringFromName(encInfoLabel);
 
   // Remove the second class to properly update the encryption icon.
@@ -182,7 +186,7 @@ function loadSmimeMessageSecurityInfo() {
   encryptionLabel.classList.add(encClass);
 
   if (encInfoHeader) {
-    let label = document.getElementById("encryptionHeader");
+    const label = document.getElementById("encryptionHeader");
     label.collapsed = false;
     label.textContent = sBundle.GetStringFromName(encInfoHeader);
   }
@@ -226,26 +230,26 @@ function loadSmimeMessageSecurityInfo() {
   }
 }
 
-function viewSignatureCert() {
-  if (!gSignerCert) {
-    return;
-  }
-
-  let url = `about:certificate?cert=${encodeURIComponent(
-    gSignerCert.getBase64DERString()
-  )}`;
-  let mail3PaneWindow = Services.wm.getMostRecentWindow("mail:3pane");
+/**
+ * Open UI that displays the given certificate.
+ * or subdirectory of the given special system/app directory (aDirToCheck).
+ *
+ * @param {nsIX509Cert} cert - The certificate to display.
+ */
+async function viewCert(cert) {
+  const url = await getCertViewerUrl(cert);
+  const mail3PaneWindow = Services.wm.getMostRecentWindow("mail:3pane");
   mail3PaneWindow.switchToTabHavingURI(url, true, {});
 }
 
-function viewEncryptionCert() {
-  if (!gEncryptionCert) {
-    return;
+async function viewSignatureCert() {
+  if (gSignerCert) {
+    viewCert(gSignerCert);
   }
+}
 
-  let url = `about:certificate?cert=${encodeURIComponent(
-    gEncryptionCert.getBase64DERString()
-  )}`;
-  let mail3PaneWindow = Services.wm.getMostRecentWindow("mail:3pane");
-  mail3PaneWindow.switchToTabHavingURI(url, true, {});
+function viewEncryptionCert() {
+  if (gEncryptionCert) {
+    viewCert(gEncryptionCert);
+  }
 }

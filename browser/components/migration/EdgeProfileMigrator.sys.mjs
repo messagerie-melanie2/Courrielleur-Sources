@@ -2,16 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
-
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 import { MigrationUtils } from "resource:///modules/MigrationUtils.sys.mjs";
 import { MigratorBase } from "resource:///modules/MigratorBase.sys.mjs";
 import { MSMigrationUtils } from "resource:///modules/MSMigrationUtils.sys.mjs";
 
 const EDGE_COOKIE_PATH_OPTIONS = ["", "#!001\\", "#!002\\"];
 const EDGE_COOKIES_SUFFIX = "MicrosoftEdge\\Cookies";
+
+const ALLOWED_PROTOCOLS = new Set(["http:", "https:", "ftp:"]);
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
@@ -25,7 +23,7 @@ const kEdgeRegistryRoot =
   "microsoft.microsoftedge_8wekyb3d8bbwe\\MicrosoftEdge";
 const kEdgeDatabasePath = "AC\\MicrosoftEdge\\User\\Default\\DataStore\\Data\\";
 
-XPCOMUtils.defineLazyGetter(lazy, "gEdgeDatabase", function () {
+ChromeUtils.defineLazyGetter(lazy, "gEdgeDatabase", function () {
   let edgeDir = MSMigrationUtils.getEdgeLocalDataFolder();
   if (!edgeDir) {
     return null;
@@ -58,8 +56,8 @@ XPCOMUtils.defineLazyGetter(lazy, "gEdgeDatabase", function () {
  *
  * @param {string}            tableName the name of the table to read.
  * @param {string[]|Function} columns   a list of column specifiers
- *                                      (see ESEDBReader.jsm) or a function that
- *                                      generates them based on the database
+ *                                      (see ESEDBReader.sys.mjs) or a function
+ *                                      that generates them based on the database
  *                                      reference once opened.
  * @param {nsIFile}           dbFile    the database file to use. Defaults to
  *                                      the main Edge database.
@@ -140,14 +138,8 @@ EdgeTypedURLMigrator.prototype = {
         continue;
       }
 
-      let url;
-      try {
-        url = new URL(urlString);
-        if (!["http:", "https:", "ftp:"].includes(url.protocol)) {
-          continue;
-        }
-      } catch (ex) {
-        console.error(ex);
+      let url = URL.parse(urlString);
+      if (!url || !ALLOWED_PROTOCOLS.has(url.protocol)) {
         continue;
       }
 
@@ -227,31 +219,27 @@ EdgeTypedURLDBMigrator.prototype = {
       Date.now() - MigrationUtils.HISTORY_MAX_AGE_IN_MILLISECONDS
     );
     for (let typedUrlInfo of typedUrls) {
-      try {
-        let date = typedUrlInfo.AccessDateTimeUTC;
-        if (!date) {
-          date = kDateCutOff;
-        } else if (date < kDateCutOff) {
-          continue;
-        }
-
-        let url = new URL(typedUrlInfo.URL);
-        if (!["http:", "https:", "ftp:"].includes(url.protocol)) {
-          continue;
-        }
-
-        pageInfos.push({
-          url,
-          visits: [
-            {
-              transition: lazy.PlacesUtils.history.TRANSITIONS.TYPED,
-              date,
-            },
-          ],
-        });
-      } catch (ex) {
-        console.error(ex);
+      let date = typedUrlInfo.AccessDateTimeUTC;
+      if (!date) {
+        date = kDateCutOff;
+      } else if (date < kDateCutOff) {
+        continue;
       }
+
+      let url = URL.parse(typedUrlInfo.URL);
+      if (!url || !ALLOWED_PROTOCOLS.has(url.protocol)) {
+        continue;
+      }
+
+      pageInfos.push({
+        url,
+        visits: [
+          {
+            transition: lazy.PlacesUtils.history.TRANSITIONS.TYPED,
+            date,
+          },
+        ],
+      });
     }
     await MigrationUtils.insertVisitsWrapper(pageInfos);
   },
@@ -323,9 +311,7 @@ EdgeReadingListMigrator.prototype = {
     for (let item of readingListItems) {
       let dateAdded = item.AddedDate || new Date();
       // Avoid including broken URLs:
-      try {
-        new URL(item.URL);
-      } catch (ex) {
+      if (!URL.canParse(item.URL)) {
         continue;
       }
       bookmarks.push({ url: item.URL, title: item.Title, dateAdded });
@@ -336,7 +322,7 @@ EdgeReadingListMigrator.prototype = {
   async _ensureReadingListFolder(parentGuid) {
     if (!this.__readingListFolderGuid) {
       let folderTitle = await MigrationUtils.getLocalizedString(
-        "imported-edge-reading-list"
+        "migration-imported-edge-reading-list"
       );
       let folderSpec = {
         type: lazy.PlacesUtils.bookmarks.TYPE_FOLDER,
@@ -430,11 +416,9 @@ EdgeBookmarksMigrator.prototype = {
       let bmToInsert;
       // Ignore invalid URLs:
       if (!bookmark.IsFolder) {
-        try {
-          new URL(bookmark.URL);
-        } catch (ex) {
+        if (!URL.canParse(bookmark.URL)) {
           console.error(
-            `Ignoring ${bookmark.URL} when importing from Edge because of exception: ${ex}`
+            `Ignoring ${bookmark.URL} when importing from Edge because it is not a valid URL.`
           );
           continue;
         }
@@ -576,14 +560,11 @@ export class EdgeProfileMigrator extends MigratorBase {
 
   /**
    * @returns {Array|null}
-   *   Somewhat counterintuitively, this returns:
-   *   - |null| to indicate "There is only 1 (default) profile" (on win10+)
-   *   - |[]| to indicate "There are no profiles" (on <=win8.1) which will avoid
-   *     using this migrator.
+   *   Somewhat counterintuitively, this returns
+   *   ``null`` to indicate "There is only 1 (default) profile".
    *   See MigrationUtils.sys.mjs for slightly more info on how sourceProfiles is used.
    */
   getSourceProfiles() {
-    let isWin10OrHigher = AppConstants.isPlatformAndVersionAtLeast("win", "10");
-    return isWin10OrHigher ? null : [];
+    return null;
   }
 }

@@ -5,8 +5,8 @@
 /* import-globals-from ../../../mail/components/addrbook/content/abCommon.js */
 /* import-globals-from ../../../mail/components/compose/content/addressingWidgetOverlay.js */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 var { AppConstants } = ChromeUtils.importESModule(
   "resource://gre/modules/AppConstants.sys.mjs"
@@ -21,6 +21,19 @@ var gOldListName = "";
 var gAWContentHeight = 0;
 var gAWRowHeight = 0;
 var gNumberOfCols = 0;
+
+window.addEventListener("load", onAbListDialogLoad);
+window.addEventListener("dragover", DragOverAddressListTree);
+window.addEventListener("drop", DropOnAddressListTree);
+
+function onAbListDialogLoad() {
+  if (window.arguments[0].listURI) {
+    document.getElementById("abListSelector").hidden = true;
+    OnLoadEditList();
+    return;
+  }
+  OnLoadNewMailList();
+}
 
 var test_addresses_sequence = false;
 
@@ -46,7 +59,7 @@ function getLoadContext() {
 
 function mailingListExists(listname) {
   if (MailServices.ab.mailListNameExists(listname)) {
-    let bundle = Services.strings.createBundle(
+    const bundle = Services.strings.createBundle(
       "chrome://messenger/locale/addressbook/addressBook.properties"
     );
     Services.prompt.alert(
@@ -69,10 +82,10 @@ function mailingListExists(listname) {
  * @returns {boolean} - Whether the operation succeeded or not.
  */
 function updateMailList(mailList, isNewList) {
-  let bundle = Services.strings.createBundle(
+  const bundle = Services.strings.createBundle(
     "chrome://messenger/locale/addressbook/addressBook.properties"
   );
-  let listname = document.getElementById("ListName").value.trim();
+  const listname = document.getElementById("ListName").value.trim();
 
   if (listname.length == 0) {
     alert(bundle.GetStringFromName("emptyListName"));
@@ -84,15 +97,15 @@ function updateMailList(mailList, isNewList) {
     return false;
   }
 
-  for (let char of ',;"<>') {
+  for (const char of ',;"<>') {
     if (listname.includes(char)) {
       alert(bundle.GetStringFromName("badListNameCharacters"));
       return false;
     }
   }
 
-  let canonicalNewListName = listname.toLowerCase();
-  let canonicalOldListName = gOldListName.toLowerCase();
+  const canonicalNewListName = listname.toLowerCase();
+  const canonicalOldListName = gOldListName.toLowerCase();
   if (isNewList || canonicalOldListName != canonicalNewListName) {
     if (mailingListExists(listname)) {
       // After showing the "Mailing List Already Exists" error alert,
@@ -120,7 +133,7 @@ function updateMailList(mailList, isNewList) {
  */
 function updateMailListMembers(mailList, parentDirectory) {
   // Gather email address inputs into a single string (comma-separated).
-  let addresses = Array.from(
+  const addresses = Array.from(
     document.querySelectorAll(".textbox-addressingWidget"),
     element => element.value
   )
@@ -128,23 +141,30 @@ function updateMailListMembers(mailList, parentDirectory) {
     .join();
 
   // Convert the addresses string into address objects.
-  let addressObjects =
+  const addressObjects =
     MailServices.headerParser.makeFromDisplayAddress(addresses);
-  let existingCards = mailList.childCards;
+  const existingCards = mailList.childCards;
 
   // Work out which addresses need to be added...
-  let existingCardAddresses = existingCards.map(card => card.primaryEmail);
-  let addressObjectsToAdd = addressObjects.filter(
+  const existingCardAddresses = existingCards.map(card => card.primaryEmail);
+  const addressObjectsToAdd = addressObjects.filter(
     aObj => !existingCardAddresses.includes(aObj.email)
+  );
+  // Eliminate duplicate emails while retaining the first occurrence.
+  const addressesToAdd = new Map(
+    addressObjectsToAdd
+      .reverse()
+      .map(obj => [obj.email, obj.name])
+      .reverse()
   );
 
   // ... and which need to be removed.
-  let addressObjectAddresses = addressObjects.map(aObj => aObj.email);
-  let cardsToRemove = existingCards.filter(
+  const addressObjectAddresses = addressObjects.map(aObj => aObj.email);
+  const cardsToRemove = existingCards.filter(
     card => !addressObjectAddresses.includes(card.primaryEmail)
   );
 
-  for (let { email, name } of addressObjectsToAdd) {
+  for (const [email, name] of addressesToAdd) {
     let card = parentDirectory.cardForEmailAddress(email);
     if (!card) {
       card = Cc["@mozilla.org/addressbook/cardproperty;1"].createInstance(
@@ -210,15 +230,15 @@ function OnLoadNewMailList() {
       }
     }
 
-    let cards = window.arguments[0].cards;
+    const cards = window.arguments[0].cards;
     if (cards && cards.length > 0) {
-      let listbox = document.getElementById("addressingWidget");
-      let newListBoxNode = listbox.cloneNode(false);
-      let templateNode = listbox.querySelector("richlistitem");
+      const listbox = document.getElementById("addressingWidget");
+      const newListBoxNode = listbox.cloneNode(false);
+      const templateNode = listbox.querySelector("richlistitem");
 
       top.MAX_RECIPIENTS = 0;
-      for (let card of cards) {
-        let address = MailServices.headerParser
+      for (const card of cards) {
+        const address = MailServices.headerParser
           .makeMailboxObject(card.displayName, card.primaryEmail)
           .toString();
         SetInputValue(address, newListBoxNode, templateNode);
@@ -255,7 +275,7 @@ function OnLoadNewMailList() {
     );
   }
 
-  let input = document.getElementById("addressCol1#1");
+  const input = document.getElementById("addressCol1#1");
   input.popup.addEventListener("click", () => {
     awReturnHit(input);
   });
@@ -266,8 +286,8 @@ function OnLoadNewMailList() {
 function EditListOKButton(event) {
   // edit mailing list in database
   if (updateMailList(gEditList, false)) {
-    let parentURI = GetParentDirectoryFromMailingListURI(gEditList.URI);
-    let parentDirectory = GetDirectoryFromURI(parentURI);
+    const parentURI = GetParentDirectoryFromMailingListURI(gEditList.URI);
+    const parentDirectory = GetDirectoryFromURI(parentURI);
     updateMailListMembers(gEditList, parentDirectory);
     if (gListCard) {
       // modify the list card (for the results pane) from the mailing list
@@ -296,22 +316,22 @@ function OnLoadEditList() {
   document.getElementById("ListDescription").value = gEditList.description;
   gOldListName = gEditList.dirName;
 
-  let bundle = Services.strings.createBundle(
+  const bundle = Services.strings.createBundle(
     "chrome://messenger/locale/addressbook/addressBook.properties"
   );
   document.title = bundle.formatStringFromName("mailingListTitleEdit", [
     gOldListName,
   ]);
 
-  let cards = gEditList.childCards;
+  const cards = gEditList.childCards;
   if (cards.length > 0) {
-    let listbox = document.getElementById("addressingWidget");
-    let newListBoxNode = listbox.cloneNode(false);
-    let templateNode = listbox.querySelector("richlistitem");
+    const listbox = document.getElementById("addressingWidget");
+    const newListBoxNode = listbox.cloneNode(false);
+    const templateNode = listbox.querySelector("richlistitem");
 
     top.MAX_RECIPIENTS = 0;
-    for (let card of cards) {
-      let address = MailServices.headerParser
+    for (const card of cards) {
+      const address = MailServices.headerParser
         .makeMailboxObject(card.displayName, card.primaryEmail)
         .toString();
       SetInputValue(address, newListBoxNode, templateNode);
@@ -361,14 +381,14 @@ function AppendLastRow() {
   awFitDummyRows(1);
 
   // focus on first name
-  let listName = document.getElementById("ListName");
+  const listName = document.getElementById("ListName");
   if (listName) {
     listName.focus();
   }
 }
 
 function AppendNewRowAndSetFocus() {
-  let lastInput = awGetInputElement(top.MAX_RECIPIENTS);
+  const lastInput = awGetInputElement(top.MAX_RECIPIENTS);
   if (lastInput && lastInput.value) {
     awAppendNewRow(true);
   } else {
@@ -383,7 +403,7 @@ function SetInputValue(inputValue, parentNode, templateNode) {
   parentNode.appendChild(newNode); // we need to insert the new node before we set the value of the select element!
 
   var input = newNode.querySelector(`input[is="autocomplete-input"]`);
-  let label = newNode.querySelector(`label.person-icon`);
+  const label = newNode.querySelector(`label.person-icon`);
   if (input) {
     input.value = inputValue;
     input.setAttribute("id", "addressCol1#" + top.MAX_RECIPIENTS);
@@ -399,7 +419,7 @@ function awClickEmptySpace(target, setFocus) {
     return;
   }
 
-  let lastInput = awGetInputElement(top.MAX_RECIPIENTS);
+  const lastInput = awGetInputElement(top.MAX_RECIPIENTS);
 
   if (lastInput && lastInput.value) {
     awAppendNewRow(setFocus);
@@ -409,9 +429,9 @@ function awClickEmptySpace(target, setFocus) {
 }
 
 function awReturnHit(inputElement) {
-  let row = awGetRowByInputElement(inputElement);
+  const row = awGetRowByInputElement(inputElement);
   if (inputElement.value) {
-    let nextInput = awGetInputElement(row + 1);
+    const nextInput = awGetInputElement(row + 1);
     if (!nextInput) {
       awAppendNewRow(true);
     } else {
@@ -445,14 +465,14 @@ function awDeleteRow(rowToDelete) {
  * @returns {Element?} The input element from the new row.
  */
 function awAppendNewRow(setFocus) {
-  let body = document.getElementById("addressingWidget");
-  let listitem1 = awGetListItem(1);
+  const body = document.getElementById("addressingWidget");
+  const listitem1 = awGetListItem(1);
   let input;
   let label;
 
   if (body && listitem1) {
-    let nextDummy = awGetNextDummyRow();
-    let newNode = listitem1.cloneNode(true);
+    const nextDummy = awGetNextDummyRow();
+    const newNode = listitem1.cloneNode(true);
     if (nextDummy) {
       body.replaceChild(newNode, nextDummy);
     } else {
@@ -521,7 +541,7 @@ function awGetRowByInputElement(inputElement) {
   );
 }
 
-function DragOverAddressListTree(event) {
+function DragOverAddressListTree() {
   var dragSession = gDragService.getCurrentSession();
 
   // XXX add support for other flavors here
@@ -531,7 +551,7 @@ function DragOverAddressListTree(event) {
 }
 
 function DropOnAddressListTree(event) {
-  let dragSession = gDragService.getCurrentSession();
+  const dragSession = gDragService.getCurrentSession();
   let trans;
 
   try {
@@ -547,7 +567,7 @@ function DropOnAddressListTree(event) {
   for (let i = 0; i < dragSession.numDropItems; ++i) {
     dragSession.getData(trans, i);
     let dataObj = {};
-    let bestFlavor = {};
+    const bestFlavor = {};
     trans.getAnyTransferData(bestFlavor, dataObj);
     if (dataObj) {
       dataObj = dataObj.value.QueryInterface(Ci.nsISupportsString);
@@ -557,7 +577,7 @@ function DropOnAddressListTree(event) {
     }
 
     // pull the URL out of the data object
-    let address = dataObj.data.substring(0, dataObj.length);
+    const address = dataObj.data.substring(0, dataObj.length);
     if (!address) {
       continue;
     }
@@ -575,9 +595,9 @@ function DropListAddress(target, address) {
 
   // Break apart the MIME-ready header address into individual addressees to
   // add to the dialog.
-  let addresses = MailServices.headerParser.parseEncodedHeader(address);
-  for (let addr of addresses) {
-    let lastInput = awGetInputElement(top.MAX_RECIPIENTS);
+  const addresses = MailServices.headerParser.parseEncodedHeader(address);
+  for (const addr of addresses) {
+    const lastInput = awGetInputElement(top.MAX_RECIPIENTS);
     lastInput.value = addr.toString();
     awAppendNewRow(true);
   }
@@ -604,9 +624,9 @@ function awAbRecipientKeyPress(event, element) {
     }
   } else {
     let inputElement = element;
-    let originalRow = awGetRowByInputElement(element);
+    const originalRow = awGetRowByInputElement(element);
     let row;
-    let addresses = MailServices.headerParser.makeFromDisplayAddress(
+    const addresses = MailServices.headerParser.makeFromDisplayAddress(
       element.value
     );
 
@@ -630,7 +650,7 @@ function awAbRecipientKeyPress(event, element) {
     row = originalRow;
     let needNewRows = false;
 
-    for (let address of addresses) {
+    for (const address of addresses) {
       if (needNewRows) {
         inputElement = awAppendNewRow(false);
       } else {
@@ -653,7 +673,7 @@ function awAbRecipientKeyPress(event, element) {
       awReturnHit(inputElement);
     } else if (event.key == "Tab") {
       // Focus the last row to let "Tab" move focus to the "Cancel" button.
-      let lastRow = row - 1;
+      const lastRow = row - 1;
       awGetInputElement(lastRow).focus();
     }
   }
@@ -693,7 +713,7 @@ function awRecipientKeyDown(event, inputElement) {
           top.awRecipientInlineDelete = false;
         }
         if (!top.awRecipientInlineDelete) {
-          let deleteForward = event.key == "Delete";
+          const deleteForward = event.key == "Delete";
           awDeleteHit(inputElement, deleteForward);
         }
       }
@@ -704,11 +724,11 @@ function awRecipientKeyDown(event, inputElement) {
     case "ArrowUp":
       // Only browse recipients if the autocomplete popup is not open.
       if (!inputElement.popupOpen) {
-        let row = awGetRowByInputElement(inputElement);
-        let down = event.key == "ArrowDown";
-        let noEdgeRow = down ? row < top.MAX_RECIPIENTS : row > 1;
+        const row = awGetRowByInputElement(inputElement);
+        const down = event.key == "ArrowDown";
+        const noEdgeRow = down ? row < top.MAX_RECIPIENTS : row > 1;
         if (noEdgeRow) {
-          let targetRow = down ? row + 1 : row - 1;
+          const targetRow = down ? row + 1 : row - 1;
           awSetFocusTo(awGetInputElement(targetRow));
         }
       }
@@ -726,7 +746,7 @@ function awRecipientKeyDown(event, inputElement) {
  *   false: focus previous row after deleting the row
  */
 function awDeleteHit(inputElement, deleteForward = false) {
-  let row = awGetRowByInputElement(inputElement);
+  const row = awGetRowByInputElement(inputElement);
 
   // Don't delete the row if it's the last one remaining; just reset it.
   if (top.MAX_RECIPIENTS <= 1) {
@@ -770,18 +790,18 @@ function awTestRowSequence() {
 
   // Debug code to verify the sequence is still good.
 
-  let listbox = document.getElementById("addressingWidget");
-  let listitems = listbox.itemChildren;
+  const listbox = document.getElementById("addressingWidget");
+  const listitems = listbox.itemChildren;
   if (listitems.length >= top.MAX_RECIPIENTS) {
     for (let i = 1; i <= listitems.length; i++) {
-      let item = listitems[i - 1];
-      let inputID = item
+      const item = listitems[i - 1];
+      const inputID = item
         .querySelector(`input[is="autocomplete-input"]`)
         .id.split("#")[1];
-      let menulist = item.querySelector("menulist");
+      const menulist = item.querySelector("menulist");
       // In some places like the mailing list dialog there is no menulist,
       // and so no popupID that needs to be kept in sequence.
-      let popupID = menulist && menulist.id.split("#")[1];
+      const popupID = menulist && menulist.id.split("#")[1];
       if (inputID != i || (popupID && popupID != i)) {
         dump(
           `#ERROR: sequence broken at row ${i}, ` +
@@ -833,7 +853,7 @@ function awCreateDummyItem(aParent) {
   titem.style.height = item.getBoundingClientRect().height + "px";
 
   for (let i = 0; i < awGetNumberOfCols(); i++) {
-    let cell = awCreateDummyCell(titem);
+    const cell = awCreateDummyCell(titem);
     if (item.children[i].hasAttribute("style")) {
       cell.setAttribute("style", item.children[i].getAttribute("style"));
     }
@@ -855,11 +875,11 @@ function awFitDummyRows() {
 }
 
 function awCreateOrRemoveDummyRows() {
-  let listbox = document.getElementById("addressingWidget");
-  let listboxHeight = listbox.getBoundingClientRect().height;
+  const listbox = document.getElementById("addressingWidget");
+  const listboxHeight = listbox.getBoundingClientRect().height;
 
   // remove rows to remove scrollbar
-  let kids = listbox.querySelectorAll("[_isDummyRow]");
+  const kids = listbox.querySelectorAll("[_isDummyRow]");
   for (
     let i = kids.length - 1;
     gAWContentHeight > listboxHeight && i >= 0;

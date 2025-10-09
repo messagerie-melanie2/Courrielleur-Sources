@@ -4,8 +4,8 @@
 
 "use strict";
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 /**
@@ -41,7 +41,7 @@ class AccountHubControllerClass {
    * Object containing all strings to trigger the needed methods for the various
    * views.
    */
-  #accounts = {
+  #views = {
     START: () => this.#viewStart(),
     MAIL: () => this.#viewEmailSetup(),
     CALENDAR: () => this.#viewCalendarSetup(),
@@ -61,10 +61,6 @@ class AccountHubControllerClass {
     const element = document.createElement("account-hub-container");
     document.body.appendChild(element);
     this.#modal = element.modal;
-
-    let closeButton = this.#modal.querySelector("#closeButton");
-    closeButton.hidden = !MailServices.accounts.accounts.length;
-    closeButton.addEventListener("click", () => this.#modal.close());
 
     // Listen from closing requests coming from child elements.
     this.#modal.addEventListener(
@@ -141,28 +137,27 @@ class AccountHubControllerClass {
    *
    * @param {string} id - The ID of the template to clone.
    */
-  #loadView(id) {
+  async #loadView(id) {
     this.#hideViews();
 
     let view = this.#modal.querySelector(id);
     if (view) {
       view.hidden = false;
       this.#currentView = view;
-      // Update the UI to make sure we're refreshing old views.
-      this.#currentView.initUI();
+      await view.ready;
       return;
     }
-
     view = document.createElement(id);
     this.#modal.appendChild(view);
     this.#currentView = view;
+    await view.ready;
   }
 
   /**
    * Hide all the currently visible views.
    */
   #hideViews() {
-    for (let view of this.#modal.querySelectorAll(".account-hub-view")) {
+    for (const view of this.#modal.querySelectorAll(".account-hub-view")) {
       view.hidden = true;
     }
   }
@@ -173,14 +168,14 @@ class AccountHubControllerClass {
    *
    * @param {?string} type - Which account flow to load when the modal opens.
    */
-  open(type = "START") {
+  async open(type = "MAIL") {
     // Interrupt if something went wrong while cleaning up a previously loaded
     // view.
     if (!this.#reset()) {
       return;
     }
 
-    this.#accounts[type].call();
+    await this.#views[type].call();
     if (!this.#modal.open) {
       this.#modal.showModal();
     }
@@ -194,7 +189,7 @@ class AccountHubControllerClass {
    *   have anything to reset.
    */
   #reset() {
-    let isClean = this.#currentView?.reset() ?? true;
+    const isClean = this.#currentView?.reset() ?? true;
     // If the reset operation was successful, clear the current class.
     if (isClean) {
       this.#hideViews();
@@ -208,7 +203,7 @@ class AccountHubControllerClass {
    */
   async #viewStart() {
     await this.#loadScript("start");
-    this.#loadView("account-hub-start");
+    await this.#loadView("account-hub-start");
   }
 
   /**
@@ -216,49 +211,50 @@ class AccountHubControllerClass {
    */
   async #viewEmailSetup() {
     await this.#loadScript("email");
-    this.#loadView("account-hub-email");
+    await this.#loadView("account-hub-email");
   }
 
   /**
    * TODO: Show the calendar setup view.
    */
   #viewCalendarSetup() {
-    console.log("Calendar setup");
+    dump("Calendar setup\n");
   }
 
   /**
-   * TODO: Show the address book setup view.
+   * Show the address book setup view.
    */
-  #viewAddressBookSetup() {
-    console.log("Address Book setup");
+  async #viewAddressBookSetup() {
+    await this.#loadScript("address-book");
+    await this.#loadView("account-hub-address-book");
   }
 
   /**
    * TODO: Show the chat setup view.
    */
   #viewChatSetup() {
-    console.log("Chat setup");
+    dump("Chat setup\n");
   }
 
   /**
    * TODO: Show the feed setup view.
    */
   #viewFeedSetup() {
-    console.log("Feed setup");
+    dump("Feed setup\n");
   }
 
   /**
    * TODO: Show the newsgroup setup view.
    */
   #viewNNTPSetup() {
-    console.log("Newsgroup setup");
+    dump("Newsgroup setup\n");
   }
 
   /**
    * TODO: Show the import setup view.
    */
   #viewImportSetup() {
-    console.log("Import setup");
+    dump("Import setup\n");
   }
 }
 
@@ -266,12 +262,12 @@ class AccountHubControllerClass {
  * Open the account hub dialog and show the requested view.
  *
  * @param {?string} type - The type of view that should be loaded when the modal
- *   is showed. See AccountHubController::#accounts for a list references.
+ *   is showed. See AccountHubController::#views for a list references.
  */
 async function openAccountHub(type) {
   if (!AccountHubController) {
     AccountHubController = new AccountHubControllerClass();
   }
   await AccountHubController.ready;
-  AccountHubController.open(type);
+  await AccountHubController.open(type);
 }

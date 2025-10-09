@@ -35,11 +35,11 @@ Services.prefs.setCharPref(
 load("../../../resources/alertTestUtils.js");
 load("../../../resources/POP3pump.js");
 
-var { MessageGenerator, SyntheticMessageSet } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { MessageGenerator, SyntheticMessageSet } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 // If we're running out of memory parsing the folder, lowering the
@@ -80,7 +80,7 @@ add_setup(async function () {
   gInbox = localAccountUtils.inboxFolder;
   gInboxFile = gInbox.filePath;
 
-  let neededFreeSpace = kSizeLimit + 0x10000000; // +256MiB
+  const neededFreeSpace = kSizeLimit + 0x10000000; // +256MiB
   // On Windows, check whether the drive is NTFS. If it is, mark the file as
   // sparse. If it isn't, then bail out now, because in all probability it is
   // FAT32, which doesn't support file sizes greater than 4 GiB.
@@ -91,7 +91,7 @@ add_setup(async function () {
     throw new Error("On Windows, this test only works on NTFS volumes.\n");
   }
 
-  let freeDiskSpace = gInboxFile.diskSpaceAvailable;
+  const freeDiskSpace = gInboxFile.diskSpaceAvailable;
   info("Free disk space = " + mailTestUtils.toMiBString(freeDiskSpace));
   if (freeDiskSpace < neededFreeSpace) {
     throw new Error(
@@ -113,7 +113,7 @@ add_setup(async function () {
   // that it's out of date.
   gInbox.msgDatabase.forceClosed();
   gInbox.msgDatabase = null;
-  let parseUrlListener = new PromiseTestUtils.PromiseUrlListener();
+  const parseUrlListener = new PromiseTestUtils.PromiseUrlListener();
   try {
     gInbox.getDatabaseWithReparse(parseUrlListener, gDummyMsgWindow);
   } catch (ex) {
@@ -139,13 +139,13 @@ add_task(async function downloadUnder4GiB() {
   Assert.notEqual(gPOP3Pump.fakeServer, null);
 
   // Download a file that still fits into the limit.
-  let bigFile = do_get_file("../../../data/mime-torture");
+  const bigFile = do_get_file("../../../data/mime-torture");
   Assert.ok(bigFile.fileSize >= 1024 * 1024);
   Assert.ok(bigFile.fileSize <= 1024 * 1024 * 2);
 
   gPOP3Pump.files = ["../../../data/mime-torture"];
   let pop3Resolve;
-  let pop3OnDonePromise = new Promise(resolve => {
+  const pop3OnDonePromise = new Promise(resolve => {
     pop3Resolve = resolve;
   });
   gPOP3Pump.onDone = pop3Resolve;
@@ -159,7 +159,7 @@ add_task(async function downloadUnder4GiB() {
  * Check we will not cross the 4GiB limit when downloading new mail.
  */
 add_task(async function downloadOver4GiB_fail() {
-  let localInboxSize = gInboxFile.clone().fileSize;
+  const localInboxSize = gInboxFile.clone().fileSize;
   Assert.ok(localInboxSize >= kNearLimit);
   Assert.ok(localInboxSize < kSizeLimit);
   Assert.equal(gInbox.sizeOnDisk, localInboxSize);
@@ -184,7 +184,7 @@ add_task(async function downloadOver4GiB_fail() {
     "../../../data/mime-torture",
   ];
   let pop3Resolve;
-  let pop3OnDonePromise = new Promise(resolve => {
+  const pop3OnDonePromise = new Promise(resolve => {
     pop3Resolve = resolve;
   });
   gPOP3Pump.onDone = pop3Resolve;
@@ -225,7 +225,7 @@ add_task(async function downloadOver4GiB_success_check() {
     "../../../data/mime-torture",
   ];
   let pop3Resolve;
-  let pop3OnDonePromise = new Promise(resolve => {
+  const pop3OnDonePromise = new Promise(resolve => {
     pop3Resolve = resolve;
   });
   gPOP3Pump.onDone = pop3Resolve;
@@ -237,7 +237,7 @@ add_task(async function downloadOver4GiB_success_check() {
    * Bug 608449
    * Check we can parse a folder if it is above 4GiB.
    */
-  let localInboxSize = gInboxFile.clone().fileSize;
+  const localInboxSize = gInboxFile.clone().fileSize;
   info(
     "Local inbox size (after downloadOver4GiB_success) = " +
       localInboxSize +
@@ -265,7 +265,7 @@ add_task(async function downloadOver4GiB_success_check() {
   // Check that the message keys are below 4GB (thus no offset),
   // actually just incrementing by 1 for each message.
   let key = 0;
-  for (let hdr of gInbox.messages) {
+  for (const hdr of gInbox.messages) {
     key++;
     Assert.equal(hdr.messageKey, key);
   }
@@ -278,19 +278,19 @@ add_task(async function downloadOver4GiB_success_check() {
 add_task(async function copyIntoOver4GiB_fail_check() {
   allow4GBFolders(false);
   // Save initial file size.
-  let localInboxSize = gInboxFile.clone().fileSize;
+  const localInboxSize = gInboxFile.clone().fileSize;
   info("Local inbox size (before copyFileMessage) = " + localInboxSize);
 
   // Use copyFileMessage to (try to) append another message
   // to local inbox.
-  let file = do_get_file("../../../data/mime-torture");
+  const file = do_get_file("../../../data/mime-torture");
 
   // Set up local folders
   localAccountUtils.loadLocalMailAccount();
 
-  let copiedMessageHeaderKeys = []; // Accumulated MsgHdrKeys for listener.
-  let copyListener = new PromiseTestUtils.PromiseCopyListener({
-    SetMessageKey(aKey) {
+  const copiedMessageHeaderKeys = []; // Accumulated MsgHdrKeys for listener.
+  const copyListener = new PromiseTestUtils.PromiseCopyListener({
+    setMessageKey(aKey) {
       copiedMessageHeaderKeys.push(aKey);
     },
   });
@@ -314,7 +314,7 @@ add_task(async function copyIntoOver4GiB_fail_check() {
   );
 
   Assert.equal(copiedMessageHeaderKeys.length, 0);
-  let alertText = await alertPromise;
+  const alertText = await alertPromise;
   Assert.ok(
     alertText.startsWith(
       "The folder Inbox on Local Folders is full, and can't hold any more messages."
@@ -322,7 +322,7 @@ add_task(async function copyIntoOver4GiB_fail_check() {
   );
 
   // Make sure inbox file did not grow (i.e., no data were appended).
-  let newLocalInboxSize = gInboxFile.clone().fileSize;
+  const newLocalInboxSize = gInboxFile.clone().fileSize;
   info("Local inbox size (after copyFileMessage()) = " + newLocalInboxSize);
 });
 
@@ -338,10 +338,10 @@ add_task(async function copyIntoOver4GiB_success_check1() {
   // Reset the Promise for alertTestUtils.js.
   // This message will be preserved in CompactUnder4GB.
   resetAlertPromise();
-  let file = do_get_file("../../../data/mime-torture");
-  let copiedMessageHeaderKeys = []; // Accumulated MsgHdrKeys for listener.
-  let copyListener = new PromiseTestUtils.PromiseCopyListener({
-    SetMessageKey(aKey) {
+  const file = do_get_file("../../../data/mime-torture");
+  const copiedMessageHeaderKeys = []; // Accumulated MsgHdrKeys for listener.
+  const copyListener = new PromiseTestUtils.PromiseCopyListener({
+    setMessageKey(aKey) {
       copiedMessageHeaderKeys.push(aKey);
     },
   });
@@ -365,10 +365,10 @@ add_task(async function copyIntoOver4GiB_success_check1() {
 
 add_task(async function copyIntoOver4GiB_success_check2() {
   // This message will be removed in compactOver4GB.
-  let file = do_get_file("../../../data/mime-torture");
-  let copiedMessageHeaderKeys = []; // Accumulated MsgHdrKeys for listener.
-  let copyListener = new PromiseTestUtils.PromiseCopyListener({
-    SetMessageKey(aKey) {
+  const file = do_get_file("../../../data/mime-torture");
+  const copiedMessageHeaderKeys = []; // Accumulated MsgHdrKeys for listener.
+  const copyListener = new PromiseTestUtils.PromiseCopyListener({
+    setMessageKey(aKey) {
       copiedMessageHeaderKeys.push(aKey);
     },
   });
@@ -404,26 +404,28 @@ add_task(async function compactOver4GiB() {
   Assert.ok(gInboxSize > kSizeLimit);
   Assert.equal(gInbox.expungedBytes, 0);
   // Delete the last small message at folder end.
-  let doomed = [...gInbox.messages].slice(-1);
+  const doomed = [...gInbox.messages].slice(-1);
   let sizeToExpunge = 0;
-  for (let header of doomed) {
+  for (const header of doomed) {
     sizeToExpunge = header.messageSize;
   }
-  let deleteListener = new PromiseTestUtils.PromiseCopyListener();
+  const deleteListener = new PromiseTestUtils.PromiseCopyListener();
   gInbox.deleteMessages(doomed, null, true, false, deleteListener, false);
   await deleteListener.promise;
   Assert.equal(gInbox.expungedBytes, sizeToExpunge);
 
   /* Unfortunately, the compaction now would kill the sparse markings in the file
-   * so it will really take 4GiB of space in the filesystem and may be slow. */
-  // Note: compact() will also add 'X-Mozilla-Status' and 'X-Mozilla-Status2'
-  // lines to message(s).
-  let urlListener = new PromiseTestUtils.PromiseUrlListener();
+   * so it will really take 4GiB of space in the filesystem and may be slow.
+   * NOTE: compact() will also add 'X-Mozilla-Status' and 'X-Mozilla-Status2'
+   * lines to message(s). So in some cases compaction could actually increase
+   * the size of the mbox!
+   */
+  const urlListener = new PromiseTestUtils.PromiseUrlListener();
   gInbox.compact(urlListener, null);
   await urlListener.promise;
   Assert.ok(gInbox.msgDatabase.summaryValid);
   // Check that folder size is still above max limit ...
-  let localInboxSize = gInbox.filePath.clone().fileSize;
+  const localInboxSize = gInbox.filePath.clone().fileSize;
   info("Local inbox size (after compact 1) = " + localInboxSize);
   Assert.ok(localInboxSize > kSizeLimit);
   // ... but it got smaller by removing 1 message.
@@ -438,28 +440,33 @@ add_task(async function compactOver4GiB() {
 add_task(async function compactUnder4GiB() {
   // The folder is still above 4GB.
   Assert.ok(gInboxFile.clone().fileSize > kSizeLimit);
-  let folderSize = gInbox.sizeOnDisk;
-  let totalMsgs = gInbox.getTotalMessages(false);
+  const folderSize = gInbox.sizeOnDisk;
+  const totalMsgs = gInbox.getTotalMessages(false);
   // Let's close the database and re-open the folder (hopefully dumping memory caches)
   // and re-reading the values from disk (msg database). That is to test if
   // the values were properly serialized to the database.
+  info("Bug 1952503 tracing: ForceDBClosed()");
   gInbox.ForceDBClosed();
   gInbox.msgDatabase = null;
+  info("Bug 1952503 tracing: getDatabaseWOReparse()");
   gInbox.getDatabaseWOReparse();
 
+  info("Bug 1952503 tracing: checking sizeOnDisk vs folderSize");
   Assert.equal(gInbox.sizeOnDisk, folderSize);
   Assert.equal(gInbox.getTotalMessages(false), totalMsgs);
 
   // Very last header in folder is retained,
   // but all other preceding headers are marked as deleted.
-  let doomed = [...gInbox.messages].slice(0, -1);
+  const doomed = [...gInbox.messages].slice(0, -1);
   let sizeToExpunge = gInbox.expungedBytes; // If compact in compactOver4GB was skipped, this is not 0.
-  for (let header of doomed) {
+  for (const header of doomed) {
     sizeToExpunge += header.messageSize;
   }
-  let deleteListener = new PromiseTestUtils.PromiseCopyListener();
+  info("Bug 1952503 tracing: start deleting messages");
+  const deleteListener = new PromiseTestUtils.PromiseCopyListener();
   gInbox.deleteMessages(doomed, null, true, false, deleteListener, false);
   await deleteListener.promise;
+  info("Bug 1952503 tracing: done deleting messages");
 
   // Bug 894012: size of messages to expunge is now higher than 4GB.
   // Only the small 1MiB message remains.
@@ -468,14 +475,16 @@ add_task(async function compactUnder4GiB() {
 
   // Note: compact() will also add 'X-Mozilla-Status' and 'X-Mozilla-Status2'
   // lines to message(s).
-  let urlListener = new PromiseTestUtils.PromiseUrlListener();
+  info("Bug 1952503 tracing: performing compaction");
+  const urlListener = new PromiseTestUtils.PromiseUrlListener();
   gInbox.compact(urlListener, null);
   await urlListener.promise;
+  info("Bug 1952503 tracing: compaction completed");
   // Check: message successfully copied.
   Assert.ok(gInbox.msgDatabase.summaryValid);
 
   // Check that folder size isn't much bigger than our sparse block size, ...
-  let localInboxSize = gInbox.filePath.clone().fileSize;
+  const localInboxSize = gInbox.filePath.clone().fileSize;
   info("Local inbox size (after compact 2) = " + localInboxSize);
   Assert.equal(gInbox.sizeOnDisk, localInboxSize);
   Assert.ok(localInboxSize < kSparseBlockSize + 1000);
@@ -494,7 +503,7 @@ add_task(function endTest() {
   // this test, comment out this line.
   gInbox.filePath.remove(false);
   Services.prefs.clearUserPref("mailnews.allowMboxOver4GB");
-  var thread = gThreadManager.currentThread;
+  var thread = Services.tm.currentThread;
   while (thread.hasPendingEvents()) {
     thread.processNextEvent(true);
   }
@@ -522,23 +531,15 @@ var FListener = {
     return this.totalMsgs[this.totalMsgs.length - 1 - aBack];
   },
 
-  onFolderAdded: function act_add(parentFolder, child) {},
-  onMessageAdded: function act_add(parentFolder, msg) {},
-  onFolderRemoved: function act_remove(parentFolder, child) {},
-  onMessageRemoved: function act_remove(parentFolder, msg) {},
+  onFolderAdded: function act_add() {},
+  onMessageAdded: function act_add() {},
+  onFolderRemoved: function act_remove() {},
+  onMessageRemoved: function act_remove() {},
 
-  onFolderPropertyChanged(aItem, aProperty, aOld, aNew) {},
+  onFolderPropertyChanged() {},
   onFolderIntPropertyChanged(aItem, aProperty, aOld, aNew) {
     if (aItem === gInbox) {
-      info(
-        "Property change on folder Inbox:" +
-          aProperty +
-          "=" +
-          aOld +
-          "->" +
-          aNew +
-          "\n"
-      );
+      info(`Inbox Property change: ${aProperty} ${aOld}=>${aNew}`);
       if (aProperty == "FolderSize") {
         this.folderSize.push(aNew);
       } else if (aProperty == "TotalMessages") {
@@ -546,10 +547,9 @@ var FListener = {
       }
     }
   },
-  onFolderBoolPropertyChanged(aItem, aProperty, aOld, aNew) {},
-  onFolderUnicharPropertyChanged(aItem, aProperty, aOld, aNew) {},
-  onFolderPropertyFlagChanged(aItem, aProperty, aOld, aNew) {},
-  onFolderEvent(aFolder, aEvent) {},
+  onFolderBoolPropertyChanged() {},
+  onFolderPropertyFlagChanged() {},
+  onFolderEvent() {},
 };
 
 /**
@@ -560,81 +560,68 @@ function allow4GBFolders(aOn) {
 }
 
 /**
- * Grow local inbox folder to the wanted size using direct appending
- * to the underlying file. The folder is filled with copies of a dummy
- * message with kSparseBlockSize bytes in size.
+ * Grow local inbox folder to at least targetSize bytes, by appending
+ * dummy messages with large sparse chunks. Potentially, this function
+ * may overshoot by a couple hundred bytes or so, depending on where
+ * message boundaries fall.
  * The file must be reparsed (getDatabaseWithReparse) after it is artificially
  * enlarged here.
  * The file is marked as sparse in the filesystem so that it does not
  * really take 4GiB and working with it is faster.
  *
- * @returns The number of messages created in the folder file.
+ * @param {integer} targetSize - Minimum desired size of the Inbox mbox file.
+ * @returns {integer} The number of messages created in the folder file.
  */
-function growInbox(aWantedSize) {
+function growInbox(targetSize) {
   let msgsAdded = 0;
-  // Put a single message in the Inbox.
-  let messageGenerator = new MessageGenerator();
-  let message = messageGenerator.makeMessage();
+
+  // Generate a dummy message to extend and repeat.
+  const messageGenerator = new MessageGenerator();
+  const msgString = messageGenerator.makeMessage().toMessageString();
+
+  const out = Cc["@mozilla.org/network/file-output-stream;1"]
+    .createInstance(Ci.nsIFileOutputStream)
+    .QueryInterface(Ci.nsISeekableStream);
+  // write-only.
+  out.init(gInboxFile, 0x02, 0o600, 0);
+
+  const eol = "\r\n";
+  const fromLine = "From " + eol;
+
+  let localSize = gInboxFile.fileSize;
+  out.seek(2, localSize);
+  while (localSize < targetSize) {
+    // The "From " line.
+    out.write(fromLine, fromLine.length);
+    localSize += fromLine.length;
+
+    // The message itself.
+    out.write(msgString, msgString.length);
+    localSize += msgString.length;
+    if (localSize < targetSize - eol.length) {
+      let chunkSize = targetSize - eol.length - localSize;
+      chunkSize = Math.min(chunkSize, kSparseBlockSize);
+      // Could use mark_file_region_sparse() to go sparse on NTFS, but
+      // unclear if that'll work on an open file...
+      localSize += chunkSize;
+      out.seek(0, localSize);
+    }
+    // Terminate the line and add a blank line.
+    out.write(eol, eol.length);
+    localSize += eol.length;
+    out.write(eol, eol.length);
+    localSize += eol.length;
+    msgsAdded++;
+  }
+  out.close();
 
   // Refresh 'gInboxFile'.
   gInboxFile = gInbox.filePath;
-  let localSize = 0;
-
-  let mboxString = message.toMboxString();
-  let plugStore = gInbox.msgStore;
-  // Grow local inbox to our wished size that is below the max limit.
-  do {
-    let sparseStart = gInboxFile.clone().fileSize + mboxString.length;
-    let nextOffset = Math.min(sparseStart + kSparseBlockSize, aWantedSize - 2);
-    if (aWantedSize - (nextOffset + 2) < mboxString.length + 2) {
-      nextOffset = aWantedSize - 2;
-    }
-
-    // Get stream to write a new message.
-    let reusable = {};
-    let newMsgHdr = {};
-    let outputStream = plugStore
-      .getNewMsgOutputStream(gInbox, newMsgHdr, reusable)
-      .QueryInterface(Ci.nsISeekableStream);
-    // Write message header.
-    outputStream.write(mboxString, mboxString.length);
-    outputStream.close();
-
-    // "Add" a new (empty) sparse block at the end of the file.
-    if (nextOffset - sparseStart == kSparseBlockSize) {
-      mailTestUtils.mark_file_region_sparse(
-        gInboxFile,
-        sparseStart,
-        kSparseBlockSize
-      );
-    }
-
-    // Append message terminator.
-    outputStream = Cc["@mozilla.org/network/file-output-stream;1"]
-      .createInstance(Ci.nsIFileOutputStream)
-      .QueryInterface(Ci.nsISeekableStream);
-    // Open in write-only mode, no truncate.
-    outputStream.init(gInboxFile, 0x02, 0o600, 0);
-
-    // Skip to the wished end of the message.
-    outputStream.seek(0, nextOffset);
-    // Add a CR+LF to terminate the message.
-    outputStream.write("\r\n", 2);
-    outputStream.close();
-    msgsAdded++;
-
-    // Refresh 'gInboxFile'.
-    gInboxFile = gInbox.filePath;
-    localSize = gInboxFile.clone().fileSize;
-  } while (localSize < aWantedSize);
-
-  Assert.equal(gInboxFile.clone().fileSize, aWantedSize);
+  Assert.greaterOrEqual(gInboxFile.clone().fileSize, targetSize);
   info(
-    "Local inbox size = " +
-      localSize +
-      "bytes = " +
-      mailTestUtils.toMiBString(localSize)
+    `Grew inbox to ${
+      gInboxFile.clone().fileSize
+    } bytes (by adding ${msgsAdded} dummy messages)`
   );
-  Assert.equal(localSize, aWantedSize);
   return msgsAdded;
 }

@@ -14,6 +14,7 @@
 #ifndef API_JSEP_SESSION_DESCRIPTION_H_
 #define API_JSEP_SESSION_DESCRIPTION_H_
 
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
@@ -70,9 +71,6 @@ class JsepSessionDescription : public SessionDescriptionInterface {
   virtual const IceCandidateCollection* candidates(
       size_t mediasection_index) const;
   virtual bool ToString(std::string* out) const;
-
-  static const int kDefaultVideoCodecId;
-  static const char kDefaultVideoCodecName[];
 
  private:
   std::unique_ptr<cricket::SessionDescription> description_;

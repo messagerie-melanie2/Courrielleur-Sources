@@ -28,7 +28,7 @@ var MailOfflineMgr = {
   },
 
   /**
-   * @returns true if we are online
+   * @returns {boolean} true if we are online
    */
   isOnline() {
     return !Services.io.offline;
@@ -78,7 +78,7 @@ var MailOfflineMgr = {
   },
 
   /**
-   * @returns true if there are unsent messages
+   * @returns {boolean} true if there are unsent messages
    */
   haveUnsentMessages() {
     return Cc["@mozilla.org/messengercompose/sendlater;1"]
@@ -98,10 +98,10 @@ var MailOfflineMgr = {
    * Prompt the user about going online to send unsent messages, and then send them
    * if appropriate. Puts the app back into online mode.
    *
-   * @param aMsgWindow the msg window to be used when going online
+   * @param {nsIMsgWindow} aMsgWindow - The msg window to be used when going online.
    */
   goOnlineToSendMessages(aMsgWindow) {
-    let goOnlineToSendMsgs = Services.prompt.confirm(
+    const goOnlineToSendMsgs = Services.prompt.confirm(
       window,
       this.offlineBundle.GetStringFromName("sendMessagesOfflineWindowTitle1"),
       this.offlineBundle.GetStringFromName("sendMessagesOfflineLabel1")
@@ -120,11 +120,11 @@ var MailOfflineMgr = {
    * Prompts the user to confirm sending of unsent messages. This is different from
    * goOnlineToSendMessages which involves going online to send unsent messages.
    *
-   * @returns true if the user wants to send unsent messages
+   * @returns {boolean} true if the user wants to send unsent messages
    */
   confirmSendUnsentMessages() {
-    let alwaysAsk = { value: true };
-    let sendUnsentMessages =
+    const alwaysAsk = { value: true };
+    const sendUnsentMessages =
       Services.prompt.confirmEx(
         window,
         this.offlineBundle.GetStringFromName("sendMessagesWindowTitle1"),
@@ -153,7 +153,7 @@ var MailOfflineMgr = {
    * Should we send unsent messages? Based on the value of
    * offline.send.unsent_messages, this method may prompt the user.
    *
-   * @returns true if we should send unsent messages
+   * @returns {boolean} true if we should send unsent messages
    */
   shouldSendUnsentMessages() {
     var sendUnsentWhenGoingOnlinePref = Services.prefs.getIntPref(
@@ -179,11 +179,11 @@ var MailOfflineMgr = {
    * Prompts the user to download messages for offline use before going offline.
    * May update the value of offline.download.download_messages
    *
-   * @returns true if the user wants to download messages for offline use.
+   * @returns {boolean} true if the user wants to download messages for offline use.
    */
   confirmDownloadMessagesForOfflineUse() {
-    let alwaysAsk = { value: true };
-    let downloadMessages =
+    const alwaysAsk = { value: true };
+    const downloadMessages =
       Services.prompt.confirmEx(
         window,
         this.offlineBundle.GetStringFromName("downloadMessagesWindowTitle1"),
@@ -212,10 +212,10 @@ var MailOfflineMgr = {
    *  Prompts the user about going online in order to download new messages.
    *  Based on the response, will move us back to online mode.
    *
-   * @returns true if the user confirms going online.
+   * @returns {boolean} true if the user confirms going online.
    */
   getNewMail() {
-    let goOnline = Services.prompt.confirm(
+    const goOnline = Services.prompt.confirm(
       window,
       this.offlineBundle.GetStringFromName("getMessagesOfflineWindowTitle1"),
       this.offlineBundle.GetStringFromName("getMessagesOfflineLabel1")
@@ -261,11 +261,11 @@ var MailOfflineMgr = {
   mailOfflineStateChanged(aGoingOffline) {
     this.updateOfflineUI(aGoingOffline);
     if (!aGoingOffline) {
-      let prefSendUnsentMessages = Services.prefs.getIntPref(
+      const prefSendUnsentMessages = Services.prefs.getIntPref(
         "offline.send.unsent_messages"
       );
       // 0 == Ask, 1 == Always Send, 2 == Never Send
-      let sendUnsentMessages =
+      const sendUnsentMessages =
         (prefSendUnsentMessages == 0 &&
           this.haveUnsentMessages() &&
           this.confirmSendUnsentMessages()) ||

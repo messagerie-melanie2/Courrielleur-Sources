@@ -43,6 +43,41 @@ add_task(async function home_button_context() {
   await hiddenPromise;
 });
 
+// Right-click on the sidebar button should show a context
+// menu with options to toggle vertical tabs and customize.
+add_task(async function sidebar_button_context() {
+  let contextMenu = document.getElementById("toolbar-context-menu");
+  let shownPromise = popupShown(contextMenu);
+  CustomizableUI.addWidgetToArea("sidebar-button", "nav-bar");
+  let sidebarButton = document.getElementById("sidebar-button");
+  EventUtils.synthesizeMouse(sidebarButton, 2, 2, {
+    type: "contextmenu",
+    button: 2,
+  });
+  await shownPromise;
+
+  let expectedEntries = [
+    ["#toolbar-context-toggle-vertical-tabs", true],
+    ["---"],
+    [".customize-context-moveToPanel", true],
+    [".customize-context-removeFromToolbar", true],
+    ["---"],
+  ];
+  if (!isOSX) {
+    expectedEntries.push(["#toggle_toolbar-menubar", true]);
+  }
+  expectedEntries.push(
+    ["#toggle_PersonalToolbar", true],
+    ["---"],
+    [".viewCustomizeToolbar", true]
+  );
+  checkContextMenu(contextMenu, expectedEntries);
+
+  let hiddenPromise = popupHidden(contextMenu);
+  contextMenu.hidePopup();
+  await hiddenPromise;
+});
+
 // Right-click on an empty bit of tabstrip should
 // show a context menu without options to move it,
 // but with tab-specific options instead.
@@ -62,8 +97,7 @@ add_task(async function tabstrip_context() {
   });
   await shownPromise;
 
-  let closedTabsAvailable =
-    SessionStore.getClosedTabCountForWindow(window) == 0;
+  let closedTabsAvailable = SessionStore.getClosedTabCount() == 0;
   info("Closed tabs: " + closedTabsAvailable);
   let expectedEntries = [
     ["#toolbar-context-openANewTab", true],
@@ -72,6 +106,8 @@ add_task(async function tabstrip_context() {
     ["#toolbar-context-bookmarkSelectedTab", true],
     ["#toolbar-context-selectAllTabs", true],
     ["#toolbar-context-undoCloseTab", !closedTabsAvailable],
+    ["---"],
+    ["#toolbar-context-toggle-vertical-tabs", true],
     ["---"],
   ];
   if (!isOSX) {
@@ -93,7 +129,7 @@ add_task(async function tabstrip_context() {
 // Right-click on the title bar spacer before the tabstrip should show a
 // context menu without options to move it and no tab-specific options.
 add_task(async function titlebar_spacer_context() {
-  if (!TabsInTitlebar.enabled) {
+  if (!CustomTitlebar.enabled) {
     info("Skipping test that requires tabs in the title bar.");
     return;
   }
@@ -172,8 +208,8 @@ add_task(async function urlbar_context() {
   let contextMenu = document.getElementById("toolbar-context-menu");
   let shownPromise = popupShown(contextMenu);
   let urlBarContainer = document.getElementById("urlbar-container");
-  // Need to make sure not to click within an edit field.
-  EventUtils.synthesizeMouse(urlBarContainer, 100, 1, {
+  // This clicks in the urlbar container margin, to avoid hitting the urlbar field.
+  EventUtils.synthesizeMouse(urlBarContainer, -2, 4, {
     type: "contextmenu",
     button: 2,
   });
@@ -205,9 +241,7 @@ add_task(async function searchbar_context_move_to_panel_and_back() {
   // This is specifically testing the addToPanel function for the search bar, so
   // we have to move it to its correct position in the navigation toolbar first.
   // The preference will be restored when the customizations are reset later.
-  Services.prefs.setBoolPref("browser.search.widget.inNavBar", true);
-
-  let searchbar = document.getElementById("searchbar");
+  let searchbar = await gCUITestUtils.addSearchBar();
   // This fails if the screen resolution is small and the search bar overflows
   // from the nav bar.
   await gCustomizeMode.addToPanel(searchbar);
@@ -550,7 +584,7 @@ add_task(async function custom_context_menus() {
   await startCustomizing();
   is(
     widget.getAttribute("context"),
-    "",
+    null,
     "Should not have own context menu in the toolbar now that we're customizing."
   );
   is(
@@ -563,7 +597,7 @@ add_task(async function custom_context_menus() {
   simulateItemDrag(widget, panel);
   is(
     widget.getAttribute("context"),
-    "",
+    null,
     "Should not have own context menu when in the panel."
   );
   is(
@@ -578,7 +612,7 @@ add_task(async function custom_context_menus() {
   );
   is(
     widget.getAttribute("context"),
-    "",
+    null,
     "Should not have own context menu when back in toolbar because we're still customizing."
   );
   is(
@@ -617,17 +651,62 @@ add_task(async function flexible_space_context_menu() {
   await shownPromise;
 
   let expectedEntries = [
-    ["#toggle_PersonalToolbar", true],
+    ["#toolbar-context-toggle-vertical-tabs", true],
     ["---"],
-    [".viewCustomizeToolbar", true],
   ];
 
   if (!isOSX) {
-    expectedEntries.unshift(["#toggle_toolbar-menubar", true]);
+    expectedEntries.push(["#toggle_toolbar-menubar", true]);
   }
+
+  expectedEntries.push(
+    ["#toggle_PersonalToolbar", true],
+    ["---"],
+    [".viewCustomizeToolbar", true]
+  );
 
   checkContextMenu(contextMenu, expectedEntries);
   contextMenu.hidePopup();
   gCustomizeMode.removeFromArea(lastSpring);
   ok(!lastSpring.parentNode, "Spring should have been removed successfully.");
+});
+
+// Right-click on the downloads button should show a context
+// menu with options specific to downloads.
+add_task(async function downloads_button_context() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.download.autohideButton", false]],
+  });
+  let contextMenu = document.getElementById("toolbar-context-menu");
+  let shownPromise = popupShown(contextMenu);
+  CustomizableUI.addWidgetToArea("downloads-button", "nav-bar");
+  let downloadsButton = document.getElementById("downloads-button");
+  EventUtils.synthesizeMouse(downloadsButton, 2, 2, {
+    type: "contextmenu",
+    button: 2,
+  });
+  await shownPromise;
+
+  let expectedEntries = [
+    [".customize-context-moveToPanel", true],
+    ["#toolbar-context-autohide-downloads-button", true],
+    [".customize-context-removeFromToolbar", true],
+    ["---"],
+    ["#toolbar-context-always-open-downloads-panel", true],
+    ["---"],
+  ];
+  if (!isOSX) {
+    expectedEntries.push(["#toggle_toolbar-menubar", true]);
+  }
+  expectedEntries.push(
+    ["#toggle_PersonalToolbar", true],
+    ["---"],
+    [".viewCustomizeToolbar", true]
+  );
+  checkContextMenu(contextMenu, expectedEntries);
+
+  let hiddenPromise = popupHidden(contextMenu);
+  contextMenu.hidePopup();
+  await hiddenPromise;
+  await SpecialPowers.popPrefEnv();
 });

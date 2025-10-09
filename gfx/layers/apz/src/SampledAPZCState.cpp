@@ -19,20 +19,27 @@ SampledAPZCState::SampledAPZCState(const FrameMetrics& aMetrics)
   RemoveFractionalAsyncDelta();
 }
 
-SampledAPZCState::SampledAPZCState(const FrameMetrics& aMetrics,
-                                   Maybe<CompositionPayload>&& aPayload,
-                                   APZScrollGeneration aGeneration)
+SampledAPZCState::SampledAPZCState(
+    const FrameMetrics& aMetrics, Maybe<CompositionPayload>&& aPayload,
+    APZScrollGeneration aGeneration,
+    std::vector<CompositorScrollUpdate>&& aUpdates)
     : mLayoutViewport(aMetrics.GetLayoutViewport()),
       mVisualScrollOffset(aMetrics.GetVisualScrollOffset()),
       mZoom(aMetrics.GetZoom()),
       mScrollPayload(std::move(aPayload)),
-      mGeneration(aGeneration) {
+      mGeneration(aGeneration),
+      mUpdates(std::move(aUpdates)) {
   RemoveFractionalAsyncDelta();
 }
 
 bool SampledAPZCState::operator==(const SampledAPZCState& aOther) const {
   // The payload doesn't factor into equality, that just comes along for
   // the ride.
+  // The compositor scroll updates also do not factor into equality.
+  // We can think of those as not describing the current state, but the
+  // process by which we got from the previous state to this one.
+  // The FrameMetrics constructor of SampledAPZCState does not initialize
+  // mUpdates, so we can't rely on them always being present.
   return mLayoutViewport.IsEqualEdges(aOther.mLayoutViewport) &&
          mVisualScrollOffset == aOther.mVisualScrollOffset &&
          mZoom == aOther.mZoom;
@@ -86,6 +93,8 @@ void SampledAPZCState::RemoveFractionalAsyncDelta() {
   // a snapshot of APZ state (decoupling it from APZ assumptions) and provides
   // it as an input to the compositor (so all compositor state should be
   // internally consistent based on this input).
+  // TODO(bug 1889267): Now that we use WebRender everywhere, can this hack be
+  // removed?
   if (mLayoutViewport.TopLeft() == mVisualScrollOffset) {
     return;
   }

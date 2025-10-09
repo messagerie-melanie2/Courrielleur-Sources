@@ -55,6 +55,10 @@ customElements.define(
       this._messageDeck = this.querySelector(
         ".unified-extensions-item-message-deck"
       );
+      this._messageBarWrapper = this.querySelector(
+        "unified-extensions-item-messagebar-wrapper"
+      );
+      this._messageBarWrapper.extensionId = this.extension?.id;
 
       // Focus/blur events are fired on specific elements only.
       this._actionButton.addEventListener("blur", this);
@@ -170,10 +174,11 @@ customElements.define(
       // to identify the extension being manipulated by the context menu.
       this._actionButton.dataset.extensionid = this.extension.id;
 
-      this.toggleAttribute(
-        "attention",
-        OriginControls.getAttention(this.extension.policy, this.ownerGlobal)
+      const { attention } = OriginControls.getAttentionState(
+        this.extension.policy,
+        this.ownerGlobal
       );
+      this.toggleAttribute("attention", attention);
 
       this.querySelector(".unified-extensions-item-name").textContent =
         this.extension.name;
@@ -193,12 +198,15 @@ customElements.define(
       // The data-extensionid attribute is used by context menu handlers
       // to identify the extension being manipulated by the context menu.
       this._menuButton.dataset.extensionid = this.extension.id;
-      this._menuButton.setAttribute(
-        "data-l10n-args",
-        JSON.stringify({ extensionName: this.extension.name })
+      this.ownerDocument.l10n.setAttributes(
+        this._menuButton,
+        "unified-extensions-item-open-menu",
+        { extensionName: this.extension.name }
       );
 
       this.#setStateMessage();
+
+      this._messageBarWrapper?.refresh();
     }
   }
 );

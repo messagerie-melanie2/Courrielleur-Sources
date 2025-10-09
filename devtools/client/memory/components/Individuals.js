@@ -7,8 +7,8 @@
 const {
   Component,
   createFactory,
-} = require("resource://devtools/client/shared/vendor/react.js");
-const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.js");
+} = require("resource://devtools/client/shared/vendor/react.mjs");
+const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.mjs");
 const Tree = createFactory(
   require("resource://devtools/client/shared/components/VirtualizedTree.js")
 );
@@ -42,9 +42,9 @@ class Individuals extends Component {
       autoExpandDepth: 0,
       preventNavigationOnArrowRight: false,
       focused: individuals.focused,
-      getParent: node => null,
-      getChildren: node => [],
-      isExpanded: node => false,
+      getParent: () => null,
+      getChildren: () => [],
+      isExpanded: () => false,
       onExpand: () => {},
       onCollapse: () => {},
       onFocus,

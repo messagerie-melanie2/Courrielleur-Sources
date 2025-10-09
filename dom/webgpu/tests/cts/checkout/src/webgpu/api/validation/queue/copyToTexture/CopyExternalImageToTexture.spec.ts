@@ -11,22 +11,16 @@ import {
 } from '../../../../../common/framework/resources.js';
 import { makeTestGroup } from '../../../../../common/framework/test_group.js';
 import { raceWithRejectOnTimeout, unreachable, assert } from '../../../../../common/util/util.js';
-import {
-  kTextureFormatInfo,
-  kTextureFormats,
-  kTextureUsages,
-  kValidTextureFormatsForCopyE2T,
-} from '../../../../capability_info.js';
-import { kResourceStates } from '../../../../gpu_test.js';
+import { kTextureUsages } from '../../../../capability_info.js';
+import { kAllTextureFormats, kValidTextureFormatsForCopyE2T } from '../../../../format_info.js';
+import { kResourceStates, AllFeaturesMaxLimitsGPUTest } from '../../../../gpu_test.js';
 import {
   CanvasType,
-  canCopyFromCanvasContext,
   createCanvas,
   createOnscreenCanvas,
   createOffscreenCanvas,
-  kValidCanvasContextIds,
 } from '../../../../util/create_elements.js';
-import { ValidationTest } from '../../validation_test.js';
+import * as vtu from '../../validation_test_utils.js';
 
 const kDefaultBytesPerPixel = 4; // using 'bgra8unorm' or 'rgba8unorm'
 const kDefaultWidth = 32;
@@ -138,7 +132,7 @@ function generateCopySizeForDstOOB({ mipLevel, dstOrigin }: WithDstOriginMipLeve
   ];
 }
 
-class CopyExternalImageToTextureTest extends ValidationTest {
+class CopyExternalImageToTextureTest extends AllFeaturesMaxLimitsGPUTest {
   onlineCrossOriginUrl = 'https://raw.githubusercontent.com/gpuweb/gpuweb/main/logo/webgpu.png';
 
   getImageData(width: number, height: number): ImageData {
@@ -159,7 +153,14 @@ class CopyExternalImageToTextureTest extends ValidationTest {
   ): HTMLCanvasElement | OffscreenCanvas {
     const canvas = createCanvas(this, canvasType, 1, 1);
     const ctx = canvas.getContext('2d');
-    assert(ctx !== null);
+    switch (canvasType) {
+      case 'onscreen':
+        assert(ctx instanceof CanvasRenderingContext2D);
+        break;
+      case 'offscreen':
+        assert(ctx instanceof OffscreenCanvasRenderingContext2D);
+        break;
+    }
     ctx.drawImage(content, 0, 0);
 
     return canvas;
@@ -173,8 +174,8 @@ class CopyExternalImageToTextureTest extends ValidationTest {
   }
 
   runTest(
-    imageBitmapCopyView: GPUImageCopyExternalImage,
-    textureCopyView: GPUImageCopyTextureTagged,
+    imageBitmapCopyView: GPUCopyExternalImageSourceInfo,
+    textureCopyView: GPUCopyExternalImageDestInfo,
     copySize: GPUExtent3D,
     validationScopeSuccess: boolean,
     exceptionName?: string
@@ -202,100 +203,6 @@ class CopyExternalImageToTextureTest extends ValidationTest {
 }
 
 export const g = makeTestGroup(CopyExternalImageToTextureTest);
-
-g.test('source_canvas,contexts')
-  .desc(
-    `
-  Test HTMLCanvasElement as source image with different contexts.
-
-  Call HTMLCanvasElement.getContext() with different context type.
-  Only '2d', 'experimental-webgl', 'webgl', 'webgl2' is valid context
-  type.
-
-  Check whether 'OperationError' is generated when context type is invalid.
-  `
-  )
-  .params(u =>
-    u //
-      .combine('contextType', kValidCanvasContextIds)
-      .beginSubcases()
-      .combine('copySize', [
-        { width: 0, height: 0, depthOrArrayLayers: 0 },
-        { width: 1, height: 1, depthOrArrayLayers: 1 },
-      ])
-  )
-  .fn(async t => {
-    const { contextType, copySize } = t.params;
-    const canvas = createOnscreenCanvas(t, 1, 1);
-    const dstTexture = t.device.createTexture({
-      size: { width: 1, height: 1, depthOrArrayLayers: 1 },
-      format: 'bgra8unorm',
-      usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
-    });
-
-    const ctx = canvas.getContext(contextType);
-    if (ctx === null) {
-      t.skip('Failed to get context for canvas element');
-      return;
-    }
-    t.tryTrackForCleanup(ctx);
-
-    t.runTest(
-      { source: canvas },
-      { texture: dstTexture },
-      copySize,
-      true, // No validation errors.
-      canCopyFromCanvasContext(contextType) ? '' : 'OperationError'
-    );
-  });
-
-g.test('source_offscreenCanvas,contexts')
-  .desc(
-    `
-  Test OffscreenCanvas as source image with different contexts.
-
-  Call OffscreenCanvas.getContext() with different context type.
-  Only '2d', 'webgl', 'webgl2', 'webgpu' is valid context type.
-
-  Check whether 'OperationError' is generated when context type is invalid.
-  `
-  )
-  .params(u =>
-    u //
-      .combine('contextType', kValidCanvasContextIds)
-      .beginSubcases()
-      .combine('copySize', [
-        { width: 0, height: 0, depthOrArrayLayers: 0 },
-        { width: 1, height: 1, depthOrArrayLayers: 1 },
-      ])
-  )
-  .fn(async t => {
-    const { contextType, copySize } = t.params;
-    const canvas = createOffscreenCanvas(t, 1, 1);
-    const dstTexture = t.device.createTexture({
-      size: { width: 1, height: 1, depthOrArrayLayers: 1 },
-      format: 'bgra8unorm',
-      usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
-    });
-
-    // MAINTENANCE_TODO: Workaround for @types/offscreencanvas missing an overload of
-    // `OffscreenCanvas.getContext` that takes `string` or a union of context types.
-    const ctx = ((canvas as unknown) as HTMLCanvasElement).getContext(contextType);
-
-    if (ctx === null) {
-      t.skip('Failed to get context for canvas element');
-      return;
-    }
-    t.tryTrackForCleanup(ctx);
-
-    t.runTest(
-      { source: canvas },
-      { texture: dstTexture },
-      copySize,
-      true, // No validation errors.
-      canCopyFromCanvasContext(contextType) ? '' : 'OperationError'
-    );
-  });
 
 g.test('source_image,crossOrigin')
   .desc(
@@ -385,7 +292,7 @@ g.test('source_image,crossOrigin')
         unreachable();
     }
 
-    const dstTexture = t.device.createTexture({
+    const dstTexture = t.createTextureTracked({
       size: { width: 1, height: 1, depthOrArrayLayers: 1 },
       format: 'bgra8unorm',
       usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
@@ -424,7 +331,7 @@ g.test('source_imageBitmap,state')
   .fn(async t => {
     const { closed, copySize } = t.params;
     const imageBitmap = await t.createImageBitmap(t.getImageData(1, 1));
-    const dstTexture = t.device.createTexture({
+    const dstTexture = t.createTextureTracked({
       size: { width: 1, height: 1, depthOrArrayLayers: 1 },
       format: 'bgra8unorm',
       usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
@@ -471,7 +378,7 @@ g.test('source_canvas,state')
         { width: 1, height: 1, depthOrArrayLayers: 1 },
       ])
   )
-  .fn(async t => {
+  .fn(t => {
     const { state, copySize } = t.params;
     const canvas = createOnscreenCanvas(t, 1, 1);
     if (typeof canvas.transferControlToOffscreen === 'undefined') {
@@ -479,7 +386,7 @@ g.test('source_canvas,state')
       return;
     }
 
-    const dstTexture = t.device.createTexture({
+    const dstTexture = t.createTextureTracked({
       size: { width: 1, height: 1, depthOrArrayLayers: 1 },
       format: 'bgra8unorm',
       usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
@@ -549,7 +456,7 @@ g.test('source_offscreenCanvas,state')
   .fn(async t => {
     const { state, copySize } = t.params;
     const offscreenCanvas = createOffscreenCanvas(t, 1, 1);
-    const dstTexture = t.device.createTexture({
+    const dstTexture = t.createTextureTracked({
       size: { width: 1, height: 1, depthOrArrayLayers: 1 },
       format: 'bgra8unorm',
       usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
@@ -620,7 +527,7 @@ g.test('destination_texture,state')
   .fn(async t => {
     const { state, copySize } = t.params;
     const imageBitmap = await t.createImageBitmap(t.getImageData(1, 1));
-    const dstTexture = t.createTextureWithState(state);
+    const dstTexture = vtu.createTextureWithState(t, state);
 
     t.runTest({ source: imageBitmap }, { texture: dstTexture }, copySize, state === 'valid');
   });
@@ -630,19 +537,19 @@ g.test('destination_texture,device_mismatch')
     'Tests copyExternalImageToTexture cannot be called with a destination texture created from another device'
   )
   .paramsSubcasesOnly(u => u.combine('mismatched', [true, false]))
-  .beforeAllSubcases(t => {
-    t.selectMismatchedDeviceOrSkipTestCase(undefined);
-  })
+  .beforeAllSubcases(t => t.usesMismatchedDevice())
   .fn(async t => {
     const { mismatched } = t.params;
     const sourceDevice = mismatched ? t.mismatchedDevice : t.device;
     const copySize = { width: 1, height: 1, depthOrArrayLayers: 1 };
 
-    const texture = sourceDevice.createTexture({
-      size: copySize,
-      format: 'rgba8unorm',
-      usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
-    });
+    const texture = t.trackForCleanup(
+      sourceDevice.createTexture({
+        size: copySize,
+        format: 'rgba8unorm',
+        usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+      })
+    );
 
     const imageBitmap = await t.createImageBitmap(t.getImageData(1, 1));
 
@@ -669,7 +576,7 @@ g.test('destination_texture,usage')
   .fn(async t => {
     const { usage, copySize } = t.params;
     const imageBitmap = await t.createImageBitmap(t.getImageData(1, 1));
-    const dstTexture = t.device.createTexture({
+    const dstTexture = t.createTextureTracked({
       size: { width: 1, height: 1, depthOrArrayLayers: 1 },
       format: 'rgba8unorm',
       usage,
@@ -703,7 +610,7 @@ g.test('destination_texture,sample_count')
   .fn(async t => {
     const { sampleCount, copySize } = t.params;
     const imageBitmap = await t.createImageBitmap(t.getImageData(1, 1));
-    const dstTexture = t.device.createTexture({
+    const dstTexture = t.createTextureTracked({
       size: { width: 1, height: 1, depthOrArrayLayers: 1 },
       sampleCount,
       format: 'bgra8unorm',
@@ -733,7 +640,7 @@ g.test('destination_texture,mipLevel')
   .fn(async t => {
     const { mipLevel, copySize } = t.params;
     const imageBitmap = await t.createImageBitmap(t.getImageData(1, 1));
-    const dstTexture = t.device.createTexture({
+    const dstTexture = t.createTextureTracked({
       size: { width: kDefaultWidth, height: kDefaultHeight, depthOrArrayLayers: kDefaultDepth },
       mipLevelCount: kDefaultMipLevelCount,
       format: 'bgra8unorm',
@@ -758,26 +665,23 @@ g.test('destination_texture,format')
   )
   .params(u =>
     u
-      .combine('format', kTextureFormats)
+      .combine('format', kAllTextureFormats)
       .beginSubcases()
       .combine('copySize', [
         { width: 0, height: 0, depthOrArrayLayers: 0 },
         { width: 1, height: 1, depthOrArrayLayers: 1 },
       ])
   )
-  .beforeAllSubcases(t => {
-    const { format } = t.params;
-    t.selectDeviceOrSkipTestCase(kTextureFormatInfo[format].feature);
-  })
   .fn(async t => {
     const { format, copySize } = t.params;
+    t.skipIfTextureFormatNotSupported(format);
 
     const imageBitmap = await t.createImageBitmap(t.getImageData(1, 1));
 
     // createTexture with all possible texture format may have validation error when using
     // compressed texture format.
     t.device.pushErrorScope('validation');
-    const dstTexture = t.device.createTexture({
+    const dstTexture = t.createTextureTracked({
       size: { width: 1, height: 1, depthOrArrayLayers: 1 },
       format,
       usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
@@ -812,7 +716,7 @@ g.test('OOB,source')
   .fn(async t => {
     const { srcOrigin, copySize } = t.params;
     const imageBitmap = await t.createImageBitmap(t.getImageData(kDefaultWidth, kDefaultHeight));
-    const dstTexture = t.device.createTexture({
+    const dstTexture = t.createTextureTracked({
       size: {
         width: kDefaultWidth + 1,
         height: kDefaultHeight + 1,
@@ -863,7 +767,7 @@ g.test('OOB,destination')
     const imageBitmap = await t.createImageBitmap(
       t.getImageData(kDefaultWidth + 1, kDefaultHeight + 1)
     );
-    const dstTexture = t.device.createTexture({
+    const dstTexture = t.createTextureTracked({
       size: {
         width: kDefaultWidth,
         height: kDefaultHeight,

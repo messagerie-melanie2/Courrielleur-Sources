@@ -24,10 +24,10 @@
 #  undef DrawText
 #endif
 
-class nsTextPaintStyle;
-class nsLineList_iterator;
 struct SelectionDetails;
+class nsBlockFrame;
 class nsTextFragment;
+class nsTextPaintStyle;
 
 namespace mozilla {
 class SVGContextPaint;
@@ -76,7 +76,8 @@ class nsTextFrame : public nsIFrame {
                      const gfxSkipCharsIterator& aStart, int32_t aLength,
                      nsIFrame* aLineContainer,
                      nscoord aOffsetFromBlockOriginForTabs,
-                     nsTextFrame::TextRunType aWhichTextRun);
+                     nsTextFrame::TextRunType aWhichTextRun,
+                     bool aAtStartOfLine);
 
     /**
      * Use this constructor after the frame has been reflowed and we don't
@@ -158,6 +159,12 @@ class nsTextFrame : public nsIFrame {
 
     const gfxSkipCharsIterator& GetEndHint() const { return mTempIterator; }
 
+    // Set a position that should be treated as start-of-line (for trimming
+    // potential letter-spacing).
+    void SetStartOfLine(const gfxSkipCharsIterator& aPosition) {
+      mStartOfLineOffset = aPosition.GetSkippedOffset();
+    }
+
    protected:
     void SetupJustificationSpacing(bool aPostReflow);
 
@@ -194,16 +201,12 @@ class nsTextFrame : public nsIFrame {
 
     const bool mReflowing;
     const nsTextFrame::TextRunType mWhichTextRun;
+    uint32_t mStartOfLineOffset = UINT32_MAX;
   };
 
   explicit nsTextFrame(ComputedStyle* aStyle, nsPresContext* aPresContext,
                        ClassID aID = kClassID)
-      : nsIFrame(aStyle, aPresContext, aID),
-        mNextContinuation(nullptr),
-        mContentOffset(0),
-        mContentLengthHint(0),
-        mAscent(0),
-        mIsSelected(SelectionState::Unknown) {}
+      : nsIFrame(aStyle, aPresContext, aID) {}
 
   NS_DECL_FRAMEARENA_HELPERS(nsTextFrame)
 
@@ -224,7 +227,7 @@ class nsTextFrame : public nsIFrame {
 
   void Destroy(DestroyContext&) override;
 
-  mozilla::Maybe<Cursor> GetCursor(const nsPoint&) final;
+  Cursor GetCursor(const nsPoint&) final;
 
   nsresult CharacterDataChanged(const CharacterDataChangeInfo&) final;
 
@@ -240,8 +243,9 @@ class nsTextFrame : public nsIFrame {
         !nsSplittableFrame::IsInNextContinuationChain(aNextContinuation, this),
         "creating a loop in continuation chain!");
     mNextContinuation = static_cast<nsTextFrame*>(aNextContinuation);
-    if (aNextContinuation)
+    if (aNextContinuation) {
       aNextContinuation->RemoveStateBits(NS_FRAME_IS_FLUID_CONTINUATION);
+    }
     // Setting a non-fluid continuation might affect our flow length (they're
     // quite rare so we assume it always does) so we delete our cached value:
     if (GetContent()->HasFlag(NS_HAS_FLOWLENGTH_PROPERTY)) {
@@ -277,13 +281,6 @@ class nsTextFrame : public nsIFrame {
   }
   nsTextFrame* LastInFlow() const final;
   nsTextFrame* LastContinuation() const final;
-
-  bool IsFrameOfType(uint32_t aFlags) const final {
-    // Set the frame state bit for text frames to mark them as replaced.
-    // XXX kipp: temporary
-    return nsIFrame::IsFrameOfType(
-        aFlags & ~(nsIFrame::eReplaced | nsIFrame::eLineParticipant));
-  }
 
   bool ShouldSuppressLineBreak() const;
 
@@ -368,6 +365,7 @@ class nsTextFrame : public nsIFrame {
   Maybe<nscoord> GetNaturalBaselineBOffset(
       mozilla::WritingMode aWM, BaselineSharingGroup aBaselineGroup,
       BaselineExportContext) const override;
+  nscoord GetCaretBaseline() const override;
 
   bool HasSignificantTerminalNewline() const final;
 
@@ -397,11 +395,13 @@ class nsTextFrame : public nsIFrame {
   void SetFontSizeInflation(float aInflation);
 
   void MarkIntrinsicISizesDirty() final;
-  nscoord GetMinISize(gfxContext* aRenderingContext) final;
-  nscoord GetPrefISize(gfxContext* aRenderingContext) final;
-  void AddInlineMinISize(gfxContext* aRenderingContext,
+
+  nscoord IntrinsicISize(const mozilla::IntrinsicSizeInput& aInput,
+                         mozilla::IntrinsicISizeType aType) final;
+
+  void AddInlineMinISize(const mozilla::IntrinsicSizeInput& aInput,
                          InlineMinISizeData* aData) override;
-  void AddInlinePrefISize(gfxContext* aRenderingContext,
+  void AddInlinePrefISize(const mozilla::IntrinsicSizeInput& aInput,
                           InlinePrefISizeData* aData) override;
   SizeComputationResult ComputeSize(
       gfxContext* aRenderingContext, mozilla::WritingMode aWM,
@@ -447,7 +447,7 @@ class nsTextFrame : public nsIFrame {
   };
 
   void AddInlineMinISizeForFlow(gfxContext* aRenderingContext,
-                                nsIFrame::InlineMinISizeData* aData,
+                                InlineMinISizeData* aData,
                                 TextRunType aTextRunType);
   void AddInlinePrefISizeForFlow(gfxContext* aRenderingContext,
                                  InlinePrefISizeData* aData,
@@ -525,20 +525,22 @@ class nsTextFrame : public nsIFrame {
      * Called before (for under/over-line) or after (for line-through) the text
      * is drawn to have a text decoration line drawn.
      */
-    virtual void PaintDecorationLine(Rect aPath, nscolor aColor) {}
+    virtual void PaintDecorationLine(Rect aPath, bool aPaintingShadows,
+                                     nscolor aColor) {}
 
     /**
      * Called after selected text is drawn to have a decoration line drawn over
      * the text. (All types of text decoration are drawn after the text when
      * text is selected.)
      */
-    virtual void PaintSelectionDecorationLine(Rect aPath, nscolor aColor) {}
+    virtual void PaintSelectionDecorationLine(Rect aPath, bool aPaintingShadows,
+                                              nscolor aColor) {}
 
     /**
      * Called just before any paths have been emitted to the gfxContext
      * for the glyphs of the frame's text.
      */
-    virtual void NotifyBeforeText(nscolor aColor) {}
+    virtual void NotifyBeforeText(bool aPaintingShadows, nscolor aColor) {}
 
     /**
      * Called just after all the paths have been emitted to the gfxContext
@@ -586,10 +588,11 @@ class nsTextFrame : public nsIFrame {
   struct PaintShadowParams;
   struct PaintDecorationLineParams;
 
-  struct SelectionRange {
-    const SelectionDetails* mDetails;
-    gfxTextRun::Range mRange;
-    uint32_t mPriority;
+  struct PriorityOrderedSelectionsForRange {
+    /// List of Selection Details active for the given range.
+    /// Ordered by priority, i.e. the last element has the highest priority.
+    nsTArray<const SelectionDetails*> mSelectionRanges;
+    Range mRange;
   };
 
   // Primary frame paint method called from nsDisplayText.  Can also be used
@@ -619,11 +622,10 @@ class nsTextFrame : public nsIFrame {
       const mozilla::UniquePtr<SelectionDetails>& aDetails,
       SelectionType aSelectionType);
 
-  SelectionTypeMask ResolveSelections(const PaintTextSelectionParams& aParams,
-                                      const SelectionDetails* aDetails,
-                                      nsTArray<SelectionRange>& aResult,
-                                      SelectionType aSelectionType,
-                                      bool* aAnyBackgrounds = nullptr) const;
+  SelectionTypeMask ResolveSelections(
+      const PaintTextSelectionParams& aParams, const SelectionDetails* aDetails,
+      nsTArray<PriorityOrderedSelectionsForRange>& aResult,
+      SelectionType aSelectionType, bool* aAnyBackgrounds = nullptr) const;
 
   void DrawEmphasisMarks(gfxContext* aContext, mozilla::WritingMode aWM,
                          const mozilla::gfx::Point& aTextBaselinePt,
@@ -671,11 +673,13 @@ class nsTextFrame : public nsIFrame {
   gfxSkipCharsIterator EnsureTextRun(TextRunType aWhichTextRun,
                                      DrawTarget* aRefDrawTarget = nullptr,
                                      nsIFrame* aLineContainer = nullptr,
-                                     const nsLineList_iterator* aLine = nullptr,
+                                     const LineListIterator* aLine = nullptr,
                                      uint32_t* aFlowEndInTextRun = nullptr);
 
   gfxTextRun* GetTextRun(TextRunType aWhichTextRun) const {
-    if (aWhichTextRun == eInflated || !HasFontSizeInflation()) return mTextRun;
+    if (aWhichTextRun == eInflated || !HasFontSizeInflation()) {
+      return mTextRun;
+    }
     return GetUninflatedTextRun();
   }
   gfxTextRun* GetUninflatedTextRun() const;
@@ -786,7 +790,7 @@ class nsTextFrame : public nsIFrame {
 
   mutable RefPtr<nsFontMetrics> mFontMetrics;
   RefPtr<gfxTextRun> mTextRun;
-  nsTextFrame* mNextContinuation;
+  nsTextFrame* mNextContinuation = nullptr;
   // The key invariant here is that mContentOffset never decreases along
   // a next-continuation chain. And of course mContentOffset is always <= the
   // the text node's content length, and the mContentOffset for the first frame
@@ -796,13 +800,13 @@ class nsTextFrame : public nsIFrame {
   // frame's offset, or the text length if there is no next frame. This means
   // the frames always map the text node without overlapping or leaving any
   // gaps.
-  int32_t mContentOffset;
+  int32_t mContentOffset = 0;
   // This does *not* indicate the length of text currently mapped by the frame;
   // instead it's a hint saying that this frame *wants* to map this much text
   // so if we create a new continuation, this is where that continuation should
   // start.
-  int32_t mContentLengthHint;
-  nscoord mAscent;
+  int32_t mContentLengthHint = 0;
+  nscoord mAscent = 0;
 
   // Cached selection state.
   enum class SelectionState : uint8_t {
@@ -810,7 +814,7 @@ class nsTextFrame : public nsIFrame {
     Selected,
     NotSelected,
   };
-  mutable SelectionState mIsSelected;
+  mutable SelectionState mIsSelected = SelectionState::Unknown;
 
   // Flags used to track whether certain properties are present.
   // (Public to keep MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS happy.)
@@ -856,11 +860,11 @@ class nsTextFrame : public nsIFrame {
                     const PaintShadowParams& aParams);
 
   struct LineDecoration {
-    nsIFrame* mFrame;
+    nsIFrame* const mFrame;
 
     // This is represents the offset from our baseline to mFrame's baseline;
     // positive offsets are *above* the baseline and negative offsets below
-    nscoord mBaselineOffset;
+    const nscoord mBaselineOffset;
 
     // This represents the offset from the initial position of the underline
     const mozilla::LengthPercentageOrAuto mTextUnderlineOffset;
@@ -868,26 +872,30 @@ class nsTextFrame : public nsIFrame {
     // for CSS property text-decoration-thickness, the width refers to the
     // thickness of the decoration line
     const mozilla::StyleTextDecorationLength mTextDecorationThickness;
-    nscolor mColor;
-    mozilla::StyleTextDecorationStyle mStyle;
+    const nscolor mColor;
+    const mozilla::StyleTextDecorationStyle mStyle;
 
     // The text-underline-position property; affects the underline offset only
     // if mTextUnderlineOffset is auto.
     const mozilla::StyleTextUnderlinePosition mTextUnderlinePosition;
 
+    const bool mAllowInkSkipping;
+
     LineDecoration(nsIFrame* const aFrame, const nscoord aOff,
-                   mozilla::StyleTextUnderlinePosition aUnderlinePosition,
+                   const mozilla::StyleTextUnderlinePosition aUnderlinePosition,
                    const mozilla::LengthPercentageOrAuto& aUnderlineOffset,
                    const mozilla::StyleTextDecorationLength& aDecThickness,
                    const nscolor aColor,
-                   const mozilla::StyleTextDecorationStyle aStyle)
+                   const mozilla::StyleTextDecorationStyle aStyle,
+                   const bool aAllowInkSkipping)
         : mFrame(aFrame),
           mBaselineOffset(aOff),
           mTextUnderlineOffset(aUnderlineOffset),
           mTextDecorationThickness(aDecThickness),
           mColor(aColor),
           mStyle(aStyle),
-          mTextUnderlinePosition(aUnderlinePosition) {}
+          mTextUnderlinePosition(aUnderlinePosition),
+          mAllowInkSkipping(aAllowInkSkipping) {}
 
     LineDecoration(const LineDecoration& aOther) = default;
 
@@ -897,7 +905,8 @@ class nsTextFrame : public nsIFrame {
              mBaselineOffset == aOther.mBaselineOffset &&
              mTextUnderlinePosition == aOther.mTextUnderlinePosition &&
              mTextUnderlineOffset == aOther.mTextUnderlineOffset &&
-             mTextDecorationThickness == aOther.mTextDecorationThickness;
+             mTextDecorationThickness == aOther.mTextDecorationThickness &&
+             mAllowInkSkipping == aOther.mAllowInkSkipping;
     }
 
     bool operator!=(const LineDecoration& aOther) const {
@@ -983,7 +992,7 @@ class nsTextFrame : public nsIFrame {
    * @return            true if the selection affects colors, false otherwise
    */
   static bool GetSelectionTextColors(SelectionType aSelectionType,
-                                     const nsAtom* aHighlightName,
+                                     nsAtom* aHighlightName,
                                      nsTextPaintStyle& aTextPaintStyle,
                                      const TextRangeStyle& aRangeStyle,
                                      nscolor* aForeground,
@@ -995,6 +1004,53 @@ class nsTextFrame : public nsIFrame {
   static gfxFloat ComputeSelectionUnderlineHeight(
       nsPresContext* aPresContext, const gfxFont::Metrics& aFontMetrics,
       SelectionType aSelectionType);
+
+  /**
+   * @brief Helper struct which contains selection data such as its details,
+   * range and priority.
+   */
+  struct SelectionRange {
+    const SelectionDetails* mDetails{nullptr};
+    gfxTextRun::Range mRange;
+    /// used to determine the order of overlapping selections of the same type.
+    uint32_t mPriority{0};
+  };
+  /**
+   * @brief Helper: Extracts a list of `SelectionRange` structs from given
+   * `SelectionDetails` and computes a priority for overlapping selection
+   * ranges.
+   */
+  static SelectionTypeMask CreateSelectionRangeList(
+      const SelectionDetails* aDetails, SelectionType aSelectionType,
+      const PaintTextSelectionParams& aParams,
+      nsTArray<SelectionRange>& aSelectionRanges, bool* aAnyBackgrounds);
+
+  /**
+   * @brief Creates an array of `CombinedSelectionRange`s from given list
+   * of `SelectionRange`s.
+   * Each instance of `CombinedSelectionRange` represents a piece of text with
+   * constant Selections.
+   *
+   * Example:
+   *
+   * Consider this text fragment, [] and () marking selection ranges:
+   *   ab[cd(e]f)g
+   * This results in the following array of combined ranges:
+   *  - [0]: range: (2, 4), selections: "[]"
+   *  - [1]: range: (4, 5), selections: "[]", "()"
+   *  - [2]: range: (5, 6), selections: "()"
+   * Depending on the priorities of the ranges, [1] may have a different order
+   * of its ranges. The given example indicates that "()" has a higher priority
+   * than "[]".
+   *
+   * @param aSelectionRanges         Array of `SelectionRange` objects. Must be
+   *                                 sorted by the start offset.
+   * @param aCombinedSelectionRanges Out parameter. Returns the constructed
+   *                                 array of combined selection ranges.
+   */
+  static void CombineSelectionRanges(
+      const nsTArray<SelectionRange>& aSelectionRanges,
+      nsTArray<PriorityOrderedSelectionsForRange>& aCombinedSelectionRanges);
 
   ContentOffsets GetCharacterOffsetAtFramePointInternal(
       const nsPoint& aPoint, bool aForInsertionPoint);
@@ -1024,6 +1080,35 @@ class nsTextFrame : public nsIFrame {
 
   nsPoint GetPointFromIterator(const gfxSkipCharsIterator& aIter,
                                PropertyProvider& aProperties);
+
+  /**
+   * Return the content offset of the first preserved newline in this frame,
+   * or return -1 if no preserved NL.
+   */
+  struct NewlineProperty;
+  int32_t GetContentNewLineOffset(int32_t aOffset,
+                                  NewlineProperty*& aCachedNewlineOffset);
+
+  void MaybeSplitFramesForFirstLetter();
+  void SetFirstLetterLength(int32_t aLength);
+
+  struct AppendRenderedTextState {
+    // Inputs, constant across all calls in the loop.
+    const uint32_t mStartOffset;
+    const uint32_t mEndOffset;
+    const TextOffsetType mOffsetType;
+    const TrailingWhitespace mTrimTrailingWhitespace;
+    const nsTextFragment* const mTextFrag;
+    // Mutable state, updated as we loop over the continuations.
+    nsBlockFrame* mLineContainer = nullptr;
+    uint32_t mOffsetInRenderedString = 0;
+    bool mHaveOffsets = false;
+  };
+  // Helper for GetRenderedText, to process one frame in the continuation
+  // chain. Returns true if the caller should continue to loop over the
+  // following frames, or false to stop.
+  bool AppendRenderedText(AppendRenderedTextState& aState,
+                          RenderedText& aResult);
 };
 
 MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(nsTextFrame::TrimmedOffsetFlags)

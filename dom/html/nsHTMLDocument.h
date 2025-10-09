@@ -42,7 +42,8 @@ class nsHTMLDocument : public mozilla::dom::Document {
   using Document::SetDocumentURI;
 
   nsHTMLDocument();
-  virtual nsresult Init() override;
+  virtual nsresult Init(nsIPrincipal* aPrincipal,
+                        nsIPrincipal* aPartitionedPrincipal) override;
 
   // Document
   virtual void Reset(nsIChannel* aChannel, nsILoadGroup* aLoadGroup) override;
@@ -69,9 +70,11 @@ class nsHTMLDocument : public mozilla::dom::Document {
   bool IsViewSource() const { return mViewSource; }
 
   // Returns whether an object was found for aName.
-  bool ResolveName(JSContext* aCx, const nsAString& aName,
-                   JS::MutableHandle<JS::Value> aRetval,
-                   mozilla::ErrorResult& aError);
+  bool ResolveNameForWindow(JSContext* aCx, const nsAString& aName,
+                            JS::MutableHandle<JS::Value> aRetVal,
+                            mozilla::ErrorResult& aError);
+
+  void GetSupportedNamesForWindow(nsTArray<nsString>& aNames);
 
   /**
    * Called when form->BindToTree() is called so that document knows
@@ -108,15 +111,9 @@ class nsHTMLDocument : public mozilla::dom::Document {
                              JS::Handle<JSObject*> aGivenProto) override;
   bool IsRegistrableDomainSuffixOfOrEqualTo(const nsAString& aHostSuffixString,
                                             const nsACString& aOrigHost);
-  void NamedGetter(JSContext* cx, const nsAString& aName, bool& aFound,
-                   JS::MutableHandle<JSObject*> aRetval,
-                   mozilla::ErrorResult& rv) {
-    JS::Rooted<JS::Value> v(cx);
-    if ((aFound = ResolveName(cx, aName, &v, rv))) {
-      SetUseCounter(mozilla::eUseCounter_custom_HTMLDocumentNamedGetterHit);
-      aRetval.set(v.toObjectOrNull());
-    }
-  }
+  void NamedGetter(JSContext* aCx, const nsAString& aName, bool& aFound,
+                   JS::MutableHandle<JSObject*> aRetVal,
+                   mozilla::ErrorResult& aRv);
   void GetSupportedNames(nsTArray<nsString>& aNames);
   // We're picking up GetLocation from Document
   already_AddRefed<mozilla::dom::Location> GetLocation() const {
@@ -168,9 +165,10 @@ class nsHTMLDocument : public mozilla::dom::Document {
   /** # of forms in the document, synchronously set */
   int32_t mNumForms;
 
-  static void TryReloadCharset(nsIContentViewer* aCv, int32_t& aCharsetSource,
+  static void TryReloadCharset(nsIDocumentViewer* aViewer,
+                               int32_t& aCharsetSource,
                                NotNull<const Encoding*>& aEncoding);
-  void TryUserForcedCharset(nsIContentViewer* aCv, nsIDocShell* aDocShell,
+  void TryUserForcedCharset(nsIDocumentViewer* aViewer, nsIDocShell* aDocShell,
                             int32_t& aCharsetSource,
                             NotNull<const Encoding*>& aEncoding,
                             bool& aForceAutoDetection);

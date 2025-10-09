@@ -11,7 +11,6 @@
 
 #include "gc/Policy.h"
 #include "vm/ArrayObject.h"
-#include "vm/JSAtom.h"
 #include "vm/JSObject.h"
 
 namespace js {
@@ -60,7 +59,7 @@ class BoundFunctionObject : public NativeObject {
   };
 
   // The AllocKind should match SlotCount. See assertion in functionBindImpl.
-  static constexpr gc::AllocKind allocKind = gc::AllocKind::OBJECT8_BACKGROUND;
+  static constexpr gc::AllocKind allocKind = gc::AllocKind::OBJECT8;
 
   void initFlags(size_t numBoundArgs, bool isConstructor) {
     int32_t val = (numBoundArgs << NumBoundArgsShift) | isConstructor;

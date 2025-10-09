@@ -12,8 +12,8 @@
 /* import-globals-from ../../../test/resources/searchTestUtils.js */
 load("../../../resources/searchTestUtils.js");
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var Isnt = Ci.nsMsgSearchOp.Isnt;
@@ -434,7 +434,7 @@ function run_test() {
   testValidityTable(news, IsBefore, Keywords, false);
 
   // delete any existing tags
-  let tagArray = MailServices.tags.getAllTags();
+  const tagArray = MailServices.tags.getAllTags();
   for (var i = 0; i < tagArray.length; i++) {
     MailServices.tags.deleteKey(tagArray[i].key);
   }
@@ -443,14 +443,17 @@ function run_test() {
   MailServices.tags.addTagForKey(Tag1, Tag1, null, null);
   MailServices.tags.addTagForKey(Tag4, Tag4, null, null);
 
+  /** @implements {nsIMsgCopyServiceListener} */
   var copyListener = {
-    OnStartCopy() {},
-    OnProgress(aProgress, aProgressMax) {},
-    SetMessageKey(aKey) {
+    onStartCopy() {},
+    onProgress() {},
+    setMessageKey(aKey) {
       hdr = localAccountUtils.inboxFolder.GetMessageHeader(aKey);
     },
-    SetMessageId(aMessageId) {},
-    OnStopCopy(aStatus) {
+    getMessageId() {
+      return null;
+    },
+    onStopCopy() {
       testKeywordSearch();
     },
   };

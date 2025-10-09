@@ -2,11 +2,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+"use strict";
+
 add_task(async function test_sessions_data() {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     background: async () => {
-      let [mailTab] = await browser.tabs.query({ mailTab: true });
-      let contentTab = await browser.tabs.create({
+      const [mailTab] = await browser.tabs.query({ mailTab: true });
+      const contentTab = await browser.tabs.create({
         url: "https://www.example.com",
       });
 
@@ -80,7 +82,7 @@ add_task(async function test_sessions_data() {
           id: "sessions@mochi.test",
         },
       },
-      permissions: ["tabs"],
+      permissions: ["tabs", "sessions"],
     },
   });
 

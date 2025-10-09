@@ -2,18 +2,19 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-let account;
-let messages;
-let tabmail = document.getElementById("tabmail");
+"use strict";
+
+let gAccount, gMessages, gDefaultTabmail;
 
 add_setup(async () => {
-  account = createAccount();
-  let rootFolder = account.incomingServer.rootFolder;
-  let subFolders = rootFolder.subFolders;
-  createMessages(subFolders[0], 10);
-  messages = subFolders[0].messages;
+  gAccount = createAccount();
+  const rootFolder = gAccount.incomingServer.rootFolder;
+  const subFolders = rootFolder.subFolders;
+  await createMessages(subFolders[0], 10);
+  gMessages = subFolders[0].messages;
 
-  let about3Pane = tabmail.currentAbout3Pane;
+  gDefaultTabmail = document.getElementById("tabmail");
+  const about3Pane = gDefaultTabmail.currentAbout3Pane;
   about3Pane.restoreState({
     folderPaneVisible: true,
     folderURI: subFolders[0],
@@ -30,12 +31,12 @@ async function subtest_popup_open_with_click_MV3_event_pages(
 ) {
   info("3-pane tab");
   {
-    let testConfig = {
+    const testConfig = {
       manifest_version: 3,
       terminateBackground,
       actionType: "message_display_action",
       testType: "open-with-mouse-click",
-      window: tabmail.currentAboutMessage,
+      window: gDefaultTabmail.currentAboutMessage,
     };
 
     await run_popup_test({
@@ -53,13 +54,13 @@ async function subtest_popup_open_with_click_MV3_event_pages(
 
   info("Message tab");
   {
-    await openMessageInTab(messages.getNext());
-    let testConfig = {
+    await openMessageInTab(gMessages.getNext());
+    const testConfig = {
       manifest_version: 3,
       terminateBackground,
       actionType: "message_display_action",
       testType: "open-with-mouse-click",
-      window: tabmail.currentAboutMessage,
+      window: gDefaultTabmail.currentAboutMessage,
     };
 
     await run_popup_test({
@@ -74,13 +75,13 @@ async function subtest_popup_open_with_click_MV3_event_pages(
       use_default_popup: true,
     });
 
-    tabmail.closeTab();
+    gDefaultTabmail.closeTab();
   }
 
   info("Message window");
   {
-    let messageWindow = await openMessageInWindow(messages.getNext());
-    let testConfig = {
+    const messageWindow = await openMessageInWindow(gMessages.getNext());
+    const testConfig = {
       manifest_version: 3,
       terminateBackground,
       actionType: "message_display_action",

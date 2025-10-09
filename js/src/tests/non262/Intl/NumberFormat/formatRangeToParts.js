@@ -1,4 +1,4 @@
-// |reftest| skip-if(!this.hasOwnProperty("Intl")||release_or_beta)
+// |reftest| skip-if(!this.hasOwnProperty("Intl"))
 
 const Start = NumberRangeFormatParts("startRange");
 const End = NumberRangeFormatParts("endRange");
@@ -59,7 +59,7 @@ const tests = {
     ],
   },
   // Non-ASCII digits.
-  "ar": {
+  "ar-EG": {
     options: {},
     ranges: [
       {

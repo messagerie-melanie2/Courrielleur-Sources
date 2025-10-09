@@ -31,8 +31,11 @@ install:: $(LIBRARY_NAME).pc
 install:: ../js-config.h
 	$(SYSINSTALL) $^ $(DESTDIR)$(includedir)/$(JS_LIBRARY_NAME)
 
+# Install the profiling category list into both js/ and the root include
+# directory, for use with both js-specific and base profilers.
 install:: ../../../mozglue/baseprofiler/public/ProfilingCategoryList.h
 	$(SYSINSTALL) $^ $(DESTDIR)$(includedir)/$(JS_LIBRARY_NAME)/js
+	$(SYSINSTALL) $^ $(DESTDIR)$(includedir)/$(JS_LIBRARY_NAME)
 
 ######################################################
 # BEGIN SpiderMonkey header installation
@@ -80,7 +83,7 @@ endif
 ifneq (,$(SHARED_LIBRARY))
 	$(SYSINSTALL) $(SHARED_LIBRARY) $(DESTDIR)$(libdir)
 ifeq ($(OS_ARCH),Darwin)
-	$(INSTALL_NAME_TOOL) -id $(abspath $(libdir)/$(SHARED_LIBRARY)) $(DESTDIR)$(libdir)/$(SHARED_LIBRARY)
+	$(INSTALL_NAME_TOOL) -id $(abspath $(libdir)/$(notdir $(SHARED_LIBRARY))) $(DESTDIR)$(libdir)/$(notdir $(SHARED_LIBRARY))
 endif
 endif
 ifneq (,$(IMPORT_LIBRARY))

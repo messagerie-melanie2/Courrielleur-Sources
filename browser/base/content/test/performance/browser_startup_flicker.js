@@ -20,32 +20,21 @@ add_task(async function () {
 
   let unexpectedRects = 0;
   let alreadyFocused = false;
+  let inRange = (val, min, max) => min <= val && val <= max;
+  let tabBoundingRect = undefined;
   for (let i = 1; i < frames.length; ++i) {
     let frame = frames[i],
       previousFrame = frames[i - 1];
     let rects = compareFrames(frame, previousFrame);
-
-    if (!alreadyFocused) {
-      // The first screenshot we get shows an unfocused browser window for some
-      // reason. See bug 1445161.
-      //
-      // We'll assume the changes we are seeing are due to this focus change if
-      // there are at least 5 areas that changed near the top of the screen,
-      // but will only ignore this once (hence the alreadyFocused variable).
-      //
-      // On Linux we expect just one rect because we don't draw titlebar
-      // buttons in the tab bar, so we just get a whole-tab-bar color-switch.
-      const minRects = AppConstants.platform == "linux" ? 0 : 5;
-      if (rects.length > minRects && rects.every(r => r.y2 < 100)) {
-        alreadyFocused = true;
-        todo(
-          false,
-          "bug 1445161 - the window should be focused at first paint, " +
-            rects.toSource()
-        );
-        continue;
-      }
+    if (!alreadyFocused && isLikelyFocusChange(rects, frame)) {
+      todo(
+        false,
+        "bug 1445161 - the window should be focused at first paint, " +
+          rects.toSource()
+      );
+      continue;
     }
+    alreadyFocused = true;
 
     rects = rects.filter(rect => {
       let width = frame.width;
@@ -54,6 +43,22 @@ add_task(async function () {
         /**
          * Please don't add anything new unless justified!
          */
+        {
+          name: "Shadow around active tab should not flicker on macOS (bug 1960967)",
+          condition(r) {
+            const tabRect = tabBoundingRect
+              ? tabBoundingRect
+              : (tabBoundingRect = gBrowser.tabContainer
+                  .querySelector("tab[selected=true] .tab-background")
+                  .getBoundingClientRect());
+            return (
+              inRange(r.x1, tabRect.x - 2, tabRect.x + 2) &&
+              inRange(r.y1, tabRect.y - 2, tabRect.y + 2) &&
+              inRange(r.w, tabRect.width - 4, tabRect.width + 4) &&
+              inRange(r.h, tabRect.height - 4, tabRect.height + 4)
+            );
+          },
+        },
       ];
 
       let rectText = `${rect.toSource()}, window width: ${width}`;

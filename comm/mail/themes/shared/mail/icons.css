@@ -5,10 +5,32 @@
 /* Density variations */
 
 :root {
+  /* XS - 12x12px icons */
+  --icon-ascending-xs: url("chrome://messenger/skin/icons/xs/ascending.svg");
+  --icon-close-xs: url("chrome://messenger/skin/icons/xs/close.svg");
+  --icon-descending-xs: url("chrome://messenger/skin/icons/xs/descending.svg");
+  --icon-dot-xs: url("chrome://messenger/skin/icons/xs/dot.svg");
+  --icon-sparkle-star-xs: url("chrome://messenger/skin/icons/xs/sparkle-star.svg");
+  --icon-replies-xs: url("chrome://messenger/skin/icons/xs/replies.svg");
+  --icon-nav-down-xs: url("chrome://messenger/skin/icons/new/nav-down-xs.svg");
+  --icon-nav-up-xs: url("chrome://messenger/skin/icons/new/nav-up-xs.svg");
+  --icon-moon-xs: url("chrome://messenger/skin/icons/new/moon-xs.svg");
+  --icon-sun-xs: url("chrome://messenger/skin/icons/new/sun-xs.svg");
+
+  /* SM - 16x16px icons */
+  --icon-folder-compact-sm: url("chrome://messenger/skin/icons/sm/folder-compact.svg");
+  --icon-sparkle-star-sm: url("chrome://messenger/skin/icons/sm/sparkle-star.svg");
+  --icon-upload-sm: url("chrome://messenger/skin/icons/sm/upload.svg");
+  --icon-mobile-export-sm: url("chrome://messenger/skin/icons/sm/mobile-export.svg");
+
+  /* LG - 24x24px icons */
+  --icon-mobile-export-lg: url("chrome://messenger/skin/icons/lg/mobile-export.svg");
+
   --icon-account-settings: url("chrome://messenger/skin/icons/new/compact/account-settings.svg");
   --icon-add: url("chrome://messenger/skin/icons/new/compact/add.svg");
   --icon-address-book: url("chrome://messenger/skin/icons/new/compact/address-book.svg");
   --icon-app-menu: url("chrome://messenger/skin/icons/new/compact/app-menu.svg");
+  --icon-app-menu-addon: url("chrome://messenger/skin/icons/new/compact/app-menu-addon.svg");
   --icon-app-menu-badged: url("chrome://messenger/skin/icons/new/compact/app-menu-badged.svg");
   --icon-archive: url("chrome://messenger/skin/icons/new/compact/archive.svg");
   --icon-attachment: url("chrome://messenger/skin/icons/new/compact/attachment.svg");
@@ -18,8 +40,10 @@
   --icon-chat: url("chrome://messenger/skin/icons/new/compact/chat.svg");
   --icon-check: url("chrome://messenger/skin/icons/new/compact/check.svg");
   --icon-checkbox: url("chrome://messenger/skin/icons/new/compact/checkbox.svg");
+  --icon-clear: url("chrome://messenger/skin/icons/new/compact/clear.svg");
   --icon-clock: url("chrome://messenger/skin/icons/new/compact/clock.svg");
   --icon-close: url("chrome://messenger/skin/icons/new/compact/close.svg");
+  --icon-close-lg: url("chrome://messenger/skin/icons/new/compact/close-lg.svg");
   --icon-cloud-download: url("chrome://messenger/skin/icons/new/compact/cloud-download.svg");
   --icon-collapse: url("chrome://messenger/skin/icons/new/compact/collapse.svg");
   --icon-compress: url("chrome://messenger/skin/icons/new/compact/compress.svg");
@@ -32,6 +56,7 @@
   --icon-density-relaxed: url("chrome://messenger/skin/icons/new/compact/density-relaxed.svg");
   --icon-display-options: url("chrome://messenger/skin/icons/new/compact/display-options.svg");
   --icon-download: url("chrome://messenger/skin/icons/new/compact/download.svg");
+  --icon-dot: url("chrome://messenger/skin/icons/sm/dot.svg");
   --icon-draft: url("chrome://messenger/skin/icons/new/compact/draft.svg");
   --icon-error-circle: url("chrome://messenger/skin/icons/new/compact/error-circle.svg");
   --icon-export: url("chrome://messenger/skin/icons/new/compact/export.svg");
@@ -40,6 +65,7 @@
   --icon-eye: url("chrome://messenger/skin/icons/new/compact/eye.svg");
   --icon-features: url("chrome://messenger/skin/icons/new/compact/features.svg");
   --icon-file: url("chrome://messenger/skin/icons/new/compact/file.svg");
+  --icon-file-draft: url("chrome://messenger/skin/icons/new/compact/file-draft.svg");
   --icon-filter: url("chrome://messenger/skin/icons/new/compact/filter.svg");
   --icon-fingerprint: url("chrome://messenger/skin/icons/new/compact/fingerprint.svg");
   --icon-flexible-space: url("chrome://messenger/skin/icons/new/compact/flexible-space.svg");
@@ -121,6 +147,7 @@
   --icon-spelling: url("chrome://messenger/skin/icons/new/compact/spelling.svg");
   --icon-star: url("chrome://messenger/skin/icons/new/compact/star.svg");
   --icon-subtract-circle-sm: url("chrome://messenger/skin/icons/new/subtract-circle-sm.svg");
+  --icon-success: url("chrome://messenger/skin/icons/new/compact/success.svg");
   --icon-sync: url("chrome://messenger/skin/icons/new/compact/sync.svg");
   --icon-tag: url("chrome://messenger/skin/icons/new/compact/tag.svg");
   --icon-tasks: url("chrome://messenger/skin/icons/new/compact/tasks.svg");
@@ -145,11 +172,14 @@
 
   /* Large variations, touch, 24px */
   --icon-address-book-lg: url("chrome://messenger/skin/icons/new/touch/address-book.svg");
+  --icon-address-book-new-lg: url("chrome://messenger/skin/icons/new/touch/address-book-new.svg");
+  --icon-address-book-remote-lg: url("chrome://messenger/skin/icons/new/touch/address-book-remote.svg");
   --icon-calendar-lg: url("chrome://messenger/skin/icons/new/touch/calendar.svg");
   --icon-chat-lg: url("chrome://messenger/skin/icons/new/touch/chat.svg");
   --icon-export-lg: url("chrome://messenger/skin/icons/new/touch/export.svg");
   --icon-import-lg: url("chrome://messenger/skin/icons/new/touch/import.svg");
   --icon-mail-lg: url("chrome://messenger/skin/icons/new/touch/mail.svg");
+  --icon-sync-lg: url("chrome://messenger/skin/icons/new/touch/sync.svg");
 
   --icon-calendar-empty: url("chrome://messenger/skin/icons/new/calendar-empty.svg");
   --icon-circle-small: url("chrome://messenger/skin/icons/new/circle-sm.svg");
@@ -166,7 +196,6 @@
   --icon-tag-sm: url("chrome://messenger/skin/icons/new/tag-sm.svg");
   --icon-thread-sm: url("chrome://messenger/skin/icons/new/thread-sm.svg");
   --icon-trash-sm: url("chrome://messenger/skin/icons/new/trash-sm.svg");
-  --icon-unread-dot: url("chrome://messenger/skin/icons/new/unread-dot.svg");
   --icon-unread-sm: url("chrome://messenger/skin/icons/new/unread-sm.svg");
   --icon-new-indicator: url("chrome://messenger/skin/icons/folder-new-indicator.svg");
   --icon-notify: url("chrome://messenger/skin/icons/new/notify.svg");
@@ -180,7 +209,6 @@
   --icon-bell-ring: url("chrome://messenger/skin/icons/new/bell-ring.svg");
   --icon-recurrence: url("chrome://messenger/skin/icons/new/recurrence.svg");
   --icon-recurrence-exception: url("chrome://messenger/skin/icons/new/recurrence-exception.svg");
-
   --icon-forward-col: url("chrome://messenger/skin/icons/new/compact/forward-col.svg");
   --icon-reply-col: url("chrome://messenger/skin/icons/new/compact/reply-col.svg");
   --icon-redirect-col: url("chrome://messenger/skin/icons/new/compact/redirect-col.svg");
@@ -188,6 +216,8 @@
   --icon-reply-forward-col: url("chrome://messenger/skin/icons/new/compact/reply-forward-col.svg");
   --icon-reply-forward-redirect-col: url("chrome://messenger/skin/icons/new/compact/reply-forward-redirect-col.svg");
   --icon-reply-redirect-col: url("chrome://messenger/skin/icons/new/compact/reply-redirect-col.svg");
+  --icon-date-time-sm: url("chrome://messenger/skin/icons/sm/date-time.svg");
+  --icon-recurrence-sm: url("chrome://messenger/skin/icons/sm/recurrence.svg");
 
   --icon-status-away: url("chrome://messenger/skin/icons/new/status-away.svg");
   --icon-status-away-sm: url("chrome://messenger/skin/icons/new/status-away-sm.svg");
@@ -255,9 +285,16 @@
   --addons-manager-recent-updates: url("chrome://messenger/skin/icons/new/touch/extension-update-recent.svg");
 
   --icon-account-sync: url("chrome://messenger/skin/icons/account-sync.svg");
+
+  --cards-view-illustration: url("chrome://messenger/skin/illustrations/pictograph-cards-view.svg");
+  --grouped-illustration: url("chrome://messenger/skin/illustrations/pictograph-grouped.svg");
+  --table-view-illustration: url("chrome://messenger/skin/illustrations/pictograph-table-view.svg");
+  --threaded-illustration: url("chrome://messenger/skin/illustrations/pictograph-threaded.svg");
+  --unthreaded-illustration: url("chrome://messenger/skin/illustrations/pictograph-unthreaded.svg");
 }
 
 :root[uidensity="compact"] {
+  --icon-dot: var(--icon-dot-xs);
   --spaces-icon-mail: var(--icon-mail);
   --spaces-icon-address-book: var(--icon-address-book);
   --spaces-icon-calendar: var(--icon-calendar);

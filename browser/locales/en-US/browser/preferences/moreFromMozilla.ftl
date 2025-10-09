@@ -12,6 +12,7 @@ more-from-moz-subtitle = Check out other { -vendor-short-name } products that wo
 
 more-from-moz-firefox-mobile-title = { -brand-product-name } Mobile
 more-from-moz-firefox-mobile-description = The mobile browser that puts your privacy first.
+more-from-moz-firefox-mobile-title-1 = { -brand-product-name } for Mobile
 
 more-from-moz-mozilla-vpn-title = { -mozilla-vpn-brand-name }
 more-from-moz-mozilla-vpn-description = Discover an added layer of anonymous browsing and protection.
@@ -30,3 +31,16 @@ more-from-moz-learn-more-link = Learn more
 more-from-moz-firefox-relay-title = { -relay-brand-name }
 more-from-moz-firefox-relay-description = Protect your inbox and your identity with free email masking.
 more-from-moz-firefox-relay-button = Get { -relay-brand-short-name }
+
+## These strings are for the Mozilla Monitor card in about:preferences moreFromMozilla page
+
+more-from-moz-mozilla-monitor-title = { -mozmonitor-brand-name }
+more-from-moz-mozilla-monitor-us-description = Automatically take back your exposed personal info.
+more-from-moz-mozilla-monitor-global-description = Get alerts when your data has been in a breach.
+more-from-moz-mozilla-monitor-button = Get { -monitor-brand-short-name }
+
+## These strings are for the Solo card in about:preferences moreFromMozilla page
+
+more-from-moz-solo-title = { -solo-ai-brand-name } AI
+more-from-moz-solo-description = Create your website instantly and connect your own custom domain for free.
+more-from-moz-solo-button = Try { -solo-ai-brand-name }

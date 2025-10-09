@@ -13,8 +13,20 @@
 edition = "2021"
 name = "xml_struct"
 version = "0.1.0"
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = false
+
+[lib]
+name = "xml_struct"
+path = "src/lib.rs"
 
 [dependencies]
+anyhow = "1.0.69"
 quick-xml = "0.31.0"
 thiserror = "1.0.56"
 

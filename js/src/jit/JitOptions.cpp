@@ -19,7 +19,7 @@ using mozilla::Maybe;
 namespace js {
 namespace jit {
 
-DefaultJitOptions JitOptions;
+MOZ_RUNINIT DefaultJitOptions JitOptions;
 
 static void Warn(const char* env, const char* value) {
   fprintf(stderr, "Warning: I didn't understand %s=\"%s\"\n", env, value);
@@ -102,6 +102,9 @@ DefaultJitOptions::DefaultJitOptions() {
   // Toggles whether instruction reordering is globally disabled.
   SET_DEFAULT(disableInstructionReordering, false);
 
+  // Toggles whether atomizing loads used as property keys is globally disabled.
+  SET_DEFAULT(disableMarkLoadsUsedAsPropertyKeys, false);
+
   // Toggles whether Range Analysis is globally disabled.
   SET_DEFAULT(disableRangeAnalysis, false);
 
@@ -129,14 +132,25 @@ DefaultJitOptions::DefaultJitOptions() {
   // Whether the Baseline Interpreter is enabled.
   SET_DEFAULT(baselineInterpreter, true);
 
-  // Emit baseline interpreter and interpreter entry frames to distinguish which
-  // JSScript is being interpreted by external profilers.
-  // Enabled by default under --enable-perf, otherwise disabled.
-#if defined(JS_ION_PERF)
-  SET_DEFAULT(emitInterpreterEntryTrampoline, true);
-#else
-  SET_DEFAULT(emitInterpreterEntryTrampoline, false);
+#ifdef ENABLE_PORTABLE_BASELINE_INTERP
+  // Whether the Portable Baseline Interpreter is enabled.
+  SET_DEFAULT(portableBaselineInterpreter, false);
 #endif
+
+#ifdef ENABLE_PORTABLE_BASELINE_INTERP_FORCE
+  SET_DEFAULT(portableBaselineInterpreter, true);
+  SET_DEFAULT(portableBaselineInterpreterWarmUpThreshold, 0);
+#endif
+
+  // emitInterpreterEntryTrampoline and enableICFramePointers are used in
+  // combination with perf jitdump profiling.  The first will enable
+  // trampolines for interpreter and baseline interpreter frames to
+  // identify which function is being executed, and the latter enables
+  // frame pointers for IC stubs.  They are both enabled by default
+  // when the |IONPERF| environment variable is set.
+  bool perfEnabled = !!getenv("IONPERF");
+  SET_DEFAULT(emitInterpreterEntryTrampoline, perfEnabled);
+  SET_DEFAULT(enableICFramePointers, perfEnabled);
 
   // Whether the Baseline JIT is enabled.
   SET_DEFAULT(baselineJit, true);
@@ -150,6 +164,9 @@ DefaultJitOptions::DefaultJitOptions() {
 
   // Whether the RegExp JIT is enabled.
   SET_DEFAULT(nativeRegExp, true);
+
+  // Whether offthread baseline compilation should be batched.
+  SET_DEFAULT(baselineBatching, false);
 
   // Whether Warp should use ICs instead of transpiling Baseline CacheIR.
   SET_DEFAULT(forceInlineCaches, false);
@@ -170,14 +187,38 @@ DefaultJitOptions::DefaultJitOptions() {
   // Whether to enable extra code to perform dynamic validations.
   SET_DEFAULT(runExtraChecks, false);
 
+#ifdef ENABLE_JS_AOT_ICS
+  SET_DEFAULT(enableAOTICs, false);
+  SET_DEFAULT(enableAOTICEnforce, false);
+#endif
+
+#ifdef ENABLE_JS_AOT_ICS_FORCE
+  SET_DEFAULT(enableAOTICs, true);
+#endif
+
+#ifdef ENABLE_JS_AOT_ICS_ENFORCE
+  SET_DEFAULT(enableAOTICs, true);
+  SET_DEFAULT(enableAOTICEnforce, true);
+#endif
+
   // How many invocations or loop iterations are needed before functions
   // enter the Baseline Interpreter.
   SET_DEFAULT(baselineInterpreterWarmUpThreshold, 10);
+
+#ifdef ENABLE_PORTABLE_BASELINE_INTERP
+  // How many invocations are needed before functions enter the
+  // Portable Baseline Interpreter.
+  SET_DEFAULT(portableBaselineInterpreterWarmUpThreshold, 10);
+#endif
 
   // How many invocations or loop iterations are needed before functions
   // are compiled with the baseline compiler.
   // Duplicated in all.js - ensure both match.
   SET_DEFAULT(baselineJitWarmUpThreshold, 100);
+
+  // How many scripts can be queued up for offthread baseline compilation
+  // before they are dispatched.
+  SET_DEFAULT(baselineQueueCapacity, 8);
 
   // Disable eager baseline jit hints
   SET_DEFAULT(disableJitHints, false);
@@ -255,18 +296,8 @@ DefaultJitOptions::DefaultJitOptions() {
   SET_DEFAULT(ionMaxLocalsAndArgs, 10 * 1000);
   SET_DEFAULT(ionMaxLocalsAndArgsMainThread, 256);
 
-  // Force the used register allocator instead of letting the optimization
-  // pass decide.
-  const char* forcedRegisterAllocatorEnv = "JIT_OPTION_forcedRegisterAllocator";
-  if (const char* env = getenv(forcedRegisterAllocatorEnv)) {
-    forcedRegisterAllocator = LookupRegisterAllocator(env);
-    if (!forcedRegisterAllocator.isSome()) {
-      Warn(forcedRegisterAllocatorEnv, env);
-    }
-  }
-
-#if defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64) || \
-    defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_RISCV64)
+#if defined(JS_CODEGEN_MIPS64) || defined(JS_CODEGEN_LOONG64) || \
+    defined(JS_CODEGEN_RISCV64)
   SET_DEFAULT(spectreIndexMasking, false);
   SET_DEFAULT(spectreObjectMitigations, false);
   SET_DEFAULT(spectreStringMitigations, false);
@@ -277,7 +308,16 @@ DefaultJitOptions::DefaultJitOptions() {
   SET_DEFAULT(spectreObjectMitigations, true);
   SET_DEFAULT(spectreStringMitigations, true);
   SET_DEFAULT(spectreValueMasking, true);
-  SET_DEFAULT(spectreJitToCxxCalls, true);
+  SET_DEFAULT(spectreJitToCxxCalls, false);
+#endif
+
+  // Whether the W^X policy is enforced to mark JIT code pages as either
+  // writable or executable but never both at the same time. On Apple Silicon
+  // this must always be false because we use pthread_jit_write_protect_np.
+#ifdef JS_USE_APPLE_FAST_WX
+  SET_DEFAULT(writeProtectCode, false);
+#else
+  SET_DEFAULT(writeProtectCode, true);
 #endif
 
   // This is set to its actual value in InitializeJit.
@@ -314,18 +354,16 @@ DefaultJitOptions::DefaultJitOptions() {
 
   // Until which wasm bytecode size should we accumulate functions, in order
   // to compile efficiently on helper threads. Baseline code compiles much
-  // faster than Ion code so use scaled thresholds (see also bug 1320374).
-  SET_DEFAULT(wasmBatchBaselineThreshold, 10000);
+  // faster than Ion code so use scaled thresholds (see also bug 1320374
+  // and bug 1930875).  Ion compilation can use a lot of memory, so having a
+  // low threshold here (1100) helps avoid OOMs in the per-task pool allocators.
+  SET_DEFAULT(wasmBatchBaselineThreshold, 25000);
   SET_DEFAULT(wasmBatchIonThreshold, 1100);
 
   // Controls how much assertion checking code is emitted
   SET_DEFAULT(lessDebugCode, false);
 
-  // Whether the MegamorphicCache is enabled.
-  SET_DEFAULT(enableWatchtowerMegamorphic, true);
-
   SET_DEFAULT(onlyInlineSelfHosted, false);
-  SET_DEFAULT(enableICFramePointers, false);
 
   SET_DEFAULT(enableWasmJitExit, true);
   SET_DEFAULT(enableWasmJitEntry, true);
@@ -351,6 +389,10 @@ DefaultJitOptions::DefaultJitOptions() {
 
   // ***** Irregexp shim flags *****
 
+  // Whether the stage 3 regexp modifiers proposal is enabled.
+  SET_DEFAULT(js_regexp_modifiers, true);
+  // Whether the stage 3 duplicate named capture groups proposal is enabled.
+  SET_DEFAULT(js_regexp_duplicate_named_groups, true);
   // V8 uses this for differential fuzzing to handle stack overflows.
   // We address the same problem in StackLimitCheck::HasOverflowed.
   SET_DEFAULT(correctness_fuzzer_suppressions, false);
@@ -378,6 +420,12 @@ bool DefaultJitOptions::isSmallFunction(JSScript* script) const {
 }
 
 void DefaultJitOptions::enableGvn(bool enable) { disableGvn = !enable; }
+
+#ifdef ENABLE_PORTABLE_BASELINE_INTERP
+void DefaultJitOptions::setEagerPortableBaselineInterpreter() {
+  portableBaselineInterpreterWarmUpThreshold = 0;
+}
+#endif
 
 void DefaultJitOptions::setEagerBaselineCompilation() {
   baselineInterpreterWarmUpThreshold = 0;
@@ -408,6 +456,16 @@ void DefaultJitOptions::setNormalIonWarmUpThreshold(uint32_t warmUpThreshold) {
 void DefaultJitOptions::resetNormalIonWarmUpThreshold() {
   jit::DefaultJitOptions defaultValues;
   setNormalIonWarmUpThreshold(defaultValues.normalIonWarmUpThreshold);
+}
+
+void DefaultJitOptions::maybeSetWriteProtectCode(bool val) {
+#ifdef JS_USE_APPLE_FAST_WX
+  // On Apple Silicon we always use pthread_jit_write_protect_np, or
+  // be_memory_inline_jit_restrict_*.
+  MOZ_ASSERT(!writeProtectCode);
+#else
+  writeProtectCode = val;
+#endif
 }
 
 }  // namespace jit

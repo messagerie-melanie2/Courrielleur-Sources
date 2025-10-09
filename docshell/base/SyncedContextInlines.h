@@ -152,7 +152,8 @@ mozilla::ipc::IPCResult Transaction<Context>::CommitFromIPC(
     nsCString error = FormatValidationError<Context>(
         failedFields,
         "Invalid Transaction from Child - CanSet failed for field(s): ");
-    return IPC_FAIL(aSource, error.get());
+    // data-review+ at https://bugzilla.mozilla.org/show_bug.cgi?id=1618992#c7
+    return IPC_FAIL_UNSAFE_PRINTF(aSource, "%s", error.get());
   }
 
   // Validate may have dropped some fields from the transaction, check it's not
@@ -276,13 +277,14 @@ typename Transaction<Context>::IndexSet Transaction<Context>::Validate(
   if (!revertTxn.mModified.isEmpty()) {
     // NOTE: Logging with modified IndexSet from revert transaction, and values
     // from this transaction, so we log the failed values we're going to revert.
-    MOZ_LOG(
-        Context::GetSyncLog(), LogLevel::Debug,
-        ("Transaction::PartialRevert(#%" PRIx64 ", pid %" PRIPID "): %s",
-         aOwner->Id(), aSource ? aSource->OtherPid() : base::kInvalidProcessId,
-         FormatTransaction<Context>(revertTxn.mModified, mValues,
-                                    revertTxn.mValues)
-             .get()));
+    MOZ_LOG(Context::GetSyncLog(), LogLevel::Debug,
+            ("Transaction::PartialRevert(#%" PRIx64 ", childid %d, pid %" PRIPID
+             "): %s",
+             aOwner->Id(), aSource ? aSource->OtherChildID() : -1,
+             aSource ? aSource->OtherPid() : base::kInvalidProcessId,
+             FormatTransaction<Context>(revertTxn.mModified, mValues,
+                                        revertTxn.mValues)
+                 .get()));
 
     mModified -= revertTxn.mModified;
 

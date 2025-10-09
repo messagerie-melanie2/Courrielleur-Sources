@@ -8,22 +8,28 @@
 /* import-globals-from ../../../base/content/globalOverlay.js */
 /* import-globals-from abCommon.js */
 
-var { encodeABTermValue } = ChromeUtils.import(
-  "resource:///modules/ABQueryUtils.jsm"
+var { encodeABTermValue } = ChromeUtils.importESModule(
+  "resource:///modules/ABQueryUtils.sys.mjs"
 );
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 var { PluralForm } = ChromeUtils.importESModule(
-  "resource://gre/modules/PluralForm.sys.mjs"
+  "resource:///modules/PluralForm.sys.mjs"
 );
+var { UIDensity } = ChromeUtils.importESModule(
+  "resource:///modules/UIDensity.sys.mjs"
+);
+var { UIFontSize } = ChromeUtils.importESModule(
+  "resource:///modules/UIFontSize.sys.mjs"
+);
+
+window.addEventListener("load", searchOnLoad);
+window.addEventListener("unload", searchOnUnload);
+window.addEventListener("close", onSearchStop);
 
 var searchSessionContractID = "@mozilla.org/messenger/searchSession;1";
 var gSearchSession;
-
-var nsMsgSearchScope = Ci.nsMsgSearchScope;
-var nsMsgSearchOp = Ci.nsMsgSearchOp;
-var nsMsgSearchAttrib = Ci.nsMsgSearchAttrib;
 
 var gStatusText;
 var gSearchBundle;
@@ -33,7 +39,6 @@ var gSearchStopButton;
 var gPropertiesCmd;
 var gComposeCmd;
 var gDeleteCmd;
-var gSearchPhoneticName = "false";
 
 var gSearchAbViewListener = {
   onSelectionChanged() {
@@ -55,6 +60,9 @@ var gSearchAbViewListener = {
 };
 
 function searchOnLoad() {
+  UIDensity.registerWindow(window);
+  UIFontSize.registerWindow(window);
+
   initializeSearchWidgets();
   initializeSearchWindowWidgets();
 
@@ -76,12 +84,6 @@ function searchOnLoad() {
     Ci.nsIMsgSearchSession
   );
 
-  // initialize a flag for phonetic name search
-  gSearchPhoneticName = Services.prefs.getComplexValue(
-    "mail.addr_book.show_phonetic_fields",
-    Ci.nsIPrefLocalizedString
-  ).data;
-
   if (window.arguments && window.arguments[0]) {
     SelectDirectory(window.arguments[0].directory);
   } else {
@@ -89,6 +91,97 @@ function searchOnLoad() {
       document.getElementById("abPopup-menupopup").firstElementChild.value
     );
   }
+
+  gAbResultsTree = document.getElementById("abResultsTree");
+  gAbResultsTree.setAttribute("rows", "auto-tree-view-table-row");
+  gAbResultsTree.defaultColumns = [
+    {
+      id: "GeneratedName",
+      l10n: {
+        header: "about-addressbook-column-header-generatedname2",
+        menuitem: "about-addressbook-column-label-generatedname2",
+        cell: "about-addressbook-cell-generatedname2",
+      },
+      picker: false,
+    },
+    {
+      id: "EmailAddresses",
+      l10n: {
+        header: "about-addressbook-column-header-emailaddresses2",
+        menuitem: "about-addressbook-column-label-emailaddresses2",
+        cell: "about-addressbook-cell-emailaddresses2",
+      },
+    },
+    {
+      id: "NickName",
+      l10n: {
+        header: "about-addressbook-column-header-nickname2",
+        menuitem: "about-addressbook-column-label-nickname2",
+        cell: "about-addressbook-cell-nickname2",
+      },
+      hidden: true,
+    },
+    {
+      id: "PhoneNumbers",
+      l10n: {
+        header: "about-addressbook-column-header-phonenumbers2",
+        menuitem: "about-addressbook-column-label-phonenumbers2",
+        cell: "about-addressbook-cell-phonenumbers2",
+      },
+    },
+    {
+      id: "Addresses",
+      l10n: {
+        header: "about-addressbook-column-header-addresses2",
+        menuitem: "about-addressbook-column-label-addresses2",
+        cell: "about-addressbook-cell-addresses2",
+      },
+    },
+    {
+      id: "Title",
+      l10n: {
+        header: "about-addressbook-column-header-title2",
+        menuitem: "about-addressbook-column-label-title2",
+        cell: "about-addressbook-cell-title2",
+      },
+      hidden: true,
+    },
+    {
+      id: "Department",
+      l10n: {
+        header: "about-addressbook-column-header-department2",
+        menuitem: "about-addressbook-column-label-department2",
+        cell: "about-addressbook-cell-department2",
+      },
+      hidden: true,
+    },
+    {
+      id: "Organization",
+      l10n: {
+        header: "about-addressbook-column-header-organization2",
+        menuitem: "about-addressbook-column-label-organization2",
+        cell: "about-addressbook-cell-organization2",
+      },
+      hidden: true,
+    },
+    {
+      id: "addrbook",
+      l10n: {
+        header: "about-addressbook-column-header-addrbook2",
+        menuitem: "about-addressbook-column-label-addrbook2",
+        cell: "about-addressbook-cell-addrbook2",
+      },
+    },
+  ];
+  gAbResultsTree.addEventListener("rowcountchange", () =>
+    gSearchAbViewListener.onCountChanged(gAbResultsTree.view.rowCount)
+  );
+  gAbResultsTree.addEventListener("select", () =>
+    gSearchAbViewListener.onSelectionChanged()
+  );
+  gAbResultsTree.addEventListener("viewchange", () =>
+    gSearchAbViewListener.onCountChanged(gAbResultsTree.view?.rowCount)
+  );
 
   onMore(null);
 }
@@ -126,7 +219,7 @@ function onAbSearchReset(event) {
 
 function SelectDirectory(aURI) {
   // set popup with address book names
-  let abPopup = document.getElementById("abPopup");
+  const abPopup = document.getElementById("abPopup");
   if (abPopup) {
     if (aURI) {
       abPopup.value = aURI;
@@ -143,19 +236,19 @@ function GetScopeForDirectoryURI(aURI) {
   if (aURI && aURI != "moz-abdirectory://?") {
     directory = MailServices.ab.getDirectory(aURI);
   }
-  let booleanAnd = gSearchBooleanRadiogroup.selectedItem.value == "and";
+  const booleanAnd = gSearchBooleanRadiogroup.selectedItem.value == "and";
 
   if (directory?.isRemote) {
     if (booleanAnd) {
-      return nsMsgSearchScope.LDAPAnd;
+      return Ci.nsMsgSearchScope.LDAPAnd;
     }
-    return nsMsgSearchScope.LDAP;
+    return Ci.nsMsgSearchScope.LDAP;
   }
 
   if (booleanAnd) {
-    return nsMsgSearchScope.LocalABAnd;
+    return Ci.nsMsgSearchScope.LocalABAnd;
   }
-  return nsMsgSearchScope.LocalAB;
+  return Ci.nsMsgSearchScope.LocalAB;
 }
 
 function onEnterInSearchTerm() {
@@ -189,7 +282,7 @@ function onSearch() {
 
   let searchUri = "?(";
   for (let i = 0; i < gSearchSession.searchTerms.length; i++) {
-    let searchTerm = gSearchSession.searchTerms[i];
+    const searchTerm = gSearchSession.searchTerms[i];
     if (!searchTerm.value.str) {
       continue;
     }
@@ -205,34 +298,22 @@ function onSearch() {
     var attrs;
 
     switch (searchTerm.attrib) {
-      case nsMsgSearchAttrib.Name:
-        if (gSearchPhoneticName != "true") {
-          attrs = [
-            "DisplayName",
-            "FirstName",
-            "LastName",
-            "NickName",
-            "_AimScreenName",
-          ];
-        } else {
-          attrs = [
-            "DisplayName",
-            "FirstName",
-            "LastName",
-            "NickName",
-            "_AimScreenName",
-            "PhoneticFirstName",
-            "PhoneticLastName",
-          ];
-        }
+      case Ci.nsMsgSearchAttrib.Name:
+        attrs = [
+          "DisplayName",
+          "FirstName",
+          "LastName",
+          "NickName",
+          "_AimScreenName",
+        ];
         break;
-      case nsMsgSearchAttrib.DisplayName:
+      case Ci.nsMsgSearchAttrib.DisplayName:
         attrs = ["DisplayName"];
         break;
-      case nsMsgSearchAttrib.Email:
+      case Ci.nsMsgSearchAttrib.Email:
         attrs = ["PrimaryEmail"];
         break;
-      case nsMsgSearchAttrib.PhoneNumber:
+      case Ci.nsMsgSearchAttrib.PhoneNumber:
         attrs = [
           "HomePhone",
           "WorkPhone",
@@ -241,43 +322,43 @@ function onSearch() {
           "CellularNumber",
         ];
         break;
-      case nsMsgSearchAttrib.Organization:
+      case Ci.nsMsgSearchAttrib.Organization:
         attrs = ["Company"];
         break;
-      case nsMsgSearchAttrib.Department:
+      case Ci.nsMsgSearchAttrib.Department:
         attrs = ["Department"];
         break;
-      case nsMsgSearchAttrib.City:
+      case Ci.nsMsgSearchAttrib.City:
         attrs = ["WorkCity"];
         break;
-      case nsMsgSearchAttrib.Street:
+      case Ci.nsMsgSearchAttrib.Street:
         attrs = ["WorkAddress"];
         break;
-      case nsMsgSearchAttrib.Nickname:
+      case Ci.nsMsgSearchAttrib.Nickname:
         attrs = ["NickName"];
         break;
-      case nsMsgSearchAttrib.WorkPhone:
+      case Ci.nsMsgSearchAttrib.WorkPhone:
         attrs = ["WorkPhone"];
         break;
-      case nsMsgSearchAttrib.HomePhone:
+      case Ci.nsMsgSearchAttrib.HomePhone:
         attrs = ["HomePhone"];
         break;
-      case nsMsgSearchAttrib.Fax:
+      case Ci.nsMsgSearchAttrib.Fax:
         attrs = ["FaxNumber"];
         break;
-      case nsMsgSearchAttrib.Pager:
+      case Ci.nsMsgSearchAttrib.Pager:
         attrs = ["PagerNumber"];
         break;
-      case nsMsgSearchAttrib.Mobile:
+      case Ci.nsMsgSearchAttrib.Mobile:
         attrs = ["CellularNumber"];
         break;
-      case nsMsgSearchAttrib.Title:
+      case Ci.nsMsgSearchAttrib.Title:
         attrs = ["JobTitle"];
         break;
-      case nsMsgSearchAttrib.AdditionalEmail:
+      case Ci.nsMsgSearchAttrib.AdditionalEmail:
         attrs = ["SecondEmail"];
         break;
-      case nsMsgSearchAttrib.ScreenName:
+      case Ci.nsMsgSearchAttrib.ScreenName:
         attrs = ["_AimScreenName"];
         break;
       default:
@@ -289,25 +370,25 @@ function onSearch() {
     var opStr;
 
     switch (searchTerm.op) {
-      case nsMsgSearchOp.Contains:
+      case Ci.nsMsgSearchOp.Contains:
         opStr = "c";
         break;
-      case nsMsgSearchOp.DoesntContain:
+      case Ci.nsMsgSearchOp.DoesntContain:
         opStr = "!c";
         break;
-      case nsMsgSearchOp.Is:
+      case Ci.nsMsgSearchOp.Is:
         opStr = "=";
         break;
-      case nsMsgSearchOp.Isnt:
+      case Ci.nsMsgSearchOp.Isnt:
         opStr = "!=";
         break;
-      case nsMsgSearchOp.BeginsWith:
+      case Ci.nsMsgSearchOp.BeginsWith:
         opStr = "bw";
         break;
-      case nsMsgSearchOp.EndsWith:
+      case Ci.nsMsgSearchOp.EndsWith:
         opStr = "ew";
         break;
-      case nsMsgSearchOp.SoundsLike:
+      case Ci.nsMsgSearchOp.SoundsLike:
         opStr = "~=";
         break;
       default:
@@ -352,13 +433,9 @@ function onSearchButton(event) {
   }
 }
 
-function GetAbViewListener() {
-  return gSearchAbViewListener;
-}
-
 function onProperties() {
   if (!gPropertiesCmd.hasAttribute("disabled")) {
-    window.opener.toAddressBook({ action: "display", card: GetSelectedCard() });
+    window.opener.toAddressBook(["cmd_displayContact", GetSelectedCard()]);
   }
 }
 
@@ -385,13 +462,9 @@ function AbResultsPaneKeyPress(event) {
   }
 }
 
-function AbResultsPaneDoubleClick(card) {
-  // Kept for abResultsPane.js.
-}
-
 function UpdateCardView() {
   disableCommands();
-  let numSelected = GetNumSelectedCards();
+  const numSelected = GetNumSelectedCards();
 
   if (!numSelected) {
     return;

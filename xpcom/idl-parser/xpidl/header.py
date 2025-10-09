@@ -21,7 +21,6 @@ if printdoccomments:
         for c in clist:
             fd.write("%s%s\n" % (indent, c))
 
-
 else:
 
     def printComments(fd, clist, indent):
@@ -83,11 +82,10 @@ def attributeReturnType(a, getter, macro):
         if macro == "NS_IMETHOD":
             # This is the declaration.
             ret = "virtual %s" % ret
+    elif ret == "nsresult":
+        ret = macro
     else:
-        if ret == "nsresult":
-            ret = macro
-        else:
-            ret = "%s_(%s)" % (macro, ret)
+        ret = "%s_(%s)" % (macro, ret)
 
     return attributeAttributes(a, getter) + ret
 
@@ -147,11 +145,10 @@ def methodReturnType(m, macro):
         if macro == "NS_IMETHOD":
             # This is the declaration
             ret = "virtual %s" % ret
+    elif ret == "nsresult":
+        ret = macro
     else:
-        if ret == "nsresult":
-            ret = macro
-        else:
-            ret = "%s_(%s)" % (macro, ret)
+        ret = "%s_(%s)" % (macro, ret)
 
     return methodAttributes(m) + ret
 
@@ -378,7 +375,7 @@ uuid_decoder = re.compile(
 iface_prolog = """ {
  public:
 
-  NS_DECLARE_STATIC_IID_ACCESSOR(%(defname)s_IID)
+  NS_INLINE_DECL_STATIC_IID(%(defname)s_IID)
 
 """
 
@@ -389,8 +386,9 @@ iface_scriptable = """\
 """
 
 iface_epilog = """};
+"""
 
-  NS_DEFINE_STATIC_IID_ACCESSOR(%(name)s, %(defname)s_IID)
+iface_decl = """
 
 /* Use this macro when declaring classes that implement this interface. */
 #define NS_DECL_%(macroname)s """
@@ -432,6 +430,13 @@ refcnt_infallible_tmpl = """\
     MOZ_ASSERT(NS_SUCCEEDED(rv));
     return already_AddRefed<%(realtype)s>(result);
   }
+"""
+
+iface_threadsafe_tmpl = """\
+namespace mozilla::detail {
+template <>
+class InterfaceNeedsThreadSafeRefCnt<%(name)s> : public std::true_type {};
+}
 """
 
 
@@ -484,11 +489,11 @@ def write_interface(iface, fd):
         names.add(name)
 
     for m in iface.members:
-        if type(m) == xpidl.Attribute:
+        if type(m) is xpidl.Attribute:
             record_name(attributeNativeName(m, getter=True))
             if not m.readonly:
                 record_name(attributeNativeName(m, getter=False))
-        elif type(m) == xpidl.Method:
+        elif type(m) is xpidl.Method:
             record_name(methodNativeName(m))
 
     def write_const_decls(g):
@@ -600,6 +605,11 @@ def write_interface(iface, fd):
                     raise Exception("Unexpected interface member: %s" % member)
 
     fd.write(iface_epilog % names)
+
+    if iface.attributes.rust_sync:
+        fd.write(iface_threadsafe_tmpl % names)
+
+    fd.write(iface_decl % names)
 
     def writeDeclaration(fd, iface, virtual):
         declType = "NS_IMETHOD" if virtual else "nsresult"

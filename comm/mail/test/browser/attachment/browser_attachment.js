@@ -8,8 +8,12 @@
 
 "use strict";
 
-var { close_compose_window, open_compose_with_forward } = ChromeUtils.import(
-  "resource://testing-common/mozmill/ComposeHelpers.jsm"
+var { close_compose_window, open_compose_with_forward } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+  );
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 var {
   add_message_to_folder,
@@ -17,31 +21,24 @@ var {
   assert_message_pane_focused,
   assert_selected_and_displayed,
   be_in_folder,
-  close_popup,
   create_folder,
   create_message,
   get_about_message,
-  mc,
+  get_about_3pane,
   msgGen,
-  plan_to_wait_for_folder_events,
   select_click_row,
   select_none,
-  wait_for_folder_events,
   wait_for_message_display_completion,
-  wait_for_popup_to_open,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-var { SyntheticPartLeaf, SyntheticPartMultiMixed } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { SyntheticPartLeaf, SyntheticPartMultiMixed } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
 
-var {
-  async_plan_for_new_window,
-  close_window,
-  plan_for_modal_dialog,
-  wait_for_modal_dialog,
-} = ChromeUtils.import("resource://testing-common/mozmill/WindowHelpers.jsm");
+var { promise_modal_dialog, promise_new_window } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/WindowHelpers.sys.mjs"
+);
 
 var folder;
 var messages;
@@ -187,10 +184,9 @@ add_setup(async function () {
 });
 
 /**
- * Set the pref to ensure that the attachments pane starts out (un)expanded
+ * Set the pref to ensure that the attachments pane starts out (un)expanded.
  *
- * @param expand true if the attachment pane should start out expanded,
- *        false otherwise
+ * @param {true} expand true if the attachment pane should start out expanded.
  */
 function ensure_starts_expanded(expand) {
   Services.prefs.setBoolPref(
@@ -202,8 +198,8 @@ function ensure_starts_expanded(expand) {
 add_task(async function test_attachment_view_collapsed() {
   await be_in_folder(folder);
 
-  select_click_row(0);
-  assert_selected_and_displayed(0);
+  await select_click_row(0);
+  await assert_selected_and_displayed(0);
 
   if (
     !get_about_message().document.getElementById("attachmentView").collapsed
@@ -216,8 +212,8 @@ add_task(async function test_attachment_view_expanded() {
   await be_in_folder(folder);
 
   for (let i = 1; i < messages.length; i++) {
-    select_click_row(i);
-    assert_selected_and_displayed(i);
+    await select_click_row(i);
+    await assert_selected_and_displayed(i);
 
     if (
       get_about_message().document.getElementById("attachmentView").collapsed
@@ -232,15 +228,15 @@ add_task(async function test_attachment_view_expanded() {
 add_task(async function test_attachment_name_sanitization() {
   await be_in_folder(folder);
 
-  let aboutMessage = get_about_message();
-  let attachmentList = aboutMessage.document.getElementById("attachmentList");
+  const aboutMessage = get_about_message();
+  const attachmentList = aboutMessage.document.getElementById("attachmentList");
 
   for (let i = 0; i < messages.length; i++) {
     if ("attachments" in messages[i]) {
-      select_click_row(i);
-      assert_selected_and_displayed(i);
+      await select_click_row(i);
+      await assert_selected_and_displayed(i);
 
-      let attachments = messages[i].attachments;
+      const attachments = messages[i].attachments;
       if (messages[i].attachments.length == 1) {
         Assert.equal(
           aboutMessage.document.getElementById("attachmentName").value,
@@ -261,12 +257,12 @@ add_task(async function test_attachment_name_sanitization() {
 add_task(async function test_long_attachment_name() {
   await be_in_folder(folder);
 
-  select_click_row(4);
-  assert_selected_and_displayed(4);
+  await select_click_row(4);
+  await assert_selected_and_displayed(4);
 
-  let aboutMessage = get_about_message();
-  let messagepaneBox = aboutMessage.document.getElementById("messagepanebox");
-  let attachmentBar = aboutMessage.document.getElementById("attachmentBar");
+  const aboutMessage = get_about_message();
+  const messagepaneBox = aboutMessage.document.getElementById("messagepanebox");
+  const attachmentBar = aboutMessage.document.getElementById("attachmentBar");
 
   Assert.ok(
     messagepaneBox.getBoundingClientRect().width >=
@@ -283,44 +279,41 @@ add_task(async function test_long_attachment_name() {
 add_task(async function test_attached_message_attachments() {
   await be_in_folder(folder);
 
-  select_click_row(5);
-  assert_selected_and_displayed(5);
+  await select_click_row(5);
+  await assert_selected_and_displayed(5);
 
   // Make sure we have the expected number of attachments in the root message:
   // an outer text attachment, an attached email, and an inner text attachment.
-  let aboutMessage = get_about_message();
+  const aboutMessage = get_about_message();
   Assert.equal(
     aboutMessage.document.getElementById("attachmentList").itemCount,
     3
   );
 
   // Open the attached email.
-  let newWindowPromise = async_plan_for_new_window("mail:messageWindow");
+  const newWindowPromise = promise_new_window("mail:messageWindow");
   aboutMessage.document
     .getElementById("attachmentList")
     .getItemAtIndex(1)
     .attachment.open();
-  let msgc = await newWindowPromise;
-  wait_for_message_display_completion(msgc, true);
+  const msgc = await newWindowPromise;
+  await wait_for_message_display_completion(msgc, true);
 
   // Make sure we have the expected number of attachments in the attached
   // message: just an inner text attachment.
-  Assert.equal(
-    msgc.window.document.getElementById("attachmentList").itemCount,
-    1
-  );
+  Assert.equal(msgc.document.getElementById("attachmentList").itemCount, 1);
 
-  close_window(msgc);
+  await BrowserTestUtils.closeWindow(msgc);
 }).skip();
 
 add_task(async function test_attachment_name_click() {
   await be_in_folder(folder);
 
-  select_click_row(1);
-  assert_selected_and_displayed(1);
+  await select_click_row(1);
+  await assert_selected_and_displayed(1);
 
-  let aboutMessage = get_about_message();
-  let attachmentList = aboutMessage.document.getElementById("attachmentList");
+  const aboutMessage = get_about_message();
+  const attachmentList = aboutMessage.document.getElementById("attachmentList");
 
   Assert.ok(
     attachmentList.collapsed,
@@ -329,13 +322,19 @@ add_task(async function test_attachment_name_click() {
 
   // Ensure the open dialog appears when clicking on the attachment name and
   // that the attachment list doesn't expand.
-  plan_for_modal_dialog("unknownContentTypeWindow", function () {});
+  const dialogPromise = promise_modal_dialog(
+    "unknownContentTypeWindow",
+    function (win) {
+      win.close();
+    }
+  );
   EventUtils.synthesizeMouseAtCenter(
     aboutMessage.document.getElementById("attachmentName"),
     { clickCount: 1 },
     aboutMessage
   );
-  wait_for_modal_dialog("unknownContentTypeWindow");
+  await dialogPromise;
+  await TestUtils.waitForTick();
   Assert.ok(
     attachmentList.collapsed,
     "Attachment list should not expand when clicking on attachmentName!"
@@ -346,22 +345,25 @@ add_task(async function test_attachment_name_click() {
  * Test that right-clicking on a particular element opens the expected context
  * menu.
  *
- * @param elementId the id of the element to right click on
- * @param contextMenuId the id of the context menu that should appear
+ * @param {string} elementId - The id of the element to right click on.
+ * @param {string} contextMenuId - The id of the context menu that should appear.
  */
 async function subtest_attachment_right_click(elementId, contextMenuId) {
-  let aboutMessage = get_about_message();
-  let element = aboutMessage.document.getElementById(elementId);
-  let contextMenu = aboutMessage.document.getElementById(contextMenuId);
+  const aboutMessage = get_about_message();
+  const element = aboutMessage.document.getElementById(elementId);
+  const contextMenu = aboutMessage.document.getElementById(contextMenuId);
 
-  let shownPromise = BrowserTestUtils.waitForEvent(contextMenu, "popupshown");
+  const shownPromise = BrowserTestUtils.waitForEvent(contextMenu, "popupshown");
   EventUtils.synthesizeMouseAtCenter(
     element,
     { type: "contextmenu" },
     aboutMessage
   );
   await shownPromise;
-  let hiddenPromise = BrowserTestUtils.waitForEvent(contextMenu, "popuphidden");
+  const hiddenPromise = BrowserTestUtils.waitForEvent(
+    contextMenu,
+    "popuphidden"
+  );
   contextMenu.hidePopup();
   await hiddenPromise;
   await new Promise(resolve => requestAnimationFrame(resolve));
@@ -370,8 +372,8 @@ async function subtest_attachment_right_click(elementId, contextMenuId) {
 add_task(async function test_attachment_right_click_single() {
   await be_in_folder(folder);
 
-  select_click_row(1);
-  assert_selected_and_displayed(1);
+  await select_click_row(1);
+  await assert_selected_and_displayed(1);
 
   await subtest_attachment_right_click(
     "attachmentIcon",
@@ -407,8 +409,8 @@ add_task(async function test_attachment_right_click_single() {
 add_task(async function test_attachment_right_click_multiple() {
   await be_in_folder(folder);
 
-  select_click_row(3);
-  assert_selected_and_displayed(3);
+  await select_click_row(3);
+  await assert_selected_and_displayed(3);
 
   await subtest_attachment_right_click(
     "attachmentIcon",
@@ -441,12 +443,12 @@ add_task(async function test_attachment_right_click_multiple() {
  * Test that clicking on various elements in the attachment bar toggles the
  * attachment list.
  *
- * @param elementId the id of the element to click
+ * @param {string} elementId - The id of the element to click.
  */
 function subtest_attachment_list_toggle(elementId) {
-  let aboutMessage = get_about_message();
-  let attachmentList = aboutMessage.document.getElementById("attachmentList");
-  let element = aboutMessage.document.getElementById(elementId);
+  const aboutMessage = get_about_message();
+  const attachmentList = aboutMessage.document.getElementById("attachmentList");
+  const element = aboutMessage.document.getElementById(elementId);
 
   EventUtils.synthesizeMouseAtCenter(element, { clickCount: 1 }, aboutMessage);
   Assert.ok(
@@ -466,10 +468,10 @@ function subtest_attachment_list_toggle(elementId) {
 add_task(async function test_attachment_list_expansion() {
   await be_in_folder(folder);
 
-  select_click_row(1);
-  assert_selected_and_displayed(1);
+  await select_click_row(1);
+  await assert_selected_and_displayed(1);
 
-  let aboutMessage = get_about_message();
+  const aboutMessage = get_about_message();
   Assert.ok(
     aboutMessage.document.getElementById("attachmentList").collapsed,
     "Attachment list should start out collapsed!"
@@ -483,7 +485,7 @@ add_task(async function test_attachment_list_expansion() {
 
   // Ensure that clicking the "Save All" button doesn't expand the attachment
   // list.
-  let dm = aboutMessage.document.querySelector(
+  const dm = aboutMessage.document.querySelector(
     "#attachmentSaveAllSingle .toolbarbutton-menubutton-dropmarker"
   );
   EventUtils.synthesizeMouseAtCenter(dm, { clickCount: 1 }, aboutMessage);
@@ -497,8 +499,8 @@ add_task(async function test_attachment_list_starts_expanded() {
   ensure_starts_expanded(true);
   await be_in_folder(folder);
 
-  select_click_row(2);
-  assert_selected_and_displayed(2);
+  await select_click_row(2);
+  await assert_selected_and_displayed(2);
 
   Assert.ok(
     !get_about_message().document.getElementById("attachmentList").collapsed,
@@ -510,10 +512,10 @@ add_task(async function test_selected_attachments_are_cleared() {
   ensure_starts_expanded(false);
   await be_in_folder(folder);
   // First, select the message with two attachments.
-  select_click_row(3);
+  await select_click_row(3);
 
   // Expand the attachment list.
-  let aboutMessage = get_about_message();
+  const aboutMessage = get_about_message();
   EventUtils.synthesizeMouseAtCenter(
     aboutMessage.document.getElementById("attachmentToggle"),
     { clickCount: 1 },
@@ -521,7 +523,7 @@ add_task(async function test_selected_attachments_are_cleared() {
   );
 
   // Select both the attachments.
-  let attachmentList = aboutMessage.document.getElementById("attachmentList");
+  const attachmentList = aboutMessage.document.getElementById("attachmentList");
   Assert.equal(
     attachmentList.selectedItems.length,
     1,
@@ -551,7 +553,7 @@ add_task(async function test_selected_attachments_are_cleared() {
 
   // Switch to the message with one attachment, and make sure there are no
   // selected attachments.
-  select_click_row(2);
+  await select_click_row(2);
 
   // Expand the attachment list again.
   EventUtils.synthesizeMouseAtCenter(
@@ -571,18 +573,18 @@ add_task(async function test_select_all_attachments_key() {
   await be_in_folder(folder);
 
   // First, select the message with two attachments.
-  select_none();
-  select_click_row(3);
+  await select_none();
+  await select_click_row(3);
 
   // Expand the attachment list.
-  let aboutMessage = get_about_message();
+  const aboutMessage = get_about_message();
   EventUtils.synthesizeMouseAtCenter(
     aboutMessage.document.getElementById("attachmentToggle"),
     { clickCount: 1 },
     aboutMessage
   );
 
-  let attachmentList = aboutMessage.document.getElementById("attachmentList");
+  const attachmentList = aboutMessage.document.getElementById("attachmentList");
   attachmentList.focus();
   EventUtils.synthesizeKey("a", { accelKey: true }, aboutMessage);
   Assert.equal(
@@ -596,12 +598,12 @@ add_task(async function test_delete_attachment_key() {
   await be_in_folder(folder);
 
   // First, select the message with two attachments.
-  select_none();
-  select_click_row(3);
+  await select_none();
+  await select_click_row(3);
 
   // Expand the attachment list.
-  assert_selected_and_displayed(3);
-  let aboutMessage = get_about_message();
+  await assert_selected_and_displayed(3);
+  const aboutMessage = get_about_message();
   if (aboutMessage.document.getElementById("attachmentList").collapsed) {
     EventUtils.synthesizeMouseAtCenter(
       aboutMessage.document.getElementById("attachmentToggle"),
@@ -609,7 +611,7 @@ add_task(async function test_delete_attachment_key() {
       aboutMessage
     );
   }
-  let firstAttachment =
+  const firstAttachment =
     aboutMessage.document.getElementById("attachmentList").firstElementChild;
   EventUtils.synthesizeMouseAtCenter(
     firstAttachment,
@@ -634,31 +636,31 @@ add_task(async function test_attachments_compose_menu() {
   await be_in_folder(folder);
 
   // First, select the message with two attachments.
-  select_none();
-  select_click_row(3);
+  await select_none();
+  await select_click_row(3);
 
-  let cwc = open_compose_with_forward();
-  let attachment = cwc.window.document.getElementById("attachmentBucket");
+  const cwc = await open_compose_with_forward();
+  const attachment = cwc.document.getElementById("attachmentBucket");
 
   // On Linux and OSX, focus events don't seem to be sent to child elements properly if
   // the parent window is not focused.  This causes some random oranges for us.
   // We use the force_focus function to "cheat" a bit, and trigger the function
   // that focusing normally would fire.  We do normal focusing for Windows.
   function force_focus(aId) {
-    let element = cwc.window.document.getElementById(aId);
+    let element = cwc.document.getElementById(aId);
     element.focus();
 
     if (["linux", "macosx"].includes(AppConstants.platform)) {
       // First, call the window's default controller's function.
-      cwc.window.defaultController.isCommandEnabled("cmd_delete");
+      cwc.defaultController.isCommandEnabled("cmd_delete");
 
       // Walk up the DOM tree and call isCommandEnabled on the first controller
       // that supports "cmd_delete".
-      while (element != cwc.window.document) {
+      while (element != cwc.document) {
         // NOTE: html elements (like body) don't have controllers.
-        let numControllers = element.controllers?.getControllerCount() || 0;
+        const numControllers = element.controllers?.getControllerCount() || 0;
         for (let i = 0; numControllers; i++) {
-          let currController = element.controllers.getControllerAt(i);
+          const currController = element.controllers.getControllerAt(i);
           if (currController.supportsCommand("cmd_delete")) {
             currController.isCommandEnabled("cmd_delete");
             return;
@@ -676,7 +678,7 @@ add_task(async function test_attachments_compose_menu() {
 
   Assert.equal(
     "Remove Attachment",
-    cwc.window.document.getElementById("cmd_delete").getAttribute("label"),
+    cwc.document.getElementById("cmd_delete").getAttribute("label"),
     "attachmentBucket with last attachment is focused!"
   );
 
@@ -689,7 +691,7 @@ add_task(async function test_attachments_compose_menu() {
   force_focus("msgSubject");
   Assert.equal(
     "Delete",
-    cwc.window.document.getElementById("cmd_delete").getAttribute("label"),
+    cwc.document.getElementById("cmd_delete").getAttribute("label"),
     "attachmentBucket is not focused!"
   );
 
@@ -697,7 +699,7 @@ add_task(async function test_attachments_compose_menu() {
   force_focus("attachmentBucket");
   Assert.equal(
     "Remove Attachment",
-    cwc.window.document.getElementById("cmd_delete").getAttribute("label"),
+    cwc.document.getElementById("cmd_delete").getAttribute("label"),
     "Only 1 attachment is selected!"
   );
 
@@ -706,7 +708,7 @@ add_task(async function test_attachments_compose_menu() {
   force_focus("msgIdentity");
   Assert.equal(
     "Delete",
-    cwc.window.document.getElementById("cmd_delete").getAttribute("label"),
+    cwc.document.getElementById("cmd_delete").getAttribute("label"),
     "attachmentBucket is not focused!"
   );
 
@@ -714,32 +716,33 @@ add_task(async function test_attachments_compose_menu() {
   force_focus("attachmentBucket");
   Assert.equal(
     "Remove Attachments",
-    cwc.window.document.getElementById("cmd_delete").getAttribute("label"),
+    cwc.document.getElementById("cmd_delete").getAttribute("label"),
     "Multiple attachments are selected!"
   );
 
-  close_compose_window(cwc);
+  await close_compose_window(cwc);
 });
 
 add_task(async function test_delete_from_toolbar() {
   await be_in_folder(folder);
 
   // First, select the message with two attachments.
-  select_none();
-  select_click_row(3);
+  await select_none();
+  await select_click_row(3);
 
   // Expand the attachment list.
-  assert_selected_and_displayed(3);
-  let aboutMessage = get_about_message();
+  await assert_selected_and_displayed(3);
+  const aboutMessage = get_about_message();
   if (aboutMessage.document.getElementById("attachmentList").collapsed) {
     EventUtils.synthesizeMouseAtCenter(
       aboutMessage.document.getElementById("attachmentToggle"),
       { clickCount: 1 },
       aboutMessage
     );
+    await TestUtils.waitForTick();
   }
 
-  let firstAttachment =
+  const firstAttachment =
     aboutMessage.document.getElementById("attachmentList").firstElementChild;
   EventUtils.synthesizeMouseAtCenter(
     firstAttachment,
@@ -749,14 +752,25 @@ add_task(async function test_delete_from_toolbar() {
 
   // Make sure clicking the "Delete" toolbar button with an attachment focused
   // deletes the *message*.
-  plan_to_wait_for_folder_events("DeleteOrMoveMsgCompleted");
+  const tree = get_about_3pane().threadTree;
+  const rowCountBefore = tree.view.rowCount;
+  // Note: Removing an attachment also triggers this notification.
+  const completed = PromiseTestUtils.promiseFolderEvent(
+    folder,
+    "DeleteOrMoveMsgCompleted"
+  );
   EventUtils.synthesizeMouseAtCenter(
     aboutMessage.document.getElementById("hdrTrashButton"),
     { clickCount: 1 },
     aboutMessage
   );
-  wait_for_folder_events();
-}).skip();
+  await completed;
+  Assert.equal(
+    tree.view.rowCount,
+    rowCountBefore - 1,
+    "Row count of view should be one less than before."
+  );
+});
 
 registerCleanupFunction(() => {
   // Remove created folders.

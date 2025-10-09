@@ -2,13 +2,25 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+for (let stack = Components.stack; stack; stack = stack.caller) {
+  if (
+    stack.filename.split("/").at(-1).startsWith("browser_") &&
+    !stack.filename.includes("comm/mail/test/browser/")
+  ) {
+    // Importing this file has unintended consequences. It should not be used
+    // outside of mail/test/browser and, ideally, not be used in any new tests.
+    throw new Error(
+      "Do not import FolderDisplayHelpers.sys.mjs outside of mail/test/browser."
+    );
+  }
+}
+
 import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 import * as EventUtils from "resource://testing-common/mail/EventUtils.sys.mjs";
 import {
   promise_new_window,
-  wait_for_existing_window,
   wait_for_window_focused,
 } from "resource://testing-common/mail/WindowHelpers.sys.mjs";
 
@@ -25,7 +37,6 @@ import {
   SyntheticMessageSet,
 } from "resource://testing-common/mailnews/MessageGenerator.sys.mjs";
 import { MessageInjection } from "resource://testing-common/mailnews/MessageInjection.sys.mjs";
-import { SmimeUtils } from "resource://testing-common/mailnews/SmimeUtils.sys.mjs";
 import { dump_view_state } from "resource://testing-common/mail/ViewHelpers.sys.mjs";
 
 var nsMsgViewIndex_None = 0xffffffff;
@@ -37,9 +48,10 @@ export var FAKE_SERVER_HOSTNAME = "tinderbox123";
 
 /**
  * The main 3-pane window.
+ *
  * @type {Window}
  */
-export var mc = wait_for_existing_window("mail:3pane");
+export var mc = Services.wm.getMostRecentWindow("mail:3pane");
 
 export function set_mc(value) {
   mc = value;
@@ -104,18 +116,6 @@ function get_db_view(win = mc) {
   return get_about_3pane_or_about_message(win).gDBView;
 }
 
-export function smimeUtils_ensureNSS() {
-  SmimeUtils.ensureNSS();
-}
-
-export function smimeUtils_loadPEMCertificate(file, certType, loadKey = false) {
-  SmimeUtils.loadPEMCertificate(file, certType, loadKey);
-}
-
-export function smimeUtils_loadCertificateAndKey(file, pw) {
-  SmimeUtils.loadCertificateAndKey(file, pw);
-}
-
 /*
  * Although we all agree that the use of generators when dealing with async
  *  operations is awesome, the mozmill idiom is for calls to be synchronous and
@@ -157,9 +157,10 @@ export function create_virtual_folder(...aArgs) {
  * Get special folder having a folder flag under Local Folders.
  * This function clears the contents of the folder by default.
  *
- * @param aFolderFlag  Folder flag of the required folder.
- * @param aCreate      Create the folder if it does not exist yet.
- * @param aEmpty       Set to false if messages from the folder must not be emptied.
+ * @param {nsMsgFolderFlags} aFolderFlag - Folder flag of the required folder.
+ * @param {boolean} aCreate - Create the folder if it does not exist yet.
+ * @param {?nsIMsgIncomingServer} aServer - Create the folder if it does not exist yet.
+ * @param {boolean} aEmpty - Set to false if messages from the folder must not be emptied.
  */
 export async function get_special_folder(
   aFolderFlag,
@@ -216,31 +217,11 @@ export function create_message(aArgs) {
 }
 
 /**
- * Create and return an SMIME SyntheticMessage object.
- *
- * @param {MakeMessageOptions} aArgs An arguments object to be passed to
- *                       MessageGenerator.makeEncryptedSMimeMessage()
- */
-export function create_encrypted_smime_message(aArgs) {
-  return msgGen.makeEncryptedSMimeMessage(aArgs);
-}
-
-/**
- * Create and return an OpenPGP SyntheticMessage object.
- *
- * @param {MakeMessageOptions} aArgs An arguments object to be passed to
- *                       MessageGenerator.makeEncryptedOpenPGPMessage()
- */
-export function create_encrypted_openpgp_message(aArgs) {
-  return msgGen.makeEncryptedOpenPGPMessage(aArgs);
-}
-
-/**
  * Adds a SyntheticMessage as a SyntheticMessageSet to a folder or folders.
  *
  * @see MessageInjection.addSetsToFolders
- * @param {SyntheticMessage} aMsg
  * @param {nsIMsgFolder[]} aFolder
+ * @param {SyntheticMessage} aMsg
  */
 export async function add_message_to_folder(aFolder, aMsg) {
   await messageInjection.addSetsToFolders(aFolder, [
@@ -298,13 +279,15 @@ export async function enter_folder(aFolder) {
 
   // Drain the event queue.
   await TestUtils.waitForTick();
+  // Make sure the window is fully drawn.
+  await new Promise(win.requestAnimationFrame);
 }
 
 /**
  * Make sure we are in the given folder, entering it if we were not.
  *
- * @returns The tab info of the current tab (a more persistent identifier for
- *     tabs than the index, which will change as tabs open/close).
+ * @returns {TabInfo} The tab info of the current tab (a more persistent
+ *   identifier for tabs than the index, which will change as tabs open/close).
  */
 export async function be_in_folder(aFolder) {
   const win = get_about_3pane();
@@ -323,8 +306,8 @@ export async function be_in_folder(aFolder) {
  * pane should be displayed, you should follow this up with
  * |wait_for_blank_content_pane()| instead.
  *
- * @returns The tab info of the current tab (a more persistent identifier for
- *     tabs than the index, which will change as tabs open/close).
+ * @returns {TabInfo} The tab info of the current tab (a more persistent
+ *    identifier for tabs than the index, which will change as tabs open/close).
  */
 export async function open_folder_in_new_tab(aFolder) {
   otherTab = mc.document.getElementById("tabmail").currentTabInfo;
@@ -375,12 +358,11 @@ export var open_selected_message = open_selected_messages;
  * Create a new tab displaying the currently selected message, making that tab
  *  the current tab.  We block until the message finishes loading.
  *
- * @param aBackground [optional] If true, then the tab is opened in the
- *                    background. If false or not given, then the tab is opened
- *                    in the foreground.
+ * @param {boolean} [aBackground] - If true, then the tab is opened in the
+ *   background. If false or not given, then the tab is opened in the foreground.
  *
- * @returns The tab info of the new tab (a more persistent identifier for tabs
- *     than the index, which will change as tabs open/close).
+ * @returns {TabInfo} The tab info of the new tab (a more persistent identifier
+ *   for tabs than the index, which will change as tabs open/close).
  */
 export async function open_selected_message_in_new_tab(aBackground) {
   // get the current tab count so we can make sure the tab actually opened.
@@ -435,12 +417,12 @@ export async function open_selected_message_in_new_window() {
  * preference. However, we do check that the tab we're returning is a folder
  * tab.
  *
- * @param aMsgHdr The message header to display.
- * @param [aExpectNew3Pane] This should be set to true if it is expected that a
- *                          new 3-pane window will be opened as a result of
- *                          the API call.
+ * @param {nsIMsgDBHdr} aMsgHdr - The message header to display.
+ * @param {boolean} [aExpectNew3Pane=false] - This should be set to true if it
+ *   is expected that a new 3-pane window will be opened as a result of
+ *   the API call.
  *
- * @returns The currently selected tab, guaranteed to be a folder tab.
+ * @returns {TabInfo} The currently selected tab, guaranteed to be a folder tab.
  */
 export async function display_message_in_folder_tab(aMsgHdr, aExpectNew3Pane) {
   let newWindowPromise;
@@ -505,7 +487,7 @@ export async function open_message_from_file(file) {
  *  to the 'other' tab.  That is the last tab we used, most likely the tab that
  *  was current when we created this tab.
  *
- * @param aNewTab Optional, index of the other tab to switch to.
+ * @param {number} aNewTab - Optional, index of the other tab to switch to.
  */
 export async function switch_tab(aNewTab) {
   if (typeof aNewTab == "number") {
@@ -532,27 +514,18 @@ export async function switch_tab(aNewTab) {
 /**
  * Assert that the currently selected tab is the given one.
  *
- * @param aTab The tab that should currently be selected.
+ * @param {TabInfo} aTab - The tab that should currently be selected.
  */
 export function assert_selected_tab(aTab) {
   Assert.equal(mc.document.getElementById("tabmail").currentTabInfo, aTab);
 }
 
 /**
- * Assert that the currently selected tab is _not_ the given one.
- *
- * @param aTab The tab that should currently not be selected.
- */
-export function assert_not_selected_tab(aTab) {
-  Assert.notEqual(mc.document.getElementById("tabmail").currentTabInfo, aTab);
-}
-
-/**
  * Assert that the given tab has the given mode name. Valid mode names include
  * "message" and "folder".
  *
- * @param aTab A Tab. The currently selected tab if null.
- * @param aModeName A string that should match the mode name of the tab.
+ * @param {?TabInfo} aTab - A Tab. The currently selected tab if null.
+ * @param {string} aModeName - A string that should match the mode name of the tab.
  */
 export function assert_tab_mode_name(aTab, aModeName) {
   if (!aTab) {
@@ -565,7 +538,7 @@ export function assert_tab_mode_name(aTab, aModeName) {
 /**
  * Assert that the number of tabs open matches the value given.
  *
- * @param aNumber The number of tabs that should be open.
+ * @param {integer} aNumber - The number of tabs that should be open.
  */
 export function assert_number_of_tabs_open(aNumber) {
   const actualNumber =
@@ -577,8 +550,8 @@ export function assert_number_of_tabs_open(aNumber) {
  * Assert that the given tab's title is based on the provided folder or
  *  message.
  *
- * @param aTab A Tab.
- * @param aWhat Either an nsIMsgFolder or an nsIMsgDBHdr
+ * @param {TabInfo} aTab - A Tab.
+ * @param {nsIMsgFolder|nsIMsgDBHdr} aWhat - Either an nsIMsgFolder or an nsIMsgDBHdr.
  */
 export async function assert_tab_titled_from(aTab, aWhat) {
   let text;
@@ -592,16 +565,6 @@ export async function assert_tab_titled_from(aTab, aWhat) {
     () => aTab.title.includes(text),
     `Tab title should include '${text}' but does not. (Current title: '${aTab.title}')`
   );
-}
-
-/**
- * Assert that the given tab's title is what is given.
- *
- * @param aTab The tab to check.
- * @param aTitle The title to check.
- */
-export function assert_tab_has_title(aTab, aTitle) {
-  Assert.equal(aTab.title, aTitle);
 }
 
 /**
@@ -658,8 +621,10 @@ export async function select_none(win = mc) {
  *  references as well as piercing complex things like message headers and
  *  synthetic message sets.
  *
- * @param aViewIndex An absolute index (integer >= 0), slice-style index (< 0),
- *     or a SyntheticMessageSet (we only care about the first message in it).
+ * @param {integer} aViewIndex - An absolute index (integer >= 0),
+ *   slice-style index (< 0),
+ *   or a SyntheticMessageSet (we only care about the first message in it).
+ * @returns {integer} the index
  */
 function _normalize_view_index(aViewIndex) {
   const dbView = get_db_view();
@@ -680,38 +645,9 @@ function _normalize_view_index(aViewIndex) {
 }
 
 /**
- * Generic method to simulate a left click on a row in a <tree> element.
- *
- * @param {XULTreeElement} aTree - The tree element.
- * @param {number} aRowIndex - Index of a row in the tree to click on.
- * @see mailTestUtils.treeClick for another way.
+ * @param {integer} aViewIndex
+ * @returns {HTMLLIElement}
  */
-export async function click_tree_row(aTree, aRowIndex) {
-  if (aRowIndex < 0 || aRowIndex >= aTree.view.rowCount) {
-    throw new Error(
-      "Row " + aRowIndex + " does not exist in the tree " + aTree.id + "!"
-    );
-  }
-
-  const selection = aTree.view.selection;
-  selection.select(aRowIndex);
-  aTree.ensureRowIsVisible(aRowIndex);
-
-  // get cell coordinates
-  const column = aTree.columns[0];
-  const coords = aTree.getCoordsForCellItem(aRowIndex, column, "text");
-
-  await TestUtils.waitForTick();
-  EventUtils.synthesizeMouse(
-    aTree.body,
-    coords.x + 4,
-    coords.y + 4,
-    {},
-    aTree.ownerGlobal
-  );
-  await TestUtils.waitForTick();
-}
-
 async function _get_row_at_index(aViewIndex) {
   const win = get_about_3pane();
   const tree = win.document.getElementById("threadTree");
@@ -721,6 +657,12 @@ async function _get_row_at_index(aViewIndex) {
   );
   tree.scrollToIndex(aViewIndex, true);
   await TestUtils.waitForCondition(() => tree.getRowAtIndex(aViewIndex));
+  Assert.report(
+    false,
+    undefined,
+    undefined,
+    `scrolled to row ${aViewIndex}; rowCount=${tree.view.rowCount}`
+  );
   return tree.getRowAtIndex(aViewIndex);
 }
 
@@ -730,9 +672,10 @@ async function _get_row_at_index(aViewIndex) {
  * @param {integer} aViewIndex - If >= 0, the view index provided, if < 0, a
  *   reference to a view index counting from the last row in the tree.
  *   -1 indicates the last message in the tree, -2 the second to last, etc.
- * @returns The message header selected.
+ * @returns {msgDBHdr} The message header selected.
  */
 export async function select_click_row(aViewIndex) {
+  Assert.report(false, undefined, undefined, `will select row ${aViewIndex}`);
   aViewIndex = _normalize_view_index(aViewIndex);
 
   const row = await _get_row_at_index(aViewIndex);
@@ -752,7 +695,7 @@ export async function select_click_row(aViewIndex) {
  *   -1 indicates the last message in the tree, -2 the second to last, etc.
  * @param {Window} [aWin] - The window in whose context to do this, defaults to
  *   the first window.
- * @returns The message header selected.
+ * @returns {msgDBHdr} The message header selected.
  */
 export async function select_column_click_row(aViewIndex, aWin = mc) {
   const dbView = get_db_view(aWin);
@@ -771,9 +714,6 @@ export async function select_column_click_row(aViewIndex, aWin = mc) {
     !(dbView.selection.count == 1 && dbView.selection.isSelected(aViewIndex)) &&
     dbView.selection.currentIndex !== aViewIndex;
 
-  if (willDisplayMessage) {
-    plan_for_message_display(aWin);
-  }
   _row_click_helper(
     aWin,
     aWin.document.getElementById("threadTree"),
@@ -791,10 +731,9 @@ export async function select_column_click_row(aViewIndex, aWin = mc) {
 /**
  * Pretend we are toggling the thread specified by a row.
  *
- * @param aViewIndex If >= 0, the view index provided, if < 0, a reference to
+ * @param {integer} aViewIndex - If >= 0, the view index provided, if < 0, a reference to
  *     a view index counting from the last row in the tree.  -1 indicates the
  *     last message in the tree, -2 the second to last, etc.
- *
  */
 export async function toggle_thread_row(aViewIndex) {
   aViewIndex = _normalize_view_index(aViewIndex);
@@ -812,11 +751,10 @@ export async function toggle_thread_row(aViewIndex) {
  * Pretend we are clicking on a row with our mouse with the control key pressed,
  *  resulting in the addition/removal of just that row to/from the selection.
  *
- * @param aViewIndex If >= 0, the view index provided, if < 0, a reference to
+ * @param {integer} aViewIndex - If >= 0, the view index provided, if < 0, a reference to
  *     a view index counting from the last row in the tree.  -1 indicates the
  *     last message in the tree, -2 the second to last, etc.
- *
- * @returns The message header of the affected message.
+ * @returns {msgDBHdr} The message header of the affected message.
  */
 export async function select_control_click_row(aViewIndex) {
   aViewIndex = _normalize_view_index(aViewIndex);
@@ -841,7 +779,7 @@ export async function select_control_click_row(aViewIndex) {
  *   -1 indicates the last message in the tree, -2 the second to last, etc.
  * @param {Window} aWin - The window in whose context to do this, defaults to
  *   the first window.
- * @returns The message headers for all messages that are now selected.
+ * @returns {msgDBHdr} The message headers for all messages that are now selected.
  */
 export async function select_shift_click_row(aViewIndex, aWin) {
   aViewIndex = _normalize_view_index(aViewIndex, aWin);
@@ -963,7 +901,7 @@ function _row_click_helper(
  *  to do something with or close.  However, we have helpful popup function
  *  helpers because I'm so nice.
  *
- * @returns The message header that you clicked on.
+ * @returns {msgDBHdr} The message header that you clicked on.
  */
 export async function right_click_on_row(aViewIndex) {
   aViewIndex = _normalize_view_index(aViewIndex);
@@ -985,7 +923,7 @@ export async function right_click_on_row(aViewIndex) {
  *
  * @param {integer} aViewIndex - The index of a selected row.
  * @param {boolean} shiftPressed - Whether the shift key has been pressed.
- * @returns [The new tab, the message that you clicked on.]
+ * @returns {[]} a tuple of [The new tab, the message that you clicked on.]
  */
 export async function middle_click_on_row(aViewIndex, shiftPressed) {
   aViewIndex = _normalize_view_index(aViewIndex);
@@ -1135,26 +1073,25 @@ export function assert_folder_expanded(aFolder) {
 /**
  * Pretend we are clicking on a folder with our mouse.
  *
- * @param aFolder The folder to click on. This needs to be present in the
+ * @param {nsIMsgFolder} aFolder - The folder to click on. This needs to be present in the
  *     current folder tree view, of course.
  *
- * @returns the view index that you clicked on.
+ * @returns {integer} The view index that you clicked on.
  */
 export function select_click_folder(aFolder) {
   const win = get_about_3pane();
   const folderTree = win.document.getElementById("folderTree");
-  const row = folderTree.rows.find(row => row.uri == aFolder.URI);
-  row.scrollIntoView();
+  const row = folderTree.rows.find(treeRow => treeRow.uri == aFolder.URI);
+  row.scrollIntoView({ block: "start", behavior: "instant" });
   EventUtils.synthesizeMouseAtCenter(row.querySelector(".container"), {}, win);
 }
 
 /**
  * Pretend we are clicking on a folder with our mouse with the shift key pressed.
  *
- * @param aFolder The folder to shift-click on. This needs to be present in the
+ * @param {nsIMsgFolder} aFolder - The folder to shift-click on. This needs to be present in the
  *     current folder tree view, of course.
- *
- * @returns An array containing all the folders that are now selected.
+ * @returns {nsIMsgFolder[]} An array containing all the folders that are now selected.
  */
 export async function select_shift_click_folder(aFolder) {
   await wait_for_all_messages_to_load();
@@ -1179,9 +1116,9 @@ export async function select_shift_click_folder(aFolder) {
  * something with or close.  However, we have helpful popup function helpers
  * helpers because asuth's so nice.
  *
- * @note The argument is a folder here, unlike in the message case, so beware.
+ * NOTE: The argument is a folder here, unlike in the message case, so beware.
  *
- * @returns The view index that you clicked on.
+ * @returns {integer} The view index that you clicked on.
  */
 export async function right_click_on_folder(aFolder) {
   const win = get_about_3pane();
@@ -1190,7 +1127,7 @@ export async function right_click_on_folder(aFolder) {
     win.document.getElementById("folderPaneContext"),
     "popupshown"
   );
-  const row = folderTree.rows.find(row => row.uri == aFolder.URI);
+  const row = folderTree.rows.find(treeRow => treeRow.uri == aFolder.URI);
   EventUtils.synthesizeMouseAtCenter(
     row.querySelector(".container"),
     { type: "contextmenu" },
@@ -1202,14 +1139,14 @@ export async function right_click_on_folder(aFolder) {
 /**
  * Middle-click on the folder tree view, presumably opening a new folder tab.
  *
- * @note The argument is a folder here, unlike in the message case, so beware.
+ * NOTE: The argument is a folder here, unlike in the message case, so beware.
  *
- * @returns [The new tab, the view index that you clicked on.]
+ * @returns {[]} A tuple of [The new tab, the view index that you clicked on.]
  */
 export function middle_click_on_folder(aFolder, shiftPressed) {
   const win = get_about_3pane();
   const folderTree = win.document.getElementById("folderTree");
-  const row = folderTree.rows.find(row => row.uri == aFolder.URI);
+  const row = folderTree.rows.find(treeRow => treeRow.uri == aFolder.URI);
   EventUtils.synthesizeMouseAtCenter(
     row.querySelector(".container"),
     { button: 1, shiftKey: shiftPressed },
@@ -1226,8 +1163,9 @@ export function middle_click_on_folder(aFolder, shiftPressed) {
 /**
  * Get a reference to the smart folder with the given name.
  *
- * @param aFolderName The name of the smart folder (e.g. "Inbox").
- * @returns An nsIMsgFolder representing the smart folder with the given name.
+ * @param {string} aFolderName - The name of the smart folder (e.g. "Inbox").
+ * @returns {nsIMsgFolder} An nsIMsgFolder representing the smart folder with
+ *   the given name.
  */
 export function get_smart_folder_named(aFolderName) {
   const smartMailbox = SmartMailboxUtils.getSmartMailbox();
@@ -1256,14 +1194,6 @@ export async function delete_via_popup() {
   // for reasons unknown, the pop-up does not close itself?
   await close_popup(mc, win.document.getElementById("mailContext"));
   await wait_for_folder_events();
-}
-
-/**
- * @deprecated Use BrowserTestUtils.waitForPopupEvent directly.
- * @param {XULPopupElement} popupElem
- */
-export async function wait_for_popup_to_open(popupElem) {
-  await BrowserTestUtils.waitForPopupEvent(popupElem, "shown");
 }
 
 /**
@@ -1344,9 +1274,6 @@ export async function archive_selected_messages(win = mc) {
   // How many messages do we expect to remain after the archival?
   const expectedCount = dbView.rowCount - dbView.numSelected;
 
-  // if (expectedCount && win.messageDisplay.visible) {
-  //   plan_for_message_display(win);
-  // }
   EventUtils.synthesizeKey("a", {}, win);
 
   // Wait for the view rowCount to decrease by the number of selected messages.
@@ -1396,46 +1323,29 @@ export async function wait_for_all_messages_to_load(win = mc) {
 }
 
 /**
- * Call this before triggering a message display that you are going to wait for
- *  using |wait_for_message_display_completion| where you are passing true for
- *  the aLoadDemanded argument.  This ensures that if a message is already
- *  displayed for the given window that state is sufficiently cleaned up
- *  so it doesn't trick us into thinking that there is no need to wait.
- *
- * @param {Window|TabInfo} [winOrTab] optional window or tab, defaulting to
- *   the first window. If the message display is going to be caused by a tab
- *   switch, a reference to the tab to switch to should be passed in.
- */
-export function plan_for_message_display() {}
-
-/**
  * If a message or summary is in the process of loading, let it finish;
- *  optionally, be sure to wait for a load to happen (assuming
- *  |plan_for_message_display| is used, modulo the conditions below.)
+ * optionally, be sure to wait for a load to happen.
  *
  * This method is used defensively by a lot of other code in this file that is
- *  really not sure whether there might be a load in progress or not.  So by
- *  default we only do something if there is obviously a message display in
- *  progress.  Since some events may end up getting deferred due to script
- *  blockers or the like, it is possible the event that triggers the display
- *  may not have happened by the time you call this.  In that case, you should
+ * really not sure whether there might be a load in progress or not.  So by
+ * default we only do something if there is obviously a message display in
+ * progress.  Since some events may end up getting deferred due to script
+ * blockers or the like, it is possible the event that triggers the display
+ * may not have happened by the time you call this.  In that case, you should
+ * pass true for aLoadDemanded.
  *
- *  1) pass true for aLoadDemanded, and
- *  2) invoke |plan_for_message_display|
- *
- *  before triggering the event that will induce a message display.  Note that:
- *  - You cannot do #2 if you are opening a new message window and can assume
- *    that this will be the first message ever displayed in the window. This is
- *    fine, because messageLoaded is initially false.
- *  - You should not do #2 if you are opening a new folder or message tab. That
- *    is because you'll affect the old tab's message display instead of the new
- *    tab's display. Again, this is fine, because a new message display will be
- *    created for the new tab, and messageLoaded will initially be false for it.
+ * before triggering the event that will induce a message display.  Note that:
+ * - You cannot do #2 if you are opening a new message window and can assume
+ * that this will be the first message ever displayed in the window. This is
+ * fine, because messageLoaded is initially false.
+ * - You should not do #2 if you are opening a new folder or message tab. That
+ * is because you'll affect the old tab's message display instead of the new
+ * tab's display. Again, this is fine, because a new message display will be
+ * created for the new tab, and messageLoaded will initially be false for it.
  *
  * If we didn't use this method defensively, we would get horrible assertions
- *  like so:
+ * like so:
  * ###!!! ASSERTION: Overwriting an existing document channel!
- *
  *
  * @param {Window} [aWin] - The window in whose context to do this, defaults to
  *   the first window.
@@ -1466,13 +1376,13 @@ export async function wait_for_message_display_completion(aWin, aLoadDemanded) {
 
   await TestUtils.waitForCondition(() => win.document.readyState == "complete");
 
-  const browser = win.getMessagePaneBrowser();
+  const messagePaneBrowser = win.getMessagePaneBrowser();
 
   await TestUtils.waitForCondition(
     () =>
-      !browser.docShell?.isLoadingDocument &&
-      (!aLoadDemanded || browser.currentURI?.spec != "about:blank"),
-    `Timeout waiting for a message. Current location: ${browser.currentURI?.spec}`
+      !messagePaneBrowser.docShell?.isLoadingDocument &&
+      (!aLoadDemanded || messagePaneBrowser.currentURI?.spec != "about:blank"),
+    `Timeout waiting for a message. Current location: ${messagePaneBrowser.currentURI?.spec}`
   );
   await TestUtils.waitForTick();
 }
@@ -1490,16 +1400,16 @@ export async function wait_for_blank_content_pane(win = mc) {
     () => aboutMessage.document.readyState == "complete"
   );
 
-  const browser = aboutMessage.getMessagePaneBrowser();
-  if (BrowserTestUtils.isHidden(browser)) {
+  const messagePaneBrowser = aboutMessage.getMessagePaneBrowser();
+  if (BrowserTestUtils.isHidden(messagePaneBrowser)) {
     return;
   }
 
   await TestUtils.waitForCondition(
     () =>
-      !browser.docShell?.isLoadingDocument &&
-      browser.currentURI?.spec == "about:blank",
-    `Timeout waiting for blank content pane. Current location: ${browser.currentURI?.spec}`
+      !messagePaneBrowser.docShell?.isLoadingDocument &&
+      messagePaneBrowser.currentURI?.spec == "about:blank",
+    `Timeout waiting for blank content pane. Current location: ${messagePaneBrowser.currentURI?.spec}`
   );
 
   // the above may return immediately, meaning the event queue might not get a
@@ -1560,12 +1470,12 @@ var FolderListener = {
  *  triggers us.  It is expected that you won't try and have multiple events
  *  in-flight or will augment us when the time comes to have to deal with that.
  */
-export function plan_to_wait_for_folder_events(...aArgs) {
+function plan_to_wait_for_folder_events(...aArgs) {
   FolderListener.ensureInited();
   FolderListener.planToWaitFor(...aArgs);
 }
 
-export async function wait_for_folder_events() {
+async function wait_for_folder_events() {
   await FolderListener.waitForEvents();
 }
 
@@ -1637,7 +1547,8 @@ export function assert_messages_in_view(aSynSets, aWin = mc) {
 /**
  * Assert the the given message/messages are not present in the view.
  *
- * @param aMessages Either a single nsIMsgDBHdr or a list of them.
+ * @param {nsIMsgDBHdr|nsIMsgDBHdr[]} aMessages - Either a single
+ *   nsIMsgDBHdr or a list of them.
  */
 export function assert_messages_not_in_view(aMessages) {
   if (aMessages instanceof Ci.nsIMsgDBHdr) {
@@ -1728,18 +1639,10 @@ export function toggle_message_pane() {
 }
 
 /**
- * Make the folder pane visible in order to run tests.
- * This is necessary as the FolderPane is collapsed if no account is available.
- */
-export function show_folder_pane() {
-  mc.document.getElementById("folderPaneBox").collapsed = false;
-}
-
-/**
  * Helper function for use by assert_selected / assert_selected_and_displayed /
  *  assert_displayed.
  *
- * @returns {Array} A list of two elements: [Window, [list of view indices]].
+ * @returns {[]} A list of two elements: [Window, [list of view indices]].
  */
 function _process_row_message_arguments(...aArgs) {
   let troller = mc;
@@ -1904,102 +1807,6 @@ async function _internal_assert_displayed(
         `the content pane should be blank, but is showing: '${location.href}'`
       );
     }
-  } else if (desiredIndices.length == 1) {
-    /*
-    // 1 means the message should be displayed
-    // make sure message display thinks we are in single message display mode
-    if (!troller.messageDisplay.singleMessageDisplay) {
-      throw new Error("Message display is not in single message display mode.");
-    }
-    // now make sure that we actually are in single message display mode
-    let singleMessagePane = troller.document.getElementById("singleMessage");
-    let multiMessagePane = troller.document.getElementById("multimessage");
-    if (singleMessagePane && singleMessagePane.hidden) {
-      throw new Error("Single message pane is hidden but it should not be.");
-    }
-    if (multiMessagePane && !multiMessagePane.hidden) {
-      throw new Error("Multiple message pane is visible but it should not be.");
-    }
-
-    if (trustSelection) {
-      if (
-        troller.gFolderDisplay.selectedMessage !=
-        troller.messageDisplay.displayedMessage
-      ) {
-        throw new Error(
-          "folderDisplay.selectedMessage != " +
-            "messageDisplay.displayedMessage! (fd: " +
-            troller.gFolderDisplay.selectedMessage +
-            " vs md: " +
-            troller.messageDisplay.displayedMessage +
-            ")"
-        );
-      }
-    }
-
-    let msgHdr = troller.messageDisplay.displayedMessage;
-    let msgUri = msgHdr.folder.getUriForMsg(msgHdr);
-    // wait for the document to load so that we don't try and replace it later
-    //  and get that stupid assertion
-    await wait_for_message_display_completion();
-    utils.sleep(500)
-    // make sure the content pane is pointed at the right thing
-
-    let msgService = troller.gFolderDisplay.messenger.messageServiceFromURI(
-      msgUri
-    );
-    let msgUrl = msgService.getUrlForUri(
-      msgUri,
-      troller.gFolderDisplay.msgWindow
-    );
-    if (troller.content?.location.href != msgUrl.spec) {
-      throw new Error(
-        "The content pane is not displaying the right message! " +
-          "Should be: " +
-          msgUrl.spec +
-          " but it's: " +
-          troller.content.location.href
-      );
-    }
-    */
-  } else {
-    /*
-    // multiple means some form of multi-message summary
-    // XXX deal with the summarization threshold bail case.
-
-    // make sure the message display thinks we are in multi-message mode
-    if (troller.messageDisplay.singleMessageDisplay) {
-      throw new Error(
-        "Message display should not be in single message display" +
-          "mode!  Desired indices: " +
-          desiredIndices
-      );
-    }
-
-    // verify that the message pane browser is displaying about:blank
-    if (mc.content && mc.content.location.href != "about:blank") {
-      throw new Error(
-        "the content pane should be blank, but is showing: '" +
-          mc.content.location.href +
-          "'"
-      );
-    }
-
-    // now make sure that we actually are in nultiple message display mode
-    let singleMessagePane = troller.document.getElementById("singleMessage");
-    let multiMessagePane = troller.document.getElementById("multimessage");
-    if (singleMessagePane && !singleMessagePane.hidden) {
-      throw new Error("Single message pane is visible but it should not be.");
-    }
-    if (multiMessagePane && multiMessagePane.hidden) {
-      throw new Error("Multiple message pane is hidden but it should not be.");
-    }
-
-    // and _now_ make sure that we actually summarized what we wanted to
-    //  summarize.
-    let desiredMessages = desiredIndices.map(vi => mc.gFolderDisplay.view.dbView.getMsgHdrAt(vi));
-    await assert_messages_summarized(troller, desiredMessages);
-    */
   }
 }
 
@@ -2030,7 +1837,7 @@ export async function assert_selected_and_displayed(...aArgs) {
 /**
  * Use the internal archiving code for archiving any given set of messages
  *
- * @param aMsgHdrs a list of message headers
+ * @param {nsIMsgDBHdr[]} aMsgHdrs - A list of message headers.
  */
 export async function archive_messages(aMsgHdrs) {
   plan_to_wait_for_folder_events(
@@ -2044,78 +1851,6 @@ export async function archive_messages(aMsgHdrs) {
   const batchMover = new MessageArchiver();
   batchMover.archiveMessages(aMsgHdrs);
   await wait_for_folder_events();
-}
-
-/**
- * Check if the selected messages match the summarized messages.
- *
- * @param aSummarizedKeys An array of keys (messageKey + folder.URI) for the
- *     summarized messages.
- * @param aSelectedMessages An array of nsIMsgDBHdrs for the selected messages.
- * @returns true is aSelectedMessages and aSummarizedKeys refer to the same set
- *     of messages.
- */
-function _verify_summarized_message_set(aSummarizedKeys, aSelectedMessages) {
-  const summarizedKeys = aSummarizedKeys.slice();
-  summarizedKeys.sort();
-  // We use the same key-generation as in multimessageview.js.
-  const selectedKeys = aSelectedMessages.map(
-    msgHdr => msgHdr.messageKey + msgHdr.folder.URI
-  );
-  selectedKeys.sort();
-
-  // Stringified versions should now be equal...
-  return selectedKeys.toString() == summarizedKeys.toString();
-}
-
-/**
- * Asserts that the messages the window's folder display widget thinks are
- *  summarized are in fact summarized.  This is automatically called by
- *  assert_selected_and_displayed, so you do not need to call this directly
- *  unless you are testing the summarization logic.
- *
- * @param {Window} aWin - The window who has the summarized display going on.
- * @param {Array} - [aMessages] Optional set of messages to verify. If not
- *   provided, this is extracted via the folderDisplay. If a SyntheticMessageSet
- *   is provided we will automatically retrieve what we need from it.
- */
-export async function assert_messages_summarized(aWin, aSelectedMessages) {
-  // - Compensate for selection stabilization code.
-  // Although WindowHelpers sets the stabilization interval to 0, we
-  //  still need to make sure we have drained the event queue so that it has
-  //  actually gotten a chance to run.
-  await TestUtils.waitForTick();
-
-  // - Verify summary object knows about right messages
-  if (aSelectedMessages == null) {
-    aSelectedMessages = aWin.gFolderDisplay.selectedMessages;
-  }
-  // if it's a synthetic message set, we want the headers...
-  if (aSelectedMessages.synMessages) {
-    aSelectedMessages = Array.from(aSelectedMessages.msgHdrs());
-  }
-
-  const summaryFrame = aWin.gSummaryFrameManager.iframe;
-  const summary = summaryFrame.contentWindow.gMessageSummary;
-  const summarizedKeys = Object.keys(summary._msgNodes);
-  if (aSelectedMessages.length != summarizedKeys.length) {
-    const elaboration =
-      "Summary contains " +
-      summarizedKeys.length +
-      " messages, expected " +
-      aSelectedMessages.length +
-      ".";
-    throw new Error(
-      "Summary does not contain the right set of messages. " + elaboration
-    );
-  }
-  if (!_verify_summarized_message_set(summarizedKeys, aSelectedMessages)) {
-    const elaboration =
-      "Summary: " + summarizedKeys + "  Selected: " + aSelectedMessages + ".";
-    throw new Error(
-      "Summary does not contain the right set of messages. " + elaboration
-    );
-  }
 }
 
 /**
@@ -2168,8 +1903,8 @@ export function assert_not_shown(aMessages) {
 }
 
 /**
- * @param aShouldBeElided Should the messages at the view indices be elided?
- * @param aArgs Arguments of the form processed by
+ * @param {boolean} aShouldBeElided - Should the messages at the view indices be elided?
+ * @param {...*} aArgs - Arguments of the form processed by
  *     |_process_row_message_arguments|.
  */
 function _assert_elided_helper(aShouldBeElided, ...aArgs) {
@@ -2206,44 +1941,6 @@ export function assert_expanded(...aArgs) {
   _assert_elided_helper(false, ...aArgs);
 }
 
-/**
- * Add the widget with the given id to the toolbar if it is not already present.
- *  It gets added to the front if we add it.  Use |remove_from_toolbar| to
- *  remove the widget from the toolbar when you are done.
- *
- * @param aToolbarElement The DOM element that is the toolbar, like you would
- *     get from getElementById.
- * @param aElementId The id attribute of the toolbaritem item you want added to
- *     the toolbar (not the id of the thing inside the toolbaritem tag!).
- *     We take the id name rather than element itself because if not already
- *     present the element is off floating in DOM limbo.  (The toolbar widget
- *     calls removeChild on the palette.)
- */
-export function add_to_toolbar(aToolbarElement, aElementId) {
-  const currentSet = aToolbarElement.currentSet.split(",");
-  if (!currentSet.includes(aElementId)) {
-    currentSet.unshift(aElementId);
-    aToolbarElement.currentSet = currentSet.join(",");
-  }
-}
-
-/**
- * Remove the widget with the given id from the toolbar if it is present.  Use
- *  |add_to_toolbar| to add the item in the first place.
- *
- * @param aToolbarElement The DOM element that is the toolbar, like you would
- *     get from getElementById.
- * @param aElementId The id attribute of the item you want removed to the
- *     toolbar.
- */
-export function remove_from_toolbar(aToolbarElement, aElementId) {
-  const currentSet = aToolbarElement.currentSet.split(",");
-  if (currentSet.includes(aElementId)) {
-    currentSet.splice(currentSet.indexOf(aElementId), 1);
-    aToolbarElement.currentSet = currentSet.join(",");
-  }
-}
-
 var RECOGNIZED_WINDOWS = ["messagepane", "multimessage"];
 var RECOGNIZED_ELEMENTS = ["folderTree", "threadTree", "attachmentList"];
 
@@ -2275,20 +1972,6 @@ export function focus_message_pane() {
     "message browser is visible"
   );
   messageBrowser.focus();
-}
-
-/**
- * Focus the multimessage pane.
- */
-export function focus_multimessage_pane() {
-  const multiMessageBrowser = get_about_3pane().document.getElementById(
-    "multiMessageBrowser"
-  );
-  Assert.ok(
-    BrowserTestUtils.isVisible(multiMessageBrowser),
-    "multi message browser is visible"
-  );
-  multiMessageBrowser.focus();
 }
 
 /**
@@ -2338,13 +2021,6 @@ function _assert_thing_focused(aThing) {
 }
 
 /**
- * Assert that the folder tree is focused.
- */
-export function assert_folder_tree_focused() {
-  Assert.equal(get_about_3pane().document.activeElement.id, "folderTree");
-}
-
-/**
  * Assert that the thread tree is focused.
  */
 export function assert_thread_tree_focused() {
@@ -2366,13 +2042,6 @@ export function assert_message_pane_focused() {
   //   aboutMessageWin.document.activeElement.id,
   //   "messageBrowser"
   // );
-}
-
-/**
- * Assert that the multimessage pane is focused.
- */
-export function assert_multimessage_pane_focused() {
-  _assert_thing_focused("multimessage");
 }
 
 /**
@@ -2631,32 +2300,6 @@ export async function set_mail_view(aMailViewIndex, aData) {
 }
 
 /**
- * Assert that the current mail view is as given. See the documentation for
- * |set_mail_view| for information about aData.
- */
-export function assert_mail_view(aMailViewIndex, aData) {
-  const actualMailViewIndex = mc.gFolderDisplay.view.mailViewIndex;
-  if (actualMailViewIndex != aMailViewIndex) {
-    throw new Error(
-      "The mail view index should be " +
-        aMailViewIndex +
-        ", but is actually " +
-        actualMailViewIndex
-    );
-  }
-
-  const actualMailViewData = mc.gFolderDisplay.view.mailViewData;
-  if (actualMailViewData != aData) {
-    throw new Error(
-      "The mail view data should be " +
-        aData +
-        ", but is actually " +
-        actualMailViewData
-    );
-  }
-}
-
-/**
  * Expand all threads in the current view.
  */
 export async function expand_all_threads() {
@@ -2669,7 +2312,7 @@ export async function expand_all_threads() {
 /**
  * Set the mail.openMessageBehavior pref.
  *
- * @param aPref One of "NEW_WINDOW", "EXISTING_WINDOW" or "NEW_TAB"
+ * @param {string} aPref - One of "NEW_WINDOW", "EXISTING_WINDOW" or "NEW_TAB".
  */
 export function set_open_message_behavior(aPref) {
   Services.prefs.setIntPref(
@@ -2690,7 +2333,7 @@ export function reset_open_message_behavior() {
 /**
  * Set the mail.tabs.loadInBackground pref.
  *
- * @param aPref true/false.
+ * @param {boolean} aPref - true/false.
  */
 export function set_context_menu_background_tabs(aPref) {
   Services.prefs.setBoolPref("mail.tabs.loadInBackground", aPref);
@@ -2708,7 +2351,7 @@ export function reset_context_menu_background_tabs() {
 /**
  * Set the mail.close_message_window.on_delete pref.
  *
- * @param aPref true/false.
+ * @param {boolean} aPref - true/false.
  */
 export function set_close_message_on_delete(aPref) {
   Services.prefs.setBoolPref("mail.close_message_window.on_delete", aPref);
@@ -2723,87 +2366,10 @@ export function reset_close_message_on_delete() {
   }
 }
 
-/**
- * assert that the multimessage/thread summary view contains
- * the specified number of elements of the specified selector.
- *
- * @param aSelector: the CSS selector to use to select
- * @param aNumElts: the number of expected elements that have that class
- */
-
-export function assert_summary_contains_N_elts(aSelector, aNumElts) {
-  const htmlframe = mc.document.getElementById("multimessage");
-  const matches = htmlframe.contentDocument.querySelectorAll(aSelector);
-  if (matches.length != aNumElts) {
-    throw new Error(
-      "Expected to find " +
-        aNumElts +
-        " elements with selector '" +
-        aSelector +
-        "', found: " +
-        matches.length
-    );
-  }
-}
-
 export function throw_and_dump_view_state(aMessage, aWin) {
   dump("******** " + aMessage + "\n");
   dump_view_state(get_db_view(aWin));
   throw new Error(aMessage);
-}
-
-/**
- * Copy constants from mailWindowOverlay.js
- */
-
-export var kClassicMailLayout = 0;
-
-export var kWideMailLayout = 1;
-export var kVerticalMailLayout = 2;
-
-/**
- * Assert that the expected mail pane layout is shown.
- *
- * @param aLayout  layout code
- */
-export function assert_pane_layout(aLayout) {
-  const actualPaneLayout = Services.prefs.getIntPref(
-    "mail.pane_config.dynamic"
-  );
-  if (actualPaneLayout != aLayout) {
-    throw new Error(
-      "The mail pane layout should be " +
-        aLayout +
-        ", but is actually " +
-        actualPaneLayout
-    );
-  }
-}
-
-/**
- * Change the current mail pane layout.
- *
- * @param aLayout  layout code
- */
-export function set_pane_layout(aLayout) {
-  Services.prefs.setIntPref("mail.pane_config.dynamic", aLayout);
-}
-
-/*
- * Check window sizes of the main Tb window whether they are at the default values.
- * Some tests change the window size so need to be sure what size they start with.
- */
-export function assert_default_window_size() {
-  Assert.equal(
-    mc.outerWidth,
-    gDefaultWindowWidth,
-    "Main window didn't meet the expected width"
-  );
-  Assert.equal(
-    mc.outerHeight,
-    gDefaultWindowHeight,
-    "Main window didn't meet the expected height"
-  );
 }
 
 /**

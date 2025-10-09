@@ -15,9 +15,9 @@
 
 #include <array>
 #include <limits>
+#include <optional>
 
 #include "absl/numeric/bits.h"
-#include "absl/types/optional.h"
 #include "api/array_view.h"
 #include "rtc_base/checks.h"
 #include "test/gmock.h"
@@ -28,26 +28,26 @@ namespace {
 
 TEST(BitstreamReaderTest, InDebugModeRequiresToCheckOkStatusBeforeDestruction) {
   const uint8_t bytes[32] = {};
-  absl::optional<BitstreamReader> reader(absl::in_place, bytes);
+  std::optional<BitstreamReader> reader(std::in_place, bytes);
 
   EXPECT_GE(reader->ReadBits(7), 0u);
 #if RTC_DCHECK_IS_ON && GTEST_HAS_DEATH_TEST && !defined(OS_ANDROID)
-  EXPECT_DEATH(reader = absl::nullopt, "");
+  EXPECT_DEATH(reader = std::nullopt, "");
 #endif
   EXPECT_TRUE(reader->Ok());
-  reader = absl::nullopt;
+  reader = std::nullopt;
 }
 
 TEST(BitstreamReaderTest, InDebugModeMayCheckRemainingBitsInsteadOfOkStatus) {
   const uint8_t bytes[32] = {};
-  absl::optional<BitstreamReader> reader(absl::in_place, bytes);
+  std::optional<BitstreamReader> reader(std::in_place, bytes);
 
   EXPECT_GE(reader->ReadBit(), 0);
 #if RTC_DCHECK_IS_ON && GTEST_HAS_DEATH_TEST && !defined(OS_ANDROID)
-  EXPECT_DEATH(reader = absl::nullopt, "");
+  EXPECT_DEATH(reader = std::nullopt, "");
 #endif
   EXPECT_GE(reader->RemainingBitCount(), 0);
-  reader = absl::nullopt;
+  reader = std::nullopt;
 }
 
 TEST(BitstreamReaderTest, ConsumeBits) {
@@ -339,6 +339,34 @@ TEST(BitstreamReaderTest, NoGolombOverread) {
   // result is 0x01FF - 1 = 0x01FE.
   EXPECT_EQ(reader3.ReadExponentialGolomb(), 0x01FEu);
   EXPECT_TRUE(reader3.Ok());
+}
+
+TEST(BitstreamReaderTest, ReadLeb128) {
+  const uint8_t bytes[] = {0xFF, 0x7F};
+  BitstreamReader reader(bytes);
+  EXPECT_EQ(reader.ReadLeb128(), 0x3FFFu);
+  EXPECT_TRUE(reader.Ok());
+}
+
+TEST(BitstreamReaderTest, ReadLeb128Large) {
+  const uint8_t max_uint64[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+                                0xFF, 0xFF, 0xFF, 0xFF, 0x1};
+  BitstreamReader max_reader(max_uint64);
+  EXPECT_EQ(max_reader.ReadLeb128(), std::numeric_limits<uint64_t>::max());
+  EXPECT_TRUE(max_reader.Ok());
+
+  const uint8_t overflow_unit64_t[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+                                       0xFF, 0xFF, 0xFF, 0xFF, 0x2};
+  BitstreamReader overflow_reader(overflow_unit64_t);
+  EXPECT_EQ(overflow_reader.ReadLeb128(), uint64_t{0});
+  EXPECT_FALSE(overflow_reader.Ok());
+}
+
+TEST(BitstreamReaderTest, ReadLeb128NoEndByte) {
+  const uint8_t bytes[] = {0xFF, 0xFF};
+  BitstreamReader reader(bytes);
+  EXPECT_EQ(reader.ReadLeb128(), uint64_t{0});
+  EXPECT_FALSE(reader.Ok());
 }
 
 }  // namespace

@@ -34,6 +34,9 @@ struct SVGViewBox {
   SVGViewBox(float aX, float aY, float aWidth, float aHeight)
       : x(aX), y(aY), width(aWidth), height(aHeight), none(false) {}
   bool operator==(const SVGViewBox& aOther) const;
+  SVGViewBox operator*(const float m) const {
+    return SVGViewBox(x * m, y * m, width * m, height * m);
+  }
 
   static nsresult FromString(const nsAString& aStr, SVGViewBox* aViewBox);
 };
@@ -42,6 +45,15 @@ class SVGAnimatedViewBox {
  public:
   friend class AutoChangeViewBoxNotifier;
   using SVGElement = dom::SVGElement;
+
+  SVGAnimatedViewBox& operator=(const SVGAnimatedViewBox& aOther) {
+    mBaseVal = aOther.mBaseVal;
+    if (aOther.mAnimVal) {
+      mAnimVal = MakeUnique<SVGViewBox>(*aOther.mAnimVal);
+    }
+    mHasBaseVal = aOther.mHasBaseVal;
+    return *this;
+  }
 
   void Init();
 

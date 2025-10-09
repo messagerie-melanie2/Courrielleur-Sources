@@ -5,23 +5,28 @@
 
 import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 
-var kACR = Ci.nsIAutoCompleteResult;
 var kSupportedTypes = new Set(["addr_newsgroups", "addr_followup"]);
 
-function NewsAutoCompleteResult(aSearchString) {
+/**
+ * @param {string} searchString - The search string.
+ */
+function NewsAutoCompleteResult(searchString) {
   // Can't create this in the prototype as we'd get the same array for
   // all instances
   this._searchResults = [];
-  this.searchString = aSearchString;
+  this.searchString = searchString;
 }
 
+/**
+ * @implements {nsIAutoCompleteResult}
+ */
 NewsAutoCompleteResult.prototype = {
   _searchResults: null,
 
   // nsIAutoCompleteResult
 
   searchString: null,
-  searchResult: kACR.RESULT_NOMATCH,
+  searchResult: Ci.nsIAutoCompleteResult.RESULT_NOMATCH,
   defaultIndex: -1,
   errorDescription: null,
 
@@ -34,11 +39,12 @@ NewsAutoCompleteResult.prototype = {
   },
 
   getLabelAt(aIndex) {
-    return this._searchResults[aIndex].value;
+    const entry = this._searchResults[aIndex];
+    return entry.value + (entry.comment ? ` — ${entry.comment}` : "");
   },
 
-  getCommentAt(aIndex) {
-    return this._searchResults[aIndex].comment;
+  getCommentAt() {
+    return "";
   },
 
   getStyleAt() {
@@ -56,12 +62,14 @@ NewsAutoCompleteResult.prototype = {
   removeValueAt() {},
 
   // nsISupports
-
   QueryInterface: ChromeUtils.generateQI(["nsIAutoCompleteResult"]),
 };
 
 export function NewsAutoCompleteSearch() {}
 
+/**
+ * @implements {nsIAutoCompleteSearch}
+ */
 NewsAutoCompleteSearch.prototype = {
   // For component registration
   classDescription: "Newsgroup Autocomplete",
@@ -72,12 +80,12 @@ NewsAutoCompleteSearch.prototype = {
   /**
    * Find the newsgroup server associated with the given accountKey.
    *
-   * @param accountKey  The key of the account.
-   * @returns The incoming news server (or null if one does not exist).
+   * @param {string} accountKey - The key of the account.
+   * @returns {?nsIMsgIncomingServer} The incoming news server, or null if one
+   *   does not exist.
    */
   _findServer(accountKey) {
     const account = MailServices.accounts.getAccount(accountKey);
-
     if (account.incomingServer.type == "nntp") {
       return account.incomingServer;
     }
@@ -93,7 +101,7 @@ NewsAutoCompleteSearch.prototype = {
       !("accountKey" in params) ||
       !kSupportedTypes.has(params.type)
     ) {
-      result.searchResult = kACR.RESULT_IGNORED;
+      result.searchResult = Ci.nsIAutoCompleteResult.RESULT_IGNORED;
       aListener.onSearchResult(this, result);
       return;
     }
@@ -115,7 +123,7 @@ NewsAutoCompleteSearch.prototype = {
     }
 
     if (result.matchCount) {
-      result.searchResult = kACR.RESULT_SUCCESS;
+      result.searchResult = Ci.nsIAutoCompleteResult.RESULT_SUCCESS;
       // If the user does not select anything, use the first entry:
       result.defaultIndex = 0;
     }
@@ -125,6 +133,5 @@ NewsAutoCompleteSearch.prototype = {
   stopSearch() {},
 
   // nsISupports
-
   QueryInterface: ChromeUtils.generateQI(["nsIAutoCompleteSearch"]),
 };

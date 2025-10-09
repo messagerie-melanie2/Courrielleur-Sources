@@ -1,7 +1,7 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
-// Tests L10nCache in UrlbarUtils.jsm.
+// Tests L10nCache in UrlbarUtils.sys.mjs.
 
 "use strict";
 
@@ -334,7 +334,6 @@ add_task(async function comprehensive() {
   // Ensure the cache is cleared after the app locale changes
   Assert.greater(cache.size(), 0, "The cache has messages in it.");
   Services.obs.notifyObservers(null, "intl:app-locales-changed");
-  await l10n.ready;
   Assert.equal(cache.size(), 0, "The cache is empty on app locale change");
 });
 

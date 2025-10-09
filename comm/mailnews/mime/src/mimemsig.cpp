@@ -5,6 +5,7 @@
 
 #include "modmimee.h"
 #include "mimemsig.h"
+#include "nsMailHeaders.h"
 #include "nspr.h"
 
 #include "prmem.h"
@@ -16,7 +17,6 @@
 #include "mimemoz2.h"
 #include "mimeeobj.h"
 #include "modmimee.h"  // for MimeConverterOutputCallback
-#include "mozilla/Attributes.h"
 
 #define MIME_SUPERCLASS mimeMultipartClass
 MimeDefClass(MimeMultipartSigned, MimeMultipartSignedClass,
@@ -35,9 +35,8 @@ static int MimeMultipartSigned_emit_child(MimeObject* obj);
 
 extern "C" MimeSuppressedCryptoClass mimeSuppressedCryptoClass;
 
-static int MimeMultipartSignedClassInitialize(MimeMultipartSignedClass* clazz) {
-  MimeObjectClass* oclass = (MimeObjectClass*)clazz;
-  MimeMultipartClass* mclass = (MimeMultipartClass*)clazz;
+static int MimeMultipartSignedClassInitialize(MimeObjectClass* oclass) {
+  MimeMultipartClass* mclass = (MimeMultipartClass*)oclass;
 
   oclass->initialize = MimeMultipartSigned_initialize;
   oclass->parse_line = MimeMultipartSigned_parse_line;
@@ -86,7 +85,7 @@ static void MimeMultipartSigned_cleanup(MimeObject* obj, bool finalizing_p) {
        around for the lifetime of the MIME object, so that we can get at the
        security info of sub-parts of the currently-displayed message. */
     ((MimeMultipartSignedClass*)obj->clazz)->crypto_free(sig->crypto_closure);
-    sig->crypto_closure = 0;
+    sig->crypto_closure = MimeClosure::zero();
   }
 
   if (sig->sig_decoder_data) {
@@ -330,7 +329,7 @@ static int MimeMultipartSigned_parse_line(const char* line, int32_t length,
        (Similar logic is in MimeLeafClass->parse_begin.)
        */
       {
-        MimeDecoderData* (*fn)(MimeConverterOutputCallback, void*) = 0;
+        MimeDecoderData* (*fn)(MimeConverterOutputCallback, MimeClosure) = 0;
         nsCString encoding;
         encoding.Adopt(MimeHeaders_get(
             sig->sig_hdrs, HEADER_CONTENT_TRANSFER_ENCODING, true, false));
@@ -340,9 +339,7 @@ static int MimeMultipartSigned_parse_line(const char* line, int32_t length,
           fn = &MimeB64DecoderInit;
         else if (!PL_strcasecmp(encoding.get(), ENCODING_QUOTED_PRINTABLE)) {
           sig->sig_decoder_data = MimeQPDecoderInit(
-              ((MimeConverterOutputCallback)(((MimeMultipartSignedClass*)
-                                                  obj->clazz)
-                                                 ->crypto_signature_hash)),
+              (((MimeMultipartSignedClass*)obj->clazz)->crypto_signature_hash),
               sig->crypto_closure);
           if (!sig->sig_decoder_data) return MIME_OUT_OF_MEMORY;
         } else if (!PL_strcasecmp(encoding.get(), ENCODING_UUENCODE) ||
@@ -353,11 +350,9 @@ static int MimeMultipartSigned_parse_line(const char* line, int32_t length,
         else if (!PL_strcasecmp(encoding.get(), ENCODING_YENCODE))
           fn = &MimeYDecoderInit;
         if (fn) {
-          sig->sig_decoder_data =
-              fn(((MimeConverterOutputCallback)(((MimeMultipartSignedClass*)
-                                                     obj->clazz)
-                                                    ->crypto_signature_hash)),
-                 sig->crypto_closure);
+          sig->sig_decoder_data = fn(
+              (((MimeMultipartSignedClass*)obj->clazz)->crypto_signature_hash),
+              sig->crypto_closure);
           if (!sig->sig_decoder_data) return MIME_OUT_OF_MEMORY;
         }
       }
@@ -540,6 +535,33 @@ static int MimeMultipartSigned_emit_child(MimeObject* obj) {
 
   NS_ASSERTION(sig->crypto_closure, "no crypto closure");
 
+  const char* my_address = mime_part_address(obj);
+  if (!strcmp(my_address, "1")) {
+    char* ct =
+        (sig->body_hdrs
+             ? MimeHeaders_get(sig->body_hdrs, HEADER_CONTENT_TYPE, true, false)
+             : 0);
+    char* ctp =
+        (sig->body_hdrs ? MimeHeaders_get(sig->body_hdrs, HEADER_CONTENT_TYPE,
+                                          false, false)
+                        : 0);
+    char* st =
+        ctp ? MimeHeaders_get_parameter(ctp, "smime-type", nullptr, nullptr)
+            : nullptr;
+
+    if (ct && st &&
+        (!PL_strcasecmp(ct, APPLICATION_XPKCS7_MIME) ||
+         !PL_strcasecmp(ct, APPLICATION_PKCS7_MIME)) &&
+        !PL_strcasecmp(st, "enveloped-data")) {
+      (((MimeMultipartSignedClass*)obj->clazz)->crypto_signature_ignore)(
+          ((MimeMultipartSigned*)obj)->crypto_closure);
+    }
+    PR_FREEIF(st);
+    PR_FREEIF(ctp);
+    PR_FREEIF(ct);
+  }
+  PR_Free((void*)my_address);
+
   /* Emit some HTML saying whether the signature was cool.
    But don't emit anything if in FO_QUOTE_MESSAGE mode.
    */
@@ -621,6 +643,7 @@ static int MimeMultipartSigned_emit_child(MimeObject* obj) {
         }
       }
     }
+    PR_Free(disposition);
   }
 
   // The js emitter wants to know about the newly created child.  Because
@@ -675,21 +698,15 @@ static int MimeMultipartSigned_emit_child(MimeObject* obj) {
     if (body->options->decompose_file_p &&
         !mime_typep(body, (MimeObjectClass*)&mimeMultipartClass) &&
         body->options->decompose_file_output_fn)
-      status =
-          MimePartBufferRead(sig->part_buffer,
-                             /* The (MimeConverterOutputCallback) cast is to
-                              turn the `void' argument into `MimeObject'. */
-                             ((MimeConverterOutputCallback)
-                                  body->options->decompose_file_output_fn),
-                             body->options->stream_closure);
+      status = MimePartBufferRead(sig->part_buffer,
+
+                                  body->options->decompose_file_output_fn,
+                                  body->options->stream_closure);
     else
 #endif /* MIME_DRAFTS */
 
-      status = MimePartBufferRead(
-          sig->part_buffer,
-          /* The (MimeConverterOutputCallback) cast is to turn the
-           `void' argument into `MimeObject'. */
-          ((MimeConverterOutputCallback)body->clazz->parse_buffer), body);
+      status = MimePartBufferRead(sig->part_buffer, body->clazz->parse_buffer,
+                                  MimeClosure(MimeClosure::isMimeObject, body));
     if (status < 0) return status;
   }
 

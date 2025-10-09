@@ -9,25 +9,68 @@
  */
 #include "test/peer_scenario/peer_scenario_client.h"
 
+#include <cstdint>
+#include <functional>
 #include <limits>
+#include <map>
 #include <memory>
+#include <string>
 #include <utility>
+#include <vector>
 
+#include "absl/container/inlined_vector.h"
 #include "absl/memory/memory.h"
-#include "api/audio_codecs/builtin_audio_decoder_factory.h"
-#include "api/audio_codecs/builtin_audio_encoder_factory.h"
+#include "api/audio_options.h"
+#include "api/candidate.h"
+#include "api/data_channel_interface.h"
+#include "api/environment/environment.h"
+#include "api/jsep.h"
+#include "api/make_ref_counted.h"
+#include "api/media_stream_interface.h"
+#include "api/peer_connection_interface.h"
+#include "api/rtc_error.h"
 #include "api/rtc_event_log/rtc_event_log_factory.h"
-#include "api/task_queue/default_task_queue_factory.h"
+#include "api/rtp_receiver_interface.h"
+#include "api/rtp_transceiver_interface.h"
+#include "api/scoped_refptr.h"
+#include "api/sequence_checker.h"
+#include "api/set_local_description_observer_interface.h"
+#include "api/set_remote_description_observer_interface.h"
 #include "api/test/create_time_controller.h"
+#include "api/test/network_emulation/network_emulation_interfaces.h"
+#include "api/test/network_emulation_manager.h"
 #include "api/transport/field_trial_based_config.h"
-#include "api/video_codecs/builtin_video_decoder_factory.h"
-#include "api/video_codecs/builtin_video_encoder_factory.h"
-#include "media/engine/webrtc_media_engine.h"
+#include "api/video/video_frame.h"
+#include "api/video/video_sink_interface.h"
+#include "api/video/video_source_interface.h"
+#include "api/video_codecs/scalability_mode.h"
+#include "api/video_codecs/sdp_video_format.h"
+#include "api/video_codecs/video_decoder.h"
+#include "api/video_codecs/video_decoder_factory.h"
+#include "api/video_codecs/video_decoder_factory_template.h"
+#include "api/video_codecs/video_decoder_factory_template_dav1d_adapter.h"
+#include "api/video_codecs/video_decoder_factory_template_libvpx_vp8_adapter.h"
+#include "api/video_codecs/video_decoder_factory_template_libvpx_vp9_adapter.h"
+#include "api/video_codecs/video_decoder_factory_template_open_h264_adapter.h"
+#include "api/video_codecs/video_encoder.h"
+#include "api/video_codecs/video_encoder_factory.h"
+#include "api/video_codecs/video_encoder_factory_template.h"
+#include "api/video_codecs/video_encoder_factory_template_libaom_av1_adapter.h"
+#include "api/video_codecs/video_encoder_factory_template_libvpx_vp8_adapter.h"
+#include "api/video_codecs/video_encoder_factory_template_libvpx_vp9_adapter.h"
+#include "api/video_codecs/video_encoder_factory_template_open_h264_adapter.h"
+#include "media/base/media_constants.h"
 #include "modules/audio_device/include/test_audio_device.h"
-#include "p2p/client/basic_port_allocator.h"
+#include "p2p/base/port_allocator.h"
+#include "pc/test/frame_generator_capturer_video_track_source.h"
+#include "rtc_base/checks.h"
+#include "rtc_base/logging.h"
+#include "rtc_base/thread.h"
+#include "test/create_frame_generator_capturer.h"
 #include "test/fake_decoder.h"
 #include "test/fake_vp8_encoder.h"
 #include "test/frame_generator_capturer.h"
+#include "test/logging/log_writer.h"
 
 namespace webrtc {
 namespace test {
@@ -97,7 +140,7 @@ class LambdaPeerConnectionObserver final : public PeerConnectionObserver {
       handler(candidates);
   }
   void OnAddTrack(rtc::scoped_refptr<RtpReceiverInterface> receiver,
-                  const std::vector<rtc::scoped_refptr<MediaStreamInterface> >&
+                  const std::vector<rtc::scoped_refptr<MediaStreamInterface>>&
                       streams) override {
     for (const auto& handler : handlers_->on_add_track)
       handler(receiver, streams);
@@ -168,26 +211,29 @@ class LambdaSetRemoteDescriptionObserver
 
 class FakeVideoEncoderFactory : public VideoEncoderFactory {
  public:
-  FakeVideoEncoderFactory(Clock* clock) : clock_(clock) {}
   std::vector<SdpVideoFormat> GetSupportedFormats() const override {
-    return {SdpVideoFormat("VP8")};
+    const absl::InlinedVector<webrtc::ScalabilityMode,
+                              webrtc::kScalabilityModeCount>
+        kSupportedScalabilityModes = {webrtc::ScalabilityMode::kL1T1,
+                                      webrtc::ScalabilityMode::kL1T2,
+                                      webrtc::ScalabilityMode::kL1T3};
+    return {
+        SdpVideoFormat(cricket::kVp8CodecName, {}, kSupportedScalabilityModes)};
   }
-  std::unique_ptr<VideoEncoder> CreateVideoEncoder(
-      const SdpVideoFormat& format) override {
+  std::unique_ptr<VideoEncoder> Create(const Environment& env,
+                                       const SdpVideoFormat& format) override {
     RTC_CHECK_EQ(format.name, "VP8");
-    return std::make_unique<FakeVp8Encoder>(clock_);
+    return std::make_unique<FakeVp8Encoder>(env);
   }
-
- private:
-  Clock* const clock_;
 };
+
 class FakeVideoDecoderFactory : public VideoDecoderFactory {
  public:
   std::vector<SdpVideoFormat> GetSupportedFormats() const override {
-    return {SdpVideoFormat("VP8")};
+    return {SdpVideoFormat::VP8()};
   }
-  std::unique_ptr<VideoDecoder> CreateVideoDecoder(
-      const SdpVideoFormat& format) override {
+  std::unique_ptr<VideoDecoder> Create(const Environment& env,
+                                       const SdpVideoFormat& format) override {
     return std::make_unique<FakeDecoder>();
   }
 };
@@ -237,17 +283,14 @@ PeerScenarioClient::PeerScenarioClient(
   pcf_deps.network_thread = manager->network_thread();
   pcf_deps.signaling_thread = signaling_thread_;
   pcf_deps.worker_thread = worker_thread_.get();
-  pcf_deps.call_factory =
-      CreateTimeControllerBasedCallFactory(net->time_controller());
+  pcf_deps.socket_factory = manager->socket_factory();
+  pcf_deps.network_manager = manager->ReleaseNetworkManager();
   pcf_deps.task_queue_factory =
       net->time_controller()->CreateTaskQueueFactory();
-  pcf_deps.event_log_factory =
-      std::make_unique<RtcEventLogFactory>(task_queue_factory_);
+  pcf_deps.event_log_factory = std::make_unique<RtcEventLogFactory>();
   pcf_deps.trials = std::make_unique<FieldTrialBasedConfig>();
 
-  cricket::MediaEngineDependencies media_deps;
-  media_deps.task_queue_factory = task_queue_factory_;
-  media_deps.adm = TestAudioDeviceModule::Create(
+  pcf_deps.adm = TestAudioDeviceModule::Create(
       task_queue_factory_,
       TestAudioDeviceModule::CreatePulsedNoiseCapturer(
           config.audio.pulsed_noise->amplitude *
@@ -255,22 +298,24 @@ PeerScenarioClient::PeerScenarioClient(
           config.audio.sample_rate, config.audio.channels),
       TestAudioDeviceModule::CreateDiscardRenderer(config.audio.sample_rate));
 
-  media_deps.audio_processing = AudioProcessingBuilder().Create();
   if (config.video.use_fake_codecs) {
-    media_deps.video_encoder_factory =
-        std::make_unique<FakeVideoEncoderFactory>(
-            net->time_controller()->GetClock());
-    media_deps.video_decoder_factory =
+    pcf_deps.video_encoder_factory =
+        std::make_unique<FakeVideoEncoderFactory>();
+    pcf_deps.video_decoder_factory =
         std::make_unique<FakeVideoDecoderFactory>();
   } else {
-    media_deps.video_encoder_factory = CreateBuiltinVideoEncoderFactory();
-    media_deps.video_decoder_factory = CreateBuiltinVideoDecoderFactory();
+    pcf_deps.video_encoder_factory =
+        std::make_unique<VideoEncoderFactoryTemplate<
+            LibvpxVp8EncoderTemplateAdapter, LibvpxVp9EncoderTemplateAdapter,
+            OpenH264EncoderTemplateAdapter, LibaomAv1EncoderTemplateAdapter>>();
+    pcf_deps.video_decoder_factory =
+        std::make_unique<VideoDecoderFactoryTemplate<
+            LibvpxVp8DecoderTemplateAdapter, LibvpxVp9DecoderTemplateAdapter,
+            OpenH264DecoderTemplateAdapter, Dav1dDecoderTemplateAdapter>>();
   }
-  media_deps.audio_encoder_factory = CreateBuiltinAudioEncoderFactory();
-  media_deps.audio_decoder_factory = CreateBuiltinAudioDecoderFactory();
-  media_deps.trials = pcf_deps.trials.get();
 
-  pcf_deps.media_engine = cricket::CreateMediaEngine(std::move(media_deps));
+  EnableMediaWithDefaultsAndTimeController(*net->time_controller(), pcf_deps);
+
   pcf_deps.fec_controller_factory = nullptr;
   pcf_deps.network_controller_factory = nullptr;
   pcf_deps.network_state_predictor_factory = nullptr;
@@ -281,10 +326,8 @@ PeerScenarioClient::PeerScenarioClient(
   pc_factory_->SetOptions(pc_options);
 
   PeerConnectionDependencies pc_deps(observer_.get());
-  pc_deps.allocator = std::make_unique<cricket::BasicPortAllocator>(
-      manager->network_manager(), manager->packet_socket_factory());
-  pc_deps.allocator->set_flags(pc_deps.allocator->flags() |
-                               cricket::PORTALLOCATOR_DISABLE_TCP);
+  config.rtc_config.port_allocator_config.flags |=
+      cricket::PORTALLOCATOR_DISABLE_TCP;
   peer_connection_ =
       pc_factory_
           ->CreatePeerConnectionOrError(config.rtc_config, std::move(pc_deps))
@@ -317,13 +360,14 @@ PeerScenarioClient::VideoSendTrack PeerScenarioClient::CreateVideo(
     VideoSendTrackConfig config) {
   RTC_DCHECK_RUN_ON(signaling_thread_);
   VideoSendTrack res;
-  auto capturer = FrameGeneratorCapturer::Create(clock(), *task_queue_factory_,
-                                                 config.generator);
+  auto capturer = CreateFrameGeneratorCapturer(clock(), *task_queue_factory_,
+                                               config.generator);
   res.capturer = capturer.get();
   capturer->Init();
   res.source = rtc::make_ref_counted<FrameGeneratorCapturerVideoTrackSource>(
       std::move(capturer), config.screencast);
-  auto track = pc_factory_->CreateVideoTrack(track_id, res.source.get());
+  res.source->Start();
+  auto track = pc_factory_->CreateVideoTrack(res.source, track_id);
   res.track = track.get();
   res.sender =
       peer_connection_->AddTrack(track, {kCommonStreamId}).MoveValue().get();
@@ -343,7 +387,8 @@ void PeerScenarioClient::CreateAndSetSdp(
   RTC_DCHECK_RUN_ON(signaling_thread_);
   peer_connection_->CreateOffer(
       rtc::make_ref_counted<LambdaCreateSessionDescriptionObserver>(
-          [=](std::unique_ptr<SessionDescriptionInterface> offer) {
+          [this, munge_offer,
+           offer_handler](std::unique_ptr<SessionDescriptionInterface> offer) {
             RTC_DCHECK_RUN_ON(signaling_thread_);
             if (munge_offer) {
               munge_offer(offer.get());
@@ -363,42 +408,55 @@ void PeerScenarioClient::CreateAndSetSdp(
 
 void PeerScenarioClient::SetSdpOfferAndGetAnswer(
     std::string remote_offer,
+    std::function<void()> remote_description_set,
     std::function<void(std::string)> answer_handler) {
   if (!signaling_thread_->IsCurrent()) {
     signaling_thread_->PostTask(
-        [=] { SetSdpOfferAndGetAnswer(remote_offer, answer_handler); });
+        [this, remote_offer, remote_description_set, answer_handler] {
+          SetSdpOfferAndGetAnswer(remote_offer, remote_description_set,
+                                  answer_handler);
+        });
     return;
   }
   RTC_DCHECK_RUN_ON(signaling_thread_);
   peer_connection_->SetRemoteDescription(
       CreateSessionDescription(SdpType::kOffer, remote_offer),
-      rtc::make_ref_counted<LambdaSetRemoteDescriptionObserver>([=](RTCError) {
-        RTC_DCHECK_RUN_ON(signaling_thread_);
-        peer_connection_->CreateAnswer(
-            rtc::make_ref_counted<LambdaCreateSessionDescriptionObserver>(
-                [=](std::unique_ptr<SessionDescriptionInterface> answer) {
-                  RTC_DCHECK_RUN_ON(signaling_thread_);
-                  std::string sdp_answer;
-                  answer->ToString(&sdp_answer);
-                  RTC_LOG(LS_INFO) << sdp_answer;
-                  peer_connection_->SetLocalDescription(
-                      std::move(answer),
-                      rtc::make_ref_counted<LambdaSetLocalDescriptionObserver>(
-                          [answer_handler, sdp_answer](RTCError) {
-                            answer_handler(sdp_answer);
-                          }));
-                })
-                .get(),
-            PeerConnectionInterface::RTCOfferAnswerOptions());
-      }));
+      rtc::make_ref_counted<LambdaSetRemoteDescriptionObserver>(
+          [this, remote_description_set, answer_handler](RTCError) {
+            RTC_DCHECK_RUN_ON(signaling_thread_);
+            if (remote_description_set) {
+              // Allow the caller to modify transceivers
+              // before creating the answer.
+              remote_description_set();
+            }
+            peer_connection_->CreateAnswer(
+                rtc::make_ref_counted<LambdaCreateSessionDescriptionObserver>(
+                    [this, answer_handler](
+                        std::unique_ptr<SessionDescriptionInterface> answer) {
+                      RTC_DCHECK_RUN_ON(signaling_thread_);
+                      std::string sdp_answer;
+                      answer->ToString(&sdp_answer);
+                      RTC_LOG(LS_INFO) << sdp_answer;
+                      peer_connection_->SetLocalDescription(
+                          std::move(answer),
+                          rtc::make_ref_counted<
+                              LambdaSetLocalDescriptionObserver>(
+                              [answer_handler, sdp_answer](RTCError) {
+                                answer_handler(sdp_answer);
+                              }));
+                    })
+                    .get(),
+                PeerConnectionInterface::RTCOfferAnswerOptions());
+          }));
 }
 
 void PeerScenarioClient::SetSdpAnswer(
     std::string remote_answer,
     std::function<void(const SessionDescriptionInterface&)> done_handler) {
   if (!signaling_thread_->IsCurrent()) {
-    signaling_thread_->PostTask(
-        [=] { SetSdpAnswer(remote_answer, done_handler); });
+    signaling_thread_->PostTask([this, remote_answer, done_handler] {
+      SetSdpAnswer(remote_answer, done_handler);
+    });
     return;
   }
   RTC_DCHECK_RUN_ON(signaling_thread_);

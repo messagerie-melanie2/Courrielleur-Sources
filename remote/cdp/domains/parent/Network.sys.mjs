@@ -17,7 +17,6 @@ const LOAD_CAUSE_STRINGS = {
   [Ci.nsIContentPolicy.TYPE_SUBDOCUMENT]: "Subdocument",
   [Ci.nsIContentPolicy.TYPE_PING]: "Ping",
   [Ci.nsIContentPolicy.TYPE_XMLHTTPREQUEST]: "Xhr",
-  [Ci.nsIContentPolicy.TYPE_OBJECT_SUBREQUEST]: "ObjectSubdoc",
   [Ci.nsIContentPolicy.TYPE_DTD]: "Dtd",
   [Ci.nsIContentPolicy.TYPE_FONT]: "Font",
   [Ci.nsIContentPolicy.TYPE_MEDIA]: "Media",
@@ -146,12 +145,10 @@ export class Network extends Domain {
    *
    * Depending on the backend support, will return detailed cookie information in the cookies field.
    *
-   * @param {object} options
-   *
    * @returns {Array<Cookie>}
    *     Array of cookie objects.
    */
-  async getAllCookies(options = {}) {
+  async getAllCookies() {
     const cookies = [];
     for (const cookie of Services.cookies.cookies) {
       cookies.push(_buildCookie(cookie));
@@ -275,13 +272,11 @@ export class Network extends Domain {
     }
 
     // Retrieve host. Check domain first because it has precedence.
-    let hostname = cookie.domain || "";
-    let cookieURL;
+    let hostname = cookie.domain ?? "";
     let schemeType = Ci.nsICookie.SCHEME_UNSET;
-    if (!hostname.length) {
-      try {
-        cookieURL = new URL(cookie.url);
-      } catch (e) {
+    if (!hostname) {
+      let cookieURL = URL.parse(cookie.url);
+      if (!cookieURL) {
         return { success: false };
       }
 

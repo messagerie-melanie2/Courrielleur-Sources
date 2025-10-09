@@ -5,6 +5,7 @@
 use std::cmp;
 use std::collections::HashMap;
 
+use malloc_size_of_derive::MallocSizeOf;
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 
@@ -36,15 +37,15 @@ fn linear_range(min: u64, max: u64, count: usize) -> Vec<u64> {
 ///
 /// Buckets are pre-computed at instantiation with a linear  distribution from `min` to `max`
 /// and `bucket_count` buckets.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, MallocSizeOf)]
 pub struct PrecomputedLinear {
     // Don't serialize the (potentially large) array of ranges, instead compute them on first
     // access.
     #[serde(skip)]
-    bucket_ranges: OnceCell<Vec<u64>>,
-    min: u64,
-    max: u64,
-    bucket_count: usize,
+    pub(crate) bucket_ranges: OnceCell<Vec<u64>>,
+    pub(crate) min: u64,
+    pub(crate) max: u64,
+    pub(crate) bucket_count: usize,
 }
 
 impl Bucketing for PrecomputedLinear {
@@ -167,12 +168,12 @@ mod test {
     fn accumulate_large_numbers() {
         let mut hist = Histogram::linear(1, 500, 10);
 
-        hist.accumulate(u64::max_value());
-        hist.accumulate(u64::max_value());
+        hist.accumulate(u64::MAX);
+        hist.accumulate(u64::MAX);
 
         assert_eq!(2, hist.count());
         // Saturate before overflowing
-        assert_eq!(u64::max_value(), hist.sum());
+        assert_eq!(u64::MAX, hist.sum());
         assert_eq!(2, hist.values[&500]);
     }
 }

@@ -33,13 +33,6 @@
 #    define MOZ_THREADSTACKHELPER_NATIVE_STACK
 #  endif
 
-// Android x86 builds consistently crash in the Background Hang Reporter. bug
-// 1368520.
-#  if defined(__ANDROID__)
-#    undef MOZ_THREADSTACKHELPER_PROFILING_STACK
-#    undef MOZ_THREADSTACKHELPER_NATIVE_STACK
-#  endif
-
 namespace mozilla {
 
 /**
@@ -92,7 +85,8 @@ class ThreadStackHelper : public ProfilerStackCollector {
   virtual void SetIsMainThread() override;
   virtual void CollectNativeLeafAddr(void* aAddr) override;
   virtual void CollectJitReturnAddr(void* aAddr) override;
-  virtual void CollectWasmFrame(const char* aLabel) override;
+  virtual void CollectWasmFrame(JS::ProfilingCategoryPair aCategory,
+                                const char* aLabel) override;
   virtual void CollectProfilingStackFrame(
       const js::ProfilingStackFrame& aEntry) override;
 

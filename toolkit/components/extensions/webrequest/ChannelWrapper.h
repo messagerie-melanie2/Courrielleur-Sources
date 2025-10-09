@@ -21,6 +21,7 @@
 #include "mozilla/WeakPtr.h"
 
 #include "mozilla/DOMEventTargetHelper.h"
+#include "nsAtomHashKeys.h"
 #include "nsCOMPtr.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsIChannel.h"
@@ -29,17 +30,12 @@
 #include "nsIStreamListener.h"
 #include "nsIRemoteTab.h"
 #include "nsIThreadRetargetableStreamListener.h"
-#include "nsPointerHashKeys.h"
 #include "nsInterfaceHashtable.h"
 #include "nsIWeakReferenceUtils.h"
 #include "nsWrapperCache.h"
 
-#define NS_CHANNELWRAPPER_IID                        \
-  {                                                  \
-    0xc06162d2, 0xb803, 0x43b4, {                    \
-      0xaa, 0x31, 0xcf, 0x69, 0x7f, 0x93, 0x68, 0x1c \
-    }                                                \
-  }
+#define NS_CHANNELWRAPPER_IID \
+  {0xc06162d2, 0xb803, 0x43b4, {0xaa, 0x31, 0xcf, 0x69, 0x7f, 0x93, 0x68, 0x1c}}
 
 class nsILoadContext;
 class nsITraceableChannel;
@@ -62,6 +58,11 @@ namespace detail {
 // QueryInterface the channel every time we touch it, we store separate
 // nsIChannel and nsIHttpChannel weak references, and check that the WeakPtr
 // is alive before returning it.
+//
+// Although the class is designed for use with generic nsIChannel instances,
+// the dependency on weak refs implies that we can only wrap channels that
+// implement nsISupportsWeakReference. In practice, only nsHttpChannel meets
+// that requirement.
 //
 // This holder class prevents us from accidentally touching the weak pointer
 // members directly from our ChannelWrapper class.
@@ -118,7 +119,7 @@ class ChannelWrapper final : public DOMEventTargetHelper,
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(ChannelWrapper, DOMEventTargetHelper)
 
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_CHANNELWRAPPER_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_CHANNELWRAPPER_IID)
 
   void Die();
 
@@ -150,7 +151,8 @@ class ChannelWrapper final : public DOMEventTargetHelper,
                                 nsIRemoteTab* aBrowserParent);
 
   already_AddRefed<nsITraceableChannel> GetTraceableChannel(
-      nsAtom* aAddonId, dom::ContentParent* aContentParent) const;
+      const WebExtensionPolicy& aAddon,
+      dom::ContentParent* aContentParent) const;
 
   void GetMethod(nsCString& aRetVal) const;
 
@@ -172,7 +174,7 @@ class ChannelWrapper final : public DOMEventTargetHelper,
   IMPL_EVENT_HANDLER(start);
   IMPL_EVENT_HANDLER(stop);
 
-  already_AddRefed<nsIURI> FinalURI() const;
+  already_AddRefed<nsIURI> GetFinalURI() const;
 
   void GetFinalURL(nsString& aRetVal) const;
 
@@ -199,8 +201,6 @@ class ChannelWrapper final : public DOMEventTargetHelper,
   bool IsServiceWorkerScript() const;
 
   static bool IsServiceWorkerScript(const nsCOMPtr<nsIChannel>& aChannel);
-
-  bool IsSystemLoad() const;
 
   void GetOriginURL(nsCString& aRetVal) const;
 
@@ -320,14 +320,13 @@ class ChannelWrapper final : public DOMEventTargetHelper,
   bool mSuspended = false;
   bool mResponseStarted = false;
 
-  nsInterfaceHashtable<nsPtrHashKey<const nsAtom>, nsIRemoteTab> mAddonEntries;
+  nsInterfaceHashtable<nsAtomHashKey, nsIRemoteTab> mAddonEntries;
 
   // The text for the "Extension Suspend" marker, set from the Suspend method
   // when called for the first time and then cleared on the Resume method.
   nsCString mSuspendedMarkerText = VoidCString();
 
-  class RequestListener final : public nsIStreamListener,
-                                public nsIMultiPartChannelListener,
+  class RequestListener final : public nsIMultiPartChannelListener,
                                 public nsIThreadRetargetableStreamListener {
    public:
     NS_DECL_THREADSAFE_ISUPPORTS
@@ -349,8 +348,6 @@ class ChannelWrapper final : public DOMEventTargetHelper,
     nsCOMPtr<nsIStreamListener> mOrigStreamListener;
   };
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(ChannelWrapper, NS_CHANNELWRAPPER_IID)
 
 }  // namespace extensions
 }  // namespace mozilla

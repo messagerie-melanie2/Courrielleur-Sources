@@ -22,9 +22,10 @@ const browserActionFor = extensionId =>
  * Wrapper element for elements whose position can be customized.
  *
  * Template ID: #unifiedToolbarCustomizableElementTemplate
- * Attributes:
- * - item-id: ID of the customizable item this represents. Not observed.
- * - disabled: Gets passed on to the live content.
+ *
+ * @tagname customizable-element
+ * @attribute {string} item-id - ID of the customizable item this represents. Not observed.
+ * @attribute {boolean} disabled - Gets passed on to the live content.
  */
 export default class CustomizableElement extends HTMLLIElement {
   static get observedAttributes() {
@@ -187,23 +188,22 @@ export default class CustomizableElement extends HTMLLIElement {
     previewLabel.title = labelText;
     const { IconDetails } = lazy.ExtensionParent;
     if (extension.manifest.icons) {
-      let { icon } = IconDetails.getPreferredIcon(
+      const { icon } = IconDetails.getPreferredIcon(
         extension.manifest.icons,
         extension,
         16
       );
-      let { icon: icon2x } = IconDetails.getPreferredIcon(
+      const { icon: icon2x } = IconDetails.getPreferredIcon(
         extension.manifest.icons,
         extension,
         32
       );
       this.style.setProperty(
         "--webextension-icon",
-        `url("${lazy.ExtensionParent.IconDetails.escapeUrl(icon)}")`
-      );
-      this.style.setProperty(
-        "--webextension-icon-2x",
-        `url("${lazy.ExtensionParent.IconDetails.escapeUrl(icon2x)}")`
+        `image-set(
+          url("${lazy.ExtensionParent.IconDetails.escapeUrl(icon)}"),
+          url("${lazy.ExtensionParent.IconDetails.escapeUrl(icon2x)}") 2x
+        )`
       );
     }
   }

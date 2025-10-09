@@ -8,12 +8,6 @@ async function pause() {
   return new Promise(resolve => setTimeout(resolve, 500));
 }
 
-// This test tends to trigger a race in the fullscreen time telemetry,
-// where the fullscreen enter and fullscreen exit events (which use the
-// same histogram ID) overlap. That causes TelemetryStopwatch to log an
-// error.
-SimpleTest.ignoreAllUncaughtExceptions(true);
-
 const IFRAME_ID = "testIframe";
 
 async function testWindowFocus(isPopup, iframeID) {
@@ -27,12 +21,25 @@ async function testWindowFocus(isPopup, iframeID) {
   await waitForFocus(tab.linkedBrowser);
 
   info("Entering full-screen");
-  await changeFullscreen(tab.linkedBrowser, true);
+  await DOMFullscreenTestUtils.changeFullscreen(tab.linkedBrowser, true);
 
-  await testExpectFullScreenExit(tab.linkedBrowser, true, async () => {
-    info("Calling window.focus()");
-    await jsWindowFocus(tab.linkedBrowser, iframeID);
-  });
+  await testExpectFullScreenExit(
+    tab.linkedBrowser,
+    true,
+    async () => {
+      info("Calling window.focus()");
+      await jsWindowFocus(tab.linkedBrowser, iframeID);
+    },
+    () => {
+      // Async fullscreen transitions will swallow the repaint of the tab,
+      // preventing us from detecting that we've successfully changed
+      // fullscreen. Supply an action to switch back to the tab after the
+      // fullscreen event has been received, which will ensure that the
+      // tab is repainted when the DOMFullscreenChild is listening for it.
+      info("Calling switchTab()");
+      BrowserTestUtils.switchTab(gBrowser, tab);
+    }
+  );
 
   // Cleanup
   if (isPopup) {
@@ -54,20 +61,33 @@ async function testWindowElementFocus(isPopup) {
   await waitForFocus(tab.linkedBrowser);
 
   info("Entering full-screen");
-  await changeFullscreen(tab.linkedBrowser, true);
+  await DOMFullscreenTestUtils.changeFullscreen(tab.linkedBrowser, true);
 
-  await testExpectFullScreenExit(tab.linkedBrowser, false, async () => {
-    info("Calling element.focus() on popup");
-    await ContentTask.spawn(tab.linkedBrowser, {}, async args => {
-      await content.wrappedJSObject.sendMessage(
-        content.wrappedJSObject.openedWindow,
-        "elementfocus"
-      );
-    });
-  });
+  await testExpectFullScreenExit(
+    tab.linkedBrowser,
+    false,
+    async () => {
+      info("Calling element.focus() on popup");
+      await ContentTask.spawn(tab.linkedBrowser, {}, async () => {
+        await content.wrappedJSObject.sendMessage(
+          content.wrappedJSObject.openedWindow,
+          "elementfocus"
+        );
+      });
+    },
+    () => {
+      // Async fullscreen transitions will swallow the repaint of the tab,
+      // preventing us from detecting that we've successfully changed
+      // fullscreen. Supply an action to switch back to the tab after the
+      // fullscreen event has been received, which will ensure that the
+      // tab is repainted when the DOMFullscreenChild is listening for it.
+      info("Calling switchTab()");
+      BrowserTestUtils.switchTab(gBrowser, tab);
+    }
+  );
 
   // Cleanup
-  await changeFullscreen(tab.linkedBrowser, false);
+  await DOMFullscreenTestUtils.changeFullscreen(tab.linkedBrowser, false);
   if (isPopup) {
     openedWindow.close();
   } else {

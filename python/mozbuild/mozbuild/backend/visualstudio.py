@@ -8,7 +8,6 @@
 import errno
 import os
 import re
-import sys
 import uuid
 from pathlib import Path
 from xml.dom import getDOMImplementation
@@ -35,8 +34,6 @@ MSNATVIS_NAMESPACE = "http://schemas.microsoft.com/vstudio/debugger/natvis/2010"
 
 
 def get_id(name):
-    if sys.version_info[0] == 2:
-        name = name.encode("utf-8")
     return str(uuid.uuid5(uuid.NAMESPACE_URL, name)).upper()
 
 
@@ -292,7 +289,7 @@ class VisualStudioBackend(CommonBackend):
                 for line in sfh:
                     if line.startswith(b"VisualStudioVersion = "):
                         vs_version = line.split(b" = ", 1)[1].strip()
-        except IOError as e:
+        except OSError as e:
             if e.errno != errno.ENOENT:
                 raise
 
@@ -441,7 +438,6 @@ class VisualStudioBackend(CommonBackend):
     def _create_natvis_type(
         self, doc, visualizer, name, displayString, stringView=None
     ):
-
         t = visualizer.appendChild(doc.createElement("Type"))
         t.setAttribute("Name", name)
 
@@ -593,7 +589,6 @@ class VisualStudioBackend(CommonBackend):
         headers=[],
         sources=[],
     ):
-
         impl = getDOMImplementation()
         doc = impl.createDocument(MSBUILD_NAMESPACE, "Project", None)
 

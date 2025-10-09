@@ -23,6 +23,8 @@ bool KeyAlgorithmProxy::WriteStructuredClone(
   switch (mType) {
     case AES:
       return JS_WriteUint32Pair(aWriter, mAes.mLength, 0);
+    case KDF:
+      return true;
     case HMAC:
       return JS_WriteUint32Pair(aWriter, mHmac.mLength, 0) &&
              StructuredCloneHolder::WriteString(aWriter, mHmac.mHash.mName);
@@ -33,6 +35,8 @@ bool KeyAlgorithmProxy::WriteStructuredClone(
     }
     case EC:
       return StructuredCloneHolder::WriteString(aWriter, mEc.mNamedCurve);
+    case OKP:
+      return true;
   }
 
   return false;
@@ -62,6 +66,10 @@ bool KeyAlgorithmProxy::ReadStructuredClone(JSStructuredCloneReader* aReader) {
       mAes.mName = mName;
       return true;
     }
+    case KDF:
+      mType = KDF;
+      mKDF.mName = mName;
+      return true;
     case HMAC: {
       mType = HMAC;
 
@@ -97,6 +105,12 @@ bool KeyAlgorithmProxy::ReadStructuredClone(JSStructuredCloneReader* aReader) {
       }
 
       mEc.mName = mName;
+      return true;
+    }
+
+    case OKP: {
+      mType = OKP;
+      mEd.mName = mName;
       return true;
     }
   }
@@ -220,6 +234,10 @@ nsString KeyAlgorithmProxy::JwkAlg() const {
     if (curveName.EqualsLiteral(WEBCRYPTO_NAMED_CURVE_P521)) {
       return NS_LITERAL_STRING_FROM_CSTRING(JWK_ALG_ECDSA_P_521);
     }
+  }
+
+  if (mName.EqualsLiteral(WEBCRYPTO_ALG_ED25519)) {
+    return NS_LITERAL_STRING_FROM_CSTRING(JWK_ALG_ED25519);
   }
 
   return nsString();

@@ -22,11 +22,11 @@ addAccessibleTask(
     let n1 = getNativeInterface(accDoc, "n1");
     let n1Label = n1.getAttributeValue("AXTitleUIElement");
     // XXX: In Safari the label is an AXText with an AXValue,
-    // here it is an AXGroup witth an AXTitle
-    is(n1Label.getAttributeValue("AXTitle"), "Label");
+    // we emulate that so VoiceOver does not speak the label twice.
+    is(n1Label.getAttributeValue("AXTitle"), "");
 
     let n2 = getNativeInterface(accDoc, "n2");
-    is(n2.getAttributeValue("AXDescription"), "TwoLabels");
+    is(n2.getAttributeValue("AXDescription"), "Two Labels");
 
     let n3 = getNativeInterface(accDoc, "n3");
     is(n3.getAttributeValue("AXDescription"), "ARIA Label");

@@ -17,6 +17,7 @@
 !define AppRegNameMail        "Thunderbird"
 !define AppRegNameNews        "Thunderbird (News)"
 !define AppRegNameCalendar    "Thunderbird (Calendar)"
+!define ToastAumidPrefix      "@MOZ_TOAST_APP_NAME@Toast-"
 
 !define ClientsRegName        "Mozilla Thunderbird"
 
@@ -26,25 +27,28 @@
 !define BrandFullName         "${BrandFullNameInternal}"
 !endif
 
-# Due to official and beta using the same branding (and`thus the same install
-# directory), this is used to differentiate between them.
+!if "@MOZ_UPDATE_CHANNEL@" == ""
+!define UpdateChannel "Unknown"
+!else
+!define UpdateChannel "@MOZ_UPDATE_CHANNEL@"
+!endif
+
 !if "@MOZ_UPDATE_CHANNEL@" == "beta"
-!undef BrandFullName
-!define BrandFullName         "${BrandFullNameInternal} Beta"
 # NO_INSTDIR_FROM_REG is defined for Beta to prevent finding a non-default
 # installation directory in the registry and using that as the default. This
 # prevents Beta releases built with official branding from finding an existing
 # install of an official release and defaulting to its installation directory.
+# Beta has it's own branding since bug 1845794.
 !define NO_INSTDIR_FROM_REG
 !endif
 !define InstDirName           "${BrandFullName}"
 
 !define CERTIFICATE_NAME            "Mozilla Corporation"
-!define CERTIFICATE_ISSUER          "DigiCert SHA2 Assured ID Code Signing CA"
+!define CERTIFICATE_ISSUER          "DigiCert Trusted G4 Code Signing RSA4096 SHA384 2021 CA1"
 ; Changing the name or issuer requires us to have both the old and the new
 ;  in the registry at the same time, temporarily.
 !define CERTIFICATE_NAME_PREVIOUS   "Mozilla Corporation"
-!define CERTIFICATE_ISSUER_PREVIOUS "DigiCert Assured ID Code Signing CA-1"
+!define CERTIFICATE_ISSUER_PREVIOUS "DigiCert SHA2 Assured ID Code Signing CA"
 
 # ARCH is used when it is necessary to differentiate the x64 registry keys from
 # the x86 registry keys (e.g. the uninstall registry key).
@@ -55,10 +59,10 @@
 !define MinSupportedVer "Microsoft Windows 10 for ARM"
 #else
 !define ARCH "x64"
-!define MinSupportedVer "Microsoft Windows 7 x64"
+!define MinSupportedVer "Microsoft Windows 10 x64"
 #endif
 #else
-!define MinSupportedVer "Microsoft Windows 7"
+!define MinSupportedVer "Microsoft Windows 10"
 !define ARCH "x86"
 #endif
 

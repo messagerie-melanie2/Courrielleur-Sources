@@ -2,21 +2,17 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   AsyncShutdown: "resource://gre/modules/AsyncShutdown.sys.mjs",
   CommonUtils: "resource://services-common/utils.sys.mjs",
+  IDBHelpers: "resource://services-settings/IDBHelpers.sys.mjs",
+  ObjectUtils: "resource://gre/modules/ObjectUtils.sys.mjs",
   Utils: "resource://services-settings/Utils.sys.mjs",
 });
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  IDBHelpers: "resource://services-settings/IDBHelpers.jsm",
-  ObjectUtils: "resource://gre/modules/ObjectUtils.jsm",
-});
-XPCOMUtils.defineLazyGetter(lazy, "console", () => lazy.Utils.log);
+ChromeUtils.defineLazyGetter(lazy, "console", () => lazy.Utils.log);
 
 /**
  * Database is a tiny wrapper with the objective
@@ -237,25 +233,65 @@ export class Database {
   }
 
   async saveAttachment(attachmentId, attachment) {
+    return await this.saveAttachments([[attachmentId, attachment]]);
+  }
+
+  async saveAttachments(idsAndBlobs) {
     try {
       await executeIDB(
         "attachments",
         store => {
-          if (attachment) {
-            store.put({ cid: this.identifier, attachmentId, attachment });
-          } else {
-            store.delete([this.identifier, attachmentId]);
+          for (const [attachmentId, attachment] of idsAndBlobs) {
+            if (attachment) {
+              store.put({ cid: this.identifier, attachmentId, attachment });
+            } else {
+              store.delete([this.identifier, attachmentId]);
+            }
           }
         },
-        { desc: "saveAttachment(" + attachmentId + ") in " + this.identifier }
+        {
+          desc:
+            "saveAttachments(<" +
+            idsAndBlobs.length +
+            " items>) in " +
+            this.identifier,
+        }
       );
     } catch (e) {
       throw new lazy.IDBHelpers.IndexedDBError(
         e,
-        "saveAttachment()",
+        "saveAttachments()",
         this.identifier
       );
     }
+  }
+
+  async hasAttachments() {
+    let count = 0;
+    try {
+      const range = IDBKeyRange.bound(
+        [this.identifier],
+        [this.identifier, []],
+        false,
+        true
+      );
+      await executeIDB(
+        "attachments",
+        store => {
+          store.count(range).onsuccess = e => {
+            count = e.target.result;
+          };
+        },
+        { mode: "readonly" }
+      );
+    } catch (e) {
+      throw new lazy.IDBHelpers.IndexedDBError(
+        e,
+        "hasAttachments()",
+        this.identifier
+      );
+    }
+    return count > 0;
   }
 
   /**
@@ -305,8 +341,6 @@ export class Database {
             request.onsuccess = e => resolve(e.target.result);
             request.onerror = e => reject(e);
           });
-
-          console.error("allRecords", allRecords);
 
           // Compare known records IDs to those stored along the attachments.
           const currentRecordsIDs = new Set(allRecords.map(r => r.id));

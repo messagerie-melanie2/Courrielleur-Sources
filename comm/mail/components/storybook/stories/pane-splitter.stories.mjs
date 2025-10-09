@@ -3,10 +3,12 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { html } from "lit";
-import "mail/base/content/widgets/pane-splitter.js"; //eslint-disable-line import/no-unassigned-import
+import "mail/base/content/widgets/pane-splitter.js";
 
 export default {
   title: "Widgets/Pane Splitter",
+  component: "pane-splitter",
+  tags: ["autodocs"],
   argTypes: {
     resizeDirection: {
       options: ["", "vertical", "horizontal"],
@@ -30,8 +32,8 @@ const Template = ({ resizeDirection, collapseWidth, collapseHeight }) => html`
       grid-template-${
         resizeDirection === "horizontal" ? "columns" : "rows"
       }: minmax(auto, var(--splitter-${
-  resizeDirection === "horizontal" ? "width" : "height"
-})) 0 auto;
+        resizeDirection === "horizontal" ? "width" : "height"
+      })) 0 auto;
       width: 500px;
       height: 500px;
       margin: 1em;

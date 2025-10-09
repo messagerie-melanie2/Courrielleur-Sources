@@ -1,8 +1,7 @@
-/* eslint no-console: "off" */
-
-import * as fs from 'fs';
+/* eslint-disable no-console, n/no-restricted-import */
 
 import { dataCache } from '../framework/data_cache.js';
+import { getResourcePath, setBaseResourcePath } from '../framework/resources.js';
 import { globalTestConfig } from '../framework/test_config.js';
 import { DefaultTestFileLoader } from '../internal/file_loader.js';
 import { prettyPrintLog } from '../internal/logging/log_message.js';
@@ -11,7 +10,7 @@ import { LiveTestCaseResult } from '../internal/logging/result.js';
 import { parseQuery } from '../internal/query/parseQuery.js';
 import { parseExpectationsForTestQuery } from '../internal/query/query.js';
 import { Colors } from '../util/colors.js';
-import { setGPUProvider } from '../util/navigator_gpu.js';
+import { setDefaultRequestAdapterOptions, setGPUProvider } from '../util/navigator_gpu.js';
 import { assert, unreachable } from '../util/util.js';
 
 import sys from './helper/sys.js';
@@ -22,19 +21,30 @@ function usage(rc: number): never {
   tools/run_${sys.type} 'unittests:*' 'webgpu:buffers,*'
 Options:
   --colors                  Enable ANSI colors in output.
+  --compat                  Runs tests in compatibility mode.
   --coverage                Emit coverage data.
   --verbose                 Print result/log of every test as it runs.
   --list                    Print all testcase names that match the given query and exit.
+  --list-unimplemented      Print all unimplemented tests
   --debug                   Include debug messages in logging.
   --print-json              Print the complete result JSON in the output.
   --expectations            Path to expectations file.
   --gpu-provider            Path to node module that provides the GPU implementation.
   --gpu-provider-flag       Flag to set on the gpu-provider as <flag>=<value>
   --unroll-const-eval-loops Unrolls loops in constant-evaluation shader execution tests
+  --enforce-default-limits  Enforce the default limits (note: powerPreference tests may fail)
+  --force-fallback-adapter  Force a fallback adapter
+  --log-to-websocket        Log to a websocket
   --quiet                   Suppress summary information in output
 `);
   return sys.exit(rc);
 }
+
+if (!sys.existsSync('src/common/runtime/cmdline.ts')) {
+  console.log('Must be run from repository root');
+  usage(1);
+}
+setBaseResourcePath('out-node/resources');
 
 // The interface that exposes creation of the GPU, and optional interface to code coverage.
 interface GPUProviderModule {
@@ -59,12 +69,10 @@ Colors.enabled = false;
 let verbose = false;
 let emitCoverage = false;
 let listMode: listModes = 'none';
-let debug = false;
 let printJSON = false;
 let quiet = false;
 let loadWebGPUExpectations: Promise<unknown> | undefined = undefined;
 let gpuProviderModule: GPUProviderModule | undefined = undefined;
-let dataPath: string | undefined = undefined;
 
 const queries: string[] = [];
 const gpuProviderFlags: string[] = [];
@@ -82,9 +90,7 @@ for (let i = 0; i < sys.args.length; ++i) {
     } else if (a === '--list-unimplemented') {
       listMode = 'unimplemented';
     } else if (a === '--debug') {
-      debug = true;
-    } else if (a === '--data') {
-      dataPath = sys.args[++i];
+      globalTestConfig.enableDebugLogs = true;
     } else if (a === '--print-json') {
       printJSON = true;
     } else if (a === '--expectations') {
@@ -99,6 +105,16 @@ for (let i = 0; i < sys.args.length; ++i) {
       quiet = true;
     } else if (a === '--unroll-const-eval-loops') {
       globalTestConfig.unrollConstEvalLoops = true;
+    } else if (a === '--compat') {
+      globalTestConfig.compatibility = true;
+    } else if (a === '--force-fallback-adapter') {
+      globalTestConfig.forceFallbackAdapter = true;
+    } else if (a === '--enforce-default-limits') {
+      globalTestConfig.enforceDefaultLimits = true;
+    } else if (a === '--block-all-features') {
+      globalTestConfig.blockAllFeatures = true;
+    } else if (a === '--log-to-websocket') {
+      globalTestConfig.logToWebSocket = true;
     } else {
       console.log('unrecognized flag: ', a);
       usage(1);
@@ -109,6 +125,13 @@ for (let i = 0; i < sys.args.length; ++i) {
 }
 
 let codeCoverage: CodeCoverageProvider | undefined = undefined;
+
+if (globalTestConfig.compatibility || globalTestConfig.forceFallbackAdapter) {
+  setDefaultRequestAdapterOptions({
+    featureLevel: globalTestConfig.compatibility ? 'compatibility' : 'core',
+    forceFallbackAdapter: globalTestConfig.forceFallbackAdapter,
+  });
+}
 
 if (gpuProviderModule) {
   setGPUProvider(() => gpuProviderModule!.create(gpuProviderFlags));
@@ -124,21 +147,23 @@ Did you remember to build with code coverage instrumentation enabled?`
   }
 }
 
-if (dataPath !== undefined) {
-  dataCache.setStore({
-    load: (path: string) => {
-      return new Promise<string>((resolve, reject) => {
-        fs.readFile(`${dataPath}/${path}`, 'utf8', (err, data) => {
+dataCache.setStore({
+  load: (path: string) => {
+    return new Promise<Uint8Array>((resolve, reject) => {
+      sys.readFile(
+        getResourcePath(`cache/${path}`),
+        (err: { message: string }, data: Uint8Array) => {
           if (err !== null) {
             reject(err.message);
           } else {
             resolve(data);
           }
-        });
-      });
-    },
-  });
-}
+        }
+      );
+    });
+  },
+});
+
 if (verbose) {
   dataCache.setDebugLogger(console.log);
 }
@@ -158,7 +183,6 @@ if (queries.length === 0) {
     filterQuery
   );
 
-  Logger.globalDebugMode = debug;
   const log = new Logger();
 
   const failed: Array<[string, LiveTestCaseResult]> = [];
@@ -261,6 +285,7 @@ Failed               = ${rpt(failed.length)}`);
   if (failed.length || warned.length) {
     sys.exit(1);
   }
+  sys.exit(0);
 })().catch(ex => {
   console.log(ex.stack ?? ex.toString());
   sys.exit(1);

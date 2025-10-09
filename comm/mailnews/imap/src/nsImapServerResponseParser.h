@@ -6,13 +6,12 @@
 #ifndef _nsIMAPServerResponseParser_H_
 #define _nsIMAPServerResponseParser_H_
 
-#include "mozilla/Attributes.h"
 #include "../public/nsIImapHostSessionList.h"
 #include "nsImapSearchResults.h"
-#include "nsString.h"
-#include "MailNewsTypes.h"
+#include "MailNewsTypes2.h"
 #include "nsTArray.h"
 #include "nsImapUtils.h"
+#include "prmem.h"
 
 class nsImapSearchResultIterator;
 class nsIImapFlagAndUidState;
@@ -100,9 +99,6 @@ class nsImapServerResponseParser : public nsImapGenericParser {
   bool ServerHasServerInfo() {
     return ((fCapabilityFlag & kXServerInfoCapability) != 0);
   }
-  bool ServerIsAOLServer() {
-    return ((fCapabilityFlag & kAOLImapCapability) != 0);
-  }
   void SetFetchingFlags(bool aFetchFlags) { fFetchingAllFlags = aFetchFlags; }
   void ResetCapabilityFlag();
 
@@ -132,11 +128,18 @@ class nsImapServerResponseParser : public nsImapGenericParser {
   bool fUtf8AcceptEnabled;
   bool fUseModSeq;  // can use mod seq for currently selected folder
   uint64_t fHighestModSeq;
+  bool fServerUnavailable;  // Server returned response code [UNAVAILABLE].
+
+  // Set of new UIDs at a destination folder obtained from UID COPY response
+  // when a message or messages are successfully copied or moved from a source
+  // folder.  Only set when server supports UIDPLUS capability and the response
+  // contains response code COPYUID. Currently only used when gmail messages are
+  // shift-deleted to trash.
+  nsCString fCopyUidSet;
 
  protected:
   virtual void flags();
   virtual void envelope_data();
-  virtual void xaolenvelope_data();
   virtual void parse_address(nsAutoCString& addressLine);
   virtual void internal_date();
   virtual nsresult BeginMessageDownload(const char* content_type);
@@ -232,6 +235,11 @@ class nsImapServerResponseParser : public nsImapGenericParser {
 
   nsCString fZeroLengthMessageUidString;
 
+  // The lock was introduced to protect parallel access to
+  // fSelectedMailboxName. It hasn't been researched if additional
+  // locking is required for other member variables.
+  // Please update this comment if additional variables are covered.
+  mozilla::Mutex mLock;
   char* fSelectedMailboxName;
 
   nsImapSearchResultSequence* fSearchResults;

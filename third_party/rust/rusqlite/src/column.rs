@@ -3,12 +3,16 @@ use std::str;
 use crate::{Error, Result, Statement};
 
 /// Information about a column of a SQLite query.
+#[cfg(feature = "column_decltype")]
+#[cfg_attr(docsrs, doc(cfg(feature = "column_decltype")))]
 #[derive(Debug)]
 pub struct Column<'stmt> {
     name: &'stmt str,
     decl_type: Option<&'stmt str>,
 }
 
+#[cfg(feature = "column_decltype")]
+#[cfg_attr(docsrs, doc(cfg(feature = "column_decltype")))]
 impl Column<'_> {
     /// Returns the name of the column.
     #[inline]
@@ -33,7 +37,7 @@ impl Statement<'_> {
     /// calling this method.
     pub fn column_names(&self) -> Vec<&str> {
         let n = self.column_count();
-        let mut cols = Vec::with_capacity(n as usize);
+        let mut cols = Vec::with_capacity(n);
         for i in 0..n {
             let s = self.column_name_unwrap(i);
             cols.push(s);
@@ -53,7 +57,7 @@ impl Statement<'_> {
     }
 
     /// Check that column name reference lifetime is limited:
-    /// https://www.sqlite.org/c3ref/column_name.html
+    /// <https://www.sqlite.org/c3ref/column_name.html>
     /// > The returned string pointer is valid...
     ///
     /// `column_name` reference can become invalid if `stmt` is reprepared
@@ -90,14 +94,19 @@ impl Statement<'_> {
     /// Returns an `Error::InvalidColumnIndex` if `idx` is outside the valid
     /// column range for this row.
     ///
+    /// # Panics
+    ///
     /// Panics when column name is not valid UTF-8.
     #[inline]
     pub fn column_name(&self, col: usize) -> Result<&str> {
         self.stmt
             .column_name(col)
+            // clippy::or_fun_call (nightly) vs clippy::unnecessary-lazy-evaluations (stable)
             .ok_or(Error::InvalidColumnIndex(col))
             .map(|slice| {
-                str::from_utf8(slice.to_bytes()).expect("Invalid UTF-8 sequence in column name")
+                slice
+                    .to_str()
+                    .expect("Invalid UTF-8 sequence in column name")
             })
     }
 
@@ -137,12 +146,13 @@ impl Statement<'_> {
     #[cfg_attr(docsrs, doc(cfg(feature = "column_decltype")))]
     pub fn columns(&self) -> Vec<Column> {
         let n = self.column_count();
-        let mut cols = Vec::with_capacity(n as usize);
+        let mut cols = Vec::with_capacity(n);
         for i in 0..n {
             let name = self.column_name_unwrap(i);
             let slice = self.stmt.column_decltype(i);
             let decl_type = slice.map(|s| {
-                str::from_utf8(s.to_bytes()).expect("Invalid UTF-8 sequence in column declaration")
+                s.to_str()
+                    .expect("Invalid UTF-8 sequence in column declaration")
             });
             cols.push(Column { name, decl_type });
         }
@@ -202,7 +212,7 @@ mod test {
                 assert_eq!(ty, Type::Integer);
             }
             e => {
-                panic!("Unexpected error type: {:?}", e);
+                panic!("Unexpected error type: {e:?}");
             }
         }
         match row.get::<_, String>("y").unwrap_err() {
@@ -212,7 +222,7 @@ mod test {
                 assert_eq!(ty, Type::Null);
             }
             e => {
-                panic!("Unexpected error type: {:?}", e);
+                panic!("Unexpected error type: {e:?}");
             }
         }
         Ok(())
@@ -221,7 +231,7 @@ mod test {
     /// `column_name` reference should stay valid until `stmt` is reprepared (or
     /// reset) even if DB schema is altered (SQLite documentation is
     /// ambiguous here because it says reference "is valid until (...) the next
-    /// call to sqlite3_column_name() or sqlite3_column_name16() on the same
+    /// call to `sqlite3_column_name()` or `sqlite3_column_name16()` on the same
     /// column.". We assume that reference is valid if only
     /// `sqlite3_column_name()` is used):
     #[test]

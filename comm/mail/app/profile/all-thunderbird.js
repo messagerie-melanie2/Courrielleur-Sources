@@ -4,6 +4,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+// This file contains Thunderbird specific settings and overrides to settings
+// from mailnews.js, all.js etc. Settings in this file will take
+// precedence for Thunderbird.
+
 #ifdef XP_UNIX
 #ifndef XP_MACOSX
 #define UNIX_BUT_NOT_MAC
@@ -94,7 +98,7 @@ pref("app.update.notifyDuringDownload", false);
 // default value to migrate to the new location that this data is now stored
 // (which is in a file in the update directory). Because of this, this pref
 // should no longer be used directly. Instead, getAppUpdateAutoEnabled and
-// getAppUpdateAutoEnabled from UpdateUtils.jsm should be used.
+// getAppUpdateAutoEnabled from UpdateUtils.sys.mjs should be used.
 #ifndef XP_WIN
  pref("app.update.auto", true);
 #endif
@@ -114,9 +118,35 @@ pref("app.update.staging.enabled", true);
 pref("app.update.service.enabled", true);
 #endif
 
-#ifdef XP_WIN
-// This pref prevents BITS from being used by Thunderbird to download updates.
-pref("app.update.BITS.enabled", false);
+#ifdef MOZ_BITS_DOWNLOAD
+  // If set to true, the Update Service will attempt to use Windows BITS to
+  // download updates and will fallback to downloading internally if that fails.
+  pref("app.update.BITS.enabled", true);
+#endif
+
+pref("app.update.langpack.enabled", true);
+
+#if defined(MOZ_UPDATE_AGENT)
+  pref("app.update.background.loglevel", "error");
+  pref("app.update.background.timeoutSec", 600);
+  // By default, check for updates when the app is not running every 7 hours.
+  pref("app.update.background.interval", 25200);
+  // By default, snapshot Firefox Messaging System targeting for use by the
+  // background update task every 60 minutes.
+  pref("app.update.background.messaging.targeting.snapshot.intervalSec", 3600);
+  // For historical reasons, the background update process requires the Mozilla
+  // Maintenance Service to be available and enabled via the service registry
+  // key.  When this value is `true`, allow the background update process to
+  // update unelevated installations (that are writeable, etc).
+  //
+  // N.b. This feature impacts the `applications: firefox_desktop` Nimbus
+  // application ID (and not the `firefox_desktop_background_task` application
+  // ID).  However, the pref will be automatically mirrored to the background
+  // update task profile. This means that experiments and enrollment impact the
+  // Firefox Desktop browsing profile that _schedules_ the background update
+  // task, and then the background update task collects telemetry in accordance
+  // with the mirrored pref.
+  pref("app.update.background.allowUpdatesForUnelevatedInstallations", false);
 #endif
 
 // Release notes URL
@@ -163,17 +193,20 @@ pref("app.use_without_mail_account", false);
 // Show error messages in error console.
 pref("javascript.options.showInConsole", true);
 
-#ifdef NIGHTLY_BUILD
-pref("signon.management.page.os-auth.enabled", true);
-#else
-pref("signon.management.page.os-auth.enabled", false);
-#endif
-
 // Controls enabling of the extension system logging (can reduce performance)
 pref("extensions.logging.enabled", false);
-pref("extensions.overlayloader.loglevel", "warn");
 
 pref("extensions.abuseReport.enabled", false);
+
+// Delay opening of action popups until the browser is fully loaded.
+// This is needed on Wayland systems, but can be enabled for other
+// systems for debug purposes as well. See Bug 1905622.
+pref("extensions.openPopupDelayedFullyLoaded.enabled", false);
+
+// Status information used by our IAN system. Default to true, because a false
+// positive is worse then a false negative IAN evaluation.
+pref("extensions.hasExtensionsInstalled", true);
+pref("extensions.hasExperimentsInstalled", true);
 
 // Strict compatibility makes add-ons incompatible by default.
 #ifndef RELEASE_OR_BETA
@@ -188,7 +221,7 @@ pref("extensions.systemAddon.update.enabled", true);  // See bug 1462160.
 
 // Disable add-ons installed into the shared user and shared system areas by
 // default. This does not include the application directory. See the SCOPE
-// constants in AddonManager.jsm for values to use here
+// constants in AddonManager.sys.mjs for values to use here
 pref("extensions.autoDisableScopes", 15);
 
 // Enable add-ons installed and owned by the application, like the default theme.
@@ -196,9 +229,6 @@ pref("extensions.startupScanScopes", 4);
 
 // Gecko Profiler
 pref("extensions.geckoProfiler.acceptedExtensionIds", "geckoprofiler@mozilla.com,quantum-foxfooding@mozilla.com,raptor@mozilla.org");
-
-// Allow "legacy" XUL/XPCOM extensions.
-pref("extensions.legacy.enabled", true);
 
 // Preferences for AMO integration
 pref("extensions.getAddons.cache.enabled", true);
@@ -226,13 +256,28 @@ pref("security.content.signature.root_hash", "[CONTENT SIGNING DISABLED - see bu
 // Show new install UI with permission lists
 pref("extensions.webextOptionalPermissionPrompts", true);
 
-// 1 = allow "Man In The Middle" (local proxy, web filter, etc.) for certificate
-//     pinning checks.
-pref("security.cert_pinning.enforcement_level", 1);
-
 // Whether to use client certificates stored in OS certificate storage.
 // This does not work for S/MIME. See bug 1726442.
 pref("security.osclientcerts.autoload", false);
+
+// Refer to Firefox file browser/app/profile/firefox.js
+// for meaning of the security.sandbox.content prefs.
+#if defined(XP_WIN) && defined(MOZ_SANDBOX)
+  pref("security.sandbox.content.level", 7);
+  pref("security.sandbox.logging.enabled", false);
+#endif
+#if defined(XP_MACOSX) && defined(MOZ_SANDBOX)
+  pref("security.sandbox.content.level", 3);
+  pref("security.sandbox.content.mac.disconnect-windowserver", true);
+  pref("security.sandbox.logging.enabled", false);
+#endif
+#if defined(XP_LINUX) && defined(MOZ_SANDBOX)
+  pref("security.sandbox.content.level", 5);
+  pref("security.sandbox.socket.process.level", 1);
+  pref("security.sandbox.content.write_path_whitelist", "");
+  pref("security.sandbox.content.read_path_whitelist", "");
+  pref("security.sandbox.content.syscall_whitelist", "");
+#endif
 
 // Symmetric (can be overridden by individual extensions) update preferences.
 // e.g.
@@ -277,8 +322,6 @@ pref("general.autoScroll", true);
 pref("mail.shell.checkDefaultClient", true);
 pref("mail.spellcheck.inline", true);
 
-pref("mail.folder.views.version", 0);
-
 // Force the unit shown for the size of all folders. If empty, the unit
 // is determined automatically for each folder. Allowed values: KB/MB/<empty string>
 pref("mail.folderpane.sizeUnits", "");
@@ -299,7 +342,6 @@ pref("browser.preferences.animateFadeIn", true);
 #else
 pref("browser.preferences.animateFadeIn", false);
 #endif
-pref("browser.preferences.search", true);
 
 // Whether the results panel should be kept open during IME composition.
 // The default value is false because some IME open a picker panel, and we end
@@ -334,7 +376,6 @@ pref("mail.showCondensedAddresses", true); // show the friendly display name for
 pref("mailnews.attachments.display.start_expanded", false);
 // hidden pref for changing how we present attachments in the message pane
 pref("mail.pane_config.dynamic", 2);
-pref("mailnews.reuse_thread_window2",     true);
 pref("editor.singleLine.pasteNewlines", 4);  // substitute commas for new lines in single line text boxes
 pref("editor.CR_creates_new_p", true);
 pref("mail.compose.default_to_paragraph", true);
@@ -364,6 +405,9 @@ pref("mail.threadpane.padding.bottom_percent", 10);
 // Use correspondents column instead of from/recipient columns.
 pref("mail.threadpane.use_correspondents", true);
 
+// Allow horizontal scroll and last column resize on the thread pane.
+pref("mail.threadpane.table.horizontal_scroll", false);
+
 // To allow images to be inserted into a composition with an auth prompt, we
 // need the following two.
 pref("network.auth.subresource-img-cross-origin-http-auth-allow", true);
@@ -373,8 +417,6 @@ pref("network.auth.non-web-content-triggered-resources-http-auth-allow", true);
 pref("mail.forward_message_mode", 2);
 
 pref("mailnews.send.loglevel", "Warn");
-
-pref("mail.import.in_new_tab", true);
 
 // End core mailnews.js pref overrides
 /////////////////////////////////////////////////////////////////
@@ -421,6 +463,7 @@ pref("network.protocol-handler.expose.mailbox", true);
 // (e.g. message pane) where we may divert them out to external applications.
 pref("network.protocol-handler.expose.about", true);
 pref("network.protocol-handler.expose.blob", true);
+pref("network.protocol-handler.expose.chrome", true);
 pref("network.protocol-handler.expose.data", true);
 pref("network.protocol-handler.expose.file", true);
 pref("network.protocol-handler.expose.http", true);
@@ -473,9 +516,6 @@ pref("security.aboutcertificate.enabled", true);
 // has on a preloaded list, it causes S/MIME failures. (Bug 1777336)
 pref("security.intermediate_preloading_healer.enabled", false);
 
-// Don't show a prompt for external applications.
-pref("security.external_protocol_requires_permission", false);
-
 // Prompt for the primary password prior to opening application windows,
 // to avoid the race that triggers multiple prompts (see bug 177175).
 pref("security.prompt_for_master_password_on_startup", true);
@@ -484,9 +524,10 @@ pref("general.config.obscure_value", 0); // for MCD .cfg files
 
 pref("browser.display.auto_quality_min_font_size", 0);
 
-pref("view_source.syntax_highlight", false);
+// Override the toolkit settings for Mac and Linux to enable HC in content.
+pref("browser.display.document_color_use", 0);
 
-pref("dom.serviceWorkers.enabled", true);
+pref("view_source.syntax_highlight", false);
 
 /////////////////////////////////////////////////////////////////
 // End core all.js pref overrides
@@ -520,27 +561,17 @@ pref("spellchecker.dictionary", "");
 // Dictionary download preference
 pref("spellchecker.dictionaries.download.url", "https://addons.thunderbird.net/%LOCALE%/%APP%/dictionaries/");
 
-// profile.force.migration can be used to bypass the migration wizard, forcing migration from a particular
-// mail application without any user intervention. Possible values are:
-// seamonkey (mozilla suite) and outlook.
-pref("profile.force.migration", "");
-
 // prefs to control the mail alert notification
 #ifndef XP_MACOSX
 pref("alerts.totalOpenTime", 10000);
 #endif
 
-// Disable new windows notifications until they are fully supported by Thunderbird (bug 1838139).
-#ifdef XP_WIN
-pref("alerts.useSystemBackend", false);
-#endif
+// Don't show a prompt for external applications (http(s):// will never prompt).
+pref("mail.external_protocol_requires_permission", false);
+
 
 // analyze urls in mail messages for scams
 pref("mail.phishing.detection.enabled", true);
-// If phishing detection is enabled, allow fine grained control
-// of the local, static tests
-pref("mail.phishing.detection.ipaddresses", true);
-pref("mail.phishing.detection.mismatched_hosts", true);
 pref("mail.phishing.detection.disallow_form_actions", true);
 
 pref("browser.safebrowsing.reportPhishURL", "https://%LOCALE%.phish-report.mozilla.com/?hl=%LOCALE%");
@@ -553,10 +584,9 @@ pref("dom.disable_window_status_change",          true);
 // 1 - open it in an existing window
 // 2 - open it in a new tab
 pref("mail.openMessageBehavior", 2);
-pref("mail.openMessageBehavior.version", 0);
 // If messages or folders are opened using the context menu or a middle click,
-// should we open them in the foreground or in the background?
-pref("mail.tabs.loadInBackground", true);
+// we open them in the background.
+pref("mail.tabs.loadInBackground", false);
 
 // Tabs
 pref("mail.tabs.tabMinWidth", 100);
@@ -597,6 +627,13 @@ pref("toolbar.customization.usesheet", true);
 #else
 pref("toolbar.customization.usesheet", false);
 #endif
+
+// Comma separated list of allowed hostnames to have the account data at.
+pref("mail.allowed_unc_hosts", "");
+
+// Comma separated list of allowed hostnames detached attachments can
+// be located at.
+pref("mail.allowed_attachment_hostnames", "");
 
 // Start compositions with (empty) attachment pane showing
 pref("mail.compose.show_attachment_pane", false);
@@ -709,9 +746,6 @@ pref("font.size.variable.el", 15);
 pref("font.size.monospace.el", 12);
 #endif
 
-// Since different versions of Windows need different settings, we'll handle
-// this in MailMigrator.jsm.
-
 // Linux, in other words.  Other OSes may wish to override.
 #ifdef UNIX_BUT_NOT_MAC
 // The font.name-list fallback is defined in case font.name isn't
@@ -756,12 +790,7 @@ pref("browser.link.open_newwindow.restriction", 0);
 
 pref("browser.tabs.loadDivertedInBackground", false);
 
-// Enable multi-process.
-pref("browser.tabs.remote.autostart", true);
-pref("browser.tabs.remote.desktopbehavior", true);
 pref("extensions.webextensions.remote", true);
-
-pref("extensions.webextensions.background-delayed-startup", true);
 
 // Browser icon prefs
 pref("browser.chrome.site_icons", true);
@@ -816,11 +845,6 @@ pref("places.loglevel", "Error");
 pref("mail.taskbar.lists.enabled", true);
 pref("mail.taskbar.lists.tasks.enabled", true);
 #endif
-
-// Account provisioner.
-pref("mail.provider.providerList", "https://broker.thunderbird.net/provider/list");
-pref("mail.provider.suggestFromName", "https://broker.thunderbird.net/provider/suggest");
-pref("mail.provider.enabled", true);
 
 pref("mail.chat.enabled", true);
 // Whether to show chat notifications or not.
@@ -878,24 +902,18 @@ pref("privacy.userContext.enabled", false);
 // muting the camera and microphone.
 pref("privacy.webrtc.globalMuteToggles", false);
 
-// If set to true, Thunderbird will collapse the main menu for new profiles
-// (or, more precisely, profiles that start with no accounts created).
-pref("mail.main_menu.collapse_by_default", true);
-
 // If set to true, when saving a message to a file, use underscore
 // instead of space in the file name.
 pref("mail.save_msg_filename_underscores_for_space", false);
 
-#ifdef NIGHTLY_BUILD
 // See bug 1572568 for details. Disallow eval() with system principal.
 pref("security.allow_eval_with_system_principal", false);
-#endif
 
 // Enable FIDO U2F
 pref("security.webauth.u2f", true);
 
-// Use OS date and time settings by default.
-pref("intl.regional_prefs.use_os_locales", true);
+// Use application date and time settings by default.
+pref("intl.regional_prefs.use_os_locales", false);
 
 // Multi-lingual preferences:
 //  *.enabled - Are langpacks available for the build of Firefox?
@@ -925,8 +943,6 @@ pref("toolkit.osKeyStore.loglevel", "Warn");
 pref("devtools.chrome.enabled", true);
 pref("devtools.debugger.remote-enabled", true);
 pref("devtools.selfxss.count", 5);
-// Enable extensionStorage storage actor by default
-pref("devtools.storage.extensionStorage.enabled", true);
 
 // Toolbox preferences
 pref("devtools.toolbox.footer.height", 250);
@@ -934,21 +950,16 @@ pref("devtools.toolbox.sidebar.width", 500);
 pref("devtools.toolbox.host", "bottom");
 pref("devtools.toolbox.previousHost", "right");
 pref("devtools.toolbox.selectedTool", "inspector");
-pref("devtools.toolbox.sideEnabled", true);
 pref("devtools.toolbox.zoomValue", "1");
-pref("devtools.toolbox.splitconsoleEnabled", false);
+pref("devtools.toolbox.splitconsole.enabled", true);
+pref("devtools.toolbox.splitconsole.open", false);
 pref("devtools.toolbox.splitconsoleHeight", 100);
 pref("devtools.toolbox.tabsOrder", "");
-pref("devtools.netmonitor.features.newEditAndResend", false);
-
-// The fission pref for enabling the "Multiprocess Browser Toolbox", which will
-// make it possible to debug anything in Firefox (See Bug 1570639 for more
-// information).
-#if defined(NIGHTLY_BUILD)
-pref("devtools.browsertoolbox.fission", true);
-#else
-pref("devtools.browsertoolbox.fission", false);
-#endif
+// This is only used for local Web Extension debugging,
+// and allows to keep the window on top of all others,
+// so that you can debug the Firefox window, while keeping the devtools
+// always visible
+pref("devtools.toolbox.alwaysOnTop", true);
 
 // When the Multiprocess Browser Toolbox is enabled, you can configure the scope of it:
 // - "everything" will enable debugging absolutely everything in the browser
@@ -957,10 +968,20 @@ pref("devtools.browsertoolbox.fission", false);
 //   All privileged javascript, documents and workers running in the parent process.
 pref("devtools.browsertoolbox.scope", "everything");
 
+// This preference will enable watching top-level targets from the server side.
+pref("devtools.target-switching.server.enabled", true);
+
+// In DevTools, create a target for each frame (i.e. not only for top-level document and
+// remote frames).
+pref("devtools.every-frame-target.enabled", true);
+
+// Controls the hability to debug popups from the same DevTools
+// of the original tab the popups are coming from
+pref("devtools.popups.debug", false);
+
 // Toolbox Button preferences
 pref("devtools.command-button-pick.enabled", true);
 pref("devtools.command-button-frames.enabled", true);
-pref("devtools.command-button-splitconsole.enabled", true);
 pref("devtools.command-button-responsive.enabled", true);
 pref("devtools.command-button-screenshot.enabled", false);
 pref("devtools.command-button-rulers.enabled", false);
@@ -991,12 +1012,10 @@ pref("devtools.inspector.imagePreviewTooltipSize", 300);
 pref("devtools.inspector.showUserAgentStyles", false);
 // Show native anonymous content and user agent shadow roots
 pref("devtools.inspector.showAllAnonymousContent", false);
-// Enable the inline CSS compatibility warning in inspector rule view
-pref("devtools.inspector.ruleview.inline-compatibility-warning.enabled", false);
-// Enable the compatibility tool in the inspector.
-pref("devtools.inspector.compatibility.enabled", true);
-// Enable color scheme simulation in the inspector.
-pref("devtools.inspector.color-scheme-simulation.enabled", true);
+// Enable overflow debugging in the inspector.
+pref("devtools.overflow.debugging.enabled", true);
+// Enable drag to edit properties in the inspector rule view.
+pref("devtools.inspector.draggable_properties", true);
 
 // Grid highlighter preferences
 pref("devtools.gridinspector.gridOutlineMaxColumns", 50);
@@ -1010,6 +1029,9 @@ pref("devtools.gridinspector.maxHighlighters", 3);
 // Whether or not simplified highlighters should be used when
 // prefers-reduced-motion is enabled.
 pref("devtools.inspector.simple-highlighters-reduced-motion", false);
+// Wheter or not Enter on inplace editor in the Rules view moves focus and activates
+// next inplace editor.
+pref("devtools.inspector.rule-view.focusNextOnEnter", true);
 
 // Whether or not the box model panel is opened in the layout view
 pref("devtools.layout.boxmodel.opened", true);
@@ -1039,9 +1061,6 @@ pref("devtools.markup.collapseAttributes", true);
 pref("devtools.markup.collapseAttributeLength", 120);
 // Whether to auto-beautify the HTML on copy.
 pref("devtools.markup.beautifyOnCopy", false);
-// Whether or not the DOM mutation breakpoints context menu are enabled in the
-// markup view.
-pref("devtools.markup.mutationBreakpoints.enabled", true);
 
 // DevTools default color unit
 pref("devtools.defaultColorUnit", "authored");
@@ -1077,11 +1096,9 @@ pref("devtools.netmonitor.features.search", true);
 pref("devtools.netmonitor.features.requestBlocking", true);
 
 // Enable the Application panel
-pref("devtools.application.enabled", false);
+pref("devtools.application.enabled", true);
 
 // Enable the custom formatters feature
-// TODO remove once the custom formatters feature is stable (see bug 1734614)
-pref("devtools.custom-formatters", false);
 // This preference represents the user's choice to enable the custom formatters feature.
 // While the preference above will be removed once the feature is stable, this one is menat to stay.
 pref("devtools.custom-formatters.enabled", false);
@@ -1092,8 +1109,9 @@ pref("devtools.netmonitor.panes-network-details-height", 450);
 pref("devtools.netmonitor.panes-search-width", 550);
 pref("devtools.netmonitor.panes-search-height", 450);
 pref("devtools.netmonitor.filters", "[\"all\"]");
+pref("devtools.netmonitor.requestfilter", "");
 pref("devtools.netmonitor.visibleColumns",
-  "[\"status\",\"method\",\"domain\",\"file\",\"initiator\",\"type\",\"transferred\",\"contentSize\",\"waterfall\"]"
+    "[\"status\",\"method\",\"domain\",\"file\",\"initiator\",\"type\",\"transferred\",\"contentSize\",\"waterfall\"]"
 );
 pref("devtools.netmonitor.columnsData",
   '[{"name":"status","minWidth":30,"width":5}, {"name":"method","minWidth":30,"width":5}, {"name":"domain","minWidth":30,"width":10}, {"name":"file","minWidth":30,"width":25}, {"name":"url","minWidth":30,"width":25},{"name":"initiator","minWidth":30,"width":10},{"name":"type","minWidth":30,"width":5},{"name":"transferred","minWidth":30,"width":10},{"name":"contentSize","minWidth":30,"width":5},{"name":"waterfall","minWidth":150,"width":15}]');
@@ -1118,14 +1136,15 @@ pref("devtools.netmonitor.har.compress", false);
 pref("devtools.netmonitor.har.forceExport", false);
 pref("devtools.netmonitor.har.pageLoadedTimeout", 1500);
 pref("devtools.netmonitor.har.enableAutoExportToFile", false);
-
-pref("devtools.netmonitor.features.webSockets", true);
+pref("devtools.netmonitor.har.multiple-pages", false);
 
 // netmonitor audit
 pref("devtools.netmonitor.audits.slow", 500);
 
-// Disable the EventSource Inspector.
-pref("devtools.netmonitor.features.serverSentEvents", false);
+// Enable the new Edit and Resend panel
+  pref("devtools.netmonitor.features.newEditAndResend", true);
+
+pref("devtools.netmonitor.customRequest", '{}');
 
 // Enable the Storage Inspector
 pref("devtools.storage.enabled", true);
@@ -1133,8 +1152,8 @@ pref("devtools.storage.enabled", true);
 // Enable the Style Editor.
 pref("devtools.styleeditor.enabled", true);
 pref("devtools.styleeditor.autocompletion-enabled", true);
-pref("devtools.styleeditor.showMediaSidebar", true);
-pref("devtools.styleeditor.mediaSidebarWidth", 238);
+pref("devtools.styleeditor.showAtRulesSidebar", true);
+pref("devtools.styleeditor.atRulesSidebarWidth", 238);
 pref("devtools.styleeditor.navSidebarWidth", 245);
 pref("devtools.styleeditor.transitions", true);
 
@@ -1160,11 +1179,9 @@ pref("devtools.webconsole.filter.netxhr", false);
 
 // Webconsole autocomplete preference
 pref("devtools.webconsole.input.autocomplete",true);
-#ifdef NIGHTLY_BUILD
-  pref("devtools.webconsole.input.context", true);
-#else
-  pref("devtools.webconsole.input.context", false);
-#endif
+
+// Show context selector in console input
+pref("devtools.webconsole.input.context", true);
 
 // Set to true to eagerly show the results of webconsole terminal evaluations
 // when they don't have side effects.
@@ -1215,9 +1232,6 @@ pref("devtools.webconsole.input.editorOnboarding", true);
 // Enable message grouping in the console, true by default
 pref("devtools.webconsole.groupWarningMessages", true);
 
-// Saved state of the Display content messages checkbox in the browser console.
-pref("devtools.browserconsole.contentMessages", true);
-
 // Enable network monitoring the browser toolbox console/browser console.
 pref("devtools.browserconsole.enableNetworkMonitoring", false);
 
@@ -1262,13 +1276,8 @@ pref("devtools.responsive.reloadNotification.enabled", true);
 pref("devtools.responsive.touchSimulation.enabled", false);
 // The user agent of the viewport.
 pref("devtools.responsive.userAgent", "");
-
-// Show the custom user agent input in Nightly builds.
-#if defined(NIGHTLY_BUILD)
-  pref("devtools.responsive.showUserAgentInput", true);
-#else
-  pref("devtools.responsive.showUserAgentInput", false);
-#endif
+// Show the custom user agent input by default
+pref("devtools.responsive.showUserAgentInput", true);
 
 // Show tab debug targets for This Firefox (on by default for local builds).
 #ifdef MOZILLA_OFFICIAL
@@ -1304,15 +1313,30 @@ pref("devtools.debugger.features.map-await-expression", true);
 pref("devtools.debugger.features.async-captured-stacks", true);
 pref("devtools.debugger.features.async-live-stacks", false);
 
+// When debugging a website, this pref controls if extension content scripts applied
+// to the currently debugged page should be shown in the Debugger Source Tree
+// As of bug 1936360, Firefox defaults to false, but we default to `true` to
+// ease extension debugging.
+pref("devtools.debugger.show-content-scripts", true);
+
+pref("devtools.debugger.hide-ignored-sources", false);
+#if defined(NIGHTLY_BUILD)
+  pref("devtools.debugger.features.codemirror-next", true);
+#else
+  pref("devtools.debugger.features.codemirror-next", false);
+#endif
+
 // Disable autohide for DevTools popups and tooltips.
 // This is currently not exposed by any UI to avoid making
 // about:devtools-toolbox tabs unusable by mistake.
 pref("devtools.popup.disable_autohide", false);
 
-// Enable overflow debugging in the inspector.
-pref("devtools.overflow.debugging.enabled", true);
-// Enable drag to edit properties in the inspector rule view.
-pref("devtools.inspector.draggable_properties", true);
+// Add support for high contrast mode
+#if defined(NIGHTLY_BUILD)
+  pref("devtools.high-contrast-mode-support", true);
+#else
+  pref("devtools.high-contrast-mode-support", false);
+#endif
 
 // Telemetry settings.
 
@@ -1346,7 +1370,6 @@ pref("mail.minimizeToTray", false);
 #endif
 
 pref("prompts.defaultModalType", 3);
-pref("prompts.contentPromptSubDialog", false);
 
 // The URL for the privacy policy related to recommended extensions.
 pref("extensions.recommendations.privacyPolicyUrl", "https://www.mozilla.org/en-US/privacy/thunderbird/#addons");
@@ -1392,16 +1415,20 @@ pref("identity.fxaccounts.autoconfig.uri", "https://accounts.stage.mozaws.net");
 pref("identity.fxaccounts.remote.root", "https://accounts.stage.mozaws.net");
 // The value of the context query parameter passed in FxA requests.
 pref("identity.fxaccounts.contextParam", "fx_desktop_v3");
+// Whether to use the oauth flow for desktop or not
+pref("identity.fxaccounts.oauth.enabled", false);
+// The remote URL of the FxA Profile Server
+pref("identity.fxaccounts.remote.profile.uri", "https://profile.stage.mozaws.net/v1");
+// The remote URL of the FxA OAuth Server
+pref("identity.fxaccounts.remote.oauth.uri", "https://oauth.stage.mozaws.net/v1");
 // Token server used by the FxA Sync identity.
 pref("identity.sync.tokenserver.uri", "https://token.stage.mozaws.net/1.0/sync/1.5");
-// Adds stage server to the white list, because we need it.
-pref("webchannel.allowObject.urlWhitelist", "https://content.cdn.mozilla.net https://support.mozilla.org https://install.mozilla.org https://accounts.stage.mozaws.net");
+
 // Adds Firefox/10x.0 to the User-Agent string, because we need it.
 // TODO: Fix this.
 pref("general.useragent.compatMode.firefox", true);
 
 // Enable the sync engines we want, and disable the ones we don't want.
-pref("services.sync.engine.accounts", true);
 pref("services.sync.engine.addons", false);
 pref("services.sync.engine.addressbooks", true);
 pref("services.sync.engine.addresses", false);
@@ -1409,15 +1436,8 @@ pref("services.sync.engine.calendars", true);
 pref("services.sync.engine.creditcards", false);
 pref("services.sync.engine.identities", true);
 pref("services.sync.engine.prefs", false);
+pref("services.sync.engine.servers", true);
 #endif
-
-// Donation appeal.
-pref("app.donation.eoy.version", 4);
-pref("app.donation.eoy.version.viewed", 0);
-pref("app.donation.eoy.url", "https://www.thunderbird.net/thunderbird/115.0/holidayeoy/");
-
-// IMAP-JS disabled, Bug 1707547.
-pref("mailnews.imap.jsmodule", false);
 
 // Unified toolbar
 
@@ -1426,3 +1446,59 @@ pref("mailnews.imap.jsmodule", false);
 // 2: icons only
 // 3: text only
 pref("toolbar.unifiedtoolbar.buttonstyle", 0);
+
+// Enable on macOS the non-native context menus
+pref("widget.macos.native-context-menus", false);
+
+#if defined(XP_MACOSX) && defined(NIGHTLY_BUILD)
+pref("mail.theme.native-theme", true);
+#else
+pref("mail.theme.native-theme", false);
+#endif
+
+// Bug 1773079 : check if true causes issues for Thunderbird
+// prevent JS from monkeying with window focus, etc
+pref("dom.disable_window_flip", true);
+
+// LightweightThemeConsumer.sys.mjs needs this pref, even if it has no effect in
+// Thunderbird.
+pref("browser.theme.dark-private-windows", true);
+
+// In-app notifications are disabled while the feature is being implemented.
+pref("mail.inappnotifications.enabled", true);
+// Refresh interval for in-app notifications in ms (6 hours)
+pref("mail.inappnotifications.refreshInterval", 21600000);
+// In-app notification server endpoint is specified by branding prefs.
+
+// Disables all filtering of in-app notifications, useful for testing.
+pref("mail.inappnotifications.bypass-filtering", false);
+
+#ifdef NIGHTLY_BUILD
+// Enable the new experimental conversation view based on Gloda.
+pref("mail.thread.conversation.enabled", false);
+#endif
+
+// Enable the conversion to dark mode for all messages when using a dark theme.
+pref("mail.dark-reader.enabled", true);
+pref("mail.dark-reader.show-toggle", true);
+
+// Enable the new account setup (starting from the second account)
+pref("mail.accounthub.enabled", true);
+
+// Enable address book setup via account hub
+pref("mail.accounthub.addressbook.enabled", false);
+
+// Export to mobile logging level.
+pref("mail.qrexport.loglevel", "Warn");
+
+// New calendar dialog
+pref("calendar.dialogs.new.enabled", false);
+
+// Layout and UI settings.
+// List view style for the thread pane:
+// 0 - Cards view.
+// 1 - Table view.
+pref("mail.threadpane.listview", 0);
+
+// Row count for the cards view, currently bound to a range between 2 and 3.
+pref("mail.threadpane.cardsview.rowcount", 3);

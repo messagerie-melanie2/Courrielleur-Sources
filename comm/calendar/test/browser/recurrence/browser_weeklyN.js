@@ -2,21 +2,18 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { handleDeleteOccurrencePrompt } = ChromeUtils.import(
-  "resource://testing-common/calendar/CalendarUtils.jsm"
+var { handleDeleteOccurrencePrompt } = ChromeUtils.importESModule(
+  "resource://testing-common/calendar/CalendarUtils.sys.mjs"
 );
-
-var { menulistSelect, saveAndCloseItemDialog, setData } = ChromeUtils.import(
-  "resource://testing-common/calendar/ItemEditingHelpers.jsm"
+var { menulistSelect, saveAndCloseItemDialog, setData } = ChromeUtils.importESModule(
+  "resource://testing-common/calendar/ItemEditingHelpers.sys.mjs"
 );
-
-var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
-
+var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
 var { dayView, weekView, multiweekView, monthView } = CalendarTestUtils;
 
 const HOUR = 8;
 
-/*
+/**
  * This test is intended to verify that events recurring on a weekly basis are
  * correctly created and displayed. The event should recur on multiple days in
  * the week, skip days, and be limited to a certain number of recurrences in
@@ -25,18 +22,19 @@ const HOUR = 8;
  */
 add_task(async function testWeeklyNRecurrence() {
   async function setRecurrence(recurrenceWindow) {
-    let recurrenceDocument = recurrenceWindow.document;
+    await SimpleTest.promiseFocus(recurrenceWindow);
+    const recurrenceDocument = recurrenceWindow.document;
 
     // Select weekly recurrence
     await menulistSelect(recurrenceDocument.getElementById("period-list"), "1");
 
-    let monLabel = cal.l10n.getDateFmtString("day.2.Mmm");
-    let tueLabel = cal.l10n.getDateFmtString("day.3.Mmm");
-    let wedLabel = cal.l10n.getDateFmtString("day.4.Mmm");
-    let friLabel = cal.l10n.getDateFmtString("day.6.Mmm");
-    let satLabel = cal.l10n.getDateFmtString("day.7.Mmm");
+    const monLabel = cal.dtz.formatter.shortWeekdayNames[1];
+    const tueLabel = cal.dtz.formatter.shortWeekdayNames[2];
+    const wedLabel = cal.dtz.formatter.shortWeekdayNames[3];
+    const friLabel = cal.dtz.formatter.shortWeekdayNames[5];
+    const satLabel = cal.dtz.formatter.shortWeekdayNames[6];
 
-    let dayPicker = recurrenceDocument.getElementById("daypicker-weekday");
+    const dayPicker = recurrenceDocument.getElementById("daypicker-weekday");
 
     // Selected date is a Monday, so it should already be selected
     Assert.ok(
@@ -75,13 +73,13 @@ add_task(async function testWeeklyNRecurrence() {
     );
     recurrenceDocument.getElementById("repeat-ntimes-count").value = "4";
 
-    let button = recurrenceDocument.querySelector("dialog").getButton("accept");
-    button.scrollIntoView();
+    const button = recurrenceDocument.querySelector("dialog").getButton("accept");
+    button.scrollIntoView({ block: "start", behavior: "instant" });
     // Close dialog
     EventUtils.synthesizeMouseAtCenter(button, {}, recurrenceWindow);
   }
 
-  let calendar = CalendarTestUtils.createCalendar();
+  const calendar = CalendarTestUtils.createCalendar();
   registerCleanupFunction(() => {
     CalendarTestUtils.removeCalendar(calendar);
   });
@@ -90,8 +88,8 @@ add_task(async function testWeeklyNRecurrence() {
   await CalendarTestUtils.goToDate(window, 2009, 1, 5);
 
   // Create event recurring on a weekly basis
-  let eventBox = dayView.getHourBoxAt(window, HOUR);
-  let { dialogWindow, iframeWindow } = await CalendarTestUtils.editNewEvent(window, eventBox);
+  const eventBox = dayView.getHourBoxAt(window, HOUR);
+  const { dialogWindow, iframeWindow } = await CalendarTestUtils.editNewEvent(window, eventBox);
   await setData(dialogWindow, iframeWindow, { title: "Event", repeat: setRecurrence });
   await saveAndCloseItemDialog(dialogWindow);
 
@@ -150,7 +148,7 @@ add_task(async function testWeeklyNRecurrence() {
   await monthView.waitForNoItemAt(window, 2, 7, 1);
 
   // Delete event
-  let box = await monthView.waitForItemAt(window, 2, 2, 1);
+  const box = await monthView.waitForItemAt(window, 2, 2, 1);
   EventUtils.synthesizeMouseAtCenter(box, {}, window);
   await handleDeleteOccurrencePrompt(window, box, true);
 
@@ -162,7 +160,7 @@ add_task(async function testWeeklyNRecurrence() {
   await monthView.waitForNoItemAt(window, 2, 6, 1);
 });
 
-/*
+/**
  * This test is intended to catch instances in which we aren't correctly setting
  * the week start value of recurrences. For example, if the user has set their
  * week to start on Saturday, then creates a recurring event running every other
@@ -184,7 +182,8 @@ add_task(async function testRecurrenceAcrossWeekStart() {
   });
 
   async function setRecurrence(recurrenceWindow) {
-    let recurrenceDocument = recurrenceWindow.document;
+    await SimpleTest.promiseFocus(recurrenceWindow);
+    const recurrenceDocument = recurrenceWindow.document;
 
     // Select weekly recurrence
     await menulistSelect(recurrenceDocument.getElementById("period-list"), "1");
@@ -192,11 +191,11 @@ add_task(async function testRecurrenceAcrossWeekStart() {
     // Recur every two weeks
     recurrenceDocument.getElementById("weekly-weeks").value = "2";
 
-    let satLabel = cal.l10n.getDateFmtString("day.7.Mmm");
-    let sunLabel = cal.l10n.getDateFmtString("day.1.Mmm");
-    let monLabel = cal.l10n.getDateFmtString("day.2.Mmm");
+    const satLabel = cal.dtz.formatter.shortWeekdayNames[6];
+    const sunLabel = cal.dtz.formatter.shortWeekdayNames[0];
+    const monLabel = cal.dtz.formatter.shortWeekdayNames[1];
 
-    let dayPicker = recurrenceDocument.getElementById("daypicker-weekday");
+    const dayPicker = recurrenceDocument.getElementById("daypicker-weekday");
 
     // Selected date is a Saturday, so it should already be selected
     Assert.ok(
@@ -223,14 +222,9 @@ add_task(async function testRecurrenceAcrossWeekStart() {
       recurrenceWindow
     );
     recurrenceDocument.getElementById("repeat-ntimes-count").value = "6";
-
-    let button = recurrenceDocument.querySelector("dialog").getButton("accept");
-    button.scrollIntoView();
-    // Close dialog
-    EventUtils.synthesizeMouseAtCenter(button, {}, recurrenceWindow);
   }
 
-  let calendar = CalendarTestUtils.createCalendar();
+  const calendar = CalendarTestUtils.createCalendar();
   registerCleanupFunction(() => {
     CalendarTestUtils.removeCalendar(calendar);
   });
@@ -239,8 +233,8 @@ add_task(async function testRecurrenceAcrossWeekStart() {
   await CalendarTestUtils.goToDate(window, 2022, 10, 15);
 
   // Create event recurring every other week
-  let eventBox = dayView.getHourBoxAt(window, HOUR);
-  let { dialogWindow, iframeWindow } = await CalendarTestUtils.editNewEvent(window, eventBox);
+  const eventBox = dayView.getHourBoxAt(window, HOUR);
+  const { dialogWindow, iframeWindow } = await CalendarTestUtils.editNewEvent(window, eventBox);
   await setData(dialogWindow, iframeWindow, { title: "Event", repeat: setRecurrence });
   await saveAndCloseItemDialog(dialogWindow);
 

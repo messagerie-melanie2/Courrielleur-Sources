@@ -17,7 +17,6 @@ var kToValid = "to@v\u00E4lid.foo.invalid";
 var kToValidACE = "to@xn--vlid-loa.foo.invalid";
 var kToInvalid = "b\u00F8rken.to@invalid.foo.invalid";
 var kToInvalidWithoutDomain = "b\u00F8rken.to";
-var NS_ERROR_ILLEGAL_LOCALPART = 0x80553139;
 
 // for alertTestUtils.js
 let resolveAlert;
@@ -28,11 +27,14 @@ function alertPS(parent, aDialogText, aText) {
   var expectedAlertMessage =
     composeProps.GetStringFromName("sendFailed") +
     "\n" +
-    composeProps
-      .GetStringFromName("errorIllegalLocalPart2")
-      // Without the domain, we currently don't display any name in the
-      // message part.
-      .replace("%s", test == kToInvalidWithoutDomain ? "" : test);
+    composeProps.GetStringFromName(
+      test == kToInvalidWithoutDomain
+        ? "noRecipients"
+        : "errorIllegalLocalPart2"
+    );
+  if (test != kToInvalidWithoutDomain) {
+    expectedAlertMessage = expectedAlertMessage.replace("%s", test);
+  }
 
   // we should only get here for the kToInvalid test case
   Assert.equal(aText, expectedAlertMessage);
@@ -51,10 +53,10 @@ function MsgSendListener(aRecipient, originalData) {
  */
 MsgSendListener.prototype = {
   // nsIMsgSendListener
-  onStartSending(aMsgID, aMsgSize) {},
-  onProgress(aMsgID, aProgress, aProgressMax) {},
-  onStatus(aMsgID, aMsg) {},
-  onStopSending(aMsgID, aStatus, aMsg, aReturnFile) {
+  onStartSending() {},
+  onSendProgress() {},
+  onStatus() {},
+  onStopSending(aMsgID, aStatus) {
     try {
       if (test == kToValid || test == kToASCII) {
         Assert.equal(aStatus, 0);
@@ -70,7 +72,7 @@ MsgSendListener.prototype = {
         // Compare data file to what the server received
         Assert.equal(this.originalData, server._daemon.post);
       } else {
-        Assert.equal(aStatus, NS_ERROR_ILLEGAL_LOCALPART);
+        Assert.equal(aStatus, Cr.NS_ERROR_FAILURE);
         do_check_transaction(server.playTransaction(), ["EHLO test"]);
         // Local address (before the @) has non-ascii char(s) or the @ is
         // missing from the address. An alert is triggered after the EHLO is
@@ -82,23 +84,25 @@ MsgSendListener.prototype = {
       do_throw(e);
     } finally {
       server.stop();
-      var thread = gThreadManager.currentThread;
+      var thread = Services.tm.currentThread;
       while (thread.hasPendingEvents()) {
         thread.processNextEvent(false);
       }
       do_test_finished();
     }
   },
-  onGetDraftFolderURI(aMsgID, aFolderURI) {},
-  onSendNotPerformed(aMsgID, aStatus) {},
-  onTransportSecurityError(msgID, status, secInfo, location) {},
+  onGetDraftFolderURI() {},
+  onSendNotPerformed() {},
+  onTransportSecurityError() {},
 
   // nsIMsgCopyServiceListener
-  OnStartCopy() {},
-  OnProgress(aProgress, aProgressMax) {},
-  SetMessageKey(aKey) {},
-  GetMessageId(aMessageId) {},
-  OnStopCopy(aStatus) {
+  onStartCopy() {},
+  onProgress() {},
+  setMessageKey() {},
+  getMessageId() {
+    return null;
+  },
+  onStopCopy(aStatus) {
     Assert.equal(aStatus, 0);
     try {
       // Now do a comparison of what is in the sent mail folder
@@ -127,7 +131,7 @@ MsgSendListener.prototype = {
 
 async function doSendTest(aRecipient, aRecipientExpected, waitForPrompt) {
   info(`Testing send to ${aRecipient} will get sent to ${aRecipientExpected}`);
-  let promiseAlertReceived = new Promise(resolve => {
+  const promiseAlertReceived = new Promise(resolve => {
     resolveAlert = resolve;
   });
   test = aRecipient;
@@ -181,7 +185,7 @@ async function doSendTest(aRecipient, aRecipientExpected, waitForPrompt) {
     Assert.ok(false, "Send fail: " + e);
   } finally {
     server.stop();
-    var thread = gThreadManager.currentThread;
+    var thread = Services.tm.currentThread;
     while (thread.hasPendingEvents()) {
       thread.processNextEvent(true);
     }

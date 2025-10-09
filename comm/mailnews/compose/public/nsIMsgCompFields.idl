@@ -19,13 +19,11 @@ interface nsIMsgCompFields : msgIWritableStructuredHeaders {
   attribute AString to;
   attribute AString cc;
   attribute AString bcc;
-  readonly attribute bool hasRecipients;
 
   attribute AString fcc;
   attribute AString fcc2;
 
   attribute AString newsgroups;
-  attribute string  newspostUrl;
   attribute AString followupTo;
 
   attribute AString subject;

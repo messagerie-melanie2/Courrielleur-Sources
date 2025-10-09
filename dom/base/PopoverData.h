@@ -16,6 +16,8 @@
 
 namespace mozilla::dom {
 
+class CloseWatcher;
+
 // https://html.spec.whatwg.org/#attr-popover
 enum class PopoverAttributeState : uint8_t {
   None,
@@ -49,6 +51,10 @@ class PopoverData {
   PopoverData() = default;
   ~PopoverData() = default;
 
+  void EnsureCloseWatcher(nsGenericHTMLElement* aElement);
+  CloseWatcher* GetCloseWatcher();
+  void DestroyCloseWatcher();
+
   PopoverAttributeState GetPopoverAttributeState() const { return mState; }
   void SetPopoverAttributeState(PopoverAttributeState aState) {
     mState = aState;
@@ -80,8 +86,10 @@ class PopoverData {
   void SetToggleEventTask(PopoverToggleEventTask* aTask) { mTask = aTask; }
   void ClearToggleEventTask() { mTask = nullptr; }
 
-  bool IsHiding() const { return mIsHiding; }
-  void SetIsHiding(bool aIsHiding) { mIsHiding = aIsHiding; }
+  bool IsShowingOrHiding() const { return mIsShowingOrHiding; }
+  void SetIsShowingOrHiding(bool aIsShowingOrHiding) {
+    mIsShowingOrHiding = aIsShowingOrHiding;
+  }
 
  private:
   PopoverVisibilityState mVisibilityState = PopoverVisibilityState::Hidden;
@@ -97,8 +105,13 @@ class PopoverData {
   // this a weak reference, as if the element goes away it's necessarily not
   // connected to our document.
   nsWeakPtr mInvokerElement;
-  bool mIsHiding = false;
+  bool mIsShowingOrHiding = false;
   RefPtr<PopoverToggleEventTask> mTask;
+
+  // This won't need to be cycle collected as CloseWatcher only has strong
+  // references to event listeners, which themselves have Weak References back
+  // to the Node.
+  RefPtr<CloseWatcher> mCloseWatcher;
 };
 }  // namespace mozilla::dom
 

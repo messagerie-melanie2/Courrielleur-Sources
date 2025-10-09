@@ -18,6 +18,7 @@ RUN apt-get update && \
       locales \
       snapd \
       sudo \
+      xz-utils \
       && \
     locale-gen "en_US.UTF-8"
 
@@ -50,6 +51,9 @@ COPY topsrcdir/comm/taskcluster/docker/recipes/make_venv.sh /scripts/make_venv.s
 COPY topsrcdir/comm/taskcluster/docker/recipes/fluent_requirements.txt /scripts/fluent_requirements.txt
 COPY topsrcdir/comm/taskcluster/docker/recipes/build_desktop_file.py /scripts/build_desktop_file.py
 COPY topsrcdir/comm/taskcluster/docker/recipes/org.mozilla.thunderbird.desktop.jinja2 /scripts/org.mozilla.thunderbird.desktop.jinja2
+
+# %include third_party/python/taskcluster_taskgraph/taskgraph/run-task/fetch-content
+ADD topsrcdir/third_party/python/taskcluster_taskgraph/taskgraph/run-task/fetch-content /scripts/fetch-content
 
 # Set up Python virtual environment
 RUN /scripts/make_venv.sh /scripts/fluent_requirements.txt

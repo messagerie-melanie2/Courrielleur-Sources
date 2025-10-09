@@ -1,6 +1,6 @@
 use std::env;
 use std::process::Command;
-use std::str::{self, FromStr};
+use std::str;
 
 // The rustc-cfg strings below are *not* public API. Please let us know by
 // opening a GitHub issue if your build environment requires some way to enable
@@ -13,75 +13,25 @@ fn main() {
         None => return,
     };
 
+    if minor >= 77 {
+        println!("cargo:rustc-check-cfg=cfg(no_core_cstr)");
+        println!("cargo:rustc-check-cfg=cfg(no_core_error)");
+        println!("cargo:rustc-check-cfg=cfg(no_core_net)");
+        println!("cargo:rustc-check-cfg=cfg(no_core_num_saturating)");
+        println!("cargo:rustc-check-cfg=cfg(no_core_try_from)");
+        println!("cargo:rustc-check-cfg=cfg(no_diagnostic_namespace)");
+        println!("cargo:rustc-check-cfg=cfg(no_float_copysign)");
+        println!("cargo:rustc-check-cfg=cfg(no_num_nonzero_signed)");
+        println!("cargo:rustc-check-cfg=cfg(no_relaxed_trait_bounds)");
+        println!("cargo:rustc-check-cfg=cfg(no_serde_derive)");
+        println!("cargo:rustc-check-cfg=cfg(no_std_atomic)");
+        println!("cargo:rustc-check-cfg=cfg(no_std_atomic64)");
+        println!("cargo:rustc-check-cfg=cfg(no_systemtime_checked_add)");
+        println!("cargo:rustc-check-cfg=cfg(no_target_has_atomic)");
+    }
+
     let target = env::var("TARGET").unwrap();
     let emscripten = target == "asmjs-unknown-emscripten" || target == "wasm32-unknown-emscripten";
-
-    // std::collections::Bound was stabilized in Rust 1.17
-    // but it was moved to core::ops later in Rust 1.26:
-    // https://doc.rust-lang.org/core/ops/enum.Bound.html
-    if minor < 26 {
-        println!("cargo:rustc-cfg=no_ops_bound");
-        if minor < 17 {
-            println!("cargo:rustc-cfg=no_collections_bound");
-        }
-    }
-
-    // core::cmp::Reverse stabilized in Rust 1.19:
-    // https://doc.rust-lang.org/stable/core/cmp/struct.Reverse.html
-    if minor < 19 {
-        println!("cargo:rustc-cfg=no_core_reverse");
-    }
-
-    // CString::into_boxed_c_str and PathBuf::into_boxed_path stabilized in Rust 1.20:
-    // https://doc.rust-lang.org/std/ffi/struct.CString.html#method.into_boxed_c_str
-    // https://doc.rust-lang.org/std/path/struct.PathBuf.html#method.into_boxed_path
-    if minor < 20 {
-        println!("cargo:rustc-cfg=no_de_boxed_c_str");
-        println!("cargo:rustc-cfg=no_de_boxed_path");
-    }
-
-    // From<Box<T>> for Rc<T> / Arc<T> stabilized in Rust 1.21:
-    // https://doc.rust-lang.org/std/rc/struct.Rc.html#impl-From<Box<T>>
-    // https://doc.rust-lang.org/std/sync/struct.Arc.html#impl-From<Box<T>>
-    if minor < 21 {
-        println!("cargo:rustc-cfg=no_de_rc_dst");
-    }
-
-    // Duration available in core since Rust 1.25:
-    // https://blog.rust-lang.org/2018/03/29/Rust-1.25.html#library-stabilizations
-    if minor < 25 {
-        println!("cargo:rustc-cfg=no_core_duration");
-    }
-
-    // 128-bit integers stabilized in Rust 1.26:
-    // https://blog.rust-lang.org/2018/05/10/Rust-1.26.html
-    //
-    // Disabled on Emscripten targets before Rust 1.40 since
-    // Emscripten did not support 128-bit integers until Rust 1.40
-    // (https://github.com/rust-lang/rust/pull/65251)
-    if minor < 26 || emscripten && minor < 40 {
-        println!("cargo:rustc-cfg=no_integer128");
-    }
-
-    // Inclusive ranges methods stabilized in Rust 1.27:
-    // https://github.com/rust-lang/rust/pull/50758
-    // Also Iterator::try_for_each:
-    // https://blog.rust-lang.org/2018/06/21/Rust-1.27.html#library-stabilizations
-    if minor < 27 {
-        println!("cargo:rustc-cfg=no_range_inclusive");
-        println!("cargo:rustc-cfg=no_iterator_try_fold");
-    }
-
-    // Non-zero integers stabilized in Rust 1.28:
-    // https://blog.rust-lang.org/2018/08/02/Rust-1.28.html#library-stabilizations
-    if minor < 28 {
-        println!("cargo:rustc-cfg=no_num_nonzero");
-    }
-
-    // Current minimum supported version of serde_derive crate is Rust 1.31.
-    if minor < 31 {
-        println!("cargo:rustc-cfg=no_serde_derive");
-    }
 
     // TryFrom, Atomic types, non-zero signed integers, and SystemTime::checked_add
     // stabilized in Rust 1.34:
@@ -92,6 +42,12 @@ fn main() {
         println!("cargo:rustc-cfg=no_num_nonzero_signed");
         println!("cargo:rustc-cfg=no_systemtime_checked_add");
         println!("cargo:rustc-cfg=no_relaxed_trait_bounds");
+    }
+
+    // f32::copysign and f64::copysign stabilized in Rust 1.35.
+    // https://blog.rust-lang.org/2019/05/23/Rust-1.35.0.html#copy-the-sign-of-a-floating-point-number-onto-another
+    if minor < 35 {
+        println!("cargo:rustc-cfg=no_float_copysign");
     }
 
     // Support for #[cfg(target_has_atomic = "...")] stabilized in Rust 1.60.
@@ -114,33 +70,50 @@ fn main() {
             println!("cargo:rustc-cfg=no_std_atomic");
         }
     }
+
+    // Current minimum supported version of serde_derive crate is Rust 1.61.
+    if minor < 61 {
+        println!("cargo:rustc-cfg=no_serde_derive");
+    }
+
+    // Support for core::ffi::CStr and alloc::ffi::CString stabilized in Rust 1.64.
+    // https://blog.rust-lang.org/2022/09/22/Rust-1.64.0.html#c-compatible-ffi-types-in-core-and-alloc
+    if minor < 64 {
+        println!("cargo:rustc-cfg=no_core_cstr");
+    }
+
+    // Support for core::num::Saturating and std::num::Saturating stabilized in Rust 1.74
+    // https://blog.rust-lang.org/2023/11/16/Rust-1.74.0.html#stabilized-apis
+    if minor < 74 {
+        println!("cargo:rustc-cfg=no_core_num_saturating");
+    }
+
+    // Support for core::net stabilized in Rust 1.77.
+    // https://blog.rust-lang.org/2024/03/21/Rust-1.77.0.html
+    if minor < 77 {
+        println!("cargo:rustc-cfg=no_core_net");
+    }
+
+    // Support for the `#[diagnostic]` tool attribute namespace
+    // https://blog.rust-lang.org/2024/05/02/Rust-1.78.0.html#diagnostic-attributes
+    if minor < 78 {
+        println!("cargo:rustc-cfg=no_diagnostic_namespace");
+    }
+
+    // The Error trait became available in core in 1.81.
+    // https://blog.rust-lang.org/2024/09/05/Rust-1.81.0.html#coreerrorerror
+    if minor < 81 {
+        println!("cargo:rustc-cfg=no_core_error");
+    }
 }
 
 fn rustc_minor_version() -> Option<u32> {
-    let rustc = match env::var_os("RUSTC") {
-        Some(rustc) => rustc,
-        None => return None,
-    };
-
-    let output = match Command::new(rustc).arg("--version").output() {
-        Ok(output) => output,
-        Err(_) => return None,
-    };
-
-    let version = match str::from_utf8(&output.stdout) {
-        Ok(version) => version,
-        Err(_) => return None,
-    };
-
+    let rustc = env::var_os("RUSTC")?;
+    let output = Command::new(rustc).arg("--version").output().ok()?;
+    let version = str::from_utf8(&output.stdout).ok()?;
     let mut pieces = version.split('.');
     if pieces.next() != Some("rustc 1") {
         return None;
     }
-
-    let next = match pieces.next() {
-        Some(next) => next,
-        None => return None,
-    };
-
-    u32::from_str(next).ok()
+    pieces.next()?.parse().ok()
 }

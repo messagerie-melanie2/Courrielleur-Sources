@@ -13,49 +13,14 @@ const { ExtensionPermissions } = ChromeUtils.importESModule(
 
 loadTestSubscript("head_unified_extensions.js");
 
-const openCustomizationUI = async () => {
-  const customizationReady = BrowserTestUtils.waitForEvent(
-    gNavToolbox,
-    "customizationready"
-  );
-  gCustomizeMode.enter();
-  await customizationReady;
-  ok(
-    CustomizationHandler.isCustomizing(),
-    "expected customizing mode to be enabled"
-  );
-};
-
-const closeCustomizationUI = async () => {
-  const afterCustomization = BrowserTestUtils.waitForEvent(
-    gNavToolbox,
-    "aftercustomization"
-  );
-  gCustomizeMode.exit();
-  await afterCustomization;
-  ok(
-    !CustomizationHandler.isCustomizing(),
-    "expected customizing mode to be disabled"
-  );
-};
-
 add_setup(async function () {
   // Make sure extension buttons added to the navbar will not overflow in the
   // panel, which could happen when a previous test file resizes the current
   // window.
   await ensureMaximizedWindow(window);
-});
-
-add_task(async function test_button_enabled_by_pref() {
-  const { button } = gUnifiedExtensions;
-  is(button.hidden, false, "expected button to be visible");
-  is(
-    document
-      .getElementById("nav-bar")
-      .getAttribute("unifiedextensionsbuttonshown"),
-    "true",
-    "expected attribute on nav-bar"
-  );
+  await SpecialPowers.pushPrefEnv({
+    set: [["extensions.originControls.grantByDefault", false]],
+  });
 });
 
 add_task(async function test_open_panel_on_button_click() {
@@ -158,8 +123,9 @@ add_task(async function test_clicks_on_unified_extension_button() {
 
   info("open panel with primary click");
   await openExtensionsPanel();
-  ok(
-    panel.getAttribute("panelopen") === "true",
+  Assert.strictEqual(
+    panel.getAttribute("panelopen"),
+    "true",
     "expected panel to be visible"
   );
   await closeExtensionsPanel();
@@ -187,8 +153,9 @@ add_task(async function test_clicks_on_unified_extension_button() {
     const viewShown = BrowserTestUtils.waitForEvent(listView, "ViewShown");
     EventUtils.synthesizeMouseAtCenter(button, { ctrlKey: true });
     await viewShown;
-    ok(
-      panel.getAttribute("panelopen") === "true",
+    Assert.strictEqual(
+      panel.getAttribute("panelopen"),
+      "true",
       "expected panel to be visible"
     );
     await closeExtensionsPanel();
@@ -1220,7 +1187,11 @@ add_task(async function test_hover_message_when_button_updates_itself() {
 
   // Move cursor to the center of the entire browser UI to avoid issues with
   // other focus/hover checks. We do this to avoid intermittent test failures.
+  // We intentionally turn off this a11y check, because the following click
+  // is purposefully targeting a non-interactive content of the page.
+  AccessibilityUtils.setEnv({ mustHaveAccessibleRule: false });
   EventUtils.synthesizeMouseAtCenter(document.documentElement, {});
+  AccessibilityUtils.resetEnv();
 
   await extension.unload();
 });

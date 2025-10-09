@@ -13,19 +13,19 @@ var { XMPPParser } = ChromeUtils.importESModule(
  * into it. Then assert that the resulting vCard matches the expected result.
  */
 function _test_vcard(aInput, aExpectedResult) {
-  let listener = {
+  const listener = {
     onXMLError(aError, aException) {
       // Ensure that no errors happen.
       ok(false, aError + " - " + aException);
     },
-    LOG(aString) {},
+    LOG() {},
     onXmppStanza(aStanza) {
       // This is a simplified stanza parser that assumes inputs are vCards.
-      let vCard = aStanza.getElement(["vCard"]);
+      const vCard = aStanza.getElement(["vCard"]);
       deepEqual(XMPPAccountPrototype.parseVCard(vCard), aExpectedResult);
     },
   };
-  let parser = new XMPPParser(listener);
+  const parser = new XMPPParser(listener);
   parser.onDataAvailable(aInput);
   parser.destroy();
 }

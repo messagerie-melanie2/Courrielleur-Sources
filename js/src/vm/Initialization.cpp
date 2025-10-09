@@ -11,6 +11,7 @@
 #include "mozilla/Assertions.h"
 #if JS_HAS_INTL_API
 #  include "mozilla/intl/ICU4CLibrary.h"
+#  include "mozilla/intl/ICU4XGeckoDataProvider.h"
 #endif
 #include "mozilla/TextUtils.h"
 
@@ -129,8 +130,6 @@ JS_PUBLIC_API const char* JS::detail::InitWithFailureDiagnostic(
   install_rust_hooks();
 #endif
 
-  PRMJ_NowInit();
-
   if (frontendOnly == FrontendOnly::No) {
     // The first invocation of `ProcessCreation` creates a temporary thread
     // and crashes if that fails, i.e. because we're out of memory. To prevent
@@ -155,12 +154,6 @@ JS_PUBLIC_API const char* JS::detail::InitWithFailureDiagnostic(
 
 #if defined(FUZZING)
   js::oom::InitLargeAllocLimit();
-#endif
-
-#if defined(JS_GC_ALLOW_EXTRA_POISONING)
-  if (getenv("JSGC_EXTRA_POISONING")) {
-    js::gExtraPoisoningEnabled = true;
-  }
 #endif
 
   js::InitMallocAllocator();
@@ -279,19 +272,9 @@ static void ShutdownImpl(JS::detail::FrontendOnly frontendOnly) {
 
   js::wasm::ShutDown();
 
-  // The only difficult-to-address reason for the restriction that you can't
-  // call JS_Init/stuff/JS_ShutDown multiple times is the Windows PRMJ
-  // NowInit initialization code, which uses PR_CallOnce to initialize the
-  // PRMJ_Now subsystem.  (For reinitialization to be permitted, we'd need to
-  // "reset" the called-once status -- doable, but more trouble than it's
-  // worth now.)  Initializing that subsystem from JS_Init eliminates the
-  // problem, but initialization can take a comparatively long time (15ms or
-  // so), so we really don't want to do it in JS_Init, and we really do want
-  // to do it only when PRMJ_Now is eventually called.
-  PRMJ_NowShutdown();
-
 #if JS_HAS_INTL_API
   mozilla::intl::ICU4CLibrary::Cleanup();
+  mozilla::intl::CleanupDataProvider();
 #endif  // JS_HAS_INTL_API
 
   if (frontendOnly == FrontendOnly::No) {
@@ -309,6 +292,10 @@ static void ShutdownImpl(JS::detail::FrontendOnly frontendOnly) {
   MOZ_ASSERT_IF(!JSRuntime::hasLiveRuntimes(), !js::WasmReservedBytes());
 
   js::ShutDownMallocAllocator();
+
+  if (!JSRuntime::hasLiveRuntimes()) {
+    js::gc::CheckMemorySubsystemOnShutDown();
+  }
 
   libraryInitState = InitState::ShutDown;
 }

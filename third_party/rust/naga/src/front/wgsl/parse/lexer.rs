@@ -1,7 +1,11 @@
-use super::{number::consume_number, Error, ExpectedToken};
+use super::{number::consume_number, Error, ExpectedToken, Result};
 use crate::front::wgsl::error::NumberError;
+use crate::front::wgsl::parse::directive::enable_extension::EnableExtensions;
 use crate::front::wgsl::parse::{conv, Number};
+use crate::front::wgsl::Scalar;
 use crate::Span;
+
+use alloc::boxed::Box;
 
 type TokenSpan<'a> = (Token<'a>, Span);
 
@@ -10,7 +14,7 @@ pub enum Token<'a> {
     Separator(char),
     Paren(char),
     Attribute,
-    Number(Result<Number, NumberError>),
+    Number(core::result::Result<Number, NumberError>),
     Word(&'a str),
     Operation(char),
     LogicalOperation(char),
@@ -116,7 +120,6 @@ fn consume_token(input: &str, generic: bool) -> (Token<'_>, &str) {
             let og_chars = chars.as_str();
             match chars.next() {
                 Some('>') => (Token::Arrow, chars.as_str()),
-                Some('0'..='9' | '.') => consume_number(input),
                 Some('-') => (Token::DecrementOperation, chars.as_str()),
                 Some('=') => (Token::AssignmentOperation(cur), chars.as_str()),
                 _ => (Token::Operation(cur), og_chars),
@@ -190,20 +193,34 @@ const fn is_blankspace(c: char) -> bool {
 
 /// Returns whether or not a char is a word start (Unicode XID_Start + '_')
 fn is_word_start(c: char) -> bool {
-    c == '_' || unicode_xid::UnicodeXID::is_xid_start(c)
+    c == '_' || unicode_ident::is_xid_start(c)
 }
 
 /// Returns whether or not a char is a word part (Unicode XID_Continue)
 fn is_word_part(c: char) -> bool {
-    unicode_xid::UnicodeXID::is_xid_continue(c)
+    unicode_ident::is_xid_continue(c)
 }
 
 #[derive(Clone)]
 pub(in crate::front::wgsl) struct Lexer<'a> {
+    /// The remaining unconsumed input.
     input: &'a str,
+
+    /// The full original source code.
+    ///
+    /// We compare `input` against this to compute the lexer's current offset in
+    /// the source.
     pub(in crate::front::wgsl) source: &'a str,
-    // The byte offset of the end of the last non-trivia token.
+
+    /// The byte offset of the end of the most recently returned non-trivia
+    /// token.
+    ///
+    /// This is consulted by the `span_from` function, for finding the
+    /// end of the span for larger structures like expressions or
+    /// statements.
     last_end_offset: usize,
+
+    pub(in crate::front::wgsl) enable_extensions: EnableExtensions,
 }
 
 impl<'a> Lexer<'a> {
@@ -212,6 +229,7 @@ impl<'a> Lexer<'a> {
             input,
             source: input,
             last_end_offset: 0,
+            enable_extensions: EnableExtensions::empty(),
         }
     }
 
@@ -226,8 +244,8 @@ impl<'a> Lexer<'a> {
     #[inline]
     pub fn capture_span<T, E>(
         &mut self,
-        inner: impl FnOnce(&mut Self) -> Result<T, E>,
-    ) -> Result<(T, Span), E> {
+        inner: impl FnOnce(&mut Self) -> core::result::Result<T, E>,
+    ) -> core::result::Result<(T, Span), E> {
         let start = self.current_byte_offset();
         let res = inner(self)?;
         let end = self.current_byte_offset();
@@ -303,19 +321,19 @@ impl<'a> Lexer<'a> {
         token
     }
 
-    pub(in crate::front::wgsl) fn expect_span(
-        &mut self,
-        expected: Token<'a>,
-    ) -> Result<Span, Error<'a>> {
+    pub(in crate::front::wgsl) fn expect_span(&mut self, expected: Token<'a>) -> Result<'a, Span> {
         let next = self.next();
         if next.0 == expected {
             Ok(next.1)
         } else {
-            Err(Error::Unexpected(next.1, ExpectedToken::Token(expected)))
+            Err(Box::new(Error::Unexpected(
+                next.1,
+                ExpectedToken::Token(expected),
+            )))
         }
     }
 
-    pub(in crate::front::wgsl) fn expect(&mut self, expected: Token<'a>) -> Result<(), Error<'a>> {
+    pub(in crate::front::wgsl) fn expect(&mut self, expected: Token<'a>) -> Result<'a, ()> {
         self.expect_span(expected)?;
         Ok(())
     }
@@ -323,16 +341,20 @@ impl<'a> Lexer<'a> {
     pub(in crate::front::wgsl) fn expect_generic_paren(
         &mut self,
         expected: char,
-    ) -> Result<(), Error<'a>> {
+    ) -> Result<'a, ()> {
         let next = self.next_generic();
         if next.0 == Token::Paren(expected) {
             Ok(())
         } else {
-            Err(Error::Unexpected(
+            Err(Box::new(Error::Unexpected(
                 next.1,
                 ExpectedToken::Token(Token::Paren(expected)),
-            ))
+            )))
         }
+    }
+
+    pub(in crate::front::wgsl) fn end_of_generic_arguments(&mut self) -> bool {
+        self.skip(Token::Separator(',')) && self.peek().0 != Token::Paren('>')
     }
 
     /// If the next token matches it is skipped and true is returned
@@ -346,48 +368,62 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub(in crate::front::wgsl) fn next_ident_with_span(
-        &mut self,
-    ) -> Result<(&'a str, Span), Error<'a>> {
+    pub(in crate::front::wgsl) fn next_ident_with_span(&mut self) -> Result<'a, (&'a str, Span)> {
         match self.next() {
-            (Token::Word(word), span) if word == "_" => {
-                Err(Error::InvalidIdentifierUnderscore(span))
-            }
-            (Token::Word(word), span) if word.starts_with("__") => {
-                Err(Error::ReservedIdentifierPrefix(span))
-            }
-            (Token::Word(word), span) => Ok((word, span)),
-            other => Err(Error::Unexpected(other.1, ExpectedToken::Identifier)),
+            (Token::Word(word), span) => Self::word_as_ident_with_span(word, span),
+            other => Err(Box::new(Error::Unexpected(
+                other.1,
+                ExpectedToken::Identifier,
+            ))),
         }
     }
 
-    pub(in crate::front::wgsl) fn next_ident(
-        &mut self,
-    ) -> Result<super::ast::Ident<'a>, Error<'a>> {
-        let ident = self
-            .next_ident_with_span()
-            .map(|(name, span)| super::ast::Ident { name, span })?;
-
-        if crate::keywords::wgsl::RESERVED.contains(&ident.name) {
-            return Err(Error::ReservedKeyword(ident.span));
+    pub(in crate::front::wgsl) fn peek_ident_with_span(&mut self) -> Result<'a, (&'a str, Span)> {
+        match self.peek() {
+            (Token::Word(word), span) => Self::word_as_ident_with_span(word, span),
+            other => Err(Box::new(Error::Unexpected(
+                other.1,
+                ExpectedToken::Identifier,
+            ))),
         }
+    }
 
-        Ok(ident)
+    fn word_as_ident_with_span(word: &'a str, span: Span) -> Result<'a, (&'a str, Span)> {
+        match word {
+            "_" => Err(Box::new(Error::InvalidIdentifierUnderscore(span))),
+            word if word.starts_with("__") => Err(Box::new(Error::ReservedIdentifierPrefix(span))),
+            word => Ok((word, span)),
+        }
+    }
+
+    pub(in crate::front::wgsl) fn next_ident(&mut self) -> Result<'a, super::ast::Ident<'a>> {
+        self.next_ident_with_span()
+            .and_then(|(word, span)| Self::word_as_ident(word, span))
+            .map(|(name, span)| super::ast::Ident { name, span })
+    }
+
+    fn word_as_ident(word: &'a str, span: Span) -> Result<'a, (&'a str, Span)> {
+        if crate::keywords::wgsl::RESERVED.contains(&word) {
+            Err(Box::new(Error::ReservedKeyword(span)))
+        } else {
+            Ok((word, span))
+        }
     }
 
     /// Parses a generic scalar type, for example `<f32>`.
-    pub(in crate::front::wgsl) fn next_scalar_generic(
-        &mut self,
-    ) -> Result<(crate::ScalarKind, crate::Bytes), Error<'a>> {
+    pub(in crate::front::wgsl) fn next_scalar_generic(&mut self) -> Result<'a, Scalar> {
         self.expect_generic_paren('<')?;
-        let pair = match self.next() {
+        let (scalar, _span) = match self.next() {
             (Token::Word(word), span) => {
-                conv::get_scalar_type(word).ok_or(Error::UnknownScalarType(span))
+                conv::get_scalar_type(&self.enable_extensions, span, word)?
+                    .map(|scalar| (scalar, span))
+                    .ok_or(Error::UnknownScalarType(span))?
             }
-            (_, span) => Err(Error::UnknownScalarType(span)),
-        }?;
+            (_, span) => return Err(Box::new(Error::UnknownScalarType(span))),
+        };
+
         self.expect_generic_paren('>')?;
-        Ok(pair)
+        Ok(scalar)
     }
 
     /// Parses a generic scalar type, for example `<f32>`.
@@ -395,33 +431,40 @@ impl<'a> Lexer<'a> {
     /// Returns the span covering the inner type, excluding the brackets.
     pub(in crate::front::wgsl) fn next_scalar_generic_with_span(
         &mut self,
-    ) -> Result<(crate::ScalarKind, crate::Bytes, Span), Error<'a>> {
+    ) -> Result<'a, (Scalar, Span)> {
         self.expect_generic_paren('<')?;
-        let pair = match self.next() {
-            (Token::Word(word), span) => conv::get_scalar_type(word)
-                .map(|(a, b)| (a, b, span))
-                .ok_or(Error::UnknownScalarType(span)),
-            (_, span) => Err(Error::UnknownScalarType(span)),
-        }?;
+
+        let (scalar, span) = match self.next() {
+            (Token::Word(word), span) => {
+                conv::get_scalar_type(&self.enable_extensions, span, word)?
+                    .map(|scalar| (scalar, span))
+                    .ok_or(Error::UnknownScalarType(span))?
+            }
+            (_, span) => return Err(Box::new(Error::UnknownScalarType(span))),
+        };
+
         self.expect_generic_paren('>')?;
-        Ok(pair)
+        Ok((scalar, span))
     }
 
     pub(in crate::front::wgsl) fn next_storage_access(
         &mut self,
-    ) -> Result<crate::StorageAccess, Error<'a>> {
+    ) -> Result<'a, crate::StorageAccess> {
         let (ident, span) = self.next_ident_with_span()?;
         match ident {
             "read" => Ok(crate::StorageAccess::LOAD),
             "write" => Ok(crate::StorageAccess::STORE),
             "read_write" => Ok(crate::StorageAccess::LOAD | crate::StorageAccess::STORE),
-            _ => Err(Error::UnknownAccess(span)),
+            "atomic" => Ok(crate::StorageAccess::ATOMIC
+                | crate::StorageAccess::LOAD
+                | crate::StorageAccess::STORE),
+            _ => Err(Box::new(Error::UnknownAccess(span))),
         }
     }
 
     pub(in crate::front::wgsl) fn next_format_generic(
         &mut self,
-    ) -> Result<(crate::StorageFormat, crate::StorageAccess), Error<'a>> {
+    ) -> Result<'a, (crate::StorageFormat, crate::StorageAccess)> {
         self.expect(Token::Paren('<'))?;
         let (ident, ident_span) = self.next_ident_with_span()?;
         let format = conv::map_storage_format(ident, ident_span)?;
@@ -431,16 +474,36 @@ impl<'a> Lexer<'a> {
         Ok((format, access))
     }
 
-    pub(in crate::front::wgsl) fn open_arguments(&mut self) -> Result<(), Error<'a>> {
+    pub(in crate::front::wgsl) fn next_acceleration_structure_flags(&mut self) -> Result<'a, bool> {
+        Ok(if self.skip(Token::Paren('<')) {
+            if !self.skip(Token::Paren('>')) {
+                let (name, span) = self.next_ident_with_span()?;
+                let ret = if name == "vertex_return" {
+                    true
+                } else {
+                    return Err(Box::new(Error::UnknownAttribute(span)));
+                };
+                self.skip(Token::Separator(','));
+                self.expect(Token::Paren('>'))?;
+                ret
+            } else {
+                false
+            }
+        } else {
+            false
+        })
+    }
+
+    pub(in crate::front::wgsl) fn open_arguments(&mut self) -> Result<'a, ()> {
         self.expect(Token::Paren('('))
     }
 
-    pub(in crate::front::wgsl) fn close_arguments(&mut self) -> Result<(), Error<'a>> {
+    pub(in crate::front::wgsl) fn close_arguments(&mut self) -> Result<'a, ()> {
         let _ = self.skip(Token::Separator(','));
         self.expect(Token::Paren(')'))
     }
 
-    pub(in crate::front::wgsl) fn next_argument(&mut self) -> Result<bool, Error<'a>> {
+    pub(in crate::front::wgsl) fn next_argument(&mut self) -> Result<'a, bool> {
         let paren = Token::Paren(')');
         if self.skip(Token::Separator(',')) {
             Ok(!self.skip(paren))
@@ -451,6 +514,7 @@ impl<'a> Lexer<'a> {
 }
 
 #[cfg(test)]
+#[track_caller]
 fn sub_test(source: &str, expected_tokens: &[Token]) {
     let mut lex = Lexer::new(source);
     for &token in expected_tokens {
@@ -461,19 +525,20 @@ fn sub_test(source: &str, expected_tokens: &[Token]) {
 
 #[test]
 fn test_numbers() {
+    use half::f16;
     // WGSL spec examples //
 
     // decimal integer
     sub_test(
         "0x123 0X123u 1u 123 0 0i 0x3f",
         &[
-            Token::Number(Ok(Number::I32(291))),
+            Token::Number(Ok(Number::AbstractInt(291))),
             Token::Number(Ok(Number::U32(291))),
             Token::Number(Ok(Number::U32(1))),
-            Token::Number(Ok(Number::I32(123))),
+            Token::Number(Ok(Number::AbstractInt(123))),
+            Token::Number(Ok(Number::AbstractInt(0))),
             Token::Number(Ok(Number::I32(0))),
-            Token::Number(Ok(Number::I32(0))),
-            Token::Number(Ok(Number::I32(63))),
+            Token::Number(Ok(Number::AbstractInt(63))),
         ],
     );
     // decimal floating point
@@ -481,61 +546,79 @@ fn test_numbers() {
         "0.e+4f 01. .01 12.34 .0f 0h 1e-3 0xa.fp+2 0x1P+4f 0X.3 0x3p+2h 0X1.fp-4 0x3.2p+2h",
         &[
             Token::Number(Ok(Number::F32(0.))),
-            Token::Number(Ok(Number::F32(1.))),
-            Token::Number(Ok(Number::F32(0.01))),
-            Token::Number(Ok(Number::F32(12.34))),
+            Token::Number(Ok(Number::AbstractFloat(1.))),
+            Token::Number(Ok(Number::AbstractFloat(0.01))),
+            Token::Number(Ok(Number::AbstractFloat(12.34))),
             Token::Number(Ok(Number::F32(0.))),
-            Token::Number(Err(NumberError::UnimplementedF16)),
-            Token::Number(Ok(Number::F32(0.001))),
-            Token::Number(Ok(Number::F32(43.75))),
+            Token::Number(Ok(Number::F16(f16::from_f32(0.)))),
+            Token::Number(Ok(Number::AbstractFloat(0.001))),
+            Token::Number(Ok(Number::AbstractFloat(43.75))),
             Token::Number(Ok(Number::F32(16.))),
-            Token::Number(Ok(Number::F32(0.1875))),
-            Token::Number(Err(NumberError::UnimplementedF16)),
-            Token::Number(Ok(Number::F32(0.12109375))),
-            Token::Number(Err(NumberError::UnimplementedF16)),
+            Token::Number(Ok(Number::AbstractFloat(0.1875))),
+            // https://github.com/gfx-rs/wgpu/issues/7046
+            Token::Number(Err(NumberError::NotRepresentable)), // Should be 0.75
+            Token::Number(Ok(Number::AbstractFloat(0.12109375))),
+            // https://github.com/gfx-rs/wgpu/issues/7046
+            Token::Number(Err(NumberError::NotRepresentable)), // Should be 12.5
         ],
     );
 
     // MIN / MAX //
 
-    // min / max decimal signed integer
+    // min / max decimal integer
     sub_test(
-        "-2147483648i 2147483647i -2147483649i 2147483648i",
+        "0i 2147483647i 2147483648i",
         &[
-            Token::Number(Ok(Number::I32(i32::MIN))),
+            Token::Number(Ok(Number::I32(0))),
             Token::Number(Ok(Number::I32(i32::MAX))),
-            Token::Number(Err(NumberError::NotRepresentable)),
             Token::Number(Err(NumberError::NotRepresentable)),
         ],
     );
     // min / max decimal unsigned integer
     sub_test(
-        "0u 4294967295u -1u 4294967296u",
+        "0u 4294967295u 4294967296u",
         &[
             Token::Number(Ok(Number::U32(u32::MIN))),
             Token::Number(Ok(Number::U32(u32::MAX))),
-            Token::Number(Err(NumberError::NotRepresentable)),
             Token::Number(Err(NumberError::NotRepresentable)),
         ],
     );
 
     // min / max hexadecimal signed integer
     sub_test(
-        "-0x80000000i 0x7FFFFFFFi -0x80000001i 0x80000000i",
+        "0x0i 0x7FFFFFFFi 0x80000000i",
         &[
-            Token::Number(Ok(Number::I32(i32::MIN))),
+            Token::Number(Ok(Number::I32(0))),
             Token::Number(Ok(Number::I32(i32::MAX))),
-            Token::Number(Err(NumberError::NotRepresentable)),
             Token::Number(Err(NumberError::NotRepresentable)),
         ],
     );
     // min / max hexadecimal unsigned integer
     sub_test(
-        "0x0u 0xFFFFFFFFu -0x1u 0x100000000u",
+        "0x0u 0xFFFFFFFFu 0x100000000u",
         &[
             Token::Number(Ok(Number::U32(u32::MIN))),
             Token::Number(Ok(Number::U32(u32::MAX))),
             Token::Number(Err(NumberError::NotRepresentable)),
+        ],
+    );
+
+    // min/max decimal abstract int
+    sub_test(
+        "0 9223372036854775807 9223372036854775808",
+        &[
+            Token::Number(Ok(Number::AbstractInt(0))),
+            Token::Number(Ok(Number::AbstractInt(i64::MAX))),
+            Token::Number(Err(NumberError::NotRepresentable)),
+        ],
+    );
+
+    // min/max hexadecimal abstract int
+    sub_test(
+        "0 0x7fffffffffffffff 0x8000000000000000",
+        &[
+            Token::Number(Ok(Number::AbstractInt(0))),
+            Token::Number(Ok(Number::AbstractInt(i64::MAX))),
             Token::Number(Err(NumberError::NotRepresentable)),
         ],
     );
@@ -550,77 +633,43 @@ fn test_numbers() {
     const LARGEST_F32_LESS_THAN_ONE: f32 = 0.99999994;
     /// ≈ 1 + 2^−23
     const SMALLEST_F32_LARGER_THAN_ONE: f32 = 1.0000001;
-    /// ≈ -(2^127 * (2 − 2^−23))
-    const SMALLEST_NORMAL_F32: f32 = f32::MIN;
     /// ≈ 2^127 * (2 − 2^−23)
     const LARGEST_NORMAL_F32: f32 = f32::MAX;
 
     // decimal floating point
     sub_test(
-        "1e-45f 1.1754942e-38f 1.17549435e-38f 0.99999994f 1.0000001f -3.40282347e+38f 3.40282347e+38f",
+        "1e-45f 1.1754942e-38f 1.17549435e-38f 0.99999994f 1.0000001f 3.40282347e+38f",
         &[
-            Token::Number(Ok(Number::F32(
-                SMALLEST_POSITIVE_SUBNORMAL_F32,
-            ))),
-            Token::Number(Ok(Number::F32(
-                LARGEST_SUBNORMAL_F32,
-            ))),
-            Token::Number(Ok(Number::F32(
-                SMALLEST_POSITIVE_NORMAL_F32,
-            ))),
-            Token::Number(Ok(Number::F32(
-                LARGEST_F32_LESS_THAN_ONE,
-            ))),
-            Token::Number(Ok(Number::F32(
-                SMALLEST_F32_LARGER_THAN_ONE,
-            ))),
-            Token::Number(Ok(Number::F32(
-                SMALLEST_NORMAL_F32,
-            ))),
-            Token::Number(Ok(Number::F32(
-                LARGEST_NORMAL_F32,
-            ))),
+            Token::Number(Ok(Number::F32(SMALLEST_POSITIVE_SUBNORMAL_F32))),
+            Token::Number(Ok(Number::F32(LARGEST_SUBNORMAL_F32))),
+            Token::Number(Ok(Number::F32(SMALLEST_POSITIVE_NORMAL_F32))),
+            Token::Number(Ok(Number::F32(LARGEST_F32_LESS_THAN_ONE))),
+            Token::Number(Ok(Number::F32(SMALLEST_F32_LARGER_THAN_ONE))),
+            Token::Number(Ok(Number::F32(LARGEST_NORMAL_F32))),
         ],
     );
     sub_test(
-        "-3.40282367e+38f 3.40282367e+38f",
+        "3.40282367e+38f",
         &[
-            Token::Number(Err(NumberError::NotRepresentable)), // ≈ -2^128
             Token::Number(Err(NumberError::NotRepresentable)), // ≈ 2^128
         ],
     );
 
     // hexadecimal floating point
     sub_test(
-        "0x1p-149f 0x7FFFFFp-149f 0x1p-126f 0xFFFFFFp-24f 0x800001p-23f -0xFFFFFFp+104f 0xFFFFFFp+104f",
+        "0x1p-149f 0x7FFFFFp-149f 0x1p-126f 0xFFFFFFp-24f 0x800001p-23f 0xFFFFFFp+104f",
         &[
-            Token::Number(Ok(Number::F32(
-                SMALLEST_POSITIVE_SUBNORMAL_F32,
-            ))),
-            Token::Number(Ok(Number::F32(
-                LARGEST_SUBNORMAL_F32,
-            ))),
-            Token::Number(Ok(Number::F32(
-                SMALLEST_POSITIVE_NORMAL_F32,
-            ))),
-            Token::Number(Ok(Number::F32(
-                LARGEST_F32_LESS_THAN_ONE,
-            ))),
-            Token::Number(Ok(Number::F32(
-                SMALLEST_F32_LARGER_THAN_ONE,
-            ))),
-            Token::Number(Ok(Number::F32(
-                SMALLEST_NORMAL_F32,
-            ))),
-            Token::Number(Ok(Number::F32(
-                LARGEST_NORMAL_F32,
-            ))),
+            Token::Number(Ok(Number::F32(SMALLEST_POSITIVE_SUBNORMAL_F32))),
+            Token::Number(Ok(Number::F32(LARGEST_SUBNORMAL_F32))),
+            Token::Number(Ok(Number::F32(SMALLEST_POSITIVE_NORMAL_F32))),
+            Token::Number(Ok(Number::F32(LARGEST_F32_LESS_THAN_ONE))),
+            Token::Number(Ok(Number::F32(SMALLEST_F32_LARGER_THAN_ONE))),
+            Token::Number(Ok(Number::F32(LARGEST_NORMAL_F32))),
         ],
     );
     sub_test(
-        "-0x1p128f 0x1p128f 0x1.000001p0f",
+        "0x1p128f 0x1.000001p0f",
         &[
-            Token::Number(Err(NumberError::NotRepresentable)), // = -2^128
             Token::Number(Err(NumberError::NotRepresentable)), // = 2^128
             Token::Number(Err(NumberError::NotRepresentable)),
         ],
@@ -628,17 +677,36 @@ fn test_numbers() {
 }
 
 #[test]
+fn double_floats() {
+    sub_test(
+        "0x1.2p4lf 0x1p8lf 0.0625lf 625e-4lf 10lf 10l",
+        &[
+            Token::Number(Ok(Number::F64(18.0))),
+            Token::Number(Ok(Number::F64(256.0))),
+            Token::Number(Ok(Number::F64(0.0625))),
+            Token::Number(Ok(Number::F64(0.0625))),
+            Token::Number(Ok(Number::F64(10.0))),
+            Token::Number(Ok(Number::AbstractInt(10))),
+            Token::Word("l"),
+        ],
+    )
+}
+
+#[test]
 fn test_tokens() {
     sub_test("id123_OK", &[Token::Word("id123_OK")]);
     sub_test(
         "92No",
-        &[Token::Number(Ok(Number::I32(92))), Token::Word("No")],
+        &[
+            Token::Number(Ok(Number::AbstractInt(92))),
+            Token::Word("No"),
+        ],
     );
     sub_test(
         "2u3o",
         &[
             Token::Number(Ok(Number::U32(2))),
-            Token::Number(Ok(Number::I32(3))),
+            Token::Number(Ok(Number::AbstractInt(3))),
             Token::Word("o"),
         ],
     );
@@ -646,7 +714,7 @@ fn test_tokens() {
         "2.4f44po",
         &[
             Token::Number(Ok(Number::F32(2.4))),
-            Token::Number(Ok(Number::I32(44))),
+            Token::Number(Ok(Number::AbstractInt(44))),
             Token::Word("po"),
         ],
     );
@@ -677,6 +745,24 @@ fn test_tokens() {
             Token::Operation('/'),
         ],
     );
+
+    // Type suffixes are only allowed on hex float literals
+    // if you provided an exponent.
+    sub_test(
+        "0x1.2f 0x1.2f 0x1.2h 0x1.2H 0x1.2lf",
+        &[
+            // The 'f' suffixes are taken as a hex digit:
+            // the fractional part is 0x2f / 256.
+            Token::Number(Ok(Number::AbstractFloat(1.0 + 0x2f as f64 / 256.0))),
+            Token::Number(Ok(Number::AbstractFloat(1.0 + 0x2f as f64 / 256.0))),
+            Token::Number(Ok(Number::AbstractFloat(1.125))),
+            Token::Word("h"),
+            Token::Number(Ok(Number::AbstractFloat(1.125))),
+            Token::Word("H"),
+            Token::Number(Ok(Number::AbstractFloat(1.125))),
+            Token::Word("lf"),
+        ],
+    )
 }
 
 #[test]
@@ -687,7 +773,7 @@ fn test_variable_decl() {
             Token::Attribute,
             Token::Word("group"),
             Token::Paren('('),
-            Token::Number(Ok(Number::I32(0))),
+            Token::Number(Ok(Number::AbstractInt(0))),
             Token::Paren(')'),
             Token::Word("var"),
             Token::Paren('<'),

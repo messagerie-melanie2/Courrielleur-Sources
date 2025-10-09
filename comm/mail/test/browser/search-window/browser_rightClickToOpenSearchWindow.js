@@ -7,18 +7,16 @@
 var {
   assert_folders_selected_and_displayed,
   create_folder,
-  enter_folder,
   select_click_folder,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 var {
   assert_search_window_folder_displayed,
   close_search_window,
-  open_search_window,
   open_search_window_from_context_menu,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/SearchWindowHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/SearchWindowHelpers.sys.mjs"
 );
 
 var folderA, folderB;
@@ -35,10 +33,10 @@ add_task(
     select_click_folder(folderA);
     assert_folders_selected_and_displayed(folderA);
 
-    let swc = await open_search_window_from_context_menu(folderA);
+    const swc = await open_search_window_from_context_menu(folderA);
     assert_search_window_folder_displayed(swc, folderA);
 
-    close_search_window(swc);
+    await close_search_window(swc);
   }
 );
 
@@ -49,10 +47,10 @@ add_task(async function test_open_search_window_with_one_thing_selected() {
   select_click_folder(folderA);
   assert_folders_selected_and_displayed(folderA);
 
-  let swc = await open_search_window_from_context_menu(folderB);
+  const swc = await open_search_window_from_context_menu(folderB);
   assert_search_window_folder_displayed(swc, folderB);
 
-  close_search_window(swc);
+  await close_search_window(swc);
 
   Assert.report(
     false,

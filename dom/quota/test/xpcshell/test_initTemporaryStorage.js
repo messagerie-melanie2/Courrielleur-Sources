@@ -5,14 +5,18 @@
 
 /**
  * This test is mainly to verify initTemporaryStorage() does call
- * QuotaManager::EnsureTemporaryStorageIsInitialized() which does various
- * things, for example, it restores the directory metadata if it's broken or
- * missing.
+ * QuotaManager::EnsureTemporaryStorageIsInitializedInternal() which does
+ * various things, for example, it restores the directory metadata if it's
+ * broken or missing.
  */
 
 async function testSteps() {
   const originDirPath = "storage/default/https+++foo.example.com";
   const metadataFileName = ".metadata-v2";
+
+  info("Setting prefs");
+
+  Services.prefs.setBoolPref("dom.quotaManager.loadQuotaFromCache", false);
 
   info("Initializing");
 
@@ -21,7 +25,7 @@ async function testSteps() {
 
   info("Verifying initialization status");
 
-  await verifyInitializationStatus(true, false);
+  await verifyInitializationStatus(true, false, false);
 
   info("Creating an empty directory");
 
@@ -45,5 +49,5 @@ async function testSteps() {
 
   info("Verifying initialization status");
 
-  await verifyInitializationStatus(true, true);
+  await verifyInitializationStatus(true, false, true);
 }

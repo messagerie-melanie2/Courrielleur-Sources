@@ -1,4 +1,6 @@
-const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+const { NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
+);
 
 function run_test() {
   var dataFile = do_get_file("data/bug121341.properties");
@@ -17,7 +19,7 @@ function run_test() {
   Assert.equal(value, "abc");
 
   value = properties.getStringProperty("2");
-  Assert.equal(value, "xy");
+  Assert.equal(value, "xy\t");
 
   value = properties.getStringProperty("3");
   Assert.equal(value, "\u1234\t\r\n\u00AB\u0001\n");
@@ -35,10 +37,10 @@ function run_test() {
   Assert.equal(value, "yet another multiline propery");
 
   value = properties.getStringProperty("8");
-  Assert.equal(value, "\ttest5\u0020");
+  Assert.equal(value, "\ttest5 \t");
 
   value = properties.getStringProperty("9");
-  Assert.equal(value, " test6\t");
+  Assert.equal(value, " test6\t\t    ");
 
   value = properties.getStringProperty("10a\u1234b");
   Assert.equal(value, "c\uCDEFd");

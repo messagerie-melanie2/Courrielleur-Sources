@@ -12,10 +12,6 @@
 
 #define IMPORT_MSGS_URL "chrome://messenger/locale/importMsgs.properties"
 
-////////////////////////////////////////////////////////////////////////
-
-static void ImportMailThread(void* stuff);
-
 class ImportThreadData;
 
 class nsImportGenericMail : public nsIImportGeneric {
@@ -47,8 +43,6 @@ class nsImportGenericMail : public nsIImportGeneric {
   nsCOMPtr<nsIFile> m_pSrcLocation;
   bool m_gotLocation;
   bool m_gotDefaultMailboxes;
-  bool m_found;
-  bool m_userVerify;
   nsCOMPtr<nsIImportMail> m_pInterface;
   nsTArray<RefPtr<nsIImportMailboxDescriptor>> m_mailboxes;
   nsCOMPtr<nsISupportsString> m_pSuccessLog;

@@ -12,17 +12,19 @@
    prepareCalendarUnifinder, taskViewOnLoad, taskEdit, tearDownInvitationsManager,
    unloadCalendarManager, removeCalendarCommandController, finishCalendarUnifinder,
    PanelUI, changeMenuForTask, setupDeleteMenuitem, getMinimonth, currentView,
-   refreshEventTree, gCurrentMode, InitMessageMenu, onViewToolbarsPopupShowing,
+   refreshUnifinderFilterInterval, gCurrentMode, InitMessageMenu, onViewToolbarsPopupShowing,
    onCommandCustomize, CustomizeMailToolbar */
 
 var { AddonManager } = ChromeUtils.importESModule("resource://gre/modules/AddonManager.sys.mjs");
 var { AppConstants } = ChromeUtils.importESModule("resource://gre/modules/AppConstants.sys.mjs");
-var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
-var { calendarDeactivator } = ChromeUtils.import(
-  "resource:///modules/calendar/calCalendarDeactivator.jsm"
+var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
+var { calendarDeactivator } = ChromeUtils.importESModule(
+  "resource:///modules/calendar/calCalendarDeactivator.sys.mjs"
 );
 
-ChromeUtils.defineModuleGetter(this, "CalMetronome", "resource:///modules/CalMetronome.jsm");
+ChromeUtils.defineESModuleGetters(this, {
+  CalMetronome: "resource:///modules/CalMetronome.sys.mjs",
+});
 
 /**
  * Does calendar initialization steps for a given chrome window. Called at
@@ -102,13 +104,13 @@ async function loadCalendarComponent() {
 
   setUpInvitationsManager();
 
-  let filter = document.getElementById("task-tree-filtergroup");
+  const filter = document.getElementById("task-tree-filtergroup");
   filter.value = filter.value || "all";
 
   // Set up mode-switching menu items and mode[v]box elements for the initial mode.
   // At this point no tabs have been restored, so the only reason we wouldn't be
   // in "mail" mode is if a content tab has opened to display the account set-up.
-  let tabmail = document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   if (tabmail.currentTabInfo.mode.name == "contentTab") {
     changeMode("special");
   } else {
@@ -117,14 +119,31 @@ async function loadCalendarComponent() {
 
   updateTodayPaneButton();
 
-  prepareCalendarUnifinder();
+  await prepareCalendarUnifinder();
 
   taskViewOnLoad();
   taskEdit.onLoad();
 
-  document.getElementById("calSidebar").style.width = `${document
-    .getElementById("calSidebar")
-    .getAttribute("width")}px`;
+  for (const [id, attribute] of [
+    ["calSidebar", "width"],
+    ["bottom-events-box", "height"],
+    ["todo-tab-panel", "height"],
+    ["calendar-task-details-container", "height"],
+    ["unifinder-search-results-tree-col-title", "width"],
+    ["unifinder-search-results-tree-col-startdate", "width"],
+    ["unifinder-search-results-tree-col-enddate", "width"],
+    ["unifinder-search-results-tree-col-categories", "width"],
+    ["unifinder-search-results-tree-col-location", "width"],
+    ["unifinder-search-results-tree-col-status", "width"],
+    ["unifinder-search-results-tree-col-calendarname", "width"],
+  ]) {
+    // These values are correctly being restored to the elements' attributes
+    // but XUL does not honour them any more. Convert to style rules.
+    const element = document.getElementById(id);
+    if (element) {
+      element.style[attribute] = `${element.getAttribute(attribute)}px`;
+    }
+  }
 
   Services.obs.notifyObservers(window, "calendar-startup-done");
 }
@@ -154,7 +173,7 @@ function unloadCalendarComponent() {
  */
 async function uninstallLightningAddon() {
   try {
-    let addon = await AddonManager.getAddonByID("{e2fda1a4-762b-4020-b5ad-a41df1933103}");
+    const addon = await AddonManager.getAddonByID("{e2fda1a4-762b-4020-b5ad-a41df1933103}");
     if (addon) {
       await addon.uninstall();
     }
@@ -168,7 +187,7 @@ async function uninstallLightningAddon() {
  */
 function migrateCalendarUI() {
   const UI_VERSION = 3;
-  let currentUIVersion = Services.prefs.getIntPref("calendar.ui.version", 0);
+  const currentUIVersion = Services.prefs.getIntPref("calendar.ui.version", 0);
   if (currentUIVersion >= UI_VERSION) {
     return;
   }
@@ -178,18 +197,18 @@ function migrateCalendarUI() {
       // If the user has customized the event/task window dialog toolbar,
       // we copy that custom set of toolbar items to the event/task tab
       // toolbar and add the app menu button and a spring for alignment.
-      let xulStore = Services.xulStore;
-      let uri = "chrome://calendar/content/calendar-event-dialog.xhtml";
+      const xulStore = Services.xulStore;
+      const uri = "chrome://calendar/content/calendar-event-dialog.xhtml";
 
       if (xulStore.hasValue(uri, "event-toolbar", "currentset")) {
-        let windowSet = xulStore.getValue(uri, "event-toolbar", "currentset");
+        const windowSet = xulStore.getValue(uri, "event-toolbar", "currentset");
         let items = "";
         if (!windowSet.includes("spring")) {
           items = "spring";
         }
-        let previousSet = windowSet == "__empty" ? "" : windowSet + ",";
-        let tabSet = previousSet + items;
-        let tabBar = document.getElementById("event-tab-toolbar");
+        const previousSet = windowSet == "__empty" ? "" : windowSet + ",";
+        const tabSet = previousSet + items;
+        const tabBar = document.getElementById("event-tab-toolbar");
 
         tabBar.currentSet = tabSet;
         // For some reason we also have to do the following,
@@ -202,21 +221,21 @@ function migrateCalendarUI() {
     if (currentUIVersion < 3) {
       // Rename toolbar button id "button-save" to
       // "button-saveandclose" in customized toolbars
-      let xulStore = Services.xulStore;
-      let windowUri = "chrome://calendar/content/calendar-event-dialog.xhtml";
-      let tabUri = "chrome://messenger/content/messenger.xhtml";
+      const xulStore = Services.xulStore;
+      const windowUri = "chrome://calendar/content/calendar-event-dialog.xhtml";
+      const tabUri = "chrome://messenger/content/messenger.xhtml";
 
       if (xulStore.hasValue(windowUri, "event-toolbar", "currentset")) {
-        let windowSet = xulStore.getValue(windowUri, "event-toolbar", "currentset");
-        let newSet = windowSet.replace("button-save", "button-saveandclose");
+        const windowSet = xulStore.getValue(windowUri, "event-toolbar", "currentset");
+        const newSet = windowSet.replace("button-save", "button-saveandclose");
         xulStore.setValue(windowUri, "event-toolbar", "currentset", newSet);
       }
       if (xulStore.hasValue(tabUri, "event-tab-toolbar", "currentset")) {
-        let tabSet = xulStore.getValue(tabUri, "event-tab-toolbar", "currentset");
-        let newSet = tabSet.replace("button-save", "button-saveandclose");
+        const tabSet = xulStore.getValue(tabUri, "event-tab-toolbar", "currentset");
+        const newSet = tabSet.replace("button-save", "button-saveandclose");
         xulStore.setValue(tabUri, "event-tab-toolbar", "currentset", newSet);
 
-        let tabBar = document.getElementById("event-tab-toolbar");
+        const tabBar = document.getElementById("event-tab-toolbar");
         tabBar.currentSet = newSet;
         tabBar.setAttribute("currentset", newSet);
       }
@@ -230,7 +249,7 @@ function migrateCalendarUI() {
 function setLocaleDefaultPreferences() {
   function setDefaultLocaleValue(aName) {
     // Shift encoded days from 1=Monday ... 7=Sunday to 0=Sunday ... 6=Saturday
-    let startDefault = calendarInfo.firstDayOfWeek % 7;
+    const startDefault = calendarInfo.firstDayOfWeek % 7;
 
     if (aName == "calendar.categories.names" && defaultBranch.getStringPref(aName) == "") {
       cal.category.setupDefaultCategories();
@@ -247,10 +266,10 @@ function setLocaleDefaultPreferences() {
 
   cal.LOG("Start loading of locale dependent preference default values...");
 
-  let defaultBranch = Services.prefs.getDefaultBranch("");
-  let calendarInfo = cal.l10n.calendarInfo();
+  const defaultBranch = Services.prefs.getDefaultBranch("");
+  const calendarInfo = cal.l10n.calendarInfo();
 
-  let prefDefaults = [
+  const prefDefaults = [
     "calendar.week.start",
     "calendar.week.d0sundaysoff",
     "calendar.week.d1mondaysoff",
@@ -261,7 +280,7 @@ function setLocaleDefaultPreferences() {
     "calendar.week.d6saturdaysoff",
     "calendar.categories.names",
   ];
-  for (let prefDefault of prefDefaults) {
+  for (const prefDefault of prefDefaults) {
     setDefaultLocaleValue(prefDefault);
   }
 
@@ -272,32 +291,39 @@ function setLocaleDefaultPreferences() {
  * Called at midnight to tell us to redraw date-specific widgets.
  */
 function doMidnightUpdate() {
-  try {
-    getMinimonth().refreshDisplay();
-
-    // Refresh the current view and just allow the refresh for the others
-    // views when will be displayed.
-    let currView = currentView();
-    currView.goToDay();
-    let views = ["day-view", "week-view", "multiweek-view", "month-view"];
-    for (let view of views) {
-      if (view != currView.id) {
-        document.getElementById(view).mToggleStatus = -1;
-      }
-    }
-
-    if (!TodayPane.showsToday()) {
-      TodayPane.setDay(cal.dtz.now());
-    }
-
-    // Update the unifinder.
-    refreshEventTree();
-
-    // Update today's date on todaypane button.
-    updateTodayPaneButtonDate();
-  } catch (exc) {
-    cal.ASSERT(false, exc);
+  if (TodayPane.showsToday) {
+    // Select today.
+    TodayPane.setDay(cal.dtz.now());
+  } else {
+    // Just update the day displayed as today.
+    const todayMinimonth = document.getElementById("today-minimonth");
+    todayMinimonth.showMonth(todayMinimonth.value);
   }
+
+  for (const view of getViewBox().children) {
+    // Mark each view as invalid to ensure it gets redrawn next time it is shown.
+    view.mToggleStatus = -1;
+  }
+
+  const minimonth = getMinimonth();
+  if (minimonth.showsToday) {
+    // Select today.
+    minimonth.value = new Date();
+  } else {
+    // Just update the day displayed as today.
+    minimonth.showMonth(minimonth.mEditorDate);
+    const view = currentView();
+    if (view.isInitialized) {
+      view.goToDay();
+    }
+  }
+
+  // The unifinder filter may be set relative to the current day, so we need
+  // to ensure that it is up-to-date.
+  refreshUnifinderFilterInterval();
+
+  // Update today's date on todaypane button.
+  updateTodayPaneButtonDate();
 }
 
 /**
@@ -320,36 +346,38 @@ function updateTimeIndicatorPosition() {
  * Updates button structure to enable images on both sides of the label.
  */
 function updateTodayPaneButton() {
-  let todaypane = document.getElementById("calendar-status-todaypane-button");
+  const todaypane = document.getElementById("calendar-status-todaypane-button");
 
-  let iconStack = document.createXULElement("stack");
+  const iconStack = document.createXULElement("stack");
   iconStack.setAttribute("pack", "center");
   iconStack.setAttribute("align", "end");
 
-  let iconBegin = document.createElement("img");
+  const iconBegin = document.createElement("img");
   iconBegin.setAttribute("alt", "");
   iconBegin.setAttribute("src", "chrome://messenger/skin/icons/new/calendar-empty.svg");
   iconBegin.classList.add("toolbarbutton-icon-begin");
 
-  let iconLabel = document.createXULElement("label");
+  const iconLabel = document.createXULElement("label");
   iconLabel.classList.add("toolbarbutton-day-text");
 
-  let dayNumber = cal.l10n.getDateFmtString(`day.${cal.dtz.now().day}.number`);
+  // Only the number of the date is used here. `formatDateOnly` is avoided as
+  // the extra characters in CJK languages won't fit.
+  const dayNumber = new Date().getDate();
   iconLabel.textContent = dayNumber;
 
   iconStack.appendChild(iconBegin);
   iconStack.appendChild(iconLabel);
 
-  let iconEnd = document.createElement("img");
+  const iconEnd = document.createElement("img");
   iconEnd.setAttribute("alt", "");
   iconEnd.setAttribute("src", "chrome://messenger/skin/icons/new/nav-up-sm.svg");
   iconEnd.classList.add("toolbarbutton-icon-end");
 
-  let oldImage = todaypane.querySelector(".toolbarbutton-icon");
+  const oldImage = todaypane.querySelector(".toolbarbutton-icon");
   todaypane.replaceChild(iconStack, oldImage);
   todaypane.appendChild(iconEnd);
 
-  let calSidebar = document.getElementById("calSidebar");
+  const calSidebar = document.getElementById("calSidebar");
   todaypane.setAttribute("checked", !calSidebar.collapsed);
 }
 
@@ -357,9 +385,11 @@ function updateTodayPaneButton() {
  * Updates the date number in the calendar icon of the todaypane button.
  */
 function updateTodayPaneButtonDate() {
-  let todaypane = document.getElementById("calendar-status-todaypane-button");
+  const todaypane = document.getElementById("calendar-status-todaypane-button");
 
-  let dayNumber = cal.l10n.getDateFmtString(`day.${cal.dtz.now().day}.number`);
+  // Only the number of the date is used here. `formatDateOnly` is avoided as
+  // the extra characters in CJK languages won't fit.
+  const dayNumber = new Date().getDate();
   todaypane.querySelector(".toolbarbutton-day-text").textContent = dayNumber;
 }
 
@@ -376,11 +406,11 @@ function getToolboxIdForCurrentTabType() {
     calendarEvent: "event-toolbox",
     calendarTask: "event-toolbox",
   };
-  let tabmail = document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   if (!tabmail) {
     return "mail-toolbox"; // Standalone message window.
   }
-  let tabType = tabmail.currentTabInfo.mode.type;
+  const tabType = tabmail.currentTabInfo.mode.type;
 
   return calendarToolboxIds[tabType] || null;
 }
@@ -399,8 +429,8 @@ function calendarOnToolbarsPopupShowing(aEvent, aInsertPoint) {
     return;
   }
 
-  let toolboxes = ["navigation-toolbox"];
-  let toolboxId = getToolboxIdForCurrentTabType();
+  const toolboxes = ["navigation-toolbox"];
+  const toolboxId = getToolboxIdForCurrentTabType();
 
   if (toolboxId) {
     toolboxes.push(toolboxId);
@@ -413,7 +443,7 @@ function calendarOnToolbarsPopupShowing(aEvent, aInsertPoint) {
  * Open the customize dialog for the toolbar for the current tab type.
  */
 function customizeMailToolbarForTabType() {
-  let toolboxId = getToolboxIdForCurrentTabType();
+  const toolboxId = getToolboxIdForCurrentTabType();
   if (!toolboxId) {
     return;
   }
@@ -428,7 +458,7 @@ function customizeMailToolbarForTabType() {
  * Initialize the calendar sidebar menu state.
  */
 function initViewCalendarPaneMenu() {
-  let calSidebar = document.getElementById("calSidebar");
+  const calSidebar = document.getElementById("calSidebar");
 
   document.getElementById("calViewCalendarPane").setAttribute("checked", !calSidebar.collapsed);
 

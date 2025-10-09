@@ -6,12 +6,16 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #define HIDDEN_WINDOW
 
-<?xml-stylesheet href="chrome://browser/skin/webRTC-menubar-indicator.css" type="text/css"?>
+<?csp script-src chrome: moz-src: resource:; ?>
 
 <window id="main-window"
         xmlns:html="http://www.w3.org/1999/xhtml"
         xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
         data-l10n-sync="true">
+  <html:link
+    rel="stylesheet"
+    href="chrome://browser/skin/webRTC-menubar-indicator.css"
+  />
 
 #include macWindow.inc.xhtml
 
@@ -23,9 +27,9 @@
   <menupopup id="menu_mac_dockmenu" aria-hidden="true">
     <!-- The command cannot be cmd_newNavigator because we need to activate
          the application. -->
-    <menuitem data-l10n-id="menu-file-new-window" oncommand="OpenBrowserWindowFromDockMenu();"
+    <menuitem data-l10n-id="menu-file-new-window"
               id="macDockMenuNewWindow" />
-    <menuitem data-l10n-id="menu-file-new-private-window" oncommand="OpenBrowserWindowFromDockMenu({private: true});"
+    <menuitem data-l10n-id="menu-file-new-private-window"
               id="macDockMenuNewPrivateWindow" />
   </menupopup>
 </popupset>

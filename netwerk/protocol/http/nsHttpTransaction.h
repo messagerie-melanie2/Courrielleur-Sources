@@ -8,7 +8,6 @@
 
 #include "ARefBase.h"
 #include "EventTokenBucket.h"
-#include "Http2Push.h"
 #include "HttpTransactionShell.h"
 #include "TimingStruct.h"
 #include "mozilla/StaticPrefs_security.h"
@@ -91,6 +90,7 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   void RemoveConnection();
   void SetIsHttp2Websocket(bool h2ws) override { mIsHttp2Websocket = h2ws; }
   bool IsHttp2Websocket() override { return mIsHttp2Websocket; }
+  bool Closed() { return mClosed; }
 
   void SetTRRInfo(nsIRequest::TRRMode aMode,
                   TRRSkippedReason aSkipReason) override {
@@ -107,26 +107,26 @@ class nsHttpTransaction final : public nsAHttpTransaction,
 
   void PrintDiagnostics(nsCString& log);
 
-  // Sets mPendingTime to the current time stamp or to a null time stamp (if now
-  // is false)
+  // Sets mTimings.transactionPending to the current time stamp or to a null
+  // time stamp (if now is false)
   void SetPendingTime(bool now = true) {
     mozilla::MutexAutoLock lock(mLock);
-    if (!now && !mPendingTime.IsNull()) {
+    if (!now && !mTimings.transactionPending.IsNull()) {
       // Remember how long it took. We will use this value to record
       // TRANSACTION_WAIT_TIME_HTTP2_SUP_HTTP3 telemetry, but we need to wait
       // for the response headers.
-      mPendingDurationTime = TimeStamp::Now() - mPendingTime;
+      mPendingDurationTime = TimeStamp::Now() - mTimings.transactionPending;
     }
     // Note that the transaction could be added in to a pending queue multiple
     // times (when the transaction is restarted or moved to a new conn entry due
     // to HTTPS RR), so we should only set the pending time once.
-    if (mPendingTime.IsNull()) {
-      mPendingTime = now ? TimeStamp::Now() : TimeStamp();
+    if (mTimings.transactionPending.IsNull()) {
+      mTimings.transactionPending = now ? TimeStamp::Now() : TimeStamp();
     }
   }
   TimeStamp GetPendingTime() override {
     mozilla::MutexAutoLock lock(mLock);
-    return mPendingTime;
+    return mTimings.transactionPending;
   }
 
   // overload of nsAHttpTransaction::RequestContext()
@@ -137,16 +137,12 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   void DisableSpdy() override;
   void DisableHttp2ForProxy() override;
   void DoNotRemoveAltSvc() override { mDoNotRemoveAltSvc = true; }
+  void DoNotResetIPFamilyPreference() override {
+    mDoNotResetIPFamilyPreference = true;
+  }
   void DisableHttp3(bool aAllowRetryHTTPSRR) override;
 
   nsHttpTransaction* QueryHttpTransaction() override { return this; }
-
-  already_AddRefed<Http2PushedStreamWrapper> GetPushedStream() {
-    return do_AddRef(mPushedStream);
-  }
-  already_AddRefed<Http2PushedStreamWrapper> TakePushedStream() {
-    return mPushedStream.forget();
-  }
 
   uint32_t InitialRwin() const { return mInitialRwin; };
   bool ChannelPipeFull() { return mWaitingOnPipeOut; }
@@ -176,22 +172,25 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   void OnProxyConnectComplete(int32_t aResponseCode) override;
   void SetFlat407Headers(const nsACString& aHeaders);
 
-  // This is only called by Http2PushedStream::TryOnPush when a new pushed
-  // stream is available. The newly added stream will be taken by another
-  // transaction.
-  void OnPush(Http2PushedStreamWrapper* aStream);
-
   void UpdateConnectionInfo(nsHttpConnectionInfo* aConnInfo);
 
   void SetClassOfService(ClassOfService cos);
 
-  virtual nsresult OnHTTPSRRAvailable(
-      nsIDNSHTTPSSVCRecord* aHTTPSSVCRecord,
-      nsISVCBRecord* aHighestPriorityRecord) override;
+  virtual nsresult OnHTTPSRRAvailable(nsIDNSHTTPSSVCRecord* aHTTPSSVCRecord,
+                                      nsISVCBRecord* aHighestPriorityRecord,
+                                      const nsACString& aCname) override;
 
   void GetHashKeyOfConnectionEntry(nsACString& aResult);
 
-  bool IsForWebTransport() { return mIsForWebTransport; }
+  bool IsForWebTransport() override { return mIsForWebTransport; }
+  bool IsResettingForTunnelConn() override { return mIsResettingForTunnelConn; }
+  void SetResettingForTunnelConn(bool aValue) override {
+    mIsResettingForTunnelConn = aValue;
+  }
+
+  nsAutoCString GetUrl() { return mUrl; }
+
+  uint64_t ChannelId() { return mChannelId; }
 
  private:
   friend class DeleteHttpTransaction;
@@ -207,16 +206,14 @@ class nsHttpTransaction final : public nsAHttpTransaction,
                                        uint32_t* contentRead,
                                        uint32_t* contentRemaining);
   [[nodiscard]] nsresult ProcessData(char*, uint32_t, uint32_t*);
+  void ReportResponseHeader(uint32_t aSubType);
   void DeleteSelfOnConsumerThread();
   void ReleaseBlockingTransaction();
-
   [[nodiscard]] static nsresult ReadRequestSegment(nsIInputStream*, void*,
                                                    const char*, uint32_t,
                                                    uint32_t, uint32_t*);
   [[nodiscard]] static nsresult WritePipeSegment(nsIOutputStream*, void*, char*,
                                                  uint32_t, uint32_t, uint32_t*);
-
-  bool TimingEnabled() const { return mCaps & NS_HTTP_TIMING_ENABLED; }
 
   bool ResponseTimeoutEnabled() const final;
 
@@ -256,8 +253,7 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   void MaybeReportFailedSVCDomain(nsresult aReason,
                                   nsHttpConnectionInfo* aFailedConnInfo);
 
-  already_AddRefed<Http2PushedStreamWrapper> TakePushedStreamById(
-      uint32_t aStreamId);
+  void FinalizeConnInfo();
 
   // IMPORTANT: when adding new values, always add them to the end, otherwise
   // it will mess up telemetry.
@@ -296,6 +292,7 @@ class nsHttpTransaction final : public nsAHttpTransaction,
     TRANSACTION_RESTART_HTTP3_FAST_FALLBACK,
     TRANSACTION_RESTART_OTHERS,
     TRANSACTION_RESTART_PROTOCOL_VERSION_ALERT,
+    TRANSACTION_RESTART_POSSIBLE_0RTT_ERROR
   };
   void SetRestartReason(TRANSACTION_RESTART_REASON aReason);
 
@@ -381,7 +378,6 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   // so far been skipped.
   uint32_t mInvalidResponseBytesRead{0};
 
-  RefPtr<Http2PushedStreamWrapper> mPushedStream;
   uint32_t mInitialRwin{0};
 
   nsHttpChunkedDecoder* mChunkedDecoder{nullptr};
@@ -457,6 +453,7 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   bool mDeferredSendProgress{false};
   bool mWaitingOnPipeOut{false};
   bool mDoNotRemoveAltSvc{false};
+  bool mDoNotResetIPFamilyPreference{false};
   bool mIsHttp2Websocket{false};
 
   // mClosed           := transaction has been explicitly closed
@@ -477,7 +474,6 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   Atomic<bool> mRestarted{false};
 
   // The time when the transaction was submitted to the Connection Manager
-  TimeStamp mPendingTime;
   TimeDuration mPendingDurationTime;
 
   uint64_t mBrowserId{0};
@@ -552,11 +548,7 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   } mEarlyDataDisposition{EARLY_NONE};
 
   HttpTrafficCategory mTrafficCategory{HttpTrafficCategory::eInvalid};
-  bool mThroughCaptivePortal;
   Atomic<int32_t> mProxyConnectResponseCode{0};
-
-  OnPushCallback mOnPushCallback;
-  nsTHashMap<uint32_t, RefPtr<Http2PushedStreamWrapper>> mIDToStreamMap;
 
   nsCOMPtr<nsICancelable> mDNSRequest;
   Atomic<uint32_t, Relaxed> mHTTPSSVCReceivedStage{HTTPSSVC_NOT_USED};
@@ -569,13 +561,23 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   nsCOMPtr<nsITimer> mFastFallbackTimer;
   nsCOMPtr<nsITimer> mHttp3BackupTimer;
   RefPtr<nsHttpConnectionInfo> mBackupConnInfo;
+  // A clone of mConnInfo taken when this transaction is activated.
+  // Describes the server that the associated connection is connected to.
+  RefPtr<nsHttpConnectionInfo> mFinalizedConnInfo;
   RefPtr<HTTPSRecordResolver> mResolver;
   TRANSACTION_RESTART_REASON mRestartReason = TRANSACTION_RESTART_NONE;
 
+  enum TRANSACTION_ECH_RETRY_COUNT : uint32_t {
+    TRANSACTION_ECH_RETRY_OTHERS_COUNT = 0,
+    TRANSACTION_ECH_RETRY_WITH_ECH_COUNT = 1,
+    TRANSACTION_ECH_RETRY_WITHOUT_ECH_COUNT = 2,
+    TRANSACTION_ECH_RETRY_ECH_FAILED_COUNT = 3,
+  };
   nsTHashMap<nsUint32HashKey, uint32_t> mEchRetryCounterMap;
 
   bool mSupportsHTTP3 = false;
   Atomic<bool, Relaxed> mIsForWebTransport{false};
+  bool mIsResettingForTunnelConn = false;
 
   bool mEarlyDataWasAvailable = false;
   bool ShouldRestartOn0RttError(nsresult reason);
@@ -587,8 +589,13 @@ class nsHttpTransaction final : public nsAHttpTransaction,
   // be associated with the connection entry whose hash key is not the same as
   // this transaction's.
   nsCString mHashKeyOfConnectionEntry;
+  // The CNAME of the host, or empty if none.
+  nsCString mCname;
+  nsCString mServerHeader;
 
   nsCOMPtr<WebTransportSessionEventListener> mWebTransportSessionEventListener;
+
+  nsAutoCString mUrl;
 };
 
 }  // namespace mozilla::net

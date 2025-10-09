@@ -20,7 +20,7 @@
 
 class nsPrintSettingsX : public nsPrintSettings {
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_PRINTSETTINGSX_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_PRINTSETTINGSX_IID)
   NS_DECL_ISUPPORTS_INHERITED
 
   nsPrintSettingsX();
@@ -31,7 +31,9 @@ class nsPrintSettingsX : public nsPrintSettings {
   void SetDestination(uint16_t aDestination) { mDestination = aDestination; }
   void GetDestination(uint16_t* aDestination) { *aDestination = mDestination; }
 
-  void SetDisposition(const nsString& aDisposition) { mDisposition = aDisposition; }
+  void SetDisposition(const nsString& aDisposition) {
+    mDisposition = aDisposition;
+  }
   void GetDisposition(nsString& aDisposition) { aDisposition = mDisposition; }
 
   // Get a Cocoa NSPrintInfo that is configured with our current settings.
@@ -71,11 +73,13 @@ class nsPrintSettingsX : public nsPrintSettings {
   int GetCocoaUnit(int16_t aGeckoUnit);
 
   double PaperSizeFromCocoaPoints(double aPointsValue) {
-    return aPointsValue * (mPaperSizeUnit == kPaperSizeInches ? 1.0 / 72.0 : 25.4 / 72.0);
+    return aPointsValue *
+           (mPaperSizeUnit == kPaperSizeInches ? 1.0 / 72.0 : 25.4 / 72.0);
   }
 
   double CocoaPointsFromPaperSize(double aSizeUnitValue) {
-    return aSizeUnitValue * (mPaperSizeUnit == kPaperSizeInches ? 72.0 : 72.0 / 25.4);
+    return aSizeUnitValue *
+           (mPaperSizeUnit == kPaperSizeInches ? 72.0 : 72.0 / 25.4);
   }
 
   // Needed to correctly track the various job dispositions (spool, preview,
@@ -96,7 +100,5 @@ class nsPrintSettingsX : public nsPrintSettings {
   // it was originally passed.
   NSPrintInfo* mSystemPrintInfo = nullptr;
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(nsPrintSettingsX, NS_PRINTSETTINGSX_IID)
 
 #endif  // nsPrintSettingsX_h_

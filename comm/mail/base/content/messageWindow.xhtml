@@ -5,20 +5,6 @@
 
 #filter substitution
 
-<?xml-stylesheet href="chrome://messenger/skin/messageWindow.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/popupPanel.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/messageHeader.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/icons.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/colors.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/folderMenus.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/attachmentList.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/searchBox.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/panelUI.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/contextMenu.css" type="text/css"?>
-<?xml-stylesheet href="chrome://calendar/skin/calendar.css" type="text/css"?>
-<?xml-stylesheet href="chrome://calendar/skin/shared/calendar-toolbar.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/openpgp/inlineNotification.css" type="text/css"?>
-
 <!DOCTYPE html [
 <!ENTITY % brandDTD SYSTEM "chrome://branding/locale/brand.dtd" >
 %brandDTD;
@@ -69,12 +55,36 @@
       windowtype="mail:messageWindow"
 #ifdef XP_MACOSX
       macanimationtype="document"
-      chromemargin="0,-1,-1,-1"
+      customtitlebar="true"
 #endif
       lightweightthemes="true"
       fullscreenbutton="true">
 <head>
   <title>&titledefault.label;@PRE_RELEASE_SUFFIX@</title>
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src chrome:; style-src chrome: 'unsafe-inline'; script-src chrome: resource: 'unsafe-inline'"
+  />
+  <link rel="stylesheet" href="chrome://messenger/skin/messageWindow.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/popupPanel.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/messageHeader.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/icons.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/colors.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/folderMenus.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/attachmentList.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/searchBox.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/panelUI.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/contextMenu.css" />
+  <link rel="stylesheet" href="chrome://calendar/skin/calendar.css" />
+  <link
+    rel="stylesheet"
+    href="chrome://calendar/skin/shared/calendar-toolbar.css"
+  />
+  <link
+    rel="stylesheet"
+    href="chrome://messenger/skin/openpgp/inlineNotification.css"
+  />
+
   <link rel="localization" href="branding/brand.ftl" />
   <link rel="localization" href="messenger/messenger.ftl" />
   <link rel="localization" href="toolkit/main-window/findbar.ftl" />
@@ -84,6 +94,7 @@
   <link rel="localization" href="messenger/appmenu.ftl" />
   <link rel="localization" href="messenger/openpgp/openpgp.ftl" />
   <link rel="localization" href="messenger/openpgp/openpgp-frontend.ftl" />
+  <link rel="localization" href="calendar/calendar.ftl"/>
 
   <script defer="defer" src="chrome://messenger/content/globalOverlay.js"></script>
   <script defer="defer" src="chrome://messenger/content/mailWindow.js"></script>
@@ -98,6 +109,7 @@
   <script defer="defer" src="chrome://messenger/content/viewZoomOverlay.js"></script>
   <script defer="defer" src="chrome://communicator/content/utilityOverlay.js"></script>
   <script defer="defer" src="chrome://messenger/content/mailCore.js"></script>
+  <script defer="defer" src="chrome://messenger/content/accountUtils.js"></script>
 #ifdef NIGHTLY_BUILD
   <script defer="defer" src="chrome://messenger/content/sync.js"></script>
 #endif
@@ -133,7 +145,7 @@
     </commandset>
     <commandset id="tasksCommands">
       <command id="cmd_newMessage" oncommand="goOpenNewMessage();"/>
-      <command id="cmd_newCard" oncommand="openNewCardDialog()"/>
+      <command id="cmd_newCard" oncommand="goDoCommand('cmd_newCard')"/>
     </commandset>
     <commandset id="commandKeys"/>
     <command id="cmd_close" oncommand="window.close();"/>
@@ -395,12 +407,10 @@
            - Once loading animation is handled by CSS, we can use a single image
            - here instead. -->
         <html:img class="animated-throbber-icon"
-                  src="chrome://global/skin/icons/loading.png"
-                  srcset="chrome://global/skin/icons/loading@2x.png 2x"
+                  src="chrome://messenger/skin/icons/spinning.svg"
                   alt="" />
         <html:img class="static-throbber-icon"
-                  src="chrome://messenger/skin/icons/notloading.png"
-                  srcset="chrome://messenger/skin/icons/notloading@2x.png 2x"
+                  src="chrome://messenger/skin/icons/not-spinning.svg"
                   alt="" />
       </toolbaritem>
 
@@ -454,9 +464,9 @@
              context="toolbar-context-menu"
 #ifdef XP_MACOSX
              iconsize="small"
-             defaultset="button-getmsg,button-newmsg,spacer,button-tag,qfb-show-filter-bar,spring">
+             defaultset="button-getmsg,button-newmsg,spacer,button-tag,spring">
 #else
-             defaultset="button-getmsg,button-newmsg,separator,button-tag,qfb-show-filter-bar,spring">
+             defaultset="button-getmsg,button-newmsg,separator,button-tag,spring">
 #endif
     </toolbar>
   </toolbox>

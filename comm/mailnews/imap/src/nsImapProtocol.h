@@ -6,7 +6,6 @@
 #ifndef nsImapProtocol_h___
 #define nsImapProtocol_h___
 
-#include "mozilla/Attributes.h"
 #include "nsIImapProtocol.h"
 #include "nsIImapUrl.h"
 
@@ -15,7 +14,6 @@
 #include "nsIAsyncOutputStream.h"
 #include "nsIAsyncInputStream.h"
 #include "nsImapCore.h"
-#include "nsString.h"
 #include "nsIProgressEventSink.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsISocketTransport.h"
@@ -33,8 +31,6 @@
 #include "nsIInputStream.h"
 #include "nsIMsgIncomingServer.h"
 #include "nsCOMArray.h"
-#include "nsIThread.h"
-#include "nsIRunnable.h"
 #include "nsIImapMockChannel.h"
 #include "nsILoadGroup.h"
 #include "nsCOMPtr.h"
@@ -48,7 +44,6 @@
 #include "nsSyncRunnableHelpers.h"
 #include "nsICacheEntryOpenCallback.h"
 #include "nsIProtocolProxyCallback.h"
-#include "nsIStringBundle.h"
 #include "nsHashPropertyBag.h"
 #include "nsMailChannel.h"
 
@@ -59,10 +54,10 @@ class nsIPrefBranch;
 
 #define kDownLoadCacheSize 16000u  // was 1536 - try making it bigger
 
-typedef struct _msg_line_info {
+using msg_line_info = struct _msg_line_info {
   const char* adoptedMessageLine;
   uint32_t uidOfMessage;
-} msg_line_info;
+};
 
 class nsMsgImapLineDownloadCache : public nsIImapHeaderInfo,
                                    public nsByteArray {
@@ -298,12 +293,12 @@ class nsImapProtocol : public nsIImapProtocol,
   void AlertUserEvent(const char* message);
   void AlertUserEventFromServer(const char* aServerEvent,
                                 bool aForIdle = false);
+  void AlertCertError(nsITransportSecurityInfo* securityInfo);
 
   void ProgressEventFunctionUsingName(const char* aMsgId);
   void ProgressEventFunctionUsingNameWithString(const char* aMsgName,
                                                 const char* aExtraInfo);
   void PercentProgressUpdateEvent(nsACString const& fmtStringName,
-                                  nsAString const& mailbox,
                                   int64_t currentProgress, int64_t maxProgress);
   void ShowProgress();
 
@@ -324,14 +319,13 @@ class nsImapProtocol : public nsIImapProtocol,
   void UidExpunge(const nsCString& messageSet);
   void ImapClose(bool shuttingDown = false, bool waitForResponse = true);
   void Check();
-  void SelectMailbox(const char* mailboxName);
+  void SelectMailbox(const char* mailboxName, bool noUpdate = false);
   // more imap commands
   void Logout(bool shuttingDown = false, bool waitForResponse = true);
   void Noop();
   void XServerInfo();
   void Netscape();
   void XMailboxInfo(const char* mailboxName);
-  void XAOL_Option(const char* option);
   void MailboxData();
   void GetMyRightsForFolder(const char* mailboxName);
   void Bodystructure(const nsCString& messageId, bool idIsUid);
@@ -383,6 +377,7 @@ class nsImapProtocol : public nsIImapProtocol,
   // It is cleared when we finish processng a url and it is set whenever we call
   // Load on a url
   bool m_urlInProgress;
+  bool IsUrlInProgress();
 
   /** The nsIImapURL that is currently running. */
   nsCOMPtr<nsIImapUrl> m_runningUrl;
@@ -417,19 +412,15 @@ class nsImapProtocol : public nsIImapProtocol,
 
   // ******* Thread support *******
   PRThread* m_thread;
-  mozilla::ReentrantMonitor
-      m_dataAvailableMonitor;  // used to notify the arrival of data from the
-                               // server
-  mozilla::ReentrantMonitor
-      m_urlReadyToRunMonitor;  // used to notify the arrival of a new url to be
-                               // processed
+  // used to notify the arrival of a new url to be processed
+  mozilla::ReentrantMonitor m_urlReadyToRunMonitor;
   mozilla::ReentrantMonitor m_pseudoInterruptMonitor;
   mozilla::ReentrantMonitor m_dataMemberMonitor;
   mozilla::ReentrantMonitor m_threadDeathMonitor;
   mozilla::ReentrantMonitor m_waitForBodyIdsMonitor;
   mozilla::ReentrantMonitor m_fetchBodyListMonitor;
   mozilla::ReentrantMonitor m_passwordReadyMonitor;
-  mozilla::Mutex mLock;
+  mozilla::ReentrantMonitor mMonitor;
   // If we get an async password prompt, this is where the UI thread
   // stores the password, before notifying the imap thread of the password
   // via the m_passwordReadyMonitor.
@@ -521,8 +512,7 @@ class nsImapProtocol : public nsIImapProtocol,
   // sure we don't log authentication information like the user's password
   // (which was encoded anyway), but still we shouldn't add that information to
   // the log.
-  nsresult SendData(const char* dataBuffer,
-                    bool aSuppressLogging = false) override;
+  nsresult SendData(const char* dataBuffer, bool aSuppressLogging = false);
 
   // state ported over from 4.5
   bool m_pseudoInterrupted;
@@ -541,9 +531,7 @@ class nsImapProtocol : public nsIImapProtocol,
   RefPtr<nsImapFlagAndUidState> m_flagState;
   nsMsgBiffState m_currentBiffState;
   // manage the IMAP server command tags
-  // 11 = enough memory for the decimal representation of MAX_UINT + trailing
-  // nul
-  char m_currentServerCommandTag[11];
+  nsCString m_currentServerCommandTag;
   uint32_t m_currentServerCommandTagNumber;
   void IncrementCommandTagNumber();
   const char* GetServerCommandTag();
@@ -585,11 +573,11 @@ class nsImapProtocol : public nsIImapProtocol,
   void OnLSubFolders();
   void OnAppendMsgFromFile();
 
-  char* GetFolderPathString();  // OK to call from UI thread
+  nsCString GetFolderPathString();  // OK to call from UI thread
 
-  char* OnCreateServerSourceFolderPathString();
-  char* OnCreateServerDestinationFolderPathString();
-  nsresult CreateServerSourceFolderPathString(char** result);
+  nsCString OnCreateServerSourceFolderPathString();
+  nsCString OnCreateServerDestinationFolderPathString();
+  nsresult CreateServerSourceFolderPathString(nsCString& result);
   void OnCreateFolder(const char* aSourceMailbox);
   void OnEnsureExistsFolder(const char* aSourceMailbox);
   void OnSubscribe(const char* aSourceMailbox);
@@ -616,7 +604,7 @@ class nsImapProtocol : public nsIImapProtocol,
                                             const char* newName,
                                             bool reallyRename);
   // notify the fe that a folder was deleted
-  void FolderDeleted(const char* mailboxName);
+  void FolderDeleted(const nsACString& mailboxName);
   // notify the fe that a folder creation failed
   void FolderNotCreated(const char* mailboxName);
   // notify the fe that a folder was deleted
@@ -624,7 +612,7 @@ class nsImapProtocol : public nsIImapProtocol,
 
   bool FolderIsSelected(const char* mailboxName);
 
-  bool MailboxIsNoSelectMailbox(const char* mailboxName);
+  bool MailboxIsNoSelectMailbox(const nsACString& mailboxName);
   bool FolderNeedsACLInitialized(const char* folderName);
   void DiscoverMailboxList();
   void DiscoverAllAndSubscribedBoxes();

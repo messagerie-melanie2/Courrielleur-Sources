@@ -9,21 +9,60 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use malloc_size_of::MallocSizeOf;
+use malloc_size_of_derive::MallocSizeOf;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::request::HeaderMap;
 use crate::{DELETION_REQUEST_PINGS_DIRECTORY, PENDING_PINGS_DIRECTORY};
 
 /// A representation of the data extracted from a ping file,
-/// this will contain the document_id, path, JSON encoded body of a ping and the persisted headers.
-pub type PingPayload = (String, String, String, Option<HeaderMap>);
+#[derive(Clone, Debug, Default, MallocSizeOf)]
+pub struct PingPayload {
+    /// The ping's doc_id.
+    pub document_id: String,
+    /// The path to upload the ping to.
+    pub upload_path: String,
+    /// The ping body as JSON-encoded string.
+    pub json_body: String,
+    /// HTTP headers to include in the upload request.
+    pub headers: Option<HeaderMap>,
+    /// Whether the ping body contains {client|ping}_info
+    pub body_has_info_sections: bool,
+    /// The ping's name. (Also likely in the upload_path.)
+    pub ping_name: String,
+    /// The capabilities this ping must be uploaded under.
+    pub uploader_capabilities: Vec<String>,
+}
 
 /// A struct to hold the result of scanning all pings directories.
 #[derive(Clone, Debug, Default)]
 pub struct PingPayloadsByDirectory {
     pub pending_pings: Vec<(u64, PingPayload)>,
     pub deletion_request_pings: Vec<(u64, PingPayload)>,
+}
+
+impl MallocSizeOf for PingPayloadsByDirectory {
+    fn size_of(&self, ops: &mut malloc_size_of::MallocSizeOfOps) -> usize {
+        // SAFETY: We own the referenced `Vec`s and can hand out pointers to them
+        // to an external function.
+        let shallow_size = unsafe {
+            ops.malloc_size_of(self.pending_pings.as_ptr())
+                + ops.malloc_size_of(self.deletion_request_pings.as_ptr())
+        };
+
+        let mut n = shallow_size;
+        for elem in self.pending_pings.iter() {
+            n += elem.0.size_of(ops);
+            n += elem.1.size_of(ops);
+        }
+        for elem in self.deletion_request_pings.iter() {
+            n += elem.0.size_of(ops);
+            n += elem.1.size_of(ops);
+        }
+        n
+    }
 }
 
 impl PingPayloadsByDirectory {
@@ -62,20 +101,30 @@ fn get_file_name_as_str(path: &Path) -> Option<&str> {
     }
 }
 
+/// A ping's metadata, as (optionally) represented on disk.
+///
+/// Anything that isn't the upload path or the ping body.
+#[derive(Default, Deserialize, Serialize)]
+pub struct PingMetadata {
+    /// HTTP headers to include when uploading the ping.
+    pub headers: Option<HeaderMap>,
+    /// Whether the body has {client|ping}_info sections.
+    pub body_has_info_sections: Option<bool>,
+    /// The name of the ping.
+    pub ping_name: Option<String>,
+    /// The capabilities this ping must be uploaded under.
+    pub uploader_capabilities: Option<Vec<String>>,
+}
+
 /// Processes a ping's metadata.
 ///
 /// The metadata is an optional third line in the ping file,
 /// currently it contains only additonal headers to be added to each ping request.
 /// Therefore, we will process the contents of this line
 /// and return a HeaderMap of the persisted headers.
-fn process_metadata(path: &str, metadata: &str) -> Option<HeaderMap> {
-    #[derive(Deserialize)]
-    struct PingMetadata {
-        pub headers: HeaderMap,
-    }
-
+pub fn process_metadata(path: &str, metadata: &str) -> Option<PingMetadata> {
     if let Ok(metadata) = serde_json::from_str::<PingMetadata>(metadata) {
-        return Some(metadata.headers);
+        return Some(metadata);
     } else {
         log::warn!("Error while parsing ping metadata: {}", path);
     }
@@ -83,7 +132,7 @@ fn process_metadata(path: &str, metadata: &str) -> Option<HeaderMap> {
 }
 
 /// Manages the pings directories.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, MallocSizeOf)]
 pub struct PingDirectoryManager {
     /// Path to the pending pings directory.
     pending_pings_dir: PathBuf,
@@ -171,8 +220,25 @@ impl PingDirectoryManager {
         if let (Some(Ok(path)), Some(Ok(body)), Ok(metadata)) =
             (lines.next(), lines.next(), lines.next().transpose())
         {
-            let headers = metadata.and_then(|m| process_metadata(&path, &m));
-            return Some((document_id.into(), path, body, headers));
+            let PingMetadata {
+                headers,
+                body_has_info_sections,
+                ping_name,
+                uploader_capabilities,
+            } = metadata
+                .and_then(|m| process_metadata(&path, &m))
+                .unwrap_or_default();
+            let ping_name =
+                ping_name.unwrap_or_else(|| path.split('/').nth(3).unwrap_or("").into());
+            return Some(PingPayload {
+                document_id: document_id.into(),
+                upload_path: path,
+                json_body: body,
+                headers,
+                body_has_info_sections: body_has_info_sections.unwrap_or(true),
+                ping_name,
+                uploader_capabilities: uploader_capabilities.unwrap_or_default(),
+            });
         } else {
             log::warn!(
                 "Error processing ping file: {}. Ping file is not formatted as expected.",
@@ -281,8 +347,6 @@ impl PingDirectoryManager {
 
 #[cfg(test)]
 mod test {
-    use std::fs::File;
-
     use super::*;
     use crate::metrics::PingType;
     use crate::tests::new_glean;
@@ -303,7 +367,18 @@ mod test {
         let (mut glean, dir) = new_glean(None);
 
         // Register a ping for testing
-        let ping_type = PingType::new("test", true, true, vec![]);
+        let ping_type = PingType::new(
+            "test",
+            true,
+            true,
+            true,
+            true,
+            true,
+            vec![],
+            vec![],
+            true,
+            vec![],
+        );
         glean.register_ping_type(&ping_type);
 
         // Submit the ping to populate the pending_pings directory
@@ -320,7 +395,8 @@ mod test {
 
         // Verify request was returned for the "test" ping
         let ping = &data.pending_pings[0].1;
-        let request_ping_type = ping.1.split('/').nth(3).unwrap();
+        let request_ping_type = ping.upload_path.split('/').nth(3).unwrap();
+        assert_eq!(request_ping_type, ping.ping_name);
         assert_eq!(request_ping_type, "test");
     }
 
@@ -329,7 +405,18 @@ mod test {
         let (mut glean, dir) = new_glean(None);
 
         // Register a ping for testing
-        let ping_type = PingType::new("test", true, true, vec![]);
+        let ping_type = PingType::new(
+            "test",
+            true,
+            true,
+            true,
+            true,
+            true,
+            vec![],
+            vec![],
+            true,
+            vec![],
+        );
         glean.register_ping_type(&ping_type);
 
         // Submit the ping to populate the pending_pings directory
@@ -352,7 +439,8 @@ mod test {
 
         // Verify request was returned for the "test" ping
         let ping = &data.pending_pings[0].1;
-        let request_ping_type = ping.1.split('/').nth(3).unwrap();
+        let request_ping_type = ping.upload_path.split('/').nth(3).unwrap();
+        assert_eq!(request_ping_type, ping.ping_name);
         assert_eq!(request_ping_type, "test");
 
         // Verify that file was indeed deleted
@@ -364,7 +452,18 @@ mod test {
         let (mut glean, dir) = new_glean(None);
 
         // Register a ping for testing
-        let ping_type = PingType::new("test", true, true, vec![]);
+        let ping_type = PingType::new(
+            "test",
+            true,
+            true,
+            true,
+            true,
+            true,
+            vec![],
+            vec![],
+            true,
+            vec![],
+        );
         glean.register_ping_type(&ping_type);
 
         // Submit the ping to populate the pending_pings directory
@@ -387,7 +486,8 @@ mod test {
 
         // Verify request was returned for the "test" ping
         let ping = &data.pending_pings[0].1;
-        let request_ping_type = ping.1.split('/').nth(3).unwrap();
+        let request_ping_type = ping.upload_path.split('/').nth(3).unwrap();
+        assert_eq!(request_ping_type, ping.ping_name);
         assert_eq!(request_ping_type, "test");
 
         // Verify that file was indeed deleted
@@ -414,7 +514,8 @@ mod test {
 
         // Verify request was returned for the "deletion-request" ping
         let ping = &data.deletion_request_pings[0].1;
-        let request_ping_type = ping.1.split('/').nth(3).unwrap();
+        let request_ping_type = ping.upload_path.split('/').nth(3).unwrap();
+        assert_eq!(request_ping_type, ping.ping_name);
         assert_eq!(request_ping_type, "deletion-request");
     }
 }

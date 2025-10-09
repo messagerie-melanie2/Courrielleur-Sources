@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsSyncRunnableHelpers.h"
+#include "nsComponentManagerUtils.h"
 #include "nsImapCore.h"
 #include "nsIMsgMailNewsUrl.h"
 #include "nsIMsgIncomingServer.h"
@@ -366,8 +367,8 @@ NS_SYNCRUNNABLEMETHOD1(ImapMailFolderSink, HeaderFetchCompleted,
 NS_SYNCRUNNABLEMETHOD1(ImapMailFolderSink, SetBiffStateAndUpdate, int32_t)
 NS_SYNCRUNNABLEMETHOD3(ImapMailFolderSink, ProgressStatusString,
                        nsIImapProtocol*, const char*, const char16_t*)
-NS_SYNCRUNNABLEMETHOD5(ImapMailFolderSink, PercentProgress, nsIImapProtocol*,
-                       nsACString const&, nsAString const&, int64_t, int64_t)
+NS_SYNCRUNNABLEMETHOD4(ImapMailFolderSink, PercentProgress, nsIImapProtocol*,
+                       nsACString const&, int64_t, int64_t)
 NS_SYNCRUNNABLEMETHOD0(ImapMailFolderSink, ClearFolderRights)
 NS_SYNCRUNNABLEMETHOD2(ImapMailFolderSink, SetCopyResponseUid, const char*,
                        nsIImapUrl*)
@@ -382,7 +383,6 @@ NS_SYNCRUNNABLEMETHOD3(ImapMessageSink, ParseAdoptedMsgLine, const char*,
 NS_SYNCRUNNABLEMETHOD4(ImapMessageSink, NormalEndMsgWriteStream, nsMsgKey, bool,
                        nsIImapUrl*, int32_t)
 NS_SYNCRUNNABLEMETHOD0(ImapMessageSink, AbortMsgWriteStream)
-NS_SYNCRUNNABLEMETHOD0(ImapMessageSink, BeginMessageUpload)
 NS_SYNCRUNNABLEMETHOD4(ImapMessageSink, NotifyMessageFlags, uint32_t,
                        const nsACString&, nsMsgKey, uint64_t)
 NS_SYNCRUNNABLEMETHOD3(ImapMessageSink, NotifyMessageDeleted, const char*, bool,
@@ -431,6 +431,8 @@ NS_SYNCRUNNABLEMETHOD2(ImapServerSink, FEAlertWithName, const char*,
                        nsIMsgMailNewsUrl*)
 NS_SYNCRUNNABLEMETHOD2(ImapServerSink, FEAlertFromServer, const nsACString&,
                        nsIMsgMailNewsUrl*)
+NS_SYNCRUNNABLEMETHOD2(ImapServerSink, FEAlertCertError,
+                       nsITransportSecurityInfo*, nsIMsgMailNewsUrl*)
 NS_SYNCRUNNABLEMETHOD0(ImapServerSink, CommitNamespaces)
 NS_SYNCRUNNABLEMETHOD3(ImapServerSink, AsyncGetPassword, nsIImapProtocol*, bool,
                        nsAString&)
@@ -444,7 +446,6 @@ NS_SYNCRUNNABLEMETHOD1(ImapServerSink, GetShowAttachmentsInline, bool*)
 NS_SYNCRUNNABLEMETHOD3(ImapServerSink, CramMD5Hash, const char*, const char*,
                        char**)
 NS_SYNCRUNNABLEMETHOD1(ImapServerSink, GetLoginUsername, nsACString&)
-NS_SYNCRUNNABLEMETHOD1(ImapServerSink, UpdateTrySTARTTLSPref, bool)
 NS_SYNCRUNNABLEMETHOD1(ImapServerSink, GetOriginalUsername, nsACString&)
 NS_SYNCRUNNABLEMETHOD1(ImapServerSink, GetServerKey, nsACString&)
 NS_SYNCRUNNABLEMETHOD1(ImapServerSink, GetServerPassword, nsAString&)
@@ -453,6 +454,11 @@ NS_SYNCRUNNABLEMETHOD1(ImapServerSink, GetServerShuttingDown, bool*)
 NS_SYNCRUNNABLEMETHOD1(ImapServerSink, ResetServerConnection, const nsACString&)
 NS_SYNCRUNNABLEMETHOD1(ImapServerSink, SetServerDoingLsub, bool)
 NS_SYNCRUNNABLEMETHOD1(ImapServerSink, SetServerUtf8AcceptEnabled, bool)
+
+NS_IMETHODIMP ImapServerSinkProxy::RunLogonExclusive(nsIRunnable*) {
+  MOZ_ASSERT(false);  // This method is not supposed to be proxied.
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
 
 namespace mozilla {
 namespace mailnews {
@@ -573,12 +579,12 @@ void OAuth2ThreadHelper::Connect() {
   }
 }
 
-nsresult OAuth2ThreadHelper::OnSuccess(const nsACString& aOAuth2String) {
+nsresult OAuth2ThreadHelper::OnSuccess(const nsACString& aBearerToken) {
   MOZ_ASSERT(NS_IsMainThread(), "Can't touch JS off-main-thread");
   MonitorAutoLock lockGuard(mMonitor);
 
   MOZ_ASSERT(mOAuth2Support, "Should not be here if no OAuth2 support");
-  mOAuth2String = aOAuth2String;
+  mOAuth2String = aBearerToken;
   mMonitor.Notify();
   return NS_OK;
 }

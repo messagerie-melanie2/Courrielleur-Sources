@@ -4,11 +4,8 @@
 
 "use strict";
 
-var { get_about_message, open_message_from_file } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-);
-var { close_window } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
+var { get_about_message, open_message_from_file } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 /**
@@ -19,10 +16,10 @@ var { close_window } = ChromeUtils.import(
 add_task(async function test_attachment_not_empty() {
   Services.prefs.setBoolPref("mailnews.display.prefer_plaintext", true);
 
-  let file = new FileUtils.File(getTestFilePath("data/bug1358565.eml"));
+  const file = new FileUtils.File(getTestFilePath("data/bug1358565.eml"));
 
-  let msgc = await open_message_from_file(file);
-  let aboutMessage = get_about_message(msgc.window);
+  const msgc = await open_message_from_file(file);
+  const aboutMessage = get_about_message(msgc);
 
   EventUtils.synthesizeMouseAtCenter(
     aboutMessage.document.getElementById("attachmentToggle"),
@@ -34,7 +31,7 @@ add_task(async function test_attachment_not_empty() {
     1
   );
 
-  let attachmentElem = aboutMessage.document
+  const attachmentElem = aboutMessage.document
     .getElementById("attachmentList")
     .getItemAtIndex(0);
   Assert.equal(attachmentElem.attachment.contentType, "image/jpeg");
@@ -45,7 +42,7 @@ add_task(async function test_attachment_not_empty() {
     "Attachment incorrectly determined empty"
   );
 
-  close_window(msgc);
+  await BrowserTestUtils.closeWindow(msgc);
 
   Services.prefs.clearUserPref("mailnews.display.prefer_plaintext");
 });

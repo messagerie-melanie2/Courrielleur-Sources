@@ -10,9 +10,10 @@
 #include "nsIURLQueryStringStripper.h"
 #include "nsIURLQueryStrippingListService.h"
 #include "nsIObserver.h"
-
+#include "mozilla/dom/StripOnShareRuleBinding.h"
 #include "nsStringFwd.h"
 #include "nsTHashSet.h"
+#include "nsTHashMap.h"
 
 class nsIURI;
 
@@ -35,6 +36,7 @@ class URLQueryStringStripper final : public nsIObserver,
   ~URLQueryStringStripper() = default;
 
   static void OnPrefChange(const char* aPref, void* aData);
+  nsresult ManageObservers();
 
   [[nodiscard]] nsresult Init();
   [[nodiscard]] nsresult Shutdown();
@@ -44,13 +46,36 @@ class URLQueryStringStripper final : public nsIObserver,
 
   bool CheckAllowList(nsIURI* aURI);
 
-  void PopulateStripList(const nsAString& aList);
+  void PopulateStripList(const nsACString& aList);
   void PopulateAllowList(const nsACString& aList);
 
-  nsTHashSet<nsString> mList;
+  // Returns whether there is a rule matching the host that tells us to strip
+  // this query parameter.
+  bool ShouldStripParam(const nsACString& aHost, const nsACString& aName);
+  // Tries parse query parameter value as url and recurse into
+  // `StripForCopyOrShareInternal` to strip query parameters for it. Returns how
+  // many params were stripped, but at most 1 in dry mode. Modifies aValue to
+  // the stripped value in non-dry mode.
+  int TryStripValue(const nsACString& aHost, nsACString& aValue, bool aDry);
+
+  // Recursive helper function that helps strip URIs of tracking parameters
+  // and enables the stripping of tracking paramerters that are in a URI which
+  // is nested in a query parameter. Dry mode won't return a strippedURI and
+  // will stop after the first strippable parameter was found making aStripCount
+  // either 0 or 1. Used to determine whether stripping is possible.
+  nsresult StripForCopyOrShareInternal(nsIURI* aURI, nsIURI** aStrippedURI,
+                                       int& aStripCount, bool aDry,
+                                       bool aStripNestedURIs);
+
+  nsTHashSet<nsCString> mList;
   nsTHashSet<nsCString> mAllowList;
   nsCOMPtr<nsIURLQueryStrippingListService> mListService;
+  nsTHashMap<nsCString, dom::StripRule> mStripOnShareMap;
   bool mIsInitialized;
+  // Indicates whether or not we currently have registered an observer
+  // for the QPS/strip-on-share list updates
+  bool mObservingQPS = false;
+  bool mObservingStripOnShare = false;
 };
 
 }  // namespace mozilla

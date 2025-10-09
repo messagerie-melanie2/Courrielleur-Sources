@@ -18,6 +18,44 @@ namespace image {
 // Helpers
 ///////////////////////////////////////////////////////////////////////////////
 
+static void FinishPotentialVectorImage(Image* aImage) {
+  if (!aImage || aImage->GetType() != imgIContainer::TYPE_VECTOR) {
+    return;
+  }
+  // We only want to transition to or away from a part once it has reached
+  // load complete status, because if we don't then the progress tracker will
+  // send a fake load event with the lastpart bit set whenever an observer is
+  // removed without having the load complete progress. That fake load event
+  // with the lastpart bit set will get out of the multipart image and to the
+  // imgRequestProxy and further, which will make it look like we got the last
+  // part of the multipart image and confuse things. If we get here then we
+  // are still waiting for the load event for this image but we've gotten
+  // OnDataAvailable for the part after aImage. That means we must have
+  // gotten OnStopRequest for aImage; OnStopRequest calls
+  // OnImageDataComplete. For raster images that are part of a multipart
+  // image OnImageDataComplete will synchronously fire the load event
+  // because we synchronously perform the metadata decode in that function,
+  // because parts of multipart images have the transient flag set. So for
+  // raster images we are assured that the load event has happened by this
+  // point for aImage. For vector images there is no such luck because
+  // OnImageDataComplete needs to wait for the load event in the underlying
+  // svg document, which we can't force to happen synchronously. So we just
+  // send a fake load event for aImage. This shouldn't confuse anyone because
+  // the progress tracker won't send out another load event when the real load
+  // event comes because it's already in the progress. And nobody should be
+  // caring about load events on the current part of multipart images since
+  // they might be sent multiple times or might not be sent at all depending
+  // on timing. So this should be okay.
+
+  RefPtr<ProgressTracker> tracker = aImage->GetProgressTracker();
+  if (tracker && !(tracker->GetProgress() & FLAG_LOAD_COMPLETE)) {
+    Progress loadProgress =
+        LoadCompleteProgress(/* aLastPart = */ false, /* aError = */ false,
+                             /* aStatus = */ NS_OK);
+    tracker->SyncNotifyProgress(loadProgress | FLAG_SIZE_AVAILABLE);
+  }
+}
+
 class NextPartObserver : public IProgressObserver {
  public:
   MOZ_DECLARE_REFCOUNTED_TYPENAME(NextPartObserver)
@@ -42,6 +80,10 @@ class NextPartObserver : public IProgressObserver {
     mImage->RequestDecodeForSize(gfx::IntSize(0, 0),
                                  imgIContainer::FLAG_SYNC_DECODE);
 
+    // Vector images need special handling to make sure they are in a complete
+    // state.
+    FinishPotentialVectorImage(mImage);
+
     // RequestDecodeForSize() should've sent synchronous notifications that
     // would have caused us to call FinishObserving() (and null out mImage)
     // already. If for some reason it didn't, we should do so here.
@@ -57,9 +99,26 @@ class NextPartObserver : public IProgressObserver {
       return;
     }
 
-    if (aType == imgINotificationObserver::FRAME_COMPLETE) {
-      FinishObserving();
+    if (aType != imgINotificationObserver::FRAME_COMPLETE) {
+      return;
     }
+
+    if (mImage && mImage->GetType() == imgIContainer::TYPE_VECTOR) {
+      RefPtr<ProgressTracker> tracker = mImage->GetProgressTracker();
+      if (tracker && !(tracker->GetProgress() & FLAG_LOAD_COMPLETE)) {
+        // Vector images can send frame complete during loading (any mutation in
+        // the underlying svg doc will call OnRenderingChange which sends frame
+        // complete). Whereas raster images can only send frame complete before
+        // the load event if there has been something to trigger a decode, but
+        // we do not request a decode. So we will ignore this for vector images
+        // so as to enforce the invariant described above in
+        // BlockUntilDecodedAndFinishObserving that the current part always has
+        // the load complete progress.
+        return;
+      }
+    }
+
+    FinishObserving();
   }
 
   virtual void OnLoadComplete(bool aLastPart) override {
@@ -83,6 +142,15 @@ class NextPartObserver : public IProgressObserver {
     // notification, so go ahead and notify our owner right away.
     RefPtr<ProgressTracker> tracker = mImage->GetProgressTracker();
     if (tracker->GetProgress() & FLAG_HAS_ERROR) {
+      FinishObserving();
+      return;
+    }
+
+    if (mImage && mImage->GetType() == imgIContainer::TYPE_VECTOR &&
+        (tracker->GetProgress() & FLAG_FRAME_COMPLETE)) {
+      // It's a vector image that we may have already got a frame complete
+      // before load that we ignored (see Notify above). Now that we have the
+      // load event too, we make this part current.
       FinishObserving();
     }
   }
@@ -181,6 +249,12 @@ void MultipartImage::FinishTransition() {
 
     return;
   }
+
+  // Vector images need special handling to make sure they are in a complete
+  // state. (Only the first part can require this, subsequent parts have
+  // FinishPotentialVectorImage called on them before they become the current
+  // part.)
+  FinishPotentialVectorImage(InnerImage());
 
   // Stop observing the current part.
   {

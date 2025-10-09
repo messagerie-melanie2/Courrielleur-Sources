@@ -6,7 +6,7 @@
 
 @namespace html url("http://www.w3.org/1999/xhtml");
 
-:root:-moz-lwtheme {
+:root[lwtheme] {
   appearance: none;
 }
 
@@ -24,41 +24,35 @@ button > .button-box {
   padding: 0;
   border: none;
   background-color: transparent;
-  list-style-image: var(--icon-nav-down-sm);
+  content: var(--icon-nav-down-sm);
   -moz-context-properties: stroke;
   stroke: currentColor;
 }
 
-menulist::part(dropmarker) {
-  display: flex;
-}
-
 html|input {
   padding: 4px;
-}
 
-html|input[type="number"]::-moz-number-spin-up,
-html|input[type="number"]::-moz-number-spin-down {
-  min-height: 0.7em;
+  &[type="number"]::-moz-number-spin-up,
+  &[type="number"]::-moz-number-spin-down {
+    min-height: 0.7em;
+  }
 }
 
 menulist[is="menulist-editable"][editable="true"] {
   appearance: none;
   margin-inline-end: 4px;
   padding: 0;
-}
 
-menulist[is="menulist-editable"][editable="true"]::part(text-input) {
-  padding: 5px 4px;
-  margin-block: -2px;
-  margin-inline: -7px 7px;
-}
+  &::part(text-input) {
+    padding: 5px 4px;
+    margin-block: -2px;
+    margin-inline: -7px 7px;
+  }
 
-menulist[is="menulist-editable"][editable="true"]::part(dropmarker) {
-  width: initial;
-  min-width: 0;
-  margin-block: 0;
-  margin-inline-end: 3px;
+  &::part(dropmarker) {
+    width: initial;
+    margin-inline-end: 3px;
+  }
 }
 
 menulist menupopup menu,
@@ -69,12 +63,8 @@ button menupopup menuitem {
   padding: 5px 8px;
 }
 
-.menu-right {
+menupopup > menu::after {
   height: 1em;
   margin-inline-end: 3px;
   transform: scale(0.7);
-}
-
-tab + tab {
-  margin-inline-start: 0;
 }

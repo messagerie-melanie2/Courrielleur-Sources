@@ -40,14 +40,9 @@
                     command="cmd_newVirtualFolder"
                     accesskey="&newVirtualFolderCmd.accesskey;"/>
           <menuseparator id="newAccountPopupMenuSeparator"/>
-          <menuitem id="newCreateEmailAccountMenuItem"
-                    label="&newCreateEmailAccountCmd.label;"
-                    accesskey="&newCreateEmailAccountCmd.accesskey;"
-                    oncommand="openAccountProvisionerTab();"/>
           <menuitem id="newMailAccountMenuItem"
-                    label="&newExistingEmailAccountCmd.label;"
-                    accesskey="&newExistingEmailAccountCmd.accesskey;"
-                    oncommand="openAccountSetupTab();"/>
+                    data-l10n-id="file-new-email-account"
+                    oncommand="openAccountSetup();"/>
           <menuitem id="newIMAccountMenuItem"
                     label="&newIMAccountCmd.label;"
                     accesskey="&newIMAccountCmd.accesskey;"
@@ -130,8 +125,9 @@
             id="menu_getAllNewMsg"
             oncommand="MsgGetMessagesForAccount();">
         <menupopup is="folder-menupopup" id="menu_getAllNewMsgPopup"
-                    expandFolders="false"
-                    oncommand="MsgGetMessagesForAccount(event.target._folder); event.stopPropagation();">
+                   mode="getMail"
+                   expandFolders="false"
+                   oncommand="MsgGetMessagesForAccount(event.target._folder); event.stopPropagation();">
           <menuitem id="menu_getnewmsgs_all_accounts"
                     label="&getAllNewMsgCmdPopupMenu.label;"
                     accesskey="&getAllNewMsgCmdPopupMenu.accesskey;"
@@ -498,91 +494,91 @@
         <menuitem id="sortByDateMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byDate"
+                  value="dateCol"
                   label="&sortByDateCmd.label;"
                   accesskey="&sortByDateCmd.accesskey;"/>
         <menuitem id="sortByReceivedMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byReceived"
+                  value="receivedCol"
                   label="&sortByReceivedCmd.label;"
                   accesskey="&sortByReceivedCmd.accesskey;"/>
         <menuitem id="sortByFlagMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byFlagged"
+                  value="flaggedCol"
                   label="&sortByStarCmd.label;"
                   accesskey="&sortByStarCmd.accesskey;"/>
         <menuitem id="sortByOrderReceivedMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byId"
+                  value="idCol"
                   label="&sortByOrderReceivedCmd.label;"
                   accesskey="&sortByOrderReceivedCmd.accesskey;"/>
         <menuitem id="sortByPriorityMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byPriority"
+                  value="priorityCol"
                   label="&sortByPriorityCmd.label;"
                   accesskey="&sortByPriorityCmd.accesskey;"/>
         <menuitem id="sortByFromMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byAuthor"
+                  value="senderCol"
                   label="&sortByFromCmd.label;"
                   accesskey="&sortByFromCmd.accesskey;"/>
         <menuitem id="sortByRecipientMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byRecipient"
+                  value="recipientCol"
                   label="&sortByRecipientCmd.label;"
                   accesskey="&sortByRecipientCmd.accesskey;"/>
         <menuitem id="sortByCorrespondentMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byCorrespondent"
+                  value="correspondentCol"
                   label="&sortByCorrespondentCmd.label;"
                   accesskey="&sortByCorrespondentCmd.accesskey;"/>
         <menuitem id="sortBySizeMenuitem"
                   type="radio"
                   name="sortby"
-                  value="bySize"
+                  value="sizeCol"
                   label="&sortBySizeCmd.label;"
                   accesskey="&sortBySizeCmd.accesskey;"/>
         <menuitem id="sortByStatusMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byStatus"
+                  value="statusCol"
                   label="&sortByStatusCmd.label;"
                   accesskey="&sortByStatusCmd.accesskey;"/>
         <menuitem id="sortBySubjectMenuitem"
                   type="radio"
                   name="sortby"
-                  value="bySubject"
+                  value="subjectCol"
                   label="&sortBySubjectCmd.label;"
                   accesskey="&sortBySubjectCmd.accesskey;"/>
         <menuitem id="sortByUnreadMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byUnread"
+                  value="unreadButtonColHeader"
                   label="&sortByUnreadCmd.label;"
                   accesskey="&sortByUnreadCmd.accesskey;"/>
         <menuitem id="sortByTagsMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byTags"
+                  value="tagsCol"
                   label="&sortByTagsCmd.label;"
                   accesskey="&sortByTagsCmd.accesskey;"/>
         <menuitem id="sortByJunkStatusMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byJunkStatus"
+                  value="junkStatusCol"
                   label="&sortByJunkStatusCmd.label;"
                   accesskey="&sortByJunkStatusCmd.accesskey;"/>
         <menuitem id="sortByAttachmentsMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byAttachments"
+                  value="attachmentCol"
                   label="&sortByAttachmentsCmd.label;"
                   accesskey="&sortByAttachmentsCmd.accesskey;"/>
         <menuseparator id="sortAfterAttachmentSeparator"/>
@@ -710,19 +706,19 @@
                     name="viewFeedBodyHTMLGroup"
                     label="&bodyAllowHTML.label;"
                     accesskey="&bodyAllowHTML.accesskey;"
-                    oncommand="MsgFeedBodyRenderPrefs(false, 0, 0)"/>
+                    oncommand="MsgBodyAllowHTML()"/>
           <menuitem id="bodyFeedSummarySanitized"
                     type="radio"
                     name="viewFeedBodyHTMLGroup"
                     label="&bodySanitized.label;"
                     accesskey="&bodySanitized.accesskey;"
-                    oncommand="MsgFeedBodyRenderPrefs(false, 3, gDisallow_classes_no_html)"/>
+                    oncommand="MsgBodySanitized()"/>
           <menuitem id="bodyFeedSummaryAsPlaintext"
                     type="radio"
                     name="viewFeedBodyHTMLGroup"
                     label="&bodyAsPlaintext.label;"
                     accesskey="&bodyAsPlaintext.accesskey;"
-                    oncommand="MsgFeedBodyRenderPrefs(true, 1, gDisallow_classes_no_html)"/>
+                    oncommand="MsgBodyAsPlaintext()"/>
         </menupopup>
       </menu>
       <menuitem id="viewAttachmentsInlineMenuitem" label="&viewAttachmentsInlineCmd.label;" accesskey="&viewAttachmentsInlineCmd.accesskey;"
@@ -850,8 +846,8 @@
         <menupopup is="folder-menupopup" id="menu_GoFolderPopup"
                     showFileHereLabel="true"
                     showRecent="true"
-                    recentLabel="&contextMoveCopyMsgRecentMenu.label;"
-                    recentAccessKey="&contextMoveCopyMsgRecentMenu.accesskey;"
+                    recentLabel="&contextMoveCopyMsgRecentDestinationMenu.label;"
+                    recentAccessKey="&contextMoveCopyMsgRecentDestinationMenu.accesskey;"
                     showFavorites="true"
                     favoritesLabel="&contextMoveCopyMsgFavoritesMenu.label;"
                     favoritesAccessKey="&contextMoveCopyMsgFavoritesMenu.accesskey;"/>
@@ -1135,9 +1131,9 @@
 <!-- Tools -->
 <menu id="tasksMenu" label="&tasksMenu.label;" accesskey="&tasksMenu.accesskey;">
   <menupopup id="taskPopup" onpopupshowing="document.commandDispatcher.updateCommands('create-menu-tasks')">
-#ifndef XP_MACOSX
     <menuitem hidden="true" accesskey="&messengerCmd.accesskey;" label="&messengerCmd.label;"
               key="key_mail" oncommand="toMessengerWindow();" id="tasksMenuMail"/>
+#ifndef XP_MACOSX
     <menuitem id="addressBook"
               label="&addressBookCmd.label;"
               accesskey="&addressBookCmd.accesskey;"
@@ -1200,6 +1196,9 @@
     <menuitem id="menu_export" label="&exportCmd.label;"
               accesskey="&exportCmd.accesskey;"
               oncommand="toExport();"/>
+    <menuitem id="menu_exportmobile"
+              data-l10n-id="menu-export-for-mobile"
+              oncommand="openOptionsDialog('paneQrExport');"/>
     <menuitem id="manageKeysOpenPGP"
               data-l10n-id="openpgp-manage-keys-openpgp-cmd"
               oncommand="openKeyManager()"/>

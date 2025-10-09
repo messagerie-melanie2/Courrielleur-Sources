@@ -6,7 +6,7 @@ function test() {
   waitForExplicitFinish();
 
   const pageURI =
-    "http://example.org/tests/toolkit/components/places/tests/browser/favicon.html";
+    "https://example.org/tests/toolkit/components/places/tests/browser/favicon.html";
   let windowsToClose = [];
 
   registerCleanupFunction(function () {
@@ -26,18 +26,17 @@ function test() {
     BrowserTestUtils.browserLoaded(aWin.gBrowser.selectedBrowser).then(
       aCallback
     );
-    BrowserTestUtils.loadURIString(aWin.gBrowser.selectedBrowser, pageURI);
+    BrowserTestUtils.startLoadingURIString(
+      aWin.gBrowser.selectedBrowser,
+      pageURI
+    );
   }
 
   testOnWindow(true, function (win) {
-    waitForTabLoad(win, function () {
-      PlacesUtils.favicons.getFaviconURLForPage(
-        NetUtil.newURI(pageURI),
-        function (uri, dataLen, data, mimeType) {
-          is(uri, null, "No result should be found");
-          finish();
-        }
-      );
+    waitForTabLoad(win, async function () {
+      let favicon = await PlacesTestUtils.getFaviconForPage(pageURI);
+      is(favicon, null, "No result should be found");
+      finish();
     });
   });
 }

@@ -4,6 +4,7 @@ This test dedicatedly tests validation of GPUMultisampleState of createRenderPip
 
 import { makeTestGroup } from '../../../../common/framework/test_group.js';
 import { kDefaultFragmentShaderCode } from '../../../util/shader.js';
+import * as vtu from '../validation_test_utils.js';
 
 import { CreateRenderPipelineValidationTest } from './common.js';
 
@@ -17,13 +18,13 @@ g.test('count')
       .beginSubcases()
       .combine('count', [0, 1, 2, 3, 4, 8, 16, 1024])
   )
-  .fn(async t => {
+  .fn(t => {
     const { isAsync, count } = t.params;
 
     const descriptor = t.getDescriptor({ multisample: { count, alphaToCoverageEnabled: false } });
 
     const _success = count === 1 || count === 4;
-    t.doCreateRenderPipelineTest(isAsync, _success, descriptor);
+    vtu.doCreateRenderPipelineTest(t, isAsync, _success, descriptor);
   });
 
 g.test('alpha_to_coverage,count')
@@ -37,13 +38,13 @@ g.test('alpha_to_coverage,count')
       .beginSubcases()
       .combine('count', [1, 4])
   )
-  .fn(async t => {
+  .fn(t => {
     const { isAsync, alphaToCoverageEnabled, count } = t.params;
 
     const descriptor = t.getDescriptor({ multisample: { count, alphaToCoverageEnabled } });
 
     const _success = alphaToCoverageEnabled ? count === 4 : count === 1 || count === 4;
-    t.doCreateRenderPipelineTest(isAsync, _success, descriptor);
+    vtu.doCreateRenderPipelineTest(t, isAsync, _success, descriptor);
   });
 
 g.test('alpha_to_coverage,sample_mask')
@@ -57,8 +58,12 @@ g.test('alpha_to_coverage,sample_mask')
       .beginSubcases()
       .combine('hasSampleMaskOutput', [false, true])
   )
-  .fn(async t => {
+  .fn(t => {
     const { isAsync, alphaToCoverageEnabled, hasSampleMaskOutput } = t.params;
+
+    if (t.isCompatibility && hasSampleMaskOutput) {
+      t.skip('WGSL sample_mask is not supported in compatibility mode');
+    }
 
     const descriptor = t.getDescriptor({
       multisample: { alphaToCoverageEnabled, count: 4 },
@@ -79,5 +84,5 @@ g.test('alpha_to_coverage,sample_mask')
     });
 
     const _success = !hasSampleMaskOutput || !alphaToCoverageEnabled;
-    t.doCreateRenderPipelineTest(isAsync, _success, descriptor);
+    vtu.doCreateRenderPipelineTest(t, isAsync, _success, descriptor);
   });

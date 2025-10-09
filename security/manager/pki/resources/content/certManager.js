@@ -1,12 +1,17 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/* import-globals-from pippki.js */
+
 "use strict";
 
 const gCertFileTypes = "*.p7b; *.crt; *.cert; *.cer; *.pem; *.der";
 
-var { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+var { NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
+);
+const { exportToFile, viewCertHelper } = ChromeUtils.importESModule(
+  "resource://gre/modules/psm/pippki.sys.mjs"
+);
 
 var key;
 
@@ -154,18 +159,37 @@ var serverRichList = {
   },
 
   addException() {
-    let retval = {
+    let params = {
       exceptionAdded: false,
     };
+    let closedCallback = () => {
+      if (params.exceptionAdded) {
+        this.buildRichList();
+      }
+    };
+    // Try to use a subdialog, if available.
+    let cur = window;
+    let prev = null;
+    while (cur != prev) {
+      if (cur.gSubDialog) {
+        cur.gSubDialog.open(
+          "chrome://pippki/content/exceptionDialog.xhtml",
+          { features: "chrome,centerscreen,modal", closedCallback },
+          params
+        );
+        return;
+      }
+      prev = cur;
+      cur = cur.parent;
+    }
+    // Otherwise, fall back to a dialog.
     window.browsingContext.topChromeWindow.openDialog(
       "chrome://pippki/content/exceptionDialog.xhtml",
       "",
       "chrome,centerscreen,modal",
-      retval
+      params
     );
-    if (retval.exceptionAdded) {
-      this.buildRichList();
-    }
+    closedCallback();
   },
 
   _setButtonState() {
@@ -333,6 +357,95 @@ function LoadCerts() {
   rememberedDecisionsRichList.setButtonState();
 
   enableBackupAllButton();
+
+  document
+    .getElementById("certmanagertabs")
+    .addEventListener("command", event => {
+      switch (event.target.id) {
+        case "mine_viewButton":
+          viewCerts();
+          break;
+        case "mine_backupButton":
+          backupCerts();
+          break;
+        case "mine_backupAllButton":
+          backupAllCerts();
+          break;
+        case "mine_restoreButton":
+          restoreCerts();
+          break;
+        case "mine_deleteButton":
+          deleteCerts();
+          break;
+        case "remembered_deleteButton":
+          rememberedDecisionsRichList.deleteSelectedRichListItem();
+          break;
+        case "remembered_viewButton":
+          rememberedDecisionsRichList.viewSelectedRichListItem();
+          break;
+        case "email_viewButton":
+          viewCerts();
+          break;
+        case "email_addButton":
+          addEmailCert();
+          break;
+        case "email_exportButton":
+          exportCerts();
+          break;
+        case "email_deleteButton":
+          deleteCerts();
+          break;
+        case "websites_deleteButton":
+          serverRichList.deleteSelectedRichListItem();
+          break;
+        case "websites_exceptionButton":
+          serverRichList.addException();
+          break;
+        case "ca_viewButton":
+          viewCerts();
+          break;
+        case "ca_editButton":
+          editCerts();
+          break;
+        case "ca_addButton":
+          addCACerts();
+          break;
+        case "ca_exportButton":
+          exportCerts();
+          break;
+        case "ca_deleteButton":
+          deleteCerts();
+          break;
+        default:
+          // Default means that we are not handling a command so we should
+          // probably let people know.
+          throw new Error("Unhandled command event");
+      }
+    });
+
+  document
+    .getElementById("user-tree")
+    .addEventListener("select", mine_enableButtons);
+  document
+    .getElementById("user-tree-children")
+    .addEventListener("dblclick", viewCerts);
+  document
+    .getElementById("email-tree")
+    .addEventListener("select", email_enableButtons);
+  document
+    .getElementById("email-tree-children")
+    .addEventListener("dblclick", viewCerts);
+  document
+    .getElementById("serverList")
+    .addEventListener("dblclick", () =>
+      serverRichList.viewSelectedRichListItem()
+    );
+  document
+    .getElementById("ca-tree")
+    .addEventListener("select", ca_enableButtons);
+  document
+    .getElementById("ca-tree-children")
+    .addEventListener("dblclick", viewCerts);
 }
 
 function enableBackupAllButton() {
@@ -539,7 +652,7 @@ async function backupCerts() {
     { id: "choose-p12-backup-file-dialog" },
     { id: "file-browse-pkcs12-spec" },
   ]);
-  fp.init(window, backupFileDialog, Ci.nsIFilePicker.modeSave);
+  fp.init(window.browsingContext, backupFileDialog, Ci.nsIFilePicker.modeSave);
   fp.appendFilter(filePkcs12Spec, "*.p12");
   fp.appendFilters(Ci.nsIFilePicker.filterAll);
   fp.defaultExtension = "p12";
@@ -588,7 +701,7 @@ async function restoreCerts() {
       { id: "file-browse-pkcs12-spec" },
       { id: "file-browse-certificate-spec" },
     ]);
-  fp.init(window, restoreFileDialog, Ci.nsIFilePicker.modeOpen);
+  fp.init(window.browsingContext, restoreFileDialog, Ci.nsIFilePicker.modeOpen);
   fp.appendFilter(filePkcs12Spec, "*.p12; *.pfx");
   fp.appendFilter(fileCertSpec, gCertFileTypes);
   fp.appendFilters(Ci.nsIFilePicker.filterAll);
@@ -666,7 +779,7 @@ async function exportCerts() {
   getSelectedCerts();
 
   for (let cert of selected_certs) {
-    await exportToFile(window, cert);
+    await exportToFile(window, document, cert);
   }
 }
 
@@ -734,7 +847,7 @@ async function addCACerts() {
     { id: "import-ca-certs-prompt" },
     { id: "file-browse-certificate-spec" },
   ]);
-  fp.init(window, importCa, Ci.nsIFilePicker.modeOpen);
+  fp.init(window.browsingContext, importCa, Ci.nsIFilePicker.modeOpen);
   fp.appendFilter(fileCertSpec, gCertFileTypes);
   fp.appendFilters(Ci.nsIFilePicker.filterAll);
   fp.open(rv => {
@@ -753,7 +866,7 @@ async function addEmailCert() {
     { id: "import-email-cert-prompt" },
     { id: "file-browse-certificate-spec" },
   ]);
-  fp.init(window, importEmail, Ci.nsIFilePicker.modeOpen);
+  fp.init(window.browsingContext, importEmail, Ci.nsIFilePicker.modeOpen);
   fp.appendFilter(fileCertSpec, gCertFileTypes);
   fp.appendFilters(Ci.nsIFilePicker.filterAll);
   fp.open(rv => {
@@ -767,3 +880,5 @@ async function addEmailCert() {
     }
   });
 }
+
+window.addEventListener("load", LoadCerts);

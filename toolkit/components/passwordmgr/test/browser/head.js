@@ -58,8 +58,8 @@ registerCleanupFunction(
  *        An array of expected login properties
  * @return {nsILoginInfo[]} - All saved logins sorted by timeCreated
  */
-function verifyLogins(expectedLogins = []) {
-  let allLogins = Services.logins.getAllLogins();
+async function verifyLogins(expectedLogins = []) {
+  let allLogins = await Services.logins.getAllLogins();
   allLogins.sort((a, b) => a.timeCreated > b.timeCreated);
   Assert.equal(
     allLogins.length,
@@ -268,10 +268,10 @@ function testSubmittingLoginFormHTTP(
   return testSubmittingLoginForm(aPageFile, aTaskFn, aOrigin);
 }
 
-function checkOnlyLoginWasUsedTwice({ justChanged }) {
+async function checkOnlyLoginWasUsedTwice({ justChanged }) {
   // Check to make sure we updated the timestamps and use count on the
   // existing login that was submitted for the test.
-  let logins = Services.logins.getAllLogins();
+  let logins = await Services.logins.getAllLogins();
   Assert.equal(logins.length, 1, "Should only have 1 login");
   Assert.ok(logins[0] instanceof Ci.nsILoginMetaInfo, "metainfo QI");
   Assert.equal(
@@ -383,7 +383,7 @@ async function waitForDoorhanger(browser, type) {
       return (
         notif.options.passwordNotificationType == type &&
         notif.anchorElement &&
-        BrowserTestUtils.is_visible(notif.anchorElement)
+        BrowserTestUtils.isVisible(notif.anchorElement)
       );
     }
     return notif;
@@ -836,11 +836,11 @@ async function doFillGeneratedPasswordContextMenuItem(browser, passwordInput) {
   );
 
   Assert.ok(
-    BrowserTestUtils.is_visible(generatedPasswordItem),
+    BrowserTestUtils.isVisible(generatedPasswordItem),
     "generated password item is visible"
   );
   Assert.ok(
-    BrowserTestUtils.is_visible(generatedPasswordSeparator),
+    BrowserTestUtils.isVisible(generatedPasswordSeparator),
     "separator is visible"
   );
 
@@ -934,14 +934,15 @@ async function changeContentInputValue(
 async function verifyConfirmationHint(
   browser,
   forceClose,
-  anchorID = "password-notification-icon"
+  anchorID = "password-notification-icon",
+  expectedL10nMessageId = null
 ) {
   let hintElem = browser.ownerGlobal.ConfirmationHint._panel;
   await BrowserTestUtils.waitForPopupEvent(hintElem, "shown");
   try {
     Assert.equal(hintElem.state, "open", "hint popup is open");
     Assert.ok(
-      BrowserTestUtils.is_visible(hintElem.anchorNode),
+      BrowserTestUtils.isVisible(hintElem.anchorNode),
       "hint anchorNode is visible"
     );
     Assert.equal(
@@ -950,6 +951,12 @@ async function verifyConfirmationHint(
       "Hint should be anchored on the expected notification icon"
     );
     info("verifyConfirmationHint, hint is shown and has its anchorNode");
+    if (expectedL10nMessageId) {
+      const l10nMessageId = hintElem
+        .querySelector("#confirmation-hint-message")
+        .getAttribute("data-l10n-id");
+      Assert.equal(l10nMessageId, expectedL10nMessageId);
+    }
     if (forceClose) {
       await closePopup(hintElem);
     } else {

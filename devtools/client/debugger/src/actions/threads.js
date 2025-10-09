@@ -3,14 +3,15 @@
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
 import { createThread } from "../client/firefox/create";
-import { getSourcesToRemoveForThread } from "../selectors";
+import { getSourcesToRemoveForThread } from "../selectors/index";
+import { getEditor } from "../utils/editor/index";
 
 export function addTarget(targetFront) {
   return { type: "INSERT_THREAD", newThread: createThread(targetFront) };
 }
 
 export function removeTarget(targetFront) {
-  return ({ getState, dispatch }) => {
+  return ({ getState, dispatch, parserWorker }) => {
     const threadActorID = targetFront.targetForm.threadActor;
 
     // Just before emitting the REMOVE_THREAD action,
@@ -24,12 +25,23 @@ export function removeTarget(targetFront) {
       threadActorID
     );
 
+    // Notify the reducers that a target/thread is being removed
+    // and that all related resources should be cleared.
+    // This action receives the list of related source actors and source objects
+    // related to that to-be-removed target.
+    // This will be fired on navigation for all existing targets.
+    // That except the top target, when pausing on unload, where the top target may still hold longer.
+    // Also except for service worker targets, which may be kept alive.
     dispatch({
       type: "REMOVE_THREAD",
       threadActorID,
       actors,
       sources,
     });
+    const sourceIds = sources.map(source => source.id);
+    parserWorker.clearSources(sourceIds);
+    const editor = getEditor();
+    editor.clearSources(sourceIds);
   };
 }
 

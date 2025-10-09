@@ -2,6 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
+var { getContentPrincipalWithProtocolPermission } = ChromeUtils.importESModule(
+  "resource:///modules/LinkHelper.sys.mjs"
+);
 var { AppConstants } = ChromeUtils.importESModule(
   "resource://gre/modules/AppConstants.sys.mjs"
 );
@@ -11,22 +14,12 @@ var { BrowserUtils } = ChromeUtils.importESModule(
 var { ExtensionParent } = ChromeUtils.importESModule(
   "resource://gre/modules/ExtensionParent.sys.mjs"
 );
-var { MailE10SUtils } = ChromeUtils.import(
-  "resource:///modules/MailE10SUtils.jsm"
+var { MailE10SUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailE10SUtils.sys.mjs"
 );
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-
-XPCOMUtils.defineLazyScriptGetter(
-  this,
-  "PrintUtils",
-  "chrome://messenger/content/printUtils.js"
-);
-
-ChromeUtils.defineESModuleGetters(this, {
-  PromiseUtils: "resource://gre/modules/PromiseUtils.sys.mjs",
-});
 
 var gContextMenu;
 
@@ -78,170 +71,38 @@ var contentController = {
     if (!this.supportsCommand(command)) {
       return false;
     }
-    let cmd = this.commands[command];
+    const cmd = this.commands[command];
     return cmd.isEnabled();
   },
   doCommand(command) {
     if (!this.supportsCommand(command)) {
       return;
     }
-    let cmd = this.commands[command];
+    const cmd = this.commands[command];
     if (!cmd.isEnabled()) {
       return;
     }
     cmd.doCommand();
   },
-  onEvent(event) {},
+  onEvent() {},
 };
 
-/**
- * @implements {nsIBrowserDOMWindow}
- */
-class nsBrowserAccess {
-  QueryInterface = ChromeUtils.generateQI(["nsIBrowserDOMWindow"]);
-
-  _openURIInNewTab(
-    aURI,
-    aReferrerInfo,
-    aIsExternal,
-    aOpenWindowInfo = null,
-    aTriggeringPrincipal = null,
-    aCsp = null,
-    aSkipLoad = false,
-    aMessageManagerGroup = null
-  ) {
-    // This is a popup which must not have more than one tab, so open the new tab
-    // in the most recent mail window.
-    let win = Services.wm.getMostRecentWindow("mail:3pane", true);
-
-    if (!win) {
-      // We couldn't find a suitable window, a new one needs to be opened.
-      return null;
-    }
-
-    let loadInBackground = Services.prefs.getBoolPref(
-      "browser.tabs.loadDivertedInBackground"
-    );
-
-    let tabmail = win.document.getElementById("tabmail");
-    let newTab = tabmail.openTab("contentTab", {
-      background: loadInBackground,
-      csp: aCsp,
-      linkHandler: aMessageManagerGroup,
-      openWindowInfo: aOpenWindowInfo,
-      referrerInfo: aReferrerInfo,
-      skipLoad: aSkipLoad,
-      triggeringPrincipal: aTriggeringPrincipal,
-      url: aURI ? aURI.spec : "about:blank",
-    });
-
-    win.focus();
-
-    return newTab.browser;
-  }
-
-  createContentWindow(
-    aURI,
-    aOpenWindowInfo,
-    aWhere,
-    aFlags,
-    aTriggeringPrincipal,
-    aCsp
-  ) {
-    throw Components.Exception("Not implemented", Cr.NS_ERROR_NOT_IMPLEMENTED);
-  }
-
-  createContentWindowInFrame(aURI, aParams, aWhere, aFlags, aName) {
-    // Passing a null-URI to only create the content window,
-    // and pass true for aSkipLoad to prevent loading of
-    // about:blank
-    return this.getContentWindowOrOpenURIInFrame(
-      null,
-      aParams,
-      aWhere,
-      aFlags,
-      aName,
-      true
-    );
-  }
-
-  openURI(aURI, aOpenWindowInfo, aWhere, aFlags, aTriggeringPrincipal, aCsp) {
-    throw Components.Exception("Not implemented", Cr.NS_ERROR_NOT_IMPLEMENTED);
-  }
-
-  openURIInFrame(aURI, aParams, aWhere, aFlags, aName) {
-    throw Components.Exception("Not implemented", Cr.NS_ERROR_NOT_IMPLEMENTED);
-  }
-
-  getContentWindowOrOpenURI(
-    aURI,
-    aOpenWindowInfo,
-    aWhere,
-    aFlags,
-    aTriggeringPrincipal,
-    aCsp,
-    aSkipLoad
-  ) {
-    throw Components.Exception("Not implemented", Cr.NS_ERROR_NOT_IMPLEMENTED);
-  }
-
-  getContentWindowOrOpenURIInFrame(
-    aURI,
-    aParams,
-    aWhere,
-    aFlags,
-    aName,
-    aSkipLoad
-  ) {
-    if (aWhere == Ci.nsIBrowserDOMWindow.OPEN_PRINT_BROWSER) {
-      return PrintUtils.handleStaticCloneCreatedForPrint(
-        aParams.openWindowInfo
-      );
-    }
-
-    if (aWhere != Ci.nsIBrowserDOMWindow.OPEN_NEWTAB) {
-      Services.console.logStringMessage(
-        "Error: openURIInFrame can only open in new tabs or print"
-      );
-      return null;
-    }
-
-    let isExternal = !!(aFlags & Ci.nsIBrowserDOMWindow.OPEN_EXTERNAL);
-
-    return this._openURIInNewTab(
-      aURI,
-      aParams.referrerInfo,
-      isExternal,
-      aParams.openWindowInfo,
-      aParams.triggeringPrincipal,
-      aParams.csp,
-      aSkipLoad,
-      aParams.openerBrowser?.getAttribute("messagemanagergroup")
-    );
-  }
-
-  canClose() {
-    return true;
-  }
-
-  get tabCount() {
-    return 1;
-  }
-}
-
 function loadRequestedUrl() {
-  let browser = document.getElementById("requestFrame");
-  browser.addProgressListener(reporterListener, Ci.nsIWebProgress.NOTIFY_ALL);
-  browser.addEventListener(
+  const extBrowser = document.getElementById("requestFrame");
+  extBrowser.addProgressListener(
+    reporterListener,
+    Ci.nsIWebProgress.NOTIFY_ALL
+  );
+  extBrowser.addEventListener(
     "DOMWindowClose",
     () => {
-      if (browser.getAttribute("allowscriptstoclose") == "true") {
+      if (extBrowser.getAttribute("allowscriptstoclose") == "true") {
         window.close();
       }
     },
     true
   );
-  browser.addEventListener(
+  extBrowser.addEventListener(
     "pagetitlechanged",
     () => gBrowser.updateTitlebar(),
     true
@@ -255,19 +116,33 @@ function loadRequestedUrl() {
   // which is consistent with Firefox behaviour.
 
   if (typeof window.arguments[0] == "string") {
-    MailE10SUtils.loadURI(browser, window.arguments[0]);
+    const url = window.arguments[0];
+    const uri = Services.io.newURI(url);
+    MailE10SUtils.loadURI(extBrowser, url, {
+      triggeringPrincipal: getContentPrincipalWithProtocolPermission(uri),
+    });
   } else {
-    if (window.arguments[1].wrappedJSObject.allowScriptsToClose) {
-      browser.setAttribute("allowscriptstoclose", "true");
+    const createData = window.arguments[1].wrappedJSObject;
+    const tabParams = createData.tabs[0].tabParams;
+    const uri = Services.io.newURI(tabParams.url);
+
+    // moz-extension:// urls default to allowScriptsToClose = true
+    const defaultScriptsToClose = uri.scheme == "moz-extension";
+
+    if (createData.allowScriptsToClose ?? defaultScriptsToClose) {
+      extBrowser.setAttribute("allowscriptstoclose", "true");
     }
-    let tabParams = window.arguments[1].wrappedJSObject.tabs[0].tabParams;
     if (tabParams.userContextId) {
-      browser.setAttribute("usercontextid", tabParams.userContextId);
-      // The usercontextid is only read on frame creation, so recreate it.
-      browser.replaceWith(browser);
+      extBrowser.setAttribute("usercontextid", tabParams.userContextId);
     }
-    ExtensionParent.apiManager.emit("extension-browser-inserted", browser);
-    MailE10SUtils.loadURI(browser, tabParams.url);
+    if (createData.linkHandler) {
+      extBrowser.setAttribute("messagemanagergroup", createData.linkHandler);
+    }
+
+    ExtensionParent.apiManager.emit("extension-browser-inserted", extBrowser);
+    MailE10SUtils.loadURI(extBrowser, tabParams.url, {
+      triggeringPrincipal: createData.triggeringPrincipal,
+    });
   }
 }
 
@@ -314,14 +189,14 @@ var gBrowser = {
     }
 
     // Add preface, if defined.
-    let docElement = document.documentElement;
+    const docElement = document.documentElement;
     if (docElement.hasAttribute("titlepreface")) {
       docTitle = docElement.getAttribute("titlepreface") + docTitle;
     }
 
     document.title = docTitle;
   },
-  getTabForBrowser(browser) {
+  getTabForBrowser() {
     return null;
   },
 };
@@ -345,20 +220,18 @@ var gBrowserInit = {
       }
     };
 
-    window.onclose = event => {
-      let { permitUnload } = gBrowser.selectedBrowser.permitUnload();
+    window.onclose = () => {
+      const { permitUnload } = gBrowser.selectedBrowser.permitUnload();
       return permitUnload;
     };
 
-    window.browserDOMWindow = new nsBrowserAccess();
-
-    let initiallyFocusedElement = document.commandDispatcher.focusedElement;
-    let promise = gBrowser.selectedBrowser.isRemoteBrowser
-      ? PromiseUtils.defer().promise
+    const initiallyFocusedElement = document.commandDispatcher.focusedElement;
+    const promise = gBrowser.selectedBrowser.isRemoteBrowser
+      ? Promise.withResolvers().promise
       : Promise.resolve();
 
     contentProgress.addListener({
-      onStateChange(browser, webProgress, request, stateFlags, statusCode) {
+      onStateChange(_browser, webProgress, _request, stateFlags, statusCode) {
         if (!webProgress.isTopLevel) {
           return;
         }
@@ -408,15 +281,15 @@ var gBrowserInit = {
 var XULBrowserWindow = {
   // Used in mailWindows to show the link in the status bar, but popup windows
   // do not have one. Do nothing here.
-  setOverLink(url, anchorElt) {},
+  setOverLink() {},
 
   // Called before links are navigated to to allow us to retarget them if needed.
-  onBeforeLinkTraversal(originalTarget, linkURI, linkNode, isAppTab) {
+  onBeforeLinkTraversal(originalTarget) {
     return originalTarget;
   },
 
   // Called by BrowserParent::RecvShowTooltip.
-  showTooltip(xDevPix, yDevPix, tooltip, direction, browser) {
+  showTooltip(xDevPix, yDevPix, tooltip, direction) {
     if (
       Cc["@mozilla.org/widget/dragservice;1"]
         .getService(Ci.nsIDragService)
@@ -425,7 +298,7 @@ var XULBrowserWindow = {
       return;
     }
 
-    let elt = document.getElementById("remoteBrowserTooltip");
+    const elt = document.getElementById("remoteBrowserTooltip");
     elt.label = tooltip;
     elt.style.direction = direction;
     elt.openPopupAtScreen(
@@ -438,7 +311,7 @@ var XULBrowserWindow = {
 
   // Called by BrowserParent::RecvHideTooltip.
   hideTooltip() {
-    let elt = document.getElementById("remoteBrowserTooltip");
+    const elt = document.getElementById("remoteBrowserTooltip");
     elt.hidePopup();
   },
 
@@ -468,7 +341,7 @@ var contentProgress = {
   },
 
   callListeners(method, args) {
-    for (let listener of this._listeners.values()) {
+    for (const listener of this._listeners.values()) {
       if (method in listener) {
         try {
           listener[method](...args);
@@ -484,6 +357,7 @@ var contentProgress = {
    *
    * @param {Browser} browser
    */
+  // eslint-disable-next-line no-shadow
   addProgressListenerToBrowser(browser) {
     if (browser?.webProgress && !browser._progressListener) {
       browser._progressListener = new contentProgress.ProgressListener(browser);
@@ -503,8 +377,11 @@ var contentProgress = {
       "nsISupportsWeakReference",
     ]);
 
-    constructor(browser) {
-      this.browser = browser;
+    /**
+     * @param {Browser} b
+     */
+    constructor(b) {
+      this.browser = b;
     }
 
     callListeners(method, args) {

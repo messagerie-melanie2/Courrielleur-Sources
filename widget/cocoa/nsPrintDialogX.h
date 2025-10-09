@@ -40,20 +40,21 @@ class nsPrintDialogServiceX final : public nsIPrintDialogService {
   NSPopUpButton* mFooterRightList;
 }
 
-- (id)initWithSettings:(nsIPrintSettings*)aSettings haveSelection:(bool)aHaveSelection;
+- (id)initWithSettings:(nsIPrintSettings*)aSettings
+         haveSelection:(bool)aHaveSelection;
 
 - (void)exportSettings;
 
 @end
 
-@interface PrintPanelAccessoryController : NSViewController <NSPrintPanelAccessorizing>
+@interface PrintPanelAccessoryController
+    : NSViewController <NSPrintPanelAccessorizing>
 
-- (id)initWithSettings:(nsIPrintSettings*)aSettings haveSelection:(bool)aHaveSelection;
+- (id)initWithSettings:(nsIPrintSettings*)aSettings
+         haveSelection:(bool)aHaveSelection;
 
 - (void)exportSettings;
 
 @end
-
-NS_DEFINE_STATIC_IID_ACCESSOR(nsPrintDialogServiceX, NS_IPRINTDIALOGSERVICE_IID)
 
 #endif  // nsPrintDialog_h_

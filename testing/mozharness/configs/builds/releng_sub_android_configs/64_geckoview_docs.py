@@ -4,7 +4,8 @@
 
 config = {
     "stage_platform": "android-geckoview-docs",
-    "src_mozconfig": "mobile/android/config/mozconfigs/android-arm/nightly-android-lints",
+    "mozconfig_platform": "android-arm",
+    "mozconfig_variant": "nightly-android-lints",
     # geckoview-docs doesn't produce a package. So don't collect package metrics.
     "disable_package_metrics": True,
     "postflight_build_mach_commands": [
@@ -22,5 +23,4 @@ config = {
             "Update {project} documentation to rev {revision}",
         ],
     ],
-    "max_build_output_timeout": 0,
 }

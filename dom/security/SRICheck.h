@@ -11,6 +11,7 @@
 #include "nsStringFwd.h"
 #include "nsCOMPtr.h"
 #include "nsICryptoHash.h"
+#include "mozilla/LoadTainting.h"
 
 class nsIChannel;
 class nsIConsoleReportCollector;
@@ -21,9 +22,6 @@ class SRIMetadata;
 
 class SRICheck final {
  public:
-  static const uint32_t MAX_METADATA_LENGTH = 24 * 1024;
-  static const uint32_t MAX_METADATA_TOKENS = 512;
-
   /**
    * Parse the multiple hashes specified in the integrity attribute and
    * return the strongest supported hash.
@@ -50,17 +48,22 @@ class SRICheck final {
 //    metadata.
 class SRICheckDataVerifier final {
  public:
-  SRICheckDataVerifier(const SRIMetadata& aMetadata,
-                       const nsACString& aSourceFileURI,
+  SRICheckDataVerifier(const SRIMetadata& aMetadata, nsIChannel* aChannel,
                        nsIConsoleReportCollector* aReporter);
 
   // Append the following bytes to the content used to compute the hash. Once
   // all bytes are streamed, use the Verify function to check the integrity.
   nsresult Update(uint32_t aStringLen, const uint8_t* aString);
+  nsresult Update(Span<const uint8_t>);
 
   // Verify that the computed hash corresponds to the metadata.
   nsresult Verify(const SRIMetadata& aMetadata, nsIChannel* aChannel,
-                  const nsACString& aSourceFileURI,
+                  LoadTainting aLoadTainting,
+                  nsIConsoleReportCollector* aReporter);
+
+  // Like Verify(), but takes the load tainting from the channel's load info
+  // (which is main-thread only).
+  nsresult Verify(const SRIMetadata& aMetadata, nsIChannel* aChannel,
                   nsIConsoleReportCollector* aReporter);
 
   bool IsComplete() const { return mComplete; }
@@ -95,8 +98,8 @@ class SRICheckDataVerifier final {
 
   nsresult EnsureCryptoHash();
   nsresult Finish();
-  nsresult VerifyHash(const SRIMetadata& aMetadata, uint32_t aHashIndex,
-                      const nsACString& aSourceFileURI,
+  nsresult VerifyHash(nsIChannel* aChannel, const SRIMetadata& aMetadata,
+                      uint32_t aHashIndex,
                       nsIConsoleReportCollector* aReporter);
 };
 

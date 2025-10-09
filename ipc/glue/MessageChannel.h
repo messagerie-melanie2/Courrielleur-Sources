@@ -6,17 +6,18 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef ipc_glue_MessageChannel_h
-#define ipc_glue_MessageChannel_h 1
+#define ipc_glue_MessageChannel_h
 
 #include "ipc/EnumSerializer.h"
 #include "mozilla/Atomics.h"
 #include "mozilla/BaseProfilerMarkers.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/Monitor.h"
+#include "mozilla/MoveOnlyFunction.h"
 #include "mozilla/Vector.h"
-#if defined(OS_WIN)
+#if defined(XP_WIN)
 #  include "mozilla/ipc/Neutering.h"
-#endif  // defined(OS_WIN)
+#endif  // defined(XP_WIN)
 
 #include <functional>
 #include <map>
@@ -93,9 +94,9 @@ enum class ResponseRejectReason {
 };
 
 template <typename T>
-using ResolveCallback = std::function<void(T&&)>;
+using ResolveCallback = MoveOnlyFunction<void(T&&)>;
 
-using RejectCallback = std::function<void(ResponseRejectReason)>;
+using RejectCallback = MoveOnlyFunction<void(ResponseRejectReason)>;
 
 enum ChannelState {
   ChannelClosed,
@@ -113,40 +114,8 @@ class MessageChannel : HasResultCodes {
 
  public:
   using Message = IPC::Message;
+  using seqno_t = Message::seqno_t;
 
-  struct UntypedCallbackHolder {
-    UntypedCallbackHolder(int32_t aActorId, Message::msgid_t aReplyMsgId,
-                          RejectCallback&& aReject)
-        : mActorId(aActorId),
-          mReplyMsgId(aReplyMsgId),
-          mReject(std::move(aReject)) {}
-
-    virtual ~UntypedCallbackHolder() = default;
-
-    void Reject(ResponseRejectReason&& aReason) { mReject(std::move(aReason)); }
-
-    int32_t mActorId;
-    Message::msgid_t mReplyMsgId;
-    RejectCallback mReject;
-  };
-
-  template <typename Value>
-  struct CallbackHolder : public UntypedCallbackHolder {
-    CallbackHolder(int32_t aActorId, Message::msgid_t aReplyMsgId,
-                   ResolveCallback<Value>&& aResolve, RejectCallback&& aReject)
-        : UntypedCallbackHolder(aActorId, aReplyMsgId, std::move(aReject)),
-          mResolve(std::move(aResolve)) {}
-
-    void Resolve(Value&& aReason) { mResolve(std::move(aReason)); }
-
-    ResolveCallback<Value> mResolve;
-  };
-
- private:
-  static Atomic<size_t> gUnresolvedResponses;
-  friend class PendingResponseReporter;
-
- public:
   static constexpr int32_t kNoTimeout = INT32_MIN;
 
   using ScopedPort = mozilla::ipc::ScopedPort;
@@ -197,9 +166,19 @@ class MessageChannel : HasResultCodes {
   // Close the underlying transport channel.
   void Close() MOZ_EXCLUDES(*mMonitor);
 
-  // Close the underlying transport channel, treating the closure as a
-  // connection error.
-  void CloseWithError() MOZ_EXCLUDES(*mMonitor);
+  // Induce an error in this MessageChannel's connection.
+  //
+  // After this method is called, no more message notifications will be
+  // delivered to the listener, and the channel will be unable to send or
+  // receive future messages, as if the peer dropped the connection
+  // unexpectedly.
+  //
+  // The OnChannelError notification will be delivered either asynchronously or
+  // during an explicit call to Close(), whichever happens first.
+  //
+  // NOTE: If SetAbortOnError(true) has been called on this MessageChannel,
+  // calling this function will immediately exit the current process.
+  void InduceConnectionError() MOZ_EXCLUDES(*mMonitor);
 
   void SetAbortOnError(bool abort) MOZ_EXCLUDES(*mMonitor) {
     MonitorAutoLock lock(*mMonitor);
@@ -225,28 +204,10 @@ class MessageChannel : HasResultCodes {
   void SetChannelFlags(ChannelFlags aFlags) { mFlags = aFlags; }
   ChannelFlags GetChannelFlags() { return mFlags; }
 
-  // Asynchronously send a message to the other side of the channel
-  bool Send(UniquePtr<Message> aMsg) MOZ_EXCLUDES(*mMonitor);
-
-  // Asynchronously send a message to the other side of the channel
-  // and wait for asynchronous reply.
-  template <typename Value>
-  void Send(UniquePtr<Message> aMsg, int32_t aActorId,
-            Message::msgid_t aReplyMsgId, ResolveCallback<Value>&& aResolve,
-            RejectCallback&& aReject) MOZ_EXCLUDES(*mMonitor) {
-    int32_t seqno = NextSeqno();
-    aMsg->set_seqno(seqno);
-    if (!Send(std::move(aMsg))) {
-      aReject(ResponseRejectReason::SendError);
-      return;
-    }
-
-    UniquePtr<UntypedCallbackHolder> callback =
-        MakeUnique<CallbackHolder<Value>>(
-            aActorId, aReplyMsgId, std::move(aResolve), std::move(aReject));
-    mPendingResponses.insert(std::make_pair(seqno, std::move(callback)));
-    gUnresolvedResponses++;
-  }
+  // Asynchronously send a message to the other side of the channel.
+  // If aSeqno is non-null, it will be set to the seqno of the sent message.
+  bool Send(UniquePtr<Message> aMsg, seqno_t* aSeqno = nullptr)
+      MOZ_EXCLUDES(*mMonitor);
 
   bool SendBuildIDsMatchMessage(const char* aParentBuildID)
       MOZ_EXCLUDES(*mMonitor);
@@ -261,14 +222,6 @@ class MessageChannel : HasResultCodes {
 
   bool CanSend() const MOZ_EXCLUDES(*mMonitor);
 
-  // Remove and return a callback that needs reply
-  UniquePtr<UntypedCallbackHolder> PopCallback(const Message& aMsg,
-                                               int32_t aActorId);
-
-  // Used to reject and remove pending responses owned by the given
-  // actor when it's about to be destroyed.
-  void RejectPendingResponsesForActor(int32_t aActorId);
-
   // If sending a sync message returns an error, this function gives a more
   // descriptive error message.
   SyncSendError LastSendError() const {
@@ -281,6 +234,11 @@ class MessageChannel : HasResultCodes {
   bool IsOnCxxStack() const { return mOnCxxStack; }
 
   void CancelCurrentTransaction() MOZ_EXCLUDES(*mMonitor);
+
+  // Return whether the current transaction is complete.
+  //
+  // This is intended only for tests.
+  bool TestOnlyIsTransactionComplete() const MOZ_EXCLUDES(*mMonitor);
 
   // IsClosed and NumQueuedMessages are safe to call from any thread, but
   // may provide an out-of-date value.
@@ -316,7 +274,7 @@ class MessageChannel : HasResultCodes {
   }
 #endif
 
-#ifdef OS_WIN
+#ifdef XP_WIN
   struct MOZ_STACK_CLASS SyncStackFrame {
     explicit SyncStackFrame(MessageChannel* channel);
     ~SyncStackFrame();
@@ -352,10 +310,7 @@ class MessageChannel : HasResultCodes {
  public:
   void ProcessNativeEventsInInterruptCall();
   static void NotifyGeckoEventDispatch();
-
- private:
-  void SpinInternalEventLoop();
-#endif  // defined(OS_WIN)
+#endif  // defined(XP_WIN)
 
  private:
   void PostErrorNotifyTask() MOZ_REQUIRES(*mMonitor);
@@ -363,8 +318,6 @@ class MessageChannel : HasResultCodes {
   void ReportConnectionError(const char* aFunctionName,
                              const uint32_t aMsgTyp) const
       MOZ_REQUIRES(*mMonitor);
-  void ReportMessageRouteError(const char* channelName) const
-      MOZ_EXCLUDES(*mMonitor);
   bool MaybeHandleError(Result code, const Message& aMsg,
                         const char* channelName) MOZ_EXCLUDES(*mMonitor);
 
@@ -409,12 +362,13 @@ class MessageChannel : HasResultCodes {
   bool ShouldContinueFromTimeout() MOZ_REQUIRES(*mMonitor);
 
   void EndTimeout() MOZ_REQUIRES(*mMonitor);
-  void CancelTransaction(int transaction) MOZ_REQUIRES(*mMonitor);
+  void CancelTransaction(seqno_t transaction) MOZ_REQUIRES(*mMonitor);
 
   void RepostAllMessages() MOZ_REQUIRES(*mMonitor);
 
-  int32_t NextSeqno() {
+  seqno_t NextSeqno() {
     AssertWorkerThread();
+    MOZ_RELEASE_ASSERT(mozilla::Abs(mNextSeqno) < INT64_MAX, "seqno overflow");
     return (mSide == ChildSide) ? --mNextSeqno : ++mNextSeqno;
   }
 
@@ -468,7 +422,6 @@ class MessageChannel : HasResultCodes {
   // Called to flush [LazySend] messages to the link.
   void FlushLazySendMessages() MOZ_REQUIRES(*mMonitor);
 
-  bool WasTransactionCanceled(int transaction);
   bool ShouldDeferMessage(const Message& aMsg) MOZ_REQUIRES(*mMonitor);
   void OnMessageReceivedFromLink(UniquePtr<Message> aMsg)
       MOZ_REQUIRES(*mMonitor);
@@ -601,7 +554,6 @@ class MessageChannel : HasResultCodes {
   };
 
   typedef LinkedList<RefPtr<MessageTask>> MessageQueue;
-  typedef std::map<size_t, UniquePtr<UntypedCallbackHolder>> CallbackMap;
   typedef IPC::Message::msgid_t msgid_t;
 
  private:
@@ -655,7 +607,7 @@ class MessageChannel : HasResultCodes {
 
   // Worker-thread only; sequence numbers for messages that require
   // replies.
-  int32_t mNextSeqno = 0;
+  seqno_t mNextSeqno = 0;
 
   static bool sIsPumpingMessages;
 
@@ -708,7 +660,7 @@ class MessageChannel : HasResultCodes {
   friend class AutoEnterTransaction;
   AutoEnterTransaction* mTransactionStack MOZ_GUARDED_BY(*mMonitor) = nullptr;
 
-  int32_t CurrentNestedInsideSyncTransaction() const MOZ_REQUIRES(*mMonitor);
+  seqno_t CurrentNestedInsideSyncTransaction() const MOZ_REQUIRES(*mMonitor);
 
   bool AwaitingSyncReply() const MOZ_REQUIRES(*mMonitor);
   int AwaitingSyncReplyNestedLevel() const MOZ_REQUIRES(*mMonitor);
@@ -735,7 +687,7 @@ class MessageChannel : HasResultCodes {
   // A message is only timed out if it initiated a transaction. This avoids
   // hitting a lot of corner cases with message nesting that we don't really
   // care about.
-  int32_t mTimedOutMessageSeqno MOZ_GUARDED_BY(*mMonitor) = 0;
+  seqno_t mTimedOutMessageSeqno MOZ_GUARDED_BY(*mMonitor) = 0;
   int mTimedOutMessageNestedLevel MOZ_GUARDED_BY(*mMonitor) = 0;
 
   // Queue of all incoming messages.
@@ -758,10 +710,7 @@ class MessageChannel : HasResultCodes {
   // by mMonitor.
   bool mOnCxxStack = false;
 
-  // Map of async Callbacks that are still waiting replies.
-  CallbackMap mPendingResponses;
-
-#ifdef OS_WIN
+#ifdef XP_WIN
   HANDLE mEvent;
 #endif
 
@@ -806,7 +755,7 @@ struct IPCMarker {
   static void StreamJSONMarkerData(
       mozilla::baseprofiler::SpliceableJSONWriter& aWriter,
       mozilla::TimeStamp aStart, mozilla::TimeStamp aEnd, int32_t aOtherPid,
-      int32_t aMessageSeqno, IPC::Message::msgid_t aMessageType,
+      IPC::Message::seqno_t aMessageSeqno, IPC::Message::msgid_t aMessageType,
       mozilla::ipc::Side aSide, mozilla::ipc::MessageDirection aDirection,
       mozilla::ipc::MessagePhase aPhase, bool aSync,
       mozilla::MarkerThreadId aOriginThreadId) {

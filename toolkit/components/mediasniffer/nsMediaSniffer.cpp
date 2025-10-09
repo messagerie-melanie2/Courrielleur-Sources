@@ -9,7 +9,7 @@
 #include "mozilla/ModuleUtils.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/StaticPrefs_media.h"
-#include "mozilla/Telemetry.h"
+#include "mozilla/glean/MediasnifferMetrics.h"
 #include "mp3sniff.h"
 #include "nestegg/nestegg.h"
 #include "nsHttpChannel.h"
@@ -66,7 +66,7 @@ nsMediaSnifferEntry nsMediaSniffer::sSnifferEntries[] = {
     PATTERN_ENTRY("\xFF\xFF\xFF\xFF\xFF\xFF\xFF", "#EXTM3U",
                   APPLICATION_MPEGURL)};
 
-using PatternLabel = mozilla::Telemetry::LABELS_MEDIA_SNIFFER_MP4_BRAND_PATTERN;
+using PatternLabel = mozilla::glean::media_sniffer::Mp4BrandPatternLabel;
 
 struct nsMediaSnifferFtypEntry : nsMediaSnifferEntry {
   nsMediaSnifferFtypEntry(nsMediaSnifferEntry aBase, const PatternLabel aLabel)
@@ -75,27 +75,27 @@ struct nsMediaSnifferFtypEntry : nsMediaSnifferEntry {
 };
 
 // For a complete list of file types, see http://www.ftyps.com/index.html
-nsMediaSnifferFtypEntry sFtypEntries[] = {
+MOZ_RUNINIT nsMediaSnifferFtypEntry sFtypEntries[] = {
     {PATTERN_ENTRY("\xFF\xFF\xFF", "mp4", VIDEO_MP4),
-     PatternLabel::ftyp_mp4},  // Could be mp41 or mp42.
+     PatternLabel::eFtypMp4},  // Could be mp41 or mp42.
     {PATTERN_ENTRY("\xFF\xFF\xFF", "avc", VIDEO_MP4),
-     PatternLabel::ftyp_avc},  // Could be avc1, avc2, ...
+     PatternLabel::eFtypAvc},  // Could be avc1, avc2, ...
     {PATTERN_ENTRY("\xFF\xFF\xFF\xFF", "3gp4", VIDEO_MP4),
-     PatternLabel::ftyp_3gp4},  // 3gp4 is based on MP4
+     PatternLabel::eFtyp3gp4},  // 3gp4 is based on MP4
     {PATTERN_ENTRY("\xFF\xFF\xFF", "3gp", VIDEO_3GPP),
-     PatternLabel::ftyp_3gp},  // Could be 3gp5, ...
-    {PATTERN_ENTRY("\xFF\xFF\xFF", "M4V", VIDEO_MP4), PatternLabel::ftyp_M4V},
-    {PATTERN_ENTRY("\xFF\xFF\xFF", "M4A", AUDIO_MP4), PatternLabel::ftyp_M4A},
-    {PATTERN_ENTRY("\xFF\xFF\xFF", "M4P", AUDIO_MP4), PatternLabel::ftyp_M4P},
-    {PATTERN_ENTRY("\xFF\xFF", "qt", VIDEO_QUICKTIME), PatternLabel::ftyp_qt},
+     PatternLabel::eFtyp3gp},  // Could be 3gp5, ...
+    {PATTERN_ENTRY("\xFF\xFF\xFF", "M4V", VIDEO_MP4), PatternLabel::eFtypM4v},
+    {PATTERN_ENTRY("\xFF\xFF\xFF", "M4A", AUDIO_MP4), PatternLabel::eFtypM4a},
+    {PATTERN_ENTRY("\xFF\xFF\xFF", "M4P", AUDIO_MP4), PatternLabel::eFtypM4p},
+    {PATTERN_ENTRY("\xFF\xFF", "qt", VIDEO_QUICKTIME), PatternLabel::eFtypQt},
     {PATTERN_ENTRY("\xFF\xFF\xFF", "crx", APPLICATION_OCTET_STREAM),
-     PatternLabel::ftyp_crx},
+     PatternLabel::eFtypCrx},
     {PATTERN_ENTRY("\xFF\xFF\xFF", "iso", VIDEO_MP4),
-     PatternLabel::ftyp_iso},  // Could be isom or iso2.
+     PatternLabel::eFtypIso},  // Could be isom or iso2.
     {PATTERN_ENTRY("\xFF\xFF\xFF\xFF", "mmp4", VIDEO_MP4),
-     PatternLabel::ftyp_mmp4},
+     PatternLabel::eFtypMmp4},
     {PATTERN_ENTRY("\xFF\xFF\xFF\xFF", "avif", IMAGE_AVIF),
-     PatternLabel::ftyp_avif},
+     PatternLabel::eFtypAvif},
 };
 
 static bool MatchesBrands(const uint8_t aData[4], nsACString& aSniffedType) {
@@ -114,12 +114,14 @@ static bool MatchesBrands(const uint8_t aData[4], nsACString& aSniffedType) {
       // this block should be removed and the bug1725190.cr3 test in
       // test_mediasniffer_ext.js will need to be updated
       if (!mozilla::StaticPrefs::media_mp4_sniff_iso_brand() &&
-          currentEntry.mLabel == PatternLabel::ftyp_iso) {
+          currentEntry.mLabel == PatternLabel::eFtypIso) {
         continue;
       }
 
       aSniffedType.AssignASCII(currentEntry.mContentType);
-      AccumulateCategorical(currentEntry.mLabel);
+      mozilla::glean::media_sniffer::mp4_brand_pattern
+          .EnumGet(currentEntry.mLabel)
+          .Add();
       return true;
     }
   }
@@ -185,8 +187,9 @@ nsMediaSniffer::GetMIMETypeFromContent(nsIRequest* aRequest,
                                        nsACString& aSniffedType) {
   const uint32_t clampedLength = std::min(aLength, MAX_BYTES_SNIFFED);
 
-  auto maybeUpdate = mozilla::MakeScopeExit([request = RefPtr{aRequest}]() {
-    nsCOMPtr<nsIChannel> channel = do_QueryInterface(request);
+  nsCOMPtr<nsIChannel> channel = do_QueryInterface(aRequest);
+
+  auto maybeUpdate = mozilla::MakeScopeExit([channel]() {
     if (channel && XRE_IsParentProcess()) {
       if (RefPtr<mozilla::net::nsHttpChannel> httpChannel =
               do_QueryObject(channel)) {
@@ -198,6 +201,21 @@ nsMediaSniffer::GetMIMETypeFromContent(nsIRequest* aRequest,
       }
     };
   });
+
+  // Check if this is a toplevel document served as application/octet-stream
+  // to disable sniffing and allow the file to download. See: Bug 1828441
+  if (channel && XRE_IsParentProcess()) {
+    nsCOMPtr<nsILoadInfo> loadInfo = channel->LoadInfo();
+    nsAutoCString mimeType;
+    channel->GetContentType(mimeType);
+    if (mimeType.EqualsLiteral(APPLICATION_OCTET_STREAM) &&
+        loadInfo->GetExternalContentPolicyType() ==
+            ExtContentPolicy::TYPE_DOCUMENT) {
+      aSniffedType.AssignLiteral(APPLICATION_OCTET_STREAM);
+      maybeUpdate.release();
+      return NS_ERROR_NOT_AVAILABLE;
+    }
+  }
 
   for (const auto& currentEntry : sSnifferEntries) {
     if (clampedLength < currentEntry.mLength || currentEntry.mLength == 0) {

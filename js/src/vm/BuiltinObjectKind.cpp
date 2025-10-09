@@ -17,12 +17,8 @@ static JSProtoKey ToProtoKey(BuiltinObjectKind kind) {
   switch (kind) {
     case BuiltinObjectKind::Array:
       return JSProto_Array;
-    case BuiltinObjectKind::ArrayBuffer:
-      return JSProto_ArrayBuffer;
-    case BuiltinObjectKind::Int32Array:
-      return JSProto_Int32Array;
-    case BuiltinObjectKind::Iterator:
-      return JSProto_Iterator;
+    case BuiltinObjectKind::ListFormat:
+      return JSProto_ListFormat;
     case BuiltinObjectKind::Map:
       return JSProto_Map;
     case BuiltinObjectKind::Promise:
@@ -31,19 +27,13 @@ static JSProtoKey ToProtoKey(BuiltinObjectKind kind) {
       return JSProto_RegExp;
     case BuiltinObjectKind::Set:
       return JSProto_Set;
-    case BuiltinObjectKind::SharedArrayBuffer:
-      return JSProto_SharedArrayBuffer;
     case BuiltinObjectKind::Symbol:
       return JSProto_Symbol;
 
     case BuiltinObjectKind::FunctionPrototype:
       return JSProto_Function;
-    case BuiltinObjectKind::ObjectPrototype:
-      return JSProto_Object;
-    case BuiltinObjectKind::RegExpPrototype:
-      return JSProto_RegExp;
-    case BuiltinObjectKind::StringPrototype:
-      return JSProto_String;
+    case BuiltinObjectKind::IteratorPrototype:
+      return JSProto_Iterator;
 
     case BuiltinObjectKind::DateTimeFormatPrototype:
       return JSProto_DateTimeFormat;
@@ -59,21 +49,16 @@ static JSProtoKey ToProtoKey(BuiltinObjectKind kind) {
 static bool IsPrototype(BuiltinObjectKind kind) {
   switch (kind) {
     case BuiltinObjectKind::Array:
-    case BuiltinObjectKind::ArrayBuffer:
-    case BuiltinObjectKind::Int32Array:
-    case BuiltinObjectKind::Iterator:
+    case BuiltinObjectKind::ListFormat:
     case BuiltinObjectKind::Map:
     case BuiltinObjectKind::Promise:
     case BuiltinObjectKind::RegExp:
     case BuiltinObjectKind::Set:
-    case BuiltinObjectKind::SharedArrayBuffer:
     case BuiltinObjectKind::Symbol:
       return false;
 
     case BuiltinObjectKind::FunctionPrototype:
-    case BuiltinObjectKind::ObjectPrototype:
-    case BuiltinObjectKind::RegExpPrototype:
-    case BuiltinObjectKind::StringPrototype:
+    case BuiltinObjectKind::IteratorPrototype:
       return true;
 
     case BuiltinObjectKind::DateTimeFormatPrototype:
@@ -91,14 +76,8 @@ BuiltinObjectKind js::BuiltinConstructorForName(
   if (name == frontend::TaggedParserAtomIndex::WellKnown::Array()) {
     return BuiltinObjectKind::Array;
   }
-  if (name == frontend::TaggedParserAtomIndex::WellKnown::ArrayBuffer()) {
-    return BuiltinObjectKind::ArrayBuffer;
-  }
-  if (name == frontend::TaggedParserAtomIndex::WellKnown::Int32Array()) {
-    return BuiltinObjectKind::Int32Array;
-  }
-  if (name == frontend::TaggedParserAtomIndex::WellKnown::Iterator()) {
-    return BuiltinObjectKind::Iterator;
+  if (name == frontend::TaggedParserAtomIndex::WellKnown::ListFormat()) {
+    return BuiltinObjectKind::ListFormat;
   }
   if (name == frontend::TaggedParserAtomIndex::WellKnown::Map()) {
     return BuiltinObjectKind::Map;
@@ -112,9 +91,6 @@ BuiltinObjectKind js::BuiltinConstructorForName(
   if (name == frontend::TaggedParserAtomIndex::WellKnown::Set()) {
     return BuiltinObjectKind::Set;
   }
-  if (name == frontend::TaggedParserAtomIndex::WellKnown::SharedArrayBuffer()) {
-    return BuiltinObjectKind::SharedArrayBuffer;
-  }
   if (name == frontend::TaggedParserAtomIndex::WellKnown::Symbol()) {
     return BuiltinObjectKind::Symbol;
   }
@@ -126,14 +102,8 @@ BuiltinObjectKind js::BuiltinPrototypeForName(
   if (name == frontend::TaggedParserAtomIndex::WellKnown::Function()) {
     return BuiltinObjectKind::FunctionPrototype;
   }
-  if (name == frontend::TaggedParserAtomIndex::WellKnown::Object()) {
-    return BuiltinObjectKind::ObjectPrototype;
-  }
-  if (name == frontend::TaggedParserAtomIndex::WellKnown::RegExp()) {
-    return BuiltinObjectKind::RegExpPrototype;
-  }
-  if (name == frontend::TaggedParserAtomIndex::WellKnown::String()) {
-    return BuiltinObjectKind::StringPrototype;
+  if (name == frontend::TaggedParserAtomIndex::WellKnown::Iterator()) {
+    return BuiltinObjectKind::IteratorPrototype;
   }
   if (name == frontend::TaggedParserAtomIndex::WellKnown::DateTimeFormat()) {
     return BuiltinObjectKind::DateTimeFormatPrototype;
@@ -165,20 +135,14 @@ const char* js::BuiltinObjectName(BuiltinObjectKind kind) {
   switch (kind) {
     case BuiltinObjectKind::Array:
       return "Array";
-    case BuiltinObjectKind::ArrayBuffer:
-      return "ArrayBuffer";
-    case BuiltinObjectKind::Int32Array:
-      return "Int32Array";
-    case BuiltinObjectKind::Iterator:
-      return "Iterator";
+    case BuiltinObjectKind::ListFormat:
+      return "ListFormat";
     case BuiltinObjectKind::Map:
       return "Map";
     case BuiltinObjectKind::Promise:
       return "Promise";
     case BuiltinObjectKind::RegExp:
       return "RegExp";
-    case BuiltinObjectKind::SharedArrayBuffer:
-      return "SharedArrayBuffer";
     case BuiltinObjectKind::Set:
       return "Set";
     case BuiltinObjectKind::Symbol:
@@ -186,12 +150,8 @@ const char* js::BuiltinObjectName(BuiltinObjectKind kind) {
 
     case BuiltinObjectKind::FunctionPrototype:
       return "Function.prototype";
-    case BuiltinObjectKind::ObjectPrototype:
-      return "Object.prototype";
-    case BuiltinObjectKind::RegExpPrototype:
-      return "RegExp.prototype";
-    case BuiltinObjectKind::StringPrototype:
-      return "String.prototype";
+    case BuiltinObjectKind::IteratorPrototype:
+      return "Iterator.prototype";
 
     case BuiltinObjectKind::DateTimeFormatPrototype:
       return "DateTimeFormat.prototype";

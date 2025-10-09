@@ -11,8 +11,9 @@ const TEST_URI = `
 <style>
   body {
     user-select: none;
-    hyphenate-limit-chars: auto;
-    overflow-clip-box: padding-box;
+    object-view-box: inset(0% 19% -33% 57%);
+    /*TODO: Re-enable it when we have another property with no MDN url nor spec url Bug 1840910*/
+    /*overflow-clip-box: padding-box;*/
   }
 </style>
 <body>
@@ -31,29 +32,26 @@ const TEST_DATA_INITIAL = [
           expectedLearnMoreUrl:
             "https://developer.mozilla.org/docs/Web/CSS/user-select?utm_source=devtools&utm_medium=inspector-css-compatibility&utm_campaign=default",
         },
-        "hyphenate-limit-chars": {
-          value: "auto",
-          expected: COMPATIBILITY_TOOLTIP_MESSAGE.default,
+        "object-view-box": {
+          value: "inset(0% 19% -33% 57%)",
+          expected: COMPATIBILITY_TOOLTIP_MESSAGE.experimental,
           // No MDN url, but a spec one
           expectedLearnMoreUrl:
-            "https://drafts.csswg.org/css-text-4/#propdef-hyphenate-limit-chars",
+            "https://drafts.csswg.org/css-images-5/#propdef-object-view-box",
         },
-        "overflow-clip-box": {
+        // TODO: Re-enable it when we have another property with no MDN url nor spec url Bug 1840910
+        /*"overflow-clip-box": {
           expected: COMPATIBILITY_TOOLTIP_MESSAGE.default,
           value: "padding-box",
           // No MDN nor spec url
           expectedLearnMoreUrl: null,
-        },
+        },*/
       },
     ],
   },
 ];
 
 add_task(async function () {
-  await pushPref(
-    "devtools.inspector.ruleview.inline-compatibility-warning.enabled",
-    true
-  );
   await addTab("data:text/html;charset=utf-8," + encodeURIComponent(TEST_URI));
   const { inspector, view } = await openRuleView();
 

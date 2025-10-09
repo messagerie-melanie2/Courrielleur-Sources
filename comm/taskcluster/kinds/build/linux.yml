@@ -28,6 +28,8 @@ linux64/opt:
     index:
         product: thunderbird
         job-name: linux64-opt
+    attributes:
+        enable-full-crashsymbols: true
     treeherder:
         platform: linux64/opt
         symbol: B
@@ -86,6 +88,8 @@ linux64/debug:
     index:
         product: thunderbird
         job-name: linux64-debug
+    attributes:
+        enable-full-crashsymbols: true
     treeherder:
         platform: linux64/debug
         symbol: B
@@ -285,7 +289,7 @@ linux64-ccov/opt:
         toolchain:
             - linux64-libotr
             - linux64-grcov
-            - linux64-rust
+            - linux64-rust-1.83
             - sysroot-x86_64-linux-gnu
 
 linux64-ccov/debug:
@@ -315,14 +319,16 @@ linux64-ccov/debug:
         toolchain:
             - linux64-libotr
             - linux64-grcov
-            - linux64-rust
+            - linux64-rust-1.83
             - sysroot-x86_64-linux-gnu
 
 linux/opt:
     description: "Linux32 Opt"
     index:
         product: thunderbird
-        job-name: linux32-opt
+        job-name: linux-opt
+    attributes:
+        enable-full-crashsymbols: true
     treeherder:
         platform: linux32/opt
         symbol: B
@@ -352,7 +358,7 @@ linux-shippable/opt:
     shipping-product: thunderbird
     index:
         product: thunderbird
-        job-name: linux32-opt
+        job-name: linux-opt
         type: shippable
     treeherder:
         platform: linux32-shippable/opt
@@ -380,7 +386,9 @@ linux/debug:
     description: "Linux32 Debug"
     index:
         product: thunderbird
-        job-name: linux32-debug
+        job-name: linux-debug
+    attributes:
+        enable-full-crashsymbols: true
     treeherder:
         platform: linux32/debug
         symbol: B

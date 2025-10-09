@@ -20,13 +20,16 @@ const DEFAULT_PROPS = {
 
 const REMOTE_RTP_PROPS = "avgPoints=2;histSecs=90";
 const GRAPH_KEYS = [
-  "inbound-rtp.framesPerSecond;noAvg",
+  "inbound-rtp.framesPerSecond",
   "inbound-rtp.packetsReceived;toRate",
   "inbound-rtp.packetsLost;toRate",
   "inbound-rtp.jitter;fixedPointDecimals=4",
   `remote-inbound-rtp.roundTripTime;${REMOTE_RTP_PROPS}`,
   `remote-inbound-rtp.packetsReceived;toRate;${REMOTE_RTP_PROPS}`,
   "outbound-rtp.packetsSent;toRate",
+  "outbound-rtp.framesSent;toRate",
+  "outbound-rtp.frameHeight;noAvg",
+  "outbound-rtp.frameWidth;noAvg",
   "outbound-rtp.nackCount",
   "outbound-rtp.pliCount",
   "outbound-rtp.firCount",

@@ -2,10 +2,15 @@
 
 createAppInfo("xpcshell@tests.mozilla.org", "XPCShell", "2");
 
-let distroDir = FileUtils.getDir("ProfD", ["sysfeatures", "empty"], true);
+// Enable SCOPE_APPLICATION for builtin testing.  Default in tests is only SCOPE_PROFILE.
+let scopes = AddonManager.SCOPE_PROFILE | AddonManager.SCOPE_APPLICATION;
+Services.prefs.setIntPref("extensions.enabledScopes", scopes);
+
+let distroDir = FileUtils.getDir("ProfD", ["sysfeatures", "empty"]);
+distroDir.create(Ci.nsIFile.DIRECTORY_TYPE, FileUtils.PERMS_DIRECTORY);
 registerDirectory("XREAppFeat", distroDir);
 
-AddonTestUtils.usePrivilegedSignatures = id => "system";
+AddonTestUtils.usePrivilegedSignatures = () => "system";
 
 add_task(() => initSystemAddonDirs());
 

@@ -13,6 +13,7 @@ const Commands = {
     "devtools/shared/commands/inspected-window/inspected-window-command",
   inspectorCommand: "devtools/shared/commands/inspector/inspector-command",
   networkCommand: "devtools/shared/commands/network/network-command",
+  objectCommand: "devtools/shared/commands/object/object-command",
   resourceCommand: "devtools/shared/commands/resource/resource-command",
   rootResourceCommand:
     "devtools/shared/commands/root-resource/root-resource-command",
@@ -22,6 +23,7 @@ const Commands = {
     "devtools/shared/commands/target-configuration/target-configuration-command",
   threadConfigurationCommand:
     "devtools/shared/commands/thread-configuration/thread-configuration-command",
+  tracerCommand: "devtools/shared/commands/tracer/tracer-command",
 };
 /* eslint-disable sort-keys */
 
@@ -29,13 +31,21 @@ const Commands = {
  * For a given descriptor and its related Targets, already initialized,
  * return the dictionary with all command instances.
  * This dictionary is lazy and commands will be loaded and instanciated on-demand.
+ *
+ * @param {DescriptorFront} descriptorFront
+ * @param {Boolean} enableWindowGlobalThreadActors: Used by one test.
  */
-async function createCommandsDictionary(descriptorFront) {
+async function createCommandsDictionary(
+  descriptorFront,
+  enableWindowGlobalThreadActors
+) {
   // Bug 1675763: Watcher actor is not available in all situations yet.
   let watcherFront;
   const supportsWatcher = descriptorFront.traits?.watcher;
   if (supportsWatcher) {
-    watcherFront = await descriptorFront.getWatcher();
+    watcherFront = await descriptorFront.getWatcher({
+      enableWindowGlobalThreadActors,
+    });
   }
   const { client } = descriptorFront;
 
@@ -49,8 +59,8 @@ async function createCommandsDictionary(descriptorFront) {
     watcherFront,
 
     // Expose for tests
-    waitForRequestsToSettle() {
-      return descriptorFront.client.waitForRequestsToSettle();
+    waitForRequestsToSettle(options) {
+      return descriptorFront.client.waitForRequestsToSettle(options);
     },
 
     // Boolean flag to know if the DevtoolsClient should be closed

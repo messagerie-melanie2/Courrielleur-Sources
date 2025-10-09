@@ -7,6 +7,7 @@
 #ifndef nsThreadPool_h__
 #define nsThreadPool_h__
 
+#include "nsIThread.h"
 #include "nsIThreadPool.h"
 #include "nsIRunnable.h"
 #include "nsCOMArray.h"
@@ -16,6 +17,7 @@
 #include "mozilla/AlreadyAddRefed.h"
 #include "mozilla/CondVar.h"
 #include "mozilla/EventQueue.h"
+#include "mozilla/LinkedList.h"
 #include "mozilla/Mutex.h"
 
 class nsIThread;
@@ -35,34 +37,42 @@ class nsThreadPool final : public mozilla::Runnable, public nsIThreadPool {
  private:
   ~nsThreadPool();
 
+  struct MRUIdleEntry;  // forward declaration only, see nsThreadPool.cpp
+
   void ShutdownThread(nsIThread* aThread);
   nsresult PutEvent(nsIRunnable* aEvent);
   nsresult PutEvent(already_AddRefed<nsIRunnable> aEvent, uint32_t aFlags);
+  void NotifyChangeToAllIdleThreads() MOZ_REQUIRES(mMutex);
+
+#ifdef DEBUG
+  void DebugLogPoolStatus(mozilla::MutexAutoLock& aProofOfLock,
+                          MRUIdleEntry* aWakingEntry = nullptr)
+      MOZ_REQUIRES(mMutex);
+#endif
 
   mozilla::Mutex mMutex;
   nsCOMArray<nsIThread> mThreads MOZ_GUARDED_BY(mMutex);
-  mozilla::CondVar mEventsAvailable MOZ_GUARDED_BY(mMutex);
   mozilla::EventQueue mEvents MOZ_GUARDED_BY(mMutex);
   uint32_t mThreadLimit MOZ_GUARDED_BY(mMutex);
   uint32_t mIdleThreadLimit MOZ_GUARDED_BY(mMutex);
-  uint32_t mIdleThreadTimeout MOZ_GUARDED_BY(mMutex);
-  uint32_t mIdleCount MOZ_GUARDED_BY(mMutex);
+  mozilla::TimeDuration mIdleThreadGraceTimeout MOZ_GUARDED_BY(mMutex);
+  mozilla::TimeDuration mIdleThreadMaxTimeout MOZ_GUARDED_BY(mMutex);
+  mozilla::LinkedList<MRUIdleEntry> mMRUIdleThreads MOZ_GUARDED_BY(mMutex);
   nsIThread::QoSPriority mQoSPriority MOZ_GUARDED_BY(mMutex);
   uint32_t mStackSize MOZ_GUARDED_BY(mMutex);
   nsCOMPtr<nsIThreadPoolListener> mListener MOZ_GUARDED_BY(mMutex);
   mozilla::Atomic<bool, mozilla::Relaxed> mShutdown;
-  bool mRegressiveMaxIdleTime MOZ_GUARDED_BY(mMutex);
   mozilla::Atomic<bool, mozilla::Relaxed> mIsAPoolThreadFree;
   // set once before we start threads
   nsCString mName MOZ_GUARDED_BY(mMutex);
   nsThreadPoolNaming mThreadNaming;  // all data inside this is atomic
 };
 
-#define NS_THREADPOOL_CID                            \
-  { /* 547ec2a8-315e-4ec4-888e-6e4264fe90eb */       \
-    0x547ec2a8, 0x315e, 0x4ec4, {                    \
-      0x88, 0x8e, 0x6e, 0x42, 0x64, 0xfe, 0x90, 0xeb \
-    }                                                \
-  }
+#define NS_THREADPOOL_CID                     \
+  {/* 547ec2a8-315e-4ec4-888e-6e4264fe90eb */ \
+   0x547ec2a8,                                \
+   0x315e,                                    \
+   0x4ec4,                                    \
+   {0x88, 0x8e, 0x6e, 0x42, 0x64, 0xfe, 0x90, 0xeb}}
 
 #endif  // nsThreadPool_h__

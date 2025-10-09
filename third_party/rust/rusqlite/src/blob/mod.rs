@@ -50,7 +50,7 @@
 //!    Using `MaybeUninit` here can be more efficient in some cases, but is
 //!    often inconvenient, so both are provided.
 //!
-//! 2. Exact/inexact refers to to whether or not the entire buffer must be
+//! 2. Exact/inexact refers to whether or not the entire buffer must be
 //!    filled in order for the call to be considered a success.
 //!
 //!    The "exact" functions require the provided buffer be entirely filled, or
@@ -134,7 +134,7 @@
 //! // Insert another BLOB, this time using a parameter passed in from
 //! // rust (potentially with a dynamic size).
 //! db.execute(
-//!     "INSERT INTO test_table (content) VALUES (?)",
+//!     "INSERT INTO test_table (content) VALUES (?1)",
 //!     [ZeroBlob(64)],
 //! )?;
 //!
@@ -175,7 +175,7 @@
 //! // Insert another blob, this time using a parameter passed in from
 //! // rust (potentially with a dynamic size).
 //! db.execute(
-//!     "INSERT INTO test_table (content) VALUES (?)",
+//!     "INSERT INTO test_table (content) VALUES (?1)",
 //!     [ZeroBlob(64)],
 //! )?;
 //!
@@ -225,7 +225,7 @@ impl Connection {
     ) -> Result<Blob<'a>> {
         let c = self.db.borrow_mut();
         let mut blob = ptr::null_mut();
-        let db = db.as_cstring()?;
+        let db = db.as_cstr()?;
         let table = super::str_to_cstring(table)?;
         let column = super::str_to_cstring(column)?;
         let rc = unsafe {
@@ -235,7 +235,7 @@ impl Connection {
                 table.as_ptr(),
                 column.as_ptr(),
                 row_id,
-                if read_only { 0 } else { 1 },
+                !read_only as std::os::raw::c_int,
                 &mut blob,
             )
         };
@@ -274,7 +274,6 @@ impl Blob<'_> {
     #[inline]
     #[must_use]
     pub fn len(&self) -> usize {
-        use std::convert::TryInto;
         self.size().try_into().unwrap()
     }
 
@@ -288,7 +287,7 @@ impl Blob<'_> {
     /// Close a BLOB handle.
     ///
     /// Calling `close` explicitly is not required (the BLOB will be closed
-    /// when the `Blob` is dropped), but it is available so you can get any
+    /// when the `Blob` is dropped), but it is available, so you can get any
     /// errors that occur.
     ///
     /// # Failure
@@ -394,7 +393,7 @@ impl io::Seek for Blob<'_> {
     }
 }
 
-#[allow(unused_must_use)]
+#[expect(unused_must_use)]
 impl Drop for Blob<'_> {
     #[inline]
     fn drop(&mut self) {
@@ -414,7 +413,7 @@ pub struct ZeroBlob(pub i32);
 impl ToSql for ZeroBlob {
     #[inline]
     fn to_sql(&self) -> Result<ToSqlOutput<'_>> {
-        let ZeroBlob(length) = *self;
+        let Self(length) = *self;
         Ok(ToSqlOutput::ZeroBlob(length))
     }
 }
@@ -440,9 +439,12 @@ mod test {
         let (db, rowid) = db_with_test_blob()?;
 
         let mut blob = db.blob_open(DatabaseName::Main, "test", "content", rowid, false)?;
+        assert!(!blob.is_empty());
+        assert_eq!(10, blob.len());
         assert_eq!(4, blob.write(b"Clob").unwrap());
         assert_eq!(6, blob.write(b"567890xxxxxx").unwrap()); // cannot write past 10
         assert_eq!(0, blob.write(b"5678").unwrap()); // still cannot write past 10
+        blob.flush().unwrap();
 
         blob.reopen(rowid)?;
         blob.close()?;
@@ -473,14 +475,14 @@ mod test {
         assert_eq!(&bytes, b"Clob5");
 
         // should not be able to seek negative or past end
-        assert!(blob.seek(SeekFrom::Current(-20)).is_err());
-        assert!(blob.seek(SeekFrom::End(0)).is_ok());
-        assert!(blob.seek(SeekFrom::Current(1)).is_err());
+        blob.seek(SeekFrom::Current(-20)).unwrap_err();
+        blob.seek(SeekFrom::End(0)).unwrap();
+        blob.seek(SeekFrom::Current(1)).unwrap_err();
 
         // write_all should detect when we return Ok(0) because there is no space left,
         // and return a write error
         blob.reopen(rowid)?;
-        assert!(blob.write_all(b"0123456789x").is_err());
+        blob.write_all(b"0123456789x").unwrap_err();
         Ok(())
     }
 
@@ -519,7 +521,7 @@ mod test {
             // trying to write too much and then flush should fail
             assert_eq!(8, writer.write(b"01234567").unwrap());
             assert_eq!(8, writer.write(b"01234567").unwrap());
-            assert!(writer.flush().is_err());
+            writer.flush().unwrap_err();
         }
 
         {
@@ -536,7 +538,7 @@ mod test {
 
             // trying to write_all too much should fail
             writer.write_all(b"aaaaaaaaaabbbbb").unwrap();
-            assert!(writer.flush().is_err());
+            writer.flush().unwrap_err();
         }
 
         {
@@ -547,5 +549,13 @@ mod test {
             assert_eq!(b"aaaaaaaaaa", &bytes);
             Ok(())
         }
+    }
+
+    #[test]
+    fn zero_blob() -> Result<()> {
+        use crate::types::ToSql;
+        let zb = super::ZeroBlob(1);
+        assert!(zb.to_sql().is_ok());
+        Ok(())
     }
 }

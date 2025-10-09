@@ -21,27 +21,21 @@
 
 class nsIDocShell;
 class nsIURI;
-namespace Json {
-class Value;
-}
 
-#define NS_NULLPRINCIPAL_CID                         \
-  {                                                  \
-    0xbd066e5f, 0x146f, 0x4472, {                    \
-      0x83, 0x31, 0x7b, 0xfd, 0x05, 0xb1, 0xed, 0x90 \
-    }                                                \
-  }
+#define NS_NULLPRINCIPAL_CID \
+  {0xbd066e5f, 0x146f, 0x4472, {0x83, 0x31, 0x7b, 0xfd, 0x05, 0xb1, 0xed, 0x90}}
 
 #define NS_NULLPRINCIPAL_SCHEME "moz-nullprincipal"
 
 namespace mozilla {
+
+class JSONWriter;
 
 class NullPrincipal final : public BasePrincipal {
  public:
   static PrincipalKind Kind() { return eNullPrincipal; }
 
   NS_IMETHOD QueryInterface(REFNSIID aIID, void** aInstancePtr) override;
-  uint32_t GetHashValue() override;
   NS_IMETHOD GetURI(nsIURI** aURI) override;
   NS_IMETHOD GetIsOriginPotentiallyTrustworthy(bool* aResult) override;
   NS_IMETHOD GetDomain(nsIURI** aDomain) override;
@@ -85,14 +79,15 @@ class NullPrincipal final : public BasePrincipal {
     return NS_OK;
   }
 
-  virtual nsresult PopulateJSONObject(Json::Value& aObject) override;
+  virtual nsresult WriteJSONInnerProperties(JSONWriter& aWriter) override;
 
   // Serializable keys are the valid enum fields the serialization supports
   enum SerializableKeys : uint8_t { eSpec = 0, eSuffix, eMax = eSuffix };
-  typedef mozilla::BasePrincipal::KeyValT<SerializableKeys> KeyVal;
 
-  static already_AddRefed<BasePrincipal> FromProperties(
-      nsTArray<NullPrincipal::KeyVal>& aFields);
+  static constexpr char SpecKey = '0';
+  static_assert(eSpec == 0);
+  static constexpr char SuffixKey = '1';
+  static_assert(eSuffix == 1);
 
   class Deserializer : public BasePrincipal::Deserializer {
    public:

@@ -12,14 +12,14 @@
 /* import-globals-from item-editing/calendar-item-editing.js */
 /* import-globals-from calendar-modes.js */
 
-var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
-var { countOccurrences } = ChromeUtils.import(
-  "resource:///modules/calendar/calRecurrenceUtils.jsm"
+var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
+var { countOccurrences } = ChromeUtils.importESModule(
+  "resource:///modules/calendar/calRecurrenceUtils.sys.mjs"
 );
 var { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUtils.sys.mjs");
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  CalEvent: "resource:///modules/CalEvent.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  CalEvent: "resource:///modules/CalEvent.sys.mjs",
 });
 
 /**
@@ -38,7 +38,7 @@ var calendarViewController = {
   createNewEvent(calendar, startTime, endTime, forceAllday) {
     // if we're given both times, skip the dialog
     if (startTime && endTime && !startTime.isDate && !endTime.isDate) {
-      let item = new CalEvent();
+      const item = new CalEvent();
       setDefaultItemValues(item, calendar, startTime, endTime);
       doTransaction("add", item, item.calendar, null, null);
     } else {
@@ -50,10 +50,11 @@ var calendarViewController = {
    * View the given occurrence.
    *
    * @param {calIItemBase} occurrence
+   * @param {Event} event - The dblclick event which triggered the view.
    * @see calICalendarViewController
    */
-  viewOccurrence(occurrence) {
-    openEventDialogForViewing(occurrence);
+  viewOccurrence(occurrence, event) {
+    openEventDialogForViewing(occurrence, event);
   },
 
   /**
@@ -65,7 +66,7 @@ var calendarViewController = {
     // if modifying this item directly (e.g. just dragged to new time),
     // then do so; otherwise pop up the dialog
     if (newStartTime || newEndTime || newTitle) {
-      let instance = occurrence.clone();
+      const instance = occurrence.clone();
 
       if (newTitle) {
         instance.title = newTitle;
@@ -112,13 +113,13 @@ var calendarViewController = {
       return;
     }
     startBatchTransaction();
-    let recurringItems = {};
-    let extResponse = extResponseArg || { responseMode: Ci.calIItipItem.USER };
+    const recurringItems = {};
+    const extResponse = extResponseArg || { responseMode: Ci.calIItipItem.USER };
 
-    let getSavedItem = function (itemToDelete) {
+    const getSavedItem = function (itemToDelete) {
       // Get the parent item, saving it in our recurringItems object for
       // later use.
-      let hashVal = itemToDelete.parentItem.hashId;
+      const hashVal = itemToDelete.parentItem.hashId;
       if (!recurringItems[hashVal]) {
         recurringItems[hashVal] = {
           oldItem: itemToDelete.parentItem,
@@ -134,11 +135,11 @@ var calendarViewController = {
     // it, filter out any items that have readonly calendars, so that
     // checking for one total item below also works out if all but one item
     // are readonly.
-    let occurrences = occurrencesArg.filter(item => cal.acl.isCalendarWritable(item.calendar));
+    const occurrences = occurrencesArg.filter(item => cal.acl.isCalendarWritable(item.calendar));
 
     // we check how many occurrences the parent item has
-    let parents = new Map();
-    for (let occ of occurrences) {
+    const parents = new Map();
+    for (const occ of occurrences) {
       if (!parents.has(occ.id)) {
         parents.set(occ.id, countOccurrences(occ));
       }
@@ -161,7 +162,11 @@ var calendarViewController = {
         itemToDelete = itemToDelete.parentItem;
         parents.set(itemToDelete.id, -1);
       } else if (promptUser) {
-        let [targetItem, , response] = promptOccurrenceModification(itemToDelete, false, "delete");
+        const [targetItem, , response] = promptOccurrenceModification(
+          itemToDelete,
+          false,
+          "delete"
+        );
         if (!response) {
           // The user canceled the dialog, bail out
           break;
@@ -182,7 +187,7 @@ var calendarViewController = {
       if (itemToDelete.parentItem.hashId == itemToDelete.hashId) {
         doTransaction("delete", itemToDelete, itemToDelete.calendar, null, null, extResponse);
       } else {
-        let savedItem = getSavedItem(itemToDelete);
+        const savedItem = getSavedItem(itemToDelete);
         savedItem.newItem.recurrenceInfo.removeOccurrenceAt(itemToDelete.recurrenceId);
         // Dont start the transaction yet. Do so later, in case the
         // parent item gets modified more than once.
@@ -191,8 +196,8 @@ var calendarViewController = {
 
     // Now handle recurring events. This makes sure that all occurrences
     // that have been passed are deleted.
-    for (let hashVal in recurringItems) {
-      let ritem = recurringItems[hashVal];
+    for (const hashVal in recurringItems) {
+      const ritem = recurringItems[hashVal];
       doTransaction(
         "modify",
         ritem.newItem,
@@ -210,19 +215,19 @@ var calendarViewController = {
  * This function does the common steps to switch between views. Should be called
  * from app-specific view switching functions
  *
- * @param viewType     The type of view to select.
+ * @param {string} viewType - The type of view to select.
  */
 function switchToView(viewType) {
-  let viewBox = getViewBox();
+  const viewBox = getViewBox();
   let selectedDay;
   let currentSelection = [];
 
   // Set up the view commands
-  let views = viewBox.children;
+  const views = viewBox.children;
   for (let i = 0; i < views.length; i++) {
-    let view = views[i];
-    let commandId = "calendar_" + view.id + "_command";
-    let command = document.getElementById(commandId);
+    const view = views[i];
+    const commandId = "calendar_" + view.id + "_command";
+    const command = document.getElementById(commandId);
     if (view.id == viewType + "-view") {
       command.setAttribute("checked", "true");
     } else {
@@ -248,13 +253,13 @@ function switchToView(viewType) {
   );
 
   // These are hidden until the calendar is loaded.
-  for (let node of document.querySelectorAll(".hide-before-calendar-loaded")) {
+  for (const node of document.querySelectorAll(".hide-before-calendar-loaded")) {
     node.removeAttribute("hidden");
   }
 
   // Anyone wanting to plug in a view needs to follow this naming scheme
-  let view = document.getElementById(viewType + "-view");
-  let oldView = currentView();
+  const view = document.getElementById(viewType + "-view");
+  const oldView = currentView();
   if (oldView?.isActive) {
     if (oldView == view) {
       // Not actually changing view, there's nothing else to do.
@@ -294,7 +299,7 @@ function switchToView(viewType) {
 /**
  * Returns the calendar view box element.
  *
- * @returns The view-box element.
+ * @returns {Element} The view-box element.
  */
 function getViewBox() {
   return document.getElementById("view-box");
@@ -303,10 +308,10 @@ function getViewBox() {
 /**
  * Returns the currently selected calendar view.
  *
- * @returns The selected calendar view
+ * @returns {?Element} The selected calendar view
  */
 function currentView() {
-  for (let element of getViewBox().children) {
+  for (const element of getViewBox().children) {
     if (!element.hidden) {
       return element;
     }
@@ -318,12 +323,11 @@ function currentView() {
  * Handler function to set the selected day in the minimonth to the currently
  * selected day in the current view.
  *
- * @param event     The "dayselect" event emitted from the views.
- *
+ * @param {Event} event - The "dayselect" event emitted from the views.
  */
 function observeViewDaySelect(event) {
-  let date = event.detail;
-  let jsDate = new Date(date.year, date.month, date.day);
+  const date = event.detail;
+  const jsDate = new Date(date.year, date.month, date.day);
 
   // for the month and multiweek view find the main month,
   // which is the month with the most visible days in the view;
@@ -332,10 +336,10 @@ function observeViewDaySelect(event) {
   if (!event.target.supportsDisjointDates) {
     let mainDate = null;
     let maxVisibleDays = 0;
-    let startDay = currentView().startDay;
-    let endDay = currentView().endDay;
-    let firstMonth = startDay.startOfMonth;
-    let lastMonth = endDay.startOfMonth;
+    const startDay = currentView().startDay;
+    const endDay = currentView().endDay;
+    const firstMonth = startDay.startOfMonth;
+    const lastMonth = endDay.startOfMonth;
     for (let month = firstMonth.clone(); month.compare(lastMonth) <= 0; month.month += 1) {
       let visibleDays = 0;
       if (month.compare(firstMonth) == 0) {
@@ -360,16 +364,16 @@ function observeViewDaySelect(event) {
 /**
  * Shows the given date in the current view, if in calendar mode.
  *
- * @param aNewDate      The new date as a JSDate.
+ * @param {Date} aNewDate - The new date.
  */
 function minimonthPick(aNewDate) {
   if (gCurrentMode == "calendar" || gCurrentMode == "task") {
-    let cdt = cal.dtz.jsDateToDateTime(aNewDate, currentView().timezone);
+    const cdt = cal.dtz.jsDateToDateTime(aNewDate, currentView().timezone);
     cdt.isDate = true;
     currentView().goToDay(cdt);
 
     // update date filter for task tree
-    let tree = document.getElementById("calendar-task-tree");
+    const tree = document.getElementById("calendar-task-tree");
     tree.updateFilter();
   }
 }
@@ -377,7 +381,7 @@ function minimonthPick(aNewDate) {
 /**
  * Provides a neutral way to get the minimonth.
  *
- * @returns The XUL minimonth element.
+ * @returns {Element} The minimonth element.
  */
 function getMinimonth() {
   return document.getElementById("calMinimonth");
@@ -387,11 +391,11 @@ function getMinimonth() {
  * Update the view orientation based on the checked state of the command
  */
 function toggleOrientation() {
-  let cmd = document.getElementById("calendar_toggle_orientation_command");
-  let newValue = cmd.getAttribute("checked") == "true" ? "false" : "true";
+  const cmd = document.getElementById("calendar_toggle_orientation_command");
+  const newValue = cmd.getAttribute("checked") == "true" ? "false" : "true";
   cmd.setAttribute("checked", newValue);
 
-  for (let view of getViewBox().children) {
+  for (const view of getViewBox().children) {
     view.rotated = newValue == "true";
   }
 
@@ -405,11 +409,11 @@ function toggleOrientation() {
  * should happen automatically.
  */
 function toggleWorkdaysOnly() {
-  let cmd = document.getElementById("calendar_toggle_workdays_only_command");
-  let newValue = cmd.getAttribute("checked") == "true" ? "false" : "true";
+  const cmd = document.getElementById("calendar_toggle_workdays_only_command");
+  const newValue = cmd.getAttribute("checked") == "true" ? "false" : "true";
   cmd.setAttribute("checked", newValue);
 
-  for (let view of getViewBox().children) {
+  for (const view of getViewBox().children) {
     view.workdaysOnly = newValue == "true";
   }
 
@@ -421,11 +425,11 @@ function toggleWorkdaysOnly() {
  * Toggle the tasks in view checkbox and refresh the current view
  */
 function toggleTasksInView() {
-  let cmd = document.getElementById("calendar_toggle_tasks_in_view_command");
-  let newValue = cmd.getAttribute("checked") == "true" ? "false" : "true";
+  const cmd = document.getElementById("calendar_toggle_tasks_in_view_command");
+  const newValue = cmd.getAttribute("checked") == "true" ? "false" : "true";
   cmd.setAttribute("checked", newValue);
 
-  for (let view of getViewBox().children) {
+  for (const view of getViewBox().children) {
     view.tasksInView = newValue == "true";
   }
 
@@ -437,11 +441,11 @@ function toggleTasksInView() {
  * Toggle the show completed in view checkbox and refresh the current view
  */
 function toggleShowCompletedInView() {
-  let cmd = document.getElementById("calendar_toggle_show_completed_in_view_command");
-  let newValue = cmd.getAttribute("checked") == "true" ? "false" : "true";
+  const cmd = document.getElementById("calendar_toggle_show_completed_in_view_command");
+  const newValue = cmd.getAttribute("checked") == "true" ? "false" : "true";
   cmd.setAttribute("checked", newValue);
 
-  for (let view of getViewBox().children) {
+  for (const view of getViewBox().children) {
     view.showCompleted = newValue == "true";
   }
 
@@ -455,14 +459,17 @@ function toggleShowCompletedInView() {
  * @param {Event} event - The click DOMEvent.
  */
 function showCalControlBarMenuPopup(event) {
-  let moreContext = document.getElementById("calControlBarMenuPopup");
-  moreContext.openPopup(event.target, { triggerEvent: event });
+  const moreContext = document.getElementById("calControlBarMenuPopup");
+  moreContext.openPopup(event.target, {
+    position: "after_end",
+    triggerEvent: event,
+  });
 }
 
 /**
  * Provides a neutral way to go to the current day in the views and minimonth.
  *
- * @param date     The date to go.
+ * @param {calIDateTime} date - The date to go to.
  */
 function goToDate(date) {
   getMinimonth().value = cal.dtz.dateTimeToJsDate(date);
@@ -481,8 +488,8 @@ var gLastShownCalendarView = {
   get() {
     if (!this._lastView) {
       if (Services.xulStore.hasValue(document.location.href, "view-box", "selectedIndex")) {
-        let viewBox = getViewBox();
-        let selectedIndex = Services.xulStore.getValue(
+        const viewBox = getViewBox();
+        const selectedIndex = Services.xulStore.getValue(
           document.location.href,
           "view-box",
           "selectedIndex"
@@ -490,7 +497,7 @@ var gLastShownCalendarView = {
         for (let i = 0; i < viewBox.children.length; i++) {
           viewBox.children[i].hidden = selectedIndex != i;
         }
-        let viewNode = viewBox.children[selectedIndex];
+        const viewNode = viewBox.children[selectedIndex];
         this._lastView = viewNode.id.replace(/-view/, "");
         document
           .querySelector(`.calview-toggle-item[aria-controls="${viewNode.id}"]`)
@@ -515,7 +522,7 @@ var gLastShownCalendarView = {
  * Deletes items currently selected in the view and clears selection.
  */
 function deleteSelectedEvents() {
-  let selectedItems = currentView().getSelectedItems();
+  const selectedItems = currentView().getSelectedItems();
   calendarViewController.deleteOccurrences(selectedItems, false, false);
   // clear selection
   currentView().setSelectedItems([], true);
@@ -525,7 +532,7 @@ function deleteSelectedEvents() {
  * Open the items currently selected in the view.
  */
 function viewSelectedEvents() {
-  let items = currentView().getSelectedItems();
+  const items = currentView().getSelectedItems();
   if (items.length >= 1) {
     openEventDialogForViewing(items[0]);
   }
@@ -535,7 +542,7 @@ function viewSelectedEvents() {
  * Edit the items currently selected in the view with the event dialog.
  */
 function editSelectedEvents() {
-  let selectedItems = currentView().getSelectedItems();
+  const selectedItems = currentView().getSelectedItems();
   if (selectedItems && selectedItems.length >= 1) {
     modifyEventWithDialog(selectedItems[0], true);
   }
@@ -545,7 +552,7 @@ function editSelectedEvents() {
  * Select all events from all calendars. Use with care.
  */
 async function selectAllEvents() {
-  let composite = cal.view.getCompositeCalendar(window);
+  const composite = cal.view.getCompositeCalendar(window);
   let filter = composite.ITEM_FILTER_CLASS_OCCURRENCES;
 
   if (currentView().tasksInView) {
@@ -560,10 +567,10 @@ async function selectAllEvents() {
   }
 
   // Need to move one day out to get all events
-  let end = currentView().endDay.clone();
+  const end = currentView().endDay.clone();
   end.day += 1;
 
-  let items = await composite.getItemsAsArray(filter, 0, currentView().startDay, end);
+  const items = await composite.getItemsAsArray(filter, 0, currentView().startDay, end);
   currentView().setSelectedItems(items, false);
 }
 
@@ -571,28 +578,23 @@ var calendarNavigationBar = {
   setDateRange(startDate, endDate) {
     let docTitle = "";
     if (startDate) {
-      let intervalLabel = document.getElementById("intervalDescription");
-      let firstWeekNo = cal.weekInfoService.getWeekTitle(startDate);
-      let secondWeekNo = firstWeekNo;
-      let weekLabel = document.getElementById("calendarWeek");
-      if (startDate.nativeTime == endDate.nativeTime) {
-        intervalLabel.textContent = cal.dtz.formatter.formatDate(startDate);
-      } else {
-        intervalLabel.textContent = currentView().getRangeDescription();
-        secondWeekNo = cal.weekInfoService.getWeekTitle(endDate);
-      }
+      const intervalLabel = document.getElementById("intervalDescription");
+      intervalLabel.textContent = currentView().getRangeDescription();
+      const firstWeekNo = cal.weekInfoService.getWeekTitle(startDate);
+      const secondWeekNo =
+        startDate.nativeTime == endDate.nativeTime
+          ? firstWeekNo
+          : cal.weekInfoService.getWeekTitle(endDate);
+      const weekLabel = document.getElementById("calendarWeek");
       if (secondWeekNo == firstWeekNo) {
-        weekLabel.textContent = cal.l10n.getCalString("singleShortCalendarWeek", [firstWeekNo]);
-        weekLabel.tooltipText = cal.l10n.getCalString("singleLongCalendarWeek", [firstWeekNo]);
+        document.l10n.setAttributes(weekLabel, "single-calendar-week", {
+          index: firstWeekNo,
+        });
       } else {
-        weekLabel.textContent = cal.l10n.getCalString("severalShortCalendarWeeks", [
-          firstWeekNo,
-          secondWeekNo,
-        ]);
-        weekLabel.tooltipText = cal.l10n.getCalString("severalLongCalendarWeeks", [
-          firstWeekNo,
-          secondWeekNo,
-        ]);
+        document.l10n.setAttributes(weekLabel, "several-calendar-weeks", {
+          startIndex: firstWeekNo,
+          endIndex: secondWeekNo,
+        });
       }
       docTitle = intervalLabel.textContent;
     }
@@ -607,7 +609,7 @@ var calendarNavigationBar = {
 
 var timezoneObserver = {
   observe() {
-    let minimonth = getMinimonth();
+    const minimonth = getMinimonth();
     minimonth.update(minimonth.value);
   },
 };

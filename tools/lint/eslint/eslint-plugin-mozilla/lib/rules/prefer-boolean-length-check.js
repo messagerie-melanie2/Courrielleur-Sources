@@ -10,7 +10,7 @@
 
 function funcForBooleanLength(context, node, conditionCheck) {
   let newText = "";
-  const sourceCode = context.getSourceCode();
+  const sourceCode = context.sourceCode;
   switch (node.operator) {
     case ">":
       if (node.right.value == 0) {
@@ -59,7 +59,7 @@ function funcForBooleanLength(context, node, conditionCheck) {
 module.exports = {
   meta: {
     docs: {
-      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/prefer-boolean-length-check.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/rules/prefer-boolean-length-check.html",
     },
     fixable: "code",
     messages: {

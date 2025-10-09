@@ -32,6 +32,7 @@
 #include "mozilla/layers/WebRenderDrawEventRecorder.h"
 #include "UnitTransforms.h"
 #include "gfxEnv.h"
+#include "MediaInfo.h"
 #include "nsDisplayListInvalidation.h"
 #include "nsLayoutUtils.h"
 #include "nsTHashSet.h"
@@ -39,8 +40,7 @@
 
 #include <cstdint>
 
-namespace mozilla {
-namespace layers {
+namespace mozilla::layers {
 
 using namespace gfx;
 using namespace image;
@@ -108,7 +108,7 @@ struct BlobItemData {
   // We need to keep a list of all the external surfaces used by the blob image.
   // We do this on a per-display item basis so that the lists remains correct
   // during invalidations.
-  std::vector<RefPtr<SourceSurface>> mExternalSurfaces;
+  DrawEventRecorderPrivate::ExternalSurfacesHolder mExternalSurfaces;
 
   BlobItemData(DIGroup* aGroup, nsDisplayItem* aItem)
       : mInvisible(false), mUsed(false), mGroup(aGroup) {
@@ -183,18 +183,18 @@ static void DestroyBlobGroupDataProperty(nsTArray<BlobItemData*>* aArray) {
 
 static void TakeExternalSurfaces(
     WebRenderDrawEventRecorder* aRecorder,
-    std::vector<RefPtr<SourceSurface>>& aExternalSurfaces,
+    DrawEventRecorderPrivate::ExternalSurfacesHolder& aExternalSurfaces,
     RenderRootStateManager* aManager, wr::IpcResourceUpdateQueue& aResources) {
   aRecorder->TakeExternalSurfaces(aExternalSurfaces);
 
-  for (auto& surface : aExternalSurfaces) {
+  for (auto& entry : aExternalSurfaces) {
     // While we don't use the image key with the surface, because the blob image
     // renderer doesn't have easy access to the resource set, we still want to
     // ensure one is generated. That will ensure the surface remains alive until
     // at least the last epoch which the blob image could be used in.
     wr::ImageKey key;
     DebugOnly<nsresult> rv =
-        SharedSurfacesChild::Share(surface, aManager, aResources, key);
+        SharedSurfacesChild::Share(entry.mSurface, aManager, aResources, key);
     MOZ_ASSERT(rv.value != NS_ERROR_NOT_IMPLEMENTED);
   }
 }
@@ -273,6 +273,8 @@ static bool DetectContainerLayerPropertiesBoundsChange(
   if (aItem->GetType() == DisplayItemType::TYPE_FILTER) {
     // Filters get clipped to the BuildingRect since they can
     // have huge bounds outside of the visible area.
+    // This function and similar code in ComputeGeometryChange should be kept in
+    // sync.
     aGeometry.mBounds = aGeometry.mBounds.Intersect(aItem->GetBuildingRect());
   }
 
@@ -308,7 +310,6 @@ struct DIGroup {
   LayerIntRect mLastVisibleRect;
 
   // This is the intersection of mVisibleRect and mLastVisibleRect
-  // we ensure that mInvalidRect is contained in mPreservedRect
   LayerIntRect mPreservedRect;
   // mHitTestBounds is the same as mActualBounds except for the bounds
   // of invisible items which are accounted for in the former but not
@@ -334,11 +335,7 @@ struct DIGroup {
         mHitInfo(CompositorHitTestInvisibleToHit) {}
 
   void InvalidateRect(const LayerIntRect& aRect) {
-    auto r = aRect.Intersect(mPreservedRect);
-    // Empty rects get dropped
-    if (!r.IsEmpty()) {
-      mInvalidRect = mInvalidRect.Union(r);
-    }
+    mInvalidRect = mInvalidRect.Union(aRect);
   }
 
   LayerIntRect ItemBounds(nsDisplayItem* aItem) {
@@ -554,6 +551,13 @@ struct DIGroup {
           }
         }
       }
+    }
+
+    if (aData->mGeometry && aItem->GetType() == DisplayItemType::TYPE_FILTER) {
+      // This hunk DetectContainerLayerPropertiesBoundsChange should be kept in
+      // sync.
+      aData->mGeometry->mBounds =
+          aData->mGeometry->mBounds.Intersect(aItem->GetBuildingRect());
     }
 
     mHitTestBounds.OrWith(aData->mRect);
@@ -793,35 +797,36 @@ struct DIGroup {
       nsDisplayItem* item = *it;
       MOZ_ASSERT(item);
 
+      if (item->GetType() == DisplayItemType::TYPE_COMPOSITOR_HITTEST_INFO) {
+        continue;
+      }
+
       BlobItemData* data = GetBlobItemData(item);
       if (data->mInvisible) {
         continue;
       }
 
       LayerIntRect bounds = data->mRect;
-      auto bottomRight = bounds.BottomRight();
+
+      // skip empty items
+      if (bounds.IsEmpty()) {
+        continue;
+      }
 
       GP("Trying %s %p-%d %d %d %d %d\n", item->Name(), item->Frame(),
          item->GetPerFrameKey(), bounds.x, bounds.y, bounds.XMost(),
          bounds.YMost());
 
-      if (item->GetType() == DisplayItemType::TYPE_COMPOSITOR_HITTEST_INFO) {
-        continue;
-      }
+      auto bottomRight = bounds.BottomRight();
 
       GP("paint check invalid %d %d - %d %d\n", bottomRight.x.value,
          bottomRight.y.value, size.width, size.height);
-      // skip empty items
-      if (bounds.IsEmpty()) {
-        continue;
-      }
 
       bool dirty = true;
       auto preservedBounds = bounds.Intersect(mPreservedRect);
       if (!mInvalidRect.Contains(preservedBounds)) {
         GP("Passing\n");
         dirty = false;
-        BlobItemData* data = GetBlobItemData(item);
         if (data->mInvalid) {
           gfxCriticalError()
               << "DisplayItem" << item->Name() << "-should be invalid";
@@ -892,7 +897,7 @@ static BlobItemData* GetBlobItemDataForGroup(nsDisplayItem* aItem,
                                              DIGroup* aGroup) {
   BlobItemData* data = GetBlobItemData(aItem);
   if (data) {
-    MOZ_RELEASE_ASSERT(data->mGroup->mDisplayItems.Contains(data));
+    MOZ_ASSERT(data->mGroup->mDisplayItems.Contains(data));
     if (data->mGroup != aGroup) {
       GP("group don't match %p %p\n", data->mGroup, aGroup);
       data->ClearFrame();
@@ -1041,11 +1046,6 @@ void Grouper::PaintContainerItem(DIGroup* aGroup, nsDisplayItem* aItem,
       // outside the invalid rect.
       if (aDirty) {
         auto filterItem = static_cast<nsDisplayFilters*>(aItem);
-
-        nsRegion visible(aItem->GetClippedBounds(mDisplayListBuilder));
-        nsRect buildingRect = aItem->GetBuildingRect();
-        visible.And(visible, buildingRect);
-
         filterItem->Paint(mDisplayListBuilder, aContext);
         TakeExternalSurfaces(aRecorder, aData->mExternalSurfaces, aRootManager,
                              aResources);
@@ -1722,6 +1722,7 @@ WebRenderCommandBuilder::WebRenderCommandBuilder(
       mLastAsr(nullptr),
       mBuilderDumpIndex(0),
       mDumpIndent(0),
+      mApzEnabled(true),
       mDoGrouping(false),
       mContainsSVGGroup(false) {}
 
@@ -1877,9 +1878,8 @@ struct NewLayerData {
   ScrollableLayerGuid::ViewID mDeferredId = ScrollableLayerGuid::NULL_SCROLL_ID;
   bool mTransformShouldGetOwnLayer = false;
 
-  void ComputeDeferredTransformInfo(
-      const StackingContextHelper& aSc, nsDisplayItem* aItem,
-      nsDisplayTransform* aLastDeferredTransform) {
+  void ComputeDeferredTransformInfo(const StackingContextHelper& aSc,
+                                    nsDisplayItem* aItem) {
     // See the comments on StackingContextHelper::mDeferredTransformItem
     // for an overview of what deferred transforms are.
     // In the case where we deferred a transform, but have a child display
@@ -1895,14 +1895,6 @@ struct NewLayerData {
     // that we deferred, and a child WebRenderLayerScrollData item that
     // holds the scroll metadata for the child's ASR.
     mDeferredItem = aSc.GetDeferredTransformItem();
-    // If this deferred transform is already slated to be emitted onto an
-    // ancestor layer, do not emit it on this layer as well. Note that it's
-    // sufficient to check the most recently deferred item here, because
-    // there's only one per stacking context, and we emit it when changing
-    // stacking contexts.
-    if (mDeferredItem == aLastDeferredTransform) {
-      mDeferredItem = nullptr;
-    }
     if (mDeferredItem) {
       // It's possible the transform's ASR is not only an ancestor of
       // the item's ASR, but an ancestor of stopAtAsr. In such cases,
@@ -1950,7 +1942,7 @@ void WebRenderCommandBuilder::CreateWebRenderCommandsFromDisplayList(
     return;
   }
 
-  bool dumpEnabled = ShouldDumpDisplayList(aDisplayListBuilder);
+  const bool dumpEnabled = ShouldDumpDisplayList(aDisplayListBuilder);
   if (dumpEnabled) {
     // If we're inside a nested display list, print the WR DL items from the
     // wrapper item before we start processing the nested items.
@@ -1968,11 +1960,10 @@ void WebRenderCommandBuilder::CreateWebRenderCommandsFromDisplayList(
     mClipManager.BeginList(aSc);
   }
 
-  const bool apzEnabled = mManager->AsyncPanZoomEnabled();
   do {
     nsDisplayItem* item = iter.GetNextItem();
 
-    DisplayItemType itemType = item->GetType();
+    const DisplayItemType itemType = item->GetType();
 
     // If this is a new (not retained/reused) item, then we need to disable
     // the display item cache for descendants, since it's possible that some of
@@ -2027,8 +2018,12 @@ void WebRenderCommandBuilder::CreateWebRenderCommandsFromDisplayList(
       }
     }
 
+    AutoRestore<bool> restoreApzEnabled(mApzEnabled);
+    mApzEnabled = mApzEnabled && mManager->AsyncPanZoomEnabled() &&
+                  itemType != DisplayItemType::TYPE_VT_CAPTURE;
+
     Maybe<NewLayerData> newLayerData;
-    if (apzEnabled) {
+    if (mApzEnabled) {
       // For some types of display items we want to force a new
       // WebRenderLayerScrollData object, to ensure we preserve the APZ-relevant
       // data that is in the display item.
@@ -2066,10 +2061,7 @@ void WebRenderCommandBuilder::CreateWebRenderCommandsFromDisplayList(
         newLayerData->mLayerCountBeforeRecursing = mLayerScrollData.size();
         newLayerData->mStopAtAsr =
             mAsrStack.empty() ? nullptr : mAsrStack.back();
-        newLayerData->ComputeDeferredTransformInfo(
-            aSc, item,
-            mDeferredTransformStack.empty() ? nullptr
-                                            : mDeferredTransformStack.back());
+        newLayerData->ComputeDeferredTransformInfo(aSc, item);
 
         // Ensure our children's |stopAtAsr| is not be an ancestor of our
         // |stopAtAsr|, otherwise we could get cyclic scroll metadata
@@ -2091,10 +2083,12 @@ void WebRenderCommandBuilder::CreateWebRenderCommandsFromDisplayList(
         mAsrStack.push_back(stopAtAsrForChildren);
 
         // If we're going to emit a deferred transform onto this layer,
-        // keep track of that so descendant layers know not to emit the
-        // same deferred transform.
+        // clear the deferred transform from the StackingContextHelper
+        // while we are building the subtree of descendant layers.
+        // This ensures that the deferred transform is not applied in
+        // duplicate to any of our descendant layers.
         if (newLayerData->mDeferredItem) {
-          mDeferredTransformStack.push_back(newLayerData->mDeferredItem);
+          aSc.ClearDeferredTransformItem();
         }
       }
     }
@@ -2131,60 +2125,57 @@ void WebRenderCommandBuilder::CreateWebRenderCommandsFromDisplayList(
       }
     }
 
-    if (apzEnabled) {
-      if (newLayerData) {
-        // Pop the thing we pushed before the recursion, so the topmost item on
-        // the stack is enclosing display item's ASR (or the stack is empty)
-        mAsrStack.pop_back();
+    if (newLayerData) {
+      // Pop the thing we pushed before the recursion, so the topmost item on
+      // the stack is enclosing display item's ASR (or the stack is empty)
+      mAsrStack.pop_back();
 
-        if (newLayerData->mDeferredItem) {
-          MOZ_ASSERT(!mDeferredTransformStack.empty());
-          mDeferredTransformStack.pop_back();
-        }
+      if (newLayerData->mDeferredItem) {
+        aSc.RestoreDeferredTransformItem(newLayerData->mDeferredItem);
+      }
 
-        const ActiveScrolledRoot* stopAtAsr = newLayerData->mStopAtAsr;
+      const ActiveScrolledRoot* stopAtAsr = newLayerData->mStopAtAsr;
 
-        int32_t descendants =
-            mLayerScrollData.size() - newLayerData->mLayerCountBeforeRecursing;
+      int32_t descendants =
+          mLayerScrollData.size() - newLayerData->mLayerCountBeforeRecursing;
 
-        nsDisplayTransform* deferred = newLayerData->mDeferredItem;
-        ScrollableLayerGuid::ViewID deferredId = newLayerData->mDeferredId;
+      nsDisplayTransform* deferred = newLayerData->mDeferredItem;
+      ScrollableLayerGuid::ViewID deferredId = newLayerData->mDeferredId;
 
-        if (newLayerData->mTransformShouldGetOwnLayer) {
-          // This creates the child WebRenderLayerScrollData for |item|, but
-          // omits the transform (hence the Nothing() as the last argument to
-          // Initialize(...)). We also need to make sure that the ASR from
-          // the deferred transform item is not on this node, so we use that
-          // ASR as the "stop at" ASR for this WebRenderLayerScrollData.
-          mLayerScrollData.emplace_back();
-          mLayerScrollData.back().Initialize(
-              mManager->GetScrollData(), item, descendants,
-              deferred->GetActiveScrolledRoot(), Nothing(),
-              ScrollableLayerGuid::NULL_SCROLL_ID);
+      if (newLayerData->mTransformShouldGetOwnLayer) {
+        // This creates the child WebRenderLayerScrollData for |item|, but
+        // omits the transform (hence the Nothing() as the last argument to
+        // Initialize(...)). We also need to make sure that the ASR from
+        // the deferred transform item is not on this node, so we use that
+        // ASR as the "stop at" ASR for this WebRenderLayerScrollData.
+        mLayerScrollData.emplace_back();
+        mLayerScrollData.back().Initialize(
+            mManager->GetScrollData(), item, descendants,
+            deferred->GetActiveScrolledRoot(), Nothing(),
+            ScrollableLayerGuid::NULL_SCROLL_ID);
 
-          // The above WebRenderLayerScrollData will also be a descendant of
-          // the transform-holding WebRenderLayerScrollData we create below.
-          descendants++;
+        // The above WebRenderLayerScrollData will also be a descendant of
+        // the transform-holding WebRenderLayerScrollData we create below.
+        descendants++;
 
-          // This creates the WebRenderLayerScrollData for the deferred
-          // transform item. This holds the transform matrix and the remaining
-          // ASRs needed to complete the ASR chain (i.e. the ones from the
-          // stopAtAsr down to the deferred transform item's ASR, which must be
-          // "between" stopAtAsr and |item|'s ASR in the ASR tree).
-          mLayerScrollData.emplace_back();
-          mLayerScrollData.back().Initialize(
-              mManager->GetScrollData(), deferred, descendants, stopAtAsr,
-              aSc.GetDeferredTransformMatrix(), deferredId);
-        } else {
-          // This is the "simple" case where we don't need to create two
-          // WebRenderLayerScrollData items; we can just create one that also
-          // holds the deferred transform matrix, if any.
-          mLayerScrollData.emplace_back();
-          mLayerScrollData.back().Initialize(
-              mManager->GetScrollData(), item, descendants, stopAtAsr,
-              deferred ? aSc.GetDeferredTransformMatrix() : Nothing(),
-              deferredId);
-        }
+        // This creates the WebRenderLayerScrollData for the deferred
+        // transform item. This holds the transform matrix and the remaining
+        // ASRs needed to complete the ASR chain (i.e. the ones from the
+        // stopAtAsr down to the deferred transform item's ASR, which must be
+        // "between" stopAtAsr and |item|'s ASR in the ASR tree).
+        mLayerScrollData.emplace_back();
+        mLayerScrollData.back().Initialize(
+            mManager->GetScrollData(), deferred, descendants, stopAtAsr,
+            aSc.GetDeferredTransformMatrix(), deferredId);
+      } else {
+        // This is the "simple" case where we don't need to create two
+        // WebRenderLayerScrollData items; we can just create one that also
+        // holds the deferred transform matrix, if any.
+        mLayerScrollData.emplace_back();
+        mLayerScrollData.back().Initialize(
+            mManager->GetScrollData(), item, descendants, stopAtAsr,
+            deferred ? aSc.GetDeferredTransformMatrix() : Nothing(),
+            deferredId);
       }
     }
   } while (iter.HasNext());
@@ -2203,6 +2194,20 @@ void WebRenderCommandBuilder::PushOverrideForASR(
 void WebRenderCommandBuilder::PopOverrideForASR(
     const ActiveScrolledRoot* aASR) {
   mClipManager.PopOverrideForASR(aASR);
+}
+
+static wr::WrRotation ToWrRotation(VideoRotation aRotation) {
+  switch (aRotation) {
+    case VideoRotation::kDegree_0:
+      return wr::WrRotation::Degree0;
+    case VideoRotation::kDegree_90:
+      return wr::WrRotation::Degree90;
+    case VideoRotation::kDegree_180:
+      return wr::WrRotation::Degree180;
+    case VideoRotation::kDegree_270:
+      return wr::WrRotation::Degree270;
+  }
+  return wr::WrRotation::Degree0;
 }
 
 Maybe<wr::ImageKey> WebRenderCommandBuilder::CreateImageKey(
@@ -2224,8 +2229,9 @@ Maybe<wr::ImageKey> WebRenderCommandBuilder::CreateImageKey(
     // We appear to be using the image bridge for a lot (most/all?) of
     // layers-free image handling and that breaks frame consistency.
     imageData->CreateAsyncImageWebRenderCommands(
-        aBuilder, aContainer, aSc, rect, scBounds, aContainer->GetRotation(),
-        aRendering, wr::MixBlendMode::Normal, !aItem->BackfaceIsHidden());
+        aBuilder, aContainer, aSc, rect, scBounds,
+        ToWrRotation(aContainer->GetRotation()), aRendering,
+        wr::MixBlendMode::Normal, !aItem->BackfaceIsHidden());
     return Nothing();
   }
 
@@ -2410,9 +2416,7 @@ WebRenderCommandBuilder::GenerateFallbackData(
     nsDisplayItem* aItem, wr::DisplayListBuilder& aBuilder,
     wr::IpcResourceUpdateQueue& aResources, const StackingContextHelper& aSc,
     nsDisplayListBuilder* aDisplayListBuilder, LayoutDeviceRect& aImageRect) {
-  const bool paintOnContentSide = aItem->MustPaintOnContentSide();
-  bool useBlobImage =
-      StaticPrefs::gfx_webrender_blob_images() && !paintOnContentSide;
+  bool useBlobImage = aItem->ShouldUseBlobRenderingForFallback();
   Maybe<gfx::DeviceColor> highlight = Nothing();
   if (StaticPrefs::gfx_webrender_debug_highlight_painted_layers()) {
     highlight = Some(useBlobImage ? gfx::DeviceColor(1.0, 0.0, 0.0, 0.5)
@@ -2422,19 +2426,14 @@ WebRenderCommandBuilder::GenerateFallbackData(
   RefPtr<WebRenderFallbackData> fallbackData =
       CreateOrRecycleWebRenderUserData<WebRenderFallbackData>(aItem);
 
-  bool snap;
-  nsRect itemBounds = aItem->GetBounds(aDisplayListBuilder, &snap);
-
   // Blob images will only draw the visible area of the blob so we don't need to
   // clip them here and can just rely on the webrender clipping.
   // TODO We also don't clip native themed widget to avoid over-invalidation
   // during scrolling. It would be better to support a sort of streaming/tiling
   // scheme for large ones but the hope is that we should not have large native
   // themed items.
-  nsRect paintBounds = (useBlobImage || paintOnContentSide)
-                           ? itemBounds
-                           : aItem->GetClippedBounds(aDisplayListBuilder);
-
+  bool snap;
+  nsRect paintBounds = aItem->GetBounds(aDisplayListBuilder, &snap);
   nsRect buildingRect = aItem->GetBuildingRect();
 
   const int32_t appUnitsPerDevPixel =
@@ -2527,7 +2526,7 @@ WebRenderCommandBuilder::GenerateFallbackData(
       aItem->GetType() != DisplayItemType::TYPE_SVG_WRAPPER && differentScale) {
     nsRect invalid;
     if (!aItem->IsInvalid(invalid)) {
-      nsPoint shift = itemBounds.TopLeft() - geometry->mBounds.TopLeft();
+      nsPoint shift = paintBounds.TopLeft() - geometry->mBounds.TopLeft();
       geometry->MoveBy(shift);
 
       nsRegion invalidRegion;
@@ -2631,7 +2630,8 @@ WebRenderCommandBuilder::GenerateFallbackData(
 
       imageData->CreateImageClientIfNeeded();
       RefPtr<ImageClient> imageClient = imageData->GetImageClient();
-      RefPtr<ImageContainer> imageContainer = MakeAndAddRef<ImageContainer>();
+      RefPtr<ImageContainer> imageContainer = MakeAndAddRef<ImageContainer>(
+          ImageUsageType::WebRenderFallbackData, ImageContainer::SYNCHRONOUS);
 
       {
         UpdateImageHelper helper(imageContainer, imageClient,
@@ -2955,5 +2955,4 @@ WebRenderGroupData::~WebRenderGroupData() {
   mFollowingGroup.ClearImageKey(mManager, true);
 }
 
-}  // namespace layers
-}  // namespace mozilla
+}  // namespace mozilla::layers

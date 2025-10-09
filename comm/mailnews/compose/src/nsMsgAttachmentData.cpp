@@ -2,6 +2,8 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+#include "nsIURI.h"
 #include "nsMsgAttachmentData.h"
 
 NS_IMPL_ISUPPORTS(nsMsgAttachmentData, nsIMsgAttachmentData)
@@ -78,26 +80,5 @@ NS_IMETHODIMP nsMsgAttachmentData::GetDescription(nsACString& aDescription) {
 NS_IMETHODIMP nsMsgAttachmentData::SetDescription(
     const nsACString& aDescription) {
   m_description = aDescription;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAttachmentData::GetXMacType(nsACString& aXMacType) {
-  aXMacType = m_xMacType;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAttachmentData::SetXMacType(const nsACString& aXMacType) {
-  m_xMacType = aXMacType;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAttachmentData::GetXMacCreator(nsACString& aXMacCreator) {
-  aXMacCreator = m_xMacCreator;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAttachmentData::SetXMacCreator(
-    const nsACString& aXMacCreator) {
-  m_xMacCreator = aXMacCreator;
   return NS_OK;
 }

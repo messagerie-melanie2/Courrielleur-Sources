@@ -351,6 +351,19 @@ class StoragePrincipalHelper final {
 
   static bool PartitionKeyHasBaseDomain(const nsAString& aPartitionKey,
                                         const nsAString& aBaseDomain);
+
+  // Partition keys can have the same-site bit added or removed from them.
+  // "(https,foo.com)", false -> "(https,foo.com)"
+  // "(https,foo.com,f)", false -> "(https,foo.com)"
+  // "(https,foo.com,f)", true -> "(https,foo.com,f)"
+  // "(https,foo.com)", true -> "(https,foo.com,f)"
+  static void UpdatePartitionKeyWithForeignAncestorBit(
+      nsAString& aKey, bool aForeignByAncestorContext);
+
+  // Generate a partition-key for an expanded principal to be used for any
+  // injected resources by add-on content scripts.
+  static nsString PartitionKeyForExpandedPrincipal(
+      nsIPrincipal* aExpandedPrincipal);
 };
 
 }  // namespace mozilla

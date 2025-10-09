@@ -8,7 +8,6 @@ import shutil
 import subprocess
 import tempfile
 import time
-from telnetlib import Telnet
 
 from mozdevice import ADBHost
 from mozprocess import ProcessHandler
@@ -19,8 +18,13 @@ from .emulator_battery import EmulatorBattery
 from .emulator_geo import EmulatorGeo
 from .emulator_screen import EmulatorScreen
 
+try:
+    from telnetlib import Telnet
+except ImportError:  # telnetlib was removed in Python 3.13
+    from .telnetlib import Telnet
 
-class ArchContext(object):
+
+class ArchContext:
     def __init__(self, arch, context, binary=None, avd=None, extra_args=None):
         homedir = getattr(context, "homedir", "")
         kernel = os.path.join(homedir, "prebuilts", "qemu-kernel", "%s", "%s")
@@ -50,7 +54,7 @@ class ArchContext(object):
             self.extra_args.extend(extra_args)
 
 
-class SDCard(object):
+class SDCard:
     def __init__(self, emulator, size):
         self.emulator = emulator
         self.path = self.create_sdcard(size)

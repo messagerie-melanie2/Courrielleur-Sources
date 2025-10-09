@@ -194,7 +194,10 @@ export class SmtpServer {
   }
 
   get authMethod() {
-    return this._getIntPrefWithDefault("authMethod", 3);
+    return this._getIntPrefWithDefault(
+      "authMethod",
+      Ci.nsMsgAuthMethod.passwordCleartext
+    );
   }
 
   set authMethod(value) {
@@ -202,7 +205,7 @@ export class SmtpServer {
   }
 
   get socketType() {
-    return this._getIntPrefWithDefault("try_ssl", 0);
+    return this._getIntPrefWithDefault("try_ssl", Ci.nsMsgSocketType.plain);
   }
 
   set socketType(value) {
@@ -539,13 +542,14 @@ export class SmtpServer {
   async sendMailMessage(
     messageFile,
     recipients,
+    bccRecipients,
     userIdentity,
     sender,
     password,
     statusListener,
     requestDSN,
     messageId,
-    requestObserver
+    listener
   ) {
     // Flag that a send is progress. Precludes sending QUIT during the transfer.
     this.sendIsActive = true;
@@ -573,7 +577,7 @@ export class SmtpServer {
       },
     };
 
-    requestObserver?.onStartRequest(request);
+    listener?.onSendStart(request);
     let fresh = true;
     client.onidle = () => {
       // onidle can occur multiple times, but we should only init sending
@@ -586,19 +590,12 @@ export class SmtpServer {
       // Init when fresh==true OR re-init sending when client.isRetry==true.
       fresh = false;
       let from = sender;
-      const to = MailServices.headerParser
-        .parseEncodedHeaderW(recipients)
-        .map(rec => rec.email);
+      const to = recipients.concat(bccRecipients).map(rec => rec.email);
 
       if (
         !Services.prefs.getBoolPref("mail.smtp.useSenderForSmtpMailFrom", false)
       ) {
         from = userIdentity.email;
-      }
-      if (!messageId) {
-        messageId = Cc["@mozilla.org/messengercompose/computils;1"]
-          .createInstance(Ci.nsIMsgCompUtils)
-          .msgGenerateMessageId(userIdentity, null);
       }
       client.useEnvelope({
         from: MailServices.headerParser.parseEncodedHeaderW(from)[0].email,
@@ -659,20 +656,13 @@ export class SmtpServer {
     };
     client.ondone = () => {
       if (!AppConstants.MOZ_SUITE) {
-        Services.telemetry.scalarAdd("tb.mails.sent", 1);
+        Glean.compose.mailsSent.add(1);
       }
 
-      requestObserver?.onStopRequest(request, Cr.NS_OK);
+      listener?.onSendStop(this.serverURI, Cr.NS_OK, null, null);
     };
     client.onerror = (nsError, errorMessage, secInfo) => {
-      this.serverURI.QueryInterface(Ci.nsIMsgMailNewsUrl);
-      if (secInfo) {
-        // TODO(emilio): Passing the failed security info as part of the URI is
-        // quite a smell, but monkey see monkey do...
-        this.serverURI.failedSecInfo = secInfo;
-      }
-      this.serverURI.errorMessage = errorMessage;
-      requestObserver?.onStopRequest(request, nsError);
+      listener?.onSendStop(this.serverURI, nsError, secInfo, errorMessage);
     };
 
     client.connect();

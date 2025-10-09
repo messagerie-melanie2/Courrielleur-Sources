@@ -4,8 +4,8 @@
 
 var { formatter } = cal.dtz;
 
-const { CalTimezone } = ChromeUtils.import("resource:///modules/CalTimezone.jsm");
-const { ICAL } = ChromeUtils.import("resource:///modules/calendar/Ical.jsm");
+const { CalTimezone } = ChromeUtils.importESModule("resource:///modules/CalTimezone.sys.mjs");
+const { default: ICAL } = ChromeUtils.importESModule("resource:///modules/calendar/Ical.sys.mjs");
 
 function run_test() {
   do_calendar_startup(run_next_test);
@@ -19,14 +19,14 @@ function run_test() {
 // If you get a failure for this test, add your pattern here.
 
 add_task(async function formatDate_test() {
-  let data = [
+  const data = [
     {
       input: {
         datetime: "20170401T180000",
         timezone: "Pacific/Fakaofo",
         dateformat: 0, // long
       },
-      expected: ["Saturday, April 01, 2017", "Saturday, April 1, 2017"],
+      expected: ["Saturday, 1 April 2017", "Saturday, April 1, 2017"],
     },
     {
       input: {
@@ -38,21 +38,21 @@ add_task(async function formatDate_test() {
     },
   ];
 
-  let dateformat = Services.prefs.getIntPref("calendar.date.format", 0);
-  let tzlocal = Services.prefs.getStringPref("calendar.timezone.local", "Pacific/Fakaofo");
+  const dateformat = Services.prefs.getIntPref("calendar.date.format", 0);
+  const tzlocal = Services.prefs.getStringPref("calendar.timezone.local", "Pacific/Fakaofo");
   Services.prefs.setStringPref("calendar.timezone.local", "Pacific/Fakaofo");
 
   let i = 0;
-  for (let test of data) {
+  for (const test of data) {
     i++;
     Services.prefs.setIntPref("calendar.date.format", test.input.dateformat);
-    let zone =
+    const zone =
       test.input.timezone == "floating"
         ? cal.dtz.floating
         : cal.timezoneService.getTimezone(test.input.timezone);
-    let date = cal.createDateTime(test.input.datetime).getInTimezone(zone);
+    const date = cal.createDateTime(test.input.datetime).getInTimezone(zone);
 
-    let formatted = formatter.formatDate(date);
+    const formatted = formatter.formatDate(date);
     ok(
       test.expected.includes(formatted),
       "(test #" + i + ": result '" + formatted + "', expected '" + test.expected + "')"
@@ -64,7 +64,7 @@ add_task(async function formatDate_test() {
 });
 
 add_task(async function formatDateShort_test() {
-  let data = [
+  const data = [
     {
       input: {
         datetime: "20170401T180000",
@@ -123,23 +123,23 @@ add_task(async function formatDateShort_test() {
     },
   ];
 
-  let dateformat = Services.prefs.getIntPref("calendar.date.format", 0);
-  let tzlocal = Services.prefs.getStringPref("calendar.timezone.local", "Pacific/Fakaofo");
+  const dateformat = Services.prefs.getIntPref("calendar.date.format", 0);
+  const tzlocal = Services.prefs.getStringPref("calendar.timezone.local", "Pacific/Fakaofo");
   Services.prefs.setStringPref("calendar.timezone.local", "Pacific/Fakaofo");
   // we make sure to have set long format
   Services.prefs.setIntPref("calendar.date.format", 0);
 
   let i = 0;
-  for (let test of data) {
+  for (const test of data) {
     i++;
 
-    let zone =
+    const zone =
       test.input.timezone == "floating"
         ? cal.dtz.floating
         : cal.timezoneService.getTimezone(test.input.timezone);
-    let date = cal.createDateTime(test.input.datetime).getInTimezone(zone);
+    const date = cal.createDateTime(test.input.datetime).getInTimezone(zone);
 
-    let formatted = formatter.formatDateShort(date);
+    const formatted = formatter.formatDateShort(date);
     ok(
       test.expected.includes(formatted),
       "(test #" + i + ": result '" + formatted + "', expected '" + test.expected + "')"
@@ -151,7 +151,7 @@ add_task(async function formatDateShort_test() {
 });
 
 add_task(async function formatDateLong_test() {
-  let data = [
+  const data = [
     {
       input: {
         datetime: "20170401T180000",
@@ -210,23 +210,23 @@ add_task(async function formatDateLong_test() {
     },
   ];
 
-  let dateformat = Services.prefs.getIntPref("calendar.date.format", 0);
-  let tzlocal = Services.prefs.getStringPref("calendar.timezone.local", "Pacific/Fakaofo");
+  const dateformat = Services.prefs.getIntPref("calendar.date.format", 0);
+  const tzlocal = Services.prefs.getStringPref("calendar.timezone.local", "Pacific/Fakaofo");
   Services.prefs.setStringPref("calendar.timezone.local", "Pacific/Fakaofo");
   // we make sure to have set short format
   Services.prefs.setIntPref("calendar.date.format", 1);
 
   let i = 0;
-  for (let test of data) {
+  for (const test of data) {
     i++;
 
-    let zone =
+    const zone =
       test.input.timezone == "floating"
         ? cal.dtz.floating
         : cal.timezoneService.getTimezone(test.input.timezone);
-    let date = cal.createDateTime(test.input.datetime).getInTimezone(zone);
+    const date = cal.createDateTime(test.input.datetime).getInTimezone(zone);
 
-    let formatted = formatter.formatDateLong(date);
+    const formatted = formatter.formatDateLong(date);
     ok(
       test.expected.includes(formatted),
       "(test #" + i + ": result '" + formatted + "', expected '" + test.expected + "')"
@@ -238,7 +238,7 @@ add_task(async function formatDateLong_test() {
 });
 
 add_task(async function formatDateWithoutYear_test() {
-  let data = [
+  const data = [
     {
       input: {
         datetime: "20170401T180000",
@@ -297,21 +297,21 @@ add_task(async function formatDateWithoutYear_test() {
     },
   ];
 
-  let dateformat = Services.prefs.getIntPref("calendar.date.format", 0);
-  let tzlocal = Services.prefs.getStringPref("calendar.timezone.local", "Pacific/Fakaofo");
+  const dateformat = Services.prefs.getIntPref("calendar.date.format", 0);
+  const tzlocal = Services.prefs.getStringPref("calendar.timezone.local", "Pacific/Fakaofo");
   Services.prefs.setStringPref("calendar.timezone.local", "Pacific/Fakaofo");
   // we make sure to have set short format
   Services.prefs.setIntPref("calendar.date.format", 1);
 
   let i = 0;
-  for (let test of data) {
+  for (const test of data) {
     i++;
 
-    let zone =
+    const zone =
       test.input.timezone == "floating"
         ? cal.dtz.floating
         : cal.timezoneService.getTimezone(test.input.timezone);
-    let date = cal.createDateTime(test.input.datetime).getInTimezone(zone);
+    const date = cal.createDateTime(test.input.datetime).getInTimezone(zone);
 
     equal(formatter.formatDateWithoutYear(date), test.expected, "(test #" + i + ")");
   }
@@ -321,7 +321,7 @@ add_task(async function formatDateWithoutYear_test() {
 });
 
 add_task(async function formatDateLongWithoutYear_test() {
-  let data = [
+  const data = [
     {
       input: {
         datetime: "20170401T180000",
@@ -380,21 +380,21 @@ add_task(async function formatDateLongWithoutYear_test() {
     },
   ];
 
-  let dateformat = Services.prefs.getIntPref("calendar.date.format", 0);
-  let tzlocal = Services.prefs.getStringPref("calendar.timezone.local", "Pacific/Fakaofo");
+  const dateformat = Services.prefs.getIntPref("calendar.date.format", 0);
+  const tzlocal = Services.prefs.getStringPref("calendar.timezone.local", "Pacific/Fakaofo");
   Services.prefs.setStringPref("calendar.timezone.local", "Pacific/Fakaofo");
   // we make sure to have set short format
   Services.prefs.setIntPref("calendar.date.format", 1);
 
   let i = 0;
-  for (let test of data) {
+  for (const test of data) {
     i++;
 
-    let zone =
+    const zone =
       test.input.timezone == "floating"
         ? cal.dtz.floating
         : cal.timezoneService.getTimezone(test.input.timezone);
-    let date = cal.createDateTime(test.input.datetime).getInTimezone(zone);
+    const date = cal.createDateTime(test.input.datetime).getInTimezone(zone);
 
     equal(formatter.formatDateLongWithoutYear(date), test.expected, "(test #" + i + ")");
   }
@@ -404,7 +404,7 @@ add_task(async function formatDateLongWithoutYear_test() {
 });
 
 add_task(async function formatTime_test() {
-  let data = [
+  const data = [
     {
       input: {
         datetime: "20170401T090000",
@@ -442,20 +442,20 @@ add_task(async function formatTime_test() {
     },
   ];
 
-  let tzlocal = Services.prefs.getStringPref("calendar.timezone.local", "Pacific/Fakaofo");
+  const tzlocal = Services.prefs.getStringPref("calendar.timezone.local", "Pacific/Fakaofo");
   Services.prefs.setStringPref("calendar.timezone.local", "Pacific/Fakaofo");
 
   let i = 0;
-  for (let test of data) {
+  for (const test of data) {
     i++;
 
-    let zone =
+    const zone =
       test.input.timezone == "floating"
         ? cal.dtz.floating
         : cal.timezoneService.getTimezone(test.input.timezone);
-    let date = cal.createDateTime(test.input.datetime).getInTimezone(zone);
+    const date = cal.createDateTime(test.input.datetime).getInTimezone(zone);
 
-    let formatted = formatter.formatTime(date);
+    const formatted = formatter.formatTime(date);
     ok(
       test.expected.includes(formatted),
       "(test #" + i + ": result '" + formatted + "', expected '" + test.expected + "')"
@@ -494,8 +494,67 @@ add_task(function formatTime_test_with_arbitrary_timezone() {
   ok(expected.includes(formatted), `expected '${expected}', actual result ${formatted}`);
 });
 
+add_task(async function formatDateTime_test() {
+  const data = [
+    {
+      input: {
+        datetime: "20250107",
+        dateformat: 0, // long
+      },
+      expected: ["Tuesday, 7 January 2025 All Day", "Tuesday, January 7, 2025 All Day"],
+    },
+    {
+      input: {
+        datetime: "20250107",
+        dateformat: 1, // short
+      },
+      expected: ["1/7/2025 All Day", "1/7/25 All Day"],
+    },
+    {
+      input: {
+        datetime: "20250107T180000",
+        timezone: "Pacific/Fakaofo",
+        dateformat: 0, // long
+      },
+      expected: [
+        "Tuesday, January 7, 2025 at 6:00 PM",
+        "Tuesday, January 7, 2025, 6:00 PM",
+        "Tuesday, January 7, 2025 at 18:00",
+      ],
+    },
+    {
+      input: {
+        datetime: "20250107T180000",
+        timezone: "Pacific/Fakaofo",
+        dateformat: 1, // short
+      },
+      expected: ["1/7/2025, 18:00", "1/7/25, 18:00", "1/7/2025, 6:00 PM", "1/7/25, 6:00 PM"],
+    },
+  ];
+
+  const dateformat = Services.prefs.getIntPref("calendar.date.format", 0);
+  const tzlocal = Services.prefs.getStringPref("calendar.timezone.local", "Pacific/Fakaofo");
+  Services.prefs.setStringPref("calendar.timezone.local", "Pacific/Fakaofo");
+
+  let i = 0;
+  for (const test of data) {
+    i++;
+    Services.prefs.setIntPref("calendar.date.format", test.input.dateformat);
+    const date = cal.createDateTime(test.input.datetime);
+
+    const formatted = formatter.formatDateTime(date);
+    ok(
+      test.expected.includes(formatted),
+      "(test #" + i + ": result '" + formatted + "', expected '" + test.expected + "')"
+    );
+  }
+  // let's reset the preferences
+  Services.prefs.setStringPref("calendar.timezone.local", tzlocal);
+  Services.prefs.setIntPref("calendar.date.format", dateformat);
+});
+
 add_task(async function formatInterval_test() {
-  let data = [
+  const data = [
     //1: task-without-dates
     {
       input: {},
@@ -520,38 +579,40 @@ add_task(async function formatInterval_test() {
     //4: all-day
     {
       input: {
-        start: "20220916T140000Z",
-        end: "20220916T140000Z",
-        allDay: true,
+        start: "20220916",
+        end: "20220916",
       },
       expected: "Friday, September 16, 2022",
     },
     //5: all-day-between-years
     {
       input: {
-        start: "20220916T140000Z",
-        end: "20230916T140000Z",
-        allDay: true,
+        start: "20220916",
+        end: "20230916",
       },
-      expected: "September 16, 2022 – September 16, 2023",
+      expected: [
+        "September 16, 2022 – September 16, 2023",
+        "Friday, September 16, 2022 – Saturday, September 16, 2023",
+      ],
     },
     //6: all-day-in-month
     {
       input: {
-        start: "20220916T140000Z",
-        end: "20220920T140000Z",
-        allDay: true,
+        start: "20220916",
+        end: "20220920",
       },
-      expected: "September 16 – 20, 2022",
+      expected: ["September 16 – 20, 2022", "Friday, September 16 – Tuesday, September 20, 2022"],
     },
     //7: all-day-between-months
     {
       input: {
-        start: "20220916T140000Z",
-        end: "20221020T140000Z",
-        allDay: true,
+        start: "20220916",
+        end: "20221020",
       },
-      expected: "September 16 – October 20, 2022",
+      expected: [
+        "September 16 – October 20, 2022",
+        "Friday, September 16 – Thursday, October 20, 2022",
+      ],
     },
     //8: same-date-time
     {
@@ -559,7 +620,11 @@ add_task(async function formatInterval_test() {
         start: "20220916T140000Z",
         end: "20220916T140000Z",
       },
-      expected: ["Friday, September 16, 2022 2:00 PM", "Friday, September 16, 2022 14:00"],
+      expected: [
+        "Friday, September 16, 2022 at 2:00 PM",
+        "Friday, September 16, 2022, 2:00 PM",
+        "Friday, September 16, 2022 at 14:00",
+      ],
     },
     //9: same-day
     {
@@ -568,8 +633,8 @@ add_task(async function formatInterval_test() {
         end: "20220916T160000Z",
       },
       expected: [
-        "Friday, September 16, 2022 2:00 PM – 4:00 PM",
-        "Friday, September 16, 2022 14:00 – 16:00",
+        "Friday, September 16, 2022, 2:00 – 4:00 PM",
+        "Friday, September 16, 2022, 14:00 – 16:00",
       ],
     },
     //10: several-days
@@ -579,23 +644,19 @@ add_task(async function formatInterval_test() {
         end: "20220920T160000Z",
       },
       expected: [
-        "Friday, September 16, 2022 2:00 PM – Tuesday, September 20, 2022 4:00 PM",
-        "Friday, September 16, 2022 14:00 – Tuesday, September 20, 2022 16:00",
+        "Friday, September 16, 2022 at 2:00 PM – Tuesday, September 20, 2022 at 4:00 PM",
+        "Friday, September 16, 2022 at 14:00 – Tuesday, September 20, 2022 at 16:00",
       ],
     },
   ];
 
   let i = 0;
-  for (let test of data) {
+  for (const test of data) {
     i++;
-    let startDate = test.input.start ? cal.createDateTime(test.input.start) : null;
-    let endDate = test.input.end ? cal.createDateTime(test.input.end) : null;
+    const startDate = test.input.start ? cal.createDateTime(test.input.start) : null;
+    const endDate = test.input.end ? cal.createDateTime(test.input.end) : null;
 
-    if (test.input.allDay) {
-      startDate.isDate = true;
-    }
-
-    let formatted = formatter.formatInterval(startDate, endDate);
+    const formatted = formatter.formatInterval(startDate, endDate);
     ok(
       test.expected.includes(formatted),
       "(test #" + i + ": result '" + formatted + "', expected '" + test.expected + "')"

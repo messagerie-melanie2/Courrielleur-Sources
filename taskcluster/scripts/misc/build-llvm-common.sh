@@ -29,12 +29,6 @@ x86_64-apple-darwin)
   arch=x86_64
   export MACOSX_DEPLOYMENT_TARGET=10.12
   ;;
-armv7-linux-android|i686-linux-android)
-  api_level=16
-  ;;
-aarch64-linux-android|x86_64-linux-android)
-  api_level=21
-  ;;
 esac
 
 case "$target" in
@@ -45,11 +39,11 @@ case "$target" in
     -DCMAKE_LIPO=$MOZ_FETCHES_DIR/clang/bin/llvm-lipo
     -DCMAKE_SYSTEM_NAME=Darwin
     -DCMAKE_SYSTEM_VERSION=$MACOSX_DEPLOYMENT_TARGET
-    -DCMAKE_OSX_SYSROOT=$MOZ_FETCHES_DIR/MacOSX13.3.sdk
+    -DCMAKE_OSX_SYSROOT=$MOZ_FETCHES_DIR/MacOSX15.4.sdk
     -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld
     -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld
     -DDARWIN_osx_ARCHS=$arch
-    -DDARWIN_osx_SYSROOT=$MOZ_FETCHES_DIR/MacOSX13.3.sdk
+    -DDARWIN_osx_SYSROOT=$MOZ_FETCHES_DIR/MacOSX15.4.sdk
     -DDARWIN_macosx_OVERRIDE_SDK_VERSION=11.0
     -DDARWIN_osx_BUILTIN_ARCHS=$arch
     -DLLVM_DEFAULT_TARGET_TRIPLE=$target
@@ -75,6 +69,7 @@ case "$target" in
     arch=${target%-linux-android}
     ;;
   esac
+  api_level=21
   target=$target$api_level
   # These flags are only necessary to pass the cmake tests. They don't end up
   # actually using libgcc, so use an empty library instead of trying to find
@@ -135,9 +130,9 @@ case "$target" in
     ln -s "windows kits/10" $MOZ_FETCHES_DIR/vs/sdk
     EXTRA_CMAKE_FLAGS="
       $EXTRA_CMAKE_FLAGS
-      -DMSVC_BASE=$MOZ_FETCHES_DIR/vs/vc/tools/msvc/14.29.30133
+      -DMSVC_BASE=$MOZ_FETCHES_DIR/vs/vc/tools/msvc/14.39.33519
       -DWINSDK_BASE=$MOZ_FETCHES_DIR/vs/sdk
-      -DWINSDK_VER=10.0.19041.0
+      -DWINSDK_VER=10.0.22621.0
     "
   fi
   ;;
@@ -192,8 +187,18 @@ eval cmake \
 ninja -v $install
 
 if [ "$what" = "compiler-rt" ]; then
-  # ninja install doesn't copy the PDBs
+  # ninja install doesn't copy the PDBs, if any
   case "$target" in
+  aarch64-pc-windows-msvc)
+      # No pdb generated in that platform/arch configuration since
+      # https://github.com/llvm/llvm-project/commit/655933070219f2b6f3a457c7e5af7edd4b5291b4
+      if echo "$@" | grep -q trunk
+      then
+        test -z "$(find -name "*.pdb")"
+      else
+        cp lib/windows/*pdb $dir/lib/windows/
+      fi
+    ;;
   *-pc-windows-msvc)
     cp lib/windows/*pdb $dir/lib/windows/
     ;;

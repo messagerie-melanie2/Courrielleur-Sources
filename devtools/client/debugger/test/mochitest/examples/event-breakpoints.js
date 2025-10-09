@@ -10,6 +10,10 @@ function clickHandler() {
 document.getElementById("click-target").onclick = clickTargetClicked;
 function clickTargetClicked() {
   console.log("clicked");
+  requestAF(function rafCallback() {});
+}
+function requestAF(cb) {
+  requestAnimationFrame(cb);
 }
 
 document.getElementById("xhr-button").onmousedown = xhrHandler;
@@ -66,4 +70,52 @@ function inputCompositionEnd() {
 document.addEventListener("scrollend", onScrollEnd);
 function onScrollEnd() {
   console.log("scroll end");
+}
+
+document.getElementById("invokee").addEventListener("invoke", onInvoke);
+function onInvoke(event) {
+  console.log(event);
+}
+
+window.addEventListener("beforeunload", onBeforeUnload);
+function onBeforeUnload() {
+  console.log("before unload");
+}
+
+window.addEventListener("unload", onUnload);
+function onUnload() {
+  console.log("unload");
+}
+
+const popover = document.getElementById("popover");
+popover.addEventListener("beforetoggle", onBeforeToggle);
+function onBeforeToggle(event) {
+  console.log("beforetoggle", event);
+}
+popover.addEventListener("toggle", onToggle);
+function onToggle(event) {
+  console.log("toggle", event);
+}
+
+document.getElementById("focus-text").addEventListener("textInput", onTextInput);
+function onTextInput() {
+  console.log("textInput");
+}
+
+document.getElementById("pointer-target").addEventListener("pointerrawupdate", onPointerRawUpdate);
+function onPointerRawUpdate() {
+  console.log("pointerrawupdate");
+}
+
+const closewatcher = new CloseWatcher();
+function closeWatcherRequestClose() {
+  closewatcher.requestClose();
+}
+closewatcher.addEventListener("cancel", onCancel);
+function onCancel(event) {
+  console.log("cancel", event);
+}
+closewatcher.addEventListener("close", onClose);
+function onClose(event) {
+  console.log("close", event);
 }

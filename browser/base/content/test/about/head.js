@@ -142,63 +142,10 @@ function promiseTabLoadEvent(tab, url) {
   let loaded = BrowserTestUtils.browserLoaded(tab.linkedBrowser, false, handle);
 
   if (url) {
-    BrowserTestUtils.loadURIString(tab.linkedBrowser, url);
+    BrowserTestUtils.startLoadingURIString(tab.linkedBrowser, url);
   }
 
   return loaded;
-}
-
-/**
- * Wait for the search engine to change. searchEngineChangeFn is a function
- * that will be called to change the search engine.
- */
-async function promiseContentSearchChange(browser, searchEngineChangeFn) {
-  // Add an event listener manually then perform the action, rather than using
-  // BrowserTestUtils.addContentEventListener as that doesn't add the listener
-  // early enough.
-  await SpecialPowers.spawn(browser, [], async () => {
-    // Store the results in a temporary place.
-    content._searchDetails = {
-      defaultEnginesList: [],
-      listener: event => {
-        if (event.detail.type == "CurrentState") {
-          content._searchDetails.defaultEnginesList.push(
-            content.wrappedJSObject.gContentSearchController.defaultEngine.name
-          );
-        }
-      },
-    };
-
-    // Listen using the system group to ensure that it fires after
-    // the default behaviour.
-    content.addEventListener(
-      "ContentSearchService",
-      content._searchDetails.listener,
-      { mozSystemGroup: true }
-    );
-  });
-
-  let expectedEngineName = await searchEngineChangeFn();
-
-  await SpecialPowers.spawn(
-    browser,
-    [expectedEngineName],
-    async expectedEngineNameChild => {
-      await ContentTaskUtils.waitForCondition(
-        () =>
-          content._searchDetails.defaultEnginesList &&
-          content._searchDetails.defaultEnginesList[
-            content._searchDetails.defaultEnginesList.length - 1
-          ] == expectedEngineNameChild
-      );
-      content.removeEventListener(
-        "ContentSearchService",
-        content._searchDetails.listener,
-        { mozSystemGroup: true }
-      );
-      delete content._searchDetails;
-    }
-  );
 }
 
 async function waitForBookmarksToolbarVisibility({
@@ -206,10 +153,14 @@ async function waitForBookmarksToolbarVisibility({
   visible,
   message,
 }) {
-  let result = await TestUtils.waitForCondition(() => {
-    let toolbar = win.document.getElementById("PersonalToolbar");
-    return toolbar && (visible ? !toolbar.collapsed : toolbar.collapsed);
-  }, message || "waiting for toolbar to become " + (visible ? "visible" : "hidden"));
+  let result = await TestUtils.waitForCondition(
+    () => {
+      let toolbar = win.document.getElementById("PersonalToolbar");
+      return toolbar && (visible ? !toolbar.collapsed : toolbar.collapsed);
+    },
+    message ||
+      "waiting for toolbar to become " + (visible ? "visible" : "hidden")
+  );
   ok(result, message);
   return result;
 }

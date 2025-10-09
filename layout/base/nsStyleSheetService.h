@@ -9,8 +9,6 @@
 #ifndef nsStyleSheetService_h_
 #define nsStyleSheetService_h_
 
-#include "nsCOMArray.h"
-#include "nsCOMPtr.h"
 #include "nsIMemoryReporter.h"
 #include "nsIStyleSheetService.h"
 #include "mozilla/Array.h"
@@ -18,20 +16,14 @@
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/StyleSheet.h"
 
-class nsICategoryManager;
-class nsIMemoryReporter;
 class nsISimpleEnumerator;
 
 namespace mozilla {
 class PresShell;
 }  // namespace mozilla
 
-#define NS_STYLESHEETSERVICE_CID                     \
-  {                                                  \
-    0x3b55e72e, 0xab7e, 0x431b, {                    \
-      0x89, 0xc0, 0x3b, 0x06, 0xa8, 0xb1, 0x40, 0x16 \
-    }                                                \
-  }
+#define NS_STYLESHEETSERVICE_CID \
+  {0x3b55e72e, 0xab7e, 0x431b, {0x89, 0xc0, 0x3b, 0x06, 0xa8, 0xb1, 0x40, 0x16}}
 
 #define NS_STYLESHEETSERVICE_CONTRACTID \
   "@mozilla.org/content/style-sheet-service;1"
@@ -63,11 +55,6 @@ class nsStyleSheetService final : public nsIStyleSheetService,
 
  private:
   ~nsStyleSheetService();
-
-  void RegisterFromEnumerator(nsICategoryManager* aManager,
-                              const char* aCategory,
-                              nsISimpleEnumerator* aEnumerator,
-                              uint32_t aSheetType);
 
   int32_t FindSheetByURI(uint32_t aSheetType, nsIURI* aSheetURI);
 

@@ -5,7 +5,7 @@
 
 localAccountUtils.loadLocalMailAccount();
 
-var localAccount = MailServices.accounts.FindAccountForServer(
+var localAccount = MailServices.accounts.findAccountForServer(
   localAccountUtils.incomingServer
 );
 var identity = MailServices.accounts.createIdentity();
@@ -20,16 +20,14 @@ function run_test() {
     "return-path: alice@t1.example.com\r\n" +
     "Disposition-Notification-To: alice@t1.example.com\r\n";
 
-  let mimeHdr = Cc["@mozilla.org/messenger/mimeheaders;1"].createInstance(
+  const mimeHdr = Cc["@mozilla.org/messenger/mimeheaders;1"].createInstance(
     Ci.nsIMimeHeaders
   );
   mimeHdr.initialize(headers);
   mimeHdr.extractHeader("To", false);
 
   localAccountUtils.inboxFolder.QueryInterface(Ci.nsIMsgLocalMailFolder);
-  localAccountUtils.inboxFolder.addMessage(
-    "From \r\n" + headers + "\r\nhello\r\n"
-  );
+  localAccountUtils.inboxFolder.addMessage(headers + "\r\nhello\r\n");
   // Need to setup some prefs
   Services.prefs.setBoolPref("mail.mdn.report.enabled", true);
   Services.prefs.setIntPref("mail.mdn.report.not_in_to_cc", 2);

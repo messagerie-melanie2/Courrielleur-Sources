@@ -249,7 +249,6 @@ export var mailTestUtils = {
    *   If this isfalse, then the underlying system doesn't support marking files as
    *   sparse. If an exception is thrown, then the system does support marking
    *   files as sparse, but an error occurred while doing so.
-   *
    */
   mark_file_region_sparse(aFile, aRegionStart, aRegionBytes) {
     const fileSystem = this.get_file_system(aFile);
@@ -473,6 +472,7 @@ export var mailTestUtils = {
   do_timeout_function(aDelayInMS, aFunc, aFuncThis, aFuncArgs) {
     this._timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
     const wrappedFunc = function () {
+      /* globals do_throw */
       try {
         aFunc.apply(aFuncThis, aFuncArgs);
       } catch (ex) {
@@ -576,27 +576,34 @@ export var mailTestUtils = {
    * `MutationObserver` as an argument because importing it here does not work
    * because `window` is not defined here.
    *
-   * @param {object} MutationObserver - The MutationObserver object.
+   * @param {object} DocMutationObserver - The MutationObserver object.
    * @param {Document} doc - Document that contains the elements.
    * @param {string} observedNodeId - Id of the element to observe.
    * @param {string} awaitedNodeId - Id of the element that will soon exist.
    * @returns {Promise.<undefined>} - A promise fulfilled when the element exists.
    */
-  awaitElementExistence(MutationObserver, doc, observedNodeId, awaitedNodeId) {
+  awaitElementExistence(
+    DocMutationObserver,
+    doc,
+    observedNodeId,
+    awaitedNodeId
+  ) {
     return new Promise(resolve => {
-      const outerObserver = new MutationObserver((mutationsList, observer) => {
-        for (const mutation of mutationsList) {
-          if (mutation.type == "childList" && mutation.addedNodes.length) {
-            const element = doc.getElementById(awaitedNodeId);
+      const outerObserver = new DocMutationObserver(
+        (mutationsList, observer) => {
+          for (const mutation of mutationsList) {
+            if (mutation.type == "childList" && mutation.addedNodes.length) {
+              const element = doc.getElementById(awaitedNodeId);
 
-            if (element) {
-              observer.disconnect();
-              resolve();
-              return;
+              if (element) {
+                observer.disconnect();
+                resolve();
+                return;
+              }
             }
           }
         }
-      });
+      );
 
       const nodeToObserve = doc.getElementById(observedNodeId);
       outerObserver.observe(nodeToObserve, { childList: true });

@@ -20,7 +20,7 @@
 #include "nsXULAppAPI.h"
 #include "mozilla/PresState.h"
 #include "mozilla/StaticPrefs_fission.h"
-
+#include "mozilla/dom/BindingIPCUtils.h"
 #include "mozilla/dom/BrowserParent.h"
 #include "mozilla/dom/CanonicalBrowsingContext.h"
 #include "mozilla/dom/ContentChild.h"
@@ -29,6 +29,7 @@
 #include "mozilla/dom/DocumentBinding.h"
 #include "mozilla/dom/DOMTypes.h"
 #include "mozilla/dom/nsCSPContext.h"
+#include "mozilla/dom/nsCSPUtils.h"
 #include "mozilla/dom/PermissionMessageUtils.h"
 #include "mozilla/dom/ReferrerInfoUtils.h"
 #include "mozilla/ipc/IPDLParamTraits.h"
@@ -52,7 +53,6 @@ SessionHistoryInfo::SessionHistoryInfo(nsDocShellLoadState* aLoadState,
                       : Some(aLoadState->SrcdocData())),
       mBaseURI(aLoadState->BaseURI()),
       mLoadReplace(aLoadState->LoadReplace()),
-      mHasUserInteraction(false),
       mHasUserActivation(aLoadState->HasValidUserGestureActivation()),
       mSharedState(SharedState::Create(
           aLoadState->TriggeringPrincipal(), aLoadState->PrincipalToInherit(),
@@ -79,6 +79,7 @@ SessionHistoryInfo::SessionHistoryInfo(
     const SessionHistoryInfo& aSharedStateFrom, nsIURI* aURI)
     : mURI(aURI), mSharedState(aSharedStateFrom.mSharedState) {
   MaybeUpdateTitleFromURI();
+  mHasUserInteraction = aSharedStateFrom.mHasUserInteraction;
 }
 
 SessionHistoryInfo::SessionHistoryInfo(
@@ -97,7 +98,10 @@ SessionHistoryInfo::SessionHistoryInfo(
     nsIChannel* aChannel, uint32_t aLoadType,
     nsIPrincipal* aPartitionedPrincipalToInherit,
     nsIContentSecurityPolicy* aCsp) {
-  aChannel->GetURI(getter_AddRefs(mURI));
+  if (NS_FAILED(NS_GetFinalChannelURI(aChannel, getter_AddRefs(mURI)))) {
+    NS_WARNING("NS_GetFinalChannelURI somehow failed in SessionHistoryInfo?");
+    aChannel->GetURI(getter_AddRefs(mURI));
+  }
   mLoadType = aLoadType;
 
   nsCOMPtr<nsILoadInfo> loadInfo;
@@ -239,6 +243,10 @@ bool SessionHistoryInfo::IsSubFrame() const {
   return mSharedState.Get()->mIsFrameNavigation;
 }
 
+nsStructuredCloneContainer* SessionHistoryInfo::GetNavigationState() const {
+  return mSharedState.Get()->mNavigationState.get();
+}
+
 void SessionHistoryInfo::SetSaveLayoutStateFlag(bool aSaveLayoutStateFlag) {
   MOZ_ASSERT(XRE_IsParentProcess());
   static_cast<SHEntrySharedParentState*>(mSharedState.Get())->mSaveLayoutState =
@@ -285,8 +293,11 @@ void SessionHistoryInfo::FillLoadInfo(nsDocShellLoadState& aLoadState) const {
 
   // When we create a load state from the history info we already know if
   // https-first was able to upgrade the request from http to https. There is no
-  // point in re-retrying to upgrade.
-  aLoadState.SetIsExemptFromHTTPSOnlyMode(true);
+  // point in re-retrying to upgrade. On a reload we still want to check,
+  // because the exemptions set by the user could have changed.
+  if ((mLoadType & nsIDocShell::LOAD_CMD_RELOAD) == 0) {
+    aLoadState.SetIsExemptFromHTTPSFirstMode(true);
+  }
 }
 /* static */
 SessionHistoryInfo::SharedState SessionHistoryInfo::SharedState::Create(
@@ -651,13 +662,13 @@ SessionHistoryEntry::SetReferrerInfo(nsIReferrerInfo* aReferrerInfo) {
 }
 
 NS_IMETHODIMP
-SessionHistoryEntry::GetContentViewer(nsIContentViewer** aContentViewer) {
-  *aContentViewer = nullptr;
+SessionHistoryEntry::GetDocumentViewer(nsIDocumentViewer** aDocumentViewer) {
+  *aDocumentViewer = nullptr;
   return NS_OK;
 }
 
 NS_IMETHODIMP
-SessionHistoryEntry::SetContentViewer(nsIContentViewer* aContentViewer) {
+SessionHistoryEntry::SetDocumentViewer(nsIDocumentViewer* aDocumentViewer) {
   MOZ_CRASH("This lives in the child process");
   return NS_ERROR_FAILURE;
 }
@@ -881,7 +892,10 @@ SessionHistoryEntry::GetCsp(nsIContentSecurityPolicy** aCsp) {
 
 NS_IMETHODIMP
 SessionHistoryEntry::SetCsp(nsIContentSecurityPolicy* aCsp) {
-  SharedInfo()->mCsp = aCsp;
+  nsCOMPtr<nsIURI> uri = mInfo->mURI;
+  if (CSP_ShouldURIInheritCSP(uri)) {
+    SharedInfo()->mCsp = aCsp;
+  }
   return NS_OK;
 }
 
@@ -1490,11 +1504,9 @@ void SessionHistoryEntry::SetFrameLoader(nsFrameLoader* aFrameLoader) {
   SharedInfo()->SetFrameLoader(aFrameLoader);
   if (aFrameLoader) {
     if (BrowsingContext* bc = aFrameLoader->GetMaybePendingBrowsingContext()) {
-      bc->PreOrderWalk([&](BrowsingContext* aContext) {
-        if (BrowserParent* bp = aContext->Canonical()->GetBrowserParent()) {
-          bp->Deactivated();
-        }
-      });
+      if (BrowserParent* bp = bc->Canonical()->GetBrowserParent()) {
+        bp->VisitAll([&](BrowserParent* aBp) { aBp->Deactivated(); });
+      }
     }
 
     // When a new frameloader is stored, try to evict some older
@@ -1505,7 +1517,7 @@ void SessionHistoryEntry::SetFrameLoader(nsFrameLoader* aFrameLoader) {
     if (shistory) {
       int32_t index = 0;
       shistory->GetIndex(&index);
-      shistory->EvictOutOfRangeContentViewers(index);
+      shistory->EvictOutOfRangeDocumentViewers(index);
     }
   }
 }
@@ -1553,6 +1565,8 @@ void IPDLParamTraits<dom::SessionHistoryInfo>::Write(
   WriteIPDLParam(aWriter, aActor, stateData);
   WriteIPDLParam(aWriter, aActor, aParam.mSrcdocData);
   WriteIPDLParam(aWriter, aActor, aParam.mBaseURI);
+  WriteIPDLParam(aWriter, aActor, aParam.mNavigationKey);
+  WriteIPDLParam(aWriter, aActor, aParam.mNavigationId);
   WriteIPDLParam(aWriter, aActor, aParam.mLoadReplace);
   WriteIPDLParam(aWriter, aActor, aParam.mURIWasModified);
   WriteIPDLParam(aWriter, aActor, aParam.mScrollRestorationIsManual);
@@ -1595,6 +1609,8 @@ bool IPDLParamTraits<dom::SessionHistoryInfo>::Read(
       !ReadIPDLParam(aReader, aActor, &stateData) ||
       !ReadIPDLParam(aReader, aActor, &aResult->mSrcdocData) ||
       !ReadIPDLParam(aReader, aActor, &aResult->mBaseURI) ||
+      !ReadIPDLParam(aReader, aActor, &aResult->mNavigationKey) ||
+      !ReadIPDLParam(aReader, aActor, &aResult->mNavigationId) ||
       !ReadIPDLParam(aReader, aActor, &aResult->mLoadReplace) ||
       !ReadIPDLParam(aReader, aActor, &aResult->mURIWasModified) ||
       !ReadIPDLParam(aReader, aActor, &aResult->mScrollRestorationIsManual) ||
@@ -1794,10 +1810,8 @@ namespace IPC {
 // Allow sending mozilla::dom::WireframeRectType enums over IPC.
 template <>
 struct ParamTraits<mozilla::dom::WireframeRectType>
-    : public ContiguousEnumSerializer<
-          mozilla::dom::WireframeRectType,
-          mozilla::dom::WireframeRectType::Image,
-          mozilla::dom::WireframeRectType::EndGuard_> {};
+    : public mozilla::dom::WebIDLEnumSerializer<
+          mozilla::dom::WireframeRectType> {};
 
 template <>
 struct ParamTraits<mozilla::dom::WireframeTaggedRect> {

@@ -38,7 +38,9 @@ add_task(async function () {
   );
 
   info("Reload the page");
-  await BrowserTestUtils.reloadTab(tab, /* includeSubFrames */ true);
+  await BrowserTestUtils.reloadTab(tab, {
+    includeSubFrames: true,
+  });
 
   is(
     await getTopLevelDocumentDevicePixelRatioAtStartup(),
@@ -70,7 +72,7 @@ add_task(async function () {
     gBrowser.selectedBrowser,
     /* includeSubFrames */ true
   );
-  BrowserTestUtils.loadURIString(
+  BrowserTestUtils.startLoadingURIString(
     gBrowser.selectedBrowser,
     URL_ROOT_ORG_SSL + TEST_DOCUMENT + "?crossOriginIsolated=true"
   );

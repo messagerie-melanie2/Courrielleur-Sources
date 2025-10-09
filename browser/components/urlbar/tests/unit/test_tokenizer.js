@@ -32,6 +32,12 @@ add_task(async function test_tokenizer() {
       ],
     },
     {
+      desc: "do not separate restriction char at beginning in search mode",
+      searchMode: { engineName: "testEngine" },
+      searchString: `${UrlbarTokenizer.RESTRICT.SEARCH}test`,
+      expectedTokens: [{ value: "?test", type: UrlbarTokenizer.TYPE.TEXT }],
+    },
+    {
       desc: "separate restriction char at end",
       searchString: `test ${UrlbarTokenizer.RESTRICT.BOOKMARK}`,
       expectedTokens: [
@@ -53,15 +59,9 @@ add_task(async function test_tokenizer() {
       ],
     },
     {
-      desc: "boundary search restriction char at end",
+      desc: "do not separate boundary search restriction char at end",
       searchString: `test${UrlbarTokenizer.RESTRICT.SEARCH}`,
-      expectedTokens: [
-        { value: "test", type: UrlbarTokenizer.TYPE.TEXT },
-        {
-          value: UrlbarTokenizer.RESTRICT.SEARCH,
-          type: UrlbarTokenizer.TYPE.RESTRICT_SEARCH,
-        },
-      ],
+      expectedTokens: [{ value: "test?", type: UrlbarTokenizer.TYPE.TEXT }],
     },
     {
       desc: "separate restriction char in the middle",
@@ -111,16 +111,12 @@ add_task(async function test_tokenizer() {
       ],
     },
     {
-      desc: "double non-combinable restriction char, single char string",
+      desc: "do not separate boundary search restriction char at end when using using a double non-combinable restriction char with a single-character string",
       searchString: `t${UrlbarTokenizer.RESTRICT.BOOKMARK}${UrlbarTokenizer.RESTRICT.SEARCH}`,
       expectedTokens: [
         {
-          value: `t${UrlbarTokenizer.RESTRICT.BOOKMARK}`,
+          value: `t${UrlbarTokenizer.RESTRICT.BOOKMARK}${UrlbarTokenizer.RESTRICT.SEARCH}`,
           type: UrlbarTokenizer.TYPE.TEXT,
-        },
-        {
-          value: UrlbarTokenizer.RESTRICT.SEARCH,
-          type: UrlbarTokenizer.TYPE.RESTRICT_SEARCH,
         },
       ],
     },
@@ -401,12 +397,8 @@ add_task(async function test_tokenizer() {
           type: UrlbarTokenizer.TYPE.POSSIBLE_URL,
         },
         {
-          value: "hi",
+          value: "hi?",
           type: UrlbarTokenizer.TYPE.TEXT,
-        },
-        {
-          value: UrlbarTokenizer.RESTRICT.SEARCH,
-          type: UrlbarTokenizer.TYPE.RESTRICT_SEARCH,
         },
       ],
     },

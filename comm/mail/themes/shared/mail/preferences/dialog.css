@@ -1,29 +1,12 @@
-/* - This Source Code Form is subject to the terms of the Mozilla Public
-   - License, v. 2.0. If a copy of the MPL was not distributed with this file,
-   - You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 @namespace html url("http://www.w3.org/1999/xhtml");
 
-@media not (prefers-contrast) {
-  @media not (prefers-color-scheme: dark) {
-    :root > * {
-      --in-content-button-background: var(--grey-90-a10);
-      --in-content-button-background-hover: var(--grey-90-a20);
-      --in-content-button-background-active: var(--grey-90-a30);
-    }
-  }
-
-  @media (prefers-color-scheme: dark) {
-    :root > * {
-      --in-content-page-background: #2a2a2e;
-      --in-content-button-background: rgba(249, 249, 250, 0.1);
-      --in-content-button-background-hover: rgba(249, 249, 250, 0.15);
-      --in-content-button-background-active: rgba(249, 249, 250, 0.2);
-      --in-content-primary-button-background: #45a1ff;
-      --in-content-primary-button-background-hover: #65c1ff;
-      --in-content-primary-button-background-active: #85e1ff;
-      --in-content-focus-outline-color: #45a1ff;
-    }
+@media (prefers-color-scheme: dark) {
+  :root > * {
+    --in-content-page-background: #2a2a2e;
   }
 }
 
@@ -35,10 +18,6 @@ window,
   color: var(--in-content-page-color);
   margin: 0;
   padding: 0;
-}
-
-body > dialog {
-  background-color: unset;
 }
 
 .contentPane,
@@ -53,11 +32,12 @@ dialog.doScroll::part(content-box) {
 }
 
 dialog.doScroll {
+  min-height: 100vh;
   margin-inline: -4px;
-}
 
-dialog.doScroll::part(content-box) {
-  padding-inline: 4px;
+  &::part(content-box) {
+    padding-inline: 4px;
+  }
 }
 
 tabbox {
@@ -95,10 +75,10 @@ groupbox {
   margin-top: 0;
   margin-inline: 4px;
   padding-block: 0 5px;
-}
 
-groupbox description {
-  margin-inline: 0;
+  & description {
+    margin-inline: 0;
+  }
 }
 
 menulist label {
@@ -130,6 +110,10 @@ textbox.tree-input {
    input in dialogs */
 .startSpacing {
   margin-inline-start: 8px;
+}
+
+.wrap {
+  white-space: wrap;
 }
 
 #siteCol {

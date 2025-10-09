@@ -2,19 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-do_get_profile();
-
-const { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
-);
-const { IdentitiesEngine } = ChromeUtils.importESModule(
+const { IdentitiesEngine, IdentityRecord } = ChromeUtils.importESModule(
   "resource://services-sync/engines/identities.sys.mjs"
 );
 const { Service } = ChromeUtils.importESModule(
   "resource://services-sync/service.sys.mjs"
-);
-const { TestUtils } = ChromeUtils.import(
-  "resource://testing-common/TestUtils.jsm"
 );
 
 let engine, store, tracker;
@@ -26,17 +18,8 @@ add_setup(async function () {
   store = engine._store;
   tracker = engine._tracker;
 
-  Assert.equal(tracker.score, 0);
-  Assert.equal(tracker._isTracking, false);
-  Assert.deepEqual(await tracker.getChangedIDs(), {});
-
-  try {
-    // Ensure there is a local mail account...
-    MailServices.accounts.localFoldersServer;
-  } catch {
-    // ... if not, make one.
-    MailServices.accounts.createLocalMailAccount();
-  }
+  Assert.equal(tracker._isTracking, false, "tracker is disabled");
+  await assertNoChangeTracked(tracker);
 
   accountA = MailServices.accounts.createAccount();
   accountA.incomingServer = MailServices.accounts.createIncomingServer(
@@ -44,8 +27,8 @@ add_setup(async function () {
     "hostname",
     "imap"
   );
-  smtpServerA = MailServices.smtp.createServer();
-  smtpServerB = MailServices.smtp.createServer();
+  smtpServerA = MailServices.outgoingServer.createServer("smtp");
+  smtpServerB = MailServices.outgoingServer.createServer("smtp");
 
   identityA = MailServices.accounts.createIdentity();
   identityA.email = "identity.a@hostname";
@@ -64,175 +47,85 @@ add_setup(async function () {
   Assert.equal(accountA.defaultIdentity.key, identityA.key);
 
   tracker.start();
-  Assert.equal(tracker._isTracking, true);
+  Assert.equal(tracker._isTracking, true, "tracker is enabled");
+
+  registerCleanupFunction(function () {
+    tracker.stop();
+  });
 });
 
 /**
  * Test creating, changing, and deleting an identity that should be synced.
  */
 add_task(async function testIdentity() {
-  Assert.equal(tracker.score, 0);
-  Assert.deepEqual(await tracker.getChangedIDs(), {});
+  const id = newUID();
+  const identity = MailServices.accounts.createIdentity();
+  // Identities aren't tracked until added to an account.
+  identity.UID = id;
+  identity.label = "New Identity";
+  identity.fullName = "New User";
+  identity.email = "username@hostname";
+  identity.smtpServerKey = smtpServerA.key;
+  await assertNoChangeTracked(tracker);
 
-  let id = newUID();
-  let newIdentity = MailServices.accounts.createIdentity();
-  newIdentity.UID = id;
-  newIdentity.email = "username@hostname";
-  newIdentity.fullName = "User";
-  newIdentity.smtpServerKey = smtpServerA.key;
-  accountA.addIdentity(newIdentity);
+  accountA.addIdentity(identity);
+  await assertChangeTracked(tracker, id);
+  await assertNoChangeTracked(tracker);
 
-  Assert.equal(tracker.score, 301);
-  Assert.deepEqual(await tracker.getChangedIDs(), { [id]: 0 });
+  await checkPropertyChanges(tracker, identity, [
+    ["label", "Changed label"],
+    ["fullName", "Changed name"],
+    ["email", "changed@hostname"],
+    ["smtpServerKey", smtpServerB.key],
+    ["smtpServerKey", null],
+  ]);
 
-  tracker.clearChangedIDs();
-  Assert.deepEqual(await tracker.getChangedIDs(), {});
-  tracker.resetScore();
-  Assert.equal(tracker.score, 0);
-
-  newIdentity.fullName = "Changed name";
-  Assert.equal(tracker.score, 301);
-  Assert.deepEqual(await tracker.getChangedIDs(), { [id]: 0 });
-
-  tracker.clearChangedIDs();
-  tracker.resetScore();
-
-  newIdentity.label = "Changed label";
-  Assert.equal(tracker.score, 301);
-  Assert.deepEqual(await tracker.getChangedIDs(), { [id]: 0 });
-
-  tracker.clearChangedIDs();
-  tracker.resetScore();
-
-  newIdentity.smtpServerKey = smtpServerB.key;
-  Assert.equal(tracker.score, 301);
-  Assert.deepEqual(await tracker.getChangedIDs(), { [id]: 0 });
-
-  tracker.clearChangedIDs();
-  tracker.resetScore();
-
-  newIdentity.smtpServerKey = null;
-  Assert.equal(tracker.score, 301);
-  Assert.deepEqual(await tracker.getChangedIDs(), { [id]: 0 });
-
-  tracker.clearChangedIDs();
-  tracker.resetScore();
-
-  accountA.removeIdentity(newIdentity);
-  Assert.equal(tracker.score, 301);
-  Assert.deepEqual(await tracker.getChangedIDs(), { [id]: 0 });
-
-  tracker.clearChangedIDs();
-  tracker.resetScore();
-});
-
-/**
- * Test swapping the default identity of an account.
- */
-add_task(async function testDefaultIdentityChange() {
-  Assert.equal(tracker.score, 0);
-  Assert.deepEqual(await tracker.getChangedIDs(), {});
-
-  accountA.defaultIdentity = identityB;
-
-  Assert.equal(tracker.score, 301);
-  Assert.deepEqual(await tracker.getChangedIDs(), {
-    [identityA.UID]: 0,
-    [identityB.UID]: 0,
-  });
-
-  tracker.clearChangedIDs();
-  tracker.resetScore();
+  accountA.removeIdentity(identity);
+  let record = await assertChangeTracked(tracker, id);
+  record = await roundTripRecord(record, IdentityRecord);
+  Assert.ok(record.deleted, "record should be a tombstone record");
+  await assertNoChangeTracked(tracker);
 });
 
 /**
  * Test the store methods on identites. The tracker should ignore them.
  */
 add_task(async function testIncomingChanges() {
-  let id = newUID();
+  const id = newUID();
 
   tracker.ignoreAll = true;
-  await store.applyIncoming({
-    id,
-    accounts: [
-      {
-        id: accountA.UID,
-        isDefault: true,
-      },
-    ],
-    prefs: {
-      attachSignature: false,
-      attachVCard: false,
-      autoQuote: true,
-      catchAll: false,
-      catchAllHint: null,
-      composeHtml: true,
-      email: "username@hostname",
-      escapedVCard: null,
+  await store.applyIncoming(
+    IdentityRecord.from({
+      id,
+      name: "",
       fullName: "User",
-      htmlSigFormat: false,
-      htmlSigText: "",
-      label: "",
-      organization: "",
-      replyOnTop: 0,
-      replyTo: null,
-      sigBottom: true,
-      sigOnForward: false,
-      sigOnReply: true,
-    },
-    smtpID: smtpServerA.UID,
-  });
-  tracker.ignoreAll = false;
-
-  Assert.deepEqual(await tracker.getChangedIDs(), {});
-  Assert.equal(tracker.score, 0);
-
-  tracker.clearChangedIDs();
-  tracker.resetScore();
-
-  tracker.ignoreAll = true;
-  await store.applyIncoming({
-    id,
-    accounts: [
-      {
-        id: accountA.UID,
-        isDefault: true,
-      },
-    ],
-    prefs: {
-      attachSignature: false,
-      attachVCard: false,
-      autoQuote: true,
-      catchAll: false,
-      catchAllHint: null,
-      composeHtml: true,
       email: "username@hostname",
-      escapedVCard: null,
-      fullName: "User (changed)",
-      htmlSigFormat: false,
-      htmlSigText: "",
-      label: "",
-      organization: "",
-      replyOnTop: 0,
-      replyTo: null,
-      sigBottom: true,
-      sigOnForward: false,
-      sigOnReply: true,
-    },
-    smtpID: smtpServerA.UID,
-  });
+      incomingServer: accountA.UID,
+      outgoingServer: smtpServerA.UID,
+    })
+  );
   tracker.ignoreAll = false;
 
-  Assert.deepEqual(await tracker.getChangedIDs(), {});
-  Assert.equal(tracker.score, 0);
+  await assertNoChangeTracked(tracker);
 
   tracker.ignoreAll = true;
-  await store.applyIncoming({
-    id,
-    deleted: true,
-  });
+  await store.applyIncoming(
+    IdentityRecord.from({
+      id,
+      name: "",
+      email: "username@hostname",
+      fullName: "User (changed)",
+      incomingServer: accountA.UID,
+      outgoingServer: smtpServerA.UID,
+    })
+  );
   tracker.ignoreAll = false;
 
-  Assert.deepEqual(await tracker.getChangedIDs(), {});
-  Assert.equal(tracker.score, 0);
+  await assertNoChangeTracked(tracker);
+
+  tracker.ignoreAll = true;
+  await store.applyIncoming(IdentityRecord.from({ id, deleted: true }));
+  tracker.ignoreAll = false;
+
+  await assertNoChangeTracked(tracker);
 });

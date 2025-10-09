@@ -10,11 +10,12 @@
 
 #include "media/sctp/sctp_transport_factory.h"
 
+#include "api/environment/environment.h"
+#include "p2p/dtls/dtls_transport_internal.h"
 #include "rtc_base/system/unused.h"
 
 #ifdef WEBRTC_HAVE_DCSCTP
-#include "media/sctp/dcsctp_transport.h"    // nogncheck
-#include "system_wrappers/include/clock.h"  // nogncheck
+#include "media/sctp/dcsctp_transport.h"  // nogncheck
 #endif
 
 namespace cricket {
@@ -25,12 +26,12 @@ SctpTransportFactory::SctpTransportFactory(rtc::Thread* network_thread)
 }
 
 std::unique_ptr<SctpTransportInternal>
-SctpTransportFactory::CreateSctpTransport(
-    rtc::PacketTransportInternal* transport) {
+SctpTransportFactory::CreateSctpTransport(const webrtc::Environment& env,
+                                          DtlsTransportInternal* transport) {
   std::unique_ptr<SctpTransportInternal> result;
 #ifdef WEBRTC_HAVE_DCSCTP
-  result = std::unique_ptr<SctpTransportInternal>(new webrtc::DcSctpTransport(
-      network_thread_, transport, webrtc::Clock::GetRealTimeClock()));
+  result = std::unique_ptr<SctpTransportInternal>(
+      new webrtc::DcSctpTransport(env, network_thread_, transport));
 #endif
   return result;
 }

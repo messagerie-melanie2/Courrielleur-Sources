@@ -49,7 +49,7 @@ nsresult nsXMLPrettyPrinter::PrettyPrint(Document* aDocument,
   // nsXMLContentSink should not ask us to pretty print an XML doc that comes
   // with a CanAttachShadowDOM() == true root element, but just in case:
   if (rootElement->CanAttachShadowDOM()) {
-    MOZ_DIAGNOSTIC_ASSERT(false, "We shouldn't be getting this root element");
+    MOZ_DIAGNOSTIC_CRASH("We shouldn't be getting this root element");
     return NS_ERROR_UNEXPECTED;
   }
 
@@ -65,7 +65,8 @@ nsresult nsXMLPrettyPrinter::PrettyPrint(Document* aDocument,
 
   nsCOMPtr<Document> xslDocument;
   rv = nsSyncLoadService::LoadDocument(
-      xslUri, nsIContentPolicy::TYPE_XSLT, nsContentUtils::GetSystemPrincipal(),
+      xslUri, nsIContentPolicy::TYPE_XSLT, nullptr,
+      nsContentUtils::GetSystemPrincipal(),
       nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL, nullptr,
       aDocument->CookieJarSettings(), true, ReferrerPolicy::_empty,
       getter_AddRefs(xslDocument));
@@ -172,8 +173,8 @@ void nsXMLPrettyPrinter::ContentInserted(nsIContent* aChild) {
   MaybeUnhook(aChild->GetParent());
 }
 
-void nsXMLPrettyPrinter::ContentRemoved(nsIContent* aChild,
-                                        nsIContent* aPreviousSibling) {
+void nsXMLPrettyPrinter::ContentWillBeRemoved(nsIContent* aChild,
+                                              const BatchRemovalState*) {
   MaybeUnhook(aChild->GetParent());
 }
 

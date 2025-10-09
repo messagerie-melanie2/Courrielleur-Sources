@@ -10,6 +10,7 @@ import copy
 
 from mozbuild.chunkify import chunkify
 from taskgraph.transforms.base import TransformSequence
+from taskgraph.util.dependencies import get_primary_dependency
 
 from gecko_taskgraph.util.partners import (
     apply_partner_priority,
@@ -23,16 +24,16 @@ transforms.add(apply_partner_priority)
 @transforms.add
 def chunk_partners(config, jobs):
     for job in jobs:
-        dep_job = job["primary-dependency"]
+        dep_job = get_primary_dependency(config, job)
+        assert dep_job
+
         build_platform = dep_job.attributes["build_platform"]
         repack_id = dep_job.task.get("extra", {}).get("repack_id")
         repack_ids = dep_job.task.get("extra", {}).get("repack_ids")
         copy_repack_ids = job.pop("copy-repack-ids", False)
 
         if copy_repack_ids:
-            assert repack_ids, "dep_job {} doesn't have repack_ids!".format(
-                dep_job.label
-            )
+            assert repack_ids, f"dep_job {dep_job.label} doesn't have repack_ids!"
             job.setdefault("extra", {})["repack_ids"] = repack_ids
             yield job
         # first downstream of the repack task, no chunking or fanout has been done yet

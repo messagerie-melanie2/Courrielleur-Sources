@@ -1,4 +1,3 @@
-// |reftest| skip -- resizable-arraybuffer is not supported
 // Copyright (C) 2021 the V8 project authors. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 /*---
@@ -37,6 +36,13 @@ testWithTypedArrayConstructors(function(TA) {
   } catch (_) {}
 
   assert.sameValue(array.length, expected, "following shrink (within bounds)");
+
+  try {
+    ab.resize(BPE * 3 - 1);
+    expected = 1;
+  } catch (_) {}
+
+  assert.sameValue(array.length, expected, "following shrink (partial element)");
 
   try {
     ab.resize(BPE);

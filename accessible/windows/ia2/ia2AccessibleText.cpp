@@ -11,8 +11,8 @@
 
 #include "AccessibleText_i.c"
 
-#include "HyperTextAccessibleWrap.h"
-#include "HyperTextAccessible-inl.h"
+#include "mozilla/a11y/Compatibility.h"
+#include "mozilla/a11y/HyperTextAccessibleBase.h"
 #include "mozilla/ClearOnShutdown.h"
 
 using namespace mozilla::a11y;
@@ -27,19 +27,6 @@ HyperTextAccessibleBase* ia2AccessibleText::TextAcc() {
   auto hyp = static_cast<ia2AccessibleHypertext*>(this);
   Accessible* acc = hyp->Acc();
   return acc ? acc->AsHyperTextBase() : nullptr;
-}
-
-std::pair<HyperTextAccessibleWrap*, HRESULT> ia2AccessibleText::LocalTextAcc() {
-  auto hyp = static_cast<ia2AccessibleHypertext*>(this);
-  Accessible* acc = hyp->Acc();
-  if (!acc) {
-    return {nullptr, CO_E_OBJNOTCONNECTED};
-  }
-  auto localAcc = static_cast<AccessibleWrap*>(acc->AsLocal());
-  if (!localAcc) {
-    return {nullptr, E_NOTIMPL};
-  }
-  return {static_cast<HyperTextAccessibleWrap*>(localAcc), S_OK};
 }
 
 // IAccessibleText
@@ -138,6 +125,19 @@ ia2AccessibleText::get_nSelections(long* aNSelections) {
   }
 
   *aNSelections = textAcc->SelectionCount();
+  if (*aNSelections == 0 &&
+      (Compatibility::A11ySuppressionReasons() &
+       SuppressionReasons::Clipboard) &&
+      static_cast<ia2AccessibleHypertext*>(this)->Acc()->IsDoc()) {
+    // Bug 1798098: Windows Suggested Actions (introduced in Windows 11
+    // 22H2) might walk the document a11y tree using UIA whenever anything
+    // is copied to the clipboard. This causes an unacceptable hang. It walks
+    // using IAccessibleText/IAccessibleHyperText if the document reports no
+    // selection, so we lie here and say that there is a selection even though
+    // there isn't. It will subsequently call get_selection, which will fail,
+    // but this hack here seems to be enough to avoid further text calls.
+    *aNSelections = 1;
+  }
 
   return S_OK;
 }
@@ -395,18 +395,17 @@ STDMETHODIMP
 ia2AccessibleText::scrollSubstringToPoint(long aStartIndex, long aEndIndex,
                                           enum IA2CoordinateType aCoordType,
                                           long aX, long aY) {
+  HyperTextAccessibleBase* textAcc = TextAcc();
+  if (!textAcc) {
+    return CO_E_OBJNOTCONNECTED;
+  }
+  if (!textAcc->IsValidRange(aStartIndex, aEndIndex)) {
+    return E_INVALIDARG;
+  }
   uint32_t geckoCoordType =
       (aCoordType == IA2_COORDTYPE_SCREEN_RELATIVE)
           ? nsIAccessibleCoordinateType::COORDTYPE_SCREEN_RELATIVE
           : nsIAccessibleCoordinateType::COORDTYPE_PARENT_RELATIVE;
-
-  auto [textAcc, hr] = LocalTextAcc();
-  if (!textAcc) {
-    return hr;
-  }
-
-  if (!textAcc->IsValidRange(aStartIndex, aEndIndex)) return E_INVALIDARG;
-
   textAcc->ScrollSubstringToPoint(aStartIndex, aEndIndex, geckoCoordType, aX,
                                   aY);
   return S_OK;
@@ -449,7 +448,7 @@ AccessibleTextBoundary ia2AccessibleText::GetGeckoTextBoundary(
     enum IA2TextBoundaryType aBoundaryType) {
   switch (aBoundaryType) {
     case IA2_TEXT_BOUNDARY_CHAR:
-      return nsIAccessibleText::BOUNDARY_CHAR;
+      return nsIAccessibleText::BOUNDARY_CLUSTER;
     case IA2_TEXT_BOUNDARY_WORD:
       return nsIAccessibleText::BOUNDARY_WORD_START;
     case IA2_TEXT_BOUNDARY_LINE:

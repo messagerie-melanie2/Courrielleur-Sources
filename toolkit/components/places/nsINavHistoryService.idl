@@ -54,24 +54,27 @@ interface nsINavHistoryResultNode : nsISupports
    * Identifies the type of this node. This node can then be QI-ed to the
    * corresponding specialized result node interface.
    */
-  const unsigned long RESULT_TYPE_URI = 0;               // nsINavHistoryResultNode
+  cenum ResultType : 8 {
+    RESULT_TYPE_URI = 0,               // nsINavHistoryResultNode
 
-  // Visit nodes are deprecated and unsupported.
-  // This line exists just to avoid reusing the value:
-  // const unsigned long RESULT_TYPE_VISIT = 1;
+    // Visit nodes are deprecated and unsupported.
+    // This line exists just to avoid reusing the value:
+    // RESULT_TYPE_VISIT = 1,
 
-  // Full visit nodes are deprecated and unsupported.
-  // This line exists just to avoid reusing the value:
-  // const unsigned long RESULT_TYPE_FULL_VISIT = 2;
+    // Full visit nodes are deprecated and unsupported.
+    // This line exists just to avoid reusing the value:
+    // RESULT_TYPE_FULL_VISIT = 2,
 
-  // Dynamic containers are deprecated and unsupported.
-  // This const exists just to avoid reusing the value:
-  // const unsigned long RESULT_TYPE_DYNAMIC_CONTAINER = 4; // nsINavHistoryContainerResultNode
+    // Dynamic containers are deprecated and unsupported.
+    // This const exists just to avoid reusing the value:
+    // RESULT_TYPE_DYNAMIC_CONTAINER = 4, // nsINavHistoryContainerResultNode
 
-  const unsigned long RESULT_TYPE_QUERY = 5;             // nsINavHistoryQueryResultNode
-  const unsigned long RESULT_TYPE_FOLDER = 6;            // nsINavHistoryQueryResultNode
-  const unsigned long RESULT_TYPE_SEPARATOR = 7;         // nsINavHistoryResultNode
-  const unsigned long RESULT_TYPE_FOLDER_SHORTCUT = 9;   // nsINavHistoryQueryResultNode
+    RESULT_TYPE_QUERY = 5,             // nsINavHistoryQueryResultNode
+    RESULT_TYPE_FOLDER = 6,            // nsINavHistoryQueryResultNode
+    RESULT_TYPE_SEPARATOR = 7,         // nsINavHistoryResultNode
+    RESULT_TYPE_FOLDER_SHORTCUT = 9,   // nsINavHistoryQueryResultNode
+  };
+
   readonly attribute unsigned long type;
 
   /**
@@ -178,13 +181,6 @@ interface nsINavHistoryResultNode : nsISupports
    * history visit nodes, this value is -1.
    */
   readonly attribute long long visitId;
-
-  /**
-   * The unique ID associated with visit node which was the referrer of this
-   * history visit. For node types other than history visit nodes, or visits
-   * without any known referrer, this value is -1.
-   */
-  readonly attribute long long fromVisitId;
 
   /**
    * The transition type associated with this visit. For node types other than
@@ -656,12 +652,6 @@ interface nsINavHistoryQuery : nsISupports
   readonly attribute unsigned long transitionCount;
 
   /**
-   * When set, returns only bookmarked items, when unset, returns anything. Setting this
-   * is equivalent to listing all bookmark folders in the 'folders' parameter.
-   */
-  attribute boolean onlyBookmarked;
-
-  /**
    * This controls the meaning of 'domain', and whether it is an exact match
    * 'domainIsHost' = true, or hierarchical (= false).
    */
@@ -686,23 +676,6 @@ interface nsINavHistoryQuery : nsISupports
    */
   attribute nsIURI uri;
   readonly attribute boolean hasUri;
-
-  /**
-   * Test for existence or non-existence of a given annotation. We don't
-   * currently support >1 annotation name per query. If 'annotationIsNot' is
-   * true, we test for the non-existence of the specified annotation.
-   *
-   * Testing for not annotation will do the same thing as a normal query and
-   * remove everything that doesn't have that annotation. Asking for things
-   * that DO have a given annotation is a little different. It also includes
-   * things that have never been visited. This allows place queries to be
-   * returned as well as anything else that may have been tagged with an
-   * annotation. This will only work for RESULTS_AS_URI since there will be
-   * no visits for these items.
-   */
-  attribute boolean annotationIsNot;
-  attribute AUTF8String annotation;
-  readonly attribute boolean hasAnnotation;
 
   /**
    * Limit results to items that are tagged with all of the given tags.  This
@@ -904,8 +877,6 @@ interface nsINavHistoryQueryOptions : nsISupports
 
   const unsigned short QUERY_TYPE_HISTORY = 0;
   const unsigned short QUERY_TYPE_BOOKMARKS = 1;
-  /* Unified queries are not yet implemented. See bug 378798 */
-  const unsigned short QUERY_TYPE_UNIFIED = 2;
 
   /**
    * The type of search to use when querying the DB; This attribute is only
@@ -932,6 +903,11 @@ interface nsINavHistoryQueryOptions : nsISupports
 [scriptable, uuid(20c974ff-ee16-4828-9326-1b7c9e036622)]
 interface nsINavHistoryService : nsISupports
 {
+  // The current database schema version.
+  // To migrate to a new version bump this, add a MigrateVXXUp function to
+  // Database.cpp/h, and a test into tests/migration/
+  const unsigned long DATABASE_SCHEMA_VERSION = 80;
+
   /**
    * System Notifications:
    *
@@ -942,59 +918,61 @@ interface nsINavHistoryService : nsISupports
    *                          for access reasons.
    */
 
-  /**
-   * This transition type means the user followed a link and got a new toplevel
-   * window.
-   */
-  const unsigned long TRANSITION_LINK = 1;
+  cenum TransitionType : 8 {
+    /**
+     * This transition type means the user followed a link and got a new toplevel
+     * window.
+     */
+    TRANSITION_LINK = 1,
 
-  /**
-   * This transition type means that the user typed the page's URL in the
-   * URL bar or selected it from URL bar autocomplete results, clicked on
-   * it from a history query (from the History sidebar, History menu,
-   * or history query in the personal toolbar or Places organizer.
-   */
-  const unsigned long TRANSITION_TYPED = 2;
+    /**
+     * This transition type means that the user typed the page's URL in the
+     * URL bar or selected it from URL bar autocomplete results, clicked on
+     * it from a history query (from the History sidebar, History menu,
+     * or history query in the personal toolbar or Places organizer.
+     */
+    TRANSITION_TYPED = 2,
 
-  /**
-   * This transition is set when the user followed a bookmark to get to the
-   * page.
-   */
-  const unsigned long TRANSITION_BOOKMARK = 3;
+    /**
+     * This transition is set when the user followed a bookmark to get to the
+     * page.
+     */
+    TRANSITION_BOOKMARK = 3,
 
-  /**
-   * This transition type is set when some inner content is loaded. This is
-   * true of all images on a page, and the contents of the iframe. It is also
-   * true of any content in a frame if the user did not explicitly follow
-   * a link to get there.
-   */
-  const unsigned long TRANSITION_EMBED = 4;
+    /**
+     * This transition type is set when some inner content is loaded. This is
+     * true of all images on a page, and the contents of the iframe. It is also
+     * true of any content in a frame if the user did not explicitly follow
+     * a link to get there.
+     */
+    TRANSITION_EMBED = 4,
 
-  /**
-   * Set when the transition was a permanent redirect.
-   */
-  const unsigned long TRANSITION_REDIRECT_PERMANENT = 5;
+    /**
+     * Set when the transition was a permanent redirect.
+     */
+    TRANSITION_REDIRECT_PERMANENT = 5,
 
-  /**
-   * Set when the transition was a temporary redirect.
-   */
-  const unsigned long TRANSITION_REDIRECT_TEMPORARY = 6;
+    /**
+     * Set when the transition was a temporary redirect.
+     */
+    TRANSITION_REDIRECT_TEMPORARY = 6,
 
-  /**
-   * Set when the transition is a download.
-   */
-  const unsigned long TRANSITION_DOWNLOAD = 7;
+    /**
+     * Set when the transition is a download.
+     */
+    TRANSITION_DOWNLOAD = 7,
 
-  /**
-   * This transition type means the user followed a link and got a visit in
-   * a frame.
-   */
-  const unsigned long TRANSITION_FRAMED_LINK = 8;
+    /**
+     * This transition type means the user followed a link and got a visit in
+     * a frame.
+     */
+    TRANSITION_FRAMED_LINK = 8,
 
-  /**
-   * This transition type means the page has been reloaded.
-   */
-  const unsigned long TRANSITION_RELOAD = 9;
+    /**
+     * This transition type means the page has been reloaded.
+     */
+    TRANSITION_RELOAD = 9,
+  };
 
   /**
    * Set when database is coherent
@@ -1137,21 +1115,19 @@ interface nsINavHistoryService : nsISupports
   unsigned long long hashURL(in ACString aSpec, [optional] in ACString aMode);
 
   /**
-   * Resets and recalculates the origin frecency statistics that are kept in the
-   * moz_meta table.
-   *
-   * @param aCallback
-   *        Called when the recalculation is complete.  The arguments passed to
-   *        the observer are not defined.
-   */
-  void recalculateOriginFrecencyStats([optional] in nsIObserver aCallback);
-
-  /**
    * Whether frecency is in the process of being decayed. The value can also
    * be read through the is_frecency_decaying() SQL function exposed by Places
    * database connections.
    */
   attribute boolean isFrecencyDecaying;
+
+  /**
+   * Whether alternative frecency is enabled. This is preferred over directly
+   * checking the feature gating preference, as it ensures consistency between
+   * the backend and frontend by avoiding discrepancies in preference values
+   * that could occur after startup.
+   */
+  readonly attribute boolean isAlternativeFrecencyEnabled;
 
   /**
    * This is set to true when a frecency is invalidated and set back to false

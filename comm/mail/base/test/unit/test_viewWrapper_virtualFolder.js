@@ -19,6 +19,10 @@
 load("resources/viewWrapperTestUtils.js");
 initViewWrapperTestUtils({ mode: "local" });
 
+var { MessageGenerator, SyntheticMessageSet } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
+);
+
 // -- single-folder backed virtual folder
 
 /**
@@ -26,13 +30,13 @@ initViewWrapperTestUtils({ mode: "local" });
  *  correctly; no constraints.
  */
 add_task(async function test_virtual_folder_single_load_no_pred() {
-  let viewWrapper = make_view_wrapper();
+  const viewWrapper = make_view_wrapper();
 
-  let [[folderOne], setOne] = await messageInjection.makeFoldersWithSets(1, [
+  const [[folderOne], setOne] = await messageInjection.makeFoldersWithSets(1, [
     {},
   ]);
 
-  let virtFolder = messageInjection.makeVirtualFolder([folderOne], {});
+  const virtFolder = messageInjection.makeVirtualFolder([folderOne], {});
   await view_open(viewWrapper, virtFolder);
 
   Assert.ok(viewWrapper.isVirtual);
@@ -52,14 +56,14 @@ add_task(async function test_virtual_folder_single_load_no_pred() {
  *  correctly; one constraint.
  */
 add_task(async function test_virtual_folder_single_load_simple_pred() {
-  let viewWrapper = make_view_wrapper();
+  const viewWrapper = make_view_wrapper();
 
-  let [[folderOne], oneSubjFoo] = await messageInjection.makeFoldersWithSets(
+  const [[folderOne], oneSubjFoo] = await messageInjection.makeFoldersWithSets(
     1,
     [{ subject: "foo" }, {}]
   );
 
-  let virtFolder = messageInjection.makeVirtualFolder([folderOne], {
+  const virtFolder = messageInjection.makeVirtualFolder([folderOne], {
     subject: "foo",
   });
   await view_open(viewWrapper, virtFolder);
@@ -73,16 +77,16 @@ add_task(async function test_virtual_folder_single_load_simple_pred() {
  *  correctly; two constraints ANDed together.
  */
 add_task(async function test_virtual_folder_single_load_complex_pred() {
-  let viewWrapper = make_view_wrapper();
+  const viewWrapper = make_view_wrapper();
 
-  let whoBar = make_person_with_word_in_name("bar");
+  const whoBar = make_person_with_word_in_name("bar");
 
-  let [[folderOne], , , oneBoth] = await messageInjection.makeFoldersWithSets(
+  const [[folderOne], , , oneBoth] = await messageInjection.makeFoldersWithSets(
     1,
     [{ subject: "foo" }, { from: whoBar }, { subject: "foo", from: whoBar }, {}]
   );
 
-  let virtFolder = messageInjection.makeVirtualFolder(
+  const virtFolder = messageInjection.makeVirtualFolder(
     [folderOne],
     { subject: "foo", from: "bar" },
     /* and? */ true
@@ -99,24 +103,24 @@ add_task(async function test_virtual_folder_single_load_complex_pred() {
  *  without exploding.
  */
 add_task(async function test_virtual_folder_single_load_after_load() {
-  let viewWrapper = make_view_wrapper();
+  const viewWrapper = make_view_wrapper();
 
-  let [[folderOne], oneSubjFoo] = await messageInjection.makeFoldersWithSets(
+  const [[folderOne], oneSubjFoo] = await messageInjection.makeFoldersWithSets(
     1,
     [{ subject: "foo" }, {}]
   );
-  let virtOne = messageInjection.makeVirtualFolder([folderOne], {
+  const virtOne = messageInjection.makeVirtualFolder([folderOne], {
     subject: "foo",
   });
   await view_open(viewWrapper, virtOne);
   verify_messages_in_view([oneSubjFoo], viewWrapper);
 
   // use "bar" instead of "foo" to make sure constraints are properly changing
-  let [[folderTwo], twoSubjBar] = await messageInjection.makeFoldersWithSets(
+  const [[folderTwo], twoSubjBar] = await messageInjection.makeFoldersWithSets(
     1,
     [{ subject: "bar" }, {}]
   );
-  let virtTwo = messageInjection.makeVirtualFolder([folderTwo], {
+  const virtTwo = messageInjection.makeVirtualFolder([folderTwo], {
     subject: "bar",
   });
   await view_open(viewWrapper, virtTwo);
@@ -132,16 +136,16 @@ add_task(async function test_virtual_folder_single_load_after_load() {
  *  correctly; no constraints.
  */
 add_task(async function test_virtual_folder_multi_load_no_pred() {
-  let viewWrapper = make_view_wrapper();
+  const viewWrapper = make_view_wrapper();
 
-  let [[folderOne], setOne] = await messageInjection.makeFoldersWithSets(1, [
+  const [[folderOne], setOne] = await messageInjection.makeFoldersWithSets(1, [
     {},
   ]);
-  let [[folderTwo], setTwo] = await messageInjection.makeFoldersWithSets(1, [
+  const [[folderTwo], setTwo] = await messageInjection.makeFoldersWithSets(1, [
     {},
   ]);
 
-  let virtFolder = messageInjection.makeVirtualFolder(
+  const virtFolder = messageInjection.makeVirtualFolder(
     [folderOne, folderTwo],
     {}
   );
@@ -156,16 +160,16 @@ add_task(async function test_virtual_folder_multi_load_no_pred() {
  * folders is persistent.
  */
 add_task(async function test_virtual_folder_multi_sortorder_persistence() {
-  let viewWrapper = make_view_wrapper();
+  const viewWrapper = make_view_wrapper();
 
-  let [[folderOne], setOne] = await messageInjection.makeFoldersWithSets(1, [
+  const [[folderOne], setOne] = await messageInjection.makeFoldersWithSets(1, [
     {},
   ]);
-  let [[folderTwo], setTwo] = await messageInjection.makeFoldersWithSets(1, [
+  const [[folderTwo], setTwo] = await messageInjection.makeFoldersWithSets(1, [
     {},
   ]);
 
-  let virtFolder = messageInjection.makeVirtualFolder(
+  const virtFolder = messageInjection.makeVirtualFolder(
     [folderOne, folderTwo],
     {}
   );
@@ -173,10 +177,95 @@ add_task(async function test_virtual_folder_multi_sortorder_persistence() {
 
   verify_messages_in_view([setOne, setTwo], viewWrapper);
   viewWrapper.showThreaded = true;
-  viewWrapper.sort(
+  viewWrapper.sort("subjectCol", Ci.nsMsgViewSortOrder.ascending);
+
+  viewWrapper.close();
+  await view_open(viewWrapper, virtFolder);
+  assert_equals(
+    viewWrapper.primarySortType,
     Ci.nsMsgViewSortType.bySubject,
-    Ci.nsMsgViewSortOrder.ascending
+    "should have remembered sort type."
   );
+  assert_equals(
+    viewWrapper.primarySortOrder,
+    Ci.nsMsgViewSortOrder.ascending,
+    "should have remembered sort order."
+  );
+  virtFolder.parent.propagateDelete(virtFolder, true);
+});
+
+/**
+ * Verify that we handle implicit secondary sorts correctly for virtual folders.
+ *
+ * When we sort first by Y, then by X, we should implicitly use Y as the
+ * secondary sort so long as that is valid.
+ */
+add_task(async function test_sort_secondary_implicit() {
+  const viewWrapper = make_view_wrapper();
+
+  const [folders, setOne] = await messageInjection.makeFoldersWithSets(2, [
+    { count: 10 },
+  ]);
+  const virtFolder = messageInjection.makeVirtualFolder(folders, {});
+  await view_open(viewWrapper, virtFolder);
+
+  verify_messages_in_view([setOne], viewWrapper);
+  viewWrapper.showThreaded = true;
+
+  viewWrapper.sort("subjectCol", Ci.nsMsgViewSortOrder.descending);
+  viewWrapper.sort("senderCol", Ci.nsMsgViewSortOrder.ascending);
+
+  const checkSorts = () => {
+    assert_equals(
+      viewWrapper.dbView.sortType,
+      Ci.nsMsgViewSortType.byAuthor,
+      "sort should be by author"
+    );
+    assert_equals(
+      viewWrapper.dbView.sortOrder,
+      Ci.nsMsgViewSortOrder.ascending,
+      "sort order should be ascending"
+    );
+    assert_equals(
+      viewWrapper.dbView.secondarySortType,
+      Ci.nsMsgViewSortType.bySubject,
+      "secondary sort should be by subject"
+    );
+    assert_equals(
+      viewWrapper.dbView.secondarySortOrder,
+      Ci.nsMsgViewSortOrder.descending,
+      "secondary sort order should be descending"
+    );
+  };
+
+  // Verify that the correct columns are used for primary and secondary sort.
+  // We verify again after refreshing the view to ensure that the setting is
+  // persistent.
+  checkSorts();
+  await view_refresh(viewWrapper);
+  checkSorts();
+  virtFolder.parent.propagateDelete(virtFolder, true);
+});
+
+/**
+ * Make sure the sort order of a virtual folder backed by multiple underlying
+ * folders is set correctly even when no messages are present.
+ */
+add_task(async function test_virtual_folder_multi_sortorder_when_empty() {
+  const viewWrapper = make_view_wrapper();
+
+  const folderOne = await messageInjection.makeEmptyFolder();
+  const folderTwo = await messageInjection.makeEmptyFolder();
+
+  const virtFolder = messageInjection.makeVirtualFolder(
+    [folderOne, folderTwo],
+    {}
+  );
+  await view_open(viewWrapper, virtFolder);
+
+  verify_empty_view(viewWrapper);
+  viewWrapper.showThreaded = true;
+  viewWrapper.sort("subjectCol", Ci.nsMsgViewSortOrder.ascending);
 
   viewWrapper.close();
   await view_open(viewWrapper, virtFolder);
@@ -198,20 +287,23 @@ add_task(async function test_virtual_folder_multi_sortorder_persistence() {
  *  correctly; one constraint.
  */
 add_task(async function test_virtual_folder_multi_load_simple_pred() {
-  let viewWrapper = make_view_wrapper();
+  const viewWrapper = make_view_wrapper();
 
-  let [[folderOne], oneSubjFoo] = await messageInjection.makeFoldersWithSets(
+  const [[folderOne], oneSubjFoo] = await messageInjection.makeFoldersWithSets(
     1,
     [{ subject: "foo" }, {}]
   );
-  let [[folderTwo], twoSubjFoo] = await messageInjection.makeFoldersWithSets(
+  const [[folderTwo], twoSubjFoo] = await messageInjection.makeFoldersWithSets(
     1,
     [{ subject: "foo" }, {}]
   );
 
-  let virtFolder = messageInjection.makeVirtualFolder([folderOne, folderTwo], {
-    subject: "foo",
-  });
+  const virtFolder = messageInjection.makeVirtualFolder(
+    [folderOne, folderTwo],
+    {
+      subject: "foo",
+    }
+  );
   await view_open(viewWrapper, virtFolder);
 
   verify_messages_in_view([oneSubjFoo, twoSubjFoo], viewWrapper);
@@ -223,20 +315,20 @@ add_task(async function test_virtual_folder_multi_load_simple_pred() {
  *  correctly; two constraints ANDed together.
  */
 add_task(async function test_virtual_folder_multi_load_complex_pred() {
-  let viewWrapper = make_view_wrapper();
+  const viewWrapper = make_view_wrapper();
 
-  let whoBar = make_person_with_word_in_name("bar");
+  const whoBar = make_person_with_word_in_name("bar");
 
-  let [[folderOne], , , oneBoth] = await messageInjection.makeFoldersWithSets(
+  const [[folderOne], , , oneBoth] = await messageInjection.makeFoldersWithSets(
     1,
     [{ subject: "foo" }, { from: whoBar }, { subject: "foo", from: whoBar }, {}]
   );
-  let [[folderTwo], , , twoBoth] = await messageInjection.makeFoldersWithSets(
+  const [[folderTwo], , , twoBoth] = await messageInjection.makeFoldersWithSets(
     1,
     [{ subject: "foo" }, { from: whoBar }, { subject: "foo", from: whoBar }, {}]
   );
 
-  let virtFolder = messageInjection.makeVirtualFolder(
+  const virtFolder = messageInjection.makeVirtualFolder(
     [folderOne, folderTwo],
     { subject: "foo", from: "bar" },
     /* and? */ true
@@ -249,17 +341,17 @@ add_task(async function test_virtual_folder_multi_load_complex_pred() {
 
 add_task(
   async function test_virtual_folder_multi_load_alotta_folders_no_pred() {
-    let viewWrapper = make_view_wrapper();
+    const viewWrapper = make_view_wrapper();
 
     const folderCount = 4;
     const messageCount = 64;
 
-    let [folders, setOne] = await messageInjection.makeFoldersWithSets(
+    const [folders, setOne] = await messageInjection.makeFoldersWithSets(
       folderCount,
       [{ count: messageCount }]
     );
 
-    let virtFolder = messageInjection.makeVirtualFolder(folders, {});
+    const virtFolder = messageInjection.makeVirtualFolder(folders, {});
     await view_open(viewWrapper, virtFolder);
 
     verify_messages_in_view([setOne], viewWrapper);
@@ -269,17 +361,17 @@ add_task(
 
 add_task(
   async function test_virtual_folder_multi_load_alotta_folders_simple_pred() {
-    let viewWrapper = make_view_wrapper();
+    const viewWrapper = make_view_wrapper();
 
     const folderCount = 16;
     const messageCount = 256;
 
-    let [folders, setOne] = await messageInjection.makeFoldersWithSets(
+    const [folders, setOne] = await messageInjection.makeFoldersWithSets(
       folderCount,
       [{ subject: "foo", count: messageCount }]
     );
 
-    let virtFolder = messageInjection.makeVirtualFolder(folders, {
+    const virtFolder = messageInjection.makeVirtualFolder(folders, {
       subject: "foo",
     });
     await view_open(viewWrapper, virtFolder);
@@ -294,24 +386,24 @@ add_task(
  *  opening another virtual folder of the same variety works without explosions.
  */
 add_task(async function test_virtual_folder_multi_load_after_load() {
-  let viewWrapper = make_view_wrapper();
+  const viewWrapper = make_view_wrapper();
 
-  let [foldersOne, oneSubjFoo] = await messageInjection.makeFoldersWithSets(2, [
-    { subject: "foo" },
-    {},
-  ]);
-  let virtOne = messageInjection.makeVirtualFolder(foldersOne, {
+  const [foldersOne, oneSubjFoo] = await messageInjection.makeFoldersWithSets(
+    2,
+    [{ subject: "foo" }, {}]
+  );
+  const virtOne = messageInjection.makeVirtualFolder(foldersOne, {
     subject: "foo",
   });
   await view_open(viewWrapper, virtOne);
   verify_messages_in_view([oneSubjFoo], viewWrapper);
 
   // use "bar" instead of "foo" to make sure constraints are properly changing
-  let [foldersTwo, twoSubjBar] = await messageInjection.makeFoldersWithSets(3, [
-    { subject: "bar" },
-    {},
-  ]);
-  let virtTwo = messageInjection.makeVirtualFolder(foldersTwo, {
+  const [foldersTwo, twoSubjBar] = await messageInjection.makeFoldersWithSets(
+    3,
+    [{ subject: "bar" }, {}]
+  );
+  const virtTwo = messageInjection.makeVirtualFolder(foldersTwo, {
     subject: "bar",
   });
   await view_open(viewWrapper, virtTwo);
@@ -333,24 +425,24 @@ add_task(async function test_virtual_folder_multi_load_after_load() {
  *  to create just a single folder.
  */
 add_task(async function test_virtual_folder_combo_load_after_load() {
-  let viewWrapper = make_view_wrapper();
+  const viewWrapper = make_view_wrapper();
 
-  let [foldersOne, oneSubjFoo] = await messageInjection.makeFoldersWithSets(1, [
-    { subject: "foo" },
-    {},
-  ]);
-  let virtOne = messageInjection.makeVirtualFolder(foldersOne, {
+  const [foldersOne, oneSubjFoo] = await messageInjection.makeFoldersWithSets(
+    1,
+    [{ subject: "foo" }, {}]
+  );
+  const virtOne = messageInjection.makeVirtualFolder(foldersOne, {
     subject: "foo",
   });
   await view_open(viewWrapper, virtOne);
   verify_messages_in_view([oneSubjFoo], viewWrapper);
 
   // use "bar" instead of "foo" to make sure constraints are properly changing
-  let [foldersTwo, twoSubjBar] = await messageInjection.makeFoldersWithSets(3, [
-    { subject: "bar" },
-    {},
-  ]);
-  let virtTwo = messageInjection.makeVirtualFolder(foldersTwo, {
+  const [foldersTwo, twoSubjBar] = await messageInjection.makeFoldersWithSets(
+    3,
+    [{ subject: "bar" }, {}]
+  );
+  const virtTwo = messageInjection.makeVirtualFolder(foldersTwo, {
     subject: "bar",
   });
   await view_open(viewWrapper, virtTwo);
@@ -369,11 +461,11 @@ add_task(async function test_virtual_folder_combo_load_after_load() {
  *  it does not get into our list of _underlyingFolders.
  */
 add_task(async function test_virtual_folder_filters_out_servers() {
-  let viewWrapper = make_view_wrapper();
+  const viewWrapper = make_view_wrapper();
 
-  let [folders] = await messageInjection.makeFoldersWithSets(2, []);
+  const [folders] = await messageInjection.makeFoldersWithSets(2, []);
   folders.push(folders[0].rootFolder);
-  let virtFolder = messageInjection.makeVirtualFolder(folders, {});
+  const virtFolder = messageInjection.makeVirtualFolder(folders, {});
   await view_open(viewWrapper, virtFolder);
 
   assert_equals(
@@ -392,20 +484,23 @@ add_task(async function test_virtual_folder_filters_out_servers() {
  *  view wrapper closes itself.
  */
 add_task(async function test_virtual_folder_underlying_folder_deleted() {
-  let viewWrapper = make_view_wrapper();
+  const viewWrapper = make_view_wrapper();
 
-  let [[folderOne]] = await messageInjection.makeFoldersWithSets(1, [
+  const [[folderOne]] = await messageInjection.makeFoldersWithSets(1, [
     { subject: "foo" },
     {},
   ]);
-  let [[folderTwo], twoSubjFoo] = await messageInjection.makeFoldersWithSets(
+  const [[folderTwo], twoSubjFoo] = await messageInjection.makeFoldersWithSets(
     1,
     [{ subject: "foo" }, {}]
   );
 
-  let virtFolder = messageInjection.makeVirtualFolder([folderOne, folderTwo], {
-    subject: "foo",
-  });
+  const virtFolder = messageInjection.makeVirtualFolder(
+    [folderOne, folderTwo],
+    {
+      subject: "foo",
+    }
+  );
   await view_open(viewWrapper, virtFolder);
 
   // this triggers the search (under the view's hood), so it's async
@@ -433,13 +528,16 @@ add_task(async function test_virtual_folder_underlying_folder_deleted() {
 
 add_task(
   async function test_virtual_folder_mail_views_unread_with_one_folder() {
-    let viewWrapper = make_view_wrapper();
+    const viewWrapper = make_view_wrapper();
 
-    let [folders, fooOne, fooTwo] = await messageInjection.makeFoldersWithSets(
-      1,
-      [{ subject: "foo 1" }, { subject: "foo 2" }, {}, {}]
-    );
-    let virtFolder = messageInjection.makeVirtualFolder(folders, {
+    const [folders, fooOne, fooTwo] =
+      await messageInjection.makeFoldersWithSets(1, [
+        { subject: "foo 1" },
+        { subject: "foo 2" },
+        {},
+        {},
+      ]);
+    const virtFolder = messageInjection.makeVirtualFolder(folders, {
       subject: "foo",
     });
 
@@ -449,7 +547,7 @@ add_task(
     verify_messages_in_view([fooOne, fooTwo], viewWrapper);
 
     // add some more things (unread!), make sure they appear.
-    let [fooThree] = await messageInjection.makeNewSetsInFolders(folders, [
+    const [fooThree] = await messageInjection.makeNewSetsInFolders(folders, [
       { subject: "foo 3" },
       {},
     ]);
@@ -474,13 +572,16 @@ add_task(
 
 add_task(
   async function test_virtual_folder_mail_views_unread_with_four_folders() {
-    let viewWrapper = make_view_wrapper();
+    const viewWrapper = make_view_wrapper();
 
-    let [folders, fooOne, fooTwo] = await messageInjection.makeFoldersWithSets(
-      4,
-      [{ subject: "foo 1" }, { subject: "foo 2" }, {}, {}]
-    );
-    let virtFolder = messageInjection.makeVirtualFolder(folders, {
+    const [folders, fooOne, fooTwo] =
+      await messageInjection.makeFoldersWithSets(4, [
+        { subject: "foo 1" },
+        { subject: "foo 2" },
+        {},
+        {},
+      ]);
+    const virtFolder = messageInjection.makeVirtualFolder(folders, {
       subject: "foo",
     });
 
@@ -490,7 +591,7 @@ add_task(
     verify_messages_in_view([fooOne, fooTwo], viewWrapper);
 
     // add some more things (unread!), make sure they appear.
-    let [fooThree] = await messageInjection.makeNewSetsInFolders(folders, [
+    const [fooThree] = await messageInjection.makeNewSetsInFolders(folders, [
       { subject: "foo 3" },
       {},
     ]);
@@ -516,14 +617,14 @@ add_task(
 // core view test, or a mozmill test, but I think the view wrapper stuff
 // is involved in some of the issues here, so this is a compromise.
 add_task(async function test_virtual_folder_mail_new_handling() {
-  let viewWrapper = make_view_wrapper();
+  const viewWrapper = make_view_wrapper();
 
-  let [folders] = await messageInjection.makeFoldersWithSets(1, [
+  const [folders] = await messageInjection.makeFoldersWithSets(1, [
     { subject: "foo 1" },
     { subject: "foo 2" },
   ]);
-  let folder = folders[0];
-  let virtFolder = messageInjection.makeVirtualFolder(folders, {
+  const folder = folders[0];
+  const virtFolder = messageInjection.makeVirtualFolder(folders, {
     subject: "foo",
   });
 
@@ -549,4 +650,284 @@ add_task(async function test_virtual_folder_mail_new_handling() {
     do_throw("saved search should not have new messages!");
   }
   virtFolder.parent.propagateDelete(virtFolder, true);
+});
+
+/* ===== Virtual Folder, Threading Modes ==== */
+/*
+ * The first three tests that verify setting the threading flags has the
+ *  expected outcome do this by creating the view from scratch with the view
+ *  flags applied.  The view threading persistence test handles making sure
+ *  that changes in threading on-the-fly work from the perspective of the
+ *  bits and what not.  None of these are tests of the view implementation's
+ *  threading/grouping logic, just sanity checking that we are doing the right
+ *  thing.
+ */
+
+add_task(async function test_virtual_folder_threading_unthreaded() {
+  const viewWrapper = make_view_wrapper();
+  // Create two maximally nested threads and spread them across the underlying
+  // folders.
+  const count = 10;
+  const setThreadOne = new SyntheticMessageSet(
+    gMessageScenarioFactory.directReply(count)
+  );
+  const setThreadTwo = new SyntheticMessageSet(
+    gMessageScenarioFactory.directReply(count)
+  );
+  const folderOne = await messageInjection.makeEmptyFolder();
+  const folderTwo = await messageInjection.makeEmptyFolder();
+  await messageInjection.addSetsToFolders(
+    [folderOne, folderTwo],
+    [setThreadOne, setThreadTwo]
+  );
+  const virtFolder = messageInjection.makeVirtualFolder(
+    [folderOne, folderTwo],
+    {}
+  );
+  await view_open(viewWrapper, virtFolder);
+
+  // verify that we are not threaded (or grouped)
+  viewWrapper.beginViewUpdate();
+  viewWrapper.showUnthreaded = true;
+  // whitebox test view flags (we've gotten them wrong before...)
+  assert_bit_not_set(
+    viewWrapper._viewFlags,
+    Ci.nsMsgViewFlagsType.kThreadedDisplay,
+    "View threaded bit should not be set."
+  );
+  assert_bit_not_set(
+    viewWrapper._viewFlags,
+    Ci.nsMsgViewFlagsType.kGroupBySort,
+    "View group-by-sort bit should not be set."
+  );
+  viewWrapper.endViewUpdate();
+  verify_messages_in_view([setThreadOne, setThreadTwo], viewWrapper);
+  verify_view_level_histogram({ 0: count * 2 }, viewWrapper);
+  virtFolder.parent.propagateDelete(virtFolder, true);
+});
+
+add_task(async function test_virtual_folder_threading_threaded() {
+  const viewWrapper = make_view_wrapper();
+  // Create two maximally nested threads and spread them across the underlying
+  // folders.
+  const count = 10;
+  const setThreadOne = new SyntheticMessageSet(
+    gMessageScenarioFactory.directReply(count)
+  );
+  const setThreadTwo = new SyntheticMessageSet(
+    gMessageScenarioFactory.directReply(count)
+  );
+  const folderOne = await messageInjection.makeEmptyFolder();
+  const folderTwo = await messageInjection.makeEmptyFolder();
+  await messageInjection.addSetsToFolders(
+    [folderOne, folderTwo],
+    [setThreadOne, setThreadTwo]
+  );
+  const virtFolder = messageInjection.makeVirtualFolder(
+    [folderOne, folderTwo],
+    {}
+  );
+  await view_open(viewWrapper, virtFolder);
+
+  // verify that we are threaded (in such a way that we can't be grouped)
+  viewWrapper.beginViewUpdate();
+  viewWrapper.showThreaded = true;
+  // whitebox test view flags (we've gotten them wrong before...)
+  assert_bit_set(
+    viewWrapper._viewFlags,
+    Ci.nsMsgViewFlagsType.kThreadedDisplay,
+    "View threaded bit should be set."
+  );
+  assert_bit_not_set(
+    viewWrapper._viewFlags,
+    Ci.nsMsgViewFlagsType.kGroupBySort,
+    "View group-by-sort bit should not be set."
+  );
+  // expand everything so our logic below works.
+  view_expand_all(viewWrapper);
+  viewWrapper.endViewUpdate();
+  verify_messages_in_view([setThreadOne, setThreadTwo], viewWrapper);
+  // blackbox test view flags: make sure IsContainer is true for the root
+  verify_view_row_at_index_is_container(viewWrapper, 0);
+  verify_view_row_at_index_is_container(viewWrapper, 10);
+  // do the histogram test to verify threading...
+  const expectedHisto = {};
+  for (let i = 0; i < count; i++) {
+    expectedHisto[i] = 2;
+  }
+  verify_view_level_histogram(expectedHisto, viewWrapper);
+  virtFolder.parent.propagateDelete(virtFolder, true);
+});
+
+add_task(async function test_virtual_folder_threading_grouped_by_sort() {
+  const viewWrapper = make_view_wrapper();
+  // Create messages that belong to the 'Last 7 Days' as well as the
+  // 'Older' bucket when sorting by date and grouping by date.
+  const count = 10;
+  const setOne = new SyntheticMessageSet(
+    new MessageGenerator().makeMessages({
+      count,
+      age: { days: 2 },
+      age_incr: { mins: 1 },
+    })
+  );
+  const setTwo = new SyntheticMessageSet(
+    new MessageGenerator().makeMessages({
+      count,
+      age: { days: 30 },
+      age_incr: { mins: 1 },
+    })
+  );
+  const folderOne = await messageInjection.makeEmptyFolder();
+  const folderTwo = await messageInjection.makeEmptyFolder();
+  await messageInjection.addSetsToFolders(
+    [folderOne, folderTwo],
+    [setOne, setTwo]
+  );
+  const virtFolder = messageInjection.makeVirtualFolder(
+    [folderOne, folderTwo],
+    {}
+  );
+  await view_open(viewWrapper, virtFolder);
+
+  // Grouped by sort sorted by date.
+  viewWrapper.beginViewUpdate();
+  viewWrapper.showGroupedBySort = true;
+  // whitebox test view flags (we've gotten them wrong before...)
+  assert_bit_set(
+    viewWrapper._viewFlags,
+    Ci.nsMsgViewFlagsType.kThreadedDisplay,
+    "View threaded bit should be set."
+  );
+  assert_bit_set(
+    viewWrapper._viewFlags,
+    Ci.nsMsgViewFlagsType.kGroupBySort,
+    "View group-by-sort bit should be set."
+  );
+  viewWrapper.sort("dateCol", Ci.nsMsgViewSortOrder.ascending);
+  viewWrapper.endViewUpdate();
+
+  // Make sure the level depths are correct ...
+  verify_view_level_histogram({ 0: 2 }, viewWrapper);
+  // ... and make sure the both rows are dummies.
+  verify_view_row_at_index_is_dummy(viewWrapper, 0);
+  verify_view_row_at_index_is_dummy(viewWrapper, 1);
+});
+
+/**
+ * Verify that we the threading modes are persisted.  We are only checking
+ *  flags here; we trust the previous tests to have done their job.
+ */
+add_task(async function test_virtual_folder_threading_persistence() {
+  const viewWrapper = make_view_wrapper();
+  // Create two maximally nested threads and spread them across the underlying
+  // folders.
+  const count = 10;
+  const setThreadOne = new SyntheticMessageSet(
+    gMessageScenarioFactory.directReply(count)
+  );
+  const setThreadTwo = new SyntheticMessageSet(
+    gMessageScenarioFactory.directReply(count)
+  );
+  const folderOne = await messageInjection.makeEmptyFolder();
+  const folderTwo = await messageInjection.makeEmptyFolder();
+  await messageInjection.addSetsToFolders(
+    [folderOne, folderTwo],
+    [setThreadOne, setThreadTwo]
+  );
+  const virtFolder = messageInjection.makeVirtualFolder(
+    [folderOne, folderTwo],
+    {}
+  );
+
+  // open the folder, set threaded mode, close it
+  await view_open(viewWrapper, virtFolder);
+  viewWrapper.showThreaded = true; // should be instantaneous
+  verify_view_row_at_index_is_container(viewWrapper, 0);
+  assert_bit_set(
+    viewWrapper._viewFlags,
+    Ci.nsMsgViewFlagsType.kThreadedDisplay,
+    "View threaded bit should be set."
+  );
+  assert_bit_not_set(
+    viewWrapper._viewFlags,
+    Ci.nsMsgViewFlagsType.kGroupBySort,
+    "View group-by-sort bit should not be set."
+  );
+  viewWrapper.close();
+
+  // open it again, make sure we're threaded, go unthreaded, close
+  viewWrapper.open(virtFolder);
+  assert_true(viewWrapper.showThreaded, "view should be threaded");
+  assert_false(viewWrapper.showUnthreaded, "view is lying about threading");
+  assert_false(viewWrapper.showGroupedBySort, "view is lying about threading");
+  verify_view_row_at_index_is_container(viewWrapper, 0);
+  assert_bit_set(
+    viewWrapper._viewFlags,
+    Ci.nsMsgViewFlagsType.kThreadedDisplay,
+    "View threaded bit should be set."
+  );
+  assert_bit_not_set(
+    viewWrapper._viewFlags,
+    Ci.nsMsgViewFlagsType.kGroupBySort,
+    "View group-by-sort bit should not be set."
+  );
+
+  viewWrapper.showUnthreaded = true;
+  assert_bit_not_set(
+    viewWrapper._viewFlags,
+    Ci.nsMsgViewFlagsType.kThreadedDisplay,
+    "View threaded bit should not be set."
+  );
+  assert_bit_not_set(
+    viewWrapper._viewFlags,
+    Ci.nsMsgViewFlagsType.kGroupBySort,
+    "View group-by-sort bit should not be set."
+  );
+  viewWrapper.close();
+
+  // open it again, make sure we're unthreaded, go grouped, close
+  viewWrapper.open(virtFolder);
+  assert_true(viewWrapper.showUnthreaded, "view should be unthreaded");
+  assert_false(viewWrapper.showThreaded, "view is lying about threading");
+  assert_false(viewWrapper.showGroupedBySort, "view is lying about threading");
+  assert_bit_not_set(
+    viewWrapper._viewFlags,
+    Ci.nsMsgViewFlagsType.kThreadedDisplay,
+    "View threaded bit should not be set."
+  );
+  assert_bit_not_set(
+    viewWrapper._viewFlags,
+    Ci.nsMsgViewFlagsType.kGroupBySort,
+    "View group-by-sort bit should not be set."
+  );
+
+  viewWrapper.showGroupedBySort = true;
+  assert_bit_set(
+    viewWrapper._viewFlags,
+    Ci.nsMsgViewFlagsType.kThreadedDisplay,
+    "View threaded bit should be set."
+  );
+  assert_bit_set(
+    viewWrapper._viewFlags,
+    Ci.nsMsgViewFlagsType.kGroupBySort,
+    "View group-by-sort bit should be set."
+  );
+  viewWrapper.close();
+
+  // open it again, make sure we're grouped.
+  viewWrapper.open(virtFolder);
+  assert_true(viewWrapper.showGroupedBySort, "view should be grouped");
+  assert_false(viewWrapper.showThreaded, "view is lying about threading");
+  assert_false(viewWrapper.showUnthreaded, "view is lying about threading");
+  assert_bit_set(
+    viewWrapper._viewFlags,
+    Ci.nsMsgViewFlagsType.kThreadedDisplay,
+    "View threaded bit should be set."
+  );
+  assert_bit_set(
+    viewWrapper._viewFlags,
+    Ci.nsMsgViewFlagsType.kGroupBySort,
+    "View group-by-sort bit should be set."
+  );
 });

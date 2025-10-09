@@ -43,9 +43,7 @@ class ProviderOmnibox extends UrlbarProvider {
   }
 
   /**
-   * Returns the type of this provider.
-   *
-   * @returns {integer} one of the types from UrlbarUtils.PROVIDER_TYPE.*
+   * @returns {Values<typeof UrlbarUtils.PROVIDER_TYPE>}
    */
   get type() {
     return UrlbarUtils.PROVIDER_TYPE.HEURISTIC;
@@ -58,10 +56,8 @@ class ProviderOmnibox extends UrlbarProvider {
    *
    * @param {UrlbarQueryContext} queryContext
    *   The query context object.
-   * @returns {boolean}
-   *   Whether this provider should be invoked for the search.
    */
-  isActive(queryContext) {
+  async isActive(queryContext) {
     if (
       queryContext.tokens[0] &&
       queryContext.tokens[0].value.length &&
@@ -71,7 +67,8 @@ class ProviderOmnibox extends UrlbarProvider {
       UrlbarUtils.substringAfter(
         queryContext.searchString,
         queryContext.tokens[0].value
-      )
+      ) &&
+      !queryContext.searchMode
     ) {
       return true;
     }
@@ -90,12 +87,10 @@ class ProviderOmnibox extends UrlbarProvider {
   /**
    * Gets the provider's priority.
    *
-   * @param {UrlbarQueryContext} queryContext
-   *   The query context object.
    * @returns {number}
    *   The provider's priority for the given query.
    */
-  getPriority(queryContext) {
+  getPriority() {
     return 0;
   }
 
@@ -156,7 +151,6 @@ class ProviderOmnibox extends UrlbarProvider {
                   queryContext.tokens[0].value,
                   UrlbarUtils.HIGHLIGHT.TYPED,
                 ],
-                blockL10n: { id: "urlbar-result-menu-dismiss-firefox-suggest" },
                 isBlockable: suggestion.deletable,
                 icon: UrlbarUtils.ICON.EXTENSION,
               }
@@ -180,15 +174,11 @@ class ProviderOmnibox extends UrlbarProvider {
     );
   }
 
-  onEngagement(isPrivate, state, queryContext, details) {
+  onEngagement(queryContext, controller, details) {
     let { result } = details;
-    if (result?.providerName != this.name) {
-      return;
-    }
-
     if (details.selType == "dismiss" && result.payload.isBlockable) {
       lazy.ExtensionSearchHandler.handleInputDeleted(result.payload.title);
-      queryContext.view.controller.removeResult(result);
+      controller.removeResult(result);
     }
   }
 }

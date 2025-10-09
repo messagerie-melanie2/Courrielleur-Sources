@@ -4,15 +4,20 @@ depth ranges as well.
 `;
 
 import { makeTestGroup } from '../../../../common/framework/test_group.js';
-import { kDepthStencilFormats, kTextureFormatInfo } from '../../../capability_info.js';
-import { GPUTest } from '../../../gpu_test.js';
+import {
+  canCopyFromAspectOfTextureFormat,
+  getBlockInfoForTextureFormat,
+  isStencilTextureFormat,
+  kDepthTextureFormats,
+} from '../../../format_info.js';
+import { AllFeaturesMaxLimitsGPUTest } from '../../../gpu_test.js';
 import {
   checkElementsBetween,
   checkElementsPassPredicate,
   CheckElementsSupplementalTableRows,
 } from '../../../util/check_contents.js';
 
-export const g = makeTestGroup(GPUTest);
+export const g = makeTestGroup(AllFeaturesMaxLimitsGPUTest);
 
 g.test('depth_clamp_and_clip')
   .desc(
@@ -35,23 +40,21 @@ have unexpected values then get drawn to the color buffer, which is later checke
   )
   .params(u =>
     u //
-      .combine('format', kDepthStencilFormats)
-      .filter(p => kTextureFormatInfo[p.format].depth)
+      .combine('format', kDepthTextureFormats)
       .combine('unclippedDepth', [undefined, false, true])
       .combine('writeDepth', [false, true])
       .combine('multisampled', [false, true])
   )
-  .beforeAllSubcases(t => {
-    const info = kTextureFormatInfo[t.params.format];
-
-    t.selectDeviceOrSkipTestCase([
-      t.params.unclippedDepth ? 'depth-clip-control' : undefined,
-      info.feature,
-    ]);
-  })
   .fn(async t => {
     const { format, unclippedDepth, writeDepth, multisampled } = t.params;
-    const info = kTextureFormatInfo[format];
+    t.skipIfTextureFormatNotSupported(format);
+    if (unclippedDepth) {
+      t.skipIfDeviceDoesNotHaveFeature('depth-clip-control');
+    }
+
+    const hasStorageBuffers = t.isCompatibility
+      ? t.device.limits.maxStorageBuffersInFragmentStage! > 0
+      : true;
 
     /** Number of depth values to test for both vertex output and frag_depth output. */
     const kNumDepthValues = 8;
@@ -90,7 +93,7 @@ have unexpected values then get drawn to the color buffer, which is later checke
 
       struct VFTest {
         @builtin(position) pos: vec4<f32>,
-        @location(0) @interpolate(flat) vertexIndex: u32,
+        @location(0) @interpolate(flat, either) vertexIndex: u32,
       };
 
       @vertex
@@ -109,7 +112,13 @@ have unexpected values then get drawn to the color buffer, which is later checke
       @group(0) @binding(0) var <storage, read_write> output: Output;
 
       fn checkZ(vf: VFTest) {
-        output.fragInputZDiff[vf.vertexIndex] = vf.pos.z - expectedFragPosZ(vf.vertexIndex);
+        ${
+          hasStorageBuffers
+            ? `
+          output.fragInputZDiff[vf.vertexIndex] = vf.pos.z - expectedFragPosZ(vf.vertexIndex);
+        `
+            : ''
+        }
       }
 
       @fragment
@@ -127,7 +136,7 @@ have unexpected values then get drawn to the color buffer, which is later checke
 
       struct VFCheck {
         @builtin(position) pos: vec4<f32>,
-        @location(0) @interpolate(flat) vertexIndex: u32,
+        @location(0) @interpolate(flat, either) vertexIndex: u32,
       };
 
       @vertex
@@ -177,7 +186,7 @@ have unexpected values then get drawn to the color buffer, which is later checke
         topology: 'point-list',
         unclippedDepth,
       },
-      depthStencil: { format, depthWriteEnabled: true },
+      depthStencil: { format, depthWriteEnabled: true, depthCompare: 'always' },
       multisample: multisampled ? { count: 4 } : undefined,
       fragment: {
         module,
@@ -202,7 +211,7 @@ have unexpected values then get drawn to the color buffer, which is later checke
       fragment: { module, entryPoint: 'fcheck', targets: [{ format: 'r8unorm' }] },
     });
 
-    const dsTexture = t.device.createTexture({
+    const dsTexture = t.createTextureTracked({
       format,
       size: [kNumTestPoints],
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
@@ -215,39 +224,42 @@ have unexpected values then get drawn to the color buffer, which is later checke
       size: [kNumTestPoints],
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
     };
-    const checkTexture = t.device.createTexture(checkTextureDesc);
+    const checkTexture = t.createTextureTracked(checkTextureDesc);
     const checkTextureView = checkTexture.createView();
     const checkTextureMSView = multisampled
-      ? t.device.createTexture({ ...checkTextureDesc, sampleCount: 4 }).createView()
+      ? t.createTextureTracked({ ...checkTextureDesc, sampleCount: 4 }).createView()
       : undefined;
 
+    const { bytesPerBlock } = getBlockInfoForTextureFormat(format);
     const dsActual =
-      !multisampled && info.bytesPerBlock
-        ? t.device.createBuffer({
-            size: kNumTestPoints * info.bytesPerBlock,
+      canCopyFromAspectOfTextureFormat(format, 'depth-only') && !multisampled && bytesPerBlock
+        ? t.createBufferTracked({
+            size: kNumTestPoints * bytesPerBlock,
             usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
           })
         : undefined;
     const dsExpected =
-      !multisampled && info.bytesPerBlock
-        ? t.device.createBuffer({
-            size: kNumTestPoints * info.bytesPerBlock,
+      canCopyFromAspectOfTextureFormat(format, 'depth-only') && !multisampled && bytesPerBlock
+        ? t.createBufferTracked({
+            size: kNumTestPoints * bytesPerBlock,
             usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
           })
         : undefined;
-    const checkBuffer = t.device.createBuffer({
+    const checkBuffer = t.createBufferTracked({
       size: kNumTestPoints,
       usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
     });
 
-    const fragInputZFailedBuffer = t.device.createBuffer({
+    const fragInputZFailedBuffer = t.createBufferTracked({
       size: 4 * kNumTestPoints,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
     });
-    const testBindGroup = t.device.createBindGroup({
-      layout: testPipeline.getBindGroupLayout(0),
-      entries: [{ binding: 0, resource: { buffer: fragInputZFailedBuffer } }],
-    });
+    const testBindGroup = hasStorageBuffers
+      ? t.device.createBindGroup({
+          layout: testPipeline.getBindGroupLayout(0),
+          entries: [{ binding: 0, resource: { buffer: fragInputZFailedBuffer } }],
+        })
+      : undefined;
 
     const enc = t.device.createCommandEncoder();
     {
@@ -258,19 +270,25 @@ have unexpected values then get drawn to the color buffer, which is later checke
           depthClearValue: 0.5, // Will see this depth value if the fragment was clipped.
           depthLoadOp: 'clear',
           depthStoreOp: 'store',
-          stencilClearValue: info.stencil ? 0 : undefined,
-          stencilLoadOp: info.stencil ? 'clear' : undefined,
-          stencilStoreOp: info.stencil ? 'discard' : undefined,
+          ...(isStencilTextureFormat(format) && {
+            stencilClearValue: 0,
+            stencilLoadOp: 'clear',
+            stencilStoreOp: 'discard',
+          }),
         },
       });
       pass.setPipeline(testPipeline);
-      pass.setBindGroup(0, testBindGroup);
+      if (hasStorageBuffers) {
+        pass.setBindGroup(0, testBindGroup);
+      }
       pass.setViewport(0, 0, kNumTestPoints, 1, kViewportMinDepth, kViewportMaxDepth);
       pass.draw(kNumTestPoints);
       pass.end();
     }
     if (dsActual) {
-      enc.copyTextureToBuffer({ texture: dsTexture }, { buffer: dsActual }, [kNumTestPoints]);
+      enc.copyTextureToBuffer({ texture: dsTexture, aspect: 'depth-only' }, { buffer: dsActual }, [
+        kNumTestPoints,
+      ]);
     }
     {
       const clearValue = [0, 0, 0, 0]; // Will see this color if the check passed.
@@ -290,9 +308,11 @@ have unexpected values then get drawn to the color buffer, which is later checke
           view: dsTextureView,
           depthLoadOp: 'load',
           depthStoreOp: 'store',
-          stencilClearValue: info.stencil ? 0 : undefined,
-          stencilLoadOp: info.stencil ? 'clear' : undefined,
-          stencilStoreOp: info.stencil ? 'discard' : undefined,
+          ...(isStencilTextureFormat(format) && {
+            stencilClearValue: 0,
+            stencilLoadOp: 'clear',
+            stencilStoreOp: 'discard',
+          }),
         },
       });
       pass.setPipeline(checkPipeline);
@@ -302,19 +322,25 @@ have unexpected values then get drawn to the color buffer, which is later checke
     }
     enc.copyTextureToBuffer({ texture: checkTexture }, { buffer: checkBuffer }, [kNumTestPoints]);
     if (dsExpected) {
-      enc.copyTextureToBuffer({ texture: dsTexture }, { buffer: dsExpected }, [kNumTestPoints]);
+      enc.copyTextureToBuffer(
+        { texture: dsTexture, aspect: 'depth-only' },
+        { buffer: dsExpected },
+        [kNumTestPoints]
+      );
     }
     t.device.queue.submit([enc.finish()]);
 
-    t.expectGPUBufferValuesPassCheck(
-      fragInputZFailedBuffer,
-      a => checkElementsBetween(a, [() => -1e-5, () => 1e-5]),
-      { type: Float32Array, typedLength: kNumTestPoints }
-    );
+    if (hasStorageBuffers) {
+      t.expectGPUBufferValuesPassCheck(
+        fragInputZFailedBuffer,
+        a => checkElementsBetween(a, [() => -1e-5, () => 1e-5]),
+        { type: Float32Array, typedLength: kNumTestPoints }
+      );
+    }
 
     const kCheckPassedValue = 0;
     const predicatePrinter: CheckElementsSupplementalTableRows = [
-      { leftHeader: 'expected ==', getValueForCell: index => kCheckPassedValue },
+      { leftHeader: 'expected ==', getValueForCell: _index => kCheckPassedValue },
     ];
     if (dsActual && dsExpected && format === 'depth32float') {
       await Promise.all([dsActual.mapAsync(GPUMapMode.READ), dsExpected.mapAsync(GPUMapMode.READ)]);
@@ -328,7 +354,7 @@ have unexpected values then get drawn to the color buffer, which is later checke
     t.expectGPUBufferValuesPassCheck(
       checkBuffer,
       a =>
-        checkElementsPassPredicate(a, (index, value) => value === kCheckPassedValue, {
+        checkElementsPassPredicate(a, (_index, value) => value === kCheckPassedValue, {
           predicatePrinter,
         }),
       { type: Uint8Array, typedLength: kNumTestPoints, method: 'map' }
@@ -351,22 +377,16 @@ to be empty.`
   )
   .params(u =>
     u //
-      .combine('format', kDepthStencilFormats)
-      .filter(p => kTextureFormatInfo[p.format].depth)
+      .combine('format', kDepthTextureFormats)
       .combine('unclippedDepth', [false, true])
       .combine('multisampled', [false, true])
   )
-  .beforeAllSubcases(t => {
-    const info = kTextureFormatInfo[t.params.format];
-
-    t.selectDeviceOrSkipTestCase([
-      t.params.unclippedDepth ? 'depth-clip-control' : undefined,
-      info.feature,
-    ]);
-  })
-  .fn(async t => {
+  .fn(t => {
     const { format, unclippedDepth, multisampled } = t.params;
-    const info = kTextureFormatInfo[format];
+    t.skipIfTextureFormatNotSupported(format);
+    if (unclippedDepth) {
+      t.skipIfDeviceDoesNotHaveFeature('depth-clip-control');
+    }
 
     const kNumDepthValues = 8;
     const kViewportMinDepth = 0.25;
@@ -387,7 +407,7 @@ to be empty.`
 
       struct VF {
         @builtin(position) pos: vec4<f32>,
-        @location(0) @interpolate(flat) vertexIndex: u32,
+        @location(0) @interpolate(flat, either) vertexIndex: u32,
       };
 
       @vertex
@@ -426,7 +446,7 @@ to be empty.`
       layout: 'auto',
       vertex: { module, entryPoint: 'vmain' },
       primitive: { topology: 'point-list' },
-      depthStencil: { format, depthWriteEnabled: true },
+      depthStencil: { format, depthWriteEnabled: true, depthCompare: 'always' },
       multisample: multisampled ? { count: 4 } : undefined,
       fragment: { module, entryPoint: 'finit', targets: [] },
     });
@@ -440,12 +460,12 @@ to be empty.`
         topology: 'point-list',
         unclippedDepth,
       },
-      depthStencil: { format, depthCompare: 'not-equal' },
+      depthStencil: { format, depthCompare: 'not-equal', depthWriteEnabled: false },
       multisample: multisampled ? { count: 4 } : undefined,
       fragment: { module, entryPoint: 'ftest', targets: [{ format: 'r8unorm' }] },
     });
 
-    const dsTexture = t.device.createTexture({
+    const dsTexture = t.createTextureTracked({
       format,
       size: [kNumDepthValues],
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
@@ -458,13 +478,13 @@ to be empty.`
       size: [kNumDepthValues],
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
     };
-    const testTexture = t.device.createTexture(testTextureDesc);
+    const testTexture = t.createTextureTracked(testTextureDesc);
     const testTextureView = testTexture.createView();
     const testTextureMSView = multisampled
-      ? t.device.createTexture({ ...testTextureDesc, sampleCount: 4 }).createView()
+      ? t.createTextureTracked({ ...testTextureDesc, sampleCount: 4 }).createView()
       : undefined;
 
-    const resultBuffer = t.device.createBuffer({
+    const resultBuffer = t.createBufferTracked({
       size: kNumDepthValues,
       usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
     });
@@ -478,9 +498,11 @@ to be empty.`
           depthClearValue: 1.0,
           depthLoadOp: 'clear',
           depthStoreOp: 'store',
-          stencilClearValue: info.stencil ? 0 : undefined,
-          stencilLoadOp: info.stencil ? 'clear' : undefined,
-          stencilStoreOp: info.stencil ? 'discard' : undefined,
+          ...(isStencilTextureFormat(format) && {
+            stencilClearValue: 0,
+            stencilLoadOp: 'clear',
+            stencilStoreOp: 'discard',
+          }),
         },
       });
       pass.setPipeline(initPipeline);
@@ -505,9 +527,11 @@ to be empty.`
           view: dsTextureView,
           depthLoadOp: 'load',
           depthStoreOp: 'store',
-          stencilClearValue: info.stencil ? 0 : undefined,
-          stencilLoadOp: info.stencil ? 'clear' : undefined,
-          stencilStoreOp: info.stencil ? 'discard' : undefined,
+          ...(isStencilTextureFormat(format) && {
+            stencilClearValue: 0,
+            stencilLoadOp: 'clear',
+            stencilStoreOp: 'discard',
+          }),
         },
       });
       pass.setPipeline(testPipeline);

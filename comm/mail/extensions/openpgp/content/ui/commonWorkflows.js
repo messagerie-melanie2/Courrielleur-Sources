@@ -6,20 +6,20 @@
 
 "use strict";
 
-var { EnigmailDialog } = ChromeUtils.import(
-  "chrome://openpgp/content/modules/dialog.jsm"
+var { EnigmailDialog } = ChromeUtils.importESModule(
+  "chrome://openpgp/content/modules/dialog.sys.mjs"
 );
-var { EnigmailKey } = ChromeUtils.import(
-  "chrome://openpgp/content/modules/key.jsm"
+var { EnigmailKey } = ChromeUtils.importESModule(
+  "chrome://openpgp/content/modules/key.sys.mjs"
 );
-var { EnigmailKeyRing } = ChromeUtils.import(
-  "chrome://openpgp/content/modules/keyRing.jsm"
+var { EnigmailKeyRing } = ChromeUtils.importESModule(
+  "chrome://openpgp/content/modules/keyRing.sys.mjs"
 );
-var { EnigmailArmor } = ChromeUtils.import(
-  "chrome://openpgp/content/modules/armor.jsm"
+var { EnigmailArmor } = ChromeUtils.importESModule(
+  "chrome://openpgp/content/modules/armor.sys.mjs"
 );
-var { MailStringUtils } = ChromeUtils.import(
-  "resource:///modules/MailStringUtils.jsm"
+var { MailStringUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailStringUtils.sys.mjs"
 );
 
 var l10n = new Localization(["messenger/openpgp/openpgp.ftl"], true);
@@ -30,7 +30,7 @@ var l10n = new Localization(["messenger/openpgp/openpgp.ftl"], true);
  * resultFlags.canceled is set to true if the user clicked cancel
  */
 function passphrasePromptCallback(win, promptString, resultFlags) {
-  let password = { value: "" };
+  const password = { value: "" };
   if (!Services.prompt.promptPassword(win, "", promptString, password)) {
     resultFlags.canceled = true;
     return "";
@@ -42,11 +42,22 @@ function passphrasePromptCallback(win, promptString, resultFlags) {
 
 /**
  * @param {nsIFile} file
+ * @param {boolean} wantSecret - Find private key block if true, public if false.
  * @returns {string} The first block of the wanted type, or empty string.
  *   Skip blocks of wrong type.
  */
 async function getKeyBlockFromFile(file, wantSecret) {
-  let contents = await IOUtils.readUTF8(file.path).catch(() => "");
+  const contents = await IOUtils.readUTF8(file.path).catch(() => "");
+  return getKeyBlock(contents, wantSecret);
+}
+
+/**
+ * @param {string} contents
+ * @param {boolean} wantSecret - Find private key block if true, public if false.
+ * @returns {string} The first block of the wanted type, or empty string.
+ *   Skip blocks of wrong type.
+ */
+function getKeyBlock(contents, wantSecret) {
   let searchOffset = 0;
 
   while (searchOffset < contents.length) {
@@ -90,35 +101,28 @@ async function EnigmailCommon_importObjectFromFile(what) {
     throw new Error(`Can't import. Invalid argument: ${what}`);
   }
 
-  let importingRevocation = what == "rev";
-  let promptStr = importingRevocation ? "import-rev-file" : "import-key-file";
-
-  let files = EnigmailDialog.filePicker(
-    window,
-    l10n.formatValueSync(promptStr),
-    "",
-    false,
-    true,
-    "*.asc",
-    "",
-    [l10n.formatValueSync("gnupg-file"), "*.asc;*.gpg;*.pgp"]
+  const title = l10n.formatValueSync(
+    what == "rev" ? "import-rev-file" : "import-key-file"
   );
-
-  if (!files.length) {
+  const fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
+  fp.init(window.browsingContext, title, Ci.nsIFilePicker.modeOpenMultiple);
+  fp.defaultExtension = "*.asc";
+  fp.appendFilter(l10n.formatValueSync("gnupg-file"), "*.asc;*.gpg;*.pgp");
+  fp.appendFilters(Ci.nsIFilePicker.filterAll);
+  const rv = await new Promise(resolve => fp.open(resolve));
+  if (rv != Ci.nsIFilePicker.returnOK || !fp.files) {
     return;
   }
 
-  for (let file of files) {
+  for (const file of fp.files) {
     if (file.fileSize > 5000000) {
       document.l10n.formatValue("file-to-big-to-import").then(value => {
-        EnigmailDialog.alert(window, value);
+        Services.prompt.alert(window, null, value);
       });
       continue;
     }
 
-    let errorMsgObj = {};
-
-    if (importingRevocation) {
+    if (what == "rev") {
       await EnigmailKeyRing.importRevFromFile(file);
       continue;
     }
@@ -129,12 +133,13 @@ async function EnigmailCommon_importObjectFromFile(what) {
     // if we don't find an ASCII block, try to import as binary.
     if (!keyBlock) {
       importBinary = true;
-      let data = await IOUtils.read(file.path);
+      const data = await IOUtils.read(file.path);
       keyBlock = MailStringUtils.uint8ArrayToByteString(data);
     }
 
+    const errorMsgObj = {};
     // Generate a preview of the imported key.
-    let preview = await EnigmailKey.getKeyListFromKeyBlock(
+    const preview = await EnigmailKey.getKeyListFromKeyBlock(
       keyBlock,
       errorMsgObj,
       true, // interactive
@@ -144,7 +149,7 @@ async function EnigmailCommon_importObjectFromFile(what) {
 
     if (!preview || !preview.length || errorMsgObj.value) {
       document.l10n.formatValue("import-keys-failed").then(value => {
-        EnigmailDialog.alert(window, value + "\n\n" + errorMsgObj.value);
+        Services.prompt.alert(window, null, value + "\n\n" + errorMsgObj.value);
       });
       continue;
     }
@@ -152,7 +157,7 @@ async function EnigmailCommon_importObjectFromFile(what) {
     if (preview.length > 0) {
       let confirmImport = false;
       let autoAcceptance = null;
-      let outParam = {};
+      const outParam = {};
       confirmImport = EnigmailDialog.confirmPubkeyImport(
         window,
         preview,
@@ -164,9 +169,9 @@ async function EnigmailCommon_importObjectFromFile(what) {
 
       if (confirmImport) {
         // import
-        let resultKeys = {};
+        const resultKeys = {};
 
-        let importExitCode = EnigmailKeyRing.importKey(
+        const importExitCode = await EnigmailKeyRing.importKeyAsync(
           window,
           false, // interactive, we already asked for confirmation
           keyBlock,
@@ -176,13 +181,16 @@ async function EnigmailCommon_importObjectFromFile(what) {
           resultKeys,
           false, // minimize
           [], // filter
-          true, // allow prompt for permissive
           autoAcceptance
         );
 
         if (importExitCode !== 0) {
           document.l10n.formatValue("import-keys-failed").then(value => {
-            EnigmailDialog.alert(window, value + "\n\n" + errorMsgObj.value);
+            Services.prompt.alert(
+              window,
+              null,
+              value + "\n\n" + errorMsgObj.value
+            );
           });
           continue;
         }

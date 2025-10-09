@@ -4,15 +4,15 @@
 
 /* import-globals-from MsgComposeCommands.js */
 
-let { MsgUtils } = ChromeUtils.import(
-  "resource:///modules/MimeMessageUtils.jsm"
+const { MsgUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MimeMessageUtils.sys.mjs"
 );
 
 var gCloudAttachmentLinkManager = {
   init() {
     this.cloudAttachments = [];
 
-    let bucket = document.getElementById("attachmentBucket");
+    const bucket = document.getElementById("attachmentBucket");
     bucket.addEventListener("attachments-removed", this);
     bucket.addEventListener("attachment-converted-to-regular", this);
     bucket.addEventListener("attachment-uploaded", this);
@@ -23,7 +23,7 @@ var gCloudAttachmentLinkManager = {
     // check to see if any of them are marked to be sent via
     // cloud, and if so, add them to our list.
     for (let i = 0; i < bucket.getRowCount(); ++i) {
-      let attachment = bucket.getItemAtIndex(i).attachment;
+      const attachment = bucket.getItemAtIndex(i).attachment;
       if (attachment && attachment.sendViaCloud) {
         this.cloudAttachments.push(attachment);
       }
@@ -38,21 +38,21 @@ var gCloudAttachmentLinkManager = {
   SaveInFolderDone() {},
 
   async handleEvent(event) {
-    let mailDoc = document.getElementById("messageEditor").contentDocument;
+    const mailDoc = document.getElementById("messageEditor").contentDocument;
 
     if (
       event.type == "attachment-renamed" ||
       event.type == "attachment-moved"
     ) {
-      let cloudFileUpload = event.target.cloudFileUpload;
+      const cloudFileUpload = event.target.cloudFileUpload;
       let items = [];
 
-      let list = mailDoc.getElementById("cloudAttachmentList");
+      const list = mailDoc.getElementById("cloudAttachmentList");
       if (list) {
         items = list.getElementsByClassName("cloudAttachmentItem");
       }
 
-      for (let item of items) {
+      for (const item of items) {
         // The original attachment is stored in the events detail property.
         if (item.dataset.contentLocation == event.detail.contentLocation) {
           item.replaceWith(await this._createNode(mailDoc, cloudFileUpload));
@@ -66,8 +66,8 @@ var gCloudAttachmentLinkManager = {
         this._insertHeader(mailDoc);
       }
 
-      let cloudFileUpload = event.target.cloudFileUpload;
-      let attachment = event.target.attachment;
+      const cloudFileUpload = event.target.cloudFileUpload;
+      const attachment = event.target.attachment;
       this.cloudAttachments.push(attachment);
       await this._insertItem(mailDoc, cloudFileUpload);
     } else if (
@@ -75,18 +75,18 @@ var gCloudAttachmentLinkManager = {
       event.type == "attachment-converted-to-regular"
     ) {
       let items = [];
-      let list = mailDoc.getElementById("cloudAttachmentList");
+      const list = mailDoc.getElementById("cloudAttachmentList");
       if (list) {
         items = list.getElementsByClassName("cloudAttachmentItem");
       }
 
-      let attachments = Array.isArray(event.detail)
+      const attachments = Array.isArray(event.detail)
         ? event.detail
         : [event.detail];
-      for (let attachment of attachments) {
+      for (const attachment of attachments) {
         // Remove the attachment from the message body.
         if (list) {
-          for (let item of items) {
+          for (const item of items) {
             if (item.dataset.contentLocation == attachment.contentLocation) {
               item.remove();
             }
@@ -94,7 +94,7 @@ var gCloudAttachmentLinkManager = {
         }
 
         // Now, remove the attachment from our internal list.
-        let index = this.cloudAttachments.indexOf(attachment);
+        const index = this.cloudAttachments.indexOf(attachment);
         if (index != -1) {
           this.cloudAttachments.splice(index, 1);
         }
@@ -118,7 +118,7 @@ var gCloudAttachmentLinkManager = {
    * @param {Document} aDocument - the document to remove the root node from
    */
   _removeRoot(aDocument) {
-    let header = aDocument.getElementById("cloudAttachmentListRoot");
+    const header = aDocument.getElementById("cloudAttachmentListRoot");
     if (header) {
       header.remove();
     }
@@ -132,7 +132,7 @@ var gCloudAttachmentLinkManager = {
    * @param {DOMNode} aNode - the node to get the textual representation from
    */
   _getHTMLRepresentation(aDocument, aNode) {
-    let tmp = aDocument.createElement("p");
+    const tmp = aDocument.createElement("p");
     tmp.appendChild(aNode);
     return tmp.innerHTML;
   },
@@ -157,7 +157,7 @@ var gCloudAttachmentLinkManager = {
    * @param {string} aColor - the CSS color string for the link
    */
   _generateLink(aDocument, aContent, aHref, aColor) {
-    let link = aDocument.createElement("a");
+    const link = aDocument.createElement("a");
     link.href = aHref;
     link.textContent = aContent;
     link.style.cssText = `color: ${aColor} !important`;
@@ -165,11 +165,11 @@ var gCloudAttachmentLinkManager = {
   },
 
   _findInsertionPoint(aDocument) {
-    let mailBody = aDocument.querySelector("body");
-    let editor = GetCurrentEditor();
-    let selection = editor.selection;
+    const mailBody = aDocument.querySelector("body");
+    const editor = GetCurrentEditor();
+    const selection = editor.selection;
 
-    let childNodes = mailBody.childNodes;
+    const childNodes = mailBody.childNodes;
     let childToInsertAfter, childIndex;
 
     // First, search for any text nodes that are immediate children of
@@ -197,10 +197,10 @@ var gCloudAttachmentLinkManager = {
     }
 
     // If there's a signature, let's get a hold of it now.
-    let signature = mailBody.querySelector(".moz-signature");
+    const signature = mailBody.querySelector(".moz-signature");
 
     // Are we replying?
-    let replyCitation = mailBody.querySelector(".moz-cite-prefix");
+    const replyCitation = mailBody.querySelector(".moz-cite-prefix");
     if (replyCitation) {
       if (gCurrentIdentity && gCurrentIdentity.replyOnTop == 0) {
         // Replying below quote - we'll select the point right before
@@ -239,7 +239,7 @@ var gCloudAttachmentLinkManager = {
     }
 
     // Are we forwarding?
-    let forwardBody = mailBody.querySelector(".moz-forward-container");
+    const forwardBody = mailBody.querySelector(".moz-forward-container");
     if (forwardBody) {
       if (forwardBody.previousSibling) {
         let nodeIndex = Array.from(childNodes).indexOf(
@@ -291,8 +291,8 @@ var gCloudAttachmentLinkManager = {
    * @param {string[]} aIDs - an array of id strings
    */
   _resetNodeIDs(aDocument, aIDs) {
-    for (let id of aIDs) {
-      let node = aDocument.getElementById(id);
+    for (const id of aIDs) {
+      const node = aDocument.getElementById(id);
       if (node) {
         node.id = "";
       }
@@ -317,33 +317,35 @@ var gCloudAttachmentLinkManager = {
       "cloudAttachmentListFooter",
     ]);
 
-    let editor = GetCurrentEditor();
-    let selection = editor.selection;
-    let originalAnchor = selection.anchorNode;
-    let originalOffset = selection.anchorOffset;
+    const editor = GetCurrentEditor();
+    const selection = editor.selection;
+    const originalAnchor = selection.anchorNode;
+    const originalOffset = selection.anchorOffset;
 
     // Save off the selection ranges so we can restore them later.
-    let ranges = [];
+    const ranges = [];
     for (let i = 0; i < selection.rangeCount; i++) {
       ranges.push(selection.getRangeAt(i));
     }
 
     this._findInsertionPoint(aDocument);
 
-    let root = editor.createElementWithDefaults("div");
-    let header = editor.createElementWithDefaults("div");
+    const root = editor.createElementWithDefaults("div");
+    const header = editor.createElementWithDefaults("div");
     let list = editor.createElementWithDefaults("div");
-    let footer = editor.createElementWithDefaults("div");
+    const footer = editor.createElementWithDefaults("div");
 
     if (gMsgCompose.composeHTML) {
-      root.style.padding = "15px";
-      root.style.backgroundColor = "#D9EDFF";
+      root.style.fontFamily = "Calibri, sans-serif";
+      root.style.color = "#18181b";
+      root.style.padding = "9px";
+      root.style.backgroundColor = "#ddeefe";
 
-      header.style.marginBottom = "15px";
+      header.style.marginBottom = "9px";
 
       list = editor.createElementWithDefaults("ul");
-      list.style.backgroundColor = "#FFFFFF";
-      list.style.padding = "15px";
+      list.style.backgroundColor = "#ffffff";
+      list.style.padding = "9px";
       list.style.listStyleType = "none";
       list.display = "inline-block";
     }
@@ -368,6 +370,15 @@ var gCloudAttachmentLinkManager = {
     if (!root.previousSibling || root.previousSibling.localName == "span") {
       root.parentNode.insertBefore(editor.document.createElement("br"), root);
     }
+    if (
+      root.nextElementSibling?.localName == "br" &&
+      root.nextElementSibling.nextElementSibling?.localName == "br" &&
+      root.nextElementSibling.nextElementSibling.nextElementSibling
+        ?.localName == "br"
+    ) {
+      // Too many <br>s. Remove one.
+      root.nextElementSibling.remove();
+    }
 
     // Remove the space, which would end up in the plain text converted
     // version.
@@ -375,7 +386,7 @@ var gCloudAttachmentLinkManager = {
     selection.collapse(originalAnchor, originalOffset);
 
     // Restore the selection ranges.
-    for (let range of ranges) {
+    for (const range of ranges) {
       selection.addRange(range);
     }
   },
@@ -387,12 +398,12 @@ var gCloudAttachmentLinkManager = {
    * @param {Document} aDocument - the document that contains the header node
    */
   async _updateAttachmentCount(aDocument) {
-    let header = aDocument.getElementById("cloudAttachmentListHeader");
+    const header = aDocument.getElementById("cloudAttachmentListHeader");
     if (!header) {
       return;
     }
 
-    let entries = aDocument.querySelectorAll(
+    const entries = aDocument.querySelectorAll(
       "#cloudAttachmentList > .cloudAttachmentItem"
     );
 
@@ -410,21 +421,21 @@ var gCloudAttachmentLinkManager = {
    * @param {Document} aDocument - the document that contains the footer node
    */
   async _updateServiceProviderLinks(aDocument) {
-    let footer = aDocument.getElementById("cloudAttachmentListFooter");
+    const footer = aDocument.getElementById("cloudAttachmentListFooter");
     if (!footer) {
       return;
     }
 
-    let providers = [];
-    let entries = aDocument.querySelectorAll(
+    const providers = [];
+    const entries = aDocument.querySelectorAll(
       "#cloudAttachmentList > .cloudAttachmentItem"
     );
-    for (let entry of entries) {
+    for (const entry of entries) {
       if (!entry.dataset.serviceUrl) {
         continue;
       }
 
-      let link_markup = this._generateLink(
+      const link_markup = this._generateLink(
         aDocument,
         entry.dataset.serviceName,
         entry.dataset.serviceUrl,
@@ -445,8 +456,8 @@ var gCloudAttachmentLinkManager = {
         }
       );
     } else if (providers.length > 1) {
-      let lastLink = providers.pop();
-      let firstLinks = providers.join(", ");
+      const lastLink = providers.pop();
+      const firstLinks = providers.join(", ");
       content = await l10nCompose.formatValue(
         "cloud-file-service-provider-footer-multiple",
         {
@@ -523,7 +534,7 @@ var gCloudAttachmentLinkManager = {
       "tooltip-password-protected-link": 6,
     };
 
-    let l10n_values = await l10nCompose.formatValues([
+    const l10n_values = await l10nCompose.formatValues([
       { id: "cloud-file-template-service-name" },
       { id: "cloud-file-template-size" },
       { id: "cloud-file-template-link" },
@@ -536,19 +547,19 @@ var gCloudAttachmentLinkManager = {
     let node = aDocument.createElement("li");
     node.style.border = "1px solid #CDCDCD";
     node.style.borderRadius = "5px";
-    node.style.marginTop = "10px";
-    node.style.marginBottom = "10px";
-    node.style.padding = "15px";
+    node.style.marginTop = "6px";
+    node.style.marginBottom = "6px";
+    node.style.padding = "9px";
     node.style.display = "grid";
     node.style.gridTemplateColumns = "0fr 1fr 0fr 0fr";
     node.style.alignItems = "center";
 
     const statsRow = (name, content, contentLink) => {
-      let entry = aDocument.createElement("span");
+      const entry = aDocument.createElement("span");
       entry.style.gridColumn = `2 / span 3`;
       entry.style.fontSize = "small";
 
-      let description = aDocument.createElement("span");
+      const description = aDocument.createElement("span");
       description.style.color = "dark-grey";
       description.textContent = `${l10n_values[locales[name]]} `;
       entry.appendChild(description);
@@ -568,25 +579,25 @@ var gCloudAttachmentLinkManager = {
       return entry;
     };
 
-    const serviceRow = () => {
-      let service = aDocument.createDocumentFragment();
-
-      let description = aDocument.createElement("span");
-      description.style.display = "none";
-      description.textContent = `${l10n_values[locales.service]} `;
-      service.appendChild(description);
-
-      let providerName = aDocument.createElement("span");
-      providerName.style.gridArea = "1 / 4";
-      providerName.style.color = "#595959";
-      providerName.style.fontSize = "small";
-      providerName.textContent = aCloudFileUpload.serviceName;
-      providerName.classList.add("cloudfile-service-name");
-      service.appendChild(providerName);
-
-      service.appendChild(aDocument.createElement("br"));
-      return service;
-    };
+    const paperclip = aDocument.createElement("div");
+    paperclip.classList.add("paperClipIcon");
+    paperclip.style.gridArea = "1 / 1";
+    paperclip.style.display = "inline-block";
+    paperclip.style.marginRight = "5px";
+    paperclip.style.width = `${iconSize}px`;
+    paperclip.style.height = `${iconSize}px`;
+    paperclip.style.backgroundSize = `${iconSize}px`;
+    if (aCloudFileUpload.downloadPasswordProtected) {
+      paperclip.title = l10n_values[locales["tooltip-password-protected-link"]];
+      paperclip.style.backgroundImage =
+        "url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAIfSURBVFhH7ZfLK0RRHMfvNd6PMV4Lj5UkO5bslJIdf4ClRw2TlY2yt2EhsZO9DYoFoiSvJBZkI6SsNMyIiLnH93vmXDF5HNe9pHzqM797fufMPb+Zc4Z7jC+QBnvgJryD93AddkH2eUop3IPiHXdgCfSEdLgLOdE+bIFFSl4zZxeRAl2HXzsn2IIZTCTAHPs4hsvhOlxz3rxRtt6GfRyzJlsucw1582zZehv2cUxEtlyGN6afkThuFa7EL7+H0wK03pek4q/xJwtYVv4YumurO+4V/3vgvwAvC5iHTfHL9zFV/Ah7J9tjE9s2r/K3YwWlD8IaREP+ExPCWBDJVl+gM3LEto0nBURHCiuNpBiflvLjqWcufDFfdVbo4ly1PVoC0xrAaz4qnLdiVjk1hVhArvDRFxuSYxQeFSAaGHzCbAuEIsf0URjtsithX3i1Cf18yewKn8kWyOu+OlWXuSpKnBRwpWKxioTXi7BCtr6Ak004BZvhJAwyAUZhb3Q0bwKxXmY+xVzyB8MNOgXwE/NrC0A+clXBDZV7iYkC7GK18AcvTZ0lOFGRE5NDWAtn4A28hdPQEToFcG1Jq4qERXAZ+DCaBXk+cIROAePQgh2whgk30SngAA7CVDgLq6Fr6P4M++Ec5PmPp6BhWAdzIA+m3BOO0C2AJ2GuMyfme0KQp6Ao5EmZf/fLDGFuI2oi+EEcUQm5JDywhpWc2MFGNIwn/WmcKhqF50UAAAAASUVORK5CYII=)";
+    } else {
+      paperclip.style.backgroundImage =
+        "url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAVFJREFUWIXtl8FKw0AQhj8EbQ/p0Ut8AVEPgYLUB+i5L6J9E0Wtr1HPgl48WU8K1Tfw4LktxUAhHvZfiMXUbdhVhB0Yms78M/NldwkJuFsD6AMjYCYfASfKBbUd4BkoKvxJmiDWKA1/AXrAtrynmIUIshJ9DXgEmt/km8oVwHEIANu8u0LTleYhBMBUzZMVmkSaSQgAe9DW1d3L/wzAqW6jJpQ3+5cA3vbW1Vz3Np6BCBABIkAE+DWAmX7TUixdynm15Wf6jf5fa3Cq60K5qrraNuHrK1kbmJcGWJ8rB9DC4yvaq5odlmK7wBB4lw8Vs9ZRzdgHwLmaXa5RM1DNmQ+AA2ABfACZgz4DctXs+QAAuMLc0dsPEJk0BXDhazjAFnCnxjlmiTuYg5kAR4rl0twCmz4BLMQAs7RVH6kLzJ17H162fczhGmO+mqa6PqXGnn8CxMN0PcC9DrQAAAAASUVORK5CYII=)";
+    }
+    if (composeHTML) {
+      node.appendChild(paperclip);
+    }
 
     // If this message is send in plain text only, do not add a link to the file
     // name.
@@ -597,62 +608,69 @@ var gCloudAttachmentLinkManager = {
         aDocument,
         aCloudFileUpload.name,
         aCloudFileUpload.url,
-        "#0F7EDB"
+        "#105bbc"
       );
       name.setAttribute("moz-do-not-send", "true");
       name.style.gridArea = "1 / 2";
     }
     name.classList.add("cloudfile-name");
     node.appendChild(name);
+    node.appendChild(aDocument.createElement("br"));
 
-    let paperclip = aDocument.createElement("img");
-    paperclip.classList.add("paperClipIcon");
-    paperclip.style.gridArea = "1 / 1";
-    paperclip.alt = "";
-    paperclip.style.marginRight = "5px";
-    paperclip.width = `${iconSize}`;
-    paperclip.height = `${iconSize}`;
-    if (aCloudFileUpload.downloadPasswordProtected) {
-      paperclip.title = l10n_values[locales["tooltip-password-protected-link"]];
-      paperclip.src =
-        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAIfSURBVFhH7ZfLK0RRHMfvNd6PMV4Lj5UkO5bslJIdf4ClRw2TlY2yt2EhsZO9DYoFoiSvJBZkI6SsNMyIiLnH93vmXDF5HNe9pHzqM797fufMPb+Zc4Z7jC+QBnvgJryD93AddkH2eUop3IPiHXdgCfSEdLgLOdE+bIFFSl4zZxeRAl2HXzsn2IIZTCTAHPs4hsvhOlxz3rxRtt6GfRyzJlsucw1582zZehv2cUxEtlyGN6afkThuFa7EL7+H0wK03pek4q/xJwtYVv4YumurO+4V/3vgvwAvC5iHTfHL9zFV/Ah7J9tjE9s2r/K3YwWlD8IaREP+ExPCWBDJVl+gM3LEto0nBURHCiuNpBiflvLjqWcufDFfdVbo4ly1PVoC0xrAaz4qnLdiVjk1hVhArvDRFxuSYxQeFSAaGHzCbAuEIsf0URjtsithX3i1Cf18yewKn8kWyOu+OlWXuSpKnBRwpWKxioTXi7BCtr6Ak004BZvhJAwyAUZhb3Q0bwKxXmY+xVzyB8MNOgXwE/NrC0A+clXBDZV7iYkC7GK18AcvTZ0lOFGRE5NDWAtn4A28hdPQEToFcG1Jq4qERXAZ+DCaBXk+cIROAePQgh2whgk30SngAA7CVDgLq6Fr6P4M++Ec5PmPp6BhWAdzIA+m3BOO0C2AJ2GuMyfme0KQp6Ao5EmZf/fLDGFuI2oi+EEcUQm5JDywhpWc2MFGNIwn/WmcKhqF50UAAAAASUVORK5CYII=";
-    } else {
-      paperclip.src =
-        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAA7DAAAOwwHHb6hkAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAVFJREFUWIXtl8FKw0AQhj8EbQ/p0Ut8AVEPgYLUB+i5L6J9E0Wtr1HPgl48WU8K1Tfw4LktxUAhHvZfiMXUbdhVhB0Yms78M/NldwkJuFsD6AMjYCYfASfKBbUd4BkoKvxJmiDWKA1/AXrAtrynmIUIshJ9DXgEmt/km8oVwHEIANu8u0LTleYhBMBUzZMVmkSaSQgAe9DW1d3L/wzAqW6jJpQ3+5cA3vbW1Vz3Np6BCBABIkAE+DWAmX7TUixdynm15Wf6jf5fa3Cq60K5qrraNuHrK1kbmJcGWJ8rB9DC4yvaq5odlmK7wBB4lw8Vs9ZRzdgHwLmaXa5RM1DNmQ+AA2ABfACZgz4DctXs+QAAuMLc0dsPEJk0BXDhazjAFnCnxjlmiTuYg5kAR4rl0twCmz4BLMQAs7RVH6kLzJ17H162fczhGmO+mqa6PqXGnn8CxMN0PcC9DrQAAAAASUVORK5CYII=";
-    }
-    node.appendChild(paperclip);
+    node.appendChild(
+      statsRow("size", gMessenger.formatFileSize(aCloudFileUpload.size))
+    );
+    node.appendChild(aDocument.createElement("br"));
 
-    let serviceIcon = aDocument.createElement("img");
+    const serviceIcon = aDocument.createElement("div");
     serviceIcon.classList.add("cloudfile-service-icon");
     serviceIcon.style.gridArea = "1 / 3";
-    serviceIcon.alt = "";
+    serviceIcon.style.display = "inline-block";
     serviceIcon.style.margin = "0 5px";
-    serviceIcon.width = `${iconSize}`;
-    serviceIcon.height = `${iconSize}`;
-    node.appendChild(serviceIcon);
+    serviceIcon.style.width = `${iconSize}px`;
+    serviceIcon.style.height = `${iconSize}px`;
+    serviceIcon.style.backgroundSize = `${iconSize}px`;
 
     if (aCloudFileUpload.serviceIcon) {
       if (!/^(chrome|moz-extension):\/\//i.test(aCloudFileUpload.serviceIcon)) {
-        serviceIcon.src = aCloudFileUpload.serviceIcon;
+        serviceIcon.style.backgroundImage =
+          "url(" + aCloudFileUpload.serviceIcon + ")";
       } else {
         try {
           // Let's use the goodness from MsgComposeCommands.js since we're
           // sitting right in a compose window.
-          serviceIcon.src = window.loadBlockedImage(
-            aCloudFileUpload.serviceIcon,
-            true
-          );
+          serviceIcon.style.backgroundImage =
+            "url(" +
+            window.loadBlockedImage(aCloudFileUpload.serviceIcon, true) +
+            ")";
         } catch (e) {
           // Couldn't load the referenced image.
           console.error(e);
         }
       }
     }
-    node.appendChild(aDocument.createElement("br"));
 
-    node.appendChild(
-      statsRow("size", gMessenger.formatFileSize(aCloudFileUpload.size))
-    );
+    node.appendChild(serviceIcon);
+
+    const serviceRow = () => {
+      const service = aDocument.createDocumentFragment();
+
+      const description = aDocument.createElement("span");
+      description.style.display = "none";
+      description.textContent = `${l10n_values[locales.service]} `;
+      service.appendChild(description);
+
+      const providerName = aDocument.createElement("span");
+      providerName.style.gridArea = "1 / 4";
+      providerName.style.color = "#595959";
+      providerName.style.fontSize = "small";
+      providerName.textContent = aCloudFileUpload.serviceName;
+      providerName.classList.add("cloudfile-service-name");
+      service.appendChild(providerName);
+
+      service.appendChild(aDocument.createElement("br"));
+      return service;
+    };
 
     if (aCloudFileUpload.downloadExpiryDate) {
       node.appendChild(
@@ -685,7 +703,7 @@ var gCloudAttachmentLinkManager = {
       node.appendChild(serviceRow());
     }
 
-    let linkElementLocaleId = aCloudFileUpload.downloadPasswordProtected
+    const linkElementLocaleId = aCloudFileUpload.downloadPasswordProtected
       ? "password-protected-link"
       : "link";
     node.appendChild(
@@ -701,7 +719,7 @@ var gCloudAttachmentLinkManager = {
     // Generate the plain text version from the HTML. The used method needs a <ul>
     // element wrapped around the <li> element to produce the correct content.
     if (!composeHTML) {
-      let ul = aDocument.createElement("ul");
+      const ul = aDocument.createElement("ul");
       ul.appendChild(node);
       node = aDocument.createElement("p");
       node.textContent = this._getTextRepresentation(ul.outerHTML);
@@ -719,9 +737,11 @@ var gCloudAttachmentLinkManager = {
    * (and not saved!), find any cloudAttachmentList* nodes that we've created,
    * and strip their IDs out.  That way, if the receiving user replies by
    * sending some BigFiles, we don't run into ID conflicts.
+   *
+   * @param {CustomEvent} aEvent - The "compose-send-message" event.
    */
   send(aEvent) {
-    let msgType = parseInt(aEvent.target.getAttribute("msgtype"));
+    const msgType = aEvent.detail.msgType;
 
     if (
       msgType == Ci.nsIMsgCompDeliverMode.Now ||
@@ -734,10 +754,10 @@ var gCloudAttachmentLinkManager = {
         "cloudAttachmentList",
         "cloudAttachmentListFooter",
       ];
-      let mailDoc = document.getElementById("messageEditor").contentDocument;
+      const mailDoc = document.getElementById("messageEditor").contentDocument;
 
-      for (let id of kIDs) {
-        let element = mailDoc.getElementById(id);
+      for (const id of kIDs) {
+        const element = mailDoc.getElementById(id);
         if (element) {
           element.removeAttribute("id");
         }

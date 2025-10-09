@@ -3,7 +3,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+
+ChromeUtils.defineESModuleGetters(this, {
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
+});
+
 var {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 const WCCR_CONTRACTID = "@mozilla.org/embeddor.implemented/web-content-handler-registrar;1";
@@ -37,14 +41,6 @@ function LOG(str) {
   }
 }
 
-function getNotificationBox(aWindow)
-{
-  return aWindow.QueryInterface(Ci.nsIInterfaceRequestor)
-                .getInterface(Ci.nsIWebNavigation)
-                .QueryInterface(Ci.nsIDocShell)
-                .chromeEventHandler.parentNode.wrappedJSObject;
-}
-
 function WebContentConverter() {
 }
 
@@ -60,7 +56,7 @@ WebContentConverter.prototype = {
     wccr.loadPreferredHandler(request);
   },
 
-  QueryInterface: XPCOMUtils.generateQI(
+  QueryInterface: ChromeUtils.generateQI(
     [Ci.nsIStreamConverter,
      Ci.nsIStreamListener])
 };
@@ -72,7 +68,7 @@ var WebContentConverterFactory = {
     return new WebContentConverter().QueryInterface(iid);
   },
 
-  QueryInterface: XPCOMUtils.generateQI(
+  QueryInterface: ChromeUtils.generateQI(
     [Ci.nsIFactory])
 };
 
@@ -126,7 +122,7 @@ ServiceInfo.prototype = {
     return this._uri.replace(/%s/gi, encodeURIComponent(uri));
   },
 
-  QueryInterface: XPCOMUtils.generateQI(
+  QueryInterface: ChromeUtils.generateQI(
     [Ci.nsIWebContentHandlerInfo])
 };
 
@@ -361,13 +357,8 @@ WebContentConverterRegistrar.prototype = {
                                                             aTitle, aContentWindow) {
     LOG("registerProtocolHandler(" + aProtocol + "," + aURIString + "," + aTitle + ")");
 
-    var win = aContentWindow;
-    var isPB = win.QueryInterface(Ci.nsIInterfaceRequestor)
-                  .getInterface(Ci.nsIWebNavigation)
-                  .QueryInterface(Ci.nsIDocShell)
-                  .QueryInterface(Ci.nsILoadContext)
-                  .usePrivateBrowsing;
-    if (isPB) {
+    var browserWindow = this._getBrowserWindowForContentWindow(aContentWindow);
+    if (PrivateBrowsingUtils.isWindowPrivate(browserWindow)) {
       // Inside the private browsing mode, we don't want to alert the user to save
       // a protocol handler.  We log it to the error console so that web developers
       // would have some way to tell what's going wrong.
@@ -443,7 +434,8 @@ WebContentConverterRegistrar.prototype = {
       buttons = [addButton];
     }
 
-    var notificationBox = getNotificationBox(aContentWindow);
+    var browserElement = this._getBrowserForContentWindow(browserWindow, aContentWindow);
+    var notificationBox = browserWindow.getBrowser().getNotificationBox(browserElement);
     notificationBox.appendNotification(message,
                                        notificationValue,
                                        notificationIcon,
@@ -470,10 +462,48 @@ WebContentConverterRegistrar.prototype = {
     if (aContentWindow) {
       var uri = this._checkAndGetURI(aURIString, aContentWindow);
 
-      this._appendFeedReaderNotification(uri, aTitle, getNotificationBox(aContentWindow));
+      var browserWindow = this._getBrowserWindowForContentWindow(aContentWindow);
+      var browserElement = this._getBrowserForContentWindow(browserWindow, aContentWindow);
+      var notificationBox = browserWindow.getBrowser().getNotificationBox(browserElement);
+      this._appendFeedReaderNotification(uri, aTitle, notificationBox);
     }
     else
       this._registerContentHandler(contentType, aURIString, aTitle);
+  },
+
+  /**
+   * Returns the browser chrome window in which the content window is in
+   */
+  _getBrowserWindowForContentWindow:
+  function WCCR__getBrowserWindowForContentWindow(aContentWindow) {
+    return aContentWindow.QueryInterface(Ci.nsIInterfaceRequestor)
+                         .getInterface(Ci.nsIWebNavigation)
+                         .QueryInterface(Ci.nsIDocShellTreeItem)
+                         .rootTreeItem
+                         .QueryInterface(Ci.nsIInterfaceRequestor)
+                         .getInterface(Ci.nsIDOMWindow)
+                         .wrappedJSObject;
+  },
+
+  /**
+   * Returns the <xul:browser> element associated with the given content
+   * window.
+   *
+   * @param aBrowserWindow
+   *        The browser window in which the content window is in.
+   * @param aContentWindow
+   *        The content window. It's possible to pass a child content window
+   *        (i.e. the content window of a frame/iframe).
+   */
+  _getBrowserForContentWindow:
+  function WCCR__getBrowserForContentWindow(aBrowserWindow, aContentWindow) {
+    // This depends on pseudo APIs of browser.js and tabbrowser.xml
+    aContentWindow = aContentWindow.top;
+    var browsers = aBrowserWindow.getBrowser().browsers;
+    for (var i = 0; i < browsers.length; ++i) {
+      if (browsers[i].contentWindow == aContentWindow)
+        return browsers[i];
+    }
   },
 
   /**
@@ -808,7 +838,7 @@ WebContentConverterRegistrar.prototype = {
   /**
    * See nsISupports
    */
-  QueryInterface: XPCOMUtils.generateQI(
+  QueryInterface: ChromeUtils.generateQI(
     [Ci.nsIWebContentConverterService,
      Ci.nsIWebContentHandlerRegistrar,
      Ci.nsIObserver,

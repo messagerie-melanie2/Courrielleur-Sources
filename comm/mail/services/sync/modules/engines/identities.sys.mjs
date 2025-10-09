@@ -3,40 +3,13 @@
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { CryptoWrapper } from "resource://services-sync/record.sys.mjs";
-import {
-  Store,
-  SyncEngine,
-  Tracker,
-} from "resource://services-sync/engines.sys.mjs";
+import { SyncEngine, Tracker } from "resource://services-sync/engines.sys.mjs";
 import { Utils } from "resource://services-sync/util.sys.mjs";
 
-const { SCORE_INCREMENT_XLARGE } = ChromeUtils.import(
-  "resource://services-sync/constants.js"
-);
-const { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
-);
+import { SCORE_INCREMENT_XLARGE } from "resource://services-sync/constants.sys.mjs";
 
-const SYNCED_IDENTITY_PROPERTIES = {
-  attachSignature: "attach_signature",
-  attachVCard: "attach_vcard",
-  autoQuote: "auto_quote",
-  catchAll: "catchAll",
-  catchAllHint: "catchAllHint",
-  composeHtml: "compose_html",
-  email: "useremail",
-  escapedVCard: "escapedVCard",
-  fullName: "fullName",
-  htmlSigFormat: "htmlSigFormat",
-  htmlSigText: "htmlSigText",
-  label: "label",
-  organization: "organization",
-  replyOnTop: "reply_on_top",
-  replyTo: "reply_to",
-  sigBottom: "sig_bottom",
-  sigOnForward: "sig_on_fwd",
-  sigOnReply: "sig_on_reply",
-};
+import { CachedStore } from "resource://services-sync/CachedStore.sys.mjs";
+import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 
 /**
  * IdentityRecord represents the state of an add-on in an application.
@@ -50,28 +23,40 @@ const SYNCED_IDENTITY_PROPERTIES = {
  * add-ons present in a Sync account.
  *
  * The record contains the following fields:
- *
  */
 export function IdentityRecord(collection, id) {
   CryptoWrapper.call(this, collection, id);
 }
 
 IdentityRecord.prototype = {
-  __proto__: CryptoWrapper.prototype,
   _logName: "Record.Identity",
 };
-Utils.deferGetSet(IdentityRecord, "cleartext", ["accounts", "prefs", "smtpID"]);
+Object.setPrototypeOf(IdentityRecord.prototype, CryptoWrapper.prototype);
+Utils.deferGetSet(IdentityRecord, "cleartext", [
+  "name",
+  "fullName",
+  "email",
+  "incomingServer",
+  "outgoingServer",
+]);
+
+IdentityRecord.from = function (data) {
+  const record = new IdentityRecord(undefined, data.id);
+  for (const [key, value] of Object.entries(data)) {
+    record.cleartext[key] = value;
+  }
+  return record;
+};
 
 export function IdentitiesEngine(service) {
   SyncEngine.call(this, "Identities", service);
 }
 
 IdentitiesEngine.prototype = {
-  __proto__: SyncEngine.prototype,
   _storeObj: IdentityStore,
   _trackerObj: IdentityTracker,
   _recordObj: IdentityRecord,
-  version: 1,
+  version: 2,
   syncPriority: 4,
 
   /*
@@ -82,56 +67,53 @@ IdentitiesEngine.prototype = {
     return this._tracker.getChangedIDs();
   },
 };
+Object.setPrototypeOf(IdentitiesEngine.prototype, SyncEngine.prototype);
 
 function IdentityStore(name, engine) {
-  Store.call(this, name, engine);
+  CachedStore.call(this, name, engine);
 }
 IdentityStore.prototype = {
-  __proto__: Store.prototype,
-
   /**
    * Create an item in the store from a record.
    *
    * This is called by the default implementation of applyIncoming(). If using
    * applyIncomingBatch(), this won't be called unless your store calls it.
    *
-   * @param record
-   *        The store record to create an item from
+   * @param {IdentityRecord} record - The store record to create an item from.
    */
   async create(record) {
-    let identity = MailServices.accounts.createIdentity();
+    await super.create(record);
+
+    const identity = MailServices.accounts.createIdentity();
     identity.UID = record.id;
 
-    for (let key of Object.keys(SYNCED_IDENTITY_PROPERTIES)) {
-      if (key in record.prefs) {
-        identity[key] = record.prefs[key];
+    identity.label = record.name;
+    identity.fullName = record.fullName;
+    identity.email = record.email;
+
+    if (record.incomingServer) {
+      const account = MailServices.accounts.accounts.find(
+        a => a.incomingServer?.UID == record.incomingServer
+      );
+      if (account) {
+        account.addIdentity(identity);
+      } else {
+        this._log.warn(
+          `Identity is for account ${record.incomingServer}, but it doesn't exist.`
+        );
       }
     }
 
-    if (record.smtpID) {
-      let smtpServer = MailServices.smtp.servers.find(
-        s => s.UID == record.smtpID
+    if (record.outgoingServer) {
+      const smtpServer = MailServices.outgoingServer.servers.find(
+        s => s.UID == record.outgoingServer
       );
       if (smtpServer) {
         identity.smtpServerKey = smtpServer.key;
       } else {
         this._log.warn(
-          `Identity uses SMTP server ${record.smtpID}, but it doesn't exist.`
+          `Identity uses SMTP server ${record.outgoingServer}, but it doesn't exist.`
         );
-      }
-    }
-
-    for (let { id, isDefault } of record.accounts) {
-      let account = MailServices.accounts.accounts.find(
-        a => a.incomingServer?.UID == id
-      );
-      if (account) {
-        account.addIdentity(identity);
-        if (isDefault) {
-          account.defaultIdentity = identity;
-        }
-      } else {
-        this._log.warn(`Identity is for account ${id}, but it doesn't exist.`);
       }
     }
   },
@@ -142,11 +124,11 @@ IdentityStore.prototype = {
    * This is called by the default implementation of applyIncoming(). If using
    * applyIncomingBatch(), this won't be called unless your store calls it.
    *
-   * @param record
-   *        The store record to delete an item from
+   * @param {IdentityRecord} record - The store record to delete an item from.
    */
   async remove(record) {
-    let identity = MailServices.accounts.allIdentities.find(
+    await super.remove(record);
+    const identity = MailServices.accounts.allIdentities.find(
       i => i.UID == record.id
     );
     if (!identity) {
@@ -154,8 +136,10 @@ IdentityStore.prototype = {
       return;
     }
 
-    for (let server of MailServices.accounts.getServersForIdentity(identity)) {
-      let account = MailServices.accounts.FindAccountForServer(server);
+    for (const server of MailServices.accounts.getServersForIdentity(
+      identity
+    )) {
+      const account = MailServices.accounts.findAccountForServer(server);
       account.removeIdentity(identity);
       // Removing the identity from one account should destroy it.
       // No need to continue.
@@ -169,11 +153,12 @@ IdentityStore.prototype = {
    * This is called by the default implementation of applyIncoming(). If using
    * applyIncomingBatch(), this won't be called unless your store calls it.
    *
-   * @param record
-   *        The record to use to update an item from
+   * @param {IdentityRecord} record - The record to use to update an item from.
    */
   async update(record) {
-    let identity = MailServices.accounts.allIdentities.find(
+    await super.update(record);
+
+    const identity = MailServices.accounts.allIdentities.find(
       i => i.UID == record.id
     );
     if (!identity) {
@@ -181,68 +166,34 @@ IdentityStore.prototype = {
       return;
     }
 
-    for (let key of Object.keys(SYNCED_IDENTITY_PROPERTIES)) {
-      if (key in record.prefs) {
-        identity[key] = record.prefs[key];
-      }
-    }
-
-    if (record.smtpID) {
-      let smtpServer = MailServices.smtp.servers.find(
-        s => s.UID == record.smtpID
+    const incomingServer =
+      MailServices.accounts.getServersForIdentity(identity)[0];
+    if (incomingServer?.UID != record.incomingServer) {
+      throw new Error(
+        `Refusing to change incoming server from "${incomingServer?.UID}" to "${record.incomingServer}"`
       );
-      if (smtpServer) {
-        identity.smtpServerKey = smtpServer.key;
-      } else {
-        this._log.warn(
-          `Identity uses SMTP server ${record.smtpID}, but it doesn't exist.`
-        );
-      }
-    } else {
-      identity.smtpServerKey = null;
     }
 
-    for (let { id, isDefault } of record.accounts) {
-      let account = MailServices.accounts.accounts.find(
-        a => a.incomingServer?.UID == id
-      );
-      if (account) {
-        if (!account.identities.includes(identity)) {
-          account.addIdentity(identity);
-        }
-        if (isDefault && account.defaultIdentity != identity) {
-          account.defaultIdentity = identity;
-        }
-      } else {
-        this._log.warn(`Identity is for account ${id}, but it doesn't exist.`);
-      }
-    }
-  },
+    identity.label = record.name;
+    identity.fullName = record.fullName;
+    identity.email = record.email;
 
-  /**
-   * Determine whether a record with the specified ID exists.
-   *
-   * Takes a string record ID and returns a booleans saying whether the record
-   * exists.
-   *
-   * @param  id
-   *         string record ID
-   * @return boolean indicating whether record exists locally
-   */
-  async itemExists(id) {
-    return id in (await this.getAllIDs());
+    const outgoingServer = MailServices.outgoingServer.servers.find(
+      s => s.UID == record.outgoingServer
+    );
+    identity.smtpServerKey = outgoingServer?.key;
   },
 
   /**
    * Obtain the set of all known record IDs.
    *
-   * @return Object with ID strings as keys and values of true. The values
-   *         are ignored.
+   * @returns {object} Object with ID strings as keys and values of true.
+   *   The values are ignored.
    */
   async getAllIDs() {
-    let ids = {};
-    for (let i of MailServices.accounts.allIdentities) {
-      let servers = MailServices.accounts.getServersForIdentity(i);
+    const ids = await super.getAllIDs();
+    for (const i of MailServices.accounts.allIdentities) {
+      const servers = MailServices.accounts.getServersForIdentity(i);
       if (servers.find(s => ["imap", "pop3"].includes(s.type))) {
         ids[i.UID] = true;
       }
@@ -257,61 +208,61 @@ IdentityStore.prototype = {
    * the store. If the ID is not known, the record should be created with the
    * delete field set to true.
    *
-   * @param  id
-   *         string record ID
-   * @param  collection
-   *         Collection to add record to. This is typically passed into the
-   *         constructor for the newly-created record.
-   * @return record type for this engine
+   * @param {string} id - String record ID.
+   * @param {CryptoCollection} collection - Collection to add record to. This
+   *   is typically passed into the constructor for the newly-created record.
+   * @returns {IdentityRecord} record type for this engine.
    */
   async createRecord(id, collection) {
-    let record = new IdentityRecord(collection, id);
+    const record = new IdentityRecord(collection, id);
 
-    let identity = MailServices.accounts.allIdentities.find(i => i.UID == id);
+    const data = await super.getCreateRecordData(id);
+    const identity = MailServices.accounts.allIdentities.find(i => i.UID == id);
 
     // If we don't know about this ID, mark the record as deleted.
-    if (!identity) {
+    if (!identity && !data) {
       record.deleted = true;
       return record;
     }
 
-    record.accounts = [];
-    for (let server of MailServices.accounts.getServersForIdentity(identity)) {
-      let account = MailServices.accounts.FindAccountForServer(server);
-      if (account) {
-        record.accounts.push({
-          id: server.UID,
-          isDefault: account.defaultIdentity == identity,
-        });
+    if (data) {
+      for (const [key, value] of Object.entries(data)) {
+        record.cleartext[key] = value;
       }
     }
 
-    record.prefs = {};
-    for (let key of Object.keys(SYNCED_IDENTITY_PROPERTIES)) {
-      record.prefs[key] = identity[key];
-    }
+    if (identity) {
+      record.name = identity.label;
+      record.fullName = identity.fullName;
+      record.email = identity.email;
 
-    if (identity.smtpServerKey) {
-      let smtpServer = MailServices.smtp.getServerByIdentity(identity);
-      record.smtpID = smtpServer.UID;
-    }
+      record.incomingServer =
+        MailServices.accounts.getServersForIdentity(identity)[0]?.UID;
+      if (identity.smtpServerKey) {
+        const smtpServer =
+          MailServices.outgoingServer.getServerByIdentity(identity);
+        record.outgoingServer = smtpServer.UID;
+      }
 
+      super.update(record);
+    }
     return record;
   },
 };
+Object.setPrototypeOf(IdentityStore.prototype, CachedStore.prototype);
 
 function IdentityTracker(name, engine) {
   Tracker.call(this, name, engine);
 }
 IdentityTracker.prototype = {
-  __proto__: Tracker.prototype,
-
   _changedIDs: new Set(),
-  _ignoreAll: false,
+  ignoreAll: false,
+
+  _watchedPrefs: ["useremail", "fullName", "label", "smtpServer"],
 
   async getChangedIDs() {
-    let changes = {};
-    for (let id of this._changedIDs) {
+    const changes = {};
+    for (const id of this._changedIDs) {
       changes[id] = 0;
     }
     return changes;
@@ -321,68 +272,44 @@ IdentityTracker.prototype = {
     this._changedIDs.clear();
   },
 
-  get ignoreAll() {
-    return this._ignoreAll;
-  },
-
-  set ignoreAll(value) {
-    this._ignoreAll = value;
-  },
-
   onStart() {
     Services.prefs.addObserver("mail.identity.", this);
     Services.obs.addObserver(this, "account-identity-added");
     Services.obs.addObserver(this, "account-identity-removed");
-    Services.obs.addObserver(this, "account-default-identity-changed");
   },
 
   onStop() {
     Services.prefs.removeObserver("mail.account.", this);
     Services.obs.removeObserver(this, "account-identity-added");
     Services.obs.removeObserver(this, "account-identity-removed");
-    Services.obs.removeObserver(this, "account-default-identity-changed");
   },
 
   observe(subject, topic, data) {
-    if (this._ignoreAll) {
+    if (this.ignoreAll) {
       return;
     }
 
-    let markAsChanged = identity => {
+    const markAsChanged = identity => {
       if (identity && !this._changedIDs.has(identity.UID)) {
         this._changedIDs.add(identity.UID);
         this.score = SCORE_INCREMENT_XLARGE;
       }
     };
 
-    if (
-      ["account-identity-added", "account-identity-removed"].includes(topic)
-    ) {
+    if (topic == "account-identity-added") {
       markAsChanged(subject.QueryInterface(Ci.nsIMsgIdentity));
       return;
     }
-
-    if (topic == "account-default-identity-changed") {
-      // The default identity has changed, update the default identity and
-      // the previous one, which will now be second on the list.
-      let [newDefault, oldDefault] = Services.prefs
-        .getStringPref(`mail.account.${data}.identities`)
-        .split(",");
-      if (newDefault) {
-        markAsChanged(MailServices.accounts.getIdentity(newDefault));
-      }
-      if (oldDefault) {
-        markAsChanged(MailServices.accounts.getIdentity(oldDefault));
-      }
+    if (topic == "account-identity-removed") {
+      subject.QueryInterface(Ci.nsIMsgIdentity);
+      this.engine._store.markDeleted(subject.UID);
+      markAsChanged(subject);
       return;
     }
 
-    let idKey = data.split(".")[2];
-    let prefName = data.substring(idKey.length + 15);
-    if (
-      prefName != "smtpServer" &&
-      !Object.values(SYNCED_IDENTITY_PROPERTIES).includes(prefName)
-    ) {
+    const idKey = data.split(".")[2];
+    const prefName = data.substring(idKey.length + 15);
+    if (!this._watchedPrefs.includes(prefName)) {
       return;
     }
 
@@ -392,3 +319,4 @@ IdentityTracker.prototype = {
     );
   },
 };
+Object.setPrototypeOf(IdentityTracker.prototype, Tracker.prototype);

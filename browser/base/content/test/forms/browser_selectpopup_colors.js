@@ -255,7 +255,7 @@ function rgbaToString(parsedColor) {
   return `rgba(${r}, ${g}, ${b}, ${a})`;
 }
 
-function testOptionColors(test, index, item, menulist) {
+function testOptionColors(test, index, item) {
   // The label contains a JSON string of the expected colors for
   // `color` and `background-color`.
   let expected = JSON.parse(item.label);
@@ -414,28 +414,27 @@ async function testSelectColors(selectID, itemCount, options) {
       base = getComputedStyle(selectPopup).backgroundColor;
     }
     info("Parsing background color: " + base);
-    let [, /* unused */ bR, bG, bB] = base.match(/rgb\((\d+), (\d+), (\d+)\)/);
-    bR = parseInt(bR, 10);
-    bG = parseInt(bG, 10);
-    bB = parseInt(bB, 10);
+    let b = InspectorUtils.colorToRGBA(base);
     let topCoat = getComputedStyle(arrowSB).backgroundImage;
     if (topCoat == "none") {
       is(
-        `rgb(${bR}, ${bG}, ${bB})`,
+        b.a == 1
+          ? `rgb(${b.r}, ${b.g}, ${b.b})`
+          : `rgba(${b.r}, ${b.g}, ${b.b}, ${b.a})`,
         options.selectBgColor,
         selectID + " popup has expected background color (top coat)"
       );
     } else {
-      let [, , /* unused */ /* unused */ tR, tG, tB, tA] = topCoat.match(
+      let [, , tR, tG, tB, tA] = topCoat.match(
         /(rgba?\((\d+), (\d+), (\d+)(?:, (0\.\d+))?\)), \1/
       );
       tR = parseInt(tR, 10);
       tG = parseInt(tG, 10);
       tB = parseInt(tB, 10);
       tA = parseFloat(tA) || 1;
-      let actualR = Math.round(tR * tA + bR * (1 - tA));
-      let actualG = Math.round(tG * tA + bG * (1 - tA));
-      let actualB = Math.round(tB * tA + bB * (1 - tA));
+      let actualR = Math.round(tR * tA + b.r * (1 - tA));
+      let actualG = Math.round(tG * tA + b.g * (1 - tA));
+      let actualB = Math.round(tB * tA + b.b * (1 - tA));
       is(
         `rgb(${actualR}, ${actualG}, ${actualB})`,
         options.selectBgColor,
@@ -793,7 +792,7 @@ add_task(async function test_scrollbar_props() {
   BrowserTestUtils.removeTab(tab);
 });
 
-if (AppConstants.isPlatformAndVersionAtLeast("win", "10")) {
+if (AppConstants.platform == "win") {
   add_task(async function test_darkmode() {
     let lightSelectColor = rgbaToString(
       InspectorUtils.colorToRGBA("MenuText", document)

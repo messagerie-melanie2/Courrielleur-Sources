@@ -11,8 +11,8 @@
  * mangling the message.
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var server;
@@ -39,27 +39,17 @@ msll.prototype = {
   _startedSending: false,
 
   // nsIMsgSendLaterListener
-  onStartSending(aTotalMessageCount) {
+  onStartSending() {
     this._initialTotal = 1;
     Assert.equal(msgSendLater.sendingMessages, true);
   },
-  onMessageStartSending(
-    aCurrentMessage,
-    aTotalMessageCount,
-    aMessageHeader,
-    aIdentity
-  ) {
+  onMessageStartSending() {
     this._startedSending = true;
   },
-  onMessageSendProgress(
-    aCurrentMessage,
-    aTotalMessageCount,
-    aMessageSendPercent,
-    aMessageCopyPercent
-  ) {
+  onMessageSendProgress() {
     // XXX Enable this function
   },
-  onMessageSendError(aCurrentMessage, aMessageHeader, aStatus, aMsg) {
+  onMessageSendError(aCurrentMessage, aMessageHeader, aStatus) {
     do_throw(
       "onMessageSendError should not have been called, status: " + aStatus
     );
@@ -94,7 +84,7 @@ msll.prototype = {
     } finally {
       server.stop();
 
-      var thread = gThreadManager.currentThread;
+      var thread = Services.tm.currentThread;
       while (thread.hasPendingEvents()) {
         thread.processNextEvent(true);
       }
@@ -113,7 +103,7 @@ function OnStopCopy(aStatus) {
     // Check this is false before we start sending
     Assert.equal(msgSendLater.sendingMessages, false);
 
-    let folder = msgSendLater.getUnsentMessagesFolder(identity);
+    const folder = msgSendLater.getUnsentMessagesFolder(identity);
 
     // Check we have a message in the unsent message folder
     Assert.equal(folder.getTotalMessages(false), 1);
@@ -141,7 +131,7 @@ function OnStopCopy(aStatus) {
   } finally {
     server.stop();
 
-    var thread = gThreadManager.currentThread;
+    var thread = Services.tm.currentThread;
     while (thread.hasPendingEvents()) {
       thread.processNextEvent(true);
     }
@@ -160,7 +150,7 @@ function sendMessageLater() {
   try {
     // Start the fake SMTP server
     server.start();
-    smtpServer.port = server.port;
+    smtpServer.QueryInterface(Ci.nsISmtpServer).port = server.port;
 
     // A test to check that we are sending files correctly, including checking
     // what the server receives and what we output.
@@ -185,7 +175,7 @@ function sendMessageLater() {
   } finally {
     server.stop();
 
-    var thread = gThreadManager.currentThread;
+    var thread = Services.tm.currentThread;
     while (thread.hasPendingEvents()) {
       thread.processNextEvent(true);
     }
@@ -205,8 +195,8 @@ add_task(async function run_the_test() {
 
   MailServices.accounts.setSpecialFolders();
 
-  let account = MailServices.accounts.createAccount();
-  let incomingServer = MailServices.accounts.createIncomingServer(
+  const account = MailServices.accounts.createAccount();
+  const incomingServer = MailServices.accounts.createIncomingServer(
     "test",
     "localhost",
     "pop3"
@@ -231,8 +221,6 @@ add_task(async function run_the_test() {
     "@mozilla.org/messengercompose/composefields;1"
   ].createInstance(Ci.nsIMsgCompFields);
 
-  // Setting the compFields sender and recipient to any value is required to
-  // survive mime_sanity_check_fields in nsMsgCompUtils.cpp.
   // Sender and recipient are required for sendMessageFile but SMTP
   // transaction values will be used directly from mail body.
   compFields.from = "irrelevant@foo.invalid";

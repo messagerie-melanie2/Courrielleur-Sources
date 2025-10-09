@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| shell-option(--enable-temporal) skip-if(!this.hasOwnProperty('Temporal')||!xulRuntime.shell) -- Temporal is not enabled unconditionally, requires shell-options
 // Copyright (C) 2021 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -9,24 +9,14 @@ includes: [temporalHelpers.js]
 features: [Temporal]
 ---*/
 
-const customCalendar = {
-  era() { return undefined; },
-  eraYear() { return undefined; },
-  year() { return 1900; },
-  month() { return 2; },
-  monthCode() { return "M02"; },
-  day() { return 5; },
-  toString() { return "custom-calendar"; },
-};
-
 TemporalHelpers.checkSubclassingIgnored(
   Temporal.PlainDate,
   [2000, 5, 2],
   "withCalendar",
-  [customCalendar],
+  ["iso8601"],
   (result) => {
-    TemporalHelpers.assertPlainDate(result, 1900, 2, "M02", 5);
-    assert.sameValue(result.calendar, customCalendar, "calendar result");
+    TemporalHelpers.assertPlainDate(result, 2000, 5, "M05", 2);
+    assert.sameValue(result.calendarId, "iso8601", "calendar result");
   },
 );
 

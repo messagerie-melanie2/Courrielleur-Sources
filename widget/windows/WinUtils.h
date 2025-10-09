@@ -33,12 +33,10 @@
 #include "nsIDownloader.h"
 #include "nsIURI.h"
 #include "nsIWidget.h"
-#include "nsIThread.h"
+#include "nsWindowsHelpers.h"
 
 #include "mozilla/Attributes.h"
 #include "mozilla/EventForwards.h"
-#include "mozilla/HalScreenConfiguration.h"
-#include "mozilla/HashTable.h"
 #include "mozilla/LazyIdleThread.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Vector.h"
@@ -46,37 +44,15 @@
 #include "mozilla/WindowsProcessMitigations.h"
 #include "mozilla/gfx/2D.h"
 
-// Starting with version 10.0.22621.0 of the Windows SDK the AR_STATE enum and
-// types are only defined when building for Windows 8 instead of Windows 7
-// (although they are always defined for MinGW)
-#if (WDK_NTDDI_VERSION >= 0x0A00000C) && (WINVER < 0x0602) && \
-    (!defined(__MINGW32__))
-
-enum tagAR_STATE {
-  AR_ENABLED = 0x0,
-  AR_DISABLED = 0x1,
-  AR_SUPPRESSED = 0x2,
-  AR_REMOTESESSION = 0x4,
-  AR_MULTIMON = 0x8,
-  AR_NOSENSOR = 0x10,
-  AR_NOT_SUPPORTED = 0x20,
-  AR_DOCKED = 0x40,
-  AR_LAPTOP = 0x80
-};
-
-typedef enum tagAR_STATE AR_STATE;
-
-using PAR_STATE = enum tagAR_STATE*;
-
-#endif  // (WDK_NTDDI_VERSION >= 0x0A00000C) && (WINVER < 0x0602)
-
 /**
  * NS_INLINE_DECL_IUNKNOWN_REFCOUNTING should be used for defining and
- * implementing AddRef() and Release() of IUnknown interface.
- * This depends on xpcom/base/nsISupportsImpl.h.
+ * implementing AddRef() and Release() of IUnknown interface and mRefCnt.
+ * NS_INLINE_DECL_IUNKNOWN_ADDREF_RELEASE should be used for overriding
+ * AddRef() and Release() of IUnknown interface.
+ * These depend on xpcom/base/nsISupportsImpl.h.
  */
 
-#define NS_INLINE_DECL_IUNKNOWN_REFCOUNTING(_class)                         \
+#define NS_INLINE_DECL_IUNKNOWN_ADDREF_RELEASE(_class)                      \
  public:                                                                    \
   STDMETHODIMP_(ULONG) AddRef() {                                           \
     MOZ_ASSERT_TYPE_OK_FOR_REFCOUNTING(_class)                              \
@@ -99,11 +75,15 @@ using PAR_STATE = enum tagAR_STATE*;
       return 0;                                                             \
     }                                                                       \
     return static_cast<ULONG>(mRefCnt.get());                               \
-  }                                                                         \
-                                                                            \
- protected:                                                                 \
-  nsAutoRefCnt mRefCnt;                                                     \
-  NS_DECL_OWNINGTHREAD                                                      \
+  }
+
+#define NS_INLINE_DECL_IUNKNOWN_REFCOUNTING(_class) \
+ public:                                            \
+  NS_INLINE_DECL_IUNKNOWN_ADDREF_RELEASE(_class)    \
+                                                    \
+ protected:                                         \
+  nsAutoRefCnt mRefCnt;                             \
+  NS_DECL_OWNINGTHREAD                              \
  public:
 
 class nsWindow;
@@ -320,34 +300,6 @@ class WinUtils {
   static void WaitForMessage(DWORD aTimeoutMs = INFINITE);
 
   /**
-   * Gets the value of a string-typed registry value.
-   *
-   * @param aRoot The registry root to search in.
-   * @param aKeyName The name of the registry key to open.
-   * @param aValueName The name of the registry value in the specified key whose
-   *   value is to be retrieved.  Can be null, to retrieve the key's unnamed/
-   *   default value.
-   * @param aBuffer The buffer into which to store the string value.  Can be
-   *   null, in which case the return value indicates just whether the value
-   *   exists.
-   * @param aBufferLength The size of aBuffer, in bytes.
-   * @return Whether the value exists and is a string.
-   */
-  static bool GetRegistryKey(HKEY aRoot, char16ptr_t aKeyName,
-                             char16ptr_t aValueName, wchar_t* aBuffer,
-                             DWORD aBufferLength);
-
-  /**
-   * Checks whether the registry key exists in either 32bit or 64bit branch on
-   * the environment.
-   *
-   * @param aRoot The registry root of aName.
-   * @param aKeyName The name of the registry key to check.
-   * @return TRUE if it exists and is readable.  Otherwise, FALSE.
-   */
-  static bool HasRegistryKey(HKEY aRoot, char16ptr_t aKeyName);
-
-  /**
    * GetTopLevelHWND() returns a window handle of the top level window which
    * aWnd belongs to.  Note that the result may not be our window, i.e., it
    * may not be managed by nsWindow.
@@ -360,7 +312,7 @@ class WinUtils {
    * |                         |         TRUE          |         FALSE         |
    + +-----------------+-------+-----------------------+-----------------------+
    * |                 |       |  * an independent top level window            |
-   * |                 | TRUE  |  * a pupup window (WS_POPUP)                  |
+   * |                 | TRUE  |  * a popup window (WS_POPUP)                  |
    * |                 |       |  * an owned top level window (like dialog)    |
    * | aStopIfNotChild +-------+-----------------------+-----------------------+
    * |                 |       |  * independent window | * only an independent |
@@ -385,11 +337,6 @@ class WinUtils {
    * No AddRef is performed. May not be used off of the main thread.
    */
   static nsWindow* GetNSWindowPtr(HWND aWnd);
-
-  /**
-   * GetMonitorCount() returns count of monitors on the environment.
-   */
-  static int32_t GetMonitorCount();
 
   /**
    * IsOurProcessWindow() returns TRUE if aWnd belongs our process.
@@ -437,19 +384,6 @@ class WinUtils {
   }
 
   /**
-   * GetInternalMessage() converts a native message to an internal message.
-   * If there is no internal message for the given native message, returns
-   * the native message itself.
-   */
-  static UINT GetInternalMessage(UINT aNativeMessage);
-
-  /**
-   * GetNativeMessage() converts an internal message to a native message.
-   * If aInternalMessage is a native message, returns the native message itself.
-   */
-  static UINT GetNativeMessage(UINT aInternalMessage);
-
-  /**
    * GetMouseInputSource() returns a pointing device information.  The value is
    * one of MouseEvent_Binding::MOZ_SOURCE_*.  This method MUST be called during
    * mouse message handling.
@@ -473,6 +407,8 @@ class WinUtils {
    * returns the LayoutDeviceIntRegion.
    */
   static LayoutDeviceIntRegion ConvertHRGNToRegion(HRGN aRgn);
+  /** Performs the inverse of ConvertHRGNToRegion. */
+  static nsAutoRegion RegionToHRGN(const LayoutDeviceIntRegion&);
 
   /**
    * ToIntRect converts a Windows RECT to a LayoutDeviceIntRect.
@@ -481,6 +417,8 @@ class WinUtils {
    * returns the LayoutDeviceIntRect.
    */
   static LayoutDeviceIntRect ToIntRect(const RECT& aRect);
+  /** Performs the inverse of ToIntRect */
+  static RECT ToWinRect(const LayoutDeviceIntRect& aRect);
 
   /**
    * Returns true if the context or IME state is enabled.  Otherwise, false.
@@ -518,6 +456,11 @@ class WinUtils {
   static PointerCapabilities GetPrimaryPointerCapabilities();
   // For any-pointer and any-hover media queries features.
   static PointerCapabilities GetAllPointerCapabilities();
+
+  // Returns whether the system has any active device for each pointer type.
+  static bool SystemHasMouse();
+  static bool SystemHasTouch();
+  static bool SystemHasPen();
 
   /**
    * Fully resolves a path to its final path name. So if path contains
@@ -607,6 +550,11 @@ class WinUtils {
 
   static bool GetClassName(HWND aHwnd, nsAString& aName);
 
+  static bool MicaAvailable();
+  static bool MicaEnabled();
+  static bool MicaPopupsEnabled();
+  static void UpdateMicaInAllWindows();
+
   static void EnableWindowOcclusion(const bool aEnable);
 
   static bool GetTimezoneName(wchar_t* aBuffer);
@@ -618,6 +566,10 @@ class WinUtils {
 
   static bool GetAutoRotationState(AR_STATE* aRotationState);
 
+  static void GetClipboardFormatAsString(UINT aFormat, nsAString& aOutput);
+
+  static nsresult GetProcessImageName(DWORD aProcessId, nsAString& aName);
+
  private:
   static WhitelistVec BuildWhitelist();
 
@@ -627,26 +579,7 @@ class WinUtils {
 #endif
 };
 
-#ifdef MOZ_PLACES
-class AsyncFaviconDataReady final : public nsIFaviconDataCallback {
- public:
-  NS_DECL_ISUPPORTS
-  NS_DECL_NSIFAVICONDATACALLBACK
-
-  AsyncFaviconDataReady(nsIURI* aNewURI, RefPtr<LazyIdleThread>& aIOThread,
-                        const bool aURLShortcut,
-                        already_AddRefed<nsIRunnable> aRunnable);
-  nsresult OnFaviconDataNotAvailable(void);
-
- private:
-  ~AsyncFaviconDataReady() {}
-
-  nsCOMPtr<nsIURI> mNewURI;
-  RefPtr<LazyIdleThread> mIOThread;
-  nsCOMPtr<nsIRunnable> mRunnable;
-  const bool mURLShortcut;
-};
-#endif
+typedef MozPromise<nsString, nsresult, true> ObtainCachedIconFileAsyncPromise;
 
 /**
  * Asynchronously tries add the list to the build
@@ -658,10 +591,12 @@ class AsyncEncodeAndWriteIcon : public nsIRunnable {
 
   // Warning: AsyncEncodeAndWriteIcon assumes ownership of the aData buffer
   // passed in
-  AsyncEncodeAndWriteIcon(const nsAString& aIconPath,
-                          UniquePtr<uint8_t[]> aData, uint32_t aStride,
-                          uint32_t aWidth, uint32_t aHeight,
-                          already_AddRefed<nsIRunnable> aRunnable);
+  AsyncEncodeAndWriteIcon(
+      const nsAString& aIconPath, UniquePtr<uint8_t[]> aData, uint32_t aStride,
+      uint32_t aWidth, uint32_t aHeight,
+      already_AddRefed<nsIRunnable> aRunnable,
+      UniquePtr<MozPromiseHolder<ObtainCachedIconFileAsyncPromise>>
+          aPromiseHolder = nullptr);
 
  private:
   virtual ~AsyncEncodeAndWriteIcon();
@@ -669,6 +604,7 @@ class AsyncEncodeAndWriteIcon : public nsIRunnable {
   nsAutoString mIconPath;
   UniquePtr<uint8_t[]> mBuffer;
   nsCOMPtr<nsIRunnable> mRunnable;
+  UniquePtr<MozPromiseHolder<ObtainCachedIconFileAsyncPromise>> mPromiseHolder;
   uint32_t mStride;
   uint32_t mWidth;
   uint32_t mHeight;
@@ -691,15 +627,20 @@ class AsyncDeleteAllFaviconsFromDisk : public nsIRunnable {
 
 class FaviconHelper {
  public:
+  enum class IconCacheDir : uint8_t {
+    JumpListCacheDir = 1,
+    ShortcutCacheDir = 2
+  };
+
   static const char kJumpListCacheDir[];
   static const char kShortcutCacheDir[];
   static nsresult ObtainCachedIconFile(
       nsCOMPtr<nsIURI> aFaviconPageURI, nsString& aICOFilePath,
       RefPtr<LazyIdleThread>& aIOThread, bool aURLShortcut,
       already_AddRefed<nsIRunnable> aRunnable = nullptr);
-
-  static nsresult HashURI(nsCOMPtr<nsICryptoHash>& aCryptoHash, nsIURI* aUri,
-                          nsACString& aUriHash);
+  static RefPtr<ObtainCachedIconFileAsyncPromise> ObtainCachedIconFileAsync(
+      nsCOMPtr<nsIURI> aFaviconPageURI, RefPtr<LazyIdleThread>& aIOThread,
+      IconCacheDir aCacheDir);
 
   static nsresult GetOutputIconPath(nsCOMPtr<nsIURI> aFaviconPageURI,
                                     nsCOMPtr<nsIFile>& aICOFile,
@@ -707,8 +648,10 @@ class FaviconHelper {
 
   static nsresult CacheIconFileFromFaviconURIAsync(
       nsCOMPtr<nsIURI> aFaviconPageURI, nsCOMPtr<nsIFile> aICOFile,
-      RefPtr<LazyIdleThread>& aIOThread, bool aURLShortcut,
-      already_AddRefed<nsIRunnable> aRunnable);
+      RefPtr<nsISerialEventTarget> aIOThread, bool aURLShortcut,
+      already_AddRefed<nsIRunnable> aRunnable,
+      UniquePtr<MozPromiseHolder<ObtainCachedIconFileAsyncPromise>>
+          aPromiseHolder);
 
   static int32_t GetICOCacheSecondsTimeout();
 };
@@ -717,13 +660,15 @@ MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(WinUtils::PathTransformFlags);
 
 // RTL shim windows are temporary child windows of our nsWindows created to
 // address RTL issues in picker dialogs. (See bug 588735.)
-class MOZ_STACK_CLASS ScopedRtlShimWindow {
+class ScopedRtlShimWindow {
  public:
   explicit ScopedRtlShimWindow(nsIWidget* aParent);
   ~ScopedRtlShimWindow();
 
   ScopedRtlShimWindow(const ScopedRtlShimWindow&) = delete;
-  ScopedRtlShimWindow(ScopedRtlShimWindow&&) = delete;
+  ScopedRtlShimWindow(ScopedRtlShimWindow&& that) noexcept : mWnd(that.mWnd) {
+    that.mWnd = nullptr;
+  };
 
   HWND get() const { return mWnd; }
 

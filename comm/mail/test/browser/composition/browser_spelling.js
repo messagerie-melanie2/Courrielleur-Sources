@@ -2,9 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { close_compose_window, open_compose_new_mail } = ChromeUtils.import(
-  "resource://testing-common/mozmill/ComposeHelpers.jsm"
-);
+var { close_compose_window, open_compose_new_mail } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+  );
 var { maybeOnSpellCheck } = ChromeUtils.importESModule(
   "resource://testing-common/AsyncSpellCheckTestHelper.sys.mjs"
 );
@@ -12,7 +13,7 @@ var { maybeOnSpellCheck } = ChromeUtils.importESModule(
 async function checkMisspelledWords(editor, ...words) {
   await new Promise(resolve => maybeOnSpellCheck({ editor }, resolve));
 
-  let selection = editor.selectionController.getSelection(
+  const selection = editor.selectionController.getSelection(
     Ci.nsISelectionController.SELECTION_SPELLCHECK
   );
   Assert.equal(
@@ -29,39 +30,36 @@ async function checkMisspelledWords(editor, ...words) {
 add_task(async function () {
   // Install en-NZ dictionary.
 
-  let dictionary = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+  const dictionary = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
   dictionary.initWithPath(getTestFilePath("data/en_NZ"));
 
-  let hunspell = Cc["@mozilla.org/spellchecker/engine;1"].getService(
+  const hunspell = Cc["@mozilla.org/spellchecker/engine;1"].getService(
     Ci.mozISpellCheckingEngine
   );
   hunspell.addDirectory(dictionary);
 
   // Open a compose window and write a message.
 
-  let cwc = open_compose_new_mail();
-  let composeWindow = cwc.window;
-  let composeDocument = composeWindow.document;
+  const cwc = await open_compose_new_mail();
+  const composeWindow = cwc;
+  const composeDocument = composeWindow.document;
 
-  cwc.window.document.getElementById("msgSubject").focus();
-  EventUtils.sendString(
-    "I went to the harbor in an aluminium boat",
-    cwc.window
-  );
-  cwc.window.document.getElementById("messageEditor").focus();
-  EventUtils.sendString("I maneuvered to the center.\n", cwc.window);
-  cwc.window.document.getElementById("messageEditor").focus();
+  cwc.document.getElementById("msgSubject").focus();
+  EventUtils.sendString("I went to the harbor in an aluminium boat", cwc);
+  cwc.document.getElementById("messageEditor").focus();
+  EventUtils.sendString("I maneuvered to the center.\n", cwc);
+  cwc.document.getElementById("messageEditor").focus();
   EventUtils.sendString(
     "The sky was the colour of ochre and the stars shone like jewelry.\n",
-    cwc.window
+    cwc
   );
 
   // Check initial spelling.
 
-  let subjectEditor = composeDocument.getElementById("msgSubject").editor;
-  let editorBrowser = composeWindow.GetCurrentEditorElement();
-  let bodyEditor = composeWindow.GetCurrentEditor();
-  let saveButton = composeDocument.getElementById("button-save");
+  const subjectEditor = composeDocument.getElementById("msgSubject").editor;
+  const editorBrowser = composeWindow.GetCurrentEditorElement();
+  const bodyEditor = composeWindow.GetCurrentEditor();
+  const saveButton = composeDocument.getElementById("button-save");
 
   await checkMisspelledWords(subjectEditor, "aluminium");
   await checkMisspelledWords(bodyEditor, "colour", "ochre");
@@ -69,10 +67,10 @@ add_task(async function () {
   // Check menu items are displayed correctly.
 
   let shownPromise, hiddenPromise;
-  let contextMenu = composeDocument.getElementById("msgComposeContext");
-  let contextMenuEnabled = composeDocument.getElementById("spellCheckEnable");
-  let optionsMenu = composeDocument.getElementById("optionsMenu");
-  let optionsMenuEnabled = composeDocument.getElementById(
+  const contextMenu = composeDocument.getElementById("msgComposeContext");
+  const contextMenuEnabled = composeDocument.getElementById("spellCheckEnable");
+  const optionsMenu = composeDocument.getElementById("optionsMenu");
+  const optionsMenuEnabled = composeDocument.getElementById(
     "menu_inlineSpellCheck"
   );
 
@@ -180,8 +178,8 @@ add_task(async function () {
 
   // Add language.
 
-  let statusButton = composeDocument.getElementById("languageStatusButton");
-  let languageList = composeDocument.getElementById("languageMenuList");
+  const statusButton = composeDocument.getElementById("languageStatusButton");
+  const languageList = composeDocument.getElementById("languageMenuList");
 
   shownPromise = BrowserTestUtils.waitForEvent(languageList, "popupshown");
   EventUtils.synthesizeMouseAtCenter(statusButton, {}, composeWindow);
@@ -255,7 +253,7 @@ add_task(async function () {
     "correct dictionaries active"
   );
   await checkMisspelledWords(subjectEditor, "harbor");
-  let words = await checkMisspelledWords(
+  const words = await checkMisspelledWords(
     bodyEditor,
     "maneuvered",
     "center",
@@ -264,7 +262,7 @@ add_task(async function () {
 
   // Check that opening the context menu on a spelling error works as expected.
 
-  let box = words.getRangeAt(1).getBoundingClientRect();
+  const box = words.getRangeAt(1).getBoundingClientRect();
   shownPromise = BrowserTestUtils.waitForEvent(contextMenu, "popupshown");
   BrowserTestUtils.synthesizeMouseAtPoint(
     box.left + box.width / 2,
@@ -275,20 +273,20 @@ add_task(async function () {
   await shownPromise;
 
   let menuItem = composeDocument.getElementById("spellCheckNoSuggestions");
-  Assert.ok(BrowserTestUtils.is_hidden(menuItem));
+  Assert.ok(BrowserTestUtils.isHidden(menuItem));
 
-  let suggestions = contextMenu.querySelectorAll(".spell-suggestion");
+  const suggestions = contextMenu.querySelectorAll(".spell-suggestion");
   Assert.greater(suggestions.length, 0);
   Assert.equal(suggestions[0].value, "centre");
 
-  for (let id of [
+  for (const id of [
     "spellCheckAddSep",
     "spellCheckAddToDictionary",
     "spellCheckIgnoreWord",
     "spellCheckSuggestionsSeparator",
   ]) {
     menuItem = composeDocument.getElementById(id);
-    Assert.ok(BrowserTestUtils.is_visible(menuItem));
+    Assert.ok(BrowserTestUtils.isVisible(menuItem));
   }
 
   hiddenPromise = BrowserTestUtils.waitForEvent(contextMenu, "popuphidden");
@@ -306,6 +304,6 @@ add_task(async function () {
 
   // Clean up.
 
-  close_compose_window(cwc);
+  await close_compose_window(cwc);
   hunspell.removeDirectory(dictionary);
 });

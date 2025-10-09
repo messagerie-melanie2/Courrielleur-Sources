@@ -27,7 +27,7 @@ var gSync = {
     }
   },
 
-  observe(subject, topic, data) {
+  observe() {
     this.updateFxAPanel();
   },
 
@@ -35,8 +35,8 @@ var gSync = {
    * Update the app menu items to match the current state.
    */
   updateFxAPanel() {
-    let state = UIState.get();
-    let isSignedIn = state.status == UIState.STATUS_SIGNED_IN;
+    const state = UIState.get();
+    const isSignedIn = state.status == UIState.STATUS_SIGNED_IN;
     document.getElementById("appmenu_signin").hidden = isSignedIn;
     document.getElementById("appmenu_sync").hidden = !isSignedIn;
     document.getElementById("syncSeparator").hidden = false;
@@ -44,7 +44,7 @@ var gSync = {
       el.value = state.email;
       el.removeAttribute("data-l10n-id");
     });
-    let button = document.getElementById("appmenu-submenu-sync-now");
+    const button = document.getElementById("appmenu-submenu-sync-now");
     if (button) {
       if (state.syncing) {
         button.setAttribute("syncstatus", "active");
@@ -56,19 +56,17 @@ var gSync = {
 
   /**
    * Opens the FxA log-in page in a tab.
-   *
-   * @param {string = ""} entryPoint
    */
   async initFxA() {
     EnsureFxAccountsWebChannel();
-    let url = await FxAccounts.config.promiseConnectAccountURI("");
+    const url = await FxAccounts.config.promiseConnectAccountURI("");
     openContentTab(url);
   },
 
   /**
    * Opens the FxA account management page in a tab.
    *
-   * @param {string = ""} entryPoint
+   * @param {string} [entryPoint=""]
    */
   async openFxAManagePage(entryPoint = "") {
     EnsureFxAccountsWebChannel();
@@ -79,7 +77,7 @@ var gSync = {
   /**
    * Opens the FxA avatar management page in a tab.
    *
-   * @param {string = ""} entryPoint
+   * @param {string} [entryPoint=""]
    */
   async openFxAAvatarPage(entryPoint = "") {
     EnsureFxAccountsWebChannel();
@@ -90,11 +88,12 @@ var gSync = {
   /**
    * Disconnect from sync, and optionally disconnect from the FxA account.
    *
-   * @param {boolean} confirm - Should the user be asked to confirm the
+   * @param {object} options
+   * @param {boolean} [options.confirm=false] - Should the user be asked to confirm the
    *   disconnection?
-   * @param {boolean} disconnectAccount - If true, disconnect from FxA as well
-   *   as Sync. If false, just disconnect from Sync.
-   * @returns {boolean} - true if the disconnection happened (ie, if the user
+   * @param {boolean} [options.disconnectAccount=true] - If true, disconnect from FxA
+   *   as wellas Sync. If false, just disconnect from Sync.
+   * @returns {boolean} - true if the disconnection happened (i.e., if the user
    *   didn't decline when asked to confirm)
    */
   async disconnect({ confirm = false, disconnectAccount = true }) {
@@ -102,9 +101,9 @@ var gSync = {
       let title, body, button;
       if (disconnectAccount) {
         [title, body, button] = await document.l10n.formatValues([
-          "fxa-signout-dialog-title",
-          "fxa-signout-dialog-body",
-          "fxa-signout-dialog-button",
+          "sync-signout-dialog-title",
+          "sync-signout-dialog-body",
+          "sync-signout-dialog-button",
         ]);
       } else {
         [title, body, button] = await document.l10n.formatValues([
@@ -114,12 +113,12 @@ var gSync = {
         ]);
       }
 
-      let flags =
+      const flags =
         Services.prompt.BUTTON_TITLE_IS_STRING * Services.prompt.BUTTON_POS_0 +
         Services.prompt.BUTTON_TITLE_CANCEL * Services.prompt.BUTTON_POS_1;
 
       // buttonPressed will be 0 for disconnect, 1 for cancel.
-      let buttonPressed = Services.prompt.confirmEx(
+      const buttonPressed = Services.prompt.confirmEx(
         window,
         title,
         body,
@@ -135,7 +134,7 @@ var gSync = {
       }
     }
 
-    let fxAccounts = ChromeUtils.importESModule(
+    const fxAccounts = ChromeUtils.importESModule(
       "resource://gre/modules/FxAccounts.sys.mjs"
     ).getFxAccountsSingleton();
 

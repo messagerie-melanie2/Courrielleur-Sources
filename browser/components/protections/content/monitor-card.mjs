@@ -33,7 +33,7 @@ export default class MonitorClass {
 
     let monitorAboutLink = this.doc.getElementById("monitor-link");
     monitorAboutLink.addEventListener("click", () => {
-      this.doc.sendTelemetryEvent("click", "mtr_about_link");
+      this.doc.sendTelemetryEvent("clickMtrAboutLink");
     });
 
     const storedEmailLink = this.doc.getElementById(
@@ -68,33 +68,17 @@ export default class MonitorClass {
     RPMSendAsyncMessage("ClearMonitorCache");
     switch (evt.currentTarget.id) {
       case "monitor-partial-breaches-link":
-        this.doc.sendTelemetryEvent(
-          "click",
-          "mtr_report_link",
-          "resolve_breaches"
-        );
+        this.doc.sendTelemetryEvent("clickMtrReportLink", "resolve_breaches");
         break;
       case "monitor-breaches-link":
         if (evt.currentTarget.classList.contains("no-breaches-resolved")) {
-          this.doc.sendTelemetryEvent(
-            "click",
-            "mtr_report_link",
-            "manage_breaches"
-          );
+          this.doc.sendTelemetryEvent("clickMtrReportLink", "manage_breaches");
         } else {
-          this.doc.sendTelemetryEvent(
-            "click",
-            "mtr_report_link",
-            "view_report"
-          );
+          this.doc.sendTelemetryEvent("clickMtrReportLink", "view_report");
         }
         break;
       case "monitor-stored-emails-link":
-        this.doc.sendTelemetryEvent(
-          "click",
-          "mtr_report_link",
-          "stored_emails"
-        );
+        this.doc.sendTelemetryEvent("clickMtrReportLink", "stored_emails");
         break;
       case "monitor-known-breaches-link":
         const knownBreaches = this.doc.querySelector(
@@ -102,16 +86,14 @@ export default class MonitorClass {
         );
         if (knownBreaches.classList.contains("known-resolved-breaches")) {
           this.doc.sendTelemetryEvent(
-            "click",
-            "mtr_report_link",
+            "clickMtrReportLink",
             "known_resolved_breaches"
           );
         } else if (
           knownBreaches.classList.contains("known-unresolved-breaches")
         ) {
           this.doc.sendTelemetryEvent(
-            "click",
-            "mtr_report_link",
+            "clickMtrReportLink",
             "known_unresolved_breaches"
           );
         }
@@ -124,8 +106,7 @@ export default class MonitorClass {
           exposedPasswords.classList.contains("passwords-exposed-all-breaches")
         ) {
           this.doc.sendTelemetryEvent(
-            "click",
-            "mtr_report_link",
+            "clickMtrReportLink",
             "exposed_passwords_all_breaches"
           );
         } else if (
@@ -134,8 +115,7 @@ export default class MonitorClass {
           )
         ) {
           this.doc.sendTelemetryEvent(
-            "click",
-            "mtr_report_link",
+            "clickMtrReportLink",
             "exposed_passwords_unresolved_breaches"
           );
         }
@@ -145,7 +125,7 @@ export default class MonitorClass {
 
   /**
    * Retrieves the monitor data and displays this data in the card.
-   **/
+   */
   getMonitorData() {
     RPMSendQuery("FetchMonitorData", {}).then(monitorData => {
       // Once data for the user is retrieved, display the monitor card.
@@ -164,8 +144,8 @@ export default class MonitorClass {
     const monitorCard = this.doc.querySelector(".card.monitor-card");
     if (!monitorData.error) {
       monitorCard.classList.add("has-logins");
-      headerContent.setAttribute(
-        "data-l10n-id",
+      this.doc.l10n.setAttributes(
+        headerContent,
         "monitor-header-content-signed-in"
       );
       this.renderContentForUserWithAccount(monitorData);
@@ -175,13 +155,13 @@ export default class MonitorClass {
         "sign-up-for-monitor-link"
       );
       signUpForMonitorLink.href = this.buildMonitorUrl(monitorData.userEmail);
-      signUpForMonitorLink.setAttribute("data-l10n-id", "monitor-sign-up-link");
-      headerContent.setAttribute(
-        "data-l10n-id",
+      this.doc.l10n.setAttributes(signUpForMonitorLink, "monitor-sign-up-link");
+      this.doc.l10n.setAttributes(
+        headerContent,
         "monitor-header-content-no-account"
       );
       signUpForMonitorLink.addEventListener("click", () => {
-        this.doc.sendTelemetryEvent("click", "mtr_signup_button");
+        this.doc.sendTelemetryEvent("clickMtrSignupButton");
       });
     }
   }
@@ -190,11 +170,11 @@ export default class MonitorClass {
    * Builds the appropriate URL that takes the user to the Monitor website's
    * sign-up/sign-in page.
    *
-   * @param {String|null} email
+   * @param {string | null} email
    *        Optional. The email used to direct the user to the Monitor website's OAuth
    *        sign-in flow. If null, then direct user to just the Monitor website.
    *
-   * @return URL to Monitor website.
+   * @returns {string} URL to Monitor website.
    */
   buildMonitorUrl(email = null) {
     return email
@@ -279,16 +259,16 @@ export default class MonitorClass {
           "src",
           "chrome://browser/skin/protections/new-feature.svg"
         );
-        breachesTitle.setAttribute(
-          "data-l10n-id",
+        this.doc.l10n.setAttributes(
+          breachesTitle,
           "monitor-breaches-unresolved-title"
         );
-        breachesDesc.setAttribute(
-          "data-l10n-id",
+        this.doc.l10n.setAttributes(
+          breachesDesc,
           "monitor-breaches-unresolved-description"
         );
-        breachesLink.setAttribute(
-          "data-l10n-id",
+        this.doc.l10n.setAttributes(
+          breachesLink,
           "monitor-manage-breaches-link"
         );
         breachesLink.classList.add("no-breaches-resolved");
@@ -316,15 +296,15 @@ export default class MonitorClass {
           "src",
           "chrome://browser/skin/protections/resolved-breach.svg"
         );
-        breachesTitle.setAttribute(
-          "data-l10n-id",
+        this.doc.l10n.setAttributes(
+          breachesTitle,
           "monitor-breaches-resolved-title"
         );
-        breachesDesc.setAttribute(
-          "data-l10n-id",
+        this.doc.l10n.setAttributes(
+          breachesDesc,
           "monitor-breaches-resolved-description"
         );
-        breachesLink.setAttribute("data-l10n-id", "monitor-view-report-link");
+        this.doc.l10n.setAttributes(breachesLink, "monitor-view-report-link");
       } else {
         breachesWrapper.classList.add("hidden");
         knownBreaches.textContent = numBreachesResolved;
@@ -348,16 +328,13 @@ export default class MonitorClass {
         const partialBreachesTitle = document.getElementById(
           "monitor-partial-breaches-title"
         );
-        partialBreachesTitle.setAttribute(
-          "data-l10n-args",
-          JSON.stringify({
+        this.doc.l10n.setAttributes(
+          partialBreachesTitle,
+          "monitor-partial-breaches-title",
+          {
             numBreaches,
             numBreachesResolved,
-          })
-        );
-        partialBreachesTitle.setAttribute(
-          "data-l10n-id",
-          "monitor-partial-breaches-title"
+          }
         );
 
         const progressBar = this.doc.querySelector(".progress-bar");
@@ -371,22 +348,22 @@ export default class MonitorClass {
         progressBar.setAttribute("value", 100 - percentageResolved);
         switch (true) {
           case percentageResolved > 0 && percentageResolved < 25:
-            partialBreachesMotivationTitle.setAttribute(
-              "data-l10n-id",
+            this.doc.l10n.setAttributes(
+              partialBreachesMotivationTitle,
               "monitor-partial-breaches-motivation-title-start"
             );
             break;
 
           case percentageResolved >= 25 && percentageResolved < 75:
-            partialBreachesMotivationTitle.setAttribute(
-              "data-l10n-id",
+            this.doc.l10n.setAttributes(
+              partialBreachesMotivationTitle,
               "monitor-partial-breaches-motivation-title-middle"
             );
             break;
 
           case percentageResolved >= 75 && percentageResolved < 100:
-            partialBreachesMotivationTitle.setAttribute(
-              "data-l10n-id",
+            this.doc.l10n.setAttributes(
+              partialBreachesMotivationTitle,
               "monitor-partial-breaches-motivation-title-end"
             );
             break;
@@ -395,15 +372,10 @@ export default class MonitorClass {
         const partialBreachesPercentage = document.getElementById(
           "monitor-partial-breaches-percentage"
         );
-        partialBreachesPercentage.setAttribute(
-          "data-l10n-args",
-          JSON.stringify({
-            percentageResolved,
-          })
-        );
-        partialBreachesPercentage.setAttribute(
-          "data-l10n-id",
-          "monitor-partial-breaches-percentage"
+        this.doc.l10n.setAttributes(
+          partialBreachesPercentage,
+          "monitor-partial-breaches-percentage",
+          { percentageResolved }
         );
 
         const partialBreachesLink = document.getElementById(
@@ -440,12 +412,12 @@ export default class MonitorClass {
         "src",
         "chrome://browser/skin/protections/resolved-breach.svg"
       );
-      breachesTitle.setAttribute("data-l10n-id", "monitor-no-breaches-title");
-      breachesDesc.setAttribute(
-        "data-l10n-id",
+      this.doc.l10n.setAttributes(breachesTitle, "monitor-no-breaches-title");
+      this.doc.l10n.setAttributes(
+        breachesDesc,
         "monitor-no-breaches-description"
       );
-      breachesLink.setAttribute("data-l10n-id", "monitor-view-report-link");
+      this.doc.l10n.setAttributes(breachesLink, "monitor-view-report-link");
     }
 
     breachesLink.setAttribute("href", MONITOR_HOME_PAGE_URL);

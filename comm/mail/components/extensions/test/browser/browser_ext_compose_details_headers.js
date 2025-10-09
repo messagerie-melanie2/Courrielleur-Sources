@@ -2,21 +2,32 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-let account = createAccount();
-let defaultIdentity = addIdentity(account);
-let nonDefaultIdentity = addIdentity(account);
-let gRootFolder = account.incomingServer.rootFolder;
+"use strict";
 
-gRootFolder.createSubfolder("test", null);
-let gTestFolder = gRootFolder.getChildNamed("test");
-createMessages(gTestFolder, 4);
+let gAccount, gDefaultIdentity, gNonDefaultIdentity;
+
+add_setup(async () => {
+  gAccount = createAccount();
+  gDefaultIdentity = addIdentity(gAccount);
+  gNonDefaultIdentity = addIdentity(gAccount);
+
+  const rootFolder = gAccount.incomingServer.rootFolder;
+  const testFolder = await createSubfolder(rootFolder, "test");
+  await createMessages(testFolder, 4);
+
+  // Add a custom header to the composer UI.
+  Services.prefs.setCharPref("mail.compose.other.header", "X-Expediteur");
+  registerCleanupFunction(async () => {
+    Services.prefs.clearUserPref("mail.compose.other.header");
+  });
+});
 
 add_task(async function testHeaders() {
-  let files = {
+  const files = {
     "background.js": async () => {
-      async function checkWindow(expected) {
-        let state = await browser.compose.getComposeDetails(createdTab.id);
-        for (let field of [
+      async function checkAPI(expected) {
+        const state = await browser.compose.getComposeDetails(createdTab.id);
+        for (const field of [
           "to",
           "cc",
           "bcc",
@@ -52,17 +63,15 @@ add_task(async function testHeaders() {
         } else {
           browser.test.assertTrue(!state.subject, "subject is empty");
         }
-
-        await window.sendMessage("checkWindow", expected);
       }
 
-      let [account] = await browser.accounts.list();
-      let [defaultIdentity, nonDefaultIdentity] = account.identities;
+      const [account] = await browser.accounts.list();
+      const [defaultIdentity, nonDefaultIdentity] = account.identities;
 
-      let addressBook = await browser.addressBooks.create({
+      const addressBook = await browser.addressBooks.create({
         name: "Baker Street",
       });
-      let contacts = {
+      const contacts = {
         sherlock: await browser.contacts.create(addressBook, {
           DisplayName: "Sherlock Holmes",
           PrimaryEmail: "sherlock@bakerstreet.invalid",
@@ -76,7 +85,7 @@ add_task(async function testHeaders() {
           PrimaryEmail: "",
         }),
       };
-      let list = await browser.mailingLists.create(addressBook, {
+      const list = await browser.mailingLists.create(addressBook, {
         name: "Holmes and Watson",
         description: "Tenants221B",
       });
@@ -90,16 +99,19 @@ add_task(async function testHeaders() {
 
       // Start a new message.
 
-      let createdWindowPromise = window.waitForEvent("windows.onCreated");
+      const createdWindowPromise = window.waitForEvent("windows.onCreated");
       await browser.compose.beginNew();
-      let [createdWindow] = await createdWindowPromise;
-      let [createdTab] = await browser.tabs.query({
+      const [createdWindow] = await createdWindowPromise;
+      const [createdTab] = await browser.tabs.query({
         windowId: createdWindow.id,
       });
 
-      await checkWindow({ identityId: defaultIdentity.id });
+      await checkAPI({ identityId: defaultIdentity.id });
+      await window.sendMessage("checkWindow", {
+        identityId: defaultIdentity.id,
+      });
 
-      let tests = [
+      const tests = [
         {
           // Change the identity and check default from.
           input: { identityId: nonDefaultIdentity.id },
@@ -142,15 +154,25 @@ add_task(async function testHeaders() {
           expected: { to: ["John Watson <john@bakerstreet.invalid>"] },
         },
         {
-          // Name with a comma, not quoted per RFC 822. This is how
-          // getComposeDetails returns names with a comma.
+          // Name with a comma, not quoted per RFC 822. The API returns the addr
+          // quoted as per RFC 5322, the UI is not using quotes.
           input: { to: ["Holmes, Mycroft <mycroft@bakerstreet.invalid>"] },
-          expected: { to: ["Holmes, Mycroft <mycroft@bakerstreet.invalid>"] },
+          expected_API: {
+            to: ['"Holmes, Mycroft" <mycroft@bakerstreet.invalid>'],
+          },
+          expected_UI: {
+            to: ["Holmes, Mycroft <mycroft@bakerstreet.invalid>"],
+          },
         },
         {
           // Name with a comma, quoted per RFC 822. This should work too.
           input: { to: [`"Holmes, Mycroft" <mycroft@bakerstreet.invalid>`] },
-          expected: { to: ["Holmes, Mycroft <mycroft@bakerstreet.invalid>"] },
+          expected_API: {
+            to: ['"Holmes, Mycroft" <mycroft@bakerstreet.invalid>'],
+          },
+          expected_UI: {
+            to: ["Holmes, Mycroft <mycroft@bakerstreet.invalid>"],
+          },
         },
         {
           // Name and address with non-ASCII characters.
@@ -351,20 +373,23 @@ add_task(async function testHeaders() {
           },
         },
       ];
-      for (let test of tests) {
+      for (const test of tests) {
         browser.test.log(`Checking input: ${JSON.stringify(test.input)}`);
+        const expected_API = test.expected || test.expected_API;
+        const expected_UI = test.expected || test.expected_UI;
 
-        if (test.expected.errorRejected) {
+        if (expected_API.errorRejected) {
           await browser.test.assertRejects(
             browser.compose.setComposeDetails(createdTab.id, test.input),
-            test.expected.errorRejected,
-            test.expected.errorDescription
+            expected_API.errorRejected,
+            expected_API.errorDescription
           );
           continue;
         }
 
         await browser.compose.setComposeDetails(createdTab.id, test.input);
-        await checkWindow(test.expected);
+        await checkAPI(expected_API);
+        await window.sendMessage("checkWindow", expected_UI);
 
         if (test.expectIdentityChanged) {
           browser.test.assertEq(
@@ -394,7 +419,7 @@ add_task(async function testHeaders() {
 
       // Clean up.
 
-      let removedWindowPromise = window.waitForEvent("windows.onRemoved");
+      const removedWindowPromise = window.waitForEvent("windows.onRemoved");
       browser.windows.remove(createdWindow.id);
       await removedWindowPromise;
 
@@ -403,7 +428,7 @@ add_task(async function testHeaders() {
     },
     "utils.js": await getUtilsJS(),
   };
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files,
     manifest: {
       background: { scripts: ["utils.js", "background.js"] },
@@ -417,12 +442,12 @@ add_task(async function testHeaders() {
   });
 
   extension.onMessage("changeIdentity", newIdentity => {
-    let composeWindows = [...Services.wm.getEnumerator("msgcompose")];
+    const composeWindows = [...Services.wm.getEnumerator("msgcompose")];
     is(composeWindows.length, 1);
-    let composeDocument = composeWindows[0].document;
+    const composeDocument = composeWindows[0].document;
 
-    let identityList = composeDocument.getElementById("msgIdentity");
-    let identityItem = identityList.querySelector(
+    const identityList = composeDocument.getElementById("msgIdentity");
+    const identityItem = identityList.querySelector(
       `[identitykey="${newIdentity}"]`
     );
     ok(identityItem);
@@ -437,7 +462,7 @@ add_task(async function testHeaders() {
 });
 
 add_task(async function test_onIdentityChanged_MV3_event_pages() {
-  let files = {
+  const files = {
     "background.js": async () => {
       // Whenever the extension starts or wakes up, the eventCounter is reset and
       // allows to observe the order of events fired. In case of a wake-up, the
@@ -462,7 +487,7 @@ add_task(async function test_onIdentityChanged_MV3_event_pages() {
     },
     "utils.js": await getUtilsJS(),
   };
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files,
     manifest: {
       manifest_version: 3,
@@ -473,10 +498,10 @@ add_task(async function test_onIdentityChanged_MV3_event_pages() {
   });
 
   function changeIdentity(newIdentity) {
-    let composeDocument = composeWindow.document;
+    const composeDocument = composeWindow.document;
 
-    let identityList = composeDocument.getElementById("msgIdentity");
-    let identityItem = identityList.querySelector(
+    const identityList = composeDocument.getElementById("msgIdentity");
+    const identityItem = identityList.querySelector(
       `[identitykey="${newIdentity}"]`
     );
     ok(identityItem);
@@ -496,15 +521,15 @@ add_task(async function test_onIdentityChanged_MV3_event_pages() {
       "compose.onComposeStateChanged",
     ];
 
-    for (let event of persistent_events) {
-      let [moduleName, eventName] = event.split(".");
+    for (const event of persistent_events) {
+      const [moduleName, eventName] = event.split(".");
       assertPersistentListeners(extension, moduleName, eventName, {
         primed,
       });
     }
   }
 
-  let composeWindow = await openComposeWindow(account);
+  const composeWindow = await openComposeWindow(gAccount);
   await focusWindow(composeWindow);
 
   await extension.startup();
@@ -514,13 +539,13 @@ add_task(async function test_onIdentityChanged_MV3_event_pages() {
 
   // Trigger events without terminating the background first.
 
-  changeIdentity(nonDefaultIdentity.key);
+  changeIdentity(gNonDefaultIdentity.key);
   {
-    let rv = await extension.awaitMessage("identity changed");
+    const rv = await extension.awaitMessage("identity changed");
     Assert.deepEqual(
       {
         eventCount: 1,
-        identityId: nonDefaultIdentity.key,
+        identityId: gNonDefaultIdentity.key,
       },
       rv,
       "The non-primed onIdentityChanged event should return the correct values"
@@ -529,7 +554,7 @@ add_task(async function test_onIdentityChanged_MV3_event_pages() {
 
   setToAddr("user@invalid.net");
   {
-    let rv = await extension.awaitMessage("compose state changed");
+    const rv = await extension.awaitMessage("compose state changed");
     Assert.deepEqual(
       {
         eventCount: 2,
@@ -549,13 +574,13 @@ add_task(async function test_onIdentityChanged_MV3_event_pages() {
   // The listeners should be primed.
   checkPersistentListeners({ primed: true });
 
-  changeIdentity(defaultIdentity.key);
+  changeIdentity(gDefaultIdentity.key);
   {
-    let rv = await extension.awaitMessage("identity changed");
+    const rv = await extension.awaitMessage("identity changed");
     Assert.deepEqual(
       {
         eventCount: 1,
-        identityId: defaultIdentity.key,
+        identityId: gDefaultIdentity.key,
       },
       rv,
       "The primed onIdentityChanged event should return the correct values"
@@ -575,7 +600,7 @@ add_task(async function test_onIdentityChanged_MV3_event_pages() {
 
   setToAddr("invalid");
   {
-    let rv = await extension.awaitMessage("compose state changed");
+    const rv = await extension.awaitMessage("compose state changed");
     Assert.deepEqual(
       {
         eventCount: 1,
@@ -599,17 +624,17 @@ add_task(async function test_onIdentityChanged_MV3_event_pages() {
 });
 
 add_task(async function testCustomHeaders() {
-  let files = {
+  const files = {
     "background.js": async () => {
       async function checkCustomHeaders(tab, expectedCustomHeaders) {
-        let [testHeader] = await window.sendMessage("getTestHeader");
+        const [testHeader] = await window.sendMessage("getTestHeader");
         browser.test.assertEq(
           "CannotTouchThis",
           testHeader,
           "Should include the test header."
         );
 
-        let details = await browser.compose.getComposeDetails(tab.id);
+        const details = await browser.compose.getComposeDetails(tab.id);
 
         browser.test.assertEq(
           expectedCustomHeaders.length,
@@ -632,7 +657,12 @@ add_task(async function testCustomHeaders() {
 
       // Start a new message with custom headers.
       let customHeaders = [{ name: "X-TEST1", value: "some header" }];
-      let tab = await browser.compose.beginNew(null, { customHeaders });
+      const tab = await browser.compose.beginNew(null, { customHeaders });
+
+      // The initial window should not have the X-Expediteur row visible.
+      await window.sendMessage("Check X-Expediteur header display", {
+        isHidden: true,
+      });
 
       // Add a header which does not start with X- and should not be touched by
       // the API.
@@ -651,6 +681,8 @@ add_task(async function testCustomHeaders() {
         { name: "X-TEST2", value: "this is header #2" },
         { name: "X-TEST3", value: "this is header #3" },
         { name: "X-TEST4", value: "this is header #4" },
+        { name: "X-EXPEDITEUR", value: "this is expediteur" },
+        { name: "MSIP_Labels", value: "this is a MSIP label" },
       ];
       await browser.compose.setComposeDetails(tab.id, { customHeaders });
       expectedHeaders = [
@@ -658,19 +690,28 @@ add_task(async function testCustomHeaders() {
         { name: "X-Test2", value: "this is header #2" },
         { name: "X-Test3", value: "this is header #3" },
         { name: "X-Test4", value: "this is header #4" },
+        { name: "X-Expediteur", value: "this is expediteur" },
+        { name: "Msip_Labels", value: "this is a MSIP label" },
       ];
       await checkCustomHeaders(tab, expectedHeaders);
+
+      // The X-Expediteur row should now be visible.
+      await window.sendMessage("Check X-Expediteur header display", {
+        isHidden: false,
+      });
 
       // Update existing header and remove some of the others. Test support for
       // empty headers.
       customHeaders = [
         { name: "X-TEST2", value: "this is a header" },
         { name: "X-TEST3", value: "" },
+        { name: "X-EXPEDITEUR", value: "this is another expediteur" },
       ];
       await browser.compose.setComposeDetails(tab.id, { customHeaders });
       expectedHeaders = [
         { name: "X-Test2", value: "this is a header" },
         { name: "X-Test3", value: "" },
+        { name: "X-Expediteur", value: "this is another expediteur" },
       ];
       await checkCustomHeaders(tab, expectedHeaders);
 
@@ -680,17 +721,32 @@ add_task(async function testCustomHeaders() {
       await checkCustomHeaders(tab, []);
 
       // Should throw for invalid custom headers.
-      customHeaders = [
-        { name: "TEST2", value: "this is an invalid custom header" },
-      ];
-      await browser.test.assertThrows(
-        () => browser.compose.setComposeDetails(tab.id, { customHeaders }),
-        'Type error for parameter details (Error processing customHeaders.0.name: String "TEST2" must match /^X-.*$/) for compose.setComposeDetails.',
+      await browser.test.assertRejects(
+        browser.compose.setComposeDetails(tab.id, {
+          customHeaders: [
+            { name: "TEST2", value: "this is an invalid custom header" },
+          ],
+        }),
+        /Invalid custom header: TEST2/,
+        "Should throw for invalid custom headers"
+      );
+
+      // Should throw for internal mozilla headers.
+      await browser.test.assertRejects(
+        browser.compose.setComposeDetails(tab.id, {
+          customHeaders: [
+            {
+              name: "X-Mozilla-Status",
+              value: "this is an invalid Mozilla header",
+            },
+          ],
+        }),
+        /Invalid custom header: X-Mozilla-Status/,
         "Should throw for invalid custom headers"
       );
 
       // Clean up.
-      let removedWindowPromise = window.waitForEvent("windows.onRemoved");
+      const removedWindowPromise = window.waitForEvent("windows.onRemoved");
       browser.windows.remove(tab.windowId);
       await removedWindowPromise;
 
@@ -698,7 +754,7 @@ add_task(async function testCustomHeaders() {
     },
     "utils.js": await getUtilsJS(),
   };
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files,
     manifest: {
       background: { scripts: ["utils.js", "background.js"] },
@@ -707,7 +763,7 @@ add_task(async function testCustomHeaders() {
   });
 
   extension.onMessage("addTestHeader", () => {
-    let composeWindow = Services.wm.getMostRecentWindow("msgcompose");
+    const composeWindow = Services.wm.getMostRecentWindow("msgcompose");
     composeWindow.gMsgCompose.compFields.setHeader(
       "ATestHeader",
       "CannotTouchThis"
@@ -716,9 +772,22 @@ add_task(async function testCustomHeaders() {
   });
 
   extension.onMessage("getTestHeader", () => {
-    let composeWindow = Services.wm.getMostRecentWindow("msgcompose");
-    let value = composeWindow.gMsgCompose.compFields.getHeader("ATestHeader");
+    const composeWindow = Services.wm.getMostRecentWindow("msgcompose");
+    const value = composeWindow.gMsgCompose.compFields.getHeader("ATestHeader");
     extension.sendMessage(value);
+  });
+
+  extension.onMessage("Check X-Expediteur header display", expected => {
+    const composeWindow = Services.wm.getMostRecentWindow("msgcompose");
+    const row = composeWindow.document.querySelector(
+      ".address-row-raw[data-recipienttype=X-Expediteur]"
+    );
+    Assert.equal(
+      BrowserTestUtils.isHidden(row),
+      expected.isHidden,
+      "The display of the X-Expediteur header row should be correct"
+    );
+    extension.sendMessage();
   });
 
   await extension.startup();

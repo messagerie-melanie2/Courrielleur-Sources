@@ -10,6 +10,7 @@ import {
   kDefaultVertexShaderCode,
   kDefaultFragmentShaderCode,
 } from '../../../util/shader.js';
+import * as vtu from '../validation_test_utils.js';
 
 import { CreateRenderPipelineValidationTest } from './common.js';
 
@@ -28,10 +29,8 @@ g.test('device_mismatch')
       { vertex_mismatched: false, fragment_mismatched: true, _success: false },
     ])
   )
-  .beforeAllSubcases(t => {
-    t.selectMismatchedDeviceOrSkipTestCase(undefined);
-  })
-  .fn(async t => {
+  .beforeAllSubcases(t => t.usesMismatchedDevice())
+  .fn(t => {
     const { isAsync, vertex_mismatched, fragment_mismatched, _success } = t.params;
 
     const code = `
@@ -65,23 +64,30 @@ g.test('device_mismatch')
       layout: t.getPipelineLayout(),
     };
 
-    t.doCreateRenderPipelineTest(isAsync, _success, descriptor);
+    vtu.doCreateRenderPipelineTest(t, isAsync, _success, descriptor);
   });
 
 g.test('invalid,vertex')
   .desc(`Tests shader module must be valid.`)
   .params(u => u.combine('isAsync', [true, false]).combine('isVertexShaderValid', [true, false]))
-  .fn(async t => {
+  .fn(t => {
     const { isAsync, isVertexShaderValid } = t.params;
-    t.doCreateRenderPipelineTest(isAsync, isVertexShaderValid, {
+    vtu.doCreateRenderPipelineTest(t, isAsync, isVertexShaderValid, {
       layout: 'auto',
       vertex: {
         module: isVertexShaderValid
           ? t.device.createShaderModule({
               code: kDefaultVertexShaderCode,
             })
-          : t.createInvalidShaderModule(),
+          : vtu.createInvalidShaderModule(t),
         entryPoint: 'main',
+      },
+      // Specify a color attachment so we have at least one render target.
+      fragment: {
+        targets: [{ format: 'rgba8unorm' }],
+        module: t.device.createShaderModule({
+          code: `@fragment fn main() -> @location(0) vec4f { return vec4f(0); }`,
+        }),
       },
     });
   });
@@ -89,9 +95,9 @@ g.test('invalid,vertex')
 g.test('invalid,fragment')
   .desc(`Tests shader module must be valid.`)
   .params(u => u.combine('isAsync', [true, false]).combine('isFragmentShaderValid', [true, false]))
-  .fn(async t => {
+  .fn(t => {
     const { isAsync, isFragmentShaderValid } = t.params;
-    t.doCreateRenderPipelineTest(isAsync, isFragmentShaderValid, {
+    vtu.doCreateRenderPipelineTest(t, isAsync, isFragmentShaderValid, {
       layout: 'auto',
       vertex: {
         module: t.device.createShaderModule({
@@ -104,7 +110,7 @@ g.test('invalid,fragment')
           ? t.device.createShaderModule({
               code: kDefaultFragmentShaderCode,
             })
-          : t.createInvalidShaderModule(),
+          : vtu.createInvalidShaderModule(t),
         entryPoint: 'main',
         targets: [{ format: 'rgba8unorm' }],
       },

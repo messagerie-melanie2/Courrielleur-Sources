@@ -2,14 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { cleanUpHostName, isLegalHostNameOrIP } = ChromeUtils.import(
-  "resource:///modules/hostnameUtils.jsm"
+var { cleanUpHostName, isLegalHostNameOrIP } = ChromeUtils.importESModule(
+  "resource:///modules/hostnameUtils.sys.mjs"
 );
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-var { OAuth2Providers } = ChromeUtils.import(
-  "resource:///modules/OAuth2Providers.jsm"
+var { OAuth2Providers } = ChromeUtils.importESModule(
+  "resource:///modules/OAuth2Providers.sys.mjs"
 );
 
 var gSmtpServer;
@@ -33,10 +33,10 @@ function onLoad() {
 
 function onAccept(event) {
   if (!isLegalHostNameOrIP(cleanUpHostName(gSmtpHostname.value))) {
-    let prefsBundle = document.getElementById("bundle_prefs");
-    let brandBundle = document.getElementById("bundle_brand");
-    let alertTitle = brandBundle.getString("brandShortName");
-    let alertMsg = prefsBundle.getString("enterValidServerName");
+    const prefsBundle = document.getElementById("bundle_prefs");
+    const brandBundle = document.getElementById("bundle_brand");
+    const alertTitle = brandBundle.getString("brandShortName");
+    const alertMsg = prefsBundle.getString("enterValidServerName");
     Services.prompt.alert(window, alertTitle, alertMsg);
 
     window.arguments[0].result = false;
@@ -48,13 +48,13 @@ function onAccept(event) {
   // we must be creating one.
   try {
     if (!gSmtpServer) {
-      gSmtpServer = MailServices.smtp.createServer();
+      gSmtpServer = MailServices.outgoingServer.createServer("smtp");
       window.arguments[0].addSmtpServer = gSmtpServer.key;
     }
 
     saveSmtpSettings(gSmtpServer);
   } catch (ex) {
-    console.error("Error saving smtp server: " + ex);
+    console.error("Error saving smtp server: ", ex);
   }
 
   window.arguments[0].result = true;
@@ -72,9 +72,10 @@ function initSmtpSettings(server) {
   gPort = document.getElementById("smtp.port");
 
   if (server) {
-    gSmtpHostname.value = server.hostname;
+    const smtpServer = server.QueryInterface(Ci.nsISmtpServer);
+    gSmtpHostname.value = smtpServer.hostname;
     gSmtpDescription.value = server.description;
-    gSmtpPort.value = server.port;
+    gSmtpPort.value = smtpServer.port;
     gSmtpUsername.value = server.username;
     gSmtpAuthMethod.value = server.authMethod;
     gSmtpSocketType.value = server.socketType < 4 ? server.socketType : 1;
@@ -110,24 +111,19 @@ function initSmtpSettings(server) {
   sslChanged(false);
   authMethodChanged(false);
 
-  if (MailServices.smtp.defaultServer) {
+  if (MailServices.outgoingServer.defaultServer) {
     onLockPreference();
   }
 
   // Hide OAuth2 option if we can't use it.
-  let details = server
-    ? OAuth2Providers.getHostnameDetails(server.hostname)
+  const details = server
+    ? OAuth2Providers.getHostnameDetails(server.serverURI.host, "smtp")
     : null;
   document.getElementById("authMethod-oauth2").hidden = !details;
 
   // Hide deprecated/hidden auth options, unless selected
   hideUnlessSelected(document.getElementById("authMethod-anysecure"));
   hideUnlessSelected(document.getElementById("authMethod-any"));
-
-  // "STARTTLS, if available" is vulnerable to MITM attacks so we shouldn't
-  // allow users to choose it anymore. Hide the option unless the user already
-  // has it set.
-  hideUnlessSelected(document.getElementById("connectionSecurityType-1"));
 }
 
 function hideUnlessSelected(element) {
@@ -140,10 +136,19 @@ function setLabelFromStringBundle(elementID, stringName) {
     .getString(stringName);
 }
 
+function onAuthMethodPopupShowing() {
+  // Hide/unhide OAuth2 option depending on if it's usable or not.
+  const details = OAuth2Providers.getHostnameDetails(
+    gSmtpHostname.value,
+    "smtp"
+  );
+  document.getElementById("authMethod-oauth2").hidden = !details;
+}
+
 // Disables xul elements that have associated preferences locked.
 function onLockPreference() {
   try {
-    let allPrefElements = {
+    const allPrefElements = {
       hostname: gSmtpHostname,
       description: gSmtpDescription,
       port: gSmtpPort,
@@ -153,7 +158,7 @@ function onLockPreference() {
     disableIfLocked(allPrefElements);
   } catch (e) {
     // non-fatal
-    console.error("Error while getting locked prefs: " + e);
+    console.error("Error while getting locked prefs: ", e);
   }
 }
 
@@ -166,11 +171,11 @@ function onLockPreference() {
  * TODO: try to merge this with disableIfLocked function in am-offline.js (bug 755885)
  */
 function disableIfLocked(prefstrArray) {
-  let smtpPrefBranch = Services.prefs.getBranch(
-    "mail.smtpserver." + MailServices.smtp.defaultServer.key + "."
+  const smtpPrefBranch = Services.prefs.getBranch(
+    "mail.smtpserver." + MailServices.outgoingServer.defaultServer.key + "."
   );
 
-  for (let prefstring in prefstrArray) {
+  for (const prefstring in prefstrArray) {
     if (smtpPrefBranch.prefIsLocked(prefstring)) {
       prefstrArray[prefstring].disabled = true;
     }
@@ -179,16 +184,18 @@ function disableIfLocked(prefstrArray) {
 
 function saveSmtpSettings(server) {
   if (server) {
-    server.hostname = cleanUpHostName(gSmtpHostname.value);
     server.description = gSmtpDescription.value;
-    server.port = gSmtpPort.value;
     server.authMethod = gSmtpAuthMethod.value;
     server.username = gSmtpUsername.value;
     server.socketType = gSmtpSocketType.value;
+
+    const smtpServer = server.QueryInterface(Ci.nsISmtpServer);
+    smtpServer.hostname = cleanUpHostName(gSmtpHostname.value);
+    smtpServer.port = gSmtpPort.value;
   }
 }
 
-function authMethodChanged(userAction) {
+function authMethodChanged() {
   var noUsername = gSmtpAuthMethod.value == Ci.nsMsgAuthMethod.none;
   gSmtpUsername.disabled = noUsername;
   gSmtpUsernameLabel.disabled = noUsername;

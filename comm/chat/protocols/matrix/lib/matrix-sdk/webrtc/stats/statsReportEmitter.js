@@ -4,8 +4,8 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.StatsReportEmitter = void 0;
-var _typedEventEmitter = require("../../models/typed-event-emitter");
-var _statsReport = require("./statsReport");
+var _typedEventEmitter = require("../../models/typed-event-emitter.js");
+var _statsReport = require("./statsReport.js");
 /*
 Copyright 2023 The Matrix.org Foundation C.I.C.
 
@@ -28,6 +28,9 @@ class StatsReportEmitter extends _typedEventEmitter.TypedEventEmitter {
   }
   emitConnectionStatsReport(report) {
     this.emit(_statsReport.StatsReport.CONNECTION_STATS, report);
+  }
+  emitCallFeedReport(report) {
+    this.emit(_statsReport.StatsReport.CALL_FEED_REPORT, report);
   }
   emitSummaryStatsReport(report) {
     this.emit(_statsReport.StatsReport.SUMMARY_STATS, report);

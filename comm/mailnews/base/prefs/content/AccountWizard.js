@@ -24,17 +24,17 @@
   * account -> accountData -> pageData -> accountData -> finishAccount
 */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-var { NntpUtils } = ChromeUtils.import("resource:///modules/NntpUtils.jsm");
+var { NntpUtils } = ChromeUtils.importESModule(
+  "resource:///modules/NntpUtils.sys.mjs"
+);
 
 var contentWindow;
 
 var gPageData;
 
-var nsIMsgIdentity = Ci.nsIMsgIdentity;
-var nsIMsgIncomingServer = Ci.nsIMsgIncomingServer;
 var gPrefsBundle, gMessengerBundle;
 
 // the current nsIMsgAccount
@@ -58,19 +58,19 @@ function onAccountWizardLoad() {
   document
     .querySelector("wizard")
     .addEventListener("wizardfinish", FinishAccount);
-  let identityPage = document.getElementById("identitypage");
+  const identityPage = document.getElementById("identitypage");
   identityPage.addEventListener("pageshow", identityPageInit);
   identityPage.addEventListener("pageadvanced", identityPageUnload);
   identityPage.next = "newsserver";
-  let newsserverPage = document.getElementById("newsserver");
+  const newsserverPage = document.getElementById("newsserver");
   newsserverPage.addEventListener("pageshow", incomingPageInit);
   newsserverPage.addEventListener("pageadvanced", incomingPageUnload);
   newsserverPage.next = "accnamepage";
-  let accnamePage = document.getElementById("accnamepage");
+  const accnamePage = document.getElementById("accnamepage");
   accnamePage.addEventListener("pageshow", acctNamePageInit);
   accnamePage.addEventListener("pageadvanced", acctNamePageUnload);
   accnamePage.next = "done";
-  let donePage = document.getElementById("done");
+  const donePage = document.getElementById("done");
   donePage.addEventListener("pageshow", donePageInit);
 
   gPrefsBundle = document.getElementById("bundle_prefs");
@@ -117,9 +117,9 @@ function onCancel() {
     // since this is not an invalid account
     // really cancel if the user hits the "cancel" button
     // if the length of the account list is less than 1, there are no accounts
-    let confirmMsg = gPrefsBundle.getString("cancelWizard");
-    let confirmTitle = gPrefsBundle.getString("accountWizard");
-    let result = Services.prompt.confirmEx(
+    const confirmMsg = gPrefsBundle.getString("cancelWizard");
+    const confirmTitle = gPrefsBundle.getString("accountWizard");
+    const result = Services.prompt.confirmEx(
       window,
       confirmTitle,
       confirmMsg,
@@ -164,10 +164,8 @@ function FinishAccount() {
     // transfer all attributes from the accountdata
     finishAccount(gCurrentAccount, accountData);
 
-    setupCopiesAndFoldersServer(gCurrentAccount, accountData);
-
-    if (gCurrentAccount.incomingServer.canBeDefaultServer) {
-      EnableCheckMailAtStartUpIfNeeded(gCurrentAccount);
+    if (!gDefaultAccount && gCurrentAccount.incomingServer.canBeDefaultServer) {
+      MailServices.accounts.defaultAccount = gCurrentAccount;
     }
 
     // in case we crash, force us a save of the prefs file NOW
@@ -176,7 +174,7 @@ function FinishAccount() {
     } catch (ex) {
       dump("Error saving account info: " + ex + "\n");
     }
-    let openerWindow = window.opener.top;
+    const openerWindow = window.opener.top;
     // The following block is the same as in feedAccountWizard.js.
     if ("selectServer" in openerWindow) {
       // Opened from Account Settings.
@@ -242,7 +240,7 @@ function PageDataToAccountData(pageData, accountData) {
 // given an accountData structure, create an account
 // (but don't fill in any fields, that's for finishAccount()
 function createAccount(accountData) {
-  let hostName = accountData.incomingServer.hostName;
+  const hostName = accountData.incomingServer.hostName;
   // If we're here, the server must not be associated with any account, so reuse
   // it.
   let server = NntpUtils.findServer(hostName);
@@ -255,14 +253,14 @@ function createAccount(accountData) {
 
   dump("MailServices.accounts.createAccount()\n");
   // Create an account.
-  let account = MailServices.accounts.createAccount();
+  const account = MailServices.accounts.createAccount();
 
   // only create an identity for this account if we really have one
   // (use the email address as a check)
   if (accountData.identity && accountData.identity.email) {
     dump("MailServices.accounts.createIdentity()\n");
     // Create an identity.
-    let identity = MailServices.accounts.createIdentity();
+    const identity = MailServices.accounts.createIdentity();
 
     // New nntp identities should use plain text by default;
     // we want that GNKSA (The Good Net-Keeping Seal of Approval).
@@ -293,7 +291,7 @@ function finishAccount(account, accountData) {
     // If so, we use the type to get the IID, QueryInterface
     // as appropriate, then copy the data over.
     const typeProperty = "ServerType-" + srcServer.type;
-    let serverAttrs =
+    const serverAttrs =
       typeProperty in srcServer ? srcServer[typeProperty] : null;
     dump(`srcServer.${typeProperty} = ${serverAttrs}\n`);
     if (serverAttrs) {
@@ -302,12 +300,12 @@ function finishAccount(account, accountData) {
       try {
         IID = destServer.protocolInfo.serverIID;
       } catch (ex) {
-        console.error("Could not get IID for " + srcServer.type + ": " + ex);
+        console.error(`Could not get IID for ${srcServer.type}`, ex);
       }
 
       if (IID) {
-        let destProtocolServer = destServer.QueryInterface(IID);
-        let srcProtocolServer = srcServer["ServerType-" + srcServer.type];
+        const destProtocolServer = destServer.QueryInterface(IID);
+        const srcProtocolServer = srcServer["ServerType-" + srcServer.type];
 
         dump("Copying over " + srcServer.type + "-specific data\n");
         copyObjectToInterface(destProtocolServer, srcProtocolServer, false);
@@ -326,7 +324,7 @@ function finishAccount(account, accountData) {
     // does this account have an identity?
     if (accountData.identity && accountData.identity.email) {
       // fixup the email address if we have a default domain
-      let emailArray = accountData.identity.email.split("@");
+      const emailArray = accountData.identity.email.split("@");
       if (emailArray.length < 2 && accountData.domain) {
         accountData.identity.email += "@" + accountData.domain;
       }
@@ -344,7 +342,7 @@ function finishAccount(account, accountData) {
      */
     if (destIdentity.attachSignature) {
       var sigFileName = accountData.signatureFileName;
-      let sigFile = MailServices.mailSession.getDataFilesDir("messenger");
+      const sigFile = MailServices.mailSession.getDataFilesDir("messenger");
       sigFile.append(sigFileName);
       destIdentity.signature = sigFile;
     }
@@ -439,115 +437,6 @@ function verifyLocalFoldersAccount() {
   }
 }
 
-function setupCopiesAndFoldersServer(account, accountData) {
-  try {
-    var server = account.incomingServer;
-
-    if (!account.identities.length) {
-      return false;
-    }
-
-    let identity = account.identities[0];
-    // For this server, do we default the folder prefs to this server, or to the "Local Folders" server
-    // If it's deferred, we use the local folders account.
-    var defaultCopiesAndFoldersPrefsToServer =
-      server.defaultCopiesAndFoldersPrefsToServer;
-
-    var copiesAndFoldersServer = null;
-    if (defaultCopiesAndFoldersPrefsToServer) {
-      copiesAndFoldersServer = server;
-    } else {
-      if (!MailServices.accounts.localFoldersServer) {
-        dump("error!  we should have a local mail server at this point\n");
-        return false;
-      }
-      copiesAndFoldersServer = MailServices.accounts.localFoldersServer;
-    }
-
-    setDefaultCopiesAndFoldersPrefs(
-      identity,
-      copiesAndFoldersServer,
-      accountData
-    );
-  } catch (ex) {
-    // return false (meaning we did not setupCopiesAndFoldersServer)
-    // on any error
-    dump("Error in setupCopiesAndFoldersServer: " + ex + "\n");
-    return false;
-  }
-  return true;
-}
-
-function setDefaultCopiesAndFoldersPrefs(identity, server, accountData) {
-  var rootFolder = server.rootFolder;
-
-  // we need to do this or it is possible that the server's draft,
-  // stationery fcc folder will not be in rdf
-  //
-  // this can happen in a couple cases
-  // 1) the first account we create, creates the local mail.  since
-  // local mail was just created, it obviously hasn't been opened,
-  // or in rdf..
-  // 2) the account we created is of a type where
-  // defaultCopiesAndFoldersPrefsToServer is true
-  // this since we are creating the server, it obviously hasn't been
-  // opened, or in rdf.
-  //
-  // this makes the assumption that the server's draft, stationery fcc folder
-  // are at the top level (ie subfolders of the root folder.)  this works
-  // because we happen to be doing things that way, and if the user changes
-  // that, it will work because to change the folder, it must be in rdf,
-  // coming from the folder cache, in the worst case.
-  var msgFolder = rootFolder.QueryInterface(Ci.nsIMsgFolder);
-
-  /**
-   * When a new account is created, folders 'Sent', 'Drafts'
-   * and 'Templates' are not created then, but created on demand at runtime.
-   * But we do need to present them as possible choices in the Copies and Folders
-   * UI. To do that, folder URIs have to be created and stored in the prefs file.
-   * So, if there is a need to build special folders, append the special folder
-   * names and create right URIs.
-   */
-  var folderDelim = "/";
-
-  /* we use internal names known to everyone like Sent, Templates and Drafts */
-  /* if folder names were already given in isp rdf, we use them,
-     otherwise we use internal names known to everyone like Sent, Templates and Drafts */
-
-  // Note the capital F, D and S!
-  var draftFolder =
-    accountData.identity && accountData.identity.DraftFolder
-      ? accountData.identity.DraftFolder
-      : "Drafts";
-  var stationeryFolder =
-    accountData.identity && accountData.identity.StationeryFolder
-      ? accountData.identity.StationeryFolder
-      : "Templates";
-  var fccFolder =
-    accountData.identity && accountData.identity.FccFolder
-      ? accountData.identity.FccFolder
-      : "Sent";
-
-  identity.draftFolder = msgFolder.server.serverURI + folderDelim + draftFolder;
-  identity.stationeryFolder =
-    msgFolder.server.serverURI + folderDelim + stationeryFolder;
-  identity.fccFolder = msgFolder.server.serverURI + folderDelim + fccFolder;
-
-  // Note the capital F, D and S!
-  identity.fccFolderPickerMode =
-    accountData.identity && accountData.identity.FccFolder
-      ? 1
-      : gDefaultSpecialFolderPickerMode;
-  identity.draftsFolderPickerMode =
-    accountData.identity && accountData.identity.DraftFolder
-      ? 1
-      : gDefaultSpecialFolderPickerMode;
-  identity.tmplFolderPickerMode =
-    accountData.identity && accountData.identity.StationeryFolder
-      ? 1
-      : gDefaultSpecialFolderPickerMode;
-}
-
 function checkForInvalidAccounts() {
   var firstInvalidAccount = getInvalidAccounts(
     MailServices.accounts.accounts
@@ -581,25 +470,4 @@ function GetPageData() {
   }
 
   return gPageData;
-}
-
-// flush the XUL cache - just for debugging purposes - not called
-function onFlush() {
-  Services.prefs.setBoolPref("nglayout.debug.disable_xul_cache", true);
-  Services.prefs.setBoolPref("nglayout.debug.disable_xul_cache", false);
-}
-
-/** If there are no default accounts..
- * this is will be the new default, so enable
- * check for mail at startup
- */
-function EnableCheckMailAtStartUpIfNeeded(newAccount) {
-  // Check if default account existed.
-  // If no such account, make this one the default account
-  // and turn on the new mail check at startup for the current account
-  if (!gDefaultAccount) {
-    MailServices.accounts.defaultAccount = newAccount;
-    newAccount.incomingServer.loginAtStartUp = true;
-    newAccount.incomingServer.downloadOnBiff = true;
-  }
 }

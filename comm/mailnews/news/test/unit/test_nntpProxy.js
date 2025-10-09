@@ -2,11 +2,11 @@
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 // Tests that NNTP over a SOCKS proxy works.
 
-const { NetworkTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/NetworkTestUtils.jsm"
+const { NetworkTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/NetworkTestUtils.sys.mjs"
 );
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 const PORT = 119;
@@ -24,9 +24,9 @@ add_setup(async function () {
 add_task(async function findMessages() {
   // This is a trivial check that makes sure that we actually do some network
   // traffic without caring about the exact network traffic.
-  let folder = localserver.rootFolder.getChildNamed("test.filter");
+  const folder = localserver.rootFolder.getChildNamed("test.filter");
   equal(folder.getTotalMessages(false), 0);
-  let asyncUrlListener = new PromiseTestUtils.PromiseUrlListener();
+  const asyncUrlListener = new PromiseTestUtils.PromiseUrlListener();
   folder.getNewMessages(null, asyncUrlListener);
   await asyncUrlListener.promise;
   equal(folder.getTotalMessages(false), 8);

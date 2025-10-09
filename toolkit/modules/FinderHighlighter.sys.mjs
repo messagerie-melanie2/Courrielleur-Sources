@@ -2,15 +2,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   Color: "resource://gre/modules/Color.sys.mjs",
   Rect: "resource://gre/modules/Geometry.sys.mjs",
 });
-XPCOMUtils.defineLazyGetter(lazy, "kDebug", () => {
+ChromeUtils.defineLazyGetter(lazy, "kDebug", () => {
   const kDebugPref = "findbar.modalHighlight.debug";
   return (
     Services.prefs.getPrefType(kDebugPref) &&
@@ -148,7 +146,7 @@ function mockAnonymousContentNode(domNode) {
         duration
       );
     },
-    setCutoutRectsForElement(id, rects) {
+    setCutoutRectsForElement() {
       // no-op for now.
     },
   };
@@ -219,7 +217,7 @@ FinderHighlighter.prototype = {
    * @param  {nsIDOMWindow} window
    * @return {Object}
    */
-  getForWindow(window, propName = null) {
+  getForWindow(window) {
     if (!gWindows.has(window)) {
       gWindows.set(window, {
         detectedGeometryChange: false,
@@ -251,11 +249,11 @@ FinderHighlighter.prototype = {
    * Toggle highlighting all occurrences of a word in a page. This method will
    * be called recursively for each (i)frame inside a page.
    *
-   * @param {Booolean} highlight    Whether highlighting should be turned on
-   * @param {String}   word         Needle to search for and highlight when found
-   * @param {Boolean}  linksOnly    Only consider nodes that are links for the search
-   * @param {Boolean}  drawOutline  Whether found links should be outlined.
-   * @param {Boolean}  useSubFrames Whether to iterate over subframes.
+   * @param {Booolean} highlight      Whether highlighting should be turned on
+   * @param {String}   [word]         Needle to search for and highlight when found
+   * @param {Boolean}  [linksOnly]    Only consider nodes that are links for the search
+   * @param {Boolean}  [drawOutline]  Whether found links should be outlined.
+   * @param {Boolean}  [useSubFrames] Whether to iterate over subframes.
    * @yield {Promise}  that resolves once the operation has finished
    */
   async highlight(highlight, word, linksOnly, drawOutline, useSubFrames) {
@@ -663,7 +661,7 @@ FinderHighlighter.prototype = {
       this.setScrollMarks(window, Array.from(marks), onHorizontalScrollbar);
 
       if (!this._marksListener) {
-        this._marksListener = event => {
+        this._marksListener = () => {
           this.updateScrollMarks();
         };
 
@@ -1968,7 +1966,7 @@ FinderHighlighter.prototype = {
 
   // Start of nsIEditActionListener implementations
 
-  WillDeleteText(textNode, offset, length) {
+  WillDeleteText(textNode, offset) {
     let editor = this._getEditableNode(textNode).editor;
     let controller = editor.selectionController;
     let fSelection = controller.getSelection(
@@ -2133,7 +2131,7 @@ FinderHighlighter.prototype = {
       },
 
       // Unimplemented
-      notifyDocumentStateChanged(aDirty) {},
+      notifyDocumentStateChanged() {},
     };
   },
 };

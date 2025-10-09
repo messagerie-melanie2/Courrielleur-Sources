@@ -10,9 +10,9 @@ const {
 const {
   createFactory,
   PureComponent,
-} = require("resource://devtools/client/shared/vendor/react.js");
+} = require("resource://devtools/client/shared/vendor/react.mjs");
 const dom = require("resource://devtools/client/shared/vendor/react-dom-factories.js");
-const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.js");
+const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.mjs");
 
 const FluentReact = require("resource://devtools/client/shared/vendor/fluent-react.js");
 
@@ -37,7 +37,7 @@ class CompatibilityApp extends PureComponent {
       dispatch: PropTypes.func.isRequired,
       // getString prop is injected by the withLocalization wrapper
       getString: PropTypes.func.isRequired,
-      isSettingsVisibile: PropTypes.bool.isRequired,
+      isSettingsVisible: PropTypes.bool.isRequired,
       isTopLevelTargetProcessing: PropTypes.bool.isRequired,
       selectedNodeIssues: PropTypes.arrayOf(PropTypes.shape(Types.issue))
         .isRequired,
@@ -51,7 +51,7 @@ class CompatibilityApp extends PureComponent {
     const {
       dispatch,
       getString,
-      isSettingsVisibile,
+      isSettingsVisible,
       isTopLevelTargetProcessing,
       selectedNodeIssues,
       topLevelTargetIssues,
@@ -85,7 +85,7 @@ class CompatibilityApp extends PureComponent {
         {
           className:
             "compatibility-app__container" +
-            (isSettingsVisibile ? " compatibility-app__container-hidden" : ""),
+            (isSettingsVisible ? " compatibility-app__container-hidden" : ""),
         },
         Accordion({
           className: "compatibility-app__main",
@@ -108,14 +108,14 @@ class CompatibilityApp extends PureComponent {
           className: "compatibility-app__footer",
         })
       ),
-      isSettingsVisibile ? Settings() : null
+      isSettingsVisible ? Settings() : null
     );
   }
 }
 
 const mapStateToProps = state => {
   return {
-    isSettingsVisibile: state.compatibility.isSettingsVisibile,
+    isSettingsVisible: state.compatibility.isSettingsVisible,
     isTopLevelTargetProcessing: state.compatibility.isTopLevelTargetProcessing,
     selectedNodeIssues: state.compatibility.selectedNodeIssues,
     topLevelTargetIssues: state.compatibility.topLevelTargetIssues,

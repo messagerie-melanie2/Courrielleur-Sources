@@ -1,6 +1,6 @@
-/* - This Source Code Form is subject to the terms of the Mozilla Public
-   - License, v. 2.0. If a copy of the MPL was not distributed with this file,
-   - You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 @import url("chrome://global/skin/in-content/common-shared.css");
 @import url("chrome://messenger/skin/layout.css");
@@ -11,81 +11,75 @@
   --in-content-button-border-radius: 3px;
   --in-content-button-border-color: color-mix(in srgb, currentColor 9%, transparent);
   --in-content-button-border-color-hover: color-mix(in srgb, currentColor 17%, transparent);
+  --in-content-deemphasized-text: color-mix(in srgb, currentColor 60%, transparent);
   --in-content-sidebar-width: auto;
   --menu-item-margin: 0 3px;
-}
 
-:root:not(.system-font-size) {
-  font: message-box;
-}
-
-@media not (prefers-contrast) {
-  :host,
-  :root {
-    --in-content-box-info-background: var(--layout-background-1);
-    --in-content-box-info-border: var(--layout-border-0);
-    --in-content-button-background: var(--grey-90-a10);
-    --in-content-button-background-hover: var(--grey-90-a20);
-    --in-content-button-background-active: var(--grey-90-a30);
+  @media not (forced-colors) {
+    --in-content-box-info-background: light-dark(var(--layout-background-1), var(--layout-background-2));
+    --in-content-box-info-border: light-dark(var(--layout-border-0), transparent);
+    --in-content-button-background: light-dark(var(--grey-90-a10), rgba(249, 249, 250, 0.1));
+    --in-content-button-background-hover: light-dark(var(--grey-90-a20), rgba(249, 249, 250, 0.15));
+    --in-content-button-background-active: light-dark(var(--grey-90-a30), rgba(249, 249, 250, 0.2));
     --in-content-categories-background: var(--layout-background-2);
     --in-content-categories-border: var(--in-content-categories-background);
-    --in-content-item-selected-unfocused: var(--color-gray-20);
+    --in-content-item-selected-unfocused: light-dark(var(--color-gray-20), rgba(249, 249, 250, 0.05));
     --in-content-item-hover: color-mix(in srgb, currentColor 12%, transparent);
     --in-content-item-selected: color-mix(in srgb, currentColor 20%, transparent);
     --in-content-item-selected-text: var(--in-content-page-color);
+    --in-content-primary-button-background: AccentColor;
+    --in-content-primary-button-background-hover: color-mix(in srgb, AccentColor 80%, black);
+    --in-content-primary-button-background-active: color-mix(in srgb, AccentColor 70%, black);
+    --in-content-primary-button-text-color: AccentColorText;
+    --in-content-focus-outline-color: AccentColor;
+    --in-content-accent-color: AccentColor;
+    --focus-outline-color: AccentColor;
   }
 
-  @media (prefers-color-scheme: dark) {
-    :host,
-    :root {
-      --in-content-box-info-background: var(--layout-background-2);
-      --in-content-box-info-border: transparent;
-      --in-content-categories-background: var(--layout-background-2);
-      --in-content-item-selected-unfocused: rgba(249, 249, 250, 0.05);
-      --in-content-button-background: rgba(249, 249, 250, 0.1);
-      --in-content-button-background-hover: rgba(249, 249, 250, 0.15);
-      --in-content-button-background-active: rgba(249, 249, 250, 0.2);
-      --in-content-primary-button-background: #45a1ff;
-      --in-content-primary-button-background-hover: #65c1ff;
-      --in-content-primary-button-background-active: #85e1ff;
-      --in-content-focus-outline-color: #45a1ff;
-    }
-  }
-}
-
-@media (prefers-contrast) {
-  :root {
+  @media (forced-colors) {
     --in-content-box-info-background: transparent;
     --in-content-box-info-border: currentColor;
     --in-content-categories-background: transparent;
     --in-content-categories-border: currentColor;
+    --in-content-primary-button-background: SelectedItem;
+    --in-content-primary-button-background-hover: SelectedItem;
+    --in-content-primary-button-background-active: SelectedItem;
+    --in-content-primary-button-text-color: SelectedItemText;
+    --in-content-primary-button-text-color-active: SelectedItemText;
+    --in-content-accent-color: SelectedItem;
   }
 }
 
-.sidebar-footer-link,
-#categories > .category {
-  border-color: transparent !important;
+:root {
+  -moz-box-collapse: legacy;
+
+  &:not(.system-font-size) {
+    font: message-box;
+  }
 }
 
-#categories > .category {
-  margin-inline: 6px;
-}
+#categories {
+  & > .category {
+    margin-inline: 6px;
+    border-color: transparent !important;
 
-#categories > .category[selected] {
-  font-weight: 500;
-}
-
-@media not (prefers-contrast) {
-  #categories > .category[selected] {
-    background-color: var(--in-content-button-background) !important;
-    color: unset;
+    &[selected] {
+      font-weight: 500;
+    }
   }
 
-  #categories[keyboard-navigation="true"]:focus-visible > .category[current],
-  #categories > .category:focus-visible {
-    background-color: var(--in-content-item-selected) !important;
-    color: var(--in-content-item-selected-text);
-    outline: none;
+  @media not (forced-colors) {
+    & > .category[selected] {
+      background-color: var(--in-content-button-background) !important;
+      color: unset;
+    }
+
+    &[keyboard-navigation="true"]:focus-visible > .category[current],
+    & > .category:focus-visible {
+      background-color: var(--in-content-item-selected) !important;
+      color: var(--in-content-item-selected-text);
+      outline: none;
+    }
   }
 }
 
@@ -97,6 +91,10 @@
   margin-inline: 0;
 }
 
+.sidebar-footer-link {
+  border-color: transparent !important;
+}
+
 .sidebar-footer-icon {
   margin: 10px;
 }
@@ -105,27 +103,45 @@
   margin: 0;
 }
 
-menupopup {
-  --panel-border-color: var(--in-content-box-border-color);
-  --panel-background: var(--in-content-box-background);
-  --panel-color: var(--in-content-text-color);
-}
-
-menupopup::part(content) {
-  border-radius: var(--arrowpanel-border-radius);
-}
-
 menulist > menupopup {
   --panel-padding: 3px 0;
+
+  & menuseparator {
+    margin: 4px 8px;
+  }
 }
 
-menupopup > :is(menu, menuitem) {
-  margin: var(--menu-item-margin);
-  min-height: 24px;
-  padding-block: var(--menu-item-padding);
-  border-radius: 3px;
+menupopup {
+  @media not (-moz-windows-mica-popups) {
+    --panel-border-color: var(--in-content-box-border-color);
+    --panel-background: var(--background-color-box);
+    --panel-color: var(--in-content-text-color);
+  }
+
+  &::part(content) {
+    border-radius: var(--arrowpanel-border-radius);
+  }
+
+  & > :is(menu, menuitem) {
+    margin: var(--menu-item-margin);
+    min-height: 24px;
+    padding-block: var(--menu-item-padding);
+    border-radius: 3px;
+  }
+
+  @media (-moz-windows-mica-popups) {
+    & menupopup {
+      --panel-border-color: var(--in-content-box-border-color);
+    }
+  }
 }
 
-menulist > menupopup menuseparator {
-  margin: 4px 8px;
+tab[selected] {
+  color: var(--in-content-button-text-color);
+  background-color: var(--in-content-button-background);
+  border-bottom-color: var(--in-content-accent-color);
+}
+
+input[type="password"] {
+  -moz-appearance: textfield;
 }

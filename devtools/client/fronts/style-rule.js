@@ -48,13 +48,20 @@ class StyleRuleFront extends FrontClassWithSpec(styleRuleSpec) {
    * trait is true; otherwise a RuleModificationList will be
    * returned.
    *
+   * @param {Window} win
+   *                 This is needed by the RuleRewriter.
    * @param {CssPropertiesFront} cssProperties
    *                             This is needed by the RuleRewriter.
    * @return {RuleModificationList}
    */
-  startModifyingProperties(cssProperties) {
+  startModifyingProperties(win, cssProperties) {
     if (this.canSetRuleText) {
-      return new RuleRewriter(cssProperties.isKnown, this, this.authoredText);
+      return new RuleRewriter(
+        win,
+        cssProperties.isKnown,
+        this,
+        this.authoredText
+      );
     }
     return new RuleModificationList(this);
   }
@@ -70,6 +77,9 @@ class StyleRuleFront extends FrontClassWithSpec(styleRuleSpec) {
   }
   get cssText() {
     return this._form.cssText;
+  }
+  get isNestedDeclarations() {
+    return !!this._form.isNestedDeclarations;
   }
   get authoredText() {
     return typeof this._form.authoredText === "string"
@@ -87,6 +97,43 @@ class StyleRuleFront extends FrontClassWithSpec(styleRuleSpec) {
   }
   get selectors() {
     return this._form.selectors;
+  }
+  get selectorsSpecificity() {
+    return this._form.selectorsSpecificity;
+  }
+
+  /**
+   * Returns a concatenation of the rule's selector and all its ancestor "selectors".
+   * This is different from a "desugared" selector as what's returned is not an
+   * actual selector, but some kind of key that represent the rule selectors.
+   * This is used for the selector highlighter, where we need to know what's
+   * being highlighted.
+   *
+   * @returns {String}
+   */
+  get computedSelector() {
+    let selector = "";
+    for (const ancestor of this.ancestorData) {
+      let ancestorSelector;
+      if (ancestor.selectors) {
+        ancestorSelector = ancestor.selectors.join(",");
+      } else if (ancestor.type === "container") {
+        ancestorSelector =
+          ancestor.containerName + " " + ancestor.containerQuery;
+      } else if (ancestor.type === "supports") {
+        ancestorSelector = ancestor.conditionText;
+      } else if (ancestor.value) {
+        ancestorSelector = ancestor.value;
+      }
+      selector +=
+        "/" + (ancestor.type ? ancestor.type + " " : "") + ancestorSelector;
+    }
+
+    return (selector ? selector + "/" : "") + this._form.selectors.join(",");
+  }
+
+  get selectorWarnings() {
+    return this._form.selectorWarnings;
   }
 
   get parentStyleSheet() {
@@ -129,6 +176,10 @@ class StyleRuleFront extends FrontClassWithSpec(styleRuleSpec) {
 
   get ancestorData() {
     return this._form.ancestorData;
+  }
+
+  get userAdded() {
+    return this._form.userAdded;
   }
 
   async modifySelector(node, value) {

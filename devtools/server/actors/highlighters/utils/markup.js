@@ -8,7 +8,6 @@ const {
   getCurrentZoom,
   getWindowDimensions,
   getViewportDimensions,
-  loadSheet,
 } = require("resource://devtools/shared/layout/utils.js");
 const EventEmitter = require("resource://devtools/shared/event-emitter.js");
 
@@ -45,7 +44,8 @@ exports.removePseudoClassLock = (...args) =>
 const SVG_NS = "http://www.w3.org/2000/svg";
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
 const XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
-const STYLESHEET_URI = "resource://devtools/server/actors/highlighters.css";
+const STYLESHEET_URI =
+  "resource://devtools-highlighter-styles/highlighters.css";
 
 const _tokens = Symbol("classList/tokens");
 
@@ -114,7 +114,7 @@ ClassList.prototype = {
  * @return {Boolean}
  */
 function isXUL(window) {
-  return window.document.documentElement.namespaceURI === XUL_NS;
+  return window.document.documentElement?.namespaceURI === XUL_NS;
 }
 exports.isXUL = isXUL;
 
@@ -200,10 +200,9 @@ CanvasFrameAnonymousContentHelper.prototype = {
     // otherwise, wait for the window-ready event to fire.
     const doc = this.highlighterEnv.document;
     if (
-      doc.documentElement &&
-      (!this.waitForDocumentToLoad ||
-        isDocumentReady(doc) ||
-        doc.readyState !== "uninitialized")
+      !this.waitForDocumentToLoad ||
+      isDocumentReady(doc) ||
+      doc.readyState !== "uninitialized"
     ) {
       this._insert();
     }
@@ -239,27 +238,13 @@ CanvasFrameAnonymousContentHelper.prototype = {
     this.anonymousContentWindow = this.highlighterEnv.window;
     this.pageListenerTarget = this.highlighterEnv.pageListenerTarget;
 
-    // For now highlighters.css is injected in content as a ua sheet because
-    // we no longer support scoped style sheets (see bug 1345702).
-    // If it did, highlighters.css would be injected as an anonymous content
-    // node using CanvasFrameAnonymousContentHelper instead.
-    loadSheet(this.anonymousContentWindow, STYLESHEET_URI);
-
-    const node = this.nodeBuilder();
-
     // It was stated that hidden documents don't accept
     // `insertAnonymousContent` calls yet. That doesn't seems the case anymore,
     // at least on desktop. Therefore, removing the code that was dealing with
     // that scenario, fixes when we're adding anonymous content in a tab that
     // is not the active one (see bug 1260043 and bug 1260044)
     try {
-      // If we didn't wait for the document to load, we want to force a layout update
-      // to ensure the anonymous content will be rendered (see Bug 1580394).
-      const forceSynchronousLayoutUpdate = !this.waitForDocumentToLoad;
-      this._content = this.anonymousContentDocument.insertAnonymousContent(
-        node,
-        forceSynchronousLayoutUpdate
-      );
+      this._content = this.anonymousContentDocument.insertAnonymousContent();
     } catch (e) {
       // If the `insertAnonymousContent` fails throwing a `NS_ERROR_UNEXPECTED`, it means
       // we don't have access to a `CustomContentContainer` yet (see bug 1365075).
@@ -278,12 +263,23 @@ CanvasFrameAnonymousContentHelper.prototype = {
             { once: true }
           );
         });
-        this._content =
-          this.anonymousContentDocument.insertAnonymousContent(node);
+        this._content = this.anonymousContentDocument.insertAnonymousContent();
       } else {
         throw e;
       }
     }
+
+    // Use createElementNS to make sure this is an HTML element.
+    // Document.createElement's behavior is different between SVG and HTML
+    // documents, see bug 1850007.
+    const link = this.anonymousContentDocument.createElementNS(
+      XHTML_NS,
+      "link"
+    );
+    link.href = STYLESHEET_URI;
+    link.rel = "stylesheet";
+    this._content.root.appendChild(link);
+    this._content.root.appendChild(this.nodeBuilder());
 
     this._initialized();
   },
@@ -312,36 +308,50 @@ CanvasFrameAnonymousContentHelper.prototype = {
     }
   },
 
+  _getNodeById(id) {
+    return this.content?.root.getElementById(id);
+  },
+
+  getBoundingClientRect(id) {
+    const node = this._getNodeById(id);
+    if (!node) {
+      return null;
+    }
+    return node.getBoundingClientRect();
+  },
+
   getComputedStylePropertyValue(id, property) {
-    return (
-      this.content && this.content.getComputedStylePropertyValue(id, property)
-    );
+    const node = this._getNodeById(id);
+    if (!node) {
+      return null;
+    }
+    return this.anonymousContentWindow
+      .getComputedStyle(node)
+      .getPropertyValue(property);
   },
 
   getTextContentForElement(id) {
-    return this.content && this.content.getTextContentForElement(id);
+    return this._getNodeById(id)?.textContent;
   },
 
   setTextContentForElement(id, text) {
-    if (this.content) {
-      this.content.setTextContentForElement(id, text);
+    const node = this._getNodeById(id);
+    if (!node) {
+      return;
     }
+    node.textContent = text;
   },
 
   setAttributeForElement(id, name, value) {
-    if (this.content) {
-      this.content.setAttributeForElement(id, name, value);
-    }
+    this._getNodeById(id)?.setAttribute(name, value);
   },
 
   getAttributeForElement(id, name) {
-    return this.content && this.content.getAttributeForElement(id, name);
+    return this._getNodeById(id)?.getAttribute(name);
   },
 
   removeAttributeForElement(id, name) {
-    if (this.content) {
-      this.content.removeAttributeForElement(id, name);
-    }
+    this._getNodeById(id)?.removeAttribute(name);
   },
 
   hasAttributeForElement(id, name) {
@@ -349,7 +359,7 @@ CanvasFrameAnonymousContentHelper.prototype = {
   },
 
   getCanvasContext(id, type = "2d") {
-    return this.content && this.content.getCanvasContext(id, type);
+    return this._getNodeById(id)?.getContext(type);
   },
 
   /**
@@ -544,7 +554,8 @@ CanvasFrameAnonymousContentHelper.prototype = {
     const zoom = getCurrentZoom(node);
     // Hide the root element and force the reflow in order to get the proper window's
     // dimensions without increasing them.
-    this.setAttributeForElement(id, "style", "display: none");
+    const root = this._getNodeById(id);
+    root.style.display = "none";
     node.offsetWidth;
 
     let { width, height } = getWindowDimensions(boundaryWindow);
@@ -556,9 +567,8 @@ CanvasFrameAnonymousContentHelper.prototype = {
       height *= zoom;
     }
 
-    value += `position:absolute; width:${width}px;height:${height}px; overflow:hidden`;
-
-    this.setAttributeForElement(id, "style", value);
+    value += `position:absolute; width:${width}px;height:${height}px; overflow:hidden;`;
+    root.style = value;
   },
 
   /**

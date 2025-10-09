@@ -3,31 +3,33 @@
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 import argparse
 import os
-import platform
 
-import six
 from mozlog.commandline import add_logging_group
 
-(FIREFOX, CHROME, CHROMIUM, SAFARI, CHROMIUM_RELEASE) = DESKTOP_APPS = [
+(FIREFOX, CHROME, SAFARI, SAFARI_TP, CHROMIUM_RELEASE) = DESKTOP_APPS = [
     "firefox",
     "chrome",
-    "chromium",
     "safari",
+    "safari-tp",
     "custom-car",
 ]
-(GECKOVIEW, REFBROW, FENIX, CHROME_ANDROID) = FIREFOX_ANDROID_APPS = [
+(GECKOVIEW, REFBROW, FENIX) = FIREFOX_ANDROID_APPS = [
     "geckoview",
     "refbrow",
     "fenix",
-    "chrome-m",
 ]
+(CHROME_ANDROID, CHROMIUM_RELEASE_ANDROID) = CHROME_ANDROID_APPS = [
+    "chrome-m",
+    "cstm-car-m",
+]
+FIREFOX_APPS = FIREFOX_ANDROID_APPS + [FIREFOX]
 
-CHROMIUM_DISTROS = [CHROME, CHROMIUM]
+CHROMIUM_DISTROS = [CHROME, CHROMIUM_RELEASE]
 APPS = {
     FIREFOX: {"long_name": "Firefox Desktop"},
     CHROME: {"long_name": "Google Chrome Desktop"},
-    CHROMIUM: {"long_name": "Google Chromium Desktop"},
     SAFARI: {"long_name": "Safari Desktop"},
+    SAFARI_TP: {"long_name": "Safari Technology Preview Desktop"},
     CHROMIUM_RELEASE: {"long_name": "Custom Chromium-as-Release desktop"},
     GECKOVIEW: {
         "long_name": "Firefox GeckoView on Android",
@@ -49,8 +51,24 @@ APPS = {
         "default_activity": "com.android.chrome/com.google.android.apps.chrome.Main",
         "default_intent": "android.intent.action.VIEW",
     },
+    CHROMIUM_RELEASE_ANDROID: {
+        "long_name": "Custom Chromium-as-Release on Android",
+        "default_activity": "com.android.chrome/com.google.android.apps.chrome.Main",
+        "default_intent": "android.intent.action.VIEW",
+    },
 }
 INTEGRATED_APPS = list(APPS.keys())
+
+GECKO_PROFILER_APPS = (FIREFOX, GECKOVIEW, REFBROW, FENIX)
+
+TRACE_APPS = (CHROME, CHROMIUM_RELEASE)
+
+APP_BINARIES = {
+    "fenix": "org.mozilla.fenix",
+    "focus": "org.mozilla.focus",
+    "geckoview": "org.mozilla.geckoview_example",
+    "refbrow": "org.mozilla.reference.browser",
+}
 
 
 def print_all_activities():
@@ -121,26 +139,7 @@ def create_parser(mach_interface=False):
         "loaded from the environment variable HOST_IP.",
         default="127.0.0.1",
     )
-    add_arg(
-        "--power-test",
-        dest="power_test",
-        action="store_true",
-        help="Use Raptor to measure power usage on Android browsers (Geckoview Example, "
-        "Fenix, and Refbrow) as well as on Intel-based MacOS machines that have "
-        "Intel Power Gadget installed.",
-    )
-    add_arg(
-        "--memory-test",
-        dest="memory_test",
-        action="store_true",
-        help="Use Raptor to measure memory usage.",
-    )
-    add_arg(
-        "--cpu-test",
-        dest="cpu_test",
-        action="store_true",
-        help="Use Raptor to measure CPU usage. Currently supported for Android only.",
-    )
+
     add_arg(
         "--live-sites",
         dest="live_sites",
@@ -186,10 +185,11 @@ def create_parser(mach_interface=False):
         "--gecko-profile",
         action="store_true",
         dest="gecko_profile",
-        help="Profile the run and out-put the results in $MOZ_UPLOAD_DIR. "
+        help="Profile the run and output the results in $MOZ_UPLOAD_DIR. "
         "After talos is finished, profiler.firefox.com will be launched in Firefox "
         "so you can analyze the local profiles. To disable auto-launching of "
-        "profiler.firefox.com, set the DISABLE_PROFILE_LAUNCH=1 env var.",
+        "profiler.firefox.com, set the DISABLE_PROFILE_LAUNCH=1 env var. "
+        "Copy paste the parameters used in this profiling run directly from about:profiling in Nightly.",
     )
     add_arg(
         "--gecko-profile-entries",
@@ -200,7 +200,7 @@ def create_parser(mach_interface=False):
     add_arg(
         "--gecko-profile-interval",
         dest="gecko_profile_interval",
-        type=int,
+        type=float,
         help="How frequently to take samples (milliseconds)",
     )
     add_arg(
@@ -251,7 +251,7 @@ def create_parser(mach_interface=False):
         "--post-startup-delay",
         dest="post_startup_delay",
         type=int,
-        default=30000,
+        default=None,
         help="How long to wait (ms) after browser start-up before starting the tests",
     )
     add_arg(
@@ -348,8 +348,8 @@ def create_parser(mach_interface=False):
             help="This contains the path to mozbuild.",
         )
     add_arg(
-        "--noinstall",
-        dest="noinstall",
+        "--no-install",
+        dest="no_install",
         default=False,
         action="store_true",
         help="Flag which indicates if Raptor should not offer to install Android APK.",
@@ -375,14 +375,6 @@ def create_parser(mach_interface=False):
         type=str,
         help="Name of conditioned profile to use. Prefix with `artifact:` "
         "if we should obtain the profile from CI.",
-    )
-    add_arg(
-        "--webext",
-        dest="webext",
-        action="store_true",
-        default=False,
-        help="Whether to use webextension to execute pageload tests "
-        "(WebExtension is being deprecated).",
     )
     add_arg(
         "--test-bytecode-cache",
@@ -511,7 +503,7 @@ def create_parser(mach_interface=False):
         default=[],
         metavar="OPTION",
         help="Alternative methods for summarizing technical and visual pageload metrics. "
-        "Options: geomean, mean.",
+        "Options: median.",
     )
     add_arg(
         "--benchmark-repository",
@@ -535,6 +527,20 @@ def create_parser(mach_interface=False):
         type=str,
         help="Repository branch that should be used for a particular benchmark test.",
     )
+    add_arg(
+        "--screenshot-on-failure",
+        action="store_true",
+        dest="screenshot_on_failure",
+        default=False,
+        help="Take a screenshot when the test fails.",
+    )
+    add_arg(
+        "--power-test",
+        action="store_true",
+        dest="power_test",
+        default=False,
+        help="Gather power usage measurements on this test (Android only).",
+    )
 
     add_logging_group(parser)
     return parser
@@ -543,15 +549,15 @@ def create_parser(mach_interface=False):
 def verify_options(parser, args):
     ctx = vars(args)
     if args.binary is None and args.app != "chrome-m":
-        parser.error("--binary is required!")
+        args.binary = APP_BINARIES.get(args.app, None)
+        if args.binary is None:
+            parser.error("--binary is required!")
+        else:
+            print(f"Using {args.binary} as default binary argument for {args.app} app")
 
     # Debug-mode is disabled in CI (check for attribute in case of mach_interface issues)
     if hasattr(args, "run_local") and (not args.run_local and args.debug_mode):
         parser.error("Cannot run debug mode in CI")
-
-    # If running on webextension, browsertime flag is changed (browsertime is run by default)
-    if args.webext:
-        args.browsertime = False
 
     # make sure that browsertime_video is set if visual metrics are requested
     if args.browsertime_visualmetrics and not args.browsertime_video:
@@ -593,29 +599,6 @@ def verify_options(parser, args):
     if args.gecko_profile and args.app in CHROMIUM_DISTROS:
         parser.error("Gecko profiling is not supported on Chrome/Chromium!")
 
-    if args.power_test:
-        if args.app not in ["geckoview", "refbrow", "fenix"]:
-            if platform.system().lower() not in ("darwin",):
-                parser.error(
-                    "Power tests are only available on MacOS desktop machines or "
-                    "Firefox android browers. App requested: %s. Platform "
-                    "detected: %s." % (args.app, platform.system().lower())
-                )
-
-    if args.cpu_test:
-        if args.app not in ["geckoview", "refbrow", "fenix"]:
-            parser.error(
-                "CPU test is only supported when running Raptor on Firefox Android "
-                "browsers!"
-            )
-
-    if args.memory_test:
-        if args.app not in ["geckoview", "refbrow", "fenix"]:
-            parser.error(
-                "Memory test is only supported when running Raptor on Firefox Android "
-                "browsers!"
-            )
-
     if args.fission:
         print("Fission enabled through browser preferences")
         args.extra_prefs.append("fission.autostart=true")
@@ -645,6 +628,10 @@ def verify_options(parser, args):
             parser.error(
                 "When a benchmark repository is provided, a revision is also required."
             )
+
+    if args.post_startup_delay:
+        if args.post_startup_delay < 0:
+            parser.error("--post-startup-delay must be a positive integer (in ms).")
 
 
 def parse_args(argv=None):
@@ -682,10 +669,10 @@ class _PrintTests(_StopAction):
         from manifestparser import TestManifest
 
         here = os.path.abspath(os.path.dirname(__file__))
-        raptor_ini = os.path.join(here, "raptor.ini")
+        raptor_toml = os.path.join(here, "raptor.toml")
 
         for _app in self.integrated_apps:
-            test_manifest = TestManifest([raptor_ini], strict=False)
+            test_manifest = TestManifest([raptor_toml], strict=False)
             info = {"app": _app}
             available_tests = test_manifest.active_tests(
                 exists=False, disabled=False, filters=[self.filter_app], **info
@@ -714,7 +701,9 @@ class _PrintTests(_StopAction):
                     # no test name; skip it
                     continue
 
-                suite = os.path.basename(next_test["manifest"])[:-4]
+                suite = ".".join(
+                    os.path.basename(next_test["manifest"]).split(".")[:-1]
+                )
                 if suite not in test_list:
                     test_list[suite] = {"type": None, "subtests": []}
 
@@ -726,11 +715,13 @@ class _PrintTests(_StopAction):
                         subtest = next_test["name"]
                         measure = next_test.get("measure")
                         if measure is not None:
-                            subtest = "{0} ({1})".format(subtest, measure)
+                            subtest = "{0} ({1})".format(
+                                subtest, measure.replace("\n", ", ")
+                            )
                         test_list[suite]["subtests"].append(subtest)
 
             # print the list in a nice, readable format
-            for key in sorted(six.iterkeys(test_list)):
+            for key in sorted(test_list.keys()):
                 print("\n%s" % key)
                 print("  type: %s" % test_list[key]["type"])
                 if len(test_list[key]["subtests"]) != 0:
@@ -742,7 +733,7 @@ class _PrintTests(_StopAction):
         # exit Raptor
         parser.exit()
 
-    def filter_app(self, tests, values):
+    def filter_app(self, tests, values, strict=True):
         for test in tests:
             if values["app"] in test["apps"]:
                 yield test

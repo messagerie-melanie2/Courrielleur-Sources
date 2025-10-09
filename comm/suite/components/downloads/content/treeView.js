@@ -2,7 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 var {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
@@ -21,7 +20,7 @@ function DownloadTreeView() {
 }
 
 DownloadTreeView.prototype = {
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsITreeView]),
+  QueryInterface: ChromeUtils.generateQI([Ci.nsITreeView]),
 
   // ***** nsITreeView attributes and methods *****
   get rowCount() {

@@ -12,7 +12,6 @@ config = {
         "build",
         "multi-l10n",
     ],
-    "max_build_output_timeout": 0,
     "secret_files": [
         {
             "filename": "/builds/gls-gapi.data",
@@ -33,6 +32,9 @@ config = {
     ],
     "vcs_share_base": "/builds/hg-shared",
     "multi_locale": True,
+    "upload_env": {
+        "UPLOAD_PATH": "/builds/worker/artifacts",
+    },
     #########################################################################
     #########################################################################
     "platform": "android",
@@ -50,7 +52,7 @@ config = {
         "PATH": "/usr/local/bin:/bin:/usr/bin",
         "SHIP_LICENSED_FONTS": "1",
     },
-    "src_mozconfig": "mobile/android/config/mozconfigs/android/nightly",
+    "app_name": "mobile/android",
     # Bug 1583594: GeckoView doesn't (yet) produce have a package file
     # from which to extract package metrics.
     "disable_package_metrics": True,

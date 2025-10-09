@@ -4,8 +4,8 @@
 
 "use strict";
 
-const { BrowserLoader } = ChromeUtils.import(
-  "resource://devtools/shared/loader/browser-loader.js"
+const { BrowserLoader } = ChromeUtils.importESModule(
+  "resource://devtools/shared/loader/browser-loader.sys.mjs"
 );
 const require = BrowserLoader({
   baseURI: "resource://devtools/client/application/",
@@ -14,11 +14,11 @@ const require = BrowserLoader({
 
 const {
   createFactory,
-} = require("resource://devtools/client/shared/vendor/react.js");
+} = require("resource://devtools/client/shared/vendor/react.mjs");
 const {
   render,
   unmountComponentAtNode,
-} = require("resource://devtools/client/shared/vendor/react-dom.js");
+} = require("resource://devtools/client/shared/vendor/react-dom.mjs");
 const Provider = createFactory(
   require("resource://devtools/client/shared/vendor/react-redux.js").Provider
 );
@@ -55,7 +55,7 @@ const {
  * called to start the UI for the panel.
  */
 window.Application = {
-  async bootstrap({ toolbox, commands, panel }) {
+  async bootstrap({ toolbox, commands }) {
     // bind event handlers to `this`
     this.updateDomain = this.updateDomain.bind(this);
 

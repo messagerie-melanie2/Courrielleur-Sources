@@ -105,6 +105,16 @@ static const PresentedMatchesReference DNSID_MATCH_PARAMS[] =
   DNS_ID_MATCH("_example", "_example"),
   DNS_ID_MATCH("*._._", "x._._"),
 
+  // We allow reference ID labels to start and end with hyphens for
+  // compatibility.
+  DNS_ID_MATCH("*.example.com", "-.example.com"),
+  DNS_ID_MATCH("*.example.com", "-hyphenstart.example.com"),
+  DNS_ID_MATCH("*.example.com", "hyphenend-.example.com"),
+  // Presented ID labels may not start or end with hyphens.
+  DNS_ID_BAD_DER("-.example.com", "-.example.com"),
+  DNS_ID_BAD_DER("-hyphenstart.example.com", "-hyphenstart.example.com"),
+  DNS_ID_BAD_DER("hyphenend-.example.com", "hyphenend-.example.com"),
+
   // See bug 1139039
   // A DNS-ID must not end in an all-numeric label. We don't consider
   // underscores to be numeric.
@@ -371,13 +381,13 @@ static const InputValidity DNSNAMES_VALIDITY[] =
   I("a...", false, false),
 
   // Punycode
-  I("xn--", false, false),
-  I("xn--.", false, false),
-  I("xn--.a", false, false),
-  I("a.xn--", false, false),
-  I("a.xn--.", false, false),
-  I("a.xn--.b", false, false),
-  I("a.xn--.b", false, false),
+  I("xn--", true, false),
+  I("xn--.", true, false),
+  I("xn--.a", true, false),
+  I("a.xn--", true, false),
+  I("a.xn--.", true, false),
+  I("a.xn--.b", true, false),
+  I("a.xn--.b", true, false),
   I("a.xn--\0.b", false, false),
   I("a.xn--a.b", true, true),
   I("xn--a", true, true),
@@ -416,7 +426,7 @@ static const InputValidity DNSNAMES_VALIDITY[] =
   I("a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v.w.x.y.z", true, true),
   I("A.B.C.D.E.F.G.H.I.J.K.L.M.N.O.P.Q.R.S.T.U.V.W.X.Y.Z", true, true),
   I("0.1.2.3.4.5.6.7.8.9.a", true, true), // "a" needed to avoid numeric last label
-  I("a-b", true, true), // hyphen (a label cannot start or end with a hyphen)
+  I("a-b", true, true), // hyphen (presented ID labels cannot start or end with a hyphen)
 
   // Underscores
   I("a_b", true, true),
@@ -469,17 +479,17 @@ static const InputValidity DNSNAMES_VALIDITY[] =
   I("a.1-1", true, true),
   I("a.1-a", true, true),
 
-  // labels cannot start with a hyphen
-  I("-", false, false),
-  I("-1", false, false),
+  // presented ID labels cannot start with a hyphen
+  I("-", true, false),
+  I("-1", true, false),
 
-  // labels cannot end with a hyphen
-  I("1-", false, false),
-  I("1-.a", false, false),
-  I("a-", false, false),
-  I("a-.a", false, false),
-  I("a.1-.a", false, false),
-  I("a.a-.a", false, false),
+  // presented ID labels cannot end with a hyphen
+  I("1-", true, false),
+  I("1-.a", true, false),
+  I("a-", true, false),
+  I("a-.a", true, false),
+  I("a.1-.a", true, false),
+  I("a.a-.a", true, false),
 
   // labels can contain a hyphen in the middle
   I("a-b", true, true),
@@ -1135,8 +1145,8 @@ static const uint8_t example_com[] = {
 static const uint8_t ipv4_addr_bytes[] = {
   1, 2, 3, 4
 };
-static const uint8_t ipv4_addr_bytes_as_str[] = "\x01\x02\x03\x04";
-static const uint8_t ipv4_addr_str[] = "1.2.3.4";
+static const char ipv4_addr_bytes_as_str[] = "\x01\x02\x03\x04";
+static const char ipv4_addr_str[] = "1.2.3.4";
 static const uint8_t ipv4_addr_bytes_FFFFFFFF[8] = {
   1, 2, 3, 4, 0xff, 0xff, 0xff, 0xff
 };
@@ -1147,7 +1157,7 @@ static const uint8_t ipv4_compatible_ipv6_addr_bytes[] = {
   0, 0, 0, 0,
   1, 2, 3, 4
 };
-static const uint8_t ipv4_compatible_ipv6_addr_str[] = "::1.2.3.4";
+static const char ipv4_compatible_ipv6_addr_str[] = "::1.2.3.4";
 
 static const uint8_t ipv4_mapped_ipv6_addr_bytes[] = {
   0, 0, 0, 0,
@@ -1155,7 +1165,7 @@ static const uint8_t ipv4_mapped_ipv6_addr_bytes[] = {
   0, 0, 0xFF, 0xFF,
   1, 2, 3, 4
 };
-static const uint8_t ipv4_mapped_ipv6_addr_str[] = "::FFFF:1.2.3.4";
+static const char ipv4_mapped_ipv6_addr_str[] = "::FFFF:1.2.3.4";
 
 static const uint8_t ipv6_addr_bytes[] = {
   0x11, 0x22, 0x33, 0x44,
@@ -1163,13 +1173,13 @@ static const uint8_t ipv6_addr_bytes[] = {
   0x99, 0xaa, 0xbb, 0xcc,
   0xdd, 0xee, 0xff, 0x11
 };
-static const uint8_t ipv6_addr_bytes_as_str[] =
+static const char ipv6_addr_bytes_as_str[] =
   "\x11\x22\x33\x44"
   "\x55\x66\x77\x88"
   "\x99\xaa\xbb\xcc"
   "\xdd\xee\xff\x11";
 
-static const uint8_t ipv6_addr_str[] =
+static const char ipv6_addr_str[] =
   "1122:3344:5566:7788:99aa:bbcc:ddee:ff11";
 
 static const uint8_t ipv6_other_addr_bytes[] = {
@@ -1646,6 +1656,45 @@ TEST_F(pkixnames_CheckCertHostname, SANWithoutSequence)
   static const uint8_t a[] = { 'a' };
   ASSERT_EQ(Result::ERROR_EXTENSION_VALUE_INVALID,
             CheckCertHostname(certInput, Input(a), mNameMatchingPolicy));
+}
+
+class SkipInvalidSubjectAlternativeNamesNameMatchingPolicy : public NameMatchingPolicy {
+ public:
+  virtual Result FallBackToCommonName(
+      Time,
+      /*out*/ FallBackToSearchWithinSubject& fallBackToCommonName) override {
+    fallBackToCommonName = FallBackToSearchWithinSubject::No;
+    return Success;
+  }
+
+  virtual HandleInvalidSubjectAlternativeNamesBy
+  HandleInvalidSubjectAlternativeNames() override {
+    return HandleInvalidSubjectAlternativeNamesBy::Skipping;
+  }
+};
+
+TEST_F(pkixnames_CheckCertHostname, SkipInvalidSubjectAlternativeNames)
+{
+  ByteString cert(CreateCert(RDN(CN("invalid SAN example")), DNSName("192.0.2.0")));
+  ASSERT_FALSE(ENCODING_FAILED(cert));
+  Input certInput;
+  ASSERT_EQ(Success, certInput.Init(cert.data(), cert.length()));
+
+  const char* hostname = "example.com";
+  Input hostnameInput;
+  ASSERT_EQ(Success,
+            hostnameInput.Init(reinterpret_cast<const uint8_t*>(hostname),
+                               strlen(hostname)));
+
+  // The default name matching policy halts on invalid SAN entries.
+  ASSERT_EQ(Result::ERROR_BAD_DER,
+            CheckCertHostname(certInput, hostnameInput, mNameMatchingPolicy));
+
+  SkipInvalidSubjectAlternativeNamesNameMatchingPolicy nameMatchingPolicy;
+  // A policy that skips invalid SAN entries should result in a domain mismatch
+  // error.
+  ASSERT_EQ(Result::ERROR_BAD_CERT_DOMAIN,
+            CheckCertHostname(certInput, hostnameInput, nameMatchingPolicy));
 }
 
 class pkixnames_CheckCertHostname_PresentedMatchesReference

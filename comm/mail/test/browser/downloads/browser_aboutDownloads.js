@@ -7,12 +7,8 @@
  */
 
 "use strict";
-var utils = ChromeUtils.import("resource://testing-common/mozmill/utils.jsm");
-var { gMockFilePicker, gMockFilePickReg } = ChromeUtils.import(
-  "resource://testing-common/mozmill/AttachmentHelpers.jsm"
-);
-var { content_tab_e } = ChromeUtils.import(
-  "resource://testing-common/mozmill/ContentTabHelpers.jsm"
+var { content_tab_e } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ContentTabHelpers.sys.mjs"
 );
 var {
   be_in_folder,
@@ -20,16 +16,16 @@ var {
   create_folder,
   get_about_message,
   make_message_sets_in_folders,
-  mc,
   select_click_row,
   switch_tab,
-  wait_for_popup_to_open,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-var { click_menus_in_sequence, wait_for_browser_load } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
-);
+var { click_menus_in_sequence, wait_for_browser_load } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/WindowHelpers.sys.mjs"
+  );
+var { MockFilePicker } = SpecialPowers;
 
 var downloads = ChromeUtils.importESModule(
   "resource://gre/modules/Downloads.sys.mjs"
@@ -56,27 +52,30 @@ var downloadsView = {
     this.items.set(aDownload, aDownload.target.path);
   },
 
-  onDownloadChanged(aDownload) {},
+  onDownloadChanged() {},
 
   onDownloadRemoved(aDownload) {
     this.removedItems.push(aDownload.target.path);
     this.items.delete(aDownload);
   },
 
-  waitForFinish() {
-    let succeededPromises = [];
-    for (let download of this.items.keys()) {
-      let succeededPromise = download.whenSucceeded();
+  async waitForFinish() {
+    const succeededPromises = [];
+    for (const download of this.items.keys()) {
+      const succeededPromise = download.whenSucceeded();
       succeededPromises.push(succeededPromise);
     }
     let finished = false;
     Promise.all(succeededPromises).then(() => (finished = true), console.error);
-    utils.waitFor(() => finished, "Timeout waiting for downloads to complete.");
+    await TestUtils.waitForCondition(
+      () => finished,
+      "Timeout waiting for downloads to complete."
+    );
   },
 };
 
 async function prepare_messages() {
-  let folder = await create_folder("about:downloads");
+  const folder = await create_folder("about:downloads");
   await make_message_sets_in_folders(
     [folder],
     [
@@ -112,46 +111,44 @@ async function prepare_messages() {
   await be_in_folder(folder);
 }
 
-function prepare_downloads_view() {
+async function prepare_downloads_view() {
   let success = false;
   downloads.Downloads.getList(downloads.Downloads.ALL)
     .then(list => list.addView(downloadsView))
     .then(() => (success = true), console.error);
-  utils.waitFor(
+  await TestUtils.waitForCondition(
     () => success,
     "Timeout waiting for attaching our download view."
   );
 }
 
 add_setup(async function () {
-  gMockFilePickReg.register();
+  MockFilePicker.init(window.browsingContext);
 
   await prepare_messages();
-  prepare_downloads_view();
+  await prepare_downloads_view();
 
-  downloadsTab = open_about_downloads();
+  downloadsTab = await open_about_downloads();
 });
 
-function setupTest(test) {
+function setupTest() {
   downloadsView.init();
 }
 
-function open_about_downloads() {
-  let preCount =
-    mc.window.document.getElementById("tabmail").tabContainer.allTabs.length;
-  let newTab = mc.window.openSavedFilesWnd();
-  utils.waitFor(
+async function open_about_downloads() {
+  const preCount =
+    document.getElementById("tabmail").tabContainer.allTabs.length;
+  const newTab = window.openSavedFilesWnd();
+  await TestUtils.waitForCondition(
     () =>
-      mc.window.document.getElementById("tabmail").tabContainer.allTabs
-        .length ==
+      document.getElementById("tabmail").tabContainer.allTabs.length ==
       preCount + 1,
     "Timeout waiting for about:downloads tab"
   );
 
-  wait_for_browser_load(newTab.browser, "about:downloads");
+  await wait_for_browser_load(newTab.browser, "about:downloads");
   // We append new tabs at the end, so check the last one.
-  let expectedNewTab =
-    mc.window.document.getElementById("tabmail").tabInfo[preCount];
+  const expectedNewTab = document.getElementById("tabmail").tabInfo[preCount];
   return expectedNewTab;
 }
 
@@ -162,28 +159,31 @@ add_task(async function test_empty_list() {
   setupTest();
   await switch_tab(downloadsTab);
 
-  let list = content_tab_e(downloadsTab, "msgDownloadsRichListBox");
+  const list = content_tab_e(downloadsTab, "msgDownloadsRichListBox");
   Assert.equal(list.children.length, 0, "Downloads list should be empty");
-  teardownTest();
+  await teardownTest();
 });
 
 async function save_attachment_files() {
   await switch_tab(0);
 
-  let profileDir = Services.dirsvc.get("ProfD", Ci.nsIFile);
+  const profileDir = Services.dirsvc.get("ProfD", Ci.nsIFile);
 
-  let aboutMessage = get_about_message();
-  let length = attachmentFileNames.length;
+  const aboutMessage = get_about_message();
+  const length = attachmentFileNames.length;
   for (let i = 0; i < length; i++) {
-    let file = profileDir.clone();
+    const file = profileDir.clone();
     file.append(attachmentFileNames[i]);
-    select_click_row(i);
-    gMockFilePicker.returnFiles = [file];
-    EventUtils.synthesizeMouseAtCenter(
-      aboutMessage.document.getElementById("attachmentSaveAllSingle"),
-      { clickCount: 1 },
-      aboutMessage
-    );
+    await select_click_row(i);
+    MockFilePicker.setFiles([file]);
+    await new Promise(function (resolve) {
+      MockFilePicker.afterOpenCallback = resolve;
+      EventUtils.synthesizeMouseAtCenter(
+        aboutMessage.document.getElementById("attachmentSaveAllSingle"),
+        { clickCount: 1 },
+        aboutMessage
+      );
+    });
   }
 }
 
@@ -193,11 +193,11 @@ async function save_attachment_files() {
 async function subtest_save_attachment_files_in_list() {
   await save_attachment_files();
 
-  mc.window.document.getElementById("tabmail").switchToTab(downloadsTab);
-  let list = content_tab_e(downloadsTab, "msgDownloadsRichListBox");
+  document.getElementById("tabmail").switchToTab(downloadsTab);
+  const list = content_tab_e(downloadsTab, "msgDownloadsRichListBox");
 
-  let length = attachmentFileNames.length;
-  utils.waitFor(
+  const length = attachmentFileNames.length;
+  await TestUtils.waitForCondition(
     () => downloadsView.count == length,
     () =>
       "Timeout waiting for saving three attachment files; " +
@@ -208,7 +208,7 @@ async function subtest_save_attachment_files_in_list() {
   Assert.equal(length, list.children.length);
   Assert.equal(downloadsView.count, list.children.length);
 
-  let actualNames = [];
+  const actualNames = [];
   let child = list.firstElementChild;
   dump(child.querySelector(".fileName").getAttribute("value"));
   while (child) {
@@ -224,7 +224,7 @@ async function subtest_save_attachment_files_in_list() {
 add_task(async function test_save_attachment_files_in_list() {
   setupTest();
   await subtest_save_attachment_files_in_list();
-  teardownTest();
+  await teardownTest();
 });
 
 /**
@@ -235,9 +235,9 @@ add_task(async function test_remove_file() {
   setupTest();
   await subtest_save_attachment_files_in_list();
 
-  let list = content_tab_e(downloadsTab, "msgDownloadsRichListBox");
-  let firstElement = list.firstElementChild;
-  let removingFileName = firstElement
+  const list = content_tab_e(downloadsTab, "msgDownloadsRichListBox");
+  const firstElement = list.firstElementChild;
+  const removingFileName = firstElement
     .querySelector(".fileName")
     .getAttribute("value");
 
@@ -253,12 +253,12 @@ add_task(async function test_remove_file() {
     firstElement.ownerGlobal
   );
 
-  let contextMenu = content_tab_e(downloadsTab, "msgDownloadsContextMenu");
-  await wait_for_popup_to_open(contextMenu);
+  const contextMenu = content_tab_e(downloadsTab, "msgDownloadsContextMenu");
+  await BrowserTestUtils.waitForPopupEvent(contextMenu, "shown");
   await click_menus_in_sequence(contextMenu, [
     { command: "msgDownloadsCmd_remove" },
   ]);
-  utils.waitFor(
+  await TestUtils.waitForCondition(
     () => downloadsView.count == 2,
     "Timeout waiting for removing a saved attachment file."
   );
@@ -271,7 +271,7 @@ add_task(async function test_remove_file() {
     );
     child = child.nextElementSibling;
   }
-  teardownTest();
+  await teardownTest();
 });
 
 /**
@@ -281,10 +281,10 @@ add_task(async function test_remove_multiple_files() {
   setupTest();
   await subtest_save_attachment_files_in_list();
 
-  let list = content_tab_e(downloadsTab, "msgDownloadsRichListBox");
-  let firstElement = list.firstElementChild.nextElementSibling;
-  let secondElement = firstElement.nextElementSibling;
-  let removingFileNames = [];
+  const list = content_tab_e(downloadsTab, "msgDownloadsRichListBox");
+  const firstElement = list.firstElementChild.nextElementSibling;
+  const secondElement = firstElement.nextElementSibling;
+  const removingFileNames = [];
 
   removingFileNames.push(
     firstElement.querySelector(".fileName").getAttribute("value")
@@ -306,19 +306,19 @@ add_task(async function test_remove_multiple_files() {
     firstElement.ownerGlobal
   );
 
-  let contextMenu = content_tab_e(downloadsTab, "msgDownloadsContextMenu");
-  await wait_for_popup_to_open(contextMenu);
+  const contextMenu = content_tab_e(downloadsTab, "msgDownloadsContextMenu");
+  await BrowserTestUtils.waitForPopupEvent(contextMenu, "shown");
   await click_menus_in_sequence(contextMenu, [
     { command: "msgDownloadsCmd_remove" },
   ]);
-  utils.waitFor(
+  await TestUtils.waitForCondition(
     () => downloadsView.count == 1,
     "Timeout waiting for removing two saved attachment files."
   );
 
   let child = list.firstElementChild;
   while (child) {
-    for (let name of removingFileNames) {
+    for (const name of removingFileNames) {
       Assert.notEqual(
         name,
         child.querySelector(".fileName").getAttribute("value")
@@ -326,7 +326,7 @@ add_task(async function test_remove_multiple_files() {
     }
     child = child.nextElementSibling;
   }
-  teardownTest();
+  await teardownTest();
 });
 
 /**
@@ -335,9 +335,9 @@ add_task(async function test_remove_multiple_files() {
 add_task(async function test_clear_all_files() {
   setupTest();
   await subtest_save_attachment_files_in_list();
-  downloadsView.waitForFinish();
+  await downloadsView.waitForFinish();
 
-  let listbox = content_tab_e(downloadsTab, "msgDownloadsRichListBox");
+  const listbox = content_tab_e(downloadsTab, "msgDownloadsRichListBox");
   EventUtils.synthesizeMouseAtCenter(
     listbox,
     { clickCount: 1 },
@@ -349,30 +349,30 @@ add_task(async function test_clear_all_files() {
     listbox.ownerGlobal
   );
 
-  let contextMenu = content_tab_e(downloadsTab, "msgDownloadsContextMenu");
-  await wait_for_popup_to_open(contextMenu);
+  const contextMenu = content_tab_e(downloadsTab, "msgDownloadsContextMenu");
+  await BrowserTestUtils.waitForPopupEvent(contextMenu, "shown");
   await click_menus_in_sequence(contextMenu, [
     { command: "msgDownloadsCmd_clearDownloads" },
   ]);
-  utils.waitFor(
+  await TestUtils.waitForCondition(
     () => downloadsView.count == 0,
     "Timeout waiting for clearing all saved attachment files."
   );
 
-  let list = content_tab_e(downloadsTab, "msgDownloadsRichListBox");
+  const list = content_tab_e(downloadsTab, "msgDownloadsRichListBox");
   Assert.equal(list.children.length, 0, "Downloads list should be empty");
-  teardownTest();
+  await teardownTest();
 });
 
-function teardownTest() {
+async function teardownTest() {
   downloads.Downloads.getList(downloads.Downloads.ALL)
     .then(function (list) {
-      for (let download of downloadsView.items.keys()) {
+      for (const download of downloadsView.items.keys()) {
         list.remove(download);
       }
     })
     .catch(console.error);
-  utils.waitFor(
+  await TestUtils.waitForCondition(
     () => downloadsView.count == 0,
     "Timeout waiting for clearing all saved attachment files."
   );
@@ -380,5 +380,5 @@ function teardownTest() {
 
 registerCleanupFunction(function () {
   close_tab(downloadsTab);
-  gMockFilePickReg.unregister();
+  MockFilePicker.cleanup();
 });

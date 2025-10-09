@@ -10,10 +10,11 @@
 #include <utility>
 
 #include "mozilla/Attributes.h"
-#include "mozilla/DataStorage.h"
+#include "mozilla/DataMutex.h"
 #include "mozilla/HashFunctions.h"
 #include "mozilla/ReentrantMonitor.h"
 #include "nsIClientAuthRememberService.h"
+#include "nsIDataStorage.h"
 #include "nsIObserver.h"
 #include "nsNSSCertificate.h"
 #include "nsString.h"
@@ -63,7 +64,7 @@ class nsClientAuthRemember final : public nsIClientAuthRememberRecord {
   nsCString mAsciiHost;
   nsCString mOriginAttributesSuffix;
   nsCString mDBKey;
-  static const nsCString SentinelValue;
+  static constexpr nsLiteralCString SentinelValue = "no client certificate"_ns;
 
  protected:
   ~nsClientAuthRemember() = default;
@@ -74,7 +75,8 @@ class nsClientAuthRememberService final : public nsIClientAuthRememberService {
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSICLIENTAUTHREMEMBERSERVICE
 
-  nsClientAuthRememberService() = default;
+  nsClientAuthRememberService()
+      : mMigrated(false, "nsClientAuthRememberService::mMigrated") {}
 
   nsresult Init();
 
@@ -83,15 +85,13 @@ class nsClientAuthRememberService final : public nsIClientAuthRememberService {
  protected:
   ~nsClientAuthRememberService() = default;
 
-  static mozilla::DataStorageType GetDataStorageType(
-      const OriginAttributes& aOriginAttributes);
-
-  RefPtr<mozilla::DataStorage> mClientAuthRememberList;
+  nsCOMPtr<nsIDataStorage> mClientAuthRememberList;
 
   nsresult AddEntryToList(const nsACString& aHost,
                           const OriginAttributes& aOriginAttributes,
-                          const nsACString& aDBKey);
+                          const nsACString& aDBKey, Duration aDuration);
 
+  mozilla::DataMutex<bool> mMigrated;
   void Migrate();
 };
 

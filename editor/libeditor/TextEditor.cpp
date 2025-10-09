@@ -24,10 +24,12 @@
 #include "mozilla/mozalloc.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_editor.h"
 #include "mozilla/TextComposition.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/TextServicesDocument.h"
+#include "mozilla/Try.h"
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/Selection.h"
@@ -38,14 +40,12 @@
 #include "nsCaret.h"
 #include "nsCharTraits.h"
 #include "nsComponentManagerUtils.h"
-#include "nsContentCID.h"
 #include "nsContentList.h"
 #include "nsDebug.h"
 #include "nsDependentSubstring.h"
 #include "nsError.h"
 #include "nsFocusManager.h"
 #include "nsGkAtoms.h"
-#include "nsIClipboard.h"
 #include "nsIContent.h"
 #include "nsINode.h"
 #include "nsIPrincipal.h"
@@ -74,6 +74,11 @@ using namespace dom;
 
 using LeafNodeType = HTMLEditUtils::LeafNodeType;
 using LeafNodeTypes = HTMLEditUtils::LeafNodeTypes;
+
+template EditorDOMPoint TextEditor::FindBetterInsertionPoint(
+    const EditorDOMPoint& aPoint) const;
+template EditorRawDOMPoint TextEditor::FindBetterInsertionPoint(
+    const EditorRawDOMPoint& aPoint) const;
 
 TextEditor::TextEditor() : EditorBase(EditorBase::EditorType::Text) {
   // printf("Size of TextEditor: %zu\n", sizeof(TextEditor));
@@ -312,18 +317,35 @@ nsresult TextEditor::HandleKeyPressEvent(WidgetKeyboardEvent* aKeyboardEvent) {
     // we don't PreventDefault() here or keybindings like control-x won't work
     return NS_OK;
   }
-  // Our widget shouldn't set `\r` to `mCharCode`, but it may be synthesized
+  aKeyboardEvent->PreventDefault();
+  // If we dispatch 2 keypress events for a surrogate pair and we set only
+  // first `.key` value to the surrogate pair, the preceding one has it and the
+  // other has empty string.  In this case, we should handle only the first one
+  // with the key value.
+  if (!StaticPrefs::dom_event_keypress_dispatch_once_per_surrogate_pair() &&
+      !StaticPrefs::dom_event_keypress_key_allow_lone_surrogate() &&
+      aKeyboardEvent->mKeyValue.IsEmpty() &&
+      IS_SURROGATE(aKeyboardEvent->mCharCode)) {
+    return NS_OK;
+  }
+  // Our widget shouldn't set `\r` to `mKeyValue`, but it may be synthesized
   // keyboard event and its value may be `\r`.  In such case, we should treat
   // it as `\n` for the backward compatibility because we stopped converting
   // `\r` and `\r\n` to `\n` at getting `HTMLInputElement.value` and
   // `HTMLTextAreaElement.value` for the performance (i.e., we don't need to
   // take care in `HTMLEditor`).
-  char16_t charCode =
-      static_cast<char16_t>(aKeyboardEvent->mCharCode) == nsCRT::CR
-          ? nsCRT::LF
-          : static_cast<char16_t>(aKeyboardEvent->mCharCode);
-  aKeyboardEvent->PreventDefault();
-  nsAutoString str(charCode);
+  nsAutoString str(aKeyboardEvent->mKeyValue);
+  if (str.IsEmpty()) {
+    MOZ_ASSERT(aKeyboardEvent->mCharCode <= 0xFFFF,
+               "Non-BMP character needs special handling");
+    str.Assign(aKeyboardEvent->mCharCode == nsCRT::CR
+                   ? static_cast<char16_t>(nsCRT::LF)
+                   : static_cast<char16_t>(aKeyboardEvent->mCharCode));
+  } else {
+    MOZ_ASSERT(str.Find(u"\r\n"_ns) == kNotFound,
+               "This assumes that typed text does not include CRLF");
+    str.ReplaceChar('\r', '\n');
+  }
   nsresult rv = OnInputText(str);
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "EditorBase::OnInputText() failed");
   return rv;
@@ -458,56 +480,34 @@ already_AddRefed<Element> TextEditor::GetInputEventTargetElement() const {
 }
 
 bool TextEditor::IsEmpty() const {
-  // Even if there is no padding <br> element for empty editor, we should be
-  // detected as empty editor if all the children are text nodes and these
-  // have no content.
-  Element* anonymousDivElement = GetRoot();
-  if (!anonymousDivElement) {
-    return true;  // Don't warn it, this is possible, e.g., 997805.html
+  // This is a public method.  Therefore, it might have not been initialized yet
+  // when this is called.  Let's return true in such case, but warn it because
+  // it may return different value than actual value which is stored by the
+  // text control element.
+  MOZ_ASSERT_IF(mInitSucceeded, GetRoot());
+  if (NS_WARN_IF(!GetRoot())) {
+    NS_ASSERTION(false,
+                 "Make the root caller stop doing that before initializing or "
+                 "after destroying the TextEditor");
+    return true;
   }
-
-  MOZ_ASSERT(anonymousDivElement->GetFirstChild() &&
-             anonymousDivElement->GetFirstChild()->IsText());
-
-  // Only when there is non-empty text node, we are not empty.
-  return !anonymousDivElement->GetFirstChild()->Length();
+  const Text* const textNode = GetTextNode();
+  MOZ_DIAGNOSTIC_ASSERT_IF(textNode,
+                           !Text::FromNodeOrNull(textNode->GetNextSibling()));
+  return !textNode || !textNode->TextDataLength();
 }
 
 NS_IMETHODIMP TextEditor::GetTextLength(uint32_t* aCount) {
   MOZ_ASSERT(aCount);
 
-  // initialize out params
-  *aCount = 0;
-
-  // special-case for empty document, to account for the padding <br> element
-  // for empty editor.
-  // XXX This should be overridden by `HTMLEditor` and we should return the
-  //     first text node's length from `TextEditor` instead.  The following
-  //     code is too expensive.
-  if (IsEmpty()) {
-    return NS_OK;
-  }
-
-  Element* rootElement = GetRoot();
-  if (NS_WARN_IF(!rootElement)) {
+  if (NS_WARN_IF(!GetRoot())) {
     return NS_ERROR_FAILURE;
   }
 
-  uint32_t totalLength = 0;
-  PostContentIterator postOrderIter;
-  DebugOnly<nsresult> rvIgnored = postOrderIter.Init(rootElement);
-  NS_WARNING_ASSERTION(NS_SUCCEEDED(rvIgnored),
-                       "PostContentIterator::Init() failed, but ignored");
-  EditorType editorType = GetEditorType();
-  for (; !postOrderIter.IsDone(); postOrderIter.Next()) {
-    nsINode* currentNode = postOrderIter.GetCurrentNode();
-    if (currentNode && currentNode->IsText() &&
-        EditorUtils::IsEditableContent(*currentNode->AsText(), editorType)) {
-      totalLength += currentNode->Length();
-    }
-  }
-
-  *aCount = totalLength;
+  const Text* const textNode = GetTextNode();
+  MOZ_DIAGNOSTIC_ASSERT_IF(textNode,
+                           !Text::FromNodeOrNull(textNode->GetNextSibling()));
+  *aCount = textNode ? textNode->TextDataLength() : 0u;
   return NS_OK;
 }
 
@@ -542,20 +542,12 @@ bool TextEditor::IsCopyToClipboardAllowedInternal() const {
 }
 
 nsresult TextEditor::HandlePasteAsQuotation(
-    AutoEditActionDataSetter& aEditActionData, int32_t aClipboardType) {
+    AutoEditActionDataSetter& aEditActionData,
+    nsIClipboard::ClipboardType aClipboardType, DataTransfer* aDataTransfer) {
   MOZ_ASSERT(aClipboardType == nsIClipboard::kGlobalClipboard ||
              aClipboardType == nsIClipboard::kSelectionClipboard);
   if (NS_WARN_IF(!GetDocument())) {
     return NS_OK;
-  }
-
-  // Get Clipboard Service
-  nsresult rv;
-  nsCOMPtr<nsIClipboard> clipboard =
-      do_GetService("@mozilla.org/widget/clipboard;1", &rv);
-  if (NS_FAILED(rv)) {
-    NS_WARNING("Failed to get nsIClipboard service");
-    return rv;
   }
 
   // XXX Why don't we dispatch ePaste event here?
@@ -576,7 +568,8 @@ nsresult TextEditor::HandlePasteAsQuotation(
   }
 
   // Get the Data from the clipboard
-  clipboard->GetData(trans, aClipboardType);
+  nsresult rv =
+      GetDataFromDataTransferOrClipboard(aDataTransfer, trans, aClipboardType);
 
   // Now we ask the transferable for the data
   // it still owns the data, we just have a pointer to it.
@@ -658,7 +651,7 @@ nsresult TextEditor::InsertWithQuotationsAsSubAction(
   //     also in single line editor)?
   MaybeDoAutoPasswordMasking();
 
-  nsresult rv = InsertTextAsSubAction(quotedStuff, SelectionHandling::Delete);
+  nsresult rv = InsertTextAsSubAction(quotedStuff, InsertTextFor::NormalText);
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
                        "EditorBase::InsertTextAsSubAction() failed");
   return rv;
@@ -744,15 +737,10 @@ nsresult TextEditor::OnFocus(const nsINode& aOriginalEventTargetNode) {
 
 nsresult TextEditor::OnBlur(const EventTarget* aEventTarget) {
   // check if something else is focused. If another element is focused, then
-  // we should not change the selection.
-  nsFocusManager* focusManager = nsFocusManager::GetFocusManager();
-  if (MOZ_UNLIKELY(!focusManager)) {
-    return NS_OK;
-  }
-
-  // If another element already has focus, we should not maintain the selection
-  // because we may not have the rights doing it.
-  if (focusManager->GetFocusedElement()) {
+  // we should not change the selection.  If another element already has focus,
+  // we should not maintain the selection because we may not have the rights
+  // doing it.
+  if (nsFocusManager::GetFocusedElementStatic()) {
     return NS_OK;
   }
 
@@ -805,6 +793,61 @@ nsresult TextEditor::RemoveAttributeOrEquivalent(Element* aElement,
   return EditorBase::ToGenericNSResult(rv);
 }
 
+template <typename EditorDOMPointType>
+EditorDOMPointType TextEditor::FindBetterInsertionPoint(
+    const EditorDOMPointType& aPoint) const {
+  if (MOZ_UNLIKELY(NS_WARN_IF(!aPoint.IsInContentNode()))) {
+    return aPoint;
+  }
+
+  MOZ_ASSERT(aPoint.IsSetAndValid());
+
+  Element* const anonymousDivElement = GetRoot();
+  if (aPoint.GetContainer() == anonymousDivElement) {
+    // In some cases, aPoint points start of the anonymous <div>.  To avoid
+    // injecting unneeded text nodes, we first look to see if we have one
+    // available.  In that case, we'll just adjust node and offset accordingly.
+    if (aPoint.IsStartOfContainer()) {
+      if (aPoint.GetContainer()->HasChildren() &&
+          aPoint.GetContainer()->GetFirstChild()->IsText()) {
+        return EditorDOMPointType(aPoint.GetContainer()->GetFirstChild(), 0u);
+      }
+    }
+    // In some other cases, aPoint points the terminating padding <br> element
+    // for empty last line in the anonymous <div>.  In that case, we'll adjust
+    // aInOutNode and aInOutOffset to the preceding text node, if any.
+    else {
+      nsIContent* child = aPoint.GetContainer()->GetLastChild();
+      while (child) {
+        if (child->IsText()) {
+          return EditorDOMPointType::AtEndOf(*child);
+        }
+        child = child->GetPreviousSibling();
+      }
+    }
+  }
+
+  // Sometimes, aPoint points the padding <br> element.  In that case, we'll
+  // adjust the insertion point to the previous text node, if one exists, or to
+  // the parent anonymous DIV.
+  if (EditorUtils::IsPaddingBRElementForEmptyLastLine(
+          *aPoint.template ContainerAs<nsIContent>()) &&
+      aPoint.IsStartOfContainer()) {
+    nsIContent* previousSibling = aPoint.GetContainer()->GetPreviousSibling();
+    if (previousSibling && previousSibling->IsText()) {
+      return EditorDOMPointType::AtEndOf(*previousSibling);
+    }
+
+    nsINode* parentOfContainer = aPoint.GetContainerParent();
+    if (parentOfContainer && parentOfContainer == anonymousDivElement) {
+      return EditorDOMPointType(parentOfContainer,
+                                aPoint.template ContainerAs<nsIContent>(), 0u);
+    }
+  }
+
+  return aPoint;
+}
+
 // static
 void TextEditor::MaskString(nsString& aString, const Text& aTextNode,
                             uint32_t aStartOffsetInString,
@@ -813,8 +856,8 @@ void TextEditor::MaskString(nsString& aString, const Text& aTextNode,
   MOZ_ASSERT(aStartOffsetInString == 0 || aStartOffsetInText == 0);
 
   uint32_t unmaskStart = UINT32_MAX, unmaskLength = 0;
-  TextEditor* textEditor =
-      nsContentUtils::GetTextEditorFromAnonymousNodeWithoutCreation(&aTextNode);
+  const TextEditor* const textEditor =
+      nsContentUtils::GetExtantTextEditorFromAnonymousNode(&aTextNode);
   if (textEditor && textEditor->UnmaskedLength() > 0) {
     unmaskStart = textEditor->UnmaskedStart();
     unmaskLength = textEditor->UnmaskedLength();
@@ -882,11 +925,10 @@ nsresult TextEditor::SetUnmaskRangeInternal(uint32_t aStart, uint32_t aLength,
     return NS_ERROR_NOT_AVAILABLE;
   }
 
-  Element* rootElement = GetRoot();
-  if (NS_WARN_IF(!rootElement)) {
+  if (NS_WARN_IF(!GetRoot())) {
     return NS_ERROR_NOT_INITIALIZED;
   }
-  Text* text = Text::FromNodeOrNull(rootElement->GetFirstChild());
+  Text* const text = GetTextNode();
   if (!text || !text->Length()) {
     // There is no anonymous text node in the editor.
     return aStart > 0 && aStart != UINT32_MAX ? NS_ERROR_INVALID_ARG : NS_OK;
@@ -900,8 +942,8 @@ nsresult TextEditor::SetUnmaskRangeInternal(uint32_t aStart, uint32_t aLength,
     // If aStart is middle of a surrogate pair, expand it to include the
     // preceding high surrogate because the caller may want to show a
     // character before the character at `aStart + 1`.
-    const nsTextFragment* textFragment = text->GetText();
-    if (textFragment->IsLowSurrogateFollowingHighSurrogateAt(aStart)) {
+    const nsTextFragment& textFragment = text->TextFragment();
+    if (textFragment.IsLowSurrogateFollowingHighSurrogateAt(aStart)) {
       mPasswordMaskData->mUnmaskedStart = aStart - 1;
       // If caller collapses the range, keep it.  Otherwise, expand the length.
       if (aLength > 0) {
@@ -916,7 +958,7 @@ nsresult TextEditor::SetUnmaskRangeInternal(uint32_t aStart, uint32_t aLength,
     // the following low surrogate because the caller may want to show a
     // character after the character at `aStart + aLength`.
     if (UnmaskedEnd() < valueLength &&
-        textFragment->IsLowSurrogateFollowingHighSurrogateAt(UnmaskedEnd())) {
+        textFragment.IsLowSurrogateFollowingHighSurrogateAt(UnmaskedEnd())) {
       mPasswordMaskData->mUnmaskedLength++;
     }
     // If it's first time to mask the unmasking characters with timer, create

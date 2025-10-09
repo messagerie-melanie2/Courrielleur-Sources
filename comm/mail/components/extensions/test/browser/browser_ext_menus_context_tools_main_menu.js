@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+"use strict";
+
 // Load subscript shared with all menu tests.
 Services.scriptloader.loadSubScript(
   new URL("head_menus.js", gTestPath).href,
@@ -9,17 +11,18 @@ Services.scriptloader.loadSubScript(
 );
 
 let gAccount, gFolders, gMessage;
+
 add_setup(async () => {
   await Services.search.init();
 
   gAccount = createAccount();
   addIdentity(gAccount);
   gFolders = gAccount.incomingServer.rootFolder.subFolders;
-  createMessages(gFolders[0], {
+  await createMessages(gFolders[0], {
     count: 1,
     body: {
       contentType: "text/html",
-      body: await fetch(`${URL_BASE}/content.html`).then(r => r.text()),
+      body: await IOUtils.readUTF8(getTestFilePath(`data/content.html`)),
     },
   });
   gMessage = [...gFolders[0].messages][0];
@@ -36,31 +39,33 @@ async function subtest_tools_menu(
   expectedTab,
   manifest
 ) {
-  let extension = await getMenuExtension(manifest);
+  const extension = await getMenuExtension(manifest);
   await extension.startup();
   await extension.awaitMessage("menus-created");
 
-  let element = testWindow.document.getElementById("tasksMenu");
-  let menu = testWindow.document.getElementById("taskPopup");
-  await leftClick(menu, element);
+  const element = testWindow.document.getElementById("tasksMenu");
+  const menu = testWindow.document.getElementById("taskPopup");
+  await openMenuPopup(menu, element);
   await checkShownEvent(
     extension,
     { menuIds: ["tools_menu"], contexts: ["tools_menu"] },
     expectedTab
   );
 
-  let hiddenPromise = BrowserTestUtils.waitForEvent(menu, "popuphidden");
-  let clickedPromise = checkClickedEvent(extension, expectedInfo, expectedTab);
-  menu.activateItem(
+  const clickedPromise = checkClickedEvent(
+    extension,
+    expectedInfo,
+    expectedTab
+  );
+  await clickItemInMenuPopup(
     menu.querySelector("#menus_mochi_test-menuitem-_tools_menu")
   );
   await clickedPromise;
-  await hiddenPromise;
   await extension.unload();
 }
 add_task(async function test_tools_menu_mv2() {
-  let toolbar = window.document.getElementById("toolbar-menubar");
-  let initialState = toolbar.getAttribute("inactive");
+  const toolbar = window.document.getElementById("toolbar-menubar");
+  const initialState = toolbar.getAttribute("inactive");
   toolbar.setAttribute("inactive", "false");
 
   await subtest_tools_menu(
@@ -68,47 +73,47 @@ add_task(async function test_tools_menu_mv2() {
     {
       menuItemId: "tools_menu",
     },
-    { active: true, index: 0, mailTab: true },
+    { active: true, index: 0, type: "mail" },
     {
       manifest_version: 2,
     }
   );
 
   toolbar.setAttribute("inactive", initialState);
-}).__skipMe = AppConstants.platform == "macosx";
+}).skip(AppConstants.platform == "macosx");
 add_task(async function test_compose_tools_menu_mv2() {
-  let testWindow = await openComposeWindow(gAccount);
+  const testWindow = await openComposeWindow(gAccount);
   await focusWindow(testWindow);
   await subtest_tools_menu(
     testWindow,
     {
       menuItemId: "tools_menu",
     },
-    { active: true, index: 0, mailTab: false },
+    { active: true, index: 0, type: "messageCompose" },
     {
       manifest_version: 2,
     }
   );
   await BrowserTestUtils.closeWindow(testWindow);
-}).__skipMe = AppConstants.platform == "macosx";
+}).skip(AppConstants.platform == "macosx");
 add_task(async function test_messagewindow_tools_menu_mv2() {
-  let testWindow = await openMessageInWindow(gMessage);
+  const testWindow = await openMessageInWindow(gMessage);
   await focusWindow(testWindow);
   await subtest_tools_menu(
     testWindow,
     {
       menuItemId: "tools_menu",
     },
-    { active: true, index: 0, mailTab: false },
+    { active: true, index: 0, type: "messageDisplay" },
     {
       manifest_version: 2,
     }
   );
   await BrowserTestUtils.closeWindow(testWindow);
-}).__skipMe = AppConstants.platform == "macosx";
+}).skip(AppConstants.platform == "macosx");
 add_task(async function test_tools_menu_mv3() {
-  let toolbar = window.document.getElementById("toolbar-menubar");
-  let initialState = toolbar.getAttribute("inactive");
+  const toolbar = window.document.getElementById("toolbar-menubar");
+  const initialState = toolbar.getAttribute("inactive");
   toolbar.setAttribute("inactive", "false");
 
   await subtest_tools_menu(
@@ -116,41 +121,41 @@ add_task(async function test_tools_menu_mv3() {
     {
       menuItemId: "tools_menu",
     },
-    { active: true, index: 0, mailTab: true },
+    { active: true, index: 0, type: "mail" },
     {
       manifest_version: 3,
     }
   );
 
   toolbar.setAttribute("inactive", initialState);
-}).__skipMe = AppConstants.platform == "macosx";
+}).skip(AppConstants.platform == "macosx");
 add_task(async function test_compose_tools_menu_mv3() {
-  let testWindow = await openComposeWindow(gAccount);
+  const testWindow = await openComposeWindow(gAccount);
   await focusWindow(testWindow);
   await subtest_tools_menu(
     testWindow,
     {
       menuItemId: "tools_menu",
     },
-    { active: true, index: 0, mailTab: false },
+    { active: true, index: 0, type: "messageCompose" },
     {
       manifest_version: 3,
     }
   );
   await BrowserTestUtils.closeWindow(testWindow);
-}).__skipMe = AppConstants.platform == "macosx";
+}).skip(AppConstants.platform == "macosx");
 add_task(async function test_messagewindow_tools_menu_mv3() {
-  let testWindow = await openMessageInWindow(gMessage);
+  const testWindow = await openMessageInWindow(gMessage);
   await focusWindow(testWindow);
   await subtest_tools_menu(
     testWindow,
     {
       menuItemId: "tools_menu",
     },
-    { active: true, index: 0, mailTab: false },
+    { active: true, index: 0, type: "messageDisplay" },
     {
       manifest_version: 3,
     }
   );
   await BrowserTestUtils.closeWindow(testWindow);
-}).__skipMe = AppConstants.platform == "macosx";
+}).skip(AppConstants.platform == "macosx");

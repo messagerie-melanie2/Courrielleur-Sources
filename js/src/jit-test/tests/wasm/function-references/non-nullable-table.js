@@ -1,5 +1,3 @@
-// |jit-test| skip-if: !wasmFunctionReferencesEnabled()
-
 // non-null table initialization
 var { get1, get2, get3, get4 } = wasmEvalText(`(module
   (type $dummy (func))
@@ -40,25 +38,55 @@ for (let i of [
   )`, /(type mismatch|table with non-nullable references requires initializer)/);
 }
 
-var t1 = new WebAssembly.Table({initial: 10, element: {ref: 'func', nullable: false }}, sampleWasmFunction);
+let { t1, t2 } = new wasmEvalText(`(module
+  (func $dummy)
+  (table (export "t1") 10 funcref (ref.func $dummy))
+  (table (export "t2") 10 (ref func) (ref.func $dummy))
+)`).exports;
 assertEq(t1.get(2) != null, true);
-assertThrows(() => {
-  new WebAssembly.Table({initial: 10, element: {ref: 'func', nullable: false }});
-});
-assertThrows(() => {
-  new WebAssembly.Table({initial: 10, element: {ref: 'func', nullable: false }}, null);
-});
 
-var t2 = new WebAssembly.Table({initial: 6, maximum: 20, element: {ref: 'extern', nullable: false }}, {foo: "bar"});
-assertEq(t2.get(1).foo, "bar");
-assertThrows(() => { t2.get(7) });
-assertThrows(() => { t2.grow(9, null) });
-t2.grow(8, {t: "test"});
-assertEq(t2.get(3).foo, "bar");
-assertEq(t2.get(7).t, "test");
-assertThrows(() => {
-  new WebAssembly.Table({initial: 10, element: {ref: 'extern', nullable: false }}, null);
-});
+// Imported tables require strict equality of their reference types.
+wasmEvalText(`(module
+  (import "" "t1" (table 10 funcref))
+  (import "" "t2" (table 10 (ref func)))
+)`, { "": { t1, t2 } });
+assertErrorMessage(
+  () => wasmEvalText(`(module (import "" "t1" (table 10 (ref func))))`, { "": { t1 } }),
+  WebAssembly.LinkError, /imported table type mismatch/,
+);
+assertErrorMessage(
+  () => wasmEvalText(`(module (import "" "t2" (table 10 funcref)))`, { "": { t2 } }),
+  WebAssembly.LinkError, /imported table type mismatch/,
+);
+
+// Tables with non-nullable types require init expressions, but only if they
+// are defined in the module.
+wasmFailValidateText(`(module
+  (table $t 10 (ref func))
+)`, /table with non-nullable references requires initializer/);
+wasmValidateText(`(module
+  (import "" "t1" (table 10 (ref func)))
+)`);
+
+wasmFailValidateText(`
+(module
+  (func $dummy)
+  (table (export "t") 10 funcref (ref.null none))
+)`, /type mismatch/);
+
+const foo = "bar";
+const { t3 } = wasmEvalText(`
+(module
+  (global (import "" "foo") externref)
+  (table (export "t3") 6 20 externref (global.get 0))
+)`, { "": { "foo": foo } }).exports;
+
+assertEq(t3.get(5), "bar");
+assertThrows(() => { t3.get(7) });
+assertThrows(() => { t3.grow(30, null) });
+t3.grow(8, {t: "test"});
+assertEq(t3.get(3), "bar");
+assertEq(t3.get(7).t, "test");
 
 // Fail because tables come before globals in the binary format, so tables
 // cannot refer to globals.

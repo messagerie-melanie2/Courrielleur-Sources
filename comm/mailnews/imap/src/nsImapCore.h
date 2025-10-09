@@ -7,11 +7,10 @@
 #ifndef _nsImapCore_H_
 #define _nsImapCore_H_
 
-#include "MailNewsTypes.h"
-#include "nsString.h"
+#include <stdint.h>
 
 /* imap message flags */
-typedef uint16_t imapMessageFlagsType;
+using imapMessageFlagsType = uint16_t;
 
 /* used for communication between imap thread and event sinks */
 #define kNoFlags            0x00 /* RFC flags */
@@ -67,27 +66,27 @@ typedef uint16_t imapMessageFlagsType;
 #define kOnlineHierarchySeparatorNil '|'
 
 #define IMAP_URL_TOKEN_SEPARATOR ">"
-#define kUidUnknown -1
+#define kUidUnknown (-1)
 // Special initial value meaning ACLs need to be loaded from DB.
 #define kAclInvalid ((uint32_t) -1)
 
 // this has to do with Mime Parts on Demand. It used to live in net.h
 // I'm not sure where this will live, but here is OK temporarily
-typedef enum {
+using IMAP_ContentModifiedType = enum IMAP_ContentModifiedType {
   IMAP_CONTENT_NOT_MODIFIED = 0,
   IMAP_CONTENT_MODIFIED_VIEW_INLINE,
   IMAP_CONTENT_MODIFIED_VIEW_AS_LINKS,
   IMAP_CONTENT_FORCE_CONTENT_NOT_MODIFIED
-} IMAP_ContentModifiedType;
+};
 
 // I think this should really go in an imap.h equivalent file
-typedef enum {
+using EIMAPNamespaceType = enum EIMapNamespaceType {
     kPersonalNamespace = 0,
     kOtherUsersNamespace,
     kPublicNamespace,
     kDefaultNamespace,
     kUnknownNamespace
-} EIMAPNamespaceType;
+};
 
 
 /**
@@ -120,7 +119,7 @@ const eIMAPCapabilityFlag kXServerInfoCapability =        0x00000800;  /* XSERVE
 const eIMAPCapabilityFlag kHasAuthPlainCapability =       0x00001000;  /* new form of auth plain base64 login */
 const eIMAPCapabilityFlag kUidplusCapability =            0x00002000;  /* RFC 2359 UIDPLUS extension */
 const eIMAPCapabilityFlag kLiteralPlusCapability =        0x00004000;  /* RFC 2088 LITERAL+ extension */
-const eIMAPCapabilityFlag kAOLImapCapability =            0x00008000;  /* aol imap extensions */
+//                                                        0x00008000;  /* unused */
 const eIMAPCapabilityFlag kHasLanguageCapability =        0x00010000;  /* language extensions */
 const eIMAPCapabilityFlag kHasCRAMCapability =            0x00020000;  /* CRAM auth extension */
 const eIMAPCapabilityFlag kQuotaCapability =              0x00040000;  /* RFC 2087 quota extension */

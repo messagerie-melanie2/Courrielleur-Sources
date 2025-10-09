@@ -2,17 +2,17 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { GlodaIndexer } = ChromeUtils.import(
-  "resource:///modules/gloda/GlodaIndexer.jsm"
+const { GlodaIndexer } = ChromeUtils.importESModule(
+  "resource:///modules/gloda/GlodaIndexer.sys.mjs"
 );
-const { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+const { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
 
 const nothingSelected = ["rootFolder", "noSelection", "contentTab"];
 const nothingOrMultiSelected = [...nothingSelected, "multiSelection"];
 
-/** @type MenuData */
+/** @type {MenuData} */
 const messageMenuData = {
   newMsgCmd: {},
   replyMainMenu: { disabled: nothingSelected },
@@ -50,7 +50,7 @@ const messageMenuData = {
   markReadMenuItem: { disabled: nothingSelected },
   markUnreadMenuItem: { disabled: true },
   menu_markThreadAsRead: { disabled: nothingSelected },
-  menu_markReadByDate: { disabled: nothingSelected },
+  menu_markReadByDate: { disabled: ["rootFolder"] },
   menu_markAllRead: { disabled: ["rootFolder"] },
   markFlaggedMenuItem: { disabled: nothingSelected },
   menu_markAsJunk: { disabled: nothingSelected },
@@ -70,32 +70,35 @@ const messageMenuData = {
   },
   watchThread: { disabled: [...nothingSelected, "externalMessage"] },
 };
-let helper = new MenuTestHelper("messageMenu", messageMenuData);
+const helper = new MenuTestHelper("messageMenu", messageMenuData);
 
-let tabmail = document.getElementById("tabmail");
+const tabmail = document.getElementById("tabmail");
 let rootFolder, testFolder, testMessages;
 let draftsFolder, draftsMessages, templatesFolder, templatesMessages;
 
 add_setup(async function () {
+  Services.prefs.clearUserPref("mail.last_msg_movecopy_target_uri");
   Services.prefs.setBoolPref("mailnews.mark_message_read.auto", false);
   document.getElementById("toolbar-menubar").removeAttribute("autohide");
 
-  let generator = new MessageGenerator();
+  const generator = new MessageGenerator();
 
-  MailServices.accounts.createLocalMailAccount();
-  let account = MailServices.accounts.accounts[0];
+  const account = MailServices.accounts.createLocalMailAccount();
   account.addIdentity(MailServices.accounts.createIdentity());
-  rootFolder = account.incomingServer.rootFolder;
+  rootFolder = account.incomingServer.rootFolder.QueryInterface(
+    Ci.nsIMsgLocalMailFolder
+  );
 
-  rootFolder.createSubfolder("messageMenu", null);
   testFolder = rootFolder
-    .getChildNamed("messageMenu")
+    .createLocalSubfolder("messageMenu")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   const messages = [
     ...generator.makeMessages({ count: 5 }),
     ...generator.makeMessages({ count: 5, msgsPerThread: 5 }),
   ];
-  testFolder.addMessageBatch(messages.map(message => message.toMboxString()));
+  testFolder.addMessageBatch(
+    messages.map(message => message.toMessageString())
+  );
   testFolder.addMessage(
     generator
       .makeMessage({
@@ -107,11 +110,10 @@ add_setup(async function () {
           },
         ],
       })
-      .toMboxString()
+      .toMessageString()
   );
   testFolder.addMessage(
-    "From - Mon Jan 01 00:00:00 2001\n" +
-      "To: Mailing List <list@example.com>\n" +
+    "To: Mailing List <list@example.com>\n" +
       "Date: Mon, 01 Jan 2001 00:00:00 +0100\n" +
       "List-Help: <https://list.example.com>\n" +
       "List-Post: <mailto:list@example.com>\n" +
@@ -131,22 +133,24 @@ add_setup(async function () {
   );
   testMessages = [...testFolder.messages];
 
-  rootFolder.createSubfolder("messageMenuDrafts", null);
   draftsFolder = rootFolder
-    .getChildNamed("messageMenuDrafts")
+    .createLocalSubfolder("messageMenuDrafts")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   draftsFolder.setFlag(Ci.nsMsgFolderFlags.Drafts);
   draftsFolder.addMessageBatch(
-    generator.makeMessages({ count: 5 }).map(message => message.toMboxString())
+    generator
+      .makeMessages({ count: 5 })
+      .map(message => message.toMessageString())
   );
   draftsMessages = [...draftsFolder.messages];
-  rootFolder.createSubfolder("messageMenuTemplates", null);
   templatesFolder = rootFolder
-    .getChildNamed("messageMenuTemplates")
+    .createLocalSubfolder("messageMenuTemplates")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   templatesFolder.setFlag(Ci.nsMsgFolderFlags.Templates);
   templatesFolder.addMessageBatch(
-    generator.makeMessages({ count: 5 }).map(message => message.toMboxString())
+    generator
+      .makeMessages({ count: 5 })
+      .map(message => message.toMessageString())
   );
   templatesMessages = [...templatesFolder.messages];
 
@@ -156,10 +160,10 @@ add_setup(async function () {
     "MsgLoaded"
   );
 
-  let messageFile = new FileUtils.File(
+  const messageFile = new FileUtils.File(
     getTestFilePath("files/sampleContent.eml")
   );
-  let messageURI =
+  const messageURI =
     Services.io.newFileURI(messageFile).spec +
     "?type=application/x-message-display";
   tabmail.openTab("mailMessageTab", { background: true, messageURI });

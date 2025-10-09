@@ -136,11 +136,7 @@ class nsIMsgFolder;
 
 #define NS_MSG_INVALID_OR_MISSING_SERVER NS_MSG_GENERATE_FAILURE(22)
 
-#define NS_MSG_SERVER_USERNAME_MISSING NS_MSG_GENERATE_FAILURE(23)
-
 #define NS_MSG_INVALID_DBVIEW_INDEX NS_MSG_GENERATE_FAILURE(24)
-
-#define NS_MSG_NEWS_ARTICLE_NOT_FOUND NS_MSG_GENERATE_FAILURE(25)
 
 #define NS_MSG_ERROR_COPY_FOLDER_ABORTED NS_MSG_GENERATE_FAILURE(26)
 // this error means a url was queued but never run because one of the urls
@@ -148,17 +144,11 @@ class nsIMsgFolder;
 // so the listeners can know that we didn't run the url.
 #define NS_MSG_ERROR_URL_ABORTED NS_MSG_GENERATE_FAILURE(27)
 
-// when num of custom headers exceeds 50
-#define NS_MSG_CUSTOM_HEADERS_OVERFLOW NS_MSG_GENERATE_FAILURE(28)
-
 // when custom header has invalid characters (as per rfc 2822)
 #define NS_MSG_INVALID_CUSTOM_HEADER NS_MSG_GENERATE_FAILURE(29)
 
 // when local caches are password protect and user isn't auth
 #define NS_MSG_USER_NOT_AUTHENTICATED NS_MSG_GENERATE_FAILURE(30)
-
-#define NS_MSG_ERROR_COPYING_FROM_TMP_DOWNLOAD \
-  NS_MSG_GENERATE_FAILURE(31)  // pop3 downloaded to tmp file, and failed.
 
 // The code tried to stream a message using the aLocalOnly argument, but
 // the message was not cached locally.
@@ -169,15 +159,21 @@ class nsIMsgFolder;
 
 #define NS_MSG_ERROR_INVALID_FOLDER_NAME NS_MSG_GENERATE_FAILURE(34)
 
+#define NS_MSG_ERROR_UNEXPECTED_SIZE NS_MSG_GENERATE_FAILURE(35)
+
+// Mbox message doesn't start with "From " separator line.
+#define NS_MSG_ERROR_MBOX_MALFORMED NS_MSG_GENERATE_FAILURE(36)
+
+// Folder compaction could not proceed because of pending offline/pseudo ops.
+#define NS_MSG_ERROR_BLOCKED_COMPACTION NS_MSG_GENERATE_FAILURE(37)
+
 /* Error codes for message compose are defined in
    compose\src\nsMsgComposeStringBundle.h. Message compose use the same error
    code space as other mailnews modules. To avoid any conflict, values between
    12500 and 12999 are reserved.
 */
 #define NS_MSGCOMP_ERROR_BEGIN 12500
-/* NS_ERROR_NNTP_NO_CROSS_POSTING lives here, and not in
- * nsMsgComposeStringBundle.h, because it is used in news and compose. */
-#define NS_ERROR_NNTP_NO_CROSS_POSTING NS_MSG_GENERATE_FAILURE(12554)
+
 #define NS_MSGCOMP_ERROR_END 12999
 
 #if defined(XP_WIN)
@@ -200,9 +196,6 @@ class nsIMsgFolder;
  */
 #define IS_MSG_LINEBREAK(line) \
   (line[0] == '\012' ? 1 : ((line[0] == '\015' && line[1] == '\012') ? 2 : 0))
-
-#define NS_MSG_BASE
-#define NS_MSG_BASE_STATIC_MEMBER_(type) type
 
 /// The number of microseconds in a day. This comes up a lot.
 #define PR_USEC_PER_DAY (PRTime(PR_USEC_PER_SEC) * 60 * 60 * 24)

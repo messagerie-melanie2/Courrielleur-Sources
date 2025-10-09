@@ -8,17 +8,20 @@
 
 #include "nsSocketTransport2.h"
 
-#include "IOActivityMonitor.h"
+#include "MockNetworkLayer.h"
+#include "MockNetworkLayerController.h"
 #include "NSSErrorsService.h"
 #include "NetworkDataCountLayer.h"
 #include "QuicSocketControl.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/StaticPrefs_network.h"
 #include "mozilla/SyncRunnable.h"
+#include "mozilla/glean/NetwerkMetrics.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/dom/ToJSValue.h"
 #include "mozilla/net/NeckoChild.h"
 #include "mozilla/net/SSLTokensCache.h"
+#include "mozilla/ProfilerBandwidthCounter.h"
 #include "nsCOMPtr.h"
 #include "nsICancelable.h"
 #include "nsIClassInfoImpl.h"
@@ -402,6 +405,7 @@ nsSocketInputStream::Read(char* buf, uint32_t count, uint32_t* countRead) {
 
     if (n > 0) {
       mByteCount += (*countRead = n);
+      profiler_count_bandwidth_read_bytes(n);
     } else if (n < 0) {
       PRErrorCode code = PR_GetError();
       if (code == PR_WOULD_BLOCK_ERROR) return NS_BASE_STREAM_WOULD_BLOCK;
@@ -592,6 +596,7 @@ nsSocketOutputStream::Write(const char* buf, uint32_t count,
 
     if (n > 0) {
       mByteCount += (*countWritten = n);
+      profiler_count_bandwidth_written_bytes(n);
     } else if (n < 0) {
       PRErrorCode code = PR_GetError();
       if (code == PR_WOULD_BLOCK_ERROR) return NS_BASE_STREAM_WOULD_BLOCK;
@@ -689,8 +694,8 @@ nsSocketOutputStream::AsyncWait(nsIOutputStreamCallback* callback,
 nsSocketTransport::nsSocketTransport()
     : mFD(this),
       mSocketTransportService(gSocketTransportService),
-      mInput(this),
-      mOutput(this) {
+      mInput(new nsSocketInputStream(this)),
+      mOutput(new nsSocketOutputStream(this)) {
   SOCKET_LOG(("creating nsSocketTransport @%p\n", this));
 
   mTimeouts[TIMEOUT_CONNECT] = UINT16_MAX;     // no timeout
@@ -861,7 +866,7 @@ nsresult nsSocketTransport::InitWithConnectedSocket(PRFileDesc* fd,
   }
   mPort = ntohs(port);
 
-  memcpy(&mNetAddr, addr, sizeof(NetAddr));
+  mNetAddr = *addr;
 
   mPollFlags = (PR_POLL_READ | PR_POLL_WRITE | PR_POLL_EXCEPT);
   mState = STATE_TRANSFERRING;
@@ -925,10 +930,10 @@ void nsSocketTransport::SendStatus(nsresult status) {
     sink = mEventSink;
     switch (status) {
       case NS_NET_STATUS_SENDING_TO:
-        progress = mOutput.ByteCount();
+        progress = mOutput->ByteCount(lock);
         break;
       case NS_NET_STATUS_RECEIVING_FROM:
-        progress = mInput.ByteCount();
+        progress = mInput->ByteCount(lock);
         break;
       default:
         progress = 0;
@@ -960,7 +965,7 @@ nsresult nsSocketTransport::ResolveHost() {
       // When not resolving mHost locally, we still want to ensure that
       // it only contains valid characters.  See bug 304904 for details.
       // Sometimes the end host is not yet known and mHost is *
-      if (!net_IsValidHostName(mHost) && !mHost.EqualsLiteral("*")) {
+      if (!net_IsValidDNSHost(mHost) && !mHost.EqualsLiteral("*")) {
         SOCKET_LOG(("  invalid hostname %s\n", mHost.get()));
         return NS_ERROR_UNKNOWN_HOST;
       }
@@ -1228,6 +1233,19 @@ nsresult nsSocketTransport::BuildSocket(PRFileDesc*& fd, bool& proxyTransparent,
   return rv;
 }
 
+static bool ShouldBlockAddress(const NetAddr& aAddr) {
+  if (!xpc::AreNonLocalConnectionsDisabled()) {
+    return false;
+  }
+
+  NetAddr overrideAddr;
+  bool hasOverride = FindNetAddrOverride(aAddr, overrideAddr);
+  const NetAddr& addrToCheck = hasOverride ? overrideAddr : aAddr;
+
+  return !(addrToCheck.IsIPAddrAny() || addrToCheck.IsIPAddrLocal() ||
+           addrToCheck.IsIPAddrShared() || addrToCheck.IsLoopbackAddr());
+}
+
 nsresult nsSocketTransport::InitiateSocket() {
   SOCKET_LOG(("nsSocketTransport::InitiateSocket [this=%p]\n", this));
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
@@ -1239,6 +1257,23 @@ nsresult nsSocketTransport::InitiateSocket() {
   if (gIOService->IsNetTearingDown()) {
     return NS_ERROR_ABORT;
   }
+
+  // Since https://github.com/whatwg/fetch/pull/1763,
+  // we need to disable access to 0.0.0.0 for non-test purposes
+  if (mNetAddr.IsIPAddrAny() && !mProxyTransparentResolvesHost) {
+    if (StaticPrefs::network_socket_ip_addr_any_disabled()) {
+      mozilla::glean::networking::http_ip_addr_any_count
+          .Get("blocked_requests"_ns)
+          .Add(1);
+      SOCKET_LOG(("connection refused NS_ERROR_CONNECTION_REFUSED\n"));
+      return NS_ERROR_CONNECTION_REFUSED;
+    }
+
+    mozilla::glean::networking::http_ip_addr_any_count
+        .Get("not_blocked_requests"_ns)
+        .Add(1);
+  }
+
   if (gIOService->IsOffline()) {
     if (StaticPrefs::network_disable_localhost_when_offline() || !isLocal) {
       return NS_ERROR_OFFLINE;
@@ -1252,9 +1287,7 @@ nsresult nsSocketTransport::InitiateSocket() {
     }
 #endif
 
-    if (NS_SUCCEEDED(mCondition) && xpc::AreNonLocalConnectionsDisabled() &&
-        !(mNetAddr.IsIPAddrAny() || mNetAddr.IsIPAddrLocal() ||
-          mNetAddr.IsIPAddrShared())) {
+    if (NS_SUCCEEDED(mCondition) && ShouldBlockAddress(mNetAddr)) {
       nsAutoCString ipaddr;
       RefPtr<nsNetAddr> netaddr = new nsNetAddr(&mNetAddr);
       netaddr->GetAddress(ipaddr);
@@ -1340,9 +1373,6 @@ nsresult nsSocketTransport::InitiateSocket() {
         ("  BuildSocket failed [rv=%" PRIx32 "]\n", static_cast<uint32_t>(rv)));
     return rv;
   }
-
-  // create proxy via IOActivityMonitor
-  IOActivityMonitor::MonitorSocket(fd);
 
 #ifdef FUZZING
   if (StaticPrefs::fuzzing_necko_enabled()) {
@@ -1524,6 +1554,15 @@ nsresult nsSocketTransport::InitiateSocket() {
            this));
     }
   }
+  if (StaticPrefs::network_socket_attach_mock_network_layer() &&
+      xpc::AreNonLocalConnectionsDisabled()) {
+    if (NS_FAILED(AttachMockNetworkLayer(fd))) {
+      SOCKET_LOG(
+          ("nsSocketTransport::InitiateSocket "
+           "AttachMockNetworkLayer failed [this=%p]\n",
+           this));
+    }
+  }
 
   bool connectCalled = true;  // This is only needed for telemetry.
   status = PR_Connect(fd, &prAddr, NS_SOCKET_CONNECT_TIMEOUT);
@@ -1535,11 +1574,11 @@ nsresult nsSocketTransport::InitiateSocket() {
   if (gSocketTransportService->IsTelemetryEnabledAndNotSleepPhase() &&
       connectStarted && connectCalled) {
     SendPRBlockingTelemetry(
-        connectStarted, Telemetry::PRCONNECT_BLOCKING_TIME_NORMAL,
-        Telemetry::PRCONNECT_BLOCKING_TIME_SHUTDOWN,
-        Telemetry::PRCONNECT_BLOCKING_TIME_CONNECTIVITY_CHANGE,
-        Telemetry::PRCONNECT_BLOCKING_TIME_LINK_CHANGE,
-        Telemetry::PRCONNECT_BLOCKING_TIME_OFFLINE);
+        connectStarted, glean::networking::prconnect_blocking_time_normal,
+        glean::networking::prconnect_blocking_time_shutdown,
+        glean::networking::prconnect_blocking_time_connectivity_change,
+        glean::networking::prconnect_blocking_time_link_change,
+        glean::networking::prconnect_blocking_time_offline);
   }
 
   if (status == PR_SUCCESS) {
@@ -1597,11 +1636,12 @@ nsresult nsSocketTransport::InitiateSocket() {
       if (gSocketTransportService->IsTelemetryEnabledAndNotSleepPhase() &&
           connectStarted && connectCalled) {
         SendPRBlockingTelemetry(
-            connectStarted, Telemetry::PRCONNECT_FAIL_BLOCKING_TIME_NORMAL,
-            Telemetry::PRCONNECT_FAIL_BLOCKING_TIME_SHUTDOWN,
-            Telemetry::PRCONNECT_FAIL_BLOCKING_TIME_CONNECTIVITY_CHANGE,
-            Telemetry::PRCONNECT_FAIL_BLOCKING_TIME_LINK_CHANGE,
-            Telemetry::PRCONNECT_FAIL_BLOCKING_TIME_OFFLINE);
+            connectStarted,
+            glean::networking::prconnect_fail_blocking_time_normal,
+            glean::networking::prconnect_fail_blocking_time_shutdown,
+            glean::networking::prconnect_fail_blocking_time_connectivity_change,
+            glean::networking::prconnect_fail_blocking_time_link_change,
+            glean::networking::prconnect_fail_blocking_time_offline);
       }
 
       rv = ErrorAccordingToNSPR(code);
@@ -1683,13 +1723,13 @@ bool nsSocketTransport::RecoverFromError() {
   if ((mState == STATE_CONNECTING) && mDNSRecord) {
     if (mNetAddr.raw.family == AF_INET) {
       if (mSocketTransportService->IsTelemetryEnabledAndNotSleepPhase()) {
-        Telemetry::Accumulate(Telemetry::IPV4_AND_IPV6_ADDRESS_CONNECTIVITY,
-                              UNSUCCESSFUL_CONNECTING_TO_IPV4_ADDRESS);
+        glean::network::ipv4_and_ipv6_address_connectivity
+            .AccumulateSingleSample(UNSUCCESSFUL_CONNECTING_TO_IPV4_ADDRESS);
       }
     } else if (mNetAddr.raw.family == AF_INET6) {
       if (mSocketTransportService->IsTelemetryEnabledAndNotSleepPhase()) {
-        Telemetry::Accumulate(Telemetry::IPV4_AND_IPV6_ADDRESS_CONNECTIVITY,
-                              UNSUCCESSFUL_CONNECTING_TO_IPV6_ADDRESS);
+        glean::network::ipv4_and_ipv6_address_connectivity
+            .AccumulateSingleSample(UNSUCCESSFUL_CONNECTING_TO_IPV6_ADDRESS);
       }
     }
   }
@@ -1803,7 +1843,7 @@ void nsSocketTransport::OnMsgInputClosed(nsresult reason) {
         NS_BASE_STREAM_CLOSED;  // XXX except if NS_FAILED(mCondition), right??
   } else {
     if (mState == STATE_TRANSFERRING) mPollFlags &= ~PR_POLL_READ;
-    mInput.OnSocketReady(reason);
+    mInput->OnSocketReady(reason);
   }
 }
 
@@ -1824,7 +1864,7 @@ void nsSocketTransport::OnMsgOutputClosed(nsresult reason) {
         NS_BASE_STREAM_CLOSED;  // XXX except if NS_FAILED(mCondition), right??
   } else {
     if (mState == STATE_TRANSFERRING) mPollFlags &= ~PR_POLL_WRITE;
-    mOutput.OnSocketReady(reason);
+    mOutput->OnSocketReady(reason);
   }
 }
 
@@ -1964,8 +2004,8 @@ void nsSocketTransport::OnSocketEvent(uint32_t type, nsresult status,
     //
     // notify input/output streams in case either has a pending notify.
     //
-    mInput.OnSocketReady(mCondition);
-    mOutput.OnSocketReady(mCondition);
+    mInput->OnSocketReady(mCondition);
+    mOutput->OnSocketReady(mCondition);
     return;
   }
 
@@ -2088,6 +2128,10 @@ void nsSocketTransport::OnSocketEvent(uint32_t type, nsresult status,
   }
 }
 
+uint64_t nsSocketTransport::ByteCountReceived() { return mInput->ByteCount(); }
+
+uint64_t nsSocketTransport::ByteCountSent() { return mOutput->ByteCount(); }
+
 //-----------------------------------------------------------------------------
 // socket handler impl
 
@@ -2108,14 +2152,14 @@ void nsSocketTransport::OnSocketReady(PRFileDesc* fd, int16_t outFlags) {
       // assume that we won't need to poll any longer (the stream will
       // request that we poll again if it is still pending).
       mPollFlags &= ~PR_POLL_WRITE;
-      mOutput.OnSocketReady(NS_OK);
+      mOutput->OnSocketReady(NS_OK);
     }
     // if waiting to read and socket is readable or hit an exception.
     if ((mPollFlags & PR_POLL_READ) && (outFlags & ~PR_POLL_WRITE)) {
       // assume that we won't need to poll any longer (the stream will
       // request that we poll again if it is still pending).
       mPollFlags &= ~PR_POLL_READ;
-      mInput.OnSocketReady(NS_OK);
+      mInput->OnSocketReady(NS_OK);
     }
     // Update poll timeout in case it was changed
     {
@@ -2139,11 +2183,13 @@ void nsSocketTransport::OnSocketReady(PRFileDesc* fd, int16_t outFlags) {
     if (gSocketTransportService->IsTelemetryEnabledAndNotSleepPhase() &&
         connectStarted) {
       SendPRBlockingTelemetry(
-          connectStarted, Telemetry::PRCONNECTCONTINUE_BLOCKING_TIME_NORMAL,
-          Telemetry::PRCONNECTCONTINUE_BLOCKING_TIME_SHUTDOWN,
-          Telemetry::PRCONNECTCONTINUE_BLOCKING_TIME_CONNECTIVITY_CHANGE,
-          Telemetry::PRCONNECTCONTINUE_BLOCKING_TIME_LINK_CHANGE,
-          Telemetry::PRCONNECTCONTINUE_BLOCKING_TIME_OFFLINE);
+          connectStarted,
+          glean::networking::prconnectcontinue_blocking_time_normal,
+          glean::networking::prconnectcontinue_blocking_time_shutdown,
+          glean::networking::
+              prconnectcontinue_blocking_time_connectivity_change,
+          glean::networking::prconnectcontinue_blocking_time_link_change,
+          glean::networking::prconnectcontinue_blocking_time_offline);
     }
 
     if (status == PR_SUCCESS) {
@@ -2154,13 +2200,13 @@ void nsSocketTransport::OnSocketReady(PRFileDesc* fd, int16_t outFlags) {
 
       if (mNetAddr.raw.family == AF_INET) {
         if (mSocketTransportService->IsTelemetryEnabledAndNotSleepPhase()) {
-          Telemetry::Accumulate(Telemetry::IPV4_AND_IPV6_ADDRESS_CONNECTIVITY,
-                                SUCCESSFUL_CONNECTING_TO_IPV4_ADDRESS);
+          glean::network::ipv4_and_ipv6_address_connectivity
+              .AccumulateSingleSample(SUCCESSFUL_CONNECTING_TO_IPV4_ADDRESS);
         }
       } else if (mNetAddr.raw.family == AF_INET6) {
         if (mSocketTransportService->IsTelemetryEnabledAndNotSleepPhase()) {
-          Telemetry::Accumulate(Telemetry::IPV4_AND_IPV6_ADDRESS_CONNECTIVITY,
-                                SUCCESSFUL_CONNECTING_TO_IPV6_ADDRESS);
+          glean::network::ipv4_and_ipv6_address_connectivity
+              .AccumulateSingleSample(SUCCESSFUL_CONNECTING_TO_IPV6_ADDRESS);
         }
       }
     } else {
@@ -2250,8 +2296,8 @@ void nsSocketTransport::OnSocketDetached(PRFileDesc* fd) {
     //
     // notify input/output streams
     //
-    mInput.OnSocketReady(mCondition);
-    mOutput.OnSocketReady(mCondition);
+    mInput->OnSocketReady(mCondition);
+    mOutput->OnSocketReady(mCondition);
     if (gIOService->IsNetTearingDown()) {
       if (mInputCopyContext) {
         NS_CancelAsyncCopy(mInputCopyContext, mCondition);
@@ -2263,7 +2309,7 @@ void nsSocketTransport::OnSocketDetached(PRFileDesc* fd) {
   }
 
   if (mCondition == NS_ERROR_NET_RESET && mDNSRecord &&
-      mOutput.ByteCount() == 0) {
+      mOutput->ByteCount() == 0) {
     // If we are here, it's likely that we are retrying a transaction. Blocking
     // the already used address could increase the successful rate of the retry.
     mDNSRecord->ReportUnusable(SocketPort());
@@ -2331,7 +2377,7 @@ nsSocketTransport::OpenInputStream(uint32_t flags, uint32_t segsize,
   SOCKET_LOG(
       ("nsSocketTransport::OpenInputStream [this=%p flags=%x]\n", this, flags));
 
-  NS_ENSURE_TRUE(!mInput.IsReferenced(), NS_ERROR_UNEXPECTED);
+  NS_ENSURE_TRUE(!mInput->IsReferenced(), NS_ERROR_UNEXPECTED);
 
   nsresult rv;
   nsCOMPtr<nsIAsyncInputStream> pipeIn;
@@ -2351,14 +2397,14 @@ nsSocketTransport::OpenInputStream(uint32_t flags, uint32_t segsize,
                 true, segsize, segcount);
 
     // async copy from socket to pipe
-    rv = NS_AsyncCopy(&mInput, pipeOut, mSocketTransportService,
+    rv = NS_AsyncCopy(mInput.get(), pipeOut, mSocketTransportService,
                       NS_ASYNCCOPY_VIA_WRITESEGMENTS, segsize, nullptr, nullptr,
                       true, true, getter_AddRefs(inputCopyContext));
     if (NS_FAILED(rv)) return rv;
 
     result = pipeIn;
   } else {
-    result = &mInput;
+    result = mInput.get();
   }
 
   // flag input stream as open
@@ -2384,7 +2430,7 @@ nsSocketTransport::OpenOutputStream(uint32_t flags, uint32_t segsize,
   SOCKET_LOG(("nsSocketTransport::OpenOutputStream [this=%p flags=%x]\n", this,
               flags));
 
-  NS_ENSURE_TRUE(!mOutput.IsReferenced(), NS_ERROR_UNEXPECTED);
+  NS_ENSURE_TRUE(!mOutput->IsReferenced(), NS_ERROR_UNEXPECTED);
 
   nsresult rv;
   nsCOMPtr<nsIAsyncOutputStream> pipeOut;
@@ -2403,14 +2449,14 @@ nsSocketTransport::OpenOutputStream(uint32_t flags, uint32_t segsize,
                 !openBlocking, segsize, segcount);
 
     // async copy from socket to pipe
-    rv = NS_AsyncCopy(pipeIn, &mOutput, mSocketTransportService,
+    rv = NS_AsyncCopy(pipeIn, mOutput.get(), mSocketTransportService,
                       NS_ASYNCCOPY_VIA_READSEGMENTS, segsize, nullptr, nullptr,
                       true, true, getter_AddRefs(outputCopyContext));
     if (NS_FAILED(rv)) return rv;
 
     result = pipeOut;
   } else {
-    result = &mOutput;
+    result = mOutput.get();
   }
 
   // flag output stream as open
@@ -2437,8 +2483,8 @@ nsSocketTransport::Close(nsresult reason) {
 
   mDoNotRetryToConnect = true;
 
-  mInput.CloseWithStatus(reason);
-  mOutput.CloseWithStatus(reason);
+  mInput->CloseWithStatus(reason);
+  mOutput->CloseWithStatus(reason);
   return NS_OK;
 }
 
@@ -2574,7 +2620,7 @@ nsSocketTransport::GetPeerAddr(NetAddr* addr) {
     return NS_ERROR_NOT_AVAILABLE;
   }
 
-  memcpy(addr, &mNetAddr, sizeof(NetAddr));
+  *addr = mNetAddr;
   return NS_OK;
 }
 
@@ -2593,7 +2639,7 @@ nsSocketTransport::GetSelfAddr(NetAddr* addr) {
     return NS_ERROR_NOT_AVAILABLE;
   }
 
-  memcpy(addr, &mSelfAddr, sizeof(NetAddr));
+  *addr = mSelfAddr;
   return NS_OK;
 }
 
@@ -2607,8 +2653,7 @@ nsSocketTransport::Bind(NetAddr* aLocalAddr) {
     return NS_ERROR_FAILURE;
   }
 
-  mBindAddr = MakeUnique<NetAddr>();
-  memcpy(mBindAddr.get(), aLocalAddr, sizeof(NetAddr));
+  mBindAddr = MakeUnique<NetAddr>(*aLocalAddr);
 
   return NS_OK;
 }
@@ -3316,37 +3361,37 @@ void nsSocketTransport::CloseSocket(PRFileDesc* aFd, bool aTelemetryEnabled) {
 
   if (aTelemetryEnabled) {
     SendPRBlockingTelemetry(
-        closeStarted, Telemetry::PRCLOSE_TCP_BLOCKING_TIME_NORMAL,
-        Telemetry::PRCLOSE_TCP_BLOCKING_TIME_SHUTDOWN,
-        Telemetry::PRCLOSE_TCP_BLOCKING_TIME_CONNECTIVITY_CHANGE,
-        Telemetry::PRCLOSE_TCP_BLOCKING_TIME_LINK_CHANGE,
-        Telemetry::PRCLOSE_TCP_BLOCKING_TIME_OFFLINE);
+        closeStarted, glean::networking::prclose_tcp_blocking_time_normal,
+        glean::networking::prclose_tcp_blocking_time_shutdown,
+        glean::networking::prclose_tcp_blocking_time_connectivity_change,
+        glean::networking::prclose_tcp_blocking_time_link_change,
+        glean::networking::prclose_tcp_blocking_time_offline);
   }
 }
 
 void nsSocketTransport::SendPRBlockingTelemetry(
-    PRIntervalTime aStart, Telemetry::HistogramID aIDNormal,
-    Telemetry::HistogramID aIDShutdown,
-    Telemetry::HistogramID aIDConnectivityChange,
-    Telemetry::HistogramID aIDLinkChange, Telemetry::HistogramID aIDOffline) {
+    PRIntervalTime aStart,
+    const glean::impl::TimingDistributionMetric& aMetricNormal,
+    const glean::impl::TimingDistributionMetric& aMetricShutdown,
+    const glean::impl::TimingDistributionMetric& aMetricConnectivityChange,
+    const glean::impl::TimingDistributionMetric& aMetricLinkChange,
+    const glean::impl::TimingDistributionMetric& aMetricOffline) {
   PRIntervalTime now = PR_IntervalNow();
+  TimeDuration delta =
+      TimeDuration::FromMilliseconds(PR_IntervalToMilliseconds(now - aStart));
   if (gIOService->IsNetTearingDown()) {
-    Telemetry::Accumulate(aIDShutdown, PR_IntervalToMilliseconds(now - aStart));
-
+    aMetricShutdown.AccumulateRawDuration(delta);
   } else if (PR_IntervalToSeconds(now - gIOService->LastConnectivityChange()) <
              60) {
-    Telemetry::Accumulate(aIDConnectivityChange,
-                          PR_IntervalToMilliseconds(now - aStart));
+    aMetricConnectivityChange.AccumulateRawDuration(delta);
   } else if (PR_IntervalToSeconds(now - gIOService->LastNetworkLinkChange()) <
              60) {
-    Telemetry::Accumulate(aIDLinkChange,
-                          PR_IntervalToMilliseconds(now - aStart));
-
+    aMetricLinkChange.AccumulateRawDuration(delta);
   } else if (PR_IntervalToSeconds(now - gIOService->LastOfflineStateChange()) <
              60) {
-    Telemetry::Accumulate(aIDOffline, PR_IntervalToMilliseconds(now - aStart));
+    aMetricOffline.AccumulateRawDuration(delta);
   } else {
-    Telemetry::Accumulate(aIDNormal, PR_IntervalToMilliseconds(now - aStart));
+    aMetricNormal.AccumulateRawDuration(delta);
   }
 }
 

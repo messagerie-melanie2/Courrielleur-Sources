@@ -19,6 +19,7 @@ use style_traits::{CssWriter, ToCss};
     Parse,
     PartialEq,
     SpecifiedValueInfo,
+    ToAnimatedValue,
     ToComputedValue,
     ToCss,
     ToResolvedValue,
@@ -49,6 +50,7 @@ pub enum VerticalAlignKeyword {
     MallocSizeOf,
     PartialEq,
     SpecifiedValueInfo,
+    ToAnimatedValue,
     ToComputedValue,
     ToCss,
     ToResolvedValue,
@@ -98,6 +100,8 @@ impl<L> ToAnimatedZero for VerticalAlign<L> {
 pub enum GenericContainIntrinsicSize<L> {
     /// The keyword `none`.
     None,
+    /// The keywords 'auto none',
+    AutoNone,
     /// A non-negative length.
     Length(L),
     /// "auto <Length>"
@@ -113,6 +117,7 @@ impl<L: ToCss> ToCss for ContainIntrinsicSize<L> {
     {
         match *self {
             Self::None => dest.write_str("none"),
+            Self::AutoNone => dest.write_str("auto none"),
             Self::Length(ref l) => l.to_css(dest),
             Self::AutoLength(ref l) => {
                 dest.write_str("auto ")?;
@@ -204,5 +209,35 @@ impl<L> Perspective<L> {
     #[inline]
     pub fn none() -> Self {
         Perspective::None
+    }
+}
+
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    SpecifiedValueInfo,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+)]
+#[repr(u8)]
+#[allow(missing_docs)]
+pub enum PositionProperty {
+    Static = 0,
+    Relative,
+    Absolute,
+    Fixed,
+    Sticky,
+}
+
+impl PositionProperty {
+    /// Is the box absolutely positioned?
+    pub fn is_absolutely_positioned(self) -> bool {
+        matches!(self, Self::Absolute | Self::Fixed)
     }
 }

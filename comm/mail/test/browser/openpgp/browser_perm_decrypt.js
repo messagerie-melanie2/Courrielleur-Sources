@@ -13,29 +13,28 @@ const {
   get_about_3pane,
   get_about_message,
   get_special_folder,
-  mc,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-const { OpenPGPTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mozmill/OpenPGPTestUtils.jsm"
+const { OpenPGPTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/OpenPGPTestUtils.sys.mjs"
 );
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
-const { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+const { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-const { EnigmailPersistentCrypto } = ChromeUtils.import(
-  "chrome://openpgp/content/modules/persistentCrypto.jsm"
+const { EnigmailPersistentCrypto } = ChromeUtils.importESModule(
+  "chrome://openpgp/content/modules/persistentCrypto.sys.mjs"
 );
 
 const MSG_TEXT = "Sundays are nothing without callaloo.";
 
-function getMsgBodyTxt(mc) {
-  let msgPane = get_about_message(mc.window).getMessagePaneBrowser();
+function getMsgBodyTxt() {
+  const msgPane = get_about_message(window).getMessagePaneBrowser();
   return msgPane.contentDocument.documentElement.textContent;
 }
 
@@ -65,7 +64,7 @@ add_setup(async function () {
   gDecFolder = aliceAcct.incomingServer.rootFolder.getChildNamed("decrypted");
 
   // Set up the alice's private key.
-  let [id] = await OpenPGPTestUtils.importPrivateKey(
+  const [id] = await OpenPGPTestUtils.importPrivateKey(
     window,
     new FileUtils.File(
       getTestFilePath(
@@ -93,14 +92,14 @@ add_setup(async function () {
 
 add_task(async function testPermanentDecrypt() {
   // Fetch a local OpenPGP message.
-  let openPgpFile = new FileUtils.File(
+  const openPgpFile = new FileUtils.File(
     getTestFilePath(
       "data/eml/signed-by-0xfbfcc82a015e7330-encrypted-to-0xf231550c4f47e38e.eml"
     )
   );
 
   // Add the fetched OpenPGP message to the inbox folder.
-  let copyListener = new PromiseTestUtils.PromiseCopyListener();
+  const copyListener = new PromiseTestUtils.PromiseCopyListener();
   MailServices.copy.copyFileMessage(
     openPgpFile,
     gInbox,
@@ -114,9 +113,9 @@ add_task(async function testPermanentDecrypt() {
   await copyListener.promise;
 
   // Select the first row.
-  select_click_row(0);
+  await select_click_row(0);
 
-  let aboutMessage = get_about_message();
+  const aboutMessage = get_about_message();
   Assert.equal(
     aboutMessage.document
       .getElementById("encryptionTechBtn")
@@ -124,14 +123,14 @@ add_task(async function testPermanentDecrypt() {
     "OpenPGP"
   );
 
-  Assert.ok(getMsgBodyTxt(mc).includes(MSG_TEXT), "message text is in body");
+  Assert.ok(getMsgBodyTxt().includes(MSG_TEXT), "message text is in body");
   Assert.ok(
     OpenPGPTestUtils.hasEncryptedIconState(aboutMessage.document, "ok"),
     "encrypted icon is displayed"
   );
 
   // Get header of selected message
-  let hdr = get_about_3pane().gDBView.hdrForFirstSelectedMessage;
+  const hdr = get_about_3pane().gDBView.hdrForFirstSelectedMessage;
 
   await EnigmailPersistentCrypto.cryptMessage(hdr, gDecFolder.URI, false, null);
 
@@ -139,8 +138,8 @@ add_task(async function testPermanentDecrypt() {
 
   await be_in_folder(gDecFolder);
 
-  select_click_row(0);
-  Assert.ok(getMsgBodyTxt(mc).includes(MSG_TEXT), "message text is in body");
+  await select_click_row(0);
+  Assert.ok(getMsgBodyTxt().includes(MSG_TEXT), "message text is in body");
   Assert.ok(
     !OpenPGPTestUtils.hasEncryptedIconState(aboutMessage.document, "ok"),
     "encrypted icon NOT displayed"

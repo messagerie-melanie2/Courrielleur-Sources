@@ -13,6 +13,11 @@
   xmlns:xul="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
 >
   <head>
+    <title></title>
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src chrome:; script-src chrome: 'unsafe-inline'; style-src chrome: 'unsafe-inline'"
+    />
     <!-- Themes -->
     <link
       rel="stylesheet"
@@ -90,7 +95,7 @@
             <span class="loading">
               <img
                 class="loading"
-                src="chrome://global/skin/icons/loading.png"
+                src="chrome://messenger/skin/icons/spinning.svg"
                 alt=""
               />
               &glodaFacetView.loading.label;

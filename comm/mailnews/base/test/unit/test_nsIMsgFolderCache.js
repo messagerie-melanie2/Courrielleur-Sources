@@ -2,19 +2,23 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+const { FileTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/FileTestUtils.sys.mjs"
+);
+
 /**
  * Sanity checks for nsIMsgFolderCache/nsIMsgFolderCacheElement.
  */
 add_task(function test_basics() {
-  let profileDir = do_get_profile();
-  let jsonFile = profileDir.clone();
+  const profileDir = do_get_profile();
+  const jsonFile = profileDir.clone();
   jsonFile.append("folderCache.json");
-  let legacyFile = profileDir.clone();
+  const legacyFile = profileDir.clone();
   legacyFile.append("panacea.dat");
 
   // Create an empty cache object and start poking it.
   {
-    let cache = Cc["@mozilla.org/messenger/msgFolderCache;1"].createInstance(
+    const cache = Cc["@mozilla.org/messenger/msgFolderCache;1"].createInstance(
       Ci.nsIMsgFolderCache
     );
     // Neither of these files exist, and that's fine.
@@ -26,7 +30,7 @@ add_task(function test_basics() {
     Assert.throws(function () {
       cache.getCacheElement("a/non/existent/key", false);
     }, /NS_ERROR_NOT_AVAILABLE/);
-    let e1 = cache.getCacheElement("/made/up/path/Inbox", true);
+    const e1 = cache.getCacheElement("/made/up/path/Inbox", true);
 
     // Can set, get and modify Int32 values?
     e1.setCachedInt32("wibble", -1);
@@ -106,7 +110,7 @@ add_task(function test_basics() {
   // Create a new cache object, reload jsonFile and make sure all the expected
   // values are there.
   {
-    let cache = Cc["@mozilla.org/messenger/msgFolderCache;1"].createInstance(
+    const cache = Cc["@mozilla.org/messenger/msgFolderCache;1"].createInstance(
       Ci.nsIMsgFolderCache
     );
     // jsonFile is there now.
@@ -114,7 +118,7 @@ add_task(function test_basics() {
     Assert.ok(!legacyFile.exists());
     cache.init(jsonFile, legacyFile);
     // Make sure all the values we previously set are intact.
-    let e1 = cache.getCacheElement("/made/up/path/Inbox", true);
+    const e1 = cache.getCacheElement("/made/up/path/Inbox", true);
     Assert.equal(e1.getCachedInt32("wibble"), 42);
     Assert.equal(e1.getCachedUInt32("pibble"), 42);
     Assert.equal(e1.getCachedInt64("foo"), 42);
@@ -127,24 +131,24 @@ add_task(function test_basics() {
 
 add_task(async function test_null_entries() {
   // Write out a trivial foldercache file with a null value.
-  let data = { "a-folder-key": { foo: null } };
-  let jsonFilename = PathUtils.join(PathUtils.tempDir, "foo.json");
+  const data = { "a-folder-key": { foo: null } };
+  const jsonFilename = PathUtils.join(PathUtils.tempDir, "foo.json");
   await IOUtils.writeJSON(jsonFilename, data);
 
   // Load it into an msIMsgFolderCache
-  let cache = Cc["@mozilla.org/messenger/msgFolderCache;1"].createInstance(
+  const cache = Cc["@mozilla.org/messenger/msgFolderCache;1"].createInstance(
     Ci.nsIMsgFolderCache
   );
-  let jsonFile = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+  const jsonFile = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
   jsonFile.initWithPath(jsonFilename);
-  let morkFile = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+  const morkFile = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
   morkFile.initWithPath(
     PathUtils.join(PathUtils.tempDir, "non-existent-file.dat")
   );
   cache.init(jsonFile, morkFile);
 
   //
-  let e1 = cache.getCacheElement("a-folder-key", false);
+  const e1 = cache.getCacheElement("a-folder-key", false);
 
   // Make sure all accessors convert the null appropriately.
   Assert.equal(e1.getCachedInt32("foo"), 0);
@@ -157,10 +161,10 @@ add_task(async function test_null_entries() {
  * Test foldercache migration from mork DB (panacea.dat) to JSON.
  */
 add_task(async function test_migration() {
-  let profileDir = do_get_profile();
-  let jsonFile = profileDir.clone();
+  const profileDir = do_get_profile();
+  const jsonFile = profileDir.clone();
   jsonFile.append("folderCache.json");
-  let legacyFile = profileDir.clone();
+  const legacyFile = profileDir.clone();
   legacyFile.append("panacea.dat");
 
   Assert.ok(!jsonFile.exists());
@@ -171,7 +175,7 @@ add_task(async function test_migration() {
 
   // Set up the cache.
   {
-    let cache = Cc["@mozilla.org/messenger/msgFolderCache;1"].createInstance(
+    const cache = Cc["@mozilla.org/messenger/msgFolderCache;1"].createInstance(
       Ci.nsIMsgFolderCache
     );
     cache.init(jsonFile, legacyFile);
@@ -185,10 +189,10 @@ add_task(async function test_migration() {
 
   // Compare the migrated json to the json we expect.
   let raw = await IOUtils.readUTF8(jsonFile.path);
-  let got = JSON.parse(raw);
+  const got = JSON.parse(raw);
 
   raw = await IOUtils.readUTF8(do_get_file("data/folderCache.json").path);
-  let expect = JSON.parse(raw);
+  const expect = JSON.parse(raw);
 
   Assert.deepEqual(got, expect);
 
@@ -200,10 +204,10 @@ add_task(async function test_migration() {
  * Test foldercache migration doesn't crash with a dud panacea.dat.
  */
 add_task(async function test_bad_pancea_dat() {
-  let profileDir = do_get_profile();
-  let jsonFile = profileDir.clone();
+  const profileDir = do_get_profile();
+  const jsonFile = profileDir.clone();
   jsonFile.append("folderCache.json");
-  let legacyFile = profileDir.clone();
+  const legacyFile = profileDir.clone();
   legacyFile.append("panacea.dat");
 
   Assert.ok(!jsonFile.exists());
@@ -215,7 +219,7 @@ add_task(async function test_bad_pancea_dat() {
   do_get_file("data/panacea_empty.dat").copyTo(profileDir, legacyFile.leafName);
 
   // Set up the cache.
-  let cache = Cc["@mozilla.org/messenger/msgFolderCache;1"].createInstance(
+  const cache = Cc["@mozilla.org/messenger/msgFolderCache;1"].createInstance(
     Ci.nsIMsgFolderCache
   );
   // init() returns OK even if migration fails - the show must go on!
@@ -225,4 +229,49 @@ add_task(async function test_bad_pancea_dat() {
   // The migration should have left everything as it was.
   Assert.ok(legacyFile.exists());
   Assert.ok(!jsonFile.exists());
+});
+
+/**
+ * Test that elements can be renamed.
+ */
+add_task(function test_renaming() {
+  // Create an empty nsIMsgFolderCache object.
+  const cache = Cc["@mozilla.org/messenger/msgFolderCache;1"].createInstance(
+    Ci.nsIMsgFolderCache
+  );
+  const jsonFile = FileTestUtils.getTempFile("foo.json");
+  cache.init(jsonFile);
+
+  // Create some nsIMsgFolderCacheElement objects in it.
+  const e1 = cache.getCacheElement("made/up/ONE", true);
+  e1.setCachedString("foo", "ONE");
+  const e2 = cache.getCacheElement("made/up/TWO", true);
+  e2.setCachedString("foo", "TWO");
+  // This one points at same data as e1.
+  const doomed = cache.getCacheElement(e1.key, false);
+  Assert.equal(doomed.getCachedString("foo"), "ONE");
+
+  // Ensure we can't overwrite keys.
+  Assert.throws(function () {
+    e1.key = e2.key;
+  }, /NS_ERROR_/);
+
+  // Rename a key and make sure it still works.
+  Assert.equal(e1.getCachedString("foo"), "ONE");
+  e1.key = "fancy/new/key";
+  Assert.equal(e1.key, "fancy/new/key");
+  Assert.equal(e1.getCachedString("foo"), "ONE");
+
+  // Duplicate object should now be invalid.
+  Assert.throws(function () {
+    doomed.getCachedString("foo");
+  }, /NS_ERROR_/);
+
+  // Make sure we can look up the new key.
+  const e3 = cache.getCacheElement("fancy/new/key", false);
+  Assert.equal(e3.getCachedString("foo"), "ONE");
+
+  // Done.
+  cache.flush();
+  jsonFile.remove(false);
 });

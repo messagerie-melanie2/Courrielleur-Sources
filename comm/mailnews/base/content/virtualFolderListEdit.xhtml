@@ -1,17 +1,9 @@
 <?xml version="1.0"?>
 <!-- This Source Code Form is subject to the terms of the Mozilla Public
    - License, v. 2.0. If a copy of the MPL was not distributed with this
-   - file, You can obtain one at http://mozilla.org/MPL/2.0/.
-   -->
-
-<?xml-stylesheet href="chrome://messenger/skin/messenger.css"?>
-<?xml-stylesheet href="chrome://messenger/skin/icons.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/colors.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/mailWindow1.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/themeableDialog.css" type="text/css"?>
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
 <!DOCTYPE html SYSTEM "chrome://messenger/locale/virtualFolderListDialog.dtd">
-
 <html
   id="virtualFolderList"
   xmlns="http://www.w3.org/1999/xhtml"
@@ -19,13 +11,21 @@
   xmlns:html="http://www.w3.org/1999/xhtml"
   lightweightthemes="true"
   persist="width height screenX screenY"
-  width="400"
-  height="370"
+  style="min-width: 27em; min-height: 25em"
   windowtype="mailnews:virtualFolderList"
   scrolling="false"
 >
   <head>
     <title>&virtualFolderListTitle.title;</title>
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src chrome:; script-src chrome: 'unsafe-inline'; style-src chrome: 'unsafe-inline'"
+    />
+    <link rel="stylesheet" href="chrome://messenger/skin/messenger.css" />
+    <link rel="stylesheet" href="chrome://messenger/skin/icons.css" />
+    <link rel="stylesheet" href="chrome://messenger/skin/colors.css" />
+    <link rel="stylesheet" href="chrome://messenger/skin/mailWindow1.css" />
+    <link rel="stylesheet" href="chrome://messenger/skin/themeableDialog.css" />
     <script
       defer="defer"
       src="chrome://messenger/content/dialogShadowDom.js"
@@ -43,7 +43,7 @@
   <html:body
     xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
   >
-    <dialog>
+    <dialog style="min-width: 27em; min-height: 25em">
       <stringbundle
         id="bundle_messenger"
         src="chrome://messenger/locale/messenger.properties"
@@ -53,7 +53,6 @@
       <tree
         id="folderPickerTree"
         flex="1"
-        style="height: 290px"
         hidecolumnpicker="true"
         seltype="multiple"
         disableKeyNavigation="true"

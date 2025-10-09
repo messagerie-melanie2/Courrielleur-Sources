@@ -10,7 +10,7 @@
 #include "AccAttributes.h"
 #include "nsAccUtils.h"
 #include "nsCoreUtils.h"
-#include "Role.h"
+#include "mozilla/a11y/Role.h"
 #include "States.h"
 
 #include "nsAttrName.h"
@@ -18,6 +18,7 @@
 #include "nsWhitespaceTokenizer.h"
 
 #include "mozilla/BinarySearch.h"
+#include "mozilla/dom/Document.h"
 #include "mozilla/dom/Element.h"
 
 #include "nsUnicharUtils.h"
@@ -37,6 +38,8 @@ static const uint32_t kGenericAccType = 0;
  *
  *  When no Role enum mapping exists for an ARIA role, the role will be exposed
  *  via the object attribute "xml-roles".
+ *
+ * Note: the list must remain alphabetically ordered to support binary search.
  */
 
 static const nsRoleMapEntry sWAIRoleMaps[] = {
@@ -210,6 +213,15 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eLandmark,
     kNoReqStates
   },
+  { // definition
+    nsGkAtoms::definition,
+    roles::DEFINITION,
+    kUseMapRole,
+    eNoValue,
+    eNoAction,
+    eNoLiveAttr,
+    kGenericAccType,
+  },
   { // deletion
     nsGkAtoms::deletion,
     roles::CONTENT_DELETION,
@@ -246,7 +258,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    kGenericAccType,
+    eDPub,
     kNoReqStates
   },
   { // doc-acknowledgments
@@ -276,7 +288,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    eLandmark,
+    eDPub | eLandmark,
     kNoReqStates
   },
   { // doc-backlink
@@ -286,7 +298,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eJumpAction,
     eNoLiveAttr,
-    kGenericAccType,
+    eDPub,
     states::LINKED
   },
   { // doc-biblioentry
@@ -296,7 +308,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    kGenericAccType,
+    eDPub,
     states::READONLY
   },
   { // doc-bibliography
@@ -306,7 +318,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    eLandmark,
+    eDPub | eLandmark,
     kNoReqStates
   },
   { // doc-biblioref
@@ -316,7 +328,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eJumpAction,
     eNoLiveAttr,
-    kGenericAccType,
+    eDPub,
     states::LINKED
   },
   { // doc-chapter
@@ -326,7 +338,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    eLandmark,
+    eDPub | eLandmark,
     kNoReqStates
   },
   { // doc-colophon
@@ -336,7 +348,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    kGenericAccType,
+    eDPub,
     kNoReqStates
   },
   { // doc-conclusion
@@ -346,7 +358,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    eLandmark,
+    eDPub | eLandmark,
     kNoReqStates
   },
   { // doc-cover
@@ -356,7 +368,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    kGenericAccType,
+    eDPub,
     kNoReqStates
   },
   { // doc-credit
@@ -366,7 +378,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    kGenericAccType,
+    eDPub,
     kNoReqStates
   },
   { // doc-credits
@@ -376,7 +388,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    eLandmark,
+    eDPub | eLandmark,
     kNoReqStates
   },
   { // doc-dedication
@@ -386,7 +398,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    kGenericAccType,
+    eDPub,
     kNoReqStates
   },
   { // doc-endnote
@@ -396,7 +408,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    kGenericAccType,
+    eDPub,
     states::READONLY
   },
   { // doc-endnotes
@@ -406,7 +418,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    eLandmark,
+    eDPub | eLandmark,
     kNoReqStates
   },
   { // doc-epigraph
@@ -416,7 +428,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    kGenericAccType,
+    eDPub,
     kNoReqStates
   },
   { // doc-epilogue
@@ -426,7 +438,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    eLandmark,
+    eDPub | eLandmark,
     kNoReqStates
   },
   { // doc-errata
@@ -436,17 +448,17 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    eLandmark,
+    eDPub | eLandmark,
     kNoReqStates
   },
   { // doc-example
     nsGkAtoms::docExample,
-    roles::SECTION,
+    roles::FIGURE,
     kUseMapRole,
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    kGenericAccType,
+    eDPub,
     kNoReqStates
   },
   { // doc-footnote
@@ -456,7 +468,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    eLandmark,
+    eDPub | eLandmark,
     kNoReqStates
   },
   { // doc-foreword
@@ -466,7 +478,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    eLandmark,
+    eDPub | eLandmark,
     kNoReqStates
   },
   { // doc-glossary
@@ -476,7 +488,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    eLandmark,
+    eDPub | eLandmark,
     kNoReqStates
   },
   { // doc-glossref
@@ -486,7 +498,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eJumpAction,
     eNoLiveAttr,
-    kGenericAccType,
+    eDPub,
     states::LINKED
   },
   { // doc-index
@@ -496,7 +508,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    eLandmark,
+    eDPub | eLandmark,
     kNoReqStates
   },
   { // doc-introduction
@@ -506,7 +518,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    eLandmark,
+    eDPub | eLandmark,
     kNoReqStates
   },
   { // doc-noteref
@@ -516,7 +528,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eJumpAction,
     eNoLiveAttr,
-    kGenericAccType,
+    eDPub,
     states::LINKED
   },
   { // doc-notice
@@ -526,7 +538,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    kGenericAccType,
+    eDPub,
     kNoReqStates
   },
   { // doc-pagebreak
@@ -536,7 +548,27 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    kGenericAccType,
+    eDPub,
+    kNoReqStates
+  },
+  { // doc-pagefooter
+    nsGkAtoms::docPagefooter,
+    roles::SECTION,
+    kUseMapRole,
+    eNoValue,
+    eNoAction,
+    eNoLiveAttr,
+    eDPub,
+    kNoReqStates
+  },
+  { // doc-pageheader
+    nsGkAtoms::docPageheader,
+    roles::SECTION,
+    kUseMapRole,
+    eNoValue,
+    eNoAction,
+    eNoLiveAttr,
+    eDPub,
     kNoReqStates
   },
   { // doc-pagelist
@@ -546,7 +578,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    eLandmark,
+    eDPub | eLandmark,
     kNoReqStates
   },
   { // doc-part
@@ -556,7 +588,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    eLandmark,
+    eDPub | eLandmark,
     kNoReqStates
   },
   { // doc-preface
@@ -566,7 +598,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    eLandmark,
+    eDPub | eLandmark,
     kNoReqStates
   },
   { // doc-prologue
@@ -576,7 +608,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    eLandmark,
+    eDPub | eLandmark,
     kNoReqStates
   },
   { // doc-pullquote
@@ -586,7 +618,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    kGenericAccType,
+    eDPub,
     kNoReqStates
   },
   { // doc-qna
@@ -596,7 +628,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    kGenericAccType,
+    eDPub,
     kNoReqStates
   },
   { // doc-subtitle
@@ -606,7 +638,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    kGenericAccType,
+    eDPub,
     kNoReqStates
   },
   { // doc-tip
@@ -616,7 +648,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    kGenericAccType,
+    eDPub,
     kNoReqStates
   },
   { // doc-toc
@@ -626,7 +658,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     eNoLiveAttr,
-    eLandmark,
+    eDPub | eLandmark,
     kNoReqStates
   },
   { // document
@@ -639,6 +671,16 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     kGenericAccType,
     kNoReqStates,
     eReadonlyUntilEditable
+  },
+  { // emphasis
+    nsGkAtoms::emphasis,
+    roles::EMPHASIS,
+    kUseMapRole,
+    eNoValue,
+    eNoAction,
+    eNoLiveAttr,
+    kGenericAccType,
+    kNoReqStates
   },
   { // feed
     nsGkAtoms::feed,
@@ -668,6 +710,16 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoAction,
     eNoLiveAttr,
     eLandmark,
+    kNoReqStates
+  },
+  { // generic
+    nsGkAtoms::generic,
+    roles::SECTION,
+    kUseMapRole,
+    eNoValue,
+    eNoAction,
+    eNoLiveAttr,
+    kGenericAccType,
     kNoReqStates
   },
   { // graphics-document
@@ -703,7 +755,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
   },
   { // grid
     nsGkAtoms::grid,
-    roles::TABLE,
+    roles::GRID,
     kUseMapRole,
     eNoValue,
     eNoAction,
@@ -739,6 +791,16 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
   { // heading
     nsGkAtoms::heading,
     roles::HEADING,
+    kUseMapRole,
+    eNoValue,
+    eNoAction,
+    eNoLiveAttr,
+    kGenericAccType,
+    kNoReqStates
+  },
+  { // image
+    nsGkAtoms::image,
+    roles::GRAPHIC,
     kUseMapRole,
     eNoValue,
     eNoAction,
@@ -787,7 +849,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     states::LINKED
   },
   { // list
-    nsGkAtoms::list_,
+    nsGkAtoms::list,
     roles::LIST,
     kUseMapRole,
     eNoValue,
@@ -821,7 +883,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     states::READONLY
   },
   { // log
-    nsGkAtoms::log_,
+    nsGkAtoms::log,
     roles::NOTHING,
     kUseNativeRole,
     eNoValue,
@@ -957,7 +1019,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     kNoReqStates
   },
   { // note
-    nsGkAtoms::note_,
+    nsGkAtoms::note,
     roles::NOTE,
     kUseMapRole,
     eNoValue,
@@ -1054,7 +1116,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
   },
   { // rowgroup
     nsGkAtoms::rowgroup,
-    roles::GROUPING,
+    roles::ROWGROUP,
     kUseMapRole,
     eNoValue,
     eNoAction,
@@ -1098,7 +1160,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
   },
   { // searchbox
     nsGkAtoms::searchbox,
-    roles::ENTRY,
+    roles::SEARCHBOX,
     kUseMapRole,
     eNoValue,
     eActivateAction,
@@ -1110,7 +1172,7 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eARIAReadonlyOrEditable
   },
   { // separator
-    nsGkAtoms::separator_,
+    nsGkAtoms::separator,
     roles::SEPARATOR,
     kUseMapRole,
     eHasValueMinMaxIfFocusable,
@@ -1150,6 +1212,16 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eNoValue,
     eNoAction,
     ePoliteLiveAttr,
+    kGenericAccType,
+    kNoReqStates
+  },
+  { // strong
+    nsGkAtoms::strong,
+    roles::STRONG,
+    kUseMapRole,
+    eNoValue,
+    eNoAction,
+    eNoLiveAttr,
     kGenericAccType,
     kNoReqStates
   },
@@ -1258,6 +1330,15 @@ static const nsRoleMapEntry sWAIRoleMaps[] = {
     eARIAAutoComplete,
     eARIAMultiline,
     eARIAReadonlyOrEditable
+  },
+  { // time
+    nsGkAtoms::time,
+    roles::TIME,
+    kUseMapRole,
+    eNoValue,
+    eNoAction,
+    eNoLiveAttr,
+    kNoReqStates
   },
   { // timer
     nsGkAtoms::timer,
@@ -1372,33 +1453,33 @@ static const AttrCharacteristics gWAIUnivAttrMap[] = {
   {nsGkAtoms::aria_checked,           ATTR_BYPASSOBJ | ATTR_VALTOKEN               }, /* exposes checkable obj attr */
   {nsGkAtoms::aria_colcount,          ATTR_VALINT                                  },
   {nsGkAtoms::aria_colindex,          ATTR_VALINT                                  },
-  {nsGkAtoms::aria_controls,          ATTR_BYPASSOBJ                 | ATTR_GLOBAL },
+  {nsGkAtoms::aria_controls,          ATTR_BYPASSOBJ                 | ATTR_GLOBAL | ATTR_REFLECT_ELEMENTS },
   {nsGkAtoms::aria_current,  ATTR_BYPASSOBJ_IF_FALSE | ATTR_VALTOKEN | ATTR_GLOBAL },
-  {nsGkAtoms::aria_describedby,       ATTR_BYPASSOBJ                 | ATTR_GLOBAL },
+  {nsGkAtoms::aria_describedby,       ATTR_BYPASSOBJ                 | ATTR_GLOBAL | ATTR_REFLECT_ELEMENTS },
   // XXX Ideally, aria-description shouldn't expose a description object
   // attribute (i.e. it should have ATTR_BYPASSOBJ). However, until the
   // description-from attribute is implemented (bug 1726087), clients such as
   // NVDA depend on the description object attribute to work out whether the
   // accDescription originated from aria-description.
   {nsGkAtoms::aria_description,                                        ATTR_GLOBAL },
-  {nsGkAtoms::aria_details,           ATTR_BYPASSOBJ                 | ATTR_GLOBAL },
+  {nsGkAtoms::aria_details,           ATTR_BYPASSOBJ                 | ATTR_GLOBAL | ATTR_REFLECT_ELEMENTS },
   {nsGkAtoms::aria_disabled,          ATTR_BYPASSOBJ | ATTR_VALTOKEN | ATTR_GLOBAL },
   {nsGkAtoms::aria_dropeffect,                         ATTR_VALTOKEN | ATTR_GLOBAL },
-  {nsGkAtoms::aria_errormessage,      ATTR_BYPASSOBJ                 | ATTR_GLOBAL },
+  {nsGkAtoms::aria_errormessage,      ATTR_BYPASSOBJ                 | ATTR_GLOBAL | ATTR_REFLECT_ELEMENTS },
   {nsGkAtoms::aria_expanded,          ATTR_BYPASSOBJ | ATTR_VALTOKEN               },
-  {nsGkAtoms::aria_flowto,            ATTR_BYPASSOBJ                 | ATTR_GLOBAL },
+  {nsGkAtoms::aria_flowto,            ATTR_BYPASSOBJ                 | ATTR_GLOBAL | ATTR_REFLECT_ELEMENTS },
   {nsGkAtoms::aria_grabbed,                            ATTR_VALTOKEN | ATTR_GLOBAL },
   {nsGkAtoms::aria_haspopup,          ATTR_BYPASSOBJ_IF_FALSE | ATTR_VALTOKEN | ATTR_GLOBAL },
   {nsGkAtoms::aria_hidden,            ATTR_BYPASSOBJ | ATTR_VALTOKEN | ATTR_GLOBAL }, /* handled special way */
   {nsGkAtoms::aria_invalid,           ATTR_BYPASSOBJ | ATTR_VALTOKEN | ATTR_GLOBAL },
   {nsGkAtoms::aria_label,             ATTR_BYPASSOBJ                 | ATTR_GLOBAL },
-  {nsGkAtoms::aria_labelledby,        ATTR_BYPASSOBJ                 | ATTR_GLOBAL },
+  {nsGkAtoms::aria_labelledby,        ATTR_BYPASSOBJ                 | ATTR_GLOBAL | ATTR_REFLECT_ELEMENTS },
   {nsGkAtoms::aria_level,             ATTR_BYPASSOBJ                               }, /* handled via groupPosition */
   {nsGkAtoms::aria_live,                               ATTR_VALTOKEN | ATTR_GLOBAL },
   {nsGkAtoms::aria_modal,             ATTR_BYPASSOBJ | ATTR_VALTOKEN | ATTR_GLOBAL },
   {nsGkAtoms::aria_multiline,         ATTR_BYPASSOBJ | ATTR_VALTOKEN               },
   {nsGkAtoms::aria_multiselectable,   ATTR_BYPASSOBJ | ATTR_VALTOKEN               },
-  {nsGkAtoms::aria_owns,              ATTR_BYPASSOBJ                 | ATTR_GLOBAL },
+  {nsGkAtoms::aria_owns,              ATTR_BYPASSOBJ                 | ATTR_GLOBAL | ATTR_REFLECT_ELEMENTS },
   {nsGkAtoms::aria_orientation,                        ATTR_VALTOKEN               },
   {nsGkAtoms::aria_posinset,          ATTR_BYPASSOBJ                               }, /* handled via groupPosition */
   {nsGkAtoms::aria_pressed,           ATTR_BYPASSOBJ | ATTR_VALTOKEN               },
@@ -1421,7 +1502,8 @@ const nsRoleMapEntry* aria::GetRoleMap(dom::Element* aEl) {
   return GetRoleMapFromIndex(GetRoleMapIndex(aEl));
 }
 
-uint8_t aria::GetRoleMapIndex(dom::Element* aEl) {
+uint8_t aria::GetFirstValidRoleMapIndexExcluding(
+    dom::Element* aEl, std::initializer_list<nsStaticAtom*> aRolesToSkip) {
   nsAutoString roles;
   if (!aEl || !nsAccUtils::GetARIAAttr(aEl, nsGkAtoms::role, roles) ||
       roles.IsEmpty()) {
@@ -1433,12 +1515,26 @@ uint8_t aria::GetRoleMapIndex(dom::Element* aEl) {
   while (tokenizer.hasMoreTokens()) {
     // Do a binary search through table for the next role in role list
     const nsDependentSubstring role = tokenizer.nextToken();
+
+    // Skip any roles that we aren't interested in.
+    bool shouldSkip = false;
+    for (nsStaticAtom* atomRole : aRolesToSkip) {
+      if (role.Equals(atomRole->GetUTF16String(),
+                      nsCaseInsensitiveStringComparator)) {
+        shouldSkip = true;
+        break;
+      }
+    }
+    if (shouldSkip) {
+      continue;
+    }
+
     size_t idx;
     auto comparator = [&role](const nsRoleMapEntry& aEntry) {
       return Compare(role, aEntry.ARIARoleString(),
                      nsCaseInsensitiveStringComparator);
     };
-    if (BinarySearchIf(sWAIRoleMaps, 0, ArrayLength(sWAIRoleMaps), comparator,
+    if (BinarySearchIf(sWAIRoleMaps, 0, std::size(sWAIRoleMaps), comparator,
                        &idx)) {
       return idx;
     }
@@ -1447,6 +1543,11 @@ uint8_t aria::GetRoleMapIndex(dom::Element* aEl) {
   // Always use some entry index if there is a non-empty role string
   // To ensure an accessible object is created
   return LANDMARK_ROLE_MAP_ENTRY_INDEX;
+}
+
+uint8_t aria::GetRoleMapIndex(dom::Element* aEl) {
+  // Get the rolemap index of the first valid role, excluding nothing.
+  return GetFirstValidRoleMapIndexExcluding(aEl, {});
 }
 
 const nsRoleMapEntry* aria::GetRoleMapFromIndex(uint8_t aRoleMapIndex) {
@@ -1483,7 +1584,7 @@ bool aria::IsRoleMapIndexValid(uint8_t aRoleMapIndex) {
     case LANDMARK_ROLE_MAP_ENTRY_INDEX:
       return true;
   }
-  return aRoleMapIndex < ArrayLength(sWAIRoleMaps);
+  return aRoleMapIndex < std::size(sWAIRoleMaps);
 }
 
 uint64_t aria::UniversalStatesFor(mozilla::dom::Element* aElement) {
@@ -1495,7 +1596,7 @@ uint64_t aria::UniversalStatesFor(mozilla::dom::Element* aElement) {
 }
 
 uint8_t aria::AttrCharacteristicsFor(nsAtom* aAtom) {
-  for (uint32_t i = 0; i < ArrayLength(gWAIUnivAttrMap); i++) {
+  for (uint32_t i = 0; i < std::size(gWAIUnivAttrMap); i++) {
     if (gWAIUnivAttrMap[i].attributeName == aAtom) {
       return gWAIUnivAttrMap[i].characteristics;
     }
@@ -1504,11 +1605,56 @@ uint8_t aria::AttrCharacteristicsFor(nsAtom* aAtom) {
   return 0;
 }
 
-bool aria::HasDefinedARIAHidden(nsIContent* aContent) {
+bool aria::IsValidARIAHidden(nsIContent* aContent) {
   return aContent && aContent->IsElement() &&
          nsAccUtils::ARIAAttrValueIs(aContent->AsElement(),
                                      nsGkAtoms::aria_hidden, nsGkAtoms::_true,
-                                     eCaseMatters);
+                                     eCaseMatters) &&
+         !ShouldIgnoreARIAHidden(aContent);
+}
+
+bool aria::IsValidARIAHidden(DocAccessible* aDocAcc) {
+  nsCOMPtr<nsIContent> docContent = aDocAcc->GetContent();
+  // First, check if our Doc Accessible has aria-hidden set on its content
+  bool isValid = IsValidARIAHidden(docContent);
+
+  // If our Doc Accessible was created using an element other than the
+  // root element, we need to verify the validity of any aria-hidden on
+  // the root element as well.
+  auto* rootElement = aDocAcc->DocumentNode()->GetRootElement();
+  if (docContent != rootElement) {
+    isValid |= IsValidARIAHidden(rootElement);
+  }
+
+  return isValid;
+}
+
+bool aria::ShouldIgnoreARIAHidden(nsIContent* aContent) {
+  if (!aContent) {
+    return false;
+  }
+
+  dom::Document* doc = aContent->OwnerDoc();
+  bool isValidElementType = (aContent == doc->GetDocumentElement());
+
+  if (auto docBody = doc->GetBody()) {
+    isValidElementType |= (aContent == docBody->AsContent());
+  }
+
+  return isValidElementType && doc->IsTopLevelContentDocument();
+}
+
+const nsRoleMapEntry* aria::GetRoleMap(const nsStaticAtom* aAriaRole) {
+  const nsDependentAtomString role(aAriaRole);
+  auto comparator = [&role](const nsRoleMapEntry& aEntry) {
+    return Compare(role, aEntry.ARIARoleString());
+  };
+  size_t idx;
+  if (BinarySearchIf(sWAIRoleMaps, 0, std::size(sWAIRoleMaps), comparator,
+                     &idx)) {
+    return GetRoleMapFromIndex(idx);
+  }
+  return nullptr;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1581,7 +1727,7 @@ nsAtom* AttrIterator::AttrName() const { return mAttrAtom; }
 
 void AttrIterator::AttrValue(nsAString& aAttrValue) const {
   nsAutoString value;
-  if (mAttrs->GetAttr(kNameSpaceID_None, mAttrAtom, value)) {
+  if (mAttrs->GetAttr(mAttrAtom, value)) {
     if (mAttrCharacteristics & ATTR_VALTOKEN) {
       nsAtom* normalizedValue =
           nsAccUtils::NormalizeARIAToken(mAttrs, mAttrAtom);
@@ -1620,9 +1766,28 @@ bool AttrIterator::ExposeAttr(AccAttributes* aTargetAttrs) const {
     return false;  // Invalid value.
   }
   nsAutoString value;
-  if (mAttrs->GetAttr(kNameSpaceID_None, mAttrAtom, value)) {
+  if (mAttrs->GetAttr(mAttrAtom, value)) {
     aTargetAttrs->SetAttribute(mAttrAtom, std::move(value));
     return true;
   }
   return false;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// AttrWithCharacteristicsIterator class
+bool AttrWithCharacteristicsIterator::Next() {
+  for (mIdx++; mIdx < static_cast<int32_t>(std::size(gWAIUnivAttrMap));
+       mIdx++) {
+    if (gWAIUnivAttrMap[mIdx].characteristics & mCharacteristics) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+nsStaticAtom* AttrWithCharacteristicsIterator::AttrName() const {
+  return mIdx >= 0
+             ? const_cast<nsStaticAtom*>(gWAIUnivAttrMap[mIdx].attributeName)
+             : nullptr;
 }

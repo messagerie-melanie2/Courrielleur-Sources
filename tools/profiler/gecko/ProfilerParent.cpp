@@ -21,6 +21,7 @@
 #include "mozilla/ipc/Endpoint.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/ProfileBufferControlledChunkManager.h"
+#include "mozilla/ProfilerBufferSize.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/Unused.h"
 #include "nsTArray.h"
@@ -153,8 +154,9 @@ class ProfileBufferGlobalController final {
 };
 
 /* static */
-DataMutexBase<ProfileBufferGlobalController::ParentChunkManagerAndPendingUpdate,
-              baseprofiler::detail::BaseProfilerMutex>
+MOZ_RUNINIT DataMutexBase<
+    ProfileBufferGlobalController::ParentChunkManagerAndPendingUpdate,
+    baseprofiler::detail::BaseProfilerMutex>
     ProfileBufferGlobalController::sParentChunkManagerAndPendingUpdate{
         "ProfileBufferGlobalController::sParentChunkManagerAndPendingUpdate"};
 
@@ -205,12 +207,10 @@ class ProfilerParentTracker final {
   Maybe<ProfileBufferGlobalController> mMaybeController;
 };
 
-static const Json::StaticString logRoot{"bufferGlobalController"};
-
 template <typename F>
 void ProfileBufferGlobalController::Log(F&& aF) {
   ProfilingLog::Access([&](Json::Value& aLog) {
-    Json::Value& root = aLog[logRoot];
+    Json::Value& root = aLog[Json::StaticString{"bufferGlobalController"}];
     if (!root.isObject()) {
       root = Json::Value(Json::objectValue);
       root[Json::StaticString{"logBegin" TIMESTAMP_JSON_SUFFIX}] =
@@ -506,13 +506,13 @@ ProfilerParentTracker* ProfilerParentTracker::GetInstance() {
 
   // The main instance pointer, it will be initialized at most once, before
   // XPCOMShutdownThreads.
-  static UniquePtr<ProfilerParentTracker> instance = nullptr;
+  static StaticAutoPtr<ProfilerParentTracker> instance;
   if (MOZ_UNLIKELY(!instance)) {
     if (PastShutdownPhase(ShutdownPhase::XPCOMShutdownThreads)) {
       return nullptr;
     }
 
-    instance = MakeUnique<ProfilerParentTracker>();
+    instance = new ProfilerParentTracker();
 
     // The tracker should get destroyed before threads are shutdown, because its
     // destruction closes extant channels, which could trigger promise
@@ -537,7 +537,8 @@ void ProfilerParentTracker::StartTracking(ProfilerParent* aProfilerParent) {
     // (And this helps delay the Controller startup, because the parent profiler
     // can start *very* early in the process, when some resources like threads
     // are not ready yet.)
-    tracker->mMaybeController.emplace(size_t(tracker->mEntries) * 8u);
+    tracker->mMaybeController.emplace(size_t(tracker->mEntries) *
+                                      scBytesPerEntry);
   }
 
   tracker->mProfilerParents.AppendElement(aProfilerParent);
@@ -560,13 +561,14 @@ void ProfilerParentTracker::ProfilerStarted(uint32_t aEntries) {
     return;
   }
 
-  tracker->mEntries = aEntries;
+  tracker->mEntries = ClampToAllowedEntries(aEntries);
 
   if (tracker->mMaybeController.isNothing() &&
       !tracker->mProfilerParents.IsEmpty()) {
     // We are already tracking child processes, so it's a good time to start
     // controlling the global memory usage of the profiler.
-    tracker->mMaybeController.emplace(size_t(tracker->mEntries) * 8u);
+    tracker->mMaybeController.emplace(size_t(tracker->mEntries) *
+                                      scBytesPerEntry);
   }
 }
 

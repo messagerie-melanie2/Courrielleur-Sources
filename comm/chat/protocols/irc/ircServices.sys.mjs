@@ -30,7 +30,7 @@ function ServiceMessage(aAccount, aMessage) {
   // irc.foo.net has a service called bar, which acts as a NickServ, we would
   // map "bar": "NickServ"). Note that the keys of this map should be
   // normalized.
-  let nicknameToServiceName = {
+  const nicknameToServiceName = {
     chanserv: "ChanServ",
     infoserv: "InfoServ",
     nickserv: "NickServ",
@@ -38,7 +38,7 @@ function ServiceMessage(aAccount, aMessage) {
     "freenode-connect": "freenode-connect",
   };
 
-  let nickname = aAccount.normalize(aMessage.origin);
+  const nickname = aAccount.normalize(aMessage.origin);
   if (nicknameToServiceName.hasOwnProperty(nickname)) {
     aMessage.serviceName = nicknameToServiceName[nickname];
   }
@@ -72,7 +72,7 @@ export var ircServices = {
         return false;
       }
 
-      let message = ServiceMessage(this, ircMessage);
+      const message = ServiceMessage(this, ircMessage);
 
       // If no service was found, return early.
       if (!message.hasOwnProperty("serviceName")) {
@@ -85,7 +85,7 @@ export var ircServices = {
     },
 
     NICK(aMessage) {
-      let newNick = aMessage.params[0];
+      const newNick = aMessage.params[0];
       // We only auto-authenticate for the account nickname.
       if (this.normalize(newNick) != this.normalize(this._accountNickname)) {
         return false;
@@ -100,9 +100,9 @@ export var ircServices = {
       return false;
     },
 
-    "001": function (aMessage) {
+    "001": function () {
       // RPL_WELCOME
-      // If SASL authentication failed, attempt IDENTIFY.
+      // If SASL authentication failed, attempt to use the IDENTIFY command.
       ircServices.sendIdentify(this);
 
       // We always want the RFC 2812 handler to handle 001, so return false.
@@ -156,13 +156,13 @@ export var servicesBase = {
       }
 
       // Otherwise, display the message in that conversation.
-      let params = { incoming: true };
+      const params = { incoming: true };
       if (aMessage.command == "NOTICE") {
         params.notification = true;
       }
 
       // The message starts after the channel name, plus [, ] and a space.
-      let message = aMessage.params[1].slice(channel.length + 3);
+      const message = aMessage.params[1].slice(channel.length + 3);
       this.getConversation(channel).writeMessage(
         aMessage.origin,
         message,
@@ -172,7 +172,7 @@ export var servicesBase = {
     },
 
     InfoServ(aMessage) {
-      let text = aMessage.params[1];
+      const text = aMessage.params[1];
 
       // Show the message of the day in the server tab.
       if (text == "*** \u0002Message(s) of the Day\u0002 ***") {
@@ -207,13 +207,14 @@ export var servicesBase = {
         return false;
       }
 
-      let text = message.params[1];
+      const text = message.params[1];
 
       // If we have a queue of messages, we're waiting for authentication.
       if (this.nickservMessageQueue) {
         if (
           text == "Password accepted - you are now recognized." || // Anope.
-          text.startsWith("You are now identified for \x02")
+          text.startsWith("You are now identified for \x02") ||
+          text.startsWith("You are successfully identified")
         ) {
           // Atheme.
           // Password successfully accepted by NickServ, don't display the
@@ -234,7 +235,9 @@ export var servicesBase = {
       // NickServ wants us to identify.
       if (
         text == "This nick is owned by someone else.  Please choose another." || // Anope.
-        text == "This nickname is registered and protected.  If it is your" || // Anope (SECURE enabled).
+        text.startsWith(
+          "This nickname is registered and protected.  If it is your" // Anope (SECURE enabled) & OFTC.
+        ) ||
         text ==
           "This nickname is registered. Please choose a different nickname, or identify via \x02/msg NickServ identify <password>\x02."
       ) {
@@ -242,7 +245,7 @@ export var servicesBase = {
         this.LOG("Authentication requested by NickServ.");
 
         // Wait one second before showing the message to the user (giving the
-        // the server time to process the log-in).
+        // server time to process the log-in).
         this.nickservMessageQueue = [message];
         this.nickservAuthTimeout = setTimeout(
           function () {
@@ -288,7 +291,7 @@ export var servicesBase = {
       }
 
       // Only ignore the message notifying of last login.
-      let text = aMessage.params[1];
+      const text = aMessage.params[1];
       return text.startsWith("Last login from: ");
     },
 

@@ -8,6 +8,7 @@ All metrics and pings in the Glean SDK have [well-documented APIs for testing][g
 You'll want to familiarize yourself with `TestGetValue()`
 (here's [an example JS (xpcshell) test of some metrics][metrics-xpcshell-test])
 for metrics and
+[`TestSubmission()`][test-submission] or
 [`TestBeforeNextSubmit()`][test-before-next-submit]
 (here's [an example C++ (gtest) test of a custom ping][ping-gtest])
 for pings.
@@ -34,6 +35,9 @@ you're going to want to write some automated tests.
 * You may see values from previous tests persist across tests because the profile directory was shared between test cases.
     * You can reset Glean before your test by calling
       `Services.fog.testResetFOG()` (in JS).
+        * If your instrumentation isn't on the parent process,
+          you should call `await Services.fog.testFlushAllChildren()` before `testResetFOG`.
+          That will ensure all pending data makes it to the parent process to be cleared.
     * You shouldn't have to do this in C++ or Rust since there you should use the
       `FOGFixture` test fixture.
 * If your metric is based on timing (`timespan`, `timing_distribution`),
@@ -42,7 +46,10 @@ you're going to want to write some automated tests.
   do not expect the values to be predictable.
     * Instead, check that a value is `> 0` or that the number of samples is expected.
     * You might be able to assert that the value is at least as much as a known, timed value,
-    but beware of rounding.
+      but beware of rounding.
+    * If your metric is a `timing_distribution` mirroring to a Telemetry probe via [GIFFT](./gifft.md),
+      there may be [small observed differences between systems](./gifft.md#timing_distribution-mirrors-samples-and-sums-might-be-different)
+      that can cause equality assertions to fail.
 * Errors in instrumentation APIs do not panic, throw, or crash.
   But Glean remembers that the errors happened.
     * Test APIs, on the other hand, are permitted
@@ -51,6 +58,42 @@ you're going to want to write some automated tests.
     * If you call a test API and it panics, throws, or crashes,
       that means your instrumentation did something wrong.
       Check your test logs for details about what went awry.
+
+### Tests and Artifact Builds
+
+Artifact build support is provided by [the JOG subsystem](../dev/jog).
+It is able to register the latest versions of all metrics and pings at runtime.
+However, the compiled code is still running against the
+version of those metrics and pings that was current at the time the artifacts were compiled.
+
+This isn't a problem unless:
+* You are changing a metric or ping that is used in instrumentation in the compiled code, or
+* You are using `testBeforeNextSubmit` in JavaScript for a ping submitted in the compiled code.
+
+When in doubt, simply test your new test in artifact mode
+(by e.g. passing `--enable-artifact-builds` to `mach try`)
+before submitting it.
+If it doesn't pass in artifact mode because of one of these two cases,
+you may need to skip your test whenever FOG's artifact build support is enabled:
+* xpcshell:
+```js
+add_task(
+  { skip_if: () => Services.prefs.getBoolPref("telemetry.fog.artifact_build", false) },
+  function () {
+    // ... your test ...
+  }
+);
+```
+* mochitest:
+```js
+add_task(function () {
+  if (Services.prefs.getBoolPref("telemetry.fog.artifact_build", false)) {
+    Assert.ok(true, "Test skipped in artifact mode.");
+    return;
+  }
+  // ... your test ...
+});
+```
 
 ## The Usual Test Format
 
@@ -104,7 +147,41 @@ add_task(function test_instrumentation() {
 ```
 
 If your new instrumentation includes a new custom ping,
-there are two small additions to The Usual Test Format:
+there are two possible testing APIs that you can use:
+
+* [`testSubmission()`][test-submission]
+* [`testBeforeNextSubmit()`][test-before-next-submit]
+
+`testSubmission` is recommended over `testBeforeNextSubmit` because it
+guarantees that the ping is submitted, whereas `testBeforeNextSubmit` requires
+that the test assert that. Additionally, it can handle pings submitted
+asynchronously (in its submit callback or by, e.g., idle dispatch) because it is
+async-aware and supports an optional submission timeout.
+
+```js
+add_task(async function test_custom_ping_submission() {
+  // 1) Assert no value
+  Assert.equal(undefined, Glean.myMetricCategory.myMetricName.testGetValue());
+
+  // 2) Express behaviour that records the correct metrics
+  // ...<left as an exercise to the reader>...
+
+  // 3) Assert the corect value and trigger ping submission
+  await GleanPings.myPing.testSubmission(
+    reason => {
+      Assert.equal(kExpectedReason, reason, "Reason of submitted ping must match.");
+      Assert.equal(kExpectedMetricValue, Glean.myMetricCategory.myMetricName.testGetValue());
+    },
+    () => {
+      // Trigger ping submission. Your ping may be submitted by specific logic
+      // elsewhere or by calling GleanPings.myPing.submit()`
+      // ...<left as an exercise to the reader>...
+    });
+});
+```
+
+If your test uses `testBeforeNextSubmit`, then there are two small additions to
+The Usual Test Format:
 
 * 1.1) Call `testBeforeNextSubmit` _before_ your ping is submitted.
   The callback you register in `testBeforeNextSubmit`
@@ -144,9 +221,42 @@ for updates on a better design and implementation for ping tests. ))
 
 `browser-chrome`-flavoured mochitests can be tested very similarly to `xpcshell`,
 though you do not need to request a profile or initialize FOG.
-`plain`-flavoured mochitests aren't yet supported (follow
-[bug 1799977](https://bugzilla.mozilla.org/show_bug.cgi?id=1799977)
-for updates and a workaround).
+`plain`-flavoured mochitests can use [`GleanTest.js`](https://searchfox.org/mozilla-central/source/testing/mochitest/tests/SimpleTest/GleanTest.js).
+It doesn't support all the features, only the `testResetFOG`,
+`testFlushAllChildren` (as `flush`), and `testGetValue` functions.
+
+```{admonition} Asynchronicity
+In `GleanTest.js`, test functions are all `async` meaning you need to `await`
+their results as they make the trip over IPC and back again.
+```
+
+```html
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Sample SimpleTest with GleanTest.js</title>
+    <script src="/tests/SimpleTest/SimpleTest.js"></script>
+    <link rel="stylesheet" href="/tests/SimpleTest/test.css" />
+    <script src="/tests/SimpleTest/GleanTest.js"></script>
+  </head>
+  <body>
+    <p id="display"></p>
+    <div id="content" style="display: none"></div>
+    <pre id="test"></pre>
+
+    <script>
+      add_task(async function () {
+        await GleanTest.testResetFOG();
+
+        // Run code that sets your metric.
+
+        const value = await GleanTest.myMetricCategory.myMetricName.testGetValue();
+      });
+    </script>
+  </body>
+</html>
+```
 
 If you're testing in `mochitest`, your instrumentation (or your test)
 might not be running in the parent process.
@@ -161,8 +271,15 @@ But your instrumentation might be on any process, so how do you test it?
 In this case there's a slight addition to the Usual Test Format:
 1) Assert no value in the metric
 2) Express behaviour
-3) _Flush all pending FOG IPC operations with `Services.fog.testFlushAllChildren()`_
+3) _Flush all pending FOG IPC operations with `await Services.fog.testFlushAllChildren()`_
 4) Assert correct value in the metric.
+
+**NOTE:** We learned in
+[bug 1843178](https://bugzilla.mozilla.org/show_bug.cgi?id=1843178)
+that the list of all content processes that `Services.fog.testFlushAllChildren()`
+uses is very quickly updated after the end of a call to `BrowserUtils.withNewTab(...)`.
+If you are using `withNewTab`, you should consider calling `testFlushAllChildren()`
+_within_ the callback.
 
 ## GTests/Google Tests
 
@@ -226,4 +343,5 @@ pub extern "C" fn Rust_MyRustTest() {
 [metrics-xpcshell-test]: https://searchfox.org/mozilla-central/rev/66e59131c1c76fe486424dc37f0a8a399ca874d4/toolkit/mozapps/update/tests/unit_background_update/test_backgroundupdate_glean.js#28
 [ping-gtest]: https://searchfox.org/mozilla-central/rev/66e59131c1c76fe486424dc37f0a8a399ca874d4/toolkit/components/glean/tests/gtest/TestFog.cpp#232
 [test-before-next-submit]: https://mozilla.github.io/glean/book/reference/pings/index.html#testbeforenextsubmit
+[test-submission]: https://searchfox.org/mozilla-central/rev/126697140e711e04a9d95edae537541c3bde89cc/toolkit/components/glean/xpcom/nsIGleanPing.idl#71
 [glean-debug]: https://mozilla.github.io/glean/book/reference/debug/index.html

@@ -8,7 +8,7 @@
 #define MOZILLA_GFX_TEXTURED3D11_H
 
 #include <d3d11.h>
-
+#include <d3d11_1.h>
 #include <vector>
 
 #include "d3d9.h"
@@ -23,11 +23,20 @@
 #include "mozilla/layers/TextureHost.h"
 
 namespace mozilla {
+
+namespace gfx {
+class FileHandleWrapper;
+}  // namespace gfx
+
 namespace gl {
 class GLBlitHelper;
 }
 
 namespace layers {
+
+class FenceD3D11;
+
+gfx::DeviceResetReason DXGIErrorToDeviceResetReason(HRESULT aError);
 
 already_AddRefed<TextureHost> CreateTextureHostD3D11(
     const SurfaceDescriptor& aDesc, ISurfaceAllocator* aDeallocator,
@@ -45,7 +54,8 @@ class MOZ_RAII AutoTextureLock final {
 };
 
 class CompositorD3D11;
-class IMFSampleUsageInfo;
+class ZeroCopyUsageInfo;
+class VideoProcessorD3D11;
 
 class D3D11TextureData final : public TextureData {
  public:
@@ -62,7 +72,8 @@ class D3D11TextureData final : public TextureData {
       ID3D11Texture2D* aTexture, uint32_t aIndex, gfx::IntSize aSize,
       gfx::SurfaceFormat aFormat, gfx::ColorSpace2 aColorSpace,
       gfx::ColorRange aColorRange, KnowsCompositor* aKnowsCompositor,
-      RefPtr<IMFSampleUsageInfo> aUsageInfo);
+      RefPtr<ZeroCopyUsageInfo> aUsageInfo,
+      const RefPtr<FenceD3D11> aWriteFence);
 
   virtual ~D3D11TextureData();
 
@@ -90,6 +101,8 @@ class D3D11TextureData final : public TextureData {
     return mAllocationFlags;
   }
 
+  TextureType GetTextureType() const override { return TextureType::D3D11; }
+
   void FillInfo(TextureData::Info& aInfo) const override;
 
   bool Serialize(SurfaceDescriptor& aOutDescrptor) override;
@@ -111,12 +124,16 @@ class D3D11TextureData final : public TextureData {
     return mGpuProcessTextureId;
   }
 
- private:
-  D3D11TextureData(ID3D11Texture2D* aTexture, uint32_t aArrayIndex,
-                   gfx::IntSize aSize, gfx::SurfaceFormat aFormat,
-                   TextureAllocationFlags aFlags);
+  void IncrementAndSignalWriteFence();
 
-  void GetDXGIResource(IDXGIResource** aOutResource);
+ private:
+  D3D11TextureData(ID3D11Device* aDevice, ID3D11Texture2D* aTexture,
+                   uint32_t aArrayIndex,
+                   RefPtr<gfx::FileHandleWrapper> aSharedHandle,
+                   gfx::IntSize aSize, gfx::SurfaceFormat aFormat,
+                   const Maybe<CompositeProcessFencesHolderId> aFencesHolderId,
+                   const RefPtr<FenceD3D11> aWriteFence,
+                   TextureAllocationFlags aFlags);
 
   bool PrepareDrawTargetInLock(OpenMode aMode);
 
@@ -132,18 +149,22 @@ class D3D11TextureData final : public TextureData {
   // Hold on to the DrawTarget because it is expensive to create one each
   // ::Lock.
   RefPtr<gfx::DrawTarget> mDrawTarget;
-  const gfx::IntSize mSize;
-  const gfx::SurfaceFormat mFormat;
 
  public:
+  const gfx::IntSize mSize;
+  const gfx::SurfaceFormat mFormat;
+  const bool mHasKeyedMutex;
+  const Maybe<CompositeProcessFencesHolderId> mFencesHolderId;
+  const RefPtr<FenceD3D11> mWriteFence;
   gfx::ColorSpace2 mColorSpace = gfx::ColorSpace2::SRGB;
 
  private:
   gfx::ColorRange mColorRange = gfx::ColorRange::LIMITED;
   bool mNeedsClear = false;
-  const bool mHasSynchronization;
 
+  const RefPtr<ID3D11Device> mDevice;
   RefPtr<ID3D11Texture2D> mTexture;
+  const RefPtr<gfx::FileHandleWrapper> mSharedHandle;
   Maybe<GpuProcessTextureId> mGpuProcessTextureId;
   uint32_t mArrayIndex = 0;
   const TextureAllocationFlags mAllocationFlags;
@@ -153,19 +174,15 @@ class DXGIYCbCrTextureData : public TextureData {
   friend class gl::GLBlitHelper;
 
  public:
-  static DXGIYCbCrTextureData* Create(
-      IDirect3DTexture9* aTextureY, IDirect3DTexture9* aTextureCb,
-      IDirect3DTexture9* aTextureCr, HANDLE aHandleY, HANDLE aHandleCb,
-      HANDLE aHandleCr, const gfx::IntSize& aSize, const gfx::IntSize& aSizeY,
-      const gfx::IntSize& aSizeCbCr, gfx::ColorDepth aColorDepth,
-      gfx::YUVColorSpace aYUVColorSpace, gfx::ColorRange aColorRange);
-
-  static DXGIYCbCrTextureData* Create(
-      ID3D11Texture2D* aTextureCb, ID3D11Texture2D* aTextureY,
-      ID3D11Texture2D* aTextureCr, const gfx::IntSize& aSize,
-      const gfx::IntSize& aSizeY, const gfx::IntSize& aSizeCbCr,
-      gfx::ColorDepth aColorDepth, gfx::YUVColorSpace aYUVColorSpace,
-      gfx::ColorRange aColorRange);
+  static DXGIYCbCrTextureData* Create(ID3D11Texture2D* aTextureCb,
+                                      ID3D11Texture2D* aTextureY,
+                                      ID3D11Texture2D* aTextureCr,
+                                      const gfx::IntSize& aSize,
+                                      const gfx::IntSize& aSizeY,
+                                      const gfx::IntSize& aSizeCbCr,
+                                      const gfx::ColorDepth aColorDepth,
+                                      const gfx::YUVColorSpace aYUVColorSpace,
+                                      const gfx::ColorRange aColorRange);
 
   bool Lock(OpenMode) override { return true; }
 
@@ -189,28 +206,33 @@ class DXGIYCbCrTextureData : public TextureData {
 
   DXGIYCbCrTextureData* AsDXGIYCbCrTextureData() override { return this; }
 
-  gfx::IntSize GetYSize() const { return mSizeY; }
-
-  gfx::IntSize GetCbCrSize() const { return mSizeCbCr; }
-
-  gfx::ColorDepth GetColorDepth() const { return mColorDepth; }
-  gfx::YUVColorSpace GetYUVColorSpace() const { return mYUVColorSpace; }
-  gfx::ColorRange GetColorRange() const { return mColorRange; }
-
   ID3D11Texture2D* GetD3D11Texture(size_t index) {
     return mD3D11Textures[index];
   }
 
+  const gfx::IntSize mSize;
+  const gfx::IntSize mSizeY;
+  const gfx::IntSize mSizeCbCr;
+  const gfx::ColorDepth mColorDepth;
+  const gfx::YUVColorSpace mYUVColorSpace;
+  const gfx::ColorRange mColorRange;
+  const CompositeProcessFencesHolderId mFencesHolderId;
+  const RefPtr<FenceD3D11> mWriteFence;
+
  protected:
+  DXGIYCbCrTextureData(RefPtr<ID3D11Texture2D> (&aD3D11Textures)[3],
+                       RefPtr<gfx::FileHandleWrapper>(aHandles)[3],
+                       const gfx::IntSize& aSize, const gfx::IntSize& aSizeY,
+                       const gfx::IntSize& aSizeCbCr,
+                       const gfx::ColorDepth aColorDepth,
+                       const gfx::YUVColorSpace aYUVColorSpace,
+                       const gfx::ColorRange aColorRange,
+                       const CompositeProcessFencesHolderId aFencesHolderId,
+                       const RefPtr<FenceD3D11> aWriteFence);
+  virtual ~DXGIYCbCrTextureData();
+
   RefPtr<ID3D11Texture2D> mD3D11Textures[3];
-  RefPtr<IDirect3DTexture9> mD3D9Textures[3];
-  HANDLE mHandles[3];
-  gfx::IntSize mSize;
-  gfx::IntSize mSizeY;
-  gfx::IntSize mSizeCbCr;
-  gfx::ColorDepth mColorDepth;
-  gfx::YUVColorSpace mYUVColorSpace;
-  gfx::ColorRange mColorRange;
+  RefPtr<gfx::FileHandleWrapper> mHandles[3];
 };
 
 /**
@@ -342,18 +364,22 @@ class DXGITextureHostD3D11 : public TextureHost {
  public:
   DXGITextureHostD3D11(TextureFlags aFlags,
                        const SurfaceDescriptorD3D10& aDescriptor);
+  ~DXGITextureHostD3D11() override;
 
   void DeallocateDeviceData() override {}
 
   gfx::SurfaceFormat GetFormat() const override { return mFormat; }
 
-  bool LockWithoutCompositor() override;
-  void UnlockWithoutCompositor() override;
-
   gfx::IntSize GetSize() const override { return mSize; }
   gfx::ColorRange GetColorRange() const override { return mColorRange; }
 
-  already_AddRefed<gfx::DataSourceSurface> GetAsSurface() override;
+  already_AddRefed<gfx::DataSourceSurface> GetAsSurface(
+      gfx::DataSourceSurface* aSurface) override;
+
+  // Return DataSourceSurface using aDevice withou readback to CPU.
+  already_AddRefed<gfx::DataSourceSurface> GetAsSurfaceWithDevice(
+      ID3D11Device* const aDevice,
+      DataMutex<RefPtr<VideoProcessorD3D11>>& aVideoProcessorD3D11);
 
   void CreateRenderTexture(
       const wr::ExternalImageId& aExternalImageId) override;
@@ -373,42 +399,29 @@ class DXGITextureHostD3D11 : public TextureHost {
 
   bool SupportsExternalCompositing(WebRenderBackend aBackend) override;
 
- protected:
-  bool LockInternal();
-  void UnlockInternal();
+  DXGITextureHostD3D11* AsDXGITextureHostD3D11() override { return this; }
 
-  bool EnsureTextureSource();
-
-  RefPtr<ID3D11Device> GetDevice();
-
-  bool EnsureTexture();
-
-  RefPtr<ID3D11Device> mDevice;
-  RefPtr<ID3D11Texture2D> mTexture;
-  Maybe<GpuProcessTextureId> mGpuProcessTextureId;
-  uint32_t mArrayIndex = 0;
-  RefPtr<DataTextureSourceD3D11> mTextureSource;
-  gfx::IntSize mSize;
-  WindowsHandle mHandle;
-  gfx::SurfaceFormat mFormat;
-
- public:
+  const RefPtr<gfx::FileHandleWrapper> mHandle;
+  const Maybe<GpuProcessTextureId> mGpuProcessTextureId;
+  const uint32_t mArrayIndex;
+  const gfx::IntSize mSize;
+  const gfx::SurfaceFormat mFormat;
+  const bool mHasKeyedMutex;
+  const Maybe<CompositeProcessFencesHolderId> mFencesHolderId;
   const gfx::ColorSpace2 mColorSpace;
-
- protected:
   const gfx::ColorRange mColorRange;
-  bool mIsLocked;
 };
 
 class DXGIYCbCrTextureHostD3D11 : public TextureHost {
  public:
   DXGIYCbCrTextureHostD3D11(TextureFlags aFlags,
                             const SurfaceDescriptorDXGIYCbCr& aDescriptor);
+  ~DXGIYCbCrTextureHostD3D11() override;
 
   void DeallocateDeviceData() override {}
 
   gfx::SurfaceFormat GetFormat() const override {
-    return gfx::SurfaceFormat::YUV;
+    return gfx::SurfaceFormat::YUV420;
   }
 
   gfx::ColorDepth GetColorDepth() const override { return mColorDepth; }
@@ -419,7 +432,8 @@ class DXGIYCbCrTextureHostD3D11 : public TextureHost {
 
   gfx::IntSize GetSize() const override { return mSize; }
 
-  already_AddRefed<gfx::DataSourceSurface> GetAsSurface() override {
+  already_AddRefed<gfx::DataSourceSurface> GetAsSurface(
+      gfx::DataSourceSurface* aSurface) override {
     return nullptr;
   }
 
@@ -441,25 +455,28 @@ class DXGIYCbCrTextureHostD3D11 : public TextureHost {
 
   bool SupportsExternalCompositing(WebRenderBackend aBackend) override;
 
- private:
-  bool EnsureTextureSource();
+  void NotifyNotUsed() override;
+
+  DXGIYCbCrTextureHostD3D11* AsDXGIYCbCrTextureHostD3D11() override {
+    return this;
+  }
+
+  void SetReadFence(RefPtr<FenceD3D11> aReadFence);
+
+  const gfx::IntSize mSize;
+  const gfx::IntSize mSizeY;
+  const gfx::IntSize mSizeCbCr;
+  const gfx::ColorDepth mColorDepth;
+  const gfx::YUVColorSpace mYUVColorSpace;
+  const gfx::ColorRange mColorRange;
+  const CompositeProcessFencesHolderId mFencesHolderId;
 
  protected:
-  RefPtr<ID3D11Device> GetDevice();
-
-  bool EnsureTexture();
-
-  RefPtr<ID3D11Texture2D> mTextures[3];
-  RefPtr<DataTextureSourceD3D11> mTextureSources[3];
-
-  gfx::IntSize mSize;
-  gfx::IntSize mSizeY;
-  gfx::IntSize mSizeCbCr;
-  WindowsHandle mHandles[3];
-  bool mIsLocked;
-  gfx::ColorDepth mColorDepth;
-  gfx::YUVColorSpace mYUVColorSpace;
-  gfx::ColorRange mColorRange;
+  // Handles will be closed automatically when `UniqueFileHandle` gets
+  // destroyed.
+  RefPtr<gfx::FileHandleWrapper> mHandles[3];
+  bool mIsLocked = false;
+  RefPtr<FenceD3D11> mReadFence;
 };
 
 class CompositingRenderTargetD3D11 : public CompositingRenderTarget,
@@ -501,7 +518,7 @@ class SyncObjectD3D11Host : public SyncObjectHost {
 
   SyncHandle mSyncHandle;
   RefPtr<ID3D11Device> mDevice;
-  RefPtr<IDXGIResource> mSyncTexture;
+  RefPtr<IDXGIResource1> mSyncTexture;
   RefPtr<IDXGIKeyedMutex> mKeyedMutex;
 };
 
@@ -528,7 +545,7 @@ class SyncObjectD3D11Client : public SyncObjectClient {
   std::vector<ID3D11Texture2D*> mSyncedTextures;
 
  private:
-  const SyncHandle mSyncHandle;
+  SyncHandle mSyncHandle;
   RefPtr<IDXGIKeyedMutex> mKeyedMutex;
   const RefPtr<ID3D11Device> mDevice;
 };
@@ -596,51 +613,6 @@ class D3D11MTAutoEnter {
 
  private:
   RefPtr<ID3D10Multithread> mMT;
-};
-
-/**
- * A class to manage ID3D11Texture2Ds that is shared without using shared handle
- * in GPU process. On some GPUs, ID3D11Texture2Ds of hardware decoded video
- * frames with zero video frame copy could not use shared handle.
- */
-class GpuProcessD3D11TextureMap {
- public:
-  static void Init();
-  static void Shutdown();
-  static GpuProcessD3D11TextureMap* Get() { return sInstance; }
-  static GpuProcessTextureId GetNextTextureId();
-
-  GpuProcessD3D11TextureMap();
-  ~GpuProcessD3D11TextureMap();
-
-  void Register(GpuProcessTextureId aTextureId, ID3D11Texture2D* aTexture,
-                uint32_t aArrayIndex, const gfx::IntSize& aSize,
-                RefPtr<IMFSampleUsageInfo> aUsageInfo);
-  void Unregister(GpuProcessTextureId aTextureId);
-
-  RefPtr<ID3D11Texture2D> GetTexture(GpuProcessTextureId aTextureId);
-  Maybe<HANDLE> GetSharedHandleOfCopiedTexture(GpuProcessTextureId aTextureId);
-
- private:
-  struct TextureHolder {
-    TextureHolder(ID3D11Texture2D* aTexture, uint32_t aArrayIndex,
-                  const gfx::IntSize& aSize,
-                  RefPtr<IMFSampleUsageInfo> aUsageInfo);
-    TextureHolder() = default;
-
-    RefPtr<ID3D11Texture2D> mTexture;
-    uint32_t mArrayIndex = 0;
-    gfx::IntSize mSize;
-    RefPtr<IMFSampleUsageInfo> mIMFSampleUsageInfo;
-    RefPtr<ID3D11Texture2D> mCopiedTexture;
-    Maybe<HANDLE> mCopiedTextureSharedHandle;
-  };
-
-  DataMutex<std::unordered_map<GpuProcessTextureId, TextureHolder,
-                               GpuProcessTextureId::HashFn>>
-      mD3D11TexturesById;
-
-  static StaticAutoPtr<GpuProcessD3D11TextureMap> sInstance;
 };
 
 }  // namespace layers

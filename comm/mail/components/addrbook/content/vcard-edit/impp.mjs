@@ -5,11 +5,9 @@
 import { vCardIdGen } from "./id-gen.mjs";
 
 const lazy = {};
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "VCardPropertyEntry",
-  "resource:///modules/VCardUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  VCardPropertyEntry: "resource:///modules/VCardUtils.sys.mjs",
+});
 
 /**
  * @implements {VCardPropertyEntryView}
@@ -34,7 +32,7 @@ export class VCardIMPPComponent extends HTMLElement {
     }
     this.hasConnected = true;
 
-    let template = document.getElementById("template-vcard-edit-impp");
+    const template = document.getElementById("template-vcard-edit-impp");
     this.appendChild(template.content.cloneNode(true));
 
     this.imppEl = this.querySelector('input[name="impp"]');
@@ -45,11 +43,11 @@ export class VCardIMPPComponent extends HTMLElement {
     this.protocolEl = this.querySelector('select[name="protocol"]');
     this.protocolEl.id = vCardIdGen.next().value;
 
-    let protocolLabel = this.querySelector('label[for="protocol"]');
+    const protocolLabel = this.querySelector('label[for="protocol"]');
     protocolLabel.htmlFor = this.protocolEl.id;
 
-    this.protocolEl.addEventListener("change", event => {
-      let entered = this.imppEl.value.split(":", 1)[0]?.toLowerCase();
+    this.protocolEl.addEventListener("change", () => {
+      const entered = this.imppEl.value.split(":", 1)[0]?.toLowerCase();
       if (entered) {
         this.protocolEl.value =
           [...this.protocolEl.options].find(o => o.value.startsWith(entered))
@@ -60,10 +58,10 @@ export class VCardIMPPComponent extends HTMLElement {
     });
 
     this.imppEl.id = vCardIdGen.next().value;
-    let imppLabel = this.querySelector('label[for="impp"]');
+    const imppLabel = this.querySelector('label[for="impp"]');
     imppLabel.htmlFor = this.imppEl.id;
     document.l10n.setAttributes(imppLabel, "vcard-impp-label");
-    this.imppEl.addEventListener("change", event => {
+    this.imppEl.addEventListener("change", () => {
       this.protocolEl.dispatchEvent(new CustomEvent("change"));
     });
 

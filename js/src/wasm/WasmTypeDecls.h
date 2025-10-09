@@ -41,19 +41,21 @@ class WasmTagObject;
 class WasmExceptionObject;
 
 using WasmInstanceObjectVector = GCVector<WasmInstanceObject*>;
+using WasmMemoryObjectVector =
+    GCVector<WasmMemoryObject*, 0, SystemAllocPolicy>;
 using WasmTableObjectVector = GCVector<WasmTableObject*, 0, SystemAllocPolicy>;
 using WasmGlobalObjectVector =
     GCVector<WasmGlobalObject*, 0, SystemAllocPolicy>;
 using WasmTagObjectVector = GCVector<WasmTagObject*, 0, SystemAllocPolicy>;
 
+struct CodeMetadataForAsmJS;
+
 namespace wasm {
 
-struct ModuleEnvironment;
+struct ModuleMetadata;
+struct CodeMetadata;
 class CodeRange;
-class CodeTier;
-class ModuleSegment;
-struct Metadata;
-struct MetadataTier;
+class CodeBlock;
 class Decoder;
 class GeneratedSourceMap;
 class Instance;
@@ -75,10 +77,8 @@ using MutableDataSegment = RefPtr<DataSegment>;
 using SharedDataSegment = RefPtr<const DataSegment>;
 using DataSegmentVector = Vector<SharedDataSegment, 0, SystemAllocPolicy>;
 
-struct ElemSegment;
-using MutableElemSegment = RefPtr<ElemSegment>;
-using SharedElemSegment = RefPtr<const ElemSegment>;
-using ElemSegmentVector = Vector<SharedElemSegment, 0, SystemAllocPolicy>;
+struct ModuleElemSegment;
+using ModuleElemSegmentVector = Vector<ModuleElemSegment, 0, SystemAllocPolicy>;
 
 class Val;
 using ValVector = GCVector<Val, 0, SystemAllocPolicy>;
@@ -92,6 +92,19 @@ using Bytes = Vector<uint8_t, 0, SystemAllocPolicy>;
 using UTF8Bytes = Vector<char, 0, SystemAllocPolicy>;
 using InstanceVector = Vector<Instance*, 0, SystemAllocPolicy>;
 using UniqueCharsVector = Vector<UniqueChars, 0, SystemAllocPolicy>;
+
+class RecGroup;
+class TypeDef;
+class TypeContext;
+enum class TypeDefKind : uint8_t;
+
+template <class T>
+class PackedType;
+
+class ValTypeTraits;
+using ValType = PackedType<ValTypeTraits>;
+class RefType;
+class MaybeRefType;
 
 }  // namespace wasm
 }  // namespace js

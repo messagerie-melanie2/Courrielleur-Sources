@@ -2,7 +2,10 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from mach.decorators import Command, CommandArgument
+import re
+from pathlib import Path
+
+from mach.decorators import Command, CommandArgument, SubCommand
 
 LICENSE_HEADER = """# This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -14,57 +17,50 @@ GENERATED_HEADER = """
 ### DO NOT edit it by hand.
 """
 
+# A list of bug components only present in certain build configurations.
+# Include any valid BMO bug component that is missed when you run
+# `./mach update-glean-tags` on certain platforms.
+PLATFORM_SPECIFIC_COMPONENTS = [
+    "Toolkit :: Default Browser Agent",  # Windows-only
+]
+
+DEFAULT_TAG_CONTENT = {
+    "description": "The Bugzilla component which applies to this object."
+}
+
+DATA_REVIEW_HELP = """
+Beginning 2024-05-07[1], data reviews for projects in mozilla-central are now
+conducted on Phabricator. Simply duplicate your bug URL from the `bugs` list to
+the `data_reviews` list in your metrics and pings definitions, and push for code
+review in the normal way[2].
+
+More details about this process can be found in the in-tree docs[3] and wiki[4].
+
+If you'd like to generate a Data Review Request template anyway (if, for
+instance, you can't use Phabricator for your data review or you need a Data
+Review Request to aid in a Sensitive Data Review process. Or you're just
+curious), you can invoke glean_parser directly:
+
+./mach python -m glean_parser data-review
+
+[1]: https://groups.google.com/a/mozilla.org/g/firefox-dev/c/7z-i6UhPoKY
+[2]: https://firefox-source-docs.mozilla.org/contributing/index.html
+[3]: https://firefox-source-docs.mozilla.org/contributing/data-review.html
+[4]: https://wiki.mozilla.org/Data_Collection
+"""
+
 
 @Command(
     "data-review",
     category="misc",
-    description="Generate a skeleton data review request form for a given bug's data",
+    description="Describe how Data Review works in mozilla-central",
 )
-@CommandArgument(
-    "bug", default=None, nargs="?", type=str, help="bug number or search pattern"
-)
-def data_review(command_context, bug=None):
-    # Get the metrics_index's list of metrics indices
-    # by loading the index as a module.
-    import sys
-    from os import path
+def data_review(command_context):
+    # Data Review happens in Phabricator now
+    # (https://groups.google.com/a/mozilla.org/g/firefox-dev/c/7z-i6UhPoKY)
+    # so explain how to do it.
 
-    sys.path.append(path.join(path.dirname(__file__), path.pardir))
-    from pathlib import Path
-
-    from glean_parser import data_review
-    from metrics_index import metrics_yamls
-
-    return data_review.generate(
-        bug, [Path(command_context.topsrcdir) / x for x in metrics_yamls]
-    )
-
-
-@Command(
-    "perf-data-review",
-    category="misc",
-    description="Generate a skeleton performance data review request form for a given bug's data",
-)
-@CommandArgument(
-    "bug", default=None, nargs="?", type=str, help="bug number or search pattern"
-)
-def perf_data_review(command_context, bug=None):
-    # Get the metrics_index's list of metrics indices
-    # by loading the index as a module.
-    import sys
-    from os import path
-
-    sys.path.append(path.join(path.dirname(__file__), path.pardir))
-    from metrics_index import metrics_yamls
-
-    sys.path.append(path.dirname(__file__))
-    from pathlib import Path
-
-    import perf_data_review
-
-    return perf_data_review.generate(
-        bug, [Path(command_context.topsrcdir) / x for x in metrics_yamls]
-    )
+    print(DATA_REVIEW_HELP)
 
 
 @Command(
@@ -75,8 +71,6 @@ def perf_data_review(command_context, bug=None):
     ),
 )
 def update_glean_tags(command_context):
-    from pathlib import Path
-
     import yaml
     from mozbuild.backend.configenvironment import ConfigEnvironment
     from mozbuild.frontend.reader import BuildReader
@@ -100,13 +94,18 @@ def update_glean_tags(command_context):
     for bug_component in bug_components:
         product = bug_component.product.strip()
         component = bug_component.component.strip()
-        tags["{} :: {}".format(product, component)] = {
-            "description": "The Bugzilla component which applies to this object."
-        }
+        tags[f"{product} :: {component}"] = DEFAULT_TAG_CONTENT
+
+    for bug_component in PLATFORM_SPECIFIC_COMPONENTS:
+        tags[bug_component] = DEFAULT_TAG_CONTENT
+
+    # pyyaml will anchor+alias DEFAULT_TAG_CONTENT which would normally be fine,
+    # but I don't want the whole file to change all at once right now.
+    yaml.Dumper.ignore_aliases = lambda self, data: True
 
     open(tags_filename, "w").write(
-        "{}\n{}\n\n".format(LICENSE_HEADER, GENERATED_HEADER)
-        + yaml.dump(tags, width=78, explicit_start=True)
+        f"{LICENSE_HEADER}\n{GENERATED_HEADER}\n\n"
+        + yaml.dump(tags, width=78, explicit_start=True, line_break="\n")
     )
 
 
@@ -162,29 +161,23 @@ def replace_in_file_or_die(path, pattern, replace):
 @CommandArgument("version", help="Glean version to upgrade to")
 def update_glean(command_context, version):
     import textwrap
-    from pathlib import Path
 
     topsrcdir = Path(command_context.topsrcdir)
 
     replace_in_file_or_die(
-        topsrcdir / "build.gradle",
-        r'gleanVersion = "[0-9.]+"',
-        f'gleanVersion = "{version}"',
+        topsrcdir / "gradle" / "libs.versions.toml",
+        r'mozilla-glean = "[0-9.]+"',
+        f'mozilla-glean = "{version}"',
     )
     replace_in_file_or_die(
-        topsrcdir / "toolkit" / "components" / "glean" / "Cargo.toml",
-        r'^glean = "[0-9.]+"',
-        f'glean = "{version}"',
+        topsrcdir / "Cargo.toml",
+        r'^glean = "=[0-9.]+"',
+        f'glean = "={version}"',
     )
     replace_in_file_or_die(
-        topsrcdir / "toolkit" / "components" / "glean" / "api" / "Cargo.toml",
-        r'^glean = "[0-9.]+"',
-        f'glean = "{version}"',
-    )
-    replace_in_file_or_die(
-        topsrcdir / "gfx" / "wr" / "webrender" / "Cargo.toml",
-        r'^glean = "[0-9.]+"',
-        f'glean = "{version}"',
+        topsrcdir / "gfx" / "wr" / "Cargo.toml",
+        r'^glean = "=[0-9.]+"',
+        f'glean = "={version}"',
     )
     replace_in_file_or_die(
         topsrcdir / "python" / "sites" / "mach.txt",
@@ -193,13 +186,9 @@ def update_glean(command_context, version):
     )
 
     instructions = f"""
-    We've edited most of the necessary files to require Glean SDK {version}.
+    We've edited the necessary files to require Glean SDK {version}.
 
-    You will have to edit the following files yourself:
-
-        gfx/wr/wr_glyph_rasterizer/Cargo.toml
-
-    Then, to ensure Glean and Firefox's other Rust dependencies are appropriately vendored,
+    To ensure Glean and Firefox's other Rust dependencies are appropriately vendored,
     please run the following commands:
 
         cargo update -p glean
@@ -225,3 +214,180 @@ def update_glean(command_context, version):
     """
 
     print(textwrap.dedent(instructions))
+
+
+@Command(
+    "event-into-legacy",
+    category="misc",
+    description="Create a Legacy Telemetry compatible event definition from an existing Glean Event metric.",
+)
+@CommandArgument(
+    "--append",
+    "-a",
+    action="store_true",
+    help="Append to toolkit/components/telemetry/Events.yaml (note: verify and make any necessary modifications before landing).",
+)
+@CommandArgument("event", default=None, nargs="?", type=str, help="Event name.")
+def event_into_legacy(command_context, event=None, append=False):
+    # Get the metrics_index's list of metrics indices
+    # by loading the index as a module.
+    import sys
+    from os import path
+
+    sys.path.append(path.join(path.dirname(__file__), path.pardir))
+
+    from metrics_index import metrics_yamls
+
+    sys.path.append(path.dirname(__file__))
+
+    from translate_events import translate_event
+
+    legacy_yaml_path = path.join(
+        Path(command_context.topsrcdir),
+        "toolkit",
+        "components",
+        "telemetry",
+        "Events.yaml",
+    )
+
+    return translate_event(
+        event,
+        append,
+        [Path(command_context.topsrcdir) / x for x in metrics_yamls],
+        legacy_yaml_path,
+    )
+
+
+def is_glean_path(glean_path):
+    """
+    Check if the given path could be a Glean repository
+    by checking for the existence of the right manifest files.
+    """
+    main_cargo = Path(glean_path) / "Cargo.toml"
+    core_cargo = Path(glean_path) / "glean-core" / "Cargo.toml"
+    rlb_cargo = Path(glean_path) / "glean-core" / "rlb" / "Cargo.toml"
+
+    return main_cargo.is_file() and core_cargo.is_file() and rlb_cargo.is_file()
+
+
+GLEAN_PATCH_PATH = """
+glean-core = {{ path = "{core_path}" }}
+glean = {{ path = "{rlb_path}" }}
+""".strip()
+
+GLEAN_PATCH_GIT = """
+glean-core = {{ git = "{repo}", branch = "{branch}" }}
+glean = {{ git = "{repo}", branch = "{branch}" }}
+""".strip()
+
+TOML_GLEAN_PATCH_RE = re.compile(r"^glean(-core)? = {.+}\n?", re.MULTILINE)
+
+
+def patch_section(glean_path, branch):
+    """
+    Return the right patch section for a `Cargo.toml` based on the given Glean path.
+
+    A `https` URI will be used as a git location and the given branch inserted.
+    Otherwise it will be treated as a path dependency.
+    """
+    import urllib.parse
+
+    uri = urllib.parse.urlparse(glean_path)
+
+    if uri.scheme == "https":
+        section = GLEAN_PATCH_GIT.format(repo=glean_path, branch=branch)
+        return section
+    elif uri.scheme == "":
+        if not is_glean_path(uri.path):
+            raise Exception(
+                f"given path '{uri.path}' does not point to a Glean checkout"
+            )
+
+        core_path = Path(glean_path) / "glean-core"
+        rlb_path = Path(glean_path) / "glean-core" / "rlb"
+        section = GLEAN_PATCH_PATH.format(core_path=core_path, rlb_path=rlb_path)
+        return section
+    else:
+        raise Exception("unsupported format. Use a path or a https: URL")
+
+
+@Command(
+    "glean",
+    category="misc",
+    description="Glean utilities",
+)
+def glean(command_context):
+    print("Usage:")
+    print("  mach glean dev <path>  Use the given URL or path as the Glean source")
+    print("")
+    print("  mach glean prod        Switch back to the normal production use of Glean.")
+    print("                         Removes any patch overrides.")
+
+
+@SubCommand(
+    "glean",
+    "dev",
+    description="Use the given URL or path as the Glean source",
+)
+@CommandArgument(
+    "glean_path",
+    help="Path or URL to a Glean repository. A patch can be absolute or relative to the mozilla-central root.",
+)
+@CommandArgument(
+    "branch", default="main", nargs="?", help="branch to use for Glean repository"
+)
+def glean_dev(command_context, glean_path, branch):
+    cargo_toml = Path(command_context.topsrcdir) / "Cargo.toml"
+    content = open(cargo_toml).read()
+
+    if re.search(TOML_GLEAN_PATCH_RE, content):
+        content = re.sub(TOML_GLEAN_PATCH_RE, "", content)
+
+    patch = patch_section(glean_path, branch)
+    glean_source(command_context, cargo_toml, content, patch)
+
+
+@SubCommand(
+    "glean",
+    "prod",
+    description="Switch back to the normal production use of Glean. Removes any patch overrides.",
+)
+def glean_prod(command_context):
+    cargo_toml = Path(command_context.topsrcdir) / "Cargo.toml"
+    content = open(cargo_toml).read()
+
+    if re.search(TOML_GLEAN_PATCH_RE, content):
+        content = re.sub(TOML_GLEAN_PATCH_RE, "", content)
+
+    glean_source(command_context, cargo_toml, content)
+
+
+def glean_source(command_context, cargo_toml, content, patch=None):
+    if patch:
+        print(f"Adding Cargo patch for Glean in {cargo_toml}")
+    else:
+        print(f"Removing Cargo patch for Glean in {cargo_toml}")
+
+    with open(cargo_toml, "w") as fp:
+        fp.write(content)
+        if patch:
+            print("Adding these lines:")
+            print(patch)
+            print(patch, file=fp)
+
+    print("Vendoring it for you:\n")
+    print("  mach vendor rust --force --ignore-modified")
+    print("\nYou can commit the local changes afterwards:\n")
+    print("  git add Cargo.toml Cargo.lock third_party/rust")
+    print("  git commit -m 'Local Glean development'")
+    print("")
+
+    run_mach(
+        command_context, "vendor", subcommand="rust", force=True, ignore_modified=True
+    )
+
+
+def run_mach(command_context, cmd, **kwargs):
+    return command_context._mach_context.commands.dispatch(
+        cmd, command_context._mach_context, **kwargs
+    )

@@ -52,7 +52,7 @@ void SimulatedTaskQueue::RunReady(Timestamp at_time) {
   }
   CurrentTaskQueueSetter set_current(this);
   while (!ready_tasks_.empty()) {
-    absl::AnyInvocable<void()&&> ready = std::move(ready_tasks_.front());
+    absl::AnyInvocable<void() &&> ready = std::move(ready_tasks_.front());
     ready_tasks_.pop_front();
     lock_.Unlock();
     std::move(ready)();
@@ -66,20 +66,19 @@ void SimulatedTaskQueue::RunReady(Timestamp at_time) {
   }
 }
 
-void SimulatedTaskQueue::PostTask(absl::AnyInvocable<void() &&> task) {
+void SimulatedTaskQueue::PostTaskImpl(absl::AnyInvocable<void() &&> task,
+                                      const PostTaskTraits& /*traits*/,
+                                      const Location& /*location*/) {
   MutexLock lock(&lock_);
   ready_tasks_.push_back(std::move(task));
   next_run_time_ = Timestamp::MinusInfinity();
 }
 
-void SimulatedTaskQueue::PostDelayedTask(absl::AnyInvocable<void() &&> task,
-                                         TimeDelta delay) {
-  PostDelayedHighPrecisionTask(std::move(task), delay);
-}
-
-void SimulatedTaskQueue::PostDelayedHighPrecisionTask(
+void SimulatedTaskQueue::PostDelayedTaskImpl(
     absl::AnyInvocable<void() &&> task,
-    TimeDelta delay) {
+    TimeDelta delay,
+    const PostDelayedTaskTraits& /*traits*/,
+    const Location& /*location*/) {
   MutexLock lock(&lock_);
   Timestamp target_time = handler_->CurrentTime() + delay;
   delayed_tasks_[target_time].push_back(std::move(task));

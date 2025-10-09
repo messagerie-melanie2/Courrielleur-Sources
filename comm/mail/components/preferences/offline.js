@@ -4,6 +4,10 @@
 
 /* import-globals-from ../../../../toolkit/content/preferencesBindings.js */
 
+window.addEventListener("load", () => {
+  gOfflineDialog.dialogSetup();
+});
+
 Preferences.addAll([
   { id: "offline.autoDetect", type: "bool" },
   { id: "offline.startup_state", type: "int" },
@@ -16,8 +20,8 @@ var kRememberLastState = 0;
 
 var gOfflineDialog = {
   dialogSetup() {
-    let offlineAutoDetection = Preferences.get("offline.autoDetect");
-    let offlineStartupStatePref = Preferences.get("offline.startup_state");
+    const offlineAutoDetection = Preferences.get("offline.autoDetect");
+    const offlineStartupStatePref = Preferences.get("offline.startup_state");
 
     offlineStartupStatePref.disabled = offlineAutoDetection.value;
     if (offlineStartupStatePref.disabled) {

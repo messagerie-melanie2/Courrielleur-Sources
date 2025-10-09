@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /*
- * Test GlodaMsgSearcher.jsm our heuristic-based fulltext search mechanism.  Things we
+ * Test GlodaMsgSearcher.sys.mjs our heuristic-based fulltext search mechanism.  Things we
  *  generally want to verify:
  * - fulltext weighting by where the match happened works.
  * - static interestingness impacts things appropriately.
@@ -25,28 +25,30 @@ var {
   assertExpectedMessagesIndexed,
   glodaTestHelperInitialize,
   waitForGlodaIndexer,
-} = ChromeUtils.import("resource://testing-common/gloda/GlodaTestHelper.jsm");
-var { queryExpect } = ChromeUtils.import(
-  "resource://testing-common/gloda/GlodaQueryHelper.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/gloda/GlodaTestHelper.sys.mjs"
 );
-var { GlodaMsgSearcher } = ChromeUtils.import(
-  "resource:///modules/gloda/GlodaMsgSearcher.jsm"
+var { queryExpect } = ChromeUtils.importESModule(
+  "resource://testing-common/gloda/GlodaQueryHelper.sys.mjs"
 );
-var { waitForGlodaDBFlush } = ChromeUtils.import(
-  "resource://testing-common/gloda/GlodaTestHelperFunctions.jsm"
+var { GlodaMsgSearcher } = ChromeUtils.importESModule(
+  "resource:///modules/gloda/GlodaMsgSearcher.sys.mjs"
 );
-var { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { waitForGlodaDBFlush } = ChromeUtils.importESModule(
+  "resource://testing-common/gloda/GlodaTestHelperFunctions.sys.mjs"
 );
-var { MessageInjection } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageInjection.jsm"
+var { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
+);
+var { MessageInjection } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageInjection.sys.mjs"
 );
 
 var uniqueCounter = 0;
 var messageInjection;
 
 add_setup(async function () {
-  let msgGen = new MessageGenerator();
+  const msgGen = new MessageGenerator();
   messageInjection = new MessageInjection({ mode: "local" }, msgGen);
   glodaTestHelperInitialize(messageInjection);
 });
@@ -56,8 +58,8 @@ add_setup(async function () {
  *  need to test all the permutations
  */
 add_task(async function test_fulltext_weighting_by_column() {
-  let ustr = unique_string();
-  let [, subjSet, bodySet] = await messageInjection.makeFoldersWithSets(1, [
+  const ustr = unique_string();
+  const [, subjSet, bodySet] = await messageInjection.makeFoldersWithSets(1, [
     { count: 1, subject: ustr },
     { count: 1, body: { body: ustr } },
   ]);
@@ -72,10 +74,10 @@ add_task(async function test_fulltext_weighting_by_column() {
  * body does not saturate until 10, each worth 1.0.)
  */
 add_task(async function test_fulltext_weighting_saturation() {
-  let ustr = unique_string();
-  let double_ustr = ustr + " " + ustr;
-  let thrice_ustr = ustr + " " + ustr + " " + ustr;
-  let [, subjSet, bodySet] = await messageInjection.makeFoldersWithSets(1, [
+  const ustr = unique_string();
+  const double_ustr = ustr + " " + ustr;
+  const thrice_ustr = ustr + " " + ustr + " " + ustr;
+  const [, subjSet, bodySet] = await messageInjection.makeFoldersWithSets(1, [
     { count: 1, subject: double_ustr },
     { count: 1, body: { body: thrice_ustr } },
   ]);
@@ -90,11 +92,14 @@ add_task(async function test_fulltext_weighting_saturation() {
  * message be the older message for safety.
  */
 add_task(async function test_static_interestingness_boost_works() {
-  let ustr = unique_string();
-  let [, starred, notStarred] = await messageInjection.makeFoldersWithSets(1, [
-    { count: 1, subject: ustr },
-    { count: 1, subject: ustr },
-  ]);
+  const ustr = unique_string();
+  const [, starred, notStarred] = await messageInjection.makeFoldersWithSets(
+    1,
+    [
+      { count: 1, subject: ustr },
+      { count: 1, subject: ustr },
+    ]
+  );
   // Index in their native state.
   await waitForGlodaIndexer();
   Assert.ok(...assertExpectedMessagesIndexed([starred, notStarred]));
@@ -110,8 +115,8 @@ add_task(async function test_static_interestingness_boost_works() {
  * Make sure that the query does not retrieve more than actually matches.
  */
 add_task(async function test_joins_do_not_return_everybody() {
-  let ustr = unique_string();
-  let [, subjSet] = await messageInjection.makeFoldersWithSets(1, [
+  const ustr = unique_string();
+  const [, subjSet] = await messageInjection.makeFoldersWithSets(1, [
     { count: 1, subject: ustr },
   ]);
   await waitForGlodaIndexer();
@@ -125,8 +130,8 @@ add_task(async function test_joins_do_not_return_everybody() {
  * collapses things.
  */
 function unique_string() {
-  let uval = uniqueCounter++;
-  let s =
+  const uval = uniqueCounter++;
+  const s =
     String.fromCharCode(97 + Math.floor(uval / (26 * 26))) +
     String.fromCharCode(97 + (Math.floor(uval / 26) % 26)) +
     String.fromCharCode(97 + (uval % 26)) +
@@ -138,18 +143,18 @@ function unique_string() {
  * Wrap the construction of a GlodaMsgSearcher with a limit of 1 and feed it to
  * queryExpect.
  *
- * @param aFulltextStr The fulltext query string which GlodaMsgSearcher will
- *     parse.
- * @param aExpectedSet The expected result set.  Make sure that the size of the
- *     set is consistent with aLimit.
- * @param [aLimit=1]
+ * @param {string} aFulltextStr - The fulltext query string which
+ *   GlodaMsgSearcher will parse.
+ * @param {object} aExpectedSet The expected result set.  Make sure that the
+ *   size of the set is consistent with aLimit.
+ * @param {integer} [aLimit=1] - Limit.
  *
  * Use like so:
  *  await asyncMsgSearchExpect("foo bar", someSynMsgSet);
  */
 async function asyncMsgSearcherExpect(aFulltextStr, aExpectedSet, aLimit) {
-  let limit = aLimit ? aLimit : 1;
+  const limit = aLimit ? aLimit : 1;
   Services.prefs.setIntPref("mailnews.database.global.search.msg.limit", limit);
-  let searcher = new GlodaMsgSearcher(null, aFulltextStr);
+  const searcher = new GlodaMsgSearcher(null, aFulltextStr);
   await queryExpect(searcher.buildFulltextQuery(), aExpectedSet);
 }

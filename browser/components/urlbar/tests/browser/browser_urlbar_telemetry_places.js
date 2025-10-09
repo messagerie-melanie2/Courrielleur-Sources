@@ -47,6 +47,8 @@ function assertSearchTelemetryEmpty(search_hist) {
     "other-MozSearch.alias",
     undefined
   );
+  let sapEvent = Glean.sap.counts.testGetValue();
+  Assert.equal(sapEvent, null, "Should not have recorded any SAP events");
 
   // Also check events.
   let events = Services.telemetry.snapshotEvents(
@@ -66,23 +68,10 @@ function assertSearchTelemetryEmpty(search_hist) {
 function snapshotHistograms() {
   Services.telemetry.clearScalars();
   Services.telemetry.clearEvents();
+  Services.fog.testResetFOG();
   return {
-    resultMethodHist: TelemetryTestUtils.getAndClearHistogram(
-      "FX_URLBAR_SELECTED_RESULT_METHOD"
-    ),
     search_hist: TelemetryTestUtils.getAndClearKeyedHistogram("SEARCH_COUNTS"),
   };
-}
-
-function assertTelemetryResults(histograms, type, index, method) {
-  TelemetryTestUtils.assertHistogram(histograms.resultMethodHist, method, 1);
-
-  TelemetryTestUtils.assertKeyedScalar(
-    TelemetryTestUtils.getProcessScalars("parent", true, true),
-    `urlbar.picked.${type}`,
-    index,
-    1
-  );
 }
 
 add_setup(async function () {
@@ -102,9 +91,6 @@ add_setup(async function () {
   let oldCanRecord = Services.telemetry.canRecordExtended;
   Services.telemetry.canRecordExtended = true;
 
-  // Enable event recording for the events tested here.
-  Services.telemetry.setEventRecordingEnabled("navigation", true);
-
   // Clear history so that history added by previous tests doesn't mess up this
   // test when it selects results in the urlbar.
   await PlacesUtils.history.clear();
@@ -121,7 +107,6 @@ add_setup(async function () {
     Services.telemetry.canRecordExtended = oldCanRecord;
     await PlacesUtils.history.clear();
     await PlacesUtils.bookmarks.eraseEverything();
-    Services.telemetry.setEventRecordingEnabled("navigation", false);
   });
 });
 
@@ -148,23 +133,32 @@ add_task(async function test_history() {
   await p;
 
   assertSearchTelemetryEmpty(histograms.search_hist);
-  assertTelemetryResults(
-    histograms,
-    "history",
-    1,
-    UrlbarTestUtils.SELECTED_RESULT_METHODS.arrowEnterSelection
-  );
 
   BrowserTestUtils.removeTab(tab);
 });
 
-add_task(async function test_bookmark() {
+add_task(async function test_history_adaptive() {
   const histograms = snapshotHistograms();
 
-  let tab = await BrowserTestUtils.openNewForegroundTab(
-    gBrowser,
-    "about:blank"
-  );
+  let tab = await BrowserTestUtils.openNewForegroundTab(gBrowser);
+
+  let p = BrowserTestUtils.browserLoaded(tab.linkedBrowser);
+  await searchInAwesomebar("example");
+  EventUtils.synthesizeKey("KEY_ArrowDown");
+  EventUtils.synthesizeKey("KEY_Enter");
+  await p;
+
+  assertSearchTelemetryEmpty(histograms.search_hist);
+
+  BrowserTestUtils.removeTab(tab);
+});
+
+add_task(async function test_bookmark_without_history() {
+  await PlacesUtils.history.clear();
+
+  const histograms = snapshotHistograms();
+
+  let tab = await BrowserTestUtils.openNewForegroundTab(gBrowser);
 
   let bm = await PlacesUtils.bookmarks.insert({
     url: "http://example.com",
@@ -179,12 +173,30 @@ add_task(async function test_bookmark() {
   await p;
 
   assertSearchTelemetryEmpty(histograms.search_hist);
-  assertTelemetryResults(
-    histograms,
-    "bookmark",
-    1,
-    UrlbarTestUtils.SELECTED_RESULT_METHODS.arrowEnterSelection
-  );
+
+  await PlacesUtils.bookmarks.remove(bm);
+
+  BrowserTestUtils.removeTab(tab);
+});
+
+add_task(async function test_bookmark_with_history() {
+  const histograms = snapshotHistograms();
+
+  let tab = await BrowserTestUtils.openNewForegroundTab(gBrowser);
+
+  let bm = await PlacesUtils.bookmarks.insert({
+    url: "http://example.com",
+    title: "example",
+    parentGuid: PlacesUtils.bookmarks.menuGuid,
+  });
+
+  let p = BrowserTestUtils.browserLoaded(tab.linkedBrowser);
+  await searchInAwesomebar("example");
+  EventUtils.synthesizeKey("KEY_ArrowDown");
+  EventUtils.synthesizeKey("KEY_Enter");
+  await p;
+
+  assertSearchTelemetryEmpty(histograms.search_hist);
 
   await PlacesUtils.bookmarks.remove(bm);
 
@@ -205,12 +217,6 @@ add_task(async function test_keyword() {
   await p;
 
   assertSearchTelemetryEmpty(histograms.search_hist);
-  assertTelemetryResults(
-    histograms,
-    "keyword",
-    0,
-    UrlbarTestUtils.SELECTED_RESULT_METHODS.enter
-  );
 
   BrowserTestUtils.removeTab(tab);
 });
@@ -234,12 +240,6 @@ add_task(async function test_switchtab() {
   await p;
 
   assertSearchTelemetryEmpty(histograms.search_hist);
-  assertTelemetryResults(
-    histograms,
-    "switchtab",
-    1,
-    UrlbarTestUtils.SELECTED_RESULT_METHODS.arrowEnterSelection
-  );
 
   BrowserTestUtils.removeTab(tab);
   BrowserTestUtils.removeTab(homeTab);
@@ -259,12 +259,6 @@ add_task(async function test_visitURL() {
   await p;
 
   assertSearchTelemetryEmpty(histograms.search_hist);
-  assertTelemetryResults(
-    histograms,
-    "visiturl",
-    0,
-    UrlbarTestUtils.SELECTED_RESULT_METHODS.enter
-  );
 
   BrowserTestUtils.removeTab(tab);
 });

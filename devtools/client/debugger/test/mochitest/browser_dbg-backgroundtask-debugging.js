@@ -72,6 +72,16 @@ add_task(async function test_backgroundtask_debugger() {
   };
   const ToolboxTask = await initBrowserToolboxTask({ existingProcessClose });
 
+  await ToolboxTask.spawn(selectors, () => {
+    const {
+      LocalizationHelper,
+    } = require("resource://devtools/shared/l10n.js");
+    // We have to expose this symbol as global for waitForSelectedSource
+    this.DEBUGGER_L10N = new LocalizationHelper(
+      "devtools/client/locales/debugger.properties"
+    );
+  });
+
   await ToolboxTask.importFunctions({
     checkEvaluateInTopFrame,
     evaluateInTopFrame,
@@ -80,7 +90,6 @@ add_task(async function test_backgroundtask_debugger() {
     findElement,
     findElementWithSelector,
     getSelector,
-    getThreadContext,
     getVisibleSelectedFrameLine,
     isPaused,
     resume,
@@ -92,9 +101,12 @@ add_task(async function test_backgroundtask_debugger() {
     waitForPaused,
     waitForResumed,
     waitForSelectedSource,
+    waitForInlinePreviews,
     waitForState,
     waitUntil,
     createLocation,
+    getEditorContent,
+    getCMEditor,
     log: (msg, data) =>
       console.log(`${msg} ${!data ? "" : JSON.stringify(data)}`),
     info: (msg, data) =>

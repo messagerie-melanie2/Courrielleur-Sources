@@ -11,6 +11,9 @@
 #ifndef API_NUMERICS_SAMPLES_STATS_COUNTER_H_
 #define API_NUMERICS_SAMPLES_STATS_COUNTER_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <map>
 #include <string>
 #include <vector>
@@ -64,6 +67,12 @@ class SamplesStatsCounter {
   double GetMax() const {
     RTC_DCHECK(!IsEmpty());
     return *stats_.GetMax();
+  }
+  // Returns sum in O(1) time. This function may not be called if there are
+  // no samples.
+  double GetSum() const {
+    RTC_DCHECK(!IsEmpty());
+    return *stats_.GetSum();
   }
   // Returns average in O(1) time. This function may not be called if there are
   // no samples.

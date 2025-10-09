@@ -9,9 +9,11 @@
 "use strict";
 
 var { close_compose_window, open_compose_new_mail, setup_msg_contents } =
-  ChromeUtils.import("resource://testing-common/mozmill/ComposeHelpers.jsm");
-var { close_popup } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+  );
+var { close_popup } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 var modifiers =
@@ -22,17 +24,17 @@ var modifiers =
  * and accidental deselection when interacting with other elements.
  */
 add_task(async function test_pill_selection() {
-  let cwc = open_compose_new_mail();
-  setup_msg_contents(
+  const cwc = await open_compose_new_mail();
+  await setup_msg_contents(
     cwc,
     "test@example.org, test@invalid.foo, test@tinderborx.invalid, alice@foo.test",
     "Testing recipient pills selection!",
     "Testing testing testing! "
   );
 
-  let cDoc = cwc.window.document;
-  let recipientsContainer = cDoc.getElementById("recipientsContainer");
-  let allPills = recipientsContainer.getAllPills();
+  const cDoc = cwc.document;
+  const recipientsContainer = cDoc.getElementById("recipientsContainer");
+  const allPills = recipientsContainer.getAllPills();
 
   Assert.equal(allPills.length, 4, "Pills correctly created");
 
@@ -40,10 +42,10 @@ add_task(async function test_pill_selection() {
   EventUtils.synthesizeMouseAtCenter(
     cDoc.getElementById("toAddrInput"),
     {},
-    cwc.window
+    cwc
   );
   // Ctrl/Cmd+a should select all pills.
-  EventUtils.synthesizeKey("a", modifiers, cwc.window);
+  EventUtils.synthesizeKey("a", modifiers, cwc);
   Assert.equal(
     recipientsContainer.getAllSelectedPills().length,
     allPills.length,
@@ -51,9 +53,9 @@ add_task(async function test_pill_selection() {
   );
 
   // Right click on the last pill to open the context menu.
-  let pill3 = allPills[3];
-  let contextMenu = cDoc.getElementById("emailAddressPillPopup");
-  let popupPromise = BrowserTestUtils.waitForEvent(contextMenu, "popupshown");
+  const pill3 = allPills[3];
+  const contextMenu = cDoc.getElementById("emailAddressPillPopup");
+  const popupPromise = BrowserTestUtils.waitForEvent(contextMenu, "popupshown");
   EventUtils.synthesizeMouseAtCenter(
     pill3,
     { type: "contextmenu" },
@@ -72,7 +74,7 @@ add_task(async function test_pill_selection() {
   EventUtils.synthesizeMouseAtCenter(
     cDoc.getElementById("toAddrInput"),
     {},
-    cwc.window
+    cwc
   );
   Assert.equal(
     recipientsContainer.getAllSelectedPills().length,
@@ -80,9 +82,12 @@ add_task(async function test_pill_selection() {
     "All pills currently deselected"
   );
 
-  let popupPromise2 = BrowserTestUtils.waitForEvent(contextMenu, "popupshown");
+  const popupPromise2 = BrowserTestUtils.waitForEvent(
+    contextMenu,
+    "popupshown"
+  );
 
-  let pill0 = allPills[0];
+  const pill0 = allPills[0];
   // Right click on the first pill to open the context menu.
   EventUtils.synthesizeMouseAtCenter(
     pill0,
@@ -105,29 +110,32 @@ add_task(async function test_pill_selection() {
   close_popup(cwc, contextMenu);
 
   // Click on the first pill, which should be selected, to trigger edit mode.
-  EventUtils.synthesizeMouseAtCenter(allPills[0], {}, cwc.window);
+  EventUtils.synthesizeMouseAtCenter(allPills[0], {}, cwc);
   Assert.ok(allPills[0].isEditing, "The pill is in edit mode");
 
   // Click on the input field, the pills should all be deselected.
   EventUtils.synthesizeMouseAtCenter(
     cDoc.getElementById("toAddrInput"),
     {},
-    cwc.window
+    cwc
   );
 
   // Click on the first pill to select it.
-  EventUtils.synthesizeMouseAtCenter(allPills[0], {}, cwc.window);
+  EventUtils.synthesizeMouseAtCenter(allPills[0], {}, cwc);
   // Ctrl/Cmd+Click ont he second pill to add it to the selection.
-  EventUtils.synthesizeMouseAtCenter(allPills[1], modifiers, cwc.window);
+  EventUtils.synthesizeMouseAtCenter(allPills[1], modifiers, cwc);
   Assert.equal(
     recipientsContainer.getAllSelectedPills().length,
     2,
     "Two pills currently selected"
   );
 
-  let popupPromise3 = BrowserTestUtils.waitForEvent(contextMenu, "popupshown");
+  const popupPromise3 = BrowserTestUtils.waitForEvent(
+    contextMenu,
+    "popupshown"
+  );
 
-  let pill2 = allPills[2];
+  const pill2 = allPills[2];
   // Right click on the thirds pill, which should be selected, to select it
   // while opening the context menu and deselecting the other two pills.
   EventUtils.synthesizeMouseAtCenter(
@@ -150,7 +158,7 @@ add_task(async function test_pill_selection() {
   );
   close_popup(cwc, contextMenu);
 
-  close_compose_window(cwc);
+  await close_compose_window(cwc);
 });
 
 /**
@@ -158,25 +166,25 @@ add_task(async function test_pill_selection() {
  * move the currently selected pills.
  */
 add_task(async function test_pill_context_menu() {
-  let cwc = open_compose_new_mail();
-  setup_msg_contents(
+  const cwc = await open_compose_new_mail();
+  await setup_msg_contents(
     cwc,
     "test@example.org, test@invalid.foo, test@tinderborx.invalid, alice@foo.test",
     "Testing recipient pills context menu!",
     "Testing testing testing! "
   );
 
-  let cDoc = cwc.window.document;
-  let recipientsContainer = cDoc.getElementById("recipientsContainer");
-  let allPills = recipientsContainer.getAllPills();
+  const cDoc = cwc.document;
+  const recipientsContainer = cDoc.getElementById("recipientsContainer");
+  const allPills = recipientsContainer.getAllPills();
 
   Assert.equal(allPills.length, 4, "Pills correctly created");
 
-  let contextMenu = cDoc.getElementById("emailAddressPillPopup");
-  let popupPromise = BrowserTestUtils.waitForEvent(contextMenu, "popupshown");
+  const contextMenu = cDoc.getElementById("emailAddressPillPopup");
+  const popupPromise = BrowserTestUtils.waitForEvent(contextMenu, "popupshown");
 
   // Right click on the first pill to open the context menu.
-  let pill = allPills[0];
+  const pill = allPills[0];
   EventUtils.synthesizeMouseAtCenter(
     pill,
     { type: "contextmenu" },
@@ -190,13 +198,13 @@ add_task(async function test_pill_context_menu() {
     "The first pill was selected"
   );
 
-  let pillMoved = BrowserTestUtils.waitForCondition(
+  const pillMoved = BrowserTestUtils.waitForCondition(
     () =>
       cDoc.querySelectorAll("#ccAddrContainer mail-address-pill").length == 1,
     "Timeout waiting for the pill to be moved to the Cc field"
   );
 
-  let movePillCc = contextMenu.querySelector("#moveAddressPillCc");
+  const movePillCc = contextMenu.querySelector("#moveAddressPillCc");
   // Move the pill to the Cc field.
   if (AppConstants.platform == "macosx") {
     // We need to use click() since the synthesizeMouseAtCenter doesn't work for
@@ -209,8 +217,8 @@ add_task(async function test_pill_context_menu() {
 
   close_popup(cwc, contextMenu);
 
-  let ccContainer = cDoc.getElementById("ccAddrContainer");
-  let ccPill = ccContainer.querySelector("mail-address-pill");
+  const ccContainer = cDoc.getElementById("ccAddrContainer");
+  const ccPill = ccContainer.querySelector("mail-address-pill");
 
   // Assert the pill was moved to the Cc filed and it's still selected.
   Assert.equal(
@@ -220,7 +228,10 @@ add_task(async function test_pill_context_menu() {
   );
   Assert.ok(ccPill.hasAttribute("selected"), "The pill is selected");
 
-  let popupPromise2 = BrowserTestUtils.waitForEvent(contextMenu, "popupshown");
+  const popupPromise2 = BrowserTestUtils.waitForEvent(
+    contextMenu,
+    "popupshown"
+  );
 
   // Right click on the same pill to open the context menu.
   EventUtils.synthesizeMouseAtCenter(
@@ -230,14 +241,14 @@ add_task(async function test_pill_context_menu() {
   );
   await popupPromise2;
 
-  let pillMoved2 = BrowserTestUtils.waitForCondition(
+  const pillMoved2 = BrowserTestUtils.waitForCondition(
     () =>
       cDoc.querySelectorAll("#bccAddrContainer mail-address-pill").length == 1,
     "Timeout waiting for the pill to be moved to the Bcc field"
   );
 
   // Move the pill to the Bcc field.
-  let moveAdd = contextMenu.querySelector("#moveAddressPillBcc");
+  const moveAdd = contextMenu.querySelector("#moveAddressPillBcc");
   if (AppConstants.platform == "macosx") {
     // We need to use click() since the synthesizeMouseAtCenter doesn't work for
     // context menu items on macos.
@@ -249,8 +260,8 @@ add_task(async function test_pill_context_menu() {
 
   close_popup(cwc, contextMenu);
 
-  let bccContainer = cDoc.getElementById("bccAddrContainer");
-  let bccPill = bccContainer.querySelector("mail-address-pill");
+  const bccContainer = cDoc.getElementById("bccAddrContainer");
+  const bccPill = bccContainer.querySelector("mail-address-pill");
 
   // Assert the pill was moved to the Cc filed and it's still selected.
   Assert.equal(
@@ -260,5 +271,5 @@ add_task(async function test_pill_context_menu() {
   );
   Assert.ok(bccPill.hasAttribute("selected"), "The pill is selected");
 
-  close_compose_window(cwc);
+  await close_compose_window(cwc);
 });

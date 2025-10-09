@@ -6,7 +6,6 @@
 #include <mapi.h>
 
 #include "msgCore.h"
-#include "nsComposeStrings.h"
 #include "msgMapiMain.h"
 #include "nsCOMPtr.h"
 
@@ -183,37 +182,11 @@ HRESULT nsMAPIConfiguration::GetMAPIErrorFromNSError(nsresult res) {
 
   // if failure return the related MAPI failure code
   switch (res) {
-    case NS_MSG_NO_RECIPIENTS:
-      hr = MAPI_E_BAD_RECIPTYPE;
-      break;
-    case NS_ERROR_COULD_NOT_GET_USERS_MAIL_ADDRESS:
-    case NS_ERROR_COULD_NOT_GET_SENDERS_IDENTITY:
-      // Something went wrong with the sender. There's no error we can map to
-      // so we use a general error, see:
-      // https://msdn.microsoft.com/en-us/library/hh802867(v=vs.85).aspx
-      hr = MAPI_E_FAILURE;
-      break;
-    case NS_ERROR_SMTP_AUTH_FAILURE:
-    case NS_ERROR_SMTP_AUTH_GSSAPI:
-    case NS_ERROR_SMTP_AUTH_MECH_NOT_SUPPORTED:
-    case NS_ERROR_SMTP_AUTH_CHANGE_ENCRYPT_TO_PLAIN_NO_SSL:
-    case NS_ERROR_SMTP_AUTH_CHANGE_ENCRYPT_TO_PLAIN_SSL:
-    case NS_ERROR_SMTP_AUTH_CHANGE_PLAIN_TO_ENCRYPT:
-      hr = MAPI_E_LOGIN_FAILURE;
-      break;
-    case NS_MSG_UNABLE_TO_OPEN_FILE:
-    case NS_MSG_UNABLE_TO_OPEN_TMP_FILE:
-    case NS_MSG_COULDNT_OPEN_FCC_FOLDER:
     case NS_ERROR_FILE_INVALID_PATH:
       hr = MAPI_E_ATTACHMENT_OPEN_FAILURE;
       break;
     case NS_ERROR_FILE_NOT_FOUND:
       hr = MAPI_E_ATTACHMENT_NOT_FOUND;
-      break;
-    case NS_MSG_ERROR_WRITING_FILE:
-    case NS_MSG_UNABLE_TO_SAVE_TEMPLATE:
-    case NS_MSG_UNABLE_TO_SAVE_DRAFT:
-      hr = MAPI_E_ATTACHMENT_WRITE_FAILURE;
       break;
     default:
       hr = MAPI_E_FAILURE;

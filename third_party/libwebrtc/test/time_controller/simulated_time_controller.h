@@ -43,7 +43,7 @@ class SimulatedSequenceRunner {
 };
 
 class SimulatedTimeControllerImpl : public TaskQueueFactory,
-                                    public rtc::YieldInterface {
+                                    public YieldInterface {
  public:
   explicit SimulatedTimeControllerImpl(Timestamp start_time);
   ~SimulatedTimeControllerImpl() override;
@@ -106,15 +106,15 @@ class TokenTaskQueue : public TaskQueueBase {
   using CurrentTaskQueueSetter = TaskQueueBase::CurrentTaskQueueSetter;
 
   void Delete() override { RTC_DCHECK_NOTREACHED(); }
-  void PostTask(absl::AnyInvocable<void() &&> /*task*/) override {
+  void PostTaskImpl(absl::AnyInvocable<void() &&> task,
+                    const PostTaskTraits& traits,
+                    const Location& location) override {
     RTC_DCHECK_NOTREACHED();
   }
-  void PostDelayedTask(absl::AnyInvocable<void() &&> /*task*/,
-                       TimeDelta /*delay*/) override {
-    RTC_DCHECK_NOTREACHED();
-  }
-  void PostDelayedHighPrecisionTask(absl::AnyInvocable<void() &&> /*task*/,
-                                    TimeDelta /*delay*/) override {
+  void PostDelayedTaskImpl(absl::AnyInvocable<void() &&> task,
+                           TimeDelta delay,
+                           const PostDelayedTaskTraits& traits,
+                           const Location& location) override {
     RTC_DCHECK_NOTREACHED();
   }
 };
@@ -138,6 +138,10 @@ class GlobalSimulatedTimeController : public TimeController {
 
   void AdvanceTime(TimeDelta duration) override;
 
+  // Advances time by `duration`and do not run delayed tasks in the meantime.
+  // Useful for simulating contention on destination queues.
+  void SkipForwardBy(TimeDelta duration);
+
   // Makes the simulated time controller aware of a custom
   // SimulatedSequenceRunner.
   // TODO(bugs.webrtc.org/11581): remove method once the ModuleRtpRtcpImpl2 unit
@@ -154,7 +158,7 @@ class GlobalSimulatedTimeController : public TimeController {
   // Provides simulated CurrentNtpInMilliseconds()
   SimulatedClock sim_clock_;
   sim_time_impl::SimulatedTimeControllerImpl impl_;
-  rtc::ScopedYieldPolicy yield_policy_;
+  ScopedYieldPolicy yield_policy_;
   std::unique_ptr<rtc::Thread> main_thread_;
 };
 }  // namespace webrtc

@@ -4,10 +4,8 @@
 
 "use strict";
 
-var utils = ChromeUtils.import("resource://testing-common/mozmill/utils.jsm");
-
-var { assert_tab_mode_name, mc } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+var { assert_tab_mode_name } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 /**
@@ -16,32 +14,28 @@ var { assert_tab_mode_name, mc } = ChromeUtils.import(
  */
 async function open_chat_tab() {
   // Get the current tab count so we can make sure the tab actually opened.
-  let preCount =
-    mc.window.document.getElementById("tabmail").tabContainer.allTabs.length;
+  const preCount =
+    document.getElementById("tabmail").tabContainer.allTabs.length;
 
-  mc.window.document.getElementById("tabmail").openTab("chat", {});
-  await wait_for_chat_tab_to_open(mc);
+  document.getElementById("tabmail").openTab("chat", {});
+  await wait_for_chat_tab_to_open(window);
 
   if (
-    mc.window.document.getElementById("tabmail").tabContainer.allTabs.length !=
+    document.getElementById("tabmail").tabContainer.allTabs.length !=
     preCount + 1
   ) {
     throw new Error("The tab never actually got opened!");
   }
 
-  let newTab = mc.window.document.getElementById("tabmail").tabInfo[preCount];
+  const newTab = document.getElementById("tabmail").tabInfo[preCount];
   return newTab;
 }
 
-async function wait_for_chat_tab_to_open(aController) {
-  if (aController == null) {
-    aController = mc;
-  }
-
-  utils.waitFor(
+async function wait_for_chat_tab_to_open() {
+  await TestUtils.waitForCondition(
     function () {
       let chatTabFound = false;
-      for (let tab of mc.window.document.getElementById("tabmail").tabInfo) {
+      for (const tab of document.getElementById("tabmail").tabInfo) {
         if (tab.mode.type == "chat") {
           chatTabFound = true;
           break;
@@ -66,27 +60,25 @@ async function wait_for_chat_tab_to_open(aController) {
  */
 add_task(async function test_chat_tab_restore() {
   // Close everything but the first tab.
-  let closeTabs = function () {
-    while (mc.window.document.getElementById("tabmail").tabInfo.length > 1) {
-      mc.window.document.getElementById("tabmail").closeTab(1);
+  const closeTabs = function () {
+    while (document.getElementById("tabmail").tabInfo.length > 1) {
+      document.getElementById("tabmail").closeTab(1);
     }
   };
 
   await open_chat_tab();
-  let state = mc.window.document.getElementById("tabmail").persistTabs();
+  const state = document.getElementById("tabmail").persistTabs();
   closeTabs();
-  mc.window.document.getElementById("tabmail").restoreTabs(state);
+  document.getElementById("tabmail").restoreTabs(state);
 
-  if (
-    mc.window.document.getElementById("tabmail").tabContainer.allTabs.length < 2
-  ) {
+  if (document.getElementById("tabmail").tabContainer.allTabs.length < 2) {
     throw new Error("The tab is not restored!");
   }
 
-  let tabTypes = ["mail3PaneTab", "chat"];
-  for (let i in tabTypes) {
+  const tabTypes = ["mail3PaneTab", "chat"];
+  for (const i in tabTypes) {
     assert_tab_mode_name(
-      mc.window.document.getElementById("tabmail").tabInfo[i],
+      document.getElementById("tabmail").tabInfo[i],
       tabTypes[i]
     );
   }

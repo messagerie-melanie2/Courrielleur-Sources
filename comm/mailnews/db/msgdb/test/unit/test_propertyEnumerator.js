@@ -4,8 +4,8 @@
 
 // tests properties in nsIMsgDBHdr;
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var gHdr;
@@ -28,14 +28,17 @@ function run_test() {
   );
 }
 
+/** @implements {nsIMsgCopyServiceListener} */
 var copyListener = {
-  OnStartCopy() {},
-  OnProgress(aProgress, aProgressMax) {},
-  SetMessageKey(aKey) {
+  onStartCopy() {},
+  onProgress() {},
+  setMessageKey(aKey) {
     gHdr = localAccountUtils.inboxFolder.GetMessageHeader(aKey);
   },
-  SetMessageId(aMessageId) {},
-  OnStopCopy(aStatus) {
+  getMessageId() {
+    return null;
+  },
+  onStopCopy() {
     continue_test();
   },
 };
@@ -52,7 +55,7 @@ function continue_test() {
   gHdr.setStringProperty("iamnew", "somevalue");
 
   properties = [];
-  for (let property of gHdr.properties) {
+  for (const property of gHdr.properties) {
     // dump("\nProperty 2 is " + property);
     properties.push(property);
   }

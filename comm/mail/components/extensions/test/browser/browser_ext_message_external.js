@@ -2,29 +2,29 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var gAccount;
-var gFolder;
+"use strict";
 
-add_setup(() => {
+let gAccount, gFolder;
+
+add_setup(async () => {
   gAccount = createAccount();
-  let rootFolder = gAccount.incomingServer.rootFolder;
-  rootFolder.createSubfolder("test0", null);
-  gFolder = rootFolder.getChildNamed("test0");
-  createMessages(gFolder, 5);
+  const rootFolder = gAccount.incomingServer.rootFolder;
+  gFolder = await createSubfolder(rootFolder, "test0");
+  await createMessages(gFolder, 5);
 });
 
 add_task(async function testExternalMessage() {
   // Copy eml file into the profile folder, where we can delete it during the test.
-  let profileDir = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+  const profileDir = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
   profileDir.initWithPath(PathUtils.profileDir);
-  let messageFile = new FileUtils.File(
+  const sampleFile = new FileUtils.File(
     getTestFilePath("messages/attachedMessageSample.eml")
   );
-  messageFile.copyTo(profileDir, "attachedMessageSample.eml");
+  sampleFile.copyTo(profileDir, "attachedMessageSample.eml");
 
-  let files = {
+  const files = {
     "background.js": async () => {
-      let platformInfo = await browser.runtime.getPlatformInfo();
+      const platformInfo = await browser.runtime.getPlatformInfo();
 
       const emlData = {
         openExternalFileMessage: {
@@ -35,7 +35,7 @@ add_task(async function testExternalMessage() {
           attachments: 2,
           size: 9754,
           external: true,
-          read: null,
+          read: undefined,
           recipients: ["Heinz <mueller@example.com>"],
           date: 958796995000,
           body: "This message has one normal attachment and one email attachment",
@@ -48,14 +48,14 @@ add_task(async function testExternalMessage() {
           attachments: 3,
           size: platformInfo.os == "win" ? 6947 : 6825, // Line endings.
           external: true,
-          read: null,
+          read: undefined,
           recipients: ["Heinz Müller <mueller@examples.com>"],
           date: 958606367000,
           body: "Die Hasen und die Frösche",
         },
       };
 
-      let [{ displayedFolder, windowId: mainWindowId }] =
+      const [{ displayedFolder, windowId: mainWindowId }] =
         await browser.mailTabs.query({
           active: true,
           currentWindow: true,
@@ -67,8 +67,8 @@ add_task(async function testExternalMessage() {
         location,
         expected
       ) {
-        let tabPromise = window.waitForEvent("tabs.onCreated");
-        let messagePromise = window.waitForEvent(
+        const tabPromise = window.waitForEvent("tabs.onCreated");
+        const messagePromise = window.waitForEvent(
           "messageDisplay.onMessageDisplayed"
         );
 
@@ -81,8 +81,8 @@ add_task(async function testExternalMessage() {
         } else {
           await window.sendMessage(actionOrMessageId, location);
         }
-        let [msgTab] = await tabPromise;
-        let [openedMsgTab, message] = await messagePromise;
+        const [msgTab] = await tabPromise;
+        const [openedMsgTab, message] = await messagePromise;
 
         if ("windowId" in expected) {
           browser.test.assertEq(
@@ -119,7 +119,7 @@ add_task(async function testExternalMessage() {
         }
 
         // Test the received message and the re-queried message.
-        for (let msg of [message, await browser.messages.get(message.id)]) {
+        for (const msg of [message, await browser.messages.get(message.id)]) {
           browser.test.assertEq(
             message.id,
             msg.id,
@@ -167,13 +167,13 @@ add_task(async function testExternalMessage() {
           );
         }
 
-        let raw = await browser.messages.getRaw(message.id);
+        const raw = await browser.messages.getRaw(message.id);
         browser.test.assertTrue(
           raw.startsWith(`Message-ID: <${expected.headerMessageId}>`),
           "Raw msg should be correct"
         );
 
-        let full = await browser.messages.getFull(message.id);
+        const full = await browser.messages.getFull(message.id);
         browser.test.assertTrue(
           full.headers["message-id"].includes(`<${expected.headerMessageId}>`),
           "Message-ID of full msg should be correct"
@@ -183,7 +183,7 @@ add_task(async function testExternalMessage() {
           "Body of full msg should be correct"
         );
 
-        let attachments = await browser.messages.listAttachments(message.id);
+        const attachments = await browser.messages.listAttachments(message.id);
         browser.test.assertEq(
           expected.attachments,
           attachments.length,
@@ -197,20 +197,20 @@ add_task(async function testExternalMessage() {
       // Check API operations on the given message.
       async function testMessageOperations(message) {
         // Test copying a file message into Thunderbird.
-        let { messages: messagesBeforeCopy } = await browser.messages.list(
-          displayedFolder
+        const { messages: messagesBeforeCopy } = await browser.messages.list(
+          displayedFolder.id
         );
-        await browser.messages.copy([message.id], displayedFolder);
-        let { messages: messagesAfterCopy } = await browser.messages.list(
-          displayedFolder
+        await browser.messages.copy([message.id], displayedFolder.id);
+        const { messages: messagesAfterCopy } = await browser.messages.list(
+          displayedFolder.id
         );
         browser.test.assertEq(
           messagesBeforeCopy.length + 1,
           messagesAfterCopy.length,
           "The file message should have been copied into the current folder"
         );
-        let { messages } = await browser.messages.query({
-          folder: displayedFolder,
+        const { messages } = await browser.messages.query({
+          folderId: displayedFolder.id,
           headerMessageId: message.headerMessageId,
         });
         browser.test.assertTrue(
@@ -238,7 +238,7 @@ add_task(async function testExternalMessage() {
         );
 
         await browser.test.assertRejects(
-          browser.messages.move([message.id], displayedFolder),
+          browser.messages.move([message.id], displayedFolder.id),
           `Error moving message: Operation not permitted for external messages`,
           "Moving external messages should throw."
         );
@@ -247,7 +247,7 @@ add_task(async function testExternalMessage() {
       }
 
       // Open an external message in a tab and check its details.
-      let externalMessage = await openAndVerifyExternalMessage(
+      const externalMessage = await openAndVerifyExternalMessage(
         "openExternalFileMessage",
         "tab",
         { ...emlData.openExternalFileMessage, windowId: mainWindowId }
@@ -271,15 +271,15 @@ add_task(async function testExternalMessage() {
 
       // Test operations on the external message. This will put a copy in a
       // folder that we can use for the next step.
-      let copiedMessage = await testMessageOperations(externalMessage);
-      let messagePromise = window.waitForEvent(
+      const copiedMessage = await testMessageOperations(externalMessage);
+      const messagePromise = window.waitForEvent(
         "messageDisplay.onMessageDisplayed"
       );
       await browser.mailTabs.setSelectedMessages([copiedMessage.id]);
       await messagePromise;
 
       // Open an attached message in a tab and check its details.
-      let attachedMessage = await openAndVerifyExternalMessage(
+      const attachedMessage = await openAndVerifyExternalMessage(
         "openExternalAttachedMessage",
         "tab",
         { ...emlData.openExternalAttachedMessage, windowId: mainWindowId }
@@ -330,13 +330,13 @@ add_task(async function testExternalMessage() {
       );
 
       await browser.test.assertRejects(
-        browser.messages.move([externalMessage.id], displayedFolder),
+        browser.messages.move([externalMessage.id], displayedFolder.id),
         `Error moving message: Message not found: ${externalMessage.id}.`,
         "Moving a missing message should throw."
       );
 
       await browser.test.assertRejects(
-        browser.messages.copy([externalMessage.id], displayedFolder),
+        browser.messages.copy([externalMessage.id], displayedFolder.id),
         `Error copying message: Message not found: ${externalMessage.id}.`,
         "Copying a missing message should throw."
       );
@@ -351,7 +351,7 @@ add_task(async function testExternalMessage() {
     },
     "utils.js": await getUtilsJS(),
   };
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files,
     manifest: {
       background: { scripts: ["utils.js", "background.js"] },
@@ -360,22 +360,23 @@ add_task(async function testExternalMessage() {
         "messagesRead",
         "messagesMove",
         "messagesDelete",
+        "messagesUpdate",
       ],
     },
   });
 
-  let tabmail = document.getElementById("tabmail");
-  let about3Pane = tabmail.currentAbout3Pane;
+  const tabmail = document.getElementById("tabmail");
+  const about3Pane = tabmail.currentAbout3Pane;
   about3Pane.displayFolder(gFolder.URI);
   about3Pane.threadTree.selectedIndex = 0;
 
   extension.onMessage("openExternalFileMessage", async location => {
-    let messagePath = PathUtils.join(
+    const messagePath = PathUtils.join(
       PathUtils.profileDir,
       "attachedMessageSample.eml"
     );
-    let messageFile = new FileUtils.File(messagePath);
-    let url = Services.io
+    const messageFile = new FileUtils.File(messagePath);
+    const url = Services.io
       .newFileURI(messageFile)
       .mutate()
       .setQuery("type=application/x-message-display")
@@ -401,7 +402,7 @@ add_task(async function testExternalMessage() {
     );
 
     // The message with attachment should be loaded in the 3-pane tab.
-    let aboutMessage = tabmail.currentAboutMessage;
+    const aboutMessage = tabmail.currentAboutMessage;
     aboutMessage.toggleAttachmentList(true);
     EventUtils.synthesizeMouseAtCenter(
       aboutMessage.document.querySelector(".attachmentItem"),
@@ -412,11 +413,11 @@ add_task(async function testExternalMessage() {
   });
 
   extension.onMessage("deleteExternalMessage", async () => {
-    let messagePath = PathUtils.join(
+    const messagePath = PathUtils.join(
       PathUtils.profileDir,
       "attachedMessageSample.eml"
     );
-    let messageFile = new FileUtils.File(messagePath);
+    const messageFile = new FileUtils.File(messagePath);
     messageFile.remove(false);
     extension.sendMessage();
   });

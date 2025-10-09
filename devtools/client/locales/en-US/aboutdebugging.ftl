@@ -21,10 +21,12 @@ about-debugging-page-title-runtime-page = Debugging - Runtime / { $selectedRunti
 about-debugging-this-firefox-runtime-name = This { -brand-shorter-name }
 
 # Sidebar heading for selecting the currently running instance of Firefox
+# .name is processed by fluent-react / SidebarFixedItem
 about-debugging-sidebar-this-firefox =
   .name = { about-debugging-this-firefox-runtime-name }
 
 # Sidebar heading for connecting to some remote source
+# .name is processed by fluent-react / SidebarFixedItem
 about-debugging-sidebar-setup =
   .name = Setup
 
@@ -138,6 +140,9 @@ about-debugging-setup-usb-step-enable-dev-menu2 = Enable Developer menu on your 
 about-debugging-setup-usb-step-enable-debug2 = Enable USB Debugging in the Android Developer Menu.
 
 # USB section step by step guide
+about-debugging-setup-usb-step-enable-file-transfer = Enable file transfer and ensure that your device is not in charging-only mode.
+
+# USB section step by step guide
 about-debugging-setup-usb-step-enable-debug-firefox2 = Enable USB Debugging in Firefox on the Android device.
 
 # USB section step by step guide
@@ -158,9 +163,6 @@ about-debugging-setup-network-troubleshoot = Problems connecting via network loc
 # Text of a button displayed after the network locations "Host" input.
 # Clicking on it will add the new network location to the list.
 about-debugging-network-locations-add-button = Add
-
-# Text to display when there are no locations to show.
-about-debugging-network-locations-empty-text = No network locations have been added yet.
 
 # Text of the label for the text input that allows users to add new network locations in
 # the Connect page. A host is a hostname and a port separated by a colon, as suggested by
@@ -186,24 +188,31 @@ about-debugging-network-location-form-duplicate = The host “{ $host-value }”
 # Below are the titles for the various categories of debug targets that can be found
 # on "runtime" pages of about:debugging.
 # Title of the temporary extensions category (only available for "This Firefox" runtime).
+# .name is processed by fluent-react / DebugTargetPane
 about-debugging-runtime-temporary-extensions =
   .name = Temporary Extensions
 # Title of the extensions category.
+# .name is processed by fluent-react / DebugTargetPane
 about-debugging-runtime-extensions =
   .name = Extensions
 # Title of the tabs category.
+# .name is processed by fluent-react / DebugTargetPane
 about-debugging-runtime-tabs =
   .name = Tabs
 # Title of the service workers category.
+# .name is processed by fluent-react / DebugTargetPane
 about-debugging-runtime-service-workers =
   .name = Service Workers
 # Title of the shared workers category.
+# .name is processed by fluent-react / DebugTargetPane
 about-debugging-runtime-shared-workers =
   .name = Shared Workers
 # Title of the other workers category.
+# .name is processed by fluent-react / DebugTargetPane
 about-debugging-runtime-other-workers =
   .name = Other Workers
 # Title of the processes category.
+# .name is processed by fluent-react / DebugTargetPane
 about-debugging-runtime-processes =
   .name = Processes
 
@@ -336,10 +345,12 @@ about-debugging-extension-backgroundscript-status-stopped = Stopped
 # to a service worker.
 # Note this relates to the "Push" API, which is normally not localized so it is
 # probably better to not localize it.
+# .disabledTitle is processed by the fluent-react / ActionButton code.
 about-debugging-worker-action-push2 = Push
   .disabledTitle = Service Worker push is currently disabled for multiprocess { -brand-shorter-name }
 
 # This string is displayed as a label of the button that starts a service worker.
+# .disabledTitle is processed by the fluent-react / ActionButton code.
 about-debugging-worker-action-start2 = Start
   .disabledTitle = Service Worker start is currently disabled for multiprocess { -brand-shorter-name }
 
@@ -374,6 +385,10 @@ about-debugging-worker-scope =
 # of a worker
 about-debugging-worker-push-service =
   .label = Push Service
+
+# Displayed for service workers in runtime pages, to label the origin of a worker.
+about-debugging-worker-origin =
+  .label = Origin
 
 # Displayed as title of the inspect button when service worker debugging is disabled.
 about-debugging-worker-inspect-action-disabled =

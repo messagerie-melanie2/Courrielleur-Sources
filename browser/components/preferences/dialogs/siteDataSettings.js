@@ -9,13 +9,9 @@ var { AppConstants } = ChromeUtils.importESModule(
   "resource://gre/modules/AppConstants.sys.mjs"
 );
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "SiteDataManager",
-  "resource:///modules/SiteDataManager.jsm"
-);
 ChromeUtils.defineESModuleGetters(this, {
   DownloadUtils: "resource://gre/modules/DownloadUtils.sys.mjs",
+  SiteDataManager: "resource:///modules/SiteDataManager.sys.mjs",
 });
 
 let gSiteDataSettings = {
@@ -142,6 +138,7 @@ let gSiteDataSettings = {
     setEventListener("removeSelected", "command", this.removeSelected);
 
     document.addEventListener("dialogaccept", e => this.saveChanges(e));
+    window.addEventListener("keypress", e => this.onKeyPress(e));
   },
 
   _updateButtonsState() {
@@ -333,3 +330,5 @@ let gSiteDataSettings = {
     this._updateButtonsState();
   },
 };
+
+window.addEventListener("load", () => gSiteDataSettings.init());

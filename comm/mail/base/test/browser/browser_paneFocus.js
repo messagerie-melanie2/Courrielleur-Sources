@@ -2,46 +2,50 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+const { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
 
-let mailButton = document.getElementById("mailButton");
-let globalSearch = document.querySelector("#unifiedToolbar global-search-bar");
-let addressBookButton = document.getElementById("addressBookButton");
-let calendarButton = document.getElementById("calendarButton");
-let tasksButton = document.getElementById("tasksButton");
-let tabmail = document.getElementById("tabmail");
+const mailButton = document.getElementById("mailButton");
+const globalSearch = document.querySelector(
+  "#unifiedToolbar global-search-bar"
+);
+const addressBookButton = document.getElementById("addressBookButton");
+const calendarButton = document.getElementById("calendarButton");
+const tasksButton = document.getElementById("tasksButton");
+const tabmail = document.getElementById("tabmail");
 
 let rootFolder, testFolder, testMessages, addressBook;
 
 add_setup(async function () {
-  let generator = new MessageGenerator();
+  const generator = new MessageGenerator();
 
-  MailServices.accounts.createLocalMailAccount();
-  let account = MailServices.accounts.accounts[0];
+  const account = MailServices.accounts.createLocalMailAccount();
   account.addIdentity(MailServices.accounts.createIdentity());
-  rootFolder = account.incomingServer.rootFolder;
+  rootFolder = account.incomingServer.rootFolder.QueryInterface(
+    Ci.nsIMsgLocalMailFolder
+  );
 
   // Quick Filter Bar needs to be toggled on for F6 focus shift to be accurate.
   goDoCommand("cmd_showQuickFilterBar");
 
-  rootFolder.createSubfolder("paneFocus", null);
   testFolder = rootFolder
-    .getChildNamed("paneFocus")
+    .createLocalSubfolder("paneFocus")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   testFolder.addMessageBatch(
-    generator.makeMessages({ count: 5 }).map(message => message.toMboxString())
+    generator
+      .makeMessages({ count: 5 })
+      .map(message => message.toMessageString())
   );
   testMessages = [...testFolder.messages];
 
-  let prefName = MailServices.ab.newAddressBook(
+  const prefName = MailServices.ab.newAddressBook(
     "paneFocus",
     null,
     Ci.nsIAbManager.JS_DIRECTORY_TYPE
   );
   addressBook = MailServices.ab.getDirectoryFromId(prefName);
-  let contact = Cc["@mozilla.org/addressbook/cardproperty;1"].createInstance(
+  const contact = Cc["@mozilla.org/addressbook/cardproperty;1"].createInstance(
     Ci.nsIAbCard
   );
   contact.displayName = "contact 1";
@@ -52,7 +56,7 @@ add_setup(async function () {
 
   registerCleanupFunction(async () => {
     MailServices.accounts.removeAccount(account, false);
-    let removePromise = TestUtils.topicObserved("addrbook-directory-deleted");
+    const removePromise = TestUtils.topicObserved("addrbook-directory-deleted");
     MailServices.ab.deleteAddressBook(addressBook.URI);
     await removePromise;
   });
@@ -61,12 +65,12 @@ add_setup(async function () {
 add_task(async function testMail3PaneTab() {
   document.body.focus();
 
-  let about3Pane = tabmail.currentAbout3Pane;
+  const about3Pane = tabmail.currentAbout3Pane;
   about3Pane.restoreState({
     folderPaneVisible: true,
     messagePaneVisible: true,
   });
-  let {
+  const {
     folderTree,
     threadTree,
     webBrowser,
@@ -196,26 +200,26 @@ add_task(async function testAddressBookTab() {
   EventUtils.synthesizeMouseAtCenter(addressBookButton, {});
   await BrowserTestUtils.browserLoaded(tabmail.currentTabInfo.browser);
 
-  let abWindow = tabmail.currentTabInfo.browser.contentWindow;
-  let abDocument = abWindow.document;
-  let booksList = abDocument.getElementById("books");
-  let searchInput = abDocument.getElementById("searchInput");
-  let cardsList = abDocument.getElementById("cards");
-  let detailsPane = abDocument.getElementById("detailsPane");
-  let editButton = abDocument.getElementById("editButton");
+  const abWindow = tabmail.currentTabInfo.browser.contentWindow;
+  const abDocument = abWindow.document;
+  const booksList = abDocument.getElementById("books");
+  const searchInput = abDocument.getElementById("searchInput");
+  const cardsList = abDocument.getElementById("cards");
+  const detailsPane = abDocument.getElementById("detailsPane");
+  const editButton = abDocument.getElementById("editButton");
 
   // Switch to the table view so the edit button isn't falling off the window.
   abWindow.cardsPane.toggleLayout(true);
 
   // Check what happens with a contact selected.
-  let row = booksList.getRowForUID(addressBook.UID);
+  const row = booksList.getRowForUID(addressBook.UID);
   EventUtils.synthesizeMouseAtCenter(row.querySelector("span"), {}, abWindow);
 
-  Assert.ok(BrowserTestUtils.is_hidden(detailsPane));
+  Assert.ok(BrowserTestUtils.isHidden(detailsPane));
   // Select first contact.
   EventUtils.synthesizeMouseAtCenter(cardsList.getRowAtIndex(0), {}, abWindow);
   Assert.equal(getActiveElement(), cardsList.table.body);
-  Assert.ok(BrowserTestUtils.is_visible(detailsPane));
+  Assert.ok(BrowserTestUtils.isVisible(detailsPane));
   cycle(
     editButton,
     addressBookButton,
@@ -226,7 +230,7 @@ add_task(async function testAddressBookTab() {
     editButton
   );
   // Still visible.
-  Assert.ok(BrowserTestUtils.is_visible(detailsPane));
+  Assert.ok(BrowserTestUtils.isVisible(detailsPane));
 
   // Check with no selection.
   EventUtils.synthesizeMouseAtCenter(
@@ -235,7 +239,7 @@ add_task(async function testAddressBookTab() {
     abWindow
   );
   Assert.equal(getActiveElement(), cardsList.table.body);
-  Assert.ok(BrowserTestUtils.is_hidden(detailsPane));
+  Assert.ok(BrowserTestUtils.isHidden(detailsPane));
   cycle(
     addressBookButton,
     globalSearch,
@@ -245,14 +249,14 @@ add_task(async function testAddressBookTab() {
     addressBookButton
   );
   // Still hidden.
-  Assert.ok(BrowserTestUtils.is_hidden(detailsPane));
+  Assert.ok(BrowserTestUtils.isHidden(detailsPane));
 
   // Check what happens while editing. It should be nothing.
   EventUtils.synthesizeMouseAtCenter(cardsList.getRowAtIndex(0), {}, abWindow);
   Assert.equal(getActiveElement(), cardsList.table.body);
-  Assert.ok(BrowserTestUtils.is_visible(detailsPane));
+  Assert.ok(BrowserTestUtils.isVisible(detailsPane));
 
-  editButton.scrollIntoView();
+  editButton.scrollIntoView({ block: "start", behavior: "instant" });
   EventUtils.synthesizeMouseAtCenter(editButton, {}, abWindow);
   Assert.equal(abDocument.activeElement.id, "vcard-n-firstname");
   EventUtils.synthesizeKey("KEY_F6", {}, abWindow);
@@ -347,7 +351,7 @@ function getActiveElement() {
  * Then presses Shift+F6 to go back through the elements.
  * Note that the currently selected element should *not* be the first element.
  *
- * @param {Element[]}
+ * @param {...Element} elements
  */
 function cycle(...elements) {
   let activeElement = getActiveElement();

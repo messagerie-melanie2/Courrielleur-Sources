@@ -51,12 +51,15 @@ class Rule {
     this.elementStyle = elementStyle;
     this.domRule = options.rule;
     this.compatibilityIssues = null;
-    this.matchedSelectors = options.matchedSelectors || [];
-    this.pseudoElement = options.pseudoElement || "";
+
+    this.matchedSelectorIndexes = options.matchedSelectorIndexes || [];
     this.isSystem = options.isSystem;
     this.isUnmatched = options.isUnmatched || false;
+    this.darkColorScheme = options.darkColorScheme;
     this.inherited = options.inherited || null;
+    this.pseudoElement = options.pseudoElement || "";
     this.keyframes = options.keyframes || null;
+    this.userAdded = options.rule.userAdded;
 
     this.cssProperties = this.elementStyle.ruleView.cssProperties;
     this.inspector = this.elementStyle.ruleView.inspector;
@@ -87,22 +90,13 @@ class Rule {
     return this.textProps;
   }
 
-  get inheritance() {
-    if (!this.inherited) {
-      return null;
-    }
-
-    return {
-      inherited: this.inherited,
-      inheritedSource: this.inheritedSource,
-    };
-  }
-
   get selector() {
     return {
       getUniqueSelector: this.getUniqueSelector,
-      matchedSelectors: this.matchedSelectors,
+      matchedSelectorIndexes: this.matchedSelectorIndexes,
       selectors: this.domRule.selectors,
+      selectorsSpecificity: this.domRule.selectorsSpecificity,
+      selectorWarnings: this.domRule.selectors,
       selectorText: this.keyframes ? this.domRule.keyText : this.selectorText,
     };
   }
@@ -120,22 +114,25 @@ class Rule {
     return title;
   }
 
-  get inheritedSource() {
-    if (this._inheritedSource) {
-      return this._inheritedSource;
+  get inheritedSectionLabel() {
+    if (this._inheritedSectionLabel) {
+      return this._inheritedSectionLabel;
     }
-    this._inheritedSource = "";
+    this._inheritedSectionLabel = "";
     if (this.inherited) {
       let eltText = this.inherited.displayName;
       if (this.inherited.id) {
         eltText += "#" + this.inherited.id;
       }
-      this._inheritedSource = STYLE_INSPECTOR_L10N.getFormatStr(
+      if (CssLogic.ELEMENT_BACKED_PSEUDO_ELEMENTS.has(this.pseudoElement)) {
+        eltText += this.pseudoElement;
+      }
+      this._inheritedSectionLabel = STYLE_INSPECTOR_L10N.getFormatStr(
         "rule.inheritedFrom",
         eltText
       );
     }
-    return this._inheritedSource;
+    return this._inheritedSectionLabel;
   }
 
   get keyframesName() {
@@ -411,6 +408,7 @@ class Rule {
     const resultPromise = Promise.resolve(this._applyingModifications)
       .then(() => {
         const modifications = this.domRule.startModifyingProperties(
+          this.inspector.panelWin,
           this.cssProperties
         );
         modifier(modifications);
@@ -495,6 +493,7 @@ class Rule {
   previewPropertyValue(property, value, priority) {
     this.elementStyle.ruleView.emitForTests("start-preview-property-value");
     const modifications = this.domRule.startModifyingProperties(
+      this.inspector.panelWin,
       this.cssProperties
     );
     modifications.setProperty(
@@ -575,7 +574,11 @@ class Rule {
       // However, we must keep all properties in order for rule
       // rewriting to work properly.  So, compute the "invisible"
       // property here.
-      const invisible = this.inherited && !this.cssProperties.isInherited(name);
+      const inherits = prop.isCustomProperty
+        ? prop.inherits
+        : this.cssProperties.isInherited(name);
+      const invisible = this.inherited && !inherits;
+
       const value = store.userProperties.getProperty(
         this.domRule,
         name,
@@ -628,7 +631,10 @@ class Rule {
    * properties as needed.
    */
   refresh(options) {
-    this.matchedSelectors = options.matchedSelectors || [];
+    this.matchedSelectorIndexes = options.matchedSelectorIndexes || [];
+    const colorSchemeChanged = this.darkColorScheme !== options.darkColorScheme;
+    this.darkColorScheme = options.darkColorScheme;
+
     const newTextProps = this._getTextProperties();
 
     // The element style rule behaves differently on refresh. We basically need to update
@@ -669,6 +675,17 @@ class Rule {
         prop.updateEditor();
       } else {
         delete prop._visited;
+      }
+
+      // Valid properties that aren't disabled might need to get updated in some condition
+      if (
+        prop.enabled &&
+        prop.isValid() &&
+        // Update if it's using light-dark and the color scheme changed
+        colorSchemeChanged &&
+        prop.value.includes("light-dark")
+      ) {
+        prop.updateEditor();
       }
     }
 
@@ -811,6 +828,52 @@ class Rule {
     }
 
     return selectorText + " {" + terminator + cssText + "}";
+  }
+
+  /**
+   * @returns {Boolean} Whether or not the rule is in a layer
+   */
+  isInLayer() {
+    return this.domRule.ancestorData.some(({ type }) => type === "layer");
+  }
+
+  /**
+   * Return whether this rule and the one passed are in the same layer,
+   * (as in described in the spec; this is not checking that the 2 rules are children
+   * of the same CSSLayerBlockRule)
+   *
+   * @param {Rule} otherRule: The rule we want to compare with
+   * @returns {Boolean}
+   */
+  isInDifferentLayer(otherRule) {
+    const filterLayer = ({ type }) => type === "layer";
+    const thisLayers = this.domRule.ancestorData.filter(filterLayer);
+    const otherRuleLayers = otherRule.domRule.ancestorData.filter(filterLayer);
+
+    if (thisLayers.length !== otherRuleLayers.length) {
+      return true;
+    }
+
+    return thisLayers.some((layer, i) => {
+      const otherRuleLayer = otherRuleLayers[i];
+      // For named layers, we can compare the layer name directly, since we want to identify
+      // the actual layer, not the specific CSSLayerBlockRule.
+      // For nameless layers though, we don't have a choice and we can only identify them
+      // via their CSSLayerBlockRule, so we're using the rule actorID.
+      return (
+        (layer.value || layer.actorID) !==
+        (otherRuleLayer.value || otherRuleLayer.actorID)
+      );
+    });
+  }
+
+  /**
+   * @returns {Boolean} Whether or not the rule is in a @starting-style rule
+   */
+  isInStartingStyle() {
+    return this.domRule.ancestorData.some(
+      ({ type }) => type === "starting-style"
+    );
   }
 
   /**

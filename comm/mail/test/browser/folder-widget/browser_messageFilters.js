@@ -8,40 +8,33 @@
 
 "use strict";
 
-var { create_ldap_address_book } = ChromeUtils.import(
-  "resource://testing-common/mozmill/AddressBookHelpers.jsm"
+var { create_ldap_address_book } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/AddressBookHelpers.sys.mjs"
 );
+var { be_in_folder, create_folder, make_message_sets_in_folders } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
+  );
+var { NNTP_PORT, setupLocalServer, setupNNTPDaemon } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/NNTPHelpers.sys.mjs"
+  );
+
 var {
-  be_in_folder,
-  close_popup,
-  create_folder,
-  make_message_sets_in_folders,
-  mc,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-);
-var { NNTP_PORT, setupLocalServer, setupNNTPDaemon } = ChromeUtils.import(
-  "resource://testing-common/mozmill/NNTPHelpers.jsm"
-);
-var {
-  close_window,
-  plan_for_modal_dialog,
-  plan_for_new_window,
-  plan_for_window_close,
-  wait_for_existing_window,
-  wait_for_modal_dialog,
-  wait_for_new_window,
-  wait_for_window_focused,
-  wait_for_window_close,
   click_menus_in_sequence,
-} = ChromeUtils.import("resource://testing-common/mozmill/WindowHelpers.jsm");
-
-var { gMockPromptService } = ChromeUtils.import(
-  "resource://testing-common/mozmill/PromptHelpers.jsm"
+  promise_modal_dialog,
+  promise_new_window,
+  wait_for_window_focused,
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/WindowHelpers.sys.mjs"
 );
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { gMockPromptService } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/PromptHelpers.sys.mjs"
+);
+
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var folderA, NNTPAccount;
@@ -54,11 +47,13 @@ add_setup(async function () {
   await make_message_sets_in_folders([folderA], [{ count: 1 }]);
 
   const server = setupLocalServer(NNTP_PORT);
-  NNTPAccount = MailServices.accounts.FindAccountForServer(server);
+  NNTPAccount = MailServices.accounts.findAccountForServer(server);
 
   registerCleanupFunction(() => {
     folderA.deleteSelf(null);
-    MailServices.accounts.removeAccount(NNTPAccount);
+    // For some peculiar reason, removing won't work in --verify mode
+    // if we remove the account here.
+    //  MailServices.accounts.removeAccount(NNTPAccount);
     // Some tests that open new windows don't return focus to the main window
     // in a way that satisfies mochitest, and the test times out.
     Services.focus.focusedWindow = window;
@@ -70,23 +65,22 @@ add_setup(async function () {
  * new fitler toolbarbutton and it's dropdown work correctly.
  */
 add_task(async function key_navigation_test() {
-  await openFiltersDialogs();
+  const filterc = await openFiltersDialogs();
 
-  const filterc = wait_for_existing_window("mailnews:filterlist");
-  const filterWinDoc = filterc.window.document;
+  const filterWinDoc = filterc.document;
   const BUTTONS_SELECTOR = `toolbarbutton:not([disabled="true"],[is="toolbarbutton-menu-button"]),dropmarker, button:not([hidden])`;
   const filterButtonList = filterWinDoc.getElementById("filterActionButtons");
   const navigableButtons = filterButtonList.querySelectorAll(BUTTONS_SELECTOR);
   const menupopupNewFilter = filterWinDoc.getElementById("newFilterMenupopup");
 
-  EventUtils.synthesizeKey("KEY_Tab", {}, filterc.window);
+  EventUtils.synthesizeKey("KEY_Tab", {}, filterc);
   Assert.equal(
     filterWinDoc.activeElement.id,
     navigableButtons[0].id,
     "focused on the first filter action button"
   );
 
-  for (let button of navigableButtons) {
+  for (const button of navigableButtons) {
     if (!filterWinDoc.getElementById(button.id).disabled) {
       Assert.equal(
         filterWinDoc.activeElement.id,
@@ -96,17 +90,24 @@ add_task(async function key_navigation_test() {
 
       if (button.id == "newButtontoolbarbutton") {
         function openEmptyDialog(fec) {
-          fec.window.document.getElementById("filterName").value = " ";
+          fec.document.getElementById("filterName").value = " ";
+          fec.close();
         }
 
-        plan_for_modal_dialog("mailnews:filtereditor", openEmptyDialog);
-        EventUtils.synthesizeKey("KEY_Enter", {}, filterc.window);
-        wait_for_modal_dialog("mailnews:filtereditor");
+        let dialogPromise = promise_modal_dialog(
+          "mailnews:filtereditor",
+          openEmptyDialog
+        );
+        EventUtils.synthesizeKey("KEY_Enter", {}, filterc);
+        await dialogPromise;
 
-        plan_for_modal_dialog("mailnews:filtereditor", openEmptyDialog);
+        dialogPromise = promise_modal_dialog(
+          "mailnews:filtereditor",
+          openEmptyDialog
+        );
         // Simulate Space keypress.
-        EventUtils.synthesizeKey(" ", {}, filterc.window);
-        wait_for_modal_dialog("mailnews:filtereditor");
+        EventUtils.synthesizeKey(" ", {}, filterc);
+        await dialogPromise;
 
         Assert.equal(
           filterWinDoc.activeElement.id,
@@ -114,36 +115,36 @@ add_task(async function key_navigation_test() {
           "Correct btn is focused after opening and closing new filter editor"
         );
       } else if (button.id == "newButtondropmarker") {
-        const menupopupOpenPromise = BrowserTestUtils.waitForEvent(
-          menupopupNewFilter,
-          "popupshown"
-        );
-        EventUtils.synthesizeKey("KEY_Enter", {}, filterc.window);
-        await menupopupOpenPromise;
-        const menupopupClosePromise = BrowserTestUtils.waitForEvent(
-          menupopupNewFilter,
-          "popuphidden"
-        );
-        EventUtils.synthesizeKey("KEY_Escape", {}, filterc.window);
-        await menupopupClosePromise;
+        await new Promise(resolve => filterc.requestAnimationFrame(resolve));
+
+        EventUtils.synthesizeKey("KEY_Enter", {}, filterc);
+        await BrowserTestUtils.waitForPopupEvent(menupopupNewFilter, "shown");
+        Assert.ok(true, `Enter opened #${menupopupNewFilter.id}`);
+        EventUtils.synthesizeKey("KEY_Escape", {}, filterc);
+        await BrowserTestUtils.waitForPopupEvent(menupopupNewFilter, "hidden");
+        Assert.ok(true, `Esc closed #${menupopupNewFilter.id}`);
+
+        await new Promise(resolve => filterc.requestAnimationFrame(resolve));
 
         // Simulate Space keypress.
-        EventUtils.synthesizeKey(" ", {}, filterc.window);
-        await menupopupOpenPromise;
-        EventUtils.synthesizeKey("KEY_Escape", {}, filterc.window);
-        await menupopupClosePromise;
+        EventUtils.synthesizeKey(" ", {}, filterc);
+        await BrowserTestUtils.waitForPopupEvent(menupopupNewFilter, "shown");
+        Assert.ok(true, `Space opened #${menupopupNewFilter.id}`);
+        EventUtils.synthesizeKey("KEY_Escape", {}, filterc);
+        await BrowserTestUtils.waitForPopupEvent(menupopupNewFilter, "hidden");
+        Assert.ok(true, `Esc closed #${menupopupNewFilter.id}`);
         Assert.equal(
           filterWinDoc.activeElement.id,
           button.id,
-          "The correct btn is focused after opening and closing the menupopup"
+          "The correct btn should be focused after closing the menupopup"
         );
       }
     }
-    EventUtils.synthesizeKey("KEY_Tab", {}, filterc.window);
+    EventUtils.synthesizeKey("KEY_Tab", {}, filterc);
   }
 
-  close_window(filterc);
-}).__skipMe = AppConstants.platform == "macosx";
+  await BrowserTestUtils.closeWindow(filterc);
+}).skip(AppConstants.platform == "macosx");
 
 /*
  * Test that the message filter list shows newsgroup servers.
@@ -151,37 +152,27 @@ add_task(async function key_navigation_test() {
 add_task(async function test_message_filter_shows_newsgroup_server() {
   await be_in_folder(folderA);
 
-  plan_for_new_window("mailnews:filterlist");
-  await openFiltersDialogs();
-  let filterc = wait_for_new_window("mailnews:filterlist");
-  wait_for_window_focused(filterc.window);
+  const filterc = await openFiltersDialogs();
+  await SimpleTest.promiseFocus(filterc);
 
-  let popup = filterc.window.document.getElementById("serverMenuPopup");
-  Assert.ok(popup);
-  EventUtils.synthesizeMouseAtCenter(popup, {}, popup.ownerGlobal);
+  // Get the newsgroups to pop up.
+  const serverMenu = filterc.document.getElementById("serverMenu");
+  let popupshown = BrowserTestUtils.waitForEvent(serverMenu, "popupshown");
+  EventUtils.synthesizeMouseAtCenter(serverMenu, {}, serverMenu.ownerGlobal);
+  await popupshown;
 
-  let nntp = popup.children.item(1);
-  Assert.ok(nntp);
-  // We need to get the newsgroups to pop up somehow.
-  // These all fail.
-  // EventUtils.synthesizeMouseAtCenter(nntp, { }, nntp.ownerGlobal)
-  // filterc.mouseover(nntp);
-  // filterc.select(popup, popup.parentNode.getIndexOfItem(nntp));
-  // filterc.select(nntp, popup.parentNode.getIndexOfItem(nntp));
-  // filterc.select(popup, 2);
-  // let nntpPopup = nntp.menupopup;
-  // EventUtils.synthesizeMouseAtCenter(nntpPopup, { }, nntpPopup.ownerGlobal)
-  // filterc.mouseover(nntpPopup);
-  // filterc.select(nntpPopup, 2);
-
-  // This one initializes the menuitems, but it's kinda hacky.
-  nntp.menupopup._ensureInitialized();
+  const nntp = serverMenu.firstElementChild.children.item(1);
   Assert.equal(
-    nntp.itemCount,
-    5,
-    "Incorrect number of children for the NNTP server"
+    nntp.label,
+    "localhost",
+    "should show 'localhost' nntp server item in menu"
   );
-  close_window(filterc);
+  popupshown = BrowserTestUtils.waitForEvent(nntp, "popupshown");
+  EventUtils.synthesizeMouseAtCenter(nntp, {}, nntp.ownerGlobal);
+  await popupshown;
+
+  Assert.equal(nntp.itemCount, 5, "All five items should show");
+  await BrowserTestUtils.closeWindow(filterc);
 });
 
 /* A helper function that opens up the new filter dialog (assuming that the
@@ -189,58 +180,60 @@ add_task(async function test_message_filter_shows_newsgroup_server() {
  * closes the dialog.
  */
 async function create_simple_filter() {
-  await openFiltersDialogs();
-
-  // We'll assume that the filters dialog is already open from
-  // the previous tests.
-  let filterc = wait_for_existing_window("mailnews:filterlist");
+  const filterc = await openFiltersDialogs();
 
   function fill_in_filter_fields(fec) {
-    let filterName = fec.window.document.getElementById("filterName");
+    const filterName = fec.document.getElementById("filterName");
     filterName.value = "A Simple Filter";
-    fec.window.document.getElementById("searchAttr0").value =
-      Ci.nsMsgSearchAttrib.To;
-    fec.window.document.getElementById("searchOp0").value = Ci.nsMsgSearchOp.Is;
-    let searchVal = fec.window.document.getElementById("searchVal0").input;
+    fec.document.getElementById("searchAttr0").value = Ci.nsMsgSearchAttrib.To;
+    fec.document.getElementById("searchOp0").value = Ci.nsMsgSearchOp.Is;
+    const searchVal = fec.document.getElementById("searchVal0").input;
     searchVal.setAttribute("value", "test@foo.invalid");
 
-    let filterActions = fec.window.document.getElementById("filterActionList");
-    let firstAction = filterActions.getItemAtIndex(0);
+    const filterActions = fec.document.getElementById("filterActionList");
+    const firstAction = filterActions.getItemAtIndex(0);
     firstAction.setAttribute("value", "markasflagged");
-    fec.window.document.querySelector("dialog").acceptDialog();
+    fec.document.querySelector("dialog").acceptDialog();
   }
 
   // Let's open the filter editor.
-  plan_for_modal_dialog("mailnews:filtereditor", fill_in_filter_fields);
-  EventUtils.synthesizeMouseAtCenter(
-    filterc.window.document.getElementById("newButton"),
-    {},
-    filterc.window.document.getElementById("newButton").ownerGlobal
+  const dialogPromise = promise_modal_dialog(
+    "mailnews:filtereditor",
+    fill_in_filter_fields
   );
-  wait_for_modal_dialog("mailnews:filtereditor");
+  EventUtils.synthesizeMouseAtCenter(
+    filterc.document.getElementById("newButton"),
+    {},
+    filterc
+  );
+  await dialogPromise;
+
+  return filterc;
 }
 
 /**
  * Open the Message Filters dialog by clicking the menus.
  */
 async function openFiltersDialogs() {
+  const filterListPromise = promise_new_window("mailnews:filterlist");
+
   if (AppConstants.platform == "macosx") {
     // Can't click the menus on mac.
-    mc.window.MsgFilters();
-    return;
+    window.MsgFilters();
+    return filterListPromise;
   }
   // Show menubar so we can click it.
   document.getElementById("toolbar-menubar").removeAttribute("autohide");
   // Open the "Tools | Message Filters…", a.k.a. "tasksMenu » filtersCmd".
   EventUtils.synthesizeMouseAtCenter(
-    mc.window.document.getElementById("tasksMenu"),
+    document.getElementById("tasksMenu"),
     {},
-    mc.window
+    window
   );
-  await click_menus_in_sequence(
-    mc.window.document.getElementById("taskPopup"),
-    [{ id: "filtersCmd" }]
-  );
+  await click_menus_in_sequence(document.getElementById("taskPopup"), [
+    { id: "filtersCmd" },
+  ]);
+  return filterListPromise;
 }
 
 /**
@@ -249,25 +242,19 @@ async function openFiltersDialogs() {
 add_task(async function test_address_books_appear_in_message_filter_dropdown() {
   // Create a remote address book - we don't want this to appear in the
   // dropdown.
-  let ldapAb = create_ldap_address_book("Some LDAP Address Book");
+  const ldapAb = create_ldap_address_book("Some LDAP Address Book");
 
   // Sanity check - this LDAP book should be remote.
   Assert.ok(ldapAb.isRemote);
 
-  await openFiltersDialogs();
-
-  // We'll assume that the filters dialog is already open from
-  // the previous tests.
-  let filterc = wait_for_existing_window("mailnews:filterlist");
+  const filterc = await openFiltersDialogs();
 
   // Prepare a function to deal with the filter editor once it
   // has opened
   function filterEditorOpened(fec) {
-    fec.window.document.getElementById("searchAttr0").value =
-      Ci.nsMsgSearchAttrib.To;
-    fec.window.document.getElementById("searchOp0").value =
-      Ci.nsMsgSearchOp.IsInAB;
-    let abList = fec.window.document.getElementById("searchVal0").input;
+    fec.document.getElementById("searchAttr0").value = Ci.nsMsgSearchAttrib.To;
+    fec.document.getElementById("searchOp0").value = Ci.nsMsgSearchOp.IsInAB;
+    const abList = fec.document.getElementById("searchVal0").input;
 
     // We should have 2 address books here - one for the Personal Address
     // Book, and one for Collected Addresses.  The LDAP address book should
@@ -277,19 +264,26 @@ add_task(async function test_address_books_appear_in_message_filter_dropdown() {
       2,
       "Should have 2 address books in the filter menu list."
     );
+    fec.close();
   }
 
   // Let's open the filter editor.
-  plan_for_modal_dialog("mailnews:filtereditor", filterEditorOpened);
-  EventUtils.synthesizeMouseAtCenter(
-    filterc.window.document.getElementById("newButton"),
-    {},
-    filterc.window.document.getElementById("newButton").ownerGlobal
+  const dialogPromise = promise_modal_dialog(
+    "mailnews:filtereditor",
+    filterEditorOpened
   );
-  wait_for_modal_dialog("mailnews:filtereditor");
+  EventUtils.synthesizeMouseAtCenter(
+    filterc.document.getElementById("newButton"),
+    {},
+    filterc
+  );
+  await dialogPromise;
+
+  await BrowserTestUtils.closeWindow(filterc);
 });
 
-/* Test that if the user has started running a filter, and the
+/**
+ * Test that if the user has started running a filter, and the
  * "quit-application-requested" notification is fired, the user
  * is given a dialog asking whether or not to quit.
  *
@@ -299,13 +293,11 @@ add_task(async function test_can_cancel_quit_on_filter_changes() {
   // Register the Mock Prompt Service
   gMockPromptService.register();
 
-  await create_simple_filter();
+  const filterWin = await create_simple_filter();
 
-  let filterc = wait_for_existing_window("mailnews:filterlist");
-  let runButton = filterc.window.document.getElementById("runFiltersButton");
-  runButton.setAttribute("label", runButton.getAttribute("stoplabel"));
+  filterWin.gRunningFilters = true; // simulate running
 
-  let cancelQuit = Cc["@mozilla.org/supports-PRBool;1"].createInstance(
+  const cancelQuit = Cc["@mozilla.org/supports-PRBool;1"].createInstance(
     Ci.nsISupportsPRBool
   );
 
@@ -314,7 +306,7 @@ add_task(async function test_can_cancel_quit_on_filter_changes() {
   gMockPromptService.returnValue = false;
   // Trigger the quit-application-request notification
   Services.obs.notifyObservers(cancelQuit, "quit-application-requested");
-  let promptState = gMockPromptService.promptState;
+  const promptState = gMockPromptService.promptState;
   Assert.notEqual(null, promptState, "Expected a confirmEx prompt");
 
   Assert.equal("confirmEx", promptState.method);
@@ -322,12 +314,14 @@ add_task(async function test_can_cancel_quit_on_filter_changes() {
   // we should be cancelling the quit - so cancelQuit.data
   // should now be true
   Assert.ok(cancelQuit.data, "Didn't cancel the quit");
+  filterWin.gRunningFilters = false; // reset
 
   // Unregister the Mock Prompt Service
   gMockPromptService.unregister();
 });
 
-/* Test that if the user has started running a filter, and the
+/**
+ * Test that if the user has started running a filter, and the
  * "quit-application-requested" notification is fired, the user
  * is given a dialog asking whether or not to quit.
  *
@@ -337,17 +331,16 @@ add_task(async function test_can_quit_on_filter_changes() {
   // Register the Mock Prompt Service
   gMockPromptService.register();
 
-  let filterc = wait_for_existing_window("mailnews:filterlist");
+  const filterWin = Services.wm.getMostRecentWindow("mailnews:filterlist");
 
   // There should already be 1 filter defined from previous test.
-  let filterCount =
-    filterc.window.document.getElementById("filterList").itemCount;
-  Assert.equal(filterCount, 1);
+  const filterCount = filterWin.document.getElementById("filterList").itemCount;
+  Assert.equal(filterCount, 1, "should have 1 filter from prev test");
 
-  let runButton = filterc.window.document.getElementById("runFiltersButton");
-  runButton.setAttribute("label", runButton.getAttribute("stoplabel"));
+  const runButton = filterWin.document.getElementById("runFiltersButton");
+  runButton.disabled = true; // simulate running
 
-  let cancelQuit = Cc["@mozilla.org/supports-PRBool;1"].createInstance(
+  const cancelQuit = Cc["@mozilla.org/supports-PRBool;1"].createInstance(
     Ci.nsISupportsPRBool
   );
 
@@ -356,7 +349,7 @@ add_task(async function test_can_quit_on_filter_changes() {
   gMockPromptService.returnValue = true;
   // Trigger the quit-application-request notification
   Services.obs.notifyObservers(cancelQuit, "quit-application-requested");
-  let promptState = gMockPromptService.promptState;
+  const promptState = gMockPromptService.promptState;
   Assert.notEqual(null, promptState, "Expected a confirmEx prompt");
 
   Assert.equal("confirmEx", promptState.method);
@@ -369,9 +362,9 @@ add_task(async function test_can_quit_on_filter_changes() {
   gMockPromptService.unregister();
 
   EventUtils.synthesizeMouseAtCenter(
-    filterc.window.document.querySelector("#filterList richlistitem"),
+    filterWin.document.querySelector("#filterList richlistitem"),
     {},
-    filterc.window
+    filterWin
   );
 
   const deleteAlertPromise = BrowserTestUtils.promiseAlertDialogOpen(
@@ -383,14 +376,14 @@ add_task(async function test_can_quit_on_filter_changes() {
       },
     }
   );
-  EventUtils.synthesizeKey("KEY_Delete", {}, filterc.window);
+  EventUtils.synthesizeKey("KEY_Delete", {}, filterWin);
   await deleteAlertPromise;
 
   Assert.equal(
-    filterc.window.document.getElementById("filterList").itemCount,
+    filterWin.document.getElementById("filterList").itemCount,
     0,
     "Previously created filter should have been deleted."
   );
 
-  close_window(filterc);
+  await BrowserTestUtils.closeWindow(filterWin);
 });

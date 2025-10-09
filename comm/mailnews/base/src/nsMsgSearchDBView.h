@@ -6,7 +6,6 @@
 #ifndef _nsMsgSearchDBViews_H_
 #define _nsMsgSearchDBViews_H_
 
-#include "mozilla/Attributes.h"
 #include "nsMsgGroupView.h"
 #include "nsIMsgCopyServiceListener.h"
 #include "nsIMsgSearchNotify.h"
@@ -33,7 +32,7 @@ class nsMsgSearchDBView : public nsMsgGroupView,
   virtual const char* GetViewName(void) override { return "SearchView"; }
   NS_IMETHOD Open(nsIMsgFolder* folder, nsMsgViewSortTypeValue sortType,
                   nsMsgViewSortOrderValue sortOrder,
-                  nsMsgViewFlagsTypeValue viewFlags, int32_t* pCount) override;
+                  nsMsgViewFlagsTypeValue viewFlags) override;
   NS_IMETHOD CloneDBView(nsIMessenger* aMessengerInstance,
                          nsIMsgWindow* aMsgWindow,
                          nsIMsgDBViewCommandUpdater* aCmdUpdater,
@@ -52,12 +51,10 @@ class nsMsgSearchDBView : public nsMsgGroupView,
   NS_IMETHOD DoCommand(nsMsgViewCommandTypeValue command) override;
   NS_IMETHOD DoCommandWithFolder(nsMsgViewCommandTypeValue command,
                                  nsIMsgFolder* destFolder) override;
-  NS_IMETHOD GetHdrForFirstSelectedMessage(nsIMsgDBHdr** hdr) override;
   NS_IMETHOD OpenWithHdrs(nsIMsgEnumerator* aHeaders,
                           nsMsgViewSortTypeValue aSortType,
                           nsMsgViewSortOrderValue aSortOrder,
-                          nsMsgViewFlagsTypeValue aViewFlags,
-                          int32_t* aCount) override;
+                          nsMsgViewFlagsTypeValue aViewFlags) override;
   NS_IMETHOD OnHdrDeleted(nsIMsgDBHdr* aHdrDeleted, nsMsgKey aParentKey,
                           int32_t aFlags,
                           nsIDBChangeListener* aInstigator) override;
@@ -78,8 +75,6 @@ class nsMsgSearchDBView : public nsMsgGroupView,
   NS_IMETHOD OnAnnouncerGoingAway(nsIDBChangeAnnouncer* instigator) override;
 
   virtual nsCOMArray<nsIMsgFolder>* GetFolders() override;
-  virtual nsresult GetFolderFromMsgURI(const nsACString& aMsgURI,
-                                       nsIMsgFolder** aFolder) override;
 
   NS_IMETHOD GetThreadContainingMsgHdr(nsIMsgDBHdr* msgHdr,
                                        nsIMsgThread** pThread) override;
@@ -87,6 +82,10 @@ class nsMsgSearchDBView : public nsMsgGroupView,
   NS_IMETHOD ApplyCommandToIndices(
       nsMsgViewCommandTypeValue command,
       nsTArray<nsMsgViewIndex> const& selection) override;
+
+  NS_IMETHOD SetViewFlags(nsMsgViewFlagsTypeValue aViewFlags) override;
+
+  NS_IMETHOD OnDeleteCompleted(bool aSucceeded) override;
 
  protected:
   virtual ~nsMsgSearchDBView();
@@ -118,8 +117,12 @@ class nsMsgSearchDBView : public nsMsgGroupView,
   virtual nsMsgViewIndex FindHdr(nsIMsgDBHdr* msgHdr,
                                  nsMsgViewIndex startIndex = 0,
                                  bool allowDummy = false) override;
+
+  // Functions for copy, move, and delete operations.
   nsresult GetFoldersAndHdrsForSelection(
       nsTArray<nsMsgViewIndex> const& selection);
+  nsresult ProcessNextFolder(nsIMsgWindow* window);
+
   nsresult GroupSearchResultsByFolder();
   nsresult PartitionSelectionByFolder(
       nsTArray<nsMsgViewIndex> const& selection,
@@ -141,6 +144,7 @@ class nsMsgSearchDBView : public nsMsgGroupView,
   // and is kept in sync with them.
   nsCOMArray<nsIMsgFolder> m_folders;
 
+  // Used for copy, move, and delete operations.
   nsTArray<nsTArray<RefPtr<nsIMsgDBHdr>>> m_hdrsForEachFolder;
   nsCOMArray<nsIMsgFolder> m_uniqueFoldersSelected;
   uint32_t mCurIndex;
@@ -151,8 +155,6 @@ class nsMsgSearchDBView : public nsMsgGroupView,
   nsCOMPtr<nsIMsgFolder> mDestFolder;
   nsWeakPtr m_searchSession;
 
-  nsresult ProcessRequestsInOneFolder(nsIMsgWindow* window);
-  nsresult ProcessRequestsInAllFolders(nsIMsgWindow* window);
   // these are for doing threading of the search hits
 
   // used for assigning thread id's to xfview threads.
@@ -165,7 +167,7 @@ class nsMsgSearchDBView : public nsMsgGroupView,
 
   // map message-ids to msg hdrs in the view, used for threading.
   nsInterfaceHashtable<nsCStringHashKey, nsIMsgDBHdr> m_hdrsTable;
-  uint32_t m_totalMessagesInView;
+  int32_t m_totalMessagesInView;
 
   virtual nsMsgGroupThread* CreateGroupThread(nsIMsgDatabase* db) override;
   nsresult GetXFThreadFromMsgHdr(nsIMsgDBHdr* msgHdr, nsIMsgThread** pThread,

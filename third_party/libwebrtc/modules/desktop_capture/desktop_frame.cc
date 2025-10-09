@@ -133,6 +133,8 @@ void DesktopFrame::CopyFrameInfoFrom(const DesktopFrame& other) {
   *mutable_updated_region() = other.updated_region();
   set_top_left(other.top_left());
   set_icc_profile(other.icc_profile());
+  set_may_contain_cursor(other.may_contain_cursor());
+  set_device_scale_factor(other.device_scale_factor());
 }
 
 void DesktopFrame::MoveFrameInfoFrom(DesktopFrame* other) {
@@ -142,6 +144,25 @@ void DesktopFrame::MoveFrameInfoFrom(DesktopFrame* other) {
   mutable_updated_region()->Swap(other->mutable_updated_region());
   set_top_left(other->top_left());
   set_icc_profile(other->icc_profile());
+  set_may_contain_cursor(other->may_contain_cursor());
+  set_device_scale_factor(other->device_scale_factor());
+}
+
+bool DesktopFrame::FrameDataIsBlack() const {
+  if (size().is_empty())
+    return false;
+
+  uint32_t* pixel = reinterpret_cast<uint32_t*>(data());
+  for (int i = 0; i < size().width() * size().height(); ++i) {
+    if (*pixel++)
+      return false;
+  }
+  return true;
+}
+
+void DesktopFrame::SetFrameDataToBlack() {
+  const uint8_t kBlackPixelValue = 0x00;
+  memset(data(), kBlackPixelValue, stride() * size().height());
 }
 
 BasicDesktopFrame::BasicDesktopFrame(DesktopSize size)

@@ -8,19 +8,13 @@
 #include "plstr.h"
 #include "prmem.h"
 #include "prprf.h"
-
-#include "nsIServiceManager.h"
 #include "nsCOMPtr.h"
 #include "nsString.h"
-#include "nsMemory.h"
-#include "nsISupportsPrimitives.h"
-
 #include "nsIMsgBiffManager.h"
 #include "nsIMsgFolder.h"
 #include "nsMsgDBFolder.h"
 #include "nsIMsgFolderCache.h"
 #include "nsIMsgPluggableStore.h"
-#include "nsIMsgFolderCacheElement.h"
 #include "nsIMsgWindow.h"
 #include "nsIMsgFilterService.h"
 #include "nsIMsgProtocolInfo.h"
@@ -30,11 +24,9 @@
 #include "nsIDocShell.h"
 #include "nsIAuthPrompt.h"
 #include "nsNetUtil.h"
+#include "nsLocalFile.h"
 #include "nsIWindowWatcher.h"
-#include "nsIStringBundle.h"
 #include "nsIMsgHdr.h"
-#include "nsIInterfaceRequestor.h"
-#include "nsIInterfaceRequestorUtils.h"
 #include "nsILoginInfo.h"
 #include "nsILoginManager.h"
 #include "nsIMsgAccountManager.h"
@@ -49,18 +41,25 @@
 #include "nsIObserverService.h"
 #include "mozilla/Unused.h"
 #include "nsIUUIDGenerator.h"
-#include "nsArrayUtils.h"
+#include "nsIArray.h"
+#ifdef MOZ_PANORAMA
+#  include "nsIDatabaseCore.h"
+#  include "nsIFolder.h"
+#  include "nsIFolderDatabase.h"
+#endif  // MOZ_PANORAMA
 
 #define PORT_NOT_SET -1
 
+using mozilla::Preferences;
+
 nsMsgIncomingServer::nsMsgIncomingServer()
-    : m_rootFolder(nullptr),
+    : m_hasShutDown(false),
+      m_rootFolder(nullptr),
       m_downloadedHdrs(50),
       m_numMsgsDownloaded(0),
       m_biffState(nsIMsgFolder::nsMsgBiffState_Unknown),
       m_serverBusy(false),
       m_canHaveFilters(true),
-      m_displayStartupPage(true),
       mPerformingBiff(false) {}
 
 nsresult nsMsgIncomingServer::Init() {
@@ -69,8 +68,7 @@ nsresult nsMsgIncomingServer::Init() {
       mozilla::services::GetObserverService();
   NS_ENSURE_TRUE(observerService, NS_ERROR_UNEXPECTED);
 
-  observerService->AddObserver(this, "passwordmgr-storage-changed", false);
-  observerService->AddObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID, false);
+  observerService->AddObserver(this, "passwordmgr-storage-changed", true);
   return NS_OK;
 }
 
@@ -130,7 +128,8 @@ nsMsgIncomingServer::Observe(nsISupports* aSubject, const char* aTopic,
       nsAutoCString thisFullName;
       GetType(thisFullName);
       if (thisFullName.EqualsLiteral("pop3")) {
-        // Note: POP3 now handled by MsgIncomingServer.jsm so does not occur.
+        // Note: POP3 now handled by MsgIncomingServer.sys.mjs so does not
+        // occur.
         MOZ_ASSERT_UNREACHABLE("pop3 should not use nsMsgIncomingServer");
         thisFullName = "mailbox://"_ns + thisHostname;
       } else {
@@ -156,14 +155,6 @@ nsMsgIncomingServer::Observe(nsISupports* aSubject, const char* aTopic,
     // will still clear the cached password regardless of authentication method.
     rv = ForgetSessionPassword(NS_strcmp(aData, u"modifyLogin") == 0);
     NS_ENSURE_SUCCESS(rv, rv);
-  } else if (strcmp(aTopic, NS_XPCOM_SHUTDOWN_OBSERVER_ID) == 0) {
-    // Now remove ourselves from the observer service as well.
-    nsCOMPtr<nsIObserverService> observerService =
-        mozilla::services::GetObserverService();
-    NS_ENSURE_TRUE(observerService, NS_ERROR_UNEXPECTED);
-
-    observerService->RemoveObserver(this, "passwordmgr-storage-changed");
-    observerService->RemoveObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID);
   }
 
   return NS_OK;
@@ -214,7 +205,7 @@ nsMsgIncomingServer::GetUID(nsACString& uid) {
   nsresult rv = mPrefBranch->PrefHasUserValue("uid", &hasValue);
   NS_ENSURE_SUCCESS(rv, rv);
   if (hasValue) {
-    return GetCharValue("uid", uid);
+    return GetStringValue("uid", uid);
   }
 
   nsCOMPtr<nsIUUIDGenerator> uuidgen =
@@ -240,13 +231,7 @@ nsMsgIncomingServer::SetUID(const nsACString& uid) {
   if (hasValue) {
     return NS_ERROR_ABORT;
   }
-  return SetCharValue("uid", uid);
-}
-
-NS_IMETHODIMP
-nsMsgIncomingServer::SetRootFolder(nsIMsgFolder* aRootFolder) {
-  m_rootFolder = aRootFolder;
-  return NS_OK;
+  return SetStringValue("uid", uid);
 }
 
 // this will return the root folder of this account,
@@ -319,6 +304,7 @@ NS_IMETHODIMP nsMsgIncomingServer::WriteToFolderCache(
 NS_IMETHODIMP
 nsMsgIncomingServer::Shutdown() {
   nsresult rv = CloseCachedConnections();
+  m_hasShutDown = true;
   mFilterPlugin = nullptr;
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -335,6 +321,11 @@ nsMsgIncomingServer::Shutdown() {
     NS_ENSURE_SUCCESS(rv, rv);
     mSpamSettings = nullptr;
   }
+
+  nsCOMPtr<nsIObserverService> observerService =
+      mozilla::services::GetObserverService();
+  observerService->RemoveObserver(this, "passwordmgr-storage-changed");
+
   return rv;
 }
 
@@ -345,22 +336,9 @@ nsMsgIncomingServer::CloseCachedConnections() {
 }
 
 NS_IMETHODIMP
-nsMsgIncomingServer::GetDownloadMessagesAtStartup(bool* getMessagesAtStartup) {
-  // derived class should override if they need to do this.
-  *getMessagesAtStartup = false;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 nsMsgIncomingServer::GetCanHaveFilters(bool* canHaveFilters) {
   NS_ENSURE_ARG_POINTER(canHaveFilters);
   *canHaveFilters = m_canHaveFilters;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgIncomingServer::SetCanHaveFilters(bool aCanHaveFilters) {
-  m_canHaveFilters = aCanHaveFilters;
   return NS_OK;
 }
 
@@ -376,23 +354,6 @@ nsMsgIncomingServer::GetCanSearchMessages(bool* canSearchMessages) {
   // derived class should override if they need to do this.
   NS_ENSURE_ARG_POINTER(canSearchMessages);
   *canSearchMessages = false;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgIncomingServer::GetCanCompactFoldersOnServer(
-    bool* canCompactFoldersOnServer) {
-  // derived class should override if they need to do this.
-  NS_ENSURE_ARG_POINTER(canCompactFoldersOnServer);
-  *canCompactFoldersOnServer = true;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgIncomingServer::GetCanUndoDeleteOnServer(bool* canUndoDeleteOnServer) {
-  // derived class should override if they need to do this.
-  NS_ENSURE_ARG_POINTER(canUndoDeleteOnServer);
-  *canUndoDeleteOnServer = true;
   return NS_OK;
 }
 
@@ -426,12 +387,12 @@ nsMsgIncomingServer::GetServerURI(nsACString& aResult) {
 }
 
 // helper routine to create local folder on disk, if it doesn't exist.
-nsresult nsMsgIncomingServer::CreateLocalFolder(const nsAString& folderName) {
+nsresult nsMsgIncomingServer::CreateLocalFolder(const nsACString& folderName) {
   nsCOMPtr<nsIMsgFolder> rootFolder;
   nsresult rv = GetRootFolder(getter_AddRefs(rootFolder));
   NS_ENSURE_SUCCESS(rv, rv);
   nsCOMPtr<nsIMsgFolder> child;
-  rv = rootFolder->GetChildNamed(folderName, getter_AddRefs(child));
+  rootFolder->GetChildNamed(folderName, getter_AddRefs(child));
   if (child) return NS_OK;
   nsCOMPtr<nsIMsgPluggableStore> msgStore;
   rv = GetMsgStore(getter_AddRefs(msgStore));
@@ -445,9 +406,33 @@ nsresult nsMsgIncomingServer::CreateRootFolder() {
   nsCString serverUri;
   rv = GetServerURI(serverUri);
   NS_ENSURE_SUCCESS(rv, rv);
-  rv = GetOrCreateFolder(serverUri, getter_AddRefs(m_rootFolder));
-  NS_ENSURE_SUCCESS(rv, rv);
-  return NS_OK;
+
+#ifdef MOZ_PANORAMA
+  if (Preferences::GetBool("mail.panorama.enabled", false)) {
+    nsCOMPtr<nsIDatabaseCore> core =
+        mozilla::components::DatabaseCore::Service();
+    nsCOMPtr<nsIFolderDatabase> folders;
+    core->GetFolders(getter_AddRefs(folders));
+
+    nsCOMPtr<nsIFolder> root;
+    rv = folders->GetFolderByPath(m_serverKey, getter_AddRefs(root));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (!root) {
+      folders->InsertRoot(m_serverKey, getter_AddRefs(root));
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+
+    m_rootFolder =
+        do_CreateInstance("@mozilla.org/mail/folder;1?name=mailbox", &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCOMPtr<nsIInitableWithFolder> initable = do_QueryInterface(m_rootFolder);
+    rv = initable->InitWithFolder(root);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+#endif  // MOZ_PANORAMA
+  return GetOrCreateFolder(serverUri, getter_AddRefs(m_rootFolder));
 }
 
 NS_IMETHODIMP
@@ -560,30 +545,17 @@ nsMsgIncomingServer::SetIntValue(const char* prefname, int32_t val) {
 }
 
 NS_IMETHODIMP
-nsMsgIncomingServer::GetCharValue(const char* prefname, nsACString& val) {
+nsMsgIncomingServer::GetStringValue(const char* prefname, nsACString& val) {
   if (!mPrefBranch) return NS_ERROR_NOT_INITIALIZED;
 
-  nsCString tmpVal;
-  if (NS_FAILED(mPrefBranch->GetCharPref(prefname, tmpVal)))
-    mDefPrefBranch->GetCharPref(prefname, tmpVal);
-  val = tmpVal;
+  if (NS_FAILED(mPrefBranch->GetStringPref(prefname, ""_ns, 0, val)))
+    mDefPrefBranch->GetStringPref(prefname, ""_ns, 0, val);
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMsgIncomingServer::GetUnicharValue(const char* prefname, nsAString& val) {
-  if (!mPrefBranch) return NS_ERROR_NOT_INITIALIZED;
-
-  nsCString valueUtf8;
-  if (NS_FAILED(
-          mPrefBranch->GetStringPref(prefname, EmptyCString(), 0, valueUtf8)))
-    mDefPrefBranch->GetStringPref(prefname, EmptyCString(), 0, valueUtf8);
-  CopyUTF8toUTF16(valueUtf8, val);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgIncomingServer::SetCharValue(const char* prefname, const nsACString& val) {
+nsMsgIncomingServer::SetStringValue(const char* prefname,
+                                    const nsACString& val) {
   if (!mPrefBranch) return NS_ERROR_NOT_INITIALIZED;
 
   if (val.IsEmpty()) {
@@ -592,42 +564,20 @@ nsMsgIncomingServer::SetCharValue(const char* prefname, const nsACString& val) {
   }
 
   nsCString defaultVal;
-  nsresult rv = mDefPrefBranch->GetCharPref(prefname, defaultVal);
+  nsresult rv = mDefPrefBranch->GetStringPref(prefname, ""_ns, 0, defaultVal);
 
   if (NS_SUCCEEDED(rv) && defaultVal.Equals(val))
     mPrefBranch->ClearUserPref(prefname);
   else
-    rv = mPrefBranch->SetCharPref(prefname, val);
-
-  return rv;
-}
-
-NS_IMETHODIMP
-nsMsgIncomingServer::SetUnicharValue(const char* prefname,
-                                     const nsAString& val) {
-  if (!mPrefBranch) return NS_ERROR_NOT_INITIALIZED;
-
-  if (val.IsEmpty()) {
-    mPrefBranch->ClearUserPref(prefname);
-    return NS_OK;
-  }
-
-  nsCString defaultVal;
-  nsresult rv =
-      mDefPrefBranch->GetStringPref(prefname, EmptyCString(), 0, defaultVal);
-
-  if (NS_SUCCEEDED(rv) && defaultVal.Equals(NS_ConvertUTF16toUTF8(val)))
-    mPrefBranch->ClearUserPref(prefname);
-  else
-    rv = mPrefBranch->SetStringPref(prefname, NS_ConvertUTF16toUTF8(val));
+    rv = mPrefBranch->SetStringPref(prefname, val);
 
   return rv;
 }
 
 // pretty name is the display name to show to the user
 NS_IMETHODIMP
-nsMsgIncomingServer::GetPrettyName(nsAString& retval) {
-  nsresult rv = GetUnicharValue("name", retval);
+nsMsgIncomingServer::GetPrettyName(nsACString& retval) {
+  nsresult rv = GetStringValue("name", retval);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // if there's no name, then just return the hostname
@@ -635,8 +585,8 @@ nsMsgIncomingServer::GetPrettyName(nsAString& retval) {
 }
 
 NS_IMETHODIMP
-nsMsgIncomingServer::SetPrettyName(const nsAString& value) {
-  SetUnicharValue("name", value);
+nsMsgIncomingServer::SetPrettyName(const nsACString& value) {
+  SetStringValue("name", value);
   nsCOMPtr<nsIMsgFolder> rootFolder;
   GetRootFolder(getter_AddRefs(rootFolder));
   if (rootFolder) rootFolder->SetPrettyName(value);
@@ -646,12 +596,12 @@ nsMsgIncomingServer::SetPrettyName(const nsAString& value) {
 // construct the pretty name to show to the user if they haven't
 // specified one. This should be overridden for news and mail.
 NS_IMETHODIMP
-nsMsgIncomingServer::GetConstructedPrettyName(nsAString& retval) {
+nsMsgIncomingServer::GetConstructedPrettyName(nsACString& retval) {
   nsCString username;
   nsresult rv = GetUsername(username);
   NS_ENSURE_SUCCESS(rv, rv);
   if (!username.IsEmpty()) {
-    CopyASCIItoUTF16(username, retval);
+    retval.Assign(username);
     retval.AppendLiteral(" on ");
   }
 
@@ -659,7 +609,7 @@ nsMsgIncomingServer::GetConstructedPrettyName(nsAString& retval) {
   rv = GetHostName(hostname);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  retval.Append(NS_ConvertASCIItoUTF16(hostname));
+  retval.Append(hostname);
   return NS_OK;
 }
 
@@ -938,10 +888,10 @@ nsMsgIncomingServer::GetMsgStore(nsIMsgPluggableStore** aMsgStore) {
     // berkeley store, and then set the store pref off of some sort
     // of default when creating a server. But we need to make sure
     // that we do always write a store pref.
-    GetCharValue("storeContractID", storeContractID);
+    GetStringValue("storeContractID", storeContractID);
     if (storeContractID.IsEmpty()) {
       storeContractID.AssignLiteral("@mozilla.org/msgstore/berkeleystore;1");
-      SetCharValue("storeContractID", storeContractID);
+      SetStringValue("storeContractID", storeContractID);
     }
 
     // After someone starts using the pluggable store, we can no longer
@@ -1029,7 +979,7 @@ nsMsgIncomingServer::RemoveFiles() {
   // IMPORTANT, see bug #77652
   // TODO: Decide what to do for deferred accounts.
   nsCString deferredToAccount;
-  GetCharValue("deferred_to_account", deferredToAccount);
+  GetStringValue("deferred_to_account", deferredToAccount);
   bool isDeferredTo = true;
   GetIsDeferredTo(&isDeferredTo);
   if (!deferredToAccount.IsEmpty() || isDeferredTo) {
@@ -1061,7 +1011,7 @@ nsMsgIncomingServer::GetFilterList(nsIMsgWindow* aMsgWindow,
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsCString filterType;
-    rv = GetCharValue("filter.type", filterType);
+    rv = GetStringValue("filter.type", filterType);
     NS_ENSURE_SUCCESS(rv, rv);
 
     if (!filterType.IsEmpty() && !filterType.EqualsLiteral("default")) {
@@ -1085,8 +1035,7 @@ nsMsgIncomingServer::GetFilterList(nsIMsgWindow* aMsgWindow,
     rv = msgFolder->GetFilePath(getter_AddRefs(thisFolder));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    mFilterFile = do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    mFilterFile = new nsLocalFile();
     rv = mFilterFile->InitWithFile(thisFolder);
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1095,9 +1044,7 @@ nsMsgIncomingServer::GetFilterList(nsIMsgWindow* aMsgWindow,
     bool fileExists;
     mFilterFile->Exists(&fileExists);
     if (!fileExists) {
-      nsCOMPtr<nsIFile> oldFilterFile =
-          do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv);
-      NS_ENSURE_SUCCESS(rv, rv);
+      nsCOMPtr<nsIFile> oldFilterFile = new nsLocalFile();
       rv = oldFilterFile->InitWithFile(thisFolder);
       NS_ENSURE_SUCCESS(rv, rv);
       oldFilterFile->AppendNative("rules.dat"_ns);
@@ -1140,7 +1087,7 @@ nsMsgIncomingServer::GetEditableFilterList(nsIMsgWindow* aMsgWindow,
       return GetFilterList(aMsgWindow, aResult);
 
     nsCString filterType;
-    rv = GetCharValue("filter.editable.type", filterType);
+    rv = GetStringValue("filter.editable.type", filterType);
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsAutoCString contractID("@mozilla.org/filterlist;1?type=");
@@ -1181,7 +1128,7 @@ nsresult nsMsgIncomingServer::InternalSetHostName(const nsACString& aHostname,
     int32_t port = portString.ToInteger(&err);
     if (NS_SUCCEEDED(err)) SetPort(port);
   }
-  return SetCharValue(prefName, hostname);
+  return SetStringValue(prefName, hostname);
 }
 
 NS_IMETHODIMP
@@ -1198,7 +1145,7 @@ nsMsgIncomingServer::OnUserOrHostNameChanged(const nsACString& oldName,
   }
 
   // 2. Replace all occurrences of old name in the acct name with the new one.
-  nsString acctName;
+  nsAutoCString acctName;
   rv = GetPrettyName(acctName);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1230,8 +1177,8 @@ nsMsgIncomingServer::OnUserOrHostNameChanged(const nsACString& oldName,
   if (!hostnameChanged && (atPos != kNotFound)) {
     // ...if username changed and the previous username was equal to the part
     // of the account name before @
-    if (StringHead(acctName, atPos).Equals(NS_ConvertASCIItoUTF16(userName)))
-      acctName.Replace(0, userName.Length(), NS_ConvertASCIItoUTF16(newName));
+    if (StringHead(acctName, atPos).Equals(userName))
+      acctName.Replace(0, userName.Length(), newName);
   }
   if (hostnameChanged) {
     // ...if hostname changed and the previous hostname was equal to the part
@@ -1240,9 +1187,8 @@ nsMsgIncomingServer::OnUserOrHostNameChanged(const nsACString& oldName,
       atPos = 0;
     else
       atPos += 1;
-    if (Substring(acctName, atPos).Equals(NS_ConvertASCIItoUTF16(hostName))) {
-      acctName.Replace(atPos, acctName.Length() - atPos,
-                       NS_ConvertASCIItoUTF16(newName));
+    if (Substring(acctName, atPos).Equals(hostName)) {
+      acctName.Replace(atPos, acctName.Length() - atPos, newName);
     }
   }
 
@@ -1264,11 +1210,11 @@ nsMsgIncomingServer::SetHostName(const nsACString& aHostname) {
 
 NS_IMETHODIMP
 nsMsgIncomingServer::GetHostName(nsACString& aResult) {
-  nsresult rv = GetCharValue("hostname", aResult);
+  nsresult rv = GetStringValue("hostname", aResult);
   if (aResult.CountChar(':') == 1) {
     // gack, we need to reformat the hostname - SetHostName will do that
     SetHostName(aResult);
-    rv = GetCharValue("hostname", aResult);
+    rv = GetStringValue("hostname", aResult);
   }
   return rv;
 }
@@ -1288,18 +1234,18 @@ nsMsgIncomingServer::SetUsername(const nsACString& aUsername) {
              .Equals(NS_ConvertASCIItoUTF16(oldName))) {
       ForgetPassword();
     }
-    rv = SetCharValue("userName", aUsername);
+    rv = SetStringValue("userName", aUsername);
     NS_ENSURE_SUCCESS(rv, rv);
     rv = OnUserOrHostNameChanged(oldName, aUsername, false);
   } else {
-    rv = SetCharValue("userName", aUsername);
+    rv = SetStringValue("userName", aUsername);
   }
   return rv;
 }
 
 NS_IMETHODIMP
 nsMsgIncomingServer::GetUsername(nsACString& aResult) {
-  return GetCharValue("userName", aResult);
+  return GetStringValue("userName", aResult);
 }
 
 #define BIFF_PREF_NAME "check_new_mail"
@@ -1477,19 +1423,6 @@ NS_IMETHODIMP nsMsgIncomingServer::SetRetentionSettings(
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsMsgIncomingServer::GetDisplayStartupPage(bool* displayStartupPage) {
-  NS_ENSURE_ARG_POINTER(displayStartupPage);
-  *displayStartupPage = m_displayStartupPage;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgIncomingServer::SetDisplayStartupPage(bool displayStartupPage) {
-  m_displayStartupPage = displayStartupPage;
-  return NS_OK;
-}
-
 NS_IMETHODIMP nsMsgIncomingServer::GetDownloadSettings(
     nsIMsgDownloadSettings** settings) {
   NS_ENSURE_ARG_POINTER(settings);
@@ -1552,25 +1485,6 @@ nsMsgIncomingServer::GetOfflineSupportLevel(int32_t* aSupportLevel) {
 }
 
 NS_IMETHODIMP
-nsMsgIncomingServer::SetOfflineSupportLevel(int32_t aSupportLevel) {
-  SetIntValue("offline_support_level", aSupportLevel);
-  return NS_OK;
-}
-
-// Called only during the migration process. A unique name is generated for the
-// migrated account.
-NS_IMETHODIMP
-nsMsgIncomingServer::GeneratePrettyNameForMigration(nsAString& aPrettyName) {
-  /**
-   * 4.x had provisions for multiple imap servers to be maintained under
-   * single identity. So, when migrated each of those server accounts need
-   * to be represented by unique account name. nsImapIncomingServer will
-   * override the implementation for this to do the right thing.
-   */
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_IMETHODIMP
 nsMsgIncomingServer::GetFilterScope(nsMsgSearchScopeValue* filterScope) {
   NS_ENSURE_ARG_POINTER(filterScope);
   *filterScope = nsMsgSearchScope::offlineMailFilter;
@@ -1605,7 +1519,6 @@ NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, DownloadOnBiff, "download_on_biff")
 NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, Valid, "valid")
 NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, EmptyTrashOnExit,
                         "empty_trash_on_exit")
-NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, CanDelete, "canDelete")
 NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer, LoginAtStartUp, "login_at_startup")
 NS_IMPL_SERVERPREF_BOOL(nsMsgIncomingServer,
                         DefaultCopiesAndFoldersPrefsToServer,
@@ -1879,7 +1792,7 @@ nsresult nsMsgIncomingServer::ConfigureTemporaryReturnReceiptsFilter(
     newFilter->SetEnabled(enable);
   else if (enable) {
     nsCString actionTargetFolderUri;
-    rv = identity->GetFccFolder(actionTargetFolderUri);
+    rv = identity->GetFccFolderURI(actionTargetFolderUri);
     if (!actionTargetFolderUri.IsEmpty()) {
       filterList->CreateFilter(internalReturnReceiptFilterName,
                                getter_AddRefs(newFilter));
@@ -1973,10 +1886,10 @@ nsMsgIncomingServer::GetSpamSettings(nsISpamSettings** aSpamSettings) {
   NS_ENSURE_ARG_POINTER(aSpamSettings);
 
   nsAutoCString spamActionTargetAccount;
-  GetCharValue("spamActionTargetAccount", spamActionTargetAccount);
+  GetStringValue("spamActionTargetAccount", spamActionTargetAccount);
   if (spamActionTargetAccount.IsEmpty()) {
     GetServerURI(spamActionTargetAccount);
-    SetCharValue("spamActionTargetAccount", spamActionTargetAccount);
+    SetStringValue("spamActionTargetAccount", spamActionTargetAccount);
   }
 
   if (!mSpamSettings) {
@@ -2051,7 +1964,7 @@ NS_IMETHODIMP nsMsgIncomingServer::GetIsDeferredTo(bool* aIsDeferredTo) {
       for (auto server : allServers) {
         if (server) {
           nsCString deferredToAccount;
-          server->GetCharValue("deferred_to_account", deferredToAccount);
+          server->GetStringValue("deferred_to_account", deferredToAccount);
           if (deferredToAccount.Equals(accountKey)) {
             *aIsDeferredTo = true;
             return NS_OK;
@@ -2084,7 +1997,7 @@ NS_IMETHODIMP nsMsgIncomingServer::IsNewHdrDuplicate(nsIMsgDBHdr* aNewHdr,
 
   nsAutoCString strHashKey;
   nsCString messageId, subject;
-  aNewHdr->GetMessageId(getter_Copies(messageId));
+  aNewHdr->GetMessageId(messageId);
   strHashKey.Append(messageId);
   aNewHdr->GetSubject(subject);
   // err on the side of caution and ignore messages w/o subject or messageid.
@@ -2111,32 +2024,5 @@ NS_IMETHODIMP nsMsgIncomingServer::IsNewHdrDuplicate(nsIMsgDBHdr* aNewHdr,
       }
     }
   }
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgIncomingServer::GetForcePropertyEmpty(const char* aPropertyName,
-                                           bool* _retval) {
-  NS_ENSURE_ARG_POINTER(_retval);
-  nsAutoCString nameEmpty(aPropertyName);
-  nameEmpty.AppendLiteral(".empty");
-  nsCString value;
-  GetCharValue(nameEmpty.get(), value);
-  *_retval = value.EqualsLiteral("true");
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgIncomingServer::SetForcePropertyEmpty(const char* aPropertyName,
-                                           bool aValue) {
-  nsAutoCString nameEmpty(aPropertyName);
-  nameEmpty.AppendLiteral(".empty");
-  return SetCharValue(nameEmpty.get(), aValue ? "true"_ns : ""_ns);
-}
-
-NS_IMETHODIMP
-nsMsgIncomingServer::GetSortOrder(int32_t* aSortOrder) {
-  NS_ENSURE_ARG_POINTER(aSortOrder);
-  *aSortOrder = 100000000;
   return NS_OK;
 }

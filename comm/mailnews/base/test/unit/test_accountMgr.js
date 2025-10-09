@@ -8,8 +8,8 @@
  * mail.accountmanager.accounts list, and removing duplicate accounts with
  * the same server.
  */
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 function run_test() {
@@ -64,18 +64,18 @@ function run_test() {
     Services.prefs.getCharPref("mail.accountmanager.accounts"),
     "account4,account5,account1"
   );
-  let server5 = MailServices.accounts
+  const server5 = MailServices.accounts
     .getIncomingServer("server5")
     .QueryInterface(Ci.nsIPop3IncomingServer);
   Assert.equal(server5.deferredToAccount, "account1");
 
-  // Just make sure this doesn't throw an exception, because we did remove the
-  // default account.
-  let defaultAccount = MailServices.accounts.defaultAccount;
-  Assert.equal(defaultAccount, null);
+  // Make sure the first viable account found is automatically set as default,
+  // after we've removed the previous default account.
+  const defaultAccount = MailServices.accounts.defaultAccount;
+  Assert.equal(defaultAccount.key, "account4");
 
   // Remove an account, and verify that the account list pref looks OK:
-  let server = MailServices.accounts.getIncomingServer("server4");
+  const server = MailServices.accounts.getIncomingServer("server4");
 
   // We need to get the root folder to read from the folder cache
   // before it gets removed or else we'll assert, because we're
@@ -83,7 +83,7 @@ function run_test() {
   server.rootFolder.flags;
 
   MailServices.accounts.removeAccount(
-    MailServices.accounts.FindAccountForServer(server)
+    MailServices.accounts.findAccountForServer(server)
   );
   Assert.equal(MailServices.accounts.accounts.length, 2);
   Assert.equal(

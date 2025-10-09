@@ -133,7 +133,7 @@ add_task(async function test_remote_window_open_data_uri2() {
   // The iframe test2.html will fetch test2.js, which will have cookies.
   const DATA_URI = `data:text/html,
                     <iframe id="iframe1" src="${TEST_PAGE}"></iframe>`;
-  BrowserTestUtils.loadURIString(browser, DATA_URI);
+  BrowserTestUtils.startLoadingURIString(browser, DATA_URI);
   await BrowserTestUtils.browserLoaded(browser, true, TEST_PAGE);
 
   await SpecialPowers.spawn(browser, [], async function () {
@@ -183,7 +183,7 @@ add_task(async function test_aboutURL() {
   let aboutURLs = [];
 
   // List of about: URLs that will initiate network requests.
-  let networkURLs = ["credits", "logins"];
+  let networkURLs = ["credits", "logins", "rights"];
 
   for (let cid in Cc) {
     let result = cid.match(
@@ -212,7 +212,12 @@ add_task(async function test_aboutURL() {
         aboutType !== "newtab" &&
         // protections kicks of async messaging as soon as it loads,
         // this test closes the tab too soon causing errors
-        aboutType !== "protections"
+        aboutType !== "protections" &&
+        // These pages are disabled in certain cases.
+        aboutType !== "profilemanager" &&
+        aboutType !== "editprofile" &&
+        aboutType !== "deleteprofile" &&
+        aboutType !== "newprofile"
       ) {
         aboutURLs.push(aboutType);
       }

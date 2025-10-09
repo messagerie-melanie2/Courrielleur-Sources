@@ -10,15 +10,33 @@ GeckoCppUnitTests(
         "TestDllInterceptor",
         "TestIATPatcher",
         "TestMMPolicy",
+        "TestOleAut32Initialization",
     ],
     linkage=None,
 )
 
-if CONFIG["CPU_ARCH"] in ("x86", "x86_64"):
+if CONFIG["TARGET_CPU"] in ("x86", "x86_64"):
     # Cross-process interceptors not yet supported on aarch64
     GeckoCppUnitTests(
         [
             "TestDllInterceptorCrossProcess",
+        ],
+        linkage=None,
+    )
+
+if CONFIG["TARGET_CPU"] == "x86_64":
+    # Single-stepped lock acquisition not yet supported on aarch64
+    GeckoCppUnitTests(
+        [
+            "TestStackWalkInitialization",
+        ],
+        linkage=None,
+    )
+
+if CONFIG["TARGET_CPU"] == "aarch64":
+    GeckoCppUnitTests(
+        [
+            "TestArm64Disassembler",
         ],
         linkage=None,
     )

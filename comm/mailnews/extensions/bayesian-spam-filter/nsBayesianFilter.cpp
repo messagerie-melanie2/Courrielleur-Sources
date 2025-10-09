@@ -7,7 +7,6 @@
 #include "nsIInputStream.h"
 #include "nsIStreamListener.h"
 #include "nsNetUtil.h"
-#include "nsQuickSort.h"
 #include "nsIMsgMessageService.h"
 #include "nsMsgUtils.h"  // for GetMessageServiceFromURI
 #include "prnetdb.h"
@@ -39,7 +38,6 @@ using mozilla::intl::UnicodeProperties;
 #include "nsIMsgHdr.h"
 
 // needed to strip html out of the body
-#include "nsLayoutCID.h"
 #include "nsIParserUtils.h"
 #include "nsIDocumentEncoder.h"
 
@@ -2160,8 +2158,8 @@ bool CorpusStore::readTokens(FILE* stream, int64_t fileSize, uint32_t aTraitId,
     if (size >= bufferSize) {
       delete[] buffer;
       while (size >= bufferSize) {
+        if (bufferSize > UINT32_MAX / 2) return false;
         bufferSize *= 2;
-        if (bufferSize == 0) return false;
       }
       buffer = new char[bufferSize];
       if (!buffer) return false;

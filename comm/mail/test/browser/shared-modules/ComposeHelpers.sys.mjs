@@ -179,21 +179,11 @@ export async function close_compose_window(aWin, aShouldPrompt) {
  * `promise_new_window("msgcompose");` and the command to open
  * the compose window itself.
  *
- * @param {Promise} promise - The returned promise from `promise_new_window`.
- * @returns {Window} The loaded window of type "msgcompose".
+ * @param {Promise} composePromise - The returned promise from `promise_new_window`.
+ * @returns {Promise<Window>} The loaded window of type "msgcompose".
  */
 export async function compose_window_ready(composePromise) {
   const replyWindow = await composePromise;
-  return _wait_for_compose_window(replyWindow);
-}
-
-/**
- * Waits for a new compose window to open.
- *
- * @returns {Window} The loaded window of type "msgcompose".
- */
-export async function promise_compose_window() {
-  const replyWindow = promise_new_window("msgcompose");
   return _wait_for_compose_window(replyWindow);
 }
 
@@ -278,8 +268,8 @@ export function get_first_pill(win) {
 /**
  * Create and return an nsIMsgAttachment for the passed URL.
  *
- * @param aUrl the URL for this attachment (either a file URL or a web URL)
- * @param aSize (optional) the file size of this attachment, in bytes
+ * @param {string} aUrl - The URL for this attachment (either a file URL or a web URL)
+ * @param {integer} [aSize] - The file size of this attachment, in bytes.
  */
 export function create_msg_attachment(aUrl, aSize) {
   const attachment = Cc[
@@ -298,9 +288,9 @@ export function create_msg_attachment(aUrl, aSize) {
  * Add an attachment to the compose window.
  *
  * @param {Window} aWin - The composition window in question.
- * @param {string|string[]} aUrl - The URL for an attachment (either a file URL
+ * @param {string|string[]} aUrls - The URL for an attachment (either a file URL
  *   or a web URL), or an array of URLs for attachments.
- * @param {integer|integer[]} [aSize] - The file size of this attachment, in
+ * @param {integer|integer[]} [aSizes] - The file size of this attachment, in
  *   bytes, or an array of sizes.
  * @param {boolean} [aWaitAdded=true] - True to wait for the attachments to be
  *   fully added, false otherwise.
@@ -431,7 +421,7 @@ export async function convert_selected_to_cloud_attachment(
     const img = item.querySelector("img.attachmentcell-icon");
     Assert.equal(
       img.src,
-      "chrome://global/skin/icons/loading.png",
+      "chrome://messenger/skin/icons/spinning.svg",
       "Icon should be the spinner during conversion."
     );
 
@@ -529,7 +519,7 @@ export async function add_cloud_attachments(
     const img = item.querySelector("img.attachmentcell-icon");
     Assert.equal(
       img.src,
-      "chrome://global/skin/icons/loading.png",
+      "chrome://messenger/skin/icons/spinning.svg",
       "Icon should be the spinner during upload."
     );
 
@@ -656,11 +646,11 @@ export function type_in_composer(aWin, aText) {
  * a br node immediately preceding it. Repeated for each subsequent string
  * of the aText array (working from end to start).
  *
- * @param aStart the first node to check
- * @param aText an array of strings that should be checked for in reverse
- *              order (so the last element of the array should be the first
- *              text node encountered, the second last element of the array
- *              should be the next text node encountered, etc).
+ * @param {Node} aStart - The first node to check.
+ * @param {string[]} aText - An array of strings that should be checked for in
+ *   reverse order (so the last element of the array should be the first
+ *   text node encountered, the second last element of the array
+ *   should be the next text node encountered, etc).
  */
 export function assert_previous_text(aStart, aText) {
   let textNode = aStart;
@@ -697,10 +687,11 @@ export function assert_previous_text(aStart, aText) {
 /**
  * Helper to get the raw contents of a message. It only reads the first 64KiB.
  *
- * @param aMsgHdr  nsIMsgDBHdr addressing a message which will be returned as text.
- * @param aCharset Charset to use to decode the message.
+ * @param {nsIMsgDBHdr} aMsgHdr - nsIMsgDBHdr addressing a message which will be
+ *   returned as text.
+ * @param {string} aCharset - Charset to use to decode the message.
  *
- * @returns String with the message source.
+ * @returns {string} the message source.
  */
 export async function get_msg_source(aMsgHdr, aCharset = "") {
   const msgUri = aMsgHdr.folder.getUriForMsg(aMsgHdr);
@@ -867,8 +858,9 @@ export class FormatHelper {
         Assert.ok(data.implies, `Found implies for ${name}`);
       }
     });
+
     /**
-     * @typedef StyleData
+     * @typedef {object} StyleData
      * @property {string} name - The style name.
      * @property {string} tag - The tagName for the corresponding HTML element.
      * @property {MozMenuItem} item - The corresponding menu item in the
@@ -879,6 +871,7 @@ export class FormatHelper {
      * @property {StyleData} [implies] - The style that is implied by this
      *   style. If this style is set, the implied style is shown as also set.
      */
+
     /**
      * Data for the various text styles. Maps from the style name to its data.
      *
@@ -1552,6 +1545,11 @@ export class FormatHelper {
    * textContent and a break element, so do not use "<BR>" within the typed text
    * of the message.
    *
+   * Non-breaking spaces (e.g. `\u00A0`, often used by HTML editors for spacing)
+   * are treated as regular spaces during comparison to avoid false mismatches
+   * due to layout-preserving characters that are visually indistinguishable.
+   * This was introduced after bug 1951832 landed.
+   *
    * @param {(BlockSummary|StyledTextSummary|string)[]} content - The expected
    *   content, ordered the same as in the document structure. BlockSummary
    *   objects represent blocks, and will have their own content.
@@ -1563,8 +1561,10 @@ export class FormatHelper {
   assertMessageBodyContent(content, assertMessage) {
     const cls = this.constructor;
 
-    function message(message, below, index) {
-      return `${message} (at index ${index} below ${below})`;
+    const normalizeWhitespace = text => text.replace(/\u00A0/g, " ");
+
+    function message(messageText, below, index) {
+      return `${messageText} (at index ${index} below ${below})`;
     }
 
     function getDifference(node, expect, below, index) {
@@ -1576,7 +1576,9 @@ export class FormatHelper {
         if (node.text === undefined) {
           return message("Is not a (styled) text region", below, index);
         }
-        if (node.text !== expect.text) {
+        const normalizedNodeText = normalizeWhitespace(node.text);
+        const normalizedExpectText = normalizeWhitespace(expect.text);
+        if (normalizedNodeText !== normalizedExpectText) {
           return message(
             `Different text "${node.text}" vs "${expect.text}"`,
             below,
@@ -1930,7 +1932,7 @@ export class FormatHelper {
    * Note, this method does not currently work on mac/osx.
    *
    * @param {MozMenuPopup} menu - A closed menu below the Format menu to open.
-   * @param {function} test - A test to run, without arguments, when the menu is
+   * @param {Function} test - A test to run, without arguments, when the menu is
    *   open. Should return a truthy value on success.
    * @param {string} message - The message to use when asserting the success of
    *   the test.
@@ -2139,7 +2141,7 @@ export class FormatHelper {
    * Note, the dialog will have to be opened separately to this method. Normally
    * after this method, but before awaiting on the promise.
    *
-   * @property {string|null} - The color to choose, or null to choose the default.
+   * @param {string|null} color - The color to choose, or null to choose the default.
    *
    * @returns {Promise} - The promise to await on once the dialog is triggered.
    */
@@ -2163,7 +2165,7 @@ export class FormatHelper {
   /**
    * Select a font color for the editor, using the toolbar selector.
    *
-   * @param {string} font - The font color to select.
+   * @param {string} color - The font color to select.
    */
   async selectColor(color) {
     const selector = this.selectColorInDialog(color);
@@ -2243,7 +2245,7 @@ export class FormatHelper {
    *
    * Note, this method does not currently work on mac/osx.
    *
-   * @param {StyleData} style - The style data for the style to select.
+   * @param {StyleData} styleData - The style data for the style to select.
    */
   async selectStyle(styleData) {
     await this.selectFromFormatSubMenu(styleData.item, this.styleMenu);

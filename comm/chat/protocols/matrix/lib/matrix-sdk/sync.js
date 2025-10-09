@@ -3,51 +3,51 @@
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
-exports.SyncState = exports.SyncApi = void 0;
+exports.SyncState = exports.SyncApi = exports.SetPresence = void 0;
 exports._createAndReEmitRoom = _createAndReEmitRoom;
 exports.defaultClientOpts = defaultClientOpts;
 exports.defaultSyncApiOpts = defaultSyncApiOpts;
-var _user = require("./models/user");
-var _room = require("./models/room");
-var _utils = require("./utils");
-var _filter = require("./filter");
-var _eventTimeline = require("./models/event-timeline");
-var _logger = require("./logger");
-var _errors = require("./errors");
-var _client = require("./client");
-var _httpApi = require("./http-api");
-var _event = require("./@types/event");
-var _roomState = require("./models/room-state");
-var _roomMember = require("./models/room-member");
-var _beacon = require("./models/beacon");
-var _sync = require("./@types/sync");
-var _feature = require("./feature");
-function ownKeys(object, enumerableOnly) { var keys = Object.keys(object); if (Object.getOwnPropertySymbols) { var symbols = Object.getOwnPropertySymbols(object); enumerableOnly && (symbols = symbols.filter(function (sym) { return Object.getOwnPropertyDescriptor(object, sym).enumerable; })), keys.push.apply(keys, symbols); } return keys; }
-function _objectSpread(target) { for (var i = 1; i < arguments.length; i++) { var source = null != arguments[i] ? arguments[i] : {}; i % 2 ? ownKeys(Object(source), !0).forEach(function (key) { _defineProperty(target, key, source[key]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) : ownKeys(Object(source)).forEach(function (key) { Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key)); }); } return target; }
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(arg) { var key = _toPrimitive(arg, "string"); return typeof key === "symbol" ? key : String(key); }
-function _toPrimitive(input, hint) { if (typeof input !== "object" || input === null) return input; var prim = input[Symbol.toPrimitive]; if (prim !== undefined) { var res = prim.call(input, hint || "default"); if (typeof res !== "object") return res; throw new TypeError("@@toPrimitive must return a primitive value."); } return (hint === "string" ? String : Number)(input); } /*
-                                                                                                                                                                                                                                                                                                                                                                                          Copyright 2015 - 2023 The Matrix.org Foundation C.I.C.
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Licensed under the Apache License, Version 2.0 (the "License");
-                                                                                                                                                                                                                                                                                                                                                                                          you may not use this file except in compliance with the License.
-                                                                                                                                                                                                                                                                                                                                                                                          You may obtain a copy of the License at
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                              http://www.apache.org/licenses/LICENSE-2.0
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Unless required by applicable law or agreed to in writing, software
-                                                                                                                                                                                                                                                                                                                                                                                          distributed under the License is distributed on an "AS IS" BASIS,
-                                                                                                                                                                                                                                                                                                                                                                                          WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-                                                                                                                                                                                                                                                                                                                                                                                          See the License for the specific language governing permissions and
-                                                                                                                                                                                                                                                                                                                                                                                          limitations under the License.
-                                                                                                                                                                                                                                                                                                                                                                                          */ /*
-                                                                                                                                                                                                                                                                                                                                                                                              * TODO:
-                                                                                                                                                                                                                                                                                                                                                                                              * This class mainly serves to take all the syncing logic out of client.js and
-                                                                                                                                                                                                                                                                                                                                                                                              * into a separate file. It's all very fluid, and this class gut wrenches a lot
-                                                                                                                                                                                                                                                                                                                                                                                              * of MatrixClient props (e.g. http). Given we want to support WebSockets as
-                                                                                                                                                                                                                                                                                                                                                                                              * an alternative syncing API, we may want to have a proper syncing interface
-                                                                                                                                                                                                                                                                                                                                                                                              * for HTTP and WS at some point.
-                                                                                                                                                                                                                                                                                                                                                                                              */
+var _user = require("./models/user.js");
+var _room = require("./models/room.js");
+var _utils = require("./utils.js");
+var _filter = require("./filter.js");
+var _eventTimeline = require("./models/event-timeline.js");
+var _logger = require("./logger.js");
+var _client = require("./client.js");
+var _index = require("./http-api/index.js");
+var _event = require("./@types/event.js");
+var _roomState = require("./models/room-state.js");
+var _roomMember = require("./models/room-member.js");
+var _beacon = require("./models/beacon.js");
+var _sync = require("./@types/sync.js");
+var _feature = require("./feature.js");
+var _membership = require("./@types/membership.js");
+function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
+function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
+function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
+Copyright 2015 - 2023 The Matrix.org Foundation C.I.C.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/ /*
+ * TODO:
+ * This class mainly serves to take all the syncing logic out of client.js and
+ * into a separate file. It's all very fluid, and this class gut wrenches a lot
+ * of MatrixClient props (e.g. http). Given we want to support WebSockets as
+ * an alternative syncing API, we may want to have a proper syncing interface
+ * for HTTP and WS at some point.
+ */
 const DEBUG = true;
 
 // /sync requests allow you to set a timeout= but the request may continue
@@ -60,7 +60,7 @@ const BUFFER_PERIOD_MS = 80 * 1000;
 // to RECONNECTING. This is needed to inform the client of server issues when the
 // keepAlive is successful but the server /sync fails.
 const FAILED_SYNC_ERROR_THRESHOLD = 3;
-let SyncState = /*#__PURE__*/function (SyncState) {
+let SyncState = exports.SyncState = /*#__PURE__*/function (SyncState) {
   SyncState["Error"] = "ERROR";
   SyncState["Prepared"] = "PREPARED";
   SyncState["Stopped"] = "STOPPED";
@@ -71,7 +71,6 @@ let SyncState = /*#__PURE__*/function (SyncState) {
 }({}); // Room versions where "insertion", "batch", and "marker" events are controlled
 // by power-levels. MSC2716 is supported in existing room versions but they
 // should only have special meaning when the room creator sends them.
-exports.SyncState = SyncState;
 const MSC2716_ROOM_VERSIONS = ["org.matrix.msc2716v3"];
 function getFilterName(userId, suffix) {
   // scope this on the user ID because people may login on many accounts
@@ -88,12 +87,12 @@ function debuglog(...params) {
 /**
  * Options passed into the constructor of SyncApi by MatrixClient
  */
-var SetPresence = /*#__PURE__*/function (SetPresence) {
+let SetPresence = exports.SetPresence = /*#__PURE__*/function (SetPresence) {
   SetPresence["Offline"] = "offline";
   SetPresence["Online"] = "online";
   SetPresence["Unavailable"] = "unavailable";
   return SetPresence;
-}(SetPresence || {});
+}({});
 /** add default settings to an IStoredClientOpts */
 function defaultClientOpts(opts) {
   return _objectSpread({
@@ -110,7 +109,6 @@ function defaultSyncApiOpts(syncOpts) {
   }, syncOpts);
 }
 class SyncApi {
-  // flag set if the store needs to be cleared before we can start
   /**
    * Construct an entity which is able to sync with a homeserver.
    * @param client - The matrix client instance to use.
@@ -137,6 +135,8 @@ class SyncApi {
     _defineProperty(this, "failedSyncCount", 0);
     // Number of consecutive failed /sync requests
     _defineProperty(this, "storeIsInvalid", false);
+    // flag set if the store needs to be cleared before we can start
+    _defineProperty(this, "presence", void 0);
     _defineProperty(this, "getPushRules", async () => {
       try {
         debuglog("Getting push rules...");
@@ -160,44 +160,23 @@ class SyncApi {
       }
       return filter;
     });
-    _defineProperty(this, "checkLazyLoadStatus", async () => {
-      debuglog("Checking lazy load status...");
-      if (this.opts.lazyLoadMembers && this.client.isGuest()) {
+    _defineProperty(this, "prepareLazyLoadingForSync", async () => {
+      debuglog("Prepare lazy loading for sync...");
+      if (this.client.isGuest()) {
         this.opts.lazyLoadMembers = false;
       }
       if (this.opts.lazyLoadMembers) {
-        debuglog("Checking server lazy load support...");
-        const supported = await this.client.doesServerSupportLazyLoading();
-        if (supported) {
-          debuglog("Enabling lazy load on sync filter...");
-          if (!this.opts.filter) {
-            this.opts.filter = this.buildDefaultFilter();
-          }
-          this.opts.filter.setLazyLoadMembers(true);
-        } else {
-          debuglog("LL: lazy loading requested but not supported " + "by server, so disabling");
-          this.opts.lazyLoadMembers = false;
+        debuglog("Enabling lazy load on sync filter...");
+        if (!this.opts.filter) {
+          this.opts.filter = this.buildDefaultFilter();
         }
-      }
-      // need to vape the store when enabling LL and wasn't enabled before
-      debuglog("Checking whether lazy loading has changed in store...");
-      const shouldClear = await this.wasLazyLoadingToggled(this.opts.lazyLoadMembers);
-      if (shouldClear) {
-        this.storeIsInvalid = true;
-        const error = new _errors.InvalidStoreError(_errors.InvalidStoreState.ToggledLazyLoading, !!this.opts.lazyLoadMembers);
-        this.updateSyncState(SyncState.Error, {
-          error
-        });
-        // bail out of the sync loop now: the app needs to respond to this error.
-        // we leave the state as 'ERROR' which isn't great since this normally means
-        // we're retrying. The client must be stopped before clearing the stores anyway
-        // so the app should stop the client, clear the store and start it again.
-        _logger.logger.warn("InvalidStoreError: store is not usable: stopping sync.");
-        return;
+        this.opts.filter.setLazyLoadMembers(true);
       }
       if (this.opts.lazyLoadMembers) {
         this.syncOpts.crypto?.enableLazyLoading();
       }
+    });
+    _defineProperty(this, "storeClientOptions", async () => {
       try {
         debuglog("Storing client options...");
         await this.client.storeClientOptions();
@@ -227,7 +206,6 @@ class SyncApi {
         await this.recoverFromSyncStartupError(this.savedSyncPromise, err);
         return this.getFilter(); // try again
       }
-
       return {
         filter,
         filterId
@@ -330,7 +308,7 @@ class SyncApi {
       // don't want to block since this is a single isolated req
       filter: filterId
     };
-    const data = await client.http.authedRequest(_httpApi.Method.Get, "/sync", qps, undefined, {
+    const data = await client.http.authedRequest(_index.Method.Get, "/sync", qps, undefined, {
       localTimeoutMs
     });
     let leaveRooms = [];
@@ -374,16 +352,21 @@ class SyncApi {
    * Peek into a room. This will result in the room in question being synced so it
    * is accessible via getRooms(). Live updates for the room will be provided.
    * @param roomId - The room ID to peek into.
+   * @param limit - The number of timeline events to initially retrieve.
    * @returns A promise which resolves once the room has been added to the
    * store.
    */
-  peek(roomId) {
+  peek(roomId, limit = 20) {
     if (this._peekRoom?.roomId === roomId) {
       return Promise.resolve(this._peekRoom);
     }
     const client = this.client;
     this._peekRoom = this.createRoom(roomId);
-    return this.client.roomInitialSync(roomId, 20).then(response => {
+    return this.client.roomInitialSync(roomId, limit).then(response => {
+      if (this._peekRoom?.roomId !== roomId) {
+        throw new Error("Peeking aborted");
+      }
+
       // make sure things are init'd
       response.messages = response.messages || {
         chunk: []
@@ -405,7 +388,7 @@ class SyncApi {
           if (user) {
             user.setPresenceEvent(presenceEvent);
           } else {
-            user = createNewUser(client, presenceEvent.getContent().user_id);
+            user = _user.User.createUser(presenceEvent.getContent().user_id, client);
             user.setPresenceEvent(presenceEvent);
             client.store.storeUser(user);
           }
@@ -456,7 +439,7 @@ class SyncApi {
     }
 
     // FIXME: gut wrenching; hard-coded timeout values
-    this.client.http.authedRequest(_httpApi.Method.Get, "/events", {
+    this.client.http.authedRequest(_index.Method.Get, "/events", {
       room_id: peekRoom.roomId,
       timeout: String(30 * 1000),
       from: token
@@ -484,7 +467,7 @@ class SyncApi {
         if (user) {
           user.setPresenceEvent(presenceEvent);
         } else {
-          user = createNewUser(this.client, presenceEvent.getContent().user_id);
+          user = _user.User.createUser(presenceEvent.getContent().user_id, this.client);
           user.setPresenceEvent(presenceEvent);
           this.client.store.storeUser(user);
         }
@@ -537,25 +520,6 @@ class SyncApi {
     });
     await keepaliveProm;
   }
-
-  /**
-   * Is the lazy loading option different than in previous session?
-   * @param lazyLoadMembers - current options for lazy loading
-   * @returns whether or not the option has changed compared to the previous session */
-  async wasLazyLoadingToggled(lazyLoadMembers = false) {
-    // assume it was turned off before
-    // if we don't know any better
-    let lazyLoadMembersBefore = false;
-    const isStoreNewlyCreated = await this.client.store.isNewlyCreated();
-    if (!isStoreNewlyCreated) {
-      const prevClientOptions = await this.client.store.getClientOptions();
-      if (prevClientOptions) {
-        lazyLoadMembersBefore = !!prevClientOptions.lazyLoadMembers;
-      }
-      return lazyLoadMembersBefore !== lazyLoadMembers;
-    }
-    return false;
-  }
   shouldAbortSync(error) {
     if (error.errcode === "M_UNKNOWN_TOKEN") {
       // The logout already happened, we just need to stop.
@@ -602,14 +566,15 @@ class SyncApi {
     //   1) We need to get push rules so we can check if events should bing as we get
     //      them from /sync.
     //   2) We need to get/create a filter which we can use for /sync.
-    //   3) We need to check the lazy loading option matches what was used in the
-    //       stored sync. If it doesn't, we can't use the stored sync.
+    //   3) We need to prepare lazy loading for sync
+    //   4) We need to store the client options
 
     // Now start the first incremental sync request: this can also
     // take a while so if we set it going now, we can wait for it
     // to finish while we process our saved sync data.
     await this.getPushRules();
-    await this.checkLazyLoadStatus();
+    await this.prepareLazyLoadingForSync();
+    await this.storeClientOptions();
     const {
       filterId,
       filter
@@ -814,7 +779,7 @@ class SyncApi {
   }
   doSyncRequest(syncOptions, syncToken) {
     const qps = this.getSyncParams(syncOptions, syncToken);
-    return this.client.http.authedRequest(_httpApi.Method.Get, "/sync", qps, undefined, {
+    return this.client.http.authedRequest(_index.Method.Get, "/sync", qps, undefined, {
       localTimeoutMs: qps.timeout + BUFFER_PERIOD_MS,
       abortSignal: this.abortController?.signal
     });
@@ -846,6 +811,8 @@ class SyncApi {
     };
     if (this.opts.disablePresence) {
       qps.set_presence = SetPresence.Offline;
+    } else if (this.presence !== undefined) {
+      qps.set_presence = this.presence;
     }
     if (syncToken) {
       qps.since = syncToken;
@@ -864,6 +831,14 @@ class SyncApi {
     }
     return qps;
   }
+
+  /**
+   * Specify the set_presence value to be used for subsequent calls to the Sync API.
+   * @param presence - the presence to specify to set_presence of sync calls
+   */
+  setPresence(presence) {
+    this.presence = presence;
+  }
   async onSyncError(err) {
     if (!this.running) {
       debuglog("Sync no longer running: exiting");
@@ -874,12 +849,10 @@ class SyncApi {
       this.updateSyncState(SyncState.Stopped);
       return true; // abort
     }
-
     _logger.logger.error("/sync error %s", err);
     if (this.shouldAbortSync(err)) {
       return true; // abort
     }
-
     this.failedSyncCount++;
     _logger.logger.log("Number of consecutive failed sync requests:", this.failedSyncCount);
     debuglog("Starting keep-alive");
@@ -972,7 +945,7 @@ class SyncApi {
         if (user) {
           user.setPresenceEvent(presenceEvent);
         } else {
-          user = createNewUser(client, presenceEvent.getSender());
+          user = _user.User.createUser(presenceEvent.getSender(), client);
           user.setPresenceEvent(presenceEvent);
           client.store.storeUser(user);
         }
@@ -1055,6 +1028,7 @@ class SyncApi {
     let inviteRooms = [];
     let joinRooms = [];
     let leaveRooms = [];
+    let knockRooms = [];
     if (data.rooms) {
       if (data.rooms.invite) {
         inviteRooms = this.mapSyncResponseToRoomArray(data.rooms.invite);
@@ -1064,6 +1038,9 @@ class SyncApi {
       }
       if (data.rooms.leave) {
         leaveRooms = this.mapSyncResponseToRoomArray(data.rooms.leave);
+      }
+      if (data.rooms.knock) {
+        knockRooms = this.mapSyncResponseToRoomArray(data.rooms.knock);
       }
     }
     this.notifEvents = [];
@@ -1110,7 +1087,7 @@ class SyncApi {
       const events = this.mapSyncEventsFormat(joinObj.timeline, room, false);
       const ephemeralEvents = this.mapSyncEventsFormat(joinObj.ephemeral);
       const accountDataEvents = this.mapSyncEventsFormat(joinObj.account_data);
-      const encrypted = client.isRoomEncrypted(room.roomId);
+      const encrypted = this.isRoomEncrypted(room, stateEvents, events);
       // We store the server-provided value first so it's correct when any of the events fire.
       if (joinObj.unread_notifications) {
         /**
@@ -1118,6 +1095,9 @@ class SyncApi {
          * bother setting it here. We trust our calculations better than the
          * server's for this case, and therefore will assume that our non-zero
          * count is accurate.
+         * XXX: this is known faulty as the push rule for `.m.room.encrypted` may be disabled so server
+         * may issue notification counts of 0 which we wrongly trust.
+         * https://github.com/matrix-org/matrix-spec-proposals/pull/2654 would fix this
          *
          * @see import("./client").fixNotificationCountOnDecryption
          */
@@ -1135,11 +1115,11 @@ class SyncApi {
       }
       const unreadThreadNotifications = joinObj[_sync.UNREAD_THREAD_NOTIFICATIONS.name] ?? joinObj[_sync.UNREAD_THREAD_NOTIFICATIONS.altName];
       if (unreadThreadNotifications) {
-        // Only partially reset unread notification
-        // We want to keep the client-generated count. Particularly important
-        // for encrypted room that refresh their notification count on event
-        // decryption
-        room.resetThreadUnreadNotificationCount(Object.keys(unreadThreadNotifications));
+        // This mirrors the logic above for rooms: take the *total* notification count from
+        // the server for unencrypted rooms or is it's zero. Any threads not present in this
+        // object implicitly have zero notifications, so start by clearing the total counts
+        // for all such threads.
+        room.resetThreadUnreadNotificationCountFromSync(Object.keys(unreadThreadNotifications));
         for (const [threadId, unreadNotification] of Object.entries(unreadThreadNotifications)) {
           if (!encrypted || unreadNotification.notification_count === 0) {
             room.setThreadUnreadNotificationCount(threadId, _room.NotificationCountType.Total, unreadNotification.notification_count ?? 0);
@@ -1150,7 +1130,7 @@ class SyncApi {
           }
         }
       } else {
-        room.resetThreadUnreadNotificationCount();
+        room.resetThreadUnreadNotificationCountFromSync();
       }
       joinObj.timeline = joinObj.timeline || {};
       if (joinObj.isBrandNewRoom) {
@@ -1277,6 +1257,24 @@ class SyncApi {
       });
     });
 
+    // Handle knocks
+    await (0, _utils.promiseMapSeries)(knockRooms, async knockObj => {
+      const room = knockObj.room;
+      const stateEvents = this.mapSyncEventsFormat(knockObj.knock_state, room);
+      await this.injectRoomEvents(room, stateEvents);
+      if (knockObj.isBrandNewRoom) {
+        room.recalculate();
+        client.store.storeRoom(room);
+        client.emit(_client.ClientEvent.Room, room);
+      } else {
+        // Update room state for knock->leave->knock cycles
+        room.recalculate();
+      }
+      stateEvents.forEach(function (e) {
+        client.emit(_client.ClientEvent.Event, e);
+      });
+    });
+
     // update the notification timeline, if appropriate.
     // we only do this for live events, as otherwise we can't order them sanely
     // in the timeline relative to ones paginated in by /notifications.
@@ -1341,6 +1339,16 @@ class SyncApi {
    * @param connDidFail - True if a connectivity failure has been detected. Optional.
    */
   pokeKeepAlive(connDidFail = false) {
+    if (!this.running) {
+      // we are in a keepAlive, retrying to connect, but the syncronization
+      // was stopped, so we are stopping the retry.
+      clearTimeout(this.keepAliveTimer);
+      if (this.connectionReturnedDefer) {
+        this.connectionReturnedDefer.reject("SyncApi.stop() was called");
+        this.connectionReturnedDefer = undefined;
+      }
+      return;
+    }
     const success = () => {
       clearTimeout(this.keepAliveTimer);
       if (this.connectionReturnedDefer) {
@@ -1348,7 +1356,7 @@ class SyncApi {
         this.connectionReturnedDefer = undefined;
       }
     };
-    this.client.http.request(_httpApi.Method.Get, "/_matrix/client/versions", undefined,
+    this.client.http.request(_index.Method.Get, "/_matrix/client/versions", undefined,
     // queryParams
     undefined,
     // data
@@ -1423,7 +1431,7 @@ class SyncApi {
     const client = this.client;
     // For each invited room member we want to give them a displayname/avatar url
     // if they have one (the m.room.member invites don't contain this).
-    room.getMembersWithMembership("invite").forEach(function (member) {
+    room.getMembersWithMembership(_membership.KnownMembership.Invite).forEach(function (member) {
       if (member.requestedProfileInfo) return;
       member.requestedProfileInfo = true;
       // try to get a cached copy first.
@@ -1442,7 +1450,7 @@ class SyncApi {
         // the code paths remain the same between invite/join display name stuff
         // which is a worthy trade-off for some minor pollution.
         const inviteEvent = member.events.member;
-        if (inviteEvent?.getContent().membership !== "invite") {
+        if (inviteEvent?.getContent().membership !== _membership.KnownMembership.Invite) {
           // between resolving and now they have since joined, so don't clobber
           return;
         }
@@ -1454,6 +1462,15 @@ class SyncApi {
         // OH WELL.
       });
     });
+  }
+  findEncryptionEvent(events) {
+    return events?.find(e => e.getType() === _event.EventType.RoomEncryption && e.getStateKey() === "");
+  }
+
+  // When processing the sync response we cannot rely on Room.hasEncryptionStateEvent we actually
+  // inject the events into the room object, so we have to inspect the events themselves.
+  isRoomEncrypted(room, stateEventList, timelineEventList) {
+    return room.hasEncryptionStateEvent() || !!this.findEncryptionEvent(stateEventList) || !!this.findEncryptionEvent(timelineEventList);
   }
 
   /**
@@ -1564,15 +1581,10 @@ class SyncApi {
     this.client.emit(_client.ClientEvent.Sync, this.syncState, old, data);
   }
 }
-exports.SyncApi = SyncApi;
-function createNewUser(client, userId) {
-  const user = new _user.User(userId);
-  client.reEmitter.reEmit(user, [_user.UserEvent.AvatarUrl, _user.UserEvent.DisplayName, _user.UserEvent.Presence, _user.UserEvent.CurrentlyActive, _user.UserEvent.LastPresenceTs]);
-  return user;
-}
 
 // /!\ This function is not intended for public use! It's only exported from
 // here in order to share some common logic with sliding-sync-sdk.ts.
+exports.SyncApi = SyncApi;
 function _createAndReEmitRoom(client, roomId, opts) {
   const {
     timelineSupport

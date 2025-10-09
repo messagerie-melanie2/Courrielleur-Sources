@@ -18,6 +18,21 @@ add_task(async function () {
   invokeInTab("firstCall");
   await waitForPaused(dbg);
 
+  await addExpression(dbg, "!true");
+  is(getWatchExpressionLabel(dbg, 1), "!true");
+  is(getWatchExpressionValue(dbg, 1), "false");
+  await deleteExpression(dbg, "!true");
+
+  await addExpression(dbg, "1-1");
+  is(getWatchExpressionLabel(dbg, 1), "1-1");
+  is(getWatchExpressionValue(dbg, 1), "0");
+  await deleteExpression(dbg, "1-1");
+
+  await addExpression(dbg, "String()");
+  is(getWatchExpressionLabel(dbg, 1), "String()");
+  is(getWatchExpressionValue(dbg, 1), '""');
+  await deleteExpression(dbg, "String()");
+
   await addExpression(dbg, "f");
   is(getWatchExpressionLabel(dbg, 1), "f");
   is(getWatchExpressionValue(dbg, 1), "(unavailable)");
@@ -60,6 +75,37 @@ add_task(async function () {
 
   await deleteExpression(dbg, "location");
   is(findAllElements(dbg, "expressionNodes").length, 0);
+
+  info(
+    "Test an expression calling a function with a breakpoint and a debugger statement, which shouldn't pause"
+  );
+  await addBreakpoint(dbg, "script-switching-01.js", 7);
+  // firstCall will call secondCall from script-switching-02.js which has a debugger statement
+  await addExpression(dbg, "firstCall()");
+  is(getWatchExpressionLabel(dbg, 1), "firstCall()");
+  is(getWatchExpressionValue(dbg, 1), "43", "has a value");
+
+  await addExpression(dbg, "$('body')");
+  is(getWatchExpressionLabel(dbg, 2), "$('body')");
+  ok(
+    getWatchExpressionValue(dbg, 2).includes("body"),
+    "uses console command $() helper"
+  );
+
+  info("Implement a custom '$' function in the page");
+  await SpecialPowers.spawn(gBrowser.selectedBrowser, [], function () {
+    content.eval("window.$ = function () {return 'page-override';}");
+  });
+
+  info("Refresh expressions");
+  const refreshed = waitForDispatch(dbg.store, "EVALUATE_EXPRESSIONS");
+  await clickElement(dbg, "expressionRefresh");
+  await refreshed;
+
+  ok(
+    getWatchExpressionValue(dbg, 2).includes("page-override"),
+    "the expression uses the page symbols and not the console command '$' function"
+  );
 });
 
 function assertEmptyValue(dbg, index) {

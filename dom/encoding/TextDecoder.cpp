@@ -5,6 +5,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/dom/TextDecoder.h"
+
+#include "mozilla/dom/BufferSourceBinding.h"
 #include "mozilla/dom/UnionTypes.h"
 #include "mozilla/Encoding.h"
 #include "mozilla/UniquePtrExtensions.h"
@@ -97,27 +99,18 @@ void TextDecoderCommon::DecodeNative(Span<const uint8_t> aInput,
   }
 }
 
-void TextDecoder::Decode(const Optional<ArrayBufferViewOrArrayBuffer>& aBuffer,
+void TextDecoder::Decode(const Optional<BufferSource>& aBuffer,
                          const TextDecodeOptions& aOptions,
                          nsAString& aOutDecodedString, ErrorResult& aRv) {
   if (!aBuffer.WasPassed()) {
     DecodeNative(nullptr, aOptions.mStream, aOutDecodedString, aRv);
     return;
   }
-  const ArrayBufferViewOrArrayBuffer& buf = aBuffer.Value();
-  uint8_t* data;
-  uint32_t length;
-  if (buf.IsArrayBufferView()) {
-    buf.GetAsArrayBufferView().ComputeState();
-    data = buf.GetAsArrayBufferView().Data();
-    length = buf.GetAsArrayBufferView().Length();
-  } else {
-    MOZ_ASSERT(buf.IsArrayBuffer());
-    buf.GetAsArrayBuffer().ComputeState();
-    data = buf.GetAsArrayBuffer().Data();
-    length = buf.GetAsArrayBuffer().Length();
-  }
-  DecodeNative(Span(data, length), aOptions.mStream, aOutDecodedString, aRv);
+
+  ProcessTypedArrays(aBuffer.Value(), [&](const Span<uint8_t>& aData,
+                                          JS::AutoCheckCannotGC&&) {
+    DecodeNative(aData, aOptions.mStream, aOutDecodedString, aRv);
+  });
 }
 
 void TextDecoderCommon::GetEncoding(nsAString& aEncoding) {

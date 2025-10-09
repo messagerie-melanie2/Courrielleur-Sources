@@ -1,6 +1,10 @@
 {%- import "macros.py" as py %}
 
-{%- for type_ in ci.iter_types() %}
+{%- if ci.has_callback_definitions() %}
+{%- include "CallbackInterfaceRuntime.py" %}
+{%- endif %}
+
+{%- for type_ in ci.iter_local_types() %}
 {%- let type_name = type_|type_name %}
 {%- let ffi_converter_name = type_|ffi_converter_name %}
 {%- let canonical_type_name = type_|canonical_name %}
@@ -52,17 +56,20 @@
 {%- when Type::String %}
 {%- include "StringHelper.py" %}
 
-{%- when Type::Enum(name) %}
-{%- include "EnumTemplate.py" %}
+{%- when Type::Bytes %}
+{%- include "BytesHelper.py" %}
 
-{%- when Type::Error(name) %}
+{%- when Type::Enum { name, module_path } %}
+{%- let e = ci.get_enum_definition(name).unwrap() %}
+{# For enums, there are either an error *or* an enum, they can't be both. #}
+{%- if ci.is_name_used_as_error(name) %}
 {%- include "ErrorTemplate.py" %}
+{%- else %}
+{%- include "EnumTemplate.py" %}
+{% endif %}
 
-{%- when Type::Record(name) %}
+{%- when Type::Record { name, module_path } %}
 {%- include "RecordTemplate.py" %}
-
-{%- when Type::Object(name) %}
-{%- include "ObjectTemplate.py" %}
 
 {%- when Type::Timestamp %}
 {%- include "TimestampHelper.py" %}
@@ -70,24 +77,49 @@
 {%- when Type::Duration %}
 {%- include "DurationHelper.py" %}
 
-{%- when Type::Optional(inner_type) %}
+{%- when Type::Optional { inner_type } %}
 {%- include "OptionalTemplate.py" %}
 
-{%- when Type::Sequence(inner_type) %}
+{%- when Type::Sequence { inner_type } %}
 {%- include "SequenceTemplate.py" %}
 
-{%- when Type::Map(key_type, value_type) %}
+{%- when Type::Map { key_type, value_type } %}
 {%- include "MapTemplate.py" %}
 
-{%- when Type::CallbackInterface(id) %}
+{%- when Type::CallbackInterface { name, module_path } %}
 {%- include "CallbackInterfaceTemplate.py" %}
 
-{%- when Type::Custom { name, builtin } %}
-{%- include "CustomType.py" %}
-
-{%- when Type::External { name, crate_name } %}
+{%- when Type::Custom { name, module_path, builtin } %}
+{%- if ci.is_external(type_) %}
 {%- include "ExternalTemplate.py" %}
+{%- else %}
+{%- include "CustomType.py" %}
+{%- endif %}
 
 {%- else %}
 {%- endmatch %}
+{%- endfor %}
+
+# objects.
+{%- for type_ in ci.filter_local_types(self.iter_sorted_object_types()) %}
+{%- match type_ %}
+{%- when Type::Object { name, .. } %}
+{%-     let type_name = type_|type_name %}
+{%-     let ffi_converter_name = type_|ffi_converter_name %}
+{%-     let canonical_type_name = type_|canonical_name %}
+{%-     include "ObjectTemplate.py" %}
+{%- else %}
+{%- endmatch %}
+{%- endfor %}
+
+{%- for type_ in ci.iter_external_types() %}
+{%- let name = type_.name().unwrap() %}
+{%- include "ExternalTemplate.py" %}
+{%- endfor %}
+{#-
+Setup type aliases for our custom types, has complications due to
+forward type references, #2067
+-#}
+{%- for (name, ty) in self.get_custom_type_aliases() %}
+{{ name }} = {{ ty|type_name }}
 {%- endfor %}

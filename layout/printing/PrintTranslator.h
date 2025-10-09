@@ -85,7 +85,11 @@ class PrintTranslator final : public Translator {
   }
 
   void AddDrawTarget(ReferencePtr aRefPtr, DrawTarget* aDT) final {
-    mDrawTargets.InsertOrUpdate(aRefPtr, RefPtr{aDT});
+    RefPtr<DrawTarget>& value = mDrawTargets.LookupOrInsert(aRefPtr);
+    if (mCurrentDT && mCurrentDT == value) {
+      mCurrentDT = nullptr;
+    }
+    value = aDT;
   }
 
   void AddPath(ReferencePtr aRefPtr, Path* aPath) final {
@@ -119,7 +123,16 @@ class PrintTranslator final : public Translator {
   }
 
   void RemoveDrawTarget(ReferencePtr aRefPtr) final {
-    mDrawTargets.Remove(aRefPtr);
+    RefPtr<DrawTarget> removedDT;
+    if (mDrawTargets.Remove(aRefPtr, getter_AddRefs(removedDT)) &&
+        mCurrentDT == removedDT) {
+      mCurrentDT = nullptr;
+    }
+  }
+
+  bool SetCurrentDrawTarget(ReferencePtr aRefPtr) final {
+    mCurrentDT = mDrawTargets.GetWeak(aRefPtr);
+    return !!mCurrentDT;
   }
 
   void RemovePath(ReferencePtr aRefPtr) final { mPaths.Remove(aRefPtr); }

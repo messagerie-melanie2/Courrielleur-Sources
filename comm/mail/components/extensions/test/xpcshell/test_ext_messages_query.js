@@ -8,22 +8,31 @@ var { ExtensionTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/ExtensionXPCShellUtils.sys.mjs"
 );
 
-add_task(async function test_query() {
-  let account = createAccount();
+add_setup(async () => {
+  registerCleanupFunction(() => {
+    // Make sure any open address book database is given a chance to close.
+    Services.startup.advanceShutdownPhase(
+      Services.startup.SHUTDOWN_PHASE_APPSHUTDOWNCONFIRMED
+    );
+  });
+});
 
-  let textAttachment = {
+add_task(async function test_query() {
+  const account = createAccount();
+
+  const textAttachment = {
     body: "textAttachment",
     filename: "test.txt",
     contentType: "text/plain",
   };
 
-  let subFolders = {
+  const subFolders = {
     test1: await createSubfolder(account.incomingServer.rootFolder, "test1"),
     test2: await createSubfolder(account.incomingServer.rootFolder, "test2"),
   };
   await createMessages(subFolders.test1, { count: 9, age_incr: { days: 2 } });
 
-  let messages = [...subFolders.test1.messages];
+  const messages = [...subFolders.test1.messages];
   // NB: Here, the messages are zero-indexed. In the test they're one-indexed.
   subFolders.test1.markMessagesRead([messages[0]], true);
   subFolders.test1.markMessagesFlagged([messages[1]], true);
@@ -52,35 +61,50 @@ add_task(async function test_query() {
     attachments: [textAttachment],
   });
 
-  let files = {
+  const files = {
     "background.js": async () => {
-      let [accountId] = await window.waitForMessage();
-      let _account = await browser.accounts.get(accountId);
-      let accountType = _account.type;
+      const [accountId] = await window.waitForMessage();
+      const _account = await browser.accounts.get(accountId);
+      const accountType = _account.type;
 
-      let messages1 = await browser.messages.list({
-        accountId,
-        path: "/test1",
-      });
+      const [folder1] = await browser.folders.query({ name: "test1" });
+      const [folder2] = await browser.folders.query({ name: "test2" });
+
+      const messages1 = await browser.messages.list(folder1.id);
       browser.test.assertEq(9, messages1.messages.length);
-      let messages2 = await browser.messages.list({
-        accountId,
-        path: "/test2",
-      });
+      const messages2 = await browser.messages.list(folder2.id);
       browser.test.assertEq(9, messages2.messages.length);
 
       // Check all messages are returned.
-      let { messages: allMessages } = await browser.messages.query({});
+      const { messages: allMessages } = await browser.messages.query({
+        autoPaginationTimeout: 0,
+      });
       browser.test.assertEq(18, allMessages.length);
 
-      let folder1 = { accountId, path: "/test1" };
-      let folder2 = { accountId, path: "/test2" };
-      let rootFolder = { accountId, path: "/" };
+      const rootFolder = _account.rootFolder;
+
+      // Mark two messages in folder1 as junk.
+      await browser.messages.update(messages1.messages[4].id, { junk: true });
+      await browser.messages.update(messages1.messages[5].id, { junk: true });
+
+      // Mark a message in folder1 as read and unread again, to force a difference
+      // between read and new.
+      await browser.messages.update(messages1.messages[2].id, { read: true });
+      await window.waitForCondition(async () => {
+        const msg = await browser.messages.get(messages1.messages[2].id);
+        return msg.read;
+      }, `Message should have been marked as read.`);
+      await browser.messages.update(messages1.messages[2].id, { read: false });
+      await window.waitForCondition(async () => {
+        const msg = await browser.messages.get(messages1.messages[2].id);
+        return !msg.read;
+      }, `Message should have been marked as not read.`);
 
       // Query messages from test1. No messages from test2 should be returned.
       // We'll use these messages as a reference for further tests.
-      let { messages: referenceMessages } = await browser.messages.query({
-        folder: folder1,
+      const { messages: referenceMessages } = await browser.messages.query({
+        folderId: folder1.id,
+        autoPaginationTimeout: 0,
       });
       browser.test.assertEq(9, referenceMessages.length);
       browser.test.assertTrue(
@@ -88,9 +112,12 @@ add_task(async function test_query() {
       );
 
       // Test includeSubFolders: Default (False).
-      let { messages: searchRecursiveDefault } = await browser.messages.query({
-        folder: rootFolder,
-      });
+      const { messages: searchRecursiveDefault } = await browser.messages.query(
+        {
+          folderId: rootFolder.id,
+          autoPaginationTimeout: 0,
+        }
+      );
       browser.test.assertEq(
         0,
         searchRecursiveDefault.length,
@@ -98,9 +125,10 @@ add_task(async function test_query() {
       );
 
       // Test includeSubFolders: True.
-      let { messages: searchRecursiveTrue } = await browser.messages.query({
-        folder: rootFolder,
+      const { messages: searchRecursiveTrue } = await browser.messages.query({
+        folderId: rootFolder.id,
         includeSubFolders: true,
+        autoPaginationTimeout: 0,
       });
       browser.test.assertEq(
         18,
@@ -108,10 +136,24 @@ add_task(async function test_query() {
         "includeSubFolders: True"
       );
 
+      // Test includeSubFolders: True but use accountId instead of rootFolder.id.
+      const { messages: searchRecursiveAccountTrue } =
+        await browser.messages.query({
+          accountId: rootFolder.accountId,
+          includeSubFolders: true,
+          autoPaginationTimeout: 0,
+        });
+      browser.test.assertEq(
+        18,
+        searchRecursiveAccountTrue.length,
+        "includeAccountSubFolders: True"
+      );
+
       // Test includeSubFolders: False.
-      let { messages: searchRecursiveFalse } = await browser.messages.query({
-        folder: rootFolder,
+      const { messages: searchRecursiveFalse } = await browser.messages.query({
+        folderId: rootFolder.id,
         includeSubFolders: false,
+        autoPaginationTimeout: 0,
       });
       browser.test.assertEq(
         0,
@@ -120,9 +162,9 @@ add_task(async function test_query() {
       );
 
       // Test attachment query: False.
-      let { messages: searchAttachmentFalse } = await browser.messages.query({
+      const { messages: searchAttachmentFalse } = await browser.messages.query({
         attachment: false,
-        includeSubFolders: true,
+        autoPaginationTimeout: 0,
       });
       browser.test.assertEq(
         17,
@@ -130,20 +172,55 @@ add_task(async function test_query() {
         "attachment: False"
       );
 
+      // Test attachment query: Range.
+      const { messages: searchAttachmentRange } = await browser.messages.query({
+        attachment: { min: 1, max: 2 },
+        autoPaginationTimeout: 0,
+      });
+      browser.test.assertEq(
+        1,
+        searchAttachmentRange.length,
+        "attachment: Range"
+      );
+
       // Test attachment query: True.
-      let { messages: searchAttachmentTrue } = await browser.messages.query({
+      const { messages: searchAttachmentTrue } = await browser.messages.query({
         attachment: true,
-        includeSubFolders: true,
+        autoPaginationTimeout: 0,
       });
       browser.test.assertEq(1, searchAttachmentTrue.length, "attachment: True");
 
+      // Test size query range.
+      const { messages: searchSizeRange } = await browser.messages.query({
+        size: { min: 400, max: 700 },
+        folderId: folder1.id,
+        includeSubFolders: true,
+        autoPaginationTimeout: 0,
+      });
+      const expectedSizeRange = referenceMessages.filter(
+        m => m.size > 400 && m.size < 700
+      );
+      browser.test.assertEq(
+        expectedSizeRange.length,
+        searchSizeRange.length,
+        "size range"
+      );
+
+      // Test junkScore query : range.
+      const { messages: searchJunkScoreRange } = await browser.messages.query({
+        junkScore: { min: 50, max: 100 },
+        folderId: folder1.id,
+        autoPaginationTimeout: 0,
+      });
+      browser.test.assertEq(2, searchJunkScoreRange.length, "junk: range");
+
       // Dump the reference messages to the console for easier debugging.
       browser.test.log("Reference messages:");
-      for (let m of referenceMessages) {
-        let date = m.date.toISOString().substring(0, 10);
-        let author = m.author.replace(/"(.*)".*/, "$1").padEnd(16, " ");
+      for (const m of referenceMessages) {
+        const date = m.date.toISOString().substring(0, 10);
+        const author = m.author.replace(/"(.*)".*/, "$1").padEnd(16, " ");
         // No recipient support for NNTP.
-        let recipients =
+        const recipients =
           accountType == "nntp"
             ? ""
             : m.recipients[0].replace(/(.*) <.*>/, "$1").padEnd(16, " ");
@@ -152,21 +229,26 @@ add_task(async function test_query() {
         );
       }
 
-      let subtest = async function (queryInfo, ...expectedMessageIndices) {
-        if (!queryInfo.folder) {
-          queryInfo.folder = folder1;
+      const subtest = async function (queryInfo, ...expectedMessageIndices) {
+        if (!queryInfo.folderId) {
+          queryInfo.folderId = folder1.id;
         }
         browser.test.log("Testing " + JSON.stringify(queryInfo));
-        let { messages: actualMessages } = await browser.messages.query(
-          queryInfo
-        );
+        const { messages: actualMessages } = await browser.messages.query({
+          ...queryInfo,
+          autoPaginationTimeout: 0,
+        });
 
         browser.test.assertEq(
           expectedMessageIndices.length,
           actualMessages.length,
-          "Correct number of messages"
+          `Query ${JSON.stringify(
+            queryInfo
+          )}: Should have received the correct number of messages: ${JSON.stringify(
+            actualMessages.map(m => m.id)
+          )}`
         );
-        for (let index of expectedMessageIndices) {
+        for (const index of expectedMessageIndices) {
           // browser.test.log(`Looking for message ${index}`);
           if (!actualMessages.some(am => am.id == index)) {
             browser.test.fail(`Message ${index} was not returned`);
@@ -178,13 +260,13 @@ add_task(async function test_query() {
       };
 
       // Date range query. The messages are 0 days old, 2 days old, 4 days old, etc..
-      let today = new Date();
-      let date1 = new Date(
+      const today = new Date();
+      const date1 = new Date(
         today.getFullYear(),
         today.getMonth(),
         today.getDate() - 5
       );
-      let date2 = new Date(
+      const date2 = new Date(
         today.getFullYear(),
         today.getMonth(),
         today.getDate() - 11
@@ -196,6 +278,14 @@ add_task(async function test_query() {
       await subtest({ toDate: date2 }, 7, 8, 9);
       await subtest({ fromDate: date1, toDate: date2 });
       await subtest({ fromDate: date2, toDate: date1 }, 4, 5, 6);
+
+      // Junk query. Only two messages are junk.
+      await subtest({ junk: true }, 5, 6);
+      await subtest({ junk: false }, 1, 2, 3, 4, 7, 8, 9);
+
+      // New query. Only two messages are not new.
+      await subtest({ new: false }, 1, 3);
+      await subtest({ new: true }, 2, 4, 5, 6, 7, 8, 9);
 
       // Unread query. Only message 1 has been read.
       await subtest({ unread: false }, 1);
@@ -281,28 +371,31 @@ add_task(async function test_query() {
       await subtest({ headerMessageId: "unknown@made.up.invalid" });
 
       // attachment query
-      await subtest({ folder: folder2, attachment: true }, 18);
+      await subtest({ folderId: folder2.id, attachment: true }, 18);
 
       // text in nested html part of multipart/alternative
-      await subtest({ folder: folder2, body: "I am HTML!" }, 17);
+      await subtest({ folderId: folder2.id, body: "I am HTML!" }, 17);
 
       // No recipient support for NNTP.
       if (accountType != "nntp") {
         // advanced search on recipients
-        await subtest({ folder: folder2, recipients: "karl; heinz" }, 17);
+        await subtest({ folderId: folder2.id, recipients: "karl; heinz" }, 17);
         await subtest(
-          { folder: folder2, recipients: "<friedrich@example.COM>; HEINZ" },
+          {
+            folderId: folder2.id,
+            recipients: "<friedrich@example.COM>; HEINZ",
+          },
           17
         );
         await subtest(
           {
-            folder: folder2,
+            folderId: folder2.id,
             recipients: "karl <friedrich@example.COM>; HEINZ",
           },
           17
         );
         await subtest({
-          folder: folder2,
+          folderId: folder2.id,
           recipients: "Heinz <friedrich@example.COM>; Karl",
         });
       }
@@ -311,11 +404,11 @@ add_task(async function test_query() {
     },
     "utils.js": await getUtilsJS(),
   };
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files,
     manifest: {
       background: { scripts: ["utils.js", "background.js"] },
-      permissions: ["accountsRead", "messagesRead"],
+      permissions: ["accountsRead", "messagesRead", "messagesUpdate"],
     },
   });
 
@@ -323,11 +416,4 @@ add_task(async function test_query() {
   extension.sendMessage(account.key);
   await extension.awaitFinish("finished");
   await extension.unload();
-});
-
-registerCleanupFunction(() => {
-  // Make sure any open address book database is given a chance to close.
-  Services.startup.advanceShutdownPhase(
-    Services.startup.SHUTDOWN_PHASE_APPSHUTDOWNCONFIRMED
-  );
 });

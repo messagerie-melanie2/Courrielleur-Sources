@@ -8,26 +8,27 @@
 // msgViewNavigation.js
 /* globals CrossFolderNavigation */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+// about3pane.js
+/* globals ThreadPaneColumns */
+
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 ChromeUtils.defineESModuleGetters(this, {
-  TreeSelection: "chrome://messenger/content/tree-selection.mjs",
-});
+  ConversationOpener: "resource:///modules/ConversationOpener.sys.mjs",
+  DBViewWrapper: "resource:///modules/DBViewWrapper.sys.mjs",
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  ConversationOpener: "resource:///modules/ConversationOpener.jsm",
-  DBViewWrapper: "resource:///modules/DBViewWrapper.jsm",
   EnigmailPersistentCrypto:
-    "chrome://openpgp/content/modules/persistentCrypto.jsm",
-  EnigmailURIs: "chrome://openpgp/content/modules/uris.jsm",
-  MailUtils: "resource:///modules/MailUtils.jsm",
-  MessageArchiver: "resource:///modules/MessageArchiver.jsm",
-  VirtualFolderHelper: "resource:///modules/VirtualFolderWrapper.jsm",
+    "chrome://openpgp/content/modules/persistentCrypto.sys.mjs",
+
+  MailUtils: "resource:///modules/MailUtils.sys.mjs",
+  MessageArchiver: "resource:///modules/MessageArchiver.sys.mjs",
+  TreeSelection: "chrome://messenger/content/TreeSelection.mjs",
+  VirtualFolderHelper: "resource:///modules/VirtualFolderWrapper.sys.mjs",
 });
 
 XPCOMUtils.defineLazyServiceGetter(
@@ -73,6 +74,7 @@ var commandController = {
     cmd_markAsRead: Ci.nsMsgViewCommandType.markMessagesRead,
     cmd_markAsUnread: Ci.nsMsgViewCommandType.markMessagesUnread,
     cmd_markThreadAsRead: Ci.nsMsgViewCommandType.markThreadRead,
+    cmd_markAllRead: Ci.nsMsgViewCommandType.markAllRead,
     cmd_markAsNotJunk: Ci.nsMsgViewCommandType.unjunk,
     cmd_watchThread: Ci.nsMsgViewCommandType.toggleThreadWatched,
   },
@@ -88,7 +90,11 @@ var commandController = {
       );
     },
     cmd_reply(event) {
-      if (gFolder?.flags & Ci.nsMsgFolderFlags.Newsgroup) {
+      if (
+        gFolder?.flags & Ci.nsMsgFolderFlags.Newsgroup ||
+        (window.messageBrowser?.contentWindow ?? window).currentHeaderData
+          ?.newsgroups
+      ) {
         commandController.doCommand("cmd_replyGroup", event);
       } else {
         commandController.doCommand("cmd_replySender", event);
@@ -102,11 +108,13 @@ var commandController = {
       }
     },
     cmd_openMessage(event) {
+      const forceTab = event?.button == 1;
       MailUtils.displayMessages(
         gDBView.getSelectedMsgHdrs(),
         gViewWrapper,
         top.document.getElementById("tabmail"),
-        event?.type == "auxclick" && !event?.shiftKey
+        forceTab,
+        event?.shiftKey
       );
     },
     cmd_tag() {
@@ -162,15 +170,6 @@ var commandController = {
       }
       gViewWrapper.dbView.doCommand(Ci.nsMsgViewCommandType.junk);
     },
-    cmd_markAllRead() {
-      if (gFolder.flags & Ci.nsMsgFolderFlags.Virtual) {
-        top.MsgMarkAllRead(
-          VirtualFolderHelper.wrapVirtualFolder(gFolder).searchFolders
-        );
-      } else {
-        top.MsgMarkAllRead([gFolder]);
-      }
-    },
     /**
      * Moves the selected messages to the destination folder.
      *
@@ -195,26 +194,26 @@ var commandController = {
       Services.prefs.setBoolPref("mail.last_msg_movecopy_was_move", true);
     },
     async cmd_copyDecryptedTo(destFolder) {
-      let msgHdrs = gDBView.getSelectedMsgHdrs();
+      const msgHdrs = gDBView.getSelectedMsgHdrs();
       if (!msgHdrs || msgHdrs.length === 0) {
         return;
       }
 
-      let total = msgHdrs.length;
+      const total = msgHdrs.length;
       let failures = 0;
-      for (let msgHdr of msgHdrs) {
+      for (const msgHdr of msgHdrs) {
         await EnigmailPersistentCrypto.cryptMessage(
           msgHdr,
           destFolder.URI,
           false, // not moving
           false
-        ).catch(err => {
+        ).catch(() => {
           failures++;
         });
       }
 
       if (failures) {
-        let info = await document.l10n.formatValue(
+        const info = await document.l10n.formatValue(
           "decrypt-and-copy-failures-multiple",
           {
             failures,
@@ -231,7 +230,7 @@ var commandController = {
      */
     cmd_copyMessage(destFolder) {
       if (window.gMessageURI?.startsWith("file:")) {
-        let file = Services.io
+        const file = Services.io
           .newURI(window.gMessageURI)
           .QueryInterface(Ci.nsIFileURL).file;
         MailServices.copy.copyFileMessage(
@@ -264,7 +263,7 @@ var commandController = {
         return;
       }
       dbViewWrapperListener.threadPaneCommandUpdater.updateNextMessageAfterDelete();
-      let archiver = new MessageArchiver();
+      const archiver = new MessageArchiver();
       // The instance of nsITransactionManager to use here is tied to msgWindow. Set
       // this property so the operation can be undone if requested.
       archiver.msgWindow = top.msgWindow;
@@ -278,7 +277,7 @@ var commandController = {
         parent.commandController.doCommand("cmd_moveToFolderAgain");
         return;
       }
-      let folder = MailUtils.getOrCreateFolder(
+      const folder = MailUtils.getOrCreateFolder(
         Services.prefs.getStringPref("mail.last_msg_movecopy_target_uri")
       );
       if (Services.prefs.getBoolPref("mail.last_msg_movecopy_was_move")) {
@@ -295,6 +294,9 @@ var commandController = {
         parent.commandController.doCommand("cmd_deleteMessage");
         return;
       }
+      if (!MailUtils.confirmDelete(false, gDBView, gFolder)) {
+        return;
+      }
       dbViewWrapperListener.threadPaneCommandUpdater.updateNextMessageAfterDelete();
       gViewWrapper.dbView.doCommand(Ci.nsMsgViewCommandType.deleteMsg);
     },
@@ -305,22 +307,25 @@ var commandController = {
         parent.commandController.doCommand("cmd_shiftDeleteMessage");
         return;
       }
+      if (!MailUtils.confirmDelete(true, gDBView, gFolder)) {
+        return;
+      }
       dbViewWrapperListener.threadPaneCommandUpdater.updateNextMessageAfterDelete();
       gViewWrapper.dbView.doCommand(Ci.nsMsgViewCommandType.deleteNoTrash);
     },
     cmd_createFilterFromMenu() {
-      let msgHdr = gDBView.hdrForFirstSelectedMessage;
-      let emailAddress =
+      const msgHdr = gDBView.hdrForFirstSelectedMessage;
+      const emailAddress =
         MailServices.headerParser.extractHeaderAddressMailboxes(msgHdr.author);
       if (emailAddress) {
         top.MsgFilters(emailAddress, msgHdr.folder);
       }
     },
     cmd_viewPageSource() {
-      let uris = window.gMessageURI
+      const uris = window.gMessageURI
         ? [window.gMessageURI]
         : gDBView.getURIsForSelection();
-      for (let uri of uris) {
+      for (const uri of uris) {
         // Now, we need to get a URL from a URI
         let url = MailServices.mailSession.ConvertMsgURIToMsgURL(
           uri,
@@ -329,7 +334,7 @@ var commandController = {
 
         // Strip out the message-display parameter to ensure that attached emails
         // display the message source, not the processed HTML.
-        url = url.replace(/type=application\/x-message-display&/, "");
+        url = url.replace(/type=application\/x-message-display&?/, "");
         window.openDialog(
           "chrome://messenger/content/viewSource.xhtml",
           "_blank",
@@ -339,7 +344,7 @@ var commandController = {
       }
     },
     cmd_saveAsFile() {
-      let uris = window.gMessageURI
+      const uris = window.gMessageURI
         ? [window.gMessageURI]
         : gDBView.getURIsForSelection();
       top.SaveAsFile(uris);
@@ -348,20 +353,20 @@ var commandController = {
       top.SaveAsTemplate(gDBView.getURIsForSelection()[0]);
     },
     cmd_applyFilters() {
-      let curFilterList = gFolder.getFilterList(top.msgWindow);
+      const curFilterList = gFolder.getFilterList(top.msgWindow);
       // Create a new filter list and copy over the enabled filters to it.
       // We do this instead of having the filter after the fact code ignore
       // disabled filters because the Filter Dialog filter after the fact
       // code would have to clone filters to allow disabled filters to run,
       // and we don't support cloning filters currently.
-      let tempFilterList = MailServices.filters.getTempFilterList(gFolder);
-      let numFilters = curFilterList.filterCount;
+      const tempFilterList = MailServices.filters.getTempFilterList(gFolder);
+      const numFilters = curFilterList.filterCount;
       // Make sure the temp filter list uses the same log stream.
       tempFilterList.loggingEnabled = curFilterList.loggingEnabled;
       tempFilterList.logStream = curFilterList.logStream;
       let newFilterIndex = 0;
       for (let i = 0; i < numFilters; i++) {
-        let curFilter = curFilterList.getFilterAt(i);
+        const curFilter = curFilterList.getFilterAt(i);
         // Only add enabled, UI visible filters that are in the manual context.
         if (
           curFilter.enabled &&
@@ -379,7 +384,7 @@ var commandController = {
       );
     },
     cmd_applyFiltersToSelection() {
-      let selectedMessages = gDBView.getSelectedMsgHdrs();
+      const selectedMessages = gDBView.getSelectedMsgHdrs();
       if (selectedMessages.length) {
         MailServices.filters.applyFilters(
           Ci.nsMsgFilterType.Manual,
@@ -389,28 +394,37 @@ var commandController = {
         );
       }
     },
-    cmd_space(event) {
+    async cmd_space(event) {
       let messagePaneBrowser;
+      let scrollSource;
+      let messageScroller;
       if (window.messageBrowser) {
         messagePaneBrowser =
           window.messageBrowser.contentWindow.getMessagePaneBrowser();
       } else {
         messagePaneBrowser = window.getMessagePaneBrowser();
       }
-      let contentWindow = messagePaneBrowser.contentWindow;
+
+      scrollSource = messageScroller = messagePaneBrowser.contentWindow;
+
+      if (!scrollSource) {
+        messageScroller =
+          messagePaneBrowser.browsingContext.currentWindowGlobal.getActor(
+            "MessageScroll"
+          );
+        scrollSource = await messageScroller.getSize();
+      }
 
       if (event?.shiftKey) {
         // If at the start of the message, go to the previous one.
-        if (contentWindow?.scrollY > 0) {
-          contentWindow.scrollByPages(-1);
+        if (scrollSource.scrollY > 0) {
+          messageScroller.scrollByPages(-1);
         } else if (Services.prefs.getBoolPref("mail.advance_on_spacebar")) {
           top.goDoCommand("cmd_previousUnreadMsg");
         }
-      } else if (
-        Math.ceil(contentWindow?.scrollY) < contentWindow?.scrollMaxY
-      ) {
+      } else if (Math.ceil(scrollSource.scrollY) < scrollSource.scrollMaxY) {
         // If at the end of the message, go to the next one.
-        contentWindow.scrollByPages(1);
+        messageScroller.scrollByPages(1);
       } else if (Services.prefs.getBoolPref("mail.advance_on_spacebar")) {
         top.goDoCommand("cmd_nextUnreadMsg");
       }
@@ -442,7 +456,7 @@ var commandController = {
   },
   // eslint-disable-next-line complexity
   isCommandEnabled(command) {
-    let type = typeof this._isCallbackEnabled[command];
+    const type = typeof this._isCallbackEnabled[command];
     if (type == "function") {
       return this._isCallbackEnabled[command]();
     } else if (type == "boolean") {
@@ -465,13 +479,13 @@ var commandController = {
       return false;
     }
 
-    let isDummyMessage = !gViewWrapper.isSynthetic && !gFolder;
+    const isDummyMessage = !gViewWrapper.isSynthetic && !gFolder;
 
     if (["cmd_goBack", "cmd_goForward"].includes(command)) {
-      let activeMessageHistory = (
+      const activeMessageHistory = (
         window.messageBrowser?.contentWindow ?? window
       ).messageHistory;
-      let relPos = command === "cmd_goBack" ? -1 : 1;
+      const relPos = command === "cmd_goBack" ? -1 : 1;
       if (relPos === -1 && activeMessageHistory.canPop(0)) {
         return !isDummyMessage;
       }
@@ -482,29 +496,34 @@ var commandController = {
       return !isDummyMessage;
     }
 
-    let numSelectedMessages = isDummyMessage ? 1 : gDBView.numSelected;
+    const numSelectedMessages = isDummyMessage
+      ? 1
+      : Number(gDBView?.numSelected);
 
     // Evaluate these properties only if needed, not once for each command.
-    let folder = () => {
+    const folder = () => {
       if (gFolder) {
         return gFolder;
       }
-      if (gDBView.numSelected >= 1) {
+      if (gDBView?.numSelected >= 1) {
         return gDBView.hdrForFirstSelectedMessage?.folder;
       }
       return null;
     };
-    let isNewsgroup = () =>
+    const isNewsgroup = () =>
       folder()?.isSpecialFolder(Ci.nsMsgFolderFlags.Newsgroup, true);
-    let canMove = () =>
+    const canMove = () =>
       numSelectedMessages >= 1 &&
-      (folder()?.canDeleteMessages || gViewWrapper.isSynthetic);
+      (folder()?.canDeleteMessages || gViewWrapper.isSynthetic) &&
+      !gViewWrapper.isExpandedGroupedByHeaderAtIndex(
+        gDBView.viewIndexForFirstSelectedMsg
+      );
 
     switch (command) {
       case "cmd_cancel":
         if (numSelectedMessages == 1 && isNewsgroup()) {
           // Ensure author of message matches own identity
-          let author = gDBView.hdrForFirstSelectedMessage.mime2DecodedAuthor;
+          const author = gDBView.hdrForFirstSelectedMessage.mime2DecodedAuthor;
           return MailServices.accounts
             .getIdentitiesForServer(folder().server)
             .some(id => id.fullAddress == author);
@@ -530,8 +549,9 @@ var commandController = {
         }
         return false;
       case "cmd_viewPageSource":
+        return numSelectedMessages > 0;
       case "cmd_saveAsTemplate":
-        return numSelectedMessages == 1;
+        return numSelectedMessages == 1 && !isDummyMessage;
       case "cmd_reply":
       case "cmd_replySender":
       case "cmd_replyall":
@@ -571,18 +591,15 @@ var commandController = {
       case "cmd_removeTags":
       case "cmd_toggleTag":
       case "cmd_toggleRead":
-      case "cmd_markReadByDate":
       case "cmd_markAsFlagged":
       case "cmd_applyFiltersToSelection":
         return numSelectedMessages >= 1 && !isDummyMessage;
       case "cmd_copyDecryptedTo": {
         let showDecrypt = numSelectedMessages > 1;
         if (numSelectedMessages == 1 && !isDummyMessage) {
-          let msgURI = gDBView.URIForFirstSelectedMessage;
+          const msgURI = gDBView.URIForFirstSelectedMessage;
           if (msgURI) {
-            showDecrypt =
-              EnigmailURIs.isEncryptedUri(msgURI) ||
-              gEncryptedURIService.isEncrypted(msgURI);
+            showDecrypt = gEncryptedURIService.isEncrypted(msgURI);
           }
         }
         return showDecrypt;
@@ -599,7 +616,11 @@ var commandController = {
           folder()?.isSpecialFolder(Ci.nsMsgFolderFlags.Templates, true)
         );
       case "cmd_replyGroup":
-        return isNewsgroup();
+        return (
+          isNewsgroup() ||
+          (window.messageBrowser?.contentWindow ?? window).currentHeaderData
+            ?.newsgroups
+        );
       case "cmd_markAsRead":
         return (
           numSelectedMessages >= 1 &&
@@ -616,10 +637,10 @@ var commandController = {
         if (numSelectedMessages == 0 || isDummyMessage) {
           return false;
         }
-        let sel = gViewWrapper.dbView.selection;
+        const sel = gViewWrapper.dbView.selection;
         for (let i = 0; i < sel.getRangeCount(); i++) {
-          let start = {};
-          let end = {};
+          const start = {};
+          const end = {};
           sel.getRangeAt(i, start, end);
           for (let j = start.value; j <= end.value; j++) {
             if (
@@ -632,6 +653,7 @@ var commandController = {
         }
         return false;
       }
+      case "cmd_markReadByDate":
       case "cmd_markAllRead":
         return gDBView?.msgFolder?.getNumUnread(false) > 0;
       case "cmd_markAsJunk":
@@ -656,7 +678,7 @@ var commandController = {
           canMoveAgain = canMove() && !isNewsgroup();
         }
         if (canMoveAgain) {
-          let targetURI = Services.prefs.getStringPref(
+          const targetURI = Services.prefs.getStringPref(
             "mail.last_msg_movecopy_target_uri"
           );
           canMoveAgain = targetURI && MailUtils.getExistingFolder(targetURI);
@@ -676,8 +698,11 @@ var commandController = {
           folder()?.server.canHaveFilters
         );
       case "cmd_watchThread": {
-        let enabledObj = {};
-        let checkStatusObj = {};
+        if (gViewWrapper?.showGroupedBySort) {
+          return false;
+        }
+        const enabledObj = {};
+        const checkStatusObj = {};
         gViewWrapper.dbView.getCommandStatus(
           Ci.nsMsgViewCommandType.toggleThreadWatched,
           enabledObj,
@@ -735,8 +760,8 @@ var commandController = {
       return false;
     }
 
-    let enabledObj = {};
-    let checkStatusObj = {};
+    const enabledObj = {};
+    const checkStatusObj = {};
     gViewWrapper.dbView.getCommandStatus(
       commandType,
       enabledObj,
@@ -749,14 +774,14 @@ var commandController = {
    * Calls the ComposeMessage function with the desired type, and proper default
    * based on the event that fired it.
    *
-   * @param composeType  the nsIMsgCompType to pass to the function
-   * @param event (optional) the event that triggered the call
+   * @param {nsIMsgCompType} composeType - The nsIMsgCompType type to pass.
+   * @param {Event} [event] - The event that triggered the call.
    */
   _composeMsgByType(composeType, event) {
     // If we're the hidden window, then we're not going to have a gFolderDisplay
     // to work out existing folders, so just use null.
-    let msgFolder = gFolder;
-    let msgUris =
+    const msgFolder = gFolder;
+    const msgUris =
       gFolder || gViewWrapper.isSynthetic
         ? gDBView?.getURIsForSelection()
         : [window.gMessageURI];
@@ -814,11 +839,11 @@ var commandController = {
       } else if (noCurrentMessage) {
         relativePosition = 0;
       }
-      let newMessageURI = messageHistory.pop(relativePosition)?.messageURI;
+      const newMessageURI = messageHistory.pop(relativePosition)?.messageURI;
       if (!newMessageURI) {
         return;
       }
-      let msgHdr =
+      const msgHdr =
         MailServices.messageServiceFromURI(newMessageURI).messageURIToMsgHdr(
           newMessageURI
         );
@@ -832,12 +857,15 @@ var commandController = {
       return;
     }
 
-    let resultKey = { value: nsMsgKey_None };
-    let resultIndex = { value: nsMsgViewIndex_None };
-    let threadIndex = {};
+    const resultKey = { value: nsMsgKey_None };
+    const resultIndex = { value: nsMsgViewIndex_None };
+    const threadIndex = {};
 
     let expandCurrentThread = false;
-    let currentIndex = window.threadTree ? window.threadTree.currentIndex : -1;
+    const currentIndex = window.threadTree
+      ? window.threadTree.currentIndex
+      : -1;
+    let addedRowsByViewNavigate = 0;
 
     // If we're doing next unread, and a collapsed thread is selected, and
     // the top level message is unread, just set the result manually to
@@ -854,6 +882,7 @@ var commandController = {
       resultIndex.value = currentIndex;
       resultKey.value = gViewWrapper.dbView.getKeyAt(currentIndex);
     } else {
+      const countBefore = gViewWrapper.dbView.rowCount;
       gViewWrapper.dbView.viewNavigate(
         navigationType,
         resultKey,
@@ -861,10 +890,9 @@ var commandController = {
         threadIndex,
         true
       );
+      addedRowsByViewNavigate = gViewWrapper.dbView.rowCount - countBefore;
       if (resultIndex.value == nsMsgViewIndex_None) {
-        if (CrossFolderNavigation(navigationType)) {
-          this._navigate(navigationType);
-        }
+        CrossFolderNavigation(navigationType, this._navigate);
         return;
       }
       if (resultKey.value == nsMsgKey_None) {
@@ -880,11 +908,26 @@ var commandController = {
       ) {
         return;
       }
-
-      window.threadTree.expandRowAtIndex(resultIndex.value);
+      const addedRows = Math.max(
+        addedRowsByViewNavigate,
+        window.threadTree.expandRowAtIndex(resultIndex.value)
+      );
       // Do an instant scroll before setting the index to avoid animation.
       window.threadTree.scrollToIndex(resultIndex.value, true);
       window.threadTree.selectedIndex = resultIndex.value;
+      // If the thread index has not been determined by viewNavigate(), its
+      // return value will be either 0 or nsMsgViewIndex_None.
+      const firstIndex =
+        threadIndex.value == 0 || threadIndex.value == nsMsgViewIndex_None
+          ? resultIndex.value
+          : threadIndex.value;
+      // Scroll the thread to the most reasonable position.
+      window.threadTree.scrollExpandedRowIntoView(
+        resultIndex.value,
+        addedRows,
+        false,
+        firstIndex
+      );
       // Focus the thread tree, unless the message pane has focus.
       if (
         Services.focus.focusedWindow !=
@@ -915,6 +958,7 @@ var commandController = {
 window.controllers.insertControllerAt(0, commandController);
 
 var dbViewWrapperListener = {
+  _allMessagesLoaded: false,
   _nextViewIndexAfterDelete: null,
 
   messenger: null,
@@ -924,17 +968,24 @@ var dbViewWrapperListener = {
       "nsIMsgDBViewCommandUpdater",
       "nsISupportsWeakReference",
     ]),
-    updateCommandStatus() {},
-    displayMessageChanged(folder, subject, keywords) {},
     updateNextMessageAfterDelete() {
       dbViewWrapperListener._nextViewIndexAfterDelete = gDBView
         ? gDBView.msgToSelectAfterDelete
         : null;
     },
-    summarizeSelection() {
-      return true;
-    },
     selectedMessageRemoved() {
+      // Virtual folders end up here while being loaded, when they restore their
+      // hits from cache, and then realize that some messages no longer exist.
+      // Exit early, to not trigger code which resets the selection after delete,
+      // which would interfere with selection restore while the virtual folder is
+      // being loaded.
+      if (
+        !dbViewWrapperListener.allMessagesLoaded &&
+        gFolder.getFlag(Ci.nsMsgFolderFlags.Virtual)
+      ) {
+        return;
+      }
+
       // We need to invalidate the tree, but this method could get called
       // multiple times, so we won't invalidate until we get to the end of the
       // event loop.
@@ -949,30 +1000,60 @@ var dbViewWrapperListener = {
     },
   },
 
+  get allMessagesLoaded() {
+    return this._allMessagesLoaded;
+  },
   get shouldUseMailViews() {
     return !!top.ViewPickerBinding?.isVisible;
   },
   get shouldDeferMessageDisplayUntilAfterServerConnect() {
     return false;
   },
+
+  /**
+   * Let the viewWrapper know if it should mark the messages read when leaving
+   * the provided folder.
+   *
+   * TODO: Consider retiring this in favor of an folders.onLeavingFolder API
+   * event (or something similar) that add-ons could hook into.
+   *
+   * @param {nsIMsgFolder} msgFolder
+   * @returns {boolean} true if we should mark this folder as read when leaving
+   *   it.
+   */
   shouldMarkMessagesReadOnLeavingFolder(msgFolder) {
-    return false;
+    return Services.prefs.getBoolPref(
+      `mailnews.mark_message_read.${msgFolder.server.type}`,
+      false
+    );
   },
-  onFolderLoading(isFolderLoading) {},
-  onSearching(isSearching) {},
+  onFolderLoading() {},
+  onSearching() {},
   onCreatedView() {
-    if (window.threadTree) {
-      window.threadPane.setTreeView(gViewWrapper.dbView);
-      // There is no persisted thread last expanded state for synthetic views.
-      if (!gViewWrapper.isSynthetic) {
-        window.threadPane.restoreThreadState();
+    this._allMessagesLoaded = false;
+
+    if (!window.threadTree || !gViewWrapper) {
+      if (location.href == "about:message" && window.msgLoading) {
+        // Apparently the view has been re-created after the underlying folder
+        // has been compacted.
+        window.ReloadMessage();
       }
-      window.threadPane.isFirstScroll = true;
-      window.threadPane.scrollDetected = false;
-      window.threadPane.scrollToLatestRowIfNoSelection();
+      return;
     }
+
+    for (const col of ThreadPaneColumns.getCustomColumns()) {
+      gViewWrapper.dbView.addColumnHandler(col.id, col.handler);
+    }
+    window.threadPane.setTreeView(gViewWrapper.dbView);
+    window.threadPane.restoreSortIndicator();
+    window.threadPane.restoreThreadState(gViewWrapper.isSingleFolder);
+    window.threadPane.isFirstScroll = true;
+    window.threadPane.scrollDetected = false;
+    window.threadPane.scrollToLatestRowIfNoSelection();
   },
   onDestroyingView(folderIsComingBack) {
+    this._allMessagesLoaded = false;
+
     if (!window.threadTree) {
       return;
     }
@@ -981,33 +1062,35 @@ var dbViewWrapperListener = {
       // We'll get a new view of the same folder (e.g. with a quick filter) -
       // try to preserve the selection.
       window.threadPane.saveSelection();
-    } else {
-      if (gDBView) {
-        gDBView.setJSTree(null);
-      }
-      window.threadTree.view = gDBView = null;
+      return;
     }
+    gDBView?.setJSTree(null);
+    window.threadPane.setTreeView(null);
   },
-  onLoadingFolder(dbFolderInfo) {
+  onLoadingFolder() {
     window.quickFilterBar?.onFolderChanged();
   },
   onDisplayingFolder() {},
   onLeavingFolder() {},
+  /**
+   * @param {boolean} all - Whether all messages have now been loaded.
+   *   When false, expect that updateFolder or a search will soon come along
+   *   with another load. The all==false case is needed for good perceived
+   *   performance. Updating the folder can take seconds during which you
+   *   would otherwise not be able to see the message list for the folder, which
+   *   may or may not really change once we get the update from the server.
+   */
   onMessagesLoaded(all) {
+    this._allMessagesLoaded = all;
+
     if (!window.threadPane) {
       return;
     }
 
-    // nsMsgQuickSearchDBView::SortThreads leaves all threads expanded in any
-    // case.
-    if (
-      all &&
-      gViewWrapper.isSingleFolder &&
-      gViewWrapper.search.hasSearchTerms &&
-      gViewWrapper.showThreaded &&
-      !gViewWrapper._threadExpandAll
-    ) {
-      gViewWrapper.dbView.doCommand(Ci.nsMsgViewCommandType.collapseAll);
+    if (all) {
+      window.threadPane.restoreThreadState(
+        gViewWrapper?.search.hasSearchTerms || gViewWrapper?.isSynthetic
+      );
     }
 
     // Try to restore what was selected. Keep the saved selection (if there is
@@ -1019,7 +1102,10 @@ var dbViewWrapperListener = {
       let newMessageFound = false;
       if (window.threadPane.scrollToNewMessage) {
         try {
-          let index = gDBView.findIndexOfMsgHdr(gFolder.firstNewMessage, true);
+          const index = gDBView.findIndexOfMsgHdr(
+            gFolder.firstNewMessage,
+            true
+          );
           if (index != nsMsgViewIndex_None) {
             window.threadTree.scrollToIndex(index, true);
             newMessageFound = true;
@@ -1033,6 +1119,16 @@ var dbViewWrapperListener = {
       if (!newMessageFound && !window.threadPane.scrollDetected) {
         window.threadPane.scrollToLatestRowIfNoSelection();
       }
+      if (all) {
+        window.dispatchEvent(new CustomEvent("allMessagesLoaded"));
+      }
+    }
+    // To be consistent with the behavior in saved searches, update the message
+    // count in synthetic views when a quick filter term is entered or cleared.
+    if (gViewWrapper?.isSynthetic) {
+      window.threadPaneHeader.updateMessageCount(
+        gViewWrapper.dbView.numMsgsInView
+      );
     }
     window.quickFilterBar?.onMessagesChanged();
   },
@@ -1051,20 +1147,20 @@ var dbViewWrapperListener = {
       return;
     }
 
-    let rowCount = gDBView.rowCount;
+    const rowCount = gDBView.rowCount;
 
     // There's no messages left.
     if (rowCount == 0) {
       if (location.href == "about:3pane") {
         // In a 3-pane tab, clear the message pane and selection.
         window.threadTree.selectedIndex = -1;
-      } else if (parent?.location != "about:3pane") {
+      } else if (window.parent && window.parent.location != "about:3pane") {
         // In a standalone message tab or window, close the tab or window.
-        let tabmail = top.document.getElementById("tabmail");
+        const tabmail = window.parent.document.getElementById("tabmail");
         if (tabmail) {
           tabmail.closeTab(window.tabOrWindow);
         } else {
-          top.close();
+          window.parent.close();
         }
       }
       this._nextViewIndexAfterDelete = null;
@@ -1089,7 +1185,7 @@ var dbViewWrapperListener = {
           // might not fire it. OTOH, we want it to fire only once, so see if
           // the event is fired, and if not, fire it.
           let eventFired = false;
-          let onSelect = () => (eventFired = true);
+          const onSelect = () => (eventFired = true);
 
           window.threadTree.addEventListener("select", onSelect, {
             once: true,
@@ -1111,7 +1207,7 @@ var dbViewWrapperListener = {
               return;
             }
             // Close the tab or window if the displayed message is deleted.
-            let tabmail = top.document.getElementById("tabmail");
+            const tabmail = top.document.getElementById("tabmail");
             if (tabmail) {
               tabmail.closeTab(window.tabOrWindow);
             } else {

@@ -7,31 +7,32 @@ import {
   getSelectedFrame,
   getClosestBreakpointPosition,
   getBreakpoint,
-} from "../../selectors";
+} from "../../selectors/index";
 import { createLocation } from "../../utils/location";
-import { addHiddenBreakpoint } from "../breakpoints";
+import { addHiddenBreakpoint } from "../breakpoints/index";
 import { setBreakpointPositions } from "../breakpoints/breakpointPositions";
+import { setSkipPausing } from "./skipPausing";
 
 import { resume } from "./commands";
 
-export function continueToHere(cx, location) {
+export function continueToHere(location) {
   return async function ({ dispatch, getState }) {
     const { line, column } = location;
     const selectedSource = getSelectedSource(getState());
-    const selectedFrame = getSelectedFrame(getState(), cx.thread);
+    const selectedFrame = getSelectedFrame(getState());
 
     if (!selectedFrame || !selectedSource) {
       return;
     }
 
-    const debugLine = selectedFrame.location.line;
+    const pausedLine = selectedFrame.location.line;
     // If the user selects a line to continue to,
     // it must be different than the currently paused line.
-    if (!column && debugLine == line) {
+    if (!column && pausedLine == line) {
       return;
     }
 
-    await dispatch(setBreakpointPositions({ cx, location }));
+    await dispatch(setBreakpointPositions(location));
     const position = getClosestBreakpointPosition(getState(), location);
 
     // If the user selects a location in the editor,
@@ -42,12 +43,14 @@ export function continueToHere(cx, location) {
 
     const pauseLocation = column && position ? position.location : location;
 
+    // Ensure that breakpoints are enabled while running this
+    await dispatch(setSkipPausing(false));
+
     // Set a hidden breakpoint if we do not already have a breakpoint
     // at the closest position
     if (!getBreakpoint(getState(), pauseLocation)) {
       await dispatch(
         addHiddenBreakpoint(
-          cx,
           createLocation({
             source: selectedSource,
             line: pauseLocation.line,
@@ -57,6 +60,6 @@ export function continueToHere(cx, location) {
       );
     }
 
-    dispatch(resume(cx));
+    dispatch(resume());
   };
 }

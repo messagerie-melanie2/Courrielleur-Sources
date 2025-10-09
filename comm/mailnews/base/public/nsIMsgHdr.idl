@@ -13,7 +13,7 @@ interface nsIUTF8StringEnumerator;
 [scriptable, uuid(3c11ddbe-c805-40c5-b9c9-d065fad5d0be)]
 interface nsIMsgDBHdr : nsISupports
 {
-    void setStringProperty(in string propertyName, in  AUTF8String propertyValue);
+    void setStringProperty(in string propertyName, in AUTF8String propertyValue);
     AUTF8String getStringProperty(in string propertyName);
     unsigned long getUint32Property(in string propertyName);
     void setUint32Property(in string propertyName,
@@ -55,11 +55,11 @@ interface nsIMsgDBHdr : nsISupports
     attribute unsigned long messageSize;
     attribute unsigned long lineCount;
     /**
-     * The offset into the local folder/offline store of the message. This
-     * will be pluggable store-dependent, e.g., for mail dir it should
-     * always be 0.
+     * Store-dependent value for locating the message. For mbox this is the
+     * offset in the mbox file, for maildir it is the filename. An empty
+     * string means unset.
      */
-    attribute unsigned long long messageOffset;
+    attribute AUTF8String storeToken;
     /**
      * For "Offline" supporting folders (IMAP, NNTP): .offlineMessageSize is
      * the exact size of the local copy of the message in the msgStore.
@@ -71,12 +71,12 @@ interface nsIMsgDBHdr : nsISupports
     /* common headers */
     attribute PRTime date;
     readonly attribute unsigned long dateInSeconds;
-    attribute string messageId;
-    attribute string ccList;
-    attribute string bccList;
-    attribute string author;
+    attribute AUTF8String messageId;
+    attribute AUTF8String ccList;
+    attribute AUTF8String bccList;
+    attribute AUTF8String author;
     attribute AUTF8String subject;
-    attribute string recipients;
+    attribute AUTF8String recipients;
 
     /* anything below here still has to be fixed */
     void setReferences(in AUTF8String references);
@@ -91,19 +91,27 @@ interface nsIMsgDBHdr : nsISupports
     Array<octet> getSubjectCollationKey();
     Array<octet> getRecipientsCollationKey();
 
-    attribute string charset;
+    attribute AUTF8String charset;
 
     /**
      * Returns the effective character set for the message (@ref charset).
      * For NNTP, if there is no specific set defined for the message,
      * the character set of the server instead.
      */
-    readonly attribute ACString effectiveCharset;
+    readonly attribute AUTF8String effectiveCharset;
 
-    attribute string accountKey;
+    attribute AUTF8String accountKey;
     readonly attribute nsIMsgFolder folder;
 
     /// Array of names of all database properties in the header.
     readonly attribute Array<AUTF8String> properties;
+
+    /**
+     * Server-assigned unique ID for message. 0 = unset.
+     * IMAP sequence number or UID, NNTP article number, etc...
+     * NOTE: Added in support of Bug 1806770, but not yet in use.
+     */
+    attribute unsigned long uidOnServer;
 };
+
 /* *******************************************************************************/

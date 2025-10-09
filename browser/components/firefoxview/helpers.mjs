@@ -2,22 +2,26 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
-
 const lazy = {};
+const loggersByName = new Map();
+
 ChromeUtils.defineESModuleGetters(lazy, {
   BrowserUtils: "resource://gre/modules/BrowserUtils.sys.mjs",
+  Log: "resource://gre/modules/Log.sys.mjs",
   PlacesUIUtils: "resource:///modules/PlacesUIUtils.sys.mjs",
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "relativeTimeFormat", () => {
+ChromeUtils.defineLazyGetter(lazy, "relativeTimeFormat", () => {
   return new Services.intl.RelativeTimeFormat(undefined, { style: "narrow" });
 });
 
 // Cutoff of 1.5 minutes + 1 second to determine what text string to display
 export const NOW_THRESHOLD_MS = 91000;
+
+// Configure logging level via this pref
+export const LOGGING_PREF = "browser.tabs.firefox-view.logLevel";
+
+export const MAX_TABS_FOR_RECENT_BROWSING = 5;
 
 export function formatURIForDisplay(uriString) {
   return lazy.BrowserUtils.formatURIStringForDisplay(uriString);
@@ -56,48 +60,47 @@ export function getImageUrl(icon, targetURI) {
   return icon ? lazy.PlacesUIUtils.getImageURL(icon) : `page-icon:${targetURI}`;
 }
 
-export function onToggleContainer(detailsContainer) {
-  // Ignore early `toggle` events, which may either be fired because the
-  // UI sections update visibility on component connected (based on persisted
-  // UI state), or because <details> elements fire `toggle` events when added
-  // to the DOM with the "open" attribute set. In either case, we don't want
-  // to record telemetry as these events aren't the result of user action.
-  if (detailsContainer.ownerDocument.readyState != "complete") {
-    return;
+/**
+ * Get or create a logger, whose log-level is controlled by a pref
+ *
+ * @param {string} loggerName - Creating named loggers helps differentiate log messages from different
+                                components or features.
+ */
+
+export function getLogger(loggerName) {
+  if (!loggersByName.has(loggerName)) {
+    let logger = lazy.Log.repository.getLogger(`FirefoxView.${loggerName}`);
+    logger.manageLevelFromPref(LOGGING_PREF);
+    logger.addAppender(
+      new lazy.Log.ConsoleAppender(new lazy.Log.BasicFormatter())
+    );
+    loggersByName.set(loggerName, logger);
   }
+  return loggersByName.get(loggerName);
+}
 
-  const isOpen = detailsContainer.open;
-  const isTabPickup = detailsContainer.id === "tab-pickup-container";
+export function escapeHtmlEntities(text) {
+  return (text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
-  const newFluentString = isOpen
-    ? "firefoxview-collapse-button-hide"
-    : "firefoxview-collapse-button-show";
-
-  detailsContainer
-    .querySelector(".twisty")
-    .setAttribute("data-l10n-id", newFluentString);
-
-  if (isTabPickup) {
-    Services.telemetry.recordEvent(
-      "firefoxview",
-      "tab_pickup_open",
-      "tabs",
-      isOpen.toString()
+export function navigateToLink(e, url = e.originalTarget.url) {
+  let currentWindow =
+    e.target.ownerGlobal.browsingContext.embedderWindowGlobal.browsingContext
+      .window;
+  if (currentWindow.openTrustedLinkIn) {
+    let where = lazy.BrowserUtils.whereToOpenLink(
+      e.detail.originalEvent,
+      false,
+      true
     );
-    Services.prefs.setBoolPref(
-      "browser.tabs.firefox-view.ui-state.tab-pickup.open",
-      isOpen
-    );
-  } else {
-    Services.telemetry.recordEvent(
-      "firefoxview",
-      "closed_tabs_open",
-      "tabs",
-      isOpen.toString()
-    );
-    Services.prefs.setBoolPref(
-      "browser.tabs.firefox-view.ui-state.recently-closed-tabs.open",
-      isOpen
-    );
+    if (where == "current") {
+      where = "tab";
+    }
+    currentWindow.openTrustedLinkIn(url, where);
   }
 }

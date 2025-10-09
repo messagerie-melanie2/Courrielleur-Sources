@@ -61,7 +61,7 @@ add_task(async function testWaitForRedirect() {
   const closedWindow = BrowserTestUtils.domWindowClosed(requestWindow);
   const browser = requestWindow.document.getElementById("requestFrame");
   await BrowserTestUtils.browserLoaded(browser);
-  BrowserTestUtils.loadURIString(browser, completionUrl);
+  BrowserTestUtils.startLoadingURIString(browser, completionUrl);
   const result = await request;
   is(result, completionUrl, "finished with correct URL");
 
@@ -81,10 +81,9 @@ add_task(async function testCancelWaitForRedirect() {
 
   await new Promise(resolve => setTimeout(resolve));
 
+  await BrowserTestUtils.closeWindow(requestWindow);
   const closeEvent = new Event("close");
   requestWindow.dispatchEvent(closeEvent);
-  await BrowserTestUtils.closeWindow(requestWindow);
-
   try {
     await request;
     ok(false, "request should be rejected");

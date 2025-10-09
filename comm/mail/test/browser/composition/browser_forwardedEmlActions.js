@@ -9,25 +9,23 @@
 
 "use strict";
 
-var { async_wait_for_compose_window, close_compose_window, get_compose_body } =
-  ChromeUtils.import("resource://testing-common/mozmill/ComposeHelpers.jsm");
+var { close_compose_window, compose_window_ready, get_compose_body } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+  );
 var {
   assert_selected_and_displayed,
   be_in_folder,
   close_tab,
   create_folder,
   get_about_message,
-  mc,
   select_click_row,
   wait_for_message_display_completion,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-var { async_plan_for_new_window, close_window, wait_for_new_window } =
-  ChromeUtils.import("resource://testing-common/mozmill/WindowHelpers.jsm");
-
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { promise_new_window } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/WindowHelpers.sys.mjs"
 );
 
 var folder;
@@ -39,8 +37,7 @@ var msgbodyB = "hi, i think you may know of an email client to recommend?";
 add_setup(async function () {
   folder = await create_folder("FwdedEmlTest");
 
-  let source =
-    "From - Mon Apr  16 22:55:33 2012\n" +
+  const source =
     "Date: Mon, 16 Apr 2012 22:55:33 +0300\n" +
     "From: Mr Example <example@invalid>\n" +
     "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:14.0) Gecko/20120331 Thunderbird/14.0a1\n" +
@@ -100,27 +97,27 @@ add_setup(async function () {
 async function setupWindowAndTest(hotkeyToHit, hotkeyModifiers) {
   await be_in_folder(folder);
 
-  let msg = select_click_row(0);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
-  let tabSelectPromise = BrowserTestUtils.waitForEvent(
-    mc.window.document.getElementById("tabmail").tabContainer,
+  const tabSelectPromise = BrowserTestUtils.waitForEvent(
+    document.getElementById("tabmail").tabContainer,
     "select"
   );
-  let aboutMessage = get_about_message();
+  const aboutMessage = get_about_message();
   EventUtils.synthesizeMouseAtCenter(
     aboutMessage.document.getElementById("attachmentName"),
     { clickCount: 1 },
     aboutMessage
   );
   await tabSelectPromise;
-  wait_for_message_display_completion(mc, false);
+  await wait_for_message_display_completion(window, false);
 
-  let newWindowPromise = async_plan_for_new_window("msgcompose");
+  const newWindowPromise = promise_new_window("msgcompose");
   EventUtils.synthesizeKey(hotkeyToHit, hotkeyModifiers, window);
-  let compWin = await async_wait_for_compose_window(window, newWindowPromise);
+  const compWin = await compose_window_ready(newWindowPromise);
 
-  let bodyText = get_compose_body(compWin).textContent;
+  const bodyText = get_compose_body(compWin).textContent;
   if (bodyText.includes("html")) {
     throw new Error("body text contains raw html; bodyText=" + bodyText);
   }
@@ -134,7 +131,7 @@ async function setupWindowAndTest(hotkeyToHit, hotkeyModifiers) {
     );
   }
 
-  let subjectText = compWin.window.document.getElementById("msgSubject").value;
+  const subjectText = compWin.document.getElementById("msgSubject").value;
   if (!subjectText.includes(msgsubject)) {
     throw new Error(
       "subject text didn't contain the original subject; " +
@@ -145,8 +142,8 @@ async function setupWindowAndTest(hotkeyToHit, hotkeyModifiers) {
     );
   }
 
-  close_compose_window(compWin, false);
-  close_tab(mc.window.document.getElementById("tabmail").currentTabInfo);
+  await close_compose_window(compWin, false);
+  close_tab(document.getElementById("tabmail").currentTabInfo);
 }
 
 /**

@@ -7,48 +7,84 @@
 menupopup {
   appearance: none;
   background-color: transparent;
+
+  &::part(content) {
+    margin: 1px;
+  }
+
+  & > :is(menu, menuitem)[disabled="true"][_moz-menuactive="true"] {
+    background-color: transparent !important;
+  }
+
+  & > menu::after {
+    line-height: 0;
+  }
+
+  &[needsgutter] > :is(menu, menuitem, menucaption) {
+    padding-inline-start: 8px;
+
+    &:before {
+      content: var(--icon-check);
+      padding-inline: 0 8px;
+    }
+
+    &:not([image]) > .menu-icon {
+      display: none;
+    }
+  }
+
+  &:not([needsgutter], .no-icon-menupopup) > :is(menu, menuitem, menucaption) > .menu-icon {
+    display: flex;
+  }
+
+  & > menuseparator {
+    margin-inline: 0;
+  }
+
+  & > menuseparator#customizeMailToolbarMenuSeparator {
+    display: none;
+  }
+
+  & > .webextension-rootElement,
+  &.webextension-menupopup > :is(menu, menuitem) {
+
+    & > .menu-icon {
+      display: flex;
+    }
+
+    &::before {
+      display: none;
+    }
+  }
+
+  menulist > & > menuitem {
+    &::before {
+      margin-inline: 0 -10px;
+    }
+
+    &:is([checked="true"], [selected="true"])::before {
+      visibility: hidden;
+    }
+
+    &.menuitem-iconic::before {
+      display: none !important;
+    }
+  }
 }
 
-menupopup::part(content) {
-  margin: 1px;
+.menu::after,
+.menu-accel {
+  margin-inline-end: 0;
 }
 
-menupopup .menu-iconic-icon {
-  width: 16px;
-  margin-inline-start: 0;
-}
+.menu-accel {
 
-menupopup > menu::after {
-  line-height: 0;
-}
+  menupopup[type="arrow"] & {
+    margin-inline-end: 0;
+  }
 
-menupopup > menu > .menu-text,
-menupopup > menuitem > .menu-text {
-  margin-inline-start: 21px !important;
-}
-
-menupopup > menuitem > .menu-right {
-  margin-inline-end: -4px;
-  appearance: none;
-}
-
-/* Only show the system checkmark on main window menu */
-#windowPopup > menuitem[checked="true"] {
-  list-style-image: none;
-}
-
-menupopup > menuseparator#customizeMailToolbarMenuSeparator {
-  display: none;
-}
-
-menulist > menupopup > menuitem::before {
-  margin-inline: 0 -10px;
-}
-
-menulist > menupopup > menuitem:is([checked="true"], [selected="true"])::before {
-  visibility: hidden;
-}
-
-menulist > menupopup > menuitem.menuitem-iconic::before {
-  display: none;
+  menuitem:not([disabled="true"]):hover &,
+  menuitem:not([disabled="true"]):focus & {
+    opacity: 1;
+  }
 }

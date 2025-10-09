@@ -11,15 +11,14 @@
 
 import * as asyncValue from "./async-value";
 
-import { initialState } from "../reducers/index";
-
 import { getDisplayURL } from "./sources-tree/getURL";
-import { createLocation } from "./location";
 
 function makeMockSource(url = "url", id = "source", thread = "FakeThread") {
   return {
     id,
     url,
+    shortName: getDisplayURL(url).filename,
+    longName: getDisplayURL(url).filename + getDisplayURL(url).search,
     displayURL: getDisplayURL(url),
     thread,
     isPrettyPrinted: false,
@@ -136,9 +135,7 @@ function mockScopeAddVariable(scope, name) {
 }
 
 function makeMockBreakpoint(source = makeMockSource(), line = 1, column) {
-  const location = column
-    ? { sourceId: source.id, source: { id: source.id }, line, column }
-    : { sourceId: source.id, source: { id: source.id }, line };
+  const location = column ? { source, line, column } : { source, line };
   return {
     id: "breakpoint",
     location,
@@ -148,41 +145,6 @@ function makeMockBreakpoint(source = makeMockSource(), line = 1, column) {
     originalText: "text",
     options: {},
   };
-}
-
-function makeMockFrame(
-  id = "frame",
-  source = makeMockSource("url"),
-  scope = makeMockScope(),
-  line = 4,
-  displayName = `display-${id}`,
-  index = 0
-) {
-  const sourceActor = {
-    id: `${source.id}-actor`,
-    actor: `${source.id}-actor`,
-    source: source.id,
-    sourceObject: source,
-  };
-  const location = createLocation({ source, sourceActor, line });
-  return {
-    id,
-    thread: "FakeThread",
-    displayName,
-    location,
-    generatedLocation: location,
-    source,
-    scope,
-    this: {},
-    index,
-    asyncCause: null,
-    state: "on-stack",
-    type: "call",
-  };
-}
-
-function makeMockFrameWithURL(url) {
-  return makeMockFrame(undefined, makeMockSource(url));
 }
 
 function makeWhyNormal(frameReturnValue = undefined) {
@@ -224,13 +186,6 @@ function makeMockThread(fields) {
   };
 }
 
-function makeMockState(state) {
-  return {
-    ...initialState(),
-    ...state,
-  };
-}
-
 function formatTree(tree, depth = 0, str = "") {
   const whitespace = new Array(depth * 2).join(" ");
 
@@ -256,14 +211,11 @@ export {
   makeMockScope,
   mockScopeAddVariable,
   makeMockBreakpoint,
-  makeMockFrame,
-  makeMockFrameWithURL,
   makeWhyNormal,
   makeWhyThrow,
   makeMockExpression,
   mockcx,
   mockthreadcx,
-  makeMockState,
   makeMockThread,
   makeFullfilledMockSourceContent,
   formatTree,

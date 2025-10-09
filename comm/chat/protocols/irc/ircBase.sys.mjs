@@ -17,11 +17,7 @@
  *   RFC 1459: Internet Relay Chat Protocol
  *     http://tools.ietf.org/html/rfc1459
  */
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-import {
-  l10nHelper,
-  nsSimpleEnumerator,
-} from "resource:///modules/imXPCOMUtils.sys.mjs";
+import { nsSimpleEnumerator } from "resource:///modules/imXPCOMUtils.sys.mjs";
 import { clearTimeout, setTimeout } from "resource://gre/modules/Timer.sys.mjs";
 import { ircHandlerPriorities } from "resource:///modules/ircHandlerPriorities.sys.mjs";
 import {
@@ -32,37 +28,60 @@ import {
 } from "resource:///modules/ircUtils.sys.mjs";
 
 const lazy = {};
-XPCOMUtils.defineLazyGetter(lazy, "_", () =>
-  l10nHelper("chrome://chat/locale/irc.properties")
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () => new Localization(["chat/irc.ftl"], true)
 );
 
 // Display the message and remove them from the rooms they're in.
 function leftRoom(aAccount, aNicks, aChannels, aSource, aReason, aKicked) {
-  let msgId = "message." + (aKicked ? "kicked" : "parted");
   // If a part message was included, include it.
-  let reason = aReason ? lazy._(msgId + ".reason", aReason) : "";
-  function __(aNick, aYou) {
-    // If the user is kicked, we need to say who kicked them.
-    let msgId2 = msgId + (aYou ? ".you" : "");
+  let reason = "";
+  if (aReason) {
     if (aKicked) {
-      if (aYou) {
-        return lazy._(msgId2, aSource, reason);
-      }
-      return lazy._(msgId2, aNick, aSource, reason);
+      reason = lazy.l10n.formatValueSync("message-kicked-reason", {
+        kickMessage: aReason,
+      });
     }
-    if (aYou) {
-      return lazy._(msgId2, reason);
-    }
-    return lazy._(msgId2, aNick, reason);
+    reason = lazy.l10n.formatValueSync("message-parted-reason", {
+      partMessage: aReason,
+    });
   }
 
-  for (let channelName of aChannels) {
+  function __(aNick, aYou) {
+    // If the user is kicked, we need to say who kicked them.
+    if (aKicked) {
+      if (aYou) {
+        return lazy.l10n.formatValueSync("message-kicked-you", {
+          nick: aSource,
+          messageKickedReason: reason,
+        });
+      }
+      return lazy.l10n.formatValueSync("message-kicked", {
+        kickedNick: aNick,
+        kickerNick: aSource,
+        messageKickedReason: reason,
+      });
+    }
+    if (aYou) {
+      return lazy.l10n.formatValueSync("message-parted-you", {
+        messagePartedReason: reason,
+      });
+    }
+    return lazy.l10n.formatValueSync("message-parted", {
+      messagePartedReason: aNick,
+      partMessage: reason,
+    });
+  }
+
+  for (const channelName of aChannels) {
     if (!aAccount.conversations.has(channelName)) {
       // Handle when we closed the window.
       continue;
     }
-    let conversation = aAccount.getConversation(channelName);
-    for (let nick of aNicks) {
+    const conversation = aAccount.getConversation(channelName);
+    for (const nick of aNicks) {
       let msg;
       if (aAccount.normalize(nick) == aAccount.normalize(aAccount._nickname)) {
         msg = __(nick, true);
@@ -80,7 +99,7 @@ function leftRoom(aAccount, aNicks, aChannels, aSource, aReason, aKicked) {
 }
 
 function writeMessage(aAccount, aMessage, aString, aType) {
-  let type = {};
+  const type = {};
   type[aType] = true;
   type.tags = aMessage.tags;
   aAccount
@@ -167,7 +186,7 @@ export var ircBase = {
         this.WARN("Received unexpected ERROR response:\n" + aMessage.params[0]);
         this.gotDisconnected(
           Ci.prplIAccount.ERROR_NETWORK_ERROR,
-          lazy._("connection.error.lost")
+          lazy.l10n.formatValueSync("connection-error-lost")
         );
       } else {
         // We received an ERROR message when expecting it (i.e. we've sent a
@@ -178,11 +197,11 @@ export var ircBase = {
     },
     INVITE(aMessage) {
       // INVITE <nickname> <channel>
-      let channel = aMessage.params[1];
+      const channel = aMessage.params[1];
       this.addChatRequest(
         channel,
         () => {
-          this.joinChat(this.getChatRoomDefaultFieldValues(channel));
+          this.joinChat(this.getChatRoomFieldValuesFromString(channel));
         },
         request => {
           // Inform the user when an invitation was automatically ignored.
@@ -190,7 +209,10 @@ export var ircBase = {
             // Otherwise just notify the user.
             this.getConversation(channel).writeMessage(
               aMessage.origin,
-              lazy._("message.inviteReceived", aMessage.origin, channel),
+              lazy.l10n.formatValueSync("message-invite-received", {
+                nick: aMessage.origin,
+                conversationName: channel,
+              }),
               { system: true }
             );
           }
@@ -201,8 +223,8 @@ export var ircBase = {
     JOIN(aMessage) {
       // JOIN ( <channel> *( "," <channel> ) [ <key> *( "," <key> ) ] ) / "0"
       // Iterate over each channel.
-      for (let channelName of aMessage.params[0].split(",")) {
-        let conversation = this.getConversation(channelName);
+      for (const channelName of aMessage.params[0].split(",")) {
+        const conversation = this.getConversation(channelName);
 
         // Check whether we joined the channel or if someone else did.
         if (
@@ -225,7 +247,7 @@ export var ircBase = {
           if (conversation._rejoined) {
             conversation.writeMessage(
               aMessage.origin,
-              lazy._("message.rejoined"),
+              lazy.l10n.formatValueSync("message-rejoined"),
               {
                 system: true,
               }
@@ -237,16 +259,20 @@ export var ircBase = {
           if (!conversation.chatRoomFields) {
             this.WARN(
               "Opening a MUC without storing its " +
-                "prplIChatRoomFieldValues first."
+                "prplIChatRoomFieldValues first: " +
+                channelName
             );
             conversation.chatRoomFields =
-              this.getChatRoomDefaultFieldValues(channelName);
+              this.getChatRoomFieldValuesFromString(channelName);
           }
         } else {
           // Don't worry about adding ourself, RPL_NAMREPLY takes care of that
           // case.
           conversation.getParticipant(aMessage.origin, true);
-          let msg = lazy._("message.join", aMessage.origin, aMessage.source);
+          const msg = lazy.l10n.formatValueSync("message-join", {
+            nick: aMessage.origin,
+            nickAndHost: aMessage.source,
+          });
           conversation.writeMessage(aMessage.origin, msg, {
             system: true,
             noLinkification: true,
@@ -254,7 +280,7 @@ export var ircBase = {
         }
       }
       // If the joiner is a buddy, mark as online.
-      let buddy = this.buddies.get(aMessage.origin);
+      const buddy = this.buddies.get(aMessage.origin);
       if (buddy) {
         buddy.setStatus(Ci.imIStatusInfo.STATUS_AVAILABLE, "");
       }
@@ -331,7 +357,7 @@ export var ircBase = {
     },
     PONG(aMessage) {
       // PONG <server> [ <server2> ]
-      let pongTime = aMessage.params[1];
+      const pongTime = aMessage.params[1];
 
       // Ping to keep the connection alive.
       if (pongTime.startsWith("_")) {
@@ -355,12 +381,13 @@ export var ircBase = {
         quitMsg = quitMsg.slice(6); // "Quit: ".length
       }
       // If a quit message was included, show it.
-      let nick = aMessage.origin;
-      let msg = lazy._(
-        "message.quit",
+      const nick = aMessage.origin;
+      const msg = lazy.l10n.formatValueSync("message-quit", {
         nick,
-        quitMsg.length ? lazy._("message.quit2", quitMsg) : ""
-      );
+        quitMessage: quitMsg.length
+          ? lazy.l10n.formatValueSync("message-quit2", { nick: quitMsg })
+          : "",
+      });
       // Loop over every conversation with the user and display that they quit.
       this.conversations.forEach(conversation => {
         if (conversation.isChat && conversation._participants.has(nick)) {
@@ -373,7 +400,7 @@ export var ircBase = {
       this.removeBuddyInfo(nick);
 
       // If the leaver is a buddy, mark as offline.
-      let buddy = this.buddies.get(nick);
+      const buddy = this.buddies.get(nick);
       if (buddy) {
         buddy.setStatus(Ci.imIStatusInfo.STATUS_OFFLINE, "");
       }
@@ -386,15 +413,15 @@ export var ircBase = {
       }
       return true;
     },
-    SQUIT(aMessage) {
+    SQUIT() {
       // <server> <comment>
       return true;
     },
     TOPIC(aMessage) {
       // TOPIC <channel> [ <topic> ]
       // Show topic as a message.
-      let conversation = this.getConversation(aMessage.params[0]);
-      let topic = aMessage.params[1];
+      const conversation = this.getConversation(aMessage.params[0]);
+      const topic = aMessage.params[1];
       // Set the topic in the conversation and update the UI.
       conversation.setTopic(
         topic ? ctcpFormatToText(topic) : "",
@@ -803,7 +830,7 @@ export var ircBase = {
       }
       return this.setWhois(aMessage.params[1], { away: aMessage.params[2] });
     },
-    302(aMessage) {
+    302() {
       // RPL_USERHOST
       // :*1<reply> *( " " <reply )"
       // reply = nickname [ "*" ] "=" ( "+" / "-" ) hostname
@@ -821,29 +848,29 @@ export var ircBase = {
       }
 
       // This was received in response to the last ISON message sent.
-      for (let buddyName of this.pendingIsOnQueue) {
+      for (const buddyName of this.pendingIsOnQueue) {
         // If the buddy name is in the list returned from the server, they're
         // online.
-        let status = !receivedBuddyNames.includes(buddyName)
+        const status = !receivedBuddyNames.includes(buddyName)
           ? Ci.imIStatusInfo.STATUS_OFFLINE
           : Ci.imIStatusInfo.STATUS_AVAILABLE;
 
         // Set the status with no status message, only if the buddy actually
         // exists in the buddy list.
-        let buddy = this.buddies.get(buddyName);
+        const buddy = this.buddies.get(buddyName);
         if (buddy) {
           buddy.setStatus(status, "");
         }
       }
       return true;
     },
-    305(aMessage) {
+    305() {
       // RPL_UNAWAY
       // :You are no longer marked as being away
       this.isAway = false;
       return true;
     },
-    306(aMessage) {
+    306() {
       // RPL_NOWAWAY
       // :You have been marked as away
       this.isAway = true;
@@ -857,8 +884,8 @@ export var ircBase = {
       // RPL_WHOISUSER
       // <nick> <user> <host> * :<real name>
       // <username>@<hostname>
-      let nick = aMessage.params[1];
-      let source = aMessage.params[2] + "@" + aMessage.params[3];
+      const nick = aMessage.params[1];
+      const source = aMessage.params[2] + "@" + aMessage.params[3];
       // Some servers obfuscate the host when sending messages. Therefore,
       // we set the account prefix by using the host from this response.
       // We store it separately to avoid glitches due to the whois entry
@@ -887,19 +914,19 @@ export var ircBase = {
     314(aMessage) {
       // RPL_WHOWASUSER
       // <nick> <user> <host> * :<real name>
-      let source = aMessage.params[2] + "@" + aMessage.params[3];
+      const source = aMessage.params[2] + "@" + aMessage.params[3];
       return this.setWhois(aMessage.params[1], {
         offline: true,
         realname: aMessage.params[5],
         connectedFrom: source,
       });
     },
-    315(aMessage) {
+    315() {
       // RPL_ENDOFWHO
       // <name> :End of WHO list
       return false;
     },
-    316(aMessage) {
+    316() {
       // RPL_WHOISCHANOP
       // Non-generic
       return false;
@@ -916,7 +943,7 @@ export var ircBase = {
       // <nick> :End of WHOIS list
       // We've received everything about WHOIS, tell the tooltip that is waiting
       // for this information.
-      let nick = aMessage.params[1];
+      const nick = aMessage.params[1];
 
       if (this.whoisInformation.has(nick)) {
         this.notifyWhois(nick);
@@ -938,7 +965,7 @@ export var ircBase = {
     /*
      * LIST
      */
-    321(aMessage) {
+    321() {
       // RPL_LISTSTART
       // Channel :Users Name
       // Obsolete. Not used.
@@ -947,8 +974,8 @@ export var ircBase = {
     322(aMessage) {
       // RPL_LIST
       // <channel> <# visible> :<topic>
-      let name = aMessage.params[1];
-      let participantCount = aMessage.params[2];
+      const name = aMessage.params[1];
+      const participantCount = aMessage.params[2];
       let topic = aMessage.params[3];
       // Some servers (e.g. Unreal) include the channel's modes before the topic.
       // Omit this.
@@ -962,14 +989,14 @@ export var ircBase = {
       this._currentBatch.push(name);
       // Give callbacks a batch of channels of length _channelsPerBatch.
       if (this._currentBatch.length == this._channelsPerBatch) {
-        for (let callback of this._roomInfoCallbacks) {
+        for (const callback of this._roomInfoCallbacks) {
           callback.onRoomInfoAvailable(this._currentBatch, false);
         }
         this._currentBatch = [];
       }
       return true;
     },
-    323(aMessage) {
+    323() {
       // RPL_LISTEND
       // :End of LIST
       this._sendRemainingRoomInfo();
@@ -990,7 +1017,7 @@ export var ircBase = {
 
       return true;
     },
-    325(aMessage) {
+    325() {
       // RPL_UNIQOPIS
       // <channel> <nickname>
       // TODO parse this and have the UI respond accordingly.
@@ -999,7 +1026,7 @@ export var ircBase = {
     331(aMessage) {
       // RPL_NOTOPIC
       // <channel> :No topic is set
-      let conversation = this.getConversation(aMessage.params[1]);
+      const conversation = this.getConversation(aMessage.params[1]);
       // Clear the topic.
       conversation.setTopic("");
       return true;
@@ -1008,12 +1035,12 @@ export var ircBase = {
       // RPL_TOPIC
       // <channel> :<topic>
       // Update the topic UI
-      let conversation = this.getConversation(aMessage.params[1]);
-      let topic = aMessage.params[2];
+      const conversation = this.getConversation(aMessage.params[1]);
+      const topic = aMessage.params[2];
       conversation.setTopic(topic ? ctcpFormatToText(topic) : "");
       return true;
     },
-    333(aMessage) {
+    333() {
       // nonstandard
       // <channel> <nickname> <time>
       return true;
@@ -1029,7 +1056,10 @@ export var ircBase = {
       // above (which is as specified by RFC 2812).
       this.getConversation(aMessage.params[2]).writeMessage(
         aMessage.origin,
-        lazy._("message.invited", aMessage.params[1], aMessage.params[2]),
+        lazy.l10n.formatValueSync("message-invited", {
+          nick: aMessage.params[1],
+          conversationName: aMessage.params[2],
+        }),
         { system: true }
       );
       return true;
@@ -1040,28 +1070,30 @@ export var ircBase = {
       return writeMessage(
         this,
         aMessage,
-        lazy._("message.summoned", aMessage.params[0])
+        lazy.l10n.formatValueSync("message-summoned", {
+          nick: aMessage.params[0],
+        })
       );
     },
-    346(aMessage) {
+    346() {
       // RPL_INVITELIST
       // <channel> <invitemask>
       // TODO what do we do?
       return false;
     },
-    347(aMessage) {
+    347() {
       // RPL_ENDOFINVITELIST
       // <channel> :End of channel invite list
       // TODO what do we do?
       return false;
     },
-    348(aMessage) {
+    348() {
       // RPL_EXCEPTLIST
       // <channel> <exceptionmask>
       // TODO what do we do?
       return false;
     },
-    349(aMessage) {
+    349() {
       // RPL_ENDOFEXCEPTIONLIST
       // <channel> :End of channel exception list
       // TODO update UI?
@@ -1080,7 +1112,7 @@ export var ircBase = {
     /*
      * WHO
      */
-    352(aMessage) {
+    352() {
       // RPL_WHOREPLY
       // <channel> <user> <host> <server> <nick> ( "H" / "G" ) ["*"] [ ("@" / "+" ) ] :<hopcount> <real name>
       // TODO parse and display this?
@@ -1093,11 +1125,11 @@ export var ircBase = {
     353(aMessage) {
       // RPL_NAMREPLY
       // <target> ( "=" / "*" / "@" ) <channel> :[ "@" / "+" ] <nick> *( " " [ "@" / "+" ] <nick> )
-      let conversation = this.getConversation(aMessage.params[2]);
+      const conversation = this.getConversation(aMessage.params[2]);
       // Keep if this is secret (@), private (*) or public (=).
       conversation.setModesFromRestriction(aMessage.params[1]);
       // Add the participants.
-      let newParticipants = [];
+      const newParticipants = [];
       aMessage.params[3]
         .trim()
         .split(" ")
@@ -1111,19 +1143,19 @@ export var ircBase = {
       return true;
     },
 
-    361(aMessage) {
+    361() {
       // RPL_KILLDONE
       // Non-generic
       // TODO What is this?
       return false;
     },
-    362(aMessage) {
+    362() {
       // RPL_CLOSING
       // Non-generic
       // TODO What is this?
       return false;
     },
-    363(aMessage) {
+    363() {
       // RPL_CLOSEEND
       // Non-generic
       // TODO What is this?
@@ -1138,7 +1170,7 @@ export var ircBase = {
       // <mask> <server> :<hopcount> <server info>
       return serverMessage(this, aMessage);
     },
-    365(aMessage) {
+    365() {
       // RPL_ENDOFLINKS
       // <mask> :End of LINKS list
       return true;
@@ -1154,7 +1186,7 @@ export var ircBase = {
 
       // This assumes that this is the last message received when joining a
       // channel, so a few "clean up" tasks are done here.
-      let conversation = this.getConversation(aMessage.params[1]);
+      const conversation = this.getConversation(aMessage.params[1]);
 
       // Update the topic as we may have added the participant for
       // the user after the mode message was handled, and so
@@ -1174,7 +1206,7 @@ export var ircBase = {
     367(aMessage) {
       // RPL_BANLIST
       // <channel> <banmask>
-      let conv = this.getConversation(aMessage.params[1]);
+      const conv = this.getConversation(aMessage.params[1]);
       if (!conv.banMasks.includes(aMessage.params[2])) {
         conv.banMasks.push(aMessage.params[2]);
       }
@@ -1183,14 +1215,20 @@ export var ircBase = {
     368(aMessage) {
       // RPL_ENDOFBANLIST
       // <channel> :End of channel ban list
-      let conv = this.getConversation(aMessage.params[1]);
+      const conv = this.getConversation(aMessage.params[1]);
       let msg;
       if (conv.banMasks.length) {
-        msg = [lazy._("message.banMasks", aMessage.params[1])]
+        msg = [
+          lazy.l10n.formatValueSync("message-ban-masks", {
+            place: aMessage.params[1],
+          }),
+        ]
           .concat(conv.banMasks)
           .join("\n");
       } else {
-        msg = lazy._("message.noBanMasks", aMessage.params[1]);
+        msg = lazy.l10n.formatValueSync("message-no-ban-masks", {
+          place: aMessage.params[1],
+        });
       }
       conv.writeMessage(aMessage.origin, msg, { system: true });
       return true;
@@ -1217,13 +1255,13 @@ export var ircBase = {
       // :- <text>
       return addMotd(this, aMessage);
     },
-    373(aMessage) {
+    373() {
       // RPL_INFOSTART
       // Non-generic
       // This is unnecessary and servers just send RPL_INFO.
       return true;
     },
-    374(aMessage) {
+    374() {
       // RPL_ENDOFINFO
       // :End of INFO list
       return true;
@@ -1265,7 +1303,7 @@ export var ircBase = {
       // <config file> :Rehashing
       return serverMessage(this, aMessage);
     },
-    383(aMessage) {
+    383() {
       // RPL_YOURESERVICE
       // You are service <servicename>
       this.WARN('Received "You are a service" message.');
@@ -1275,7 +1313,7 @@ export var ircBase = {
     /*
      * Info
      */
-    384(aMessage) {
+    384() {
       // RPL_MYPORTIS
       // Non-generic
       // TODO Parse and display?
@@ -1285,31 +1323,34 @@ export var ircBase = {
       // RPL_TIME
       // <server> :<string showing server's local time>
 
-      let msg = lazy._("ctcp.time", aMessage.params[1], aMessage.params[2]);
+      const msg = lazy.l10n.formatValueSync("ctcp-time", {
+        username: aMessage.params[1],
+        timeResponse: aMessage.params[2],
+      });
       // Show the date returned from the server, note that this doesn't use
       // the serverMessage function: since this is in response to a command, it
       // should always be shown.
       return writeMessage(this, aMessage, msg, "system");
     },
-    392(aMessage) {
+    392() {
       // RPL_USERSSTART
       // :UserID   Terminal  Host
       // TODO
       return false;
     },
-    393(aMessage) {
+    393() {
       // RPL_USERS
       // :<username> <ttyline> <hostname>
       // TODO store into buddy list? List out?
       return false;
     },
-    394(aMessage) {
+    394() {
       // RPL_ENDOFUSERS
       // :End of users
       // TODO Notify observers of the buddy list?
       return false;
     },
-    395(aMessage) {
+    395() {
       // RPL_NOUSERS
       // :Nobody logged in
       // TODO clear buddy list?
@@ -1322,9 +1363,8 @@ export var ircBase = {
       // <nickname> :No such nick/channel
       // Can arise in response to /mode, /invite, /kill, /msg, /whois.
       // TODO Handled in the conversation for /whois and /mgs so far.
-      let msgId =
-        "error.noSuch" +
-        (this.isMUCName(aMessage.params[1]) ? "Channel" : "Nick");
+      const msgSuffix = this.isMUCName(aMessage.params[1]) ? "channel" : "nick";
+      const msgId = `error-no-such-${msgSuffix}`;
       if (this.conversations.has(aMessage.params[1])) {
         // If the conversation exists and we just sent a message from it, then
         // notify that the user is offline.
@@ -1336,10 +1376,12 @@ export var ircBase = {
       return serverErrorMessage(
         this,
         aMessage,
-        lazy._(msgId, aMessage.params[1])
+        lazy.l10n.formatValueSync(msgId, {
+          name: aMessage.params[1],
+        })
       );
     },
-    402(aMessage) {
+    402() {
       // ERR_NOSUCHSERVER
       // <server name> :No such server
       // TODO Parse & display an error to the user.
@@ -1351,7 +1393,7 @@ export var ircBase = {
       return conversationErrorMessage(
         this,
         aMessage,
-        "error.noChannel",
+        "error-no-channel",
         true,
         false
       );
@@ -1363,7 +1405,7 @@ export var ircBase = {
       return conversationErrorMessage(
         this,
         aMessage,
-        "error.cannotSendToChannel"
+        "error-cannot-send-to-channel"
       );
     },
     405(aMessage) {
@@ -1372,7 +1414,7 @@ export var ircBase = {
       return conversationErrorMessage(
         this,
         aMessage,
-        "error.tooManyChannels",
+        "error-too-many-channels",
         true
       );
     },
@@ -1383,7 +1425,9 @@ export var ircBase = {
       return serverErrorMessage(
         this,
         aMessage,
-        lazy._("error.wasNoSuchNick", aMessage.params[1])
+        lazy.l10n.formatValueSync("error-was-no-such-nick", {
+          name: aMessage.params[1],
+        })
       );
     },
     407(aMessage) {
@@ -1392,31 +1436,31 @@ export var ircBase = {
       return conversationErrorMessage(
         this,
         aMessage,
-        "error.nonUniqueTarget",
+        "error-non-unique-target",
         false,
         false
       );
     },
-    408(aMessage) {
+    408() {
       // ERR_NOSUCHSERVICE
       // <service name> :No such service
       // TODO
       return false;
     },
-    409(aMessage) {
+    409() {
       // ERR_NOORIGIN
       // :No origin specified
       // TODO failed PING/PONG message, this should never occur?
       return false;
     },
-    411(aMessage) {
+    411() {
       // ERR_NORECIPIENT
       // :No recipient given (<command>)
       // If this happens a real error with the protocol occurred.
       this.ERROR("ERR_NORECIPIENT: No recipient given for PRIVMSG.");
       return true;
     },
-    412(aMessage) {
+    412() {
       // ERR_NOTEXTTOSEND
       // :No text to send
       // If this happens a real error with the protocol occurred: we should
@@ -1424,52 +1468,52 @@ export var ircBase = {
       this.ERROR("ERR_NOTEXTTOSEND: No text to send for PRIVMSG.");
       return true;
     },
-    413(aMessage) {
+    413() {
       // ERR_NOTOPLEVEL
       // <mask> :No toplevel domain specified
       // If this response is received, a real error occurred in the protocol.
       this.ERROR("ERR_NOTOPLEVEL: Toplevel domain not specified.");
       return true;
     },
-    414(aMessage) {
+    414() {
       // ERR_WILDTOPLEVEL
       // <mask> :Wildcard in toplevel domain
       // If this response is received, a real error occurred in the protocol.
       this.ERROR("ERR_WILDTOPLEVEL: Wildcard toplevel domain specified.");
       return true;
     },
-    415(aMessage) {
+    415() {
       // ERR_BADMASK
       // <mask> :Bad Server/host mask
       // If this response is received, a real error occurred in the protocol.
       this.ERROR("ERR_BADMASK: Bad server/host mask specified.");
       return true;
     },
-    421(aMessage) {
+    421() {
       // ERR_UNKNOWNCOMMAND
       // <command> :Unknown command
       // TODO This shouldn't occur.
       return false;
     },
-    422(aMessage) {
+    422() {
       // ERR_NOMOTD
       // :MOTD File is missing
       // No message of the day to display.
       return true;
     },
-    423(aMessage) {
+    423() {
       // ERR_NOADMININFO
       // <server> :No administrative info available
       // TODO
       return false;
     },
-    424(aMessage) {
+    424() {
       // ERR_FILEERROR
       // :File error doing <file op> on <file>
       // TODO
       return false;
     },
-    431(aMessage) {
+    431() {
       // ERR_NONICKNAMEGIVEN
       // :No nickname given
       // TODO
@@ -1478,7 +1522,9 @@ export var ircBase = {
     432(aMessage) {
       // ERR_ERRONEUSNICKNAME
       // <nick> :Erroneous nickname
-      let msg = lazy._("error.erroneousNickname", this._requestedNickname);
+      const msg = lazy.l10n.formatValueSync("error-erroneous-nickname", {
+        name: this._requestedNickname,
+      });
       serverErrorMessage(this, aMessage, msg);
       if (this._requestedNickname == this._accountNickname) {
         // The account has been set up with an illegal nickname.
@@ -1521,11 +1567,11 @@ export var ircBase = {
       return conversationErrorMessage(
         this,
         aMessage,
-        "error.unavailable",
+        "error-unavailable",
         true
       );
     },
-    441(aMessage) {
+    441() {
       // ERR_USERNOTINCHANNEL
       // <nick> <channel> :They aren't on that channel
       // TODO
@@ -1546,28 +1592,27 @@ export var ircBase = {
       // <user> <channel> :is already on channel
       this.getConversation(aMessage.params[2]).writeMessage(
         aMessage.origin,
-        lazy._(
-          "message.alreadyInChannel",
-          aMessage.params[1],
-          aMessage.params[2]
-        ),
+        lazy.l10n.formatValueSync("message-already-in-channel", {
+          nick: aMessage.params[1],
+          conversationName: aMessage.params[2],
+        }),
         { system: true }
       );
       return true;
     },
-    444(aMessage) {
+    444() {
       // ERR_NOLOGIN
       // <user> :User not logged in
       // TODO
       return false;
     },
-    445(aMessage) {
+    445() {
       // ERR_SUMMONDISABLED
       // :SUMMON has been disabled
       // TODO keep track of this and disable UI associated?
       return false;
     },
-    446(aMessage) {
+    446() {
       // ERR_USERSDISABLED
       // :USERS has been disabled
       // TODO Disabled all buddy list etc.
@@ -1584,7 +1629,7 @@ export var ircBase = {
       // TODO
       return false;
     },
-    461(aMessage) {
+    461() {
       // ERR_NEEDMOREPARAMS
       // <command> :Not enough parameters
 
@@ -1593,49 +1638,59 @@ export var ircBase = {
         this.ERROR("Erroneous username: " + this.username);
         this.gotDisconnected(
           Ci.prplIAccount.ERROR_INVALID_USERNAME,
-          lazy._("connection.error.invalidUsername", this.user)
+          lazy.l10n.formatValueSync("connection-error-invalid-username", {
+            username: this.user,
+          })
         );
         return true;
       }
 
       return false;
     },
-    462(aMessage) {
+    462() {
       // ERR_ALREADYREGISTERED
       // :Unauthorized command (already registered)
       // TODO
       return false;
     },
-    463(aMessage) {
+    463() {
       // ERR_NOPERMFORHOST
       // :Your host isn't among the privileged
       // TODO
       return false;
     },
-    464(aMessage) {
+    464() {
       // ERR_PASSWDMISMATCH
       // :Password incorrect
       this.gotDisconnected(
         Ci.prplIAccount.ERROR_AUTHENTICATION_FAILED,
-        lazy._("connection.error.invalidPassword")
+        lazy.l10n.formatValueSync("connection-error-invalid-password")
       );
       return true;
     },
     465(aMessage) {
       // ERR_YOUREBANEDCREEP
       // :You are banned from this server
-      serverErrorMessage(this, aMessage, lazy._("error.banned"));
+      serverErrorMessage(
+        this,
+        aMessage,
+        lazy.l10n.formatValueSync("error-banned")
+      );
       this.gotDisconnected(
         Ci.prplIAccount.ERROR_OTHER_ERROR,
-        lazy._("error.banned")
+        lazy.l10n.formatValueSync("error-banned")
       ); // Notify account manager.
       return true;
     },
     466(aMessage) {
       // ERR_YOUWILLBEBANNED
-      return serverErrorMessage(this, aMessage, lazy._("error.bannedSoon"));
+      return serverErrorMessage(
+        this,
+        aMessage,
+        lazy.l10n.formatValueSync("error-banned-soon")
+      );
     },
-    467(aMessage) {
+    467() {
       // ERR_KEYSET
       // <channel> :Channel key already set
       // TODO
@@ -1647,11 +1702,11 @@ export var ircBase = {
       return conversationErrorMessage(
         this,
         aMessage,
-        "error.channelFull",
+        "error-channel-full",
         true
       );
     },
-    472(aMessage) {
+    472() {
       // ERR_UNKNOWNMODE
       // <char> :is unknown mode char to me for <channel>
       // TODO
@@ -1663,7 +1718,7 @@ export var ircBase = {
       return conversationErrorMessage(
         this,
         aMessage,
-        "error.inviteOnly",
+        "error-invite-only",
         true,
         false
       );
@@ -1674,7 +1729,7 @@ export var ircBase = {
       return conversationErrorMessage(
         this,
         aMessage,
-        "error.channelBanned",
+        "error-channel-banned",
         true,
         false
       );
@@ -1685,30 +1740,30 @@ export var ircBase = {
       return conversationErrorMessage(
         this,
         aMessage,
-        "error.wrongKey",
+        "error-wrong-key",
         true,
         false
       );
     },
-    476(aMessage) {
+    476() {
       // ERR_BADCHANMASK
       // <channel> :Bad Channel Mask
       // TODO
       return false;
     },
-    477(aMessage) {
+    477() {
       // ERR_NOCHANMODES
       // <channel> :Channel doesn't support modes
       // TODO
       return false;
     },
-    478(aMessage) {
+    478() {
       // ERR_BANLISTFULL
       // <channel> <char> :Channel list is full
       // TODO
       return false;
     },
-    481(aMessage) {
+    481() {
       // ERR_NOPRIVILEGES
       // :Permission Denied- You're not an IRC operator
       // TODO ask to auth?
@@ -1717,34 +1772,34 @@ export var ircBase = {
     482(aMessage) {
       // ERR_CHANOPRIVSNEEDED
       // <channel> :You're not channel operator
-      return conversationErrorMessage(this, aMessage, "error.notChannelOp");
+      return conversationErrorMessage(this, aMessage, "error-not-channel-op");
     },
-    483(aMessage) {
+    483() {
       // ERR_CANTKILLSERVER
       // :You can't kill a server!
       // TODO Display error?
       return false;
     },
-    484(aMessage) {
+    484() {
       // ERR_RESTRICTED
       // :Your connection is restricted!
       // Indicates user mode +r
       // TODO
       return false;
     },
-    485(aMessage) {
+    485() {
       // ERR_UNIQOPPRIVSNEEDED
       // :You're not the original channel operator
       // TODO ask to auth?
       return false;
     },
-    491(aMessage) {
+    491() {
       // ERR_NOOPERHOST
       // :No O-lines for your host
       // TODO
       return false;
     },
-    492(aMessage) {
+    492() {
       // ERR_NOSERVICEHOST
       // Non-generic
       // TODO
@@ -1756,13 +1811,19 @@ export var ircBase = {
       return serverErrorMessage(
         this,
         aMessage,
-        lazy._("error.unknownMode", aMessage.params[1])
+        lazy.l10n.formatValueSync("error-unknown-mode", {
+          mode: aMessage.params[1],
+        })
       );
     },
     502(aMessage) {
       // ERR_USERSDONTMATCH
       // :Cannot change mode for other users
-      return serverErrorMessage(this, aMessage, lazy._("error.mode.wrongUser"));
+      return serverErrorMessage(
+        this,
+        aMessage,
+        lazy.l10n.formatValueSync("error-mode-wrong-user")
+      );
     },
   },
 };

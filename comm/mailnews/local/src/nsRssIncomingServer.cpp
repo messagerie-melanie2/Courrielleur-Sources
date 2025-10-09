@@ -10,7 +10,6 @@
 
 #include "nsIMsgLocalMailFolder.h"
 #include "nsServiceManagerUtils.h"
-#include "nsComponentManagerUtils.h"
 #include "nsMsgUtils.h"
 
 nsrefcnt nsRssIncomingServer::gInstanceCount = 0;
@@ -73,7 +72,7 @@ NS_IMETHODIMP nsRssIncomingServer::GetFeedItemsPath(nsIFile** aLocation) {
 
 NS_IMETHODIMP nsRssIncomingServer::CreateDefaultMailboxes() {
   // For Feeds, all we have is Trash.
-  return CreateLocalFolder(u"Trash"_ns);
+  return CreateLocalFolder("Trash"_ns);
 }
 
 NS_IMETHODIMP nsRssIncomingServer::SetFlagsOnDefaultMailboxes() {
@@ -159,6 +158,12 @@ NS_IMETHODIMP nsRssIncomingServer::MsgAdded(nsIMsgDBHdr* aMsg) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
+NS_IMETHODIMP nsRssIncomingServer::MsgPropertyChanged(
+    nsIMsgDBHdr* aMsg, const char* aProperty, const nsACString& aOldValue,
+    const nsACString& aNewValue) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
 NS_IMETHODIMP nsRssIncomingServer::MsgsClassified(
     const nsTArray<RefPtr<nsIMsgDBHdr>>& aMsgs, bool aJunkProcessed,
     bool aTraitProcessed) {
@@ -238,11 +243,4 @@ NS_IMETHODIMP nsRssIncomingServer::FolderCompactFinish(nsIMsgFolder* folder) {
 NS_IMETHODIMP nsRssIncomingServer::FolderReindexTriggered(
     nsIMsgFolder* folder) {
   return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_IMETHODIMP
-nsRssIncomingServer::GetSortOrder(int32_t* aSortOrder) {
-  NS_ENSURE_ARG_POINTER(aSortOrder);
-  *aSortOrder = 400000000;
-  return NS_OK;
 }

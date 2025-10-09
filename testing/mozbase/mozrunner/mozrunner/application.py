@@ -5,7 +5,7 @@
 import os
 import posixpath
 from abc import ABCMeta, abstractmethod
-from distutils.spawn import find_executable
+from shutil import which
 
 import six
 from mozdevice import ADBDeviceFactory
@@ -34,12 +34,12 @@ def get_app_context(appname):
     return context_map[appname]
 
 
-class DefaultContext(object):
+class DefaultContext:
     profile_class = Profile
 
 
 @six.add_metaclass(ABCMeta)
-class RemoteContext(object):
+class RemoteContext:
     device = None
     _remote_profile = None
     _adb = None
@@ -51,7 +51,7 @@ class RemoteContext(object):
     @property
     def bindir(self):
         if self._bindir is None:
-            paths = [find_executable("emulator")]
+            paths = [which("emulator")]
             paths = [p for p in paths if p is not None if os.path.isfile(p)]
             if not paths:
                 self._bindir = ""
@@ -88,7 +88,7 @@ class RemoteContext(object):
             paths.insert(0, os.path.abspath(self.bindir))
             os.environ["PATH"] = os.pathsep.join(paths)
 
-        return find_executable(binary)
+        return which(binary)
 
     @abstractmethod
     def stop_application(self):
@@ -140,17 +140,17 @@ class FennecContext(RemoteContext):
         return self._remote_profiles_ini
 
 
-class FirefoxContext(object):
+class FirefoxContext:
     profile_class = FirefoxProfile
 
 
-class ThunderbirdContext(object):
+class ThunderbirdContext:
     profile_class = ThunderbirdProfile
 
 
-class ChromeContext(object):
+class ChromeContext:
     profile_class = ChromeProfile
 
 
-class ChromiumContext(object):
+class ChromiumContext:
     profile_class = ChromiumProfile

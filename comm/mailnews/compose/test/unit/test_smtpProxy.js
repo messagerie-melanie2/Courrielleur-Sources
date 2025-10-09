@@ -2,11 +2,11 @@
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 // Tests that SMTP over a SOCKS proxy works.
 
-const { NetworkTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/NetworkTestUtils.jsm"
+const { NetworkTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/NetworkTestUtils.sys.mjs"
 );
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 const PORT = 25;
@@ -23,24 +23,29 @@ add_setup(function () {
 
 add_task(async function sendMessage() {
   equal(daemon.post, undefined);
-  let identity = getSmtpIdentity("test@tinderbox.invalid", localserver);
+  const identity = getSmtpIdentity("test@tinderbox.invalid", localserver);
   var testFile = do_get_file("data/message1.eml");
-  var urlListener = new PromiseTestUtils.PromiseUrlListener();
-  MailServices.smtp.sendMailMessage(
+
+  const messageId = Cc["@mozilla.org/messengercompose/computils;1"]
+    .createInstance(Ci.nsIMsgCompUtils)
+    .msgGenerateMessageId(identity, null);
+
+  const listener = new PromiseTestUtils.PromiseMsgOutgoingListener();
+  const smtpServer = MailServices.outgoingServer.getServerByIdentity(identity);
+  smtpServer.sendMailMessage(
     testFile,
-    "somebody@example.org",
+    MailServices.headerParser.parseEncodedHeaderW("somebody@example.org"),
+    [],
     identity,
     "me@example.org",
     null,
-    urlListener,
-    null,
     null,
     false,
-    "",
-    {},
-    {}
+    messageId,
+    listener
   );
-  await urlListener.promise;
+  await listener.promise;
+
   notEqual(daemon.post, "");
 });
 

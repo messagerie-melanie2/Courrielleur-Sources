@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| shell-option(--enable-temporal) skip-if(!this.hasOwnProperty('Temporal')||!xulRuntime.shell) -- Temporal is not enabled unconditionally, requires shell-options
 // Copyright (C) 2022 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -11,7 +11,7 @@ features: [Temporal]
 // The following are all valid strings so should not throw:
 
 ["UTC", "+01:00"].forEach((timeZone) => {
-  Temporal.Duration.compare(new Temporal.Duration(), new Temporal.Duration(), { relativeTo: { year: 2000, month: 5, day: 2, timeZone } });
+  Temporal.Duration.compare(new Temporal.Duration(1), new Temporal.Duration(), { relativeTo: { year: 2000, month: 5, day: 2, timeZone } });
 });
 
 reportCompare(0, 0);

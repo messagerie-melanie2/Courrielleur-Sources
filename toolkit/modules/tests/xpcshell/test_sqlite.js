@@ -2,15 +2,6 @@
 
 const PROFILE_DIR = do_get_profile().path;
 
-const { PromiseUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/PromiseUtils.sys.mjs"
-);
-const { FileUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/FileUtils.sys.mjs"
-);
-const { Sqlite } = ChromeUtils.importESModule(
-  "resource://gre/modules/Sqlite.sys.mjs"
-);
 const { TelemetryTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/TelemetryTestUtils.sys.mjs"
 );
@@ -121,9 +112,8 @@ add_task(async function test_open_normal_error() {
 
   // Ensure that our database doesn't already exist.
   let path = PathUtils.join(PROFILE_DIR, "corrupt.sqlite");
-  await Assert.rejects(
-    IOUtils.stat(path),
-    /Could not stat file\(.*\) because it does not exist/,
+  Assert.ok(
+    !(await IOUtils.exists(path)),
     "Database file should not exist yet"
   );
 
@@ -338,12 +328,9 @@ add_task(async function test_execute_invalid_statement() {
   await new Promise(resolve => {
     Assert.equal(c._connectionData._anonymousStatements.size, 0);
 
-    c.execute("SELECT invalid FROM unknown").then(
-      do_throw,
-      function onError(error) {
-        resolve();
-      }
-    );
+    c.execute("SELECT invalid FROM unknown").then(do_throw, function onError() {
+      resolve();
+    });
   });
 
   // Ensure we don't leak the statement instance.
@@ -370,15 +357,11 @@ add_task(async function test_on_row_exception_ignored() {
   }
 
   let i = 0;
-  let hasResult = await c.execute(
-    "SELECT * FROM DIRS",
-    null,
-    function onRow(row) {
-      i++;
+  let hasResult = await c.execute("SELECT * FROM DIRS", null, function onRow() {
+    i++;
 
-      throw new Error("Some silly error.");
-    }
-  );
+    throw new Error("Some silly error.");
+  });
 
   Assert.equal(hasResult, true);
   Assert.equal(i, 10);
@@ -422,7 +405,7 @@ add_task(async function test_on_row_stop_iteration() {
   let hasResult = await c.execute(
     `SELECT * FROM dirs WHERE path="nonexistent"`,
     null,
-    function onRow(row) {
+    function onRow() {
       i++;
     }
   );
@@ -468,7 +451,7 @@ add_task(async function test_execute_transaction_success() {
 add_task(async function test_execute_transaction_rollback() {
   let c = await getDummyDatabase("execute_transaction_rollback");
 
-  let deferred = PromiseUtils.defer();
+  let deferred = Promise.withResolvers();
 
   c.executeTransaction(async function transaction(conn) {
     await conn.execute("INSERT INTO dirs (path) VALUES ('foo')");
@@ -477,7 +460,7 @@ add_task(async function test_execute_transaction_rollback() {
 
     // We should never get here.
     do_throw();
-  }).then(do_throw, function onError(error) {
+  }).then(do_throw, function onError() {
     deferred.resolve();
   });
 
@@ -494,7 +477,7 @@ add_task(async function test_close_during_transaction() {
 
   await c.execute("INSERT INTO dirs (path) VALUES ('foo')");
 
-  let promise = c.executeTransaction(async function transaction(conn) {
+  let promise = c.executeTransaction(async function transaction() {
     await c.execute("INSERT INTO dirs (path) VALUES ('bar')");
   });
   await c.close();
@@ -771,7 +754,7 @@ add_task(async function test_in_progress_counts() {
   // To do so, we kick off a second statement within the row handler
   // of the first, then wait for both to finish.
 
-  let inner = PromiseUtils.defer();
+  let inner = Promise.withResolvers();
   await c.executeCached("SELECT * from dirs", null, function onRow() {
     // In the onRow handler, we're still an outstanding query.
     // Expect a single in-progress entry.
@@ -805,7 +788,7 @@ add_task(async function test_discard_while_active() {
   let discarded = -1;
   let first = true;
   let sql = "SELECT * FROM dirs";
-  await c.executeCached(sql, null, function onRow(row) {
+  await c.executeCached(sql, null, function onRow() {
     if (!first) {
       return;
     }
@@ -983,7 +966,9 @@ add_task(async function test_programmatic_binding_implicit_transaction() {
 // Test that direct binding of params and execution through mozStorage doesn't
 // error when we manually create a transaction. See Bug 856925.
 add_task(async function test_direct() {
-  let file = FileUtils.getFile("TmpD", ["test_direct.sqlite"]);
+  let file = new FileUtils.File(
+    PathUtils.join(PathUtils.tempDir, "test_direct.sqlite")
+  );
   file.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, FileUtils.PERMS_FILE);
   print("Opening " + file.path);
 
@@ -1010,9 +995,9 @@ add_task(async function test_direct() {
   let begin = db.createAsyncStatement("BEGIN DEFERRED TRANSACTION");
   let end = db.createAsyncStatement("COMMIT TRANSACTION");
 
-  let deferred = PromiseUtils.defer();
+  let deferred = Promise.withResolvers();
   begin.executeAsync({
-    handleCompletion(reason) {
+    handleCompletion() {
       deferred.resolve();
     },
   });
@@ -1020,10 +1005,10 @@ add_task(async function test_direct() {
 
   statement.bindParameters(params);
 
-  deferred = PromiseUtils.defer();
+  deferred = Promise.withResolvers();
   print("Executing async.");
   statement.executeAsync({
-    handleResult(resultSet) {},
+    handleResult() {},
 
     handleError(error) {
       print(
@@ -1033,7 +1018,7 @@ add_task(async function test_direct() {
       deferred.reject();
     },
 
-    handleCompletion(reason) {
+    handleCompletion() {
       print("Completed.");
       deferred.resolve();
     },
@@ -1041,9 +1026,9 @@ add_task(async function test_direct() {
 
   await deferred.promise;
 
-  deferred = PromiseUtils.defer();
+  deferred = Promise.withResolvers();
   end.executeAsync({
-    handleCompletion(reason) {
+    handleCompletion() {
       deferred.resolve();
     },
   });
@@ -1053,7 +1038,7 @@ add_task(async function test_direct() {
   begin.finalize();
   end.finalize();
 
-  deferred = PromiseUtils.defer();
+  deferred = Promise.withResolvers();
   db.asyncClose(function () {
     deferred.resolve();
   });
@@ -1213,7 +1198,7 @@ add_task(async function test_warning_message_on_finalization() {
   failTestsOnAutoClose(false);
   let c = await getDummyDatabase("warning_message_on_finalization");
   let identifier = c._connectionData._identifier;
-  let deferred = PromiseUtils.defer();
+  let deferred = Promise.withResolvers();
 
   let listener = {
     observe(msg) {
@@ -1241,7 +1226,7 @@ add_task(async function test_warning_message_on_finalization() {
 
 add_task(async function test_error_message_on_unknown_finalization() {
   failTestsOnAutoClose(false);
-  let deferred = PromiseUtils.defer();
+  let deferred = Promise.withResolvers();
 
   let listener = {
     observe(msg) {
@@ -1287,7 +1272,7 @@ add_task(async function test_close_database_on_gc() {
   {
     let collectedPromises = [];
     for (let i = 0; i < 100; ++i) {
-      let deferred = PromiseUtils.defer();
+      let deferred = Promise.withResolvers();
       let c = await getDummyDatabase("gc_" + i);
       c._connectionData._deferredClose.promise.then(deferred.resolve);
       collectedPromises.push(deferred.promise);
@@ -1399,5 +1384,16 @@ add_task(async function test_pageSize() {
     8192,
     "Check page size was set"
   );
+  await c.close();
+});
+
+add_task(async function test_loadExtension() {
+  await Assert.rejects(
+    getDummyDatabase("dummy", { extensions: ["dummy"] }),
+    /Could not load extension/,
+    "Check unsupported extension"
+  );
+  let c = await getDummyDatabase("fts", { extensions: ["fts5"] });
+  await c.execute("CREATE VIRTUAL TABLE test_fts USING fts5(body)");
   await c.close();
 });

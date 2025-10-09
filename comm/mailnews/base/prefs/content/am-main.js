@@ -4,7 +4,16 @@
 
 /* import-globals-from am-identity-edit.js */
 
+ChromeUtils.defineESModuleGetters(this, {
+  AccountManagerUtils: "resource:///modules/AccountManagerUtils.sys.mjs",
+});
+
 var gAccount;
+var AMUtils;
+
+window.addEventListener("load", () => {
+  parent.onPanelLoaded("am-main.xhtml");
+});
 
 /**
  * Initialize am-main account settings page when it gets shown.
@@ -12,14 +21,37 @@ var gAccount;
  */
 function onInit() {
   setAccountTitle();
+  setServerColor();
   setupSignatureItems();
   Services.obs.addObserver(
     onDefaultIdentityChange,
     "account-default-identity-changed"
   );
+
+  const defaultAccount = document.getElementById("defaultAccount");
+  if (
+    gAccount != MailServices.accounts.defaultAccount &&
+    gAccount.incomingServer.canBeDefaultServer &&
+    gAccount.identities.length > 0 &&
+    !(
+      Services.prefs.prefIsLocked("mail.disable_button.set_default_account") &&
+      Services.prefs.getBoolPref("mail.disable_button.set_default_account")
+    )
+  ) {
+    defaultAccount.removeAttribute("disabled");
+  } else {
+    defaultAccount.setAttribute("disabled", true);
+  }
+
+  const deleteAccount = document.getElementById("deleteAccount");
+  if (gAccount.incomingServer.protocolInfo.canDelete) {
+    deleteAccount.removeAttribute("disabled");
+  } else {
+    deleteAccount.setAttribute("disabled", true);
+  }
 }
 
-window.addEventListener("unload", function () {
+window.addEventListener("unload", () => {
   Services.obs.removeObserver(
     onDefaultIdentityChange,
     "account-default-identity-changed"
@@ -51,8 +83,8 @@ function serverPrettyNameOnBlur(event) {
  * Update an account's main settings title with the account name if applicable.
  */
 function setAccountTitle() {
-  let accountName = document.getElementById("server.prettyName");
-  let title = document.querySelector("#am-main-title .dialogheader-title");
+  const accountName = document.getElementById("server.prettyName");
+  const title = document.querySelector("#am-main-title .dialogheader-title");
   let titleValue = title.getAttribute("defaultTitle");
   if (accountName.value) {
     titleValue += " - " + accountName.value;
@@ -62,10 +94,31 @@ function setAccountTitle() {
   document.title = titleValue;
 }
 
+function setServerColor() {
+  const colorInput = document.getElementById("serverColor");
+  colorInput.value = AMUtils.serverColor;
+
+  colorInput.addEventListener("input", event =>
+    AMUtils.previewServerColor(event.target.value)
+  );
+  colorInput.addEventListener("change", event =>
+    AMUtils.updateServerColor(event.target.value)
+  );
+  document
+    .getElementById("resetColor")
+    .addEventListener("click", () => resetServerColor());
+}
+
+function resetServerColor() {
+  document.getElementById("serverColor").value = AMUtils.defaultServerColor;
+  AMUtils.resetServerColor();
+}
+
 function onPreInit(account, accountValues) {
   gAccount = account;
+  AMUtils = new AccountManagerUtils(gAccount);
   loadSMTPServerList();
-  let type = parent.getAccountValue(
+  const type = parent.getAccountValue(
     account,
     accountValues,
     "server",
@@ -85,13 +138,13 @@ function manageIdentities() {
     return;
   }
 
-  var accountName = document.getElementById("server.prettyName").value;
+  const accountName = document.getElementById("server.prettyName").value;
 
-  var args = { account: gAccount, accountName, result: false };
+  const args = { account: gAccount, accountName, result: false };
 
   // save the current identity settings so they show up correctly
   // if the user just changed them in the manage identities dialog
-  var identity = gAccount.defaultIdentity;
+  const identity = gAccount.defaultIdentity;
   saveIdentitySettings(identity);
 
   parent.gSubDialog.open(
@@ -102,9 +155,10 @@ function manageIdentities() {
 
   function onCloseIdentities() {
     if (args.result) {
-      // Refresh the SMTP list in case the user changed server properties
-      // from the identity dialog.
-      loadSMTPServerList();
+      // Reload, the user may have changed details about the main identity -
+      // which is this page am-main.xhtml.
+      // Or done SMTP server changes/additions.
+      window.location.reload();
     }
   }
 }

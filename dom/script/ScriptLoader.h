@@ -8,13 +8,16 @@
 #define mozilla_dom_ScriptLoader_h
 
 #include "js/TypeDecls.h"
+#include "js/Utility.h"  // JS::FreePolicy
 #include "js/loader/LoadedScript.h"
 #include "js/loader/ScriptKind.h"
 #include "js/loader/ScriptLoadRequest.h"
 #include "mozilla/dom/ScriptLoadContext.h"
+#include "mozilla/dom/ScriptLoadRequestType.h"
 #include "nsCOMPtr.h"
 #include "nsRefPtrHashtable.h"
 #include "nsIScriptElement.h"
+#include "SharedScriptCache.h"
 #include "nsCOMArray.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsTArray.h"
@@ -24,7 +27,6 @@
 #include "nsIScriptLoaderObserver.h"
 #include "nsURIHashKey.h"
 #include "mozilla/CORSMode.h"
-#include "mozilla/dom/JSExecutionContext.h"  // JSExecutionContext
 #include "ModuleLoader.h"
 #include "mozilla/MaybeOneOf.h"
 #include "mozilla/MozPromise.h"
@@ -36,6 +38,7 @@ class nsIContent;
 class nsIIncrementalStreamLoader;
 class nsIPrincipal;
 class nsIScriptGlobalObject;
+class nsITimer;
 class nsIURI;
 
 namespace JS {
@@ -53,6 +56,8 @@ class ModuleLoadRequest;
 class ModuleScript;
 class ScriptLoadRequest;
 class ScriptLoadRequestList;
+
+enum class ParserMetadata;
 
 }  // namespace loader
 }  // namespace JS
@@ -76,6 +81,7 @@ class ScriptLoader;
 class ScriptRequestProcessor;
 
 enum class ReferrerPolicy : uint8_t;
+enum class RequestPriority : uint8_t;
 
 class AsyncCompileShutdownObserver final : public nsIObserver {
   ~AsyncCompileShutdownObserver() { Unregister(); }
@@ -128,9 +134,12 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
   friend class AutoCurrentScriptUpdater;
 
  public:
+  using MaybeSourceText =
+      mozilla::MaybeOneOf<JS::SourceText<char16_t>, JS::SourceText<Utf8Unit>>;
+
   explicit ScriptLoader(Document* aDocument);
 
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_CYCLE_COLLECTION_CLASS(ScriptLoader)
 
   /**
@@ -144,7 +153,35 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
    * which it is initialized. This call forces the reference to
    * be dropped.
    */
-  void DropDocumentReference() { mDocument = nullptr; }
+  void DropDocumentReference();
+
+  /**
+   * Register this loader to the shared script cache.
+   *
+   * When the principal for the document for the loader is modified,
+   * DeregisterFromCache and RegisterToCache should be called to reflect the
+   * modification (See Document::SetPrincipals).
+   */
+  void RegisterToCache();
+
+  /**
+   * Deregister this loader from the shared script cache and
+   * clear the cache data associated with this loader.
+   */
+  void DeregisterFromCache();
+
+  // Methods for SharedScriptCache.
+  nsIPrincipal* LoaderPrincipal() const;
+  nsIPrincipal* PartitionedPrincipal() const;
+
+  bool ShouldBypassCache() const;
+
+  template <typename T>
+  bool HasLoaded(const T& aKey) {
+    // NOTE: ScriptLoader doesn't cache pending/loading requests, and
+    //       this method is unsed.
+    return false;
+  }
 
   /**
    * Add an observer for all scripts loaded through this loader.
@@ -180,14 +217,18 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
    * @param aElement The element representing the script to be loaded and
    *        evaluated.
    */
-  bool ProcessScriptElement(nsIScriptElement* aElement,
-                            const nsAutoString& aTypeAttr);
+  bool ProcessScriptElement(nsIScriptElement* aElement);
 
   /**
    * Gets the currently executing script. This is useful if you want to
    * generate a unique key based on the currently executing script.
    */
   nsIScriptElement* GetCurrentScript() { return mCurrentScript; }
+
+  void ContinueParsingDocumentAfterCurrentScript() {
+    MOZ_ASSERT(mCurrentScript);
+    mContinueParsingDocumentAfterCurrentScript = true;
+  }
 
   nsIScriptElement* GetCurrentParserInsertedScript() {
     return mCurrentParserInsertedScript;
@@ -266,31 +307,16 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
    * @param aHintCharset Character set hint (e.g., from a charset attribute).
    * @param aDocument    Document which the data is loaded for. May be null.
    * @param aBufOut      [out] fresh char16_t array containing data converted to
-   *                     Unicode.  Caller must js_free() this data when finished
-   *                     with it.
+   *                     Unicode.
    * @param aLengthOut   [out] Length of array returned in aBufOut in number
    *                     of char16_t code units.
    */
   static nsresult ConvertToUTF16(nsIChannel* aChannel, const uint8_t* aData,
                                  uint32_t aLength,
                                  const nsAString& aHintCharset,
-                                 Document* aDocument, char16_t*& aBufOut,
-                                 size_t& aLengthOut);
-
-  static nsresult ConvertToUTF16(nsIChannel* aChannel, const uint8_t* aData,
-                                 uint32_t aLength,
-                                 const nsAString& aHintCharset,
                                  Document* aDocument,
-                                 JS::UniqueTwoByteChars& aBufOut,
-                                 size_t& aLengthOut) {
-    char16_t* bufOut;
-    nsresult rv = ConvertToUTF16(aChannel, aData, aLength, aHintCharset,
-                                 aDocument, bufOut, aLengthOut);
-    if (NS_SUCCEEDED(rv)) {
-      aBufOut.reset(bufOut);
-    }
-    return rv;
-  };
+                                 UniquePtr<char16_t[], JS::FreePolicy>& aBufOut,
+                                 size_t& aLengthOut);
 
   /**
    * Convert the given buffer to a UTF-8 string.  If the buffer begins with a
@@ -307,28 +333,15 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
    * @param aHintCharset Character set hint (e.g., from a charset attribute).
    * @param aDocument    Document which the data is loaded for. May be null.
    * @param aBufOut      [out] fresh Utf8Unit array containing data converted to
-   *                     Unicode.  Caller must js_free() this data when finished
-   *                     with it.
+   *                     Unicode.
    * @param aLengthOut   [out] Length of array returned in aBufOut in UTF-8 code
    *                     units (i.e. in bytes).
    */
   static nsresult ConvertToUTF8(nsIChannel* aChannel, const uint8_t* aData,
                                 uint32_t aLength, const nsAString& aHintCharset,
-                                Document* aDocument, Utf8Unit*& aBufOut,
+                                Document* aDocument,
+                                UniquePtr<Utf8Unit[], JS::FreePolicy>& aBufOut,
                                 size_t& aLengthOut);
-
-  static inline nsresult ConvertToUTF8(
-      nsIChannel* aChannel, const uint8_t* aData, uint32_t aLength,
-      const nsAString& aHintCharset, Document* aDocument,
-      UniquePtr<Utf8Unit[], JS::FreePolicy>& aBufOut, size_t& aLengthOut) {
-    Utf8Unit* bufOut;
-    nsresult rv = ConvertToUTF8(aChannel, aData, aLength, aHintCharset,
-                                aDocument, bufOut, aLengthOut);
-    if (NS_SUCCEEDED(rv)) {
-      aBufOut.reset(bufOut);
-    }
-    return rv;
-  };
 
   /**
    * Handle the completion of a stream.  This is called by the
@@ -354,7 +367,7 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
   /**
    * Processes any pending requests that are ready for processing.
    */
-  void ProcessPendingRequests();
+  void ProcessPendingRequests(bool aAllowBypassingParserBlocking = false);
 
   /**
    * Starts deferring deferred scripts and puts them in the mDeferredRequests
@@ -398,16 +411,19 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
    * @param aType The type parameter for the script.
    * @param aCrossOrigin The crossorigin attribute for the script.
    *                     Void if not present.
+   * @param aFetchPriority
+   * <https://html.spec.whatwg.org/#the-script-element:attr-script-fetchpriority>.
    * @param aIntegrity The expect hash url, if avail, of the request
+
    * @param aScriptFromHead Whether or not the script was a child of head
    */
-  virtual void PreloadURI(nsIURI* aURI, const nsAString& aCharset,
-                          const nsAString& aType, const nsAString& aCrossOrigin,
-                          const nsAString& aIntegrity, bool aScriptFromHead,
-                          bool aAsync, bool aDefer, bool aNoModule,
-                          bool aLinkPreload,
-                          const ReferrerPolicy aReferrerPolicy,
-                          uint64_t aEarlyHintPreloaderId);
+  void PreloadURI(nsIURI* aURI, const nsAString& aCharset,
+                  const nsAString& aType, const nsAString& aCrossOrigin,
+                  const nsAString& aNonce, const nsAString& aFetchPriority,
+                  const nsAString& aIntegrity, bool aScriptFromHead,
+                  bool aAsync, bool aDefer, bool aLinkPreload,
+                  const ReferrerPolicy aReferrerPolicy,
+                  uint64_t aEarlyHintPreloaderId);
 
   /**
    * Process a request that was deferred so that the script could be compiled
@@ -454,7 +470,29 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
   already_AddRefed<ScriptLoadRequest> CreateLoadRequest(
       ScriptKind aKind, nsIURI* aURI, nsIScriptElement* aElement,
       nsIPrincipal* aTriggeringPrincipal, mozilla::CORSMode aCORSMode,
-      const SRIMetadata& aIntegrity, ReferrerPolicy aReferrerPolicy);
+      const nsAString& aNonce, RequestPriority aRequestPriority,
+      const SRIMetadata& aIntegrity, ReferrerPolicy aReferrerPolicy,
+      JS::loader::ParserMetadata aParserMetadata,
+      ScriptLoadRequestType aRequestType);
+
+  /**
+   * Helper function to lookup the cache entry and associate it to the
+   * request if any.
+   */
+  void TryUseCache(
+      ScriptLoadRequest* aRequest, nsIScriptElement* aElement = nullptr,
+      const nsAString& aNonce = u""_ns,
+      ScriptLoadRequestType aRequestType = ScriptLoadRequestType::External);
+
+  /**
+   * Helper function to notify network observers for cached request.
+   */
+  void EmulateNetworkEvents(ScriptLoadRequest* aRequest);
+
+  void NotifyObserversForCachedScript(
+      nsIURI* aURI, nsINode* aContext, nsIPrincipal* aTriggeringPrincipal,
+      nsSecurityFlags aSecurityFlags, nsContentPolicyType aContentPolicyType,
+      SubResourceNetworkMetadataHolder* aNetworkMetadata);
 
   /**
    * Unblocks the creator parser of the parser-blocking scripts.
@@ -467,10 +505,20 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
   void ContinueParserAsync(ScriptLoadRequest* aParserBlockingRequest);
 
   bool ProcessExternalScript(nsIScriptElement* aElement, ScriptKind aScriptKind,
-                             const nsAutoString& aTypeAttr,
                              nsIContent* aScriptContent);
 
   bool ProcessInlineScript(nsIScriptElement* aElement, ScriptKind aScriptKind);
+
+  enum class CacheBehavior : uint8_t {
+    DoNothing,
+    Insert,
+    Evict,
+  };
+
+  CacheBehavior GetCacheBehavior(ScriptLoadRequest* aRequest);
+
+  void TryCacheRequest(ScriptLoadRequest* aRequest,
+                       RefPtr<JS::Stencil>& aStencil);
 
   JS::loader::ScriptLoadRequest* LookupPreloadRequest(
       nsIScriptElement* aElement, ScriptKind aScriptKind,
@@ -488,9 +536,9 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
   /**
    * Helper function to check the content policy for a given request.
    */
-  static nsresult CheckContentPolicy(Document* aDocument, nsISupports* aContext,
-                                     const nsAString& aType,
-                                     ScriptLoadRequest* aRequest);
+  nsresult CheckContentPolicy(nsIScriptElement* aElement,
+                              const nsAString& aNonce,
+                              ScriptLoadRequest* aRequest);
 
   /**
    * Helper function to determine whether an about: page loads a chrome: URI.
@@ -506,18 +554,30 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
    * Start a load for aRequest's URI.
    */
   nsresult StartLoad(ScriptLoadRequest* aRequest,
-                     uint64_t aEarlyHintPreloaderId,
                      const Maybe<nsAutoString>& aCharsetForPreload);
   /**
    * Start a load for a classic script URI.
    * Sets up the necessary security flags before calling StartLoadInternal.
    */
   nsresult StartClassicLoad(ScriptLoadRequest* aRequest,
-                            uint64_t aEarlyHintPreloaderId,
                             const Maybe<nsAutoString>& aCharsetForPreload);
 
+  static void PrepareCacheInfoChannel(nsIChannel* aChannel,
+                                      ScriptLoadRequest* aRequest);
+
+  static void PrepareRequestPriorityAndRequestDependencies(
+      nsIChannel* aChannel, ScriptLoadRequest* aRequest);
+
+  [[nodiscard]] static nsresult PrepareHttpRequestAndInitiatorType(
+      nsIChannel* aChannel, ScriptLoadRequest* aRequest,
+      const Maybe<nsAutoString>& aCharsetForPreload);
+
+  [[nodiscard]] nsresult PrepareIncrementalStreamLoader(
+      nsIIncrementalStreamLoader** aOutLoader, nsIChannel* aChannel,
+      ScriptLoadRequest* aRequest);
+
   /**
-   * Start a load for a module script URI.
+   * Start a load for a script (module or classic) URI.
    *
    * aCharsetForPreload is only needed when this load is a preload (via
    * ScriptLoader::PreloadURI), because ScriptLoadRequest doesn't
@@ -525,7 +585,6 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
    */
   nsresult StartLoadInternal(ScriptLoadRequest* aRequest,
                              nsSecurityFlags securityFlags,
-                             uint64_t aEarlyHintPreloaderId,
                              const Maybe<nsAutoString>& aCharsetForPreload);
 
   /**
@@ -544,7 +603,9 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
    *
    * This function is virtual to allow cross-library calls to SetEnabled()
    */
-  virtual void ProcessPendingRequestsAsync();
+  void ProcessPendingRequestsAsync();
+
+  void ProcessPendingRequestsAsyncBypassParserBlocking();
 
   /**
    * If true, the loader is ready to execute parser-blocking scripts, and so are
@@ -572,8 +633,7 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
                      SRICheckDataVerifier* aSRIDataVerifier) const;
 
   nsresult SaveSRIHash(ScriptLoadRequest* aRequest,
-                       SRICheckDataVerifier* aSRIDataVerifier,
-                       uint32_t* sriLength) const;
+                       SRICheckDataVerifier* aSRIDataVerifier) const;
 
   void ReportErrorToConsole(ScriptLoadRequest* aRequest,
                             nsresult aResult) const override;
@@ -584,17 +644,16 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
 
   void ReportPreloadErrorsToConsole(ScriptLoadRequest* aRequest);
 
+  nsIConsoleReportCollector* GetConsoleReportCollector() const override {
+    return mReporter;
+  }
+
   nsresult AttemptOffThreadScriptCompile(ScriptLoadRequest* aRequest,
                                          bool* aCouldCompileOut);
 
-  nsresult StartOffThreadCompilation(JSContext* aCx,
-                                     ScriptLoadRequest* aRequest,
-                                     JS::CompileOptions& aOptions,
-                                     Runnable* aRunnable,
-                                     JS::OffThreadToken** aTokenOut);
-
-  static void OffThreadCompilationCompleteCallback(JS::OffThreadToken* aToken,
-                                                   void* aCallbackData);
+  nsresult CreateOffThreadTask(JSContext* aCx, ScriptLoadRequest* aRequest,
+                               JS::CompileOptions& aOptions,
+                               CompileOrDecodeTask** aCompileOrDecodeTask);
 
   nsresult ProcessRequest(ScriptLoadRequest* aRequest);
   nsresult CompileOffThreadOrProcessRequest(ScriptLoadRequest* aRequest);
@@ -606,11 +665,36 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
   // Implements https://html.spec.whatwg.org/#execute-the-script-block
   nsresult EvaluateScriptElement(ScriptLoadRequest* aRequest);
 
-  // Handles both bytecode and text source scripts; populates exec with a
-  // compiled script
-  nsresult CompileOrDecodeClassicScript(JSContext* aCx,
-                                        JSExecutionContext& aExec,
-                                        ScriptLoadRequest* aRequest);
+  // Instantiate classic script from one of the following data:
+  //   * text source
+  //   * encoded bytecode
+  //   * cached stencil
+  void InstantiateClassicScriptFromAny(
+      JSContext* aCx, JS::CompileOptions& aCompileOptions,
+      ScriptLoadRequest* aRequest, JS::MutableHandle<JSScript*> aScript,
+      JS::Handle<JS::Value> aDebuggerPrivateValue,
+      JS::Handle<JSScript*> aDebuggerIntroductionScript, ErrorResult& aRv);
+
+  // Instantiate classic script from one of the following data:
+  //   * text source
+  //   * encoded bytecode
+  //
+  // aStencilOut is set to the compiled stencil.
+  void InstantiateClassicScriptFromMaybeEncodedSource(
+      JSContext* aCx, JS::CompileOptions& aCompileOptions,
+      ScriptLoadRequest* aRequest, JS::MutableHandle<JSScript*> aScript,
+      RefPtr<JS::Stencil>& aStencilOut,
+      JS::Handle<JS::Value> aDebuggerPrivateValue,
+      JS::Handle<JSScript*> aDebuggerIntroductionScript, ErrorResult& aRv);
+
+  // Instantiate classic script from the following data:
+  //   * cached stencil
+  void InstantiateClassicScriptFromCachedStencil(
+      JSContext* aCx, JS::CompileOptions& aCompileOptions,
+      ScriptLoadRequest* aRequest, JS::Stencil* aStencil,
+      JS::MutableHandle<JSScript*> aScript,
+      JS::Handle<JS::Value> aDebuggerPrivateValue,
+      JS::Handle<JSScript*> aDebuggerIntroductionScript, ErrorResult& aRv);
 
   static nsCString& BytecodeMimeTypeFor(ScriptLoadRequest* aRequest);
 
@@ -696,12 +780,9 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
 
   void MaybeMoveToLoadedList(ScriptLoadRequest* aRequest);
 
-  using MaybeSourceText =
-      mozilla::MaybeOneOf<JS::SourceText<char16_t>, JS::SourceText<Utf8Unit>>;
-
   // Returns wether we should save the bytecode of this script after the
   // execution of the script.
-  static bool ShouldCacheBytecode(ScriptLoadRequest* aRequest);
+  static void CalculateBytecodeCacheFlag(ScriptLoadRequest* aRequest);
 
   void RunScriptWhenSafe(ScriptLoadRequest* aRequest);
 
@@ -768,6 +849,7 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
   bool mBlockingDOMContentLoaded;
   bool mLoadEventFired;
   bool mGiveUpEncoding;
+  bool mContinueParsingDocumentAfterCurrentScript;
 
   TimeDuration mMainThreadParseTime;
 
@@ -779,6 +861,10 @@ class ScriptLoader final : public JS::loader::ScriptLoaderInterface {
   RefPtr<ModuleLoader> mModuleLoader;
   nsTArray<RefPtr<ModuleLoader>> mWebExtModuleLoaders;
   nsTArray<RefPtr<ModuleLoader>> mShadowRealmModuleLoaders;
+
+  RefPtr<SharedScriptCache> mCache;
+
+  nsCOMPtr<nsITimer> mProcessPendingRequestsAsyncBypassParserBlocking;
 
   // Logging
  public:

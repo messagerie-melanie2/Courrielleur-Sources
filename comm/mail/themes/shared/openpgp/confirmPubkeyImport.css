@@ -4,19 +4,25 @@
 
 @import url("chrome://messenger/skin/messenger.css");
 
+html {
+  min-width: 55em;
+  min-height: 560px;
+}
+
 #confirmPubkeyImportDialog {
-  width: 55em;
-}
+  height: 100vh;
+  width: 100vw;
 
-@media not (-moz-platform: macos) {
-  #confirmPubkeyImportDialog::part(content-box) {
-    width: calc(55em - 18px); /* dialog width - padding. */
+  @media not (-moz-platform: macos) {
+    &::part(content-box) {
+      width: calc(55em - 18px); /* dialog width - padding. */
+    }
   }
-}
 
-@media (-moz-platform: macos) {
-  #confirmPubkeyImportDialog::part(content-box) {
-    width: calc(55em - 28px); /* dialog width - padding. */
+  @media (-moz-platform: macos) {
+    &::part(content-box) {
+      width: calc(55em - 28px); /* dialog width - padding. */
+    }
   }
 }
 
@@ -45,7 +51,7 @@ description {
 
 #importKeyListContainer {
   height: 25em;
-  overflow-y: scroll;
+  overflow-y: auto;
 }
 
 #importKeyList {

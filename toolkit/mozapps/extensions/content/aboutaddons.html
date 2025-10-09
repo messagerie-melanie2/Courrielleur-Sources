@@ -2,7 +2,7 @@
    - License, v. 2.0. If a copy of the MPL was not distributed with this file,
    - You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
-<!DOCTYPE html>
+<!doctype html>
 <html>
   <head>
     <title data-l10n-id="addons-page-title"></title>
@@ -10,12 +10,9 @@
     <!-- Bug 1571346 Remove 'unsafe-inline' from style-src within about:addons -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src chrome:; style-src chrome: 'unsafe-inline'; img-src chrome: file: jar: https: http:; connect-src chrome: data: https: http:; object-src 'none'"
+      content="default-src chrome:; style-src chrome: 'unsafe-inline'; img-src chrome: blob: file: jar: https: http:; connect-src chrome: data: https: http:; object-src 'none'"
     />
     <meta name="color-scheme" content="light dark" />
-    <link rel="stylesheet" href="chrome://global/content/tabprompts.css" />
-    <link rel="stylesheet" href="chrome://global/skin/tabprompts.css" />
-
     <link rel="stylesheet" href="chrome://global/skin/in-content/common.css" />
     <link
       rel="stylesheet"
@@ -30,10 +27,14 @@
       rel="shortcut icon"
       href="chrome://mozapps/skin/extensions/extension.svg"
     />
+    <link
+      href="chrome://mozapps/content/extensions/components/addon-mlmodel-details.css"
+      rel="stylesheet"
+    />
 
     <link rel="localization" href="branding/brand.ftl" />
     <link rel="localization" href="toolkit/about/aboutAddons.ftl" />
-    <link rel="localization" href="toolkit/about/abuseReports.ftl" />
+    <link rel="localization" href="toolkit/global/extensionPermissions.ftl" />
 
     <!-- Defer scripts so all the templates are loaded by the time they run. -->
     <script
@@ -61,12 +62,36 @@
       src="chrome://mozapps/content/extensions/aboutaddons.js"
     ></script>
     <script
+      src="chrome://mozapps/content/extensions/components/addon-mlmodel-details.mjs"
+      type="module"
+    ></script>
+    <script
+      src="chrome://mozapps/content/extensions/components/mlmodel-list-intro.mjs"
+      type="module"
+    ></script>
+    <script
+      type="module"
+      src="chrome://mozapps/content/extensions/components/mlmodel-card-header-additions.mjs"
+    ></script>
+    <script
+      type="module"
+      src="chrome://mozapps/content/extensions/components/mlmodel-card-list-additions.mjs"
+    ></script>
+    <script
+      type="module"
+      src="chrome://global/content/elements/moz-message-bar.mjs"
+    ></script>
+    <script
       type="module"
       src="chrome://global/content/elements/moz-toggle.mjs"
     ></script>
     <script
       type="module"
       src="chrome://global/content/elements/moz-support-link.mjs"
+    ></script>
+    <script
+      type="module"
+      src="chrome://global/content/elements/moz-five-star.mjs"
     ></script>
   </head>
   <body>
@@ -131,6 +156,15 @@
           ></button>
           <button
             is="category-button"
+            viewid="addons://list/mlmodel"
+            class="category"
+            role="tab"
+            name="mlmodel"
+            hidden
+            default-hidden
+          ></button>
+          <button
+            is="category-button"
             viewid="addons://updates/available"
             class="category"
             role="tab"
@@ -157,13 +191,6 @@
           page-options-id="page-options"
         ></addon-page-header>
         <addon-page-options id="page-options"></addon-page-options>
-
-        <message-bar-stack
-          id="abuse-reports-messages"
-          reverse
-          max-message-bar-count="3"
-        >
-        </message-bar-stack>
 
         <div id="main"></div>
       </div>
@@ -236,6 +263,7 @@
           action="set-update-automatically"
           data-l10n-id="addon-updates-update-addons-automatically"
           data-l10n-attrs="accesskey"
+          type="checkbox"
         ></panel-item>
         <panel-item
           action="reset-update-states"
@@ -283,10 +311,12 @@
         <panel-item
           data-l10n-id="always-activate-button"
           action="always-activate"
+          type="checkbox"
         ></panel-item>
         <panel-item
           data-l10n-id="never-activate-button"
           action="never-activate"
+          type="checkbox"
         ></panel-item>
         <hr />
         <panel-item
@@ -302,6 +332,7 @@
     </template>
 
     <template name="addon-permissions-list">
+      <!-- Permissions -->
       <div class="addon-permissions-required" hidden>
         <h2
           class="permission-header"
@@ -316,11 +347,29 @@
         ></h2>
         <ul class="addon-permissions-list"></ul>
       </div>
+
+      <!-- Data collection -->
+      <div class="addon-data-collection-permissions-required" hidden>
+        <h2
+          class="permission-header"
+          data-l10n-id="addon-permissions-required-data-collection"
+        ></h2>
+        <ul class="addon-permissions-list"></ul>
+      </div>
+      <div class="addon-data-collection-permissions-optional" hidden>
+        <h2
+          class="permission-header"
+          data-l10n-id="addon-permissions-optional-data-collection"
+        ></h2>
+        <ul class="addon-permissions-list"></ul>
+      </div>
+
       <div
         class="addon-detail-row addon-permissions-empty"
-        data-l10n-id="addon-permissions-empty"
+        data-l10n-id="addon-permissions-empty2"
         hidden
       ></div>
+
       <div class="addon-detail-row">
         <a
           is="moz-support-link"
@@ -357,7 +406,7 @@
                 is="moz-support-link"
                 support-page="add-on-badges"
                 utm-content="promoted-addon-badge"
-                data-l10n-id="addon-badge-recommended2"
+                data-l10n-id="addon-badge-recommended4"
                 hidden
               >
               </a>
@@ -366,7 +415,7 @@
                 is="moz-support-link"
                 support-page="add-on-badges"
                 utm-content="promoted-addon-badge"
-                data-l10n-id="addon-badge-line3"
+                data-l10n-id="addon-badge-line4"
                 hidden
               >
               </a>
@@ -375,7 +424,7 @@
                 is="moz-support-link"
                 support-page="add-on-badges"
                 utm-content="promoted-addon-badge"
-                data-l10n-id="addon-badge-verified2"
+                data-l10n-id="addon-badge-verified4"
                 hidden
               >
               </a>
@@ -383,7 +432,7 @@
                 class="addon-badge addon-badge-private-browsing-allowed"
                 is="moz-support-link"
                 support-page="extensions-pb"
-                data-l10n-id="addon-badge-private-browsing-allowed2"
+                data-l10n-id="addon-badge-private-browsing-allowed3"
                 hidden
               >
               </a>
@@ -399,6 +448,7 @@
                 data-l10n-id="extension-enable-addon-button-label"
                 hidden
               ></moz-toggle>
+              <mlmodel-card-header-additions></mlmodel-card-header-additions>
               <button
                 class="more-options-button"
                 action="more-options"
@@ -407,24 +457,30 @@
                 aria-expanded="false"
               ></button>
             </div>
+            <mlmodel-card-list-additions></mlmodel-card-list-additions>
             <!-- This ends up in the tab order when the ellipsis happens, but it isn't necessary. -->
             <span class="addon-description" tabindex="-1"></span>
           </div>
         </div>
-        <message-bar class="update-postponed-bar" align="center" hidden>
-          <span
-            class="description"
-            data-l10n-id="install-postponed-message"
-          ></span>
+        <moz-message-bar
+          class="update-postponed-bar"
+          data-l10n-id="install-postponed-message2"
+          align="center"
+          hidden
+        >
           <button
+            slot="actions"
             action="install-postponed"
             data-l10n-id="install-postponed-button"
           ></button>
-        </message-bar>
-        <message-bar class="addon-card-message" align="center" hidden>
-          <span></span>
-          <button action="link"></button>
-        </message-bar>
+        </moz-message-bar>
+        <moz-message-bar class="addon-card-message" align="center" hidden>
+          <!-- A button or a SUMO page link are going to be slotted into this messagebar
+               (e.g. a button is used for non-SUMO links, like blocklist urls).
+               See addon-card custom element's updateMessage method and
+               getAddonMessageInfo helper defined in aboutaddons.js.
+           -->
+        </moz-message-bar>
       </div>
     </template>
 
@@ -448,7 +504,7 @@
         <span class="disco-description-main"></span>
       </div>
       <div class="disco-description-statistics">
-        <five-star-rating></five-star-rating>
+        <moz-five-star></moz-five-star>
         <span class="disco-user-count"></span>
       </div>
     </template>
@@ -506,8 +562,15 @@
           <div class="addon-detail-sitepermissions">
             <addon-sitepermissions-list></addon-sitepermissions-list>
           </div>
-          <div class="addon-detail-row addon-detail-row-updates">
-            <label data-l10n-id="addon-detail-updates-label"></label>
+          <div class="addon-detail-mlmodel">
+            <addon-mlmodel-details></addon-mlmodel-details>
+          </div>
+          <div
+            class="addon-detail-row addon-detail-row-updates"
+            role="group"
+            data-l10n-id="addon-detail-group-label-updates"
+          >
+            <span data-l10n-id="addon-detail-updates-label"></span>
             <div class="addon-detail-actions">
               <button
                 class="button-link"
@@ -531,9 +594,11 @@
           </div>
           <div
             class="addon-detail-row addon-detail-row-has-help addon-detail-row-private-browsing"
+            role="group"
+            data-l10n-id="addon-detail-group-label-private-browsing"
             hidden
           >
-            <label data-l10n-id="detail-private-browsing-label"></label>
+            <span data-l10n-id="detail-private-browsing-label"></span>
             <div class="addon-detail-actions">
               <label class="radio-container-with-text">
                 <input type="radio" name="private-browsing" value="1" />
@@ -595,6 +660,40 @@
               support-page="extensions-pb"
             ></a>
           </div>
+          <div
+            class="addon-detail-row addon-detail-row-has-help addon-detail-row-quarantined-domains"
+            role="group"
+            data-l10n-id="addon-detail-group-label-quarantined-domains"
+            hidden
+          >
+            <span data-l10n-id="addon-detail-quarantined-domains-label"></span>
+            <div class="addon-detail-actions">
+              <label class="radio-container-with-text">
+                <input
+                  type="radio"
+                  name="quarantined-domains-user-allowed"
+                  value="1"
+                />
+                <span
+                  data-l10n-id="addon-detail-quarantined-domains-allow"
+                ></span>
+              </label>
+              <label class="radio-container-with-text">
+                <input
+                  type="radio"
+                  name="quarantined-domains-user-allowed"
+                  value="0"
+                />
+                <span
+                  data-l10n-id="addon-detail-quarantined-domains-disallow"
+                ></span>
+              </label>
+            </div>
+          </div>
+          <div class="addon-detail-row addon-detail-help-row" hidden>
+            <span data-l10n-id="addon-detail-quarantined-domains-help"></span>
+            <a is="moz-support-link" support-page="quarantined-domains"></a>
+          </div>
           <div class="addon-detail-row addon-detail-row-author">
             <label data-l10n-id="addon-detail-author-label"></label>
             <a target="_blank"></a>
@@ -613,7 +712,7 @@
           <div class="addon-detail-row addon-detail-row-rating">
             <label data-l10n-id="addon-detail-rating-label"></label>
             <div class="addon-detail-rating">
-              <five-star-rating></five-star-rating>
+              <moz-five-star></moz-five-star>
               <a target="_blank"></a>
             </div>
           </div>
@@ -624,30 +723,40 @@
       </named-deck>
     </template>
 
-    <template name="five-star-rating">
-      <link
-        rel="stylesheet"
-        href="chrome://mozapps/content/extensions/rating-star.css"
-      />
-      <span class="rating-star"></span>
-      <span class="rating-star"></span>
-      <span class="rating-star"></span>
-      <span class="rating-star"></span>
-      <span class="rating-star"></span>
+    <template name="colorway-removal-notice">
+      <moz-message-bar
+        data-l10n-id="colorway-removal-notice-message"
+        dismissable
+      >
+        <a
+          is="moz-support-link"
+          support-page="colorways"
+          data-l10n-id="colorway-removal-notice-learn-more"
+          slot="support-link"
+        ></a>
+
+        <button
+          slot="actions"
+          action="open-amo-colorway-collection"
+          data-l10n-id="colorway-removal-notice-button"
+        ></button>
+      </moz-message-bar>
     </template>
 
     <template name="taar-notice">
-      <message-bar class="discopane-notice" dismissable>
-        <div class="discopane-notice-content">
-          <span data-l10n-id="discopane-notice-recommendations"></span>
-          <a
-            is="moz-support-link"
-            support-page="personalized-addons"
-            data-l10n-id="discopane-notice-learn-more"
-            action="notice-learn-more"
-          ></a>
-        </div>
-      </message-bar>
+      <moz-message-bar
+        class="discopane-notice"
+        data-l10n-id="discopane-notice-recommendations2"
+        dismissable
+      >
+        <a
+          is="moz-support-link"
+          support-page="personalized-addons"
+          data-l10n-id="discopane-notice-learn-more"
+          action="notice-learn-more"
+          slot="support-link"
+        ></a>
+      </moz-message-bar>
     </template>
 
     <template name="recommended-footer">
@@ -670,7 +779,7 @@
     <template name="discopane">
       <header>
         <p>
-          <span data-l10n-id="discopane-intro">
+          <span data-l10n-id="discopane-intro3">
             <a
               class="discopane-intro-learn-more-link"
               is="moz-support-link"
@@ -741,7 +850,7 @@
     </template>
 
     <template id="shortcut-card-template">
-      <div class="card shortcut">
+      <div class="card card-no-hover shortcut">
         <div class="card-heading">
           <img class="card-heading-icon addon-icon" />
           <h2 class="addon-name"></h2>
@@ -758,7 +867,11 @@
           type="text"
           readonly
         />
-        <button class="shortcut-remove-button ghost-button"></button>
+        <button
+          class="shortcut-remove-button ghost-button"
+          data-l10n-id="shortcuts-remove-button"
+          data-l10n-attrs="aria-label"
+        ></button>
       </div>
     </template>
 

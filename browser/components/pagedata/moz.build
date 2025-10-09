@@ -4,11 +4,14 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+with Files("**"):
+    BUG_COMPONENT = ("Firefox", "Bookmarks & History")
+
 XPCSHELL_TESTS_MANIFESTS += [
-    "tests/unit/xpcshell.ini",
+    "tests/unit/xpcshell.toml",
 ]
 BROWSER_CHROME_MANIFESTS += [
-    "tests/browser/browser.ini",
+    "tests/browser/browser.toml",
 ]
 
 JAR_MANIFESTS += ["jar.mn"]

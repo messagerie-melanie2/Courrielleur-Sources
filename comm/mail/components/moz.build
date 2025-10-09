@@ -10,16 +10,17 @@ DIRS += [
     "accountcreation",
     "activity",
     "addrbook",
+    "calendar",
     "cloudfile",
     "compose",
+    "customizableshortcuts",
     "customizableui",
     "devtools",
     "downloads",
     "enterprisepolicies",
     "extensions",
     "im",
-    "migration",
-    "newmailaccount",
+    "inappnotifications",
     "preferences",
     "prompts",
     "search",
@@ -32,22 +33,22 @@ EXTRA_COMPONENTS += [
 ]
 
 EXTRA_JS_MODULES += [
-    "AboutRedirector.jsm",
-    "AppIdleManager.jsm",
-    "MailGlue.jsm",
-    "MessengerContentHandler.jsm",
+    "AboutRedirector.sys.mjs",
+    "AppIdleManager.sys.mjs",
+    "MailGlue.sys.mjs",
+    "MessengerContentHandler.sys.mjs",
 ]
 
 if CONFIG["MOZ_DEBUG"] or CONFIG["NIGHTLY_BUILD"]:
     EXTRA_JS_MODULES += [
-        "StartupRecorder.jsm",
+        "StartupRecorder.sys.mjs",
     ]
 
 XPCOM_MANIFESTS += [
     "components.conf",
 ]
 
-XPCSHELL_TESTS_MANIFESTS += ["test/unit/xpcshell.ini"]
+XPCSHELL_TESTS_MANIFESTS += ["test/unit/xpcshell.toml"]
 
 Library("mailcomps")
 FINAL_LIBRARY = "xul"

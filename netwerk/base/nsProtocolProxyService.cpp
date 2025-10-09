@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "SimpleChannel.h"
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/AutoRestore.h"
@@ -115,6 +116,34 @@ nsProtocolProxyService::FilterLink::~FilterLink() {
 }
 
 //-----------------------------------------------------------------------------
+
+// Calls onProxyAvailable after making sure we don't pass a nsIProxyInfo
+// for loopback URLs or URLs that should not use a proxy.
+// static
+void nsProtocolProxyService::CallOnProxyAvailableCallback(
+    nsProtocolProxyService* aService, nsIProtocolProxyCallback* aCallback,
+    nsICancelable* aRequest, nsIChannel* aChannel, nsIProxyInfo* aProxyInfo,
+    nsresult aStatus) {
+  nsresult rv;
+  nsCOMPtr<nsIURI> channelURI;
+  if (aChannel) {
+    aChannel->GetURI(getter_AddRefs(channelURI));
+  }
+
+  // This check makes sure that we don't accidentally proxy loopback URLs if
+  // one of the proxy filters allows it.
+  if (aProxyInfo && channelURI) {
+    nsProtocolInfo info;
+    rv = aService->GetProtocolInfo(channelURI, &info);
+
+    if (NS_SUCCEEDED(rv) &&
+        !aService->CanUseProxy(channelURI, info.defaultPort)) {
+      aProxyInfo = nullptr;
+    }
+  }
+
+  aCallback->OnProxyAvailable(aRequest, aChannel, aProxyInfo, aStatus);
+}
 
 // The nsPACManCallback portion of this implementation should be run
 // on the main thread - so call nsPACMan::AsyncGetProxyForURI() with
@@ -245,6 +274,7 @@ class nsAsyncResolveRequest final : public nsIRunnable,
  public:
   nsresult ProcessLocally(nsProtocolInfo& info, nsIProxyInfo* pi,
                           bool isSyncOK) {
+    LOG(("nsAsyncResolveRequest::ProcessLocally"));
     SetResult(NS_OK, pi);
 
     auto consumeFiltersResult = [isSyncOK](nsAsyncResolveRequest* ctx,
@@ -339,8 +369,8 @@ class nsAsyncResolveRequest final : public nsIRunnable,
       pacAvailable = false;
     }
 
-    // Generate proxy info from the PAC string if appropriate
     if (NS_SUCCEEDED(mStatus) && !mProxyInfo && !mPACString.IsEmpty()) {
+      // Generate proxy info from the PAC string if appropriate
       mPPS->ProcessPACString(mPACString, mResolveFlags,
                              getter_AddRefs(mProxyInfo));
       nsCOMPtr<nsIURI> proxyURI;
@@ -368,8 +398,9 @@ class nsAsyncResolveRequest final : public nsIRunnable,
         }
 
         self->EnsureResolveFlagsMatch();
-        self->mCallback->OnProxyAvailable(self, self->mChannel,
-                                          self->mProxyInfo, self->mStatus);
+        nsProtocolProxyService::CallOnProxyAvailableCallback(
+            self->mPPS, self->mCallback, self, self->mChannel, self->mProxyInfo,
+            self->mStatus);
 
         return NS_OK;
       };
@@ -399,7 +430,8 @@ class nsAsyncResolveRequest final : public nsIRunnable,
       }
 
       if (NS_FAILED(rv)) {
-        mCallback->OnProxyAvailable(this, mChannel, nullptr, rv);
+        nsProtocolProxyService::CallOnProxyAvailableCallback(
+            mPPS, mCallback, this, mChannel, nullptr, rv);
       }
 
       // do not call onproxyavailable() in SUCCESS case - the newRequest will
@@ -409,7 +441,8 @@ class nsAsyncResolveRequest final : public nsIRunnable,
            static_cast<uint32_t>(mStatus)));
       if (NS_SUCCEEDED(mStatus)) mPPS->MaybeDisableDNSPrefetch(mProxyInfo);
       EnsureResolveFlagsMatch();
-      mCallback->OnProxyAvailable(this, mChannel, mProxyInfo, mStatus);
+      nsProtocolProxyService::CallOnProxyAvailableCallback(
+          mPPS, mCallback, this, mChannel, mProxyInfo, mStatus);
     }
 
     // We are on the main thread now and don't need these any more so
@@ -621,28 +654,29 @@ nsAsyncResolveRequest::AsyncApplyFilters::Cancel(nsresult reason) {
   return NS_OK;
 }
 
-// Bug 1366133: make GetPACURI off-main-thread since it may hang on Windows
-// platform
-class AsyncGetPACURIRequest final : public nsIRunnable {
+// Bug 1366133: make GetPACURI and GetSystemWPADSetting off-main-thread since it
+// may hang on Windows platform
+class AsyncGetPACURIRequestOrSystemWPADSetting final : public nsIRunnable {
  public:
   NS_DECL_THREADSAFE_ISUPPORTS
 
   using CallbackFunc = nsresult (nsProtocolProxyService::*)(bool, bool,
                                                             nsresult,
-                                                            const nsACString&);
+                                                            const nsACString&,
+                                                            bool);
 
-  AsyncGetPACURIRequest(nsProtocolProxyService* aService,
-                        CallbackFunc aCallback,
-                        nsISystemProxySettings* aSystemProxySettings,
-                        bool aMainThreadOnly, bool aForceReload,
-                        bool aResetPACThread)
+  AsyncGetPACURIRequestOrSystemWPADSetting(
+      nsProtocolProxyService* aService, CallbackFunc aCallback,
+      nsISystemProxySettings* aSystemProxySettings, bool aMainThreadOnly,
+      bool aForceReload, bool aResetPACThread, bool aSystemWPADAllowed)
       : mIsMainThreadOnly(aMainThreadOnly),
         mService(aService),
         mServiceHolder(do_QueryObject(aService)),
         mCallback(aCallback),
         mSystemProxySettings(aSystemProxySettings),
         mForceReload(aForceReload),
-        mResetPACThread(aResetPACThread) {
+        mResetPACThread(aResetPACThread),
+        mSystemWPADAllowed(aSystemWPADAllowed) {
     MOZ_ASSERT(NS_IsMainThread());
     Unused << mIsMainThreadOnly;
   }
@@ -650,21 +684,30 @@ class AsyncGetPACURIRequest final : public nsIRunnable {
   NS_IMETHOD Run() override {
     MOZ_ASSERT(NS_IsMainThread() == mIsMainThreadOnly);
 
+    nsresult rv;
     nsCString pacUri;
-    nsresult rv = mSystemProxySettings->GetPACURI(pacUri);
+    bool systemWPADSetting = false;
+    if (mSystemWPADAllowed) {
+      mSystemProxySettings->GetSystemWPADSetting(&systemWPADSetting);
+    }
+
+    rv = mSystemProxySettings->GetPACURI(pacUri);
 
     nsCOMPtr<nsIRunnable> event =
-        NewNonOwningCancelableRunnableMethod<bool, bool, nsresult, nsCString>(
-            "AsyncGetPACURIRequestCallback", mService, mCallback, mForceReload,
-            mResetPACThread, rv, pacUri);
+        NewNonOwningCancelableRunnableMethod<bool, bool, nsresult, nsCString,
+                                             bool>(
+            "AsyncGetPACURIRequestOrSystemWPADSettingCallback", mService,
+            mCallback, mForceReload, mResetPACThread, rv, pacUri,
+            systemWPADSetting);
 
     return NS_DispatchToMainThread(event);
   }
 
  private:
-  ~AsyncGetPACURIRequest() {
-    NS_ReleaseOnMainThread("AsyncGetPACURIRequest::mServiceHolder",
-                           mServiceHolder.forget());
+  ~AsyncGetPACURIRequestOrSystemWPADSetting() {
+    NS_ReleaseOnMainThread(
+        "AsyncGetPACURIRequestOrSystemWPADSetting::mServiceHolder",
+        mServiceHolder.forget());
   }
 
   bool mIsMainThreadOnly;
@@ -676,9 +719,10 @@ class AsyncGetPACURIRequest final : public nsIRunnable {
 
   bool mForceReload;
   bool mResetPACThread;
+  bool mSystemWPADAllowed;
 };
 
-NS_IMPL_ISUPPORTS(AsyncGetPACURIRequest, nsIRunnable)
+NS_IMPL_ISUPPORTS(AsyncGetPACURIRequestOrSystemWPADSetting, nsIRunnable)
 
 //----------------------------------------------------------------------------
 
@@ -807,6 +851,7 @@ nsresult nsProtocolProxyService::Init() {
 // ReloadNetworkPAC() checks if there's a non-networked PAC in use then avoids
 // to call ReloadPAC()
 nsresult nsProtocolProxyService::ReloadNetworkPAC() {
+  LOG(("nsProtocolProxyService::ReloadNetworkPAC"));
   nsCOMPtr<nsIPrefBranch> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID);
   if (!prefs) {
     return NS_OK;
@@ -847,8 +892,9 @@ nsresult nsProtocolProxyService::ReloadNetworkPAC() {
   return NS_OK;
 }
 
-nsresult nsProtocolProxyService::AsyncConfigureFromPAC(bool aForceReload,
-                                                       bool aResetPACThread) {
+nsresult nsProtocolProxyService::AsyncConfigureWPADOrFromPAC(
+    bool aForceReload, bool aResetPACThread, bool aSystemWPADAllowed) {
+  LOG(("nsProtocolProxyService::AsyncConfigureWPADOrFromPAC"));
   MOZ_ASSERT(NS_IsMainThread());
 
   bool mainThreadOnly;
@@ -857,9 +903,10 @@ nsresult nsProtocolProxyService::AsyncConfigureFromPAC(bool aForceReload,
     return rv;
   }
 
-  nsCOMPtr<nsIRunnable> req = new AsyncGetPACURIRequest(
-      this, &nsProtocolProxyService::OnAsyncGetPACURI, mSystemProxySettings,
-      mainThreadOnly, aForceReload, aResetPACThread);
+  nsCOMPtr<nsIRunnable> req = new AsyncGetPACURIRequestOrSystemWPADSetting(
+      this, &nsProtocolProxyService::OnAsyncGetPACURIOrSystemWPADSetting,
+      mSystemProxySettings, mainThreadOnly, aForceReload, aResetPACThread,
+      aSystemWPADAllowed);
 
   if (mainThreadOnly) {
     return req->Run();
@@ -869,17 +916,25 @@ nsresult nsProtocolProxyService::AsyncConfigureFromPAC(bool aForceReload,
                                    nsIEventTarget::DISPATCH_NORMAL);
 }
 
-nsresult nsProtocolProxyService::OnAsyncGetPACURI(bool aForceReload,
-                                                  bool aResetPACThread,
-                                                  nsresult aResult,
-                                                  const nsACString& aUri) {
+nsresult nsProtocolProxyService::OnAsyncGetPACURIOrSystemWPADSetting(
+    bool aForceReload, bool aResetPACThread, nsresult aResult,
+    const nsACString& aUri, bool aSystemWPADSetting) {
+  LOG(("nsProtocolProxyService::OnAsyncGetPACURIOrSystemWPADSetting"));
   MOZ_ASSERT(NS_IsMainThread());
 
   if (aResetPACThread) {
     ResetPACThread();
   }
 
-  if (NS_SUCCEEDED(aResult) && !aUri.IsEmpty()) {
+  if (aSystemWPADSetting) {
+    if (mSystemProxySettings || !mPACMan) {
+      mSystemProxySettings = nullptr;
+      ResetPACThread();
+    }
+
+    nsAutoCString tempString;
+    ConfigureFromPAC(EmptyCString(), false);
+  } else if (NS_SUCCEEDED(aResult) && !aUri.IsEmpty()) {
     ConfigureFromPAC(PromiseFlatCString(aUri), aForceReload);
   }
 
@@ -960,7 +1015,8 @@ void nsProtocolProxyService::PrefsChanged(nsIPrefBranch* prefBranch,
   auto invokeCallback =
       MakeScopeExit([&] { NotifyProxyConfigChangedInternal(); });
 
-  if (!pref || !strcmp(pref, PROXY_PREF("type"))) {
+  if (!pref || !strcmp(pref, PROXY_PREF("type")) ||
+      !strcmp(pref, PROXY_PREF("system_wpad"))) {
     int32_t type = -1;
     rv = prefBranch->GetIntPref(PROXY_PREF("type"), &type);
     if (NS_SUCCEEDED(rv)) {
@@ -1020,16 +1076,21 @@ void nsProtocolProxyService::PrefsChanged(nsIPrefBranch* prefBranch,
     int32_t version;
     proxy_GetIntPref(prefBranch, PROXY_PREF("socks_version"), version);
     // make sure this preference value remains sane
-    if (version == 5) {
-      mSOCKSProxyVersion = 5;
+    if (version == nsIProxyInfo::SOCKS_V5) {
+      mSOCKSProxyVersion = nsIProxyInfo::SOCKS_V5;
     } else {
-      mSOCKSProxyVersion = 4;
+      mSOCKSProxyVersion = nsIProxyInfo::SOCKS_V4;
     }
   }
 
   if (!pref || !strcmp(pref, PROXY_PREF("socks_remote_dns"))) {
     proxy_GetBoolPref(prefBranch, PROXY_PREF("socks_remote_dns"),
-                      mSOCKSProxyRemoteDNS);
+                      mSOCKS4ProxyRemoteDNS);
+  }
+
+  if (!pref || !strcmp(pref, PROXY_PREF("socks5_remote_dns"))) {
+    proxy_GetBoolPref(prefBranch, PROXY_PREF("socks5_remote_dns"),
+                      mSOCKS5ProxyRemoteDNS);
   }
 
   if (!pref || !strcmp(pref, PROXY_PREF("proxy_over_tls"))) {
@@ -1076,9 +1137,12 @@ void nsProtocolProxyService::PrefsChanged(nsIPrefBranch* prefBranch,
     } else if (mProxyConfig == PROXYCONFIG_WPAD) {
       LOG(("Auto-detecting proxy - Reset Pac Thread"));
       ResetPACThread();
+    } else if (mSystemProxySettings && mProxyConfig == PROXYCONFIG_SYSTEM &&
+               StaticPrefs::network_proxy_system_wpad()) {
+      AsyncConfigureWPADOrFromPAC(false, false, true);
     } else if (mSystemProxySettings) {
       // Get System Proxy settings if available
-      AsyncConfigureFromPAC(false, false);
+      AsyncConfigureWPADOrFromPAC(false, false, false);
     }
     if (!tempString.IsEmpty() || mProxyConfig == PROXYCONFIG_WPAD) {
       ConfigureFromPAC(tempString, false);
@@ -1253,7 +1317,7 @@ const char* nsProtocolProxyService::ExtractProxyInfo(const char* start,
     // If it's a SOCKS5 proxy, do name resolution on the server side.
     // We could use this with SOCKS4a servers too, but they might not
     // support it.
-    if (type == kProxyType_SOCKS || mSOCKSProxyRemoteDNS) {
+    if (type == kProxyType_SOCKS || mSOCKS5ProxyRemoteDNS) {
       flags |= nsIProxyInfo::TRANSPARENT_PROXY_RESOLVES_HOST;
     }
 
@@ -1383,6 +1447,7 @@ bool nsProtocolProxyService::IsProxyDisabled(nsProxyInfo* pi) {
 
 nsresult nsProtocolProxyService::SetupPACThread(
     nsISerialEventTarget* mainThreadEventTarget) {
+  LOG(("nsProtocolProxyService::SetupPACThread"));
   if (mIsShutdown) {
     return NS_ERROR_FAILURE;
   }
@@ -1408,6 +1473,7 @@ nsresult nsProtocolProxyService::SetupPACThread(
 }
 
 nsresult nsProtocolProxyService::ResetPACThread() {
+  LOG(("nsProtocolProxyService::ResetPACThread"));
   if (!mPACMan) return NS_OK;
 
   mPACMan->Shutdown();
@@ -1466,6 +1532,7 @@ void nsProtocolProxyService::ProcessPACString(const nsCString& pacString,
 // nsIProtocolProxyService2
 NS_IMETHODIMP
 nsProtocolProxyService::ReloadPAC() {
+  LOG(("nsProtocolProxyService::ReloadPAC"));
   nsCOMPtr<nsIPrefBranch> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID);
   if (!prefs) return NS_OK;
 
@@ -1478,7 +1545,8 @@ nsProtocolProxyService::ReloadPAC() {
     prefs->GetCharPref(PROXY_PREF("autoconfig_url"), pacSpec);
   } else if (type == PROXYCONFIG_SYSTEM) {
     if (mSystemProxySettings) {
-      AsyncConfigureFromPAC(true, true);
+      AsyncConfigureWPADOrFromPAC(true, true,
+                                  StaticPrefs::network_proxy_system_wpad());
     } else {
       ResetPACThread();
     }
@@ -1490,52 +1558,11 @@ nsProtocolProxyService::ReloadPAC() {
   return NS_OK;
 }
 
-// When sync interface is removed this can go away too
-// The nsPACManCallback portion of this implementation should be run
-// off the main thread, because it uses a condvar for signaling and
-// the main thread is blocking on that condvar -
-//  so call nsPACMan::AsyncGetProxyForURI() with
-// a false mainThreadResponse parameter.
-class nsAsyncBridgeRequest final : public nsPACManCallback {
-  NS_DECL_THREADSAFE_ISUPPORTS
-
-  nsAsyncBridgeRequest()
-      : mMutex("nsDeprecatedCallback"),
-        mCondVar(mMutex, "nsDeprecatedCallback") {}
-
-  void OnQueryComplete(nsresult status, const nsACString& pacString,
-                       const nsACString& newPACURL) override {
-    MutexAutoLock lock(mMutex);
-    mCompleted = true;
-    mStatus = status;
-    mPACString = pacString;
-    mPACURL = newPACURL;
-    mCondVar.Notify();
-  }
-
-  void Lock() MOZ_CAPABILITY_ACQUIRE(mMutex) { mMutex.Lock(); }
-  void Unlock() MOZ_CAPABILITY_RELEASE(mMutex) { mMutex.Unlock(); }
-  void Wait() { mCondVar.Wait(TimeDuration::FromSeconds(3)); }
-
- private:
-  ~nsAsyncBridgeRequest() = default;
-
-  friend class nsProtocolProxyService;
-
-  Mutex mMutex;
-  CondVar mCondVar;
-
-  nsresult mStatus MOZ_GUARDED_BY(mMutex){NS_OK};
-  nsCString mPACString MOZ_GUARDED_BY(mMutex);
-  nsCString mPACURL MOZ_GUARDED_BY(mMutex);
-  bool mCompleted MOZ_GUARDED_BY(mMutex){false};
-};
-NS_IMPL_ISUPPORTS0(nsAsyncBridgeRequest)
-
 nsresult nsProtocolProxyService::AsyncResolveInternal(
     nsIChannel* channel, uint32_t flags, nsIProtocolProxyCallback* callback,
     nsICancelable** result, bool isSyncOK,
     nsISerialEventTarget* mainThreadEventTarget) {
+  LOG(("nsProtocolProxyService::AsyncResolveInternal"));
   NS_ENSURE_ARG_POINTER(channel);
   NS_ENSURE_ARG_POINTER(callback);
 
@@ -1555,7 +1582,8 @@ nsresult nsProtocolProxyService::AsyncResolveInternal(
   bool usePACThread;
 
   // adapt to realtime changes in the system proxy service
-  if (mProxyConfig == PROXYCONFIG_SYSTEM) {
+  if (mProxyConfig == PROXYCONFIG_SYSTEM &&
+      !StaticPrefs::network_proxy_system_wpad()) {
     nsCOMPtr<nsISystemProxySettings> sp2 =
         do_GetService(NS_SYSTEMPROXYSETTINGS_CONTRACTID);
     if (sp2 != mSystemProxySettings) {
@@ -1749,11 +1777,18 @@ nsresult nsProtocolProxyService::InsertFilterLink(RefPtr<FilterLink>&& link) {
     return NS_ERROR_FAILURE;
   }
 
-  mFilters.AppendElement(link);
-  mFilters.Sort(ProxyFilterPositionComparator());
+  // If we add a new element with the same position as an existing one, we want
+  // to preserve the insertion order to avoid surprises.
+  mFilters.InsertElementSorted(link, ProxyFilterPositionComparator());
 
   NotifyProxyConfigChangedInternal();
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsProtocolProxyService::GetHasProxyFilterRegistered(bool* aResult) {
+  *aResult = !mFilters.IsEmpty();
   return NS_OK;
 }
 
@@ -2070,11 +2105,26 @@ nsresult nsProtocolProxyService::NewProxyInfo_Internal(
   return NS_OK;
 }
 
+const char* nsProtocolProxyService::SOCKSProxyType() {
+  if (mSOCKSProxyVersion == nsIProxyInfo::SOCKS_V4) {
+    return kProxyType_SOCKS4;
+  }
+  return kProxyType_SOCKS;
+}
+
+bool nsProtocolProxyService::SOCKSRemoteDNS() {
+  return (mSOCKSProxyVersion == nsIProxyInfo::SOCKS_V4 &&
+          mSOCKS4ProxyRemoteDNS) ||
+         (mSOCKSProxyVersion == nsIProxyInfo::SOCKS_V5 &&
+          mSOCKS5ProxyRemoteDNS);
+}
+
 nsresult nsProtocolProxyService::Resolve_Internal(nsIChannel* channel,
                                                   const nsProtocolInfo& info,
                                                   uint32_t flags,
                                                   bool* usePACThread,
                                                   nsIProxyInfo** result) {
+  LOG(("nsProtocolProxyService::Resolve_Internal"));
   NS_ENSURE_ARG_POINTER(channel);
 
   *usePACThread = false;
@@ -2189,7 +2239,8 @@ nsresult nsProtocolProxyService::Resolve_Internal(nsIChannel* channel,
   }
 
   // Proxy auto config magic...
-  if (mProxyConfig == PROXYCONFIG_PAC || mProxyConfig == PROXYCONFIG_WPAD) {
+  if (mProxyConfig == PROXYCONFIG_PAC || mProxyConfig == PROXYCONFIG_WPAD ||
+      StaticPrefs::network_proxy_system_wpad()) {
     // Do not query PAC now.
     *usePACThread = true;
     return NS_OK;
@@ -2209,15 +2260,11 @@ nsresult nsProtocolProxyService::Resolve_Internal(nsIChannel* channel,
   if ((flags & RESOLVE_PREFER_SOCKS_PROXY) && !mSOCKSProxyTarget.IsEmpty() &&
       (IsHostLocalTarget(mSOCKSProxyTarget) || mSOCKSProxyPort > 0)) {
     host = &mSOCKSProxyTarget;
-    if (mSOCKSProxyVersion == 4) {
-      type = kProxyType_SOCKS4;
-    } else {
-      type = kProxyType_SOCKS;
-    }
-    port = mSOCKSProxyPort;
-    if (mSOCKSProxyRemoteDNS) {
+    type = SOCKSProxyType();
+    if (SOCKSRemoteDNS()) {
       proxyFlags |= nsIProxyInfo::TRANSPARENT_PROXY_RESOLVES_HOST;
     }
+    port = mSOCKSProxyPort;
   } else if ((flags & RESOLVE_PREFER_HTTPS_PROXY) &&
              !mHTTPSProxyHost.IsEmpty() && mHTTPSProxyPort > 0) {
     host = &mHTTPSProxyHost;
@@ -2238,15 +2285,11 @@ nsresult nsProtocolProxyService::Resolve_Internal(nsIChannel* channel,
   } else if (!mSOCKSProxyTarget.IsEmpty() &&
              (IsHostLocalTarget(mSOCKSProxyTarget) || mSOCKSProxyPort > 0)) {
     host = &mSOCKSProxyTarget;
-    if (mSOCKSProxyVersion == 4) {
-      type = kProxyType_SOCKS4;
-    } else {
-      type = kProxyType_SOCKS;
-    }
-    port = mSOCKSProxyPort;
-    if (mSOCKSProxyRemoteDNS) {
+    type = SOCKSProxyType();
+    if (SOCKSRemoteDNS()) {
       proxyFlags |= nsIProxyInfo::TRANSPARENT_PROXY_RESOLVES_HOST;
     }
+    port = mSOCKSProxyPort;
   }
 
   if (type) {
@@ -2264,6 +2307,10 @@ void nsProtocolProxyService::MaybeDisableDNSPrefetch(nsIProxyInfo* aProxy) {
 
   nsCOMPtr<nsProxyInfo> pi = do_QueryInterface(aProxy);
   if (!pi || !pi->mType || pi->mType == kProxyType_DIRECT) return;
+
+  if (StaticPrefs::network_dns_prefetch_via_proxy()) {
+    return;
+  }
 
   // To avoid getting DNS service recursively, we directly use
   // GetXPCOMSingleton().

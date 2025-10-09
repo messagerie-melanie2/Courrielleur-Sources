@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use clap::error::{Error, ErrorKind};
 use clap::{ArgMatches, Args as _, Command, FromArgMatches, Parser, Subcommand};
 
@@ -7,7 +8,7 @@ struct AddArgs {
 }
 #[derive(Parser, Debug)]
 struct RemoveArgs {
-    #[clap(short, long)]
+    #[arg(short, long)]
     force: bool,
     name: Vec<String>,
 }
@@ -24,7 +25,7 @@ impl FromArgMatches for CliSub {
             Some(("add", args)) => Ok(Self::Add(AddArgs::from_arg_matches(args)?)),
             Some(("remove", args)) => Ok(Self::Remove(RemoveArgs::from_arg_matches(args)?)),
             Some((_, _)) => Err(Error::raw(
-                ErrorKind::UnrecognizedSubcommand,
+                ErrorKind::InvalidSubcommand,
                 "Valid subcommands are `add` and `remove`",
             )),
             None => Err(Error::raw(
@@ -39,7 +40,7 @@ impl FromArgMatches for CliSub {
             Some(("remove", args)) => *self = Self::Remove(RemoveArgs::from_arg_matches(args)?),
             Some((_, _)) => {
                 return Err(Error::raw(
-                    ErrorKind::UnrecognizedSubcommand,
+                    ErrorKind::InvalidSubcommand,
                     "Valid subcommands are `add` and `remove`",
                 ))
             }
@@ -50,12 +51,12 @@ impl FromArgMatches for CliSub {
 }
 
 impl Subcommand for CliSub {
-    fn augment_subcommands(cmd: Command<'_>) -> Command<'_> {
+    fn augment_subcommands(cmd: Command) -> Command {
         cmd.subcommand(AddArgs::augment_args(Command::new("add")))
             .subcommand(RemoveArgs::augment_args(Command::new("remove")))
             .subcommand_required(true)
     }
-    fn augment_subcommands_for_update(cmd: Command<'_>) -> Command<'_> {
+    fn augment_subcommands_for_update(cmd: Command) -> Command {
         cmd.subcommand(AddArgs::augment_args(Command::new("add")))
             .subcommand(RemoveArgs::augment_args(Command::new("remove")))
             .subcommand_required(true)
@@ -67,13 +68,13 @@ impl Subcommand for CliSub {
 
 #[derive(Parser, Debug)]
 struct Cli {
-    #[clap(short, long)]
+    #[arg(short, long)]
     top_level: bool,
-    #[clap(subcommand)]
+    #[command(subcommand)]
     subcommand: CliSub,
 }
 
 fn main() {
     let args = Cli::parse();
-    println!("{:#?}", args);
+    println!("{args:#?}");
 }

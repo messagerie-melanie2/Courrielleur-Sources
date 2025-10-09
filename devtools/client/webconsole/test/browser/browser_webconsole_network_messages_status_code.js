@@ -14,14 +14,15 @@ const {
   l10n,
 } = require("resource://devtools/client/webconsole/utils/messages.js");
 const LEARN_MORE_URI =
-  "https://developer.mozilla.org/docs/Web/HTTP/Status/200" + GA_PARAMS;
+  "https://developer.mozilla.org/docs/Web/HTTP/Reference/Status/200" +
+  GA_PARAMS;
 
 pushPref(NET_PREF, true);
 pushPref(XHR_PREF, true);
 
 registerCleanupFunction(async function () {
   await new Promise(resolve => {
-    Services.clearData.deleteData(Ci.nsIClearDataService.CLEAR_ALL, value =>
+    Services.clearData.deleteData(Ci.nsIClearDataService.CLEAR_ALL, () =>
       resolve()
     );
   });
@@ -65,7 +66,7 @@ add_task(async function task() {
   await hideContextMenu(hud);
 
   await new Promise(resolve => {
-    Services.clearData.deleteData(Ci.nsIClearDataService.CLEAR_ALL, value =>
+    Services.clearData.deleteData(Ci.nsIClearDataService.CLEAR_ALL, () =>
       resolve()
     );
   });

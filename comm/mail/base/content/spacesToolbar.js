@@ -16,9 +16,6 @@ var gSpacesToolbar = {
     "--webextension-toolbar-image",
     "--webextension-toolbar-image-dark",
     "--webextension-toolbar-image-light",
-    "--webextension-toolbar-image-2x",
-    "--webextension-toolbar-image-2x-dark",
-    "--webextension-toolbar-image-2x-light",
   ],
   docURL: "chrome://messenger/content/messenger.xhtml",
   /**
@@ -135,7 +132,7 @@ var gSpacesToolbar = {
     onTabRestored() {},
     onTabClosing() {},
 
-    onTabSwitched(newTabInfo, oldTabInfo) {
+    onTabSwitched(newTabInfo) {
       // Bail out if for whatever reason something went wrong.
       if (!newTabInfo) {
         console.error(
@@ -144,7 +141,7 @@ var gSpacesToolbar = {
         return;
       }
 
-      let tabSpace = gSpacesToolbar.spaces.find(space =>
+      const tabSpace = gSpacesToolbar.spaces.find(space =>
         space.tabInSpace(newTabInfo)
       );
       if (gSpacesToolbar.currentSpace != tabSpace) {
@@ -172,11 +169,11 @@ var gSpacesToolbar = {
    * @returns {string} - The converted hexadecimal color.
    */
   _rgbToHex(color) {
-    let rgb = color.split("(")[1].split(")")[0].split(",");
+    const rgb = color.split("(")[1].split(")")[0].split(",");
 
     // For each array element convert ot a base16 string and add zero if we get
     // only one character.
-    let hash = rgb.map(x => parseInt(x).toString(16).padStart(2, "0"));
+    const hash = rgb.map(x => parseInt(x).toString(16).padStart(2, "0"));
 
     return `#${hash.join("")}`;
   },
@@ -188,7 +185,7 @@ var gSpacesToolbar = {
 
     this.element = document.getElementById("spacesToolbar");
     this.focusButton = document.getElementById("mailButton");
-    let tabmail = document.getElementById("tabmail");
+    const tabmail = document.getElementById("tabmail");
 
     this.spaces = [
       {
@@ -207,7 +204,7 @@ var gSpacesToolbar = {
         },
         open(where) {
           // Prefer the current tab, else the earliest tab.
-          let existingTab = [tabmail.currentTabInfo, ...tabmail.tabInfo].find(
+          const existingTab = [tabmail.currentTabInfo, ...tabmail.tabInfo].find(
             tabInfo => this.tabInSpace(tabInfo) == 1
           );
           let folderURI = null;
@@ -289,12 +286,13 @@ var gSpacesToolbar = {
             case "preferencesTab":
               // A primary tab that the open method creates.
               return 1;
-            case "contentTab":
-              let url = tabInfo.urlbar?.value;
+            case "contentTab": {
+              const url = tabInfo.urlbar?.value;
               if (url == "about:accountsettings" || url == "about:addons") {
                 // A secondary tab, that is related to this space.
                 return 2;
               }
+            }
           }
           return 0;
         },
@@ -334,15 +332,15 @@ var gSpacesToolbar = {
 
     // Prevent buttons from stealing the focus on click since the focus is
     // handled when a specific tab is opened or switched to.
-    for (let button of document.querySelectorAll(".spaces-toolbar-button")) {
+    for (const button of document.querySelectorAll(".spaces-toolbar-button")) {
       button.onmousedown = event => event.preventDefault();
     }
 
-    let tabmail = document.getElementById("tabmail");
-    let contextMenu = document.getElementById("spacesContextMenu");
-    let newTabItem = document.getElementById("spacesContextNewTabItem");
-    let newWindowItem = document.getElementById("spacesContextNewWindowItem");
-    let separator = document.getElementById("spacesContextMenuSeparator");
+    const tabmail = document.getElementById("tabmail");
+    const contextMenu = document.getElementById("spacesContextMenu");
+    const newTabItem = document.getElementById("spacesContextNewTabItem");
+    const newWindowItem = document.getElementById("spacesContextNewWindowItem");
+    const separator = document.getElementById("spacesContextMenuSeparator");
 
     // The space that we (last) opened the context menu for, which we share
     // between methods.
@@ -352,7 +350,7 @@ var gSpacesToolbar = {
       contextSpace.open("window")
     );
 
-    let settingsContextMenu = document.getElementById("settingsContextMenu");
+    const settingsContextMenu = document.getElementById("settingsContextMenu");
     document
       .getElementById("settingsContextOpenSettingsItem")
       .addEventListener("command", () => openTab("preferencesTab", {}));
@@ -370,7 +368,7 @@ var gSpacesToolbar = {
       .getElementById("settingsContextOpenCustomizeItem")
       .addEventListener("command", () => this.showCustomize());
 
-    for (let space of this.spaces) {
+    for (const space of this.spaces) {
       this._addButtonClickListener(space.button, () => {
         this.openSpace(tabmail, space);
       });
@@ -393,19 +391,19 @@ var gSpacesToolbar = {
         event.stopPropagation();
         contextSpace = space;
         // Clean up old items.
-        for (let menuitem of contextMenu.querySelectorAll(".switch-to-tab")) {
+        for (const menuitem of contextMenu.querySelectorAll(".switch-to-tab")) {
           menuitem.remove();
         }
 
-        let existingTabs = tabmail.tabInfo.filter(space.tabInSpace);
+        const existingTabs = tabmail.tabInfo.filter(space.tabInSpace);
         // Show opening in new tab if no existing tabs or can open multiple.
         // NOTE: We always show at least one item: either the switch to tab
         // items, or the new tab item.
         newTabItem.hidden = !!existingTabs.length && !space.allowMultipleTabs;
         newWindowItem.hidden = !space.allowMultipleTabs;
 
-        for (let tabInfo of existingTabs) {
-          let menuitem = document.createXULElement("menuitem");
+        for (const tabInfo of existingTabs) {
+          const menuitem = document.createXULElement("menuitem");
           document.l10n.setAttributes(
             menuitem,
             "spaces-context-switch-tab-item",
@@ -458,7 +456,7 @@ var gSpacesToolbar = {
         }
 
         if (event.key == " " || event.key == "Enter") {
-          let panel = document.getElementById("spacesButtonMenuPopup");
+          const panel = document.getElementById("spacesButtonMenuPopup");
           if (panel.state == "open") {
             panel.hidePopup();
           } else if (panel.state == "closed") {
@@ -493,7 +491,7 @@ var gSpacesToolbar = {
     }
 
     // Collect all currently visible buttons of the spaces toolbar.
-    let buttons = [
+    const buttons = [
       ...document.querySelectorAll(".spaces-toolbar-button:not([hidden])"),
     ];
     let elementIndex = buttons.indexOf(this.focusButton);
@@ -582,7 +580,7 @@ var gSpacesToolbar = {
    */
   openSpace(tabmail, space) {
     // Find the earliest primary tab that belongs to this space.
-    let existing = tabmail.tabInfo.find(
+    const existing = tabmail.tabInfo.find(
       tabInfo => space.tabInSpace(tabInfo) == 1
     );
     if (!existing) {
@@ -612,7 +610,7 @@ var gSpacesToolbar = {
    * Load the saved customization from the xulStore, if we have any.
    */
   async loadCustomization() {
-    let xulStore = Services.xulStore;
+    const xulStore = Services.xulStore;
     if (xulStore.hasValue(this.docURL, "spacesToolbar", "colors")) {
       this.customizeData = JSON.parse(
         xulStore.getValue(this.docURL, "spacesToolbar", "colors")
@@ -630,7 +628,7 @@ var gSpacesToolbar = {
     // data, we fetch the current colors from the DOM elements.
     // IMPORTANT! Always clear the onchange method before setting a new value
     // since this method might be called after the popup is already opened.
-    let bgButton = document.getElementById("spacesBackgroundColor");
+    const bgButton = document.getElementById("spacesBackgroundColor");
     bgButton.onchange = null;
     bgButton.value =
       this.customizeData.background ||
@@ -640,7 +638,7 @@ var gSpacesToolbar = {
       this.updateCustomization();
     };
 
-    let iconButton = document.getElementById("spacesIconsColor");
+    const iconButton = document.getElementById("spacesIconsColor");
     iconButton.onchange = null;
     iconButton.value =
       this.customizeData.color ||
@@ -654,10 +652,10 @@ var gSpacesToolbar = {
       this.updateCustomization();
     };
 
-    let accentStyle = getComputedStyle(
+    const accentStyle = getComputedStyle(
       document.getElementById("spacesAccentPlaceholder")
     );
-    let accentBgButton = document.getElementById("spacesAccentBgColor");
+    const accentBgButton = document.getElementById("spacesAccentBgColor");
     accentBgButton.onchange = null;
     accentBgButton.value =
       this.customizeData.accentBackground ||
@@ -667,7 +665,7 @@ var gSpacesToolbar = {
       this.updateCustomization();
     };
 
-    let accentFgButton = document.getElementById("spacesAccentTextColor");
+    const accentFgButton = document.getElementById("spacesAccentTextColor");
     accentFgButton.onchange = null;
     accentFgButton.value =
       this.customizeData.accentColor || this._rgbToHex(accentStyle.color);
@@ -743,8 +741,8 @@ var gSpacesToolbar = {
    * Apply the customization to the CSS file.
    */
   updateCustomization() {
-    let data = this.customizeData;
-    let style = document.documentElement.style;
+    const data = this.customizeData;
+    const style = document.documentElement.style;
 
     // Toolbar background color.
     style.setProperty("--spaces-bg-color", data.background ?? null);
@@ -807,11 +805,11 @@ var gSpacesToolbar = {
     this.isHidden = state;
 
     // The focused element, prior to toggling.
-    let activeElement = document.activeElement;
+    const activeElement = document.activeElement;
 
-    let pinnedButton = document.getElementById("spacesPinnedButton");
+    const pinnedButton = document.getElementById("spacesPinnedButton");
     pinnedButton.hidden = !state;
-    let revealButton = document.getElementById("spacesToolbarReveal");
+    const revealButton = document.getElementById("spacesToolbarReveal");
     revealButton.hidden = !state;
     this.element.hidden = state;
 
@@ -851,7 +849,7 @@ var gSpacesToolbar = {
       return;
     }
 
-    let density = Services.prefs.getIntPref("mail.uidensity", 1);
+    const density = Services.prefs.getIntPref("mail.uidensity", 1);
     switch (density) {
       case 0:
         this.densitySpacing = 10;
@@ -903,11 +901,11 @@ var gSpacesToolbar = {
       return;
     }
 
-    let overflowButton = document.getElementById(
+    const overflowButton = document.getElementById(
       "spacesToolbarAddonsOverflowButton"
     );
-    let separator = document.getElementById("spacesPopupAddonsSeparator");
-    let popup = document.getElementById("spacesToolbarAddonsPopup");
+    const separator = document.getElementById("spacesPopupAddonsSeparator");
+    const popup = document.getElementById("spacesToolbarAddonsPopup");
     // Bail out if we don't have any add-ons button.
     if (!this.addonButtonCount) {
       if (this.focusButton == overflowButton) {
@@ -924,11 +922,11 @@ var gSpacesToolbar = {
     separator.collapsed = false;
     // Use the first available button's height as reference, and include the gap
     // defined by the UIDensity pref.
-    let buttonHeight =
+    const buttonHeight =
       document.querySelector(".spaces-toolbar-button").getBoundingClientRect()
         .height + this.densitySpacing;
 
-    let containerHeight = document
+    const containerHeight = document
       .getElementById("spacesToolbarAddonsContainer")
       .getBoundingClientRect().height;
 
@@ -940,13 +938,15 @@ var gSpacesToolbar = {
     // - Dividing the returned value by the height of a single button.
     // Doing so we will get an integer representing how many buttons might or
     // might not fit in the available area.
-    let threshold = Math.ceil(
+    const threshold = Math.ceil(
       (buttonHeight * this.addonButtonCount - containerHeight) / buttonHeight
     );
 
     // Always reset the visibility of all buttons to avoid unnecessary
     // calculations when needing to reveal hidden buttons.
-    for (let btn of document.querySelectorAll(".spaces-addon-button[hidden]")) {
+    for (const btn of document.querySelectorAll(
+      ".spaces-addon-button[hidden]"
+    )) {
       btn.hidden = false;
     }
 
@@ -968,7 +968,7 @@ var gSpacesToolbar = {
     overflowButton.hidden = false;
     // Hide as many buttons as needed based on the threshold value.
     for (let i = 0; i <= threshold; i++) {
-      let btn = document.querySelector(
+      const btn = document.querySelector(
         `.spaces-addon-button:nth-last-child(${i})`
       );
       if (btn) {
@@ -995,8 +995,8 @@ var gSpacesToolbar = {
     // Add inline styling to the tabmail tabs only if we're on macOS and the
     // app is in full screen mode.
     if (window.fullScreen) {
-      let size = this.element.getBoundingClientRect().width;
-      let style = `margin-inline-start: ${size}px;`;
+      const size = this.element.getBoundingClientRect().width;
+      const style = `margin-inline-start: ${size}px;`;
       document.getElementById("tabmail-tabs").setAttribute("style", style);
       return;
     }
@@ -1006,9 +1006,19 @@ var gSpacesToolbar = {
   },
 
   /**
+   * Properties for a new tab to be passed into TabMail.openTab().
+   *
+   * @typedef NativeTabProperties
+   * @property {string} url
+   * @property {?string} initialBrowsingContextGroupId
+   * @property {?string} linkHandler
+   * @property {?nsIPrincipal} triggeringPrincipal
+   * @property {?integer} userContextId
+   */
+
+  /**
    * @typedef NativeButtonProperties
    * @property {string} title - The text of the button tooltip and menuitem value.
-   * @property {string} url - The URL of the content tab to open.
    * @property {Map} iconStyles - The icon styles Map.
    * @property {?string} badgeText - The optional badge text.
    * @property {?Map} badgeStyles - The optional badge styles Map.
@@ -1019,38 +1029,50 @@ var gSpacesToolbar = {
    * toolbar.
    *
    * @param {string} id - The ID of the newly created button.
-   * @param {NativeButtonProperties} properties - The properties of the new button.
+   * @param {NativeTabProperties} tabProperties - The properties of the default
+   *   space tab.
+   * @param {NativeButtonProperties} nativeButtonProperties - The properties of
+   *   the new button.
    *
    * @returns {Promise} - A Promise that resolves when the button is created.
    */
-  async createToolbarButton(id, properties = {}) {
+  async createToolbarButton(
+    id,
+    tabProperties = {},
+    nativeButtonProperties = {}
+  ) {
     return new Promise((resolve, reject) => {
       if (!this.isLoaded) {
         return reject("Unable to add spaces toolbar button! Toolbar not ready");
       }
       if (
         !id ||
-        !properties.title ||
-        !properties.url ||
-        !properties.iconStyles
+        !tabProperties.url ||
+        !nativeButtonProperties.title ||
+        !nativeButtonProperties.iconStyles
       ) {
         return reject(
           "Unable to add spaces toolbar button! Missing ID, Title, IconStyles, or space URL"
         );
       }
 
+      if (document.getElementById(id)) {
+        // Button exists already, bail out.
+        return resolve();
+      }
+
       // Create the button.
-      let button = document.createElement("button");
+      const button = document.createElement("button");
       button.classList.add("spaces-toolbar-button", "spaces-addon-button");
       button.id = id;
-      button.title = properties.title;
+      button.title = nativeButtonProperties.title;
       button.tabIndex = -1;
 
-      let badge = document.createElement("span");
+      const badge = document.createElement("span");
       badge.classList.add("spaces-badge-container");
       button.appendChild(badge);
 
-      let img = document.createElement("img");
+      const img = document.createElement("img");
       img.setAttribute("alt", "");
       button.appendChild(img);
       document
@@ -1058,14 +1080,14 @@ var gSpacesToolbar = {
         .appendChild(button);
 
       // Create the menuitem.
-      let menuitem = document.createXULElement("menuitem");
+      const menuitem = document.createXULElement("menuitem");
       menuitem.classList.add(
         "spaces-addon-menuitem",
         "menuitem-iconic",
         "spaces-popup-menuitem"
       );
       menuitem.id = `${id}-menuitem`;
-      menuitem.label = properties.title;
+      menuitem.label = nativeButtonProperties.title;
       document
         .getElementById("spacesButtonMenuPopup")
         .insertBefore(
@@ -1075,10 +1097,16 @@ var gSpacesToolbar = {
 
       // Set icons. The unified toolbar customization also relies on the CSS
       // variables of the img.
-      for (let style of this.SUPPORTED_ICON_STYLES) {
-        if (properties.iconStyles.has(style)) {
-          img.style.setProperty(style, properties.iconStyles.get(style));
-          menuitem.style.setProperty(style, properties.iconStyles.get(style));
+      for (const style of this.SUPPORTED_ICON_STYLES) {
+        if (nativeButtonProperties.iconStyles.has(style)) {
+          img.style.setProperty(
+            style,
+            nativeButtonProperties.iconStyles.get(style)
+          );
+          menuitem.style.setProperty(
+            style,
+            nativeButtonProperties.iconStyles.get(style)
+          );
         }
       }
 
@@ -1087,7 +1115,7 @@ var gSpacesToolbar = {
         name: id,
         button,
         menuitem,
-        url: properties.url,
+        tabProperties,
         isExtensionSpace: true,
         tabInSpace(tabInfo) {
           // TODO: Store the spaceButtonId in the XULStore (or somewhere), so the
@@ -1100,9 +1128,9 @@ var gSpacesToolbar = {
           // done in openSpace() and this function here should always open a new
           // tab and not switch to a tab which might have loaded the same url,
           // but belongs to a different space.
-          let tab = openTab(
+          const tab = openTab(
             "contentTab",
-            { url: this.url, duplicate: true },
+            { ...this.tabProperties, duplicate: true },
             where
           );
           tab.spaceButtonId = this.name;
@@ -1115,26 +1143,29 @@ var gSpacesToolbar = {
       });
 
       // Set click actions.
-      let tabmail = document.getElementById("tabmail");
+      const tabmail = document.getElementById("tabmail");
       this._addButtonClickListener(button, () => {
-        let space = gSpacesToolbar.spaces.find(space => space.name == id);
+        const space = gSpacesToolbar.spaces.find(s => s.name == id);
         this.openSpace(tabmail, space);
       });
       menuitem.addEventListener("command", () => {
-        let space = gSpacesToolbar.spaces.find(space => space.name == id);
+        const space = gSpacesToolbar.spaces.find(s => s.name == id);
         this.openSpace(tabmail, space);
       });
 
       // Set badge.
-      if (properties.badgeText) {
+      if (nativeButtonProperties.badgeText) {
         button.classList.add("has-badge");
-        badge.textContent = properties.badgeText;
+        badge.textContent = nativeButtonProperties.badgeText;
       }
 
-      if (properties.badgeStyles) {
-        for (let style of this.SUPPORTED_BADGE_STYLES) {
-          if (properties.badgeStyles.has(style)) {
-            badge.style.setProperty(style, properties.badgeStyles.get(style));
+      if (nativeButtonProperties.badgeStyles) {
+        for (const style of this.SUPPORTED_BADGE_STYLES) {
+          if (nativeButtonProperties.badgeStyles.has(style)) {
+            badge.style.setProperty(
+              style,
+              nativeButtonProperties.badgeStyles.get(style)
+            );
           }
         }
       }
@@ -1149,65 +1180,72 @@ var gSpacesToolbar = {
    * to the spaces toolbar.
    *
    * @param {string} id - The ID of the button that needs to be updated.
-   * @param {NativeButtonProperties} properties - The new properties of the button.
-   *   Not specifying the optional badgeText or badgeStyles will remove them.
+   * @param {NativeTabProperties} tabProperties - The new properties of the default
+   *   space tab.
+   * @param {NativeButtonProperties} nativeButtonProperties - The new properties
+   *   of the button. Not specifying the optional badgeText or badgeStyles will
+   *   remove them.
    *
    * @returns {Promise} - A promise that resolves when the button is updated.
    */
-  async updateToolbarButton(id, properties = {}) {
+  async updateToolbarButton(
+    id,
+    tabProperties = {},
+    nativeButtonProperties = {}
+  ) {
     return new Promise((resolve, reject) => {
       if (
         !id ||
-        !properties.title ||
-        !properties.url ||
-        !properties.iconStyles
+        !tabProperties.url ||
+        !nativeButtonProperties.title ||
+        !nativeButtonProperties.iconStyles
       ) {
         return reject(
           "Unable to update spaces toolbar button! Missing ID, Title, IconsStyles, or space URL"
         );
       }
 
-      let button = document.getElementById(`${id}`);
-      let menuitem = document.getElementById(`${id}-menuitem`);
+      const button = document.getElementById(`${id}`);
+      const menuitem = document.getElementById(`${id}-menuitem`);
       if (!button || !menuitem) {
         return reject(
           "Unable to update spaces toolbar button! Button or menuitem don't exist"
         );
       }
 
-      button.title = properties.title;
-      menuitem.label = properties.title;
+      button.title = nativeButtonProperties.title;
+      menuitem.label = nativeButtonProperties.title;
 
       // Update icons.
-      let img = button.querySelector("img");
-      for (let style of this.SUPPORTED_ICON_STYLES) {
-        let value = properties.iconStyles.get(style);
+      const img = button.querySelector("img");
+      for (const style of this.SUPPORTED_ICON_STYLES) {
+        const value = nativeButtonProperties.iconStyles.get(style);
         img.style.setProperty(style, value ?? null);
         menuitem.style.setProperty(style, value ?? null);
       }
 
       // Update url.
-      let space = gSpacesToolbar.spaces.find(space => space.name == id);
-      if (space.url != properties.url) {
+      const space = gSpacesToolbar.spaces.find(s => s.name == id);
+      if (space.tabProperties.url != tabProperties.url) {
         // TODO: Reload the space, when the url is changed (or close and re-open
         // the tab).
-        space.url = properties.url;
+        space.tabProperties.url = tabProperties.url;
       }
 
       // Update badge.
-      let badge = button.querySelector(".spaces-badge-container");
-      if (properties.badgeText) {
+      const badge = button.querySelector(".spaces-badge-container");
+      if (nativeButtonProperties.badgeText) {
         button.classList.add("has-badge");
-        badge.textContent = properties.badgeText;
+        badge.textContent = nativeButtonProperties.badgeText;
       } else {
         button.classList.remove("has-badge");
         badge.textContent = "";
       }
 
-      for (let style of this.SUPPORTED_BADGE_STYLES) {
+      for (const style of this.SUPPORTED_BADGE_STYLES) {
         badge.style.setProperty(
           style,
-          properties.badgeStyles?.get(style) ?? null
+          nativeButtonProperties.badgeStyles?.get(style) ?? null
         );
       }
 
@@ -1233,7 +1271,7 @@ var gSpacesToolbar = {
         return reject("Unable to remove spaces toolbar button! Missing ID");
       }
 
-      let button = document.getElementById(`${id}`);
+      const button = document.getElementById(`${id}`);
       // If the button being removed is the currently focused one, move the
       // focus on an arbitrary first available spaces button.
       if (this.focusButton == button) {
@@ -1245,9 +1283,9 @@ var gSpacesToolbar = {
       button?.remove();
       document.getElementById(`${id}-menuitem`)?.remove();
 
-      let space = gSpacesToolbar.spaces.find(space => space.name == id);
-      let tabmail = document.getElementById("tabmail");
-      let existing = tabmail.tabInfo.find(
+      const space = gSpacesToolbar.spaces.find(s => s.name == id);
+      const tabmail = document.getElementById("tabmail");
+      const existing = tabmail.tabInfo.find(
         tabInfo => space.tabInSpace(tabInfo) == 1
       );
       if (existing) {
@@ -1268,17 +1306,17 @@ var gSpacesToolbar = {
    * @param {DOMEvent} event - The DOM click event.
    */
   openSpacesToolbarAddonsPopup(event) {
-    let popup = document.getElementById("spacesToolbarAddonsPopup");
+    const popup = document.getElementById("spacesToolbarAddonsPopup");
 
-    for (let button of document.querySelectorAll(
+    for (const button of document.querySelectorAll(
       ".spaces-addon-button[hidden]"
     )) {
-      let menuitem = document.createXULElement("menuitem");
+      const menuitem = document.createXULElement("menuitem");
       menuitem.classList.add("menuitem-iconic", "spaces-popup-menuitem");
       menuitem.label = button.title;
 
-      let img = button.querySelector("img");
-      for (let style of this.SUPPORTED_ICON_STYLES) {
+      const img = button.querySelector("img");
+      for (const style of this.SUPPORTED_ICON_STYLES) {
         menuitem.style.setProperty(
           style,
           img.style.getPropertyValue(style) ?? null
@@ -1304,10 +1342,10 @@ var gSpacesToolbar = {
    * Should be called whenever one of the menu item's badge state changes.
    */
   updatePinnedBadgeState() {
-    let hasBadge = Boolean(
+    const hasBadge = Boolean(
       document.querySelector("#spacesButtonMenuPopup .has-badge")
     );
-    let spacesPinnedButton = document.getElementById("spacesPinnedButton");
+    const spacesPinnedButton = document.getElementById("spacesPinnedButton");
     spacesPinnedButton.classList.toggle("has-badge", hasBadge);
   },
 

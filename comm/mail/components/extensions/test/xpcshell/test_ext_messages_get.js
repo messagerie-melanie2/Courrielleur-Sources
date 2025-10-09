@@ -10,8 +10,8 @@ var { FileUtils } = ChromeUtils.importESModule(
 var { ExtensionTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/ExtensionXPCShellUtils.sys.mjs"
 );
-var { OpenPGPTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mozmill/OpenPGPTestUtils.jsm"
+var { OpenPGPTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/OpenPGPTestUtils.sys.mjs"
 );
 
 const OPENPGP_TEST_DIR = do_get_file("../../../../test/browser/openpgp");
@@ -22,30 +22,34 @@ const OPENPGP_KEY_PATH = PathUtils.join(
   "alice@openpgp.example-0xf231550c4f47e38e-secret.asc"
 );
 
+add_setup(async () => {
+  await OpenPGPTestUtils.initOpenPGP();
+});
+
 /**
  * Test the messages.getRaw and messages.getFull functions. Since each message
  * is unique and there are minor differences between the account
  * implementations, we don't compare exactly with a reference message.
  */
 add_task(async function test_plain_mv2() {
-  let _account = createAccount();
-  let _folder = await createSubfolder(
+  const _account = createAccount();
+  const _folder = await createSubfolder(
     _account.incomingServer.rootFolder,
     "test1"
   );
   await createMessages(_folder, 1);
 
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     background: async () => {
-      let accounts = await browser.accounts.list();
+      const accounts = await browser.accounts.list();
       browser.test.assertEq(1, accounts.length);
 
-      for (let account of accounts) {
-        let folder = account.folders.find(f => f.name == "test1");
-        let { messages } = await browser.messages.list(folder);
+      for (const account of accounts) {
+        const folder = account.folders.find(f => f.name == "test1");
+        const { messages } = await browser.messages.list(folder.id);
         browser.test.assertEq(1, messages.length);
 
-        let [message] = messages;
+        const [message] = messages;
 
         // Expected message content:
         // -------------------------
@@ -62,7 +66,7 @@ add_task(async function test_plain_mv2() {
 
         browser.test.assertEq("Big Meeting Today", message.subject);
         browser.test.assertEq(
-          '"Andy Anway" <andy@anway.invalid>',
+          "Andy Anway <andy@anway.invalid>",
           message.author
         );
 
@@ -74,20 +78,20 @@ add_task(async function test_plain_mv2() {
           );
         }
 
-        let strMessage_1 = await browser.messages.getRaw(message.id);
+        const strMessage_1 = await browser.messages.getRaw(message.id);
         browser.test.assertEq("string", typeof strMessage_1);
-        let strMessage_2 = await browser.messages.getRaw(message.id, {
+        const strMessage_2 = await browser.messages.getRaw(message.id, {
           data_format: "BinaryString",
         });
         browser.test.assertEq("string", typeof strMessage_2);
-        let fileMessage_3 = await browser.messages.getRaw(message.id, {
+        const fileMessage_3 = await browser.messages.getRaw(message.id, {
           data_format: "File",
         });
         // eslint-disable-next-line mozilla/use-isInstance
         browser.test.assertTrue(fileMessage_3 instanceof File);
         // Since we do not have utf-8 chars in the test message, the returned BinaryString is
         // identical to the return value of File.text().
-        let strMessage_3 = await fileMessage_3.text();
+        const strMessage_3 = await fileMessage_3.text();
 
         for (let strMessage of [strMessage_1, strMessage_2, strMessage_3]) {
           // Fold Windows line-endings \r\n to \n.
@@ -107,7 +111,7 @@ add_task(async function test_plain_mv2() {
         // {
         //   "contentType": "message/rfc822",
         //   "headers": {
-        //     "content-type": ["text/plain; charset=ISO-8859-1; format=flowed"],
+        //     "content-type": ["message/rfc822"],
         //     "subject": ["Big Meeting Today"],
         //     "from": ["\"Andy Anway\" <andy@anway.invalid>"],
         //     "to": ["\"Bob Bell\" <bob@bell.invalid>"],
@@ -129,13 +133,13 @@ add_task(async function test_plain_mv2() {
         //   ]
         // }
 
-        let fullMessage = await browser.messages.getFull(message.id);
+        const fullMessage = await browser.messages.getFull(message.id);
         browser.test.log(JSON.stringify(fullMessage));
         browser.test.assertEq("object", typeof fullMessage);
         browser.test.assertEq("message/rfc822", fullMessage.contentType);
 
         browser.test.assertEq("object", typeof fullMessage.headers);
-        for (let header of [
+        for (const header of [
           "content-type",
           "date",
           "from",
@@ -151,11 +155,11 @@ add_task(async function test_plain_mv2() {
           fullMessage.headers.subject[0]
         );
         browser.test.assertEq(
-          '"Andy Anway" <andy@anway.invalid>',
+          "Andy Anway <andy@anway.invalid>",
           fullMessage.headers.from[0]
         );
         browser.test.assertEq(
-          '"Bob Bell" <bob@bell.invalid>',
+          "Bob Bell <bob@bell.invalid>",
           fullMessage.headers.to[0]
         );
 
@@ -170,7 +174,10 @@ add_task(async function test_plain_mv2() {
 
       browser.test.notifyPass("finished");
     },
-    manifest: { permissions: ["accountsRead", "messagesRead"] },
+    manifest: {
+      manifest_version: 2,
+      permissions: ["accountsRead", "messagesRead"],
+    },
   });
 
   await extension.startup();
@@ -181,24 +188,26 @@ add_task(async function test_plain_mv2() {
 });
 
 add_task(async function test_plain_mv3() {
-  let _account = createAccount();
-  let _folder = await createSubfolder(
+  const _account = createAccount();
+  const _folder = await createSubfolder(
     _account.incomingServer.rootFolder,
     "test1"
   );
   await createMessages(_folder, 1);
 
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     background: async () => {
-      let accounts = await browser.accounts.list();
+      const accounts = await browser.accounts.list(true);
       browser.test.assertEq(1, accounts.length);
 
-      for (let account of accounts) {
-        let folder = account.folders.find(f => f.name == "test1");
-        let { messages } = await browser.messages.list(folder);
+      for (const account of accounts) {
+        const folder = account.rootFolder.subFolders.find(
+          f => f.name == "test1"
+        );
+        const { messages } = await browser.messages.list(folder.id);
         browser.test.assertEq(1, messages.length);
 
-        let [message] = messages;
+        const [message] = messages;
 
         // Expected message content:
         // -------------------------
@@ -215,7 +224,7 @@ add_task(async function test_plain_mv3() {
 
         browser.test.assertEq("Small Party Tomorrow", message.subject);
         browser.test.assertEq(
-          '"Chris Clarke" <chris@clarke.invalid>',
+          "Chris Clarke <chris@clarke.invalid>",
           message.author
         );
 
@@ -227,24 +236,24 @@ add_task(async function test_plain_mv3() {
           );
         }
 
-        let fileMessage_1 = await browser.messages.getRaw(message.id);
+        const fileMessage_1 = await browser.messages.getRaw(message.id);
         // eslint-disable-next-line mozilla/use-isInstance
         browser.test.assertTrue(fileMessage_1 instanceof File);
         // Since we do not have utf-8 chars in the test message, the returned
         // BinaryString is identical to the return value of File.text().
-        let strMessage_1 = await fileMessage_1.text();
+        const strMessage_1 = await fileMessage_1.text();
 
-        let strMessage_2 = await browser.messages.getRaw(message.id, {
+        const strMessage_2 = await browser.messages.getRaw(message.id, {
           data_format: "BinaryString",
         });
         browser.test.assertEq("string", typeof strMessage_2);
 
-        let fileMessage_3 = await browser.messages.getRaw(message.id, {
+        const fileMessage_3 = await browser.messages.getRaw(message.id, {
           data_format: "File",
         });
         // eslint-disable-next-line mozilla/use-isInstance
         browser.test.assertTrue(fileMessage_3 instanceof File);
-        let strMessage_3 = await fileMessage_3.text();
+        const strMessage_3 = await fileMessage_3.text();
 
         for (let strMessage of [strMessage_1, strMessage_2, strMessage_3]) {
           // Fold Windows line-endings \r\n to \n.
@@ -264,7 +273,7 @@ add_task(async function test_plain_mv3() {
         // {
         //   "contentType": "message/rfc822",
         //   "headers": {
-        //     "content-type": ["text/plain; charset=ISO-8859-1; format=flowed"],
+        //     "content-type": ["message/rfc822"],
         //     "subject": ["Small Party Tomorrow"],
         //     "from": ["\"Chris Clarke\" <chris@clarke.invalid>"],
         //     "to": ["\"David Davol\" <David Davol>"],
@@ -286,13 +295,13 @@ add_task(async function test_plain_mv3() {
         //   ]
         // }
 
-        let fullMessage = await browser.messages.getFull(message.id);
+        const fullMessage = await browser.messages.getFull(message.id);
         browser.test.log(JSON.stringify(fullMessage));
         browser.test.assertEq("object", typeof fullMessage);
         browser.test.assertEq("message/rfc822", fullMessage.contentType);
 
         browser.test.assertEq("object", typeof fullMessage.headers);
-        for (let header of [
+        for (const header of [
           "content-type",
           "date",
           "from",
@@ -308,11 +317,11 @@ add_task(async function test_plain_mv3() {
           fullMessage.headers.subject[0]
         );
         browser.test.assertEq(
-          '"Chris Clarke" <chris@clarke.invalid>',
+          "Chris Clarke <chris@clarke.invalid>",
           fullMessage.headers.from[0]
         );
         browser.test.assertEq(
-          '"David Davol" <david@davol.invalid>',
+          "David Davol <david@davol.invalid>",
           fullMessage.headers.to[0]
         );
 
@@ -342,12 +351,12 @@ add_task(async function test_plain_mv3() {
 
 /**
  * Test that mime parsers for all message types retrieve the correctly decoded
- * headers and bodies. Bodies should no not be returned, if it is an attachment.
+ * headers and bodies. Bodies should not be returned, if it is an attachment.
  * Sizes are not checked for.
  */
 add_task(async function test_encoding() {
-  let _account = createAccount();
-  let _folder = await createSubfolder(
+  const _account = createAccount();
+  const _folder = await createSubfolder(
     _account.incomingServer.rootFolder,
     "test1"
   );
@@ -391,427 +400,584 @@ add_task(async function test_encoding() {
     _folder,
     do_get_file("messages/sample07.eml").path
   );
+  // A multipart/related message with an embedded image.
+  await createMessageFromFile(
+    _folder,
+    do_get_file("messages/sample08.eml").path
+  );
+  // A message with utf-8 encoded from and to header, which have an encoded comma
+  // and should be quoted after RFC2047 decoding.
+  await createMessageFromFile(
+    _folder,
+    do_get_file("messages/utf8MailboxStrings.eml").path
+  );
 
-  let extension = ExtensionTestUtils.loadExtension({
-    background: async () => {
-      let accounts = await browser.accounts.list();
-      browser.test.assertEq(1, accounts.length);
+  const extension = ExtensionTestUtils.loadExtension({
+    files: {
+      "background.js": async () => {
+        const accounts = await browser.accounts.list();
+        browser.test.assertEq(1, accounts.length);
+        const account = accounts[0];
 
-      let expectedData = {
-        "01.eml@mime.sample": {
-          msgHeaders: {
-            subject: "αλφάβητο",
-            author: "Bug Reporter <new@thunderbird.bug>",
-          },
-          msgParts: {
-            contentType: "message/rfc822",
-            partName: "",
-            size: 0,
-            headers: {
-              from: ["Bug Reporter <new@thunderbird.bug>"],
-              newsgroups: ["gmane.comp.mozilla.thundebird.user"],
-              subject: ["αλφάβητο"],
-              date: ["Thu, 27 May 2021 21:23:35 +0100"],
-              "message-id": ["<01.eml@mime.sample>"],
-              "mime-version": ["1.0"],
-              "content-type": ["text/plain; charset=utf-8;"],
-              "content-transfer-encoding": ["base64"],
-              "content-disposition": ["inline"],
+        const expectedData = {
+          "01.eml@mime.sample": {
+            msgHeaders: {
+              subject: "αλφάβητο",
+              author: "Bug Reporter <new@thunderbird.bug>",
             },
-            parts: [
-              {
-                contentType: "text/plain",
-                partName: "1",
-                size: 0,
-                body: "Άλφα\n",
-                headers: {
-                  "content-type": ["text/plain; charset=utf-8;"],
-                },
+            msgParts: {
+              contentType: "message/rfc822",
+              partName: "",
+              size: 0,
+              decryptionStatus: "none",
+              headers: {
+                from: ["Bug Reporter <new@thunderbird.bug>"],
+                newsgroups: ["gmane.comp.mozilla.thundebird.user"],
+                subject: ["αλφάβητο"],
+                date: ["Thu, 27 May 2021 21:23:35 +0100"],
+                "message-id": ["<01.eml@mime.sample>"],
+                "mime-version": ["1.0"],
+                "content-type": ["message/rfc822"],
               },
-            ],
-          },
-        },
-        "02.eml@mime.sample": {
-          msgHeaders: {
-            subject: "Test message from Microsoft Outlook 00",
-            author: '"Doug Sauder" <doug@example.com>',
-          },
-          msgParts: {
-            contentType: "message/rfc822",
-            partName: "",
-            size: 0,
-            headers: {
-              from: ['"Doug Sauder" <doug@example.com>'],
-              to: ["Heinz Müller <mueller@example.com>"],
-              subject: ["Test message from Microsoft Outlook 00"],
-              date: ["Wed, 17 May 2000 19:32:47 -0400"],
-              "message-id": ["<02.eml@mime.sample>"],
-              "mime-version": ["1.0"],
-              "content-type": [
-                'multipart/mixed; boundary="----=_NextPart_000_0002_01BFC036.AE309650"',
+              parts: [
+                {
+                  contentType: "text/plain",
+                  partName: "1",
+                  size: 0,
+                  body: "Άλφα\n",
+                  headers: {
+                    "content-type": ["text/plain; charset=utf-8;"],
+                    "content-transfer-encoding": ["base64"],
+                    "content-disposition": ["inline"],
+                  },
+                },
               ],
-              "x-priority": ["3 (Normal)"],
-              "x-msmail-priority": ["Normal"],
-              "x-mailer": [
-                "Microsoft Outlook IMO, Build 9.0.2416 (9.0.2910.0)",
-              ],
-              importance: ["Normal"],
-              "x-mimeole": ["Produced By Microsoft MimeOLE V5.00.2314.1300"],
             },
-            parts: [
-              {
-                contentType: "multipart/mixed",
-                partName: "1",
-                size: 0,
-                headers: {
-                  "content-type": [
-                    'multipart/mixed; boundary="----=_NextPart_000_0002_01BFC036.AE309650"',
+          },
+          "02.eml@mime.sample": {
+            msgHeaders: {
+              subject: "Test message from Microsoft Outlook 00",
+              author: "Doug Sauder <doug@example.com>",
+            },
+            msgParts: {
+              contentType: "message/rfc822",
+              partName: "",
+              size: 0,
+              decryptionStatus: "none",
+              headers: {
+                from: ["Doug Sauder <doug@example.com>"],
+                to: ["Heinz Müller <mueller@example.com>"],
+                subject: ["Test message from Microsoft Outlook 00"],
+                date: ["Wed, 17 May 2000 19:32:47 -0400"],
+                "message-id": ["<02.eml@mime.sample>"],
+                "mime-version": ["1.0"],
+                "content-type": ["message/rfc822"],
+                "x-priority": ["3 (Normal)"],
+                "x-msmail-priority": ["Normal"],
+                "x-mailer": [
+                  "Microsoft Outlook IMO, Build 9.0.2416 (9.0.2910.0)",
+                ],
+                importance: ["Normal"],
+                "x-mimeole": ["Produced By Microsoft MimeOLE V5.00.2314.1300"],
+              },
+              parts: [
+                {
+                  contentType: "multipart/mixed",
+                  partName: "1",
+                  size: 0,
+                  headers: {
+                    "content-type": [
+                      'multipart/mixed; boundary="----=_NextPart_000_0002_01BFC036.AE309650"',
+                    ],
+                  },
+                  parts: [
+                    {
+                      contentType: "text/plain",
+                      partName: "1.1",
+                      size: 0,
+                      body: `\nDie Hasen und die Frösche \n \n`,
+                      headers: {
+                        "content-type": ['text/plain; charset="iso-8859-1"'],
+                        "content-transfer-encoding": ["quoted-printable"],
+                      },
+                    },
+                    {
+                      contentType: "image/png",
+                      partName: "1.2",
+                      size: 0,
+                      name: "blueball2.png",
+                      headers: {
+                        "content-type": ['image/png; name="blueball1.png"'],
+                        "content-transfer-encoding": ["base64"],
+                        "content-disposition": [
+                          'attachment; filename="blueball2.png"',
+                        ],
+                      },
+                    },
+                    {
+                      contentType: "image/png",
+                      partName: "1.3",
+                      size: 0,
+                      name: "greenball.png",
+                      headers: {
+                        "content-type": ['image/png; name="greenball.png"'],
+                        "content-transfer-encoding": ["base64"],
+                        "content-disposition": ["attachment"],
+                      },
+                    },
+                    {
+                      contentType: "image/png",
+                      partName: "1.4",
+                      size: 0,
+                      name: "redball.png",
+                      headers: {
+                        "content-type": ["image/png"],
+                        "content-transfer-encoding": ["base64"],
+                        "content-disposition": [
+                          'attachment; filename="redball.png"',
+                        ],
+                      },
+                    },
                   ],
                 },
-                parts: [
-                  {
-                    contentType: "text/plain",
-                    partName: "1.1",
-                    size: 0,
-                    body: `\nDie Hasen und die Frösche \n \n`,
-                    headers: {
-                      "content-type": ['text/plain; charset="iso-8859-1"'],
-                    },
-                  },
-                  {
-                    contentType: "image/png",
-                    partName: "1.2",
-                    size: 0,
-                    name: "blueball2.png",
-                    headers: {
-                      "content-type": ['image/png; name="blueball1.png"'],
-                    },
-                  },
-                  {
-                    contentType: "image/png",
-                    partName: "1.3",
-                    size: 0,
-                    name: "greenball.png",
-                    headers: {
-                      "content-type": ['image/png; name="greenball.png"'],
-                    },
-                  },
-                  {
-                    contentType: "image/png",
-                    partName: "1.4",
-                    size: 0,
-                    name: "redball.png",
-                    headers: {
-                      "content-type": ["image/png"],
-                    },
-                  },
+              ],
+            },
+          },
+          "03.eml@mime.sample": {
+            msgHeaders: {
+              subject: "Test message from Microsoft Outlook 00",
+              author: "Heinz Müller <mueller@example.com>",
+            },
+            msgParts: {
+              contentType: "message/rfc822",
+              partName: "",
+              size: 0,
+              decryptionStatus: "none",
+              headers: {
+                from: ["Heinz Müller <mueller@example.com>"],
+                to: ["Joe Blow <jblow@example.com>"],
+                subject: ["Test message from Microsoft Outlook 00"],
+                date: ["Wed, 17 May 2000 19:35:05 -0400"],
+                "message-id": ["<03.eml@mime.sample>"],
+                "mime-version": ["1.0"],
+                "content-type": ["message/rfc822"],
+                "x-priority": ["3 (Normal)"],
+                "x-msmail-priority": ["Normal"],
+                "x-mailer": [
+                  "Microsoft Outlook IMO, Build 9.0.2416 (9.0.2910.0)",
                 ],
+                importance: ["Normal"],
+                "x-mimeole": ["Produced By Microsoft MimeOLE V5.00.2314.1300"],
               },
-            ],
-          },
-        },
-        "03.eml@mime.sample": {
-          msgHeaders: {
-            subject: "Test message from Microsoft Outlook 00",
-            author: "Heinz Müller <mueller@example.com>",
-          },
-          msgParts: {
-            contentType: "message/rfc822",
-            partName: "",
-            size: 0,
-            headers: {
-              from: ["Heinz Müller <mueller@example.com>"],
-              to: ['"Joe Blow" <jblow@example.com>'],
-              subject: ["Test message from Microsoft Outlook 00"],
-              date: ["Wed, 17 May 2000 19:35:05 -0400"],
-              "message-id": ["<03.eml@mime.sample>"],
-              "mime-version": ["1.0"],
-              "content-type": ['image/png; name="doubelspace  ball.png"'],
-              "content-transfer-encoding": ["base64"],
-              "content-disposition": [
-                'attachment; filename="doubelspace  ball.png"',
-              ],
-              "x-priority": ["3 (Normal)"],
-              "x-msmail-priority": ["Normal"],
-              "x-mailer": [
-                "Microsoft Outlook IMO, Build 9.0.2416 (9.0.2910.0)",
-              ],
-              importance: ["Normal"],
-              "x-mimeole": ["Produced By Microsoft MimeOLE V5.00.2314.1300"],
-            },
-            parts: [
-              {
-                contentType: "image/png",
-                name: "doubelspace  ball.png",
-                partName: "1",
-                size: 0,
-                headers: {
-                  "content-type": ['image/png; name="doubelspace  ball.png"'],
+              parts: [
+                {
+                  contentType: "image/png",
+                  name: "doubelspace  ball.png",
+                  partName: "1",
+                  size: 0,
+                  headers: {
+                    "content-type": ['image/png; name="doubelspace  ball.png"'],
+                    "content-transfer-encoding": ["base64"],
+                    "content-disposition": [
+                      'attachment; filename="doubelspace  ball.png"',
+                    ],
+                  },
                 },
-              },
-            ],
-          },
-        },
-        "04.eml@mime.sample": {
-          msgHeaders: {
-            subject: "Алфавит",
-            author: "Bug Reporter <new@thunderbird.bug>",
-          },
-          msgParts: {
-            contentType: "message/rfc822",
-            partName: "",
-            size: 0,
-            headers: {
-              from: ["Bug Reporter <new@thunderbird.bug>"],
-              newsgroups: ["gmane.comp.mozilla.thundebird.user"],
-              subject: ["Алфавит"],
-              date: ["Sun, 27 May 2001 21:23:35 +0100"],
-              "message-id": ["<04.eml@mime.sample>"],
-              "mime-version": ["1.0"],
-              "content-type": ["text/plain; charset=koi8-r;"],
-              "content-transfer-encoding": ["base64"],
-            },
-            parts: [
-              {
-                contentType: "text/plain",
-                partName: "1",
-                size: 0,
-                body: "Вопрос\n",
-                headers: {
-                  "content-type": ["text/plain; charset=koi8-r;"],
-                },
-              },
-            ],
-          },
-        },
-        "05.eml@mime.sample": {
-          msgHeaders: {
-            subject: "Алфавит",
-            author: "Bug Reporter <new@thunderbird.bug>",
-          },
-          msgParts: {
-            contentType: "message/rfc822",
-            partName: "",
-            size: 0,
-            headers: {
-              from: ["Bug Reporter <new@thunderbird.bug>"],
-              newsgroups: ["gmane.comp.mozilla.thundebird.user"],
-              subject: ["Алфавит"],
-              date: ["Sun, 27 May 2001 21:23:35 +0100"],
-              "message-id": ["<05.eml@mime.sample>"],
-              "mime-version": ["1.0"],
-              "content-type": ["text/plain; charset=windows-1251;"],
-              "content-transfer-encoding": ["base64"],
-            },
-            parts: [
-              {
-                contentType: "text/plain",
-                partName: "1",
-                size: 0,
-                body: "Вопрос\n",
-                headers: {
-                  "content-type": ["text/plain; charset=windows-1251;"],
-                },
-              },
-            ],
-          },
-        },
-        "06.eml@mime.sample": {
-          msgHeaders: {
-            subject: "I have no content type",
-            author: "Bug Reporter <new@thunderbird.bug>",
-          },
-          msgParts: {
-            contentType: "message/rfc822",
-            partName: "",
-            size: 0,
-            headers: {
-              from: ["Bug Reporter <new@thunderbird.bug>"],
-              newsgroups: ["gmane.comp.mozilla.thundebird.user"],
-              subject: ["I have no content type"],
-              date: ["Sun, 27 May 2001 21:23:35 +0100"],
-              "message-id": ["<06.eml@mime.sample>"],
-              "mime-version": ["1.0"],
-            },
-            parts: [
-              {
-                contentType: "text/plain",
-                partName: "1",
-                size: 0,
-                body: "No content type\n",
-                headers: {
-                  "content-type": ["text/plain"],
-                },
-              },
-            ],
-          },
-        },
-        "07.eml@mime.sample": {
-          msgHeaders: {
-            subject: "Default content-types",
-            author: "Doug Sauder <dwsauder@example.com>",
-          },
-          msgParts: {
-            contentType: "message/rfc822",
-            partName: "",
-            size: 0,
-            headers: {
-              from: ["Doug Sauder <dwsauder@example.com>"],
-              to: ["Heinz <mueller@example.com>"],
-              subject: ["Default content-types"],
-              date: ["Fri, 19 May 2000 00:29:55 -0400"],
-              "message-id": ["<07.eml@mime.sample>"],
-              "mime-version": ["1.0"],
-              "content-type": [
-                'multipart/alternative; boundary="=====================_714967308==_.ALT"',
               ],
             },
-            parts: [
-              {
-                contentType: "multipart/alternative",
-                partName: "1",
-                size: 0,
-                headers: {
-                  "content-type": [
-                    'multipart/alternative; boundary="=====================_714967308==_.ALT"',
+          },
+          "04.eml@mime.sample": {
+            msgHeaders: {
+              subject: "Алфавит",
+              author: "Bug Reporter <new@thunderbird.bug>",
+            },
+            msgParts: {
+              contentType: "message/rfc822",
+              partName: "",
+              size: 0,
+              decryptionStatus: "none",
+              headers: {
+                from: ["Bug Reporter <new@thunderbird.bug>"],
+                newsgroups: ["gmane.comp.mozilla.thundebird.user"],
+                subject: ["Алфавит"],
+                date: ["Sun, 27 May 2001 21:23:35 +0100"],
+                "message-id": ["<04.eml@mime.sample>"],
+                "mime-version": ["1.0"],
+                "content-type": ["message/rfc822"],
+              },
+              parts: [
+                {
+                  contentType: "text/plain",
+                  partName: "1",
+                  size: 0,
+                  body: "Вопрос\n",
+                  headers: {
+                    "content-type": ["text/plain; charset=koi8-r;"],
+                    "content-transfer-encoding": ["base64"],
+                  },
+                },
+              ],
+            },
+          },
+          "05.eml@mime.sample": {
+            msgHeaders: {
+              subject: "Алфавит",
+              author: "Bug Reporter <new@thunderbird.bug>",
+            },
+            msgParts: {
+              contentType: "message/rfc822",
+              partName: "",
+              size: 0,
+              decryptionStatus: "none",
+              headers: {
+                from: ["Bug Reporter <new@thunderbird.bug>"],
+                newsgroups: ["gmane.comp.mozilla.thundebird.user"],
+                subject: ["Алфавит"],
+                date: ["Sun, 27 May 2001 21:23:35 +0100"],
+                "message-id": ["<05.eml@mime.sample>"],
+                "mime-version": ["1.0"],
+                "content-type": ["message/rfc822"],
+              },
+              parts: [
+                {
+                  contentType: "text/plain",
+                  partName: "1",
+                  size: 0,
+                  body: "Вопрос\n",
+                  headers: {
+                    "content-type": ["text/plain; charset=windows-1251;"],
+                    "content-transfer-encoding": ["base64"],
+                  },
+                },
+              ],
+            },
+          },
+          "06.eml@mime.sample": {
+            msgHeaders: {
+              subject: "I have no content type",
+              author: "Bug Reporter <new@thunderbird.bug>",
+            },
+            msgParts: {
+              contentType: "message/rfc822",
+              partName: "",
+              size: 0,
+              decryptionStatus: "none",
+              headers: {
+                from: ["Bug Reporter <new@thunderbird.bug>"],
+                newsgroups: ["gmane.comp.mozilla.thundebird.user"],
+                subject: ["I have no content type"],
+                date: ["Sun, 27 May 2001 21:23:35 +0100"],
+                "message-id": ["<06.eml@mime.sample>"],
+                "mime-version": ["1.0"],
+                "content-type": ["message/rfc822"],
+              },
+              parts: [
+                {
+                  contentType: "text/plain",
+                  partName: "1",
+                  size: 0,
+                  body: "No content type\n",
+                  headers: {
+                    "content-type": ["text/plain"],
+                  },
+                },
+              ],
+            },
+          },
+          "07.eml@mime.sample": {
+            msgHeaders: {
+              subject: "Default content-types",
+              author: "Doug Sauder <dwsauder@example.com>",
+            },
+            msgParts: {
+              contentType: "message/rfc822",
+              partName: "",
+              size: 0,
+              decryptionStatus: "none",
+              headers: {
+                from: ["Doug Sauder <dwsauder@example.com>"],
+                to: ["Heinz <mueller@example.com>"],
+                subject: ["Default content-types"],
+                date: ["Fri, 19 May 2000 00:29:55 -0400"],
+                "message-id": ["<07.eml@mime.sample>"],
+                "mime-version": ["1.0"],
+                "content-type": ["message/rfc822"],
+              },
+              parts: [
+                {
+                  contentType: "multipart/alternative",
+                  partName: "1",
+                  size: 0,
+                  headers: {
+                    "content-type": [
+                      'multipart/alternative; boundary="=====================_714967308==_.ALT"',
+                    ],
+                  },
+                  parts: [
+                    {
+                      contentType: "text/plain",
+                      partName: "1.1",
+                      size: 0,
+                      body: "Die Hasen\n",
+                      headers: {
+                        "content-type": ["text/plain"],
+                        "content-transfer-encoding": ["quoted-printable"],
+                      },
+                    },
+                    {
+                      contentType: "text/html",
+                      partName: "1.2",
+                      size: 0,
+                      body: "<html><body><b>Die Hasen</b></body></html>\n",
+                      headers: {
+                        "content-type": ["text/html"],
+                      },
+                    },
                   ],
                 },
-                parts: [
-                  {
-                    contentType: "text/plain",
-                    partName: "1.1",
-                    size: 0,
-                    body: "Die Hasen\n",
-                    headers: {
-                      "content-type": ["text/plain"],
-                    },
-                  },
-                  {
-                    contentType: "text/html",
-                    partName: "1.2",
-                    size: 0,
-                    body: "<html><body><b>Die Hasen</b></body></html>\n",
-                    headers: {
-                      "content-type": ["text/html"],
-                    },
-                  },
-                ],
-              },
-            ],
+              ],
+            },
           },
-        },
-      };
+          "08.eml@mime.sample": {
+            msgHeaders: {
+              subject: "Embedded Image",
+              author: "John <john@example.com>",
+            },
+            msgParts: {
+              contentType: "message/rfc822",
+              partName: "",
+              size: 0,
+              decryptionStatus: "none",
+              headers: {
+                from: ["John <john@example.com>"],
+                to: ["user@invalid"],
+                subject: ["Embedded Image"],
+                date: ["Wed, 29 May 2024 15:26:47 +0200"],
+                "message-id": ["<08.eml@mime.sample>"],
+                "mime-version": ["1.0"],
+                "content-type": ["message/rfc822"],
+              },
+              parts: [
+                {
+                  contentType: "multipart/related",
+                  headers: {
+                    "content-language": ["en-US"],
+                    "content-type": [
+                      `multipart/related; boundary="------------XDhTrqqN5B126r5Y7JBH0YyJ"`,
+                    ],
+                  },
+                  size: 0,
+                  partName: "1",
+                  parts: [
+                    {
+                      contentType: "text/html",
+                      headers: {
+                        "content-type": ["text/html; charset=UTF-8"],
+                        "content-transfer-encoding": ["7bit"],
+                      },
+                      size: 0,
+                      partName: "1.1",
+                      body: `<!DOCTYPE html>\r\n<html>\r\n  <head>\r\n    <meta http-equiv=\"content-type\" content=\"text/html; charset=UTF-8\">\r\n  </head>\r\n  <body>\r\n    <p>Example body</p>\r\n    <img moz-do-not-send=\"false\"\r\n      src=\"cid:part1.FxEY2Ivx.xSFtCdX4@example.com\" alt=\"\" width=\"1\"\r\n      height=\"1\" class=\"\">\r\n    <p>with embedded image.<br>\r\n    </p>\r\n    <br>\r\n  </body>\r\n</html>`,
+                    },
+                    {
+                      contentType: "image/png",
+                      headers: {
+                        "content-type": [
+                          `image/png; name="blue_pixel_1x1.png"`,
+                        ],
+                        "content-disposition": [
+                          `inline; filename="blue_pixel_1x1.png"`,
+                        ],
+                        "content-id": ["<part1.FxEY2Ivx.xSFtCdX4@example.com>"],
+                        "content-transfer-encoding": ["base64"],
+                      },
+                      size: 0,
+                      name: "blue_pixel_1x1.png",
+                      partName: "1.2",
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+          "1919244@thunderbird.bug": {
+            msgHeaders: {
+              subject: "Message for Bug 1919244",
+              author: `"Hörst, Kenny" <K.Hoerst@invalid>`,
+              recipients:
+                account.type == "nntp"
+                  ? []
+                  : [
+                      `"Hörst, Kenny" <K.Hoerst@invalid>`,
+                      "Bug Reporter <new@thunderbird.bug>",
+                    ],
+            },
+            msgParts: {
+              contentType: "message/rfc822",
+              partName: "",
+              size: 0,
+              decryptionStatus: "none",
+              headers: {
+                from: [`"Hörst, Kenny" <K.Hoerst@invalid>`],
+                to: [
+                  `"Hörst, Kenny" <K.Hoerst@invalid>, Bug Reporter <new@thunderbird.bug>`,
+                ],
+                subject: ["Message for Bug 1919244"],
+                date: ["Mon, 23 Sep 2024 16:16:47 +0200"],
+                "message-id": ["<1919244@thunderbird.bug>"],
+                "mime-version": ["1.0"],
+                "content-type": ["message/rfc822"],
+              },
+              parts: [
+                {
+                  contentType: "text/plain",
+                  partName: "1",
+                  size: 0,
+                  body: "Test\n",
+                  headers: {
+                    "content-type": [
+                      "text/plain; charset=UTF-8; format=flowed",
+                    ],
+                    "content-transfer-encoding": ["7bit"],
+                  },
+                },
+              ],
+            },
+          },
+        };
 
-      function checkMsgHeaders(expected, actual) {
-        // Check if all expected properties are there.
-        for (let property of Object.keys(expected)) {
-          browser.test.assertEq(
-            expected.hasOwnProperty(property),
-            actual.hasOwnProperty(property),
-            `expected property ${property} is present`
-          );
-          // Check property content.
-          browser.test.assertEq(
-            expected[property],
-            actual[property],
-            `property ${property} is correct`
-          );
-        }
-      }
-
-      function checkMsgParts(expected, actual) {
-        // Check if all expected properties are there.
-        for (let property of Object.keys(expected)) {
-          browser.test.assertEq(
-            expected.hasOwnProperty(property),
-            actual.hasOwnProperty(property),
-            `expected property ${property} is present`
-          );
-          if (
-            ["parts", "headers", "size"].includes(property) ||
-            (["body"].includes(property) && expected[property] == "")
-          ) {
-            continue;
-          }
-          // Check property content.
-          browser.test.assertEq(
-            JSON.stringify(expected[property].replaceAll("\r\n", "\n")),
-            JSON.stringify(actual[property].replaceAll("\r\n", "\n")),
-            `property ${property} is correct`
-          );
-        }
-
-        // Check for unexpected properties.
-        for (let property of Object.keys(actual)) {
-          browser.test.assertEq(
-            expected.hasOwnProperty(property),
-            actual.hasOwnProperty(property),
-            `property ${property} is expected`
-          );
-        }
-
-        // Check if all expected headers are there.
-        if (expected.headers) {
-          for (let header of Object.keys(expected.headers)) {
+        function checkMsgHeaders(expected, actual) {
+          // Check if all expected properties are there.
+          for (const property of Object.keys(expected)) {
             browser.test.assertEq(
-              expected.headers.hasOwnProperty(header),
-              actual.headers.hasOwnProperty(header),
-              `expected header ${header} is present`
+              expected.hasOwnProperty(property),
+              actual.hasOwnProperty(property),
+              `expected property ${property} is present`
             );
-            // Check header content.
-            // Note: jsmime does not eat TABs after a CLRF.
-            browser.test.assertEq(
-              expected.headers[header].toString().replaceAll("\t", " "),
-              actual.headers[header].toString().replaceAll("\t", " "),
-              `header ${header} is correct`
-            );
-          }
-          // Check for unexpected headers.
-          for (let header of Object.keys(actual.headers)) {
-            browser.test.assertEq(
-              expected.headers.hasOwnProperty(header),
-              actual.headers.hasOwnProperty(header),
-              `header ${header} is expected`
-            );
+            // Check property content.
+            if (Array.isArray(expected[property])) {
+              window.assertDeepEqual(
+                expected[property],
+                actual[property],
+                `property ${property} is correct (object)`
+              );
+            } else {
+              browser.test.assertEq(
+                expected[property],
+                actual[property],
+                `property ${property} is correct`
+              );
+            }
           }
         }
 
-        // Check sub-parts.
-        browser.test.assertEq(
-          Array.isArray(expected.parts),
-          Array.isArray(actual.parts),
-          `has sub-parts`
-        );
-        if (Array.isArray(expected.parts)) {
+        function checkMsgParts(expected, actual) {
+          // Check if all expected properties are there.
+          for (const property of Object.keys(expected)) {
+            browser.test.assertEq(
+              expected.hasOwnProperty(property),
+              actual.hasOwnProperty(property),
+              `expected property ${property} is present`
+            );
+            if (
+              ["parts", "headers", "size"].includes(property) ||
+              (["body"].includes(property) && expected[property] == "")
+            ) {
+              continue;
+            }
+            // Check property content.
+            browser.test.assertEq(
+              JSON.stringify(expected[property].replaceAll("\r\n", "\n")),
+              JSON.stringify(actual[property].replaceAll("\r\n", "\n")),
+              `property ${property} is correct`
+            );
+          }
+
+          // Check for unexpected properties.
+          for (const property of Object.keys(actual)) {
+            browser.test.assertEq(
+              expected.hasOwnProperty(property),
+              actual.hasOwnProperty(property),
+              `property ${property} is expected`
+            );
+          }
+
+          // Check if all expected headers are there.
+          if (expected.headers) {
+            for (const header of Object.keys(expected.headers)) {
+              browser.test.assertEq(
+                expected.headers.hasOwnProperty(header),
+                actual.headers.hasOwnProperty(header),
+                `expected header ${header} is present`
+              );
+              // Check header content.
+              // Note: jsmime does not eat TABs after a CLRF.
+              browser.test.assertEq(
+                expected.headers[header].toString().replaceAll("\t", " "),
+                actual.headers[header].toString().replaceAll("\t", " "),
+                `header ${header} is correct`
+              );
+            }
+            // Check for unexpected headers.
+            // (But don't worry about new x-mozilla-* ones that get slipped in
+            // during writes to the offline store).
+            const x_moz_headers = [
+              "x-mozilla-status",
+              "x-mozilla-status2",
+              "x-mozilla-status-keys",
+            ];
+            for (const header of Object.keys(actual.headers)) {
+              if (x_moz_headers.includes(header)) {
+                continue;
+              }
+
+              browser.test.assertEq(
+                expected.headers.hasOwnProperty(header),
+                actual.headers.hasOwnProperty(header),
+                `header ${header} is expected`
+              );
+            }
+          }
+
+          // Check sub-parts.
           browser.test.assertEq(
-            expected.parts.length,
-            actual.parts.length,
-            "number of parts"
+            Array.isArray(expected.parts),
+            Array.isArray(actual.parts),
+            `has sub-parts`
           );
-          for (let i in expected.parts) {
-            checkMsgParts(expected.parts[i], actual.parts[i]);
+          if (Array.isArray(expected.parts)) {
+            browser.test.assertEq(
+              expected.parts.length,
+              actual.parts.length,
+              "number of parts"
+            );
+            for (const i in expected.parts) {
+              checkMsgParts(expected.parts[i], actual.parts[i]);
+            }
           }
         }
-      }
 
-      for (let account of accounts) {
-        let folder = account.folders.find(f => f.name == "test1");
-        let { messages } = await browser.messages.list(folder);
-        browser.test.assertEq(7, messages.length);
+        const folder = account.folders.find(f => f.name == "test1");
+        const { messages } = await browser.messages.list(folder.id);
+        browser.test.assertEq(9, messages.length);
 
-        for (let message of messages) {
-          let fullMessage = await browser.messages.getFull(message.id);
+        for (const message of messages) {
+          const fullMessage = await browser.messages.getFull(message.id);
           browser.test.assertEq("object", typeof fullMessage);
-
-          let expected = expectedData[message.headerMessageId];
+          const expected = expectedData[message.headerMessageId];
           checkMsgHeaders(expected.msgHeaders, message);
           checkMsgParts(expected.msgParts, fullMessage);
         }
-      }
 
-      browser.test.notifyPass("finished");
+        browser.test.notifyPass("finished");
+      },
+      "utils.js": await getUtilsJS(),
     },
-    manifest: { permissions: ["accountsRead", "messagesRead"] },
+    manifest: {
+      manifest_version: 2,
+      background: { scripts: ["utils.js", "background.js"] },
+      permissions: ["accountsRead", "messagesRead"],
+    },
   });
 
   await extension.startup();
@@ -826,16 +992,16 @@ add_task(
     skip_if: () => IS_NNTP,
   },
   async function test_openpgp() {
-    let _account = createAccount();
-    let _identity = addIdentity(_account);
-    let _folder = await createSubfolder(
+    const _account = createAccount();
+    const _identity = addIdentity(_account);
+    const _folder = await createSubfolder(
       _account.incomingServer.rootFolder,
       "test1"
     );
 
     // Load an encrypted message.
 
-    let messagePath = PathUtils.join(
+    const messagePath = PathUtils.join(
       OPENPGP_TEST_DIR.path,
       "data",
       "eml",
@@ -843,19 +1009,19 @@ add_task(
     );
     await createMessageFromFile(_folder, messagePath);
 
-    let extension = ExtensionTestUtils.loadExtension({
+    const extension = ExtensionTestUtils.loadExtension({
       files: {
         "background.js": async () => {
-          let [account] = await browser.accounts.list();
-          let folder = account.folders.find(f => f.name == "test1");
+          const [account] = await browser.accounts.list();
+          const folder = account.folders.find(f => f.name == "test1");
 
           // Read the message, without the key set up. The headers should be
           // readable, but not the message itself.
 
-          let { messages } = await browser.messages.list(folder);
+          const { messages } = await browser.messages.list(folder.id);
           browser.test.assertEq(1, messages.length);
 
-          let [message] = messages;
+          const [message] = messages;
           browser.test.assertEq("...", message.subject);
           browser.test.assertEq(
             "Bob Babbage <bob@openpgp.example>",
@@ -863,13 +1029,43 @@ add_task(
           );
           browser.test.assertEq("alice@openpgp.example", message.recipients[0]);
 
-          let fullMessage = await browser.messages.getFull(message.id);
+          // getFull({decrypt: false}) should succeed without keys.
+          const fullEncrypted1 = await browser.messages.getFull(message.id, {
+            decrypt: false,
+          });
+          browser.test.assertEq(
+            "skipped",
+            fullEncrypted1.decryptionStatus,
+            "The decryptionStatus should be correct"
+          );
+
+          // getRaw({decrypt: false}) should succeed without keys.
+          const rawMessage = await browser.messages.getRaw(message.id, {
+            decrypt: false,
+          });
+          browser.test.assertTrue(
+            rawMessage.includes("multipart/encrypted"),
+            "Should find the encrypted message"
+          );
+
+          // getRaw({decrypt: true}) should fail without keys.
+          await browser.test.assertRejects(
+            browser.messages.getRaw(message.id, { decrypt: true }),
+            `Error decrypting message ${message.id}`,
+            "browser.messages.getRaw({decrypt: true}) should reject, if the keys are not available."
+          );
+
+          // getFull() should not be able to decrypt the message and not return
+          // any parts.
+          const fullMessage = await browser.messages.getFull(message.id, {
+            decrypt: true,
+          });
           browser.test.log(JSON.stringify(fullMessage));
           browser.test.assertEq("object", typeof fullMessage);
           browser.test.assertEq("message/rfc822", fullMessage.contentType);
 
           browser.test.assertEq("object", typeof fullMessage.headers);
-          for (let header of [
+          for (const header of [
             "content-type",
             "date",
             "from",
@@ -890,36 +1086,53 @@ add_task(
             fullMessage.headers.to[0]
           );
 
-          browser.test.assertTrue(Array.isArray(fullMessage.parts));
-          browser.test.assertEq(1, fullMessage.parts.length);
-
-          let part = fullMessage.parts[0];
-          browser.test.assertEq("object", typeof part);
-          browser.test.assertEq("multipart/encrypted", part.contentType);
-          browser.test.assertEq(undefined, part.parts);
+          // Decryption failed, parts should be omitted.
+          browser.test.assertEq(
+            "fail",
+            fullMessage.decryptionStatus,
+            "should find the correct decryptionStatus"
+          );
+          browser.test.assertEq(
+            0,
+            fullMessage.parts.length,
+            "parts should be omitted"
+          );
 
           // Now set up the key and read the message again. It should all be
           // there this time.
 
           await window.sendMessage("load key");
 
-          ({ messages } = await browser.messages.list(folder));
-          browser.test.assertEq(1, messages.length);
-          [message] = messages;
-          browser.test.assertEq("...", message.subject);
+          const { messages: messages_with_key } = await browser.messages.list(
+            folder.id
+          );
+          browser.test.assertEq(1, messages_with_key.length);
+          const [message_with_key] = messages_with_key;
+          // FIXME: The messageHeader still has the encrypted subject, only after
+          // the UI has displayed and decrypted the message, the subject gets
+          // updated.
+          browser.test.assertEq("...", message_with_key.subject);
           browser.test.assertEq(
             "Bob Babbage <bob@openpgp.example>",
-            message.author
+            message_with_key.author
           );
-          browser.test.assertEq("alice@openpgp.example", message.recipients[0]);
+          browser.test.assertEq(
+            "alice@openpgp.example",
+            message_with_key.recipients[0]
+          );
 
-          fullMessage = await browser.messages.getFull(message.id);
-          browser.test.log(JSON.stringify(fullMessage));
-          browser.test.assertEq("object", typeof fullMessage);
-          browser.test.assertEq("message/rfc822", fullMessage.contentType);
+          const fullDecrypted = await browser.messages.getFull(
+            message_with_key.id,
+            {
+              decrypt: true,
+            }
+          );
+          browser.test.log(JSON.stringify(fullDecrypted));
+          browser.test.assertEq("object", typeof fullDecrypted);
+          browser.test.assertEq("message/rfc822", fullDecrypted.contentType);
 
-          browser.test.assertEq("object", typeof fullMessage.headers);
-          for (let header of [
+          browser.test.assertEq("object", typeof fullDecrypted.headers);
+          for (const header of [
             "content-type",
             "date",
             "from",
@@ -927,31 +1140,37 @@ add_task(
             "subject",
             "to",
           ]) {
-            browser.test.assertTrue(Array.isArray(fullMessage.headers[header]));
-            browser.test.assertEq(1, fullMessage.headers[header].length);
+            browser.test.assertTrue(
+              Array.isArray(fullDecrypted.headers[header])
+            );
+            browser.test.assertEq(1, fullDecrypted.headers[header].length);
           }
-          browser.test.assertEq("...", fullMessage.headers.subject[0]);
+          browser.test.assertEq(
+            "Unsigned Encrypted",
+            fullDecrypted.headers.subject[0]
+          );
           browser.test.assertEq(
             "Bob Babbage <bob@openpgp.example>",
-            fullMessage.headers.from[0]
+            fullDecrypted.headers.from[0]
           );
           browser.test.assertEq(
             "alice@openpgp.example",
-            fullMessage.headers.to[0]
+            fullDecrypted.headers.to[0]
           );
 
-          browser.test.assertTrue(Array.isArray(fullMessage.parts));
-          browser.test.assertEq(1, fullMessage.parts.length);
+          browser.test.assertEq("success", fullDecrypted.decryptionStatus);
+          browser.test.assertTrue(Array.isArray(fullDecrypted.parts));
+          browser.test.assertEq(1, fullDecrypted.parts.length);
 
-          part = fullMessage.parts[0];
+          let part = fullDecrypted.parts[0];
           browser.test.assertEq("object", typeof part);
-          browser.test.assertEq("multipart/encrypted", part.contentType);
+          browser.test.assertEq("multipart/mixed", part.contentType);
           browser.test.assertTrue(Array.isArray(part.parts));
           browser.test.assertEq(1, part.parts.length);
 
           part = part.parts[0];
           browser.test.assertEq("object", typeof part);
-          browser.test.assertEq("multipart/fake-container", part.contentType);
+          browser.test.assertEq("multipart/mixed", part.contentType);
           browser.test.assertTrue(Array.isArray(part.parts));
           browser.test.assertEq(1, part.parts.length);
 
@@ -963,11 +1182,37 @@ add_task(
             part.body.trimRight()
           );
 
+          // getFull({decrypt: false}) should succeed with loaded keys.
+          const fullEncrypted2 = await browser.messages.getFull(message.id, {
+            decrypt: false,
+          });
+          browser.test.assertEq("...", fullEncrypted2.headers.subject[0]);
+          browser.test.assertEq("skipped", fullEncrypted2.decryptionStatus);
+
+          // getRaw({decrypt: false}) should succeed.
+          const rawMessage2 = await browser.messages.getRaw(message.id, {
+            decrypt: false,
+          });
+          browser.test.assertTrue(
+            rawMessage2.includes("multipart/encrypted"),
+            "Should find the encrypted message"
+          );
+
+          // getRaw({decrypt: true}) should succeed.
+          const rawMessage3 = await browser.messages.getRaw(message.id, {
+            decrypt: true,
+          });
+          browser.test.assertFalse(
+            rawMessage3.includes("multipart/encrypted"),
+            "Should not find the encrypted message"
+          );
+
           browser.test.notifyPass("finished");
         },
         "utils.js": await getUtilsJS(),
       },
       manifest: {
+        manifest_version: 2,
         background: { scripts: ["utils.js", "background.js"] },
         permissions: ["accountsRead", "messagesRead"],
       },
@@ -977,8 +1222,7 @@ add_task(
 
     await extension.awaitMessage("load key");
     info(`Adding key from ${OPENPGP_KEY_PATH}`);
-    await OpenPGPTestUtils.initOpenPGP();
-    let [id] = await OpenPGPTestUtils.importPrivateKey(
+    const [id] = await OpenPGPTestUtils.importPrivateKey(
       null,
       new FileUtils.File(OPENPGP_KEY_PATH)
     );
@@ -993,8 +1237,8 @@ add_task(
 );
 
 add_task(async function test_attached_message_with_missing_headers() {
-  let _account = createAccount();
-  let _folder = await createSubfolder(
+  const _account = createAccount();
+  const _folder = await createSubfolder(
     _account.incomingServer.rootFolder,
     "test1"
   );
@@ -1004,26 +1248,26 @@ add_task(async function test_attached_message_with_missing_headers() {
     do_get_file("messages/attachedMessageWithMissingHeaders.eml").path
   );
 
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
-        let accounts = await browser.accounts.list();
+        const accounts = await browser.accounts.list();
         browser.test.assertEq(1, accounts.length);
 
-        for (let account of accounts) {
-          let folder = account.folders.find(f => f.name == "test1");
-          let { messages } = await browser.messages.list(folder);
+        for (const account of accounts) {
+          const folder = account.folders.find(f => f.name == "test1");
+          const { messages } = await browser.messages.list(folder.id);
           browser.test.assertEq(1, messages.length);
 
-          let msg = messages[0];
-          let attachments = await browser.messages.listAttachments(msg.id);
+          const msg = messages[0];
+          const attachments = await browser.messages.listAttachments(msg.id);
           browser.test.assertEq(
             attachments.length,
             1,
             "Should have found the correct number of attachments"
           );
 
-          let attachedMessage = attachments[0].message;
+          const attachedMessage = attachments[0].message;
           browser.test.assertTrue(
             !!attachedMessage,
             "Should have found an attached message"
@@ -1060,9 +1304,196 @@ add_task(async function test_attached_message_with_missing_headers() {
       "utils.js": await getUtilsJS(),
     },
     manifest: {
+      manifest_version: 2,
       background: { scripts: ["utils.js", "background.js"] },
       permissions: ["accountsRead", "messagesRead"],
     },
+  });
+
+  await extension.startup();
+  await extension.awaitFinish("finished");
+  await extension.unload();
+
+  cleanUpAccount(_account);
+});
+
+add_task(async function test_get_deleted_messages() {
+  const _account = createAccount();
+  const _folder = await createSubfolder(
+    _account.incomingServer.rootFolder,
+    "test1"
+  );
+  await createMessages(_folder, 10);
+
+  const extension = ExtensionTestUtils.loadExtension({
+    files: {
+      "background.js": async () => {
+        const accounts = await browser.accounts.list();
+        browser.test.assertEq(
+          1,
+          accounts.length,
+          "Should find the correct number of accounts"
+        );
+        const foundMessages = new Map();
+
+        for (const account of accounts) {
+          const messageIds = [];
+
+          const folder = account.folders.find(f => f.name == "test1");
+          const { messages: listMessages } = await browser.messages.list(
+            folder.id
+          );
+          browser.test.assertEq(
+            10,
+            listMessages.length,
+            "Should find the correct number of messages"
+          );
+          const { messages: queryMessages } = await browser.messages.query({
+            folderId: folder.id,
+          });
+          browser.test.assertEq(
+            10,
+            queryMessages.length,
+            "Should find the correct number of messages"
+          );
+
+          let counts = 0;
+          for (const msg of listMessages) {
+            messageIds.push(msg.id);
+            const header = await browser.messages.get(msg.id);
+            if (header) {
+              counts++;
+            }
+          }
+          browser.test.assertEq(
+            10,
+            counts,
+            "Should find the correct number of messages"
+          );
+          foundMessages.set(account.id, messageIds);
+        }
+
+        await window.sendMessage("markSomeAsIMAPDeleted", 3);
+
+        for (const account of accounts) {
+          const folder = account.folders.find(f => f.name == "test1");
+          const { messages: listMessages } = await browser.messages.list(
+            folder.id
+          );
+          browser.test.assertEq(
+            7,
+            listMessages.length,
+            "Should find the correct number of messages"
+          );
+          const { messages: queryMessages } = await browser.messages.query({
+            folderId: folder.id,
+          });
+          browser.test.assertEq(
+            7,
+            queryMessages.length,
+            "Should find the correct number of messages"
+          );
+
+          const messageIds = foundMessages.get(account.id);
+          let goodCounts = 0;
+          let badCounts = 0;
+          for (const msgId of messageIds) {
+            try {
+              const header = await browser.messages.get(msgId);
+              if (header) {
+                goodCounts++;
+              }
+            } catch (ex) {
+              badCounts++;
+            }
+          }
+          browser.test.assertEq(
+            7,
+            goodCounts,
+            "Should find the correct number of messages"
+          );
+          browser.test.assertEq(
+            3,
+            badCounts,
+            "Should find the correct number of skipped messages"
+          );
+        }
+
+        await window.sendMessage("markSomeAsExpunged", 6);
+
+        for (const account of accounts) {
+          const folder = account.folders.find(f => f.name == "test1");
+          const { messages: listMessages } = await browser.messages.list(
+            folder.id
+          );
+          browser.test.assertEq(
+            4,
+            listMessages.length,
+            "Should find the correct number of messages"
+          );
+          const { messages: queryMessages } = await browser.messages.query({
+            folderId: folder.id,
+          });
+          browser.test.assertEq(
+            4,
+            queryMessages.length,
+            "Should find the correct number of messages"
+          );
+
+          const messageIds = foundMessages.get(account.id);
+          let goodCounts = 0;
+          let badCounts = 0;
+          for (const msgId of messageIds) {
+            try {
+              const header = await browser.messages.get(msgId);
+              if (header) {
+                goodCounts++;
+              }
+            } catch (ex) {
+              badCounts++;
+            }
+          }
+          browser.test.assertEq(
+            4,
+            goodCounts,
+            "Should find the correct number of messages"
+          );
+          browser.test.assertEq(
+            6,
+            badCounts,
+            "Should find the correct number of skipped messages"
+          );
+        }
+
+        browser.test.notifyPass("finished");
+      },
+      "utils.js": await getUtilsJS(),
+    },
+    manifest: {
+      manifest_version: 2,
+      background: { scripts: ["utils.js", "background.js"] },
+      permissions: ["accountsRead", "messagesRead"],
+    },
+  });
+
+  extension.onMessage("markSomeAsIMAPDeleted", count => {
+    const messages = _folder.messages;
+    while (messages.hasMoreElements() && count > 0) {
+      const msg = messages.getNext();
+      msg.flags |= Ci.nsMsgMessageFlags.IMAPDeleted;
+      count--;
+    }
+    extension.sendMessage();
+  });
+
+  extension.onMessage("markSomeAsExpunged", count => {
+    const messages = _folder.messages;
+    while (messages.hasMoreElements() && count > 0) {
+      const msg = messages.getNext();
+      msg.flags |= Ci.nsMsgMessageFlags.Expunged;
+      count--;
+    }
+    extension.sendMessage();
   });
 
   await extension.startup();

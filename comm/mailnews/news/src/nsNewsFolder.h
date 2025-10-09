@@ -10,10 +10,8 @@
 #ifndef nsMsgNewsFolder_h__
 #define nsMsgNewsFolder_h__
 
-#include "mozilla/Attributes.h"
 #include "nsMsgDBFolder.h"
 #include "nsIFile.h"
-#include "nsNewsUtils.h"
 #include "nsMsgKeySet.h"
 #include "nsIMsgNewsFolder.h"
 #include "nsCOMPtr.h"
@@ -31,20 +29,17 @@ class nsMsgNewsFolder : public nsMsgDBFolder, public nsIMsgNewsFolder {
 
   NS_IMETHOD UpdateFolder(nsIMsgWindow* aWindow) override;
 
-  NS_IMETHOD CreateSubfolder(const nsAString& folderName,
+  NS_IMETHOD CreateSubfolder(const nsACString& folderName,
                              nsIMsgWindow* msgWindow) override;
 
   NS_IMETHOD DeleteStorage() override;
-  NS_IMETHOD Rename(const nsAString& newName, nsIMsgWindow* msgWindow) override;
+  NS_IMETHOD Rename(const nsACString& newName,
+                    nsIMsgWindow* msgWindow) override;
 
-  NS_IMETHOD GetAbbreviatedName(nsAString& aAbbreviatedName) override;
-
-  NS_IMETHOD GetFolderURL(nsACString& url) override;
+  NS_IMETHOD GetAbbreviatedName(nsACString& aAbbreviatedName) override;
 
   NS_IMETHOD GetExpungedBytesCount(int64_t* count);
   NS_IMETHOD GetDeletable(bool* deletable) override;
-
-  NS_IMETHOD RefreshSizeOnDisk();
 
   NS_IMETHOD GetSizeOnDisk(int64_t* size) override;
 
@@ -70,8 +65,6 @@ class nsMsgNewsFolder : public nsMsgDBFolder, public nsIMsgNewsFolder {
       nsIMsgWindow* window) override;
   NS_IMETHOD GetLocalMsgStream(nsIMsgDBHdr* hdr,
                                nsIInputStream** stream) override;
-  NS_IMETHOD Compact(nsIUrlListener* aListener,
-                     nsIMsgWindow* aMsgWindow) override;
   NS_IMETHOD DownloadAllForOffline(nsIUrlListener* listener,
                                    nsIMsgWindow* msgWindow) override;
   NS_IMETHOD GetSortOrder(int32_t* order) override;
@@ -91,13 +84,11 @@ class nsMsgNewsFolder : public nsMsgDBFolder, public nsIMsgNewsFolder {
  protected:
   virtual ~nsMsgNewsFolder();
   // helper routine to parse the URI and update member variables
-  nsresult AbbreviatePrettyName(nsAString& prettyName, int32_t fullwords);
+  nsresult AbbreviatePrettyName(nsACString& prettyName, int32_t fullwords);
   nsresult ParseFolder(nsIFile* path);
   nsresult CreateSubFolders(nsIFile* path);
   nsresult AddDirectorySeparator(nsIFile* path);
   nsresult GetDatabase() override;
-  virtual nsresult CreateChildFromURI(const nsACString& uri,
-                                      nsIMsgFolder** folder) override;
 
   nsresult LoadNewsrcFileAndCreateNewsgroups();
   int32_t RememberLine(const nsACString& line);
@@ -116,8 +107,6 @@ class nsMsgNewsFolder : public nsMsgDBFolder, public nsIMsgNewsFolder {
   bool mInitialized;
   bool m_downloadMessageForOfflineUse;
 
-  nsCString mOptionLines;
-  nsCString mUnsubscribedNewsgroupLines;
   RefPtr<nsMsgKeySet> mReadSet;
 
   nsCOMPtr<nsIFile> mNewsrcFilePath;

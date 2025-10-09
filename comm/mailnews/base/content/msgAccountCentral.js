@@ -3,12 +3,20 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { openLinkExternally } = ChromeUtils.importESModule(
+  "resource:///modules/LinkHelper.sys.mjs"
 );
-var { MailUtils } = ChromeUtils.import("resource:///modules/MailUtils.jsm");
-var { UIDensity } = ChromeUtils.import("resource:///modules/UIDensity.jsm");
-var { UIFontSize } = ChromeUtils.import("resource:///modules/UIFontSize.jsm");
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
+);
+var { MailUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailUtils.sys.mjs"
+);
+
+ChromeUtils.defineESModuleGetters(this, {
+  UIDensity: "resource:///modules/UIDensity.sys.mjs",
+  UIFontSize: "resource:///modules/UIFontSize.sys.mjs",
+});
 
 var gSelectedServer = null;
 var gSelectedFolder = null;
@@ -20,14 +28,14 @@ window.addEventListener("DOMContentLoaded", OnInit);
  * The folder is passed in via the document URL.
  */
 function OnInit() {
-  let el = document.getElementById("setupTitle");
+  const el = document.getElementById("setupTitle");
 
   document.l10n.setAttributes(el, "setup-title", {
     accounts: MailServices.accounts.accounts.length,
   });
 
   // Selected folder URI is passed as folderURI argument in the query string.
-  let folderURI = decodeURIComponent(
+  const folderURI = decodeURIComponent(
     document.location.search.replace("?folderURI=", "")
   );
   gSelectedFolder = folderURI ? MailUtils.getExistingFolder(folderURI) : null;
@@ -43,8 +51,8 @@ function OnInit() {
     document.getElementById("version").textContent = Services.appinfo.version;
 
     // Update the style of the account setup buttons and area.
-    let accountSection = document.getElementById("accountSetupSection");
-    for (let btn of accountSection.querySelectorAll(".btn-hub")) {
+    const accountSection = document.getElementById("accountSetupSection");
+    for (const btn of accountSection.querySelectorAll(".btn-hub")) {
       btn.classList.remove("btn-inline");
     }
     accountSection.classList.remove("zebra");
@@ -70,7 +78,7 @@ function updateAccountCentralUI() {
     .getElementById("accountLogo")
     .setAttribute("type", gSelectedServer.type);
 
-  let exceptions = [];
+  const exceptions = [];
   let protocolInfo = null;
   try {
     protocolInfo = gSelectedServer.protocolInfo;
@@ -79,10 +87,10 @@ function updateAccountCentralUI() {
   }
 
   // Is this a RSS account?
-  let isRssAccount = gSelectedServer?.type == "rss";
+  const isRssAccount = gSelectedServer?.type == "rss";
 
   // Is this an NNTP account?
-  let isNNTPAccount = gSelectedServer?.type == "nntp";
+  const isNNTPAccount = gSelectedServer?.type == "nntp";
 
   // Is this a Local Folders account?
   const isLocalFoldersAccount = gSelectedServer?.type == "none";
@@ -232,7 +240,5 @@ function subscribe() {
  */
 function openLink(event) {
   event.preventDefault();
-  Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-    .getService(Ci.nsIExternalProtocolService)
-    .loadURI(Services.io.newURI(event.target.href));
+  openLinkExternally(event.target.href, { addToHistory: false });
 }

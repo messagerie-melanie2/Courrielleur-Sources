@@ -3,32 +3,42 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* eslint-disable mozilla/valid-lazy */
 
 /**
  * This module contains utilities and base classes for logic which is
  * common between the parent and child process, and in particular
- * between ExtensionParent.jsm and ExtensionChild.jsm.
+ * between ExtensionParent.sys.mjs and ExtensionChild.sys.mjs.
  */
 
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
-const lazy = {};
-
-ChromeUtils.defineESModuleGetters(lazy, {
+const lazy = XPCOMUtils.declareLazy({
   ConsoleAPI: "resource://gre/modules/Console.sys.mjs",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
   SchemaRoot: "resource://gre/modules/Schemas.sys.mjs",
   Schemas: "resource://gre/modules/Schemas.sys.mjs",
+  styleSheetService: {
+    service: "@mozilla.org/content/style-sheet-service;1",
+    iid: Ci.nsIStyleSheetService,
+  },
+  wptEnabled: {
+    pref: "extensions.wpt.enabled",
+    default: false,
+  },
+  // An hidden pref only meant to be used if we would need to revert the use
+  // of the ChromeUtils.callFunctionAndLogException helper temporarily because
+  // of regression only hit once it got to the release channel.
+  //
+  // Bug 1963002: remove this hidden pref 3 cycles after this has been in release
+  // without any regression that needed us to revert it.
+  callFunctionAndLogExceptionDisabled: {
+    pref: "extensions.callFunctionAndLogExceptionDisabled",
+    default: false,
+  },
 });
-
-XPCOMUtils.defineLazyServiceGetter(
-  lazy,
-  "styleSheetService",
-  "@mozilla.org/content/style-sheet-service;1",
-  "nsIStyleSheetService"
-);
 
 const ScriptError = Components.Constructor(
   "@mozilla.org/scripterror;1",
@@ -53,10 +63,6 @@ function getConsole() {
     prefix: "WebExtensions",
   });
 }
-
-const BACKGROUND_SCRIPTS_VIEW_TYPES = ["background", "background_worker"];
-
-export var ExtensionCommon;
 
 // Run a function and report exceptions.
 function runSafeSyncWithoutClone(f, ...args) {
@@ -124,37 +130,48 @@ function withHandlingUserInput(window, callable) {
  * prototype will be invoked separately for each object instance that
  * it's accessed on.
  *
+ * Note: for better type inference, prefer redefineGetter() below.
+ *
  * @param {object} object
  *        The prototype object on which to define the getter.
  * @param {string | symbol} prop
  *        The property name for which to define the getter.
- * @param {Function} getter
+ * @param {callback} getter
  *        The function to call in order to generate the final property
  *        value.
  */
 function defineLazyGetter(object, prop, getter) {
-  let redefine = (obj, value) => {
-    Object.defineProperty(obj, prop, {
-      enumerable: true,
-      configurable: true,
-      writable: true,
-      value,
-    });
-    return value;
-  };
-
   Object.defineProperty(object, prop, {
     enumerable: true,
     configurable: true,
-
     get() {
-      return redefine(this, getter.call(this));
+      return redefineGetter(this, prop, getter.call(this), true);
     },
-
     set(value) {
-      redefine(this, value);
+      redefineGetter(this, prop, value, true);
     },
   });
+}
+
+/**
+ * A more type-inference friendly version of defineLazyGetter() above.
+ * Call it from a real getter (and setter) for your class or object.
+ * On first run, it will redefine the property with the final value.
+ *
+ * @template Value
+ * @param {object} object
+ * @param {string | symbol} key
+ * @param {Value} value
+ * @returns {Value}
+ */
+function redefineGetter(object, key, value, writable = false) {
+  Object.defineProperty(object, key, {
+    enumerable: true,
+    configurable: true,
+    writable,
+    value,
+  });
+  return value;
 }
 
 function checkLoadURI(uri, principal, options) {
@@ -227,7 +244,7 @@ class NoCloneSpreadArgs {
 const LISTENERS = Symbol("listeners");
 const ONCE_MAP = Symbol("onceMap");
 
-class EventEmitter {
+export class EventEmitter {
   constructor() {
     this[LISTENERS] = new Map();
     this[ONCE_MAP] = new WeakMap();
@@ -253,7 +270,7 @@ class EventEmitter {
    *
    * @param {string} event
    *       The name of the event to listen for.
-   * @param {function(string, ...any)} listener
+   * @param {function(string, ...any): any} listener
    *        The listener to call when events are emitted.
    */
   on(event, listener) {
@@ -271,7 +288,7 @@ class EventEmitter {
    *
    * @param {string} event
    *       The name of the event to stop listening for.
-   * @param {function(string, ...any)} listener
+   * @param {function(string, ...any): any} listener
    *        The listener function to remove.
    */
   off(event, listener) {
@@ -290,15 +307,15 @@ class EventEmitter {
    *
    * @param {string} event
    *       The name of the event to listen for.
-   * @param {function(string, ...any)} listener
+   * @param {function(string, ...any): any} listener
    *        The listener to call when events are emitted.
    */
   once(event, listener) {
-    let wrapper = (...args) => {
+    let wrapper = (event, ...args) => {
       this.off(event, wrapper);
       this[ONCE_MAP].delete(listener);
 
-      return listener(...args);
+      return listener(event, ...args);
     };
     this[ONCE_MAP].set(listener, wrapper);
 
@@ -346,7 +363,7 @@ class EventEmitter {
  * that inherits from this class, the derived class is instantiated
  * once for each extension that uses the API.
  */
-class ExtensionAPI extends EventEmitter {
+export class ExtensionAPI extends EventEmitter {
   constructor(extension) {
     super();
 
@@ -362,11 +379,28 @@ class ExtensionAPI extends EventEmitter {
 
   destroy() {}
 
-  onManifestEntry(entry) {}
+  /** @param {string} _entryName */
+  onManifestEntry(_entryName) {}
 
-  getAPI(context) {
+  /** @param {boolean} _isAppShutdown */
+  onShutdown(_isAppShutdown) {}
+
+  /** @param {BaseContext} _context */
+  getAPI(_context) {
     throw new Error("Not Implemented");
   }
+
+  /** @param {string} _id */
+  static onDisable(_id) {}
+
+  /** @param {string} _id */
+  static onUninstall(_id) {}
+
+  /**
+   * @param {string} _id
+   * @param {object} _manifest
+   */
+  static onUpdate(_id, _manifest) {}
 }
 
 /**
@@ -376,6 +410,9 @@ class ExtensionAPI extends EventEmitter {
  * this.apiNamespace = class extends ExtensionAPIPersistent {};
  */
 class ExtensionAPIPersistent extends ExtensionAPI {
+  /** @type {Record<string, callback>} */
+  PERSISTENT_EVENTS;
+
   /**
    * Check for event entry.
    *
@@ -441,7 +478,12 @@ class ExtensionAPIPersistent extends ExtensionAPI {
  *
  * @abstract
  */
-class BaseContext {
+export class BaseContext {
+  /** @type {boolean} */
+  isTopContext;
+  /** @type {string} */
+  viewType;
+
   constructor(envType, extension) {
     this.envType = envType;
     this.onClose = new Set();
@@ -457,6 +499,7 @@ class BaseContext {
     this.messageManager = null;
     this.contentWindow = null;
     this.innerWindowID = 0;
+    this.browserId = 0;
 
     // These two properties are assigned in ContentScriptContextChild subclass
     // to keep a copy of the content script sandbox Error and Promise globals
@@ -487,7 +530,14 @@ class BaseContext {
   }
 
   get isBackgroundContext() {
-    return BACKGROUND_SCRIPTS_VIEW_TYPES.includes(this.viewType);
+    if (this.viewType === "background") {
+      if (this.isProxyContextParent) {
+        return !!this.isTopContext; // Set in ExtensionPageContextParent.
+      }
+      const { contentWindow } = this;
+      return !!contentWindow && contentWindow.top === contentWindow;
+    }
+    return this.viewType === "background_worker";
   }
 
   /**
@@ -514,9 +564,7 @@ class BaseContext {
    * Opens a conduit linked to this context, populating related address fields.
    * Only available in child contexts with an associated contentWindow.
    *
-   * @param {object} subject
-   * @param {ConduitAddress} address
-   * @returns {PointConduit}
+   * @type {ConduitGen}
    */
   openConduit(subject, address) {
     let wgc = this.contentWindow.windowGlobalChild;
@@ -540,6 +588,7 @@ class BaseContext {
       );
     }
 
+    this.browserId = contentWindow.browsingContext?.browserId;
     this.innerWindowID = getInnerWindowID(contentWindow);
     this.messageManager = contentWindow.docShell.messageManager;
 
@@ -574,14 +623,16 @@ class BaseContext {
   // All child contexts must implement logActivity.  This is handled if the child
   // context subclasses ExtensionBaseContextChild.  ProxyContextParent overrides
   // this with a noop for parent contexts.
-  logActivity(type, name, data) {
+  logActivity(_type, _name, _data) {
     throw new Error(`Not implemented for ${this.envType}`);
   }
 
+  /** @type {object} */
   get cloneScope() {
     throw new Error("Not implemented");
   }
 
+  /** @type {nsIPrincipal} */
   get principal() {
     throw new Error("Not implemented");
   }
@@ -632,95 +683,49 @@ class BaseContext {
       );
     } else {
       try {
-        return Reflect.apply(callback, null, args);
-      } catch (e) {
-        // An extension listener may as well be throwing an object that isn't
-        // an instance of Error, in that case we have to use fallbacks for the
-        // error message, fileName, lineNumber and columnNumber properties.
-        const isError = e instanceof this.Error;
-        let message;
-        let fileName;
-        let lineNumber;
-        let columnNumber;
-
-        if (isError) {
-          message = `${e.name}: ${e.message}`;
-          lineNumber = e.lineNumber;
-          columnNumber = e.columnNumber;
-          fileName = e.fileName;
-        } else {
-          message = `uncaught exception: ${e}`;
-
-          try {
-            // TODO(Bug 1810582): the following fallback logic may go away once
-            // we introduced a better way to capture and log the exception in
-            // the right window and in all cases (included when the extension
-            // code is raising undefined or an object that isn't an instance of
-            // the Error constructor).
-            //
-            // Fallbacks for the error location:
-            // - the callback location if it is registered directly from the
-            //   extension code (and not wrapped by the child/ext-APINAMe.js
-            //   implementation, like e.g. browser.storage, browser.devtools.network
-            //   are doing and browser.menus).
-            // - if the location of the extension callback is not directly
-            //   available (e.g. browser.storage onChanged events, and similarly
-            //   for browser.devtools.network and browser.menus events):
-            //   - the extension page url if the context is an extension page
-            //   - the extension base url if the context is a content script
-            const cbLoc = Cu.getFunctionSourceLocation(callback);
-            fileName = cbLoc.filename;
-            lineNumber = cbLoc.lineNumber ?? lineNumber;
-
-            const extBaseUrl = this.extension.baseURI.resolve("/");
-            if (fileName.startsWith(extBaseUrl)) {
-              fileName = cbLoc.filename;
-              lineNumber = cbLoc.lineNumber ?? lineNumber;
-            } else {
-              fileName = this.contentWindow?.location?.href;
-              if (!fileName || !fileName.startsWith(extBaseUrl)) {
-                fileName = extBaseUrl;
-              }
-            }
-          } catch {
-            // Ignore errors on retrieving the callback source location.
-          }
+        // When we are in the parent process (isProxyContextParent==true), there is no need to forward
+        // the exceptions to the extension document (this.cloneScope).
+        if (
+          this.isProxyContextParent ||
+          lazy.callFunctionAndLogExceptionDisabled
+        ) {
+          return Reflect.apply(callback, null, args);
         }
+        // Use callFunctionAndLogException in order to ensure routing any exception to DevTools.
 
-        dump(
-          `Extension error: ${message} ${fileName} ${lineNumber}\n[[Exception stack\n${
-            isError ? filterStack(e) : undefined
-          }Current stack\n${filterStack(Error())}]]\n`
+        return ChromeUtils.callFunctionAndLogException(this.cloneScope, () =>
+          Reflect.apply(callback, null, args)
         );
-
-        // If the error is coming from an extension context associated
-        // to a window (e.g. an extension page or extension content script).
-        //
-        // TODO(Bug 1810574): for the background service worker we will need to do
-        // something similar, but not tied to the innerWindowID because there
-        // wouldn't be one set for extension contexts related to the
-        // background service worker.
-        //
-        // TODO(Bug 1810582): change the error associated to the innerWindowID to also
-        // include a full stack from the original error.
-        if (!this.isProxyContextParent && this.contentWindow) {
-          Services.console.logMessage(
-            new ScriptError(
-              message,
-              fileName,
-              null,
-              lineNumber,
-              columnNumber,
-              Ci.nsIScriptError.errorFlag,
-              "content javascript",
-              this.innerWindowID
-            )
-          );
+      } catch (e) {
+        if (this.isProxyContextParent) {
+          Cu.reportError(e);
         }
-        // Also report the original error object (because it also includes
-        // the full error stack).
-        Cu.reportError(e);
       }
+    }
+  }
+
+  logConsoleScriptError({
+    message,
+    fileName,
+    lineNumber,
+    columnNumber,
+    flags = Ci.nsIScriptError.errorFlag,
+    innerWindowID = this.innerWindowID,
+  }) {
+    if (innerWindowID) {
+      Services.console.logMessage(
+        new ScriptError(
+          message,
+          fileName,
+          lineNumber,
+          columnNumber,
+          flags,
+          "content javascript",
+          innerWindowID
+        )
+      );
+    } else {
+      Cu.reportError(new Error(message));
     }
   }
 
@@ -738,7 +743,7 @@ class BaseContext {
    * Safely call JSON.stringify() on an object that comes from an
    * extension.
    *
-   * @param {Array<any>} args Arguments for JSON.stringify()
+   * @param {[any, callback?, number?]} args for JSON.stringify()
    * @returns {string} The stringified representation of obj
    */
   jsonStringify(...args) {
@@ -780,7 +785,7 @@ class BaseContext {
    * exception error.
    *
    * @param {Error|object} error
-   * @param {SavedFrame?} [caller]
+   * @param {nsIStackFrame?} [caller]
    * @returns {Error}
    */
   normalizeError(error, caller) {
@@ -822,7 +827,7 @@ class BaseContext {
    *
    * @param {object} error An object with a `message` property. May
    *     optionally be an `Error` object belonging to the target scope.
-   * @param {SavedFrame?} caller
+   * @param {nsIStackFrame?} caller
    *        The optional caller frame which triggered this callback, to be used
    *        in error reporting.
    * @param {Function} callback The callback to call.
@@ -843,7 +848,7 @@ class BaseContext {
   /**
    * Captures the most recent stack frame which belongs to the extension.
    *
-   * @returns {SavedFrame?}
+   * @returns {nsIStackFrame?}
    */
   getCaller() {
     return ChromeUtils.getCallerLocation(this.principal);
@@ -991,19 +996,19 @@ class BaseContext {
 
 /**
  * An object that runs the implementation of a schema API. Instantiations of
- * this interfaces are used by Schemas.jsm.
+ * this interfaces are used by Schemas.sys.mjs.
  *
  * @interface
  */
-class SchemaAPIInterface {
+export class SchemaAPIInterface {
   /**
    * Calls this as a function that returns its return value.
    *
    * @abstract
-   * @param {Array} args The parameters for the function.
+   * @param {Array} _args The parameters for the function.
    * @returns {*} The return value of the invoked function.
    */
-  callFunction(args) {
+  callFunction(_args) {
     throw new Error("Not implemented");
   }
 
@@ -1011,9 +1016,9 @@ class SchemaAPIInterface {
    * Calls this as a function and ignores its return value.
    *
    * @abstract
-   * @param {Array} args The parameters for the function.
+   * @param {Array} _args The parameters for the function.
    */
-  callFunctionNoReturn(args) {
+  callFunctionNoReturn(_args) {
     throw new Error("Not implemented");
   }
 
@@ -1021,15 +1026,15 @@ class SchemaAPIInterface {
    * Calls this as a function that completes asynchronously.
    *
    * @abstract
-   * @param {Array} args The parameters for the function.
-   * @param {function(*)} [callback] The callback to be called when the function
+   * @param {Array} _args The parameters for the function.
+   * @param {callback} [_callback] The callback to be called when the function
    *     completes.
-   * @param {boolean} [requireUserInput=false] If true, the function should
+   * @param {boolean} [_requireUserInput=false] If true, the function should
    *                  fail if the browser is not currently handling user input.
    * @returns {Promise|undefined} Must be void if `callback` is set, and a
    *     promise otherwise. The promise is resolved when the function completes.
    */
-  callAsyncFunction(args, callback, requireUserInput = false) {
+  callAsyncFunction(_args, _callback, _requireUserInput) {
     throw new Error("Not implemented");
   }
 
@@ -1047,9 +1052,9 @@ class SchemaAPIInterface {
    * Assigns the value to this as property.
    *
    * @abstract
-   * @param {string} value The new value of the property.
+   * @param {string} _value The new value of the property.
    */
-  setProperty(value) {
+  setProperty(_value) {
     throw new Error("Not implemented");
   }
 
@@ -1057,11 +1062,11 @@ class SchemaAPIInterface {
    * Registers a `listener` to this as an event.
    *
    * @abstract
-   * @param {Function} listener The callback to be called when the event fires.
-   * @param {Array} args Extra parameters for EventManager.addListener.
+   * @param {Function} _listener The callback to be called when the event fires.
+   * @param {Array} _args Extra parameters for EventManager.addListener.
    * @see EventManager.addListener
    */
-  addListener(listener, args) {
+  addListener(_listener, _args) {
     throw new Error("Not implemented");
   }
 
@@ -1069,11 +1074,11 @@ class SchemaAPIInterface {
    * Checks whether `listener` is listening to this as an event.
    *
    * @abstract
-   * @param {Function} listener The event listener.
+   * @param {Function} _listener The event listener.
    * @returns {boolean} Whether `listener` is registered with this as an event.
    * @see EventManager.hasListener
    */
-  hasListener(listener) {
+  hasListener(_listener) {
     throw new Error("Not implemented");
   }
 
@@ -1081,10 +1086,10 @@ class SchemaAPIInterface {
    * Unregisters `listener` from this as an event.
    *
    * @abstract
-   * @param {Function} listener The event listener.
+   * @param {Function} _listener The event listener.
    * @see EventManager.removeListener
    */
-  removeListener(listener) {
+  removeListener(_listener) {
     throw new Error("Not implemented");
   }
 
@@ -1441,7 +1446,7 @@ class SchemaAPIManager extends EventEmitter {
    *     "addon" - An addon process.
    *     "content" - A content process.
    *     "devtools" - A devtools process.
-   * @param {SchemaRoot} schema
+   * @param {import("Schemas.sys.mjs").SchemaInject} [schema]
    */
   constructor(processType, schema) {
     super();
@@ -1690,8 +1695,7 @@ class SchemaAPIManager extends EventEmitter {
    *
    * @param {string} name
    *        The name of the module to load.
-   *
-   * @returns {class}
+   * @returns {typeof ExtensionAPI}
    */
   loadModule(name) {
     let module = this.modules.get(name);
@@ -1716,7 +1720,7 @@ class SchemaAPIManager extends EventEmitter {
    * @param {string} name
    *        The name of the module to load.
    *
-   * @returns {Promise<class>}
+   * @returns {Promise<typeof ExtensionAPI>}
    */
   asyncLoadModule(name) {
     let module = this.modules.get(name);
@@ -1730,10 +1734,15 @@ class SchemaAPIManager extends EventEmitter {
     this._checkLoadModule(module, name);
 
     module.asyncLoaded = ChromeUtils.compileScript(module.url).then(script => {
-      this.initGlobal();
-      script.executeInGlobal(this.global);
+      // In some rare cases, loadModule() may have been called since we started
+      // the async compileScript call. In that case, return the result that we
+      // already got from loadModule.
+      if (!module.loaded) {
+        this.initGlobal();
+        script.executeInGlobal(this.global);
 
-      module.loaded = true;
+        module.loaded = true;
+      }
 
       return this.global[name];
     });
@@ -1802,9 +1811,6 @@ class SchemaAPIManager extends EventEmitter {
     if (!module) {
       throw new Error(`Module '${name}' does not exist`);
     }
-    if (module.asyncLoaded) {
-      throw new Error(`Module '${name}' currently being lazily loaded`);
-    }
     if (this.global && this.global[name]) {
       throw new Error(
         `Module '${name}' conflicts with existing global property`
@@ -1824,7 +1830,7 @@ class SchemaAPIManager extends EventEmitter {
       {
         wantXrays: false,
         wantGlobalProperties: ["ChromeUtils"],
-        sandboxName: `Namespace of ext-*.js scripts for ${this.processType} (from: resource://gre/modules/ExtensionCommon.jsm)`,
+        sandboxName: `Namespace of ext-*.js scripts for ${this.processType} (from: resource://gre/modules/ExtensionCommon.sys.mjs)`,
       }
     );
 
@@ -1838,10 +1844,16 @@ class SchemaAPIManager extends EventEmitter {
       ExtensionAPI,
       ExtensionAPIPersistent,
       ExtensionCommon,
+      FileReader,
+      Glean,
+      GleanPings,
       IOUtils,
+      L10nFileSource,
+      L10nRegistry,
       MatchGlob,
       MatchPattern,
       MatchPatternSet,
+      OffscreenCanvas,
       PathUtils,
       Services,
       StructuredCloneHolder,
@@ -1851,7 +1863,7 @@ class SchemaAPIManager extends EventEmitter {
       global,
     });
 
-    XPCOMUtils.defineLazyGetter(global, "console", getConsole);
+    ChromeUtils.defineLazyGetter(global, "console", getConsole);
     // eslint-disable-next-line mozilla/lazy-getter-object-name
     ChromeUtils.defineESModuleGetters(global, {
       ExtensionUtils: "resource://gre/modules/ExtensionUtils.sys.mjs",
@@ -1889,12 +1901,15 @@ class LazyAPIManager extends SchemaAPIManager {
   constructor(processType, moduleData, schemaURLs) {
     super(processType);
 
+    /** @type {Promise | boolean} */
     this.initialized = false;
 
     this.initModuleData(moduleData);
 
     this.schemaURLs = schemaURLs;
   }
+
+  lazyInit() {}
 }
 
 defineLazyGetter(LazyAPIManager.prototype, "schema", function () {
@@ -1973,22 +1988,38 @@ defineLazyGetter(MultiAPIManager.prototype, "schema", function () {
   return new lazy.SchemaRoot(bases, new Map());
 });
 
-function LocaleData(data) {
+export function LocaleData(data) {
   this.defaultLocale = data.defaultLocale;
   this.selectedLocale = data.selectedLocale;
   this.locales = data.locales || new Map();
   this.warnedMissingKeys = new Set();
 
-  // Map(locale-name -> Map(message-key -> localized-string))
-  //
-  // Contains a key for each loaded locale, each of which is a
-  // Map of message keys to their localized strings.
+  /**
+   * Map(locale-name -> Map(message-key -> localized-string))
+   *
+   * Contains a key for each loaded locale, each of which is a
+   * Map of message keys to their localized strings.
+   *
+   * @type {Map<string, Map<string, string>>}
+   */
   this.messages = data.messages || new Map();
 
   if (data.builtinMessages) {
     this.messages.set(this.BUILTIN, data.builtinMessages);
   }
 }
+
+LocaleData.listLocaleVariations = function LocaleData_listLocaleVariations(
+  locale
+) {
+  const subTags = locale.split("-");
+  const result = [];
+  while (subTags.length) {
+    result.push(subTags.join("-"));
+    subTags.pop();
+  }
+  return result;
+};
 
 LocaleData.prototype = {
   // Representation of the object to send to content processes. This
@@ -2008,21 +2039,30 @@ LocaleData.prototype = {
     return this.messages.has(locale);
   },
 
+  getAvailableLocales(preferredLocale) {
+    const locales = [this.BUILTIN];
+
+    if (preferredLocale) {
+      locales.push(...LocaleData.listLocaleVariations(preferredLocale));
+    }
+
+    if (!locales.includes(this.defaultLocale)) {
+      locales.push(this.defaultLocale);
+    }
+
+    return locales.filter(locale => this.messages.has(locale));
+  },
+
   // https://developer.chrome.com/extensions/i18n
   localizeMessage(message, substitutions = [], options = {}) {
-    let defaultOptions = {
+    const defaultOptions = {
       defaultValue: "",
       cloneScope: null,
     };
 
-    let locales = this.availableLocales;
-    if (options.locale) {
-      locales = new Set(
-        [this.BUILTIN, options.locale, this.defaultLocale].filter(locale =>
-          this.messages.has(locale)
-        )
-      );
-    }
+    const locales = options.locale
+      ? this.getAvailableLocales(options.locale)
+      : this.availableLocales;
 
     options = Object.assign(defaultOptions, options);
 
@@ -2180,15 +2220,12 @@ LocaleData.prototype = {
   get uiLocale() {
     return Services.locale.appLocaleAsBCP47;
   },
-};
 
-defineLazyGetter(LocaleData.prototype, "availableLocales", function () {
-  return new Set(
-    [this.BUILTIN, this.selectedLocale, this.defaultLocale].filter(locale =>
-      this.messages.has(locale)
-    )
-  );
-});
+  get availableLocales() {
+    let value = this.getAvailableLocales(this.selectedLocale);
+    return redefineGetter(this, "availableLocales", value);
+  },
+};
 
 /**
  * This is a generic class for managing event listeners.
@@ -2267,6 +2304,26 @@ class EventManager {
     this.register = register;
     this.inputHandling = inputHandling;
     this.resetIdleOnEvent = resetIdleOnEvent;
+
+    const isBackgroundParent =
+      this.context.envType === "addon_parent" &&
+      this.context.isBackgroundContext;
+
+    // TODO(Bug 1844041): ideally we should restrict resetIdleOnEvent to
+    // EventManager instances that belongs to the event page, but along
+    // with that we should consider if calling sendMessage from an event
+    // page should also reset idle timer, and so in the shorter term
+    // here we are allowing listeners from other extension pages to
+    // also reset the idle timer.
+    const isAddonContext = ["addon_parent", "addon_child"].includes(
+      this.context.envType
+    );
+
+    // Avoid resetIdleOnEvent overhead by only consider it when applicable.
+    if (!isAddonContext || context.extension.persistentBackground) {
+      this.resetIdleOnEvent = false;
+    }
+
     if (!name) {
       this.name = `${module}.${event}`;
     }
@@ -2285,11 +2342,7 @@ class EventManager {
       );
     }
 
-    this.canPersistEvents =
-      module &&
-      event &&
-      ["background", "background_worker"].includes(this.context.viewType) &&
-      this.context.envType == "addon_parent";
+    this.canPersistEvents = module && event && isBackgroundParent;
 
     if (this.canPersistEvents) {
       let { extension } = context;
@@ -2759,7 +2812,21 @@ class EventManager {
           throw new Error("Called raw() on unloaded/inactive context");
         }
         resetIdle();
-        let result = Reflect.apply(callback, null, args);
+        let result;
+        // When we are in the parent process (isProxyContextParent==true), there is no need to forward
+        // the exceptions to the extension document (context.cloneScope).
+        if (
+          this.context.isProxyContextParent ||
+          lazy.callFunctionAndLogExceptionDisabled
+        ) {
+          result = Reflect.apply(callback, null, args);
+        } else {
+          // Use callFunctionAndLogException in order to ensure routing any exception to DevTools.
+          result = ChromeUtils.callFunctionAndLogException(
+            this.context.cloneScope,
+            () => Reflect.apply(callback, null, args)
+          );
+        }
         this.context.logActivity("api_event", this.name, { args, result });
         return result;
       },
@@ -2819,15 +2886,28 @@ class EventManager {
         listener.added = true;
 
         recordStartupData = false;
-        this.remove.set(callback, () => {
-          EventManager.clearPersistentListener(
-            extension,
-            module,
-            event,
-            uneval(args),
-            listener.primeId
-          );
-        });
+
+        // Do not clear the persistent listener for a non-persistent backgrond
+        // context on removeListener calls got after the background context
+        // was fully started. The persistent listener can instead be cleared
+        // by not re-registering it on the next background context startup.
+        //
+        // This check prevents that for listeners that were already persisted
+        // and primed (a separate one below prevents it for new listeners).
+        //
+        // TODO Bug 1899767: do not reprime if the listener has been
+        // unregistered.
+        if (extension.persistentBackground) {
+          this.remove.set(callback, () => {
+            EventManager.clearPersistentListener(
+              extension,
+              module,
+              event,
+              uneval(args),
+              listener.primeId
+            );
+          });
+        }
       }
     }
 
@@ -2843,15 +2923,28 @@ class EventManager {
     if (recordStartupData) {
       const [, , , /* _module */ /* _event */ /* _key */ primeId] =
         EventManager.savePersistentListener(extension, module, event, args);
-      this.remove.set(callback, () => {
-        EventManager.clearPersistentListener(
-          extension,
-          module,
-          event,
-          uneval(args),
-          primeId
-        );
-      });
+
+      // Do not clear the persistent listener for a non-persistent backgrond
+      // context on removeListener calls got after the background context
+      // was fully started. The persistent listener can instead be cleared
+      // by not re-registering it on the next background context startup.
+      //
+      // This check prevents that for new listeners that were not already persisted
+      // and primed.
+      //
+      // TODO Bug 1899767: do not reprime if the listener has been
+      // unregistered.
+      if (extension.persistentBackground) {
+        this.remove.set(callback, () => {
+          EventManager.clearPersistentListener(
+            extension,
+            module,
+            event,
+            uneval(args),
+            primeId
+          );
+        });
+      }
     }
   }
 
@@ -2910,7 +3003,7 @@ class EventManager {
 // Simple API for event listeners where events never fire.
 function ignoreEvent(context, name) {
   return {
-    addListener: function (callback) {
+    addListener: function () {
       let id = context.extension.id;
       let frame = Components.stack.caller;
       let msg = `In add-on ${id}, attempting to use listener "${name}", which is unimplemented.`;
@@ -2920,7 +3013,6 @@ function ignoreEvent(context, name) {
       scriptError.init(
         msg,
         frame.filename,
-        null,
         frame.lineNumber,
         frame.columnNumber,
         Ci.nsIScriptError.warningFlag,
@@ -2928,8 +3020,8 @@ function ignoreEvent(context, name) {
       );
       Services.console.logMessage(scriptError);
     },
-    removeListener: function (callback) {},
-    hasListener: function (callback) {},
+    removeListener: function () {},
+    hasListener: function () {},
   };
 }
 
@@ -2937,7 +3029,9 @@ const stylesheetMap = new DefaultMap(url => {
   let uri = Services.io.newURI(url);
   return lazy.styleSheetService.preloadSheet(
     uri,
-    lazy.styleSheetService.AGENT_SHEET
+    // Note: keep in sync with ext-browser-content.js. This used to be
+    // AGENT_SHEET, but changed to AUTHOR_SHEET, see bug 1873024.
+    lazy.styleSheetService.AUTHOR_SHEET
   );
 });
 
@@ -2990,7 +3084,7 @@ function updateAllowedOrigins(policy, origins, isAdd) {
   policy.allowedOrigins = new MatchPatternSet(Array.from(patternMap.values()));
 }
 
-ExtensionCommon = {
+export var ExtensionCommon = {
   BaseContext,
   CanOfAPIs,
   EventManager,
@@ -3006,6 +3100,7 @@ ExtensionCommon = {
   checkLoadURI,
   checkLoadURL,
   defineLazyGetter,
+  redefineGetter,
   getConsole,
   ignoreEvent,
   instanceOf,
@@ -3018,4 +3113,10 @@ ExtensionCommon = {
 
   MultiAPIManager,
   LazyAPIManager,
+
+  // Whether we're running under Web Platform Tests mode,
+  // required to adjust some cross-browser behaviors.
+  get isInWPT() {
+    return Cu.isInAutomation && lazy.wptEnabled;
+  },
 };

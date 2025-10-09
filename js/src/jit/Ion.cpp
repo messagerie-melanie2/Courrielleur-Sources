@@ -20,8 +20,10 @@
 #include "jit/BacktrackingAllocator.h"
 #include "jit/BaselineFrame.h"
 #include "jit/BaselineJIT.h"
+#include "jit/BranchHinting.h"
 #include "jit/CodeGenerator.h"
 #include "jit/CompileInfo.h"
+#include "jit/DominatorTree.h"
 #include "jit/EdgeCaseAnalysis.h"
 #include "jit/EffectiveAddressAnalysis.h"
 #include "jit/ExecutableAllocator.h"
@@ -29,6 +31,7 @@
 #include "jit/InlineScriptTree.h"
 #include "jit/InstructionReordering.h"
 #include "jit/Invalidation.h"
+#include "jit/InvalidationScriptSet.h"
 #include "jit/IonAnalysis.h"
 #include "jit/IonCompileTask.h"
 #include "jit/IonIC.h"
@@ -36,7 +39,6 @@
 #include "jit/IonScript.h"
 #include "jit/JitcodeMap.h"
 #include "jit/JitFrames.h"
-#include "jit/JitRealm.h"
 #include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
 #include "jit/JitZone.h"
@@ -48,7 +50,9 @@
 #include "jit/RangeAnalysis.h"
 #include "jit/ScalarReplacement.h"
 #include "jit/ScriptFromCalleeToken.h"
+#include "jit/SimpleAllocator.h"
 #include "jit/Sink.h"
+#include "jit/UnrollLoops.h"
 #include "jit/ValueNumbering.h"
 #include "jit/WarpBuilder.h"
 #include "jit/WarpOracle.h"
@@ -69,6 +73,7 @@
 #include "jit/MacroAssembler-inl.h"
 #include "jit/SafepointIndex-inl.h"
 #include "vm/GeckoProfiler-inl.h"
+#include "vm/JSContext-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/Realm-inl.h"
 
@@ -86,6 +91,8 @@ JitRuntime::~JitRuntime() {
   MOZ_ASSERT(numFinishedOffThreadTasks_ == 0);
   MOZ_ASSERT(ionLazyLinkListSize_ == 0);
   MOZ_ASSERT(ionLazyLinkList_.ref().isEmpty());
+
+  MOZ_ASSERT(ionFreeTaskBatch_.ref().empty());
 
   // By this point, the jitcode global table should be empty.
   MOZ_ASSERT_IF(jitcodeGlobalTable_, jitcodeGlobalTable_->empty());
@@ -208,9 +215,10 @@ bool JitRuntime::generateTrampolines(JSContext* cx) {
   shapePreBarrierOffset_ = generatePreBarrier(cx, masm, MIRType::Shape);
   rangeRecorder.recordOffset("Trampoline: PreBarrier Shape");
 
-  JitSpew(JitSpew_Codegen, "# Emitting free stub");
-  generateFreeStub(masm);
-  rangeRecorder.recordOffset("Trampoline: FreeStub");
+  JitSpew(JitSpew_Codegen, "# Emitting Pre Barrier for WasmAnyRef");
+  wasmAnyRefPreBarrierOffset_ =
+      generatePreBarrier(cx, masm, MIRType::WasmAnyRef);
+  rangeRecorder.recordOffset("Trampoline: PreBarrier WasmAnyRef");
 
   JitSpew(JitSpew_Codegen, "# Emitting lazy link stub");
   generateLazyLinkStub(masm);
@@ -225,10 +233,9 @@ bool JitRuntime::generateTrampolines(JSContext* cx) {
   rangeRecorder.recordOffset("Trampoline: DoubleToInt32ValueStub");
 
   JitSpew(JitSpew_Codegen, "# Emitting VM function wrappers");
-  if (!generateVMWrappers(cx, masm)) {
+  if (!generateVMWrappers(cx, masm, rangeRecorder)) {
     return false;
   }
-  rangeRecorder.recordOffset("Trampoline: VM Wrapper");
 
   JitSpew(JitSpew_Codegen, "# Emitting profiler exit frame tail stub");
   Label profilerExitTail;
@@ -238,6 +245,18 @@ bool JitRuntime::generateTrampolines(JSContext* cx) {
   JitSpew(JitSpew_Codegen, "# Emitting exception tail stub");
   generateExceptionTailStub(masm, &profilerExitTail, &bailoutTail);
   rangeRecorder.recordOffset("Trampoline: ExceptionTailStub");
+
+  JitSpew(JitSpew_Codegen, "# Emitting Ion generic call stub");
+  generateIonGenericCallStub(masm, IonGenericCallKind::Call);
+  rangeRecorder.recordOffset("Trampoline: IonGenericCall");
+
+  JitSpew(JitSpew_Codegen, "# Emitting Ion generic construct stub");
+  generateIonGenericCallStub(masm, IonGenericCallKind::Construct);
+  rangeRecorder.recordOffset("Trampoline: IonGenericConstruct");
+
+  JitSpew(JitSpew_Codegen, "# Emitting trampoline natives");
+  TrampolineNativeJitEntryOffsets nativeOffsets;
+  generateTrampolineNatives(masm, nativeOffsets, rangeRecorder);
 
   Linker linker(masm);
   trampolineCode_ = linker.newCode(cx, CodeKind::Other);
@@ -250,20 +269,30 @@ bool JitRuntime::generateTrampolines(JSContext* cx) {
   vtune::MarkStub(trampolineCode_, "Trampolines");
 #endif
 
+  // Initialize TrampolineNative JitEntry array.
+  for (size_t i = 0; i < size_t(TrampolineNative::Count); i++) {
+    TrampolineNative native = TrampolineNative(i);
+    uint32_t offset = nativeOffsets[native];
+    MOZ_ASSERT(offset > 0 && offset < trampolineCode_->instructionsSize());
+    trampolineNativeJitEntries_[native] = trampolineCode_->raw() + offset;
+  }
+
   return true;
 }
 
-JitCode* JitRuntime::debugTrapHandler(JSContext* cx,
-                                      DebugTrapHandlerKind kind) {
-  if (!debugTrapHandlers_[kind]) {
-    // JitRuntime code stubs are shared across compartments and have to
-    // be allocated in the atoms zone.
-    mozilla::Maybe<AutoAllocInAtomsZone> az;
-    if (!cx->zone()->isAtomsZone()) {
-      az.emplace(cx);
-    }
-    debugTrapHandlers_[kind] = generateDebugTrapHandler(cx, kind);
+bool JitRuntime::ensureDebugTrapHandler(JSContext* cx,
+                                        DebugTrapHandlerKind kind) {
+  if (debugTrapHandlers_[kind]) {
+    return true;
   }
+
+  // JitRuntime code stubs are shared across compartments and have to
+  // be allocated in the atoms zone.
+  mozilla::Maybe<AutoAllocInAtomsZone> az;
+  if (!cx->zone()->isAtomsZone()) {
+    az.emplace(cx);
+  }
+  debugTrapHandlers_[kind] = generateDebugTrapHandler(cx, kind);
   return debugTrapHandlers_[kind];
 }
 
@@ -295,44 +324,44 @@ void JitRuntime::ionLazyLinkListAdd(JSRuntime* rt, jit::IonCompileTask* task) {
 }
 
 uint8_t* JitRuntime::allocateIonOsrTempData(size_t size) {
-  // Free the old buffer (if needed) before allocating a new one. Note that we
-  // could use realloc here but it's likely not worth the complexity.
-  freeIonOsrTempData();
-  ionOsrTempData_.ref().reset(static_cast<uint8_t*>(js_malloc(size)));
-  return ionOsrTempData_.ref().get();
-}
+  MOZ_ASSERT(size > 0);
 
-void JitRuntime::freeIonOsrTempData() { ionOsrTempData_.ref().reset(); }
+  uint8_t* prevBuffer = ionOsrTempData_.ref().get();
+  size_t prevSize = ionOsrTempDataSize_.ref();
+  MOZ_ASSERT((prevSize > 0) == !!prevBuffer);
 
-JitRealm::JitRealm() : initialStringHeap(gc::Heap::Tenured) {}
-
-void JitRealm::initialize(bool zoneHasNurseryStrings) {
-  setStringsCanBeInNursery(zoneHasNurseryStrings);
-}
-
-template <typename T>
-static T PopNextBitmaskValue(uint32_t* bitmask) {
-  MOZ_ASSERT(*bitmask);
-  uint32_t index = mozilla::CountTrailingZeroes32(*bitmask);
-  *bitmask ^= 1 << index;
-
-  MOZ_ASSERT(index < uint32_t(T::Count));
-  return T(index);
-}
-
-void JitRealm::performStubReadBarriers(uint32_t stubsToBarrier) const {
-  while (stubsToBarrier) {
-    auto stub = PopNextBitmaskValue<StubIndex>(&stubsToBarrier);
-    const WeakHeapPtr<JitCode*>& jitCode = stubs_[stub];
-    MOZ_ASSERT(jitCode);
-    jitCode.get();
+  // Reuse the previous buffer if possible.
+  if (prevSize >= size) {
+    return prevBuffer;
   }
+
+  // Allocate or resize the buffer.
+  uint8_t* buffer = js_pod_realloc<uint8_t>(prevBuffer, prevSize, size);
+  if (!buffer) {
+    // ionOsrTempData_ is still valid.
+    return nullptr;
+  }
+  // ionOsrTempData_ is no longer valid.
+  (void)ionOsrTempData_.ref().release();
+  ionOsrTempData_.ref().reset(buffer);
+  ionOsrTempDataSize_ = size;
+  return buffer;
+}
+
+void JitRuntime::freeIonOsrTempData() {
+  ionOsrTempData_.ref().reset();
+  ionOsrTempDataSize_ = 0;
 }
 
 static bool LinkCodeGen(JSContext* cx, CodeGenerator* codegen,
-                        HandleScript script, const WarpSnapshot* snapshot) {
-  if (!codegen->link(cx, snapshot)) {
+                        HandleScript script) {
+  if (!codegen->link(cx)) {
     return false;
+  }
+
+  // Record Ion compile time in glean.
+  if (mozilla::TimeDuration compileTime = codegen->getCompilationTime()) {
+    cx->metrics().ION_COMPILE_TIME(compileTime);
   }
 
   return true;
@@ -346,7 +375,7 @@ static bool LinkBackgroundCodeGen(JSContext* cx, IonCompileTask* task) {
 
   JitContext jctx(cx);
   RootedScript script(cx, task->script());
-  return LinkCodeGen(cx, codegen, script, task->snapshot());
+  return LinkCodeGen(cx, codegen, script);
 }
 
 void jit::LinkIonScript(JSContext* cx, HandleScript calleeScript) {
@@ -370,10 +399,8 @@ void jit::LinkIonScript(JSContext* cx, HandleScript calleeScript) {
     }
   }
 
-  {
-    AutoLockHelperThreadState lock;
-    FinishOffThreadTask(cx->runtime(), task, lock);
-  }
+  AutoStartIonFreeTask freeTask(cx->runtime()->jitRuntime());
+  FinishOffThreadTask(cx->runtime(), freeTask, task);
 }
 
 uint8_t* jit::LazyLinkTopActivation(JSContext* cx,
@@ -391,8 +418,6 @@ uint8_t* jit::LazyLinkTopActivation(JSContext* cx,
 
 /* static */
 void JitRuntime::TraceAtomZoneRoots(JSTracer* trc) {
-  MOZ_ASSERT(!JS::RuntimeHeapIsMinorCollecting());
-
   // Shared stubs are allocated in the atoms zone, so do not iterate
   // them after the atoms heap after it has been "finished."
   if (trc->runtime()->atomsAreFinished()) {
@@ -422,15 +447,6 @@ bool JitRuntime::MarkJitcodeGlobalTableIteratively(GCMarker* marker) {
 void JitRuntime::TraceWeakJitcodeGlobalTable(JSRuntime* rt, JSTracer* trc) {
   if (rt->hasJitRuntime() && rt->jitRuntime()->hasJitcodeGlobalTable()) {
     rt->jitRuntime()->getJitcodeGlobalTable()->traceWeak(rt, trc);
-  }
-}
-
-void JitRealm::traceWeak(JSTracer* trc, JS::Realm* realm) {
-  // Any outstanding compilations should have been cancelled by the GC.
-  MOZ_ASSERT(!HasOffThreadIonCompile(realm));
-
-  for (WeakHeapPtr<JitCode*>& stub : stubs_) {
-    TraceWeakEdge(trc, &stub, "JitRealm::stubs_");
   }
 }
 
@@ -522,7 +538,13 @@ bool RecompileInfo::traceWeak(JSTracer* trc) {
   return maybeIonScriptToInvalidate() != nullptr;
 }
 
-void JitZone::traceWeak(JSTracer* trc) {
+void JitZone::traceWeak(JSTracer* trc, Zone* zone) {
+  MOZ_ASSERT(this == zone->jitZone());
+
+  for (WeakHeapPtr<JitCode*>& stub : stubs_) {
+    TraceWeakEdge(trc, &stub, "JitZone::stubs_");
+  }
+
   baselineCacheIRStubCodes_.traceWeak(trc);
   inlinedCompilations_.traceWeak(trc);
 
@@ -532,13 +554,9 @@ void JitZone::traceWeak(JSTracer* trc) {
                 "JitZone::lastStubFoldingBailoutParent_");
 }
 
-size_t JitRealm::sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
-  return mallocSizeOf(this);
-}
-
 void JitZone::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
                                      JS::CodeSizes* code, size_t* jitZone,
-                                     size_t* baselineStubsOptimized) const {
+                                     size_t* cacheIRStubs) const {
   *jitZone += mallocSizeOf(this);
   *jitZone +=
       baselineCacheIRStubCodes_.shallowSizeOfExcludingThis(mallocSizeOf);
@@ -546,8 +564,7 @@ void JitZone::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
 
   execAlloc().addSizeOfCode(code);
 
-  *baselineStubsOptimized +=
-      optimizedStubSpace_.sizeOfExcludingThis(mallocSizeOf);
+  *cacheIRStubs += stubSpace_.sizeOfExcludingThis(mallocSizeOf);
 }
 
 void JitCodeHeader::init(JitCode* jitCode) {
@@ -644,18 +661,7 @@ void JitCode::finalize(JS::GCContext* gcx) {
   }
   setHeaderPtr(nullptr);
 
-#ifdef JS_ION_PERF
-  // Code buffers are stored inside ExecutablePools. Pools are refcounted.
-  // Releasing the pool may free it. Horrible hack: if we are using perf
-  // integration, we don't want to reuse code addresses, so we just leak the
-  // memory instead.
-  if (!PerfEnabled()) {
-    pool_->release(headerSize_ + bufferSize_, CodeKind(kind_));
-  }
-#else
   pool_->release(headerSize_ + bufferSize_, CodeKind(kind_));
-#endif
-
   zone()->decJitMemory(headerSize_ + bufferSize_);
 
   pool_ = nullptr;
@@ -785,6 +791,11 @@ void IonScript::trace(JSTracer* trc) {
   for (size_t i = 0; i < numICs(); i++) {
     getICFromIndex(i).trace(trc, this);
   }
+}
+
+void IonScript::traceWeak(JSTracer* trc) {
+  // IonICs do not currently contain weak pointers. If this is added then they
+  // should be traced here.
 }
 
 /* static */
@@ -928,7 +939,7 @@ void IonScript::Destroy(JS::GCContext* gcx, IonScript* script) {
       continue;
     }
     if (lock.isNothing()) {
-      lock.emplace(&gcx->runtime()->gc.storeBuffer());
+      lock.emplace(gcx->runtimeFromAnyThread());
     }
     script->nurseryObjects()[i] = HeapPtr<JSObject*>();
   }
@@ -982,7 +993,8 @@ bool OptimizeMIR(MIRGenerator* mir) {
   }
 
   {
-    if (!FoldEmptyBlocks(graph)) {
+    bool dummy;
+    if (!FoldEmptyBlocks(graph, &dummy)) {
       return false;
     }
     gs.spewPass("Fold Empty Blocks");
@@ -1042,7 +1054,7 @@ bool OptimizeMIR(MIRGenerator* mir) {
   }
 
   {
-    if (!BuildDominatorTree(graph)) {
+    if (!BuildDominatorTree(mir, graph)) {
       return false;
     }
     // No spew: graph not changed.
@@ -1119,6 +1131,18 @@ bool OptimizeMIR(MIRGenerator* mir) {
     }
   }
 
+  if (mir->compilingWasm()) {
+    if (!TrackWasmRefTypes(graph)) {
+      return false;
+    }
+    gs.spewPass("Track Wasm ref types");
+    AssertExtendedGraphCoherency(graph);
+
+    if (mir->shouldCancel("Track Wasm ref types")) {
+      return false;
+    }
+  }
+
   if (mir->optimizationInfo().amaEnabled()) {
     AlignmentMaskAnalysis ama(graph);
     if (!ama.analyze()) {
@@ -1181,6 +1205,19 @@ bool OptimizeMIR(MIRGenerator* mir) {
     AssertExtendedGraphCoherency(graph);
 
     if (mir->shouldCancel("GVN")) {
+      return false;
+    }
+  }
+
+  if (mir->branchHintingEnabled()) {
+    JitSpewCont(JitSpew_BranchHint, "\n");
+    if (!BranchHinting(mir, graph)) {
+      return false;
+    }
+    gs.spewPass("BranchHinting");
+    AssertBasicGraphCoherency(graph);
+
+    if (mir->shouldCancel("BranchHinting")) {
       return false;
     }
   }
@@ -1352,9 +1389,19 @@ bool OptimizeMIR(MIRGenerator* mir) {
     }
   }
 
+  if (!JitOptions.disableMarkLoadsUsedAsPropertyKeys && !mir->compilingWasm()) {
+    JitSpewCont(JitSpew_MarkLoadsUsedAsPropertyKeys, "\n");
+    if (!MarkLoadsUsedAsPropertyKeys(graph)) {
+      return false;
+    }
+    if (mir->shouldCancel("MarkLoadsUsedAsPropertyKeys")) {
+      return false;
+    }
+  }
+
   if (mir->optimizationInfo().instructionReorderingEnabled() &&
       !mir->outerInfo().hadReorderingBailout()) {
-    if (!ReorderInstructions(graph)) {
+    if (!ReorderInstructions(mir, graph)) {
       return false;
     }
     gs.spewPass("Reordering");
@@ -1381,6 +1428,48 @@ bool OptimizeMIR(MIRGenerator* mir) {
   }
   AssertExtendedGraphCoherency(graph, /* underValueNumberer = */ false,
                                /* force = */ true);
+
+  // Unroll and/or peel loops
+  if (mir->compilingWasm() && JS::Prefs::wasm_unroll_loops()) {
+    bool loopsChanged;
+    if (!UnrollLoops(mir, graph, &loopsChanged)) {
+      return false;
+    }
+
+    gs.spewPass("Unroll loops");
+
+    AssertExtendedGraphCoherency(graph);
+
+    if (mir->shouldCancel("Unroll loops")) {
+      return false;
+    }
+
+    if (loopsChanged) {
+      // Rerun GVN in the hope that unrolling exposed more optimization
+      // opportunities.
+      if (!gvn.run(ValueNumberer::DontUpdateAliasAnalysis)) {
+        return false;
+      }
+      // And tidy up any empty blocks.
+      bool blocksFolded;
+      if (!FoldEmptyBlocks(graph, &blocksFolded)) {
+        return false;
+      }
+      if (blocksFolded) {
+        // Redo the dominator tree.
+        ClearDominatorTree(graph);
+        if (!BuildDominatorTree(mir, graph)) {
+          return false;
+        }
+      }
+
+      AssertExtendedGraphCoherency(graph);
+
+      if (mir->shouldCancel("Rerun GVN after loop unrolling")) {
+        return false;
+      }
+    }
+  }
 
   // Remove unreachable blocks created by MBasicBlock::NewFakeLoopPredecessor
   // to ensure every loop header has two predecessors. (This only happens due
@@ -1422,6 +1511,10 @@ bool OptimizeMIR(MIRGenerator* mir) {
     }
     gs.spewPass("Bounds Check Elimination");
     AssertGraphCoherency(graph);
+
+    if (mir->shouldCancel("Bounds Check Elimination")) {
+      return false;
+    }
   }
 
   if (mir->optimizationInfo().eliminateRedundantShapeGuardsEnabled()) {
@@ -1430,6 +1523,10 @@ bool OptimizeMIR(MIRGenerator* mir) {
     }
     gs.spewPass("Shape Guard Elimination");
     AssertGraphCoherency(graph);
+
+    if (mir->shouldCancel("Shape Guard Elimination")) {
+      return false;
+    }
   }
 
   // Run the GC Barrier Elimination pass after instruction reordering, to
@@ -1441,6 +1538,10 @@ bool OptimizeMIR(MIRGenerator* mir) {
     }
     gs.spewPass("GC Barrier Elimination");
     AssertGraphCoherency(graph);
+
+    if (mir->shouldCancel("GC Barrier Elimination")) {
+      return false;
+    }
   }
 
   if (!mir->compilingWasm() && !mir->outerInfo().hadUnboxFoldingBailout()) {
@@ -1449,6 +1550,10 @@ bool OptimizeMIR(MIRGenerator* mir) {
     }
     gs.spewPass("FoldLoadsWithUnbox");
     AssertGraphCoherency(graph);
+
+    if (mir->shouldCancel("FoldLoadsWithUnbox")) {
+      return false;
+    }
   }
 
   if (!mir->compilingWasm()) {
@@ -1457,6 +1562,10 @@ bool OptimizeMIR(MIRGenerator* mir) {
     }
     gs.spewPass("Add KeepAlive Instructions");
     AssertGraphCoherency(graph);
+
+    if (mir->shouldCancel("Add KeepAlive Instructions")) {
+      return false;
+    }
   }
 
   AssertGraphCoherency(graph, /* force = */ true);
@@ -1493,60 +1602,58 @@ LIRGraph* GenerateLIR(MIRGenerator* mir) {
 
 #ifdef DEBUG
   AllocationIntegrityState integrity(*lir);
-#endif
-
-  {
-    IonRegisterAllocator allocator =
-        mir->optimizationInfo().registerAllocator();
-
-    switch (allocator) {
-      case RegisterAllocator_Backtracking:
-      case RegisterAllocator_Testbed: {
-#ifdef DEBUG
-        if (JitOptions.fullDebugChecks) {
-          if (!integrity.record()) {
-            return nullptr;
-          }
-        }
-#endif
-
-        BacktrackingAllocator regalloc(mir, &lirgen, *lir,
-                                       allocator == RegisterAllocator_Testbed);
-        if (!regalloc.go()) {
-          return nullptr;
-        }
-
-#ifdef DEBUG
-        if (JitOptions.fullDebugChecks) {
-          if (!integrity.check()) {
-            return nullptr;
-          }
-        }
-#endif
-
-        gs.spewPass("Allocate Registers [Backtracking]");
-        break;
-      }
-
-      default:
-        MOZ_CRASH("Bad regalloc");
-    }
-
-    if (mir->shouldCancel("Allocate Registers")) {
+  if (JitOptions.fullDebugChecks) {
+    if (!integrity.record()) {
       return nullptr;
     }
+  }
+#endif
+
+  IonRegisterAllocator allocator = mir->optimizationInfo().registerAllocator();
+  switch (allocator) {
+    case RegisterAllocator_Backtracking: {
+      BacktrackingAllocator regalloc(mir, &lirgen, *lir);
+      if (!regalloc.go()) {
+        return nullptr;
+      }
+      gs.spewPass("Allocate Registers [Backtracking]");
+      break;
+    }
+    case RegisterAllocator_Simple: {
+      SimpleAllocator regalloc(mir, &lirgen, *lir);
+      if (!regalloc.go()) {
+        return nullptr;
+      }
+      gs.spewPass("Allocate Registers [Simple]");
+      break;
+    }
+    default:
+      MOZ_CRASH("Bad regalloc");
+  }
+
+#ifdef DEBUG
+  if (JitOptions.fullDebugChecks) {
+    if (!integrity.check()) {
+      return nullptr;
+    }
+  }
+#endif
+
+  if (mir->shouldCancel("Allocate Registers")) {
+    return nullptr;
   }
 
   return lir;
 }
 
-CodeGenerator* GenerateCode(MIRGenerator* mir, LIRGraph* lir) {
+static CodeGenerator* GenerateCode(MIRGenerator* mir, LIRGraph* lir,
+                                   const WarpSnapshot* snapshot) {
   auto codegen = MakeUnique<CodeGenerator>(mir, lir);
   if (!codegen) {
     return nullptr;
   }
 
-  if (!codegen->generate()) {
+  if (!codegen->generate(snapshot)) {
     return nullptr;
   }
 
@@ -1557,6 +1664,7 @@ CodeGenerator* CompileBackEnd(MIRGenerator* mir, WarpSnapshot* snapshot) {
   // Everything in CompileBackEnd can potentially run on a helper thread.
   AutoEnterIonBackend enter;
   AutoSpewEndFunction spewEndFunction(mir);
+  mozilla::TimeStamp compileStartTime = mozilla::TimeStamp::Now();
 
   {
     WarpCompilation comp(mir->alloc());
@@ -1575,7 +1683,11 @@ CodeGenerator* CompileBackEnd(MIRGenerator* mir, WarpSnapshot* snapshot) {
     return nullptr;
   }
 
-  return GenerateCode(mir, lir);
+  CodeGenerator* codegen = GenerateCode(mir, lir, snapshot);
+  if (codegen) {
+    codegen->setCompilationTime(mozilla::TimeStamp::Now() - compileStartTime);
+  }
+  return codegen;
 }
 
 static AbortReasonOr<WarpSnapshot*> CreateWarpSnapshot(JSContext* cx,
@@ -1598,22 +1710,56 @@ static AbortReasonOr<WarpSnapshot*> CreateWarpSnapshot(JSContext* cx,
   return result;
 }
 
+UniquePtr<LifoAlloc> JitRuntime::tryReuseIonLifoAlloc() {
+  // Try to reuse the LifoAlloc of a finished Ion compilation task for a new
+  // Ion compilation. If there are multiple tasks, we pick the one with the
+  // largest LifoAlloc.
+
+  auto& batch = ionFreeTaskBatch_.ref();
+  IonCompileTask* bestTask = nullptr;
+  size_t bestTaskIndex = 0;
+  size_t bestTaskSize = 0;
+
+  for (size_t i = 0, len = batch.length(); i < len; i++) {
+    IonCompileTask* task = batch[i];
+    if (task->alloc().lifoAlloc()->isHuge()) {
+      // Ignore 'huge' LifoAllocs. This avoids keeping a lot of memory alive and
+      // also avoids freeing all LifoAlloc memory (instead of reusing it) in
+      // freeAllIfHugeAndUnused.
+      continue;
+    }
+    size_t taskSize = task->alloc().lifoAlloc()->computedSizeOfExcludingThis();
+    if (!bestTask || taskSize >= bestTaskSize) {
+      bestTask = task;
+      bestTaskIndex = i;
+      bestTaskSize = taskSize;
+    }
+  }
+
+  if (bestTask) {
+    batch.erase(&batch[bestTaskIndex]);
+    return FreeIonCompileTaskAndReuseLifoAlloc(bestTask);
+  }
+
+  return nullptr;
+}
+
 static AbortReason IonCompile(JSContext* cx, HandleScript script,
                               jsbytecode* osrPc) {
   cx->check(script);
 
-  auto alloc =
-      cx->make_unique<LifoAlloc>(TempAllocator::PreferredLifoChunkSize);
+  if (!cx->zone()->ensureJitZoneExists(cx)) {
+    return AbortReason::Error;
+  }
+
+  UniquePtr<LifoAlloc> alloc =
+      cx->runtime()->jitRuntime()->tryReuseIonLifoAlloc();
   if (!alloc) {
-    return AbortReason::Error;
-  }
-
-  if (!cx->realm()->ensureJitRealmExists(cx)) {
-    return AbortReason::Error;
-  }
-
-  if (!cx->realm()->jitRealm()->ensureIonStubsExist(cx)) {
-    return AbortReason::Error;
+    alloc = cx->make_unique<LifoAlloc>(TempAllocator::PreferredLifoChunkSize,
+                                       js::MallocArena);
+    if (!alloc) {
+      return AbortReason::Error;
+    }
   }
 
   TempAllocator* temp = alloc->new_<TempAllocator>(alloc.get());
@@ -1650,6 +1796,9 @@ static AbortReason IonCompile(JSContext* cx, HandleScript script,
     return AbortReason::Alloc;
   }
 
+  auto clearDependencies =
+      mozilla::MakeScopeExit([mirGen]() { mirGen->tracker.reset(); });
+
   MOZ_ASSERT(!script->baselineScript()->hasPendingIonCompileTask());
   MOZ_ASSERT(!script->hasIonScript());
   MOZ_ASSERT(script->canIonCompile());
@@ -1669,7 +1818,8 @@ static AbortReason IonCompile(JSContext* cx, HandleScript script,
     JitSpew(JitSpew_IonSyncLogs,
             "Can't log script %s:%u:%u"
             ". (Compiled on background thread.)",
-            script->filename(), script->lineno(), script->column());
+            script->filename(), script->lineno(),
+            script->column().oneOriginValue());
 
     IonCompileTask* task = alloc->new_<IonCompileTask>(cx, *mirGen, snapshot);
     if (!task) {
@@ -1688,6 +1838,7 @@ static AbortReason IonCompile(JSContext* cx, HandleScript script,
     // The allocator and associated data will be destroyed after being
     // processed in the finishedOffThreadCompilations list.
     (void)alloc.release();
+    clearDependencies.release();
 
     return AbortReason::NoAbort;
   }
@@ -1705,7 +1856,7 @@ static AbortReason IonCompile(JSContext* cx, HandleScript script,
       return AbortReason::Disable;
     }
 
-    succeeded = LinkCodeGen(cx, codegen.get(), script, snapshot);
+    succeeded = LinkCodeGen(cx, codegen.get(), script);
   }
 
   if (succeeded) {
@@ -1785,7 +1936,7 @@ static bool ScriptIsTooLarge(JSContext* cx, JSScript* script) {
     JitSpew(JitSpew_IonAbort,
             "Script too large (%zu bytes) (%zu locals/args) @ %s:%u:%u",
             script->length(), numLocalsAndArgs, script->filename(),
-            script->lineno(), script->column());
+            script->lineno(), script->column().oneOriginValue());
     return true;
   }
 
@@ -1804,20 +1955,6 @@ bool CanIonCompileScript(JSContext* cx, JSScript* script) {
   }
 
   if (ScriptIsTooLarge(cx, script)) {
-    return false;
-  }
-
-  return true;
-}
-
-bool CanIonInlineScript(JSScript* script) {
-  if (!script->canIonCompile()) {
-    return false;
-  }
-
-  const char* reason = nullptr;
-  if (!CanIonCompileOrInlineScript(script, &reason)) {
-    JitSpew(JitSpew_Inlining, "Cannot Ion compile script (%s)", reason);
     return false;
   }
 
@@ -1844,12 +1981,13 @@ static MethodStatus Compile(JSContext* cx, HandleScript script,
 
   if (!CanIonCompileScript(cx, script)) {
     JitSpew(JitSpew_IonAbort, "Aborted compilation of %s:%u:%u",
-            script->filename(), script->lineno(), script->column());
+            script->filename(), script->lineno(),
+            script->column().oneOriginValue());
     return Method_CantCompile;
   }
 
   OptimizationLevel optimizationLevel =
-      IonOptimizations.levelForScript(script, osrPc);
+      IonOptimizations.levelForScript(cx, script, osrPc);
   if (optimizationLevel == OptimizationLevel::DontCompile) {
     return Method_Skipped;
   }
@@ -2109,8 +2247,9 @@ static bool IonCompileScriptForBaseline(JSContext* cx, BaselineFrame* frame,
   JitSpew(JitSpew_BaselineOSR,
           "WarmUpCounter for %s:%u:%u reached %d at pc %p, trying to switch to "
           "Ion!",
-          script->filename(), script->lineno(), script->column(),
-          (int)script->getWarmUpCount(), (void*)pc);
+          script->filename(), script->lineno(),
+          script->column().oneOriginValue(), (int)script->getWarmUpCount(),
+          (void*)pc);
 
   MethodStatus stat;
   if (isLoopHead) {
@@ -2274,18 +2413,13 @@ static void InvalidateActivation(JS::GCContext* gcx,
 
   for (OnlyJSJitFrameIter iter(activations); !iter.done(); ++iter, ++frameno) {
     const JSJitFrameIter& frame = iter.frame();
-    MOZ_ASSERT_IF(frameno == 1, frame.isExitFrame() ||
-                                    frame.type() == FrameType::Bailout ||
-                                    frame.type() == FrameType::JSJitToWasm);
+    MOZ_ASSERT_IF(frameno == 1,
+                  frame.isExitFrame() || frame.type() == FrameType::Bailout);
 
 #ifdef JS_JITSPEW
     switch (frame.type()) {
       case FrameType::Exit:
         JitSpew(JitSpew_IonInvalidate, "#%zu exit frame @ %p", frameno,
-                frame.fp());
-        break;
-      case FrameType::JSJitToWasm:
-        JitSpew(JitSpew_IonInvalidate, "#%zu wasm exit frame @ %p", frameno,
                 frame.fp());
         break;
       case FrameType::BaselineJS:
@@ -2304,8 +2438,8 @@ static void InvalidateActivation(JS::GCContext* gcx,
         JitSpew(JitSpew_IonInvalidate,
                 "#%zu %s JS frame @ %p, %s:%u:%u (fun: %p, script: %p, pc %p)",
                 frameno, type, frame.fp(), script->maybeForwardedFilename(),
-                script->lineno(), script->column(), frame.maybeCallee(), script,
-                frame.resumePCinCurrentFrame());
+                script->lineno(), script->column().oneOriginValue(),
+                frame.maybeCallee(), script, frame.resumePCinCurrentFrame());
         break;
       }
       case FrameType::BaselineStub:
@@ -2320,6 +2454,10 @@ static void InvalidateActivation(JS::GCContext* gcx,
       case FrameType::Rectifier:
         JitSpew(JitSpew_IonInvalidate, "#%zu rectifier frame @ %p", frameno,
                 frame.fp());
+        break;
+      case FrameType::TrampolineNative:
+        JitSpew(JitSpew_IonInvalidate, "#%zu TrampolineNative frame @ %p",
+                frameno, frame.fp());
         break;
       case FrameType::IonICCall:
         JitSpew(JitSpew_IonInvalidate, "#%zu ion IC call frame @ %p", frameno,
@@ -2430,11 +2568,7 @@ static void InvalidateActivation(JS::GCContext* gcx,
 
 void jit::InvalidateAll(JS::GCContext* gcx, Zone* zone) {
   // The caller should previously have cancelled off thread compilation.
-#ifdef DEBUG
-  for (RealmsInZoneIter realm(zone); !realm.done(); realm.next()) {
-    MOZ_ASSERT(!HasOffThreadIonCompile(realm));
-  }
-#endif
+  MOZ_ASSERT(!HasOffThreadIonCompile(zone));
   if (zone->isAtomsZone()) {
     return;
   }
@@ -2464,6 +2598,18 @@ static void ClearIonScriptAfterInvalidation(JSContext* cx, JSScript* script,
   }
 }
 
+// Remove this script from pending invalidation script caches.
+//
+// This is done to avoid an invalidation leaving behind dependencies which
+// may not actually be real on a recompilation, causing superflous invalidation
+// of recompiled code.
+//
+// Note: This must be kept in sync with the various WeakScriptCaches.
+static void ClearPendingInvalidationDependencies(JSScript* script) {
+  script->realm()->zone()->fuseDependencies.removeScript(script);
+  script->realm()->realmFuses.fuseDependencies.removeScript(script);
+}
+
 void jit::Invalidate(JSContext* cx, const RecompileInfoVector& invalid,
                      bool resetUses, bool cancelOffThread) {
   JitSpew(JitSpew_IonInvalidate, "Start invalidation.");
@@ -2483,7 +2629,9 @@ void jit::Invalidate(JSContext* cx, const RecompileInfoVector& invalid,
 
     JitSpew(JitSpew_IonInvalidate, " Invalidate %s:%u:%u, IonScript %p",
             info.script()->filename(), info.script()->lineno(),
-            info.script()->column(), ionScript);
+            info.script()->column().oneOriginValue(), ionScript);
+
+    ClearPendingInvalidationDependencies(info.script());
 
     // Keep the ion script alive during the invalidation and flag this
     // ionScript as being invalidated.  This increment is removed by the
@@ -2569,8 +2717,8 @@ void jit::Invalidate(JSContext* cx, JSScript* script, bool resetUses,
     }
 
     // Construct the descriptive string.
-    UniqueChars buf =
-        JS_smprintf("%s:%u:%u", filename, script->lineno(), script->column());
+    UniqueChars buf = JS_smprintf("%s:%u:%u", filename, script->lineno(),
+                                  script->column().oneOriginValue());
 
     // Ignore the event on allocation failure.
     if (buf) {
@@ -2604,7 +2752,8 @@ void jit::FinishInvalidation(JS::GCContext* gcx, JSScript* script) {
 
 void jit::ForbidCompilation(JSContext* cx, JSScript* script) {
   JitSpew(JitSpew_IonAbort, "Disabling Ion compilation of script %s:%u:%u",
-          script->filename(), script->lineno(), script->column());
+          script->filename(), script->lineno(),
+          script->column().oneOriginValue());
 
   CancelOffThreadIonCompile(script);
 

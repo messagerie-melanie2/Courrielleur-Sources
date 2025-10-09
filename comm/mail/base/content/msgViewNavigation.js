@@ -8,11 +8,9 @@
 /* globals DBViewWrapper, dbViewWrapperListener, TreeSelection */
 /* globals gDBView: true, gFolder: true, gViewWrapper: true */ // mailCommon.js
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "FolderUtils",
-  "resource:///modules/FolderUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  FolderUtils: "resource:///modules/FolderUtils.sys.mjs",
+});
 
 function GetSubFoldersInFolderPaneOrder(folder) {
   function compareFolderSortKey(folder1, folder2) {
@@ -37,7 +35,7 @@ function FindNextChildFolder(aParent, aAfter) {
       folder = subFolders[i++];
     }
 
-    let ignoreFlags =
+    const ignoreFlags =
       Ci.nsMsgFolderFlags.Trash |
       Ci.nsMsgFolderFlags.SentMail |
       Ci.nsMsgFolderFlags.Drafts |
@@ -120,10 +118,10 @@ function FindNextFolder() {
 }
 
 function GetRootFoldersInFolderPaneOrder() {
-  let accounts = FolderUtils.allAccountsSorted(false);
+  const accounts = FolderUtils.allAccountsSorted(false);
 
-  let serversMsgFolders = [];
-  for (let account of accounts) {
+  const serversMsgFolders = [];
+  for (const account of accounts) {
     serversMsgFolders.push(account.incomingServer.rootMsgFolder);
   }
 
@@ -131,13 +129,21 @@ function GetRootFoldersInFolderPaneOrder() {
 }
 
 /**
+ * @callback navigateCallback
+ * @param {nsMsgNavigationType} type - The type of navigation.
+ */
+
+/**
  * Handle switching the folder if required for the given kind of navigation.
  * Only used in about:3pane.
  *
  * @param {nsMsgNavigationType} type - The type of navigation.
+ * @param {navigateCallback} [navigateFunction] - The function to be called
+ *   when the folder has been changed and all messages in that folder have been
+ *   loaded. This is `commandController._navigate`.
  * @returns {boolean} If the folder was changed for the navigation.
  */
-function CrossFolderNavigation(type) {
+function CrossFolderNavigation(type, navigateFunction) {
   // do cross folder navigation for next unread message/thread and message history
   if (
     type != Ci.nsMsgNavigationType.nextUnreadMessage &&
@@ -146,7 +152,7 @@ function CrossFolderNavigation(type) {
     return false;
   }
 
-  let nextMode = Services.prefs.getIntPref("mailnews.nav_crosses_folders");
+  const nextMode = Services.prefs.getIntPref("mailnews.nav_crosses_folders");
   // 0: "next" goes to the next folder, without prompting
   // 1: "next" goes to the next folder, and prompts (the default)
   // 2: "next" does nothing when there are no unread messages
@@ -156,20 +162,21 @@ function CrossFolderNavigation(type) {
     return false;
   }
 
-  let folder = FindNextFolder();
+  const folder = FindNextFolder();
   if (!folder || gDBView.msgFolder.URI == folder.URI) {
     return false;
   }
 
   if (nextMode == 1) {
-    let messengerBundle =
+    const messengerBundle =
       window.messengerBundle ||
       Services.strings.createBundle(
         "chrome://messenger/locale/messenger.properties"
       );
-    let promptText = messengerBundle.formatStringFromName("advanceNextPrompt", [
-      folder.name,
-    ]);
+    const promptText = messengerBundle.formatStringFromName(
+      "advanceNextPrompt",
+      [folder.name]
+    );
     if (
       Services.prompt.confirmEx(
         window,
@@ -189,7 +196,10 @@ function CrossFolderNavigation(type) {
 
   if (window.threadPane) {
     // In about:3pane.
-    window.threadPane.forgetSelection(folder.URI);
+    window.addEventListener("allMessagesLoaded", () => navigateFunction(type), {
+      once: true,
+    });
+    window.threadPane.forgetSavedSelection(folder.URI);
     window.displayFolder(folder.URI);
   } else {
     // In standalone about:message. Do just enough to call
@@ -198,10 +208,11 @@ function CrossFolderNavigation(type) {
     gViewWrapper._viewFlags = Ci.nsMsgViewFlagsType.kThreadedDisplay;
     gViewWrapper.open(folder);
     gDBView = gViewWrapper.dbView;
-    let selection = (gDBView.selection = new TreeSelection());
+    const selection = (gDBView.selection = new TreeSelection());
     selection.view = gDBView;
     // We're now in a bit of a weird state until `displayMessage` is called,
     // but being here means we have everything we need for that to happen.
+    navigateFunction(type);
   }
   return true;
 }

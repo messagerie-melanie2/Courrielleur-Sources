@@ -7,11 +7,11 @@
 const {
   Component,
   createFactory,
-} = require("resource://devtools/client/shared/vendor/react.js");
+} = require("resource://devtools/client/shared/vendor/react.mjs");
 const {
   connect,
 } = require("resource://devtools/client/shared/vendor/react-redux.js");
-const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.js");
+const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.mjs");
 const {
   div,
 } = require("resource://devtools/client/shared/vendor/react-dom-factories.js");
@@ -105,7 +105,7 @@ class Checks extends Component {
   }
 }
 
-const mapStateToProps = ({ details, ui }) => {
+const mapStateToProps = ({ details }) => {
   const { audit } = details;
   if (!audit) {
     return {};

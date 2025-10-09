@@ -58,16 +58,17 @@ ScrollPositionUpdate ScrollPositionUpdate::NewRelativeScroll(
 
 /*static*/
 ScrollPositionUpdate ScrollPositionUpdate::NewSmoothScroll(
-    ScrollOrigin aOrigin, nsPoint aDestination,
+    ScrollMode aMode, ScrollOrigin aOrigin, nsPoint aDestination,
     ScrollTriggeredByScript aTriggeredByScript,
     UniquePtr<ScrollSnapTargetIds> aSnapTargetIds) {
   MOZ_ASSERT(aOrigin != ScrollOrigin::NotSpecified);
   MOZ_ASSERT(aOrigin != ScrollOrigin::None);
+  MOZ_ASSERT(aMode == ScrollMode::Smooth || aMode == ScrollMode::SmoothMsd);
 
   ScrollPositionUpdate ret;
   ret.mScrollGeneration = sGenerationCounter.NewMainThreadGeneration();
   ret.mType = ScrollUpdateType::Absolute;
-  ret.mScrollMode = ScrollMode::SmoothMsd;
+  ret.mScrollMode = aMode;
   ret.mScrollOrigin = aOrigin;
   ret.mDestination = CSSPoint::FromAppUnits(aDestination);
   ret.mTriggeredByScript = aTriggeredByScript;
@@ -127,10 +128,9 @@ CSSPoint ScrollPositionUpdate::GetDelta() const {
 
 std::ostream& operator<<(std::ostream& aStream,
                          const ScrollPositionUpdate& aUpdate) {
-  aStream << "{ gen=" << aUpdate.mScrollGeneration
-          << ", type=" << (int)aUpdate.mType
-          << ", mode=" << (int)aUpdate.mScrollMode
-          << ", origin=" << (int)aUpdate.mScrollOrigin
+  aStream << "{ gen=" << aUpdate.mScrollGeneration << ", type=" << aUpdate.mType
+          << ", mode=" << aUpdate.mScrollMode
+          << ", origin=" << aUpdate.mScrollOrigin
           << ", dst=" << aUpdate.mDestination << ", src=" << aUpdate.mSource
           << ", delta=" << aUpdate.mDelta
           << ", triggered by script=" << aUpdate.WasTriggeredByScript() << " }";

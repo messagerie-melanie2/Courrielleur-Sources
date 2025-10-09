@@ -3,7 +3,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 
-import json
+import functools
 from collections import namedtuple
 from types import FunctionType
 
@@ -12,14 +12,13 @@ from mozilla_repo_urls import parse
 from taskgraph import create
 from taskgraph.config import load_graph_config
 from taskgraph.parameters import Parameters
-from taskgraph.util import hash, taskcluster, yaml
-from taskgraph.util.memoize import memoize
+from taskgraph.util import hash, json, taskcluster, yaml
 from taskgraph.util.python_path import import_sibling_modules
 
 actions = []
 callbacks = {}
 
-Action = namedtuple("Action", ["order", "cb_name", "generic", "action_builder"])
+Action = namedtuple("Action", ["order", "cb_name", "permission", "action_builder"])
 
 
 def is_json(data):
@@ -31,13 +30,13 @@ def is_json(data):
     return True
 
 
-@memoize
+@functools.lru_cache(maxsize=None)
 def read_taskcluster_yml(filename):
-    """Load and parse .taskcluster.yml, memoized to save some time"""
+    """Load and parse .taskcluster.yml, cached to save some time"""
     return yaml.load_yaml(filename)
 
 
-@memoize
+@functools.lru_cache(maxsize=None)
 def hash_taskcluster_yml(filename):
     """
     Generate a hash of the given .taskcluster.yml.  This is the first 10 digits
@@ -56,7 +55,7 @@ def register_callback_action(
     context=[],
     available=lambda parameters: True,
     schema=None,
-    generic=True,
+    permission="generic",
     cb_name=None,
 ):
     """
@@ -113,8 +112,10 @@ def register_callback_action(
         schema (dict):
             JSON schema specifying input accepted by the action.
             This is optional and can be left ``null`` if no input is taken.
-        generic (bool)
-            Whether this is a generic action or has its own permissions.
+        permission (str):
+            This defaults to ``generic`` and needs to be set for actions that
+            need additional permissions. It appears in fxci-config and various
+            role and hook names.
         cb_name (str):
             The name under which this function should be registered, defaulting to
             `name`.  This is used to generation actionPerm for non-generic hook
@@ -132,55 +133,55 @@ def register_callback_action(
     title = title.strip()
     description = description.strip()
 
+    if not cb_name:
+        cb_name = name
+
     # ensure that context is callable
     if not callable(context):
         context_value = context
         context = lambda params: context_value  # noqa
 
-    def register_callback(cb, cb_name=cb_name):
+    def register_callback(cb):
         assert isinstance(name, str), "name must be a string"
         assert isinstance(order, int), "order must be an integer"
-        assert callable(schema) or is_json(
-            schema
-        ), "schema must be a JSON compatible object"
+        assert callable(schema) or is_json(schema), (
+            "schema must be a JSON compatible object"
+        )
         assert isinstance(cb, FunctionType), "callback must be a function"
         # Allow for json-e > 25 chars in the symbol.
         if "$" not in symbol:
             assert 1 <= len(symbol) <= 25, "symbol must be between 1 and 25 characters"
         assert isinstance(symbol, str), "symbol must be a string"
 
-        assert not mem[
-            "registered"
-        ], "register_callback_action must be used as decorator"
-        if not cb_name:
-            cb_name = name
-        assert cb_name not in callbacks, "callback name {} is not unique".format(
-            cb_name
+        assert not mem["registered"], (
+            "register_callback_action must be used as decorator"
         )
+        assert cb_name not in callbacks, f"callback name {cb_name} is not unique"
 
         def action_builder(parameters, graph_config, decision_task_id):
             if not available(parameters):
                 return None
 
-            actionPerm = "generic" if generic else cb_name
-
             # gather up the common decision-task-supplied data for this action
-            repo_param = "head_repository"
             repository = {
-                "url": parameters[repo_param],
+                "url": parameters["head_repository"],
                 "project": parameters["project"],
                 "level": parameters["level"],
+                "base_url": parameters["base_repository"],
             }
 
-            revision = parameters["head_rev"]
             push = {
                 "owner": "mozilla-taskcluster-maintenance@mozilla.com",
                 "pushlog_id": parameters["pushlog_id"],
-                "revision": revision,
+                "revision": parameters["head_rev"],
+                "base_revision": parameters["base_rev"],
             }
             branch = parameters.get("head_ref")
             if branch:
                 push["branch"] = branch
+            base_branch = parameters.get("base_ref")
+            if base_branch and branch != base_branch:
+                push["base_branch"] = base_branch
 
             action = {
                 "name": name,
@@ -212,16 +213,19 @@ def register_callback_action(
             # action was named `myaction/release`, then the `*` in the scope would also
             # match that action.  To prevent such an accident, we prohibit `/` in hook
             # names.
-            if "/" in actionPerm:
+            if "/" in permission:
                 raise Exception("`/` is not allowed in action names; use `-`")
+
+            if parameters["tasks_for"].startswith("github-pull-request"):
+                hookId = f"in-tree-pr-action-{level}-{permission}/{tcyml_hash}"
+            else:
+                hookId = f"in-tree-action-{level}-{permission}/{tcyml_hash}"
 
             rv.update(
                 {
                     "kind": "hook",
                     "hookGroupId": f"project-{trustDomain}",
-                    "hookId": "in-tree-action-{}-{}/{}".format(
-                        level, actionPerm, tcyml_hash
-                    ),
+                    "hookId": hookId,
                     "hookPayload": {
                         # provide the decision-task parameters as context for triggerHook
                         "decision": {
@@ -239,14 +243,14 @@ def register_callback_action(
                         },
                     },
                     "extra": {
-                        "actionPerm": actionPerm,
+                        "actionPerm": permission,
                     },
                 }
             )
 
             return rv
 
-        actions.append(Action(order, cb_name, generic, action_builder))
+        actions.append(Action(order, cb_name, permission, action_builder))
 
         mem["registered"] = True
         callbacks[cb_name] = cb
@@ -295,18 +299,20 @@ def sanity_check_task_scope(callback, parameters, graph_config):
     else:
         raise ValueError(f"No action with cb_name {callback}")
 
-    actionPerm = "generic" if action.generic else action.cb_name
-
-    repo_param = "head_repository"
-    raw_url = parameters[repo_param]
-    parsed_url = parse(raw_url)
-    expected_scope = f"assume:{parsed_url.taskcluster_role_prefix}:action:{actionPerm}"
+    parsed_base_url = parse(parameters["base_repository"])
+    parsed_head_url = parse(parameters["head_repository"])
+    action_scope = (
+        f"assume:{parsed_head_url.taskcluster_role_prefix}:action:{action.permission}"
+    )
+    pr_action_scope = f"assume:{parsed_base_url.taskcluster_role_prefix}:pr-action:{action.permission}"
 
     # the scope should appear literally; no need for a satisfaction check. The use of
     # get_current_scopes here calls the auth service through the Taskcluster Proxy, giving
     # the precise scopes available to this task.
-    if expected_scope not in taskcluster.get_current_scopes():
-        raise ValueError(f"Expected task scope {expected_scope} for this action")
+    if not set((action_scope, pr_action_scope)) & set(taskcluster.get_current_scopes()):
+        raise ValueError(
+            f"Expected task scope {action_scope} or {pr_action_scope} for this action"
+        )
 
 
 def trigger_action_callback(

@@ -6,6 +6,8 @@ Object.defineProperty(exports, "__esModule", {
 exports.randomLowercaseString = randomLowercaseString;
 exports.randomString = randomString;
 exports.randomUppercaseString = randomUppercaseString;
+exports.secureRandomBase64Url = secureRandomBase64Url;
+var _base = require("./base64.js");
 /*
 Copyright 2018 New Vector Ltd
 Copyright 2019 The Matrix.org Foundation C.I.C.
@@ -26,6 +28,11 @@ limitations under the License.
 const LOWERCASE = "abcdefghijklmnopqrstuvwxyz";
 const UPPERCASE = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const DIGITS = "0123456789";
+function secureRandomBase64Url(len) {
+  const key = new Uint8Array(len);
+  globalThis.crypto.getRandomValues(key);
+  return (0, _base.encodeUnpaddedBase64Url)(key);
+}
 function randomString(len) {
   return randomStringFrom(len, UPPERCASE + LOWERCASE + DIGITS);
 }

@@ -2,17 +2,33 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import os
+import subprocess
+import threading
+import time
+from pathlib import Path
+
 import mozpack.path as mozpath
-from mach.decorators import Command, SubCommand
+from mach.decorators import Command, CommandArgument, SubCommand
 
 
 @Command(
     "storybook",
     category="misc",
-    description="Start the Storybook server. This will install npm dependencies, if necessary.",
+    description="Start the Storybook server and launch the site in a local build of Firefox. This will install npm dependencies, if necessary.",
 )
-def storybook_server(command_context):
+@CommandArgument(
+    "--no-open",
+    action="store_true",
+    help="Start the Storybook server without opening a local Firefox build.",
+)
+def storybook_server(command_context, no_open=False):
     ensure_env(command_context)
+    if not no_open:
+        start_browser_thread = threading.Thread(
+            target=start_browser, args=(command_context,)
+        )
+        start_browser_thread.start()
     return run_npm(command_context, args=["run", "storybook"])
 
 
@@ -27,6 +43,19 @@ def storybook_build(command_context):
 
 
 @SubCommand(
+    "storybook",
+    "upgrade",
+    description="Upgrade all storybook dependencies to latest of ranges in package.json",
+)
+def storybook_upgrade(command_context):
+    delete_storybook_node_modules()
+    package_lock_path = "browser/components/storybook/package-lock.json"
+    if os.path.exists(package_lock_path):
+        os.unlink(package_lock_path)
+    return run_npm(command_context, args=["install"])
+
+
+@SubCommand(
     "storybook", "launch", description="Launch the Storybook site in your local build."
 )
 def storybook_launch(command_context):
@@ -34,8 +63,32 @@ def storybook_launch(command_context):
         command_context,
         "run",
         argv=["http://localhost:5703"],
-        setpref=["svg.context-properties.content.enabled=true"],
+        setpref=[
+            "svg.context-properties.content.enabled=true",
+            "layout.css.light-dark.enabled=true",
+        ],
     )
+
+
+def delete_path(path):
+    if path.is_file() or path.is_symlink():
+        path.unlink()
+        return
+    for p in path.iterdir():
+        delete_path(p)
+    path.rmdir()
+
+
+def delete_storybook_node_modules():
+    node_modules_path = Path("browser/components/storybook/node_modules")
+    if node_modules_path.exists():
+        delete_path(node_modules_path)
+
+
+def start_browser(command_context):
+    # This delay is used to avoid launching the browser before the Storybook server has started.
+    time.sleep(5)
+    subprocess.run(run_mach(command_context, "storybook", subcommand="launch"))
 
 
 def build_storybook_manifest(command_context):
@@ -44,7 +97,7 @@ def build_storybook_manifest(command_context):
     config_environment = command_context.config_environment
     storybook_chrome_map_path = "browser/components/storybook/.storybook/chrome-map.js"
     chrome_map_path = mozpath.join(config_environment.topobjdir, "chrome-map.json")
-    with open(chrome_map_path, "r") as chrome_map_f:
+    with open(chrome_map_path) as chrome_map_f:
         with open(storybook_chrome_map_path, "w") as storybook_chrome_map_f:
             storybook_chrome_map_f.write("module.exports = ")
             storybook_chrome_map_f.write(chrome_map_f.read())

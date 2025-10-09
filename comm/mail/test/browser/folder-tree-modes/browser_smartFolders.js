@@ -18,11 +18,11 @@ var {
   inboxFolder,
   make_message_sets_in_folders,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var about3Pane;
@@ -32,8 +32,6 @@ var trashFolder;
 var trashSubfolder;
 
 var smartInboxFolder;
-
-var inboxSet;
 
 add_setup(async function () {
   about3Pane = get_about_3pane();
@@ -50,10 +48,7 @@ add_setup(async function () {
 
   // The message itself doesn't really matter, as long as there's at least one
   // in the folder.
-  [inboxSet] = await make_message_sets_in_folders(
-    [inboxFolder],
-    [{ count: 1 }]
-  );
+  await make_message_sets_in_folders([inboxFolder], [{ count: 1 }]);
   await make_message_sets_in_folders([inboxSubfolder], [{ count: 1 }]);
 
   // Switch to the smart folder mode.
@@ -73,24 +68,31 @@ add_task(async function test_folder_flag_changes() {
   about3Pane.displayFolder(inboxSubfolder);
   // Need to archive two messages in two different accounts in order to
   // create a smart Archives folder.
-  select_click_row(0);
-  archive_selected_messages();
-  let pop3Server = MailServices.accounts.findServer(
+  await select_click_row(0);
+  await archive_selected_messages();
+  const pop3Account = MailServices.accounts.getAccount("account2");
+  const pop3Server = MailServices.accounts.findServer(
     "tinderbox",
     FAKE_SERVER_HOSTNAME,
     "pop3"
   );
-  let pop3Inbox = await get_special_folder(
+  pop3Server.rootFolder.createSubfolder("Archives", null);
+  pop3Server.rootFolder
+    .getChildNamed("Archives")
+    .setFlag(Ci.nsMsgFolderFlags.Archive);
+  pop3Account.defaultIdentity.archivesFolderURI =
+    pop3Server.serverURI + "/Archives";
+  const pop3Inbox = await get_special_folder(
     Ci.nsMsgFolderFlags.Inbox,
     false,
     pop3Server
   );
   await make_message_sets_in_folders([pop3Inbox], [{ count: 1 }]);
   about3Pane.displayFolder(pop3Inbox);
-  select_click_row(0);
-  archive_selected_messages();
+  await select_click_row(0);
+  await archive_selected_messages();
 
-  let smartArchiveFolder = get_smart_folder_named("Archives");
+  const smartArchiveFolder = get_smart_folder_named("Archives");
   let archiveScope =
     "|" +
     smartArchiveFolder.msgDatabase.dBFolderInfo.getCharProperty(
@@ -120,9 +122,9 @@ add_task(async function test_folder_flag_changes() {
 
   // figure out what we expect the archiveScope to now be.
   rootFolder = inboxFolder.server.rootFolder;
-  let localArchiveFolder = rootFolder.getChildNamed("Archives");
+  const localArchiveFolder = rootFolder.getChildNamed("Archives");
   let desiredScope = "|" + localArchiveFolder.URI + "|";
-  for (let folder of localArchiveFolder.descendants) {
+  for (const folder of localArchiveFolder.descendants) {
     desiredScope += folder.URI + "|";
   }
 
@@ -135,17 +137,17 @@ add_task(async function test_folder_flag_changes() {
 });
 
 function assert_folder_and_children_in_scope(folder, searchScope) {
-  let folderURI = "|" + folder.URI + "|";
+  const folderURI = "|" + folder.URI + "|";
   assert_uri_found(folderURI, searchScope);
-  for (let f of folder.descendants) {
+  for (const f of folder.descendants) {
     assert_uri_found(f.URI, searchScope);
   }
 }
 
 function assert_folder_and_children_not_in_scope(folder, searchScope) {
-  let folderURI = "|" + folder.URI + "|";
+  const folderURI = "|" + folder.URI + "|";
   assert_uri_not_found(folderURI, searchScope);
-  for (let f of folder.descendants) {
+  for (const f of folder.descendants) {
     assert_uri_not_found(f.URI, searchScope);
   }
 }

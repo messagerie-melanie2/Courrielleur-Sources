@@ -24,24 +24,26 @@ loader.lazyGetter(lazy, "BufferStream", () => {
     "setData"
   );
 });
+loader.lazyRequireGetter(
+  lazy,
+  "CSSCompleter",
+  "resource://devtools/client/shared/sourceeditor/css-autocompleter.js"
+);
 
 ChromeUtils.defineESModuleGetters(lazy, {
   FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
+  NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
 });
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "NetUtil",
-  "resource://gre/modules/NetUtil.jsm"
-);
 
 import {
   getString,
   showFilePicker,
 } from "resource://devtools/client/styleeditor/StyleEditorUtil.sys.mjs";
 
+import { TYPES as HIGHLIGHTER_TYPES } from "resource://devtools/shared/highlighters.mjs";
+
 const LOAD_ERROR = "error-load";
 const SAVE_ERROR = "error-save";
-const SELECTOR_HIGHLIGHTER_TYPE = "SelectorHighlighter";
 
 // max update frequency in ms (avoid potential typing lag and/or flicker)
 // @see StyleEditor.updateStylesheet
@@ -84,7 +86,7 @@ const STYLE_SHEET_UPDATE_CAUSED_BY_STYLE_EDITOR = "styleeditor";
  *        panel window for style editor
  * @param {Number} styleSheetFriendlyIndex
  *        Optional Integer representing the index of the current stylesheet
- *        among all stylesheets of its type (inline or user-created)
+ *        among all stylesheets of its type (inline, constructed or user-created)
  */
 export function StyleSheetEditor(resource, win, styleSheetFriendlyIndex) {
   EventEmitter.decorate(this);
@@ -194,16 +196,16 @@ StyleSheetEditor.prototype = {
       return this.savedFile.leafName;
     }
 
+    const index = this.styleSheetFriendlyIndex;
     if (this._isNew) {
-      const index = this.styleSheetFriendlyIndex + 1 || 0;
       return getString("newStyleSheet", index);
     }
 
+    if (this.styleSheet.constructed) {
+      return getString("constructedStyleSheet", index);
+    }
+
     if (!this.styleSheet.href) {
-      // TODO(bug 1809107): Probably a different index + string for
-      // constructable stylesheets, they can't be meaningfully edited right now
-      // because we don't have their original text.
-      const index = this.styleSheetFriendlyIndex + 1 || 0;
       return getString("inlineStyleSheet", index);
     }
 
@@ -278,7 +280,7 @@ StyleSheetEditor.prototype = {
    *
    * This will set |this._state.text| to the new text.
    */
-  async _fetchSourceText(options = {}) {
+  async _fetchSourceText() {
     const styleSheetsFront = await this._getStyleSheetsFront();
 
     let longStr = null;
@@ -293,21 +295,38 @@ StyleSheetEditor.prototype = {
     this._state.text = await longStr.string();
   },
 
+  prettifySourceText() {
+    this._prettifySourceTextIfNeeded(/* force */ true);
+  },
+
   /**
    * Attempt to prettify the current text if the corresponding stylesheet is not
    * an original source. The text will be read from |this._state.text|.
    *
    * This will set |this._state.text| to the prettified text if needed.
+   *
+   * @param {Boolean} force: Set to true to prettify the stylesheet, no matter if it's
+   *                         minified or not.
    */
-  _prettifySourceTextIfNeeded() {
-    if (!this.styleSheet.isOriginalSource) {
-      const ruleCount = this.styleSheet.ruleCount;
-      const { result, mappings } = prettifyCSS(this._state.text, ruleCount);
-      // Store the list of objects with mappings between CSS token positions from the
-      // original source to the prettified source. These will be used when requested to
-      // jump to a specific position within the editor.
-      this._mappings = mappings;
-      this._state.text = result;
+  _prettifySourceTextIfNeeded(force = false) {
+    if (this.styleSheet.isOriginalSource) {
+      return;
+    }
+
+    const { result, mappings } = prettifyCSS(
+      this._state.text,
+      // prettifyCSS will always prettify the passed text if we pass a `null` ruleCount.
+      force ? null : this.styleSheet.ruleCount
+    );
+
+    // Store the list of objects with mappings between CSS token positions from the
+    // original source to the prettified source. These will be used when requested to
+    // jump to a specific position within the editor.
+    this._mappings = mappings;
+    this._state.text = result;
+
+    if (force && this.sourceEditor) {
+      this.sourceEditor.setText(result);
     }
   },
 
@@ -405,13 +424,20 @@ StyleSheetEditor.prototype = {
     }
 
     if (this.sourceEditor) {
-      await this._fetchSourceText();
+      try {
+        await this._fetchSourceText();
+      } catch (e) {
+        if (this._isDestroyed) {
+          // Source editor was destroyed while trying to apply an update, bail.
+          return;
+        }
+        throw e;
+      }
 
       // sourceEditor is already loaded, so we can prettify immediately.
       this._prettifySourceTextIfNeeded();
 
-      // The updated stylesheet text should have been set in this._state.text
-      // by _fetchSourceText and _prettifySourceTextIfNeeded.
+      // The updated stylesheet text should have been set in this._state.text by _fetchSourceText.
       const sourceText = this._state.text;
 
       this._justSetText = true;
@@ -667,7 +693,7 @@ StyleSheetEditor.prototype = {
   async _highlightSelectorAt(x, y) {
     const pos = this.sourceEditor.getPositionFromCoords({ left: x, top: y });
     const info = this.sourceEditor.getInfoAt(pos);
-    if (!info || info.state !== "selector") {
+    if (!info || info.state !== lazy.CSSCompleter.CSS_STATE_SELECTOR) {
       return;
     }
 
@@ -715,7 +741,7 @@ StyleSheetEditor.prototype = {
     const walker = await this.getWalker();
     try {
       this.highlighter = await walker.parentFront.getHighlighterByType(
-        SELECTOR_HIGHLIGHTER_TYPE
+        HIGHLIGHTER_TYPES.SELECTOR
       );
       return this.highlighter;
     } catch (e) {

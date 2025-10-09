@@ -4,22 +4,22 @@
 
 #include "WebrtcGlobalInformation.h"
 #include "WebrtcGlobalStatsHistory.h"
+#include "libwebrtcglue/VideoConduit.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/dom/PWebrtcGlobal.h"
 #include "mozilla/dom/PWebrtcGlobalChild.h"
-#include "mozilla/media/webrtc/WebrtcGlobal.h"
 #include "WebrtcGlobalChild.h"
 #include "WebrtcGlobalParent.h"
 
 #include <algorithm>
 #include <vector>
-#include <type_traits>
 
 #include "mozilla/dom/WebrtcGlobalInformationBinding.h"
 #include "mozilla/dom/RTCStatsReportBinding.h"  // for RTCStatsReportInternal
 #include "mozilla/dom/ContentChild.h"
 
+#include "ErrorList.h"
 #include "nsISupports.h"
 #include "nsITimer.h"
 #include "nsLiteralString.h"
@@ -28,7 +28,6 @@
 #include "nsXULAppAPI.h"
 #include "mozilla/ErrorResult.h"
 #include "nsProxyRelease.h"  // nsMainThreadPtrHolder
-#include "mozilla/Telemetry.h"
 #include "mozilla/Unused.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/ClearOnShutdown.h"
@@ -68,7 +67,8 @@ class WebrtcContentParents {
   static std::vector<RefPtr<WebrtcGlobalParent>> sContentParents;
 };
 
-std::vector<RefPtr<WebrtcGlobalParent>> WebrtcContentParents::sContentParents;
+MOZ_RUNINIT std::vector<RefPtr<WebrtcGlobalParent>>
+    WebrtcContentParents::sContentParents;
 
 WebrtcGlobalParent* WebrtcContentParents::Alloc() {
   RefPtr<WebrtcGlobalParent> cp = new WebrtcGlobalParent;
@@ -159,10 +159,12 @@ GetStatsPromiseForThisProcess(const nsAString& aPcIdFilter) {
              std::move(UnwrapUniquePtrs));
 }
 
-static std::map<int32_t, dom::Sequence<nsString>>& GetWebrtcGlobalLogStash() {
-  static StaticAutoPtr<std::map<int32_t, dom::Sequence<nsString>>> sStash;
+static std::map<mozilla::ipc::ActorId, dom::Sequence<nsString>>&
+GetWebrtcGlobalLogStash() {
+  static StaticAutoPtr<std::map<mozilla::ipc::ActorId, dom::Sequence<nsString>>>
+      sStash;
   if (!sStash) {
-    sStash = new std::map<int32_t, dom::Sequence<nsString>>();
+    sStash = new std::map<mozilla::ipc::ActorId, dom::Sequence<nsString>>();
     ClearOnShutdown(&sStash);
   }
   return *sStash;
@@ -235,7 +237,7 @@ void WebrtcGlobalInformation::GetStatsHistorySince(
   auto statsAfter = aAfter.WasPassed() ? Some(aAfter.Value()) : Nothing();
   auto sdpAfter = aSdpAfter.WasPassed() ? Some(aSdpAfter.Value()) : Nothing();
 
-  WebrtcGlobalStatsHistory::GetHistory(pcIdFilter).apply([&](auto& hist) {
+  WebrtcGlobalStatsHistory::GetHistory(pcIdFilter).apply([&](const auto& hist) {
     if (!history.mReports.AppendElements(hist->Since(statsAfter), fallible)) {
       mozalloc_handle_oom(0);
     }
@@ -248,6 +250,12 @@ void WebrtcGlobalInformation::GetStatsHistorySince(
   IgnoredErrorResult rv;
   aStatsCallback.Call(history, rv);
   aRv = NS_OK;
+}
+
+void WebrtcGlobalInformation::GetMediaContext(
+    const GlobalObject& aGlobal, WebrtcGlobalMediaContext& aContext) {
+  aContext.mHasH264Hardware = WebrtcVideoConduit::HasH264Hardware();
+  aContext.mHasAv1 = WebrtcVideoConduit::HasAv1();
 }
 
 using StatsPromiseArray =
@@ -528,27 +536,8 @@ void WebrtcGlobalInformation::GetLogging(
   aRv = NS_OK;
 }
 
-static int32_t sLastSetLevel = 0;
 static bool sLastAECDebug = false;
-static Maybe<nsCString> sAecDebugLogDir;
-
-void WebrtcGlobalInformation::SetDebugLevel(const GlobalObject& aGlobal,
-                                            int32_t aLevel) {
-  if (aLevel) {
-    StartWebRtcLog(mozilla::LogLevel(aLevel));
-  } else {
-    StopWebRtcLog();
-  }
-  sLastSetLevel = aLevel;
-
-  for (const auto& cp : WebrtcContentParents::GetAll()) {
-    Unused << cp->SendSetDebugMode(aLevel);
-  }
-}
-
-int32_t WebrtcGlobalInformation::DebugLevel(const GlobalObject& aGlobal) {
-  return sLastSetLevel;
-}
+MOZ_RUNINIT static Maybe<nsCString> sAecDebugLogDir;
 
 void WebrtcGlobalInformation::SetAecDebug(const GlobalObject& aGlobal,
                                           bool aEnable) {
@@ -782,17 +771,6 @@ mozilla::ipc::IPCResult WebrtcGlobalChild::RecvSetAecLogging(
       StartAecLog();
     } else {
       StopAecLog();
-    }
-  }
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult WebrtcGlobalChild::RecvSetDebugMode(const int& aLevel) {
-  if (!mShutdown) {
-    if (aLevel) {
-      StartWebRtcLog(mozilla::LogLevel(aLevel));
-    } else {
-      StopWebRtcLog();
     }
   }
   return IPC_OK();

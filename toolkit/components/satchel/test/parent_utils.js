@@ -15,13 +15,18 @@ var gAutocompletePopup =
 assert.ok(gAutocompletePopup, "Got autocomplete popup");
 
 var ParentUtils = {
+  // Returns a object with two fields:
+  //  labels - an array of the labels of the current dropdown
+  //  comments - an array of the comments of the current dropdown
   getMenuEntries() {
-    let entries = [];
+    let labels = [],
+      comments = [];
     let numRows = gAutocompletePopup.view.matchCount;
     for (let i = 0; i < numRows; i++) {
-      entries.push(gAutocompletePopup.view.getValueAt(i));
+      labels.push(gAutocompletePopup.view.getLabelAt(i));
+      comments.push(gAutocompletePopup.view.getCommentAt(i));
     }
-    return entries;
+    return { labels, comments };
   },
 
   cleanUpFormHistory() {
@@ -41,8 +46,8 @@ var ParentUtils = {
   },
 
   popupshownListener() {
-    let results = this.getMenuEntries();
-    sendAsyncMessage("onpopupshown", { results });
+    let entries = this.getMenuEntries();
+    sendAsyncMessage("onpopupshown", entries);
   },
 
   countEntries(name, value) {
@@ -80,6 +85,7 @@ var ParentUtils = {
         return false;
       }
     }, `Waiting for row count change to ${expectedCount}, first value: ${expectedFirstValue}.`);
+
     return this.getMenuEntries();
   },
 
@@ -92,17 +98,16 @@ var ParentUtils = {
     );
   },
 
-  // Tests using this function need to flip pref for exceptional use of
-  // `new Function` / `eval()`.
-  // See test_autofill_and_ordinal_forms.html for example.
-  testMenuEntry(index, statement) {
+  testMenuEntry(index, is) {
     ContentTaskUtils.waitForCondition(() => {
       let el = gAutocompletePopup.richlistbox.getItemAtIndex(index);
-      let testFunc = new Services.ww.activeWindow.Function(
-        "el",
-        `return ${statement}`
-      );
-      return gAutocompletePopup.popupOpen && el && testFunc(el);
+
+      if (!gAutocompletePopup.popupOpen || !el) {
+        return false;
+      }
+
+      let win = el.ownerGlobal;
+      return win.customElements.getName(el.constructor) == is;
     }, "Testing menu entry").then(() => {
       sendAsyncMessage("menuEntryTested");
     });
@@ -174,8 +179,8 @@ addMessageListener(
 addMessageListener("waitForSelectedIndex", ({ expectedIndex }) =>
   ParentUtils.checkSelectedIndex(expectedIndex)
 );
-addMessageListener("waitForMenuEntryTest", ({ index, statement }) => {
-  ParentUtils.testMenuEntry(index, statement);
+addMessageListener("waitForMenuEntryTest", ({ index, is }) => {
+  ParentUtils.testMenuEntry(index, is);
 });
 
 addMessageListener("getPopupState", () => {

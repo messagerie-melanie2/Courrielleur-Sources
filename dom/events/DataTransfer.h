@@ -7,13 +7,15 @@
 #ifndef mozilla_dom_DataTransfer_h
 #define mozilla_dom_DataTransfer_h
 
-#include "nsString.h"
-#include "nsTArray.h"
-#include "nsIVariant.h"
-#include "nsIPrincipal.h"
-#include "nsIDragService.h"
-#include "nsITransferable.h"
 #include "nsCycleCollectionParticipant.h"
+#include "nsString.h"
+#include "nsStringStream.h"
+#include "nsTArray.h"
+#include "nsIClipboard.h"
+#include "nsIDragService.h"
+#include "nsIPrincipal.h"
+#include "nsITransferable.h"
+#include "nsIVariant.h"
 
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Assertions.h"
@@ -23,6 +25,7 @@
 #include "mozilla/dom/DataTransferItemList.h"
 #include "mozilla/dom/File.h"
 
+class nsIClipboardDataSnapshot;
 class nsINode;
 class nsITransferable;
 class nsILoadContext;
@@ -44,19 +47,15 @@ template <typename T>
 class Optional;
 class WindowContext;
 
-#define NS_DATATRANSFER_IID                          \
-  {                                                  \
-    0x6c5f90d1, 0xa886, 0x42c8, {                    \
-      0x85, 0x06, 0x10, 0xbe, 0x5c, 0x0d, 0xc6, 0x77 \
-    }                                                \
-  }
+#define NS_DATATRANSFER_IID \
+  {0x6c5f90d1, 0xa886, 0x42c8, {0x85, 0x06, 0x10, 0xbe, 0x5c, 0x0d, 0xc6, 0x77}}
 
 /**
  * See <https://html.spec.whatwg.org/multipage/dnd.html#datatransfer>.
  */
 class DataTransfer final : public nsISupports, public nsWrapperCache {
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_DATATRANSFER_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_DATATRANSFER_IID)
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
 
@@ -82,7 +81,9 @@ class DataTransfer final : public nsISupports, public nsWrapperCache {
   DataTransfer(nsISupports* aParent, EventMessage aEventMessage,
                const uint32_t aEffectAllowed, bool aCursorState,
                bool aIsExternal, bool aUserCancelled,
-               bool aIsCrossDomainSubFrameDrop, int32_t aClipboardType,
+               bool aIsCrossDomainSubFrameDrop,
+               mozilla::Maybe<nsIClipboard::ClipboardType> aClipboardType,
+               nsCOMPtr<nsIClipboardDataSnapshot> aClipboardDataSnapshot,
                DataTransferItemList* aItems, Element* aDragImage,
                uint32_t aDragImageX, uint32_t aDragImageY,
                bool aShowFailAnimation);
@@ -99,11 +100,12 @@ class DataTransfer final : public nsISupports, public nsWrapperCache {
   // The case of a drag will occur when an external drag occurs, that is, a
   // drag where the source is another application, or a drag is started by
   // calling the drag service directly. For clipboard operations,
-  // aClipboardType indicates which clipboard to use, from nsIClipboard, or -1
-  // for non-clipboard operations, or if access to the system clipboard should
-  // not be allowed.
+  // aClipboardType indicates which clipboard to use, from nsIClipboard, or
+  // Nothing for non-clipboard operations, or if access to the system clipboard
+  // should not be allowed.
   DataTransfer(nsISupports* aParent, EventMessage aEventMessage,
-               bool aIsExternal, int32_t aClipboardType);
+               bool aIsExternal,
+               mozilla::Maybe<nsIClipboard::ClipboardType> aClipboardType);
   DataTransfer(nsISupports* aParent, EventMessage aEventMessage,
                nsITransferable* aTransferable);
   DataTransfer(nsISupports* aParent, EventMessage aEventMessage,
@@ -263,7 +265,7 @@ class DataTransfer final : public nsISupports, public nsWrapperCache {
    */
   uint32_t DropEffectInt() const { return mDropEffect; }
   void SetDropEffectInt(uint32_t aDropEffectInt) {
-    MOZ_RELEASE_ASSERT(aDropEffectInt < ArrayLength(sEffects),
+    MOZ_RELEASE_ASSERT(aDropEffectInt < std::size(sEffects),
                        "Bogus drop effect value");
     mDropEffect = aDropEffectInt;
   }
@@ -299,7 +301,9 @@ class DataTransfer final : public nsISupports, public nsWrapperCache {
   bool IsProtected() const { return mMode == Mode::Protected; }
 
   nsITransferable* GetTransferable() const { return mTransferable; }
-  int32_t ClipboardType() const { return mClipboardType; }
+  mozilla::Maybe<nsIClipboard::ClipboardType> ClipboardType() const {
+    return mClipboardType;
+  }
   EventMessage GetEventMessage() const { return mEventMessage; }
   bool IsCrossDomainSubFrameDrop() const { return mIsCrossDomainSubFrameDrop; }
 
@@ -386,14 +390,6 @@ class DataTransfer final : public nsISupports, public nsWrapperCache {
   }
   bool MozShowFailAnimation() const { return mShowFailAnimation; }
 
-  // Retrieve a list of clipboard formats supported
-  //
-  // If kFileMime is supported, then it will be placed either at
-  // index 0 or at index 1 in aResult
-  static void GetExternalClipboardFormats(const int32_t& aWhichClipboard,
-                                          const bool& aPlainTextOnly,
-                                          nsTArray<nsCString>* aResult);
-
   // Retrieve a list of supporting formats in aTransferable.
   //
   // If kFileMime is supported, then it will be placed either at
@@ -426,7 +422,37 @@ class DataTransfer final : public nsISupports, public nsWrapperCache {
                                                      kImageRequestMime,
                                                      kPDFJSMime};
 
+  already_AddRefed<nsIGlobalObject> GetGlobal() const;
+
+  already_AddRefed<WindowContext> GetWindowContext() const;
+
+  nsIClipboardDataSnapshot* GetClipboardDataSnapshot() const;
+
+  // The drag session on the widget of the owner, if any.
+  nsIDragSession* GetOwnerDragSession();
+
+  // format is first element, data is second
+  using ParseExternalCustomTypesStringData = std::pair<nsString&&, nsString&&>;
+
+  // Parses out the contents of aString and calls aCallback for every data
+  // of type eCustomClipboardTypeId_String.
+  static void ParseExternalCustomTypesString(
+      mozilla::Span<const char> aString,
+      std::function<void(ParseExternalCustomTypesStringData&&)>&& aCallback);
+
+  // Clears this DataTransfer that was used for paste
+  void ClearForPaste();
+
+  bool HasPrivateHTMLFlavor() const;
+
  protected:
+  // Retrieve a list of clipboard formats supported
+  //
+  // If kFileMime is supported, then it will be placed either at
+  // index 0 or at index 1 in aResult
+  void GetExternalClipboardFormats(const bool& aPlainTextOnly,
+                                   nsTArray<nsCString>& aResult);
+
   // caches text and uri-list data formats that exist in the drag service or
   // clipboard for retrieval later.
   nsresult CacheExternalData(const char* aFormat, uint32_t aIndex,
@@ -454,7 +480,7 @@ class DataTransfer final : public nsISupports, public nsWrapperCache {
   nsresult SetDataAtInternal(const nsAString& aFormat, nsIVariant* aData,
                              uint32_t aIndex, nsIPrincipal* aSubjectPrincipal);
 
-  friend class ContentParent;
+  friend class BrowserParent;
   friend class Clipboard;
 
   void FillAllExternalData();
@@ -467,6 +493,9 @@ class DataTransfer final : public nsISupports, public nsWrapperCache {
   void MozClearDataAtHelper(const nsAString& aFormat, uint32_t aIndex,
                             nsIPrincipal& aSubjectPrincipal,
                             mozilla::ErrorResult& aRv);
+
+  // Returns the widget of the owner, if known.
+  nsIWidget* GetOwnerWidget();
 
   nsCOMPtr<nsISupports> mParent;
 
@@ -502,7 +531,11 @@ class DataTransfer final : public nsISupports, public nsWrapperCache {
 
   // Indicates which clipboard type to use for clipboard operations. Ignored for
   // drag and drop.
-  int32_t mClipboardType;
+  mozilla::Maybe<nsIClipboard::ClipboardType> mClipboardType;
+
+  // The nsIClipboardDataSnapshot that is used for getting clipboard formats and
+  // data.
+  nsCOMPtr<nsIClipboardDataSnapshot> mClipboardDataSnapshot;
 
   // The items contained with the DataTransfer
   RefPtr<DataTransferItemList> mItems;
@@ -520,8 +553,6 @@ class DataTransfer final : public nsISupports, public nsWrapperCache {
   // Not supported everywhere.
   bool mShowFailAnimation = true;
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(DataTransfer, NS_DATATRANSFER_IID)
 
 }  // namespace dom
 }  // namespace mozilla

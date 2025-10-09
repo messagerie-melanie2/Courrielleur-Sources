@@ -166,13 +166,13 @@ export var Socket = {
     } else {
       try {
         // Attempt to get a default proxy from the proxy service.
-        let proxyService = Cc[
+        const proxyService = Cc[
           "@mozilla.org/network/protocol-proxy-service;1"
         ].getService(Ci.nsIProtocolProxyService);
 
         // Add a URI scheme since, by default, some protocols (i.e. IRC) don't
         // have a URI scheme before the host.
-        let uri = Services.io.newURI("http://" + this.host);
+        const uri = Services.io.newURI("http://" + this.host);
         // This will return null when the result is known immediately and
         // the callback will just be dispatched to the current thread.
         this._proxyCancel = proxyService.asyncResolve(
@@ -247,11 +247,12 @@ export var Socket = {
   sendString(aString, aEncoding = "UTF-8", aLoggedData = aString) {
     this.LOG("Sending:\n" + aLoggedData);
 
-    let converter = new ScriptableUnicodeConverter();
+    const converter = new ScriptableUnicodeConverter();
     converter.charset = aEncoding;
     try {
-      let stream = converter.convertToInputStream(aString);
-      this._outputStream.writeFrom(stream, stream.available());
+      let buf = converter.ConvertFromUnicode(aString);
+      buf += converter.Finish();
+      this._outputStream.write(buf, buf.length);
     } catch (e) {
       console.error(e);
     }
@@ -259,10 +260,10 @@ export var Socket = {
 
   disconnected: true,
 
-  startTLS() {
-    this.transport.tlsSocketControl
+  async startTLS() {
+    await this.transport.tlsSocketControl
       .QueryInterface(Ci.nsITLSSocketControl)
-      .StartTLS();
+      .asyncStartTLS();
   },
 
   // If using the ping functionality, this should be called whenever a message is
@@ -307,11 +308,11 @@ export var Socket = {
   // Plenty of time may have elapsed if the computer wakes from sleep, so check
   // if we should reconnect immediately.
   _lastAliveTime: null,
-  observe(aSubject, aTopic, aData) {
+  observe(aSubject, aTopic) {
     if (aTopic != "wake_notification") {
       return;
     }
-    let elapsedTime = Date.now() - this._lastAliveTime;
+    const elapsedTime = Date.now() - this._lastAliveTime;
     // If there never was any activity before we went to sleep,
     // or if we've been waiting for a ping response for over 30s,
     // or if the last activity on the socket is longer ago than we usually
@@ -340,7 +341,7 @@ export var Socket = {
   /*
    * nsIProtocolProxyCallback methods
    */
-  onProxyAvailable(aRequest, aURI, aProxyInfo, aStatus) {
+  onProxyAvailable(aRequest, aURI, aProxyInfo) {
     if (!("_proxyCancel" in this)) {
       this.LOG("onProxyAvailable called, but disconnect() was called before.");
       return;
@@ -379,7 +380,7 @@ export var Socket = {
     if (this.delimiter) {
       // Load the data from the stream.
       this._incomingDataBuffer += this._scriptableInputStream.read(aCount);
-      let data = this._incomingDataBuffer.split(this.delimiter);
+      const data = this._incomingDataBuffer.split(this.delimiter);
 
       // Store the (possibly) incomplete part.
       this._incomingDataBuffer = data.pop();
@@ -428,7 +429,7 @@ export var Socket = {
    * nsIRequestObserver methods
    */
   // Signifies the beginning of an async request
-  onStartRequest(aRequest) {
+  onStartRequest() {
     if (this.disconnected) {
       // Ignore this if we're already disconnected.
       return;
@@ -460,9 +461,9 @@ export var Socket = {
     } else if (aStatus == NS_ERROR_NET_TIMEOUT) {
       this.onConnectionTimedOut();
     } else if (!Components.isSuccessCode(aStatus)) {
-      let nssErrorsService = Cc["@mozilla.org/nss_errors_service;1"].getService(
-        Ci.nsINSSErrorsService
-      );
+      const nssErrorsService = Cc[
+        "@mozilla.org/nss_errors_service;1"
+      ].getService(Ci.nsINSSErrorsService);
       this.securityInfo =
         await this.transport.tlsSocketControl?.asyncGetSecurityInfo();
       this.onConnectionSecurityError(
@@ -476,7 +477,7 @@ export var Socket = {
   /*
    * nsITransportEventSink methods
    */
-  onTransportStatus(aTransport, aStatus, aProgress, aProgressmax) {
+  onTransportStatus(aTransport, aStatus) {
     // Don't send status change notifications after the socket has been closed.
     // The event sink can't be removed after opening the transport, so we can't
     // do better than adding a null check here.
@@ -493,7 +494,7 @@ export var Socket = {
       0x4b000a: "STATUS_WAITING_FOR",
       0x4b0006: "STATUS_RECEIVING_FROM",
     };
-    let status = nsITransportEventSinkStatus[aStatus];
+    const status = nsITransportEventSinkStatus[aStatus];
     this.DEBUG(
       "onTransportStatus(" + (status || "0x" + aStatus.toString(16)) + ")"
     );
@@ -523,7 +524,7 @@ export var Socket = {
     // Create a routed socket transport
     // We connect to host and port, but the origin host and origin port are
     // given to PSM (e.g. check the certificate).
-    let socketTS = Cc[
+    const socketTS = Cc[
       "@mozilla.org/network/socket-transport-service;1"
     ].getService(Ci.nsIRoutedSocketTransportService);
     this.transport = socketTS.createRoutedTransport(
@@ -608,8 +609,8 @@ export var Socket = {
    ********************* Methods for subtypes to override **********************
    *****************************************************************************
    */
-  LOG(aString) {},
-  DEBUG(aString) {},
+  LOG() {},
+  DEBUG() {},
   // Called when a connection is established.
   onConnection() {},
   // Called when a socket is accepted after listening.
@@ -619,12 +620,12 @@ export var Socket = {
   // Called when a socket request's network is reset.
   onConnectionReset() {},
   // Called when the certificate provided by the server didn't satisfy NSS.
-  onConnectionSecurityError(aTLSError, aNSSErrorMessage) {},
+  onConnectionSecurityError() {},
   // Called when the other end has closed the connection.
   onConnectionClosed() {},
 
   // Called when ASCII data is available.
-  onDataReceived(/* string */ aData) {},
+  onDataReceived(/* string */) {},
 
   // If using the ping functionality, this is called when a new ping message
   // should be sent on the socket.

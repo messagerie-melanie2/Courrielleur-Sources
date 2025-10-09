@@ -181,9 +181,10 @@ OBJDIR = os.path.abspath(OBJDIR)
 OUTDIR = os.path.join(OBJDIR, "out")
 MAKE = env.get("MAKE", "make")
 PYTHON = sys.executable
+MACH = os.path.join(DIR.source, "mach")
 
 for d in DIR._fields:
-    info("DIR.{name} = {dir}".format(name=d, dir=getattr(DIR, d)))
+    info(f"DIR.{d} = {getattr(DIR, d)}")
 
 
 def ensure_dir_exists(
@@ -217,23 +218,40 @@ def ensure_dir_exists(
 with open(os.path.join(DIR.scripts, "variants", args.variant)) as fh:
     variant = json.load(fh)
 
-if args.variant == "nonunified":
-    # Rewrite js/src/**/moz.build to replace UNIFIED_SOURCES to SOURCES.
-    # Note that this modifies the current checkout.
-    for dirpath, dirnames, filenames in os.walk(DIR.js_src):
-        if "moz.build" in filenames:
-            in_place = ["-i"]
-            if platform.system() == "Darwin":
-                in_place.append("")
-            subprocess.check_call(
-                ["sed"]
-                + in_place
-                + ["s/UNIFIED_SOURCES/SOURCES/", os.path.join(dirpath, "moz.build")]
-            )
+# Some of the variants request a particular word size (eg ARM simulators).
+word_bits = variant.get("bits")
+
+# On Linux and Windows, we build 32- and 64-bit versions on a 64 bit
+# host, so the caller has to specify what is desired.
+if word_bits is None and args.platform:
+    platform_arch = args.platform.split("-")[0]
+    if platform_arch in ("win32", "linux"):
+        word_bits = 32
+    elif platform_arch in ("win64", "linux64"):
+        word_bits = 64
+
+# Fall back to the word size of the host.
+if word_bits is None:
+    word_bits = 64 if platform.architecture()[0] == "64bit" else 32
+
+# Need a platform name to use as a key in variant files.
+if args.platform:
+    variant_platform = args.platform.split("-")[0]
+elif platform.system() == "Windows":
+    variant_platform = "win64" if word_bits == 64 else "win32"
+elif platform.system() == "Linux":
+    variant_platform = "linux64" if word_bits == 64 else "linux"
+elif platform.system() == "Darwin":
+    variant_platform = "macosx64"
+else:
+    variant_platform = "other"
 
 CONFIGURE_ARGS = variant["configure-args"]
 
-compiler = variant.get("compiler")
+if variant_platform in ("win32", "win64"):
+    compiler = "clang-cl"
+else:
+    compiler = variant.get("compiler")
 if compiler != "gcc" and "clang-plugin" not in CONFIGURE_ARGS:
     CONFIGURE_ARGS += " --enable-clang-plugin"
 
@@ -267,34 +285,6 @@ if opt is not None:
 opt = variant.get("nspr")
 if opt is None or opt:
     CONFIGURE_ARGS += " --enable-nspr-build"
-
-# Some of the variants request a particular word size (eg ARM simulators).
-word_bits = variant.get("bits")
-
-# On Linux and Windows, we build 32- and 64-bit versions on a 64 bit
-# host, so the caller has to specify what is desired.
-if word_bits is None and args.platform:
-    platform_arch = args.platform.split("-")[0]
-    if platform_arch in ("win32", "linux"):
-        word_bits = 32
-    elif platform_arch in ("win64", "linux64"):
-        word_bits = 64
-
-# Fall back to the word size of the host.
-if word_bits is None:
-    word_bits = 64 if platform.architecture()[0] == "64bit" else 32
-
-# Need a platform name to use as a key in variant files.
-if args.platform:
-    variant_platform = args.platform.split("-")[0]
-elif platform.system() == "Windows":
-    variant_platform = "win64" if word_bits == 64 else "win32"
-elif platform.system() == "Linux":
-    variant_platform = "linux64" if word_bits == 64 else "linux"
-elif platform.system() == "Darwin":
-    variant_platform = "macosx64"
-else:
-    variant_platform = "other"
 
 env["LD_LIBRARY_PATH"] = ":".join(
     d
@@ -388,6 +378,13 @@ def run_command(command, check=False, **kwargs):
     return stdout, stderr, status
 
 
+def run_mach_command(command, check=False, **kwargs):
+    _stdout, _stderr, status = run_command(
+        [PYTHON, MACH] + command, check=check, **kwargs
+    )
+    return status
+
+
 # Replacement strings in environment variables.
 REPLACEMENTS = {
     "DIR": DIR.scripts,
@@ -400,6 +397,12 @@ REPLACEMENTS = {
 # modify the flags passed to the shell or to set the GC zeal mode.
 for k, v in variant.get("env", {}).items():
     env[k] = v.format(**REPLACEMENTS)
+
+# Do similar substitution for the extra_args keyed lists.
+extra_args = {"jit-test": [], "jstests": [], "gdb": []}
+extra_args.update(variant.get("extra-args", {}))
+for v in extra_args.values():
+    v[:] = [arg.format(**REPLACEMENTS) for arg in v]
 
 if AUTOMATION:
     # Currently only supported on linux64.
@@ -439,30 +442,28 @@ if use_minidump:
     if injector_lib is None:
         use_minidump = False
 
-    info("use_minidump is {}".format(use_minidump))
+    info(f"use_minidump is {use_minidump}")
     info("  MINIDUMP_SAVE_PATH={}".format(env["MINIDUMP_SAVE_PATH"]))
-    info("  injector lib is {}".format(injector_lib))
+    info(f"  injector lib is {injector_lib}")
     info("  MINIDUMP_STACKWALK={}".format(env.get("MINIDUMP_STACKWALK")))
 
 
 mozconfig = os.path.join(DIR.source, "mozconfig.autospider")
-CONFIGURE_ARGS += " --prefix={OBJDIR}/dist".format(OBJDIR=quote(OBJDIR))
+CONFIGURE_ARGS += f" --prefix={quote(OBJDIR)}/dist"
 
 # Generate a mozconfig.
-with open(mozconfig, "wt") as fh:
+with open(mozconfig, "w") as fh:
     if AUTOMATION and platform.system() == "Windows":
-        fh.write('. "$topsrcdir/build/%s/mozconfig.vs-latest"\n' % variant_platform)
+        fh.write('. "$topsrcdir/build/mozconfig.clang-cl"\n')
     fh.write("ac_add_options --enable-project=js\n")
     fh.write("ac_add_options " + CONFIGURE_ARGS + "\n")
     fh.write("mk_add_options MOZ_OBJDIR=" + quote(OBJDIR) + "\n")
 
 env["MOZCONFIG"] = mozconfig
 
-mach = os.path.join(DIR.source, "mach")
-
 if not args.nobuild:
     # Do the build
-    run_command([sys.executable, mach, "build"], check=True)
+    run_mach_command(["build"], check=True)
 
     if use_minidump:
         # Convert symbols to breakpad format.
@@ -471,10 +472,8 @@ if not args.nobuild:
         cmd_env["RUSTC_COMMIT"] = "0"
         cmd_env["MOZ_CRASHREPORTER"] = "1"
         cmd_env["MOZ_AUTOMATION_BUILD_SYMBOLS"] = "1"
-        run_command(
+        run_mach_command(
             [
-                sys.executable,
-                mach,
                 "build",
                 "recurse_syms",
             ],
@@ -496,19 +495,14 @@ def run_test_command(command, **kwargs):
 
 
 def run_jsapitests(args):
-    jsapi_test_binary = os.path.join(OBJDIR, "dist", "bin", "jsapi-tests")
     test_env = env.copy()
-    test_env["TOPSRCDIR"] = DIR.source
     if use_minidump and platform.system() == "Linux":
         test_env["LD_PRELOAD"] = injector_lib
-    st = run_test_command([jsapi_test_binary] + args, env=test_env)
+    st = run_mach_command(["jsapi-tests"], env=test_env)
     if st < 0:
-        print(
-            "PROCESS-CRASH | {} | application crashed".format(
-                " ".join(["jsapi-tests"] + args)
-            )
-        )
-        print("Return code: {}".format(st))
+        info = " ".join(["jsapi-tests"] + args)
+        print(f"PROCESS-CRASH | {info} | application crashed")
+        print(f"Return code: {st}")
     return st
 
 
@@ -560,13 +554,9 @@ jstest_workers = worker_max
 jittest_workers = worker_max
 if platform.system() == "Windows":
     jstest_workers = min(worker_max, 16)
-    env["JSTESTS_EXTRA_ARGS"] = "-j{} ".format(jstest_workers) + env.get(
-        "JSTESTS_EXTRA_ARGS", ""
-    )
+    extra_args["jstests"].append(f"-j{jstest_workers}")
     jittest_workers = min(worker_max, 8)
-    env["JITTEST_EXTRA_ARGS"] = "-j{} ".format(jittest_workers) + env.get(
-        "JITTEST_EXTRA_ARGS", ""
-    )
+    extra_args["jit-test"].append(f"-j{jittest_workers}")
 print(
     f"using {jstest_workers}/{worker_max} workers for jstests, "
     f"{jittest_workers}/{worker_max} for jittest"
@@ -578,8 +568,12 @@ if use_minidump:
     # cross-compiling from 64- to 32-bit, that will fail and produce stderr
     # output when running any 64-bit commands, which breaks eg mozconfig
     # processing. So use the --dll command line mechanism universally.
-    for v in ("JSTESTS_EXTRA_ARGS", "JITTEST_EXTRA_ARGS"):
-        env[v] = "--args='--dll %s' %s" % (injector_lib, env.get(v, ""))
+    for suite in ("jstests", "jit-test"):
+        extra_args[suite].append(f"--args=--dll {injector_lib}")
+
+# Report longest running tests in automation.
+for suite in ("jstests", "jit-test"):
+    extra_args[suite].append("--show-slow")
 
 # Always run all enabled tests, even if earlier ones failed. But return the
 # first failed status.
@@ -589,22 +583,45 @@ if "checks" in test_suites:
     results.append(("make check", run_test_command([MAKE, "check"])))
 
 if "jittest" in test_suites:
-    results.append(("make check-jit-test", run_test_command([MAKE, "check-jit-test"])))
+    auto_args = []
+    if AUTOMATION:
+        auto_args = [
+            "--no-slow",
+            "--no-progress",
+            "--format=automation",
+            "--timeout=300",
+            "--jitflags=all",
+        ]
+    results.append(
+        (
+            "mach jit-test",
+            run_mach_command(["jit-test", "--", *auto_args, *extra_args["jit-test"]]),
+        )
+    )
 if "jsapitests" in test_suites:
     st = run_jsapitests([])
     if st == 0:
         st = run_jsapitests(["--frontend-only"])
     results.append(("jsapi-tests", st))
 if "jstests" in test_suites:
-    results.append(("jstests", run_test_command([MAKE, "check-jstests"])))
+    auto_args = []
+    if AUTOMATION:
+        auto_args = ["--no-progress", "--format=automation", "--timeout=300"]
+    results.append(
+        (
+            "mach jstests",
+            run_mach_command(["jstests", "--", *auto_args, *extra_args["jstests"]]),
+        )
+    )
 if "gdb" in test_suites:
     test_script = os.path.join(DIR.js_src, "gdb", "run-tests.py")
     auto_args = ["-s", "-o", "--no-progress"] if AUTOMATION else []
-    extra_args = env.get("GDBTEST_EXTRA_ARGS", "").split(" ")
     results.append(
         (
             "gdb",
-            run_test_command([PYTHON, test_script, *auto_args, *extra_args, OBJDIR]),
+            run_test_command(
+                [PYTHON, test_script, *auto_args, *extra_args["gdb"], OBJDIR]
+            ),
         )
     )
 
@@ -675,10 +692,10 @@ if args.variant == "wasi":
 
 # Generate stacks from minidumps.
 if use_minidump:
-    venv_python = os.path.join(OBJDIR, "_virtualenvs", "build", "bin", "python3")
-    run_command(
+    run_mach_command(
         [
-            venv_python,
+            "python",
+            "--virtualenv=build",
             os.path.join(DIR.source, "testing/mozbase/mozcrash/mozcrash/mozcrash.py"),
             os.getenv("TMPDIR", "/tmp"),
             os.path.join(OBJDIR, "dist/crashreporter-symbols"),

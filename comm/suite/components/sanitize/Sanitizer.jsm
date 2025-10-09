@@ -5,7 +5,6 @@
 
 var EXPORTED_SYMBOLS = ["Sanitizer"];
 
-const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 XPCOMUtils.defineLazyModuleGetters(this, {
@@ -16,6 +15,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   FormHistory: "resource://gre/modules/FormHistory.jsm",
   PlacesUtils: "resource://gre/modules/PlacesUtils.jsm",
   setTimeout: "resource://gre/modules/Timer.jsm",
+  OfflineAppCacheHelper: "resource://gre/modules/offlineAppCache.jsm",
 });
 
 XPCOMUtils.defineLazyServiceGetter(this, "serviceWorkerManager",
@@ -286,9 +286,9 @@ var Sanitizer = {
     }
   },
 
-  QueryInterface: XPCOMUtils.generateQI([
+  QueryInterface: ChromeUtils.generateQI([
     Ci.nsiObserver,
-    Ci.nsISupportsWeakReference
+    Ci.nsISupportsWeakReference,
   ]),
 
   items: {
@@ -372,8 +372,6 @@ var Sanitizer = {
 
     offlineApps: {
       async clear(range) {
-        // AppCache
-        ChromeUtils.import("resource:///modules/OfflineAppCacheHelper.jsm");
         // This doesn't wait for the cleanup to be complete.
         OfflineAppCacheHelper.clear();
 
@@ -392,8 +390,8 @@ var Sanitizer = {
               unregisterSucceeded: () => { resolve(true); },
               // We don't care about failures.
               unregisterFailed: () => { resolve(true); },
-              QueryInterface: XPCOMUtils.generateQI(
-                [Ci.nsIServiceWorkerUnregisterCallback])
+              QueryInterface: ChromeUtils.generateQI(
+                [Ci.nsIServiceWorkerUnregisterCallback]),
             };
 
             serviceWorkerManager.propagateUnregister(sw.principal,

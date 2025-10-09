@@ -18,8 +18,11 @@ var { AddonManager } = ChromeUtils.importESModule(
 var { ExtensionParent } = ChromeUtils.importESModule(
   "resource://gre/modules/ExtensionParent.sys.mjs"
 );
-var { MailE10SUtils } = ChromeUtils.import(
-  "resource:///modules/MailE10SUtils.jsm"
+var { MailE10SUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailE10SUtils.sys.mjs"
+);
+var { MailUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailUtils.sys.mjs"
 );
 
 function tabProgressListener(aTab, aStartsBlank) {
@@ -140,7 +143,7 @@ tabProgressListener.prototype = {
       return;
     }
 
-    let tabmail = document.getElementById("tabmail");
+    const tabmail = document.getElementById("tabmail");
 
     if (aStateFlags & Ci.nsIWebProgressListener.STATE_START) {
       this.mRequestCount++;
@@ -200,15 +203,16 @@ tabProgressListener.prototype = {
       this.mProgressListener.onSecurityChange(aWebProgress, aRequest, aState);
     }
 
-    const wpl = Ci.nsIWebProgressListener;
     const wpl_security_bits =
-      wpl.STATE_IS_SECURE | wpl.STATE_IS_BROKEN | wpl.STATE_IS_INSECURE;
+      Ci.nsIWebProgressListener.STATE_IS_SECURE |
+      Ci.nsIWebProgressListener.STATE_IS_BROKEN |
+      Ci.nsIWebProgressListener.STATE_IS_INSECURE;
     let level = "";
     switch (aState & wpl_security_bits) {
-      case wpl.STATE_IS_SECURE:
+      case Ci.nsIWebProgressListener.STATE_IS_SECURE:
         level = "high";
         break;
-      case wpl.STATE_IS_BROKEN:
+      case Ci.nsIWebProgressListener.STATE_IS_BROKEN:
         level = "broken";
         break;
     }
@@ -255,8 +259,8 @@ var DOMLinkHandler = {
     }
   },
   onLinkAdded(event) {
-    let link = event.target;
-    let rel = link.rel && link.rel.toLowerCase();
+    const link = event.target;
+    const rel = link.rel && link.rel.toLowerCase();
     if (!link || !link.ownerDocument || !rel || !link.href) {
       return;
     }
@@ -266,14 +270,14 @@ var DOMLinkHandler = {
         return;
       }
 
-      let targetDoc = link.ownerDocument;
+      const targetDoc = link.ownerDocument;
 
-      let uri = Services.io.newURI(link.href, targetDoc.characterSet);
+      const uri = Services.io.newURI(link.href, targetDoc.characterSet);
 
       // Verify that the load of this icon is legal.
       // Some error or special pages can load their favicon.
       // To be on the safe side, only allow chrome:// favicons.
-      let isAllowedPage =
+      const isAllowedPage =
         targetDoc.documentURI == "about:home" ||
         ["about:neterror?", "about:blocked?", "about:certerror?"].some(
           function (aStart) {
@@ -308,16 +312,16 @@ var DOMLinkHandler = {
       // ensure that the image loaded always obeys the content policy. There
       // may have been a chance that it was cached and we're trying to load it
       // direct from the cache and not the normal route.
-      let { NetUtil } = ChromeUtils.import(
-        "resource://gre/modules/NetUtil.jsm"
+      const { NetUtil } = ChromeUtils.importESModule(
+        "resource://gre/modules/NetUtil.sys.mjs"
       );
-      let tmpChannel = NetUtil.newChannel({
+      const tmpChannel = NetUtil.newChannel({
         uri,
         loadingNode: targetDoc,
         securityFlags: Ci.nsILoadInfo.SEC_ONLY_FOR_EXPLICIT_CONTENTSEC_CHECK,
         contentPolicyType: Ci.nsIContentPolicy.TYPE_IMAGE,
       });
-      let tmpLoadInfo = tmpChannel.loadInfo;
+      const tmpLoadInfo = tmpChannel.loadInfo;
       if (
         contentPolicy.shouldLoad(uri, tmpLoadInfo, link.type) !=
         Ci.nsIContentPolicy.ACCEPT
@@ -325,7 +329,7 @@ var DOMLinkHandler = {
         return;
       }
 
-      let tab = document
+      const tab = document
         .getElementById("tabmail")
         .getBrowserForDocument(targetDoc.defaultView);
 
@@ -344,7 +348,7 @@ var DOMLinkHandler = {
 var contentTabBaseType = {
   // List of URLs that will receive special treatment when opened in a tab.
   // Note that about:preferences is loaded via a different mechanism.
-  inContentWhitelist: [
+  inContentAllowList: [
     "about:addons",
     "about:addressbook",
     "about:blank",
@@ -354,10 +358,10 @@ var contentTabBaseType = {
 
   // Code to run if a particular document is loaded in a tab.
   // The array members (functions) are for the respective document URLs
-  // as specified in inContentWhitelist.
+  // as specified in inContentAllowList.
   inContentOverlays: [
     // about:addons
-    function (aDocument, aTab) {
+    function (aDocument) {
       Services.scriptloader.loadSubScript(
         "chrome://messenger/content/aboutAddonsExtra.js",
         aDocument.defaultView
@@ -373,12 +377,12 @@ var contentTabBaseType = {
     null,
 
     // about:profiles
-    function (aDocument, aTab) {
-      let win = aDocument.defaultView;
+    function (aDocument) {
+      const win = aDocument.defaultView;
       // Need a timeout to let the script run to create the needed buttons.
       win.setTimeout(() => {
         win.MozXULElement.insertFTLIfNeeded("messenger/aboutProfilesExtra.ftl");
-        for (let button of aDocument.querySelectorAll(
+        for (const button of aDocument.querySelectorAll(
           `[data-l10n-id="profiles-launch-profile"]`
         )) {
           win.document.l10n.setAttributes(
@@ -401,8 +405,8 @@ var contentTabBaseType = {
       return -1;
     }
 
-    let tabmail = document.getElementById("tabmail");
-    let tabInfo = tabmail.tabInfo;
+    const tabmail = document.getElementById("tabmail");
+    const tabInfo = tabmail.tabInfo;
     let uri;
 
     try {
@@ -470,20 +474,20 @@ var contentTabBaseType = {
   },
 
   _setUpLoadListener(aTab) {
-    let self = this;
+    const self = this;
 
     function onLoad(aEvent) {
-      let doc = aEvent.target;
-      let url = doc.defaultView.location.href;
+      const doc = aEvent.target;
+      const url = doc.defaultView.location.href;
 
       // If this document has an overlay defined, run it now.
-      let ind = self.inContentWhitelist.indexOf(url);
+      let ind = self.inContentAllowList.indexOf(url);
       if (ind < 0) {
         // Try a wildcard.
-        ind = self.inContentWhitelist.indexOf(url.replace(/:.*/, ":*"));
+        ind = self.inContentAllowList.indexOf(url.replace(/:.*/, ":*"));
       }
       if (ind >= 0) {
-        let overlayFunction = self.inContentOverlays[ind];
+        const overlayFunction = self.inContentOverlays[ind];
         if (overlayFunction) {
           overlayFunction(doc, aTab);
         }
@@ -496,7 +500,7 @@ var contentTabBaseType = {
 
   // Internal function used to set up the title listener on a content tab.
   _setUpTitleListener(aTab) {
-    function onDOMTitleChanged(aEvent) {
+    function onDOMTitleChanged() {
       aTab.title = aTab.browser.contentTitle;
       document.getElementById("tabmail").setTabTitle(aTab);
     }
@@ -527,7 +531,7 @@ var contentTabBaseType = {
     aTab.browser.addEventListener("DOMWindowClose", aTab.closeListener, true);
   },
 
-  supportsCommand(aCommand, aTab) {
+  supportsCommand(aCommand) {
     switch (aCommand) {
       case "cmd_fullZoomReduce":
       case "cmd_fullZoomEnlarge":
@@ -560,7 +564,7 @@ var contentTabBaseType = {
         return true;
       case "cmd_print":
       case "button_print": {
-        let uri = aTab.browser?.currentURI;
+        const uri = aTab.browser?.currentURI;
         if (!uri || !uri.schemeIs("about")) {
           return true;
         }
@@ -657,8 +661,8 @@ class SecurityIcon {
   /**
    * Set the security level of the page.
    *
-   * @param {"high"|"broken"|""} - The security level for the page, or empty if
-   *   it is to be ignored.
+   * @param {"high"|"broken"|""} securityLevel - The security level for the
+   *   page, or empty if it is to be ignored.
    */
   setSecurityLevel(securityLevel) {
     if (this.securityLevel !== securityLevel) {
@@ -673,8 +677,7 @@ class SecurityIcon {
     let l10nId;
     let secure = false;
     if (this.loading) {
-      src = "chrome://global/skin/icons/loading.png";
-      srcSet = "chrome://global/skin/icons/loading@2x.png 2x";
+      src = "chrome://messenger/skin/icons/spinning.svg";
       l10nId = "content-tab-page-loading-icon";
     } else {
       switch (this.securityLevel) {
@@ -709,12 +712,6 @@ class SecurityIcon {
 
 var specialTabs = {
   _kAboutRightsVersion: 1,
-  get _protocolSvc() {
-    delete this._protocolSvc;
-    return (this._protocolSvc = Cc[
-      "@mozilla.org/uriloader/external-protocol-service;1"
-    ].getService(Ci.nsIExternalProtocolService));
-  },
 
   get msgNotificationBar() {
     if (!this._notificationBox) {
@@ -730,7 +727,7 @@ var specialTabs = {
 
   // This will open any special tabs if necessary on startup.
   openSpecialTabsOnStartup() {
-    let tabmail = document.getElementById("tabmail");
+    const tabmail = document.getElementById("tabmail");
 
     tabmail.registerTabType(this.contentTabType);
 
@@ -771,6 +768,7 @@ var specialTabs = {
      * This is the internal function used by content tabs to open a new tab. To
      * open a contentTab, use specialTabs.openTab("contentTab", aArgs)
      *
+     * @param {TabInfo} aTab - The tab.
      * @param {object} aArgs - The options that content tabs accept.
      * @param {string} aArgs.url - The URL that is to be opened
      * @param {nsIOpenWindowInfo} [aArgs.openWindowInfo] - The opener window
@@ -794,14 +792,14 @@ var specialTabs = {
       }
 
       // First clone the page and set up the basics.
-      let clone = document
+      const clone = document
         .getElementById("contentTab")
         .firstElementChild.cloneNode(true);
 
       clone.setAttribute("id", "contentTab" + this.lastBrowserId);
       clone.setAttribute("collapsed", false);
 
-      let toolbox = clone.firstElementChild;
+      const toolbox = clone.firstElementChild;
       toolbox.setAttribute("id", "contentTabToolbox" + this.lastBrowserId);
       toolbox.firstElementChild.setAttribute(
         "id",
@@ -811,20 +809,45 @@ var specialTabs = {
       aTab.linkedBrowser = aTab.browser = document.createXULElement("browser");
       aTab.browser.setAttribute("id", "contentTabBrowser" + this.lastBrowserId);
       aTab.browser.setAttribute("type", "content");
+      aTab.browser.setAttribute("manualactiveness", "true");
       aTab.browser.setAttribute("flex", "1");
       aTab.browser.setAttribute("autocompletepopup", "PopupAutoComplete");
       aTab.browser.setAttribute("context", "browserContext");
       aTab.browser.setAttribute("maychangeremoteness", "true");
       aTab.browser.setAttribute("onclick", "return contentAreaClick(event);");
       aTab.browser.openWindowInfo = aArgs.openWindowInfo || null;
+      // Do not load about:blank (which is done as a secondary load, replacing the
+      // initially loaded about:blank), which may lead to an assertion fail in
+      // nsDocLoader.cpp: Overwriting an existing document channel. Mozilla-central
+      // is aggressively setting nodefaultsrc, so we do the same. See Comment 8
+      // of bug 1921974 for more details.
+      aTab.browser.setAttribute("nodefaultsrc", "true");
       clone.querySelector("stack").appendChild(aTab.browser);
 
       if (aArgs.skipLoad) {
-        clone.querySelector("browser").setAttribute("nodefaultsrc", "true");
+        // If a new tab is opened via a click on a link with target="_blank", we
+        // get here via createContentWindowInFrame(). The remoteness must be set
+        // before aTab.panel.appendChild(clone), otherwise the browser will get
+        // a docShell, which runs into a MOZ_ASSERT later (see Bug 1770105).
+        // We must ensure the context is a parent window that is already
+        // marked as remote (see Bug 1843741)
+        if (aArgs.openWindowInfo?.isRemote) {
+          aTab.browser.setAttribute("remote", "true");
+        }
       }
       if (aArgs.userContextId) {
         aTab.browser.setAttribute("usercontextid", aArgs.userContextId);
       }
+
+      // Ensure the browser will initially load in the same group as other
+      // browsers from the same extension.
+      if (aArgs.initialBrowsingContextGroupId) {
+        aTab.browser.setAttribute(
+          "initialBrowsingContextGroupId",
+          aArgs.initialBrowsingContextGroupId
+        );
+      }
+
       aTab.panel.setAttribute("id", "contentTabWrapper" + this.lastBrowserId);
       aTab.panel.appendChild(clone);
       aTab.root = clone;
@@ -855,7 +878,7 @@ var specialTabs = {
 
       // As we're opening this tab, showTab may not get called, so set
       // the type according to if we're opening in background or not.
-      let background = "background" in aArgs && aArgs.background;
+      const background = "background" in aArgs && aArgs.background;
       if (background) {
         aTab.browser.removeAttribute("primary");
       } else {
@@ -864,7 +887,10 @@ var specialTabs = {
 
       if (aArgs.linkHandler == "single-page") {
         aTab.browser.setAttribute("messagemanagergroup", "single-page");
-      } else if (aArgs.linkHandler === null) {
+      } else if (
+        aArgs.linkHandler === null ||
+        aArgs.linkHandler == "browsers"
+      ) {
         aTab.browser.setAttribute("messagemanagergroup", "browsers");
       } else {
         aTab.browser.setAttribute("messagemanagergroup", "single-site");
@@ -908,7 +934,7 @@ var specialTabs = {
       }
 
       // Create a filter and hook it up to our browser
-      let filter = Cc[
+      const filter = Cc[
         "@mozilla.org/appshell/component/browser-status-filter;1"
       ].createInstance(Ci.nsIWebProgress);
       aTab.filter = filter;
@@ -947,7 +973,8 @@ var specialTabs = {
       this.lastBrowserId++;
     },
     tryCloseTab(aTab) {
-      return aTab.browser.permitUnload();
+      const { permitUnload } = aTab.browser.permitUnload();
+      return permitUnload;
     },
     persistTab(aTab) {
       if (aTab.browser.currentURI.spec == "about:blank") {
@@ -973,7 +1000,7 @@ var specialTabs = {
       };
     },
     restoreTab(aTabmail, aPersistedState) {
-      let tab = aTabmail.openTab("contentTab", {
+      const tab = aTabmail.openTab("contentTab", {
         background: true,
         duplicate: aPersistedState.duplicate,
         linkHandler: aPersistedState.linkHandler,
@@ -995,23 +1022,28 @@ var specialTabs = {
    *
    * @see {BrowserContentHandler.needHomepageOverride}
    */
-  showWhatsNewPage() {
-    let old_mstone = Services.prefs.getCharPref(
+  async showWhatsNewPage() {
+    const old_mstone = Services.prefs.getCharPref(
       "mailnews.start_page_override.mstone",
       ""
     );
 
-    let mstone = Services.appinfo.version;
+    const mstone = Services.appinfo.version;
     if (mstone != old_mstone) {
       Services.prefs.setCharPref("mailnews.start_page_override.mstone", mstone);
     }
 
     if (AppConstants.MOZ_UPDATER) {
-      let update = Cc["@mozilla.org/updates/update-manager;1"].getService(
+      const um = Cc["@mozilla.org/updates/update-manager;1"].getService(
         Ci.nsIUpdateManager
-      ).readyUpdate;
+      );
+      const update = await um.lastUpdateInstalled();
 
-      if (update && Services.vc.compare(update.appVersion, old_mstone) > 0) {
+      if (
+        update &&
+        Services.vc.compare(update.appVersion, old_mstone) > 0 &&
+        Services.vc.compare(update.appVersion, mstone) <= 0
+      ) {
         let overridePage = Services.urlFormatter.formatURLPref(
           "mailnews.start_page.override_url"
         );
@@ -1034,7 +1066,7 @@ var specialTabs = {
    */
   getPostUpdateOverridePage(update, defaultOverridePage) {
     update = update.QueryInterface(Ci.nsIWritablePropertyBag);
-    let actions = update.getProperty("actions");
+    const actions = update.getProperty("actions");
     // When the update doesn't specify actions fallback to the original behavior
     // of displaying the default override page.
     if (!actions) {
@@ -1061,19 +1093,19 @@ var specialTabs = {
    * Looks at the existing prefs and determines if we should show the policy or not.
    */
   shouldShowPolicyNotification() {
-    let dataSubmissionEnabled = Services.prefs.getBoolPref(
+    const dataSubmissionEnabled = Services.prefs.getBoolPref(
       "datareporting.policy.dataSubmissionEnabled",
       true
     );
-    let dataSubmissionPolicyBypassNotification = Services.prefs.getBoolPref(
+    const dataSubmissionPolicyBypassNotification = Services.prefs.getBoolPref(
       "datareporting.policy.dataSubmissionPolicyBypassNotification",
       false
     );
-    let dataSubmissionPolicyAcceptedVersion = Services.prefs.getIntPref(
+    const dataSubmissionPolicyAcceptedVersion = Services.prefs.getIntPref(
       "datareporting.policy.dataSubmissionPolicyAcceptedVersion",
       0
     );
-    let currentPolicyVersion = Services.prefs.getIntPref(
+    const currentPolicyVersion = Services.prefs.getIntPref(
       "datareporting.policy.currentPolicyVersion",
       1
     );
@@ -1092,7 +1124,7 @@ var specialTabs = {
 
   showPolicyNotification() {
     try {
-      let firstRunURL = Services.prefs.getStringPref(
+      const firstRunURL = Services.prefs.getStringPref(
         "datareporting.policy.firstRunURL"
       );
       document.getElementById("tabmail").openTab("contentTab", {
@@ -1103,7 +1135,7 @@ var specialTabs = {
       // Show the infobar if it fails to show the privacy policy in the new tab.
       this.showTelemetryNotification();
     }
-    let currentPolicyVersion = Services.prefs.getIntPref(
+    const currentPolicyVersion = Services.prefs.getIntPref(
       "datareporting.policy.currentPolicyVersion",
       1
     );
@@ -1117,26 +1149,26 @@ var specialTabs = {
     );
   },
 
-  showTelemetryNotification() {
-    let brandBundle = Services.strings.createBundle(
+  async showTelemetryNotification() {
+    const brandBundle = Services.strings.createBundle(
       "chrome://branding/locale/brand.properties"
     );
-    let telemetryBundle = Services.strings.createBundle(
+    const telemetryBundle = Services.strings.createBundle(
       "chrome://messenger/locale/telemetry.properties"
     );
 
-    let productName = brandBundle.GetStringFromName("brandFullName");
-    let serverOwner = Services.prefs.getCharPref(
+    const productName = brandBundle.GetStringFromName("brandFullName");
+    const serverOwner = Services.prefs.getCharPref(
       "toolkit.telemetry.server_owner"
     );
-    let telemetryText = telemetryBundle.formatStringFromName("telemetryText", [
-      productName,
-      serverOwner,
-    ]);
+    const telemetryText = telemetryBundle.formatStringFromName(
+      "telemetryText",
+      [productName, serverOwner]
+    );
 
     // TODO: sync up this bar with Firefox:
     // https://searchfox.org/mozilla-central/rev/227f22acef5c4865503bde9f835452bf38332c8e/browser/locales/en-US/chrome/browser/browser.properties#697-698
-    let buttons = [
+    const buttons = [
       {
         label: telemetryBundle.GetStringFromName("telemetryLinkLabel"),
         popup: null,
@@ -1146,7 +1178,7 @@ var specialTabs = {
       },
     ];
 
-    let notification = this.msgNotificationBar.appendNotification(
+    const notification = await this.msgNotificationBar.appendNotification(
       "telemetry",
       {
         label: telemetryText,
@@ -1196,7 +1228,7 @@ var specialTabs = {
         label: rightsBundle.GetStringFromName("buttonLabel"),
         accessKey: rightsBundle.GetStringFromName("buttonAccessKey"),
         popup: null,
-        callback(aNotificationBar, aButton) {
+        callback() {
           // Show the about:rights tab
           document.getElementById("tabmail").openTab("contentTab", {
             url: "about:rights",
@@ -1205,10 +1237,10 @@ var specialTabs = {
       },
     ];
 
-    let notifyRightsText = await document.l10n.formatValue(
+    const notifyRightsText = await document.l10n.formatValue(
       "about-rights-notification-text"
     );
-    let notification = this.msgNotificationBar.appendNotification(
+    const notification = await this.msgNotificationBar.appendNotification(
       "about-rights",
       {
         label: notifyRightsText,
@@ -1226,7 +1258,8 @@ var specialTabs = {
   /**
    * Determine if we should load fav icons or not.
    *
-   * @param aURI  An nsIURI containing the current url.
+   * @param {nsIURI} aURI - An nsIURI containing the current url.
+   * @returns {boolean} true if we should load.
    */
   _shouldLoadFavIcon(aURI) {
     return (
@@ -1245,7 +1278,7 @@ var specialTabs = {
   useDefaultFavIcon(aTab) {
     // Use documentURI in the check for shouldLoadFavIcon so that we do the
     // right thing with about:-style error pages.
-    let docURIObject = aTab.browser.documentURI;
+    const docURIObject = aTab.browser.documentURI;
     let icon = null;
     if (this._shouldLoadFavIcon(docURIObject)) {
       icon = docURIObject.prePath + "/favicon.ico";
@@ -1259,19 +1292,13 @@ var specialTabs = {
    * page shown in the browser. It is assumed that the preferences have already
    * been checked before calling this function appropriately.
    *
-   * @param aTab  The tab to set the icon for.
-   * @param aIcon A string based URL of the icon to try and load.
+   * @param {object} aTab - The tab (tabInfo) to set the icon for.
+   * @param {string} aIcon - A string based URL of the icon to try and load.
    */
-  setFavIcon(aTab, aIcon) {
-    if (aIcon) {
-      PlacesUtils.favicons.setAndFetchFaviconForPage(
-        aTab.browser.currentURI,
-        Services.io.newURI(aIcon),
-        false,
-        PlacesUtils.favicons.FAVICON_LOAD_NON_PRIVATE,
-        null,
-        aTab.browser.contentPrincipal
-      );
+  async setFavIcon(aTab, aIcon) {
+    if (aIcon && aTab.browser.currentURI.spec.startsWith("http")) {
+      const iconURI = Services.io.newURI(aIcon);
+      await MailUtils.setFaviconForPage(aTab.browser.currentURI, iconURI);
     }
     document
       .getElementById("tabmail")
@@ -1283,7 +1310,7 @@ var specialTabs = {
   },
 
   browserForward() {
-    let tabmail = document.getElementById("tabmail");
+    const tabmail = document.getElementById("tabmail");
     if (
       !["contentTab", "mail3PaneTab"].includes(
         tabmail?.currentTabInfo.mode.name
@@ -1291,7 +1318,7 @@ var specialTabs = {
     ) {
       return;
     }
-    let browser = tabmail.getBrowserForSelectedTab();
+    const browser = tabmail.getBrowserForSelectedTab();
     if (!browser) {
       return;
     }
@@ -1301,7 +1328,7 @@ var specialTabs = {
   },
 
   browserBack() {
-    let tabmail = document.getElementById("tabmail");
+    const tabmail = document.getElementById("tabmail");
     if (
       !["contentTab", "mail3PaneTab"].includes(
         tabmail?.currentTabInfo.mode.name
@@ -1309,7 +1336,7 @@ var specialTabs = {
     ) {
       return;
     }
-    let browser = tabmail.getBrowserForSelectedTab();
+    const browser = tabmail.getBrowserForSelectedTab();
     if (!browser) {
       return;
     }

@@ -9,8 +9,9 @@
 #include <memory>
 
 #include "mozilla/AlreadyAddRefed.h"
-#include "mozilla/dom/NonRefcountedDOMObject.h"
 #include "mozilla/webgpu/WebGPUTypes.h"
+#include "mozilla/IntegerPrintfMacros.h"
+#include "nsPrintfCString.h"
 #include "nsString.h"
 #include "ObjectModel.h"
 
@@ -29,6 +30,7 @@ class Sequence;
 }  // namespace dom
 
 namespace webgpu {
+class Adapter;
 class Device;
 class Instance;
 class SupportedFeatures;
@@ -38,19 +40,32 @@ namespace ffi {
 struct WGPUAdapterInformation;
 }  // namespace ffi
 
-class AdapterInfo final : public dom::NonRefcountedDOMObject {
- private:
+class AdapterInfo final : public nsWrapperCache, public ChildOf<Adapter> {
+ public:
+  GPU_DECL_CYCLE_COLLECTION(AdapterInfo)
+  GPU_DECL_JS_WRAP(AdapterInfo)
+
+ protected:
   const std::shared_ptr<ffi::WGPUAdapterInformation> mAboutSupportInfo;
+  ~AdapterInfo() = default;
+  void Cleanup() {}
 
  public:
   explicit AdapterInfo(
+      Adapter* const aParent,
       const std::shared_ptr<ffi::WGPUAdapterInformation>& aAboutSupportInfo)
-      : mAboutSupportInfo(aAboutSupportInfo) {}
+      : ChildOf(aParent), mAboutSupportInfo(aAboutSupportInfo) {}
 
+  /// Changing implementation in a way that increases fingerprinting
+  /// surface? Please create a bug in [Core::Privacy: Anti
+  /// Tracking](https://bugzilla.mozilla.org/enter_bug.cgi?product=Core&component=Privacy%3A%20Anti-Tracking)
   void GetVendor(nsString& s) const { s = nsString(); }
   void GetArchitecture(nsString& s) const { s = nsString(); }
   void GetDevice(nsString& s) const { s = nsString(); }
   void GetDescription(nsString& s) const { s = nsString(); }
+  uint32_t SubgroupMinSize() const;
+  uint32_t SubgroupMaxSize() const;
+  bool IsFallbackAdapter() const;
 
   // Non-standard field getters; see also TODO BUGZILLA LINK
   void GetWgpuName(nsString&) const;
@@ -60,10 +75,11 @@ class AdapterInfo final : public dom::NonRefcountedDOMObject {
   void GetWgpuDriver(nsString&) const;
   void GetWgpuDriverInfo(nsString&) const;
   void GetWgpuBackend(nsString&) const;
-
-  bool WrapObject(JSContext*, JS::Handle<JSObject*>,
-                  JS::MutableHandle<JSObject*>);
 };
+
+inline auto ToHexCString(const uint64_t v) {
+  return nsPrintfCString("0x%" PRIx64, v);
+}
 
 class Adapter final : public ObjectBase, public ChildOf<Instance> {
  public:
@@ -71,9 +87,6 @@ class Adapter final : public ObjectBase, public ChildOf<Instance> {
   GPU_DECL_JS_WRAP(Adapter)
 
   RefPtr<WebGPUChild> mBridge;
-
-  static Maybe<uint32_t> MakeFeatureBits(
-      const dom::Sequence<dom::GPUFeatureName>& aFeatures);
 
  private:
   ~Adapter();
@@ -84,21 +97,29 @@ class Adapter final : public ObjectBase, public ChildOf<Instance> {
   // to unlink them in CC unlink.
   RefPtr<SupportedFeatures> mFeatures;
   RefPtr<SupportedLimits> mLimits;
-
-  const std::shared_ptr<ffi::WGPUAdapterInformation> mInfo;
+  RefPtr<AdapterInfo> mInfo;
+  const std::shared_ptr<ffi::WGPUAdapterInformation> mInfoInner;
 
  public:
   Adapter(Instance* const aParent, WebGPUChild* const aBridge,
           const std::shared_ptr<ffi::WGPUAdapterInformation>& aInfo);
   const RefPtr<SupportedFeatures>& Features() const;
   const RefPtr<SupportedLimits>& Limits() const;
+  const RefPtr<AdapterInfo>& Info() const;
   bool IsFallbackAdapter() const;
+  bool SupportExternalTextureInSwapChain() const;
+  uint64_t MissingFeatures() const;
+
+  nsCString LabelOrId() const {
+    nsCString ret = this->CLabel();
+    if (ret.IsEmpty()) {
+      ret = ToHexCString(mId);
+    }
+    return ret;
+  }
 
   already_AddRefed<dom::Promise> RequestDevice(
       const dom::GPUDeviceDescriptor& aDesc, ErrorResult& aRv);
-
-  already_AddRefed<dom::Promise> RequestAdapterInfo(
-      const dom::Sequence<nsString>& aUnmaskHints, ErrorResult& aRv) const;
 };
 
 }  // namespace webgpu

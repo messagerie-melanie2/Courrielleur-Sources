@@ -28,6 +28,7 @@
 
 #ifdef MOZ_WIDGET_ANDROID
 #  include "mozilla/ProfilerLabels.h"
+#  include "AndroidBuild.h"
 #endif
 
 #if defined(MOZ_X11)
@@ -151,13 +152,13 @@ class GLLibraryEGL final {
   void InitLibExtensions();
 
   std::shared_ptr<EglDisplay> CreateDisplayLocked(
-      bool forceAccel, nsACString* const out_failureId,
+      bool forceAccel, bool forceSoftware, nsACString* const out_failureId,
       const StaticMutexAutoLock& aProofOfLock);
 
  public:
   Maybe<SymbolLoader> GetSymbolLoader() const;
 
-  std::shared_ptr<EglDisplay> CreateDisplay(bool forceAccel,
+  std::shared_ptr<EglDisplay> CreateDisplay(bool forceAccel, bool forceSoftware,
                                             nsACString* const out_failureId);
   std::shared_ptr<EglDisplay> CreateDisplay(ID3D11Device*);
   std::shared_ptr<EglDisplay> DefaultDisplay(nsACString* const out_failureId);
@@ -703,6 +704,8 @@ class EglDisplay final {
  private:
   std::bitset<UnderlyingValue(EGLExtension::Max)> mAvailableExtensions;
 
+  bool mShouldLeakEGLDisplay = false;
+
   struct PrivateUseOnly final {};
 
  public:
@@ -727,6 +730,10 @@ class EglDisplay final {
   void DumpEGLConfig(EGLConfig) const;
   void DumpEGLConfigs() const;
 
+  // When called, ensure we deliberately leak the EGLDisplay rather than call
+  // eglTerminate. Used as a workaround on buggy drivers.
+  void SetShouldLeakEGLDisplay() { mShouldLeakEGLDisplay = true; }
+
   void Shutdown();
 
   // -
@@ -743,7 +750,12 @@ class EglDisplay final {
 
   // -
 
-  EGLBoolean fTerminate() { return mLib->fTerminate(mDisplay); }
+  EGLBoolean fTerminate() {
+    if (mShouldLeakEGLDisplay) {
+      return LOCAL_EGL_TRUE;
+    }
+    return mLib->fTerminate(mDisplay);
+  }
 
   EGLBoolean fMakeCurrent(EGLSurface draw, EGLSurface read,
                           EGLContext ctx) const {

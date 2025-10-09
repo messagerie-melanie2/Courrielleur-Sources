@@ -2,13 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* globals TodayPane, switchToView, gLastShownCalendarView, ensureUnifinderLoaded */
+/* globals TodayPane, switchToView, gLastShownCalendarView */
+/* import-globals-from calendar-unifinder.js */
 
 /* exported calSwitchToCalendarMode, calSwitchToMode, calSwitchToTaskMode,
  *          changeMode
  */
 
-var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
+var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
 
 /**
  * The current mode defining the current mode we're in. Allowed values are:
@@ -93,8 +94,9 @@ function calSwitchToCalendarMode() {
     // make sure the view is sized correctly
     window.dispatchEvent(new CustomEvent("viewresize"));
 
-    // Load the unifinder if it isn't already loaded.
-    ensureUnifinderLoaded();
+    // Activate the unifinder, if it's visible. If it's not visible,
+    // `getUnifinderView` will return a falsy value.
+    getUnifinderView()?.activate();
   }
 }
 
@@ -113,7 +115,7 @@ function calSwitchToTaskMode() {
 
     document.getElementById("calMinimonth").setAttribute("freebusy", "true");
 
-    let tree = document.getElementById("calendar-task-tree");
+    const tree = document.getElementById("calendar-task-tree");
     if (!tree.hasBeenVisible) {
       tree.hasBeenVisible = true;
       tree.refresh();

@@ -10,39 +10,24 @@ var { ExtensionTestUtils } = ChromeUtils.importESModule(
 var { TestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/TestUtils.sys.mjs"
 );
-var { ExtensionsUI } = ChromeUtils.import(
-  "resource:///modules/ExtensionsUI.jsm"
+var { ExtensionsUI } = ChromeUtils.importESModule(
+  "resource:///modules/ExtensionsUI.sys.mjs"
 );
 var { AddonTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/AddonTestUtils.sys.mjs"
 );
 
-ExtensionTestUtils.mockAppInfo();
-AddonTestUtils.maybeInit(this);
-
-registerCleanupFunction(async () => {
-  // Remove the temporary MozillaMailnews folder, which is not deleted in time when
-  // the cleanupFunction registered by AddonTestUtils.maybeInit() checks for left over
-  // files in the temp folder.
-  // Note: PathUtils.tempDir points to the system temp folder, which is different.
-  let path = PathUtils.join(
-    Services.dirsvc.get("TmpD", Ci.nsIFile).path,
-    "MozillaMailnews"
-  );
-  await IOUtils.remove(path, { recursive: true });
-});
-
 // Function to start an event page extension (MV3), which can be called whenever
 // the main test is about to trigger an event. The extension terminates its
 // background and listens for that single event, verifying it is waking up correctly.
 async function event_page_extension(eventName, actionCallback) {
-  let ext = ExtensionTestUtils.loadExtension({
+  const ext = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
         // Whenever the extension starts or wakes up, hasFired is set to false. In
         // case of a wake-up, the first fired event is the one that woke up the background.
         let hasFired = false;
-        let _eventName = browser.runtime.getManifest().description;
+        const _eventName = browser.runtime.getManifest().description;
 
         browser.messages[_eventName].addListener(async (...args) => {
           // Only send the first event after background wake-up, this should
@@ -75,7 +60,7 @@ async function event_page_extension(eventName, actionCallback) {
   assertPersistentListeners(ext, "messages", eventName, { primed: true });
 
   await actionCallback();
-  let rv = await ext.awaitMessage(`${eventName} received`);
+  const rv = await ext.awaitMessage(`${eventName} received`);
   await ext.awaitMessage("background started");
   // The listener should be persistent, but not primed.
   assertPersistentListeners(ext, "messages", eventName, { primed: false });
@@ -84,6 +69,23 @@ async function event_page_extension(eventName, actionCallback) {
   return rv;
 }
 
+add_setup(async () => {
+  ExtensionTestUtils.mockAppInfo();
+  AddonTestUtils.maybeInit(this);
+
+  registerCleanupFunction(async () => {
+    // Remove the temporary MozillaMailnews folder, which is not deleted in time when
+    // the cleanupFunction registered by AddonTestUtils.maybeInit() checks for left over
+    // files in the temp folder.
+    // Note: PathUtils.tempDir points to the system temp folder, which is different.
+    const path = PathUtils.join(
+      Services.dirsvc.get("TmpD", Ci.nsIFile).path,
+      "MozillaMailnews"
+    );
+    await IOUtils.remove(path, { recursive: true });
+  });
+});
+
 add_task(
   {
     skip_if: () => IS_NNTP,
@@ -91,53 +93,79 @@ add_task(
   async function test_update() {
     await AddonTestUtils.promiseStartupManager();
 
-    let account = createAccount();
-    let rootFolder = account.incomingServer.rootFolder;
-    let testFolder0 = await createSubfolder(rootFolder, "test0");
+    const account = createAccount();
+    const rootFolder = account.incomingServer.rootFolder;
+    const testFolder0 = await createSubfolder(rootFolder, "test0");
     await createMessages(testFolder0, 1);
     testFolder0.addKeywordsToMessages(
       [[...testFolder0.messages][0]],
       "testkeyword"
     );
 
-    let files = {
+    const files = {
       "background.js": async () => {
         async function capturePrimedEvent(eventName, callback) {
-          let eventPageExtensionReadyPromise = window.waitForMessage();
+          const eventPageExtensionReadyPromise = window.waitForMessage();
           browser.test.sendMessage("capturePrimedEvent", eventName);
           await eventPageExtensionReadyPromise;
-          let eventPageExtensionFinishedPromise = window.waitForMessage();
+          const eventPageExtensionFinishedPromise = window.waitForMessage();
           callback();
           return eventPageExtensionFinishedPromise;
         }
 
-        function newUpdatePromise(numberOfEventsToCollapse = 1) {
+        function newUpdatePromise(options = {}) {
+          const numberOfEventsToCollapse =
+            options.numberOfEventsToCollapse ?? 1;
+          const reportIndividualEvents = options.reportIndividualEvents;
+
           return new Promise(resolve => {
-            let seenEvents = {};
-            const listener = (msg, props) => {
+            const seenEvents = {};
+            const listener = (msg, newProps, oldProps) => {
               if (!seenEvents.hasOwnProperty(msg.id)) {
                 seenEvents[msg.id] = {
+                  events: [],
                   counts: 0,
-                  props: {},
                 };
               }
 
+              if (
+                reportIndividualEvents ||
+                seenEvents[msg.id].events.length == 0
+              ) {
+                seenEvents[msg.id].events.push({
+                  newProps: {},
+                  oldProps: {},
+                });
+              }
               seenEvents[msg.id].counts++;
-              for (let prop of Object.keys(props)) {
-                seenEvents[msg.id].props[prop] = props[prop];
+              const idx = seenEvents[msg.id].events.length - 1;
+
+              for (const prop of Object.keys(newProps)) {
+                seenEvents[msg.id].events[idx].newProps[prop] = newProps[prop];
+                seenEvents[msg.id].events[idx].oldProps[prop] = oldProps[prop];
               }
 
               if (seenEvents[msg.id].counts == numberOfEventsToCollapse) {
                 browser.messages.onUpdated.removeListener(listener);
-                resolve({ msg, props: seenEvents[msg.id].props });
+                resolve({
+                  msg,
+                  newProps: reportIndividualEvents
+                    ? seenEvents[msg.id].events.map(e => e.newProps)
+                    : seenEvents[msg.id].events[idx].newProps,
+                  oldProps: reportIndividualEvents
+                    ? seenEvents[msg.id].events.map(e => e.oldProps)
+                    : seenEvents[msg.id].events[idx].oldProps,
+                });
               }
             };
             browser.messages.onUpdated.addListener(listener);
           });
         }
-        let tags = await browser.messages.listTags();
-        let [data] = await window.sendMessage("getFolder");
-        let messageList = await browser.messages.list(data.folder);
+
+        const tags = await browser.messages.tags.list();
+        const [data] = await window.sendMessage("getFolder");
+        const [folder] = await browser.folders.query({ name: data.folderName });
+        const messageList = await browser.messages.list(folder.id);
         browser.test.assertEq(1, messageList.messages.length);
         let message = messageList.messages[0];
         browser.test.assertFalse(message.flagged);
@@ -145,7 +173,7 @@ add_task(
         browser.test.assertFalse(message.junk);
         browser.test.assertEq(0, message.junkScore);
         browser.test.assertEq(0, message.tags.length);
-        browser.test.assertEq(data.size, message.size);
+        browser.test.assertEq(data.messageSize, message.size);
         browser.test.assertEq("0@made.up.invalid", message.headerMessageId);
 
         // Test that setting flagged works.
@@ -154,14 +182,16 @@ add_task(
           browser.messages.update(message.id, { flagged: true })
         );
         let updateInfo = await updatePromise;
+
         window.assertDeepEqual(
-          [updateInfo.msg, updateInfo.props],
-          primedUpdatedInfo,
+          [updateInfo.msg, updateInfo.newProps],
+          [primedUpdatedInfo[0], primedUpdatedInfo[1]],
           "The primed and non-primed onUpdated events should return the same values",
           { strict: true }
         );
         browser.test.assertEq(message.id, updateInfo.msg.id);
-        window.assertDeepEqual({ flagged: true }, updateInfo.props);
+        window.assertDeepEqual({ flagged: true }, updateInfo.newProps);
+        window.assertDeepEqual({ flagged: false }, updateInfo.oldProps);
         await window.sendMessage("flagged");
 
         // Test that setting read works.
@@ -170,14 +200,16 @@ add_task(
           browser.messages.update(message.id, { read: true })
         );
         updateInfo = await updatePromise;
+
         window.assertDeepEqual(
-          [updateInfo.msg, updateInfo.props],
-          primedUpdatedInfo,
+          [updateInfo.msg, updateInfo.newProps],
+          [primedUpdatedInfo[0], primedUpdatedInfo[1]],
           "The primed and non-primed onUpdated events should return the same values",
           { strict: true }
         );
         browser.test.assertEq(message.id, updateInfo.msg.id);
-        window.assertDeepEqual({ read: true }, updateInfo.props);
+        window.assertDeepEqual({ read: true }, updateInfo.newProps);
+        window.assertDeepEqual({ read: false }, updateInfo.oldProps);
         await window.sendMessage("read");
 
         // Test that setting junk works.
@@ -186,14 +218,16 @@ add_task(
           browser.messages.update(message.id, { junk: true })
         );
         updateInfo = await updatePromise;
+
         window.assertDeepEqual(
-          [updateInfo.msg, updateInfo.props],
-          primedUpdatedInfo,
+          [updateInfo.msg, updateInfo.newProps],
+          [primedUpdatedInfo[0], primedUpdatedInfo[1]],
           "The primed and non-primed onUpdated events should return the same values",
           { strict: true }
         );
         browser.test.assertEq(message.id, updateInfo.msg.id);
-        window.assertDeepEqual({ junk: true }, updateInfo.props);
+        window.assertDeepEqual({ junk: true }, updateInfo.newProps);
+        window.assertDeepEqual({ junk: false }, updateInfo.oldProps);
         await window.sendMessage("junk");
 
         // Test that setting one tag works.
@@ -202,34 +236,46 @@ add_task(
           browser.messages.update(message.id, { tags: [tags[0].key] })
         );
         updateInfo = await updatePromise;
+
         window.assertDeepEqual(
-          [updateInfo.msg, updateInfo.props],
-          primedUpdatedInfo,
+          [updateInfo.msg, updateInfo.newProps],
+          [primedUpdatedInfo[0], primedUpdatedInfo[1]],
           "The primed and non-primed onUpdated events should return the same values",
           { strict: true }
         );
         browser.test.assertEq(message.id, updateInfo.msg.id);
-        window.assertDeepEqual({ tags: [tags[0].key] }, updateInfo.props);
+        window.assertDeepEqual({ tags: [tags[0].key] }, updateInfo.newProps);
+        window.assertDeepEqual({ tags: [] }, updateInfo.oldProps);
+
         await window.sendMessage("tags1");
 
         // Test that setting two tags works. We get 3 events: one removing tags0,
         // one adding tags1 and one adding tags2. updatePromise is waiting for
         // the third one before resolving.
-        updatePromise = newUpdatePromise(3);
+        updatePromise = newUpdatePromise({
+          numberOfEventsToCollapse: 2,
+          reportIndividualEvents: true,
+        });
         await browser.messages.update(message.id, {
           tags: [tags[1].key, tags[2].key],
         });
         updateInfo = await updatePromise;
         browser.test.assertEq(message.id, updateInfo.msg.id);
         window.assertDeepEqual(
-          { tags: [tags[1].key, tags[2].key] },
-          updateInfo.props
+          [{ tags: [] }, { tags: [tags[1].key, tags[2].key] }],
+          updateInfo.newProps,
+          "Received new properties should be correct"
+        );
+        window.assertDeepEqual(
+          [{ tags: [tags[0].key] }, { tags: [] }],
+          updateInfo.oldProps,
+          "Received old properties should be correct"
         );
         await window.sendMessage("tags2");
 
         // Test that unspecified properties aren't changed.
         let listenerCalls = 0;
-        const listenerFunc = (msg, props) => {
+        const listenerFunc = () => {
           listenerCalls++;
         };
         browser.messages.onUpdated.addListener(listenerFunc);
@@ -255,7 +301,7 @@ add_task(
         browser.test.assertEq("0@made.up.invalid", message.headerMessageId);
 
         // Test that clearing properties works.
-        updatePromise = newUpdatePromise(5);
+        updatePromise = newUpdatePromise({ numberOfEventsToCollapse: 4 });
         await browser.messages.update(message.id, {
           flagged: false,
           read: false,
@@ -270,7 +316,7 @@ add_task(
             junk: false,
             tags: [],
           },
-          updateInfo.props
+          updateInfo.newProps
         );
         await window.sendMessage("clear");
 
@@ -287,24 +333,29 @@ add_task(
       },
       "utils.js": await getUtilsJS(),
     };
-    let extension = ExtensionTestUtils.loadExtension({
+    const extension = ExtensionTestUtils.loadExtension({
       files,
       manifest: {
         background: { scripts: ["utils.js", "background.js"] },
-        permissions: ["accountsRead", "messagesRead"],
+        permissions: [
+          "accountsRead",
+          "messagesRead",
+          "messagesTagsList",
+          "messagesUpdate",
+        ],
         browser_specific_settings: {
           gecko: { id: "messages.update@mochi.test" },
         },
       },
     });
 
-    let message = [...testFolder0.messages][0];
+    const message = [...testFolder0.messages][0];
     ok(!message.isFlagged);
     ok(!message.isRead);
     equal(message.getStringProperty("keywords"), "testkeyword");
 
     extension.onMessage("capturePrimedEvent", async eventName => {
-      let primedEventData = await event_page_extension(eventName, () => {
+      const primedEventData = await event_page_extension(eventName, () => {
         // Resume execution in the main test, after the event page extension is
         // ready to capture the event with deactivated background.
         extension.sendMessage();
@@ -400,8 +451,8 @@ add_task(
 
     extension.onMessage("getFolder", async () => {
       extension.sendMessage({
-        folder: { accountId: account.key, path: "/test0" },
-        size: message.messageSize,
+        folderName: "test0",
+        messageSize: message.messageSize,
       });
     });
 

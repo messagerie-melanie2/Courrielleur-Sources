@@ -2,8 +2,44 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from typing import Any, Dict, Generator, Tuple
 
-from .attributes import keymatch
+from taskgraph.util.attributes import keymatch
+
+
+def iter_dot_path(
+    container: Dict[str, Any], subfield: str
+) -> Generator[Tuple[Dict[str, Any], str], None, None]:
+    """Given a container and a subfield in dot path notation, yield the parent
+    container of the dotpath's leaf node, along with the leaf node name that it
+    contains.
+
+    If the dot path contains a list object, each item in the list will be
+    yielded.
+
+    Args:
+        container (dict): The container to search for the dot path.
+        subfield (str): The dot path to search for.
+    """
+    while "." in subfield:
+        f, subfield = subfield.split(".", 1)
+
+        if f.endswith("[]"):
+            f = f[0:-2]
+            if not isinstance(container.get(f), list):
+                return
+
+            for item in container[f]:
+                yield from iter_dot_path(item, subfield)
+            return
+
+        if f not in container:
+            return
+
+        container = container[f]
+
+    if isinstance(container, dict) and subfield in container:
+        yield container, subfield
 
 
 def evaluate_keyed_by(
@@ -66,8 +102,8 @@ def evaluate_keyed_by(
             # Error out when only 'default' is specified as only alternatives,
             # because we don't need to by-{keyed_by} there.
             raise Exception(
-                "Keyed-by '{}' unnecessary with only value 'default' "
-                "found, when determining item {}".format(keyed_by, item_name)
+                f"Keyed-by '{keyed_by}' unnecessary with only value 'default' "
+                f"found, when determining item {item_name}"
             )
 
         if key is None:
@@ -76,22 +112,20 @@ def evaluate_keyed_by(
                 continue
             else:
                 raise Exception(
-                    "No attribute {} and no value for 'default' found "
-                    "while determining item {}".format(keyed_by, item_name)
+                    f"No attribute {keyed_by} and no value for 'default' found "
+                    f"while determining item {item_name}"
                 )
 
         matches = keymatch(alternatives, key)
         if enforce_single_match and len(matches) > 1:
             raise Exception(
-                "Multiple matching values for {} {!r} found while "
-                "determining item {}".format(keyed_by, key, item_name)
+                f"Multiple matching values for {keyed_by} {key!r} found while "
+                f"determining item {item_name}"
             )
         elif matches:
             value = matches[0]
             continue
 
         raise Exception(
-            "No {} matching {!r} nor 'default' found while determining item {}".format(
-                keyed_by, key, item_name
-            )
+            f"No {keyed_by} matching {key!r} nor 'default' found while determining item {item_name}"
         )

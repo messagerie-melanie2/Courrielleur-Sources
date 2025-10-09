@@ -12,6 +12,9 @@
 #include "js/Exception.h"  // JS::ExceptionStack, JS::StealPendingExceptionStack
 #include "jsapi.h"
 
+#include "mozilla/dom/CookieStore.h"
+#include "mozilla/dom/PushSubscriptionChangeEvent.h"
+#include "mozilla/dom/PushSubscriptionChangeEventBinding.h"
 #include "nsCOMPtr.h"
 #include "nsContentUtils.h"
 #include "nsDebug.h"
@@ -20,6 +23,7 @@
 #include "nsIPushErrorReporter.h"
 #include "nsISupportsImpl.h"
 #include "nsITimer.h"
+#include "nsIURI.h"
 #include "nsServiceManagerUtils.h"
 #include "nsTArray.h"
 #include "nsThreadUtils.h"
@@ -33,10 +37,10 @@
 #include "mozilla/OwningNonNull.h"
 #include "mozilla/SchedulerGroup.h"
 #include "mozilla/ScopeExit.h"
-#include "mozilla/Telemetry.h"
 #include "mozilla/Unused.h"
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/Client.h"
+#include "mozilla/dom/ExtendableCookieChangeEvent.h"
 #include "mozilla/dom/ExtendableMessageEventBinding.h"
 #include "mozilla/dom/FetchEventBinding.h"
 #include "mozilla/dom/FetchEventOpProxyChild.h"
@@ -50,11 +54,13 @@
 #include "mozilla/dom/PerformanceStorage.h"
 #include "mozilla/dom/PushEventBinding.h"
 #include "mozilla/dom/RemoteWorkerChild.h"
+#include "mozilla/dom/RemoteWorkerNonLifeCycleOpControllerChild.h"
 #include "mozilla/dom/RemoteWorkerService.h"
 #include "mozilla/dom/Request.h"
 #include "mozilla/dom/Response.h"
 #include "mozilla/dom/RootedDictionary.h"
 #include "mozilla/dom/SafeRefPtr.h"
+#include "mozilla/dom/ServiceWorker.h"
 #include "mozilla/dom/ServiceWorkerBinding.h"
 #include "mozilla/dom/ServiceWorkerGlobalScopeBinding.h"
 #include "mozilla/dom/WorkerCommon.h"
@@ -62,9 +68,13 @@
 #include "mozilla/dom/WorkerScope.h"
 #include "mozilla/extensions/ExtensionBrowser.h"
 #include "mozilla/ipc/IPCStreamUtils.h"
-#include "mozilla/net/MozURL.h"
 
 namespace mozilla::dom {
+
+using remoteworker::Canceled;
+using remoteworker::Killed;
+using remoteworker::Pending;
+using remoteworker::Running;
 
 namespace {
 
@@ -271,15 +281,15 @@ bool DispatchFailed(nsresult aStatus) {
 
 }  // anonymous namespace
 
-class ServiceWorkerOp::ServiceWorkerOpRunnable : public WorkerDebuggeeRunnable {
+class ServiceWorkerOp::ServiceWorkerOpRunnable final
+    : public WorkerDebuggeeRunnable {
  public:
   NS_DECL_ISUPPORTS_INHERITED
 
   ServiceWorkerOpRunnable(RefPtr<ServiceWorkerOp> aOwner,
                           WorkerPrivate* aWorkerPrivate)
-      : WorkerDebuggeeRunnable(aWorkerPrivate, WorkerThreadModifyBusyCount),
+      : WorkerDebuggeeRunnable("ServiceWorkerOpRunnable"),
         mOwner(std::move(aOwner)) {
-    AssertIsOnMainThread();
     MOZ_ASSERT(mOwner);
     MOZ_ASSERT(aWorkerPrivate);
   }
@@ -293,6 +303,14 @@ class ServiceWorkerOp::ServiceWorkerOpRunnable : public WorkerDebuggeeRunnable {
     MOZ_ASSERT(aWorkerPrivate->IsServiceWorker());
     MOZ_ASSERT(mOwner);
 
+    // GlobalScope could be nullptr here that OOM issue causes GlobalScope
+    // creation fail.
+    if (!aWorkerPrivate->GlobalScope() ||
+        aWorkerPrivate->GlobalScope()->IsDying()) {
+      Unused << Cancel();
+      return true;
+    }
+
     bool rv = mOwner->Exec(aCx, aWorkerPrivate);
     Unused << NS_WARN_IF(!rv);
     mOwner = nullptr;
@@ -300,11 +318,13 @@ class ServiceWorkerOp::ServiceWorkerOpRunnable : public WorkerDebuggeeRunnable {
     return rv;
   }
 
-  nsresult Cancel() override {
-    // We need to check first if cancel is permitted
-    nsresult rv = WorkerRunnable::Cancel();
-    NS_ENSURE_SUCCESS(rv, rv);
+  // Silent PreDispatch and PostDispatch, since ServiceWorkerOpRunnable can be
+  // from the main thread or from the worker thread.
+  bool PreDispatch(WorkerPrivate* WorkerPrivate) override { return true; }
+  void PostDispatch(WorkerPrivate* WorkerPrivate,
+                    bool aDispatchResult) override {}
 
+  nsresult Cancel() override {
     MOZ_ASSERT(mOwner);
 
     mOwner->RejectAll(NS_ERROR_DOM_ABORT_ERR);
@@ -317,10 +337,10 @@ class ServiceWorkerOp::ServiceWorkerOpRunnable : public WorkerDebuggeeRunnable {
 };
 
 NS_IMPL_ISUPPORTS_INHERITED0(ServiceWorkerOp::ServiceWorkerOpRunnable,
-                             WorkerRunnable)
+                             WorkerThreadRunnable)
 
 bool ServiceWorkerOp::MaybeStart(RemoteWorkerChild* aOwner,
-                                 RemoteWorkerChild::State& aState) {
+                                 RemoteWorkerState& aState) {
   MOZ_ASSERT(!mStarted);
   MOZ_ASSERT(aOwner);
   MOZ_ASSERT(aOwner->GetActorEventTarget()->IsOnCurrentThread());
@@ -338,14 +358,13 @@ bool ServiceWorkerOp::MaybeStart(RemoteWorkerChild* aOwner,
     return false;
   }
 
-  if (NS_WARN_IF(aState.is<RemoteWorkerChild::Canceled>()) ||
-      NS_WARN_IF(aState.is<RemoteWorkerChild::Killed>())) {
+  if (NS_WARN_IF(aState.is<Canceled>()) || NS_WARN_IF(aState.is<Killed>())) {
     RejectAll(NS_ERROR_DOM_INVALID_STATE_ERR);
     mStarted = true;
     return true;
   }
 
-  MOZ_ASSERT(aState.is<RemoteWorkerChild::Running>() || IsTerminationOp());
+  MOZ_ASSERT(aState.is<Running>() || IsTerminationOp());
 
   RefPtr<ServiceWorkerOp> self = this;
 
@@ -378,13 +397,12 @@ bool ServiceWorkerOp::MaybeStart(RemoteWorkerChild* aOwner,
 
   mStarted = true;
 
-  MOZ_ALWAYS_SUCCEEDS(
-      SchedulerGroup::Dispatch(TaskCategory::Other, r.forget()));
-
+  MOZ_ALWAYS_SUCCEEDS(SchedulerGroup::Dispatch(r.forget()));
   return true;
 }
 
 void ServiceWorkerOp::StartOnMainThread(RefPtr<RemoteWorkerChild>& aOwner) {
+  AssertIsOnMainThread();
   MaybeReportServiceWorkerShutdownProgress(mArgs);
 
   {
@@ -402,13 +420,49 @@ void ServiceWorkerOp::StartOnMainThread(RefPtr<RemoteWorkerChild>& aOwner) {
     auto lock = aOwner->mState.Lock();
     MOZ_ASSERT(lock->is<Running>());
 
-    RefPtr<WorkerRunnable> workerRunnable =
+    RefPtr<WorkerThreadRunnable> workerRunnable =
         GetRunnable(lock->as<Running>().mWorkerPrivate);
 
-    if (NS_WARN_IF(!workerRunnable->Dispatch())) {
+    if (NS_WARN_IF(
+            !workerRunnable->Dispatch(lock->as<Running>().mWorkerPrivate))) {
       RejectAll(NS_ERROR_FAILURE);
     }
   }
+}
+
+void ServiceWorkerOp::Start(RemoteWorkerNonLifeCycleOpControllerChild* aOwner,
+                            RemoteWorkerState& aState) {
+  MOZ_ASSERT(!mStarted);
+  MOZ_ASSERT(aOwner);
+
+  if (NS_WARN_IF(!aOwner->CanSend())) {
+    RejectAll(NS_ERROR_DOM_ABORT_ERR);
+    mStarted = true;
+    return;
+  }
+
+  // NonLifeCycle related operations would never start at Pending state.
+  MOZ_ASSERT(!aState.is<Pending>());
+
+  if (NS_WARN_IF(aState.is<Canceled>()) || NS_WARN_IF(aState.is<Killed>())) {
+    RejectAll(NS_ERROR_DOM_INVALID_STATE_ERR);
+    mStarted = true;
+    return;
+  }
+
+  MOZ_ASSERT(aState.is<Running>());
+
+  WorkerPrivate* workerPrivate = GetCurrentThreadWorkerPrivate();
+
+  MOZ_ASSERT_DEBUG_OR_FUZZING(workerPrivate);
+
+  RefPtr<WorkerThreadRunnable> workerRunnable = GetRunnable(workerPrivate);
+
+  if (NS_WARN_IF(!workerRunnable->Dispatch(workerPrivate))) {
+    RejectAll(NS_ERROR_FAILURE);
+  }
+
+  mStarted = true;
 }
 
 void ServiceWorkerOp::Cancel() { RejectAll(NS_ERROR_DOM_ABORT_ERR); }
@@ -417,8 +471,8 @@ ServiceWorkerOp::ServiceWorkerOp(
     ServiceWorkerOpArgs&& aArgs,
     std::function<void(const ServiceWorkerOpResult&)>&& aCallback)
     : mArgs(std::move(aArgs)) {
-  MOZ_ASSERT(RemoteWorkerService::Thread()->IsOnCurrentThread());
-
+  // Can be on the Worker Launcher thread for Terminate operations or on the
+  // Worker thread for other operations
   RefPtr<ServiceWorkerOpPromise> promise = mPromiseHolder.Ensure(__func__);
 
   promise->Then(
@@ -442,7 +496,6 @@ ServiceWorkerOp::~ServiceWorkerOp() {
 
 bool ServiceWorkerOp::Started() const {
   MOZ_ASSERT(RemoteWorkerService::Thread()->IsOnCurrentThread());
-
   return mStarted;
 }
 
@@ -451,9 +504,8 @@ bool ServiceWorkerOp::IsTerminationOp() const {
          ServiceWorkerOpArgs::TServiceWorkerTerminateWorkerOpArgs;
 }
 
-RefPtr<WorkerRunnable> ServiceWorkerOp::GetRunnable(
+RefPtr<WorkerThreadRunnable> ServiceWorkerOp::GetRunnable(
     WorkerPrivate* aWorkerPrivate) {
-  AssertIsOnMainThread();
   MOZ_ASSERT(aWorkerPrivate);
 
   return new ServiceWorkerOpRunnable(this, aWorkerPrivate);
@@ -515,17 +567,27 @@ class UpdateServiceWorkerStateOp final : public ServiceWorkerOp {
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(UpdateServiceWorkerStateOp, override);
 
  private:
-  class UpdateStateOpRunnable final : public MainThreadWorkerControlRunnable {
+  class UpdateStateOpRunnable final : public WorkerControlRunnable {
    public:
     NS_DECL_ISUPPORTS_INHERITED
 
     UpdateStateOpRunnable(RefPtr<UpdateServiceWorkerStateOp> aOwner,
                           WorkerPrivate* aWorkerPrivate)
-        : MainThreadWorkerControlRunnable(aWorkerPrivate),
+        : WorkerControlRunnable("UpdateStateOpRunnable"),
           mOwner(std::move(aOwner)) {
-      AssertIsOnMainThread();
       MOZ_ASSERT(mOwner);
       MOZ_ASSERT(aWorkerPrivate);
+      aWorkerPrivate->AssertIsOnWorkerThread();
+    }
+
+    virtual bool PreDispatch(WorkerPrivate* aWorkerPrivate) override {
+      aWorkerPrivate->AssertIsOnWorkerThread();
+      return true;
+    }
+
+    virtual void PostDispatch(WorkerPrivate* aWorkerPrivate,
+                              bool aDispatchResult) override {
+      aWorkerPrivate->AssertIsOnWorkerThread();
     }
 
    private:
@@ -550,7 +612,7 @@ class UpdateServiceWorkerStateOp final : public ServiceWorkerOp {
       mOwner->RejectAll(NS_ERROR_DOM_ABORT_ERR);
       mOwner = nullptr;
 
-      return MainThreadWorkerControlRunnable::Cancel();
+      return NS_OK;
     }
 
     RefPtr<UpdateServiceWorkerStateOp> mOwner;
@@ -558,9 +620,10 @@ class UpdateServiceWorkerStateOp final : public ServiceWorkerOp {
 
   ~UpdateServiceWorkerStateOp() = default;
 
-  RefPtr<WorkerRunnable> GetRunnable(WorkerPrivate* aWorkerPrivate) override {
-    AssertIsOnMainThread();
+  RefPtr<WorkerThreadRunnable> GetRunnable(
+      WorkerPrivate* aWorkerPrivate) override {
     MOZ_ASSERT(aWorkerPrivate);
+    aWorkerPrivate->IsOnWorkerThread();
     MOZ_ASSERT(mArgs.type() ==
                ServiceWorkerOpArgs::TServiceWorkerUpdateStateOpArgs);
 
@@ -584,7 +647,7 @@ class UpdateServiceWorkerStateOp final : public ServiceWorkerOp {
 };
 
 NS_IMPL_ISUPPORTS_INHERITED0(UpdateServiceWorkerStateOp::UpdateStateOpRunnable,
-                             MainThreadWorkerControlRunnable)
+                             WorkerControlRunnable)
 
 void ExtendableEventOp::FinishedWithResult(ExtendableEventResult aResult) {
   MOZ_ASSERT(IsCurrentThreadRunningWorker());
@@ -637,6 +700,56 @@ class LifeCycleEventOp final : public ExtendableEventOp {
   }
 };
 
+class CookieChangeEventOp final : public ExtendableEventOp {
+  using ExtendableEventOp::ExtendableEventOp;
+
+ public:
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(CookieChangeEventOp, override)
+
+ private:
+  ~CookieChangeEventOp() = default;
+
+  bool Exec(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override {
+    MOZ_ASSERT(aWorkerPrivate);
+    aWorkerPrivate->AssertIsOnWorkerThread();
+    MOZ_ASSERT(aWorkerPrivate->IsServiceWorker());
+    MOZ_ASSERT(!mPromiseHolder.IsEmpty());
+
+    const ServiceWorkerCookieChangeEventOpArgs& args =
+        mArgs.get_ServiceWorkerCookieChangeEventOpArgs();
+
+    CookieListItem item;
+    CookieStore::CookieStructToItem(args.cookie(), &item);
+
+    GlobalObject globalObj(aCx, aWorkerPrivate->GlobalScope()->GetWrapper());
+    nsCOMPtr<EventTarget> eventTarget =
+        do_QueryInterface(globalObj.GetAsSupports());
+    MOZ_ASSERT(eventTarget);
+
+    RefPtr<ExtendableCookieChangeEvent> event;
+
+    if (args.deleted()) {
+      item.mValue.Reset();
+      event = ExtendableCookieChangeEvent::CreateForDeletedCookie(eventTarget,
+                                                                  item);
+    } else {
+      event = ExtendableCookieChangeEvent::CreateForChangedCookie(eventTarget,
+                                                                  item);
+    }
+
+    MOZ_ASSERT(event);
+
+    nsresult rv = DispatchExtendableEventOnWorkerScope(
+        aCx, aWorkerPrivate->GlobalScope(), event, this);
+
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return false;
+    }
+
+    return true;
+  }
+};
+
 /**
  * PushEventOp
  */
@@ -670,12 +783,13 @@ class PushEventOp final : public ExtendableEventOp {
     RootedDictionary<PushEventInit> pushEventInit(aCx);
 
     if (args.data().type() != OptionalPushData::Tvoid_t) {
-      auto& bytes = args.data().get_ArrayOfuint8_t();
-      JSObject* data =
-          Uint8Array::Create(aCx, bytes.Length(), bytes.Elements());
+      const auto& bytes = args.data().get_ArrayOfuint8_t();
+      JSObject* data = Uint8Array::Create(aCx, bytes, result);
 
-      if (!data) {
-        result = ErrorResult(NS_ERROR_FAILURE);
+      // The ScopeExit above will deal with the exceptions (through
+      // StealNSResult).
+      result.WouldReportJSException();
+      if (result.Failed()) {
         return false;
       }
 
@@ -773,12 +887,28 @@ class PushSubscriptionChangeEventOp final : public ExtendableEventOp {
 
     RefPtr<EventTarget> target = aWorkerPrivate->GlobalScope();
 
-    ExtendableEventInit init;
+    ServiceWorkerPushSubscriptionChangeEventOpArgs& args =
+        mArgs.get_ServiceWorkerPushSubscriptionChangeEventOpArgs();
+
+    PushSubscriptionChangeEventInit init;
     init.mBubbles = false;
     init.mCancelable = false;
 
-    RefPtr<ExtendableEvent> event = ExtendableEvent::Constructor(
-        target, u"pushsubscriptionchange"_ns, init);
+    if (args.oldSubscription()) {
+      PushSubscriptionData oldSubscriptionData =
+          args.oldSubscription().extract();
+      RefPtr<PushSubscription> oldSubscription = new PushSubscription(
+          target->GetParentObject(), oldSubscriptionData.endpoint(), u""_ns,
+          Nullable<EpochTimeStamp>(),
+          std::move(oldSubscriptionData.rawP256dhKey()),
+          std::move(oldSubscriptionData.authSecret()),
+          std::move(oldSubscriptionData.appServerKey()));
+      init.mOldSubscription = oldSubscription.forget();
+    }
+
+    RefPtr<PushSubscriptionChangeEvent> event =
+        PushSubscriptionChangeEvent::Constructor(
+            target, u"pushsubscriptionchange"_ns, init);
     event->SetTrusted(true);
 
     nsresult rv = DispatchExtendableEventOnWorkerScope(
@@ -859,12 +989,9 @@ class NotificationEventOp : public ExtendableEventOp,
     timer.swap(mTimer);
 
     // We swap first and then initialize the timer so that even if initializing
-    // fails, we still clean the busy count and interaction count correctly.
-    // The timer can't be initialized before modyfing the busy count since the
-    // timer thread could run and call the timeout but the worker may
-    // already be terminating and modifying the busy count could fail.
-    uint32_t delay = mArgs.get_ServiceWorkerNotificationEventOpArgs()
-                         .disableOpenClickDelay();
+    // fails, we still clean the interaction count correctly.
+    uint32_t delay =
+        StaticPrefs::dom_webnotifications_disable_open_click_delay();
     rv = mTimer->InitWithCallback(this, delay, nsITimer::TYPE_ONE_SHOT);
 
     if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -884,28 +1011,42 @@ class NotificationEventOp : public ExtendableEventOp,
 
     ServiceWorkerNotificationEventOpArgs& args =
         mArgs.get_ServiceWorkerNotificationEventOpArgs();
+    bool isClick = args.type() ==
+                   ServiceWorkerNotificationEventOpArgs::
+                       TServiceWorkerNotificationClickEventOpArgs;
+    const IPCNotification& notification =
+        args.type() == ServiceWorkerNotificationEventOpArgs::
+                           TServiceWorkerNotificationClickEventOpArgs
+            ? args.get_ServiceWorkerNotificationClickEventOpArgs()
+                  .notification()
+            : args.get_ServiceWorkerNotificationCloseEventOpArgs()
+                  .notification();
 
-    ErrorResult result;
-    RefPtr<Notification> notification = Notification::ConstructFromFields(
-        aWorkerPrivate->GlobalScope(), args.id(), args.title(), args.dir(),
-        args.lang(), args.body(), args.tag(), args.icon(), args.data(),
-        args.scope(), result);
+    auto result = Notification::ConstructFromIPC(
+        aWorkerPrivate->GlobalScope(), notification,
+        NS_ConvertUTF8toUTF16(aWorkerPrivate->ServiceWorkerScope()));
 
-    if (NS_WARN_IF(result.Failed())) {
+    if (NS_WARN_IF(result.isErr())) {
       return false;
     }
 
     NotificationEventInit init;
-    init.mNotification = notification;
+    init.mNotification = result.unwrap();
     init.mBubbles = false;
     init.mCancelable = false;
+    if (isClick) {
+      init.mAction =
+          args.get_ServiceWorkerNotificationClickEventOpArgs().action();
+    }
 
     RefPtr<NotificationEvent> notificationEvent =
-        NotificationEvent::Constructor(target, args.eventName(), init);
+        NotificationEvent::Constructor(
+            target, isClick ? u"notificationclick"_ns : u"notificationclose"_ns,
+            init);
 
     notificationEvent->SetTrusted(true);
 
-    if (args.eventName().EqualsLiteral("notificationclick")) {
+    if (isClick) {
       StartClearWindowTimer(aWorkerPrivate);
     }
 
@@ -1006,25 +1147,50 @@ class MessageEventOp final : public ExtendableEventOp {
       init.mPorts = std::move(ports);
     }
 
-    RefPtr<net::MozURL> mozUrl;
-    nsresult result = net::MozURL::Init(
-        getter_AddRefs(mozUrl), mArgs.get_ServiceWorkerMessageEventOpArgs()
-                                    .clientInfoAndState()
-                                    .info()
-                                    .url());
+    PostMessageSource& ipcSource =
+        mArgs.get_ServiceWorkerMessageEventOpArgs().source();
+    nsCString originSource;
+    switch (ipcSource.type()) {
+      case PostMessageSource::TClientInfoAndState:
+        originSource = ipcSource.get_ClientInfoAndState().info().url();
+        init.mSource.SetValue().SetAsClient() =
+            new Client(sgo, ipcSource.get_ClientInfoAndState());
+        break;
+      case PostMessageSource::TIPCServiceWorkerDescriptor:
+        originSource = ipcSource.get_IPCServiceWorkerDescriptor().scriptURL();
+        init.mSource.SetValue().SetAsServiceWorker() = ServiceWorker::Create(
+            sgo, ServiceWorkerDescriptor(
+                     ipcSource.get_IPCServiceWorkerDescriptor()));
+        break;
+      default:
+        MOZ_ASSERT_UNREACHABLE("Unexpected source type");
+        return false;
+    }
+
+    nsCOMPtr<nsIURI> url;
+    nsresult result = NS_NewURI(getter_AddRefs(url), originSource);
     if (NS_WARN_IF(NS_FAILED(result))) {
       RejectAll(result);
       rv.SuppressException();
       return false;
     }
 
+    OriginAttributes attrs;
+    nsCOMPtr<nsIPrincipal> principal =
+        BasePrincipal::CreateContentPrincipal(url, attrs);
+    if (!principal) {
+      return false;
+    }
+
     nsCString origin;
-    mozUrl->Origin(origin);
+    result = principal->GetOriginNoSuffix(origin);
+    if (NS_WARN_IF(NS_FAILED(result))) {
+      RejectAll(result);
+      rv.SuppressException();
+      return false;
+    }
 
     CopyUTF8toUTF16(origin, init.mOrigin);
-
-    init.mSource.SetValue().SetAsClient() = new Client(
-        sgo, mArgs.get_ServiceWorkerMessageEventOpArgs().clientInfoAndState());
 
     rv.SuppressException();
     RefPtr<EventTarget> target = aWorkerPrivate->GlobalScope();
@@ -1046,6 +1212,32 @@ class MessageEventOp final : public ExtendableEventOp {
   }
 
   RefPtr<ServiceWorkerCloneData> mData;
+};
+
+class UpdateIsOnContentBlockingAllowListOp final : public ExtendableEventOp {
+  using ExtendableEventOp::ExtendableEventOp;
+
+ public:
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(UpdateIsOnContentBlockingAllowListOp,
+                                        override);
+
+ private:
+  ~UpdateIsOnContentBlockingAllowListOp() = default;
+
+  bool Exec(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override {
+    MOZ_ASSERT(aWorkerPrivate);
+    aWorkerPrivate->AssertIsOnWorkerThread();
+    MOZ_ASSERT(aWorkerPrivate->IsServiceWorker());
+    MOZ_ASSERT(!mPromiseHolder.IsEmpty());
+
+    bool onContentBlockingAllowList =
+        mArgs.get_ServiceWorkerUpdateIsOnContentBlockingAllowListOpArgs()
+            .onContentBlockingAllowList();
+    aWorkerPrivate->UpdateIsOnContentBlockingAllowList(
+        onContentBlockingAllowList);
+
+    return true;
+  }
 };
 
 /**
@@ -1421,8 +1613,7 @@ void FetchEventOp::ResolvedCallback(JSContext* aCx,
 
   if (response->Type() == ResponseType::Opaque &&
       requestMode != RequestMode::No_cors) {
-    NS_ConvertASCIItoUTF16 modeString(
-        RequestModeValues::GetString(requestMode));
+    NS_ConvertASCIItoUTF16 modeString(GetEnumString(requestMode));
 
     nsAutoString requestURL;
     GetRequestURL(requestURL);
@@ -1465,14 +1656,12 @@ void FetchEventOp::ResolvedCallback(JSContext* aCx,
   if (NS_WARN_IF((response->Type() == ResponseType::Opaque ||
                   response->Type() == ResponseType::Cors) &&
                  ir->GetUnfilteredURL().IsEmpty())) {
-    MOZ_DIAGNOSTIC_ASSERT(false, "Cors or opaque Response without a URL");
+    MOZ_DIAGNOSTIC_CRASH("Cors or opaque Response without a URL");
     return;
   }
 
   if (requestMode == RequestMode::Same_origin &&
       response->Type() == ResponseType::Cors) {
-    Telemetry::ScalarAdd(Telemetry::ScalarID::SW_CORS_RES_FOR_SO_REQ_COUNT, 1);
-
     // XXXtt: Will have a pref to enable the quirk response in bug 1419684.
     // The variadic template provided by StringArrayAppender requires exactly
     // an nsString.
@@ -1866,8 +2055,8 @@ class ExtensionAPIEventOp final : public ServiceWorkerOp {
 /* static */ already_AddRefed<ServiceWorkerOp> ServiceWorkerOp::Create(
     ServiceWorkerOpArgs&& aArgs,
     std::function<void(const ServiceWorkerOpResult&)>&& aCallback) {
-  MOZ_ASSERT(RemoteWorkerService::Thread()->IsOnCurrentThread());
-
+  // Can be on the Worker Launcher thread for Terminate operations or on the
+  // Worker thread for other operations.
   RefPtr<ServiceWorkerOp> op;
 
   switch (aArgs.type()) {
@@ -1885,6 +2074,10 @@ class ExtensionAPIEventOp final : public ServiceWorkerOp {
       break;
     case ServiceWorkerOpArgs::TServiceWorkerLifeCycleEventOpArgs:
       op = MakeRefPtr<LifeCycleEventOp>(std::move(aArgs), std::move(aCallback));
+      break;
+    case ServiceWorkerOpArgs::TServiceWorkerCookieChangeEventOpArgs:
+      op = MakeRefPtr<CookieChangeEventOp>(std::move(aArgs),
+                                           std::move(aCallback));
       break;
     case ServiceWorkerOpArgs::TServiceWorkerPushEventOpArgs:
       op = MakeRefPtr<PushEventOp>(std::move(aArgs), std::move(aCallback));
@@ -1906,6 +2099,11 @@ class ExtensionAPIEventOp final : public ServiceWorkerOp {
     case ServiceWorkerOpArgs::TServiceWorkerExtensionAPIEventOpArgs:
       op = MakeRefPtr<ExtensionAPIEventOp>(std::move(aArgs),
                                            std::move(aCallback));
+      break;
+    case ServiceWorkerOpArgs::
+        TServiceWorkerUpdateIsOnContentBlockingAllowListOpArgs:
+      op = MakeRefPtr<UpdateIsOnContentBlockingAllowListOp>(
+          std::move(aArgs), std::move(aCallback));
       break;
     default:
       MOZ_CRASH("Unknown Service Worker operation!");

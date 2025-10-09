@@ -2,10 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
-XPCOMUtils.defineLazyGetter(lazy, "DevToolsStartup", () => {
+ChromeUtils.defineLazyGetter(lazy, "DevToolsStartup", () => {
   return Cc["@mozilla.org/devtools/startup-clh;1"].getService(
     Ci.nsICommandLineHandler
   ).wrappedJSObject;
@@ -13,7 +11,7 @@ XPCOMUtils.defineLazyGetter(lazy, "DevToolsStartup", () => {
 
 // We don't want to spend time initializing the full loader here so we create
 // our own lazy require.
-XPCOMUtils.defineLazyGetter(lazy, "Telemetry", function () {
+ChromeUtils.defineLazyGetter(lazy, "Telemetry", function () {
   const { require } = ChromeUtils.importESModule(
     "resource://devtools/shared/loader/Loader.sys.mjs"
   );
@@ -47,7 +45,6 @@ export const DevToolsShim = {
   get telemetry() {
     if (!this._telemetry) {
       this._telemetry = new lazy.Telemetry();
-      this._telemetry.setEventRecordingEnabled(true);
     }
     return this._telemetry;
   },
@@ -257,6 +254,7 @@ export const DevToolsShim = {
    * @param {String} reason
    *        optional, if provided should be a valid entry point for DEVTOOLS_ENTRY_POINT
    *        in toolkit/components/telemetry/Histograms.json
+   *        and devtools:entry_point in devtools/client/shared/metrics.yaml
    */
   initDevTools(reason) {
     if (!this.isEnabled()) {

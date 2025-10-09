@@ -64,11 +64,15 @@ class MockRtpSenderInternal : public RtpSenderInternal {
               SetParametersInternalWithAllLayers,
               (const RtpParameters&),
               (override));
-  MOCK_METHOD(RTCError, CheckSVCParameters, (const RtpParameters&), (override));
-  MOCK_METHOD(void,
-              SetVideoCodecPreferences,
-              (std::vector<cricket::VideoCodec>),
+  MOCK_METHOD(RTCError,
+              CheckCodecParameters,
+              (const RtpParameters&),
               (override));
+  MOCK_METHOD(void, SetSendCodecs, (std::vector<cricket::Codec>), (override));
+  MOCK_METHOD(std::vector<cricket::Codec>,
+              GetSendCodecs,
+              (),
+              (const, override));
   MOCK_METHOD(rtc::scoped_refptr<DtmfSenderInterface>,
               GetDtmfSender,
               (),
@@ -82,13 +86,14 @@ class MockRtpSenderInternal : public RtpSenderInternal {
               (),
               (const, override));
   MOCK_METHOD(void,
-              SetEncoderToPacketizerFrameTransformer,
+              SetFrameTransformer,
               (rtc::scoped_refptr<FrameTransformerInterface>),
               (override));
   MOCK_METHOD(void,
               SetEncoderSelector,
               (std::unique_ptr<VideoEncoderFactory::EncoderSelectorInterface>),
               (override));
+  MOCK_METHOD(void, SetObserver, (RtpSenderObserverInterface*), (override));
 
   // RtpSenderInternal methods.
   MOCK_METHOD1(SetMediaChannel, void(cricket::MediaSendChannelInterface*));
@@ -102,6 +107,7 @@ class MockRtpSenderInternal : public RtpSenderInternal {
   MOCK_METHOD1(DisableEncodingLayers,
                RTCError(const std::vector<std::string>&));
   MOCK_METHOD0(SetTransceiverAsStopped, void());
+  MOCK_METHOD(void, NotifyFirstPacketSent, (), (override));
 };
 
 }  // namespace webrtc

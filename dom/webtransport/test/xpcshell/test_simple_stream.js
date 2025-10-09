@@ -21,7 +21,9 @@ registerCleanupFunction(async () => {
   Services.prefs.clearUserPref("network.webtransport.redirect.enabled");
 });
 
-var { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+var { NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
+);
 
 function readFile(file) {
   let fstream = Cc["@mozilla.org/network/file-input-stream;1"].createInstance(
@@ -164,5 +166,20 @@ add_task(async function test_wt_incoming_bidi_stream() {
   const str = await read_stream_as_string(bidi_stream.readable);
   Assert.equal(str, "asdfg");
 
+  wt.close();
+});
+
+add_task(async function test_wt_incoming_bidi_stream_huge_data() {
+  let wt = new WebTransport(
+    "https://" + host + "/create_bidi_stream_and_large_data"
+  );
+  // await wt.ready; // causes occasional hang on release --verify
+
+  const stream_reader = wt.incomingBidirectionalStreams.getReader();
+  const { value: bidi_stream } = await stream_reader.read();
+  stream_reader.releaseLock();
+
+  const str = await read_stream_as_string(bidi_stream.readable);
+  Assert.equal(str.length, 32 * 1024 * 1024);
   wt.close();
 });

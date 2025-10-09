@@ -94,26 +94,24 @@ const char* gInaccessibleProperties[] = {
     "-x-span",
     "-x-text-scale",
     "-moz-default-appearance",
+    "-moz-theme",
     "-moz-inert",
     "-moz-script-level",  // parsed by UA sheets only
-    "-moz-script-size-multiplier",
-    "-moz-script-min-size",
     "-moz-math-variant",
-    "-moz-math-display",                     // parsed by UA sheets only
-    "-moz-top-layer",                        // parsed by UA sheets only
-    "-moz-min-font-size-ratio",              // parsed by UA sheets only
-    "-moz-box-collapse",                     // chrome-only internal properties
-    "-moz-font-smoothing-background-color",  // chrome-only internal properties
-    "-moz-subtree-hidden-only-visually",     // chrome-only internal properties
-    "-moz-window-input-region-margin",       // chrome-only internal properties
-    "-moz-window-opacity",                   // chrome-only internal properties
-    "-moz-window-transform",                 // chrome-only internal properties
-    "-moz-window-transform-origin",          // chrome-only internal properties
-    "-moz-window-shadow",                    // chrome-only internal properties
+    "-moz-math-display",                  // parsed by UA sheets only
+    "-moz-top-layer",                     // parsed by UA sheets only
+    "-moz-min-font-size-ratio",           // parsed by UA sheets only
+    "-moz-box-collapse",                  // chrome-only internal properties
+    "-moz-subtree-hidden-only-visually",  // chrome-only internal properties
+    "-moz-user-focus",                    // chrome-only internal properties
+    "-moz-window-input-region-margin",    // chrome-only internal properties
+    "-moz-window-opacity",                // chrome-only internal properties
+    "-moz-window-transform",              // chrome-only internal properties
+    "-moz-window-shadow",                 // chrome-only internal properties
 };
 
 inline int is_inaccessible(const char* aPropName) {
-  for (unsigned j = 0; j < MOZ_ARRAY_LENGTH(gInaccessibleProperties); ++j) {
+  for (unsigned j = 0; j < std::size(gInaccessibleProperties); ++j) {
     if (strcmp(aPropName, gInaccessibleProperties[j]) == 0) return 1;
   }
   return 0;
@@ -168,12 +166,10 @@ void print_array(const char* aName, const PropertyInfo* aProps,
 
 int main() {
   print_array("gLonghandProperties", gLonghandProperties,
-              MOZ_ARRAY_LENGTH(gLonghandProperties),
-              gLonghandPropertiesWithDOMProp,
-              MOZ_ARRAY_LENGTH(gLonghandPropertiesWithDOMProp));
+              std::size(gLonghandProperties), gLonghandPropertiesWithDOMProp,
+              std::size(gLonghandPropertiesWithDOMProp));
   print_array("gShorthandProperties", gShorthandProperties,
-              MOZ_ARRAY_LENGTH(gShorthandProperties),
-              gShorthandPropertiesWithDOMProp,
-              MOZ_ARRAY_LENGTH(gShorthandPropertiesWithDOMProp));
+              std::size(gShorthandProperties), gShorthandPropertiesWithDOMProp,
+              std::size(gShorthandPropertiesWithDOMProp));
   return 0;
 }

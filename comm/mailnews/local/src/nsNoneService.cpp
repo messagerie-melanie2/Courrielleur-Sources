@@ -3,8 +3,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "msgCore.h"  // precompiled header...
-
 #include "nsNoneService.h"
 #include "nsINoIncomingServer.h"
 #include "nsINoneService.h"
@@ -62,8 +60,8 @@ nsNoneService::GetDefaultLocalPath(nsIFile** aResult) {
 }
 
 NS_IMETHODIMP
-nsNoneService::GetServerIID(nsIID** aServerIID) {
-  *aServerIID = new nsIID(NS_GET_IID(nsINoIncomingServer));
+nsNoneService::GetServerIID(nsIID& aServerIID) {
+  aServerIID = nsIID(NS_GET_IID(nsINoIncomingServer));
   return NS_OK;
 }
 

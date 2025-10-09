@@ -3,10 +3,10 @@
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
-<!DOCTYPE window>
+<?csp default-src chrome: resource:; img-src chrome: resource: https: http:
+data: blob: ?>
 
-<?xml-stylesheet href="chrome://global/content/alerts/alert.css" type="text/css"?>
-<?xml-stylesheet href="chrome://global/skin/alert.css" type="text/css"?>
+<!DOCTYPE window>
 
 <window
   id="alertNotification"
@@ -15,11 +15,15 @@
   xmlns:xhtml="http://www.w3.org/1999/xhtml"
   role="alert"
   pack="start"
-  onload="onAlertLoad();"
-  onclick="onAlertClick();"
-  onbeforeunload="onAlertBeforeUnload();"
+  hidechrome="true"
 >
   <linkset>
+    <xhtml:link
+      rel="stylesheet"
+      href="chrome://global/content/alerts/alert.css"
+    />
+    <xhtml:link rel="stylesheet" href="chrome://global/skin/alert.css" />
+
     <xhtml:link rel="localization" href="toolkit/global/alert.ftl" />
   </linkset>
 
@@ -27,14 +31,12 @@
 
   <vbox id="alertBox">
     <box id="alertTitleBox">
-      <image id="alertIcon" />
-      <label id="alertTitleLabel" class="alertTitle plain" crop="end" />
+      <label id="alertTitleLabel" class="alertTitle" crop="end" />
       <vbox>
         <toolbarbutton
           class="close-icon"
+          id="alert-close"
           data-l10n-id="alert-close"
-          onclick="event.stopPropagation();"
-          oncommand="onAlertClose();"
         />
       </vbox>
     </box>
@@ -49,34 +51,24 @@
       </hbox>
 
       <vbox id="alertTextBox" class="alertTextBox">
-        <label id="alertTextLabel" class="alertText plain" />
+        <label id="alertTextLabel" class="alertText" />
         <spacer flex="1" />
         <box id="alertFooter">
-          <label id="alertSourceLabel" class="alertSource plain" />
+          <label id="alertSourceLabel" class="alertSource" />
           <button
             type="menu"
             id="alertSettings"
             data-l10n-id="alert-settings-title"
           >
             <menupopup position="after_end">
-              <menuitem id="doNotDisturbMenuItem" oncommand="doNotDisturb();" />
+              <menuitem id="doNotDisturbMenuItem" />
               <menuseparator />
-              <menuitem
-                id="disableForOriginMenuItem"
-                oncommand="disableForOrigin();"
-              />
-              <menuitem id="openSettingsMenuItem" oncommand="openSettings();" />
+              <menuitem id="disableForOriginMenuItem" />
+              <menuitem id="openSettingsMenuItem" />
             </menupopup>
           </button>
         </box>
       </vbox>
     </box>
   </vbox>
-
-  <!-- This method is called inline because we want to make sure we establish the width
-       and height of the alert before we fire the onload handler. -->
-  <script>
-    /* eslint-disable no-undef */
-    prefillAlertInfo();
-  </script>
 </window>

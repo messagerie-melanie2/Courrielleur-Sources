@@ -12,27 +12,26 @@ use crate::dom::{TDocument, TElement, TNode};
 use crate::invalidation::element::element_wrapper::{ElementSnapshot, ElementWrapper};
 use crate::invalidation::element::restyle_hints::RestyleHint;
 use crate::media_queries::Device;
-use crate::selector_map::{MaybeCaseInsensitiveHashMap, PrecomputedHashMap};
 use crate::selector_parser::{SelectorImpl, Snapshot, SnapshotMap};
 use crate::shared_lock::SharedRwLockReadGuard;
 use crate::stylesheets::{CssRule, StylesheetInDocument};
 use crate::stylesheets::{EffectiveRules, EffectiveRulesIterator};
+use crate::simple_buckets_map::SimpleBucketsMap;
 use crate::values::AtomIdent;
 use crate::LocalName as SelectorLocalName;
-use crate::{Atom, ShrinkIfNeeded};
 use selectors::parser::{Component, LocalName, Selector};
 
 /// The kind of change that happened for a given rule.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, Hash, MallocSizeOf, PartialEq)]
 pub enum RuleChangeKind {
+    /// Some change in the rule which we don't know about, and could have made
+    /// the rule change in any way.
+    Generic = 0,
     /// The rule was inserted.
     Insertion,
     /// The rule was removed.
     Removal,
-    /// Some change in the rule which we don't know about, and could have made
-    /// the rule change in any way.
-    Generic,
     /// A change in the declarations of a style rule.
     StyleRuleDeclarations,
 }
@@ -100,9 +99,7 @@ impl InvalidationKind {
 /// changes too (or even selector changes?).
 #[derive(Debug, Default, MallocSizeOf)]
 pub struct StylesheetInvalidationSet {
-    classes: MaybeCaseInsensitiveHashMap<Atom, InvalidationKind>,
-    ids: MaybeCaseInsensitiveHashMap<Atom, InvalidationKind>,
-    local_names: PrecomputedHashMap<SelectorLocalName, InvalidationKind>,
+    buckets: SimpleBucketsMap<InvalidationKind>,
     fully_invalid: bool,
 }
 
@@ -123,9 +120,7 @@ impl StylesheetInvalidationSet {
         if self.fully_invalid {
             return;
         }
-        self.classes.shrink_if_needed();
-        self.ids.shrink_if_needed();
-        self.local_names.shrink_if_needed();
+        self.buckets.shrink_if_needed();
     }
 
     /// Analyze the given stylesheet, and collect invalidations from their
@@ -152,7 +147,13 @@ impl StylesheetInvalidationSet {
 
         let quirks_mode = device.quirks_mode();
         for rule in stylesheet.effective_rules(device, guard) {
-            self.collect_invalidations_for_rule(rule, guard, device, quirks_mode);
+            self.collect_invalidations_for_rule(
+                rule,
+                guard,
+                device,
+                quirks_mode,
+                /* is_generic_change = */ false,
+            );
             if self.fully_invalid {
                 break;
             }
@@ -160,11 +161,11 @@ impl StylesheetInvalidationSet {
 
         self.shrink_if_needed();
 
-        debug!(" > resulting class invalidations: {:?}", self.classes);
-        debug!(" > resulting id invalidations: {:?}", self.ids);
+        debug!(" > resulting class invalidations: {:?}", self.buckets.classes);
+        debug!(" > resulting id invalidations: {:?}", self.buckets.ids);
         debug!(
             " > resulting local name invalidations: {:?}",
-            self.local_names
+            self.buckets.local_names
         );
         debug!(" > fully_invalid: {}", self.fully_invalid);
     }
@@ -193,9 +194,7 @@ impl StylesheetInvalidationSet {
     /// Returns whether there's no invalidation to process.
     pub fn is_empty(&self) -> bool {
         !self.fully_invalid &&
-            self.classes.is_empty() &&
-            self.ids.is_empty() &&
-            self.local_names.is_empty()
+            self.buckets.is_empty()
     }
 
     fn invalidation_kind_for<E>(
@@ -211,9 +210,9 @@ impl StylesheetInvalidationSet {
 
         let mut kind = InvalidationKind::None;
 
-        if !self.classes.is_empty() {
+        if !self.buckets.classes.is_empty() {
             element.each_class(|c| {
-                kind.add(self.classes.get(c, quirks_mode));
+                kind.add(self.buckets.classes.get(c, quirks_mode));
             });
 
             if kind.is_scope() {
@@ -222,7 +221,7 @@ impl StylesheetInvalidationSet {
 
             if let Some(snapshot) = snapshot {
                 snapshot.each_class(|c| {
-                    kind.add(self.classes.get(c, quirks_mode));
+                    kind.add(self.buckets.classes.get(c, quirks_mode));
                 });
 
                 if kind.is_scope() {
@@ -231,24 +230,24 @@ impl StylesheetInvalidationSet {
             }
         }
 
-        if !self.ids.is_empty() {
+        if !self.buckets.ids.is_empty() {
             if let Some(ref id) = element.id() {
-                kind.add(self.ids.get(id, quirks_mode));
+                kind.add(self.buckets.ids.get(id, quirks_mode));
                 if kind.is_scope() {
                     return kind;
                 }
             }
 
             if let Some(ref old_id) = snapshot.and_then(|s| s.id_attr()) {
-                kind.add(self.ids.get(old_id, quirks_mode));
+                kind.add(self.buckets.ids.get(old_id, quirks_mode));
                 if kind.is_scope() {
                     return kind;
                 }
             }
         }
 
-        if !self.local_names.is_empty() {
-            kind.add(self.local_names.get(element.local_name()));
+        if !self.buckets.local_names.is_empty() {
+            kind.add(self.buckets.local_names.get(element.local_name()));
         }
 
         kind
@@ -256,9 +255,7 @@ impl StylesheetInvalidationSet {
 
     /// Clears the invalidation set without processing.
     pub fn clear(&mut self) {
-        self.classes.clear();
-        self.ids.clear();
-        self.local_names.clear();
+        self.buckets.clear();
         self.fully_invalid = false;
         debug_assert!(self.is_empty());
     }
@@ -480,14 +477,14 @@ impl StylesheetInvalidationSet {
     ) -> bool {
         match invalidation {
             Invalidation::Class(c) => {
-                let entry = match self.classes.try_entry(c.0, quirks_mode) {
+                let entry = match self.buckets.classes.try_entry(c.0, quirks_mode) {
                     Ok(e) => e,
                     Err(..) => return false,
                 };
                 *entry.or_insert(InvalidationKind::None) |= kind;
             },
             Invalidation::ID(i) => {
-                let entry = match self.ids.try_entry(i.0, quirks_mode) {
+                let entry = match self.buckets.ids.try_entry(i.0, quirks_mode) {
                     Ok(e) => e,
                     Err(..) => return false,
                 };
@@ -495,16 +492,16 @@ impl StylesheetInvalidationSet {
             },
             Invalidation::LocalName { name, lower_name } => {
                 let insert_lower = name != lower_name;
-                if self.local_names.try_reserve(1).is_err() {
+                if self.buckets.local_names.try_reserve(1).is_err() {
                     return false;
                 }
-                let entry = self.local_names.entry(name);
+                let entry = self.buckets.local_names.entry(name);
                 *entry.or_insert(InvalidationKind::None) |= kind;
                 if insert_lower {
-                    if self.local_names.try_reserve(1).is_err() {
+                    if self.buckets.local_names.try_reserve(1).is_err() {
                         return false;
                     }
-                    let entry = self.local_names.entry(lower_name);
+                    let entry = self.buckets.local_names.entry(lower_name);
                     *entry.or_insert(InvalidationKind::None) |= kind;
                 }
             },
@@ -529,8 +526,6 @@ impl StylesheetInvalidationSet {
     ) where
         S: StylesheetInDocument,
     {
-        use crate::stylesheets::CssRule::*;
-
         debug!("StylesheetInvalidationSet::rule_changed");
         if self.fully_invalid {
             return;
@@ -541,51 +536,32 @@ impl StylesheetInvalidationSet {
             return; // Nothing to do here.
         }
 
+        // If the change is generic, we don't have the old rule information to know e.g., the old
+        // media condition, or the old selector text, so we might need to invalidate more
+        // aggressively. That only applies to the changed rules, for other rules we can just
+        // collect invalidations as normal.
         let is_generic_change = change_kind == RuleChangeKind::Generic;
+        self.collect_invalidations_for_rule(rule, guard, device, quirks_mode, is_generic_change);
+        if self.fully_invalid {
+            return;
+        }
 
-        match *rule {
-            Namespace(..) => {
-                // It's not clear what handling changes for this correctly would
-                // look like.
-            },
-            CounterStyle(..) |
-            Page(..) |
-            Property(..) |
-            Viewport(..) |
-            FontFeatureValues(..) |
-            FontPaletteValues(..) |
-            LayerStatement(..) |
-            FontFace(..) |
-            Keyframes(..) |
-            Container(..) |
-            Style(..) => {
-                if is_generic_change {
-                    // TODO(emilio): We need to do this for selector / keyframe
-                    // name / font-face changes, because we don't have the old
-                    // selector / name.  If we distinguish those changes
-                    // specially, then we can at least use this invalidation for
-                    // style declaration changes.
-                    return self.invalidate_fully();
-                }
+        if !is_generic_change && !EffectiveRules::is_effective(guard, device, quirks_mode, rule) {
+            return;
+        }
 
-                self.collect_invalidations_for_rule(rule, guard, device, quirks_mode)
-            },
-            Document(..) | Import(..) | Media(..) | Supports(..) | LayerBlock(..) => {
-                if !is_generic_change &&
-                    !EffectiveRules::is_effective(guard, device, quirks_mode, rule)
-                {
-                    return;
-                }
-
-                let rules =
-                    EffectiveRulesIterator::effective_children(device, quirks_mode, guard, rule);
-                for rule in rules {
-                    self.collect_invalidations_for_rule(rule, guard, device, quirks_mode);
-                    if self.fully_invalid {
-                        break;
-                    }
-                }
-            },
+        let rules = EffectiveRulesIterator::effective_children(device, quirks_mode, guard, rule);
+        for rule in rules {
+            self.collect_invalidations_for_rule(
+                rule,
+                guard,
+                device,
+                quirks_mode,
+                /* is_generic_change = */ false,
+            );
+            if self.fully_invalid {
+                break;
+            }
         }
     }
 
@@ -596,60 +572,83 @@ impl StylesheetInvalidationSet {
         guard: &SharedRwLockReadGuard,
         device: &Device,
         quirks_mode: QuirksMode,
+        is_generic_change: bool,
     ) {
         use crate::stylesheets::CssRule::*;
         debug!("StylesheetInvalidationSet::collect_invalidations_for_rule");
-        debug_assert!(!self.fully_invalid, "Not worth to be here!");
+        debug_assert!(!self.fully_invalid, "Not worth being here!");
 
         match *rule {
             Style(ref lock) => {
+                if is_generic_change {
+                    // TODO(emilio): We need to do this for selector / keyframe
+                    // name / font-face changes, because we don't have the old
+                    // selector / name.  If we distinguish those changes
+                    // specially, then we can at least use this invalidation for
+                    // style declaration changes.
+                    return self.invalidate_fully();
+                }
+
                 let style_rule = lock.read_with(guard);
-                for selector in &style_rule.selectors.0 {
+                for selector in style_rule.selectors.slice() {
                     self.collect_invalidations(selector, quirks_mode);
                     if self.fully_invalid {
                         return;
                     }
                 }
             },
-            Document(..) | Namespace(..) | Import(..) | Media(..) | Supports(..) |
-            Container(..) | LayerStatement(..) | LayerBlock(..) => {
-                // Do nothing, relevant nested rules are visited as part of the
-                // iteration.
+            NestedDeclarations(..) => {
+                // Our containing style rule would handle invalidation for us.
+            },
+            Namespace(..) => {
+                // It's not clear what handling changes for this correctly would
+                // look like.
+            },
+            LayerStatement(..) => {
+                // Layer statement insertions might alter styling order, so we need to always
+                // invalidate fully.
+                return self.invalidate_fully();
+            },
+            Document(..) | Import(..) | Media(..) | Supports(..) | Container(..) |
+            LayerBlock(..) | StartingStyle(..) => {
+                // Do nothing, relevant nested rules are visited as part of rule iteration.
             },
             FontFace(..) => {
-                // Do nothing, @font-face doesn't affect computed style
-                // information. We'll restyle when the font face loads, if
-                // needed.
+                // Do nothing, @font-face doesn't affect computed style information on it's own.
+                // We'll restyle when the font face loads, if needed.
+            },
+            Page(..) | Margin(..) => {
+                // Do nothing, we don't support OM mutations on print documents, and page rules
+                // can't affect anything else.
             },
             Keyframes(ref lock) => {
+                if is_generic_change {
+                    return self.invalidate_fully();
+                }
                 let keyframes_rule = lock.read_with(guard);
                 if device.animation_name_may_be_referenced(&keyframes_rule.name) {
                     debug!(
                         " > Found @keyframes rule potentially referenced \
                          from the page, marking the whole tree invalid."
                     );
-                    self.fully_invalid = true;
+                    self.invalidate_fully();
                 } else {
-                    // Do nothing, this animation can't affect the style of
-                    // existing elements.
+                    // Do nothing, this animation can't affect the style of existing elements.
                 }
             },
-            CounterStyle(..) |
-            Page(..) |
-            Property(..) |
-            Viewport(..) |
-            FontFeatureValues(..) |
-            FontPaletteValues(..) => {
-                debug!(
-                    " > Found unsupported rule, marking the whole subtree \
-                     invalid."
-                );
-
-                // TODO(emilio): Can we do better here?
-                //
-                // At least in `@page`, we could check the relevant media, I
-                // guess.
-                self.fully_invalid = true;
+            CounterStyle(..) | Property(..) | FontFeatureValues(..) | FontPaletteValues(..) => {
+                debug!(" > Found unsupported rule, marking the whole subtree invalid.");
+                self.invalidate_fully();
+            },
+            Scope(..) => {
+                // Addition/removal of @scope requires re-evaluation of scope proximity to properly
+                // figure out the styling order.
+                self.invalidate_fully();
+            },
+            PositionTry(..) => {
+                // Potential change in sizes/positions of anchored elements. TODO(dshin, bug 1910616):
+                // We should probably make an effort to see if this position-try is referenced.
+                self.invalidate_fully();
             },
         }
     }

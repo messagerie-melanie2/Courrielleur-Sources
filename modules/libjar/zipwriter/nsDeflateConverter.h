@@ -8,15 +8,12 @@
 
 #include "nsIStreamConverter.h"
 #include "nsCOMPtr.h"
+#include "nsIThreadRetargetableStreamListener.h"
 #include "zlib.h"
 #include "mozilla/Attributes.h"
 
-#define DEFLATECONVERTER_CID                         \
-  {                                                  \
-    0x461cd5dd, 0x73c6, 0x47a4, {                    \
-      0x8c, 0xc3, 0x60, 0x3b, 0x37, 0xd8, 0x4a, 0x61 \
-    }                                                \
-  }
+#define DEFLATECONVERTER_CID \
+  {0x461cd5dd, 0x73c6, 0x47a4, {0x8c, 0xc3, 0x60, 0x3b, 0x37, 0xd8, 0x4a, 0x61}}
 
 class nsDeflateConverter final : public nsIStreamConverter {
  public:
@@ -25,6 +22,7 @@ class nsDeflateConverter final : public nsIStreamConverter {
   NS_DECL_ISUPPORTS
   NS_DECL_NSIREQUESTOBSERVER
   NS_DECL_NSISTREAMLISTENER
+  NS_DECL_NSITHREADRETARGETABLESTREAMLISTENER
   NS_DECL_NSISTREAMCONVERTER
 
   nsDeflateConverter() : mWrapMode(WRAP_NONE), mOffset(0), mZstream() {

@@ -8,14 +8,20 @@ export const HeuristicsRegExp = {
   RULES: {
     email: undefined,
     tel: undefined,
-    organization: undefined,
+    "tel-country-code" : undefined,
+    "address-housenumber": undefined,
     "street-address": undefined,
     "address-line1": undefined,
     "address-line2": undefined,
     "address-line3": undefined,
+    "postal-code": undefined,
+    "address-level3": undefined,
     "address-level2": undefined,
     "address-level1": undefined,
-    "postal-code": undefined,
+    // Note: We place the `organization` field after the `address` fields, to
+    // ensure that all address-related fields that might contain organization 
+    // info are matched as address fields first.
+    organization: undefined,
     country: undefined,
     // Note: We place the `cc-name` field for Credit Card first, because
     // it is more specific than the `name` field below and we want to check
@@ -25,6 +31,7 @@ export const HeuristicsRegExp = {
     "given-name": undefined,
     "additional-name": undefined,
     "family-name": undefined,
+    "cc-csc": undefined,
     "cc-number": undefined,
     "cc-exp-month": undefined,
     "cc-exp-year": undefined,
@@ -32,15 +39,38 @@ export const HeuristicsRegExp = {
     "cc-type": undefined,
   },
 
+  // regular expressions that only apply to label
+  LABEL_RULES: {
+    "address-line1": undefined,
+    "address-line2": undefined,
+  },
+
   RULE_SETS: [
     //=========================================================================
     // Firefox-specific rules
     {
-      "address-line1": "addrline1|address_1",
-      "address-line2": "addrline2|address_2",
-      "address-line3": "addrline3|address_3",
-      "address-level1": "land", // de-DE
+      "street-address": "ulica(.*(numer|nr))?", // pl-PL
+      "address-line1": "addrline1|address_1|addl1",
+      "address-line2":
+        "addrline2|address_2|addl2" +
+        "|landmark", // common in IN
+      "address-line3": "addrline3|address_3|addl3",
+      "address-level2": 
+        "città" + // it-IT
+        "|miasto|miejscowosc|miejscowość", //pl-PL
+      "address-housenumber":
+        "(house|building)\\s*number|hausnummer|haus|house[a-z\-]*n(r|o)" +
+        "|n[úu]mero" +
+        "|domu", // pl-PL
+      "address-level3":
+        "(^address-?level-?3$)" +
+        "|neighbou*rhood|barrio|bairro|colonia|suburb", // en/es/pt/mx/au/nz
+      "postal-code": 
+        "^PLZ(\\b|\\*)" + // de-DE
+        "|kod.?pocztowy", // pl-PL
+      "given-name": "imię", // pl-PL
       "additional-name": "apellido.?materno|lastlastname",
+      "family-name": "nazwisko",
       "cc-name":
         "accountholdername" +
         "|titulaire", // fr-FR
@@ -48,19 +78,33 @@ export const HeuristicsRegExp = {
         "(cc|kk)nr",    // de-DE
       "cc-exp":
         "ważna.*do" +        // pl-PL
-        "|data.*ważności",   // pl-PL
+        "|data.*ważności" +  // pl-PL
+        "|mm\\s*[\\-\\/]\\s*yy" +  // en-US
+        "|mm\\s*[\\-\\/]\\s*aa" +  // es-ES
+        "|mm\\s*[\\-\\/]\\s*jj" +  // de-AT
+        "|vervaldatum",            // nl-NL
       "cc-exp-month":
         "month" +
         "|(cc|kk)month" +    // de-DE
-        "|miesiąc",          // pl-PL
+        "|miesiąc" +         // pl-PL
+        "|mes" +             // es-ES
+        "|maand",            // nl-NL
       "cc-exp-year":
         "year" +
         "|(cc|kk)year" +     // de-DE
-        "|rok",              // pl-PL
+        "|rok" +             // pl-PL
+        "|(anno|año)" +      // es-ES
+        "|jaar",             // nl-NL
       "cc-type":
-        "type" +
+        "(cc|card).*(type)" +
         "|kartenmarke" +     // de-DE
         "|typ.*karty",       // pl-PL
+      "cc-csc":
+        "(\\bcvn\\b|\\bcvv\\b|\\bcvc\\b|\\bcsc\\b|\\bcvd\\b|\\bcid\\b|\\bccv\\b)",
+      "tel-country-code":
+        "phone.*country|country.*phone" +
+        "tel.*country|country.*tel",
+      "tel": "(numer|nr)?\\.?telefonu", //pl-PL
     },
 
     //=========================================================================
@@ -176,9 +220,8 @@ export const HeuristicsRegExp = {
         "cc-?name" +
         "|card-?name" +
         "|cardholder-?name" +
-        "|cardholder" +
+        "|cardholder",
         // "|(^name$)" + // Removed to avoid overwriting "name", above.
-        "|(^nom$)",
 
       "cc-number":
         "cc-?number" +
@@ -368,7 +411,7 @@ export const HeuristicsRegExp = {
       "address-line1":
         "^address$|address[_-]?line(one)?|address1|addr1|street" +
         "|(?:shipping|billing)address$" +
-        "|strasse|straße|hausnummer|housenumber" + // de-DE
+        "|strasse|straße" + // de-DE
         "|house.?name" + // en-GB
         "|direccion|dirección" + // es
         "|adresse" + // fr-FR
@@ -480,7 +523,7 @@ export const HeuristicsRegExp = {
       // ==== Name Fields ====
       "cc-name":
         "card.?(?:holder|owner)|name.*(\\b)?on(\\b)?.*card" +
-        "|(?:card|cc).?name|cc.?full.?name" +
+        "|^(credit[-\\s]?card|card).*name|cc.?full.?name" +
         "|karteninhaber" + // de-DE
         "|nombre.*tarjeta" + // es
         "|nom.*carte" + // fr-FR
@@ -538,7 +581,7 @@ export const HeuristicsRegExp = {
       // Note: `cc-name` expression has been moved up, above `name`, in
       // order to handle specialization through ordering.
       "cc-number":
-        "(add)?(?:card|cc|acct).?(?:number|#|no|num|field)" +
+        "(add)?(?:card|cc|acct).?(?:number|#|no|num|field(?!s)|pan)" +
         // In order to support webkit we convert all negative lookbehinds to a capture group
         // (?<!not)word -> (?<neg>notword)|word
         // TODO: Bug 1829583
@@ -582,39 +625,101 @@ export const HeuristicsRegExp = {
         "|有効期限" + // ja-JP
         "|validade" + // pt-BR, pt-PT
         "|Срок действия карты", // ru
+
+      "cc-csc":
+        "verification|card.?identification|security.?code|card.?code" +
+        "|security.?value" +
+        "|security.?number|card.?pin|c-v-v" +
+        // We omit this regexp in favor of being less generic.
+        // See "Firefox-specific" rules for cc-csc
+        // "|(cvn|cvv|cvc|csc|cvd|cid|ccv)(field)?" +
+        "|\\bcid\\b",
     },
   ],
 
-  _getRule(name) {
-    let rules = [];
-    this.RULE_SETS.forEach(set => {
-      if (set[name]) {
-        // Add the rule.
-        // We make the regex lower case so that we can match it against the
-        // lower-cased field name and get a rough equivalent of a case-insensitive
-        // match. This avoids a performance cliff with the "iu" flag on regular
-        // expressions.
-        rules.push(`(${set[name].toLowerCase()})`.normalize("NFKC"));
-      }
-    });
+  LABEL_RULE_SETS: [
+    {
+      "address-line1":
+        "(^\\W*address)" +
+        "|(address\\W*$)" +
+        "|(?:shipping|billing|mailing|pick.?up|drop.?off|delivery|sender|postal|" +
+        "recipient|home|work|office|school|business|mail)[\\s\\-]+address" +
+        "|address\\s+(of|for|to|from)" +
+        "|adresse" +                         // fr-FR
+        "|indirizzo" +                       // it-IT
+        "|住所" +                            // ja-JP
+        "|地址" +                            // zh-CN
+        "|(\\b|_)adres(?! tarifi)(\\b|_)" +  // tr
+        "|주소" +                            // ko-KR
+        "|^alamat" +                         // id
+        // Should contain street and any other address component, in any order
+        "|street.*(house|building|apartment|floor)" +  // en
+        "|(house|building|apartment|floor).*street" +
+        "|(sokak|cadde).*(apartman|bina|daire|mahalle)" +  // tr
+        "|(apartman|bina|daire|mahalle).*(sokak|cadde)" +
+        "|улиц.*(дом|корпус|квартир|этаж)|(дом|корпус|квартир|этаж).*улиц",  // ru
+    },
+    {
+      "address-line2":
+        "address|line" +
+        "|house|building|apartment|floor" +    // de-DE
+        "|apartamento|" +    // pt
+        "|adresse" +      // fr-FR
+        "|indirizzo" +    // it-IT
+        "|地址" +         // zh-CN
+        "|주소" +         // ko-KR
+        "|mieszkan(ie|ia)",         // pl-PL
+    },
+  ],
 
-    const value = new RegExp(rules.join("|"), "gu");
-    Object.defineProperty(this.RULES, name, { get: undefined });
-    Object.defineProperty(this.RULES, name, { value });
-    return value;
+  EXTRA_RULES: {
+    "lookup":
+      "lookup|search|suchen",
   },
 
-  getRules() {
-    Object.keys(this.RULES).forEach(field =>
-      Object.defineProperty(this.RULES, field, {
+  _getRules(rules, rulesets) {
+    function computeRule(name) {
+      let regexps = [];
+      rulesets.forEach(set => {
+        if (set[name]) {
+          // Add the rule.
+          // We make the regex lower case so that we can match it against the
+          // lower-cased field name and get a rough equivalent of a case-insensitive
+          // match. This avoids a performance cliff with the "iu" flag on regular
+          // expressions.
+          regexps.push(`(${set[name].toLowerCase()})`.normalize("NFKC"));
+        }
+      });
+
+      const value = new RegExp(regexps.join("|"), "gu");
+
+      Object.defineProperty(rules, name, { get: undefined });
+      Object.defineProperty(rules, name, { value });
+      return value;
+    }
+
+    Object.keys(rules).forEach(field =>
+      Object.defineProperty(rules, field, {
         get() {
-          return HeuristicsRegExp._getRule(field);
+          return computeRule(field);
         },
       })
     );
 
-    return this.RULES;
+    return rules;
   },
+
+  getLabelRules() {
+    return this._getRules(this.LABEL_RULES, this.LABEL_RULE_SETS);
+  },
+
+  getRules() {
+    return this._getRules(this.RULES, this.RULE_SETS);
+  },
+
+  getExtraRules(fieldName) {
+    return new RegExp(this.EXTRA_RULES[fieldName], "iug");
+  }
 };
 
 export default HeuristicsRegExp;

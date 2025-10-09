@@ -1,5 +1,3 @@
-// |jit-test| skip-if: !wasmFunctionReferencesEnabled()
-
 // non-null values are subtype of null values
 wasmValidateText(`(module
   (func (param $a (ref extern))
@@ -79,7 +77,7 @@ wasmValidateText(`(module
   )  
 )`);
 wasmFailValidateText(`(module
-  (elem declare 0)
+  (elem declare func 0)
   (func
     (local (ref func))
     i32.const 0
@@ -93,7 +91,7 @@ wasmFailValidateText(`(module
   )
 )`, /local\.get read from unset local/);
 wasmValidateText(`(module
-  (elem declare 0)
+  (elem declare func 0)
   (func (result funcref)
     (local (ref func) (ref func))
     i32.const 0
@@ -154,7 +152,7 @@ assertErrorMessage(() => runMultiNullStack(), TypeError, /cannot pass null to no
   // can have non-nullable globals
   wasmEvalText(`(module
     (func $f)
-    (elem declare $f)
+    (elem declare func $f)
     (global (ref func) ref.func $f)
   )`);
 }

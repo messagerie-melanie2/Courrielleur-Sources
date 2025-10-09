@@ -4,17 +4,11 @@
 
 "use strict";
 
-var { ExtensionSupport } = ChromeUtils.import(
-  "resource:///modules/ExtensionSupport.jsm"
-);
-var { ExtensionCommon } = ChromeUtils.importESModule(
-  "resource://gre/modules/ExtensionCommon.sys.mjs"
-);
 var { makeWidgetId } = ExtensionCommon;
 
 function getSessionData(tabId, extension) {
-  let nativeTab = tabTracker.getTab(tabId);
-  let widgetId = makeWidgetId(extension.id);
+  const nativeTab = tabTracker.getTab(tabId);
+  const widgetId = makeWidgetId(extension.id);
 
   if (!nativeTab._ext.extensionSession) {
     nativeTab._ext.extensionSession = {};
@@ -30,15 +24,30 @@ this.sessions = class extends ExtensionAPI {
     return {
       sessions: {
         setTabValue(tabId, key, value) {
-          let sessionData = getSessionData(tabId, context.extension);
+          if (!context.extension.hasPermission("sessions")) {
+            console.warn(
+              "Following Firefox, Thunderbird will soon require the `sessions` permission in order to use sessions.setTabValue()."
+            );
+          }
+          const sessionData = getSessionData(tabId, context.extension);
           sessionData[key] = value;
         },
         getTabValue(tabId, key) {
-          let sessionData = getSessionData(tabId, context.extension);
+          if (!context.extension.hasPermission("sessions")) {
+            console.warn(
+              "Following Firefox, Thunderbird will soon require the `sessions` permission in order to use sessions.getTabValue()."
+            );
+          }
+          const sessionData = getSessionData(tabId, context.extension);
           return sessionData[key];
         },
         removeTabValue(tabId, key) {
-          let sessionData = getSessionData(tabId, context.extension);
+          if (!context.extension.hasPermission("sessions")) {
+            console.warn(
+              "Following Firefox, Thunderbird will soon require the `sessions` permission in order to use sessions.removeTabValue()."
+            );
+          }
+          const sessionData = getSessionData(tabId, context.extension);
           delete sessionData[key];
         },
       },
@@ -47,9 +56,9 @@ this.sessions = class extends ExtensionAPI {
 
   static onUninstall(extensionId) {
     // Remove session data.
-    let widgetId = makeWidgetId(extensionId);
-    for (let window of Services.wm.getEnumerator("mail:3pane")) {
-      for (let tabInfo of window.gTabmail.tabInfo) {
+    const widgetId = makeWidgetId(extensionId);
+    for (const window of Services.wm.getEnumerator("mail:3pane")) {
+      for (const tabInfo of window.gTabmail.tabInfo) {
         if (
           tabInfo._ext.extensionSession &&
           tabInfo._ext.extensionSession[`${widgetId}`]

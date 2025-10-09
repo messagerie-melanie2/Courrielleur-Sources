@@ -13,18 +13,14 @@
 #define nsIMimeObjectClassAccess_h_
 
 // {C09EDB23-B7AF-11d2-B35E-525400E2D63A}
-#define NS_IMIME_OBJECT_CLASS_ACCESS_IID            \
-  {                                                 \
-    0xc09edb23, 0xb7af, 0x11d2, {                   \
-      0xb3, 0x5e, 0x52, 0x54, 0x0, 0xe2, 0xd6, 0x3a \
-    }                                               \
-  }
+#define NS_IMIME_OBJECT_CLASS_ACCESS_IID \
+  {0xc09edb23, 0xb7af, 0x11d2, {0xb3, 0x5e, 0x52, 0x54, 0x0, 0xe2, 0xd6, 0x3a}}
 
 #include "nsISupports.h"
 
 class nsIMimeObjectClassAccess : public nsISupports {
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IMIME_OBJECT_CLASS_ACCESS_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_IMIME_OBJECT_CLASS_ACCESS_IID)
 
   // These methods are all implemented by libmime to be used by
   // content type handler plugins for processing stream data.
@@ -46,8 +42,5 @@ class nsIMimeObjectClassAccess : public nsISupports {
   NS_IMETHOD MimeCreate(char* content_type, void* hdrs, void* opts,
                         void** ptr) = 0;
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(nsIMimeObjectClassAccess,
-                              NS_IMIME_OBJECT_CLASS_ACCESS_IID)
 
 #endif /* nsIMimeObjectClassAccess_h_ */

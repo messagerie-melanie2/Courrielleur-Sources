@@ -14,36 +14,30 @@
 namespace mozilla {
 namespace widget {
 
-class HeadlessClipboard final : public ClipboardSetDataHelper {
+class HeadlessClipboard final : public nsBaseClipboard {
  public:
   HeadlessClipboard();
 
   NS_DECL_ISUPPORTS_INHERITED
-
-  // nsIClipboard
-  NS_IMETHOD GetData(nsITransferable* aTransferable,
-                     int32_t aWhichClipboard) override;
-  NS_IMETHOD EmptyClipboard(int32_t aWhichClipboard) override;
-  NS_IMETHOD HasDataMatchingFlavors(const nsTArray<nsCString>& aFlavorList,
-                                    int32_t aWhichClipboard,
-                                    bool* _retval) override;
-  NS_IMETHOD IsClipboardTypeSupported(int32_t aWhichClipboard,
-                                      bool* _retval) override;
-  RefPtr<mozilla::GenericPromise> AsyncGetData(
-      nsITransferable* aTransferable, int32_t aWhichClipboard) override;
-  RefPtr<DataFlavorsPromise> AsyncHasDataMatchingFlavors(
-      const nsTArray<nsCString>& aFlavorList, int32_t aWhichClipboard) override;
+  mozilla::Result<int32_t, nsresult> GetNativeClipboardSequenceNumber(
+      ClipboardType aWhichClipboard) override;
 
  protected:
   ~HeadlessClipboard() = default;
 
   // Implement the native clipboard behavior.
   NS_IMETHOD SetNativeClipboardData(nsITransferable* aTransferable,
-                                    nsIClipboardOwner* aOwner,
-                                    int32_t aWhichClipboard) override;
+                                    ClipboardType aWhichClipboard) override;
+  mozilla::Result<nsCOMPtr<nsISupports>, nsresult> GetNativeClipboardData(
+      const nsACString& aFlavor, ClipboardType aWhichClipboard) override;
+  nsresult EmptyNativeClipboardData(ClipboardType aWhichClipboard) override;
+  mozilla::Result<bool, nsresult> HasNativeClipboardDataMatchingFlavors(
+      const nsTArray<nsCString>& aFlavorList,
+      ClipboardType aWhichClipboard) override;
 
  private:
-  UniquePtr<HeadlessClipboardData> mClipboard;
+  UniquePtr<HeadlessClipboardData>
+      mClipboards[nsIClipboard::kClipboardTypeCount];
 };
 
 }  // namespace widget

@@ -5,6 +5,7 @@
 /* compile-time and runtime tests for whether to use various ARM extensions */
 
 #include "arm.h"
+#include "mozilla/Attributes.h"
 
 #if defined(MOZILLA_ARM_HAVE_CPUID_DETECTION)
 
@@ -22,7 +23,8 @@ enum {
   MOZILLA_HAS_EDSP_FLAG = 1,
   MOZILLA_HAS_ARMV6_FLAG = 2,
   MOZILLA_HAS_ARMV7_FLAG = 4,
-  MOZILLA_HAS_NEON_FLAG = 8
+  MOZILLA_HAS_NEON_FLAG = 8,
+  MOZILLA_HAS_AES_FLAG = 16
 };
 
 static unsigned get_arm_cpu_flags(void) {
@@ -49,6 +51,10 @@ static unsigned get_arm_cpu_flags(void) {
         p = strstr(buf, " neon");
         if (p != nullptr && (p[5] == ' ' || p[5] == '\n'))
           flags |= MOZILLA_HAS_NEON_FLAG;
+        p = strstr(buf, " aes");
+        if (p != nullptr && (p[4] == ' ' || p[4] == '\n')) {
+          flags |= MOZILLA_HAS_AES_FLAG;
+        }
       }
       if (memcmp(buf, "CPU architecture:", 17) == 0) {
         int version;
@@ -83,7 +89,7 @@ static unsigned get_arm_cpu_flags(void) {
 }
 
 // Cache a local copy so we only have to read /proc/cpuinfo once.
-static unsigned arm_cpu_flags = get_arm_cpu_flags();
+MOZ_RUNINIT static unsigned arm_cpu_flags = get_arm_cpu_flags();
 
 #    if !defined(MOZILLA_PRESUME_EDSP)
 static bool check_edsp(void) {
@@ -109,21 +115,30 @@ static bool check_neon(void) {
 }
 #    endif
 
+#    if !defined(MOZILLA_PRESUME_ARM_AES)
+static bool check_aes(void) {
+  return (arm_cpu_flags & MOZILLA_HAS_AES_FLAG) != 0;
+}
+#    endif
+
 #  endif  // defined(__linux__) || defined(ANDROID)
 
 namespace mozilla {
 namespace arm_private {
 #  if !defined(MOZILLA_PRESUME_EDSP)
-bool edsp_enabled = check_edsp();
+MOZ_RUNINIT bool edsp_enabled = check_edsp();
 #  endif
 #  if !defined(MOZILLA_PRESUME_ARMV6)
-bool armv6_enabled = check_armv6();
+MOZ_RUNINIT bool armv6_enabled = check_armv6();
 #  endif
 #  if !defined(MOZILLA_PRESUME_ARMV7)
-bool armv7_enabled = check_armv7();
+MOZ_RUNINIT bool armv7_enabled = check_armv7();
 #  endif
 #  if !defined(MOZILLA_PRESUME_NEON)
-bool neon_enabled = check_neon();
+MOZ_RUNINIT bool neon_enabled = check_neon();
+#  endif
+#  if !defined(MOZILLA_PRESUME_ARM_AES)
+MOZ_RUNINIT bool aes_enabled = check_aes();
 #  endif
 }  // namespace arm_private
 }  // namespace mozilla

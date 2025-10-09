@@ -1,15 +1,17 @@
 export const description = `Validation tests for buffer related parameters for buffer <-> texture copies`;
 
 import { makeTestGroup } from '../../../../common/framework/test_group.js';
-import {
-  kSizedTextureFormats,
-  kTextureDimensions,
-  kTextureFormatInfo,
-  textureDimensionAndFormatCompatible,
-} from '../../../capability_info.js';
+import { kTextureDimensions } from '../../../capability_info.js';
 import { GPUConst } from '../../../constants.js';
+import {
+  getBlockInfoForSizedTextureFormat,
+  isDepthOrStencilTextureFormat,
+  kSizedTextureFormats,
+  textureFormatAndDimensionPossiblyCompatible,
+} from '../../../format_info.js';
 import { kResourceStates } from '../../../gpu_test.js';
 import { kImageCopyTypes } from '../../../util/texture/layout.js';
+import * as vtu from '../validation_test_utils.js';
 
 import { ImageCopyTest, formatCopyableWithMethod } from './image_copy.js';
 
@@ -29,11 +31,11 @@ Test that the buffer must be valid and not destroyed.
       .combine('method', ['CopyB2T', 'CopyT2B'] as const)
       .combine('state', kResourceStates)
   )
-  .fn(async t => {
+  .fn(t => {
     const { method, state } = t.params;
 
     // A valid buffer.
-    const buffer = t.createBufferWithState(state, {
+    const buffer = vtu.createBufferWithState(t, state, {
       size: 16,
       usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     });
@@ -42,7 +44,7 @@ Test that the buffer must be valid and not destroyed.
     const submit = state !== 'invalid';
     const success = state === 'valid';
 
-    const texture = t.device.createTexture({
+    const texture = t.createTextureTracked({
       size: { width: 2, height: 2, depthOrArrayLayers: 1 },
       format: 'rgba8unorm',
       usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST,
@@ -62,20 +64,19 @@ g.test('buffer,device_mismatch')
   .paramsSubcasesOnly(u =>
     u.combine('method', ['CopyB2T', 'CopyT2B'] as const).combine('mismatched', [true, false])
   )
-  .beforeAllSubcases(t => {
-    t.selectMismatchedDeviceOrSkipTestCase(undefined);
-  })
-  .fn(async t => {
+  .beforeAllSubcases(t => t.usesMismatchedDevice())
+  .fn(t => {
     const { method, mismatched } = t.params;
     const sourceDevice = mismatched ? t.mismatchedDevice : t.device;
 
-    const buffer = sourceDevice.createBuffer({
-      size: 16,
-      usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
-    });
-    t.trackForCleanup(buffer);
+    const buffer = t.trackForCleanup(
+      sourceDevice.createBuffer({
+        size: 16,
+        usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+      })
+    );
 
-    const texture = t.device.createTexture({
+    const texture = t.createTextureTracked({
       size: { width: 2, height: 2, depthOrArrayLayers: 1 },
       format: 'rgba8unorm',
       usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST,
@@ -113,10 +114,10 @@ TODO update such that it tests
         GPUConst.BufferUsage.COPY_SRC | GPUConst.BufferUsage.COPY_DST,
       ])
   )
-  .fn(async t => {
+  .fn(t => {
     const { method, usage } = t.params;
 
-    const buffer = t.device.createBuffer({
+    const buffer = t.createBufferTracked({
       size: 16,
       usage,
     });
@@ -126,7 +127,7 @@ TODO update such that it tests
         ? (usage & GPUBufferUsage.COPY_SRC) !== 0
         : (usage & GPUBufferUsage.COPY_DST) !== 0;
 
-    const texture = t.device.createTexture({
+    const texture = t.createTextureTracked({
       size: { width: 2, height: 2, depthOrArrayLayers: 1 },
       format: 'rgba8unorm',
       usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST,
@@ -159,7 +160,9 @@ Test that bytesPerRow must be a multiple of 256 for CopyB2T and CopyT2B if it is
       .combine('format', kSizedTextureFormats)
       .filter(formatCopyableWithMethod)
       .combine('dimension', kTextureDimensions)
-      .filter(({ dimension, format }) => textureDimensionAndFormatCompatible(dimension, format))
+      .filter(({ dimension, format }) =>
+        textureFormatAndDimensionPossiblyCompatible(dimension, format)
+      )
       .beginSubcases()
       .combine('bytesPerRow', [undefined, 0, 1, 255, 256, 257, 512])
       .combine('copyHeightInBlocks', [0, 1, 2, 3])
@@ -169,34 +172,29 @@ Test that bytesPerRow must be a multiple of 256 for CopyB2T and CopyT2B if it is
       .unless(p => p.dimension === '1d' && p.copyHeightInBlocks > 1)
       // Depth/stencil format copies must copy the whole subresource.
       .unless(p => {
-        const info = kTextureFormatInfo[p.format];
-        return (info.depth || info.stencil) && p.copyHeightInBlocks !== p._textureHeightInBlocks;
+        return (
+          isDepthOrStencilTextureFormat(p.format) &&
+          p.copyHeightInBlocks !== p._textureHeightInBlocks
+        );
       })
       // bytesPerRow must be specified and it must be equal or greater than the bytes size of each row if we are copying multiple rows.
       // Note that we are copying one single block on each row in this test.
       .filter(
         ({ format, bytesPerRow, copyHeightInBlocks }) =>
           (bytesPerRow === undefined && copyHeightInBlocks <= 1) ||
-          (bytesPerRow !== undefined && bytesPerRow >= kTextureFormatInfo[format].bytesPerBlock)
+          (bytesPerRow !== undefined &&
+            bytesPerRow >= getBlockInfoForSizedTextureFormat(format).bytesPerBlock)
       )
   )
-  .beforeAllSubcases(t => {
-    const info = kTextureFormatInfo[t.params.format];
-    t.selectDeviceOrSkipTestCase(info.feature);
-  })
-  .fn(async t => {
-    const {
-      method,
-      dimension,
-      format,
-      bytesPerRow,
-      copyHeightInBlocks,
-      _textureHeightInBlocks,
-    } = t.params;
+  .fn(t => {
+    const { method, dimension, format, bytesPerRow, copyHeightInBlocks, _textureHeightInBlocks } =
+      t.params;
+    t.skipIfTextureFormatNotSupported(format);
+    t.skipIfTextureFormatAndDimensionNotCompatible(format, dimension);
 
-    const info = kTextureFormatInfo[format];
+    const info = getBlockInfoForSizedTextureFormat(format);
 
-    const buffer = t.device.createBuffer({
+    const buffer = t.createBufferTracked({
       size: 512 * 8 * 16,
       usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     });
@@ -210,7 +208,7 @@ Test that bytesPerRow must be a multiple of 256 for CopyB2T and CopyT2B if it is
     if (bytesPerRow !== undefined && bytesPerRow > 0 && bytesPerRow % 256 === 0) success = true;
 
     const size = [info.blockWidth, _textureHeightInBlocks * info.blockHeight, 1];
-    const texture = t.device.createTexture({
+    const texture = t.createTextureTracked({
       size,
       dimension,
       format,

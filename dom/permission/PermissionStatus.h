@@ -10,23 +10,25 @@
 #include "mozilla/dom/PermissionsBinding.h"
 #include "mozilla/dom/PermissionStatusBinding.h"
 #include "mozilla/DOMEventTargetHelper.h"
+#include "mozilla/MozPromise.h"
 
 namespace mozilla::dom {
 
-class PermissionObserver;
+class PermissionStatusSink;
 
 class PermissionStatus : public DOMEventTargetHelper {
-  friend class PermissionObserver;
+  friend class PermissionStatusSink;
 
  public:
-  static already_AddRefed<PermissionStatus> Create(nsPIDOMWindowInner* aWindow,
-                                                   PermissionName aName,
-                                                   ErrorResult& aRv);
+  using SimplePromise = MozPromise<nsresult, nsresult, true>;
+
+  PermissionStatus(nsIGlobalObject* aGlobal, PermissionName aName);
 
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;
 
   PermissionState State() const { return mState; }
+  void SetState(PermissionState aState) { mState = aState; }
 
   IMPL_EVENT_HANDLER(change)
 
@@ -34,12 +36,12 @@ class PermissionStatus : public DOMEventTargetHelper {
 
   PermissionName Name() const { return mName; }
 
-  nsresult Init();
+  void GetType(nsACString& aName) const;
+
+  RefPtr<SimplePromise> Init();
 
  protected:
   ~PermissionStatus();
-
-  PermissionStatus(nsPIDOMWindowInner* aWindow, PermissionName aName);
 
   /**
    * This method returns the internal permission type, which should be equal to
@@ -51,19 +53,20 @@ class PermissionStatus : public DOMEventTargetHelper {
    * boolean, which is used to determine whether to return "midi" or
    * "midi-sysex" for the MIDI permission.
    */
-  virtual nsLiteralCString GetPermissionType();
+  virtual nsLiteralCString GetPermissionType() const;
 
  private:
-  nsresult UpdateState();
+  virtual already_AddRefed<PermissionStatusSink> CreateSink();
 
-  already_AddRefed<nsIPrincipal> GetPrincipal() const;
+  void PermissionChanged(uint32_t aAction);
 
-  void PermissionChanged();
+  PermissionState ComputeStateFromAction(uint32_t aAction);
 
   PermissionName mName;
-  PermissionState mState;
+  RefPtr<PermissionStatusSink> mSink;
 
-  RefPtr<PermissionObserver> mObserver;
+ protected:
+  PermissionState mState;
 };
 
 }  // namespace mozilla::dom

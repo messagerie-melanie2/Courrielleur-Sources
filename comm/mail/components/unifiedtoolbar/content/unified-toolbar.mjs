@@ -31,6 +31,9 @@ ChromeUtils.defineESModuleGetters(lazy, {
  * management and interaction logic. Template: #unifiedToolbarTemplate.
  * Requires unifiedToolbarPopups.inc.xhtml to be in a popupset of the same
  * document.
+ * Template ID: #unifiedToolbarTemplate
+ *
+ * @tagname unified-toolbar
  */
 class UnifiedToolbar extends HTMLElement {
   constructor() {
@@ -267,7 +270,7 @@ class UnifiedToolbar extends HTMLElement {
       menuItem.removeAttribute("checked");
     } else {
       menuItem.setAttribute("checked", true);
-      menubarToolbar.removeAttribute("autohide");
+      menubarToolbar.setAttribute("autohide", "false");
     }
     Services.xulStore.persist(menubarToolbar, "autohide");
   };
@@ -280,7 +283,10 @@ class UnifiedToolbar extends HTMLElement {
   #handleKey = event => {
     // Don't handle any key events within menupopups that are children of the
     // toolbar contents.
-    if (event.target.closest("menupopup")) {
+    if (
+      event.target.closest("menupopup") ||
+      event.target.closest(".search-bar")
+    ) {
       return;
     }
     switch (event.key) {

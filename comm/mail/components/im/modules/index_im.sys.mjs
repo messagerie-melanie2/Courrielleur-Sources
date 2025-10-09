@@ -4,25 +4,17 @@
 
 var CC = Components.Constructor;
 
-const { Gloda } = ChromeUtils.import(
-  "resource:///modules/gloda/GlodaPublic.jsm"
-);
-const { GlodaAccount } = ChromeUtils.import(
-  "resource:///modules/gloda/GlodaDataModel.jsm"
-);
-const { GlodaConstants } = ChromeUtils.import(
-  "resource:///modules/gloda/GlodaConstants.jsm"
-);
-const { GlodaIndexer, IndexingJob } = ChromeUtils.import(
-  "resource:///modules/gloda/GlodaIndexer.jsm"
-);
+import { Gloda } from "resource:///modules/gloda/GlodaPublic.sys.mjs";
+import { GlodaAccount } from "resource:///modules/gloda/GlodaDataModel.sys.mjs";
+import { GlodaConstants } from "resource:///modules/gloda/GlodaConstants.sys.mjs";
+import {
+  GlodaIndexer,
+  IndexingJob,
+} from "resource:///modules/gloda/GlodaIndexer.sys.mjs";
 import { IMServices } from "resource:///modules/IMServices.sys.mjs";
 
-const { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
-);
+import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 import { FileUtils } from "resource://gre/modules/FileUtils.sys.mjs";
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 import { clearTimeout, setTimeout } from "resource://gre/modules/Timer.sys.mjs";
 
@@ -30,12 +22,8 @@ const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   AsyncShutdown: "resource://gre/modules/AsyncShutdown.sys.mjs",
+  GlodaDatastore: "resource:///modules/gloda/GlodaDatastore.sys.mjs",
 });
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "GlodaDatastore",
-  "resource:///modules/gloda/GlodaDatastore.jsm"
-);
 
 var kCacheFileName = "indexedFiles.json";
 
@@ -54,7 +42,7 @@ var ScriptableInputStream = CC(
 // job to actually carrying it out.
 var kIndexingDelay = 5000; // in milliseconds
 
-XPCOMUtils.defineLazyGetter(lazy, "MailFolder", () =>
+ChromeUtils.defineLazyGetter(lazy, "MailFolder", () =>
   Cc["@mozilla.org/mail/folder-factory;1?name=mailbox"].createInstance(
     Ci.nsIMsgFolder
   )
@@ -63,7 +51,7 @@ XPCOMUtils.defineLazyGetter(lazy, "MailFolder", () =>
 var gIMAccounts = {};
 
 function GlodaIMConversation(aTitle, aTime, aPath, aContent) {
-  // grokNounItem from Gloda.jsm puts automatically the values of all
+  // grokNounItem from Gloda.sys.mjs puts automatically the values of all
   // JS properties in the jsonAttributes magic attribute, except if
   // they start with _, so we put the values in _-prefixed properties,
   // and have getters in the prototype.
@@ -88,20 +76,20 @@ GlodaIMConversation.prototype = {
 
   // for glodaFacetBindings.xml compatibility (pretend we are a message object)
   get account() {
-    let [protocol, username] = this._path.split("/", 2);
+    const [protocol, username] = this._path.split("/", 2);
 
-    let cacheName = protocol + "/" + username;
+    const cacheName = protocol + "/" + username;
     if (cacheName in gIMAccounts) {
       return gIMAccounts[cacheName];
     }
 
     // Find the nsIIncomingServer for the current imIAccount.
-    for (let account of MailServices.accounts.accounts) {
-      let incomingServer = account.incomingServer;
+    for (const account of MailServices.accounts.accounts) {
+      const incomingServer = account.incomingServer;
       if (!incomingServer || incomingServer.type != "im") {
         continue;
       }
-      let imAccount = incomingServer.wrappedJSObject.imAccount;
+      const imAccount = incomingServer.wrappedJSObject.imAccount;
       if (
         imAccount.protocol.normalizedName == protocol &&
         imAccount.normalizedName == username
@@ -132,7 +120,7 @@ GlodaIMConversation.prototype = {
   get from() {
     if (!this._from) {
       let from = "";
-      let account = this.account;
+      const account = this.account;
       if (account) {
         from = account.incomingServer.wrappedJSObject.imAccount.protocol.name;
       }
@@ -192,7 +180,7 @@ var IMConversationNoun = {
 Gloda.defineNoun(IMConversationNoun);
 
 // Needs to be set after calling defineNoun, otherwise it's replaced
-// by GlodaDatabind.jsm' implementation.
+// by GlodaDatabind.sys.mjs' implementation.
 IMConversationNoun.objFromRow = function (aRow) {
   // Row columns are:
   // 0 id
@@ -202,7 +190,7 @@ IMConversationNoun.objFromRow = function (aRow) {
   // 4 jsonAttributes
   // 5 content
   // 6 offsets
-  let conv = new GlodaIMConversation(
+  const conv = new GlodaIMConversation(
     aRow.getString(1),
     aRow.getInt64(2),
     aRow.getString(3),
@@ -281,7 +269,7 @@ Gloda.defineAttribute({
   subjectNouns: [IMConversationNoun.id],
   objectNoun: GlodaConstants.NOUN_FULLTEXT,
 });
-// For Facet.jsm DateFaceter
+// For Facet.sys.mjs DateFaceter
 Gloda.defineAttribute({
   provider: WidgetProvider,
   extensionName: EXT_NAME,
@@ -326,28 +314,30 @@ var GlodaIMIndexer = {
 
     this._knownFiles = {};
 
-    let dir = FileUtils.getFile("ProfD", ["logs"]);
+    const dir = new FileUtils.File(
+      PathUtils.join(PathUtils.profileDir, "logs")
+    );
     if (!dir.exists() || !dir.isDirectory()) {
       return;
     }
-    let cacheFile = dir.clone();
+    const cacheFile = dir.clone();
     cacheFile.append(kCacheFileName);
     if (!cacheFile.exists()) {
       return;
     }
 
     const PR_RDONLY = 0x01;
-    let fis = new FileInputStream(
+    const fis = new FileInputStream(
       cacheFile,
       PR_RDONLY,
       parseInt("0444", 8),
       Ci.nsIFileInputStream.CLOSE_ON_EOF
     );
-    let sis = new ScriptableInputStream(fis);
-    let text = sis.read(sis.available());
+    const sis = new ScriptableInputStream(fis);
+    const text = sis.read(sis.available());
     sis.close();
 
-    let data = JSON.parse(text);
+    const data = JSON.parse(text);
 
     // Check to see if the Gloda datastore ID matches the one that we saved
     // in the cache. If so, we can trust it. If not, that means that the
@@ -403,14 +393,14 @@ var GlodaIMIndexer = {
   _saveCacheNow() {
     GlodaIMIndexer._cacheSaveTimer = null;
 
-    let data = {
+    const data = {
       knownFiles: GlodaIMIndexer._knownFiles,
       datastoreID: Gloda.datastoreID,
       version: GlodaIMIndexer.cacheVersion,
     };
 
     // Asynchronously copy the data to the file.
-    let path = PathUtils.join(
+    const path = PathUtils.join(
       Services.dirsvc.get("ProfD", Ci.nsIFile).path,
       "logs",
       kCacheFileName
@@ -430,7 +420,7 @@ var GlodaIMIndexer = {
   _indexingJobCallbacks: new Map(),
 
   _scheduleIndexingJob(aConversation) {
-    let convId = aConversation.id;
+    const convId = aConversation.id;
 
     // If we've already scheduled this conversation to be indexed, let's
     // not repeat.
@@ -453,7 +443,7 @@ var GlodaIMIndexer = {
   },
 
   _beginIndexingJob(aConversation) {
-    let convId = aConversation.id;
+    const convId = aConversation.id;
 
     // In the event that we're triggering this indexing job manually, without
     // bothering to schedule it (for example, when a conversation is closed),
@@ -468,13 +458,12 @@ var GlodaIMIndexer = {
       };
     }
 
-    let conv = this._knownConversations[convId];
+    const conv = this._knownConversations[convId];
     (async () => {
       // We need to get the log files every time, because a new log file might
       // have been started since we last got them.
-      let logFiles = await IMServices.logs.getLogPathsForConversation(
-        aConversation
-      );
+      const logFiles =
+        await IMServices.logs.getLogPathsForConversation(aConversation);
       if (!logFiles || !logFiles.length) {
         // No log files exist yet, nothing to do!
         return;
@@ -484,21 +473,21 @@ var GlodaIMIndexer = {
         // We initialize the _knownFiles tree path for the current files below in
         // case it doesn't already exist.
         let folder = PathUtils.parent(logFiles[0]);
-        let convName = PathUtils.filename(folder);
+        const convName = PathUtils.filename(folder);
         folder = PathUtils.parent(folder);
-        let accountName = PathUtils.filename(folder);
+        const accountName = PathUtils.filename(folder);
         folder = PathUtils.parent(folder);
-        let protoName = PathUtils.filename(folder);
+        const protoName = PathUtils.filename(folder);
         if (
           !Object.prototype.hasOwnProperty.call(this._knownFiles, protoName)
         ) {
           this._knownFiles[protoName] = {};
         }
-        let protoObj = this._knownFiles[protoName];
+        const protoObj = this._knownFiles[protoName];
         if (!Object.prototype.hasOwnProperty.call(protoObj, accountName)) {
           protoObj[accountName] = {};
         }
-        let accountObj = protoObj[accountName];
+        const accountObj = protoObj[accountName];
         if (!Object.prototype.hasOwnProperty.call(accountObj, convName)) {
           accountObj[convName] = {};
         }
@@ -514,13 +503,13 @@ var GlodaIMIndexer = {
       // one as well as index the new ones. The index of the previous one is
       // conv.logFiles.length - 1, so we slice from there. This gives us all new
       // log files even if there are multiple new ones.
-      let currentLogFiles =
+      const currentLogFiles =
         conv.logFileCount > 1
           ? logFiles.slice(conv.logFileCount - 1)
           : logFiles;
-      for (let logFile of currentLogFiles) {
-        let fileName = PathUtils.filename(logFile);
-        let lastModifiedTime = (await IOUtils.stat(logFile)).lastModified;
+      for (const logFile of currentLogFiles) {
+        const fileName = PathUtils.filename(logFile);
+        const lastModifiedTime = (await IOUtils.stat(logFile)).lastModified;
         if (
           Object.prototype.hasOwnProperty.call(conv.convObj, fileName) &&
           conv.convObj[fileName] == lastModifiedTime
@@ -536,7 +525,7 @@ var GlodaIMIndexer = {
           this._indexingJobCallbacks.set(convId, aResolve);
         });
 
-        let job = new IndexingJob("indexIMConversation", null);
+        const job = new IndexingJob("indexIMConversation", null);
         job.conversation = conv;
         job.path = logFile;
         job.lastModifiedTime = lastModifiedTime;
@@ -549,7 +538,7 @@ var GlodaIMIndexer = {
     this._knownConversations[convId].scheduledIndex = null;
   },
 
-  observe(aSubject, aTopic, aData) {
+  observe(aSubject, aTopic) {
     if (
       aTopic == "new-ui-conversation" ||
       aTopic == "conversation-update-type"
@@ -557,7 +546,7 @@ var GlodaIMIndexer = {
       // Add ourselves to the ui-conversation's list of observers for the
       // unread-message-count-changed notification.
       // For this notification, aSubject is the ui-conversation that is opened.
-      aSubject.addObserver(this);
+      aSubject.wrappedJSObject.addObserver(this);
       return;
     }
 
@@ -565,7 +554,7 @@ var GlodaIMIndexer = {
       aTopic == "ui-conversation-closed" ||
       aTopic == "ui-conversation-replaced"
     ) {
-      aSubject.removeObserver(this);
+      aSubject.wrappedJSObject.removeObserver(this);
       return;
     }
 
@@ -584,7 +573,7 @@ var GlodaIMIndexer = {
     }
 
     if (aTopic == "conversation-closed") {
-      let convId = aSubject.id;
+      const convId = aSubject.id;
       // If there's a scheduled indexing job, cancel it, because we're going
       // to index now.
       if (
@@ -602,8 +591,8 @@ var GlodaIMIndexer = {
     if (aTopic == "new-text" && !aSubject.noLog) {
       // Ok, some new text is about to be put into a conversation. For this
       // notification, aSubject is a prplIMessage.
-      let conv = aSubject.conversation;
-      let uiConv = IMServices.conversations.getUIConversation(conv);
+      const conv = aSubject.conversation;
+      const uiConv = IMServices.conversations.getUIConversation(conv);
 
       // We only want to schedule an indexing job if this message is
       // immediately visible to the user. We figure this out by finding
@@ -620,15 +609,15 @@ var GlodaIMIndexer = {
    * find its id.
    */
   _getIdFromPath(aPath) {
-    let selectStatement = lazy.GlodaDatastore._createAsyncStatement(
+    const selectStatement = lazy.GlodaDatastore._createAsyncStatement(
       "SELECT id FROM imConversations WHERE path = ?1"
     );
     selectStatement.bindByIndex(0, aPath);
     let id;
-    return new Promise((resolve, reject) => {
+    return new Promise(resolve => {
       selectStatement.executeAsync({
         handleResult: aResultSet => {
-          let row = aResultSet.getNextRow();
+          const row = aResultSet.getNextRow();
           if (!row) {
             return;
           }
@@ -655,6 +644,9 @@ var GlodaIMIndexer = {
   },
 
   /**
+   * @param {Function} aCallbackHandle
+   * @param {string} aLogPath
+   * @param {integer} aLastModifiedTime - Time in ms.
    * @param {object} aCache - An object mapping file names to their last
    *   modified times at the time they were last indexed. The value for the file
    *   currently being indexed is updated to the aLastModifiedTime parameter's
@@ -675,16 +667,16 @@ var GlodaIMIndexer = {
     aCache,
     aGlodaConv
   ) {
-    let log = await IMServices.logs.getLogFromFile(aLogPath);
-    let logConv = await log.getConversation();
+    const log = await IMServices.logs.getLogFromFile(aLogPath);
+    const logConv = await log.getConversation();
 
     // Ignore corrupted log files.
     if (!logConv) {
       return GlodaConstants.kWorkDone;
     }
 
-    let fileName = PathUtils.filename(aLogPath);
-    let messages = logConv
+    const fileName = PathUtils.filename(aLogPath);
+    const messages = logConv
       .getMessages()
       // Some messages returned, e.g. sessionstart messages,
       // may have the noLog flag set. Ignore these.
@@ -694,10 +686,10 @@ var GlodaIMIndexer = {
       await new Promise(resolve => {
         ChromeUtils.idleDispatch(timing => {
           while (timing.timeRemaining() > 5 && messages.length > 0) {
-            let m = messages.shift();
-            let who = m.alias || m.who;
+            const m = messages.shift();
+            const who = m.alias || m.who;
             // Messages like topic change notifications may not have a source.
-            let prefix = who ? who + ": " : "";
+            const prefix = who ? who + ": " : "";
             content.push(
               prefix +
                 lazy.MailFolder.convertMsgSnippetToPlainText(
@@ -715,7 +707,7 @@ var GlodaIMIndexer = {
       glodaConv = aGlodaConv.value;
       glodaConv._content = content;
     } else {
-      let relativePath = this._getRelativePath(aLogPath);
+      const relativePath = this._getRelativePath(aLogPath);
       glodaConv = new GlodaIMConversation(
         logConv.title,
         log.time,
@@ -726,7 +718,7 @@ var GlodaIMIndexer = {
       // gloda conversation so that the existing entry gets updated. This can
       // happen if the log sweep detects that the last messages in an open
       // chat were not in fact indexed before that session was shut down.
-      let id = await this._getIdFromPath(relativePath);
+      const id = await this._getIdFromPath(relativePath);
       if (id) {
         glodaConv.id = id;
       }
@@ -738,9 +730,9 @@ var GlodaIMIndexer = {
     if (!aCache) {
       throw new Error("indexIMConversation called without aCache parameter.");
     }
-    let isNew =
+    const isNew =
       !Object.prototype.hasOwnProperty.call(aCache, fileName) && !glodaConv.id;
-    let rv = aCallbackHandle.pushAndGo(
+    const rv = aCallbackHandle.pushAndGo(
       Gloda.grokNounItem(glodaConv, {}, true, isNew, aCallbackHandle)
     );
 
@@ -756,8 +748,8 @@ var GlodaIMIndexer = {
   },
 
   *_worker_indexIMConversation(aJob, aCallbackHandle) {
-    let glodaConv = {};
-    let existingGlodaConv = aJob.conversation.glodaConv;
+    const glodaConv = {};
+    const existingGlodaConv = aJob.conversation.glodaConv;
     if (
       existingGlodaConv &&
       existingGlodaConv.path == this._getRelativePath(aJob.path)
@@ -786,8 +778,10 @@ var GlodaIMIndexer = {
     yield GlodaConstants.kWorkDone;
   },
 
-  *_worker_logsFolderSweep(aJob) {
-    let dir = FileUtils.getFile("ProfD", ["logs"]);
+  *_worker_logsFolderSweep() {
+    const dir = new FileUtils.File(
+      PathUtils.join(PathUtils.profileDir, "logs")
+    );
     if (!dir.exists() || !dir.isDirectory()) {
       // If the folder does not exist, then we are done.
       yield GlodaConstants.kWorkDone;
@@ -795,34 +789,34 @@ var GlodaIMIndexer = {
 
     // Sweep the logs directory for log files, adding any new entries to the
     // _knownFiles tree as we traverse.
-    for (let proto of dir.directoryEntries) {
+    for (const proto of dir.directoryEntries) {
       if (!proto.isDirectory()) {
         continue;
       }
-      let protoName = proto.leafName;
+      const protoName = proto.leafName;
       if (!Object.prototype.hasOwnProperty.call(this._knownFiles, protoName)) {
         this._knownFiles[protoName] = {};
       }
-      let protoObj = this._knownFiles[protoName];
-      let accounts = proto.directoryEntries;
-      for (let account of accounts) {
+      const protoObj = this._knownFiles[protoName];
+      const accounts = proto.directoryEntries;
+      for (const account of accounts) {
         if (!account.isDirectory()) {
           continue;
         }
-        let accountName = account.leafName;
+        const accountName = account.leafName;
         if (!Object.prototype.hasOwnProperty.call(protoObj, accountName)) {
           protoObj[accountName] = {};
         }
-        let accountObj = protoObj[accountName];
-        for (let conv of account.directoryEntries) {
-          let convName = conv.leafName;
+        const accountObj = protoObj[accountName];
+        for (const conv of account.directoryEntries) {
+          const convName = conv.leafName;
           if (!conv.isDirectory() || convName == ".system") {
             continue;
           }
           if (!Object.prototype.hasOwnProperty.call(accountObj, convName)) {
             accountObj[convName] = {};
           }
-          let job = new IndexingJob("convFolderSweep", null);
+          const job = new IndexingJob("convFolderSweep", null);
           job.folder = conv;
           job.convObj = accountObj[convName];
           GlodaIndexer.indexJob(job);
@@ -834,10 +828,10 @@ var GlodaIMIndexer = {
   },
 
   *_worker_convFolderSweep(aJob, aCallbackHandle) {
-    let folder = aJob.folder;
+    const folder = aJob.folder;
 
-    for (let file of folder.directoryEntries) {
-      let fileName = file.leafName;
+    for (const file of folder.directoryEntries) {
+      const fileName = file.leafName;
       if (
         !file.isFile() ||
         !file.isReadable() ||
@@ -870,7 +864,7 @@ var GlodaIMIndexer = {
   },
 
   initialSweep() {
-    let job = new IndexingJob("logsFolderSweep", null);
+    const job = new IndexingJob("logsFolderSweep", null);
     GlodaIndexer.indexJob(job);
   },
 
@@ -878,11 +872,11 @@ var GlodaIMIndexer = {
   // of their path relative to the logs directory. These entries are updated to
   // use relative paths below.
   fixEntriesWithAbsolutePaths() {
-    let store = lazy.GlodaDatastore;
-    let selectStatement = store._createAsyncStatement(
+    const store = lazy.GlodaDatastore;
+    const selectStatement = store._createAsyncStatement(
       "SELECT id, path FROM imConversations"
     );
-    let updateStatement = store._createAsyncStatement(
+    const updateStatement = store._createAsyncStatement(
       "UPDATE imConversations SET path = ?1 WHERE id = ?2"
     );
 
@@ -897,7 +891,7 @@ var GlodaIMIndexer = {
           // them with PathUtils.split(). It's a safe assumption that nobody
           // ported their profile folder to a different OS since the regression,
           // so this should work.
-          let pathComponents = PathUtils.split(row.getString(1));
+          const pathComponents = PathUtils.split(row.getString(1));
           if (pathComponents.length > 4) {
             updateStatement.bindByIndex(1, row.getInt64(0)); // id
             updateStatement.bindByIndex(0, pathComponents.slice(-4).join("/")); // Last 4 path components

@@ -181,18 +181,17 @@ struct InefficientNonFlatteningStringHashPolicy {
 namespace JS {
 
 struct ClassInfo {
-#define FOR_EACH_SIZE(MACRO)                                     \
-  MACRO(Objects, GCHeapUsed, objectsGCHeap)                      \
-  MACRO(Objects, MallocHeap, objectsMallocHeapSlots)             \
-  MACRO(Objects, MallocHeap, objectsMallocHeapElementsNormal)    \
-  MACRO(Objects, MallocHeap, objectsMallocHeapElementsAsmJS)     \
-  MACRO(Objects, MallocHeap, objectsMallocHeapGlobalData)        \
-  MACRO(Objects, MallocHeap, objectsMallocHeapGlobalVarNamesSet) \
-  MACRO(Objects, MallocHeap, objectsMallocHeapMisc)              \
-  MACRO(Objects, NonHeap, objectsNonHeapElementsNormal)          \
-  MACRO(Objects, NonHeap, objectsNonHeapElementsShared)          \
-  MACRO(Objects, NonHeap, objectsNonHeapElementsWasm)            \
-  MACRO(Objects, NonHeap, objectsNonHeapElementsWasmShared)      \
+#define FOR_EACH_SIZE(MACRO)                                  \
+  MACRO(Objects, GCHeapUsed, objectsGCHeap)                   \
+  MACRO(Objects, MallocHeap, objectsMallocHeapSlots)          \
+  MACRO(Objects, MallocHeap, objectsMallocHeapElementsNormal) \
+  MACRO(Objects, MallocHeap, objectsMallocHeapElementsAsmJS)  \
+  MACRO(Objects, MallocHeap, objectsMallocHeapGlobalData)     \
+  MACRO(Objects, MallocHeap, objectsMallocHeapMisc)           \
+  MACRO(Objects, NonHeap, objectsNonHeapElementsNormal)       \
+  MACRO(Objects, NonHeap, objectsNonHeapElementsShared)       \
+  MACRO(Objects, NonHeap, objectsNonHeapElementsWasm)         \
+  MACRO(Objects, NonHeap, objectsNonHeapElementsWasmShared)   \
   MACRO(Objects, NonHeap, objectsNonHeapCodeWasm)
 
   ClassInfo() = default;
@@ -316,6 +315,7 @@ struct GCSizes {
   MACRO(_, MallocHeap, storeBufferVals)           \
   MACRO(_, MallocHeap, storeBufferCells)          \
   MACRO(_, MallocHeap, storeBufferSlots)          \
+  MACRO(_, MallocHeap, storeBufferWasmAnyRefs)    \
   MACRO(_, MallocHeap, storeBufferWholeCells)     \
   MACRO(_, MallocHeap, storeBufferGenerics)
 
@@ -461,7 +461,6 @@ struct NotableScriptSourceInfo : public ScriptSourceInfo {
 struct HelperThreadStats {
 #define FOR_EACH_SIZE(MACRO)           \
   MACRO(_, MallocHeap, stateData)      \
-  MACRO(_, MallocHeap, parseTask)      \
   MACRO(_, MallocHeap, ionCompileTask) \
   MACRO(_, MallocHeap, wasmCompile)    \
   MACRO(_, MallocHeap, contexts)
@@ -554,7 +553,8 @@ struct UnusedGCThingSizes {
   MACRO(Other, GCHeapUnused, bigInt)       \
   MACRO(Other, GCHeapUnused, jitcode)      \
   MACRO(Other, GCHeapUnused, scope)        \
-  MACRO(Other, GCHeapUnused, regExpShared)
+  MACRO(Other, GCHeapUnused, regExpShared) \
+  MACRO(Other, GCHeapUnused, smallBuffer)
 
   UnusedGCThingSizes() = default;
   UnusedGCThingSizes(UnusedGCThingSizes&& other) = default;
@@ -597,6 +597,9 @@ struct UnusedGCThingSizes {
       case JS::TraceKind::RegExpShared:
         regExpShared += n;
         break;
+      case JS::TraceKind::SmallBuffer:
+        smallBuffer += n;
+        break;
       default:
         MOZ_CRASH("Bad trace kind for UnusedGCThingSizes");
     }
@@ -605,6 +608,36 @@ struct UnusedGCThingSizes {
   void addSizes(const UnusedGCThingSizes& other) {
     FOR_EACH_SIZE(ADD_OTHER_SIZE);
   }
+
+  size_t totalSize() const {
+    size_t n = 0;
+    FOR_EACH_SIZE(ADD_SIZE_TO_N);
+    return n;
+  }
+
+  void addToTabSizes(JS::TabSizes* sizes) const {
+    FOR_EACH_SIZE(ADD_TO_TAB_SIZES);
+  }
+
+  void addToServoSizes(JS::ServoSizes* sizes) const {
+    FOR_EACH_SIZE(ADD_TO_SERVO_SIZES);
+  }
+
+  FOR_EACH_SIZE(DECL_SIZE_ZERO);
+
+#undef FOR_EACH_SIZE
+};
+
+struct GCBufferStats {
+#define FOR_EACH_SIZE(MACRO)          \
+  MACRO(Other, MallocHeap, usedBytes) \
+  MACRO(Other, MallocHeap, freeBytes) \
+  MACRO(Other, MallocHeap, adminBytes)
+
+  GCBufferStats() = default;
+  GCBufferStats(GCBufferStats&& other) = default;
+
+  void addSizes(const GCBufferStats& other) { FOR_EACH_SIZE(ADD_OTHER_SIZE); }
 
   size_t totalSize() const {
     size_t n = 0;
@@ -642,9 +675,11 @@ struct ZoneStats {
   MACRO(Other, MallocHeap, scopesMallocHeap)               \
   MACRO(Other, GCHeapUsed, regExpSharedsGCHeap)            \
   MACRO(Other, MallocHeap, regExpSharedsMallocHeap)        \
+  MACRO(Other, GCHeapUsed, smallBuffersGCHeap)             \
+  MACRO(Other, MallocHeap, zoneObject)                     \
   MACRO(Other, MallocHeap, regexpZone)                     \
   MACRO(Other, MallocHeap, jitZone)                        \
-  MACRO(Other, MallocHeap, baselineStubsOptimized)         \
+  MACRO(Other, MallocHeap, cacheIRStubs)                   \
   MACRO(Other, MallocHeap, uniqueIdMap)                    \
   MACRO(Other, MallocHeap, initialPropMapTable)            \
   MACRO(Other, MallocHeap, shapeTables)                    \
@@ -661,6 +696,7 @@ struct ZoneStats {
   void addSizes(const ZoneStats& other) {
     MOZ_ASSERT(isTotals);
     FOR_EACH_SIZE(ADD_OTHER_SIZE);
+    gcBuffers.addSizes(other.gcBuffers);
     unusedGCThings.addSizes(other.unusedGCThings);
     stringInfo.add(other.stringInfo);
     shapeInfo.add(other.shapeInfo);
@@ -678,6 +714,7 @@ struct ZoneStats {
   void addToTabSizes(JS::TabSizes* sizes) const {
     MOZ_ASSERT(isTotals);
     FOR_EACH_SIZE(ADD_TO_TAB_SIZES);
+    gcBuffers.addToTabSizes(sizes);
     unusedGCThings.addToTabSizes(sizes);
     stringInfo.addToTabSizes(sizes);
     shapeInfo.addToTabSizes(sizes);
@@ -686,6 +723,7 @@ struct ZoneStats {
   void addToServoSizes(JS::ServoSizes* sizes) const {
     MOZ_ASSERT(isTotals);
     FOR_EACH_SIZE(ADD_TO_SERVO_SIZES);
+    gcBuffers.addToServoSizes(sizes);
     unusedGCThings.addToServoSizes(sizes);
     stringInfo.addToServoSizes(sizes);
     shapeInfo.addToServoSizes(sizes);
@@ -693,6 +731,8 @@ struct ZoneStats {
   }
 
   FOR_EACH_SIZE(DECL_SIZE_ZERO);
+
+  GCBufferStats gcBuffers;
 
   // These string measurements are initially for all strings.  At the end,
   // if the measurement granularity is FineGrained, we subtract the
@@ -725,21 +765,20 @@ struct RealmStats {
   // actually guaranteed. But for Servo, at least, it's a moot point because
   // it doesn't provide an ObjectPrivateVisitor so the value will always be
   // zero.
-#define FOR_EACH_SIZE(MACRO)                               \
-  MACRO(Private, MallocHeap, objectsPrivate)               \
-  MACRO(Other, GCHeapUsed, scriptsGCHeap)                  \
-  MACRO(Other, MallocHeap, scriptsMallocHeapData)          \
-  MACRO(Other, MallocHeap, baselineData)                   \
-  MACRO(Other, MallocHeap, baselineStubsFallback)          \
-  MACRO(Other, MallocHeap, ionData)                        \
-  MACRO(Other, MallocHeap, jitScripts)                     \
-  MACRO(Other, MallocHeap, realmObject)                    \
-  MACRO(Other, MallocHeap, realmTables)                    \
-  MACRO(Other, MallocHeap, innerViewsTable)                \
-  MACRO(Other, MallocHeap, objectMetadataTable)            \
-  MACRO(Other, MallocHeap, savedStacksSet)                 \
-  MACRO(Other, MallocHeap, nonSyntacticLexicalScopesTable) \
-  MACRO(Other, MallocHeap, jitRealm)
+#define FOR_EACH_SIZE(MACRO)                      \
+  MACRO(Private, MallocHeap, objectsPrivate)      \
+  MACRO(Other, GCHeapUsed, scriptsGCHeap)         \
+  MACRO(Other, MallocHeap, scriptsMallocHeapData) \
+  MACRO(Other, MallocHeap, baselineData)          \
+  MACRO(Other, MallocHeap, allocSites)            \
+  MACRO(Other, MallocHeap, ionData)               \
+  MACRO(Other, MallocHeap, jitScripts)            \
+  MACRO(Other, MallocHeap, realmObject)           \
+  MACRO(Other, MallocHeap, realmTables)           \
+  MACRO(Other, MallocHeap, innerViewsTable)       \
+  MACRO(Other, MallocHeap, objectMetadataTable)   \
+  MACRO(Other, MallocHeap, savedStacksSet)        \
+  MACRO(Other, MallocHeap, nonSyntacticLexicalScopesTable)
 
   RealmStats() = default;
   RealmStats(RealmStats&& other) = default;

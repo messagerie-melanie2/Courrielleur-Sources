@@ -26,17 +26,17 @@ var gStatusBar = document.getElementById("statusbar-icon");
 var GlodaSearchBoxTabMonitor = {
   monitorName: "glodaSearchBox",
 
-  onTabSwitched(aTab, aOldTab) {},
+  onTabSwitched() {},
 
   onTabTitleChanged() {},
 
-  onTabOpened(aTab, aFirstTab, aOldTab) {
+  onTabOpened(aTab) {
     aTab._ext.glodaSearchBox = {
       value: aTab.mode.name === "glodaFacet" ? aTab.searchString : "",
     };
 
     if (aTab.mode.name === "glodaFacet") {
-      let searchInput = aTab.panel.querySelector(".remote-gloda-search");
+      const searchInput = aTab.panel.querySelector(".remote-gloda-search");
       if (searchInput) {
         searchInput.value = aTab.searchString;
       }

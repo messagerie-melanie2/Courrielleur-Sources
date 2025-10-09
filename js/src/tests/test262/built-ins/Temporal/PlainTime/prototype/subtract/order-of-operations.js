@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| shell-option(--enable-temporal) skip-if(!this.hasOwnProperty('Temporal')||!xulRuntime.shell) -- Temporal is not enabled unconditionally, requires shell-options
 // Copyright (C) 2020 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -57,7 +57,6 @@ const fields = TemporalHelpers.propertyBagObserver(actual, {
 }, "fields");
 const result = instance.subtract(fields);
 TemporalHelpers.assertPlainTime(result, 11, 33, 55, 986, 653, 320);
-assert.sameValue(result.calendar.id, "iso8601", "calendar result");
 assert.compareArray(actual, expected, "order of operations");
 
 reportCompare(0, 0);

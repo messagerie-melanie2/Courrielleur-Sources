@@ -13,19 +13,35 @@
 
 class nsHTTPSOnlyUtils {
  public:
-  /**
-   * Returns if HTTPS-Only Mode preference is enabled
-   * @param aFromPrivateWindow true if executing in private browsing mode
-   * @return true if HTTPS-Only Mode is enabled
-   */
-  static bool IsHttpsOnlyModeEnabled(bool aFromPrivateWindow);
+  enum UpgradeMode {
+    NO_UPGRADE_MODE,
+    HTTPS_ONLY_MODE,
+    HTTPS_FIRST_MODE,
+    SCHEMELESS_HTTPS_FIRST_MODE
+  };
 
   /**
-   * Returns if HTTPS-First Mode preference is enabled
-   * @param aFromPrivateWindow true if executing in private browsing mode
-   * @return true if HTTPS-First Mode is enabled
+   * Returns the upgrade mode which should be used for a given load, based on
+   * the prefs currently set.
+   * @param aFromPrivateWindow   Whether the load in question is from a private
+   *                             window.
+   * @param aSchemelessInputType Information about the load possibly originating
+   *                             from a schemeful or schemeless address bar
+   *                             input.
+   * @return                     Upgrade mode as an enum.
    */
-  static bool IsHttpsFirstModeEnabled(bool aFromPrivateWindow);
+  static UpgradeMode GetUpgradeMode(
+      bool aFromPrivateWindow,
+      nsILoadInfo::SchemelessInputType aSchemelessInputType =
+          nsILoadInfo::SchemelessInputTypeUnset);
+
+  /**
+   * Returns the upgrade mode which should be used for a given load, based on
+   * the prefs currently set.
+   * @param aLoadInfo Load info for the load in question.
+   * @return          Upgrade mode as an enum.
+   */
+  static UpgradeMode GetUpgradeMode(nsILoadInfo* aLoadInfo);
 
   /**
    * Potentially fires an http request for a top-level load (provided by
@@ -77,7 +93,7 @@ class nsHTTPSOnlyUtils {
     EnforceForHTTPSRR,
   };
   static bool IsUpgradeDowngradeEndlessLoop(
-      nsIURI* aURI, nsILoadInfo* aLoadInfo,
+      nsIURI* aOldURI, nsIURI* aNewURI, nsILoadInfo* aLoadInfo,
       const mozilla::EnumSet<UpgradeDowngradeEndlessLoopOptions>& aOptions =
           {});
 
@@ -95,12 +111,13 @@ class nsHTTPSOnlyUtils {
   /**
    * Determines if the request was previously upgraded with HTTPS-First, creates
    * a downgraded URI and logs to console.
-   * @param  aStatus   Status code
-   * @param  aChannel Failed channel
-   * @return          URI with http-scheme or nullptr
+   * @param  aStatus               Status code
+   * @param  aDocumentLoadListener Failed document load listener
+   * @return                       URI with http-scheme or nullptr
    */
   static already_AddRefed<nsIURI> PotentiallyDowngradeHttpsFirstRequest(
-      nsIChannel* aChannel, nsresult aStatus);
+      mozilla::net::DocumentLoadListener* aDocumentLoadListener,
+      nsresult aStatus);
 
   /**
    * Checks if the error code is on a block-list of codes that are probably
@@ -127,11 +144,13 @@ class nsHTTPSOnlyUtils {
                                  bool aUseHttpsFirst = false);
 
   /**
-   * Tests if the HTTPS-Only upgrade exception is set for a given principal.
-   * @param  aPrincipal The principal for whom the exception should be checked
-   * @return            True if exempt
+   * Tests if a upgrade exception is set for a given principal.
+   * @param  aPrincipal   The principal for whom the exception should be checked
+   * @param  aUpgradeMode The upgrade mode that should be checked for
+   * @return              True if exempt
    */
-  static bool TestIfPrincipalIsExempt(nsIPrincipal* aPrincipal);
+  static bool TestIfPrincipalIsExempt(nsIPrincipal* aPrincipal,
+                                      UpgradeMode aUpgradeMode);
 
   /**
    * Tests if the HTTPS-Only Mode upgrade exception is set for channel result
@@ -153,22 +172,60 @@ class nsHTTPSOnlyUtils {
 
   /**
    * Checks if two URIs are same origin modulo the difference that
-   * aHTTPSchemeURI uses an http scheme.
-   * @param aHTTPSSchemeURI nsIURI using scheme of https
-   * @param aOtherURI nsIURI using scheme of http
-   * @param aLoadInfo nsILoadInfo of the request
+   * aToURI scheme is downgraded to http from https aFromURI.
+   * @param aFromURI nsIURI using scheme of https
+   * @param aToURI nsIURI using scheme of http
    * @return true, if URIs are equal except scheme and ref
    */
-  static bool IsEqualURIExceptSchemeAndRef(nsIURI* aHTTPSSchemeURI,
-                                           nsIURI* aOtherURI,
-                                           nsILoadInfo* aLoadInfo);
+  static bool IsHttpDowngrade(nsIURI* aFromURI, nsIURI* aToURI);
 
   /**
-   * Checks a top-level load, if it is exempt by HTTPS-First/ Only
-   * clear exemption flag.
-   * @param aLoadInfo nsILoadInfo of the request
+   * Will add a special temporary HTTPS-Only exception that only applies to
+   * HTTPS-First, and is not exposed in the UI.
+   * @param aURI      The URL for whose HTTP principal the exception should be
+   *                  added
+   * @param aLoadInfo The loadinfo of the request triggering this exception to
+   *                  be added (needs to match aURI)
    */
-  static void PotentiallyClearExemptFlag(nsILoadInfo* aLoadInfo);
+  static nsresult AddHTTPSFirstException(nsCOMPtr<nsIURI> aURI,
+                                         nsILoadInfo* const aLoadInfo);
+
+  /**
+   * Determines which HTTPS-Only status flags should get propagated to
+   * sub-resources or sub-documents. As sub-resources and sub-documents are
+   * exempt when the top-level document is exempt, we need to copy the "exempt"
+   * flag. The HTTPS-First "upgraded" flag should not be copied to prevent a
+   * unwanted downgrade (Bug 1885949).
+   * @param aHttpsOnlyStatus The HTTPS-Only status of the top-level document.
+   * @return The HTTPS-Only status that the sub-resource/document should
+   * receive.
+   */
+  static uint32_t GetStatusForSubresourceLoad(uint32_t aHttpsOnlyStatus);
+
+  /**
+   * When a downgrade is happening because of HTTPS-First, this function will
+   * update the load state for the new load accordingly. This includes
+   * information about the downgrade for later telemetry use.
+   * @param aDocumentLoadListener The calling document load listener.
+   * @param aLoadState The load state to be updated
+   */
+  static void UpdateLoadStateAfterHTTPSFirstDowngrade(
+      mozilla::net::DocumentLoadListener* aDocumentLoadListener,
+      nsDocShellLoadState* aLoadState);
+
+  /**
+   * When a load is successful, this should be called by the document load
+   * listener. In two cases, telemetry is then recorded:
+   * a) If downgrade data has been passed, the passed load is a successful
+   *    downgrade, which means telemetry based on the downgrade data will be
+   *    submitted.
+   * b) If the passed load info indicates that this load has been upgraded by
+   *    HTTPS-First, this means the upgrade was successful, which will be
+   *    recorded to telemetry.
+   */
+  static void SubmitHTTPSFirstTelemetry(
+      nsCOMPtr<nsILoadInfo> const& aLoadInfo,
+      RefPtr<HTTPSFirstDowngradeData> const& aHttpsFirstDowngradeData);
 
  private:
   /**
@@ -203,6 +260,14 @@ class nsHTTPSOnlyUtils {
    * @return      true if the URI is either loopback or local
    */
   static bool LoopbackOrLocalException(nsIURI* aURI);
+
+  /**
+   * Checks whether the host of the URI ends with a suffix that is not in the
+   * public suffix list.
+   * @param aURI URI object
+   * @return     true if the host of the URI ends with a unknown suffix
+   */
+  static bool UnknownPublicSuffixException(nsIURI* aURI);
 };
 
 /**
@@ -249,6 +314,20 @@ class TestHTTPAnswerRunnable final : public mozilla::Runnable,
   // through redirects)
   RefPtr<mozilla::net::DocumentLoadListener> mDocumentLoadListener;
   RefPtr<nsITimer> mTimer;
+  bool mHasHTTPSRR{false};
+};
+
+/**
+ * Data about a HTTPS-First downgrade used for Telemetry. We need to store this
+ * instead of directly submitting it when deciding to downgrade, because it is
+ * only interesting for us if the downgraded load is actually succesful.
+ */
+struct HTTPSFirstDowngradeData
+    : public mozilla::RefCounted<HTTPSFirstDowngradeData> {
+  MOZ_DECLARE_REFCOUNTED_TYPENAME(HTTPSFirstDowngradeData)
+  mozilla::TimeDuration downgradeTime;
+  bool isOnTimer = false;
+  bool isSchemeless = false;
 };
 
 #endif /* nsHTTPSOnlyUtils_h___ */

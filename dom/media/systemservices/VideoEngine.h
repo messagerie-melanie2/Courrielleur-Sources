@@ -7,44 +7,24 @@
 #ifndef mozilla_VideoEngine_h
 #define mozilla_VideoEngine_h
 
+#include <functional>
+#include <memory>
+
 #include "MediaEngine.h"
 #include "VideoFrameUtils.h"
+#include "modules/video_capture/video_capture.h"
+#include "mozilla/DefineEnum.h"
 #include "mozilla/media/MediaUtils.h"
-#include "modules/video_capture/video_capture_impl.h"
-#include "modules/video_capture/video_capture_defines.h"
-#include "modules/video_capture/video_capture_factory.h"
-#include <memory>
-#include <functional>
+#include "video_engine/video_capture_factory.h"
+
+namespace webrtc {
+class DesktopCaptureImpl;
+}
 
 namespace mozilla::camera {
 
-enum class CaptureDeviceType { Camera, Screen, Window, Browser };
-
-struct CaptureDeviceInfo {
-  CaptureDeviceType type;
-
-  CaptureDeviceInfo() : type(CaptureDeviceType::Camera) {}
-  explicit CaptureDeviceInfo(CaptureDeviceType t) : type(t) {}
-
-  const char* TypeName() const {
-    switch (type) {
-      case CaptureDeviceType::Camera: {
-        return "Camera";
-      }
-      case CaptureDeviceType::Screen: {
-        return "Screen";
-      }
-      case CaptureDeviceType::Window: {
-        return "Window";
-      }
-      case CaptureDeviceType::Browser: {
-        return "Browser";
-      }
-    }
-    assert(false);
-    return "UNKOWN-CaptureDeviceType!";
-  }
-};
+MOZ_DEFINE_ENUM_CLASS_WITH_TOSTRING(CaptureDeviceType,
+                                    (Camera, Screen, Window, Browser));
 
 // Historically the video engine was part of webrtc
 // it was removed (and reimplemented in Talk)
@@ -61,11 +41,13 @@ class VideoEngine {
   NS_INLINE_DECL_REFCOUNTING(VideoEngine)
 
   static already_AddRefed<VideoEngine> Create(
-      const CaptureDeviceType& aCaptureDeviceType);
+      const CaptureDeviceType& aCaptureDeviceType,
+      RefPtr<VideoCaptureFactory> aVideoCaptureFactory);
 #if defined(ANDROID)
   static int SetAndroidObjects();
 #endif
-  // Returns a non-negative capture identifier or -1 on failure.
+  /** Returns a non-negative capture identifier or -1 on failure.
+   */
   int32_t CreateVideoCapture(const char* aDeviceUniqueIdUTF8);
 
   int ReleaseVideoCapture(const int32_t aId);
@@ -83,18 +65,27 @@ class VideoEngine {
    *   @see bug 1305212 https://bugzilla.mozilla.org/show_bug.cgi?id=1305212
    */
   std::shared_ptr<webrtc::VideoCaptureModule::DeviceInfo>
-  GetOrCreateVideoCaptureDeviceInfo();
+  GetOrCreateVideoCaptureDeviceInfo(webrtc::VideoInputFeedBack* callBack);
+
+  /**
+   * Destroys existing DeviceInfo.
+   *  The DeviceInfo will be recreated the next time it is needed.
+   */
+  void ClearVideoCaptureDeviceInfo();
 
   class CaptureEntry {
    public:
     CaptureEntry(int32_t aCapnum,
-                 rtc::scoped_refptr<webrtc::VideoCaptureModule> aCapture);
+                 rtc::scoped_refptr<webrtc::VideoCaptureModule> aCapture,
+                 webrtc::DesktopCaptureImpl* aDesktopImpl);
     int32_t Capnum() const;
     rtc::scoped_refptr<webrtc::VideoCaptureModule> VideoCapture();
+    mozilla::MediaEventSource<void>* CaptureEndedEvent();
 
    private:
     int32_t mCapnum;
     rtc::scoped_refptr<webrtc::VideoCaptureModule> mVideoCaptureModule;
+    webrtc::DesktopCaptureImpl* mDesktopImpl = nullptr;
     friend class VideoEngine;
   };
 
@@ -103,9 +94,11 @@ class VideoEngine {
                  const std::function<void(CaptureEntry& entry)>&& fn);
 
  private:
-  explicit VideoEngine(const CaptureDeviceType& aCaptureDeviceType);
+  VideoEngine(const CaptureDeviceType& aCaptureDeviceType,
+              RefPtr<VideoCaptureFactory> aVideoCaptureFactory);
   int32_t mId;
-  const CaptureDeviceInfo mCaptureDevInfo;
+  const CaptureDeviceType mCaptureDevType;
+  RefPtr<VideoCaptureFactory> mVideoCaptureFactory;
   std::shared_ptr<webrtc::VideoCaptureModule::DeviceInfo> mDeviceInfo;
   std::map<int32_t, CaptureEntry> mCaps;
   std::map<int32_t, int32_t> mIdMap;

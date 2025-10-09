@@ -9,28 +9,58 @@
 
 #include "GeckoProfiler.h"
 #include "nsThreadUtils.h"
-#include "pratom.h"
 
 #include "nsIObserverService.h"
+#include "nsIPropertyBag2.h"
 #include "mozilla/Services.h"
 #include "mozilla/ChaosMode.h"
 #include "mozilla/ArenaAllocator.h"
 #include "mozilla/ArrayUtils.h"
-#include "mozilla/BinarySearch.h"
 #include "mozilla/OperatorNewExtensions.h"
 #include "mozilla/StaticPrefs_timer.h"
 
-#include "mozilla/glean/GleanMetrics.h"
+#include "mozilla/glean/XpcomMetrics.h"
 
 #include <math.h>
 
 using namespace mozilla;
 
-// Bug 1829983 reports an assertion failure that (so far) has only failed once
-// in over a month of the assert existing. This #define enables some additional
-// output that should get printed out if the assert fails again.
-#if defined(XP_WIN) && defined(DEBUG)
-#  define HACK_OUTPUT_FOR_BUG_1829983
+#ifdef XP_WIN
+// Include Windows header required for enabling high-precision timers.
+#  include <windows.h>
+#  include <mmsystem.h>
+
+static constexpr UINT kTimerPeriodHiRes = 1;
+static constexpr UINT kTimerPeriodLowRes = 16;
+
+// Helper functions to determine what Windows timer resolution to target.
+static constexpr UINT GetDesiredTimerPeriod(const bool aOnBatteryPower,
+                                            const bool aLowProcessPriority) {
+  const bool useLowResTimer = aOnBatteryPower || aLowProcessPriority;
+  return useLowResTimer ? kTimerPeriodLowRes : kTimerPeriodHiRes;
+}
+
+static_assert(GetDesiredTimerPeriod(true, false) == kTimerPeriodLowRes);
+static_assert(GetDesiredTimerPeriod(false, true) == kTimerPeriodLowRes);
+static_assert(GetDesiredTimerPeriod(true, true) == kTimerPeriodLowRes);
+static_assert(GetDesiredTimerPeriod(false, false) == kTimerPeriodHiRes);
+
+UINT TimerThread::ComputeDesiredTimerPeriod() const {
+  const bool lowPriorityProcess =
+      mCachedPriority.load(std::memory_order_relaxed) <
+      hal::PROCESS_PRIORITY_FOREGROUND;
+
+  // NOTE: Using short-circuiting here to avoid call to GetSystemPowerStatus()
+  // when we know that that result will not affect the final result. (As
+  // confirmed by the static_assert's above, onBatteryPower does not affect the
+  // result when the lowPriorityProcess is true.)
+  SYSTEM_POWER_STATUS status;
+  const bool onBatteryPower = !lowPriorityProcess &&
+                              GetSystemPowerStatus(&status) &&
+                              (status.ACLineStatus == 0);
+
+  return GetDesiredTimerPeriod(onBatteryPower, lowPriorityProcess);
+}
 #endif
 
 // Uncomment the following line to enable runtime stats during development.
@@ -184,6 +214,8 @@ TimerObserverRunnable::Run() {
                                  false);
     observerService->AddObserver(mObserver, "resume_process_notification",
                                  false);
+    observerService->AddObserver(mObserver, "ipc:process-priority-changed",
+                                 false);
   }
   return NS_OK;
 }
@@ -218,7 +250,7 @@ class TimerEventAllocator {
 
  public:
   TimerEventAllocator()
-      : mPool(), mFirstFree(nullptr), mMonitor("TimerEventAllocator") {}
+      : mFirstFree(nullptr), mMonitor("TimerEventAllocator") {}
 
   ~TimerEventAllocator() = default;
 
@@ -252,7 +284,8 @@ class nsTimerEvent final : public CancelableRunnable {
         mTimerThreadId(aTimerThreadId) {
     // Note: We override operator new for this class, and the override is
     // fallible!
-    sAllocatorUsers++;
+
+    AddAllocatorRef();
 
     if (MOZ_LOG_TEST(GetTimerLog(), LogLevel::Debug) ||
         profiler_thread_is_being_profiled_for_markers(mTimerThreadId)) {
@@ -262,15 +295,13 @@ class nsTimerEvent final : public CancelableRunnable {
 
   static void Init();
   static void Shutdown();
-  static void DeleteAllocatorIfNeeded();
 
   static void* operator new(size_t aSize) noexcept(true) {
     return sAllocator->Alloc(aSize);
   }
   void operator delete(void* aPtr) {
     sAllocator->Free(aPtr);
-    sAllocatorUsers--;
-    DeleteAllocatorIfNeeded();
+    ReleaseAllocatorRef();
   }
 
   already_AddRefed<nsTimerImpl> ForgetTimer() { return mTimer.forget(); }
@@ -280,10 +311,15 @@ class nsTimerEvent final : public CancelableRunnable {
   nsTimerEvent& operator=(const nsTimerEvent&) = delete;
   nsTimerEvent& operator=(const nsTimerEvent&&) = delete;
 
-  ~nsTimerEvent() {
-    MOZ_ASSERT(!sCanDeleteAllocator || sAllocatorUsers > 0,
-               "This will result in us attempting to deallocate the "
-               "nsTimerEvent allocator twice");
+  ~nsTimerEvent() = default;
+
+  static void AddAllocatorRef() { ++sAllocatorRefs; }
+  static void ReleaseAllocatorRef() {
+    nsrefcnt count = --sAllocatorRefs;
+    if (count == 0) {
+      delete sAllocator;
+      sAllocator = nullptr;
+    }
   }
 
   TimeStamp mInitTime;
@@ -292,14 +328,11 @@ class nsTimerEvent final : public CancelableRunnable {
   ProfilerThreadId mTimerThreadId;
 
   static TimerEventAllocator* sAllocator;
-
-  static Atomic<int32_t, SequentiallyConsistent> sAllocatorUsers;
-  static Atomic<bool, SequentiallyConsistent> sCanDeleteAllocator;
+  static ThreadSafeAutoRefCnt sAllocatorRefs;
 };
 
 TimerEventAllocator* nsTimerEvent::sAllocator = nullptr;
-Atomic<int32_t, SequentiallyConsistent> nsTimerEvent::sAllocatorUsers;
-Atomic<bool, SequentiallyConsistent> nsTimerEvent::sCanDeleteAllocator;
+ThreadSafeAutoRefCnt nsTimerEvent::sAllocatorRefs;
 
 namespace {
 
@@ -416,18 +449,13 @@ struct AddRemoveTimerMarker {
   }
 };
 
-void nsTimerEvent::Init() { sAllocator = new TimerEventAllocator(); }
-
-void nsTimerEvent::Shutdown() {
-  sCanDeleteAllocator = true;
-  DeleteAllocatorIfNeeded();
+void nsTimerEvent::Init() {
+  sAllocator = new TimerEventAllocator();
+  AddAllocatorRef();  // Freed in Shutdown
 }
 
-void nsTimerEvent::DeleteAllocatorIfNeeded() {
-  if (sCanDeleteAllocator && sAllocatorUsers == 0) {
-    delete sAllocator;
-    sAllocator = nullptr;
-  }
+void nsTimerEvent::Shutdown() {
+  ReleaseAllocatorRef();  // Taken in Init
 }
 
 #ifdef MOZ_COLLECTING_RUNNABLE_TELEMETRY
@@ -684,31 +712,13 @@ TimeStamp TimerThread::ComputeWakeupTimeFromTimers() const {
     MOZ_ASSERT(bundleWakeup <= cutoffTime);
   }
 
-#ifdef HACK_OUTPUT_FOR_BUG_1829983
-  const bool assertCondition =
-      bundleWakeup - mTimers[0].Timeout() <=
-      ComputeAcceptableFiringDelay(mTimers[0].Delay(), minTimerDelay,
-                                   maxTimerDelay);
-  if (!assertCondition) {
-    printf_stderr("*** Special TimerThread debug output ***\n");
-    const int64_t tDMin = minTimerDelay.GetValue();
-    const int64_t tDMax = maxTimerDelay.GetValue();
-    printf_stderr("%16llx / %16llx\n", tDMin, tDMax);
-    const size_t l = mTimers.Length();
-    for (size_t i = 0; i < l; ++i) {
-      const Entry& e = mTimers[i];
-      const TimeStamp tS = e.Timeout();
-      const TimeStampValue tSV = tS.GetValue();
-      const TimeDuration d = e.Delay();
-      printf_stderr("[%5zu] %16llx / %16llx / %d / %d / %16llx\n", i, tSV.GTC(),
-                    tSV.QPC(), (int)tSV.IsNull(), (int)tSV.HasQPC(),
-                    d.GetValue());
-    }
-  }
-#endif
+#if !defined(XP_WIN)
+  // Due to the fact that, on Windows, each TimeStamp object holds two distinct
+  // "values", this assert is not valid there. See bug 1829983 for the details.
   MOZ_ASSERT(bundleWakeup - mTimers[0].Timeout() <=
              ComputeAcceptableFiringDelay(mTimers[0].Delay(), minTimerDelay,
                                           maxTimerDelay));
+#endif
 
   return bundleWakeup;
 }
@@ -722,7 +732,7 @@ TimeDuration TimerThread::ComputeAcceptableFiringDelay(
   constexpr int64_t timerDurationDivider = 8;
   static_assert(IsPowerOfTwo(static_cast<uint64_t>(timerDurationDivider)));
   const TimeDuration tmp = timerDuration / timerDurationDivider;
-  return std::min(std::max(minDelay, tmp), maxDelay);
+  return std::clamp(tmp, minDelay, maxDelay);
 }
 
 NS_IMETHODIMP
@@ -731,25 +741,11 @@ TimerThread::Run() {
 
   mProfilerThreadId = profiler_current_thread_id();
 
-  // We need to know how many microseconds give a positive PRIntervalTime. This
-  // is platform-dependent and we calculate it at runtime, finding a value |v|
-  // such that |PR_MicrosecondsToInterval(v) > 0| and then binary-searching in
-  // the range [0, v) to find the ms-to-interval scale.
-  uint32_t usForPosInterval = 1;
-  while (PR_MicrosecondsToInterval(usForPosInterval) == 0) {
-    usForPosInterval <<= 1;
-  }
-
-  size_t usIntervalResolution;
-  BinarySearchIf(MicrosecondsToInterval(), 0, usForPosInterval,
-                 IntervalComparator(), &usIntervalResolution);
-  MOZ_ASSERT(PR_MicrosecondsToInterval(usIntervalResolution - 1) == 0);
-  MOZ_ASSERT(PR_MicrosecondsToInterval(usIntervalResolution) == 1);
-
-  // Half of the amount of microseconds needed to get positive PRIntervalTime.
-  // We use this to decide how to round our wait times later
-  mAllowedEarlyFiringMicroseconds = usIntervalResolution / 2;
-  bool forceRunNextTimer = false;
+  // TODO: Make mAllowedEarlyFiringMicroseconds const and initialize it in the
+  // constructor.
+  mAllowedEarlyFiringMicroseconds = 250;
+  const TimeDuration normalAllowedEarlyFiring =
+      TimeDuration::FromMicroseconds(mAllowedEarlyFiringMicroseconds);
 
   // Queue for tracking of how many timers are fired on each wake-up. We need to
   // buffer these locally and only send off to glean occasionally to avoid
@@ -759,12 +755,32 @@ TimerThread::Run() {
   AutoTArray<uint64_t, kMaxQueuedTimerFired> queuedTimersFiredPerWakeup;
   queuedTimersFiredPerWakeup.SetLengthAndRetainStorage(kMaxQueuedTimerFired);
 
+#ifdef XP_WIN
+  // kTimerPeriodEvalIntervalSec is the minimum amount of time that must pass
+  // before we will consider changing the timer period again.
+  static constexpr float kTimerPeriodEvalIntervalSec = 2.0f;
+  const TimeDuration timerPeriodEvalInterval =
+      TimeDuration::FromSeconds(kTimerPeriodEvalIntervalSec);
+  TimeStamp nextTimerPeriodEval = TimeStamp::Now() + timerPeriodEvalInterval;
+
+  // If this is false, we will perform all of the logic but will stop short of
+  // actually changing the timer period.
+  const bool adjustTimerPeriod =
+      StaticPrefs::timer_auto_increase_timer_resolution();
+  UINT lastTimePeriodSet = ComputeDesiredTimerPeriod();
+
+  if (adjustTimerPeriod) {
+    timeBeginPeriod(lastTimePeriodSet);
+  }
+#endif
+
   uint64_t timersFiredThisWakeup = 0;
   while (!mShutdown) {
+    const bool chaosModeActive =
+        ChaosMode::isActive(ChaosFeature::TimerScheduling);
+
     // Have to use PRIntervalTime here, since PR_WaitCondVar takes it
     TimeDuration waitFor;
-    bool forceRunThisTimer = forceRunNextTimer;
-    forceRunNextTimer = false;
 
 #ifdef DEBUG
     VerifyTimerListConsistency();
@@ -773,13 +789,35 @@ TimerThread::Run() {
     if (mSleeping) {
       // Sleep for 0.1 seconds while not firing timers.
       uint32_t milliseconds = 100;
-      if (ChaosMode::isActive(ChaosFeature::TimerScheduling)) {
+      if (chaosModeActive) {
         milliseconds = ChaosMode::randomUint32LessThan(200);
       }
       waitFor = TimeDuration::FromMilliseconds(milliseconds);
     } else {
+      // Determine how early we are going to allow timers to fire. In chaos mode
+      // we mess with this a little bit.
+      const TimeDuration allowedEarlyFiring =
+          !chaosModeActive
+              ? normalAllowedEarlyFiring
+              : TimeDuration::FromMicroseconds(ChaosMode::randomUint32LessThan(
+                    4 * mAllowedEarlyFiringMicroseconds));
+
       waitFor = TimeDuration::Forever();
       TimeStamp now = TimeStamp::Now();
+
+#ifdef XP_WIN
+      if (now >= nextTimerPeriodEval) {
+        const UINT newTimePeriod = ComputeDesiredTimerPeriod();
+        if (newTimePeriod != lastTimePeriodSet) {
+          if (adjustTimerPeriod) {
+            timeEndPeriod(lastTimePeriodSet);
+            timeBeginPeriod(newTimePeriod);
+          }
+          lastTimePeriodSet = newTimePeriod;
+        }
+        nextTimerPeriodEval = now + timerPeriodEvalInterval;
+      }
+#endif
 
 #if TIMER_THREAD_STATISTICS
       if (!mNotified && !mIntendedWakeupTime.IsNull() &&
@@ -793,7 +831,7 @@ TimerThread::Run() {
       RemoveLeadingCanceledTimersInternal();
 
       if (!mTimers.IsEmpty()) {
-        if (now >= mTimers[0].Value()->mTimeout || forceRunThisTimer) {
+        if (now + allowedEarlyFiring >= mTimers[0].Value()->mTimeout) {
         next:
           // NB: AddRef before the Release under RemoveTimerInternal to avoid
           // mRefCnt passing through zero, in case all other refs than the one
@@ -838,21 +876,9 @@ TimerThread::Run() {
         // resolution. We use mAllowedEarlyFiringMicroseconds, calculated
         // before, to do the optimal rounding (i.e., of how to decide what
         // interval is so small we should not wait at all).
-        double microseconds = (timeout - now).ToMicroseconds();
+        const TimeDuration timeToNextTimer = timeout - now;
 
-        // The mean value of sFractions must be 1 to ensure that the average of
-        // a long sequence of timeouts converges to the actual sum of their
-        // times.
-        static constexpr double sChaosFractions[] = {0.0, 0.25, 0.5, 0.75,
-                                                     1.0, 1.75, 2.75};
-        if (ChaosMode::isActive(ChaosFeature::TimerScheduling)) {
-          microseconds *= sChaosFractions[ChaosMode::randomUint32LessThan(
-              ArrayLength(sChaosFractions))];
-          forceRunNextTimer = true;
-        }
-
-        if (microseconds < mAllowedEarlyFiringMicroseconds) {
-          forceRunNextTimer = false;
+        if (timeToNextTimer < allowedEarlyFiring) {
           goto next;  // round down; execute event now
         }
 
@@ -872,16 +898,14 @@ TimerThread::Run() {
         // should have fired.
         MOZ_ASSERT(!waitFor.IsZero());
 
-        if (ChaosMode::isActive(ChaosFeature::TimerScheduling)) {
-          // If chaos mode is active then mess with the amount of time that we
-          // request to sleep (without changing what we record as our expected
-          // wake-up time). This will simulate unintended early/late wake-ups.
-          const double waitInMs = waitFor.ToMilliseconds();
-          const double chaosWaitInMs =
-              waitInMs * sChaosFractions[ChaosMode::randomUint32LessThan(
-                             ArrayLength(sChaosFractions))];
-          waitFor = TimeDuration::FromMilliseconds(chaosWaitInMs);
-        }
+        // If chaos mode is active then we will add a random amount to the
+        // calculated wait (sleep) time to simulate early/late wake-ups.
+        const TimeDuration chaosWaitDelay =
+            !chaosModeActive
+                ? TimeDuration::Zero()
+                : TimeDuration::FromMicroseconds(
+                      ChaosMode::randomInt32InRange(-10000, 10000));
+        waitFor = std::max(TimeDuration::Zero(), waitFor + chaosWaitDelay);
 
         mIntendedWakeupTime = wakeupTime;
       } else {
@@ -940,9 +964,6 @@ TimerThread::Run() {
       AUTO_PROFILER_TRACING_MARKER("TimerThread", "Wait", OTHER);
       mMonitor.Wait(waitFor);
     }
-    if (mNotified) {
-      forceRunNextTimer = false;
-    }
     mWaiting = false;
   }
 
@@ -952,6 +973,13 @@ TimerThread::Run() {
     glean::timer_thread::timers_fired_per_wakeup.AccumulateSamples(
         queuedTimersFiredPerWakeup);
   }
+
+#ifdef XP_WIN
+  // About to shut down - let's finish off the last time period that we set.
+  if (adjustTimerPeriod) {
+    timeEndPeriod(lastTimePeriodSet);
+  }
+#endif
 
   return NS_OK;
 }
@@ -1102,11 +1130,11 @@ TimeStamp TimerThread::FindNextFireTimeForCurrentThread(TimeStamp aDefault,
       }
 
       if (aSearchBound == 0) {
-        // Return the currently highest timeout when we reach the bound.
-        // This won't give accurate information if we stop before finding
-        // any timer for the current thread, but at least won't report too
-        // long idle period.
-        return timer->mTimeout;
+        // Couldn't find any non-low priority timers for the current thread.
+        // Return a compromise between a very short and a long idle time.
+        TimeStamp fallbackDeadline =
+            TimeStamp::Now() + TimeDuration::FromMilliseconds(16);
+        return fallbackDeadline < aDefault ? fallbackDeadline : aDefault;
       }
 
       --aSearchBound;
@@ -1322,8 +1350,18 @@ void TimerThread::DoAfterSleep() {
 }
 
 NS_IMETHODIMP
-TimerThread::Observe(nsISupports* /* aSubject */, const char* aTopic,
-                     const char16_t* /* aData */) {
+TimerThread::Observe(nsISupports* aSubject, const char* aTopic,
+                     const char16_t* aData) {
+  if (strcmp(aTopic, "ipc:process-priority-changed") == 0) {
+    nsCOMPtr<nsIPropertyBag2> props = do_QueryInterface(aSubject);
+    MOZ_ASSERT(props != nullptr);
+
+    int32_t priority = static_cast<int32_t>(hal::PROCESS_PRIORITY_UNKNOWN);
+    props->GetPropertyAsInt32(u"priority"_ns, &priority);
+    mCachedPriority.store(static_cast<hal::ProcessPriority>(priority),
+                          std::memory_order_relaxed);
+  }
+
   if (StaticPrefs::timer_ignore_sleep_wake_notifications()) {
     return NS_OK;
   }

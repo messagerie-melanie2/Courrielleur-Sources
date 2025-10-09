@@ -9,69 +9,22 @@
 #include "plstr.h"
 #include "nsMailHeaders.h"
 #include "nscore.h"
-#include "nsEmitterUtils.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
 #include "nsIMimeStreamConverter.h"
-#include "nsIMsgWindow.h"
 #include "nsIMsgMailNewsUrl.h"
 #include "nsMimeTypes.h"
 #include "prtime.h"
 #include "prprf.h"
-#include "nsStringEnumerator.h"
 #include "nsServiceManagerUtils.h"
 // hack: include this to fix opening news attachments.
 #include "nsINntpUrl.h"
-#include "nsComponentManagerUtils.h"
 #include "nsMsgUtils.h"
-#include "nsMemory.h"
 #include "mozilla/Components.h"
 #include "nsIMailChannel.h"
-#include "nsIProgressEventSink.h"
+#include "mozilla/ProfilerMarkers.h"
 
 #define VIEW_ALL_HEADERS 2
-
-/**
- * A helper class to implement nsIUTF8StringEnumerator
- */
-
-class nsMimeStringEnumerator final : public nsStringEnumeratorBase {
- public:
-  NS_DECL_ISUPPORTS
-  NS_DECL_NSIUTF8STRINGENUMERATOR
-
-  nsMimeStringEnumerator() : mCurrentIndex(0) {}
-
-  template <class T>
-  nsCString* Append(T value) {
-    return mValues.AppendElement(value);
-  }
-
-  using nsStringEnumeratorBase::GetNext;
-
- protected:
-  ~nsMimeStringEnumerator() {}
-  nsTArray<nsCString> mValues;
-  uint32_t mCurrentIndex;  // consumers expect first-in first-out enumeration
-};
-
-NS_IMPL_ISUPPORTS(nsMimeStringEnumerator, nsIUTF8StringEnumerator,
-                  nsIStringEnumerator)
-
-NS_IMETHODIMP
-nsMimeStringEnumerator::HasMore(bool* result) {
-  NS_ENSURE_ARG_POINTER(result);
-  *result = mCurrentIndex < mValues.Length();
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMimeStringEnumerator::GetNext(nsACString& result) {
-  if (mCurrentIndex >= mValues.Length()) return NS_ERROR_UNEXPECTED;
-
-  result = mValues[mCurrentIndex++];
-  return NS_OK;
-}
 
 /*
  * nsMimeHtmlEmitter definitions....
@@ -204,7 +157,14 @@ nsresult nsMimeHtmlDisplayEmitter::BroadcastHeaders(int32_t aHeaderMode) {
                  !PL_strcasecmp("x-mimeole", headerName) ||
                  !PL_strcasecmp("references", headerName) ||
                  !PL_strcasecmp("in-reply-to", headerName) ||
+                 !PL_strcasecmp("list-id", headerName) ||
+                 !PL_strcasecmp("list-help", headerName) ||
+                 !PL_strcasecmp("list-unsubscribe", headerName) ||
+                 !PL_strcasecmp("list-subscribe", headerName) ||
                  !PL_strcasecmp("list-post", headerName) ||
+                 !PL_strcasecmp("list-owner", headerName) ||
+                 !PL_strcasecmp("list-archive", headerName) ||
+                 !PL_strcasecmp("archived-at", headerName) ||
                  !PL_strcasecmp("delivered-to", headerName)) {
         skip = false;
 
@@ -226,8 +186,8 @@ nsresult nsMimeHtmlDisplayEmitter::BroadcastHeaders(int32_t aHeaderMode) {
     }
 
     const char* headerValue = headerInfo->value;
-    mailChannel->AddHeaderFromMIME(nsCString(headerInfo->name),
-                                   nsCString(headerValue));
+    mailChannel->AddHeaderFromMIME(nsDependentCString(headerInfo->name),
+                                   nsDependentCString(headerValue));
 
     // Add a localized version of the date header if we encounter it.
     if (!PL_strcasecmp("Date", headerInfo->name)) {
@@ -272,6 +232,10 @@ NS_IMETHODIMP nsMimeHtmlDisplayEmitter::WriteHTMLHeaders(
 
 nsresult nsMimeHtmlDisplayEmitter::EndHeader(const nsACString& name) {
   if (mDocHeader && (mFormat != nsMimeOutput::nsMimeMessageFilterSniffer)) {
+    PROFILER_MARKER_TEXT(
+        "MIME HTML Emitter", MAILNEWS,
+        mozilla::MarkerOptions(mozilla::MarkerTiming::IntervalStart()),
+        "HTML output"_ns);
     // Start with a UTF-8 BOM so this can't be mistaken for another charset.
     UtilityWriteCRLF("\xEF\xBB\xBF<!DOCTYPE html>");
     UtilityWriteCRLF("<html>");
@@ -294,7 +258,10 @@ nsresult nsMimeHtmlDisplayEmitter::EndHeader(const nsACString& name) {
     UtilityWriteCRLF("<body>");
   }
 
+  PROFILER_MARKER_TEXT("MIME HTML Emitter", MAILNEWS, {}, "Headers begin"_ns);
   WriteHTMLHeaders(name);
+  PROFILER_MARKER_TEXT("MIME HTML Emitter", MAILNEWS, {}, "Headers end"_ns);
+  PROFILER_MARKER_TEXT("MIME HTML Emitter", MAILNEWS, {}, "Body begins"_ns);
 
   return NS_OK;
 }
@@ -312,10 +279,14 @@ nsresult nsMimeHtmlDisplayEmitter::StartAttachment(const nsACString& name,
     // HACK: news urls require us to use the originalSpec. Everyone
     // else uses GetURI to get the RDF resource which describes the message.
     nsCOMPtr<nsINntpUrl> nntpUrl(do_QueryInterface(mURL, &rv));
-    if (NS_SUCCEEDED(rv) && nntpUrl)
+    if (NS_SUCCEEDED(rv) && nntpUrl) {
       rv = msgurl->GetOriginalSpec(uriString);
-    else
+    } else {
       rv = msgurl->GetUri(uriString);
+    }
+  } else {
+    // If the URL isn't a MailNews URL, then just use it as is.
+    MOZ_TRY(mURL->GetSpec(uriString));
   }
 
   // The attachment name has already been RFC2047 processed
@@ -368,6 +339,8 @@ nsresult nsMimeHtmlDisplayEmitter::StartAttachmentInBody(
   // Add the list of attachments. This is only visible when printing.
 
   if (mFirst) {
+    PROFILER_MARKER_TEXT("MIME HTML Emitter", MAILNEWS, {},
+                         "Attachments begin"_ns);
     UtilityWrite(
         "<fieldset class=\"moz-mime-attachment-header moz-print-only\">");
     if (!name.IsEmpty()) {
@@ -452,6 +425,7 @@ nsresult nsMimeHtmlDisplayEmitter::EndAttachment() {
 nsresult nsMimeHtmlDisplayEmitter::EndAllAttachments() {
   UtilityWrite("</table>");
   UtilityWrite("</div>");
+  PROFILER_MARKER_TEXT("MIME HTML Emitter", MAILNEWS, {}, "Attachments end"_ns);
 
   // Notify the front end that we've finished reading the body.
   nsresult rv;
@@ -463,6 +437,10 @@ nsresult nsMimeHtmlDisplayEmitter::EndAllAttachments() {
     listener->OnAttachmentsComplete(mailChannel);
   }
 
+  PROFILER_MARKER_TEXT(
+      "MIME HTML Emitter", MAILNEWS,
+      mozilla::MarkerOptions(mozilla::MarkerTiming::IntervalEnd()),
+      "HTML output"_ns);
   return NS_OK;
 }
 
@@ -476,6 +454,7 @@ nsresult nsMimeHtmlDisplayEmitter::EndBody() {
   if (mFormat != nsMimeOutput::nsMimeMessageFilterSniffer) {
     UtilityWriteCRLF("</body>");
     UtilityWriteCRLF("</html>");
+    PROFILER_MARKER_TEXT("MIME HTML Emitter", MAILNEWS, {}, "Body ends"_ns);
   }
 
   // Notify the front end that we've finished reading the body.

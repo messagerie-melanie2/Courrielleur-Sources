@@ -2,6 +2,13 @@
 
 /* globals TCPServerSocket */
 
+// We don't normally allow localhost channels to be proxied, but this
+// is easier than updating all the certs.
+Services.prefs.setBoolPref("network.proxy.allow_hijacking_localhost", true);
+registerCleanupFunction(() => {
+  Services.prefs.clearUserPref("network.proxy.allow_hijacking_localhost");
+});
+
 const CC = Components.Constructor;
 
 const BinaryInputStream = CC(
@@ -46,7 +53,7 @@ class SocksClient {
     this.state = STATE_WAIT_GREETING;
     this.socket = socket;
 
-    socket.onclose = event => {
+    socket.onclose = () => {
       this.server.requestCompleted(this);
     };
     socket.ondata = event => {
@@ -566,7 +573,7 @@ add_task(async function test_webRequest_socks_proxy() {
       { urls: ["<all_urls>"] }
     );
     browser.webRequest.onAuthRequired.addListener(
-      details => {
+      () => {
         // We should never get onAuthRequired for socks proxy
         browser.test.fail("onAuthRequired");
       },
@@ -608,9 +615,8 @@ add_task(async function test_webRequest_socks_proxy() {
   await handlingExt.startup();
   ExtensionTestUtils.failOnSchemaWarnings(true);
 
-  let contentPage = await ExtensionTestUtils.loadContentPage(
-    `http://localhost/`
-  );
+  let contentPage =
+    await ExtensionTestUtils.loadContentPage(`http://localhost/`);
 
   await handlingExt.awaitMessage("done");
   await contentPage.close();

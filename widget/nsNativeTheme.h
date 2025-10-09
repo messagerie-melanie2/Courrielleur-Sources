@@ -9,7 +9,6 @@
 #ifndef _NSNATIVETHEME_H_
 #define _NSNATIVETHEME_H_
 
-#include "nsAlgorithm.h"
 #include "nsAtom.h"
 #include "nsColor.h"
 #include "nsCOMPtr.h"
@@ -159,6 +158,7 @@ class nsNativeTheme : public nsITimerCallback, public nsINamed {
   static bool IsDarkBackground(nsIFrame*);
 
   static bool IsWidgetScrollbarPart(mozilla::StyleAppearance);
+  static bool IsWidgetAlwaysNonNative(nsIFrame*, mozilla::StyleAppearance);
 
  private:
   uint32_t mAnimatedContentTimeout;

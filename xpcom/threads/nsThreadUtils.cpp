@@ -10,6 +10,7 @@
 #include "LeakRefPtr.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/Likely.h"
+#include "mozilla/TaskQueue.h"
 #include "mozilla/TimeStamp.h"
 #include "nsComponentManagerUtils.h"
 #include "nsExceptionHandler.h"
@@ -480,12 +481,12 @@ bool NS_ProcessNextEvent(nsIThread* aThread, bool aMayWait) {
 }
 
 void NS_SetCurrentThreadName(const char* aName) {
-#if defined(ANDROID)
-  // Workaround for Bug 1541216 - PR_SetCurrentThreadName() Fails to set the
-  // thread name on Android.
-  prctl(PR_SET_NAME, reinterpret_cast<unsigned long>(aName));
-#else
   PR_SetCurrentThreadName(aName);
+#if defined(ANDROID) && defined(DEBUG)
+  // Check nspr does the right thing on Android.
+  char buffer[16] = {'\0'};
+  prctl(PR_GET_NAME, buffer);
+  MOZ_ASSERT(0 == strncmp(buffer, aName, 15));
 #endif
   if (nsThreadManager::get().IsNSThread()) {
     nsThread* thread = nsThreadManager::get().GetCurrentThread();
@@ -595,7 +596,7 @@ template <>
 void LogTaskBase<IPC::Message>::LogDispatchWithPid(IPC::Message* aEvent,
                                                    int32_t aPid) {
   if (aEvent->seqno() && aPid > 0) {
-    LOG1(("SEND %p %d %d", aEvent, aEvent->seqno(), aPid));
+    LOG1(("SEND %p %" PRId64 " %d", aEvent, aEvent->seqno(), aPid));
   }
 }
 
@@ -650,7 +651,7 @@ LogTaskBase<Task>::Run::Run(Task* aTask, bool aWillRunAgain)
 template <>
 LogTaskBase<IPC::Message>::Run::Run(IPC::Message* aMessage, bool aWillRunAgain)
     : mWillRunAgain(aWillRunAgain) {
-  LOG1(("RECV %p %p %d [%s]", aMessage, this, aMessage->seqno(),
+  LOG1(("RECV %p %p %" PRId64 " [%s]", aMessage, this, aMessage->seqno(),
         aMessage->name()));
 }
 
@@ -674,6 +675,7 @@ template class LogTaskBase<nsTimerImpl>;
 template class LogTaskBase<Task>;
 template class LogTaskBase<PresShell>;
 template class LogTaskBase<dom::FrameRequestCallback>;
+template class LogTaskBase<dom::VideoFrameRequestCallback>;
 
 MOZ_THREAD_LOCAL(nsISerialEventTarget*)
 SerialEventTargetGuard::sCurrentThreadTLS;

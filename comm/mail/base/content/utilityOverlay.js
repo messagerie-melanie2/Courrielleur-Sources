@@ -7,15 +7,11 @@
 var { AppConstants } = ChromeUtils.importESModule(
   "resource://gre/modules/AppConstants.sys.mjs"
 );
-var { PlacesUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/PlacesUtils.sys.mjs"
+var { openLinkExternally, openUILink } = ChromeUtils.importESModule(
+  "resource:///modules/LinkHelper.sys.mjs"
 );
 
 var gShowBiDi = false;
-
-function getBrowserURL() {
-  return AppConstants.BROWSER_CHROME_URL;
-}
 
 // update menu items that rely on focus
 function goUpdateGlobalEditMenuItems() {
@@ -48,12 +44,6 @@ function goUpdateUndoEditMenuItems() {
 // update menu items that depend on clipboard contents
 function goUpdatePasteMenuItems() {
   goUpdateCommand("cmd_paste");
-}
-
-// update Find As You Type menu items, they rely on focus
-function goUpdateFindTypeMenuItems() {
-  goUpdateCommand("cmd_findTypeText");
-  goUpdateCommand("cmd_findTypeLinks");
 }
 
 /**
@@ -157,7 +147,7 @@ function goToggleToolbar(id, elementID) {
  * Toggle a splitter to show or hide some piece of UI (e.g. the message preview
  * pane).
  *
- * @param splitterId the splliter that should be toggled
+ * @param {string} splitterId - The splliter that should be toggled.
  */
 function togglePaneSplitter(splitterId) {
   var splitter = document.getElementById(splitterId);
@@ -169,84 +159,48 @@ function togglePaneSplitter(splitterId) {
   }
 }
 
-// openUILink handles clicks on UI elements that cause URLs to load.
-// We currently only react to left click in Thunderbird.
-function openUILink(url, event) {
-  if (!event.button) {
-    PlacesUtils.history
-      .insert({
-        url,
-        visits: [
-          {
-            date: new Date(),
-          },
-        ],
-      })
-      .catch(console.error);
-    Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-      .getService(Ci.nsIExternalProtocolService)
-      .loadURI(Services.io.newURI(url));
-  }
-}
-
 function openLinkText(event, what) {
   switch (what) {
     case "getInvolvedURL":
-      openUILink("https://www.thunderbird.net/get-involved/", event);
+      openUILink("https://www.thunderbird.net/participate/", event);
       break;
     case "keyboardShortcutsURL":
       openUILink("https://support.mozilla.org/kb/keyboard-shortcuts/", event);
       break;
     case "donateURL":
       openUILink(
-        "https://give.thunderbird.net/?utm_source=thunderbird-client&utm_medium=referral&utm_content=help-menu",
+        "https://www.thunderbird.net/donate/?utm_source=thunderbird-client&utm_medium=referral&utm_content=help-menu",
         event
       );
       break;
-    case "tourURL":
-      openUILink("https://www.thunderbird.net/features/", event);
-      break;
     case "feedbackURL":
       openUILink("https://connect.mozilla.org/", event);
+      break;
+    case "releaseSupportURL":
+      if (AppConstants.NIGHTLY_BUILD) {
+        openUILink("https://support.mozilla.org/kb/thunderbird-daily", event);
+        break;
+      }
+
+      openUILink("https://support.mozilla.org/kb/thunderbird-beta", event);
       break;
   }
 }
 
 /**
- * Open a web search in the default browser for a given query.
- *
- * @param query the string to search for
- * @param engine (optional) the search engine to use
- */
-function openWebSearch(query, engine) {
-  return Services.search.init().then(async () => {
-    if (!engine) {
-      engine = await Services.search.getDefault();
-      openLinkExternally(engine.getSubmission(query).uri.spec);
-
-      Services.telemetry.keyedScalarAdd(
-        "tb.websearch.usage",
-        engine.name.toLowerCase(),
-        1
-      );
-    }
-  });
-}
-
-/**
  * Open the specified tab type (possibly in a new window)
  *
- * @param tabType the tab type to open (e.g. "contentTab")
- * @param tabParams the parameters to pass to the tab
- * @param where 'tab' to open in a new tab (default) or 'window' to open in a
- *        new window
+ * @param {string} tabType - The tab type to open (e.g. "contentTab").
+ * @param {object} tabParams - The parameters to pass to the tab
+ * @param {"tab"|"window"} where - 'tab' to open in a new tab (default)
+ *   or 'window' to open in a new window.
  */
 function openTab(tabType, tabParams, where) {
   if (where != "window") {
     let tabmail = document.getElementById("tabmail");
     if (!tabmail) {
       // Try opening new tabs in an existing 3pane window
-      let mail3PaneWindow = Services.wm.getMostRecentWindow("mail:3pane");
+      const mail3PaneWindow = Services.wm.getMostRecentWindow("mail:3pane");
       if (mail3PaneWindow) {
         tabmail = mail3PaneWindow.document.getElementById("tabmail");
         mail3PaneWindow.focus();
@@ -276,8 +230,8 @@ function openTab(tabType, tabParams, where) {
  * Open the specified URL as a content tab (or window)
  *
  * @param {string} url - The location to open.
- * @param {string} [where="tab"] - 'tab' to open in a new tab or 'window' to
- *     open in a new window
+ * @param {"tab"|"window"} where - 'tab' to open in a new tab (default)
+ *   or 'window' to open in a new window.
  * @param {string} [linkHandler] - See specialTabs.contentTabType.openTab.
  */
 function openContentTab(url, where, linkHandler) {
@@ -287,9 +241,9 @@ function openContentTab(url, where, linkHandler) {
 /**
  * Open the preferences page for the specified query in a new tab.
  *
- * @param paneID       ID of prefpane to select automatically.
- * @param scrollPaneTo ID of the element to scroll into view.
- * @param otherArgs    other prefpane specific arguments.
+ * @param {string} paneID - ID of prefpane to select automatically.
+ * @param {string} scrollPaneTo - ID of the element to scroll into view.
+ * @param {*} otherArgs - Other prefpane specific arguments.
  */
 function openPreferencesTab(paneID, scrollPaneTo, otherArgs) {
   openTab("preferencesTab", {
@@ -306,28 +260,15 @@ function openPreferencesTab(paneID, scrollPaneTo, otherArgs) {
  * Open the dictionary list in a new content tab, if possible in an available
  * mail:3pane window, otherwise by opening a new mail:3pane.
  *
- * @param where the context to open the dictionary list in (e.g. 'tab',
- *        'window'). See openContentTab for more details.
+ * @param {"tab"|"window"} where - 'tab' to open in a new tab (default)
+ *   or 'window' to open in a new window.
  */
 function openDictionaryList(where) {
-  let dictUrl = Services.urlFormatter.formatURLPref(
+  const dictUrl = Services.urlFormatter.formatURLPref(
     "spellchecker.dictionaries.download.url"
   );
 
   openContentTab(dictUrl, where);
-}
-
-/**
- * Open the privacy policy in a new content tab, if possible in an available
- * mail:3pane window, otherwise by opening a new mail:3pane.
- *
- * @param where the context to open the privacy policy in (e.g. 'tab',
- *        'window'). See openContentTab for more details.
- */
-function openPrivacyPolicy(where) {
-  const kTelemetryInfoUrl = "toolkit.telemetry.infoURL";
-  let url = Services.prefs.getCharPref(kTelemetryInfoUrl);
-  openContentTab(url, where);
 }
 
 /**
@@ -340,15 +281,18 @@ function openPrivacyPolicy(where) {
  *
  * @param {string} url - The URL to load.
  * @param {string} [where] - Ignored, only here for compatibility.
- * @param {object} [openParams] - Optional parameters for changing behaviour.
+ * @param {object} [params] - Optional parameters for changing behaviour.
  */
 function openTrustedLinkIn(url, where, params = {}) {
   if (!params.triggeringPrincipal) {
     params.triggeringPrincipal =
       Services.scriptSecurityManager.getSystemPrincipal();
   }
-
-  openLinkIn(url, where, params);
+  if (/^about:/.test(url)) {
+    openContentTab(url);
+  } else {
+    openLinkIn(url, where, params);
+  }
 }
 
 /**
@@ -361,7 +305,7 @@ function openTrustedLinkIn(url, where, params = {}) {
  *
  * @param {string} url - The URL to load.
  * @param {string} [where] - Ignored, only here for compatibility.
- * @param {object} [openParams] - Optional parameters for changing behaviour.
+ * @param {object} [params] - Optional parameters for changing behaviour.
  */
 function openWebLinkIn(url, where, params = {}) {
   if (url.startsWith("https://developer.mozilla.org/")) {
@@ -380,21 +324,6 @@ function openWebLinkIn(url, where, params = {}) {
   }
 
   openLinkIn(url, where, params);
-}
-
-// Thunderbird itself is not using this function. It is however called for the
-// "contribute" button for add-ons in the add-on manager. We ignore all additional
-// parameters including "where" and always open the link externally. We don't
-// want to open donation pages in a tab due to their complexity, and we don't
-// want to handle them inside Thunderbird.
-function openUILinkIn(
-  url,
-  where,
-  aAllowThirdPartyFixup,
-  aPostData,
-  aReferrerInfo
-) {
-  openLinkExternally(url);
 }
 
 /**
@@ -421,14 +350,14 @@ function openLinkIn(url, where, openParams) {
   // the developer tools window and therefore a completely separate program
   // from the rest of Thunderbird. Be careful what you do here.
 
-  let args = Cc["@mozilla.org/array;1"].createInstance(Ci.nsIMutableArray);
-  let uri = Cc["@mozilla.org/supports-string;1"].createInstance(
+  const args = Cc["@mozilla.org/array;1"].createInstance(Ci.nsIMutableArray);
+  const uri = Cc["@mozilla.org/supports-string;1"].createInstance(
     Ci.nsISupportsString
   );
   uri.data = url;
   args.appendElement(uri);
 
-  let win = Services.ww.openWindow(
+  const win = Services.ww.openWindow(
     window,
     AppConstants.BROWSER_CHROME_URL,
     null,
@@ -441,35 +370,6 @@ function openLinkIn(url, where, openParams) {
       openParams.resolveOnContentBrowserCreated(win.gBrowser.selectedBrowser)
     );
   }
-}
-
-/**
- * Forces a url to open in an external application according to the protocol
- * service settings.
- *
- * @param url  A url string or an nsIURI containing the url to open.
- */
-function openLinkExternally(url) {
-  let uri = url;
-  if (!(uri instanceof Ci.nsIURI)) {
-    uri = Services.io.newURI(url);
-  }
-
-  // This can fail if there is a problem with the places database.
-  PlacesUtils.history
-    .insert({
-      url, // accepts both string and nsIURI
-      visits: [
-        {
-          date: new Date(),
-        },
-      ],
-    })
-    .catch(console.error);
-
-  Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-    .getService(Ci.nsIExternalProtocolService)
-    .loadURI(uri);
 }
 
 /**
@@ -497,14 +397,14 @@ function goSetAccessKey(aCommand, aAccessKeyAttribute) {
 }
 
 function buildHelpMenu() {
-  let helpTroubleshootModeItem = document.getElementById(
+  const helpTroubleshootModeItem = document.getElementById(
     "helpTroubleshootMode"
   );
   if (helpTroubleshootModeItem) {
     helpTroubleshootModeItem.disabled =
       !Services.policies.isAllowed("safeMode");
   }
-  let appmenu_troubleshootModeItem = document.getElementById(
+  const appmenu_troubleshootModeItem = document.getElementById(
     "appmenu_troubleshootMode"
   );
   if (appmenu_troubleshootModeItem) {

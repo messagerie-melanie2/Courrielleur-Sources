@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -49,7 +47,7 @@ def rust_datatypes_filter(value):
     class RustEncoder(json.JSONEncoder):
         def iterencode(self, value):
             if isinstance(value, dict):
-                raise ValueError("RustEncoder doesn't know dicts {}".format(str(value)))
+                raise ValueError(f"RustEncoder doesn't know dicts {str(value)}")
             elif isinstance(value, enum.Enum):
                 yield (value.__class__.__name__ + "::" + util.Camelize(value.name))
             elif isinstance(value, set):
@@ -68,9 +66,10 @@ def rust_datatypes_filter(value):
             # CowString is also a 'str' but is a special case.
             # Ensure its case is handled before str's (below).
             elif isinstance(value, CowString):
-                yield f'::std::borrow::Cow::from("{value.inner}")'
+                value = json.dumps(value)
+                yield f"::std::borrow::Cow::from({value})"
             elif isinstance(value, str):
-                yield '"' + value + '".into()'
+                yield f"{json.dumps(value)}.into()"
             elif isinstance(value, Rate):
                 yield "CommonMetricData {"
                 for arg_name in common_metric_data_args:
@@ -91,9 +90,12 @@ def ctor(obj):
     Necessary because LabeledMetric<T> is constructed using LabeledMetric::new
     not LabeledMetric<T>::new
     """
+    suffix = "::new"
+    if obj.metadata.get("permit_non_commutative_operations_over_ipc", False):
+        suffix = "::with_unordered_ipc"
     if getattr(obj, "labeled", False):
-        return "LabeledMetric::new"
-    return class_name(obj.type) + "::new"
+        return f"LabeledMetric{suffix}"
+    return f"{class_name(obj.type)}{suffix}"
 
 
 def type_name(obj):
@@ -115,9 +117,11 @@ def type_name(obj):
                 # we always use the `extra` suffix,
                 # because we only expose the new event API
                 suffix = "Extra"
-                return "{}<{}>".format(
-                    class_name(obj.type), util.Camelize(obj.name) + suffix
-                )
+                return f"{class_name(obj.type)}<{util.Camelize(obj.name) + suffix}>"
+    generate_structure = getattr(obj, "_generate_structure", [])
+    if len(generate_structure):
+        generic = util.Camelize(obj.name) + "Object"
+        return f"{class_name(obj.type)}<{generic}>"
     return class_name(obj.type)
 
 
@@ -132,6 +136,21 @@ def extra_type_name(typ: str) -> str:
         return "String"
     elif typ == "quantity":
         return "u32"
+    else:
+        return "UNSUPPORTED"
+
+
+def structure_type_name(typ: str) -> str:
+    """
+    Returns the corresponding Rust type for structure items.
+    """
+
+    if typ == "boolean":
+        return "bool"
+    elif typ == "string":
+        return "String"
+    elif typ == "number":
+        return "i64"
     else:
         return "UNSUPPORTED"
 
@@ -152,6 +171,22 @@ def extra_keys(allowed_extra_keys):
     Returns the &'static [&'static str] ALLOWED_EXTRA_KEYS for impl ExtraKeys
     """
     return "&[" + ", ".join(map(lambda key: '"' + key + '"', allowed_extra_keys)) + "]"
+
+
+def get_schedule_reverse_map(objs):
+    ping_schedule_reverse_map = dict()
+    if "pings" in objs:
+        for ping_key, ping_val in objs["pings"].items():
+            for ping_schedule in ping_val.metadata.get("ping_schedule", []):
+                if ping_schedule not in ping_schedule_reverse_map:
+                    ping_schedule_reverse_map[ping_schedule] = set()
+                ping_schedule_reverse_map[ping_schedule].add(ping_key)
+
+    for ping, schedules in ping_schedule_reverse_map.items():
+        sorted_schedule = sorted(schedules)
+        ping_schedule_reverse_map[ping] = sorted_schedule
+
+    return ping_schedule_reverse_map
 
 
 def output_rust(objs, output_fd, ping_names_by_app_id, options={}):
@@ -183,8 +218,9 @@ def output_rust(objs, output_fd, ping_names_by_app_id, options={}):
         return env.get_template(template_name)
 
     util.get_jinja2_template = get_local_template
-    get_metric_id = generate_metric_ids(objs)
+    get_metric_id = generate_metric_ids(objs, options)
     get_ping_id = generate_ping_ids(objs)
+    ping_schedule_reverse_map = get_schedule_reverse_map(objs)
 
     # Map from a tuple (const, typ) to an array of tuples (id, path)
     # where:
@@ -207,6 +243,14 @@ def output_rust(objs, output_fd, ping_names_by_app_id, options={}):
     #
     #   17 -> "test_only::an_event"
     events_by_id = {}
+
+    # Map from a metric ID to the fully qualified path of the object metric in Rust.
+    # Required for the special handling of object lookups.
+    #
+    # Example:
+    #
+    #   18 -> "test_only::an_object"
+    objects_by_id = {}
 
     # Map from a labeled type (e.g. "counter") to a map from metric ID to the
     # fully qualified path of the labeled metric object in Rust paired with
@@ -238,6 +282,9 @@ def output_rust(objs, output_fd, ping_names_by_app_id, options={}):
                 if metric.type == "event":
                     events_by_id[get_metric_id(metric)] = full_path
                     continue
+                if metric.type == "object":
+                    objects_by_id[get_metric_id(metric)] = full_path
+                    continue
 
                 if getattr(metric, "labeled", False):
                     labeled_type = metric.type[8:]
@@ -261,6 +308,7 @@ def output_rust(objs, output_fd, ping_names_by_app_id, options={}):
             ("snake_case", util.snake_case),
             ("type_name", type_name),
             ("extra_type_name", extra_type_name),
+            ("structure_type_name", structure_type_name),
             ("ctor", ctor),
             ("extra_keys", extra_keys),
             ("metric_id", get_metric_id),
@@ -275,9 +323,11 @@ def output_rust(objs, output_fd, ping_names_by_app_id, options={}):
             metric_by_type=objs_by_type,
             extra_args=util.extra_args,
             events_by_id=events_by_id,
+            objects_by_id=objects_by_id,
             labeleds_by_id_by_type=labeleds_by_id_by_type,
             submetric_bit=ID_BITS - ID_SIGNAL_BITS,
             ping_names_by_app_id=ping_names_by_app_id,
+            ping_schedule_reverse_map=ping_schedule_reverse_map,
         )
     )
     output_fd.write("\n")

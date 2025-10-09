@@ -51,13 +51,17 @@ def lint(paths, config, binary=None, fix=None, rules=[], setup=None, **lintargs)
     module_path = setup_helper.get_project_root()
 
     modified_paths = []
-    exts = "*.(" + "|".join(config["extensions"]) + ")"
+    exts = "*.{" + ",".join(config["extensions"]) + "}"
+
     for path in paths:
         filepath, fileext = os.path.splitext(path)
         if fileext:
             modified_paths += [path]
         else:
-            modified_paths += [os.path.join(path, "**" + os.path.sep + exts)]
+            joined_path = os.path.join(path, "**", exts)
+            if is_windows():
+                joined_path = joined_path.replace("\\", "/")
+            modified_paths.append(joined_path)
 
     # Valid binaries are:
     #  - Any provided by the binary argument.
@@ -86,7 +90,7 @@ def lint(paths, config, binary=None, fix=None, rules=[], setup=None, **lintargs)
         [
             binary,
             os.path.join(
-                module_path, "node_modules", "stylelint", "bin", "stylelint.js"
+                module_path, "node_modules", "stylelint", "bin", "stylelint.mjs"
             ),
             "--formatter",
             "json",
@@ -113,10 +117,7 @@ def lint(paths, config, binary=None, fix=None, rules=[], setup=None, **lintargs)
 
 def run(cmd_args, config, fix):
     shell = False
-    if (
-        os.environ.get("MSYSTEM") in ("MINGW32", "MINGW64")
-        or "MOZILLABUILD" in os.environ
-    ):
+    if is_windows():
         # The stylelint binary needs to be run from a shell with msys
         shell = True
     encoding = "utf-8"
@@ -128,30 +129,29 @@ def run(cmd_args, config, fix):
     signal.signal(signal.SIGINT, orig)
 
     try:
-        output, errors = proc.communicate()
+        _, errors = proc.communicate()
     except KeyboardInterrupt:
         proc.kill()
         return {"results": [], "fixed": 0}
 
     if errors:
         errors = errors.decode(encoding, "replace")
-        print(STYLELINT_ERROR_MESSAGE.format(errors))
 
     # 0 is success, 2 is there was at least 1 rule violation. Anything else
     # is more serious.
     if proc.returncode != 0 and proc.returncode != 2:
         if proc.returncode == 78:
             print("Stylelint reported an issue with its configuration file.")
-            print(output)
+            print(errors)
         return 1
 
-    if not output:
-        return {"results": [], "fixed": 0}  # no output means success
-    output = output.decode(encoding, "replace")
+    if not errors:
+        return {"results": [], "fixed": 0}
+
     try:
-        jsonresult = json.loads(output)
+        jsonresult = json.loads(errors)
     except ValueError:
-        print(STYLELINT_ERROR_MESSAGE.format(output))
+        print(STYLELINT_ERROR_MESSAGE.format(errors))
         return 1
 
     results = []
@@ -185,3 +185,10 @@ def run(cmd_args, config, fix):
             results.append(result.from_config(config, **err))
 
     return {"results": results, "fixed": fixed}
+
+
+def is_windows():
+    return (
+        os.environ.get("MSYSTEM") in ("MINGW32", "MINGW64")
+        or "MOZILLABUILD" in os.environ
+    )

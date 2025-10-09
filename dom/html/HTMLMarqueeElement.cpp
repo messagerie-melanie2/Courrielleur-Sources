@@ -7,7 +7,6 @@
 #include "mozilla/dom/HTMLMarqueeElement.h"
 #include "nsGenericHTMLElement.h"
 #include "nsStyleConsts.h"
-#include "nsMappedAttributes.h"
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/dom/HTMLMarqueeElementBinding.h"
 #include "mozilla/dom/CustomEvent.h"
@@ -23,22 +22,21 @@ HTMLMarqueeElement::~HTMLMarqueeElement() = default;
 
 NS_IMPL_ELEMENT_CLONE(HTMLMarqueeElement)
 
-static const nsAttrValue::EnumTable kBehaviorTable[] = {
-    {"scroll", 1}, {"slide", 2}, {"alternate", 3}, {nullptr, 0}};
+static constexpr nsAttrValue::EnumTableEntry kBehaviorTable[] = {
+    {"scroll", 1}, {"slide", 2}, {"alternate", 3}
+
+};
 
 // Default behavior value is "scroll".
-static const nsAttrValue::EnumTable* kDefaultBehavior = &kBehaviorTable[0];
+static constexpr const nsAttrValue::EnumTableEntry* kDefaultBehavior =
+    &kBehaviorTable[0];
 
-static const nsAttrValue::EnumTable kDirectionTable[] = {
-    {"left", 1}, {"right", 2}, {"up", 3}, {"down", 4}, {nullptr, 0}};
+static constexpr nsAttrValue::EnumTableEntry kDirectionTable[] = {
+    {"left", 1}, {"right", 2}, {"up", 3}, {"down", 4}};
 
 // Default direction value is "left".
-static const nsAttrValue::EnumTable* kDefaultDirection = &kDirectionTable[0];
-
-bool HTMLMarqueeElement::IsEventAttributeNameInternal(nsAtom* aName) {
-  return nsContentUtils::IsEventAttributeName(
-      aName, EventNameType_HTML | EventNameType_HTMLMarqueeOnly);
-}
+static constexpr const nsAttrValue::EnumTableEntry* kDefaultDirection =
+    &kDirectionTable[0];
 
 JSObject* HTMLMarqueeElement::WrapNode(JSContext* aCx,
                                        JS::Handle<JSObject*> aGivenProto) {
@@ -57,14 +55,14 @@ nsresult HTMLMarqueeElement::BindToTree(BindContext& aContext,
   return rv;
 }
 
-void HTMLMarqueeElement::UnbindFromTree(bool aNullParent) {
+void HTMLMarqueeElement::UnbindFromTree(UnbindContext& aContext) {
   if (IsInComposedDoc()) {
     // We don't want to unattach the shadow root because it used to
     // contain a <slot>.
     NotifyUAWidgetTeardown(UnattachShadowRoot::No);
   }
 
-  nsGenericHTMLElement::UnbindFromTree(aNullParent);
+  nsGenericHTMLElement::UnbindFromTree(aContext);
 }
 
 void HTMLMarqueeElement::GetBehavior(nsAString& aValue) {
@@ -113,25 +111,12 @@ bool HTMLMarqueeElement::ParseAttribute(int32_t aNamespaceID,
                                               aMaybeScriptedPrincipal, aResult);
 }
 
-void HTMLMarqueeElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
-                                      const nsAttrValue* aValue,
-                                      const nsAttrValue* aOldValue,
-                                      nsIPrincipal* aMaybeScriptedPrincipal,
-                                      bool aNotify) {
-  if (IsInComposedDoc() && aNameSpaceID == kNameSpaceID_None &&
-      aName == nsGkAtoms::direction) {
-    NotifyUAWidgetSetupOrChange();
-  }
-  return nsGenericHTMLElement::AfterSetAttr(
-      aNameSpaceID, aName, aValue, aOldValue, aMaybeScriptedPrincipal, aNotify);
-}
-
 void HTMLMarqueeElement::MapAttributesIntoRule(
-    const nsMappedAttributes* aAttributes, MappedDeclarations& aDecls) {
-  nsGenericHTMLElement::MapImageMarginAttributeInto(aAttributes, aDecls);
-  nsGenericHTMLElement::MapImageSizeAttributesInto(aAttributes, aDecls);
-  nsGenericHTMLElement::MapCommonAttributesInto(aAttributes, aDecls);
-  nsGenericHTMLElement::MapBGColorInto(aAttributes, aDecls);
+    MappedDeclarationsBuilder& aBuilder) {
+  nsGenericHTMLElement::MapImageMarginAttributeInto(aBuilder);
+  nsGenericHTMLElement::MapImageSizeAttributesInto(aBuilder);
+  nsGenericHTMLElement::MapCommonAttributesInto(aBuilder);
+  nsGenericHTMLElement::MapBGColorInto(aBuilder);
 }
 
 NS_IMETHODIMP_(bool)

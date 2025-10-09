@@ -7,6 +7,7 @@
 #ifndef mozilla_IMEStateManager_h_
 #define mozilla_IMEStateManager_h_
 
+#include "mozilla/AlreadyAddRefed.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/StaticPtr.h"
@@ -15,6 +16,7 @@
 
 class nsIContent;
 class nsINode;
+class nsIURI;
 class nsPresContext;
 
 namespace mozilla {
@@ -22,6 +24,7 @@ namespace mozilla {
 class EditorBase;
 class EventDispatchingCallback;
 class IMEContentObserver;
+class PseudoFocusChangeRunnable;
 class TextCompositionArray;
 class TextComposition;
 
@@ -37,12 +40,12 @@ class Selection;
  */
 
 class IMEStateManager {
-  typedef dom::BrowserParent BrowserParent;
-  typedef widget::IMEMessage IMEMessage;
-  typedef widget::IMENotification IMENotification;
-  typedef widget::IMEState IMEState;
-  typedef widget::InputContext InputContext;
-  typedef widget::InputContextAction InputContextAction;
+  using BrowserParent = dom::BrowserParent;
+  using IMEMessage = widget::IMEMessage;
+  using IMENotification = widget::IMENotification;
+  using IMEState = widget::IMEState;
+  using InputContext = widget::InputContext;
+  using InputContextAction = widget::InputContextAction;
 
  public:
   static void Init();
@@ -126,6 +129,14 @@ class IMEStateManager {
   }
 
   /**
+   * Return a widget which is for handling text input. This should be valid
+   * while an editable element has focus or an editable document has focus.
+   */
+  static nsIWidget* GetWidgetForTextInputHandling() {
+    return sTextInputHandlingWidget;
+  }
+
+  /**
    * SetIMEContextForChildProcess() is called when aBrowserParent receives
    * SetInputContext() from the remote process.
    */
@@ -155,6 +166,20 @@ class IMEStateManager {
       nsPresContext& aPresContext);
   MOZ_CAN_RUN_SCRIPT static nsresult OnRemoveContent(
       nsPresContext& aPresContext, dom::Element& aElement);
+  /**
+   * Called when the parent chain of the observing element of IMEContentObserver
+   * is changed.
+   */
+  MOZ_CAN_RUN_SCRIPT static void OnParentChainChangedOfObservingElement(
+      IMEContentObserver& aObserver);
+
+  /**
+   * Called when HTMLEditor updates the root element which is <body> of the
+   * document if there is (or the document element otherwise).
+   */
+  MOZ_CAN_RUN_SCRIPT static void OnUpdateHTMLEditorRootElement(
+      HTMLEditor& aHTMLEditor, dom::Element* aNewRootElement);
+
   /**
    * OnChangeFocus() should be called when focused content is changed or
    * IME enabled state is changed.  If nobody has focus, set both aPresContext
@@ -277,13 +302,12 @@ class IMEStateManager {
   /**
    * Get TextComposition from widget.
    */
-  static already_AddRefed<TextComposition> GetTextCompositionFor(
-      nsIWidget* aWidget);
+  static TextComposition* GetTextCompositionFor(nsIWidget* aWidget);
 
   /**
    * Returns TextComposition instance for the event.
    */
-  static already_AddRefed<TextComposition> GetTextCompositionFor(
+  static TextComposition* GetTextCompositionFor(
       const WidgetCompositionEvent* aCompositionEvent);
 
   /**
@@ -291,8 +315,7 @@ class IMEStateManager {
    * Be aware, even if another pres context which shares native IME context with
    * specified pres context has composition, this returns nullptr.
    */
-  static already_AddRefed<TextComposition> GetTextCompositionFor(
-      nsPresContext* aPresContext);
+  static TextComposition* GetTextCompositionFor(nsPresContext* aPresContext);
 
   /**
    * Send a notification to IME.  It depends on the IME or platform spec what
@@ -336,6 +359,13 @@ class IMEStateManager {
   static IMEState GetNewIMEState(const nsPresContext& aPresContext,
                                  dom::Element* aElement);
 
+  /**
+   * Return a URI which is exposable via the native IME API to the system or
+   * IME.
+   */
+  static already_AddRefed<nsIURI> GetExposableURL(
+      const nsPresContext* aPresContext);
+
   static void EnsureTextCompositionArray();
 
   // XXX Changing this to MOZ_CAN_RUN_SCRIPT requires too many callers to be
@@ -376,6 +406,26 @@ class IMEStateManager {
    * and it has already set input context.  Otherwise, returns false.
    */
   static bool HasActiveChildSetInputContext();
+
+  /**
+   * This is the runner of OnInstalledMenuKeyboardListener(), called by
+   * PseudoFocusChangeRunnable maybe asynchronously.
+   *
+   * @param aCaller             The caller instance, used only for debug.
+   * @param aSetPseudoFocus     Whether the menu keyboard listener is installed
+   *                            or uninstalled when
+   *                            OnInstalledMenuKeyboardListener() is called and
+   *                            the PseudoFocusChangeRunnable instance is
+   *                            created.
+   * @param aFocusedPresContextAtRequested
+   *                            sFocusedPresContext when
+   *                            OnInstalledMenuKeyboardListener() is called and
+   *                            the PseudoFocusChangeRunnable instance is
+   *                            created.
+   */
+  MOZ_CAN_RUN_SCRIPT static void SetMenubarPseudoFocus(
+      PseudoFocusChangeRunnable* aCaller, bool aSetPseudoFocus,
+      nsPresContext* aFocusedPresContextAtRequested);
 
   // sFocusedElement and sFocusedPresContext are the focused content and
   // PresContext.  If a document has focus but there is no focused element,
@@ -487,6 +537,11 @@ class IMEStateManager {
    private:
     bool mOldValue;
   };
+
+  // OnInstalledMenuKeyboardListener may be called when it's not safe.
+  // Therefore, it tries to update with adding this as a script runner.
+  static StaticRefPtr<PseudoFocusChangeRunnable> sPseudoFocusChangeRunnable;
+  friend class PseudoFocusChangeRunnable;
 };
 
 }  // namespace mozilla

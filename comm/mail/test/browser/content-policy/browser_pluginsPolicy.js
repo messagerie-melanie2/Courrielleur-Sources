@@ -9,32 +9,30 @@
 
 "use strict";
 
-var { open_content_tab_with_url } = ChromeUtils.import(
-  "resource://testing-common/mozmill/ContentTabHelpers.jsm"
+var { open_content_tab_with_url } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ContentTabHelpers.sys.mjs"
 );
 
 var {
   assert_nothing_selected,
   assert_selected_and_displayed,
   be_in_folder,
-  close_message_window,
   create_folder,
   get_about_message,
-  mc,
   open_selected_message,
   select_click_row,
   select_none,
   set_open_message_behavior,
   wait_for_message_display_completion,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-var { async_plan_for_new_window } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
+var { promise_new_window } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/WindowHelpers.sys.mjs"
 );
 
-var { MailE10SUtils } = ChromeUtils.import(
-  "resource:///modules/MailE10SUtils.jsm"
+var { MailE10SUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailE10SUtils.sys.mjs"
 );
 
 var folder = null;
@@ -60,10 +58,9 @@ add_setup(async function () {
 });
 
 function addToFolder(aSubject, aBody, aFolder) {
-  let msgId = Services.uuid.generateUUID() + "@mozillamessaging.invalid";
+  const msgId = Services.uuid.generateUUID() + "@mozillamessaging.invalid";
 
-  let source =
-    "From - Sat Nov  1 12:39:54 2008\n" +
+  const source =
     "X-Mozilla-Status: 0001\n" +
     "X-Mozilla-Status2: 00000000\n" +
     "Message-ID: <" +
@@ -94,7 +91,7 @@ function addToFolder(aSubject, aBody, aFolder) {
 
 function isPluginLoaded(browser) {
   return SpecialPowers.spawn(browser, [], () => {
-    let element = content.document.getElementById("testelement");
+    const element = content.document.getElementById("testelement");
 
     try {
       // if setColor throws, then the plugin isn't running
@@ -108,10 +105,14 @@ function isPluginLoaded(browser) {
 }
 
 async function addMsgToFolderAndCheckContent(loadAllowed) {
-  let msgDbHdr = addToFolder("Plugin test message " + gMsgNo, msgBody, folder);
+  const msgDbHdr = addToFolder(
+    "Plugin test message " + gMsgNo,
+    msgBody,
+    folder
+  );
 
   // select the newly created message
-  let msgHdr = select_click_row(gMsgNo);
+  const msgHdr = await select_click_row(gMsgNo);
 
   if (msgDbHdr != msgHdr) {
     throw new Error(
@@ -119,7 +120,7 @@ async function addMsgToFolderAndCheckContent(loadAllowed) {
     );
   }
 
-  assert_selected_and_displayed(gMsgNo);
+  await assert_selected_and_displayed(gMsgNo);
 
   ++gMsgNo;
 
@@ -144,13 +145,13 @@ async function addMsgToFolderAndCheckContent(loadAllowed) {
 }
 
 async function checkStandaloneMessageWindow(loadAllowed) {
-  let newWindowPromise = async_plan_for_new_window("mail:messageWindow");
+  const newWindowPromise = promise_new_window("mail:messageWindow");
   // Open it
   set_open_message_behavior("NEW_WINDOW");
 
   open_selected_message();
-  let msgc = await newWindowPromise;
-  wait_for_message_display_completion(msgc, true);
+  const msgc = await newWindowPromise;
+  await wait_for_message_display_completion(msgc, true);
 
   // XXX It appears the wait_for_message_display_completion doesn't actually
   // wait long enough for plugin load. However, I also can't find a way to wait
@@ -158,7 +159,7 @@ async function checkStandaloneMessageWindow(loadAllowed) {
   // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
   await new Promise(resolve => setTimeout(resolve, 1000));
 
-  let aboutMessage = get_about_message(msgc.window);
+  const aboutMessage = get_about_message(msgc);
   if (
     (await isPluginLoaded(
       aboutMessage.document.getElementById("messagepane")
@@ -172,23 +173,23 @@ async function checkStandaloneMessageWindow(loadAllowed) {
   }
 
   // Clean up, close the window
-  close_message_window(msgc);
+  await BrowserTestUtils.closeWindow(msgc);
 }
 
 add_task(async function test_3paneWindowDenied() {
   await be_in_folder(folder);
 
-  assert_nothing_selected();
+  await assert_nothing_selected();
 
   await addMsgToFolderAndCheckContent(false);
 });
 
 add_task(async function test_checkPluginsInNonMessageContent() {
   // Deselect everything so we can load our content
-  select_none();
+  await select_none();
 
   // load something non-message-like in the message pane
-  let browser = get_about_message().document.getElementById("messagepane");
+  const browser = get_about_message().document.getElementById("messagepane");
   MailE10SUtils.loadURI(browser, url + "plugin.html");
   await BrowserTestUtils.browserLoaded(browser);
 
@@ -200,11 +201,11 @@ add_task(async function test_checkPluginsInNonMessageContent() {
 });
 
 add_task(async function test_3paneWindowDeniedAgain() {
-  select_click_row(0);
+  await select_click_row(0);
 
-  assert_selected_and_displayed(0);
+  await assert_selected_and_displayed(0);
 
-  let browser = get_about_message().document.getElementById("messagepane");
+  const browser = get_about_message().document.getElementById("messagepane");
   // Now check that the content hasn't been loaded
   if (await isPluginLoaded(browser)) {
     throw new Error("Plugin has not been blocked in message as expected");
@@ -218,20 +219,19 @@ add_task(async function test_checkStandaloneMessageWindowDenied() {
 add_task(async function test_checkContentTab() {
   // To open a tab we're going to have to cheat and use tabmail so we can load
   // in the data of what we want.
-  let preCount =
-    mc.window.document.getElementById("tabmail").tabContainer.allTabs.length;
+  const preCount =
+    document.getElementById("tabmail").tabContainer.allTabs.length;
 
-  let newTab = open_content_tab_with_url(url + "plugin.html");
+  const newTab = await open_content_tab_with_url(url + "plugin.html");
 
   if (await isPluginLoaded(newTab.browser)) {
     throw new Error("Plugin has been unexpectedly not blocked in content tab");
   }
 
-  mc.window.document.getElementById("tabmail").closeTab(newTab);
+  document.getElementById("tabmail").closeTab(newTab);
 
   if (
-    mc.window.document.getElementById("tabmail").tabContainer.allTabs.length !=
-    preCount
+    document.getElementById("tabmail").tabContainer.allTabs.length != preCount
   ) {
     throw new Error("The content tab didn't close");
   }

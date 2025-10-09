@@ -131,7 +131,7 @@ classic.jar:
   skin/classic/communicator/icons/question-48.png                       (communicator/icons/question-48.png)
   skin/classic/communicator/icons/warning-24.png                        (communicator/icons/warning-24.png)
 #endif
-  skin/classic/communicator/icons/notification-icons.svg                (communicator/icons/notification-icons.svg)
+  skin/classic/communicator/icons/persistent-storage.svg                (communicator/icons/persistent-storage.svg)
   skin/classic/communicator/about.css                                   (communicator/about.css)
   skin/classic/communicator/aboutSupport.css                            (communicator/aboutSupport.css)
   skin/classic/communicator/brand.css                                   (communicator/brand.css)
@@ -146,6 +146,8 @@ classic.jar:
   skin/classic/communicator/brand/throbber-anim.png                     (communicator/brand/throbber-anim.png)
   skin/classic/communicator/brand/throbber-single.png                   (communicator/brand/throbber-single.png)
   skin/classic/communicator/brand/throbber16-anim.png                   (communicator/brand/throbber16-anim.png)
+  skin/classic/communicator/checkbox/cbox-check.png                     (communicator/icons/checkbox/cbox-check.png)
+  skin/classic/communicator/checkbox/cbox-check-dis.png                 (communicator/icons/checkbox/cbox-check-dis.png)
   skin/classic/communicator/brand/throbber16-single.png                 (communicator/brand/throbber16-single.png)
   skin/classic/communicator/dataman/dataman.css                         (communicator/dataman/dataman.css)
   skin/classic/communicator/dataman/datamanIcon-16.png                  (communicator/dataman/datamanIcon-16.png)

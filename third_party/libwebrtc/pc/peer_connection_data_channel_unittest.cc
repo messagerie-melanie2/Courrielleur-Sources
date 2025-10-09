@@ -9,44 +9,37 @@
  */
 
 #include <memory>
+#include <optional>
 #include <string>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
-#include "absl/types/optional.h"
-#include "api/call/call_factory_interface.h"
 #include "api/jsep.h"
 #include "api/media_types.h"
 #include "api/peer_connection_interface.h"
 #include "api/scoped_refptr.h"
 #include "api/sctp_transport_interface.h"
 #include "api/task_queue/default_task_queue_factory.h"
-#include "api/task_queue/task_queue_factory.h"
-#include "api/transport/sctp_transport_factory_interface.h"
-#include "media/base/fake_media_engine.h"
-#include "media/base/media_engine.h"
 #include "p2p/base/p2p_constants.h"
-#include "p2p/base/port_allocator.h"
 #include "pc/media_session.h"
 #include "pc/peer_connection.h"
-#include "pc/peer_connection_proxy.h"
 #include "pc/peer_connection_wrapper.h"
 #include "pc/sctp_transport.h"
 #include "pc/sdp_utils.h"
 #include "pc/session_description.h"
+#include "pc/test/enable_fake_media.h"
 #include "pc/test/mock_peer_connection_observers.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/logging.h"
-#include "rtc_base/rtc_certificate_generator.h"
 #include "rtc_base/thread.h"
+#include "rtc_base/virtual_socket_server.h"
 #include "test/gmock.h"
 #include "test/gtest.h"
+#include "test/pc/sctp/fake_sctp_transport.h"
+
 #ifdef WEBRTC_ANDROID
 #include "pc/test/android_test_initializer.h"
 #endif
-#include "rtc_base/virtual_socket_server.h"
-#include "test/pc/sctp/fake_sctp_transport.h"
 
 namespace webrtc {
 
@@ -64,8 +57,7 @@ PeerConnectionFactoryDependencies CreatePeerConnectionFactoryDependencies() {
   deps.worker_thread = rtc::Thread::Current();
   deps.signaling_thread = rtc::Thread::Current();
   deps.task_queue_factory = CreateDefaultTaskQueueFactory();
-  deps.media_engine = std::make_unique<cricket::FakeMediaEngine>();
-  deps.call_factory = CreateCallFactory();
+  EnableFakeMedia(deps);
   deps.sctp_factory = std::make_unique<FakeSctpTransportFactory>();
   return deps;
 }
@@ -85,19 +77,12 @@ class PeerConnectionWrapperForDataChannelTest : public PeerConnectionWrapper {
     sctp_transport_factory_ = sctp_transport_factory;
   }
 
-  absl::optional<std::string> sctp_mid() {
+  std::optional<std::string> sctp_mid() {
     return GetInternalPeerConnection()->sctp_mid();
   }
 
-  absl::optional<std::string> sctp_transport_name() {
+  std::optional<std::string> sctp_transport_name() {
     return GetInternalPeerConnection()->sctp_transport_name();
-  }
-
-  PeerConnection* GetInternalPeerConnection() {
-    auto* pci =
-        static_cast<PeerConnectionProxyWithInternal<PeerConnectionInterface>*>(
-            pc());
-    return static_cast<PeerConnection*>(pci->internal());
   }
 
  private:
@@ -228,10 +213,10 @@ TEST_P(PeerConnectionDataChannelTest, SctpContentAndTransportNameSetCorrectly) {
   const auto& offer_contents = offer->description()->contents();
   ASSERT_EQ(cricket::MEDIA_TYPE_AUDIO,
             offer_contents[0].media_description()->type());
-  std::string audio_mid = offer_contents[0].name;
+  auto audio_mid = offer_contents[0].mid();
   ASSERT_EQ(cricket::MEDIA_TYPE_DATA,
             offer_contents[2].media_description()->type());
-  std::string data_mid = offer_contents[2].name;
+  auto data_mid = offer_contents[2].mid();
 
   ASSERT_TRUE(
       caller->SetLocalDescription(CloneSessionDescription(offer.get())));
@@ -277,7 +262,7 @@ TEST_P(PeerConnectionDataChannelTest,
   ASSERT_TRUE(data_content);
   EXPECT_FALSE(data_content->rejected);
   EXPECT_TRUE(
-      answer->description()->GetTransportInfoByName(data_content->name));
+      answer->description()->GetTransportInfoByName(data_content->mid()));
 }
 
 TEST_P(PeerConnectionDataChannelTest, SctpPortPropagatedFromSdpToTransport) {

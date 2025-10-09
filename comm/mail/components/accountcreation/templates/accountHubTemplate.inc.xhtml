@@ -1,17 +1,29 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
-
 <!--
   List of all the account creation templates. Don't load any JavaScript or
   CSS in here, those files are handled lazily in the controller and in the
   various shadowRoots of the views.
 -->
+#include ./accountHubAddressBookAccountSelectTemplate.inc.xhtml
+#include ./accountHubAddressBookLdapAccountFormTemplate.inc.xhtml
+#include ./accountHubAddressBookLdapAdvancedFormTemplate.inc.xhtml
+#include ./accountHubAddressBookOptionSelectTemplate.inc.xhtml
+#include ./accountHubAddressBookRemoteAccountFormTemplate.inc.xhtml
+#include ./accountHubAddressBookSyncTemplate.inc.xhtml
+#include ./accountHubEmailAutoFormTemplate.inc.xhtml
+#include ./accountHubEmailConfigFoundTemplate.inc.xhtml
+#include ./accountHubEmailIncomingFormTemplate.inc.xhtml
+#include ./accountHubEmailOutgoingFormTemplate.inc.xhtml
+#include ./accountHubEmailPasswordFormTemplate.inc.xhtml
+#include ./accountHubEmailSyncAccountsFormTemplate.inc.xhtml
+#include ./accountHubEmailAddedSuccessTemplate.inc.xhtml
+#include ./accountHubFooterTemplate.inc.xhtml
+#include ./accountHubHeaderTemplate.inc.xhtml
+#include ./accountHubStepTemplate.inc.xhtml
 <html:template id="accountHubDialog" xmlns="http://www.w3.org/1999/xhtml">
   <dialog class="account-hub-dialog">
-    <button id="closeButton" type="button">
-      <img src="" alt="" />
-    </button>
   </dialog>
 </html:template>
 
@@ -26,10 +38,14 @@
     <div id="defaultHeader" class="start-header" hidden="hidden">
       <img src="chrome://branding/content/logo-gradient.svg" alt="" />
       <h1>
-        <span class="start-header-brand-name"
-              data-l10n-id="account-hub-brand"></span>
-        <span class="start-header-title"
-              data-l10n-id="account-hub-title"></span>
+        <span
+          class="start-header-brand-name"
+          data-l10n-id="account-hub-brand"
+        ></span>
+        <span
+          class="start-header-title"
+          data-l10n-id="account-hub-title"
+        ></span>
       </h1>
     </div>
   </header>
@@ -37,122 +53,130 @@
   <div class="hub-body">
     <div class="hub-body-grid"></div>
 #ifdef NIGHTLY_BUILD
-    <button id="hubSyncButton"
-            data-l10n-id="account-hub-sync-button"
-            class="button button-flat"
-            type="button"
-            hidden="hidden"></button>
+    <button
+      id="hubSyncButton"
+      data-l10n-id="account-hub-sync-button"
+      class="button button-flat"
+      type="button"
+      hidden="hidden"></button>
 #endif
   </div>
 
   <footer class="hub-footer">
     <ul class="reset-list footer-links">
       <li>
-        <a id="hubReleaseNotes"
-           data-l10n-id="account-hub-release-notes"></a>
+        <a
+          id="hubReleaseNotes"
+          data-l10n-id="account-hub-release-notes"
+        ></a>
       </li>
       <li>
-        <a href="https://support.mozilla.org/products/thunderbird"
-           data-l10n-id="account-hub-support"
-           onclick="openLinkExternally(this.href);"></a>
+        <a
+          href="https://support.mozilla.org/products/thunderbird"
+          data-l10n-id="account-hub-support"
+          onclick="openLinkExternally(this.href);"
+        ></a>
       </li>
       <li>
-        <a href="https://give.thunderbird.net/?utm_source=thunderbird_account_hub&amp;utm_medium=referral&amp;utm_content=hub_footer"
-           data-l10n-id="account-hub-donate"
-           onclick="openLinkExternally(this.href);"></a>
+        <a
+          href="https://www.thunderbird.net/donate/?utm_source=thunderbird_account_hub&amp;utm_medium=referral&amp;utm_content=hub_footer"
+          data-l10n-id="account-hub-donate"
+          onclick="openLinkExternally(this.href);"
+        ></a>
       </li>
     </ul>
   </footer>
 </html:template>
 
 <html:template id="accountHubEmailSetup" xmlns="http://www.w3.org/1999/xhtml">
-  <form id="emailForm" class="account-hub-form">
-    <header class="hub-header">
-      <h1 class="sub-view-title" data-l10n-id="account-hub-email-title"></h1>
-    </header>
+  <email-auto-form
+    id="emailAutoConfigSubview"
+    title-id="account-hub-email-setup-header"
+    class="account-hub-step"
+  >
+  </email-auto-form>
+  <email-manual-incoming-form
+    id="emailIncomingConfigSubview"
+    title-id="account-hub-email-setup-incoming"
+    class="account-hub-step"
+    hidden="hidden"
+  >
+  </email-manual-incoming-form>
+  <email-manual-outgoing-form
+    id="emailOutgoingConfigSubview"
+    title-id="account-hub-email-setup-outgoing"
+    class="account-hub-step"
+    hidden="hidden"
+  >
+  </email-manual-outgoing-form>
+  <email-config-found
+    id="emailConfigFoundSubview"
+    title-id="account-hub-email-config-found"
+    class="account-hub-step"
+    hidden="hidden"
+  >
+  </email-config-found>
+  <email-password-form
+    id="emailPasswordSubview"
+    title-id="account-hub-email-enter-password"
+    class="account-hub-step"
+    hidden="hidden"
+  >
+  </email-password-form>
+  <email-sync-accounts-form
+    id="emailSyncAccountsSubview"
+    title-id="account-hub-email-sync-accounts"
+    class="account-hub-step"
+    hidden="hidden"
+  >
+  </email-sync-accounts-form>
+  <email-added-success
+    id="emailAddedSuccessSubview"
+    class="account-hub-step"
+    hidden="hidden"
+  >
+  </email-added-success>
 
-    <div class="hub-body">
-      <label for="realName"
-             data-l10n-id="account-setup-name-label"
-             data-l10n-attrs="accesskey">
-      </label>
-      <div class="input-control">
-        <input id="realName" type="text"
-               class="input-field"
-               data-l10n-id="account-setup-name-input"
-               required="required" />
-        <img src="chrome://messenger/skin/icons/new/compact/info.svg"
-             data-l10n-id="account-setup-name-info-icon"
-             alt=""
-             class="form-icon" />
-        <img src="chrome://messenger/skin/icons/new/compact/warning.svg"
-             data-l10n-id="account-setup-name-warning-icon"
-             alt=""
-             class="form-icon icon-warning" />
-      </div>
+  <account-hub-footer id="emailFooter" class="hub-footer">
+  </account-hub-footer>
 
-      <label for="email"
-             data-l10n-id="account-setup-email-label"
-             data-l10n-attrs="accesskey">
-      </label>
-      <div class="input-control">
-        <input id="email" type="email"
-               data-l10n-id="account-setup-email-input"
-               class="input-field"
-               required="required" />
-        <img id="emailInfo"
-             src="chrome://messenger/skin/icons/new/compact/info.svg"
-             data-l10n-id="account-setup-email-info-icon"
-             alt=""
-             class="form-icon" />
-        <img id="emailWarning"
-             src="chrome://messenger/skin/icons/new/compact/warning.svg"
-             data-l10n-id="account-setup-email-warning-icon"
-             alt=""
-             class="form-icon icon-warning" />
-      </div>
-
-      <label for="password"
-             data-l10n-id="account-setup-password-label"
-             data-l10n-attrs="accesskey">
-      </label>
-      <div class="input-control">
-        <!-- Leave the placeholder empty for CSS visibility toggle of the
-             adjacent button. -->
-        <input id="password" type="password" class="input-field"
-               placeholder="" />
-        <button id="passwordToggleButton"
-                type="button"
-                data-l10n-id="account-setup-password-toggle-show"
-                class="form-toggle-button"
-                aria-pressed="false">
-          <img src="" alt="" class="form-icon" />
-        </button>
-      </div>
-
-      <div class="remember-button-container">
-        <label class="toggle-container-with-text">
-          <input id="rememberPassword" type="checkbox" checked="checked" />
-          <span data-l10n-id="account-setup-remember-password"
-                data-l10n-attrs="accesskey">
-          </span>
-        </label>
-      </div>
+  <div id="loadingOverlay">
+    <div class="loader-outside">
+      <div class="loader-inside"></div>
     </div>
+  </div>
+</html:template>
 
-    <footer class="hub-footer">
-      <menu class="dialog-menu-container two-columns">
-        <li>
-          <button id="emailGoBackButton" type="button"
-                  data-l10n-id="account-hub-email-cancel-button"></button>
-        </li>
-        <li>
-          <button id="emailContinueButton" type="submit"
-                  data-l10n-id="account-hub-email-continue-button"
-                  class="primary"
-                  disabled="disabled"></button>
-        </li>
-      </menu>
-    </footer>
-  </form>
+<html:template
+  id="accountHubAddressBookSetup"
+  xmlns="http://www.w3.org/1999/xhtml"
+>
+  <address-book-option-select
+    id="addressBookOptionSelectSubview"
+    class="account-hub-step"
+    title-id="account-hub-add-address-book"
+  >
+  </address-book-option-select>
+  <address-book-account-select id="addressBookAccountSelectSubview" hidden="hidden">
+  </address-book-account-select>
+  <address-book-remote-account-form
+    id="addressBookRemoteAccountFormSubview"
+    hidden="hidden"
+  >
+  </address-book-remote-account-form>
+  <address-book-ldap-account-form
+    id="addressBookLdapAccountFormSubview"
+    hidden="hidden"
+  >
+  </address-book-ldap-account-form>
+  <address-book-ldap-advanced-form
+    id="addressBookLdapAdvancedFormSubview"
+    hidden="hidden"
+  >
+  </address-book-ldap-advanced-form>
+  <address-book-sync id="addressBookSyncSubview" hidden="hidden">
+  </address-book-sync>
+
+  <account-hub-footer id="addressBookFooter" class="hub-footer">
+  </account-hub-footer>
 </html:template>

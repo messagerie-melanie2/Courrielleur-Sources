@@ -21,8 +21,7 @@ Windows dependencies
 --------------------
 
 #. You need a :ref:`supported version of Windows<tier_1_hosts>`.
-#. Download and install `Visual Studio Community Edition. <https://visualstudio.microsoft.com/downloads/>`__
-#. Finally download the `MozillaBuild Package. <https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe>`__ Installation directory should be:
+#. Download the `MozillaBuild Package. <https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe>`__ Installation directory should be:
 
     .. code-block:: shell
 
@@ -34,7 +33,7 @@ Windows dependencies
 
     All the commands of this tutorial must be run in the shell provided with the MozillaBuild Package (start-shell.bat)
 
-:ref:`More information <Building Firefox On Windows>`
+:ref:`More information on building Firefox on Windows <Building Firefox On Windows>`
 
 Bootstrap a copy of the Firefox source code
 -------------------------------------------
@@ -43,7 +42,7 @@ You can download the source code and have Firefox automatically download and ins
 
 Downloading can take from 40 minutes to two hours (depending on your connection) and the repository should be less than 5GB (~ 20GB after the build).
 
-The default options are recommended.
+The **default options are recommended**.
 If you're not planning to write C++ or Rust code, select :ref:`Artifact Mode <Understanding Artifact Builds>`
 and follow the instructions at the end of the bootstrap for creating a mozconfig file.
 
@@ -55,20 +54,33 @@ To Setup Firefox On Windows
     $ cd c:/
     $ mkdir mozilla-source
     $ cd mozilla-source
-    $ wget https://hg.mozilla.org/mozilla-central/raw-file/default/python/mozboot/bin/bootstrap.py
+    $ wget https://raw.githubusercontent.com/mozilla-firefox/firefox/refs/heads/main/python/mozboot/bin/bootstrap.py
+
     $ python3 bootstrap.py
 
-More information :ref:`for Windows <Building Firefox On Windows>`
+More information on :ref:`building Firefox for Windows <Building Firefox On Windows>`.
 
 To Setup Firefox On macOS and Linux
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: shell
 
-    $ curl https://hg.mozilla.org/mozilla-central/raw-file/default/python/mozboot/bin/bootstrap.py -O
+    $ curl -L https://raw.githubusercontent.com/mozilla-firefox/firefox/refs/heads/main/python/mozboot/bin/bootstrap.py -O
+
     $ python3 bootstrap.py
 
-More information :ref:`for Linux <Building Firefox On Linux>` and :ref:`for MacOS <Building Firefox On MacOS>`
+More information on :ref:`building Firefox for Linux <Building Firefox On Linux>` and :ref:`building Firefox for MacOS <Building Firefox On MacOS>`.
+
+To Setup Firefox for Android
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: shell
+
+    $ curl -L https://raw.githubusercontent.com/mozilla-firefox/firefox/refs/heads/main/python/mozboot/bin/bootstrap.py -O
+
+    $ python3 bootstrap.py
+
+More information on :ref:`building Firefox for Android <Firefox for Android>`
 
 To set up your editor
 ---------------------
@@ -85,6 +97,11 @@ build and reviews cycles.
 
 See our :ref:`editor page for more information about how to set up your favorite editor <Editor / IDE integration>`.
 
+More advanced git configuration
+-------------------------------
+
+See the :ref:`Git tips and tricks page <Git Tricks>` to use a personal fork, and for other useful git configurations.
+
 To build & run
 --------------
 
@@ -92,11 +109,17 @@ Once the System is bootstrapped, run:
 
 .. code-block:: shell
 
-    $ cd mozilla-unified
+    $ cd firefox
     $ ./mach build
 
 which will check for dependencies and start the build.
 This will take a while; a few minutes to a few hours depending on your hardware.
+
+.. note::
+
+    If you build Firefox often, add `ac_add_options \-\-with-ccache=sccache` to .mozconfig.
+    sccache will significantly speed up your builds by caching compilation results.
+    The Firefox build system will download sccache automatically.
 
 .. note::
 
@@ -111,7 +134,11 @@ To run it:
 
      $ ./mach run
 
-:ref:`More information about Linux <Building Firefox On Linux>` / :ref:`More information about MacOS <Building Firefox On MacOS>`
+This command will open your locally built Firefox in a new window.
+
+:ref:`More information about building Firefox on Linux <Building Firefox On Linux>` / :ref:`More information about building Firefox on MacOS <Building Firefox On MacOS>`
+
+If you encounter build errors, please reference the more detailed "Building Firefox" on your specific operating system document and specifically the "Troubleshooting" section.
 
 .. _write_a_patch:
 
@@ -120,12 +147,24 @@ To write a patch
 
 Make the changes you need in the codebase. You can look up UI text in `Searchfox <https://searchfox.org>`__ to find the right file.
 
-Then:
+.. note::
+    If you are unsure of what changes you need to make, or need help from the mentor of the bug,
+    please don't hesitate to use the needinfo feature ("Request information from") on `Bugzilla <https://bugzilla.mozilla.org/home>`__ to get the attention of your mentor.
+
+
+After making your changes, visualize your changes to ensure you're including all the necessary work:
 
 .. code-block:: shell
 
-    # Mercurial
-    $ hg commit
+    # For files changed/added/removed
+    $ git status
+
+    # For detailed line changes
+    $ git diff
+
+Then commit your changes:
+
+.. code-block:: shell
 
     # Git
     $ git commit
@@ -142,9 +181,12 @@ The commit message should look like:
 
 **Make sure you include the bug number and at least one reviewer (or reviewer group) in this format.**
 
+For example, here is an example of a good commit message:
+"Bug 123456 - Null-check presentation shell so we don't crash when a button removes itself
+during its own onclick handler. r=person"
+
 To :ref:`find a reviewer or a review group <Getting reviews>`, the easiest way is to run
-``hg log <modified-file>`` (or ``git log <modified-file>``, if
-you're using git) on the relevant files, and look who usually is
+`git log <modified-file>`` on the relevant files, and look who usually is
 reviewing the actual changes (ie not reformat, renaming of variables, etc).
 
 
@@ -152,15 +194,10 @@ To visualize your patch in the repository, run:
 
 .. code-block:: shell
 
-    # Mercurial
-    $ hg wip
-
     # Git
     $ git show
 
 :ref:`More information on how to work with stack of patches <Working with stack of patches Quick Reference>`
-
-:ref:`More information <Mercurial Overview>`
 
 To make sure the change follows the coding style
 ------------------------------------------------
@@ -257,7 +294,7 @@ If you wrote several patches on top of each other:
     $ moz-phab submit <first_revision>::<last_revision>
 
 `More
-information <https://moz-conduit.readthedocs.io/en/latest/phabricator-user.html>`__
+information on how to use Phabricator and MozPhab <https://moz-conduit.readthedocs.io/en/latest/phabricator-user.html>`__
 
 To update the working directory
 -------------------------------
@@ -266,8 +303,7 @@ If you're finished with a patch and would like to return to the tip to make a ne
 
 .. code-block:: shell
 
-    $ hg pull central
-    $ hg up central
+    $ git pull --rebase
 
 To update a submitted patch
 ---------------------------
@@ -282,12 +318,12 @@ If your patch is not loaded in your working directory, you first need to re-appl
 
     $ moz-phab patch D<revision_id>
 
+    # Or you can use the URL of the revision on Phabricator
+    $ moz-phab patch https://phabricator.services.mozilla.com/D<revision_id>
+
 Make your changes in the working folder and run:
 
 .. code-block:: shell
-
-   # Or, if you need to pass arguments, e.g., changing the commit message:
-   $ hg commit --amend
 
    # Git
    $ git commit --amend
@@ -296,7 +332,7 @@ After amending the patch, you will need to submit it using moz-phab again.
 
 .. warning::
 
-    Don't use ``hg commit --amend -m`` or ``git commit --amend -m``.
+    Don't use ``git commit --amend -m``.
 
     Phabricator tracks revision by editing the commit message when a
     revision is created to add a special ``Differential Revision:
@@ -311,9 +347,6 @@ command:
 
 .. code-block:: shell
 
-   # Mercurial
-   $ hg histedit
-
    # Git
    $ git rebase -i
 
@@ -327,9 +360,6 @@ Retrieve new changes from the repository
 To pull changes from the repository, run:
 
 .. code-block:: shell
-
-   # Mercurial
-   $ hg pull --rebase
 
    # Git
    $ git pull --rebase
@@ -360,10 +390,10 @@ GeckoView setup and contribution docs live in `geckoview.dev <https://geckoview.
 More documentation about contribution
 -------------------------------------
 
+:ref:`How to Contribute Code to Firefox`
+
 :ref:`Contributing to Mozilla projects`
 
 https://mozilla-version-control-tools.readthedocs.io/en/latest/devguide/contributing.html
 
 https://moz-conduit.readthedocs.io/en/latest/phabricator-user.html
-
-https://mikeconley.github.io/documents/How_mconley_uses_Mercurial_for_Mozilla_code

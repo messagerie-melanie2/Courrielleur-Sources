@@ -21,12 +21,8 @@ class nsIMemoryReporter;
 typedef mozilla::ArenaAllocator<1024 * 8, 8> CategoryAllocator;
 
 /* 16d222a6-1dd2-11b2-b693-f38b02c021b2 */
-#define NS_CATEGORYMANAGER_CID                       \
-  {                                                  \
-    0x16d222a6, 0x1dd2, 0x11b2, {                    \
-      0xb6, 0x93, 0xf3, 0x8b, 0x02, 0xc0, 0x21, 0xb2 \
-    }                                                \
-  }
+#define NS_CATEGORYMANAGER_CID \
+  {0x16d222a6, 0x1dd2, 0x11b2, {0xb6, 0x93, 0xf3, 0x8b, 0x02, 0xc0, 0x21, 0xb2}}
 
 /**
  * a "leaf-node", managed by the nsCategoryNode hashtable.
@@ -83,8 +79,8 @@ class CategoryNode {
 
   void* operator new(size_t aSize, CategoryAllocator* aArena);
 
-  nsTHashtable<CategoryLeaf> mTable;
-  mozilla::Mutex mLock MOZ_UNANNOTATED;
+  nsTHashtable<CategoryLeaf> mTable MOZ_GUARDED_BY(mLock);
+  mozilla::Mutex mLock;
 };
 
 /**
@@ -130,16 +126,16 @@ class nsCategoryManager final : public nsICategoryManager,
 
   size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf);
 
-  CategoryNode* get_category(const nsACString& aName);
+  CategoryNode* get_category(const nsACString& aName) MOZ_REQUIRES(mLock);
   void NotifyObservers(
       const char* aTopic,
       const nsACString& aCategoryName,  // must be a static string
       const nsACString& aEntryName);
 
-  CategoryAllocator mArena;
-  nsClassHashtable<nsDepCharHashKey, CategoryNode> mTable;
-  mozilla::Mutex mLock MOZ_UNANNOTATED;
-  bool mSuppressNotifications;
+  CategoryAllocator mArena;  // Mainthread only
+  nsClassHashtable<nsDepCharHashKey, CategoryNode> mTable MOZ_GUARDED_BY(mLock);
+  mozilla::Mutex mLock;
+  bool mSuppressNotifications;  // Mainthread only
 };
 
 #endif

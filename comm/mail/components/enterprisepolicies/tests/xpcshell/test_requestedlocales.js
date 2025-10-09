@@ -7,14 +7,15 @@ const REQ_LOC_CHANGE_EVENT = "intl:requested-locales-changed";
 
 function promiseLocaleChanged(requestedLocale) {
   return new Promise(resolve => {
-    let localeObserver = {
-      observe(aSubject, aTopic, aData) {
+    const localeObserver = {
+      observe(aSubject, aTopic) {
         switch (aTopic) {
-          case REQ_LOC_CHANGE_EVENT:
-            let reqLocs = Services.locale.requestedLocales;
+          case REQ_LOC_CHANGE_EVENT: {
+            const reqLocs = Services.locale.requestedLocales;
             equal(reqLocs[0], requestedLocale);
             Services.obs.removeObserver(localeObserver, REQ_LOC_CHANGE_EVENT);
             resolve();
+          }
         }
       },
     };
@@ -23,8 +24,8 @@ function promiseLocaleChanged(requestedLocale) {
 }
 
 add_task(async function test_requested_locale_array() {
-  let originalLocales = Services.locale.requestedLocales;
-  let localePromise = promiseLocaleChanged("de");
+  const originalLocales = Services.locale.requestedLocales;
+  const localePromise = promiseLocaleChanged("de");
   await setupPolicyEngineWithJson({
     policies: {
       RequestedLocales: ["de"],
@@ -35,8 +36,8 @@ add_task(async function test_requested_locale_array() {
 });
 
 add_task(async function test_requested_locale_string() {
-  let originalLocales = Services.locale.requestedLocales;
-  let localePromise = promiseLocaleChanged("fr");
+  const originalLocales = Services.locale.requestedLocales;
+  const localePromise = promiseLocaleChanged("fr");
   await setupPolicyEngineWithJson({
     policies: {
       RequestedLocales: "fr",

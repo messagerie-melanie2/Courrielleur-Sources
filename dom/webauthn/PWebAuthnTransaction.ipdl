@@ -14,9 +14,12 @@
  * selecting a different tab.
  */
 
-include protocol PBackground;
+include protocol PWindowGlobal;
+
+include "mozilla/dom/WebAuthnIPCUtils.h";
 
 using mozilla::dom::MaybeDiscardedBrowsingContext from "mozilla/dom/BrowsingContext.h";
+using mozilla::dom::CredentialProtectionPolicy from "mozilla/dom/WebAuthenticationBinding.h";
 
 namespace mozilla {
 namespace dom {
@@ -32,42 +35,96 @@ struct WebAuthnScopedCredential {
   uint8_t transports;
 };
 
-struct WebAuthnExtensionAppId {
-  uint8_t[] AppId;
-  nsString appIdentifier;
+struct WebAuthnExtensionCredProtect {
+  CredentialProtectionPolicy policy;
+  bool required;
+};
+
+struct WebAuthnExtensionCredProps {
+  bool credProps;
 };
 
 struct WebAuthnExtensionHmacSecret {
   bool hmacCreateSecret;
 };
 
+struct WebAuthnExtensionLargeBlob {
+  bool? flag;      // In registrations this indicates whether large blob support is required.
+                   // In authentications this indicates whether this is a request to read the
+                   // a blob or whether it is a request to write one.
+  uint8_t[] write; // Authentication only. The value to be written when `flag` is
+                   // present and false.
+};
+
+struct WebAuthnExtensionMinPinLength {
+  bool minPinLength;
+};
+
+struct WebAuthnExtensionPrf {
+  WebAuthnExtensionPrfValues? eval;
+  bool evalByCredentialMaybe;
+  WebAuthnExtensionPrfEvalByCredentialEntry[] evalByCredential;
+};
+
+struct WebAuthnExtensionPrfValues {
+    uint8_t[] first;
+    bool secondMaybe;
+    uint8_t[] second;
+};
+
+struct WebAuthnExtensionPrfEvalByCredentialEntry {
+    uint8_t[] credentialId;
+    WebAuthnExtensionPrfValues eval;
+};
+
 union WebAuthnExtension {
-  WebAuthnExtensionAppId;
+  WebAuthnExtensionCredProtect;
+  WebAuthnExtensionCredProps;
   WebAuthnExtensionHmacSecret;
+  WebAuthnExtensionLargeBlob;
+  WebAuthnExtensionMinPinLength;
+  WebAuthnExtensionPrf;
 };
 
 struct WebAuthnExtensionResultAppId {
   bool AppId;
 };
 
+struct WebAuthnExtensionResultCredProps {
+  bool rk;
+};
+
 struct WebAuthnExtensionResultHmacSecret {
   bool hmacCreateSecret;
 };
 
+struct WebAuthnExtensionResultLargeBlob {
+  bool flag;      // In registration this indicates support. In authentication
+                  // it indicates whether this is a read return or a write return.
+  uint8_t[] blob; // Authentication only. Read return.
+  bool written;   // Authentication only. Write return
+};
+
+struct WebAuthnExtensionResultPrf {
+  bool? enabled;
+  WebAuthnExtensionPrfValues? results;
+};
+
 union WebAuthnExtensionResult {
   WebAuthnExtensionResultAppId;
+  WebAuthnExtensionResultCredProps;
   WebAuthnExtensionResultHmacSecret;
+  WebAuthnExtensionResultLargeBlob;
+  WebAuthnExtensionResultPrf;
 };
 
 struct WebAuthnMakeCredentialRpInfo {
   nsString Name;
-  nsString Icon;
 };
 
 struct WebAuthnMakeCredentialUserInfo {
   uint8_t[] Id;
   nsString Name;
-  nsString Icon;
   nsString DisplayName;
 };
 
@@ -76,10 +133,8 @@ struct CoseAlg {
 };
 
 struct WebAuthnMakeCredentialInfo {
-  nsString Origin;
-  nsString RpId;
+  nsCString RpId;
   uint8_t[] Challenge;
-  nsCString ClientDataJSON;
   uint32_t TimeoutMS;
   WebAuthnScopedCredential[] ExcludeList;
   WebAuthnMakeCredentialRpInfo Rp;
@@ -88,26 +143,31 @@ struct WebAuthnMakeCredentialInfo {
   WebAuthnExtension[] Extensions;
   WebAuthnAuthenticatorSelection AuthenticatorSelection;
   nsString attestationConveyancePreference;
-  uint64_t BrowsingContextId;
 };
 
 struct WebAuthnMakeCredentialResult {
   nsCString ClientDataJSON;
   uint8_t[] AttestationObject;
   uint8_t[] KeyHandle;
+  nsString[] Transports;
   WebAuthnExtensionResult[] Extensions;
+  nsString? AuthenticatorAttachment;
+};
+
+union WebAuthnMakeCredentialResponse {
+  nsresult;
+  WebAuthnMakeCredentialResult;
 };
 
 struct WebAuthnGetAssertionInfo {
-  nsString Origin;
-  nsString RpId;
+  nsCString RpId;
+  nsCString? AppId;
   uint8_t[] Challenge;
-  nsCString ClientDataJSON;
   uint32_t TimeoutMS;
   WebAuthnScopedCredential[] AllowList;
   WebAuthnExtension[] Extensions;
   nsString userVerificationRequirement;
-  uint64_t BrowsingContextId;
+  bool ConditionallyMediated;
 };
 
 struct WebAuthnGetAssertionResult {
@@ -117,23 +177,25 @@ struct WebAuthnGetAssertionResult {
   uint8_t[] AuthenticatorData;
   WebAuthnExtensionResult[] Extensions;
   uint8_t[] UserHandle;
+  nsString? AuthenticatorAttachment;
 };
 
-[ManualDealloc]
+union WebAuthnGetAssertionResponse {
+  nsresult;
+  WebAuthnGetAssertionResult;
+};
+
 async protocol PWebAuthnTransaction {
-  manager PBackground;
+  manager PWindowGlobal;
 
   parent:
-    async RequestRegister(uint64_t aTransactionId, WebAuthnMakeCredentialInfo aTransactionInfo);
-    async RequestSign(uint64_t aTransactionId, WebAuthnGetAssertionInfo aTransactionInfo);
-    [Tainted] async RequestCancel(uint64_t aTransactionId);
-    async DestroyMe();
+    async RequestRegister(WebAuthnMakeCredentialInfo aTransactionInfo) returns (WebAuthnMakeCredentialResponse response);
+    async RequestSign(WebAuthnGetAssertionInfo aTransactionInfo) returns (WebAuthnGetAssertionResponse response);
+    async RequestIsUVPAA() returns (bool available);
+    async RequestCancel();
 
   child:
     async __delete__();
-    async ConfirmRegister(uint64_t aTransactionId, WebAuthnMakeCredentialResult aResult);
-    async ConfirmSign(uint64_t aTransactionId, WebAuthnGetAssertionResult aResult);
-    async Abort(uint64_t aTransactionId, nsresult Error);
 };
 
 }

@@ -5,6 +5,7 @@
 "use strict";
 
 module.exports = {
+  name: "mozilla/require-jsdoc",
   plugins: ["jsdoc"],
 
   rules: {
@@ -18,15 +19,23 @@ module.exports = {
       },
     ],
     "jsdoc/require-param": "error",
-    "jsdoc/require-param-description": "error",
     "jsdoc/require-param-name": "error",
+    "jsdoc/require-param-type": "error",
     "jsdoc/require-property": "error",
     "jsdoc/require-property-description": "error",
     "jsdoc/require-property-name": "error",
     "jsdoc/require-property-type": "error",
-    "jsdoc/require-returns": "error",
     "jsdoc/require-returns-check": "error",
     "jsdoc/require-yields": "error",
     "jsdoc/require-yields-check": "error",
+  },
+  settings: {
+    jsdoc: {
+      // This changes what's allowed in JSDocs, enabling more type-inference
+      // friendly types.  This is the default in eslint-plugin-jsdoc versions
+      // since May 2023, but we're still on 39.9 and need opt-in for now.
+      // https://github.com/gajus/eslint-plugin-jsdoc/issues/834
+      mode: "typescript",
+    },
   },
 };

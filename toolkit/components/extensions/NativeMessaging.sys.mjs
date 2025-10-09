@@ -1,28 +1,14 @@
-/* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
+/* -*- mode: js; indent-tabs-mode: nil; js-indent-level: 2 -*- */
 /* vim: set sts=2 sw=2 et tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* eslint-disable mozilla/valid-lazy */
 
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 import { EventEmitter } from "resource://gre/modules/EventEmitter.sys.mjs";
 import { ExtensionUtils } from "resource://gre/modules/ExtensionUtils.sys.mjs";
-
-const lazy = {};
-
-ChromeUtils.defineESModuleGetters(lazy, {
-  AsyncShutdown: "resource://gre/modules/AsyncShutdown.sys.mjs",
-  NativeManifests: "resource://gre/modules/NativeManifests.sys.mjs",
-  Subprocess: "resource://gre/modules/Subprocess.sys.mjs",
-});
-
-const { ExtensionError, promiseTimeout } = ExtensionUtils;
-
-// For a graceful shutdown (i.e., when the extension is unloaded or when it
-// explicitly calls disconnect() on a native port), how long we give the native
-// application to exit before we start trying to kill it.  (in milliseconds)
-const GRACEFUL_SHUTDOWN_TIME = 3000;
 
 // Hard limits on maximum message size that can be read/written
 // These are defined in the native messaging documentation, note that
@@ -40,7 +26,32 @@ const PREF_MAX_READ = "webextensions.native-messaging.max-input-message-bytes";
 const PREF_MAX_WRITE =
   "webextensions.native-messaging.max-output-message-bytes";
 
-export var NativeApp = class extends EventEmitter {
+const lazy = XPCOMUtils.declareLazy({
+  AsyncShutdown: "resource://gre/modules/AsyncShutdown.sys.mjs",
+  NativeManifests: "resource://gre/modules/NativeManifests.sys.mjs",
+  Subprocess: "resource://gre/modules/Subprocess.sys.mjs",
+  maxRead: { pref: PREF_MAX_READ, default: MAX_READ },
+  maxWrite: { pref: PREF_MAX_WRITE, default: MAX_WRITE },
+  portal: {
+    service: "@mozilla.org/extensions/native-messaging-portal;1",
+    iid: Ci.nsINativeMessagingPortal,
+  },
+});
+
+const { ExtensionError, promiseTimeout } = ExtensionUtils;
+
+// For a graceful shutdown (i.e., when the extension is unloaded or when it
+// explicitly calls disconnect() on a native port), how long we give the native
+// application to exit before we start trying to kill it.  (in milliseconds)
+const GRACEFUL_SHUTDOWN_TIME = 3000;
+
+export class NativeApp extends EventEmitter {
+  _throwGenericError(application) {
+    // Report a generic error to not leak information about whether a native
+    // application is installed to addons that do not have the right permission.
+    throw new ExtensionError(`No such native application ${application}`);
+  }
+
   /**
    * @param {BaseContext} context The context that initiated the native app.
    * @param {string} application The identifier of the native app.
@@ -59,6 +70,18 @@ export var NativeApp = class extends EventEmitter {
     this.sendQueue = [];
     this.writePromise = null;
     this.cleanupStarted = false;
+    this.portalSessionHandle = null;
+
+    if ("@mozilla.org/extensions/native-messaging-portal;1" in Cc) {
+      if (lazy.portal.shouldUse()) {
+        this.startupPromise = this._doInitPortal().catch(err => {
+          this.startupPromise = null;
+          Cu.reportError(err instanceof Error ? err : err.message);
+          this._cleanup(err);
+        });
+        return;
+      }
+    }
 
     this.startupPromise = lazy.NativeManifests.lookupManifest(
       "stdio",
@@ -66,10 +89,8 @@ export var NativeApp = class extends EventEmitter {
       context
     )
       .then(hostInfo => {
-        // Report a generic error to not leak information about whether a native
-        // application is installed to addons that do not have the right permission.
         if (!hostInfo) {
-          throw new ExtensionError(`No such native application ${application}`);
+          this._throwGenericError(application);
         }
 
         let command = hostInfo.manifest.path;
@@ -77,6 +98,9 @@ export var NativeApp = class extends EventEmitter {
           // Normalize in case the extension used / instead of \.
           command = command.replaceAll("/", "\\");
 
+          // Relative paths are only supported on Windows. On Linux and macOS,
+          // _tryPath in NativeManifests.sys.mjs enforces that the command path
+          // is absolute.
           if (!PathUtils.isAbsolute(command)) {
             // Note: hostInfo.path is an absolute path to the manifest.
             const parentPath = PathUtils.parent(
@@ -86,11 +110,6 @@ export var NativeApp = class extends EventEmitter {
             // but command is allowed to contain ".." to traverse the directory.
             command = `${parentPath}\\${command}`;
           }
-        } else if (!PathUtils.isAbsolute(command)) {
-          // Only windows supports relative paths.
-          throw new Error(
-            "NativeApp requires absolute path to command on this platform"
-          );
         }
 
         let subprocessOpts = {
@@ -117,12 +136,73 @@ export var NativeApp = class extends EventEmitter {
       });
   }
 
+  async _doInitPortal() {
+    let available = await lazy.portal.available;
+    if (!available) {
+      Cu.reportError("Native messaging portal is not available");
+      this._throwGenericError(this.name);
+    }
+
+    let handle = await lazy.portal.createSession(this.name);
+    this.portalSessionHandle = handle;
+
+    let hostInfo = null;
+    let path;
+    try {
+      let manifest = await lazy.portal.getManifest(
+        handle,
+        this.name,
+        this.context.extension.id
+      );
+      path = manifest.substring(0, 30) + "...";
+      hostInfo = await lazy.NativeManifests.parseManifest(
+        "stdio",
+        path,
+        this.name,
+        this.context,
+        JSON.parse(manifest)
+      );
+    } catch (ex) {
+      if (ex instanceof SyntaxError && ex.message.startsWith("JSON.parse:")) {
+        Cu.reportError(`Error parsing native manifest ${path}: ${ex.message}`);
+        this._throwGenericError(this.name);
+      }
+    }
+    if (!hostInfo) {
+      this._throwGenericError(this.name);
+    }
+
+    let pipes;
+    try {
+      pipes = await lazy.portal.start(
+        handle,
+        this.name,
+        this.context.extension.id
+      );
+    } catch (err) {
+      if (err.name == "NotFoundError") {
+        this._throwGenericError(this.name);
+      } else {
+        throw err;
+      }
+    }
+    this.proc = await lazy.Subprocess.connectRunning([
+      pipes.stdin,
+      pipes.stdout,
+      pipes.stderr,
+    ]);
+    this.startupPromise = null;
+    this._startRead();
+    this._startWrite();
+    this._startStderrRead();
+  }
+
   /**
    * Open a connection to a native messaging host.
    *
    * @param {number} portId A unique internal ID that identifies the port.
-   * @param {NativeMessenger} port Parent NativeMessenger used to send messages.
-   * @returns {ParentPort}
+   * @param {import("ExtensionParent.sys.mjs").NativeMessenger} port Parent NativeMessenger used to send messages.
+   * @returns {import("ExtensionParent.sys.mjs").ParentPort}
    */
   onConnect(portId, port) {
     // eslint-disable-next-line
@@ -148,12 +228,12 @@ export var NativeApp = class extends EventEmitter {
   /**
    * @param {BaseContext} context The scope from where `message` originates.
    * @param {*} message A message from the extension, meant for a native app.
-   * @returns {ArrayBuffer} An ArrayBuffer that can be sent to the native app.
+   * @returns {ArrayBufferLike} An ArrayBuffer that can be sent to the native app.
    */
   static encodeMessage(context, message) {
     message = context.jsonStringify(message);
     let buffer = new TextEncoder().encode(message).buffer;
-    if (buffer.byteLength > NativeApp.maxWrite) {
+    if (buffer.byteLength > lazy.maxWrite) {
       throw new context.Error("Write too big");
     }
     return buffer;
@@ -174,9 +254,9 @@ export var NativeApp = class extends EventEmitter {
     this.readPromise = this.proc.stdout
       .readUint32()
       .then(len => {
-        if (len > NativeApp.maxRead) {
+        if (len > lazy.maxRead) {
           throw new ExtensionError(
-            `Native application tried to send a message of ${len} bytes, which exceeds the limit of ${NativeApp.maxRead} bytes.`
+            `Native application tried to send a message of ${len} bytes, which exceeds the limit of ${lazy.maxRead} bytes.`
           );
         }
         return this.proc.stdout.readJSON(len);
@@ -265,7 +345,7 @@ export var NativeApp = class extends EventEmitter {
 
     let buffer = msg;
 
-    if (buffer.byteLength > NativeApp.maxWrite) {
+    if (buffer.byteLength > lazy.maxWrite) {
       throw new ExtensionError("Write too big");
     }
 
@@ -292,6 +372,22 @@ export var NativeApp = class extends EventEmitter {
     }
 
     await this.startupPromise;
+
+    if (this.portalSessionHandle) {
+      if (this.writePromise) {
+        await this.writePromise.catch(Cu.reportError);
+      }
+      // When using the WebExtensions portal, we don't control the external
+      // process, the portal does. So let the portal handle waiting/killing the
+      // external process as it sees fit.
+      await lazy.portal
+        .closeSession(this.portalSessionHandle)
+        .catch(Cu.reportError);
+      this.portalSessionHandle = null;
+      this.proc?.kill();
+      this.proc = null;
+      return;
+    }
 
     if (!this.proc) {
       // Failed to initialize proc in the constructor.
@@ -380,17 +476,4 @@ export var NativeApp = class extends EventEmitter {
 
     return result;
   }
-};
-
-XPCOMUtils.defineLazyPreferenceGetter(
-  NativeApp,
-  "maxRead",
-  PREF_MAX_READ,
-  MAX_READ
-);
-XPCOMUtils.defineLazyPreferenceGetter(
-  NativeApp,
-  "maxWrite",
-  PREF_MAX_WRITE,
-  MAX_WRITE
-);
+}

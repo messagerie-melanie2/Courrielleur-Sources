@@ -45,7 +45,7 @@ class gfxPlatformMac : public gfxPlatform {
   void ReadSystemFontList(mozilla::dom::SystemFontList* aFontList) override;
 
   void GetCommonFallbackFonts(uint32_t aCh, Script aRunScript,
-                              eFontPresentation aPresentation,
+                              FontPresentation aPresentation,
                               nsTArray<const char*>& aFontList) override;
 
   // lookup the system font for a particular system font type and set
@@ -75,8 +75,6 @@ class gfxPlatformMac : public gfxPlatform {
   uint32_t GetAntiAliasingThreshold() { return mFontAntiAliasingThreshold; }
 
   static bool CheckVariationFontSupport();
-
-  bool SupportsHDR() override;
 
  protected:
   bool AccelerateLayersByDefault() override;

@@ -2,13 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-import { l10nHelper } from "resource:///modules/imXPCOMUtils.sys.mjs";
+import { IMServices } from "resource:///modules/IMServices.sys.mjs";
 
 const lazy = {};
 
-XPCOMUtils.defineLazyGetter(lazy, "_", () =>
-  l10nHelper("chrome://chat/locale/matrix.properties")
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () => new Localization(["chat/matrix-properties.ftl"], true)
 );
 
 ChromeUtils.defineESModuleGetters(lazy, {
@@ -16,27 +17,27 @@ ChromeUtils.defineESModuleGetters(lazy, {
   MatrixSDK: "resource:///modules/matrix-sdk.sys.mjs",
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "EVENT_TO_STRING", () => ({
-  ban: "powerLevel.ban",
-  [lazy.MatrixSDK.EventType.RoomAvatar]: "powerLevel.roomAvatar",
-  [lazy.MatrixSDK.EventType.RoomCanonicalAlias]: "powerLevel.mainAddress",
-  [lazy.MatrixSDK.EventType.RoomHistoryVisibility]: "powerLevel.history",
-  [lazy.MatrixSDK.EventType.RoomName]: "powerLevel.roomName",
-  [lazy.MatrixSDK.EventType.RoomPowerLevels]: "powerLevel.changePermissions",
-  [lazy.MatrixSDK.EventType.RoomServerAcl]: "powerLevel.server_acl",
-  [lazy.MatrixSDK.EventType.RoomTombstone]: "powerLevel.upgradeRoom",
-  invite: "powerLevel.inviteUser",
-  kick: "powerLevel.kickUsers",
-  redact: "powerLevel.remove",
-  state_default: "powerLevel.state_default",
-  users_default: "powerLevel.defaultRole",
-  events_default: "powerLevel.events_default",
-  [lazy.MatrixSDK.EventType.RoomEncryption]: "powerLevel.encryption",
-  [lazy.MatrixSDK.EventType.RoomTopic]: "powerLevel.topic",
+ChromeUtils.defineLazyGetter(lazy, "EVENT_TO_STRING", () => ({
+  ban: "power-level-ban",
+  [lazy.MatrixSDK.EventType.RoomAvatar]: "power-level-room-avatar",
+  [lazy.MatrixSDK.EventType.RoomCanonicalAlias]: "power-level-main-address",
+  [lazy.MatrixSDK.EventType.RoomHistoryVisibility]: "power-level-history",
+  [lazy.MatrixSDK.EventType.RoomName]: "power-level-room-name",
+  [lazy.MatrixSDK.EventType.RoomPowerLevels]: "power-level-change-permissions",
+  [lazy.MatrixSDK.EventType.RoomServerAcl]: "power-level-server-acl",
+  [lazy.MatrixSDK.EventType.RoomTombstone]: "power-level-upgrade-room",
+  invite: "power-level-invite-user",
+  kick: "power-level-kick-users",
+  redact: "power-level-remove",
+  state_default: "power-level-state-default",
+  users_default: "power-level-default-role",
+  events_default: "power-level-events-default",
+  [lazy.MatrixSDK.EventType.RoomEncryption]: "power-level-encryption",
+  [lazy.MatrixSDK.EventType.RoomTopic]: "power-level-topic",
 }));
 
 // Commands from element that we're not yet supporting (including equivalents):
-// - /nick (no proper display name change support in matrix.jsm yet)
+// - /nick (no proper display name change support in matrix.sys.mjs yet)
 // - /myroomnick <display_name>
 // - /roomavatar [<mxc_url>]
 // - /myroomavatar [<mxc_url>]
@@ -67,7 +68,9 @@ function getAccount(conv) {
  */
 function getEventString(eventType, userPower) {
   if (lazy.EVENT_TO_STRING.hasOwnProperty(eventType)) {
-    return lazy._(lazy.EVENT_TO_STRING[eventType], userPower);
+    return lazy.l10n.formatValueSync(lazy.EVENT_TO_STRING[eventType], {
+      var1: userPower,
+    });
   }
   return null;
 }
@@ -80,27 +83,31 @@ function getEventString(eventType, userPower) {
  * @param {prplIConversation} conv - Conversation to list details for.
  */
 function publishRoomDetails(account, conv) {
-  let roomState = conv.roomState;
-  let powerLevelEvent = roomState.getStateEvents(
+  const roomState = conv.roomState;
+  const powerLevelEvent = roomState.getStateEvents(
     lazy.MatrixSDK.EventType.RoomPowerLevels,
     ""
   );
-  let room = conv.room;
+  const room = conv.room;
 
-  let name = room.name;
-  let nameString = lazy._("detail.name", name);
+  const name = room.name;
+  const nameString = lazy.l10n.formatValueSync("detail-name", { value: name });
   conv.writeMessage(account.userId, nameString, {
     system: true,
   });
 
-  let roomId = room.roomId;
-  let roomIdString = lazy._("detail.roomId", roomId);
+  const roomId = room.roomId;
+  const roomIdString = lazy.l10n.formatValueSync("detail-room-id", {
+    value: roomId,
+  });
   conv.writeMessage(account.userId, roomIdString, {
     system: true,
   });
 
-  let roomVersion = room.getVersion();
-  let versionString = lazy._("detail.version", roomVersion);
+  const roomVersion = room.getVersion();
+  const versionString = lazy.l10n.formatValueSync("detail-version", {
+    value: roomVersion,
+  });
   conv.writeMessage(account.userId, versionString, {
     system: true,
   });
@@ -111,24 +118,28 @@ function publishRoomDetails(account, conv) {
       .getStateEvents(lazy.MatrixSDK.EventType.RoomTopic)[0]
       .getContent().topic;
   }
-  let topicString = lazy._("detail.topic", topic);
+  const topicString = lazy.l10n.formatValueSync("detail-topic", {
+    value: topic,
+  });
   conv.writeMessage(account.userId, topicString, {
     system: true,
   });
 
-  let guestAccess = roomState
+  const guestAccess = roomState
     .getStateEvents(lazy.MatrixSDK.EventType.RoomGuestAccess, "")
     ?.getContent()?.guest_access;
-  let guestAccessString = lazy._("detail.guest", guestAccess);
+  const guestAccessString = lazy.l10n.formatValueSync("detail-guest", {
+    value: guestAccess,
+  });
   conv.writeMessage(account.userId, guestAccessString, {
     system: true,
   });
 
-  let admins = [];
-  let moderators = [];
+  const admins = [];
+  const moderators = [];
 
-  let powerLevel = powerLevelEvent.getContent();
-  for (let [key, value] of Object.entries(powerLevel.users)) {
+  const powerLevel = powerLevelEvent.getContent();
+  for (const [key, value] of Object.entries(powerLevel.users)) {
     if (value >= lazy.MatrixPowerLevels.admin) {
       admins.push(key);
     } else if (value >= lazy.MatrixPowerLevels.moderator) {
@@ -137,14 +148,18 @@ function publishRoomDetails(account, conv) {
   }
 
   if (admins.length) {
-    let adminString = lazy._("detail.admin", admins.join(", "));
+    const adminString = lazy.l10n.formatValueSync("detail-admin", {
+      value: admins.join(", "),
+    });
     conv.writeMessage(account.userId, adminString, {
       system: true,
     });
   }
 
   if (moderators.length) {
-    let moderatorString = lazy._("detail.moderator", moderators.join(", "));
+    const moderatorString = lazy.l10n.formatValueSync("detail-moderator", {
+      value: moderators.join(", "),
+    });
     conv.writeMessage(account.userId, moderatorString, {
       system: true,
     });
@@ -154,32 +169,37 @@ function publishRoomDetails(account, conv) {
     roomState.getStateEvents(lazy.MatrixSDK.EventType.RoomCanonicalAlias)
       ?.length
   ) {
-    let canonicalAlias = room.getCanonicalAlias();
-    let aliases = room.getAltAliases();
+    const canonicalAlias = room.getCanonicalAlias();
+    const aliases = room.getAltAliases();
     if (canonicalAlias && !aliases.includes(canonicalAlias)) {
       aliases.unshift(canonicalAlias);
     }
     if (aliases.length) {
-      let aliasString = lazy._("detail.alias", aliases.join(","));
+      const aliasString = lazy.l10n.formatValueSync("detail-alias", {
+        value: aliases.join(","),
+      });
       conv.writeMessage(account.userId, aliasString, {
         system: true,
       });
     }
   }
 
-  conv.writeMessage(account.userId, lazy._("detail.power"), {
+  conv.writeMessage(account.userId, lazy.l10n.formatValueSync("detail-power"), {
     system: true,
   });
 
   const defaultLevel = lazy.MatrixPowerLevels.getUserDefaultLevel(powerLevel);
-  for (let [key, value] of Object.entries(powerLevel)) {
+  for (const [key, value] of Object.entries(powerLevel)) {
     if (key == "users") {
       continue;
     }
     if (key == "events") {
-      for (let [userKey, userValue] of Object.entries(powerLevel.events)) {
-        let userPower = lazy.MatrixPowerLevels.toText(userValue, defaultLevel);
-        let powerString = getEventString(userKey, userPower);
+      for (const [userKey, userValue] of Object.entries(powerLevel.events)) {
+        const userPower = lazy.MatrixPowerLevels.toText(
+          userValue,
+          defaultLevel
+        );
+        const powerString = getEventString(userKey, userPower);
         if (!powerString) {
           continue;
         }
@@ -189,8 +209,8 @@ function publishRoomDetails(account, conv) {
       }
       continue;
     }
-    let userPower = lazy.MatrixPowerLevels.toText(value, defaultLevel);
-    let powerString = getEventString(key, userPower);
+    const userPower = lazy.MatrixPowerLevels.toText(value, defaultLevel);
+    const powerString = getEventString(key, userPower);
     if (!powerString) {
       continue;
     }
@@ -203,20 +223,25 @@ function publishRoomDetails(account, conv) {
 /**
  * Generic command handler for commands with up to 2 params.
  *
- * @param {(imIAccount, prplIConversation, string[]) => boolean} commandCallback - Command handler implementation. Returns true when successful.
+ * @param {function(imIAccount,prplIConversation,string[]):boolean} commandCallback - Command
+ *   handler implementation. Returns true when successful.
  * @param {number} parameterCount - Number of parameters. Maximum 2.
  * @param {object} [options] - Extra options.
- * @param {number} [options.requiredCount] - How many of the parameters are required (from the start).
- * @param {(string[]) => boolean} [options.validateParams] - Validator function for params.
- * @param {(prplIConversation, string[]) => any[]} [options.formatParams] - Formatting function for params.
- * @returns {(string, imIConversation) => boolean} Command handler function that returns true when the command was handled.
+ * @param {number} [options.requiredCount] - How many of the parameters are
+ *   required (from the start).
+ * @param {function(string[]):boolean} [options.validateParams] - Validator
+ *   function for params.
+ * @param {function(prplIConversation,string[]):[]} [options.formatParams] - Formatting
+ *   function for params.
+ * @returns {function(string,IMConversation):boolean} Command handler function
+ *   that returns true when the command was handled.
  */
 function runCommand(
   commandCallback,
   parameterCount,
   {
     requiredCount = parameterCount,
-    validateParams = params => true,
+    validateParams = () => true,
     formatParams = (conv, params) => [conv._roomId, ...params],
   } = {}
 ) {
@@ -272,10 +297,14 @@ function runCommand(
  * @param {string} clientMethod - Name of the method on the matrix client.
  * @param {number} parameterCount - Number of parameters. Maximum 2.
  * @param {object} [options] - Extra options.
- * @param {number} [options.requiredCount] - How many of the parameters are required (from the start).
- * @param {(string[]) => boolean} [options.validateParams] - Validator function for params.
- * @param {(prplIConversation, string[]) => any[]} [options.formatParams] - Formatting function for params.
- * @returns {(string, imIConversation) => boolean} Command handler function that returns true when the command was handled.
+ * @param {number} [options.requiredCount] - How many of the parameters are
+ *   required (from the start).
+ * @param {function(string[]):boolean} [options.validateParams] - Validator function
+ *   for params.
+ * @param {function(prplIConversation,string[]):[]} [options.formatParams] - Formatting
+ *   function for params.
+ * @returns {function(string,IMConversation):boolean} Command handler function
+ *   that returns true when the command was handled.
  */
 function clientCommand(clientMethod, parameterCount, options) {
   return runCommand(
@@ -297,40 +326,44 @@ export var commands = [
   {
     name: "ban",
     get helpString() {
-      return lazy._("command.ban", "ban");
+      return lazy.l10n.formatValueSync("command-ban", { commandName: "ban" });
     },
     run: clientCommand("ban", 2, { requiredCount: 1 }),
   },
   {
     name: "unban",
     get helpString() {
-      return lazy._("command.unban", "unban");
+      return lazy.l10n.formatValueSync("command-unban", {
+        commandName: "unban",
+      });
     },
     run: clientCommand("unban", 1),
   },
   {
     name: "invite",
     get helpString() {
-      return lazy._("command.invite", "invite");
+      return lazy.l10n.formatValueSync("command-invite", {
+        commandName: "invite",
+      });
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_CHAT,
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.CHAT,
     run: clientCommand("invite", 1),
   },
   {
     name: "kick",
     get helpString() {
-      return lazy._("command.kick", "kick");
+      return lazy.l10n.formatValueSync("command-kick", { commandName: "kick" });
     },
     run: clientCommand("kick", 2, { requiredCount: 1 }),
   },
   {
     name: "op",
     get helpString() {
-      return lazy._("command.op", "op");
+      return lazy.l10n.formatValueSync("command-op", { commandName: "op" });
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_CHAT,
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.CHAT,
     run: clientCommand("setPowerLevel", 2, {
-      validateParams([userId, powerLevelString]) {
+      validateParams([, powerLevelString]) {
         const powerLevel = Number.parseInt(powerLevelString);
         return (
           Number.isInteger(powerLevel) &&
@@ -339,48 +372,39 @@ export var commands = [
       },
       formatParams(conv, [userId, powerLevelString]) {
         const powerLevel = Number.parseInt(powerLevelString);
-        let powerLevelEvent = conv.roomState.getStateEvents(
-          lazy.MatrixSDK.EventType.RoomPowerLevels,
-          ""
-        );
-        return [conv._roomId, userId, powerLevel, powerLevelEvent];
+        return [conv._roomId, userId, powerLevel];
       },
     }),
   },
   {
     name: "deop",
     get helpString() {
-      return lazy._("command.deop", "deop");
+      return lazy.l10n.formatValueSync("command-deop", { commandName: "deop" });
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_CHAT,
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.CHAT,
     run: clientCommand("setPowerLevel", 1, {
       formatParams(conv, [userId]) {
-        const powerLevelEvent = conv.roomState.getStateEvents(
-          lazy.MatrixSDK.EventType.RoomPowerLevels,
-          ""
-        );
-        return [
-          conv._roomId,
-          userId,
-          lazy.MatrixPowerLevels.user,
-          powerLevelEvent,
-        ];
+        return [conv._roomId, userId, lazy.MatrixPowerLevels.user];
       },
     }),
   },
   {
     name: "part",
     get helpString() {
-      return lazy._("command.leave", "part");
+      return lazy.l10n.formatValueSync("command-leave", {
+        commandName: "part",
+      });
     },
     run: clientCommand("leave", 0),
   },
   {
     name: "topic",
     get helpString() {
-      return lazy._("command.topic", "topic");
+      return lazy.l10n.formatValueSync("command-topic", {
+        commandName: "topic",
+      });
     },
-    run: runCommand((account, conv, [roomId, topic]) => {
+    run: runCommand((account, conv, [, topic]) => {
       conv.topic = topic;
       return true;
     }, 1),
@@ -388,7 +412,9 @@ export var commands = [
   {
     name: "visibility",
     get helpString() {
-      return lazy._("command.visibility", "visibility");
+      return lazy.l10n.formatValueSync("command-visibility", {
+        commandName: "visibility",
+      });
     },
     run: clientCommand("setRoomDirectoryVisibility", 1, {
       formatParams(conv, [visibilityString]) {
@@ -403,18 +429,22 @@ export var commands = [
   {
     name: "roomname",
     get helpString() {
-      return lazy._("command.roomname", "roomname");
+      return lazy.l10n.formatValueSync("command-roomname", {
+        commandName: "roomname",
+      });
     },
     run: clientCommand("setRoomName", 1),
   },
   {
     name: "detail",
     get helpString() {
-      return lazy._("command.detail", "detail");
+      return lazy.l10n.formatValueSync("command-detail", {
+        commandName: "detail",
+      });
     },
-    run(msg, convObj, returnedConv) {
-      let account = getAccount(convObj);
-      let conv = getConv(convObj);
+    run(msg, convObj) {
+      const account = getAccount(convObj);
+      const conv = getConv(convObj);
       publishRoomDetails(account, conv);
       return true;
     },
@@ -422,7 +452,9 @@ export var commands = [
   {
     name: "addalias",
     get helpString() {
-      return lazy._("command.addalias", "addalias");
+      return lazy.l10n.formatValueSync("command-addalias", {
+        commandName: "addalias",
+      });
     },
     run: clientCommand("createAlias", 1, {
       formatParams(conv, [alias]) {
@@ -433,7 +465,9 @@ export var commands = [
   {
     name: "removealias",
     get helpString() {
-      return lazy._("command.removealias", "removealias");
+      return lazy.l10n.formatValueSync("command-removealias", {
+        commandName: "removealias",
+      });
     },
     run: clientCommand("deleteAlias", 1, {
       formatParams(conv, [alias]) {
@@ -444,9 +478,9 @@ export var commands = [
   {
     name: "me",
     get helpString() {
-      return lazy._("command.me", "me");
+      return lazy.l10n.formatValueSync("command-me", { commandName: "me" });
     },
-    run: runCommand((account, conv, [roomId, message]) => {
+    run: runCommand((account, conv, [, message]) => {
       conv.sendMsg(message, true);
       return true;
     }, 1),
@@ -454,9 +488,9 @@ export var commands = [
   {
     name: "msg",
     get helpString() {
-      return lazy._("command.msg", "msg");
+      return lazy.l10n.formatValueSync("command-msg", { commandName: "msg" });
     },
-    run: runCommand((account, conv, [roomId, userId, message]) => {
+    run: runCommand((account, conv, [, userId, message]) => {
       const room = account.getDirectConversation(userId);
       if (room) {
         room.waitForRoom().then(readyRoom => {
@@ -471,10 +505,10 @@ export var commands = [
   {
     name: "join",
     get helpString() {
-      return lazy._("command.join", "join");
+      return lazy.l10n.formatValueSync("command-join", { commandName: "join" });
     },
     run: runCommand(
-      (account, conv, [currentRoomId, joinRoomId]) => {
+      (account, conv, [, joinRoomId]) => {
         account.getGroupConversation(joinRoomId);
         return true;
       },

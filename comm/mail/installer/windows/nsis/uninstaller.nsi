@@ -42,6 +42,7 @@ Var MaintCertKey
 ; MigrateTaskBarShortcut and is not intended to be used here.
 ; See Bug 1329869 for more.
 Var AddTaskbarSC
+Var RegHive
 
 ; Other included files may depend upon these includes!
 ; The following includes are provided by NSIS.
@@ -277,9 +278,8 @@ Section "Uninstall"
   ${un.RegCleanUninstall}
   ${un.DeleteShortcuts}
 
-  ; Unregister resources associated with Win7 taskbar jump lists.
-  ${If} ${AtLeastWin7}
-  ${AndIf} "$AppUserModelID" != ""
+  ; Unregister resources associated with taskbar jump lists.
+  ${If} "$AppUserModelID" != ""
     ApplicationID::UninstallJumpLists "$AppUserModelID"
   ${EndIf}
 
@@ -293,11 +293,11 @@ Section "Uninstall"
   ClearErrors
   WriteRegStr HKLM "Software\Mozilla" "${BrandShortName}InstallerTest" "Write Test"
   ${If} ${Errors}
-    StrCpy $TmpVal "HKCU" ; used primarily for logging
+    StrCpy $RegHive "HKCU" ; used primarily for logging
   ${Else}
     SetShellVarContext all  ; Set SHCTX to HKLM
     DeleteRegValue HKLM "Software\Mozilla" "${BrandShortName}InstallerTest"
-    StrCpy $TmpVal "HKLM" ; used primarily for logging
+    StrCpy $RegHive "HKLM" ; used primarily for logging
     ${un.RegCleanMain} "Software\Mozilla"
     ${un.RegCleanUninstall}
     ${un.DeleteShortcuts}
@@ -422,6 +422,40 @@ Section "Uninstall"
 
   ; Remove the Windows Reporter Module entry
   DeleteRegValue HKLM "SOFTWARE\Microsoft\Windows\Windows Error Reporting\RuntimeExceptionHelperModules" "$INSTDIR\mozwer.dll"
+
+  ; Remove Toast Notification registration.
+  ; Find any GUID used for this installation.
+  ClearErrors
+  ReadRegStr $0 HKLM "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "CustomActivator"
+
+  DeleteRegValue HKLM "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "CustomActivator"
+  DeleteRegValue HKLM "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "DisplayName"
+  DeleteRegValue HKLM "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "IconUri"
+  DeleteRegKey HKLM "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID"
+  ${If} "$0" != ""
+    DeleteRegValue HKLM "Software\Classes\AppID\$0" "DllSurrogate"
+    DeleteRegKey HKLM "Software\Classes\AppID\$0"
+    DeleteRegValue HKLM "Software\Classes\CLSID\$0" "AppID"
+    DeleteRegValue HKLM "Software\Classes\CLSID\$0\InProcServer32" ""
+    DeleteRegKey HKLM "Software\Classes\CLSID\$0\InProcServer32"
+    DeleteRegKey HKLM "Software\Classes\CLSID\$0"
+  ${EndIf}
+
+  ClearErrors
+  ReadRegStr $0 HKCU "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "CustomActivator"
+
+  DeleteRegValue HKCU "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "CustomActivator"
+  DeleteRegValue HKCU "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "DisplayName"
+  DeleteRegValue HKCU "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "IconUri"
+  DeleteRegKey HKCU "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID"
+  ${If} "$0" != ""
+    DeleteRegValue HKCU "Software\Classes\AppID\$0" "DllSurrogate"
+    DeleteRegKey HKCU "Software\Classes\AppID\$0"
+    DeleteRegValue HKCU "Software\Classes\CLSID\$0" "AppID"
+    DeleteRegValue HKCU "Software\Classes\CLSID\$0\InProcServer32" ""
+    DeleteRegKey HKCU "Software\Classes\CLSID\$0\InProcServer32"
+    DeleteRegKey HKCU "Software\Classes\CLSID\$0"
+  ${EndIf}
 
   ${un.RemovePrecompleteEntries} "false"
 

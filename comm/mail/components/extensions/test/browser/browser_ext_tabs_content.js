@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
+"use strict";
+
 /**
  * Common core of the test. This is complicated by how WebExtensions tests work.
  *
@@ -12,13 +14,13 @@
  *     with the tab.
  */
 async function subTest(createTab, getBrowser, shouldRemove = true) {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "createTab.js": createTab,
       "background.js": async () => {
         // Open the tab to be tested.
 
-        let tabId = await window.createTab();
+        const tabId = await window.createTab();
 
         // Test insertCSS, removeCSS, and executeScript.
 
@@ -52,13 +54,13 @@ async function subTest(createTab, getBrowser, shouldRemove = true) {
 
         // Test connect and sendMessage. The receivers were set up above.
 
-        let port = await browser.tabs.connect(tabId);
+        const port = await browser.tabs.connect(tabId);
         port.onMessage.addListener(message =>
           browser.test.assertEq(message, "Got your message.")
         );
         port.postMessage("Sending a message.");
 
-        let response = await browser.tabs.sendMessage(
+        const response = await browser.tabs.sendMessage(
           tabId,
           "Sending a message."
         );
@@ -66,8 +68,8 @@ async function subTest(createTab, getBrowser, shouldRemove = true) {
 
         // Remove the tab if required.
 
-        let [shouldRemove] = await window.sendMessage();
-        if (shouldRemove) {
+        const [remove] = await window.sendMessage();
+        if (remove) {
           await browser.tabs.remove(tabId);
         }
         browser.test.notifyPass();
@@ -83,7 +85,7 @@ async function subTest(createTab, getBrowser, shouldRemove = true) {
   await extension.startup();
 
   await extension.awaitMessage();
-  let browser = getBrowser();
+  const browser = getBrowser();
   await awaitBrowserLoaded(browser, url => url != "about:blank");
 
   await checkContent(browser, {
@@ -112,43 +114,43 @@ async function subTest(createTab, getBrowser, shouldRemove = true) {
 }
 
 add_task(async function testFirstTab() {
-  let createTab = async () => {
+  const createTab = async () => {
     window.createTab = async function () {
-      let tabs = await browser.tabs.query({});
+      const tabs = await browser.tabs.query({});
       browser.test.assertEq(1, tabs.length);
       await browser.tabs.update(tabs[0].id, { url: "test.html" });
       return tabs[0].id;
     };
   };
 
-  let tabmail = document.getElementById("tabmail");
-  function getBrowser(expected) {
+  const tabmail = document.getElementById("tabmail");
+  function getBrowser() {
     return tabmail.currentTabInfo.browser;
   }
 
-  let gAccount = createAccount();
+  const account = createAccount();
   tabmail.currentAbout3Pane.restoreState({
     folderPaneVisible: true,
-    folderURI: gAccount.incomingServer.rootFolder.subFolders[0].URI,
+    folderURI: account.incomingServer.rootFolder.subFolders[0].URI,
   });
 
   return subTest(createTab, getBrowser, false);
 });
 
 add_task(async function testContentTab() {
-  let createTab = async () => {
+  const createTab = async () => {
     window.createTab = async function () {
-      let tab = await browser.tabs.create({ url: "test.html" });
+      const tab = await browser.tabs.create({ url: "test.html" });
       return tab.id;
     };
   };
 
-  function getBrowser(expected) {
-    let tabmail = document.getElementById("tabmail");
+  function getBrowser() {
+    const tabmail = document.getElementById("tabmail");
     return tabmail.currentTabInfo.browser;
   }
 
-  let tabmail = document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   Assert.equal(
     tabmail.tabInfo.length,
     1,
@@ -156,7 +158,7 @@ add_task(async function testContentTab() {
   );
   // Run the subtest without removing the created tab, to check if extension tabs
   // are removed automatically, when the extension is removed.
-  let rv = await subTest(createTab, getBrowser, false);
+  const rv = await subTest(createTab, getBrowser, false);
   Assert.equal(
     tabmail.tabInfo.length,
     1,
@@ -166,9 +168,9 @@ add_task(async function testContentTab() {
 });
 
 add_task(async function testPopupWindow() {
-  let createTab = async () => {
+  const createTab = async () => {
     window.createTab = async function () {
-      let popup = await browser.windows.create({
+      const popup = await browser.windows.create({
         url: "test.html",
         type: "popup",
       });
@@ -177,18 +179,18 @@ add_task(async function testPopupWindow() {
     };
   };
 
-  function getBrowser(expected) {
-    let popups = [...Services.wm.getEnumerator("mail:extensionPopup")];
+  function getBrowser() {
+    const popups = [...Services.wm.getEnumerator("mail:extensionPopup")];
     Assert.equal(popups.length, 1);
 
-    let popup = popups[0];
+    const popup = popups[0];
 
-    let popupBrowser = popup.getBrowser();
+    const popupBrowser = popup.getBrowser();
     Assert.ok(popupBrowser);
 
     return popupBrowser;
   }
-  let popups = [...Services.wm.getEnumerator("mail:extensionPopup")];
+  const popups = [...Services.wm.getEnumerator("mail:extensionPopup")];
   Assert.equal(
     popups.length,
     0,
@@ -196,7 +198,7 @@ add_task(async function testPopupWindow() {
   );
   // Run the subtest without removing the created window, to check if extension
   // windows are removed automatically, when the extension is removed.
-  let rv = await subTest(createTab, getBrowser, false);
+  const rv = await subTest(createTab, getBrowser, false);
   Assert.equal(
     popups.length,
     0,
@@ -206,11 +208,11 @@ add_task(async function testPopupWindow() {
 });
 
 add_task(async function testMultipleContentTabs() {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
-        let tabs = [];
-        let tests = [
+        const tabs = [];
+        const tests = [
           {
             url: "test.html",
             expectedUrl: browser.runtime.getURL("test.html"),
@@ -242,11 +244,11 @@ add_task(async function testMultipleContentTabs() {
         ];
 
         async function create(url, expectedUrl) {
-          let tabDonePromise = new Promise(resolve => {
+          const tabDonePromise = new Promise(resolve => {
             let changeInfoStatus = false;
             let changeInfoUrl = false;
 
-            let listener = (tabId, changeInfo) => {
+            const listener = (tabId, changeInfo) => {
               if (!tab || tab.id != tabId) {
                 return;
               }
@@ -267,8 +269,8 @@ add_task(async function testMultipleContentTabs() {
             browser.tabs.onUpdated.addListener(listener);
           });
 
-          let tab = await browser.tabs.create({ url });
-          for (let otherTab of tabs) {
+          const tab = await browser.tabs.create({ url });
+          for (const otherTab of tabs) {
             browser.test.assertTrue(
               tab.id != otherTab.id,
               "Id of created tab should be unique."
@@ -276,7 +278,7 @@ add_task(async function testMultipleContentTabs() {
           }
           tabs.push(tab);
 
-          let changeInfoUrl = await tabDonePromise;
+          const changeInfoUrl = await tabDonePromise;
           browser.test.assertEq(
             expectedUrl,
             changeInfoUrl,
@@ -284,7 +286,7 @@ add_task(async function testMultipleContentTabs() {
           );
         }
 
-        for (let { url, expectedUrl } of tests) {
+        for (const { url, expectedUrl } of tests) {
           await create(url, expectedUrl);
         }
 
@@ -298,7 +300,7 @@ add_task(async function testMultipleContentTabs() {
     },
   });
 
-  let tabmail = document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   Assert.equal(
     tabmail.tabInfo.length,
     1,
@@ -322,8 +324,8 @@ add_task(async function testMultipleContentTabs() {
   );
 
   for (let i = tabmail.tabInfo.length; i > 0; i--) {
-    let nativeTabInfo = tabmail.tabInfo[i - 1];
-    let uri = nativeTabInfo.browser?.browsingContext.currentURI;
+    const nativeTabInfo = tabmail.tabInfo[i - 1];
+    const uri = nativeTabInfo.browser?.browsingContext.currentURI;
     if (uri && ["https", "http"].includes(uri.scheme)) {
       tabmail.closeTab(nativeTabInfo);
     }

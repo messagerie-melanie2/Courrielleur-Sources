@@ -2,22 +2,17 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 var kLogLevelPref = "purple.debug.loglevel";
 
 /**
  * Creates an nsIScriptError instance and logs it.
  *
- * @param aModule
- *        string identifying the module within which the error occurred.
- * @param aLevel
- *        the error level as defined in imIDebugMessage.
- * @param aMessage
- *        the error message string.
- * @param aOriginalError
- *        (optional) JS Error object containing the location where the
- *        actual error occurred. Its error message is appended to aMessage.
+ * @param {string} aModule - String identifying the module within which the
+ *   error occurred.
+ * @param {1|2|3|4} aLevel - The error level as defined in imIDebugMessage.
+ * @param {string} aMessage - The error message string.
+ * @param {Error} [aOriginalError] - JS Error object containing the location
+ *   where the actual error occurred. Its error message is appended to aMessage.
  */
 export function scriptError(aModule, aLevel, aMessage, aOriginalError) {
   // Figure out the log level, based on the module and the prefs set.
@@ -25,9 +20,9 @@ export function scriptError(aModule, aLevel, aMessage, aOriginalError) {
   // the last section removed is attempted (until no sections are left, using
   // the global default log level).
   let logLevel = -1;
-  let logKeys = ["level"].concat(aModule.split("."));
+  const logKeys = ["level"].concat(aModule.split("."));
   for (; logKeys.length > 0; logKeys.pop()) {
-    let logKey = logKeys.join(".");
+    const logKey = logKeys.join(".");
     if (logKey in lazy.gLogLevels) {
       logLevel = lazy.gLogLevels[logKey];
       break;
@@ -44,10 +39,10 @@ export function scriptError(aModule, aLevel, aMessage, aOriginalError) {
     flag = Ci.nsIScriptError.errorFlag;
   }
 
-  let scriptError = Cc["@mozilla.org/scripterror;1"].createInstance(
+  const errorMessage = Cc["@mozilla.org/scripterror;1"].createInstance(
     Ci.nsIScriptError
   );
-  let caller = Components.stack.caller;
+  const caller = Components.stack.caller;
   let sourceLine = aModule || caller.sourceLine;
   if (caller.name) {
     if (sourceLine) {
@@ -66,7 +61,7 @@ export function scriptError(aModule, aLevel, aMessage, aOriginalError) {
       lineNumber = aOriginalError.lineNumber;
     }
   }
-  scriptError.init(
+  errorMessage.init(
     aMessage,
     fileName,
     sourceLine,
@@ -81,11 +76,11 @@ export function scriptError(aModule, aLevel, aMessage, aOriginalError) {
     if (aLevel == Ci.imIDebugMessage.LEVEL_LOG && logLevel == aLevel) {
       Services.console.logStringMessage(aMessage);
     } else {
-      Services.console.logMessage(scriptError);
+      Services.console.logMessage(errorMessage);
     }
   }
   if ("imAccount" in this) {
-    this.imAccount.logDebugMessage(scriptError, aLevel);
+    this.imAccount.logDebugMessage(errorMessage, aLevel);
   }
 }
 
@@ -98,15 +93,15 @@ export function initLogModule(aModule, aObj = {}) {
 }
 
 const lazy = {};
-XPCOMUtils.defineLazyGetter(lazy, "gLogLevels", function () {
+ChromeUtils.defineLazyGetter(lazy, "gLogLevels", function () {
   // This object functions both as an obsever as well as a dict keeping the
   // log levels with prefs; the log levels all start with "level" (i.e. "level"
   // for the global level, "level.irc" for the IRC module).  The dual-purpose
   // is necessary to make sure the observe is left alive while being a weak ref
   // to avoid cycles with the pref service.
-  let logLevels = {
+  const logLevels = {
     observe(aSubject, aTopic, aData) {
-      let module = "level" + aData.substr(kLogLevelPref.length);
+      const module = "level" + aData.substr(kLogLevelPref.length);
       if (Services.prefs.getPrefType(aData) == Services.prefs.PREF_INT) {
         lazy.gLogLevels[module] = Services.prefs.getIntPref(aData);
       } else {
@@ -123,7 +118,7 @@ XPCOMUtils.defineLazyGetter(lazy, "gLogLevels", function () {
   Services.prefs.addObserver(kLogLevelPref, logLevels, true /* weak */);
 
   // Initialize with existing log level prefs.
-  for (let pref of Services.prefs.getChildList(kLogLevelPref)) {
+  for (const pref of Services.prefs.getChildList(kLogLevelPref)) {
     if (Services.prefs.getPrefType(pref) == Services.prefs.PREF_INT) {
       logLevels["level" + pref.substr(kLogLevelPref.length)] =
         Services.prefs.getIntPref(pref);
@@ -136,7 +131,7 @@ XPCOMUtils.defineLazyGetter(lazy, "gLogLevels", function () {
     .split(/[;,]/)
     .filter(n => n != "")
     .forEach(function (env) {
-      let [, module, level] = env.match(/(?:(.*?)[:=])?(\d+)/);
+      const [, module, level] = env.match(/(?:(.*?)[:=])?(\d+)/);
       logLevels["level" + (module ? "." + module : "")] = parseInt(level, 10);
     });
 
@@ -158,7 +153,7 @@ export function ClassInfo(aInterfaces, aDescription = "JS Proto Object") {
     aInterfaces = [aInterfaces];
   }
 
-  for (let i of aInterfaces) {
+  for (const i of aInterfaces) {
     if (typeof i == "string" && !(i in Ci)) {
       Services.console.logStringMessage("ClassInfo: unknown interface " + i);
     }
@@ -191,31 +186,11 @@ ClassInfo.prototype = {
   flags: 0,
 };
 
-export function l10nHelper(aChromeURL) {
-  let bundle = Services.strings.createBundle(aChromeURL);
-  return function (aStringId) {
-    try {
-      if (arguments.length == 1) {
-        return bundle.GetStringFromName(aStringId);
-      }
-      return bundle.formatStringFromName(
-        aStringId,
-        Array.prototype.slice.call(arguments, 1)
-      );
-    } catch (e) {
-      console.error(e);
-      dump("Failed to get " + aStringId + "\n");
-      return aStringId;
-    }
-  };
-}
-
 /**
  * Constructs an nsISimpleEnumerator for the given array of items.
  * Copied from netwerk/test/httpserver/httpd.js
  *
- * @param items : Array
- *   the items, which must all implement nsISupports
+ * @param {nsISupports[]} items - Items, which must all implement nsISupports.
  */
 export function nsSimpleEnumerator(items) {
   this._items = items;

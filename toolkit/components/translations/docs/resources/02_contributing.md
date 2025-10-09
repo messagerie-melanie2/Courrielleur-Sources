@@ -1,7 +1,7 @@
-# Contributing
+# Contributing to Translations
 
 The following content goes more in-depth than the [Overview](./01_overview.md) section
-to provide helpful information regarding contributing to Firefox Translations.
+to provide helpful information regarding contributing to Translations.
 
 - [Source Code](#source-code)
 - [Architecture](#architecture)
@@ -13,19 +13,26 @@ to provide helpful information regarding contributing to Firefox Translations.
     - [Versioning](#versioning)
       - [Non-Breaking Changes](#non-breaking-changes)
       - [Breaking Changes](#breaking-changes)
-- [Building fastText](#building-fasttext)
-    - [Downloading The Models](#downloading-the-models)
-    - [Building the WASM Binary](#building-the-wasm-binary)
-        - [Dependencies](#dependencies)
-        - [Modifying the EMCXXFLAGS](#modifying-the-emcxxflags)
-- [Building Bergamot](#building-bergamot)
-
+- [Language Identification](#language-identification)
+- [End-to-end Tests](#end-to-end-tests)
+    - [End-to-end Test Configuration](#end-to-end-test-configuration)
+    - [Running End-to-end Tests Locally](#running-end-to-end-tests-locally)
+- [Performance Tests](#performance-tests)
+    - [Running Performance Tests Locally](#running-performance-tests-locally)
+    - [Comparing Translations Performance in CI](#comparing-translations-performance-in-ci)
+    - [Temporarily Increasing Sample Size](#temporarily-increasing-sample-size)
+    - [Adding New Performance Tests](#adding-new-performance-tests)
 ---
 ## Source Code
 
-The primary source code for Firefox Translations lives in the following directory:
+The primary source code for Translations in Firefox lives in the following directories:
 
-> **[toolkit/components/translations]**
+> * **[browser/components/translations]**
+> * **[toolkit/components/translations]**
+
+The primary code for model training and inference lives in GitHub in the following repository:
+
+> * **[mozilla/translations]**
 
 ---
 ## Architecture
@@ -48,10 +55,10 @@ The machine-learning models and [WASM] binaries are all hosted in Remote Setting
 
 ### Admin Dashboards
 
-In order to get access to Firefox Translations content in the Remote Settings admin dashboards, you will need to request
+In order to get access to Translations content in the Remote Settings admin dashboards, you will need to request
 access in the Remote Settings component on [Bugzilla].
 
-Once you have access to Firefox Translations content in Remote Settings, you will be able to view it in the admin dashboards:
+Once you have access to Translations content in Remote Settings, you will be able to view it in the admin dashboards:
 
 **Dev**<br>
 > [https://settings.dev.mozaws.net/v0/admin](https://settings.dev.mozaws.net/v1/admin)
@@ -75,18 +82,11 @@ the latest [remote-settings-devtools] Firefox extension.
 
 ### Versioning
 
-Firefox Translations uses semantic versioning for all of its records via the **`version`** property.
-
-```{note}
-**Beta Versions**
-
-Versions that are below **`1.0`** are considered to be a beta version. For language translation models,
-this quality will be communicated to users via the UI.
-```
+Translations uses semantic versioning for all of its records via the **`version`** property.
 
 #### Non-breaking Changes
 
-Firefox Translations code will always retrieve the maximum compatible version of each record from Remote Settings.
+Translations code will always retrieve the maximum compatible version of each record from Remote Settings.
 If two records exist with different versions, (e.g. **`1.0`** and **`1.1`**) then only the version **`1.1`** record
 will be considered.
 
@@ -96,16 +96,16 @@ in both backward-compatible and forward-compatible ways. These can be released t
 
 #### Breaking Changes
 
-Breaking changes for Firefox Translations are a bit more tricky. These are changes that make older-version records
+Breaking changes for Translations are a bit more tricky. These are changes that make older-version records
 incompatible with the current Firefox source code and/or [WASM] runtimes.
 
 While a breaking change will result in a change of the semver number (e.g. **`1.1 ⟶ 2.0`**), this alone is not
-sufficient. Since Firefox Translations always attempts to use the maximum compatible version, only bumping this number
+sufficient. Since Translations always attempts to use the maximum compatible version, only bumping this number
 would result in older versions of Firefox attempting to use a newer-version record that is no longer compatible with the
 Firefox source code or [WASM] runtimes.
 
-To handle these changes, Firefox Translations utilizes Remote Settings [Filter Expressions] to make certain records
-available to only particular releases of Firefox. This will allow Firefox Translations to make different sets of Remote Settings records available to different versions
+To handle these changes, Translations utilizes Remote Settings [Filter Expressions] to make certain records
+available to only particular releases of Firefox. This will allow Translations to make different sets of Remote Settings records available to different versions
 of Firefox.
 
 ```{admonition} Example
@@ -130,324 +130,123 @@ This means that these records will only be available in Firefox versions greater
 
 ```
 
-Tying breaking changes to releases in this way frees up Firefox Translations to make changes as large as entirely
+Tying breaking changes to releases in this way frees up Translations to make changes as large as entirely
 switching one third-party library for another in the compiled source code, while allowing older versions of Firefox to continue utilizing the old library and allowing newer versions of Firefox to utilize the new library.
 
 ---
-## Building fastText
+## Language Identification
 
-### Downloading the Models
+Translations currently uses the [CLD2] language detector.
 
-The fastText model that we use can be downloaded directly from the fastText website:<br>
-> [https://fasttext.cc/docs/en/language-identification.html](https://fasttext.cc/docs/en/language-identification.html)
+We have previously experimented with using the [fastText] language detector, but we opted to use [CLD2] due to complications with [fastText] [WASM] runtime performance. The benefit of the [CLD2] language detector is that it already exists in the Firefox source tree. In the future, we would still like to explore moving to a more modern language detector such as [CLD3], or perhaps something else.
 
-Firefox Translations uses the compressed, **`lid.176.ftz`** model.
+---
+## End-to-end Tests
 
-### Building the WASM Binary
+A true [Remote Settings](#remote-settings) network connection is not available when running Firefox tests locally or in CI. As such, we cannot serve the WASM binary or the translation models to the Translations infrastructure the exact same way that we do in production.
 
-To build the fastText [WASM] binary, we can follow the steps in the [Requirements] section of the fastText website.
+Most of our integration tests in Firefox are written using a mocked, local instance of Remote Settings with a mocked translator that simply capitalizes text and appends the intended language tags to the end of the translated output. This works out nicely because it helps our UI tests be both quick and deterministic. However, it is important that we also test the full end-to-end connections, running our models within the inference engine.
 
-#### Dependencies
+This section covers the configurations and setup for running end-to-end Translations tests both locally and in CI.
 
-**C++ Compiler**<br>
-Any of the C++ compilers from [Getting Set Up To Work On The Firefox Codebase] will be sufficient for this.
+### End-to-End Test Configuration
 
-**emskd**<br>
-Follow the [Download and Install] instructions for setting up the emscripten sdk.
+In order to provide genuine WASM and translation-model artifacts to end-to-end tests in CI, we simulate a local instance of [Remote Settings](#remote-settings) that [pulls from the file system](https://searchfox.org/mozilla-central/rev/d5f93d53d7d005bd303925bc166163f158142cfd/toolkit/components/translations/tests/browser/shared-head.js#860-925). In particular, this Remote Settings instance will look for files within a directory specified by the `MOZ_FETCHES_DIR` environment variable, which is a standard variable defined in Firefox CI for all fetch tasks.
 
-#### Modifying the EMCXXFLAGS
+In order to expose the correct artifacts to `MOZ_FETCHES_DIR` in CI, we specify [translations-fetch.yml] which gets run by Taskcluster any time Translations tests are pushed to CI. This file contains a list of URLs at which the artifacts will be downloaded and added to `MOZ_FETCHES_DIR`. They must match the specified size and hash in order to pass the fetch task.
 
-At the time of writing, the a latest commit on the fastText repo ([3697152e0fd772d9185697fdbd4a1d340ca5571d])
-is not compatible by default with the latest version of [emscripten (3.1.35)].
+### Running End-to-end Tests Locally
 
-A few changes need to be made to the Makefile in order to generate the fastText [WASM] for use in Firefox.
+The `MOZ_FETCHES_DIR` environment variable is automatically set for pushes to CI, however it will not be set in your local environment by default. Running an end-to-end Translations test locally will result in a failure unless the proper artifacts are downloaded to a directory that is exported as `MOZ_FETCHES_DIR`.
 
-**1) Disable DYNAMIC_EXECUTION**<br>
-In the `Makefile` for the fastText repo, there is a variable called **`EMCXXFLAGS`**.<br>
-We need to add the following flag to this variable:
+For convenience, we provide a script that will automatically download the artifacts specified in [translations-fetch.yml]:
 
-```
--s "DYNAMIC_EXECUTION=0"
-```
+* [toolkit/components/translations/tests/scripts/download-translations-artifacts.py](https://searchfox.org/mozilla-central/source/toolkit/components/translations/tests/scripts/download-translations-artifacts.py)
 
-If this flag is not set to **`0`**, then emscripten will [generate functions] that use the [eval()] function.
-[eval()] is not allowed in the context that fastText runs in FireFox due to security reasons.
+You will then need to export that temporary directory as `MOZ_FETCHES_DIR` prior to running end-to-end Translations tests.
 
-**2) Rename EXTRA_EXPORTED_RUNTIME_METHODS**<br>
-In [emscripten (2.0.18)], **`EXTRA_EXPORTED_RUNTIME_METHODS`** was deprecated in favor of **`EXPORTED_RUNTIME_METHODS`**.
-The fastText Makefile still has the old flag, so we need to update the name.
-
-**3) Use the -r Flag When Appropriate**<br>
-In [emscripten (2.0.3)] the following change was made:
-
-> "The default output format is now executable JavaScript. Previously we would default to output objecting files unless, for example, the output name ended in **`.js`**. This is contrary to behavior of clang and gcc. Now emscripten will always produce and executable unless the **`-c`**, **`-r`** or **`-shared`** flags are given. This is true even when the name of the output file ends in **`.o`**. e.g, **`emcc foo.c -o foo.o`** will produce a JavaScript file called **`foo.o`**. This might surprise some users (although it matches the behavior of existing toolchains) so we now produce a warning in this case."
-
-The Makefile needs to be modified to use the **`-r`** flag when appropriate. These changes are modeled after comments on this [GitHub Issue].
-
-**Cumulative Changes**<br>
-Here is a diff of the full changes needed for the Makefile at the time of writing:
-
-```diff
-diff --git a/Makefile b/Makefile
-index e246f79..396ae0b 100644
---- a/Makefile
-+++ b/Makefile
-@@ -73,7 +73,9 @@ clean:
-
- EMCXX = em++
--EMCXXFLAGS = --bind --std=c++11 -s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s "EXTRA_EXPORTED_RUNTIME_METHODS=['addOnPostRun', 'FS']" -s "DISABLE_EXCEPTION_CATCHING=0" -s "EXCEPTION_DEBUG=1" -s "FORCE_FILESYSTEM=1" -s "MODULARIZE=1" -s "EXPORT_ES6=1" -s 'EXPORT_NAME="FastTextModule"' -Isrc/
-+EMCXXFLAGS_BASE = --bind --std=c++11 -s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s "EXPORTED_RUNTIME_METHODS=['addOnPostRun', 'FS']" -s "DISABLE_EXCEPTION_CATCHING=0" -s "EXCEPTION_DEBUG=0" -s "DYNAMIC_EXECUTION=0" -s "FORCE_FILESYSTEM=1" -s "MODULARIZE=1" -s "EXPORT_ES6=1" -s 'EXPORT_NAME="FastTextModule"' -Isrc/
-+EMCXXFLAGS = $(EMCXXFLAGS_BASE) -r
-+EMCXXFLAGS_JS = $(EMCXXFLAGS_BASE)
- EMOBJS = args.bc autotune.bc matrix.bc dictionary.bc loss.bc productquantizer.bc densematrix.bc quantmatrix.bc vector.bc model.bc utils.bc meter.bc fasttext.bc main.bc
-
-
-@@ -120,6 +122,6 @@ fasttext.bc: src/fasttext.cc src/*.h
- 	$(EMCXX) $(EMCXXFLAGS)  src/fasttext.cc -o fasttext.bc
-
- webassembly/fasttext_wasm.js: $(EMOBJS) webassembly/fasttext_wasm.cc Makefile
--	$(EMCXX) $(EMCXXFLAGS) $(EMOBJS) -o webassembly/fasttext_wasm.js
-+	$(EMCXX) $(EMCXXFLAGS_JS) $(EMOBJS) -o webassembly/fasttext_wasm.js
-```
-
-After modifying the Makefile in the previous section, running **`make wasm`** in the fastText repo should run without warnings or errors and the following files will be generated in the **`webassembly`** directory:
+Once your `MOZ_FETCHES_DIR` is properly exported, you can run end-to-end tests the same way you would any other Translations mochitest, e.g.
 
 ```
-webassembly
-├── fasttext.js
-├── fasttext_wasm.js
-└── fasttext_wasm.wasm
-```
-
-#### Modifying fasttext_wasm.js
-
-There are a few changes we need to make to the **`fasttext_wasm.js`** file to make it compatible with use in Firefox.
-
-**1) Define a function, not a module**<br>
-The generated code exports a module, but this needs to be modified into a function for use in [importScripts()] in a worker.
-
-At the top of the file we need to make the following changes:
-
-```diff
-diff --git a/toolkit/components/translations/fasttext/fasttext_wasm.js b/toolkit/components/translations/fasttext/fasttext_wasm.js
-index 64c6184a85851..4802343da2a03 100644
---- a/toolkit/components/translations/fasttext/fasttext_wasm.js
-+++ b/toolkit/components/translations/fasttext/fasttext_wasm.js
-@@ -1,9 +1,6 @@
-
--var FastTextModule = (() => {
--  var _scriptDir = import.meta.url;
--
--  return (
--async function(FastTextModule = {})  {
-+async function loadFastTextModule(FastTextModule = {})  {
-+  const _scriptDir = null;
-
- // include: shell.js
- // The Module object: Our interface to the outside world. We import
-```
-
-Here we are defining a function rather than a variable, and we are setting **`_scriptDir`** to null
-because **`import.meta.url`** is only available for use within modules.
-
-Next we need to modify the bottom of the file to match these changes:
-
-```diff
-diff --git a/toolkit/components/translations/fasttext/fasttext_wasm.js b/toolkit/components/translations/fasttext/fasttext_wasm.js
-index 64c6184a85851..0a6fca3f524e4 100644
---- a/toolkit/components/translations/fasttext/fasttext_wasm.js
-+++ b/toolkit/components/translations/fasttext/fasttext_wasm.js
-@@ -8287,7 +8287,3 @@ run();
-
-   return FastTextModule.ready
- }
--
--);
--})();
--export default FastTextModule;
-```
-
-**2) Remove unneeded environment checks**<br>
-Next we need to remove unneeded checks for different environments:
-
-```JavaScript
-if (ENVIRONMENT_IS_NODE) {
-    // ...
-} else
-if (ENVIRONMENT_IS_SHELL) {
-    // ...
-} else
-if (ENVIRONMENT_IS_WEB || ENVIRONMENT_IS_WORKER) {
-    // ...
-} else
-{
-  throw new Error('environment detection error');
-}
-```
-
-Since this code will only be run inside of a worker, we want to delete the blocks that deal with **`ENVIRONMENT_IS_NODE`** and **`ENVIRONMENT_IS_SHELL`**. In fact, this code will fail to be imported by [importScripts()] if we don't do this.
-
-**3) Remove the use of `import.meta.url`**<br>
-Finally, there is a use of **`import.meta.url`** that we need to remove.
-
-```diff
-diff --git a/toolkit/components/translations/fasttext/fasttext_wasm.js b/toolkit/components/translations/fasttext/fasttext_wasm.js
-index 64c6184a85851..746cbae2ec952 100644
---- a/toolkit/components/translations/fasttext/fasttext_wasm.js
-+++ b/toolkit/components/translations/fasttext/fasttext_wasm.js
-@@ -746,7 +746,7 @@ if (Module['locateFile']) {
-   }
- } else {
-   // Use bundler-friendly `new URL(..., import.meta.url)` pattern; works in browsers too.
--  wasmBinaryFile = new URL('fasttext_wasm.wasm', import.meta.url).href;
-+  wasmBinaryFile = null;
- }
-
- function getBinary(file) {
-```
-
-As mentioned before, **`import.meta.url`** is not allowed outside of modules and cannot be used with [importScripts()]
-in the worker code that we are creating.
-
-It is okay to set this to null here, because we will be providing the **`wasmBinaryFile`** via [Remote Settings].
-
-**4) Minifying the file**<br>
-The generated **`fasttext_wasm.js`** file is very large. To minimize the impact on the size of the code in the Firefox source tree, we want to minify the file using the [minify] tool.
-
-```
-Size Name
-291k ├── fasttext_wasm.js (original)
-109k └── fasttext_wasm.js (minified)
-```
-
-**5) Adding the license**<br>
-Finally, we should add a copy of the current fastText MIT license to the top of the minified **`fasttext_wasm.js`** file.
-You should be able to paste this from the generated **`fasttext.js`** file.
-
-#### Modifying fasttext.js
-
-```{note}
-It is likely that the source file in tree already has these changes and is already sufficient,
-even if **`fasttext_wasm.js`** has been recently updated. Try running it first as-is before replacing
-and re-modifying.
-```
-
-Next we need to modify **`fasttext.js`** to utilize the changes that we made to **`fasttext_wasm.js`** and also to
-not be a module so that we can import it using [importScripts()].
-
-These changes do the following:
-
-1) Define a variable called **`fastTextModule`** for use in the worker scripts.
-2) Utilize the **`loadFastTextModule()`** function that we defined in **`fasttext_wasm.js`**
-3) Add a function **`loadModelBinary()`** that takes the wasm binary directly, which we will provide through [Remote Settings].
-4) Remove any module exports.
-
-```diff
-diff --git a/toolkit/components/translations/fasttext/fasttext.js b/toolkit/components/translations/fasttext/fasttext.js
-index 86600b9ac9e28..2c49b3faaeedc 100644
---- a/toolkit/components/translations/fasttext/fasttext.js
-+++ b/toolkit/components/translations/fasttext/fasttext.js
-@@ -6,20 +6,30 @@
-  * LICENSE file in the root directory of this source tree.
-  */
-
--import fastTextModularized from './fasttext_wasm.js';
--const fastTextModule = fastTextModularized();
-+let fastTextModule;
-+
-+const _initFastTextModule = async function (wasmModule) {
-+  try {
-+    fastTextModule = await loadFastTextModule(wasmModule);
-+  } catch(e) {
-+    console.error(e);
-+  }
-+  return true
-+}
-
- let postRunFunc = null;
- const addOnPostRun = function(func) {
-   postRunFunc = func;
- };
-
--fastTextModule.addOnPostRun(() => {
--  if (postRunFunc) {
--    postRunFunc();
--  }
--});
-
-+const loadFastText = (wasmModule) => {
-+  _initFastTextModule(wasmModule).then((res) => {
-+    if (postRunFunc) {
-+      postRunFunc();
-+    }
-+  })
-+}
- const thisModule = this;
- const trainFileInWasmFs = 'train.txt';
- const testFileInWasmFs = 'test.txt';
-@@ -41,7 +51,7 @@ const getFloat32ArrayFromHeap = (len) => {
- const heapToFloat32 = (r) => new Float32Array(r.buffer, r.ptr, r.size);
-
- class FastText {
--  constructor() {
-+  constructor(fastTextModule) {
-     this.f = new fastTextModule.FastText();
-   }
-
-@@ -77,6 +87,15 @@ class FastText {
-     });
-   }
-
-+  loadModelBinary(buffer) {
-+    const fastTextNative = this.f;
-+    const byteArray = new Uint8Array(buffer);
-+    const FS = fastTextModule.FS;
-+    FS.writeFile(modelFileInWasmFs, byteArray);
-+    fastTextNative.loadModel(modelFileInWasmFs);
-+    return new FastTextModel(fastTextNative);
-+  }
-+
-   _train(url, modelName, kwargs = {}, callback = null) {
-     const fetchFunc = (thisModule && thisModule.fetch) || fetch;
-     const fastTextNative = this.f;
-@@ -515,6 +534,3 @@ class FastTextModel {
-     });
-   }
- }
--
--
--export {FastText, addOnPostRun};
+./mach test browser_translations_e2e_full_page_translate_without_lexical_shortlist.js
 ```
 
 ---
-## Building Bergamot
+## Performance Tests
 
-TODO
+Translations performance tests run very similarly to other Translatiosn end-to-end tests. The [configuration](#end-to-end-test-configuration) using `MOZ_FETCHES_DIR` is exactly the same.
+
+### Running Performance Tests Locally
+
+To run Translations performance tests locally, you will need to follow the same [steps](#running-end-to-end-tests-locally) that you would to run Translations end-to-end tests locally. The only difference is in the way the test is invoked, e.g.
+
+```
+./mach perftest browser/components/translations/tests/browser/browser_translations_perf_es_en.js
+```
+
+### Comparing Translations Performance in CI
+
+Translations performance tests allow us to make changes and compare a [kernel density estimation] of their results using the [perf.compare] website.
+
+To push a new run of our performance tests to the Try servers, you will run the following command:
+
+```
+./mach try perf --single-run --full --artifact
+```
+
+Once this pulls up the fuzzy finder, you can filter on `-tr8ns`, which should pull up our Translations performance tests for each operating system.
+
+You will need to do this once for your base revision, and once for your modified revision. Note that if your base revision is simply the tip of central with no other commits, then you can omit the `--single-run` flag and it should automatically push up two revisions to try: one without your changes and one with your changes.
+
+Once you have the two revision hashes from the Try servers, you can simply add them to the [perf.compare] website to view the results once they are ready. Ensure that the category to compare is set to `mozperftest`.
+
+#### Temporarily Increasing Sample Size
+
+Our performance tests run whenever code is merged to autoland, to help detect regressions or improvements to the performance of the code. However, the test may only run a limited number of times so as not to waste resources in automation.
+
+If you are trying to make subtle changes, or perhaps you just want a higher confidence in the statistical significance of your changes, you can increase the run count in your base revision and modified revision by modifying the [runCount](https://searchfox.org/mozilla-central/rev/d5f93d53d7d005bd303925bc166163f158142cfd/browser/components/translations/tests/browser/browser_translations_perf_es_en.js#62-76) in the test. Note that you may also have to increase the test timeout, depending on the `runCount`.
+
+This is why it may be useful to push up the base revision and modified revision separately using the `--single-run` flag, rather than letting the base revision simply be the tip of central.
+
+### Adding New Performance Tests
+
+In order to add a new performance test, you may need to add new language-model artifacts to [translations-fetch.yml] described in the [configuration](#end-to-end-test-configuration) section.
+
+You will also need to add a new test page and [register](https://searchfox.org/mozilla-central/rev/d5f93d53d7d005bd303925bc166163f158142cfd/browser/components/translations/tests/browser/head.js#420-434) its language, word count, and token count with the TranslationsBencher. For your convenience, we provide a script that will analyze the HTML of your test page, ensuring that it has a valid language tag, then providing you with the word count and token count.
+
+* [toolkit/components/translations/tests/scripts/translations-perf-data.py](https://searchfox.org/mozilla-central/source/toolkit/components/translations/tests/scripts/translations-perf-data.py)
+
+
 
 
 <!-- Hyperlinks -->
-[3697152e0fd772d9185697fdbd4a1d340ca5571d]: https://github.com/facebookresearch/fastText/tree/3697152e0fd772d9185697fdbd4a1d340ca5571d
+[browser/components/translations]: https://searchfox.org/mozilla-central/search?q=&path=browser%2Fcomponents%2Ftranslations&case=false&regexp=false
 [Bugzilla]: https://bugzilla.mozilla.org/enter_bug.cgi?product=Cloud%20Services&component=Server%3A%20Remote%20Settings
 [Child]: https://searchfox.org/mozilla-central/search?q=TranslationsChild
+[CLD2]: https://github.com/CLD2Owners/cld2
+[CLD3]: https://github.com/google/cld3
 [Download and Install]: https://emscripten.org/docs/getting_started/downloads.html#download-and-install
 [emscripten (2.0.3)]: https://github.com/emscripten-core/emscripten/blob/main/ChangeLog.md#203-09102020
 [emscripten (2.0.18)]: https://github.com/emscripten-core/emscripten/blob/main/ChangeLog.md#2018-04232021
 [emscripten (3.1.35)]: https://github.com/emscripten-core/emscripten/blob/main/ChangeLog.md#3135---040323
 [Environments]: https://remote-settings.readthedocs.io/en/latest/getting-started.html#environments
 [eval()]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/eval
+[fastText]: https://fasttext.cc/
 [Filter Expressions]: https://remote-settings.readthedocs.io/en/latest/target-filters.html#filter-expressions
 [Firefox Release Schedule]: https://wiki.mozilla.org/Release_Management/Calendar
 [generate functions]: https://emscripten.org/docs/api_reference/emscripten.h.html?highlight=dynamic_execution#functions
 [Getting Set Up To Work On The Firefox Codebase]: https://firefox-source-docs.mozilla.org/setup/index.html
-[GitHub Issue]: https://github.com/facebookresearch/fastText/pull/1227#issuecomment-1353830003
 [importScripts()]: https://developer.mozilla.org/en-US/docs/Web/API/WorkerGlobalScope/importScripts
 [JSWindowActors]: https://firefox-source-docs.mozilla.org/dom/ipc/jsactors.html#jswindowactor
+[kernel density estimation]: https://en.wikipedia.org/wiki/Kernel_density_estimation
 [minify]: https://github.com/tdewolff/minify
+[mozilla/translations]: https://github.com/mozilla/translations
 [Parent]: https://searchfox.org/mozilla-central/search?q=TranslationsParent
+[perf.compare]: https://perf.compare
 [Step 3]: https://remote-settings.readthedocs.io/en/latest/getting-started.html#create-a-new-official-type-of-remote-settings
 [remote-settings-devtools]: https://github.com/mozilla-extensions/remote-settings-devtools/releases
 [Remote Settings]: https://remote-settings.readthedocs.io/en/latest/
-[Requirements]: https://fasttext.cc/docs/en/webassembly-module.html#requirements
-[toolkit/components/translations]: https://searchfox.org/mozilla-central/search?q=toolkit%2Fcomponents%2Ftranslations
+[toolkit/components/translations]: https://searchfox.org/mozilla-central/search?q=&path=toolkit%2Fcomponents%2Ftranslations&case=false&regexp=false
+[translations-fetch.yml]: https://searchfox.org/mozilla-central/source/taskcluster/kinds/fetch/translations-fetch.yml
 [WASM]: https://webassembly.org/
 [Workers]: https://searchfox.org/mozilla-central/search?q=%2Ftranslations.*worker&path=&case=false&regexp=true

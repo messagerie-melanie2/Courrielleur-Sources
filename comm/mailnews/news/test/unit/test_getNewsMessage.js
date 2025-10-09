@@ -6,11 +6,11 @@
  *   - Downloading a single message and checking content in stream is correct.
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
-// The basic daemon to use for testing Nntpd.jsm implementations
+// The basic daemon to use for testing Nntpd.sys.mjs implementations
 var daemon = setupNNTPDaemon();
 
 var server;
@@ -25,7 +25,7 @@ var streamListener = {
   ]),
 
   // nsIRequestObserver
-  onStartRequest(aRequest) {},
+  onStartRequest() {},
   onStopRequest(aRequest, aStatusCode) {
     Assert.equal(aStatusCode, 0);
 
@@ -41,7 +41,7 @@ var streamListener = {
 
   // nsIStreamListener
   onDataAvailable(aRequest, aInputStream, aOffset, aCount) {
-    let scriptStream = Cc[
+    const scriptStream = Cc[
       "@mozilla.org/scriptableinputstream;1"
     ].createInstance(Ci.nsIScriptableInputStream);
 
@@ -56,7 +56,7 @@ function doTestFinished() {
 
   server.stop();
 
-  var thread = gThreadManager.currentThread;
+  var thread = Services.tm.currentThread;
   while (thread.hasPendingEvents()) {
     thread.processNextEvent(true);
   }
@@ -93,7 +93,7 @@ function run_test() {
 
     Cc["@mozilla.org/messenger/messageservice;1?type=news"]
       .getService(Ci.nsIMsgMessageService)
-      .loadMessage(messageUri, streamListener, null, null, false);
+      .streamMessage(messageUri, streamListener, null, null, false, "", false);
   } catch (e) {
     server.stop();
     do_throw(e);

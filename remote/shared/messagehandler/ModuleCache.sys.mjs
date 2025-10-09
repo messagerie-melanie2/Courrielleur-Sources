@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
@@ -32,7 +30,7 @@ ChromeUtils.defineESModuleGetters(protocols.test, {
     "chrome://mochitests/content/browser/remote/shared/messagehandler/test/browser/resources/modules/ModuleRegistry.sys.mjs",
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "logger", () => lazy.Log.get());
+ChromeUtils.defineLazyGetter(lazy, "logger", () => lazy.Log.get());
 
 /**
  * ModuleCache instances are dedicated to lazily create and cache the instances
@@ -44,22 +42,22 @@ XPCOMUtils.defineLazyGetter(lazy, "logger", () => lazy.Log.get());
  *
  * In order to implement module logic in any context, separate module files
  * should be created for each situation. For instance, for a given module,
- * - ${MODULES_FOLDER}/root/{ModuleName}.jsm contains the implementation for
+ * - ${MODULES_FOLDER}/root/{ModuleName}.sys.mjs contains the implementation for
  *   commands intended for the destination ROOT, and will be created for a ROOT
  *   MessageHandler only. Typically, they will run in the parent process.
- * - ${MODULES_FOLDER}/windowglobal/{ModuleName}.jsm contains the implementation
+ * - ${MODULES_FOLDER}/windowglobal/{ModuleName}.sys.mjs contains the implementation
  *   for commands intended for a WINDOW_GLOBAL destination, and will be created
  *   for a WINDOW_GLOBAL MessageHandler only. Those will usually run in a
  *   content process.
- * - ${MODULES_FOLDER}/windowglobal-in-root/{ModuleName}.jsm also handles
+ * - ${MODULES_FOLDER}/windowglobal-in-root/{ModuleName}.sys.mjs also handles
  *   commands intended for a WINDOW_GLOBAL destination, but they will be created
  *   for the ROOT MessageHandler and will run in the parent process. This can be
  *   useful if some code has to be executed in the parent process, even though
  *   the final destination is a WINDOW_GLOBAL.
  * - And so on, as more MessageHandler types get added, more combinations will
  *   follow based on the same pattern:
- *   - {contextName}/{ModuleName}.jsm
- *   - or {destinationType}-in-{currentType}/{ModuleName}.jsm
+ *   - {contextName}/{ModuleName}.sys.mjs
+ *   - or {destinationType}-in-{currentType}/{ModuleName}.sys.mjs
  *
  * All those implementations are optional. If a module cannot be found, based on
  * the logic detailed above, the MessageHandler will assume that the command
@@ -147,7 +145,7 @@ export class ModuleCache {
    *     The name of the module which should implement the command.
    * @param {CommandDestination} destination
    *     The destination of the command for which we need to instantiate a
-   *     module. See MessageHandler.jsm for the CommandDestination typedef.
+   *     module. See MessageHandler.sys.mjs for the CommandDestination typedef.
    * @returns {object=}
    *     A module instance corresponding to the provided moduleName and
    *     destination, or null if it could not be instantiated.
@@ -170,6 +168,7 @@ export class ModuleCache {
     let module = null;
     if (ModuleClass) {
       module = new ModuleClass(this.#messageHandler);
+      module.moduleName = moduleName;
     }
 
     this.#modules.set(key, module);
@@ -230,19 +229,31 @@ export class ModuleCache {
       );
     }
 
-    let moduleClass = null;
-    if (this.#protocol.modules[moduleFolder][moduleName]) {
-      moduleClass = this.#protocol.modules[moduleFolder][moduleName];
+    let modulePath = this.#protocol.modules[moduleFolder];
+    if (moduleName.includes(":")) {
+      const parts = moduleName.split(":");
+      moduleName = parts[1];
+      modulePath = modulePath[parts[0]];
     }
 
-    if (moduleClass) {
-      lazy.logger.trace(
-        `Module ${moduleFolder}/${moduleName}.jsm found for ${destinationType}`
-      );
-    } else {
-      lazy.logger.trace(
-        `Module ${moduleFolder}/${moduleName}.jsm not found for ${destinationType}`
-      );
+    const moduleClass = modulePath?.[moduleName] ?? null;
+
+    // Module hit/miss logs generate a lot of spam. Only log if verbose is true.
+    //
+    // Note: Due to https://bugzilla.mozilla.org/show_bug.cgi?id=1828395
+    // verbose is currently always false if the log level is trace.
+    // If those logs are needed before the bug is fixed, temporarily remove the
+    // condition.
+    if (lazy.Log.verbose) {
+      if (moduleClass) {
+        lazy.logger.trace(
+          `Module ${moduleFolder}/${moduleName}.sys.mjs found for ${destinationType}`
+        );
+      } else {
+        lazy.logger.trace(
+          `Module ${moduleFolder}/${moduleName}.sys.mjs not found for ${destinationType}`
+        );
+      }
     }
 
     return moduleClass;
@@ -252,12 +263,12 @@ export class ModuleCache {
     const originPath = lazy.getMessageHandlerClass(originType).modulePath;
     if (originType === destinationType) {
       // If the command is targeting the current type, the module is expected to
-      // be in eg "windowglobal/${moduleName}.jsm".
+      // be in eg "windowglobal/${moduleName}.sys.mjs".
       return originPath;
     }
 
     // If the command is targeting another type, the module is expected to
-    // be in a composed folder eg "windowglobal-in-root/${moduleName}.jsm".
+    // be in a composed folder eg "windowglobal-in-root/${moduleName}.sys.mjs".
     const destinationPath =
       lazy.getMessageHandlerClass(destinationType).modulePath;
     return `${destinationPath}-in-${originPath}`;

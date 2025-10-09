@@ -6,8 +6,8 @@
 const {
   createElement,
   createFactory,
-} = require("resource://devtools/client/shared/vendor/react.js");
-const ReactDOM = require("resource://devtools/client/shared/vendor/react-dom.js");
+} = require("resource://devtools/client/shared/vendor/react.mjs");
+const ReactDOM = require("resource://devtools/client/shared/vendor/react-dom.mjs");
 const {
   Provider,
   createProvider,
@@ -31,6 +31,9 @@ const EventEmitter = require("resource://devtools/shared/event-emitter.js");
 const App = createFactory(
   require("resource://devtools/client/webconsole/components/App.js")
 );
+const {
+  getAllFilters,
+} = require("resource://devtools/client/webconsole/selectors/filters.js");
 
 loader.lazyGetter(this, "AppErrorBoundary", () =>
   createFactory(
@@ -122,13 +125,21 @@ class WebConsoleWrapper {
         },
       });
 
+      const serviceContainer = this.getServiceContainer();
+
       const app = AppErrorBoundary(
         {
           componentName: "Console",
           panel: L10N.getStr("ToolboxTabWebconsole.label"),
+          // The AppErrorBoundary renders a link to file a bug, but in the case of the
+          // browser console, we need to have a specific handler to open the link in the
+          // main Firefox window
+          openLink: webConsoleUI.isBrowserConsole
+            ? serviceContainer.openLink
+            : null,
         },
         App({
-          serviceContainer: this.getServiceContainer(),
+          serviceContainer,
           webConsoleUI,
           onFirstMeaningfulPaint: resolve,
           closeSplitConsole: this.closeSplitConsole.bind(this),
@@ -169,6 +180,19 @@ class WebConsoleWrapper {
     if (this.parentNode) {
       ReactDOM.unmountComponentAtNode(this.parentNode);
     }
+  }
+
+  /**
+   * Query the reducer store for the current state of filtering
+   * a given type of message
+   *
+   * @param {String} filter
+   *        Type of message to be filtered.
+   * @return {Boolean}
+   *         True if this type of message should be displayed.
+   */
+  getFilterState(filter) {
+    return getAllFilters(this.getStore().getState())[filter];
   }
 
   dispatchMessageAdd(packet) {
@@ -389,7 +413,10 @@ class WebConsoleWrapper {
           return;
         }
 
-        store.dispatch(actions.messagesAdd(this.queuedMessageAdds));
+        const { ui } = store.getState();
+        store.dispatch(
+          actions.messagesAdd(this.queuedMessageAdds, null, ui.persistLogs)
+        );
 
         const { length } = this.queuedMessageAdds;
 
@@ -468,6 +495,14 @@ class WebConsoleWrapper {
   // Called by pushing close button.
   closeSplitConsole() {
     this.toolbox.closeSplitConsole();
+  }
+
+  toggleOriginalVariableMappingEvaluationNotification(show) {
+    store.dispatch(
+      actions.showEvaluationNotification(
+        show ? Constants.ORIGINAL_VARIABLE_MAPPING : ""
+      )
+    );
   }
 }
 

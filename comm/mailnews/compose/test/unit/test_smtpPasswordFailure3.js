@@ -8,8 +8,8 @@
  *
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 /* import-globals-from ../../../test/resources/alertTestUtils.js */
@@ -28,16 +28,7 @@ var kUsername = "testsmtp";
 // file.
 var kValidPassword = "smtptest1";
 
-function confirmExPS(
-  aDialogTitle,
-  aText,
-  aButtonFlags,
-  aButton0Title,
-  aButton1Title,
-  aButton2Title,
-  aCheckMsg,
-  aCheckState
-) {
+function confirmExPS() {
   switch (++attempt) {
     // First attempt, retry.
     case 1:
@@ -94,7 +85,8 @@ add_task(async function () {
   // Ensure we have at least one mail account
   localAccountUtils.loadLocalMailAccount();
 
-  // Start the fake SMTP server
+  // Start the fake SMTP server. The server's socket type defaults to
+  // Ci.nsMsgSocketType.plain, so no need to set it.
   server.start();
   var smtpServer = getBasicSmtpServer(server.port);
   var identity = getSmtpIdentity(kIdentityMail, smtpServer);
@@ -103,36 +95,37 @@ add_task(async function () {
   test = "Auth sendMailMessage";
 
   smtpServer.authMethod = Ci.nsMsgAuthMethod.passwordCleartext;
-  smtpServer.socketType = Ci.nsMsgSocketType.plain;
   smtpServer.username = kUsername;
 
   do_test_pending();
 
-  MailServices.smtp.sendMailMessage(
+  const messageId = Cc["@mozilla.org/messengercompose/computils;1"]
+    .createInstance(Ci.nsIMsgCompUtils)
+    .msgGenerateMessageId(identity, null);
+
+  smtpServer.sendMailMessage(
     testFile,
-    kTo,
+    MailServices.headerParser.parseEncodedHeaderW(kTo),
+    [],
     identity,
     kSender,
     null,
-    URLListener,
-    null,
     null,
     false,
-    "",
-    {},
-    {}
+    messageId,
+    Listener
   );
 
   server.performTest();
 });
 
-var URLListener = {
-  OnStartRunningUrl(url) {},
-  OnStopRunningUrl(url, rc) {
+var Listener = {
+  onSendStart() {},
+  onSendStop(serverUri, status) {
     // Check for ok status.
-    Assert.equal(rc, 0);
+    Assert.equal(status, 0);
     // Now check the new password has been saved.
-    let logins = Services.logins.findLogins(
+    const logins = Services.logins.findLogins(
       "smtp://localhost",
       null,
       "smtp://localhost"
@@ -144,7 +137,7 @@ var URLListener = {
 
     server.stop();
 
-    var thread = gThreadManager.currentThread;
+    var thread = Services.tm.currentThread;
     while (thread.hasPendingEvents()) {
       thread.processNextEvent(true);
     }

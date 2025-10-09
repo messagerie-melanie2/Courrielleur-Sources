@@ -3,7 +3,7 @@
 
 "use strict";
 
-const { ExperimentFakes } = ChromeUtils.importESModule(
+const { NimbusTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/NimbusTestUtils.sys.mjs"
 );
 
@@ -64,15 +64,11 @@ add_task(async function test_experiment_control() {
  * This tests that the experiment is showing the icon only
  */
 add_task(async function test_experiment_iconOnly() {
-  let experimentCleanup = await ExperimentFakes.enrollWithFeatureConfig({
+  let experimentCleanup = await NimbusTestUtils.enrollWithFeatureConfig({
     featureId: "pictureinpicture",
     value: {
       showIconOnly: true,
     },
-  });
-
-  registerCleanupFunction(async function () {
-    await experimentCleanup();
   });
 
   await BrowserTestUtils.withNewTab(
@@ -100,15 +96,17 @@ add_task(async function test_experiment_iconOnly() {
         let pipIcon = shadowRoot.querySelector("div.pip-icon");
 
         Assert.ok(
-          ContentTaskUtils.is_hidden(pipExpanded),
+          ContentTaskUtils.isHidden(pipExpanded),
           "The PiP explainer hidden by the experiment"
         );
 
         Assert.ok(
-          ContentTaskUtils.is_visible(pipIcon),
+          ContentTaskUtils.isVisible(pipIcon),
           "The PiP icon is visible by the experiment"
         );
       });
     }
   );
+
+  experimentCleanup();
 });

@@ -8,14 +8,16 @@
 var { TestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/TestUtils.sys.mjs"
 );
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-const { MimeParser } = ChromeUtils.import("resource:///modules/mimeParser.jsm");
+const { MimeParser } = ChromeUtils.importESModule(
+  "resource:///modules/mimeParser.sys.mjs"
+);
 
 load("../../../resources/logHelper.js"); // watch for errors in the error console
 
@@ -44,7 +46,7 @@ function run_test() {
 }
 
 add_task(async function copy_gIncomingMailFile() {
-  let promiseCopyListener = new PromiseTestUtils.PromiseCopyListener();
+  const promiseCopyListener = new PromiseTestUtils.PromiseCopyListener();
   // Copy gIncomingMailFile into the Inbox.
   MailServices.copy.copyFileMessage(
     gIncomingMailFile,
@@ -60,7 +62,7 @@ add_task(async function copy_gIncomingMailFile() {
 });
 
 add_task(async function copy_gIncomingMailFile2() {
-  let promiseCopyListener = new PromiseTestUtils.PromiseCopyListener();
+  const promiseCopyListener = new PromiseTestUtils.PromiseCopyListener();
   // Copy gIncomingMailFile2 into the Inbox.
   MailServices.copy.copyFileMessage(
     gIncomingMailFile2,
@@ -76,7 +78,7 @@ add_task(async function copy_gIncomingMailFile2() {
 });
 
 add_task(async function copy_gIncomingMailFile3() {
-  let promiseCopyListener = new PromiseTestUtils.PromiseCopyListener();
+  const promiseCopyListener = new PromiseTestUtils.PromiseCopyListener();
   // Copy gIncomingMailFile3 into the Inbox.
   MailServices.copy.copyFileMessage(
     gIncomingMailFile3,
@@ -92,7 +94,7 @@ add_task(async function copy_gIncomingMailFile3() {
 });
 
 add_task(async function copy_gTemplateMailFile() {
-  let promiseCopyListener = new PromiseTestUtils.PromiseCopyListener();
+  const promiseCopyListener = new PromiseTestUtils.PromiseCopyListener();
   // Copy gTemplateMailFile into the Templates folder.
   MailServices.copy.copyFileMessage(
     gTemplateMailFile,
@@ -108,7 +110,7 @@ add_task(async function copy_gTemplateMailFile() {
 });
 
 add_task(async function copy_gTemplateMailFile2() {
-  let promiseCopyListener = new PromiseTestUtils.PromiseCopyListener();
+  const promiseCopyListener = new PromiseTestUtils.PromiseCopyListener();
   // Copy gTemplateMailFile2 into the Templates folder.
   MailServices.copy.copyFileMessage(
     gTemplateMailFile2,
@@ -172,13 +174,15 @@ add_task(async function testReplyingToMailWithNoFrom() {
 
 // Test reply with template.
 async function testReply(aHrdIdx, aTemplateHdrIdx = 0) {
-  let smtpServer = getBasicSmtpServer();
-  smtpServer.port = gServer.port;
+  const smtpServer = getBasicSmtpServer(gServer.port);
 
-  let identity = getSmtpIdentity(kSender, smtpServer);
+  const identity = getSmtpIdentity(kSender, smtpServer);
   localAccountUtils.msgAccount.addIdentity(identity);
 
-  let msgHdr = mailTestUtils.getMsgHdrN(localAccountUtils.inboxFolder, aHrdIdx);
+  const msgHdr = mailTestUtils.getMsgHdrN(
+    localAccountUtils.inboxFolder,
+    aHrdIdx
+  );
   info(
     "Msg#" +
       aHrdIdx +
@@ -187,10 +191,13 @@ async function testReply(aHrdIdx, aTemplateHdrIdx = 0) {
       ", recipients=" +
       msgHdr.recipients
   );
-  let templateHdr = mailTestUtils.getMsgHdrN(gTemplateFolder, aTemplateHdrIdx);
+  const templateHdr = mailTestUtils.getMsgHdrN(
+    gTemplateFolder,
+    aTemplateHdrIdx
+  );
 
   // See <method name="getTemplates"> in searchWidgets.xml
-  let msgTemplateUri =
+  const msgTemplateUri =
     gTemplateFolder.URI +
     "?messageId=" +
     templateHdr.messageId +
@@ -204,8 +211,9 @@ async function testReply(aHrdIdx, aTemplateHdrIdx = 0) {
   );
 
   await TestUtils.waitForCondition(() => gServer._daemon.post);
-  let headers, body;
-  [headers, body] = MimeParser.extractHeadersAndBody(gServer._daemon.post);
+  const [headers, body] = MimeParser.extractHeadersAndBody(
+    gServer._daemon.post
+  );
   Assert.ok(headers.get("Subject").startsWith("Auto: "));
   Assert.equal(headers.get("Auto-submitted"), "auto-replied");
   Assert.equal(headers.get("In-Reply-To"), "<" + msgHdr.messageId + ">");

@@ -4,22 +4,22 @@
 
 /* import-globals-from ../../../../base/content/mailWindowOverlay.js */
 
-let { cloudFileAccounts } = ChromeUtils.import(
-  "resource:///modules/cloudFileAccounts.jsm"
+const { cloudFileAccounts } = ChromeUtils.importESModule(
+  "resource:///modules/cloudFileAccounts.sys.mjs"
 );
 
 const ICON_URL = getRootDirectory(gTestPath) + "files/icon.svg";
 const MANAGEMENT_URL = getRootDirectory(gTestPath) + "files/management.html";
 
 function getFileFromChromeURL(leafName) {
-  let ChromeRegistry = Cc["@mozilla.org/chrome/chrome-registry;1"].getService(
+  const ChromeRegistry = Cc["@mozilla.org/chrome/chrome-registry;1"].getService(
     Ci.nsIChromeRegistry
   );
 
-  let url = Services.io.newURI(
+  const url = Services.io.newURI(
     getRootDirectory(gTestPath) + "files/" + leafName
   );
-  let fileURL = ChromeRegistry.convertChromeURL(url).QueryInterface(
+  const fileURL = ChromeRegistry.convertChromeURL(url).QueryInterface(
     Ci.nsIFileURL
   );
   return fileURL.file;
@@ -27,7 +27,7 @@ function getFileFromChromeURL(leafName) {
 
 add_task(async () => {
   let uploadedFiles = [];
-  let provider = {
+  const provider = {
     type: "Mochitest",
     displayName: "Mochitest",
     iconURL: ICON_URL,
@@ -62,27 +62,27 @@ add_task(async () => {
   );
 
   cloudFileAccounts.registerProvider(provider.type, provider);
-  let account = cloudFileAccounts.createAccount(provider.type);
+  const account = cloudFileAccounts.createAccount(provider.type);
   Assert.equal(
     cloudFileAccounts.configuredAccounts.length,
     1,
     "Should have only the one account we created."
   );
 
-  let composeWindowPromise = BrowserTestUtils.domWindowOpened();
+  const composeWindowPromise = BrowserTestUtils.domWindowOpened();
   MsgNewMessage();
-  let composeWindow = await composeWindowPromise;
+  const composeWindow = await composeWindowPromise;
   await BrowserTestUtils.waitForEvent(composeWindow, "compose-editor-ready");
   await TestUtils.waitForCondition(
     () => Services.focus.activeWindow == composeWindow
   );
-  let composeDocument = composeWindow.document;
+  const composeDocument = composeWindow.document;
 
   // Compose window loaded.
   // Check the attach dropdown has our account as a <menuitem>.
 
-  let toolbarButton = composeDocument.getElementById("button-attach");
-  let rect = toolbarButton.getBoundingClientRect();
+  const toolbarButton = composeDocument.getElementById("button-attach");
+  const rect = toolbarButton.getBoundingClientRect();
   EventUtils.synthesizeMouse(
     toolbarButton,
     rect.width - 5,
@@ -92,12 +92,12 @@ add_task(async () => {
   );
   await promiseAnimationFrame(composeWindow);
 
-  let menu = composeDocument.getElementById(
+  const menu = composeDocument.getElementById(
     "button-attachPopup_attachCloudMenu"
   );
-  ok(!BrowserTestUtils.is_hidden(menu));
+  ok(!BrowserTestUtils.isHidden(menu));
 
-  let popupshown = BrowserTestUtils.waitForEvent(menu, "popupshown");
+  const popupshown = BrowserTestUtils.waitForEvent(menu, "popupshown");
   EventUtils.synthesizeMouseAtCenter(menu, { clickCount: 1 }, composeWindow);
   await popupshown;
 
@@ -172,17 +172,17 @@ add_task(async () => {
 
   // Select one of the previously-uploaded items and check the attachment is added.
 
-  let bucket = composeDocument.getElementById("attachmentBucket");
+  const bucket = composeDocument.getElementById("attachmentBucket");
   await new Promise(resolve => {
     bucket.addEventListener("attachments-added", resolve, { once: true });
     menu.menupopup.activateItem(menuitems[1]);
   });
   info("attachment added");
   await promiseAnimationFrame(composeWindow);
-  ok(toolbarButton.open === false);
+  Assert.strictEqual(toolbarButton.open, false);
 
   is(bucket.itemCount, 1);
-  let attachment = bucket.itemChildren[0];
+  const attachment = bucket.itemChildren[0];
   is(attachment.getAttribute("name"), "green_eggs.txt");
   ok(attachment.attachment.sendViaCloud);
   is(attachment.attachment.cloudFileAccountKey, account.accountKey);
@@ -198,8 +198,8 @@ add_task(async () => {
   );
 
   // Check the content of the editor for the added template.
-  let editor = composeWindow.GetCurrentEditor();
-  let urls = editor.document.querySelectorAll(
+  const editor = composeWindow.GetCurrentEditor();
+  const urls = editor.document.querySelectorAll(
     "body > #cloudAttachmentListRoot > #cloudAttachmentList"
   );
   Assert.equal(urls.length, 1, "Found 1 FileLink template in the document.");
@@ -225,8 +225,8 @@ add_task(async () => {
   );
 
   Assert.equal(
-    urls[0].querySelector(".cloudfile-service-icon").src,
-    "data:image/svg+xml;filename=globe.svg;base64,PCEtLSBUaGlzIFNvdXJjZSBDb2RlIEZvcm0gaXMgc3ViamVjdCB0byB0aGUgdGVybXMgb2YgdGhlIE1vemlsbGEgUHVibGljCiAgIC0gTGljZW5zZSwgdi4gMi4wLiBJZiBhIGNvcHkgb2YgdGhlIE1QTCB3YXMgbm90IGRpc3RyaWJ1dGVkIHdpdGggdGhpcwogICAtIGZpbGUsIFlvdSBjYW4gb2J0YWluIG9uZSBhdCBodHRwOi8vbW96aWxsYS5vcmcvTVBMLzIuMC8uIC0tPgo8c3ZnIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiB2aWV3Qm94PSIwIDAgMTYgMTYiPgogIDxwYXRoIGZpbGw9ImNvbnRleHQtZmlsbCIgZD0iTTggMGE4IDggMCAxIDAgOCA4IDguMDA5IDguMDA5IDAgMCAwLTgtOHptNS4xNjMgNC45NThoLTEuNTUyYTcuNyA3LjcgMCAwIDAtMS4wNTEtMi4zNzYgNi4wMyA2LjAzIDAgMCAxIDIuNjAzIDIuMzc2ek0xNCA4YTUuOTYzIDUuOTYzIDAgMCAxLS4zMzUgMS45NThoLTEuODIxQTEyLjMyNyAxMi4zMjcgMCAwIDAgMTIgOGExMi4zMjcgMTIuMzI3IDAgMCAwLS4xNTYtMS45NThoMS44MjFBNS45NjMgNS45NjMgMCAwIDEgMTQgOHptLTYgNmMtMS4wNzUgMC0yLjAzNy0xLjItMi41NjctMi45NThoNS4xMzVDMTAuMDM3IDEyLjggOS4wNzUgMTQgOCAxNHpNNS4xNzQgOS45NThhMTEuMDg0IDExLjA4NCAwIDAgMSAwLTMuOTE2aDUuNjUxQTExLjExNCAxMS4xMTQgMCAwIDEgMTEgOGExMS4xMTQgMTEuMTE0IDAgMCAxLS4xNzQgMS45NTh6TTIgOGE1Ljk2MyA1Ljk2MyAwIDAgMSAuMzM1LTEuOTU4aDEuODIxYTEyLjM2MSAxMi4zNjEgMCAwIDAgMCAzLjkxNkgyLjMzNUE1Ljk2MyA1Ljk2MyAwIDAgMSAyIDh6bTYtNmMxLjA3NSAwIDIuMDM3IDEuMiAyLjU2NyAyLjk1OEg1LjQzM0M1Ljk2MyAzLjIgNi45MjUgMiA4IDJ6bS0yLjU2LjU4MmE3LjcgNy43IDAgMCAwLTEuMDUxIDIuMzc2SDIuODM3QTYuMDMgNi4wMyAwIDAgMSA1LjQ0IDIuNTgyem0tMi42IDguNDZoMS41NDlhNy43IDcuNyAwIDAgMCAxLjA1MSAyLjM3NiA2LjAzIDYuMDMgMCAwIDEtMi42MDMtMi4zNzZ6bTcuNzIzIDIuMzc2YTcuNyA3LjcgMCAwIDAgMS4wNTEtMi4zNzZoMS41NTJhNi4wMyA2LjAzIDAgMCAxLTIuNjA2IDIuMzc2eiI+PC9wYXRoPgo8L3N2Zz4K",
+    urls[0].querySelector(".cloudfile-service-icon").style.backgroundImage,
+    `url("data:image/svg+xml;filename=globe.svg;base64,PCEtLSBUaGlzIFNvdXJjZSBDb2RlIEZvcm0gaXMgc3ViamVjdCB0byB0aGUgdGVybXMgb2YgdGhlIE1vemlsbGEgUHVibGljCiAgIC0gTGljZW5zZSwgdi4gMi4wLiBJZiBhIGNvcHkgb2YgdGhlIE1QTCB3YXMgbm90IGRpc3RyaWJ1dGVkIHdpdGggdGhpcwogICAtIGZpbGUsIFlvdSBjYW4gb2J0YWluIG9uZSBhdCBodHRwOi8vbW96aWxsYS5vcmcvTVBMLzIuMC8uIC0tPgo8c3ZnIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiB2aWV3Qm94PSIwIDAgMTYgMTYiPgogIDxwYXRoIGZpbGw9ImNvbnRleHQtZmlsbCIgZD0iTTggMGE4IDggMCAxIDAgOCA4IDguMDA5IDguMDA5IDAgMCAwLTgtOHptNS4xNjMgNC45NThoLTEuNTUyYTcuNyA3LjcgMCAwIDAtMS4wNTEtMi4zNzYgNi4wMyA2LjAzIDAgMCAxIDIuNjAzIDIuMzc2ek0xNCA4YTUuOTYzIDUuOTYzIDAgMCAxLS4zMzUgMS45NThoLTEuODIxQTEyLjMyNyAxMi4zMjcgMCAwIDAgMTIgOGExMi4zMjcgMTIuMzI3IDAgMCAwLS4xNTYtMS45NThoMS44MjFBNS45NjMgNS45NjMgMCAwIDEgMTQgOHptLTYgNmMtMS4wNzUgMC0yLjAzNy0xLjItMi41NjctMi45NThoNS4xMzVDMTAuMDM3IDEyLjggOS4wNzUgMTQgOCAxNHpNNS4xNzQgOS45NThhMTEuMDg0IDExLjA4NCAwIDAgMSAwLTMuOTE2aDUuNjUxQTExLjExNCAxMS4xMTQgMCAwIDEgMTEgOGExMS4xMTQgMTEuMTE0IDAgMCAxLS4xNzQgMS45NTh6TTIgOGE1Ljk2MyA1Ljk2MyAwIDAgMSAuMzM1LTEuOTU4aDEuODIxYTEyLjM2MSAxMi4zNjEgMCAwIDAgMCAzLjkxNkgyLjMzNUE1Ljk2MyA1Ljk2MyAwIDAgMSAyIDh6bTYtNmMxLjA3NSAwIDIuMDM3IDEuMiAyLjU2NyAyLjk1OEg1LjQzM0M1Ljk2MyAzLjIgNi45MjUgMiA4IDJ6bS0yLjU2LjU4MmE3LjcgNy43IDAgMCAwLTEuMDUxIDIuMzc2SDIuODM3QTYuMDMgNi4wMyAwIDAgMSA1LjQ0IDIuNTgyem0tMi42IDguNDZoMS41NDlhNy43IDcuNyAwIDAgMCAxLjA1MSAyLjM3NiA2LjAzIDYuMDMgMCAwIDEtMi42MDMtMi4zNzZ6bTcuNzIzIDIuMzc2YTcuNyA3LjcgMCAwIDAgMS4wNTEtMi4zNzZoMS41NTJhNi4wMyA2LjAzIDAgMCAxLTIuNjA2IDIuMzc2eiI+PC9wYXRoPgo8L3N2Zz4K")`,
     "The used service icon should be correct."
   );
 

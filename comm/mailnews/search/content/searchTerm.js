@@ -115,19 +115,18 @@ searchTermContainer.prototype = {
 
   save() {
     var searchTerm = this.searchTerm;
-    var nsMsgSearchAttrib = Ci.nsMsgSearchAttrib;
 
     if (isNaN(this.searchattribute.value)) {
       // is this a custom term?
-      searchTerm.attrib = nsMsgSearchAttrib.Custom;
+      searchTerm.attrib = Ci.nsMsgSearchAttrib.Custom;
       searchTerm.customId = this.searchattribute.value;
     } else {
       searchTerm.attrib = this.searchattribute.value;
     }
 
     if (
-      this.searchattribute.value > nsMsgSearchAttrib.OtherHeader &&
-      this.searchattribute.value < nsMsgSearchAttrib.kNumMsgSearchAttributes
+      this.searchattribute.value > Ci.nsMsgSearchAttrib.OtherHeader &&
+      this.searchattribute.value < Ci.nsMsgSearchAttrib.kNumMsgSearchAttributes
     ) {
       searchTerm.arbitraryHeader = this.searchattribute.label;
     }
@@ -192,7 +191,7 @@ function initializeBooleanWidgets() {
 
 function initializeSearchRows(scope, searchTerms) {
   for (let i = 0; i < searchTerms.length; i++) {
-    let searchTerm = searchTerms[i];
+    const searchTerm = searchTerms[i];
     createSearchRow(i, scope, searchTerm, false);
     gTotalSearchTerms++;
   }
@@ -203,7 +202,7 @@ function initializeSearchRows(scope, searchTerms) {
 /**
  * Enables/disables all the visible elements inside the search terms listbox.
  *
- * @param matchAllValue boolean value from the first search term
+ * @param {boolean} matchAllValue - value from the first search term
  */
 function updateSearchTermsListbox(matchAllValue) {
   var searchTerms = document.getElementById("searchTermList");
@@ -331,11 +330,12 @@ function booleanChanged(event) {
 /**
  * Create a new search row with all the needed elements.
  *
- * @param index       index of the position in the menulist where to add the row
- * @param scope       a nsMsgSearchScope constant indicating scope of this search rule
- * @param searchTerm  nsIMsgSearchTerm object to hold the search term
- * @param aUserAdded  boolean indicating if the row addition was initiated by the user
- *                    (e.g. via the '+' button)
+ * @param {integer} index - Index of the position in the menulist where to add the row.
+ * @param {nsMsgSearchScope} scope - A nsMsgSearchScope constant indicating
+ *   scope of this search rule.
+ * @param {nsIMsgSearchTerm} searchTerm  - The search term.
+ * @param {boolean} aUserAdded - Boolean indicating if the row addition was
+ *   initiated by the user (e.g. via the '+' button).
  */
 function createSearchRow(index, scope, searchTerm, aUserAdded) {
   var searchAttr = document.createXULElement("search-attribute");
@@ -444,21 +444,20 @@ function initializeTermFromIndex(index) {
  * Creates a <richlistitem> using the array children as the children
  * of each listcell.
  *
- * @param aChildren  An array of XUL elements to put into the listitem.
- *                   Each array member is put into a separate listcell.
- *                   If the member itself is an array of elements,
- *                   all of them are put into the same listcell.
+ * @param {Element[]} aChildren - An array of XUL elements to put into the
+ *   listitem. Each array member is put into a separate listcell. If the member
+ *   itself is an array of elements, all of them are put into the same listcell.
  */
 function constructRow(aChildren) {
-  let cols = gSearchTermList.firstElementChild.children; // treecol elements
-  let listitem = document.createXULElement("richlistitem");
+  const cols = gSearchTermList.firstElementChild.children; // treecol elements
+  const listitem = document.createXULElement("richlistitem");
   listitem.setAttribute("allowevents", "true");
   for (let i = 0; i < aChildren.length; i++) {
-    let listcell = document.createXULElement("hbox");
+    const listcell = document.createXULElement("hbox");
     if (cols[i].hasAttribute("style")) {
       listcell.setAttribute("style", cols[i].getAttribute("style"));
     }
-    let child = aChildren[i];
+    const child = aChildren[i];
 
     if (child instanceof Array) {
       for (let j = 0; j < child.length; j++) {
@@ -473,6 +472,9 @@ function constructRow(aChildren) {
   return listitem;
 }
 
+/**
+ * @param {integer} index - Index of row to remove.
+ */
 function removeSearchRow(index) {
   var searchTermObj = gSearchTerms[index].obj;
   if (!searchTermObj) {
@@ -553,7 +555,7 @@ function saveSearchTerms(searchTerms, termOwner) {
   return searchTerms;
 }
 
-function onReset(event) {
+function onReset() {
   while (gTotalSearchTerms > 0) {
     removeSearchRow(--gTotalSearchTerms);
   }

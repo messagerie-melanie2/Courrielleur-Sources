@@ -7,6 +7,10 @@
 <window title="Textbox Add and Undo Add to Dictionary Test" width="500" height="600"
         xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
         xmlns:html="http://www.w3.org/1999/xhtml">
+  <linkset>
+    <html:link rel="localization" href="toolkit/global/textActions.ftl"/>
+  </linkset>
+
   <script src="chrome://mochikit/content/tests/SimpleTest/SimpleTest.js"></script>
   <script src="chrome://mochikit/content/tests/SimpleTest/EventUtils.js"></script>
 
@@ -44,8 +48,8 @@ function startTests()
   inputBox._input.focus();
   testNum = 0;
 
-  ({onSpellCheck} = ChromeUtils.import(
-    "resource://testing-common/AsyncSpellCheckTestHelper.jsm"));
+  ({onSpellCheck} = ChromeUtils.importESModule(
+    "resource://testing-common/AsyncSpellCheckTestHelper.sys.mjs"));
   onSpellCheck(inputBox._input, function () {
     bringUpContextMenu(inputBox);
   });

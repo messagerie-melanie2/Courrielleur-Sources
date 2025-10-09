@@ -12,14 +12,12 @@
  *   - Message with mix of attachment types.
  */
 
-var { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
-
-var gMessageGenerator = new MessageGenerator();
 
 var gMsgFile1 = do_get_file("../../../data/bugmail10");
 var gMsgId1 = "200806061706.m56H6RWT004933@mrapp54.mozilla.org";
@@ -36,7 +34,7 @@ var gImapInboxOfflineStoreSize;
 function addMessagesToServer(messages, mailbox) {
   // For every message we have, we need to convert it to a file:/// URI.
   messages.forEach(function (message) {
-    let URI = Services.io
+    const URI = Services.io
       .newFileURI(message.file)
       .QueryInterface(Ci.nsIFileURL);
     // Create the ImapMessage and store it on the mailbox.
@@ -70,76 +68,85 @@ add_setup(async function () {
     IMAPPump.daemon.getMailbox("INBOX")
   );
 
-  let listener = new PromiseTestUtils.PromiseUrlListener();
+  const listener = new PromiseTestUtils.PromiseUrlListener();
   IMAPPump.inbox.updateFolderWithListener(null, listener);
   await listener.promise;
-});
 
-var gIMAPService;
-
-add_task(async function selectFirstMsg() {
   // We postpone creating the imap service until after we've set the prefs
   //  that it reads on its startup.
   gIMAPService = Cc[
     "@mozilla.org/messenger/messageservice;1?type=imap"
   ].getService(Ci.nsIMsgMessageService);
+});
 
-  let db = IMAPPump.inbox.msgDatabase;
-  let msg1 = db.getMsgHdrForMessageID(gMsgId1);
-  let listener = new PromiseTestUtils.PromiseUrlListener({
+var gIMAPService;
+
+add_task(async function selectFirstMsg() {
+  const db = IMAPPump.inbox.msgDatabase;
+  const msg1 = db.getMsgHdrForMessageID(gMsgId1);
+  const listener = new PromiseTestUtils.PromiseUrlListener({
     OnStopRunningUrl: (aUrl, aExitCode) => {
       Assert.equal(aExitCode, 0);
     },
   });
-  // We use the streamListener as a display consumer.
-  let streamListener = new PromiseTestUtils.PromiseStreamListener();
-  gIMAPService.loadMessage(
+  // Stream to inbox.
+  const streamListener = new PromiseTestUtils.PromiseStreamListener();
+  gIMAPService.streamMessage(
     IMAPPump.inbox.getUriForMsg(msg1),
     streamListener,
     null,
     listener,
+    false,
+    "",
     false
   );
+  await streamListener.promise;
   await listener.promise;
 });
 
 add_task(async function select2ndMsg() {
-  let msg1 = IMAPPump.inbox.msgDatabase.getMsgHdrForMessageID(gMsgId1);
+  const msg1 = IMAPPump.inbox.msgDatabase.getMsgHdrForMessageID(gMsgId1);
   Assert.notEqual(msg1.flags & Ci.nsMsgMessageFlags.Offline, 0);
-  let db = IMAPPump.inbox.msgDatabase;
-  let msg2 = db.getMsgHdrForMessageID(gMsgId2);
-  let listener = new PromiseTestUtils.PromiseUrlListener({
+  const db = IMAPPump.inbox.msgDatabase;
+  const msg2 = db.getMsgHdrForMessageID(gMsgId2);
+  const listener = new PromiseTestUtils.PromiseUrlListener({
     OnStopRunningUrl: (aUrl, aExitCode) => {
       Assert.equal(aExitCode, 0);
     },
   });
-  // We use the streamListener as a display consumer.
-  let streamListener = new PromiseTestUtils.PromiseStreamListener();
-  gIMAPService.loadMessage(
+  // Stream to inbox.
+  const streamListener = new PromiseTestUtils.PromiseStreamListener();
+  gIMAPService.streamMessage(
     IMAPPump.inbox.getUriForMsg(msg2),
     streamListener,
     null,
     listener,
+    false,
+    "",
     false
   );
+  await streamListener.promise;
   await listener.promise;
 });
 
 add_task(async function select3rdMsg() {
-  let msg2 = IMAPPump.inbox.msgDatabase.getMsgHdrForMessageID(gMsgId2);
+  const msg2 = IMAPPump.inbox.msgDatabase.getMsgHdrForMessageID(gMsgId2);
   Assert.notEqual(msg2.flags & Ci.nsMsgMessageFlags.Offline, 0);
-  let db = IMAPPump.inbox.msgDatabase;
-  let msg3 = db.getMsgHdrForMessageID(gMsgId3);
-  let listener = new PromiseTestUtils.PromiseUrlListener();
-  // We use the streamListener as a display consumer.
-  let streamListener = new PromiseTestUtils.PromiseStreamListener();
-  gIMAPService.loadMessage(
+  const db = IMAPPump.inbox.msgDatabase;
+  const msg3 = db.getMsgHdrForMessageID(gMsgId3);
+  const listener = new PromiseTestUtils.PromiseUrlListener();
+  // Stream to inbox.
+  const streamListener = new PromiseTestUtils.PromiseStreamListener();
+  gIMAPService.streamMessage(
     IMAPPump.inbox.getUriForMsg(msg3),
     streamListener,
     null,
     listener,
+    false,
+    "",
     false
   );
+  await streamListener.promise;
   await listener.promise;
 });
 
@@ -149,14 +156,14 @@ add_task(
     skip_if: () => true,
   },
   function verify3rdMsg() {
-    let db = IMAPPump.inbox.msgDatabase;
-    let msg3 = db.getMsgHdrForMessageID(gMsgId3);
+    const db = IMAPPump.inbox.msgDatabase;
+    const msg3 = db.getMsgHdrForMessageID(gMsgId3);
     Assert.equal(msg3.flags & Ci.nsMsgMessageFlags.Offline, 0);
   }
 );
 
 add_task(async function addNewMsgs() {
-  let mbox = IMAPPump.daemon.getMailbox("INBOX");
+  const mbox = IMAPPump.daemon.getMailbox("INBOX");
   // Make a couple of messages.
   let messages = [];
   let bodyString = "";
@@ -165,7 +172,6 @@ add_task(async function addNewMsgs() {
       "1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890\r\n";
   }
 
-  gMessageGenerator = new MessageGenerator();
   messages = messages.concat(
     gMessageGenerator.makeMessage({
       body: { body: bodyString, contentType: "text/plain" },
@@ -177,13 +183,13 @@ add_task(async function addNewMsgs() {
   gFirstMsgSize = messages[0].toMessageString().length + 102;
 
   messages.forEach(function (message) {
-    let dataUri = Services.io.newURI(
+    const dataUri = Services.io.newURI(
       "data:text/plain;base64," + btoa(message.toMessageString())
     );
     mbox.addMessage(new ImapMessage(dataUri.spec, mbox.uidnext++, []));
   });
 
-  let listener = new PromiseTestUtils.PromiseUrlListener();
+  const listener = new PromiseTestUtils.PromiseUrlListener();
   IMAPPump.inbox.updateFolderWithListener(null, listener);
   await listener.promise;
 });
@@ -192,10 +198,10 @@ add_task(async function test_queuedOfflineDownload() {
   //  it for offline use doesn't end up in it getting added to the offline
   //  store twice.
   gImapInboxOfflineStoreSize = IMAPPump.inbox.filePath.fileSize + gFirstMsgSize;
-  let newMsgHdr = IMAPPump.inbox.GetMessageHeader(gFirstNewMsg);
-  let msgURI = newMsgHdr.folder.getUriForMsg(newMsgHdr);
-  let msgServ = MailServices.messageServiceFromURI(msgURI);
-  let listener = new PromiseTestUtils.PromiseStreamListener();
+  const newMsgHdr = IMAPPump.inbox.GetMessageHeader(gFirstNewMsg);
+  const msgURI = newMsgHdr.folder.getUriForMsg(newMsgHdr);
+  const msgServ = MailServices.messageServiceFromURI(msgURI);
+  const listener = new PromiseTestUtils.PromiseStreamListener();
   msgServ.streamMessage(msgURI, listener, null, null, false, "", false);
   await listener.promise;
 });
@@ -203,7 +209,7 @@ add_task(async function firstStreamFinished() {
   // nsIMsgFolder.downloadMessagesForOffline does not take a listener, so
   //  we invoke nsIImapService.downloadMessagesForOffline directly
   //  with a listener.
-  let listener = new PromiseTestUtils.PromiseUrlListener();
+  const listener = new PromiseTestUtils.PromiseUrlListener();
   MailServices.imap.downloadMessagesForOffline(
     gFirstNewMsg,
     IMAPPump.inbox,

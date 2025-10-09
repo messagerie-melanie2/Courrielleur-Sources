@@ -3,6 +3,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 
+import itertools
 import logging
 import sys
 import textwrap
@@ -34,9 +35,7 @@ def _should_retrigger(task_graph, label):
     """
     if label not in task_graph:
         logger.info(
-            "Task {} not in full taskgraph, assuming task should not be retriggered.".format(
-                label
-            )
+            f"Task {label} not in full taskgraph, assuming task should not be retriggered."
         )
         return False
     return task_graph[label].attributes.get("retrigger", False)
@@ -145,7 +144,7 @@ def retrigger_decision_action(parameters, graph_config, input, task_group_id, ta
     },
 )
 def retrigger_action(parameters, graph_config, input, task_group_id, task_id):
-    decision_task_id, full_task_graph, label_to_taskid = fetch_graph_and_labels(
+    decision_task_id, full_task_graph, label_to_taskid, _ = fetch_graph_and_labels(
         parameters, graph_config
     )
 
@@ -157,8 +156,8 @@ def retrigger_action(parameters, graph_config, input, task_group_id, task_id):
 
     if not input.get("force", None) and not _should_retrigger(full_task_graph, label):
         logger.info(
-            "Not retriggering task {}, task should not be retrigged "
-            "and force not specified.".format(label)
+            f"Not retriggering task {label}, task should not be retrigged "
+            "and force not specified."
         )
         sys.exit(1)
 
@@ -199,15 +198,18 @@ def retrigger_action(parameters, graph_config, input, task_group_id, task_id):
 def rerun_action(parameters, graph_config, input, task_group_id, task_id):
     task = get_task_definition(task_id)
     parameters = dict(parameters)
-    decision_task_id, full_task_graph, label_to_taskid = fetch_graph_and_labels(
-        parameters, graph_config
-    )
+    (
+        decision_task_id,
+        full_task_graph,
+        label_to_taskid,
+        label_to_taskids,
+    ) = fetch_graph_and_labels(parameters, graph_config)
     label = task["metadata"]["name"]
-    if task_id not in label_to_taskid.values():
+    if task_id not in itertools.chain(*label_to_taskid.values()):
+        # XXX the error message is wrong, we're also looking at label_to_taskid
+        #     from action and cron tasks on that revision
         logger.error(
-            "Refusing to rerun {}: taskId {} not in decision task {} label_to_taskid!".format(
-                label, task_id, decision_task_id
-            )
+            f"Refusing to rerun {label}: taskId {task_id} not in decision task {decision_task_id} label_to_taskid!"
         )
 
     _rerun_task(task_id, label)
@@ -217,9 +219,7 @@ def _rerun_task(task_id, label):
     state = state_task(task_id)
     if state not in RERUN_STATES:
         logger.warning(
-            "No need to rerun {}: state '{}' not in {}!".format(
-                label, state, RERUN_STATES
-            )
+            f"No need to rerun {label}: state '{state}' not in {RERUN_STATES}!"
         )
         return
     rerun_task(task_id)
@@ -258,9 +258,12 @@ def _rerun_task(task_id, label):
     },
 )
 def retrigger_multiple(parameters, graph_config, input, task_group_id, task_id):
-    decision_task_id, full_task_graph, label_to_taskid = fetch_graph_and_labels(
-        parameters, graph_config
-    )
+    (
+        decision_task_id,
+        full_task_graph,
+        label_to_taskid,
+        label_to_taskids,
+    ) = fetch_graph_and_labels(parameters, graph_config)
 
     suffixes = []
     for i, request in enumerate(input.get("requests", [])):
@@ -281,7 +284,8 @@ def retrigger_multiple(parameters, graph_config, input, task_group_id, task_id):
             # In practice, this shouldn't matter, as only completed tasks
             # are pulled in from other pushes and treeherder won't pass
             # those labels.
-            _rerun_task(label_to_taskid[label], label)
+            for rerun_taskid in label_to_taskids[label]:
+                _rerun_task(rerun_taskid, label)
 
         for j in range(times):
             suffix = f"{i}-{j}"

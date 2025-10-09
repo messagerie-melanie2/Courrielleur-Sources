@@ -10,8 +10,6 @@ const CUSTOM_FORMATTED_BODY = "customFormattedBody";
 const VARIABLE_NAME = "xyz";
 
 add_task(async function () {
-  // TODO: This preference can be removed once the custom formatters feature is stable enough
-  await pushPref("devtools.custom-formatters", true);
   await pushPref("devtools.custom-formatters.enabled", true);
 
   const dbg = await initDebugger(TEST_FILENAME);
@@ -35,7 +33,7 @@ add_task(async function () {
   );
 
   is(
-    customFormattedElement.querySelector(".arrow"),
+    customFormattedElement.querySelector(".theme-twisty"),
     null,
     "The expression is not expandable…"
   );
@@ -78,9 +76,9 @@ add_task(async function () {
   info(
     `Check that '${VARIABLE_NAME}' is in the scopes panel and custom formatted`
   );
-  const index = 4;
+  const index = 5;
   is(
-    getScopeLabel(dbg, index),
+    getScopeNodeLabel(dbg, index),
     VARIABLE_NAME,
     `Got '${VARIABLE_NAME}' at the expected position`
   );
@@ -121,9 +119,15 @@ add_task(async function () {
   invokeInTab(TEST_FUNCTION_NAME);
   await waitForPaused(dbg);
 
-  await assertPreviewTextValue(dbg, 26, 16, {
+  await assertPreviewTextValue(dbg, 43, 16, {
+    expression: "abc",
+    result: "object tag: null",
+  });
+
+  await assertPreviewTextValue(dbg, 44, 16, {
     expression: VARIABLE_NAME,
-    text: "CUSTOM",
+    result: "CUSTOM",
+    doNotClose: true,
   });
 
   const tooltipPopup = findElement(dbg, "previewPopup");
@@ -150,9 +154,6 @@ add_task(async function () {
     CUSTOM_FORMATTED_BODY,
     "The tooltip variable body text is correct"
   );
-
-  info("Close tooltip");
-  dbg.actions.clearPreview(getContext(dbg));
 
   await resume(dbg);
 });

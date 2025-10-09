@@ -4,7 +4,8 @@
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
 const CB_STRICT_FEATURES_PREF = "browser.contentblocking.features.strict";
-const CB_STRICT_FEATURES_VALUE = "tp,tpPrivate,cookieBehavior5,cm,fp,stp,lvl2";
+const CB_STRICT_FEATURES_VALUE =
+  "tp,tpPrivate,cookieBehavior5,cryptoTP,fp,stp,lvl2";
 const FPI_PREF = "privacy.firstparty.isolate";
 const COOKIE_BEHAVIOR_PREF = "network.cookie.cookieBehavior";
 const COOKIE_BEHAVIOR_VALUE = 5;
@@ -23,9 +24,7 @@ async function testStrings() {
   }
 
   // Check the learn more strings
-  elts = doc.querySelectorAll(
-    ".tail-with-learn-more.content-blocking-warning-description"
-  );
+  elts = doc.querySelectorAll(".content-blocking-warning-description");
   for (let elt of elts) {
     let id = doc.l10n.getAttributes(elt).id;
     is(

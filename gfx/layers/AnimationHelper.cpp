@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "AnimationHelper.h"
+#include "CompositorAnimationStorage.h"
 #include "base/process_util.h"
 #include "gfx2DGlue.h"                 // for ThebesRect
 #include "gfxLineSegment.h"            // for gfxLineSegment
@@ -15,19 +16,18 @@
 #include "mozilla/ServoStyleConsts.h"  // for StyleComputedTimingFunction
 #include "mozilla/dom/AnimationEffectBinding.h"  // for dom::FillMode
 #include "mozilla/dom/KeyframeEffectBinding.h"   // for dom::IterationComposite
-#include "mozilla/dom/KeyframeEffect.h"       // for dom::KeyFrameEffectReadOnly
-#include "mozilla/dom/Nullable.h"             // for dom::Nullable
-#include "mozilla/layers/APZSampler.h"        // for APZSampler
-#include "mozilla/layers/CompositorThread.h"  // for CompositorThreadHolder
-#include "mozilla/LayerAnimationInfo.h"       // for GetCSSPropertiesFor()
-#include "mozilla/MotionPathUtils.h"          // for ResolveMotionPath()
-#include "mozilla/ServoBindings.h"  // for Servo_ComposeAnimationSegment, etc
+#include "mozilla/dom/KeyframeEffect.h"  // for dom::KeyFrameEffectReadOnly
+#include "mozilla/dom/Nullable.h"        // for dom::Nullable
+#include "mozilla/layers/APZSampler.h"   // for APZSampler
+#include "mozilla/AnimatedPropertyID.h"
+#include "mozilla/LayerAnimationInfo.h"   // for GetCSSPropertiesFor()
+#include "mozilla/Maybe.h"                // for Maybe<>
+#include "mozilla/MotionPathUtils.h"      // for ResolveMotionPath()
 #include "mozilla/StyleAnimationValue.h"  // for StyleAnimationValue, etc
-#include "nsDeviceContext.h"              // for AppUnitsPerCSSPixel
+#include "nsCSSPropertyID.h"              // for eCSSProperty_offset_path, etc
 #include "nsDisplayList.h"                // for nsDisplayTransform, etc
 
-namespace mozilla {
-namespace layers {
+namespace mozilla::layers {
 
 static dom::Nullable<TimeDuration> CalculateElapsedTimeForScrollTimeline(
     const Maybe<APZSampler::ScrollOffsetAndRange> aScrollMeta,
@@ -318,7 +318,7 @@ AnimationHelper::SampleResult AnimationHelper::SampleAnimationForEachNode(
     const MutexAutoLock& aProofOfMapLock, TimeStamp aPreviousFrameTime,
     TimeStamp aCurrentFrameTime, const AnimatedValue* aPreviousValue,
     nsTArray<PropertyAnimationGroup>& aPropertyAnimationGroups,
-    nsTArray<RefPtr<StyleAnimationValue>>& aAnimationValues /* out */) {
+    SampledAnimationArray& aAnimationValues /* output */) {
   MOZ_ASSERT(!aPropertyAnimationGroups.IsEmpty(),
              "Should be called with animation data");
   MOZ_ASSERT(aAnimationValues.IsEmpty(),
@@ -446,7 +446,9 @@ static bool HasTransformLikeAnimations(const AnimationArray& aAnimations) {
 #endif
 
 AnimationStorageData AnimationHelper::ExtractAnimations(
-    const LayersId& aLayersId, const AnimationArray& aAnimations) {
+    const LayersId& aLayersId, const AnimationArray& aAnimations,
+    const CompositorAnimationStorage* aStorage,
+    const TimeStamp& aPreviousSampleTime) {
   AnimationStorageData storageData;
   storageData.mLayersId = aLayersId;
 
@@ -498,16 +500,17 @@ AnimationStorageData AnimationHelper::ExtractAnimations(
                    "Fixed offset-path should have base style");
         MOZ_ASSERT(HasTransformLikeAnimations(aAnimations));
 
-        AnimationValue value{currData->mBaseStyle};
-        const StyleOffsetPath& offsetPath = value.GetOffsetPathProperty();
+        const StyleOffsetPath& offsetPath =
+            animation.baseStyle().get_StyleOffsetPath();
+        // FIXME: Bug 1837042. Cache all basic shapes.
         if (offsetPath.IsPath()) {
           MOZ_ASSERT(!storageData.mCachedMotionPath,
                      "Only one offset-path: path() is set");
 
           RefPtr<gfx::PathBuilder> builder =
               MotionPathUtils::GetCompositorPathBuilder();
-          storageData.mCachedMotionPath =
-              MotionPathUtils::BuildPath(offsetPath.AsPath(), builder);
+          storageData.mCachedMotionPath = MotionPathUtils::BuildSVGPath(
+              offsetPath.AsSVGPathData(), builder);
         }
       }
 
@@ -537,12 +540,37 @@ AnimationStorageData AnimationHelper::ExtractAnimations(
     propertyAnimation->mScrollTimelineOptions =
         animation.scrollTimelineOptions();
 
+    RefPtr<StyleAnimationValue> startValue;
+    if (animation.replacedTransitionId()) {
+      if (const auto* animatedValue =
+              aStorage->GetAnimatedValue(*animation.replacedTransitionId())) {
+        startValue = animatedValue->AsAnimationValue(animation.property());
+        // Basically, the timeline time is increasing monotonically, so it may
+        // not make sense to have a negative start time (i.e. the case when
+        // aPreviousSampleTime is behind the origin time). Therefore, if the
+        // previous sample time is less than the origin time, we skip the
+        // replacement of the start time.
+        if (!aPreviousSampleTime.IsNull() &&
+            (aPreviousSampleTime >= animation.originTime())) {
+          propertyAnimation->mStartTime =
+              Some(aPreviousSampleTime - animation.originTime());
+        }
+
+        MOZ_ASSERT(animation.segments().Length() == 1,
+                   "The CSS Transition only has one segement");
+      }
+    }
+
     nsTArray<PropertyAnimation::SegmentData>& segmentData =
         propertyAnimation->mSegments;
     for (const AnimationSegment& segment : animation.segments()) {
       segmentData.AppendElement(PropertyAnimation::SegmentData{
-          AnimationValue::FromAnimatable(animation.property(),
-                                         segment.startState()),
+          // Note that even though we re-compute the start value on the main
+          // thread, we still replace it with the last sampled value, to avoid
+          // any possible lag.
+          startValue ? startValue
+                     : AnimationValue::FromAnimatable(animation.property(),
+                                                      segment.startState()),
           AnimationValue::FromAnimatable(animation.property(),
                                          segment.endState()),
           segment.sampleFn(), segment.startPortion(), segment.endPortion(),
@@ -600,8 +628,8 @@ uint64_t AnimationHelper::GetNextCompositorAnimationsId() {
 }
 
 gfx::Matrix4x4 AnimationHelper::ServoAnimationValueToMatrix4x4(
-    const nsTArray<RefPtr<StyleAnimationValue>>& aValues,
-    const TransformData& aTransformData, gfx::Path* aCachedMotionPath) {
+    const SampledAnimationArray& aValues, const TransformData& aTransformData,
+    gfx::Path* aCachedMotionPath) {
   using nsStyleTransformMatrix::TransformReferenceBox;
 
   // This is a bit silly just to avoid the transform list copy from the
@@ -615,15 +643,17 @@ gfx::Matrix4x4 AnimationHelper::ServoAnimationValueToMatrix4x4(
   const StyleRotate* rotate = nullptr;
   const StyleScale* scale = nullptr;
   const StyleTransform* transform = nullptr;
-  const StyleOffsetPath* path = nullptr;
+  Maybe<StyleOffsetPath> path;
   const StyleLengthPercentage* distance = nullptr;
   const StyleOffsetRotate* offsetRotate = nullptr;
   const StylePositionOrAuto* anchor = nullptr;
+  const StyleOffsetPosition* position = nullptr;
 
   for (const auto& value : aValues) {
     MOZ_ASSERT(value);
-    nsCSSPropertyID id = Servo_AnimationValue_GetPropertyId(value);
-    switch (id) {
+    AnimatedPropertyID property(eCSSProperty_UNKNOWN);
+    Servo_AnimationValue_GetPropertyId(value, &property);
+    switch (property.mID) {
       case eCSSProperty_transform:
         MOZ_ASSERT(!transform);
         transform = Servo_AnimationValue_GetTransform(value);
@@ -642,7 +672,8 @@ gfx::Matrix4x4 AnimationHelper::ServoAnimationValueToMatrix4x4(
         break;
       case eCSSProperty_offset_path:
         MOZ_ASSERT(!path);
-        path = Servo_AnimationValue_GetOffsetPath(value);
+        path.emplace(StyleOffsetPath::None());
+        Servo_AnimationValue_GetOffsetPath(value, path.ptr());
         break;
       case eCSSProperty_offset_distance:
         MOZ_ASSERT(!distance);
@@ -656,6 +687,10 @@ gfx::Matrix4x4 AnimationHelper::ServoAnimationValueToMatrix4x4(
         MOZ_ASSERT(!anchor);
         anchor = Servo_AnimationValue_GetOffsetAnchor(value);
         break;
+      case eCSSProperty_offset_position:
+        MOZ_ASSERT(!position);
+        position = Servo_AnimationValue_GetOffsetPosition(value);
+        break;
       default:
         MOZ_ASSERT_UNREACHABLE("Unsupported transform-like property");
     }
@@ -663,8 +698,8 @@ gfx::Matrix4x4 AnimationHelper::ServoAnimationValueToMatrix4x4(
 
   TransformReferenceBox refBox(nullptr, aTransformData.bounds());
   Maybe<ResolvedMotionPathData> motion = MotionPathUtils::ResolveMotionPath(
-      path, distance, offsetRotate, anchor, aTransformData.motionPathData(),
-      refBox, aCachedMotionPath);
+      path.ptrOr(nullptr), distance, offsetRotate, anchor, position,
+      aTransformData.motionPathData(), refBox, aCachedMotionPath);
 
   // We expect all our transform data to arrive in device pixels
   gfx::Point3D transformOrigin = aTransformData.transformOrigin();
@@ -832,5 +867,4 @@ bool AnimationHelper::ShouldBeJank(const LayoutDeviceRect& aPrerenderedRect,
                                prerenderedQuad.mPoints[3].y, clipRect);
 }
 
-}  // namespace layers
-}  // namespace mozilla
+}  // namespace mozilla::layers

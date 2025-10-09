@@ -118,9 +118,15 @@ bool ValueNumberer::VisibleValues::has(const MDefinition* def) const {
 // Call MDefinition::justReplaceAllUsesWith, and add some GVN-specific asserts.
 static void ReplaceAllUsesWith(MDefinition* from, MDefinition* to) {
   MOZ_ASSERT(from != to, "GVN shouldn't try to replace a value with itself");
-  MOZ_ASSERT(from->type() == to->type(), "Def replacement has different type");
+  MOZ_ASSERT(from->type() == to->type(),
+             "Def replacement has different MIR type");
   MOZ_ASSERT(!to->isDiscarded(),
              "GVN replaces an instruction by a removed instruction");
+
+  // Update the node's wasm ref type to the LUB of the two nodes being combined.
+  // This ensures that any type-based optimizations downstream remain correct.
+  to->setWasmRefType(wasm::MaybeRefType::leastUpperBound(from->wasmRefType(),
+                                                         to->wasmRefType()));
 
   // We don't need the extra setting of ImplicitlyUsed flags that the regular
   // replaceAllUsesWith does because we do it ourselves.
@@ -755,9 +761,17 @@ bool ValueNumberer::visitDefinition(MDefinition* def) {
 
     // If |sim| doesn't belong to a block, insert it next to |def|.
     if (isNewInstruction) {
-      // A new |sim| node mustn't be effectful when |def| wasn't effectful.
-      MOZ_ASSERT((def->isEffectful() && sim->isEffectful()) ||
-                 !sim->isEffectful());
+#ifdef DEBUG
+      if (sim->isObjectKeysLength() && def->isArrayLength()) {
+        // /!\ Exception: MArrayLength::foldsTo replaces a sequence of
+        // instructions containing an effectful instruction by an effectful
+        // instruction.
+      } else {
+        // Otherwise, a new |sim| node mustn't be effectful when |def| wasn't
+        // effectful.
+        MOZ_ASSERT_IF(sim->isEffectful(), def->isEffectful());
+      }
+#endif
 
       // If both instructions are effectful, |sim| must have stolen the resume
       // point of |def| when it's a new instruction.
@@ -1231,7 +1245,7 @@ bool ValueNumberer::cleanupOSRFixups() {
   return RemoveUnmarkedBlocks(mir_, graph_, numMarked);
 }
 
-ValueNumberer::ValueNumberer(MIRGenerator* mir, MIRGraph& graph)
+ValueNumberer::ValueNumberer(const MIRGenerator* mir, MIRGraph& graph)
     : mir_(mir),
       graph_(graph),
       // Initialize the value set. It's tempting to pass in a length that is a

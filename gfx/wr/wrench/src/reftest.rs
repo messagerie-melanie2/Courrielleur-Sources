@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use crate::{WindowWrapper, NotifierEvent};
+use base64::Engine as _;
 use image::load as load_piston_image;
 use image::png::PNGEncoder;
 use image::{ColorType, ImageFormat};
@@ -325,7 +326,7 @@ impl ReftestImage {
                 .encode(&self.data[..], width as u32, height as u32, ColorType::Rgba8)
                 .expect("Unable to encode PNG!");
         }
-        let png_base64 = base64::encode(&png);
+        let png_base64 = base64::engine::general_purpose::STANDARD.encode(&png);
         format!("data:image/png;base64,{}", png_base64)
     }
 }
@@ -514,7 +515,7 @@ impl ReftestManifest {
                         max_difference: options.allow_max_difference,
                         num_differences: options.allow_num_differences }),
                 1 => {
-                    let mut fuzzy = &mut fuzziness[0];
+                    let fuzzy = &mut fuzziness[0];
                     fuzzy.max_difference = cmp::max(fuzzy.max_difference, options.allow_max_difference);
                     fuzzy.num_differences = cmp::max(fuzzy.num_differences, options.allow_num_differences);
                 },

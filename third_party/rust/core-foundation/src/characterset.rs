@@ -11,10 +11,10 @@
 
 pub use core_foundation_sys::characterset::*;
 
-use base::TCFType;
+use crate::base::TCFType;
 
-declare_TCFType!{
-    /// An immutable set of Unicde characters.
+declare_TCFType! {
+    /// An immutable set of Unicode characters.
     CFCharacterSet, CFCharacterSetRef
 }
 impl_TCFType!(CFCharacterSet, CFCharacterSetRef, CFCharacterSetGetTypeID);

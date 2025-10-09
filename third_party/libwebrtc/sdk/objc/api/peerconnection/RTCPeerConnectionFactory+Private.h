@@ -24,11 +24,12 @@ NS_ASSUME_NONNULL_BEGIN
      * RTCPeerConnectionFactory object. This is needed to pass to the underlying
      * C++ APIs.
      */
-    @property(nonatomic,
-              readonly) rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> nativeFactory;
+    @property(nonatomic, readonly) rtc::scoped_refptr<
+        webrtc::PeerConnectionFactoryInterface> nativeFactory;
 
 @property(nonatomic, readonly) rtc::Thread* signalingThread;
 @property(nonatomic, readonly) rtc::Thread* workerThread;
+@property(nonatomic, readonly) rtc::Thread* networkThread;
 
 @end
 

@@ -2,45 +2,48 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+"use strict";
+
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
-let account = createAccount("pop3");
-createAccount("local");
-MailServices.accounts.defaultAccount = account;
+add_setup(async () => {
+  const account = createAccount("pop3");
+  createAccount("local");
+  MailServices.accounts.defaultAccount = account;
 
-addIdentity(account);
+  addIdentity(account);
 
-let rootFolder = account.incomingServer.rootFolder;
-rootFolder.createSubfolder("test", null);
-let folder = rootFolder.getChildNamed("test");
-createMessages(folder, 4);
+  const rootFolder = account.incomingServer.rootFolder;
+  const folder = await createSubfolder(rootFolder, "test");
+  await createMessages(folder, 4);
+});
 
 add_task(async function testHeaders() {
-  let files = {
+  const files = {
     "background.js": async () => {
       async function checkHeaders(expected) {
-        let [createdWindow] = await createdWindowPromise;
+        const [createdWindow] = await createdWindowPromise;
         browser.test.assertEq("messageCompose", createdWindow.type);
         browser.test.sendMessage("checkHeaders", expected);
         await window.waitForMessage();
-        let removedWindowPromise = window.waitForEvent("windows.onRemoved");
+        const removedWindowPromise = window.waitForEvent("windows.onRemoved");
         browser.windows.remove(createdWindow.id);
         await removedWindowPromise;
       }
 
-      let accounts = await browser.accounts.list();
+      const accounts = await browser.accounts.list();
       browser.test.assertEq(2, accounts.length, "number of accounts");
-      let popAccount = accounts.find(a => a.type == "pop3");
-      let folder = popAccount.folders.find(f => f.name == "test");
-      let { messages } = await browser.messages.list(folder);
+      const popAccount = accounts.find(a => a.type == "pop3");
+      const testFolder = popAccount.folders.find(f => f.name == "test");
+      const { messages } = await browser.messages.list(testFolder.id);
       browser.test.assertEq(4, messages.length, "number of messages");
 
-      let addressBook = await browser.addressBooks.create({
+      const addressBook = await browser.addressBooks.create({
         name: "Baker Street",
       });
-      let contacts = {
+      const contacts = {
         sherlock: await browser.contacts.create(addressBook, {
           DisplayName: "Sherlock Holmes",
           PrimaryEmail: "sherlock@bakerstreet.invalid",
@@ -50,7 +53,7 @@ add_task(async function testHeaders() {
           PrimaryEmail: "john@bakerstreet.invalid",
         }),
       };
-      let list = await browser.mailingLists.create(addressBook, {
+      const list = await browser.mailingLists.create(addressBook, {
         name: "Holmes and Watson",
         description: "Tenants221B",
       });
@@ -159,9 +162,10 @@ add_task(async function testHeaders() {
     },
     "utils.js": await getUtilsJS(),
   };
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files,
     manifest: {
+      manifest_version: 2,
       background: { scripts: ["utils.js", "background.js"] },
       permissions: ["accountsRead", "addressBooks", "messagesRead"],
     },

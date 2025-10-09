@@ -30,38 +30,28 @@
 // for the memory cache...
 #include "nsICacheEntry.h"
 #include "nsImapUrl.h"
-#include "nsIMsgProtocolInfo.h"
 #include "nsIMsgMailSession.h"
 #include "nsImapNamespace.h"
-#include "nsArrayUtils.h"
 #include "nsMsgUtils.h"
 #include "nsServiceManagerUtils.h"
 #include "nsComponentManagerUtils.h"
-#include "nsCRTGlue.h"
 #include "mozilla/Components.h"
 #include "nsNetUtil.h"
 #include "mozilla/Utf8.h"
 #include "mozilla/LoadInfo.h"
 
 using namespace mozilla;
+using mozilla::net::LoadInfo;
 
 // Despite its name, this contains a folder path, for example INBOX/Trash.
 #define PREF_TRASH_FOLDER_PATH "trash_folder_name"
 #define DEFAULT_TRASH_FOLDER_PATH "Trash"  // XXX Is this a useful default?
 
-#define NS_SUBSCRIBABLESERVER_CID                    \
-  {                                                  \
-    0x8510876a, 0x1dd2, 0x11b2, {                    \
-      0x82, 0x53, 0x91, 0xf7, 0x1b, 0x34, 0x8a, 0x25 \
-    }                                                \
-  }
+#define NS_SUBSCRIBABLESERVER_CID \
+  {0x8510876a, 0x1dd2, 0x11b2, {0x82, 0x53, 0x91, 0xf7, 0x1b, 0x34, 0x8a, 0x25}}
 static NS_DEFINE_CID(kSubscribableServerCID, NS_SUBSCRIBABLESERVER_CID);
-#define NS_IIMAPHOSTSESSIONLIST_CID                  \
-  {                                                  \
-    0x479ce8fc, 0xe725, 0x11d2, {                    \
-      0xa5, 0x05, 0x00, 0x60, 0xb0, 0xfc, 0x04, 0xb7 \
-    }                                                \
-  }
+#define NS_IIMAPHOSTSESSIONLIST_CID \
+  {0x479ce8fc, 0xe725, 0x11d2, {0xa5, 0x05, 0x00, 0x60, 0xb0, 0xfc, 0x04, 0xb7}}
 static NS_DEFINE_CID(kCImapHostSessionListCID, NS_IIMAPHOSTSESSIONLIST_CID);
 
 NS_IMPL_ADDREF_INHERITED(nsImapIncomingServer, nsMsgIncomingServer)
@@ -74,8 +64,11 @@ NS_INTERFACE_MAP_BEGIN(nsImapIncomingServer)
   NS_INTERFACE_MAP_ENTRY(nsIUrlListener)
 NS_INTERFACE_MAP_END_INHERITING(nsMsgIncomingServer)
 
+LazyLogModule IMAP_DC("IMAP_DC");  // For imap folder discovery
+
 nsImapIncomingServer::nsImapIncomingServer()
-    : mLock("nsImapIncomingServer.mLock") {
+    : mLock("nsImapIncomingServer.mLock"),
+      mLogonMonitor("nsImapIncomingServer.mLogonMonitor") {
   m_capability = kCapabilityUndefined;
   mDoingSubscribeDialog = false;
   mDoingLsub = false;
@@ -154,7 +147,7 @@ NS_IMETHODIMP nsImapIncomingServer::SetKey(
 // construct the pretty name to show to the user if they haven't
 // specified one. This should be overridden for news and mail.
 NS_IMETHODIMP
-nsImapIncomingServer::GetConstructedPrettyName(nsAString& retval) {
+nsImapIncomingServer::GetConstructedPrettyName(nsACString& retval) {
   nsAutoCString username;
   nsAutoCString hostName;
   nsresult rv;
@@ -186,8 +179,12 @@ nsImapIncomingServer::GetConstructedPrettyName(nsAString& retval) {
     }
   }
 
-  return GetFormattedStringFromName(emailAddress, "imapDefaultAccountName",
-                                    retval);
+  nsAutoString prettyName;
+  rv = GetFormattedStringFromName(emailAddress, "imapDefaultAccountName",
+                                  prettyName);
+  NS_ENSURE_SUCCESS(rv, rv);
+  retval.Assign(NS_ConvertUTF16toUTF8(prettyName));
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsImapIncomingServer::GetLocalStoreType(nsACString& type) {
@@ -202,7 +199,7 @@ NS_IMETHODIMP nsImapIncomingServer::GetLocalDatabaseType(nsACString& type) {
 
 NS_IMETHODIMP
 nsImapIncomingServer::GetServerDirectory(nsACString& serverDirectory) {
-  return GetCharValue("server_sub_directory", serverDirectory);
+  return GetStringValue("server_sub_directory", serverDirectory);
 }
 
 NS_IMETHODIMP
@@ -216,7 +213,7 @@ nsImapIncomingServer::SetServerDirectory(const nsACString& serverDirectory) {
       hostSession->SetOnlineDirForHost(
           serverKey.get(), PromiseFlatCString(serverDirectory).get());
   }
-  return SetCharValue("server_sub_directory", serverDirectory);
+  return SetStringValue("server_sub_directory", serverDirectory);
 }
 
 NS_IMETHODIMP
@@ -347,16 +344,17 @@ nsImapIncomingServer::SetDeleteModel(int32_t ivalue) {
 
     // Despite its name, this returns the trash folder path, for example
     // INBOX/Trash.
-    nsAutoString trashFolderName;
+    nsAutoCString trashFolderName;
     nsresult rv = GetTrashFolderName(trashFolderName);
     if (NS_SUCCEEDED(rv)) {
       nsAutoCString trashFolderNameUtf7or8;
       bool useUTF8 = false;
       GetUtf8AcceptEnabled(&useUTF8);
       if (useUTF8) {
-        CopyUTF16toUTF8(trashFolderName, trashFolderNameUtf7or8);
+        trashFolderNameUtf7or8 = trashFolderName;
       } else {
-        CopyUTF16toMUTF7(trashFolderName, trashFolderNameUtf7or8);
+        CopyUTF16toMUTF7(NS_ConvertUTF8toUTF16(trashFolderName),
+                         trashFolderNameUtf7or8);
       }
       nsCOMPtr<nsIMsgFolder> trashFolder;
       // 'trashFolderName' being a path here works well since this is appended
@@ -369,10 +367,11 @@ nsImapIncomingServer::SetDeleteModel(int32_t ivalue) {
                                getter_AddRefs(trashFolder));
       if (NS_SUCCEEDED(rv) && trashFolder) {
         // If the trash folder is used, set the flag, otherwise clear it.
-        if (ivalue == nsMsgImapDeleteModels::MoveToTrash)
+        if (ivalue == nsMsgImapDeleteModels::MoveToTrash) {
           trashFolder->SetFlag(nsMsgFolderFlags::Trash);
-        else
+        } else {
           trashFolder->ClearFlag(nsMsgFolderFlags::Trash);
+        }
       }
     }
   }
@@ -395,29 +394,6 @@ NS_IMPL_SERVERPREF_STR(nsImapIncomingServer, OtherUsersNamespace,
 NS_IMPL_SERVERPREF_BOOL(nsImapIncomingServer, FetchByChunks, "fetch_by_chunks")
 
 NS_IMPL_SERVERPREF_BOOL(nsImapIncomingServer, SendID, "send_client_info")
-
-NS_IMETHODIMP
-nsImapIncomingServer::GetIsAOLServer(bool* aBool) {
-  NS_ENSURE_ARG_POINTER(aBool);
-  *aBool = ((m_capability & kAOLImapCapability) != 0);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsImapIncomingServer::SetIsAOLServer(bool aBool) {
-  if (aBool)
-    m_capability |= kAOLImapCapability;
-  else
-    m_capability &= ~kAOLImapCapability;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsImapIncomingServer::UpdateTrySTARTTLSPref(bool aStartTLSSucceeded) {
-  SetSocketType(aStartTLSSucceeded ? nsMsgSocketType::alwaysSTARTTLS
-                                   : nsMsgSocketType::plain);
-  return NS_OK;
-}
 
 NS_IMETHODIMP
 nsImapIncomingServer::GetImapConnectionAndLoadUrl(nsIImapUrl* aImapUrl,
@@ -499,6 +475,7 @@ nsImapIncomingServer::RetryUrl(nsIImapUrl* aImapUrl,
 NS_IMETHODIMP
 nsImapIncomingServer::LoadNextQueuedUrl(nsIImapProtocol* aProtocol,
                                         bool* aResult) {
+  if (m_hasShutDown) return NS_ERROR_FAILURE;
   if (WeAreOffline()) return NS_MSG_ERROR_OFFLINE;
 
   nsresult rv = NS_OK;
@@ -685,29 +662,6 @@ nsresult nsImapIncomingServer::GetImapConnection(
       if (!badConnection) {
         badConnection = NS_FAILED(connection->CanHandleUrl(
             aImapUrl, &canRunUrlImmediately, &canRunButBusy));
-#ifdef DEBUG_bienvenu
-        nsAutoCString curSelectedFolderName;
-        if (connection)
-          connection->GetSelectedMailboxName(
-              getter_Copies(curSelectedFolderName));
-        // check that no other connection is in the same selected state.
-        if (!curSelectedFolderName.IsEmpty()) {
-          for (uint32_t j = 0; j < cnt; j++) {
-            if (j != i) {
-              nsCOMPtr<nsIImapProtocol> otherConnection =
-                  do_QueryElementAt(m_connectionCache, j);
-              if (otherConnection) {
-                nsAutoCString otherSelectedFolderName;
-                otherConnection->GetSelectedMailboxName(
-                    getter_Copies(otherSelectedFolderName));
-                NS_ASSERTION(
-                    !curSelectedFolderName.Equals(otherSelectedFolderName),
-                    "two connections selected on same folder");
-              }
-            }
-          }
-        }
-#endif  // DEBUG_bienvenu
       }
       if (badConnection) {
         connection = nullptr;
@@ -796,10 +750,11 @@ nsresult nsImapIncomingServer::CreateProtocolInstance(
   rv = protocolInstance->Initialize(hostSession, this);
   NS_ENSURE_SUCCESS(rv, rv);
   // It implements nsIChannel, and all channels require loadInfo.
-  protocolInstance->SetLoadInfo(new mozilla::net::LoadInfo(
-      nsContentUtils::GetSystemPrincipal(), nullptr, nullptr,
-      nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
-      nsIContentPolicy::TYPE_OTHER));
+  nsCOMPtr<nsILoadInfo> loadInfo = MOZ_TRY(
+      LoadInfo::Create(nsContentUtils::GetSystemPrincipal(), nullptr, nullptr,
+                       nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
+                       nsIContentPolicy::TYPE_OTHER));
+  protocolInstance->SetLoadInfo(loadInfo);
 
   // take the protocol instance and add it to the connectionCache
   m_connectionCache.AppendObject(protocolInstance);
@@ -947,14 +902,6 @@ nsImapIncomingServer::CloseCachedConnections() {
   }
 
   PR_CExitMonitor(this);
-  return NS_OK;
-}
-
-nsresult nsImapIncomingServer::CreateRootFolderFromUri(
-    const nsACString& serverUri, nsIMsgFolder** rootFolder) {
-  nsImapMailFolder* newRootFolder = new nsImapMailFolder;
-  newRootFolder->Init(serverUri);
-  NS_ADDREF(*rootFolder = newRootFolder);
   return NS_OK;
 }
 
@@ -1109,8 +1056,9 @@ NS_IMETHODIMP nsImapIncomingServer::PossibleImapMailbox(
       if (boxFlags & kImapTrash) {
         int32_t deleteModel;
         GetDeleteModel(&deleteModel);
-        if (deleteModel == nsMsgImapDeleteModels::MoveToTrash)
+        if (deleteModel == nsMsgImapDeleteModels::MoveToTrash) {
           child->SetFlag(nsMsgFolderFlags::Trash);
+        }
       }
 
       imapFolder->SetBoxFlags(boxFlags);
@@ -1135,7 +1083,7 @@ NS_IMETHODIMP nsImapIncomingServer::PossibleImapMailbox(
         nsImapUrl::UnescapeSlashes(folderName);
       }
       if (NS_SUCCEEDED(CopyFolderNameToUTF16(folderName, unicodeName)))
-        child->SetPrettyName(unicodeName);
+        child->SetPrettyName(NS_ConvertUTF16toUTF8(unicodeName));
     }
   }
   if (!found && child)
@@ -1325,6 +1273,28 @@ NS_IMETHODIMP nsImapIncomingServer::FolderVerifiedOnline(
   return rv;
 }
 
+/*
+ * Define a function to obtain the imap (short) path of a folder.
+ * Currently used only in nsImapIncomingServer::DiscoveryDone for folder(s)
+ * flagged as Trash.
+ */
+/*static*/
+nsresult nsImapIncomingServer::PathFromFolder(nsIMsgFolder* folder,
+                                              nsACString& shortPath) {
+  nsresult rv;
+  nsAutoCString folderURI;
+  rv = folder->GetURI(folderURI);
+  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIURI> uri;
+  rv = NS_NewURI(getter_AddRefs(uri), folderURI);
+  NS_ENSURE_SUCCESS(rv, rv);
+  nsAutoCString fullfolderPath;
+  uri->GetPathQueryRef(fullfolderPath);
+  MsgUnescapeString(Substring(fullfolderPath, 1),  // Skip leading slash.
+                    nsINetUtil::ESCAPE_URL_PATH, shortPath);
+  return NS_OK;
+}
+
 NS_IMETHODIMP nsImapIncomingServer::DiscoveryDone() {
   if (mDoingSubscribeDialog) return NS_OK;
 
@@ -1347,31 +1317,31 @@ NS_IMETHODIMP nsImapIncomingServer::DiscoveryDone() {
     rv = accountMgr->GetFirstIdentityForServer(this, getter_AddRefs(identity));
     if (NS_SUCCEEDED(rv) && identity) {
       nsCString folderUri;
-      identity->GetFccFolder(folderUri);
+      identity->GetFccFolderURI(folderUri);
       nsCString existingUri;
 
       if (CheckSpecialFolder(folderUri, nsMsgFolderFlags::SentMail,
                              existingUri)) {
-        identity->SetFccFolder(existingUri);
+        identity->SetFccFolderURI(existingUri);
         identity->SetFccFolderPickerMode("1"_ns);
       }
-      identity->GetDraftFolder(folderUri);
+      identity->GetDraftsFolderURI(folderUri);
       if (CheckSpecialFolder(folderUri, nsMsgFolderFlags::Drafts,
                              existingUri)) {
-        identity->SetDraftFolder(existingUri);
+        identity->SetDraftsFolderURI(existingUri);
         identity->SetDraftsFolderPickerMode("1"_ns);
       }
       bool archiveEnabled;
       identity->GetArchiveEnabled(&archiveEnabled);
       if (archiveEnabled) {
-        identity->GetArchiveFolder(folderUri);
+        identity->GetArchivesFolderURI(folderUri);
         if (CheckSpecialFolder(folderUri, nsMsgFolderFlags::Archive,
                                existingUri)) {
-          identity->SetArchiveFolder(existingUri);
+          identity->SetArchivesFolderURI(existingUri);
           identity->SetArchivesFolderPickerMode("1"_ns);
         }
       }
-      identity->GetStationeryFolder(folderUri);
+      identity->GetTemplatesFolderURI(folderUri);
       if (!folderUri.IsEmpty()) {
         nsCOMPtr<nsIMsgFolder> folder;
         rv = GetOrCreateFolder(folderUri, getter_AddRefs(folder));
@@ -1391,86 +1361,30 @@ NS_IMETHODIMP nsImapIncomingServer::DiscoveryDone() {
         spamSettings->SetMoveTargetMode(
             nsISpamSettings::MOVE_TARGET_MODE_FOLDER);
         // Set the preferences too so that the values persist.
-        SetUnicharValue("spamActionTargetFolder",
-                        NS_ConvertUTF8toUTF16(existingUri));
+        SetStringValue("spamActionTargetFolder", existingUri);
         SetIntValue("moveTargetMode", nsISpamSettings::MOVE_TARGET_MODE_FOLDER);
-      }
-    }
-
-    bool isGMailServer;
-    GetIsGMailServer(&isGMailServer);
-
-    // Verify there is only one trash folder. Another might be present if
-    // the trash name has been changed. Or we might be a gmail server and
-    // want to switch to gmail's trash folder.
-    nsTArray<RefPtr<nsIMsgFolder>> trashFolders;
-    rv = rootMsgFolder->GetFoldersWithFlags(nsMsgFolderFlags::Trash,
-                                            trashFolders);
-
-    if (NS_SUCCEEDED(rv)) {
-      nsAutoString trashName;
-      if (NS_SUCCEEDED(GetTrashFolderName(trashName))) {
-        for (auto trashFolder : trashFolders) {
-          // If we're a gmail server, we clear the trash flags from folder(s)
-          // without the kImapXListTrash flag. For normal servers, we clear
-          // the trash folder flag if the folder name doesn't match the
-          // pref trash folder name.
-          nsAutoString retval;
-          rv = GetUnicharValue(PREF_TRASH_FOLDER_PATH, retval);
-          if (isGMailServer && (NS_FAILED(rv) || retval.IsEmpty())) {
-            nsCOMPtr<nsIMsgImapMailFolder> imapFolder(
-                do_QueryInterface(trashFolder));
-            int32_t boxFlags;
-            imapFolder->GetBoxFlags(&boxFlags);
-            if (boxFlags & kImapXListTrash) {
-              continue;
-            }
-          } else {
-            // Store the trash folder path. We maintain the full path in the
-            // trash_folder_name preference since the full path is stored
-            // there when selecting a trash folder in the Account Manager.
-            nsAutoCString trashURL;
-            rv = trashFolder->GetFolderURL(trashURL);
-            if (NS_FAILED(rv)) {
-              continue;
-            }
-            nsCOMPtr<nsIURI> uri;
-            rv = NS_NewURI(getter_AddRefs(uri), trashURL);
-            if (NS_FAILED(rv)) {
-              continue;
-            }
-            nsAutoCString trashPath;
-            uri->GetPathQueryRef(trashPath);
-            nsAutoCString unescapedName;
-            MsgUnescapeString(Substring(trashPath, 1),  // Skip leading slash.
-                              nsINetUtil::ESCAPE_URL_PATH, unescapedName);
-            nsAutoString nameUnicode;
-            if (NS_FAILED(CopyFolderNameToUTF16(unescapedName, nameUnicode)) ||
-                trashName.Equals(nameUnicode)) {
-              continue;
-            }
-            if (trashFolders.Length() == 1) {
-              // We got here because the preferred trash folder does not
-              // exist, but a folder got discovered to be the trash folder.
-              SetUnicharValue(PREF_TRASH_FOLDER_PATH, nameUnicode);
-              continue;
-            }
-          }
-          // We clear the trash folder flag if the trash folder path doesn't
-          // match mail.server.serverX.trash_folder_name.
-          trashFolder->ClearFlag(nsMsgFolderFlags::Trash);
-        }
       }
     }
   }
 
+  // Un-verify ALL subfolders when ignoring subs. Needed to ensure that new
+  // folders are discovered at all levels, including under Inbox. Note: At
+  // account creation, all folders are new.
   bool usingSubscription = true;
   GetUsingSubscription(&usingSubscription);
+  if (!usingSubscription && rootMsgFolder) {
+    ResetFoldersToUnverified(rootMsgFolder);
+  }
 
   nsCOMArray<nsIMsgImapMailFolder> unverifiedFolders;
   GetUnverifiedFolders(unverifiedFolders);
 
+  // Need to do this BEFORE trash folder checks and adjustments so if trash
+  // folder is deleted it is no longer present in the trashFolders array. Array
+  // obtained below.
   int32_t count = unverifiedFolders.Count();
+  MOZ_LOG(IMAP_DC, mozilla::LogLevel::Debug,
+          ("DiscoveryDone, unverified folder count = %" PRIu32, count));
   for (int32_t k = 0; k < count; ++k) {
     bool explicitlyVerify = false;
     bool hasSubFolders = false;
@@ -1491,30 +1405,148 @@ NS_IMETHODIMP nsImapIncomingServer::DiscoveryDone() {
           explicitlyVerify)) ||
         ((NS_SUCCEEDED(currentFolder->GetHasSubFolders(&hasSubFolders)) &&
           hasSubFolders) &&
-         !NoDescendentsAreVerified(currentFolder))) {
+         !NoDescendantsAreVerified(currentFolder))) {
       bool isNamespace;
       currentImapFolder->GetIsNamespace(&isNamespace);
       if (!isNamespace)  // don't list namespaces explicitly
       {
         // If there are no subfolders and this is unverified, we don't want to
-        // run this url. That is, we want to undiscover the folder.
+        // run url listfolder. That is, we want to undiscover the folder.
         // If there are subfolders and no descendants are verified, we want to
         // undiscover all of the folders.
         // Only if there are subfolders and at least one of them is verified
         // do we want to refresh that folder's flags, because it won't be going
         // away.
         currentImapFolder->SetExplicitlyVerify(false);
-        currentImapFolder->List();
+        currentImapFolder->List();  // Run listfolder url
+        // If subscriptions are ignored, trigger a discoverchildren url so that
+        // any new folders are discovered. PerformExpand starts the url.
+        if (!usingSubscription) {
+          MOZ_LOG(IMAP_DC, mozilla::LogLevel::Debug,
+                  ("DiscoveryDone: run discoverchildren with PerformExpand"));
+          currentImapFolder->PerformExpand(nullptr);
+        }
       }
     } else {
       nsCOMPtr<nsIMsgFolder> parent;
       currentFolder->GetParent(getter_AddRefs(parent));
       if (parent) {
+        MOZ_LOG(IMAP_DC, mozilla::LogLevel::Debug,
+                ("DiscoveryDone: folder is gone so remove it"));
         currentImapFolder->RemoveLocalSelf();
       }
     }
   }
 
+  if (rootMsgFolder) {
+    // Ensure there is at most one folder flagged as trash. Another might be
+    // flagged if the trash name has been changed. Also try to make sure that
+    // the trash folder pref is set to the path of the folder flagged as trash.
+    // First obtain array of folders flagged as trash.
+    nsTArray<RefPtr<nsIMsgFolder>> trashFolders;
+    rv = rootMsgFolder->GetFoldersWithFlags(nsMsgFolderFlags::Trash,
+                                            trashFolders);
+    NS_WARNING_ASSERTION(trashFolders.Length() <= 2,
+                         "why more than 2 folders flagged as trash?");
+    if (NS_SUCCEEDED(rv) && trashFolders.Length()) {
+      // See if there is a pref set for trash folder. Only check the "raw" value
+      // since here we don't want to see the default "Trash" string returned by
+      // GetTrashFolderName() when the pref is really empty.
+      nsAutoCString prefPath;
+      rv = GetStringValue(PREF_TRASH_FOLDER_PATH, prefPath);
+      if (!prefPath.IsEmpty()) {
+        // Go through the trashFolders and un-flag as `trash` ones that don't
+        // match prefPath.
+        for (auto trashFolder : trashFolders) {
+          nsAutoCString trashFolderPathUtf7or8;
+          if (NS_SUCCEEDED(
+                  PathFromFolder(trashFolder, trashFolderPathUtf7or8))) {
+            // The value for trashFolderPathUtf7or8 comes from the server, which
+            // for non UTF-8 servers will be encoded as MUTF-7. The preference
+            // is stored in UTF-8, so we need to convert if this is not a UTF-8
+            // server to compare the preference value to the server value.
+            bool isUtf8;
+            GetUtf8AcceptEnabled(&isUtf8);
+            nsAutoCString trashFolderPathUtf8;
+            if (isUtf8) {
+              trashFolderPathUtf8 = trashFolderPathUtf7or8;
+            } else {
+              nsAutoString trashFolderPathUtf16;
+              CopyMUTF7toUTF16(trashFolderPathUtf7or8, trashFolderPathUtf16);
+              CopyUTF16toUTF8(trashFolderPathUtf16, trashFolderPathUtf8);
+            }
+            if (!prefPath.Equals(trashFolderPathUtf8)) {
+              // We clear the trash folder flag if the trash folder path doesn't
+              // match mail.server.serverX.trash_folder_name.
+              trashFolder->ClearFlag(nsMsgFolderFlags::Trash);
+            }
+          }
+        }
+      } else {
+        // Trash pref is not set. Go through the trashFolders and set the trash
+        // pref for the folder with possible boxFlag kImapXListTrash (discovered
+        // as \trash special-use) and keep the Trash flag. If kImapXListTrash
+        // boxFlag is not set, remove the trash flag unless the folder name is
+        // the default name "Trash".
+
+        // First, look for folder with special-use \trash flag.
+        nsCOMPtr<nsIMsgFolder> specialUseFolder;
+        for (auto trashFolder : trashFolders) {
+          nsCOMPtr<nsIMsgImapMailFolder> imapFolder(
+              do_QueryInterface(trashFolder));
+          int32_t boxFlags;
+          imapFolder->GetBoxFlags(&boxFlags);
+          if (boxFlags & kImapXListTrash) {
+            // Found one. Deal with it below.
+            specialUseFolder = trashFolder;
+            break;
+          }
+        }
+
+        // No trash pref set, so get the default if needed.
+        nsAutoCString defaultTrashName;
+        if (!specialUseFolder) GetTrashFolderName(defaultTrashName);
+        for (auto trashFolder : trashFolders) {
+          if (specialUseFolder) {
+            // Clear trash flag on folders w/o special-use kImapXListTrash flag.
+            nsCOMPtr<nsIMsgImapMailFolder> imapFolder(
+                do_QueryInterface(trashFolder));
+            int32_t boxFlags;
+            imapFolder->GetBoxFlags(&boxFlags);
+            if (!(boxFlags & kImapXListTrash)) {
+              trashFolder->ClearFlag(nsMsgFolderFlags::Trash);
+            } else {
+              // Set pref to the path of the discovered special-use trash
+              // folder.
+              nsAutoCString specialUseFolderPath;
+              rv = PathFromFolder(specialUseFolder, specialUseFolderPath);
+              if (NS_SUCCEEDED(rv)) {
+                SetStringValue(PREF_TRASH_FOLDER_PATH, specialUseFolderPath);
+              }
+            }
+          } else {
+            // No special-use trash found.
+            // Clear the trash flag unless folder has the default name "Trash",
+            // ignorng case. If folder matches default name, set that folder's
+            // name as the pref.
+            nsAutoCString trashFolderPath;
+            rv = PathFromFolder(trashFolder, trashFolderPath);
+            if (NS_SUCCEEDED(rv)) {
+              if (!defaultTrashName.Equals(
+                      trashFolderPath, nsCaseInsensitiveUTF8StringComparator)) {
+                trashFolder->ClearFlag(nsMsgFolderFlags::Trash);
+              } else {
+                // Set the pref to the server's trashFolderPath
+                SetStringValue(PREF_TRASH_FOLDER_PATH, trashFolderPath);
+              }
+            }
+          }
+        }
+      }
+    } else {
+      SetStringValue(PREF_TRASH_FOLDER_PATH, ""_ns);
+    }
+  }
   return rv;
 }
 
@@ -1546,7 +1578,7 @@ bool nsImapIncomingServer::CheckSpecialFolder(nsCString& folderUri,
       folder->SetFlag(folderFlag);
     }
 
-    nsString folderName;
+    nsCString folderName;
     folder->GetPrettyName(folderName);
     // this will set the localized name based on the folder flag.
     folder->SetPrettyName(folderName);
@@ -1560,7 +1592,7 @@ bool nsImapIncomingServer::CheckSpecialFolder(nsCString& folderUri,
   return false;
 }
 
-bool nsImapIncomingServer::NoDescendentsAreVerified(
+bool nsImapIncomingServer::NoDescendantsAreVerified(
     nsIMsgFolder* parentFolder) {
   nsTArray<RefPtr<nsIMsgFolder>> subFolders;
   nsresult rv = parentFolder->GetSubFolders(subFolders);
@@ -1574,7 +1606,7 @@ bool nsImapIncomingServer::NoDescendentsAreVerified(
         if (NS_SUCCEEDED(rv) && childVerified) {
           return false;
         }
-        if (!NoDescendentsAreVerified(child)) {
+        if (!NoDescendantsAreVerified(child)) {
           return false;
         }
       }
@@ -1584,7 +1616,7 @@ bool nsImapIncomingServer::NoDescendentsAreVerified(
   return true;
 }
 
-bool nsImapIncomingServer::AllDescendentsAreNoSelect(
+bool nsImapIncomingServer::AllDescendantsAreNoSelect(
     nsIMsgFolder* parentFolder) {
   nsTArray<RefPtr<nsIMsgFolder>> subFolders;
   nsresult rv = parentFolder->GetSubFolders(subFolders);
@@ -1600,7 +1632,7 @@ bool nsImapIncomingServer::AllDescendentsAreNoSelect(
         if (!isNoSelect) {
           return false;
         }
-        if (!AllDescendentsAreNoSelect(child)) {
+        if (!AllDescendantsAreNoSelect(child)) {
           return false;
         }
       }
@@ -1619,7 +1651,7 @@ nsImapIncomingServer::PromptLoginFailed(nsIMsgWindow* aMsgWindow,
   nsAutoCString userName;
   GetUsername(userName);
 
-  nsAutoString accountName;
+  nsAutoCString accountName;
   GetPrettyName(accountName);
 
   return MsgPromptLoginFailed(aMsgWindow, hostName, userName, accountName,
@@ -1632,12 +1664,13 @@ nsImapIncomingServer::FEAlert(const nsAString& aAlertString,
   GetStringBundle();
 
   if (m_stringBundle) {
-    nsAutoString hostName;
+    nsAutoCString hostName;
     nsresult rv = GetPrettyName(hostName);
     if (NS_SUCCEEDED(rv)) {
       nsString message;
       nsString tempString(aAlertString);
-      AutoTArray<nsString, 2> params = {hostName, tempString};
+      AutoTArray<nsString, 2> params = {NS_ConvertUTF8toUTF16(hostName),
+                                        tempString};
 
       rv = m_stringBundle->FormatStringFromName("imapServerAlert", params,
                                                 message);
@@ -1714,10 +1747,10 @@ NS_IMETHODIMP nsImapIncomingServer::FEAlertFromServer(
   // Adjust the message.
   if (pos != -1) message = Substring(message, pos + 1);
 
-  nsString hostName;
+  nsAutoCString hostName;
   GetPrettyName(hostName);
 
-  AutoTArray<nsString, 3> formatStrings = {hostName};
+  AutoTArray<nsString, 3> formatStrings = {NS_ConvertUTF8toUTF16(hostName)};
 
   const char* msgName;
   nsString fullMessage;
@@ -1729,7 +1762,7 @@ NS_IMETHODIMP nsImapIncomingServer::FEAlertFromServer(
 
   imapUrl->GetRequiredImapState(&imapState);
   imapUrl->GetImapAction(&imapAction);
-  nsString folderName;
+  nsCString folderName;
 
   NS_ConvertUTF8toUTF16 unicodeMsg(message);
 
@@ -1742,7 +1775,7 @@ NS_IMETHODIMP nsImapIncomingServer::FEAlertFromServer(
     aUrl->GetFolder(getter_AddRefs(folder));
     if (folder) folder->GetPrettyName(folderName);
     msgName = "imapFolderCommandFailed";
-    formatStrings.AppendElement(folderName);
+    formatStrings.AppendElement(NS_ConvertUTF8toUTF16(folderName));
   } else {
     msgName = "imapServerCommandFailed";
   }
@@ -1758,6 +1791,14 @@ NS_IMETHODIMP nsImapIncomingServer::FEAlertFromServer(
   }
 
   return AlertUser(fullMessage, aUrl);
+}
+
+NS_IMETHODIMP nsImapIncomingServer::FEAlertCertError(
+    nsITransportSecurityInfo* securityInfo, nsIMsgMailNewsUrl* url) {
+  nsCOMPtr<nsIMsgMailSession> mailSession =
+      do_GetService("@mozilla.org/messenger/services/session;1");
+  mailSession->AlertCertError(securityInfo, url);
+  return NS_OK;
 }
 
 #define IMAP_MSGS_URL "chrome://messenger/locale/imapMsgs.properties"
@@ -2153,17 +2194,12 @@ nsImapIncomingServer::OnStopRunningUrl(nsIURI* url, nsresult exitCode) {
         nsCOMPtr<nsIMsgMailNewsUrl> mailUrl = do_QueryInterface(imapUrl);
         mailUrl->GetFolder(getter_AddRefs(msgFolder));
         if (msgFolder) {
-          nsresult rv;
-          nsCOMPtr<nsIMsgMailSession> session =
-              do_GetService("@mozilla.org/messenger/services/session;1", &rv);
-          NS_ENSURE_SUCCESS(rv, rv);
-          bool folderOpen;
-          rv = session->IsFolderOpenInWindow(msgFolder, &folderOpen);
-          if (NS_SUCCEEDED(rv) && !folderOpen && msgFolder)
-            msgFolder->SetMsgDatabase(nullptr);
           nsCOMPtr<nsIMsgImapMailFolder> imapFolder =
               do_QueryInterface(msgFolder);
           m_foldersToStat.RemoveObject(imapFolder);
+          // This command is used for folders that are not opened.
+          // We need to close after we're done.
+          msgFolder->SetMsgDatabase(nullptr);
         }
         // if we get an error running the url, it's better
         // not to chain the next url.
@@ -2260,20 +2296,17 @@ nsImapIncomingServer::GetSubscribeListener(nsISubscribeListener** aListener) {
 }
 
 NS_IMETHODIMP
-nsImapIncomingServer::Subscribe(const char16_t* aName) {
-  NS_ENSURE_ARG_POINTER(aName);
-  return SubscribeToFolder(nsDependentString(aName), true, nullptr);
+nsImapIncomingServer::Subscribe(const nsACString& aName) {
+  return SubscribeToFolder(aName, true, nullptr);
 }
 
 NS_IMETHODIMP
-nsImapIncomingServer::Unsubscribe(const char16_t* aName) {
-  NS_ENSURE_ARG_POINTER(aName);
-
-  return SubscribeToFolder(nsDependentString(aName), false, nullptr);
+nsImapIncomingServer::Unsubscribe(const nsACString& aName) {
+  return SubscribeToFolder(aName, false, nullptr);
 }
 
 NS_IMETHODIMP
-nsImapIncomingServer::SubscribeToFolder(const nsAString& aName, bool subscribe,
+nsImapIncomingServer::SubscribeToFolder(const nsACString& aName, bool subscribe,
                                         nsIURI** aUri) {
   nsresult rv;
   nsCOMPtr<nsIImapService> imapService =
@@ -2288,10 +2321,9 @@ nsImapIncomingServer::SubscribeToFolder(const nsAString& aName, bool subscribe,
   // folder pathnames, otherwise root's (ie, '^') is used and this is wrong.
 
   // aName is not a genuine UTF-16 but just a zero-padded MUTF-7.
-  NS_ConvertUTF16toUTF8 folderCName(aName);
   nsCOMPtr<nsIMsgFolder> msgFolder;
   if (rootMsgFolder && !aName.IsEmpty())
-    rv = rootMsgFolder->FindSubFolder(folderCName, getter_AddRefs(msgFolder));
+    rv = rootMsgFolder->FindSubFolder(aName, getter_AddRefs(msgFolder));
 
   nsCOMPtr<nsIThread> thread(do_GetCurrentThread());
 
@@ -2422,26 +2454,6 @@ nsImapIncomingServer::GetCanBeDefaultServer(bool* canBeDefaultServer) {
 }
 
 NS_IMETHODIMP
-nsImapIncomingServer::GetCanCompactFoldersOnServer(
-    bool* canCompactFoldersOnServer) {
-  NS_ENSURE_ARG_POINTER(canCompactFoldersOnServer);
-  // Initialize canCompactFoldersOnServer true, a default value for IMAP
-  *canCompactFoldersOnServer = true;
-  GetPrefForServerAttribute("canCompactFoldersOnServer",
-                            canCompactFoldersOnServer);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsImapIncomingServer::GetCanUndoDeleteOnServer(bool* canUndoDeleteOnServer) {
-  NS_ENSURE_ARG_POINTER(canUndoDeleteOnServer);
-  // Initialize canUndoDeleteOnServer true, a default value for IMAP
-  *canUndoDeleteOnServer = true;
-  GetPrefForServerAttribute("canUndoDeleteOnServer", canUndoDeleteOnServer);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 nsImapIncomingServer::GetCanSearchMessages(bool* canSearchMessages) {
   NS_ENSURE_ARG_POINTER(canSearchMessages);
   // Initialize canSearchMessages true, a default value for IMAP
@@ -2484,31 +2496,27 @@ nsImapIncomingServer::GetSupportsDiskSpace(bool* aSupportsDiskSpace) {
   return NS_OK;
 }
 
-// count number of non-busy connections in cache
+// Check whether all connections in the cache are idle.
 NS_IMETHODIMP
-nsImapIncomingServer::GetNumIdleConnections(int32_t* aNumIdleConnections) {
-  NS_ENSURE_ARG_POINTER(aNumIdleConnections);
-  *aNumIdleConnections = 0;
+nsImapIncomingServer::GetAllConnectionsIdle(bool* aAllIdle) {
+  NS_ENSURE_ARG_POINTER(aAllIdle);
+  *aAllIdle = true;
 
-  nsresult rv = NS_OK;
-  nsCOMPtr<nsIImapProtocol> connection;
-  bool isBusy = false;
+  nsresult rv;
+  bool isBusy;
   bool isInboxConnection;
+
   PR_CEnterMonitor(this);
-
-  int32_t cnt = m_connectionCache.Count();
-
-  // loop counting idle connections
-  for (int32_t i = 0; i < cnt; ++i) {
-    connection = m_connectionCache[i];
-    if (connection) {
-      rv = connection->IsBusy(&isBusy, &isInboxConnection);
-      if (NS_FAILED(rv)) continue;
-      if (!isBusy) (*aNumIdleConnections)++;
+  for (nsCOMPtr<nsIImapProtocol> connection : m_connectionCache) {
+    rv = connection->IsBusy(&isBusy, &isInboxConnection);
+    if (NS_FAILED(rv) || isBusy) {
+      *aAllIdle = false;
+      break;
     }
   }
   PR_CExitMonitor(this);
-  return rv;
+
+  return NS_OK;
 }
 
 /**
@@ -2551,77 +2559,6 @@ nsImapIncomingServer::GetOfflineSupportLevel(int32_t* aSupportLevel) {
   if (NS_FAILED(rv))  // set default value
     *aSupportLevel = OFFLINE_SUPPORT_LEVEL_REGULAR;
   return NS_OK;
-}
-
-// Called only during the migration process. This routine enables the generation
-// of unique account name based on the username, hostname and the port. If the
-// port is valid and not a default one, it will be appended to the account name.
-NS_IMETHODIMP
-nsImapIncomingServer::GeneratePrettyNameForMigration(nsAString& aPrettyName) {
-  nsCString userName;
-  nsCString hostName;
-
-  /**
-   * Pretty name for migrated account is of format username@hostname:<port>,
-   * provided the port is valid and not the default
-   */
-  // Get user name to construct pretty name
-  nsresult rv = GetUsername(userName);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Get host name to construct pretty name
-  rv = GetHostName(hostName);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  int32_t defaultServerPort;
-  int32_t defaultSecureServerPort;
-
-  // Here, the final contract ID is already known, so use it directly for
-  // efficiency.
-  nsCOMPtr<nsIMsgProtocolInfo> protocolInfo =
-      do_GetService("@mozilla.org/messenger/protocol/info;1?type=imap", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Get the default port
-  rv = protocolInfo->GetDefaultServerPort(false, &defaultServerPort);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Get the default secure port
-  rv = protocolInfo->GetDefaultServerPort(true, &defaultSecureServerPort);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Get the current server port
-  int32_t serverPort = PORT_NOT_SET;
-  rv = GetPort(&serverPort);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // Is the server secure ?
-  int32_t socketType;
-  rv = GetSocketType(&socketType);
-  NS_ENSURE_SUCCESS(rv, rv);
-  bool isSecure = (socketType == nsMsgSocketType::SSL);
-
-  // Is server port a default port ?
-  bool isItDefaultPort = false;
-  if (((serverPort == defaultServerPort) && !isSecure) ||
-      ((serverPort == defaultSecureServerPort) && isSecure))
-    isItDefaultPort = true;
-
-  // Construct pretty name from username and hostname
-  nsAutoString constructedPrettyName;
-  CopyASCIItoUTF16(userName, constructedPrettyName);
-  constructedPrettyName.Append('@');
-  constructedPrettyName.Append(NS_ConvertASCIItoUTF16(hostName));
-
-  // If the port is valid and not default, add port value to the pretty name
-  if ((serverPort > 0) && (!isItDefaultPort)) {
-    constructedPrettyName.Append(':');
-    constructedPrettyName.AppendInt(serverPort);
-  }
-
-  // Format the pretty name
-  return GetFormattedStringFromName(constructedPrettyName,
-                                    "imapDefaultAccountName", aPrettyName);
 }
 
 nsresult nsImapIncomingServer::GetFormattedStringFromName(
@@ -2747,10 +2684,10 @@ nsImapIncomingServer::GetNewMessagesForNonInboxFolders(nsIMsgFolder* aFolder,
     aFolder->SetGettingNewMessages(true);
     if (performingBiff) imapFolder->SetPerformingBiff(true);
     bool isOpen = false;
-    nsCOMPtr<nsIMsgMailSession> mailSession =
-        do_GetService("@mozilla.org/messenger/services/session;1");
-    if (mailSession && aFolder)
-      mailSession->IsFolderOpenInWindow(aFolder, &isOpen);
+    if (aFolder) {
+      aFolder->GetDatabaseOpen(&isOpen);
+    }
+
     // eventually, the gGotStatusPref should go away, once we work out the kinks
     // from using STATUS.
     if (!gGotStatusPref) {
@@ -2854,23 +2791,22 @@ nsImapIncomingServer::GetUriWithNamespacePrefixIfNecessary(
   return rv;
 }
 
-NS_IMETHODIMP nsImapIncomingServer::GetTrashFolderName(nsAString& retval) {
+NS_IMETHODIMP nsImapIncomingServer::GetTrashFolderName(nsACString& retval) {
   // Despite its name, this returns a path, for example INBOX/Trash.
-  nsresult rv = GetUnicharValue(PREF_TRASH_FOLDER_PATH, retval);
+  nsresult rv = GetStringValue(PREF_TRASH_FOLDER_PATH, retval);
   if (NS_FAILED(rv)) return rv;
-  if (retval.IsEmpty())
-    retval = NS_LITERAL_STRING_FROM_CSTRING(DEFAULT_TRASH_FOLDER_PATH);
+  if (retval.IsEmpty()) retval = nsCString(DEFAULT_TRASH_FOLDER_PATH);
   return NS_OK;
 }
 
 NS_IMETHODIMP nsImapIncomingServer::SetTrashFolderName(
-    const nsAString& chvalue) {
+    const nsACString& chvalue) {
   // Clear trash flag from the old pref.
   // Despite its name, this returns the trash folder path, for example
   // INBOX/Trash.
   bool useUTF8 = false;
   GetUtf8AcceptEnabled(&useUTF8);
-  nsAutoString oldTrashName;
+  nsAutoCString oldTrashName;
   nsresult rv = GetTrashFolderName(oldTrashName);
   if (NS_SUCCEEDED(rv)) {
     nsAutoCString oldTrashNameUtf7or8;
@@ -2878,9 +2814,10 @@ NS_IMETHODIMP nsImapIncomingServer::SetTrashFolderName(
     // 'trashFolderName' being a path here works well since this is appended
     // to the server's root folder in GetFolder().
     if (useUTF8) {
-      CopyUTF16toUTF8(oldTrashName, oldTrashNameUtf7or8);
+      oldTrashNameUtf7or8 = oldTrashName;
     } else {
-      CopyUTF16toMUTF7(oldTrashName, oldTrashNameUtf7or8);
+      CopyUTF16toMUTF7(NS_ConvertUTF8toUTF16(oldTrashName),
+                       oldTrashNameUtf7or8);
     }
     rv = GetFolder(oldTrashNameUtf7or8, getter_AddRefs(oldFolder));
     if (NS_SUCCEEDED(rv) && oldFolder)
@@ -2895,17 +2832,18 @@ NS_IMETHODIMP nsImapIncomingServer::SetTrashFolderName(
   if (NS_SUCCEEDED(rv) && (deleteModel == nsMsgImapDeleteModels::MoveToTrash)) {
     nsAutoCString newTrashNameUtf7or8;
     if (useUTF8) {
-      CopyUTF16toUTF8(PromiseFlatString(chvalue), newTrashNameUtf7or8);
+      newTrashNameUtf7or8 = chvalue;
     } else {
-      CopyUTF16toMUTF7(PromiseFlatString(chvalue), newTrashNameUtf7or8);
+      CopyUTF16toMUTF7(NS_ConvertUTF8toUTF16(chvalue), newTrashNameUtf7or8);
     }
     nsCOMPtr<nsIMsgFolder> newTrashFolder;
     rv = GetFolder(newTrashNameUtf7or8, getter_AddRefs(newTrashFolder));
-    if (NS_SUCCEEDED(rv) && newTrashFolder)
+    if (NS_SUCCEEDED(rv) && newTrashFolder) {
       newTrashFolder->SetFlag(nsMsgFolderFlags::Trash);
+    }
   }
 
-  return SetUnicharValue(PREF_TRASH_FOLDER_PATH, chvalue);
+  return SetStringValue(PREF_TRASH_FOLDER_PATH, chvalue);
 }
 
 NS_IMETHODIMP
@@ -2941,7 +2879,7 @@ nsImapIncomingServer::GetMsgFolderFromURI(nsIMsgFolder* aFolderResource,
   }
 
   msgFolder.forget(aFolder);
-  return (aFolder ? NS_OK : NS_ERROR_FAILURE);
+  return NS_OK;
 }
 
 nsresult nsImapIncomingServer::GetExistingMsgFolder(
@@ -3029,4 +2967,11 @@ nsImapIncomingServer::SetServerDoingLsub(bool aDoingLsub) {
 NS_IMETHODIMP
 nsImapIncomingServer::SetServerUtf8AcceptEnabled(bool enabled) {
   return SetUtf8AcceptEnabled(enabled);
+}
+
+// Run a callback under the protection of the Logon lock.
+NS_IMETHODIMP
+nsImapIncomingServer::RunLogonExclusive(nsIRunnable* callback) {
+  mozilla::MonitorAutoLock lock(mLogonMonitor);
+  return callback->Run();
 }

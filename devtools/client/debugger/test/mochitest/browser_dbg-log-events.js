@@ -9,17 +9,21 @@
 "use strict";
 
 add_task(async function () {
-  Services.prefs.setBoolPref("devtools.toolbox.splitconsoleEnabled", true);
+  Services.prefs.setBoolPref("devtools.toolbox.splitconsole.open", true);
   const dbg = await initDebugger(
     "doc-event-breakpoints.html",
     "event-breakpoints.js"
   );
 
   await clickElement(dbg, "logEventsCheckbox");
-  await dbg.actions.addEventListenerBreakpoints(["event.mouse.click"]);
+  await dbg.actions.addEventListenerBreakpoints("breakpoint", [
+    "event.mouse.click",
+    "animationframe.request",
+  ]);
   clickElementInTab("#click-target");
 
-  await hasConsoleMessage(dbg, "click");
+  await hasConsoleMessage(dbg, "click { target: div#click-target");
+  await hasConsoleMessage(dbg, "function rafCallback()");
   await waitForRequestsToSettle(dbg);
   ok(true);
 });

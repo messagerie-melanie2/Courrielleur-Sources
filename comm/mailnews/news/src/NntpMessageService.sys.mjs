@@ -109,7 +109,10 @@ class BaseMessageService {
 
   Search(searchSession, msgWindow, msgFolder, searchUri) {
     const slashIndex = searchUri.indexOf("/");
-    const xpatLines = searchUri.slice(slashIndex + 1).split("/");
+    const xpatLines = searchUri
+      .slice(slashIndex + 1)
+      .split("/")
+      .map(decodeURIComponent);
     const server = msgFolder.server.QueryInterface(Ci.nsINntpIncomingServer);
 
     server.wrappedJSObject.withClient(client => {
@@ -122,7 +125,7 @@ class BaseMessageService {
       };
 
       client.onData = line => {
-        searchSession.runningAdapter.AddHit(line.split(" ")[0]);
+        searchSession.runningAdapter.addHit(line.split(" ")[0]);
       };
     });
   }
@@ -143,8 +146,8 @@ class BaseMessageService {
       // NOTE: jsmimeemitter relies on this.
       const url = new URL(uri.spec);
       const params = new URLSearchParams(`?header=${additionalHeader}`);
-      for (const [key, value] of params.entries()) {
-        url.searchParams.set(key, value);
+      for (const [param, value] of params.entries()) {
+        url.searchParams.set(param, value);
       }
       uri = uri.mutate().setQuery(url.search).finalize();
     }
@@ -238,14 +241,14 @@ class BaseMessageService {
    *
    * @param {nsIURI} uri - URL representing the message.
    * @param {string} messageUri - URI including the part to fetch.
-   * @param {nsIStreamListener} - Stream listener.
+   * @param {nsIStreamListener} streamListener - Stream listener.
    * @param {nsIMsgWindow} msgWindow
    * @param {nsIUrlListener} urlListener - URL listener.
    * @returns {nsIURI} the URL that gets run, if any.
    */
   fetchMimePart(uri, messageUri, streamListener, msgWindow, urlListener) {
     this._logger.debug("fetchMimePart", uri.spec);
-    this.streamMessage(
+    return this.streamMessage(
       uri.spec,
       streamListener,
       msgWindow,

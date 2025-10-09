@@ -4,11 +4,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![cfg_attr(feature = "deny-warnings", deny(warnings))]
-#![warn(clippy::pedantic)]
-// This is because of Encoder and Decoder structs. TODO: think about a better namings for crate and structs.
-#![allow(clippy::module_name_repetitions)]
-
 pub mod decoder;
 mod decoder_instructions;
 pub mod encoder;
@@ -24,6 +19,8 @@ pub mod reader;
 mod static_table;
 mod stats;
 mod table;
+
+use std::fmt::{self, Display, Formatter};
 
 pub use decoder::QPackDecoder;
 pub use encoder::QPackEncoder;
@@ -44,13 +41,14 @@ pub enum Error {
     EncoderStream,
     DecoderStream,
     ClosedCriticalStream,
-    InternalError(u16),
+    InternalError,
 
     // These are internal errors, they will be transformed into one of the above.
-    NeedMoreData, // Return when an input stream does not have more data that a decoder needs.(It does not mean that a stream is closed.)
+    NeedMoreData, /* Return when an input stream does not have more data that a decoder
+                   * needs.(It does not mean that a stream is closed.) */
     HeaderLookup,
     HuffmanDecompressionFailed,
-    ToStringFailed,
+    BadUtf8,
     ChangeCapacity,
     DynamicTableFull,
     IncrementAck,
@@ -66,7 +64,7 @@ pub enum Error {
 
 impl Error {
     #[must_use]
-    pub fn code(&self) -> neqo_transport::AppError {
+    pub const fn code(&self) -> neqo_transport::AppError {
         match self {
             Self::DecompressionFailed => 0x200,
             Self::EncoderStream => 0x201,
@@ -78,7 +76,8 @@ impl Error {
     }
 
     /// # Errors
-    ///   Any error is mapped to the indicated type.
+    ///
+    /// Any error is mapped to the indicated type.
     fn map_error<R>(r: Result<R, Self>, err: Self) -> Result<R, Self> {
         r.map_err(|e| {
             if matches!(e, Self::ClosedCriticalStream) {
@@ -99,9 +98,9 @@ impl ::std::error::Error for Error {
     }
 }
 
-impl ::std::fmt::Display for Error {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
-        write!(f, "QPACK error: {:?}", self)
+impl Display for Error {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "QPACK error: {self:?}")
     }
 }
 

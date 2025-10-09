@@ -22,9 +22,11 @@
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
 }
 
-.conv-nicklist-header {
-  appearance: auto;
-  -moz-default-appearance: treeheadercell;
+.conv-nicklist-header,
+.conv-logs-header-label {
+  padding-block: 2px;
+  border-bottom: 1px solid ThreeDShadow;
+  background-color: -moz-Dialog;
   margin-right: -1px;
 }
 
@@ -33,7 +35,8 @@
   margin-block: 1px 0 !important;
 }
 
-.conv-nicklist, #logTree {
+.conv-nicklist,
+#logTree {
   appearance: none;
   width: 250px;
   border: 0;
@@ -47,19 +50,20 @@ richlistitem[is="chat-group-richlistitem"] .twisty {
   margin-inline-end: 3px;
 }
 
-#chatPanel:-moz-lwtheme {
-  color: -moz-DialogText;
-  text-shadow: none;
-}
+#chatPanel {
 
-/* Adaptation from #folderTree */
-:root:not([lwt-tree]) #chatPanel {
-  background-color: -moz-OddTreeRow;
-}
+  :root[lwtheme] & {
+    color: -moz-DialogText;
+    text-shadow: none;
+  }
 
-@media (prefers-contrast) {
-  :root:not([lwt-tree]) #chatPanel {
-    background-color: Field;
+  /* Adaptation from #folderTree */
+  :root:not([lwt-tree]) & {
+    background-color: -moz-OddTreeRow;
+
+    @media (prefers-contrast) {
+      background-color: Field;
+    }
   }
 }
 
@@ -76,18 +80,13 @@ richlistitem[is="chat-group-richlistitem"] .twisty {
   margin-top: 3px;
 }
 
-#statusTypeIcon:-moz-locale-dir(ltr) {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-}
+#statusTypeIcon {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
 
-#statusTypeIcon:-moz-locale-dir(rtl) {
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-}
-
-#statusTypeIcon > .toolbarbutton-text {
-  display: none;
+  & > .toolbarbutton-text {
+    display: none;
+  }
 }
 
 .statusMessageToolbarItem {
@@ -103,7 +102,7 @@ richlistitem[is="chat-group-richlistitem"] .twisty {
 }
 
 .conv-status-container {
-  border-bottom-color: #8B8B8B;
+  border-bottom-color: #8b8b8b;
 }
 
 .startChatBubble > .button-box > .button-icon,

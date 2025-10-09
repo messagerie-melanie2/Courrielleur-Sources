@@ -15,10 +15,9 @@
 #include "harfbuzz/hb.h"
 
 struct nsCharProps2 {
-  // Currently only 4 bits are defined here, so 4 more could be added without
+  // Currently only 2 bits are defined here, so 6 more could be added without
   // affecting the storage requirements for this struct. Or we could pack two
   // records per byte, at the cost of a slightly more complex accessor.
-  unsigned char mVertOrient : 2;
   unsigned char mIdType : 2;
 };
 
@@ -30,12 +29,12 @@ namespace unicode {
 
 extern const nsUGenCategory sDetailedToGeneralCategory[];
 
-/* This MUST match the values assigned by genUnicodePropertyData.pl! */
+/* This values must match the values by UVerticalOrientation by ICU */
 enum VerticalOrientation {
-  VERTICAL_ORIENTATION_U = 0,
-  VERTICAL_ORIENTATION_R = 1,
+  VERTICAL_ORIENTATION_R = 0,
+  VERTICAL_ORIENTATION_Tr = 1,
   VERTICAL_ORIENTATION_Tu = 2,
-  VERTICAL_ORIENTATION_Tr = 3
+  VERTICAL_ORIENTATION_U = 3,
 };
 
 /* This MUST match the values assigned by genUnicodePropertyData.pl! */
@@ -57,10 +56,16 @@ enum EmojiPresentation { TextOnly = 0, TextDefault = 1, EmojiDefault = 2 };
 
 const uint32_t kVariationSelector15 = 0xFE0E;  // text presentation
 const uint32_t kVariationSelector16 = 0xFE0F;  // emoji presentation
+static inline bool IsEmojiPresentationSelector(uint32_t aCh) {
+  return aCh >= kVariationSelector15 && aCh <= kVariationSelector16;
+}
 
 // Unicode values for EMOJI MODIFIER FITZPATRICK TYPE-*
 const uint32_t kEmojiSkinToneFirst = 0x1f3fb;
 const uint32_t kEmojiSkinToneLast = 0x1f3ff;
+static inline bool IsEmojiSkinToneModifier(uint32_t aCh) {
+  return aCh >= kEmojiSkinToneFirst && aCh <= kEmojiSkinToneLast;
+}
 
 extern const hb_unicode_general_category_t sICUtoHBcategory[];
 
@@ -142,7 +147,8 @@ inline nsUGenCategory GetGenCategory(uint32_t aCh) {
 }
 
 inline VerticalOrientation GetVerticalOrientation(uint32_t aCh) {
-  return VerticalOrientation(GetCharProps2(aCh).mVertOrient);
+  return VerticalOrientation(intl::UnicodeProperties::GetIntPropertyValue(
+      aCh, intl::UnicodeProperties::IntProperty::VerticalOrientation));
 }
 
 inline IdentifierType GetIdentifierType(uint32_t aCh) {
@@ -159,13 +165,17 @@ uint32_t GetFullWidthInverse(uint32_t aCh);
 bool IsClusterExtender(uint32_t aCh, uint8_t aCategory);
 
 inline bool IsClusterExtender(uint32_t aCh) {
-  return IsClusterExtender(aCh, GetGeneralCategory(aCh));
+  // There are no cluster-extender characters before the first combining-
+  // character block at U+03xx, so we short-circuit here to avoid the cost
+  // of calling GetGeneralCategory for Latin-1 letters etc.
+  return aCh >= 0x0300 && IsClusterExtender(aCh, GetGeneralCategory(aCh));
 }
 
 bool IsClusterExtenderExcludingJoiners(uint32_t aCh, uint8_t aCategory);
 
 inline bool IsClusterExtenderExcludingJoiners(uint32_t aCh) {
-  return IsClusterExtenderExcludingJoiners(aCh, GetGeneralCategory(aCh));
+  return aCh >= 0x0300 &&
+         IsClusterExtenderExcludingJoiners(aCh, GetGeneralCategory(aCh));
 }
 
 // Count the number of grapheme clusters in the given string

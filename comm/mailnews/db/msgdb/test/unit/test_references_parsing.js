@@ -2,8 +2,8 @@
  * Test nsMsgHdr's In-Reply-To/References parsing logic.
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var anyOldMessage = do_get_file("../../../../data/bugmail1");
@@ -107,16 +107,19 @@ function run_test() {
   return true;
 }
 
+/** @implements {nsIMsgCopyServiceListener} */
 var messageHeaderGetterListener = {
   msgKey: null,
 
-  OnStartCopy() {},
-  OnProgress(aProgress, aProgressMax) {},
-  GetMessageId(aMessageId) {},
-  SetMessageKey(aKey) {
+  onStartCopy() {},
+  onProgress() {},
+  getMessageId() {
+    return null;
+  },
+  setMessageKey(aKey) {
     this.msgKey = aKey;
   },
-  OnStopCopy(aStatus) {
+  onStopCopy() {
     test_references_header_parsing(
       localAccountUtils.inboxFolder.GetMessageHeader(this.msgKey)
     );

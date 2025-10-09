@@ -41,9 +41,7 @@ def find_hg_revision_push_info(repository, revision):
 
     if len(pushes) != 1:
         raise RuntimeError(
-            "Found {} pushlog_ids, expected 1, for {} revision {}: {}".format(
-                len(pushes), repository, revision, pushes
-            )
+            f"Found {len(pushes)} pushlog_ids, expected 1, for {repository} revision {revision}: {pushes}"
         )
 
     pushid = list(pushes.keys())[0]
@@ -96,26 +94,30 @@ def get_push_data(repository, project, push_id_start, push_id_end):
 
 
 @memoize
-def get_json_automationrelevance(repository, revision):
-    url = "{}/json-automationrelevance/{}".format(repository.rstrip("/"), revision)
+def get_json_pushchangedfiles(repository, revision):
+    url = "{}/json-pushchangedfiles/{}".format(repository.rstrip("/"), revision)
     logger.debug("Querying version control for metadata: %s", url)
 
-    def get_automationrelevance():
-        response = requests.get(url, timeout=30)
+    def get_pushchangedfiles():
+        response = requests.get(url, timeout=60)
         return response.json()
 
-    return retry(get_automationrelevance, attempts=10, sleeptime=10)
+    return retry(get_pushchangedfiles, attempts=10, sleeptime=10)
 
 
 def get_hg_revision_branch(root, revision):
     """Given the parameters for a revision, find the hg_branch (aka
     relbranch) of the revision."""
+    return get_hg_revision_info(root, revision, "branch")
+
+
+def get_hg_revision_info(root, revision, info):
     return subprocess.check_output(
         [
             "hg",
             "identify",
             "-T",
-            "{branch}",
+            f"{{{info}}}",
             "--rev",
             revision,
         ],

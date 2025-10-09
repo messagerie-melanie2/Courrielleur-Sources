@@ -7,16 +7,13 @@
 #ifndef nsHTMLButtonControlFrame_h___
 #define nsHTMLButtonControlFrame_h___
 
-#include "mozilla/Attributes.h"
 #include "nsContainerFrame.h"
-#include "nsIFormControlFrame.h"
-#include "nsButtonFrameRenderer.h"
+#include "nsCSSRenderingBorders.h"
 
 class gfxContext;
 class nsPresContext;
 
-class nsHTMLButtonControlFrame : public nsContainerFrame,
-                                 public nsIFormControlFrame {
+class nsHTMLButtonControlFrame : public nsContainerFrame {
  public:
   explicit nsHTMLButtonControlFrame(ComputedStyle* aStyle,
                                     nsPresContext* aPresContext)
@@ -30,9 +27,8 @@ class nsHTMLButtonControlFrame : public nsContainerFrame,
   void BuildDisplayList(nsDisplayListBuilder* aBuilder,
                         const nsDisplayListSet& aLists) override;
 
-  nscoord GetMinISize(gfxContext* aRenderingContext) override;
-
-  nscoord GetPrefISize(gfxContext* aRenderingContext) override;
+  nscoord IntrinsicISize(const mozilla::IntrinsicSizeInput& aInput,
+                         mozilla::IntrinsicISizeType aType) override;
 
   void Reflow(nsPresContext* aPresContext, ReflowOutput& aDesiredSize,
               const ReflowInput& aReflowInput,
@@ -45,13 +41,6 @@ class nsHTMLButtonControlFrame : public nsContainerFrame,
   nsresult HandleEvent(nsPresContext* aPresContext,
                        mozilla::WidgetGUIEvent* aEvent,
                        nsEventStatus* aEventStatus) override;
-
-  void Init(nsIContent* aContent, nsContainerFrame* aParent,
-            nsIFrame* aPrevInFlow) override;
-
-  ComputedStyle* GetAdditionalComputedStyle(int32_t aIndex) const override;
-  void SetAdditionalComputedStyle(int32_t aIndex,
-                                  ComputedStyle* aComputedStyle) override;
 
 #ifdef DEBUG
   void AppendFrames(ChildListID aListID, nsFrameList&& aFrameList) override;
@@ -71,18 +60,9 @@ class nsHTMLButtonControlFrame : public nsContainerFrame,
   }
 #endif
 
-  // nsIFormControlFrame
-  void SetFocus(bool aOn, bool aRepaint) override;
-  nsresult SetFormProperty(nsAtom* aName, const nsAString& aValue) override;
-
   // Inserted child content gets its frames parented by our child block
   nsContainerFrame* GetContentInsertionFrame() override {
     return PrincipalChildList().FirstChild()->GetContentInsertionFrame();
-  }
-
-  bool IsFrameOfType(uint32_t aFlags) const override {
-    return nsContainerFrame::IsFrameOfType(
-        aFlags & ~(nsIFrame::eReplaced | nsIFrame::eReplacedContainsBlock));
   }
 
   // Return the ::-moz-button-content anonymous box.
@@ -92,12 +72,10 @@ class nsHTMLButtonControlFrame : public nsContainerFrame,
   nsHTMLButtonControlFrame(ComputedStyle* aStyle, nsPresContext* aPresContext,
                            nsIFrame::ClassID aID);
 
-  virtual bool IsInput() { return false; }
-
   // Indicates whether we should clip our children's painting to our
   // border-box (either because of "overflow" or because of legacy reasons
   // about how <input>-flavored buttons work).
-  bool ShouldClipPaintingToBorderBox();
+  bool ShouldClipPaintingToBorderBox() const;
 
   // Reflows the button's sole child frame, and computes the desired size
   // of the button itself from the results.
@@ -110,8 +88,6 @@ class nsHTMLButtonControlFrame : public nsContainerFrame,
   nscoord SynthesizeFallbackBaseline(
       mozilla::WritingMode aWM,
       BaselineSharingGroup aBaselineGroup) const override;
-
-  nsButtonFrameRenderer mRenderer;
 };
 
 #endif

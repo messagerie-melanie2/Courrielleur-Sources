@@ -2,8 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { MailE10SUtils } = ChromeUtils.import(
-  "resource:///modules/MailE10SUtils.jsm"
+var { MailE10SUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailE10SUtils.sys.mjs"
+);
+var { UIFontSize } = ChromeUtils.importESModule(
+  "resource:///modules/UIFontSize.sys.mjs"
 );
 
 var gFilterList;
@@ -24,6 +27,8 @@ function onLoad() {
   gLogView.browsingContext.allowJavascript = false;
 
   MailE10SUtils.loadURI(gLogView, gFilterList.logURL);
+
+  UIFontSize.registerWindow(window);
 }
 
 function toggleLogFilters() {

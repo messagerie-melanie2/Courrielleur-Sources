@@ -2,7 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { Preferences } from "resource://gre/modules/Preferences.sys.mjs";
 import { TelemetryController } from "resource://gre/modules/TelemetryController.sys.mjs";
 import { clearTimeout, setTimeout } from "resource://gre/modules/Timer.sys.mjs";
 import { CleanupManager } from "resource://normandy/lib/CleanupManager.sys.mjs";
@@ -94,11 +93,7 @@ export var Heartbeat = class {
     }
 
     if (options.learnMoreUrl) {
-      try {
-        options.learnMoreUrl = new URL(options.learnMoreUrl);
-      } catch (e) {
-        options.learnMoreUrl = null;
-      }
+      options.learnMoreUrl = URL.parse(options.learnMoreUrl);
     }
 
     this.chromeWindow = chromeWindow;
@@ -149,58 +144,58 @@ export var Heartbeat = class {
       });
     }
 
-    this.notificationBox = this.chromeWindow.gNotificationBox;
-    this.notice = this.notificationBox.appendNotification(
-      "heartbeat-" + this.options.flowId,
-      {
-        label: this.options.message,
-        image: "resource://normandy/skin/shared/heartbeat-icon.svg",
-        priority: this.notificationBox.PRIORITY_SYSTEM,
-        eventCallback: eventType => {
-          if (eventType !== "removed") {
-            return;
-          }
-          this.maybeNotifyHeartbeat("NotificationClosed");
-        },
-      },
-      this.buttons
-    );
-    this.notice.classList.add("heartbeat");
-    this.notice.messageText.classList.add("heartbeat");
-
     // Build the heartbeat stars
     if (!this.options.engagementButtonLabel) {
-      const numStars = this.options.engagementButtonLabel ? 0 : 5;
       this.ratingContainer = this.chromeWindow.document.createElement("span");
-      this.ratingContainer.id = "star-rating-container";
 
-      for (let i = 0; i < numStars; i++) {
-        // create a star rating element
-        const ratingElement =
-          this.chromeWindow.document.createXULElement("toolbarbutton");
+      const fiveStarElement =
+        this.chromeWindow.document.createElement("moz-five-star");
 
-        // style it
-        const starIndex = numStars - i;
-        ratingElement.className = "plain star-x";
-        ratingElement.id = "star" + starIndex;
-        ratingElement.setAttribute("data-score", starIndex);
+      fiveStarElement.selectable = true;
 
-        // Add the click handler
-        ratingElement.addEventListener("click", ev => {
-          const rating = parseInt(ev.target.getAttribute("data-score"));
-          this.maybeNotifyHeartbeat("Voted", { score: rating });
-          this.userEngaged({
-            type: "stars",
-            score: rating,
-            flowId: this.options.flowId,
-          });
+      // Add the click handler
+      fiveStarElement.addEventListener("select", ev => {
+        const rating = ev.detail.rating;
+        this.maybeNotifyHeartbeat("Voted", { score: rating });
+        this.userEngaged({
+          type: "stars",
+          score: rating,
+          flowId: this.options.flowId,
         });
+      });
 
-        this.ratingContainer.appendChild(ratingElement);
-      }
-
-      this.notice.buttonContainer.append(this.ratingContainer);
+      this.ratingContainer.appendChild(fiveStarElement);
     }
+
+    this.notificationBox = this.chromeWindow.gNotificationBox;
+    this.noticePromise = new Promise(resolve => {
+      this.notificationBox
+        .appendNotification(
+          "heartbeat-" + this.options.flowId,
+          {
+            label: this.options.message,
+            image: "resource://normandy/skin/shared/heartbeat-icon.svg",
+            priority: this.notificationBox.PRIORITY_SYSTEM,
+            eventCallback: eventType => {
+              if (eventType !== "removed") {
+                return;
+              }
+              this.maybeNotifyHeartbeat("NotificationClosed");
+            },
+          },
+          this.buttons
+        )
+        .then(noticeEl => {
+          noticeEl.classList.add("heartbeat");
+          this.chromeWindow.requestAnimationFrame(() => {
+            noticeEl.messageText.classList.add("heartbeat");
+          });
+          if (this.ratingContainer) {
+            noticeEl.buttonContainer.append(this.ratingContainer);
+          }
+          resolve(noticeEl);
+        }, resolve);
+    });
 
     // Let the consumer know the notification was shown.
     this.maybeNotifyHeartbeat("NotificationOffered");
@@ -209,7 +204,8 @@ export var Heartbeat = class {
       this.handleWindowClosed
     );
 
-    const surveyDuration = Preferences.get(PREF_SURVEY_DURATION, 300) * 1000;
+    const surveyDuration =
+      Services.prefs.getIntPref(PREF_SURVEY_DURATION, 300) * 1000;
     this.surveyEndTimer = setTimeout(() => {
       this.maybeNotifyHeartbeat("SurveyExpired");
       this.close();
@@ -289,6 +285,16 @@ export var Heartbeat = class {
         addEnvironment: true,
       });
 
+      const gleanOmittedFields = ["version", "surveyVersion", "testing"];
+      for (const [k, v] of Object.entries(payload)) {
+        if (gleanOmittedFields.includes(k)) {
+          continue;
+        }
+        const metricName = k.endsWith("TS") ? k.slice(0, -2) : k;
+        Glean.heartbeat[metricName].set(v);
+      }
+      GleanPings.heartbeat.submit();
+
       // only for testing
       this.eventEmitter.emit("TelemetrySent", payload);
 
@@ -305,17 +311,20 @@ export var Heartbeat = class {
   }
 
   userEngaged(engagementParams) {
-    // Make the heartbeat icon pulse twice
-    this.notice.label = this.options.thanksMessage;
-    this.notice.messageImage.classList.remove("pulse-onshow");
-    this.notice.messageImage.classList.add("pulse-twice");
+    this.noticePromise.then(noticeEl => {
+      // Make the heartbeat icon pulse twice
+      noticeEl.label = this.options.thanksMessage;
+      noticeEl.messageImage?.classList.remove("pulse-onshow");
+      noticeEl.messageImage?.classList.add("pulse-twice");
+      // Remove the custom contents of the buttons
+      for (let button of noticeEl.buttonContainer.querySelectorAll("button")) {
+        button.remove();
+      }
+    });
 
-    // Remove the custom contents of the notice and the buttons
+    // Remove the custom contents of the notice
     if (this.ratingContainer) {
       this.ratingContainer.remove();
-    }
-    for (let button of this.notice.buttonContainer.querySelectorAll("button")) {
-      button.remove();
     }
 
     // Open the engagement tab if we have a valid engagement URL.
@@ -357,7 +366,9 @@ export var Heartbeat = class {
   }
 
   close() {
-    this.notificationBox.removeNotification(this.notice);
+    this.noticePromise.then(noticeEl =>
+      this.notificationBox.removeNotification(noticeEl)
+    );
   }
 
   cleanup() {
@@ -372,7 +383,7 @@ export var Heartbeat = class {
     // remove references for garbage collection
     this.chromeWindow = null;
     this.notificationBox = null;
-    this.notice = null;
+    this.noticePromise = null;
     this.ratingContainer = null;
     this.eventEmitter = null;
     // Ensure we don't re-enter and release the CleanupManager's reference to us:

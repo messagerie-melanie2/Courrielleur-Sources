@@ -4,14 +4,15 @@
 
 // This tests that we use IMAP move if the IMAP server supports it.
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 /* import-globals-from ../../../test/resources/logHelper.js */
-/* import-globals-from ../../../test/resources/MessageGenerator.jsm */
 load("../../../resources/logHelper.js");
-load("../../../resources/MessageGenerator.jsm");
+var { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
+);
 
 var gFolder1;
 
@@ -30,26 +31,26 @@ async function startTest() {
   await PromiseTestUtils.promiseFolderAdded("folder 1");
 
   addImapMessage();
-  let listener = new PromiseTestUtils.PromiseUrlListener();
+  const listener = new PromiseTestUtils.PromiseUrlListener();
   IMAPPump.inbox.updateFolderWithListener(null, listener);
   await listener.promise;
 
   // ...and download for offline use.
-  let promiseUrlListener = new PromiseTestUtils.PromiseUrlListener();
+  const promiseUrlListener = new PromiseTestUtils.PromiseUrlListener();
   IMAPPump.inbox.downloadAllForOffline(promiseUrlListener, null);
   await promiseUrlListener.promise;
 }
 
 async function doMove() {
-  let rootFolder = IMAPPump.incomingServer.rootFolder;
+  const rootFolder = IMAPPump.incomingServer.rootFolder;
   gFolder1 = rootFolder
     .getChildNamed("folder 1")
     .QueryInterface(Ci.nsIMsgImapMailFolder);
-  let msg = IMAPPump.inbox.msgDatabase.getMsgHdrForKey(
+  const msg = IMAPPump.inbox.msgDatabase.getMsgHdrForKey(
     IMAPPump.mailbox.uidnext - 1
   );
   IMAPPump.server._test = true;
-  let listener = new PromiseTestUtils.PromiseCopyListener();
+  const listener = new PromiseTestUtils.PromiseCopyListener();
   MailServices.copy.copyMessages(
     IMAPPump.inbox,
     [msg],
@@ -65,18 +66,18 @@ async function doMove() {
 
 async function testMove() {
   Assert.equal(IMAPPump.inbox.getTotalMessages(false), 0);
-  let listener = new PromiseTestUtils.PromiseUrlListener();
+  const listener = new PromiseTestUtils.PromiseUrlListener();
   gFolder1.updateFolderWithListener(null, listener);
   await listener.promise;
   Assert.equal(gFolder1.getTotalMessages(false), 1);
 
   // maildir should also delete the files.
   if (IMAPPump.inbox.msgStore.storeType == "maildir") {
-    let curDir = IMAPPump.inbox.filePath.clone();
+    const curDir = IMAPPump.inbox.filePath.clone();
     curDir.append("cur");
     Assert.ok(curDir.exists());
     Assert.ok(curDir.isDirectory());
-    let curEnum = curDir.directoryEntries;
+    const curEnum = curDir.directoryEntries;
     // the directory should be empty, fails from bug 771643
     Assert.ok(!curEnum.hasMoreElements());
   }

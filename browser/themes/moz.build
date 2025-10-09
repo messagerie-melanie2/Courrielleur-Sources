@@ -10,6 +10,10 @@ with Files("**"):
 with Files("ThemeVariableMap.sys.mjs"):
     BUG_COMPONENT = ("WebExtensions", "Themes")
 
+MOZ_SRC_FILES += [
+    "ToolbarIconColor.sys.mjs",
+]
+
 EXTRA_JS_MODULES += [
     "BuiltInThemeConfig.sys.mjs",
     "BuiltInThemes.sys.mjs",
@@ -17,15 +21,10 @@ EXTRA_JS_MODULES += [
 ]
 
 BROWSER_CHROME_MANIFESTS += [
-    "test/browser/browser.ini",
+    "test/browser/browser.toml",
 ]
 
 toolkit = CONFIG["MOZ_WIDGET_TOOLKIT"]
-
-if toolkit == "windows":
-    EXTRA_JS_MODULES += [
-        "Windows8WindowFrameColor.sys.mjs",
-    ]
 
 if toolkit == "cocoa":
     DIRS += ["osx"]

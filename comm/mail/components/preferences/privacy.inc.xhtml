@@ -25,7 +25,7 @@
                   oncommand="gPrivacyPane.showRemoteContentExceptions();"
                   data-l10n-id="exceptions-button"
                   search-l10n-ids="
-                    permissions-reminder-window2.title,
+                    permissions-dialog-title,
                     website-address-label.value,
                     block-button.label,
                     allow-session-button.label,
@@ -70,7 +70,7 @@
                   data-l10n-id="exceptions-button"
                   preference="pref.privacy.disable_button.cookie_exceptions"
                   search-l10n-ids="
-                    permissions-reminder-window2.title,
+                    permissions-dialog-title,
                     website-address-label.value,
                     block-button.label,
                     allow-session-button.label,
@@ -110,7 +110,7 @@
                   oncommand="gPrivacyPane.showCookies();"
                   preference="pref.privacy.disable_button.view_cookies"
                   search-l10n-ids="
-                    cookies-window-dialog2.title,
+                    cookies-dialog-title,
                     filter-search-label.value,
                     cookies-on-system-label,
                     treecol-site-header.label,
@@ -131,13 +131,21 @@
       <separator class="thin"/>
 
       <hbox align="center">
-        <checkbox id="privacyDoNotTrackCheckbox"
+        <checkbox id="globalPrivacyControlCheckbox"
                   class="tail-with-learn-more"
-                  data-l10n-id="do-not-track-label"
-                  preference="privacy.donottrackheader.enabled"/>
-        <label is="text-link" id="doNotTrackInfo"
-               href="https://www.mozilla.org/dnt"
-               data-l10n-id="dnt-learn-more-button"/>
+                  preference="privacy.globalprivacycontrol.enabled"
+                  data-l10n-id="global-privacy-control-description"
+                  search-l10n-ids="global-privacy-control-search" />
+        <html:a is="moz-support-link"
+                id="globalPrivacyControlLearnMoreLink"
+                support-page="global-privacy-control" />
+      </hbox>
+
+      <hbox align="center">
+        <html:a is="moz-support-link"
+                id="doNotTrackRemoval"
+                support-page="how-do-i-turn-do-not-track-feature"
+                data-l10n-id="do-not-track-removal" />
       </hbox>
     </html:fieldset>
     </html:div>
@@ -161,7 +169,7 @@
                   oncommand="gPrivacyPane.showPasswords();"
                   preference="pref.privacy.disable_button.view_passwords"
                   search-l10n-ids="
-                    saved-logins.title,
+                    saved-logins-title,
                     copy-provider-url-cmd.label,
                     copy-username-cmd.label,
                     edit-username-cmd.label,
@@ -192,6 +200,11 @@
         </hbox>
       </hbox>
       <!-- XXX button to do a showExceptions()? -->
+
+      <hbox id="osReauthRow" align="center">
+        <checkbox id="osReauthCheckbox"
+                  data-l10n-id="forms-os-reauth"/>
+      </hbox>
 
       <separator class="thin"/>
 
@@ -228,7 +241,7 @@
       <separator class="thin"/>
       <hbox>
         <checkbox id="manualMark"
-                  data-l10n-id="junk-label"
+                  data-l10n-id="junk-marked-label"
                   preference="mail.spam.manualMark"
                   oncommand="gPrivacyPane.updateManualMarkMode(this.checked);"/>
         <spacer flex="1"/>
@@ -250,12 +263,16 @@
           <spacer flex="1"/>
         </hbox>
       </radiogroup>
-      <hbox>
-        <checkbox id="markAsReadOnSpam"
-                  data-l10n-id="junk-read-label"
-                  preference="mail.spam.markAsReadOnSpam"/>
-        <spacer flex="1"/>
-      </hbox>
+      <separator class="thin"/>
+      <description data-l10n-id="junk-read-description"></description>
+      <checkbox class="indent"
+                id="manualMarkAsJunkMarksRead"
+                data-l10n-id="junk-read-manual-label"
+                preference="mailnews.ui.junk.manualMarkAsJunkMarksRead" />
+      <checkbox class="indent"
+                id="markAsReadOnSpam"
+                data-l10n-id="junk-read-auto-label"
+                preference="mail.spam.markAsReadOnSpam" />
       <hbox align="start">
         <checkbox id="enableJunkLogging" data-l10n-id="junk-log-label"
                   oncommand="gPrivacyPane.updateJunkLogButton(this.checked);"

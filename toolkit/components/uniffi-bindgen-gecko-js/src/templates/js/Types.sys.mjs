@@ -3,7 +3,8 @@
 
 {% endif %}
 
-{%- for type_ in ci.iter_types() %}
+
+{%- for type_ in ci.iter_local_types() %}
 {%- let ffi_converter = type_.ffi_converter() %}
 {%- match type_ %}
 
@@ -40,37 +41,42 @@
 {%- when Type::Float64 %}
 {%- include "Float64.sys.mjs" %}
 
-{%- when Type::Record with (name) %}
+{%- when Type::Record { name, module_path } %}
 {%- include "Record.sys.mjs" %}
 
-{%- when Type::Optional with (inner) %}
+{%- when Type::Optional { inner_type } %}
 {%- include "Optional.sys.mjs" %}
 
 {%- when Type::String %}
 {%- include "String.sys.mjs" %}
 
-{%- when Type::Sequence with (inner) %}
+{%- when Type::Bytes %}
+{%- include "Bytes.sys.mjs" %}
+
+{%- when Type::Sequence { inner_type } %}
 {%- include "Sequence.sys.mjs" %}
 
-{%- when Type::Map with (key_type, value_type) %}
+{%- when Type::Map { key_type, value_type } %}
 {%- include "Map.sys.mjs" %}
 
-{%- when Type::Error with (name) %}
+{%- when Type::Enum { name, module_path } %}
+{%- let e = ci.get_enum_definition(name).unwrap() %}
+{# For enums, there are either an error *or* an enum, they can't be both. #}
+{%- if ci.is_name_used_as_error(name) %}
+{%- let error = e %}
 {%- include "Error.sys.mjs" %}
-
-{%- when Type::Enum with (name) %}
+{%- else %}
+{%- let enum_ = e %}
 {%- include "Enum.sys.mjs" %}
+{% endif %}
 
-{%- when Type::Object with (name) %}
+{%- when Type::Object { name, imp, module_path } %}
 {%- include "Object.sys.mjs" %}
 
-{%- when Type::Custom with { name, builtin } %}
+{%- when Type::Custom { name, builtin, module_path } %}
 {%- include "CustomType.sys.mjs" %}
 
-{%- when Type::External with { name, crate_name } %}
-{%- include "ExternalType.sys.mjs" %}
-
-{%- when Type::CallbackInterface with (name) %}
+{%- when Type::CallbackInterface { name, module_path } %}
 {%- include "CallbackInterface.sys.mjs" %}
 
 {%- else %}
@@ -79,6 +85,14 @@
 {%- endmatch %}
 
 {% endfor %}
+
+{%- for type_ in ci.iter_external_types() %}
+{%- let ffi_converter = type_.ffi_converter() %}
+{%- let name = type_.name().expect("External type without name") %}
+{%- let module_path = type_.module_path().expect("External type without module path") %}
+{%- include "ExternalType.sys.mjs" %}
+{%- endfor %}
+
 
 {%- if !ci.callback_interface_definitions().is_empty() %}
 // Define callback interface handlers, this must come after the type loop since they reference the FfiConverters defined above.

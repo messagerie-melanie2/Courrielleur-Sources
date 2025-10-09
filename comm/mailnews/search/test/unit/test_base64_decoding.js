@@ -8,8 +8,8 @@
 /* import-globals-from ../../../test/resources/searchTestUtils.js */
 load("../../../resources/searchTestUtils.js");
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var Contains = Ci.nsMsgSearchOp.Contains;
@@ -44,19 +44,22 @@ function run_test() {
 
   // Get a message into the local filestore. function testBodySearch() continues the testing after the copy.
   do_test_pending();
-  copyListener.OnStopCopy(null);
+  copyListener.onStopCopy(null);
   return true;
 }
 
+/** @implements {nsIMsgCopyServiceListener} */
 var copyListener = {
-  OnStartCopy() {},
-  OnProgress(aProgress, aProgressMax) {},
-  SetMessageKey(aKey) {},
-  SetMessageId(aMessageId) {},
-  OnStopCopy(aStatus) {
-    let fileName = Files.shift();
+  onStartCopy() {},
+  onProgress() {},
+  setMessageKey() {},
+  getMessageId() {
+    return null;
+  },
+  onStopCopy() {
+    const fileName = Files.shift();
     if (fileName) {
-      let file = do_get_file(fileName);
+      const file = do_get_file(fileName);
       MailServices.copy.copyFileMessage(
         file,
         localAccountUtils.inboxFolder,

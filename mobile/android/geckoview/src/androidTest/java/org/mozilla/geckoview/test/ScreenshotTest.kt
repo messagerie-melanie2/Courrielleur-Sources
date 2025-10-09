@@ -4,15 +4,24 @@
 
 package org.mozilla.geckoview.test
 
-import android.graphics.* // ktlint-disable no-wildcard-imports
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.Shader
+import android.graphics.SurfaceTexture
 import android.view.Surface
+import androidx.core.graphics.createBitmap
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.MediumTest
 import androidx.test.platform.app.InstrumentationRegistry
-import org.hamcrest.Matchers.* // ktlint-disable no-wildcard-imports
-import org.junit.Assert
+import org.hamcrest.Matchers.equalTo
+import org.hamcrest.Matchers.lessThanOrEqualTo
+import org.hamcrest.Matchers.notNullValue
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Assume.assumeThat
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -25,7 +34,7 @@ import org.mozilla.geckoview.GeckoSession.ContentDelegate
 import org.mozilla.geckoview.GeckoSession.ProgressDelegate
 import org.mozilla.geckoview.test.rule.GeckoSessionTestRule.AssertCalled
 import org.mozilla.geckoview.test.rule.GeckoSessionTestRule.WithDisplay
-import java.lang.IllegalStateException
+import org.mozilla.geckoview.test.util.UiThreadUtils
 import kotlin.math.absoluteValue
 import kotlin.math.max
 
@@ -38,7 +47,7 @@ private const val BIG_SCREEN_WIDTH = 999999
 @MediumTest
 class ScreenshotTest : BaseSessionTest() {
     private fun getComparisonScreenshot(width: Int, height: Int): Bitmap {
-        val screenshotFile = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val screenshotFile = createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(screenshotFile)
         val paint = Paint()
         paint.shader = LinearGradient(0f, 0f, width.toFloat(), height.toFloat(), Color.RED, Color.WHITE, Shader.TileMode.MIRROR)
@@ -142,6 +151,27 @@ class ScreenshotTest : BaseSessionTest() {
         }
     }
 
+    @WithDisplay(height = SCREEN_HEIGHT, width = SCREEN_WIDTH)
+    @Test
+    fun capturePixelsFailsWhenCompositorNotReady() {
+        sessionRule.display?.let { display ->
+            mainSession.close()
+            var exceptionListenerCalled = false
+            val result = display.capturePixels()
+            result.exceptionally { error: Throwable ->
+                assertTrue(error is IllegalStateException)
+                exceptionListenerCalled = true
+                result
+            }.accept {
+                fail("screenshot shouldn't complete successfully after session is closed")
+            }
+            UiThreadUtils.waitForCondition(
+                { exceptionListenerCalled },
+                sessionRule.env.defaultTimeoutMillis,
+            )
+        } ?: run { fail("no display found") }
+    }
+
     // This tests tries to catch problems like Bug 1644561.
     @WithDisplay(height = SCREEN_HEIGHT, width = SCREEN_WIDTH)
     @Test
@@ -203,7 +233,7 @@ class ScreenshotTest : BaseSessionTest() {
     @WithDisplay(height = SCREEN_HEIGHT, width = SCREEN_WIDTH)
     @Test
     fun capturePixelsWhileSessionDeactivated() {
-        // TODO: Bug 1673955
+        // TODO: Bug 1837551
         assumeThat(sessionRule.env.isFission, equalTo(false))
         val screenshotFile = getComparisonScreenshot(SCREEN_WIDTH, SCREEN_HEIGHT)
 
@@ -425,7 +455,7 @@ class ScreenshotTest : BaseSessionTest() {
             .capture()
             .exceptionally(
                 OnExceptionListener<Throwable> { error: Throwable ->
-                    Assert.assertTrue(error is OutOfMemoryError)
+                    assertTrue(error is OutOfMemoryError)
                     fromException(error)
                 },
             )

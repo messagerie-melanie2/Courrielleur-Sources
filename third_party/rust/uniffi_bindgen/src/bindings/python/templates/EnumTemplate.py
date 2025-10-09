@@ -4,71 +4,105 @@
 # when none of the variants have associated data, or a generic nested-class
 # construct when they do.
 #}
-{%- let e = ci.get_enum_definition(name).unwrap() %}
 {% if e.is_flat() %}
 
 class {{ type_name }}(enum.Enum):
-    {% for variant in e.variants() -%}
-    {{ variant.name()|enum_variant_py }} = {{ loop.index }}
+    {%- call py::docstring(e, 4) %}
+    {%- for variant in e.variants() %}
+    {{ variant.name() }} = {{ e|variant_discr_literal(loop.index0) }}
+    {%- call py::docstring(variant, 4) %}
     {% endfor %}
 {% else %}
 
 class {{ type_name }}:
+    {%- call py::docstring(e, 4) %}
     def __init__(self):
         raise RuntimeError("{{ type_name }} cannot be instantiated directly")
 
     # Each enum variant is a nested class of the enum itself.
     {% for variant in e.variants() -%}
-    class {{ variant.name()|enum_variant_py }}(object):
-        def __init__(self,{% for field in variant.fields() %}{{ field.name()|var_name }}{% if loop.last %}{% else %}, {% endif %}{% endfor %}):
-            {% if variant.has_fields() %}
-            {%- for field in variant.fields() %}
-            self.{{ field.name()|var_name }} = {{ field.name()|var_name }}
-            {%- endfor %}
-            {% else %}
-            pass
-            {% endif %}
+    class {{ variant.name() }}:
+        {%- call py::docstring(variant, 8) %}
+
+    {%-  if variant.has_nameless_fields() %}
+        def __init__(self, *values):
+            if len(values) != {{ variant.fields().len() }}:
+                raise TypeError(f"Expected {{ variant.fields().len() }} arguments, found {len(values)}")
+            self._values = values
+
+        def __getitem__(self, index):
+            return self._values[index]
 
         def __str__(self):
-            return "{{ type_name }}.{{ variant.name()|enum_variant_py }}({% for field in variant.fields() %}{{ field.name()|var_name }}={}{% if loop.last %}{% else %}, {% endif %}{% endfor %})".format({% for field in variant.fields() %}self.{{ field.name()|var_name }}{% if loop.last %}{% else %}, {% endif %}{% endfor %})
+            return f"{{ type_name }}.{{ variant.name() }}{self._values!r}"
 
         def __eq__(self, other):
-            if not other.is_{{ variant.name()|var_name }}():
+            if not other.is_{{ variant.name() }}():
+                return False
+            return self._values == other._values
+
+    {%-  else -%}
+        {%- for field in variant.fields() %}
+        {{ field.name() }}: "{{ field|type_name }}"
+        {%- call py::docstring(field, 8) %}
+        {%- endfor %}
+
+        def __init__(self,{% for field in variant.fields() %}{{ field.name() }}: "{{- field|type_name }}"{% if loop.last %}{% else %}, {% endif %}{% endfor %}):
+            {%- if variant.has_fields() %}
+            {%- for field in variant.fields() %}
+            self.{{ field.name() }} = {{ field.name() }}
+            {%- endfor %}
+            {%- else %}
+            pass
+            {%- endif %}
+
+        def __str__(self):
+            return "{{ type_name }}.{{ variant.name() }}({% for field in variant.fields() %}{{ field.name() }}={}{% if loop.last %}{% else %}, {% endif %}{% endfor %})".format({% for field in variant.fields() %}self.{{ field.name() }}{% if loop.last %}{% else %}, {% endif %}{% endfor %})
+
+        def __eq__(self, other):
+            if not other.is_{{ variant.name() }}():
                 return False
             {%- for field in variant.fields() %}
-            if self.{{ field.name()|var_name }} != other.{{ field.name()|var_name }}:
+            if self.{{ field.name() }} != other.{{ field.name() }}:
                 return False
             {%- endfor %}
             return True
+    {%  endif %}
     {% endfor %}
 
-    # For each variant, we have an `is_NAME` method for easily checking
+    # For each variant, we have `is_NAME` and `is_name` methods for easily checking
     # whether an instance is that variant.
     {% for variant in e.variants() -%}
-    def is_{{ variant.name()|var_name }}(self):
-        return isinstance(self, {{ type_name }}.{{ variant.name()|enum_variant_py }})
+    def is_{{ variant.name() }}(self) -> bool:
+        return isinstance(self, {{ type_name }}.{{ variant.name() }})
+
+    {#- We used to think we used `is_NAME` but did `is_name` instead. In #2270 we decided to do both. #}
+    {%- if variant.name() != variant.name().to_snake_case() %}
+    def is_{{ variant.name().to_snake_case() }}(self) -> bool:
+        return isinstance(self, {{ type_name }}.{{ variant.name() }})
+    {%- endif %}
     {% endfor %}
 
 # Now, a little trick - we make each nested variant class be a subclass of the main
 # enum class, so that method calls and instance checks etc will work intuitively.
 # We might be able to do this a little more neatly with a metaclass, but this'll do.
 {% for variant in e.variants() -%}
-{{ type_name }}.{{ variant.name()|enum_variant_py }} = type("{{ type_name }}.{{ variant.name()|enum_variant_py }}", ({{ type_name }}.{{variant.name()|enum_variant_py}}, {{ type_name }},), {})
+{{ type_name }}.{{ variant.name() }} = type("{{ type_name }}.{{ variant.name() }}", ({{ type_name }}.{{variant.name()}}, {{ type_name }},), {})  # type: ignore
 {% endfor %}
 
 {% endif %}
 
-class {{ ffi_converter_name }}(FfiConverterRustBuffer):
+class {{ ffi_converter_name }}(_UniffiConverterRustBuffer):
     @staticmethod
     def read(buf):
-        variant = buf.readI32()
+        variant = buf.read_i32()
 
         {%- for variant in e.variants() %}
         if variant == {{ loop.index }}:
             {%- if e.is_flat() %}
-            return {{ type_name }}.{{variant.name()|enum_variant_py}}
+            return {{ type_name }}.{{variant.name()}}
             {%- else %}
-            return {{ type_name }}.{{variant.name()|enum_variant_py}}(
+            return {{ type_name }}.{{variant.name()}}(
                 {%- for field in variant.fields() %}
                 {{ field|read_fn }}(buf),
                 {%- endfor %}
@@ -77,16 +111,44 @@ class {{ ffi_converter_name }}(FfiConverterRustBuffer):
         {%- endfor %}
         raise InternalError("Raw enum value doesn't match any cases")
 
+    @staticmethod
+    def check_lower(value):
+        {%- if e.variants().is_empty() %}
+        pass
+        {%- else %}
+        {%- for variant in e.variants() %}
+        {%- if e.is_flat() %}
+        if value == {{ type_name }}.{{ variant.name() }}:
+        {%- else %}
+        if value.is_{{ variant.name() }}():
+        {%- endif %}
+            {%- for field in variant.fields() %}
+            {%- if variant.has_nameless_fields() %}
+            {{ field|check_lower_fn }}(value._values[{{ loop.index0 }}])
+            {%- else %}
+            {{ field|check_lower_fn }}(value.{{ field.name() }})
+            {%- endif %}
+            {%- endfor %}
+            return
+        {%- endfor %}
+        raise ValueError(value)
+        {%- endif %}
+
+    @staticmethod
     def write(value, buf):
         {%- for variant in e.variants() %}
         {%- if e.is_flat() %}
-        if value == {{ type_name }}.{{ variant.name()|enum_variant_py }}:
-            buf.writeI32({{ loop.index }})
+        if value == {{ type_name }}.{{ variant.name() }}:
+            buf.write_i32({{ loop.index }})
         {%- else %}
-        if value.is_{{ variant.name()|var_name }}():
-            buf.writeI32({{ loop.index }})
+        if value.is_{{ variant.name() }}():
+            buf.write_i32({{ loop.index }})
             {%- for field in variant.fields() %}
-            {{ field|write_fn }}(value.{{ field.name()|var_name }}, buf)
+            {%- if variant.has_nameless_fields() %}
+            {{ field|write_fn }}(value._values[{{ loop.index0 }}], buf)
+            {%- else %}
+            {{ field|write_fn }}(value.{{ field.name() }}, buf)
+            {%- endif %}
             {%- endfor %}
         {%- endif %}
         {%- endfor %}

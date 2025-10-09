@@ -3,18 +3,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "msgCore.h"
 #include "nsMsgTagService.h"
 #include "nsIPrefService.h"
-#include "nsISupportsPrimitives.h"
 #include "nsMsgI18N.h"
 #include "nsIPrefLocalizedString.h"
-#include "nsMsgDBView.h"  // for labels migration
-#include "nsQuickSort.h"
 #include "nsMsgUtils.h"
-#include "nsComponentManagerUtils.h"
 #include "nsServiceManagerUtils.h"
-#include "nsMemory.h"
 
 #define STRLEN(s) (sizeof(s) - 1)
 
@@ -191,11 +185,11 @@ NS_IMETHODIMP nsMsgTagService::AddTagForKey(const nsACString& key,
   prefName.AppendLiteral(TAG_PREF_SUFFIX_TAG);
   nsresult rv = SetUnicharPref(prefName.get(), tag);
   NS_ENSURE_SUCCESS(rv, rv);
+  rv = SetOrdinalForKey(key, ordinal);
+  NS_ENSURE_SUCCESS(rv, rv);
   rv = SetColorForKey(key, color);
   NS_ENSURE_SUCCESS(rv, rv);
-  rv = RefreshKeyCache();
-  NS_ENSURE_SUCCESS(rv, rv);
-  return SetOrdinalForKey(key, ordinal);
+  return RefreshKeyCache();
 }
 
 /* void addTag (in wstring tag, in long color); */

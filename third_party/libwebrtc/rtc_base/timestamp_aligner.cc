@@ -17,7 +17,7 @@
 #include "rtc_base/logging.h"
 #include "rtc_base/time_utils.h"
 
-namespace rtc {
+namespace webrtc {
 
 TimestampAligner::TimestampAligner()
     : frames_seen_(0),
@@ -112,7 +112,6 @@ int64_t TimestampAligner::UpdateOffset(int64_t capturer_time_us,
 
 int64_t TimestampAligner::ClipTimestamp(int64_t filtered_time_us,
                                         int64_t system_time_us) {
-  const int64_t kMinFrameIntervalUs = rtc::kNumMicrosecsPerMillisec;
   // Clip to make sure we don't produce timestamps in the future.
   int64_t time_us = filtered_time_us - clip_bias_us_;
   if (time_us > system_time_us) {
@@ -141,4 +140,4 @@ int64_t TimestampAligner::ClipTimestamp(int64_t filtered_time_us,
   return time_us;
 }
 
-}  // namespace rtc
+}  // namespace webrtc

@@ -80,6 +80,9 @@ interface nsMsgMessageFlags : nsISupports
    * it. They are not returned in MSG_MessageLine.flags, just in mozilla-status,
    * so if you need more non-persistent flags, you could share these bits. But
    * it would be wrong.
+   * NOTE: 2025-03-24 BenC - it seems there was once code to record priority
+   * in the "X-Mozilla-Status:" header, but it looks like this hack isn't
+   * used now, so these 3 bits could be reclaimed.
    */
   const nsMsgMessageFlagType Priorities      = 0x0000E000;
 
@@ -127,8 +130,8 @@ interface nsMsgMessageFlags : nsISupports
   // We're trying to reserve the high byte of the flags for view flags, so,
   // don't add flags to the high byte if possible.
 
-  /// The list of all message flags to not write to disk
-  const nsMsgMessageFlagType RuntimeOnly     = Elided;
+  /// The flags we don't want written to X-Mozilla-Status/X-Mozilla-Status2.
+  const nsMsgMessageFlagType RuntimeOnly     = Elided | New | Offline;
 };
 
 typedef unsigned long nsMsgProcessingFlagType;

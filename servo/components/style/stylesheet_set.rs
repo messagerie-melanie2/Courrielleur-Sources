@@ -224,8 +224,8 @@ where
     ///
     /// Since we don't have a good use-case for partial iteration, this does the
     /// trick for now.
-    pub fn each(self, mut callback: impl FnMut(&S, SheetRebuildKind) -> bool) {
-        for potential_sheet in self.entries.iter_mut() {
+    pub fn each(self, mut callback: impl FnMut(usize, &S, SheetRebuildKind) -> bool) {
+        for (index, potential_sheet) in self.entries.iter_mut().enumerate() {
             let committed = mem::replace(&mut potential_sheet.committed, true);
             let rebuild_kind = if !committed {
                 // If the sheet was uncommitted, we need to do a full rebuild
@@ -239,7 +239,7 @@ where
                 }
             };
 
-            if !callback(&potential_sheet.sheet, rebuild_kind) {
+            if !callback(index, &potential_sheet.sheet, rebuild_kind) {
                 return;
             }
         }
@@ -298,8 +298,13 @@ where
         self.entries.get(index).map(|e| &e.sheet)
     }
 
+    fn find_sheet_index(&self, sheet: &S) -> Option<usize> {
+        let rev_pos = self.entries.iter().rev().position(|entry| entry.sheet == *sheet);
+        rev_pos.map(|i| self.entries.len() - i - 1)
+    }
+
     fn remove(&mut self, sheet: &S) {
-        let index = self.entries.iter().position(|entry| entry.sheet == *sheet);
+        let index = self.find_sheet_index(sheet);
         if cfg!(feature = "gecko") && index.is_none() {
             // FIXME(emilio): Make Gecko's PresShell::AddUserSheet not suck.
             return;
@@ -338,10 +343,7 @@ where
     fn insert_before(&mut self, sheet: S, before_sheet: &S) {
         debug_assert!(!self.contains(&sheet));
 
-        let index = self
-            .entries
-            .iter()
-            .position(|entry| entry.sheet == *before_sheet)
+        let index = self.find_sheet_index(before_sheet)
             .expect("`before_sheet` stylesheet not found");
 
         // Inserting stylesheets somewhere but at the end changes the validity
@@ -591,7 +593,7 @@ where
     /// Return an iterator over the flattened view of all the stylesheets.
     pub fn iter(&self) -> StylesheetIterator<S> {
         StylesheetIterator {
-            origins: OriginSet::all().iter(),
+            origins: OriginSet::all().iter_origins(),
             collections: &self.collections,
             current: None,
         }
@@ -601,7 +603,7 @@ where
     /// something external may have invalidated it.
     pub fn force_dirty(&mut self, origins: OriginSet) {
         self.invalidations.invalidate_fully();
-        for origin in origins.iter() {
+        for origin in origins.iter_origins() {
             // We don't know what happened, assume the worse.
             self.collections
                 .borrow_mut_for_origin(&origin)

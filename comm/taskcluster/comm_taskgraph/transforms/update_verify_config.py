@@ -26,8 +26,10 @@ transforms = TransformSequence()
 INCLUDE_VERSION_REGEXES = {
     "beta": r"'^(\d+\.\d+b\d+)$'",
     "nonbeta": r"'^\d+\.\d+(\.\d+)?$'",
-    # Previous major versions, for update testing before we update users to a new esr
-    "release-next": r"'^(91|102)\.\d+(\.\d+)?$'",
+    # Same as nonbeta, except for the esr suffix
+    "esr": r"'^\d+\.\d+(\.\d+)?esr$'",
+    # Previous esr versions, for update testing before we update users to a new esr
+    "esr140-next": r"'^(91|102|115|128)\.\d+(\.\d+)?esr$'",
 }
 
 MAR_CHANNEL_ID_OVERRIDE_REGEXES = {
@@ -62,6 +64,10 @@ def add_command(config, tasks):
             task["attributes"]["build_platform"]
         )
 
+        llbv_arg = ()
+        if last_linux_bz2_version := task["extra"].get("last-linux-bz2-version", None):
+            llbv_arg = ("--last-linux-bz2-version", last_linux_bz2_version)
+
         command = [
             "python",
             "testing/mozharness/scripts/release/update-verify-config-creator.py",
@@ -85,8 +91,11 @@ def add_command(config, tasks):
             config.params["moz_build_date"],
             "--to-revision",
             get_branch_rev(config),
+            *llbv_arg,
             "--output-file",
             "update-verify.cfg",
+            "--local-repo",
+            "comm/.",
         ]
 
         repo_path = urlsplit(get_branch_repo(config)).path.lstrip("/")

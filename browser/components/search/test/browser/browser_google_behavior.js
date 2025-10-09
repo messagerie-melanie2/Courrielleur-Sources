@@ -55,7 +55,7 @@ if (code) {
 }
 
 function promiseContentSearchReady(browser) {
-  return SpecialPowers.spawn(browser, [], async function (args) {
+  return SpecialPowers.spawn(browser, [], async function () {
     return new Promise(resolve => {
       SpecialPowers.pushPrefEnv({
         set: [
@@ -120,11 +120,11 @@ async function testSearchEngine(engineDetails) {
       run() {
         // Simulate a contextmenu search
         // FIXME: This is a bit "low-level"...
-        BrowserSearch._loadSearch(
+        SearchUIUtils._loadSearch(
+          window,
           "foo",
           false,
           false,
-          "contextmenu",
           Services.scriptSecurityManager.getSystemPrincipal()
         );
       },
@@ -154,13 +154,13 @@ async function testSearchEngine(engineDetails) {
         await gCUITestUtils.addSearchBar();
       },
       run() {
-        let sb = BrowserSearch.searchBar;
+        let sb = document.getElementById("searchbar");
         sb.focus();
         sb.value = "foo";
         EventUtils.synthesizeKey("KEY_Enter");
       },
       postTest() {
-        BrowserSearch.searchBar.value = "";
+        document.getElementById("searchbar").value = "";
         gCUITestUtils.removeSearchBar();
       },
     },
@@ -169,13 +169,13 @@ async function testSearchEngine(engineDetails) {
       code: engineDetails.codes.newTab,
       async preTest(tab) {
         let browser = tab.linkedBrowser;
-        BrowserTestUtils.loadURIString(browser, "about:newtab");
+        BrowserTestUtils.startLoadingURIString(browser, "about:newtab");
         await BrowserTestUtils.browserLoaded(browser, false, "about:newtab");
 
         await promiseContentSearchReady(browser);
       },
       async run(tab) {
-        await SpecialPowers.spawn(tab.linkedBrowser, [], async function (args) {
+        await SpecialPowers.spawn(tab.linkedBrowser, [], async function () {
           let input = content.document.querySelector("input[id*=search-]");
           input.focus();
           input.value = "foo";
@@ -194,8 +194,11 @@ async function testSearchEngine(engineDetails) {
       await test.preTest(tab);
     }
 
-    let googleUrl =
-      "https://www.google.com/search?client=" + test.code + "&q=foo";
+    let googleUrl = "https://www.google.com/search?client=" + test.code;
+    if (SearchUtils.MODIFIED_APP_CHANNEL == "esr") {
+      googleUrl += "&channel=entpr";
+    }
+    googleUrl += "&q=foo";
     let promises = [
       BrowserTestUtils.waitForDocLoadAndStopIt(googleUrl, tab),
       BrowserTestUtils.browserStopped(tab.linkedBrowser, googleUrl, true),

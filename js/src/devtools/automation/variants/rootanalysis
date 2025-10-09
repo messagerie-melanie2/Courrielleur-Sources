@@ -3,7 +3,10 @@
     "optimize": true,
     "debug": true,
     "env": {
-        "JS_GC_ZEAL": "GenerationalGC",
-        "JSTESTS_EXTRA_ARGS": "--jitflags=debug"
+        "JS_GC_ZEAL": "GenerationalGC;CheckHeapBeforeMinorGC"
+    },
+    "extra-args": {
+        "jit-test": ["--args=--gc-param=semispaceNurseryEnabled=1"],
+        "jstests": ["--jitflags=debug", "--args=--gc-param=semispaceNurseryEnabled=1"]
     }
 }

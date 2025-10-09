@@ -13,6 +13,7 @@
 #include "mozilla/layers/UiCompositorControllerParent.h"
 #include "mozilla/gfx/GPUProcessManager.h"
 #include "mozilla/ipc/Endpoint.h"
+#include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/StaticPtr.h"
 #include "nsBaseWidget.h"
 #include "nsProxyRelease.h"
@@ -211,7 +212,7 @@ void UiCompositorControllerChild::ProcessingError(Result aCode,
 }
 
 void UiCompositorControllerChild::HandleFatalError(const char* aMsg) {
-  dom::ContentChild::FatalErrorIfNotUsingGPUProcess(aMsg, OtherPid());
+  dom::ContentChild::FatalErrorIfNotUsingGPUProcess(aMsg, OtherChildID());
 }
 
 mozilla::ipc::IPCResult
@@ -226,13 +227,12 @@ UiCompositorControllerChild::RecvToolbarAnimatorMessageFromCompositor(
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult UiCompositorControllerChild::RecvRootFrameMetrics(
-    const ScreenPoint& aScrollOffset, const CSSToScreenScale& aZoom) {
-#if defined(MOZ_WIDGET_ANDROID)
+mozilla::ipc::IPCResult
+UiCompositorControllerChild::RecvNotifyCompositorScrollUpdate(
+    const CompositorScrollUpdate& aUpdate) {
   if (mWidget) {
-    mWidget->UpdateRootFrameMetrics(aScrollOffset, aZoom);
+    mWidget->NotifyCompositorScrollUpdate(aUpdate);
   }
-#endif  // defined(MOZ_WIDGET_ANDROID)
 
   return IPC_OK();
 }
@@ -286,6 +286,8 @@ void UiCompositorControllerChild::OpenForGPUProcess(
     }
     return;
   }
+
+  SetReplyTimeout();
 
   SendCachedValues();
   // Let Ui thread know the connection is open;
@@ -345,6 +347,21 @@ void UiCompositorControllerChild::OnCompositorSurfaceChanged(
   }
 }
 #endif
+
+void UiCompositorControllerChild::SetReplyTimeout() {
+#ifndef DEBUG
+  // Add a timeout for release builds to kill GPU process when it hangs.
+  const int32_t timeout =
+      StaticPrefs::layers_gpu_process_ipc_reply_timeout_ms_AtStartup();
+  SetReplyTimeoutMs(timeout);
+#endif
+}
+
+bool UiCompositorControllerChild::ShouldContinueFromReplyTimeout() {
+  gfxCriticalNote << "Killing GPU process due to IPC reply timeout";
+  gfx::GPUProcessManager::Get()->KillProcess(/* aGenerateMinidump */ true);
+  return false;
+}
 
 }  // namespace layers
 }  // namespace mozilla

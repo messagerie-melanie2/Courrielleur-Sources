@@ -21,8 +21,7 @@ function invalidCall(code) {
     code,
     errors: [
       {
-        message:
-          "`globalThis` shouldn't be passed to function that can modify it. `globalThis` is the shared global inside the system module, and properties defined on it is visible from all modules.",
+        messageId: "rejectPassingGlobalThis",
         type: "CallExpression",
       },
     ],
@@ -34,8 +33,7 @@ function invalidAssignment(code) {
     code,
     errors: [
       {
-        message:
-          "`globalThis` shouldn't be modified. `globalThis` is the shared global inside the system module, and properties defined on it is visible from all modules.",
+        messageId: "rejectModifyGlobalThis",
         type: "AssignmentExpression",
       },
     ],
@@ -64,23 +62,8 @@ ruleTester.run("reject-globalThis-modification", rule, {
     Object.assign(globalThis, { foo: 10 });
 `),
     invalidCall(`
-    ChromeUtils.defineModuleGetter(
-      globalThis, "AppConstants", "resource://gre/modules/AppConstants.jsm"
-    );
-`),
-    invalidCall(`
     ChromeUtils.defineESMGetters(globalThis, {
       AppConstants: "resource://gre/modules/AppConstants.sys.mjs",
-    });
-`),
-    invalidCall(`
-    XPCOMUtils.defineLazyModuleGetter(
-      globalThis, "AppConstants", "resource://gre/modules/AppConstants.jsm"
-    );
-`),
-    invalidCall(`
-    XPCOMUtils.defineLazyModuleGetters(globalThis, {
-      AppConstants: "resource://gre/modules/AppConstants.jsm",
     });
 `),
     invalidCall(`

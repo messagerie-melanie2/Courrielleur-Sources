@@ -642,6 +642,10 @@ typedef enum {
     bltestSHA256,       /* .             */
     bltestSHA384,       /* .             */
     bltestSHA512,       /* .             */
+    bltestSHA3_224,     /* .             */
+    bltestSHA3_256,     /* .             */
+    bltestSHA3_384,     /* .             */
+    bltestSHA3_512,     /* .             */
     NUMMODES
 } bltestCipherMode;
 
@@ -685,6 +689,10 @@ static char *mode_strings[] = {
     "sha256",
     "sha384",
     "sha512",
+    "sha3_224",
+    "sha3_256",
+    "sha3_384",
+    "sha3_512",
 };
 
 typedef struct
@@ -860,7 +868,7 @@ PRBool
 is_hashCipher(bltestCipherMode mode)
 {
     /* change as needed! */
-    if (mode >= bltestMD2 && mode <= bltestSHA512)
+    if (mode >= bltestMD2 && mode <= bltestSHA3_512)
         return PR_TRUE;
     return PR_FALSE;
 }
@@ -2363,7 +2371,7 @@ cipherInit(bltestCipherInfo *cipherInfo, PRBool encrypt)
         case bltestRSA_PSS:
             if (encrypt || cipherInfo->mode != bltestRSA_PSS) {
                 /* Don't allocate a buffer for PSS in verify mode, as no actual
-         * output is produced. */
+                 * output is produced. */
                 SECITEM_AllocItem(cipherInfo->arena, &cipherInfo->output.buf,
                                   RSA_MAX_MODULUS_BITS / 8);
             }
@@ -2434,6 +2442,34 @@ cipherInit(bltestCipherInfo *cipherInfo, PRBool encrypt)
                               SHA512_LENGTH);
             cipherInfo->cipher.hashCipher = (restart) ? SHA512_restart
                                                       : SHA512_HashBuf;
+            return SECSuccess;
+            break;
+        case bltestSHA3_224:
+            restart = cipherInfo->params.hash.restart;
+            SECITEM_AllocItem(cipherInfo->arena, &cipherInfo->output.buf,
+                              SHA3_224_LENGTH);
+            cipherInfo->cipher.hashCipher = SHA3_224_HashBuf;
+            return SECSuccess;
+            break;
+        case bltestSHA3_256:
+            restart = cipherInfo->params.hash.restart;
+            SECITEM_AllocItem(cipherInfo->arena, &cipherInfo->output.buf,
+                              SHA3_256_LENGTH);
+            cipherInfo->cipher.hashCipher = SHA3_256_HashBuf;
+            return SECSuccess;
+            break;
+        case bltestSHA3_384:
+            restart = cipherInfo->params.hash.restart;
+            SECITEM_AllocItem(cipherInfo->arena, &cipherInfo->output.buf,
+                              SHA3_384_LENGTH);
+            cipherInfo->cipher.hashCipher = SHA3_384_HashBuf;
+            return SECSuccess;
+            break;
+        case bltestSHA3_512:
+            restart = cipherInfo->params.hash.restart;
+            SECITEM_AllocItem(cipherInfo->arena, &cipherInfo->output.buf,
+                              SHA3_512_LENGTH);
+            cipherInfo->cipher.hashCipher = SHA3_512_HashBuf;
             return SECSuccess;
             break;
         default:
@@ -2692,6 +2728,10 @@ cipherFinish(bltestCipherInfo *cipherInfo)
         case bltestSHA256:
         case bltestSHA384:
         case bltestSHA512:
+        case bltestSHA3_224:
+        case bltestSHA3_256:
+        case bltestSHA3_384:
+        case bltestSHA3_512:
             return SECSuccess;
             break;
         default:
@@ -2914,7 +2954,8 @@ print_td:
     fprintf(stdout, "%12s", "thrgput");
     fprintf(stdout, "\n");
     fprintf(stdout, "%8s", mode_strings[info->mode]);
-    fprintf(stdout, "_%c", (cxonly) ? 'c' : (encrypt) ? 'e' : 'd');
+    fprintf(stdout, "_%c", (cxonly) ? 'c' : (encrypt) ? 'e'
+                                                      : 'd');
     printPR_smpString("%12s", getHighUnitBytes(totalIn), "%12d", totalIn);
 
     td = !td;
@@ -3953,10 +3994,10 @@ main(int argc, char **argv)
     /* default input mode is binary */
     ioMode = (bltest.options[opt_B64].activated)
                  ? bltestBase64Encoded
-                 : (bltest.options[opt_Hex].activated)
-                       ? bltestHexStream
-                       : (bltest.options[opt_HexWSpc].activated) ? bltestHexSpaceDelim
-                                                                 : bltestBinary;
+             : (bltest.options[opt_Hex].activated)
+                 ? bltestHexStream
+             : (bltest.options[opt_HexWSpc].activated) ? bltestHexSpaceDelim
+                                                       : bltestBinary;
 
     if (bltest.options[opt_Exponent].activated)
         exponent = PORT_Atoi(bltest.options[opt_Exponent].arg);

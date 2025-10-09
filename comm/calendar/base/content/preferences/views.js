@@ -44,19 +44,19 @@ var gViewsPane = {
    * menulists. This is needed to respect locales that use AM/PM.
    */
   initializeViewStartEndMenus() {
-    const { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
+    const { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
 
-    let formatter = cal.dtz.formatter;
-    let calTime = cal.createDateTime();
+    const formatter = cal.dtz.formatter;
+    const calTime = cal.createDateTime();
     calTime.minute = 0;
 
     // 1 to 23 instead of 0 to 24 to keep midnight & noon as the localized strings
     for (let theHour = 1; theHour <= 23; theHour++) {
       calTime.hour = theHour;
-      let time = formatter.formatTime(calTime);
+      const time = formatter.formatTime(calTime);
 
-      let labelIdStart = "timeStart" + theHour;
-      let labelIdEnd = "timeEnd" + theHour;
+      const labelIdStart = "timeStart" + theHour;
+      const labelIdEnd = "timeEnd" + theHour;
       // This if block to keep Noon as the localized string, instead of as a number.
       if (theHour != 12) {
         document.getElementById(labelIdStart).setAttribute("label", time);
@@ -69,10 +69,10 @@ var gViewsPane = {
    * Updates the view end menu to only display hours after the selected view
    * start.
    *
-   * @param aStartValue       The value selected for view start.
+   * @param {string} aStartValue - The value selected for view start.
    */
   updateViewEndMenu(aStartValue) {
-    let endMenuKids = document.getElementById("dayendhourpopup").children;
+    const endMenuKids = document.getElementById("dayendhourpopup").children;
     for (let i = 0; i < endMenuKids.length; i++) {
       if (Number(endMenuKids[i].value) <= Number(aStartValue)) {
         endMenuKids[i].setAttribute("hidden", true);
@@ -86,10 +86,10 @@ var gViewsPane = {
    * Updates the view start menu to only display hours before the selected view
    * end.
    *
-   * @param aEndValue         The value selected for view end.
+   * @param {string} aEndValue - The value selected for view end.
    */
   updateViewStartMenu(aEndValue) {
-    let startMenuKids = document.getElementById("daystarthourpopup").children;
+    const startMenuKids = document.getElementById("daystarthourpopup").children;
     for (let i = 0; i < startMenuKids.length; i++) {
       if (Number(startMenuKids[i].value) >= Number(aEndValue)) {
         startMenuKids[i].setAttribute("hidden", true);
@@ -102,13 +102,13 @@ var gViewsPane = {
   /**
    * Update the workday checkboxes based on the start of the week.
    *
-   * @Param weekStart         The (0-based) index of the weekday the week
-   *                            should start at.
+   * @param {0|1|2|3|4|5|6} weekStart - The (0-based) index of the weekday the
+   *   week should start at.
    */
   updateViewWorkDayCheckboxes(weekStart) {
     weekStart = Number(weekStart);
     for (let i = weekStart; i < weekStart + 7; i++) {
-      let checkbox = document.getElementById("dayoff" + (i % 7));
+      const checkbox = document.getElementById("dayoff" + (i % 7));
       checkbox.parentNode.appendChild(checkbox);
     }
   },

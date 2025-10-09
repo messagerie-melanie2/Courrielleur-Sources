@@ -14,22 +14,13 @@
   }
 }
 
-xul|tab[visuallyselected] {
-  /* Override styles for tab[selected] from
-     toolkit/themes/linux/global/tabbox.css */
-  margin-bottom: 0;
-}
-
 /* Overriding appearance also avoids incorrect selection background color with
    light text. */
 xul|menulist::part(label-box),
 xul|*.radio-label-box,
-xul|*.checkbox-label-box {
+xul|*.checkbox-label-box,
+xul|*.button-menu-dropmarker {
   appearance: none;
-}
-
-xul|button[type="menu"] > xul|*.button-box > xul|*.button-menu-dropmarker {
-  appearance: none !important;
 }
 
 xul|menulist {

@@ -10,6 +10,7 @@
 #include "mozilla/dom/ElementInlines.h"
 #include "mozilla/ComputedStyleInlines.h"
 #include "nsContainerFrame.h"
+#include "nsIContentInlines.h"
 #include "nsLayoutUtils.h"
 #include "nsPlaceholderFrame.h"
 #include "nsCSSAnonBoxes.h"
@@ -34,9 +35,16 @@ bool nsIFrame::IsFlexOrGridItem() const {
          GetParent()->IsFlexOrGridContainer();
 }
 
+bool nsIFrame::IsLegacyWebkitBox() const {
+  MOZ_ASSERT(
+      IsFlexContainerFrame(),
+      "The state-bit is meaningful when this is a nsFlexContainerFrame!");
+  return HasAnyStateBits(NS_STATE_FLEX_IS_EMULATING_LEGACY_WEBKIT_BOX);
+}
+
 bool nsIFrame::IsMasonry(mozilla::LogicalAxis aAxis) const {
   MOZ_DIAGNOSTIC_ASSERT(IsGridContainerFrame());
-  return HasAnyStateBits(aAxis == mozilla::eLogicalAxisBlock
+  return HasAnyStateBits(aAxis == mozilla::LogicalAxis::Block
                              ? NS_STATE_GRID_IS_ROW_MASONRY
                              : NS_STATE_GRID_IS_COL_MASONRY);
 }
@@ -62,6 +70,10 @@ bool nsIFrame::IsFixedPosContainingBlock() const {
 
 bool nsIFrame::IsRelativelyOrStickyPositioned() const {
   return StyleDisplay()->IsRelativelyOrStickyPositioned(this);
+}
+
+bool nsIFrame::HasAnchorPosName() const {
+  return StyleDisplay()->HasAnchorName();
 }
 
 bool nsIFrame::IsRelativelyPositioned() const {
@@ -184,6 +196,10 @@ mozilla::LogicalPoint nsIFrame::GetLogicalNormalPosition(
   // right instead of the left
   return mozilla::LogicalPoint(aWritingMode, GetNormalPosition(),
                                aContainerSize - mRect.Size());
+}
+
+bool nsIFrame::ContentIsEditable() const {
+  return mContent && mContent->IsEditable();
 }
 
 #endif

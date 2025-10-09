@@ -3,17 +3,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "msgCore.h"
-
 #include "nsIURI.h"
 #include "nsNetCID.h"
 #include "nsSmtpUrl.h"
 #include "nsString.h"
 #include "nsMsgUtils.h"
 #include "nsIMimeConverter.h"
-#include "nsComponentManagerUtils.h"
 #include "nsServiceManagerUtils.h"
-#include "nsCRT.h"
 #include "mozilla/Encoding.h"
 
 /////////////////////////////////////////////////////////////////////////////////////
@@ -70,108 +66,109 @@ nsresult nsMailtoUrl::ParseMailtoUrl(char* searchPart) {
   if (rest) {
     char* token = NS_strtok("&", &rest);
     while (token && *token) {
-      char* value = 0;
+      char* value = nullptr;
       char* eq = PL_strchr(token, '=');
       if (eq) {
         value = eq + 1;
         *eq = 0;
+
+        nsCString decodedName;
+        MsgUnescapeString(nsDependentCString(token), 0, decodedName);
+
+        if (decodedName.IsEmpty()) break;
+
+        switch (NS_ToUpper(decodedName.First())) {
+            /* DO NOT support attachment= in mailto urls. This poses a security
+               fire hole!!! case 'A': if (!PL_strcasecmp (token, "attachment"))
+                              m_attachmentPart = value;
+                              break;
+                         */
+          case 'B':
+            if (decodedName.LowerCaseEqualsLiteral("bcc")) {
+              if (!escapedBccPart.IsEmpty()) {
+                escapedBccPart += ", ";
+                escapedBccPart += value;
+              } else
+                escapedBccPart = value;
+            } else if (decodedName.LowerCaseEqualsLiteral("body")) {
+              if (!escapedBodyPart.IsEmpty()) {
+                escapedBodyPart += "\n";
+                escapedBodyPart += value;
+              } else
+                escapedBodyPart = value;
+            }
+            break;
+          case 'C':
+            if (decodedName.LowerCaseEqualsLiteral("cc")) {
+              if (!escapedCcPart.IsEmpty()) {
+                escapedCcPart += ", ";
+                escapedCcPart += value;
+              } else
+                escapedCcPart = value;
+            }
+            break;
+          case 'F':
+            if (decodedName.LowerCaseEqualsLiteral("followup-to"))
+              escapedFollowUpToPart = value;
+            else if (decodedName.LowerCaseEqualsLiteral("from"))
+              escapedFromPart = value;
+            break;
+          case 'H':
+            if (decodedName.LowerCaseEqualsLiteral("html-part") ||
+                decodedName.LowerCaseEqualsLiteral("html-body")) {
+              // escapedHtmlPart holds the body for both html-part and
+              // html-body.
+              escapedHtmlPart = value;
+              mFormat = nsIMsgCompFormat::HTML;
+            }
+            break;
+          case 'I':
+            if (decodedName.LowerCaseEqualsLiteral("in-reply-to"))
+              escapedInReplyToPart = value;
+            break;
+
+          case 'N':
+            if (decodedName.LowerCaseEqualsLiteral("newsgroups"))
+              escapedNewsgroupPart = value;
+            else if (decodedName.LowerCaseEqualsLiteral("newshost"))
+              escapedNewsHostPart = value;
+            break;
+          case 'O':
+            if (decodedName.LowerCaseEqualsLiteral("organization"))
+              escapedOrganizationPart = value;
+            break;
+          case 'R':
+            if (decodedName.LowerCaseEqualsLiteral("references"))
+              escapedReferencePart = value;
+            else if (decodedName.LowerCaseEqualsLiteral("reply-to"))
+              escapedReplyToPart = value;
+            break;
+          case 'S':
+            if (decodedName.LowerCaseEqualsLiteral("subject"))
+              escapedSubjectPart = value;
+            break;
+          case 'P':
+            if (decodedName.LowerCaseEqualsLiteral("priority"))
+              escapedPriorityPart = PL_strdup(value);
+            break;
+          case 'T':
+            if (decodedName.LowerCaseEqualsLiteral("to")) {
+              if (!escapedToPart.IsEmpty()) {
+                escapedToPart += ", ";
+                escapedToPart += value;
+              } else
+                escapedToPart = value;
+            }
+            break;
+          default:
+            break;
+        }  // end of switch statement...
+
+        *eq = '='; /* put it back */
       }
-
-      nsCString decodedName;
-      MsgUnescapeString(nsDependentCString(token), 0, decodedName);
-
-      if (decodedName.IsEmpty()) break;
-
-      switch (NS_ToUpper(decodedName.First())) {
-          /* DO NOT support attachment= in mailto urls. This poses a security
-             fire hole!!! case 'A': if (!PL_strcasecmp (token, "attachment"))
-                            m_attachmentPart = value;
-                            break;
-                       */
-        case 'B':
-          if (decodedName.LowerCaseEqualsLiteral("bcc")) {
-            if (!escapedBccPart.IsEmpty()) {
-              escapedBccPart += ", ";
-              escapedBccPart += value;
-            } else
-              escapedBccPart = value;
-          } else if (decodedName.LowerCaseEqualsLiteral("body")) {
-            if (!escapedBodyPart.IsEmpty()) {
-              escapedBodyPart += "\n";
-              escapedBodyPart += value;
-            } else
-              escapedBodyPart = value;
-          }
-          break;
-        case 'C':
-          if (decodedName.LowerCaseEqualsLiteral("cc")) {
-            if (!escapedCcPart.IsEmpty()) {
-              escapedCcPart += ", ";
-              escapedCcPart += value;
-            } else
-              escapedCcPart = value;
-          }
-          break;
-        case 'F':
-          if (decodedName.LowerCaseEqualsLiteral("followup-to"))
-            escapedFollowUpToPart = value;
-          else if (decodedName.LowerCaseEqualsLiteral("from"))
-            escapedFromPart = value;
-          break;
-        case 'H':
-          if (decodedName.LowerCaseEqualsLiteral("html-part") ||
-              decodedName.LowerCaseEqualsLiteral("html-body")) {
-            // escapedHtmlPart holds the body for both html-part and html-body.
-            escapedHtmlPart = value;
-            mFormat = nsIMsgCompFormat::HTML;
-          }
-          break;
-        case 'I':
-          if (decodedName.LowerCaseEqualsLiteral("in-reply-to"))
-            escapedInReplyToPart = value;
-          break;
-
-        case 'N':
-          if (decodedName.LowerCaseEqualsLiteral("newsgroups"))
-            escapedNewsgroupPart = value;
-          else if (decodedName.LowerCaseEqualsLiteral("newshost"))
-            escapedNewsHostPart = value;
-          break;
-        case 'O':
-          if (decodedName.LowerCaseEqualsLiteral("organization"))
-            escapedOrganizationPart = value;
-          break;
-        case 'R':
-          if (decodedName.LowerCaseEqualsLiteral("references"))
-            escapedReferencePart = value;
-          else if (decodedName.LowerCaseEqualsLiteral("reply-to"))
-            escapedReplyToPart = value;
-          break;
-        case 'S':
-          if (decodedName.LowerCaseEqualsLiteral("subject"))
-            escapedSubjectPart = value;
-          break;
-        case 'P':
-          if (decodedName.LowerCaseEqualsLiteral("priority"))
-            escapedPriorityPart = PL_strdup(value);
-          break;
-        case 'T':
-          if (decodedName.LowerCaseEqualsLiteral("to")) {
-            if (!escapedToPart.IsEmpty()) {
-              escapedToPart += ", ";
-              escapedToPart += value;
-            } else
-              escapedToPart = value;
-          }
-          break;
-        default:
-          break;
-      }  // end of switch statement...
-
-      if (eq) *eq = '='; /* put it back */
       token = NS_strtok("&", &rest);
     }  // while we still have part of the url to parse...
-  }    // if rest && *rest
+  }  // if rest && *rest
 
   nsresult rv;
   // Get a global converter
@@ -518,6 +515,11 @@ nsMailtoUrl::GetDisplayPrePath(nsACString& aPrePath) {
 NS_IMETHODIMP
 nsMailtoUrl::GetHasRef(bool* result) { return m_baseURL->GetHasRef(result); }
 
+NS_IMETHODIMP nsMailtoUrl::GetHasUserPass(bool* aHasUserPass) {
+  *aHasUserPass = false;
+  return NS_OK;
+}
+
 NS_IMETHODIMP
 nsMailtoUrl::GetFilePath(nsACString& aFilePath) {
   return m_baseURL->GetFilePath(aFilePath);
@@ -559,6 +561,10 @@ nsMailtoUrl::Mutate(nsIURIMutator** aMutator) {
   }
   mutator.forget(aMutator);
   return NS_OK;
+}
+
+NS_IMETHODIMP nsMailtoUrl::GetHasQuery(bool* aHasQuery) {
+  return m_baseURL->GetHasQuery(aHasQuery);
 }
 
 nsresult nsMailtoUrl::NewMailtoURI(const nsACString& aSpec, nsIURI* aBaseURI,
@@ -719,14 +725,14 @@ nsSmtpUrl::GetNotificationCallbacks(nsIInterfaceRequestor** aCallbacks) {
 }
 
 NS_IMETHODIMP
-nsSmtpUrl::SetSmtpServer(nsISmtpServer* aSmtpServer) {
+nsSmtpUrl::SetSmtpServer(nsIMsgOutgoingServer* aSmtpServer) {
   NS_ENSURE_ARG_POINTER(aSmtpServer);
   m_smtpServer = aSmtpServer;
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsSmtpUrl::GetSmtpServer(nsISmtpServer** aSmtpServer) {
+nsSmtpUrl::GetSmtpServer(nsIMsgOutgoingServer** aSmtpServer) {
   NS_ENSURE_ARG_POINTER(aSmtpServer);
   NS_ENSURE_TRUE(m_smtpServer, NS_ERROR_NULL_POINTER);
   NS_ADDREF(*aSmtpServer = m_smtpServer);

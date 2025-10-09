@@ -2,9 +2,9 @@
 // search in a private window, and then checks in the public window
 // whether there is an autocomplete entry for the private search.
 
-add_task(async function test_setup() {
+add_setup(async function () {
   await gCUITestUtils.addSearchBar();
-  await SearchTestUtils.promiseNewSearchEngine({
+  await SearchTestUtils.installOpenSearchEngine({
     url: getRootDirectory(gTestPath) + "426329.xml",
     setAsDefault: true,
   });
@@ -18,7 +18,7 @@ add_task(async function () {
   let windowsToClose = [];
 
   function performSearch(aWin, aIsPrivate) {
-    let searchBar = aWin.BrowserSearch.searchBar;
+    let searchBar = aWin.document.getElementById("searchbar");
     ok(searchBar, "got search bar");
 
     let loadPromise = BrowserTestUtils.browserLoaded(
@@ -49,7 +49,7 @@ add_task(async function () {
 
   newWindow = await testOnWindow(false);
 
-  let searchBar = newWindow.BrowserSearch.searchBar;
+  let searchBar = newWindow.document.getElementById("searchbar");
   searchBar.value = "p";
   searchBar.focus();
 

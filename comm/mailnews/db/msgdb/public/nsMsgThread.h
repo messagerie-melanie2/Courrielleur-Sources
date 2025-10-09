@@ -6,9 +6,8 @@
 #ifndef _nsMsgThread_H
 #define _nsMsgThread_H
 
+#include "nsCOMPtr.h"
 #include "nsIMsgThread.h"
-#include "nsString.h"
-#include "MailNewsTypes.h"
 #include "mdb.h"
 
 class nsIMdbTable;
@@ -35,6 +34,7 @@ class nsMsgThread : public nsIMsgThread {
   void Clear();
   virtual nsresult InitCachedValues();
   nsresult ChangeChildCount(int32_t delta);
+  nsresult ChangeNewChildCount(int32_t delta);
   nsresult ChangeUnreadChildCount(int32_t delta);
   nsresult RemoveChild(nsMsgKey msgKey);
   nsresult SetThreadRootKey(nsMsgKey threadRootKey);
@@ -53,6 +53,7 @@ class nsMsgThread : public nsIMsgThread {
 
   nsMsgKey m_threadKey;
   uint32_t m_numChildren;
+  uint32_t m_numNewChildren;
   uint32_t m_numUnreadChildren;
   uint32_t m_flags;
   nsCOMPtr<nsIMdbTable> m_mdbTable;

@@ -51,19 +51,10 @@ async function testEditableFieldFocus(
     "Focus should have moved to the new property span"
   );
 
-  for (const textProp of ruleEditor.rule.textProps.slice(0).reverse()) {
+  for (const textProp of ruleEditor.rule.textProps.toReversed()) {
     const propEditor = textProp.editor;
 
     await focusNextField(view, ruleEditor, commitKey, options);
-    if (
-      ["background-color", "color"].includes(propEditor.nameSpan.textContent)
-    ) {
-      // background-color and color property value spans have inner focusable elements
-      // and so, focus needs to move to the inplace editor field where enter needs to be
-      // pressed to trigger click event on it
-      await focusNextField(view, ruleEditor, commitKey, options);
-      EventUtils.sendKey("Return");
-    }
     await assertEditor(
       view,
       propEditor.valueSpan,

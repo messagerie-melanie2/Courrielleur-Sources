@@ -3,7 +3,7 @@
 // This code is governed by the BSD license found in the LICENSE file.
 
 /*---
-esid: sec-atomics.store
+esid: sec-atomics.load
 description: >
   TypedArray type is validated before `index` argument is coerced.
 info: |
@@ -23,7 +23,8 @@ info: |
       a. If typeName is not "Int8Array", "Uint8Array", "Int16Array", "Uint16Array", "Int32Array",
          or "Uint32Array", throw a TypeError exception.
     ...
-features: [Atomics]
+includes: [testTypedArray.js]
+features: [Atomics, TypedArray]
 ---*/
 
 var index = {
@@ -32,11 +33,7 @@ var index = {
   }
 };
 
-var badArrayTypes = [
-  Uint8ClampedArray, Float32Array, Float64Array
-];
-
-for (var badArrayType of badArrayTypes) {
+for (var badArrayType of nonAtomicsFriendlyTypedArrayConstructors) {
   var typedArray = new badArrayType(new SharedArrayBuffer(8));
   assert.throws(TypeError, function() {
     Atomics.load(typedArray, index);

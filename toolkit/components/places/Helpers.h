@@ -15,15 +15,18 @@
 #include "nsThreadUtils.h"
 #include "nsProxyRelease.h"
 #include "prtime.h"
-#include "mozilla/Telemetry.h"
 #include "mozIStorageStatementCallback.h"
 
-namespace mozilla {
-namespace places {
+class nsIFile;
+
+namespace mozilla::places {
 
 ////////////////////////////////////////////////////////////////////////////////
 //// Asynchronous Statement Callback Helper
 
+/**
+ * Doesn't implement ISupports methods, leaving that to the inherited class.
+ */
 class WeakAsyncStatementCallback : public mozIStorageStatementCallback {
  public:
   NS_DECL_MOZISTORAGESTATEMENTCALLBACK
@@ -33,6 +36,9 @@ class WeakAsyncStatementCallback : public mozIStorageStatementCallback {
   virtual ~WeakAsyncStatementCallback() = default;
 };
 
+/**
+ * This is the most common class to use, with ISupports.
+ */
 class AsyncStatementCallback : public WeakAsyncStatementCallback {
  public:
   NS_DECL_ISUPPORTS
@@ -40,6 +46,21 @@ class AsyncStatementCallback : public WeakAsyncStatementCallback {
 
  protected:
   virtual ~AsyncStatementCallback() = default;
+};
+
+/**
+ * Adds a callback to bind parameters to AsyncStatementCallback.
+ */
+class PendingStatementCallback : public AsyncStatementCallback {
+ public:
+  NS_INLINE_DECL_REFCOUNTING_INHERITED(PendingStatementCallback,
+                                       AsyncStatementCallback);
+  PendingStatementCallback() = default;
+
+  virtual nsresult BindParams(mozIStorageBindingParamsArray*) MOZ_MUST_OVERRIDE;
+
+ protected:
+  virtual ~PendingStatementCallback() = default;
 };
 
 /**
@@ -168,6 +189,14 @@ PRTime RoundedPRNow();
 nsresult HashURL(const nsACString& aSpec, const nsACString& aMode,
                  uint64_t* _hash);
 
+/**
+ * Return exposable URL from given URI.
+ *
+ * @param  aURI The URI to be converted.
+ * @return already_AddRefed<nsIURI> The converted, exposable URI.
+ */
+already_AddRefed<nsIURI> GetExposableURI(nsIURI* aURI);
+
 class QueryKeyValuePair final {
  public:
   QueryKeyValuePair(const nsACString& aKey, const nsACString& aValue) {
@@ -190,8 +219,9 @@ class QueryKeyValuePair final {
                     int32_t aEquals, int32_t aPastEnd) {
     if (aEquals == aKeyBegin) aEquals = aPastEnd;
     key = Substring(aSource, aKeyBegin, aEquals - aKeyBegin);
-    if (aPastEnd - aEquals > 0)
+    if (aPastEnd - aEquals > 0) {
       value = Substring(aSource, aEquals + 1, aPastEnd - aEquals - 1);
+    }
   }
   nsCString key;
   nsCString value;
@@ -208,6 +238,26 @@ nsresult TokenizeQueryString(const nsACString& aQuery,
 
 void TokensToQueryString(const nsTArray<QueryKeyValuePair>& aTokens,
                          nsACString& aQuery);
+
+/**
+ * Copies the specified database file to the specified parent directory with
+ * the specified file name.  If the parent directory is not specified, it
+ * places the backup in the same directory as the current file.  This
+ * function ensures that the file being created is unique. This utility is meant
+ * to be used on database files with no open connections. Using this on database
+ * files with open connections may result in a corrupt backup file.
+ *
+ * @param aDBFile
+ *        The database file that will be backed up.
+ * @param aBackupFileName
+ *        The name of the new backup file to create.
+ * @param [optional] aBackupParentDirectory
+ *        The directory you'd like the backup file to be placed.
+ * @param backup
+ *        An outparam for the nsIFile pointing to the backup copy.
+ */
+nsresult BackupDatabaseFile(nsIFile* aDBFile, const nsAString& aBackupFileName,
+                            nsIFile* aBackupParentDirectory, nsIFile** backup);
 
 /**
  * Used to finalize a statementCache on a specified thread.
@@ -259,23 +309,6 @@ class FinalizeStatementCacheProxy : public Runnable {
  */
 bool GetHiddenState(bool aIsRedirect, uint32_t aTransitionType);
 
-/**
- * Used to notify a topic to system observers on async execute completion.
- */
-class AsyncStatementTelemetryTimer : public AsyncStatementCallback {
- public:
-  explicit AsyncStatementTelemetryTimer(Telemetry::HistogramID aHistogramId,
-                                        TimeStamp aStart = TimeStamp::Now())
-      : mHistogramId(aHistogramId), mStart(aStart) {}
-
-  NS_IMETHOD HandleCompletion(uint16_t aReason) override;
-
- private:
-  const Telemetry::HistogramID mHistogramId;
-  const TimeStamp mStart;
-};
-
-}  // namespace places
-}  // namespace mozilla
+}  // namespace mozilla::places
 
 #endif  // mozilla_places_Helpers_h_

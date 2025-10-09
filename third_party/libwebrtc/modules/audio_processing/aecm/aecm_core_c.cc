@@ -185,8 +185,9 @@ static void WindowAndFFT(AecmCore* aecm,
     int16_t scaled_time_signal = time_signal[i] * (1 << time_signal_scaling);
     fft[i] = (int16_t)((scaled_time_signal * WebRtcAecm_kSqrtHanning[i]) >> 14);
     scaled_time_signal = time_signal[i + PART_LEN] * (1 << time_signal_scaling);
-    fft[PART_LEN + i] = (int16_t)(
-        (scaled_time_signal * WebRtcAecm_kSqrtHanning[PART_LEN - i]) >> 14);
+    fft[PART_LEN + i] = (int16_t)((scaled_time_signal *
+                                   WebRtcAecm_kSqrtHanning[PART_LEN - i]) >>
+                                  14);
   }
 
   // Do forward FFT, then take only the first PART_LEN complex samples,
@@ -512,8 +513,7 @@ int RTC_NO_SANITIZE("signed-integer-overflow")  // bugs.webrtc.org/8200
     // Far end signal through channel estimate in Q8
     // How much can we shift right to preserve resolution
     tmp32no1 = echoEst32[i] - aecm->echoFilt[i];
-    aecm->echoFilt[i] +=
-        rtc::dchecked_cast<int32_t>((int64_t{tmp32no1} * 50) >> 8);
+    aecm->echoFilt[i] += dchecked_cast<int32_t>((int64_t{tmp32no1} * 50) >> 8);
 
     zeros32 = WebRtcSpl_NormW32(aecm->echoFilt[i]) + 1;
     zeros16 = WebRtcSpl_NormW16(supGain) + 1;
@@ -644,18 +644,18 @@ int RTC_NO_SANITIZE("signed-integer-overflow")  // bugs.webrtc.org/8200
       }
 
       // multiply with Wiener coefficients
-      efw[i].real = (int16_t)(
-          WEBRTC_SPL_MUL_16_16_RSFT_WITH_ROUND(dfw[i].real, hnl[i], 14));
-      efw[i].imag = (int16_t)(
-          WEBRTC_SPL_MUL_16_16_RSFT_WITH_ROUND(dfw[i].imag, hnl[i], 14));
+      efw[i].real = (int16_t)(WEBRTC_SPL_MUL_16_16_RSFT_WITH_ROUND(dfw[i].real,
+                                                                   hnl[i], 14));
+      efw[i].imag = (int16_t)(WEBRTC_SPL_MUL_16_16_RSFT_WITH_ROUND(dfw[i].imag,
+                                                                   hnl[i], 14));
     }
   } else {
     // multiply with Wiener coefficients
     for (i = 0; i < PART_LEN1; i++) {
-      efw[i].real = (int16_t)(
-          WEBRTC_SPL_MUL_16_16_RSFT_WITH_ROUND(dfw[i].real, hnl[i], 14));
-      efw[i].imag = (int16_t)(
-          WEBRTC_SPL_MUL_16_16_RSFT_WITH_ROUND(dfw[i].imag, hnl[i], 14));
+      efw[i].real = (int16_t)(WEBRTC_SPL_MUL_16_16_RSFT_WITH_ROUND(dfw[i].real,
+                                                                   hnl[i], 14));
+      efw[i].imag = (int16_t)(WEBRTC_SPL_MUL_16_16_RSFT_WITH_ROUND(dfw[i].imag,
+                                                                   hnl[i], 14));
     }
   }
 

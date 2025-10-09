@@ -8,13 +8,12 @@
  * books.
  */
 
-var { getModelQuery } = ChromeUtils.import(
-  "resource:///modules/ABQueryUtils.jsm"
+var { getModelQuery } = ChromeUtils.importESModule(
+  "resource:///modules/ABQueryUtils.sys.mjs"
 );
 
 // taken from nsAbAutoCompleteSearch.js
 var ACR = Ci.nsIAutoCompleteResult;
-var nsIAbAutoCompleteResult = Ci.nsIAbAutoCompleteResult;
 
 function nsAbAutoCompleteResult(aSearchString) {
   // Can't create this in the prototype as we'd get the same array for
@@ -45,18 +44,18 @@ nsAbAutoCompleteResult.prototype = {
   },
 
   getLabelAt: function getLabelAt(aIndex) {
-    return this.getValueAt(aIndex);
+    return this._searchResults[aIndex].label;
   },
 
-  getCommentAt: function getCommentAt(aIndex) {
-    return this._searchResults[aIndex].comment;
+  getCommentAt: function getCommentAt() {
+    return "";
   },
 
-  getStyleAt: function getStyleAt(aIndex) {
+  getStyleAt: function getStyleAt() {
     return "local-abook";
   },
 
-  getImageAt: function getImageAt(aIndex) {
+  getImageAt: function getImageAt() {
     return "";
   },
 
@@ -64,7 +63,7 @@ nsAbAutoCompleteResult.prototype = {
     return this.getValueAt(aIndex);
   },
 
-  removeValueAt: function removeValueAt(aRowIndex, aRemoveFromDB) {},
+  removeValueAt: function removeValueAt() {},
 
   // nsIAbAutoCompleteResult
 
@@ -77,7 +76,7 @@ nsAbAutoCompleteResult.prototype = {
     return this._searchResults[aIndex].card.primaryEmail;
   },
 
-  isCompleteResult: function isCompleteResult(aIndex) {
+  isCompleteResult: function isCompleteResult() {
     // For this test we claim all results are complete.
     return true;
   },
@@ -90,7 +89,7 @@ nsAbAutoCompleteResult.prototype = {
   ]),
 };
 
-function createCard(chars, popularity) {
+function createCard(chars) {
   var card = Cc["@mozilla.org/addressbook/cardproperty;1"].createInstance(
     Ci.nsIAbCard
   );
@@ -144,7 +143,7 @@ add_task(async () => {
   for (let i = 0; i < results.length; ++i) {
     lastResult._searchResults.push({
       value: results[i].email,
-      comment: results[i].dirName,
+      label: `${results[i].email} – ${results[i].dirName}`,
       card: createCard(i + 1, 0),
     });
   }
@@ -152,8 +151,8 @@ add_task(async () => {
   // Test - Matches
 
   // Now check multiple matches
-  async function checkInputItem(element, index) {
-    let resultPromise = obs.waitForResult();
+  async function checkInputItem(element) {
+    const resultPromise = obs.waitForResult();
     acs.startSearch(
       element.search,
       JSON.stringify({ type: "addr_to", idKey: "" }),
@@ -175,18 +174,14 @@ add_task(async () => {
       );
       Assert.equal(
         obs._result.getLabelAt(i),
-        results[element.expected[i]].email
-      );
-      Assert.equal(
-        obs._result.getCommentAt(i),
-        results[element.expected[i]].dirName
+        `${results[element.expected[i]].email} – ${results[element.expected[i]].dirName}`
       );
       Assert.equal(obs._result.getStyleAt(i), "local-abook");
       Assert.equal(obs._result.getImageAt(i), "");
     }
   }
 
-  for (let inputSet of inputs) {
+  for (const inputSet of inputs) {
     for (let i = 0; i < inputSet.length; i++) {
       await checkInputItem(inputSet[i], i);
     }

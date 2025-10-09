@@ -9,17 +9,16 @@
 "use strict";
 
 var { add_attachments, close_compose_window, open_compose_new_mail } =
-  ChromeUtils.import("resource://testing-common/mozmill/ComposeHelpers.jsm");
-var { mc } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-);
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+  );
 
 requestLongerTimeout(3);
 
 /**
  * Test the cycling of focus in the composition window through (Shift+)F6.
  *
- * @param {MozMillController} controller - Controller for the compose window.
+ * @param {Window} win - The compose window.
  * @param {object} options - Options to set for the test.
  * @param {boolean} options.useTab - Whether to use Ctrl+Tab instead of F6.
  * @param {boolean} options.attachment - Whether to add an attachment.
@@ -27,22 +26,20 @@ requestLongerTimeout(3);
  * @param {boolean} options.languageButton - Whether to show the language
  *   menu button.
  * @param {boolean} options.contacts - Whether to show the contacts side pane.
- * @param {string} otherHeader - The name of the custom header to show.
  */
-async function checkFocusCycling(controller, options) {
-  let win = controller.window;
-  let doc = win.document;
+async function checkFocusCycling(win, options) {
+  const doc = win.document;
   let contactDoc;
   let contactsInput;
-  let identityElement = doc.getElementById("msgIdentity");
-  let bccButton = doc.getElementById("addr_bccShowAddressRowButton");
-  let toInput = doc.getElementById("toAddrInput");
-  let bccInput = doc.getElementById("bccAddrInput");
-  let subjectInput = doc.getElementById("msgSubject");
-  let editorElement = doc.getElementById("messageEditor");
-  let attachmentElement = doc.getElementById("attachmentBucket");
-  let extraMenuButton = doc.getElementById("extraAddressRowsMenuButton");
-  let languageButton = doc.getElementById("languageStatusButton");
+  const identityElement = doc.getElementById("msgIdentity");
+  const bccButton = doc.getElementById("addr_bccShowAddressRowButton");
+  const toInput = doc.getElementById("toAddrInput");
+  const bccInput = doc.getElementById("bccAddrInput");
+  const subjectInput = doc.getElementById("msgSubject");
+  const editorElement = doc.getElementById("messageEditor");
+  const attachmentElement = doc.getElementById("attachmentBucket");
+  const extraMenuButton = doc.getElementById("extraAddressRowsMenuButton");
+  const languageButton = doc.getElementById("languageStatusButton");
   let firstNotification;
   let secondNotification;
 
@@ -51,10 +48,10 @@ async function checkFocusCycling(controller, options) {
     await BrowserTestUtils.waitForEvent(win, "activate");
   }
 
-  let key = options.useTab ? "VK_TAB" : "VK_F6";
-  let goForward = () =>
+  const key = options.useTab ? "VK_TAB" : "VK_F6";
+  const goForward = () =>
     EventUtils.synthesizeKey(key, { ctrlKey: options.useTab }, win);
-  let goBackward = () =>
+  const goBackward = () =>
     EventUtils.synthesizeKey(
       key,
       { ctrlKey: options.useTab, shiftKey: true },
@@ -62,7 +59,7 @@ async function checkFocusCycling(controller, options) {
     );
 
   if (options.attachment) {
-    add_attachments(controller, "https://www.mozilla.org/");
+    await add_attachments(win, "https://www.mozilla.org/");
   }
 
   if (options.contacts) {
@@ -70,6 +67,9 @@ async function checkFocusCycling(controller, options) {
     EventUtils.synthesizeKey("VK_F9", {}, win);
     contactsInput = await TestUtils.waitForCondition(() => {
       contactDoc = doc.getElementById("contactsBrowser").contentDocument;
+      if (contactDoc.readyState != "complete") {
+        return false;
+      }
       return contactDoc.getElementById("peopleSearchInput");
     }, "Waiting for the contacts pane to load");
   }
@@ -77,6 +77,8 @@ async function checkFocusCycling(controller, options) {
   if (options.languageButton) {
     // languageButton only shows if we have more than one dictionary, but we
     // will show it anyway.
+    // FIXME: should test under real conditions.
+    // updateLanguageInStatusBar() can hide the button during tests.
     languageButton.hidden = false;
   }
 
@@ -84,21 +86,22 @@ async function checkFocusCycling(controller, options) {
   EventUtils.synthesizeMouseAtCenter(bccButton, {}, win);
 
   // Show the custom row.
-  let otherRow = doc.querySelector(
+  const otherRow = doc.querySelector(
     `.address-row[data-recipienttype="${options.otherHeader}"]`
   );
   // Show the input.
-  let menu = doc.getElementById("extraAddressRowsMenu");
+  const menu = doc.getElementById("extraAddressRowsMenu");
   let promise = BrowserTestUtils.waitForEvent(menu, "popupshown");
   EventUtils.synthesizeMouseAtCenter(extraMenuButton, {}, win);
   await promise;
   promise = BrowserTestUtils.waitForEvent(menu, "popuphidden");
   menu.activateItem(doc.getElementById(otherRow.dataset.showSelfMenuitem));
   await promise;
-  let otherHeaderInput = otherRow.querySelector(".address-row-input");
+  const otherHeaderInput = otherRow.querySelector(".address-row-input");
 
   // Move the initial focus back to the To input.
   toInput.focus();
+  Assert.ok(toInput.matches(":focus"), "forward to 'to' row");
 
   if (options.notifications) {
     // Exceed the recipient threshold.
@@ -107,7 +110,7 @@ async function checkFocusCycling(controller, options) {
       0,
       "Should be no initial notifications"
     );
-    let notificationPromise = TestUtils.waitForCondition(
+    const notificationPromise = TestUtils.waitForCondition(
       () => win.gComposeNotification.allNotifications[0],
       "First notification shown"
     );
@@ -128,8 +131,8 @@ async function checkFocusCycling(controller, options) {
 
   if (options.notifications && !options.attachment) {
     // Include an attachment key word in the subject.
-    let notificationPromise = TestUtils.waitForCondition(() => {
-      let notifications = win.gComposeNotification.allNotifications;
+    const notificationPromise = TestUtils.waitForCondition(() => {
+      const notifications = win.gComposeNotification.allNotifications;
       if (notifications.length != 2) {
         return null;
       }
@@ -159,7 +162,7 @@ async function checkFocusCycling(controller, options) {
 
   if (options.notifications) {
     Assert.equal(
-      firstNotification,
+      firstNotification.querySelector("button"),
       doc.activeElement,
       "forward to notification"
     );
@@ -167,7 +170,7 @@ async function checkFocusCycling(controller, options) {
   }
 
   // From Message Body (or Attachment bucket) to Language button.
-  if (options.languageButton) {
+  if (options.languageButton && !languageButton.hidden) {
     Assert.ok(languageButton.matches(":focus"), "forward to status bar");
     goForward();
   }
@@ -202,14 +205,14 @@ async function checkFocusCycling(controller, options) {
     goBackward();
   }
 
-  if (options.languageButton) {
+  if (options.languageButton && !languageButton.hidden) {
     Assert.ok(languageButton.matches(":focus"), "backward to status bar");
     goBackward();
   }
 
   if (options.notifications) {
     Assert.equal(
-      firstNotification,
+      firstNotification.querySelector("button"),
       doc.activeElement,
       "backward to notification"
     );
@@ -239,7 +242,9 @@ async function checkFocusCycling(controller, options) {
   // neighbouring area.
 
   // Focus the close button.
-  let bccCloseButton = doc.querySelector("#addressRowBcc .remove-field-button");
+  const bccCloseButton = doc.querySelector(
+    "#addressRowBcc .remove-field-button"
+  );
   bccCloseButton.focus();
   goForward();
   Assert.ok(
@@ -255,7 +260,7 @@ async function checkFocusCycling(controller, options) {
   Assert.ok(toInput.matches(":focus"), "from close bcc button to 'to' row");
 
   if (options.contacts) {
-    let addressBookList = contactDoc.getElementById("addressbookList");
+    const addressBookList = contactDoc.getElementById("addressbookList");
     addressBookList.focus();
     goForward();
     Assert.ok(
@@ -268,14 +273,14 @@ async function checkFocusCycling(controller, options) {
     // Same the other way.
     addressBookList.focus();
     goBackward();
-    if (options.languageButton) {
+    if (options.languageButton && !languageButton.hidden) {
       Assert.ok(
         languageButton.matches(":focus"),
         "from addressbook selector to status bar"
       );
     } else if (options.notifications) {
       Assert.equal(
-        firstNotification,
+        firstNotification.querySelector("button"),
         doc.activeElement,
         "from addressbook selector to notification"
       );
@@ -295,7 +300,7 @@ async function checkFocusCycling(controller, options) {
 
   // Cc button and extra address rows menu button are in the same area as the
   // message identity.
-  let ccButton = doc.getElementById("addr_ccShowAddressRowButton");
+  const ccButton = doc.getElementById("addr_ccShowAddressRowButton");
   ccButton.focus();
   goBackward();
   if (options.contacts) {
@@ -303,11 +308,11 @@ async function checkFocusCycling(controller, options) {
       contactsInput.matches(":focus-within"),
       "from Cc button to contacts"
     );
-  } else if (options.languageButton) {
+  } else if (options.languageButton && !languageButton.hidden) {
     Assert.ok(languageButton.matches(":focus"), "from Cc button to status bar");
   } else if (options.notifications) {
     Assert.equal(
-      firstNotification,
+      firstNotification.querySelector("button"),
       doc.activeElement,
       "from Cc button to notification"
     );
@@ -336,10 +341,10 @@ async function checkFocusCycling(controller, options) {
   Assert.ok(identityElement.matches(":focus"), "back to 'from' row again");
 
   if (options.attachment) {
-    let attachmentArea = doc.getElementById("attachmentArea");
-    let attachmentSummary = attachmentArea.querySelector("summary");
+    const attachmentArea = doc.getElementById("attachmentArea");
+    const attachmentSummary = attachmentArea.querySelector("summary");
     Assert.ok(attachmentArea.open, "Attachment area should be open");
-    for (let open of [true, false]) {
+    for (const open of [true, false]) {
       if (open) {
         Assert.ok(attachmentArea.open, "Attachment area should be open");
       } else {
@@ -376,11 +381,11 @@ async function checkFocusCycling(controller, options) {
       goForward();
       if (options.notifications) {
         Assert.equal(
-          firstNotification,
+          firstNotification.querySelector("button"),
           doc.activeElement,
           `forward from attachment summary (open: ${open}) to notification`
         );
-      } else if (options.languageButton) {
+      } else if (options.languageButton && !languageButton.hidden) {
         Assert.ok(
           languageButton.matches(":focus"),
           `forward from attachment summary (open: ${open}) to status bar`
@@ -416,7 +421,7 @@ async function checkFocusCycling(controller, options) {
 
   if (options.notifications) {
     // Focus inside the notification.
-    let closeButton = (secondNotification || firstNotification).closeButton;
+    const closeButton = (secondNotification || firstNotification).closeButton;
     closeButton.focus();
 
     goBackward();
@@ -436,7 +441,7 @@ async function checkFocusCycling(controller, options) {
     goForward();
     // Go to the first notification.
     Assert.equal(
-      firstNotification,
+      firstNotification.querySelector("button"),
       doc.activeElement,
       "forward to the first notification"
     );
@@ -444,7 +449,7 @@ async function checkFocusCycling(controller, options) {
     // Try reverse.
     closeButton.focus();
     goForward();
-    if (options.languageButton) {
+    if (options.languageButton && !languageButton.hidden) {
       Assert.ok(
         languageButton.matches(":focus"),
         "forward from notification button to status bar"
@@ -462,7 +467,7 @@ async function checkFocusCycling(controller, options) {
     }
     goBackward();
     Assert.equal(
-      firstNotification,
+      firstNotification.querySelector("button"),
       doc.activeElement,
       "return to the first notification"
     );
@@ -480,8 +485,8 @@ add_task(async function test_jump_focus() {
   // focus on non-input field elements. This is necessary only for macOS as
   // the default value is 2 instead of the default 7 used on Windows and Linux.
   Services.prefs.setIntPref("accessibility.tabfocus", 7);
-  let prevHeader = Services.prefs.getCharPref("mail.compose.other.header");
-  let prevThreshold = Services.prefs.getIntPref(
+  const prevHeader = Services.prefs.getCharPref("mail.compose.other.header");
+  const prevThreshold = Services.prefs.getIntPref(
     "mail.compose.warn_public_recipients.threshold"
   );
   // Set two custom headers, but only one is shown.
@@ -490,12 +495,12 @@ add_task(async function test_jump_focus() {
     "X-Header2,X-Header1"
   );
   Services.prefs.setIntPref("mail.compose.warn_public_recipients.threshold", 2);
-  for (let useTab of [false, true]) {
-    for (let attachment of [false, true]) {
-      for (let notifications of [false, true]) {
-        for (let languageButton of [false, true]) {
-          for (let contacts of [false, true]) {
-            let options = {
+  for (const useTab of [false, true]) {
+    for (const attachment of [false, true]) {
+      for (const notifications of [false, true]) {
+        for (const languageButton of [false, true]) {
+          for (const contacts of [false, true]) {
+            const options = {
               useTab,
               attachment,
               notifications,
@@ -504,9 +509,12 @@ add_task(async function test_jump_focus() {
               otherHeader: "X-Header1",
             };
             info(`Test run: ${JSON.stringify(options)}`);
-            let controller = open_compose_new_mail();
-            await checkFocusCycling(controller, options);
-            close_compose_window(controller);
+            Services.xulStore.removeDocument(
+              "chrome://messenger/content/messengercompose/messengercompose.xhtml"
+            );
+            const win = await open_compose_new_mail();
+            await checkFocusCycling(win, options);
+            await close_compose_window(win);
           }
         }
       }

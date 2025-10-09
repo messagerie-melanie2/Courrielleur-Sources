@@ -3,7 +3,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { FeedUtils } = ChromeUtils.import("resource:///modules/FeedUtils.jsm");
+var { FeedUtils } = ChromeUtils.importESModule(
+  "resource:///modules/FeedUtils.sys.mjs"
+);
 
 window.addEventListener("DOMContentLoaded", () => {
   FeedAccountWizard.onLoad();
@@ -17,7 +19,7 @@ var FeedAccountWizard = {
     document
       .querySelector("wizard")
       .addEventListener("wizardfinish", this.onFinish.bind(this));
-    let accountSetupPage = document.getElementById("accountsetuppage");
+    const accountSetupPage = document.getElementById("accountsetuppage");
     accountSetupPage.addEventListener(
       "pageshow",
       this.accountSetupPageValidate.bind(this)
@@ -26,7 +28,7 @@ var FeedAccountWizard = {
       "pagehide",
       this.accountSetupPageValidate.bind(this)
     );
-    let donePage = document.getElementById("done");
+    const donePage = document.getElementById("done");
     donePage.addEventListener("pageshow", this.donePageInit.bind(this));
   },
 
@@ -40,8 +42,8 @@ var FeedAccountWizard = {
   },
 
   onFinish() {
-    let account = FeedUtils.createRssAccount(this.accountName);
-    let openerWindow = window.opener.top;
+    const account = FeedUtils.createRssAccount(this.accountName);
+    const openerWindow = window.opener.top;
     // The following block is the same as in AccountWizard.js.
     if ("selectServer" in openerWindow) {
       // Opened from Account Settings.

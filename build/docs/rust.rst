@@ -126,15 +126,16 @@ building Firefox does not involve downloading any third-party crates.
 
 If you add a dependency on a new crate you must run ``mach vendor rust`` to
 vendor the dependencies into that directory. (Note that ``mach vendor rust``
-`may not work as well on Windows <https://bugzilla.mozilla.org/show_bug.cgi?id=1647582>`_
+`may not work as well on Windows <https://bugzilla.mozilla.org/show_bug.cgi?id=1938341>`_
 as on other platforms.)
 
 When it comes to checking the suitability of third-party code for inclusion
 into mozilla-central, keep the following in mind.
 
 - ``mach vendor rust`` will check that the licenses of all crates are suitable.
-- You should review the crate code to some degree to check that it looks
-  reasonable (especially for unsafe code) and that it has reasonable tests.
+- ``mach vendor rust`` will run ``cargo vet`` to ensure that the crates have been audited. If not,
+  you will have to audit them using ``mach cargo vet`` to check that the code looks reasonable
+  (especially unsafe code) and that there are reasonable tests. All vendored crates must be audited.
 - Third-party crate tests aren't run, which means that large test fixtures will
   bloat mozilla-central. Consider working with upstream to mark those test
   fixtures with ``[package] exclude = ...`` as described

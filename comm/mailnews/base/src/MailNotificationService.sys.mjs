@@ -91,10 +91,10 @@ export class NewMailNotificationService {
     let unreadCount = 0;
 
     const allFolders = [folder, ...folder.descendants];
-    for (const folder of allFolders) {
-      if (this.confirmShouldCount(folder)) {
-        const count = folder.getNumUnread(false);
-        this.#log.debug(`${folder.URI} has ${count} unread`);
+    for (const candidateFolder of allFolders) {
+      if (this.confirmShouldCount(candidateFolder)) {
+        const count = candidateFolder.getNumUnread(false);
+        this.#log.debug(`${candidateFolder.URI} has ${count} unread`);
         if (count > 0) {
           unreadCount += count;
         }
@@ -155,7 +155,7 @@ export class NewMailNotificationService {
         return;
       }
       this.#log.trace(
-        `Changed int ${property} of ${folder.folderURL}: ${oldValue} -> ${newValue}`
+        `Changed int ${property} of ${folder.URI}: ${oldValue} -> ${newValue}`
       );
       if (property == "BiffState") {
         this.#biffStateChanged(folder, oldValue, newValue);
@@ -186,10 +186,10 @@ export class NewMailNotificationService {
       this.#log.debug(`${folder.URI} notified; will check subfolders`);
       let newCount = 0;
 
-      for (const folder of allFolders) {
-        if (this.confirmShouldCount(folder)) {
-          const folderNew = folder.getNumNewMessages(false);
-          this.#log.debug(`${folder.URI}: ${folderNew} new`);
+      for (const candidateFolder of allFolders) {
+        if (this.confirmShouldCount(candidateFolder)) {
+          const folderNew = candidateFolder.getNumNewMessages(false);
+          this.#log.debug(`${candidateFolder.URI}: ${folderNew} new`);
           if (folderNew > 0) {
             newCount += folderNew;
           }
@@ -264,17 +264,15 @@ export class NewMailNotificationService {
 
   onFolderAdded(parentFolder, child) {
     if (child.rootFolder == child) {
-      this.#log.trace(`Added root folder ${child.folderURL}`);
+      this.#log.trace(`Added root folder ${child.URI}`);
     } else {
-      this.#log.trace(
-        `Added child folder ${child.folderURL} to ${parentFolder.folderURL}`
-      );
+      this.#log.trace(`Added child folder ${child.URI} to ${parentFolder.URI}`);
     }
   }
 
   onMessageAdded(parentFolder, msg) {
     if (this.confirmShouldCount(msg.folder)) {
-      this.#log.trace(`Added <${msg.messageId}> to ${msg.folder.folderURL}`);
+      this.#log.trace(`Added <${msg.messageId}> to ${msg.folder.URI}`);
     }
   }
 
@@ -283,22 +281,18 @@ export class NewMailNotificationService {
       oldFlag & Ci.nsMsgMessageFlags.New &&
       !(newFlag & Ci.nsMsgMessageFlags.New)
     ) {
-      this.#log.trace(
-        `<${msg.messageId}> marked read in ${msg.folder.folderURL}`
-      );
+      this.#log.trace(`<${msg.messageId}> marked read in ${msg.folder.URI}`);
     } else if (newFlag & Ci.nsMsgMessageFlags.New) {
-      this.#log.trace(
-        `<${msg.messageId}> marked unread in ${msg.folder.folderURL}`
-      );
+      this.#log.trace(`<${msg.messageId}> marked unread in ${msg.folder.URI}`);
     }
   }
 
   onFolderRemoved(parentFolder, child) {
     if (child.rootFolder == child) {
-      this.#log.trace(`Removed root folder ${child.folderURL}`);
+      this.#log.trace(`Removed root folder ${child.URI}`);
     } else {
       this.#log.trace(
-        `Removed child folder ${child.folderURL} from ${parentFolder?.folderURL}`
+        `Removed child folder ${child.URI} from ${parentFolder?.URI}`
       );
     }
   }
@@ -306,7 +300,7 @@ export class NewMailNotificationService {
   onMessageRemoved(parentFolder, msg) {
     if (!msg.isRead) {
       this.#log.trace(
-        `Removed unread <${msg.messageId}> from ${msg.folder.folderURL}`
+        `Removed unread <${msg.messageId}> from ${msg.folder.URI}`
       );
     }
   }

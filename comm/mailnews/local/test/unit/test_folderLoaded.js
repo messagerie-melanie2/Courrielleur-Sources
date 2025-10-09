@@ -7,14 +7,14 @@
  * with a null database.
  */
 
-var { MessageGenerator, SyntheticMessageSet } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { MessageGenerator, SyntheticMessageSet } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-var { MessageInjection } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageInjection.jsm"
+var { MessageInjection } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageInjection.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 var testSubjects = [
@@ -33,7 +33,7 @@ add_setup(async function () {
   localAccountUtils.rootFolder.createSubfolder("target", null);
   gTargetFolder = localAccountUtils.rootFolder.getChildNamed("target");
 
-  let copyListenerFile1 = new PromiseTestUtils.PromiseCopyListener();
+  const copyListenerFile1 = new PromiseTestUtils.PromiseCopyListener();
   MailServices.copy.copyFileMessage(
     gMsgFile1,
     gTargetFolder,
@@ -46,7 +46,7 @@ add_setup(async function () {
   );
   await copyListenerFile1.promise;
 
-  let copyListenerFile2 = new PromiseTestUtils.PromiseCopyListener();
+  const copyListenerFile2 = new PromiseTestUtils.PromiseCopyListener();
   MailServices.copy.copyFileMessage(
     gMsgFile2,
     gTargetFolder,
@@ -63,13 +63,13 @@ add_setup(async function () {
 add_task(async function firstUpdate() {
   // Get message headers for the target folder.
   var msgCount = 0;
-  for (let hdr of gTargetFolder.msgDatabase.enumerateMessages()) {
+  for (const hdr of gTargetFolder.msgDatabase.enumerateMessages()) {
     msgCount++;
     Assert.equal(hdr.subject, testSubjects[msgCount - 1]);
   }
   Assert.equal(msgCount, 2);
 
-  let folderAddedListener = PromiseTestUtils.promiseFolderEvent(
+  const folderAddedListener = PromiseTestUtils.promiseFolderEvent(
     gTargetFolder,
     "FolderLoaded"
   );
@@ -80,7 +80,7 @@ add_task(async function firstUpdate() {
 add_task(async function secondUpdate() {
   // If the following executes, the test hangs in bug 787557.
   gTargetFolder.msgDatabase = null;
-  let folderAddedListener = PromiseTestUtils.promiseFolderEvent(
+  const folderAddedListener = PromiseTestUtils.promiseFolderEvent(
     gTargetFolder,
     "FolderLoaded"
   );

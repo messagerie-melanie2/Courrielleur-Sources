@@ -1,5 +1,7 @@
-/* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
-/* vim: set sts=2 sw=2 et tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
 let gAccount;
@@ -11,7 +13,7 @@ async function testExecuteComposeActionWithOptions(options = {}) {
     )}`
   );
 
-  let extensionOptions = {};
+  const extensionOptions = {};
   extensionOptions.manifest = {
     permissions: ["accountsRead"],
     commands: {
@@ -35,18 +37,16 @@ async function testExecuteComposeActionWithOptions(options = {}) {
     extensionOptions.manifest.compose_action.default_popup = "popup.html";
 
     extensionOptions.files = {
-      "popup.html": `
-        <!DOCTYPE html>
+      "popup.html": `<!DOCTYPE html>
         <html>
           <head>
             <meta charset="utf-8">
-            <script src="popup.js"></script>
+            <script defer="defer" src="popup.js"></script>
           </head>
           <body>
             Popup
           </body>
-      </html>
-      `,
+        </html>`,
       "popup.js": function () {
         browser.test.log("sending from-compose-action-popup");
         browser.runtime.sendMessage("from-compose-action-popup");
@@ -55,11 +55,11 @@ async function testExecuteComposeActionWithOptions(options = {}) {
   }
 
   extensionOptions.background = async () => {
-    let accounts = await browser.accounts.list();
+    const accounts = await browser.accounts.list();
     browser.test.assertEq(1, accounts.length, "number of accounts");
 
     browser.test.onMessage.addListener((message, withPopup) => {
-      browser.commands.onCommand.addListener(commandName => {
+      browser.commands.onCommand.addListener(() => {
         browser.test.fail(
           "The onCommand listener should never fire for a valid _execute_* command."
         );
@@ -87,10 +87,10 @@ async function testExecuteComposeActionWithOptions(options = {}) {
     });
   };
 
-  let extension = ExtensionTestUtils.loadExtension(extensionOptions);
+  const extension = ExtensionTestUtils.loadExtension(extensionOptions);
   await extension.startup();
 
-  let composeWindow = await openComposeWindow(gAccount);
+  const composeWindow = await openComposeWindow(gAccount);
   await focusWindow(composeWindow);
 
   // trigger setup of listeners in background and the send-keys msg
@@ -98,7 +98,7 @@ async function testExecuteComposeActionWithOptions(options = {}) {
 
   await extension.awaitMessage("send-keys");
   info("Simulating ALT+SHIFT+J");
-  let modifiers =
+  const modifiers =
     AppConstants.platform == "macosx"
       ? { metaKey: true, shiftKey: true }
       : { altKey: true, shiftKey: true };
@@ -123,11 +123,11 @@ add_setup(async () => {
   addIdentity(gAccount);
 });
 
-let popupJobs = [true, false];
-let formatToolbarJobs = [true, false];
+const popupJobs = [true, false];
+const formatToolbarJobs = [true, false];
 
-for (let popupJob of popupJobs) {
-  for (let formatToolbarJob of formatToolbarJobs) {
+for (const popupJob of popupJobs) {
+  for (const formatToolbarJob of formatToolbarJobs) {
     add_task(async () => {
       await testExecuteComposeActionWithOptions({
         withPopup: popupJob,

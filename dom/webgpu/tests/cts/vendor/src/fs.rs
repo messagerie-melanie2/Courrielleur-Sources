@@ -14,6 +14,26 @@ pub(crate) struct FileRoot {
     path: PathBuf,
 }
 
+impl Eq for FileRoot {}
+
+impl PartialEq for FileRoot {
+    fn eq(&self, other: &Self) -> bool {
+        self.path == other.path
+    }
+}
+
+impl Ord for FileRoot {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.path.cmp(&other.path)
+    }
+}
+
+impl PartialOrd for FileRoot {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl FileRoot {
     pub(crate) fn new<P>(nickname: &'static str, path: P) -> miette::Result<Self>
     where
@@ -73,21 +93,6 @@ impl FileRoot {
         Ok(child)
     }
 
-    fn removed_file<P>(&self, path: P) -> miette::Result<Child<'_>>
-    where
-        P: AsRef<Path>,
-    {
-        let path = path.as_ref();
-        let child = self.child(path);
-        if child.exists() {
-            log::info!("removing old copy of {child}…",);
-            fs::remove_file(&*child)
-                .map_err(miette::Report::msg)
-                .wrap_err_with(|| format!("failed to remove old copy of {child}"))?;
-        }
-        Ok(child)
-    }
-
     pub(crate) fn regen_dir<P>(
         &self,
         path: P,
@@ -100,24 +105,6 @@ impl FileRoot {
         gen(&child)?;
         ensure!(
             child.is_dir(),
-            "{} was not regenerated for an unknown reason",
-            child,
-        );
-        Ok(child)
-    }
-
-    pub(crate) fn regen_file<P>(
-        &self,
-        path: P,
-        gen: impl FnOnce(&Child<'_>) -> miette::Result<()>,
-    ) -> miette::Result<Child<'_>>
-    where
-        P: AsRef<Path>,
-    {
-        let child = self.removed_file(path)?;
-        gen(&child)?;
-        ensure!(
-            child.is_file(),
             "{} was not regenerated for an unknown reason",
             child,
         );
@@ -152,6 +139,7 @@ impl Display for FileRoot {
     }
 }
 
+#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct Child<'a> {
     root: &'a FileRoot,
     /// NOTE: This is always an absolute path that is a child of the `root`.
@@ -181,7 +169,7 @@ impl Child<'_> {
     }
 
     #[track_caller]
-    pub(crate) fn child<P>(&self, path: P) -> Child<'_>
+    pub(crate) fn child<P>(&self, path: P) -> Self
     where
         P: AsRef<Path>,
     {
@@ -224,30 +212,6 @@ impl Display for Child<'_> {
     }
 }
 
-pub(crate) fn existing_file<P>(path: P) -> P
-where
-    P: AsRef<Path>,
-{
-    let p = path.as_ref();
-    assert!(p.is_file(), "{p:?} does not exist as a file");
-    path
-}
-
-pub(crate) fn copy_dir<P, Q>(source: P, dest: Q) -> miette::Result<()>
-where
-    P: Display + AsRef<Path>,
-    Q: Display + AsRef<Path>,
-{
-    log::debug!(
-        "copy-merging directories from {} into {}",
-        source.as_ref().display(),
-        dest.as_ref().display(),
-    );
-    ::dircpy::copy_dir(&source, &dest)
-        .into_diagnostic()
-        .wrap_err_with(|| format!("failed to copy files from {source} to {dest}"))
-}
-
 pub(crate) fn read_to_string<P>(path: P) -> miette::Result<String>
 where
     P: AsRef<Path>,
@@ -262,18 +226,28 @@ where
         })
 }
 
-pub(crate) fn copy<P1, P2>(from: P1, to: P2) -> miette::Result<u64>
+pub(crate) fn rename<P1, P2>(from: P1, to: P2) -> miette::Result<()>
 where
     P1: AsRef<Path>,
     P2: AsRef<Path>,
 {
-    fs::copy(&from, &to).into_diagnostic().wrap_err_with(|| {
+    fs::rename(&from, &to).into_diagnostic().wrap_err_with(|| {
         format!(
-            "failed to copy {} to {}",
+            "failed to rename {} to {}",
             from.as_ref().display(),
             to.as_ref().display()
         )
     })
+}
+
+pub(crate) fn try_exists<P>(path: P) -> miette::Result<bool>
+where
+    P: AsRef<Path>,
+{
+    let path = path.as_ref();
+    path.try_exists()
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to check if path exists: {}", path.display()))
 }
 
 pub(crate) fn create_dir_all<P>(path: P) -> miette::Result<()>

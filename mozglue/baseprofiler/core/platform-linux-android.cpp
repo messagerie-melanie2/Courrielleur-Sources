@@ -91,32 +91,38 @@ static void PopulateRegsFromContext(Registers& aRegs, ucontext_t* aContext) {
   aRegs.mPC = reinterpret_cast<Address>(mcontext.gregs[REG_EIP]);
   aRegs.mSP = reinterpret_cast<Address>(mcontext.gregs[REG_ESP]);
   aRegs.mFP = reinterpret_cast<Address>(mcontext.gregs[REG_EBP]);
-  aRegs.mLR = 0;
+  aRegs.mEcx = reinterpret_cast<Address>(mcontext.gregs[REG_ECX]);
+  aRegs.mEdx = reinterpret_cast<Address>(mcontext.gregs[REG_EDX]);
 #elif defined(GP_PLAT_amd64_linux) || defined(GP_PLAT_amd64_android)
   aRegs.mPC = reinterpret_cast<Address>(mcontext.gregs[REG_RIP]);
   aRegs.mSP = reinterpret_cast<Address>(mcontext.gregs[REG_RSP]);
   aRegs.mFP = reinterpret_cast<Address>(mcontext.gregs[REG_RBP]);
-  aRegs.mLR = 0;
+  aRegs.mR10 = reinterpret_cast<Address>(mcontext.gregs[REG_R10]);
+  aRegs.mR12 = reinterpret_cast<Address>(mcontext.gregs[REG_R12]);
 #elif defined(GP_PLAT_amd64_freebsd)
   aRegs.mPC = reinterpret_cast<Address>(mcontext.mc_rip);
   aRegs.mSP = reinterpret_cast<Address>(mcontext.mc_rsp);
   aRegs.mFP = reinterpret_cast<Address>(mcontext.mc_rbp);
-  aRegs.mLR = 0;
+  aRegs.mR10 = reinterpret_cast<Address>(mcontext.mc_r10);
+  aRegs.mR12 = reinterpret_cast<Address>(mcontext.mc_r12);
 #elif defined(GP_PLAT_arm_linux) || defined(GP_PLAT_arm_android)
   aRegs.mPC = reinterpret_cast<Address>(mcontext.arm_pc);
   aRegs.mSP = reinterpret_cast<Address>(mcontext.arm_sp);
   aRegs.mFP = reinterpret_cast<Address>(mcontext.arm_fp);
   aRegs.mLR = reinterpret_cast<Address>(mcontext.arm_lr);
+  aRegs.mR7 = reinterpret_cast<Address>(mcontext.arm_r7);
 #elif defined(GP_PLAT_arm64_linux) || defined(GP_PLAT_arm64_android)
   aRegs.mPC = reinterpret_cast<Address>(mcontext.pc);
   aRegs.mSP = reinterpret_cast<Address>(mcontext.sp);
   aRegs.mFP = reinterpret_cast<Address>(mcontext.regs[29]);
   aRegs.mLR = reinterpret_cast<Address>(mcontext.regs[30]);
+  aRegs.mR11 = reinterpret_cast<Address>(mcontext.regs[11]);
 #elif defined(GP_PLAT_arm64_freebsd)
   aRegs.mPC = reinterpret_cast<Address>(mcontext.mc_gpregs.gp_elr);
   aRegs.mSP = reinterpret_cast<Address>(mcontext.mc_gpregs.gp_sp);
   aRegs.mFP = reinterpret_cast<Address>(mcontext.mc_gpregs.gp_x[29]);
   aRegs.mLR = reinterpret_cast<Address>(mcontext.mc_gpregs.gp_lr);
+  aRegs.mR11 = reinterpret_cast<Address>(mcontext.mc_gpregs.gp_x[11]);
 #elif defined(GP_PLAT_mips64_linux) || defined(GP_PLAT_mips64_android)
   aRegs.mPC = reinterpret_cast<Address>(mcontext.pc);
   aRegs.mSP = reinterpret_cast<Address>(mcontext.gregs[29]);
@@ -395,27 +401,6 @@ SamplerThread::SamplerThread(PSLockRef aLock, uint32_t aActivityGeneration,
       mActivityGeneration(aActivityGeneration),
       mIntervalMicroseconds(
           std::max(1, int(floor(aIntervalMilliseconds * 1000 + 0.5)))) {
-#if defined(USE_LUL_STACKWALK)
-  lul::LUL* lul = CorePS::Lul(aLock);
-  if (!lul && ProfilerFeature::HasStackWalkEnabled(aFeatures)) {
-    CorePS::SetLul(aLock, MakeUnique<lul::LUL>(logging_sink_for_LUL));
-    // Read all the unwind info currently available.
-    lul = CorePS::Lul(aLock);
-    read_procmaps(lul);
-
-    // Switch into unwind mode. After this point, we can't add or remove any
-    // unwind info to/from this LUL instance. The only thing we can do with
-    // it is Unwind() calls.
-    lul->EnableUnwinding();
-
-    // Has a test been requested?
-    if (getenv("MOZ_PROFILER_LUL_TEST")) {
-      int nTests = 0, nTestsPassed = 0;
-      RunLulUnitTests(&nTests, &nTestsPassed, lul);
-    }
-  }
-#endif
-
   // Start the sampling thread. It repeatedly sends a SIGPROF signal. Sending
   // the signal ourselves instead of relying on itimer provides much better
   // accuracy.

@@ -24,8 +24,6 @@ const nsIAccessibleScrollingEvent = Ci.nsIAccessibleScrollingEvent;
 const nsIAccessibleTextChangeEvent = Ci.nsIAccessibleTextChangeEvent;
 const nsIAccessibleTextSelectionChangeEvent =
   Ci.nsIAccessibleTextSelectionChangeEvent;
-const nsIAccessibleVirtualCursorChangeEvent =
-  Ci.nsIAccessibleVirtualCursorChangeEvent;
 const nsIAccessibleObjectAttributeChangedEvent =
   Ci.nsIAccessibleObjectAttributeChangedEvent;
 const nsIAccessibleAnnouncementEvent = Ci.nsIAccessibleAnnouncementEvent;
@@ -850,7 +848,11 @@ function getTextFromClipboard() {
   }
 
   trans.addDataFlavor("text/plain");
-  Services.clipboard.getData(trans, Services.clipboard.kGlobalClipboard);
+  Services.clipboard.getData(
+    trans,
+    Services.clipboard.kGlobalClipboard,
+    SpecialPowers.wrap(window).browsingContext.currentWindowContext
+  );
 
   var str = {};
   trans.getTransferData("text/plain", str);
@@ -866,33 +868,17 @@ function getTextFromClipboard() {
 }
 
 /**
- * Extract DOMNode id from an accessible. If e10s is enabled, DOMNode is not
- * present in parent process but, if available, DOMNode id is attached to an
- * accessible object.
+ * Obtain DOMNode id from an accessible. This simply queries the .id property
+ * on the accessible, but it catches exceptions which might occur if the
+ * accessible has died.
  * @param  {nsIAccessible} accessible  accessible
  * @return {String?}                   DOMNode id if available
  */
 function getAccessibleDOMNodeID(accessible) {
-  if (accessible instanceof nsIAccessibleDocument) {
-    // If accessible is a document, trying to find its document body id.
-    try {
-      return accessible.DOMNode.body.id;
-    } catch (e) {
-      /* This only works if accessible is not a proxy. */
-    }
-  }
   try {
-    return accessible.DOMNode.id;
-  } catch (e) {
-    /* This will fail if DOMNode is in different process. */
-  }
-  try {
-    // When e10s is enabled, accessible will have an "id" property if its
-    // corresponding DOMNode has an id. If accessible is a document, its "id"
-    // property corresponds to the "id" of its body element.
     return accessible.id;
   } catch (e) {
-    /* This will fail if accessible is not a proxy. */
+    // This will fail if the accessible has died.
   }
   return null;
 }
@@ -974,7 +960,7 @@ function prettyName(aIdentifier) {
  * @param aString the string to shorten.
  * @returns the shortened string.
  */
-function shortenString(aString, aMaxLength) {
+function shortenString(aString) {
   if (aString.length <= MAX_TRIM_LENGTH) {
     return aString;
   }

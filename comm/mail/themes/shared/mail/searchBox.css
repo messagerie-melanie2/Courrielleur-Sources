@@ -12,10 +12,10 @@
   height: 16px;
   width: 16px;
   z-index: 2;
-}
 
-.search-icon:-moz-locale-dir(rtl) {
-  transform: scaleX(-1);
+  &:-moz-locale-dir(rtl) {
+    transform: scaleX(-1);
+  }
 }
 
 .searchBox,
@@ -28,15 +28,14 @@
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
   outline: none;
   min-height: 24px;
-  height: 1.2em;
 }
 
 .textbox-search-clear {
   opacity: 0.8;
-}
 
-.textbox-search-clear:not([disabled]):hover {
-  opacity: 1;
+  &:not([disabled]):hover {
+    opacity: 1;
+  }
 }
 
 .themeableSearchBox[disabled] {
@@ -55,8 +54,8 @@
 }
 
 /* special treatment because these boxes are on themable toolbars */
-.gloda-search:-moz-lwtheme,
-.remote-gloda-search:-moz-lwtheme,
+:root[lwtheme] .gloda-search,
+:root[lwtheme] .remote-gloda-search,
 :root[lwt-tree] .themeableSearchBox,
 :root[lwt-tree] #peopleSearchInput:not([focused="true"]) {
   color: var(--toolbar-field-color);
@@ -66,30 +65,27 @@
 
 .gloda-search:focus,
 .searchBox[focused="true"],
-.themeableSearchBox:not([disabled="true"]):focus,
-.themeableSearchBox:not([disabled="true"])[focused="true"] {
+.themeableSearchBox:not([disabled="true"]):is(:focus, [focused="true"]) {
   border-color: var(--toolbar-field-focus-border-color);
   outline: 1px solid var(--toolbar-field-focus-border-color);
 }
 
-.gloda-search:-moz-lwtheme:focus,
-:root[lwt-tree] .themeableSearchBox:focus,
-:root[lwt-tree] .themeableSearchBox[focused="true"],
-:root[lwt-tree] #peopleSearchInput[focused="true"],
-.remote-gloda-search:-moz-lwtheme[focused="true"] {
+:root[lwtheme] .gloda-search:focus,
+:root[lwtheme] .remote-gloda-search[focused="true"],
+:root[lwt-tree] .themeableSearchBox:is(:focus, [focused="true"]),
+:root[lwt-tree] #peopleSearchInput[focused="true"] {
   color: var(--toolbar-field-focus-color);
   background-color: var(--toolbar-field-focus-background-color);
 }
 
-.gloda-search:-moz-lwtheme::selection,
-.themeableSearchBox:-moz-lwtheme::selection {
+:root[lwtheme] .gloda-search::selection,
+:root[lwtheme] .themeableSearchBox::selection {
   background-color: var(--lwt-toolbar-field-highlight, Highlight);
   color: var(--lwt-toolbar-field-highlight-text, HighlightText);
 }
 
 .gloda-search:not(:focus)::selection,
-.themeableSearchBox:not(:focus)::selection,
-.themeableSearchBox:not([focused="true"])::selection {
+.themeableSearchBox:not(:focus, [focused="true"])::selection {
   background-color: var(--lwt-toolbar-field-highlight, text-select-disabled-background);
 }
 
@@ -112,15 +108,15 @@
   margin-inline: 2px;
   padding-inline-start: 12px;
   border-radius: 2px;
-}
 
-.autocomplete-richlistitem[type^="gloda-"]:hover {
-  background-color: hsla(0, 0%, 80%, 0.3);
-}
+  &:hover {
+    background-color: hsla(0, 0%, 80%, 0.3);
+  }
 
-.autocomplete-richlistitem[type^="gloda-"][selected] {
-  background: var(--autocomplete-popup-highlight-background);
-  color: var(--autocomplete-popup-highlight-color);
+  &[selected] {
+    background: var(--autocomplete-popup-highlight-background);
+    color: var(--autocomplete-popup-highlight-color);
+  }
 }
 
 .remote-gloda-search-container {

@@ -19,13 +19,13 @@ const l10n = new Localization([
   "branding/brand.ftl",
 ]);
 
-var { CustomizableUITestUtils } = ChromeUtils.import(
-  "resource://testing-common/CustomizableUITestUtils.jsm"
+var { CustomizableUITestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/CustomizableUITestUtils.sys.mjs"
 );
-let gCUITestUtils = new CustomizableUITestUtils(window);
+const gCUITestUtils = new CustomizableUITestUtils(window);
 
-const { PermissionTestUtils } = ChromeUtils.import(
-  "resource://testing-common/PermissionTestUtils.jsm"
+const { PermissionTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/PermissionTestUtils.sys.mjs"
 );
 
 /**
@@ -40,7 +40,7 @@ const { PermissionTestUtils } = ChromeUtils.import(
 function promisePopupNotificationShown(name) {
   return new Promise(resolve => {
     function popupshown() {
-      let notification = PopupNotifications.getNotification(name);
+      const notification = PopupNotifications.getNotification(name);
       if (!notification) {
         return;
       }
@@ -59,18 +59,14 @@ function promisePopupNotificationShown(name) {
 /**
  * Wait for a specific install event to fire for a given addon
  *
- * @param {AddonWrapper} addon
- *        The addon to watch for an event on
- * @param {string}
- *        The name of the event to watch for (e.g., onInstallEnded)
- *
- * @returns {Promise}
- *          Resolves when the event triggers with the first argument
- *          to the event handler as the resolution value.
+ * @param {AddonWrapper} addon - The addon to watch for an event on.
+ * @param {string} event - The name of the event to watch for (e.g., onInstallEnded).
+ * @returns {Promise} Resolves when the event triggers with the first argument
+ *   to the event handler as the resolution value.
  */
 function promiseInstallEvent(addon, event) {
   return new Promise(resolve => {
-    let listener = {};
+    const listener = {};
     listener[event] = (install, arg) => {
       if (install.addon.id == addon.id) {
         AddonManager.removeInstallListener(listener);
@@ -84,20 +80,17 @@ function promiseInstallEvent(addon, event) {
 /**
  * Install an (xpi packaged) extension
  *
- * @param {string} url
- *        URL of the .xpi file to install
- * @param {object?} installTelemetryInfo
- *        an optional object that contains additional details used by the telemetry events.
- *
- * @returns {Promise}
- *          Resolves when the extension has been installed with the Addon
- *          object as the resolution value.
+ * @param {string} url - URL of the .xpi file to install.
+ * @param {?object} telemetryInfo - An optional object that contains
+ *   additional details used by the telemetry events.
+ * @returns {Promise<AddonWrapper>} Resolves when the extension has been
+ *   installed with the Addon object as the resolution value.
  */
 async function promiseInstallAddon(url, telemetryInfo) {
-  let install = await AddonManager.getInstallForURL(url, { telemetryInfo });
+  const install = await AddonManager.getInstallForURL(url, { telemetryInfo });
   install.install();
 
-  let addon = await new Promise(resolve => {
+  const addon = await new Promise(resolve => {
     install.addListener({
       onInstallEnded(_install, _addon) {
         resolve(_addon);
@@ -125,15 +118,12 @@ async function promiseInstallAddon(url, telemetryInfo) {
  * (This does not actually perform an update, it just watches for
  * the events that occur as a result of an update.)
  *
- * @param {AddonWrapper} addon
- *        The addon to be updated.
- *
- * @returns {Promise}
- *          Resolves when the extension has ben updated.
+ * @param {AddonWrapper} addon - The addon to be updated.
+ * @returns {Promise<AddonWrapper>} Resolves when the extension has ben updated.
  */
 async function waitForUpdate(addon) {
-  let installPromise = promiseInstallEvent(addon, "onInstallEnded");
-  let readyPromise = new Promise(resolve => {
+  const installPromise = promiseInstallEvent(addon, "onInstallEnded");
+  const readyPromise = new Promise(resolve => {
     function listener(event, extension) {
       if (extension.id == addon.id) {
         Management.off("ready", listener);
@@ -143,7 +133,7 @@ async function waitForUpdate(addon) {
     Management.on("ready", listener);
   });
 
-  let [newAddon] = await Promise.all([installPromise, readyPromise]);
+  const [newAddon] = await Promise.all([installPromise, readyPromise]);
   return newAddon;
 }
 
@@ -171,23 +161,20 @@ function isDefaultIcon(icon) {
 /**
  * Check the contents of a permission popup notification
  *
- * @param {Window} panel
- *        The popup window.
- * @param {string | RegExp | Function} checkIcon
- *        The icon expected to appear in the notification.  If this is a
- *        string, it must match the icon url exactly.  If it is a
- *        regular expression it is tested against the icon url, and if
- *        it is a function, it is called with the icon url and returns
- *        true if the url is correct.
- * @param {Object[]} permissions
- *        The expected entries in the permissions list. Each element
- *        in this array is itself a 2-element array with the string key
- *        for the item (e.g., "webext-perms-description-foo") for permission foo
- *        and an optional formatting parameter.
- * @param {boolean} sideloaded
- *        Whether the notification is for a sideloaded extenion.
- * @param {boolean} [warning]
- *        Whether the experiments warning should be visible.
+ * @param {Window} panel - The popup window.
+ * @param {string|RegExp|Function} checkIcon - The icon expected to appear in
+ *   the notification.  If this is a string, it must match the icon url exactly.
+ *   If it is a regular expression it is tested against the icon url, and if
+ *   it is a function, it is called with the icon url and returns
+ *   true if the url is correct.
+ * @param {object[]} permissions - The expected entries in the permissions list.
+ *   Each element in this array is itself a 2-element array with the string key
+ *   for the item (e.g., "webext-perms-description-foo") for permission foo
+ *   and an optional formatting parameter.
+ * @param {boolean} sideloaded - Whether the notification is for a sideloaded
+ *   extenion.
+ * @param {boolean} [warning=false] Whether the experiments warning should be
+ *   visible.
  */
 async function checkNotification(
   panel,
@@ -196,13 +183,15 @@ async function checkNotification(
   sideloaded,
   warning = false
 ) {
-  let icon = panel.getAttribute("icon");
-  let ul = document.getElementById("addon-webext-perm-list");
-  let singleDataEl = document.getElementById("addon-webext-perm-single-entry");
-  let experimentWarning = document.getElementById(
+  const icon = panel.getAttribute("icon");
+  const permissionTitleEl = document.getElementById(
+    "addon-webext-perm-title-required"
+  );
+  const permissionListEl = document.getElementById("addon-webext-perm-list");
+  const experimentWarning = document.getElementById(
     "addon-webext-experiment-warning"
   );
-  let learnMoreLink = document.getElementById("addon-webext-perm-info");
+  const learnMoreLink = document.getElementById("addon-webext-perm-info");
 
   if (checkIcon instanceof RegExp) {
     ok(
@@ -222,21 +211,24 @@ async function checkNotification(
   );
 
   if (!permissions.length) {
-    ok(ul.hidden, "Permissions list is hidden");
-    ok(singleDataEl.hidden, "Single permission data entry is hidden");
+    ok(permissionListEl.hidden, "Permissions list is hidden");
+    ok(permissionTitleEl.hidden, "Permissions list title is hidden");
     ok(
-      !(ul.childElementCount || singleDataEl.textContent),
+      !permissionListEl.childElementCount,
       "Permission list and single permission element have no entries"
     );
-  } else if (permissions.length === 1) {
-    ok(ul.hidden, "Permissions list is hidden");
-    ok(!ul.childElementCount, "Permission list has no entries");
-    ok(singleDataEl.textContent, "Single permission data label has been set");
   } else {
-    ok(singleDataEl.hidden, "Single permission data entry is hidden");
-    ok(
-      !singleDataEl.textContent,
-      "Single permission data label has not been set"
+    ok(!permissionListEl.hidden, "Permissions list is not hidden");
+    ok(!permissionTitleEl.hidden, "Permissions list title is not hidden");
+    is(
+      permissions.length,
+      permissionListEl.childElementCount,
+      "Permission list has the correct number of entries"
+    );
+    is(
+      "Required permissions:",
+      permissionTitleEl.textContent,
+      "Permissions list title is correct"
     );
   }
 
@@ -251,16 +243,15 @@ async function checkNotification(
  * Test that install-time permission prompts work for a given
  * installation method.
  *
- * @param {Function} installFn
- *        Callable that takes the name of an xpi file to install and
- *        starts to install it.  Should return a Promise that resolves
- *        when the install is finished or rejects if the install is canceled.
- *
+ * @param {function(string):Promise} installFn - Callable that takes the name
+ *   of an xpi file to install and starts to install it.
+ *   Should return a Promise that resolves when the install is finished or
+ *   rejects if the install is canceled.
  * @returns {Promise}
  */
 async function testInstallMethod(installFn) {
-  const PERMS_XPI = "browser_webext_permissions.xpi";
-  const NO_PERMS_XPI = "browser_webext_nopermissions.xpi";
+  const PERMS_XPI = "addons/browser_webext_permissions.xpi";
+  const NO_PERMS_XPI = "addons/browser_webext_nopermissions.xpi";
   const ID = "permissions@test.mozilla.org";
 
   await SpecialPowers.pushPrefEnv({
@@ -270,18 +261,18 @@ async function testInstallMethod(installFn) {
     ],
   });
 
-  let testURI = makeURI("https://example.com/");
+  const testURI = makeURI("https://example.com/");
   PermissionTestUtils.add(testURI, "install", Services.perms.ALLOW_ACTION);
   registerCleanupFunction(() => PermissionTestUtils.remove(testURI, "install"));
 
   async function runOnce(filename, cancel) {
-    let tab = openContentTab("about:blank");
+    const tab = openContentTab("about:blank");
     if (tab.browser.webProgress.isLoadingDocument) {
       await BrowserTestUtils.browserLoaded(tab.browser);
     }
 
-    let installPromise = new Promise(resolve => {
-      let listener = {
+    const installPromise = new Promise(resolve => {
+      const listener = {
         onDownloadCancelled() {
           AddonManager.removeInstallListener(listener);
           resolve(false);
@@ -310,7 +301,7 @@ async function testInstallMethod(installFn) {
       AddonManager.addInstallListener(listener);
     });
 
-    let installMethodPromise = installFn(filename);
+    const installMethodPromise = installFn(filename);
 
     let panel = await promisePopupNotificationShown("addon-webext-permissions");
     if (filename == PERMS_XPI) {
@@ -337,7 +328,8 @@ async function testInstallMethod(installFn) {
       } catch (err) {}
     } else {
       // Look for post-install notification
-      let postInstallPromise = promisePopupNotificationShown("addon-installed");
+      const postInstallPromise =
+        promisePopupNotificationShown("addon-installed");
       panel.button.click();
 
       // Press OK on the post-install notification
@@ -347,8 +339,8 @@ async function testInstallMethod(installFn) {
       await installMethodPromise;
     }
 
-    let result = await installPromise;
-    let addon = await AddonManager.getAddonByID(ID);
+    const result = await installPromise;
+    const addon = await AddonManager.getAddonByID(ID);
     if (cancel) {
       ok(!result, "Installation was cancelled");
       is(addon, null, "Extension is not installed");
@@ -358,7 +350,7 @@ async function testInstallMethod(installFn) {
       await addon.uninstall();
     }
 
-    let tabmail = document.getElementById("tabmail");
+    const tabmail = document.getElementById("tabmail");
     tabmail.closeOtherTabs(tabmail.tabInfo[0]);
   }
 
@@ -409,7 +401,7 @@ async function interactiveUpdateTest(autoUpdate, checkFn) {
     let manualUpdatePromise;
     if (!autoUpdate) {
       manualUpdatePromise = new Promise(resolve => {
-        let listener = {
+        const listener = {
           onNewInstall() {
             AddonManager.removeInstallListener(listener);
             resolve();
@@ -419,25 +411,29 @@ async function interactiveUpdateTest(autoUpdate, checkFn) {
       });
     }
 
-    let promise = checkFn(win, addon);
+    const promise = checkFn(win, addon);
 
     if (manualUpdatePromise) {
       await manualUpdatePromise;
 
-      let doc = win.document;
+      const doc = win.document;
       if (win.gViewController.currentViewId !== "addons://updates/available") {
-        let showUpdatesBtn = doc.querySelector("addon-updates-message").button;
+        const showUpdatesBtn = doc.querySelector(
+          "addon-updates-message"
+        ).button;
         await TestUtils.waitForCondition(() => {
           return !showUpdatesBtn.hidden;
         }, "Wait for show updates button");
-        let viewChanged = waitAboutAddonsViewLoaded(doc);
+        const viewChanged = waitAboutAddonsViewLoaded(doc);
         showUpdatesBtn.click();
         await viewChanged;
       }
-      let card = await TestUtils.waitForCondition(() => {
+      const card = await TestUtils.waitForCondition(() => {
         return doc.querySelector(`addon-card[addon-id="${ID}"]`);
       }, `Wait addon card for "${ID}"`);
-      let updateBtn = card.querySelector('panel-item[action="install-update"]');
+      const updateBtn = card.querySelector(
+        'panel-item[action="install-update"]'
+      );
       ok(updateBtn, `Found update button for "${ID}"`);
       updateBtn.click();
     }
@@ -446,13 +442,16 @@ async function interactiveUpdateTest(autoUpdate, checkFn) {
   }
 
   // Install version 1.0 of the test extension
-  let addon = await promiseInstallAddon(`${BASE}/browser_webext_update1.xpi`, {
-    source: FAKE_INSTALL_SOURCE,
-  });
+  let addon = await promiseInstallAddon(
+    `${BASE}/addons/browser_webext_update1.xpi`,
+    {
+      source: FAKE_INSTALL_SOURCE,
+    }
+  );
   ok(addon, "Addon was installed");
   is(addon.version, "1.0", "Version 1 of the addon is installed");
 
-  let win = await openAddonsMgr("addons://list/extension");
+  const win = await openAddonsMgr("addons://list/extension");
 
   await waitAboutAddonsViewLoaded(win.document);
 
@@ -462,7 +461,7 @@ async function interactiveUpdateTest(autoUpdate, checkFn) {
   let panel = await popupPromise;
 
   // Click the cancel button, wait to see the cancel event
-  let cancelPromise = promiseInstallEvent(addon, "onInstallCancelled");
+  const cancelPromise = promiseInstallEvent(addon, "onInstallCancelled");
   panel.secondaryButton.click();
   await cancelPromise;
 
@@ -477,7 +476,7 @@ async function interactiveUpdateTest(autoUpdate, checkFn) {
   checkPromise = (await triggerUpdate(win, addon)).promise;
 
   // This time, accept the upgrade
-  let updatePromise = waitForUpdate(addon);
+  const updatePromise = waitForUpdate(addon);
   panel = await popupPromise;
   panel.button.click();
 
@@ -486,7 +485,7 @@ async function interactiveUpdateTest(autoUpdate, checkFn) {
 
   await checkPromise;
 
-  let tabmail = document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   tabmail.closeTab(tabmail.currentTabInfo);
   await addon.uninstall();
   await SpecialPowers.popPrefEnv();
@@ -533,7 +532,7 @@ async function interactiveUpdateTest(autoUpdate, checkFn) {
     "Every update telemetry event should have the update_from extra var 'user'"
   );
 
-  let hasPermissionsExtras = collectedUpdateEvents
+  const hasPermissionsExtras = collectedUpdateEvents
     .filter(evt => {
       return evt.extra.step === "permissions_prompt";
     })
@@ -546,7 +545,7 @@ async function interactiveUpdateTest(autoUpdate, checkFn) {
     "Every 'permissions_prompt' update telemetry event should have the permissions extra vars"
   );
 
-  let hasDownloadTimeExtras = collectedUpdateEvents
+  const hasDownloadTimeExtras = collectedUpdateEvents
     .filter(evt => {
       return evt.extra.step === "download_completed";
     })
@@ -572,8 +571,8 @@ async function interactiveUpdateTest(autoUpdate, checkFn) {
 // to ensure it gets called before the final check is performed.
 let testCleanup;
 add_task(async function () {
-  let addons = await AddonManager.getAllAddons();
-  let existingAddons = new Set(addons.map(a => a.id));
+  const addons = await AddonManager.getAllAddons();
+  const existingAddons = new Set(addons.map(a => a.id));
 
   registerCleanupFunction(async function () {
     if (testCleanup) {
@@ -581,7 +580,7 @@ add_task(async function () {
       testCleanup = null;
     }
 
-    for (let addon of await AddonManager.getAllAddons()) {
+    for (const addon of await AddonManager.getAllAddons()) {
       // Builtin search extensions may have been installed by SearchService
       // during the test run, ignore those.
       if (
@@ -600,17 +599,17 @@ add_task(async function () {
 
 registerCleanupFunction(() => {
   // The appmenu should be closed by the end of the test.
-  ok(PanelUI.panel.state == "closed", "Main menu is closed.");
+  Assert.equal(PanelUI.panel.state, "closed", "Main menu is closed.");
 
   // Any opened tabs should be closed by the end of the test.
-  let tabmail = document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   is(tabmail.tabInfo.length, 1, "All tabs are closed.");
   tabmail.closeOtherTabs(0);
 });
 
 let collectedTelemetry = [];
 function hookExtensionsTelemetry() {
-  let originalHistogram = ExtensionsUI.histogram;
+  const originalHistogram = ExtensionsUI.histogram;
   ExtensionsUI.histogram = {
     add(value) {
       collectedTelemetry.push(value);

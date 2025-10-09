@@ -11,7 +11,6 @@
  * IDBRequest-based IndexedDB methods and classes.
  */
 
-/* exported IndexedDB */
 /**
  * Wraps the given request object, and returns a Promise which resolves when
  * the requests succeeds or rejects when it fails.
@@ -117,7 +116,7 @@ function forwardMethods(cls, target, methods) {
   }
 }
 
-class Cursor {
+export class Cursor {
   constructor(cursorRequest, source) {
     this.cursorRequest = cursorRequest;
     this.source = source;
@@ -167,7 +166,7 @@ defineCursorUpdateMethods(Cursor, [
 forwardGetters(Cursor, "cursor", ["direction", "key", "primaryKey"]);
 wrapMethods(Cursor, "cursor", ["delete", "update"]);
 
-class CursorWithValue extends Cursor {}
+export class CursorWithValue extends Cursor {}
 
 forwardGetters(CursorWithValue, "cursor", ["value"]);
 
@@ -213,7 +212,7 @@ forwardGetters(Index, "index", [
   "unique",
 ]);
 
-class ObjectStore extends Cursed {
+export class ObjectStore extends Cursed {
   constructor(store) {
     super(store);
 
@@ -233,7 +232,7 @@ wrapMethods(ObjectStore, "store", ["add", "clear", "delete", "put"]);
 
 forwardMethods(ObjectStore, "store", ["deleteIndex"]);
 
-class Transaction {
+export class Transaction {
   constructor(transaction) {
     this.transaction = transaction;
 
@@ -282,9 +281,7 @@ export class IndexedDB {
    *
    * @param {string} dbName
    *        The name of the database to open.
-   * @param {object} options
-   *        The options with which to open the database.
-   * @param {integer} options.version
+   * @param {integer} version
    *        The schema version with which the database needs to be opened. If
    *        the database does not exist, or its current schema version does
    *        not match, the `onupgradeneeded` function will be called.
@@ -296,8 +293,8 @@ export class IndexedDB {
    *
    * @returns {Promise<IndexedDB>}
    */
-  static open(dbName, options, onupgradeneeded = null) {
-    let request = indexedDB.open(dbName, options);
+  static open(dbName, version, onupgradeneeded = null) {
+    let request = indexedDB.open(dbName, version);
     return this._wrapOpenRequest(request, onupgradeneeded);
   }
 
@@ -342,6 +339,7 @@ export class IndexedDB {
   }
 
   constructor(db) {
+    /** @type {IDBDatabase} */
     this.db = db;
   }
 
@@ -350,28 +348,14 @@ export class IndexedDB {
   /**
    * Opens a transaction for the given object stores.
    *
-   * @param {Array<string>} storeNames
+   * @param {string | string[]} storeNames
    *        The names of the object stores for which to open a transaction.
    * @param {string} [mode = "readonly"]
    *        The mode in which to open the transaction.
-   * @param {function} [callback]
-   *        An optional callback function. If provided, the function will be
-   *        called with the Transaction, and a Promise will be returned, which
-   *        will resolve to the callback's return value when the transaction
-   *        completes.
-   * @returns {Transaction|Promise}
+   * @returns {Transaction}
    */
-  transaction(storeNames, mode, callback = null) {
-    let transaction = new Transaction(this.db.transaction(storeNames, mode));
-
-    if (callback) {
-      let result = new Promise(resolve => {
-        resolve(callback(transaction));
-      });
-      return transaction.promiseComplete().then(() => result);
-    }
-
-    return transaction;
+  transaction(storeNames, mode) {
+    return new Transaction(this.db.transaction(storeNames, mode));
   }
 
   /**
@@ -382,25 +366,11 @@ export class IndexedDB {
    *        The name of the object store to open.
    * @param {string} [mode = "readonly"]
    *        The mode in which to open the transaction.
-   * @param {function} [callback]
-   *        An optional callback function. If provided, the function will be
-   *        called with the ObjectStore, and a Promise will be returned, which
-   *        will resolve to the callback's return value when the transaction
-   *        completes.
-   * @returns {ObjectStore|Promise}
+   * @returns {ObjectStore}
    */
-  objectStore(storeName, mode, callback = null) {
+  objectStore(storeName, mode) {
     let transaction = this.transaction([storeName], mode);
-    let objectStore = transaction.objectStore(storeName);
-
-    if (callback) {
-      let result = new Promise(resolve => {
-        resolve(callback(objectStore));
-      });
-      return transaction.promiseComplete().then(() => result);
-    }
-
-    return objectStore;
+    return transaction.objectStore(storeName);
   }
 
   createObjectStore(...args) {

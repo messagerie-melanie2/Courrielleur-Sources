@@ -7,11 +7,10 @@ use std::borrow::Borrow;
 use std::borrow::Cow;
 use std::char;
 use std::error::Error;
-use std::fmt;
 use std::io::{self, Write};
-use std::iter::Iterator;
-use std::mem;
+
 use std::str;
+use thiserror::Error;
 
 impl PrefReaderError {
     fn new(message: String, position: Position, parent: Option<Box<dyn Error>>) -> PrefReaderError {
@@ -20,26 +19,6 @@ impl PrefReaderError {
             position,
             parent,
         }
-    }
-}
-
-impl fmt::Display for PrefReaderError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{} at line {}, column {}",
-            self.message, self.position.line, self.position.column
-        )
-    }
-}
-
-impl Error for PrefReaderError {
-    fn description(&self) -> &str {
-        &self.message
-    }
-
-    fn cause(&self) -> Option<&dyn Error> {
-        self.parent.as_deref()
     }
 }
 
@@ -115,7 +94,7 @@ pub enum PrefToken<'a> {
     Error(String, Position),
 }
 
-impl<'a> PrefToken<'a> {
+impl PrefToken<'_> {
     fn position(&self) -> Position {
         match *self {
             PrefToken::PrefFunction(position) => position,
@@ -135,10 +114,12 @@ impl<'a> PrefToken<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
+#[error("{message} at line {}, column {}", .position.line, .position.column)]
 pub struct PrefReaderError {
     message: String,
     position: Position,
+    #[source]
     parent: Option<Box<dyn Error>>,
 }
 
@@ -241,12 +222,10 @@ impl<'a> PrefTokenizer<'a> {
             TokenType::Semicolon => PrefToken::Semicolon(position),
             TokenType::Comma => PrefToken::Comma(position),
             TokenType::String => PrefToken::String(buf, position),
-            TokenType::Int => {
-                return match buf.parse::<i64>() {
-                    Ok(value) => PrefToken::Int(value, position),
-                    Err(_) => PrefToken::Error(format!("Expected integer, got {}", buf), position),
-                }
-            }
+            TokenType::Int => match buf.parse::<i64>() {
+                Ok(value) => PrefToken::Int(value, position),
+                Err(_) => PrefToken::Error(format!("Expected integer, got {}", buf), position),
+            },
             TokenType::Bool => {
                 let value = match buf.borrow() {
                     "true" => true,
@@ -842,7 +821,7 @@ where
 fn escape_quote(data: &str) -> Cow<str> {
     // Not very efficient…
     if data.contains('"') || data.contains('\\') {
-        Cow::Owned(data.replace('\\', r#"\\"#).replace('"', r#"\""#))
+        Cow::Owned(data.replace('\\', r"\\").replace('"', r#"\""#))
     } else {
         Cow::Borrowed(data)
     }
@@ -999,8 +978,8 @@ pub fn parse_tokens(tokenizer: &mut PrefTokenizer<'_>) -> Result<Preferences, Pr
                         ))
                     }
                 }
-                let key = mem::replace(&mut current_pref.key, None);
-                let value = mem::replace(&mut current_pref.value, None);
+                let key = current_pref.key.take();
+                let value = current_pref.value.take();
                 let pref = if current_pref.sticky {
                     Pref::new_sticky(value.unwrap())
                 } else {

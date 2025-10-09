@@ -7,7 +7,6 @@
 #define mozilla_net_SocketProcessParent_h
 
 #include "mozilla/UniquePtr.h"
-#include "mozilla/ipc/BackgroundParent.h"
 #include "mozilla/ipc/CrashReporterHelper.h"
 #include "mozilla/ipc/InputStreamUtils.h"
 #include "mozilla/net/PSocketProcessParent.h"
@@ -27,15 +26,17 @@ class SocketProcessHost;
 // by SocketProcessHost.
 class SocketProcessParent final
     : public PSocketProcessParent,
-      public ipc::CrashReporterHelper<GeckoProcessType_Socket> {
+      public ipc::CrashReporterHelper<SocketProcessParent> {
  public:
+  static constexpr GeckoProcessType PROCESS_TYPE = GeckoProcessType_Socket;
+
   friend class SocketProcessHost;
 
-  NS_INLINE_DECL_REFCOUNTING(SocketProcessParent, final)
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(SocketProcessParent, final)
 
   explicit SocketProcessParent(SocketProcessHost* aHost);
 
-  static SocketProcessParent* GetSingleton();
+  static already_AddRefed<SocketProcessParent> GetSingleton();
 
   mozilla::ipc::IPCResult RecvAddMemoryReport(const MemoryReport& aReport);
   mozilla::ipc::IPCResult RecvAccumulateChildHistograms(
@@ -76,27 +77,16 @@ class SocketProcessParent final
       const uint32_t& aActivitySubtype, const PRTime& aTimestamp,
       const uint64_t& aExtraSizeData, const nsACString& aExtraStringData);
 
-  mozilla::ipc::IPCResult RecvInitBackground(
-      Endpoint<PBackgroundStarterParent>&& aEndpoint);
+  mozilla::ipc::IPCResult RecvInitSocketBackground(
+      Endpoint<PSocketProcessBackgroundParent>&& aEndpoint);
 
   already_AddRefed<PAltServiceParent> AllocPAltServiceParent();
-
-  mozilla::ipc::IPCResult RecvFindIPCClientCertObjects(
-      nsTArray<IPCClientCertObject>* aObjects);
-  mozilla::ipc::IPCResult RecvIPCClientCertSign(ByteArray aCert,
-                                                ByteArray aData,
-                                                ByteArray aParams,
-                                                ByteArray* aSignature);
 
   already_AddRefed<PProxyConfigLookupParent> AllocPProxyConfigLookupParent(
       nsIURI* aURI, const uint32_t& aProxyResolveFlags);
   mozilla::ipc::IPCResult RecvPProxyConfigLookupConstructor(
       PProxyConfigLookupParent* aActor, nsIURI* aURI,
       const uint32_t& aProxyResolveFlags) override;
-
-  mozilla::ipc::IPCResult RecvCachePushCheck(
-      nsIURI* aPushedURL, OriginAttributes&& aOriginAttributes,
-      nsCString&& aRequestString, CachePushCheckResolver&& aResolver);
 
   mozilla::ipc::IPCResult RecvExcludeHttp2OrHttp3(
       const HttpConnectionInfoCloneArgs& aArgs);

@@ -4,8 +4,8 @@ use crate::unwind;
 use std::mem;
 use std::sync::Arc;
 
-/// Fires off a task into the Rayon threadpool in the "static" or
-/// "global" scope.  Just like a standard thread, this task is not
+/// Puts the task into the Rayon threadpool's job queue in the "static"
+/// or "global" scope. Just like a standard thread, this task is not
 /// tied to the current stack frame, and hence it cannot hold any
 /// references other than those with `'static` lifetime. If you want
 /// to spawn a task that references stack data, use [the `scope()`
@@ -154,7 +154,7 @@ where
     // in a locally-FIFO order.  Otherwise, just use the pool's global injector.
     match registry.current_thread() {
         Some(worker) => worker.push_fifo(job_ref),
-        None => registry.inject(&[job_ref]),
+        None => registry.inject(job_ref),
     }
     mem::forget(abort_guard);
 }

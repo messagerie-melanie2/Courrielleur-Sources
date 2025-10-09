@@ -5,8 +5,6 @@
 
 // this file implements the nsMsgFilterList interface
 
-#include "nsTextFormatter.h"
-
 #include "msgCore.h"
 #include "nsMsgFilterList.h"
 #include "nsMsgFilter.h"
@@ -15,15 +13,14 @@
 #include "nsMsgUtils.h"
 #include "nsMsgSearchTerm.h"
 #include "nsString.h"
+#include "nsLocalFile.h"
 #include "nsIMsgFilterService.h"
 #include "nsMsgSearchScopeTerm.h"
 #include "nsIStringBundle.h"
 #include "nsNetUtil.h"
 #include "nsIInputStream.h"
 #include "nsNativeCharsetUtils.h"
-#include "nsMemory.h"
 #include "prmem.h"
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/Components.h"
 #include "mozilla/Logging.h"
 #include "mozilla/intl/AppDateTimeFormat.h"
@@ -183,9 +180,7 @@ nsresult nsMsgFilterList::GetLogFile(nsIFile** aFile) {
     rv = m_folder->GetFilePath(getter_AddRefs(thisFolder));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsCOMPtr<nsIFile> filterLogFile =
-        do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsIFile> filterLogFile = new nsLocalFile();
     rv = filterLogFile->InitWithFile(thisFolder);
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -287,7 +282,7 @@ nsMsgFilterList::ApplyFiltersToHdr(nsMsgFilterTypeType filterType,
   RefPtr<nsMsgSearchScopeTerm> scope =
       new nsMsgSearchScopeTerm(nullptr, nsMsgSearchScope::offlineMail, folder);
 
-  nsString folderName;
+  nsAutoCString folderName;
   folder->GetName(folderName);
   nsMsgKey msgKey;
   msgHdr->GetMessageKey(&msgKey);
@@ -301,8 +296,7 @@ nsMsgFilterList::ApplyFiltersToHdr(nsMsgFilterTypeType filterType,
   MOZ_LOG(FILTERLOGMODULE, LogLevel::Info,
           ("(Auto) Running %" PRIu32
            " filters from %s on message with key %" PRIu32 " in folder '%s'",
-           filterCount, m_listId.get(), msgKeyToInt(msgKey),
-           NS_ConvertUTF16toUTF8(folderName).get()));
+           filterCount, m_listId.get(), msgKeyToInt(msgKey), folderName.get()));
 
   for (uint32_t filterIndex = 0; filterIndex < filterCount; filterIndex++) {
     if (NS_SUCCEEDED(GetFilterAt(filterIndex, getter_AddRefs(filter)))) {
@@ -338,7 +332,7 @@ nsMsgFilterList::ApplyFiltersToHdr(nsMsgFilterTypeType filterType,
         filter->SetScope(nullptr);
         if (NS_SUCCEEDED(matchTermStatus) && result && listener) {
           nsCString msgId;
-          msgHdr->GetMessageId(getter_Copies(msgId));
+          msgHdr->GetMessageId(msgId);
           MOZ_LOG(FILTERLOGMODULE, LogLevel::Info,
                   ("(Auto) Filter matched message with key %" PRIu32,
                    msgKeyToInt(msgKey)));
@@ -434,7 +428,7 @@ static FilterFileAttribEntry FilterFileAttribTable[] = {
 };
 
 static const unsigned int sNumFilterFileAttribTable =
-    MOZ_ARRAY_LENGTH(FilterFileAttribTable);
+    std::size(FilterFileAttribTable);
 
 // If we want to buffer file IO, wrap it in here.
 int nsMsgFilterList::ReadChar(nsIInputStream* aStream) {
@@ -586,6 +580,12 @@ nsresult nsMsgFilterList::LoadTextFilters(
       {
         if (m_curFilter) {
           int32_t nextFilterStartPos = m_unparsedFilterBuffer.RFind("name");
+          if (nextFilterStartPos < 0) {
+            m_curFilter->SetUnparseable(true);
+            m_curFilter->SetEnabled(false);
+            err = NS_ERROR_ABORT;
+            break;
+          }
 
           nsAutoCString nextFilterPart;
           nextFilterPart = Substring(m_unparsedFilterBuffer, nextFilterStartPos,
@@ -601,11 +601,7 @@ nsresult nsMsgFilterList::LoadTextFilters(
           }
           m_unparsedFilterBuffer = nextFilterPart;
         }
-        nsMsgFilter* filter = new nsMsgFilter;
-        if (filter == nullptr) {
-          err = NS_ERROR_OUT_OF_MEMORY;
-          break;
-        }
+        nsMsgFilter* filter = new nsMsgFilter();
         filter->SetFilterList(static_cast<nsIMsgFilterList*>(this));
         nsAutoString unicodeStr;
         if (m_fileVersion == k45Version) {

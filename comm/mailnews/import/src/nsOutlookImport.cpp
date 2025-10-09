@@ -8,6 +8,7 @@
 */
 #include "nscore.h"
 #include "nsString.h"
+#include "nsLocalFile.h"
 #include "nsMsgUtils.h"
 #include "nsIImportService.h"
 #include "nsOutlookImport.h"
@@ -17,7 +18,6 @@
 #include "nsIImportGeneric.h"
 #include "nsIImportAddressBooks.h"
 #include "nsIImportABDescriptor.h"
-#include "nsIImportFieldMap.h"
 #include "nsXPCOM.h"
 #include "nsISupportsPrimitives.h"
 #include "nsIAbDirectory.h"
@@ -25,7 +25,6 @@
 #include "nsTextFormatter.h"
 #include "nsOutlookStringBundle.h"
 #include "ImportDebug.h"
-#include "nsUnicharUtils.h"
 
 #include "nsOutlookMail.h"
 
@@ -42,10 +41,7 @@ class ImportOutlookMailImpl : public nsIImportMail {
 
   // nsIImportmail interface
 
-  /* void GetDefaultLocation (out nsIFile location, out boolean found, out
-   * boolean userVerify); */
-  NS_IMETHOD GetDefaultLocation(nsIFile** location, bool* found,
-                                bool* userVerify);
+  NS_IMETHOD GetDefaultLocation(nsIFile** location);
 
   NS_IMETHOD FindMailboxes(nsIFile* location,
                            nsTArray<RefPtr<nsIImportMailboxDescriptor>>& boxes);
@@ -91,37 +87,18 @@ class ImportOutlookAddressImpl : public nsIImportAddressBooks {
 
   NS_IMETHOD GetAutoFind(char16_t** description, bool* _retval);
 
-  NS_IMETHOD GetNeedsFieldMap(nsIFile* location, bool* _retval) {
-    *_retval = false;
-    return NS_OK;
-  }
-
-  NS_IMETHOD GetDefaultLocation(nsIFile** location, bool* found,
-                                bool* userVerify) {
-    return NS_ERROR_FAILURE;
-  }
+  NS_IMETHOD GetDefaultLocation(nsIFile** location) { return NS_ERROR_FAILURE; }
 
   NS_IMETHOD FindAddressBooks(nsIFile* location,
                               nsTArray<RefPtr<nsIImportABDescriptor>>& books);
 
-  NS_IMETHOD InitFieldMap(nsIImportFieldMap* fieldMap) {
-    return NS_ERROR_FAILURE;
-  }
-
   NS_IMETHOD ImportAddressBook(nsIImportABDescriptor* source,
                                nsIAbDirectory* destination,
-                               nsIImportFieldMap* fieldMap,
                                nsISupports* aSupportService,
                                char16_t** errorLog, char16_t** successLog,
                                bool* fatalError);
 
   NS_IMETHOD GetImportProgress(uint32_t* _retval);
-
-  NS_IMETHOD GetSampleData(int32_t index, bool* pFound, char16_t** pStr) {
-    return NS_ERROR_FAILURE;
-  }
-
-  NS_IMETHOD SetSampleLocation(nsIFile*) { return NS_OK; }
 
  private:
   virtual ~ImportOutlookAddressImpl();
@@ -147,39 +124,6 @@ nsOutlookImport::~nsOutlookImport() {
 }
 
 NS_IMPL_ISUPPORTS(nsOutlookImport, nsIImportModule)
-
-NS_IMETHODIMP nsOutlookImport::GetName(char16_t** name) {
-  NS_ASSERTION(name != nullptr, "null ptr");
-  if (!name) return NS_ERROR_NULL_POINTER;
-
-  *name = nsOutlookStringBundle::GetStringByID(OUTLOOKIMPORT_NAME);
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsOutlookImport::GetDescription(char16_t** name) {
-  NS_ASSERTION(name != nullptr, "null ptr");
-  if (!name) return NS_ERROR_NULL_POINTER;
-
-  *name = nsOutlookStringBundle::GetStringByID(OUTLOOKIMPORT_DESCRIPTION);
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsOutlookImport::GetSupports(char** supports) {
-  NS_ASSERTION(supports != nullptr, "null ptr");
-  if (!supports) return NS_ERROR_NULL_POINTER;
-
-  *supports = strdup(kOutlookSupportsString);
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsOutlookImport::GetSupportsUpgrade(bool* pUpgrade) {
-  NS_ASSERTION(pUpgrade != nullptr, "null ptr");
-  if (!pUpgrade) return NS_ERROR_NULL_POINTER;
-
-  *pUpgrade = true;
-  return NS_OK;
-}
 
 NS_IMETHODIMP nsOutlookImport::GetImportInterface(const char* pImportType,
                                                   nsISupports** ppInterface) {
@@ -268,17 +212,11 @@ ImportOutlookMailImpl::~ImportOutlookMailImpl() {
 
 NS_IMPL_ISUPPORTS(ImportOutlookMailImpl, nsIImportMail)
 
-NS_IMETHODIMP ImportOutlookMailImpl::GetDefaultLocation(nsIFile** ppLoc,
-                                                        bool* found,
-                                                        bool* userVerify) {
+NS_IMETHODIMP ImportOutlookMailImpl::GetDefaultLocation(nsIFile** ppLoc) {
   NS_ASSERTION(ppLoc != nullptr, "null ptr");
-  NS_ASSERTION(found != nullptr, "null ptr");
-  NS_ASSERTION(userVerify != nullptr, "null ptr");
-  if (!ppLoc || !found || !userVerify) return NS_ERROR_NULL_POINTER;
+  if (!ppLoc) return NS_ERROR_NULL_POINTER;
 
-  *found = false;
   *ppLoc = nullptr;
-  *userVerify = false;
   // We need to verify here that we can get the mail, if true then
   // return a dummy location, otherwise return no location
   CMapiApi mapi;
@@ -290,14 +228,8 @@ NS_IMETHODIMP ImportOutlookMailImpl::GetDefaultLocation(nsIFile** ppLoc,
 
   if (store.GetSize() == 0) return NS_OK;
 
-  nsresult rv;
-  nsCOMPtr<nsIFile> resultFile =
-      do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv);
-  if (NS_FAILED(rv)) return rv;
-
-  *found = true;
+  nsCOMPtr<nsIFile> resultFile = new nsLocalFile();
   resultFile.forget(ppLoc);
-  *userVerify = false;
 
   return NS_OK;
 }
@@ -447,8 +379,8 @@ NS_IMETHODIMP ImportOutlookAddressImpl::FindAddressBooks(
 
 NS_IMETHODIMP ImportOutlookAddressImpl::ImportAddressBook(
     nsIImportABDescriptor* source, nsIAbDirectory* destination,
-    nsIImportFieldMap* fieldMap, nsISupports* aSupportService,
-    char16_t** pErrorLog, char16_t** pSuccessLog, bool* fatalError) {
+    nsISupports* aSupportService, char16_t** pErrorLog, char16_t** pSuccessLog,
+    bool* fatalError) {
   m_msgCount = 0;
   m_msgTotal = 0;
   NS_ASSERTION(source != nullptr, "null ptr");

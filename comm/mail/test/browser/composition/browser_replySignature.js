@@ -9,17 +9,18 @@
 "use strict";
 
 var { close_compose_window, get_compose_body, open_compose_with_reply } =
-  ChromeUtils.import("resource://testing-common/mozmill/ComposeHelpers.jsm");
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+  );
 var {
   add_message_to_folder,
   assert_selected_and_displayed,
   be_in_folder,
   create_folder,
   create_message,
-  mc,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 var sig = "roses are red";
@@ -29,7 +30,7 @@ add_setup(async function () {
   folder = await create_folder("SigStripTest");
   registerCleanupFunction(() => folder.deleteSelf(null));
 
-  let msg = create_message({
+  const msg = create_message({
     subject: "msg with signature; format=flowed",
     body: {
       body:
@@ -43,7 +44,7 @@ add_setup(async function () {
     },
   });
   await add_message_to_folder([folder], msg);
-  let msg2 = create_message({
+  const msg2 = create_message({
     subject: "msg with signature; format not flowed",
     body: {
       body:
@@ -90,23 +91,23 @@ add_task(async function test_sig_strip_false_nonff() {
 /**
  * Helper function to check signature stripping works as it should.
  *
- * @param aRow the row index of the message to test
- * @param aShouldStrip true if the signature should be stripped
+ * @param {integer} aRow - The row index of the message to test.
+ * @param {boolean} aShouldStrip true if the signature should be stripped.
  */
 async function check_sig_strip_works(aRow, aShouldStrip) {
   await be_in_folder(folder);
-  let msg = select_click_row(aRow);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(aRow);
+  await assert_selected_and_displayed(window, msg);
 
-  let rwc = open_compose_with_reply();
-  let body = get_compose_body(rwc);
+  const rwc = await open_compose_with_reply();
+  const body = get_compose_body(rwc);
 
   if (aShouldStrip && body.textContent.includes(sig)) {
     throw new Error("signature was not stripped; body=" + body.textContent);
   } else if (!aShouldStrip && !body.textContent.includes(sig)) {
     throw new Error("signature stripped; body=" + body.textContent);
   }
-  close_compose_window(rwc);
+  await close_compose_window(rwc);
 
   Assert.report(
     false,

@@ -38,12 +38,16 @@ mod metrics {
 }
 
 mod pings {
+    use super::*;
     use glean::private::PingType;
     use once_cell::sync::Lazy;
 
     #[allow(non_upper_case_globals)]
-    pub static validation: Lazy<PingType> =
-        Lazy::new(|| glean::private::PingType::new("validation", true, true, vec![]));
+    pub static validation: Lazy<PingType> = Lazy::new(|| {
+        common::PingBuilder::new("validation")
+            .with_send_if_empty(true)
+            .build()
+    });
 }
 
 /// Test scenario: Glean initialization fails.
@@ -59,6 +63,7 @@ fn init_fails() {
     let dir = tempfile::tempdir().unwrap();
     let tmpname = dir.path().to_path_buf();
 
+    _ = &*pings::validation;
     let cfg = ConfigurationBuilder::new(true, tmpname, "")
         .with_server_endpoint("invalid-test-host")
         .build();

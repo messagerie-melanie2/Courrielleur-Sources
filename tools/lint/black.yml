@@ -10,9 +10,9 @@ black:
     extensions:
         - build
         - configure
+        - mozbuild
         - py
     support-files:
         - 'tools/lint/python/**'
     type: external
     payload: python.black:lint
-    setup: python.black:setup

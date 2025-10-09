@@ -14,20 +14,22 @@ const {
   get_about_message,
   get_special_folder,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 const { open_compose_new_mail, get_msg_source, setup_msg_contents } =
-  ChromeUtils.import("resource://testing-common/mozmill/ComposeHelpers.jsm");
-const { OpenPGPTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mozmill/OpenPGPTestUtils.jsm"
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+  );
+const { OpenPGPTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/OpenPGPTestUtils.sys.mjs"
 );
-const { EnigmailPersistentCrypto } = ChromeUtils.import(
-  "chrome://openpgp/content/modules/persistentCrypto.jsm"
+const { EnigmailPersistentCrypto } = ChromeUtils.importESModule(
+  "chrome://openpgp/content/modules/persistentCrypto.sys.mjs"
 );
 
-const { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+const { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 let bobAcct;
@@ -35,7 +37,7 @@ let bobIdentity;
 let initialKeyIdPref = "";
 let gOutbox;
 
-let aboutMessage = get_about_message();
+const aboutMessage = get_about_message();
 
 async function waitCheckEncryptionStateDone(win) {
   return BrowserTestUtils.waitForEvent(
@@ -59,7 +61,7 @@ add_setup(async function () {
   bobIdentity.email = "bob@openpgp.example";
   bobAcct.addIdentity(bobIdentity);
 
-  let [id] = await OpenPGPTestUtils.importPrivateKey(
+  const [id] = await OpenPGPTestUtils.importPrivateKey(
     window,
     new FileUtils.File(
       getTestFilePath(
@@ -99,15 +101,15 @@ add_setup(async function () {
  * Outbox.
  */
 add_task(async function testSignedMessageComposition() {
-  let autocryptPrefName = "mail.identity.default.sendAutocryptHeaders";
+  const autocryptPrefName = "mail.identity.default.sendAutocryptHeaders";
   Services.prefs.setBoolPref(autocryptPrefName, true);
 
   await be_in_folder(bobAcct.incomingServer.rootFolder);
 
-  let cwc = open_compose_new_mail();
-  let composeWin = cwc.window;
+  const cwc = await open_compose_new_mail();
+  const composeWin = cwc;
 
-  setup_msg_contents(
+  await setup_msg_contents(
     cwc,
     "alice@openpgp.example",
     "Compose Signed Message",
@@ -119,10 +121,10 @@ add_task(async function testSignedMessageComposition() {
   await sendMessage(composeWin);
 
   await be_in_folder(gOutbox);
-  let msg = select_click_row(0);
-  assert_selected_and_displayed(0);
-  let src = await get_msg_source(msg);
-  let lines = src.split("\n");
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(0);
+  const src = await get_msg_source(msg);
+  const lines = src.split("\n");
 
   Assert.ok(
     lines.some(
@@ -160,10 +162,10 @@ add_task(async function testSignedMessageComposition() {
 add_task(async function testSignedMessageWithKeyComposition() {
   await be_in_folder(bobAcct.incomingServer.rootFolder);
 
-  let cwc = open_compose_new_mail();
-  let composeWin = cwc.window;
+  const cwc = await open_compose_new_mail();
+  const composeWin = cwc;
 
-  setup_msg_contents(
+  await setup_msg_contents(
     cwc,
     "alice@openpgp.example",
     "Compose Signed Message With Key",
@@ -174,15 +176,15 @@ add_task(async function testSignedMessageWithKeyComposition() {
   await sendMessage(composeWin);
 
   await be_in_folder(gOutbox);
-  select_click_row(0);
-  assert_selected_and_displayed(0);
+  await select_click_row(0);
+  await assert_selected_and_displayed(0);
 
   Assert.ok(
     OpenPGPTestUtils.hasSignedIconState(aboutMessage.document, "ok"),
     "message has signed icon"
   );
 
-  let attachmentList = aboutMessage.document.querySelector("#attachmentList");
+  const attachmentList = aboutMessage.document.querySelector("#attachmentList");
 
   Assert.equal(
     attachmentList.itemChildren.length,
@@ -272,12 +274,12 @@ Autocrypt-Gossip: addr=carol@example.com; keydata=
 add_task(async function testSignedEncryptedMessageComposition() {
   await be_in_folder(bobAcct.incomingServer.rootFolder);
 
-  let cwc = open_compose_new_mail();
-  let composeWin = cwc.window;
+  const cwc = await open_compose_new_mail();
+  const composeWin = cwc;
 
   // setup_msg_contents will trigger checkEncryptionState.
   let checkDonePromise = waitCheckEncryptionStateDone(composeWin);
-  setup_msg_contents(
+  await setup_msg_contents(
     cwc,
     "alice@openpgp.example, carol@example.com",
     "Compose Signed Encrypted Message",
@@ -296,8 +298,8 @@ add_task(async function testSignedEncryptedMessageComposition() {
   await sendMessage(composeWin);
 
   await be_in_folder(gOutbox);
-  let encryptedMsg = select_click_row(0);
-  assert_selected_and_displayed(0);
+  const encryptedMsg = await select_click_row(0);
+  await assert_selected_and_displayed(0);
 
   Assert.ok(
     OpenPGPTestUtils.hasSignedIconState(aboutMessage.document, "ok"),
@@ -327,13 +329,13 @@ add_task(async function testSignedEncryptedMessageComposition() {
     null
   );
 
-  let msg = await select_click_row(0);
-  let src = await get_msg_source(msg);
-  let lines = src.split("\r\n");
+  const msg = await select_click_row(0);
+  const src = await get_msg_source(msg);
+  const lines = src.split("\r\n");
 
   // As a sanity check, we check that the header line, plus the first
   // and last lines of the keydata are present.
-  let expectedGossipLines = [
+  const expectedGossipLines = [
     "Autocrypt-Gossip: addr=alice@openpgp.example; keydata=",
     " xjMEXEcE6RYJKwYBBAHaRw8BAQdArjWwk3FAqyiFbFBKT4TzXcVBqPTB3gmzlC/Ub7O1u13N",
     " 4xN80fsn0QEA22Kr7VkCjeAEC08VSTeV+QFsmz55/lntWkwYWhmvOgE=",
@@ -342,7 +344,7 @@ add_task(async function testSignedEncryptedMessageComposition() {
     " meCtpxz2PoYBJfxGPEzu9xTLV6k9wSVTCgE=",
   ];
 
-  for (let egl of expectedGossipLines) {
+  for (const egl of expectedGossipLines) {
     Assert.ok(
       lines.some(line => line == egl),
       "The following Autocrypt-Gossip header line was found: " + egl
@@ -360,12 +362,12 @@ add_task(async function testSignedEncryptedMessageComposition() {
 add_task(async function testSignedEncryptedMessageWithKeyComposition() {
   await be_in_folder(bobAcct.incomingServer.rootFolder);
 
-  let cwc = open_compose_new_mail();
-  let composeWin = cwc.window;
+  const cwc = await open_compose_new_mail();
+  const composeWin = cwc;
 
   // setup_msg_contents will trigger checkEncryptionState.
   let checkDonePromise = waitCheckEncryptionStateDone(composeWin);
-  setup_msg_contents(
+  await setup_msg_contents(
     cwc,
     "alice@openpgp.example",
     "Compose Signed Encrypted Message With Key",
@@ -383,8 +385,8 @@ add_task(async function testSignedEncryptedMessageWithKeyComposition() {
   await sendMessage(composeWin);
 
   await be_in_folder(gOutbox);
-  select_click_row(0);
-  assert_selected_and_displayed(0);
+  await select_click_row(0);
+  await assert_selected_and_displayed(0);
 
   Assert.ok(
     OpenPGPTestUtils.hasSignedIconState(aboutMessage.document, "ok"),
@@ -396,7 +398,7 @@ add_task(async function testSignedEncryptedMessageWithKeyComposition() {
     "message has encrypted icon"
   );
 
-  let attachmentList = aboutMessage.document.querySelector("#attachmentList");
+  const attachmentList = aboutMessage.document.querySelector("#attachmentList");
 
   Assert.equal(
     attachmentList.itemChildren.length,

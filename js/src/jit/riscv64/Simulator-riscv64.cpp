@@ -611,7 +611,7 @@ void RiscvDebugger::Debug() {
           printf("%s unrecognized\n", arg1);
           continue;
         }
-        sim_->watch_address_ = reinterpret_cast<int64_t*>(value);
+        sim_->watch_address_ = reinterpret_cast<intptr_t*>(value);
         sim_->watch_value_ = *(sim_->watch_address_);
       } else if ((strcmp(cmd, "disasm") == 0) || (strcmp(cmd, "dpc") == 0) ||
                  (strcmp(cmd, "di") == 0)) {
@@ -1259,6 +1259,14 @@ JS::ProfilingFrameIterator::RegisterState Simulator::registerState() {
   return state;
 }
 
+void Simulator::HandleWasmTrap() {
+  uint8_t* newPC;
+  if (wasm::HandleIllegalInstruction(registerState(), &newPC)) {
+    set_pc(int64_t(newPC));
+    return;
+  }
+}
+
 // TODO(plind): consider making icount_ printing a flag option.
 template <typename T>
 void Simulator::TraceMemRd(sreg_t addr, T value, sreg_t reg_value) {
@@ -1610,6 +1618,8 @@ typedef double (*Prototype_Double_DoubleDoubleDoubleDouble)(double arg0,
 typedef int32_t (*Prototype_Int32_General)(int64_t);
 typedef int32_t (*Prototype_Int32_GeneralInt32)(int64_t, int32_t);
 typedef int32_t (*Prototype_Int32_GeneralInt32Int32)(int64_t, int32_t, int32_t);
+typedef int32_t (*Prototype_Int32_GeneralInt32Int32Int32)(int64_t, int32_t,
+                                                          int32_t, int32_t);
 typedef int32_t (*Prototype_Int32_GeneralInt32Int32Int32Int32)(int64_t, int32_t,
                                                                int32_t, int32_t,
                                                                int32_t);
@@ -1619,36 +1629,50 @@ typedef int32_t (*Prototype_Int32_GeneralInt32Int32Int32Int32General)(
     int64_t, int32_t, int32_t, int32_t, int32_t, int64_t);
 typedef int32_t (*Prototype_Int32_GeneralInt32Int32Int32General)(
     int64_t, int32_t, int32_t, int32_t, int64_t);
-typedef int32_t (*Prototype_Int32_GeneralInt32Int32Int64)(int64_t, int32_t,
-                                                          int32_t, int64_t);
 typedef int32_t (*Prototype_Int32_GeneralInt32Int32General)(int64_t, int32_t,
                                                             int32_t, int64_t);
-typedef int32_t (*Prototype_Int32_GeneralInt32Int64Int64)(int64_t, int32_t,
-                                                          int64_t, int64_t);
+typedef int32_t (*Prototype_Int32_GeneralInt32Int32Int64Int32)(int64_t, int32_t,
+                                                               int32_t, int64_t,
+                                                               int32_t);
 typedef int32_t (*Prototype_Int32_GeneralInt32GeneralInt32)(int64_t, int32_t,
                                                             int64_t, int32_t);
 typedef int32_t (*Prototype_Int32_GeneralInt32GeneralInt32Int32)(
     int64_t, int32_t, int64_t, int32_t, int32_t);
+typedef int32_t (*Prototype_Int32_GeneralInt32Int64Int64Int32)(int64_t, int32_t,
+                                                               int64_t, int64_t,
+                                                               int32_t);
 typedef int32_t (*Prototype_Int32_GeneralGeneral)(int64_t, int64_t);
 typedef int32_t (*Prototype_Int32_GeneralGeneralGeneral)(int64_t, int64_t,
                                                          int64_t);
 typedef int32_t (*Prototype_Int32_GeneralGeneralInt32Int32)(int64_t, int64_t,
                                                             int32_t, int32_t);
+typedef int32_t (*Prototype_Int32_GeneralInt64Int32Int32)(int64_t, int64_t,
+                                                          int32_t, int32_t);
+typedef int32_t (*Prototype_Int32_GeneralInt64Int32Int32Int32Int32)(
+    int64_t, int64_t, int32_t, int32_t, int32_t, int32_t);
+typedef int32_t (*Prototype_Int32_GeneralInt64Int32Int64Int32)(int64_t, int64_t,
+                                                               int32_t, int64_t,
+                                                               int32_t);
 typedef int32_t (*Prototype_Int32_GeneralInt64Int32Int32Int32)(int64_t, int64_t,
                                                                int32_t, int32_t,
                                                                int32_t);
-typedef int32_t (*Prototype_Int32_GeneralInt64Int32)(int64_t, int64_t, int32_t);
-
+typedef int32_t (*Prototype_Int32_GeneralGeneralInt32Int32Int32GeneralInt32)(
+    int64_t, int64_t, int32_t, int32_t, int32_t, int64_t, int32_t);
 typedef int32_t (*Prototype_Int32_GeneralGeneralInt32General)(int32_t, int32_t,
                                                               int32_t, int32_t);
-typedef int32_t (*Prototype_Int32_GeneralInt64Int32Int64)(int64_t, int64_t,
-                                                          int32_t, int64_t);
 typedef int32_t (*Prototype_Int32_GeneralInt64Int32Int64General)(
     int64_t, int64_t, int32_t, int64_t, int64_t);
 typedef int32_t (*Prototype_Int32_GeneralInt64Int64Int64)(int64_t, int64_t,
                                                           int64_t, int64_t);
+typedef int32_t (*Prototype_Int32_GeneralInt64Int64Int64Int32)(int64_t, int64_t,
+                                                               int64_t, int64_t,
+                                                               int32_t);
+typedef int32_t (*Prototype_Int32_GeneralInt64Int64General)(int64_t, int64_t,
+                                                            int64_t, int64_t);
 typedef int32_t (*Prototype_Int32_GeneralInt64Int64Int64General)(
     int64_t, int64_t, int64_t, int64_t, int64_t);
+typedef int32_t (*Prototype_Int32_GeneralInt64Int64Int64Int32Int32)(
+    int64_t, int64_t, int64_t, int64_t, int32_t, int32_t);
 typedef int64_t (*Prototype_General_GeneralInt32)(int64_t, int32_t);
 typedef int64_t (*Prototype_General_GeneralInt32Int32)(int64_t, int32_t,
                                                        int32_t);
@@ -1659,7 +1683,9 @@ typedef int64_t (*Prototype_General_GeneralInt32Int32GeneralInt32)(
 typedef int32_t (*Prototype_Int32_GeneralGeneralInt32GeneralInt32Int32Int32)(
     int64_t, int64_t, int32_t, int64_t, int32_t, int32_t, int32_t);
 typedef int64_t (*Prototype_Int64_General)(int64_t);
+typedef int64_t (*Prototype_Int64_GeneralInt32)(int64_t, int32_t);
 typedef int64_t (*Prototype_Int64_GeneralInt64)(int64_t, int64_t);
+typedef int64_t (*Prototype_Int64_GeneralInt64Int32)(int64_t, int64_t, int32_t);
 typedef int32_t (*Prototype_Int32_GeneralInt64Int64General)(int64_t, int64_t,
                                                             int64_t, int64_t);
 // Generated by Assembler::break_()/stop(), ebreak code is passed as immediate
@@ -1722,7 +1748,7 @@ void Simulator::SoftwareInterrupt() {
         Prototype_General0 target =
             reinterpret_cast<Prototype_General0>(external);
         int64_t result = target();
-        if (FLAG_trace_sim) printf("ret %ld\n", result);
+        if (FLAG_trace_sim) printf("ret %" PRId64 "\n", result);
         setCallResult(result);
         break;
       }
@@ -1730,7 +1756,7 @@ void Simulator::SoftwareInterrupt() {
         Prototype_General1 target =
             reinterpret_cast<Prototype_General1>(external);
         int64_t result = target(arg0);
-        if (FLAG_trace_sim) printf("ret %ld\n", result);
+        if (FLAG_trace_sim) printf("ret %" PRId64 "\n", result);
         setCallResult(result);
         break;
       }
@@ -1738,7 +1764,7 @@ void Simulator::SoftwareInterrupt() {
         Prototype_General2 target =
             reinterpret_cast<Prototype_General2>(external);
         int64_t result = target(arg0, arg1);
-        if (FLAG_trace_sim) printf("ret %ld\n", result);
+        if (FLAG_trace_sim) printf("ret %" PRId64 "\n", result);
         setCallResult(result);
         break;
       }
@@ -1746,7 +1772,7 @@ void Simulator::SoftwareInterrupt() {
         Prototype_General3 target =
             reinterpret_cast<Prototype_General3>(external);
         int64_t result = target(arg0, arg1, arg2);
-        if (FLAG_trace_sim) printf("ret %ld\n", result);
+        if (FLAG_trace_sim) printf("ret %" PRId64 "\n", result);
         if (external == intptr_t(&js::wasm::Instance::wake_m32)) {
           result = int32_t(result);
         }
@@ -1757,7 +1783,7 @@ void Simulator::SoftwareInterrupt() {
         Prototype_General4 target =
             reinterpret_cast<Prototype_General4>(external);
         int64_t result = target(arg0, arg1, arg2, arg3);
-        if (FLAG_trace_sim) printf("ret %ld\n", result);
+        if (FLAG_trace_sim) printf("ret %" PRId64 "\n", result);
         setCallResult(result);
         break;
       }
@@ -1765,7 +1791,7 @@ void Simulator::SoftwareInterrupt() {
         Prototype_General5 target =
             reinterpret_cast<Prototype_General5>(external);
         int64_t result = target(arg0, arg1, arg2, arg3, arg4);
-        if (FLAG_trace_sim) printf("ret %ld\n", result);
+        if (FLAG_trace_sim) printf("ret %" PRId64 "\n", result);
         setCallResult(result);
         break;
       }
@@ -1773,7 +1799,7 @@ void Simulator::SoftwareInterrupt() {
         Prototype_General6 target =
             reinterpret_cast<Prototype_General6>(external);
         int64_t result = target(arg0, arg1, arg2, arg3, arg4, arg5);
-        if (FLAG_trace_sim) printf("ret %ld\n", result);
+        if (FLAG_trace_sim) printf("ret %" PRId64 "\n", result);
         setCallResult(result);
         break;
       }
@@ -1781,7 +1807,7 @@ void Simulator::SoftwareInterrupt() {
         Prototype_General7 target =
             reinterpret_cast<Prototype_General7>(external);
         int64_t result = target(arg0, arg1, arg2, arg3, arg4, arg5, arg6);
-        if (FLAG_trace_sim) printf("ret %ld\n", result);
+        if (FLAG_trace_sim) printf("ret %" PRId64 "\n", result);
         setCallResult(result);
         break;
       }
@@ -1789,7 +1815,7 @@ void Simulator::SoftwareInterrupt() {
         Prototype_General8 target =
             reinterpret_cast<Prototype_General8>(external);
         int64_t result = target(arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7);
-        if (FLAG_trace_sim) printf("ret %ld\n", result);
+        if (FLAG_trace_sim) printf("ret %" PRId64 "\n", result);
         setCallResult(result);
         break;
       }
@@ -1806,8 +1832,8 @@ void Simulator::SoftwareInterrupt() {
         Prototype_Int_Double target =
             reinterpret_cast<Prototype_Int_Double>(external);
         int64_t result = target(dval0);
-        if (FLAG_trace_sim) printf("ret %ld\n", result);
-        if (external == intptr_t((int32_t(*)(double))JS::ToInt32)) {
+        if (FLAG_trace_sim) printf("ret %" PRId64 "\n", result);
+        if (external == intptr_t((int32_t (*)(double))JS::ToInt32)) {
           result = int32_t(result);
         }
         setRegister(a0, result);
@@ -1817,7 +1843,7 @@ void Simulator::SoftwareInterrupt() {
         Prototype_GeneralGeneralGeneralInt64 target =
             reinterpret_cast<Prototype_GeneralGeneralGeneralInt64>(external);
         int64_t result = target(arg0, arg1, arg2, arg3);
-        if (FLAG_trace_sim) printf("ret %ld\n", result);
+        if (FLAG_trace_sim) printf("ret %" PRId64 "\n", result);
         if (external == intptr_t(&js::wasm::Instance::wait_i32_m32)) {
           result = int32_t(result);
         }
@@ -1828,7 +1854,7 @@ void Simulator::SoftwareInterrupt() {
         Prototype_GeneralGeneralInt64Int64 target =
             reinterpret_cast<Prototype_GeneralGeneralInt64Int64>(external);
         int64_t result = target(arg0, arg1, arg2, arg3);
-        if (FLAG_trace_sim) printf("ret %ld\n", result);
+        if (FLAG_trace_sim) printf("ret %" PRId64 "\n", result);
         if (external == intptr_t(&js::wasm::Instance::wait_i64_m32)) {
           result = int32_t(result);
         }
@@ -1840,7 +1866,7 @@ void Simulator::SoftwareInterrupt() {
         Prototype_Int_DoubleInt target =
             reinterpret_cast<Prototype_Int_DoubleInt>(external);
         int64_t result = target(dval, arg0);
-        if (FLAG_trace_sim) printf("ret %ld\n", result);
+        if (FLAG_trace_sim) printf("ret %" PRId64 "\n", result);
         setRegister(a0, result);
         break;
       }
@@ -1849,7 +1875,7 @@ void Simulator::SoftwareInterrupt() {
         Prototype_Int_DoubleIntInt target =
             reinterpret_cast<Prototype_Int_DoubleIntInt>(external);
         int64_t result = target(dval, arg1, arg2);
-        if (FLAG_trace_sim) printf("ret %ld\n", result);
+        if (FLAG_trace_sim) printf("ret %" PRId64 "\n", result);
         setRegister(a0, result);
         break;
       }
@@ -1858,7 +1884,7 @@ void Simulator::SoftwareInterrupt() {
         Prototype_Int_IntDoubleIntInt target =
             reinterpret_cast<Prototype_Int_IntDoubleIntInt>(external);
         int64_t result = target(arg0, dval, arg2, arg3);
-        if (FLAG_trace_sim) printf("ret %ld\n", result);
+        if (FLAG_trace_sim) printf("ret %" PRId64 "\n", result);
         setRegister(a0, result);
         break;
       }
@@ -1887,7 +1913,7 @@ void Simulator::SoftwareInterrupt() {
         Prototype_Int_Float32 target =
             reinterpret_cast<Prototype_Int_Float32>(external);
         int64_t result = target(fval0);
-        if (FLAG_trace_sim) printf("ret %ld\n", result);
+        if (FLAG_trace_sim) printf("ret %" PRId64 "\n", result);
         setRegister(a0, result);
         break;
       }
@@ -1944,7 +1970,7 @@ void Simulator::SoftwareInterrupt() {
         Prototype_Int_IntDouble target =
             reinterpret_cast<Prototype_Int_IntDouble>(external);
         int64_t result = target(arg0, dval0);
-        if (FLAG_trace_sim) printf("ret %ld\n", result);
+        if (FLAG_trace_sim) printf("ret %" PRId64 "\n", result);
         setRegister(a0, result);
         break;
       }
@@ -1992,6 +2018,12 @@ void Simulator::SoftwareInterrupt() {
         setRegister(a0, I64(ret));
         break;
       }
+      case Args_Int32_GeneralInt32Int32Int32: {
+        int32_t ret = reinterpret_cast<Prototype_Int32_GeneralInt32Int32Int32>(
+            nativeFn)(arg0, I32(arg1), I32(arg2), I32(arg3));
+        setRegister(a0, I64(ret));
+        break;
+      }
       case Args_Int32_GeneralInt32Int32Int32Int32: {
         int32_t ret =
             reinterpret_cast<Prototype_Int32_GeneralInt32Int32Int32Int32>(
@@ -2025,13 +2057,6 @@ void Simulator::SoftwareInterrupt() {
         setRegister(a0, I64(ret));
         break;
       }
-      case Args_Int32_GeneralInt32Int32Int64: {
-        int32_t ret = reinterpret_cast<Prototype_Int32_GeneralInt32Int32Int64>(
-            nativeFn)(arg0, I32(arg1), I32(arg2), arg3);
-        if (FLAG_trace_sim) printf("ret %d\n", ret);
-        setRegister(a0, I64(ret));
-        break;
-      }
       case Args_Int32_GeneralInt32Int32General: {
         int32_t ret =
             reinterpret_cast<Prototype_Int32_GeneralInt32Int32General>(
@@ -2040,10 +2065,10 @@ void Simulator::SoftwareInterrupt() {
         setRegister(a0, I64(ret));
         break;
       }
-      case Args_Int32_GeneralInt32Int64Int64: {
-        int32_t ret = reinterpret_cast<Prototype_Int32_GeneralInt32Int64Int64>(
-            nativeFn)(arg0, I32(arg1), arg2, arg3);
-        if (FLAG_trace_sim) printf("ret %d\n", ret);
+      case Args_Int32_GeneralInt32Int32Int64Int32: {
+        int32_t ret =
+            reinterpret_cast<Prototype_Int32_GeneralInt32Int32Int64Int32>(
+                nativeFn)(arg0, I32(arg1), I32(arg2), arg3, I32(arg4));
         setRegister(a0, I64(ret));
         break;
       }
@@ -2070,6 +2095,13 @@ void Simulator::SoftwareInterrupt() {
         setRegister(a0, I64(ret));
         break;
       }
+      case Args_Int32_GeneralInt32Int64Int64Int32: {
+        int32_t ret =
+            reinterpret_cast<Prototype_Int32_GeneralInt32Int64Int64Int32>(
+                nativeFn)(arg0, I32(arg1), arg2, arg3, I32(arg4));
+        setRegister(a0, I64(ret));
+        break;
+      }
       case Args_Int32_GeneralGeneralGeneral: {
         int32_t ret = reinterpret_cast<Prototype_Int32_GeneralGeneralGeneral>(
             nativeFn)(arg0, arg1, arg2);
@@ -2085,25 +2117,24 @@ void Simulator::SoftwareInterrupt() {
         setRegister(a0, I64(ret));
         break;
       }
-      case js::jit::Args_Int32_GeneralInt64Int32Int32Int32: {
+      case js::jit::Args_Int32_GeneralInt64Int32Int32: {
+        int32_t ret = reinterpret_cast<Prototype_Int32_GeneralInt64Int32Int32>(
+            nativeFn)(arg0, arg1, I32(arg2), I32(arg3));
+        setRegister(a0, I64(ret));
+        break;
+      }
+      case js::jit::Args_Int32_GeneralInt64Int32Int32Int32Int32: {
         int32_t ret =
-            reinterpret_cast<Prototype_Int32_GeneralInt64Int32Int32Int32>(
-                nativeFn)(arg0, arg1, I32(arg2), I32(arg3), I32(arg4));
-        if (FLAG_trace_sim) printf("ret %d\n", ret);
+            reinterpret_cast<Prototype_Int32_GeneralInt64Int32Int32Int32Int32>(
+                nativeFn)(arg0, arg1, I32(arg2), I32(arg3), I32(arg4),
+                          I32(arg5));
         setRegister(a0, I64(ret));
         break;
       }
-      case js::jit::Args_Int32_GeneralInt64Int32: {
-        int32_t ret = reinterpret_cast<Prototype_Int32_GeneralInt64Int32>(
-            nativeFn)(arg0, arg1, I32(arg2));
-        if (FLAG_trace_sim) printf("ret %d\n", ret);
-        setRegister(a0, I64(ret));
-        break;
-      }
-      case js::jit::Args_Int32_GeneralInt64Int32Int64: {
-        int32_t ret = reinterpret_cast<Prototype_Int32_GeneralInt64Int32Int64>(
-            nativeFn)(arg0, arg1, I32(arg2), arg3);
-        if (FLAG_trace_sim) printf("ret %d\n", ret);
+      case js::jit::Args_Int32_GeneralInt64Int32Int64Int32: {
+        int32_t ret =
+            reinterpret_cast<Prototype_Int32_GeneralInt64Int32Int64Int32>(
+                nativeFn)(arg0, arg1, I32(arg2), arg3, I32(arg4));
         setRegister(a0, I64(ret));
         break;
       }
@@ -2122,6 +2153,21 @@ void Simulator::SoftwareInterrupt() {
         setRegister(a0, I64(ret));
         break;
       }
+      case js::jit::Args_Int32_GeneralInt64Int64Int64Int32: {
+        int32_t ret =
+            reinterpret_cast<Prototype_Int32_GeneralInt64Int64Int64Int32>(
+                nativeFn)(arg0, arg1, arg2, arg3, I32(arg4));
+        setRegister(a0, I64(ret));
+        break;
+      }
+      case js::jit::Args_Int32_GeneralInt64Int64General: {
+        int32_t ret =
+            reinterpret_cast<Prototype_Int32_GeneralInt64Int64General>(
+                nativeFn)(arg0, arg1, arg2, arg3);
+        if (FLAG_trace_sim) printf("ret %d\n", ret);
+        setRegister(a0, I64(ret));
+        break;
+      }
       case js::jit::Args_Int32_GeneralInt64Int64Int64General: {
         int32_t ret =
             reinterpret_cast<Prototype_Int32_GeneralInt64Int64Int64General>(
@@ -2133,21 +2179,28 @@ void Simulator::SoftwareInterrupt() {
       case Args_General_GeneralInt32: {
         int64_t ret = reinterpret_cast<Prototype_General_GeneralInt32>(
             nativeFn)(arg0, I32(arg1));
-        if (FLAG_trace_sim) printf("ret %ld\n", ret);
+        if (FLAG_trace_sim) printf("ret %" PRId64 "\n", ret);
         setRegister(a0, ret);
+        break;
+      }
+      case js::jit::Args_Int32_GeneralInt64Int64Int64Int32Int32: {
+        int32_t ret =
+            reinterpret_cast<Prototype_Int32_GeneralInt64Int64Int64Int32Int32>(
+                nativeFn)(arg0, arg1, arg2, arg3, I32(arg4), I32(arg5));
+        setRegister(a0, I64(ret));
         break;
       }
       case Args_General_GeneralInt32Int32: {
         int64_t ret = reinterpret_cast<Prototype_General_GeneralInt32Int32>(
             nativeFn)(arg0, I32(arg1), I32(arg2));
-        if (FLAG_trace_sim) printf("ret %ld\n", ret);
+        if (FLAG_trace_sim) printf("ret %" PRId64 "\n", ret);
         setRegister(a0, ret);
         break;
       }
       case Args_General_GeneralInt32General: {
         int64_t ret = reinterpret_cast<Prototype_General_GeneralInt32General>(
             nativeFn)(arg0, I32(arg1), arg2);
-        if (FLAG_trace_sim) printf("ret %ld\n", ret);
+        if (FLAG_trace_sim) printf("ret %" PRId64 "\n", ret);
         setRegister(a0, ret);
         break;
       }
@@ -2156,6 +2209,14 @@ void Simulator::SoftwareInterrupt() {
             reinterpret_cast<Prototype_General_GeneralInt32Int32GeneralInt32>(
                 nativeFn)(arg0, I32(arg1), I32(arg2), arg3, I32(arg4));
         setRegister(a0, ret);
+        break;
+      }
+      case js::jit::Args_Int32_GeneralGeneralInt32Int32Int32GeneralInt32: {
+        int32_t ret = reinterpret_cast<
+            Prototype_Int32_GeneralGeneralInt32Int32Int32GeneralInt32>(
+            nativeFn)(arg0, arg1, I32(arg2), I32(arg3), I32(arg4), arg5,
+                      I32(arg6));
+        setRegister(a0, I64(ret));
         break;
       }
       case js::jit::Args_Int32_GeneralGeneralInt32General: {
@@ -2177,22 +2238,26 @@ void Simulator::SoftwareInterrupt() {
       }
       case js::jit::Args_Int64_General: {
         int64_t ret = reinterpret_cast<Prototype_Int64_General>(nativeFn)(arg0);
-        if (FLAG_trace_sim) printf("ret %ld\n", ret);
+        if (FLAG_trace_sim) printf("ret %" PRId64 "\n", ret);
+        setRegister(a0, ret);
+        break;
+      }
+      case js::jit::Args_Int64_GeneralInt32: {
+        int64_t ret = reinterpret_cast<Prototype_Int64_GeneralInt32>(nativeFn)(
+            arg0, I32(arg1));
         setRegister(a0, ret);
         break;
       }
       case js::jit::Args_Int64_GeneralInt64: {
         int64_t ret = reinterpret_cast<Prototype_Int64_GeneralInt64>(nativeFn)(
             arg0, arg1);
-        if (FLAG_trace_sim) printf("ret %ld\n", ret);
         setRegister(a0, ret);
         break;
       }
-      case js::jit::Args_Int32_GeneralInt64Int64General: {
-        int32_t ret =
-            reinterpret_cast<Prototype_Int32_GeneralInt64Int64General>(
-                nativeFn)(arg0, arg1, arg2, arg3);
-        setRegister(a0, I64(ret));
+      case js::jit::Args_Int64_GeneralInt64Int32: {
+        int64_t ret = reinterpret_cast<Prototype_Int64_GeneralInt64Int32>(
+            nativeFn)(arg0, arg1, I32(arg2));
+        setRegister(a0, ret);
         break;
       }
       default:
@@ -2455,8 +2520,8 @@ void Simulator::InstructionDecode(Instruction* instr) {
   if (watch_address_ != nullptr) {
     printf("  0x%012" PRIxPTR " :  0x%016" REGIx_FORMAT "  %14" REGId_FORMAT
            " \n",
-           reinterpret_cast<intptr_t>(watch_address_), *watch_address_,
-           *watch_address_);
+           reinterpret_cast<intptr_t>(watch_address_), I64(*watch_address_),
+           I64(*watch_address_));
     if (watch_value_ != *watch_address_) {
       RiscvDebugger dbg(this);
       dbg.Debug();
@@ -3001,8 +3066,8 @@ int Simulator::storeConditionalW(uint64_t addr, int value,
   // return 0, but there is no point at allowing that. It is certainly an
   // indicator of a bug.
   if (addr != LLAddr_) {
-    printf("SC to bad address: 0x%016" PRIx64 ", pc=0x%016" PRIx64
-           ", expected: 0x%016" PRIx64 "\n",
+    printf("SC to bad address: 0x%016" PRIx64 ", pc=0x%016" PRIxPTR
+           ", expected: 0x%016" PRIxPTR "\n",
            addr, reinterpret_cast<intptr_t>(instr), LLAddr_);
     MOZ_CRASH();
   }
@@ -3055,8 +3120,8 @@ int Simulator::storeConditionalD(uint64_t addr, int64_t value,
   // return 0, but there is no point at allowing that. It is certainly an
   // indicator of a bug.
   if (addr != LLAddr_) {
-    printf("SC to bad address: 0x%016" PRIx64 ", pc=0x%016" PRIx64
-           ", expected: 0x%016" PRIx64 "\n",
+    printf("SC to bad address: 0x%016" PRIx64 ", pc=0x%016" PRIxPTR
+           ", expected: 0x%016" PRIxPTR "\n",
            addr, reinterpret_cast<intptr_t>(instr), LLAddr_);
     MOZ_CRASH();
   }
@@ -4097,11 +4162,7 @@ void Simulator::DecodeRVIType() {
       } else if (instr_.Imm12Value() == 1) {  // EBREAK
         uint8_t code = get_ebreak_code(instr_.instr());
         if (code == kWasmTrapCode) {
-          uint8_t* newPC;
-          if (wasm::HandleIllegalInstruction(registerState(), &newPC)) {
-            set_pc(int64_t(newPC));
-            return;
-          }
+          HandleWasmTrap();
         }
         SoftwareInterrupt();
       } else {
@@ -4139,6 +4200,12 @@ void Simulator::DecodeRVIType() {
     case RO_CSRRWI: {
       if (rd_reg() != zero_reg) {
         set_rd(zext_xlen(read_csr_value(csr_reg())));
+      }
+      if (csr_reg() == csr_cycle) {
+        if (imm5CSR() == kWasmTrapCode) {
+          HandleWasmTrap();
+          return;
+        }
       }
       write_csr_value(csr_reg(), imm5CSR());
       break;

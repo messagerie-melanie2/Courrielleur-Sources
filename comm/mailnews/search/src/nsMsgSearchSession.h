@@ -7,6 +7,7 @@
 #define nsMsgSearchSession_h___
 
 #include "nscore.h"
+#include "nsMsgSearchBoolExpression.h"
 #include "nsMsgSearchCore.h"
 #include "nsIMsgSearchSession.h"
 #include "nsIUrlListener.h"
@@ -66,6 +67,8 @@ class nsMsgSearchSession : public nsIMsgSearchSession,
    * to -1, which we always set on conclusion of our loop).
    */
   int32_t m_iListener;
+
+  bool m_searchRunning;
 
   void DestroyTermList();
   void DestroyScopeList();

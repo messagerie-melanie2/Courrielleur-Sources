@@ -29,10 +29,10 @@ function loadAutoplayVideo(browser, args) {
     info("- create a new autoplay video -");
     let video = content.document.createElement("video");
     video.id = "v1";
-    video.didPlayPromise = new Promise((resolve, reject) => {
+    video.didPlayPromise = new Promise(resolve => {
       video.addEventListener(
         "playing",
-        e => {
+        () => {
           video.didPlay = true;
           resolve();
         },
@@ -40,7 +40,7 @@ function loadAutoplayVideo(browser, args) {
       );
       video.addEventListener(
         "blocked",
-        e => {
+        () => {
           video.didPlay = false;
           resolve();
         },
@@ -54,7 +54,7 @@ function loadAutoplayVideo(browser, args) {
       info("will call play() when reached loadedmetadata");
       video.addEventListener(
         "loadedmetadata",
-        e => {
+        () => {
           video.play().then(
             () => {
               info("video play() resolved");
@@ -68,6 +68,9 @@ function loadAutoplayVideo(browser, args) {
       );
     } else {
       ok(false, "Invalid 'mode' arg");
+    }
+    if (args.muted) {
+      video.muted = true;
     }
     video.src = "gizmo.mp4";
     content.document.body.appendChild(video);

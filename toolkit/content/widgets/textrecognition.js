@@ -4,7 +4,7 @@
 "use strict";
 
 // This is a UA widget. It runs in per-origin UA widget scope,
-// to be loaded by UAWidgetsChild.jsm.
+// to be loaded by UAWidgetsChild.sys.mjs.
 
 this.TextRecognitionWidget = class {
   /**
@@ -178,7 +178,7 @@ this.TextRecognitionWidget = class {
     this.isInitialized = true;
 
     const parser = new this.window.DOMParser();
-    let parserDoc = parser.parseFromString(
+    let parserDoc = parser.parseFromSafeString(
       `<div class="textrecognition" xmlns="http://www.w3.org/1999/xhtml" role="none">
         <link rel="stylesheet" href="chrome://global/skin/media/textrecognition.css" />
         <canvas />

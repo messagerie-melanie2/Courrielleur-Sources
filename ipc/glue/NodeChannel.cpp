@@ -8,7 +8,8 @@
 #include "chrome/common/ipc_message.h"
 #include "chrome/common/ipc_message_utils.h"
 #include "mojo/core/ports/name.h"
-#include "mozilla/ipc/BrowserProcessSubThread.h"
+#include "mozilla/ipc/IOThread.h"
+#include "mozilla/ipc/GeckoChildProcessHost.h"
 #include "mozilla/ipc/ProtocolMessageUtils.h"
 #include "mozilla/ipc/ProtocolUtils.h"
 #include "nsThreadUtils.h"
@@ -41,37 +42,35 @@ namespace mozilla::ipc {
 
 NodeChannel::NodeChannel(const NodeName& aName,
                          UniquePtr<IPC::Channel> aChannel, Listener* aListener,
-                         base::ProcessId aPid)
+                         base::ProcessId aPid,
+                         GeckoChildProcessHost* aChildProcessHost)
     : mListener(aListener),
       mName(aName),
       mOtherPid(aPid),
-      mChannel(std::move(aChannel)) {}
+      mChannel(std::move(aChannel)),
+      mChildProcessHost(aChildProcessHost) {}
 
 NodeChannel::~NodeChannel() { Close(); }
 
 // Called when the NodeChannel's refcount drops to `0`.
 void NodeChannel::Destroy() {
-  // Dispatch the `delete` operation to the IO thread. We need to do this even
-  // if we're already on the IO thread, as we could be in an `IPC::Channel`
-  // callback which unfortunately will not hold a strong reference to keep
-  // `this` alive.
-  MessageLoop* ioThread = XRE_GetIOMessageLoop();
-  if (ioThread->IsAcceptingTasks()) {
-    ioThread->PostTask(NewNonOwningRunnableMethod("NodeChannel::Destroy", this,
-                                                  &NodeChannel::FinalDestroy));
-    return;
-  }
+  // We want to dispatch the `delete` operation to the IO thread. We need to do
+  // this even if we're already on the IO thread, as we could be in an
+  // `IPC::Channel` callback which unfortunately will not hold a strong
+  // reference to keep `this` alive.
+  nsISerialEventTarget* ioThread = XRE_GetAsyncIOEventTarget();
 
-  // If the IOThread has already been destroyed, we must be shutting it down and
-  // need to synchronously invoke `FinalDestroy` to ensure we're cleaned up
-  // before the thread dies. This is safe as we can't be in a non-owning
-  // IPC::Channel callback at this point.
-  if (MessageLoop::current() == ioThread) {
+  // Synchronously invoke `FinalDestroy` if we're already shutting the IO thread
+  // down to ensure we're cleaned up before the thread dies. This is safe as we
+  // can't be in a non-owning IPC::Channel callback at this point.
+  if (ioThread->IsOnCurrentThread() && MessageLoop::current() &&
+      !MessageLoop::current()->IsAcceptingTasks()) {
     FinalDestroy();
     return;
   }
 
-  MOZ_ASSERT_UNREACHABLE("Leaking NodeChannel after IOThread destroyed!");
+  MOZ_ALWAYS_SUCCEEDS(ioThread->Dispatch(NewNonOwningRunnableMethod(
+      "NodeChannel::Destroy", this, &NodeChannel::FinalDestroy)));
 }
 
 void NodeChannel::FinalDestroy() {
@@ -79,34 +78,11 @@ void NodeChannel::FinalDestroy() {
   delete this;
 }
 
-void NodeChannel::Start(bool aCallConnect) {
+void NodeChannel::Start() {
   AssertIOThread();
 
-  mExistingListener = mChannel->set_listener(this);
-
-  std::queue<UniquePtr<IPC::Message>> pending;
-  if (mExistingListener) {
-    mExistingListener->GetQueuedMessages(pending);
-  }
-
-  if (aCallConnect) {
-    MOZ_ASSERT(pending.empty(), "unopened channel with pending messages?");
-    if (!mChannel->Connect()) {
-      OnChannelError();
-    }
-  } else {
-    // Check if our channel has already been connected, and knows the other PID.
-    base::ProcessId otherPid = mChannel->OtherPid();
-    if (otherPid != base::kInvalidProcessId) {
-      SetOtherPid(otherPid);
-    }
-
-    // Handle any events the previous listener had queued up. Make sure to stop
-    // if an error causes our channel to become closed.
-    while (!pending.empty() && mState != State::Closed) {
-      OnMessageReceived(std::move(pending.front()));
-      pending.pop();
-    }
+  if (!mChannel->Connect(this)) {
+    OnChannelError();
   }
 }
 
@@ -115,7 +91,6 @@ void NodeChannel::Close() {
 
   if (mState.exchange(State::Closed) != State::Closed) {
     mChannel->Close();
-    mChannel->set_listener(mExistingListener);
   }
 }
 
@@ -129,9 +104,11 @@ void NodeChannel::SetOtherPid(base::ProcessId aNewPid) {
     MOZ_RELEASE_ASSERT(previousPid == aNewPid,
                        "Different sources disagree on the correct pid?");
   }
+
+  mChannel->SetOtherPid(aNewPid);
 }
 
-#ifdef XP_MACOSX
+#ifdef XP_DARWIN
 void NodeChannel::SetMachTaskPort(task_t aTask) {
   AssertIOThread();
 
@@ -189,12 +166,13 @@ void NodeChannel::AcceptInvite(const NodeName& aRealName,
 
 void NodeChannel::SendMessage(UniquePtr<IPC::Message> aMessage) {
   if (aMessage->size() > IPC::Channel::kMaximumMessageSize) {
-    CrashReporter::AnnotateCrashReport(
-        CrashReporter::Annotation::IPCMessageName,
-        nsDependentCString(aMessage->name()));
-    CrashReporter::AnnotateCrashReport(
-        CrashReporter::Annotation::IPCMessageSize,
-        static_cast<unsigned int>(aMessage->size()));
+    CrashReporter::RecordAnnotationCString(
+        CrashReporter::Annotation::IPCMessageName, aMessage->name());
+    CrashReporter::RecordAnnotationU32(
+        CrashReporter::Annotation::IPCMessageSize, aMessage->size());
+    CrashReporter::RecordAnnotationU32(
+        CrashReporter::Annotation::IPCMessageLargeBufferShmemFailureSize,
+        aMessage->LargeBufferShmemFailureSize());
     MOZ_CRASH("IPC message size is too large");
   }
   aMessage->AssertAsLargeAsHeader();
@@ -220,7 +198,7 @@ void NodeChannel::SendMessage(UniquePtr<IPC::Message> aMessage) {
     // a runnable to actually close our channel.
     State expected = State::Active;
     if (mState.compare_exchange_strong(expected, State::Closing)) {
-      XRE_GetIOMessageLoop()->PostTask(
+      XRE_GetAsyncIOEventTarget()->Dispatch(
           NewRunnableMethod("NodeChannel::CloseForSendError", this,
                             &NodeChannel::OnChannelError));
     }
@@ -299,13 +277,10 @@ void NodeChannel::OnChannelConnected(base::ProcessId aPeerPid) {
 
   SetOtherPid(aPeerPid);
 
-  // We may need to tell our original listener (which will be the process launch
-  // code) that the the channel has been connected to unblock completing the
-  // process launch.
-  // FIXME: This is super sketchy, but it's also what we were already doing. We
-  // should swap this out for something less sketchy.
-  if (mExistingListener) {
-    mExistingListener->OnChannelConnected(aPeerPid);
+  // We may need to tell the GeckoChildProcessHost which we were created by that
+  // the channel has been connected to unblock completing the process launch.
+  if (mChildProcessHost) {
+    mChildProcessHost->OnChannelConnected(aPeerPid);
   }
 }
 
@@ -317,9 +292,8 @@ void NodeChannel::OnChannelError() {
     return;
   }
 
-  // Clean up the channel and make sure we're no longer the active listener.
+  // Clean up the channel.
   mChannel->Close();
-  MOZ_ALWAYS_TRUE(this == mChannel->set_listener(mExistingListener));
 
   // Tell our listener about the error.
   mListener->OnChannelError(mName);

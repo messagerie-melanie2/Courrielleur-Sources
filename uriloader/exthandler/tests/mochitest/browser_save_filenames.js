@@ -27,6 +27,8 @@ let types = {
   zip: "application/zip",
   json: "application/json",
   tar: "application/x-tar",
+  mp2: "audio/mpeg",
+  wav: "audio/x-wav",
 };
 
 const PNG_DATA = atob(
@@ -55,7 +57,7 @@ const DEFAULT_FILENAME =
 const PROMISE_FILENAME_TYPE = "application/x-moz-file-promise-dest-filename";
 
 let MockFilePicker = SpecialPowers.MockFilePicker;
-MockFilePicker.init(window);
+MockFilePicker.init(window.browsingContext);
 
 let expectedItems;
 let sendAsAttachment = false;
@@ -116,19 +118,6 @@ function handleRedirect(aRequest, aResponse) {
   aResponse.setHeader("Location", "/bell" + filename[0] + "?" + queryString);
 }
 
-function promiseDownloadFinished(list) {
-  return new Promise(resolve => {
-    list.addView({
-      onDownloadChanged(download) {
-        if (download.stopped) {
-          list.removeView(this);
-          resolve(download);
-        }
-      },
-    });
-  });
-}
-
 // nsIFile::CreateUnique crops long filenames if the path is too long, but
 // we don't know exactly how long depending on the full path length, so
 // for those save methods that use CreateUnique, instead just verify that
@@ -150,17 +139,17 @@ function checkShortenedFilename(actual, expected) {
 }
 
 add_setup(async function () {
-  const { HttpServer } = ChromeUtils.import(
-    "resource://testing-common/httpd.js"
+  const { HttpServer } = ChromeUtils.importESModule(
+    "resource://testing-common/httpd.sys.mjs"
   );
   httpServer = new HttpServer();
   httpServer.start(8000);
 
   // Need to load the page from localhost:8000 as the download attribute
   // only applies to links from the same domain.
-  let saveFilenamesPage = FileUtils.getFile(
-    "CurWorkD",
-    "/browser/uriloader/exthandler/tests/mochitest/save_filenames.html".split(
+  let saveFilenamesPage = await IOUtils.getFile(
+    Services.dirsvc.get("CurWorkD", Ci.nsIFile).path,
+    ..."browser/uriloader/exthandler/tests/mochitest/save_filenames.html".split(
       "/"
     )
   );
@@ -192,8 +181,8 @@ add_setup(async function () {
   expectedItems = await getItems("items");
 });
 
-function getItems(parentid) {
-  return SpecialPowers.spawn(
+async function getItems(parentid) {
+  let items = await SpecialPowers.spawn(
     gBrowser.selectedBrowser,
     [parentid, AppConstants.platform],
     (id, platform) => {
@@ -202,12 +191,13 @@ function getItems(parentid) {
       while (elem) {
         let filename =
           elem.dataset["filenamePlatform" + platform] || elem.dataset.filename;
-        let url = elem.getAttribute("src");
+        let url = elem.getAttribute("src") || elem.getAttribute("href");
         let draggable =
           elem.localName == "img" && elem.dataset.nodrag != "true";
         let unknown = elem.dataset.unknown;
         let noattach = elem.dataset.noattach;
         let savepagename = elem.dataset.savepagename;
+        let pickedfilename = elem.dataset.pickedfilename;
         elements.push({
           draggable,
           unknown,
@@ -215,12 +205,15 @@ function getItems(parentid) {
           url,
           noattach,
           savepagename,
+          pickedfilename,
         });
         elem = elem.nextElementSibling;
       }
       return elements;
     }
   );
+  Assert.greater(items.length, 0, "Some elements were found to test");
+  return items;
 }
 
 function getDirectoryEntries(dir) {
@@ -251,23 +244,13 @@ add_task(async function save_document() {
   tmpDir.append(baseFilename + "_document_files");
 
   MockFilePicker.displayDirectory = tmpDir;
-  MockFilePicker.showCallback = function (fp) {
+  MockFilePicker.showCallback = function () {
     MockFilePicker.setFiles([tmpFile]);
     MockFilePicker.filterIndex = 0; // kSaveAsType_Complete
   };
 
   let downloadsList = await Downloads.getList(Downloads.PUBLIC);
-  let savePromise = new Promise((resolve, reject) => {
-    downloadsList.addView({
-      onDownloadChanged(download) {
-        if (download.succeeded) {
-          downloadsList.removeView(this);
-          downloadsList.removeFinished();
-          resolve();
-        }
-      },
-    });
-  });
+  let savePromise = promiseDownloadFinished(downloadsList);
   saveBrowser(browser);
   await savePromise;
 
@@ -301,8 +284,9 @@ add_task(async function save_document() {
       fileIdx = filesSaved.indexOf(filename);
     }
 
-    ok(
-      fileIdx >= 0,
+    Assert.greaterOrEqual(
+      fileIdx,
+      0,
       "file i" +
         idx +
         " " +
@@ -319,6 +303,7 @@ add_task(async function save_document() {
   is(filesSaved.length, 0, "all files accounted for");
   tmpDir.remove(true);
   tmpFile.remove(false);
+  downloadsList.removeFinished();
 });
 
 // This test simulates dragging the images in the document and ensuring that
@@ -392,7 +377,11 @@ if (AppConstants.platform != "macosx") {
 
 // This test checks that copying an image provides the right filename
 // for pasting to the local file system. This is only implemented on Windows.
-if (AppConstants.platform == "win") {
+const imageAsFileEnabled = SpecialPowers.getBoolPref(
+  "clipboard.imageAsFile.enabled",
+  false
+);
+if (AppConstants.platform == "win" && imageAsFileEnabled) {
   add_task(async function copy_image() {
     for (let idx = 0; idx < expectedItems.length; idx++) {
       if (!expectedItems[idx].draggable) {
@@ -400,30 +389,22 @@ if (AppConstants.platform == "win") {
         continue;
       }
 
-      let data = await SpecialPowers.spawn(
-        gBrowser.selectedBrowser,
-        [idx, PROMISE_FILENAME_TYPE],
-        (imagenum, type) => {
-          // No need to wait for the data to be really on the clipboard, we only
-          // need the promise data added when the command is performed.
-          SpecialPowers.setCommandNode(
-            content,
-            content.document.getElementById("i" + imagenum)
-          );
-          SpecialPowers.doCommand(content, "cmd_copyImageContents");
-
-          return SpecialPowers.getClipboardData(type);
-        }
-      );
-
-      is(
-        data,
+      await SimpleTest.promiseClipboardChange(
         expectedItems[idx].filename,
-        "i" +
-          idx +
-          " " +
-          expectedItems[idx].filename +
-          " was saved with the correct name when copying"
+        () => {
+          return SpecialPowers.spawn(
+            gBrowser.selectedBrowser,
+            [idx],
+            imagenum => {
+              SpecialPowers.setCommandNode(
+                content,
+                content.document.getElementById("i" + imagenum)
+              );
+              SpecialPowers.doCommand(content, "cmd_copyImageContents");
+            }
+          );
+        },
+        PROMISE_FILENAME_TYPE
       );
     }
   });
@@ -555,6 +536,59 @@ add_task(async function saveas_files() {
         await BrowserTestUtils.removeTab(gBrowser.selectedTab);
       }
     }
+  }
+});
+
+// This test checks that the filename is saved correctly when it
+// has been modified within the file picker.
+add_task(async function saveas_files_modified_in_filepicker() {
+  let items = await getItems("modifieditems");
+  for (let idx = 0; idx < items.length; idx++) {
+    await BrowserTestUtils.openNewForegroundTab({
+      gBrowser,
+      opening: items[idx].url,
+      waitForLoad: false,
+      waitForStateStop: true,
+    });
+
+    let savedFile = SpecialPowers.Services.dirsvc.get("TmpD", Ci.nsIFile);
+
+    let downloadsList = await Downloads.getList(Downloads.PUBLIC);
+    let savePromise = promiseDownloadFinished(downloadsList);
+
+    await new Promise(resolve => {
+      MockFilePicker.displayDirectory = savedFile;
+
+      MockFilePicker.showCallback = function () {
+        MockFilePicker.filterIndex = 0; // kSaveAsType_Complete
+        savedFile.append(items[idx].pickedfilename);
+        MockFilePicker.setFiles([savedFile]);
+        setTimeout(() => {
+          resolve(items[idx].pickedfilename);
+        }, 0);
+
+        return Ci.nsIFilePicker.returnOK;
+      };
+
+      document.getElementById("Browser:SavePage").doCommand();
+    });
+
+    await savePromise;
+
+    savedFile.leafName = items[idx].filename;
+    ok(
+      savedFile.exists(),
+      "i" +
+        idx +
+        " '" +
+        savedFile.leafName +
+        "' was saved when modified with the correct name "
+    );
+    if (savedFile.exists()) {
+      savedFile.remove(false);
+    }
+
+    await BrowserTestUtils.removeTab(gBrowser.selectedTab);
   }
 });
 

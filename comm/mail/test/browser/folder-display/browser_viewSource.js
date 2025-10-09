@@ -8,17 +8,14 @@
 
 "use strict";
 
-var utils = ChromeUtils.import("resource://testing-common/mozmill/utils.jsm");
-var { be_in_folder, create_folder, get_about_message, mc, select_click_row } =
-  ChromeUtils.import(
-    "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+var { be_in_folder, create_folder, get_about_message, select_click_row } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
   );
-var {
-  click_menus_in_sequence,
-  close_window,
-  plan_for_new_window,
-  wait_for_new_window,
-} = ChromeUtils.import("resource://testing-common/mozmill/WindowHelpers.jsm");
+var { click_menus_in_sequence, promise_new_window } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/WindowHelpers.sys.mjs"
+  );
 
 var folder;
 
@@ -71,10 +68,9 @@ add_task(async function utf8Header_with_utf8Body() {
 });
 
 function addToFolder(subject, charset, body) {
-  let msgId = Services.uuid.generateUUID() + "@invalid";
+  const msgId = Services.uuid.generateUUID() + "@invalid";
 
-  let source =
-    "From - Sat Nov  1 12:39:54 2008\n" +
+  const source =
     "X-Mozilla-Status: 0001\n" +
     "X-Mozilla-Status2: 00000000\n" +
     "Message-ID: <" +
@@ -99,10 +95,10 @@ function addToFolder(subject, charset, body) {
 }
 
 async function subtest(row, expectedDisplayed, expectedSource) {
-  select_click_row(row);
+  await select_click_row(row);
 
-  let aboutMessage = get_about_message();
-  let displayContent =
+  const aboutMessage = get_about_message();
+  const displayContent =
     aboutMessage.getMessagePaneBrowser().contentDocument.body.textContent;
   Assert.stringContains(
     displayContent,
@@ -114,21 +110,21 @@ async function subtest(row, expectedDisplayed, expectedSource) {
     "UTF-8"
   );
 
-  plan_for_new_window("navigator:view-source");
+  const viewSourcePromise = promise_new_window("navigator:view-source");
   EventUtils.synthesizeKey("U", { shiftKey: false, accelKey: true });
-  let viewSourceController = wait_for_new_window("navigator:view-source");
+  const viewSourceWin = await viewSourcePromise;
 
-  utils.waitFor(
+  await TestUtils.waitForCondition(
     () =>
-      viewSourceController.window.document
+      viewSourceWin.document
         .getElementById("content")
         .contentDocument.querySelector("pre") != null,
     "Timeout waiting for the latin1 view-source document to load."
   );
 
   let source =
-    viewSourceController.window.document.getElementById("content")
-      .contentDocument.body.textContent;
+    viewSourceWin.document.getElementById("content").contentDocument.body
+      .textContent;
   Assert.stringContains(
     source,
     expectedSource,
@@ -139,50 +135,46 @@ async function subtest(row, expectedDisplayed, expectedSource) {
 
   // We can't use the menu on macOS.
   if (AppConstants.platform != "macosx") {
-    let theContent =
-      viewSourceController.window.document.getElementById("content");
+    const theContent = viewSourceWin.document.getElementById("content");
     // Keep a reference to the originally loaded document.
-    let doc = theContent.contentDocument;
+    const doc = theContent.contentDocument;
 
     // Click the new window to make it receive further events properly.
     EventUtils.synthesizeMouseAtCenter(theContent, {}, theContent.ownerGlobal);
     await new Promise(resolve => setTimeout(resolve));
 
     popupshown = BrowserTestUtils.waitForEvent(
-      viewSourceController.window.document.getElementById("viewmenu-popup"),
+      viewSourceWin.document.getElementById("viewmenu-popup"),
       "popupshown"
     );
-    let menuView =
-      viewSourceController.window.document.getElementById("menu_view");
+    const menuView = viewSourceWin.document.getElementById("menu_view");
     EventUtils.synthesizeMouseAtCenter(menuView, {}, menuView.ownerGlobal);
     await popupshown;
 
     Assert.equal(
-      viewSourceController.window.document.getElementById(
-        "repair-text-encoding"
-      ).disabled,
+      viewSourceWin.document.getElementById("repair-text-encoding").disabled,
       expectedSource == contentReadable
     );
 
     await click_menus_in_sequence(
-      viewSourceController.window.document.getElementById("viewmenu-popup"),
+      viewSourceWin.document.getElementById("viewmenu-popup"),
       [{ id: "repair-text-encoding" }]
     );
 
     if (expectedSource != contentReadable) {
-      utils.waitFor(
+      await TestUtils.waitForCondition(
         () =>
-          viewSourceController.window.document.getElementById("content")
-            .contentDocument != doc &&
-          viewSourceController.window.document
+          viewSourceWin.document.getElementById("content").contentDocument !=
+            doc &&
+          viewSourceWin.document
             .getElementById("content")
             .contentDocument.querySelector("pre") != null,
         "Timeout waiting utf-8 encoded view-source document to load."
       );
 
       source =
-        viewSourceController.window.document.getElementById("content")
-          .contentDocument.body.textContent;
+        viewSourceWin.document.getElementById("content").contentDocument.body
+          .textContent;
       Assert.stringContains(
         source,
         contentReadable,
@@ -192,8 +184,8 @@ async function subtest(row, expectedDisplayed, expectedSource) {
   }
 
   // Check the context menu while were here.
-  let browser = viewSourceController.window.document.getElementById("content");
-  let contextMenu = viewSourceController.window.document.getElementById(
+  const browser = viewSourceWin.document.getElementById("content");
+  const contextMenu = viewSourceWin.document.getElementById(
     "viewSourceContextMenu"
   );
   popupshown = BrowserTestUtils.waitForEvent(contextMenu, "popupshown");
@@ -204,8 +196,8 @@ async function subtest(row, expectedDisplayed, expectedSource) {
   );
   await popupshown;
 
-  let actualItems = [];
-  for (let item of contextMenu.children) {
+  const actualItems = [];
+  for (const item of contextMenu.children) {
     if (item.localName == "menuitem" && !item.hidden) {
       actualItems.push(item.id);
     }
@@ -218,5 +210,5 @@ async function subtest(row, expectedDisplayed, expectedSource) {
   ]);
   contextMenu.hidePopup();
 
-  close_window(viewSourceController);
+  await BrowserTestUtils.closeWindow(viewSourceWin);
 }

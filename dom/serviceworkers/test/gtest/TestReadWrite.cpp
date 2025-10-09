@@ -9,6 +9,7 @@
 #include "mozilla/dom/ServiceWorkerRegistrar.h"
 #include "mozilla/dom/ServiceWorkerRegistrarTypes.h"
 #include "mozilla/ipc/PBackgroundSharedTypes.h"
+#include "mozilla/UniquePtr.h"
 
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsIFile.h"
@@ -22,18 +23,76 @@
 using namespace mozilla::dom;
 using namespace mozilla::ipc;
 
+namespace {
+
+struct HandlerStats {
+  uint32_t swLoadCount;
+  uint32_t swUpdatedCount;
+  uint32_t swUnregisteredCount;
+  nsCString lastValue;
+
+  uint32_t swLoad2Count;
+  uint32_t swUpdated2Count;
+  uint32_t swUnregistered2Count;
+  nsCString lastValue2;
+};
+
+MOZ_CONSTINIT mozilla::UniquePtr<HandlerStats> gHandlerStats;
+
+void MaybeCreateHandlerStats() {
+  if (!gHandlerStats) {
+    gHandlerStats.reset(new HandlerStats());
+  }
+}
+
+void swLoaded(const ServiceWorkerRegistrationData& data,
+              const nsACString& aValue) {
+  MaybeCreateHandlerStats();
+  gHandlerStats->swLoadCount++;
+  gHandlerStats->lastValue = aValue;
+}
+
+void swUpdated(const ServiceWorkerRegistrationData& data) {
+  MaybeCreateHandlerStats();
+  gHandlerStats->swUpdatedCount++;
+}
+
+void swUnregistered(const ServiceWorkerRegistrationData& data) {
+  MaybeCreateHandlerStats();
+  gHandlerStats->swUnregisteredCount++;
+}
+
+void swLoaded2(const ServiceWorkerRegistrationData& data,
+               const nsACString& aValue) {
+  MaybeCreateHandlerStats();
+  gHandlerStats->swLoad2Count++;
+  gHandlerStats->lastValue2 = aValue;
+}
+
+void swUpdated2(const ServiceWorkerRegistrationData& data) {
+  MaybeCreateHandlerStats();
+  gHandlerStats->swUpdated2Count++;
+}
+
+void swUnregistered2(const ServiceWorkerRegistrationData& data) {
+  MaybeCreateHandlerStats();
+  gHandlerStats->swUnregistered2Count++;
+}
+
+}  // namespace
+
 class ServiceWorkerRegistrarTest : public ServiceWorkerRegistrar {
  public:
   ServiceWorkerRegistrarTest() {
-#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
     nsresult rv = NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR,
                                          getter_AddRefs(mProfileDir));
-    MOZ_DIAGNOSTIC_ASSERT(NS_SUCCEEDED(rv));
-#else
-    NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR,
-                           getter_AddRefs(mProfileDir));
-#endif
-    MOZ_DIAGNOSTIC_ASSERT(mProfileDir);
+    MOZ_RELEASE_ASSERT(NS_SUCCEEDED(rv));
+    MOZ_RELEASE_ASSERT(mProfileDir);
+
+    mExpandoHandlers.AppendElement(ExpandoHandler{
+        nsCString("handler_test"), swLoaded, swUpdated, swUnregistered});
+    mExpandoHandlers.AppendElement(ExpandoHandler{
+        nsCString("handler_test2"), swLoaded2, swUpdated2, swUnregistered2});
   }
 
   nsresult TestReadData() { return ReadData(); }
@@ -47,7 +106,9 @@ class ServiceWorkerRegistrarTest : public ServiceWorkerRegistrar {
     RegisterServiceWorkerInternal(aData);
   }
 
-  nsTArray<ServiceWorkerRegistrationData>& TestGetData() { return mData; }
+  nsTArray<ServiceWorkerData>& TestGetData() MOZ_NO_THREAD_SAFETY_ANALYSIS {
+    return mData;
+  }
 };
 
 already_AddRefed<nsIFile> GetFile() {
@@ -104,7 +165,8 @@ TEST(ServiceWorkerRegistrar, TestNoFile)
   rv = swr->TestReadData();
   ASSERT_EQ(NS_OK, rv) << "ReadData() should not fail";
 
-  const nsTArray<ServiceWorkerRegistrationData>& data = swr->TestGetData();
+  const nsTArray<ServiceWorkerRegistrar::ServiceWorkerData>& data =
+      swr->TestGetData();
   ASSERT_EQ((uint32_t)0, data.Length())
       << "No data should be found in an empty file";
 }
@@ -119,14 +181,19 @@ TEST(ServiceWorkerRegistrar, TestEmptyFile)
   nsresult rv = swr->TestReadData();
   ASSERT_NE(NS_OK, rv) << "ReadData() should fail if the file is empty";
 
-  const nsTArray<ServiceWorkerRegistrationData>& data = swr->TestGetData();
+  const nsTArray<ServiceWorkerRegistrar::ServiceWorkerData>& data =
+      swr->TestGetData();
   ASSERT_EQ((uint32_t)0, data.Length())
       << "No data should be found in an empty file";
 }
 
 TEST(ServiceWorkerRegistrar, TestRightVersionFile)
 {
-  ASSERT_TRUE(CreateFile(nsLiteralCString(SERVICEWORKERREGISTRAR_VERSION "\n")))
+  nsCString buffer;
+  buffer.AppendInt(static_cast<uint32_t>(SERVICEWORKERREGISTRAR_VERSION));
+  buffer.Append("\n");
+
+  ASSERT_TRUE(CreateFile(buffer))
   << "CreateFile should not fail";
 
   RefPtr<ServiceWorkerRegistrarTest> swr = new ServiceWorkerRegistrarTest;
@@ -135,15 +202,19 @@ TEST(ServiceWorkerRegistrar, TestRightVersionFile)
   ASSERT_EQ(NS_OK, rv)
       << "ReadData() should not fail when the version is correct";
 
-  const nsTArray<ServiceWorkerRegistrationData>& data = swr->TestGetData();
+  const nsTArray<ServiceWorkerRegistrar::ServiceWorkerData>& data =
+      swr->TestGetData();
   ASSERT_EQ((uint32_t)0, data.Length())
       << "No data should be found in an empty file";
 }
 
 TEST(ServiceWorkerRegistrar, TestWrongVersionFile)
 {
-  ASSERT_TRUE(
-      CreateFile(nsLiteralCString(SERVICEWORKERREGISTRAR_VERSION "bla\n")))
+  nsCString buffer;
+  buffer.AppendInt(static_cast<uint32_t>(SERVICEWORKERREGISTRAR_VERSION));
+  buffer.Append("bla\n");
+
+  ASSERT_TRUE(CreateFile(buffer))
   << "CreateFile should not fail";
 
   RefPtr<ServiceWorkerRegistrarTest> swr = new ServiceWorkerRegistrarTest;
@@ -152,14 +223,17 @@ TEST(ServiceWorkerRegistrar, TestWrongVersionFile)
   ASSERT_NE(NS_OK, rv)
       << "ReadData() should fail when the version is not correct";
 
-  const nsTArray<ServiceWorkerRegistrationData>& data = swr->TestGetData();
+  const nsTArray<ServiceWorkerRegistrar::ServiceWorkerData>& data =
+      swr->TestGetData();
   ASSERT_EQ((uint32_t)0, data.Length())
       << "No data should be found in an empty file";
 }
 
 TEST(ServiceWorkerRegistrar, TestReadData)
 {
-  nsAutoCString buffer(SERVICEWORKERREGISTRAR_VERSION "\n");
+  nsCString buffer;
+  buffer.AppendInt(static_cast<uint32_t>(SERVICEWORKERREGISTRAR_VERSION));
+  buffer.Append("\n");
 
   buffer.AppendLiteral("^inBrowser=1\n");
   buffer.AppendLiteral("https://scope_0.org\ncurrentWorkerURL 0\n");
@@ -177,6 +251,8 @@ TEST(ServiceWorkerRegistrar, TestReadData)
   buffer.AppendInt(0);
   buffer.AppendLiteral("\n");
   buffer.AppendLiteral("true\n");
+  buffer.AppendInt(0);
+  buffer.AppendLiteral("\n");
   buffer.Append(SERVICEWORKERREGISTRAR_TERMINATOR "\n");
 
   buffer.AppendLiteral("\n");
@@ -195,6 +271,8 @@ TEST(ServiceWorkerRegistrar, TestReadData)
   buffer.AppendInt(1);
   buffer.AppendLiteral("\n");
   buffer.AppendLiteral("false\n");
+  buffer.AppendInt(0);
+  buffer.AppendLiteral("\n");
   buffer.Append(SERVICEWORKERREGISTRAR_TERMINATOR "\n");
 
   ASSERT_TRUE(CreateFile(buffer))
@@ -205,52 +283,63 @@ TEST(ServiceWorkerRegistrar, TestReadData)
   nsresult rv = swr->TestReadData();
   ASSERT_EQ(NS_OK, rv) << "ReadData() should not fail";
 
-  const nsTArray<ServiceWorkerRegistrationData>& data = swr->TestGetData();
+  const nsTArray<ServiceWorkerRegistrar::ServiceWorkerData>& data =
+      swr->TestGetData();
   ASSERT_EQ((uint32_t)2, data.Length()) << "2 entries should be found";
 
-  const mozilla::ipc::PrincipalInfo& info0 = data[0].principal();
+  const mozilla::ipc::PrincipalInfo& info0 = data[0].mRegistration.principal();
   ASSERT_EQ(info0.type(), mozilla::ipc::PrincipalInfo::TContentPrincipalInfo)
       << "First principal must be content";
-  const mozilla::ipc::ContentPrincipalInfo& cInfo0 = data[0].principal();
+  const mozilla::ipc::ContentPrincipalInfo& cInfo0 =
+      data[0].mRegistration.principal();
 
   nsAutoCString suffix0;
   cInfo0.attrs().CreateSuffix(suffix0);
 
-  ASSERT_STREQ("^inBrowser=1", suffix0.get());
+  ASSERT_STREQ("", suffix0.get());
   ASSERT_STREQ("https://scope_0.org", cInfo0.spec().get());
-  ASSERT_STREQ("https://scope_0.org", data[0].scope().get());
-  ASSERT_STREQ("currentWorkerURL 0", data[0].currentWorkerURL().get());
-  ASSERT_TRUE(data[0].currentWorkerHandlesFetch());
-  ASSERT_STREQ("cacheName 0", NS_ConvertUTF16toUTF8(data[0].cacheName()).get());
+  ASSERT_STREQ("https://scope_0.org", data[0].mRegistration.scope().get());
+  ASSERT_STREQ("currentWorkerURL 0",
+               data[0].mRegistration.currentWorkerURL().get());
+  ASSERT_TRUE(data[0].mRegistration.currentWorkerHandlesFetch());
+  ASSERT_STREQ("cacheName 0",
+               NS_ConvertUTF16toUTF8(data[0].mRegistration.cacheName()).get());
   ASSERT_EQ(nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_IMPORTS,
-            data[0].updateViaCache());
-  ASSERT_EQ((int64_t)0, data[0].currentWorkerInstalledTime());
-  ASSERT_EQ((int64_t)0, data[0].currentWorkerActivatedTime());
-  ASSERT_EQ((int64_t)0, data[0].lastUpdateTime());
-  ASSERT_EQ(false, data[0].navigationPreloadState().enabled());
-  ASSERT_STREQ("true", data[0].navigationPreloadState().headerValue().get());
+            data[0].mRegistration.updateViaCache());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.currentWorkerInstalledTime());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.currentWorkerActivatedTime());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.lastUpdateTime());
+  ASSERT_EQ(false, data[0].mRegistration.navigationPreloadState().enabled());
+  ASSERT_STREQ(
+      "true",
+      data[0].mRegistration.navigationPreloadState().headerValue().get());
 
-  const mozilla::ipc::PrincipalInfo& info1 = data[1].principal();
+  const mozilla::ipc::PrincipalInfo& info1 = data[1].mRegistration.principal();
   ASSERT_EQ(info1.type(), mozilla::ipc::PrincipalInfo::TContentPrincipalInfo)
       << "First principal must be content";
-  const mozilla::ipc::ContentPrincipalInfo& cInfo1 = data[1].principal();
+  const mozilla::ipc::ContentPrincipalInfo& cInfo1 =
+      data[1].mRegistration.principal();
 
   nsAutoCString suffix1;
   cInfo1.attrs().CreateSuffix(suffix1);
 
   ASSERT_STREQ("", suffix1.get());
   ASSERT_STREQ("https://scope_1.org", cInfo1.spec().get());
-  ASSERT_STREQ("https://scope_1.org", data[1].scope().get());
-  ASSERT_STREQ("currentWorkerURL 1", data[1].currentWorkerURL().get());
-  ASSERT_FALSE(data[1].currentWorkerHandlesFetch());
-  ASSERT_STREQ("cacheName 1", NS_ConvertUTF16toUTF8(data[1].cacheName()).get());
+  ASSERT_STREQ("https://scope_1.org", data[1].mRegistration.scope().get());
+  ASSERT_STREQ("currentWorkerURL 1",
+               data[1].mRegistration.currentWorkerURL().get());
+  ASSERT_FALSE(data[1].mRegistration.currentWorkerHandlesFetch());
+  ASSERT_STREQ("cacheName 1",
+               NS_ConvertUTF16toUTF8(data[1].mRegistration.cacheName()).get());
   ASSERT_EQ(nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_ALL,
-            data[1].updateViaCache());
-  ASSERT_EQ((int64_t)ts, data[1].currentWorkerInstalledTime());
-  ASSERT_EQ((int64_t)ts, data[1].currentWorkerActivatedTime());
-  ASSERT_EQ((int64_t)ts, data[1].lastUpdateTime());
-  ASSERT_EQ(true, data[1].navigationPreloadState().enabled());
-  ASSERT_STREQ("false", data[1].navigationPreloadState().headerValue().get());
+            data[1].mRegistration.updateViaCache());
+  ASSERT_EQ((int64_t)ts, data[1].mRegistration.currentWorkerInstalledTime());
+  ASSERT_EQ((int64_t)ts, data[1].mRegistration.currentWorkerActivatedTime());
+  ASSERT_EQ((int64_t)ts, data[1].mRegistration.lastUpdateTime());
+  ASSERT_EQ(true, data[1].mRegistration.navigationPreloadState().enabled());
+  ASSERT_STREQ(
+      "false",
+      data[1].mRegistration.navigationPreloadState().headerValue().get());
 }
 
 TEST(ServiceWorkerRegistrar, TestDeleteData)
@@ -277,30 +366,24 @@ TEST(ServiceWorkerRegistrar, TestWriteData)
   {
     RefPtr<ServiceWorkerRegistrarTest> swr = new ServiceWorkerRegistrarTest;
 
-    for (int i = 0; i < 2; ++i) {
-      ServiceWorkerRegistrationData reg;
+    ServiceWorkerRegistrationData reg;
 
-      reg.scope() = nsPrintfCString("https://scope_write_%d.org", i);
-      reg.currentWorkerURL() = nsPrintfCString("currentWorkerURL write %d", i);
-      reg.currentWorkerHandlesFetch() = true;
-      reg.cacheName() =
-          NS_ConvertUTF8toUTF16(nsPrintfCString("cacheName write %d", i));
-      reg.updateViaCache() =
-          nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_IMPORTS;
+    reg.scope() = "https://scope_write_0.org"_ns;
+    reg.currentWorkerURL() = "currentWorkerURL write 0"_ns;
+    reg.currentWorkerHandlesFetch() = true;
+    reg.cacheName() = u"cacheName write 0"_ns;
+    reg.updateViaCache() =
+        nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_IMPORTS;
 
-      reg.currentWorkerInstalledTime() = PR_Now();
-      reg.currentWorkerActivatedTime() = PR_Now();
-      reg.lastUpdateTime() = PR_Now();
+    reg.currentWorkerInstalledTime() = PR_Now();
+    reg.currentWorkerActivatedTime() = PR_Now();
+    reg.lastUpdateTime() = PR_Now();
 
-      nsAutoCString spec;
-      spec.AppendPrintf("spec write %d", i);
+    const auto spec = "spec write 0"_ns;
+    reg.principal() = mozilla::ipc::ContentPrincipalInfo(
+        mozilla::OriginAttributes(), spec, spec, mozilla::Nothing(), spec);
 
-      reg.principal() = mozilla::ipc::ContentPrincipalInfo(
-          mozilla::OriginAttributes(i % 2), spec, spec, mozilla::Nothing(),
-          spec);
-
-      swr->TestRegisterServiceWorker(reg);
-    }
+    swr->TestRegisterServiceWorker(reg);
 
     nsresult rv = swr->TestWriteData();
     ASSERT_EQ(NS_OK, rv) << "WriteData() should not fail";
@@ -311,47 +394,40 @@ TEST(ServiceWorkerRegistrar, TestWriteData)
   nsresult rv = swr->TestReadData();
   ASSERT_EQ(NS_OK, rv) << "ReadData() should not fail";
 
-  const nsTArray<ServiceWorkerRegistrationData>& data = swr->TestGetData();
-  ASSERT_EQ((uint32_t)2, data.Length()) << "2 entries should be found";
+  const nsTArray<ServiceWorkerRegistrar::ServiceWorkerData>& dataArr =
+      swr->TestGetData();
+  ASSERT_EQ((uint32_t)1, dataArr.Length()) << "1 entries should be found";
 
-  for (int i = 0; i < 2; ++i) {
-    nsAutoCString test;
+  const auto& data = dataArr[0];
 
-    ASSERT_EQ(data[i].principal().type(),
-              mozilla::ipc::PrincipalInfo::TContentPrincipalInfo);
-    const mozilla::ipc::ContentPrincipalInfo& cInfo = data[i].principal();
+  ASSERT_EQ(data.mRegistration.principal().type(),
+            mozilla::ipc::PrincipalInfo::TContentPrincipalInfo);
+  const mozilla::ipc::ContentPrincipalInfo& cInfo =
+      data.mRegistration.principal();
 
-    mozilla::OriginAttributes attrs(i % 2);
-    nsAutoCString suffix, expectSuffix;
-    attrs.CreateSuffix(expectSuffix);
-    cInfo.attrs().CreateSuffix(suffix);
+  mozilla::OriginAttributes attrs;
+  nsAutoCString suffix, expectSuffix;
+  attrs.CreateSuffix(expectSuffix);
+  cInfo.attrs().CreateSuffix(suffix);
 
-    ASSERT_STREQ(expectSuffix.get(), suffix.get());
+  ASSERT_STREQ(expectSuffix.get(), suffix.get());
 
-    test.AppendPrintf("https://scope_write_%d.org", i);
-    ASSERT_STREQ(test.get(), cInfo.spec().get());
+  ASSERT_STREQ("https://scope_write_0.org", cInfo.spec().get());
+  ASSERT_STREQ("https://scope_write_0.org", data.mRegistration.scope().get());
+  ASSERT_STREQ("currentWorkerURL write 0",
+               data.mRegistration.currentWorkerURL().get());
 
-    test.Truncate();
-    test.AppendPrintf("https://scope_write_%d.org", i);
-    ASSERT_STREQ(test.get(), data[i].scope().get());
+  ASSERT_EQ(true, data.mRegistration.currentWorkerHandlesFetch());
 
-    test.Truncate();
-    test.AppendPrintf("currentWorkerURL write %d", i);
-    ASSERT_STREQ(test.get(), data[i].currentWorkerURL().get());
+  ASSERT_STREQ("cacheName write 0",
+               NS_ConvertUTF16toUTF8(data.mRegistration.cacheName()).get());
 
-    ASSERT_EQ(true, data[i].currentWorkerHandlesFetch());
+  ASSERT_EQ(nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_IMPORTS,
+            data.mRegistration.updateViaCache());
 
-    test.Truncate();
-    test.AppendPrintf("cacheName write %d", i);
-    ASSERT_STREQ(test.get(), NS_ConvertUTF16toUTF8(data[i].cacheName()).get());
-
-    ASSERT_EQ(nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_IMPORTS,
-              data[i].updateViaCache());
-
-    ASSERT_NE((int64_t)0, data[i].currentWorkerInstalledTime());
-    ASSERT_NE((int64_t)0, data[i].currentWorkerActivatedTime());
-    ASSERT_NE((int64_t)0, data[i].lastUpdateTime());
-  }
+  ASSERT_NE((int64_t)0, data.mRegistration.currentWorkerInstalledTime());
+  ASSERT_NE((int64_t)0, data.mRegistration.currentWorkerActivatedTime());
+  ASSERT_NE((int64_t)0, data.mRegistration.lastUpdateTime());
 }
 
 TEST(ServiceWorkerRegistrar, TestVersion2Migration)
@@ -380,50 +456,55 @@ TEST(ServiceWorkerRegistrar, TestVersion2Migration)
   nsresult rv = swr->TestReadData();
   ASSERT_EQ(NS_OK, rv) << "ReadData() should not fail";
 
-  const nsTArray<ServiceWorkerRegistrationData>& data = swr->TestGetData();
+  const nsTArray<ServiceWorkerRegistrar::ServiceWorkerData>& data =
+      swr->TestGetData();
   ASSERT_EQ((uint32_t)2, data.Length()) << "2 entries should be found";
 
-  const mozilla::ipc::PrincipalInfo& info0 = data[0].principal();
+  const mozilla::ipc::PrincipalInfo& info0 = data[0].mRegistration.principal();
   ASSERT_EQ(info0.type(), mozilla::ipc::PrincipalInfo::TContentPrincipalInfo)
       << "First principal must be content";
-  const mozilla::ipc::ContentPrincipalInfo& cInfo0 = data[0].principal();
+  const mozilla::ipc::ContentPrincipalInfo& cInfo0 =
+      data[0].mRegistration.principal();
 
   nsAutoCString suffix0;
   cInfo0.attrs().CreateSuffix(suffix0);
 
-  ASSERT_STREQ("^inBrowser=1", suffix0.get());
+  ASSERT_STREQ("", suffix0.get());
   ASSERT_STREQ("https://scope_0.org", cInfo0.spec().get());
-  ASSERT_STREQ("https://scope_0.org", data[0].scope().get());
-  ASSERT_STREQ("currentWorkerURL 0", data[0].currentWorkerURL().get());
-  ASSERT_EQ(true, data[0].currentWorkerHandlesFetch());
+  ASSERT_STREQ("https://scope_0.org", data[0].mRegistration.scope().get());
+  ASSERT_STREQ("currentWorkerURL 0",
+               data[0].mRegistration.currentWorkerURL().get());
+  ASSERT_EQ(true, data[0].mRegistration.currentWorkerHandlesFetch());
   ASSERT_STREQ("activeCache 0",
-               NS_ConvertUTF16toUTF8(data[0].cacheName()).get());
+               NS_ConvertUTF16toUTF8(data[0].mRegistration.cacheName()).get());
   ASSERT_EQ(nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_IMPORTS,
-            data[0].updateViaCache());
-  ASSERT_EQ((int64_t)0, data[0].currentWorkerInstalledTime());
-  ASSERT_EQ((int64_t)0, data[0].currentWorkerActivatedTime());
-  ASSERT_EQ((int64_t)0, data[0].lastUpdateTime());
+            data[0].mRegistration.updateViaCache());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.currentWorkerInstalledTime());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.currentWorkerActivatedTime());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.lastUpdateTime());
 
-  const mozilla::ipc::PrincipalInfo& info1 = data[1].principal();
+  const mozilla::ipc::PrincipalInfo& info1 = data[1].mRegistration.principal();
   ASSERT_EQ(info1.type(), mozilla::ipc::PrincipalInfo::TContentPrincipalInfo)
       << "First principal must be content";
-  const mozilla::ipc::ContentPrincipalInfo& cInfo1 = data[1].principal();
+  const mozilla::ipc::ContentPrincipalInfo& cInfo1 =
+      data[1].mRegistration.principal();
 
   nsAutoCString suffix1;
   cInfo1.attrs().CreateSuffix(suffix1);
 
   ASSERT_STREQ("", suffix1.get());
   ASSERT_STREQ("https://scope_1.org", cInfo1.spec().get());
-  ASSERT_STREQ("https://scope_1.org", data[1].scope().get());
-  ASSERT_STREQ("currentWorkerURL 1", data[1].currentWorkerURL().get());
-  ASSERT_EQ(true, data[1].currentWorkerHandlesFetch());
+  ASSERT_STREQ("https://scope_1.org", data[1].mRegistration.scope().get());
+  ASSERT_STREQ("currentWorkerURL 1",
+               data[1].mRegistration.currentWorkerURL().get());
+  ASSERT_EQ(true, data[1].mRegistration.currentWorkerHandlesFetch());
   ASSERT_STREQ("activeCache 1",
-               NS_ConvertUTF16toUTF8(data[1].cacheName()).get());
+               NS_ConvertUTF16toUTF8(data[1].mRegistration.cacheName()).get());
   ASSERT_EQ(nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_IMPORTS,
-            data[1].updateViaCache());
-  ASSERT_EQ((int64_t)0, data[1].currentWorkerInstalledTime());
-  ASSERT_EQ((int64_t)0, data[1].currentWorkerActivatedTime());
-  ASSERT_EQ((int64_t)0, data[1].lastUpdateTime());
+            data[1].mRegistration.updateViaCache());
+  ASSERT_EQ((int64_t)0, data[1].mRegistration.currentWorkerInstalledTime());
+  ASSERT_EQ((int64_t)0, data[1].mRegistration.currentWorkerActivatedTime());
+  ASSERT_EQ((int64_t)0, data[1].mRegistration.lastUpdateTime());
 }
 
 TEST(ServiceWorkerRegistrar, TestVersion3Migration)
@@ -450,48 +531,55 @@ TEST(ServiceWorkerRegistrar, TestVersion3Migration)
   nsresult rv = swr->TestReadData();
   ASSERT_EQ(NS_OK, rv) << "ReadData() should not fail";
 
-  const nsTArray<ServiceWorkerRegistrationData>& data = swr->TestGetData();
+  const nsTArray<ServiceWorkerRegistrar::ServiceWorkerData>& data =
+      swr->TestGetData();
   ASSERT_EQ((uint32_t)2, data.Length()) << "2 entries should be found";
 
-  const mozilla::ipc::PrincipalInfo& info0 = data[0].principal();
+  const mozilla::ipc::PrincipalInfo& info0 = data[0].mRegistration.principal();
   ASSERT_EQ(info0.type(), mozilla::ipc::PrincipalInfo::TContentPrincipalInfo)
       << "First principal must be content";
-  const mozilla::ipc::ContentPrincipalInfo& cInfo0 = data[0].principal();
+  const mozilla::ipc::ContentPrincipalInfo& cInfo0 =
+      data[0].mRegistration.principal();
 
   nsAutoCString suffix0;
   cInfo0.attrs().CreateSuffix(suffix0);
 
-  ASSERT_STREQ("^inBrowser=1", suffix0.get());
+  ASSERT_STREQ("", suffix0.get());
   ASSERT_STREQ("https://scope_0.org", cInfo0.spec().get());
-  ASSERT_STREQ("https://scope_0.org", data[0].scope().get());
-  ASSERT_STREQ("currentWorkerURL 0", data[0].currentWorkerURL().get());
-  ASSERT_EQ(true, data[0].currentWorkerHandlesFetch());
-  ASSERT_STREQ("cacheName 0", NS_ConvertUTF16toUTF8(data[0].cacheName()).get());
+  ASSERT_STREQ("https://scope_0.org", data[0].mRegistration.scope().get());
+  ASSERT_STREQ("currentWorkerURL 0",
+               data[0].mRegistration.currentWorkerURL().get());
+  ASSERT_EQ(true, data[0].mRegistration.currentWorkerHandlesFetch());
+  ASSERT_STREQ("cacheName 0",
+               NS_ConvertUTF16toUTF8(data[0].mRegistration.cacheName()).get());
   ASSERT_EQ(nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_IMPORTS,
-            data[0].updateViaCache());
-  ASSERT_EQ((int64_t)0, data[0].currentWorkerInstalledTime());
-  ASSERT_EQ((int64_t)0, data[0].currentWorkerActivatedTime());
-  ASSERT_EQ((int64_t)0, data[0].lastUpdateTime());
+            data[0].mRegistration.updateViaCache());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.currentWorkerInstalledTime());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.currentWorkerActivatedTime());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.lastUpdateTime());
 
-  const mozilla::ipc::PrincipalInfo& info1 = data[1].principal();
+  const mozilla::ipc::PrincipalInfo& info1 = data[1].mRegistration.principal();
   ASSERT_EQ(info1.type(), mozilla::ipc::PrincipalInfo::TContentPrincipalInfo)
       << "First principal must be content";
-  const mozilla::ipc::ContentPrincipalInfo& cInfo1 = data[1].principal();
+  const mozilla::ipc::ContentPrincipalInfo& cInfo1 =
+      data[1].mRegistration.principal();
 
   nsAutoCString suffix1;
   cInfo1.attrs().CreateSuffix(suffix1);
 
   ASSERT_STREQ("", suffix1.get());
   ASSERT_STREQ("https://scope_1.org", cInfo1.spec().get());
-  ASSERT_STREQ("https://scope_1.org", data[1].scope().get());
-  ASSERT_STREQ("currentWorkerURL 1", data[1].currentWorkerURL().get());
-  ASSERT_EQ(true, data[1].currentWorkerHandlesFetch());
-  ASSERT_STREQ("cacheName 1", NS_ConvertUTF16toUTF8(data[1].cacheName()).get());
+  ASSERT_STREQ("https://scope_1.org", data[1].mRegistration.scope().get());
+  ASSERT_STREQ("currentWorkerURL 1",
+               data[1].mRegistration.currentWorkerURL().get());
+  ASSERT_EQ(true, data[1].mRegistration.currentWorkerHandlesFetch());
+  ASSERT_STREQ("cacheName 1",
+               NS_ConvertUTF16toUTF8(data[1].mRegistration.cacheName()).get());
   ASSERT_EQ(nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_IMPORTS,
-            data[1].updateViaCache());
-  ASSERT_EQ((int64_t)0, data[1].currentWorkerInstalledTime());
-  ASSERT_EQ((int64_t)0, data[1].currentWorkerActivatedTime());
-  ASSERT_EQ((int64_t)0, data[1].lastUpdateTime());
+            data[1].mRegistration.updateViaCache());
+  ASSERT_EQ((int64_t)0, data[1].mRegistration.currentWorkerInstalledTime());
+  ASSERT_EQ((int64_t)0, data[1].mRegistration.currentWorkerActivatedTime());
+  ASSERT_EQ((int64_t)0, data[1].mRegistration.lastUpdateTime());
 }
 
 TEST(ServiceWorkerRegistrar, TestVersion4Migration)
@@ -518,50 +606,57 @@ TEST(ServiceWorkerRegistrar, TestVersion4Migration)
   nsresult rv = swr->TestReadData();
   ASSERT_EQ(NS_OK, rv) << "ReadData() should not fail";
 
-  const nsTArray<ServiceWorkerRegistrationData>& data = swr->TestGetData();
+  const nsTArray<ServiceWorkerRegistrar::ServiceWorkerData>& data =
+      swr->TestGetData();
   ASSERT_EQ((uint32_t)2, data.Length()) << "2 entries should be found";
 
-  const mozilla::ipc::PrincipalInfo& info0 = data[0].principal();
+  const mozilla::ipc::PrincipalInfo& info0 = data[0].mRegistration.principal();
   ASSERT_EQ(info0.type(), mozilla::ipc::PrincipalInfo::TContentPrincipalInfo)
       << "First principal must be content";
-  const mozilla::ipc::ContentPrincipalInfo& cInfo0 = data[0].principal();
+  const mozilla::ipc::ContentPrincipalInfo& cInfo0 =
+      data[0].mRegistration.principal();
 
   nsAutoCString suffix0;
   cInfo0.attrs().CreateSuffix(suffix0);
 
-  ASSERT_STREQ("^inBrowser=1", suffix0.get());
+  ASSERT_STREQ("", suffix0.get());
   ASSERT_STREQ("https://scope_0.org", cInfo0.spec().get());
-  ASSERT_STREQ("https://scope_0.org", data[0].scope().get());
-  ASSERT_STREQ("currentWorkerURL 0", data[0].currentWorkerURL().get());
+  ASSERT_STREQ("https://scope_0.org", data[0].mRegistration.scope().get());
+  ASSERT_STREQ("currentWorkerURL 0",
+               data[0].mRegistration.currentWorkerURL().get());
   // default is true
-  ASSERT_EQ(true, data[0].currentWorkerHandlesFetch());
-  ASSERT_STREQ("cacheName 0", NS_ConvertUTF16toUTF8(data[0].cacheName()).get());
+  ASSERT_EQ(true, data[0].mRegistration.currentWorkerHandlesFetch());
+  ASSERT_STREQ("cacheName 0",
+               NS_ConvertUTF16toUTF8(data[0].mRegistration.cacheName()).get());
   ASSERT_EQ(nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_IMPORTS,
-            data[0].updateViaCache());
-  ASSERT_EQ((int64_t)0, data[0].currentWorkerInstalledTime());
-  ASSERT_EQ((int64_t)0, data[0].currentWorkerActivatedTime());
-  ASSERT_EQ((int64_t)0, data[0].lastUpdateTime());
+            data[0].mRegistration.updateViaCache());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.currentWorkerInstalledTime());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.currentWorkerActivatedTime());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.lastUpdateTime());
 
-  const mozilla::ipc::PrincipalInfo& info1 = data[1].principal();
+  const mozilla::ipc::PrincipalInfo& info1 = data[1].mRegistration.principal();
   ASSERT_EQ(info1.type(), mozilla::ipc::PrincipalInfo::TContentPrincipalInfo)
       << "First principal must be content";
-  const mozilla::ipc::ContentPrincipalInfo& cInfo1 = data[1].principal();
+  const mozilla::ipc::ContentPrincipalInfo& cInfo1 =
+      data[1].mRegistration.principal();
 
   nsAutoCString suffix1;
   cInfo1.attrs().CreateSuffix(suffix1);
 
   ASSERT_STREQ("", suffix1.get());
   ASSERT_STREQ("https://scope_1.org", cInfo1.spec().get());
-  ASSERT_STREQ("https://scope_1.org", data[1].scope().get());
-  ASSERT_STREQ("currentWorkerURL 1", data[1].currentWorkerURL().get());
+  ASSERT_STREQ("https://scope_1.org", data[1].mRegistration.scope().get());
+  ASSERT_STREQ("currentWorkerURL 1",
+               data[1].mRegistration.currentWorkerURL().get());
   // default is true
-  ASSERT_EQ(true, data[1].currentWorkerHandlesFetch());
-  ASSERT_STREQ("cacheName 1", NS_ConvertUTF16toUTF8(data[1].cacheName()).get());
+  ASSERT_EQ(true, data[1].mRegistration.currentWorkerHandlesFetch());
+  ASSERT_STREQ("cacheName 1",
+               NS_ConvertUTF16toUTF8(data[1].mRegistration.cacheName()).get());
   ASSERT_EQ(nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_IMPORTS,
-            data[1].updateViaCache());
-  ASSERT_EQ((int64_t)0, data[1].currentWorkerInstalledTime());
-  ASSERT_EQ((int64_t)0, data[1].currentWorkerActivatedTime());
-  ASSERT_EQ((int64_t)0, data[1].lastUpdateTime());
+            data[1].mRegistration.updateViaCache());
+  ASSERT_EQ((int64_t)0, data[1].mRegistration.currentWorkerInstalledTime());
+  ASSERT_EQ((int64_t)0, data[1].mRegistration.currentWorkerActivatedTime());
+  ASSERT_EQ((int64_t)0, data[1].mRegistration.lastUpdateTime());
 }
 
 TEST(ServiceWorkerRegistrar, TestVersion5Migration)
@@ -590,48 +685,55 @@ TEST(ServiceWorkerRegistrar, TestVersion5Migration)
   nsresult rv = swr->TestReadData();
   ASSERT_EQ(NS_OK, rv) << "ReadData() should not fail";
 
-  const nsTArray<ServiceWorkerRegistrationData>& data = swr->TestGetData();
+  const nsTArray<ServiceWorkerRegistrar::ServiceWorkerData>& data =
+      swr->TestGetData();
   ASSERT_EQ((uint32_t)2, data.Length()) << "2 entries should be found";
 
-  const mozilla::ipc::PrincipalInfo& info0 = data[0].principal();
+  const mozilla::ipc::PrincipalInfo& info0 = data[0].mRegistration.principal();
   ASSERT_EQ(info0.type(), mozilla::ipc::PrincipalInfo::TContentPrincipalInfo)
       << "First principal must be content";
-  const mozilla::ipc::ContentPrincipalInfo& cInfo0 = data[0].principal();
+  const mozilla::ipc::ContentPrincipalInfo& cInfo0 =
+      data[0].mRegistration.principal();
 
   nsAutoCString suffix0;
   cInfo0.attrs().CreateSuffix(suffix0);
 
-  ASSERT_STREQ("^inBrowser=1", suffix0.get());
+  ASSERT_STREQ("", suffix0.get());
   ASSERT_STREQ("https://scope_0.org", cInfo0.spec().get());
-  ASSERT_STREQ("https://scope_0.org", data[0].scope().get());
-  ASSERT_STREQ("currentWorkerURL 0", data[0].currentWorkerURL().get());
-  ASSERT_TRUE(data[0].currentWorkerHandlesFetch());
-  ASSERT_STREQ("cacheName 0", NS_ConvertUTF16toUTF8(data[0].cacheName()).get());
+  ASSERT_STREQ("https://scope_0.org", data[0].mRegistration.scope().get());
+  ASSERT_STREQ("currentWorkerURL 0",
+               data[0].mRegistration.currentWorkerURL().get());
+  ASSERT_TRUE(data[0].mRegistration.currentWorkerHandlesFetch());
+  ASSERT_STREQ("cacheName 0",
+               NS_ConvertUTF16toUTF8(data[0].mRegistration.cacheName()).get());
   ASSERT_EQ(nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_IMPORTS,
-            data[0].updateViaCache());
-  ASSERT_EQ((int64_t)0, data[0].currentWorkerInstalledTime());
-  ASSERT_EQ((int64_t)0, data[0].currentWorkerActivatedTime());
-  ASSERT_EQ((int64_t)0, data[0].lastUpdateTime());
+            data[0].mRegistration.updateViaCache());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.currentWorkerInstalledTime());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.currentWorkerActivatedTime());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.lastUpdateTime());
 
-  const mozilla::ipc::PrincipalInfo& info1 = data[1].principal();
+  const mozilla::ipc::PrincipalInfo& info1 = data[1].mRegistration.principal();
   ASSERT_EQ(info1.type(), mozilla::ipc::PrincipalInfo::TContentPrincipalInfo)
       << "First principal must be content";
-  const mozilla::ipc::ContentPrincipalInfo& cInfo1 = data[1].principal();
+  const mozilla::ipc::ContentPrincipalInfo& cInfo1 =
+      data[1].mRegistration.principal();
 
   nsAutoCString suffix1;
   cInfo1.attrs().CreateSuffix(suffix1);
 
   ASSERT_STREQ("", suffix1.get());
   ASSERT_STREQ("https://scope_1.org", cInfo1.spec().get());
-  ASSERT_STREQ("https://scope_1.org", data[1].scope().get());
-  ASSERT_STREQ("currentWorkerURL 1", data[1].currentWorkerURL().get());
-  ASSERT_FALSE(data[1].currentWorkerHandlesFetch());
-  ASSERT_STREQ("cacheName 1", NS_ConvertUTF16toUTF8(data[1].cacheName()).get());
+  ASSERT_STREQ("https://scope_1.org", data[1].mRegistration.scope().get());
+  ASSERT_STREQ("currentWorkerURL 1",
+               data[1].mRegistration.currentWorkerURL().get());
+  ASSERT_FALSE(data[1].mRegistration.currentWorkerHandlesFetch());
+  ASSERT_STREQ("cacheName 1",
+               NS_ConvertUTF16toUTF8(data[1].mRegistration.cacheName()).get());
   ASSERT_EQ(nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_IMPORTS,
-            data[1].updateViaCache());
-  ASSERT_EQ((int64_t)0, data[1].currentWorkerInstalledTime());
-  ASSERT_EQ((int64_t)0, data[1].currentWorkerActivatedTime());
-  ASSERT_EQ((int64_t)0, data[1].lastUpdateTime());
+            data[1].mRegistration.updateViaCache());
+  ASSERT_EQ((int64_t)0, data[1].mRegistration.currentWorkerInstalledTime());
+  ASSERT_EQ((int64_t)0, data[1].mRegistration.currentWorkerActivatedTime());
+  ASSERT_EQ((int64_t)0, data[1].mRegistration.lastUpdateTime());
 }
 
 TEST(ServiceWorkerRegistrar, TestVersion6Migration)
@@ -664,48 +766,55 @@ TEST(ServiceWorkerRegistrar, TestVersion6Migration)
   nsresult rv = swr->TestReadData();
   ASSERT_EQ(NS_OK, rv) << "ReadData() should not fail";
 
-  const nsTArray<ServiceWorkerRegistrationData>& data = swr->TestGetData();
+  const nsTArray<ServiceWorkerRegistrar::ServiceWorkerData>& data =
+      swr->TestGetData();
   ASSERT_EQ((uint32_t)2, data.Length()) << "2 entries should be found";
 
-  const mozilla::ipc::PrincipalInfo& info0 = data[0].principal();
+  const mozilla::ipc::PrincipalInfo& info0 = data[0].mRegistration.principal();
   ASSERT_EQ(info0.type(), mozilla::ipc::PrincipalInfo::TContentPrincipalInfo)
       << "First principal must be content";
-  const mozilla::ipc::ContentPrincipalInfo& cInfo0 = data[0].principal();
+  const mozilla::ipc::ContentPrincipalInfo& cInfo0 =
+      data[0].mRegistration.principal();
 
   nsAutoCString suffix0;
   cInfo0.attrs().CreateSuffix(suffix0);
 
-  ASSERT_STREQ("^inBrowser=1", suffix0.get());
+  ASSERT_STREQ("", suffix0.get());
   ASSERT_STREQ("https://scope_0.org", cInfo0.spec().get());
-  ASSERT_STREQ("https://scope_0.org", data[0].scope().get());
-  ASSERT_STREQ("currentWorkerURL 0", data[0].currentWorkerURL().get());
-  ASSERT_TRUE(data[0].currentWorkerHandlesFetch());
-  ASSERT_STREQ("cacheName 0", NS_ConvertUTF16toUTF8(data[0].cacheName()).get());
+  ASSERT_STREQ("https://scope_0.org", data[0].mRegistration.scope().get());
+  ASSERT_STREQ("currentWorkerURL 0",
+               data[0].mRegistration.currentWorkerURL().get());
+  ASSERT_TRUE(data[0].mRegistration.currentWorkerHandlesFetch());
+  ASSERT_STREQ("cacheName 0",
+               NS_ConvertUTF16toUTF8(data[0].mRegistration.cacheName()).get());
   ASSERT_EQ(nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_ALL,
-            data[0].updateViaCache());
-  ASSERT_EQ((int64_t)0, data[0].currentWorkerInstalledTime());
-  ASSERT_EQ((int64_t)0, data[0].currentWorkerActivatedTime());
-  ASSERT_EQ((int64_t)0, data[0].lastUpdateTime());
+            data[0].mRegistration.updateViaCache());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.currentWorkerInstalledTime());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.currentWorkerActivatedTime());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.lastUpdateTime());
 
-  const mozilla::ipc::PrincipalInfo& info1 = data[1].principal();
+  const mozilla::ipc::PrincipalInfo& info1 = data[1].mRegistration.principal();
   ASSERT_EQ(info1.type(), mozilla::ipc::PrincipalInfo::TContentPrincipalInfo)
       << "First principal must be content";
-  const mozilla::ipc::ContentPrincipalInfo& cInfo1 = data[1].principal();
+  const mozilla::ipc::ContentPrincipalInfo& cInfo1 =
+      data[1].mRegistration.principal();
 
   nsAutoCString suffix1;
   cInfo1.attrs().CreateSuffix(suffix1);
 
   ASSERT_STREQ("", suffix1.get());
   ASSERT_STREQ("https://scope_1.org", cInfo1.spec().get());
-  ASSERT_STREQ("https://scope_1.org", data[1].scope().get());
-  ASSERT_STREQ("currentWorkerURL 1", data[1].currentWorkerURL().get());
-  ASSERT_FALSE(data[1].currentWorkerHandlesFetch());
-  ASSERT_STREQ("cacheName 1", NS_ConvertUTF16toUTF8(data[1].cacheName()).get());
+  ASSERT_STREQ("https://scope_1.org", data[1].mRegistration.scope().get());
+  ASSERT_STREQ("currentWorkerURL 1",
+               data[1].mRegistration.currentWorkerURL().get());
+  ASSERT_FALSE(data[1].mRegistration.currentWorkerHandlesFetch());
+  ASSERT_STREQ("cacheName 1",
+               NS_ConvertUTF16toUTF8(data[1].mRegistration.cacheName()).get());
   ASSERT_EQ(nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_IMPORTS,
-            data[1].updateViaCache());
-  ASSERT_EQ((int64_t)0, data[1].currentWorkerInstalledTime());
-  ASSERT_EQ((int64_t)0, data[1].currentWorkerActivatedTime());
-  ASSERT_EQ((int64_t)0, data[1].lastUpdateTime());
+            data[1].mRegistration.updateViaCache());
+  ASSERT_EQ((int64_t)0, data[1].mRegistration.currentWorkerInstalledTime());
+  ASSERT_EQ((int64_t)0, data[1].mRegistration.currentWorkerActivatedTime());
+  ASSERT_EQ((int64_t)0, data[1].mRegistration.lastUpdateTime());
 }
 
 TEST(ServiceWorkerRegistrar, TestVersion7Migration)
@@ -751,48 +860,55 @@ TEST(ServiceWorkerRegistrar, TestVersion7Migration)
   nsresult rv = swr->TestReadData();
   ASSERT_EQ(NS_OK, rv) << "ReadData() should not fail";
 
-  const nsTArray<ServiceWorkerRegistrationData>& data = swr->TestGetData();
+  const nsTArray<ServiceWorkerRegistrar::ServiceWorkerData>& data =
+      swr->TestGetData();
   ASSERT_EQ((uint32_t)2, data.Length()) << "2 entries should be found";
 
-  const mozilla::ipc::PrincipalInfo& info0 = data[0].principal();
+  const mozilla::ipc::PrincipalInfo& info0 = data[0].mRegistration.principal();
   ASSERT_EQ(info0.type(), mozilla::ipc::PrincipalInfo::TContentPrincipalInfo)
       << "First principal must be content";
-  const mozilla::ipc::ContentPrincipalInfo& cInfo0 = data[0].principal();
+  const mozilla::ipc::ContentPrincipalInfo& cInfo0 =
+      data[0].mRegistration.principal();
 
   nsAutoCString suffix0;
   cInfo0.attrs().CreateSuffix(suffix0);
 
-  ASSERT_STREQ("^inBrowser=1", suffix0.get());
+  ASSERT_STREQ("", suffix0.get());
   ASSERT_STREQ("https://scope_0.org", cInfo0.spec().get());
-  ASSERT_STREQ("https://scope_0.org", data[0].scope().get());
-  ASSERT_STREQ("currentWorkerURL 0", data[0].currentWorkerURL().get());
-  ASSERT_TRUE(data[0].currentWorkerHandlesFetch());
-  ASSERT_STREQ("cacheName 0", NS_ConvertUTF16toUTF8(data[0].cacheName()).get());
+  ASSERT_STREQ("https://scope_0.org", data[0].mRegistration.scope().get());
+  ASSERT_STREQ("currentWorkerURL 0",
+               data[0].mRegistration.currentWorkerURL().get());
+  ASSERT_TRUE(data[0].mRegistration.currentWorkerHandlesFetch());
+  ASSERT_STREQ("cacheName 0",
+               NS_ConvertUTF16toUTF8(data[0].mRegistration.cacheName()).get());
   ASSERT_EQ(nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_ALL,
-            data[0].updateViaCache());
-  ASSERT_EQ((int64_t)0, data[0].currentWorkerInstalledTime());
-  ASSERT_EQ((int64_t)0, data[0].currentWorkerActivatedTime());
-  ASSERT_EQ((int64_t)0, data[0].lastUpdateTime());
+            data[0].mRegistration.updateViaCache());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.currentWorkerInstalledTime());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.currentWorkerActivatedTime());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.lastUpdateTime());
 
-  const mozilla::ipc::PrincipalInfo& info1 = data[1].principal();
+  const mozilla::ipc::PrincipalInfo& info1 = data[1].mRegistration.principal();
   ASSERT_EQ(info1.type(), mozilla::ipc::PrincipalInfo::TContentPrincipalInfo)
       << "First principal must be content";
-  const mozilla::ipc::ContentPrincipalInfo& cInfo1 = data[1].principal();
+  const mozilla::ipc::ContentPrincipalInfo& cInfo1 =
+      data[1].mRegistration.principal();
 
   nsAutoCString suffix1;
   cInfo1.attrs().CreateSuffix(suffix1);
 
   ASSERT_STREQ("", suffix1.get());
   ASSERT_STREQ("https://scope_1.org", cInfo1.spec().get());
-  ASSERT_STREQ("https://scope_1.org", data[1].scope().get());
-  ASSERT_STREQ("currentWorkerURL 1", data[1].currentWorkerURL().get());
-  ASSERT_FALSE(data[1].currentWorkerHandlesFetch());
-  ASSERT_STREQ("cacheName 1", NS_ConvertUTF16toUTF8(data[1].cacheName()).get());
+  ASSERT_STREQ("https://scope_1.org", data[1].mRegistration.scope().get());
+  ASSERT_STREQ("currentWorkerURL 1",
+               data[1].mRegistration.currentWorkerURL().get());
+  ASSERT_FALSE(data[1].mRegistration.currentWorkerHandlesFetch());
+  ASSERT_STREQ("cacheName 1",
+               NS_ConvertUTF16toUTF8(data[1].mRegistration.cacheName()).get());
   ASSERT_EQ(nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_IMPORTS,
-            data[1].updateViaCache());
-  ASSERT_EQ((int64_t)ts, data[1].currentWorkerInstalledTime());
-  ASSERT_EQ((int64_t)ts, data[1].currentWorkerActivatedTime());
-  ASSERT_EQ((int64_t)ts, data[1].lastUpdateTime());
+            data[1].mRegistration.updateViaCache());
+  ASSERT_EQ((int64_t)ts, data[1].mRegistration.currentWorkerInstalledTime());
+  ASSERT_EQ((int64_t)ts, data[1].mRegistration.currentWorkerActivatedTime());
+  ASSERT_EQ((int64_t)ts, data[1].mRegistration.lastUpdateTime());
 }
 
 TEST(ServiceWorkerRegistrar, TestDedupeRead)
@@ -836,48 +952,55 @@ TEST(ServiceWorkerRegistrar, TestDedupeRead)
   nsresult rv = swr->TestReadData();
   ASSERT_EQ(NS_OK, rv) << "ReadData() should not fail";
 
-  const nsTArray<ServiceWorkerRegistrationData>& data = swr->TestGetData();
+  const nsTArray<ServiceWorkerRegistrar::ServiceWorkerData>& data =
+      swr->TestGetData();
   ASSERT_EQ((uint32_t)2, data.Length()) << "2 entries should be found";
 
-  const mozilla::ipc::PrincipalInfo& info0 = data[0].principal();
+  const mozilla::ipc::PrincipalInfo& info0 = data[0].mRegistration.principal();
   ASSERT_EQ(info0.type(), mozilla::ipc::PrincipalInfo::TContentPrincipalInfo)
       << "First principal must be content";
-  const mozilla::ipc::ContentPrincipalInfo& cInfo0 = data[0].principal();
+  const mozilla::ipc::ContentPrincipalInfo& cInfo0 =
+      data[0].mRegistration.principal();
 
   nsAutoCString suffix0;
   cInfo0.attrs().CreateSuffix(suffix0);
 
-  ASSERT_STREQ("^inBrowser=1", suffix0.get());
+  ASSERT_STREQ("", suffix0.get());
   ASSERT_STREQ("https://scope_0.org", cInfo0.spec().get());
-  ASSERT_STREQ("https://scope_0.org", data[0].scope().get());
-  ASSERT_STREQ("currentWorkerURL 0", data[0].currentWorkerURL().get());
-  ASSERT_EQ(true, data[0].currentWorkerHandlesFetch());
-  ASSERT_STREQ("cacheName 0", NS_ConvertUTF16toUTF8(data[0].cacheName()).get());
+  ASSERT_STREQ("https://scope_0.org", data[0].mRegistration.scope().get());
+  ASSERT_STREQ("currentWorkerURL 0",
+               data[0].mRegistration.currentWorkerURL().get());
+  ASSERT_EQ(true, data[0].mRegistration.currentWorkerHandlesFetch());
+  ASSERT_STREQ("cacheName 0",
+               NS_ConvertUTF16toUTF8(data[0].mRegistration.cacheName()).get());
   ASSERT_EQ(nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_IMPORTS,
-            data[0].updateViaCache());
-  ASSERT_EQ((int64_t)0, data[0].currentWorkerInstalledTime());
-  ASSERT_EQ((int64_t)0, data[0].currentWorkerActivatedTime());
-  ASSERT_EQ((int64_t)0, data[0].lastUpdateTime());
+            data[0].mRegistration.updateViaCache());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.currentWorkerInstalledTime());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.currentWorkerActivatedTime());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.lastUpdateTime());
 
-  const mozilla::ipc::PrincipalInfo& info1 = data[1].principal();
+  const mozilla::ipc::PrincipalInfo& info1 = data[1].mRegistration.principal();
   ASSERT_EQ(info1.type(), mozilla::ipc::PrincipalInfo::TContentPrincipalInfo)
       << "First principal must be content";
-  const mozilla::ipc::ContentPrincipalInfo& cInfo1 = data[1].principal();
+  const mozilla::ipc::ContentPrincipalInfo& cInfo1 =
+      data[1].mRegistration.principal();
 
   nsAutoCString suffix1;
   cInfo1.attrs().CreateSuffix(suffix1);
 
   ASSERT_STREQ("", suffix1.get());
   ASSERT_STREQ("https://scope_1.org", cInfo1.spec().get());
-  ASSERT_STREQ("https://scope_1.org", data[1].scope().get());
-  ASSERT_STREQ("currentWorkerURL 1", data[1].currentWorkerURL().get());
-  ASSERT_EQ(true, data[1].currentWorkerHandlesFetch());
-  ASSERT_STREQ("cacheName 1", NS_ConvertUTF16toUTF8(data[1].cacheName()).get());
+  ASSERT_STREQ("https://scope_1.org", data[1].mRegistration.scope().get());
+  ASSERT_STREQ("currentWorkerURL 1",
+               data[1].mRegistration.currentWorkerURL().get());
+  ASSERT_EQ(true, data[1].mRegistration.currentWorkerHandlesFetch());
+  ASSERT_STREQ("cacheName 1",
+               NS_ConvertUTF16toUTF8(data[1].mRegistration.cacheName()).get());
   ASSERT_EQ(nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_IMPORTS,
-            data[1].updateViaCache());
-  ASSERT_EQ((int64_t)0, data[1].currentWorkerInstalledTime());
-  ASSERT_EQ((int64_t)0, data[1].currentWorkerActivatedTime());
-  ASSERT_EQ((int64_t)0, data[1].lastUpdateTime());
+            data[1].mRegistration.updateViaCache());
+  ASSERT_EQ((int64_t)0, data[1].mRegistration.currentWorkerInstalledTime());
+  ASSERT_EQ((int64_t)0, data[1].mRegistration.currentWorkerActivatedTime());
+  ASSERT_EQ((int64_t)0, data[1].mRegistration.lastUpdateTime());
 }
 
 TEST(ServiceWorkerRegistrar, TestDedupeWrite)
@@ -900,8 +1023,7 @@ TEST(ServiceWorkerRegistrar, TestDedupeWrite)
       spec.AppendPrintf("spec write dedupe/%d", i);
 
       reg.principal() = mozilla::ipc::ContentPrincipalInfo(
-          mozilla::OriginAttributes(false), spec, spec, mozilla::Nothing(),
-          spec);
+          mozilla::OriginAttributes(), spec, spec, mozilla::Nothing(), spec);
 
       swr->TestRegisterServiceWorker(reg);
     }
@@ -916,14 +1038,16 @@ TEST(ServiceWorkerRegistrar, TestDedupeWrite)
   ASSERT_EQ(NS_OK, rv) << "ReadData() should not fail";
 
   // Duplicate entries should be removed.
-  const nsTArray<ServiceWorkerRegistrationData>& data = swr->TestGetData();
+  const nsTArray<ServiceWorkerRegistrar::ServiceWorkerData>& data =
+      swr->TestGetData();
   ASSERT_EQ((uint32_t)1, data.Length()) << "1 entry should be found";
 
-  ASSERT_EQ(data[0].principal().type(),
+  ASSERT_EQ(data[0].mRegistration.principal().type(),
             mozilla::ipc::PrincipalInfo::TContentPrincipalInfo);
-  const mozilla::ipc::ContentPrincipalInfo& cInfo = data[0].principal();
+  const mozilla::ipc::ContentPrincipalInfo& cInfo =
+      data[0].mRegistration.principal();
 
-  mozilla::OriginAttributes attrs(false);
+  mozilla::OriginAttributes attrs;
   nsAutoCString suffix, expectSuffix;
   attrs.CreateSuffix(expectSuffix);
   cInfo.attrs().CreateSuffix(suffix);
@@ -932,16 +1056,95 @@ TEST(ServiceWorkerRegistrar, TestDedupeWrite)
   // previous values.  So expect "1" in values here.
   ASSERT_STREQ(expectSuffix.get(), suffix.get());
   ASSERT_STREQ("https://scope_write.dedupe", cInfo.spec().get());
-  ASSERT_STREQ("https://scope_write.dedupe", data[0].scope().get());
-  ASSERT_STREQ("currentWorkerURL write 1", data[0].currentWorkerURL().get());
-  ASSERT_EQ(true, data[0].currentWorkerHandlesFetch());
+  ASSERT_STREQ("https://scope_write.dedupe",
+               data[0].mRegistration.scope().get());
+  ASSERT_STREQ("currentWorkerURL write 1",
+               data[0].mRegistration.currentWorkerURL().get());
+  ASSERT_EQ(true, data[0].mRegistration.currentWorkerHandlesFetch());
   ASSERT_STREQ("cacheName write 1",
-               NS_ConvertUTF16toUTF8(data[0].cacheName()).get());
+               NS_ConvertUTF16toUTF8(data[0].mRegistration.cacheName()).get());
   ASSERT_EQ(nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_IMPORTS,
-            data[0].updateViaCache());
-  ASSERT_EQ((int64_t)0, data[0].currentWorkerInstalledTime());
-  ASSERT_EQ((int64_t)0, data[0].currentWorkerActivatedTime());
-  ASSERT_EQ((int64_t)0, data[0].lastUpdateTime());
+            data[0].mRegistration.updateViaCache());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.currentWorkerInstalledTime());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.currentWorkerActivatedTime());
+  ASSERT_EQ((int64_t)0, data[0].mRegistration.lastUpdateTime());
+}
+
+TEST(ServiceWorkerRegistrar, TestLoadHandler)
+{
+  nsCString buffer;
+  buffer.AppendInt(static_cast<uint32_t>(SERVICEWORKERREGISTRAR_VERSION));
+  buffer.Append("\n");
+
+  buffer.AppendLiteral("^inBrowser=1\n");
+  buffer.AppendLiteral("https://scope_0.org\ncurrentWorkerURL 0\n");
+  buffer.Append(SERVICEWORKERREGISTRAR_TRUE "\n");
+  buffer.AppendLiteral("cacheName 0\n");
+  buffer.AppendInt(nsIServiceWorkerRegistrationInfo::UPDATE_VIA_CACHE_IMPORTS,
+                   16);
+  buffer.AppendLiteral("\n");
+  buffer.AppendInt(0);
+  buffer.AppendLiteral("\n");
+  buffer.AppendInt(0);
+  buffer.AppendLiteral("\n");
+  buffer.AppendInt(0);
+  buffer.AppendLiteral("\n");
+  buffer.AppendInt(0);
+  buffer.AppendLiteral("\n");
+  buffer.AppendLiteral("true\n");
+  buffer.AppendInt(2);
+  buffer.AppendLiteral("\n");
+  buffer.AppendLiteral("handler_test\n");
+  buffer.AppendLiteral("hello world!\n");
+  buffer.AppendLiteral("handler_test2\n");
+  buffer.AppendLiteral("hello\n");
+  buffer.Append(SERVICEWORKERREGISTRAR_TERMINATOR "\n");
+
+  ASSERT_TRUE(CreateFile(buffer))
+  << "CreateFile should not fail";
+
+  {
+    RefPtr<ServiceWorkerRegistrarTest> swr = new ServiceWorkerRegistrarTest;
+    nsresult rv = swr->TestReadData();
+    ASSERT_EQ(NS_OK, rv) << "ReadData() should not fail";
+
+    ASSERT_EQ(gHandlerStats->swLoadCount, (uint32_t)1)
+        << "First handle correctly called";
+    ASSERT_EQ(gHandlerStats->lastValue, nsCString("hello world!"))
+        << "First handle correctly called correct value)";
+    ASSERT_EQ(gHandlerStats->swUnregisteredCount, (uint32_t)0)
+        << "No unregister calls yet";
+
+    ASSERT_EQ(gHandlerStats->swLoad2Count, (uint32_t)1)
+        << "Second handle correctly called";
+    ASSERT_EQ(gHandlerStats->lastValue2, nsCString("hello"))
+        << "Second handle correctly called correct value)";
+    ASSERT_EQ(gHandlerStats->swUnregistered2Count, (uint32_t)0)
+        << "No unregister calls yet";
+
+    rv = swr->TestWriteData();
+    ASSERT_EQ(NS_OK, rv) << "WriteData() should not fail";
+  }
+
+  {
+    RefPtr<ServiceWorkerRegistrarTest> swr = new ServiceWorkerRegistrarTest;
+    nsresult rv = swr->TestReadData();
+    ASSERT_EQ(NS_OK, rv) << "ReadData() should not fail";
+
+    ASSERT_EQ(gHandlerStats->swLoadCount, (uint32_t)2)
+        << "First handle correctly called";
+    ASSERT_EQ(gHandlerStats->lastValue, nsCString("hello world!"))
+        << "First handle correctly called correct value)";
+    ASSERT_EQ(gHandlerStats->swUnregisteredCount, (uint32_t)0)
+        << "No unregister calls yet";
+
+    ASSERT_EQ(gHandlerStats->swLoad2Count, (uint32_t)2)
+        << "Second handle correctly called";
+    ASSERT_EQ(gHandlerStats->lastValue2, nsCString("hello"))
+        << "Second handle correctly called correct value)";
+    ASSERT_EQ(gHandlerStats->swUnregistered2Count, (uint32_t)0)
+        << "No unregister calls yet";
+  }
 }
 
 int main(int argc, char** argv) {

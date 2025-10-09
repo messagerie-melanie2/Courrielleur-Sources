@@ -6,7 +6,7 @@ loader: taskgraph.loader.transform:loader
 
 transforms:
     - gecko_taskgraph.transforms.release_deps:transforms
-    - gecko_taskgraph.transforms.release_version_bump:transforms
+    - comm_taskgraph.transforms.resolve_landoscript_keyed_by:transforms
     - gecko_taskgraph.transforms.task:transforms
 
 kind-dependencies:
@@ -21,16 +21,19 @@ task-defaults:
         implementation: treescript
         dontbuild: true
         tags: ['release']
-        bump: true
-        bump-files:
+        bump:
             by-project:
+                comm-esr.*: false
+                default: true
+        bump-files:
+            by-release-type:
                 default: ["mail/config/version_display.txt"]
-                comm-(beta|esr.*):
+                release|esr.*:
                     - "mail/config/version.txt"
                     - "mail/config/version_display.txt"
         push:
             by-project:
-                comm-(beta|esr.*): true
+                comm-(beta|release|esr.*): true
                 default: false
 
 tasks:

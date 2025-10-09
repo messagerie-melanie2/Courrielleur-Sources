@@ -8,14 +8,15 @@
 // globals from there.
 /* import-globals-from common.js */
 
-/* exported EVENT_ANNOUNCEMENT, EVENT_REORDER, EVENT_SCROLLING,
+/* exported EVENT_ANNOUNCEMENT, EVENT_ALERT, EVENT_REORDER, EVENT_SCROLLING,
             EVENT_SCROLLING_END, EVENT_SHOW, EVENT_TEXT_INSERTED,
             EVENT_TEXT_REMOVED, EVENT_DOCUMENT_LOAD_COMPLETE, EVENT_HIDE,
             EVENT_TEXT_ATTRIBUTE_CHANGED, EVENT_TEXT_CARET_MOVED, EVENT_SELECTION,
             EVENT_DESCRIPTION_CHANGE, EVENT_NAME_CHANGE, EVENT_STATE_CHANGE,
             EVENT_VALUE_CHANGE, EVENT_TEXT_VALUE_CHANGE, EVENT_FOCUS,
             EVENT_DOCUMENT_RELOAD, EVENT_VIRTUALCURSOR_CHANGED, EVENT_ALERT,
-            EVENT_OBJECT_ATTRIBUTE_CHANGED, UnexpectedEvents, waitForEvent,
+            EVENT_OBJECT_ATTRIBUTE_CHANGED, EVENT_MENUPOPUP_START, EVENT_MENUPOPUP_END, EVENT_ERRORMESSAGE_CHANGED,
+            UnexpectedEvents, waitForEvent,
             waitForEvents, waitForOrderedEvents, waitForStateChange,
             stateChangeEventArgs */
 
@@ -52,6 +53,10 @@ const EVENT_LIVE_REGION_REMOVED = nsIAccessibleEvent.EVENT_LIVE_REGION_REMOVED;
 const EVENT_OBJECT_ATTRIBUTE_CHANGED =
   nsIAccessibleEvent.EVENT_OBJECT_ATTRIBUTE_CHANGED;
 const EVENT_INNER_REORDER = nsIAccessibleEvent.EVENT_INNER_REORDER;
+const EVENT_MENUPOPUP_START = nsIAccessibleEvent.EVENT_MENUPOPUP_START;
+const EVENT_MENUPOPUP_END = nsIAccessibleEvent.EVENT_MENUPOPUP_END;
+const EVENT_ERRORMESSAGE_CHANGED =
+  nsIAccessibleEvent.EVENT_ERRORMESSAGE_CHANGED;
 
 const EventsLogger = {
   enabled: false,
@@ -141,7 +146,7 @@ function matchEvent(event, matchCriteria) {
 function waitForEvent(eventType, matchCriteria, message) {
   return new Promise(resolve => {
     let eventObserver = {
-      observe(subject, topic, data) {
+      observe(subject, topic) {
         if (topic !== "accessible-event") {
           return;
         }
@@ -165,7 +170,7 @@ function waitForEvent(eventType, matchCriteria, message) {
           Services.obs.removeObserver(this, "accessible-event");
           ok(
             true,
-            `${message ? message + ": " : ""}Recieved ${eventTypeToString(
+            `${message ? message + ": " : ""}Received ${eventTypeToString(
               eventType
             )} event`
           );
@@ -185,7 +190,7 @@ class UnexpectedEvents {
     }
   }
 
-  observe(subject, topic, data) {
+  observe(subject, topic) {
     if (topic !== "accessible-event") {
       return;
     }
@@ -215,7 +220,7 @@ class UnexpectedEvents {
  * @param {Array}   events          a list of events to wait (same format as
  *                                   waitForEvent arguments)
  * @param {String}  message         Message to prepend to logging.
- * @param {Boolean} ordered         Events need to be recieved in given order.
+ * @param {Boolean} ordered         Events need to be received in given order.
  * @param {Object}  invokerOrWindow a local window or a special content invoker
  *                                   it takes a list of arguments and a task
  *                                   function.

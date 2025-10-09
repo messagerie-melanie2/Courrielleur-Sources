@@ -6,7 +6,6 @@
 
 #include "vm/ProxyObject.h"
 
-#include "gc/Allocator.h"
 #include "gc/GCProbes.h"
 #include "gc/Marking.h"
 #include "gc/Zone.h"
@@ -15,6 +14,7 @@
 #include "vm/Realm.h"
 
 #include "gc/ObjectKind-inl.h"
+#include "vm/JSContext-inl.h"
 
 using namespace js;
 
@@ -38,11 +38,16 @@ static gc::AllocKind GetProxyGCObjectKind(const JSClass* clasp,
 
   MOZ_ASSERT(nslots <= NativeObject::MAX_FIXED_SLOTS);
   gc::AllocKind kind = gc::GetGCObjectKind(nslots);
+  gc::FinalizeKind finalizeKind;
+
+  // Bug 1957589: Support non-finalized proxies as well.
   if (handler->finalizeInBackground(priv)) {
-    kind = ForegroundToBackgroundAllocKind(kind);
+    finalizeKind = gc::FinalizeKind::Background;
+  } else {
+    finalizeKind = gc::FinalizeKind::Foreground;
   }
 
-  return kind;
+  return gc::GetFinalizedAllocKind(kind, finalizeKind);
 }
 
 void ProxyObject::init(const BaseProxyHandler* handler, HandleValue priv,

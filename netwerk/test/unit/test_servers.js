@@ -9,7 +9,16 @@
 /* import-globals-from head_channels.js */
 /* import-globals-from head_servers.js */
 
-const { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js");
+// We don't normally allow localhost channels to be proxied, but this
+// is easier than updating all the certs and/or domains.
+Services.prefs.setBoolPref("network.proxy.allow_hijacking_localhost", true);
+registerCleanupFunction(() => {
+  Services.prefs.clearUserPref("network.proxy.allow_hijacking_localhost");
+});
+
+const { HttpServer } = ChromeUtils.importESModule(
+  "resource://testing-common/httpd.sys.mjs"
+);
 
 function makeChan(uri) {
   let chan = NetUtil.newChannel({
@@ -20,12 +29,26 @@ function makeChan(uri) {
   return chan;
 }
 
-function channelOpenPromise(chan, flags, observer) {
+function channelOpenPromise(chan, flags) {
   return new Promise(resolve => {
     function finish(req, buffer) {
       resolve([req, buffer]);
     }
     chan.asyncOpen(new ChannelListener(finish, null, flags));
+  });
+}
+
+function registerSimplePathHandler(server, path) {
+  return server.registerPathHandler(path, (req, resp) => {
+    resp.writeHead(200);
+    resp.end("done");
+  });
+}
+
+function regiisterServerNamePathHandler(server, path) {
+  return server.registerPathHandler(path, (req, resp) => {
+    resp.writeHead(200);
+    resp.end(global.server_name);
   });
 }
 
@@ -60,10 +83,7 @@ add_task(async function test_http() {
   });
   equal(req.status, Cr.NS_OK);
   equal(req.QueryInterface(Ci.nsIHttpChannel).responseStatus, 404);
-  await server.registerPathHandler("/test", (req, resp) => {
-    resp.writeHead(200);
-    resp.end("done");
-  });
+  await registerSimplePathHandler(server, "/test");
   chan = makeChan(`http://localhost:${server.port()}/test`);
   req = await new Promise(resolve => {
     chan.asyncOpen(new ChannelListener(resolve, null, CL_ALLOW_UNKNOWN_CL));
@@ -93,10 +113,7 @@ add_task(async function test_https() {
   });
   equal(req.status, Cr.NS_OK);
   equal(req.QueryInterface(Ci.nsIHttpChannel).responseStatus, 404);
-  await server.registerPathHandler("/test", (req, resp) => {
-    resp.writeHead(200);
-    resp.end("done");
-  });
+  await registerSimplePathHandler(server, "/test");
   chan = makeChan(`https://localhost:${server.port()}/test`);
   req = await new Promise(resolve => {
     chan.asyncOpen(new ChannelListener(resolve, null, CL_ALLOW_UNKNOWN_CL));
@@ -125,10 +142,7 @@ add_task(async function test_http2() {
   });
   equal(req.status, Cr.NS_OK);
   equal(req.QueryInterface(Ci.nsIHttpChannel).responseStatus, 404);
-  await server.registerPathHandler("/test", (req, resp) => {
-    resp.writeHead(200);
-    resp.end("done");
-  });
+  await registerSimplePathHandler(server, "/test");
   chan = makeChan(`https://localhost:${server.port()}/test`);
   req = await new Promise(resolve => {
     chan.asyncOpen(new ChannelListener(resolve, null, CL_ALLOW_UNKNOWN_CL));
@@ -165,27 +179,18 @@ add_task(async function test_http1_proxy() {
       await server.execute(
         `global.server_name = "${server.constructor.name}";`
       );
-      await server.registerPathHandler("/test", (req, resp) => {
-        resp.writeHead(200);
-        resp.end(global.server_name);
-      });
-      let chan = makeChan(`${server.origin()}/test`);
-      let { req, buff } = await new Promise(resolve => {
-        chan.asyncOpen(
-          new ChannelListener(
-            (req, buff) => resolve({ req, buff }),
-            null,
-            CL_ALLOW_UNKNOWN_CL
-          )
-        );
-      });
-      equal(req.status, Cr.NS_OK);
-      equal(req.QueryInterface(Ci.nsIHttpChannel).responseStatus, 200);
+      await regiisterServerNamePathHandler(server, "/test");
+      let [req1, buff] = await channelOpenPromise(
+        makeChan(`${server.origin()}/test`),
+        CL_ALLOW_UNKNOWN_CL
+      );
+      equal(req1.status, Cr.NS_OK);
+      equal(req1.QueryInterface(Ci.nsIHttpChannel).responseStatus, 200);
       equal(buff, server.constructor.name);
       //Bug 1792187: Check if proxy is set to true when a proxy is used.
-      equal(req.QueryInterface(Ci.nsIHttpChannelInternal).isProxyUsed, true);
+      equal(req1.QueryInterface(Ci.nsIHttpChannelInternal).isProxyUsed, true);
       equal(
-        req.QueryInterface(Ci.nsIHttpChannel).protocolVersion,
+        req1.QueryInterface(Ci.nsIHttpChannel).protocolVersion,
         server.constructor.name == "NodeHTTP2Server" ? "h2" : "http/1.1"
       );
     }
@@ -220,22 +225,14 @@ add_task(async function test_https_proxy() {
       await server.execute(
         `global.server_name = "${server.constructor.name}";`
       );
-      await server.registerPathHandler("/test", (req, resp) => {
-        resp.writeHead(200);
-        resp.end(global.server_name);
-      });
-      let chan = makeChan(`${server.origin()}/test`);
-      let { req, buff } = await new Promise(resolve => {
-        chan.asyncOpen(
-          new ChannelListener(
-            (req, buff) => resolve({ req, buff }),
-            null,
-            CL_ALLOW_UNKNOWN_CL
-          )
-        );
-      });
-      equal(req.status, Cr.NS_OK);
-      equal(req.QueryInterface(Ci.nsIHttpChannel).responseStatus, 200);
+      await regiisterServerNamePathHandler(server, "/test");
+
+      let [req1, buff] = await channelOpenPromise(
+        makeChan(`${server.origin()}/test`),
+        CL_ALLOW_UNKNOWN_CL
+      );
+      equal(req1.status, Cr.NS_OK);
+      equal(req1.QueryInterface(Ci.nsIHttpChannel).responseStatus, 200);
       equal(buff, server.constructor.name);
     }
   );
@@ -269,22 +266,13 @@ add_task(async function test_http2_proxy() {
       await server.execute(
         `global.server_name = "${server.constructor.name}";`
       );
-      await server.registerPathHandler("/test", (req, resp) => {
-        resp.writeHead(200);
-        resp.end(global.server_name);
-      });
-      let chan = makeChan(`${server.origin()}/test`);
-      let { req, buff } = await new Promise(resolve => {
-        chan.asyncOpen(
-          new ChannelListener(
-            (req, buff) => resolve({ req, buff }),
-            null,
-            CL_ALLOW_UNKNOWN_CL
-          )
-        );
-      });
-      equal(req.status, Cr.NS_OK);
-      equal(req.QueryInterface(Ci.nsIHttpChannel).responseStatus, 200);
+      await regiisterServerNamePathHandler(server, "/test");
+      let [req1, buff] = await channelOpenPromise(
+        makeChan(`${server.origin()}/test`),
+        CL_ALLOW_UNKNOWN_CL
+      );
+      equal(req1.status, Cr.NS_OK);
+      equal(req1.QueryInterface(Ci.nsIHttpChannel).responseStatus, 200);
       equal(buff, server.constructor.name);
     }
   );
@@ -329,15 +317,7 @@ add_task(async function test_proxy_with_redirects() {
         });
 
         let chan = makeChan(`${server.origin()}/redirect`);
-        let { req, buff } = await new Promise(resolve => {
-          chan.asyncOpen(
-            new ChannelListener(
-              (req, buff) => resolve({ req, buff }),
-              null,
-              CL_ALLOW_UNKNOWN_CL
-            )
-          );
-        });
+        let [req, buff] = await channelOpenPromise(chan, CL_ALLOW_UNKNOWN_CL);
         equal(req.status, Cr.NS_OK);
         equal(req.QueryInterface(Ci.nsIHttpChannel).responseStatus, 200);
         equal(buff, server.constructor.name);

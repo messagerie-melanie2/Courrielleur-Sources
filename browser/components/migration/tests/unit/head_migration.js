@@ -6,15 +6,14 @@ var { MigrationUtils } = ChromeUtils.importESModule(
 var { LoginHelper } = ChromeUtils.importESModule(
   "resource://gre/modules/LoginHelper.sys.mjs"
 );
-var { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+var { NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
+);
 var { PlacesUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/PlacesUtils.sys.mjs"
 );
 var { Preferences } = ChromeUtils.importESModule(
   "resource://gre/modules/Preferences.sys.mjs"
-);
-var { PromiseUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/PromiseUtils.sys.mjs"
 );
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
@@ -89,22 +88,6 @@ async function promiseMigration(
 
   return Promise.all(promises);
 }
-/**
- * Function that returns a favicon url for a given page url
- *
- * @param {string} uri
- * The Bookmark URI
- * @returns {string} faviconURI
- * The Favicon URI
- */
-async function getFaviconForPageURI(uri) {
-  let faviconURI = await new Promise(resolve => {
-    PlacesUtils.favicons.getFaviconDataForPage(uri, favURI => {
-      resolve(favURI);
-    });
-  });
-  return faviconURI;
-}
 
 /**
  * Takes an array of page URIs and checks that the favicon was imported for each page URI
@@ -113,9 +96,32 @@ async function getFaviconForPageURI(uri) {
  */
 async function assertFavicons(pageURIs) {
   for (let uri of pageURIs) {
-    let faviconURI = await getFaviconForPageURI(uri);
-    Assert.ok(faviconURI, `Got favicon for ${uri.spec}`);
+    let favicon = await PlacesUtils.favicons.getFaviconForPage(uri);
+    Assert.ok(favicon, `Got favicon for ${favicon.uri.spec}`);
   }
+}
+
+/**
+ * Check the image data for favicon of given page uri.
+ *
+ * @param {string} pageURI
+ *                 The page URI to which the favicon belongs.
+ * @param {Array} expectedImageData
+ *                 Expected image data of the favicon.
+ * @param {string} expectedMimeType
+ *                 Expected mime type of the favicon.
+ */
+async function assertFavicon(pageURI, expectedImageData, expectedMimeType) {
+  let result = await PlacesUtils.favicons.getFaviconForPage(
+    Services.io.newURI(pageURI)
+  );
+  Assert.ok(!!result, `Got favicon for ${pageURI}`);
+  Assert.equal(
+    result.rawData.join(","),
+    expectedImageData.join(","),
+    "Image data is correct"
+  );
+  Assert.equal(result.mimeType, expectedMimeType, "Mime type is correct");
 }
 
 /**

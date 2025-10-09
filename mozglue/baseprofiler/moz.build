@@ -12,7 +12,6 @@
 if CONFIG["MOZ_GECKO_PROFILER"]:
     DEFINES["IMPL_MFBT"] = True
     EXPORTS += [
-        "public/BaseProfilerSharedLibraries.h",
         "public/BaseProfilingStack.h",
     ]
     UNIFIED_SOURCES += [
@@ -30,21 +29,11 @@ if CONFIG["MOZ_GECKO_PROFILER"]:
     ]
 
     if CONFIG["OS_TARGET"] in ("Android", "Linux", "FreeBSD"):
-        if CONFIG["CPU_ARCH"] in ("arm", "aarch64", "x86", "x86_64", "mips64"):
-            UNIFIED_SOURCES += [
-                "lul/AutoObjectMapper.cpp",
-                "lul/LulCommon.cpp",
-                "lul/LulDwarf.cpp",
-                "lul/LulDwarfSummariser.cpp",
-                "lul/LulElf.cpp",
-                "lul/LulMain.cpp",
-                "lul/platform-linux-lul.cpp",
-            ]
         # These files cannot be built in unified mode because of name clashes with mozglue headers on Android.
         SOURCES += [
             "core/shared-libraries-linux.cc",
         ]
-        if CONFIG["CPU_ARCH"] == "arm" and CONFIG["OS_TARGET"] != "FreeBSD":
+        if CONFIG["TARGET_CPU"] == "arm" and CONFIG["OS_TARGET"] != "FreeBSD":
             SOURCES += [
                 "core/EHABIStackWalk.cpp",
             ]
@@ -77,6 +66,7 @@ EXPORTS += [
     "!public/ProfilingCategoryList.h",
     "public/BaseProfiler.h",
     "public/BaseProfilingCategory.h",
+    "public/SharedLibraries.h",
 ]
 
 EXPORTS.mozilla += [
@@ -92,8 +82,8 @@ EXPORTS.mozilla += [
     "public/BaseProfilerRAIIMacro.h",
     "public/BaseProfilerState.h",
     "public/BaseProfilerUtils.h",
-    "public/BlocksRingBuffer.h",
     "public/FailureLatch.h",
+    "public/Flow.h",
     "public/leb128iterator.h",
     "public/ModuloBuffer.h",
     "public/PowerOfTwo.h",
@@ -107,12 +97,14 @@ EXPORTS.mozilla += [
     "public/ProfileBufferIndex.h",
     "public/ProfileChunkedBuffer.h",
     "public/ProfileChunkedBufferDetail.h",
+    "public/ProfilerBufferSize.h",
     "public/ProgressLogger.h",
     "public/ProportionValue.h",
 ]
 
 UNIFIED_SOURCES += [
     "core/BaseAndGeckoProfilerDetail.cpp",
+    "core/Flow.cpp",
     "core/ProfilerUtils.cpp",
 ]
 

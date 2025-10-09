@@ -1,4 +1,6 @@
-const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+const { NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
+);
 
 const BASE_HOST = "example.org";
 
@@ -13,7 +15,7 @@ add_task(async function test_basic_eviction() {
   do_get_profile();
 
   Services.prefs.setIntPref("network.cookie.staleThreshold", 0);
-  Services.prefs.setIntPref("network.cookie.quotaPerHost", 2);
+  Services.prefs.setIntPref("network.cookie.quotaPerHost", 3);
   Services.prefs.setIntPref("network.cookie.maxPerHost", 5);
 
   // We don't want to have CookieJarSettings blocking this test.

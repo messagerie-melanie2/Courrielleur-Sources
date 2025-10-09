@@ -1,25 +1,31 @@
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-var { mailTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MailTestUtils.jsm"
+var { mailTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MailTestUtils.sys.mjs"
 );
-var { localAccountUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/LocalAccountUtils.jsm"
+var { localAccountUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/LocalAccountUtils.sys.mjs"
 );
 
-let { FeedParser } = ChromeUtils.import("resource:///modules/FeedParser.jsm");
-let { Feed } = ChromeUtils.import("resource:///modules/Feed.jsm");
-let { FeedUtils } = ChromeUtils.import("resource:///modules/FeedUtils.jsm");
-let { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js");
+const { FeedParser } = ChromeUtils.importESModule(
+  "resource:///modules/FeedParser.sys.mjs"
+);
+const { Feed } = ChromeUtils.importESModule("resource:///modules/Feed.sys.mjs");
+const { FeedUtils } = ChromeUtils.importESModule(
+  "resource:///modules/FeedUtils.sys.mjs"
+);
+const { HttpServer } = ChromeUtils.importESModule(
+  "resource://testing-common/httpd.sys.mjs"
+);
 
 // Set up local web server to serve up test files.
 // We run it on a random port so that other tests can run concurrently
 // even if they also run a web server.
-let httpServer = new HttpServer();
+const httpServer = new HttpServer();
 httpServer.registerDirectory("/", do_get_file("resources"));
 httpServer.start(-1);
 const SERVER_PORT = httpServer.identity.primaryPort;

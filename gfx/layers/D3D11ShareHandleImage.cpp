@@ -16,6 +16,8 @@
 #include "mozilla/gfx/DeviceManagerDx.h"
 #include "mozilla/layers/CompositableClient.h"
 #include "mozilla/layers/CompositableForwarder.h"
+#include "mozilla/layers/CompositeProcessD3D11FencesHolderMap.h"
+#include "mozilla/layers/FenceD3D11.h"
 #include "mozilla/layers/TextureClient.h"
 #include "mozilla/layers/TextureD3D11.h"
 
@@ -24,142 +26,17 @@ namespace layers {
 
 using namespace gfx;
 
-/* static */
-RefPtr<D3D11ShareHandleImage>
-D3D11ShareHandleImage::MaybeCreateNV12ImageAndSetData(
-    KnowsCompositor* aKnowsCompositor, ImageContainer* aContainer,
-    const PlanarYCbCrData& aData) {
-  MOZ_ASSERT(aKnowsCompositor);
-  MOZ_ASSERT(aContainer);
-
-  if (!aKnowsCompositor || !aContainer) {
-    return nullptr;
-  }
-
-  // Check if data could be used with NV12
-  if (aData.YPictureSize().width % 2 != 0 ||
-      aData.YPictureSize().height % 2 != 0 || aData.mYSkip != 0 ||
-      aData.mCbSkip != 0 || aData.mCrSkip != 0 ||
-      aData.mColorDepth != gfx::ColorDepth::COLOR_8 ||
-      aData.mColorRange != gfx::ColorRange::LIMITED ||
-      aData.mChromaSubsampling !=
-          gfx::ChromaSubsampling::HALF_WIDTH_AND_HEIGHT) {
-    return nullptr;
-  }
-
-  RefPtr<D3D11ShareHandleImage> image = new D3D11ShareHandleImage(
-      aData.YPictureSize(), aData.mPictureRect,
-      ToColorSpace2(aData.mYUVColorSpace), aData.mColorRange);
-
-  RefPtr<D3D11RecycleAllocator> allocator =
-      aContainer->GetD3D11RecycleAllocator(aKnowsCompositor,
-                                           gfx::SurfaceFormat::NV12);
-  if (!allocator) {
-    return nullptr;
-  }
-
-  auto syncObject = allocator->GetSyncObject();
-  if (!syncObject) {
-    MOZ_ASSERT_UNREACHABLE("unexpected to be called");
-    return nullptr;
-  }
-
-  MOZ_ASSERT(allocator->GetUsableSurfaceFormat() == gfx::SurfaceFormat::NV12);
-  if (allocator->GetUsableSurfaceFormat() != gfx::SurfaceFormat::NV12) {
-    MOZ_ASSERT_UNREACHABLE("unexpected to be called");
-    return nullptr;
-  }
-
-  RefPtr<ID3D11Texture2D> stagingTexture =
-      allocator->GetStagingTextureNV12(aData.YPictureSize());
-  if (!stagingTexture) {
-    return nullptr;
-  }
-
-  bool ok = image->AllocateTexture(allocator, allocator->mDevice);
-  if (!ok) {
-    return nullptr;
-  }
-
-  RefPtr<TextureClient> client = image->GetTextureClient(nullptr);
-  if (!client) {
-    return nullptr;
-  }
-
-  // The texture does not have keyed mutex. When keyed mutex exists, the texture
-  // could not be used for video overlay. Then it needs manual synchronization
-  RefPtr<ID3D11Texture2D> texture = image->GetTexture();
-  if (!texture) {
-    return nullptr;
-  }
-
-  RefPtr<ID3D11DeviceContext> context;
-  allocator->mDevice->GetImmediateContext(getter_AddRefs(context));
-  if (!context) {
-    return nullptr;
-  }
-
-  RefPtr<ID3D10Multithread> mt;
-  HRESULT hr = allocator->mDevice->QueryInterface(
-      (ID3D10Multithread**)getter_AddRefs(mt));
-  if (FAILED(hr) || !mt) {
-    gfxCriticalError() << "Multithread safety interface not supported. " << hr;
-    return nullptr;
-  }
-
-  if (!mt->GetMultithreadProtected()) {
-    gfxCriticalError() << "Device used not marked as multithread-safe.";
-    return nullptr;
-  }
-
-  D3D11MTAutoEnter mtAutoEnter(mt.forget());
-
-  AutoLockD3D11Texture lockSt(stagingTexture);
-
-  D3D11_MAP mapType = D3D11_MAP_WRITE;
-  D3D11_MAPPED_SUBRESOURCE mappedResource;
-
-  hr = context->Map(stagingTexture, 0, mapType, 0, &mappedResource);
-  if (FAILED(hr)) {
-    gfxCriticalNoteOnce << "Mapping D3D11 staging texture failed: "
-                        << gfx::hexa(hr);
-    return nullptr;
-  }
-
-  const size_t destStride = mappedResource.RowPitch;
-  uint8_t* yDestPlaneStart = reinterpret_cast<uint8_t*>(mappedResource.pData);
-  uint8_t* uvDestPlaneStart = reinterpret_cast<uint8_t*>(mappedResource.pData) +
-                              destStride * aData.YPictureSize().height;
-  // Convert I420 to NV12,
-  libyuv::I420ToNV12(aData.mYChannel, aData.mYStride, aData.mCbChannel,
-                     aData.mCbCrStride, aData.mCrChannel, aData.mCbCrStride,
-                     yDestPlaneStart, destStride, uvDestPlaneStart, destStride,
-                     aData.YDataSize().width, aData.YDataSize().height);
-
-  context->Unmap(stagingTexture, 0);
-
-  context->CopyResource(texture, stagingTexture);
-
-  context->Flush();
-
-  client->SyncWithObject(syncObject);
-  if (!syncObject->Synchronize(true)) {
-    MOZ_ASSERT_UNREACHABLE("unexpected to be called");
-    return nullptr;
-  }
-
-  return image;
-}
-
 D3D11ShareHandleImage::D3D11ShareHandleImage(const gfx::IntSize& aSize,
                                              const gfx::IntRect& aRect,
                                              gfx::ColorSpace2 aColorSpace,
-                                             gfx::ColorRange aColorRange)
+                                             gfx::ColorRange aColorRange,
+                                             gfx::ColorDepth aColorDepth)
     : Image(nullptr, ImageFormat::D3D11_SHARE_HANDLE_TEXTURE),
       mSize(aSize),
       mPictureRect(aRect),
       mColorSpace(aColorSpace),
-      mColorRange(aColorRange) {}
+      mColorRange(aColorRange),
+      mColorDepth(aColorDepth) {}
 
 bool D3D11ShareHandleImage::AllocateTexture(D3D11RecycleAllocator* aAllocator,
                                             ID3D11Device* aDevice) {
@@ -178,7 +55,8 @@ bool D3D11ShareHandleImage::AllocateTexture(D3D11RecycleAllocator* aAllocator,
     CD3D11_TEXTURE2D_DESC newDesc(
         DXGI_FORMAT_B8G8R8A8_UNORM, mSize.width, mSize.height, 1, 1,
         D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE);
-    newDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+    newDesc.MiscFlags =
+        D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED;
 
     HRESULT hr =
         aDevice->CreateTexture2D(&newDesc, nullptr, getter_AddRefs(mTexture));
@@ -202,7 +80,22 @@ D3D11ShareHandleImage::GetAsSourceSurface() {
     return nullptr;
   }
 
-  return gfx::Factory::CreateBGRA8DataSourceSurfaceForD3D11Texture(src);
+  return gfx::Factory::CreateBGRA8DataSourceSurfaceForD3D11Texture(
+      src, 0, mColorSpace, mColorRange);
+}
+
+nsresult D3D11ShareHandleImage::BuildSurfaceDescriptorBuffer(
+    SurfaceDescriptorBuffer& aSdBuffer, BuildSdbFlags aFlags,
+    const std::function<MemoryOrShmem(uint32_t)>& aAllocate) {
+  RefPtr<ID3D11Texture2D> src = GetTexture();
+  if (!src) {
+    gfxWarning() << "Cannot readback from shared texture because no texture is "
+                    "available.";
+    return NS_ERROR_FAILURE;
+  }
+
+  return gfx::Factory::CreateSdbForD3D11Texture(src, mSize, aSdBuffer,
+                                                aAllocate);
 }
 
 ID3D11Texture2D* D3D11ShareHandleImage::GetTexture() const { return mTexture; }
@@ -296,9 +189,12 @@ already_AddRefed<TextureClient> D3D11RecycleAllocator::CreateOrRecycleClient(
   }
   mImageDevice = device;
 
+  auto* fencesHolderMap = CompositeProcessD3D11FencesHolderMap::Get();
+  const bool useFence =
+      fencesHolderMap && FenceD3D11::IsSupported(mImageDevice);
   TextureAllocationFlags allocFlags = TextureAllocationFlags::ALLOC_DEFAULT;
-  if (StaticPrefs::media_wmf_use_sync_texture_AtStartup() ||
-      mDevice == DeviceManagerDx::Get()->GetCompositorDevice()) {
+  if (!useFence && (StaticPrefs::media_wmf_use_sync_texture_AtStartup() ||
+                    mDevice == DeviceManagerDx::Get()->GetCompositorDevice())) {
     // If our device is the compositor device, we don't need any synchronization
     // in practice.
     allocFlags = TextureAllocationFlags::ALLOC_MANUAL_SYNCHRONIZATION;
@@ -308,7 +204,18 @@ already_AddRefed<TextureClient> D3D11RecycleAllocator::CreateOrRecycleClient(
       mUsableSurfaceFormat, aColorSpace, aColorRange, aSize, allocFlags,
       mDevice, layers::TextureFlags::DEFAULT);
 
-  RefPtr<TextureClient> textureClient = CreateOrRecycle(helper);
+  RefPtr<TextureClient> textureClient =
+      CreateOrRecycle(helper).unwrapOr(nullptr);
+
+  if (textureClient) {
+    auto* textureData = textureClient->GetInternalData()->AsD3D11TextureData();
+    MOZ_ASSERT(textureData);
+    if (textureData && textureData->mFencesHolderId.isSome() &&
+        fencesHolderMap) {
+      fencesHolderMap->WaitAllFencesAndForget(
+          textureData->mFencesHolderId.ref(), mDevice);
+    }
+  }
   return textureClient.forget();
 }
 
@@ -326,7 +233,7 @@ RefPtr<ID3D11Texture2D> D3D11RecycleAllocator::GetStagingTextureNV12(
     desc.Usage = D3D11_USAGE_STAGING;
     desc.BindFlags = 0;
     desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-    desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+    desc.MiscFlags = 0;
     desc.SampleDesc.Count = 1;
 
     HRESULT hr = mDevice->CreateTexture2D(&desc, nullptr,

@@ -1,7 +1,20 @@
-{%- let mod_name = crate_name|fn_name %}
+{%- let namespace = ci.namespace_for_type(type_)? %}
+{%- let module = python_config.module_for_namespace(namespace) %}
 
-{%- let ffi_converter_name = "FfiConverterType{}"|format(name) %}
-{{ self.add_import_of(mod_name, ffi_converter_name) }}
+# External type {{ name }}: `from {{ module }} import {{ name }}`
+{%- let ffi_converter_name = "_UniffiConverterType{}"|format(name) %}
+{{- self.add_import_of(module, ffi_converter_name) }}
+{{- self.add_import_of(module, name) }} {#- import the type alias itself -#}
 
-{%- let rustbuffer_local_name = "RustBuffer{}"|format(name) %}
-{{ self.add_import_of_as(mod_name, "RustBuffer", rustbuffer_local_name) }}
+{%- if ci.is_name_used_as_error(name) %}
+# External type {{ name }} is an error.
+{%-     match type_ %}
+{%-         when Type::Object { .. } %}
+{%-             let err_ffi_converter_name = "{}__as_error"|format(ffi_converter_name) %}
+{{- self.add_import_of(module, err_ffi_converter_name) }}
+{%-         else %}
+{%-     endmatch %}
+{%- endif %}
+
+{%- let rustbuffer_local_name = "_UniffiRustBuffer{}"|format(name) %}
+{{- self.add_import_of_as(module, "_UniffiRustBuffer", rustbuffer_local_name) }}

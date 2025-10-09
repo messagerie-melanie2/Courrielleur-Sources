@@ -115,7 +115,6 @@ exports.modules = {
   // and so are never frozen, even if the browser loader module which
   // pull it is destroyed. See bug 1402779.
   Promise,
-  TelemetryStopwatch,
 };
 
 defineLazyGetter(exports.modules, "Debugger", () => {
@@ -125,7 +124,8 @@ defineLazyGetter(exports.modules, "Debugger", () => {
     return global.Debugger;
   }
   const { addDebuggerToGlobal } = ChromeUtils.importESModule(
-    "resource://gre/modules/jsdebugger.sys.mjs"
+    "resource://gre/modules/jsdebugger.sys.mjs",
+    { global: "contextual" }
   );
   addDebuggerToGlobal(global);
   return global.Debugger;
@@ -141,7 +141,8 @@ defineLazyGetter(exports.modules, "ChromeDebugger", () => {
   });
 
   const { addDebuggerToGlobal } = ChromeUtils.importESModule(
-    "resource://gre/modules/jsdebugger.sys.mjs"
+    "resource://gre/modules/jsdebugger.sys.mjs",
+    { global: "contextual" }
   );
   addDebuggerToGlobal(debuggerSandbox);
   return debuggerSandbox.Debugger;
@@ -183,21 +184,22 @@ function lazyGlobal(name, getter) {
 // Lazily define a few things so that the corresponding modules are only loaded
 // when used.
 lazyGlobal("clearTimeout", () => {
-  return ChromeUtils.importESModule("resource://gre/modules/Timer.sys.mjs")
-    .clearTimeout;
+  return ChromeUtils.importESModule("resource://gre/modules/Timer.sys.mjs", {
+    global: "contextual",
+  }).clearTimeout;
 });
 lazyGlobal("setTimeout", () => {
-  return ChromeUtils.importESModule("resource://gre/modules/Timer.sys.mjs")
-    .setTimeout;
+  return ChromeUtils.importESModule("resource://gre/modules/Timer.sys.mjs", {
+    global: "contextual",
+  }).setTimeout;
 });
 lazyGlobal("clearInterval", () => {
-  return ChromeUtils.importESModule("resource://gre/modules/Timer.sys.mjs")
-    .clearInterval;
+  return ChromeUtils.importESModule("resource://gre/modules/Timer.sys.mjs", {
+    global: "contextual",
+  }).clearInterval;
 });
 lazyGlobal("setInterval", () => {
-  return ChromeUtils.importESModule("resource://gre/modules/Timer.sys.mjs")
-    .setInterval;
-});
-lazyGlobal("WebSocket", () => {
-  return Services.appShell.hiddenDOMWindow.WebSocket;
+  return ChromeUtils.importESModule("resource://gre/modules/Timer.sys.mjs", {
+    global: "contextual",
+  }).setInterval;
 });

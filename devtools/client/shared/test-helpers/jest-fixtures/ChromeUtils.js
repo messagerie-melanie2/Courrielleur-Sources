@@ -4,9 +4,21 @@
 
 "use strict";
 
+const mockedESM = {
+  BinarySearch: {
+    insertionIndexOf() {
+      return 0;
+    },
+  },
+};
+
 module.exports = {
   import: () => ({}),
   addProfilerMarker: () => {},
-  defineESModuleGetters: () => {},
-  importESModule: () => ({}),
+  defineESModuleGetters: (lazy, dict) => {
+    for (const key in dict) {
+      lazy[key] = mockedESM[key];
+    }
+  },
+  importESModule: path => require(path) || {},
 };

@@ -5,6 +5,7 @@
 package org.mozilla.fenix.microsurvey.ui
 
 import androidx.annotation.DrawableRes
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,28 +15,31 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Card
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.rememberNestedScrollInteropConnection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.mozilla.fenix.R
-import org.mozilla.fenix.compose.annotation.LightDarkPreview
 import org.mozilla.fenix.compose.list.RadioButtonListItem
 import org.mozilla.fenix.theme.FirefoxTheme
 
-private val shape = RoundedCornerShape(16.dp)
-private val elevation: Dp = 5.dp
+private val shape = RoundedCornerShape(8.dp)
 
 /**
- * The micro survey content UI to hold question and answer data.
+ * The microsurvey content UI to hold question and answer data.
  *
  * @param question The survey question text.
  * @param answers The survey answer text options available for the question.
@@ -45,33 +49,43 @@ private val elevation: Dp = 5.dp
  * @param onSelectionChange An event that updates the [selectedAnswer].
  */
 @Composable
-fun MicroSurveyContent(
+fun MicrosurveyContent(
     question: String,
     answers: List<String>,
-    @DrawableRes icon: Int = R.drawable.ic_print, // todo currently unknown what the default will be if any.
+    @DrawableRes icon: Int = R.drawable.ic_print,
     backgroundColor: Color = FirefoxTheme.colors.layer2,
     selectedAnswer: String? = null,
     onSelectionChange: (String) -> Unit,
 ) {
     Card(
+        border = BorderStroke(1.dp, FirefoxTheme.colors.borderPrimary),
+        elevation = 0.dp,
         shape = shape,
         backgroundColor = backgroundColor,
-        elevation = elevation,
         modifier = Modifier
             .wrapContentHeight()
-            .fillMaxWidth(),
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
     ) {
-        Column(modifier = Modifier.wrapContentHeight()) {
+        Column {
             Header(icon, question)
 
-            answers.forEach {
-                RadioButtonListItem(
-                    label = it,
-                    selected = selectedAnswer == it,
-                    onClick = {
-                        onSelectionChange.invoke(it)
-                    },
-                )
+            Column(
+                modifier = Modifier
+                    .wrapContentHeight()
+                    .selectableGroup()
+                    .nestedScroll(rememberNestedScrollInteropConnection())
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                answers.forEach {
+                    RadioButtonListItem(
+                        label = it,
+                        selected = selectedAnswer == it,
+                        onClick = {
+                            onSelectionChange.invoke(it)
+                        },
+                    )
+                }
             }
         }
     }
@@ -85,7 +99,7 @@ private fun Header(icon: Int, question: String) {
     ) {
         Image(
             painter = painterResource(icon),
-            contentDescription = null,
+            contentDescription = stringResource(id = R.string.microsurvey_feature_icon_content_description),
             modifier = Modifier.size(24.dp),
         )
 
@@ -100,14 +114,14 @@ private fun Header(icon: Int, question: String) {
 }
 
 /**
- * Preview for [MicroSurveyContent].
+ * Preview for [MicrosurveyContent].
  */
 @PreviewScreenSizes
-@LightDarkPreview
+@PreviewLightDark
 @Composable
-fun MicroSurveyContentPreview() {
+fun MicrosurveyContentPreview() {
     FirefoxTheme {
-        MicroSurveyContent(
+        MicrosurveyContent(
             question = "How satisfied are you with printing in Firefox?",
             icon = R.drawable.ic_print,
             answers = listOf(

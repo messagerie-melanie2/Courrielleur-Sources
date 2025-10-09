@@ -22,13 +22,11 @@
 ///////////////////////////////////////////////////////////////////////////////
 // nsThunderbirdProfileMigrator
 
-#define FILE_NAME_SITEPERM_OLD    "cookperm.txt"
 #define FILE_NAME_SITEPERM_NEW    "hostperm.1"
-#define FILE_NAME_CERT8DB         "cert8.db"
-#define FILE_NAME_KEY3DB          "key3.db"
-#define FILE_NAME_SECMODDB        "secmod.db"
+#define FILE_NAME_CERT9DB         "cert9.db"
+#define FILE_NAME_KEY4DB          "key4.db"
 #define FILE_NAME_HISTORY         "history.dat"
-#define FILE_NAME_SIGNONS         "signons.sqlite"
+#define FILE_NAME_SIGNONS         "logins.json"
 #define FILE_NAME_MIMETYPES       "mimeTypes.rdf"
 #define FILE_NAME_USER_PREFS      "user.js"
 #define FILE_NAME_PERSONALDICTIONARY "persdict.dat"
@@ -95,8 +93,6 @@ nsThunderbirdProfileMigrator::Migrate(uint16_t aItems,
     // Permissions (Images)
     if (NS_SUCCEEDED(rv))
       rv = CopyFile(FILE_NAME_SITEPERM_NEW, FILE_NAME_SITEPERM_NEW);
-    if (NS_SUCCEEDED(rv))
-      rv = CopyFile(FILE_NAME_SITEPERM_OLD, FILE_NAME_SITEPERM_OLD);
   }
 
   // the last thing to do is to actually copy over any mail folders
@@ -360,7 +356,6 @@ nsThunderbirdProfileMigrator::PrefTransform gTransforms[] = {
   MAKESAMETYPEPREFTRANSFORM("mailnews.offline_sync_work_offline",      Bool),
   MAKESAMETYPEPREFTRANSFORM("mailnews.open_window_warning",            Int),
   MAKESAMETYPEPREFTRANSFORM("mailnews.plaintext_domains",              String),
-  MAKESAMETYPEPREFTRANSFORM("mailnews.remember_selected_message",      Bool),
   MAKESAMETYPEPREFTRANSFORM("mailnews.reply_in_default_charset",       Bool),
   MAKESAMETYPEPREFTRANSFORM("mailnews.reuse_message_window",           Bool),
   MAKESAMETYPEPREFTRANSFORM("mailnews.scroll_to_new_message",          Bool),
@@ -486,9 +481,9 @@ nsThunderbirdProfileMigrator::TransformPreferences(
     "wallet."
   };
 
-  PBStructArray branches[MOZ_ARRAY_LENGTH(branchNames)];
+  PBStructArray branches[std::size(branchNames)];
   uint32_t i;
-  for (i = 0; i < MOZ_ARRAY_LENGTH(branchNames); ++i)
+  for (i = 0; i < std::size(branchNames); ++i)
     ReadBranch(branchNames[i], psvc, branches[i]);
 
   // the signature file prefs may be paths to files in the thunderbird profile
@@ -519,7 +514,7 @@ nsThunderbirdProfileMigrator::TransformPreferences(
   for (transform = gTransforms; transform < end; ++transform)
     transform->prefSetterFunc(transform, branch);
 
-  for (i = 0; i < MOZ_ARRAY_LENGTH(branchNames); ++i)
+  for (i = 0; i < std::size(branchNames); ++i)
     WriteBranch(branchNames[i], psvc, branches[i]);
 
   psvc->SavePrefFile(targetPrefsFile);
@@ -541,11 +536,9 @@ nsThunderbirdProfileMigrator::CopyPreferences(bool aReplace)
 
   // Security Stuff
   if (NS_SUCCEEDED(rv))
-    rv = CopyFile(FILE_NAME_CERT8DB, FILE_NAME_CERT8DB);
+    rv = CopyFile(FILE_NAME_CERT9DB, FILE_NAME_CERT9DB);
   if (NS_SUCCEEDED(rv))
-    rv = CopyFile(FILE_NAME_KEY3DB, FILE_NAME_KEY3DB);
-  if (NS_SUCCEEDED(rv))
-    rv = CopyFile(FILE_NAME_SECMODDB, FILE_NAME_SECMODDB);
+    rv = CopyFile(FILE_NAME_KEY4DB, FILE_NAME_KEY4DB);
 
   // User MIME Type overrides
   if (NS_SUCCEEDED(rv))

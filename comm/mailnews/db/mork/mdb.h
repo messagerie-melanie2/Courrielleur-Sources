@@ -75,7 +75,7 @@ typedef mdb_u4 mdb_more;       // more available bytes for larger buffer
 typedef mdb_u2 mork_uses;  // 2-byte strong uses count
 typedef mdb_u2 mork_refs;  // 2-byte actual reference count
 
-#define mdbId_kNone ((mdb_id)-1) /* never a valid Mork object ID */
+#define mdbId_kNone ((mdb_id) - 1) /* never a valid Mork object ID */
 
 typedef mdb_u4 mdb_percent;  // 0..100, with values >100 same as 100
 
@@ -84,7 +84,7 @@ typedef mdb_u1 mdb_priority;  // 0..9, for a total of ten different values
 // sequence position is signed; negative is useful to mean "before first":
 typedef mdb_i4 mdb_pos;  // signed zero-based ordinal collection position
 
-#define mdbPos_kBeforeFirst ((mdb_pos)-1) /* any negative is before zero */
+#define mdbPos_kBeforeFirst ((mdb_pos) - 1) /* any negative is before zero */
 
 // order is also signed, so we can use three states for comparison order:
 typedef mdb_i4 mdb_order;  // neg:lessthan, zero:equalto, pos:greaterthan
@@ -366,16 +366,12 @@ class nsIMdbSorting;
 
 #define NS_IMDBOBJECT_IID_STR "5533ea4b-14c3-4bef-ac60-22f9e9a49084"
 
-#define NS_IMDBOBJECT_IID                            \
-  {                                                  \
-    0x5533ea4b, 0x14c3, 0x4bef, {                    \
-      0xac, 0x60, 0x22, 0xf9, 0xe9, 0xa4, 0x90, 0x84 \
-    }                                                \
-  }
+#define NS_IMDBOBJECT_IID \
+  {0x5533ea4b, 0x14c3, 0x4bef, {0xac, 0x60, 0x22, 0xf9, 0xe9, 0xa4, 0x90, 0x84}}
 
 class nsIMdbObject : public nsISupports {  // msg db base class
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IMDBOBJECT_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_IMDBOBJECT_IID)
   // { ===== begin nsIMdbObject methods =====
 
   // { ----- begin attribute methods -----
@@ -405,8 +401,6 @@ class nsIMdbObject : public nsISupports {  // msg db base class
 
   // } ===== end nsIMdbObject methods =====
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(nsIMdbObject, NS_IMDBOBJECT_IID)
 
 /*| nsIMdbErrorHook: a base class for clients of this API to subclass, in order
 **| to provide a callback installable in nsIMdbEnv for error notifications. If
@@ -463,7 +457,7 @@ class nsIMdbHeap {  // caller-supplied memory management interface
 
   virtual size_t GetUsedSize() = 0;
 
-  virtual ~nsIMdbHeap(){};
+  virtual ~nsIMdbHeap() {};
   // } ===== end nsIMdbHeap methods =====
 };
 
@@ -490,17 +484,13 @@ class nsIMdbCPlusHeap {  // caller-supplied memory management interface
 
 #define NS_IMDBTHUMB_IID_STR "6d3ad7c1-a809-4e74-8577-49fa9a4562fa"
 
-#define NS_IMDBTHUMB_IID                             \
-  {                                                  \
-    0x6d3ad7c1, 0xa809, 0x4e74, {                    \
-      0x85, 0x77, 0x49, 0xfa, 0x9a, 0x45, 0x62, 0xfa \
-    }                                                \
-  }
+#define NS_IMDBTHUMB_IID \
+  {0x6d3ad7c1, 0xa809, 0x4e74, {0x85, 0x77, 0x49, 0xfa, 0x9a, 0x45, 0x62, 0xfa}}
 
 class nsIMdbThumb
     : public nsISupports {  // closure for repeating incremental method
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IMDBTHUMB_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_IMDBTHUMB_IID)
 
   // { ===== begin nsIMdbThumb methods =====
   NS_IMETHOD GetProgress(
@@ -523,8 +513,6 @@ class nsIMdbThumb
       nsIMdbEnv* ev) = 0;
   // } ===== end nsIMdbThumb methods =====
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(nsIMdbThumb, NS_IMDBTHUMB_IID)
 
 /*| nsIMdbEnv: a context parameter used when calling most abstract db methods.
 **| The main purpose of such an object is to permit a database implementation
@@ -560,16 +548,12 @@ that
 
 #define NS_IMDBENV_IID_STR "a765e46b-efb6-41e6-b75b-c5d6bd710594"
 
-#define NS_IMDBENV_IID                               \
-  {                                                  \
-    0xa765e46b, 0xefb6, 0x41e6, {                    \
-      0xb7, 0x5b, 0xc5, 0xd6, 0xbd, 0x71, 0x05, 0x94 \
-    }                                                \
-  }
+#define NS_IMDBENV_IID \
+  {0xa765e46b, 0xefb6, 0x41e6, {0xb7, 0x5b, 0xc5, 0xd6, 0xbd, 0x71, 0x05, 0x94}}
 
 class nsIMdbEnv : public nsISupports {  // db specific context parameter
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IMDBENV_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_IMDBENV_IID)
   // { ===== begin nsIMdbEnv methods =====
 
   // { ----- begin attribute methods -----
@@ -598,8 +582,6 @@ class nsIMdbEnv : public nsISupports {  // db specific context parameter
   NS_IMETHOD ClearErrorsAndWarnings() = 0;  // clear both errors & warnings
   // } ===== end nsIMdbEnv methods =====
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(nsIMdbEnv, NS_IMDBENV_IID)
 
 /*| nsIMdbFactory: the main entry points to the abstract db interface.  A DLL
 **| that supports this mdb interface need only have a single exported method
@@ -651,18 +633,14 @@ nsIMdbFactory
 
 #define NS_IMDBFACTORY_IID_STR "2b80395c-b91e-4990-b1a7-023e99ab14e9"
 
-#define NS_IMDBFACTORY_IID                           \
-  {                                                  \
-    0xf04aa4ab, 0x1fe, 0x4115, {                     \
-      0xa4, 0xa5, 0x68, 0x19, 0xdf, 0xf1, 0x10, 0x3d \
-    }                                                \
-  }
+#define NS_IMDBFACTORY_IID \
+  {0xf04aa4ab, 0x1fe, 0x4115, {0xa4, 0xa5, 0x68, 0x19, 0xdf, 0xf1, 0x10, 0x3d}}
 
 class nsIMdbFactory : public nsISupports {  // suite entry points
   using PathChar = mozilla::filesystem::Path::value_type;
 
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IMDBFACTORY_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_IMDBFACTORY_IID)
   // { ===== begin nsIMdbFactory methods =====
 
   // { ----- begin file methods -----
@@ -768,8 +746,6 @@ class nsIMdbFactory : public nsISupports {  // suite entry points
   // } ===== end nsIMdbFactory methods =====
 };
 
-NS_DEFINE_STATIC_IID_ACCESSOR(nsIMdbFactory, NS_IMDBFACTORY_IID)
-
 extern "C" nsIMdbFactory* MakeMdbFactory();
 
 /*| nsIMdbFile: abstract file interface resembling the original morkFile
@@ -819,16 +795,12 @@ extern "C" nsIMdbFactory* MakeMdbFactory();
 
 #define NS_IMDBFILE_IID_STR "f04aa4ab-1fe7-4115-a4a5-6819dff1103d"
 
-#define NS_IMDBFILE_IID                              \
-  {                                                  \
-    0xf04aa4ab, 0x1fe, 0x4115, {                     \
-      0xa4, 0xa5, 0x68, 0x19, 0xdf, 0xf1, 0x10, 0x3d \
-    }                                                \
-  }
+#define NS_IMDBFILE_IID \
+  {0xf04aa4ab, 0x1fe, 0x4115, {0xa4, 0xa5, 0x68, 0x19, 0xdf, 0xf1, 0x10, 0x3d}}
 
 class nsIMdbFile : public nsISupports {  // minimal file interface
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IMDBFILE_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_IMDBFILE_IID)
   // { ===== begin nsIMdbFile methods =====
 
   // { ----- begin pos methods -----
@@ -892,8 +864,6 @@ class nsIMdbFile : public nsISupports {  // minimal file interface
 
   // } ===== end nsIMdbFile methods =====
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(nsIMdbFile, NS_IMDBFILE_IID)
 
 /*| nsIMdbPort: a readonly interface to a specific database file. The mutable
 **| nsIMdbStore interface is a subclass that includes writing behavior, but
@@ -1305,16 +1275,12 @@ class nsIMdbPort : public nsISupports {
 |*/
 
 #define NS_IMDBSTORE_IID_STR "74d6218d-44b0-43b5-9ebe-69a17dfb562c"
-#define NS_IMDBSTORE_IID                             \
-  {                                                  \
-    0x74d6218d, 0x44b0, 0x43b5, {                    \
-      0x9e, 0xbe, 0x69, 0xa1, 0x7d, 0xfb, 0x56, 0x2c \
-    }                                                \
-  }
+#define NS_IMDBSTORE_IID \
+  {0x74d6218d, 0x44b0, 0x43b5, {0x9e, 0xbe, 0x69, 0xa1, 0x7d, 0xfb, 0x56, 0x2c}}
 
 class nsIMdbStore : public nsIMdbPort {
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IMDBSTORE_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_IMDBSTORE_IID)
 
   // { ===== begin nsIMdbStore methods =====
 
@@ -1434,8 +1400,6 @@ class nsIMdbStore : public nsIMdbPort {
   // } ===== end nsIMdbStore methods =====
 };
 
-NS_DEFINE_STATIC_IID_ACCESSOR(nsIMdbStore, NS_IMDBSTORE_IID)
-
 /*| nsIMdbCursor: base cursor class for iterating row cells and table rows
 **|
 **|| count: the number of elements in the collection (table or row)
@@ -1461,16 +1425,12 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsIMdbStore, NS_IMDBSTORE_IID)
 
 #define NS_IMDBCURSOR_IID_STR "a0c37337-6ebc-474c-90db-e65ea0b850aa"
 
-#define NS_IMDBCURSOR_IID                            \
-  {                                                  \
-    0xa0c37337, 0x6ebc, 0x474c, {                    \
-      0x90, 0xdb, 0xe6, 0x5e, 0xa0, 0xb8, 0x50, 0xaa \
-    }                                                \
-  }
+#define NS_IMDBCURSOR_IID \
+  {0xa0c37337, 0x6ebc, 0x474c, {0x90, 0xdb, 0xe6, 0x5e, 0xa0, 0xb8, 0x50, 0xaa}}
 
 class nsIMdbCursor : public nsISupports {  // collection iterator
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IMDBCURSOR_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_IMDBCURSOR_IID)
   // { ===== begin nsIMdbCursor methods =====
 
   // { ----- begin attribute methods -----
@@ -1487,16 +1447,10 @@ class nsIMdbCursor : public nsISupports {  // collection iterator
   // } ===== end nsIMdbCursor methods =====
 };
 
-NS_DEFINE_STATIC_IID_ACCESSOR(nsIMdbCursor, NS_IMDBCURSOR_IID)
-
 #define NS_IMDBPORTTABLECURSOR_IID_STR = "f181a41e-933d-49b3-af93-20d3634b8b78"
 
-#define NS_IMDBPORTTABLECURSOR_IID                   \
-  {                                                  \
-    0xf181a41e, 0x933d, 0x49b3, {                    \
-      0xaf, 0x93, 0x20, 0xd3, 0x63, 0x4b, 0x8b, 0x78 \
-    }                                                \
-  }
+#define NS_IMDBPORTTABLECURSOR_IID \
+  {0xf181a41e, 0x933d, 0x49b3, {0xaf, 0x93, 0x20, 0xd3, 0x63, 0x4b, 0x8b, 0x78}}
 
 /*| nsIMdbPortTableCursor: cursor class for iterating port tables
 **|
@@ -1507,7 +1461,7 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsIMdbCursor, NS_IMDBCURSOR_IID)
 |*/
 class nsIMdbPortTableCursor : public nsISupports {  // table collection iterator
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IMDBPORTTABLECURSOR_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_IMDBPORTTABLECURSOR_IID)
   // { ===== begin nsIMdbPortTableCursor methods =====
 
   // { ----- begin attribute methods -----
@@ -1533,8 +1487,6 @@ class nsIMdbPortTableCursor : public nsISupports {  // table collection iterator
 
   // } ===== end nsIMdbPortTableCursor methods =====
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(nsIMdbPortTableCursor, NS_IMDBPORTTABLECURSOR_IID)
 
 /*| nsIMdbCollection: an object that collects a set of other objects as members.
 **| The main purpose of this base class is to unify the perceived semantics
@@ -1728,16 +1680,12 @@ class nsIMdbCollection : public nsISupports {  // sequence of objects
 
 #define NS_IMDBTABLE_IID_STR = "fe11bc98-d02b-4128-9fac-87042fdf9639"
 
-#define NS_IMDBTABLE_IID                             \
-  {                                                  \
-    0xfe11bc98, 0xd02b, 0x4128, {                    \
-      0x9f, 0xac, 0x87, 0x04, 0x2f, 0xdf, 0x96, 0x39 \
-    }                                                \
-  }
+#define NS_IMDBTABLE_IID \
+  {0xfe11bc98, 0xd02b, 0x4128, {0x9f, 0xac, 0x87, 0x04, 0x2f, 0xdf, 0x96, 0x39}}
 
 class nsIMdbTable : public nsIMdbCollection {  // a collection of rows
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IMDBTABLE_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_IMDBTABLE_IID)
   // { ===== begin nsIMdbTable methods =====
 
   // { ----- begin meta attribute methods -----
@@ -2006,8 +1954,6 @@ class nsIMdbTable : public nsIMdbCollection {  // a collection of rows
   // } ===== end nsIMdbTable methods =====
 };
 
-NS_DEFINE_STATIC_IID_ACCESSOR(nsIMdbTable, NS_IMDBTABLE_IID)
-
 /*| nsIMdbSorting: a view of a table in some particular sort order.  This
 **| row order closely resembles a readonly array of rows with the same row
 **| membership as the underlying table, but in a different order than the
@@ -2102,16 +2048,12 @@ class nsIMdbSorting : public nsIMdbObject {  // sorting of some table
 
 #define NS_IMDBTABLEROWCURSOR_IID_STR = "4f325dad-0385-4b62-a992-c914ab93587e"
 
-#define NS_IMDBTABLEROWCURSOR_IID                    \
-  {                                                  \
-    0x4f325dad, 0x0385, 0x4b62, {                    \
-      0xa9, 0x92, 0xc9, 0x14, 0xab, 0x93, 0x58, 0x7e \
-    }                                                \
-  }
+#define NS_IMDBTABLEROWCURSOR_IID \
+  {0x4f325dad, 0x0385, 0x4b62, {0xa9, 0x92, 0xc9, 0x14, 0xab, 0x93, 0x58, 0x7e}}
 
 class nsIMdbTableRowCursor : public nsISupports {  // table row iterator
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IMDBTABLEROWCURSOR_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_IMDBTABLEROWCURSOR_IID)
 
   // { ===== begin nsIMdbTableRowCursor methods =====
 
@@ -2198,24 +2140,18 @@ class nsIMdbTableRowCursor : public nsISupports {  // table row iterator
   // } ===== end nsIMdbTableRowCursor methods =====
 };
 
-NS_DEFINE_STATIC_IID_ACCESSOR(nsIMdbTableRowCursor, NS_IMDBTABLEROWCURSOR_IID)
-
 /*| nsIMdbRow: a collection of cells
 **|
 |*/
 
 #define NS_IMDBROW_IID_STR "271e8d6e-183a-40e3-9f18-36913b4c7853"
 
-#define NS_IMDBROW_IID                               \
-  {                                                  \
-    0x271e8d6e, 0x183a, 0x40e3, {                    \
-      0x9f, 0x18, 0x36, 0x91, 0x3b, 0x4c, 0x78, 0x53 \
-    }                                                \
-  }
+#define NS_IMDBROW_IID \
+  {0x271e8d6e, 0x183a, 0x40e3, {0x9f, 0x18, 0x36, 0x91, 0x3b, 0x4c, 0x78, 0x53}}
 
 class nsIMdbRow : public nsIMdbCollection {  // cell tuple
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IMDBROW_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_IMDBROW_IID)
   // { ===== begin nsIMdbRow methods =====
 
   // { ----- begin cursor methods -----
@@ -2314,8 +2250,6 @@ class nsIMdbRow : public nsIMdbCollection {  // cell tuple
   // } ===== end nsIMdbRow methods =====
 };
 
-NS_DEFINE_STATIC_IID_ACCESSOR(nsIMdbRow, NS_IMDBROW_IID)
-
 /*| nsIMdbRowCellCursor: cursor class for iterating row cells
 **|
 **|| row: the cursor is associated with a specific row, which can be
@@ -2328,16 +2262,12 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsIMdbRow, NS_IMDBROW_IID)
 
 #define NS_IMDBROWCELLCURSOR_IID_STR "b33371a7-5d63-4d10-85a8-e44dffe75c28"
 
-#define NS_IMDBROWCELLCURSOR_IID                     \
-  {                                                  \
-    0x271e8d6e, 0x5d63, 0x4d10, {                    \
-      0x85, 0xa8, 0xe4, 0x4d, 0xff, 0xe7, 0x5c, 0x28 \
-    }                                                \
-  }
+#define NS_IMDBROWCELLCURSOR_IID \
+  {0x271e8d6e, 0x5d63, 0x4d10, {0x85, 0xa8, 0xe4, 0x4d, 0xff, 0xe7, 0x5c, 0x28}}
 
 class nsIMdbRowCellCursor : public nsISupports {  // cell collection iterator
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IMDBROWCELLCURSOR_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_IMDBROWCELLCURSOR_IID)
   // { ===== begin nsIMdbRowCellCursor methods =====
 
   // { ----- begin attribute methods -----
@@ -2373,8 +2303,6 @@ class nsIMdbRowCellCursor : public nsISupports {  // cell collection iterator
 
   // } ===== end nsIMdbRowCellCursor methods =====
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(nsIMdbRowCellCursor, NS_IMDBROWCELLCURSOR_IID)
 
 /*| nsIMdbBlob: a base class for objects composed mainly of byte sequence state.
 **| (This provides a base class for nsIMdbCell, so that cells themselves can
@@ -2473,19 +2401,15 @@ class nsIMdbBlob : public nsISupports {  // a string with associated charset
 **| interface as more natural.
 |*/
 
-#define NS_IMDBCELL_IID                              \
-  {                                                  \
-    0xa3b62f71, 0xa181, 0x4a91, {                    \
-      0xb6, 0x6b, 0x27, 0x10, 0x9b, 0x88, 0x98, 0x35 \
-    }                                                \
-  }
+#define NS_IMDBCELL_IID \
+  {0xa3b62f71, 0xa181, 0x4a91, {0xb6, 0x6b, 0x27, 0x10, 0x9b, 0x88, 0x98, 0x35}}
 
 #define NS_IMDBCELL_IID_STR = "a3b62f71-a181-4a91-b66b-27109b889835"
 
 class nsIMdbCell
     : public nsIMdbBlob {  // text attribute in row with column scope
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IMDBTABLEROWCURSOR_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_IMDBTABLEROWCURSOR_IID)
   // { ===== begin nsIMdbCell methods =====
 
   // { ----- begin attribute methods -----
@@ -2540,8 +2464,6 @@ class nsIMdbCell
 
   // } ===== end nsIMdbCell methods =====
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(nsIMdbCell, NS_IMDBTABLEROWCURSOR_IID)
 
 // } %%%%% end C++ abstract class interfaces %%%%%
 

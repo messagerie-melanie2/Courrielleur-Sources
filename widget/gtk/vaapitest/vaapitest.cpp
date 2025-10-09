@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <stdint.h>
+#include <stdarg.h>
 
 #if defined(MOZ_ASAN) || defined(FUZZING)
 #  include <signal.h>
@@ -25,7 +26,6 @@
 #  include <stdio.h>
 #endif
 
-#include "mozilla/widget/mozwayland.h"
 #include "prlink.h"
 #include "va/va.h"
 
@@ -34,11 +34,14 @@
 // Print VA-API test results to stdout and logging to stderr
 #define OUTPUT_PIPE 1
 
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
 // bits to use decoding vaapitest() return values.
 constexpr int CODEC_HW_H264 = 1 << 4;
 constexpr int CODEC_HW_VP8 = 1 << 5;
 constexpr int CODEC_HW_VP9 = 1 << 6;
 constexpr int CODEC_HW_AV1 = 1 << 7;
+constexpr int CODEC_HW_HEVC = 1 << 8;
 
 // childgltest is declared inside extern "C" so that the name is not mangled.
 // The name is used in build/valgrind/x86_64-pc-linux-gnu.sup to suppress
@@ -50,8 +53,7 @@ static constexpr struct {
   VAProfile mVAProfile;
   const char* mName;
 } kVAAPiProfileName[] = {
-#define MAP(v) \
-  { VAProfile##v, #v }
+#define MAP(v) {VAProfile##v, #v}
     MAP(H264ConstrainedBaseline),
     MAP(H264Main),
     MAP(H264High),
@@ -60,6 +62,9 @@ static constexpr struct {
     MAP(VP9Profile2),
     MAP(AV1Profile0),
     MAP(AV1Profile1),
+    MAP(HEVCMain),
+    MAP(HEVCMain10),
+    MAP(HEVCMain12),
 #undef MAP
 };
 
@@ -103,7 +108,7 @@ static void vaapitest(const char* aRenderDevicePath) {
 
   libDrm = dlopen("libva-drm.so.2", RTLD_LAZY);
   if (!libDrm) {
-    record_error("VA-API test failed: libva-drm.so.2 is missing.");
+    log("vaapitest failed: libva-drm.so.2 is missing\n");
     return;
   }
 
@@ -116,7 +121,7 @@ static void vaapitest(const char* aRenderDevicePath) {
 
   display = sVaGetDisplayDRM(renderDeviceFD);
   if (!display) {
-    record_error("VA-API test failed: sVaGetDisplayDRM failed.");
+    record_error("VA-API test failed: vaGetDisplayDRM failed.");
     return;
   }
 
@@ -124,7 +129,6 @@ static void vaapitest(const char* aRenderDevicePath) {
   VAStatus status = vaInitialize(display, &major, &minor);
   if (status != VA_STATUS_SUCCESS) {
     log("vaInitialize failed %d\n", status);
-    record_error("VA-API test failed: failed to initialise VAAPI connection.");
     return;
   } else {
     log("vaInitialize finished\n");
@@ -183,8 +187,10 @@ static void vaapitest(const char* aRenderDevicePath) {
           codecs |= CODEC_HW_VP9;
         } else if (!strncmp(profstr, "AV1", 3)) {
           codecs |= CODEC_HW_AV1;
+        } else if (!strncmp(profstr, "HEVC", 4)) {
+          codecs |= CODEC_HW_HEVC;
         } else {
-          record_warning("VA-API test unknown profile.\n");
+          record_warning("VA-API test unknown profile.");
         }
         vaDestroyConfig(display, config);
         foundProfile = true;

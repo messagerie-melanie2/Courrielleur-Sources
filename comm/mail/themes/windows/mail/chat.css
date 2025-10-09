@@ -8,17 +8,25 @@
   padding: 0 7px;
 }
 
-/* Adaptation from #folderTree */
-:root:not([lwt-tree]) #listPaneBox {
-  appearance: none;
-  background-color: Field;
-  color: FieldText;
-}
+#listPaneBox {
 
-#listPaneBox > * {
-  background: transparent !important;
-  appearance: none !important;
-  border: none;
+  & > * {
+    background: transparent !important;
+    appearance: none !important;
+    border: none;
+  }
+  /* Adaptation from #folderTree */
+  :root:not([lwt-tree]) & {
+    appearance: none;
+    background-color: Field;
+    color: FieldText;
+  }
+
+  @media not (prefers-contrast) {
+    :root:not([lwt-tree],[lwtheme]) & {
+      background-color: var(--layout-background-1);
+    }
+  }
 }
 
 #conversationsBox {
@@ -34,15 +42,11 @@
   padding-inline-end: 5px;
   margin-inline-end: 2px;
   margin-bottom: 2px !important; /* override 4px from description */
-}
 
-.conv-counter[value^="-"] {
-  margin-inline-end: 2px;
-  padding-inline-end: 4px;
-}
-
-.splitter.conv-chat {
-  border-left: 1px solid rgba(0, 0, 0, 0.25);
+  &[value^="-"] {
+    margin-inline-end: 2px;
+    padding-inline-end: 4px;
+  }
 }
 
 #contextPane {
@@ -63,7 +67,6 @@
 
 .conv-nicklist-header,
 .conv-logs-header-label {
-  appearance: none;
   margin: 0;
   padding-block: 2px;
   border-bottom: 1px solid ThreeDShadow;
@@ -81,20 +84,6 @@
   padding: 3px 3px 4px;
 }
 
-#listSplitter,
-#contextSplitter {
-  background-color: transparent;
-  min-width: 0;
-}
-
-#listSplitter {
-  border-inline-end-width: 0;
-}
-
-#contextSplitter {
-  border-inline-start-width: 0;
-}
-
 #nicklist > richlistitem[inactive][selected] > label {
   color: -moz-cellhighlighttext !important;
 }
@@ -103,7 +92,7 @@ richlistitem[is="chat-group-richlistitem"] .twisty {
   margin-inline-end: 2px;
 }
 
-@media (-moz-windows-default-theme) {
+@media not (prefers-contrast) {
   .conv-status-container {
     border-bottom-color: var(--color-gray-30);
   }
@@ -115,32 +104,5 @@ richlistitem[is="chat-group-richlistitem"] .twisty {
   #chat-status-selector > vbox > .statusMessageToolbarItem[editing] {
     appearance: none;
     padding-inline: 2px;
-  }
-}
-
-@media (-moz-platform: windows-win7) and (-moz-windows-default-theme) {
-  :root:not([lwt-tree]) #listPaneBox {
-    background-color: rgb(238, 243, 250);
-  }
-
-  #conversationsBox {
-    background-color: rgb(233, 239, 245);
-  }
-
-  .conv-nicklist-header,
-  .conv-logs-header-label {
-    background-color: rgb(233, 239, 245);
-  }
-}
-
-@media (-moz-platform: windows-win8) and (-moz-windows-default-theme) {
-  :root:not([lwt-tree]) #listPaneBox {
-    background-color: -moz-Dialog;
-  }
-}
-
-@media (-moz-platform: windows-win10) and (-moz-windows-default-theme) {
-  :root:not([lwt-tree],:-moz-lwtheme) #listPaneBox {
-    background-color: #fafafa;
   }
 }

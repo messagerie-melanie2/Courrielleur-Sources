@@ -27,6 +27,7 @@
 #include "nsIMsgComposeService.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsDirectoryServiceUtils.h"
+#include "nsLocalFile.h"
 #include "msgMapi.h"
 #include "msgMapiHook.h"
 #include "msgMapiSupport.h"
@@ -38,6 +39,7 @@
 #include "mozilla/ReentrantMonitor.h"
 #include "mozilla/Components.h"
 #include "nsEmbedCID.h"
+#include "mozilla/ErrorNames.h"
 #include "mozilla/Logging.h"
 #include "mozilla/SpinEventLoopUntil.h"
 
@@ -54,25 +56,19 @@ class MAPISendListener : public nsIMsgSendListener,
   // nsISupports interface
   NS_DECL_THREADSAFE_ISUPPORTS
 
-  /* void OnStartSending (in string aMsgID, in uint32_t aMsgSize); */
   NS_IMETHOD OnStartSending(const char* aMsgID, uint32_t aMsgSize) {
     return NS_OK;
   }
 
-  /* void OnProgress (in string aMsgID, in uint32_t aProgress, in uint32_t
-   * aProgressMax); */
-  NS_IMETHOD OnProgress(const char* aMsgID, uint32_t aProgress,
-                        uint32_t aProgressMax) {
+  NS_IMETHOD OnSendProgress(const char* aMsgID, uint32_t aProgress,
+                            uint32_t aProgressMax) {
     return NS_OK;
   }
 
-  /* void OnStatus (in string aMsgID, in wstring aMsg); */
   NS_IMETHOD OnStatus(const char* aMsgID, const char16_t* aMsg) {
     return NS_OK;
   }
 
-  /* void OnStopSending (in string aMsgID, in nsresult aStatus, in wstring aMsg,
-   * in nsIFile returnFile); */
   NS_IMETHOD OnStopSending(const char* aMsgID, nsresult aStatus,
                            const char16_t* aMsg, nsIFile* returnFile) {
     mozilla::ReentrantMonitorAutoEnter mon(*this);
@@ -81,20 +77,16 @@ class MAPISendListener : public nsIMsgSendListener,
     return NS_OK;
   }
 
-  /* void OnTransportSecurityError( in string msgID, in nsresult status, in
-   * nsITransportSecurityInfo secInfo, in ACString location); */
   NS_IMETHOD OnTransportSecurityError(const char* msgID, nsresult status,
                                       nsITransportSecurityInfo* secInfo,
                                       nsACString const& location) {
     return NS_OK;
   }
 
-  /* void OnSendNotPerformed */
   NS_IMETHOD OnSendNotPerformed(const char* aMsgID, nsresult aStatus) {
     return OnStopSending(aMsgID, aStatus, nullptr, nullptr);
   }
 
-  /* void OnGetDraftFolderURI (); */
   NS_IMETHOD OnGetDraftFolderURI(const char* aMsgID,
                                  const nsACString& aFolderURI) {
     return NS_OK;
@@ -105,35 +97,6 @@ class MAPISendListener : public nsIMsgSendListener,
  private:
   bool m_done;
   virtual ~MAPISendListener() {}
-};
-
-/// Helper for setting up the hidden window for blind MAPI.
-class MOZ_STACK_CLASS AutoHiddenWindow {
- public:
-  explicit AutoHiddenWindow(nsresult& rv)
-      : mAppService(do_GetService("@mozilla.org/appshell/appShellService;1")) {
-    mCreatedHiddenWindow = false;
-    rv = mAppService->GetHiddenDOMWindow(getter_AddRefs(mHiddenWindow));
-    if (rv == NS_ERROR_FAILURE) {
-      // Try to get a hidden window. If it doesn't exist, create a hidden
-      // window for us to use.
-      rv = mAppService->CreateHiddenWindow();
-      NS_ENSURE_SUCCESS_VOID(rv);
-      mCreatedHiddenWindow = true;
-      rv = mAppService->GetHiddenDOMWindow(getter_AddRefs(mHiddenWindow));
-    }
-    NS_ENSURE_SUCCESS_VOID(rv);
-  }
-  ~AutoHiddenWindow() {
-    if (mCreatedHiddenWindow) mAppService->DestroyHiddenWindow();
-  }
-  mozIDOMWindowProxy* operator->() { return mHiddenWindow; }
-  operator mozIDOMWindowProxy*() { return mHiddenWindow; }
-
- private:
-  nsCOMPtr<nsIAppShellService> mAppService;
-  nsCOMPtr<mozIDOMWindowProxy> mHiddenWindow;
-  bool mCreatedHiddenWindow;
 };
 
 NS_IMPL_ISUPPORTS(MAPISendListener, nsIMsgSendListener)
@@ -285,10 +248,6 @@ nsresult nsMapiHook::BlindSendMail(unsigned long aSession,
 
   if (!IsBlindSendAllowed()) return NS_ERROR_FAILURE;
 
-  // Get a hidden window to use for compose.
-  AutoHiddenWindow hiddenWindow(rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
   // smtp password and Logged in used IdKey from MapiConfig (session obj)
   nsMAPIConfiguration* pMapiConfig =
       nsMAPIConfiguration::GetMAPIConfiguration();
@@ -331,7 +290,7 @@ nsresult nsMapiHook::BlindSendMail(unsigned long aSession,
   nsCOMPtr<nsIMsgCompose> pMsgCompose(
       do_CreateInstance("@mozilla.org/messengercompose/compose;1", &rv));
   NS_ENSURE_SUCCESS(rv, rv);
-  rv = pMsgCompose->Initialize(pMsgComposeParams, hiddenWindow, nullptr);
+  rv = pMsgCompose->Initialize(pMsgComposeParams, nullptr, nullptr);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // If we're in offline mode, we'll need to queue it for later.
@@ -347,8 +306,11 @@ nsresult nsMapiHook::BlindSendMail(unsigned long aSession,
   if (WeAreOffline()) return NS_OK;
 
   // Wait for OnStopSending to be called.
-  mozilla::SpinEventLoopUntil("nsIMsgCompose::SendMsg is async"_ns,
-                              [=]() { return sendListener->IsDone(); });
+  mozilla::SpinEventLoopUntil("nsIMsgCompose::SendMsg is async"_ns, [=]() {
+    bool shutdownInProgress = false;
+    accountManager->GetShutdownInProgress(&shutdownInProgress);
+    return sendListener->IsDone() || shutdownInProgress;
+  });
 
   return rv;
 }
@@ -363,18 +325,20 @@ nsresult nsMapiHook::HandleAttachments(nsIMsgCompFields* aCompFields,
   nsAutoCString Attachments;
   nsAutoCString TempFiles;
 
-  nsCOMPtr<nsIFile> pFile = do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv);
-  if (NS_FAILED(rv) || (!pFile)) return rv;
-  nsCOMPtr<nsIFile> pTempDir = do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv);
-  if (NS_FAILED(rv) || (!pTempDir)) return rv;
+  nsCOMPtr<nsIFile> pFile = new nsLocalFile();
+  nsCOMPtr<nsIFile> pTempDir = new nsLocalFile();
 
   for (int i = 0; i < aFileCount; i++) {
     if (aFiles[i].lpszPathName) {
       // check if attachment exists
-      if (!aIsUTF8)
-        pFile->InitWithNativePath(nsDependentCString(aFiles[i].lpszPathName));
-      else
-        pFile->InitWithPath(NS_ConvertUTF8toUTF16(aFiles[i].lpszPathName));
+      if (!aIsUTF8) {
+        rv = pFile->InitWithNativePath(
+            nsDependentCString(aFiles[i].lpszPathName));
+        NS_ENSURE_SUCCESS(rv, rv);
+      } else {
+        rv = pFile->InitWithPath(NS_ConvertUTF8toUTF16(aFiles[i].lpszPathName));
+        NS_ENSURE_SUCCESS(rv, rv);
+      }
 
       bool bExist;
       rv = pFile->Exists(&bExist);
@@ -394,7 +358,7 @@ nsresult nsMapiHook::HandleAttachments(nsIMsgCompFields* aCompFields,
       pTempDir->AppendRelativePath(u"moz_mapi"_ns);
       pTempDir->Exists(&bExist);
       if (!bExist) {
-        rv = pTempDir->Create(nsIFile::DIRECTORY_TYPE, 777);
+        rv = pTempDir->Create(nsIFile::DIRECTORY_TYPE, 0777);
         if (NS_FAILED(rv)) return rv;
       }
 
@@ -424,7 +388,7 @@ nsresult nsMapiHook::HandleAttachments(nsIMsgCompFields* aCompFields,
       nsCOMPtr<nsIMsgAttachment> attachment =
           do_CreateInstance("@mozilla.org/messengercompose/attachment;1", &rv);
       NS_ENSURE_SUCCESS(rv, rv);
-      attachment->SetName(leafName);
+      attachment->SetName(NS_ConvertUTF16toUTF8(leafName));
 
       nsCOMPtr<nsIFile> pTempFile;
       rv = pTempDir->Clone(getter_AddRefs(pTempFile));
@@ -460,10 +424,13 @@ nsresult nsMapiHook::HandleAttachments(nsIMsgCompFields* aCompFields,
 
       // add the attachment
       rv = aCompFields->AddAttachment(attachment);
-      if (NS_FAILED(rv))
-        MOZ_LOG(
-            MAPI, mozilla::LogLevel::Debug,
-            ("nsMapiHook::HandleAttachments: AddAttachment rv =  %x\n", rv));
+      if (NS_FAILED(rv)) {
+        nsAutoCString name;
+        mozilla::GetErrorName(rv, name);
+        MOZ_LOG(MAPI, mozilla::LogLevel::Debug,
+                ("nsMapiHook::HandleAttachments: AddAttachment rv =  %s\n",
+                 name.get()));
+      }
     }
   }
   return rv;
@@ -479,15 +446,14 @@ nsresult nsMapiHook::HandleAttachmentsW(nsIMsgCompFields* aCompFields,
   nsAutoCString Attachments;
   nsAutoCString TempFiles;
 
-  nsCOMPtr<nsIFile> pFile = do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv);
-  if (NS_FAILED(rv) || (!pFile)) return rv;
-  nsCOMPtr<nsIFile> pTempDir = do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv);
-  if (NS_FAILED(rv) || (!pTempDir)) return rv;
+  nsCOMPtr<nsIFile> pFile = new nsLocalFile();
+  nsCOMPtr<nsIFile> pTempDir = new nsLocalFile();
 
   for (int i = 0; i < aFileCount; i++) {
     if (aFiles[i].lpszPathName) {
       // Check if attachment exists.
-      pFile->InitWithPath(nsDependentString(aFiles[i].lpszPathName));
+      rv = pFile->InitWithPath(nsDependentString(aFiles[i].lpszPathName));
+      NS_ENSURE_SUCCESS(rv, rv);
 
       bool bExist;
       rv = pFile->Exists(&bExist);
@@ -508,7 +474,7 @@ nsresult nsMapiHook::HandleAttachmentsW(nsIMsgCompFields* aCompFields,
       pTempDir->AppendRelativePath(u"moz_mapi"_ns);
       pTempDir->Exists(&bExist);
       if (!bExist) {
-        rv = pTempDir->Create(nsIFile::DIRECTORY_TYPE, 777);
+        rv = pTempDir->Create(nsIFile::DIRECTORY_TYPE, 0777);
         if (NS_FAILED(rv)) return rv;
       }
 
@@ -532,7 +498,7 @@ nsresult nsMapiHook::HandleAttachmentsW(nsIMsgCompFields* aCompFields,
       nsCOMPtr<nsIMsgAttachment> attachment =
           do_CreateInstance("@mozilla.org/messengercompose/attachment;1", &rv);
       NS_ENSURE_SUCCESS(rv, rv);
-      attachment->SetName(leafName);
+      attachment->SetName(NS_ConvertUTF16toUTF8(leafName));
 
       nsCOMPtr<nsIFile> pTempFile;
       rv = pTempDir->Clone(getter_AddRefs(pTempFile));
@@ -568,10 +534,13 @@ nsresult nsMapiHook::HandleAttachmentsW(nsIMsgCompFields* aCompFields,
 
       // Add the attachment.
       rv = aCompFields->AddAttachment(attachment);
-      if (NS_FAILED(rv))
-        MOZ_LOG(
-            MAPI, mozilla::LogLevel::Debug,
-            ("nsMapiHook::HandleAttachmentsW: AddAttachment rv =  %x\n", rv));
+      if (NS_FAILED(rv)) {
+        nsAutoCString name;
+        mozilla::GetErrorName(rv, name);
+        MOZ_LOG(MAPI, mozilla::LogLevel::Debug,
+                ("nsMapiHook::HandleAttachmentsW: AddAttachment rv =  %s\n",
+                 name.get()));
+      }
     }
   }
   return rv;
@@ -803,8 +772,7 @@ nsresult nsMapiHook::PopulateCompFieldsForSendDocs(
     nsAutoString Subject;
 
     // multiple files to be sent, delim specified
-    nsCOMPtr<nsIFile> pFile = do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv);
-    if (NS_FAILED(rv) || (!pFile)) return rv;
+    nsCOMPtr<nsIFile> pFile = new nsLocalFile();
 
     char* newFilePaths = (char*)strFilePaths.get();
     while (offset != kNotFound) {
@@ -817,7 +785,7 @@ nsresult nsMapiHook::PopulateCompFieldsForSendDocs(
       pTempDir->AppendRelativePath(u"moz_mapi"_ns);
       pTempDir->Exists(&bExist);
       if (!bExist) {
-        rv = pTempDir->Create(nsIFile::DIRECTORY_TYPE, 777);
+        rv = pTempDir->Create(nsIFile::DIRECTORY_TYPE, 0777);
         if (NS_FAILED(rv)) return rv;
       }
 
@@ -843,7 +811,8 @@ nsresult nsMapiHook::PopulateCompFieldsForSendDocs(
         }
       }
 
-      pFile->InitWithNativePath(RemainingPaths);
+      rv = pFile->InitWithNativePath(RemainingPaths);
+      NS_ENSURE_SUCCESS(rv, rv);
 
       rv = pFile->Exists(&bExist);
       if (NS_FAILED(rv) || (!bExist)) return NS_ERROR_FILE_NOT_FOUND;

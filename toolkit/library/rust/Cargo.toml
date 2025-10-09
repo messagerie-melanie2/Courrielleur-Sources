@@ -1,13 +1,15 @@
 [package]
+edition = "2015"
 name = "gkrust"
 version = "0.1.0"
 authors = ["The Mozilla Project Developers"]
 license = "MPL-2.0"
 description = "Rust code for libxul"
+rust-version.workspace = true
 
 [dependencies]
 gkrust-shared = { path = "shared" }
-mozilla-central-workspace-hack = { path = "../../../build/workspace-hack" }
+mozilla-central-workspace-hack = { version = "0.1", features = ["gkrust"], optional = true }
 
 # Workarounds for https://github.com/rust-lang/rust/issues/58393
 mozglue-static = { path = "../../../mozglue/static/rust" }
@@ -24,7 +26,6 @@ test = false
 doctest = false
 bench = false
 doc = false
-plugin = false
 harness = false
 
 [package.metadata.cargo-udeps.ignore]

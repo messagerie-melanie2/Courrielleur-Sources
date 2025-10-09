@@ -4,21 +4,27 @@
 # file, you can obtain one at http://mozilla.org/MPL/2.0/.
 
 EXTRA_JS_MODULES += [
-    "../../../browser/modules/FaviconLoader.jsm",
+    "../../../browser/modules/FaviconLoader.sys.mjs",
 ]
+
+with Files("**"):
+    BUG_COMPONENT = ("Thunderbird", "General")
 
 FINAL_TARGET_FILES.actors += [
     "../../../browser/actors/ContextMenuChild.sys.mjs",
     "../../../browser/actors/LinkHandlerChild.sys.mjs",
+    "BrowserProcessChild.sys.mjs",
     "ChatActionChild.sys.mjs",
     "ChatActionParent.sys.mjs",
     "ContextMenuParent.sys.mjs",
-    "LinkClickHandlerChild.jsm",
-    "LinkClickHandlerParent.jsm",
+    "LinkClickHandlerChild.sys.mjs",
+    "LinkClickHandlerParent.sys.mjs",
     "LinkHandlerParent.sys.mjs",
-    "MailLinkChild.jsm",
-    "MailLinkParent.jsm",
-    "PromptParent.jsm",
-    "VCardChild.jsm",
-    "VCardParent.jsm",
+    "MailLinkChild.sys.mjs",
+    "MailLinkParent.sys.mjs",
+    "MessageScrollChild.sys.mjs",
+    "MessageScrollParent.sys.mjs",
+    "PromptParent.sys.mjs",
+    "VCardChild.sys.mjs",
+    "VCardParent.sys.mjs",
 ]

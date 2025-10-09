@@ -4,14 +4,13 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 EXPORTS += [
-    "nsComposeStrings.h",
     "nsMsgAttachmentData.h",
     "nsMsgCompFields.h",
     "nsMsgCompose.h",
+    "nsMsgCompUtils.h",
 ]
 
 SOURCES += [
-    "nsComposeStrings.cpp",
     "nsMsgAttachedFile.cpp",
     "nsMsgAttachment.cpp",
     "nsMsgAttachmentData.cpp",
@@ -43,16 +42,17 @@ if CONFIG["CC_TYPE"] == "clang-cl":
     CXXFLAGS += ["-Wno-switch"]
 
 EXTRA_JS_MODULES += [
-    "MailtoProtocolHandler.jsm",
-    "MessageSend.jsm",
-    "MimeEncoder.jsm",
-    "MimeMessage.jsm",
-    "MimeMessageUtils.jsm",
-    "MimePart.jsm",
-    "SmtpClient.jsm",
-    "SMTPProtocolHandler.jsm",
-    "SmtpServer.jsm",
-    "SmtpService.jsm",
+    "AddressCollector.sys.mjs",
+    "MailtoProtocolHandler.sys.mjs",
+    "MessageSend.sys.mjs",
+    "MimeEncoder.sys.mjs",
+    "MimeMessage.sys.mjs",
+    "MimeMessageUtils.sys.mjs",
+    "MimePart.sys.mjs",
+    "OutgoingServerService.sys.mjs",
+    "SmtpClient.sys.mjs",
+    "SMTPProtocolHandler.sys.mjs",
+    "SmtpServer.sys.mjs",
 ]
 
 XPCOM_MANIFESTS += [

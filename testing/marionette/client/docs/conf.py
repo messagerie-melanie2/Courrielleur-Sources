@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #
 # Marionette Python Client documentation build configuration file, created by
 # sphinx-quickstart on Tue Aug  6 13:54:46 2013.
@@ -45,8 +44,8 @@ source_suffix = ".rst"
 master_doc = "index"
 
 # General information about the project.
-project = u"Marionette Python Client"
-copyright = u"2013, Mozilla Automation and Tools and individual contributors"
+project = "Marionette Python Client"
+copyright = "2013, Mozilla Automation and Tools and individual contributors"
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -202,8 +201,8 @@ latex_documents = [
     (
         "index",
         "MarionettePythonClient.tex",
-        u"Marionette Python Client Documentation",
-        u"Mozilla Automation and Tools team",
+        "Marionette Python Client Documentation",
+        "Mozilla Automation and Tools team",
         "manual",
     ),
 ]
@@ -237,8 +236,8 @@ man_pages = [
     (
         "index",
         "marionettepythonclient",
-        u"Marionette Python Client Documentation",
-        [u"Mozilla Automation and Tools team"],
+        "Marionette Python Client Documentation",
+        ["Mozilla Automation and Tools team"],
         1,
     )
 ]

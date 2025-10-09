@@ -6,11 +6,11 @@
  * Test that nsMsgDBView properly reports the values of messages in the display.
  */
 
-var { MessageGenerator, SyntheticMessageSet } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { MessageGenerator, SyntheticMessageSet } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-var { MessageInjection } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageInjection.jsm"
+var { MessageInjection } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageInjection.sys.mjs"
 );
 
 var messageInjection = new MessageInjection({ mode: "local" });
@@ -20,28 +20,34 @@ var messageInjection = new MessageInjection({ mode: "local" });
 // and the second element is a map of column names to expected values when
 // requesting the cell text for a given column name.
 var tests = [
-  [{ from: "John Doe <db@tinderbox.invalid>" }, { senderCol: "John Doe" }],
-  [{ from: '"Doe, John" <db@tinderbox.invalid>' }, { senderCol: "Doe, John" }],
+  [
+    { from: "John Doe <db@tinderbox.invalid>" },
+    { senderCol: "John Doe <db@tinderbox.invalid>" },
+  ],
+  [
+    { from: '"Doe, John" <db@tinderbox.invalid>' },
+    { senderCol: "Doe, John <db@tinderbox.invalid>" },
+  ],
   // Multiple senders are indicated with 'et al.' suffix.
   [
     { from: "John Doe <db@tinderbox.invalid>, Sally Ann <db@null.invalid>" },
-    { senderCol: "John Doe et al." },
+    { senderCol: "John Doe <db@tinderbox.invalid> et al." },
   ],
   [
     { from: "=?UTF-8?Q?David_H=C3=A5s=C3=A4ther?= <db@null.invalid>" },
-    { senderCol: "David Håsäther" },
+    { senderCol: "David Håsäther <db@null.invalid>" },
   ],
   [
     { from: "=?UTF-8?Q?H=C3=A5s=C3=A4ther=2C_David?= <db@null.invalid>" },
-    { senderCol: "Håsäther, David" },
+    { senderCol: "Håsäther, David <db@null.invalid>" },
   ],
   [
     { from: '"Håsäther, David" <db@null.invalid>' },
-    { senderCol: "Håsäther, David" },
+    { senderCol: "Håsäther, David <db@null.invalid>" },
   ],
   [
     { from: "David Håsäther <db@null.invalid>" },
-    { senderCol: "David Håsäther" },
+    { senderCol: "David Håsäther <db@null.invalid>" },
   ],
   [
     {
@@ -54,56 +60,54 @@ var tests = [
       from: "John Doe \xF5  <db@null.invalid>",
       clobberHeaders: { "Content-type": "text/plain; charset=ISO-8859-1" },
     },
-    { senderCol: "John Doe õ" },
+    { senderCol: "John Doe õ <db@null.invalid>" },
   ],
   [
     {
       from: "John Doe \xF5 <db@null.invalid>",
       clobberHeaders: { "Content-type": "text/plain; charset=ISO-8859-2" },
     },
-    { senderCol: "John Doe ő" },
+    { senderCol: "John Doe ő <db@null.invalid>" },
   ],
   [
     {
       from: "=?UTF-8?Q?H=C3=A5s=C3=A4ther=2C_David?= <db@null.invalid>",
       clobberHeaders: { "Content-type": "text/plain; charset=ISO-8859-2" },
     },
-    { senderCol: "Håsäther, David" },
+    { senderCol: "Håsäther, David <db@null.invalid>" },
   ],
 ];
 
 add_task(async function test_nsMsgDBView_headValues() {
   // Add the messages to the folder
-  let msgGenerator = new MessageGenerator();
-  let genMessages = tests.map(data => msgGenerator.makeMessage(data[0]));
-  let folder = await messageInjection.makeEmptyFolder();
+  const msgGenerator = new MessageGenerator();
+  const genMessages = tests.map(data => msgGenerator.makeMessage(data[0]));
+  const folder = await messageInjection.makeEmptyFolder();
   await messageInjection.addSetsToFolders(
     [folder],
     [new SyntheticMessageSet(genMessages)]
   );
 
   // Make the DB view
-  let dbviewContractId = "@mozilla.org/messenger/msgdbview;1?type=threaded";
-  let dbView = Cc[dbviewContractId].createInstance(Ci.nsIMsgDBView);
+  const dbviewContractId = "@mozilla.org/messenger/msgdbview;1?type=threaded";
+  const dbView = Cc[dbviewContractId].createInstance(Ci.nsIMsgDBView);
   dbView.init(null, null, null);
-  let outCount = {};
   dbView.open(
     folder,
     Ci.nsMsgViewSortType.byDate,
     Ci.nsMsgViewSortOrder.ascending,
-    0,
-    outCount
+    0
   );
 
   // Did we add all the messages properly?
-  let treeView = dbView.QueryInterface(Ci.nsITreeView);
+  const treeView = dbView.QueryInterface(Ci.nsITreeView);
   Assert.equal(treeView.rowCount, tests.length);
 
   // For each test, make sure that the display is correct.
   tests.forEach(function (data, i) {
     info("Checking data for " + uneval(data));
-    let expected = data[1];
-    for (let column in expected) {
+    const expected = data[1];
+    for (const column in expected) {
       Assert.equal(dbView.cellTextForColumn(i, column), expected[column]);
     }
   });

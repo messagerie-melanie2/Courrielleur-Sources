@@ -10,11 +10,11 @@ with Files("*"):
 DIRS += ["blink"]
 
 MOCHITEST_MANIFESTS += [
-    "test/blink/mochitest.ini",
-    "test/mochitest.ini",
-    "test/mochitest_audio.ini",
-    "test/mochitest_bugs.ini",
-    "test/mochitest_media.ini",
+    "test/blink/mochitest.toml",
+    "test/mochitest.toml",
+    "test/mochitest_audio.toml",
+    "test/mochitest_bugs.toml",
+    "test/mochitest_media.toml",
 ]
 
 TEST_HARNESS_FILES.testing.mochitest.tests.dom.media.webaudio.test.blink += [
@@ -54,6 +54,7 @@ EXPORTS.mozilla.dom += [
     "AudioParamMap.h",
     "AudioProcessingEvent.h",
     "AudioScheduledSourceNode.h",
+    "AudioWorklet.h",
     "AudioWorkletGlobalScope.h",
     "AudioWorkletNode.h",
     "AudioWorkletProcessor.h",
@@ -95,6 +96,7 @@ UNIFIED_SOURCES += [
     "AudioParamMap.cpp",
     "AudioProcessingEvent.cpp",
     "AudioScheduledSourceNode.cpp",
+    "AudioWorklet.cpp",
     "AudioWorkletGlobalScope.cpp",
     "AudioWorkletImpl.cpp",
     "AudioWorkletNode.cpp",
@@ -125,13 +127,11 @@ UNIFIED_SOURCES += [
     "WebAudioUtils.cpp",
 ]
 
-if CONFIG["CPU_ARCH"] == "aarch64" or CONFIG["BUILD_ARM_NEON"]:
+if CONFIG["TARGET_CPU"] == "aarch64" or CONFIG["BUILD_ARM_NEON"]:
     DEFINES["USE_NEON"] = True
     LOCAL_INCLUDES += ["/third_party/xsimd/include"]
     SOURCES += ["AudioNodeEngineNEON.cpp"]
     SOURCES["AudioNodeEngineNEON.cpp"].flags += CONFIG["NEON_FLAGS"]
-    if CONFIG["BUILD_ARM_NEON"]:
-        LOCAL_INCLUDES += ["/media/openmax_dl/dl/api/"]
 
 # Are we targeting x86 or x64?  If so, build SSEX files.
 if CONFIG["INTEL_ARCHITECTURE"]:
@@ -146,6 +146,9 @@ if CONFIG["INTEL_ARCHITECTURE"]:
         SOURCES["AudioNodeEngineSSE4_2_FMA3.cpp"].flags += (
             CONFIG["SSE4_2_FLAGS"] + CONFIG["FMA_FLAGS"]
         )
+
+if CONFIG["MOZ_SYSTEM_AV1"]:
+    CXXFLAGS += CONFIG["MOZ_SYSTEM_LIBAOM_CFLAGS"]
 
 include("/ipc/chromium/chromium-config.mozbuild")
 

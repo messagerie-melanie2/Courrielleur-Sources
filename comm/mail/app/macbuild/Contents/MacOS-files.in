@@ -5,9 +5,8 @@
 #filter substitution
 /*.app/***
 /certutil
-/@MOZ_APP_NAME@-bin
 #if defined(MOZ_CRASHREPORTER)
-/minidump-analyzer
+/crashhelper
 #endif
 /pingsender
 /pk12util

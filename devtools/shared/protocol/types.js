@@ -32,6 +32,14 @@ var registeredTypes = (types.registeredTypes = new Map());
 
 exports.registeredTypes = registeredTypes;
 
+// Values used in specification's request or response attributes to specify
+// if a request should only send (request) orreceive (response) raw byte thanks to bulk requests.
+// In such case, the front/actor can't send/receive any custom json attribute.
+// The request will result into a one-way JSON packet with "actor", "type" and "length" attributes only.
+// (i.e. there is no response packet as being one-way)
+exports.BULK_REQUEST = Symbol("request");
+exports.BULK_RESPONSE = Symbol("response");
+
 /**
  * Return the type object associated with a given typestring.
  * If passed a type object, it will be returned unchanged.
@@ -138,12 +146,10 @@ function identityWrite(v) {
  * @param object typeObject
  *    An object whose properties will be stored in the type, including
  *    the `read` and `write` methods.
- * @param object options
- *    Can specify `thawed` to prevent the type from being frozen.
  *
  * @returns a type object that can be used in protocol definitions.
  */
-types.addType = function (name, typeObject = {}, options = {}) {
+types.addType = function (name, typeObject = {}) {
   if (registeredTypes.has(name)) {
     throw Error("Type '" + name + "' already exists.");
   }

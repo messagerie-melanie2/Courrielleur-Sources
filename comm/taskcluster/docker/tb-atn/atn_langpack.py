@@ -92,6 +92,10 @@ class ATNUploader:
         with requests.put(url, files=file, data=data, headers=headers, verify=False) as resp:
             if not resp.ok:
                 print_line(f"Failed {locale}")
+
+                # Print response to help determine if failure caused by client or host
+                print(resp.text)
+
                 return resp.json()
             else:
                 return resp.json()
@@ -103,6 +107,8 @@ class ATNUploader:
             try:
                 rv = retry(self.upload_langpack, args=(locale,), attempts=3, sleeptime=10)
                 if "error" not in rv:
+                    success.append((locale, rv))
+                elif rv["error"].find("Version already exists. Latest version is:") == 0:
                     success.append((locale, rv))
                 else:
                     failed.append((locale, rv))

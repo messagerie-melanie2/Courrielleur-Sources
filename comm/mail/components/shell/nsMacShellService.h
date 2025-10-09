@@ -7,17 +7,12 @@
 #define nsMacShellService_h_
 
 #include "nsIShellService.h"
-#include "nsString.h"
 #include "nsToolkitShellService.h"
 
 #include <CoreFoundation/CoreFoundation.h>
 
-#define NS_MAILMACINTEGRATION_CID                    \
-  {                                                  \
-    0x85a27035, 0xb970, 0x4079, {                    \
-      0xb9, 0xd2, 0xe2, 0x1f, 0x69, 0xe6, 0xb2, 0x1f \
-    }                                                \
-  }
+#define NS_MAILMACINTEGRATION_CID \
+  {0x85a27035, 0xb970, 0x4079, {0xb9, 0xd2, 0xe2, 0x1f, 0x69, 0xe6, 0xb2, 0x1f}}
 
 class nsMacShellService : public nsIShellService, public nsToolkitShellService {
  public:
@@ -30,7 +25,7 @@ class nsMacShellService : public nsIShellService, public nsToolkitShellService {
   nsresult setAsDefaultHandlerForProtocol(CFStringRef aScheme);
 
  private:
-  virtual ~nsMacShellService(){};
+  virtual ~nsMacShellService() {};
   bool mCheckedThisSession;
 };
 #endif

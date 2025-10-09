@@ -5,8 +5,10 @@ use serde::{
     Deserialize, Deserializer,
 };
 
-use crate::error::SpannedResult;
-use crate::value::{Map, Number, Value};
+use crate::{
+    error::SpannedResult,
+    value::{Map, Number, Value},
+};
 
 impl std::str::FromStr for Value {
     type Err = crate::error::SpannedError;
@@ -47,6 +49,27 @@ impl<'de> Visitor<'de> for ValueVisitor {
         Ok(Value::Bool(v))
     }
 
+    fn visit_i8<E>(self, v: i8) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(Value::Number(Number::new(v)))
+    }
+
+    fn visit_i16<E>(self, v: i16) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(Value::Number(Number::new(v)))
+    }
+
+    fn visit_i32<E>(self, v: i32) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(Value::Number(Number::new(v)))
+    }
+
     fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
     where
         E: Error,
@@ -59,7 +82,28 @@ impl<'de> Visitor<'de> for ValueVisitor {
     where
         E: Error,
     {
-        self.visit_f64(v as f64)
+        Ok(Value::Number(Number::new(v)))
+    }
+
+    fn visit_u8<E>(self, v: u8) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(Value::Number(Number::new(v)))
+    }
+
+    fn visit_u16<E>(self, v: u16) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(Value::Number(Number::new(v)))
+    }
+
+    fn visit_u32<E>(self, v: u32) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(Value::Number(Number::new(v)))
     }
 
     fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
@@ -74,7 +118,14 @@ impl<'de> Visitor<'de> for ValueVisitor {
     where
         E: Error,
     {
-        self.visit_f64(v as f64)
+        Ok(Value::Number(Number::new(v)))
+    }
+
+    fn visit_f32<E>(self, v: f32) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(Value::Number(Number::new(v)))
     }
 
     fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
@@ -116,7 +167,7 @@ impl<'de> Visitor<'de> for ValueVisitor {
     where
         E: Error,
     {
-        self.visit_string(String::from_utf8(v).map_err(|e| Error::custom(format!("{}", e)))?)
+        Ok(Value::Bytes(v))
     }
 
     fn visit_none<E>(self) -> Result<Self::Value, E>
@@ -171,7 +222,12 @@ impl<'de> Visitor<'de> for ValueVisitor {
     {
         let mut res: Map = Map::new();
 
-        while let Some(entry) = map.next_entry()? {
+        #[cfg(feature = "indexmap")]
+        if let Some(cap) = map.size_hint() {
+            res.0.reserve_exact(cap);
+        }
+
+        while let Some(entry) = map.next_entry::<Value, Value>()? {
             res.insert(entry.0, entry.1);
         }
 
@@ -181,8 +237,9 @@ impl<'de> Visitor<'de> for ValueVisitor {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::str::FromStr;
+
+    use super::*;
 
     fn eval(s: &str) -> Value {
         s.parse().expect("Failed to parse")
@@ -207,9 +264,9 @@ mod tests {
         assert_eq!(
             eval("(3, 4.0, 5.0)"),
             Value::Seq(vec![
-                Value::Number(Number::new(3)),
-                Value::Number(Number::new(4.0)),
-                Value::Number(Number::new(5.0)),
+                Value::Number(Number::U8(3)),
+                Value::Number(Number::F32(4.0.into())),
+                Value::Number(Number::F32(5.0.into())),
             ],),
         );
     }
@@ -220,9 +277,9 @@ mod tests {
             eval("(true, 3, 4, 5.0)"),
             Value::Seq(vec![
                 Value::Bool(true),
-                Value::Number(Number::new(3)),
-                Value::Number(Number::new(4)),
-                Value::Number(Number::new(5.0)),
+                Value::Number(Number::U8(3)),
+                Value::Number(Number::U8(4)),
+                Value::Number(Number::F32(5.0.into())),
             ]),
         );
     }
@@ -245,9 +302,9 @@ mod tests {
         assert_eq!(
             eval("(inf, -inf, NaN)"),
             Value::Seq(vec![
-                Value::Number(Number::new(std::f64::INFINITY)),
-                Value::Number(Number::new(std::f64::NEG_INFINITY)),
-                Value::Number(Number::new(std::f64::NAN)),
+                Value::Number(Number::new(std::f32::INFINITY)),
+                Value::Number(Number::new(std::f32::NEG_INFINITY)),
+                Value::Number(Number::new(std::f32::NAN)),
             ]),
         );
     }
@@ -276,11 +333,11 @@ mod tests {
                     vec![
                         (
                             Value::String("width".to_owned()),
-                            Value::Number(Number::new(20)),
+                            Value::Number(Number::U8(20)),
                         ),
                         (
                             Value::String("height".to_owned()),
-                            Value::Number(Number::new(5)),
+                            Value::Number(Number::U8(5)),
                         ),
                         (
                             Value::String("name".to_owned()),
@@ -294,11 +351,11 @@ mod tests {
                     vec![
                         (
                             Value::String("width".to_owned()),
-                            Value::Number(Number::new(10.0)),
+                            Value::Number(Number::F32(10.0.into())),
                         ),
                         (
                             Value::String("height".to_owned()),
-                            Value::Number(Number::new(10.0)),
+                            Value::Number(Number::F32(10.0.into())),
                         ),
                         (
                             Value::String("name".to_owned()),
@@ -310,15 +367,15 @@ mod tests {
                                 vec![
                                     (
                                         Value::String("Enemy1".to_owned()),
-                                        Value::Number(Number::new(3)),
+                                        Value::Number(Number::U8(3)),
                                     ),
                                     (
                                         Value::String("Enemy2".to_owned()),
-                                        Value::Number(Number::new(5)),
+                                        Value::Number(Number::U8(5)),
                                     ),
                                     (
                                         Value::String("Enemy3".to_owned()),
-                                        Value::Number(Number::new(7)),
+                                        Value::Number(Number::U8(7)),
                                     ),
                                 ]
                                 .into_iter()
@@ -330,6 +387,50 @@ mod tests {
                     .collect(),
                 ),
             ]))))
+        );
+    }
+
+    #[test]
+    fn test_struct() {
+        assert_eq!(
+            eval("(a:42)"),
+            Value::Map(
+                [(
+                    Value::String(String::from("a")),
+                    Value::Number(Number::U8(42))
+                )]
+                .into_iter()
+                .collect()
+            ),
+        );
+        assert_eq!(
+            eval("(r#a:42)"),
+            Value::Map(
+                [(
+                    Value::String(String::from("a")),
+                    Value::Number(Number::U8(42))
+                )]
+                .into_iter()
+                .collect()
+            ),
+        );
+        assert_eq!(
+            "(r#:42)".parse::<Value>().unwrap_err(),
+            crate::error::SpannedError {
+                code: crate::Error::ExpectedString,
+                position: crate::error::Position { line: 1, col: 4 },
+            },
+        );
+
+        // Check for a failure in Deserializer::check_struct_type
+        // - opening brace triggers the struct type check
+        // - unclosed block comment fails the whitespace skip
+        assert_eq!(
+            "( /*".parse::<Value>().unwrap_err(),
+            crate::error::SpannedError {
+                code: crate::Error::UnclosedBlockComment,
+                position: crate::error::Position { line: 1, col: 5 },
+            },
         );
     }
 }

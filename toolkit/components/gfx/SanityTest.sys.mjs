@@ -24,18 +24,12 @@ const TIMEOUT_SEC = 20;
 
 const MEDIA_ENGINE_PREF = "media.wmf.media-engine.enabled";
 
-// GRAPHICS_SANITY_TEST histogram enumeration values
+// Glean.gfx.sanityTest values
 const TEST_PASSED = 0;
 const TEST_FAILED_RENDER = 1;
 const TEST_FAILED_VIDEO = 2;
 const TEST_CRASHED = 3;
 const TEST_TIMEOUT = 4;
-
-// GRAPHICS_SANITY_TEST_REASON enumeration values.
-const REASON_FIRST_RUN = 0;
-const REASON_FIREFOX_CHANGED = 1;
-const REASON_DEVICE_CHANGED = 2;
-const REASON_DRIVER_CHANGED = 3;
 
 function testPixel(ctx, x, y, r, g, b, a, fuzz) {
   var data = ctx.getImageData(x, y, 1, 1);
@@ -52,20 +46,10 @@ function testPixel(ctx, x, y, r, g, b, a, fuzz) {
 }
 
 function reportResult(val) {
-  try {
-    let histogram = Services.telemetry.getHistogramById("GRAPHICS_SANITY_TEST");
-    histogram.add(val);
-  } catch (e) {}
+  Glean.gfx.sanityTest.accumulateSingleSample(val);
 
   Services.prefs.setBoolPref(RUNNING_PREF, false);
   Services.prefs.savePrefFile(null);
-}
-
-function reportTestReason(val) {
-  let histogram = Services.telemetry.getHistogramById(
-    "GRAPHICS_SANITY_TEST_REASON"
-  );
-  histogram.add(val);
 }
 
 function annotateCrashReport() {
@@ -217,7 +201,7 @@ var listener = {
   canvas: null,
   ctx: null,
   mm: null,
-  disabledPrefs: [],
+  mediaEnginePrefVal: 0,
 
   messages: ["gfxSanity:ContentLoaded"],
 
@@ -260,9 +244,10 @@ var listener = {
   onWindowLoaded() {
     // Disable media engine pref if it's enabled because it doesn't support
     // capturing image to canvas.
-    if (Services.prefs.getBoolPref(MEDIA_ENGINE_PREF, false)) {
-      Services.prefs.setBoolPref(MEDIA_ENGINE_PREF, false);
-      this.disabledPrefs.push(MEDIA_ENGINE_PREF);
+    const prefVal = Services.prefs.getIntPref(MEDIA_ENGINE_PREF, 0);
+    if (prefVal != 0) {
+      Services.prefs.setIntPref(MEDIA_ENGINE_PREF, 0);
+      this.mediaEnginePrefVal = prefVal;
     }
 
     let browser = this.win.document.createXULElement("browser");
@@ -306,10 +291,10 @@ var listener = {
       this.mm = null;
     }
 
-    for (let pref of this.disabledPrefs) {
-      Services.prefs.setBoolPref(pref, true);
+    if (this.mediaEnginePrefVal != 0) {
+      Services.prefs.setIntPref(MEDIA_ENGINE_PREF, this.mediaEnginePrefVal);
+      this.mediaEnginePrefVal = 0;
     }
-    this.disabledPrefs = null;
 
     // Remove the annotation after we've cleaned everything up, to catch any
     // incidental crashes from having performed the sanity test.
@@ -337,13 +322,12 @@ SanityTest.prototype = {
       return false;
     }
 
-    function checkPref(pref, value, reason) {
+    function checkPref(pref, value) {
       let prefValue;
       let prefType = Services.prefs.getPrefType(pref);
 
       switch (prefType) {
         case Ci.nsIPrefBranch.PREF_INVALID:
-          reportTestReason(REASON_FIRST_RUN);
           return false;
 
         case Ci.nsIPrefBranch.PREF_STRING:
@@ -362,23 +346,14 @@ SanityTest.prototype = {
           throw new Error("Unexpected preference type.");
       }
 
-      if (prefValue != value) {
-        reportTestReason(reason);
-        return false;
-      }
-
-      return true;
+      return prefValue == value;
     }
 
     // TODO: Handle dual GPU setups
     if (
-      checkPref(
-        DRIVER_PREF,
-        gfxinfo.adapterDriverVersion,
-        REASON_DRIVER_CHANGED
-      ) &&
-      checkPref(DEVICE_PREF, gfxinfo.adapterDeviceID, REASON_DEVICE_CHANGED) &&
-      checkPref(VERSION_PREF, buildId, REASON_FIREFOX_CHANGED)
+      checkPref(DRIVER_PREF, gfxinfo.adapterDriverVersion) &&
+      checkPref(DEVICE_PREF, gfxinfo.adapterDeviceID) &&
+      checkPref(VERSION_PREF, buildId)
     ) {
       return false;
     }
@@ -396,7 +371,7 @@ SanityTest.prototype = {
     return true;
   },
 
-  observe(subject, topic, data) {
+  observe(subject, topic) {
     if (topic != "profile-after-change") {
       return;
     }
@@ -424,7 +399,7 @@ SanityTest.prototype = {
         PAGE_WIDTH +
         ",height=" +
         PAGE_HEIGHT +
-        ",chrome,titlebar=0,scrollbars=0,popup=1",
+        ",chrome,titlebar=0,scrollbars=0,dialog=1",
       null
     );
 

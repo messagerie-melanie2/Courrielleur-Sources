@@ -17,24 +17,17 @@ using namespace js;
 using namespace js::gc;
 
 WeakMapBase::WeakMapBase(JSObject* memOf, Zone* zone)
-    : memberOf(memOf), zone_(zone), mapColor(CellColor::White) {
+    : memberOf(memOf), zone_(zone) {
   MOZ_ASSERT_IF(memberOf, memberOf->compartment()->zone() == zone);
-}
-
-WeakMapBase::~WeakMapBase() {
-  MOZ_ASSERT(CurrentThreadIsGCFinalizing() ||
-             CurrentThreadCanAccessZone(zone_));
+  MOZ_ASSERT(!IsMarked(mapColor()));
 }
 
 void WeakMapBase::unmarkZone(JS::Zone* zone) {
-  AutoEnterOOMUnsafeRegion oomUnsafe;
-  if (!zone->gcEphemeronEdges().clear()) {
-    oomUnsafe.crash("clearing ephemeron edges table");
-  }
+  zone->gcEphemeronEdges().clearAndCompact();
   MOZ_ASSERT(zone->gcNurseryEphemeronEdges().count() == 0);
 
   for (WeakMapBase* m : zone->gcWeakMapList()) {
-    m->mapColor = CellColor::White;
+    m->setMapColor(CellColor::White);
   }
 }
 
@@ -46,6 +39,59 @@ void Zone::traceWeakMaps(JSTracer* trc) {
   }
 }
 
+bool WeakMapBase::markMap(MarkColor markColor) {
+  // We may be marking in parallel here so use a compare exchange loop to handle
+  // concurrent updates to the map color.
+  //
+  // The color increases monotonically; we don't downgrade from black to gray.
+  //
+  // We can attempt to mark gray after marking black when a barrier pushes the
+  // map object onto the black mark stack when it's already present on the
+  // gray mark stack, since this is marked later.
+
+  uint32_t targetColor = uint32_t(markColor);
+
+  for (;;) {
+    uint32_t currentColor = mapColor_;
+
+    if (currentColor >= targetColor) {
+      return false;
+    }
+
+    if (mapColor_.compareExchange(currentColor, targetColor)) {
+      return true;
+    }
+  }
+}
+
+bool WeakMapBase::addEphemeronEdgesForEntry(MarkColor mapColor, Cell* key,
+                                            Cell* delegate,
+                                            TenuredCell* value) {
+  if (delegate && !addEphemeronEdge(mapColor, delegate, key)) {
+    return false;
+  }
+
+  if (value && !addEphemeronEdge(mapColor, key, value)) {
+    return false;
+  }
+
+  return true;
+}
+
+bool WeakMapBase::addEphemeronEdge(MarkColor color, gc::Cell* src,
+                                   gc::Cell* dst) {
+  // Add an implicit edge from |src| to |dst|.
+
+  auto& edgeTable = src->zone()->gcEphemeronEdges(src);
+  auto p = edgeTable.lookupForAdd(src);
+  if (!p) {
+    if (!edgeTable.add(p, src, EphemeronEdgeVector())) {
+      return false;
+    }
+  }
+  return p->value().emplaceBack(color, dst);
+}
+
 #if defined(JS_GC_ZEAL) || defined(DEBUG)
 bool WeakMapBase::checkMarkingForZone(JS::Zone* zone) {
   // This is called at the end of marking.
@@ -53,7 +99,7 @@ bool WeakMapBase::checkMarkingForZone(JS::Zone* zone) {
 
   bool ok = true;
   for (WeakMapBase* m : zone->gcWeakMapList()) {
-    if (m->mapColor && !m->checkMarking()) {
+    if (IsMarked(m->mapColor()) && !m->checkMarking()) {
       ok = false;
     }
   }
@@ -62,19 +108,29 @@ bool WeakMapBase::checkMarkingForZone(JS::Zone* zone) {
 }
 #endif
 
+#ifdef JSGC_HASH_TABLE_CHECKS
+/* static */
+void WeakMapBase::checkWeakMapsAfterMovingGC(JS::Zone* zone) {
+  for (WeakMapBase* map : zone->gcWeakMapList()) {
+    map->checkAfterMovingGC();
+  }
+}
+#endif
+
 bool WeakMapBase::markZoneIteratively(JS::Zone* zone, GCMarker* marker) {
   bool markedAny = false;
   for (WeakMapBase* m : zone->gcWeakMapList()) {
-    if (m->mapColor && m->markEntries(marker)) {
+    if (IsMarked(m->mapColor()) && m->markEntries(marker)) {
       markedAny = true;
     }
   }
   return markedAny;
 }
 
-bool WeakMapBase::findSweepGroupEdgesForZone(JS::Zone* zone) {
-  for (WeakMapBase* m : zone->gcWeakMapList()) {
-    if (!m->findSweepGroupEdges()) {
+bool WeakMapBase::findSweepGroupEdgesForZone(JS::Zone* atomsZone,
+                                             JS::Zone* mapZone) {
+  for (WeakMapBase* m : mapZone->gcWeakMapList()) {
+    if (!m->findSweepGroupEdges(atomsZone)) {
       return false;
     }
   }
@@ -84,7 +140,7 @@ bool WeakMapBase::findSweepGroupEdgesForZone(JS::Zone* zone) {
 void Zone::sweepWeakMaps(JSTracer* trc) {
   for (WeakMapBase* m = gcWeakMapList().getFirst(); m;) {
     WeakMapBase* next = m->getNext();
-    if (m->mapColor) {
+    if (IsMarked(m->mapColor())) {
       m->traceWeakEdges(trc);
     } else {
       m->clearAndCompact();
@@ -95,7 +151,7 @@ void Zone::sweepWeakMaps(JSTracer* trc) {
 
 #ifdef DEBUG
   for (WeakMapBase* m : gcWeakMapList()) {
-    MOZ_ASSERT(m->isInList() && m->mapColor);
+    MOZ_ASSERT(m->isInList() && IsMarked(m->mapColor()));
   }
 #endif
 }
@@ -114,7 +170,7 @@ void WeakMapBase::traceAllMappings(WeakMapTracer* tracer) {
 bool WeakMapBase::saveZoneMarkedWeakMaps(JS::Zone* zone,
                                          WeakMapColors& markedWeakMaps) {
   for (WeakMapBase* m : zone->gcWeakMapList()) {
-    if (m->mapColor && !markedWeakMaps.put(m, m->mapColor)) {
+    if (IsMarked(m->mapColor()) && !markedWeakMaps.put(m, m->mapColor())) {
       return false;
     }
   }
@@ -126,50 +182,11 @@ void WeakMapBase::restoreMarkedWeakMaps(WeakMapColors& markedWeakMaps) {
        r.popFront()) {
     WeakMapBase* map = r.front().key();
     MOZ_ASSERT(map->zone()->isGCMarking());
-    MOZ_ASSERT(map->mapColor == CellColor::White);
-    map->mapColor = r.front().value();
+    MOZ_ASSERT(!IsMarked(map->mapColor()));
+    map->setMapColor(r.front().value());
   }
 }
 
-ObjectWeakMap::ObjectWeakMap(JSContext* cx) : map(cx, nullptr) {}
-
-JSObject* ObjectWeakMap::lookup(const JSObject* obj) {
-  if (ObjectValueWeakMap::Ptr p = map.lookup(const_cast<JSObject*>(obj))) {
-    return &p->value().toObject();
-  }
-  return nullptr;
-}
-
-bool ObjectWeakMap::add(JSContext* cx, JSObject* obj, JSObject* target) {
-  MOZ_ASSERT(obj && target);
-
-  Value targetVal(ObjectValue(*target));
-  if (!map.putNew(obj, targetVal)) {
-    ReportOutOfMemory(cx);
-    return false;
-  }
-
-  return true;
-}
-
-void ObjectWeakMap::remove(JSObject* key) {
-  MOZ_ASSERT(key);
-  map.remove(key);
-}
-
-void ObjectWeakMap::clear() { map.clear(); }
-
-void ObjectWeakMap::trace(JSTracer* trc) { map.trace(trc); }
-
-size_t ObjectWeakMap::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) {
-  return map.shallowSizeOfExcludingThis(mallocSizeOf);
-}
-
-#ifdef JSGC_HASH_TABLE_CHECKS
-void ObjectWeakMap::checkAfterMovingGC() {
-  for (ObjectValueWeakMap::Range r = map.all(); !r.empty(); r.popFront()) {
-    CheckGCThingAfterMovingGC(r.front().key().get());
-    CheckGCThingAfterMovingGC(&r.front().value().toObject());
-  }
-}
-#endif  // JSGC_HASH_TABLE_CHECKS
+namespace js {
+template class WeakMap<JSObject*, JSObject*>;
+}  // namespace js

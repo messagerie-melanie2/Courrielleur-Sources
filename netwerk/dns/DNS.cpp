@@ -11,6 +11,7 @@
 #include "mozilla/mozalloc.h"
 #include "mozilla/StaticPrefs_network.h"
 #include "nsContentUtils.h"
+#include "nsPrintfCString.h"
 #include "nsString.h"
 #include <string.h>
 
@@ -20,36 +21,6 @@
 
 namespace mozilla {
 namespace net {
-
-const char* inet_ntop_internal(int af, const void* src, char* dst,
-                               socklen_t size) {
-#ifdef XP_WIN
-  if (af == AF_INET) {
-    struct sockaddr_in s;
-    memset(&s, 0, sizeof(s));
-    s.sin_family = AF_INET;
-    memcpy(&s.sin_addr, src, sizeof(struct in_addr));
-    int result = getnameinfo((struct sockaddr*)&s, sizeof(struct sockaddr_in),
-                             dst, size, nullptr, 0, NI_NUMERICHOST);
-    if (result == 0) {
-      return dst;
-    }
-  } else if (af == AF_INET6) {
-    struct sockaddr_in6 s;
-    memset(&s, 0, sizeof(s));
-    s.sin6_family = AF_INET6;
-    memcpy(&s.sin6_addr, src, sizeof(struct in_addr6));
-    int result = getnameinfo((struct sockaddr*)&s, sizeof(struct sockaddr_in6),
-                             dst, size, nullptr, 0, NI_NUMERICHOST);
-    if (result == 0) {
-      return dst;
-    }
-  }
-  return nullptr;
-#else
-  return inet_ntop(af, src, dst, size);
-#endif
-}
 
 // Copies the contents of a PRNetAddr to a NetAddr.
 // Does not do a ptr safety check!
@@ -114,12 +85,7 @@ void NetAddrToPRNetAddr(const NetAddr* addr, PRNetAddr* prAddr) {
     memcpy(&prAddr->ipv6.ip, &addr->inet6.ip, sizeof(addr->inet6.ip.u8));
     prAddr->ipv6.scope_id = addr->inet6.scope_id;
   }
-#if defined(XP_UNIX)
-  else if (addr->raw.family == AF_LOCAL) {
-    prAddr->local.family = PR_AF_LOCAL;
-    memcpy(prAddr->local.path, addr->local.path, sizeof(addr->local.path));
-  }
-#elif defined(XP_WIN)
+#if defined(XP_UNIX) || defined(XP_WIN)
   else if (addr->raw.family == AF_LOCAL) {
     prAddr->local.family = PR_AF_LOCAL;
     memcpy(prAddr->local.path, addr->local.path, sizeof(addr->local.path));
@@ -135,7 +101,7 @@ bool NetAddr::ToStringBuffer(char* buf, uint32_t bufSize) const {
     }
     struct in_addr nativeAddr = {};
     nativeAddr.s_addr = addr->inet.ip;
-    return !!inet_ntop_internal(AF_INET, &nativeAddr, buf, bufSize);
+    return !!inet_ntop(AF_INET, &nativeAddr, buf, bufSize);
   }
   if (addr->raw.family == AF_INET6) {
     if (bufSize < INET6_ADDRSTRLEN) {
@@ -143,7 +109,7 @@ bool NetAddr::ToStringBuffer(char* buf, uint32_t bufSize) const {
     }
     struct in6_addr nativeAddr = {};
     memcpy(&nativeAddr.s6_addr, &addr->inet6.ip, sizeof(addr->inet6.ip.u8));
-    return !!inet_ntop_internal(AF_INET6, &nativeAddr, buf, bufSize);
+    return !!inet_ntop(AF_INET6, &nativeAddr, buf, bufSize);
   }
 #if defined(XP_UNIX)
   if (addr->raw.family == AF_LOCAL) {
@@ -178,6 +144,12 @@ nsCString NetAddr::ToString() const {
   return ""_ns;
 }
 
+void NetAddr::ToAddrPortString(nsACString& aOutput) const {
+  uint16_t port = 0;
+  GetPort(&port);
+  aOutput.Assign(nsPrintfCString("%s:%d", ToString().get(), port));
+}
+
 bool NetAddr::IsLoopbackAddr() const {
   if (IsLoopBackAddressWithoutIPv6Mapping()) {
     return true;
@@ -187,8 +159,30 @@ bool NetAddr::IsLoopbackAddr() const {
     return false;
   }
 
-  return IPv6ADDR_IS_V4MAPPED(&addr->inet6.ip) &&
-         IPv6ADDR_V4MAPPED_TO_IPADDR(&addr->inet6.ip) == htonl(INADDR_LOOPBACK);
+  if (IPv6ADDR_IS_V4MAPPED(&addr->inet6.ip)) {
+    return IPv6ADDR_V4MAPPED_TO_IPADDR(&addr->inet6.ip) ==
+           htonl(INADDR_LOOPBACK);
+  }
+
+  // IPv6 loopback address ::1
+  uint64_t ipv6Addr1 = ntohl(addr->inet6.ip.u64[0]);
+  uint64_t ipv6Addr2 = ntohl(addr->inet6.ip.u64[1]);
+  return (ipv6Addr1 == 0 && ipv6Addr2 == 1);
+}
+
+bool NetAddr::IsBenchMarkingAddress() const {
+  // check for 198.18.0.0/15
+  if (this->raw.family == AF_INET) {
+    uint32_t addr = ntohl(this->inet.ip) >> 17;
+    return addr == (0xC612 >> 1);
+  }
+
+  if (IPv6ADDR_IS_V4MAPPED(&this->inet6.ip)) {
+    uint32_t addr = ntohl(IPv6ADDR_V4MAPPED_TO_IPADDR(&this->inet6.ip)) >> 17;
+    return addr == (0xC612 >> 1);
+  }
+
+  return false;
 }
 
 bool NetAddr::IsLoopBackAddressWithoutIPv6Mapping() const {
@@ -242,6 +236,21 @@ bool NetAddr::IsIPAddrAny() const {
 
 NetAddr::NetAddr(const PRNetAddr* prAddr) { PRNetAddrToNetAddr(prAddr, this); }
 
+nsILoadInfo::IPAddressSpace NetAddr::GetIpAddressSpace() const {
+  const NetAddr* addr = this;
+
+  if (addr->IsBenchMarkingAddress() || addr->IsLoopbackAddr() ||
+      addr->IsIPAddrAny()) {
+    return nsILoadInfo::IPAddressSpace::Local;
+  }
+
+  if (addr->IsIPAddrLocal() || addr->IsIPAddrShared()) {
+    return nsILoadInfo::IPAddressSpace::Private;
+  }
+
+  return nsILoadInfo::IPAddressSpace::Public;
+}
+
 nsresult NetAddr::InitFromString(const nsACString& aString, uint16_t aPort) {
   PRNetAddr prAddr{};
   memset(&prAddr, 0, sizeof(PRNetAddr));
@@ -271,14 +280,20 @@ bool NetAddr::IsIPAddrV4Mapped() const {
 
 static bool isLocalIPv4(uint32_t networkEndianIP) {
   uint32_t addr32 = ntohl(networkEndianIP);
-  return addr32 >> 24 == 0x0A ||    // 10/8 prefix (RFC 1918).
-         addr32 >> 20 == 0xAC1 ||   // 172.16/12 prefix (RFC 1918).
+  return addr32 >> 24 == 0x00 ||    // 0/8 prefix (RFC 1122).
+         addr32 >> 24 == 0x0A ||    // 10/8 prefix (RFC 1918).
+         addr32 >> 20 == 0x0AC1 ||  // 172.16/12 prefix (RFC 1918).
          addr32 >> 16 == 0xC0A8 ||  // 192.168/16 prefix (RFC 1918).
          addr32 >> 16 == 0xA9FE;    // 169.254/16 prefix (Link Local).
 }
 
 bool NetAddr::IsIPAddrLocal() const {
   const NetAddr* addr = this;
+
+  // An IPv4/6 any address.
+  if (IsIPAddrAny()) {
+    return true;
+  }
 
   // IPv4 RFC1918 and Link Local Addresses.
   if (addr->raw.family == AF_INET) {
@@ -348,7 +363,7 @@ bool NetAddr::operator==(const NetAddr& other) const {
   }
   if (this->raw.family == AF_LOCAL) {
     return strncmp(this->local.path, other.local.path,
-                   ArrayLength(this->local.path));
+                   std::size(this->local.path));
 #endif
   }
   return false;
@@ -414,7 +429,6 @@ AddrInfo::AddrInfo(const nsACString& host, DNSResolverType aResolverType,
                    uint32_t aTTL)
     : ttl(aTTL),
       mHostName(host),
-      mCanonicalName(),
       mResolverType(aResolverType),
       mTRRType(aTRRType),
       mAddresses(std::move(addresses)) {}

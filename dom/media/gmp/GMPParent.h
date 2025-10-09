@@ -45,16 +45,23 @@ class GMPCapability {
                        const nsACString& aAPI, const nsCString& aTag);
 };
 
-enum class GMPState : uint32_t { NotLoaded, Loaded, Unloading, Closing };
+enum class GMPState : uint32_t {
+  NotLoaded,
+  Loaded,
+  Unloading,
+  Closing,
+  Closed
+};
 
 class GMPContentParent;
 
-class GMPParent final
-    : public PGMPParent,
-      public ipc::CrashReporterHelper<GeckoProcessType_GMPlugin> {
+class GMPParent final : public PGMPParent,
+                        public ipc::CrashReporterHelper<GMPParent> {
   friend class PGMPParent;
 
  public:
+  static constexpr GeckoProcessType PROCESS_TYPE = GeckoProcessType_GMPlugin;
+
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(GMPParent, final)
 
   GMPParent();
@@ -86,6 +93,8 @@ class GMPParent final
 
   GMPState State() const;
   nsCOMPtr<nsISerialEventTarget> GMPEventTarget();
+
+  void OnPreferenceChange(const mozilla::dom::Pref& aPref);
 
   // A GMP can either be a single instance shared across all NodeIds (like
   // in the OpenH264 case), or we can require a new plugin instance for every
@@ -120,8 +129,6 @@ class GMPParent final
   already_AddRefed<nsIFile> GetDirectory() {
     return nsCOMPtr<nsIFile>(mDirectory).forget();
   }
-
-  void AbortAsyncShutdown();
 
   // Called when the child process has died.
   void ChildTerminated();
@@ -169,6 +176,12 @@ class GMPParent final
   mozilla::ipc::IPCResult RecvPGMPContentChildDestroyed();
 
   mozilla::ipc::IPCResult RecvFOGData(ByteBuf&& aBuf);
+
+#if defined(XP_WIN)
+  mozilla::ipc::IPCResult RecvGetModulesTrust(
+      ModulePaths&& aModPaths, bool aRunAtNormalPriority,
+      GetModulesTrustResolver&& aResolver);
+#endif  // defined(XP_WIN)
 
   bool IsUsed() {
     return mGMPContentChildCount > 0 || !mGetContentParentPromises.IsEmpty();

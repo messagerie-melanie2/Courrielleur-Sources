@@ -9,6 +9,7 @@ kind-dependencies:
     - post-beetmover-dummy
     - release-balrog-submit-toplevel
     - release-update-verify-config
+    - toolchain
 
 transforms:
     - gecko_taskgraph.transforms.release:run_on_releases
@@ -20,7 +21,6 @@ transforms:
 task-defaults:
     name: update-verify
     run-on-projects: []  # to make sure this never runs as part of CI
-    run-on-releases: [beta, esr128]  # Remove after shipping first comm-release
     shipping-phase: promote
     worker-type: b-linux-gcp
     worker:
@@ -69,3 +69,6 @@ tasks:
         shipping-product: thunderbird
         attributes:
             build_platform: macosx64-shippable
+        fetches:
+            toolchain:
+                - linux64-libdmg

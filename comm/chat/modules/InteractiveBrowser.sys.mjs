@@ -45,7 +45,7 @@ export var InteractiveBrowser = {
    */
   _browserRequest(url) {
     return new Promise((resolve, reject) => {
-      let browserRequest = {
+      const browserRequest = {
         promptText: "",
         iconURI: "",
         url,
@@ -73,14 +73,16 @@ export var InteractiveBrowser = {
   /**
    * Listen for a browser window to redirect to the specified URL.
    *
-   * @param {Window} param0.window - Window to listen in.
-   * @param {nsIWebProgress} param0.webProgress - Web progress instance.
-   * @param {AbortSignal} param0.signal - Abort signal indicating that this should no longer listen for redirects.
+   * @param {object} options
+   * @param {Window} options.window - Window to listen in.
+   * @param {nsIWebProgress} options.webProgress - Web progress instance.
+   * @param {AbortSignal} options.signal - Abort signal indicating that this
+   *   should no longer listen for redirects.
    * @returns {Promise<string>} Resolves with the resulting redirect URL.
    */
   _listenForRedirect({ window, webProgress, signal }) {
     return new Promise((resolve, reject) => {
-      let listener = {
+      const listener = {
         QueryInterface: ChromeUtils.generateQI([
           Ci.nsIWebProgressListener,
           Ci.nsISupportsWeakReference,
@@ -102,9 +104,12 @@ export var InteractiveBrowser = {
 
           this._cleanUp();
         },
-        onStateChange(aWebProgress, request, stateFlags, aStatus) {
-          const wpl = Ci.nsIWebProgressListener;
-          if (stateFlags & (wpl.STATE_START | wpl.STATE_IS_NETWORK)) {
+        onStateChange(_webProgress, request, stateFlags) {
+          if (
+            stateFlags &
+            (Ci.nsIWebProgressListener.STATE_START |
+              Ci.nsIWebProgressListener.STATE_IS_NETWORK)
+          ) {
             try {
               this._checkForRedirect(request.name);
             } catch (error) {
@@ -115,7 +120,7 @@ export var InteractiveBrowser = {
             }
           }
         },
-        onLocationChange(webProgress, request, location) {
+        onLocationChange(_webProgress, _request, location) {
           this._checkForRedirect(location.spec);
         },
         onProgressChange() {},

@@ -3,11 +3,11 @@
  * Test suite for basic nsIAbCard functions.
  */
 
-const { AddrBookCard } = ChromeUtils.import(
-  "resource:///modules/AddrBookCard.jsm"
+const { AddrBookCard } = ChromeUtils.importESModule(
+  "resource:///modules/AddrBookCard.sys.mjs"
 );
-const { VCardPropertyEntry } = ChromeUtils.import(
-  "resource:///modules/VCardUtils.jsm"
+const { VCardPropertyEntry } = ChromeUtils.importESModule(
+  "resource:///modules/VCardUtils.sys.mjs"
 );
 
 // Intersperse these with UTF-8 values to check we handle them correctly.
@@ -21,7 +21,7 @@ var kEmailValue2 = "test@test.foo.invalid";
 var kEmailReducedValue = "testEmail\u00D2";
 
 add_task(function testAddrBookCard() {
-  let card = new AddrBookCard();
+  const card = new AddrBookCard();
 
   // Test - Set First, Last and Display Names and Email Address
   // via setProperty, and check correctly saved via their
@@ -107,27 +107,11 @@ add_task(function testAddrBookCard() {
   card.firstName = kFNValue;
   card.lastName = kLNValue;
 
-  let bundle = Services.strings.createBundle(
+  const bundle = Services.strings.createBundle(
     "chrome://messenger/locale/addressbook/addressBook.properties"
   );
 
   Assert.equal(card.generateName(1, bundle), kLNValue + ", " + kFNValue);
-
-  // Test - generatePhoneticName
-
-  card.setProperty("PhoneticFirstName", kFNValue);
-  card.setProperty("PhoneticLastName", kLNValue);
-  Assert.equal(card.generatePhoneticName(false), kFNValue + kLNValue);
-  Assert.equal(card.generatePhoneticName(true), kLNValue + kFNValue);
-
-  card.setProperty("PhoneticLastName", "");
-  Assert.equal(card.generatePhoneticName(false), kFNValue);
-  Assert.equal(card.generatePhoneticName(true), kFNValue);
-
-  card.setProperty("PhoneticFirstName", "");
-  card.setProperty("PhoneticLastName", kLNValue);
-  Assert.equal(card.generatePhoneticName(false), kLNValue);
-  Assert.equal(card.generatePhoneticName(true), kLNValue);
 
   // Test - emailAddresses
 

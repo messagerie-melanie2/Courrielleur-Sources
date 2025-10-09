@@ -31,11 +31,11 @@ richlistbox.theme-listbox > richlistitem {
 }
 
 richlistbox.theme-listbox:not(:focus) > richlistitem[selected="true"] {
-  background-color: -moz-mac-secondaryhighlight;
+  background-color: -moz-cellhighlight;
 }
 
 richlistbox.theme-listbox > richlistitem > label {
-  margin: 0px;
+  margin: 0;
   padding-bottom: 1px;
   padding-inline-start: 4px;
   white-space: nowrap;

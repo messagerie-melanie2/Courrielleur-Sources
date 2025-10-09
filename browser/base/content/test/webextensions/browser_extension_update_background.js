@@ -47,12 +47,18 @@ add_setup(async function () {
 
   // Navigate away from the initial page so that about:addons always
   // opens in a new tab during tests
-  BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, "about:robots");
+  BrowserTestUtils.startLoadingURIString(
+    gBrowser.selectedBrowser,
+    "about:robots"
+  );
   await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
 
   registerCleanupFunction(async function () {
     // Return to about:blank when we're done
-    BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, "about:blank");
+    BrowserTestUtils.startLoadingURIString(
+      gBrowser.selectedBrowser,
+      "about:blank"
+    );
     await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
   });
 });
@@ -72,6 +78,8 @@ async function backgroundUpdateTest(url, id, checkIconFn) {
     ],
   });
 
+  Services.fog.testResetFOG();
+
   // Install version 1.0 of the test extension
   let addon = await promiseInstallAddon(url, {
     source: FAKE_INSTALL_TELEMETRY_SOURCE,
@@ -79,7 +87,7 @@ async function backgroundUpdateTest(url, id, checkIconFn) {
   let addonId = addon.id;
 
   ok(addon, "Addon was installed");
-  is(getBadgeStatus(), "", "Should not start out with an addon alert badge");
+  is(getBadgeStatus(), null, "Should not start out with an addon alert badge");
 
   // Trigger an update check and wait for the update for this addon
   // to be downloaded.
@@ -102,7 +110,11 @@ async function backgroundUpdateTest(url, id, checkIconFn) {
   addons.children[0].click();
 
   // The click should hide the main menu. This is currently synchronous.
-  ok(PanelUI.panel.state != "open", "Main menu is closed or closing.");
+  Assert.notEqual(
+    PanelUI.panel.state,
+    "open",
+    "Main menu is closed or closing."
+  );
 
   // about:addons should load and go to the list of extensions
   let tab = await tabPromise;
@@ -129,11 +141,16 @@ async function backgroundUpdateTest(url, id, checkIconFn) {
   // The original extension has 1 promptable permission and the new one
   // has 2 (history and <all_urls>) plus 1 non-promptable permission (cookies).
   // So we should only see the 1 new promptable permission in the notification.
-  let singlePermissionEl = document.getElementById(
-    "addon-webext-perm-single-entry"
+  let permissionsListEl = document.getElementById(
+    "addon-webext-perm-list-required"
   );
-  ok(!singlePermissionEl.hidden, "Single permission entry is not hidden");
-  ok(singlePermissionEl.textContent, "Single permission entry text is set");
+  ok(!permissionsListEl.hidden, "Permissions list is visible");
+  ok(permissionsListEl.textContent, "Permissions list contains text");
+  is(
+    permissionsListEl.childElementCount,
+    1,
+    "Expect only 1 permission entry in the Permissions list"
+  );
 
   // Cancel the update.
   panel.secondaryButton.click();
@@ -144,7 +161,7 @@ async function backgroundUpdateTest(url, id, checkIconFn) {
   BrowserTestUtils.removeTab(tab);
 
   // Alert badge and hamburger menu items should be gone
-  is(getBadgeStatus(), "", "Addon alert badge should be gone");
+  is(getBadgeStatus(), null, "Addon alert badge should be gone");
 
   await gCUITestUtils.openMainMenu();
   addons = PanelUI.addonNotificationContainer;
@@ -193,10 +210,12 @@ async function backgroundUpdateTest(url, id, checkIconFn) {
 
   BrowserTestUtils.removeTab(tab);
 
-  is(getBadgeStatus(), "", "Addon alert badge should be gone");
+  is(getBadgeStatus(), null, "Addon alert badge should be gone");
 
   await addon.uninstall();
   await SpecialPowers.popPrefEnv();
+
+  let gleanUpdates = AddonTestUtils.getAMGleanEvents("update");
 
   // Test that the expected telemetry events have been recorded (and that they include the
   // permission_prompt event).
@@ -208,23 +227,31 @@ async function backgroundUpdateTest(url, id, checkIconFn) {
       return evt;
     });
 
+  const expectedSteps = [
+    // First update (cancelled).
+    "started",
+    "download_started",
+    "download_completed",
+    "permissions_prompt",
+    "cancelled",
+    // Second update (completed).
+    "started",
+    "download_started",
+    "download_completed",
+    "permissions_prompt",
+    "completed",
+  ];
+
   Assert.deepEqual(
+    expectedSteps,
     updateEvents.map(evt => evt.extra && evt.extra.step),
-    [
-      // First update (cancelled).
-      "started",
-      "download_started",
-      "download_completed",
-      "permissions_prompt",
-      "cancelled",
-      // Second update (completed).
-      "started",
-      "download_started",
-      "download_completed",
-      "permissions_prompt",
-      "completed",
-    ],
     "Got the steps from the collected telemetry events"
+  );
+
+  Assert.deepEqual(
+    expectedSteps,
+    gleanUpdates.map(evt => evt.step),
+    "Got the steps from the collected Glean events."
   );
 
   const method = "update";
@@ -247,6 +274,15 @@ async function backgroundUpdateTest(url, id, checkIconFn) {
       { method, object, extra: { ...baseExtra, num_strings: "1" } },
     ],
     "Got the expected permission_prompts events"
+  );
+
+  Assert.deepEqual(
+    gleanUpdates.filter(e => e.step === "permissions_prompt"),
+    [
+      { ...baseExtra, addon_type: object, num_strings: "1" },
+      { ...baseExtra, addon_type: object, num_strings: "1" },
+    ],
+    "Got the expected permission_prompt events from Glean."
   );
 }
 

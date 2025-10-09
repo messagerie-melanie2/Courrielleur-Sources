@@ -45,15 +45,14 @@ private:
   T_Callback callback;
 
   // The interceptor is the function that runs between the sandbox invoking the
-  // callback and the actual callback running The interceptor is responsible for
-  // wrapping and converting callback arguments, returns etc. to their
+  // callback and the actual callback running. The interceptor is responsible
+  // for wrapping and converting callback arguments, returns etc. to their
   // appropriate representations
-  using T_Interceptor =
-    decltype(callback_detail::interceptor_type_helper<T_Sbx>(
-      std::declval<T>()));
+  using T_Interceptor = decltype(
+    callback_detail::interceptor_type_helper<T_Sbx>(std::declval<T>()));
   T_Interceptor callback_interceptor;
 
-  // The trampoline is the internal sandbox representation of the callback
+  // The trampoline is the internal sandbox representation of the callback.
   // Depending on the sandbox type, this could be the callback pointer directly
   // or a trampoline function that gates exits from the sandbox.
   using T_Trampoline = detail::convert_to_sandbox_equivalent_t<T, T_Sbx>;
@@ -293,7 +292,10 @@ public:
     val = rhs;
     return *this;
   }
-  inline tainted_boolean_hint operator!() const { return tainted_boolean_hint(!val); }
+  inline tainted_boolean_hint operator!() const
+  {
+    return tainted_boolean_hint(!val);
+  }
   template<size_t N>
   inline bool unverified_safe_because(const char (&reason)[N]) const
   {
@@ -349,7 +351,10 @@ public:
     val = rhs;
     return *this;
   }
-  inline tainted_boolean_hint operator!() const { return tainted_boolean_hint(!val); }
+  inline tainted_boolean_hint operator!() const
+  {
+    return tainted_boolean_hint(!val);
+  }
   template<size_t N>
   inline int unverified_safe_because(const char (&reason)[N]) const
   {

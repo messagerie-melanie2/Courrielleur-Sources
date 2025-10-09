@@ -1,4 +1,4 @@
-// |jit-test| skip-if: !wasmSimdEnabled() || !hasDisassembler() || wasmCompileMode() != "ion" || !getBuildConfiguration().x64 || getBuildConfiguration().simulator || isAvxPresent(); include:codegen-x64-test.js
+// |jit-test| skip-if: !wasmSimdEnabled() || !hasDisassembler() || wasmCompileMode() != "ion" || !getBuildConfiguration("x64") || getBuildConfiguration("simulator") || isAvxPresent(); include:codegen-x64-test.js
 
 // Test that there are no extraneous moves or fixups for SIMD bitselect
 // operations.  See README-codegen.md for general information about this type of
@@ -29,8 +29,8 @@ codegenTestX64_adhoc(
       (func (export "f") (param v128) (param v128) (param v128) (result v128)
         (v128.bitselect (local.get 0) (local.get 1) (v128.const i32x4 -1 0 0 -1))))`,
       'f',
-  `66 0f 3a 0e c1 c3         pblendw \\$0xC3, %xmm1, %xmm0`);
-  
+  `66 0f 3a 0e c1 3c         pblendw \\$0x3C, %xmm1, %xmm0`);
+
 // vpblendvp optimization when bitselect follows comparison.
 // Non-AVX pblendvb uses xmm0 as an implicit read-only operand.
 codegenTestX64_adhoc(

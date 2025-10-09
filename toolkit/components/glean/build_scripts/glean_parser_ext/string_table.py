@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -79,7 +77,7 @@ class StringTable:
         f.write("#else\n")
         f.write("constexpr char %s[] = {\n" % name)
         f.write("#endif\n")
-        for (string, offset) in sorted(entries, key=lambda x: x[1]):
+        for string, offset in sorted(entries, key=lambda x: x[1]):
             if "*/" in string:
                 raise ValueError(
                     "String in string table contains unexpected sequence '*/': %s"

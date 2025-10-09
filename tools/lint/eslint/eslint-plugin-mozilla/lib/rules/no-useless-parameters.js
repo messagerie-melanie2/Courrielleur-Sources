@@ -12,7 +12,7 @@
 module.exports = {
   meta: {
     docs: {
-      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/no-useless-parameters.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/rules/no-useless-parameters.html",
     },
     fixable: "code",
     messages: {
@@ -27,7 +27,7 @@ module.exports = {
 
   create(context) {
     function getRangeAfterArgToEnd(argNumber, args) {
-      let sourceCode = context.getSourceCode();
+      let sourceCode = context.sourceCode;
       return [
         sourceCode.getTokenAfter(args[argNumber]).range[0],
         args[args.length - 1].range[1],

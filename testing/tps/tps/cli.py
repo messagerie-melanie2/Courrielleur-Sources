@@ -107,7 +107,7 @@ def main():
             )
 
     # load the config file
-    f = open(configfile, "r")
+    f = open(configfile)
     configcontent = f.read()
     f.close()
     config = json.loads(configcontent)
@@ -125,7 +125,7 @@ def main():
     else:
         if sys.platform == "win32":
             # replace msys-style paths with proper Windows paths
-            m = re.match("^\/\w\/", extensionDir)
+            m = re.match(r"^\/\w\/", extensionDir)
             if m:
                 extensionDir = "%s:/%s" % (m.group(0)[1:2], extensionDir[3:])
                 extensionDir = extensionDir.replace("/", "\\")

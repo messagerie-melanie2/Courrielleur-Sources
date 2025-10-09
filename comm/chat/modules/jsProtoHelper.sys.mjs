@@ -2,25 +2,36 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+import { clearTimeout, setTimeout } from "resource://gre/modules/Timer.sys.mjs";
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 import {
   initLogModule,
   nsSimpleEnumerator,
-  l10nHelper,
   ClassInfo,
 } from "resource:///modules/imXPCOMUtils.sys.mjs";
 import { IMServices } from "resource:///modules/IMServices.sys.mjs";
 
 const lazy = {};
 
-XPCOMUtils.defineLazyGetter(lazy, "_", () =>
-  l10nHelper("chrome://chat/locale/conversations.properties")
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () => new Localization(["chat/conversations.ftl"], true)
 );
 
-XPCOMUtils.defineLazyGetter(lazy, "TXTToHTML", function () {
-  let cs = Cc["@mozilla.org/txttohtmlconv;1"].getService(Ci.mozITXTToHTMLConv);
+ChromeUtils.defineLazyGetter(lazy, "TXTToHTML", function () {
+  const cs = Cc["@mozilla.org/txttohtmlconv;1"].getService(
+    Ci.mozITXTToHTMLConv
+  );
   return aTXT => cs.scanTXT(aTXT, cs.kEntities);
 });
+
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "SHOULD_SEND_TYPING",
+  "purple.conversations.im.send_typing",
+  true
+);
 
 function OutgoingMessage(aMsg, aConversation) {
   this.message = aMsg;
@@ -43,7 +54,7 @@ export var GenericAccountPrototype = {
     this.imAccount = aImAccount;
     initLogModule(aProtocol.id, this);
   },
-  observe(aSubject, aTopic, aData) {},
+  observe() {},
   remove() {
     throw Components.Exception("", Cr.NS_ERROR_NOT_IMPLEMENTED);
   },
@@ -56,15 +67,15 @@ export var GenericAccountPrototype = {
   disconnect() {
     throw Components.Exception("", Cr.NS_ERROR_NOT_IMPLEMENTED);
   },
-  createConversation(aName) {
+  createConversation() {
     throw Components.Exception("", Cr.NS_ERROR_NOT_IMPLEMENTED);
   },
-  joinChat(aComponents) {
+  joinChat() {
     throw Components.Exception("", Cr.NS_ERROR_NOT_IMPLEMENTED);
   },
-  setBool(aName, aVal) {},
-  setInt(aName, aVal) {},
-  setString(aName, aVal) {},
+  setBool() {},
+  setInt() {},
+  setString() {},
 
   get name() {
     return this.imAccount.name;
@@ -97,7 +108,7 @@ export var GenericAccountPrototype = {
   handleConnectionSecurityError(aSocket) {
     // Stash away the connectionTarget and securityInfo.
     this._connectionTarget = aSocket.host + ":" + aSocket.port;
-    let securityInfo = (this._securityInfo = aSocket.securityInfo);
+    const securityInfo = (this._securityInfo = aSocket.securityInfo);
 
     if (!securityInfo) {
       return Ci.prplIAccount.ERROR_CERT_NOT_PROVIDED;
@@ -192,7 +203,7 @@ export var GenericAccountPrototype = {
     if (!this._pendingBuddyRequests) {
       this._pendingBuddyRequests = [];
     }
-    let buddyRequest = {
+    const buddyRequest = {
       get account() {
         return this._account.imAccount;
       },
@@ -244,7 +255,7 @@ export var GenericAccountPrototype = {
       return;
     }
 
-    for (let request of this._pendingBuddyRequests) {
+    for (const request of this._pendingBuddyRequests) {
       if (request.userName == aUserName) {
         request.cancel();
         break;
@@ -256,7 +267,7 @@ export var GenericAccountPrototype = {
       return;
     }
 
-    for (let request of this._pendingBuddyRequests) {
+    for (const request of this._pendingBuddyRequests) {
       request.cancel();
     }
     delete this._pendingBuddyRequests;
@@ -268,9 +279,9 @@ export var GenericAccountPrototype = {
    *
    * @param {string} conversationName - Name of the conversation the user is
    *   invited to.
-   * @param {(prplIChatRequest) => void} grantCallback - Function to be called
+   * @param {function(prplIChatRequest):void} grantCallback - Function to be called
    *   when the invite is accepted.
-   * @param {(prplIChatRequest?, boolean) => void} [denyCallback] - Function to
+   * @param {function(?prplIChatRequest,boolean):void} [denyCallback] - Function to
    *   be called when the invite is rejected. If omitted, |canDeny| will be
    *   |false|. Callback is passed a boolean indicating whether the rejection should be
    *   sent to the other party. It being false is equivalent to ignoring the invite, in
@@ -280,7 +291,7 @@ export var GenericAccountPrototype = {
     if (!this._pendingChatRequests) {
       this._pendingChatRequests = new Set();
     }
-    let inviteHandling = Services.prefs.getIntPref(
+    const inviteHandling = Services.prefs.getIntPref(
       "messenger.conversations.autoAcceptChatInvitations"
     );
     // Only auto-reject invites that can be denied.
@@ -291,12 +302,12 @@ export var GenericAccountPrototype = {
     }
     let resolvePromise;
     let rejectPromise;
-    let completePromise = new Promise((resolve, reject) => {
+    const completePromise = new Promise((resolve, reject) => {
       resolvePromise = resolve;
       rejectPromise = reject;
     });
     /** @implements {prplIChatRequest} */
-    let chatRequest = {
+    const chatRequest = {
       get account() {
         return this._account.imAccount;
       },
@@ -352,7 +363,7 @@ export var GenericAccountPrototype = {
       return;
     }
 
-    for (let request of this._pendingChatRequests) {
+    for (const request of this._pendingChatRequests) {
       if (request.conversationName == conversationName) {
         request.cancel();
         break;
@@ -364,13 +375,13 @@ export var GenericAccountPrototype = {
       return;
     }
 
-    for (let request of this._pendingChatRequests) {
+    for (const request of this._pendingChatRequests) {
       request.cancel();
     }
     this._pendingChatRequests = null;
   },
 
-  requestBuddyInfo(aBuddyName) {},
+  requestBuddyInfo() {},
 
   get canJoinChat() {
     return false;
@@ -379,34 +390,22 @@ export var GenericAccountPrototype = {
     if (!this.chatRoomFields) {
       return [];
     }
-    let fieldNames = Object.keys(this.chatRoomFields);
+    const fieldNames = Object.keys(this.chatRoomFields);
     return fieldNames.map(
       fieldName => new ChatRoomField(fieldName, this.chatRoomFields[fieldName])
     );
   },
-  getChatRoomDefaultFieldValues(aDefaultChatName) {
-    if (!this.chatRoomFields) {
-      return new ChatRoomFieldValues({});
-    }
-
-    let defaultFieldValues = {};
-    for (let fieldName in this.chatRoomFields) {
-      defaultFieldValues[fieldName] = this.chatRoomFields[fieldName].default;
-    }
-
-    if (aDefaultChatName && "parseDefaultChatName" in this) {
-      let parsedDefaultChatName = this.parseDefaultChatName(aDefaultChatName);
-      for (let field in parsedDefaultChatName) {
-        defaultFieldValues[field] = parsedDefaultChatName[field];
-      }
-    }
-
-    return new ChatRoomFieldValues(defaultFieldValues);
+  getChatRoomDefaultFieldValues() {
+    // Return no defaults as a fallback.
+    return new ChatRoomFieldValues({});
   },
-  requestRoomInfo(aCallback) {
+  getChatRoomFieldValuesFromString() {
     throw Components.Exception("", Cr.NS_ERROR_NOT_IMPLEMENTED);
   },
-  getRoomInfo(aName) {
+  requestRoomInfo() {
+    throw Components.Exception("", Cr.NS_ERROR_NOT_IMPLEMENTED);
+  },
+  getRoomInfo() {
     throw Components.Exception("", Cr.NS_ERROR_NOT_IMPLEMENTED);
   },
   get isRoomInfoStale() {
@@ -457,8 +456,8 @@ export var GenericAccountPrototype = {
   /**
    *
    * @param {string} aDisplayName - Display name the request is from.
-   * @param {() => Promise<{challenge: string, challengeDescription: string?}>} aGetChallenge - Accept request and generate
-   *   the challenge.
+   * @param {function():Promise<object>} aGetChallenge - Accept request and generate
+   *   the challenge. Returns an object {challenge: string, challengeDescription: string?}
    * @param {AbortSignal} [aAbortSignal] - Abort signal to indicate the request
    *   was cancelled.
    * @returns {Promise<boolean>} Completion promise for the verification.
@@ -468,7 +467,7 @@ export var GenericAccountPrototype = {
     if (!this._pendingVerificationRequests) {
       this._pendingVerificationRequests = [];
     }
-    let verificationRequest = {
+    const verificationRequest = {
       _account: this,
       get account() {
         return this._account.imAccount;
@@ -556,7 +555,7 @@ export var GenericAccountPrototype = {
     if (!this._pendingVerificationRequests) {
       return;
     }
-    for (let request of this._pendingVerificationRequests) {
+    for (const request of this._pendingVerificationRequests) {
       request.cancel();
     }
     this._pendingVerificationRequests = null;
@@ -600,7 +599,7 @@ export var GenericAccountBuddyPrototype = {
     this._account = aAccount;
     this._buddy = aBuddy;
     if (aBuddy) {
-      let displayName = aBuddy.displayName;
+      const displayName = aBuddy.displayName;
       if (displayName != aUserName) {
         this._serverAlias = displayName;
       }
@@ -629,7 +628,7 @@ export var GenericAccountBuddyPrototype = {
     return this._tag;
   },
   set tag(aNewTag) {
-    let oldTag = this._tag;
+    const oldTag = this._tag;
     this._tag = aNewTag;
     IMServices.contacts.accountBuddyMoved(this, oldTag, aNewTag);
   },
@@ -654,7 +653,7 @@ export var GenericAccountBuddyPrototype = {
     return this._serverAlias;
   },
   set serverAlias(aNewAlias) {
-    let old = this.displayName;
+    const old = this.displayName;
     this._serverAlias = aNewAlias;
     if (old != this.displayName) {
       this._notifyObservers("display-name-changed", old);
@@ -666,7 +665,8 @@ export var GenericAccountBuddyPrototype = {
    * _startVerification of GenericSessionPrototype. If the property is not a
    * function, |canVerifyIdentity| is false.
    *
-   * @type {() => {challenge: string, challengeDescription: string?, handleResult: (boolean) => void, cancel: () => void, cancelPromise: Promise}?}
+   * @type {function():object} a function returning an object like
+   *   {challenge: string, challengeDescription: string?, handleResult: (boolean) => void, cancel: () => void, cancelPromise: Promise}?}
    */
   _startVerification: null,
   get canVerifyIdentity() {
@@ -760,7 +760,7 @@ export var GenericAccountBuddyPrototype = {
     }
 
     // Decide which notifications should be fired.
-    let notifications = [];
+    const notifications = [];
     if (
       this._statusType != aStatusType ||
       this._availabilityDetails != aAvailabilityDetails
@@ -824,7 +824,7 @@ export var GenericMessagePrototype = {
     this.conversation = aConversation;
 
     if (aObject) {
-      for (let i in aObject) {
+      for (const i in aObject) {
         this[i] = aObject[i];
       }
     }
@@ -842,7 +842,7 @@ export var GenericMessagePrototype = {
 
     // Otherwise, attempt to find a buddy for incoming messages, and forward the call.
     if (this.incoming && this.conversation && !this.conversation.isChat) {
-      let buddy = this.conversation.buddy;
+      const buddy = this.conversation.buddy;
       if (buddy) {
         return buddy.buddyIconFilename;
       }
@@ -930,7 +930,7 @@ export var GenericConversationPrototype = {
     this._observers = this._observers.filter(o => o !== aObserver);
   },
   notifyObservers(aSubject, aTopic, aData) {
-    for (let observer of this._observers) {
+    for (const observer of this._observers) {
       try {
         observer.observe(aSubject, aTopic, aData);
       } catch (e) {
@@ -951,6 +951,9 @@ export var GenericConversationPrototype = {
     }
   },
   sendMsg(aMsg, aAction = false, aNotification = false) {
+    // Clear any pending typing timers.
+    this._cancelTypingTimer();
+
     // Add-ons (eg. pastebin) have an opportunity to cancel the message at this
     // point, or change the text content of the message.
     // If an add-on wants to split a message, it should truncate the first
@@ -966,11 +969,11 @@ export var GenericConversationPrototype = {
     // Protocols have an opportunity here to preprocess messages before they are
     // sent (eg. split long messages). If a message is split here, the split
     // will be visible in the UI.
-    let messages = this.prepareForSending(om);
-    let isAction = om.action;
-    let isNotification = om.notification;
+    const messages = this.prepareForSending(om);
+    const isAction = om.action;
+    const isNotification = om.notification;
 
-    for (let msg of messages) {
+    for (const msg of messages) {
       // Add-ons (eg. OTR) have an opportunity to tweak or cancel the message
       // at this point.
       om = new OutgoingMessage(msg, this);
@@ -983,16 +986,109 @@ export var GenericConversationPrototype = {
       this.dispatchMessage(om.message, om.action, om.notification);
     }
   },
-  dispatchMessage(message, action, notification) {
+  /**
+   * Send a message over the wire.
+   *
+   * Note that this does not clear typing notifications, but does clear any pending
+   * timers. Protocols may wish to internally call sendTyping(Ci.prplIConvIM.NOT_TYPING)
+   * if additional wire messages are needed to cancel typing.
+   *
+   * @param {string} _message - The message typed by the user.
+   * @param {boolean} _action - True if the message is an emote (i.e. /me).
+   * @param {boolean} _notification - True if the message is a notification (i.e. /notice).
+   */
+  dispatchMessage(_message, _action, _notification) {
     throw Components.Exception("", Cr.NS_ERROR_NOT_IMPLEMENTED);
   },
-  sendTyping: aString => Ci.prplIConversation.NO_TYPING_LIMIT,
+
+  /**
+   * A timer for when to consider the user having stopped typing.
+   */
+  _typingTimer: null,
+  /**
+   * True if the conversation supports typing notifications. False otherwise.
+   */
+  supportTypingNotifications: false,
+
+  /**
+   * If we should send typing notifications to the remote server.
+   *
+   * @type {boolean}
+   */
+  get _shouldSendTypingNotifications() {
+    return this.supportTypingNotifications && lazy.SHOULD_SEND_TYPING;
+  },
+
+  /**
+   * Called when the user is typing a message.
+   *
+   * @param {string} string - The currently typed message.
+   * @returns {number} The number of characters that can still be typed
+   *    or NO_TYPING_LIMIT if there is no protocol defined limit.
+   */
+  sendTyping(string) {
+    // If the protocol does not support typing notifications or if the user has
+    // disabled them, there's nothing to do.
+    if (!this._shouldSendTypingNotifications) {
+      return this.getRemainingCharacters(string);
+    }
+
+    // If the message is empty then it was either sent or the input box was
+    // cleared. The user is no longer typing.
+    const isTyping =
+      string.length > 0 ? Ci.prplIConvIM.TYPING : Ci.prplIConvIM.NOT_TYPING;
+
+    this._cancelTypingTimer();
+    if (isTyping) {
+      this._typingTimer = setTimeout(this.finishedComposing.bind(this), 10000);
+    }
+
+    this.setTypingState(isTyping);
+
+    return this.getRemainingCharacters(string);
+  },
+
+  /**
+   * Called to send the protocol over thewire.
+   *
+   * @param {number} _newState - The user's typing state, matching the constants
+   *    defined in Ci.prplIConvIM.
+   */
+  setTypingState: _newState => {},
+
+  /**
+   * Called when the user is typing a message.
+   *
+   * @param {string} _string - The currently typed message.
+   * @returns {number} The number of characters that can still be typed
+   *    or NO_TYPING_LIMIT if there is no protocol defined limit.
+   */
+  getRemainingCharacters: _string => Ci.prplIConversation.NO_TYPING_LIMIT,
+
+  /**
+   * Called when the user has finished typing a message.
+   */
+  finishedComposing() {
+    if (!this._shouldSendTypingNotifications) {
+      return;
+    }
+
+    this.setTypingState(Ci.prplIConvIM.TYPED);
+  },
+
+  _cancelTypingTimer() {
+    if (this._typingTimer) {
+      clearTimeout(this._typingTimer);
+      delete this._typingTimer;
+    }
+  },
 
   close() {
     Services.obs.notifyObservers(this, "closing-conversation");
     IMServices.conversations.removeConversation(this);
   },
   unInit() {
+    this._cancelTypingTimer();
     delete this._account;
     delete this._observers;
   },
@@ -1009,8 +1105,15 @@ export var GenericConversationPrototype = {
     return new Message(who, text, properties, this);
   },
 
-  writeMessage(aWho, aText, aProperties) {
-    const message = this.createMessage(aWho, aText, aProperties);
+  /**
+   * Write a message to the conversation.
+   *
+   * @param {string} who - Nick of the participant who sent the message.
+   * @param {string} text - Raw message contents.
+   * @param {object} properties - Additional properties of the message.
+   */
+  writeMessage(who, text, properties) {
+    const message = this.createMessage(who, text, properties);
     this.notifyObservers(message, "new-text");
   },
 
@@ -1091,6 +1194,7 @@ export var GenericConvIMPrototype = {
     return false;
   },
   buddy: null,
+  // The typing state of the remote buddy.
   typingState: Ci.prplIConvIM.NOT_TYPING,
   get convIconFilename() {
     // By default, pass through information from the buddy for IM conversations
@@ -1166,16 +1270,26 @@ export var GenericConvChatPrototype = {
     let message;
     if (aTopicSetter) {
       if (aTopic) {
-        message = lazy._("topicChanged", aTopicSetter, lazy.TXTToHTML(aTopic));
+        message = lazy.l10n.formatValueSync("topic-changed", {
+          user: aTopicSetter,
+          topic: lazy.TXTToHTML(aTopic),
+        });
       } else {
-        message = lazy._("topicCleared", aTopicSetter);
+        message = lazy.l10n.formatValueSync("topic-cleared", {
+          user: aTopicSetter,
+        });
       }
     } else {
       aTopicSetter = null;
       if (aTopic) {
-        message = lazy._("topicSet", this.name, lazy.TXTToHTML(aTopic));
+        message = lazy.l10n.formatValueSync("topic-set", {
+          conversationName: this.name,
+          topic: lazy.TXTToHTML(aTopic),
+        });
       } else {
-        message = lazy._("topicNotSet", this.name);
+        message = lazy.l10n.formatValueSync("topic-not-set", {
+          conversationName: this.name,
+        });
       }
     }
     this.writeMessage(aTopicSetter, message, { system: true });
@@ -1186,7 +1300,7 @@ export var GenericConvChatPrototype = {
   },
   set nick(aNick) {
     this._nick = aNick;
-    let escapedNick = this._nick.replace(/[[\]{}()*+?.\\^$|]/g, "\\$&");
+    const escapedNick = this._nick.replace(/[[\]{}()*+?.\\^$|]/g, "\\$&");
     this._pingRegexp = new RegExp("(?:^|\\W)" + escapedNick + "(?:\\W|$)", "i");
   },
 
@@ -1226,11 +1340,13 @@ export var GenericConvChatPrototype = {
   // Updates the nick of a participant in conversation to a new one.
   updateNick(aOldNick, aNewNick, isOwnNick) {
     let message;
-    let isParticipant = this._participants.has(aOldNick);
+    const isParticipant = this._participants.has(aOldNick);
     if (isOwnNick) {
       // If this is the user's nick, change it.
       this.nick = aNewNick;
-      message = lazy._("nickSet.you", aNewNick);
+      message = lazy.l10n.formatValueSync("nick-set-you", {
+        newNick: aNewNick,
+      });
 
       // If the account was disconnected, it's OK the user is not a participant.
       if (!isParticipant) {
@@ -1245,11 +1361,14 @@ export var GenericConvChatPrototype = {
       );
       return;
     } else {
-      message = lazy._("nickSet", aOldNick, aNewNick);
+      message = lazy.l10n.formatValueSync("nick-set-key", {
+        oldNick: aOldNick,
+        newNick: aNewNick,
+      });
     }
 
     // Get the original participant and then remove it.
-    let participant = this._participants.get(aOldNick);
+    const participant = this._participants.get(aOldNick);
     this._participants.delete(aOldNick);
 
     // Update the nickname and add it under the new nick.
@@ -1266,7 +1385,7 @@ export var GenericConvChatPrototype = {
       return;
     }
 
-    let stringNickname = Cc["@mozilla.org/supports-string;1"].createInstance(
+    const stringNickname = Cc["@mozilla.org/supports-string;1"].createInstance(
       Ci.nsISupportsString
     );
     stringNickname.data = aNick;
@@ -1279,11 +1398,11 @@ export var GenericConvChatPrototype = {
 
   // Removes all participant in conversation.
   removeAllParticipants() {
-    let stringNicknames = [];
+    const stringNicknames = [];
     this._participants.forEach(function (aParticipant) {
-      let stringNickname = Cc["@mozilla.org/supports-string;1"].createInstance(
-        Ci.nsISupportsString
-      );
+      const stringNickname = Cc[
+        "@mozilla.org/supports-string;1"
+      ].createInstance(Ci.nsISupportsString);
       stringNickname.data = aParticipant.name;
       stringNicknames.push(stringNickname);
     });
@@ -1326,7 +1445,8 @@ export var GenericConvChatBuddyPrototype = {
    * _startVerification of GenericSessionPrototype. If the property is not a
    * function, |canVerifyIdentity| is false.
    *
-   * @type {() => {challenge: string, challengeDescription: string?, handleResult: (boolean) => void, cancel: () => void, cancelPromise: Promise}?}
+   * @type {function():object} function returning an object like
+   *   {challenge: string, challengeDescription: string?, handleResult: (boolean) => void, cancel: () => void, cancelPromise: Promise}?}
    */
   _startVerification: null,
   get canVerifyIdentity() {
@@ -1449,7 +1569,7 @@ purplePref.prototype = {
   },
   getList() {
     // Convert a JavaScript object map {"value 1": "label 1", ...}
-    let keys = Object.keys(this._listValues);
+    const keys = Object.keys(this._listValues);
     return keys.map(key => new purpleKeyValuePair(this._listValues[key], key));
   },
   getListDefault() {
@@ -1503,7 +1623,7 @@ ChatRoomField.prototype = ClassInfo(
   "ChatRoomField object"
 );
 
-function ChatRoomFieldValues(aMap) {
+export function ChatRoomFieldValues(aMap) {
   this.values = aMap;
 }
 ChatRoomFieldValues.prototype = {
@@ -1541,7 +1661,7 @@ export var GenericProtocolPrototype = {
     return "chrome://chat/skin/prpl-generic/";
   },
 
-  getAccount(aImAccount) {
+  getAccount() {
     throw Components.Exception("", Cr.NS_ERROR_NOT_IMPLEMENTED);
   },
 
@@ -1556,8 +1676,8 @@ export var GenericProtocolPrototype = {
       return [];
     }
 
-    let purplePrefs = [];
-    for (let [name, option] of Object.entries(this.options)) {
+    const purplePrefs = [];
+    for (const [name, option] of Object.entries(this.options)) {
       purplePrefs.push(new purplePref(name, option));
     }
     return purplePrefs;
@@ -1614,14 +1734,11 @@ export var GenericProtocolPrototype = {
       if (!command.hasOwnProperty("name") || !command.hasOwnProperty("run")) {
         throw new Error("Every command must have a name and a run function.");
       }
-      if (!("QueryInterface" in command)) {
-        command.QueryInterface = ChromeUtils.generateQI(["imICommand"]);
-      }
       if (!command.hasOwnProperty("usageContext")) {
-        command.usageContext = Ci.imICommand.CMD_CONTEXT_ALL;
+        command.usageContext = IMServices.cmd.COMMAND_CONTEXT.ALL;
       }
       if (!command.hasOwnProperty("priority")) {
-        command.priority = Ci.imICommand.CMD_PRIORITY_PRPL;
+        command.priority = IMServices.cmd.COMMAND_PRIORITY.PRPL;
       }
       IMServices.cmd.registerCommand(command, this.id);
     }, this);
@@ -1755,7 +1872,8 @@ export var GenericSessionPrototype = {
    * expected to update the trusted property on the session if it becomes
    * trusted after verification.
    *
-   * @returns {Promise<{challenge: string, challengeDescription: string?, handleResult: (boolean) => void, cancel: () => void, cancelPromise: Promise<void>}>}
+   * @returns {Promise<object>} and object like
+   *   {challenge: string, challengeDescription: string?, handleResult: (boolean) => void, cancel: () => void, cancelPromise: Promise<void>}
    *  Promise resolves to an object holding the challenge string, as well as a
    *  callback that handles the result of the verification flow. The cancel
    *  callback is called when the verification is cancelled and the cancelPromise

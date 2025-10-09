@@ -3,18 +3,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "nsMsgCompose.h"
 #include "nsMsgCompFields.h"
-#include "nsMsgI18N.h"
+#include "nsIMsgCompose.h"
 #include "nsMsgCompUtils.h"
 #include "nsMsgUtils.h"
 #include "prmem.h"
-#include "nsIFileChannel.h"
 #include "nsIMsgAttachment.h"
 #include "nsIMsgMdnGenerator.h"
-#include "nsServiceManagerUtils.h"
-#include "nsMemory.h"
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/mailnews/MimeHeaderParser.h"
 
 using namespace mozilla::mailnews;
@@ -42,7 +37,6 @@ static HeaderInfo kHeaders[] = {
     {"Subject", false},
     {"Organization", false},
     {"References", true},
-    {"X-Mozilla-News-Host", false},
     {"X-Priority", false},
     {nullptr, false},  // CHARACTER_SET
     {"Message-Id", true},
@@ -54,7 +48,7 @@ static HeaderInfo kHeaders[] = {
 };
 
 static_assert(
-    MOZ_ARRAY_LENGTH(kHeaders) == nsMsgCompFields::MSG_MAX_HEADERS,
+    std::size(kHeaders) == nsMsgCompFields::MSG_MAX_HEADERS,
     "These two arrays need to be kept in sync or bad things will happen!");
 
 NS_IMPL_ISUPPORTS(nsMsgCompFields, nsIMsgCompFields, msgIStructuredHeaders,
@@ -91,6 +85,7 @@ nsresult nsMsgCompFields::SetAsciiHeader(MsgHeaderID header,
   // take as an attempt to delete the header.
   const char* headerName = kHeaders[header].mName;
   if (headerName) {
+    NS_ENSURE_STATE(mStructuredHeaders);
     if (!value || !*value) return mStructuredHeaders->DeleteHeader(headerName);
 
     return mStructuredHeaders->SetRawHeader(headerName,
@@ -109,6 +104,10 @@ const char* nsMsgCompFields::GetAsciiHeader(MsgHeaderID header) {
 
   const char* headerName = kHeaders[header].mName;
   if (headerName) {
+    if (!mStructuredHeaders) {
+      NS_WARNING("mStructuredHeaders was null");
+      return "";
+    }
     // We may be out of sync with the structured header object. Retrieve the
     // header value.
     if (kHeaders[header].mStructured) {
@@ -206,15 +205,6 @@ NS_IMETHODIMP nsMsgCompFields::GetFollowupTo(nsAString& _retval) {
   return GetUnicodeHeader(MSG_FOLLOWUP_TO_HEADER_ID, _retval);
 }
 
-NS_IMETHODIMP nsMsgCompFields::GetHasRecipients(bool* _retval) {
-  NS_ENSURE_ARG_POINTER(_retval);
-
-  *_retval = NS_SUCCEEDED(mime_sanity_check_fields_recipients(
-      GetTo(), GetCc(), GetBcc(), GetNewsgroups()));
-
-  return NS_OK;
-}
-
 NS_IMETHODIMP nsMsgCompFields::SetCreatorIdentityKey(const char* value) {
   return SetAsciiHeader(MSG_CREATOR_IDENTITY_KEY_ID, value);
 }
@@ -247,15 +237,6 @@ NS_IMETHODIMP nsMsgCompFields::SetReferences(const char* value) {
 
 NS_IMETHODIMP nsMsgCompFields::GetReferences(char** _retval) {
   *_retval = strdup(GetAsciiHeader(MSG_REFERENCES_HEADER_ID));
-  return *_retval ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
-}
-
-NS_IMETHODIMP nsMsgCompFields::SetNewspostUrl(const char* value) {
-  return SetAsciiHeader(MSG_NEWSPOSTURL_HEADER_ID, value);
-}
-
-NS_IMETHODIMP nsMsgCompFields::GetNewspostUrl(char** _retval) {
-  *_retval = strdup(GetAsciiHeader(MSG_NEWSPOSTURL_HEADER_ID));
   return *_retval ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
 }
 

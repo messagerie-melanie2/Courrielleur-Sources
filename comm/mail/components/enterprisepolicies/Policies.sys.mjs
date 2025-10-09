@@ -32,15 +32,12 @@ const ABOUT_CONTRACT = "@mozilla.org/network/protocol/about;1?what=";
 
 const isXpcshell = Services.env.exists("XPCSHELL_TEST_PROFILE_DIR");
 
-XPCOMUtils.defineLazyGetter(lazy, "log", () => {
-  let { ConsoleAPI } = ChromeUtils.importESModule(
-    "resource://gre/modules/Console.sys.mjs"
-  );
-  return new ConsoleAPI({
-    prefix: "Policies.jsm",
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
+  return console.createInstance({
+    prefix: "Policies",
     // tip: set maxLogLevel to "debug" and use log.debug() to create detailed
-    // messages during development. See LOG_LEVELS in Console.jsm for details.
-    maxLogLevel: "error",
+    // messages during development. See LOG_LEVELS in Console.sys.mjs for details.
+    maxLogLevel: "Error",
     maxLogLevelPref: PREF_LOGLEVEL,
   });
 });
@@ -75,25 +72,25 @@ export var Policies = {
   // Used for cleaning up policies.
   // Use the same timing that you used for setting up the policy.
   _cleanup: {
-    onBeforeAddons(manager) {
+    onBeforeAddons() {
       if (Cu.isInAutomation || isXpcshell) {
-        console.log("_cleanup from onBeforeAddons");
+        lazy.log.debug("_cleanup from onBeforeAddons");
         clearBlockedAboutPages();
       }
     },
-    onProfileAfterChange(manager) {
+    onProfileAfterChange() {
       if (Cu.isInAutomation || isXpcshell) {
-        console.log("_cleanup from onProfileAfterChange");
+        lazy.log.debug("_cleanup from onProfileAfterChange");
       }
     },
-    onBeforeUIStartup(manager) {
+    onBeforeUIStartup() {
       if (Cu.isInAutomation || isXpcshell) {
-        console.log("_cleanup from onBeforeUIStartup");
+        lazy.log.debug("_cleanup from onBeforeUIStartup");
       }
     },
-    onAllWindowsRestored(manager) {
+    onAllWindowsRestored() {
       if (Cu.isInAutomation || isXpcshell) {
-        console.log("_cleanup from onAllWindowsRestored");
+        lazy.log.debug("_cleanup from onAllWindowsRestored");
       }
     },
   },
@@ -124,7 +121,7 @@ export var Policies = {
       const earliestPinMajorVersion = 102;
       const earliestPinMinorVersion = 0;
 
-      let pinParts = param.split(".");
+      const pinParts = param.split(".");
 
       if (pinParts.length < 2) {
         lazy.log.error("AppUpdatePin has too few dots.");
@@ -345,7 +342,7 @@ export var Policies = {
       if ("Install" in param) {
         (async () => {
           let dirs = [];
-          let platform = AppConstants.platform;
+          const platform = AppConstants.platform;
           if (platform == "win") {
             dirs = [
               // Ugly, but there is no official way to get %USERNAME\AppData\Roaming\Mozilla.
@@ -361,7 +358,7 @@ export var Policies = {
             ];
           }
           dirs.unshift(Services.dirsvc.get("XREAppDist", Ci.nsIFile));
-          for (let certfilename of param.Install) {
+          for (const certfilename of param.Install) {
             let certfile;
             try {
               certfile = Cc["@mozilla.org/file/local;1"].createInstance(
@@ -369,7 +366,7 @@ export var Policies = {
               );
               certfile.initWithPath(certfilename);
             } catch (e) {
-              for (let dir of dirs) {
+              for (const dir of dirs) {
                 certfile = dir.clone();
                 certfile.append(
                   platform == "linux" ? "certificates" : "Certificates"
@@ -387,14 +384,14 @@ export var Policies = {
               lazy.log.error(`Unable to find certificate - ${certfilename}`);
               continue;
             }
-            let reader = new FileReader();
+            const reader = new FileReader();
             reader.onloadend = function () {
               if (reader.readyState != reader.DONE) {
                 lazy.log.error(`Unable to read certificate - ${certfile.path}`);
                 return;
               }
-              let certFile = reader.result;
-              let certFileArray = [];
+              const certFile = reader.result;
+              const certFileArray = [];
               for (let i = 0; i < certFile.length; i++) {
                 certFileArray.push(certFile.charCodeAt(i));
               }
@@ -455,7 +452,7 @@ export var Policies = {
           .sort()
           .join("\n");
         runOncePerModification("clearCookiesForBlockedHosts", hosts, () => {
-          for (let blocked of param.Block) {
+          for (const blocked of param.Block) {
             Services.cookies.removeCookiesWithOriginAttributes(
               "{}",
               blocked.hostname
@@ -534,7 +531,7 @@ export var Policies = {
 
   DisabledCiphers: {
     onBeforeAddons(manager, param) {
-      let cipherPrefs = {
+      const cipherPrefs = {
         TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:
           "security.ssl3.ecdhe_rsa_aes_128_gcm_sha256",
         TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:
@@ -565,7 +562,7 @@ export var Policies = {
           "security.ssl3.deprecated.rsa_des_ede3_sha",
       };
 
-      for (let cipher in param) {
+      for (const cipher in param) {
         setAndLockPref(cipherPrefs[cipher], !param[cipher]);
       }
     },
@@ -652,7 +649,7 @@ export var Policies = {
         locked = param.Locked;
       }
       if ("Enabled" in param) {
-        let mode = param.Enabled ? 2 : 5;
+        const mode = param.Enabled ? 2 : 5;
         PoliciesUtils.setDefaultPref("network.trr.mode", mode, locked);
       }
       if ("ProviderURL" in param) {
@@ -696,10 +693,10 @@ export var Policies = {
             Services.prefs.clearUserPref(
               "browser.policies.runOncePerModification.extensionsInstall"
             );
-            let addons = await lazy.AddonManager.getAddonsByIDs(
+            const addons = await lazy.AddonManager.getAddonsByIDs(
               param.Uninstall
             );
-            for (let addon of addons) {
+            for (const addon of addons) {
               if (addon) {
                 try {
                   await addon.uninstall();
@@ -720,13 +717,13 @@ export var Policies = {
           JSON.stringify(param.Install),
           async () => {
             await uninstallingPromise;
-            for (let location of param.Install) {
+            for (const location of param.Install) {
               let uri;
               try {
                 // We need to try as a file first because
                 // Windows paths are valid URIs.
                 // This is done for legacy support (old API)
-                let xpiFile = new lazy.FileUtils.File(location);
+                const xpiFile = new lazy.FileUtils.File(location);
                 uri = Services.io.newFileURI(xpiFile);
               } catch (e) {
                 uri = Services.io.newURI(location);
@@ -737,7 +734,7 @@ export var Policies = {
         );
       }
       if ("Locked" in param) {
-        for (let ID of param.Locked) {
+        for (const ID of param.Locked) {
           manager.disallowFeature(`uninstall-extension:${ID}`);
           manager.disallowFeature(`disable-extension:${ID}`);
         }
@@ -754,7 +751,7 @@ export var Policies = {
       }
     },
     async onBeforeUIStartup(manager, param) {
-      let extensionSettings = param;
+      const extensionSettings = param;
       let blockAllExtensions = false;
       if ("*" in extensionSettings) {
         if (
@@ -773,7 +770,7 @@ export var Policies = {
           blockAboutPage(manager, "about:debugging");
         }
         if ("restricted_domains" in extensionSettings["*"]) {
-          let restrictedDomains = Services.prefs
+          const restrictedDomains = Services.prefs
             .getCharPref("extensions.webextensions.restrictedDomains")
             .split(",");
           setAndLockPref(
@@ -784,9 +781,9 @@ export var Policies = {
           );
         }
       }
-      let addons = await lazy.AddonManager.getAllAddons();
-      let allowedExtensions = [];
-      for (let extensionID in extensionSettings) {
+      const addons = await lazy.AddonManager.getAllAddons();
+      const allowedExtensions = [];
+      for (const extensionID in extensionSettings) {
         if (extensionID == "*") {
           // Ignore global settings
           continue;
@@ -823,7 +820,7 @@ export var Policies = {
           ) {
             if (addons.find(addon => addon.id == extensionID)) {
               // Can't use the addon from getActiveAddons since it doesn't have uninstall.
-              let addon = await lazy.AddonManager.getAddonByID(extensionID);
+              const addon = await lazy.AddonManager.getAddonByID(extensionID);
               try {
                 await addon.uninstall();
               } catch (e) {
@@ -837,7 +834,7 @@ export var Policies = {
         }
       }
       if (blockAllExtensions) {
-        for (let addon of addons) {
+        for (const addon of addons) {
           if (
             addon.isSystem ||
             addon.isBuiltin ||
@@ -848,7 +845,7 @@ export var Policies = {
           if (!allowedExtensions.includes(addon.id)) {
             try {
               // Can't use the addon from getActiveAddons since it doesn't have uninstall.
-              let addonToUninstall = await lazy.AddonManager.getAddonByID(
+              const addonToUninstall = await lazy.AddonManager.getAddonByID(
                 addon.id
               );
               await addonToUninstall.uninstall();
@@ -875,9 +872,9 @@ export var Policies = {
   Handlers: {
     onBeforeAddons(manager, param) {
       if ("mimeTypes" in param) {
-        for (let mimeType in param.mimeTypes) {
-          let mimeInfo = param.mimeTypes[mimeType];
-          let realMIMEInfo = lazy.gMIMEService.getFromTypeAndExtension(
+        for (const mimeType in param.mimeTypes) {
+          const mimeInfo = param.mimeTypes[mimeType];
+          const realMIMEInfo = lazy.gMIMEService.getFromTypeAndExtension(
             mimeType,
             ""
           );
@@ -885,10 +882,10 @@ export var Policies = {
         }
       }
       if ("extensions" in param) {
-        for (let extension in param.extensions) {
-          let mimeInfo = param.extensions[extension];
+        for (const extension in param.extensions) {
+          const mimeInfo = param.extensions[extension];
           try {
-            let realMIMEInfo = lazy.gMIMEService.getFromTypeAndExtension(
+            const realMIMEInfo = lazy.gMIMEService.getFromTypeAndExtension(
               "",
               extension
             );
@@ -899,9 +896,9 @@ export var Policies = {
         }
       }
       if ("schemes" in param) {
-        for (let scheme in param.schemes) {
-          let handlerInfo = param.schemes[scheme];
-          let realHandlerInfo =
+        for (const scheme in param.schemes) {
+          const handlerInfo = param.schemes[scheme];
+          const realHandlerInfo =
             lazy.gExternalProtocolService.getProtocolHandlerInfo(scheme);
           processMIMEInfo(handlerInfo, realHandlerInfo);
         }
@@ -913,6 +910,32 @@ export var Policies = {
     onBeforeAddons(manager, param) {
       if (!param) {
         setAndLockPref("layers.acceleration.disabled", true);
+      }
+    },
+  },
+
+  InAppNotification: {
+    onBeforeUIStartup(manager, param) {
+      if ("DonationEnabled" in param) {
+        setAndLockPref(
+          "mail.inappnotifications.donation_enabled",
+          param.DonationEnabled
+        );
+      }
+      if ("SurveyEnabled" in param) {
+        setAndLockPref(
+          "mail.inappnotifications.blog_enabled", // This is the type/pref for surveys, currently.
+          param.SurveyEnabled
+        );
+      }
+      if ("MessageEnabled" in param) {
+        setAndLockPref(
+          "mail.inappnotifications.message_enabled",
+          param.MessageEnabled
+        );
+      }
+      if ("Disabled" in param) {
+        setAndLockPref("mail.inappnotifications.enabled", !param.Disabled);
       }
     },
   },
@@ -956,7 +979,7 @@ export var Policies = {
 
   OfferToSaveLoginsDefault: {
     onBeforeUIStartup(manager, param) {
-      let policies = Services.policies.getActivePolicies();
+      const policies = Services.policies.getActivePolicies();
       if ("OfferToSaveLogins" in policies) {
         lazy.log.error(
           `OfferToSaveLoginsDefault ignored because OfferToSaveLogins is present.`
@@ -1036,7 +1059,7 @@ export var Policies = {
         "app.update.migrated",
       ];
 
-      for (let preference in param) {
+      for (const preference in param) {
         if (blockedPrefs.includes(preference)) {
           lazy.log.error(
             `Unable to set preference ${preference}. Preference not allowed for security reasons.`
@@ -1186,8 +1209,8 @@ export var Policies = {
             "removeSearchEngines",
             JSON.stringify(param.Remove),
             async function () {
-              for (let engineName of param.Remove) {
-                let engine = Services.search.getEngineByName(engineName);
+              for (const engineName of param.Remove) {
+                const engine = Services.search.getEngineByName(engineName);
                 if (engine) {
                   try {
                     await Services.search.removeEngine(engine);
@@ -1331,10 +1354,8 @@ export var Policies = {
  * is stored as the user value).
  * The value is only changed in memory, and not stored to disk.
  *
- * @param {string} prefName
- *        The pref to be changed
- * @param {boolean,number,string} prefValue
- *        The value to set and lock
+ * @param {string} prefName - The pref to be changed.
+ * @param {boolean|number|string} prefValue - The value to set and lock.
  */
 export function setAndLockPref(prefName, prefValue) {
   PoliciesUtils.setDefaultPref(prefName, prefValue, true);
@@ -1346,12 +1367,9 @@ export function setAndLockPref(prefName, prefValue) {
  * Sets the _default_ value of a pref and optionally locks it.
  * The value is only changed in memory, and not stored to disk.
  *
- * @param {string} prefName
- *        The pref to be changed
- * @param {boolean,number,string} prefValue
- *        The value to set
- * @param {boolean} locked
- *        Optionally lock the pref
+ * @param {string} prefName - The pref to be changed.
+ * @param {boolean|number|string} prefValue - The value to set and lock.
+ * @param {boolean} [locked=false] - Optionally lock the pref.
  */
 export var PoliciesUtils = {
   setDefaultPref(prefName, prefValue, locked = false) {
@@ -1359,7 +1377,7 @@ export var PoliciesUtils = {
       Services.prefs.unlockPref(prefName);
     }
 
-    let defaults = Services.prefs.getDefaultBranch("");
+    const defaults = Services.prefs.getDefaultBranch("");
 
     switch (typeof prefValue) {
       case "boolean":
@@ -1415,7 +1433,7 @@ function addAllowDenyPermissions(permissionName, allowList, blockList) {
   allowList = allowList || [];
   blockList = blockList || [];
 
-  for (let origin of allowList) {
+  for (const origin of allowList) {
     try {
       Services.perms.addFromPrincipal(
         Services.scriptSecurityManager.createContentPrincipalFromOrigin(origin),
@@ -1430,7 +1448,7 @@ function addAllowDenyPermissions(permissionName, allowList, blockList) {
     }
   }
 
-  for (let origin of blockList) {
+  for (const origin of blockList) {
     Services.perms.addFromPrincipal(
       Services.scriptSecurityManager.createContentPrincipalFromOrigin(origin),
       permissionName,
@@ -1451,7 +1469,7 @@ function addAllowDenyPermissions(permissionName, allowList, blockList) {
  *        The callback to run only once.
  */
 export function runOnce(actionName, callback) {
-  let prefName = `browser.policies.runonce.${actionName}`;
+  const prefName = `browser.policies.runonce.${actionName}`;
   if (Services.prefs.getBoolPref(prefName, false)) {
     lazy.log.debug(
       `Not running action ${actionName} again because it has already run.`
@@ -1463,8 +1481,6 @@ export function runOnce(actionName, callback) {
 }
 
 /**
- * runOncePerModification
- *
  * Helper function similar to runOnce. The difference is that runOnce runs the
  * callback once when the policy is set, then never again.
  * runOncePerModification runs the callback once each time the policy value
@@ -1472,23 +1488,18 @@ export function runOnce(actionName, callback) {
  * If the callback that was passed is an async function, you can await on this
  * function to await for the callback.
  *
- * @param {string} actionName
- *        A given name which will be used to track if this callback has run.
- *        This string will be part of a pref name.
- * @param {string} policyValue
- *        The current value of the policy. This will be compared to previous
- *        values given to this function to determine if the policy value has
- *        changed. Regardless of the data type of the policy, this must be a
- *        string.
- * @param {Function} callback
- *        The callback to be run when the pref value changes
- * @returns Promise
- *        A promise that will resolve once the callback finishes running.
- *
+ * @param {string} actionName - A given name which will be used to track if
+ *   this callback has run. This string will be part of a pref name.
+ * @param {string} policyValue - The current value of the policy. This will be
+ *   compared to previous values given to this function to determine if the
+ *   policy value has changed. Regardless of the data type of the policy, this
+ *   must be a string.
+ * @param {Function} callback - The callback to be run when the pref value changes.
+ * @returns {Promise} A promise that will resolve once the callback finishes running.
  */
 async function runOncePerModification(actionName, policyValue, callback) {
-  let prefName = `browser.policies.runOncePerModification.${actionName}`;
-  let oldPolicyValue = Services.prefs.getStringPref(prefName, undefined);
+  const prefName = `browser.policies.runOncePerModification.${actionName}`;
+  const oldPolicyValue = Services.prefs.getStringPref(prefName, undefined);
   if (policyValue === oldPolicyValue) {
     lazy.log.debug(
       `Not running action ${actionName} again because the policy's value is unchanged`
@@ -1500,25 +1511,24 @@ async function runOncePerModification(actionName, policyValue, callback) {
 }
 
 /**
- * clearRunOnceModification
- *
  * Helper function that clears a runOnce policy.
  */
 function clearRunOnceModification(actionName) {
-  let prefName = `browser.policies.runOncePerModification.${actionName}`;
+  const prefName = `browser.policies.runOncePerModification.${actionName}`;
   Services.prefs.clearUserPref(prefName);
 }
 
 function replacePathVariables(path) {
   if (path.includes("${home}")) {
-    return path.replace("${home}", lazy.FileUtils.getFile("Home", []).path);
+    return path.replace(
+      "${home}",
+      Services.dirsvc.get("Home", Ci.nsIFile).path
+    );
   }
   return path;
 }
 
 /**
- * installAddonFromURL
- *
  * Helper function that installs an addon from a URL
  * and verifies that the addon ID matches.
  */
@@ -1540,7 +1550,7 @@ function installAddonFromURL(url, extensionID, addon) {
       install.cancel();
       return;
     }
-    let listener = {
+    const listener = {
       /* eslint-disable-next-line no-shadow */
       onDownloadEnded: install => {
         // Install failed, error will be reported elsewhere.
@@ -1596,6 +1606,14 @@ function installAddonFromURL(url, extensionID, addon) {
         lazy.log.debug(`Installation succeeded - ${url}`);
       },
     };
+    // If it's a local file install, onDownloadEnded is never called.
+    // So we call it manually, to handle some error cases.
+    if (url.startsWith("file:")) {
+      listener.onDownloadEnded(install);
+      if (install.state == lazy.AddonManager.STATE_CANCELLED) {
+        return;
+      }
+    }
     install.addListener(listener);
     install.install();
   });
@@ -1607,24 +1625,26 @@ function clearBlockedAboutPages() {
   gBlockedAboutPages = [];
 }
 
-function blockAboutPage(manager, feature, neededOnContentProcess = false) {
+function blockAboutPage(manager, feature) {
   addChromeURLBlocker();
   gBlockedAboutPages.push(feature);
 
   try {
-    let aboutModule = Cc[ABOUT_CONTRACT + feature.split(":")[1]].getService(
+    const aboutModule = Cc[ABOUT_CONTRACT + feature.split(":")[1]].getService(
       Ci.nsIAboutModule
     );
-    let chromeURL = aboutModule.getChromeURI(Services.io.newURI(feature)).spec;
+    const chromeURL = aboutModule.getChromeURI(
+      Services.io.newURI(feature)
+    ).spec;
     gBlockedAboutPages.push(chromeURL);
   } catch (e) {
     // Some about pages don't have chrome URLS (compat)
   }
 }
 
-let ChromeURLBlockPolicy = {
-  shouldLoad(contentLocation, loadInfo, mimeTypeGuess) {
-    let contentType = loadInfo.externalContentPolicyType;
+const ChromeURLBlockPolicy = {
+  shouldLoad(contentLocation, loadInfo) {
+    const contentType = loadInfo.externalContentPolicyType;
     if (
       (contentLocation.scheme != "chrome" &&
         contentLocation.scheme != "about") ||
@@ -1642,7 +1662,7 @@ let ChromeURLBlockPolicy = {
     }
     return Ci.nsIContentPolicy.ACCEPT;
   },
-  shouldProcess(contentLocation, loadInfo, mimeTypeGuess) {
+  shouldProcess() {
     return Ci.nsIContentPolicy.ACCEPT;
   },
   classDescription: "Policy Engine Content Policy",
@@ -1659,7 +1679,7 @@ function addChromeURLBlocker() {
     return;
   }
 
-  let registrar = Components.manager.QueryInterface(Ci.nsIComponentRegistrar);
+  const registrar = Components.manager.QueryInterface(Ci.nsIComponentRegistrar);
   registrar.registerFactory(
     ChromeURLBlockPolicy.classID,
     ChromeURLBlockPolicy.classDescription,
@@ -1686,14 +1706,14 @@ function pemToBase64(pem) {
 function processMIMEInfo(mimeInfo, realMIMEInfo) {
   if ("handlers" in mimeInfo) {
     let firstHandler = true;
-    for (let handler of mimeInfo.handlers) {
+    for (const handler of mimeInfo.handlers) {
       // handler can be null which means they don't
       // want a preferred handler.
       if (handler) {
         let handlerApp;
         if ("path" in handler) {
           try {
-            let file = new lazy.FileUtils.File(handler.path);
+            const file = new lazy.FileUtils.File(handler.path);
             handlerApp = Cc[
               "@mozilla.org/uriloader/local-handler-app;1"
             ].createInstance(Ci.nsILocalHandlerApp);
@@ -1705,7 +1725,7 @@ function processMIMEInfo(mimeInfo, realMIMEInfo) {
             continue;
           }
         } else if ("uriTemplate" in handler) {
-          let templateURL = new URL(handler.uriTemplate);
+          const templateURL = new URL(handler.uriTemplate);
           if (templateURL.protocol != "https:") {
             lazy.log.error(
               `Web handler must be https (${handler.uriTemplate})`
@@ -1741,7 +1761,7 @@ function processMIMEInfo(mimeInfo, realMIMEInfo) {
     }
   }
   if ("action" in mimeInfo) {
-    let action = realMIMEInfo[mimeInfo.action];
+    const action = realMIMEInfo[mimeInfo.action];
     if (
       action == realMIMEInfo.useHelperApp &&
       !realMIMEInfo.possibleApplicationHandlers.length

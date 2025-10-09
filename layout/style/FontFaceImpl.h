@@ -9,12 +9,9 @@
 
 #include "mozilla/dom/FontFaceBinding.h"
 #include "mozilla/FontPropertyTypes.h"
-#include "mozilla/Maybe.h"
-#include "mozilla/Mutex.h"
+#include "mozilla/RWLock.h"
 #include "mozilla/ServoStyleConsts.h"
 #include "gfxUserFontSet.h"
-#include "nsCSSPropertyID.h"
-#include "nsCSSValue.h"
 #include "nsTHashSet.h"
 
 class gfxFontFaceBufferSource;
@@ -50,21 +47,15 @@ class FontFaceImpl final {
     Entry(gfxUserFontSet* aFontSet, nsTArray<gfxFontFaceSrc>&& aFontFaceSrcList,
           gfxUserFontAttributes&& aAttr)
         : gfxUserFontEntry(std::move(aFontFaceSrcList), std::move(aAttr)),
-          mMutex("FontFaceImpl::Entry::mMutex"),
           mFontSet(aFontSet) {}
 
     void SetLoadState(UserFontLoadState aLoadState) override;
     void GetUserFontSets(nsTArray<RefPtr<gfxUserFontSet>>& aResult) override;
     already_AddRefed<gfxUserFontSet> GetUserFontSet() const override;
 
-    void CheckUserFontSet() {
-      MutexAutoLock lock(mMutex);
-      CheckUserFontSetLocked();
-    }
-
 #ifdef DEBUG
     bool HasUserFontSet(gfxUserFontSet* aFontSet) const {
-      MutexAutoLock lock(mMutex);
+      AutoReadLock lock(mLock);
       return mFontSet == aFontSet;
     }
 #endif
@@ -73,19 +64,19 @@ class FontFaceImpl final {
     void RemoveFontFace(FontFaceImpl* aOwner);
     void FindFontFaceOwners(nsTHashSet<FontFace*>& aOwners);
 
-   protected:
-    void CheckUserFontSetLocked() MOZ_REQUIRES(mMutex);
+    RWLock& Lock() const MOZ_RETURN_CAPABILITY(mLock) { return mLock; }
 
-    mutable Mutex mMutex;
+   protected:
+    void CheckUserFontSetLocked() MOZ_REQUIRES(mLock);
 
     // Font set which owns this entry;
-    gfxUserFontSet* MOZ_NON_OWNING_REF mFontSet MOZ_GUARDED_BY(mMutex);
+    gfxUserFontSet* MOZ_NON_OWNING_REF mFontSet MOZ_GUARDED_BY(mLock);
 
     // The FontFace objects that use this user font entry.  We need to store
     // an array of these, not just a single pointer, since the user font
     // cache can return the same entry for different FontFaces that have
     // the same descriptor values and come from the same origin.
-    AutoTArray<FontFaceImpl*, 1> mFontFaces MOZ_GUARDED_BY(mMutex);
+    AutoTArray<FontFaceImpl*, 1> mFontFaces MOZ_GUARDED_BY(mLock);
   };
 
 #ifdef DEBUG
@@ -99,14 +90,17 @@ class FontFaceImpl final {
     return mOwner;
   }
 
+  void StopKeepingOwnerAlive();
+
   static already_AddRefed<FontFaceImpl> CreateForRule(
       FontFace* aOwner, FontFaceSetImpl* aFontFaceSet,
       StyleLockedFontFaceRule* aRule);
 
   StyleLockedFontFaceRule* GetRule() { return mRule; }
 
-  bool HasLocalSrc() const;
-
+  static bool GetAttributesFromRule(
+      StyleLockedFontFaceRule*, gfxUserFontAttributes& aAttr,
+      const Maybe<gfxCharacterMap*>& aKnownCharMap = Nothing());
   bool GetAttributes(gfxUserFontAttributes& aAttr);
   gfxUserFontEntry* CreateUserFontEntry();
   gfxUserFontEntry* GetUserFontEntry() const { return mUserFontEntry; }
@@ -134,6 +128,13 @@ class FontFaceImpl final {
    * @font-face rule.
    */
   bool HasRule() const { return mRule; }
+
+  /** Set the font-face block we're reflecting when reusing a FontFace object */
+  void SetRule(StyleLockedFontFaceRule* aData) {
+    MOZ_ASSERT(HasRule());
+    AssertIsOnOwningThread();
+    mRule = aData;
+  }
 
   /**
    * Breaks the connection between this FontFace and its @font-face rule.
@@ -209,6 +210,11 @@ class FontFaceImpl final {
   bool SetDescriptors(const nsACString& aFamily,
                       const FontFaceDescriptors& aDescriptors);
 
+  StyleLockedFontFaceRule* GetData() const {
+    AssertIsOnOwningThread();
+    return HasRule() ? mRule : mDescriptors;
+  }
+
  private:
   ~FontFaceImpl();
 
@@ -234,11 +240,6 @@ class FontFaceImpl final {
   void SetStatus(FontFaceLoadStatus aStatus);
 
   void GetDesc(nsCSSFontDesc aDescID, nsACString& aResult) const;
-
-  StyleLockedFontFaceRule* GetData() const {
-    AssertIsOnOwningThread();
-    return HasRule() ? mRule : mDescriptors;
-  }
 
   /**
    * Returns and takes ownership of the buffer storing the font data.
@@ -297,10 +298,13 @@ class FontFaceImpl final {
 
   // Whether mUnicodeRange needs to be rebuilt before being returned from
   // GetUnicodeRangeAsCharacterMap.
-  bool mUnicodeRangeDirty;
+  bool mUnicodeRangeDirty = true;
 
   // Whether this FontFace appears in mFontFaceSet.
-  bool mInFontFaceSet;
+  bool mInFontFaceSet = false;
+
+  // Whether we're artificially keeping mOwner alive while we load.
+  bool mKeepingOwnerAlive = false;
 };
 
 }  // namespace mozilla::dom

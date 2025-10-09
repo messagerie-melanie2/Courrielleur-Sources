@@ -5,252 +5,28 @@
 
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
-import { clearTimeout, setTimeout } from "resource://gre/modules/Timer.sys.mjs";
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   CLIENT_NOT_CONFIGURED: "resource://services-sync/constants.sys.mjs",
+  BrowserUtils: "resource://gre/modules/BrowserUtils.sys.mjs",
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
   CustomizableUI: "resource:///modules/CustomizableUI.sys.mjs",
   MigrationUtils: "resource:///modules/MigrationUtils.sys.mjs",
+  OpenInTabsUtils:
+    "moz-src:///browser/components/tabbrowser/OpenInTabsUtils.sys.mjs",
   PlacesTransactions: "resource://gre/modules/PlacesTransactions.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
-  PromiseUtils: "resource://gre/modules/PromiseUtils.sys.mjs",
   Weave: "resource://services-sync/main.sys.mjs",
 });
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
-  OpenInTabsUtils: "resource:///modules/OpenInTabsUtils.jsm",
-});
-
-const gInContentProcess =
-  Services.appinfo.processType == Ci.nsIXULRuntime.PROCESS_TYPE_CONTENT;
-const FAVICON_REQUEST_TIMEOUT = 60 * 1000;
-// Map from windows to arrays of data about pending favicon loads.
-let gFaviconLoadDataMap = new Map();
 
 const ITEM_CHANGED_BATCH_NOTIFICATION_THRESHOLD = 10;
 
 // copied from utilityOverlay.js
 const TAB_DROP_TYPE = "application/x-moz-tabbrowser-tab";
-
-let InternalFaviconLoader = {
-  /**
-   * Actually cancel the request, and clear the timeout for cancelling it.
-   *
-   * @param {object} options
-   *   The options object containing:
-   * @param {object} options.uri
-   *   The URI of the favicon to cancel.
-   * @param {number} options.innerWindowID
-   *   The inner window ID of the window. Unused.
-   * @param {number} options.timerID
-   *   The timer ID of the timeout to be cancelled
-   * @param {*} options.callback
-   *   The request callback
-   * @param {string} reason
-   *   The reason for cancelling the request.
-   */
-  _cancelRequest({ uri, innerWindowID, timerID, callback }, reason) {
-    // Break cycle
-    let request = callback.request;
-    delete callback.request;
-    // Ensure we don't time out.
-    clearTimeout(timerID);
-    try {
-      request.cancel();
-    } catch (ex) {
-      console.error(
-        "When cancelling a request for " +
-          uri.spec +
-          " because " +
-          reason +
-          ", it was already canceled!"
-      );
-    }
-  },
-
-  /**
-   * Called for every inner that gets destroyed, only in the parent process.
-   *
-   * @param {number} innerID
-   *   The innerID of the window.
-   */
-  removeRequestsForInner(innerID) {
-    for (let [window, loadDataForWindow] of gFaviconLoadDataMap) {
-      let newLoadDataForWindow = loadDataForWindow.filter(loadData => {
-        let innerWasDestroyed = loadData.innerWindowID == innerID;
-        if (innerWasDestroyed) {
-          this._cancelRequest(
-            loadData,
-            "the inner window was destroyed or a new favicon was loaded for it"
-          );
-        }
-        // Keep the items whose inner is still alive.
-        return !innerWasDestroyed;
-      });
-      // Map iteration with for...of is safe against modification, so
-      // now just replace the old value:
-      gFaviconLoadDataMap.set(window, newLoadDataForWindow);
-    }
-  },
-
-  /**
-   * Called when a toplevel chrome window unloads. We use this to tidy up after ourselves,
-   * avoid leaks, and cancel any remaining requests. The last part should in theory be
-   * handled by the inner-window-destroyed handlers. We clean up just to be on the safe side.
-   *
-   * @param {DOMWindow} win
-   *   The window that was unloaded.
-   */
-  onUnload(win) {
-    let loadDataForWindow = gFaviconLoadDataMap.get(win);
-    if (loadDataForWindow) {
-      for (let loadData of loadDataForWindow) {
-        this._cancelRequest(loadData, "the chrome window went away");
-      }
-    }
-    gFaviconLoadDataMap.delete(win);
-  },
-
-  /**
-   * Remove a particular favicon load's loading data from our map tracking
-   * load data per chrome window.
-   *
-   * @param {DOMWindow} win
-   *   the chrome window in which we should look for this load
-   * @param {object} filterData
-   *   the data we should use to find this particular load to remove.
-   * @param {number} filterData.innerWindowID
-   *   The inner window ID of the window.
-   * @param {string} filterData.uri
-   *   The URI of the favicon to cancel.
-   * @param {*} filterData.callback
-   *   The request callback
-   *
-   * @returns {object|null}
-   *   the loadData object we removed, or null if we didn't find any.
-   */
-  _removeLoadDataFromWindowMap(win, { innerWindowID, uri, callback }) {
-    let loadDataForWindow = gFaviconLoadDataMap.get(win);
-    if (loadDataForWindow) {
-      let itemIndex = loadDataForWindow.findIndex(loadData => {
-        return (
-          loadData.innerWindowID == innerWindowID &&
-          loadData.uri.equals(uri) &&
-          loadData.callback.request == callback.request
-        );
-      });
-      if (itemIndex != -1) {
-        let loadData = loadDataForWindow[itemIndex];
-        loadDataForWindow.splice(itemIndex, 1);
-        return loadData;
-      }
-    }
-    return null;
-  },
-
-  /**
-   * Create a function to use as a nsIFaviconDataCallback, so we can remove cancelling
-   * information when the request succeeds. Note that right now there are some edge-cases,
-   * such as about: URIs with chrome:// favicons where the success callback is not invoked.
-   * This is OK: we will 'cancel' the request after the timeout (or when the window goes
-   * away) but that will be a no-op in such cases.
-   *
-   * @param {DOMWindow} win
-   *   The chrome window in which the request was made.
-   * @param {number} id
-   *   The inner window ID of the window.
-   * @returns {object}
-   */
-  _makeCompletionCallback(win, id) {
-    return {
-      onComplete(uri) {
-        let loadData = InternalFaviconLoader._removeLoadDataFromWindowMap(win, {
-          uri,
-          innerWindowID: id,
-          callback: this,
-        });
-        if (loadData) {
-          clearTimeout(loadData.timerID);
-        }
-        delete this.request;
-      },
-    };
-  },
-
-  ensureInitialized() {
-    if (this._initialized) {
-      return;
-    }
-    this._initialized = true;
-
-    Services.obs.addObserver(windowGlobal => {
-      this.removeRequestsForInner(windowGlobal.innerWindowId);
-    }, "window-global-destroyed");
-  },
-
-  loadFavicon(browser, principal, pageURI, uri, expiration, iconURI) {
-    this.ensureInitialized();
-    let { ownerGlobal: win, innerWindowID } = browser;
-    if (!gFaviconLoadDataMap.has(win)) {
-      gFaviconLoadDataMap.set(win, []);
-      let unloadHandler = event => {
-        let doc = event.target;
-        let eventWin = doc.defaultView;
-        if (eventWin == win) {
-          win.removeEventListener("unload", unloadHandler);
-          this.onUnload(win);
-        }
-      };
-      win.addEventListener("unload", unloadHandler, true);
-    }
-
-    // First we do the actual setAndFetch call:
-    let loadType = lazy.PrivateBrowsingUtils.isWindowPrivate(win)
-      ? lazy.PlacesUtils.favicons.FAVICON_LOAD_PRIVATE
-      : lazy.PlacesUtils.favicons.FAVICON_LOAD_NON_PRIVATE;
-    let callback = this._makeCompletionCallback(win, innerWindowID);
-
-    if (iconURI && iconURI.schemeIs("data")) {
-      expiration = lazy.PlacesUtils.toPRTime(expiration);
-      lazy.PlacesUtils.favicons.replaceFaviconDataFromDataURL(
-        uri,
-        iconURI.spec,
-        expiration,
-        principal
-      );
-    }
-
-    let request = lazy.PlacesUtils.favicons.setAndFetchFaviconForPage(
-      pageURI,
-      uri,
-      false,
-      loadType,
-      callback,
-      principal
-    );
-
-    // Now register the result so we can cancel it if/when necessary.
-    if (!request) {
-      // The favicon service can return with success but no-op (and leave request
-      // as null) if the icon is the same as the page (e.g. for images) or if it is
-      // the favicon for an error page. In this case, we do not need to do anything else.
-      return;
-    }
-    callback.request = request;
-    let loadData = { innerWindowID, uri, callback };
-    loadData.timerID = setTimeout(() => {
-      this._cancelRequest(loadData, "it timed out");
-      this._removeLoadDataFromWindowMap(win, loadData);
-    }, FAVICON_REQUEST_TIMEOUT);
-    let loadDataForWindow = gFaviconLoadDataMap.get(win);
-    loadDataForWindow.push(loadData);
-  },
-};
 
 /**
  * Collects all information for a bookmark and performs editmethods
@@ -383,22 +159,29 @@ class BookmarkState {
    * @returns {string} The bookmark's GUID.
    */
   async _createBookmark() {
-    await lazy.PlacesTransactions.batch(async () => {
-      this._guid = await lazy.PlacesTransactions.NewBookmark({
-        parentGuid: this._newState.parentGuid ?? this._originalState.parentGuid,
+    let transactions = [
+      lazy.PlacesTransactions.NewBookmark({
+        parentGuid: this.parentGuid,
         tags: this._newState.tags,
         title: this._newState.title ?? this._originalState.title,
         url: this._newState.uri ?? this._originalState.uri,
         index: this._originalState.index,
-      }).transact();
-      if (this._newState.keyword) {
-        await lazy.PlacesTransactions.EditKeyword({
-          guid: this._guid,
+      }),
+    ];
+    if (this._newState.keyword) {
+      transactions.push(previousResults =>
+        lazy.PlacesTransactions.EditKeyword({
+          guid: previousResults[0],
           keyword: this._newState.keyword,
           postData: this._postData,
-        }).transact();
-      }
-    });
+        })
+      );
+    }
+    let results = await lazy.PlacesTransactions.batch(
+      transactions,
+      "BookmarkState::createBookmark"
+    );
+    this._guid = results?.[0];
     return this._guid;
   }
 
@@ -408,13 +191,35 @@ class BookmarkState {
    * @returns {string} The folder's GUID.
    */
   async _createFolder() {
-    this._guid = await lazy.PlacesTransactions.NewFolder({
-      parentGuid: this._newState.parentGuid ?? this._originalState.parentGuid,
-      title: this._newState.title ?? this._originalState.title,
-      children: this._children,
-      index: this._originalState.index,
-    }).transact();
+    let transactions = [
+      lazy.PlacesTransactions.NewFolder({
+        parentGuid: this.parentGuid,
+        title: this._newState.title ?? this._originalState.title,
+        children: this._children,
+        index: this._originalState.index,
+        tags: this._newState.tags,
+      }),
+    ];
+
+    if (this._bulkTaggingUrls) {
+      this._appendTagsTransactions({
+        transactions,
+        newTags: this._newState.tags,
+        originalTags: this._originalState.tags,
+        urls: this._bulkTaggingUrls,
+      });
+    }
+
+    let results = await lazy.PlacesTransactions.batch(
+      transactions,
+      "BookmarkState::save::createFolder"
+    );
+    this._guid = results[0];
     return this._guid;
+  }
+
+  get parentGuid() {
+    return this._newState.parentGuid ?? this._originalState.parentGuid;
   }
 
   /**
@@ -463,30 +268,15 @@ class BookmarkState {
             })
           );
           break;
-        case "tags":
-          const newTags = value.filter(
-            tag => !this._originalState.tags.includes(tag)
-          );
-          const removedTags = this._originalState.tags.filter(
-            tag => !value.includes(tag)
-          );
-          if (newTags.length) {
-            transactions.push(
-              lazy.PlacesTransactions.Tag({
-                urls: this._bulkTaggingUrls || [url],
-                tags: newTags,
-              })
-            );
-          }
-          if (removedTags.length) {
-            transactions.push(
-              lazy.PlacesTransactions.Untag({
-                urls: this._bulkTaggingUrls || [url],
-                tags: removedTags,
-              })
-            );
-          }
+        case "tags": {
+          this._appendTagsTransactions({
+            transactions,
+            newTags: value,
+            originalTags: this._originalState.tags,
+            urls: this._bulkTaggingUrls || [url],
+          });
           break;
+        }
         case "keyword":
           transactions.push(
             lazy.PlacesTransactions.EditKeyword({
@@ -508,12 +298,52 @@ class BookmarkState {
       }
     }
     if (transactions.length) {
-      await lazy.PlacesTransactions.batch(transactions);
+      await lazy.PlacesTransactions.batch(transactions, "BookmarkState::save");
     }
 
     this._originalState = { ...this._originalState, ...this._newState };
     this._newState = {};
     return this._guid;
+  }
+
+  /**
+   * Append transactions to update tags by given information.
+   *
+   * @param {object} parameters
+   *   The parameters object containing:
+   * @param {object[]} parameters.transactions
+   *   Array that transactions will be appended to.
+   * @param {string[]} parameters.newTags
+   *   Tags that will be appended to the given urls.
+   * @param {string[]} parameters.originalTags
+   *   Tags that had been appended to the given urls.
+   * @param {string[]} parameters.urls
+   *   URLs that will be updated.
+   */
+  _appendTagsTransactions({
+    transactions,
+    newTags = [],
+    originalTags = [],
+    urls,
+  }) {
+    const addedTags = newTags.filter(tag => !originalTags.includes(tag));
+    const removedTags = originalTags.filter(tag => !newTags.includes(tag));
+    if (addedTags.length) {
+      transactions.push(
+        lazy.PlacesTransactions.Tag({
+          urls,
+          tags: addedTags,
+        })
+      );
+    }
+    if (removedTags.length) {
+      transactions.push(
+        lazy.PlacesTransactions.Untag({
+          urls,
+          tags: removedTags,
+        })
+      );
+    }
   }
 }
 
@@ -523,6 +353,8 @@ export var PlacesUIUtils = {
   LAST_USED_FOLDERS_META_KEY: "bookmarks/lastusedfolders",
 
   lastContextMenuTriggerNode: null,
+
+  lastContextMenuCommand: null,
 
   // This allows to await for all the relevant bookmark changes to be applied
   // when a bookmark dialog is closed. It is resolved to the bookmark guid,
@@ -562,7 +394,7 @@ export var PlacesUIUtils = {
    *                   undefined otherwise.
    */
   async showBookmarkDialog(aInfo, aParentWindow = null) {
-    this.lastBookmarkDialogDeferred = lazy.PromiseUtils.defer();
+    this.lastBookmarkDialogDeferred = Promise.withResolvers();
 
     let dialogURL = "chrome://browser/content/places/bookmarkProperties.xhtml";
     let features = "centerscreen,chrome,modal,resizable=no";
@@ -615,43 +447,6 @@ export var PlacesUIUtils = {
     }
 
     await PlacesUIUtils.showBookmarkDialog(bookmarkDialogInfo, win);
-  },
-
-  /**
-   * set and fetch a favicon. Can only be used from the parent process.
-   *
-   * @param {object} browser
-   *        The XUL browser element for which we're fetching a favicon.
-   * @param {Principal} principal
-   *        The loading principal to use for the fetch.
-   * @param {URI} pageURI
-   *        The page URI associated to this favicon load.
-   * @param {URI} uri
-   *        The URI to fetch.
-   * @param {number} expiration
-   *        An optional expiration time.
-   * @param {URI} iconURI
-   *        An optional data: URI holding the icon's data.
-   */
-  loadFavicon(
-    browser,
-    principal,
-    pageURI,
-    uri,
-    expiration = 0,
-    iconURI = null
-  ) {
-    if (gInContentProcess) {
-      throw new Error("Can't track loads from within the child process!");
-    }
-    InternalFaviconLoader.loadFavicon(
-      browser,
-      principal,
-      pageURI,
-      uri,
-      expiration,
-      iconURI
-    );
   },
 
   /**
@@ -769,6 +564,7 @@ export var PlacesUIUtils = {
   doCommand(win, command) {
     let controller = this.getControllerForCommand(win, command);
     if (controller && controller.isCommandEnabled(command)) {
+      PlacesUIUtils.lastContextMenuCommand = command;
       controller.doCommand(command);
     }
   },
@@ -856,7 +652,6 @@ export var PlacesUIUtils = {
    * @param {DOMWindow} aWindow
    *        a window on which a potential error alert is shown on.
    * @returns {boolean} true if it's safe to open the node in the browser, false otherwise.
-   *
    */
   checkURLSecurity: function PUIU_checkURLSecurity(aURINode, aWindow) {
     if (lazy.PlacesUtils.nodeIsBookmark(aURINode)) {
@@ -893,7 +688,7 @@ export var PlacesUIUtils = {
 
     // Is it a query pointing to one of the special root folders?
     if (lazy.PlacesUtils.nodeIsQuery(parentNode)) {
-      if (lazy.PlacesUtils.nodeIsFolder(aNode)) {
+      if (lazy.PlacesUtils.nodeIsFolderOrShortcut(aNode)) {
         let guid = lazy.PlacesUtils.getConcreteItemGuid(aNode);
         // If the parent folder is not a folder, it must be a query, and so this node
         // cannot be removed.
@@ -936,7 +731,7 @@ export var PlacesUIUtils = {
   isFolderReadOnly(placesNode) {
     if (
       typeof placesNode != "object" ||
-      !lazy.PlacesUtils.nodeIsFolder(placesNode)
+      !lazy.PlacesUtils.nodeIsFolderOrShortcut(placesNode)
     ) {
       throw new Error("invalid value for placesNode");
     }
@@ -981,7 +776,7 @@ export var PlacesUIUtils = {
     // whereToOpenLink doesn't return "window" when there's no browser window
     // open (Bug 630255).
     var where = browserWindow
-      ? browserWindow.whereToOpenLink(aEvent, false, true)
+      ? lazy.BrowserUtils.whereToOpenLink(aEvent, false, true)
       : "window";
     if (where == "window") {
       // There is no browser window open, thus open a new one.
@@ -1072,14 +867,13 @@ export var PlacesUIUtils = {
   openNodeWithEvent: function PUIU_openNodeWithEvent(aNode, aEvent) {
     let window = aEvent.target.ownerGlobal;
 
-    let browserWindow = getBrowserWindow(window);
-
-    let where = window.whereToOpenLink(aEvent, false, true);
+    let where = lazy.BrowserUtils.whereToOpenLink(aEvent, false, true);
     if (this.loadBookmarksInTabs && lazy.PlacesUtils.nodeIsBookmark(aNode)) {
       if (where == "current" && !aNode.uri.startsWith("javascript:")) {
         where = "tab";
       }
-      if (where == "tab" && browserWindow.gBrowser.selectedTab.isEmpty) {
+      let browserWindow = getBrowserWindow(window);
+      if (where == "tab" && browserWindow?.gBrowser.selectedTab.isEmpty) {
         where = "current";
       }
     }
@@ -1113,8 +907,8 @@ export var PlacesUIUtils = {
   ) {
     if (
       aNode &&
-      lazy.PlacesUtils.nodeIsURI(aNode) &&
-      this.checkURLSecurity(aNode, aWindow)
+      this.checkURLSecurity(aNode, aWindow) &&
+      this.isURILike(aNode)
     ) {
       let isBookmark = lazy.PlacesUtils.nodeIsBookmark(aNode);
 
@@ -1144,6 +938,21 @@ export var PlacesUIUtils = {
         aWindow.updateTelemetry([aNode]);
       }
     }
+  },
+
+  /**
+   * Determines whether a node represents a URI.
+   *
+   * @param {nsINavHistoryResultNode | HTMLElement} aNode
+   *   A result node.
+   * @returns {boolean}
+   *   Whether the node represents a URI.
+   */
+  isURILike(aNode) {
+    if (aNode instanceof Ci.nsINavHistoryResultNode) {
+      return lazy.PlacesUtils.nodeIsURI(aNode);
+    }
+    return !!aNode.uri;
   },
 
   /**
@@ -1191,7 +1000,7 @@ export var PlacesUIUtils = {
   shouldShowTabsFromOtherComputersMenuitem() {
     let weaveOK =
       lazy.Weave.Status.checkSetup() != lazy.CLIENT_NOT_CONFIGURED &&
-      lazy.Weave.Svc.Prefs.get("firstSync", "") != "notReady";
+      lazy.Weave.Svc.PrefBranch.getCharPref("firstSync", "") != "notReady";
     return weaveOK;
   },
 
@@ -1230,8 +1039,8 @@ export var PlacesUIUtils = {
    * Helpers for consumers of editBookmarkOverlay which don't have a node as their input.
    *
    * Given a bookmark object for either a url bookmark or a folder, returned by
-   * Bookmarks.fetch (see Bookmark.jsm), this creates a node-like object suitable for
-   * initialising the edit overlay with it.
+   * Bookmarks.fetch (see Bookmark.sys.mjs), this creates a node-like object
+   * suitable for initialising the edit overlay with it.
    *
    * @param {object} aFetchInfo
    *        a bookmark object returned by Bookmarks.fetch.
@@ -1244,17 +1053,11 @@ export var PlacesUIUtils = {
     }
 
     let parent = {
-      itemId: await lazy.PlacesUtils.promiseItemId(aFetchInfo.parentGuid),
       bookmarkGuid: aFetchInfo.parentGuid,
       type: Ci.nsINavHistoryResultNode.RESULT_TYPE_FOLDER,
     };
 
-    let itemId =
-      aFetchInfo.guid === lazy.PlacesUtils.bookmarks.unsavedGuid
-        ? undefined
-        : await lazy.PlacesUtils.promiseItemId(aFetchInfo.guid);
     return Object.freeze({
-      itemId,
       bookmarkGuid: aFetchInfo.guid,
       title: aFetchInfo.title,
       uri: aFetchInfo.url !== undefined ? aFetchInfo.url.href : "",
@@ -1296,11 +1099,11 @@ export var PlacesUIUtils = {
    *                                    count is lower than a threshold, then
    *                                    batching won't be set.
    * @param {Function} functionToWrap The function to
+   * @returns {object} forwards the functionToWrap return value.
    */
   async batchUpdatesForNode(resultNode, itemsBeingChanged, functionToWrap) {
     if (!resultNode) {
-      await functionToWrap();
-      return;
+      return functionToWrap();
     }
 
     if (itemsBeingChanged > ITEM_CHANGED_BATCH_NOTIFICATION_THRESHOLD) {
@@ -1308,7 +1111,7 @@ export var PlacesUIUtils = {
     }
 
     try {
-      await functionToWrap();
+      return await functionToWrap();
     } finally {
       if (itemsBeingChanged > ITEM_CHANGED_BATCH_NOTIFICATION_THRESHOLD) {
         resultNode.onEndUpdateBatch();
@@ -1354,27 +1157,15 @@ export var PlacesUIUtils = {
       return [];
     }
 
-    let guidsToSelect = [];
-    let resultForBatching = getResultForBatching(view);
+    let guidsToSelect = await this.batchUpdatesForNode(
+      getResultForBatching(view),
+      itemsCount,
+      async () =>
+        lazy.PlacesTransactions.batch(transactions, "handleTransferItems")
+    );
 
-    // If we're inserting into a tag, we don't get the guid, so we'll just
-    // pass the transactions direct to the batch function.
-    let batchingItem = transactions;
-    if (!insertionPoint.isTag) {
-      // If we're not a tag, then we need to get the ids of the items to select.
-      batchingItem = async () => {
-        for (let transaction of transactions) {
-          let result = await transaction.transact();
-          guidsToSelect = guidsToSelect.concat(result);
-        }
-      };
-    }
-
-    await this.batchUpdatesForNode(resultForBatching, itemsCount, async () => {
-      await lazy.PlacesTransactions.batch(batchingItem);
-    });
-
-    return guidsToSelect;
+    // If we're inserting into a tag, we don't get the resulting guids.
+    return insertionPoint.isTag ? [] : guidsToSelect.flat();
   },
 
   onSidebarTreeClick(event) {
@@ -1527,6 +1318,40 @@ export var PlacesUIUtils = {
     }
   },
 
+  /**
+   * Determines whether the given "placesContext" menu item would open a link
+   * under some special conditions, but those special conditions cannot be met.
+   *
+   * @param {Element} item The menu or menu item to decide for.
+   *
+   * @returns {boolean} Whether the item is an "open" item that should be
+   *   hidden.
+   */
+  shouldHideOpenMenuItem(item) {
+    if (
+      item.hasAttribute("hide-if-disabled-private-browsing") &&
+      !lazy.PrivateBrowsingUtils.enabled
+    ) {
+      return true;
+    }
+
+    if (
+      item.hasAttribute("hide-if-private-browsing") &&
+      lazy.PrivateBrowsingUtils.isWindowPrivate(item.ownerGlobal)
+    ) {
+      return true;
+    }
+
+    if (
+      item.hasAttribute("hide-if-usercontext-disabled") &&
+      !Services.prefs.getBoolPref("privacy.userContext.enabled", false)
+    ) {
+      return true;
+    }
+
+    return false;
+  },
+
   async managedPlacesContextShowing(event) {
     let menupopup = event.target;
     let document = menupopup.ownerDocument;
@@ -1541,12 +1366,6 @@ export var PlacesUIUtils = {
         menupopup.triggerNode.menupopup
       );
     }
-    let linkItems = [
-      "placesContext_open:newtab",
-      "placesContext_open:newwindow",
-      "placesContext_openSeparator",
-      "placesContext_copy",
-    ];
     // Hide everything. We'll unhide the things we need.
     Array.from(menupopup.children).forEach(function (child) {
       child.hidden = true;
@@ -1568,12 +1387,18 @@ export var PlacesUIUtils = {
       openContainerInTabs_menuitem.disabled = !openContainerInTabs;
       openContainerInTabs_menuitem.hidden = false;
     } else {
-      linkItems.forEach(id => (document.getElementById(id).hidden = false));
-      document.getElementById("placesContext_open:newprivatewindow").hidden =
-        lazy.PrivateBrowsingUtils.isWindowPrivate(window) ||
-        !lazy.PrivateBrowsingUtils.enabled;
-      document.getElementById("placesContext_open:newcontainertab").hidden =
-        !Services.prefs.getBoolPref("privacy.userContext.enabled", false);
+      for (let id of [
+        "placesContext_open:newtab",
+        "placesContext_open:newcontainertab",
+        "placesContext_open:newwindow",
+        "placesContext_open:newprivatewindow",
+      ]) {
+        let item = document.getElementById(id);
+        item.hidden = this.shouldHideOpenMenuItem(item);
+      }
+      for (let id of ["placesContext_openSeparator", "placesContext_copy"]) {
+        document.getElementById(id).hidden = false;
+      }
     }
 
     event.target.ownerGlobal.updateCommands("places");
@@ -1581,9 +1406,17 @@ export var PlacesUIUtils = {
 
   placesContextShowing(event) {
     let menupopup = event.target;
-    if (menupopup.id != "placesContext") {
+    if (
+      !["placesContext", "sidebar-history-context-menu"].includes(menupopup.id)
+    ) {
       // Ignore any popupshowing events from submenus
-      return true;
+      return;
+    }
+
+    if (menupopup.id == "sidebar-history-context-menu") {
+      PlacesUIUtils.lastContextMenuTriggerNode =
+        menupopup.triggerNode.triggerNode;
+      return;
     }
 
     PlacesUIUtils.lastContextMenuTriggerNode = menupopup.triggerNode;
@@ -1608,21 +1441,23 @@ export var PlacesUIUtils = {
     let isManaged = !!menupopup.triggerNode.closest("#managed-bookmarks");
     if (isManaged) {
       this.managedPlacesContextShowing(event);
-      return true;
+      return;
     }
     menupopup._view = this.getViewForNode(menupopup.triggerNode);
     if (!menupopup._view) {
       // This can happen if we try to invoke the context menu on
       // an uninitialized places toolbar. Just bail out:
       event.preventDefault();
-      return false;
+      return;
     }
     if (!this.openInTabClosesMenu) {
       menupopup.ownerDocument
         .getElementById("placesContext_open:newtab")
         .setAttribute("closemenu", "single");
     }
-    return menupopup._view.buildContextMenu(menupopup);
+    if (!menupopup._view.buildContextMenu(menupopup)) {
+      event.preventDefault();
+    }
   },
 
   placesContextHiding(event) {
@@ -1631,8 +1466,15 @@ export var PlacesUIUtils = {
       menupopup._view.destroyContextMenu();
     }
 
-    if (menupopup.id == "placesContext") {
+    if (
+      [
+        "sidebar-history-context-menu",
+        "placesContext",
+        "sidebar-synced-tabs-context-menu",
+      ].includes(menupopup.id)
+    ) {
       PlacesUIUtils.lastContextMenuTriggerNode = null;
+      PlacesUIUtils.lastContextMenuCommand = null;
     }
   },
 
@@ -1642,6 +1484,7 @@ export var PlacesUIUtils = {
   },
 
   openInContainerTab(event) {
+    PlacesUIUtils.lastContextMenuCommand = "placesCmd_open:newcontainertab";
     let userContextId = parseInt(
       event.target.getAttribute("data-usercontextid")
     );
@@ -1653,9 +1496,14 @@ export var PlacesUIUtils = {
       return;
     }
     let view = this.getViewForNode(triggerNode);
-    this._openNodeIn(view.selectedNode, "tab", view.ownerWindow, {
-      userContextId,
-    });
+    this._openNodeIn(
+      view?.selectedNode || triggerNode,
+      "tab",
+      view?.ownerWindow || triggerNode.ownerGlobal.top,
+      {
+        userContextId,
+      }
+    );
   },
 
   openSelectionInTabs(event) {
@@ -1705,51 +1553,13 @@ export var PlacesUIUtils = {
     doCommand(command) {
       let window = this.triggerNode.ownerGlobal;
       switch (command) {
-        case "placesCmd_copy":
-          // This is a little hacky, but there is a lot of code in Places that handles
-          // clipboard stuff, so it's easier to reuse.
-          let node = {};
-          node.type = 0;
-          node.title = this.triggerNode.label;
-          node.uri = this.triggerNode.link;
-
-          // Copied from _populateClipboard in controller.js
-
-          // This order is _important_! It controls how this and other applications
-          // select data to be inserted based on type.
-          let contents = [
-            { type: lazy.PlacesUtils.TYPE_X_MOZ_URL, entries: [] },
-            { type: lazy.PlacesUtils.TYPE_HTML, entries: [] },
-            { type: lazy.PlacesUtils.TYPE_PLAINTEXT, entries: [] },
-          ];
-
-          contents.forEach(function (content) {
-            content.entries.push(lazy.PlacesUtils.wrapNode(node, content.type));
-          });
-
-          let xferable = Cc[
-            "@mozilla.org/widget/transferable;1"
-          ].createInstance(Ci.nsITransferable);
-          xferable.init(null);
-
-          function addData(type, data) {
-            xferable.addDataFlavor(type);
-            xferable.setTransferData(
-              type,
-              lazy.PlacesUtils.toISupportsString(data)
-            );
-          }
-
-          contents.forEach(function (content) {
-            addData(content.type, content.entries.join(lazy.PlacesUtils.endl));
-          });
-
-          Services.clipboard.setData(
-            xferable,
-            null,
-            Ci.nsIClipboard.kGlobalClipboard
+        case "placesCmd_copy": {
+          lazy.BrowserUtils.copyLink(
+            this.triggerNode.link,
+            this.triggerNode.label
           );
           break;
+        }
         case "placesCmd_open:privatewindow":
           window.openTrustedLinkIn(this.triggerNode.link, "window", {
             private: true,
@@ -1858,13 +1668,43 @@ export var PlacesUIUtils = {
     }
   },
 
-  getImageURL(icon) {
-    let iconURL = icon;
-    // don't initiate a connection just to fetch a favicon (see bug 467828)
-    if (/^https?:/.test(iconURL)) {
-      iconURL = "moz-anno:favicon:" + iconURL;
+  /**
+   * Sets up a speculative connection to the target of a
+   * clicked places DOM node on left and middle click.
+   *
+   * @param {event} event the mousedown event.
+   */
+  maybeSpeculativeConnectOnMouseDown(event) {
+    if (
+      event.type == "mousedown" &&
+      event.target._placesNode?.uri &&
+      event.button != 2
+    ) {
+      PlacesUIUtils.setupSpeculativeConnection(
+        event.target._placesNode.uri,
+        event.target.ownerGlobal
+      );
     }
-    return iconURL;
+  },
+
+  /**
+   * Generates a cached-favicon: link for an icon URL, that will allow to fetch
+   * the icon from the local favicons cache, rather than from the network.
+   * If the icon URL is invalid, fallbacks to the default favicon URL.
+   *
+   * @param {string} icon The url of the icon to load from local cache.
+   * @returns {string} a "cached-favicon:" prefixed URL, unless the original
+   *   URL protocol refers to a local resource, then it will just pass-through
+   *   unchanged.
+   */
+  getImageURL(icon) {
+    // don't initiate a connection just to fetch a favicon (see bug 467828)
+    try {
+      return lazy.PlacesUtils.favicons.getFaviconLinkForIcon(
+        Services.io.newURI(icon)
+      ).spec;
+    } catch (ex) {}
+    return lazy.PlacesUtils.favicons.defaultFavicon.spec;
   },
 
   /**
@@ -1947,32 +1787,32 @@ PlacesUIUtils.canLoadToolbarContentPromise = new Promise(resolve => {
 });
 
 // These are lazy getters to avoid importing PlacesUtils immediately.
-XPCOMUtils.defineLazyGetter(PlacesUIUtils, "PLACES_FLAVORS", () => {
+ChromeUtils.defineLazyGetter(PlacesUIUtils, "PLACES_FLAVORS", () => {
   return [
     lazy.PlacesUtils.TYPE_X_MOZ_PLACE_CONTAINER,
     lazy.PlacesUtils.TYPE_X_MOZ_PLACE_SEPARATOR,
     lazy.PlacesUtils.TYPE_X_MOZ_PLACE,
   ];
 });
-XPCOMUtils.defineLazyGetter(PlacesUIUtils, "URI_FLAVORS", () => {
+ChromeUtils.defineLazyGetter(PlacesUIUtils, "URI_FLAVORS", () => {
   return [
     lazy.PlacesUtils.TYPE_X_MOZ_URL,
     TAB_DROP_TYPE,
     lazy.PlacesUtils.TYPE_PLAINTEXT,
   ];
 });
-XPCOMUtils.defineLazyGetter(PlacesUIUtils, "SUPPORTED_FLAVORS", () => {
+ChromeUtils.defineLazyGetter(PlacesUIUtils, "SUPPORTED_FLAVORS", () => {
   return [...PlacesUIUtils.PLACES_FLAVORS, ...PlacesUIUtils.URI_FLAVORS];
 });
 
-XPCOMUtils.defineLazyGetter(PlacesUIUtils, "ellipsis", function () {
+ChromeUtils.defineLazyGetter(PlacesUIUtils, "ellipsis", function () {
   return Services.prefs.getComplexValue(
     "intl.ellipsis",
     Ci.nsIPrefLocalizedString
   ).data;
 });
 
-XPCOMUtils.defineLazyGetter(PlacesUIUtils, "promptLocalization", () => {
+ChromeUtils.defineLazyGetter(PlacesUIUtils, "promptLocalization", () => {
   return new Localization(
     ["browser/placesPrompts.ftl", "branding/brand.ftl"],
     true

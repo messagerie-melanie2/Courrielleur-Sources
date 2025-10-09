@@ -10,7 +10,6 @@
 #include "MediaPipelineFilter.h"
 
 #include "api/rtp_headers.h"
-#include "api/rtp_parameters.h"
 #include "mozilla/Logging.h"
 
 // defined in MediaPipeline.cpp
@@ -99,10 +98,11 @@ bool MediaPipelineFilter::Filter(const webrtc::RTPHeader& header) {
        header.ssrc, remote_ssrc_set_.size()));
 
   //
-  // PT, payload type, last ditch effort filtering
+  // PT, payload type, last ditch effort filtering. We only try this if we do
+  // not have any ssrcs configured (either by learning them, or negotiation).
   //
 
-  if (payload_type_set_.count(header.payloadType)) {
+  if (receive_payload_type_set_.count(header.payloadType)) {
     DEBUG_LOG(
         ("MediaPipelineFilter payload-type: %u matched %zu"
          " unique payload type. learning ssrc. passing packet",
@@ -115,7 +115,7 @@ bool MediaPipelineFilter::Filter(const webrtc::RTPHeader& header) {
   DEBUG_LOG(
       ("MediaPipelineFilter payload-type: %u did not match any of %zu"
        " unique payload-types.",
-       header.payloadType, payload_type_set_.size()));
+       header.payloadType, receive_payload_type_set_.size()));
   DEBUG_LOG(
       ("MediaPipelineFilter packet failed to match any criteria."
        " ignoring packet"));
@@ -126,11 +126,16 @@ void MediaPipelineFilter::AddRemoteSSRC(uint32_t ssrc) {
   remote_ssrc_set_.insert(ssrc);
 }
 
-void MediaPipelineFilter::AddUniquePT(uint8_t payload_type) {
-  payload_type_set_.insert(payload_type);
+void MediaPipelineFilter::AddUniqueReceivePT(uint8_t payload_type) {
+  receive_payload_type_set_.insert(payload_type);
 }
 
-void MediaPipelineFilter::Update(const MediaPipelineFilter& filter_update) {
+void MediaPipelineFilter::AddDuplicateReceivePT(uint8_t payload_type) {
+  duplicate_payload_type_set_.insert(payload_type);
+}
+
+void MediaPipelineFilter::Update(const MediaPipelineFilter& filter_update,
+                                 bool signalingStable) {
   // We will not stomp the remote_ssrc_set_ if the update has no ssrcs,
   // because we don't want to unlearn any remote ssrcs unless the other end
   // has explicitly given us a new set.
@@ -144,7 +149,20 @@ void MediaPipelineFilter::Update(const MediaPipelineFilter& filter_update) {
     mRemoteMid = filter_update.mRemoteMid;
     mRemoteMidBindings = filter_update.mRemoteMidBindings;
   }
-  payload_type_set_ = filter_update.payload_type_set_;
+
+  // If we are signaling is stable replace the filters values otherwise add to
+  // them.
+  if (signalingStable) {
+    receive_payload_type_set_ = filter_update.receive_payload_type_set_;
+    duplicate_payload_type_set_ = filter_update.duplicate_payload_type_set_;
+  } else {
+    for (const auto& uniquePT : filter_update.receive_payload_type_set_) {
+      if (!receive_payload_type_set_.count(uniquePT) &&
+          !duplicate_payload_type_set_.count(uniquePT)) {
+        AddUniqueReceivePT(uniquePT);
+      }
+    }
+  }
 
   // Use extmapping from new filter
   mExtMap = filter_update.mExtMap;

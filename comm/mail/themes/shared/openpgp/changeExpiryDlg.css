@@ -11,9 +11,20 @@ html {
 fieldset {
   margin-inline: 20px;
   margin-block: 4px;
+
+  & > div {
+    display: flex;
+    align-items: center;
+  }
 }
 
-fieldset > div {
-  display: flex;
-  align-items: center;
+.selected-keys-properties {
+  display: grid;
+  grid-template-columns: min-content auto;
+  gap: 3px 9px;
+  margin: 6px;
+
+  .key-property-title {
+    font-weight: bold;
+  }
 }

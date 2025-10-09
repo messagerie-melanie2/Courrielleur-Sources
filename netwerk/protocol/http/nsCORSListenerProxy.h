@@ -15,6 +15,7 @@
 #include "nsTArray.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIChannelEventSink.h"
+#include "nsICORSPreflightCache.h"
 #include "nsIThreadRetargetableStreamListener.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/Atomics.h"
@@ -41,8 +42,7 @@ enum class UpdateType {
   InternalOrHSTSRedirect
 };
 
-class nsCORSListenerProxy final : public nsIStreamListener,
-                                  public nsIInterfaceRequestor,
+class nsCORSListenerProxy final : public nsIInterfaceRequestor,
                                   public nsIChannelEventSink,
                                   public nsIThreadRetargetableStreamListener {
  public:
@@ -56,6 +56,8 @@ class nsCORSListenerProxy final : public nsIStreamListener,
   NS_DECL_NSIINTERFACEREQUESTOR
   NS_DECL_NSICHANNELEVENTSINK
   NS_DECL_NSITHREADRETARGETABLESTREAMLISTENER
+
+  static already_AddRefed<nsICORSPreflightCache> GetCORSPreflightSingleton();
 
   static void Shutdown();
   static void ClearCache();
@@ -93,10 +95,12 @@ class nsCORSListenerProxy final : public nsIStreamListener,
 
   [[nodiscard]] nsresult UpdateChannel(nsIChannel* aChannel,
                                        DataURIHandling aAllowDataURI,
-                                       UpdateType aUpdateType);
+                                       UpdateType aUpdateType,
+                                       bool aStripAuthHeader);
   [[nodiscard]] nsresult CheckRequestApproved(nsIRequest* aRequest);
   [[nodiscard]] nsresult CheckPreflightNeeded(nsIChannel* aChannel,
-                                              UpdateType aUpdateType);
+                                              UpdateType aUpdateType,
+                                              bool aStripAuthHeader);
 
   nsCOMPtr<nsIStreamListener> mOuterListener;
   // The principal that originally kicked off the request

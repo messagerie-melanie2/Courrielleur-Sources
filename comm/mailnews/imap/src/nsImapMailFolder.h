@@ -6,7 +6,6 @@
 #define nsImapMailFolder_h__
 
 #include "mozilla/Attributes.h"
-#include "nsImapCore.h"  // so that consumers including ImapMailFolder.h also get the kImapMsg* constants
 #include "nsMsgDBFolder.h"
 #include "nsIImapMailFolderSink.h"
 #include "nsIImapMessageSink.h"
@@ -20,32 +19,24 @@
 #include "nsIMsgFilterList.h"
 #include "prmon.h"
 #include "nsIMsgImapMailFolder.h"
-#include "nsIMsgThread.h"
-#include "nsIImapMailFolderSink.h"
 #include "nsIMsgFilterPlugin.h"
-#include "nsISimpleEnumerator.h"
-#include "nsIStringEnumerator.h"
 #include "nsTHashMap.h"
 #include "nsITimer.h"
-#include "nsCOMArray.h"
 #include "nsAutoSyncState.h"
 
 class nsImapMoveCoalescer;
 class nsIMsgIdentity;
 class nsIMsgOfflineImapOperation;
+class nsIMsgThread;
 
 #define COPY_BUFFER_SIZE 16384
 
-#define NS_IMAPMAILCOPYSTATE_IID                     \
-  {                                                  \
-    0xb64534f0, 0x3d53, 0x11d3, {                    \
-      0xac, 0x2a, 0x00, 0x80, 0x5f, 0x8a, 0xc9, 0x68 \
-    }                                                \
-  }
+#define NS_IMAPMAILCOPYSTATE_IID \
+  {0xb64534f0, 0x3d53, 0x11d3, {0xac, 0x2a, 0x00, 0x80, 0x5f, 0x8a, 0xc9, 0x68}}
 
 class nsImapMailCopyState : public nsISupports {
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IMAPMAILCOPYSTATE_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_IMAPMAILCOPYSTATE_IID)
 
   NS_DECL_THREADSAFE_ISUPPORTS
 
@@ -59,6 +50,9 @@ class nsImapMailCopyState : public nsISupports {
                                                    // operation
   nsCOMPtr<nsIFile> m_tmpFile;         // temp file spec for copy operation
   nsCOMPtr<nsIMsgWindow> m_msgWindow;  // msg window for copy operation
+  nsCOMPtr<nsIMsgFolder> m_arrFolder;  // arrived folder (actual folder
+                                       // resulting from moving/copying a
+                                       // folder)
 
   nsCOMPtr<nsIMsgMessageService>
       m_msgService;        // source folder message service; can
@@ -85,8 +79,6 @@ class nsImapMailCopyState : public nsISupports {
  private:
   virtual ~nsImapMailCopyState();
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(nsImapMailCopyState, NS_IMAPMAILCOPYSTATE_IID)
 
 // ACLs for this folder.
 // Generally, we will try to always query this class when performing
@@ -225,9 +217,9 @@ class nsImapMailFolder : public nsMsgDBFolder,
 
   NS_IMETHOD UpdateFolder(nsIMsgWindow* aWindow) override;
 
-  NS_IMETHOD CreateSubfolder(const nsAString& folderName,
+  NS_IMETHOD CreateSubfolder(const nsACString& folderName,
                              nsIMsgWindow* msgWindow) override;
-  NS_IMETHOD AddSubfolder(const nsAString& aName,
+  NS_IMETHOD AddSubfolder(const nsACString& aName,
                           nsIMsgFolder** aChild) override;
   NS_IMETHODIMP CreateStorageIfMissing(nsIUrlListener* urlListener) override;
 
@@ -241,15 +233,14 @@ class nsImapMailFolder : public nsMsgDBFolder,
       nsIOutputStream* outputStream) override;
   NS_IMETHOD CopyDataDone() override;
   NS_IMETHOD DeleteStorage() override;
-  NS_IMETHOD Rename(const nsAString& newName, nsIMsgWindow* msgWindow) override;
+  NS_IMETHOD Rename(const nsACString& newName,
+                    nsIMsgWindow* msgWindow) override;
   NS_IMETHOD RenameSubFolders(nsIMsgWindow* msgWindow,
                               nsIMsgFolder* oldFolder) override;
   NS_IMETHOD GetNoSelect(bool* aResult) override;
 
-  NS_IMETHOD GetPrettyName(nsAString& prettyName)
+  NS_IMETHOD GetPrettyName(nsACString& prettyName)
       override;  // Override of the base, for top-level mail folder
-
-  NS_IMETHOD GetFolderURL(nsACString& url) override;
 
   NS_IMETHOD UpdateSummaryTotals(bool force) override;
 
@@ -271,8 +262,8 @@ class nsImapMailFolder : public nsMsgDBFolder,
                                  bool markFlagged) override;
   NS_IMETHOD MarkThreadRead(nsIMsgThread* thread) override;
   NS_IMETHOD SetJunkScoreForMessages(
-      const nsTArray<RefPtr<nsIMsgDBHdr>>& aMessages,
-      const nsACString& aJunkScore) override;
+      const nsTArray<RefPtr<nsIMsgDBHdr>>& messages, nsMsgJunkScore junkScore,
+      const nsACString& junkScoreOrigin, int32_t junkPercent) override;
   NS_IMETHOD DeleteSelf(nsIMsgWindow* msgWindow) override;
   NS_IMETHOD ReadFromFolderCacheElem(
       nsIMsgFolderCacheElement* element) override;
@@ -300,9 +291,6 @@ class nsImapMailFolder : public nsMsgDBFolder,
   NS_IMETHOD GetNewMessages(nsIMsgWindow* aWindow,
                             nsIUrlListener* aListener) override;
 
-  NS_IMETHOD GetFilePath(nsIFile** aPathName) override;
-  NS_IMETHOD SetFilePath(nsIFile* aPath) override;
-
   NS_IMETHOD Shutdown(bool shutdownChildren) override;
 
   NS_IMETHOD DownloadMessagesForOffline(
@@ -323,8 +311,6 @@ class nsImapMailFolder : public nsMsgDBFolder,
   NS_IMETHOD RemoveKeywordsFromMessages(
       const nsTArray<RefPtr<nsIMsgDBHdr>>& aMessages,
       const nsACString& aKeywords) override;
-
-  NS_IMETHOD NotifyCompactCompleted() override;
 
   // overrides nsMsgDBFolder::HasMsgOffline()
   NS_IMETHOD HasMsgOffline(nsMsgKey msgKey, bool* _retval) override;
@@ -350,7 +336,7 @@ class nsImapMailFolder : public nsMsgDBFolder,
 
   NS_IMETHOD GetIncomingServerType(nsACString& serverType) override;
 
-  nsresult AddSubfolderWithPath(nsAString& name, nsIFile* dbPath,
+  nsresult AddSubfolderWithPath(const nsACString& name, nsIFile* folderPath,
                                 nsIMsgFolder** child, bool brandNew = false);
   nsresult MoveIncorporatedMessage(nsIMsgDBHdr* mailHdr,
                                    nsIMsgDatabase* sourceDB,
@@ -371,17 +357,13 @@ class nsImapMailFolder : public nsMsgDBFolder,
   nsresult SetSupportedUserFlags(uint32_t userFlags);
   nsresult GetSupportedUserFlags(uint32_t* userFlags);
 
-  // Find the start of a range of msgKeys that can hold srcCount headers.
-  nsresult FindOpenRange(nsMsgKey& fakeBase, uint32_t srcCount);
-
  protected:
   virtual ~nsImapMailFolder();
   // Helper methods
-
+  nsresult CreateFileForDB(const nsAString& userLeafName, nsIFile* baseDir,
+                           nsIFile** dbFile);
   nsresult ExpungeAndCompact(nsIUrlListener* aListener,
                              nsIMsgWindow* aMsgWindow);
-  virtual nsresult CreateChildFromURI(const nsACString& uri,
-                                      nsIMsgFolder** folder) override;
   void FindKeysToAdd(const nsTArray<nsMsgKey>& existingKeys,
                      nsTArray<nsMsgKey>& keysToFetch, uint32_t& numNewUnread,
                      nsIImapFlagAndUidState* flagState);
@@ -427,7 +409,7 @@ class nsImapMailFolder : public nsMsgDBFolder,
   virtual bool DeleteIsMoveToTrash();
   nsresult GetFolder(const nsACString& name, nsIMsgFolder** pFolder);
   nsresult GetTrashFolder(nsIMsgFolder** pTrashFolder);
-  bool TrashOrDescendentOfTrash(nsIMsgFolder* folder);
+  bool TrashOrDescendantOfTrash(nsIMsgFolder* folder);
   static bool ShouldCheckAllFolders(nsIImapIncomingServer* imapServer);
   nsresult GetServerKey(nsACString& serverKey);
   nsresult DisplayStatusMsg(nsIImapUrl* aImapUrl, const nsAString& msg);
@@ -466,9 +448,6 @@ class nsImapMailFolder : public nsMsgDBFolder,
   nsresult GetClearedOriginalOp(nsIMsgOfflineImapOperation* op,
                                 nsIMsgOfflineImapOperation** originalOp,
                                 nsIMsgDatabase** originalDB);
-  nsresult GetOriginalOp(nsIMsgOfflineImapOperation* op,
-                         nsIMsgOfflineImapOperation** originalOp,
-                         nsIMsgDatabase** originalDB);
   MOZ_CAN_RUN_SCRIPT_BOUNDARY nsresult CopyMessagesOffline(
       nsIMsgFolder* srcFolder, nsTArray<RefPtr<nsIMsgDBHdr>> const& messages,
       bool isMove, nsIMsgWindow* msgWindow,
@@ -480,7 +459,7 @@ class nsImapMailFolder : public nsMsgDBFolder,
                               nsIMsgDBHdr* origHdr, nsIInputStream* inputStream,
                               nsIOutputStream* outputStream);
 
-  void GetTrashFolderName(nsAString& aFolderName);
+  void GetTrashFolderName(nsACString& aFolderName);
   bool ShowPreviewText();
 
   // Pseudo-Offline operation playback timer
@@ -488,10 +467,6 @@ class nsImapMailFolder : public nsMsgDBFolder,
 
   // Allocate and initialize associated auto-sync state object.
   void InitAutoSyncState();
-
-  virtual nsresult GetOfflineFileStream(nsMsgKey msgKey, uint64_t* offset,
-                                        uint32_t* size,
-                                        nsIInputStream** aFileStream) override;
 
   bool m_initialized;
   bool m_haveDiscoveredAllFolders;
@@ -509,6 +484,7 @@ class nsImapMailFolder : public nsMsgDBFolder,
   /// the junk destination folder
   nsCOMPtr<nsIMsgFolder> mSpamFolder;
   nsMsgKey m_curMsgUid;
+  nsMsgKey m_previousHighestUid;
   uint32_t m_uidValidity;
 
   // These three vars are used to store counts from STATUS or SELECT command

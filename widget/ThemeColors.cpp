@@ -105,16 +105,20 @@ ColorPalette::ColorPalette(nscolor aAccent, nscolor aForeground) {
 }
 
 ThemeAccentColor::ThemeAccentColor(const ComputedStyle& aStyle,
-                                   ColorScheme aScheme) {
+                                   ColorScheme aScheme)
+    : mDefaultPalette(aScheme == ColorScheme::Light ? &sDefaultLightPalette
+                                                    : &sDefaultDarkPalette) {
   const auto& color = aStyle.StyleUI()->mAccentColor;
-  if (color.IsColor()) {
-    mAccentColor.emplace(
-        ColorPalette::EnsureOpaque(color.AsColor().CalcColor(aStyle)));
-  } else {
-    MOZ_ASSERT(color.IsAuto());
-    mDefaultPalette = aScheme == ColorScheme::Light ? &sDefaultLightPalette
-                                                    : &sDefaultDarkPalette;
+  if (color.IsAuto()) {
+    return;
   }
+  MOZ_ASSERT(color.IsColor());
+  nscolor accentColor =
+      ColorPalette::EnsureOpaque(color.AsColor().CalcColor(aStyle));
+  if (sRGBColor::FromABGR(accentColor) == mDefaultPalette->mAccent) {
+    return;
+  }
+  mAccentColor.emplace(accentColor);
 }
 
 sRGBColor ThemeAccentColor::Get() const {
@@ -153,18 +157,47 @@ sRGBColor ThemeAccentColor::GetDarker() const {
   return sRGBColor::FromABGR(ColorPalette::GetDarker(*mAccentColor));
 }
 
-bool ThemeColors::ShouldBeHighContrast(const nsPresContext& aPc) {
-  // We make sure that we're drawing backgrounds, since otherwise layout will
-  // darken our used text colors etc anyways, and that can cause contrast issues
-  // with dark high-contrast themes.
-  return aPc.GetBackgroundColorDraw() &&
-         PreferenceSheet::PrefsFor(*aPc.Document())
-             .NonNativeThemeShouldBeHighContrast();
+auto ThemeColors::ShouldBeHighContrast(const nsIFrame* aFrame)
+    -> HighContrastInfo {
+  auto* pc = aFrame->PresContext();
+  if (!pc->GetBackgroundColorDraw()) {
+    // We make sure that we're drawing backgrounds, since otherwise layout
+    // will darken our used text colors etc anyways, and that can cause
+    // contrast issues with dark high-contrast themes.
+    //
+    // TODO(emilio): Is this needed given we force standins for printing in
+    // PreferenceSheet::Initialize?
+    return {};
+  }
+  const bool highContrast = [&] {
+    if (StaticPrefs::widget_non_native_theme_always_high_contrast()) {
+      return true;
+    }
+    // We only use high contrast mode if we are overriding the document colors,
+    // or in "requested" mode (chrome-only) with no custom accent color.
+    // Otherwise it causes issues when pages only override some of the system
+    // colors, specially in dark themes.
+    switch (pc->ForcedColors()) {
+      case StyleForcedColors::None:
+        break;
+      case StyleForcedColors::Requested:
+        return aFrame->StyleUI()->mAccentColor.IsAuto();
+      case StyleForcedColors::Active:
+        return true;
+    }
+    return false;
+  }();
+  const bool mustUseLight =
+      PreferenceSheet::PrefsFor(*pc->Document()).mMustUseLightSystemColors;
+  return {highContrast, mustUseLight};
 }
 
 ColorScheme ThemeColors::ColorSchemeForWidget(const nsIFrame* aFrame,
                                               StyleAppearance aAppearance,
-                                              bool aHighContrast) {
+                                              const HighContrastInfo& aInfo) {
+  if (aInfo.mMustUseLightSystemColors) {
+    return ColorScheme::Light;
+  }
   if (!nsNativeTheme::IsWidgetScrollbarPart(aAppearance)) {
     return LookAndFeel::ColorSchemeForFrame(aFrame);
   }
@@ -175,9 +208,6 @@ ColorScheme ThemeColors::ColorSchemeForWidget(const nsIFrame* aFrame,
   // property. Perhaps we should check whether the style or the document set
   // `color-scheme` to something that isn't `normal`, and if so go through the
   // code-path above.
-  if (aHighContrast) {
-    return ColorScheme::Light;
-  }
   if (StaticPrefs::widget_disable_dark_scrollbar()) {
     return ColorScheme::Light;
   }

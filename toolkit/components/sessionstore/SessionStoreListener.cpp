@@ -24,7 +24,7 @@
 #include "nsIXULRuntime.h"
 #include "nsPresContext.h"
 #include "nsPrintfCString.h"
-#include "SessionStoreFunctions.h"
+#include "nsISessionStoreFunctions.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -69,7 +69,6 @@ nsCString ContentSessionStore::CollectDocShellCapabilities() {
   }                                             \
   PR_END_MACRO
 
-  TRY_ALLOWPROP(Plugins);
   // Bug 1328013 : Don't collect "AllowJavascript" property
   // TRY_ALLOWPROP(Javascript);
   TRY_ALLOWPROP(MetaRedirects);
@@ -123,6 +122,7 @@ void ContentSessionStore::OnDocumentEnd() {
 }
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(TabListener)
+  NS_INTERFACE_MAP_ENTRY_CONCRETE(TabListener)
   NS_INTERFACE_MAP_ENTRY(nsIDOMEventListener)
   NS_INTERFACE_MAP_ENTRY(nsIObserver)
   NS_INTERFACE_MAP_ENTRY(nsIPrivacyTransitionObserver)
@@ -214,13 +214,6 @@ void TabListener::SetOwnerContent(Element* aElement) {
   AddEventListeners();
 }
 
-/* static */
-void TabListener::TimerCallback(nsITimer* aTimer, void* aClosure) {
-  auto listener = static_cast<TabListener*>(aClosure);
-  listener->UpdateSessionStore();
-  listener->StopTimerForUpdate();
-}
-
 void TabListener::StopTimerForUpdate() {
   if (mUpdatedTimer) {
     mUpdatedTimer->Cancel();
@@ -238,9 +231,18 @@ void TabListener::AddTimerForUpdate() {
     return;
   }
 
-  NS_NewTimerWithFuncCallback(getter_AddRefs(mUpdatedTimer), TimerCallback,
-                              this, mUpdateInterval, nsITimer::TYPE_ONE_SHOT,
-                              "TabListener::TimerCallback");
+  // Hold this by `nsWeakPtr`, forcing a SessionStore update when the timer
+  // expires if this object has not yet gone away.
+  nsWeakPtr weakSelf = do_GetWeakReference(this);
+  NS_NewTimerWithCallback(
+      getter_AddRefs(mUpdatedTimer),
+      [weakSelf](nsITimer* aTimer) {
+        if (RefPtr<TabListener> self = do_QueryReferent(weakSelf)) {
+          self->UpdateSessionStore();
+          self->StopTimerForUpdate();
+        }
+      },
+      mUpdateInterval, nsITimer::TYPE_ONE_SHOT, "TabListener::TimerCallback");
 }
 
 NS_IMETHODIMP TabListener::PrivateModeChanged(bool aEnabled) {
@@ -437,9 +439,13 @@ void TabListener::UpdateSessionStore(bool aIsFlush) {
     data.mIsPrivate.Construct() = mSessionStore->GetPrivateModeEnabled();
   }
 
-  nsCOMPtr<nsISessionStoreFunctions> funcs = do_ImportESModule(
-      "resource://gre/modules/SessionStoreFunctions.sys.mjs", fallible);
-  nsCOMPtr<nsIXPConnectWrappedJS> wrapped = do_QueryInterface(funcs);
+  nsCOMPtr<nsISessionStoreFunctions> sessionStoreFuncs =
+      do_GetService("@mozilla.org/toolkit/sessionstore-functions;1");
+  if (!sessionStoreFuncs) {
+    return;
+  }
+  nsCOMPtr<nsIXPConnectWrappedJS> wrapped =
+      do_QueryInterface(sessionStoreFuncs);
   if (!wrapped) {
     return;
   }
@@ -457,7 +463,7 @@ void TabListener::UpdateSessionStore(bool aIsFlush) {
   JS::Rooted<JS::Value> key(jsapi.cx(),
                             context->Canonical()->Top()->PermanentKey());
 
-  nsresult rv = funcs->UpdateSessionStore(
+  nsresult rv = sessionStoreFuncs->UpdateSessionStore(
       mOwnerContent, context, key, mEpoch,
       mSessionStore->GetAndClearSHistoryChanged(), update);
   if (NS_FAILED(rv)) {

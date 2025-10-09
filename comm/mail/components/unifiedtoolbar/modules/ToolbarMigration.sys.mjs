@@ -19,11 +19,8 @@ const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   ExtensionCommon: "resource://gre/modules/ExtensionCommon.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  getCachedAllowedSpaces: "resource:///modules/ExtensionToolbarButtons.jsm",
-  setCachedAllowedSpaces: "resource:///modules/ExtensionToolbarButtons.jsm",
+  getCachedAllowedSpaces: "resource:///modules/ExtensionToolbarButtons.sys.mjs",
+  setCachedAllowedSpaces: "resource:///modules/ExtensionToolbarButtons.sys.mjs",
 });
 
 /**
@@ -107,7 +104,7 @@ const EMPTY_SET = "__empty";
  * migrating were removed from the DOM. The value should be the value of the
  * defaultset attribute of the respective element in the markup.
  *
- * @type {{[string]: string}}
+ * @type {object} string -> string mapping.
  */
 const XUL_TOOLBAR_DEFAULT_SET = {
   "mail-bar3":

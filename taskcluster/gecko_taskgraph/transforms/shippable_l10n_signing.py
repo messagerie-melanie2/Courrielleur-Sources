@@ -6,6 +6,7 @@ Transform the signing task into an actual task description.
 """
 
 from taskgraph.transforms.base import TransformSequence
+from taskgraph.util.dependencies import get_primary_dependency
 from taskgraph.util.treeherder import join_symbol
 
 from gecko_taskgraph.util.attributes import copy_attributes_from_dependent_job
@@ -19,8 +20,7 @@ transforms = TransformSequence()
 @transforms.add
 def make_signing_description(config, jobs):
     for job in jobs:
-        dep_job = job["primary-dependency"]
-        job["depname"] = dep_job.label
+        dep_job = get_primary_dependency(config, job)
 
         # add the chunk number to the TH symbol
         symbol = job.get("treeherder", {}).get("symbol", "Bs")
@@ -37,10 +37,11 @@ def make_signing_description(config, jobs):
 @transforms.add
 def define_upstream_artifacts(config, jobs):
     for job in jobs:
-        dep_job = job["primary-dependency"]
-        upstream_artifact_task = job.pop("upstream-artifact-task", dep_job)
+        dep_job = get_primary_dependency(config, job)
 
-        job["attributes"] = copy_attributes_from_dependent_job(dep_job)
+        job.setdefault("attributes", {}).update(
+            copy_attributes_from_dependent_job(dep_job)
+        )
         if dep_job.attributes.get("chunk_locales"):
             # Used for l10n attribute passthrough
             job["attributes"]["chunk_locales"] = dep_job.attributes.get("chunk_locales")
@@ -49,20 +50,18 @@ def define_upstream_artifacts(config, jobs):
             config,
             job,
             keep_locale_template=True,
-            dep_kind=upstream_artifact_task.kind,
+            dep_kind=dep_job.kind,
         )
 
         upstream_artifacts = []
         for spec in locale_specifications:
             upstream_task_type = "l10n"
-            if upstream_artifact_task.kind.endswith(
-                ("-mac-notarization", "-mac-signing")
-            ):
+            if dep_job.kind.endswith(("-mac-notarization", "-mac-signing")):
                 # Upstream is mac signing or notarization
                 upstream_task_type = "scriptworker"
             upstream_artifacts.append(
                 {
-                    "taskId": {"task-reference": f"<{upstream_artifact_task.kind}>"},
+                    "taskId": {"task-reference": f"<{dep_job.kind}>"},
                     "taskType": upstream_task_type,
                     # Set paths based on artifacts in the specs (above) one per
                     # locale present in the chunk this is signing stuff for.
@@ -71,9 +70,7 @@ def define_upstream_artifacts(config, jobs):
                     "paths": sorted(
                         {
                             path_template.format(locale=locale)
-                            for locale in upstream_artifact_task.attributes.get(
-                                "chunk_locales", []
-                            )
+                            for locale in dep_job.attributes.get("chunk_locales", [])
                             for path_template in spec["artifacts"]
                         }
                     ),

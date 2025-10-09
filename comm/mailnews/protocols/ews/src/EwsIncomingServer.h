@@ -5,17 +5,12 @@
 #ifndef __COMM_MAILNEWS_PROTOCOLS_EWS_INCOMING_SERVER_H
 #define __COMM_MAILNEWS_PROTOCOLS_EWS_INCOMING_SERVER_H
 
-#include "IEwsClient.h"
 #include "IEwsIncomingServer.h"
 #include "msgIOAuth2Module.h"
 #include "nsMsgIncomingServer.h"
 
-#define EWS_INCOMING_SERVER_IID                      \
-  {                                                  \
-    0x6eaa0a24, 0x78f6, 0x4ad7, {                    \
-      0xa2, 0x8a, 0x07, 0x7d, 0x24, 0x02, 0x2c, 0xd2 \
-    }                                                \
-  }
+#define EWS_INCOMING_SERVER_IID \
+  {0x6eaa0a24, 0x78f6, 0x4ad7, {0xa2, 0x8a, 0x07, 0x7d, 0x24, 0x02, 0x2c, 0xd2}}
 
 class FolderSyncListener;
 
@@ -27,15 +22,26 @@ class EwsIncomingServer : public nsMsgIncomingServer,
 
   EwsIncomingServer();
 
-  NS_DECLARE_STATIC_IID_ACCESSOR(EWS_INCOMING_SERVER_IID)
+  NS_INLINE_DECL_STATIC_IID(EWS_INCOMING_SERVER_IID)
 
  protected:
   virtual ~EwsIncomingServer();
 
-  // nsMsgIncomingServer
-  nsresult CreateFolderWithDetails(const nsACString& id,
+  /**
+   * Locally creates a folder with the given properties. Intended to be called
+   * by a friend class such as `FolderSyncListener`.
+   */
+  nsresult MaybeCreateFolderWithDetails(const nsACString& id,
+                                        const nsACString& parentId,
+                                        const nsACString& name, uint32_t flags);
+  // Delete the folder with the given id. Intended to be called by a friend
+  // class such as `FolderSyncListener`.
+  nsresult DeleteFolderWithId(const nsACString& id);
+
+  nsresult UpdateFolderWithDetails(const nsACString& id,
                                    const nsACString& parentId,
-                                   const nsAString& name, uint32_t flags);
+                                   const nsACString& name,
+                                   nsIMsgWindow* msgWindow);
 
   // nsIMsgIncomingServer
   NS_IMETHOD GetLocalStoreType(nsACString& aLocalStoreType) override;
@@ -49,13 +55,27 @@ class EwsIncomingServer : public nsMsgIncomingServer,
                          nsIURI** _retval) override;
 
  private:
+  /**
+   * Retrieve the folder associated with the given EWS ID. If no such folder
+   * could be found, `NS_ERROR_FAILURE` is returned.
+   */
   nsresult FindFolderWithId(const nsACString& id, nsIMsgFolder** _retval);
+
+  /**
+   * Synchronize the list of folders for this account, then call the given
+   * callback function.
+   */
+  nsresult SyncFolderList(nsIMsgWindow* aMsgWindow,
+                          std::function<nsresult()> postSyncCallback);
+
+  /**
+   * Synchronize the message list for every folder in the account.
+   */
+  nsresult SyncAllFolders(nsIMsgWindow* aMsgWindow);
 
   RefPtr<msgIOAuth2Module> mOAuth2Module;
 
   friend class FolderSyncListener;
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(EwsIncomingServer, EWS_INCOMING_SERVER_IID)
 
 #endif

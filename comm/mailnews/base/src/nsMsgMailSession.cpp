@@ -17,7 +17,6 @@
 #include "nsIObserverService.h"
 #include "nsIAppStartup.h"
 #include "nsISupportsPrimitives.h"
-#include "nsIAppShellService.h"
 #include "nsAppShellCID.h"
 #include "nsIWindowMediator.h"
 #include "nsIWindowWatcher.h"
@@ -89,17 +88,6 @@ nsMsgMailSession::OnFolderPropertyChanged(nsIMsgFolder* aItem,
                                           const nsACString& aOldValue,
                                           const nsACString& aNewValue) {
   NOTIFY_FOLDER_LISTENERS(propertyChanged, OnFolderPropertyChanged,
-                          (aItem, aProperty, aOldValue, aNewValue));
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgMailSession::OnFolderUnicharPropertyChanged(nsIMsgFolder* aItem,
-                                                 const nsACString& aProperty,
-                                                 const nsAString& aOldValue,
-                                                 const nsAString& aNewValue) {
-  NOTIFY_FOLDER_LISTENERS(unicharPropertyChanged,
-                          OnFolderUnicharPropertyChanged,
                           (aItem, aProperty, aOldValue, aNewValue));
   return NS_OK;
 }
@@ -198,6 +186,11 @@ nsMsgMailSession::AlertUser(const nsAString& aMessage,
     listenersNotified = listenersNotified || notified;
   }
 
+  // Are alerts disabled by preference?
+  nsCOMPtr<nsIPrefBranch> prefService =
+      do_GetService(NS_PREFSERVICE_CONTRACTID);
+  prefService->GetBoolPref("mail.suppressAlertsForTests", &listenersNotified);
+
   // If the listeners notified the user, then we don't need to. Also exit if
   // aUrl is null because we won't have a nsIMsgWindow in that case.
   if (listenersNotified || !aUrl) return NS_OK;
@@ -219,6 +212,20 @@ nsMsgMailSession::AlertUser(const nsAString& aMessage,
   NS_ENSURE_SUCCESS(rv, rv);
 
   dlgService->Alert(domWindow, nullptr, PromiseFlatString(aMessage).get());
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsMsgMailSession::AlertCertError(nsITransportSecurityInfo* securityInfo,
+                                 nsIMsgMailNewsUrl* url) {
+  nsTObserverArray<nsCOMPtr<nsIMsgUserFeedbackListener>>::ForwardIterator iter(
+      mFeedbackListeners);
+  nsCOMPtr<nsIMsgUserFeedbackListener> listener;
+  while (iter.HasMore()) {
+    listener = iter.GetNext();
+    listener->OnCertError(securityInfo, url);
+  }
 
   return NS_OK;
 }
@@ -328,39 +335,6 @@ NS_IMETHODIMP nsMsgMailSession::AddMsgWindow(nsIMsgWindow* msgWindow) {
 
 NS_IMETHODIMP nsMsgMailSession::RemoveMsgWindow(nsIMsgWindow* msgWindow) {
   mWindows.RemoveObject(msgWindow);
-  // Mac keeps a hidden window open so the app doesn't shut down when
-  // the last window is closed. So don't shutdown the account manager in that
-  // case. Similarly, for suite, we don't want to disable mailnews when the
-  // last mail window is closed.
-#if !defined(XP_MACOSX) && !defined(MOZ_SUITE)
-  if (!mWindows.Count()) {
-    nsresult rv;
-    nsCOMPtr<nsIMsgAccountManager> accountManager =
-        do_GetService("@mozilla.org/messenger/account-manager;1", &rv);
-    if (NS_FAILED(rv)) return rv;
-    accountManager->CleanupOnExit();
-  }
-#endif
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgMailSession::IsFolderOpenInWindow(nsIMsgFolder* folder,
-                                                     bool* aResult) {
-  NS_ENSURE_ARG_POINTER(aResult);
-
-  *aResult = false;
-
-  uint32_t count = mWindows.Count();
-
-  for (uint32_t i = 0; i < count; i++) {
-    nsCOMPtr<nsIMsgFolder> openFolder;
-    mWindows[i]->GetOpenFolder(getter_AddRefs(openFolder));
-    if (folder == openFolder.get()) {
-      *aResult = true;
-      break;
-    }
-  }
-
   return NS_OK;
 }
 
@@ -584,15 +558,8 @@ NS_IMETHODIMP nsMsgShutdownService::Observe(nsISupports* aSubject,
       nsCOMPtr<nsIWindowMediator> winMed =
           do_GetService(NS_WINDOWMEDIATOR_CONTRACTID);
       winMed->GetMostRecentWindow(nullptr, getter_AddRefs(internalDomWin));
-
-      // If not use the hidden window.
-      if (!internalDomWin) {
-        nsCOMPtr<nsIAppShellService> appShell(
-            do_GetService(NS_APPSHELLSERVICE_CONTRACTID));
-        appShell->GetHiddenDOMWindow(getter_AddRefs(internalDomWin));
-        NS_ENSURE_TRUE(internalDomWin,
-                       NS_ERROR_FAILURE);  // bail if we don't get a window.
-      }
+      NS_ENSURE_TRUE(internalDomWin,
+                     NS_ERROR_FAILURE);  // Bail if we don't get a window.
     }
 
     if (!mQuitForced) {

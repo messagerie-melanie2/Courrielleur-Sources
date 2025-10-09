@@ -15,20 +15,21 @@ function FakeAccount() {
 }
 FakeAccount.prototype = {
   __proto__: ircAccount.prototype,
-  setWhois: (n, f) => true,
+  setWhois: () => true,
   ERROR: do_throw,
 };
 
 function run_test() {
   add_test(test_topicSettable);
   add_test(test_topicSettableJoinAsOp);
+  add_test(test_addRemoveKey);
 
   run_next_test();
 }
 
 // Test joining a channel, then being set as op.
 function test_topicSettable() {
-  let channel = new ircChannel(new FakeAccount(), "#test", "nick");
+  const channel = new ircChannel(new FakeAccount(), "#test", "nick");
   // We're not in the room yet, so the topic is NOT editable.
   equal(channel.topicSettable, false);
 
@@ -52,7 +53,7 @@ function test_topicSettable() {
 
 // Test when you join as an op (as opposed to being set to op after joining).
 function test_topicSettableJoinAsOp() {
-  let channel = new ircChannel(new FakeAccount(), "#test", "nick");
+  const channel = new ircChannel(new FakeAccount(), "#test", "nick");
   // We're not in the room yet, so the topic is NOT editable.
   equal(channel.topicSettable, false);
 
@@ -65,6 +66,38 @@ function test_topicSettableJoinAsOp() {
   channel.setMode("+t", [], "ChanServ");
   // The topic should still be editable.
   equal(channel.topicSettable, true);
+
+  run_next_test();
+}
+
+function test_addRemoveKey() {
+  const account = new FakeAccount();
+  const channel = new ircChannel(account, "#test", "nick");
+
+  // Add chat room fields to the channel.
+  channel.chatRoomFields = account.getChatRoomFieldValuesFromString("#test");
+
+  equal(
+    channel.chatRoomFields.getValue("password"),
+    undefined,
+    "Start with no password set"
+  );
+
+  // Receive the channel mode.
+  channel.setMode("+k", ["foo"], "ChanServ");
+  equal(
+    channel.chatRoomFields.getValue("password"),
+    "foo",
+    "The password should be stored"
+  );
+
+  // Receive the channel mode.
+  channel.setMode("-k", [], "ChanServ");
+  equal(
+    channel.chatRoomFields.getValue("password"),
+    undefined,
+    "The password should be cleared"
+  );
 
   run_next_test();
 }

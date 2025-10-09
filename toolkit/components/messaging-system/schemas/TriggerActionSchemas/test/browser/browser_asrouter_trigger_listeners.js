@@ -1,16 +1,13 @@
-ChromeUtils.defineModuleGetter(
-  this,
-  "ASRouterTriggerListeners",
-  "resource://activity-stream/lib/ASRouterTriggerListeners.jsm"
-);
 ChromeUtils.defineESModuleGetters(this, {
+  ASRouterTriggerListeners:
+    "resource:///modules/asrouter/ASRouterTriggerListeners.sys.mjs",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
   TestUtils: "resource://testing-common/TestUtils.sys.mjs",
 });
 
 async function openURLInWindow(window, url) {
   const { selectedBrowser } = window.gBrowser;
-  BrowserTestUtils.loadURIString(selectedBrowser, url);
+  BrowserTestUtils.startLoadingURIString(selectedBrowser, url);
   await BrowserTestUtils.browserLoaded(selectedBrowser, false, url);
 }
 
@@ -40,7 +37,7 @@ add_task(async function check_matchPatternFailureCase() {
 
 add_task(async function check_openArticleURL() {
   const TEST_URL =
-    "https://example.com/browser/browser/components/newtab/test/browser/red_page.html";
+    "https://example.com/browser/browser/extensions/newtab/test/browser/red_page.html";
   const articleTrigger = ASRouterTriggerListeners.get("openArticleURL");
 
   // Previously initialized by the Router
@@ -78,7 +75,7 @@ add_task(async function check_openArticleURL() {
 
 add_task(async function check_openURL_listener() {
   const TEST_URL =
-    "https://example.com/browser/browser/components/newtab/test/browser/red_page.html";
+    "https://example.com/browser/browser/extensions/newtab/test/browser/red_page.html";
 
   let urlVisitCount = 0;
   const triggerHandler = () => urlVisitCount++;
@@ -161,7 +158,7 @@ add_task(async function check_openURL_listener() {
 
 add_task(async function check_newSavedLogin_save_listener() {
   const TEST_URL =
-    "https://example.com/browser/browser/components/newtab/test/browser/red_page.html";
+    "https://example.com/browser/browser/extensions/newtab/test/browser/red_page.html";
 
   let triggerTypesHandled = {
     save: 0,
@@ -212,7 +209,7 @@ add_task(async function check_newSavedLogin_save_listener() {
 
 add_task(async function check_newSavedLogin_update_listener() {
   const TEST_URL =
-    "https://example.com/browser/browser/components/newtab/test/browser/red_page.html";
+    "https://example.com/browser/browser/extensions/newtab/test/browser/red_page.html";
 
   let triggerTypesHandled = {
     save: 0,
@@ -263,7 +260,7 @@ add_task(async function check_newSavedLogin_update_listener() {
 
 add_task(async function check_contentBlocking_listener() {
   const TEST_URL =
-    "https://example.com/browser/browser/components/newtab/test/browser/red_page.html";
+    "https://example.com/browser/browser/extensions/newtab/test/browser/red_page.html";
 
   const event1 = 0x0001;
   const event2 = 0x0010;
@@ -291,7 +288,7 @@ add_task(async function check_contentBlocking_listener() {
       1,
       `event ${type} is valid`
     );
-    ok(pageLoadSum <= pageLoad, "pageLoad is non-decreasing");
+    Assert.lessOrEqual(pageLoadSum, pageLoad, "pageLoad is non-decreasing");
 
     observerEvent += 1;
     pageLoadSum = pageLoad;
@@ -404,7 +401,7 @@ add_task(async function check_contentBlocking_listener() {
 
 add_task(async function check_contentBlockingMilestone_listener() {
   const TEST_URL =
-    "https://example.com/browser/browser/components/newtab/test/browser/red_page.html";
+    "https://example.com/browser/browser/extensions/newtab/test/browser/red_page.html";
 
   let observerEvent = 0;
   const triggerHandler = (target, trigger) => {

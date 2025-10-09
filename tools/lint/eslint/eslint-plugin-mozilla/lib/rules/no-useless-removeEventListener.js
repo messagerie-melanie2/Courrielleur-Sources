@@ -12,7 +12,7 @@
 module.exports = {
   meta: {
     docs: {
-      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/no-useless-removeEventListener.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/rules/no-useless-removeEventListener.html",
     },
     messages: {
       useOnce:
@@ -53,6 +53,7 @@ module.exports = {
           call.callee.type == "MemberExpression" &&
           call.callee.property.type == "Identifier" &&
           call.callee.property.name == "removeEventListener" &&
+          call.arguments[0] &&
           ((call.arguments[0].type == "Literal" &&
             call.arguments[0].value == node.arguments[0].value) ||
             (call.arguments[0].type == "Identifier" &&

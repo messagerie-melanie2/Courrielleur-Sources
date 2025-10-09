@@ -10,19 +10,21 @@ $schema: moz://mozilla.org/schemas/glean/metrics/2-0-0
 $tags:
   - 'Core :: Widget: Cocoa'
 
-startup:
-  is_restored_by_macos:
-    type: boolean
+widget:
+  ime_name_on_mac:
+    type: labeled_boolean
     description: >
-      Recorded on every launch of a Firefox install on macOS, with a boolean
-      value indicating whether Firefox was restored by macOS or if it was
-      manually launched by a user.
+      Name of IME which was selected by users on macOS.  The value is
+      Input Source ID if non-Japanese IME was open.  Otherwise, if
+      Japanese IME was open, the value is Bundle ID.  Input Source ID
+      includes input mode, but Bundle ID does not include input mode.
+      This metric was generated to correspond to the Legacy Telemetry
+      scalar widget.ime_name_on_mac.
     bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=639707
+      - https://bugzil.la/1215818
     data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=639707
-    data_sensitivity:
-      - technical
+      - https://bugzil.la/1215818
     notification_emails:
-      - spohl@mozilla.com
-    expires: 116
+      - mnakano.birchill@mozilla.com
+    expires: never
+    telemetry_mirror: WIDGET_IME_NAME_ON_MAC

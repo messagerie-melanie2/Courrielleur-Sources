@@ -6,23 +6,22 @@
 
 JAR_MANIFESTS += ["jar.mn"]
 
-EXTRA_JS_MODULES += [
+MOZ_SRC_FILES += [
     "AboutReader.sys.mjs",
+    "readability/JSDOMParser.js",
+    "readability/Readability.js",
+    "Reader.worker.js",
     "ReaderMode.sys.mjs",
+    "ReaderWorker.sys.mjs",
 ]
 
 EXTRA_PP_JS_MODULES += [
     "Readerable.sys.mjs",
 ]
 
-EXTRA_JS_MODULES.reader = [
-    "JSDOMParser.js",
-    "Readability.js",
-    "ReaderWorker.js",
-    "ReaderWorker.sys.mjs",
-]
+BROWSER_CHROME_MANIFESTS += ["tests/browser/browser.toml"]
 
-BROWSER_CHROME_MANIFESTS += ["test/browser.ini"]
+MOCHITEST_CHROME_MANIFESTS += ["tests/chrome/chrome.toml"]
 
 with Files("**"):
     BUG_COMPONENT = ("Toolkit", "Reader Mode")

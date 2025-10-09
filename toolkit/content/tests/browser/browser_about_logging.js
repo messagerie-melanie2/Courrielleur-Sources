@@ -7,6 +7,43 @@ function clearLoggingPrefs() {
   }
 }
 
+/**
+ * This function will select a node from the XPath.
+ * This function has been copied from the devtools' performance panel's tests.
+ * @returns {HTMLElement?}
+ */
+function getElementByXPath(document, path) {
+  return document.evaluate(
+    path,
+    document,
+    null,
+    XPathResult.FIRST_ORDERED_NODE_TYPE,
+    null
+  ).singleNodeValue;
+}
+
+/**
+ * This function looks inside of a document for some element that contains
+ * the given text. It runs in a loop every requestAnimationFrame until it
+ * finds the element. If it doesn't find the element it throws an error.
+ * This function has been copied from the devtools' performance panel's tests.
+ *
+ * @param {HTMLDocument} document
+ * @param {string} text
+ * @returns {Promise<HTMLElement>}
+ */
+async function getElementFromDocumentByText(document, text) {
+  // Fallback on aria-label if there are no results for the text xpath.
+  const xpath = `//*[contains(text(), '${text}')] | //*[contains(@aria-label, '${text}')]`;
+  return TestUtils.waitForCondition(() => {
+    const element = getElementByXPath(document, xpath);
+    if (element && BrowserTestUtils.isVisible(element)) {
+      return element;
+    }
+    return null;
+  }, `Trying to find a visible element with the text "${text}".`);
+}
+
 // Before running, save any MOZ_LOG environment variable that might be preset,
 // and restore them at the end of this test.
 add_setup(async function saveRestoreLogModules() {
@@ -110,15 +147,12 @@ add_task(async function testURLParameters() {
           !$("#some-elements-unavailable").hidden,
           "If modules are selected via URL, a warning should be displayed."
         );
-        var inPageSorted = $("#current-log-modules")
-          .innerText.split(",")
-          .sort()
-          .join(",");
-        var inURLSorted = modulesInURL.split(",").sort().join(",");
+        var inInputSorted = $("#log-modules").value.split(",").sort().join(",");
+        var modulesSorted = modulesInURL.split(",").sort().join(",");
         Assert.equal(
-          inPageSorted,
-          inURLSorted,
-          "When selecting modules via URL params, the same modules are reflected in the page."
+          modulesSorted,
+          inInputSorted,
+          "When selecting modules via URL params, the log modules aren't immediately set"
         );
       });
     }
@@ -135,19 +169,16 @@ add_task(async function testURLParameters() {
           !$("#some-elements-unavailable").hidden,
           "If a preset is selected via URL, a warning should be displayed."
         );
-        var inPageSorted = $("#current-log-modules")
-          .innerText.split(",")
-          .sort()
-          .join(",");
+        var inInputSorted = $("#log-modules").value.split(",").sort().join(",");
         var presetSorted = content
           .presets()
           [presetInURL].modules.split(",")
           .sort()
           .join(",");
         Assert.equal(
-          inPageSorted,
+          inInputSorted,
           presetSorted,
-          "When selecting a preset via URL params, the correct log modules are reflected in the page."
+          "When selecting a preset via URL params, the correct log modules are reflected in the input."
         );
       });
     }
@@ -207,7 +238,7 @@ add_task(async function testURLParameters() {
       url: PAGE + "?invalid-param",
     },
     async browser => {
-      await SpecialPowers.spawn(browser, [profilerPresetInURL], async inURL => {
+      await SpecialPowers.spawn(browser, [profilerPresetInURL], async () => {
         let $ = content.document.querySelector.bind(content.document);
         Assert.ok(
           !$("#error").hidden,
@@ -374,7 +405,7 @@ add_task(async function testProfilerOpens() {
       "https://example.com/",
       false
     );
-    SpecialPowers.spawn(browser, [], async savedLogModules => {
+    SpecialPowers.spawn(browser, [], async () => {
       let $ = content.document.querySelector.bind(content.document);
       // Override the URL the profiler uses to avoid hitting external
       // resources (and crash).
@@ -461,4 +492,169 @@ add_task(async function testLogFileFound() {
     Assert.ok(foundNonEmptyLogFile, "Found at least one non-empty log file.");
   });
   clearLoggingPrefs();
+});
+
+// Roughly test the Android-specific UI
+add_task(async function testAndroidUI() {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["toolkit.aboutLogging.uploadProfileToCloud", true],
+      [
+        "toolkit.aboutlogging.uploadProfileUrl",
+        "https://api.profiler.firefox.com/browser/toolkit/content/tests/browser/browser_about_logging_server.sjs",
+      ],
+      // The value "2" tells Downloads.getPreferredDownloadsDirectory to use the
+      // pref "browser.download.dir" below.
+      ["browser.download.folderList", 2],
+      // We use a path in the temp directory for the test.
+      ["browser.download.dir", Services.dirsvc.get("TmpD", Ci.nsIFile).path],
+    ],
+  });
+  await BrowserTestUtils.withNewTab(PAGE, async browser => {
+    const document = browser.contentDocument;
+    const window = browser.contentWindow;
+
+    info("Make sure the profiler option is selected.");
+    EventUtils.synthesizeMouseAtCenter(
+      await getElementFromDocumentByText(
+        document,
+        "Logging to the Firefox Profiler"
+      ),
+      {},
+      window
+    );
+
+    info("Start logging");
+    const loggingButton = await getElementFromDocumentByText(
+      document,
+      "Start Logging"
+    );
+    EventUtils.synthesizeMouseAtCenter(loggingButton, {}, window);
+
+    // Wait for the profiler to start. This can be very slow.
+    await content.profilerPromise();
+
+    info(
+      "The profiler is started. Let's wait 1 second so that it can capture some data."
+    );
+
+    // Wait for some time for good measure while the profiler collects some
+    // data. We don't really care about the data itself.
+    // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+    await new Promise(resolve => content.setTimeout(resolve, 1000));
+
+    info("Stop logging");
+    EventUtils.synthesizeMouseAtCenter(loggingButton, {}, window);
+
+    ok(
+      await getElementFromDocumentByText(
+        document,
+        "The profile data has been captured."
+      ),
+      "The information about the profile data capture is displayed."
+    );
+
+    info("Click the save button");
+    const saveButton = await getElementFromDocumentByText(document, "Save");
+    EventUtils.synthesizeMouseAtCenter(saveButton, {}, window);
+    const savedText = await getElementFromDocumentByText(document, "Saved to");
+    ok(savedText, "The text path is being displayed");
+    info(`The text displayed is: ${savedText.textContent}`);
+    const savedPath = savedText.textContent.slice("Saved to ".length);
+    const fileinfo = await IOUtils.stat(savedPath);
+    Assert.greater(
+      fileinfo.size,
+      0,
+      `The profile has been saved to ${savedPath} and has a positive size.`
+    );
+    info("Cleaning up the saved file.");
+    await IOUtils.remove(savedPath);
+
+    await info("Click the upload button");
+    const uploadButton = await getElementFromDocumentByText(document, "Upload");
+    EventUtils.synthesizeMouseAtCenter(uploadButton, {}, window);
+    ok(
+      await getElementFromDocumentByText(document, "Uploading"),
+      "Some text is displayed while uploading."
+    );
+    const uploadedText = await getElementFromDocumentByText(
+      document,
+      "Uploaded to"
+    );
+    const uploadedUrl = uploadedText.querySelector("a").href;
+    is(
+      uploadedUrl,
+      "https://profiler.firefox.com/public/24j1wmckznh8sj22zg1tsmg47dyfdtprj0g41s8",
+      "The profiler URL is displayed."
+    );
+
+    // Test the error case
+    info("Test the error case, uploading to a 404");
+    await SpecialPowers.pushPrefEnv({
+      set: [
+        [
+          "toolkit.aboutlogging.uploadProfileUrl",
+          "https://api.profiler.firefox.com/NONEXISTENT",
+        ],
+      ],
+    });
+    EventUtils.synthesizeMouseAtCenter(uploadButton, {}, window);
+    const errorText = await getElementFromDocumentByText(
+      document,
+      "An error happened while uploading the profile"
+    );
+    is(
+      errorText.textContent,
+      "An error happened while uploading the profile: Error: xhr onload with status != 200, xhr.statusText: Not Found",
+      "The error is output to the user."
+    );
+  });
+});
+
+add_task(async function testCopyToClipboard() {
+  await BrowserTestUtils.withNewTab(
+    PAGE,
+    async browser => {
+      const document = browser.contentDocument;
+      const window = browser.contentWindow;
+      // Open the menu, click on the item to copy to the clipboard
+      var menuButton = document.querySelector("#open-menu-button");
+      EventUtils.synthesizeMouseAtCenter(menuButton, {}, window);
+      var copyAction = await getElementFromDocumentByText(
+        document,
+        "Copy current settings as URL"
+      );
+      EventUtils.synthesizeMouseAtCenter(copyAction, {}, window);
+      // In theory, we could wait for the toast, and check that the clipboard
+      // has been filled with reasonnable data. In practice the CI machines
+      // are too slow and miss the toast, so we're repeatedly checking the
+      // content of the clipboard instead.
+      var copiedString = await TestUtils.waitForCondition(() => {
+        const xferable = Cc[
+          "@mozilla.org/widget/transferable;1"
+        ].createInstance(Ci.nsITransferable);
+        xferable.init(null);
+        xferable.addDataFlavor("text/plain");
+        Services.clipboard.getData(xferable, Ci.nsIClipboard.kGlobalClipboard);
+        let data = {};
+        let type = {};
+        try {
+          xferable.getAnyTransferData(type, data);
+          data = data.value.QueryInterface(Ci.nsISupportsString).data;
+        } catch {
+          data = "";
+        }
+        if (data.startsWith("about:logging")) {
+          return data;
+        }
+        return false;
+      });
+      Assert.stringMatches(
+        copiedString,
+        /^about:logging\?/,
+        `about:logging URL copied successfully ${copiedString}`
+      );
+    },
+    "Waiting to have clipboard data"
+  );
 });

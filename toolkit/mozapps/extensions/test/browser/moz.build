@@ -5,16 +5,16 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 BROWSER_CHROME_MANIFESTS += [
-    "browser.ini",
+    "browser.toml",
 ]
 
 addons = [
     "browser_dragdrop1",
+    "browser_dragdrop1.1",
     "browser_dragdrop2",
     "browser_dragdrop_incompat",
     "browser_installssl",
     "browser_theme",
-    "options_signed",
 ]
 
 output_dir = (

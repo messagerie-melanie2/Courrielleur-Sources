@@ -18,6 +18,10 @@ REQUIRE_GPU = False
 if "REQUIRE_GPU" in os.environ:
     REQUIRE_GPU = os.environ["REQUIRE_GPU"] == "1"
 
+USE_HARDWARE = False
+if "USE_HARDWARE" in os.environ:
+    USE_HARDWARE = os.environ["USE_HARDWARE"] == "1"
+
 PYWIN32 = "pywin32==306"
 
 XPCSHELL_NAME = "xpcshell.exe"
@@ -31,9 +35,9 @@ DESKTOP_VISUALFX_THEME = {
     "Custom": 3,
 }.get("Best appearance")
 TASKBAR_AUTOHIDE_REG_PATH = {
-    "Windows 7": "HKCU:SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StuckRects2",
-    "Windows 10": "HKCU:SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3",
-}.get("{} {}".format(platform.system(), platform.release()))
+    "Windows 7": r"HKCU:SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StuckRects2",
+    "Windows 10": r"HKCU:SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3",
+}.get(f"{platform.system()} {platform.release()}")
 #####
 config = {
     "exes": {
@@ -44,7 +48,7 @@ config = {
     "installer_path": INSTALLER_PATH,
     "binary_path": BINARY_PATH,
     "xpcshell_name": XPCSHELL_NAME,
-    "virtualenv_modules": [PYWIN32, "six==1.13.0", "vcversioner==2.16.0.0"],
+    "virtualenv_modules": [PYWIN32, "six==1.16.0", "vcversioner==2.16.0.0"],
     "virtualenv_path": "venv",
     "exe_suffix": EXE_SUFFIX,
     "run_file_names": {
@@ -126,7 +130,7 @@ config = {
                 "--symbols-path=%(symbols_path)s",
                 "--log-errorsummary=%(error_summary_file)s",
                 "--utility-path=tests/bin",
-                "--manifest=tests/xpcshell/tests/xpcshell.ini",
+                "--manifest=tests/xpcshell/tests/xpcshell.toml",
             ],
             "run_filename": "runxpcshelltests.py",
             "testsdir": "xpcshell",
@@ -150,7 +154,7 @@ config = {
         "mochitest-chrome": ["--flavor=chrome", "--chunk-by-dir=4", "--disable-e10s"],
         "mochitest-chrome-gpu": ["--flavor=chrome", "--subsuite=gpu", "--disable-e10s"],
         "mochitest-browser-chrome": ["--flavor=browser", "--chunk-by-runtime"],
-        "mochitest-browser-chrome-screenshots": [
+        "mochitest-browser-screenshots": [
             "--flavor=browser",
             "--subsuite=screenshots",
         ],
@@ -167,6 +171,10 @@ config = {
         ],
         "mochitest-browser-a11y": ["--flavor=browser", "--subsuite=a11y"],
         "mochitest-browser-media": ["--flavor=browser", "--subsuite=media-bc"],
+        "mochitest-browser-translations": [
+            "--flavor=browser",
+            "--subsuite=translations",
+        ],
         "mochitest-a11y": ["--flavor=a11y", "--disable-e10s"],
         "mochitest-remote": ["--flavor=browser", "--subsuite=remote"],
     },
@@ -188,27 +196,14 @@ config = {
             "options": ["--suite=reftest", "--topsrcdir=tests/reftest/tests"],
             "tests": ["tests/reftest/tests/layout/reftests/reftest.list"],
         },
-        "reftest-no-accel": {
-            "options": [
-                "--suite=reftest",
-                "--setpref=layers.acceleration.disabled=true",
-                "--topsrcdir=tests/reftest/tests",
-            ],
-            "tests": ["tests/reftest/tests/layout/reftests/reftest.list"],
-        },
     },
     "all_xpcshell_suites": {
         "xpcshell": {
             "options": [
                 "--xpcshell=%(abs_app_dir)s/" + XPCSHELL_NAME,
-            ],
-            "tests": [],
-        },
-        "xpcshell-msix": {
-            "options": [
-                "--app-binary=%(binary_path)s",
-                "--app-path=%(install_dir)s",
-                "--xre-path=%(install_dir)s",
+                "--msix-app-binary=%(binary_path)s",
+                "--msix-app-path=%(install_dir)s",
+                "--msix-xre-path=%(install_dir)s",
             ],
             "tests": [],
         },
@@ -245,20 +240,158 @@ config = {
                     "external_tools",
                     "machine-configuration.json",
                 ),
-                "--platform=win10-vm"
-                if REQUIRE_GPU and (platform.release() == "10")
-                else "--platform=win7",
+                (
+                    "--platform=win10-vm"
+                    if REQUIRE_GPU and (platform.uname().version == "10.0.19045")
+                    else (
+                        "--platform=win11-hw"
+                        if REQUIRE_GPU and (platform.uname().version == "10.0.22621")
+                        else "--platform=win7"
+                    )
+                ),
             ],
             "architectures": ["32bit", "64bit"],
             "halt_on_failure": True,
             "enabled": ADJUST_MOUSE_AND_SCREEN,
         },
         {
+            "name": "enable microphone access for msix",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-Item -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\ -Name "Mozilla.MozillaFirefoxNightly_5x4grbbqzn2q4" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
+            "name": "enable microphone access for msix, add allow key",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-ItemProperty -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\Mozilla.MozillaFirefoxNightly_5x4grbbqzn2q4 -Name "Value" -Value "Allow" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
+            "name": "enable microphone access for msix (central)",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-Item -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\ -Name "Mozilla.MozillaFirefoxNightly_jag0gd4e3s9p2" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
+            "name": "enable microphone access for msix, add allow key (central)",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-ItemProperty -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\Mozilla.MozillaFirefoxNightly_jag0gd4e3s9p2 -Name "Value" -Value "Allow" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
+            "name": "enable microphone access for msix (beta)",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-Item -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\ -Name "Mozilla.MozillaFirefoxBeta_5x4grbbqzn2q4" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
+            "name": "enable microphone access for msix, add allow key (beta)",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-ItemProperty -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\Mozilla.MozillaFirefoxBeta_5x4grbbqzn2q4 -Name "Value" -Value "Allow" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
+            "name": "enable microphone access for msix (beta)",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-Item -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\ -Name "Mozilla.MozillaFirefoxBeta_jag0gd4e3s9p2" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
+            "name": "enable microphone access for msix, add allow key (beta)",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-ItemProperty -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\Mozilla.MozillaFirefoxBeta_jag0gd4e3s9p2 -Name "Value" -Value "Allow" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
+            "name": "enable microphone access for msix (release)",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-Item -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\ -Name "Mozilla.MozillaFirefox_jag0gd4e3s9p2" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
+            "name": "enable microphone access for msix, add allow key (release)",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-ItemProperty -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\Mozilla.MozillaFirefox_jag0gd4e3s9p2 -Name "Value" -Value "Allow" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
+            "name": "enable microphone access for msix (esr)",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-Item -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\ -Name "Mozilla.MozillaFirefox_5x4grbbqzn2q4" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
+            "name": "enable microphone access for msix, add allow key (esr)",
+            "cmd": [
+                "powershell",
+                "-command",
+                r'New-ItemProperty -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\Mozilla.MozillaFirefox_5x4grbbqzn2q4 -Name "Value" -Value "Allow" -Force',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
             "name": "disable windows security and maintenance notifications",
             "cmd": [
                 "powershell",
                 "-command",
-                "\"&{$p='HKCU:SOFTWARE\Microsoft\Windows\CurrentVersion\\Notifications\Settings\Windows.SystemToast.SecurityAndMaintenance';if(!(Test-Path -Path $p)){&New-Item -Path $p -Force}&Set-ItemProperty -Path $p -Name Enabled -Value 0}\"",  # noqa
+                "\"&{$p='HKCU:SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings\\Windows.SystemToast.SecurityAndMaintenance';if(!(Test-Path -Path $p)){&New-Item -Path $p -Force}&Set-ItemProperty -Path $p -Name Enabled -Value 0}\"",  # noqa
             ],
             "architectures": ["32bit", "64bit"],
             "halt_on_failure": True,
@@ -269,9 +402,7 @@ config = {
             "cmd": [
                 "powershell",
                 "-command",
-                "\"&{{&Set-ItemProperty -Path 'HKCU:Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name VisualFXSetting -Value {}}}\"".format(
-                    DESKTOP_VISUALFX_THEME
-                ),
+                f"\"&{{&Set-ItemProperty -Path 'HKCU:Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects' -Name VisualFXSetting -Value {DESKTOP_VISUALFX_THEME}}}\"",
             ],
             "architectures": ["32bit", "64bit"],
             "halt_on_failure": True,
@@ -282,7 +413,7 @@ config = {
             "cmd": [
                 "powershell",
                 "-command",
-                "New-ItemProperty -Path 'HKCU:\Control Panel\Accessibility' -Name 'DynamicScrollbars' -Value 0",
+                "New-ItemProperty -Path 'HKCU:\\Control Panel\\Accessibility' -Name 'DynamicScrollbars' -Value 0",
             ],
             "architectures": ["32bit", "64bit"],
             "halt_on_failure": False,
@@ -293,9 +424,7 @@ config = {
             "cmd": [
                 "powershell",
                 "-command",
-                "\"&{{$p='{}';$v=(Get-ItemProperty -Path $p).Settings;$v[8]=3;&Set-ItemProperty -Path $p -Name Settings -Value $v}}\"".format(
-                    TASKBAR_AUTOHIDE_REG_PATH
-                ),
+                f"\"&{{$p='{TASKBAR_AUTOHIDE_REG_PATH}';$v=(Get-ItemProperty -Path $p).Settings;$v[8]=3;&Set-ItemProperty -Path $p -Name Settings -Value $v}}\"",
             ],
             "architectures": ["32bit", "64bit"],
             "halt_on_failure": True,
@@ -317,11 +446,35 @@ config = {
             "cmd": [
                 "powershell",
                 "-command",
-                "if (test-path ${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe) {start chrome; Start-Sleep -s 30; taskkill /F /IM chrome.exe /T}",
+                "if (test-path ${env:ProgramFiles(x86)}\\Google\\Chrome\\Application\\chrome.exe) {start chrome; Start-Sleep -s 30; taskkill /F /IM chrome.exe /T}",
             ],
             "architectures": ["32bit", "64bit"],
             "halt_on_failure": True,
-            "enabled": True,
+            "enabled": False,
+        },
+        {
+            "name": "ensure proper graphics driver",
+            "cmd": [
+                "powershell",
+                "-command",
+                'if (-Not ((Get-CimInstance win32_VideoController).InstalledDisplayDrivers | Out-String).contains("nvgrid")) { echo "Missing nvgrid driver: " + (Get-CimInstance win32_VideoController).InstalledDisplayDrivers; exit 4; }',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True if REQUIRE_GPU and not USE_HARDWARE else False,
+            "fatal_exit_code": 4,
+        },
+        {
+            "name": "ensure display refresh rate == 60",
+            "cmd": [
+                "powershell",
+                "-command",
+                'if (-Not ((Get-WmiObject win32_videocontroller).CurrentRefreshRate | Out-String).contains("60")) { echo "Screen refresh rate != 60: " + ((Get-WmiObject win32_videocontroller).CurrentRefreshRate | Out-String); exit 4; }',
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": True,
+            "enabled": True if REQUIRE_GPU and USE_HARDWARE else False,
+            "fatal_exit_code": 4,
         },
     ],
     "vcs_output_timeout": 1000,

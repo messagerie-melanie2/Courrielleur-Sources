@@ -630,7 +630,7 @@ export var SitePermissions = {
    * @param {string} latest
    *        The latest value of the preference
    */
-  invalidatePermissionList(data, previous, latest) {
+  invalidatePermissionList() {
     // Ensure that listPermissions() will reconstruct its return value the next
     // time it's called.
     this._permissionsArray = null;
@@ -769,9 +769,17 @@ export var SitePermissions = {
       }
     }
 
-    if (result.state == defaultState) {
-      // If there's no persistent permission saved, check if we have something
-      // set temporarily.
+    if (
+      result.state == defaultState ||
+      result.state == SitePermissions.PROMPT
+    ) {
+      // If there's no persistent permission saved, or if the persistent permission
+      // saved is merely PROMPT (aka "Always Ask" when persisted for camera and
+      // microphone), then check if we have something set temporarily.
+      //
+      // This way, a temporary ALLOW or BLOCK trumps a persisted PROMPT. While
+      // having overlap would be a bug (because any ALLOW or BLOCK user action should
+      // really clear PROMPT), this order seems safer than the other way around.
       let value = TemporaryPermissions.get(browser, permissionID);
 
       if (value) {
@@ -972,8 +980,8 @@ export var SitePermissions = {
       // Permission doesn't support having a label.
       return null;
     }
-    if (id == "3rdPartyStorage") {
-      // The key is the 3rd party origin, which we use for the label.
+    if (id == "3rdPartyStorage" || id == "3rdPartyFrameStorage") {
+      // The key is the 3rd party origin or site, which we use for the label.
       return key;
     }
     let labelID = gPermissions.get(id).labelID || id;
@@ -1241,9 +1249,6 @@ let gPermissions = {
       labelID: "open-protocol-handler",
       exactHostMatch: true,
       states: [SitePermissions.UNKNOWN, SitePermissions.ALLOW],
-      get disabled() {
-        return !SitePermissions.openProtoPermissionEnabled;
-      },
     },
 
     xr: {
@@ -1290,6 +1295,7 @@ let gPermissions = {
     },
 
     "3rdPartyStorage": {},
+    "3rdPartyFrameStorage": {},
   },
 };
 
@@ -1315,12 +1321,5 @@ XPCOMUtils.defineLazyPreferenceGetter(
   "resistFingerprinting",
   "privacy.resistFingerprinting",
   false,
-  SitePermissions.invalidatePermissionList.bind(SitePermissions)
-);
-XPCOMUtils.defineLazyPreferenceGetter(
-  SitePermissions,
-  "openProtoPermissionEnabled",
-  "security.external_protocol_requires_permission",
-  true,
   SitePermissions.invalidatePermissionList.bind(SitePermissions)
 );

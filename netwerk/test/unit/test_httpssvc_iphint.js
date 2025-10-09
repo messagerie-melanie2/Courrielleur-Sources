@@ -23,12 +23,19 @@ add_setup(async function setup() {
 
   Services.prefs.setBoolPref("network.dns.upgrade_with_https_rr", true);
   Services.prefs.setBoolPref("network.dns.use_https_rr_as_altsvc", true);
+  Services.prefs.setBoolPref(
+    "network.dns.https_rr.check_record_with_cname",
+    false
+  );
 
   registerCleanupFunction(async () => {
     trr_clear_prefs();
     Services.prefs.clearUserPref("network.dns.upgrade_with_https_rr");
     Services.prefs.clearUserPref("network.dns.use_https_rr_as_altsvc");
     Services.prefs.clearUserPref("network.dns.disablePrefetch");
+    Services.prefs.clearUserPref(
+      "network.dns.https_rr.check_record_with_cname"
+    );
     await trrServer.stop();
   });
 
@@ -39,7 +46,7 @@ add_setup(async function setup() {
 });
 
 // Test if IP hint addresses can be accessed as regular A/AAAA records.
-add_task(async function testStoreIPHint() {
+add_task(async function testStoreiphint() {
   trrServer = new TRRServer();
   registerCleanupFunction(async () => {
     await trrServer.stop();
@@ -49,19 +56,19 @@ add_task(async function testStoreIPHint() {
   Services.prefs.setIntPref("network.trr.mode", 3);
   Services.prefs.setCharPref(
     "network.trr.uri",
-    `https://foo.example.com:${trrServer.port}/dns-query`
+    `https://foo.example.com:${trrServer.port()}/dns-query`
   );
 
-  await trrServer.registerDoHAnswers("test.IPHint.com", "HTTPS", {
+  await trrServer.registerDoHAnswers("test.iphint.com", "HTTPS", {
     answers: [
       {
-        name: "test.IPHint.com",
+        name: "test.iphint.com",
         ttl: 999,
         type: "HTTPS",
         flush: false,
         data: {
           priority: 1,
-          name: "test.IPHint.com",
+          name: "test.iphint.com",
           values: [
             { key: "alpn", value: ["h2", "h3"] },
             { key: "port", value: 8888 },
@@ -73,14 +80,14 @@ add_task(async function testStoreIPHint() {
     ],
   });
 
-  let { inRecord } = await new TRRDNSListener("test.IPHint.com", {
+  let { inRecord } = await new TRRDNSListener("test.iphint.com", {
     type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
   });
 
   let answer = inRecord.QueryInterface(Ci.nsIDNSHTTPSSVCRecord).records;
   Assert.equal(inRecord.QueryInterface(Ci.nsIDNSHTTPSSVCRecord).ttl, 999);
   Assert.equal(answer[0].priority, 1);
-  Assert.equal(answer[0].name, "test.IPHint.com");
+  Assert.equal(answer[0].name, "test.iphint.com");
   Assert.equal(answer[0].values.length, 4);
   Assert.deepEqual(
     answer[0].values[0].QueryInterface(Ci.nsISVCParamAlpn).alpn,
@@ -117,9 +124,9 @@ add_task(async function testStoreIPHint() {
     "got correct answer"
   );
 
-  async function verifyAnswer(flags, expectedAddresses) {
+  async function verifyAnswer(domain, flags, expectedAddresses) {
     // eslint-disable-next-line no-shadow
-    let { inRecord } = await new TRRDNSListener("test.IPHint.com", {
+    let { inRecord } = await new TRRDNSListener(domain, {
       flags,
       expectedSuccess: false,
     });
@@ -133,7 +140,7 @@ add_task(async function testStoreIPHint() {
     Assert.equal(inRecord.ttl, 999);
   }
 
-  await verifyAnswer(Ci.nsIDNSService.RESOLVE_IP_HINT, [
+  await verifyAnswer("test.iphint.com", Ci.nsIDNSService.RESOLVE_IP_HINT, [
     "1.2.3.4",
     "5.6.7.8",
     "::1",
@@ -141,11 +148,52 @@ add_task(async function testStoreIPHint() {
   ]);
 
   await verifyAnswer(
+    "test.iphint.com",
     Ci.nsIDNSService.RESOLVE_IP_HINT | Ci.nsIDNSService.RESOLVE_DISABLE_IPV4,
     ["::1", "fe80::794f:6d2c:3d5e:7836"]
   );
 
   await verifyAnswer(
+    "test.iphint.com",
+    Ci.nsIDNSService.RESOLVE_IP_HINT | Ci.nsIDNSService.RESOLVE_DISABLE_IPV6,
+    ["1.2.3.4", "5.6.7.8"]
+  );
+
+  info("checking that IPv6 hints are ignored when disableIPv6 is true");
+  Services.prefs.setBoolPref("network.dns.disableIPv6", true);
+  await trrServer.registerDoHAnswers("testv6.iphint.com", "HTTPS", {
+    answers: [
+      {
+        name: "testv6.iphint.com",
+        ttl: 999,
+        type: "HTTPS",
+        flush: false,
+        data: {
+          priority: 1,
+          name: "testv6.iphint.com",
+          values: [
+            { key: "alpn", value: ["h2", "h3"] },
+            { key: "port", value: 8888 },
+            { key: "ipv4hint", value: ["1.2.3.4", "5.6.7.8"] },
+            { key: "ipv6hint", value: ["::1", "fe80::794f:6d2c:3d5e:7836"] },
+          ],
+        },
+      },
+    ],
+  });
+
+  ({ inRecord } = await new TRRDNSListener("testv6.iphint.com", {
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
+  }));
+  Services.prefs.setBoolPref("network.dns.disableIPv6", false);
+
+  await verifyAnswer("testv6.iphint.com", Ci.nsIDNSService.RESOLVE_IP_HINT, [
+    "1.2.3.4",
+    "5.6.7.8",
+  ]);
+
+  await verifyAnswer(
+    "testv6.iphint.com",
     Ci.nsIDNSService.RESOLVE_IP_HINT | Ci.nsIDNSService.RESOLVE_DISABLE_IPV6,
     ["1.2.3.4", "5.6.7.8"]
   );
@@ -167,14 +215,12 @@ function channelOpenPromise(chan, flags) {
     function finish(req, buffer) {
       resolve([req, buffer]);
     }
-    let internal = chan.QueryInterface(Ci.nsIHttpChannelInternal);
-    internal.setWaitForHTTPSSVCRecord();
     chan.asyncOpen(new ChannelListener(finish, null, flags));
   });
 }
 
 // Test if we can connect to the server with the IP hint address.
-add_task(async function testConnectionWithIPHint() {
+add_task(async function testConnectionWithiphint() {
   Services.dns.clearCache(true);
   Services.prefs.setIntPref("network.trr.mode", 3);
   Services.prefs.setCharPref(
@@ -215,13 +261,13 @@ add_task(async function testConnectionWithIPHint() {
 
 // Test the case that we failed to use IP Hint address because DNS cache
 // is bypassed.
-add_task(async function testIPHintWithFreshDNS() {
+add_task(async function testiphintWithFreshDNS() {
   trrServer = new TRRServer();
   await trrServer.start();
   Services.prefs.setIntPref("network.trr.mode", 3);
   Services.prefs.setCharPref(
     "network.trr.uri",
-    `https://foo.example.com:${trrServer.port}/dns-query`
+    `https://foo.example.com:${trrServer.port()}/dns-query`
   );
   // To make sure NS_HTTP_REFRESH_DNS not be cleared.
   Services.prefs.setBoolPref("network.dns.disablePrefetch", true);
@@ -275,7 +321,7 @@ add_task(async function testIPHintWithFreshDNS() {
   );
 
   let chan = makeChan(`https://test.iphint.org/server-timing`);
-  chan.loadFlags |= Ci.nsIRequest.LOAD_BYPASS_CACHE;
+  chan.loadFlags |= Ci.nsIRequest.LOAD_FRESH_CONNECTION;
   let [req] = await channelOpenPromise(
     chan,
     CL_EXPECT_FAILURE | CL_ALLOW_UNKNOWN_CL
@@ -296,7 +342,7 @@ add_task(async function testIPHintWithFreshDNS() {
   });
 
   chan = makeChan(`https://test.iphint.org/server-timing`);
-  chan.loadFlags |= Ci.nsIRequest.LOAD_BYPASS_CACHE;
+  chan.loadFlags |= Ci.nsIRequest.LOAD_FRESH_CONNECTION;
   [req] = await channelOpenPromise(chan);
   Assert.equal(req.protocolVersion, "h2");
   let internal = req.QueryInterface(Ci.nsIHttpChannelInternal);

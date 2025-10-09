@@ -11,6 +11,8 @@ interface nsIMsgMailNewsUrl;
 interface nsIImapProtocol;
 interface nsIImapUrl;
 interface nsIImapMockChannel;
+interface nsITransportSecurityInfo;
+interface nsIRunnable;
 
 /**
  * nsIImapServerSink is designed to be used as a proxy to the application's UI
@@ -20,10 +22,10 @@ interface nsIImapMockChannel;
 interface nsIImapServerSink : nsISupports {
   /**
    * Check if the given folder path is a possible IMAP mailbox.
-   * @param folderPath folder path to check
-   * @param hierarchyDelimiter IMAP hierarchy delimiter in canonical format,
-   *                           i.e., hierarchy delimiter has been replaced
-   *                           with '/'
+   *
+   * @param folderPath The IMAP mailbox path (e.g. "INBOX", "Trash", "foo/bar").
+   *                   This path always uses '/' as hierarchy delimiter.
+   * @param hierarchyDelimiter The hierarchy delimiter used on the IMAP server.
    * @param boxFlags IMAP folder flags (for subscription, namespaces etc.)
    * @return true if it's a new mailbox
    */
@@ -110,6 +112,15 @@ interface nsIImapServerSink : nsISupports {
    */
   void fEAlertFromServer(in ACString aServerString, in nsIMsgMailNewsUrl aUrl);
 
+  /**
+   * Alerts the user with a certificate error.
+   *
+   * @param securityInfo - The security information about the operation.
+   * @param url - The running url.
+   */
+  void fEAlertCertError(in nsITransportSecurityInfo securityInfo,
+                        in nsIMsgMailNewsUrl url);
+
   void commitNamespaces();
 
   /**
@@ -145,13 +156,6 @@ interface nsIImapServerSink : nsISupports {
   attribute boolean userAuthenticated;
   void setMailServerUrls(in AUTF8String manageMailAccount, in AUTF8String manageLists, in AUTF8String manageFilters);
 
-  /** Used by the imap thread when upgrading from the socketType
-   * trySTARTTLS.
-   * @param aSucceeded whether STARTTLS succeeded. If it did, the server
-   * will set the socket type to alwaysSTARTTLS, otherwise plain.
-   */
-  void UpdateTrySTARTTLSPref(in boolean aSucceeded);
-
   readonly attribute AUTF8String arbitraryHeaders;
   void forgetPassword();
 
@@ -175,4 +179,17 @@ interface nsIImapServerSink : nsISupports {
   void setServerDoingLsub(in boolean aDoingLsub);
   /// set whether UTF8=ACCEPT enabled or not
   void setServerUtf8AcceptEnabled(in boolean aEnabled);
+
+  /**
+   * Acquire the server logon lock, and run the callback before releasing the
+   * lock and returning.
+   * If callback fails, runLogonExclusive() will return that failure code.
+   * Because we have multiple connection threads, we don't want them all to
+   * try logging on at once (and potentially causing the server to lock the
+   * account due to too many failed login attempts! See Bug 1862111)
+   * There is no fancy dispatch here: the callback will be run immediately,
+   * on the current thread.
+   */
+  void runLogonExclusive(in nsIRunnable callback);
+
 };

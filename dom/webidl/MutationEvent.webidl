@@ -9,14 +9,12 @@
  * Copyright © 2012 W3C® (MIT, ERCIM, Keio), All Rights Reserved. W3C
  * liability, trademark and document use rules apply.
  */
-[Exposed=Window]
+[Exposed=Window, Pref="dom.mutation_events.enabled"]
 interface MutationEvent : Event
 {
   const unsigned short MODIFICATION = 1;
   const unsigned short ADDITION     = 2;
   const unsigned short REMOVAL      = 3;
-  [ChromeOnly]
-  const unsigned short SMIL         = 4;
 
   readonly attribute Node?          relatedNode;
   readonly attribute DOMString      prevValue;

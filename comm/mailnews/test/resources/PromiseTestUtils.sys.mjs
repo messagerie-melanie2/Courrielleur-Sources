@@ -9,14 +9,14 @@
 
 import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 
+export var PromiseTestUtils = {};
+
 /**
  * Url listener that can wrap another listener and trigger a callback.
  *
  * @param [aWrapped] The nsIUrlListener to pass all notifications through to.
  *     This gets called prior to the callback (or async resumption).
  */
-
-export var PromiseTestUtils = {};
 
 PromiseTestUtils.PromiseUrlListener = function (aWrapped) {
   this.wrapped = aWrapped;
@@ -344,8 +344,15 @@ PromiseTestUtils.PromiseSearchNotify.prototype = {
  * their storeTokens, and has a promise to pause until completion (or failure).
  */
 PromiseTestUtils.PromiseStoreScanListener = function () {
-  this.messages = []; // Full messages collect here.
-  this.tokens = []; // storeTokens collect here.
+  // Collect messages in these arrays. Might be more sensible to have a single
+  // array of objects, but that would complicate comparisons in tests. EnvDate
+  // in particular will be hard to control in test - it'll usually be a
+  // current timestamp.
+  // So keep as separate arrays for now.
+  this.messages = []; // Full raw message data collects here.
+  this.tokens = []; // storeToken collects here.
+  this.envAddrs = []; // envAddr collects here.
+  this.envDates = []; // envDate collects here.
   this._promise = new Promise((resolve, reject) => {
     this._resolve = resolve;
     this._reject = reject;
@@ -371,9 +378,11 @@ PromiseTestUtils.PromiseStoreScanListener.prototype = {
 
   // nsIStoreScanListener callbacks
   onStartScan() {},
-  onStartMessage(tok) {
+  onStartMessage(tok, envAddr, envDate) {
     this.tokens.push(tok);
-    this.messages.push("");
+    this.envAddrs.push(envAddr);
+    this.envDates.push(envDate);
+    this.messages.push(""); // To be filled out in onDataAvailable().
   },
   onStopScan(status) {
     if (status == Cr.NS_OK) {
@@ -385,4 +394,112 @@ PromiseTestUtils.PromiseStoreScanListener.prototype = {
   get promise() {
     return this._promise;
   },
+};
+
+/**
+ * PromiseSendLaterListener is a helper for sending messages with a delay via
+ * nsIMsgSendLater.
+ *
+ * If sending was successful, it resolves with an object that includes the
+ * number of messages the service tried to send, and the number of messages it
+ * successfully sent.
+ *
+ * @implements {nsIMsgSendLaterListener}
+ */
+PromiseTestUtils.PromiseSendLaterListener = class {
+  QueryInterface = ChromeUtils.generateQI(["nsIMsgSendLaterListener"]);
+
+  constructor() {
+    this._promise = new Promise((resolve, reject) => {
+      this._resolve = resolve;
+      this._reject = reject;
+    });
+  }
+
+  onStartSending() {}
+  onMessageStartSending() {}
+  onMessageSendProgress() {}
+
+  onMessageSendError(aCurrentMessage, aMessageHeader, aStatus) {
+    this._reject(aStatus);
+  }
+
+  onStopSending(aStatus, aMsg, aTotalTried, aSuccessful) {
+    if (aStatus != Cr.NS_OK) {
+      this._reject(aStatus);
+      return;
+    }
+
+    this._resolve({
+      totalTried: aTotalTried,
+      successful: aSuccessful,
+    });
+  }
+
+  get promise() {
+    return this._promise;
+  }
+};
+
+/**
+ * Message outgoing listener that can be turned into a Promise.
+ */
+PromiseTestUtils.PromiseMsgOutgoingListener = class {
+  QueryInterface = ChromeUtils.generateQI(["nsIMsgOutgoingListener"]);
+
+  constructor() {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    this._promise = promise;
+    this._resolve = resolve;
+    this._reject = reject;
+  }
+
+  onSendStart() {}
+
+  onSendStop(serverURI, exitCode) {
+    if (exitCode == Cr.NS_OK) {
+      this._resolve();
+    } else {
+      this._reject(exitCode);
+    }
+  }
+
+  get promise() {
+    return this._promise;
+  }
+};
+
+/**
+ * Adaptor to turn nsIMsgOperationListener into a Promise.
+ */
+PromiseTestUtils.PromiseMsgOperationListener = class {
+  QueryInterface = ChromeUtils.generateQI(["nsIMsgOperationListener"]);
+
+  /**
+   * @param {nsIMsgOperationListener} [wrapped] An optional listener
+   *   to pass through to. If used, this is called prior to the resolve
+   *   (or async resumption).
+   */
+  constructor(wrapped) {
+    this.wrapped = wrapped;
+    this._promise = new Promise((resolve, reject) => {
+      this._resolve = resolve;
+      this._reject = reject;
+    });
+  }
+
+  onStopOperation(statusCode) {
+    if (this.wrapped && this.wrapped.onStopOperation) {
+      this.wrapped.onStopOperation(statusCode);
+    }
+    if (statusCode == Cr.NS_OK) {
+      this._resolve();
+    } else {
+      this._reject(statusCode);
+    }
+  }
+
+  get promise() {
+    return this._promise;
+  }
 };

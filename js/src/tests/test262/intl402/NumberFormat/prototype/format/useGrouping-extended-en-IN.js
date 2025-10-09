@@ -1,4 +1,3 @@
-// |reftest| skip-if(release_or_beta) -- Intl.NumberFormat-v3 is not released yet
 // Copyright 2021 the V8 project authors. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -29,8 +28,8 @@ assert.sameValue(nf.format(100000), '1,00,000', '"min2"');
 nf = new Intl.NumberFormat('en-IN', {notation: 'compact'});
 
 assert.sameValue(nf.format(100), '100', 'notation: "compact"');
-assert.sameValue(nf.format(1000), '1T', 'notation: "compact"');
-assert.sameValue(nf.format(10000), '10T', 'notation: "compact"');
+assert.sameValue(nf.format(1000), '1K', 'notation: "compact"');
+assert.sameValue(nf.format(10000), '10K', 'notation: "compact"');
 assert.sameValue(nf.format(100000), '1L', 'notation: "compact"');
 
 reportCompare(0, 0);

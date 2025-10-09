@@ -7,28 +7,20 @@
  */
 
 var { get_msg_source, open_compose_new_mail, setup_msg_contents } =
-  ChromeUtils.import("resource://testing-common/mozmill/ComposeHelpers.jsm");
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+  );
 var {
   be_in_folder,
   get_special_folder,
   get_about_message,
   press_delete,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-);
-var { plan_for_window_close, wait_for_window_close } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
-);
-
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 var gOutboxFolder;
-
-var kBoxId = "compose-notification-bottom";
-var kNotificationId = "blockedContent";
 
 function typedArrayToString(buffer) {
   var string = "";
@@ -39,7 +31,7 @@ function typedArrayToString(buffer) {
 }
 
 function putHTMLOnClipboard(html) {
-  let trans = Cc["@mozilla.org/widget/transferable;1"].createInstance(
+  const trans = Cc["@mozilla.org/widget/transferable;1"].createInstance(
     Ci.nsITransferable
   );
 
@@ -47,7 +39,7 @@ function putHTMLOnClipboard(html) {
   trans.init(null);
   trans.addDataFlavor("text/html");
 
-  let wapper = Cc["@mozilla.org/supports-string;1"].createInstance(
+  const wapper = Cc["@mozilla.org/supports-string;1"].createInstance(
     Ci.nsISupportsString
   );
   wapper.data = html;
@@ -65,39 +57,36 @@ add_setup(async function () {
  * for data uri if needed.
  */
 add_task(async function test_send_inline_image() {
-  let cwc = open_compose_new_mail();
-  setup_msg_contents(
+  const cwc = await open_compose_new_mail();
+  await setup_msg_contents(
     cwc,
     "someone@example.com",
     "Test sending inline image",
     "The image doesn't display because we changed the data URI\n"
   );
 
-  let fileBuf = await IOUtils.read(getTestFilePath("data/nest.png"));
-  let fileContent = btoa(typedArrayToString(fileBuf));
-  let dataURI = `data:image/png;base64,${fileContent}`;
+  const fileBuf = await IOUtils.read(getTestFilePath("data/nest.png"));
+  const fileContent = btoa(typedArrayToString(fileBuf));
+  const dataURI = `data:image/png;base64,${fileContent}`;
 
   putHTMLOnClipboard(`<img id="inline-img" src="${dataURI}">`);
-  cwc.window.document.getElementById("messageEditor").focus();
+  cwc.document.getElementById("messageEditor").focus();
   // Ctrl+V = Paste
-  EventUtils.synthesizeKey(
-    "v",
-    { shiftKey: false, accelKey: true },
-    cwc.window
-  );
+  EventUtils.synthesizeKey("v", { shiftKey: false, accelKey: true }, cwc);
 
-  plan_for_window_close(cwc);
-  cwc.window.goDoCommand("cmd_sendLater");
-  wait_for_window_close();
+  const closePromise = BrowserTestUtils.domWindowClosed(cwc);
+  cwc.goDoCommand("cmd_sendLater");
+  await closePromise;
+  await SimpleTest.promiseFocus(window);
 
   await be_in_folder(gOutboxFolder);
-  let msgLoaded = BrowserTestUtils.waitForEvent(
+  const msgLoaded = BrowserTestUtils.waitForEvent(
     get_about_message(),
     "MsgLoaded"
   );
-  let outMsg = select_click_row(0);
+  const outMsg = await select_click_row(0);
   await msgLoaded;
-  let outMsgContent = await get_msg_source(outMsg);
+  const outMsgContent = await get_msg_source(outMsg);
 
   ok(
     outMsgContent.includes('id="inline-img" src="cid:'),
@@ -108,5 +97,5 @@ add_task(async function test_send_inline_image() {
     `file name should have 16 characters: ${outMsgContent}`
   );
 
-  press_delete(); // Delete the msg from Outbox.
+  await press_delete(); // Delete the msg from Outbox.
 });

@@ -9,17 +9,9 @@
 "use strict";
 
 var { click_account_tree_row, get_account_tree_row, open_advanced_settings } =
-  ChromeUtils.import(
-    "resource://testing-common/mozmill/AccountManagerHelpers.jsm"
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/AccountManagerHelpers.sys.mjs"
   );
-
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
-);
-
-var { mc } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-);
 
 var gPopAccount, gOriginalAccountCount;
 
@@ -28,11 +20,11 @@ add_setup(function () {
   gOriginalAccountCount = MailServices.accounts.allServers.length;
 
   // Create a POP server
-  let popServer = MailServices.accounts
+  const popServer = MailServices.accounts
     .createIncomingServer("nobody", "foo.invalid", "pop3")
     .QueryInterface(Ci.nsIPop3IncomingServer);
 
-  let identity = MailServices.accounts.createIdentity();
+  const identity = MailServices.accounts.createIdentity();
   identity.email = "tinderbox@foo.invalid";
 
   gPopAccount = MailServices.accounts.createAccount();
@@ -68,10 +60,10 @@ add_task(async function test_account_open_state() {
  * @param {object} tab - The account manager tab.
  */
 async function subtest_check_account_order(tab) {
-  let accountRow = get_account_tree_row(gPopAccount.key, null, tab);
-  click_account_tree_row(tab, accountRow);
+  const accountRow = get_account_tree_row(gPopAccount.key, null, tab);
+  await click_account_tree_row(tab, accountRow);
 
-  let prevAccountList = MailServices.accounts.accounts.map(
+  const prevAccountList = MailServices.accounts.accounts.map(
     account => account.key
   );
 

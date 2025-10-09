@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
@@ -11,15 +9,14 @@ ChromeUtils.defineESModuleGetters(lazy, {
   EventDispatcher:
     "chrome://remote/content/marionette/actors/MarionetteEventsParent.sys.mjs",
   Log: "chrome://remote/content/shared/Log.sys.mjs",
-  modal: "chrome://remote/content/marionette/modal.sys.mjs",
   PageLoadStrategy:
     "chrome://remote/content/shared/webdriver/Capabilities.sys.mjs",
   ProgressListener: "chrome://remote/content/shared/Navigate.sys.mjs",
-  TimedPromise: "chrome://remote/content/marionette/sync.sys.mjs",
+  TimedPromise: "chrome://remote/content/shared/Sync.sys.mjs",
   truncate: "chrome://remote/content/shared/Format.sys.mjs",
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "logger", () =>
+ChromeUtils.defineLazyGetter(lazy, "logger", () =>
   lazy.Log.get(lazy.Log.TYPES.MARIONETTE)
 );
 
@@ -164,9 +161,11 @@ navigate.isLoadEventExpected = function (current, options = {}) {
 navigate.navigateTo = async function (browsingContext, url) {
   const opts = {
     loadFlags: Ci.nsIWebNavigation.LOAD_FLAGS_IS_LINK,
-    triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
     // Fake user activation.
     hasValidUserGestureActivation: true,
+    // Prevent HTTPS-First upgrades.
+    schemelessInput: Ci.nsILoadInfo.SchemelessInputTypeSchemeful,
+    triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
   };
   browsingContext.fixupAndLoadURIString(url, opts);
 };
@@ -231,6 +230,7 @@ navigate.waitForNavigationCompleted = async function waitForNavigationCompleted(
       if (listener.isStarted) {
         listener.stop();
       }
+      listener.destroy();
     });
 
     await callback();
@@ -258,22 +258,40 @@ navigate.waitForNavigationCompleted = async function waitForNavigationCompleted(
     }
   };
 
-  const onDialogOpened = action => {
-    if (action === lazy.modal.ACTION_OPENED) {
-      lazy.logger.trace("Canceled page load listener because a dialog opened");
+  const onPromptClosed = (_, data) => {
+    if (data.detail.promptType === "beforeunload" && !data.detail.accepted) {
+      // If a beforeunload prompt is dismissed there will be no navigation.
+      lazy.logger.trace(
+        `Canceled page load listener because a beforeunload prompt was dismissed`
+      );
       checkDone({ finished: true });
     }
   };
 
-  const onTimer = timer => {
-    // In the case when a document has a beforeunload handler
-    // registered, the currently active command will return immediately
-    // due to the modal dialog observer.
+  const onPromptOpened = (_, data) => {
+    if (data.prompt.promptType === "beforeunload") {
+      // WebDriver HTTP basically doesn't know anything about beforeunload
+      // prompts. As such we always ignore the prompt opened event.
+      return;
+    }
+
+    lazy.logger.trace(
+      `Canceled page load listener because a ${data.prompt.promptType} prompt opened`
+    );
+    checkDone({ finished: true });
+  };
+
+  const onTimer = () => {
+    // For the command "Element Click" we want to detect a potential navigation
+    // as early as possible. The `beforeunload` event is an indication for that
+    // but could still cause the navigation to get aborted by the user. As such
+    // wait a bit longer for the `unload` event to happen (only when the page
+    // load strategy is `none`), which usually will occur pretty soon after
+    // `beforeunload`.
     //
-    // Otherwise the timeout waiting for the document to start
-    // navigating is increased by 5000 ms to ensure a possible load
-    // event is not missed. In the common case such an event should
-    // occur pretty soon after beforeunload, and we optimise for this.
+    // Note that with WebDriver BiDi enabled the `beforeunload` prompts might
+    // not get implicitly accepted, so lets keep the timer around until we know
+    // that it is really not required.
     if (seenBeforeUnload) {
       seenBeforeUnload = false;
       unloadTimer.initWithCallback(
@@ -320,7 +338,7 @@ navigate.waitForNavigationCompleted = async function waitForNavigationCompleted(
         break;
 
       case "DOMContentLoaded":
-      case "pageshow":
+      case "pageshow": {
         // Don't require an unload event when a top-level browsing context
         // change occurred.
         if (!seenUnload && !browsingContextChanged) {
@@ -329,6 +347,7 @@ navigate.waitForNavigationCompleted = async function waitForNavigationCompleted(
         const result = checkReadyState(pageLoadStrategy, data);
         checkDone(result);
         break;
+      }
     }
   };
 
@@ -355,7 +374,7 @@ navigate.waitForNavigationCompleted = async function waitForNavigationCompleted(
     }
   };
 
-  const onUnload = event => {
+  const onUnload = () => {
     lazy.logger.trace(
       "Canceled page load listener " +
         "because the top-browsing context has been closed"
@@ -369,7 +388,8 @@ navigate.waitForNavigationCompleted = async function waitForNavigationCompleted(
     "XULFrameLoaderCreated",
     onBrowsingContextChanged
   );
-  driver.dialogObserver.add(onDialogOpened);
+  driver.promptListener.on("closed", onPromptClosed);
+  driver.promptListener.on("opened", onPromptOpened);
   Services.obs.addObserver(
     onBrowsingContextDiscarded,
     "browsing-context-discarded"
@@ -420,7 +440,8 @@ navigate.waitForNavigationCompleted = async function waitForNavigationCompleted(
       "XULFrameLoaderCreated",
       onBrowsingContextChanged
     );
-    driver.dialogObserver?.remove(onDialogOpened);
+    driver.promptListener?.off("closed", onPromptClosed);
+    driver.promptListener?.off("opened", onPromptOpened);
     unloadTimer?.cancel();
 
     lazy.EventDispatcher.off("page-load", onNavigation);

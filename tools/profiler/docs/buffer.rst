@@ -30,7 +30,7 @@ ProfilerParent
   The main profiler machinery is installed in the parent process. It uses IPC to
   communicate to the child processes. The PProfiler is the actor which is used
   to communicate across processes to coordinate things. See `ProfilerParent.h`_. The
-  ProfilerParent uses the DestroyReleasedChunksAtOrBefore meessage to control the
+  ProfilerParent uses the DestroyReleasedChunksAtOrBefore message to control the
   overall chunk limit.
 
 ProfilerChild
@@ -55,7 +55,7 @@ Released chunk
 
 Recycled chunk
   This is a chunk that was previously written into, and full. When memory limits occur,
-  rather than freeing the memory, it is re-used as the next chunk.
+  rather than freeing the memory, it is reused as the next chunk.
 
 .. _ProfileChunkedBuffer: https://searchfox.org/mozilla-central/search?q=ProfileChunkedBuffer&path=&case=true&regexp=false
 .. _ProfileChunkManager: https://searchfox.org/mozilla-central/search?q=ProfileBufferChunkManager.h&path=&case=true&regexp=false

@@ -8,6 +8,7 @@ interface URI;
 interface nsIDocShell;
 interface RemoteTab;
 interface nsIDOMProcessParent;
+interface nsIRFPTargetSetIDL;
 
 [Exposed=Window, ChromeOnly]
 interface WindowContext {
@@ -34,6 +35,17 @@ interface WindowContext {
 
   readonly attribute boolean shouldResistFingerprinting;
 
+  // True if this window is using unpartitioned cookies.
+  readonly attribute boolean usingStorageAccess;
+
+  // The granular fingerprinting protection overrides for the context. We will
+  // use the granular overrides to decide which fingerprinting protection we
+  // want to enable in the context due to the WebCompat reason. The value can be
+  // null, which means we are using default fingerprinting protection in the
+  // context.
+  [BinaryName="OverriddenFingerprintingSettingsWebIDL"]
+  readonly attribute nsIRFPTargetSetIDL? overriddenFingerprintingSettings;
+
   /**
    * Partially determines whether script execution is allowed in this
    * BrowsingContext. Script execution will be permitted only if this
@@ -45,7 +57,7 @@ interface WindowContext {
   [SetterThrows] attribute boolean allowJavascript;
 };
 
-// Keep this in sync with nsIContentViewer::PermitUnloadAction.
+// Keep this in sync with nsIDocumentViewer::PermitUnloadAction.
 enum PermitUnloadAction {
   "prompt",
   "dontUnload",
@@ -166,6 +178,7 @@ interface WindowGlobalChild {
   readonly attribute boolean isInProcess;
   readonly attribute BrowsingContext browsingContext;
   readonly attribute WindowContext windowContext;
+  readonly attribute WindowProxy? contentWindow;
 
   readonly attribute boolean isCurrentGlobal;
 

@@ -6,6 +6,7 @@
 
 #include "WebRenderAPI.h"
 
+#include "mozilla/Logging.h"
 #include "mozilla/ipc/ByteBuf.h"
 #include "mozilla/webrender/RendererOGL.h"
 #include "mozilla/gfx/gfxVars.h"
@@ -21,11 +22,9 @@
 #include "malloc_decls.h"
 #include "GLContext.h"
 
-// clang-format off
-#define WRDL_LOG(...)
-//#define WRDL_LOG(...) printf_stderr("WRDL(%p): " __VA_ARGS__)
-//#define WRDL_LOG(...) if (XRE_IsContentProcess()) printf_stderr("WRDL(%p): " __VA_ARGS__)
-// clang-format on
+static mozilla::LazyLogModule sWrDLLog("wr.dl");
+#define WRDL_LOG(...) \
+  MOZ_LOG(sWrDLLog, LogLevel::Debug, ("WRDL(%p): " __VA_ARGS__))
 
 namespace mozilla {
 using namespace layers;
@@ -139,7 +138,8 @@ class NewRenderer : public RendererEvent {
             gfx::gfxVars::UseWebRenderScissoredCacheClears(), swgl, gl,
             compositor->SurfaceOriginIsTopLeft(), progCache, shaders,
             aRenderThread.ThreadPool().Raw(),
-            aRenderThread.ThreadPoolLP().Raw(), &WebRenderMallocSizeOf,
+            aRenderThread.ThreadPoolLP().Raw(), aRenderThread.MemoryChunkPool(),
+            aRenderThread.GlyphRasterThread().Raw(), &WebRenderMallocSizeOf,
             &WebRenderMallocEnclosingSizeOf, 0, compositor.get(),
             compositor->ShouldUseNativeCompositor(),
             compositor->UsePartialPresent(),
@@ -150,7 +150,9 @@ class NewRenderer : public RendererEvent {
             panic_on_gl_error, picTileWidth, picTileHeight,
             gfx::gfxVars::WebRenderRequiresHardwareDriver(),
             StaticPrefs::gfx_webrender_low_quality_pinch_zoom_AtStartup(),
-            StaticPrefs::gfx_webrender_max_shared_surface_size_AtStartup())) {
+            StaticPrefs::gfx_webrender_max_shared_surface_size_AtStartup(),
+            StaticPrefs::gfx_webrender_enable_subpixel_aa_AtStartup(),
+            compositor->ShouldUseLayerCompositor())) {
       // wr_window_new puts a message into gfxCriticalNote if it returns false
       MOZ_ASSERT(errorMessage);
       mError->AssignASCII(errorMessage);
@@ -177,6 +179,8 @@ class NewRenderer : public RendererEvent {
 
     aRenderThread.AddRenderer(aWindowId, std::move(renderer));
   }
+
+  const char* Name() override { return "NewRenderer"; }
 
  private:
   wr::DocumentHandle** mDocHandle;
@@ -209,18 +213,41 @@ class RemoveRenderer : public RendererEvent {
     layers::AutoCompleteTask complete(mTask);
   }
 
+  const char* Name() override { return "RemoveRenderer"; }
+
  private:
   layers::SynchronousTask* mTask;
 };
 
-TransactionBuilder::TransactionBuilder(WebRenderAPI* aApi,
-                                       bool aUseSceneBuilderThread)
-    : mUseSceneBuilderThread(aUseSceneBuilderThread),
-      mApiBackend(aApi->GetBackendType()) {
+TransactionBuilder::TransactionBuilder(
+    WebRenderAPI* aApi, bool aUseSceneBuilderThread,
+    layers::RemoteTextureTxnScheduler* aRemoteTextureTxnScheduler,
+    layers::RemoteTextureTxnId aRemoteTextureTxnId)
+    : mRemoteTextureTxnScheduler(aRemoteTextureTxnScheduler),
+      mRemoteTextureTxnId(aRemoteTextureTxnId),
+      mUseSceneBuilderThread(aUseSceneBuilderThread),
+      mApiBackend(aApi->GetBackendType()),
+      mOwnsData(true) {
   mTxn = wr_transaction_new(mUseSceneBuilderThread);
 }
 
-TransactionBuilder::~TransactionBuilder() { wr_transaction_delete(mTxn); }
+TransactionBuilder::TransactionBuilder(
+    WebRenderAPI* aApi, Transaction* aTxn, bool aUseSceneBuilderThread,
+    bool aOwnsData,
+    layers::RemoteTextureTxnScheduler* aRemoteTextureTxnScheduler,
+    layers::RemoteTextureTxnId aRemoteTextureTxnId)
+    : mRemoteTextureTxnScheduler(aRemoteTextureTxnScheduler),
+      mRemoteTextureTxnId(aRemoteTextureTxnId),
+      mTxn(aTxn),
+      mUseSceneBuilderThread(aUseSceneBuilderThread),
+      mApiBackend(aApi->GetBackendType()),
+      mOwnsData(aOwnsData) {}
+
+TransactionBuilder::~TransactionBuilder() {
+  if (mOwnsData) {
+    wr_transaction_delete(mTxn);
+  }
+}
 
 void TransactionBuilder::SetLowPriority(bool aIsLowPriority) {
   wr_transaction_set_low_priority(mTxn, aIsLowPriority);
@@ -253,9 +280,9 @@ void TransactionBuilder::ClearDisplayList(Epoch aEpoch,
   wr_transaction_clear_display_list(mTxn, aEpoch, aPipelineId);
 }
 
-void TransactionBuilder::GenerateFrame(const VsyncId& aVsyncId,
+void TransactionBuilder::GenerateFrame(const VsyncId& aVsyncId, bool aPresent,
                                        wr::RenderReasons aReasons) {
-  wr_transaction_generate_frame(mTxn, aVsyncId.mId, aReasons);
+  wr_transaction_generate_frame(mTxn, aVsyncId.mId, aPresent, aReasons);
 }
 
 void TransactionBuilder::InvalidateRenderedFrame(wr::RenderReasons aReasons) {
@@ -307,15 +334,19 @@ void TransactionWrapper::AppendTransformProperties(
 }
 
 void TransactionWrapper::UpdateScrollPosition(
-    const wr::WrPipelineId& aPipelineId,
-    const layers::ScrollableLayerGuid::ViewID& aScrollId,
+    const wr::ExternalScrollId& aScrollId,
     const nsTArray<wr::SampledScrollOffset>& aSampledOffsets) {
-  wr_transaction_scroll_layer(mTxn, aPipelineId, aScrollId, &aSampledOffsets);
+  wr_transaction_scroll_layer(mTxn, aScrollId, &aSampledOffsets);
 }
 
 void TransactionWrapper::UpdateIsTransformAsyncZooming(uint64_t aAnimationId,
                                                        bool aIsZooming) {
   wr_transaction_set_is_transform_async_zooming(mTxn, aAnimationId, aIsZooming);
+}
+
+void TransactionWrapper::AddMinimapData(const wr::ExternalScrollId& aScrollId,
+                                        const MinimapData& aMinimapData) {
+  wr_transaction_add_minimap_data(mTxn, aScrollId, aMinimapData);
 }
 
 /*static*/
@@ -338,7 +369,7 @@ already_AddRefed<WebRenderAPI> WebRenderAPI::Create(
   bool useDComp = false;
   bool useTripleBuffering = false;
   bool supportsExternalBufferTextures = false;
-  layers::SyncHandle syncHandle = 0;
+  layers::SyncHandle syncHandle = {};
 
   // Dispatch a synchronous task because the DocumentHandle object needs to be
   // created on the render thread. If need be we could delay waiting on this
@@ -368,12 +399,10 @@ already_AddRefed<WebRenderAPI> WebRenderAPI::Clone() {
   wr::DocumentHandle* docHandle = nullptr;
   wr_api_clone(mDocHandle, &docHandle);
 
-  RefPtr<WebRenderAPI> renderApi =
-      new WebRenderAPI(docHandle, mId, mBackend, mCompositor, mMaxTextureSize,
-                       mUseANGLE, mUseDComp, mUseTripleBuffering,
-                       mSupportsExternalBufferTextures, mSyncHandle);
-  renderApi->mRootApi = this;  // Hold root api
-  renderApi->mRootDocumentApi = this;
+  RefPtr<WebRenderAPI> renderApi = new WebRenderAPI(
+      docHandle, mId, mBackend, mCompositor, mMaxTextureSize, mUseANGLE,
+      mUseDComp, mUseTripleBuffering, mSupportsExternalBufferTextures,
+      mSyncHandle, this, this);
 
   return renderApi.forget();
 }
@@ -382,13 +411,12 @@ wr::WrIdNamespace WebRenderAPI::GetNamespace() {
   return wr_api_get_namespace(mDocHandle);
 }
 
-WebRenderAPI::WebRenderAPI(wr::DocumentHandle* aHandle, wr::WindowId aId,
-                           WebRenderBackend aBackend,
-                           WebRenderCompositor aCompositor,
-                           uint32_t aMaxTextureSize, bool aUseANGLE,
-                           bool aUseDComp, bool aUseTripleBuffering,
-                           bool aSupportsExternalBufferTextures,
-                           layers::SyncHandle aSyncHandle)
+WebRenderAPI::WebRenderAPI(
+    wr::DocumentHandle* aHandle, wr::WindowId aId, WebRenderBackend aBackend,
+    WebRenderCompositor aCompositor, uint32_t aMaxTextureSize, bool aUseANGLE,
+    bool aUseDComp, bool aUseTripleBuffering,
+    bool aSupportsExternalBufferTextures, layers::SyncHandle aSyncHandle,
+    wr::WebRenderAPI* aRootApi, wr::WebRenderAPI* aRootDocumentApi)
     : mDocHandle(aHandle),
       mId(aId),
       mBackend(aBackend),
@@ -400,7 +428,9 @@ WebRenderAPI::WebRenderAPI(wr::DocumentHandle* aHandle, wr::WindowId aId,
       mSupportsExternalBufferTextures(aSupportsExternalBufferTextures),
       mCaptureSequence(false),
       mSyncHandle(aSyncHandle),
-      mRendererDestroyed(false) {}
+      mRendererDestroyed(false),
+      mRootApi(aRootApi),
+      mRootDocumentApi(aRootDocumentApi) {}
 
 WebRenderAPI::~WebRenderAPI() {
   if (!mRootDocumentApi) {
@@ -430,6 +460,13 @@ void WebRenderAPI::DestroyRenderer() {
   mRendererDestroyed = true;
 }
 
+wr::WebRenderAPI* WebRenderAPI::GetRootAPI() {
+  if (mRootApi) {
+    return mRootApi;
+  }
+  return this;
+}
+
 void WebRenderAPI::UpdateDebugFlags(uint32_t aFlags) {
   wr_api_set_debug_flags(mDocHandle, wr::DebugFlags{aFlags});
 }
@@ -446,13 +483,23 @@ void WebRenderAPI::SendTransaction(TransactionBuilder& aTxn) {
             std::move(mPendingRemoteTextureInfoList)));
   }
 
+  if (mPendingAsyncImagePipelineOps &&
+      !mPendingAsyncImagePipelineOps->mList.empty()) {
+    mPendingWrTransactionEvents.emplace(
+        WrTransactionEvent::PendingAsyncImagePipelineOps(
+            std::move(mPendingAsyncImagePipelineOps), this, aTxn));
+  }
+
   if (!mPendingWrTransactionEvents.empty()) {
-    mPendingWrTransactionEvents.emplace(WrTransactionEvent::Transaction(
-        aTxn.Take(), aTxn.UseSceneBuilderThread()));
+    mPendingWrTransactionEvents.emplace(
+        WrTransactionEvent::Transaction(this, aTxn));
     HandleWrTransactionEvents(RemoteTextureWaitType::AsyncWait);
   } else {
     wr_api_send_transaction(mDocHandle, aTxn.Raw(),
                             aTxn.UseSceneBuilderThread());
+    if (aTxn.mRemoteTextureTxnScheduler) {
+      aTxn.mRemoteTextureTxnScheduler->NotifyTxn(aTxn.mRemoteTextureTxnId);
+    }
   }
 }
 
@@ -462,30 +509,40 @@ layers::RemoteTextureInfoList* WebRenderAPI::GetPendingRemoteTextureInfoList() {
     return nullptr;
   }
 
-  if (!gfx::gfxVars::UseCanvasRenderThread() ||
-      !StaticPrefs::webgl_out_of_process_async_present() ||
-      gfx::gfxVars::WebglOopAsyncPresentForceSync()) {
-    return nullptr;
-  }
-
-  // async remote texture is enabled
-  MOZ_ASSERT(gfx::gfxVars::UseCanvasRenderThread());
-  MOZ_ASSERT(StaticPrefs::webgl_out_of_process_async_present());
-  MOZ_ASSERT(!gfx::gfxVars::WebglOopAsyncPresentForceSync());
-
   if (!mPendingRemoteTextureInfoList) {
     mPendingRemoteTextureInfoList = MakeUnique<layers::RemoteTextureInfoList>();
   }
   return mPendingRemoteTextureInfoList.get();
 }
 
+layers::AsyncImagePipelineOps* WebRenderAPI::GetPendingAsyncImagePipelineOps(
+    TransactionBuilder& aTxn) {
+  if (!mRootApi) {
+    // root api does not support async wait RemoteTexture.
+    return nullptr;
+  }
+
+  if (!mPendingAsyncImagePipelineOps ||
+      mPendingAsyncImagePipelineOps->mTransaction != aTxn.Raw()) {
+    if (mPendingAsyncImagePipelineOps &&
+        !mPendingAsyncImagePipelineOps->mList.empty()) {
+      MOZ_ASSERT_UNREACHABLE("unexpected to be called");
+      gfxCriticalNoteOnce << "Invalid AsyncImagePipelineOps";
+    }
+    mPendingAsyncImagePipelineOps =
+        MakeUnique<layers::AsyncImagePipelineOps>(aTxn.Raw());
+  } else {
+    MOZ_RELEASE_ASSERT(mPendingAsyncImagePipelineOps->mTransaction ==
+                       aTxn.Raw());
+  }
+
+  return mPendingAsyncImagePipelineOps.get();
+}
+
 bool WebRenderAPI::CheckIsRemoteTextureReady(
-    layers::RemoteTextureInfoList* aList) {
+    layers::RemoteTextureInfoList* aList, const TimeStamp& aTimeStamp) {
   MOZ_ASSERT(layers::CompositorThreadHolder::IsInCompositorThread());
   MOZ_ASSERT(aList);
-  MOZ_ASSERT(gfx::gfxVars::UseCanvasRenderThread());
-  MOZ_ASSERT(StaticPrefs::webgl_out_of_process_async_present());
-  MOZ_ASSERT(!gfx::gfxVars::WebglOopAsyncPresentForceSync());
 
   RefPtr<WebRenderAPI> self = this;
   auto callback = [self](const layers::RemoteTextureInfo&) {
@@ -506,16 +563,32 @@ bool WebRenderAPI::CheckIsRemoteTextureReady(
     }
   }
 
-  return isReady;
+  if (isReady) {
+    return true;
+  }
+
+#ifndef DEBUG
+  const auto maxWaitDurationMs = 10000;
+#else
+  const auto maxWaitDurationMs = 30000;
+#endif
+  const auto now = TimeStamp::Now();
+  const auto waitDurationMs =
+      static_cast<uint32_t>((now - aTimeStamp).ToMilliseconds());
+
+  const auto isTimeout = waitDurationMs > maxWaitDurationMs;
+  if (isTimeout) {
+    MOZ_ASSERT_UNREACHABLE("unexpected to be called");
+    gfxCriticalNote << "RemoteTexture ready timeout";
+  }
+
+  return false;
 }
 
 void WebRenderAPI::WaitRemoteTextureReady(
     layers::RemoteTextureInfoList* aList) {
   MOZ_ASSERT(layers::CompositorThreadHolder::IsInCompositorThread());
   MOZ_ASSERT(aList);
-  MOZ_ASSERT(gfx::gfxVars::UseCanvasRenderThread());
-  MOZ_ASSERT(StaticPrefs::webgl_out_of_process_async_present());
-  MOZ_ASSERT(!gfx::gfxVars::WebglOopAsyncPresentForceSync());
 
   while (!aList->mList.empty()) {
     auto& front = aList->mList.front();
@@ -539,13 +612,18 @@ void WebRenderAPI::HandleWrTransactionEvents(RemoteTextureWaitType aType) {
     auto& front = events.front();
     switch (front.mTag) {
       case WrTransactionEvent::Tag::Transaction:
-        wr_api_send_transaction(mDocHandle, front.Transaction(),
+        wr_api_send_transaction(mDocHandle, front.RawTransaction(),
                                 front.UseSceneBuilderThread());
+        if (front.GetTransactionBuilder()->mRemoteTextureTxnScheduler) {
+          front.GetTransactionBuilder()->mRemoteTextureTxnScheduler->NotifyTxn(
+              front.GetTransactionBuilder()->mRemoteTextureTxnId);
+        }
         break;
-      case WrTransactionEvent::Tag::PendingRemoteTextures:
+      case WrTransactionEvent::Tag::PendingRemoteTextures: {
         bool isReady = true;
         if (aType == RemoteTextureWaitType::AsyncWait) {
-          isReady = CheckIsRemoteTextureReady(front.RemoteTextureInfoList());
+          isReady = CheckIsRemoteTextureReady(front.RemoteTextureInfoList(),
+                                              front.mTimeStamp);
         } else if (aType == RemoteTextureWaitType::FlushWithWait) {
           WaitRemoteTextureReady(front.RemoteTextureInfoList());
         } else {
@@ -554,14 +632,22 @@ void WebRenderAPI::HandleWrTransactionEvents(RemoteTextureWaitType aType) {
           while (!list->mList.empty()) {
             auto& front = list->mList.front();
             layers::RemoteTextureMap::Get()->SuppressRemoteTextureReadyCheck(
-                front.mTextureId, front.mForPid);
+                front);
             list->mList.pop();
           }
         }
-        if (!isReady) {
+        if (!isReady && (aType != RemoteTextureWaitType::FlushWithoutWait)) {
           return;
         }
         break;
+      }
+      case WrTransactionEvent::Tag::PendingAsyncImagePipelineOps: {
+        auto* list = front.AsyncImagePipelineOps();
+        TransactionBuilder& txn = *front.GetTransactionBuilder();
+
+        list->HandleOps(txn);
+        break;
+      }
     }
     events.pop();
   }
@@ -614,13 +700,22 @@ void WebRenderAPI::Readback(const TimeStamp& aStartTime, gfx::IntSize size,
     MOZ_COUNTED_DTOR_OVERRIDE(Readback)
 
     void Run(RenderThread& aRenderThread, WindowId aWindowId) override {
-      aRenderThread.UpdateAndRender(aWindowId, VsyncId(), mStartTime,
-                                    /* aRender */ true, Some(mSize),
+      RendererStats stats = {0};
+      wr::FrameReadyParams params = {
+          .present = true,
+          .render = true,
+          .scrolled = false,
+      };
+      aRenderThread.UpdateAndRender(aWindowId, VsyncId(), mStartTime, params,
+                                    Some(mSize),
                                     wr::SurfaceFormatToImageFormat(mFormat),
-                                    Some(mBuffer), mNeedsYFlip);
+                                    Some(mBuffer), &stats, mNeedsYFlip);
       layers::AutoCompleteTask complete(mTask);
     }
 
+    const char* Name() override { return "Readback"; }
+
+   private:
     layers::SynchronousTask* mTask;
     TimeStamp mStartTime;
     gfx::IntSize mSize;
@@ -664,6 +759,10 @@ void WebRenderAPI::SetInt(wr::IntParameter aKey, int32_t aValue) {
   wr_api_set_int(mDocHandle, aKey, aValue);
 }
 
+void WebRenderAPI::SetFloat(wr::FloatParameter aKey, float aValue) {
+  wr_api_set_float(mDocHandle, aKey, aValue);
+}
+
 void WebRenderAPI::SetClearColor(const gfx::DeviceColor& aColor) {
   RenderThread::Get()->SetClearColor(mId, ToColorF(aColor));
 }
@@ -686,15 +785,15 @@ void WebRenderAPI::Pause() {
       layers::AutoCompleteTask complete(mTask);
     }
 
+    const char* Name() override { return "PauseEvent"; }
+
+   private:
     layers::SynchronousTask* mTask;
   };
 
   layers::SynchronousTask task("Pause");
   auto event = MakeUnique<PauseEvent>(&task);
-  // This event will be passed from wr_backend thread to renderer thread. That
-  // implies that all frame data have been processed when the renderer runs this
-  // event.
-  RunOnRenderThread(std::move(event));
+  RenderThread::Get()->PostEvent(mId, std::move(event));
 
   task.Wait();
 }
@@ -714,6 +813,9 @@ bool WebRenderAPI::Resume() {
       layers::AutoCompleteTask complete(mTask);
     }
 
+    const char* Name() override { return "ResumeEvent"; }
+
+   private:
     layers::SynchronousTask* mTask;
     bool* mResult;
   };
@@ -721,10 +823,7 @@ bool WebRenderAPI::Resume() {
   bool result = false;
   layers::SynchronousTask task("Resume");
   auto event = MakeUnique<ResumeEvent>(&task, &result);
-  // This event will be passed from wr_backend thread to renderer thread. That
-  // implies that all frame data have been processed when the renderer runs this
-  // event.
-  RunOnRenderThread(std::move(event));
+  RenderThread::Get()->PostEvent(mId, std::move(event));
 
   task.Wait();
   return result;
@@ -758,6 +857,9 @@ void WebRenderAPI::WaitFlushed() {
       layers::AutoCompleteTask complete(mTask);
     }
 
+    const char* Name() override { return "WaitFlushedEvent"; }
+
+   private:
     layers::SynchronousTask* mTask;
   };
 
@@ -816,6 +918,8 @@ void WebRenderAPI::BeginRecording(const TimeStamp& aRecordingStart,
                                             mRootPipelineId);
     }
 
+    const char* Name() override { return "BeginRecordingEvent"; }
+
    private:
     TimeStamp mRecordingStart;
     wr::PipelineId mRootPipelineId;
@@ -848,6 +952,8 @@ RefPtr<WebRenderAPI::EndRecordingPromise> WebRenderAPI::EndRecording() {
       return mPromise.Ensure(__func__);
     }
 
+    const char* Name() override { return "EndRecordingEvent"; }
+
    private:
     MozPromiseHolder<WebRenderAPI::EndRecordingPromise> mPromise;
   };
@@ -862,6 +968,10 @@ RefPtr<WebRenderAPI::EndRecordingPromise> WebRenderAPI::EndRecording() {
 void TransactionBuilder::Clear() { wr_resource_updates_clear(mTxn); }
 
 Transaction* TransactionBuilder::Take() {
+  if (!mOwnsData) {
+    MOZ_ASSERT_UNREACHABLE("unexpected to be called");
+    return nullptr;
+  }
   Transaction* txn = mTxn;
   mTxn = wr_transaction_new(mUseSceneBuilderThread);
   return txn;
@@ -892,9 +1002,11 @@ void TransactionBuilder::AddExternalImage(ImageKey key,
                                           const ImageDescriptor& aDescriptor,
                                           ExternalImageId aExtID,
                                           wr::ExternalImageType aImageType,
-                                          uint8_t aChannelIndex) {
+                                          uint8_t aChannelIndex,
+                                          bool aNormalizedUvs) {
   wr_resource_updates_add_external_image(mTxn, key, &aDescriptor, aExtID,
-                                         &aImageType, aChannelIndex);
+                                         &aImageType, aChannelIndex,
+                                         aNormalizedUvs);
 }
 
 void TransactionBuilder::AddExternalImageBuffer(
@@ -924,17 +1036,20 @@ void TransactionBuilder::UpdateExternalImage(ImageKey aKey,
                                              const ImageDescriptor& aDescriptor,
                                              ExternalImageId aExtID,
                                              wr::ExternalImageType aImageType,
-                                             uint8_t aChannelIndex) {
+                                             uint8_t aChannelIndex,
+                                             bool aNormalizedUvs) {
   wr_resource_updates_update_external_image(mTxn, aKey, &aDescriptor, aExtID,
-                                            &aImageType, aChannelIndex);
+                                            &aImageType, aChannelIndex,
+                                            aNormalizedUvs);
 }
 
 void TransactionBuilder::UpdateExternalImageWithDirtyRect(
     ImageKey aKey, const ImageDescriptor& aDescriptor, ExternalImageId aExtID,
     wr::ExternalImageType aImageType, const wr::DeviceIntRect& aDirtyRect,
-    uint8_t aChannelIndex) {
+    uint8_t aChannelIndex, bool aNormalizedUvs) {
   wr_resource_updates_update_external_image_with_dirty_rect(
-      mTxn, aKey, &aDescriptor, aExtID, &aImageType, aChannelIndex, aDirtyRect);
+      mTxn, aKey, &aDescriptor, aExtID, &aImageType, aChannelIndex,
+      aNormalizedUvs, aDirtyRect);
 }
 
 void TransactionBuilder::SetBlobImageVisibleArea(
@@ -948,6 +1063,14 @@ void TransactionBuilder::DeleteImage(ImageKey aKey) {
 
 void TransactionBuilder::DeleteBlobImage(BlobImageKey aKey) {
   wr_resource_updates_delete_blob_image(mTxn, aKey);
+}
+
+void TransactionBuilder::AddSnapshotImage(wr::SnapshotImageKey aKey) {
+  wr_resource_updates_add_snapshot_image(mTxn, aKey);
+}
+
+void TransactionBuilder::DeleteSnapshotImage(wr::SnapshotImageKey aKey) {
+  wr_resource_updates_delete_snapshot_image(mTxn, aKey);
 }
 
 void TransactionBuilder::AddRawFont(wr::FontKey aKey, wr::Vec<uint8_t>& aBytes,
@@ -998,6 +1121,8 @@ class FrameStartTime : public RendererEvent {
       renderer->SetFrameStartTime(mTime);
     }
   }
+
+  const char* Name() override { return "FrameStartTime"; }
 
  private:
   TimeStamp mTime;
@@ -1060,7 +1185,6 @@ void DisplayListBuilder::Begin(layers::DisplayItemCache* aCache) {
   mActiveFixedPosTracker = nullptr;
   mDisplayItemCache = aCache;
   mCurrentCacheSlot = Nothing();
-  mRemotePipelineIds.Clear();
 }
 
 void DisplayListBuilder::End(BuiltDisplayList& aOutDisplayList) {
@@ -1086,7 +1210,6 @@ void DisplayListBuilder::End(layers::DisplayListData& aOutTransaction) {
   aOutTransaction.mDLSpatialTree.emplace(dlSpatialTree.inner.data,
                                          dlSpatialTree.inner.length,
                                          dlSpatialTree.inner.capacity);
-  aOutTransaction.mRemotePipelineIds = mRemotePipelineIds.Clone();
   dlItems.inner.capacity = 0;
   dlItems.inner.data = nullptr;
   dlCache.inner.capacity = 0;
@@ -1132,8 +1255,17 @@ wr::WrClipChainId DisplayListBuilder::DefineClipChain(
   }
   uint64_t clipchainId = wr_dp_define_clipchain(
       mWrState, parent, aClips.Elements(), aClips.Length());
-  WRDL_LOG("DefineClipChain id=%" PRIu64 " clips=%zu\n", mWrState, clipchainId,
-           aClips.Length());
+  if (MOZ_LOG_TEST(sWrDLLog, LogLevel::Debug)) {
+    nsCString message;
+    message.AppendPrintf("DefineClipChain id=%" PRIu64
+                         " clipCount=%zu clipIds=[",
+                         clipchainId, aClips.Length());
+    for (const auto& clip : aClips) {
+      message.AppendPrintf("%" PRIuPTR ",", clip.id);
+    }
+    message.Append("]");
+    WRDL_LOG("%s", mWrState, message.get());
+  }
   return wr::WrClipChainId{clipchainId};
 }
 
@@ -1184,11 +1316,12 @@ wr::WrSpatialId DisplayListBuilder::DefineStickyFrame(
     const float* aRightMargin, const float* aBottomMargin,
     const float* aLeftMargin, const StickyOffsetBounds& aVerticalBounds,
     const StickyOffsetBounds& aHorizontalBounds,
-    const wr::LayoutVector2D& aAppliedOffset, wr::SpatialTreeItemKey aKey) {
+    const wr::LayoutVector2D& aAppliedOffset, wr::SpatialTreeItemKey aKey,
+    const WrAnimationProperty* aAnimation) {
   auto spatialId = wr_dp_define_sticky_frame(
       mWrState, mCurrentSpaceAndClipChain.space, aContentRect, aTopMargin,
       aRightMargin, aBottomMargin, aLeftMargin, aVerticalBounds,
-      aHorizontalBounds, aAppliedOffset, aKey);
+      aHorizontalBounds, aAppliedOffset, aKey, aAnimation);
 
   WRDL_LOG("DefineSticky id=%zu c=%s t=%s r=%s b=%s l=%s v=%s h=%s a=%s\n",
            mWrState, spatialId.id, ToString(aContentRect).c_str(),
@@ -1457,6 +1590,20 @@ void DisplayListBuilder::PushP010Image(
       aSupportsExternalCompositing);
 }
 
+void DisplayListBuilder::PushNV16Image(
+    const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
+    bool aIsBackfaceVisible, wr::ImageKey aImageChannel0,
+    wr::ImageKey aImageChannel1, wr::WrColorDepth aColorDepth,
+    wr::WrYuvColorSpace aColorSpace, wr::WrColorRange aColorRange,
+    wr::ImageRendering aRendering, bool aPreferCompositorSurface,
+    bool aSupportsExternalCompositing) {
+  wr_dp_push_yuv_NV16_image(
+      mWrState, aBounds, MergeClipLeaf(aClip), aIsBackfaceVisible,
+      &mCurrentSpaceAndClipChain, aImageChannel0, aImageChannel1, aColorDepth,
+      aColorSpace, aColorRange, aRendering, aPreferCompositorSurface,
+      aSupportsExternalCompositing);
+}
+
 void DisplayListBuilder::PushYCbCrInterleavedImage(
     const wr::LayoutRect& aBounds, const wr::LayoutRect& aClip,
     bool aIsBackfaceVisible, wr::ImageKey aImageChannel0,
@@ -1474,7 +1621,6 @@ void DisplayListBuilder::PushIFrame(const LayoutDeviceRect& aDevPxBounds,
                                     bool aIsBackfaceVisible,
                                     PipelineId aPipeline,
                                     bool aIgnoreMissingPipeline) {
-  mRemotePipelineIds.AppendElement(aPipeline);
   // If the incoming bounds size has decimals (As it could when zoom is
   // involved), and is pushed straight through here, the compositor would end up
   // calculating the destination rect to paint the rendered iframe into
@@ -1633,6 +1779,10 @@ void DisplayListBuilder::PushBoxShadow(
                         aIsBackfaceVisible, &mCurrentSpaceAndClipChain,
                         aBoxBounds, aOffset, aColor, aBlurRadius, aSpreadRadius,
                         aBorderRadius, aClipMode);
+}
+
+void DisplayListBuilder::PushDebug(uint32_t aVal) {
+  wr_dp_push_debug(mWrState, aVal);
 }
 
 void DisplayListBuilder::StartGroup(nsPaintedDisplayItem* aItem) {

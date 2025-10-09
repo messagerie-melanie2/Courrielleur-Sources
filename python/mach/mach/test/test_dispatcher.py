@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 from mozunit import main
-from six import string_types
 
 from mach.base import CommandContext
 from mach.registrar import Registrar
@@ -25,12 +24,14 @@ class TestDispatcher(unittest.TestCase):
             mach.settings.register_provider(provider)
 
         if config:
-            if isinstance(config, string_types):
+            if isinstance(config, str):
                 config = StringIO(config)
             mach.settings.load_fps([config])
 
         context = CommandContext(cwd="", settings=mach.settings)
-        return mach.get_argument_parser(context)
+        from mach.main import get_argument_parser
+
+        return get_argument_parser(context)
 
     def test_command_aliases(self):
         config = """

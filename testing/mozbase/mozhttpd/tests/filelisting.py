@@ -6,12 +6,12 @@
 
 import os
 import re
+from urllib.request import urlopen
 
 import mozhttpd
 import mozunit
 import pytest
 from six import ensure_str
-from six.moves.urllib.request import urlopen
 
 
 @pytest.fixture(name="docroot")
@@ -45,7 +45,7 @@ def test_filelist(httpd, docroot, path):
 
     filelist = os.listdir(docroot)
 
-    pattern = "\<[a-zA-Z0-9\-\_\.\=\"'\/\\\%\!\@\#\$\^\&\*\(\) :;]*\>"
+    pattern = r"""\<[a-zA-Z0-9\-\_\.\="'\/\\%\!\@\#\$\^\&\*\(\) :;]*\>"""
 
     for line in f.readlines():
         subbed_lined = re.sub(pattern, "", ensure_str(line).strip("\n"))
@@ -56,11 +56,11 @@ def test_filelist(httpd, docroot, path):
             and not webline.startswith("Directory listing for")
             and not webline.startswith("<!DOCTYPE")
         ):
-            msg = "File {} in dir listing corresponds to a file".format(webline)
+            msg = f"File {webline} in dir listing corresponds to a file"
             assert webline in filelist, msg
             filelist.remove(webline)
 
-    msg = "Should have no items in filelist ({}) unaccounted for".format(filelist)
+    msg = f"Should have no items in filelist ({filelist}) unaccounted for"
     assert len(filelist) == 0, msg
 
 

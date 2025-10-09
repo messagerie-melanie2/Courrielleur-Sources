@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| shell-option(--enable-temporal) skip-if(!this.hasOwnProperty('Temporal')||!xulRuntime.shell) -- Temporal is not enabled unconditionally, requires shell-options
 // Copyright (C) 2022 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -12,7 +12,7 @@ const instance = new Temporal.PlainDateTime(2000, 5, 2);
 
 ["UTC", "+01:30"].forEach((timeZone) => {
   const result = instance.toZonedDateTime(timeZone);
-  assert.sameValue(result.timeZone.id, timeZone, `Time zone created from string "${timeZone}"`);
+  assert.sameValue(result.timeZoneId, timeZone, `time zone slot should store string "${timeZone}"`);
 });
 
 reportCompare(0, 0);

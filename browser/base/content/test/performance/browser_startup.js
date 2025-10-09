@@ -29,6 +29,7 @@ const startupPhases = {
     allowlist: {
       modules: new Set([
         "resource:///modules/BrowserGlue.sys.mjs",
+        "moz-src:///browser/components/DesktopActorRegistry.sys.mjs",
         "resource:///modules/StartupRecorder.sys.mjs",
         "resource://gre/modules/AppConstants.sys.mjs",
         "resource://gre/modules/ActorManagerParent.sys.mjs",
@@ -56,16 +57,17 @@ const startupPhases = {
   "before first paint": {
     denylist: {
       modules: new Set([
-        "resource:///modules/AboutNewTab.jsm",
-        "resource:///modules/BrowserUsageTelemetry.jsm",
-        "resource:///modules/ContentCrashHandlers.jsm",
+        "resource:///modules/AboutNewTab.sys.mjs",
+        "resource:///modules/BrowserUsageTelemetry.sys.mjs",
+        "resource:///modules/ContentCrashHandlers.sys.mjs",
         "resource:///modules/ShellService.sys.mjs",
         "resource://gre/modules/NewTabUtils.sys.mjs",
         "resource://gre/modules/PageThumbs.sys.mjs",
         "resource://gre/modules/PlacesUtils.sys.mjs",
         "resource://gre/modules/Preferences.sys.mjs",
         "resource://gre/modules/SearchService.sys.mjs",
-        "resource://gre/modules/Sqlite.sys.mjs",
+        // Sqlite.sys.mjs commented out because of bug 1828735.
+        // "resource://gre/modules/Sqlite.sys.mjs"
       ]),
       services: new Set(["@mozilla.org/browser/search-service;1"]),
     },
@@ -78,15 +80,13 @@ const startupPhases = {
     denylist: {
       modules: new Set([
         "resource://gre/modules/Blocklist.sys.mjs",
-        // Bug 1391495 - BrowserWindowTracker.jsm is intermittently used.
-        // "resource:///modules/BrowserWindowTracker.jsm",
+        // Bug 1391495 - BrowserWindowTracker.sys.mjs is intermittently used.
+        // "resource:///modules/BrowserWindowTracker.sys.mjs",
         "resource://gre/modules/BookmarkHTMLUtils.sys.mjs",
         "resource://gre/modules/Bookmarks.sys.mjs",
         "resource://gre/modules/ContextualIdentityService.sys.mjs",
         "resource://gre/modules/FxAccounts.sys.mjs",
         "resource://gre/modules/FxAccountsStorage.sys.mjs",
-        "resource://gre/modules/PlacesBackups.sys.mjs",
-        "resource://gre/modules/PlacesExpiration.sys.mjs",
         "resource://gre/modules/PlacesSyncUtils.sys.mjs",
         "resource://gre/modules/PushComponents.sys.mjs",
       ]),
@@ -108,6 +108,13 @@ const startupPhases = {
   },
 };
 
+if (AppConstants.platform == "win") {
+  // On Windows we call checkForLaunchOnLogin early in startup.
+  startupPhases["before profile selection"].allowlist.modules.add(
+    "moz-src:///browser/components/shell/StartupOSIntegration.sys.mjs"
+  );
+}
+
 if (
   Services.prefs.getBoolPref("browser.startup.blankWindow") &&
   Services.prefs.getCharPref(
@@ -123,6 +130,13 @@ if (
 if (AppConstants.MOZ_CRASHREPORTER) {
   startupPhases["before handling user events"].denylist.modules.add(
     "resource://gre/modules/CrashSubmit.sys.mjs"
+  );
+}
+// Bug 1798750
+if (AppConstants.platform != "linux") {
+  startupPhases["before handling user events"].denylist.modules.add(
+    "resource://gre/modules/PlacesBackups.sys.mjs",
+    "resource://gre/modules/PlacesExpiration.sys.mjs"
   );
 }
 

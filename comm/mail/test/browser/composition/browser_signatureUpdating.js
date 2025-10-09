@@ -15,17 +15,17 @@
 "use strict";
 
 var { close_compose_window, open_compose_new_mail, setup_msg_contents } =
-  ChromeUtils.import("resource://testing-common/mozmill/ComposeHelpers.jsm");
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+  );
 var { be_in_folder, FAKE_SERVER_HOSTNAME, get_special_folder } =
-  ChromeUtils.import(
-    "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
   );
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-
-var cwc = null; // compose window controller
 
 add_setup(async function () {
   requestLongerTimeout(2);
@@ -42,12 +42,12 @@ add_setup(async function () {
 
   // Ensure we're in the tinderbox account as that has the right identities set
   // up for this test.
-  let server = MailServices.accounts.findServer(
+  const server = MailServices.accounts.findServer(
     "tinderbox",
     FAKE_SERVER_HOSTNAME,
     "pop3"
   );
-  let inbox = await get_special_folder(
+  const inbox = await get_special_folder(
     Ci.nsMsgFolderFlags.Inbox,
     false,
     server
@@ -82,16 +82,21 @@ async function plaintextComposeWindowSwitchSignatures(suppressSigSep) {
     "mail.identity.id2.suppress_signature_separator",
     suppressSigSep
   );
-  cwc = open_compose_new_mail();
+  const cwc = await open_compose_new_mail();
 
-  let contentFrame = cwc.window.document.getElementById("messageEditor");
-  let mailBody = contentFrame.contentDocument.body;
+  const contentFrame = cwc.document.getElementById("messageEditor");
+  const mailBody = contentFrame.contentDocument.body;
 
   // The first node in the body should be a BR node, which allows the user
   // to insert text before / outside of the signature.
   Assert.equal(mailBody.firstChild.localName, "br");
 
-  setup_msg_contents(cwc, "", "Plaintext compose window", "Body, first line.");
+  await setup_msg_contents(
+    cwc,
+    "",
+    "Plaintext compose window",
+    "Body, first line."
+  );
 
   let node = mailBody.lastChild;
 
@@ -112,7 +117,7 @@ async function plaintextComposeWindowSwitchSignatures(suppressSigSep) {
 
   if (!suppressSigSep) {
     Assert.equal(sigNode.textContent, kSeparator);
-    let brNode = sigNode.nextSibling;
+    const brNode = sigNode.nextSibling;
     Assert.equal(brNode.localName, "br");
     sigNode = brNode.nextSibling;
   }
@@ -121,7 +126,7 @@ async function plaintextComposeWindowSwitchSignatures(suppressSigSep) {
   Assert.equal(sigNode.textContent, expectedText);
 
   // Now switch identities!
-  await chooseIdentity(cwc.window, "id2");
+  await chooseIdentity(cwc, "id2");
 
   node = contentFrame.contentDocument.body.lastChild;
 
@@ -138,7 +143,7 @@ async function plaintextComposeWindowSwitchSignatures(suppressSigSep) {
   if (!suppressSigSep) {
     expectedText = "-- ";
     Assert.equal(sigNode.textContent, kSeparator);
-    let brNode = sigNode.nextSibling;
+    const brNode = sigNode.nextSibling;
     Assert.equal(brNode.localName, "br");
     sigNode = brNode.nextSibling;
   }
@@ -148,11 +153,11 @@ async function plaintextComposeWindowSwitchSignatures(suppressSigSep) {
 
   // Now check that the original signature has been removed by ensuring
   // that there's only one node with class moz-signature.
-  let sigs = contentFrame.contentDocument.querySelectorAll("." + kSigClass);
+  const sigs = contentFrame.contentDocument.querySelectorAll("." + kSigClass);
   Assert.equal(sigs.length, 1);
 
   // And ensure that the text we wrote wasn't altered
-  let bodyFirstChild = contentFrame.contentDocument.body.firstChild;
+  const bodyFirstChild = contentFrame.contentDocument.body.firstChild;
 
   while (node != bodyFirstChild) {
     node = node.previousSibling;
@@ -160,7 +165,7 @@ async function plaintextComposeWindowSwitchSignatures(suppressSigSep) {
 
   Assert.equal(node.nodeValue, "Body, first line.");
 
-  close_compose_window(cwc);
+  await close_compose_window(cwc);
 }
 
 add_task(async function testPlaintextComposeWindowSwitchSignatures() {
@@ -194,11 +199,11 @@ async function HTMLComposeWindowSwitchSignatures(
     "mail.identity.id2.suppress_signature_separator",
     suppressSigSep
   );
-  cwc = open_compose_new_mail();
+  const cwc = await open_compose_new_mail();
 
-  setup_msg_contents(cwc, "", "HTML compose window", "Body, first line.");
+  await setup_msg_contents(cwc, "", "HTML compose window", "Body, first line.");
 
-  let contentFrame = cwc.window.document.getElementById("messageEditor");
+  const contentFrame = cwc.document.getElementById("messageEditor");
   let node = contentFrame.contentDocument.body.lastChild;
 
   // In html compose, the signature is inside the last node, which has a
@@ -212,7 +217,7 @@ async function HTMLComposeWindowSwitchSignatures(
   }
 
   // Now switch identities!
-  await chooseIdentity(cwc.window, "id2");
+  await chooseIdentity(cwc, "id2");
 
   node = contentFrame.contentDocument.body.lastChild;
 
@@ -252,7 +257,7 @@ async function HTMLComposeWindowSwitchSignatures(
   // check that that the signature is the last node.
   Assert.equal(node, contentFrame.contentDocument.body.lastChild);
 
-  close_compose_window(cwc);
+  await close_compose_window(cwc);
 }
 
 add_task(async function testHTMLComposeWindowSwitchSignatures() {

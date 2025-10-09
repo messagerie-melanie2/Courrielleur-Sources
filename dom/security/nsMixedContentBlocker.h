@@ -9,12 +9,8 @@
 
 #define NS_MIXEDCONTENTBLOCKER_CONTRACTID "@mozilla.org/mixedcontentblocker;1"
 /* daf1461b-bf29-4f88-8d0e-4bcdf332c862 */
-#define NS_MIXEDCONTENTBLOCKER_CID                   \
-  {                                                  \
-    0xdaf1461b, 0xbf29, 0x4f88, {                    \
-      0x8d, 0x0e, 0x4b, 0xcd, 0xf3, 0x32, 0xc8, 0x62 \
-    }                                                \
-  }
+#define NS_MIXEDCONTENTBLOCKER_CID \
+  {0xdaf1461b, 0xbf29, 0x4f88, {0x8d, 0x0e, 0x4b, 0xcd, 0xf3, 0x32, 0xc8, 0x62}}
 
 // This enum defines type of content that is detected when an
 // nsMixedContentEvent fires
@@ -61,8 +57,13 @@ class nsMixedContentBlocker : public nsIContentPolicy,
   /**
    * Returns true if the provided content policy type is subject to the
    * mixed content level 2 upgrading mechanism (audio, video, image).
+   *
+   * @param aConsiderPrefs A boolean that indicates whether the result of this
+   * functions takes the `security.mixed_content.upgrade_display_content`
+   * preferences into account.
    */
-  static bool IsUpgradableContentType(nsContentPolicyType aType);
+  static bool IsUpgradableContentType(nsContentPolicyType aType,
+                                      bool aConsiderPrefs);
 
   /* Static version of ShouldLoad() that contains all the Mixed Content Blocker
    * logic.  Called from non-static ShouldLoad().
@@ -78,8 +79,7 @@ class nsMixedContentBlocker : public nsIContentPolicy,
    */
   static nsresult ShouldLoad(bool aHadInsecureImageRedirect,
                              nsIURI* aContentLocation, nsILoadInfo* aLoadInfo,
-                             const nsACString& aMimeGuess, bool aReportError,
-                             int16_t* aDecision);
+                             bool aReportError, int16_t* aDecision);
   static void AccumulateMixedContentHSTS(
       nsIURI* aURI, bool aActive, const OriginAttributes& aOriginAttributes);
 

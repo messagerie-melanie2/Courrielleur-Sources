@@ -7,7 +7,7 @@
 add_task(async function test_change_in_popup() {
   // This test assumes that the Web Developer preset is set by default, which is
   // not the case on Nightly and custom builds.
-  BackgroundJSM.changePreset(
+  PrefsPresets.changePreset(
     "aboutprofiling",
     "web-developer",
     Services.profiler.GetFeatures()
@@ -122,7 +122,7 @@ add_task(async function test_change_in_popup() {
 add_task(async function test_change_in_about_profiling() {
   // This test assumes that the Web Developer preset is set by default, which is
   // not the case on Nightly and custom builds, or after previous tests.
-  BackgroundJSM.changePreset(
+  PrefsPresets.changePreset(
     "aboutprofiling",
     "web-developer",
     Services.profiler.GetFeatures()
@@ -294,18 +294,11 @@ add_task(async function test_change_in_about_profiling() {
         "The new value should have the same count of threads as the old value, please double check the test code."
       );
       setThreadInputValue(newThreadValue);
-      checkDevtoolsCustomPresetContent(
-        devtoolsDocument,
-        `
-          Interval: 2 ms
-          Threads: GeckoMain, Dummy
-          JavaScript
-          Native Stacks
-          CPU Utilization
-          Audio Callback Tracing
-          IPC Messages
-          Process CPU Utilization
-        `
+      ok(
+        getDevtoolsCustomPresetContent(devtoolsDocument).includes(
+          "Threads: GeckoMain, Dummy\n"
+        ),
+        "Threads list should match the changed value"
       );
     }
   );
@@ -314,7 +307,7 @@ add_task(async function test_change_in_about_profiling() {
 add_task(async function test_change_in_devtools_panel() {
   // This test assumes that the Web Developer preset is set by default, which is
   // not the case on Nightly and custom builds, or after previous tests.
-  BackgroundJSM.changePreset(
+  PrefsPresets.changePreset(
     "aboutprofiling",
     "web-developer",
     Services.profiler.GetFeatures()

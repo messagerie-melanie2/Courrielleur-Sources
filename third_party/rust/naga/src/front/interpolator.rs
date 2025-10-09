@@ -43,6 +43,7 @@ impl crate::Binding {
             location: _,
             interpolation: ref mut interpolation @ None,
             ref mut sampling,
+            blend_src: _,
         } = *self
         {
             match ty.scalar_kind() {

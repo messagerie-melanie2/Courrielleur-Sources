@@ -25,25 +25,23 @@ var {
   assert_tab_mode_name,
   assert_tab_titled_from,
   be_in_folder,
-  close_message_window,
   close_tab,
   create_folder,
   make_message_sets_in_folders,
-  mc,
   open_selected_message,
   open_selected_messages,
-  plan_for_message_display,
   reset_open_message_behavior,
   select_click_row,
   select_shift_click_row,
+  set_context_menu_background_tabs,
   set_open_message_behavior,
   switch_tab,
   wait_for_message_display_completion,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-var { async_plan_for_new_window, wait_for_new_window } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
+var { promise_new_window } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/WindowHelpers.sys.mjs"
 );
 
 // One folder's enough
@@ -61,13 +59,14 @@ add_setup(async function () {
  * Test opening a single message in a new tab.
  */
 add_task(async function test_open_single_message_in_tab() {
+  set_context_menu_background_tabs(false);
   set_open_message_behavior("NEW_TAB");
-  let folderTab = mc.window.document.getElementById("tabmail").currentTabInfo;
-  let preCount =
-    mc.window.document.getElementById("tabmail").tabContainer.allTabs.length;
+  const folderTab = document.getElementById("tabmail").currentTabInfo;
+  const preCount =
+    document.getElementById("tabmail").tabContainer.allTabs.length;
   await be_in_folder(folder);
   // Select one message
-  let msgHdr = select_click_row(1);
+  const msgHdr = await select_click_row(1);
   // Open it
   open_selected_message();
   // Check that the tab count has increased by 1
@@ -76,7 +75,7 @@ add_task(async function test_open_single_message_in_tab() {
   // opened tab is in the foreground)
   assert_tab_mode_name(null, "mailMessageTab");
 
-  let tab = mc.window.document.getElementById("tabmail").currentTabInfo;
+  const tab = document.getElementById("tabmail").currentTabInfo;
   if (
     tab.chromeBrowser.docShell.isLoadingDocument ||
     tab.chromeBrowser.currentURI.spec != "about:message"
@@ -85,11 +84,11 @@ add_task(async function test_open_single_message_in_tab() {
   }
 
   // Check that the message header displayed is the right one
-  assert_selected_and_displayed(msgHdr);
+  await assert_selected_and_displayed(msgHdr);
   // Check that the message pane is focused
   assert_message_pane_focused();
   // Clean up, close the tab
-  close_tab(mc.window.document.getElementById("tabmail").currentTabInfo);
+  close_tab(document.getElementById("tabmail").currentTabInfo);
   await switch_tab(folderTab);
   reset_open_message_behavior();
 });
@@ -99,14 +98,14 @@ add_task(async function test_open_single_message_in_tab() {
  */
 add_task(async function test_open_multiple_messages_in_tabs() {
   set_open_message_behavior("NEW_TAB");
-  let folderTab = mc.window.document.getElementById("tabmail").currentTabInfo;
-  let preCount =
-    mc.window.document.getElementById("tabmail").tabContainer.allTabs.length;
+  const folderTab = document.getElementById("tabmail").currentTabInfo;
+  const preCount =
+    document.getElementById("tabmail").tabContainer.allTabs.length;
   await be_in_folder(folder);
 
   // Select a bunch of messages
-  select_click_row(1);
-  let selectedMessages = select_shift_click_row(NUM_MESSAGES_TO_OPEN);
+  await select_click_row(1);
+  const selectedMessages = await select_shift_click_row(NUM_MESSAGES_TO_OPEN);
   // Open them
   open_selected_messages();
   // Check that the tab count has increased by the correct number
@@ -118,8 +117,8 @@ add_task(async function test_open_multiple_messages_in_tabs() {
   // Now check whether each of the NUM_MESSAGES_TO_OPEN tabs has the correct
   // title
   for (let i = 0; i < NUM_MESSAGES_TO_OPEN; i++) {
-    assert_tab_titled_from(
-      mc.window.document.getElementById("tabmail").tabInfo[preCount + i],
+    await assert_tab_titled_from(
+      document.getElementById("tabmail").tabInfo[preCount + i],
       selectedMessages[i]
     );
   }
@@ -127,9 +126,9 @@ add_task(async function test_open_multiple_messages_in_tabs() {
   // Check whether each tab has the correct message and whether the message pane
   // is focused in each case, then close it to load the previous tab.
   for (let i = 0; i < NUM_MESSAGES_TO_OPEN; i++) {
-    assert_selected_and_displayed(selectedMessages.pop());
+    await assert_selected_and_displayed(selectedMessages.pop());
     assert_message_pane_focused();
-    close_tab(mc.window.document.getElementById("tabmail").currentTabInfo);
+    close_tab(document.getElementById("tabmail").currentTabInfo);
   }
   await switch_tab(folderTab);
   reset_open_message_behavior();
@@ -143,18 +142,18 @@ add_task(async function test_open_message_in_new_window() {
   await be_in_folder(folder);
 
   // Select a message
-  let msgHdr = select_click_row(1);
+  const msgHdr = await select_click_row(1);
 
-  let newWindowPromise = async_plan_for_new_window("mail:messageWindow");
+  const newWindowPromise = promise_new_window("mail:messageWindow");
   // Open it
   open_selected_message();
-  let msgc = await newWindowPromise;
-  wait_for_message_display_completion(msgc, true);
+  const msgc = await newWindowPromise;
+  await wait_for_message_display_completion(msgc, true);
 
-  assert_selected_and_displayed(msgc, msgHdr);
+  await assert_selected_and_displayed(msgc, msgHdr);
 
   // Clean up, close the window
-  close_message_window(msgc);
+  await BrowserTestUtils.closeWindow(msgc);
   reset_open_message_behavior();
 });
 
@@ -166,21 +165,20 @@ add_task(async function test_open_message_in_existing_window() {
   await be_in_folder(folder);
 
   // Open up a window
-  select_click_row(1);
-  let newWindowPromise = async_plan_for_new_window("mail:messageWindow");
+  await select_click_row(1);
+  const newWindowPromise = promise_new_window("mail:messageWindow");
   open_selected_message();
-  let msgc = await newWindowPromise;
-  wait_for_message_display_completion(msgc, true);
+  const msgc = await newWindowPromise;
+  await wait_for_message_display_completion(msgc, true);
 
   // Select another message and open it
-  let msgHdr = select_click_row(2);
-  plan_for_message_display(msgc);
+  const msgHdr = await select_click_row(2);
   open_selected_message();
-  wait_for_message_display_completion(msgc, true);
+  await wait_for_message_display_completion(msgc, true);
 
   // Check if our old window displays the message
-  assert_selected_and_displayed(msgc, msgHdr);
+  await assert_selected_and_displayed(msgc, msgHdr);
   // Clean up, close the window
-  close_message_window(msgc);
+  await BrowserTestUtils.closeWindow(msgc);
   reset_open_message_behavior();
 });

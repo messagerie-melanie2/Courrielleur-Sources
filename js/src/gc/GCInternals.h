@@ -12,16 +12,22 @@
 #define gc_GCInternals_h
 
 #include "mozilla/Maybe.h"
+#include "mozilla/Range.h"
 #include "mozilla/TimeStamp.h"
+#include "mozilla/Vector.h"
 
 #include "gc/Cell.h"
 #include "gc/GC.h"
 #include "gc/GCContext.h"
+#include "gc/GCMarker.h"
 #include "vm/GeckoProfiler.h"
 #include "vm/HelperThreads.h"
 #include "vm/JSContext.h"
 
 namespace js {
+
+class GCMarker;
+
 namespace gc {
 
 /*
@@ -189,8 +195,6 @@ class MOZ_RAII AutoRunParallelTask : public GCParallelTask {
   }
 };
 
-GCAbortReason IsIncrementalGCUnsafe(JSRuntime* rt);
-
 #ifdef JS_GC_ZEAL
 
 class MOZ_RAII AutoStopVerifyingBarriers {
@@ -297,6 +301,28 @@ class AutoSetThreadIsSweeping : public AutoSetThreadGCUseT<GCUse::Sweeping> {
 #endif
 };
 
+class MOZ_RAII AutoDisallowPreWriteBarrier {
+ public:
+  explicit AutoDisallowPreWriteBarrier(JS::GCContext* gcx) {
+#ifdef DEBUG
+    gcx_ = gcx;
+    MOZ_ASSERT(gcx->preWriteBarrierAllowed_);
+    gcx->preWriteBarrierAllowed_ = false;
+#endif
+  }
+  ~AutoDisallowPreWriteBarrier() {
+#ifdef DEBUG
+    MOZ_ASSERT(!gcx_->preWriteBarrierAllowed_);
+    gcx_->preWriteBarrierAllowed_ = true;
+#endif
+  }
+
+ private:
+#ifdef DEBUG
+  JS::GCContext* gcx_;
+#endif
+};
+
 #ifdef JSGC_HASH_TABLE_CHECKS
 void CheckHashTablesAfterMovingGC(JSRuntime* rt);
 void CheckHeapAfterGC(JSRuntime* rt);
@@ -321,6 +347,16 @@ struct MinorSweepingTracer final
   friend class GenericTracerImpl<MinorSweepingTracer>;
 };
 
+class MOZ_RAII AutoUpdateMarkStackRanges {
+  GCMarker& marker_;
+
+ public:
+  explicit AutoUpdateMarkStackRanges(GCMarker& marker) : marker_(marker) {
+    marker_.updateRangesAtStartOfSlice();
+  }
+  ~AutoUpdateMarkStackRanges() { marker_.updateRangesAtEndOfSlice(); }
+};
+
 extern void DelayCrossCompartmentGrayMarking(GCMarker* maybeMarker,
                                              JSObject* src);
 
@@ -329,7 +365,7 @@ inline bool IsOOMReason(JS::GCReason reason) {
          reason == JS::GCReason::MEM_PRESSURE;
 }
 
-void* AllocateCellInGC(JS::Zone* zone, AllocKind thingKind);
+void* AllocateTenuredCellInGC(JS::Zone* zone, AllocKind thingKind);
 
 void ReadProfileEnv(const char* envName, const char* helpText, bool* enableOut,
                     bool* workersOut, mozilla::TimeDuration* thresholdOut);
@@ -337,6 +373,16 @@ void ReadProfileEnv(const char* envName, const char* helpText, bool* enableOut,
 bool ShouldPrintProfile(JSRuntime* runtime, bool enable, bool workers,
                         mozilla::TimeDuration threshold,
                         mozilla::TimeDuration duration);
+
+using CharRange = mozilla::Range<const char>;
+using CharRangeVector = Vector<CharRange, 0, SystemAllocPolicy>;
+
+// Split a string on a given character and produce a vector of CharRanges that
+// reference the input string.
+extern bool SplitStringBy(const char* string, char delimiter,
+                          CharRangeVector* resultOut);
+extern bool SplitStringBy(const CharRange& string, char delimiter,
+                          CharRangeVector* resultOut);
 
 } /* namespace gc */
 } /* namespace js */

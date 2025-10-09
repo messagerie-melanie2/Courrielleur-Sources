@@ -51,7 +51,8 @@ class JSActor : public nsISupports, public nsWrapperCache {
   void GetName(nsCString& aName) { aName = Name(); }
 
   void SendAsyncMessage(JSContext* aCx, const nsAString& aMessageName,
-                        JS::Handle<JS::Value> aObj, ErrorResult& aRv);
+                        JS::Handle<JS::Value> aObj,
+                        JS::Handle<JS::Value> aTransfers, ErrorResult& aRv);
 
   already_AddRefed<Promise> SendQuery(JSContext* aCx,
                                       const nsAString& aMessageName,
@@ -78,7 +79,7 @@ class JSActor : public nsISupports, public nsWrapperCache {
 
   virtual ~JSActor() = default;
 
-  void SetName(const nsACString& aName);
+  void Init(const nsACString& aName);
 
   bool CanSend() const { return mCanSend; }
 
@@ -117,7 +118,7 @@ class JSActor : public nsISupports, public nsWrapperCache {
   // message.
   class QueryHandler final : public PromiseNativeHandler {
    public:
-    NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+    NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
     NS_DECL_CYCLE_COLLECTION_CLASS(QueryHandler)
 
     QueryHandler(JSActor* aActor, const JSActorMessageMeta& aMetadata,

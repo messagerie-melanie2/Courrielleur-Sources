@@ -9,16 +9,11 @@ import { EventEmitter } from "resource://gre/modules/EventEmitter.sys.mjs";
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
-  E10SUtils: "resource://gre/modules/E10SUtils.sys.mjs",
-  HiddenFrame: "resource://gre/modules/HiddenFrame.sys.mjs",
-  PromiseUtils: "resource://gre/modules/PromiseUtils.sys.mjs",
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
+  HiddenBrowserManager: "resource://gre/modules/HiddenFrame.sys.mjs",
 });
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
-});
-
-XPCOMUtils.defineLazyGetter(lazy, "logConsole", function () {
+ChromeUtils.defineLazyGetter(lazy, "logConsole", function () {
   return console.createInstance({
     prefix: "PageData",
     maxLogLevel: Services.prefs.getBoolPref("browser.pagedata.log", false)
@@ -38,10 +33,7 @@ XPCOMUtils.defineLazyPreferenceGetter(
   300
 );
 
-const ALLOWED_SCHEMES = ["http", "https", "data", "blob"];
-
-const BACKGROUND_WIDTH = 1024;
-const BACKGROUND_HEIGHT = 768;
+const ALLOWED_PROTOCOLS = new Set(["http:", "https:", "data:", "blob:"]);
 
 /**
  * Shifts the first element out of the set.
@@ -61,90 +53,6 @@ function shift(set) {
 
   set.delete(value);
   return value;
-}
-
-/**
- * A manager for hidden browsers. Responsible for creating and destroying a
- * hidden frame to hold them.
- */
-class HiddenBrowserManager {
-  /**
-   * The hidden frame if one has been created.
-   *
-   * @type {HiddenFrame | null}
-   */
-  #frame = null;
-  /**
-   * The number of hidden browser elements currently in use.
-   *
-   * @type {number}
-   */
-  #browsers = 0;
-
-  /**
-   * Creates and returns a new hidden browser.
-   *
-   * @returns {Browser}
-   */
-  async #acquireBrowser() {
-    this.#browsers++;
-    if (!this.#frame) {
-      this.#frame = new lazy.HiddenFrame();
-    }
-
-    let frame = await this.#frame.get();
-    let doc = frame.document;
-    let browser = doc.createXULElement("browser");
-    browser.setAttribute("remote", "true");
-    browser.setAttribute("type", "content");
-    browser.setAttribute(
-      "style",
-      `
-        width: ${BACKGROUND_WIDTH}px;
-        min-width: ${BACKGROUND_WIDTH}px;
-        height: ${BACKGROUND_HEIGHT}px;
-        min-height: ${BACKGROUND_HEIGHT}px;
-      `
-    );
-    browser.setAttribute("maychangeremoteness", "true");
-    doc.documentElement.appendChild(browser);
-
-    return browser;
-  }
-
-  /**
-   * Releases the given hidden browser.
-   *
-   * @param {Browser} browser
-   *   The hidden browser element.
-   */
-  #releaseBrowser(browser) {
-    browser.remove();
-
-    this.#browsers--;
-    if (this.#browsers == 0) {
-      this.#frame.destroy();
-      this.#frame = null;
-    }
-  }
-
-  /**
-   * Calls a callback function with a new hidden browser.
-   * This function will return whatever the callback function returns.
-   *
-   * @param {Callback} callback
-   *   The callback function will be called with the browser element and may
-   *   be asynchronous.
-   * @returns {T}
-   */
-  async withHiddenBrowser(callback) {
-    let browser = await this.#acquireBrowser();
-    try {
-      return await callback(browser);
-    } finally {
-      this.#releaseBrowser(browser);
-    }
-  }
 }
 
 /**
@@ -299,13 +207,6 @@ export const PageDataService = new (class PageDataService extends EventEmitter {
   #userIsIdle = false;
 
   /**
-   * A manager for hidden browsers.
-   *
-   * @type {HiddenBrowserManager}
-   */
-  #browserManager = new HiddenBrowserManager();
-
-  /**
    * A map of hidden browsers to a resolve function that should be passed the
    * actor that was created for the browser.
    *
@@ -457,8 +358,7 @@ export const PageDataService = new (class PageDataService extends EventEmitter {
    *   The url of the page.
    */
   async pageLoaded(actor, url) {
-    let uri = Services.io.newURI(url);
-    if (!ALLOWED_SCHEMES.includes(uri.scheme)) {
+    if (!ALLOWED_PROTOCOLS.has(new URL(url).protocol)) {
       return;
     }
 
@@ -540,25 +440,14 @@ export const PageDataService = new (class PageDataService extends EventEmitter {
    *   Resolves to the found pagedata or null in case of error.
    */
   async fetchPageData(url) {
-    return this.#browserManager.withHiddenBrowser(async browser => {
+    return lazy.HiddenBrowserManager.withHiddenBrowser(async browser => {
       try {
-        let { promise, resolve } = lazy.PromiseUtils.defer();
+        let { promise, resolve } = Promise.withResolvers();
         this.#backgroundBrowsers.set(browser, resolve);
 
         let principal = Services.scriptSecurityManager.getSystemPrincipal();
-        let oa = lazy.E10SUtils.predictOriginAttributes({
-          browser,
-        });
         let loadURIOptions = {
           triggeringPrincipal: principal,
-          remoteType: lazy.E10SUtils.getRemoteTypeForURI(
-            url,
-            true,
-            false,
-            lazy.E10SUtils.DEFAULT_REMOTE_TYPE,
-            null,
-            oa
-          ),
         };
         browser.fixupAndLoadURIString(url, loadURIOptions);
 
@@ -577,10 +466,8 @@ export const PageDataService = new (class PageDataService extends EventEmitter {
    *   The notification's subject.
    * @param {string} topic
    *   The notification topic.
-   * @param {string} data
-   *   The data associated with the notification.
    */
-  observe(subject, topic, data) {
+  observe(subject, topic) {
     switch (topic) {
       case "idle":
         lazy.logConsole.debug("User went idle");

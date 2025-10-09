@@ -7,7 +7,6 @@
 #define nsEmlxHelperUtils_h___
 
 #include "nscore.h"
-#include "nsString.h"
 
 class nsIOutputStream;
 class nsIFile;
@@ -37,14 +36,6 @@ class nsEmlxHelperUtils {
     // 1 << 30,            // highlight text in toc
     // 1 << 31             // (unused)
   };
-
-  // This method will scan the raw EMLX message buffer for "dangerous" so-called
-  // "From-lines" that we need to escape. If it needs to modify any lines, it
-  // will return a non-NULL aOutBuffer. If aOutBuffer is NULL, no modification
-  // needed to be made.
-  static nsresult ConvertToMboxRD(const char* aMessageBufferStart,
-                                  const char* aMessageBufferEnd,
-                                  nsCString& aOutBuffer);
 
   // returns an int representing the X-Mozilla-Status flags set (e.g. "read",
   // "flagged") converted from EMLX flags.

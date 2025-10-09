@@ -75,11 +75,10 @@ void gecko_profiler_destruct_marker_timing(
     mozilla::MarkerTiming* aMarkerTiming);
 
 // MarkerSchema constructors and destructor.
-void gecko_profiler_construct_marker_schema(
-    mozilla::MarkerSchema* aMarkerSchema,
+mozilla::MarkerSchema* gecko_profiler_construct_marker_schema(
     const mozilla::MarkerSchema::Location* aLocations, size_t aLength);
-void gecko_profiler_construct_marker_schema_with_special_front_end_location(
-    mozilla::MarkerSchema* aMarkerSchema);
+mozilla::MarkerSchema*
+gecko_profiler_construct_marker_schema_with_special_front_end_location();
 void gecko_profiler_destruct_marker_schema(
     mozilla::MarkerSchema* aMarkerSchema);
 
@@ -132,6 +131,9 @@ void gecko_profiler_json_writer_bool_property(
     mozilla::baseprofiler::SpliceableJSONWriter* aWriter, const char* aName,
     size_t aNameLength, bool aValue);
 void gecko_profiler_json_writer_string_property(
+    mozilla::baseprofiler::SpliceableJSONWriter* aWriter, const char* aName,
+    size_t aNameLength, const char* aValue, size_t aValueLength);
+void gecko_profiler_json_writer_unique_string_property(
     mozilla::baseprofiler::SpliceableJSONWriter* aWriter, const char* aName,
     size_t aNameLength, const char* aValue, size_t aValueLength);
 void gecko_profiler_json_writer_null_property(

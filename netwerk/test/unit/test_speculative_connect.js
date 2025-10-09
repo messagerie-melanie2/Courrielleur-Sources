@@ -54,15 +54,19 @@ var localIPLiterals = localIPv4Literals.concat(localIPv6Literals);
 /** Test function list and descriptions.
  */
 var testList = [
-  test_speculative_connect,
+  test_localhost_http_speculative_connect,
+  test_localhost_https_speculative_connect,
   test_hostnames_resolving_to_local_addresses,
   test_proxies_with_local_addresses,
+  test_speculative_connect_with_proxy_filter,
 ];
 
 var testDescription = [
-  "Expect pass with localhost",
+  "Expect pass with localhost, http",
+  "Expect pass with localhost, https",
   "Expect failure with resolved local IPs",
   "Expect failure for proxies with local IPs",
+  "Expect failure without notification callbacks",
 ];
 
 var testIdx = 0;
@@ -79,7 +83,7 @@ function TestServer() {
 
 TestServer.prototype = {
   QueryInterface: ChromeUtils.generateQI(["nsIServerSocket"]),
-  onSocketAccepted(socket, trans) {
+  onSocketAccepted() {
     try {
       this.listener.close();
     } catch (e) {}
@@ -87,7 +91,7 @@ TestServer.prototype = {
     next_test();
   },
 
-  onStopListening(socket) {},
+  onStopListening() {},
 };
 
 /** TestFailedStreamCallback
@@ -145,16 +149,34 @@ TestFailedStreamCallback.prototype = {
   },
 };
 
-/** test_speculative_connect
+/** test_localhost_http_speculative_connect
  *
  * Tests a basic positive case using nsIOService.SpeculativeConnect:
- * connecting to localhost.
+ * connecting to localhost via http.
  */
-function test_speculative_connect() {
+function test_localhost_http_speculative_connect() {
   serv = new TestServer();
   var ssm = Services.scriptSecurityManager;
   var URI = ios.newURI(
     "http://localhost:" + serv.listener.port + "/just/a/test"
+  );
+  var principal = ssm.createContentPrincipal(URI, {});
+
+  ios
+    .QueryInterface(Ci.nsISpeculativeConnect)
+    .speculativeConnect(URI, principal, null, false);
+}
+
+/** test_localhost_https_speculative_connect
+ *
+ * Tests a basic positive case using nsIOService.SpeculativeConnect:
+ * connecting to localhost via https.
+ */
+function test_localhost_https_speculative_connect() {
+  serv = new TestServer();
+  var ssm = Services.scriptSecurityManager;
+  var URI = ios.newURI(
+    "https://localhost:" + serv.listener.port + "/just/a/test"
   );
   var principal = ssm.createContentPrincipal(URI, {});
 
@@ -326,6 +348,54 @@ function test_proxies_with_local_addresses() {
   // Test another local IP address when the current one is done.
   var next = test_proxies_with_local_addresses;
   test_proxies(host, next);
+}
+
+class ProxyFilter {
+  constructor(type, host, port, flags) {
+    this._type = type;
+    this._host = host;
+    this._port = port;
+    this._flags = flags;
+    this.QueryInterface = ChromeUtils.generateQI(["nsIProtocolProxyFilter"]);
+  }
+  applyFilter(uri, pi, cb) {
+    const pps =
+      Cc["@mozilla.org/network/protocol-proxy-service;1"].getService();
+    cb.onProxyFilterResult(
+      pps.newProxyInfo(
+        this._type,
+        this._host,
+        this._port,
+        "",
+        "",
+        this._flags,
+        1000,
+        null
+      )
+    );
+  }
+}
+
+function test_speculative_connect_with_proxy_filter() {
+  let filter = new ProxyFilter("https", "localhost", 80, 0);
+  let pps = Cc["@mozilla.org/network/protocol-proxy-service;1"].getService();
+  pps.registerFilter(filter, 10);
+  let URI = ios.newURI("https://not-exist-dommain.com");
+  let principal = Services.scriptSecurityManager.createContentPrincipal(
+    URI,
+    {}
+  );
+
+  Assert.throws(
+    () =>
+      ios
+        .QueryInterface(Ci.nsISpeculativeConnect)
+        .speculativeConnect(URI, principal, null, false),
+    /NS_ERROR_FAILURE/,
+    "speculativeConnect should throw when no callback is provided and a proxy filter is registered"
+  );
+  pps.unregisterFilter(filter);
+  next_test();
 }
 
 /** next_test

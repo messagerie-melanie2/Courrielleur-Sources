@@ -2,6 +2,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+#include "mimehdrs.h"
 #include "nsCOMPtr.h"
 #include "mimeiimg.h"
 #include "mimemoz2.h"
@@ -23,11 +24,10 @@ static int MimeInlineImage_parse_begin(MimeObject*);
 static int MimeInlineImage_parse_line(const char*, int32_t, MimeObject*);
 static int MimeInlineImage_parse_eof(MimeObject*, bool);
 static int MimeInlineImage_parse_decoded_buffer(const char*, int32_t,
-                                                MimeObject*);
+                                                MimeClosure);
 
-static int MimeInlineImageClassInitialize(MimeInlineImageClass* clazz) {
-  MimeObjectClass* oclass = (MimeObjectClass*)clazz;
-  MimeLeafClass* lclass = (MimeLeafClass*)clazz;
+static int MimeInlineImageClassInitialize(MimeObjectClass* oclass) {
+  MimeLeafClass* lclass = (MimeLeafClass*)oclass;
 
   NS_ASSERTION(!oclass->class_initialized,
                "1.1 <rhp@netscape.com> 19 Mar 1999 12:00");
@@ -116,7 +116,8 @@ static int MimeInlineImage_parse_begin(MimeObject* obj) {
 
     if (!img->image_data) return MIME_OUT_OF_MEMORY;
 
-    html = obj->options->make_image_html(img->image_data);
+    html = obj->options->make_image_html(
+        MimeClosure(MimeClosure::isMimeImageStreamData, img->image_data));
     if (!html) return MIME_OUT_OF_MEMORY;
 
     status = MimeObject_write(obj, html, strlen(html), true);
@@ -129,8 +130,12 @@ static int MimeInlineImage_parse_begin(MimeObject* obj) {
   // URI for the url being run...
   //
   if (obj->options && obj->options->stream_closure && obj->content_type) {
-    mime_stream_data* msd = (mime_stream_data*)(obj->options->stream_closure);
-    if ((msd) && (msd->channel)) {
+    mime_stream_data* msd = obj->options->stream_closure.AsMimeStreamData();
+    if (!msd) {
+      return -1;
+    }
+
+    if (msd->channel) {
       msd->channel->SetContentType(nsDependentCString(obj->content_type));
     }
   }
@@ -148,8 +153,9 @@ static int MimeInlineImage_parse_eof(MimeObject* obj, bool abort_p) {
   if (status < 0) abort_p = true;
 
   if (img->image_data) {
-    obj->options->image_end(img->image_data,
-                            (status < 0 ? status : (abort_p ? -1 : 0)));
+    obj->options->image_end(
+        MimeClosure(MimeClosure::isMimeImageStreamData, img->image_data),
+        (status < 0 ? status : (abort_p ? -1 : 0)));
     img->image_data = 0;
   }
 
@@ -157,11 +163,16 @@ static int MimeInlineImage_parse_eof(MimeObject* obj, bool abort_p) {
 }
 
 static int MimeInlineImage_parse_decoded_buffer(const char* buf, int32_t size,
-                                                MimeObject* obj) {
+                                                MimeClosure closure) {
   /* This is called (by MimeLeafClass->parse_buffer) with blocks of data
    that have already been base64-decoded.  Pass this raw image data
    along to the backend-specific image display code.
    */
+  MimeObject* obj = closure.AsMimeObject();
+  if (!obj) {
+    return -1;
+  }
+
   MimeInlineImage* img = (MimeInlineImage*)obj;
   int status;
 
@@ -194,7 +205,9 @@ static int MimeInlineImage_parse_decoded_buffer(const char* buf, int32_t size,
 
   /* Hand this data off to the backend-specific image display stream.
    */
-  status = obj->options->image_write_buffer(buf, size, img->image_data);
+  status = obj->options->image_write_buffer(
+      buf, size,
+      MimeClosure(MimeClosure::isMimeImageStreamData, img->image_data));
 
   /* If the image display stream fails, then close the stream - but do not
    return the failure status, and do not give up on parsing this object.
@@ -203,7 +216,9 @@ static int MimeInlineImage_parse_decoded_buffer(const char* buf, int32_t size,
    this part, and letting our parent continue.
    */
   if (status < 0) {
-    obj->options->image_end(img->image_data, status);
+    obj->options->image_end(
+        MimeClosure(MimeClosure::isMimeImageStreamData, img->image_data),
+        status);
     img->image_data = 0;
     status = 0;
   }

@@ -26,8 +26,6 @@ void PresShell::SetNeedLayoutFlush() {
   if (!mReflowCause) {
     mReflowCause = profiler_capture_backtrace();
   }
-
-  mLayoutTelemetry.IncReqsPerFlush(FlushType::Layout);
 }
 
 void PresShell::SetNeedStyleFlush() {
@@ -48,13 +46,16 @@ void PresShell::SetNeedStyleFlush() {
   if (!mStyleCause) {
     mStyleCause = profiler_capture_backtrace();
   }
-
-  mLayoutTelemetry.IncReqsPerFlush(FlushType::Layout);
 }
 
 void PresShell::EnsureStyleFlush() {
   SetNeedStyleFlush();
-  ObserveStyleFlushes();
+  ScheduleFlush();
+}
+
+void PresShell::EnsureLayoutFlush() {
+  SetNeedLayoutFlush();
+  ScheduleFlush();
 }
 
 void PresShell::SetNeedThrottledAnimationFlush() {
@@ -67,7 +68,7 @@ void PresShell::SetNeedThrottledAnimationFlush() {
 }
 
 ServoStyleSet* PresShell::StyleSet() const {
-  return mDocument->StyleSetForPresShellOrMediaQueryEvaluation();
+  return mDocument->StyleSetForPresShell();
 }
 
 /* static */

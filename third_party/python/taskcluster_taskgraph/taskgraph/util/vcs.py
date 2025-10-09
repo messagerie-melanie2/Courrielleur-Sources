@@ -7,11 +7,9 @@ import logging
 import os
 import re
 import subprocess
-from abc import ABC, abstractmethod, abstractproperty
+from abc import ABC, abstractmethod
 from shutil import which
-
-import requests
-from redo import retry
+from typing import List, Optional
 
 from taskgraph.util.path import ancestors
 
@@ -21,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class Repository(ABC):
-    # Both mercurial and git use sha1 as revision idenfiers. Luckily, both define
+    # Both mercurial and git use sha1 as revision identifiers. Luckily, both define
     # the same value as the null revision.
     #
     # https://github.com/git/git/blob/dc04167d378fb29d30e1647ff6ff51dd182bc9a3/t/oid-info/hash-info#L7
@@ -37,51 +35,67 @@ class Repository(ABC):
 
         self._env = os.environ.copy()
 
-    def run(self, *args: str, **kwargs):
+    def run(self, *args: str, **kwargs) -> str:
         return_codes = kwargs.pop("return_codes", [])
         cmd = (self.binary,) + args
 
         try:
-            return subprocess.check_output(
-                cmd, cwd=self.path, env=self._env, encoding="utf-8", **kwargs
+            return subprocess.check_output(  # type: ignore
+                cmd,  # type: ignore
+                cwd=self.path,
+                env=self._env,
+                encoding="utf-8",
+                **kwargs,
             )
         except subprocess.CalledProcessError as e:
             if e.returncode in return_codes:
                 return ""
             raise
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def tool(self) -> str:
         """Version control system being used, either 'hg' or 'git'."""
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def head_rev(self) -> str:
         """Hash of HEAD revision."""
 
-    @abstractproperty
-    def base_rev(self):
+    @property
+    @abstractmethod
+    def base_rev(self) -> str:
         """Hash of revision the current topic branch is based on."""
 
-    @abstractproperty
-    def branch(self):
+    @property
+    @abstractmethod
+    def branch(self) -> Optional[str]:
         """Current branch or bookmark the checkout has active."""
 
-    @abstractproperty
-    def all_remote_names(self):
+    @property
+    @abstractmethod
+    def all_remote_names(self) -> List[str]:
         """Name of all configured remote repositories."""
 
-    @abstractproperty
-    def default_remote_name(self):
+    @property
+    @abstractmethod
+    def default_remote_name(self) -> str:
         """Name the VCS defines for the remote repository when cloning
         it for the first time. This name may not exist anymore if users
         changed the default configuration, for instance."""
 
-    @abstractproperty
-    def remote_name(self):
+    @property
+    @abstractmethod
+    def remote_name(self) -> str:
         """Name of the remote repository."""
 
-    def _get_most_suitable_remote(self, remote_instructions):
+    def _get_most_suitable_remote(self, remote_instructions) -> str:
         remotes = self.all_remote_names
+
+        # in case all_remote_names raised a RuntimeError
+        if remotes is None:
+            raise RuntimeError("No valid remotes found")
+
         if len(remotes) == 1:
             return remotes[0]
 
@@ -98,20 +112,36 @@ class Repository(ABC):
 
         return first_remote
 
-    @abstractproperty
-    def default_branch(self):
+    @property
+    @abstractmethod
+    def default_branch(self) -> str:
         """Name of the default branch."""
 
     @abstractmethod
-    def get_url(self, remote=None):
+    def get_url(self, remote: Optional[str]) -> str:
         """Get URL of the upstream repository."""
 
     @abstractmethod
-    def get_commit_message(self, revision=None):
+    def get_commit_message(self, revision: Optional[str]) -> str:
         """Commit message of specified revision or current commit."""
 
     @abstractmethod
-    def get_changed_files(self, diff_filter, mode="unstaged", rev=None, base_rev=None):
+    def get_tracked_files(self, *paths: str, rev: Optional[str] = None) -> List[str]:
+        """Return list of tracked files.
+
+        ``*paths`` are path specifiers to limit results to.
+        ``rev`` is a revision specifier at which to retrieve the files.
+        Defaults to the parent of the working copy if unspecified.
+        """
+
+    @abstractmethod
+    def get_changed_files(
+        self,
+        diff_filter: Optional[str],
+        mode: Optional[str],
+        rev: Optional[str],
+        base_rev: Optional[str],
+    ) -> List[str]:
         """Return a list of files that are changed in:
          * either this repository's working copy,
          * or at a given revision (``rev``)
@@ -138,7 +168,7 @@ class Repository(ABC):
         """
 
     @abstractmethod
-    def get_outgoing_files(self, diff_filter, upstream):
+    def get_outgoing_files(self, diff_filter: str, upstream: str) -> List[str]:
         """Return a list of changed files compared to upstream.
 
         ``diff_filter`` works the same as `get_changed_files`.
@@ -148,7 +178,9 @@ class Repository(ABC):
         """
 
     @abstractmethod
-    def working_directory_clean(self, untracked=False, ignored=False):
+    def working_directory_clean(
+        self, untracked: Optional[bool] = False, ignored: Optional[bool] = False
+    ) -> bool:
         """Determine if the working directory is free of modifications.
 
         Returns True if the working directory does not have any file
@@ -160,16 +192,19 @@ class Repository(ABC):
         """
 
     @abstractmethod
-    def update(self, ref):
+    def update(self, ref: str) -> None:
         """Update the working directory to the specified reference."""
 
     @abstractmethod
-    def find_latest_common_revision(self, base_ref_or_rev, head_rev):
+    def find_latest_common_revision(self, base_ref_or_rev: str, head_rev: str) -> str:
         """Find the latest revision that is common to both the given
-        ``head_rev`` and ``base_ref_or_rev``"""
+        ``head_rev`` and ``base_ref_or_rev``.
+
+        If no common revision exists, ``Repository.NULL_REVISION`` will
+        be returned."""
 
     @abstractmethod
-    def does_revision_exist_locally(self, revision):
+    def does_revision_exist_locally(self, revision: str) -> bool:
         """Check whether this revision exists in the local repository.
 
         If this function returns an unexpected value, then make sure
@@ -177,8 +212,13 @@ class Repository(ABC):
 
 
 class HgRepository(Repository):
-    tool = "hg"
-    default_remote_name = "default"
+    @property
+    def tool(self) -> str:
+        return "hg"
+
+    @property
+    def default_remote_name(self) -> str:
+        return "default"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -221,12 +261,13 @@ class HgRepository(Repository):
         # https://www.mercurial-scm.org/wiki/StandardBranching#Don.27t_use_a_name_other_than_default_for_your_main_development_branch
         return "default"
 
-    def get_url(self, remote="default"):
+    def get_url(self, remote=None):
+        remote = remote or "default"
         return self.run("path", "-T", "{url}", remote).strip()
 
     def get_commit_message(self, revision=None):
-        revision = revision or self.head_rev
-        return self.run("log", "-r", ".", "-T", "{desc}")
+        revision = revision or "."
+        return self.run("log", "-r", revision, "-T", "{desc}")
 
     def _format_diff_filter(self, diff_filter, for_status=False):
         df = diff_filter.lower()
@@ -248,9 +289,12 @@ class HgRepository(Repository):
             template += "{file_mods % '{file}\\n'}"
         return template
 
-    def get_changed_files(
-        self, diff_filter="ADM", mode="unstaged", rev=None, base_rev=None
-    ):
+    def get_tracked_files(self, *paths, rev=None):
+        rev = rev or "."
+        return self.run("files", "-r", rev, *paths).splitlines()
+
+    def get_changed_files(self, diff_filter=None, mode=None, rev=None, base_rev=None):
+        diff_filter = diff_filter or "ADM"
         if rev is None:
             if base_rev is not None:
                 raise ValueError("Cannot specify `base_rev` without `rev`")
@@ -259,7 +303,7 @@ class HgRepository(Repository):
             return self.run("status", "--no-status", f"-{df}").splitlines()
         else:
             template = self._files_template(diff_filter)
-            revision_argument = rev if base_rev is None else f"{base_rev}~-1::{rev}"
+            revision_argument = rev if base_rev is None else f"{rev} % {base_rev}"
             return self.run("log", "-r", revision_argument, "-T", template).splitlines()
 
     def get_outgoing_files(self, diff_filter="ADM", upstream=None):
@@ -293,20 +337,21 @@ class HgRepository(Repository):
         return not len(self.run(*args).strip())
 
     def update(self, ref):
-        return self.run("update", "--check", ref)
+        self.run("update", "--check", ref)
 
     def find_latest_common_revision(self, base_ref_or_rev, head_rev):
-        return self.run(
+        ancestor = self.run(
             "log",
             "-r",
             f"last(ancestors('{base_ref_or_rev}') and ancestors('{head_rev}'))",
             "--template",
             "{node}",
         ).strip()
+        return ancestor or self.NULL_REVISION
 
     def does_revision_exist_locally(self, revision):
         try:
-            return self.run("log", "-r", revision).strip() != ""
+            return bool(self.run("log", "-r", revision).strip())
         except subprocess.CalledProcessError as e:
             # Error code 255 comes with the message:
             # "abort: unknown revision $REVISION"
@@ -316,8 +361,13 @@ class HgRepository(Repository):
 
 
 class GitRepository(Repository):
-    tool = "git"
-    default_remote_name = "origin"
+    @property
+    def tool(self) -> str:
+        return "git"
+
+    @property
+    def default_remote_name(self) -> str:
+        return "origin"
 
     _LS_REMOTE_PATTERN = re.compile(r"ref:\s+refs/heads/(?P<branch_name>\S+)\s+HEAD")
 
@@ -349,13 +399,19 @@ class GitRepository(Repository):
     def remote_name(self):
         try:
             remote_branch_name = self.run(
-                "rev-parse", "--verify", "--abbrev-ref", "--symbolic-full-name", "@{u}"
+                "rev-parse",
+                "--verify",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                "@{u}",
+                stderr=subprocess.PIPE,
             ).strip()
             return remote_branch_name.split("/")[0]
         except subprocess.CalledProcessError as e:
             # Error code 128 comes with the message:
             # "fatal: no upstream configured for branch $BRANCH"
             if e.returncode != 128:
+                print(e.stderr)
                 raise
 
         return self._get_most_suitable_remote("`git remote add origin $URL`")
@@ -382,7 +438,7 @@ class GitRepository(Repository):
     def _get_default_branch_from_remote_query(self):
         # This function requires network access to the repo
         remote_name = self.remote_name
-        output = self.run("ls-remote", "--symref", remote_name, "HEAD")
+        output = self.run("ls-remote", "--symref", remote_name, "HEAD")  # type: ignore
         matches = self._LS_REMOTE_PATTERN.search(output)
         if not matches:
             raise RuntimeError(
@@ -411,16 +467,21 @@ class GitRepository(Repository):
 
         raise RuntimeError(f"Unable to find default branch. Got: {branches}")
 
-    def get_url(self, remote="origin"):
+    def get_url(self, remote=None):
+        remote = remote or "origin"
         return self.run("remote", "get-url", remote).strip()
 
     def get_commit_message(self, revision=None):
-        revision = revision or self.head_rev
-        return self.run("log", "-n1", "--format=%B")
+        revision = revision or "HEAD"
+        return self.run("log", "-n1", "--format=%B", revision)
 
-    def get_changed_files(
-        self, diff_filter="ADM", mode="unstaged", rev=None, base_rev=None
-    ):
+    def get_tracked_files(self, *paths, rev=None):
+        rev = rev or "HEAD"
+        return self.run("ls-tree", "-r", "--name-only", rev, *paths).splitlines()
+
+    def get_changed_files(self, diff_filter=None, mode=None, rev=None, base_rev=None):
+        diff_filter = diff_filter or "ADM"
+        mode = mode or "unstaged"
         assert all(f.lower() in self._valid_diff_filter for f in diff_filter)
 
         if rev is None:
@@ -438,6 +499,9 @@ class GitRepository(Repository):
             cmd = ["log", "--format=format:", revision_argument]
 
         cmd.append("--name-only")
+        cmd.append(
+            "--no-renames"
+        )  # Consider renames as deletion of old, addition of new.
         cmd.append("--diff-filter=" + diff_filter.upper())
 
         files = self.run(*cmd).splitlines()
@@ -482,7 +546,10 @@ class GitRepository(Repository):
         self.run("checkout", ref)
 
     def find_latest_common_revision(self, base_ref_or_rev, head_rev):
-        return self.run("merge-base", base_ref_or_rev, head_rev).strip()
+        try:
+            return self.run("merge-base", base_ref_or_rev, head_rev).strip()
+        except subprocess.CalledProcessError:
+            return self.NULL_REVISION
 
     def does_revision_exist_locally(self, revision):
         try:
@@ -506,34 +573,3 @@ def get_repository(path):
             return GitRepository(path)
 
     raise RuntimeError("Current directory is neither a git or hg repository")
-
-
-def find_hg_revision_push_info(repository, revision):
-    """Given the parameters for this action and a revision, find the
-    pushlog_id of the revision."""
-    pushlog_url = PUSHLOG_TMPL.format(repository, revision)
-
-    def query_pushlog(url):
-        r = requests.get(pushlog_url, timeout=60)
-        r.raise_for_status()
-        return r
-
-    r = retry(
-        query_pushlog,
-        args=(pushlog_url,),
-        attempts=5,
-        sleeptime=10,
-    )
-    pushes = r.json()["pushes"]
-    if len(pushes) != 1:
-        raise RuntimeError(
-            "Unable to find a single pushlog_id for {} revision {}: {}".format(
-                repository, revision, pushes
-            )
-        )
-    pushid = list(pushes.keys())[0]
-    return {
-        "pushdate": pushes[pushid]["date"],
-        "pushid": pushid,
-        "user": pushes[pushid]["user"],
-    }

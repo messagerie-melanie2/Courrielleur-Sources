@@ -11,23 +11,29 @@
 #include "mozilla/dom/ipc/IdType.h"
 #include "mozilla/dom/MessageManagerCallback.h"
 #include "mozilla/dom/MediaSessionBinding.h"
+#include "mozilla/dom/ProcessIsolation.h"
 #include "mozilla/dom/RemoteBrowser.h"
 #include "mozilla/dom/RemoteType.h"
 #include "mozilla/dom/JSProcessActorParent.h"
 #include "mozilla/dom/ProcessActor.h"
+#include "mozilla/dom/UniqueContentParentKeepAlive.h"
+#include "mozilla/dom/UserActivation.h"
 #include "mozilla/gfx/gfxVarReceiver.h"
 #include "mozilla/gfx/GPUProcessListener.h"
 #include "mozilla/ipc/BackgroundUtils.h"
 #include "mozilla/ipc/GeckoChildProcessHost.h"
 #include "mozilla/ipc/InputStreamUtils.h"
+#include "mozilla/ipc/SharedMemoryHandle.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/DataMutex.h"
-#include "mozilla/FileUtils.h"
 #include "mozilla/HalTypes.h"
+#include "mozilla/IdleTaskRunner.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/MemoryReportingProcess.h"
 #include "mozilla/MozPromise.h"
+#include "mozilla/RecursiveMutex.h"
+#include "mozilla/Result.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/UniquePtr.h"
@@ -36,31 +42,34 @@
 #include "nsClassHashtable.h"
 #include "nsTHashMap.h"
 #include "nsTHashSet.h"
-#include "nsPluginTags.h"
 #include "nsHashKeys.h"
 #include "nsIAsyncShutdown.h"
 #include "nsIDOMProcessParent.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIObserver.h"
 #include "nsIRemoteTab.h"
+#include "nsITransferable.h"
 #include "nsIDOMGeoPositionCallback.h"
 #include "nsIDOMGeoPositionErrorCallback.h"
+#include "nsIUrlClassifierFeature.h"
 #include "nsRefPtrHashtable.h"
 #include "PermissionMessageUtils.h"
 #include "DriverCrashGuard.h"
 #include "nsIReferrerInfo.h"
 
-#define CHILD_PROCESS_SHUTDOWN_MESSAGE u"child-process-shutdown"_ns
-
 class nsConsoleService;
-class nsIContentProcessInfo;
 class nsICycleCollectorLogSink;
 class nsIDumpGCAndCCLogsCallback;
 class nsIRemoteTab;
 class nsITimer;
 class ParentIdleListener;
+class nsIOriginsListLoadCallback;
 class nsIWidget;
 class nsIX509Cert;
+
+namespace CrashReporter {
+class CrashReporterInitArgs;
+}
 
 namespace mozilla {
 class PClipboardWriteRequestParent;
@@ -72,7 +81,6 @@ class SandboxBrokerPolicyFactory;
 #endif
 
 class PreallocatedProcessManagerImpl;
-class BenchmarkStorageParent;
 
 using mozilla::loader::PScriptCacheParent;
 
@@ -96,16 +104,14 @@ class MemoryReport;
 class TabContext;
 class GetFilesHelper;
 class MemoryReportRequestHost;
+class RemoteWorkerDebuggerManagerParent;
 class RemoteWorkerManager;
+class RemoteWorkerServiceParent;
 class ThreadsafeContentParentHandle;
 struct CancelContentJSOptions;
 
-#define NS_CONTENTPARENT_IID                         \
-  {                                                  \
-    0xeeec9ebf, 0x8ecf, 0x4e38, {                    \
-      0x81, 0xda, 0xb7, 0x34, 0x13, 0x7e, 0xac, 0xf3 \
-    }                                                \
-  }
+#define NS_CONTENTPARENT_IID \
+  {0xeeec9ebf, 0x8ecf, 0x4e38, {0x81, 0xda, 0xb7, 0x34, 0x13, 0x7e, 0xac, 0xf3}}
 
 class ContentParent final : public PContentParent,
                             public nsIDOMProcessParent,
@@ -130,12 +136,13 @@ class ContentParent final : public PContentParent,
   friend class mozilla::PreallocatedProcessManagerImpl;
   friend class PContentParent;
   friend class mozilla::dom::RemoteWorkerManager;
+  friend struct mozilla::dom::ContentParentKeepAliveDeleter;
 
  public:
   using LaunchPromise =
-      mozilla::MozPromise<RefPtr<ContentParent>, nsresult, false>;
+      mozilla::MozPromise<UniqueContentParentKeepAlive, nsresult, true>;
 
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_CONTENTPARENT_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_CONTENTPARENT_IID)
 
   static LogModule* GetLog();
 
@@ -146,7 +153,7 @@ class ContentParent final : public PContentParent,
   /**
    * Create a ContentParent suitable for use later as a content process.
    */
-  static already_AddRefed<ContentParent> MakePreallocProcess();
+  static UniqueContentParentKeepAlive MakePreallocProcess();
 
   /**
    * Start up the content-process machinery.  This might include
@@ -170,59 +177,89 @@ class ContentParent final : public PContentParent,
 
   /**
    * Picks a random content parent from |aContentParents| respecting the index
-   * limit set by |aMaxContentParents|.
+   * limit set by |aMaxContentParents|. If |aBrowserId| is non-zero, that tab
+   * will be ignored when counting tabs in this process.
    * Returns null if non available.
    */
   static already_AddRefed<ContentParent> MinTabSelect(
       const nsTArray<ContentParent*>& aContentParents,
-      int32_t maxContentParents);
+      int32_t maxContentParents, uint64_t aBrowserId);
 
   /**
-   * Get or create a content process for:
-   * 1. browser iframe
-   * 2. remote xul <browser>
-   * 3. normal iframe
+   * Get or create a content process which can be used for hosting web content
+   * or workers.
+   *
+   * This method returns a |UniqueContentParentKeepAlive|, which manages the
+   * lifecycle of the process. See the documentation on |AddKeepAlive| for more
+   * information about managing content process lifecycles.
+   *
+   * The returned ContentParent which may still be in the process of launching.
+   * Use the |WaitForLaunchAsync| or |WaitForLaunchSync| methods to wait for
+   * this process to finish launching.
+   *
+   * @param aRemoteType Required remote type for new & used processes.
+   * @param aGroup If specified, the |BrowsingContextGroup| requesting process
+   *               selection. Used to ensure that only a single process per
+   *               remoteType is used for each |BrowsingContextGroup|.
+   * @param aPriority Initial process priority for a new content process.
+   * @param aPreferUsed If true, process selection will prefer re-using an
+   *                    existing ContentProcess over launching a new one.
+   * @param aBrowserId The |BrowserId| requesting process selection. This
+   *                   information is used to reduce unnecessary process churn
+   *                   when navigating (see |MinTabSelect|).
+   *                   The returned KeepAlive will be for this BrowserId.
+   */
+  static UniqueContentParentKeepAlive GetNewOrUsedLaunchingBrowserProcess(
+      const nsACString& aRemoteType, BrowsingContextGroup* aGroup = nullptr,
+      hal::ProcessPriority aPriority =
+          hal::ProcessPriority::PROCESS_PRIORITY_FOREGROUND,
+      bool aPreferUsed = false, uint64_t aBrowserId = 0);
+
+  /**
+   * Like |GetNewOrUsedLaunchingBrowserProcess|, but returns a promise which
+   * resolves when the process is finished launching.
    */
   static RefPtr<ContentParent::LaunchPromise> GetNewOrUsedBrowserProcessAsync(
       const nsACString& aRemoteType, BrowsingContextGroup* aGroup = nullptr,
       hal::ProcessPriority aPriority =
           hal::ProcessPriority::PROCESS_PRIORITY_FOREGROUND,
-      bool aPreferUsed = false);
-  static already_AddRefed<ContentParent> GetNewOrUsedBrowserProcess(
-      const nsACString& aRemoteType, BrowsingContextGroup* aGroup = nullptr,
-      hal::ProcessPriority aPriority =
-          hal::ProcessPriority::PROCESS_PRIORITY_FOREGROUND,
-      bool aPreferUsed = false);
+      bool aPreferUsed = false, uint64_t aBrowserId = 0);
 
   /**
-   * Get or create a content process, but without waiting for the process
-   * launch to have completed. The returned `ContentParent` may still be in the
-   * "Launching" state.
-   *
-   * Can return `nullptr` in the case of an error.
-   *
-   * Use the `WaitForLaunchAsync` or `WaitForLaunchSync` methods to wait for
-   * the process to be fully launched.
+   * Like |GetNewOrUsedLaunchingBrowserProcess|, but blocks the main thread
+   * until the process process is finished launching before returning.
    */
-  static already_AddRefed<ContentParent> GetNewOrUsedLaunchingBrowserProcess(
+  static UniqueContentParentKeepAlive GetNewOrUsedBrowserProcess(
       const nsACString& aRemoteType, BrowsingContextGroup* aGroup = nullptr,
       hal::ProcessPriority aPriority =
           hal::ProcessPriority::PROCESS_PRIORITY_FOREGROUND,
-      bool aPreferUsed = false);
+      bool aPreferUsed = false, uint64_t aBrowserId = 0);
 
+  /**
+   * Create an nsITransferable with the specified data flavor types.
+   */
+  static mozilla::Result<nsCOMPtr<nsITransferable>, nsresult>
+  CreateClipboardTransferable(const nsTArray<nsCString>& aTypes);
+
+  /**
+   * Asynchronously wait for this content process to finish launching, such that
+   * the ContentParent actor is ready for IPC.
+   *
+   * @param aPriority The initial priority for the process after launching.
+   * @param aBrowserId The BrowserId to hold a KeepAlive for during the async
+   *                   launch which will be used to resolve the LaunchPromise.
+   */
   RefPtr<ContentParent::LaunchPromise> WaitForLaunchAsync(
       hal::ProcessPriority aPriority =
-          hal::ProcessPriority::PROCESS_PRIORITY_FOREGROUND);
-  bool WaitForLaunchSync(hal::ProcessPriority aPriority =
-                             hal::ProcessPriority::PROCESS_PRIORITY_FOREGROUND);
+          hal::ProcessPriority::PROCESS_PRIORITY_FOREGROUND,
+      uint64_t aBrowserId = 0);
 
   /**
-   * Get or create a content process for a JS plugin. aPluginID is the id of the
-   * JS plugin
-   * (@see nsFakePlugin::mId). There is a maximum of one process per JS plugin.
+   * Like `WaitForLaunchAsync`, but synchronously blocks the main thread until
+   * the content process has finished launching.
    */
-  static already_AddRefed<ContentParent> GetNewOrUsedJSPluginProcess(
-      uint32_t aPluginID, const hal::ProcessPriority& aPriority);
+  bool WaitForLaunchSync(hal::ProcessPriority aPriority =
+                             hal::ProcessPriority::PROCESS_PRIORITY_FOREGROUND);
 
   /**
    * Get or create a content process for the given TabContext.  aFrameElement
@@ -250,7 +287,6 @@ class ContentParent final : public PContentParent,
 
   static void BroadcastStringBundle(const StringBundleDescriptor&);
 
-  static void BroadcastFontListChanged();
   static void BroadcastShmBlockAdded(uint32_t aGeneration, uint32_t aIndex);
 
   static void BroadcastThemeUpdate(widget::ThemeChangeKind);
@@ -319,11 +355,9 @@ class ContentParent final : public PContentParent,
   // been updated and so full reflows are in order.
   static void NotifyUpdatedFonts(bool aFullRebuild);
 
+  mozilla::ipc::IPCResult RecvCreateClipboardContentAnalysis(
+      Endpoint<PClipboardContentAnalysisParent>&& aParentEndpoint);
   mozilla::ipc::IPCResult RecvCreateGMPService();
-
-  mozilla::ipc::IPCResult RecvRemovePermission(
-      nsIPrincipal* aPrincipal, const nsACString& aPermissionType,
-      nsresult* aRv);
 
   NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(ContentParent, nsIObserver)
 
@@ -344,32 +378,47 @@ class ContentParent final : public PContentParent,
   virtual nsresult DoSendAsyncMessage(const nsAString& aMessage,
                                       StructuredCloneData& aData) override;
 
-  /** Notify that a tab is about to send Destroy to its child. */
-  void NotifyTabWillDestroy();
+  /*
+   * Attempt to add a KeepAlive for the given BrowserId. A KeepAlive will try to
+   * keep the process alive, though it may still die (e.g. due to a crash,
+   * explicit shutdown request, or similar).
+   *
+   * The returned `UniqueContentParentKeepAlive` will clear this KeepAlive when
+   * destroyed, and acts as a strong pointer to this `ContentParent`.
+   *
+   * Returns nullptr if the process is already being shut down.
+   */
+  [[nodiscard]] UniqueContentParentKeepAlive TryAddKeepAlive(
+      uint64_t aBrowserId);
 
-  /** Notify that a tab is beginning its destruction sequence. */
-  void NotifyTabDestroying();
+  /*
+   * Like `TryAddKeepAlive`, but never returns `nullptr`, instead asserting if
+   * the ContentParent is already shutting down.
+   */
+  [[nodiscard]] UniqueContentParentKeepAlive AddKeepAlive(uint64_t aBrowserId);
 
-  /** Notify that a tab was destroyed during normal operation. */
-  void NotifyTabDestroyed(const TabId& aTabId, bool aNotifiedDestroying);
-
-  // Manage the set of `KeepAlive`s on this ContentParent which are preventing
-  // it from being destroyed.
-  void AddKeepAlive();
-  void RemoveKeepAlive();
+  /**
+   * Check if this process is ready to be shut down, and if it is, begin the
+   * shutdown process.  Automatically called whenever a KeepAlive is removed, or
+   * a BrowserParent is removed.
+   *
+   * By default when a process becomes unused, it will be kept alive for a short
+   * time, potentially allowing the process to be re-used.
+   *
+   * @param aImmediate If true, immediately begins shutdown if the process is
+   *                   eligible, without any grace period for process re-use.
+   * @param aIgnoreKeepAlivePref If true, the dom.ipc.keepProcessesAlive.*
+   *                             preferences will be ignored, for clean-up of
+   *                             cached processes. Requires aImmediate.
+   */
+  void MaybeBeginShutDown(bool aImmediate = false,
+                          bool aIgnoreKeepAlivePref = false);
 
   TestShellParent* CreateTestShell();
 
   bool DestroyTestShell(TestShellParent* aTestShell);
 
   TestShellParent* GetTestShellSingleton();
-
-  // This method can be called on any thread.
-  void RegisterRemoteWorkerActor();
-
-  // This method _must_ be called on main-thread because it can start the
-  // shutting down of the content process.
-  void UnregisterRemoveWorkerActor();
 
   void ReportChildAlreadyBlocked();
 
@@ -391,19 +440,20 @@ class ContentParent final : public PContentParent,
   bool IsDead() const { return mLifecycleState == LifecycleState::DEAD; }
 
   bool IsForBrowser() const { return mIsForBrowser; }
-  bool IsForJSPlugin() const {
-    return mJSPluginID != nsFakePluginTag::NOT_JSPLUGIN;
-  }
 
   GeckoChildProcessHost* Process() const { return mSubprocess; }
-
-  nsIContentProcessInfo* ScriptableHelper() const { return mScriptableHelper; }
 
   mozilla::dom::ProcessMessageManager* GetMessageManager() const {
     return mMessageManager;
   }
 
   bool NeedsPermissionsUpdate(const nsACString& aPermissionKey) const;
+
+  // Getter for which permission keys should signal that a content
+  // process needs to know about the change of a permission with this as the
+  // secondary key, like for 3rdPartyFrameStorage^https://secondary.com
+  bool NeedsSecondaryKeyPermissionsUpdate(
+      const nsACString& aPermissionKey) const;
 
   // Manage pending load states which have been sent to this process, and are
   // expected to be used to start a load imminently.
@@ -419,8 +469,15 @@ class ContentParent final : public PContentParent,
    * WARNING: aReason appears in telemetry, so any new value passed in requires
    * data review.
    */
-  void KillHard(const char* aWhy);
+  void KillHard(const char* aReason);
 
+  /**
+   * Get a unique identifier for this child process. This ID is unique across
+   * all types of child processes.
+   *
+   * NOTE: The `ContentParentId` wrapper type is a historical artifact from when
+   * the ID was only specific to content processes.
+   */
   ContentParentId ChildID() const { return mChildID; }
 
   /**
@@ -431,10 +488,8 @@ class ContentParent final : public PContentParent,
    */
   void FriendlyName(nsAString& aName, bool aAnonymize = false);
 
-  virtual void OnChannelError() override;
-
   mozilla::ipc::IPCResult RecvInitCrashReporter(
-      const NativeThreadId& aThreadId);
+      const CrashReporter::CrashReporterInitArgs& aInitArgs);
 
   already_AddRefed<PNeckoParent> AllocPNeckoParent();
 
@@ -454,13 +509,18 @@ class ContentParent final : public PContentParent,
     return PContentParent::RecvPHalConstructor(aActor);
   }
 
+  mozilla::ipc::IPCResult RecvAttributionEvent(
+      const nsACString& aHost, PrivateAttributionImpressionType aType,
+      uint32_t aIndex, const nsAString& aAd, const nsACString& aTargetHost);
+  mozilla::ipc::IPCResult RecvAttributionConversion(
+      const nsACString& aHost, const nsAString& aTask, uint32_t aHistogramSize,
+      const Maybe<uint32_t>& aLookbackDays,
+      const Maybe<PrivateAttributionImpressionType>& aImpressionType,
+      const nsTArray<nsString>& aAds, const nsTArray<nsCString>& aSourceHosts);
+
   PHeapSnapshotTempFileHelperParent* AllocPHeapSnapshotTempFileHelperParent();
 
   PRemoteSpellcheckEngineParent* AllocPRemoteSpellcheckEngineParent();
-
-  mozilla::ipc::IPCResult RecvRecordingDeviceEvents(
-      const nsAString& aRecordingStatus, const nsAString& aPageURL,
-      const bool& aIsAudio, const bool& aIsVideo);
 
   bool CycleCollectWithLogs(bool aDumpAllTraces,
                             nsICycleCollectorLogSink* aSink,
@@ -473,8 +533,6 @@ class ContentParent final : public PContentParent,
 
   mozilla::ipc::IPCResult RecvNotifyShutdownSuccess();
 
-  void MaybeInvokeDragSession(BrowserParent* aParent);
-
   PContentPermissionRequestParent* AllocPContentPermissionRequestParent(
       const nsTArray<PermissionRequest>& aRequests, nsIPrincipal* aPrincipal,
       nsIPrincipal* aTopLevelPrincipal, const bool& aIsHandlingUserInput,
@@ -486,38 +544,41 @@ class ContentParent final : public PContentParent,
   void ForkNewProcess(bool aBlocking);
 
   mozilla::ipc::IPCResult RecvCreateWindow(
-      PBrowserParent* aThisBrowserParent,
-      const MaybeDiscarded<BrowsingContext>& aParent, PBrowserParent* aNewTab,
-      const uint32_t& aChromeFlags, const bool& aCalledFromJS,
-      const bool& aForPrinting, const bool& aForWindowDotPrint,
+      PBrowserParent* aThisTab, const MaybeDiscarded<BrowsingContext>& aParent,
+      PBrowserParent* aNewTab, const uint32_t& aChromeFlags,
+      const bool& aCalledFromJS, const bool& aForPrinting,
+      const bool& aForWindowDotPrint, const bool& aTopLevelCreatedByWebContent,
       nsIURI* aURIToLoad, const nsACString& aFeatures,
+      const UserActivation::Modifiers& aModifiers,
       nsIPrincipal* aTriggeringPrincipal, nsIContentSecurityPolicy* aCsp,
       nsIReferrerInfo* aReferrerInfo, const OriginAttributes& aOriginAttributes,
+      bool aUserActivation, bool aTextDirectiveUserActivation,
       CreateWindowResolver&& aResolve);
 
   mozilla::ipc::IPCResult RecvCreateWindowInDifferentProcess(
       PBrowserParent* aThisTab, const MaybeDiscarded<BrowsingContext>& aParent,
       const uint32_t& aChromeFlags, const bool& aCalledFromJS,
-      nsIURI* aURIToLoad, const nsACString& aFeatures, const nsAString& aName,
-      nsIPrincipal* aTriggeringPrincipal, nsIContentSecurityPolicy* aCsp,
-      nsIReferrerInfo* aReferrerInfo,
-      const OriginAttributes& aOriginAttributes);
+      const bool& aTopLevelCreatedByWebContent, nsIURI* aURIToLoad,
+      const nsACString& aFeatures, const UserActivation::Modifiers& aModifiers,
+      const nsAString& aName, nsIPrincipal* aTriggeringPrincipal,
+      nsIContentSecurityPolicy* aCsp, nsIReferrerInfo* aReferrerInfo,
+      const OriginAttributes& aOriginAttributes, bool aUserActivation,
+      bool aTextDirectiveUserActivation);
 
   static void BroadcastBlobURLRegistration(
       const nsACString& aURI, BlobImpl* aBlobImpl, nsIPrincipal* aPrincipal,
-      const Maybe<nsID>& aAgentClusterId,
-      ContentParent* aIgnoreThisCP = nullptr);
+      const nsCString& aPartitionKey, ContentParent* aIgnoreThisCP = nullptr);
 
   static void BroadcastBlobURLUnregistration(
-      const nsACString& aURI, nsIPrincipal* aPrincipal,
+      const nsTArray<BroadcastBlobURLUnregistrationRequest>& aRequests,
       ContentParent* aIgnoreThisCP = nullptr);
 
   mozilla::ipc::IPCResult RecvStoreAndBroadcastBlobURLRegistration(
       const nsACString& aURI, const IPCBlob& aBlob, nsIPrincipal* aPrincipal,
-      const Maybe<nsID>& aAgentCluster);
+      const nsCString& aPartitionKey);
 
   mozilla::ipc::IPCResult RecvUnstoreAndBroadcastBlobURLUnregistration(
-      const nsACString& aURI, nsIPrincipal* aPrincipal);
+      const nsTArray<BroadcastBlobURLUnregistrationRequest>& aRequests);
 
   virtual int32_t Pid() const override;
 
@@ -536,12 +597,15 @@ class ContentParent final : public PContentParent,
       PURLClassifierLocalParent* aActor, nsIURI* aURI,
       nsTArray<IPCURLClassifierFeature>&& aFeatures) override;
 
-  PLoginReputationParent* AllocPLoginReputationParent(nsIURI* aURI);
+  // PURLClassifierLocalByNameParent.
+  PURLClassifierLocalByNameParent* AllocPURLClassifierLocalByNameParent(
+      nsIURI* aURI, const nsTArray<nsCString>& aFeatures,
+      const nsIUrlClassifierFeature::listType& aListType);
 
-  virtual mozilla::ipc::IPCResult RecvPLoginReputationConstructor(
-      PLoginReputationParent* aActor, nsIURI* aURI) override;
-
-  bool DeallocPLoginReputationParent(PLoginReputationParent* aActor);
+  virtual mozilla::ipc::IPCResult RecvPURLClassifierLocalByNameConstructor(
+      PURLClassifierLocalByNameParent* aActor, nsIURI* aURI,
+      nsTArray<nsCString>&& aFeatureNames,
+      const nsIUrlClassifierFeature::listType& aListType) override;
 
   PSessionStorageObserverParent* AllocPSessionStorageObserverParent();
 
@@ -551,29 +615,32 @@ class ContentParent final : public PContentParent,
   bool DeallocPSessionStorageObserverParent(
       PSessionStorageObserverParent* aActor);
 
+  bool DeallocPURLClassifierLocalByNameParent(
+      PURLClassifierLocalByNameParent* aActor);
+
   bool DeallocPURLClassifierLocalParent(PURLClassifierLocalParent* aActor);
 
   bool DeallocPURLClassifierParent(PURLClassifierParent* aActor);
 
   // Use the PHangMonitor channel to ask the child to repaint a tab.
-  void PaintTabWhileInterruptingJS(BrowserParent* aBrowserParent,
-                                   const layers::LayersObserverEpoch& aEpoch);
+  void PaintTabWhileInterruptingJS(BrowserParent*);
 
-  void UnloadLayersWhileInterruptingJS(
-      BrowserParent* aBrowserParent, const layers::LayersObserverEpoch& aEpoch);
+  void UnloadLayersWhileInterruptingJS(BrowserParent*);
 
   void CancelContentJSExecutionIfRunning(
       BrowserParent* aBrowserParent,
       nsIRemoteTab::NavigationType aNavigationType,
       const CancelContentJSOptions& aCancelContentJSOptions);
 
+  void SetMainThreadQoSPriority(nsIThread::QoSPriority aQoSPriority);
+
   // This function is called when we are about to load a document from an
-  // HTTP(S) or FTP channel for a content process.  It is a useful place
+  // HTTP(S) channel for a content process.  It is a useful place
   // to start to kick off work as early as possible in response to such
   // document loads.
   // aShouldWaitForPermissionCookieUpdate is set to true if main thread IPCs for
   // updating permissions/cookies are sent.
-  nsresult AboutToLoadHttpFtpDocumentForChild(
+  nsresult AboutToLoadHttpDocumentForChild(
       nsIChannel* aChannel,
       bool* aShouldWaitForPermissionCookieUpdate = nullptr);
 
@@ -582,15 +649,16 @@ class ContentParent final : public PContentParent,
   // to this content process forever.
   void TransmitBlobURLsForPrincipal(nsIPrincipal* aPrincipal);
 
+  // Update a cache list of allowed domains to store cookies for the current
+  // process. This method is called when PCookieServiceParent actor is not
+  // available yet.
+  void AddPrincipalToCookieInProcessCache(nsIPrincipal* aPrincipal);
+  void TakeCookieInProcessCache(nsTArray<nsCOMPtr<nsIPrincipal>>& aList);
+
   nsresult TransmitPermissionsForPrincipal(nsIPrincipal* aPrincipal);
 
   // Whenever receiving a Principal we need to validate that Principal case
   // by case, where we grant individual callsites to customize the checks!
-  enum class ValidatePrincipalOptions {
-    AllowNullPtr,  // Not a NullPrincipal but a nullptr as Principal.
-    AllowSystem,
-    AllowExpanded,
-  };
   bool ValidatePrincipal(
       nsIPrincipal* aPrincipal,
       const EnumSet<ValidatePrincipalOptions>& aOptions = {});
@@ -614,8 +682,6 @@ class ContentParent final : public PContentParent,
   void SetInputPriorityEventEnabled(bool aEnabled);
   bool IsInputPriorityEventEnabled() { return mIsInputPriorityEventEnabled; }
 
-  static bool IsInputEventQueueSupported();
-
   mozilla::ipc::IPCResult RecvCreateBrowsingContext(
       uint64_t aGroupId, BrowsingContext::IPCInitializer&& aInit);
 
@@ -635,7 +701,8 @@ class ContentParent final : public PContentParent,
       uint64_t aActionId);
   mozilla::ipc::IPCResult RecvAdjustWindowFocus(
       const MaybeDiscarded<BrowsingContext>& aContext, bool aIsVisible,
-      uint64_t aActionId);
+      uint64_t aActionId, bool aShouldClearFocus,
+      const MaybeDiscarded<BrowsingContext>& aAncestorBrowsingContextToFocus);
   mozilla::ipc::IPCResult RecvClearFocus(
       const MaybeDiscarded<BrowsingContext>& aContext);
   mozilla::ipc::IPCResult RecvSetFocusedBrowsingContext(
@@ -670,8 +737,7 @@ class ContentParent final : public PContentParent,
       const nsACString& aBlobURL, nsIPrincipal* pTriggeringPrincipal,
       nsIPrincipal* pLoadingPrincipal,
       const OriginAttributes& aOriginAttributes, uint64_t aInnerWindowId,
-      const Maybe<nsID>& aAgentClusterId,
-      BlobURLDataRequestResolver&& aResolver);
+      const nsCString& aPartitionKey, BlobURLDataRequestResolver&& aResolver);
 
  protected:
   bool CheckBrowsingContextEmbedder(CanonicalBrowsingContext* aBC,
@@ -695,19 +761,7 @@ class ContentParent final : public PContentParent,
    */
   static nsClassHashtable<nsCStringHashKey, nsTArray<ContentParent*>>*
       sBrowserContentParents;
-  static mozilla::StaticAutoPtr<nsTHashMap<nsUint32HashKey, ContentParent*>>
-      sJSPluginContentParents;
   static mozilla::StaticAutoPtr<LinkedList<ContentParent>> sContentParents;
-
-  /**
-   * In order to avoid rapidly creating and destroying content processes when
-   * running under e10s, we may keep alive a single unused "web" content
-   * process if it previously had a very short lifetime.
-   *
-   * This process will be re-used during process selection, avoiding spawning a
-   * new process, if the "web" remote type is being requested.
-   */
-  static StaticRefPtr<ContentParent> sRecycledE10SProcess;
 
   void AddShutdownBlockers();
   void RemoveShutdownBlockers();
@@ -724,32 +778,17 @@ class ContentParent final : public PContentParent,
       PBrowserParent* aThisTab, BrowsingContext& aParent, bool aSetOpener,
       const uint32_t& aChromeFlags, const bool& aCalledFromJS,
       const bool& aForPrinting, const bool& aForWindowDotPrint,
-      nsIURI* aURIToLoad, const nsACString& aFeatures,
+      const bool& aIsTopLevelCreatedByWebContent, nsIURI* aURIToLoad,
+      const nsACString& aFeatures, const UserActivation::Modifiers& aModifiers,
       BrowserParent* aNextRemoteBrowser, const nsAString& aName,
       nsresult& aResult, nsCOMPtr<nsIRemoteTab>& aNewRemoteTab,
       bool* aWindowIsNew, int32_t& aOpenLocation,
       nsIPrincipal* aTriggeringPrincipal, nsIReferrerInfo* aReferrerInfo,
       bool aLoadUri, nsIContentSecurityPolicy* aCsp,
-      const OriginAttributes& aOriginAttributes);
+      const OriginAttributes& aOriginAttributes, bool aUserActivation,
+      bool aTextDirectiveUserActivation);
 
-  explicit ContentParent(int32_t aPluginID) : ContentParent(""_ns, aPluginID) {}
-  explicit ContentParent(const nsACString& aRemoteType)
-      : ContentParent(aRemoteType, nsFakePluginTag::NOT_JSPLUGIN) {}
-
-  ContentParent(const nsACString& aRemoteType, int32_t aPluginID);
-
-  // Launch the subprocess and associated initialization.
-  // Returns false if the process fails to start.
-  // Deprecated in favor of LaunchSubprocessAsync.
-  bool LaunchSubprocessSync(hal::ProcessPriority aInitialPriority);
-
-  // Launch the subprocess and associated initialization;
-  // returns a promise and signals failure by rejecting.
-  // OS-level launching work is dispatched to another thread, but some
-  // initialization (creating IPDL actors, etc.; see Init()) is run on
-  // the main thread.
-  RefPtr<LaunchPromise> LaunchSubprocessAsync(
-      hal::ProcessPriority aInitialPriority);
+  explicit ContentParent(const nsACString& aRemoteType);
 
   // Common implementation of LaunchSubprocess{Sync,Async}.
   // Return `true` in case of success, `false` if launch was
@@ -775,39 +814,10 @@ class ContentParent final : public PContentParent,
   void ForwardKnownInfo();
 
   /**
-   * We might want to reuse barely used content processes if certain criteria
-   * are met.
-   *
-   * With Fission this is a no-op.
-   */
-  bool TryToRecycleE10SOnly();
-
-  /**
-   * If this process is currently being recycled, unmark it as the recycled
-   * content process.
-   * If `aForeground` is true, will also restore the process' foreground
-   * priority if it was previously the recycled content process.
-   *
-   * With Fission this is a no-op.
-   */
-  void StopRecyclingE10SOnly(bool aForeground);
-
-  /**
    * Removing it from the static array so it won't be returned for new tabs in
    * GetNewOrUsedBrowserProcess.
    */
   void RemoveFromList();
-
-  /**
-   * Return if the process has an active worker or JSPlugin
-   */
-  bool HasActiveWorkerOrJSPlugin();
-
-  /**
-   * Decide whether the process should be kept alive even when it would normally
-   * be shut down, for example when all its tabs are closed.
-   */
-  bool ShouldKeepProcessAlive();
 
   /**
    * Mark this ContentParent as dead for the purposes of Get*().
@@ -822,22 +832,6 @@ class ContentParent final : public PContentParent,
    */
   void SignalImpendingShutdownToContentJS();
 
-  bool CheckTabDestroyWillKeepAlive(uint32_t aExpectedBrowserCount);
-
-  /**
-   * Check if this process is ready to be shut down, and if it is, begin the
-   * shutdown process. Should be called whenever a change occurs which could
-   * cause the decisions made by `ShouldKeepProcessAlive` to change.
-   *
-   * @param aExpectedBrowserCount The number of PBrowser actors which should
-   *                              not block shutdown. This should usually be 0.
-   * @param aSendShutDown If true, will send the shutdown message in addition
-   *                      to marking the process as dead and starting the force
-   *                      kill timer.
-   */
-  void MaybeBeginShutDown(uint32_t aExpectedBrowserCount = 0,
-                          bool aSendShutDown = true);
-
   /**
    * How we will shut down this ContentParent and its subprocess.
    */
@@ -846,28 +840,24 @@ class ContentParent final : public PContentParent,
     SEND_SHUTDOWN_MESSAGE,
     // Close the channel ourselves and let the subprocess clean up itself.
     CLOSE_CHANNEL,
-    // Close the channel with error and let the subprocess clean up itself.
-    CLOSE_CHANNEL_WITH_ERROR,
   };
 
-  void MaybeAsyncSendShutDownMessage();
+  void AsyncSendShutDownMessage();
 
   /**
    * Exit the subprocess and vamoose.  After this call IsAlive()
    * will return false and this ContentParent will not be returned
    * by the Get*() funtions.  However, the shutdown sequence itself
    * may be asynchronous.
-   *
-   * If aMethod is CLOSE_CHANNEL_WITH_ERROR and this is the first call
-   * to ShutDownProcess, then we'll close our channel using CloseWithError()
-   * rather than vanilla Close().  CloseWithError() indicates to IPC that this
-   * is an abnormal shutdown (e.g. a crash).
    */
   bool ShutDownProcess(ShutDownMethod aMethod);
 
   // Perform any steps necesssary to gracefully shtudown the message
   // manager and null out mMessageManager.
   void ShutDownMessageManager();
+
+  // Start the send shutdown timer on shutdown.
+  void StartSendShutdownTimer();
 
   // Start the force-kill timer on shutdown.
   void StartForceKillTimer();
@@ -880,6 +870,7 @@ class ContentParent final : public PContentParent,
   void EnsurePermissionsByKey(const nsACString& aKey,
                               const nsACString& aOrigin);
 
+  static void SendShutdownTimerCallback(nsITimer* aTimer, void* aClosure);
   static void ForceKillTimerCallback(nsITimer* aTimer, void* aClosure);
 
   bool CanOpenBrowser(const IPCTabContext& aContext);
@@ -895,11 +886,10 @@ class ContentParent final : public PContentParent,
       Endpoint<mozilla::ipc::PBackgroundStarterParent>&& aEndpoint);
 
   mozilla::ipc::IPCResult RecvAddMemoryReport(const MemoryReport& aReport);
-  mozilla::ipc::IPCResult RecvAddPerformanceMetrics(
-      const nsID& aID, nsTArray<PerformanceInfo>&& aMetrics);
 
   bool DeallocPRemoteSpellcheckEngineParent(PRemoteSpellcheckEngineParent*);
 
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY
   mozilla::ipc::IPCResult RecvCloneDocumentTreeInto(
       const MaybeDiscarded<BrowsingContext>& aSource,
       const MaybeDiscarded<BrowsingContext>& aTarget, PrintData&& aPrintData);
@@ -908,7 +898,7 @@ class ContentParent final : public PContentParent,
       const MaybeDiscarded<BrowsingContext>& aTarget, PrintData&& aPrintData);
 
   mozilla::ipc::IPCResult RecvConstructPopupBrowser(
-      ManagedEndpoint<PBrowserParent>&& actor,
+      ManagedEndpoint<PBrowserParent>&& aBrowserEp,
       ManagedEndpoint<PWindowGlobalParent>&& windowEp, const TabId& tabId,
       const IPCTabContext& context, const WindowGlobalInit& initialWindowInit,
       const uint32_t& chromeFlags);
@@ -932,33 +922,28 @@ class ContentParent final : public PContentParent,
 
   bool DeallocPCycleCollectWithLogsParent(PCycleCollectWithLogsParent* aActor);
 
-  PTestShellParent* AllocPTestShellParent();
-
-  bool DeallocPTestShellParent(PTestShellParent* shell);
-
   PScriptCacheParent* AllocPScriptCacheParent(const FileDescOrError& cacheFile,
                                               const bool& wantCacheData);
 
   bool DeallocPScriptCacheParent(PScriptCacheParent* shell);
 
   already_AddRefed<PExternalHelperAppParent> AllocPExternalHelperAppParent(
-      nsIURI* aUri, const Maybe<mozilla::net::LoadInfoArgs>& aLoadInfoArgs,
+      nsIURI* aUri, const mozilla::net::LoadInfoArgs& aLoadInfoArgs,
       const nsACString& aMimeContentType, const nsACString& aContentDisposition,
       const uint32_t& aContentDispositionHint,
       const nsAString& aContentDispositionFilename, const bool& aForceSave,
       const int64_t& aContentLength, const bool& aWasFileChannel,
-      nsIURI* aReferrer, const MaybeDiscarded<BrowsingContext>& aContext,
-      const bool& aShouldCloseWindow);
+      nsIURI* aReferrer, const MaybeDiscarded<BrowsingContext>& aContext);
 
   mozilla::ipc::IPCResult RecvPExternalHelperAppConstructor(
       PExternalHelperAppParent* actor, nsIURI* uri,
-      const Maybe<LoadInfoArgs>& loadInfoArgs,
-      const nsACString& aMimeContentType, const nsACString& aContentDisposition,
+      const LoadInfoArgs& loadInfoArgs, const nsACString& aMimeContentType,
+      const nsACString& aContentDisposition,
       const uint32_t& aContentDispositionHint,
       const nsAString& aContentDispositionFilename, const bool& aForceSave,
       const int64_t& aContentLength, const bool& aWasFileChannel,
-      nsIURI* aReferrer, const MaybeDiscarded<BrowsingContext>& aContext,
-      const bool& aShouldCloseWindow) override;
+      nsIURI* aReferrer,
+      const MaybeDiscarded<BrowsingContext>& aContext) override;
 
   already_AddRefed<PHandlerServiceParent> AllocPHandlerServiceParent();
 
@@ -966,58 +951,53 @@ class ContentParent final : public PContentParent,
 
   bool DeallocPMediaParent(PMediaParent* aActor);
 
-  PBenchmarkStorageParent* AllocPBenchmarkStorageParent();
-
-  bool DeallocPBenchmarkStorageParent(PBenchmarkStorageParent* aActor);
-
 #ifdef MOZ_WEBSPEECH
-  PSpeechSynthesisParent* AllocPSpeechSynthesisParent();
-  bool DeallocPSpeechSynthesisParent(PSpeechSynthesisParent* aActor);
+  already_AddRefed<PSpeechSynthesisParent> AllocPSpeechSynthesisParent();
 
   virtual mozilla::ipc::IPCResult RecvPSpeechSynthesisConstructor(
       PSpeechSynthesisParent* aActor) override;
 #endif
 
-  PWebBrowserPersistDocumentParent* AllocPWebBrowserPersistDocumentParent(
+  already_AddRefed<PWebBrowserPersistDocumentParent>
+  AllocPWebBrowserPersistDocumentParent(
       PBrowserParent* aBrowser,
       const MaybeDiscarded<BrowsingContext>& aContext);
 
-  bool DeallocPWebBrowserPersistDocumentParent(
-      PWebBrowserPersistDocumentParent* aActor);
-
-  mozilla::ipc::IPCResult RecvGetGfxVars(nsTArray<GfxVarUpdate>* aVars);
-
-  mozilla::ipc::IPCResult RecvSetClipboard(const IPCTransferable& aTransferable,
-                                           const int32_t& aWhichClipboard);
+  mozilla::ipc::IPCResult RecvSetClipboard(
+      const IPCTransferable& aTransferable,
+      const nsIClipboard::ClipboardType& aWhichClipboard,
+      const MaybeDiscarded<WindowContext>& aRequestingWindowContext);
 
   mozilla::ipc::IPCResult RecvGetClipboard(
-      nsTArray<nsCString>&& aTypes, const int32_t& aWhichClipboard,
-      IPCTransferableData* aTransferableData);
+      nsTArray<nsCString>&& aTypes,
+      const nsIClipboard::ClipboardType& aWhichClipboard,
+      const MaybeDiscarded<WindowContext>& aRequestingWindowContext,
+      IPCTransferableDataOrError* aTransferableDataOrError);
 
-  mozilla::ipc::IPCResult RecvEmptyClipboard(const int32_t& aWhichClipboard);
+  mozilla::ipc::IPCResult RecvEmptyClipboard(
+      const nsIClipboard::ClipboardType& aWhichClipboard);
 
-  mozilla::ipc::IPCResult RecvClipboardHasType(nsTArray<nsCString>&& aTypes,
-                                               const int32_t& aWhichClipboard,
-                                               bool* aHasType);
+  mozilla::ipc::IPCResult RecvClipboardHasType(
+      nsTArray<nsCString>&& aTypes,
+      const nsIClipboard::ClipboardType& aWhichClipboard, bool* aHasType);
 
-  mozilla::ipc::IPCResult RecvClipboardHasTypesAsync(
-      nsTArray<nsCString>&& aTypes, const int32_t& aWhichClipboard,
-      ClipboardHasTypesAsyncResolver&& aResolver);
+  mozilla::ipc::IPCResult RecvGetClipboardDataSnapshot(
+      nsTArray<nsCString>&& aTypes,
+      const nsIClipboard::ClipboardType& aWhichClipboard,
+      const MaybeDiscarded<WindowContext>& aRequestingWindowContext,
+      mozilla::NotNull<nsIPrincipal*> aRequestingPrincipal,
+      GetClipboardDataSnapshotResolver&& aResolver);
 
-  mozilla::ipc::IPCResult RecvGetExternalClipboardFormats(
-      const int32_t& aWhichClipboard, const bool& aPlainTextOnly,
-      nsTArray<nsCString>* aTypes);
-
-  mozilla::ipc::IPCResult RecvGetClipboardAsync(
-      nsTArray<nsCString>&& aTypes, const int32_t& aWhichClipboard,
-      GetClipboardAsyncResolver&& aResolver);
+  mozilla::ipc::IPCResult RecvGetClipboardDataSnapshotSync(
+      nsTArray<nsCString>&& aTypes,
+      const nsIClipboard::ClipboardType& aWhichClipboard,
+      const MaybeDiscarded<WindowContext>& aRequestingWindowContext,
+      ClipboardReadRequestOrError* aRequestOrError);
 
   already_AddRefed<PClipboardWriteRequestParent>
-  AllocPClipboardWriteRequestParent(const int32_t& aClipboardType);
-
-  mozilla::ipc::IPCResult RecvPlaySound(nsIURI* aURI);
-  mozilla::ipc::IPCResult RecvBeep();
-  mozilla::ipc::IPCResult RecvPlayEventSound(const uint32_t& aEventId);
+  AllocPClipboardWriteRequestParent(
+      const nsIClipboard::ClipboardType& aClipboardType,
+      const MaybeDiscarded<WindowContext>& aSettingWindowContext);
 
   mozilla::ipc::IPCResult RecvGetIconForExtension(const nsACString& aFileExt,
                                                   const uint32_t& aIconSize,
@@ -1028,24 +1008,12 @@ class ContentParent final : public PContentParent,
 
   mozilla::ipc::IPCResult RecvSetURITitle(nsIURI* uri, const nsAString& title);
 
-  mozilla::ipc::IPCResult RecvShowAlert(nsIAlertNotification* aAlert);
-
-  mozilla::ipc::IPCResult RecvCloseAlert(const nsAString& aName,
-                                         bool aContextClosed);
-
-  mozilla::ipc::IPCResult RecvDisableNotifications(nsIPrincipal* aPrincipal);
-
-  mozilla::ipc::IPCResult RecvOpenNotificationSettings(
-      nsIPrincipal* aPrincipal);
-
-  mozilla::ipc::IPCResult RecvNotificationEvent(
-      const nsAString& aType, const NotificationEventData& aData);
-
   mozilla::ipc::IPCResult RecvLoadURIExternal(
       nsIURI* uri, nsIPrincipal* triggeringPrincipal,
       nsIPrincipal* redirectPrincipal,
       const MaybeDiscarded<BrowsingContext>& aContext,
-      bool aWasExternallyTriggered, bool aHasValidUserGestureActivation);
+      bool aWasExternallyTriggered, bool aHasValidUserGestureActivation,
+      bool aNewWindowTarget);
   mozilla::ipc::IPCResult RecvExtProtocolChannelConnectParent(
       const uint64_t& registrarId);
 
@@ -1070,31 +1038,29 @@ class ContentParent final : public PContentParent,
   mozilla::ipc::IPCResult RecvConsoleMessage(const nsAString& aMessage);
 
   mozilla::ipc::IPCResult RecvScriptError(
-      const nsAString& aMessage, const nsAString& aSourceName,
-      const nsAString& aSourceLine, const uint32_t& aLineNumber,
-      const uint32_t& aColNumber, const uint32_t& aFlags,
-      const nsACString& aCategory, const bool& aIsFromPrivateWindow,
-      const uint64_t& aInnerWindowId, const bool& aIsFromChromeContext);
+      const nsAString& aMessage, const nsACString& aSourceName,
+      const uint32_t& aLineNumber, const uint32_t& aColNumber,
+      const uint32_t& aFlags, const nsACString& aCategory,
+      const bool& aIsFromPrivateWindow, const uint64_t& aInnerWindowId,
+      const bool& aIsFromChromeContext);
 
   mozilla::ipc::IPCResult RecvReportFrameTimingData(
-      const mozilla::Maybe<LoadInfoArgs>& loadInfoArgs,
-      const nsAString& entryName, const nsAString& initiatorType,
-      UniquePtr<PerformanceTimingData>&& aData);
+      const LoadInfoArgs& loadInfoArgs, const nsAString& entryName,
+      const nsAString& initiatorType, UniquePtr<PerformanceTimingData>&& aData);
 
   mozilla::ipc::IPCResult RecvScriptErrorWithStack(
-      const nsAString& aMessage, const nsAString& aSourceName,
-      const nsAString& aSourceLine, const uint32_t& aLineNumber,
-      const uint32_t& aColNumber, const uint32_t& aFlags,
-      const nsACString& aCategory, const bool& aIsFromPrivateWindow,
-      const bool& aIsFromChromeContext, const ClonedMessageData& aStack);
+      const nsAString& aMessage, const nsACString& aSourceName,
+      const uint32_t& aLineNumber, const uint32_t& aColNumber,
+      const uint32_t& aFlags, const nsACString& aCategory,
+      const bool& aIsFromPrivateWindow, const bool& aIsFromChromeContext,
+      const ClonedMessageData& aStack);
 
  private:
   mozilla::ipc::IPCResult RecvScriptErrorInternal(
-      const nsAString& aMessage, const nsAString& aSourceName,
-      const nsAString& aSourceLine, const uint32_t& aLineNumber,
-      const uint32_t& aColNumber, const uint32_t& aFlags,
-      const nsACString& aCategory, const bool& aIsFromPrivateWindow,
-      const bool& aIsFromChromeContext,
+      const nsAString& aMessage, const nsACString& aSourceName,
+      const uint32_t& aLineNumber, const uint32_t& aColNumber,
+      const uint32_t& aFlags, const nsACString& aCategory,
+      const bool& aIsFromPrivateWindow, const bool& aIsFromChromeContext,
       const ClonedMessageData* aStack = nullptr);
 
  public:
@@ -1128,10 +1094,10 @@ class ContentParent final : public PContentParent,
 
   mozilla::ipc::IPCResult RecvEndDriverCrashGuard(const uint32_t& aGuardType);
 
-  mozilla::ipc::IPCResult RecvAddIdleObserver(const uint64_t& observerId,
+  mozilla::ipc::IPCResult RecvAddIdleObserver(const uint64_t& aObserverId,
                                               const uint32_t& aIdleTimeInS);
 
-  mozilla::ipc::IPCResult RecvRemoveIdleObserver(const uint64_t& observerId,
+  mozilla::ipc::IPCResult RecvRemoveIdleObserver(const uint64_t& aObserverId,
                                                  const uint32_t& aIdleTimeInS);
 
   mozilla::ipc::IPCResult RecvBackUpXResources(
@@ -1150,22 +1116,13 @@ class ContentParent final : public PContentParent,
   bool DeallocPWebrtcGlobalParent(PWebrtcGlobalParent* aActor);
 #endif
 
-  mozilla::ipc::IPCResult RecvUpdateDropEffect(const uint32_t& aDragAction,
-                                               const uint32_t& aDropEffect);
-
   mozilla::ipc::IPCResult RecvShutdownProfile(const nsACString& aProfile);
 
   mozilla::ipc::IPCResult RecvShutdownPerfStats(const nsACString& aPerfStats);
 
-  mozilla::ipc::IPCResult RecvGetGraphicsDeviceInitData(
-      ContentDeviceData* aOut);
-
-  mozilla::ipc::IPCResult RecvGetOutputColorProfileData(
-      nsTArray<uint8_t>* aOutputColorProfileData);
-
   mozilla::ipc::IPCResult RecvGetFontListShmBlock(
       const uint32_t& aGeneration, const uint32_t& aIndex,
-      base::SharedMemoryHandle* aOut);
+      mozilla::ipc::ReadOnlySharedMemoryHandle* aOut);
 
   mozilla::ipc::IPCResult RecvInitializeFamily(const uint32_t& aGeneration,
                                                const uint32_t& aFamilyIndex,
@@ -1188,12 +1145,8 @@ class ContentParent final : public PContentParent,
   mozilla::ipc::IPCResult RecvStartCmapLoading(const uint32_t& aGeneration,
                                                const uint32_t& aStartIndex);
 
-  mozilla::ipc::IPCResult RecvGetHyphDict(nsIURI* aURIParams,
-                                          base::SharedMemoryHandle* aOutHandle,
-                                          uint32_t* aOutSize);
-
-  mozilla::ipc::IPCResult RecvNotifyBenchmarkResult(const nsAString& aCodecName,
-                                                    const uint32_t& aDecodeFPS);
+  mozilla::ipc::IPCResult RecvGetHyphDict(
+      nsIURI* aURIParams, mozilla::ipc::ReadOnlySharedMemoryHandle* aOutHandle);
 
   mozilla::ipc::IPCResult RecvNotifyPushObservers(const nsACString& aScope,
                                                   nsIPrincipal* aPrincipal,
@@ -1203,9 +1156,6 @@ class ContentParent final : public PContentParent,
       const nsACString& aScope, nsIPrincipal* aPrincipal,
       const nsAString& aMessageId, nsTArray<uint8_t>&& aData);
 
-  mozilla::ipc::IPCResult RecvNotifyPushSubscriptionChangeObservers(
-      const nsACString& aScope, nsIPrincipal* aPrincipal);
-
   mozilla::ipc::IPCResult RecvPushError(const nsACString& aScope,
                                         nsIPrincipal* aPrincipal,
                                         const nsAString& aMessage,
@@ -1214,9 +1164,9 @@ class ContentParent final : public PContentParent,
   mozilla::ipc::IPCResult RecvNotifyPushSubscriptionModifiedObservers(
       const nsACString& aScope, nsIPrincipal* aPrincipal);
 
-  mozilla::ipc::IPCResult RecvGetFilesRequest(const nsID& aID,
-                                              const nsAString& aDirectoryPath,
-                                              const bool& aRecursiveFlag);
+  mozilla::ipc::IPCResult RecvGetFilesRequest(
+      const nsID& aID, nsTArray<nsString>&& aDirectoryPaths,
+      const bool& aRecursiveFlag);
 
   mozilla::ipc::IPCResult RecvDeleteGetFilesRequest(const nsID& aID);
 
@@ -1233,7 +1183,7 @@ class ContentParent final : public PContentParent,
   mozilla::ipc::IPCResult RecvRecordDiscardedData(
       const DiscardedData& aDiscardedData);
   mozilla::ipc::IPCResult RecvRecordPageLoadEvent(
-      const mozilla::glean::perf::PageLoadExtra& aPageLoadEventExtra);
+      mozilla::glean::perf::PageLoadExtra&& aPageLoadEventExtra);
   mozilla::ipc::IPCResult RecvRecordOrigin(const uint32_t& aMetricId,
                                            const nsACString& aOrigin);
   mozilla::ipc::IPCResult RecvReportContentBlockingLog(
@@ -1258,6 +1208,7 @@ class ContentParent final : public PContentParent,
       const Maybe<
           ContentBlockingNotifier::StorageAccessPermissionGrantedReason>&
           aReason,
+      const bool& aFrameOnly,
       StorageAccessPermissionGrantedForOriginResolver&& aResolver);
 
   mozilla::ipc::IPCResult RecvCompleteAllowAccessFor(
@@ -1318,7 +1269,11 @@ class ContentParent final : public PContentParent,
 
   mozilla::ipc::IPCResult RecvNotifyPositionStateChanged(
       const MaybeDiscarded<BrowsingContext>& aContext,
-      const PositionState& aState);
+      const Maybe<PositionState>& aState);
+
+  mozilla::ipc::IPCResult RecvNotifyGuessedPositionStateChanged(
+      const MaybeDiscarded<BrowsingContext>& aContext, const nsID& aMediaId,
+      const Maybe<PositionState>& aState);
 
   mozilla::ipc::IPCResult RecvAddOrRemovePageAwakeRequest(
       const MaybeDiscarded<BrowsingContext>& aContext,
@@ -1351,6 +1306,7 @@ class ContentParent final : public PContentParent,
       const bool& aCloneEntryChildren, const bool& aChannelExpired,
       const uint32_t& aCacheKey);
 
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY
   mozilla::ipc::IPCResult RecvHistoryGo(
       const MaybeDiscarded<BrowsingContext>& aContext, int32_t aOffset,
       uint64_t aHistoryEpoch, bool aRequireUserInteraction,
@@ -1386,6 +1342,11 @@ class ContentParent final : public PContentParent,
       const MaybeDiscarded<BrowsingContext>& aContext,
       GetLoadingSessionHistoryInfoFromParentResolver&& aResolver);
 
+  mozilla::ipc::IPCResult RecvGetContiguousSessionHistoryInfos(
+      const MaybeDiscarded<BrowsingContext>& aContext,
+      SessionHistoryInfo&& aInfo,
+      GetContiguousSessionHistoryInfosResolver&& aResolver);
+
   mozilla::ipc::IPCResult RecvRemoveFromBFCache(
       const MaybeDiscarded<BrowsingContext>& aContext);
 
@@ -1404,9 +1365,13 @@ class ContentParent final : public PContentParent,
   mozilla::ipc::IPCResult RecvRemoveFromSessionHistory(
       const MaybeDiscarded<BrowsingContext>& aContext, const nsID& aChangeID);
 
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY
   mozilla::ipc::IPCResult RecvHistoryReload(
       const MaybeDiscarded<BrowsingContext>& aContext,
       const uint32_t aReloadFlags);
+
+  mozilla::ipc::IPCResult RecvConsumeHistoryActivation(
+      const MaybeDiscarded<BrowsingContext>& aTop);
 
   mozilla::ipc::IPCResult RecvCleanupPendingLoadState(uint64_t aLoadIdentifier);
 
@@ -1423,10 +1388,18 @@ class ContentParent final : public PContentParent,
 
   mozilla::ipc::IPCResult RecvSetContainerFeaturePolicy(
       const MaybeDiscardedBrowsingContext& aContainerContext,
-      FeaturePolicy* aContainerFeaturePolicy);
+      MaybeFeaturePolicyInfo&& aContainerFeaturePolicyInfo);
 
   mozilla::ipc::IPCResult RecvGetSystemIcon(nsIURI* aURI,
                                             GetSystemIconResolver&& aResolver);
+
+  mozilla::ipc::IPCResult RecvGetSystemGeolocationPermissionBehavior(
+      GetSystemGeolocationPermissionBehaviorResolver&& aResolver);
+
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY mozilla::ipc::IPCResult
+  RecvRequestGeolocationPermissionFromUser(
+      const MaybeDiscardedBrowsingContext& aBrowsingContext,
+      RequestGeolocationPermissionFromUserResolver&& aResolver);
 
 #ifdef FUZZING_SNAPSHOT
   mozilla::ipc::IPCResult RecvSignalFuzzingReady();
@@ -1467,17 +1440,26 @@ class ContentParent final : public PContentParent,
     return mThreadsafeHandle;
   }
 
+  RemoteWorkerServiceParent* GetRemoteWorkerServiceParent() const {
+    return mRemoteWorkerServiceActor;
+  }
+
  private:
   // Return an existing ContentParent if possible. Otherwise, `nullptr`.
-  static already_AddRefed<ContentParent> GetUsedBrowserProcess(
+  static UniqueContentParentKeepAlive GetUsedBrowserProcess(
       const nsACString& aRemoteType, nsTArray<ContentParent*>& aContentParents,
-      uint32_t aMaxContentParents, bool aPreferUsed, ProcessPriority aPriority);
+      uint32_t aMaxContentParents, bool aPreferUsed, ProcessPriority aPriority,
+      uint64_t aBrowserId);
 
   void AddToPool(nsTArray<ContentParent*>&);
   void RemoveFromPool(nsTArray<ContentParent*>&);
   void AssertNotInPool();
 
+  void RemoveKeepAlive(uint64_t aBrowserId);
+
   void AssertAlive();
+
+  void StartRemoteWorkerService();
 
  private:
   // If you add strong pointers to cycle collected objects here, be sure to
@@ -1498,11 +1480,11 @@ class ContentParent final : public PContentParent,
   ContentParentId mChildID;
   int32_t mGeolocationWatchID;
 
-  // This contains the id for the JS plugin (@see nsFakePluginTag) if this is
-  // the ContentParent for a process containing iframes for that JS plugin. If
-  // this is not a ContentParent for a JS plugin then it contains the value
-  // nsFakePluginTag::NOT_JSPLUGIN.
-  int32_t mJSPluginID;
+  // After we destroy the last Browser, we also start a timer to ensure
+  // that even content processes that are not responding will get a
+  // second chance and a shutdown message.
+  nsCOMPtr<nsITimer> mSendShutdownTimer;
+  bool mSentShutdownMessage = false;
 
   // After we initiate shutdown, we also start a timer to ensure
   // that even content processes that are 100% blocked (say from
@@ -1514,13 +1496,6 @@ class ContentParent final : public PContentParent,
   // track the identity and other relevant information about the content process
   // they're attached to.
   const RefPtr<ThreadsafeContentParentHandle> mThreadsafeHandle;
-
-  // How many tabs we're waiting to finish their destruction
-  // sequence.  Precisely, how many BrowserParents have called
-  // NotifyTabDestroying() but not called NotifyTabDestroyed().
-  int32_t mNumDestroyingTabs;
-
-  uint32_t mNumKeepaliveCalls;
 
   // The process starts in the LAUNCHING state, and transitions to
   // ALIVE once it can accept IPC messages.  It remains ALIVE only
@@ -1562,29 +1537,33 @@ class ContentParent final : public PContentParent,
 
   // True if we already created a GMP service.
   uint8_t mGMPCreated : 1;
+  // True if we already created the
+  // ClipboardContentAnalysis actor
+  uint8_t mClipboardContentAnalysisCreated : 1;
 
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
-  bool mNotifiedImpendingShutdownOnTabWillDestroy = false;
   bool mBlockShutdownCalled;
 #endif
-
-  nsCOMPtr<nsIContentProcessInfo> mScriptableHelper;
 
   nsTArray<nsCOMPtr<nsIObserver>> mIdleListeners;
 
 #ifdef MOZ_X11
   // Dup of child's X socket, used to scope its resources to this
   // object instead of the child process's lifetime.
-  ScopedClose mChildXSocketFdDup;
+  UniqueFileHandle mChildXSocketFdDup;
 #endif
 
   RefPtr<PProcessHangMonitorParent> mHangMonitorActor;
+
+  RefPtr<RemoteWorkerServiceParent> mRemoteWorkerServiceActor;
+
+  RefPtr<RemoteWorkerDebuggerManagerParent> mRemoteWorkerDebuggerManagerActor;
 
   UniquePtr<gfx::DriverCrashGuard> mDriverCrashGuard;
   UniquePtr<MemoryReportRequestHost> mMemoryReportRequest;
 
 #if defined(XP_LINUX) && defined(MOZ_SANDBOX)
-  mozilla::UniquePtr<SandboxBroker> mSandboxBroker;
+  RefPtr<SandboxBroker> mSandboxBroker;
   static mozilla::StaticAutoPtr<SandboxBrokerPolicyFactory>
       sSandboxBrokerPolicyFactory;
 #endif
@@ -1594,8 +1573,9 @@ class ContentParent final : public PContentParent,
   nsRefPtrHashtable<nsIDHashKey, GetFilesHelper> mGetFilesPendingRequests;
 
   nsTHashSet<nsCString> mActivePermissionKeys;
+  nsTHashSet<nsCString> mActiveSecondaryPermissionKeys;
 
-  nsTArray<nsCString> mBlobURLs;
+  nsTArray<nsCOMPtr<nsIPrincipal>> mCookieInContentListCache;
 
   // This is intended to be a memory and time efficient means of determining
   // whether an origin has ever existed in a process so that Blob URL broadcast
@@ -1637,14 +1617,20 @@ class ContentParent final : public PContentParent,
   // Cleared once startup is complete.
   UniquePtr<mozilla::ipc::SharedPreferenceSerializer> mPrefSerializer;
 
+  RefPtr<IdleTaskRunner> mMaybeBeginShutdownRunner;
+
   static uint32_t sMaxContentProcesses;
   static uint32_t sPageLoadEventCounter;
 
   bool mIsSignaledImpendingShutdown = false;
   bool mIsNotifiedShutdownSuccess = false;
-};
 
-NS_DEFINE_STATIC_IID_ACCESSOR(ContentParent, NS_CONTENTPARENT_IID)
+  nsCOMPtr<nsIThread> mClipboardContentAnalysisThread;
+
+#ifdef MOZ_WMF_CDM
+  RefPtr<nsIOriginsListLoadCallback> mOriginsListCallback;
+#endif
+};
 
 // Threadsafe handle object allowing off-main-thread code to get some
 // information and maintain a weak reference to a ContentParent.
@@ -1669,18 +1655,15 @@ class ThreadsafeContentParentHandle final {
     return do_AddRef(mWeakActor);
   }
 
-  // Calls `aCallback` with the current remote worker count and whether or not
-  // shutdown has been started. If the callback returns `true`, registers a new
-  // actor, and returns `true`, otherwise returns `false`.
+  // Attempt to add a KeepAlive for the given BrowserId. A KeepAlive will try to
+  // keep the process alive, though it may still die (e.g. due to a crash,
+  // explicit shutdown request, or similar).
   //
-  // NOTE: The internal mutex is held while evaluating `aCallback`.
-  bool MaybeRegisterRemoteWorkerActor(
-      MoveOnlyFunction<bool(uint32_t, bool)> aCallback) MOZ_EXCLUDES(mMutex);
-
-  // Like `MaybeRegisterRemoteWorkerActor`, but unconditional.
-  void RegisterRemoteWorkerActor() MOZ_EXCLUDES(mMutex) {
-    MaybeRegisterRemoteWorkerActor([](uint32_t, bool) { return true; });
-  }
+  // Returns nullptr if the process is already being shut down.
+  //
+  // May be called from any thread.
+  [[nodiscard]] UniqueThreadsafeContentParentKeepAlive TryAddKeepAlive(
+      uint64_t aBrowserId = 0) MOZ_EXCLUDES(mMutex);
 
  private:
   ThreadsafeContentParentHandle(ContentParent* aActor, ContentParentId aChildID,
@@ -1688,12 +1671,22 @@ class ThreadsafeContentParentHandle final {
       : mChildID(aChildID), mRemoteType(aRemoteType), mWeakActor(aActor) {}
   ~ThreadsafeContentParentHandle() { MOZ_ASSERT(!mWeakActor); }
 
-  mozilla::Mutex mMutex{"ContentParentIdentity"};
+  mozilla::RecursiveMutex mMutex{"ContentParentIdentity"};
 
   const ContentParentId mChildID;
 
   nsCString mRemoteType MOZ_GUARDED_BY(mMutex);
-  uint32_t mRemoteWorkerActorCount MOZ_GUARDED_BY(mMutex) = 0;
+
+  // Keepalives for this browser, keyed by BrowserId. A BrowserId of `0` is used
+  // for non-tab code keeping the process alive (such as for workers).
+  // Each KeepAlive increments the corresponding BrowserId's counter, and the
+  // process will begin shutdown when the last KeepAlive is removed.
+  // FIXME: These sets are probably quite small, so it might make sense to avoid
+  // hashtable storage.
+  nsTHashMap<uint64_t, uint32_t> mKeepAlivesPerBrowserId MOZ_GUARDED_BY(mMutex);
+
+  // If set, the browser is shutting down, and new workers or tabs should not be
+  // created in this process.
   bool mShutdownStarted MOZ_GUARDED_BY(mMutex) = false;
 
   // Weak reference to the actual ContentParent actor. Only touched on the main
@@ -1702,15 +1695,12 @@ class ThreadsafeContentParentHandle final {
 };
 
 // This is the C++ version of remoteTypePrefix in E10SUtils.sys.mjs.
-const nsDependentCSubstring RemoteTypePrefix(
-    const nsACString& aContentProcessType);
+nsDependentCSubstring RemoteTypePrefix(const nsACString& aContentProcessType);
 
 // This is based on isWebRemoteType in E10SUtils.sys.mjs.
 bool IsWebRemoteType(const nsACString& aContentProcessType);
 
 bool IsWebCoopCoepRemoteType(const nsACString& aContentProcessType);
-
-bool IsPrivilegedMozillaRemoteType(const nsACString& aContentProcessType);
 
 bool IsExtensionRemoteType(const nsACString& aContentProcessType);
 

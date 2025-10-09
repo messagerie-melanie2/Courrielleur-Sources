@@ -50,27 +50,35 @@ add_task(async function () {
     },
     {
       selector: `h1, [test-hint="anonymous-layer"]`,
-      ancestorRulesData: ["@layer"],
+      ancestorRulesData: ["@layer {"],
     },
     {
       selector: `h1, [test-hint="named-layer"]`,
-      ancestorRulesData: ["@layer myLayer"],
+      ancestorRulesData: ["@layer myLayer {"],
     },
     {
       selector: `h1, [test-hint="imported-named-layer--no-rule-layer"]`,
-      ancestorRulesData: ["@layer importedLayer", "@media screen"],
+      ancestorRulesData: ["@layer importedLayer {", "  @media screen {"],
     },
     {
       selector: `h1, [test-hint="imported-named-layer--named-layer"]`,
       ancestorRulesData: [
-        "@layer importedLayer",
-        "@media screen",
-        "@layer in-imported-stylesheet",
+        "@layer importedLayer {",
+        "  @media screen {",
+        "    @layer in-imported-stylesheet {",
+      ],
+    },
+    {
+      selector: `h1, [test-hint="imported-nested-named-layer--named-layer"]`,
+      ancestorRulesData: [
+        "@layer importedLayer {",
+        "  @layer importedNestedLayer {",
+        "    @layer in-imported-nested-stylesheet {",
       ],
     },
     {
       selector: `h1, [test-hint="imported-anonymous-layer--no-rule-layer"]`,
-      ancestorRulesData: ["@layer"],
+      ancestorRulesData: ["@layer {"],
     },
   ];
 
@@ -86,7 +94,7 @@ add_task(async function () {
     info(`Checking rule #${i}: ${expectedRule.selector}`);
 
     const selector = rulesInView[i].querySelector(
-      ".ruleview-selectorcontainer"
+      ".ruleview-selectors-container"
     ).innerText;
     is(selector, expectedRule.selector, `Expected selector for ${selector}`);
 
@@ -104,4 +112,36 @@ add_task(async function () {
       );
     }
   }
+});
+
+add_task(async function editStylesheetLayerRule() {
+  await addTab(
+    "https://example.com/document-builder.sjs?html=" +
+      encodeURIComponent(`
+        <link rel="stylesheet" href="${URL_ROOT_COM_SSL}doc_layer_edit.css">
+        <h1>Editing @layer stylesheet</h1>
+      `)
+  );
+
+  const { inspector, view } = await openRuleView();
+
+  info("Select h1 node");
+  await selectNode("h1", inspector);
+
+  is(
+    await getComputedStyleProperty("h1", null, "font-size"),
+    "20px",
+    "original font-size value for h1 is 20px"
+  );
+
+  const prop = getTextProperty(view, 1, { "font-size": "20px" });
+
+  info("Change font-size");
+  await setProperty(view, prop, "42px");
+
+  is(
+    await getComputedStyleProperty("h1", null, "font-size"),
+    "42px",
+    "h1 font-size was properly set"
+  );
 });

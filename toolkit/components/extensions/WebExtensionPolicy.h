@@ -133,8 +133,19 @@ class WebExtensionPolicyCore final {
                     bool aCheckRestricted = true,
                     bool aAllowFilePermission = false) const;
 
+  bool IgnoreQuarantine() const MOZ_EXCLUDES(mLock) {
+    AutoReadLock lock(mLock);
+    return mIgnoreQuarantine;
+  }
+  void SetIgnoreQuarantine(bool aIgnore) MOZ_EXCLUDES(mLock) {
+    AutoWriteLock lock(mLock);
+    mIgnoreQuarantine = aIgnore;
+  }
+
   bool QuarantinedFromDoc(const DocInfo& aDoc) const;
-  bool QuarantinedFromURI(const URLInfo& aURI) const;
+  bool QuarantinedFromURI(const URLInfo& aURI) const MOZ_EXCLUDES(mLock);
+
+  bool PrivateBrowsingAllowed() const;
 
   // Try to get a reference to the cycle-collected main-thread-only
   // WebExtensionPolicy instance.
@@ -175,7 +186,6 @@ class WebExtensionPolicyCore final {
   /* const */ nsString mBaseCSP;
 
   const bool mIsPrivileged;
-  const bool mIgnoreQuarantine;
   const bool mTemporarilyInstalled;
 
   const nsString mBackgroundWorkerScript;
@@ -183,6 +193,8 @@ class WebExtensionPolicyCore final {
   /* const */ nsTArray<RefPtr<WebAccessibleResource>> mWebAccessibleResources;
 
   mutable RWLock mLock{"WebExtensionPolicyCore"};
+
+  bool mIgnoreQuarantine MOZ_GUARDED_BY(mLock);
   RefPtr<AtomSet> mPermissions MOZ_GUARDED_BY(mLock);
   RefPtr<MatchPatternSetCore> mHostPermissions MOZ_GUARDED_BY(mLock);
 };
@@ -301,13 +313,18 @@ class WebExtensionPolicy final : public nsISupports, public nsWrapperCache {
     mCore->SetPermissions(aPermissions);
   }
 
+  bool IgnoreQuarantine() const { return mCore->IgnoreQuarantine(); }
+  void SetIgnoreQuarantine(bool aIgnore);
+
   void GetContentScripts(ScriptArray& aScripts) const;
   const ScriptArray& ContentScripts() const { return mContentScripts; }
 
   bool Active() const { return mActive; }
   void SetActive(bool aActive, ErrorResult& aRv);
 
-  bool PrivateBrowsingAllowed() const;
+  bool PrivateBrowsingAllowed() const {
+    return mCore->PrivateBrowsingAllowed();
+  }
 
   bool CanAccessContext(nsILoadContext* aContext) const;
 

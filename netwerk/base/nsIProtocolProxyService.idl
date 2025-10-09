@@ -193,7 +193,7 @@ interface nsIProtocolProxyService : nsISupports
      */
     nsIProxyInfo newProxyInfoWithAuth(in ACString aType, in AUTF8String aHost,
                                       in long aPort,
-                                      in ACString aUsername, in ACString aPassword,
+                                      in AUTF8String aUsername, in AUTF8String aPassword,
                                       in ACString aProxyAuthorizationHeader,
                                       in ACString aConnectionIsolationKey,
                                       in unsigned long aFlags,
@@ -285,6 +285,11 @@ interface nsIProtocolProxyService : nsISupports
      *        The nsIProtocolProxyChannelFilter instance to be unregistered.
      */
     void unregisterChannelFilter(in nsIProtocolProxyChannelFilter aFilter);
+
+    /**
+      * True when there is a filter registered.
+      */
+    readonly attribute boolean hasProxyFilterRegistered;
 
     /**
      * This method is used to register a nsIProxyConfigChangedCallback.

@@ -2,15 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* exported onLoad */
-
 /* import-globals-from ../../../../mail/base/content/utilityOverlay.js */
 /* import-globals-from ../calendar-ui-utils.js */
 /* import-globals-from calendar-identity-utils.js */
 
-var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
-var { PluralForm } = ChromeUtils.importESModule("resource://gre/modules/PluralForm.sys.mjs");
-
+var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
 /**
  * The calendar to modify, is retrieved from window.arguments[0].calendar
  */
@@ -26,14 +22,14 @@ window.addEventListener("DOMContentLoaded", onLoad);
  */
 function onLoad() {
   /** @type {{ calendar: calICalendar, canDisable: boolean}} */
-  let args = window.arguments[0];
+  const args = window.arguments[0];
 
   gCalendar = args.calendar; // eslint-disable-line no-global-assign
 
   // Some servers provide colors as an 8-character hex string, which the color
   // picker can't handle. Strip the alpha component.
   let calColor = gCalendar.getProperty("color");
-  let alphaHex = calColor?.match(/^(#[0-9A-Fa-f]{6})[0-9A-Fa-f]{2}$/);
+  const alphaHex = calColor?.match(/^(#[0-9A-Fa-f]{6})[0-9A-Fa-f]{2}$/);
   if (alphaHex) {
     gCalendar.setProperty("color", alphaHex[1]);
     calColor = alphaHex[1];
@@ -65,9 +61,9 @@ function onLoad() {
   initRefreshInterval();
 
   // Set up the cache field
-  let cacheBox = document.getElementById("cache");
-  let canCache = gCalendar.getProperty("cache.supported") !== false;
-  let alwaysCache = gCalendar.getProperty("cache.always");
+  const cacheBox = document.getElementById("cache");
+  const canCache = gCalendar.getProperty("cache.supported") !== false;
+  const alwaysCache = gCalendar.getProperty("cache.always");
   if (!canCache || alwaysCache) {
     cacheBox.setAttribute("disable-capability", "true");
     cacheBox.hidden = true;
@@ -76,8 +72,8 @@ function onLoad() {
   cacheBox.checked = alwaysCache || (canCache && gCalendar.getProperty("cache.enabled"));
 
   // Set up the show alarms row and checkbox
-  let suppressAlarmsRow = document.getElementById("calendar-suppressAlarms-row");
-  let suppressAlarms = gCalendar.getProperty("suppressAlarms");
+  const suppressAlarmsRow = document.getElementById("calendar-suppressAlarms-row");
+  const suppressAlarms = gCalendar.getProperty("suppressAlarms");
   document.getElementById("fire-alarms").checked = !suppressAlarms;
 
   suppressAlarmsRow.toggleAttribute(
@@ -107,7 +103,7 @@ function onLoad() {
     document.getElementById("calendar-name").focus();
   }
 
-  let notificationsSetting = document.getElementById("calendar-notifications-setting");
+  const notificationsSetting = document.getElementById("calendar-notifications-setting");
   notificationsSetting.value = gCalendar.getProperty("notifications.times");
 }
 
@@ -134,19 +130,18 @@ function onAcceptDialog() {
 
   // Save refresh interval
   if (gCalendar.canRefresh) {
-    let value = document.getElementById("calendar-refreshInterval-menulist").value;
+    const value = document.getElementById("calendar-refreshInterval-menulist").value;
     gCalendar.setProperty("refreshInterval", value);
-  }
-
-  // Save cache options
-  let alwaysCache = gCalendar.getProperty("cache.always");
-  if (!alwaysCache) {
-    gCalendar.setProperty("cache.enabled", document.getElementById("cache").checked);
   }
 
   // Save identity and scheduling options.
   saveMailIdentitySelection(gCalendar);
   saveForceEmailScheduling();
+
+  gCalendar.setProperty(
+    "notifications.times",
+    document.getElementById("calendar-notifications-setting").value
+  );
 
   if (!gCalendar.getProperty("force-disabled")) {
     // Save disabled option (should do this last), remove auto-enabled
@@ -157,10 +152,13 @@ function onAcceptDialog() {
     gCalendar.deleteProperty("auto-enabled");
   }
 
-  gCalendar.setProperty(
-    "notifications.times",
-    document.getElementById("calendar-notifications-setting").value
-  );
+  // Save cache options.
+  // NOTE: do this last! changeCalendarCache will be using another calendar
+  // than gCalendar afterwards so changes to gCalendar would get lost.
+  const alwaysCache = gCalendar.getProperty("cache.always");
+  if (!alwaysCache) {
+    gCalendar.setProperty("cache.enabled", document.getElementById("cache").checked);
+  }
 }
 // When this event fires, onAcceptDialog might not be the function defined
 // above, so call it indirectly.
@@ -169,7 +167,7 @@ document.addEventListener("dialogaccept", () => onAcceptDialog());
 /**
  * Called when an identity is selected.
  */
-function onChangeIdentity(aEvent) {
+function onChangeIdentity() {
   notifyOnIdentitySelection(gCalendar);
   updateForceEmailSchedulingControl();
 }
@@ -178,8 +176,8 @@ function onChangeIdentity(aEvent) {
  * When the calendar is disabled, we need to disable a number of other elements
  */
 function setupEnabledCheckbox() {
-  let isEnabled = document.getElementById("calendar-enabled-checkbox").checked;
-  let els = document.getElementsByAttribute("disable-with-calendar", "true");
+  const isEnabled = document.getElementById("calendar-enabled-checkbox").checked;
+  const els = document.getElementsByAttribute("disable-with-calendar", "true");
   for (let i = 0; i < els.length; i++) {
     els[i].disabled = !isEnabled || els[i].getAttribute("disable-capability") == "true";
   }
@@ -196,12 +194,12 @@ document.addEventListener("dialogextra1", () => {
 
 function initRefreshInterval() {
   function createMenuItem(minutes) {
-    let menuitem = document.createXULElement("menuitem");
+    const menuitem = document.createXULElement("menuitem");
     menuitem.setAttribute("value", minutes);
 
-    let everyMinuteString = cal.l10n.getCalString("calendarPropertiesEveryMinute");
-    let label = PluralForm.get(minutes, everyMinuteString).replace("#1", minutes);
-    menuitem.setAttribute("label", label);
+    document.l10n.setAttributes(menuitem, "calendar-properties-every-minute", {
+      count: minutes,
+    });
 
     return menuitem;
   }
@@ -217,10 +215,10 @@ function initRefreshInterval() {
     }
 
     let foundValue = false;
-    let separator = document.getElementById("calendar-refreshInterval-manual-separator");
-    let menulist = document.getElementById("calendar-refreshInterval-menulist");
-    for (let min of [1, 5, 15, 30, 60]) {
-      let menuitem = createMenuItem(min);
+    const separator = document.getElementById("calendar-refreshInterval-manual-separator");
+    const menulist = document.getElementById("calendar-refreshInterval-menulist");
+    for (const min of [1, 5, 15, 30, 60]) {
+      const menuitem = createMenuItem(min);
 
       separator.parentNode.insertBefore(menuitem, separator);
       if (refreshInterval == min) {
@@ -236,10 +234,55 @@ function initRefreshInterval() {
 
     if (!foundValue) {
       // Special menuitem in case the user changed the value in the config editor.
-      let menuitem = createMenuItem(refreshInterval);
+      const menuitem = createMenuItem(refreshInterval);
       separator.parentNode.insertBefore(menuitem, separator.nextElementSibling);
       menulist.selectedItem = menuitem;
     }
+  }
+}
+
+/**
+ * Display the  option to enforce email scheduling for outgoing scheduling operations.
+ */
+function initForceEmailScheduling() {
+  if (gCalendar && gCalendar.type == "caldav") {
+    const checkbox = document.getElementById("force-email-scheduling");
+    checkbox.checked = !!gCalendar.getProperty("forceEmailScheduling");
+    updateForceEmailSchedulingControl();
+  } else {
+    document.getElementById("calendar-force-email-scheduling-row").toggleAttribute("hidden", true);
+  }
+}
+
+/**
+ * Persisting the calendar property to enforce email scheduling. Used in the
+ * calendar properties dialog.
+ */
+function saveForceEmailScheduling() {
+  if (gCalendar && gCalendar.type == "caldav") {
+    const checkbox = document.getElementById("force-email-scheduling");
+    if (checkbox.getAttribute("disable-capability") != "true") {
+      gCalendar.setProperty("forceEmailScheduling", checkbox.checked);
+    }
+  }
+}
+
+/**
+ * Updates the forceEmailScheduling control based on the currently assigned
+ * email identity to this calendar.
+ */
+function updateForceEmailSchedulingControl() {
+  const checkbox = document.getElementById("force-email-scheduling");
+  if (
+    gCalendar &&
+    gCalendar.getProperty("capabilities.autoschedule.supported") &&
+    getMailIdentitySelection(gCalendar) != "none"
+  ) {
+    checkbox.removeAttribute("disable-capability");
+    checkbox.removeAttribute("disabled");
+  } else {
+    checkbox.setAttribute("disable-capability", "true");
+    checkbox.setAttribute("disabled", "true");
   }
 }
 

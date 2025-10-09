@@ -90,6 +90,7 @@ TaggingService.prototype = {
 
   /**
    * Returns the folder id for a tag, or -1 if not found.
+   *
    * @param [in] aTag
    *        string tag to search for
    * @returns integer id for the bookmark folder for the tag
@@ -109,7 +110,7 @@ TaggingService.prototype = {
    *        Array of tags.  Entries can be tag names or concrete item id.
    * @param trim [optional]
    *        Whether to trim passed-in named tags. Defaults to false.
-   * @return Array of tag objects like { id: number, name: string }.
+   * @returns Array of tag objects like { id: number, name: string }.
    *
    * @throws Cr.NS_ERROR_INVALID_ARG if any element of the input array is not
    *         a valid tag.
@@ -321,7 +322,7 @@ TaggingService.prototype = {
   },
 
   // nsIObserver
-  observe: function TS_observe(aSubject, aTopic, aData) {
+  observe: function TS_observe(aSubject, aTopic) {
     if (aTopic == TOPIC_SHUTDOWN) {
       PlacesUtils.observers.removeListener(
         [
@@ -497,13 +498,13 @@ class TagSearch {
       for (let i = 0; i < matchingTags.length; ++i) {
         let tag = matchingTags[i];
         // For each match, prepend what the user has typed so far.
-        this._result.appendMatch(before + tag, tag);
+        this._result.appendMatch(before + tag, null, null, null, null, tag);
         // In case of many tags, notify once every 10.
         if (i % 10 == 0) {
           this._notifyResult(true);
           // yield to avoid monopolizing the main-thread
           await new Promise(resolve =>
-            Services.tm.dispatchToMainThread(resolve)
+            Services.tm.dispatchToMainThread(() => resolve())
           );
           if (this._canceled) {
             return;

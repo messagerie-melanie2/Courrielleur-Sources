@@ -12,7 +12,9 @@ EXPORTS.mozilla += [
     "decimal/Decimal.h",
     "decimal/DoubleConversion.h",
     "IntegerPrintfMacros.h",
+    "LoggingCore.h",
     "MmapFaultHandler.h",
+    "Now.h",
     "PlatformConditionVariable.h",
     "PlatformMutex.h",
     "PlatformRWLock.h",
@@ -43,7 +45,10 @@ if CONFIG["OS_ARCH"] == "WINNT":
 SOURCES += [
     "AutoProfilerLabel.cpp",
     "AwakeTimeStamp.cpp",
+    "Debug.cpp",
+    "LoggingCore.cpp",
     "MmapFaultHandler.cpp",
+    "Now.cpp",
     "Printf.cpp",
     "SIMD.cpp",
     "StackWalk.cpp",
@@ -51,7 +56,7 @@ SOURCES += [
     "Uptime.cpp",
 ]
 
-if CONFIG["CPU_ARCH"].startswith("x86"):
+if CONFIG["TARGET_CPU"].startswith("x86"):
     SOURCES += [
         "SIMD_avx2.cpp",
         "SSE.cpp",
@@ -76,6 +81,7 @@ if CONFIG["OS_ARCH"] == "WINNT":
         "DynamicallyLinkedFunctionPtr.h",
         "ImportDir.h",
         "NativeNt.h",
+        "WindowsDiagnostics.h",
         "WindowsDpiInitialization.h",
         "WindowsEnumProcessModules.h",
         "WindowsMapRemoteView.h",
@@ -89,6 +95,7 @@ if CONFIG["OS_ARCH"] == "WINNT":
     SOURCES += [
         "GetKnownFolderPath.cpp",
         "TimeStamp_windows.cpp",
+        "WindowsDiagnostics.cpp",
         "WindowsDllMain.cpp",
         "WindowsDpiInitialization.cpp",
         "WindowsMapRemoteView.cpp",
@@ -96,11 +103,7 @@ if CONFIG["OS_ARCH"] == "WINNT":
         "WindowsUnicode.cpp",
     ]
 
-    OS_LIBS += [
-        "dbghelp",
-        "oleaut32",
-        "ole32",
-    ]
+    OS_LIBS += ["dbghelp", "oleaut32", "ole32", "mincore"]
 
     if not CONFIG["JS_STANDALONE"]:
         SOURCES += [
@@ -109,13 +112,13 @@ if CONFIG["OS_ARCH"] == "WINNT":
             "PreXULSkeletonUI.cpp",
         ]
 
-elif CONFIG["HAVE_CLOCK_MONOTONIC"]:
-    SOURCES += [
-        "TimeStamp_posix.cpp",
-    ]
 elif CONFIG["OS_ARCH"] == "Darwin":
     SOURCES += [
         "TimeStamp_darwin.cpp",
+    ]
+elif CONFIG["HAVE_CLOCK_MONOTONIC"]:
+    SOURCES += [
+        "TimeStamp_posix.cpp",
     ]
 elif CONFIG["COMPILE_ENVIRONMENT"]:
     error("No TimeStamp implementation on this platform.  Build will not succeed")

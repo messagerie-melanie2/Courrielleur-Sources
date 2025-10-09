@@ -7,7 +7,7 @@
 #ifndef MOZILLA_GFX_RECORDINGTYPES_H_
 #define MOZILLA_GFX_RECORDINGTYPES_H_
 
-#include <ostream>
+#include <type_traits>
 #include <vector>
 
 #include "Logging.h"
@@ -18,10 +18,36 @@ namespace gfx {
 template <class S, class T>
 struct ElementStreamFormat {
   static void Write(S& aStream, const T& aElement) {
+    static_assert(std::is_trivially_copyable_v<T>);
     aStream.write(reinterpret_cast<const char*>(&aElement), sizeof(T));
   }
   static void Read(S& aStream, T& aElement) {
+    static_assert(std::is_trivially_copyable_v<T>);
     aStream.read(reinterpret_cast<char*>(&aElement), sizeof(T));
+  }
+};
+
+template <class S>
+struct ElementStreamFormat<S, bool> {
+  static void Write(S& aStream, const bool& aElement) {
+    char boolChar = aElement ? '\x01' : '\x00';
+    aStream.write(&boolChar, sizeof(boolChar));
+  }
+  static void Read(S& aStream, bool& aElement) {
+    char boolChar;
+    aStream.read(&boolChar, sizeof(boolChar));
+    switch (boolChar) {
+      case '\x00':
+        aElement = false;
+        break;
+      case '\x01':
+        aElement = true;
+        break;
+      default:
+        aStream.SetIsBad();
+        aElement = false;
+        break;
+    }
   }
 };
 

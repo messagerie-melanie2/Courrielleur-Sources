@@ -180,7 +180,7 @@ class WebRenderCommandBuilder final {
     return res.forget();
   }
 
-  WebRenderLayerManager* mManager;
+  WebRenderLayerManager* const mManager;
 
  private:
   RenderRootStateManager* GetRenderRootStateManager();
@@ -208,9 +208,6 @@ class WebRenderCommandBuilder final {
   // need this so that WebRenderLayerScrollData items that deeper in the
   // tree don't duplicate scroll metadata that their ancestors already have.
   std::vector<const ActiveScrolledRoot*> mAsrStack;
-  // A similar stack to track the deferred transform that we decided to emit
-  // most recently.
-  std::vector<nsDisplayTransform*> mDeferredTransformStack;
   const ActiveScrolledRoot* mLastAsr;
 
   WebRenderUserDataRefTable mWebRenderUserDatas;
@@ -220,6 +217,8 @@ class WebRenderCommandBuilder final {
 
   wr::usize mBuilderDumpIndex;
   wr::usize mDumpIndent;
+
+  bool mApzEnabled;
 
  public:
   // Whether consecutive inactive display items should be grouped into one

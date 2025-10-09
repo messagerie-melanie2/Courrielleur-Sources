@@ -30,25 +30,18 @@ class PChannelDiverterParent;
 
 namespace dom {
 
-#define NS_IEXTERNALHELPERAPPPARENT_IID              \
-  {                                                  \
-    0x127a01bc, 0x2a49, 0x46a8, {                    \
-      0x8c, 0x63, 0x4b, 0x5d, 0x3c, 0xa4, 0x07, 0x9c \
-    }                                                \
-  }
+#define NS_IEXTERNALHELPERAPPPARENT_IID \
+  {0x127a01bc, 0x2a49, 0x46a8, {0x8c, 0x63, 0x4b, 0x5d, 0x3c, 0xa4, 0x07, 0x9c}}
 
 class nsIExternalHelperAppParent : public nsISupports {
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IEXTERNALHELPERAPPPARENT_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_IEXTERNALHELPERAPPPARENT_IID)
 
   /**
    * Returns true if this fake channel represented a file channel in the child.
    */
   virtual bool WasFileChannel() = 0;
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(nsIExternalHelperAppParent,
-                              NS_IEXTERNALHELPERAPPPARENT_IID)
 
 class ContentParent;
 class PBrowserParent;
@@ -85,10 +78,9 @@ class ExternalHelperAppParent
                           const nsACString& aContentDispositionHeader,
                           const uint32_t& aContentDispositionHint,
                           const nsAString& aContentDispositionFilename);
-  bool Init(const Maybe<mozilla::net::LoadInfoArgs>& aLoadInfoArgs,
+  bool Init(const mozilla::net::LoadInfoArgs& aLoadInfoArgs,
             const nsACString& aMimeContentType, const bool& aForceSave,
-            nsIURI* aReferrer, BrowsingContext* aContext,
-            const bool& aShouldCloseWindow);
+            nsIURI* aReferrer, BrowsingContext* aContext);
 
  protected:
   virtual ~ExternalHelperAppParent();

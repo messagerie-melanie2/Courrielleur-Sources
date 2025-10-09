@@ -1,6 +1,10 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
+const { setTimeout } = ChromeUtils.importESModule(
+  "resource://gre/modules/Timer.sys.mjs"
+);
+
 var { GenericConvIMPrototype } = ChromeUtils.importESModule(
   "resource:///modules/jsProtoHelper.sys.mjs"
 );
@@ -11,6 +15,7 @@ function Conversation(name) {
   this._observers = [];
   this._date = Date.now() * 1000;
   this.id = ++_id;
+  this.typingState = undefined;
 }
 Conversation.prototype = {
   __proto__: GenericConvIMPrototype,
@@ -25,6 +30,9 @@ Conversation.prototype = {
     },
     DEBUG() {},
   },
+  setTypingState(newState) {
+    this.typingState = newState;
+  },
 };
 
 // ROT13, used as an example transformation.
@@ -38,8 +46,8 @@ function rot13(aString) {
 
 // A test that cancels a message before it can be sent.
 add_task(function test_cancel_send_message() {
-  let conv = new Conversation();
-  conv.dispatchMessage = function (aMsg) {
+  const conv = new Conversation();
+  conv.dispatchMessage = function () {
     ok(
       false,
       "The message should have been halted in the conversation service."
@@ -48,7 +56,7 @@ add_task(function test_cancel_send_message() {
 
   let sending = false;
   conv.addObserver({
-    observe(aObject, aTopic, aMsg) {
+    observe(aObject, aTopic) {
       switch (aTopic) {
         case "sending-message":
           ok(
@@ -74,7 +82,7 @@ add_task(function test_cancel_send_message() {
 // A test that ensures protocols get a chance to prepare a message before
 // sending and displaying.
 add_task(function test_prpl_message_prep() {
-  let conv = new Conversation();
+  const conv = new Conversation();
   conv.dispatchMessage = function (aMsg) {
     this.writeMessage("user", aMsg, { outgoing: true });
   };
@@ -91,8 +99,8 @@ add_task(function test_prpl_message_prep() {
     aMsg.displayMessage = aMsg.displayMessage.slice(prefix.length);
   };
 
-  let msg = "Hi!";
-  let prefix = "test> ";
+  const msg = "Hi!";
+  const prefix = "test> ";
 
   let prepared = false;
   let receivedMsg = false;
@@ -123,10 +131,10 @@ add_task(function test_split_message_before_sending() {
   let msgCount = 0;
   let prepared = false;
 
-  let msg = "This is a looo\nooong message.\nThis one is short.";
-  let msgs = msg.split("\n");
+  const msg = "This is a looo\nooong message.\nThis one is short.";
+  const msgs = msg.split("\n");
 
-  let conv = new Conversation();
+  const conv = new Conversation();
   conv.dispatchMessage = function (aMsg) {
     equal(aMsg, msgs[msgCount++], "Sending an unexpected message.");
   };
@@ -144,7 +152,7 @@ add_task(function test_split_message_before_sending() {
 
 add_task(function test_removeMessage() {
   let didRemove = false;
-  let conv = new Conversation();
+  const conv = new Conversation();
   conv.addObserver({
     observe(subject, topic, data) {
       if (topic === "remove-text") {
@@ -156,4 +164,80 @@ add_task(function test_removeMessage() {
 
   conv.removeMessage("foo");
   ok(didRemove);
+});
+
+add_task(function test_sendTyping() {
+  const roomStub = new Conversation();
+  Services.prefs.setBoolPref("purple.conversations.im.send_typing", false);
+
+  // Nothing happens until the conversation supports typing & the pref is enabled.
+  let result = roomStub.sendTyping("lorem ipsum");
+  ok(!roomStub._typingTimer, "Typing is disabled");
+  equal(
+    result,
+    Ci.prplIConversation.NO_TYPING_LIMIT,
+    "Default to no typing limit"
+  );
+  equal(roomStub.typingState, undefined, "Typing state is uninitialized");
+
+  roomStub.supportTypingNotifications = true;
+  result = roomStub.sendTyping("lorem ipsum");
+  ok(!roomStub._typingTimer, "Typing is disabled via pref");
+  equal(
+    result,
+    Ci.prplIConversation.NO_TYPING_LIMIT,
+    "Default to no typing limit 2"
+  );
+  equal(roomStub.typingState, undefined, "Typing state is unmodified");
+
+  Services.prefs.setBoolPref("purple.conversations.im.send_typing", true);
+
+  // A message changes the state to typing.
+  result = roomStub.sendTyping("lorem ipsum");
+  ok(roomStub._typingTimer, "Typing is enabled and a timer is configured");
+  equal(
+    result,
+    Ci.prplIConversation.NO_TYPING_LIMIT,
+    "Default to no typing limit 3"
+  );
+  equal(roomStub.typingState, Ci.prplIConvIM.TYPING, "The user is typing");
+
+  // Clearing the input resets to not typing.
+  result = roomStub.sendTyping("");
+  ok(!roomStub._typingTimer, "Typing timer is cancelled and reset");
+  equal(
+    result,
+    Ci.prplIConversation.NO_TYPING_LIMIT,
+    "Default to no typing limit 4"
+  );
+  equal(
+    roomStub.typingState,
+    Ci.prplIConvIM.NOT_TYPING,
+    "The user is no longer typing"
+  );
+
+  roomStub.unInit();
+});
+
+add_task(function test_cancelTypingTimer() {
+  const roomStub = {
+    _typingTimer: setTimeout(() => {}, 10000), // eslint-disable-line mozilla/no-arbitrary-setTimeout
+  };
+  Conversation.prototype._cancelTypingTimer.call(roomStub);
+  ok(!roomStub._typingTimer, "Typing timer is cancelled and reset");
+});
+
+add_task(function test_finishedComposing() {
+  const roomStub = new Conversation();
+
+  roomStub.finishedComposing();
+  equal(roomStub.typingState, undefined, "Typing is disabled");
+
+  roomStub.supportTypingNotifications = true;
+  roomStub.finishedComposing();
+  equal(
+    roomStub.typingState,
+    Ci.prplIConvIM.TYPED,
+    "The user has left a message in the window"
+  );
 });

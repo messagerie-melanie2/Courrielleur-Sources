@@ -9,7 +9,6 @@
 #include "mozilla/DataMutex.h"
 #include "mozilla/gfx/2D.h"
 
-#include "gfxMacPlatformFontList.h"
 #include "gfxMacFont.h"
 #include "gfxCoreTextShaper.h"
 #include "gfxTextRun.h"
@@ -17,10 +16,13 @@
 #include "gfxConfig.h"
 
 #include "AppleUtils.h"
+#include "CFTypeRefPtr.h"
 #include "nsTArray.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/VsyncDispatcher.h"
-#include "nsCocoaFeatures.h"
+#ifdef MOZ_WIDGET_COCOA
+#  include "nsCocoaFeatures.h"
+#endif
 #include "nsComponentManagerUtils.h"
 #include "nsIFile.h"
 #include "nsUnicodeProperties.h"
@@ -30,7 +32,6 @@
 #include "nsThreadUtils.h"
 
 #ifdef MOZ_BUNDLED_FONTS
-#  include "mozilla/Telemetry.h"
 #  include "nsDirectoryServiceDefs.h"
 #  include "mozilla/StaticPrefs_gfx.h"
 #endif
@@ -48,6 +49,14 @@ using namespace mozilla::unicode;
 
 using mozilla::dom::SystemFontList;
 
+#ifdef MOZ_WIDGET_COCOA
+#  include "gfxMacPlatformFontList.h"
+using PlatformFontListClass = gfxMacPlatformFontList;
+#else
+#  include "IOSPlatformFontList.h"
+using PlatformFontListClass = IOSPlatformFontList;
+#endif
+
 // A bunch of fonts for "additional language support" are shipped in a
 // "Language Support" directory, and don't show up in the standard font
 // list returned by CTFontManagerCopyAvailableFontFamilyNames unless
@@ -62,7 +71,7 @@ void gfxPlatformMac::FontRegistrationCallback(void* aUnused) {
   PR_SetCurrentThreadName("RegisterFonts");
 
   for (const auto& dir : kLangFontsDirs) {
-    gfxMacPlatformFontList::ActivateFontsFromDir(dir);
+    PlatformFontListClass::ActivateFontsFromDir(dir);
   }
 }
 
@@ -74,23 +83,12 @@ PRThread* gfxPlatformMac::sFontRegistrationThread = nullptr;
    our font list. */
 /* static */
 void gfxPlatformMac::RegisterSupplementalFonts() {
-  if (XRE_IsParentProcess()) {
+  if (XRE_GetProcessType() == GeckoProcessType_Default) {
+    // We activate the fonts on a separate thread, to minimize the startup-
+    // time cost.
     sFontRegistrationThread = PR_CreateThread(
         PR_USER_THREAD, FontRegistrationCallback, nullptr, PR_PRIORITY_NORMAL,
         PR_GLOBAL_THREAD, PR_JOINABLE_THREAD, 0);
-  } else if (!nsCocoaFeatures::OnCatalinaOrLater()) {
-    // On Catalina+, it appears to be sufficient to activate fonts in the
-    // parent process; they are then also usable in child processes. But on
-    // pre-Catalina systems we need to explicitly activate them in each child
-    // process (per bug 1704273).
-    //
-    // But at least on 10.14 (Mojave), doing font registration on a separate
-    // thread in the content process seems crashy (bug 1708821), despite the
-    // CTFontManager.h header claiming that it's thread-safe. So we just do it
-    // immediately on the main thread, and accept the startup-time hit (sigh).
-    for (const auto& dir : kLangFontsDirs) {
-      gfxMacPlatformFontList::ActivateFontsFromDir(dir);
-    }
   }
 }
 
@@ -122,11 +120,11 @@ BackendPrefsData gfxPlatformMac::GetBackendPrefs() const {
 }
 
 bool gfxPlatformMac::CreatePlatformFontList() {
-  return gfxPlatformFontList::Initialize(new gfxMacPlatformFontList);
+  return gfxPlatformFontList::Initialize(new PlatformFontListClass);
 }
 
 void gfxPlatformMac::ReadSystemFontList(SystemFontList* aFontList) {
-  gfxMacPlatformFontList::PlatformFontList()->ReadSystemFontList(aFontList);
+  PlatformFontListClass::PlatformFontList()->ReadSystemFontList(aFontList);
 }
 
 already_AddRefed<gfxASurface> gfxPlatformMac::CreateOffscreenSurface(
@@ -140,7 +138,7 @@ already_AddRefed<gfxASurface> gfxPlatformMac::CreateOffscreenSurface(
 }
 
 void gfxPlatformMac::GetCommonFallbackFonts(uint32_t aCh, Script aRunScript,
-                                            eFontPresentation aPresentation,
+                                            FontPresentation aPresentation,
                                             nsTArray<const char*>& aFontList) {
   if (PrefersColor(aPresentation)) {
     aFontList.AppendElement("Apple Color Emoji");
@@ -590,6 +588,9 @@ void gfxPlatformMac::GetCommonFallbackFonts(uint32_t aCh, Script aRunScript,
     case Script::WANCHO:
       aFontList.AppendElement("Noto Sans Wancho");
       break;
+    case Script::ARABIC_NASTALIQ:
+      aFontList.AppendElement("Noto Nastaliq Urdu");
+      break;
 
     // Script codes for which no commonly-installed font is currently known.
     // Probably future macOS versions will add Noto fonts for many of these,
@@ -648,6 +649,13 @@ void gfxPlatformMac::GetCommonFallbackFonts(uint32_t aCh, Script aRunScript,
     case Script::VITHKUQI:
     case Script::KAWI:
     case Script::NAG_MUNDARI:
+    case Script::GARAY:
+    case Script::GURUNG_KHEMA:
+    case Script::KIRAT_RAI:
+    case Script::OL_ONAL:
+    case Script::SUNUWAR:
+    case Script::TODHRI:
+    case Script::TULU_TIGALARI:
       break;
   }
 
@@ -679,8 +687,8 @@ void gfxPlatformMac::GetCommonFallbackFonts(uint32_t aCh, Script aRunScript,
 void gfxPlatformMac::LookupSystemFont(
     mozilla::LookAndFeel::FontID aSystemFontID, nsACString& aSystemFontName,
     gfxFontStyle& aFontStyle) {
-  gfxMacPlatformFontList* pfl = gfxMacPlatformFontList::PlatformFontList();
-  return pfl->LookupSystemFont(aSystemFontID, aSystemFontName, aFontStyle);
+  return PlatformFontListClass::LookupSystemFont(aSystemFontID, aSystemFontName,
+                                                 aFontStyle);
 }
 
 uint32_t gfxPlatformMac::ReadAntiAliasingThreshold() {
@@ -696,14 +704,16 @@ uint32_t gfxPlatformMac::ReadAntiAliasingThreshold() {
 
   // value set via Appearance pref panel, "Turn off text smoothing for font
   // sizes xxx and smaller"
-  CFNumberRef prefValue = (CFNumberRef)CFPreferencesCopyAppValue(
-      CFSTR("AppleAntiAliasingThreshold"), kCFPreferencesCurrentApplication);
+  auto prefValue = CFTypeRefPtr<CFPropertyListRef>::WrapUnderCreateRule(
+      CFPreferencesCopyAppValue(CFSTR("AppleAntiAliasingThreshold"),
+                                kCFPreferencesCurrentApplication));
 
   if (prefValue) {
-    if (!CFNumberGetValue(prefValue, kCFNumberIntType, &threshold)) {
+    if (CFGetTypeID(prefValue.get()) != CFNumberGetTypeID() ||
+        !CFNumberGetValue(static_cast<CFNumberRef>(prefValue.get()),
+                          kCFNumberIntType, &threshold)) {
       threshold = 0;
     }
-    CFRelease(prefValue);
   }
 
   return threshold;
@@ -711,6 +721,7 @@ uint32_t gfxPlatformMac::ReadAntiAliasingThreshold() {
 
 bool gfxPlatformMac::AccelerateLayersByDefault() { return true; }
 
+#ifdef MOZ_WIDGET_COCOA
 // This is the renderer output callback function, called on the vsync thread
 static CVReturn VsyncCallback(CVDisplayLinkRef aDisplayLink,
                               const CVTimeStamp* aNow,
@@ -720,18 +731,28 @@ static CVReturn VsyncCallback(CVDisplayLinkRef aDisplayLink,
 
 class OSXVsyncSource final : public VsyncSource {
  public:
-  OSXVsyncSource()
-      : mDisplayLink(nullptr, "OSXVsyncSource::OSXDisplay::mDisplayLink") {
+  OSXVsyncSource() : mDisplayLink(nullptr, "OSXVsyncSource::mDisplayLink") {
     MOZ_ASSERT(NS_IsMainThread());
     mTimer = NS_NewTimer();
     CGDisplayRegisterReconfigurationCallback(DisplayReconfigurationCallback,
                                              this);
+    CreateDisplayLink();
   }
 
   virtual ~OSXVsyncSource() {
     MOZ_ASSERT(NS_IsMainThread());
     CGDisplayRemoveReconfigurationCallback(DisplayReconfigurationCallback,
                                            this);
+    DisableVsync();
+    DestroyDisplayLink();
+  }
+
+  static void RetryCreateDisplayLink(nsITimer* aTimer, void* aOsxVsyncSource) {
+    MOZ_ASSERT(NS_IsMainThread());
+    OSXVsyncSource* osxVsyncSource =
+        static_cast<OSXVsyncSource*>(aOsxVsyncSource);
+    MOZ_ASSERT(osxVsyncSource);
+    osxVsyncSource->CreateDisplayLink();
   }
 
   static void RetryEnableVsync(nsITimer* aTimer, void* aOsxVsyncSource) {
@@ -742,13 +763,10 @@ class OSXVsyncSource final : public VsyncSource {
     osxVsyncSource->EnableVsync();
   }
 
-  void EnableVsync() override {
+  void CreateDisplayLink() {
     MOZ_ASSERT(NS_IsMainThread());
-    if (IsVsyncEnabled()) {
-      return;
-    }
-
     auto displayLink = mDisplayLink.Lock();
+    MOZ_ASSERT(!*displayLink);
 
     // Create a display link capable of being used with all active displays
     // TODO: See if we need to create an active DisplayLink for each monitor
@@ -771,12 +789,14 @@ class OSXVsyncSource final : public VsyncSource {
       retval = kCVReturnInvalidDisplay;
     }
 
-    if (retval != kCVReturnSuccess) {
+    if (!*displayLink || (retval != kCVReturnSuccess)) {
       NS_WARNING(
           "Could not create a display link with all active displays. "
           "Retrying");
-      CVDisplayLinkRelease(*displayLink);
-      *displayLink = nullptr;
+      if (*displayLink) {
+        CVDisplayLinkRelease(*displayLink);
+        *displayLink = nullptr;
+      }
 
       // bug 1142708 - When coming back from sleep,
       // or when changing displays, active displays may not be ready yet,
@@ -791,9 +811,9 @@ class OSXVsyncSource final : public VsyncSource {
       // because on a late 2013 15" retina, it takes about that
       // long to come back up from sleep.
       uint32_t delay = 100;
-      mTimer->InitWithNamedFuncCallback(RetryEnableVsync, this, delay,
+      mTimer->InitWithNamedFuncCallback(RetryCreateDisplayLink, this, delay,
                                         nsITimer::TYPE_ONE_SHOT,
-                                        "RetryEnableVsync");
+                                        "RetryCreateDisplayLink");
       return;
     }
 
@@ -802,14 +822,34 @@ class OSXVsyncSource final : public VsyncSource {
       NS_WARNING("Could not set displaylink output callback");
       CVDisplayLinkRelease(*displayLink);
       *displayLink = nullptr;
+    }
+  }
+
+  void DestroyDisplayLink() {
+    MOZ_ASSERT(NS_IsMainThread());
+    auto displayLink = mDisplayLink.Lock();
+    if (*displayLink) {
+      CVDisplayLinkRelease(*displayLink);
+      *displayLink = nullptr;
+    }
+  }
+
+  void EnableVsync() override {
+    MOZ_ASSERT(NS_IsMainThread());
+    if (IsVsyncEnabled()) {
+      return;
+    }
+
+    auto displayLink = mDisplayLink.Lock();
+    if (!*displayLink) {
+      NS_WARNING("No display link available when starting vsync");
       return;
     }
 
     mPreviousTimestamp = TimeStamp::Now();
     if (CVDisplayLinkStart(*displayLink) != kCVReturnSuccess) {
       NS_WARNING("Could not activate the display link");
-      CVDisplayLinkRelease(*displayLink);
-      *displayLink = nullptr;
+      return;
     }
 
     CVTime vsyncRate =
@@ -832,18 +872,20 @@ class OSXVsyncSource final : public VsyncSource {
       return;
     }
 
-    // Release the display link
     auto displayLink = mDisplayLink.Lock();
+
     if (*displayLink) {
-      CVDisplayLinkRelease(*displayLink);
-      *displayLink = nullptr;
+      CVDisplayLinkStop(*displayLink);
     }
   }
 
   bool IsVsyncEnabled() override {
-    MOZ_ASSERT(NS_IsMainThread());
     auto displayLink = mDisplayLink.Lock();
-    return *displayLink != nullptr;
+    if (!*displayLink) {
+      return false;
+    }
+
+    return CVDisplayLinkIsRunning(*displayLink);
   }
 
   TimeDuration GetVsyncRate() override { return mVsyncRate; }
@@ -853,6 +895,7 @@ class OSXVsyncSource final : public VsyncSource {
     mTimer->Cancel();
     mTimer = nullptr;
     DisableVsync();
+    DestroyDisplayLink();
   }
 
   // The vsync timestamps given by the CVDisplayLinkCallback are
@@ -900,7 +943,18 @@ class OSXVsyncSource final : public VsyncSource {
       // Recreate the display link, because otherwise it may be stuck with a
       // "removed" display forever and never notify us again.
       DisableVsync();
+      DestroyDisplayLink();
+      CreateDisplayLink();
       EnableVsync();
+
+      // Check if we actually succeeded in enabling vsync, and if we didn't,
+      // retry one time.
+      if (!IsVsyncEnabled()) {
+        uint32_t delay = 100;
+        mTimer->InitWithNamedFuncCallback(RetryCreateDisplayLink, this, delay,
+                                          nsITimer::TYPE_ONE_SHOT,
+                                          "RetryEnableVsync");
+      }
     }
   }
 
@@ -945,9 +999,11 @@ static CVReturn VsyncCallback(CVDisplayLinkRef aDisplayLink,
   vsyncSource->NotifyVsync(previousVsync, outputTime);
   return kCVReturnSuccess;
 }
+#endif
 
 already_AddRefed<mozilla::gfx::VsyncSource>
 gfxPlatformMac::CreateGlobalHardwareVsyncSource() {
+#ifdef MOZ_WIDGET_COCOA
   RefPtr<VsyncSource> osxVsyncSource = new OSXVsyncSource();
   osxVsyncSource->EnableVsync();
   if (!osxVsyncSource->IsVsyncEnabled()) {
@@ -958,23 +1014,9 @@ gfxPlatformMac::CreateGlobalHardwareVsyncSource() {
 
   osxVsyncSource->DisableVsync();
   return osxVsyncSource.forget();
-}
-
-bool gfxPlatformMac::SupportsHDR() {
-  // HDR has 3 requirements:
-  // 1) high peak brightness
-  // 2) high contrast ratio
-  // 3) color depth > 24
-  if (GetScreenDepth() <= 24) {
-    return false;
-  }
-  // Screen is capable. Is the OS capable?
-#ifdef EARLY_BETA_OR_EARLIER
-  // More-or-less supported in Catalina.
-  return nsCocoaFeatures::OnCatalinaOrLater();
 #else
-  // Definitely supported in Big Sur.
-  return nsCocoaFeatures::OnBigSurOrLater();
+  // TODO: CADisplayLink
+  return GetSoftwareVsyncSource();
 #endif
 }
 
@@ -984,7 +1026,10 @@ nsTArray<uint8_t> gfxPlatformMac::GetPlatformCMSOutputProfileData() {
     return prefProfileData;
   }
 
-  CGColorSpaceRef cspace = ::CGDisplayCopyColorSpace(::CGMainDisplayID());
+  CGColorSpaceRef cspace = nil;
+#ifdef MOZ_WIDGET_COCOA
+  cspace = ::CGDisplayCopyColorSpace(::CGMainDisplayID());
+#endif
   if (!cspace) {
     cspace = ::CGColorSpaceCreateDeviceRGB();
   }
@@ -992,7 +1037,7 @@ nsTArray<uint8_t> gfxPlatformMac::GetPlatformCMSOutputProfileData() {
     return nsTArray<uint8_t>();
   }
 
-  CFDataRef iccp = ::CGColorSpaceCopyICCProfile(cspace);
+  CFDataRef iccp = ::CGColorSpaceCopyICCData(cspace);
 
   ::CFRelease(cspace);
 
@@ -1014,13 +1059,7 @@ nsTArray<uint8_t> gfxPlatformMac::GetPlatformCMSOutputProfileData() {
   return result;
 }
 
-bool gfxPlatformMac::CheckVariationFontSupport() {
-  // We don't allow variation fonts to be enabled before 10.13,
-  // as although the Core Text APIs existed, they are known to be
-  // fairly buggy.
-  // (Note that Safari also requires 10.13 for variation-font support.)
-  return nsCocoaFeatures::OnHighSierraOrLater();
-}
+bool gfxPlatformMac::CheckVariationFontSupport() { return true; }
 
 void gfxPlatformMac::InitPlatformGPUProcessPrefs() {
   FeatureState& gpuProc = gfxConfig::GetFeature(Feature::GPU_PROCESS);

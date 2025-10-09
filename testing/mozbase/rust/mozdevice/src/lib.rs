@@ -12,10 +12,8 @@ use log::{debug, info, trace, warn};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::BTreeMap;
-use std::convert::TryFrom;
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::iter::FromIterator;
 use std::net::TcpStream;
 use std::num::{ParseIntError, TryFromIntError};
 use std::path::{Component, Path};
@@ -32,8 +30,9 @@ pub type Result<T> = std::result::Result<T, DeviceError>;
 
 static SYNC_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"[^A-Za-z0-9_@%+=:,./-]").unwrap());
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub enum AndroidStorageInput {
+    #[default]
     Auto,
     App,
     Internal,
@@ -51,12 +50,6 @@ impl FromStr for AndroidStorageInput {
             "sdcard" => Ok(AndroidStorageInput::Sdcard),
             _ => Err(DeviceError::InvalidStorage),
         }
-    }
-}
-
-impl Default for AndroidStorageInput {
-    fn default() -> Self {
-        AndroidStorageInput::Auto
     }
 }
 
@@ -373,8 +366,8 @@ pub struct Device {
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RemoteDirEntry {
     depth: usize,
-    metadata: RemoteMetadata,
-    name: String,
+    pub metadata: RemoteMetadata,
+    pub name: String,
 }
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -408,15 +401,13 @@ impl Device {
 
         // check for rooted devices
         let uid_check = |id: String| id.contains("uid=0");
-        device.adbd_root = device
-            .execute_host_shell_command("id")
-            .map_or(false, uid_check);
+        device.adbd_root = device.execute_host_shell_command("id").is_ok_and(uid_check);
         device.su_0_root = device
             .execute_host_shell_command("su 0 id")
-            .map_or(false, uid_check);
+            .is_ok_and(uid_check);
         device.su_c_root = device
             .execute_host_shell_command("su -c id")
-            .map_or(false, uid_check);
+            .is_ok_and(uid_check);
         device.is_rooted = device.adbd_root || device.su_0_root || device.su_c_root;
 
         device.storage = match storage {

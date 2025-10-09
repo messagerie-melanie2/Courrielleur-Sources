@@ -80,7 +80,7 @@ class ChromiumCDMParent final : public PChromiumCDMParent,
                                     uint32_t aProtectionMask);
 
   void GetStatusForPolicy(uint32_t aPromiseId,
-                          const nsCString& aMinHdcpVersion);
+                          const dom::HDCPVersion& aMinHdcpVersion);
 
   RefPtr<DecryptPromise> Decrypt(MediaRawData* aSample);
 
@@ -126,8 +126,11 @@ class ChromiumCDMParent final : public PChromiumCDMParent,
                                         const double& aSecondsSinceEpoch);
   ipc::IPCResult RecvOnSessionClosed(const nsCString& aSessionId);
   ipc::IPCResult RecvOnQueryOutputProtectionStatus();
-  ipc::IPCResult RecvDecrypted(const uint32_t& aId, const uint32_t& aStatus,
-                               ipc::Shmem&& aData);
+  ipc::IPCResult RecvDecryptedShmem(const uint32_t& aId,
+                                    const uint32_t& aStatus,
+                                    ipc::Shmem&& aData);
+  ipc::IPCResult RecvDecryptedData(const uint32_t& aId, const uint32_t& aStatus,
+                                   nsTArray<uint8_t>&& aData);
   ipc::IPCResult RecvDecryptFailed(const uint32_t& aId,
                                    const uint32_t& aStatus);
   ipc::IPCResult RecvOnDecoderInitDone(const uint32_t& aStatus);
@@ -184,7 +187,7 @@ class ChromiumCDMParent final : public PChromiumCDMParent,
   RefPtr<layers::ImageContainer> mImageContainer;
   RefPtr<layers::KnowsCompositor> mKnowsCompositor;
   VideoInfo mVideoInfo;
-  uint64_t mLastStreamOffset = 0;
+  int64_t mLastStreamOffset = 0;
 
   MozPromiseHolder<MediaDataDecoder::FlushPromise> mFlushDecoderPromise;
 

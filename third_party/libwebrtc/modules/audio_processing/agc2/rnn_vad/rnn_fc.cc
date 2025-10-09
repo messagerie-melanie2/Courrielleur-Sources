@@ -8,10 +8,11 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
+#include "modules/audio_processing/agc2/rnn_vad/rnn_fc.h"
+
 #include <algorithm>
 #include <numeric>
 
-#include "modules/audio_processing/agc2/rnn_vad/rnn_fc.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/numerics/safe_conversions.h"
 #include "third_party/rnnoise/src/rnn_activations.h"
@@ -39,8 +40,8 @@ std::vector<float> PreprocessWeights(rtc::ArrayView<const int8_t> weights,
     return GetScaledParams(weights);
   }
   // Transpose, scale and cast.
-  const int input_size = rtc::CheckedDivExact(
-      rtc::dchecked_cast<int>(weights.size()), output_size);
+  const int input_size =
+      rtc::CheckedDivExact(dchecked_cast<int>(weights.size()), output_size);
   std::vector<float> w(weights.size());
   for (int o = 0; o < output_size; ++o) {
     for (int i = 0; i < input_size; ++i) {

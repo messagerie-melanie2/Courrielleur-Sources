@@ -80,10 +80,11 @@ void nsCounterChangeNode::Calc(nsCounterList* aList) {
 }
 
 void nsCounterUseNode::GetText(nsString& aResult) {
-  CounterStyle* style =
-      mPseudoFrame->PresContext()->CounterStyleManager()->ResolveCounterStyle(
-          mCounterStyle);
-  GetText(mPseudoFrame->GetWritingMode(), style, aResult);
+  mPseudoFrame->PresContext()
+      ->CounterStyleManager()
+      ->WithCounterStyleNameOrSymbols(mCounterStyle, [&](CounterStyle* aStyle) {
+        GetText(mPseudoFrame->GetWritingMode(), aStyle, aResult);
+      });
 }
 
 void nsCounterUseNode::GetText(WritingMode aWM, CounterStyle* aStyle,
@@ -203,7 +204,11 @@ void nsCounterList::SetScope(nsCounterNode* aNode) {
   // the element itself, then we use that scope.
   // Otherwise, fall through to consider scopes created by siblings (and
   // their descendants) in reverse document order.
-  if (aNode->mType != nsCounterNode::USE &&
+  // Do this only for the list-item counter, while the CSSWG discusses what the
+  // right thing to do here is, see bug 1548753 and
+  // https://github.com/w3c/csswg-drafts/issues/5477.
+  if (mCounterName == nsGkAtoms::list_item &&
+      aNode->mType != nsCounterNode::USE &&
       StaticPrefs::layout_css_counter_ancestor_scope_enabled()) {
     for (auto* p = aNode->mPseudoFrame; p; p = p->GetParent()) {
       // This relies on the fact that a RESET node is always the first
@@ -327,6 +332,27 @@ bool nsCounterList::SetScopeByWalkingBackwardThroughList(
 
   return false;
 }
+
+#if defined(DEBUG) || defined(MOZ_LAYOUT_DEBUGGER)
+void nsCounterList::Dump() {
+  int32_t i = 0;
+  for (auto* node = First(); node; node = Next(node)) {
+    const char* types[] = {"RESET", "INCREMENT", "SET", "USE"};
+    printf(
+        "  Node #%d @%p frame=%p index=%d type=%s valAfter=%d\n"
+        "       scope-start=%p scope-prev=%p",
+        i++, (void*)node, (void*)node->mPseudoFrame, node->mContentIndex,
+        types[node->mType], node->mValueAfter, (void*)node->mScopeStart,
+        (void*)node->mScopePrev);
+    if (node->mType == nsCounterNode::USE) {
+      nsAutoString text;
+      node->UseNode()->GetText(text);
+      printf(" text=%s", NS_ConvertUTF16toUTF8(text).get());
+    }
+    printf("\n");
+  }
+}
+#endif
 
 void nsCounterList::RecalcAll() {
   AutoRestore<bool> restoreRecalculatingAll(mRecalculatingAll);
@@ -530,22 +556,7 @@ void nsCounterManager::Dump() const {
     printf("Counter named \"%s\":\n", nsAtomCString(entry.GetKey()).get());
 
     nsCounterList* list = entry.GetWeak();
-    int32_t i = 0;
-    for (nsCounterNode* node = list->First(); node; node = list->Next(node)) {
-      const char* types[] = {"RESET", "INCREMENT", "SET", "USE"};
-      printf(
-          "  Node #%d @%p frame=%p index=%d type=%s valAfter=%d\n"
-          "       scope-start=%p scope-prev=%p",
-          i++, (void*)node, (void*)node->mPseudoFrame, node->mContentIndex,
-          types[node->mType], node->mValueAfter, (void*)node->mScopeStart,
-          (void*)node->mScopePrev);
-      if (node->mType == nsCounterNode::USE) {
-        nsAutoString text;
-        node->UseNode()->GetText(text);
-        printf(" text=%s", NS_ConvertUTF16toUTF8(text).get());
-      }
-      printf("\n");
-    }
+    list->Dump();
   }
   printf("\n\n");
 }

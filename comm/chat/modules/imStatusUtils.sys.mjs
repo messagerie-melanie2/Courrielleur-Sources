@@ -2,25 +2,23 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-import { l10nHelper } from "resource:///modules/imXPCOMUtils.sys.mjs";
-
 const lazy = {};
 
-XPCOMUtils.defineLazyGetter(lazy, "_", () =>
-  l10nHelper("chrome://chat/locale/status.properties")
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () => new Localization(["chat/status.ftl"], true)
 );
 
-var imIStatusInfo = Ci.imIStatusInfo;
 var statusAttributes = {};
-statusAttributes[imIStatusInfo.STATUS_UNKNOWN] = "unknown";
-statusAttributes[imIStatusInfo.STATUS_OFFLINE] = "offline";
-statusAttributes[imIStatusInfo.STATUS_INVISIBLE] = "invisible";
-statusAttributes[imIStatusInfo.STATUS_MOBILE] = "mobile";
-statusAttributes[imIStatusInfo.STATUS_IDLE] = "idle";
-statusAttributes[imIStatusInfo.STATUS_AWAY] = "away";
-statusAttributes[imIStatusInfo.STATUS_UNAVAILABLE] = "unavailable";
-statusAttributes[imIStatusInfo.STATUS_AVAILABLE] = "available";
+statusAttributes[Ci.imIStatusInfo.STATUS_UNKNOWN] = "unknown";
+statusAttributes[Ci.imIStatusInfo.STATUS_OFFLINE] = "offline";
+statusAttributes[Ci.imIStatusInfo.STATUS_INVISIBLE] = "invisible";
+statusAttributes[Ci.imIStatusInfo.STATUS_MOBILE] = "mobile";
+statusAttributes[Ci.imIStatusInfo.STATUS_IDLE] = "idle";
+statusAttributes[Ci.imIStatusInfo.STATUS_AWAY] = "away";
+statusAttributes[Ci.imIStatusInfo.STATUS_UNAVAILABLE] = "unavailable";
+statusAttributes[Ci.imIStatusInfo.STATUS_AVAILABLE] = "available";
 
 export var Status = {
   toAttribute: aStatusType =>
@@ -35,23 +33,28 @@ export var Status = {
     }
 
     if (!(aStatusType in this._labels)) {
-      this._labels[aStatusType] = lazy._(aStatusType + "StatusType");
+      this._labels[aStatusType] = lazy.l10n.formatValueSync(
+        `${aStatusType}-status-type`
+      );
     }
 
     let label = this._labels[aStatusType];
     if (aStatusText) {
-      label = lazy._("statusWithStatusMessage", label, aStatusText);
+      label = lazy.l10n.formatValueSync("status-with-status-message", {
+        statusType: label,
+        statusMessage: aStatusText,
+      });
     }
 
     return label;
   },
 
   toFlag(aAttribute) {
-    for (let flag in statusAttributes) {
+    for (const flag in statusAttributes) {
       if (statusAttributes[flag] == aAttribute) {
         return flag;
       }
     }
-    return imIStatusInfo.STATUS_UNKNOWN;
+    return Ci.imIStatusInfo.STATUS_UNKNOWN;
   },
 };

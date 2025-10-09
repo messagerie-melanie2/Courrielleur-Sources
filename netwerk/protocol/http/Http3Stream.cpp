@@ -14,7 +14,7 @@
 #include "nsISocketTransport.h"
 #include "nsSocketTransportService2.h"
 #include "mozilla/StaticPrefs_network.h"
-#include "mozilla/Telemetry.h"
+#include "mozilla/glean/NetwerkProtocolHttpMetrics.h"
 #include "nsIOService.h"
 #include "nsHttpHandler.h"
 
@@ -38,11 +38,13 @@ Http3Stream::Http3Stream(nsAHttpTransaction* httpTransaction,
   LOG3(("Http3Stream::Http3Stream [this=%p]", this));
 
   nsHttpTransaction* trans = mTransaction->QueryHttpTransaction();
+  int32_t priority = nsISupportsPriority::PRIORITY_NORMAL;
   if (trans) {
     mTransactionBrowserId = trans->BrowserId();
+    priority = trans->Priority();
   }
 
-  SetPriority(cos.Flags());
+  mPriorityUrgency = nsHttpHandler::UrgencyFromCoSFlags(cos.Flags(), priority);
   SetIncremental(cos.Incremental());
 }
 
@@ -78,31 +80,6 @@ bool Http3Stream::GetHeadersString(const char* buf, uint32_t avail,
   *countUsed = avail - (oldLen - endHeader) + 4;
 
   return true;
-}
-
-void Http3Stream::SetPriority(uint32_t aCos) {
-  if (aCos & nsIClassOfService::UrgentStart) {
-    // coming from an user interaction => response should be the highest
-    // priority
-    mPriorityUrgency = 1;
-  } else if (aCos & nsIClassOfService::Leader) {
-    // main html document normal priority
-    mPriorityUrgency = 2;
-  } else if (aCos & nsIClassOfService::Unblocked) {
-    mPriorityUrgency = 3;
-  } else if (aCos & nsIClassOfService::Follower) {
-    mPriorityUrgency = 4;
-  } else if (aCos & nsIClassOfService::Speculative) {
-    mPriorityUrgency = 6;
-  } else if (aCos & nsIClassOfService::Background) {
-    // background tasks can be deprioritzed to the lowest priority
-    mPriorityUrgency = 6;
-  } else if (aCos & nsIClassOfService::Tail) {
-    mPriorityUrgency = 6;
-  } else {
-    // all others get a lower priority than the main html document
-    mPriorityUrgency = 4;
-  }
 }
 
 void Http3Stream::SetIncremental(bool incremental) {
@@ -143,7 +120,7 @@ nsresult Http3Stream::TryActivating() {
 }
 
 void Http3Stream::CurrentBrowserIdChanged(uint64_t id) {
-  MOZ_ASSERT(gHttpHandler->ActiveTabPriority());
+  MOZ_ASSERT(StaticPrefs::network_http_active_tab_priority());
 
   bool previouslyFocused = (mCurrentBrowserId == mTransactionBrowserId);
   mCurrentBrowserId = id;
@@ -413,9 +390,8 @@ nsresult Http3Stream::ReadSegments() {
       mTransaction->OnTransportStatus(nullptr, NS_NET_STATUS_WAITING_FOR, 0);
       mSession->CloseSendingSide(mStreamId);
       mSendState = SEND_DONE;
-      Telemetry::Accumulate(
-          Telemetry::HTTP3_SENDING_BLOCKED_BY_FLOW_CONTROL_PER_TRANS,
-          mSendingBlockedByFlowControlCount);
+      glean::http3::sending_blocked_by_flow_control_per_trans
+          .AccumulateSingleSample(mSendingBlockedByFlowControlCount);
 
 #ifdef DEBUG
       MOZ_ASSERT(mRequestBodyLenSent == mRequestBodyLenExpected);

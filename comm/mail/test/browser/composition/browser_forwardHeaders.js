@@ -14,7 +14,9 @@ var {
   get_compose_body,
   open_compose_with_forward,
   open_compose_with_forward_as_attachments,
-} = ChromeUtils.import("resource://testing-common/mozmill/ComposeHelpers.jsm");
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+);
 var {
   add_message_sets_to_folders,
   be_in_folder,
@@ -22,27 +24,22 @@ var {
   create_thread,
   get_special_folder,
   make_display_unthreaded,
-  mc,
   press_delete,
   select_click_row,
   select_shift_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-var { MsgHdrToMimeMessage } = ChromeUtils.import(
-  "resource:///modules/gloda/MimeMessage.jsm"
-);
-var { plan_for_window_close, wait_for_window_close } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
+var { MsgHdrToMimeMessage } = ChromeUtils.importESModule(
+  "resource:///modules/gloda/MimeMessage.sys.mjs"
 );
 
-var cwc = null; // compose window controller
 var folder;
 var gDrafts;
 
 add_setup(async function () {
   folder = await create_folder("Test");
-  let thread1 = create_thread(10);
+  const thread1 = create_thread(10);
   await add_message_sets_to_folders([folder], [thread1]);
 
   gDrafts = await get_special_folder(Ci.nsMsgFolderFlags.Drafts, true);
@@ -57,42 +54,41 @@ registerCleanupFunction(function () {
   Services.prefs.clearUserPref("mail.compose.default_to_paragraph");
 });
 
-async function forward_selected_messages_and_go_to_drafts_folder(f) {
+async function forward_selected_messages_and_go_to_drafts_folder(callback) {
   const kText = "Hey check out this megalol link";
   // opening a new compose window
-  cwc = f(mc);
-  cwc.window.document.getElementById("messageEditor").focus();
-  EventUtils.sendString(kText, cwc.window);
+  const cwc = await callback(window);
+  cwc.document.getElementById("messageEditor").focus();
+  EventUtils.sendString(kText, cwc);
 
-  let mailBody = get_compose_body(cwc);
+  const mailBody = get_compose_body(cwc);
   assert_previous_text(mailBody.firstChild, [kText]);
 
-  plan_for_window_close(cwc);
-  // mwc is modal window controller
-  let dialogPromise = BrowserTestUtils.promiseAlertDialog("accept");
+  const closePromise = BrowserTestUtils.domWindowClosed(cwc);
+  const dialogPromise = BrowserTestUtils.promiseAlertDialog("accept");
   // quit -> do you want to save ?
-  cwc.window.goDoCommand("cmd_close");
+  cwc.goDoCommand("cmd_close");
   await dialogPromise;
   // Actually quit the window.
-  wait_for_window_close();
+  await closePromise;
 
   // Visit the existing Drafts folder.
   await be_in_folder(gDrafts);
-  make_display_unthreaded();
+  await make_display_unthreaded();
 }
 
 add_task(async function test_forward_inline() {
   await be_in_folder(folder);
-  make_display_unthreaded();
+  await make_display_unthreaded();
   // original message header
-  let oMsgHdr = select_click_row(0);
+  const oMsgHdr = await select_click_row(0);
 
   await forward_selected_messages_and_go_to_drafts_folder(
     open_compose_with_forward
   );
 
   // forwarded message header
-  let fMsgHdr = select_click_row(0);
+  const fMsgHdr = await select_click_row(0);
 
   Assert.ok(
     fMsgHdr.numReferences > 0,
@@ -107,14 +103,14 @@ add_task(async function test_forward_inline() {
   // test for x-forwarded-message id and exercise the js mime representation as
   // well
   return new Promise(resolve => {
-    MsgHdrToMimeMessage(fMsgHdr, null, function (aMsgHdr, aMimeMsg) {
+    MsgHdrToMimeMessage(fMsgHdr, null, async function (aMsgHdr, aMimeMsg) {
       Assert.equal(
         aMimeMsg.headers["x-forwarded-message-id"],
         "<" + oMsgHdr.messageId + ">"
       );
       Assert.equal(aMimeMsg.headers.references, "<" + oMsgHdr.messageId + ">");
 
-      press_delete(mc);
+      await press_delete(window);
       resolve();
     });
   });
@@ -122,19 +118,19 @@ add_task(async function test_forward_inline() {
 
 add_task(async function test_forward_as_attachments() {
   await be_in_folder(folder);
-  make_display_unthreaded();
+  await make_display_unthreaded();
 
   // original message header
-  let oMsgHdr0 = select_click_row(0);
-  let oMsgHdr1 = select_click_row(1);
-  select_shift_click_row(0);
+  const oMsgHdr0 = await select_click_row(0);
+  const oMsgHdr1 = await select_click_row(1);
+  await select_shift_click_row(0);
 
   await forward_selected_messages_and_go_to_drafts_folder(
     open_compose_with_forward_as_attachments
   );
 
   // forwarded message header
-  let fMsgHdr = select_click_row(0);
+  const fMsgHdr = await select_click_row(0);
 
   Assert.ok(
     fMsgHdr.numReferences > 0,
@@ -158,7 +154,7 @@ add_task(async function test_forward_as_attachments() {
   // test for x-forwarded-message id and exercise the js mime representation as
   // well
   return new Promise(resolve => {
-    MsgHdrToMimeMessage(fMsgHdr, null, function (aMsgHdr, aMimeMsg) {
+    MsgHdrToMimeMessage(fMsgHdr, null, async function (aMsgHdr, aMimeMsg) {
       Assert.equal(
         aMimeMsg.headers["x-forwarded-message-id"],
         "<" + oMsgHdr0.messageId + "> <" + oMsgHdr1.messageId + ">"
@@ -168,7 +164,7 @@ add_task(async function test_forward_as_attachments() {
         "<" + oMsgHdr0.messageId + "> <" + oMsgHdr1.messageId + ">"
       );
 
-      press_delete(mc);
+      await press_delete(window);
       resolve();
     });
   });

@@ -6,9 +6,11 @@
 
 #include "Localization.h"
 #include "nsIObserverService.h"
+#include "xpcpublic.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
+#include "mozilla/dom/Document.h"
 #include "mozilla/dom/PromiseNativeHandler.h"
 
 #define INTL_APP_LOCALES_CHANGED "intl:app-locales-changed"
@@ -105,6 +107,13 @@ already_AddRefed<Localization> Localization::Create(
 
 /* static */
 already_AddRefed<Localization> Localization::Create(
+    const nsTArray<nsCString>& aResourceIds, bool aIsSync,
+    const nsTArray<nsCString>& aLocales) {
+  return MakeAndAddRef<Localization>(aResourceIds, aIsSync, aLocales);
+}
+
+/* static */
+already_AddRefed<Localization> Localization::Create(
     const nsTArray<ffi::GeckoResourceId>& aResourceIds, bool aIsSync) {
   return MakeAndAddRef<Localization>(aResourceIds, aIsSync);
 }
@@ -115,6 +124,13 @@ Localization::Localization(const nsTArray<nsCString>& aResIds, bool aIsSync) {
                         getter_AddRefs(mRaw));
 
   RegisterObservers();
+}
+
+Localization::Localization(const nsTArray<nsCString>& aResIds, bool aIsSync,
+                           const nsTArray<nsCString>& aLocales) {
+  auto ffiResourceIds{L10nRegistry::ResourceIdsToFFI(aResIds)};
+  ffi::localization_new_with_locales(&ffiResourceIds, aIsSync, nullptr,
+                                     &aLocales, getter_AddRefs(mRaw));
 }
 
 Localization::Localization(const nsTArray<ffi::GeckoResourceId>& aResIds,
@@ -146,6 +162,13 @@ Localization::Localization(nsIGlobalObject* aGlobal, bool aIsSync,
                            const ffi::LocalizationRc* aRaw)
     : mGlobal(aGlobal), mRaw(aRaw) {
   RegisterObservers();
+}
+
+/* static */
+bool Localization::IsAPIEnabled(JSContext* aCx, JSObject* aObject) {
+  JS::Rooted<JSObject*> obj(aCx, aObject);
+  return Document::DocumentSupportsL10n(aCx, obj) ||
+         IsChromeOrUAWidget(aCx, obj);
 }
 
 already_AddRefed<Localization> Localization::Constructor(

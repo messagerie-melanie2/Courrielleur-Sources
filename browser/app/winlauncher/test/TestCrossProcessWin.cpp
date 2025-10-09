@@ -34,11 +34,12 @@ const char* kTestDependentModulePaths[] = {
     "\\Device\\HarddiskVolume3\\A B c.exe",
     "\\Device\\HarddiskVolume4\\X y Z.dll",
 };
-const wchar_t kExpectedDependentModules[] =
-    L"A B C\0"
-    L"a b c.dll\0"
-    L"A B C.exe\0"
-    L"X Y Z.dll\0";
+const wchar_t* kExpectedDependentModules[] = {
+    L"A B C",
+    L"a b c.dll",
+    L"A B C.exe",
+    L"X Y Z.dll",
+};
 
 const UNICODE_STRING kStringNotInBlocklist =
     MOZ_LITERAL_UNICODE_STRING(L"Test_NotInBlocklist.dll");
@@ -51,8 +52,7 @@ using namespace mozilla::freestanding;
 // clang-format off
 const DllBlockInfo kDllBlocklistShort[] = {
   // The entries do not have to be sorted.
-  DLL_BLOCKLIST_ENTRY("X Y Z_Test", MAKE_VERSION(1, 2, 65535, 65535),
-                      DllBlockInfoFlags::BLOCK_WIN8_AND_OLDER)
+  DLL_BLOCKLIST_ENTRY("X Y Z_Test", MAKE_VERSION(1, 2, 65535, 65535))
   DLL_BLOCKLIST_ENTRY("\u30E9\u30FC\u30E1\u30F3_Test")
   DLL_BLOCKLIST_ENTRY("Avmvirtualsource_Test.ax", MAKE_VERSION(1, 0, 0, 3),
                       DllBlockInfoFlags::BROWSER_PROCESS_ONLY)
@@ -79,7 +79,7 @@ class TempFile final {
  public:
   TempFile() : mFullPath{0} {
     wchar_t tempDir[MAX_PATH + 1];
-    DWORD len = ::GetTempPathW(ArrayLength(tempDir), tempDir);
+    DWORD len = ::GetTempPathW(std::size(tempDir), tempDir);
     if (!len) {
       return;
     }
@@ -126,17 +126,29 @@ static bool VerifySharedSection(SharedSection& aSharedSection) {
   VERIFY_FUNCTION_RESOLVED(k32mod, k32Exports, GetSystemInfo);
   VERIFY_FUNCTION_RESOLVED(k32mod, k32Exports, VirtualProtect);
 
-  Span<const wchar_t> modulesArray = aSharedSection.GetDependentModules();
-  bool matched = memcmp(modulesArray.data(), kExpectedDependentModules,
-                        sizeof(kExpectedDependentModules)) == 0;
+  Maybe<Vector<const wchar_t*>> modulesArray =
+      aSharedSection.GetDependentModules();
+  if (modulesArray.isNothing()) {
+    printf(
+        "TEST-FAILED | TestCrossProcessWin | GetDependentModules returned "
+        "Nothing");
+    return false;
+  }
+  bool matched =
+      modulesArray->length() ==
+      sizeof(kExpectedDependentModules) / sizeof(kExpectedDependentModules[0]);
+  if (matched) {
+    for (size_t i = 0; i < modulesArray->length(); ++i) {
+      if (wcscmp((*modulesArray)[i], kExpectedDependentModules[i])) {
+        matched = false;
+        break;
+      }
+    }
+  }
   if (!matched) {
     // Print actual strings on error
-    for (const wchar_t* p = modulesArray.data(); *p;) {
+    for (const wchar_t* p : *modulesArray) {
       printf("%p: %S\n", p, p);
-      while (*p) {
-        ++p;
-      }
-      ++p;
     }
     return false;
   }
@@ -277,9 +289,9 @@ static DynamicBlockList ConvertStaticBlocklistToDynamic(
   return blockList;
 }
 
-const DynamicBlockList gFullList =
+MOZ_RUNINIT const DynamicBlockList gFullList =
     ConvertStaticBlocklistToDynamic(gWindowsDllBlocklist);
-const DynamicBlockList gShortList =
+MOZ_RUNINIT const DynamicBlockList gShortList =
     ConvertStaticBlocklistToDynamic(kDllBlocklistShort);
 
 static bool TestDependentModules() {
@@ -525,8 +537,7 @@ class ChildProcess final {
   ChildProcess(const wchar_t* aExecutable, const wchar_t* aOption)
       : mProcessId(0) {
     const wchar_t* childArgv[] = {aExecutable, aOption};
-    auto cmdLine(
-        mozilla::MakeCommandLine(mozilla::ArrayLength(childArgv), childArgv));
+    auto cmdLine(mozilla::MakeCommandLine(std::size(childArgv), childArgv));
 
     STARTUPINFOW si = {sizeof(si)};
     PROCESS_INFORMATION pi;

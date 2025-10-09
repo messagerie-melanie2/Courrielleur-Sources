@@ -3,15 +3,6 @@
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
-<?xml-stylesheet href="chrome://messenger/skin/messengercompose/messengercompose.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/icons.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/folderMenus.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/attachmentList.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/menulist.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/contextMenu.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/input-fields.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/inContentDialog.css" type="text/css"?>
-
 <!DOCTYPE html [
   <!ENTITY % messengercomposeDTD SYSTEM "chrome://messenger/locale/messengercompose/messengercompose.dtd" >
   %messengercomposeDTD;
@@ -45,11 +36,27 @@
       lightweightthemes="true"
 #ifdef XP_MACOSX
       macanimationtype="document"
-      chromemargin="0,-1,-1,-1"
+      customtitlebar="true"
 #endif
       fullscreenbutton="true">
 <head>
   <title>&msgComposeWindow.title;</title>
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src chrome:; script-src chrome: resource: 'unsafe-inline'; style-src chrome: 'unsafe-inline'; img-src chrome: moz-icon:; worker-src resource:; connect-src http: https:"
+  />
+  <link
+    rel="stylesheet"
+    href="chrome://messenger/skin/messengercompose/messengercompose.css"
+  />
+  <link rel="stylesheet" href="chrome://messenger/skin/icons.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/folderMenus.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/attachmentList.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/menulist.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/contextMenu.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/input-fields.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/inContentDialog.css" />
+
   <link rel="localization" href="branding/brand.ftl"/>
   <link rel="localization" href="messenger/messenger.ftl" />
   <link rel="localization" href="messenger/messengercompose/messengercompose.ftl" />
@@ -194,8 +201,8 @@
     <command id="cmd_ul" state="false" oncommand="doStyleUICommand('cmd_ul')"/>
     <command id="cmd_ol" state="false" oncommand="doStyleUICommand('cmd_ol')"/>
 
-    <command id="cmd_indent" oncommand="goDoCommand('cmd_indent')"/>
-    <command id="cmd_outdent" oncommand="goDoCommand('cmd_outdent')"/>
+    <command id="cmd_indent" oncommand="doStyleUICommand('cmd_indent')"/>
+    <command id="cmd_outdent" oncommand="doStyleUICommand('cmd_outdent')"/>
 
     <command id="cmd_paragraphState" state=""/>
     <command id="cmd_fontFace" state="" oncommand="doStatefulCommand('cmd_fontFace', event.target.value)"/>
@@ -883,7 +890,7 @@
               <menuseparator/>
               <menuitem id="menu_NewContact" label="&newContact.label;"
                         accesskey="&newContact.accesskey;"
-                        oncommand="toAddressBook({ action: 'create' });"/>
+                        oncommand="toAddressBook(['cmd_newCard'])"/>
             </menupopup>
           </menu>
           <menu id="menu_Attach" label="&attachMenu.label;" accesskey="&attachMenu.accesskey;">
@@ -983,7 +990,9 @@
           <menuitem id="menu_RenameAttachment"
                     label="&renameAttachmentCmd.label;"
                     accesskey="&renameAttachmentCmd.accesskey;"
+#ifndef XP_MACOSX
                     key="key_renameAttachment"
+#endif
                     command="cmd_renameAttachment"/>
           <menuitem id="menu_reorderAttachments"
                     label="&reorderAttachmentsCmd.label;"
@@ -2082,7 +2091,9 @@
         <menulist is="menulist-editable" id="msgIdentity"
                   type="description"
                   disableautoselect="true" onkeypress="fromKeyPress(event);"
-                  oncommand="LoadIdentity(false);" disableonsend="true">
+                  oncommand="LoadIdentity(false);"
+                  oninput="msgIdentityOnInput(event);"
+                  disableonsend="true">
           <menupopup id="msgIdentityPopup"/>
         </menulist>
 
@@ -2393,7 +2404,8 @@
                 class="input-container">
           <moz-input-box spellcheck="true" style="flex: 1;">
                 <html:img id="msgEncryptedSubjectIcon"
-                          src="chrome://messenger/skin/icons/message-encrypted-notok.svg"
+                          src="chrome://messenger/skin/icons/new/compact/lock-disabled.svg"
+                          data-l10n-id="subject-encription-icon"
                           onclick="toggleEncryptedSubject(event);"
                           hidden="hidden"
                           alt="" />
@@ -2451,7 +2463,7 @@
               name="browser.message.body"
               aria-label="&aria.message.bodyName;"
               messagemanagergroup="browsers"
-              oncontextmenu="this._contextX = event.pageX; this._contextY = event.pageY;"
+              oncontextmenu="this._clientX = event.clientX; this._clientY = event.clientY;"
               onclick="EditorClick(event);"
               ondblclick="EditorDblClick(event);"
               context="msgComposeContext"/>

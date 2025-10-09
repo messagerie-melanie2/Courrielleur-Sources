@@ -56,7 +56,6 @@ Var RegisterDefaultAgent
 !include defines.nsi
 !include common.nsh
 !include locales.nsi
-!include custom.nsi
 
 VIAddVersionKey "FileDescription" "${BrandShortName} Installer"
 VIAddVersionKey "OriginalFilename" "setup.exe"
@@ -72,7 +71,7 @@ VIAddVersionKey "OriginalFilename" "setup.exe"
 !insertmacro ChangeMUIHeaderImage
 !insertmacro CheckForFilesInUse
 !insertmacro CheckIfRegistryKeyExists
-!insertmacro CleanUpdateDirectories
+!insertmacro CleanMaintenanceServiceLogs
 !insertmacro CopyFilesFromDir
 !insertmacro CreateRegKey
 !insertmacro FindSMProgramsDir
@@ -142,9 +141,6 @@ ShowInstDetails nevershow
 ; Custom Options Page
 Page custom preOptions leaveOptions
 
-; Custom Components Page
-Page custom preComponents leaveComponents
-
 ; Select Install Directory Page
 !define MUI_PAGE_CUSTOMFUNCTION_PRE preDirectory
 !define MUI_PAGE_CUSTOMFUNCTION_LEAVE leaveDirectory
@@ -200,25 +196,8 @@ Section "-InstallStartCleanup"
     ClearErrors
   ${EndIf}
 
-  ${If} $InstallType == ${INSTALLTYPE_CUSTOM}
-    ; Custom installs.
-    ; If DebugQA is installed and this install includes DebugQA remove it
-    ; from the installation directory. This will remove it if the user
-    ; deselected DebugQA on the components page.
-    ${If} ${FileExists} "$EXEDIR\optional\extensions\debugQA@mozilla.org.xpi"
-      ${DeleteFile} "$INSTDIR\extensions\debugQA@mozilla.org.xpi"
-      ${If} ${FileExists} "$INSTDIR\extensions\debugQA@mozilla.org"
-        RmDir /r "$INSTDIR\extensions\debugQA@mozilla.org"
-      ${EndIf}
-    ${EndIf}
-
-  ${EndIf}
-
   ; setup the application model id registration value
   ${InitHashAppModelId} "$INSTDIR" "Software\Mozilla\${AppName}\TaskBarIDs"
-
-  ; Remove the updates directory for Windows 7 and above
-  ${CleanUpdateDirectories} "Mozilla\SeaMonkey" "Mozilla\updates"
 
   ${RemoveDeprecatedFiles}
 
@@ -279,14 +258,6 @@ Section "-Application" APP_IDX
   ${EndIf}
 
   ClearErrors
-
-  ${RegisterDLL} "$INSTDIR\AccessibleHandler.dll"
-  ${If} ${Errors}
-    ${LogMsg} "** ERROR Registering: $INSTDIR\AccessibleHandler.dll **"
-  ${Else}
-    ${LogUninstall} "DLLReg: \AccessibleHandler.dll"
-    ${LogMsg} "Registered: $INSTDIR\AccessibleHandler.dll"
-  ${EndIf}
 
   ; Write extra files created by the application to the uninstall log so they
   ; will be removed when the application is uninstalled. To remove an empty
@@ -464,22 +435,6 @@ Section "-Application" APP_IDX
   !insertmacro MUI_STARTMENU_WRITE_END
 SectionEnd
 
-Section /o "Debug and QA Tools" DEBUG_IDX
-  ${If} ${FileExists} "$EXEDIR\optional\extensions\debugQA@mozilla.org.xpi"
-    SetDetailsPrint both
-    DetailPrint $(STATUS_INSTALL_OPTIONAL)
-    SetDetailsPrint none
-
-    ${RemoveDir} "$INSTDIR\extensions\debugQA@mozilla.org"
-    ${DeleteFile} "$INSTDIR\extensions\debugQA@mozilla.org.xpi"
-    ${DeleteFile} "$INSTDIR\distribution\extensions\debugQA@mozilla.org.xpi"
-    ClearErrors
-    ${LogHeader} "Installing Debug and QA Tools"
-    CopyFiles /SILENT "$EXEDIR\optional\extensions\debugQA@mozilla.org.xpi" \
-                      "$INSTDIR\extensions\"
-  ${EndIf}
-SectionEnd
-
 ; Cleanup operations to perform at the end of the installation.
 Section "-InstallEndCleanup"
   SetDetailsPrint both
@@ -629,29 +584,6 @@ Function leaveOptions
   ${If} $InstallType == ${INSTALLTYPE_BASIC}
     Call CheckExistingInstall
   ${EndIf}
-FunctionEnd
-
-Function preComponents
-  ${CheckCustomCommon}
-  !insertmacro checkSuiteComponents
-  !insertmacro MUI_HEADER_TEXT "$(OPTIONAL_COMPONENTS_TITLE)" "$(OPTIONAL_COMPONENTS_SUBTITLE)"
-  !insertmacro MUI_INSTALLOPTIONS_DISPLAY "components.ini"
-FunctionEnd
-
-Function leaveComponents
-  ; If debugQA exists then it will be Field 2.
-  StrCpy $R1 2
-
-  ${If} ${FileExists} "$EXEDIR\optional\extensions\debugQA@mozilla.org.xpi"
-    ${MUI_INSTALLOPTIONS_READ} $R0 "components.ini" "Field $R1" "State"
-    ; State will be 1 for checked and 0 for unchecked so we can use that to set
-    ; the section flags for installation.
-    SectionSetFlags ${DEBUG_IDX} $R0
-    IntOp $R1 $R1 + 1
-  ${Else}
-    SectionSetFlags ${DEBUG_IDX} 0 ; Disable install for debugQA
-  ${EndIf}
-
 FunctionEnd
 
 Function preDirectory
@@ -842,7 +774,6 @@ Function .onInit
 
 
   !insertmacro InitInstallOptionsFile "options.ini"
-  !insertmacro InitInstallOptionsFile "components.ini"
   !insertmacro InitInstallOptionsFile "shortcuts.ini"
   !insertmacro InitInstallOptionsFile "summary.ini"
 
@@ -886,9 +817,6 @@ Function .onInit
   WriteINIStr "$PLUGINSDIR\options.ini" "Field 5" Right  "-1"
   WriteINIStr "$PLUGINSDIR\options.ini" "Field 5" Top    "67"
   WriteINIStr "$PLUGINSDIR\options.ini" "Field 5" Bottom "87"
-
-  ; Setup the components.ini file for the Components page
-  !insertmacro createSuiteComponentsINI
 
   ; Setup the shortcuts.ini file for the Custom Shortcuts Page
   WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Settings" NumFields "4"

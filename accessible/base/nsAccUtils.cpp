@@ -5,7 +5,6 @@
 
 #include "nsAccUtils.h"
 
-#include "LocalAccessible-inl.h"
 #include "AccAttributes.h"
 #include "ARIAMap.h"
 #include "nsCoreUtils.h"
@@ -14,15 +13,13 @@
 #include "DocAccessibleParent.h"
 #include "HyperTextAccessible.h"
 #include "nsIAccessibleTypes.h"
-#include "Role.h"
+#include "mozilla/a11y/Role.h"
 #include "States.h"
 #include "TextLeafAccessible.h"
 
 #include "nsIBaseWindow.h"
 #include "nsIDocShellTreeOwner.h"
 #include "nsIDOMXULContainerElement.h"
-#include "nsISimpleEnumerator.h"
-#include "mozilla/a11y/PDocAccessibleChild.h"
 #include "mozilla/a11y/RemoteAccessible.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/Element.h"
@@ -44,6 +41,13 @@ void nsAccUtils::SetAccGroupAttrs(AccAttributes* aAttributes, int32_t aLevel,
     aAttributes->SetAttribute(nsGkAtoms::posinset, aPosInSet);
     aAttributes->SetAttribute(nsGkAtoms::setsize, aSetSize);
   }
+}
+
+void nsAccUtils::SetAccGroupAttrs(AccAttributes* aAttributes,
+                                  Accessible* aAcc) {
+  GroupPos groupPos = aAcc->GroupPosition();
+  nsAccUtils::SetAccGroupAttrs(aAttributes, groupPos.level, groupPos.setSize,
+                               groupPos.posInSet);
 }
 
 int32_t nsAccUtils::GetLevelForXULContainerItem(nsIContent* aContent) {
@@ -87,6 +91,7 @@ void nsAccUtils::SetLiveContainerAttributes(AccAttributes* aAttributes,
       if (live.IsEmpty()) {
         // aria-live wasn't explicitly set. See if an aria-live value is implied
         // by an ARIA role or markup element.
+        MOZ_ASSERT(GetAccService());
         if (roleMap) {
           GetLiveAttrValue(roleMap->liveAttRule, live);
         } else if (nsStaticAtom* value = GetAccService()->MarkupAttribute(
@@ -139,7 +144,7 @@ bool nsAccUtils::HasDefinedARIAToken(nsIContent* aContent, nsAtom* aAtom) {
 }
 
 bool nsAccUtils::HasDefinedARIAToken(const AttrArray* aAttrs, nsAtom* aAtom) {
-  return aAttrs->HasAttr(kNameSpaceID_None, aAtom) &&
+  return aAttrs->HasAttr(aAtom) &&
          !aAttrs->AttrValueIs(kNameSpaceID_None, aAtom, nsGkAtoms::_empty,
                               eCaseMatters) &&
          !aAttrs->AttrValueIs(kNameSpaceID_None, aAtom, nsGkAtoms::_undefined,
@@ -154,7 +159,7 @@ nsStaticAtom* nsAccUtils::NormalizeARIAToken(const AttrArray* aAttrs,
 
   if (aAttr == nsGkAtoms::aria_current) {
     static AttrArray::AttrValuesArray tokens[] = {
-        nsGkAtoms::page, nsGkAtoms::step, nsGkAtoms::location_,
+        nsGkAtoms::page, nsGkAtoms::step, nsGkAtoms::location,
         nsGkAtoms::date, nsGkAtoms::time, nsGkAtoms::_true,
         nullptr};
     int32_t idx =
@@ -418,7 +423,8 @@ bool nsAccUtils::MustPrune(Accessible* aAccessible) {
   MOZ_ASSERT(aAccessible);
   roles::Role role = aAccessible->Role();
 
-  if (role == roles::SLIDER || role == roles::PROGRESSBAR) {
+  if (role == roles::SLIDER || role == roles::PROGRESSBAR ||
+      role == roles::METER) {
     // Always prune the tree for sliders and progressbars, as it doesn't make
     // sense for either to have descendants. Per the ARIA spec, children of
     // these elements are presentational. They also confuse NVDA.
@@ -444,50 +450,40 @@ bool nsAccUtils::MustPrune(Accessible* aAccessible) {
   return childRole == roles::TEXT_LEAF || childRole == roles::STATICTEXT;
 }
 
-bool nsAccUtils::IsARIALive(const LocalAccessible* aAccessible) {
-  // Get computed aria-live property based on the closest container with the
-  // attribute. Inner nodes override outer nodes within the same
-  // document.
-  // This should be the same as the container-live attribute, but we don't need
-  // the other container-* attributes, so we can't use the same function.
-  nsIContent* ancestor = aAccessible->GetContent();
-  if (!ancestor) {
-    return false;
+void nsAccUtils::GetLiveRegionSetting(Accessible* aAcc, nsAString& aLive) {
+  MOZ_ASSERT(aAcc);
+  aAcc->LiveRegionAttributes(&aLive, nullptr, nullptr, nullptr);
+  // aria-live wasn't explicitly set. See if an aria-live value is implied
+  // by an ARIA role or markup element.
+  if (const nsRoleMapEntry* roleMap = aAcc->ARIARoleMap()) {
+    GetLiveAttrValue(roleMap->liveAttRule, aLive);
+  } else if (nsStaticAtom* value = GetAccService()
+                                       ? GetAccService()->MarkupAttribute(
+                                             aAcc, nsGkAtoms::aria_live)
+                                       : nullptr) {
+    value->ToString(aLive);
   }
-  dom::Document* doc = ancestor->GetComposedDoc();
-  if (!doc) {
-    return false;
-  }
-  dom::Element* topEl = doc->GetRootElement();
-  while (ancestor) {
-    const nsRoleMapEntry* role = nullptr;
-    if (ancestor->IsElement()) {
-      role = aria::GetRoleMap(ancestor->AsElement());
-    }
-    nsAutoString live;
-    if (HasDefinedARIAToken(ancestor, nsGkAtoms::aria_live)) {
-      GetARIAAttr(ancestor->AsElement(), nsGkAtoms::aria_live, live);
-    } else if (role) {
-      GetLiveAttrValue(role->liveAttRule, live);
-    } else if (nsStaticAtom* value = GetAccService()->MarkupAttribute(
-                   ancestor, nsGkAtoms::aria_live)) {
-      value->ToString(live);
-    }
-    if (!live.IsEmpty() && !live.EqualsLiteral("off")) {
-      return true;
-    }
+}
 
-    if (ancestor == topEl) {
+Accessible* nsAccUtils::GetLiveRegionRoot(Accessible* aAcc) {
+  MOZ_ASSERT(aAcc);
+  nsAutoString live;
+  Accessible* acc;
+  for (acc = aAcc; acc; acc = acc->Parent()) {
+    GetLiveRegionSetting(acc, live);
+    if (!live.IsEmpty()) {
       break;
     }
-
-    ancestor = ancestor->GetParent();
-    if (!ancestor) {
-      ancestor = topEl;  // Use <body>/<frameset>
+    if (acc->IsDoc()) {
+      // A document can be the root of a live region, but a live region cannot
+      // cross document boundaries.
+      return nullptr;
     }
   }
-
-  return false;
+  if (live.IsEmpty() || live.EqualsLiteral("off")) {
+    return nullptr;
+  }
+  return acc;
 }
 
 Accessible* nsAccUtils::DocumentFor(Accessible* aAcc) {
@@ -549,26 +545,26 @@ const AttrArray* nsAccUtils::GetARIADefaults(dom::Element* aElement) {
 }
 
 bool nsAccUtils::HasARIAAttr(dom::Element* aElement, const nsAtom* aName) {
-  if (aElement->HasAttr(kNameSpaceID_None, aName)) {
+  if (aElement->HasAttr(aName)) {
     return true;
   }
   const auto* defaults = GetARIADefaults(aElement);
   if (!defaults) {
     return false;
   }
-  return defaults->HasAttr(kNameSpaceID_None, aName);
+  return defaults->HasAttr(aName);
 }
 
 bool nsAccUtils::GetARIAAttr(dom::Element* aElement, const nsAtom* aName,
                              nsAString& aResult) {
-  if (aElement->GetAttr(kNameSpaceID_None, aName, aResult)) {
+  if (aElement->GetAttr(aName, aResult)) {
     return true;
   }
   const auto* defaults = GetARIADefaults(aElement);
   if (!defaults) {
     return false;
   }
-  return defaults->GetAttr(kNameSpaceID_None, aName, aResult);
+  return defaults->GetAttr(aName, aResult);
 }
 
 const nsAttrValue* nsAccUtils::GetARIAAttr(dom::Element* aElement,
@@ -583,11 +579,28 @@ const nsAttrValue* nsAccUtils::GetARIAAttr(dom::Element* aElement,
   return defaults->GetAttr(aName, kNameSpaceID_None);
 }
 
+bool nsAccUtils::GetARIAElementsAttr(dom::Element* aElement, nsAtom* aName,
+                                     nsTArray<dom::Element*>& aElements) {
+  if (aElement->HasAttr(aName)) {
+    aElement->GetExplicitlySetAttrElements(aName, aElements);
+    return true;
+  }
+
+  if (auto* element = nsGenericHTMLElement::FromNode(aElement)) {
+    if (auto* internals = element->GetInternals()) {
+      return internals->GetAttrElements(aName, aElements);
+    }
+  }
+
+  return false;
+}
+
 bool nsAccUtils::ARIAAttrValueIs(dom::Element* aElement, const nsAtom* aName,
                                  const nsAString& aValue,
                                  nsCaseTreatment aCaseSensitive) {
-  if (aElement->AttrValueIs(kNameSpaceID_None, aName, aValue, aCaseSensitive)) {
-    return true;
+  if (aElement->HasAttr(kNameSpaceID_None, aName)) {
+    return aElement->AttrValueIs(kNameSpaceID_None, aName, aValue,
+                                 aCaseSensitive);
   }
   const auto* defaults = GetARIADefaults(aElement);
   if (!defaults) {
@@ -600,8 +613,9 @@ bool nsAccUtils::ARIAAttrValueIs(dom::Element* aElement, const nsAtom* aName,
 bool nsAccUtils::ARIAAttrValueIs(dom::Element* aElement, const nsAtom* aName,
                                  const nsAtom* aValue,
                                  nsCaseTreatment aCaseSensitive) {
-  if (aElement->AttrValueIs(kNameSpaceID_None, aName, aValue, aCaseSensitive)) {
-    return true;
+  if (aElement->HasAttr(kNameSpaceID_None, aName)) {
+    return aElement->AttrValueIs(kNameSpaceID_None, aName, aValue,
+                                 aCaseSensitive);
   }
   const auto* defaults = GetARIADefaults(aElement);
   if (!defaults) {
@@ -626,4 +640,14 @@ int32_t nsAccUtils::FindARIAAttrValueIn(dom::Element* aElement,
                                       aCaseSensitive);
   }
   return index;
+}
+
+bool nsAccUtils::IsEditableARIACombobox(const LocalAccessible* aAccessible) {
+  const nsRoleMapEntry* roleMap = aAccessible->ARIARoleMap();
+  if (!roleMap || roleMap->role != roles::EDITCOMBOBOX) {
+    return false;
+  }
+
+  return aAccessible->IsTextField() ||
+         aAccessible->Elm()->State().HasState(dom::ElementState::READWRITE);
 }

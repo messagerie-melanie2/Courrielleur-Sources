@@ -2,6 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+:is(#event-toolbox, #FormatToolbox) > toolbar {
+  color: inherit;
+}
+
+:root:not([lwtheme-image]) :is(#event-toolbox, #FormatToolbox) > toolbar {
+  background-color: inherit;
+}
+
 /*--------------------------------------------------------------------
  *   Event dialog keep duration button
  *-------------------------------------------------------------------*/
@@ -12,17 +20,6 @@
 
 #timezone-endtime {
   margin-inline-start: 16px;
-}
-
-
-#todo-entrydate menulist[is="menulist-editable"][editable="true"],
-#todo-duedate menulist[is="menulist-editable"][editable="true"] {
-  margin-inline-end: 2.4em;
-}
-
-#todo-entrydate::part(dropmarker),
-#todo-duedate::part(dropmarker) {
-  display: block !important;
 }
 
 #percent-complete-textbox {

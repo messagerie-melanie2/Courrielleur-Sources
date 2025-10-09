@@ -5,9 +5,6 @@ const { FxAccounts } = ChromeUtils.importESModule(
   "resource://gre/modules/FxAccounts.sys.mjs"
 );
 
-const gBrowserGlue = Cc["@mozilla.org/browser/browserglue;1"].getService(
-  Ci.nsIObserver
-);
 const DEVICES_URL = "https://example.com/devices";
 
 add_setup(async function () {
@@ -24,7 +21,10 @@ add_setup(async function () {
 
 async function testDeviceConnected(deviceName) {
   info("testDeviceConnected with deviceName=" + deviceName);
-  BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, "about:mozilla");
+  BrowserTestUtils.startLoadingURIString(
+    gBrowser.selectedBrowser,
+    "about:mozilla"
+  );
   await waitForDocLoadComplete();
 
   let waitForTabPromise = BrowserTestUtils.waitForNewTab(gBrowser);

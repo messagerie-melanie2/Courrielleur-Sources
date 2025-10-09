@@ -2,7 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 var {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 const PTV_interfaces = [Ci.nsITreeView,
@@ -51,15 +50,7 @@ PlacesTreeView.prototype = {
     return this;
   },
 
-  __xulStore: null,
-  get _xulStore() {
-    if (!this.__xulStore) {
-      this.__xulStore = Cc["@mozilla.org/xul/xulstore;1"].getService(Ci.nsIXULStore);
-    }
-    return this.__xulStore;
-  },
-
-  QueryInterface: XPCOMUtils.generateQI(PTV_interfaces),
+  QueryInterface: ChromeUtils.generateQI(PTV_interfaces),
 
   // Bug 761494:
   // ----------
@@ -365,7 +356,7 @@ PlacesTreeView.prototype = {
         let isopen = false;
 
         if (uri) {
-          let val = this._xulStore.getValue(document.documentURI, uri, "open");
+          let val = Services.xulStore.getValue(document.documentURI, uri, "open");
           isopen = (val == "true");
         }
 
@@ -1629,9 +1620,9 @@ PlacesTreeView.prototype = {
         let docURI = document.documentURI;
 
         if (node.containerOpen) {
-          this._xulStore.removeValue(docURI, uri, "open");
+          Services.xulStore.removeValue(docURI, uri, "open");
         } else {
-          this._xulStore.setValue(docURI, uri, "open", "true");
+          Services.xulStore.setValue(docURI, uri, "open", "true");
         }
       }
     }

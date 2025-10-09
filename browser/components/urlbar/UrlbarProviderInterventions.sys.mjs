@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 import {
   UrlbarProvider,
   UrlbarUtils,
@@ -13,26 +11,20 @@ const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   AppUpdater: "resource://gre/modules/AppUpdater.sys.mjs",
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
   NLP: "resource://gre/modules/NLP.sys.mjs",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
   ResetProfile: "resource://gre/modules/ResetProfile.sys.mjs",
   Sanitizer: "resource:///modules/Sanitizer.sys.mjs",
-  UrlbarPrefs: "resource:///modules/UrlbarPrefs.sys.mjs",
+  UrlbarProviderGlobalActions:
+    "resource:///modules/UrlbarProviderGlobalActions.sys.mjs",
   UrlbarResult: "resource:///modules/UrlbarResult.sys.mjs",
   UrlbarTokenizer: "resource:///modules/UrlbarTokenizer.sys.mjs",
 });
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
-});
+ChromeUtils.defineLazyGetter(lazy, "appUpdater", () => new lazy.AppUpdater());
 
-XPCOMUtils.defineLazyGetter(lazy, "appUpdater", () => new lazy.AppUpdater());
-
-// The possible tips to show.  These names (except NONE) are used in the names
-// of keys in the `urlbar.tips` keyed scalar telemetry (see telemetry.rst).
-// Don't modify them unless you've considered that.  If you do modify them or
-// add new tips, then you are also adding new `urlbar.tips` keys and therefore
-// need an expanded data collection review.
+// The possible tips to show.
 const TIPS = {
   NONE: "",
   CLEAR: "intervention_clear",
@@ -142,6 +134,7 @@ const UPDATE_CHECK_PERIOD_MS = 12 * 60 * 60 * 1000; // 12 hours
 /**
  * A node in the QueryScorer's phrase tree.
  */
+// eslint-disable-next-line no-shadow
 class Node {
   constructor(word) {
     this.word = word;
@@ -443,10 +436,8 @@ class ProviderInterventions extends UrlbarProvider {
     // The tip we should currently show.
     this.currentTip = TIPS.NONE;
 
-    this.tipsShownInCurrentEngagement = new Set();
-
     // This object is used to match the user's queries to tips.
-    XPCOMUtils.defineLazyGetter(this, "queryScorer", () => {
+    ChromeUtils.defineLazyGetter(this, "queryScorer", () => {
       let queryScorer = new QueryScorer({
         variations: new Map([
           // Recognize "fire fox", "fox fire", and "foxfire" as "firefox".
@@ -483,9 +474,7 @@ class ProviderInterventions extends UrlbarProvider {
   }
 
   /**
-   * The type of the provider, must be one of UrlbarUtils.PROVIDER_TYPE.
-   *
-   * @returns {UrlbarUtils.PROVIDER_TYPE}
+   * @returns {Values<typeof UrlbarUtils.PROVIDER_TYPE>}
    */
   get type() {
     return UrlbarUtils.PROVIDER_TYPE.PROFILE;
@@ -497,9 +486,8 @@ class ProviderInterventions extends UrlbarProvider {
    * with this provider, to save on resources.
    *
    * @param {UrlbarQueryContext} queryContext The query context object
-   * @returns {boolean} Whether this provider should be invoked for the search.
    */
-  isActive(queryContext) {
+  async isActive(queryContext) {
     if (
       !queryContext.searchString ||
       queryContext.searchString.length > UrlbarUtils.MAX_TEXT_LENGTH ||
@@ -507,7 +495,8 @@ class ProviderInterventions extends UrlbarProvider {
         queryContext.searchString
       ) ||
       !EN_LOCALE_MATCH.test(Services.locale.appLocaleAsBCP47) ||
-      !Services.policies.isAllowed("urlbarinterventions")
+      !Services.policies.isAllowed("urlbarinterventions") ||
+      (await lazy.UrlbarProviderGlobalActions.isActive(queryContext))
     ) {
       return false;
     }
@@ -550,7 +539,7 @@ class ProviderInterventions extends UrlbarProvider {
     );
   }
 
-  async _setCurrentTipFromAppUpdaterStatus(waitForCheck) {
+  async _setCurrentTipFromAppUpdaterStatus() {
     // The update tips depend on the app's update status, so check for updates
     // now (if we haven't already checked within the update-check period).  If
     // we're running in an xpcshell test, then checkForBrowserUpdate's attempt
@@ -662,24 +651,18 @@ class ProviderInterventions extends UrlbarProvider {
         type: this.currentTip,
         icon: UrlbarUtils.ICON.TIP,
         helpL10n: {
-          id: lazy.UrlbarPrefs.get("resultMenu")
-            ? "urlbar-result-menu-tip-get-help"
-            : "urlbar-tip-help-icon",
+          id: "urlbar-result-menu-tip-get-help",
         },
       }
     );
     result.suggestedIndex = 1;
-    this.tipsShownInCurrentEngagement.add(this.currentTip);
     addCallback(this, result);
   }
 
   /**
    * Cancels a running query,
-   *
-   * @param {UrlbarQueryContext} queryContext the query context object to cancel
-   *        query for.
    */
-  cancelQuery(queryContext) {
+  cancelQuery() {
     // If we're waiting for appUpdater to finish its update check,
     // this._appUpdaterListener will be defined.  We can stop listening now.
     if (this._appUpdaterListener) {
@@ -714,23 +697,14 @@ class ProviderInterventions extends UrlbarProvider {
     }
   }
 
-  onEngagement(isPrivate, state, queryContext, details, window) {
-    let { result } = details;
-
+  onEngagement(queryContext, controller, details) {
     // `selType` is "tip" when the tip's main button is picked. Ignore clicks on
     // the help command ("tiphelp"), which is handled by UrlbarInput since we
     // set `helpUrl` on the result payload. Currently there aren't any other
     // buttons or commands but this will ignore clicks on them too.
-    if (result?.providerName == this.name && details.selType == "tip") {
-      this.#pickResult(result, window);
+    if (details.selType == "tip") {
+      this.#pickResult(details.result, controller.browserWindow);
     }
-
-    if (["engagement", "abandonment"].includes(state)) {
-      for (let tip of this.tipsShownInCurrentEngagement) {
-        Services.telemetry.keyedScalarAdd("urlbar.tips", `${tip}-shown`, 1);
-      }
-    }
-    this.tipsShownInCurrentEngagement.clear();
   }
 
   /**

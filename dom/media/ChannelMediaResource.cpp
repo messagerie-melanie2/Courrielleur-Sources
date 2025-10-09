@@ -58,14 +58,16 @@ NS_IMPL_ISUPPORTS(ChannelMediaResource::Listener, nsIRequestObserver,
                   nsIThreadRetargetableStreamListener)
 
 nsresult ChannelMediaResource::Listener::OnStartRequest(nsIRequest* aRequest) {
-  MOZ_ASSERT(NS_IsMainThread());
+  AssertIsOnMainThread();
+  mLock.NoteOnMainThread();
   if (!mResource) return NS_OK;
   return mResource->OnStartRequest(aRequest, mOffset);
 }
 
 nsresult ChannelMediaResource::Listener::OnStopRequest(nsIRequest* aRequest,
                                                        nsresult aStatus) {
-  MOZ_ASSERT(NS_IsMainThread());
+  AssertIsOnMainThread();
+  mLock.NoteOnMainThread();
   if (!mResource) return NS_OK;
   return mResource->OnStopRequest(aRequest, aStatus);
 }
@@ -76,7 +78,8 @@ nsresult ChannelMediaResource::Listener::OnDataAvailable(
   // This might happen off the main thread.
   RefPtr<ChannelMediaResource> res;
   {
-    MutexAutoLock lock(mMutex);
+    MutexAutoLock lock(mLock.Lock());
+    mLock.NoteLockHeld();
     res = mResource;
   }
   // Note Rekove() might happen at the same time to reset mResource. We check
@@ -87,7 +90,8 @@ nsresult ChannelMediaResource::Listener::OnDataAvailable(
 nsresult ChannelMediaResource::Listener::AsyncOnChannelRedirect(
     nsIChannel* aOld, nsIChannel* aNew, uint32_t aFlags,
     nsIAsyncVerifyRedirectCallback* cb) {
-  MOZ_ASSERT(NS_IsMainThread());
+  AssertIsOnMainThread();
+  mLock.NoteOnMainThread();
 
   nsresult rv = NS_OK;
   if (mResource) {
@@ -104,14 +108,19 @@ nsresult ChannelMediaResource::Listener::AsyncOnChannelRedirect(
 
 nsresult ChannelMediaResource::Listener::CheckListenerChain() { return NS_OK; }
 
+NS_IMETHODIMP
+ChannelMediaResource::Listener::OnDataFinished(nsresult) { return NS_OK; }
+
 nsresult ChannelMediaResource::Listener::GetInterface(const nsIID& aIID,
                                                       void** aResult) {
   return QueryInterface(aIID, aResult);
 }
 
 void ChannelMediaResource::Listener::Revoke() {
-  MOZ_ASSERT(NS_IsMainThread());
-  MutexAutoLock lock(mMutex);
+  AssertIsOnMainThread();
+  MutexAutoLock lock(mLock.Lock());
+  mLock.NoteExclusiveAccess();
+
   mResource = nullptr;
 }
 
@@ -224,7 +233,7 @@ nsresult ChannelMediaResource::OnStartRequest(nsIRequest* aRequest,
         // at this stage.
         //       For now, tell the decoder that the stream is infinite.
         if (rangeTotal != -1) {
-          contentLength = std::max(contentLength, rangeTotal);
+          length = std::max(contentLength, rangeTotal);
         }
       }
       acceptsRanges = gotRangeHeader;
@@ -237,11 +246,9 @@ nsresult ChannelMediaResource::OnStartRequest(nsIRequest* aRequest,
         // to assume seeking doesn't work.
         acceptsRanges = false;
       }
-    }
-    if (aRequestOffset == 0 && contentLength >= 0 &&
-        (responseStatus == HTTP_OK_CODE ||
-         responseStatus == HTTP_PARTIAL_RESPONSE_CODE)) {
-      length = contentLength;
+      if (contentLength >= 0) {
+        length = contentLength;
+      }
     }
     // XXX we probably should examine the Content-Range header in case
     // the server gave us a range which is not quite what we asked for
@@ -277,8 +284,7 @@ nsresult ChannelMediaResource::OnStartRequest(nsIRequest* aRequest,
   owner->DownloadProgressed();
 
   nsCOMPtr<nsIThreadRetargetableRequest> retarget;
-  if (Preferences::GetBool("media.omt_data_delivery.enabled", false) &&
-      (retarget = do_QueryInterface(aRequest))) {
+  if ((retarget = do_QueryInterface(aRequest))) {
     // Note this will not always succeed. We need to handle the case where
     // all resources sharing the same cache might run their data callbacks
     // on different threads.
@@ -486,9 +492,9 @@ int64_t ChannelMediaResource::CalculateStreamLength() const {
   bool gotRangeHeader = NS_SUCCEEDED(
       ParseContentRangeHeader(hc, rangeStart, rangeEnd, rangeTotal));
   if (gotRangeHeader && rangeTotal != -1) {
-    contentLength = std::max(contentLength, rangeTotal);
+    return std::max(contentLength, rangeTotal);
   }
-  return contentLength;
+  return -1;
 }
 
 nsresult ChannelMediaResource::Open(nsIStreamListener** aStreamListener) {
@@ -755,6 +761,12 @@ nsresult ChannelMediaResource::RecreateChannel() {
   }
 
   Unused << loadInfo->SetIsMediaRequest(true);
+
+  if (nsCOMPtr<nsITimedChannel> timedChannel = do_QueryInterface(mChannel)) {
+    nsString initiatorType =
+        element->IsHTMLElement(nsGkAtoms::audio) ? u"audio"_ns : u"video"_ns;
+    timedChannel->SetInitiatorType(initiatorType);
+  }
 
   nsCOMPtr<nsIClassOfService> cos(do_QueryInterface(mChannel));
   if (cos) {
@@ -1051,3 +1063,5 @@ bool ChannelSuspendAgent::IsSuspended() {
 }
 
 }  // namespace mozilla
+
+#undef LOG

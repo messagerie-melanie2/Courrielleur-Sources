@@ -13,13 +13,14 @@ const { ctypes } = ChromeUtils.importESModule(
 const { FileUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/FileUtils.sys.mjs"
 );
-const { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js");
+const { HttpServer } = ChromeUtils.importESModule(
+  "resource://testing-common/httpd.sys.mjs"
+);
 const { MockRegistrar } = ChromeUtils.importESModule(
   "resource://testing-common/MockRegistrar.sys.mjs"
 );
-const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
-const { PromiseUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/PromiseUtils.sys.mjs"
+const { NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
 );
 const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
@@ -29,15 +30,16 @@ const { X509 } = ChromeUtils.importESModule(
   "resource://gre/modules/psm/X509.sys.mjs"
 );
 
-const isDebugBuild = Cc["@mozilla.org/xpcom/debug;1"].getService(
+const gIsDebugBuild = Cc["@mozilla.org/xpcom/debug;1"].getService(
   Ci.nsIDebug2
 ).isDebugBuild;
 
 // The test EV roots are only enabled in debug builds as a security measure.
-const gEVExpected = isDebugBuild;
+const gEVExpected = gIsDebugBuild;
 
-const CLIENT_AUTH_FILE_NAME = "ClientAuthRememberList.txt";
-const SSS_STATE_FILE_NAME = "SiteSecurityServiceState.txt";
+const CLIENT_AUTH_FILE_NAME = "ClientAuthRememberList.bin";
+const SSS_STATE_FILE_NAME = "SiteSecurityServiceState.bin";
+const SSS_STATE_OLD_FILE_NAME = "SiteSecurityServiceState.txt";
 const CERT_OVERRIDE_FILE_NAME = "cert_override.txt";
 
 const SEC_ERROR_BASE = Ci.nsINSSErrorsService.NSS_SEC_ERROR_BASE;
@@ -109,24 +111,21 @@ const MOZILLA_PKIX_ERROR_ADDITIONAL_POLICY_CONSTRAINT_FAILED =
   MOZILLA_PKIX_ERROR_BASE + 13;
 const MOZILLA_PKIX_ERROR_SELF_SIGNED_CERT = MOZILLA_PKIX_ERROR_BASE + 14;
 const MOZILLA_PKIX_ERROR_MITM_DETECTED = MOZILLA_PKIX_ERROR_BASE + 15;
-
-// Supported Certificate Usages
-const certificateUsageSSLClient = 0x0001;
-const certificateUsageSSLServer = 0x0002;
-const certificateUsageSSLCA = 0x0008;
-const certificateUsageEmailSigner = 0x0010;
-const certificateUsageEmailRecipient = 0x0020;
+const MOZILLA_PKIX_ERROR_INSUFFICIENT_CERTIFICATE_TRANSPARENCY =
+  MOZILLA_PKIX_ERROR_BASE + 16;
+const MOZILLA_PKIX_ERROR_ISSUER_NO_LONGER_TRUSTED =
+  MOZILLA_PKIX_ERROR_BASE + 17;
 
 // A map from the name of a certificate usage to the value of the usage.
 // Useful for printing debugging information and for enumerating all supported
 // usages.
-const allCertificateUsages = {
-  certificateUsageSSLClient,
-  certificateUsageSSLServer,
-  certificateUsageSSLCA,
-  certificateUsageEmailSigner,
-  certificateUsageEmailRecipient,
-};
+const verifyUsages = new Map([
+  ["verifyUsageTLSClient", Ci.nsIX509CertDB.verifyUsageTLSClient],
+  ["verifyUsageTLSServer", Ci.nsIX509CertDB.verifyUsageTLSServer],
+  ["verifyUsageTLSServerCA", Ci.nsIX509CertDB.verifyUsageTLSServerCA],
+  ["verifyUsageEmailSigner", Ci.nsIX509CertDB.verifyUsageEmailSigner],
+  ["verifyUsageEmailRecipient", Ci.nsIX509CertDB.verifyUsageEmailRecipient],
+]);
 
 const NO_FLAGS = 0;
 
@@ -298,7 +297,7 @@ function checkCertErrorGenericAtTime(
   /* optional */ hostname,
   /* optional */ flags = NO_FLAGS
 ) {
-  return new Promise((resolve, reject) => {
+  return new Promise(resolve => {
     let result = new CertVerificationExpectedErrorResult(
       cert.commonName,
       expectedError,
@@ -329,6 +328,55 @@ function checkCertErrorGeneric(
     isEVExpected,
     hostname
   );
+}
+
+// Helper for checkRootOfBuiltChain
+class CertVerificationExpectedRootResult {
+  constructor(certName, rootSha256SpkiDigest, resolve) {
+    this.certName = certName;
+    this.rootSha256SpkiDigest = rootSha256SpkiDigest;
+    this.resolve = resolve;
+  }
+
+  verifyCertFinished(aPRErrorCode, aVerifiedChain, _aHasEVPolicy) {
+    equal(
+      aPRErrorCode,
+      PRErrorCodeSuccess,
+      `verifying ${this.certName}: should succeed`
+    );
+    equal(
+      aVerifiedChain[aVerifiedChain.length - 1]
+        .sha256SubjectPublicKeyInfoDigest,
+      this.rootSha256SpkiDigest,
+      `verifying ${this.certName}: should build chain to ${this.rootSha256SpkiDigest}`
+    );
+    this.resolve();
+  }
+}
+
+function checkRootOfBuiltChain(
+  certdb,
+  cert,
+  rootSha256SpkiDigest,
+  time,
+  /* optional */ hostname,
+  /* optional */ flags = NO_FLAGS
+) {
+  return new Promise(resolve => {
+    let result = new CertVerificationExpectedRootResult(
+      cert.commonName,
+      rootSha256SpkiDigest,
+      resolve
+    );
+    certdb.asyncVerifyCertAtTime(
+      cert,
+      Ci.nsIX509CertDB.verifyUsageTLSServer,
+      flags,
+      hostname,
+      time,
+      result
+    );
+  });
 }
 
 function checkEVStatus(certDB, cert, usage, isEVExpected) {
@@ -540,7 +588,7 @@ async function asyncConnectTo(
   function Connection(host) {
     this.host = host;
     this.thread = Services.tm.currentThread;
-    this.defer = PromiseUtils.defer();
+    this.defer = Promise.withResolvers();
     let sts = Cc["@mozilla.org/network/socket-transport-service;1"].getService(
       Ci.nsISocketTransportService
     );
@@ -568,7 +616,7 @@ async function asyncConnectTo(
 
   Connection.prototype = {
     // nsITransportEventSink
-    onTransportStatus(aTransport, aStatus, aProgress, aProgressMax) {
+    onTransportStatus(aTransport, aStatus) {
       if (
         !this.connected &&
         aStatus == Ci.nsISocketTransport.STATUS_CONNECTED_TO
@@ -594,7 +642,7 @@ async function asyncConnectTo(
     },
 
     // nsIOutputStreamCallback
-    onOutputStreamReady(aStream) {
+    onOutputStreamReady() {
       if (aAfterStreamOpen) {
         aAfterStreamOpen(this.transport);
       }
@@ -772,7 +820,7 @@ function generateOCSPResponses(ocspRespArray, nssDBlocation) {
 // serverIdentities.
 function getFailingHttpServer(serverPort, serverIdentities) {
   let httpServer = new HttpServer();
-  httpServer.registerPrefixHandler("/", function (request, response) {
+  httpServer.registerPrefixHandler("/", function () {
     Assert.ok(false, "HTTP responder should not have been queried");
   });
   httpServer.identity.setPrimary("http", serverIdentities.shift(), serverPort);
@@ -816,15 +864,15 @@ function startOCSPResponder(
   expectedResponseTypes,
   responseHeaderPairs = []
 ) {
-  let ocspResponseGenerationArgs = expectedCertNames.map(function (
-    expectedNick
-  ) {
-    let responseType = "good";
-    if (expectedResponseTypes && expectedResponseTypes.length >= 1) {
-      responseType = expectedResponseTypes.shift();
+  let ocspResponseGenerationArgs = expectedCertNames.map(
+    function (expectedNick) {
+      let responseType = "good";
+      if (expectedResponseTypes && expectedResponseTypes.length >= 1) {
+        responseType = expectedResponseTypes.shift();
+      }
+      return [responseType, expectedNick, "unused", 0];
     }
-    return [responseType, expectedNick, "unused", 0];
-  });
+  );
   let ocspResponses = generateOCSPResponses(
     ocspResponseGenerationArgs,
     nssDBLocation
@@ -900,7 +948,7 @@ function startOCSPResponder(
 // Given an OCSP responder (see startOCSPResponder), returns a promise that
 // resolves when the responder has successfully stopped.
 function stopOCSPResponder(responder) {
-  return new Promise((resolve, reject) => {
+  return new Promise(resolve => {
     responder.stop(resolve);
   });
 }
@@ -975,7 +1023,7 @@ class CertVerificationResult {
     this.resolve = resolve;
   }
 
-  verifyCertFinished(aPRErrorCode, aVerifiedChain, aHasEVPolicy) {
+  verifyCertFinished(aPRErrorCode) {
     if (this.successExpected) {
       equal(
         aPRErrorCode,
@@ -1014,9 +1062,9 @@ class CertVerificationResult {
 function asyncTestCertificateUsages(certdb, cert, expectedUsages) {
   let now = new Date().getTime() / 1000;
   let promises = [];
-  Object.keys(allCertificateUsages).forEach(usageString => {
-    let promise = new Promise((resolve, reject) => {
-      let usage = allCertificateUsages[usageString];
+  verifyUsages.keys().forEach(usageString => {
+    let promise = new Promise(resolve => {
+      let usage = verifyUsages.get(usageString);
       let successExpected = expectedUsages.includes(usage);
       let result = new CertVerificationResult(
         cert.commonName,
@@ -1102,7 +1150,7 @@ function writeLinesAndClose(lines, outputStream) {
  *        A unique substring of name of the dynamic library file of the module
  *        that should not be loaded.
  */
-function checkPKCS11ModuleNotPresent(moduleName, libraryName) {
+function checkPKCS11ModuleNotPresent(moduleName, libraryName = "undefined") {
   let moduleDB = Cc["@mozilla.org/security/pkcs11moduledb;1"].getService(
     Ci.nsIPKCS11ModuleDB
   );
@@ -1117,10 +1165,12 @@ function checkPKCS11ModuleNotPresent(moduleName, libraryName) {
       moduleName,
       `Non-test module name shouldn't equal '${moduleName}'`
     );
-    ok(
-      !(module.libName && module.libName.includes(libraryName)),
-      `Non-test module lib name should not include '${libraryName}'`
-    );
+    if (libraryName != "undefined") {
+      ok(
+        !(module.libName && module.libName.includes(libraryName)),
+        `Non-test module lib name should not include '${libraryName}'`
+      );
+    }
   }
 }
 
@@ -1136,7 +1186,7 @@ function checkPKCS11ModuleNotPresent(moduleName, libraryName) {
  * @returns {nsIPKCS11Module}
  *          The test module.
  */
-function checkPKCS11ModuleExists(moduleName, libraryName) {
+function checkPKCS11ModuleExists(moduleName, libraryName = "undefined") {
   let moduleDB = Cc["@mozilla.org/security/pkcs11moduledb;1"].getService(
     Ci.nsIPKCS11ModuleDB
   );
@@ -1153,11 +1203,17 @@ function checkPKCS11ModuleExists(moduleName, libraryName) {
     }
   }
   notEqual(testModule, null, "Test module should have been found");
-  notEqual(testModule.libName, null, "Test module lib name should not be null");
-  ok(
-    testModule.libName.includes(ctypes.libraryName(libraryName)),
-    `Test module lib name should include lib name of '${libraryName}'`
-  );
+  if (libraryName != "undefined") {
+    notEqual(
+      testModule.libName,
+      null,
+      "Test module lib name should not be null"
+    );
+    ok(
+      testModule.libName.includes(ctypes.libraryName(libraryName)),
+      `Test module lib name should include lib name of '${libraryName}'`
+    );
+  }
 
   return testModule;
 }
@@ -1188,5 +1244,106 @@ function run_certutil_on_directory(directory, args, expectSuccess = true) {
   process.run(true, args, args.length);
   if (expectSuccess) {
     Assert.equal(process.exitValue, 0, "certutil should succeed");
+  }
+}
+
+function get_data_storage_contents(dataStorageFileName) {
+  let stateFile = do_get_profile();
+  stateFile.append(dataStorageFileName);
+  if (!stateFile.exists()) {
+    return undefined;
+  }
+  return readFile(stateFile);
+}
+
+function u16_to_big_endian_bytes(u16) {
+  Assert.less(u16, 65536);
+  return [u16 / 256, u16 % 256];
+}
+
+// Appends a line to the given data storage file (as an nsIOutputStream).
+// score is an integer representing the number of unique days the item has been accessed.
+// lastAccessed is the day since the epoch the item was last accessed.
+// key and value are strings representing the key and value of the item.
+function append_line_to_data_storage_file(
+  outputStream,
+  score,
+  lastAccessed,
+  key,
+  value,
+  valueLength = 24,
+  useBadChecksum = false
+) {
+  let line = arrayToString(u16_to_big_endian_bytes(score));
+  line = line + arrayToString(u16_to_big_endian_bytes(lastAccessed));
+  line = line + key;
+  let keyPadding = [];
+  for (let i = 0; i < 256 - key.length; i++) {
+    keyPadding.push(0);
+  }
+  line = line + arrayToString(keyPadding);
+  line = line + value;
+  let valuePadding = [];
+  for (let i = 0; i < valueLength - value.length; i++) {
+    valuePadding.push(0);
+  }
+  line = line + arrayToString(valuePadding);
+  let checksum = 0;
+  Assert.equal(line.length % 2, 0);
+  for (let i = 0; i < line.length; i += 2) {
+    checksum ^= (line.charCodeAt(i) << 8) + line.charCodeAt(i + 1);
+  }
+  line =
+    arrayToString(
+      u16_to_big_endian_bytes(useBadChecksum ? ~checksum & 0xffff : checksum)
+    ) + line;
+  outputStream.write(line, line.length);
+}
+
+// Helper constants for setting security.pki.certificate_transparency.mode.
+const CT_MODE_COLLECT_TELEMETRY = 1;
+const CT_MODE_ENFORCE = 2;
+
+// Helper function for add_ct_test. Returns a function that checks that the
+// nsITransportSecurityInfo of the connection has the expected CT and resumed
+// statuses.
+function expectCT(expectedCTValue, expectedResumed) {
+  return securityInfo => {
+    Assert.equal(
+      securityInfo.certificateTransparencyStatus,
+      expectedCTValue,
+      "actual and expected CT status should match"
+    );
+    Assert.equal(
+      securityInfo.resumed,
+      expectedResumed,
+      "connection should be resumed (or not) as expected"
+    );
+  };
+}
+
+// Helper function to add a certificate transparency test. The connection is
+// expected to succeed with the given CT status (see nsITransportSecurityInfo).
+// Additionally, if an additional connection is made, it is expected that TLS
+// resumption is used and that the CT status is the same with the resumed
+// connection.
+function add_ct_test(host, expectedCTValue, expectConnectionSuccess) {
+  add_connection_test(
+    host,
+    expectConnectionSuccess
+      ? PRErrorCodeSuccess
+      : MOZILLA_PKIX_ERROR_INSUFFICIENT_CERTIFICATE_TRANSPARENCY,
+    null,
+    expectCT(expectedCTValue, false)
+  );
+  // Test that session resumption results in the same expected CT status for
+  // successful connections.
+  if (expectConnectionSuccess) {
+    add_connection_test(
+      host,
+      PRErrorCodeSuccess,
+      null,
+      expectCT(expectedCTValue, true)
+    );
   }
 }

@@ -245,6 +245,8 @@ static const oidValDef curveOptList[] = {
       NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_CERT_SIGNATURE },
     { CIPHER_NAME("CURVE25519"), SEC_OID_CURVE25519,
       NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_CERT_SIGNATURE },
+    { CIPHER_NAME("XYBER768D00"), SEC_OID_XYBER768D00, 0 },
+    { CIPHER_NAME("MLKEM768X25519"), SEC_OID_MLKEM768X25519, 0 },
     /* ANSI X9.62 named elliptic curves (characteristic two field) */
     { CIPHER_NAME("C2PNB163V1"), SEC_OID_ANSIX962_EC_C2PNB163V1,
       NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_CERT_SIGNATURE },
@@ -328,52 +330,98 @@ static const oidValDef curveOptList[] = {
 static const oidValDef hashOptList[] = {
     /* Hashes */
     { CIPHER_NAME("MD2"), SEC_OID_MD2,
-      NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE },
+      NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE | NSS_USE_ALG_IN_SMIME |
+          NSS_USE_ALG_IN_PKCS12 },
     { CIPHER_NAME("MD4"), SEC_OID_MD4,
-      NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE },
+      NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE | NSS_USE_ALG_IN_SMIME |
+          NSS_USE_ALG_IN_PKCS12 },
     { CIPHER_NAME("MD5"), SEC_OID_MD5,
-      NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE },
+      NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE | NSS_USE_ALG_IN_SMIME |
+          NSS_USE_ALG_IN_PKCS12 },
     { CIPHER_NAME("SHA1"), SEC_OID_SHA1,
-      NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE },
+      NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE | NSS_USE_ALG_IN_SMIME |
+          NSS_USE_ALG_IN_PKCS12 },
     { CIPHER_NAME("SHA224"), SEC_OID_SHA224,
-      NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE },
+      NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE | NSS_USE_ALG_IN_SMIME |
+          NSS_USE_ALG_IN_PKCS12 },
     { CIPHER_NAME("SHA256"), SEC_OID_SHA256,
-      NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE },
+      NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE | NSS_USE_ALG_IN_SMIME |
+          NSS_USE_ALG_IN_PKCS12 },
     { CIPHER_NAME("SHA384"), SEC_OID_SHA384,
-      NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE },
+      NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE | NSS_USE_ALG_IN_SMIME |
+          NSS_USE_ALG_IN_PKCS12 },
     { CIPHER_NAME("SHA512"), SEC_OID_SHA512,
-      NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE }
+      NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE | NSS_USE_ALG_IN_SMIME |
+          NSS_USE_ALG_IN_PKCS12 },
+    { CIPHER_NAME("SHA3-224"), SEC_OID_SHA3_224,
+      NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE | NSS_USE_ALG_IN_SMIME |
+          NSS_USE_ALG_IN_PKCS12 },
+    { CIPHER_NAME("SHA3-256"), SEC_OID_SHA3_256,
+      NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE | NSS_USE_ALG_IN_SMIME |
+          NSS_USE_ALG_IN_PKCS12 },
+    { CIPHER_NAME("SHA3-384"), SEC_OID_SHA3_384,
+      NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE | NSS_USE_ALG_IN_SMIME |
+          NSS_USE_ALG_IN_PKCS12 },
+    { CIPHER_NAME("SHA3-512"), SEC_OID_SHA3_512,
+      NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE | NSS_USE_ALG_IN_SMIME |
+          NSS_USE_ALG_IN_PKCS12 }
 };
 
 static const oidValDef macOptList[] = {
     /* MACs */
-    { CIPHER_NAME("HMAC-SHA1"), SEC_OID_HMAC_SHA1, NSS_USE_ALG_IN_SSL },
-    { CIPHER_NAME("HMAC-SHA224"), SEC_OID_HMAC_SHA224, NSS_USE_ALG_IN_SSL },
-    { CIPHER_NAME("HMAC-SHA256"), SEC_OID_HMAC_SHA256, NSS_USE_ALG_IN_SSL },
-    { CIPHER_NAME("HMAC-SHA384"), SEC_OID_HMAC_SHA384, NSS_USE_ALG_IN_SSL },
-    { CIPHER_NAME("HMAC-SHA512"), SEC_OID_HMAC_SHA512, NSS_USE_ALG_IN_SSL },
-    { CIPHER_NAME("HMAC-MD5"), SEC_OID_HMAC_MD5, NSS_USE_ALG_IN_SSL },
+    { CIPHER_NAME("HMAC-MD5"), SEC_OID_HMAC_MD5,
+      NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_PKCS12 },
+    { CIPHER_NAME("HMAC-SHA1"), SEC_OID_HMAC_SHA1,
+      NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_PKCS12 },
+    { CIPHER_NAME("HMAC-SHA224"), SEC_OID_HMAC_SHA224,
+      NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_PKCS12 },
+    { CIPHER_NAME("HMAC-SHA256"), SEC_OID_HMAC_SHA256,
+      NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_PKCS12 },
+    { CIPHER_NAME("HMAC-SHA384"), SEC_OID_HMAC_SHA384,
+      NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_PKCS12 },
+    { CIPHER_NAME("HMAC-SHA512"), SEC_OID_HMAC_SHA512,
+      NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_PKCS12 },
+    { CIPHER_NAME("HMAC-SHA3-224"), SEC_OID_HMAC_SHA3_224,
+      NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_PKCS12 },
+    { CIPHER_NAME("HMAC-SHA3-256"), SEC_OID_HMAC_SHA3_256,
+      NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_PKCS12 },
+    { CIPHER_NAME("HMAC-SHA3-384"), SEC_OID_HMAC_SHA3_384,
+      NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_PKCS12 },
+    { CIPHER_NAME("HMAC-SHA3-512"), SEC_OID_HMAC_SHA3_512,
+      NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_PKCS12 },
 };
 
 static const oidValDef cipherOptList[] = {
     /* Ciphers */
-    { CIPHER_NAME("AES128-CBC"), SEC_OID_AES_128_CBC, NSS_USE_ALG_IN_SSL },
-    { CIPHER_NAME("AES192-CBC"), SEC_OID_AES_192_CBC, NSS_USE_ALG_IN_SSL },
-    { CIPHER_NAME("AES256-CBC"), SEC_OID_AES_256_CBC, NSS_USE_ALG_IN_SSL },
+    { CIPHER_NAME("AES128-CBC"), SEC_OID_AES_128_CBC,
+      NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_SMIME | NSS_USE_ALG_IN_PKCS12 },
+    { CIPHER_NAME("AES192-CBC"), SEC_OID_AES_192_CBC,
+      NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_SMIME | NSS_USE_ALG_IN_PKCS12 },
+    { CIPHER_NAME("AES256-CBC"), SEC_OID_AES_256_CBC,
+      NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_SMIME | NSS_USE_ALG_IN_PKCS12 },
     { CIPHER_NAME("AES128-GCM"), SEC_OID_AES_128_GCM, NSS_USE_ALG_IN_SSL },
     { CIPHER_NAME("AES192-GCM"), SEC_OID_AES_192_GCM, NSS_USE_ALG_IN_SSL },
     { CIPHER_NAME("AES256-GCM"), SEC_OID_AES_256_GCM, NSS_USE_ALG_IN_SSL },
-    { CIPHER_NAME("CAMELLIA128-CBC"), SEC_OID_CAMELLIA_128_CBC, NSS_USE_ALG_IN_SSL },
-    { CIPHER_NAME("CAMELLIA192-CBC"), SEC_OID_CAMELLIA_192_CBC, NSS_USE_ALG_IN_SSL },
-    { CIPHER_NAME("CAMELLIA256-CBC"), SEC_OID_CAMELLIA_256_CBC, NSS_USE_ALG_IN_SSL },
+    { CIPHER_NAME("CAMELLIA128-CBC"), SEC_OID_CAMELLIA_128_CBC,
+      NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_SMIME | NSS_USE_ALG_IN_PKCS12 },
+    { CIPHER_NAME("CAMELLIA192-CBC"), SEC_OID_CAMELLIA_192_CBC,
+      NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_SMIME | NSS_USE_ALG_IN_PKCS12 },
+    { CIPHER_NAME("CAMELLIA256-CBC"), SEC_OID_CAMELLIA_256_CBC,
+      NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_SMIME | NSS_USE_ALG_IN_PKCS12 },
     { CIPHER_NAME("CHACHA20-POLY1305"), SEC_OID_CHACHA20_POLY1305, NSS_USE_ALG_IN_SSL },
-    { CIPHER_NAME("SEED-CBC"), SEC_OID_SEED_CBC, NSS_USE_ALG_IN_SSL },
-    { CIPHER_NAME("DES-EDE3-CBC"), SEC_OID_DES_EDE3_CBC, NSS_USE_ALG_IN_SSL },
-    { CIPHER_NAME("DES-40-CBC"), SEC_OID_DES_40_CBC, NSS_USE_ALG_IN_SSL },
+    { CIPHER_NAME("SEED-CBC"), SEC_OID_SEED_CBC,
+      NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_SMIME | NSS_USE_ALG_IN_PKCS12 },
+    { CIPHER_NAME("DES-EDE3-CBC"), SEC_OID_DES_EDE3_CBC,
+      NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_SMIME | NSS_USE_ALG_IN_PKCS12 },
+    { CIPHER_NAME("DES-40-CBC"), SEC_OID_DES_40_CBC,
+      NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_SMIME | NSS_USE_ALG_IN_PKCS12 },
     { CIPHER_NAME("DES-CBC"), SEC_OID_DES_CBC, NSS_USE_ALG_IN_SSL },
     { CIPHER_NAME("NULL-CIPHER"), SEC_OID_NULL_CIPHER, NSS_USE_ALG_IN_SSL },
-    { CIPHER_NAME("RC2"), SEC_OID_RC2_CBC, NSS_USE_ALG_IN_SSL },
-    { CIPHER_NAME("RC4"), SEC_OID_RC4, NSS_USE_ALG_IN_SSL },
+    { CIPHER_NAME("RC2"), SEC_OID_RC2_CBC, NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_PKCS12 },
+    { CIPHER_NAME("RC2-40-CBC"), SEC_OID_RC2_40_CBC, NSS_USE_ALG_IN_SMIME },
+    { CIPHER_NAME("RC2-64-CBC"), SEC_OID_RC2_64_CBC, NSS_USE_ALG_IN_SMIME },
+    { CIPHER_NAME("RC2-128-CBC"), SEC_OID_RC2_128_CBC, NSS_USE_ALG_IN_SMIME },
+    { CIPHER_NAME("RC4"), SEC_OID_RC4, NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_PKCS12 },
     { CIPHER_NAME("IDEA"), SEC_OID_IDEA_CBC, NSS_USE_ALG_IN_SSL },
 };
 
@@ -389,6 +437,16 @@ static const oidValDef kxOptList[] = {
     { CIPHER_NAME("ECDHE-RSA"), SEC_OID_TLS_ECDHE_RSA, NSS_USE_ALG_IN_SSL_KX },
     { CIPHER_NAME("ECDH-ECDSA"), SEC_OID_TLS_ECDH_ECDSA, NSS_USE_ALG_IN_SSL_KX },
     { CIPHER_NAME("ECDH-RSA"), SEC_OID_TLS_ECDH_RSA, NSS_USE_ALG_IN_SSL_KX },
+    { CIPHER_NAME("TLS-REQUIRE-EMS"), SEC_OID_TLS_REQUIRE_EMS, NSS_USE_ALG_IN_SSL_KX },
+
+};
+
+static const oidValDef smimeKxOptList[] = {
+    /* Key exchange */
+    { CIPHER_NAME("RSA-PKCS"), SEC_OID_PKCS1_RSA_ENCRYPTION, NSS_USE_ALG_IN_SMIME_KX },
+    { CIPHER_NAME("RSA-OAEP"), SEC_OID_PKCS1_RSA_OAEP_ENCRYPTION, NSS_USE_ALG_IN_SMIME_KX },
+    { CIPHER_NAME("ECDH"), SEC_OID_ECDH_KEA, NSS_USE_ALG_IN_SMIME_KX },
+    { CIPHER_NAME("DH"), SEC_OID_X942_DIFFIE_HELMAN_KEY, NSS_USE_ALG_IN_SMIME_KX },
 };
 
 static const oidValDef signOptList[] = {
@@ -401,6 +459,8 @@ static const oidValDef signOptList[] = {
       NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE },
     { CIPHER_NAME("ECDSA"), SEC_OID_ANSIX962_EC_PUBLIC_KEY,
       NSS_USE_ALG_IN_SSL_KX | NSS_USE_ALG_IN_SIGNATURE },
+    { CIPHER_NAME("ED25519"), SEC_OID_ED25519_PUBLIC_KEY,
+      NSS_USE_ALG_IN_SIGNATURE },
 };
 
 typedef struct {
@@ -415,7 +475,8 @@ static const algListsDef algOptLists[] = {
     { hashOptList, PR_ARRAY_SIZE(hashOptList), "HASH", PR_FALSE },
     { macOptList, PR_ARRAY_SIZE(macOptList), "MAC", PR_FALSE },
     { cipherOptList, PR_ARRAY_SIZE(cipherOptList), "CIPHER", PR_FALSE },
-    { kxOptList, PR_ARRAY_SIZE(kxOptList), "OTHER-KX", PR_FALSE },
+    { kxOptList, PR_ARRAY_SIZE(kxOptList), "SSL-KX", PR_FALSE },
+    { smimeKxOptList, PR_ARRAY_SIZE(smimeKxOptList), "SMIME-KX", PR_TRUE },
     { signOptList, PR_ARRAY_SIZE(signOptList), "OTHER-SIGN", PR_FALSE },
 };
 
@@ -438,6 +499,8 @@ static const optionFreeDef keySizeFlagsList[] = {
     { CIPHER_NAME("KEY-SIZE-SSL"), NSS_KEY_SIZE_POLICY_SSL_FLAG },
     { CIPHER_NAME("KEY-SIZE-SIGN"), NSS_KEY_SIZE_POLICY_SIGN_FLAG },
     { CIPHER_NAME("KEY-SIZE-VERIFY"), NSS_KEY_SIZE_POLICY_VERIFY_FLAG },
+    { CIPHER_NAME("KEY-SIZE-SMIME"), NSS_KEY_SIZE_POLICY_SMIME_FLAG },
+    { CIPHER_NAME("KEY-SIZE-ALL"), NSS_KEY_SIZE_POLICY_ALL_FLAGS },
 };
 
 static const optionFreeDef freeOptList[] = {
@@ -461,21 +524,46 @@ static const policyFlagDef policyFlagList[] = {
     { CIPHER_NAME("SSL"), NSS_USE_ALG_IN_SSL },
     { CIPHER_NAME("SSL-KEY-EXCHANGE"), NSS_USE_ALG_IN_SSL_KX },
     /* add other key exhanges in the future */
-    { CIPHER_NAME("KEY-EXCHANGE"), NSS_USE_ALG_IN_SSL_KX },
+    { CIPHER_NAME("KEY-EXCHANGE"), NSS_USE_ALG_IN_KEY_EXCHANGE },
     { CIPHER_NAME("CERT-SIGNATURE"), NSS_USE_ALG_IN_CERT_SIGNATURE },
-    { CIPHER_NAME("CMS-SIGNATURE"), NSS_USE_ALG_IN_CMS_SIGNATURE },
+    { CIPHER_NAME("CMS-SIGNATURE"), NSS_USE_ALG_IN_SMIME_SIGNATURE },
+    { CIPHER_NAME("SMIME-SIGNATURE"), NSS_USE_ALG_IN_SMIME_SIGNATURE },
     { CIPHER_NAME("ALL-SIGNATURE"), NSS_USE_ALG_IN_SIGNATURE },
+    { CIPHER_NAME("PKCS12"), NSS_USE_ALG_IN_PKCS12 },
+    /* only use in allow */
+    { CIPHER_NAME("PKCS12-LEGACY"), NSS_USE_ALG_IN_PKCS12_DECRYPT },
+    /* only use in disallow */
+    { CIPHER_NAME("PKCS12-ENCRYPT"), NSS_USE_ALG_IN_PKCS12_ENCRYPT },
+    { CIPHER_NAME("SMIME"), NSS_USE_ALG_IN_SMIME },
+    /* only use in allow, enable */
+    { CIPHER_NAME("SMIME-LEGACY"), NSS_USE_ALG_IN_SMIME_LEGACY },
+    /* only use in disallow, disable */
+    { CIPHER_NAME("SMIME-ENCRYPT"), NSS_USE_ALG_IN_SMIME_ENCRYPT },
+    { CIPHER_NAME("SMIME-KEY-EXCHANGE"), NSS_USE_ALG_IN_SMIME_KX },
+    /* only use in allow */
+    { CIPHER_NAME("SMIME-KEY-EXCHANGE-LEGACY"), NSS_USE_ALG_IN_SMIME_KX_LEGACY },
+    /* only use in disallow */
+    { CIPHER_NAME("SMIME-KEY-EXCHANGE-ENCRYPT"), NSS_USE_ALG_IN_SMIME_KX_ENCRYPT },
     /* sign turns off all signatures, but doesn't change the
-     * allowance for specific sigantures... for example:
-     * disallow=sha256/all allow=sha256/signature doesn't allow
-     * cert-sigantures, where disallow=sha256/all allow=sha256/all-signature
-     * does.
-     * however, disallow=sha356/signature and disallow=sha256/all-siganture are
-     * equivalent in effect */
+     * allowance for specific signatures... for example:
+     *     disallow=sha256/all allow=sha256/signature
+     * doesn't allow cert-signatures or sime-signatures, where
+     *     disallow=sha256/all allow=sha256/all-signature
+     * does. however,
+     *     disallow=sha256/signature
+     * and
+     *     disallow=sha256/all-signature
+     * are equivalent in effect */
     { CIPHER_NAME("SIGNATURE"), NSS_USE_ALG_IN_ANY_SIGNATURE },
+    /* enable/allow algorithms for legacy (read/verify)operations */
+    { CIPHER_NAME("LEGACY"), NSS_USE_ALG_IN_PKCS12_DECRYPT |
+                                 NSS_USE_ALG_IN_SMIME_LEGACY |
+                                 NSS_USE_ALG_IN_SMIME_KX_LEGACY },
     /* enable/disable everything */
     { CIPHER_NAME("ALL"), NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_SSL_KX |
-                              NSS_USE_ALG_IN_SIGNATURE },
+                              NSS_USE_ALG_IN_PKCS12 | NSS_USE_ALG_IN_SMIME |
+                              NSS_USE_ALG_IN_SIGNATURE |
+                              NSS_USE_ALG_IN_SMIME_KX },
     { CIPHER_NAME("NONE"), 0 }
 };
 
@@ -557,6 +645,9 @@ secmod_getPolicyOptValue(const char *policyValue, int policyValueLength,
         *result = val;
         return SECSuccess;
     }
+    if (policyValueLength == 0) {
+        return SECFailure;
+    }
     /* handle any ssl strings */
     for (i = 0; i < PR_ARRAY_SIZE(sslOptList); i++) {
         if (policyValueLength == sslOptList[i].name_size &&
@@ -569,7 +660,7 @@ secmod_getPolicyOptValue(const char *policyValue, int policyValueLength,
     /* handle key_size flags. Each flag represents a bit, which
      * gets or'd together. They can be separated by , | or + */
     val = 0;
-    while (*policyValue) {
+    while (policyValueLength > 0) {
         PRBool found = PR_FALSE;
         for (i = 0; i < PR_ARRAY_SIZE(keySizeFlagsList); i++) {
             if (PORT_Strncasecmp(keySizeFlagsList[i].name, policyValue,
@@ -577,6 +668,7 @@ secmod_getPolicyOptValue(const char *policyValue, int policyValueLength,
                 val |= keySizeFlagsList[i].option;
                 found = PR_TRUE;
                 policyValue += keySizeFlagsList[i].name_size;
+                policyValueLength -= keySizeFlagsList[i].name_size;
                 break;
             }
         }
@@ -585,6 +677,7 @@ secmod_getPolicyOptValue(const char *policyValue, int policyValueLength,
         }
         if (*policyValue == ',' || *policyValue == '|' || *policyValue == '+') {
             policyValue++;
+            policyValueLength--;
         }
     }
     *result = val;
@@ -604,6 +697,59 @@ typedef enum {
     NSS_ENABLE
 } NSSPolicyOperation;
 
+/* Enable/Disable only apply to SSL cipher suites and S/MIME symetric algorithms.
+ * Enable/Disable is implemented by clearing the DEFAULT_NOT_VALID
+ * flag, then setting the NSS_USE_DEFAULT_SSL_ENABLE and
+ * NSS_USE_DEFAULT_SMIME_ENABLE flags to the correct value. The ssl
+ * policy code will then sort out what to set based on ciphers and
+ * cipher suite values and the smime policy code will sort
+ * out which ciphers to include in capabilities based on these values */
+static SECStatus
+secmod_setDefault(SECOidTag oid, NSSPolicyOperation operation,
+                  PRUint32 value)
+{
+    SECStatus rv = SECSuccess;
+    PRUint32 policy;
+    PRUint32 useDefault = 0;
+    PRUint32 set = 0;
+    /* we always clear the default not valid flag as this operation will
+     * make the defaults valid */
+    PRUint32 clear = NSS_USE_DEFAULT_NOT_VALID;
+
+    /* what values are we trying to change */
+    /* if either SSL or SSL_KX is set, enable SSL */
+    if (value & (NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_SSL_KX)) {
+        useDefault |= NSS_USE_DEFAULT_SSL_ENABLE;
+    }
+    /* only bulk ciphers are configured as enable in S/MIME, only
+     * enable them if both SMIME bits are set */
+    if ((value & NSS_USE_ALG_IN_SMIME) == NSS_USE_ALG_IN_SMIME) {
+        useDefault |= NSS_USE_DEFAULT_SMIME_ENABLE;
+    }
+
+    /* on disable we clear, on enable we set */
+    if (operation == NSS_DISABLE) {
+        clear |= useDefault;
+    } else {
+        /* we also turn the cipher on by policy if we enable it,
+         * so include the policy bits */
+        set |= value | useDefault;
+    }
+
+    /* if we haven't set the not valid flag yet, then we need to
+     * clear any of the other bits we aren't actually setting as well.
+     */
+    rv = NSS_GetAlgorithmPolicy(oid, &policy);
+    if (rv != SECSuccess) {
+        return rv;
+    }
+    if (policy & NSS_USE_DEFAULT_NOT_VALID) {
+        clear |= ((NSS_USE_DEFAULT_SSL_ENABLE | NSS_USE_DEFAULT_SMIME_ENABLE) &
+                  ~set);
+    }
+    return NSS_SetAlgorithmPolicy(oid, set, clear);
+}
+
 /* apply the operator specific policy */
 SECStatus
 secmod_setPolicyOperation(SECOidTag oid, NSSPolicyOperation operation,
@@ -619,25 +765,9 @@ secmod_setPolicyOperation(SECOidTag oid, NSSPolicyOperation operation,
             /* set the requested policy bits */
             rv = NSS_SetAlgorithmPolicy(oid, value, 0);
             break;
-        /* enable/disable only apply to SSL cipher suites (future S/MIME).
-         * Enable/disable is implemented by clearing the DEFAULT_NOT_VALID
-         * flag, then setting the NSS_USE_DEFAULT_SSL_ENABLE flag to the
-         * correct value. The ssl policy code will then sort out what to
-         * set based on ciphers and cipher suite values.*/
         case NSS_DISABLE:
-            if (value & (NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_SSL_KX)) {
-                /* clear not valid and enable */
-                rv = NSS_SetAlgorithmPolicy(oid, 0,
-                                            NSS_USE_DEFAULT_NOT_VALID |
-                                                NSS_USE_DEFAULT_SSL_ENABLE);
-            }
-            break;
         case NSS_ENABLE:
-            if (value & (NSS_USE_ALG_IN_SSL | NSS_USE_ALG_IN_SSL_KX)) {
-                /* set enable, clear not valid. NOTE: enable implies allow! */
-                rv = NSS_SetAlgorithmPolicy(oid, value | NSS_USE_DEFAULT_SSL_ENABLE,
-                                            NSS_USE_DEFAULT_NOT_VALID);
-            }
+            rv = secmod_setDefault(oid, operation, value);
             break;
         default:
             PORT_SetError(SEC_ERROR_LIBRARY_FAILURE);
@@ -663,6 +793,79 @@ secmod_getOperationString(NSSPolicyOperation operation)
             break;
     }
     return "invalid";
+}
+
+/* Allow external applications fetch the policy oid based on the internal
+ * string mapping used by the configuration system. The search can be
+ * narrowed by supplying the name of the table (list) that the policy
+ * is on. The value 'Any' allows the policy to be searched on all lists */
+SECOidTag
+SECMOD_PolicyStringToOid(const char *policy, const char *list)
+{
+    PRBool any = (PORT_Strcasecmp(list, "Any") == 0) ? PR_TRUE : PR_FALSE;
+    int len = PORT_Strlen(policy);
+    int i, j;
+
+    for (i = 0; i < PR_ARRAY_SIZE(algOptLists); i++) {
+        const algListsDef *algOptList = &algOptLists[i];
+        if (any || (PORT_Strcasecmp(algOptList->description, list) == 0)) {
+            for (j = 0; j < algOptList->entries; j++) {
+                const oidValDef *algOpt = &algOptList->list[j];
+                unsigned name_size = algOpt->name_size;
+                if (len == name_size &&
+                    PORT_Strcasecmp(algOpt->name, policy) == 0) {
+                    return algOpt->oid;
+                }
+            }
+        }
+    }
+    return SEC_OID_UNKNOWN;
+}
+
+/* Allow external applications fetch the NSS option based on the internal
+ * string mapping used by the configuration system. */
+PRUint32
+SECMOD_PolicyStringToOpt(const char *policy)
+{
+    int len = PORT_Strlen(policy);
+    int i;
+
+    for (i = 0; i < PR_ARRAY_SIZE(freeOptList); i++) {
+        const optionFreeDef *freeOpt = &freeOptList[i];
+        unsigned name_size = freeOpt->name_size;
+        if (len == name_size &&
+            PORT_Strcasecmp(freeOpt->name, policy) == 0) {
+            return freeOpt->option;
+        }
+    }
+    return 0;
+}
+
+/* Allow external applications map policy flags to their string equivalance.
+ * Some strings represent more than one flag. If more than one flag is included
+ * the returned string is the string that contains any of the
+ * supplied flags unless exact is specified. If exact is specified, then the
+ * returned value matches all the included flags and only those flags. For
+ * Example: 'ALL-SIGNATURE' has the bits NSS_USE_ALG_IN_CERTSIGNATURE|
+ * NSS_USE_ALG_IN_SMIME_SIGNATURE|NSS_USE_ALG_IN_ANY_SIGNATURE. If you ask for
+ * NSS_USE_ALG_IN_CERT_SIGNATURE|NSS_USE_ALG_IN_SMIME_SIGNATURE and don't set
+ * exact, this function will return 'ALL-SIGNATURE' if you do set exact, you must
+ * include all three bits in value to get 'All-SIGNATURE'*/
+const char *
+SECMOD_FlagsToPolicyString(PRUint32 val, PRBool exact)
+{
+    int i;
+
+    for (i = 0; i < PR_ARRAY_SIZE(policyFlagList); i++) {
+        const policyFlagDef *policy = &policyFlagList[i];
+        if (exact && (policy->flag == val)) {
+            return policy->name;
+        }
+        if (!exact && ((policy->flag & val) == policy->flag)) {
+            return policy->name;
+        }
+    }
+    return NULL;
 }
 
 static SECStatus
@@ -816,7 +1019,7 @@ secmod_sanityCheckCryptoPolicy(void)
             if ((algOpt->val & NSS_USE_ALG_IN_SSL_KX) && (value & NSS_USE_ALG_IN_SSL_KX)) {
                 ++num_kx_enabled;
                 anyEnabled = PR_TRUE;
-                fprintf(stderr, "NSS-POLICY-INFO: %s is enabled for KX\n", algOpt->name);
+                fprintf(stderr, "NSS-POLICY-INFO: %s is enabled for SSL-KX\n", algOpt->name);
             }
             if ((algOpt->val & NSS_USE_ALG_IN_SSL) && (value & NSS_USE_ALG_IN_SSL)) {
                 ++num_ssl_enabled;
@@ -2112,6 +2315,72 @@ loser:
     return module;
 }
 
+SECMODModule *
+SECMOD_LoadModuleWithFunction(const char *moduleName, CK_C_GetFunctionList fentry)
+{
+    SECMODModule *module = NULL;
+    SECMODModule *oldModule = NULL;
+    SECStatus rv;
+
+    /* initialize the underlying module structures */
+    SECMOD_Init();
+
+    module = secmod_NewModule();
+    if (module == NULL) {
+        goto loser;
+    }
+
+    module->commonName = PORT_ArenaStrdup(module->arena, moduleName ? moduleName : "");
+    module->internal = PR_FALSE;
+    module->isFIPS = PR_FALSE;
+    /* if the system FIPS mode is enabled, force FIPS to be on */
+    if (SECMOD_GetSystemFIPSEnabled()) {
+        module->isFIPS = PR_TRUE;
+    }
+
+    module->isCritical = PR_FALSE;
+    /* new field */
+    module->trustOrder = NSSUTIL_DEFAULT_TRUST_ORDER;
+    /* new field */
+    module->cipherOrder = NSSUTIL_DEFAULT_CIPHER_ORDER;
+    /* new field */
+    module->isModuleDB = PR_FALSE;
+    module->moduleDBOnly = PR_FALSE;
+
+    module->ssl[0] = 0;
+    module->ssl[1] = 0;
+
+    secmod_PrivateModuleCount++;
+
+    /* load it */
+    rv = secmod_LoadPKCS11ModuleFromFunction(module, &oldModule, fentry);
+    if (rv != SECSuccess) {
+        goto loser;
+    }
+
+    /* if we just reload an old module, no need to add it to any lists.
+     * we simple release all our references */
+    if (oldModule) {
+        /* This module already exists, don't link it anywhere. This
+         * will probably destroy this module */
+        SECMOD_DestroyModule(module);
+        return oldModule;
+    }
+
+    SECMOD_AddModuleToList(module);
+    /* handle any additional work here */
+    return module;
+
+loser:
+    if (module) {
+        if (module->loaded) {
+            SECMOD_UnloadModule(module);
+        }
+        SECMOD_AddModuleToUnloadList(module);
+    }
+    return module;
+}
+
 /*
  * load a PKCS#11 module and add it to the default NSS trust domain
  */
@@ -2120,6 +2389,25 @@ SECMOD_LoadUserModule(char *modulespec, SECMODModule *parent, PRBool recurse)
 {
     SECStatus rv = SECSuccess;
     SECMODModule *newmod = SECMOD_LoadModule(modulespec, parent, recurse);
+    SECMODListLock *moduleLock = SECMOD_GetDefaultModuleListLock();
+
+    if (newmod) {
+        SECMOD_GetReadLock(moduleLock);
+        rv = STAN_AddModuleToDefaultTrustDomain(newmod);
+        SECMOD_ReleaseReadLock(moduleLock);
+        if (SECSuccess != rv) {
+            SECMOD_DestroyModule(newmod);
+            return NULL;
+        }
+    }
+    return newmod;
+}
+
+SECMODModule *
+SECMOD_LoadUserModuleWithFunction(const char *moduleName, CK_C_GetFunctionList fentry)
+{
+    SECStatus rv = SECSuccess;
+    SECMODModule *newmod = SECMOD_LoadModuleWithFunction(moduleName, fentry);
     SECMODListLock *moduleLock = SECMOD_GetDefaultModuleListLock();
 
     if (newmod) {

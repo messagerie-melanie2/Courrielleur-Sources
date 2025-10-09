@@ -3,8 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { SiteDataManager } = ChromeUtils.import(
-  "resource:///modules/SiteDataManager.jsm"
+const { SiteDataManager } = ChromeUtils.importESModule(
+  "resource:///modules/SiteDataManager.sys.mjs"
 );
 const { DownloadUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/DownloadUtils.sys.mjs"
@@ -14,7 +14,6 @@ const { DownloadUtils } = ChromeUtils.importESModule(
 
 ChromeUtils.defineESModuleGetters(this, {
   LoginHelper: "resource://gre/modules/LoginHelper.sys.mjs",
-  PluralForm: "resource://gre/modules/PluralForm.sys.mjs",
 });
 
 var security = {
@@ -33,7 +32,11 @@ var security = {
     certsStringURL = certsStringURL.join("&");
     let url = `about:certificate?${certsStringURL}`;
     let win = BrowserWindowTracker.getTopWindow();
-    win.switchToTabHavingURI(url, true, {});
+    if (win) {
+      win.switchToTabHavingURI(url, true, {});
+    } else {
+      URILoadingHelper.openTrustedLinkIn(window, url, "window");
+    }
   },
 
   async _getSecurityInfo() {
@@ -222,7 +225,7 @@ var security = {
   viewPasswords() {
     LoginHelper.openPasswordManager(window, {
       filterString: this.windowInfo.hostName,
-      entryPoint: "pageinfo",
+      entryPoint: "Pageinfo",
     });
   },
 };
@@ -400,7 +403,7 @@ function realmHasPasswords(uri) {
  *
  * @param host - the domain name to look for in history
  */
-function previousVisitCount(host, endTimeReference) {
+function previousVisitCount(host) {
   if (!host) {
     return 0;
   }

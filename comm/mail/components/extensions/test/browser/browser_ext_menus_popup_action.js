@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+"use strict";
+
 // Load subscript shared with all menu tests.
 Services.scriptloader.loadSubScript(
   new URL("head_menus.js", gTestPath).href,
@@ -9,20 +11,21 @@ Services.scriptloader.loadSubScript(
 );
 
 let gAccount, gFolders, gMessage;
+
 add_setup(async () => {
   gAccount = createAccount();
   addIdentity(gAccount);
   gFolders = gAccount.incomingServer.rootFolder.subFolders;
-  createMessages(gFolders[0], {
+  await createMessages(gFolders[0], {
     count: 1,
     body: {
       contentType: "text/html",
-      body: await fetch(`${URL_BASE}/content.html`).then(r => r.text()),
+      body: await IOUtils.readUTF8(getTestFilePath(`data/content.html`)),
     },
   });
   gMessage = [...gFolders[0].messages][0];
 
-  let about3Pane = document.getElementById("tabmail").currentAbout3Pane;
+  const about3Pane = document.getElementById("tabmail").currentAbout3Pane;
   about3Pane.restoreState({
     folderPaneVisible: true,
     folderURI: gFolders[0],
@@ -41,29 +44,30 @@ async function subtest_action_popup_menu(
   expectedTab,
   manifest
 ) {
-  let extension = await getMenuExtension(manifest);
+  const extension = await getMenuExtension(manifest);
 
   await extension.startup();
   await extension.awaitMessage("menus-created");
 
-  let element = testWindow.document.querySelector(target.elementSelector);
-  let menu = element.querySelector("menupopup");
+  const element = testWindow.document.querySelector(target.elementSelector);
+  const menu = element.querySelector("menupopup");
 
-  await leftClick(menu, element);
+  await openMenuPopup(menu, element);
   await checkShownEvent(
     extension,
     { menuIds: [target.context], contexts: [target.context, "all"] },
     expectedTab
   );
 
-  let hiddenPromise = BrowserTestUtils.waitForEvent(menu, "popuphidden");
-  let clickedPromise = checkClickedEvent(extension, expectedInfo, expectedTab);
-  menu.activateItem(
+  const clickedPromise = checkClickedEvent(
+    extension,
+    expectedInfo,
+    expectedTab
+  );
+  await clickItemInMenuPopup(
     menu.querySelector(`#menus_mochi_test-menuitem-_${target.context}`)
   );
   await clickedPromise;
-  await hiddenPromise;
-
   await extension.unload();
 }
 
@@ -78,7 +82,7 @@ add_task(async function test_browser_action_menu_popup_mv2() {
       pageUrl: /^mailbox\:/,
       menuItemId: "browser_action_menu",
     },
-    { active: true, index: 0, mailTab: true },
+    { active: true, index: 0, type: "mail" },
     {
       manifest_version: 2,
       browser_action: {
@@ -89,7 +93,7 @@ add_task(async function test_browser_action_menu_popup_mv2() {
   );
 });
 add_task(async function test_browser_action_menu_popup_message_window_mv2() {
-  let testWindow = await openMessageInWindow(gMessage);
+  const testWindow = await openMessageInWindow(gMessage);
   await focusWindow(testWindow);
   await subtest_action_popup_menu(
     testWindow,
@@ -101,7 +105,7 @@ add_task(async function test_browser_action_menu_popup_message_window_mv2() {
       pageUrl: /^mailbox\:/,
       menuItemId: "browser_action_menu",
     },
-    { active: true, index: 0, mailTab: false },
+    { active: true, index: 0, type: "messageDisplay" },
     {
       manifest_version: 2,
       browser_action: {
@@ -114,8 +118,8 @@ add_task(async function test_browser_action_menu_popup_message_window_mv2() {
   await BrowserTestUtils.closeWindow(testWindow);
 });
 add_task(async function test_message_display_action_menu_popup_pane_mv2() {
-  let tabmail = document.getElementById("tabmail");
-  let aboutMessage = tabmail.currentAboutMessage;
+  const tabmail = document.getElementById("tabmail");
+  const aboutMessage = tabmail.currentAboutMessage;
   await SimpleTest.promiseFocus(aboutMessage);
 
   await subtest_action_popup_menu(
@@ -128,7 +132,7 @@ add_task(async function test_message_display_action_menu_popup_pane_mv2() {
       pageUrl: /^mailbox\:/,
       menuItemId: "message_display_action_menu",
     },
-    { active: true, index: 0, mailTab: true },
+    { active: true, index: 0, type: "mail" },
     {
       manifest_version: 2,
       message_display_action: {
@@ -139,7 +143,7 @@ add_task(async function test_message_display_action_menu_popup_pane_mv2() {
   );
 });
 add_task(async function test_message_display_action_menu_popup_tab_mv2() {
-  let tab = await openMessageInTab(gMessage);
+  const tab = await openMessageInTab(gMessage);
   await subtest_action_popup_menu(
     tab.chromeBrowser.contentWindow,
     {
@@ -150,7 +154,7 @@ add_task(async function test_message_display_action_menu_popup_tab_mv2() {
       pageUrl: /^mailbox\:/,
       menuItemId: "message_display_action_menu",
     },
-    { active: true, index: 1, mailTab: false },
+    { active: true, index: 1, type: "messageDisplay" },
     {
       manifest_version: 2,
       message_display_action: {
@@ -162,7 +166,7 @@ add_task(async function test_message_display_action_menu_popup_tab_mv2() {
   window.document.getElementById("tabmail").closeTab(tab);
 });
 add_task(async function test_message_display_action_menu_popup_window_mv2() {
-  let testWindow = await openMessageInWindow(gMessage);
+  const testWindow = await openMessageInWindow(gMessage);
   await focusWindow(testWindow);
   await subtest_action_popup_menu(
     testWindow.messageBrowser.contentWindow,
@@ -174,7 +178,7 @@ add_task(async function test_message_display_action_menu_popup_window_mv2() {
       pageUrl: /^mailbox\:/,
       menuItemId: "message_display_action_menu",
     },
-    { active: true, index: 0, mailTab: false },
+    { active: true, index: 0, type: "messageDisplay" },
     {
       manifest_version: 2,
       message_display_action: {
@@ -186,7 +190,7 @@ add_task(async function test_message_display_action_menu_popup_window_mv2() {
   await BrowserTestUtils.closeWindow(testWindow);
 });
 add_task(async function test_compose_action_menu_popup_mv2() {
-  let testWindow = await openComposeWindow(gAccount);
+  const testWindow = await openComposeWindow(gAccount);
   await focusWindow(testWindow);
   await subtest_action_popup_menu(
     testWindow,
@@ -198,7 +202,7 @@ add_task(async function test_compose_action_menu_popup_mv2() {
       pageUrl: "about:blank?compose",
       menuItemId: "compose_action_menu",
     },
-    { active: true, index: 0, mailTab: false },
+    { active: true, index: 0, type: "messageCompose" },
     {
       manifest_version: 2,
       compose_action: {
@@ -210,7 +214,7 @@ add_task(async function test_compose_action_menu_popup_mv2() {
   await BrowserTestUtils.closeWindow(testWindow);
 });
 add_task(async function test_compose_action_menu_popup_formattoolbar_mv2() {
-  let testWindow = await openComposeWindow(gAccount);
+  const testWindow = await openComposeWindow(gAccount);
   await focusWindow(testWindow);
   await subtest_action_popup_menu(
     testWindow,
@@ -222,7 +226,7 @@ add_task(async function test_compose_action_menu_popup_formattoolbar_mv2() {
       pageUrl: "about:blank?compose",
       menuItemId: "compose_action_menu",
     },
-    { active: true, index: 0, mailTab: false },
+    { active: true, index: 0, type: "messageCompose" },
     {
       manifest_version: 2,
       compose_action: {
@@ -246,7 +250,7 @@ add_task(async function test_browser_action_menu_popup_mv3() {
       pageUrl: /^mailbox\:/,
       menuItemId: "action_menu",
     },
-    { active: true, index: 0, mailTab: true },
+    { active: true, index: 0, type: "mail" },
     {
       manifest_version: 3,
       action: {
@@ -257,7 +261,7 @@ add_task(async function test_browser_action_menu_popup_mv3() {
   );
 });
 add_task(async function test_browser_action_menu_popup_message_window_mv3() {
-  let testWindow = await openMessageInWindow(gMessage);
+  const testWindow = await openMessageInWindow(gMessage);
   await focusWindow(testWindow);
   await subtest_action_popup_menu(
     testWindow,
@@ -269,7 +273,7 @@ add_task(async function test_browser_action_menu_popup_message_window_mv3() {
       pageUrl: /^mailbox\:/,
       menuItemId: "action_menu",
     },
-    { active: true, index: 0, mailTab: false },
+    { active: true, index: 0, type: "messageDisplay" },
     {
       manifest_version: 3,
       action: {
@@ -282,8 +286,8 @@ add_task(async function test_browser_action_menu_popup_message_window_mv3() {
   await BrowserTestUtils.closeWindow(testWindow);
 });
 add_task(async function test_message_display_action_menu_popup_pane_mv3() {
-  let tabmail = document.getElementById("tabmail");
-  let aboutMessage = tabmail.currentAboutMessage;
+  const tabmail = document.getElementById("tabmail");
+  const aboutMessage = tabmail.currentAboutMessage;
   await SimpleTest.promiseFocus(aboutMessage);
 
   await subtest_action_popup_menu(
@@ -296,7 +300,7 @@ add_task(async function test_message_display_action_menu_popup_pane_mv3() {
       pageUrl: /^mailbox\:/,
       menuItemId: "message_display_action_menu",
     },
-    { active: true, index: 0, mailTab: true },
+    { active: true, index: 0, type: "mail" },
     {
       manifest_version: 3,
       message_display_action: {
@@ -307,7 +311,7 @@ add_task(async function test_message_display_action_menu_popup_pane_mv3() {
   );
 });
 add_task(async function test_message_display_action_menu_popup_tab_mv3() {
-  let tab = await openMessageInTab(gMessage);
+  const tab = await openMessageInTab(gMessage);
   await subtest_action_popup_menu(
     tab.chromeBrowser.contentWindow,
     {
@@ -318,7 +322,7 @@ add_task(async function test_message_display_action_menu_popup_tab_mv3() {
       pageUrl: /^mailbox\:/,
       menuItemId: "message_display_action_menu",
     },
-    { active: true, index: 1, mailTab: false },
+    { active: true, index: 1, type: "messageDisplay" },
     {
       manifest_version: 3,
       message_display_action: {
@@ -330,7 +334,7 @@ add_task(async function test_message_display_action_menu_popup_tab_mv3() {
   window.document.getElementById("tabmail").closeTab(tab);
 });
 add_task(async function test_message_display_action_menu_popup_window_mv3() {
-  let testWindow = await openMessageInWindow(gMessage);
+  const testWindow = await openMessageInWindow(gMessage);
   await focusWindow(testWindow);
   await subtest_action_popup_menu(
     testWindow.messageBrowser.contentWindow,
@@ -342,7 +346,7 @@ add_task(async function test_message_display_action_menu_popup_window_mv3() {
       pageUrl: /^mailbox\:/,
       menuItemId: "message_display_action_menu",
     },
-    { active: true, index: 0, mailTab: false },
+    { active: true, index: 0, type: "messageDisplay" },
     {
       manifest_version: 3,
       message_display_action: {
@@ -354,7 +358,7 @@ add_task(async function test_message_display_action_menu_popup_window_mv3() {
   await BrowserTestUtils.closeWindow(testWindow);
 });
 add_task(async function test_compose_action_menu_popup_mv3() {
-  let testWindow = await openComposeWindow(gAccount);
+  const testWindow = await openComposeWindow(gAccount);
   await focusWindow(testWindow);
   await subtest_action_popup_menu(
     testWindow,
@@ -367,7 +371,7 @@ add_task(async function test_compose_action_menu_popup_mv3() {
       pageUrl: "about:blank?compose",
       menuItemId: "compose_action_menu",
     },
-    { active: true, index: 0, mailTab: false },
+    { active: true, index: 0, type: "messageCompose" },
     {
       manifest_version: 3,
       compose_action: {
@@ -379,7 +383,7 @@ add_task(async function test_compose_action_menu_popup_mv3() {
   await BrowserTestUtils.closeWindow(testWindow);
 });
 add_task(async function test_compose_action_menu_popup_formattoolbar_mv3() {
-  let testWindow = await openComposeWindow(gAccount);
+  const testWindow = await openComposeWindow(gAccount);
   await focusWindow(testWindow);
   await subtest_action_popup_menu(
     testWindow,
@@ -391,7 +395,7 @@ add_task(async function test_compose_action_menu_popup_formattoolbar_mv3() {
       pageUrl: "about:blank?compose",
       menuItemId: "compose_action_menu",
     },
-    { active: true, index: 0, mailTab: false },
+    { active: true, index: 0, type: "messageCompose" },
     {
       manifest_version: 3,
       compose_action: {

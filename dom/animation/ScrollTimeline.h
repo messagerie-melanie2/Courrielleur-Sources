@@ -16,9 +16,8 @@
 
 #define PROGRESS_TIMELINE_DURATION_MILLISEC 100000
 
-class nsIScrollableFrame;
-
 namespace mozilla {
+class ScrollContainerFrame;
 class ElementAnimationData;
 struct NonOwningAnimationTarget;
 namespace dom {
@@ -38,7 +37,7 @@ class Element;
  *
  * As a result, we schedule an animation restyle when
  * 1) there are any scroll offsets updated (from APZ or script), via
- *    nsIScrollableFrame, or
+ *    ScrollContainerFrame, or
  * 2) there are any possible scroll range updated during the frame reflow.
  *
  * -------------
@@ -54,11 +53,11 @@ class Element;
  *   | Try schedule the scroll-driven animations, if there are any scroll
  *   | offsets changed or the scroll range changed [1].
  *   |
- * ----------------------
- * | nsIScrollableFrame |
- * ----------------------
+ * ------------------------
+ * | ScrollContainerFrame |
+ * ------------------------
  *
- * [1] nsIScrollableFrame uses its associated dom::Element to lookup the
+ * [1] ScrollContainerFrame uses its associated dom::Element to lookup the
  *     ScrollTimelineSet, and iterates the set to schedule the animations
  *     linked to the ScrollTimelines.
  */
@@ -78,6 +77,8 @@ class ScrollTimeline : public AnimationTimeline {
     };
     Type mType = Type::Root;
     RefPtr<Element> mElement;
+    // FIXME: Bug 1928437. We have to update mPseudoType to use
+    // PseudoStyleRequest.
     PseudoStyleType mPseudoType;
 
     // We use the owner doc of the animation target. This may be different from
@@ -119,7 +120,8 @@ class ScrollTimeline : public AnimationTimeline {
   // scroll-timeline-name property.
   static already_AddRefed<ScrollTimeline> MakeNamed(
       Document* aDocument, Element* aReferenceElement,
-      PseudoStyleType aPseudoType, const StyleScrollTimeline& aStyleTimeline);
+      const PseudoStyleRequest& aPseudoRequest,
+      const StyleScrollTimeline& aStyleTimeline);
 
   bool operator==(const ScrollTimeline& aOther) const {
     return mDocument == aOther.mDocument && mSource == aOther.mSource &&
@@ -161,12 +163,23 @@ class ScrollTimeline : public AnimationTimeline {
     return TimeDuration::FromMilliseconds(PROGRESS_TIMELINE_DURATION_MILLISEC);
   }
 
-  void ScheduleAnimations() {
+  enum class TimelineState : uint8_t {
+    // Normal case. The timeline is still in the scheduler.
+    None,
+    // This timeline is pending for removal from the scheduler.
+    PendingRemove,
+  };
+  TimelineState ScheduleAnimations() {
+    MOZ_ASSERT(mState == TimelineState::None);
+
     // FIXME: Bug 1737927: Need to check the animation mutation observers for
     // animations with scroll timelines.
     // nsAutoAnimationMutationBatch mb(mDocument);
+    TickState state;
+    Tick(state);
+    // TODO: Do we need to synchronize scroll animations?
 
-    Tick();
+    return mState;
   }
 
   // If the source of a ScrollTimeline is an element whose principal box does
@@ -176,7 +189,7 @@ class ScrollTimeline : public AnimationTimeline {
   // https://drafts.csswg.org/web-animations-1/#inactive-timeline
   // Note: This function is called only for compositor animations, so we must
   // have the primary frame (principal box) for the source element if it exists.
-  bool IsActive() const { return GetScrollFrame(); }
+  bool IsActive() const { return GetScrollContainerFrame(); }
 
   Element* SourceElement() const {
     MOZ_ASSERT(mSource);
@@ -193,8 +206,13 @@ class ScrollTimeline : public AnimationTimeline {
   bool ScrollingDirectionIsAvailable() const;
 
   void ReplacePropertiesWith(const Element* aReferenceElement,
-                             PseudoStyleType aPseudoType,
+                             const PseudoStyleRequest& aPseudoRequest,
                              const StyleScrollTimeline& aNew);
+
+  void NotifyAnimationContentVisibilityChanged(Animation* aAnimation,
+                                               bool aIsVisible) override;
+
+  void ResetState() { mState = TimelineState::None; }
 
  protected:
   virtual ~ScrollTimeline() { Teardown(); }
@@ -207,7 +225,7 @@ class ScrollTimeline : public AnimationTimeline {
     nscoord mEnd = 0;
   };
   virtual Maybe<ScrollOffsets> ComputeOffsets(
-      const nsIScrollableFrame* aScrollFrame,
+      const ScrollContainerFrame* aScrollFrame,
       layers::ScrollDirection aOrientation) const;
 
   // Note: This function is required to be idempotent, as it can be called from
@@ -221,10 +239,10 @@ class ScrollTimeline : public AnimationTimeline {
   // Unregister this scroll timeline from the element property.
   void UnregisterFromScrollSource();
 
-  const nsIScrollableFrame* GetScrollFrame() const;
+  const ScrollContainerFrame* GetScrollContainerFrame() const;
 
-  static std::pair<const Element*, PseudoStyleType> FindNearestScroller(
-      Element* aSubject, PseudoStyleType aPseudoType);
+  static std::pair<const Element*, PseudoStyleRequest> FindNearestScroller(
+      Element* aSubject, const PseudoStyleRequest& aPseudoRequest);
 
   RefPtr<Document> mDocument;
 
@@ -233,6 +251,11 @@ class ScrollTimeline : public AnimationTimeline {
   // nearest scroller.
   Scroller mSource;
   StyleScrollAxis mAxis;
+
+  // The current state of this timeline. We set this flag during scheduling
+  // because we shouldn't remove this timeline from the scheduler immediately
+  // while scheduling, to avoid any unexpected behaviors.
+  TimelineState mState = TimelineState::None;
 };
 
 /**
@@ -240,39 +263,44 @@ class ScrollTimeline : public AnimationTimeline {
  * of scroll driven animations. This is used for all kinds of progress
  * timelines, i.e. anonymous/named scroll timelines and anonymous/named view
  * timelines. And this object is owned by the scroll source (See
- * ElementAnimationData and nsGfxScrollFrame for the usage).
+ * ElementAnimationData and ScrollContainerFrame for the usage).
  */
 class ProgressTimelineScheduler {
  public:
   ProgressTimelineScheduler() { MOZ_COUNT_CTOR(ProgressTimelineScheduler); }
   ~ProgressTimelineScheduler() { MOZ_COUNT_DTOR(ProgressTimelineScheduler); }
 
-  static ProgressTimelineScheduler* Get(const Element* aElement,
-                                        PseudoStyleType aPseudoType);
-  static ProgressTimelineScheduler& Ensure(Element* aElement,
-                                           PseudoStyleType aPseudoType);
-  static void Destroy(const Element* aElement, PseudoStyleType aPseudoType);
+  static ProgressTimelineScheduler* Get(
+      const Element* aElement, const PseudoStyleRequest& aPseudoRequest);
+  static ProgressTimelineScheduler& Ensure(
+      Element* aElement, const PseudoStyleRequest& aPseudoRequest);
+  static void Destroy(const Element* aElement,
+                      const PseudoStyleRequest& aPseudoRequest);
 
   void AddTimeline(ScrollTimeline* aScrollTimeline) {
+    MOZ_ASSERT(!mIsInScheduling, "Do not mutate the hashset during scheduling");
     Unused << mTimelines.put(aScrollTimeline);
   }
   void RemoveTimeline(ScrollTimeline* aScrollTimeline) {
+    MOZ_ASSERT(!mIsInScheduling, "Do not mutate the hashset during scheduling");
     mTimelines.remove(aScrollTimeline);
   }
 
   bool IsEmpty() const { return mTimelines.empty(); }
+  bool IsInScheduling() const { return mIsInScheduling; }
 
-  void ScheduleAnimations() const {
-    for (auto iter = mTimelines.iter(); !iter.done(); iter.next()) {
-      iter.get()->ScheduleAnimations();
-    }
-  }
+  // Note: Use static function because this may destroy the scheduler if all
+  // timelines are removed.
+  static void ScheduleAnimations(const Element* aElement,
+                                 const PseudoStyleRequest& aRequest);
 
  private:
   // We let Animations own its scroll timeline or view timeline if it is
   // anonymous. For named progress timelines, they are created and destroyed by
   // TimelineCollection.
   HashSet<ScrollTimeline*> mTimelines;
+  // Used to avoid mutating |mTimelines| while scheduling.
+  bool mIsInScheduling = false;
 };
 
 }  // namespace dom

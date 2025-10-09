@@ -7,6 +7,7 @@
 // Undefine windows version of LoadImage because our code uses that name.
 #include "mozilla/ScopeExit.h"
 #include "nsIChildChannel.h"
+#include "nsIThreadRetargetableStreamListener.h"
 #undef LoadImage
 
 #include "imgLoader.h"
@@ -30,7 +31,11 @@
 #include "mozilla/StaticPrefs_image.h"
 #include "mozilla/StaticPrefs_network.h"
 #include "mozilla/StoragePrincipalHelper.h"
+#include "mozilla/Maybe.h"
+#include "mozilla/SharedSubResourceCache.h"
+#include "mozilla/dom/CacheExpirationTime.h"
 #include "mozilla/dom/ContentParent.h"
+#include "mozilla/dom/FetchPriority.h"
 #include "mozilla/dom/nsMixedContentBlocker.h"
 #include "mozilla/image/ImageMemoryReporter.h"
 #include "mozilla/layers/CompositorManagerChild.h"
@@ -722,16 +727,18 @@ static bool ShouldLoadCachedImage(imgRequest* aImgRequest,
     loadingPrincipal = NullPrincipal::CreateWithoutOriginAttributes();
   }
 
-  nsCOMPtr<nsILoadInfo> secCheckLoadInfo = new LoadInfo(
+  Result<RefPtr<LoadInfo>, nsresult> maybeLoadInfo = LoadInfo::Create(
       loadingPrincipal, aTriggeringPrincipal, aLoadingDocument,
       nsILoadInfo::SEC_ONLY_FOR_EXPLICIT_CONTENTSEC_CHECK, aPolicyType);
-
+  if (NS_WARN_IF(maybeLoadInfo.isErr())) {
+    return false;
+  }
+  RefPtr<LoadInfo> secCheckLoadInfo = maybeLoadInfo.unwrap();
   secCheckLoadInfo->SetSendCSPViolationEvents(aSendCSPViolationReports);
 
   int16_t decision = nsIContentPolicy::REJECT_REQUEST;
-  rv = NS_CheckContentLoadPolicy(contentLocation, secCheckLoadInfo,
-                                 ""_ns,  // mime guess
-                                 &decision, nsContentUtils::GetContentPolicy());
+  rv = NS_CheckContentLoadPolicy(contentLocation, secCheckLoadInfo, &decision,
+                                 nsContentUtils::GetContentPolicy());
   if (NS_FAILED(rv) || !NS_CP_ACCEPTED(decision)) {
     return false;
   }
@@ -759,8 +766,7 @@ static bool ShouldLoadCachedImage(imgRequest* aImgRequest,
       decision = nsIContentPolicy::REJECT_REQUEST;
       rv = nsMixedContentBlocker::ShouldLoad(insecureRedirect, contentLocation,
                                              secCheckLoadInfo,
-                                             ""_ns,  // mime guess
-                                             true,   // aReportError
+                                             true,  // aReportError
                                              &decision);
       if (NS_FAILED(rv) || !NS_CP_ACCEPTED(decision)) {
         return false;
@@ -816,6 +822,32 @@ static bool ValidateSecurityInfo(imgRequest* aRequest,
                                /* aSendCSPViolationReports */ false);
 }
 
+static void AdjustPriorityForImages(nsIChannel* aChannel,
+                                    nsLoadFlags aLoadFlags,
+                                    FetchPriority aFetchPriority) {
+  // Image channels are loaded by default with reduced priority.
+  if (nsCOMPtr<nsISupportsPriority> supportsPriority =
+          do_QueryInterface(aChannel)) {
+    int32_t priority = nsISupportsPriority::PRIORITY_LOW;
+
+    // Adjust priority according to fetchpriorty attribute.
+    if (StaticPrefs::network_fetchpriority_enabled()) {
+      priority += FETCH_PRIORITY_ADJUSTMENT_FOR(images, aFetchPriority);
+    }
+
+    // Further reduce priority for background loads
+    if (aLoadFlags & nsIRequest::LOAD_BACKGROUND) {
+      ++priority;
+    }
+
+    supportsPriority->AdjustPriority(priority);
+  }
+
+  if (nsCOMPtr<nsIClassOfService> cos = do_QueryInterface(aChannel)) {
+    cos->SetFetchPriorityDOM(aFetchPriority);
+  }
+}
+
 static nsresult NewImageChannel(
     nsIChannel** aResult,
     // If aForcePrincipalCheckForCacheEntry is true, then we will
@@ -829,7 +861,8 @@ static nsresult NewImageChannel(
     nsIReferrerInfo* aReferrerInfo, nsILoadGroup* aLoadGroup,
     nsLoadFlags aLoadFlags, nsContentPolicyType aPolicyType,
     nsIPrincipal* aTriggeringPrincipal, nsINode* aRequestingNode,
-    bool aRespectPrivacy, uint64_t aEarlyHintPreloaderId) {
+    bool aRespectPrivacy, uint64_t aEarlyHintPreloaderId,
+    FetchPriority aFetchPriority) {
   MOZ_ASSERT(aResult);
 
   nsresult rv;
@@ -949,17 +982,7 @@ static nsresult NewImageChannel(
     }
   }
 
-  // Image channels are loaded by default with reduced priority.
-  nsCOMPtr<nsISupportsPriority> p = do_QueryInterface(*aResult);
-  if (p) {
-    uint32_t priority = nsISupportsPriority::PRIORITY_LOW;
-
-    if (aLoadFlags & nsIRequest::LOAD_BACKGROUND) {
-      ++priority;  // further reduce priority for background loads
-    }
-
-    p->AdjustPriority(priority);
-  }
+  AdjustPriorityForImages(*aResult, aLoadFlags, aFetchPriority);
 
   // Create a new loadgroup for this new channel, using the old group as
   // the parent. The indirection keeps the channel insulated from cancels,
@@ -988,7 +1011,7 @@ imgCacheEntry::imgCacheEntry(imgLoader* loader, imgRequest* request,
       mDataSize(0),
       mTouchedTime(SecondsFromPRTime(PR_Now())),
       mLoadTime(SecondsFromPRTime(PR_Now())),
-      mExpiryTime(0),
+      mExpiryTime(CacheExpirationTime::Never()),
       mMustValidate(false),
       // We start off as evicted so we don't try to update the cache.
       // PutIntoCache will set this to false.
@@ -1154,8 +1177,7 @@ nsresult imgLoader::CreateNewProxyForRequest(
   proxyRequest->SetLoadFlags(aLoadFlags);
 
   // init adds itself to imgRequest's list of observers
-  nsresult rv = proxyRequest->Init(aRequest, aLoadGroup, aLoadingDocument, aURI,
-                                   aObserver);
+  nsresult rv = proxyRequest->Init(aRequest, aLoadGroup, aURI, aObserver);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
@@ -1354,18 +1376,122 @@ imgLoader::Observe(nsISupports* aSubject, const char* aTopic,
 }
 
 NS_IMETHODIMP
-imgLoader::ClearCache(bool chrome) {
+imgLoader::ClearCache(JS::Handle<JS::Value> aChrome) {
+  nsresult rv = NS_OK;
+
+  Maybe<bool> chrome =
+      aChrome.isBoolean() ? Some(aChrome.toBoolean()) : Nothing();
   if (XRE_IsParentProcess()) {
     bool privateLoader = this == gPrivateBrowsingLoader;
-    for (auto* cp : ContentParent::AllProcesses(ContentParent::eLive)) {
-      Unused << cp->SendClearImageCache(privateLoader, chrome);
+    rv = ClearCache(Some(privateLoader), chrome, Nothing(), Nothing(),
+                    Nothing());
+
+    if (this == gNormalLoader || this == gPrivateBrowsingLoader) {
+      return rv;
     }
+
+    // NOTE: There can be other loaders created with
+    //       Cc["@mozilla.org/image/loader;1"].createInstance(Ci.imgILoader).
+    //       If ClearCache is called on them, the above static ClearCache
+    //       doesn't handle it, and ClearImageCache needs to be called on
+    //       the current instance.
+    //       The favicon handling and some tests can create such loaders.
   }
+
   ClearOptions options;
   if (chrome) {
-    options += ClearOption::ChromeOnly;
+    if (*chrome) {
+      options += ClearOption::ChromeOnly;
+    } else {
+      options += ClearOption::ContentOnly;
+    }
   }
-  return ClearImageCache(options);
+  nsresult rv2 = ClearImageCache(options);
+
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+  return rv2;
+}
+
+/*static */
+nsresult imgLoader::ClearCache(
+    mozilla::Maybe<bool> aPrivateLoader /* = mozilla::Nothing() */,
+    mozilla::Maybe<bool> aChrome /* = mozilla::Nothing() */,
+    const mozilla::Maybe<nsCOMPtr<nsIPrincipal>>&
+        aPrincipal /* = mozilla::Nothing() */,
+    const mozilla::Maybe<nsCString>& aSchemelessSite /* = mozilla::Nothing() */,
+    const mozilla::Maybe<mozilla::OriginAttributesPattern>&
+        aPattern /* = mozilla::Nothing() */,
+    const mozilla::Maybe<nsCString>& aURL /* = mozilla::Nothing() */) {
+  if (XRE_IsParentProcess()) {
+    for (auto* cp : ContentParent::AllProcesses(ContentParent::eLive)) {
+      Unused << cp->SendClearImageCache(aPrivateLoader, aChrome, aPrincipal,
+                                        aSchemelessSite, aPattern, aURL);
+    }
+  }
+
+  if (aPrincipal) {
+    imgLoader* loader;
+    if ((*aPrincipal)->OriginAttributesRef().IsPrivateBrowsing()) {
+      loader = imgLoader::PrivateBrowsingLoader();
+    } else {
+      loader = imgLoader::NormalLoader();
+    }
+
+    loader->RemoveEntriesInternal(aPrincipal, Nothing(), Nothing(), Nothing());
+    return NS_OK;
+  }
+
+  if (aSchemelessSite) {
+    if (!aPrivateLoader || !*aPrivateLoader) {
+      nsresult rv = imgLoader::NormalLoader()->RemoveEntriesInternal(
+          Nothing(), aSchemelessSite, aPattern, Nothing());
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+    if (!aPrivateLoader || *aPrivateLoader) {
+      nsresult rv = imgLoader::PrivateBrowsingLoader()->RemoveEntriesInternal(
+          Nothing(), aSchemelessSite, aPattern, Nothing());
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+    return NS_OK;
+  }
+
+  if (aURL) {
+    nsCOMPtr<nsIURI> uri;
+    nsresult rv = NS_NewURI(getter_AddRefs(uri), *aURL);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (!aPrivateLoader || !*aPrivateLoader) {
+      nsresult rv = imgLoader::NormalLoader()->RemoveEntry(uri, nullptr);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+    if (!aPrivateLoader || *aPrivateLoader) {
+      nsresult rv =
+          imgLoader::PrivateBrowsingLoader()->RemoveEntry(uri, nullptr);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+    return NS_OK;
+  }
+
+  ClearOptions options;
+  if (aChrome) {
+    if (*aChrome) {
+      options += ClearOption::ChromeOnly;
+    } else {
+      options += ClearOption::ContentOnly;
+    }
+  }
+
+  if (!aPrivateLoader || !*aPrivateLoader) {
+    nsresult rv = imgLoader::NormalLoader()->ClearImageCache(options);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+  if (!aPrivateLoader || *aPrivateLoader) {
+    nsresult rv = imgLoader::PrivateBrowsingLoader()->ClearImageCache(options);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -1374,119 +1500,50 @@ imgLoader::RemoveEntriesFromPrincipalInAllProcesses(nsIPrincipal* aPrincipal) {
     return NS_ERROR_NOT_AVAILABLE;
   }
 
-  for (auto* cp : ContentParent::AllProcesses(ContentParent::eLive)) {
-    Unused << cp->SendClearImageCacheFromPrincipal(aPrincipal);
-  }
-
-  imgLoader* loader;
-  if (aPrincipal->OriginAttributesRef().mPrivateBrowsingId ==
-      nsIScriptSecurityManager::DEFAULT_PRIVATE_BROWSING_ID) {
-    loader = imgLoader::NormalLoader();
-  } else {
-    loader = imgLoader::PrivateBrowsingLoader();
-  }
-
-  return loader->RemoveEntriesInternal(aPrincipal, nullptr);
+  nsCOMPtr<nsIPrincipal> principal = aPrincipal;
+  return ClearCache(Nothing(), Nothing(), Some(principal));
 }
 
 NS_IMETHODIMP
-imgLoader::RemoveEntriesFromBaseDomainInAllProcesses(
-    const nsACString& aBaseDomain) {
+imgLoader::RemoveEntriesFromSiteInAllProcesses(
+    const nsACString& aSchemelessSite,
+    JS::Handle<JS::Value> aOriginAttributesPattern, JSContext* aCx) {
   if (!XRE_IsParentProcess()) {
     return NS_ERROR_NOT_AVAILABLE;
   }
 
-  for (auto* cp : ContentParent::AllProcesses(ContentParent::eLive)) {
-    Unused << cp->SendClearImageCacheFromBaseDomain(aBaseDomain);
-  }
-
-  return RemoveEntriesInternal(nullptr, &aBaseDomain);
-}
-
-nsresult imgLoader::RemoveEntriesInternal(nsIPrincipal* aPrincipal,
-                                          const nsACString* aBaseDomain) {
-  // Can only clear by either principal or base domain.
-  if ((!aPrincipal && !aBaseDomain) || (aPrincipal && aBaseDomain)) {
+  OriginAttributesPattern pattern;
+  if (!aOriginAttributesPattern.isObject() ||
+      !pattern.Init(aCx, aOriginAttributesPattern)) {
     return NS_ERROR_INVALID_ARG;
   }
 
-  nsAutoString origin;
-  if (aPrincipal) {
-    nsresult rv = nsContentUtils::GetUTFOrigin(aPrincipal, origin);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
+  return ClearCache(Nothing(), Nothing(), Nothing(),
+                    Some(nsCString(aSchemelessSite)), Some(pattern));
+}
+
+nsresult imgLoader::RemoveEntriesInternal(
+    const Maybe<nsCOMPtr<nsIPrincipal>>& aPrincipal,
+    const Maybe<nsCString>& aSchemelessSite,
+    const Maybe<OriginAttributesPattern>& aPattern,
+    const mozilla::Maybe<nsCString>& aURL) {
+  // Can only clear by either principal or site + pattern.
+  if ((!aPrincipal && !aSchemelessSite && !aURL) ||
+      (aPrincipal && aSchemelessSite) || (aPrincipal && aURL) ||
+      (aSchemelessSite && aURL) ||
+      aSchemelessSite.isSome() != aPattern.isSome()) {
+    return NS_ERROR_INVALID_ARG;
   }
 
-  nsCOMPtr<nsIEffectiveTLDService> tldService;
   AutoTArray<RefPtr<imgCacheEntry>, 128> entriesToBeRemoved;
 
   // For base domain we only clear the non-chrome cache.
   for (const auto& entry : mCache) {
     const auto& key = entry.GetKey();
 
-    const bool shouldRemove = [&] {
-      if (aPrincipal) {
-        if (key.OriginAttributesRef() !=
-            BasePrincipal::Cast(aPrincipal)->OriginAttributesRef()) {
-          return false;
-        }
-
-        nsAutoString imageOrigin;
-        nsresult rv = nsContentUtils::GetUTFOrigin(key.URI(), imageOrigin);
-        if (NS_WARN_IF(NS_FAILED(rv))) {
-          return false;
-        }
-
-        return imageOrigin == origin;
-      }
-
-      if (!aBaseDomain) {
-        return false;
-      }
-      // Clear by baseDomain.
-      nsAutoCString host;
-      nsresult rv = key.URI()->GetHost(host);
-      if (NS_FAILED(rv) || host.IsEmpty()) {
-        return false;
-      }
-
-      if (!tldService) {
-        tldService = do_GetService(NS_EFFECTIVETLDSERVICE_CONTRACTID);
-      }
-      if (NS_WARN_IF(!tldService)) {
-        return false;
-      }
-
-      bool hasRootDomain = false;
-      rv = tldService->HasRootDomain(host, *aBaseDomain, &hasRootDomain);
-      if (NS_SUCCEEDED(rv) && hasRootDomain) {
-        return true;
-      }
-
-      // If we don't get a direct base domain match, also check for cache of
-      // third parties partitioned under aBaseDomain.
-
-      // The isolation key is either just the base domain, or an origin suffix
-      // which contains the partitionKey holding the baseDomain.
-
-      if (key.IsolationKeyRef().Equals(*aBaseDomain)) {
-        return true;
-      }
-
-      // The isolation key does not match the given base domain. It may be an
-      // origin suffix. Parse it into origin attributes.
-      OriginAttributes attrs;
-      if (!attrs.PopulateFromSuffix(key.IsolationKeyRef())) {
-        // Key is not an origin suffix.
-        return false;
-      }
-
-      return StoragePrincipalHelper::PartitionKeyHasBaseDomain(
-          attrs.mPartitionKey, *aBaseDomain);
-    }();
-
-    if (shouldRemove) {
+    if (SharedSubResourceCacheUtils::ShouldClearEntry(
+            key.URI(), key.LoaderPrincipal(), key.PartitionPrincipal(),
+            Nothing(), aPrincipal, aSchemelessSite, aPattern, aURL)) {
       entriesToBeRemoved.AppendElement(entry.GetData());
     }
   }
@@ -1511,12 +1568,8 @@ imgLoader::RemoveEntry(nsIURI* aURI, Document* aDoc) {
   if (!aURI) {
     return NS_OK;
   }
-  OriginAttributes attrs;
-  if (aDoc) {
-    attrs = aDoc->NodePrincipal()->OriginAttributesRef();
-  }
   for (auto corsMode : AllCORSModes()) {
-    ImageCacheKey key(aURI, corsMode, attrs, aDoc);
+    ImageCacheKey key(aURI, corsMode, aDoc);
     RemoveFromCache(key);
   }
   return NS_OK;
@@ -1527,16 +1580,8 @@ imgLoader::FindEntryProperties(nsIURI* uri, Document* aDoc,
                                nsIProperties** _retval) {
   *_retval = nullptr;
 
-  OriginAttributes attrs;
-  if (aDoc) {
-    nsCOMPtr<nsIPrincipal> principal = aDoc->NodePrincipal();
-    if (principal) {
-      attrs = principal->OriginAttributesRef();
-    }
-  }
-
   for (auto corsMode : AllCORSModes()) {
-    ImageCacheKey key(uri, corsMode, attrs, aDoc);
+    ImageCacheKey key(uri, corsMode, aDoc);
     RefPtr<imgCacheEntry> entry;
     if (!mCache.Get(key, getter_AddRefs(entry)) || !entry) {
       continue;
@@ -1733,7 +1778,8 @@ bool imgLoader::ValidateRequestWithNewChannel(
     uint64_t aInnerWindowId, nsLoadFlags aLoadFlags,
     nsContentPolicyType aLoadPolicyType, imgRequestProxy** aProxyRequest,
     nsIPrincipal* aTriggeringPrincipal, CORSMode aCORSMode, bool aLinkPreload,
-    uint64_t aEarlyHintPreloaderId, bool* aNewChannelCreated) {
+    uint64_t aEarlyHintPreloaderId, FetchPriority aFetchPriority,
+    bool* aNewChannelCreated) {
   // now we need to insert a new channel request object in between the real
   // request and the proxy that basically delays loading the image until it
   // gets a 304 or figures out that this needs to be a new request
@@ -1760,7 +1806,6 @@ bool imgLoader::ValidateRequestWithNewChannel(
 
       if (aLinkPreload) {
         MOZ_ASSERT(aLoadingDocument);
-        proxy->PrioritizeAsPreload();
         auto preloadKey = PreloadHashKey::CreateAsImage(
             aURI, aTriggeringPrincipal, aCORSMode);
         proxy->NotifyOpen(preloadKey, aLoadingDocument, true);
@@ -1777,11 +1822,11 @@ bool imgLoader::ValidateRequestWithNewChannel(
   // cache.
   nsCOMPtr<nsIChannel> newChannel;
   bool forcePrincipalCheck;
-  rv =
-      NewImageChannel(getter_AddRefs(newChannel), &forcePrincipalCheck, aURI,
-                      aInitialDocumentURI, aCORSMode, aReferrerInfo, aLoadGroup,
-                      aLoadFlags, aLoadPolicyType, aTriggeringPrincipal,
-                      aLoadingDocument, mRespectPrivacy, aEarlyHintPreloaderId);
+  rv = NewImageChannel(getter_AddRefs(newChannel), &forcePrincipalCheck, aURI,
+                       aInitialDocumentURI, aCORSMode, aReferrerInfo,
+                       aLoadGroup, aLoadFlags, aLoadPolicyType,
+                       aTriggeringPrincipal, aLoadingDocument, mRespectPrivacy,
+                       aEarlyHintPreloaderId, aFetchPriority);
   if (NS_FAILED(rv)) {
     return false;
   }
@@ -1810,7 +1855,7 @@ bool imgLoader::ValidateRequestWithNewChannel(
 
   // Casting needed here to get past multiple inheritance.
   nsCOMPtr<nsIStreamListener> listener =
-      do_QueryInterface(static_cast<nsIThreadRetargetableStreamListener*>(hvc));
+      static_cast<nsIThreadRetargetableStreamListener*>(hvc);
   NS_ENSURE_TRUE(listener, false);
 
   // We must set the notification callbacks before setting up the
@@ -1828,7 +1873,6 @@ bool imgLoader::ValidateRequestWithNewChannel(
 
   if (aLinkPreload) {
     MOZ_ASSERT(aLoadingDocument);
-    req->PrioritizeAsPreload();
     auto preloadKey =
         PreloadHashKey::CreateAsImage(aURI, aTriggeringPrincipal, aCORSMode);
     req->NotifyOpen(preloadKey, aLoadingDocument, true);
@@ -1861,14 +1905,14 @@ void imgLoader::NotifyObserversForCachedImage(
     imgCacheEntry* aEntry, imgRequest* request, nsIURI* aURI,
     nsIReferrerInfo* aReferrerInfo, Document* aLoadingDocument,
     nsIPrincipal* aTriggeringPrincipal, CORSMode aCORSMode,
-    uint64_t aEarlyHintPreloaderId) {
+    uint64_t aEarlyHintPreloaderId, FetchPriority aFetchPriority) {
   if (aEntry->HasNotified()) {
     return;
   }
 
   nsCOMPtr<nsIObserverService> obsService = services::GetObserverService();
 
-  if (!obsService->HasObservers("http-on-image-cache-response")) {
+  if (!obsService->HasObservers("http-on-resource-cache-response")) {
     return;
   }
 
@@ -1880,20 +1924,20 @@ void imgLoader::NotifyObserversForCachedImage(
       getter_AddRefs(newChannel), &forcePrincipalCheck, aURI, nullptr,
       aCORSMode, aReferrerInfo, nullptr, 0,
       nsIContentPolicy::TYPE_INTERNAL_IMAGE, aTriggeringPrincipal,
-      aLoadingDocument, mRespectPrivacy, aEarlyHintPreloaderId);
+      aLoadingDocument, mRespectPrivacy, aEarlyHintPreloaderId, aFetchPriority);
   if (NS_FAILED(rv)) {
     return;
   }
 
   RefPtr<HttpBaseChannel> httpBaseChannel = do_QueryObject(newChannel);
   if (httpBaseChannel) {
-    httpBaseChannel->SetDummyChannelForImageCache();
+    httpBaseChannel->SetDummyChannelForCachedResource();
     newChannel->SetContentType(nsDependentCString(request->GetMimeType()));
     RefPtr<mozilla::image::Image> image = request->GetImage();
     if (image) {
       newChannel->SetContentLength(aEntry->GetDataSize());
     }
-    obsService->NotifyObservers(newChannel, "http-on-image-cache-response",
+    obsService->NotifyObservers(newChannel, "http-on-resource-cache-response",
                                 nullptr);
   }
 }
@@ -1905,29 +1949,23 @@ bool imgLoader::ValidateEntry(
     nsLoadFlags aLoadFlags, nsContentPolicyType aLoadPolicyType,
     bool aCanMakeNewChannel, bool* aNewChannelCreated,
     imgRequestProxy** aProxyRequest, nsIPrincipal* aTriggeringPrincipal,
-    CORSMode aCORSMode, bool aLinkPreload, uint64_t aEarlyHintPreloaderId) {
+    CORSMode aCORSMode, bool aLinkPreload, uint64_t aEarlyHintPreloaderId,
+    FetchPriority aFetchPriority) {
   LOG_SCOPE(gImgLog, "imgLoader::ValidateEntry");
 
   // If the expiration time is zero, then the request has not gotten far enough
   // to know when it will expire, or we know it will never expire (see
   // nsContentUtils::GetSubresourceCacheValidationInfo).
-  uint32_t expiryTime = aEntry->GetExpiryTime();
-  bool hasExpired = expiryTime && expiryTime <= SecondsFromPRTime(PR_Now());
-
-  nsresult rv;
+  bool hasExpired = aEntry->GetExpiryTime().IsExpired();
 
   // Special treatment for file URLs - aEntry has expired if file has changed
-  nsCOMPtr<nsIFileURL> fileUrl(do_QueryInterface(aURI));
-  if (fileUrl) {
+  if (nsCOMPtr<nsIFileURL> fileUrl = do_QueryInterface(aURI)) {
     uint32_t lastModTime = aEntry->GetLoadTime();
-
     nsCOMPtr<nsIFile> theFile;
-    rv = fileUrl->GetFile(getter_AddRefs(theFile));
-    if (NS_SUCCEEDED(rv)) {
+    if (NS_SUCCEEDED(fileUrl->GetFile(getter_AddRefs(theFile)))) {
       PRTime fileLastMod;
-      rv = theFile->GetLastModifiedTime(&fileLastMod);
-      if (NS_SUCCEEDED(rv)) {
-        // nsIFile uses millisec, NSPR usec
+      if (NS_SUCCEEDED(theFile->GetLastModifiedTime(&fileLastMod))) {
+        // nsIFile uses millisec, NSPR usec.
         fileLastMod *= 1000;
         hasExpired = SecondsFromPRTime((PRTime)fileLastMod) > lastModTime;
       }
@@ -2014,19 +2052,18 @@ bool imgLoader::ValidateEntry(
   // validate the request) we make sure to validate. This avoids the bug because
   // when the load complete notification arrives the proxy is marked as
   // validating so it lies about its status and returns nothing.
-  bool requestComplete = false;
-  RefPtr<ProgressTracker> tracker;
-  RefPtr<mozilla::image::Image> image = request->GetImage();
-  if (image) {
-    tracker = image->GetProgressTracker();
-  } else {
-    tracker = request->GetProgressTracker();
-  }
-  if (tracker) {
-    if (tracker->GetProgress() & (FLAG_LOAD_COMPLETE | FLAG_HAS_ERROR)) {
-      requestComplete = true;
+  const bool requestComplete = [&] {
+    RefPtr<ProgressTracker> tracker;
+    RefPtr<mozilla::image::Image> image = request->GetImage();
+    if (image) {
+      tracker = image->GetProgressTracker();
+    } else {
+      tracker = request->GetProgressTracker();
     }
-  }
+    return tracker &&
+           tracker->GetProgress() & (FLAG_LOAD_COMPLETE | FLAG_HAS_ERROR);
+  }();
+
   if (!requestComplete) {
     return true;
   }
@@ -2040,13 +2077,13 @@ bool imgLoader::ValidateEntry(
         request, aURI, aInitialDocumentURI, aReferrerInfo, aLoadGroup,
         aObserver, aLoadingDocument, innerWindowID, aLoadFlags, aLoadPolicyType,
         aProxyRequest, aTriggeringPrincipal, aCORSMode, aLinkPreload,
-        aEarlyHintPreloaderId, aNewChannelCreated);
+        aEarlyHintPreloaderId, aFetchPriority, aNewChannelCreated);
   }
 
   if (!validateRequest) {
-    NotifyObserversForCachedImage(aEntry, request, aURI, aReferrerInfo,
-                                  aLoadingDocument, aTriggeringPrincipal,
-                                  aCORSMode, aEarlyHintPreloaderId);
+    NotifyObserversForCachedImage(
+        aEntry, request, aURI, aReferrerInfo, aLoadingDocument,
+        aTriggeringPrincipal, aCORSMode, aEarlyHintPreloaderId, aFetchPriority);
   }
 
   return !validateRequest;
@@ -2118,11 +2155,19 @@ bool imgLoader::RemoveFromCache(imgCacheEntry* entry, QueueState aQueueState) {
 
 nsresult imgLoader::ClearImageCache(ClearOptions aOptions) {
   const bool chromeOnly = aOptions.contains(ClearOption::ChromeOnly);
+  const bool contentOnly = aOptions.contains(ClearOption::ContentOnly);
   const auto ShouldRemove = [&](imgCacheEntry* aEntry) {
-    if (chromeOnly) {
-      // TODO: Consider also removing "resource://" etc?
+    if (chromeOnly || contentOnly) {
       RefPtr<imgRequest> request = aEntry->GetRequest();
-      if (!request || !request->CacheKey().URI()->SchemeIs("chrome")) {
+      if (!request) {
+        return false;
+      }
+      nsIURI* uri = request->CacheKey().URI();
+      bool isChrome = uri->SchemeIs("chrome") || uri->SchemeIs("resource");
+      if (chromeOnly && !isChrome) {
+        return false;
+      }
+      if (contentOnly && isChrome) {
         return false;
       }
     }
@@ -2146,7 +2191,7 @@ nsresult imgLoader::ClearImageCache(ClearOptions aOptions) {
       }
     }
 
-    MOZ_ASSERT(chromeOnly || mCacheQueue.GetNumElements() == 0);
+    MOZ_ASSERT(chromeOnly || contentOnly || mCacheQueue.GetNumElements() == 0);
     return NS_OK;
   }
 
@@ -2163,7 +2208,7 @@ nsresult imgLoader::ClearImageCache(ClearOptions aOptions) {
       return NS_ERROR_FAILURE;
     }
   }
-  MOZ_ASSERT(chromeOnly || mCache.IsEmpty());
+  MOZ_ASSERT(chromeOnly || contentOnly || mCache.IsEmpty());
   return NS_OK;
 }
 
@@ -2201,7 +2246,7 @@ imgLoader::LoadImageXPCOM(
                 0, aLoadGroup, aObserver, aLoadingDocument, aLoadingDocument,
                 aLoadFlags, aCacheKey, aContentPolicyType, u""_ns,
                 /* aUseUrgentStartForChannel */ false, /* aListPreload */ false,
-                0, &proxy);
+                0, FetchPriority::Auto, &proxy);
   *_retval = proxy;
   return rv;
 }
@@ -2231,8 +2276,7 @@ static void MakeRequestStaticIfNeeded(
 bool imgLoader::IsImageAvailable(nsIURI* aURI,
                                  nsIPrincipal* aTriggeringPrincipal,
                                  CORSMode aCORSMode, Document* aDocument) {
-  ImageCacheKey key(aURI, aCORSMode,
-                    aTriggeringPrincipal->OriginAttributesRef(), aDocument);
+  ImageCacheKey key(aURI, aCORSMode, aDocument);
   RefPtr<imgCacheEntry> entry;
   if (!mCache.Get(key, getter_AddRefs(entry)) || !entry) {
     return false;
@@ -2260,7 +2304,7 @@ nsresult imgLoader::LoadImage(
     nsISupports* aCacheKey, nsContentPolicyType aContentPolicyType,
     const nsAString& initiatorType, bool aUseUrgentStartForChannel,
     bool aLinkPreload, uint64_t aEarlyHintPreloaderId,
-    imgRequestProxy** _retval) {
+    FetchPriority aFetchPriority, imgRequestProxy** _retval) {
   VerifyCacheSizes();
 
   NS_ASSERTION(aURI, "imgLoader::LoadImage -- NULL URI pointer");
@@ -2288,7 +2332,7 @@ nsresult imgLoader::LoadImage(
   bool isPrivate = false;
 
   if (aLoadingDocument) {
-    isPrivate = nsContentUtils::IsInPrivateBrowsing(aLoadingDocument);
+    isPrivate = aLoadingDocument->IsInPrivateBrowsing();
   } else if (aLoadGroup) {
     isPrivate = nsContentUtils::IsInPrivateBrowsing(aLoadGroup);
   }
@@ -2329,9 +2373,6 @@ nsresult imgLoader::LoadImage(
     // Propagate background loading...
     requestFlags |= nsIRequest::LOAD_BACKGROUND;
   }
-  if (aLoadFlags & nsIRequest::LOAD_RECORD_START_REQUEST_DELAY) {
-    requestFlags |= nsIRequest::LOAD_RECORD_START_REQUEST_DELAY;
-  }
 
   if (aLinkPreload) {
     // Set background loading if it is <link rel=preload>
@@ -2346,7 +2387,7 @@ nsresult imgLoader::LoadImage(
   }
 
   // Look in the preloaded images of loading document first.
-  if (StaticPrefs::network_preload() && !aLinkPreload && aLoadingDocument) {
+  if (!aLinkPreload && aLoadingDocument) {
     // All Early Hints preloads are Link preloads, therefore we don't have a
     // Early Hints preload here
     MOZ_ASSERT(!aEarlyHintPreloaderId);
@@ -2405,18 +2446,14 @@ nsresult imgLoader::LoadImage(
   // XXX For now ignore aCacheKey. We will need it in the future
   // for correctly dealing with image load requests that are a result
   // of post data.
-  OriginAttributes attrs;
-  if (aTriggeringPrincipal) {
-    attrs = aTriggeringPrincipal->OriginAttributesRef();
-  }
-  ImageCacheKey key(aURI, corsmode, attrs, aLoadingDocument);
+  ImageCacheKey key(aURI, corsmode, aLoadingDocument);
   if (mCache.Get(key, getter_AddRefs(entry)) && entry) {
     bool newChannelCreated = false;
     if (ValidateEntry(entry, aURI, aInitialDocumentURI, aReferrerInfo,
                       aLoadGroup, aObserver, aLoadingDocument, requestFlags,
                       aContentPolicyType, true, &newChannelCreated, _retval,
                       aTriggeringPrincipal, corsmode, aLinkPreload,
-                      aEarlyHintPreloaderId)) {
+                      aEarlyHintPreloaderId, aFetchPriority)) {
       request = entry->GetRequest();
 
       // If this entry has no proxies, its request has no reference to the
@@ -2466,7 +2503,7 @@ nsresult imgLoader::LoadImage(
                          aInitialDocumentURI, corsmode, aReferrerInfo,
                          aLoadGroup, requestFlags, aContentPolicyType,
                          aTriggeringPrincipal, aContext, mRespectPrivacy,
-                         aEarlyHintPreloaderId);
+                         aEarlyHintPreloaderId, aFetchPriority);
     if (NS_FAILED(rv)) {
       return NS_ERROR_FAILURE;
     }
@@ -2485,6 +2522,9 @@ nsresult imgLoader::LoadImage(
     if (cos) {
       if (aUseUrgentStartForChannel && !aLinkPreload) {
         cos->AddClassFlags(nsIClassOfService::UrgentStart);
+      }
+      if (StaticPrefs::image_priority_incremental()) {
+        cos->SetIncremental(true);
       }
 
       if (StaticPrefs::network_http_tailing_enabled() &&
@@ -2580,7 +2620,6 @@ nsresult imgLoader::LoadImage(
 
     if (aLinkPreload) {
       MOZ_ASSERT(aLoadingDocument);
-      proxy->PrioritizeAsPreload();
       auto preloadKey =
           PreloadHashKey::CreateAsImage(aURI, aTriggeringPrincipal, corsmode);
       proxy->NotifyOpen(preloadKey, aLoadingDocument, true);
@@ -2644,11 +2683,9 @@ nsresult imgLoader::LoadImageWithChannel(nsIChannel* channel,
   NS_ENSURE_TRUE(channel, NS_ERROR_FAILURE);
   nsCOMPtr<nsILoadInfo> loadInfo = channel->LoadInfo();
 
-  OriginAttributes attrs = loadInfo->GetOriginAttributes();
-
   // TODO: Get a meaningful cors mode from the caller probably?
   const auto corsMode = CORS_NONE;
-  ImageCacheKey key(uri, corsMode, attrs, aLoadingDocument);
+  ImageCacheKey key(uri, corsMode, aLoadingDocument);
 
   nsLoadFlags requestFlags = nsIRequest::LOAD_NORMAL;
   channel->GetLoadFlags(&requestFlags);
@@ -2681,7 +2718,8 @@ nsresult imgLoader::LoadImageWithChannel(nsIChannel* channel,
 
       if (ValidateEntry(entry, uri, nullptr, nullptr, nullptr, aObserver,
                         aLoadingDocument, requestFlags, policyType, false,
-                        nullptr, nullptr, nullptr, corsMode, false, 0)) {
+                        nullptr, nullptr, nullptr, corsMode, false, 0,
+                        FetchPriority::Auto)) {
         request = entry->GetRequest();
       } else {
         nsCOMPtr<nsICacheInfoChannel> cacheChan(do_QueryInterface(channel));
@@ -2758,8 +2796,7 @@ nsresult imgLoader::LoadImageWithChannel(nsIChannel* channel,
     // constructed above with the *current URI* and not the *original URI*. I'm
     // pretty sure this is a bug, and it's preventing us from ever getting a
     // cache hit in LoadImageWithChannel when redirects are involved.
-    ImageCacheKey originalURIKey(originalURI, corsMode, attrs,
-                                 aLoadingDocument);
+    ImageCacheKey originalURIKey(originalURI, corsMode, aLoadingDocument);
 
     // Default to doing a principal check because we don't know who
     // started that load and whether their principal ended up being
@@ -2815,7 +2852,7 @@ bool imgLoader::SupportImageWithMimeType(const nsACString& aMimeType,
   ToLowerCase(mimeType);
 
   if (aAccept == AcceptedMimeTypes::IMAGES_AND_DOCUMENTS &&
-      mimeType.EqualsLiteral("image/svg+xml")) {
+      mimeType.EqualsLiteral(IMAGE_SVG_XML)) {
     return true;
   }
 
@@ -3007,6 +3044,20 @@ ProxyListener::OnDataAvailable(nsIRequest* aRequest, nsIInputStream* inStr,
   }
 
   return mDestListener->OnDataAvailable(aRequest, inStr, sourceOffset, count);
+}
+
+NS_IMETHODIMP
+ProxyListener::OnDataFinished(nsresult aStatus) {
+  if (!mDestListener) {
+    return NS_ERROR_FAILURE;
+  }
+  nsCOMPtr<nsIThreadRetargetableStreamListener> retargetableListener =
+      do_QueryInterface(mDestListener);
+  if (retargetableListener) {
+    return retargetableListener->OnDataFinished(aStatus);
+  }
+
+  return NS_OK;
 }
 
 /** nsThreadRetargetableStreamListener methods **/
@@ -3241,6 +3292,20 @@ imgCacheValidator::OnDataAvailable(nsIRequest* aRequest, nsIInputStream* inStr,
   }
 
   return mDestListener->OnDataAvailable(aRequest, inStr, sourceOffset, count);
+}
+
+NS_IMETHODIMP
+imgCacheValidator::OnDataFinished(nsresult aStatus) {
+  if (!mDestListener) {
+    return NS_ERROR_FAILURE;
+  }
+  nsCOMPtr<nsIThreadRetargetableStreamListener> retargetableListener =
+      do_QueryInterface(mDestListener);
+  if (retargetableListener) {
+    return retargetableListener->OnDataFinished(aStatus);
+  }
+
+  return NS_OK;
 }
 
 /** nsIThreadRetargetableStreamListener methods **/

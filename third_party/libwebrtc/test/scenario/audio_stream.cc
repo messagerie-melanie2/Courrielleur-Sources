@@ -9,17 +9,35 @@
  */
 #include "test/scenario/audio_stream.h"
 
-#include "absl/memory/memory.h"
-#include "test/call_test.h"
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <vector>
+
+#include "api/audio_codecs/audio_decoder_factory.h"
+#include "api/audio_codecs/audio_encoder_factory.h"
+#include "api/call/transport.h"
+#include "api/media_types.h"
+#include "api/rtp_headers.h"
+#include "api/rtp_parameters.h"
+#include "api/scoped_refptr.h"
+#include "api/units/data_rate.h"
+#include "api/units/time_delta.h"
+#include "call/audio_receive_stream.h"
+#include "call/audio_send_stream.h"
+#include "rtc_base/checks.h"
+#include "rtc_base/strings/string_builder.h"
+#include "test/scenario/call_client.h"
+#include "test/scenario/column_printer.h"
+#include "test/scenario/scenario_config.h"
+#include "test/video_test_constants.h"
 
 #if WEBRTC_ENABLE_PROTOBUF
-RTC_PUSH_IGNORING_WUNDEF()
 #ifdef WEBRTC_ANDROID_PLATFORM_BUILD
 #include "external/webrtc/webrtc/modules/audio_coding/audio_network_adaptor/config.pb.h"
 #else
 #include "modules/audio_coding/audio_network_adaptor/config.pb.h"
 #endif
-RTC_POP_IGNORING_WUNDEF()
 #endif
 
 namespace webrtc {
@@ -30,7 +48,7 @@ enum : int {  // The first valid value is 1.
   kAbsSendTimeExtensionId
 };
 
-absl::optional<std::string> CreateAdaptationString(
+std::optional<std::string> CreateAdaptationString(
     AudioStreamConfig::NetworkAdaptation config) {
 #if WEBRTC_ENABLE_PROTOBUF
 
@@ -62,7 +80,7 @@ absl::optional<std::string> CreateAdaptationString(
   RTC_LOG(LS_ERROR) << "audio_network_adaptation is enabled"
                        " but WEBRTC_ENABLE_PROTOBUF is false.\n"
                        "Ignoring settings.";
-  return absl::nullopt;
+  return std::nullopt;
 #endif  // WEBRTC_ENABLE_PROTOBUF
 }
 }  // namespace
@@ -90,7 +108,7 @@ SendAudioStream::SendAudioStream(
   AudioSendStream::Config send_config(send_transport);
   ssrc_ = sender->GetNextAudioSsrc();
   send_config.rtp.ssrc = ssrc_;
-  SdpAudioFormat::Parameters sdp_params;
+  CodecParameterMap sdp_params;
   if (config.source.channels == 2)
     sdp_params["stereo"] = "1";
   if (config.encoder.initial_frame_length != TimeDelta::Millis(20))
@@ -103,7 +121,8 @@ SendAudioStream::SendAudioStream(
   // stereo, but the actual channel count used is based on the "stereo"
   // parameter.
   send_config.send_codec_spec = AudioSendStream::Config::SendCodecSpec(
-      CallTest::kAudioSendPayloadType, {"opus", 48000, 2, sdp_params});
+      VideoTestConstants::kAudioSendPayloadType,
+      {"opus", 48000, 2, sdp_params});
   RTC_DCHECK_LE(config.source.channels, 2);
   send_config.encoder_factory = encoder_factory;
 
@@ -132,9 +151,6 @@ SendAudioStream::SendAudioStream(
     send_config.max_bitrate_bps = max_rate.bps();
   }
 
-  if (config.stream.in_bandwidth_estimation) {
-    send_config.send_codec_spec->transport_cc_enabled = true;
-  }
   send_config.rtp.extensions = GetAudioRtpExtensions(config);
 
   sender_->SendTask([&] {
@@ -188,10 +204,9 @@ ReceiveAudioStream::ReceiveAudioStream(
   recv_config.rtcp_send_transport = feedback_transport;
   recv_config.rtp.remote_ssrc = send_stream->ssrc_;
   receiver->ssrc_media_types_[recv_config.rtp.remote_ssrc] = MediaType::AUDIO;
-  recv_config.rtp.extensions = GetAudioRtpExtensions(config);
   recv_config.decoder_factory = decoder_factory;
   recv_config.decoder_map = {
-      {CallTest::kAudioSendPayloadType, {"opus", 48000, 2}}};
+      {VideoTestConstants::kAudioSendPayloadType, {"opus", 48000, 2}}};
   recv_config.sync_group = config.render.sync_group;
   receiver_->SendTask([&] {
     receive_stream_ = receiver_->call_->CreateAudioReceiveStream(recv_config);

@@ -40,7 +40,8 @@ class gfxVarReceiver;
   _(UseWebRenderANGLE, bool, false)                                \
   _(UseWebRenderFlipSequentialWin, bool, false)                    \
   _(UseWebRenderDCompWin, bool, false)                             \
-  _(UseWebRenderDCompVideoOverlayWin, bool, false)                 \
+  _(UseWebRenderDCompVideoHwOverlayWin, bool, false)               \
+  _(UseWebRenderDCompVideoSwOverlayWin, bool, false)               \
   _(UseWebRenderTripleBufferingWin, bool, false)                   \
   _(UseWebRenderCompositor, bool, false)                           \
   _(UseWebRenderProgramBinaryDisk, bool, false)                    \
@@ -50,14 +51,15 @@ class gfxVarReceiver;
   _(WebglAllowCoreProfile, bool, true)                             \
   _(WebglAllowWindowsNativeGl, bool, false)                        \
   _(WebRenderMaxPartialPresentRects, int32_t, 0)                   \
-  _(WebRenderDebugFlags, int32_t, 0)                               \
+  _(WebRenderDebugFlags, uint64_t, 0)                              \
   _(WebRenderBoolParameters, int32_t, 0)                           \
   _(WebRenderBatchingLookback, int32_t, 10)                        \
   _(WebRenderBlobTileSize, int32_t, 256)                           \
   _(WebRenderBatchedUploadThreshold, int32_t, 512 * 512)           \
+  _(WebRenderSlowCpuFrameThreshold, float, 10.0)                   \
   _(UseSoftwareWebRender, bool, false)                             \
   _(AllowSoftwareWebRenderD3D11, bool, false)                      \
-  _(ScreenDepth, int32_t, 0)                                       \
+  _(PrimaryScreenDepth, int32_t, 0)                                \
   _(GREDirectory, nsString, nsString())                            \
   _(ProfDirectory, nsString, nsString())                           \
   _(AllowD3D11KeyedMutex, bool, false)                             \
@@ -75,12 +77,12 @@ class gfxVarReceiver;
   _(UseDoubleBufferingWithCompositor, bool, false)                 \
   _(UseGLSwizzle, bool, true)                                      \
   _(ForceSubpixelAAWherePossible, bool, false)                     \
-  _(DwmCompositionEnabled, bool, true)                             \
   _(FxREmbedded, bool, false)                                      \
   _(UseAHardwareBufferSharedSurfaceWebglOop, bool, false)          \
   _(UseEGL, bool, false)                                           \
   _(DrmRenderDevice, nsCString, nsCString())                       \
   _(UseDMABuf, bool, false)                                        \
+  _(UseDMABufWebGL, bool, true)                                    \
   _(DMABufModifiersXRGB, ArrayOfuint64_t, nsTArray<uint64_t>())    \
   _(DMABufModifiersARGB, ArrayOfuint64_t, nsTArray<uint64_t>())    \
   _(CodecSupportInfo, nsCString, nsCString())                      \
@@ -91,6 +93,7 @@ class gfxVarReceiver;
   _(UseVP9HwDecode, bool, false)                                   \
   _(UseAV1HwDecode, bool, false)                                   \
   _(UseH264HwDecode, bool, false)                                  \
+  _(UseHEVCHwDecode, bool, false)                                  \
   _(HwDecodedVideoZeroCopy, bool, false)                           \
   _(UseDMABufSurfaceExport, bool, true)                            \
   _(ReuseDecoderDevice, bool, false)                               \
@@ -98,8 +101,14 @@ class gfxVarReceiver;
   _(AllowBackdropFilter, bool, true)                               \
   _(WebglOopAsyncPresentForceSync, bool, true)                     \
   _(UseAcceleratedCanvas2D, bool, false)                           \
-  _(UseWebRenderDCompSwVideoOverlayWin, bool, false)               \
-  _(WebglUseHardware, bool, true)
+  _(AllowSoftwareWebRenderOGL, bool, false)                        \
+  _(WebglUseHardware, bool, true)                                  \
+  _(WebRenderOverlayVpAutoHDR, bool, false)                        \
+  _(WebRenderOverlayVpSuperResolution, bool, false)                \
+  _(AllowWebGPUPresentWithoutReadback, bool, false)                \
+  _(GPUProcessEnabled, bool, false)                                \
+  _(DMABufModifiersP010, ArrayOfuint64_t, nsTArray<uint64_t>())    \
+  _(DMABufModifiersNV12, ArrayOfuint64_t, nsTArray<uint64_t>())
 
 /* Add new entries above this line. */
 

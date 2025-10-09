@@ -4,7 +4,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsMailboxServer.h"
-#include "nsLocalMailFolder.h"
 
 NS_IMETHODIMP
 nsMailboxServer::GetLocalStoreType(nsACString& type) {
@@ -15,14 +14,5 @@ nsMailboxServer::GetLocalStoreType(nsACString& type) {
 NS_IMETHODIMP
 nsMailboxServer::GetLocalDatabaseType(nsACString& type) {
   type.AssignLiteral("mailbox");
-  return NS_OK;
-}
-
-nsresult nsMailboxServer::CreateRootFolderFromUri(const nsACString& serverUri,
-                                                  nsIMsgFolder** rootFolder) {
-  nsMsgLocalMailFolder* newRootFolder = new nsMsgLocalMailFolder;
-  if (!newRootFolder) return NS_ERROR_OUT_OF_MEMORY;
-  NS_ADDREF(*rootFolder = newRootFolder);
-  newRootFolder->Init(serverUri);
   return NS_OK;
 }

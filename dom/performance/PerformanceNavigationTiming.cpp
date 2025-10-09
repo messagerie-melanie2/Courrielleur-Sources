@@ -112,21 +112,21 @@ DOMHighResTimeStamp PerformanceNavigationTiming::LoadEventEnd() const {
   REDUCE_TIME_PRECISION;
 }
 
-NavigationType PerformanceNavigationTiming::Type() const {
+NavigationTimingType PerformanceNavigationTiming::Type() const {
   switch (mPerformance->GetDOMTiming()->GetType()) {
     case nsDOMNavigationTiming::TYPE_NAVIGATE:
-      return NavigationType::Navigate;
+      return NavigationTimingType::Navigate;
       break;
     case nsDOMNavigationTiming::TYPE_RELOAD:
-      return NavigationType::Reload;
+      return NavigationTimingType::Reload;
       break;
     case nsDOMNavigationTiming::TYPE_BACK_FORWARD:
-      return NavigationType::Back_forward;
+      return NavigationTimingType::Back_forward;
       break;
     default:
       // The type is TYPE_RESERVED or some other value that was later added.
       // We fallback to the default of Navigate.
-      return NavigationType::Navigate;
+      return NavigationTimingType::Navigate;
   }
 }
 
@@ -135,13 +135,13 @@ uint16_t PerformanceNavigationTiming::RedirectCount() const {
 }
 
 DOMHighResTimeStamp PerformanceNavigationTiming::RedirectStart(
-    Maybe<nsIPrincipal*>& aSubjectPrincipal) const {
+    nsIPrincipal& aSubjectPrincipal) const {
   return PerformanceResourceTiming::RedirectStart(
       aSubjectPrincipal, true /* aEnsureSameOriginAndIgnoreTAO */);
 }
 
 DOMHighResTimeStamp PerformanceNavigationTiming::RedirectEnd(
-    Maybe<nsIPrincipal*>& aSubjectPrincipal) const {
+    nsIPrincipal& aSubjectPrincipal) const {
   return PerformanceResourceTiming::RedirectEnd(
       aSubjectPrincipal, true /* aEnsureSameOriginAndIgnoreTAO */);
 }

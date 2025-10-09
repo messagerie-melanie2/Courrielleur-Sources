@@ -8,11 +8,11 @@
  */
 "use strict";
 
-var { CalendarTestUtils } = ChromeUtils.import(
-  "resource://testing-common/calendar/CalendarTestUtils.jsm"
+var { CalendarTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/calendar/CalendarTestUtils.sys.mjs"
 );
 
-var { MailServices } = ChromeUtils.import("resource:///modules/MailServices.jsm");
+var { MailServices } = ChromeUtils.importESModule("resource:///modules/MailServices.sys.mjs");
 
 var gCalendar;
 
@@ -20,13 +20,13 @@ var gCalendar;
  * Initialize account, identity and calendar.
  */
 add_setup(async function () {
-  let receiverAcct = MailServices.accounts.createAccount();
+  const receiverAcct = MailServices.accounts.createAccount();
   receiverAcct.incomingServer = MailServices.accounts.createIncomingServer(
     "receiver",
     "example.com",
     "imap"
   );
-  let receiverIdentity = MailServices.accounts.createIdentity();
+  const receiverIdentity = MailServices.accounts.createIdentity();
   receiverIdentity.email = "john.doe@example.com";
   receiverAcct.addIdentity(receiverIdentity);
   gCalendar = CalendarTestUtils.createCalendar("EventTestCal");
@@ -42,30 +42,32 @@ add_setup(async function () {
  * shows the correct UI.
  * The party crashing dialog should not show.
  */
-add_task(async function test_event_from_eml() {
-  let file = new FileUtils.File(getTestFilePath("data/message-non-invite.eml"));
+add_task(async function test_message_non_invite_eml() {
+  const file = new FileUtils.File(getTestFilePath("data/message-non-invite.eml"));
 
-  let win = await openMessageFromFile(file);
-  let aboutMessage = win.document.getElementById("messageBrowser").contentWindow;
-  let imipBar = aboutMessage.document.getElementById("imip-bar");
+  const win = await openMessageFromFile(file);
+  const aboutMessage = win.document.getElementById("messageBrowser").contentWindow;
+  const imipBar = aboutMessage.document.getElementById("imip-bar");
 
   await TestUtils.waitForCondition(() => !imipBar.collapsed);
   info("Ok, iMIP bar is showing");
 
-  let imipAddButton = aboutMessage.document.getElementById("imipAddButton");
-  Assert.ok(!imipAddButton.hidden, "Add button should show");
+  const imipAddButton = aboutMessage.document.getElementById("imipAddButton");
+  await TestUtils.waitForCondition(() => !imipAddButton.hidden, "Add button should show");
 
   EventUtils.synthesizeMouseAtCenter(imipAddButton, {}, aboutMessage);
 
   // Make sure the event got added, without showing the party crashing dialog.
   await TestUtils.waitForCondition(async () => {
-    let event = await gCalendar.getItem("1e5fd4e6-bc52-439c-ac76-40da54f57c77@secure.example.com");
+    const event = await gCalendar.getItem(
+      "1e5fd4e6-bc52-439c-ac76-40da54f57c77@secure.example.com"
+    );
     return event;
   });
 
   await TestUtils.waitForCondition(() => imipAddButton.hidden, "Add button should hide");
 
-  let imipDetailsButton = aboutMessage.document.getElementById("imipDetailsButton");
+  const imipDetailsButton = aboutMessage.document.getElementById("imipDetailsButton");
   Assert.ok(!imipDetailsButton.hidden, "Details button should show");
 
   await BrowserTestUtils.closeWindow(win);

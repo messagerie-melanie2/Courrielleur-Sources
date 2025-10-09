@@ -3,7 +3,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 var {AppConstants} = ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 const {PluralForm} = ChromeUtils.import("resource://gre/modules/PluralForm.jsm");
 ChromeUtils.import("resource://gre/modules/InlineSpellChecker.jsm");
@@ -454,15 +453,8 @@ var progressListener = {
       // we can ignore this notification
     },
 
-    QueryInterface : function(iid)
-    {
-      if (iid.equals(Ci.nsIWebProgressListener) ||
-          iid.equals(Ci.nsISupportsWeakReference) ||
-          iid.equals(Ci.nsISupports))
-        return this;
-
-      throw Cr.NS_NOINTERFACE;
-    }
+    QueryInterface: ChromeUtils.generateQI([Ci.nsIWebProgressListener,
+                                            Ci.nsISupportsWeakReference]),
 };
 
 var defaultController =
@@ -1043,7 +1035,8 @@ function ComposeFieldsReady()
   //If we are in plain text, we need to set the wrap column
   if (! gMsgCompose.composeHTML) {
     try {
-      gMsgCompose.editor.wrapWidth = gMsgCompose.wrapLength;
+      gMsgCompose.editor.QueryInterface(Ci.nsIEditorMailSupport).wrapWidth =
+        gMsgCompose.wrapLength;
     }
     catch (e) {
       dump("### textEditor.wrapWidth exception text: " + e + " - failed\n");
@@ -2925,15 +2918,8 @@ function nsAttachmentOpener()
 
 nsAttachmentOpener.prototype =
 {
-  QueryInterface: function(iid)
-  {
-    if (iid.equals(Ci.nsIURIContentListener) ||
-        iid.equals(Ci.nsIInterfaceRequestor) ||
-        iid.equals(Ci.nsISupports)) {
-      return this;
-    }
-    throw Cr.NS_NOINTERFACE;
-  },
+  QueryInterface: ChromeUtils.generateQI([Ci.nsIURIContentListener,
+                                          Ci.nsIInterfaceRequestor]),
 
   doContent: function(contentType, isContentPreferred, request, contentHandler)
   {

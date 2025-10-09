@@ -9,7 +9,6 @@
 #include "nsString.h"
 #include "ExampleStylesheet.h"
 #include "ServoBindings.h"
-#include "mozilla/dom/DOMString.h"
 #include "mozilla/Encoding.h"
 #include "mozilla/Utf8.h"
 #include "mozilla/NullPrincipal.h"
@@ -30,7 +29,7 @@ using namespace mozilla::net;
 #  define SETPROPERTY_REPETITIONS (1000 * 1000)
 #  define GETPROPERTY_REPETITIONS (1000 * 1000)
 
-static void ServoParsingBench(const StyleUseCounters* aCounters) {
+static void ServoParsingBench() {
   auto css = AsBytes(MakeStringSpan(EXAMPLE_STYLESHEET));
   nsCString cssStr;
   cssStr.Append(css);
@@ -44,9 +43,9 @@ static void ServoParsingBench(const StyleUseCounters* aCounters) {
   for (int i = 0; i < PARSING_REPETITIONS; i++) {
     RefPtr<StyleStylesheetContents> stylesheet =
         Servo_StyleSheet_FromUTF8Bytes(
-            nullptr, nullptr, nullptr, &cssStr, eAuthorSheetFeatures, data, 0,
-            eCompatibility_FullStandards, nullptr, aCounters,
-            StyleAllowImportRules::Yes, StyleSanitizationKind::None, nullptr)
+            nullptr, nullptr, nullptr, &cssStr, eAuthorSheetFeatures, data,
+            eCompatibility_FullStandards, nullptr, StyleAllowImportRules::Yes,
+            StyleSanitizationKind::None, nullptr)
             .Consume();
   }
 }
@@ -66,7 +65,7 @@ static void ServoSetPropertyByIdBench(const nsACString& css) {
   for (int i = 0; i < SETPROPERTY_REPETITIONS; i++) {
     Servo_DeclarationBlock_SetPropertyById(
         block, eCSSProperty_width, &css,
-        /* is_important = */ false, data, ParsingMode::Default,
+        /* is_important = */ false, data, StyleParsingMode::DEFAULT,
         eCompatibility_FullStandards, nullptr, STYLE_RULE, {});
   }
 }
@@ -84,7 +83,7 @@ static void ServoGetPropertyValueById() {
   const nsACString& css = css_;
   Servo_DeclarationBlock_SetPropertyById(
       block, eCSSProperty_width, &css,
-      /* is_important = */ false, data, ParsingMode::Default,
+      /* is_important = */ false, data, StyleParsingMode::DEFAULT,
       eCompatibility_FullStandards, nullptr, STYLE_RULE, {});
 
   for (int i = 0; i < GETPROPERTY_REPETITIONS; i++) {
@@ -96,12 +95,7 @@ static void ServoGetPropertyValueById() {
 }
 
 MOZ_GTEST_BENCH(Stylo, Servo_StyleSheet_FromUTF8Bytes_Bench,
-                [] { ServoParsingBench(nullptr); });
-
-MOZ_GTEST_BENCH(Stylo, Servo_StyleSheet_FromUTF8Bytes_Bench_UseCounters, [] {
-  UniquePtr<StyleUseCounters> counters(Servo_UseCounters_Create());
-  ServoParsingBench(counters.get());
-});
+                [] { ServoParsingBench(); });
 
 MOZ_GTEST_BENCH(Stylo, Servo_DeclarationBlock_SetPropertyById_Bench,
                 [] { ServoSetPropertyByIdBench("10px"_ns); });

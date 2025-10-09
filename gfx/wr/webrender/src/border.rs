@@ -175,24 +175,28 @@ pub fn ensure_no_corner_overlap(
     let bottom_right_radius = &mut radius.bottom_right;
     let bottom_left_radius = &mut radius.bottom_left;
 
-    let sum = top_left_radius.width + top_right_radius.width;
-    if size.width < sum {
-        ratio = f32::min(ratio, size.width / sum);
+    if size.width > 0.0 {
+        let sum = top_left_radius.width + top_right_radius.width;
+        if size.width < sum {
+            ratio = f32::min(ratio, size.width / sum);
+        }
+
+        let sum = bottom_left_radius.width + bottom_right_radius.width;
+        if size.width < sum {
+            ratio = f32::min(ratio, size.width / sum);
+        }
     }
 
-    let sum = bottom_left_radius.width + bottom_right_radius.width;
-    if size.width < sum {
-        ratio = f32::min(ratio, size.width / sum);
-    }
+    if size.height > 0.0 {
+        let sum = top_left_radius.height + bottom_left_radius.height;
+        if size.height < sum {
+            ratio = f32::min(ratio, size.height / sum);
+        }
 
-    let sum = top_left_radius.height + bottom_left_radius.height;
-    if size.height < sum {
-        ratio = f32::min(ratio, size.height / sum);
-    }
-
-    let sum = top_right_radius.height + bottom_right_radius.height;
-    if size.height < sum {
-        ratio = f32::min(ratio, size.height / sum);
+        let sum = top_right_radius.height + bottom_right_radius.height;
+        if size.height < sum {
+            ratio = f32::min(ratio, size.height / sum);
+        }
     }
 
     if ratio < 1. {
@@ -584,7 +588,8 @@ impl EdgeInfo {
 // the 'on' segment) and the count of them for a given segment.
 fn compute_half_dash(side_width: f32, total_size: f32) -> (f32, u32) {
     let half_dash = side_width * 1.5;
-    let num_half_dashes = (total_size / half_dash).ceil() as u32;
+    // 16k dashes should be enough for anyone
+    let num_half_dashes = (total_size / half_dash).ceil().min(16.0 * 1024.0) as u32;
 
     if num_half_dashes == 0 {
         return (0., 0);
@@ -1350,13 +1355,13 @@ impl NinePatchDescriptor {
 
             // Enable repeat modes on the segment.
             if repeat_horizontal == RepeatMode::Repeat {
-                brush_flags |= BrushFlags::SEGMENT_REPEAT_X;
+                brush_flags |= BrushFlags::SEGMENT_REPEAT_X | BrushFlags::SEGMENT_REPEAT_X_CENTERED;
             } else if repeat_horizontal == RepeatMode::Round {
                 brush_flags |= BrushFlags::SEGMENT_REPEAT_X | BrushFlags::SEGMENT_REPEAT_X_ROUND;
             }
 
             if repeat_vertical == RepeatMode::Repeat {
-                brush_flags |= BrushFlags::SEGMENT_REPEAT_Y;
+                brush_flags |= BrushFlags::SEGMENT_REPEAT_Y | BrushFlags::SEGMENT_REPEAT_Y_CENTERED;
             } else if repeat_vertical == RepeatMode::Round {
                 brush_flags |= BrushFlags::SEGMENT_REPEAT_Y | BrushFlags::SEGMENT_REPEAT_Y_ROUND;
             }

@@ -61,9 +61,7 @@ pub struct Profile {
     pub(crate) mAB: Option<Box<lutmABType>>,
     pub(crate) mBA: Option<Box<lutmABType>>,
     pub(crate) chromaticAdaption: Option<Matrix>,
-    pub(crate) output_table_r: Option<Arc<PrecacheOuput>>,
-    pub(crate) output_table_g: Option<Arc<PrecacheOuput>>,
-    pub(crate) output_table_b: Option<Arc<PrecacheOuput>>,
+    pub(crate) precache_output: Option<Arc<PrecacheOuput>>,
     is_srgb: bool,
 }
 
@@ -206,7 +204,7 @@ fn uInt16Number_to_float(a: uInt16Number) -> f32 {
     a as f32 / 65535.0
 }
 
-fn invalid_source(mut mem: &mut MemSource, reason: &'static str) {
+fn invalid_source(mem: &mut MemSource, reason: &'static str) {
     mem.valid = false;
     mem.invalid_reason = Some(reason);
 }
@@ -299,7 +297,7 @@ const COLOR_SPACE_PROFILE: u32 = 0x73706163; // 'spac'
 const ABSTRACT_PROFILE: u32 = 0x61627374; // 'abst'
 const NAMED_COLOR_PROFILE: u32 = 0x6e6d636c; // 'nmcl'
 
-fn read_class_signature(mut profile: &mut Profile, mem: &mut MemSource) {
+fn read_class_signature(profile: &mut Profile, mem: &mut MemSource) {
     profile.class_type = read_u32(mem, 12);
     match profile.class_type {
         DISPLAY_DEVICE_PROFILE
@@ -311,7 +309,7 @@ fn read_class_signature(mut profile: &mut Profile, mem: &mut MemSource) {
         }
     };
 }
-fn read_color_space(mut profile: &mut Profile, mem: &mut MemSource) {
+fn read_color_space(profile: &mut Profile, mem: &mut MemSource) {
     profile.color_space = read_u32(mem, 16);
     match profile.color_space {
         RGB_SIGNATURE | GRAY_SIGNATURE => {}
@@ -322,7 +320,7 @@ fn read_color_space(mut profile: &mut Profile, mem: &mut MemSource) {
         }
     };
 }
-fn read_pcs(mut profile: &mut Profile, mem: &mut MemSource) {
+fn read_pcs(profile: &mut Profile, mem: &mut MemSource) {
     profile.pcs = read_u32(mem, 20);
     match profile.pcs {
         XYZ_SIGNATURE | LAB_SIGNATURE => {}
@@ -863,7 +861,7 @@ fn read_tag_lutType(src: &mut MemSource, tag: &Tag) -> Option<Box<lutType>> {
         output_table,
     }))
 }
-fn read_rendering_intent(mut profile: &mut Profile, src: &mut MemSource) {
+fn read_rendering_intent(profile: &mut Profile, src: &mut MemSource) {
     let intent = read_u32(src, 64);
     profile.rendering_intent = match intent {
         x if x == Perceptual as u32 => Perceptual,
@@ -1160,6 +1158,13 @@ impl ColourPrimaries {
         }
         .into()
     }
+
+    fn is_usable(self) -> bool {
+        match self {
+            Self::Reserved | Self::Unspecified => false,
+            _ => true
+        }
+    }
 }
 
 /// See [Rec. ITU-T H.273 (12/2016)](https://www.itu.int/rec/T-REC-H.273-201612-I/en) Table 3
@@ -1272,7 +1277,7 @@ impl TryFrom<TransferCharacteristics> for curveType {
                 //
                 // Inverting gives the electro-optical transfer characteristic
                 // function (EOTF) which can be represented as ICC
-                // parametricCurveType with 4 parameters (ICC.1:2010 Table 5).
+                // parametricCurveType with 4 parameters (ICC.1:2010 Table 65).
                 // Converting between the two (Lc ↔︎ Y, V ↔︎ X):
                 //
                 // Y = (a * X + b)^g  for (X >= d)
@@ -1282,7 +1287,7 @@ impl TryFrom<TransferCharacteristics> for curveType {
                 //
                 // g = 1 / 0.45
                 // a = 1 / α
-                // b = 1 - α
+                // b = 1 - a
                 // c = 1 / 4.500
                 // d = 4.500 * β
                 //
@@ -1396,6 +1401,15 @@ impl TryFrom<TransferCharacteristics> for curveType {
                 curveType::Curve(table)
             }
         })
+    }
+}
+
+impl TransferCharacteristics {
+    fn is_usable(self) -> bool {
+        match self {
+            Self::Reserved | Self::Unspecified => false,
+            _ => true
+        }
     }
 }
 
@@ -1513,6 +1527,30 @@ impl Profile {
         profile
     }
 
+    pub(crate) fn new_displayP3() -> Box<Profile> {
+        let primaries = qcms_CIE_xyYTRIPLE::from(ColourPrimaries::Smpte432);
+        let white_point = qcms_white_point_sRGB();
+        let mut profile = profile_create();
+        set_rgb_colorants(&mut profile, white_point, primaries);
+
+        let curve = Box::new(curveType::Parametric(vec![
+            2.4,
+            1. / 1.055,
+            0.055 / 1.055,
+            1. / 12.92,
+            0.04045,
+        ]));
+        profile.redTRC = Some(curve.clone());
+        profile.blueTRC = Some(curve.clone());
+        profile.greenTRC = Some(curve);
+        profile.class_type = DISPLAY_DEVICE_PROFILE;
+        profile.rendering_intent = Perceptual;
+        profile.color_space = RGB_SIGNATURE;
+        profile.pcs = XYZ_TYPE;
+        profile.is_srgb = false;
+        profile
+    }
+
     /// Create a new profile with D50 adopted white and identity transform functions
     pub fn new_XYZD50() -> Box<Profile> {
         let mut profile = profile_create();
@@ -1538,6 +1576,9 @@ impl Profile {
 
     pub fn new_cicp(cp: ColourPrimaries, tc: TransferCharacteristics) -> Option<Box<Profile>> {
         let mut profile = profile_create();
+        if !cp.is_usable() || !tc.is_usable() {
+            return None;
+        }
         //XXX: should store the whitepoint
         if !set_rgb_colorants(&mut profile, cp.white_point(), qcms_CIE_xyYTRIPLE::from(cp)) {
             return None;
@@ -1602,7 +1643,7 @@ impl Profile {
         };
         let index;
         source.valid = true;
-        let mut src: &mut MemSource = &mut source;
+        let src: &mut MemSource = &mut source;
         if mem.len() < 4 {
             return None;
         }

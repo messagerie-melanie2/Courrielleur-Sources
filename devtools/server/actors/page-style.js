@@ -9,7 +9,6 @@ const {
   pageStyleSpec,
 } = require("resource://devtools/shared/specs/page-style.js");
 
-const { getCSSLexer } = require("resource://devtools/shared/css/lexer.js");
 const {
   LongStringActor,
 } = require("resource://devtools/server/actors/string.js");
@@ -161,7 +160,7 @@ class PageStyleActor extends Actor {
   /**
    * Called when a style sheet is updated.
    */
-  _styleApplied(kind, styleSheet) {
+  _styleApplied(kind) {
     // No matter what kind of update is done, we need to invalidate
     // the keyframe cache.
     this.cssLogic.reset();
@@ -172,13 +171,23 @@ class PageStyleActor extends Actor {
 
   /**
    * Return or create a StyleRuleActor for the given item.
-   * @param item Either a CSSStyleRule or a DOM element.
+   *
+   * @param {CSSStyleRule|Element} item
+   * @param {String} pseudoElement An optional pseudo-element type in cases when the CSS
+   *        rule applies to a pseudo-element.
+   * @param {Boolean} userAdded: Optional boolean to distinguish rules added by the user.
+   * @return {StyleRuleActor} The newly created, or cached, StyleRuleActor for this item.
    */
-  _styleRef(item) {
+  _styleRef(item, pseudoElement, userAdded = false) {
     if (this.refMap.has(item)) {
       return this.refMap.get(item);
     }
-    const actor = new StyleRuleActor(this, item);
+    const actor = new StyleRuleActor({
+      pageStyle: this,
+      item,
+      userAdded,
+      pseudoElement,
+    });
     this.manage(actor);
     this.refMap.set(item, actor);
 
@@ -249,27 +258,49 @@ class PageStyleActor extends Actor {
   getComputed(node, options) {
     const ret = Object.create(null);
 
+    const filterProperties = Array.isArray(options.filterProperties)
+      ? options.filterProperties
+      : null;
     this.cssLogic.sourceFilter = options.filter || SharedCssLogic.FILTER.UA;
     this.cssLogic.highlight(node.rawNode);
     const computed = this.cssLogic.computedStyle || [];
+    const targetDocument = this.inspector.targetActor.window.document;
 
-    Array.prototype.forEach.call(computed, name => {
-      if (
-        Array.isArray(options.filterProperties) &&
-        !options.filterProperties.includes(name)
-      ) {
-        return;
+    for (const name of computed) {
+      if (filterProperties && !filterProperties.includes(name)) {
+        continue;
       }
       ret[name] = {
         value: computed.getPropertyValue(name),
         priority: computed.getPropertyPriority(name) || undefined,
       };
-    });
+
+      if (name.startsWith("--")) {
+        const registeredProperty = InspectorUtils.getCSSRegisteredProperty(
+          targetDocument,
+          name
+        );
+        if (registeredProperty) {
+          ret[name].registeredPropertyInitialValue =
+            registeredProperty.initialValue;
+          if (
+            !InspectorUtils.valueMatchesSyntax(
+              targetDocument,
+              ret[name].value,
+              registeredProperty.syntax
+            )
+          ) {
+            ret[name].invalidAtComputedValueTime = true;
+            ret[name].registeredPropertySyntax = registeredProperty.syntax;
+          }
+        }
+      }
+    }
 
     if (options.markMatched || options.onlyMatched) {
       const matched = this.cssLogic.hasMatchedSelectors(Object.keys(ret));
       for (const key in ret) {
-        if (matched[key]) {
+        if (matched.has(key)) {
           ret[key].matched = options.markMatched ? true : undefined;
         } else if (options.onlyMatched) {
           delete ret[key];
@@ -346,11 +377,25 @@ class PageStyleActor extends Actor {
         format: font.format,
         localName: font.localName,
         metadata: font.metadata,
+        version: font.getNameString(InspectorFontFace.NAME_ID_VERSION),
+        description: font.getNameString(InspectorFontFace.NAME_ID_DESCRIPTION),
+        manufacturer: font.getNameString(
+          InspectorFontFace.NAME_ID_MANUFACTURER
+        ),
+        vendorUrl: font.getNameString(InspectorFontFace.NAME_ID_VENDOR_URL),
+        designer: font.getNameString(InspectorFontFace.NAME_ID_DESIGNER),
+        designerUrl: font.getNameString(InspectorFontFace.NAME_ID_DESIGNER_URL),
+        license: font.getNameString(InspectorFontFace.NAME_ID_LICENSE),
+        licenseUrl: font.getNameString(InspectorFontFace.NAME_ID_LICENSE_URL),
+        sampleText: font.getNameString(InspectorFontFace.NAME_ID_SAMPLE_TEXT),
       };
 
       // If this font comes from a @font-face rule
       if (font.rule) {
-        const styleActor = new StyleRuleActor(this, font.rule);
+        const styleActor = new StyleRuleActor({
+          pageStyle: this,
+          item: font.rule,
+        });
         this.manage(styleActor);
         fontFace.rule = styleActor;
         fontFace.ruleText = font.rule.cssText;
@@ -376,7 +421,8 @@ class PageStyleActor extends Actor {
         const opts = {
           previewText: options.previewText,
           previewFontSize: options.previewFontSize,
-          fontStyle: weight + " " + style,
+          fontStyle: style,
+          fontWeight: weight,
           fillStyle: options.previewFillStyle,
         };
         const { dataURL, size } = getFontPreviewData(
@@ -459,8 +505,17 @@ class PageStyleActor extends Actor {
     this.cssLogic.highlight(node.rawNode);
 
     const rules = new Set();
-
     const matched = [];
+
+    const targetDocument = this.inspector.targetActor.window.document;
+    let registeredProperty;
+    if (property.startsWith("--")) {
+      registeredProperty = InspectorUtils.getCSSRegisteredProperty(
+        targetDocument,
+        property
+      );
+    }
+
     const propInfo = this.cssLogic.getPropertyInfo(property);
     for (const selectorInfo of propInfo.matchedSelectors) {
       const cssRule = selectorInfo.selector.cssRule;
@@ -469,17 +524,27 @@ class PageStyleActor extends Actor {
       const rule = this._styleRef(domRule);
       rules.add(rule);
 
-      matched.push({
+      const match = {
         rule,
         sourceText: this.getSelectorSource(selectorInfo, node.rawNode),
         selector: selectorInfo.selector.text,
         name: selectorInfo.property,
         value: selectorInfo.value,
         status: selectorInfo.status,
-      });
+      };
+      if (
+        registeredProperty &&
+        !InspectorUtils.valueMatchesSyntax(
+          targetDocument,
+          match.value,
+          registeredProperty.syntax
+        )
+      ) {
+        match.invalidAtComputedValueTime = true;
+        match.registeredPropertySyntax = registeredProperty.syntax;
+      }
+      matched.push(match);
     }
-
-    this._expandRules(rules);
 
     return {
       matched,
@@ -524,37 +589,37 @@ class PageStyleActor extends Actor {
     this.selectedElement = node.rawNode;
 
     if (!node) {
-      return { entries: [], rules: [], sheets: [] };
+      return { entries: [] };
     }
 
     this.cssLogic.highlight(node.rawNode);
-    let entries = [];
-    entries = entries.concat(
-      this._getAllElementRules(node, undefined, options)
+
+    const entries = this.getAppliedProps(
+      node,
+      this._getAllElementRules(node, undefined, options),
+      options
     );
 
-    const result = this.getAppliedProps(node, entries, options);
-    for (const rule of result.rules) {
-      try {
-        // See the comment in |StyleRuleActor.form| to understand this.
-        // This can throw if the authored rule text is not found (so e.g., with
-        // CSSOM or constructable stylesheets).
-        await rule.getAuthoredCssText();
-      } catch (ex) {}
-    }
+    const entryRules = new Set();
+    entries.forEach(entry => {
+      entryRules.add(entry.rule);
+    });
+
+    await Promise.all(entries.map(entry => entry.rule.getAuthoredCssText()));
 
     // Reference to instances of StyleRuleActor for CSS rules matching the node.
     // Assume these are used by a consumer which wants to be notified when their
     // state or declarations change either directly or indirectly.
-    this._observedRules = result.rules;
+    this._observedRules = entryRules;
 
-    return result;
+    return { entries };
   }
 
   _hasInheritedProps(style) {
-    return Array.prototype.some.call(style, prop => {
-      return InspectorUtils.isInheritedProperty(prop);
-    });
+    const doc = this.inspector.targetActor.window.document;
+    return Array.prototype.some.call(style, prop =>
+      InspectorUtils.isInheritedProperty(doc, prop)
+    );
   }
 
   async isPositionEditable(node) {
@@ -587,6 +652,7 @@ class PageStyleActor extends Actor {
    *                - isSystem Boolean
    *                - inherited Boolean
    *                - pseudoElement String
+   *                - darkColorScheme Boolean
    */
   _getAllElementRules(node, inherited, options) {
     const { bindingElement, pseudo } = CssLogic.getBindingElementAndPseudo(
@@ -598,17 +664,20 @@ class PageStyleActor extends Actor {
       return rules;
     }
 
-    const elementStyle = this._styleRef(bindingElement);
+    const elementStyle = this._styleRef(
+      bindingElement,
+      // for inline style, we can't have a related pseudo element
+      null
+    );
     const showElementStyles = !inherited && !pseudo;
     const showInheritedStyles =
       inherited && this._hasInheritedProps(bindingElement.style);
 
-    const rule = {
-      rule: elementStyle,
+    const rule = this._getRuleItem(elementStyle, node.rawNode, {
       pseudoElement: null,
       isSystem: false,
       inherited: false,
-    };
+    });
 
     // First any inline styles
     if (showElementStyles) {
@@ -636,22 +705,70 @@ class PageStyleActor extends Actor {
     );
 
     // Now any pseudos.
-    if (showElementStyles && !options.skipPseudo) {
+    if (!pseudo && !options.skipPseudo) {
+      const relevantPseudoElements = [];
       for (const readPseudo of PSEUDO_ELEMENTS) {
-        if (this._pseudoIsRelevant(bindingElement, readPseudo)) {
-          this._getElementRules(
-            bindingElement,
-            readPseudo,
-            inherited,
-            options
-          ).forEach(oneRule => {
-            rules.push(oneRule);
+        if (!this._pseudoIsRelevant(bindingElement, readPseudo, inherited)) {
+          continue;
+        }
+
+        // FIXME: Bug 1909173. Need to handle view transitions peudo-elements.
+        if (readPseudo === "::highlight") {
+          InspectorUtils.getRegisteredCssHighlights(
+            this.inspector.targetActor.window.document,
+            // only active
+            true
+          ).forEach(name => {
+            relevantPseudoElements.push(`::highlight(${name})`);
           });
+        } else {
+          relevantPseudoElements.push(readPseudo);
+        }
+      }
+
+      for (const readPseudo of relevantPseudoElements) {
+        const pseudoRules = this._getElementRules(
+          bindingElement,
+          readPseudo,
+          inherited,
+          options
+        );
+        // inherited element backed pseudo element rules (e.g. `::details-content`) should
+        // not be at the same "level" as rules inherited from the binding element (e.g. `<details>`),
+        // so we need to put them before the "regular" rules.
+        if (
+          SharedCssLogic.ELEMENT_BACKED_PSEUDO_ELEMENTS.has(readPseudo) &&
+          inherited
+        ) {
+          rules.unshift(...pseudoRules);
+        } else {
+          rules.push(...pseudoRules);
         }
       }
     }
 
     return rules;
+  }
+
+  /**
+   * @param {DOMNode} rawNode
+   * @param {StyleRuleActor} styleRuleActor
+   * @param {Object} params
+   * @param {Boolean} params.inherited
+   * @param {Boolean} params.isSystem
+   * @param {String|null} params.pseudoElement
+   * @returns Object
+   */
+  _getRuleItem(rule, rawNode, { inherited, isSystem, pseudoElement }) {
+    return {
+      rule,
+      pseudoElement,
+      isSystem,
+      inherited,
+      // We can't compute the value for the whole document as the color scheme
+      // can be set at the node level (e.g. with `color-scheme`)
+      darkColorScheme: InspectorUtils.isUsedColorSchemeDark(rawNode),
+    };
   }
 
   _nodeIsTextfieldLike(node) {
@@ -664,16 +781,6 @@ class PageStyleActor extends Actor {
     );
   }
 
-  _nodeIsButtonLike(node) {
-    if (node.nodeName == "BUTTON") {
-      return true;
-    }
-    return (
-      node.nodeName == "INPUT" &&
-      ["submit", "color", "button"].includes(node.type)
-    );
-  }
-
   _nodeIsListItem(node) {
     const display = CssLogic.getComputedStyle(node).getPropertyValue("display");
     // This is written this way to handle `inline list-item` and such.
@@ -681,39 +788,83 @@ class PageStyleActor extends Actor {
   }
 
   // eslint-disable-next-line complexity
-  _pseudoIsRelevant(node, pseudo) {
+  _pseudoIsRelevant(node, pseudo, inherited = false) {
     switch (pseudo) {
       case "::after":
       case "::before":
       case "::first-letter":
       case "::first-line":
       case "::selection":
-        return true;
+      case "::highlight":
+      case "::target-text":
+        return !inherited;
       case "::marker":
-        return this._nodeIsListItem(node);
+        return !inherited && this._nodeIsListItem(node);
       case "::backdrop":
-        return node.matches(":modal");
+        return !inherited && node.matches(":modal, :popover-open");
       case "::cue":
-        return node.nodeName == "VIDEO";
+        return !inherited && node.nodeName == "VIDEO";
       case "::file-selector-button":
-        return node.nodeName == "INPUT" && node.type == "file";
+        return !inherited && node.nodeName == "INPUT" && node.type == "file";
+      case "::details-content": {
+        const isDetailsNode = node.nodeName == "DETAILS";
+        if (!isDetailsNode) {
+          return false;
+        }
+
+        if (!inherited) {
+          return true;
+        }
+
+        // If we're getting rules on a parent element, we need to check if the selected
+        // element is inside the ::details-content of node
+        // We traverse the flattened parent tree until we find the <slot> that implements
+        // the pseudo element, as it's easier to handle edge cases like nested <details>,
+        // multiple <summary>, etc …
+        let traversedNode = this.selectedElement;
+        while (traversedNode) {
+          if (
+            // if we found the <slot> implementing the pseudo element
+            traversedNode.implementedPseudoElement === "::details-content" &&
+            // and its parent <details> element is the element we're evaluating
+            traversedNode.flattenedTreeParentNode === node
+          ) {
+            // then include the ::details-content rules from that element
+            return true;
+          }
+          // otherwise keep looking up the tree
+          traversedNode = traversedNode.flattenedTreeParentNode;
+        }
+
+        return false;
+      }
       case "::placeholder":
       case "::-moz-placeholder":
-        return this._nodeIsTextfieldLike(node);
-      case "::-moz-focus-inner":
-        return this._nodeIsButtonLike(node);
+        return !inherited && this._nodeIsTextfieldLike(node);
       case "::-moz-meter-bar":
-        return node.nodeName == "METER";
+        return !inherited && node.nodeName == "METER";
       case "::-moz-progress-bar":
-        return node.nodeName == "PROGRESS";
+        return !inherited && node.nodeName == "PROGRESS";
       case "::-moz-color-swatch":
-        return node.nodeName == "INPUT" && node.type == "color";
+        return !inherited && node.nodeName == "INPUT" && node.type == "color";
       case "::-moz-range-progress":
       case "::-moz-range-thumb":
       case "::-moz-range-track":
-        return node.nodeName == "INPUT" && node.type == "range";
+      case "::slider-fill":
+      case "::slider-thumb":
+      case "::slider-track":
+        return !inherited && node.nodeName == "INPUT" && node.type == "range";
+      case "::view-transition":
+      case "::view-transition-group":
+      case "::view-transition-image-pair":
+      case "::view-transition-old":
+      case "::view-transition-new":
+        // FIXME: Bug 1909173. Need to handle view transitions peudo-elements
+        // for DevTools. For now we skip them.
+        return false;
       default:
-        throw Error("Unhandled pseudo-element " + pseudo);
+        console.error("Unhandled pseudo-element " + pseudo);
+        return false;
     }
   }
 
@@ -728,10 +879,13 @@ class PageStyleActor extends Actor {
    * @returns Array
    */
   _getElementRules(node, pseudo, inherited, options) {
-    const domRules = InspectorUtils.getCSSStyleRules(
+    // we don't need to retrieve inherited starting style rules
+    const includeStartingStyleRules = !inherited;
+    const domRules = InspectorUtils.getMatchingCSSRules(
       node,
       pseudo,
-      CssLogic.hasVisitedState(node)
+      CssLogic.hasVisitedState(node),
+      includeStartingStyleRules
     );
 
     if (!domRules) {
@@ -740,7 +894,9 @@ class PageStyleActor extends Actor {
 
     const rules = [];
 
-    // getCSSStyleRules returns ordered from least-specific to
+    const doc = this.inspector.targetActor.window.document;
+
+    // getMatchingCSSRules returns ordered from least-specific to
     // most-specific.
     for (let i = domRules.length - 1; i >= 0; i--) {
       const domRule = domRules[i];
@@ -757,21 +913,22 @@ class PageStyleActor extends Actor {
         // Don't include inherited rules if none of its properties
         // are inheritable.
         const hasInherited = [...domRule.style].some(prop =>
-          InspectorUtils.isInheritedProperty(prop)
+          InspectorUtils.isInheritedProperty(doc, prop)
         );
         if (!hasInherited) {
           continue;
         }
       }
 
-      const ruleActor = this._styleRef(domRule);
+      const ruleActor = this._styleRef(domRule, pseudo);
 
-      rules.push({
-        rule: ruleActor,
-        inherited,
-        isSystem,
-        pseudoElement: pseudo,
-      });
+      rules.push(
+        this._getRuleItem(ruleActor, node, {
+          inherited,
+          isSystem,
+          pseudoElement: pseudo,
+        })
+      );
     }
     return rules;
   }
@@ -811,7 +968,7 @@ class PageStyleActor extends Actor {
    *     'ua': Include properties from user and user-agent sheets.
    *     Default value is 'ua'
    *   `inherited`: Include styles inherited from parent nodes.
-   *   `matchedSelectors`: Include an array of specific selectors that
+   *   `matchedSelectors`: Include an array of specific (desugared) selectors that
    *     caused this rule to match its node.
    *   `skipPseudo`: Exclude styles applied to pseudo elements of the provided node.
    * @param array entries
@@ -819,9 +976,7 @@ class PageStyleActor extends Actor {
    *   node. If adding a new rule to the stylesheet, only the new rule entry
    *   is provided and only the style properties that apply to the new
    *   rule is fetched.
-   * @returns Object containing the list of rule entries, rule actors and
-   *   stylesheet actors that applies to the given node and its associated
-   *   rules.
+   * @returns Array of rule entries that applies to the given node and its associated rules.
    */
   getAppliedProps(node, entries, options) {
     if (options.inherited) {
@@ -841,7 +996,6 @@ class PageStyleActor extends Actor {
         }
 
         const domRule = entry.rule.rawRule;
-        const selectors = CssLogic.getSelectors(domRule);
         const element = entry.inherited
           ? entry.inherited.rawNode
           : node.rawNode;
@@ -849,19 +1003,19 @@ class PageStyleActor extends Actor {
         const { bindingElement, pseudo } =
           CssLogic.getBindingElementAndPseudo(element);
         const relevantLinkVisited = CssLogic.hasVisitedState(bindingElement);
-        entry.matchedSelectors = [];
+        entry.matchedSelectorIndexes = [];
 
-        for (let i = 0; i < selectors.length; i++) {
+        const len = domRule.selectorCount;
+        for (let i = 0; i < len; i++) {
           if (
-            InspectorUtils.selectorMatchesElement(
-              bindingElement,
-              domRule,
+            domRule.selectorMatchesElement(
               i,
+              bindingElement,
               pseudo,
               relevantLinkVisited
             )
           ) {
-            entry.matchedSelectors.push(selectors[i]);
+            entry.matchedSelectorIndexes.push(i);
           }
         }
       }
@@ -877,41 +1031,21 @@ class PageStyleActor extends Actor {
         // Traverse through all the available keyframes rule and add
         // the keyframes rule that matches the computed animation name
         for (const keyframesRule of this.cssLogic.keyframesRules) {
-          if (animationNames.indexOf(keyframesRule.name) > -1) {
-            for (const rule of keyframesRule.cssRules) {
-              entries.push({
-                rule: this._styleRef(rule),
-                keyframes: this._styleRef(keyframesRule),
-              });
-            }
+          if (!animationNames.includes(keyframesRule.name)) {
+            continue;
+          }
+
+          for (const rule of keyframesRule.cssRules) {
+            entries.push({
+              rule: this._styleRef(rule),
+              keyframes: this._styleRef(keyframesRule),
+            });
           }
         }
       }
     }
 
-    const rules = new Set();
-    entries.forEach(entry => rules.add(entry.rule));
-    this._expandRules(rules);
-
-    return {
-      entries,
-      rules: [...rules],
-    };
-  }
-
-  /**
-   * Expand a set of rules to include all parent rules.
-   */
-  _expandRules(ruleSet) {
-    // Sets include new items in their iteration
-    for (const rule of ruleSet) {
-      if (rule.rawRule.parentRule) {
-        const parent = this._styleRef(rule.rawRule.parentRule);
-        if (!ruleSet.has(parent)) {
-          ruleSet.add(parent);
-        }
-      }
-    }
+    return entries;
   }
 
   /**
@@ -1032,7 +1166,7 @@ class PageStyleActor extends Actor {
    * properties
    * @param NodeActor node
    * @param CSSStyleRule rule
-   * @returns Object containing its applied style properties
+   * @returns Array containing its applied style properties
    */
   getNewAppliedProps(node, rule) {
     const ruleActor = this._styleRef(rule);
@@ -1086,7 +1220,7 @@ class PageStyleActor extends Actor {
     await this.styleSheetsManager.setStyleSheetText(resourceId, authoredText);
 
     const cssRule = sheet.cssRules.item(index);
-    const ruleActor = this._styleRef(cssRule);
+    const ruleActor = this._styleRef(cssRule, null, true);
 
     TrackChangeEmitter.trackChange({
       ...ruleActor.metadata,
@@ -1096,7 +1230,7 @@ class PageStyleActor extends Actor {
       selector,
     });
 
-    return this.getNewAppliedProps(node, cssRule);
+    return { entries: this.getNewAppliedProps(node, cssRule) };
   }
 
   /**
@@ -1112,10 +1246,15 @@ class PageStyleActor extends Actor {
    * Call this method whenever a CSS rule is mutated:
    * - a CSS declaration is added/changed/disabled/removed
    * - a selector is added/changed/removed
+   *
+   * @param {Array<StyleRuleActor>} rulesToForceRefresh: An array of rules that,
+   *        if observed, should be refreshed even if the state of their declaration
+   *        didn't change.
    */
-  refreshObservedRules() {
+  refreshObservedRules(rulesToForceRefresh) {
     for (const rule of this._observedRules) {
-      rule.refresh();
+      const force = rulesToForceRefresh && rulesToForceRefresh.includes(rule);
+      rule.maybeRefresh(force);
     }
   }
 
@@ -1229,12 +1368,18 @@ class PageStyleActor extends Actor {
       return;
     }
 
-    // We loop through all the stylesheets and their rules, and then use the lexer to only
-    // get the attributes we're looking for.
-    for (const styleSheet of targetDocument.styleSheets) {
-      for (const rule of styleSheet.rules) {
+    // We loop through all the stylesheets and their rules, recursively so we can go through
+    // nested rules, and then use the lexer to only get the attributes we're looking for.
+    const traverseRules = ruleList => {
+      for (const rule of ruleList) {
         this._collectAttributesFromRule(result, rule, search, attributeType);
+        if (rule.cssRules) {
+          traverseRules(rule.cssRules);
+        }
       }
+    };
+    for (const styleSheet of targetDocument.styleSheets) {
+      traverseRules(styleSheet.rules);
     }
   }
 
@@ -1271,20 +1416,26 @@ class PageStyleActor extends Actor {
       return;
     }
 
-    const lexer = getCSSLexer(selectorText);
+    const lexer = new InspectorCSSParser(selectorText);
     let token;
     while ((token = lexer.nextToken())) {
       if (
-        token.tokenType === "symbol" &&
-        ((shouldRetrieveClasses && token.text === ".") ||
-          (shouldRetrieveIds && token.text === "#"))
+        token.tokenType === "Delim" &&
+        shouldRetrieveClasses &&
+        token.text === "."
       ) {
         token = lexer.nextToken();
         if (
-          token.tokenType === "ident" &&
+          token.tokenType === "Ident" &&
           token.text.toLowerCase().startsWith(search)
         ) {
           result.add(token.text);
+        }
+      }
+      if (token.tokenType === "IDHash" && shouldRetrieveIds) {
+        const idWithoutHash = token.value;
+        if (idWithoutHash.startsWith(search)) {
+          result.add(idWithoutHash);
         }
       }
     }

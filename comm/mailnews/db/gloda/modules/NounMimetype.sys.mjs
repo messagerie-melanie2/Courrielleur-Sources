@@ -202,6 +202,7 @@ var MimeCategoryMapping = {
  * Instances of this class should only be retrieved via |MimeTypeNoun|; no one
  *  should ever create an instance directly.
  */
+// eslint-disable-next-line no-shadow
 export function MimeType(aID, aType, aSubType, aFullType, aCategory) {
   this._id = aID;
   this._type = aType;
@@ -253,18 +254,18 @@ MimeType.prototype = {
   },
 
   /**
-   * @returns the category we believe this mime type belongs to.  This category
-   *     name should never be shown directly to the user.  Instead, use
-   *     |categoryLabel| to get the localized name for the category.  The
-   *     category mapping comes from mimeTypesCategories.js.
+   * @returns {string} the category we believe this mime type belongs to.
+   *   This category name should never be shown directly to the user.  Instead, use
+   *   |categoryLabel| to get the localized name for the category.  The
+   *   category mapping comes from mimeTypesCategories.js.
    */
   get category() {
     return this._category;
   },
   /**
-   * @returns The localized label for the category from gloda.properties in the
-   *     "gloda.mimetype.category.CATEGORY.label" definition using the value
-   *     from |category|.
+   * @returns {string} The localized label for the category from gloda.properties in the
+   *   "gloda.mimetype.category.CATEGORY.label" definition using the value
+   *   from |category|.
    */
   get categoryLabel() {
     return CategoryStringMap[this._category];
@@ -498,9 +499,10 @@ export var MimeTypeNoun = {
   /**
    * Map a mime type to a |MimeType| instance, creating it if necessary.
    *
-   * @param aMimeTypeName The mime type.  It may optionally include parameters
-   *     (which will be ignored).  A mime type is of the form "type/subtype".
-   *     A type with parameters would look like 'type/subtype; param="value"'.
+   * @param {string} aMimeTypeName - The mime type.
+   *   It may optionally include parameters (which will be ignored).
+   *   A mime type is of the form "type/subtype".
+   *   A type with parameters would look like 'type/subtype; param="value"'.
    */
   getMimeType(aMimeTypeName) {
     // first, lose any parameters
@@ -528,8 +530,8 @@ export var MimeTypeNoun = {
      *  passed in.  We want the range to span the entire block allocated to the
      *  category.
      *
-     * @param aAttrDef The attribute that is using us.
-     * @param aArguments The actual arguments object that
+     * @param {object} aAttrDef - The attribute that is using us. See Gloda.defineAttribute()
+     * @param {[]} aArguments - The actual arguments object.
      */
     Category(aAttrDef, aArguments) {
       const rangePairs = [];

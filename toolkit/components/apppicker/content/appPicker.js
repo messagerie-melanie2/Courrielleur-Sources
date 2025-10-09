@@ -74,6 +74,7 @@ AppPicker.prototype = {
     var fileList = mimeInfo.possibleLocalHandlers;
 
     var list = document.getElementById("app-picker-listbox");
+    list.addEventListener("dblclick", () => g_dialog.appDoubleClick());
 
     var primaryCount = 0;
 
@@ -195,7 +196,11 @@ AppPicker.prototype = {
     var nsIFilePicker = Ci.nsIFilePicker;
     var fp = Cc["@mozilla.org/filepicker;1"].createInstance(nsIFilePicker);
 
-    fp.init(window, this._incomingParams.title, nsIFilePicker.modeOpen);
+    fp.init(
+      window.browsingContext,
+      this._incomingParams.title,
+      nsIFilePicker.modeOpen
+    );
     fp.appendFilters(nsIFilePicker.filterApps);
 
     var startLocation;
@@ -224,3 +229,4 @@ AppPicker.prototype = {
 
 // Global object
 var g_dialog = new AppPicker();
+window.addEventListener("load", () => g_dialog.appPickerLoad());

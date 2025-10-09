@@ -35,6 +35,8 @@ const BUILTIN_SPACES = new Set([
  * custom element for state management. When visible, the document should have
  * the customizingUnifiedToolbar class.
  * Template: #unifiedToolbarCustomizationTemplate.
+ *
+ * @tagname unified-toolbar-customization
  */
 class UnifiedToolbarCustomization extends HTMLElement {
   /**
@@ -67,7 +69,7 @@ class UnifiedToolbarCustomization extends HTMLElement {
         passive: false,
       }
     );
-    form.addEventListener("reset", event => {
+    form.addEventListener("reset", () => {
       this.#reset();
     });
     template
@@ -96,10 +98,22 @@ class UnifiedToolbarCustomization extends HTMLElement {
     this.initialize();
     this.append(template);
     this.#updateResetToDefault();
-    this.addEventListener("keyup", this.#handleKeyboard);
-    this.addEventListener("keyup", this.#closeByKeyboard);
-    this.addEventListener("keypress", this.#handleKeyboard);
-    this.addEventListener("keydown", this.#handleKeyboard);
+    this.addEventListener("keyup", this);
+    this.addEventListener("keypress", this);
+    this.addEventListener("keydown", this);
+  }
+
+  handleEvent(event) {
+    switch (event.type) {
+      case "keyup":
+        this.#handleKeyboard(event);
+        this.#closeByKeyboard(event);
+        break;
+      case "keypress":
+      case "keydown":
+        this.#handleKeyboard(event);
+        break;
+    }
   }
 
   #handleItemChange = event => {
@@ -124,7 +138,7 @@ class UnifiedToolbarCustomization extends HTMLElement {
 
   #handleSettingsButton = event => {
     event.preventDefault();
-    openPreferencesTab("paneGeneral", "layoutGroup");
+    openPreferencesTab("paneAppearance", "layoutGroup");
     this.toggle(false);
   };
 

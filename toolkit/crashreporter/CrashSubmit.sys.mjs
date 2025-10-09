@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { FileUtils } from "resource://gre/modules/FileUtils.sys.mjs";
-
 const SUCCESS = "success";
 const FAILED = "failed";
 const SUBMITTING = "submitting";
@@ -12,81 +10,6 @@ const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SUBMISSION_REGEX =
   /^bp-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-// TODO: this is still synchronous; need an async INI parser to make it async
-function parseINIStrings(path) {
-  let file = new FileUtils.File(path);
-  let factory = Cc["@mozilla.org/xpcom/ini-parser-factory;1"].getService(
-    Ci.nsIINIParserFactory
-  );
-  let parser = factory.createINIParser(file);
-  let obj = {};
-  for (let key of parser.getKeys("Strings")) {
-    obj[key] = parser.getString("Strings", key);
-  }
-  return obj;
-}
-
-// Since we're basically re-implementing (with async) part of the crashreporter
-// client here, we'll just steal the strings we need from crashreporter.ini
-async function getL10nStrings() {
-  let path = PathUtils.join(
-    Services.dirsvc.get("GreD", Ci.nsIFile).path,
-    "crashreporter.ini"
-  );
-  let pathExists = await IOUtils.exists(path);
-
-  if (!pathExists) {
-    // we if we're on a mac
-    let parentDir = PathUtils.parent(path);
-    path = PathUtils.join(
-      parentDir,
-      "MacOS",
-      "crashreporter.app",
-      "Contents",
-      "Resources",
-      "crashreporter.ini"
-    );
-
-    let pathExists = await IOUtils.exists(path);
-
-    if (!pathExists) {
-      // This happens on Android where everything is in an APK.
-      // Android users can't see the contents of the submitted files
-      // anyway, so just hardcode some fallback strings.
-      return {
-        crashid: "Crash ID: %s",
-        reporturl: "You can view details of this crash at %s",
-      };
-    }
-  }
-
-  let crstrings = parseINIStrings(path);
-  let strings = {
-    crashid: crstrings.CrashID,
-    reporturl: crstrings.CrashDetailsURL,
-  };
-
-  path = PathUtils.join(
-    Services.dirsvc.get("XCurProcD", Ci.nsIFile).path,
-    "crashreporter-override.ini"
-  );
-  pathExists = await IOUtils.exists(path);
-
-  if (pathExists) {
-    crstrings = parseINIStrings(path);
-
-    if ("CrashID" in crstrings) {
-      strings.crashid = crstrings.CrashID;
-    }
-
-    if ("CrashDetailsURL" in crstrings) {
-      strings.reporturl = crstrings.CrashDetailsURL;
-    }
-  }
-
-  return strings;
-}
 
 function getDir(name) {
   let uAppDataPath = Services.dirsvc.get("UAppData", Ci.nsIFile).path;
@@ -109,11 +32,17 @@ function getPendingMinidump(id) {
 }
 
 async function writeSubmittedReportAsync(crashID, viewURL) {
-  let strings = await getL10nStrings();
-  let data = strings.crashid.replace("%s", crashID);
-
+  // Since we're basically re-implementing (with async) part of the
+  // crashreporter client here, we'll use the strings we need from the
+  // crashreporter fluent file.
+  const l10n = new Localization(["crashreporter/crashreporter.ftl"]);
+  let data = await l10n.formatValue("crashreporter-crash-identifier", {
+    id: crashID,
+  });
   if (viewURL) {
-    data += "\n" + strings.reporturl.replace("%s", viewURL);
+    data +=
+      "\n" +
+      (await l10n.formatValue("crashreporter-crash-details", { url: viewURL }));
   }
 
   await writeFileAsync("submitted", `${crashID}.txt`, data);
@@ -196,6 +125,8 @@ Submitter.prototype = {
   },
 
   submitForm: function Submitter_submitForm() {
+    this.submittedExtraKeyVals = {};
+
     if (!("ServerURL" in this.extraKeyVals)) {
       return false;
     }
@@ -216,8 +147,15 @@ Submitter.prototype = {
     // tell the server not to throttle this if requested
     this.extraKeyVals.Throttleable = this.noThrottle ? "0" : "1";
 
-    // add the data
-    let payload = Object.assign({}, this.extraKeyVals);
+    // add the data, keeping only annotations which are allowed for reports
+    let payload = Object.fromEntries(
+      Object.entries(this.extraKeyVals).filter(
+        ([annotation, _]) =>
+          Services.appinfo.isAnnotationValid(annotation) &&
+          Services.appinfo.isAnnotationAllowedForReport(annotation)
+      )
+    );
+    this.submittedExtraKeyVals = payload;
     let json = new Blob([JSON.stringify(payload)], {
       type: "application/json",
     });
@@ -259,10 +197,36 @@ Submitter.prototype = {
     let manager = Services.crashmanager;
     let submissionID = manager.generateSubmissionID();
 
-    xhr.addEventListener("readystatechange", evt => {
+    xhr.addEventListener("readystatechange", () => {
       if (xhr.readyState == 4) {
         let ret =
           xhr.status === 200 ? this.parseResponse(xhr.responseText) : {};
+        let failmsg;
+        if (xhr.status !== 200) {
+          const xhrStatus = code => {
+            switch (code) {
+              case 400:
+                return xhr.responseText;
+
+              case 413:
+                return "Discarded=post_body_too_large";
+
+              default:
+                return "Discarded=unknown_error";
+            }
+          };
+          let err = xhrStatus(xhr.status);
+          if (err.length && err.startsWith("Discarded=")) {
+            // Place the error code after, otherwise JS will complain we start
+            // with a number when dealing with the telemetry value on JS side
+            const errMsg = `${err.split("Discarded=")[1]}_${xhr.status}`;
+            Glean.crashSubmission.collectorErrors[errMsg].add();
+            failmsg = `received bad response: ${xhr.status} ${err}`;
+          }
+          if (xhr.status === 0) {
+            Glean.crashSubmission.channelStatus[xhr.channel.status].add();
+          }
+        }
         let submitted = !!ret.CrashID;
         let p = Promise.resolve();
 
@@ -285,7 +249,10 @@ Submitter.prototype = {
           if (submitted) {
             this.submitSuccess(ret);
           } else {
-            this.notifyStatus(FAILED);
+            this.notifyStatus(
+              FAILED,
+              failmsg || "did not receive a crash ID in server response"
+            );
             this.cleanup();
           }
         });
@@ -306,6 +273,10 @@ Submitter.prototype = {
     return true;
   },
 
+  // `ret` is determined based on `status`:
+  // * `SUCCESS` - `ret` should be an object with submission details.
+  // * `FAILED` - `ret` should be a string with additional information about
+  //   the failure.
   notifyStatus: function Submitter_notify(status, ret) {
     let propBag = Cc["@mozilla.org/hash-property-bag;1"].createInstance(
       Ci.nsIWritablePropertyBag2
@@ -318,7 +289,7 @@ Submitter.prototype = {
     let extraKeyValsBag = Cc["@mozilla.org/hash-property-bag;1"].createInstance(
       Ci.nsIWritablePropertyBag2
     );
-    for (let key in this.extraKeyVals) {
+    for (let key in this.submittedExtraKeyVals) {
       extraKeyValsBag.setPropertyAsAString(key, this.extraKeyVals[key]);
     }
     propBag.setPropertyAsInterface("extra", extraKeyValsBag);
@@ -328,9 +299,11 @@ Submitter.prototype = {
     switch (status) {
       case SUCCESS:
         this.resolveSubmitStatusPromise(ret.CrashID);
+        Glean.crashSubmission.success.add(1);
         break;
       case FAILED:
-        this.rejectSubmitStatusPromise(FAILED);
+        this.rejectSubmitStatusPromise(`${FAILED}: ${ret}`);
+        Glean.crashSubmission.failure.add(1);
         break;
       default:
       // no callbacks invoked.
@@ -338,18 +311,8 @@ Submitter.prototype = {
   },
 
   readAnnotations: async function Submitter_readAnnotations(extra) {
-    // These annotations are used only by the crash reporter client and should
-    // not be submitted to Socorro.
-    const strippedAnnotations = [
-      "StackTraces",
-      "TelemetryClientId",
-      "TelemetrySessionId",
-      "TelemetryServerURL",
-    ];
     let extraKeyVals = await IOUtils.readJSON(extra);
-
     this.extraKeyVals = { ...extraKeyVals, ...this.extraKeyVals };
-    strippedAnnotations.forEach(key => delete this.extraKeyVals[key]);
   },
 
   submit: async function Submitter_submit() {
@@ -365,7 +328,10 @@ Submitter.prototype = {
     ]);
 
     if (!dumpExists || !extraExists) {
-      this.notifyStatus(FAILED);
+      this.notifyStatus(
+        FAILED,
+        `missing ${!dumpExists ? "dump" : "extra"} file`
+      );
       this.cleanup();
       return this.submitStatusPromise;
     }
@@ -394,7 +360,10 @@ Submitter.prototype = {
       let allDumpsExist = dumpsExist.every(exists => exists);
 
       if (!allDumpsExist) {
-        this.notifyStatus(FAILED);
+        this.notifyStatus(
+          FAILED,
+          "one or more additional minidumps are missing"
+        );
         this.cleanup();
         return this.submitStatusPromise;
       }
@@ -404,7 +373,10 @@ Submitter.prototype = {
     this.additionalDumps = additionalDumps;
 
     if (!(await this.submitForm())) {
-      this.notifyStatus(FAILED);
+      this.notifyStatus(
+        FAILED,
+        "no url available to which to send crash reports"
+      );
       this.cleanup();
     }
 
@@ -415,7 +387,7 @@ Submitter.prototype = {
 // ===================================
 // External API goes here
 export var CrashSubmit = {
-  // A set of strings representing how a user subnmitted a given crash
+  // A set of strings representing how a user submitted a given crash
   SUBMITTED_FROM_AUTO: "Auto",
   SUBMITTED_FROM_INFOBAR: "Infobar",
   SUBMITTED_FROM_ABOUT_CRASHES: "AboutCrashes",
@@ -496,8 +468,8 @@ export var CrashSubmit = {
   },
 
   /**
-   * Add a .dmg.ignore file along side the .dmp file to indicate that the user
-   * shouldn't be prompted to submit this crash report again.
+   * Add a .dmg.ignore file along side the (existing) .dmp file to indicate
+   * that the user shouldn't be prompted to submit this crash report again.
    *
    * @param id
    *        Filename (minus .dmp extension) of the report to ignore
@@ -507,8 +479,10 @@ export var CrashSubmit = {
    */
   ignore: async function CrashSubmit_ignore(id) {
     let [dump /* , extra, memory */] = getPendingMinidump(id);
-    const ignorePath = `${dump}.ignore`;
-    await IOUtils.writeUTF8(ignorePath, "", { mode: "create" });
+    if (await IOUtils.exists(dump)) {
+      const ignorePath = `${dump}.ignore`;
+      await IOUtils.writeUTF8(ignorePath, "", { mode: "create" });
+    }
   },
 
   /**
@@ -540,7 +514,17 @@ export var CrashSubmit = {
       const ignored = Object.create(null);
 
       for (const child of children) {
-        const info = await IOUtils.stat(child);
+        let info;
+        try {
+          info = await IOUtils.stat(child);
+        } catch (ex) {
+          // File may have disappeared
+          if (ex.result == Cr.NS_ERROR_DOM_NOT_FOUND_ERR) {
+            continue;
+          }
+          console.error(ex);
+          throw ex;
+        }
 
         if (info.type !== "directory") {
           const name = PathUtils.filename(child);

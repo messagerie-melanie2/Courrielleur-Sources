@@ -2,8 +2,11 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+#include "mimehdrs.h"
 #include "nsCOMPtr.h"
 #include "mimeebod.h"
+#include "nsMailHeaders.h"
 #include "prmem.h"
 #include "plstr.h"
 #include "prlog.h"
@@ -37,9 +40,7 @@ static int MimeExternalBody_debug_print (MimeObject *, PRFileDesc *, int32_t);
 #  endif
 #endif /* 0 */
 
-static int MimeExternalBodyClassInitialize(MimeExternalBodyClass* clazz) {
-  MimeObjectClass* oclass = (MimeObjectClass*)clazz;
-
+static int MimeExternalBodyClassInitialize(MimeObjectClass* oclass) {
   NS_ASSERTION(!oclass->class_initialized,
                "1.1 <rhp@netscape.com> 19 Mar 1999 12:00");
   oclass->initialize = MimeExternalBody_initialize;
@@ -152,12 +153,13 @@ char* MimeExternalBody_make_url(const char* ct, const char* at,
 
     if (!PL_strcasecmp(at, "afs")) /* only if there is a /afs/ directory */
     {
-      nsCOMPtr<nsIFile> fs = do_CreateInstance(NS_LOCAL_FILE_CONTRACTID);
-      bool exists = false;
-      if (fs) {
-        fs->InitWithNativePath("/afs/."_ns);
-        fs->Exists(&exists);
+      nsCOMPtr<nsIFile> file;
+      nsresult rv = NS_NewNativeLocalFile("/afs/."_ns, getter_AddRefs(file));
+      if (NS_FAILED(rv)) {
+        return 0;
       }
+      bool exists = false;
+      file->Exists(&exists);
       if (!exists) return 0;
     }
 
@@ -423,14 +425,14 @@ static bool MimeExternalBody_displayable_inline_p(MimeObjectClass* clazz,
 #ifdef XP_UNIX
   else if (!PL_strcasecmp(at, "afs")) /* only if there is a /afs/ directory */
   {
-    nsCOMPtr<nsIFile> fs = do_CreateInstance(NS_LOCAL_FILE_CONTRACTID);
-    bool exists = false;
-    if (fs) {
-      fs->InitWithNativePath("/afs/."_ns);
-      fs->Exists(&exists);
+    nsCOMPtr<nsIFile> file;
+    nsresult rv = NS_NewNativeLocalFile("/afs/."_ns, getter_AddRefs(file));
+    if (NS_FAILED(rv)) {
+      return 0;
     }
+    bool exists = false;
+    file->Exists(&exists);
     if (!exists) return 0;
-
     inline_p = true;
   }
 #endif /* XP_UNIX */

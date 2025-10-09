@@ -2,7 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { Gloda } = ChromeUtils.import("resource:///modules/gloda/Gloda.jsm");
+var { Gloda } = ChromeUtils.importESModule(
+  "resource:///modules/gloda/Gloda.sys.mjs"
+);
 
 var gIdentityListBox; // the root <richlistbox> node
 var gAddButton;
@@ -47,12 +49,12 @@ function refreshIdentityList(aSelectIndex) {
   }
 
   // Build the list from the identities array.
-  for (let identity of gAccount.identities) {
+  for (const identity of gAccount.identities) {
     if (identity.valid) {
-      let label = document.createXULElement("label");
+      const label = document.createXULElement("label");
       label.setAttribute("value", identity.identityName);
 
-      let listitem = document.createXULElement("richlistitem");
+      const listitem = document.createXULElement("richlistitem");
       listitem.appendChild(label);
       listitem.setAttribute("key", identity.key);
       gIdentityListBox.appendChild(listitem);
@@ -76,9 +78,9 @@ function refreshIdentityList(aSelectIndex) {
  * @param {nsIMsgIdentity} identity - The identity (if any) to load in the dialog.
  */
 function openIdentityEditor(identity) {
-  let args = { identity, account: gAccount, result: false };
+  const args = { identity, account: gAccount, result: false };
 
-  let indexToSelect = identity
+  const indexToSelect = identity
     ? gIdentityListBox.selectedIndex
     : gIdentityListBox.itemCount;
 
@@ -100,13 +102,13 @@ function getSelectedIdentity() {
     return null;
   }
 
-  let identityKey = gIdentityListBox.selectedItems[0].getAttribute("key");
+  const identityKey = gIdentityListBox.selectedItems[0].getAttribute("key");
   return (
     gAccount.identities.find(id => id.valid && id.key == identityKey) || null
   );
 }
 
-function onEdit(event) {
+function onEdit() {
   var id = getSelectedIdentity();
   openIdentityEditor(id);
 }
@@ -140,8 +142,8 @@ function updateButtons() {
   // The Add command is always enabled.
 }
 
-function onSetDefault(event) {
-  let identity = getSelectedIdentity();
+function onSetDefault() {
+  const identity = getSelectedIdentity();
   if (!identity) {
     return;
   }
@@ -158,24 +160,25 @@ function onSetDefault(event) {
   Gloda._initMyIdentities();
 }
 
-function onDelete(event) {
+function onDelete() {
   if (gIdentityListBox.itemCount <= 1) {
     // don't support deleting the last identity
     return;
   }
 
   // get delete confirmation
-  let selectedIdentity = getSelectedIdentity();
+  const selectedIdentity = getSelectedIdentity();
 
-  let prefsBundle = document.getElementById("bundle_prefs");
-  let confirmTitle = prefsBundle.getFormattedString(
+  const prefsBundle = document.getElementById("bundle_prefs");
+  const confirmTitle = prefsBundle.getFormattedString(
     "identity-delete-confirm-title",
     [window.arguments[0].accountName]
   );
-  let confirmText = prefsBundle.getFormattedString("identity-delete-confirm", [
-    selectedIdentity.identityName,
-  ]);
-  let confirmButton = prefsBundle.getString("identity-delete-confirm-button");
+  const confirmText = prefsBundle.getFormattedString(
+    "identity-delete-confirm",
+    [selectedIdentity.identityName]
+  );
+  const confirmButton = prefsBundle.getString("identity-delete-confirm-button");
 
   if (
     Services.prompt.confirmEx(
@@ -194,7 +197,7 @@ function onDelete(event) {
     return;
   }
 
-  let selectedItemIndex = gIdentityListBox.selectedIndex;
+  const selectedItemIndex = gIdentityListBox.selectedIndex;
 
   gAccount.removeIdentity(selectedIdentity);
 

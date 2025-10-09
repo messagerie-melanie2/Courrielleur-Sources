@@ -3,11 +3,12 @@
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
-exports.PolicyScope = exports.POLICIES_ACCOUNT_EVENT_TYPE = exports.IgnoredInvites = exports.IGNORE_INVITES_ACCOUNT_EVENT_KEY = void 0;
+exports.PolicyScope = exports.PolicyRecommendation = exports.POLICIES_ACCOUNT_EVENT_TYPE = exports.IgnoredInvites = exports.IGNORE_INVITES_ACCOUNT_EVENT_KEY = void 0;
 var _matrixEventsSdk = require("matrix-events-sdk");
-var _eventTimeline = require("./event-timeline");
-var _partials = require("../@types/partials");
-var _utils = require("../utils");
+var _eventTimeline = require("./event-timeline.js");
+var _partials = require("../@types/partials.js");
+var _utils = require("../utils.js");
+var _event = require("../@types/event.js");
 /*
 Copyright 2022 The Matrix.org Foundation C.I.C.
 
@@ -27,29 +28,33 @@ limitations under the License.
 /// The event type storing the user's individual policies.
 ///
 /// Exported for testing purposes.
-const POLICIES_ACCOUNT_EVENT_TYPE = new _matrixEventsSdk.UnstableValue("m.policies", "org.matrix.msc3847.policies");
+const POLICIES_ACCOUNT_EVENT_TYPE = exports.POLICIES_ACCOUNT_EVENT_TYPE = new _matrixEventsSdk.UnstableValue("m.policies", "org.matrix.msc3847.policies");
 
 /// The key within the user's individual policies storing the user's ignored invites.
 ///
 /// Exported for testing purposes.
-exports.POLICIES_ACCOUNT_EVENT_TYPE = POLICIES_ACCOUNT_EVENT_TYPE;
-const IGNORE_INVITES_ACCOUNT_EVENT_KEY = new _matrixEventsSdk.UnstableValue("m.ignore.invites", "org.matrix.msc3847.ignore.invites");
+const IGNORE_INVITES_ACCOUNT_EVENT_KEY = exports.IGNORE_INVITES_ACCOUNT_EVENT_KEY = new _matrixEventsSdk.UnstableValue("m.ignore.invites", "org.matrix.msc3847.ignore.invites");
 
 /// The types of recommendations understood.
-exports.IGNORE_INVITES_ACCOUNT_EVENT_KEY = IGNORE_INVITES_ACCOUNT_EVENT_KEY;
-var PolicyRecommendation = /*#__PURE__*/function (PolicyRecommendation) {
+let PolicyRecommendation = exports.PolicyRecommendation = /*#__PURE__*/function (PolicyRecommendation) {
   PolicyRecommendation["Ban"] = "m.ban";
   return PolicyRecommendation;
-}(PolicyRecommendation || {});
+}({});
 /**
  * The various scopes for policies.
  */
-let PolicyScope = /*#__PURE__*/function (PolicyScope) {
+let PolicyScope = exports.PolicyScope = /*#__PURE__*/function (PolicyScope) {
   PolicyScope["User"] = "m.policy.user";
   PolicyScope["Room"] = "m.policy.room";
   PolicyScope["Server"] = "m.policy.server";
   return PolicyScope;
 }({});
+const scopeToEventTypeMap = {
+  [PolicyScope.User]: _event.EventType.PolicyRuleUser,
+  [PolicyScope.Room]: _event.EventType.PolicyRuleRoom,
+  [PolicyScope.Server]: _event.EventType.PolicyRuleServer
+};
+
 /**
  * A container for ignored invites.
  *
@@ -60,7 +65,6 @@ let PolicyScope = /*#__PURE__*/function (PolicyScope) {
  * applications turn out to require longer lists, we may need to rework
  * our data structures.
  */
-exports.PolicyScope = PolicyScope;
 class IgnoredInvites {
   constructor(client) {
     this.client = client;
@@ -76,7 +80,7 @@ class IgnoredInvites {
    */
   async addRule(scope, entity, reason) {
     const target = await this.getOrCreateTargetRoom();
-    const response = await this.client.sendStateEvent(target.roomId, scope, {
+    const response = await this.client.sendStateEvent(target.roomId, scopeToEventTypeMap[scope], {
       entity,
       reason,
       recommendation: PolicyRecommendation.Ban
@@ -129,8 +133,9 @@ class IgnoredInvites {
   /**
    * Find out whether an invite should be ignored.
    *
-   * @param sender - The user id for the user who issued the invite.
-   * @param roomId - The room to which the user is invited.
+   * @param params
+   * @param params.sender - The user id for the user who issued the invite.
+   * @param params.roomId - The room to which the user is invited.
    * @returns A rule matching the entity, if any was found, `null` otherwise.
    */
   async getRuleForInvite({
@@ -165,7 +170,7 @@ class IgnoredInvites {
         scope: PolicyScope.Server,
         entities: [senderServer, roomServer]
       }]) {
-        const events = state.getStateEvents(scope);
+        const events = state.getStateEvents(scopeToEventTypeMap[scope]);
         for (const event of events) {
           const content = event.getContent();
           if (content?.recommendation != PolicyRecommendation.Ban) {
@@ -180,7 +185,7 @@ class IgnoredInvites {
           let regexp;
           try {
             regexp = new RegExp((0, _utils.globToRegexp)(glob));
-          } catch (ex) {
+          } catch {
             // Assume invalid event.
             continue;
           }
@@ -193,7 +198,6 @@ class IgnoredInvites {
         }
       }
     }
-
     return null;
   }
 

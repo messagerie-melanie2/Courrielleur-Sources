@@ -3,13 +3,13 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 import json
 import os
+import platform
 import signal
 import socket
 import sys
 import time
 
 import mozinfo
-import six
 from mozprocess import ProcessHandler
 
 from mozproxy.backends.base import Playback
@@ -39,6 +39,7 @@ class Mitmproxy(Playback):
         self.port = None
         self.mitmproxy_proc = None
         self.mitmdump_path = None
+        self.mitmdump_path_dir = None
         self.record_mode = config.get("record", False)
         self.recording = None
         self.playback_files = []
@@ -59,7 +60,7 @@ class Mitmproxy(Playback):
                 )
                 raise Exception("Please provide a playback_files list.")
 
-            if not isinstance(self.config.get("recording_file"), six.string_types):
+            if not isinstance(self.config.get("recording_file"), str):
                 LOG.error("recording_file argument type is not str!")
                 raise Exception("recording_file argument type invalid!")
 
@@ -116,6 +117,28 @@ class Mitmproxy(Playback):
         LOG.info("Playback tool: %s" % self.config["playback_tool"])
         LOG.info("Playback tool version: %s" % self.config["playback_version"])
 
+    def generate_mitmdump_path(self):
+        mitmdump_path_tail = ["mitmdump"]
+        if self.config["playback_version"] == "11.0.0" and sys.platform == "darwin":
+            # For MacOS newer versions have a different folder structure.
+            # Prepend this new path
+            mitmdump_path_tail = [
+                "mitmproxy.app",
+                "Contents",
+                "MacOS",
+            ] + mitmdump_path_tail
+
+        # mitmproxy is unpacked here
+        self.mitmdump_path_dir = os.path.normpath(
+            os.path.join(
+                self.mozproxy_dir,
+                "mitmdump-%s" % self.config["playback_version"],
+            )
+        )
+        self.mitmdump_path = os.path.normpath(
+            os.path.join(self.mitmdump_path_dir, *mitmdump_path_tail)
+        )
+
     def download_mitm_bin(self):
         # Download and setup mitm binaries
 
@@ -125,23 +148,22 @@ class Mitmproxy(Playback):
             "mitmproxy-rel-bin-%s-{platform}.manifest"
             % self.config["playback_version"],
         )
-        transformed_manifest = transform_platform(manifest, self.config["platform"])
+        transformed_manifest = transform_platform(
+            manifest,
+            self.config["platform"],
+            platform.processor(),
+            self.config["playback_version"],
+        )
 
         # generate the mitmdump_path
-        self.mitmdump_path = os.path.normpath(
-            os.path.join(
-                self.mozproxy_dir,
-                "mitmdump-%s" % self.config["playback_version"],
-                "mitmdump",
-            )
-        )
+        self.generate_mitmdump_path()
 
         # Check if mitmproxy bin exists
         if os.path.exists(self.mitmdump_path):
             LOG.info("mitmproxy binary already exists. Skipping download")
         else:
             # Download and unpack mitmproxy binary
-            download_path = os.path.dirname(self.mitmdump_path)
+            download_path = self.mitmdump_path_dir
             LOG.info("create mitmproxy %s dir" % self.config["playback_version"])
             if not os.path.exists(download_path):
                 os.makedirs(download_path)
@@ -178,7 +200,6 @@ class Mitmproxy(Playback):
             raise Exception("playback_files should be a list")
 
         for playback_file in self.config["playback_files"]:
-
             if playback_file.startswith("https://") and "mozilla.com" in playback_file:
                 # URL provided
                 dest = os.path.join(self.mozproxy_dir, os.path.basename(playback_file))
@@ -271,7 +292,6 @@ class Mitmproxy(Playback):
 
         # record mode
         if self.record_mode:
-
             # generate recording script paths
 
             command.extend(
@@ -295,7 +315,7 @@ class Mitmproxy(Playback):
         else:
             # playback mode
             if len(self.playback_files) > 0:
-                if self.config["playback_version"] == "8.1.1":
+                if self.config["playback_version"] in ["8.1.1", "11.0.0"]:
                     command.extend(
                         [
                             "--set",
@@ -308,6 +328,8 @@ class Mitmproxy(Playback):
                             "alt_server_replay_kill_extra=true",
                             "--set",
                             "alt_server_replay_order_reversed=true",
+                            "--set",
+                            "tls_version_client_min=TLS1_2",
                             "--set",
                             "alt_server_replay={}".format(
                                 ",".join(
@@ -325,7 +347,11 @@ class Mitmproxy(Playback):
                             ),
                         ]
                     )
-                elif self.config["playback_version"] in ["4.0.4", "5.1.1", "6.0.2"]:
+                elif self.config["playback_version"] in [
+                    "4.0.4",
+                    "5.1.1",
+                    "6.0.2",
+                ]:
                     command.extend(
                         [
                             "--set",
@@ -448,5 +474,5 @@ class Mitmproxy(Playback):
             s.shutdown(socket.SHUT_RDWR)
             s.close()
             return True
-        except socket.error:
+        except OSError:
             return False

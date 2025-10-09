@@ -158,7 +158,7 @@ add_task(async function test_filter_isActive() {
     get type() {
       return UrlbarUtils.PROVIDER_TYPE.PROFILE;
     }
-    isActive(context) {
+    async isActive(context) {
       info("Acceptable sources: " + context.sources);
       return context.sources.includes(UrlbarUtils.RESULT_SOURCE.BOOKMARKS);
     }
@@ -205,10 +205,10 @@ add_task(async function test_filter_queryContext() {
     get type() {
       return UrlbarUtils.PROVIDER_TYPE.PROFILE;
     }
-    isActive(context) {
+    async isActive(_context) {
       return true;
     }
-    async startQuery(context, add) {
+    async startQuery(_context, _add) {
       Assert.ok(false, "Provider should no be invoked");
     }
   }
@@ -295,27 +295,23 @@ add_task(async function test_nofilter_restrict() {
       { engine: "noengine" }
     ),
   ];
+
   /**
    * A test provider.
    */
-  class TestProvider extends UrlbarProvider {
-    get name() {
-      return "MyProvider";
+  class TestProvider extends UrlbarTestUtils.TestProvider {
+    constructor() {
+      super({
+        name: "MyProvider",
+        results: matches,
+      });
     }
-    get type() {
-      return UrlbarUtils.PROVIDER_TYPE.PROFILE;
-    }
-    isActive(context) {
+    async isActive(context) {
       Assert.equal(context.sources.length, 1, "Check acceptable sources");
       return true;
     }
-    async startQuery(context, add) {
-      Assert.ok(true, "expected provider was invoked");
-      for (let match of matches) {
-        add(this, match);
-      }
-    }
   }
+
   let provider = new TestProvider();
   UrlbarProvidersManager.registerProvider(provider);
 
@@ -357,12 +353,10 @@ add_task(async function test_filter_priority() {
    */
   class TestProvider extends UrlbarTestUtils.TestProvider {
     constructor(priority, shouldBeInvoked, namePart = "") {
-      super();
-      this._priority = priority;
-      this._name = `${priority}` + namePart;
+      super({ priority, name: `${priority}` + namePart });
       this._shouldBeInvoked = shouldBeInvoked;
     }
-    async startQuery(context, add) {
+    async startQuery(_context, _add) {
       Assert.ok(this._shouldBeInvoked, `${this.name} was invoked`);
     }
   }

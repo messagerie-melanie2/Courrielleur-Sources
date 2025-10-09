@@ -13,11 +13,14 @@ add_task(async function mainTest() {
     Downloads.Error.BLOCK_VERDICT_POTENTIALLY_UNWANTED,
     Downloads.Error.BLOCK_VERDICT_INSECURE,
   ];
-  await task_addDownloads(verdicts.map(v => makeDownload(v)));
+  let downloads = [];
+  verdicts.map(v => makeDownload(v)).forEach(d => downloads.push(d));
+  downloads.push(makeContentAnalysisWarnDownload());
+  await task_addDownloads(downloads);
 
   // Check that the richlistitem for each download is correct.
-  for (let i = 0; i < verdicts.length; i++) {
-    await openPanel();
+  for (let i = 0; i < downloads.length; i++) {
+    await task_openPanel();
 
     // Handle items backwards, using lastElementChild, to ensure there's no
     // code wrongly resetting the selection to the first item during the process.
@@ -30,9 +33,12 @@ add_task(async function mainTest() {
 
     // Items are listed in newest-to-oldest order, so e.g. the first item's
     // verdict is the last element in the verdicts array.
-    Assert.ok(
+    // But we're handling items backwards per above, so iterating forwards
+    // gives us the expected order.
+    let currentDownload = downloads[i];
+    is(
       DownloadsBlockedSubview.subview.getAttribute("verdict"),
-      verdicts[verdicts.count - i - 1]
+      currentDownload.errorObj.reputationCheckVerdict
     );
 
     info("Go back to the main view.");
@@ -45,6 +51,8 @@ add_task(async function mainTest() {
     EventUtils.synthesizeMouseAtCenter(item, {});
     await viewPromise;
 
+    ok(!DownloadsBlockedSubview.elements.unblockButton.hidden);
+    ok(!DownloadsBlockedSubview.elements.deleteButton.hidden);
     info("Click the Open button.");
     // The download should be unblocked and then opened,
     // i.e., unblockAndOpenDownload() should be called on the item.  The panel
@@ -70,7 +78,7 @@ add_task(async function mainTest() {
     await SimpleTest.promiseFocus(window);
 
     info("Reopen the panel and show the subview again.");
-    await openPanel();
+    await task_openPanel();
     viewPromise = promiseViewShown(DownloadsBlockedSubview.subview);
     EventUtils.synthesizeMouseAtCenter(item, {});
     await viewPromise;
@@ -86,7 +94,7 @@ add_task(async function mainTest() {
     await hidePromise;
 
     info("Open the panel again and check the item is gone.");
-    await openPanel();
+    await task_openPanel();
     Assert.ok(!item.parentNode);
 
     hidePromise = promisePanelHidden();
@@ -97,60 +105,28 @@ add_task(async function mainTest() {
   await task_resetState();
 });
 
-async function openPanel() {
-  // This function is insane but something intermittently causes the panel to be
-  // closed as soon as it's opening on Linux ASAN.  Maybe it would also happen
-  // on other build machines if the test ran often enough.  Not only is the
-  // panel closed, it's closed while it's opening, leaving DownloadsPanel._state
-  // such that when you try to open the panel again, it thinks it's already
-  // open, but it's not.  The result is that the test times out.
-  //
-  // What this does is call DownloadsPanel.showPanel over and over again until
-  // the panel is really open.  There are a few wrinkles:
-  //
-  // (1) When panel.state is "open", check four more times (for a total of five)
-  // before returning to make the panel stays open.
-  // (2) If the panel is not open, check the _state.  It should be either
-  // kStateUninitialized or kStateHidden.  If it's not, then the panel is in the
-  // process of opening -- or maybe it's stuck in that process -- so reset the
-  // _state to kStateHidden.
-  // (3) If the _state is not kStateUninitialized or kStateHidden, then it may
-  // actually be properly opening and not stuck at all.  To avoid always closing
-  // the panel while it's properly opening, use an exponential backoff mechanism
-  // for retries.
-  //
-  // If all that fails, then the test will time out, but it would have timed out
-  // anyway.
+add_task(async function test_content_analysis_blocked_file() {
+  await task_resetState();
 
-  await promiseFocus();
-  await new Promise(resolve => {
-    let verifyCount = 5;
-    let backoff = 0;
-    let iBackoff = 0;
-    let interval = setInterval(() => {
-      if (DownloadsPanel.panel && DownloadsPanel.panel.state == "open") {
-        if (verifyCount > 0) {
-          verifyCount--;
-        } else {
-          clearInterval(interval);
-          resolve();
-        }
-      } else if (iBackoff < backoff) {
-        // Keep backing off before trying again.
-        iBackoff++;
-      } else {
-        // Try (or retry) opening the panel.
-        verifyCount = 5;
-        backoff = Math.max(1, 2 * backoff);
-        iBackoff = 0;
-        if (DownloadsPanel._state != DownloadsPanel.kStateUninitialized) {
-          DownloadsPanel._state = DownloadsPanel.kStateHidden;
-        }
-        DownloadsPanel.showPanel();
-      }
-    }, 100);
-  });
-}
+  await task_addDownloads([makeContentAnalysisBlockedDownload()]);
+
+  // Check that the richlistitem for each download is correct.
+  await task_openPanel();
+
+  // Handle items backwards, using lastElementChild, to ensure there's no
+  // code wrongly resetting the selection to the first item during the process.
+  let item = DownloadsView.richListBox.lastElementChild;
+
+  info("Open the panel and click the item to show the subview.");
+  let viewPromise = promiseViewShown(DownloadsBlockedSubview.subview);
+  EventUtils.synthesizeMouseAtCenter(item, {});
+  await viewPromise;
+
+  ok(DownloadsBlockedSubview.elements.unblockButton.hidden);
+  ok(DownloadsBlockedSubview.elements.deleteButton.hidden);
+
+  await task_resetState();
+});
 
 function promisePanelHidden() {
   return BrowserTestUtils.waitForEvent(DownloadsPanel.panel, "popuphidden");
@@ -164,8 +140,40 @@ function makeDownload(verdict) {
       result: Cr.NS_ERROR_FAILURE,
       message: "Download blocked.",
       becauseBlocked: true,
+      becauseBlockedByContentAnalysis: false,
       becauseBlockedByReputationCheck: true,
       reputationCheckVerdict: verdict,
+    },
+  };
+}
+
+function makeContentAnalysisBlockedDownload() {
+  return {
+    state: DownloadsCommon.DOWNLOAD_DIRTY,
+    hasBlockedData: true,
+    errorObj: {
+      result: Cr.NS_ERROR_FAILURE,
+      message: "Download blocked.",
+      becauseBlocked: true,
+      becauseBlockedByContentAnalysis: true,
+      becauseBlockedByReputationCheck: false,
+      reputationCheckVerdict: Downloads.Error.BLOCK_VERDICT_MALWARE,
+    },
+  };
+}
+
+function makeContentAnalysisWarnDownload() {
+  return {
+    state: DownloadsCommon.DOWNLOAD_DIRTY,
+    hasBlockedData: true,
+    errorObj: {
+      result: Cr.NS_ERROR_FAILURE,
+      message: "Download warned.",
+      becauseBlocked: true,
+      becauseBlockedByContentAnalysis: true,
+      becauseBlockedByReputationCheck: false,
+      reputationCheckVerdict:
+        Downloads.Error.BLOCK_VERDICT_POTENTIALLY_UNWANTED,
     },
   };
 }

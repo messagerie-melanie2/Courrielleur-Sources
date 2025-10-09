@@ -6,13 +6,10 @@
 #ifndef _nsMsgDatabase_H_
 #define _nsMsgDatabase_H_
 
-#include "mozilla/Attributes.h"
 #include "mozilla/MemoryReporting.h"
-#include "mozilla/Path.h"
 #include "nsIFile.h"
 #include "nsIMsgDatabase.h"
 #include "nsMsgHdr.h"
-#include "nsString.h"
 #include "nsIDBChangeAnnouncer.h"
 #include "nsMsgMessageFlags.h"
 #include "nsIMsgFolder.h"
@@ -23,7 +20,9 @@
 #include "nsCOMArray.h"
 #include "PLDHashTable.h"
 #include "nsTArray.h"
+#include "nsTHashMap.h"
 #include "nsTObserverArray.h"
+#include "prtime.h"
 
 using mozilla::intl::Collator;
 
@@ -103,9 +102,11 @@ class nsMsgDatabase : public nsIMsgOfflineOpsDatabase {
   virtual nsresult Open(nsMsgDBService* aDBService, nsIFile* aFolderName,
                         bool aCreate, bool aLeaveInvalidDB);
   virtual nsresult IsHeaderRead(nsIMsgDBHdr* hdr, bool* pRead);
+  virtual nsresult MarkHdrRead(nsIMsgDBHdr* msgHdr, bool bRead,
+                               nsIDBChangeListener* instigator);
   virtual nsresult MarkHdrReadInDB(nsIMsgDBHdr* msgHdr, bool bRead,
                                    nsIDBChangeListener* instigator);
-  nsresult OpenInternal(nsMsgDBService* aDBService, nsIFile* aFolderName,
+  nsresult OpenInternal(nsMsgDBService* aDBService, nsIFile* summaryFile,
                         bool aCreate, bool aLeaveInvalidDB, bool sync);
   nsresult CheckForErrors(nsresult err, bool sync, nsMsgDBService* aDBService,
                           nsIFile* summaryFile);
@@ -229,7 +230,6 @@ class nsMsgDatabase : public nsIMsgOfflineOpsDatabase {
   nsIMsgThread* GetThreadForSubject(nsCString& subject);
   nsIMsgThread* GetThreadForMessageId(nsCString& msgId);
   nsIMsgThread* GetThreadForThreadId(nsMsgKey threadId);
-  nsMsgHdr* GetMsgHdrForReference(nsCString& reference);
   nsIMsgDBHdr* GetMsgHdrForSubject(nsCString& subject);
   // threading interfaces
   virtual nsresult CreateNewThread(nsMsgKey key, const char* subject,
@@ -240,24 +240,20 @@ class nsMsgDatabase : public nsIMsgOfflineOpsDatabase {
   virtual nsresult ThreadNewHdr(nsMsgHdr* hdr, bool& newThread);
   virtual nsresult AddNewThread(nsMsgHdr* msgHdr);
   virtual nsresult AddToThread(nsMsgHdr* newHdr, nsIMsgThread* thread,
-                               nsIMsgDBHdr* pMsgHdr, bool threadInThread);
+                               nsIMsgDBHdr* inReplyTo, bool threadInThread);
 
   static PRTime gLastUseTime;  // global last use time
   PRTime m_lastUseTime;        // last use time for this db
   // inline to make instrumentation as cheap as possible
   inline void RememberLastUseTime() { gLastUseTime = m_lastUseTime = PR_Now(); }
 
-  bool MatchDbName(nsIFile* dbName);  // returns TRUE if they match
+  bool MatchDbName(nsIFile* dbFile);  // returns TRUE if they match
 
   // Flag handling routines
   virtual nsresult SetKeyFlag(nsMsgKey key, bool set, nsMsgMessageFlagType flag,
                               nsIDBChangeListener* instigator = nullptr);
-  virtual nsresult SetMsgHdrFlag(nsIMsgDBHdr* msgHdr, bool set,
-                                 nsMsgMessageFlagType flag,
-                                 nsIDBChangeListener* instigator);
-
   virtual bool SetHdrFlag(nsIMsgDBHdr*, bool bSet, nsMsgMessageFlagType flag);
-  virtual bool SetHdrReadFlag(nsIMsgDBHdr*, bool pRead);
+  virtual bool SetHdrReadFlag(nsIMsgDBHdr*, bool bRead);
   virtual uint32_t GetStatusFlags(nsIMsgDBHdr* msgHdr,
                                   nsMsgMessageFlagType origFlags);
   // helper function which doesn't involve thread object
@@ -278,6 +274,8 @@ class nsMsgDatabase : public nsIMsgOfflineOpsDatabase {
                               bool applyToFlaggedMessages,
                               nsTArray<RefPtr<nsIMsgDBHdr>>& hdrsToDelete);
 
+  nsMsgKey FindMsgKeyForUID(uint32_t uid);
+
   // mdb bookkeeping stuff
   virtual nsresult InitExistingDB();
   virtual nsresult InitNewDB();
@@ -290,6 +288,7 @@ class nsMsgDatabase : public nsIMsgOfflineOpsDatabase {
   nsIMdbStore* m_mdbStore;
   nsIMdbTable* m_mdbAllMsgHeadersTable;
   nsIMdbTable* m_mdbAllThreadsTable;
+  nsTHashMap<nsCString, RefPtr<nsIMdbTable>> m_mdbSearchResultsTables;
 
   // Used for asynchronous db opens. If non-null, we're still opening
   // the underlying mork database. If null, the db has been completely opened.
@@ -332,6 +331,7 @@ class nsMsgDatabase : public nsIMsgOfflineOpsDatabase {
   mdb_token m_threadNewestMsgDateColumnToken;
   mdb_token m_offlineMsgOffsetColumnToken;
   mdb_token m_offlineMessageSizeColumnToken;
+  mdb_token m_uidOnServerColumnToken;
 
   // header caching stuff - MRU headers, keeps them around in memory
   nsresult AddHdrToCache(nsIMsgDBHdr* hdr, nsMsgKey key);

@@ -6,14 +6,16 @@ notification {
   border-inline-width: 1px;
 }
 
-:root:not([lwt-tree]):-moz-lwtheme #summary-toolbox {
-  background-image: var(--lwt-header-image) !important;
-  background-repeat: no-repeat;
-  background-position: right top !important;
-}
+:root[lwtheme]:not([lwt-tree]) {
+  #summary-toolbox {
+    background-image: var(--lwt-header-image) !important;
+    background-repeat: no-repeat;
+    background-position: right top !important;
+  }
 
-:root:not([lwt-tree]):-moz-lwtheme #summary-toolbar {
-  background-color: var(--toolbar-bgcolor);
+  #summary-toolbar {
+    background-color: var(--toolbar-bgcolor);
+  }
 }
 
 .item-attendees-description {
@@ -34,11 +36,14 @@ notification {
 
 #calendar-summary-dialog {
   min-height: 20em;
+
+  &:has(#calendar-event-summary-dialog.resize){
+    height: auto;
+  }
 }
 
 #calendar-event-summary-dialog {
-  height: 100vh;
-  overflow-y: scroll;
+  overflow-y: auto;
 }
 
 #calendar-summary-dialog-custom-button-footer {

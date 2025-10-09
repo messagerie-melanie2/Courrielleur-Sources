@@ -17,6 +17,7 @@ It does this by examining specific variables populated during execution.
 """
 
 import ast
+import functools
 import inspect
 import logging
 import os
@@ -29,12 +30,9 @@ from collections import OrderedDict, defaultdict
 from concurrent.futures.process import ProcessPoolExecutor
 from io import StringIO
 from itertools import chain
-from multiprocessing import cpu_count
 
 import mozpack.path as mozpath
-import six
 from mozpack.files import FileFinder
-from six import string_types
 
 from mozbuild.backend.configenvironment import ConfigEnvironment
 from mozbuild.base import ExecutionSummary
@@ -42,6 +40,7 @@ from mozbuild.util import (
     EmptyValue,
     HierarchicalStringList,
     ReadOnlyDefaultDict,
+    cpu_count,
     memoize,
 )
 
@@ -66,17 +65,12 @@ from .sandbox import (
     default_finder,
 )
 
-if six.PY2:
-    type_type = types.TypeType
-else:
-    type_type = type
-
 
 def log(logger, level, action, params, formatter):
     logger.log(level, formatter, extra={"action": action, "params": params})
 
 
-class EmptyConfig(object):
+class EmptyConfig:
     """A config object that is empty.
 
     This config object is suitable for using with a BuildReader on a vanilla
@@ -129,6 +123,10 @@ def is_read_allowed(path, config):
     topsrcdir = mozpath.normpath(config.topsrcdir)
 
     if mozpath.basedir(path, [topsrcdir]):
+        return True
+
+    hook = config.substs.get("MOZ_BUILD_HOOK")
+    if hook and path == hook:
         return True
 
     return False
@@ -212,7 +210,7 @@ class MozbuildSandbox(Sandbox):
             return
         Sandbox.__setitem__(self, key, value)
 
-    def exec_file(self, path):
+    def exec_file(self, path, becomes_current_path=True):
         """Override exec_file to normalize paths and restrict file loading.
 
         Paths will be rejected if they do not fall under topsrcdir or one of
@@ -226,7 +224,7 @@ class MozbuildSandbox(Sandbox):
                 self._context.source_stack, sys.exc_info()[2], illegal_path=path
             )
 
-        Sandbox.exec_file(self, path)
+        Sandbox.exec_file(self, path, becomes_current_path)
 
     def _export(self, varname):
         """Export the variable to all subdirectories of the current path."""
@@ -381,7 +379,7 @@ class MozbuildSandbox(Sandbox):
         return template_wrapper
 
 
-class TemplateFunction(object):
+class TemplateFunction:
     def __init__(self, func, sandbox):
         self.path = func.__code__.co_filename
         self.name = func.__name__
@@ -410,15 +408,14 @@ class TemplateFunction(object):
         # When using a custom dictionary for function globals/locals, Cpython
         # actually never calls __getitem__ and __setitem__, so we need to
         # modify the AST so that accesses to globals are properly directed
-        # to a dict. AST wants binary_type for this in Py2 and text_type for
-        # this in Py3, so cast to str.
-        self._global_name = str("_data")
+        # to a dict.
+        self._global_name = "_data"
         # In case '_data' is a name used for a variable in the function code,
         # prepend more underscores until we find an unused name.
         while (
             self._global_name in code.co_names or self._global_name in code.co_varnames
         ):
-            self._global_name += str("_")
+            self._global_name += "_"
         func_ast = self.RewriteName(sandbox, self._global_name).visit(func_ast)
 
         # Execute the rewritten code. That code now looks like:
@@ -460,10 +457,6 @@ class TemplateFunction(object):
         def __init__(self, sandbox, global_name):
             self._sandbox = sandbox
             self._global_name = global_name
-
-        def visit_Str(self, node):
-            node.s = six.ensure_text(node.s)
-            return node
 
         def visit_Name(self, node):
             # Modify uppercase variable references and names known to the
@@ -542,7 +535,6 @@ class BuildReaderError(Exception):
         other_error=None,
         sandbox_called_error=None,
     ):
-
         self.file_stack = file_stack
         self.trace = trace
         self.sandbox_called_error = sandbox_called_error
@@ -598,10 +590,7 @@ class BuildReaderError(Exception):
             s.write("the execution. The reported error is:\n")
             s.write("\n")
             s.write(
-                "".join(
-                    "    %s\n" % l
-                    for l in six.text_type(self.validation_error).splitlines()
-                )
+                "".join("    %s\n" % l for l in str(self.validation_error).splitlines())
             )
             s.write("\n")
         else:
@@ -613,7 +602,7 @@ class BuildReaderError(Exception):
             for l in traceback.format_exception(
                 type(self.other), self.other, self.trace
             ):
-                s.write(six.ensure_text(l))
+                s.write(str(l))
 
         return s.getvalue()
 
@@ -810,7 +799,7 @@ class BuildReaderError(Exception):
         s.write("\n")
         s.write("This variable expects the following type(s):\n")
         s.write("\n")
-        if type(inner.args[4]) == type_type:
+        if type(inner.args[4]) is type:
             s.write("    %s\n" % inner.args[4].__name__)
         else:
             for t in inner.args[4]:
@@ -828,7 +817,7 @@ class BuildReaderError(Exception):
         s.write("    %s\n" % traceback.format_exception_only(type(e), e))
 
 
-class BuildReader(object):
+class BuildReader:
     """Read a tree of mozbuild files into data structures.
 
     This is where the build system starts. You give it a tree configuration
@@ -846,11 +835,12 @@ class BuildReader(object):
         self.config = config
 
         self._log = logging.getLogger(__name__)
-        self._read_files = set()
+        self._read_files = {}
         self._execution_stack = []
         self.finder = finder
 
         # Finder patterns to ignore when searching for moz.build files.
+        # Keep this logic in sync with `all_mozbuild_paths`
         ignores = {
             # Ignore fake moz.build files used for testing moz.build.
             "python/mozbuild/mozbuild/test",
@@ -859,14 +849,16 @@ class BuildReader(object):
             "obj*",
         }
 
+        # Also ignore any other directories that could be objdirs, but don't
+        # necessarily start with the string 'obj'.
+        objdir_finder = FileFinder(self.config.topsrcdir, ignore=ignores)
+        for path, _file in objdir_finder.find("*/config.status"):
+            ignores.add(os.path.dirname(path))
+        del objdir_finder
+
         self._relevant_mozbuild_finder = FileFinder(
             self.config.topsrcdir, ignore=ignores
         )
-
-        # Also ignore any other directories that could be objdirs, they don't
-        # necessarily start with the string 'obj'.
-        for path, f in self._relevant_mozbuild_finder.find("*/config.status"):
-            self._relevant_mozbuild_finder.ignore.add(os.path.dirname(path))
 
         max_workers = cpu_count()
         if sys.platform.startswith("win"):
@@ -931,10 +923,43 @@ class BuildReader(object):
         # In the future, we may traverse moz.build files by looking
         # for DIRS references in the AST, even if a directory is added behind
         # a conditional. For now, just walk the filesystem.
-        for path, f in self._relevant_mozbuild_finder.find("**/moz.build"):
-            yield path
+        #
+        # The implementation below replaces using
+        # `self._relevant_mozbuild_finder.find("**/moz.build")`, in addition to
+        # filtering out folders that contain a `config.status` file (see below).
 
-    def find_variables_from_ast(self, variables, path=None):
+        base_dir = self._relevant_mozbuild_finder.base
+        # Share the ignores at the cost of a little bit of speed and readability
+        ignores = self._relevant_mozbuild_finder.ignore
+
+        def should_include_dir(relpath, d):
+            d = mozpath.join(relpath, d)
+            # faster than `any(match)`
+            return all(not mozpath.match(d, p) for p in ignores)
+
+        for full_path, dirs, files in os.walk(base_dir, topdown=True):
+            if "config.status" in files:
+                # Also ignore any other directories that could be objdirs,
+                # but don't necessarily start with the string 'obj'.
+                continue
+
+            # faster than `os.path.relpath` and we know the path is always
+            # relative to the root
+            relpath = full_path[len(base_dir) + len(os.path.sep) :]
+
+            dirs[:] = [
+                d
+                for d in dirs
+                # ignore hidden dirs
+                if d[0] != "."
+                # ignore specific dirs
+                and should_include_dir(relpath, d)
+            ]
+
+            if "moz.build" in files:
+                yield mozpath.join(relpath, "moz.build")
+
+    def find_variables_from_ast(self, variables, path=None, all_relevant_files=True):
         """Finds all assignments to the specified variables by parsing
         moz.build abstract syntax trees.
 
@@ -967,6 +992,10 @@ class BuildReader(object):
             path (str): A path relative to the source dir. If specified, only
                 `moz.build` files relevant to this path will be parsed. Otherwise
                 all `moz.build` files are parsed.
+            all_relevant_files (bool): Whether to look at all relevant paths
+                (the default), or only look at the specific path passed in.
+                If you set this to False, `path` must also be specified and
+                point to a moz.build file.
 
         Returns:
             A generator that generates tuples of the form `(<moz.build path>,
@@ -974,7 +1003,7 @@ class BuildReader(object):
             defined if the variable is an object, otherwise it is `None`.
         """
 
-        if isinstance(variables, string_types):
+        if isinstance(variables, str):
             variables = [variables]
 
         def assigned_variable(node):
@@ -988,7 +1017,7 @@ class BuildReader(object):
             else:
                 target = node.target
 
-            if isinstance(target, ast.Subscript):
+            if isinstance(target, (ast.Subscript, ast.Attribute)):
                 if not isinstance(target.value, ast.Name):
                     return None, None
                 name = target.value.id
@@ -1012,6 +1041,9 @@ class BuildReader(object):
                     assert isinstance(target.slice, ast.Index)
                     assert isinstance(target.slice.value, ast.Str)
                     key = target.slice.value.s
+            elif isinstance(target, ast.Attribute):
+                assert isinstance(target.attr, str)
+                key = target.attr
 
             return name, key
 
@@ -1042,7 +1074,13 @@ class BuildReader(object):
             def visit_AugAssign(self, node):
                 self.helper(node)
 
-        if path:
+        if not all_relevant_files:
+            if not path:
+                raise Exception(
+                    "all_relevant_files was set to False but you did not pass a path."
+                )
+            mozbuild_paths = [path]
+        elif path:
             mozbuild_paths = chain(*self._find_relevant_mozbuilds([path]).values())
         else:
             mozbuild_paths = self.all_mozbuild_paths()
@@ -1123,20 +1161,8 @@ class BuildReader(object):
             logging.DEBUG,
             "read_mozbuild",
             {"path": path},
-            "Reading file: {path}".format(path=path),
+            f"Reading file: {path}",
         )
-
-        if path in self._read_files:
-            log(
-                self._log,
-                logging.WARNING,
-                "read_already",
-                {"path": path},
-                "File already read. Skipping: {path}".format(path=path),
-            )
-            return
-
-        self._read_files.add(path)
 
         time_start = time.monotonic()
 
@@ -1144,6 +1170,20 @@ class BuildReader(object):
 
         relpath = mozpath.relpath(path, config.topsrcdir)
         reldir = mozpath.dirname(relpath)
+
+        # NOTE: descend case is handled in the loop below.
+        if not descend:
+            if relpath in self._read_files:
+                log(
+                    self._log,
+                    logging.WARNING,
+                    "read_already",
+                    {"path": path},
+                    f"File already read. Skipping: {path}",
+                )
+                return
+
+            self._read_files[relpath] = (relpath, "")
 
         if mozpath.dirname(relpath) == "js/src" and not config.substs.get(
             "JS_STANDALONE"
@@ -1156,6 +1196,9 @@ class BuildReader(object):
         context = Context(VARIABLES, config, self.finder)
         sandbox = MozbuildSandbox(context, metadata=metadata, finder=self.finder)
         sandbox.exec_file(path)
+        hook = config.substs.get("MOZ_BUILD_HOOK")
+        if hook:
+            sandbox.exec_file(hook, becomes_current_path=False)
         self._execution_time += time.monotonic() - time_start
         self._file_count += len(context.all_paths)
 
@@ -1192,7 +1235,7 @@ class BuildReader(object):
                     raise SandboxValidationError("Cannot find %s." % source, context)
                 non_unified_sources.add(source)
             action_overrides = {}
-            for action, script in six.iteritems(gyp_dir.action_overrides):
+            for action, script in gyp_dir.action_overrides.items():
                 action_overrides[action] = SourcePath(context, script)
 
             gyp_processor = GypProcessor(
@@ -1246,6 +1289,15 @@ class BuildReader(object):
 
             if not descend:
                 continue
+
+            child_relpath = mozpath.relpath(child_path, self.config.topsrcdir)
+
+            if child_relpath in self._read_files:
+                (prev_parent, prev_path) = self._read_files[child_relpath]
+                raise Exception(
+                    f"File already read. A directory should not be added to DIRS twice: {child_relpath} is referred from {prev_parent} as '{prev_path}', and {relpath} as '{path}'"
+                )
+            self._read_files[child_relpath] = (relpath, path)
 
             for res in self.read_mozbuild(
                 child_path, context.config, metadata=child_metadata
@@ -1365,7 +1417,7 @@ class BuildReader(object):
 
         result = {}
         for path, paths in path_mozbuilds.items():
-            result[path] = six.moves.reduce(
+            result[path] = functools.reduce(
                 lambda x, y: x + y, (contexts[p] for p in paths), []
             )
 

@@ -8,8 +8,10 @@
 #define jit_shared_Assembler_shared_h
 
 #include "mozilla/CheckedInt.h"
+#include "mozilla/DebugOnly.h"
 
 #include <limits.h>
+#include <utility>  // std::pair
 
 #include "gc/Barrier.h"
 #include "jit/AtomicOp.h"
@@ -25,20 +27,21 @@
 #include "wasm/WasmConstants.h"
 
 #if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64) ||      \
-    defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64) ||  \
-    defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_WASM32) || \
-    defined(JS_CODEGEN_RISCV64)
+    defined(JS_CODEGEN_MIPS64) || defined(JS_CODEGEN_LOONG64) || \
+    defined(JS_CODEGEN_WASM32) || defined(JS_CODEGEN_RISCV64)
 // Push return addresses callee-side.
 #  define JS_USE_LINK_REGISTER
 #endif
 
-#if defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64) || \
-    defined(JS_CODEGEN_ARM64) || defined(JS_CODEGEN_LOONG64) || \
-    defined(JS_CODEGEN_RISCV64)
+#if defined(JS_CODEGEN_MIPS64) || defined(JS_CODEGEN_ARM64) ||    \
+    defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_RISCV64) || \
+    defined(JS_CODEGEN_ARM)
 // JS_CODELABEL_LINKMODE gives labels additional metadata
 // describing how Bind() should patch them.
 #  define JS_CODELABEL_LINKMODE
 #endif
+
+using js::wasm::FaultingCodeOffset;
 
 namespace js {
 namespace jit {
@@ -58,7 +61,13 @@ static_assert(Simd128DataSize == 4 * sizeof(float),
 static_assert(Simd128DataSize == 2 * sizeof(double),
               "SIMD data should be able to contain float64x2");
 
-enum Scale { TimesOne = 0, TimesTwo = 1, TimesFour = 2, TimesEight = 3 };
+enum Scale {
+  TimesOne = 0,
+  TimesTwo = 1,
+  TimesFour = 2,
+  TimesEight = 3,
+  Invalid = -1
+};
 
 static_assert(sizeof(JS::Value) == 8,
               "required for TimesEight and 3 below to be correct");
@@ -95,6 +104,24 @@ static inline Scale ScaleFromScalarType(Scalar::Type type) {
   return ScaleFromElemWidth(Scalar::byteSize(type));
 }
 
+#ifdef JS_JITSPEW
+static inline const char* StringFromScale(Scale scale) {
+  switch (scale) {
+    case TimesOne:
+      return "TimesOne";
+    case TimesTwo:
+      return "TimesTwo";
+    case TimesFour:
+      return "TimesFour";
+    case TimesEight:
+      return "TimesEight";
+    default:
+      break;
+  }
+  MOZ_CRASH("Unknown Scale");
+}
+#endif
+
 // Used for 32-bit immediates which do not require relocation.
 struct Imm32 {
   int32_t value;
@@ -113,8 +140,9 @@ struct Imm32 {
         return Imm32(2);
       case TimesEight:
         return Imm32(3);
+      default:
+        MOZ_CRASH("Invalid scale");
     };
-    MOZ_CRASH("Invalid scale");
   }
 
   static inline Imm32 FactorOf(enum Scale s) {
@@ -138,9 +166,6 @@ struct Imm64 {
   Imm32 low() const { return Imm32(int32_t(value)); }
 
   Imm32 hi() const { return Imm32(int32_t(value >> 32)); }
-
-  inline Imm32 firstHalf() const;
-  inline Imm32 secondHalf() const;
 };
 
 #ifdef DEBUG
@@ -219,7 +244,8 @@ class ImmGCPtr {
   explicit ImmGCPtr(const gc::Cell* ptr) : value(ptr) {
     // Nursery pointers can't be used if the main thread might be currently
     // performing a minor GC.
-    MOZ_ASSERT_IF(ptr && !ptr->isTenured(), !CurrentThreadIsIonCompiling());
+    MOZ_ASSERT_IF(ptr && !ptr->isTenured(),
+                  !CurrentThreadIsOffThreadCompiling());
 
     // wasm shouldn't be creating GC things
     MOZ_ASSERT(!IsCompilingWasm());
@@ -279,6 +305,12 @@ struct Address {
 #endif
 
   Address() = delete;
+
+  bool operator==(const Address& other) const {
+    return base == other.base && offset == other.offset;
+  }
+
+  bool operator!=(const Address& other) const { return !(*this == other); }
 };
 
 #if JS_BITS_PER_WORD == 32
@@ -463,7 +495,7 @@ class CodeLabel {
 #endif
 };
 
-typedef Vector<CodeLabel, 0, SystemAllocPolicy> CodeLabelVector;
+using CodeLabelVector = Vector<CodeLabel, 0, SystemAllocPolicy>;
 
 class CodeLocationLabel {
   uint8_t* raw_ = nullptr;
@@ -502,59 +534,69 @@ struct SymbolicAccess {
   SymbolicAddress target;
 };
 
-typedef Vector<SymbolicAccess, 0, SystemAllocPolicy> SymbolicAccessVector;
+using SymbolicAccessVector = Vector<SymbolicAccess, 0, SystemAllocPolicy>;
 
 // Describes a single wasm or asm.js memory access for the purpose of generating
 // code and metadata.
 
 class MemoryAccessDesc {
-  uint64_t offset64_;
+  uint32_t memoryIndex_;
+  uint64_t offset_;
   uint32_t align_;
   Scalar::Type type_;
   jit::Synchronization sync_;
-  wasm::BytecodeOffset trapOffset_;
+  wasm::TrapSiteDesc trapDesc_;
   wasm::SimdOp widenOp_;
   enum { Plain, ZeroExtend, Splat, Widen } loadOp_;
+  // Used for an assertion in MacroAssembler about offset length
+  mozilla::DebugOnly<bool> hugeMemory_;
 
  public:
   explicit MemoryAccessDesc(
-      Scalar::Type type, uint32_t align, uint64_t offset,
-      BytecodeOffset trapOffset,
-      const jit::Synchronization& sync = jit::Synchronization::None())
-      : offset64_(offset),
+      uint32_t memoryIndex, Scalar::Type type, uint32_t align, uint64_t offset,
+      wasm::TrapSiteDesc trapDesc, mozilla::DebugOnly<bool> hugeMemory,
+      jit::Synchronization sync = jit::Synchronization::None())
+      : memoryIndex_(memoryIndex),
+        offset_(offset),
         align_(align),
         type_(type),
         sync_(sync),
-        trapOffset_(trapOffset),
+        trapDesc_(trapDesc),
         widenOp_(wasm::SimdOp::Limit),
-        loadOp_(Plain) {
+        loadOp_(Plain),
+        hugeMemory_(hugeMemory) {
     MOZ_ASSERT(mozilla::IsPowerOfTwo(align));
   }
 
-  // The offset is a 64-bit value because of memory64.  Almost always, it will
-  // fit in 32 bits, and hence offset() checks that it will, this method is used
-  // almost everywhere in the engine.  The compiler front-ends must use
-  // offset64() to bypass the check performed by offset(), and must resolve
-  // offsets that don't fit in 32 bits early in the compilation pipeline so that
-  // no large offsets are observed later.
-  uint32_t offset() const {
-    MOZ_ASSERT(offset64_ <= UINT32_MAX);
-    return uint32_t(offset64_);
+  uint32_t memoryIndex() const {
+    MOZ_ASSERT(memoryIndex_ != UINT32_MAX);
+    return memoryIndex_;
   }
-  uint64_t offset64() const { return offset64_; }
+
+  // The offset is a 64-bit value because of memory64. Almost always, it will
+  // fit in 32 bits, and therefore offset32() is used almost everywhere in the
+  // engine. The compiler front-ends must use offset64() to bypass the check
+  // performed by offset32(), and must resolve offsets that don't fit in 32 bits
+  // early in the compilation pipeline so that no large offsets are observed
+  // later.
+  uint32_t offset32() const {
+    MOZ_ASSERT(offset_ <= UINT32_MAX);
+    return uint32_t(offset_);
+  }
+  uint64_t offset64() const { return offset_; }
 
   // The offset can be cleared without worrying about its magnitude.
-  void clearOffset() { offset64_ = 0; }
+  void clearOffset() { offset_ = 0; }
 
   // The offset can be set (after compile-time evaluation) but only to values
   // that fit in 32 bits.
-  void setOffset32(uint32_t offset) { offset64_ = offset; }
+  void setOffset32(uint32_t offset) { offset_ = offset; }
 
   uint32_t align() const { return align_; }
   Scalar::Type type() const { return type_; }
   unsigned byteSize() const { return Scalar::byteSize(type()); }
-  const jit::Synchronization& sync() const { return sync_; }
-  BytecodeOffset trapOffset() const { return trapOffset_; }
+  jit::Synchronization sync() const { return sync_; }
+  const TrapSiteDesc& trapDesc() const { return trapDesc_; }
   wasm::SimdOp widenSimdOp() const {
     MOZ_ASSERT(isWidenSimd128Load());
     return widenOp_;
@@ -563,6 +605,13 @@ class MemoryAccessDesc {
   bool isZeroExtendSimd128Load() const { return loadOp_ == ZeroExtend; }
   bool isSplatSimd128Load() const { return loadOp_ == Splat; }
   bool isWidenSimd128Load() const { return loadOp_ == Widen; }
+
+  mozilla::DebugOnly<bool> isHugeMemory() const { return hugeMemory_; }
+#ifdef DEBUG
+  void assertOffsetInGuardPages() const;
+#else
+  void assertOffsetInGuardPages() const {}
+#endif
 
   void setZeroExtendSimd128Load() {
     MOZ_ASSERT(type() == Scalar::Float32 || type() == Scalar::Float64);
@@ -594,11 +643,16 @@ namespace jit {
 
 // The base class of all Assemblers for all archs.
 class AssemblerShared {
-  wasm::CallSiteVector callSites_;
+  wasm::InliningContext inliningContext_;
+  wasm::CallSites callSites_;
   wasm::CallSiteTargetVector callSiteTargets_;
-  wasm::TrapSiteVectorArray trapSites_;
+  wasm::TrapSites trapSites_;
   wasm::SymbolicAccessVector symbolicAccesses_;
   wasm::TryNoteVector tryNotes_;
+  wasm::CodeRangeUnwindInfoVector codeRangesUnwind_;
+  wasm::CallRefMetricsPatchVector callRefMetricsPatches_;
+  wasm::AllocSitePatchVector allocSitesPatches_;
+
 #ifdef DEBUG
   // To facilitate figuring out which part of SM created each instruction as
   // shown by IONFLAGS=codegen, this maintains a stack of (notionally)
@@ -649,18 +703,16 @@ class AssemblerShared {
   template <typename... Args>
   void append(const wasm::CallSiteDesc& desc, CodeOffset retAddr,
               Args&&... args) {
-    enoughMemory_ &= callSites_.emplaceBack(desc, retAddr.offset());
+    enoughMemory_ &= callSites_.append(desc, retAddr.offset());
     enoughMemory_ &= callSiteTargets_.emplaceBack(std::forward<Args>(args)...);
   }
-  void append(wasm::Trap trap, wasm::TrapSite site) {
-    enoughMemory_ &= trapSites_[trap].append(site);
+  void append(wasm::Trap trap, wasm::TrapMachineInsn insn, uint32_t pcOffset,
+              const wasm::TrapSiteDesc& desc) {
+    enoughMemory_ &= trapSites_.append(trap, insn, pcOffset, desc);
   }
-  void append(const wasm::MemoryAccessDesc& access, uint32_t pcOffset) {
-    appendOutOfBoundsTrap(access.trapOffset(), pcOffset);
-  }
-  void appendOutOfBoundsTrap(wasm::BytecodeOffset trapOffset,
-                             uint32_t pcOffset) {
-    append(wasm::Trap::OutOfBounds, wasm::TrapSite(pcOffset, trapOffset));
+  void append(const wasm::MemoryAccessDesc& access, wasm::TrapMachineInsn insn,
+              FaultingCodeOffset pcOffset) {
+    append(wasm::Trap::OutOfBounds, insn, pcOffset.get(), access.trapDesc());
   }
   void append(wasm::SymbolicAccess access) {
     enoughMemory_ &= symbolicAccesses_.append(access);
@@ -676,11 +728,30 @@ class AssemblerShared {
     return true;
   }
 
-  wasm::CallSiteVector& callSites() { return callSites_; }
+  void append(wasm::CodeRangeUnwindInfo::UnwindHow unwindHow,
+              uint32_t pcOffset) {
+    enoughMemory_ &= codeRangesUnwind_.emplaceBack(pcOffset, unwindHow);
+  }
+  void append(wasm::CallRefMetricsPatch patch) {
+    enoughMemory_ &= callRefMetricsPatches_.append(patch);
+  }
+  void append(wasm::AllocSitePatch patch) {
+    enoughMemory_ &= allocSitesPatches_.append(patch);
+  }
+
+  wasm::InliningContext& inliningContext() { return inliningContext_; }
+  wasm::CallSites& callSites() { return callSites_; }
   wasm::CallSiteTargetVector& callSiteTargets() { return callSiteTargets_; }
-  wasm::TrapSiteVectorArray& trapSites() { return trapSites_; }
+  wasm::TrapSites& trapSites() { return trapSites_; }
   wasm::SymbolicAccessVector& symbolicAccesses() { return symbolicAccesses_; }
   wasm::TryNoteVector& tryNotes() { return tryNotes_; }
+  wasm::CodeRangeUnwindInfoVector& codeRangeUnwindInfos() {
+    return codeRangesUnwind_;
+  }
+  wasm::CallRefMetricsPatchVector& callRefMetricsPatches() {
+    return callRefMetricsPatches_;
+  }
+  wasm::AllocSitePatchVector& allocSitesPatches() { return allocSitesPatches_; }
 };
 
 // AutoCreatedBy pushes and later pops a who-created-these-insns? tag into the

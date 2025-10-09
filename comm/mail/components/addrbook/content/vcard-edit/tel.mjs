@@ -5,17 +5,15 @@
 import { vCardIdGen } from "./id-gen.mjs";
 
 const lazy = {};
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "VCardPropertyEntry",
-  "resource:///modules/VCardUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  VCardPropertyEntry: "resource:///modules/VCardUtils.sys.mjs",
+});
 
 /**
  * @implements {VCardPropertyEntryView}
  * @see RFC6350 TEL
  *
- * @TODO missing type-param-tel support.
+ * TODO: missing type-param-tel support.
  * "text, voice, video, textphone"
  */
 export class VCardTelComponent extends HTMLElement {
@@ -35,12 +33,12 @@ export class VCardTelComponent extends HTMLElement {
     }
     this.hasConnected = true;
 
-    let template = document.getElementById("template-vcard-edit-tel");
-    let clonedTemplate = template.content.cloneNode(true);
+    const template = document.getElementById("template-vcard-edit-tel");
+    const clonedTemplate = template.content.cloneNode(true);
     this.appendChild(clonedTemplate);
 
     this.inputElement = this.querySelector('input[type="tel"]');
-    let urlId = vCardIdGen.next().value;
+    const urlId = vCardIdGen.next().value;
     this.inputElement.id = urlId;
     const urlLabel = this.querySelector('label[for="tel"]');
     urlLabel.htmlFor = urlId;

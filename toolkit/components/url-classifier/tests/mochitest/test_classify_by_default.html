@@ -77,7 +77,7 @@ async function setupAndRun(hasCookie, topLevelSite = TEST_TOP_SITE) {
   });
 }
 
-async function cleanup(topLevelSite = TEST_TOP_SITE) {
+async function cleanup() {
   function clearServiceWorker() {
     return new Promise(resolve => {
       let w;
@@ -91,8 +91,10 @@ async function cleanup(topLevelSite = TEST_TOP_SITE) {
     });
   }
 
-  // Ensure we clear the stylesheet cache so that we re-classify.
-  SpecialPowers.DOMWindowUtils.clearSharedStyleSheetCache();
+  // Ensure we clear the stylesheet/JS cache so that we re-classify.
+  SpecialPowers.ChromeUtils.clearResourceCache({
+    types: ["stylesheet", "script"],
+  });
 
   await clearServiceWorker();
 }

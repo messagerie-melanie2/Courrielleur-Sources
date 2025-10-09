@@ -9,8 +9,8 @@
 search-bar-button =
   .alt = Search
 
-search-bar-item =
-  .label = Search:
+search-bar-item2 =
+  .label = Search
 
 search-bar-placeholder = Search…
 
@@ -27,6 +27,12 @@ search-bar-placeholder-with-key2 = {
 
 customize-menu-customize =
   .label = Customize…
+
+# Unified toolbar get messages button context menu
+
+toolbar-get-all-messages-menuitem =
+  .label = Get All New Messages
+  .accesskey = G
 
 ## Unified Toolbar customization
 
@@ -70,8 +76,9 @@ customize-save = Save
 
 customize-unsaved-changes = Unsaved changes in other spaces
 
-customize-search-bar =
-  .label = Search toolbar buttons…
+customize-search-bar2 =
+  .label = Search toolbar buttons
+  .placeholder = Search toolbar buttons…
 
 customize-spaces-tabs =
   .aria-label = Spaces

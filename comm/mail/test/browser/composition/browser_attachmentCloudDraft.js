@@ -8,55 +8,50 @@
 
 "use strict";
 
-var { gMockFilePicker, gMockFilePickReg } = ChromeUtils.import(
-  "resource://testing-common/mozmill/AttachmentHelpers.jsm"
-);
 var {
   close_compose_window,
+  compose_window_ready,
   open_compose_new_mail,
   save_compose_message,
   setup_msg_contents,
-  wait_for_compose_window,
-} = ChromeUtils.import("resource://testing-common/mozmill/ComposeHelpers.jsm");
-var { CloudFileTestProvider } = ChromeUtils.import(
-  "resource://testing-common/mozmill/CloudfileHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+);
+var { CloudFileTestProvider } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/CloudfileHelpers.sys.mjs"
 );
 var {
   be_in_folder,
   get_special_folder,
   get_about_message,
-  mc,
   press_delete,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-var { get_notification, wait_for_notification_to_show } = ChromeUtils.import(
-  "resource://testing-common/mozmill/NotificationBoxHelpers.jsm"
+var { get_notification, wait_for_notification_to_show } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/NotificationBoxHelpers.sys.mjs"
+  );
+var { promise_new_window } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/WindowHelpers.sys.mjs"
 );
-var { plan_for_modal_dialog, plan_for_new_window, wait_for_modal_dialog } =
-  ChromeUtils.import("resource://testing-common/mozmill/WindowHelpers.jsm");
-
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
-);
+var { MockFilePicker } = SpecialPowers;
 
 var gDrafts;
-var gOutbox;
 var gCloudFileProvider;
 const kFiles = ["./data/attachment.txt"];
 
 add_setup(async function () {
   gDrafts = await get_special_folder(Ci.nsMsgFolderFlags.Drafts, true);
-  gOutbox = await get_special_folder(Ci.nsMsgFolderFlags.Queue);
-  gMockFilePickReg.register();
+  MockFilePicker.init(window.browsingContext);
   // Register an extension based cloudFile provider.
   gCloudFileProvider = new CloudFileTestProvider("testProvider");
   await gCloudFileProvider.register(this);
 });
 
 registerCleanupFunction(async function () {
-  gMockFilePickReg.unregister();
+  MockFilePicker.cleanup();
   await gCloudFileProvider.unregister();
 });
 
@@ -68,22 +63,23 @@ registerCleanupFunction(async function () {
  */
 add_task(async function test_draft_with_cloudFile_attachment() {
   // Prepare the mock file picker.
-  let files = collectFiles(kFiles);
-  gMockFilePicker.returnFiles = files;
+  const files = collectFiles(kFiles);
+  MockFilePicker.setFiles(files);
 
-  let cloudFileAccount = await gCloudFileProvider.createAccount("validAccount");
-  let draft = await createAndCloseDraftWithCloudAttachment(cloudFileAccount);
-  let expectedUpload = { ...draft.upload };
+  const cloudFileAccount =
+    await gCloudFileProvider.createAccount("validAccount");
+  const draft = await createAndCloseDraftWithCloudAttachment(cloudFileAccount);
+  const expectedUpload = { ...draft.upload };
 
-  let cwc = openDraft();
+  const cwc = await openDraft();
 
-  let bucket = cwc.window.document.getElementById("attachmentBucket");
+  const bucket = cwc.document.getElementById("attachmentBucket");
   Assert.equal(
     bucket.itemCount,
     kFiles.length,
     "Should find correct number of attachments."
   );
-  let itemFromDraft = [...bucket.children].find(
+  const itemFromDraft = [...bucket.children].find(
     e => e.attachment.name == "attachment.txt"
   );
   Assert.ok(itemFromDraft, "Should have found the attachment item");
@@ -121,12 +117,12 @@ add_task(async function test_draft_with_cloudFile_attachment() {
   );
   Assert.equal(
     draft.totalSize,
-    cwc.window.document.getElementById("attachmentBucketSize").textContent,
+    cwc.document.getElementById("attachmentBucketSize").textContent,
     "Total size of draft should match total size of original email."
   );
 
   // Rename attachment.
-  await cwc.window.UpdateAttachment(itemFromDraft, { name: "renamed.txt" });
+  await cwc.UpdateAttachment(itemFromDraft, { name: "renamed.txt" });
   Assert.equal(
     "renamed.txt",
     itemFromDraft.attachment.name,
@@ -134,16 +130,16 @@ add_task(async function test_draft_with_cloudFile_attachment() {
   );
 
   // Convert to regular attachment.
-  await cwc.window.UpdateAttachment(itemFromDraft, { cloudFileAccount: null });
+  await cwc.UpdateAttachment(itemFromDraft, { cloudFileAccount: null });
   Assert.ok(
     !itemFromDraft.attachment.sendViaCloud,
     "Converting a restored cloudFile attachment to a regular attachment should succeed."
   );
 
-  close_compose_window(cwc);
+  await close_compose_window(cwc);
 
   // Delete the leftover draft message.
-  press_delete();
+  await press_delete();
 
   // Cleanup cloudFile account.
   await gCloudFileProvider.removeAccount(cloudFileAccount);
@@ -158,29 +154,29 @@ add_task(async function test_draft_with_cloudFile_attachment() {
  */
 add_task(async function test_draft_with_unknown_cloudFile_attachment() {
   // Prepare the mock file picker.
-  let files = collectFiles(kFiles);
-  gMockFilePicker.returnFiles = files;
+  const files = collectFiles(kFiles);
+  MockFilePicker.setFiles(files);
 
-  let cloudFileAccount = await gCloudFileProvider.createAccount(
+  const cloudFileAccount = await gCloudFileProvider.createAccount(
     "validAccountUnknownUpload"
   );
-  let draft = await createAndCloseDraftWithCloudAttachment(cloudFileAccount);
-  let expectedUpload = { ...draft.upload };
+  const draft = await createAndCloseDraftWithCloudAttachment(cloudFileAccount);
+  const expectedUpload = { ...draft.upload };
 
   // Change the known upload, so the draft comes back as unknown.
-  let id1 = cloudFileAccount._uploads.get(1);
+  const id1 = cloudFileAccount._uploads.get(1);
   id1.serviceName = "wrongService";
   cloudFileAccount._uploads.set(1, id1);
 
-  let cwc = openDraft();
+  const cwc = await openDraft();
 
-  let bucket = cwc.window.document.getElementById("attachmentBucket");
+  const bucket = cwc.document.getElementById("attachmentBucket");
   Assert.equal(
     bucket.itemCount,
     kFiles.length,
     "Should find correct number of attachments."
   );
-  let itemFromDraft = [...bucket.children].find(
+  const itemFromDraft = [...bucket.children].find(
     e => e.attachment.name == "attachment.txt"
   );
   Assert.ok(itemFromDraft, "Should have found the attachment item");
@@ -219,12 +215,12 @@ add_task(async function test_draft_with_unknown_cloudFile_attachment() {
   );
   Assert.equal(
     draft.totalSize,
-    cwc.window.document.getElementById("attachmentBucketSize").textContent,
+    cwc.document.getElementById("attachmentBucketSize").textContent,
     "Total size of draft should match total size of original email."
   );
 
   // Rename attachment.
-  await cwc.window.UpdateAttachment(itemFromDraft, { name: "renamed.txt" });
+  await cwc.UpdateAttachment(itemFromDraft, { name: "renamed.txt" });
   Assert.equal(
     "renamed.txt",
     itemFromDraft.attachment.name,
@@ -232,16 +228,16 @@ add_task(async function test_draft_with_unknown_cloudFile_attachment() {
   );
 
   // Convert to regular attachment.
-  await cwc.window.UpdateAttachment(itemFromDraft, { cloudFileAccount: null });
+  await cwc.UpdateAttachment(itemFromDraft, { cloudFileAccount: null });
   Assert.ok(
     !itemFromDraft.attachment.sendViaCloud,
     "Converting an unknown cloudFile attachment to a regular attachment should succeed."
   );
 
-  close_compose_window(cwc);
+  await close_compose_window(cwc);
 
   // Delete the leftover draft message.
-  press_delete();
+  await press_delete();
 
   // Cleanup cloudFile account.
   await gCloudFileProvider.removeAccount(cloudFileAccount);
@@ -256,28 +252,27 @@ add_task(async function test_draft_with_unknown_cloudFile_attachment() {
  */
 add_task(async function test_draft_with_cloudFile_attachment_no_account() {
   // Prepare the mock file picker.
-  let files = collectFiles(kFiles);
-  gMockFilePicker.returnFiles = files;
+  const files = collectFiles(kFiles);
+  MockFilePicker.setFiles(files);
 
-  let cloudFileAccount = await gCloudFileProvider.createAccount(
-    "invalidAccount"
-  );
-  let draft = await createAndCloseDraftWithCloudAttachment(cloudFileAccount);
-  let expectedUpload = { ...draft.upload };
+  const cloudFileAccount =
+    await gCloudFileProvider.createAccount("invalidAccount");
+  const draft = await createAndCloseDraftWithCloudAttachment(cloudFileAccount);
+  const expectedUpload = { ...draft.upload };
 
   // Remove account.
   await gCloudFileProvider.removeAccount(cloudFileAccount);
 
-  let cwc = openDraft();
+  const cwc = await openDraft();
 
   // Check that the draft has a cloudFile attachment.
-  let bucket = cwc.window.document.getElementById("attachmentBucket");
+  const bucket = cwc.document.getElementById("attachmentBucket");
   Assert.equal(
     bucket.itemCount,
     kFiles.length,
     "Should find correct number of attachments."
   );
-  let itemFromDraft = [...bucket.children].find(
+  const itemFromDraft = [...bucket.children].find(
     e => e.attachment.name == "attachment.txt"
   );
   Assert.ok(itemFromDraft, "Should have found the attachment item");
@@ -316,28 +311,28 @@ add_task(async function test_draft_with_cloudFile_attachment_no_account() {
   );
   Assert.equal(
     draft.totalSize,
-    cwc.window.document.getElementById("attachmentBucketSize").textContent,
+    cwc.document.getElementById("attachmentBucketSize").textContent,
     "Total size of draft should match total size of original email."
   );
 
   // Rename attachment.
   await Assert.rejects(
-    cwc.window.UpdateAttachment(itemFromDraft, { name: "renamed.txt" }),
+    cwc.UpdateAttachment(itemFromDraft, { name: "renamed.txt" }),
     /CloudFile Error: Account not found: undefined/,
     "Renaming a restored cloudFile attachment (without account) should not succeed."
   );
 
   // Convert to regular attachment.
-  await cwc.window.UpdateAttachment(itemFromDraft, { cloudFileAccount: null });
+  await cwc.UpdateAttachment(itemFromDraft, { cloudFileAccount: null });
   Assert.ok(
     !itemFromDraft.attachment.sendViaCloud,
     "Converting a restored cloudFile attachment (without account) to a regular attachment should succeed."
   );
 
-  close_compose_window(cwc);
+  await close_compose_window(cwc);
 
   // Delete the leftover draft message.
-  press_delete();
+  await press_delete();
 });
 
 /**
@@ -349,31 +344,30 @@ add_task(async function test_draft_with_cloudFile_attachment_no_account() {
  */
 add_task(async function test_draft_with_cloudFile_attachment_no_file() {
   // Prepare the mock file picker.
-  let tempFile = await createAttachmentFile(
+  const tempFile = await createAttachmentFile(
     "attachment.txt",
     "This is a sample text."
   );
-  gMockFilePicker.returnFiles = [tempFile.file];
+  MockFilePicker.setFiles([tempFile.file]);
 
-  let cloudFileAccount = await gCloudFileProvider.createAccount(
-    "validAccountNoFile"
-  );
-  let draft = await createAndCloseDraftWithCloudAttachment(cloudFileAccount);
-  let expectedUpload = { ...draft.upload };
+  const cloudFileAccount =
+    await gCloudFileProvider.createAccount("validAccountNoFile");
+  const draft = await createAndCloseDraftWithCloudAttachment(cloudFileAccount);
+  const expectedUpload = { ...draft.upload };
 
   // Remove local file of cloudFile attachment.
   await IOUtils.remove(tempFile.path);
 
-  let cwc = openDraft();
+  const cwc = await openDraft();
 
   // Check that the draft has a cloudFile attachment.
-  let bucket = cwc.window.document.getElementById("attachmentBucket");
+  const bucket = cwc.document.getElementById("attachmentBucket");
   Assert.equal(
     bucket.itemCount,
     kFiles.length,
     "Should find correct number of attachments."
   );
-  let itemFromDraft = [...bucket.children].find(
+  const itemFromDraft = [...bucket.children].find(
     e => e.attachment.name == "attachment.txt"
   );
   Assert.ok(itemFromDraft, "Should have found the attachment item");
@@ -416,13 +410,13 @@ add_task(async function test_draft_with_cloudFile_attachment_no_file() {
   );
   Assert.equal(
     draft.totalSize,
-    cwc.window.document.getElementById("attachmentBucketSize").textContent,
+    cwc.document.getElementById("attachmentBucketSize").textContent,
     "Total size of draft should match total size of original email."
   );
 
   // Rename attachment.
   await Assert.rejects(
-    cwc.window.UpdateAttachment(itemFromDraft, { name: "renamed.txt" }),
+    cwc.UpdateAttachment(itemFromDraft, { name: "renamed.txt" }),
     e => {
       return (
         e.message.startsWith("CloudFile Error: Attachment file not found: ") &&
@@ -434,7 +428,7 @@ add_task(async function test_draft_with_cloudFile_attachment_no_file() {
 
   // Rename attachment.
   await Assert.rejects(
-    cwc.window.UpdateAttachment(itemFromDraft, { name: "renamed.txt" }),
+    cwc.UpdateAttachment(itemFromDraft, { name: "renamed.txt" }),
     e => {
       return (
         e.message.startsWith("CloudFile Error: Attachment file not found: ") &&
@@ -446,7 +440,7 @@ add_task(async function test_draft_with_cloudFile_attachment_no_file() {
 
   // Convert to regular attachment.
   await Assert.rejects(
-    cwc.window.UpdateAttachment(itemFromDraft, { cloudFileAccount: null }),
+    cwc.UpdateAttachment(itemFromDraft, { cloudFileAccount: null }),
     e => {
       return (
         e.message.startsWith("CloudFile Error: Attachment file not found: ") &&
@@ -456,10 +450,10 @@ add_task(async function test_draft_with_cloudFile_attachment_no_file() {
     "Converting a restored cloudFile attachment (without local file) to a regular attachment should not succeed."
   );
 
-  close_compose_window(cwc);
+  await close_compose_window(cwc);
 
   // Delete the leftover draft message.
-  press_delete();
+  await press_delete();
 
   // Cleanup cloudFile account.
   await gCloudFileProvider.removeAccount(cloudFileAccount);
@@ -467,23 +461,23 @@ add_task(async function test_draft_with_cloudFile_attachment_no_file() {
 
 async function createAndCloseDraftWithCloudAttachment(cloudFileAccount) {
   // Open a sample message.
-  let cwc = open_compose_new_mail();
-  setup_msg_contents(
+  const cwc = await open_compose_new_mail();
+  await setup_msg_contents(
     cwc,
     "test@example.invalid",
     `Testing drafts with cloudFiles for provider ${cloudFileAccount.displayName}!`,
     "Some body..."
   );
 
-  await cwc.window.attachToCloudNew(cloudFileAccount);
+  await cwc.attachToCloudNew(cloudFileAccount);
 
-  let bucket = cwc.window.document.getElementById("attachmentBucket");
+  const bucket = cwc.document.getElementById("attachmentBucket");
   Assert.equal(
     bucket.itemCount,
     kFiles.length,
     "Should find correct number of attachments."
   );
-  let item = [...bucket.children].find(
+  const item = [...bucket.children].find(
     e => e.attachment.name == "attachment.txt"
   );
   Assert.ok(item, "Should have found the attachment item");
@@ -499,11 +493,11 @@ async function createAndCloseDraftWithCloudAttachment(cloudFileAccount) {
     "Should have the correct cloudFileAccount."
   );
 
-  let url = item.attachment.url;
-  let upload = item.cloudFileUpload;
-  let itemIcon = item.querySelector("img.attachmentcell-icon").src;
-  let itemSize = item.querySelector(".attachmentcell-size").textContent;
-  let totalSize = cwc.window.document.getElementById(
+  const url = item.attachment.url;
+  const upload = item.cloudFileUpload;
+  const itemIcon = item.querySelector("img.attachmentcell-icon").src;
+  const itemSize = item.querySelector(".attachmentcell-size").textContent;
+  const totalSize = cwc.document.getElementById(
     "attachmentBucketSize"
   ).textContent;
 
@@ -514,8 +508,8 @@ async function createAndCloseDraftWithCloudAttachment(cloudFileAccount) {
   );
 
   // Now close the message with saving it as draft.
-  await save_compose_message(cwc.window);
-  close_compose_window(cwc);
+  await save_compose_message(cwc);
+  await close_compose_window(cwc);
 
   // The draft message was saved into Local Folders/Drafts.
   await be_in_folder(gDrafts);
@@ -523,18 +517,18 @@ async function createAndCloseDraftWithCloudAttachment(cloudFileAccount) {
   return { upload, url, itemIcon, itemSize, totalSize };
 }
 
-function openDraft() {
-  select_click_row(0);
-  let aboutMessage = get_about_message();
+async function openDraft() {
+  await select_click_row(0);
+  const aboutMessage = get_about_message();
   // Wait for the notification with the Edit button.
-  wait_for_notification_to_show(
+  await wait_for_notification_to_show(
     aboutMessage,
     "mail-notification-top",
     "draftMsgContent"
   );
   // Edit the draft again...
-  plan_for_new_window("msgcompose");
-  let box = get_notification(
+  const composePromise = promise_new_window("msgcompose");
+  const box = get_notification(
     aboutMessage,
     "mail-notification-top",
     "draftMsgContent"
@@ -545,22 +539,7 @@ function openDraft() {
     {},
     aboutMessage
   );
-  return wait_for_compose_window();
-}
-
-/**
- * Click Save in the Save message dialog.
- */
-function click_save_message(controller) {
-  if (controller.window.document.title != "Save Message") {
-    throw new Error(
-      "Not a Save message dialog; title=" + controller.window.document.title
-    );
-  }
-  controller.window.document
-    .querySelector("dialog")
-    .getButton("accept")
-    .doCommand();
+  return compose_window_ready(composePromise);
 }
 
 function collectFiles(files) {
@@ -568,7 +547,7 @@ function collectFiles(files) {
 }
 
 async function createAttachmentFile(filename, content) {
-  let tempPath = PathUtils.join(PathUtils.tempDir, filename);
+  const tempPath = PathUtils.join(PathUtils.tempDir, filename);
   await IOUtils.writeUTF8(tempPath, content);
   return {
     path: tempPath,

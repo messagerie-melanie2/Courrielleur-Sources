@@ -53,7 +53,7 @@ LOCAL_INCLUDES = [
     "src",
     "src/common",
     "src/lib",
-    "src/libsexp/include"
+    "src/libsexpp/include"
 ]
 
 IQuote(
@@ -62,6 +62,7 @@ IQuote(
 
 # Set up defines for src/lib/config.h
 rnp_defines = {
+    "RNP_USE_STD_REGEX": True,
     "HAVE_BZLIB_H": True,
     "HAVE_ZLIB_H": True,
     "ENABLE_SM2": False,
@@ -88,12 +89,14 @@ elif CONFIG["MZLA_LIBRNP_BACKEND"] == "openssl":
 
     rnp_defines.update({
         "CRYPTO_BACKEND_OPENSSL": True,
+        # _LEGACY needed due to enabling IDEA, CAST5, and BLOWFISH
+        # See rnp/src/lib/crypto/backend_version.cpp
+        "CRYPTO_BACKEND_OPENSSL3_LEGACY": True,
         # Not supported by OpenSSL https://github.com/openssl/openssl/issues/2046
         "ENABLE_TWOFISH": False,
         # Supported, but not with RHEL's OpenSSL, disabled for now;
         "ENABLE_BRAINPOOL": False,
     })
-    rnp_defines["PACKAGE_STRING"] = rnp_defines["PACKAGE_STRING"][:-1] + '-openssl"'
     if CONFIG["MZLA_LIBRNP_OPENSSL_VERSION"][0] == "3":
         rnp_defines["CRYPTO_BACKEND_OPENSSL3"] = True
 
@@ -105,7 +108,8 @@ GeneratedFile(
     script="/comm/python/thirdroc/rnp_generated.py",
     inputs=["src/lib/version.h.in", "src/lib/config.h.in"],
     flags=["-V", f"{SRCDIR}/version.txt",
-           "-m", CONFIG["MOZ_APP_VERSION_DISPLAY"]] + gen_files_flags
+           "-m", CONFIG["MOZ_APP_VERSION_DISPLAY"],
+           "-c", CONFIG["MZLA_LIBRNP_BACKEND"]] + gen_files_flags
 )
 
 if CONFIG["MOZ_SYSTEM_ZLIB"]:
@@ -129,10 +133,12 @@ if CONFIG["CC_TYPE"] == "clang-cl":
         "../niwcompat",
     ]
 
-    if CONFIG["CPU_ARCH"] == "x86":
+    if CONFIG["TARGET_CPU"] == "x86":
         LDFLAGS += ["clang_rt.builtins-i386.lib"]
-    elif CONFIG["CPU_ARCH"] == "x86_64":
+    elif CONFIG["TARGET_CPU"] == "x86_64":
         LDFLAGS += ["clang_rt.builtins-x86_64.lib"]
+    elif CONFIG["TARGET_CPU"] == "aarch64":
+        LDFLAGS += ["clang_rt.builtins-aarch64.lib"]
 
 SYMBOLS_FILE = "rnp.symbols"
 
@@ -178,15 +184,22 @@ SOURCES += [
     "src/librepgp/stream-parse.cpp",
     "src/librepgp/stream-sig.cpp",
     "src/librepgp/stream-write.cpp",
-    # libsexp
-    "src/libsexp/src/ext-key-format.cpp",
-    "src/libsexp/src/sexp-char-defs.cpp",
-    "src/libsexp/src/sexp-error.cpp",
-    "src/libsexp/src/sexp-input.cpp",
-    "src/libsexp/src/sexp-object.cpp",
-    "src/libsexp/src/sexp-output.cpp",
-    "src/libsexp/src/sexp-simple-string.cpp",
+    # libsexpp
+    "src/libsexpp/src/ext-key-format.cpp",
+    "src/libsexpp/src/sexp-char-defs.cpp",
+    "src/libsexpp/src/sexp-depth-manager.cpp",
+    "src/libsexpp/src/sexp-error.cpp",
+    "src/libsexpp/src/sexp-input.cpp",
+    "src/libsexpp/src/sexp-object.cpp",
+    "src/libsexpp/src/sexp-output.cpp",
+    "src/libsexpp/src/sexp-simple-string.cpp",
 ]
+
+if CONFIG["CC_TYPE"] == "clang-cl" and CONFIG["TARGET_CPU"] == "aarch64":
+    SOURCES["src/librepgp/stream-dump.cpp"].flags += ["/EHa"]
+
+SOURCES["src/lib/crypto/sha1cd/sha1.c"].flags += ["-Wno-unsafe-buffer-usage", "-Wno-extra-semi-stmt"]
+SOURCES["src/lib/crypto/sha1cd/ubc_check.c"].flags += ["-Wno-unsafe-buffer-usage"]
 
 if CONFIG["MZLA_LIBRNP_BACKEND"] == "botan":
     SOURCES += [

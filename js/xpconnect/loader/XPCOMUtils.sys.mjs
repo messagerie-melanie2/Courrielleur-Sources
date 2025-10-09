@@ -31,34 +31,25 @@ function redefine(object, prop, value) {
   return value;
 }
 
+/**
+ * XPCOMUtils contains helpers to make lazily loading scripts, modules, prefs
+ * and XPCOM services more ergonomic for JS consumers.
+ *
+ * @class
+ */
 export var XPCOMUtils = {
-  /**
-   * Defines a getter on a specified object that will be created upon first use.
-   *
-   * @param aObject
-   *        The object to define the lazy getter on.
-   * @param aName
-   *        The name of the getter to define on aObject.
-   * @param aLambda
-   *        A function that returns what the getter should return.  This will
-   *        only ever be called once.
-   */
-  defineLazyGetter(aObject, aName, aLambda) {
-    ChromeUtils.defineLazyGetter(aObject, aName, aLambda);
-  },
-
   /**
    * Defines a getter on a specified object for a script.  The script will not
    * be loaded until first use.
    *
-   * @param aObject
+   * @param {object} aObject
    *        The object to define the lazy getter on.
-   * @param aNames
+   * @param {string|string[]} aNames
    *        The name of the getter to define on aObject for the script.
    *        This can be a string if the script exports only one symbol,
    *        or an array of strings if the script can be first accessed
    *        from several different symbols.
-   * @param aResource
+   * @param {string} aResource
    *        The URL used to obtain the script.
    */
   defineLazyScriptGetter(aObject, aNames, aResource) {
@@ -96,7 +87,7 @@ export var XPCOMUtils = {
   /**
    * Defines a getter property on the given object for each of the given
    * global names as accepted by Cu.importGlobalProperties. These
-   * properties are imported into the shared JSM module global, and then
+   * properties are imported into the shared system global, and then
    * copied onto the given object, no matter which global the object
    * belongs to.
    *
@@ -107,7 +98,7 @@ export var XPCOMUtils = {
    */
   defineLazyGlobalGetters(aObject, aNames) {
     for (let name of aNames) {
-      this.defineLazyGetter(aObject, name, () => {
+      ChromeUtils.defineLazyGetter(aObject, name, () => {
         if (!(name in global)) {
           let importName = EXTRA_GLOBAL_NAME_TO_IMPORT_NAME[name] || name;
           // eslint-disable-next-line mozilla/reject-importGlobalProperties, no-unused-vars
@@ -122,19 +113,22 @@ export var XPCOMUtils = {
    * Defines a getter on a specified object for a service.  The service will not
    * be obtained until first use.
    *
-   * @param aObject
+   * @param {object} aObject
    *        The object to define the lazy getter on.
-   * @param aName
+   * @param {string} aName
    *        The name of the getter to define on aObject for the service.
-   * @param aContract
+   * @param {string} aContract
    *        The contract used to obtain the service.
-   * @param aInterfaceName
-   *        The name of the interface to query the service to.
+   * @param {nsID|string} aInterface
+   *        The interface or name of interface to query the service to.
    */
-  defineLazyServiceGetter(aObject, aName, aContract, aInterfaceName) {
-    this.defineLazyGetter(aObject, aName, () => {
-      if (aInterfaceName) {
-        return Cc[aContract].getService(Ci[aInterfaceName]);
+  defineLazyServiceGetter(aObject, aName, aContract, aInterface) {
+    ChromeUtils.defineLazyGetter(aObject, aName, () => {
+      if (aInterface) {
+        if (typeof aInterface === "string") {
+          aInterface = Ci[aInterface];
+        }
+        return Cc[aContract].getService(aInterface);
       }
       return Cc[aContract].getService().wrappedJSObject;
     });
@@ -144,9 +138,9 @@ export var XPCOMUtils = {
    * Defines a lazy service getter on a specified object for each
    * property in the given object.
    *
-   * @param aObject
+   * @param {object} aObject
    *        The object to define the lazy getter on.
-   * @param aServices
+   * @param {object} aServices
    *        An object with a property for each service to be
    *        imported, where the property name is the name of the
    *        symbol to define, and the value is a 1 or 2 element array
@@ -168,102 +162,23 @@ export var XPCOMUtils = {
   },
 
   /**
-   * Defines a getter on a specified object for a module.  The module will not
-   * be imported until first use. The getter allows to execute setup and
-   * teardown code (e.g.  to register/unregister to services) and accepts
-   * a proxy object which acts on behalf of the module until it is imported.
-   *
-   * @param aObject
-   *        The object to define the lazy getter on.
-   * @param aName
-   *        The name of the getter to define on aObject for the module.
-   * @param aResource
-   *        The URL used to obtain the module.
-   * @param aSymbol
-   *        The name of the symbol exported by the module.
-   *        This parameter is optional and defaults to aName.
-   * @param aPreLambda
-   *        A function that is executed when the proxy is set up.
-   *        This will only ever be called once.
-   * @param aPostLambda
-   *        A function that is executed when the module has been imported to
-   *        run optional teardown procedures on the proxy object.
-   *        This will only ever be called once.
-   * @param aProxy
-   *        An object which acts on behalf of the module to be imported until
-   *        the module has been imported.
-   */
-  defineLazyModuleGetter(
-    aObject,
-    aName,
-    aResource,
-    aSymbol,
-    aPreLambda,
-    aPostLambda,
-    aProxy
-  ) {
-    if (arguments.length == 3) {
-      ChromeUtils.defineModuleGetter(aObject, aName, aResource);
-      return;
-    }
-
-    let proxy = aProxy || {};
-
-    if (typeof aPreLambda === "function") {
-      aPreLambda.apply(proxy);
-    }
-
-    this.defineLazyGetter(aObject, aName, () => {
-      var temp = {};
-      try {
-        temp = ChromeUtils.import(aResource);
-
-        if (typeof aPostLambda === "function") {
-          aPostLambda.apply(proxy);
-        }
-      } catch (ex) {
-        console.error("Failed to load module " + aResource + ".");
-        throw ex;
-      }
-      return temp[aSymbol || aName];
-    });
-  },
-
-  /**
-   * Defines a lazy module getter on a specified object for each
-   * property in the given object.
-   *
-   * @param aObject
-   *        The object to define the lazy getter on.
-   * @param aModules
-   *        An object with a property for each module property to be
-   *        imported, where the property name is the name of the
-   *        imported symbol and the value is the module URI.
-   */
-  defineLazyModuleGetters(aObject, aModules) {
-    for (let [name, module] of Object.entries(aModules)) {
-      ChromeUtils.defineModuleGetter(aObject, name, module);
-    }
-  },
-
-  /**
    * Defines a getter on a specified object for preference value. The
    * preference is read the first time that the property is accessed,
    * and is thereafter kept up-to-date using a preference observer.
    *
-   * @param aObject
+   * @param {object} aObject
    *        The object to define the lazy getter on.
-   * @param aName
+   * @param {string} aName
    *        The name of the getter property to define on aObject.
-   * @param aPreference
+   * @param {string} aPreference
    *        The name of the preference to read.
-   * @param aDefaultPrefValue
+   * @param {any} aDefaultPrefValue
    *        The default value to use, if the preference is not defined.
    *        This is the default value of the pref, before applying aTransform.
-   * @param aOnUpdate
+   * @param {Function} aOnUpdate
    *        A function to call upon update. Receives as arguments
    *         `(aPreference, previousValue, newValue)`
-   * @param aTransform
+   * @param {Function} aTransform
    *        An optional function to transform the value.  If provided,
    *        this function receives the new preference value as an argument
    *        and its return value is used by the getter.
@@ -372,7 +287,131 @@ export var XPCOMUtils = {
   },
 
   /**
+   * Defines properties on the given object which lazily import
+   * an ES module or run another utility getter when accessed.
+   *
+   * Use this version when you need to define getters on the
+   * global `this`, or any other object you can't assign to:
+   *
+   *    @example
+   *    XPCOMUtils.defineLazy(this, {
+   *      AppConstants: "resource://gre/modules/AppConstants.sys.mjs",
+   *      verticalTabs: { pref: "sidebar.verticalTabs", default: false },
+   *      MIME: { service: "@mozilla.org/mime;1", iid: Ci.nsInsIMIMEService },
+   *      expensiveThing: () => fetch_or_compute(),
+   *    });
+   *
+   * Additionally, the given object is also returned, which enables
+   * type-friendly composition:
+   *
+   *    @example
+   *    const existing = {
+   *      someProps: new Widget(),
+   *    };
+   *    const combined = XPCOMUtils.defineLazy(existing, {
+   *      expensiveThing: () => fetch_or_compute(),
+   *    });
+   *
+   * The `combined` variable is the same object reference as `existing`,
+   * but TypeScript also knows about lazy getters defined on it.
+   *
+   * Since you probably don't want aliases, you can use it like this to,
+   * for example, define (static) lazy getters on a class:
+   *
+   *    @example
+   *    const Widget = XPCOMUtils.defineLazy(
+   *      class Widget {
+   *        static normalProp = 3;
+   *      },
+   *      {
+   *        verticalTabs: { pref: "sidebar.verticalTabs", default: false },
+   *      }
+   *    );
+   *
+   * @template {LazyDefinition} const L, T
+   *
+   * @param {T} lazy
+   * The object to define the getters on.
+   *
+   * @param {L} definition
+   * Each key:value property defines type and parameters for getters.
+   *
+   *  - "resource://module" string
+   *    @see ChromeUtils.defineESModuleGetters
+   *
+   *  - () => value
+   *    @see ChromeUtils.defineLazyGetter
+   *
+   *  - { service: "contract", iid?: nsIID }
+   *    @see XPCOMUtils.defineLazyServiceGetter
+   *
+   *  - { pref: "name", default?, onUpdate?, transform? }
+   *    @see XPCOMUtils.defineLazyPreferenceGetter
+   *
+   * @param {ImportESModuleOptionsDictionary} [options]
+   * When importing ESModules in devtools and worker contexts,
+   * the third parameter is required.
+   */
+  defineLazy(lazy, definition, options) {
+    let modules = {};
+
+    for (let [key, val] of Object.entries(definition)) {
+      if (typeof val === "string") {
+        modules[key] = val;
+      } else if (typeof val === "function") {
+        ChromeUtils.defineLazyGetter(lazy, key, val);
+      } else if ("service" in val) {
+        XPCOMUtils.defineLazyServiceGetter(lazy, key, val.service, val.iid);
+      } else if ("pref" in val) {
+        XPCOMUtils.defineLazyPreferenceGetter(
+          lazy,
+          key,
+          val.pref,
+          val.default,
+          val.onUpdate,
+          val.transform
+        );
+      } else {
+        throw new Error(`Unkown LazyDefinition for ${key}`);
+      }
+    }
+
+    ChromeUtils.defineESModuleGetters(lazy, modules, options);
+    return /** @type {T & DeclaredLazy<L>} */ (lazy);
+  },
+
+  /**
+   * @see XPCOMUtils.defineLazy
+   * A shorthand for above which always returns a new lazy object.
+   * Use this version if you have a global `lazy` const with all the getters:
+   *
+   *    @example
+   *    const lazy = XPCOMUtils.declareLazy({
+   *      AppConstants: "resource://gre/modules/AppConstants.sys.mjs",
+   *      verticalTabs: { pref: "sidebar.verticalTabs", default: false },
+   *      MIME: { service: "@mozilla.org/mime;1", iid: Ci.nsInsIMIMEService },
+   *      expensiveThing: () => fetch_or_compute(),
+   *    });
+   *
+   * @template {LazyDefinition} const L
+   * @param {L} declaration
+   * @param {ImportESModuleOptionsDictionary} [options]
+   */
+  declareLazy(declaration, options) {
+    return XPCOMUtils.defineLazy({}, declaration, options);
+  },
+
+  /**
    * Defines a non-writable property on an object.
+   *
+   * @param {object} aObj
+   *        The object to define the property on.
+   *
+   * @param {string} aName
+   *        The name of the non-writable property to define on aObject.
+   *
+   * @param {any} aValue
+   *        The value of the non-writable property.
    */
   defineConstant(aObj, aName, aValue) {
     Object.defineProperty(aObj, aName, {
@@ -381,198 +420,11 @@ export var XPCOMUtils = {
       writable: false,
     });
   },
-
-  /**
-   * Defines a proxy which acts as a lazy object getter that can be passed
-   * around as a reference, and will only be evaluated when something in
-   * that object gets accessed.
-   *
-   * The evaluation can be triggered by a function call, by getting or
-   * setting a property, calling this as a constructor, or enumerating
-   * the properties of this object (e.g. during an iteration).
-   *
-   * Please note that, even after evaluated, the object given to you
-   * remains being the proxy object (which forwards everything to the
-   * real object). This is important to correctly use these objects
-   * in pairs of add+remove listeners, for example.
-   * If your use case requires access to the direct object, you can
-   * get it through the untrap callback.
-   *
-   * @param aObject
-   *        The object to define the lazy getter on.
-   *
-   *        You can pass null to aObject if you just want to get this
-   *        proxy through the return value.
-   *
-   * @param aName
-   *        The name of the getter to define on aObject.
-   *
-   * @param aInitFuncOrResource
-   *        A function or a module that defines what this object actually
-   *        should be when it gets evaluated. This will only ever be called once.
-   *
-   *        Short-hand: If you pass a string to this parameter, it will be treated
-   *        as the URI of a module to be imported, and aName will be used as
-   *        the symbol to retrieve from the module.
-   *
-   * @param aStubProperties
-   *        In this parameter, you can provide an object which contains
-   *        properties from the original object that, when accessed, will still
-   *        prevent the entire object from being evaluated.
-   *
-   *        These can be copies or simplified versions of the original properties.
-   *
-   *        One example is to provide an alternative QueryInterface implementation
-   *        to avoid the entire object from being evaluated when it's added as an
-   *        observer (as addObserver calls object.QueryInterface(Ci.nsIObserver)).
-   *
-   *        Once the object has been evaluated, the properties from the real
-   *        object will be used instead of the ones provided here.
-   *
-   * @param aUntrapCallback
-   *        A function that gets called once when the object has just been evaluated.
-   *        You can use this to do some work (e.g. setting properties) that you need
-   *        to do on this object but that can wait until it gets evaluated.
-   *
-   *        Another use case for this is to use during code development to log when
-   *        this object gets evaluated, to make sure you're not accidentally triggering
-   *        it earlier than expected.
-   */
-  defineLazyProxy(
-    aObject,
-    aName,
-    aInitFuncOrResource,
-    aStubProperties,
-    aUntrapCallback
-  ) {
-    let initFunc = aInitFuncOrResource;
-
-    if (typeof aInitFuncOrResource == "string") {
-      initFunc = () => ChromeUtils.import(aInitFuncOrResource)[aName];
-    }
-
-    let handler = new LazyProxyHandler(
-      aName,
-      initFunc,
-      aStubProperties,
-      aUntrapCallback
-    );
-
-    /*
-     * We cannot simply create a lazy getter for the underlying
-     * object and pass it as the target of the proxy, because
-     * just passing it in `new Proxy` means it would get
-     * evaluated. Becase of this, a full handler needs to be
-     * implemented (the LazyProxyHandler).
-     *
-     * So, an empty object is used as the target, and the handler
-     * replaces it on every call with the real object.
-     */
-    let proxy = new Proxy({}, handler);
-
-    if (aObject) {
-      Object.defineProperty(aObject, aName, {
-        value: proxy,
-        enumerable: true,
-        writable: true,
-      });
-    }
-
-    return proxy;
-  },
 };
 
-XPCOMUtils.defineLazyGetter(XPCOMUtils, "_scriptloader", () => {
+ChromeUtils.defineLazyGetter(XPCOMUtils, "_scriptloader", () => {
   return Services.scriptloader;
 });
-
-/**
- * LazyProxyHandler
- * This class implements the handler used
- * in the proxy from defineLazyProxy.
- *
- * This handler forwards all calls to an underlying object,
- * stored as `this.realObject`, which is obtained as the returned
- * value from aInitFunc, which will be called on the first time
- * time that it needs to be used (with an exception in the get() trap
- * for the properties provided in the `aStubProperties` parameter).
- */
-
-class LazyProxyHandler {
-  constructor(aName, aInitFunc, aStubProperties, aUntrapCallback) {
-    this.pending = true;
-    this.name = aName;
-    this.initFuncOrResource = aInitFunc;
-    this.stubProperties = aStubProperties;
-    this.untrapCallback = aUntrapCallback;
-  }
-
-  getObject() {
-    if (this.pending) {
-      this.realObject = this.initFuncOrResource.call(null);
-
-      if (this.untrapCallback) {
-        this.untrapCallback.call(null, this.realObject);
-        this.untrapCallback = null;
-      }
-
-      this.pending = false;
-      this.stubProperties = null;
-    }
-    return this.realObject;
-  }
-
-  getPrototypeOf(target) {
-    return Reflect.getPrototypeOf(this.getObject());
-  }
-
-  setPrototypeOf(target, prototype) {
-    return Reflect.setPrototypeOf(this.getObject(), prototype);
-  }
-
-  isExtensible(target) {
-    return Reflect.isExtensible(this.getObject());
-  }
-
-  preventExtensions(target) {
-    return Reflect.preventExtensions(this.getObject());
-  }
-
-  getOwnPropertyDescriptor(target, prop) {
-    return Reflect.getOwnPropertyDescriptor(this.getObject(), prop);
-  }
-
-  defineProperty(target, prop, descriptor) {
-    return Reflect.defineProperty(this.getObject(), prop, descriptor);
-  }
-
-  has(target, prop) {
-    return Reflect.has(this.getObject(), prop);
-  }
-
-  get(target, prop, receiver) {
-    if (
-      this.pending &&
-      this.stubProperties &&
-      Object.prototype.hasOwnProperty.call(this.stubProperties, prop)
-    ) {
-      return this.stubProperties[prop];
-    }
-    return Reflect.get(this.getObject(), prop, receiver);
-  }
-
-  set(target, prop, value, receiver) {
-    return Reflect.set(this.getObject(), prop, value, receiver);
-  }
-
-  deleteProperty(target, prop) {
-    return Reflect.deleteProperty(this.getObject(), prop);
-  }
-
-  ownKeys(target) {
-    return Reflect.ownKeys(this.getObject());
-  }
-}
 
 var XPCU_lazyPreferenceObserverQI = ChromeUtils.generateQI([
   "nsIObserver",

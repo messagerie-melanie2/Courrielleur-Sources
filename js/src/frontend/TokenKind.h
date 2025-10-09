@@ -9,7 +9,7 @@
 
 #include <stdint.h>
 
-#include "js/TypeDecls.h"  // IF_RECORD_TUPLE
+#include "js/TypeDecls.h"  // IF_DECORATORS
 
 /*
  * List of token kinds and their ranges.
@@ -52,7 +52,7 @@
  *   FOR_EACH_TOKEN_KIND(EMIT_TOKEN)
  *   #undef EMIT_TOKEN
  *
- * Note that this list does not contain ERROR and LIMIT.
+ * Note that this list does not contain Limit.
  */
 #define FOR_EACH_TOKEN_KIND_WITH_RANGE(MACRO, RANGE)                   \
   MACRO(Eof, "end of script")                                          \
@@ -70,10 +70,8 @@
   MACRO(TripleDot, "'...'") /* rest arguments and spread operator */   \
   MACRO(OptionalChain, "'?.'")                                         \
   MACRO(LeftBracket, "'['")                                            \
-  IF_RECORD_TUPLE(MACRO(HashBracket, "'#['"))                          \
   MACRO(RightBracket, "']'")                                           \
   MACRO(LeftCurly, "'{'")                                              \
-  IF_RECORD_TUPLE(MACRO(HashCurly, "'#{'"))                            \
   MACRO(RightCurly, "'}'")                                             \
   MACRO(LeftParen, "'('")                                              \
   MACRO(RightParen, "')'")                                             \
@@ -143,6 +141,7 @@
   MACRO(Set, "'set'")                                                  \
   MACRO(Static, "'static'")                                            \
   MACRO(Target, "'target'")                                            \
+  IF_EXPLICIT_RESOURCE_MANAGEMENT(MACRO(Using, "'using'"))             \
   MACRO(Yield, "'yield'")                                              \
   RANGE(ContextualKeywordLast, Yield)                                  \
                                                                        \

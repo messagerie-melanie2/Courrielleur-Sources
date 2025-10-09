@@ -15,6 +15,7 @@
   },
   {
     "namespace": "addressBooks",
+    "description": "The addressBooks API allows to access and manage the user's address books.",
     "permissions": ["addressBooks"],
     "types": [
       {
@@ -35,11 +36,11 @@
           "parentId": {
             "type": "string",
             "optional": true,
-            "description": "The ``id`` of the parent object."
+            "description": "The <var>id</var> of the parent object."
           },
           "type": {
             "$ref": "NodeType",
-            "description": "Always set to <value>addressBook</value>."
+            "description": "Always set to <var>addressBook</var>."
           },
           "readOnly": {
             "type": "boolean",
@@ -257,12 +258,14 @@
   },
   {
     "namespace": "addressBooks.provider",
+    "description": "The address book provider API allows to add address books, which are not stored or cached by Thunderbird itself, but are handled completely by the extension. Address books created by the this API will forward all access requests to the WebExtension.",
     "permissions": ["addressBooks"],
     "events": [
       {
         "name": "onSearchRequest",
+        "max_manifest_version": 2,
         "type": "function",
-        "description": "Registering this listener will create and list a read-only address book in Thunderbird's address book window, similar to LDAP address books. When selecting this address book, users will first see no contacts, but they can search for them, which will fire this event. Contacts returned by the listener callback will be displayed as contact cards in the address book. Several listeners can be registered, to create multiple address books.\n\nThe event also fires for each registered listener (for each created read-only address book), when users type something into the mail composer's <em>To:</em> field, or into similar fields like the calendar meeting attendees field. Contacts returned by the listener callback will be added to the autocomplete results in the dropdown of that field.\n\nExample: <literalinclude>includes/addressBooks/onSearchRequest.js<lang>JavaScript</lang></literalinclude>",
+        "description": "Registering this listener will create a read-only address book, similar to an LDAP address book. When selecting this address book, users will first see no contacts, but they can search for contacts, which will fire this event. Contacts returned by the listener callback will be displayed as contact cards in the address book. Several listeners can be registered, to create multiple address books.",
         "parameters": [
           {
             "name": "node",
@@ -277,7 +280,7 @@
           {
             "name": "query",
             "type": "string",
-            "description": "The boolean query expression corresponding to the search. **Note:** This parameter may change in future releases of Thunderbird.",
+            "description": "The boolean query expression corresponding to the search.",
             "optional": true
           }
         ],
@@ -290,7 +293,7 @@
               "addressBookName": {
                 "type": "string",
                 "optional": true,
-                "description": "The name of the created address book."
+                "description": "The name of the created address book. If not provided, the name of the extension is used."
               },
               "isSecure": {
                 "type": "boolean",
@@ -300,51 +303,145 @@
               "id": {
                 "type": "string",
                 "optional": true,
-                "description": "The unique ID of the created address book. If several listeners have been added, the ``id`` allows to identify which address book initiated the search request. If not provided, a unique ID will be generated for you."
+                "description": "The unique identifier of the created address book. If not provided, a unique identifier will be generated for you."
               }
             }
           }
-        ]
+        ],
+        "returns": {
+          "type": "object",
+          "properties": {
+            "results": {
+              "type": "array",
+              "items": {
+                "$ref": "ContactProperties"
+              }
+            },
+            "isCompleteResult": {
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      {
+        "name": "onSearchRequest",
+        "min_manifest_version": 3,
+        "type": "function",
+        "description": "Registering this listener will create a read-only address book, similar to an LDAP address book. When selecting this address book, users will first see no contacts, but they can search for contacts, which will fire this event. Contacts returned by the listener callback will be displayed as contact cards in the address book. Several listeners can be registered, to create multiple address books.",
+        "parameters": [
+          {
+            "name": "node",
+            "$ref": "AddressBookNode"
+          },
+          {
+            "name": "searchString",
+            "description": "The search text that the user entered. Not available when invoked from the advanced address book search dialog.",
+            "type": "string",
+            "optional": true
+          },
+          {
+            "name": "query",
+            "type": "string",
+            "description": "The boolean query expression corresponding to the search.",
+            "optional": true
+          }
+        ],
+        "extraParameters": [
+          {
+            "name": "parameters",
+            "description": "Descriptions for the address book created by registering this listener.",
+            "type": "object",
+            "properties": {
+              "addressBookName": {
+                "type": "string",
+                "optional": true,
+                "description": "The name of the created address book. If not provided, the name of the extension is used."
+              },
+              "isSecure": {
+                "type": "boolean",
+                "optional": true,
+                "description": "Whether the address book search queries are using encrypted protocols like HTTPS."
+              },
+              "id": {
+                "type": "string",
+                "optional": true,
+                "description": "The unique identifier of the created address book. If not provided, a unique identifier will be generated for you."
+              }
+            }
+          }
+        ],
+        "returns": {
+          "type": "object",
+          "properties": {
+            "results": {
+              "type": "array",
+              "items": {
+                "$ref": "ContactProperties"
+              }
+            },
+            "isCompleteResult": {
+              "type": "boolean"
+            }
+          }
+        }
       }
     ]
   },
   {
+    "namespace": "addressBooks.contacts",
+    "min_manifest_version": 3,
+    "$import": "contacts"
+  },
+  {
+    "namespace": "addressBooks.mailingLists",
+    "min_manifest_version": 3,
+    "$import": "mailingLists"
+  },
+  {
     "namespace": "contacts",
+    "description": "The contacts API allows to access and manage the user's contacts.",
+    "max_manifest_version": 2,
     "permissions": ["addressBooks"],
     "types": [
       {
         "id": "QueryInfo",
-        "description": "Object defining a query for :ref:`contacts.quickSearch`.",
+        "description": "Object defining a query for $(ref:contacts.quickSearch).",
         "type": "object",
         "properties": {
+          "parentId": {
+            "type": "string",
+            "min_manifest_version": 3,
+            "optional": true,
+            "description": "The id of the address book to search. If not specified, all address books are searched."
+          },
           "searchString": {
             "type": "string",
             "optional": true,
-            "description": "One or more space-separated terms to search for."
+            "description": "One or more space-separated terms to search for in predefined contact fields (defined by the preference <var>mail.addr_book.quicksearchquery.format</var>)."
           },
           "includeLocal": {
             "type": "boolean",
             "optional": true,
             "default": true,
-            "description": "Whether to include results from local address books. Defaults to true."
+            "description": "Whether to include results from local address books. Defaults to <var>true</var>."
           },
           "includeRemote": {
             "type": "boolean",
             "optional": true,
             "default": true,
-            "description": "Whether to include results from remote address books. Defaults to true."
+            "description": "Whether to include results from remote address books. Defaults to <var>true</var>."
           },
           "includeReadOnly": {
             "type": "boolean",
             "optional": true,
             "default": true,
-            "description": "Whether to include results from read-only address books. Defaults to true."
+            "description": "Whether to include results from read-only address books. Defaults to <var>true</var>."
           },
           "includeReadWrite": {
             "type": "boolean",
             "optional": true,
             "default": true,
-            "description": "Whether to include results from read-write address books. Defaults to true."
+            "description": "Whether to include results from read-write address books. Defaults to <var>true</var>."
           }
         }
       },
@@ -360,11 +457,11 @@
           "parentId": {
             "type": "string",
             "optional": true,
-            "description": "The ``id`` of the parent object."
+            "description": "The <var>id</var> of the parent object."
           },
           "type": {
             "$ref": "addressBooks.NodeType",
-            "description": "Always set to <value>contact</value>."
+            "description": "Always set to <var>contact</var>."
           },
           "readOnly": {
             "type": "boolean",
@@ -377,14 +474,19 @@
             "description": "Indicates if the object came from a remote address book."
           },
           "properties": {
+            "max_manifest_version": 2,
             "$ref": "ContactProperties"
+          },
+          "vCard": {
+            "min_manifest_version": 3,
+            "type": "string"
           }
         }
       },
       {
         "id": "ContactProperties",
         "type": "object",
-        "description": "A set of individual properties for a particular contact, and its vCard string. Further information can be found in :ref:`howto_contacts`.",
+        "description": "A set of individual properties for a particular contact, and its vCard string. Further information can be found in $(doc:guides/vcard).",
         "patternProperties": {
           "^\\w+$": {
             "choices": [
@@ -401,7 +503,7 @@
       {
         "id": "PropertyChange",
         "type": "object",
-        "description": "A dictionary of changed properties. Keys are the property name that changed, values are an object containing ``oldValue`` and ``newValue``. Values can be either a string or <value>null</value>.",
+        "description": "A dictionary of changed properties. Keys are the property name that changed, values are an object containing <var>oldValue</var> and <var>newValue</var>. Values can be either a string or <var>null</var>.",
         "patternProperties": {
           "^\\w+$": {
             "type": "object",
@@ -455,10 +557,11 @@
             ]
           }
         ],
-        "description": "Gets all the contacts in the address book with the id ``parentId``."
+        "description": "Gets all the contacts in the address book with the id <var>parentId</var>."
       },
       {
         "name": "quickSearch",
+        "max_manifest_version": 2,
         "type": "function",
         "async": "callback",
         "parameters": [
@@ -470,7 +573,7 @@
           },
           {
             "name": "queryInfo",
-            "description": "Either a <em>string</em> with one or more space-separated terms to search for, or a complex :ref:`contacts.QueryInfo` search query.",
+            "description": "Either a <em>string</em> with one or more space-separated terms to search for, or a complex $(ref:contacts.QueryInfo) search query.",
             "choices": [
               {
                 "type": "string"
@@ -494,7 +597,33 @@
             ]
           }
         ],
-        "description": "Gets all contacts matching ``queryInfo`` in the address book with the id ``parentId``."
+        "description": "Gets all contacts matching <var>queryInfo</var> in the address book with the id <var>parentId</var>."
+      },
+      {
+        "name": "query",
+        "min_manifest_version": 3,
+        "type": "function",
+        "async": "callback",
+        "parameters": [
+          {
+            "name": "queryInfo",
+            "$ref": "QueryInfo"
+          },
+          {
+            "type": "function",
+            "name": "callback",
+            "optional": true,
+            "parameters": [
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "ContactNode"
+                }
+              }
+            ]
+          }
+        ],
+        "description": "Gets all contacts matching <var>queryInfo</var>."
       },
       {
         "name": "get",
@@ -533,15 +662,21 @@
             "optional": true,
             "parameters": [
               {
-                "type": "object",
-                "optional": true,
-                "isInstanceOf": "File",
-                "additionalProperties": true
+                "choices": [
+                  {
+                    "type": "object",
+                    "isInstanceOf": "File",
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             ]
           }
         ],
-        "description": "Gets the photo associated with this contact, if any."
+        "description": "Gets the photo associated with this contact. Returns <var>null</var>, if no photo is available."
       },
       {
         "name": "setPhoto",
@@ -564,6 +699,7 @@
       {
         "name": "create",
         "type": "function",
+        "max_manifest_version": 2,
         "async": "callback",
         "parameters": [
           {
@@ -573,13 +709,14 @@
           {
             "name": "id",
             "type": "string",
-            "description": "Assigns the contact an id. If an existing contact has this id, an exception is thrown. **Note:** Deprecated, the card's id should be specified in the vCard string instead.",
+            "description": "Assigns the contact an id. If an existing contact has this id, an exception is thrown.",
+            "deprecated": "The card's id should be specified directly in the vCard string.",
             "optional": true
           },
           {
             "name": "properties",
             "$ref": "ContactProperties",
-            "description": "The properties object for the new contact. If it includes a ``vCard`` member, all specified `legacy properties <|link-legacy-properties|>`__ are ignored and the new contact will be based on the provided vCard string. If a UID is specified in the vCard string, which is already used by another contact, an exception is thrown. **Note:** Using individual properties is deprecated, use the ``vCard`` member instead."
+            "description": "The properties object for the new contact. If it includes a <var>vCard</var> member, all specified $(url:legacy-properties)[legacy properties] are ignored and the new contact will be based on the provided vCard string. If a UID is specified in the vCard string, which is already used by another contact, an exception is thrown."
           },
           {
             "type": "function",
@@ -593,11 +730,42 @@
             ]
           }
         ],
-        "description": "Adds a new contact to the address book with the id ``parentId``."
+        "description": "Adds a new contact to the address book with the id <var>parentId</var>."
+      },
+      {
+        "name": "create",
+        "type": "function",
+        "min_manifest_version": 3,
+        "async": "callback",
+        "parameters": [
+          {
+            "name": "parentId",
+            "type": "string"
+          },
+          {
+            "name": "vCard",
+            "min_manifest_version": 3,
+            "type": "string",
+            "description": "The vCard for the new contact. If it includes an (optional) id and an existing contact has this id already, an exception is thrown."
+          },
+          {
+            "type": "function",
+            "name": "callback",
+            "optional": true,
+            "parameters": [
+              {
+                "type": "string",
+                "description": "The ID of the new contact."
+              }
+            ]
+          }
+        ],
+        "description": "Adds a new contact to the address book with the id <var>parentId</var>."
       },
       {
         "name": "update",
         "type": "function",
+        "max_manifest_version": 2,
         "async": true,
         "parameters": [
           {
@@ -607,7 +775,25 @@
           {
             "name": "properties",
             "$ref": "ContactProperties",
-            "description": "An object with properties to update the specified contact. Individual properties are removed, if they are set to <value>null</value>. If the provided object includes a ``vCard`` member, all specified `legacy properties <|link-legacy-properties|>`__ are ignored and the details of the contact will be replaced by the provided vCard. Changes to the UID will be ignored. **Note:** Using individual properties is deprecated, use the ``vCard`` member instead. "
+            "description": "An object with properties to update the specified contact. Individual properties are removed, if they are set to <var>null</var>. If the provided object includes a <var>vCard</var> member, all specified $(url:legacy-properties)[legacy properties] are ignored and the details of the contact will be replaced by the provided vCard. Changes to the UID will be ignored."
+          }
+        ],
+        "description": "Updates a contact."
+      },
+      {
+        "name": "update",
+        "type": "function",
+        "min_manifest_version": 3,
+        "async": true,
+        "parameters": [
+          {
+            "name": "id",
+            "type": "string"
+          },
+          {
+            "name": "vCard",
+            "type": "string",
+            "description": "The updated vCard for the contact."
           }
         ],
         "description": "Updates a contact."
@@ -640,6 +826,7 @@
       {
         "name": "onUpdated",
         "type": "function",
+        "max_manifest_version": 2,
         "description": "Fired when a contact is changed.",
         "parameters": [
           {
@@ -649,6 +836,22 @@
           {
             "name": "changedProperties",
             "$ref": "PropertyChange"
+          }
+        ]
+      },
+      {
+        "name": "onUpdated",
+        "type": "function",
+        "min_manifest_version": 3,
+        "description": "Fired when a contact is changed.",
+        "parameters": [
+          {
+            "name": "node",
+            "$ref": "ContactNode"
+          },
+          {
+            "name": "oldVCard",
+            "type": "string"
           }
         ]
       },
@@ -671,6 +874,8 @@
   },
   {
     "namespace": "mailingLists",
+    "description": "The mailingLists API allows to access and manage the user's mailing lists.",
+    "max_manifest_version": 2,
     "permissions": ["addressBooks"],
     "types": [
       {
@@ -685,11 +890,11 @@
           "parentId": {
             "type": "string",
             "optional": true,
-            "description": "The ``id`` of the parent object."
+            "description": "The <var>id</var> of the parent object."
           },
           "type": {
             "$ref": "addressBooks.NodeType",
-            "description": "Always set to <value>mailingList</value>."
+            "description": "Always set to <var>mailingList</var>."
           },
           "readOnly": {
             "type": "boolean",
@@ -745,7 +950,7 @@
             ]
           }
         ],
-        "description": "Gets all the mailing lists in the address book with id ``parentId``."
+        "description": "Gets all the mailing lists in the address book with id <var>parentId</var>."
       },
       {
         "name": "get",
@@ -807,7 +1012,7 @@
             ]
           }
         ],
-        "description": "Creates a new mailing list in the address book with id ``parentId``."
+        "description": "Creates a new mailing list in the address book with id <var>parentId</var>."
       },
       {
         "name": "update",
@@ -864,7 +1069,7 @@
             "type": "string"
           }
         ],
-        "description": "Adds a contact to the mailing list with id ``id``. If the contact and mailing list are in different address books, the contact will also be copied to the list's address book."
+        "description": "Adds a contact to the mailing list with id <var>id</var>. If the contact and mailing list are in different address books, the contact will also be copied to the list's address book."
       },
       {
         "name": "listMembers",
@@ -889,7 +1094,7 @@
             ]
           }
         ],
-        "description": "Gets all contacts that are members of the mailing list with id ``id``."
+        "description": "Gets all contacts that are members of the mailing list with id <var>id</var>."
       },
       {
         "name": "removeMember",
@@ -905,7 +1110,7 @@
             "type": "string"
           }
         ],
-        "description": "Removes a contact from the mailing list with id ``id``. This does not delete the contact from the address book."
+        "description": "Removes a contact from the mailing list with id <var>id</var>. This does not delete the contact from the address book."
       }
     ],
     "events": [

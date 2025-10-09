@@ -5,12 +5,12 @@
 
 #include <windows.h>
 
-#include "BaseProfilerSharedLibraries.h"
+#include "SharedLibraries.h"
 
 #include "mozilla/glue/WindowsUnicode.h"
 #include "mozilla/NativeNt.h"
 #include "mozilla/WindowsEnumProcessModules.h"
-#include "mozilla/WindowsVersion.h"
+#include "mozilla/WindowsProcessMitigations.h"
 
 #include <cctype>
 #include <string>
@@ -55,34 +55,11 @@ static void AppendHex(T aValue, std::string& aOut, bool aWithPadding,
   }
 }
 
+bool LowerCaseEqualsLiteral(char aModuleChar, char aDetouredChar) {
+  return std::tolower(aModuleChar) == aDetouredChar;
+}
+
 static bool IsModuleUnsafeToLoad(const std::string& aModuleName) {
-  auto LowerCaseEqualsLiteral = [](char aModuleChar, char aDetouredChar) {
-    return std::tolower(aModuleChar) == aDetouredChar;
-  };
-
-#if defined(_M_AMD64) || defined(_M_IX86)
-  // Hackaround for Bug 1607574.  Nvidia's shim driver nvd3d9wrap[x].dll detours
-  // LoadLibraryExW and it causes AV when the following conditions are met.
-  //   1. LoadLibraryExW was called for "detoured.dll"
-  //   2. nvinit[x].dll was unloaded
-  //   3. OS version is older than 6.2
-#  if defined(_M_AMD64)
-  LPCWSTR kNvidiaShimDriver = L"nvd3d9wrapx.dll";
-  LPCWSTR kNvidiaInitDriver = L"nvinitx.dll";
-#  elif defined(_M_IX86)
-  LPCWSTR kNvidiaShimDriver = L"nvd3d9wrap.dll";
-  LPCWSTR kNvidiaInitDriver = L"nvinit.dll";
-#  endif
-  constexpr std::string_view detoured_dll = "detoured.dll";
-  if (std::equal(aModuleName.cbegin(), aModuleName.cend(),
-                 detoured_dll.cbegin(), detoured_dll.cend(),
-                 LowerCaseEqualsLiteral) &&
-      !mozilla::IsWin8OrLater() && ::GetModuleHandleW(kNvidiaShimDriver) &&
-      !::GetModuleHandleW(kNvidiaInitDriver)) {
-    return true;
-  }
-#endif  // defined(_M_AMD64) || defined(_M_IX86)
-
   // Hackaround for Bug 1723868.  There is no safe way to prevent the module
   // Microsoft's VP9 Video Decoder from being unloaded because mfplat.dll may
   // have posted more than one task to unload the module in the work queue
@@ -97,8 +74,9 @@ static bool IsModuleUnsafeToLoad(const std::string& aModuleName) {
   return false;
 }
 
-void SharedLibraryInfo::AddSharedLibraryFromModuleInfo(
-    const wchar_t* aModulePath, mozilla::Maybe<HMODULE> aModule) {
+void AddSharedLibraryFromModuleInfo(SharedLibraryInfo& sharedLibraryInfo,
+                                    const wchar_t* aModulePath,
+                                    mozilla::Maybe<HMODULE> aModule) {
   mozilla::UniquePtr<char[]> utf8ModulePath(
       mozilla::glue::WideToUTF8(aModulePath));
   if (!utf8ModulePath) {
@@ -113,6 +91,15 @@ void SharedLibraryInfo::AddSharedLibraryFromModuleInfo(
 
   // If the module is unsafe to call LoadLibraryEx for, we skip.
   if (IsModuleUnsafeToLoad(moduleNameStr)) {
+    return;
+  }
+
+  // If EAF+ is enabled, parsing ntdll's PE header causes a crash.
+  constexpr std::string_view ntdll_dll = "ntdll.dll";
+  if (mozilla::IsEafPlusEnabled() &&
+      std::equal(moduleNameStr.cbegin(), moduleNameStr.cend(),
+                 ntdll_dll.cbegin(), ntdll_dll.cend(),
+                 LowerCaseEqualsLiteral)) {
     return;
   }
 
@@ -196,7 +183,7 @@ void SharedLibraryInfo::AddSharedLibraryFromModuleInfo(
                       0,  // DLLs are always mapped at offset 0 on Windows
                       breakpadId, codeId, moduleNameStr, modulePathStr,
                       pdbNameStr, pdbPathStr, versionStr, "");
-  AddSharedLibrary(shlib);
+  sharedLibraryInfo.AddSharedLibrary(shlib);
 }
 
 SharedLibraryInfo SharedLibraryInfo::GetInfoForSelf() {
@@ -204,8 +191,8 @@ SharedLibraryInfo SharedLibraryInfo::GetInfoForSelf() {
 
   auto addSharedLibraryFromModuleInfo =
       [&sharedLibraryInfo](const wchar_t* aModulePath, HMODULE aModule) {
-        sharedLibraryInfo.AddSharedLibraryFromModuleInfo(
-            aModulePath, mozilla::Some(aModule));
+        AddSharedLibraryFromModuleInfo(sharedLibraryInfo, aModulePath,
+                                       mozilla::Some(aModule));
       };
 
   mozilla::EnumerateProcessModules(addSharedLibraryFromModuleInfo);
@@ -214,9 +201,8 @@ SharedLibraryInfo SharedLibraryInfo::GetInfoForSelf() {
 
 SharedLibraryInfo SharedLibraryInfo::GetInfoFromPath(const wchar_t* aPath) {
   SharedLibraryInfo sharedLibraryInfo;
-  sharedLibraryInfo.AddSharedLibraryFromModuleInfo(aPath, mozilla::Nothing());
+  AddSharedLibraryFromModuleInfo(sharedLibraryInfo, aPath, mozilla::Nothing());
   return sharedLibraryInfo;
 }
 
-void SharedLibraryInfo::Initialize() { /* do nothing */
-}
+void SharedLibraryInfo::Initialize() { /* do nothing */ }

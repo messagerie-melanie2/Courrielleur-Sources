@@ -34,16 +34,15 @@ interface nsIImapIncomingServer : nsISupports {
   attribute boolean cleanupInboxOnExit;
   attribute nsMsgImapDeleteModel deleteModel;
   attribute boolean dualUseFolders;
-  attribute ACString personalNamespace;
-  attribute ACString publicNamespace;
-  attribute ACString otherUsersNamespace;
+  attribute AUTF8String personalNamespace;
+  attribute AUTF8String publicNamespace;
+  attribute AUTF8String otherUsersNamespace;
   attribute boolean offlineDownload;
   attribute boolean overrideNamespaces;
   attribute boolean usingSubscription;
   attribute AUTF8String manageMailAccountUrl;
   attribute boolean fetchByChunks;
   attribute boolean sendID;
-  attribute boolean isAOLServer;
   attribute boolean useIdle;
   attribute boolean checkAllFoldersForNew;
 
@@ -65,13 +64,16 @@ interface nsIImapIncomingServer : nsISupports {
    * account manager sets this attribute to the path of the trash folder the
    * user has chosen.
    */
-  attribute AString trashFolderName;
+  attribute AUTF8String trashFolderName;
 
   attribute boolean downloadBodiesOnGetNewMail;
   attribute boolean autoSyncOfflineStores;
 
   /// Max age of messages we will autosync to, or keep in offline store.
   attribute long autoSyncMaxAgeDays;
+
+  /** True if there are no busy connections in cache. */
+  readonly attribute boolean allConnectionsIdle;
 
   /**
    * See IMAP RFC 6855
@@ -87,7 +89,7 @@ interface nsIImapIncomingServer : nsISupports {
   void ResetConnection(in AUTF8String folderName);
   void CloseConnectionForFolder(in nsIMsgFolder aMsgFolder);
   void reDiscoverAllFolders();
-  nsIURI subscribeToFolder(in AString name, in boolean subscribe);
+  nsIURI subscribeToFolder(in AUTF8String name, in boolean subscribe);
   void GetNewMessagesForNonInboxFolders(in nsIMsgFolder aRootFolder,
                                         in nsIMsgWindow aWindow,
                                         in boolean forceAllFolders,

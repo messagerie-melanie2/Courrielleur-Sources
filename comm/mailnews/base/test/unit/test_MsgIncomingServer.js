@@ -2,32 +2,29 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-Services.prefs.setBoolPref("mailnews.imap.jsmodule", true);
-
 registerCleanupFunction(() => {
   Services.logins.removeAllLogins();
-  Services.prefs.clearUserPref("mailnews.imap.jsmodule");
 });
 
 /**
  * Test password is migrated when changing hostname/username.
  */
-add_task(function testMigratePasswordOnChangeUsernameHostname() {
+add_task(async function testMigratePasswordOnChangeUsernameHostname() {
   // Add two logins.
-  let loginItems = [
+  const loginItems = [
     ["news://news.localhost", "user-nntp", "password-nntp"],
     ["mailbox://pop3.localhost", "user-pop", "password-pop"],
   ];
-  for (let [uri, username, password] of loginItems) {
-    let login = Cc["@mozilla.org/login-manager/loginInfo;1"].createInstance(
+  for (const [uri, username, password] of loginItems) {
+    const login = Cc["@mozilla.org/login-manager/loginInfo;1"].createInstance(
       Ci.nsILoginInfo
     );
     login.init(uri, null, uri, username, password, "", "");
-    Services.logins.addLogin(login);
+    await Services.logins.addLoginAsync(login);
   }
 
   // Create a nntp server, check the password can be found correctly.
-  let nntpIncomingServer = MailServices.accounts.createIncomingServer(
+  const nntpIncomingServer = MailServices.accounts.createIncomingServer(
     "user-nntp",
     "news.localhost",
     "nntp"
@@ -39,7 +36,7 @@ add_task(function testMigratePasswordOnChangeUsernameHostname() {
   nntpIncomingServer.username = "nntp";
   let password;
   let serverUri = "news://news.localhost";
-  for (let login of Services.logins.findLogins(serverUri, "", serverUri)) {
+  for (const login of Services.logins.findLogins(serverUri, "", serverUri)) {
     if (login.username == "nntp") {
       password = login.password;
     }
@@ -47,7 +44,7 @@ add_task(function testMigratePasswordOnChangeUsernameHostname() {
   equal(password, "password-nntp");
 
   // Create a pop3 server, check the password can be found correctly.
-  let pop3IncomingServer = MailServices.accounts.createIncomingServer(
+  const pop3IncomingServer = MailServices.accounts.createIncomingServer(
     "user-pop",
     "pop3.localhost",
     "pop3"
@@ -58,7 +55,7 @@ add_task(function testMigratePasswordOnChangeUsernameHostname() {
   // Change the hostname, check password can be found using the new hostname.
   pop3IncomingServer.hostName = "localhost";
   serverUri = "mailbox://localhost";
-  for (let login of Services.logins.findLogins(serverUri, "", serverUri)) {
+  for (const login of Services.logins.findLogins(serverUri, "", serverUri)) {
     if (login.username == "user-pop") {
       password = login.password;
     }
@@ -70,80 +67,78 @@ add_task(function testMigratePasswordOnChangeUsernameHostname() {
  * Test identity folders are migrated when changing hostname/username.
  */
 add_task(function testMigrateIdentitiesOnChangeUsernameHostname() {
-  // Create an imap server.
-  let incomingServer1 = MailServices.accounts.createIncomingServer(
-    "user-imap",
-    "imap.localhost",
-    "imap"
-  );
   // Create a pop server.
-  let incomingServer2 = MailServices.accounts.createIncomingServer(
-    "user-pop",
+  const incomingServer1 = MailServices.accounts.createIncomingServer(
+    "mike",
+    "pop3.invalid",
+    "pop3"
+  );
+  // Create another pop server.
+  const incomingServer2 = MailServices.accounts.createIncomingServer(
+    "oscar",
     "pop3.localhost",
     "pop3"
   );
 
   // Create an identity and point folders to incomingServer1.
   let identity1 = MailServices.accounts.createIdentity();
-  identity1.fccFolder = incomingServer1.serverURI + "/Sent";
-  identity1.draftFolder = incomingServer1.serverURI + "/Drafts";
-  identity1.archiveFolder = incomingServer1.serverURI + "/Archives";
-  identity1.stationeryFolder = incomingServer1.serverURI + "/Templates";
-  let account1 = MailServices.accounts.createAccount();
+  identity1.fccFolderURI = incomingServer1.serverURI + "/Sent";
+  identity1.draftsFolderURI = incomingServer1.serverURI + "/Drafts";
+  identity1.archivesFolderURI = incomingServer1.serverURI + "/Archives";
+  identity1.templatesFolderURI = incomingServer1.serverURI + "/Templates";
+  const account1 = MailServices.accounts.createAccount();
   account1.addIdentity(identity1);
+
   // Create another identity and point folders to both servers.
-  let identity2 = MailServices.accounts.createIdentity();
-  identity2.fccFolder = incomingServer1.serverURI + "/Sent";
-  identity2.draftFolder = incomingServer2.serverURI + "/Drafts";
-  let account2 = MailServices.accounts.createAccount();
+  const identity2 = MailServices.accounts.createIdentity();
+  identity2.fccFolderURI = incomingServer1.serverURI + "/Sent";
+  identity2.draftsFolderURI = incomingServer2.serverURI + "/Drafts";
+  const account2 = MailServices.accounts.createAccount();
   account2.addIdentity(identity2);
 
   // Check folders were correctly set.
-  equal(identity1.fccFolder, "imap://user-imap@imap.localhost/Sent");
-  equal(identity1.draftFolder, "imap://user-imap@imap.localhost/Drafts");
-  equal(identity1.archiveFolder, "imap://user-imap@imap.localhost/Archives");
-  equal(
-    identity1.stationeryFolder,
-    "imap://user-imap@imap.localhost/Templates"
-  );
-  equal(identity2.fccFolder, "imap://user-imap@imap.localhost/Sent");
-  equal(identity2.draftFolder, "mailbox://user-pop@pop3.localhost/Drafts");
+  equal(identity1.fccFolderURI, "mailbox://mike@pop3.invalid/Sent");
+  equal(identity1.draftsFolderURI, "mailbox://mike@pop3.invalid/Drafts");
+  equal(identity1.archivesFolderURI, "mailbox://mike@pop3.invalid/Archives");
+  equal(identity1.templatesFolderURI, "mailbox://mike@pop3.invalid/Templates");
+  equal(identity2.fccFolderURI, "mailbox://mike@pop3.invalid/Sent");
+  equal(identity2.draftsFolderURI, "mailbox://oscar@pop3.localhost/Drafts");
 
   // Change the hostname.
   incomingServer1.hostName = "localhost";
 
   // Check folders were correctly updated.
   identity1 = MailServices.accounts.getIdentity(identity1.key);
-  equal(identity1.fccFolder, "imap://user-imap@localhost/Sent");
-  equal(identity1.draftFolder, "imap://user-imap@localhost/Drafts");
-  equal(identity1.archiveFolder, "imap://user-imap@localhost/Archives");
-  equal(identity1.stationeryFolder, "imap://user-imap@localhost/Templates");
-  equal(identity2.fccFolder, "imap://user-imap@localhost/Sent");
-  equal(identity2.draftFolder, "mailbox://user-pop@pop3.localhost/Drafts");
+  equal(identity1.fccFolderURI, "mailbox://mike@localhost/Sent");
+  equal(identity1.draftsFolderURI, "mailbox://mike@localhost/Drafts");
+  equal(identity1.archivesFolderURI, "mailbox://mike@localhost/Archives");
+  equal(identity1.templatesFolderURI, "mailbox://mike@localhost/Templates");
+  equal(identity2.fccFolderURI, "mailbox://mike@localhost/Sent");
+  equal(identity2.draftsFolderURI, "mailbox://oscar@pop3.localhost/Drafts");
 });
 
 /**
  * Test spam action prefs are migrated when changing hostname/username.
  */
 add_task(function testMigrateSpamActionsOnChangeUsernameHostname() {
-  // Create an imap server.
-  let incomingServer1 = MailServices.accounts.createIncomingServer(
-    "user-imap",
-    "imap.localhost",
-    "imap"
+  // Create an pop3 server.
+  const incomingServer1 = MailServices.accounts.createIncomingServer(
+    "mike",
+    "pop3.localhost",
+    "pop3"
   );
-  incomingServer1.setUnicharValue(
+  incomingServer1.setStringValue(
     "spamActionTargetFolder",
     incomingServer1.serverURI + "/Спам"
   );
 
   equal(
     incomingServer1.spamSettings.actionTargetAccount,
-    "imap://user-imap@imap.localhost"
+    "mailbox://mike@pop3.localhost"
   );
   equal(
     incomingServer1.spamSettings.actionTargetFolder,
-    "imap://user-imap@imap.localhost/Спам"
+    "mailbox://mike@pop3.localhost/Спам"
   );
 
   // Change the username.
@@ -151,11 +146,11 @@ add_task(function testMigrateSpamActionsOnChangeUsernameHostname() {
 
   equal(
     incomingServer1.spamSettings.actionTargetAccount,
-    "imap://user@imap.localhost"
+    "mailbox://user@pop3.localhost"
   );
   equal(
     incomingServer1.spamSettings.actionTargetFolder,
-    "imap://user@imap.localhost/Спам"
+    "mailbox://user@pop3.localhost/Спам"
   );
 });
 
@@ -164,7 +159,7 @@ add_task(function testMigrateSpamActionsOnChangeUsernameHostname() {
  */
 add_task(function testMigrateFiltersOnChangeUsernameHostname() {
   // Create a nntp server.
-  let nntpIncomingServer = MailServices.accounts.createIncomingServer(
+  const nntpIncomingServer = MailServices.accounts.createIncomingServer(
     "user-nntp",
     "news.localhost",
     "nntp"

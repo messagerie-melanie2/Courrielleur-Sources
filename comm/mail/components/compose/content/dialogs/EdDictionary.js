@@ -2,11 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* import-globals-from ../editorUtilities.js */
 /* import-globals-from EdDialogCommon.js */
 
 var gSpellChecker;
 var gWordToAdd;
+
+window.addEventListener("load", () => {
+  Startup();
+});
 
 function Startup() {
   if (!GetCurrentEditor()) {
@@ -100,22 +103,18 @@ function FillDictionaryList() {
   ClearListbox(gDialog.DictionaryList);
 
   // Get the list from the spell checker
-  gSpellChecker.GetPersonalDictionary();
+  const wordList = Cc[
+    "@mozilla.org/spellchecker/personaldictionary;1"
+  ].getService(Ci.mozIPersonalDictionary).wordList;
 
-  var haveList = false;
-
-  // Get words until an empty string is returned
-  do {
-    var word = gSpellChecker.GetPersonalDictionaryWord();
-    if (word != "") {
+  if (wordList.hasMore()) {
+    while (wordList.hasMore()) {
+      const word = wordList.getNext();
       gDialog.DictionaryList.appendItem(word, "");
-      haveList = true;
     }
-  } while (word != "");
-
-  // XXX: BUG 74467: If list is empty, it doesn't layout to full height correctly
-  //     (ignores "rows" attribute) (bug is latered, so we are fixing here for now)
-  if (!haveList) {
+  } else {
+    // XXX: BUG 74467: If list is empty, it doesn't layout to full height correctly
+    //     (ignores "rows" attribute) (bug is latered, so we are fixing here for now)
     gDialog.DictionaryList.appendItem("", "");
   }
 

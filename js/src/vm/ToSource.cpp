@@ -15,30 +15,25 @@
 #include "builtin/Array.h"          // ArrayToSource
 #include "builtin/Boolean.h"        // BooleanToString
 #include "builtin/Object.h"         // ObjectToSource
-#include "gc/Allocator.h"           // CanGC
+#include "gc/GCEnum.h"              // CanGC
 #include "js/Class.h"               // ESClass
 #include "js/friend/StackLimits.h"  // js::AutoCheckRecursionLimit
 #include "js/Object.h"              // JS::GetBuiltinClass
 #include "js/Printer.h"             // QuoteString
 #include "js/Symbol.h"              // SymbolCode, JS::WellKnownSymbolLimit
 #include "js/TypeDecls.h"  // Rooted{Function, Object, String, Value}, HandleValue, Latin1Char
-#include "js/Utility.h"         // UniqueChars
-#include "js/Value.h"           // JS::Value
-#include "util/StringBuffer.h"  // JSStringBuilder
-#include "vm/ErrorObject.h"     // ErrorObject, ErrorToSource
-#include "vm/Interpreter.h"     // Call
-#include "vm/JSContext.h"       // JSContext
-#include "vm/JSFunction.h"      // JSFunction, fun_toStringHelper
-#include "vm/SelfHosting.h"     // CallSelfHostedFunction
-#include "vm/Stack.h"           // FixedInvokeArgs
-#include "vm/StaticStrings.h"   // StaticStrings
-#include "vm/StringType.h"      // NewStringCopy{N,Z}, ToString
-#include "vm/SymbolType.h"      // Symbol
-#ifdef ENABLE_RECORD_TUPLE
-#  include "vm/RecordType.h"
-#  include "vm/TupleType.h"
-#endif
-
+#include "js/Utility.h"               // UniqueChars
+#include "js/Value.h"                 // JS::Value
+#include "util/StringBuilder.h"       // JSStringBuilder
+#include "vm/ErrorObject.h"           // ErrorObject, ErrorToSource
+#include "vm/Interpreter.h"           // Call
+#include "vm/JSContext.h"             // JSContext
+#include "vm/JSFunction.h"            // JSFunction, fun_toStringHelper
+#include "vm/SelfHosting.h"           // CallSelfHostedFunction
+#include "vm/Stack.h"                 // FixedInvokeArgs
+#include "vm/StaticStrings.h"         // StaticStrings
+#include "vm/StringType.h"            // NewStringCopy{N,Z}, ToString
+#include "vm/SymbolType.h"            // Symbol
 #include "vm/JSContext-inl.h"         // JSContext::check
 #include "vm/JSObject-inl.h"          // IsCallable
 #include "vm/ObjectOperations-inl.h"  // GetProperty
@@ -128,7 +123,7 @@ JSString* js::ValueToSource(JSContext* cx, HandleValue v) {
 
   switch (v.type()) {
     case JS::ValueType::Undefined:
-      return cx->names().void0;
+      return cx->names().void_0_;
 
     case JS::ValueType::String:
       return StringToSource(cx, v.toString());
@@ -164,20 +159,6 @@ JSString* js::ValueToSource(JSContext* cx, HandleValue v) {
       return ConcatStrings<CanGC>(cx, str, n);
     }
 
-#ifdef ENABLE_RECORD_TUPLE
-    case ValueType::ExtendedPrimitive: {
-      RootedObject obj(cx, &v.toExtendedPrimitive());
-      if (obj->is<TupleType>()) {
-        Rooted<TupleType*> tup(cx, &obj->as<TupleType>());
-        return TupleToSource(cx, tup);
-      }
-      if (obj->is<RecordType>()) {
-        return RecordToSource(cx, obj.as<RecordType>());
-      }
-      MOZ_CRASH("Unsupported ExtendedPrimitive");
-    }
-#endif
-
     case JS::ValueType::Object: {
       RootedValue fval(cx);
       RootedObject obj(cx, &v.toObject());
@@ -212,8 +193,8 @@ JSString* js::ValueToSource(JSContext* cx, HandleValue v) {
         case ESClass::RegExp: {
           FixedInvokeArgs<0> args(cx);
           RootedValue rval(cx);
-          if (!CallSelfHostedFunction(cx, cx->names().RegExpToString, v, args,
-                                      &rval)) {
+          if (!CallSelfHostedFunction(cx, cx->names().dollar_RegExpToString_, v,
+                                      args, &rval)) {
             return nullptr;
           }
           return ToString<CanGC>(cx, rval);

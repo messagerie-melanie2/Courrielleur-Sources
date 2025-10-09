@@ -4,9 +4,9 @@
 "use strict";
 
 // Tests that scrollIntoViewIfNeeded works properly.
-const {
-  scrollIntoViewIfNeeded,
-} = require("resource://devtools/client/shared/scroll.js");
+const { scrollIntoViewIfNeeded } = ChromeUtils.importESModule(
+  "resource://devtools/client/shared/scroll.mjs"
+);
 
 const TEST_URI = CHROME_URL_ROOT + "doc_layoutHelpers.html";
 
@@ -121,8 +121,9 @@ async function runTest(win) {
   win.scroll(0, 0);
 
   scrollIntoViewIfNeeded(other, false, true);
-  ok(
-    win.scrollY < other.clientHeight,
+  Assert.less(
+    win.scrollY,
+    other.clientHeight,
     "Window has not instantly scrolled to the final position"
   );
   await waitUntil(() => win.scrollY === other.clientHeight);

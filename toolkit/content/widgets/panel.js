@@ -9,7 +9,7 @@
 {
   class MozPanel extends MozElements.MozElementMixin(XULPopupElement) {
     static get markup() {
-      return `<html:slot part="content" style="display: none !important"/>`;
+      return `<html:slot part="content"/>`;
     }
     constructor() {
       super();
@@ -59,10 +59,12 @@
         return;
       }
 
-      this.shadowRoot.appendChild(this.constructor.fragment);
-      if (this.hasAttribute("neverhidden")) {
-        this.panelContent.style.display = "";
+      let fragment = this.constructor.fragment;
+      if (!this.hasAttribute("neverhidden")) {
+        let slot = fragment.querySelector("[part=content]");
+        slot.style.setProperty("display", "none", "important");
       }
+      this.shadowRoot.appendChild(fragment);
     }
 
     get panelContent() {
@@ -91,6 +93,10 @@
       return this.getAttribute("type") == "arrow";
     }
 
+    get noOpenOnAnchor() {
+      return this.hasAttribute("no-open-on-anchor");
+    }
+
     _setSideAttribute(event) {
       if (!this.isArrowPanel || !event.isAnchored) {
         return;
@@ -116,6 +122,10 @@
           this.setAttribute("side", "top");
         }
       }
+
+      // This method isn't implemented by panel.js, but it can be added to
+      // individual instances that need to show an arrow.
+      this.setArrowPosition?.(event);
     }
 
     on_popupshowing(event) {
@@ -123,7 +133,7 @@
         this.panelContent.style.display = "";
       }
       if (this.isArrowPanel && event.target == this) {
-        if (this.anchorNode) {
+        if (this.anchorNode && !this.noOpenOnAnchor) {
           let anchorRoot =
             this.anchorNode.closest("toolbarbutton, .anchor-root") ||
             this.anchorNode;
@@ -162,7 +172,6 @@
         );
         if (!this._prevFocus.get()) {
           this._prevFocus = Cu.getWeakReference(document.activeElement);
-          return;
         }
       } catch (ex) {
         this._prevFocus = Cu.getWeakReference(document.activeElement);
@@ -194,7 +203,7 @@
           this.setAttribute("animate", "cancel");
         }
 
-        if (this.anchorNode) {
+        if (this.anchorNode && !this.noOpenOnAnchor) {
           let anchorRoot =
             this.anchorNode.closest("toolbarbutton, .anchor-root") ||
             this.anchorNode;

@@ -4,39 +4,33 @@
 
 /* exported launchBrowser */
 
+var { openLinkExternally } = ChromeUtils.importESModule("resource:///modules/LinkHelper.sys.mjs");
+
 /**
  * Launch the given url (string) in the external browser. If an event is passed,
  * then this is only done on left click and the event propagation is stopped.
  *
- * @param url       The URL to open, as a string
- * @param event     (optional) The event that caused the URL to open
+ * @param {string} url - The URL to open, as a string.
+ * @param {Event} [event] - The event that caused the URL to open.
  */
 function launchBrowser(url, event) {
-  // Bail out if there is no url set, or an event was passed without left-click
-  if (!url || (event && event.button != 0)) {
-    return;
-  }
-
-  // 0. Prevent people from trying to launch URLs such as javascript:foo();
-  //    by only allowing URLs starting with http or https or mid.
-  // XXX: We likely will want to do this using nsIURLs in the future to
-  //      prevent sneaky nasty escaping issues, but this is fine for now.
-  if (!/^https?:/i.test(url) && !/^mid:/i.test(url)) {
-    console.error(
-      "launchBrowser: Invalid URL provided: " + url + " Only http(s):// and mid:// URLs are valid."
-    );
+  // Bail out if there is no URL set, an event was passed without left-click,
+  // or the URL is already being handled by the MailLink actor.
+  if (
+    !url ||
+    (event && event.button != 0) ||
+    (event.target.ownerGlobal.browsingContext.isContent && /^(mid|mailto|s?news):/i.test(url))
+  ) {
     return;
   }
 
   if (/^mid:/i.test(url)) {
-    let { MailUtils } = ChromeUtils.import("resource:///modules/MailUtils.jsm");
-    MailUtils.openMessageByMessageId(url.slice(4));
+    const { MailUtils } = ChromeUtils.importESModule("resource:///modules/MailUtils.sys.mjs");
+    MailUtils.openMessageForMessageId(url.slice(4));
     return;
   }
 
-  Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-    .getService(Ci.nsIExternalProtocolService)
-    .loadURI(Services.io.newURI(url));
+  openLinkExternally(url, { addToHistory: false });
 
   // Make sure that any default click handlers don't do anything, we have taken
   // care of all processing

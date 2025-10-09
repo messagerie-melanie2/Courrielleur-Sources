@@ -1,12 +1,12 @@
 export const description = 'checkPixels helpers behave as expected against real textures';
 
 import { makeTestGroup } from '../../../common/framework/test_group.js';
-import { GPUTest } from '../../gpu_test.js';
+import { AllFeaturesMaxLimitsGPUTest } from '../../gpu_test.js';
 
 import { TexelView } from './texel_view.js';
 import { textureContentIsOKByT2B } from './texture_ok.js';
 
-export const g = makeTestGroup(GPUTest);
+export const g = makeTestGroup(AllFeaturesMaxLimitsGPUTest);
 
 g.test('float32')
   .desc(`Basic test that actual/expected must match, for float32.`)
@@ -39,16 +39,15 @@ g.test('float32')
     const { format, data, opts, _ok } = t.params;
 
     const size = [1, 1];
-    const texture = t.device.createTexture({
+    const texture = t.createTextureTracked({
       format,
       size,
       usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC,
     });
-    t.trackForCleanup(texture);
     t.device.queue.writeTexture({ texture }, new Float32Array([data, data, data, data]), {}, size);
 
     const expColor = { R: 0.6, G: 0.6, B: 0.6, A: 0.6 };
-    const expTexelView = TexelView.fromTexelsAsColors(format, coords => expColor);
+    const expTexelView = TexelView.fromTexelsAsColors(format, _coords => expColor);
 
     const result = await textureContentIsOKByT2B(t, { texture }, size, { expTexelView }, opts);
     t.expect((result === undefined) === _ok, `expected ${_ok}, got ${result === undefined}`);
@@ -76,21 +75,20 @@ g.test('norm')
     const { mode, format, _maxValue, data, _ok } = t.params;
 
     const size = [2, 1];
-    const texture = t.device.createTexture({
+    const texture = t.createTextureTracked({
       format,
       size,
       usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC,
     });
-    t.trackForCleanup(texture);
     t.device.queue.writeTexture({ texture }, new Int8Array(data), {}, size);
 
     let expTexelView;
     switch (mode) {
       case 'bytes':
-        expTexelView = TexelView.fromTexelsAsBytes(format, coords => new Uint8Array([10]));
+        expTexelView = TexelView.fromTexelsAsBytes(format, _coords => new Uint8Array([10]));
         break;
       case 'colors':
-        expTexelView = TexelView.fromTexelsAsColors(format, coords => ({ R: 10 / _maxValue }));
+        expTexelView = TexelView.fromTexelsAsColors(format, _coords => ({ R: 10 / _maxValue }));
         break;
     }
 
@@ -123,12 +121,11 @@ g.test('snorm_min')
     const data = [-_maxValue, -_maxValue - 1];
 
     const size = [2, 1];
-    const texture = t.device.createTexture({
+    const texture = t.createTextureTracked({
       format,
       size,
       usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC,
     });
-    t.trackForCleanup(texture);
     t.device.queue.writeTexture({ texture }, new Int8Array(data), {}, size);
 
     let expTexelView;
@@ -144,7 +141,7 @@ g.test('snorm_min')
         }
         break;
       case 'colors':
-        expTexelView = TexelView.fromTexelsAsColors(format, coords => ({ R: -1 }));
+        expTexelView = TexelView.fromTexelsAsColors(format, _coords => ({ R: -1 }));
         break;
     }
 

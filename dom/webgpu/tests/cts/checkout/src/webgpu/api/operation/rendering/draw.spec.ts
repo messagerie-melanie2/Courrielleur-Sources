@@ -11,9 +11,11 @@ import {
   TypedArrayBufferView,
   TypedArrayBufferViewConstructor,
 } from '../../../../common/util/util.js';
-import { GPUTest } from '../../../gpu_test.js';
+import { AllFeaturesMaxLimitsGPUTest } from '../../../gpu_test.js';
+import * as ttu from '../../../texture_test_utils.js';
+import { PerPixelComparison } from '../../../util/texture/texture_ok.js';
 
-class DrawTest extends GPUTest {
+class DrawTest extends AllFeaturesMaxLimitsGPUTest {
   checkTriangleDraw(opts: {
     firstIndex: number | undefined;
     count: number;
@@ -38,6 +40,8 @@ class DrawTest extends GPUTest {
       baseVertex: opts.baseVertex ?? 0,
     };
 
+    const haveStorageBuffersInFragmentStage =
+      !this.isCompatibility || this.device.limits.maxStorageBuffersInFragmentStage! > 0;
     const renderTargetSize = [72, 36];
 
     // The test will split up the render target into a grid where triangles of
@@ -53,13 +57,14 @@ class DrawTest extends GPUTest {
     // |   \
     // |______\
     // Unit triangle shaped like this. 0-1 Y-down.
-    const triangleVertices = /* prettier-ignore */ [
+    /* prettier-ignore */
+    const triangleVertices = [
       0.0, 0.0,
       0.0, 1.0,
       1.0, 1.0,
     ];
 
-    const renderTarget = this.device.createTexture({
+    const renderTarget = this.createTextureTracked({
       size: renderTargetSize,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
       format: 'rgba8unorm',
@@ -99,7 +104,7 @@ struct Output {
 @group(0) @binding(0) var<storage, read_write> output : Output;
 
 @fragment fn frag_main() -> @location(0) vec4<f32> {
-  output.value = 1u;
+  ${haveStorageBuffersInFragmentStage ? 'output.value = 1u;' : ''}
   return vec4<f32>(0.0, 1.0, 0.0, 1.0);
 }
 `,
@@ -134,22 +139,26 @@ struct Output {
       },
     });
 
-    const resultBuffer = this.device.createBuffer({
-      size: Uint32Array.BYTES_PER_ELEMENT,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
-    });
+    const resultBuffer = haveStorageBuffersInFragmentStage
+      ? this.createBufferTracked({
+          size: Uint32Array.BYTES_PER_ELEMENT,
+          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+        })
+      : null;
 
-    const resultBindGroup = this.device.createBindGroup({
-      layout: pipeline.getBindGroupLayout(0),
-      entries: [
-        {
-          binding: 0,
-          resource: {
-            buffer: resultBuffer,
-          },
-        },
-      ],
-    });
+    const resultBindGroup = haveStorageBuffersInFragmentStage
+      ? this.device.createBindGroup({
+          layout: pipeline.getBindGroupLayout(0),
+          entries: [
+            {
+              binding: 0,
+              resource: {
+                buffer: resultBuffer!,
+              },
+            },
+          ],
+        })
+      : null;
 
     const commandEncoder = this.device.createCommandEncoder();
     const renderPass = commandEncoder.beginRenderPass({
@@ -277,9 +286,12 @@ struct Output {
 
     const didDraw = defaulted.count && defaulted.instanceCount;
 
-    this.expectGPUBufferValuesEqual(resultBuffer, new Uint32Array([didDraw ? 1 : 0]));
+    if (resultBuffer) {
+      this.expectGPUBufferValuesEqual(resultBuffer, new Uint32Array([didDraw ? 1 : 0]));
+    }
 
     const baseVertexCount = defaulted.baseVertex ?? 0;
+    const pixelComparisons: PerPixelComparison<Uint8Array>[] = [];
     for (let primitiveId = 0; primitiveId < numX; ++primitiveId) {
       for (let instanceId = 0; instanceId < numY; ++instanceId) {
         let expectedColor = didDraw ? green : transparentBlack;
@@ -297,19 +309,17 @@ struct Output {
           expectedColor = transparentBlack;
         }
 
-        this.expectSinglePixelIn2DTexture(
-          renderTarget,
-          'rgba8unorm',
-          {
-            x: (1 / 3 + primitiveId) * tileSizeX,
-            y: (2 / 3 + instanceId) * tileSizeY,
-          },
-          {
-            exp: expectedColor,
-          }
-        );
+        pixelComparisons.push({
+          coord: { x: (1 / 3 + primitiveId) * tileSizeX, y: (2 / 3 + instanceId) * tileSizeY },
+          exp: expectedColor,
+        });
       }
     }
+    ttu.expectSinglePixelComparisonsAreOkInTexture(
+      this,
+      { texture: renderTarget },
+      pixelComparisons
+    );
   }
 }
 
@@ -324,7 +334,7 @@ Increasing the |first| param should skip some of the beginning triangles on the 
 Increasing the |first_instance| param should skip of the beginning triangles on the vertical axis.
 The vertex buffer contains two sets of disjoint triangles, and base_vertex is used to select the second set.
 The test checks that the center of all of the expected triangles is drawn, and the others are empty.
-The fragment shader also writes out to a storage buffer. If the draw is zero-sized, check that no value is written.
+The fragment shader also writes out to a storage buffer if it can. If the draw is zero-sized, check that no value is written.
 
 Params:
   - first= {0, 3} - either the firstVertex or firstIndex
@@ -350,12 +360,10 @@ Params:
       .expand('index_buffer_offset', p => (p.indexed ? ([0, 16] as const) : [undefined]))
       .expand('base_vertex', p => (p.indexed ? ([0, 9] as const) : [undefined]))
   )
-  .beforeAllSubcases(t => {
+  .fn(t => {
     if (t.params.first_instance > 0 && t.params.indirect) {
-      t.selectDeviceOrSkipTestCase('indirect-first-instance');
+      t.skipIfDeviceDoesNotHaveFeature('indirect-first-instance');
     }
-  })
-  .fn(async t => {
     t.checkTriangleDraw({
       firstIndex: t.params.first,
       count: t.params.count,
@@ -389,7 +397,7 @@ g.test('default_arguments')
         p.mode === 'drawIndexed' ? ([undefined, 9] as const) : [undefined]
       )
   )
-  .fn(async t => {
+  .fn(t => {
     const kVertexCount = 3;
     const kVertexBufferOffset = 32;
     const kIndexBufferOffset = 16;
@@ -431,12 +439,20 @@ g.test('vertex_attributes,basic')
       .unless(p => p.step_mode === 'mixed' && p.vertex_buffer_count <= 1)
   )
   .fn(t => {
+    // MAINTENANCE_TODO: refactor this test so it doesn't need a storage buffer OR
+    // consider removing it. It's possible the tests in src/webgpu/api/operation/vertex_state/correctness.spec.ts
+    // already test this.
+    t.skipIf(
+      t.isCompatibility && !(t.device.limits.maxStorageBuffersInFragmentStage! > 0),
+      `maxStorageBuffersInFragmentStage(${t.device.limits.maxStorageBuffersInFragmentStage}) is 0`
+    );
     const vertexCount = 4;
     const instanceCount = 4;
 
-    const attributesPerVertexBuffer =
-      t.params.vertex_attribute_count / t.params.vertex_buffer_count;
-    assert(Math.round(attributesPerVertexBuffer) === attributesPerVertexBuffer);
+    // In compat mode, @builtin(vertex_index) and @builtin(instance_index) each take an attribute.
+    const maxAttributes = t.device.limits.maxVertexAttributes - (t.isCompatibility ? 2 : 0);
+    const numAttributes = Math.min(maxAttributes, t.params.vertex_attribute_count);
+    const maxAttributesPerVertexBuffer = Math.ceil(numAttributes / t.params.vertex_buffer_count);
 
     let shaderLocation = 0;
     let attributeValue = 0;
@@ -481,7 +497,12 @@ g.test('vertex_attributes,basic')
       }
 
       const attributes: GPUVertexAttribute[] = [];
-      for (let a = 0; a < attributesPerVertexBuffer; ++a) {
+      const numAttributesForBuffer = Math.min(
+        maxAttributesPerVertexBuffer,
+        maxAttributes - b * maxAttributesPerVertexBuffer
+      );
+
+      for (let a = 0; a < numAttributesForBuffer; ++a) {
         const attribute: GPUVertexAttribute = {
           format: t.params.vertex_format,
           shaderLocation,
@@ -494,7 +515,7 @@ g.test('vertex_attributes,basic')
       }
 
       for (let v = 0; v < vertexOrInstanceCount; ++v) {
-        for (let a = 0; a < attributesPerVertexBuffer; ++a) {
+        for (let a = 0; a < numAttributesForBuffer; ++a) {
           vertexBufferValues.push(attributeValue);
           attributeValue += 1.234; // Values will get rounded later if we make a Uint32Array.
         }
@@ -574,22 +595,37 @@ g.test('vertex_attributes,basic')
     let accumulateVariableDeclarationsInFragmentShader = '';
     let accumulateVariableAssignmentsInFragmentShader = '';
     // The remaining 3 vertex attributes
-    if (t.params.vertex_attribute_count === 16) {
+    if (numAttributes === 16) {
       accumulateVariableDeclarationsInVertexShader = `
-        @location(13) @interpolate(flat) outAttrib13 : vec4<${wgslFormat}>,
+        @location(13) @interpolate(flat, either) outAttrib13 : vec4<${wgslFormat}>,
       `;
       accumulateVariableAssignmentsInVertexShader = `
       output.outAttrib13 =
           vec4<${wgslFormat}>(input.attrib12, input.attrib13, input.attrib14, input.attrib15);
       `;
       accumulateVariableDeclarationsInFragmentShader = `
-      @location(13) @interpolate(flat) attrib13 : vec4<${wgslFormat}>,
+      @location(13) @interpolate(flat, either) attrib13 : vec4<${wgslFormat}>,
       `;
       accumulateVariableAssignmentsInFragmentShader = `
       outBuffer.primitives[input.primitiveId].attrib12 = input.attrib13.x;
       outBuffer.primitives[input.primitiveId].attrib13 = input.attrib13.y;
       outBuffer.primitives[input.primitiveId].attrib14 = input.attrib13.z;
       outBuffer.primitives[input.primitiveId].attrib15 = input.attrib13.w;
+      `;
+    } else if (numAttributes === 14) {
+      accumulateVariableDeclarationsInVertexShader = `
+        @location(13) @interpolate(flat, either) outAttrib13 : vec4<${wgslFormat}>,
+      `;
+      accumulateVariableAssignmentsInVertexShader = `
+      output.outAttrib13 =
+          vec4<${wgslFormat}>(input.attrib12, input.attrib13, 0, 0);
+      `;
+      accumulateVariableDeclarationsInFragmentShader = `
+      @location(13) @interpolate(flat, either) attrib13 : vec4<${wgslFormat}>,
+      `;
+      accumulateVariableAssignmentsInFragmentShader = `
+      outBuffer.primitives[input.primitiveId].attrib12 = input.attrib13.x;
+      outBuffer.primitives[input.primitiveId].attrib13 = input.attrib13.y;
       `;
     }
 
@@ -607,9 +643,9 @@ ${vertexInputShaderLocations.map(i => `  @location(${i}) attrib${i} : ${wgslForm
 struct Outputs {
   @builtin(position) Position : vec4<f32>,
 ${interStageScalarShaderLocations
-  .map(i => `  @location(${i}) @interpolate(flat) outAttrib${i} : ${wgslFormat},`)
+  .map(i => `  @location(${i}) @interpolate(flat, either) outAttrib${i} : ${wgslFormat},`)
   .join('\n')}
-  @location(${interStageScalarShaderLocations.length}) @interpolate(flat) primitiveId : u32,
+  @location(${interStageScalarShaderLocations.length}) @interpolate(flat, either) primitiveId : u32,
 ${accumulateVariableDeclarationsInVertexShader}
 };
 
@@ -632,9 +668,9 @@ ${accumulateVariableAssignmentsInVertexShader}
           code: `
 struct Inputs {
 ${interStageScalarShaderLocations
-  .map(i => `  @location(${i}) @interpolate(flat) attrib${i} : ${wgslFormat},`)
+  .map(i => `  @location(${i}) @interpolate(flat, either) attrib${i} : ${wgslFormat},`)
   .join('\n')}
-  @location(${interStageScalarShaderLocations.length}) @interpolate(flat) primitiveId : u32,
+  @location(${interStageScalarShaderLocations.length}) @interpolate(flat, either) primitiveId : u32,
 ${accumulateVariableDeclarationsInFragmentShader}
 };
 
@@ -667,7 +703,7 @@ ${accumulateVariableAssignmentsInFragmentShader}
       },
     });
 
-    const resultBuffer = t.device.createBuffer({
+    const resultBuffer = t.createBufferTracked({
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
       size: vertexCount * instanceCount * vertexInputShaderLocations.length * 4,
     });
@@ -690,8 +726,8 @@ ${accumulateVariableAssignmentsInFragmentShader}
         {
           // Dummy render attachment - not used (WebGPU doesn't allow using a render pass with no
           // attachments)
-          view: t.device
-            .createTexture({
+          view: t
+            .createTextureTracked({
               usage: GPUTextureUsage.RENDER_ATTACHMENT,
               size: [1],
               format: 'rgba8unorm',

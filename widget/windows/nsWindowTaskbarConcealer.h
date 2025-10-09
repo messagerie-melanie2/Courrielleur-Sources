@@ -24,6 +24,10 @@ class nsWindow::TaskbarConcealer {
   // nsWindow pointer is not needed, and will not be acquired or accessed.
   static void OnWindowDestroyed(HWND aWnd);
 
+  // To be called when a window is maximized. Harmlessly redundant with
+  // OnFullscreenChanged.
+  static void OnWindowMaximized(nsWindow* aWin);
+
   // To be called when the Gecko-fullscreen state of a window changes.
   static void OnFullscreenChanged(nsWindow* aWin, bool enteredFullscreen);
 
@@ -35,6 +39,9 @@ class nsWindow::TaskbarConcealer {
   // all windows' internal cloaking-state mirror variables are up-to-date.)
   static void OnCloakChanged();
 
+  // To be called upon receipt of MOZ_WM_FULLSCREEN_STATE_UPDATE.
+  static void OnAsyncStateUpdateRequest(HWND);
+
  private:
   static void UpdateAllState(HWND destroyedHwnd = nullptr);
 
@@ -45,7 +52,6 @@ class nsWindow::TaskbarConcealer {
   static mozilla::Maybe<WindowState> GetWindowState(HWND);
 
   static nsTHashMap<HWND, HMONITOR> sKnownWindows;
-  struct Impl;
 };
 
 #endif  // WIDGET_WINDOWS_NSWINDOWTASKBARCONCEALER_H_

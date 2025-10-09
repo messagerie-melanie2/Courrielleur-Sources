@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import "./search-bar.mjs"; // eslint-disable-line import/no-unassigned-import
+import "chrome://messenger/content/search-bar.mjs"; // eslint-disable-line import/no-unassigned-import
 import "./customization-palette.mjs"; // eslint-disable-line import/no-unassigned-import
 import "./customization-target.mjs"; // eslint-disable-line import/no-unassigned-import
 import {
@@ -15,11 +15,11 @@ const { getDefaultItemIdsForSpace } = ChromeUtils.importESModule(
 );
 
 /**
- * Template ID: unifiedToolbarCustomizationPaneTemplate
- * Attributes:
- * - space: Identifier of the space this pane is for. Changes are not observed.
- * - current-items: Currently used items in this space.
- * - builtin-space: Boolean indicating if the space is a built in space (true) or an
+ * Template ID: #unifiedToolbarCustomizationPaneTemplate
+ *
+ * @attribute {string} space - Identifier of the space this pane is for. Changes are not observed.
+ * @attribute {string} current-items - Currently used items in this space.
+ * @attribute {boolean} builtin-space - Boolean indicating if the space is a built in space (true) or an
  *   extension provided space (false).
  */
 class UnifiedToolbarCustomizationPane extends HTMLElement {

@@ -239,6 +239,8 @@ class nsParser final : public nsIParser,
   void HandleParserContinueEvent(class nsParserContinueEvent*);
 
   void Reset() {
+    MOZ_ASSERT(!mIsAboutBlank,
+               "Only the XML fragment parsing case is supposed to call this.");
     Cleanup();
     mUnusedInput.Truncate();
     Initialize();
@@ -246,8 +248,10 @@ class nsParser final : public nsIParser,
 
   bool IsScriptExecuting() { return mSink && mSink->IsScriptExecuting(); }
 
-  bool IsOkToProcessNetworkData() {
-    return !IsScriptExecuting() && !mProcessingNetworkData;
+  void ContinueParsingDocumentAfterCurrentScript() {
+    if (mSink) {
+      mSink->ContinueParsingDocumentAfterCurrentScript();
+    }
   }
 
   // Returns Nothing() if we haven't determined yet what the parser is being
@@ -306,6 +310,7 @@ class nsParser final : public nsIParser,
   nsCString mCommandStr;
 
   bool mProcessingNetworkData;
+  bool mOnStopPending;
   bool mIsAboutBlank;
 };
 

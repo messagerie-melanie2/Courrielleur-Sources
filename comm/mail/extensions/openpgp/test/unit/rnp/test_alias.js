@@ -8,22 +8,24 @@
 
 "use strict";
 
-const { RNP } = ChromeUtils.import("chrome://openpgp/content/modules/RNP.jsm");
-const { EnigmailConstants } = ChromeUtils.import(
-  "chrome://openpgp/content/modules/constants.jsm"
+const { RNP } = ChromeUtils.importESModule(
+  "chrome://openpgp/content/modules/RNP.sys.mjs"
 );
-const { EnigmailKeyRing } = ChromeUtils.import(
-  "chrome://openpgp/content/modules/keyRing.jsm"
+const { EnigmailConstants } = ChromeUtils.importESModule(
+  "chrome://openpgp/content/modules/constants.sys.mjs"
 );
-const { EnigmailEncryption } = ChromeUtils.import(
-  "chrome://openpgp/content/modules/encryption.jsm"
+const { EnigmailKeyRing } = ChromeUtils.importESModule(
+  "chrome://openpgp/content/modules/keyRing.sys.mjs"
 );
-const { OpenPGPAlias } = ChromeUtils.import(
-  "chrome://openpgp/content/modules/OpenPGPAlias.jsm"
+const { EnigmailEncryption } = ChromeUtils.importESModule(
+  "chrome://openpgp/content/modules/encryption.sys.mjs"
+);
+const { OpenPGPAlias } = ChromeUtils.importESModule(
+  "chrome://openpgp/content/modules/OpenPGPAlias.sys.mjs"
 );
 
-const { OpenPGPTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mozmill/OpenPGPTestUtils.jsm"
+const { OpenPGPTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/OpenPGPTestUtils.sys.mjs"
 );
 
 const keyDir = "../../../../../test/browser/openpgp/data/keys";
@@ -226,10 +228,10 @@ add_setup(async function () {
 });
 
 add_task(async function testAlias() {
-  let aliasFilename = "openpgp-alias-rules.json";
-  let profileDir = Services.dirsvc.get("ProfD", Ci.nsIFile);
+  const aliasFilename = "openpgp-alias-rules.json";
+  const profileDir = Services.dirsvc.get("ProfD", Ci.nsIFile);
 
-  for (let test of tests) {
+  for (const test of tests) {
     if (test.filename) {
       info(`Running alias test with rules from: ${test.filename}`);
 
@@ -237,7 +239,7 @@ add_task(async function testAlias() {
       // because load function only works with simple filenames
       // or absolute file URLs.
 
-      let inFile = do_get_file(test.filename);
+      const inFile = do_get_file(test.filename);
       inFile.copyTo(profileDir, aliasFilename);
 
       try {
@@ -261,10 +263,10 @@ add_task(async function testAlias() {
     }
     info(test.info);
 
-    let addresses = [test.to];
-    let resultDetails = {};
+    const addresses = [test.to];
+    const resultDetails = {};
 
-    let isMissing = await EnigmailKeyRing.getValidKeysForAllRecipients(
+    const isMissing = await EnigmailKeyRing.getValidKeysForAllRecipients(
       addresses,
       resultDetails
     );
@@ -279,9 +281,9 @@ add_task(async function testAlias() {
       continue;
     }
 
-    let errorMsgObj = { value: "" };
-    let logFileObj = {};
-    let encryptArgs = EnigmailEncryption.getCryptParams(
+    const errorMsgObj = { value: "" };
+    const logFileObj = {};
+    const encryptArgs = EnigmailEncryption.getCryptParams(
       "",
       test.to,
       "",
@@ -292,19 +294,19 @@ add_task(async function testAlias() {
       logFileObj
     );
 
-    let foundAliasKeys = encryptArgs.aliasKeys.get(test.to.toLowerCase());
+    const foundAliasKeys = encryptArgs.aliasKeys.get(test.to.toLowerCase());
 
     if (!test.expectedAliasKeys) {
       Assert.ok(!foundAliasKeys, "foundAliasKeys should be empty");
     } else {
       Assert.equal(foundAliasKeys.length, test.expectedAliasKeys.length);
 
-      test.expectedAliasKeys.forEach((val, i) => {
+      test.expectedAliasKeys.forEach(val => {
         Assert.ok(foundAliasKeys.includes(val));
       });
 
-      let encryptResult = {};
-      let encrypted = await RNP.encryptAndOrSign(
+      const encryptResult = {};
+      const encrypted = await RNP.encryptAndOrSign(
         "plaintext",
         encryptArgs,
         encryptResult

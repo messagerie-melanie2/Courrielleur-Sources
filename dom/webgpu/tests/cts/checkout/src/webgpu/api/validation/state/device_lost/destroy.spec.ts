@@ -5,6 +5,7 @@ Tests for device lost induced via destroy.
 `;
 
 import { makeTestGroup } from '../../../../../common/framework/test_group.js';
+import { assert } from '../../../../../common/util/util.js';
 import {
   allBindingEntries,
   bindingTypeInfo,
@@ -13,30 +14,40 @@ import {
   kBufferUsageInfo,
   kBufferUsageCopy,
   kBufferUsageCopyInfo,
-  kCompressedTextureFormats,
   kQueryTypes,
   kTextureUsageType,
   kTextureUsageTypeInfo,
   kTextureUsageCopy,
   kTextureUsageCopyInfo,
-  kRegularTextureFormats,
-  kRenderableColorTextureFormats,
   kShaderStageKeys,
-  kTextureFormatInfo,
 } from '../../../../capability_info.js';
+import {
+  getBlockInfoForColorTextureFormat,
+  kCompressedTextureFormats,
+  kRegularTextureFormats,
+  kPossibleColorRenderableTextureFormats,
+  getBlockInfoForTextureFormat,
+  isTextureFormatPossiblyUsableAsColorRenderAttachment,
+  isTextureFormatPossiblyStorageReadable,
+} from '../../../../format_info.js';
+import { AllFeaturesMaxLimitsGPUTest } from '../../../../gpu_test.js';
 import { CommandBufferMaker, EncoderType } from '../../../../util/command_buffer_maker.js';
 import {
-  canCopyFromCanvasContext,
   createCanvas,
   kAllCanvasTypes,
   kValidCanvasContextIds,
 } from '../../../../util/create_elements.js';
-import { ValidationTest } from '../../validation_test.js';
+import {
+  startPlayingAndWaitForVideo,
+  getVideoElement,
+  getVideoFrameFromVideoElement,
+} from '../../../../web_platform/util.js';
+import * as vtu from '../../validation_test_utils.js';
 
 const kCommandValidationStages = ['finish', 'submit'];
-type CommandValidationStage = typeof kCommandValidationStages[number];
+type CommandValidationStage = (typeof kCommandValidationStages)[number];
 
-class DeviceDestroyTests extends ValidationTest {
+class DeviceDestroyTests extends AllFeaturesMaxLimitsGPUTest {
   /**
    * Expects that `fn` does not produce any errors before the device is destroyed, and then calls
    * `fn` after the device is destroyed without any specific expectation. If `awaitLost` is true, we
@@ -108,7 +119,7 @@ Tests creating buffers on destroyed device. Tests valid combinations of:
   .params(u =>
     u
       .combine('usageType', kBufferUsageKeys)
-      .beginSubcases()
+
       .combine('usageCopy', kBufferUsageCopy)
       .combine('awaitLost', [true, false])
       .filter(({ usageType, usageCopy }) => {
@@ -128,7 +139,7 @@ Tests creating buffers on destroyed device. Tests valid combinations of:
   .fn(async t => {
     const { awaitLost, usageType, usageCopy, mappedAtCreation } = t.params;
     await t.executeAfterDestroy(() => {
-      t.device.createBuffer({
+      t.createBufferTracked({
         size: 16,
         usage: kBufferUsageInfo[usageType] | kBufferUsageCopyInfo[usageCopy],
         mappedAtCreation,
@@ -147,23 +158,24 @@ Tests creating 2d uncompressed textures on destroyed device. Tests valid combina
   .params(u =>
     u
       .combine('format', kRegularTextureFormats)
-      .beginSubcases()
+
       .combine('usageType', kTextureUsageType)
       .combine('usageCopy', kTextureUsageCopy)
       .combine('awaitLost', [true, false])
       .filter(({ format, usageType }) => {
-        const info = kTextureFormatInfo[format];
         return !(
-          (!info.renderable && usageType === 'render') ||
-          (!info.storage && usageType === 'storage')
+          (!isTextureFormatPossiblyUsableAsColorRenderAttachment(format) &&
+            usageType === 'render') ||
+          (!isTextureFormatPossiblyStorageReadable(format) && usageType === 'storage')
         );
       })
   )
   .fn(async t => {
     const { awaitLost, format, usageType, usageCopy } = t.params;
-    const { blockWidth, blockHeight } = kTextureFormatInfo[format];
+    t.skipIfTextureFormatNotSupported(format);
+    const { blockWidth, blockHeight } = getBlockInfoForTextureFormat(format);
     await t.executeAfterDestroy(() => {
-      t.device.createTexture({
+      t.createTextureTracked({
         size: { width: blockWidth, height: blockHeight },
         usage: kTextureUsageTypeInfo[usageType] | kTextureUsageCopyInfo[usageCopy],
         format,
@@ -182,27 +194,24 @@ Tests creating 2d compressed textures on destroyed device. Tests valid combinati
   .params(u =>
     u
       .combine('format', kCompressedTextureFormats)
-      .beginSubcases()
+
       .combine('usageType', kTextureUsageType)
       .combine('usageCopy', kTextureUsageCopy)
       .combine('awaitLost', [true, false])
       .filter(({ format, usageType }) => {
-        const info = kTextureFormatInfo[format];
         return !(
-          (!info.renderable && usageType === 'render') ||
-          (!info.storage && usageType === 'storage')
+          (!isTextureFormatPossiblyUsableAsColorRenderAttachment(format) &&
+            usageType === 'render') ||
+          (!isTextureFormatPossiblyStorageReadable(format) && usageType === 'storage')
         );
       })
   )
-  .beforeAllSubcases(t => {
-    const { format } = t.params;
-    t.selectDeviceOrSkipTestCase(kTextureFormatInfo[format].feature);
-  })
   .fn(async t => {
     const { awaitLost, format, usageType, usageCopy } = t.params;
-    const { blockWidth, blockHeight } = kTextureFormatInfo[format];
+    t.skipIfTextureFormatNotSupported(format);
+    const { blockWidth, blockHeight } = getBlockInfoForColorTextureFormat(format);
     await t.executeAfterDestroy(() => {
-      t.device.createTexture({
+      t.createTextureTracked({
         size: { width: blockWidth, height: blockHeight },
         usage: kTextureUsageTypeInfo[usageType] | kTextureUsageCopyInfo[usageCopy],
         format,
@@ -221,22 +230,23 @@ Tests creating texture views on 2d uncompressed textures from destroyed device. 
   .params(u =>
     u
       .combine('format', kRegularTextureFormats)
-      .beginSubcases()
+
       .combine('usageType', kTextureUsageType)
       .combine('usageCopy', kTextureUsageCopy)
       .combine('awaitLost', [true, false])
       .filter(({ format, usageType }) => {
-        const info = kTextureFormatInfo[format];
         return !(
-          (!info.renderable && usageType === 'render') ||
-          (!info.storage && usageType === 'storage')
+          (!isTextureFormatPossiblyUsableAsColorRenderAttachment(format) &&
+            usageType === 'render') ||
+          (!isTextureFormatPossiblyStorageReadable(format) && usageType === 'storage')
         );
       })
   )
   .fn(async t => {
     const { awaitLost, format, usageType, usageCopy } = t.params;
-    const { blockWidth, blockHeight } = kTextureFormatInfo[format];
-    const texture = t.device.createTexture({
+    t.skipIfTextureFormatNotSupported(format);
+    const { blockWidth, blockHeight } = getBlockInfoForTextureFormat(format);
+    const texture = t.createTextureTracked({
       size: { width: blockWidth, height: blockHeight },
       usage: kTextureUsageTypeInfo[usageType] | kTextureUsageCopyInfo[usageCopy],
       format,
@@ -257,26 +267,23 @@ Tests creating texture views on 2d compressed textures from destroyed device. Te
   .params(u =>
     u
       .combine('format', kCompressedTextureFormats)
-      .beginSubcases()
+
       .combine('usageType', kTextureUsageType)
       .combine('usageCopy', kTextureUsageCopy)
       .combine('awaitLost', [true, false])
       .filter(({ format, usageType }) => {
-        const info = kTextureFormatInfo[format];
         return !(
-          (!info.renderable && usageType === 'render') ||
-          (!info.storage && usageType === 'storage')
+          (!isTextureFormatPossiblyUsableAsColorRenderAttachment(format) &&
+            usageType === 'render') ||
+          (!isTextureFormatPossiblyStorageReadable(format) && usageType === 'storage')
         );
       })
   )
-  .beforeAllSubcases(t => {
-    const { format } = t.params;
-    t.selectDeviceOrSkipTestCase(kTextureFormatInfo[format].feature);
-  })
   .fn(async t => {
     const { awaitLost, format, usageType, usageCopy } = t.params;
-    const { blockWidth, blockHeight } = kTextureFormatInfo[format];
-    const texture = t.device.createTexture({
+    t.skipIfTextureFormatNotSupported(format);
+    const { blockWidth, blockHeight } = getBlockInfoForColorTextureFormat(format);
+    const texture = t.createTextureTracked({
       size: { width: blockWidth, height: blockHeight },
       usage: kTextureUsageTypeInfo[usageType] | kTextureUsageCopyInfo[usageCopy],
       format,
@@ -292,7 +299,7 @@ g.test('createSampler')
 Tests creating samplers on destroyed device.
   `
   )
-  .params(u => u.beginSubcases().combine('awaitLost', [true, false]))
+  .params(u => u.combine('awaitLost', [true, false]))
   .fn(async t => {
     const { awaitLost } = t.params;
     await t.executeAfterDestroy(() => {
@@ -308,9 +315,7 @@ Tests creating bind group layouts on destroyed device. Tests valid combinations 
   - Maximum set of visibility for each binding entry
   `
   )
-  .params(u =>
-    u.combine('entry', allBindingEntries(false)).beginSubcases().combine('awaitLost', [true, false])
-  )
+  .params(u => u.combine('entry', allBindingEntries(false)).combine('awaitLost', [true, false]))
   .fn(async t => {
     const { awaitLost, entry } = t.params;
     const visibility = bindingTypeInfo(entry).validStages;
@@ -325,7 +330,7 @@ g.test('createBindGroup')
   .desc(
     `
 Tests creating bind group on destroyed device. Tests valid combinations of:
-  - Various binded resource types
+  - Various bound resource types
   - Various valid binding entries
   - Maximum set of visibility for each binding entry
   `
@@ -348,7 +353,7 @@ Tests creating bind group on destroyed device. Tests valid combinations of:
             return info.resource === resourceType;
         }
       })
-      .beginSubcases()
+
       .combine('awaitLost', [true, false])
   )
   .fn(async t => {
@@ -357,7 +362,7 @@ Tests creating bind group on destroyed device. Tests valid combinations of:
     const layout = t.device.createBindGroupLayout({
       entries: [{ binding: 0, visibility, ...entry }],
     });
-    const resource = t.getBindingResource(resourceType);
+    const resource = vtu.getBindingResource(t, resourceType);
     await t.executeAfterDestroy(() => {
       t.device.createBindGroup({ layout, entries: [{ binding: 0, resource }] });
     }, awaitLost);
@@ -371,9 +376,7 @@ Tests creating pipeline layouts on destroyed device. Tests valid combinations of
   - Maximum set of visibility for each binding entry
   `
   )
-  .params(u =>
-    u.combine('entry', allBindingEntries(false)).beginSubcases().combine('awaitLost', [true, false])
-  )
+  .params(u => u.combine('entry', allBindingEntries(false)).combine('awaitLost', [true, false]))
   .fn(async t => {
     const { awaitLost, entry } = t.params;
     const visibility = bindingTypeInfo(entry).validStages;
@@ -394,13 +397,11 @@ Tests creating shader modules on destroyed device.
   - Tests all shader stages: vertex, fragment, compute
   `
   )
-  .params(u =>
-    u.combine('stage', kShaderStageKeys).beginSubcases().combine('awaitLost', [true, false])
-  )
+  .params(u => u.combine('stage', kShaderStageKeys).combine('awaitLost', [true, false]))
   .fn(async t => {
     const { awaitLost, stage } = t.params;
     await t.executeAfterDestroy(() => {
-      t.device.createShaderModule({ code: t.getNoOpShaderCode(stage) });
+      t.device.createShaderModule({ code: vtu.getNoOpShaderCode(stage) });
     }, awaitLost);
   });
 
@@ -411,10 +412,10 @@ Tests creating compute pipeline on destroyed device.
   - Tests with a valid no-op compute shader
   `
   )
-  .params(u => u.beginSubcases().combine('awaitLost', [true, false]))
+  .params(u => u.combine('awaitLost', [true, false]))
   .fn(async t => {
     const { awaitLost } = t.params;
-    const cShader = t.device.createShaderModule({ code: t.getNoOpShaderCode('COMPUTE') });
+    const cShader = t.device.createShaderModule({ code: vtu.getNoOpShaderCode('COMPUTE') });
     await t.executeAfterDestroy(() => {
       t.device.createComputePipeline({
         layout: 'auto',
@@ -430,11 +431,11 @@ Tests creating render pipeline on destroyed device.
   - Tests with valid no-op vertex and fragment shaders
   `
   )
-  .params(u => u.beginSubcases().combine('awaitLost', [true, false]))
+  .params(u => u.combine('awaitLost', [true, false]))
   .fn(async t => {
     const { awaitLost } = t.params;
-    const vShader = t.device.createShaderModule({ code: t.getNoOpShaderCode('VERTEX') });
-    const fShader = t.device.createShaderModule({ code: t.getNoOpShaderCode('FRAGMENT') });
+    const vShader = t.device.createShaderModule({ code: vtu.getNoOpShaderCode('VERTEX') });
+    const fShader = t.device.createShaderModule({ code: vtu.getNoOpShaderCode('FRAGMENT') });
     await t.executeAfterDestroy(() => {
       t.device.createRenderPipeline({
         layout: 'auto',
@@ -448,13 +449,173 @@ Tests creating render pipeline on destroyed device.
     }, awaitLost);
   });
 
+g.test('createComputePipelineAsync')
+  .desc(
+    `
+Tests creating a pipeline asynchronously while destroying the device and on a destroyed device
+- valid={true, false}, use an invalid or valid pipeline descriptor
+- awaitLost={true, false}, check results before/after waiting for the device lost promise
+  `
+  )
+  .params(u => u.combine('valid', [true, false]).combine('awaitLost', [true, false]))
+  .fn(async t => {
+    const { valid, awaitLost } = t.params;
+    const cShader = t.device.createShaderModule({ code: vtu.getNoOpShaderCode('COMPUTE') });
+    const fn = () =>
+      t.device.createComputePipelineAsync({
+        layout: 'auto',
+        compute: { module: cShader, entryPoint: valid ? 'main' : 'does_not_exist' },
+      });
+
+    // Kick off async creation
+    const p = fn();
+
+    // Track whether or not the device is lost.
+    let isLost = false;
+    void t.device.lost.then(() => {
+      isLost = true;
+    });
+
+    if (valid) {
+      // The async creation should resolve successfully.
+      t.shouldResolve(
+        (async () => {
+          const pipeline = await p;
+          assert(pipeline instanceof GPUComputePipeline, 'Pipeline was not a GPUComputePipeline');
+        })()
+      );
+    } else {
+      // The async creation should resolve successfully if the device is lost.
+      // If the device is not lost, it should see a validation error.
+      // Note: this could be a race!
+      t.shouldResolve(
+        p.then(
+          pipeline => {
+            assert(
+              isLost,
+              'Invalid async creation should "succeed" if the device is already lost.'
+            );
+            assert(pipeline instanceof GPUComputePipeline, 'Pipeline was not a GPUComputePipeline');
+          },
+          err => {
+            assert(
+              !isLost,
+              'Invalid async creation should only fail if the device is not yet lost.'
+            );
+            assert(err instanceof GPUPipelineError, 'Error was not a GPUPipelineError');
+            assert(err.reason === 'validation', 'Expected validation error');
+          }
+        )
+      );
+    }
+
+    // Destroy the device, and expect it to be lost.
+    t.expectDeviceLost('destroyed');
+    t.device.destroy();
+    if (awaitLost) {
+      const lostInfo = await t.device.lost;
+      t.expect(lostInfo.reason === 'destroyed');
+    }
+
+    // After device destroy, creation should still resolve successfully.
+    t.shouldResolve(
+      (async () => {
+        const pipeline = await fn();
+        assert(pipeline instanceof GPUComputePipeline, 'Pipeline was not a GPUComputePipeline');
+      })()
+    );
+  });
+
+g.test('createRenderPipelineAsync')
+  .desc(
+    `
+Tests creating a pipeline asynchronously while destroying the device and on a destroyed device
+- valid={true, false}, use an invalid or valid pipeline descriptor
+- awaitLost={true, false}, check results before/after waiting for the device lost promise
+  `
+  )
+  .params(u => u.combine('valid', [true, false]).combine('awaitLost', [true, false]))
+  .fn(async t => {
+    const { valid, awaitLost } = t.params;
+    const vShader = t.device.createShaderModule({ code: vtu.getNoOpShaderCode('VERTEX') });
+    const fShader = t.device.createShaderModule({ code: vtu.getNoOpShaderCode('FRAGMENT') });
+    const fn = () =>
+      t.device.createRenderPipelineAsync({
+        layout: 'auto',
+        vertex: { module: vShader, entryPoint: 'main' },
+        fragment: {
+          module: fShader,
+          entryPoint: valid ? 'main' : 'does_not_exist',
+          targets: [{ format: 'rgba8unorm', writeMask: 0 }],
+        },
+      });
+
+    // Kick off async creation
+    const p = fn();
+
+    // Track whether or not the device is lost.
+    let isLost = false;
+    void t.device.lost.then(() => {
+      isLost = true;
+    });
+
+    if (valid) {
+      // The async creation should resolve successfully.
+      t.shouldResolve(
+        (async () => {
+          const pipeline = await p;
+          assert(pipeline instanceof GPURenderPipeline, 'Pipeline was not a GPURenderPipeline');
+        })()
+      );
+    } else {
+      // The async creation should resolve successfully if the device is lost.
+      // If the device is not lost, it should see a validation error.
+      // Note: this could be a race!
+      t.shouldResolve(
+        p.then(
+          pipeline => {
+            assert(
+              isLost,
+              'Invalid async creation should "succeed" if the device is already lost.'
+            );
+            assert(pipeline instanceof GPURenderPipeline, 'Pipeline was not a GPURenderPipeline');
+          },
+          err => {
+            assert(
+              !isLost,
+              'Invalid async creation should only fail if the device is not yet lost.'
+            );
+            assert(err instanceof GPUPipelineError, 'Error was not a GPUPipelineError');
+            assert(err.reason === 'validation', 'Expected validation error');
+          }
+        )
+      );
+    }
+
+    // Destroy the device, and expect it to be lost.
+    t.expectDeviceLost('destroyed');
+    t.device.destroy();
+    if (awaitLost) {
+      const lostInfo = await t.device.lost;
+      t.expect(lostInfo.reason === 'destroyed');
+    }
+
+    // After device destroy, creation should still resolve successfully.
+    t.shouldResolve(
+      (async () => {
+        const pipeline = await fn();
+        assert(pipeline instanceof GPURenderPipeline, 'Pipeline was not a GPURenderPipeline');
+      })()
+    );
+  });
+
 g.test('createCommandEncoder')
   .desc(
     `
 Tests creating command encoders on destroyed device.
   `
   )
-  .params(u => u.beginSubcases().combine('awaitLost', [true, false]))
+  .params(u => u.combine('awaitLost', [true, false]))
   .fn(async t => {
     const { awaitLost } = t.params;
     await t.executeAfterDestroy(() => {
@@ -470,13 +631,11 @@ Tests creating render bundle encoders on destroyed device.
   `
   )
   .params(u =>
-    u
-      .combine('format', kRenderableColorTextureFormats)
-      .beginSubcases()
-      .combine('awaitLost', [true, false])
+    u.combine('format', kPossibleColorRenderableTextureFormats).combine('awaitLost', [true, false])
   )
   .fn(async t => {
     const { awaitLost, format } = t.params;
+    t.skipIfTextureFormatNotUsableAsRenderAttachment(format);
     await t.executeAfterDestroy(() => {
       t.device.createRenderBundleEncoder({ colorFormats: [format] });
     }, awaitLost);
@@ -489,16 +648,57 @@ Tests creating query sets on destroyed device.
   - Tests various query set types
   `
   )
-  .params(u => u.combine('type', kQueryTypes).beginSubcases().combine('awaitLost', [true, false]))
-  .beforeAllSubcases(t => {
-    const { type } = t.params;
-    t.selectDeviceForQueryTypeOrSkipTestCase(type);
-  })
+  .params(u => u.combine('type', kQueryTypes).combine('awaitLost', [true, false]))
   .fn(async t => {
     const { awaitLost, type } = t.params;
+    t.skipIfDeviceDoesNotSupportQueryType(type);
     await t.executeAfterDestroy(() => {
-      t.device.createQuerySet({ type, count: 4 });
+      t.createQuerySetTracked({ type, count: 4 });
     }, awaitLost);
+  });
+
+g.test('importExternalTexture')
+  .desc(
+    `
+Tests import external texture on destroyed device. Tests valid combinations of:
+  - Various valid source type
+  `
+  )
+  .params(u =>
+    u
+      .combine('sourceType', ['VideoElement', 'VideoFrame'] as const)
+
+      .combine('awaitLost', [true, false])
+  )
+  .fn(async t => {
+    const { awaitLost, sourceType } = t.params;
+
+    const videoElement = getVideoElement(t, 'four-colors-vp9-bt601.webm');
+    if (!('requestVideoFrameCallback' in videoElement)) {
+      t.skip('HTMLVideoElement.requestVideoFrameCallback is not supported');
+    }
+
+    let source: HTMLVideoElement | VideoFrame;
+    await startPlayingAndWaitForVideo(videoElement, async () => {
+      source =
+        sourceType === 'VideoFrame'
+          ? await getVideoFrameFromVideoElement(t, videoElement)
+          : videoElement;
+
+      await t.executeAfterDestroy(() => {
+        t.device.createBindGroup({
+          layout: t.device.createBindGroupLayout({
+            entries: [{ binding: 0, visibility: GPUShaderStage.FRAGMENT, externalTexture: {} }],
+          }),
+          entries: [
+            {
+              binding: 0,
+              resource: t.device.importExternalTexture({ source }),
+            },
+          ],
+        });
+      }, awaitLost);
+    });
   });
 
 g.test('command,copyBufferToBuffer')
@@ -507,17 +707,15 @@ g.test('command,copyBufferToBuffer')
 Tests copyBufferToBuffer command with various uncompressed formats on destroyed device.
   `
   )
-  .params(u =>
-    u.beginSubcases().combine('stage', kCommandValidationStages).combine('awaitLost', [true, false])
-  )
+  .params(u => u.combine('stage', kCommandValidationStages).combine('awaitLost', [true, false]))
   .fn(async t => {
     const { stage, awaitLost } = t.params;
     const kBufferSize = 16;
-    const src = t.device.createBuffer({
+    const src = t.createBufferTracked({
       size: kBufferSize,
       usage: GPUBufferUsage.COPY_SRC,
     });
-    const dst = t.device.createBuffer({
+    const dst = t.createBufferTracked({
       size: kBufferSize,
       usage: GPUBufferUsage.COPY_DST,
     });
@@ -535,21 +733,19 @@ Tests copyBufferToTexture command on destroyed device.
   - Tests submitting command on destroyed device
   `
   )
-  .params(u =>
-    u.beginSubcases().combine('stage', kCommandValidationStages).combine('awaitLost', [true, false])
-  )
+  .params(u => u.combine('stage', kCommandValidationStages).combine('awaitLost', [true, false]))
   .fn(async t => {
     const { stage, awaitLost } = t.params;
     const format = 'rgba32uint';
-    const { bytesPerBlock, blockWidth, blockHeight } = kTextureFormatInfo[format];
+    const { bytesPerBlock, blockWidth, blockHeight } = getBlockInfoForColorTextureFormat(format);
     const src = {
-      buffer: t.device.createBuffer({
+      buffer: t.createBufferTracked({
         size: bytesPerBlock,
         usage: GPUBufferUsage.COPY_SRC,
       }),
     };
     const dst = {
-      texture: t.device.createTexture({
+      texture: t.createTextureTracked({
         size: { width: blockWidth, height: blockHeight },
         usage: GPUTextureUsage.COPY_DST,
         format,
@@ -570,22 +766,20 @@ Tests copyTextureToBuffer command on destroyed device.
   - Tests submitting command on destroyed device
   `
   )
-  .params(u =>
-    u.beginSubcases().combine('stage', kCommandValidationStages).combine('awaitLost', [true, false])
-  )
+  .params(u => u.combine('stage', kCommandValidationStages).combine('awaitLost', [true, false]))
   .fn(async t => {
     const { stage, awaitLost } = t.params;
     const format = 'rgba32uint';
-    const { bytesPerBlock, blockWidth, blockHeight } = kTextureFormatInfo[format];
+    const { bytesPerBlock, blockWidth, blockHeight } = getBlockInfoForColorTextureFormat(format);
     const src = {
-      texture: t.device.createTexture({
+      texture: t.createTextureTracked({
         size: { width: blockWidth, height: blockHeight },
         usage: GPUTextureUsage.COPY_SRC,
         format,
       }),
     };
     const dst = {
-      buffer: t.device.createBuffer({
+      buffer: t.createBufferTracked({
         size: bytesPerBlock,
         usage: GPUBufferUsage.COPY_DST,
       }),
@@ -605,22 +799,20 @@ Tests copyTextureToTexture command on destroyed device.
   - Tests submitting command on destroyed device
   `
   )
-  .params(u =>
-    u.beginSubcases().combine('stage', kCommandValidationStages).combine('awaitLost', [true, false])
-  )
+  .params(u => u.combine('stage', kCommandValidationStages).combine('awaitLost', [true, false]))
   .fn(async t => {
     const { stage, awaitLost } = t.params;
     const format = 'rgba32uint';
-    const { blockWidth, blockHeight } = kTextureFormatInfo[format];
+    const { blockWidth, blockHeight } = getBlockInfoForColorTextureFormat(format);
     const src = {
-      texture: t.device.createTexture({
+      texture: t.createTextureTracked({
         size: { width: blockWidth, height: blockHeight },
         usage: GPUTextureUsage.COPY_SRC,
         format,
       }),
     };
     const dst = {
-      texture: t.device.createTexture({
+      texture: t.createTextureTracked({
         size: { width: blockWidth, height: blockHeight },
         usage: GPUBufferUsage.COPY_DST,
         format,
@@ -641,13 +833,11 @@ Tests encoding and finishing a clearBuffer command on destroyed device.
   - Tests submitting command on destroyed device
   `
   )
-  .params(u =>
-    u.beginSubcases().combine('stage', kCommandValidationStages).combine('awaitLost', [true, false])
-  )
+  .params(u => u.combine('stage', kCommandValidationStages).combine('awaitLost', [true, false]))
   .fn(async t => {
     const { stage, awaitLost } = t.params;
     const kBufferSize = 16;
-    const buffer = t.device.createBuffer({
+    const buffer = t.createBufferTracked({
       size: kBufferSize,
       usage: GPUBufferUsage.COPY_SRC,
     });
@@ -668,26 +858,22 @@ Tests encoding and finishing a writeTimestamp command on destroyed device.
   .params(u =>
     u
       .combine('type', kQueryTypes)
-      .beginSubcases()
+
       .combine('stage', kCommandValidationStages)
       .combine('awaitLost', [true, false])
   )
-  .beforeAllSubcases(t => {
-    const { type } = t.params;
-
-    // writeTimestamp is only available for devices that enable the 'timestamp-query' feature.
-    const queryTypes: GPUQueryType[] = ['timestamp'];
-    if (type !== 'timestamp') {
-      queryTypes.push(type);
-    }
-
-    t.selectDeviceForQueryTypeOrSkipTestCase(queryTypes);
-  })
   .fn(async t => {
     const { type, stage, awaitLost } = t.params;
-    const querySet = t.device.createQuerySet({ type, count: 2 });
+    t.skipIfDeviceDoesNotSupportQueryType('timestamp', type);
+
+    const querySet = t.createQuerySetTracked({ type, count: 2 });
     await t.executeCommandsAfterDestroy(stage, awaitLost, 'non-pass', maker => {
-      maker.encoder.writeTimestamp(querySet, 0);
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (maker.encoder as any).writeTimestamp(querySet, 0);
+      } catch (ex) {
+        t.skipIf(ex instanceof TypeError, 'writeTimestamp is actually not available');
+      }
       return maker;
     });
   });
@@ -700,14 +886,12 @@ Tests encoding and finishing a resolveQuerySet command on destroyed device.
   - Tests submitting command on destroyed device
   `
   )
-  .params(u =>
-    u.beginSubcases().combine('stage', kCommandValidationStages).combine('awaitLost', [true, false])
-  )
+  .params(u => u.combine('stage', kCommandValidationStages).combine('awaitLost', [true, false]))
   .fn(async t => {
     const { stage, awaitLost } = t.params;
     const kQueryCount = 2;
-    const querySet = t.createQuerySetWithState('valid');
-    const destination = t.createBufferWithState('valid', {
+    const querySet = vtu.createQuerySetWithState(t, 'valid');
+    const destination = vtu.createBufferWithState(t, 'valid', {
       size: kQueryCount * 8,
       usage: GPUBufferUsage.QUERY_RESOLVE,
     });
@@ -726,12 +910,10 @@ Tests encoding and dispatching a simple valid compute pass on destroyed device.
   - Tests submitting command on destroyed device
   `
   )
-  .params(u =>
-    u.beginSubcases().combine('stage', kCommandValidationStages).combine('awaitLost', [true, false])
-  )
+  .params(u => u.combine('stage', kCommandValidationStages).combine('awaitLost', [true, false]))
   .fn(async t => {
     const { stage, awaitLost } = t.params;
-    const cShader = t.device.createShaderModule({ code: t.getNoOpShaderCode('COMPUTE') });
+    const cShader = t.device.createShaderModule({ code: vtu.getNoOpShaderCode('COMPUTE') });
     const pipeline = t.device.createComputePipeline({
       layout: 'auto',
       compute: { module: cShader, entryPoint: 'main' },
@@ -752,13 +934,11 @@ Tests encoding and finishing a simple valid render pass on destroyed device.
   - Tests submitting command on destroyed device
   `
   )
-  .params(u =>
-    u.beginSubcases().combine('stage', kCommandValidationStages).combine('awaitLost', [true, false])
-  )
+  .params(u => u.combine('stage', kCommandValidationStages).combine('awaitLost', [true, false]))
   .fn(async t => {
     const { stage, awaitLost } = t.params;
-    const vShader = t.device.createShaderModule({ code: t.getNoOpShaderCode('VERTEX') });
-    const fShader = t.device.createShaderModule({ code: t.getNoOpShaderCode('FRAGMENT') });
+    const vShader = t.device.createShaderModule({ code: vtu.getNoOpShaderCode('VERTEX') });
+    const fShader = t.device.createShaderModule({ code: vtu.getNoOpShaderCode('FRAGMENT') });
     const pipeline = t.device.createRenderPipeline({
       layout: 'auto',
       vertex: { module: vShader, entryPoint: 'main' },
@@ -784,13 +964,11 @@ Tests encoding and drawing a render pass including a render bundle on destroyed 
   - Tests submitting command on destroyed device
   `
   )
-  .params(u =>
-    u.beginSubcases().combine('stage', kCommandValidationStages).combine('awaitLost', [true, false])
-  )
+  .params(u => u.combine('stage', kCommandValidationStages).combine('awaitLost', [true, false]))
   .fn(async t => {
     const { stage, awaitLost } = t.params;
-    const vShader = t.device.createShaderModule({ code: t.getNoOpShaderCode('VERTEX') });
-    const fShader = t.device.createShaderModule({ code: t.getNoOpShaderCode('FRAGMENT') });
+    const vShader = t.device.createShaderModule({ code: vtu.getNoOpShaderCode('VERTEX') });
+    const fShader = t.device.createShaderModule({ code: vtu.getNoOpShaderCode('FRAGMENT') });
     const pipeline = t.device.createRenderPipeline({
       layout: 'auto',
       vertex: { module: vShader, entryPoint: 'main' },
@@ -813,12 +991,10 @@ g.test('queue,writeBuffer')
 Tests writeBuffer on queue on destroyed device.
   `
   )
-  .params(u =>
-    u.combine('numElements', [4, 8, 16]).beginSubcases().combine('awaitLost', [true, false])
-  )
+  .params(u => u.combine('numElements', [4, 8, 16]).combine('awaitLost', [true, false]))
   .fn(async t => {
     const { numElements, awaitLost } = t.params;
-    const buffer = t.device.createBuffer({
+    const buffer = t.createBufferTracked({
       size: numElements,
       usage: GPUBufferUsage.COPY_DST,
     });
@@ -834,14 +1010,13 @@ g.test('queue,writeTexture,2d,uncompressed_format')
 Tests writeTexture on queue on destroyed device with uncompressed formats.
   `
   )
-  .params(u =>
-    u.combine('format', kRegularTextureFormats).beginSubcases().combine('awaitLost', [true, false])
-  )
+  .params(u => u.combine('format', kRegularTextureFormats).combine('awaitLost', [true, false]))
   .fn(async t => {
     const { format, awaitLost } = t.params;
-    const { blockWidth, blockHeight, bytesPerBlock } = kTextureFormatInfo[format];
-    const data = new Uint8Array(bytesPerBlock);
-    const texture = t.device.createTexture({
+    t.skipIfTextureFormatNotSupported(format);
+    const { blockWidth, blockHeight, bytesPerBlock } = getBlockInfoForTextureFormat(format);
+    const data = new Uint8Array(bytesPerBlock!);
+    const texture = t.createTextureTracked({
       size: { width: blockWidth, height: blockHeight },
       usage: GPUTextureUsage.COPY_DST,
       format,
@@ -865,18 +1040,15 @@ Tests writeTexture on queue on destroyed device with compressed formats.
   .params(u =>
     u
       .combine('format', kCompressedTextureFormats)
-      .beginSubcases()
+
       .combine('awaitLost', [true, false])
   )
-  .beforeAllSubcases(t => {
-    const { format } = t.params;
-    t.selectDeviceOrSkipTestCase(kTextureFormatInfo[format].feature);
-  })
   .fn(async t => {
     const { format, awaitLost } = t.params;
-    const { blockWidth, blockHeight, bytesPerBlock } = kTextureFormatInfo[format];
+    t.skipIfTextureFormatNotSupported(format);
+    const { blockWidth, blockHeight, bytesPerBlock } = getBlockInfoForColorTextureFormat(format);
     const data = new Uint8Array(bytesPerBlock);
-    const texture = t.device.createTexture({
+    const texture = t.createTextureTracked({
       size: { width: blockWidth, height: blockHeight },
       usage: GPUTextureUsage.COPY_DST,
       format,
@@ -901,22 +1073,19 @@ Tests copyExternalImageToTexture from canvas on queue on destroyed device.
     u
       .combine('canvasType', kAllCanvasTypes)
       .combine('contextType', kValidCanvasContextIds)
-      .filter(({ contextType }) => {
-        return canCopyFromCanvasContext(contextType);
-      })
-      .beginSubcases()
+
       .combine('awaitLost', [true, false])
   )
   .fn(async t => {
     const { canvasType, contextType, awaitLost } = t.params;
     const canvas = createCanvas(t, canvasType, 1, 1);
-    const texture = t.device.createTexture({
+    const texture = t.createTextureTracked({
       size: { width: 1, height: 1 },
       format: 'bgra8unorm',
       usage: GPUTextureUsage.COPY_DST,
     });
 
-    const ctx = ((canvas as unknown) as HTMLCanvasElement).getContext(contextType);
+    const ctx = (canvas as unknown as HTMLCanvasElement).getContext(contextType);
     if (ctx === null) {
       t.skip('Failed to get context for canvas element');
       return;
@@ -938,7 +1107,7 @@ g.test('queue,copyExternalImageToTexture,imageBitmap')
 Tests copyExternalImageToTexture from canvas on queue on destroyed device.
   `
   )
-  .params(u => u.beginSubcases().combine('awaitLost', [true, false]))
+  .params(u => u.combine('awaitLost', [true, false]))
   .fn(async t => {
     const { awaitLost } = t.params;
     if (typeof createImageBitmap === 'undefined') {
@@ -946,7 +1115,7 @@ Tests copyExternalImageToTexture from canvas on queue on destroyed device.
     }
     const imageBitmap = await createImageBitmap(new ImageData(new Uint8ClampedArray(4), 1, 1));
 
-    const texture = t.device.createTexture({
+    const texture = t.createTextureTracked({
       size: { width: 1, height: 1 },
       format: 'bgra8unorm',
       usage: GPUTextureUsage.COPY_DST,

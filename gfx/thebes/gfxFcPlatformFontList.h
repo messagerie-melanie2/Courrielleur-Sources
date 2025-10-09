@@ -308,14 +308,13 @@ class gfxFcPlatformFontList final : public gfxPlatformFontList {
   }
 
   // map lang group ==> lang string
-  // When aForFontEnumerationThread is true, this method will avoid using
-  // LanguageService::LookupLanguage, because it is not safe for off-main-
-  // thread use (except by stylo traversal, which does the necessary locking)
-  void GetSampleLangForGroup(nsAtom* aLanguage, nsACString& aLangStr,
-                             bool aForFontEnumerationThread = false);
+  void GetSampleLangForGroup(nsAtom* aLanguage, nsACString& aLangStr);
 
  protected:
   virtual ~gfxFcPlatformFontList();
+
+  nsTArray<std::pair<const char**, uint32_t>> GetFilteredPlatformFontLists()
+      override;
 
 #if defined(MOZ_SANDBOX) && defined(XP_LINUX)
   typedef mozilla::SandboxBroker::Policy SandboxPolicy;
@@ -351,15 +350,6 @@ class gfxFcPlatformFontList final : public gfxPlatformFontList {
                                        nsAtom* aLanguage = nullptr)
       MOZ_REQUIRES(mLock) override;
 
-  enum class DistroID : int8_t {
-    Unknown = 0,
-    Ubuntu = 1,
-    Fedora = 2,
-    // To be extended with any distros that ship a useful base set of fonts
-    // that we want to explicitly support.
-  };
-  DistroID GetDistroID() const;  // -> DistroID::Unknown if we can't tell
-
   FontVisibility GetVisibilityForFamily(const nsACString& aName) const;
 
   gfxFontFamily* CreateFontFamily(const nsACString& aName,
@@ -367,7 +357,7 @@ class gfxFcPlatformFontList final : public gfxPlatformFontList {
 
   // helper method for finding an appropriate lang string
   bool TryLangForGroup(const nsACString& aOSLang, nsAtom* aLangGroup,
-                       nsACString& aLang, bool aForFontEnumerationThread);
+                       nsACString& aLang);
 
 #ifdef MOZ_BUNDLED_FONTS
   void ActivateBundledFonts();

@@ -17,10 +17,10 @@ this.ContentSearchUIController = (function () {
    * The UI consists of an html:table that's inserted into the DOM after the given
    * text box and styled so that it appears as a dropdown below the text box.
    *
-   * @param {DOMElement} inputElement
+   * @param {HTMLInputElement} inputElement
    *        Search suggestions will be based on the text in this text box.
    *        Assumed to be an html:input.
-   * @param {DOMElement} tableParent
+   * @param {Element} tableParent
    *        The suggestion table is appended as a child to this element.  Since
    *        the table is absolutely positioned and its top and left values are set
    *        to be relative to the top and left of the page, either the parent and
@@ -32,7 +32,7 @@ this.ContentSearchUIController = (function () {
    *        record the search.
    * @param {string} searchPurpose
    *        Sent with search data, see nsISearchEngine.getSubmission.
-   * @param {sring} idPrefix
+   * @param {string} idPrefix
    *        The IDs of elements created by the object will be prefixed with this
    *        string.
    */
@@ -557,11 +557,11 @@ this.ContentSearchUIController = (function () {
       }
     },
 
-    _onMsgFocusInput(event) {
+    _onMsgFocusInput() {
       this.input.focus();
     },
 
-    _onMsgBlur(event) {
+    _onMsgBlur() {
       this.input.blur();
       this._hideSuggestions();
     },
@@ -771,15 +771,22 @@ this.ContentSearchUIController = (function () {
       return row;
     },
 
-    // If the favicon is an array buffer, convert it into a Blob URI.
-    // Otherwise just return the plain URI.
+    /**
+     * If the favicon is an iconData object, convert it into a Blob URI.
+     * Otherwise just return the plain URI.
+     *
+     * @param {string|iconData} data
+     *   The icon's URL or an iconData object containing the icon data.
+     * @returns {string}
+     *   A blob URL or the plain icon URI.
+     */
     _getFaviconURIFromIconData(data) {
       if (typeof data == "string") {
         return data;
       }
 
-      // If typeof(data) != "string", we assume it's an ArrayBuffer
-      let blob = new Blob([data]);
+      // If typeof(data) != "string", the iconData object is returned.
+      let blob = new Blob([data.icon], { type: data.mimeType });
       return URL.createObjectURL(blob);
     },
 

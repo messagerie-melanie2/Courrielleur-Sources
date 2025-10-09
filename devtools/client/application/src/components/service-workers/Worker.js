@@ -7,9 +7,9 @@
 const {
   createFactory,
   PureComponent,
-} = require("resource://devtools/client/shared/vendor/react.js");
+} = require("resource://devtools/client/shared/vendor/react.mjs");
 
-const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.js");
+const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.mjs");
 const {
   connect,
 } = require("resource://devtools/client/shared/vendor/react-redux.js");
@@ -118,7 +118,7 @@ class Worker extends PureComponent {
     return this.props.worker.stateText;
   }
 
-  getClassNameForStatus(baseClass) {
+  getClassNameForStatus() {
     const { state } = this.props.worker;
 
     switch (state) {

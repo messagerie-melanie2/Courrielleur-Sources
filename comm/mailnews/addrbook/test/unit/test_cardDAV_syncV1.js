@@ -2,6 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
+const { setTimeout } = ChromeUtils.importESModule(
+  "resource://gre/modules/Timer.sys.mjs"
+);
+
 async function subtest() {
   // Put some cards on the server.
   CardDAVServer.putCardInternal(
@@ -18,7 +22,7 @@ async function subtest() {
     "BEGIN:VCARD\r\nUID:delete-me\r\nFN:I'm going to be deleted.\r\nEND:VCARD\r\n"
   );
 
-  let directory = initDirectory();
+  const directory = await initDirectory();
 
   // We'll only use this for the initial sync, so I think it's okay to use
   // bulkAddCards and not get a notification for every contact.
@@ -26,9 +30,9 @@ async function subtest() {
   await directory.fetchAllFromServer();
 
   info("Cards:");
-  let cardMap = new Map();
-  let oldETags = new Map();
-  for (let card of directory.childCards) {
+  const cardMap = new Map();
+  const oldETags = new Map();
+  for (const card of directory.childCards) {
     info(card.displayName);
     info(card.getProperty("_href", ""));
     info(card.getProperty("_etag", ""));
@@ -74,7 +78,7 @@ async function subtest() {
 
   info("Cards:");
   cardMap.clear();
-  for (let card of directory.childCards) {
+  for (const card of directory.childCards) {
     info(card.displayName);
     info(card.getProperty("_href", ""));
     info(card.getProperty("_etag", ""));
@@ -167,21 +171,32 @@ async function subtest() {
 
   try {
     let changeMeCard = cardMap.get("change-me");
+    Assert.equal(
+      changeMeCard.getProperty("PopularityIndex", ""),
+      0,
+      "sanity check, initial PopularityIndex"
+    );
     changeMeCard.displayName = "I've been changed again!";
+    changeMeCard.setProperty("PopularityIndex", 10);
 
+    // First entry into AddrBookDirectory.modifyCard.
+    const firstNotification = observer.waitFor("addrbook-contact-updated");
     directory.modifyCard(changeMeCard);
     Assert.ok(!directory.readOnly, "read-only directory should throw");
+    await firstNotification;
+
+    // Second entry into AddrBookDirectory.modifyCard. Triggered by syncing.
     Assert.equal(
       await observer.waitFor("addrbook-contact-updated"),
       "change-me"
     );
-    observer.checkAndClearNotifications({
-      "addrbook-contact-created": [],
-      "addrbook-contact-updated": ["change-me"],
-      "addrbook-contact-deleted": [],
-    });
 
     changeMeCard = directory.childCards.find(c => c.UID == "change-me");
+    Assert.equal(
+      changeMeCard.getProperty("PopularityIndex", ""),
+      10,
+      "PopularityIndex survived sync"
+    );
     cardMap.set("change-me", changeMeCard);
 
     await checkCardsOnServer({
@@ -200,6 +215,45 @@ async function subtest() {
     Assert.ok(directory.readOnly, "read-write directory should not throw");
   }
 
+  // Change a card on the client, but this time only non-vCard properties.
+
+  info("Changing a card on the client, non-vCard properties.");
+
+  try {
+    let changeMeCard = cardMap.get("change-me");
+    Assert.equal(
+      changeMeCard.getProperty("PopularityIndex", ""),
+      10,
+      "sanity check, initial PopularityIndex"
+    );
+    changeMeCard.setProperty("PopularityIndex", 20);
+
+    // First entry into AddrBookDirectory.modifyCard.
+    const firstNotification = observer.waitFor("addrbook-contact-updated");
+    directory.modifyCard(changeMeCard);
+    Assert.ok(!directory.readOnly, "read-only directory should throw");
+    await firstNotification;
+
+    // Check there's no second entry into AddrBookDirectory.modifyCard.
+    // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+    await new Promise(resolve => setTimeout(resolve, 500));
+    observer.checkAndClearNotifications({
+      "addrbook-contact-created": [],
+      "addrbook-contact-updated": [],
+      "addrbook-contact-deleted": [],
+    });
+
+    changeMeCard = directory.childCards.find(c => c.UID == "change-me");
+    Assert.equal(
+      changeMeCard.getProperty("PopularityIndex", ""),
+      20,
+      "PopularityIndex did get modified"
+    );
+    cardMap.set("change-me", changeMeCard);
+  } catch (ex) {
+    Assert.ok(directory.readOnly, "read-write directory should not throw");
+  }
+
   // Add a new card on the client.
 
   info("Adding a new card on the client.");
@@ -209,6 +263,7 @@ async function subtest() {
       Ci.nsIAbCard
     );
     newCard.displayName = "I'm another new contact. ϔ";
+    newCard.setProperty("PopularityIndex", 10);
     newCard.UID = "another-new";
     newCard = directory.addCard(newCard);
     Assert.ok(!directory.readOnly, "read-only directory should throw");
@@ -228,6 +283,11 @@ async function subtest() {
       newCard.displayName,
       "I'm another new contact. ϔ",
       "non-ascii character survived the trip to the server"
+    );
+    Assert.equal(
+      newCard.getProperty("PopularityIndex", ""),
+      10,
+      "PopularityIndex survived sync"
     );
 
     await checkCardsOnServer({

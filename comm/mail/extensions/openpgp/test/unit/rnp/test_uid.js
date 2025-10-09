@@ -8,11 +8,11 @@
 
 "use strict";
 
-const { OpenPGPTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mozmill/OpenPGPTestUtils.jsm"
+const { OpenPGPTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/OpenPGPTestUtils.sys.mjs"
 );
-const { EnigmailFuncs } = ChromeUtils.import(
-  "chrome://openpgp/content/modules/funcs.jsm"
+const { EnigmailFuncs } = ChromeUtils.importESModule(
+  "chrome://openpgp/content/modules/funcs.sys.mjs"
 );
 
 const tests = [
@@ -75,11 +75,11 @@ const tests = [
   },
   {
     input: "First Last () <> <email1@example.com>",
-    email: "",
+    email: "email1@example.com",
   },
   {
     input: "First <Last> (comment) <email1@example.com>",
-    email: "",
+    email: "email1@example.com",
   },
   {
     input: "First Last <email@example.com> (bad comment)",
@@ -122,10 +122,10 @@ add_setup(async function () {
 });
 
 add_task(async function testAlias() {
-  for (let test of tests) {
+  for (const test of tests) {
     console.debug("testing input: " + test.input);
 
-    let email = EnigmailFuncs.getEmailFromUserID(test.input);
+    const email = EnigmailFuncs.getEmailFromUserID(test.input);
 
     Assert.equal(test.email, email);
   }

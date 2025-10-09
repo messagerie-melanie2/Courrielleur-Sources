@@ -1,17 +1,7 @@
 /**
- * Copyright 2023 Google Inc. All rights reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * @license
+ * Copyright 2023 Google Inc.
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 import assert from 'assert';
@@ -54,7 +44,7 @@ describe('ChromeDriver install', () => {
         platform: BrowserPlatform.LINUX,
         buildId: testChromeDriverBuildId,
         baseUrl: getServerUrl(),
-      })
+      }),
     );
   });
 
@@ -67,7 +57,7 @@ describe('ChromeDriver install', () => {
         buildId: 'unknown',
         baseUrl: getServerUrl(),
       }),
-      false
+      false,
     );
   });
 
@@ -76,7 +66,7 @@ describe('ChromeDriver install', () => {
     const expectedOutputPath = path.join(
       tmpDir,
       'chromedriver',
-      `${BrowserPlatform.LINUX}-${testChromeDriverBuildId}`
+      `${BrowserPlatform.LINUX}-${testChromeDriverBuildId}`,
     );
     assert.strictEqual(fs.existsSync(expectedOutputPath), false);
     let browser = await install({
@@ -98,5 +88,6 @@ describe('ChromeDriver install', () => {
     });
     assert.strictEqual(browser.path, expectedOutputPath);
     assert.ok(fs.existsSync(expectedOutputPath));
+    assert.ok(fs.existsSync(browser.executablePath));
   });
 });

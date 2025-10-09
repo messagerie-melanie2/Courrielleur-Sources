@@ -233,6 +233,13 @@ nsIGlobalObject* GetCurrentGlobal() {
   return xpc::NativeGlobal(global);
 }
 
+WebTaskSchedulingState* GetWebTaskSchedulingState() {
+  if (const nsIGlobalObject* global = GetEntryGlobal()) {
+    return global->GetWebTaskSchedulingState();
+  }
+  return nullptr;
+}
+
 nsIPrincipal* GetWebIDLCallerPrincipal() {
   MOZ_ASSERT(NS_IsMainThread());
   ScriptSettingsStackEntry* entry = ScriptSettingsStack::EntryPoint();
@@ -643,7 +650,7 @@ AutoJSContext::AutoJSContext() : mCx(nullptr) {
 
 AutoJSContext::operator JSContext*() const { return mCx; }
 
-AutoSafeJSContext::AutoSafeJSContext() : AutoJSAPI() {
+AutoSafeJSContext::AutoSafeJSContext() {
   MOZ_ASSERT(NS_IsMainThread());
 
   DebugOnly<bool> ok = Init(xpc::UnprivilegedJunkScope());

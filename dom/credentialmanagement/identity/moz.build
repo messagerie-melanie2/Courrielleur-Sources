@@ -12,17 +12,22 @@ EXPORTS.mozilla.dom += [
     "IdentityCredential.h",
     "IdentityCredentialSerializationHelpers.h",
     "IdentityNetworkHelpers.h",
+    "NavigatorLogin.h",
 ]
 
 IPDL_SOURCES += [
     "IPCIdentityCredential.ipdlh",
 ]
 
-UNIFIED_SOURCES += ["IdentityCredential.cpp"]
+UNIFIED_SOURCES += [
+    "IdentityCredential.cpp",
+    "IdentityNetworkHelpers.cpp",
+    "NavigatorLogin.cpp",
+]
 
 include("/ipc/chromium/chromium-config.mozbuild")
 
 FINAL_LIBRARY = "xul"
 
-BROWSER_CHROME_MANIFESTS += ["tests/browser/browser.ini"]
-MOCHITEST_MANIFESTS += ["tests/mochitest/mochitest.ini"]
+BROWSER_CHROME_MANIFESTS += ["tests/browser/browser.toml"]
+MOCHITEST_MANIFESTS += ["tests/mochitest/mochitest.toml"]

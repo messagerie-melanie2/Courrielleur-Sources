@@ -23,7 +23,7 @@ add_setup(async () => {
   reset();
   class MockAlertsService {
     QueryInterface = ChromeUtils.generateQI(["nsIAlertsService"]);
-    showAlert(alertInfo, listener) {
+    showAlert() {
       alertShown = true;
     }
   }
@@ -60,7 +60,7 @@ add_task(async function testNotificationsDisabled() {
   Services.prefs.setBoolPref("mail.chat.show_desktop_notifications", true);
   reset();
 
-  let soundPlayed = TestUtils.topicObserved("play-chat-notification-sound");
+  const soundPlayed = TestUtils.topicObserved("play-chat-notification-sound");
   Services.obs.notifyObservers(
     {
       who: "notifier",

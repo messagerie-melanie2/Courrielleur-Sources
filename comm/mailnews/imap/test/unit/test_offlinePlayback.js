@@ -7,15 +7,16 @@
  * go back online.
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
-/* import-globals-from ../../../test/resources/MessageGenerator.jsm */
-load("../../../resources/MessageGenerator.jsm");
+var { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
+);
 
 var gSecondFolder, gThirdFolder;
 var gSynthMessage1, gSynthMessage2;
@@ -26,15 +27,12 @@ var gOfflineManager;
 var tests = [
   setupIMAPPump,
   function serverParms() {
-    var { fsDebugAll } = ChromeUtils.import(
-      "resource://testing-common/mailnews/Maild.jsm"
-    );
-    IMAPPump.server.setDebugLevel(fsDebugAll);
+    IMAPPump.server.setDebugLevel(nsMailServer.debugAll);
   },
   setup,
 
   function prepareToGoOffline() {
-    let rootFolder = IMAPPump.incomingServer.rootFolder;
+    const rootFolder = IMAPPump.incomingServer.rootFolder;
     gSecondFolder = rootFolder
       .getChildNamed("secondFolder")
       .QueryInterface(Ci.nsIMsgImapMailFolder);
@@ -49,17 +47,17 @@ var tests = [
 
     // Flag the two messages, and then copy them to different folders. Since
     // we're offline, these operations are synchronous.
-    let msgHdr1 = IMAPPump.inbox.msgDatabase.getMsgHdrForMessageID(
+    const msgHdr1 = IMAPPump.inbox.msgDatabase.getMsgHdrForMessageID(
       gSynthMessage1.messageId
     );
-    let msgHdr2 = IMAPPump.inbox.msgDatabase.getMsgHdrForMessageID(
+    const msgHdr2 = IMAPPump.inbox.msgDatabase.getMsgHdrForMessageID(
       gSynthMessage2.messageId
     );
-    let headers1 = [msgHdr1];
-    let headers2 = [msgHdr2];
+    const headers1 = [msgHdr1];
+    const headers2 = [msgHdr2];
     msgHdr1.folder.markMessagesFlagged(headers1, true);
     msgHdr2.folder.markMessagesFlagged(headers2, true);
-    let promiseCopyListener1 = new PromiseTestUtils.PromiseCopyListener();
+    const promiseCopyListener1 = new PromiseTestUtils.PromiseCopyListener();
     MailServices.copy.copyMessages(
       IMAPPump.inbox,
       headers1,
@@ -69,7 +67,7 @@ var tests = [
       null,
       true
     );
-    let promiseCopyListener2 = new PromiseTestUtils.PromiseCopyListener();
+    const promiseCopyListener2 = new PromiseTestUtils.PromiseCopyListener();
     MailServices.copy.copyMessages(
       IMAPPump.inbox,
       headers2,
@@ -80,7 +78,7 @@ var tests = [
       true
     );
     var file = do_get_file("../../../data/bugmail10");
-    let promiseCopyListener3 = new PromiseTestUtils.PromiseCopyListener();
+    const promiseCopyListener3 = new PromiseTestUtils.PromiseCopyListener();
     MailServices.copy.copyFileMessage(
       file,
       IMAPPump.inbox,
@@ -109,28 +107,28 @@ var tests = [
     await PromiseTestUtils.promiseDelay(2000);
   },
   async function updateSecondFolder() {
-    let promiseUrlListener = new PromiseTestUtils.PromiseUrlListener();
+    const promiseUrlListener = new PromiseTestUtils.PromiseUrlListener();
     gSecondFolder.updateFolderWithListener(null, promiseUrlListener);
     await promiseUrlListener.promise;
   },
   async function updateThirdFolder() {
-    let promiseUrlListener = new PromiseTestUtils.PromiseUrlListener();
+    const promiseUrlListener = new PromiseTestUtils.PromiseUrlListener();
     gThirdFolder.updateFolderWithListener(null, promiseUrlListener);
     await promiseUrlListener.promise;
   },
   async function updateInbox() {
-    let promiseUrlListener = new PromiseTestUtils.PromiseUrlListener();
+    const promiseUrlListener = new PromiseTestUtils.PromiseUrlListener();
     IMAPPump.inbox.updateFolderWithListener(null, promiseUrlListener);
     await promiseUrlListener.promise;
   },
   function checkDone() {
-    let msgHdr1 = gSecondFolder.msgDatabase.getMsgHdrForMessageID(
+    const msgHdr1 = gSecondFolder.msgDatabase.getMsgHdrForMessageID(
       gSynthMessage1.messageId
     );
-    let msgHdr2 = gThirdFolder.msgDatabase.getMsgHdrForMessageID(
+    const msgHdr2 = gThirdFolder.msgDatabase.getMsgHdrForMessageID(
       gSynthMessage2.messageId
     );
-    let msgHdr3 = IMAPPump.inbox.msgDatabase.getMsgHdrForMessageID(gMsgId1);
+    const msgHdr3 = IMAPPump.inbox.msgDatabase.getMsgHdrForMessageID(gMsgId1);
     Assert.notEqual(msgHdr1, null);
     Assert.notEqual(msgHdr2, null);
     Assert.notEqual(msgHdr3, null);
@@ -153,7 +151,7 @@ async function setup() {
 
   // make a couple of messages
   let messages = [];
-  let gMessageGenerator = new MessageGenerator();
+  const gMessageGenerator = new MessageGenerator();
   messages = messages.concat(gMessageGenerator.makeMessage());
   messages = messages.concat(gMessageGenerator.makeMessage());
   gSynthMessage1 = messages[0];
@@ -162,7 +160,7 @@ async function setup() {
   let msgURI = Services.io.newURI(
     "data:text/plain;base64," + btoa(messages[0].toMessageString())
   );
-  let imapInbox = IMAPPump.daemon.getMailbox("INBOX");
+  const imapInbox = IMAPPump.daemon.getMailbox("INBOX");
   let message = new ImapMessage(msgURI.spec, imapInbox.uidnext++, ["\\Seen"]);
   imapInbox.addMessage(message);
   msgURI = Services.io.newURI(
@@ -172,7 +170,7 @@ async function setup() {
   imapInbox.addMessage(message);
 
   // update folder to download header.
-  let promiseUrlListener = new PromiseTestUtils.PromiseUrlListener();
+  const promiseUrlListener = new PromiseTestUtils.PromiseUrlListener();
   IMAPPump.inbox.updateFolderWithListener(null, promiseUrlListener);
   await promiseUrlListener.promise;
 }

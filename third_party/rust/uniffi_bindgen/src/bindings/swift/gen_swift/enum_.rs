@@ -2,8 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use crate::backend::{CodeOracle, CodeType, Literal};
+use super::CodeType;
+use crate::{backend::Literal, bail, Result};
 
+#[derive(Debug)]
 pub struct EnumCodeType {
     id: String,
 }
@@ -15,19 +17,19 @@ impl EnumCodeType {
 }
 
 impl CodeType for EnumCodeType {
-    fn type_label(&self, oracle: &dyn CodeOracle) -> String {
-        oracle.class_name(&self.id)
+    fn type_label(&self) -> String {
+        super::SwiftCodeOracle.class_name(&self.id)
     }
 
-    fn canonical_name(&self, _oracle: &dyn CodeOracle) -> String {
+    fn canonical_name(&self) -> String {
         format!("Type{}", self.id)
     }
 
-    fn literal(&self, oracle: &dyn CodeOracle, literal: &Literal) -> String {
+    fn literal(&self, literal: &Literal) -> Result<String> {
         if let Literal::Enum(v, _) = literal {
-            format!(".{}", oracle.enum_variant_name(v))
+            Ok(format!(".{}", super::SwiftCodeOracle.enum_variant_name(v)))
         } else {
-            unreachable!();
+            bail!("Invalid literal for enum type: {literal:?}")
         }
     }
 }

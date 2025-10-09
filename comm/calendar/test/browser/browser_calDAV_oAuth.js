@@ -4,9 +4,19 @@
 
 // Creates calendars in various configurations (current and legacy) and performs
 // requests in each of them to prove that OAuth2 authentication is working as expected.
+//
+// Previous versions used a separate client ID and/or stored credentials differently.
+// All of those have been migrated to use the Thunderbird client ID and store credentials
+// in the same format (origin as `oauth://{hostname}`, username as the username) except
+// where no username was stored, in which case the calendar ID is used as the username.
 
-var { CalDavCalendar } = ChromeUtils.import("resource:///modules/CalDavCalendar.jsm");
-var { CalDavGenericRequest } = ChromeUtils.import("resource:///modules/caldav/CalDavRequest.jsm");
+var { CalDavCalendar } = ChromeUtils.importESModule("resource:///modules/CalDavCalendar.sys.mjs");
+var { CalDavGenericRequest } = ChromeUtils.importESModule(
+  "resource:///modules/caldav/CalDavRequest.sys.mjs"
+);
+var { OAuth2TestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/OAuth2TestUtils.sys.mjs"
+);
 
 var LoginInfo = Components.Constructor(
   "@mozilla.org/login-manager/loginInfo;1",
@@ -14,11 +24,34 @@ var LoginInfo = Components.Constructor(
   "init"
 );
 
+// This test is best left in one file, as it relies on the state of the server and the
+// logins service to be consistent between tests, so setting a longer timeout to prevent
+// the server from timing out and causing the tests to fail.
+requestLongerTimeout(2);
+
 // Ideal login info. This is what would be saved if you created a new calendar.
-const ORIGIN = "oauth://mochi.test";
+const ORIGIN = "oauth://test.test";
 const SCOPE = "test_scope";
-const USERNAME = "bob@test.invalid";
-const VALID_TOKEN = "bobs_refresh_token";
+const USERNAME = "user";
+const PASSWORD = "password";
+const VALID_TOKEN = "refresh_token";
+
+const defaultLogin = {
+  origin: ORIGIN,
+  scope: SCOPE,
+  username: USERNAME,
+  password: VALID_TOKEN,
+};
+
+const GOOGLE_SCOPE = "Google CalDAV v2";
+const googleLogin = { ...defaultLogin, scope: GOOGLE_SCOPE };
+
+let oAuth2Server;
+
+add_setup(async function () {
+  Services.logins.removeAllLogins();
+  oAuth2Server = await OAuth2TestUtils.startServer();
+});
 
 /**
  * Set a string pref for the given calendar.
@@ -32,15 +65,40 @@ function setPref(calendarId, key, value) {
 }
 
 /**
+ * @typedef {LoginData}
+ * @property {string} origin
+ * @property {string} scope
+ * @property {string} username
+ * @property {string} password
+ */
+
+/**
  * Clear any existing saved logins and add the given ones.
  *
- * @param {string[][]} - Zero or more arrays consisting of origin, realm, username, and password.
+ * @param {LoginData[]} logins - Zero or more login data objects.
  */
-function setLogins(...logins) {
+async function setLogins(logins) {
   Services.logins.removeAllLogins();
-  for (let [origin, realm, username, password] of logins) {
-    Services.logins.addLogin(new LoginInfo(origin, null, realm, username, password, "", ""));
+  for (const { origin, scope, username, password } of logins) {
+    await Services.logins.addLoginAsync(
+      new LoginInfo(origin, null, scope, username, password, "", "")
+    );
   }
+}
+
+/**
+ * Wait for a login prompt window to appear, and submit it.
+ *
+ * @param {string} expectedHint - Expected value of the login_hint URL param.
+ */
+async function handleOAuthDialog(expectedHint) {
+  const oAuthWindow = await OAuth2TestUtils.promiseOAuthWindow();
+  info("oauth2 window shown");
+  await SpecialPowers.spawn(
+    oAuthWindow.getBrowser(),
+    [{ expectedHint, expectedScope: SCOPE, username: USERNAME, password: PASSWORD }],
+    OAuth2TestUtils.submitOAuthLogin
+  );
 }
 
 /**
@@ -49,14 +107,17 @@ function setLogins(...logins) {
  * check that the new token is stored in the right place.
  *
  * @param {string} calendarId - ID of the new calendar
- * @param {string} [newTokenUsername] - If given, re-authentication must happen and the new token
- *   stored with this user name.
+ * @param {object} [newTokenDetails] - If given, re-authentication must happen.
+ * @param {string} [newTokenDetails.username] - The new token must be stored with this user name.
+ * @param {string} [newTokenDetails.reason] - The telemetry reason for the new token request.
  */
-async function subtest(calendarId, newTokenUsername) {
-  let calendar = new CalDavCalendar();
+async function subtest(calendarId, newTokenDetails) {
+  Services.fog.testResetFOG();
+
+  const calendar = new CalDavCalendar();
   calendar.id = calendarId;
 
-  let request = new CalDavGenericRequest(
+  const request = new CalDavGenericRequest(
     calendar.wrappedJSObject.session,
     calendar,
     "GET",
@@ -64,138 +125,205 @@ async function subtest(calendarId, newTokenUsername) {
       "http://mochi.test:8888/browser/comm/mail/components/addrbook/test/browser/data/auth_headers.sjs"
     )
   );
-  let response = await request.commit();
-  let headers = JSON.parse(response.text);
+  const dialogPromise = newTokenDetails
+    ? handleOAuthDialog(newTokenDetails.username)
+    : Promise.resolve();
+  const response = await request.commit();
+  await dialogPromise;
+  const headers = JSON.parse(response.text);
 
-  if (newTokenUsername) {
-    Assert.equal(headers.authorization, "Bearer new_access_token");
+  Assert.equal(headers.authorization, "Bearer access_token");
 
-    let logins = Services.logins
-      .findLogins(ORIGIN, null, SCOPE)
-      .filter(l => l.username == newTokenUsername);
-    Assert.equal(logins.length, 1);
-    Assert.equal(logins[0].username, newTokenUsername);
-    Assert.equal(logins[0].password, "new_refresh_token");
+  if (newTokenDetails) {
+    OAuth2TestUtils.checkTelemetry([
+      {
+        issuer: "test.test",
+        reason: newTokenDetails.reason,
+        result: "succeeded",
+      },
+    ]);
   } else {
-    Assert.equal(headers.authorization, "Bearer bobs_access_token");
+    OAuth2TestUtils.checkTelemetry([]);
+  }
+}
+
+/**
+ * Checks that the saved logins are as expected, and then clears all saved logins.
+ *
+ * @param {LoginData[]} expectedLogins - Zero or more login data objects.
+ */
+function checkAndClearLogins(expectedLogins) {
+  const logins = Services.logins.findLogins("", null, "");
+  Assert.equal(logins.length, expectedLogins.length);
+  for (let i = 0; i < logins.length; i++) {
+    Assert.equal(logins[i].origin, expectedLogins[i].origin);
+    Assert.equal(logins[i].httpRealm, expectedLogins[i].scope);
+    Assert.equal(logins[i].username, expectedLogins[i].username);
+    Assert.equal(logins[i].password, expectedLogins[i].password);
   }
 
   Services.logins.removeAllLogins();
+  OAuth2TestUtils.forgetObjects();
+  oAuth2Server.grantedScope = null;
 }
 
 // Test making a request when there is no matching token stored.
 
 /** No token stored, no username or session ID set. */
-add_task(function testCalendarOAuth_id_none() {
-  let calendarId = "testCalendarOAuth_id_none";
-  return subtest(calendarId, calendarId);
+add_task(async function testCalendarOAuth_id_none() {
+  const calendarId = "testCalendarOAuth_id_none";
+  await subtest(calendarId, { username: calendarId, reason: "no refresh token" });
+  checkAndClearLogins([{ ...defaultLogin, username: calendarId }]);
 });
 
 /** No token stored, session ID set. */
-add_task(function testCalendarOAuth_sessionId_none() {
-  let calendarId = "testCalendarOAuth_sessionId_none";
+add_task(async function testCalendarOAuth_sessionId_none() {
+  const calendarId = "testCalendarOAuth_sessionId_none";
   setPref(calendarId, "sessionId", "test_session");
-  return subtest(calendarId, "test_session");
+  await subtest(calendarId, { username: calendarId, reason: "no refresh token" });
+  checkAndClearLogins([{ ...defaultLogin, username: calendarId }]);
 });
 
 /** No token stored, username set. */
-add_task(function testCalendarOAuth_username_none() {
-  let calendarId = "testCalendarOAuth_username_none";
+add_task(async function testCalendarOAuth_username_none() {
+  const calendarId = "testCalendarOAuth_username_none";
   setPref(calendarId, "username", USERNAME);
-  return subtest(calendarId, USERNAME);
+  await subtest(calendarId, { username: USERNAME, reason: "no refresh token" });
+  checkAndClearLogins([defaultLogin]);
 });
 
 // Test making a request when there IS a matching token, but the server rejects it.
-// Currently a new token is not requested on failure.
+// A new token is requested on failure.
 
 /** Expired token stored with calendar ID. */
-add_task(function testCalendarOAuth_id_expired() {
-  let calendarId = "testCalendarOAuth_id_expired";
-  setLogins([`oauth:${calendarId}`, "Google CalDAV v2", calendarId, "expired_token"]);
-  return subtest(calendarId, calendarId);
-}).skip(); // Broken.
+add_task(async function testCalendarOAuth_id_expired() {
+  const calendarId = "testCalendarOAuth_id_expired";
+  const logins = [
+    {
+      ...defaultLogin,
+      username: calendarId,
+      password: "expired_token",
+    },
+  ];
+  await setLogins(logins);
+  await subtest(calendarId, { username: calendarId, reason: "invalid grant" });
+  logins[0].password = VALID_TOKEN;
+  checkAndClearLogins(logins);
+});
 
-/** Expired token stored with session ID. */
-add_task(function testCalendarOAuth_sessionId_expired() {
-  let calendarId = "testCalendarOAuth_sessionId_expired";
-  setPref(calendarId, "sessionId", "test_session");
-  setLogins(["oauth:test_session", "Google CalDAV v2", "test_session", "expired_token"]);
-  return subtest(calendarId, "test_session");
-}).skip(); // Broken.
-
-/** Expired token stored with calendar ID, username set. */
-add_task(function testCalendarOAuth_username_expired() {
-  let calendarId = "testCalendarOAuth_username_expired";
+/** Expired token stored with calendar ID, username set. The new token is stored with the username. */
+add_task(async function testCalendarOAuth_id_and_username_expired() {
+  const calendarId = "testCalendarOAuth_id_and_username_expired";
+  const logins = [
+    {
+      ...defaultLogin,
+      username: calendarId,
+      password: "expired_token",
+    },
+  ];
   setPref(calendarId, "username", USERNAME);
-  setLogins([`oauth:${calendarId}`, "Google CalDAV v2", calendarId, "expired_token"]);
-  return subtest(calendarId, USERNAME);
-}).skip(); // Broken.
+  await setLogins(logins);
+  await subtest(calendarId, { username: USERNAME, reason: "no refresh token" });
+  checkAndClearLogins([logins[0], defaultLogin]);
+});
+
+/** Expired token stored with username. */
+add_task(async function testCalendarOAuth_username_expired() {
+  const calendarId = "testCalendarOAuth_username_expired";
+  const logins = [
+    {
+      ...defaultLogin,
+      password: "expired_token",
+    },
+  ];
+  setPref(calendarId, "username", USERNAME);
+  await setLogins(logins);
+  await subtest(calendarId, { username: USERNAME, reason: "invalid grant" });
+  logins[0].password = VALID_TOKEN;
+  checkAndClearLogins(logins);
+});
 
 // Test making a request with a valid token, using Lightning's client ID and secret.
 
 /** Valid token stored with calendar ID. */
-add_task(function testCalendarOAuth_id_valid() {
-  let calendarId = "testCalendarOAuth_id_valid";
-  setLogins([`oauth:${calendarId}`, "Google CalDAV v2", calendarId, VALID_TOKEN]);
-  return subtest(calendarId);
+add_task(async function testCalendarOAuth_id_valid() {
+  const calendarId = "testCalendarOAuth_id_valid";
+  const logins = [{ ...googleLogin, origin: `oauth:${calendarId}`, username: calendarId }];
+  await setLogins(logins);
+  await subtest(calendarId, { username: calendarId, reason: "no refresh token" });
+  checkAndClearLogins([logins[0], { ...defaultLogin, username: calendarId }]);
 });
 
 /** Valid token stored with session ID. */
-add_task(function testCalendarOAuth_sessionId_valid() {
-  let calendarId = "testCalendarOAuth_sessionId_valid";
+add_task(async function testCalendarOAuth_sessionId_valid() {
+  const calendarId = "testCalendarOAuth_sessionId_valid";
+  const logins = [{ ...googleLogin, origin: "oauth:test_session", username: "test_session" }];
   setPref(calendarId, "sessionId", "test_session");
-  setLogins(["oauth:test_session", "Google CalDAV v2", "test_session", VALID_TOKEN]);
-  return subtest(calendarId);
+  await setLogins(logins);
+  await subtest(calendarId, { username: calendarId, reason: "no refresh token" });
+  checkAndClearLogins([logins[0], { ...defaultLogin, username: calendarId }]);
 });
 
 /** Valid token stored with calendar ID, username set. */
-add_task(function testCalendarOAuth_username_valid() {
-  let calendarId = "testCalendarOAuth_username_valid";
+add_task(async function testCalendarOAuth_username_valid() {
+  const calendarId = "testCalendarOAuth_username_valid";
+  const logins = [{ ...googleLogin, origin: `oauth:${calendarId}`, username: calendarId }];
   setPref(calendarId, "username", USERNAME);
-  setLogins([`oauth:${calendarId}`, "Google CalDAV v2", calendarId, VALID_TOKEN]);
-  return subtest(calendarId, USERNAME);
+  await setLogins(logins);
+  await subtest(calendarId, { username: USERNAME, reason: "no refresh token" });
+  checkAndClearLogins([logins[0], defaultLogin]);
 });
 
 // Test making a request with a valid token, using Thunderbird's client ID and secret.
 
 /** Valid token stored with calendar ID. */
-add_task(function testCalendarOAuthTB_id_valid() {
-  let calendarId = "testCalendarOAuthTB_id_valid";
-  setLogins([ORIGIN, SCOPE, calendarId, VALID_TOKEN]);
-  return subtest(calendarId);
+add_task(async function testCalendarOAuthTB_id_valid() {
+  const calendarId = "testCalendarOAuthTB_id_valid";
+  const logins = [{ ...defaultLogin, username: calendarId }];
+  await setLogins(logins);
+  await subtest(calendarId);
+  checkAndClearLogins(logins);
 });
 
 /** Valid token stored with session ID. */
-add_task(function testCalendarOAuthTB_sessionId_valid() {
-  let calendarId = "testCalendarOAuthTB_sessionId_valid";
+add_task(async function testCalendarOAuthTB_sessionId_valid() {
+  const calendarId = "testCalendarOAuthTB_sessionId_valid";
+  const logins = [{ ...defaultLogin, username: "test_session" }];
   setPref(calendarId, "sessionId", "test_session");
-  setLogins([ORIGIN, SCOPE, "test_session", VALID_TOKEN]);
-  return subtest(calendarId);
+  await setLogins(logins);
+  await subtest(calendarId, { username: calendarId, reason: "no refresh token" });
+  checkAndClearLogins([logins[0], { ...defaultLogin, username: calendarId }]);
 });
 
 /** Valid token stored with calendar ID, username set. */
-add_task(function testCalendarOAuthTB_username_valid() {
-  let calendarId = "testCalendarOAuthTB_username_valid";
+add_task(async function testCalendarOAuthTB_username_valid() {
+  const calendarId = "testCalendarOAuthTB_username_valid";
+  const logins = [{ ...defaultLogin, username: calendarId }];
   setPref(calendarId, "username", USERNAME);
-  setLogins([ORIGIN, SCOPE, calendarId, VALID_TOKEN]);
-  return subtest(calendarId, USERNAME);
+  await setLogins(logins);
+  await subtest(calendarId, { username: USERNAME, reason: "no refresh token" });
+  checkAndClearLogins([logins[0], defaultLogin]);
 });
 
 /** Valid token stored with username, exact scope. */
-add_task(function testCalendarOAuthTB_username_validSingle() {
-  let calendarId = "testCalendarOAuthTB_username_validSingle";
+add_task(async function testCalendarOAuthTB_username_validSingle() {
+  const calendarId = "testCalendarOAuthTB_username_validSingle";
+  const logins = [
+    { ...defaultLogin },
+    { ...defaultLogin, scope: "other_scope", password: "other_refresh_token" },
+  ];
   setPref(calendarId, "username", USERNAME);
-  setLogins(
-    [ORIGIN, SCOPE, USERNAME, VALID_TOKEN],
-    [ORIGIN, "other_scope", USERNAME, "other_refresh_token"]
-  );
-  return subtest(calendarId);
+  await setLogins(logins);
+  await subtest(calendarId);
+  checkAndClearLogins(logins);
 });
 
 /** Valid token stored with username, many scopes. */
-add_task(function testCalendarOAuthTB_username_validMultiple() {
-  let calendarId = "testCalendarOAuthTB_username_validMultiple";
+add_task(async function testCalendarOAuthTB_username_validMultiple() {
+  const calendarId = "testCalendarOAuthTB_username_validMultiple";
+  const logins = [{ ...defaultLogin, scope: "scope test_scope other_scope" }];
   setPref(calendarId, "username", USERNAME);
-  setLogins([ORIGIN, "scope test_scope other_scope", USERNAME, VALID_TOKEN]);
-  return subtest(calendarId);
+  await setLogins(logins);
+  await subtest(calendarId);
+  checkAndClearLogins(logins);
 });

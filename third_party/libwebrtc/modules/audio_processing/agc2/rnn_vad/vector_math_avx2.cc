@@ -8,11 +8,10 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-#include "modules/audio_processing/agc2/rnn_vad/vector_math.h"
-
 #include <immintrin.h>
 
 #include "api/array_view.h"
+#include "modules/audio_processing/agc2/rnn_vad/vector_math.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/numerics/safe_conversions.h"
 
@@ -44,8 +43,7 @@ float VectorMath::DotProductAvx2(rtc::ArrayView<const float> x,
   low = _mm_add_ss(high, low);
   float dot_product = _mm_cvtss_f32(low);
   // Add the result for the last block if incomplete.
-  for (int i = incomplete_block_index; i < rtc::dchecked_cast<int>(x.size());
-       ++i) {
+  for (int i = incomplete_block_index; i < dchecked_cast<int>(x.size()); ++i) {
     dot_product += x[i] * y[i];
   }
   return dot_product;

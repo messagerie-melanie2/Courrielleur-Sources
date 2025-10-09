@@ -17,11 +17,11 @@
 #include <set>
 #include <vector>
 
+#include "api/rtp_parameters.h"
 #include "mozilla/Maybe.h"
 
 namespace webrtc {
 struct RTPHeader;
-struct RtpExtension;
 }  // namespace webrtc
 
 namespace mozilla {
@@ -66,9 +66,12 @@ class MediaPipelineFilter {
   void SetRemoteMediaStreamId(const Maybe<std::string>& aMid);
 
   // When a payload type id is unique to our media section, add it here.
-  void AddUniquePT(uint8_t payload_type);
+  void AddUniqueReceivePT(uint8_t payload_type);
 
-  void Update(const MediaPipelineFilter& filter_update);
+  // When a payload type id is NOT unique to our media section, add it here.
+  void AddDuplicateReceivePT(uint8_t payload_type);
+
+  void Update(const MediaPipelineFilter& filter_update, bool signalingStable);
 
   std::vector<webrtc::RtpExtension> GetExtmap() const { return mExtMap; }
 
@@ -76,7 +79,8 @@ class MediaPipelineFilter {
   // The number of filters we manage here is quite small, so I am optimizing
   // for readability.
   std::set<uint32_t> remote_ssrc_set_;
-  std::set<uint8_t> payload_type_set_;
+  std::set<uint8_t> receive_payload_type_set_;
+  std::set<uint8_t> duplicate_payload_type_set_;
   Maybe<std::string> mRemoteMid;
   std::set<uint32_t> mRemoteMidBindings;
   // RID extension can be set by tests and is sticky, the rest of

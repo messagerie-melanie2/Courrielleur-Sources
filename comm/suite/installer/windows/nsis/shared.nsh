@@ -78,8 +78,6 @@
 
   ${RemoveDeprecatedFiles}
 
-  ; Register AccessibleHandler.dll with COM (this writes to HKLM)
-  ${RegisterAccessibleHandler}
 !macroend
 !define PostUpdate "!insertmacro PostUpdate"
 
@@ -291,6 +289,16 @@
 !macroend
 !define ShowShortcuts "!insertmacro ShowShortcuts"
 
+!macro AddAssociationIfNoneExist FILE_TYPE KEY
+  ClearErrors
+  EnumRegKey $7 HKCR "${FILE_TYPE}" 0
+  ${If} ${Errors}
+    WriteRegStr SHCTX "SOFTWARE\Classes\${FILE_TYPE}"  "" ${KEY}
+  ${EndIf}
+  WriteRegStr SHCTX "SOFTWARE\Classes\${FILE_TYPE}\OpenWithProgids" ${KEY} ""
+!macroend
+!define AddAssociationIfNoneExist "!insertmacro AddAssociationIfNoneExist"
+
 !macro SetHandlersBrowser
   ${GetLongPath} "$INSTDIR\${FileMainEXE}" $8
 
@@ -339,11 +347,13 @@
     WriteRegStr SHCTX "$0\.xhtml" "" "SeaMonkeyHTML"
   ${EndIf}
 
-  ; Only add webm if it's not present
-  ${CheckIfRegistryKeyExists} "$0" ".webm" $7
-  ${If} $7 == "false"
-    WriteRegStr SHCTX "$0\.webm"  "" "SeaMonkeyHTML"
-  ${EndIf}
+  ${AddAssociationIfNoneExist} ".oga"  "SeaMonkeyHTML"
+  ${AddAssociationIfNoneExist} ".ogg"  "SeaMonkeyHTML"
+  ${AddAssociationIfNoneExist} ".ogv"  "SeaMonkeyHTML"
+  ${AddAssociationIfNoneExist} ".svg"  "SeaMonkeyHTML"
+  ${AddAssociationIfNoneExist} ".webm" "SeaMonkeyHTML"
+  ${AddAssociationIfNoneExist} ".webp" "SeaMonkeyHTML"
+
 !macroend
 !define SetHandlersBrowser "!insertmacro SetHandlersBrowser"
 
@@ -425,6 +435,9 @@
   WriteRegStr HKLM "$0\Capabilities\FileAssociations" ".shtml" "SeaMonkeyHTML"
   WriteRegStr HKLM "$0\Capabilities\FileAssociations" ".xht"   "SeaMonkeyHTML"
   WriteRegStr HKLM "$0\Capabilities\FileAssociations" ".xhtml" "SeaMonkeyHTML"
+
+  WriteRegStr HKLM "$0\Capabilities\FileAssociations" ".svg"   "SeaMonkeyHTML"
+  WriteRegStr HKLM "$0\Capabilities\FileAssociations" ".webp"  "SeaMonkeyHTML"
 
   WriteRegStr HKLM "$0\Capabilities\StartMenu" "StartMenuInternet" "$R9"
 
@@ -656,7 +669,7 @@
   ${WriteRegStr2} $1 "$0" "DisplayName" "${BrandFullNameInternal} ${AppVersion} (${ARCH} ${AB_CD})" 0
   ${WriteRegStr2} $1 "$0" "DisplayVersion" "${AppVersion}" 0
   ${WriteRegStr2} $1 "$0" "InstallLocation" "$8" 0
-  ${WriteRegStr2} $1 "$0" "Publisher" "Mozilla" 0
+  ${WriteRegStr2} $1 "$0" "Publisher" "${CompanyName}" 0
   ${WriteRegStr2} $1 "$0" "UninstallString" "$8\uninstall\helper.exe" 0
   ${WriteRegStr2} $1 "$0" "URLInfoAbout" "${URLInfoAbout}" 0
   ${WriteRegStr2} $1 "$0" "URLUpdateInfo" "${URLUpdateInfo}" 0
@@ -760,11 +773,6 @@
 !define UpdateProtocolHandlers "!insertmacro UpdateProtocolHandlers"
 !insertmacro RegCleanAppHandler
 
-!macro RegisterAccessibleHandler
-  ${RegisterDLL} "$INSTDIR\AccessibleHandler.dll"
-!macroend
-!define RegisterAccessibleHandler "!insertmacro RegisterAccessibleHandler"
-
 ; Removes various registry entries for reasons noted below (does not use SHCTX).
 !macro RemoveDeprecatedKeys
   StrCpy $0 "SOFTWARE\Classes"
@@ -796,6 +804,11 @@
   ; with non-ASCII characters in file names.
   StrCpy $0 "Software\Clients\Mail\${ClientsRegName}"
   DeleteRegValue HKLM $0 "SupportUTF8"
+
+  ; Unregister deprecated AccessibleHandler.dll.
+  ${If} ${FileExists} "$INSTDIR\AccessibleHandler.dll"
+    ${UnregisterDLL} "$INSTDIR\AccessibleHandler.dll"
+  ${EndIf}
 !macroend
 !define RemoveDeprecatedKeys "!insertmacro RemoveDeprecatedKeys"
 
@@ -1016,12 +1029,9 @@
   ; should be ${FileMainEXE} so if it is in use the CheckForFilesInUse macro
   ; returns after the first check.
   Push "end"
-  Push "AccessibleHandler.dll"
   Push "AccessibleMarshal.dll"
-  Push "IA2Marshal.dll"
   Push "freebl3.dll"
-  Push "nssckbi.dll"
-  Push "nspr4.dll"
+    Push "nspr4.dll"
   Push "nssdbm3.dll"
   Push "sqlite3.dll"
   Push "mozsqlite3.dll"

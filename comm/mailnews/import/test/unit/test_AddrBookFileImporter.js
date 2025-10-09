@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-var { AddrBookFileImporter } = ChromeUtils.import(
-  "resource:///modules/AddrBookFileImporter.jsm"
+var { AddrBookFileImporter } = ChromeUtils.importESModule(
+  "resource:///modules/AddrBookFileImporter.sys.mjs"
 );
 
 /**
@@ -17,18 +17,18 @@ var { AddrBookFileImporter } = ChromeUtils.import(
  */
 async function test_importAbFile(type, filePath, refDataKey, csvFieldMap) {
   // Create an address book and init the importer.
-  let dirId = MailServices.ab.newAddressBook(
+  const dirId = MailServices.ab.newAddressBook(
     `tmp-${type}`,
     "",
     Ci.nsIAbManager.JS_DIRECTORY_TYPE
   );
-  let targetDir = MailServices.ab.getDirectoryFromId(dirId);
-  let importer = new AddrBookFileImporter(type);
+  const targetDir = MailServices.ab.getDirectoryFromId(dirId);
+  const importer = new AddrBookFileImporter(type);
 
   // Start importing.
-  let sourceFile = do_get_file(filePath);
+  const sourceFile = do_get_file(filePath);
   if (type == "csv") {
-    let unmatched = await importer.parseCsvFile(sourceFile);
+    const unmatched = await importer.parseCsvFile(sourceFile);
     if (unmatched.length) {
       importer.setCsvFields(csvFieldMap);
     }
@@ -36,13 +36,13 @@ async function test_importAbFile(type, filePath, refDataKey, csvFieldMap) {
   await importer.startImport(sourceFile, targetDir);
 
   // Read in the reference data.
-  let refFile = do_get_file("resources/addressbook.json");
-  let refData = JSON.parse(await IOUtils.readUTF8(refFile.path))[refDataKey];
+  const refFile = do_get_file("resources/addressbook.json");
+  const refData = JSON.parse(await IOUtils.readUTF8(refFile.path))[refDataKey];
 
   // Compare with the reference data.
   for (let i = 0; i < refData.length; i++) {
-    let card = targetDir.childCards[i];
-    for (let [key, value] of Object.entries(refData[i])) {
+    const card = targetDir.childCards[i];
+    for (const [key, value] of Object.entries(refData[i])) {
       if (key == "LastModifiedDate") {
         continue;
       }
@@ -104,16 +104,22 @@ add_task(async function test_importCsvFile() {
 
 /** Test importing .vcf file works. */
 add_task(async function test_importVCardFile() {
-  return test_importAbFile(
+  await test_importAbFile(
     "vcard",
     "resources/basic_vcard_addressbook.vcf",
     "vcard_import"
   );
-});
 
-/** Test importing .vcf file with \r\r\n as line breaks works. */
-add_task(async function test_importDosVCardFile() {
-  return test_importAbFile(
+  // File with extra newlines (e.g. as copy-pasted by hand, a relatively
+  // unlikely but still reasonable use case to cover).
+  await test_importAbFile(
+    "vcard",
+    "resources/emptylines_vcard_addressbook.vcf",
+    "vcard_import"
+  );
+
+  // File with \r\r\n as line breaks.
+  await test_importAbFile(
     "vcard",
     "resources/dos_vcard_addressbook.vcf",
     "dos_vcard_import"
@@ -122,9 +128,12 @@ add_task(async function test_importDosVCardFile() {
 
 /** Test importing .ldif file works. */
 add_task(async function test_importLdifFile() {
-  return test_importAbFile(
+  await test_importAbFile(
     "ldif",
     "resources/basic_ldif_addressbook.ldif",
     "basic_addressbook"
   );
+
+  // Bug 264405: The Address Book doesn't show the LDAP-field "labeledURI" as Website
+  await test_importAbFile("ldif", "resources/bug_263304.ldif", "bug_263304");
 });

@@ -4,30 +4,29 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.IndexedDBStore = void 0;
-var _memory = require("./memory");
-var _indexeddbLocalBackend = require("./indexeddb-local-backend");
-var _indexeddbRemoteBackend = require("./indexeddb-remote-backend");
-var _user = require("../models/user");
-var _event = require("../models/event");
-var _logger = require("../logger");
-var _typedEventEmitter = require("../models/typed-event-emitter");
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(arg) { var key = _toPrimitive(arg, "string"); return typeof key === "symbol" ? key : String(key); }
-function _toPrimitive(input, hint) { if (typeof input !== "object" || input === null) return input; var prim = input[Symbol.toPrimitive]; if (prim !== undefined) { var res = prim.call(input, hint || "default"); if (typeof res !== "object") return res; throw new TypeError("@@toPrimitive must return a primitive value."); } return (hint === "string" ? String : Number)(input); } /*
-                                                                                                                                                                                                                                                                                                                                                                                          Copyright 2017 - 2021 Vector Creations Ltd
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Licensed under the Apache License, Version 2.0 (the "License");
-                                                                                                                                                                                                                                                                                                                                                                                          you may not use this file except in compliance with the License.
-                                                                                                                                                                                                                                                                                                                                                                                          You may obtain a copy of the License at
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                              http://www.apache.org/licenses/LICENSE-2.0
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Unless required by applicable law or agreed to in writing, software
-                                                                                                                                                                                                                                                                                                                                                                                          distributed under the License is distributed on an "AS IS" BASIS,
-                                                                                                                                                                                                                                                                                                                                                                                          WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-                                                                                                                                                                                                                                                                                                                                                                                          See the License for the specific language governing permissions and
-                                                                                                                                                                                                                                                                                                                                                                                          limitations under the License.
-                                                                                                                                                                                                                                                                                                                                                                                          */ /* eslint-disable @babel/no-invalid-this */
+var _memory = require("./memory.js");
+var _indexeddbLocalBackend = require("./indexeddb-local-backend.js");
+var _indexeddbRemoteBackend = require("./indexeddb-remote-backend.js");
+var _event = require("../models/event.js");
+var _logger = require("../logger.js");
+var _typedEventEmitter = require("../models/typed-event-emitter.js");
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
+function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
+Copyright 2017 - 2021 Vector Creations Ltd
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/ /* eslint-disable @babel/no-invalid-this */
 /**
  * This is an internal module. See {@link IndexedDBStore} for the public class.
  */
@@ -62,10 +61,10 @@ class IndexedDBStore extends _memory.MemoryStore {
    * ```
    * let opts = { indexedDB: window.indexedDB, localStorage: window.localStorage };
    * let store = new IndexedDBStore(opts);
-   * await store.startup(); // load from indexed db
    * let client = sdk.createClient({
    *     store: store,
    * });
+   * await store.startup(); // load from indexed db, must be called after createClient
    * client.startClient();
    * client.on("sync", function(state, prevState, data) {
    *     if (state === "PREPARED") {
@@ -87,7 +86,6 @@ class IndexedDBStore extends _memory.MemoryStore {
     _defineProperty(this, "userModifiedMap", {});
     // user_id : timestamp
     _defineProperty(this, "emitter", new _typedEventEmitter.TypedEventEmitter());
-    _defineProperty(this, "on", this.emitter.on.bind(this.emitter));
     _defineProperty(this, "onClose", () => {
       this.emitter.emit("closed");
     });
@@ -122,7 +120,7 @@ class IndexedDBStore extends _memory.MemoryStore {
         _logger.logger.error(`Failed to delete indexeddb data: ${err}`);
         throw err;
       });
-    }));
+    }, null));
     _defineProperty(this, "reallySave", this.degradable(() => {
       this.syncTs = Date.now(); // set now to guard against multi-writes
 
@@ -138,7 +136,7 @@ class IndexedDBStore extends _memory.MemoryStore {
         this.userModifiedMap[u.userId] = u.getLastModifiedTime();
       }
       return this.backend.syncToDatabase(userTuples);
-    }));
+    }, null));
     _defineProperty(this, "setSyncData", this.degradable(syncData => {
       return this.backend.setSyncData(syncData);
     }, "setSyncData"));
@@ -182,6 +180,12 @@ class IndexedDBStore extends _memory.MemoryStore {
       this.backend = new _indexeddbLocalBackend.LocalIndexedDBStoreBackend(opts.indexedDB, opts.dbName);
     }
   }
+
+  /** Re-exports `TypedEventEmitter.on` */
+  on(event, handler) {
+    this.emitter.on(event, handler);
+  }
+
   /**
    * @returns Resolved when loaded from indexed db.
    */
@@ -197,7 +201,10 @@ class IndexedDBStore extends _memory.MemoryStore {
     }).then(userPresenceEvents => {
       _logger.logger.log(`IndexedDBStore.startup: processing presence events`);
       userPresenceEvents.forEach(([userId, rawEvent]) => {
-        const u = new _user.User(userId);
+        if (!this.createUser) {
+          throw new Error("`IndexedDBStore.startup` must be called after assigning it to the client, not before!");
+        }
+        const u = this.createUser(userId);
         if (rawEvent) {
           u.setPresenceEvent(new _event.MatrixEvent(rawEvent));
         }

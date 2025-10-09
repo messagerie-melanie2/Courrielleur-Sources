@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* eslint-env mozilla/chrome-worker, node */
-
 /**
  * This worker will perform mbox<->maildir conversions on a tree of
  * directories. It operates purely at the filesystem level.
@@ -41,14 +39,14 @@
  *
  * @param {string} maildir - Path to the source maildir.
  * @param {string} mboxFilename - Path of the mbox file to create.
- * @param {Function(number)} progressFn - Function to be invoked regularly with
- *                                        progress updates. Param is number of
- *                                        "units" processed since last update.
+ * @param {function(integer):void} progressFn - Function to be invoked regularly
+ *   with progress updates. Takes param specifying numbers of "units" processed
+ *   since last update.
  */
 async function maildirToMBox(maildir, mboxFilename, progressFn) {
   // Helper to format dates
   // eg "Thu Jan 18 12:34:56 2018"
-  let fmtUTC = function (d) {
+  const fmtUTC = function (d) {
     const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const monthNames = [
       "Jan",
@@ -87,11 +85,11 @@ async function maildirToMBox(maildir, mboxFilename, progressFn) {
   });
 
   // Iterate over all the message files in "cur".
-  let curPath = PathUtils.join(maildir, "cur");
-  let paths = await IOUtils.getChildren(curPath);
-  let files = await Promise.all(
+  const curPath = PathUtils.join(maildir, "cur");
+  const paths = await IOUtils.getChildren(curPath);
+  const files = await Promise.all(
     paths.map(async path => {
-      let stat = await IOUtils.stat(path);
+      const stat = await IOUtils.stat(path);
       return {
         path,
         creationDate: stat.creationTime,
@@ -104,8 +102,8 @@ async function maildirToMBox(maildir, mboxFilename, progressFn) {
     return a.creationDate - b.creationDate;
   });
 
-  for (let ent of files) {
-    let raw = await IOUtils.read(ent.path);
+  for (const ent of files) {
+    const raw = await IOUtils.read(ent.path);
     // Old converter had a bug where maildir messages included the
     // leading "From " marker, so we need to cope with any
     // cases of this left in the wild.
@@ -114,7 +112,7 @@ async function maildirToMBox(maildir, mboxFilename, progressFn) {
       // Technically, timestamp should be the reception time of the
       // message, but we don't really want to have to parse the
       // message here and nothing is likely to rely on it.
-      let sepLine = "From - " + fmtUTC(new Date()) + "\n";
+      const sepLine = "From - " + fmtUTC(new Date()) + "\n";
       await IOUtils.writeUTF8(mboxFilename, sepLine, {
         mode: "append",
       });
@@ -133,16 +131,15 @@ async function maildirToMBox(maildir, mboxFilename, progressFn) {
  *
  * @param {string} mboxPath - Path of the mbox file to split.
  * @param {string} maildirPath - Path of the maildir to create.
- * @param {Function(number)} progressFn - Function to be invoked regularly with
- *                                        progress updates. One parameter is
- *                                        passed - the number of "cost units"
- *                                        since the previous update.
+ * @param {function(integer):void} progressFn - Function to be invoked regularly
+ *   with progress updates. Takes param specifying numbers of "units" processed
+ *   since last update.
  */
 async function mboxToMaildir(mboxPath, maildirPath, progressFn) {
   // Create the maildir structure.
   await IOUtils.makeDirectory(maildirPath);
-  let curDirPath = PathUtils.join(maildirPath, "cur");
-  let tmpDirPath = PathUtils.join(maildirPath, "tmp");
+  const curDirPath = PathUtils.join(maildirPath, "cur");
+  const tmpDirPath = PathUtils.join(maildirPath, "tmp");
   await IOUtils.makeDirectory(curDirPath);
   await IOUtils.makeDirectory(tmpDirPath);
 
@@ -165,7 +162,7 @@ async function mboxToMaildir(mboxPath, maildirPath, progressFn) {
   // to better cope with unescaped "From " lines in the message body.
   // note: the first subexpression matches the separator line, so
   // that it can be removed from the input.
-  let sepRE = /^(From (?:.*?)\r?\n)[\x21-\x7E]+:/gm;
+  const sepRE = /^(From (?:.*?)\r?\n)[\x21-\x7E]+:/gm;
 
   // Use timestamp as starting name for output messages, incrementing
   // by one for each.
@@ -178,7 +175,7 @@ async function mboxToMaildir(mboxPath, maildirPath, progressFn) {
    * @param {string} str - Input string with chars in 0-255 range.
    * @returns {Uint8Array} The output bytes.
    */
-  let stringToBytes = function (str) {
+  const stringToBytes = function (str) {
     var bytes = new Uint8Array(str.length);
     for (let i = 0; i < str.length; i++) {
       bytes[i] = str.charCodeAt(i);
@@ -194,7 +191,7 @@ async function mboxToMaildir(mboxPath, maildirPath, progressFn) {
    * @param {Uint8Array} bytes - The bytes to convert.
    * @returns {string} The byte values in string form.
    */
-  let bytesToString = function (bytes) {
+  const bytesToString = function (bytes) {
     return bytes.reduce(function (str, b) {
       return str + String.fromCharCode(b);
     }, "");
@@ -208,7 +205,7 @@ async function mboxToMaildir(mboxPath, maildirPath, progressFn) {
    *
    * @param {string} str - The bytes to append (as chars in range 0-255).
    */
-  let writeToMsg = async function (str) {
+  const writeToMsg = async function (str) {
     let mode = "append";
     if (!outPath) {
       outPath = PathUtils.join(curDirPath, ident.toString() + ".eml");
@@ -217,7 +214,7 @@ async function mboxToMaildir(mboxPath, maildirPath, progressFn) {
     }
     // We know that str is really raw 8-bit data, not UTF-16. So we can
     // discard the upper byte and just keep the low byte of each char.
-    let raw = stringToBytes(str);
+    const raw = stringToBytes(str);
     await IOUtils.write(outPath, raw, { mode });
     // For mbox->maildir conversion, progress is measured in bytes.
     progressFn(raw.byteLength);
@@ -227,7 +224,7 @@ async function mboxToMaildir(mboxPath, maildirPath, progressFn) {
   let eof = false;
   let offset = 0;
   while (!eof) {
-    let rawBytes = await IOUtils.read(mboxPath, {
+    const rawBytes = await IOUtils.read(mboxPath, {
       offset,
       maxBytes: CHUNK_SIZE,
     });
@@ -291,7 +288,7 @@ function isSBD(name) {
  * @returns {boolean} - true if file should be copied verbatim.
  */
 function isFileToCopy(name) {
-  let ext4 = name.substr(-4);
+  const ext4 = name.substr(-4);
   // Database and config files.
   if (ext4 == ".msf" || ext4 == ".dat") {
     return true;
@@ -342,8 +339,8 @@ function isMBoxName(name) {
  */
 async function isMaildir(dir) {
   try {
-    let cur = PathUtils.join(dir, "cur");
-    let fi = await IOUtils.stat(cur);
+    const cur = PathUtils.join(dir, "cur");
+    const fi = await IOUtils.stat(cur);
     return fi.type === "directory";
   } catch (ex) {
     if (ex instanceof DOMException && ex.name === "NotFoundError") {
@@ -361,8 +358,8 @@ async function isMaildir(dir) {
  * @returns {Promise<number>} - number of messages found.
  */
 async function countMaildirMsgs(maildir) {
-  let cur = PathUtils.join(maildir, "cur");
-  let paths = await IOUtils.getChildren(cur);
+  const cur = PathUtils.join(maildir, "cur");
+  const paths = await IOUtils.getChildren(cur);
   return paths.length;
 }
 
@@ -376,10 +373,10 @@ async function countMaildirMsgs(maildir) {
  */
 async function calcMaildirCost(srcPath) {
   let cost = 0;
-  for (let path of await IOUtils.getChildren(srcPath)) {
-    let stat = await IOUtils.stat(path);
+  for (const path of await IOUtils.getChildren(srcPath)) {
+    const stat = await IOUtils.stat(path);
     if (stat.type === "directory") {
-      let name = PathUtils.filename(path);
+      const name = PathUtils.filename(path);
       if (isSBD(name)) {
         // Recurse into subfolder.
         cost += await calcMaildirCost(path);
@@ -407,8 +404,8 @@ async function calcMaildirCost(srcPath) {
 async function calcMBoxCost(srcPath) {
   let cost = 0;
   for (const path of await IOUtils.getChildren(srcPath)) {
-    let stat = await IOUtils.stat(path);
-    let name = PathUtils.filename(path);
+    const stat = await IOUtils.stat(path);
+    const name = PathUtils.filename(path);
     if (stat.type === "directory") {
       if (isSBD(name)) {
         // Recurse into .sbd subfolder.
@@ -426,17 +423,17 @@ async function calcMBoxCost(srcPath) {
  *
  * @param {string} srcPath - Root path containing mboxes.
  * @param {string} destPath - Where to create destination root.
- * @param {Function(number)} progressFn - Function to be invoked regularly with
- *                                        progress updates (called with number of
- *                                        cost "units" since last update)
+ * @param {function(integer):void} progressFn - Function to be invoked regularly
+ *   with progress updates. Takes param specifying numbers of "units" processed
+ *   since last update.
  */
 async function convertTreeMBoxToMaildir(srcPath, destPath, progressFn) {
   await IOUtils.makeDirectory(destPath);
 
   for (const path of await IOUtils.getChildren(srcPath)) {
-    let name = PathUtils.filename(path);
-    let dest = PathUtils.join(destPath, name);
-    let stat = await IOUtils.stat(path);
+    const name = PathUtils.filename(path);
+    const dest = PathUtils.join(destPath, name);
+    const stat = await IOUtils.stat(path);
     if (stat.type === "directory") {
       if (isSBD(name)) {
         // Recurse into .sbd subfolder.
@@ -456,17 +453,17 @@ async function convertTreeMBoxToMaildir(srcPath, destPath, progressFn) {
  *
  * @param {string} srcPath - Root path containing maildirs.
  * @param {string} destPath - Where to create destination root.
- * @param {Function(number)} progressFn - Function to be invoked regularly with
- *                                        progress updates (called with number of
- *                                        cost "units" since last update)
+ * @param {function(integer):void} progressFn - Function to be invoked regularly
+ *   with progress updates. Takes param specifying numbers of "units" processed
+ *   since last update.
  */
 async function convertTreeMaildirToMBox(srcPath, destPath, progressFn) {
   await IOUtils.makeDirectory(destPath);
 
-  for (let path of await IOUtils.getChildren(srcPath)) {
-    let name = PathUtils.filename(path);
-    let dest = PathUtils.join(destPath, name);
-    let stat = await IOUtils.stat(path);
+  for (const path of await IOUtils.getChildren(srcPath)) {
+    const name = PathUtils.filename(path);
+    const dest = PathUtils.join(destPath, name);
+    const stat = await IOUtils.stat(path);
     if (stat.type === "directory") {
       if (isSBD(name)) {
         // Recurse into .sbd subfolder.
@@ -488,10 +485,10 @@ self.addEventListener("unhandledrejection", function (error) {
 
 self.addEventListener("message", function (e) {
   // Unpack the request params from the main thread.
-  let srcType = e.data.srcType;
-  let destType = e.data.destType;
-  let srcRoot = e.data.srcRoot;
-  let destRoot = e.data.destRoot;
+  const srcType = e.data.srcType;
+  const destType = e.data.destType;
+  const srcRoot = e.data.srcRoot;
+  const destRoot = e.data.destRoot;
   // destRoot will be a temporary dir, so if it all goes pear-shaped
   // we can just bail out without cleaning up.
 
@@ -511,7 +508,7 @@ self.addEventListener("message", function (e) {
   // Go!
   costFn(srcRoot).then(totalCost => {
     let v = 0;
-    let progressFn = function (n) {
+    const progressFn = function (n) {
       v += n;
       self.postMessage({ msg: "progress", val: v, total: totalCost });
     };

@@ -32,7 +32,14 @@ public final class HardwareCodecCapabilityUtils {
   private static final String VP8_MIME_TYPE = "video/x-vnd.on2.vp8";
   // List of supported HW VP9 codecs.
   private static final String[] supportedVp9HwCodecPrefixes = {
-    "OMX.qcom.", "OMX.Exynos.", "c2.exynos"
+    "OMX.qcom.",
+    "OMX.Exynos.",
+    "c2.exynos",
+    "OMX.allwinner.",
+    "OMX.amlogic.",
+    "OMX.MTK.",
+    "OMX.Nvidia.",
+    "OMX.rk."
   };
   private static final String VP9_MIME_TYPE = "video/x-vnd.on2.vp9";
   // List of supported HW H.264 codecs.
@@ -47,9 +54,14 @@ public final class HardwareCodecCapabilityUtils {
     "OMX.k3.",
     "OMX.hisi.",
     "OMX.TI.",
-    "OMX.MTK."
+    "OMX.MTK.",
+    "OMX.allwinner.",
+    "OMX.amlogic.",
+    "OMX.rk."
   };
   private static final String H264_MIME_TYPE = "video/avc";
+  private static final String HEVC_MIME_TYPE = "video/hevc";
+  private static final String AV1_MIME_TYPE = "video/av01";
   // NV12 color format supported by QCOM codec, but not declared in MediaCodec -
   // see /hardware/qcom/media/mm-core/inc/OMX_QCOMExtns.h
   private static final int COLOR_QCOM_FORMATYUV420PackedSemiPlanar32m = 0x7FA30C04;
@@ -61,7 +73,7 @@ public final class HardwareCodecCapabilityUtils {
     COLOR_QCOM_FORMATYUV420PackedSemiPlanar32m
   };
   private static final int COLOR_FORMAT_NOT_SUPPORTED = -1;
-  private static final String[] adaptivePlaybackBlacklist = {
+  private static final String[] adaptivePlaybackBlocklist = {
     "GT-I9300", // S3 (I9300 / I9300I)
     "SCH-I535", // S3
     "SGH-T999", // S3 (T-Mobile)
@@ -100,11 +112,12 @@ public final class HardwareCodecCapabilityUtils {
   // Return list of all codecs (decode + encode).
   private static MediaCodecInfo[] getCodecList() {
     final MediaCodecInfo[] codecList;
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
-      codecList = getCodecListWithOldAPI();
-    } else {
+    try {
       final MediaCodecList list = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
       codecList = list.getCodecInfos();
+    } catch (final RuntimeException e) {
+      Log.e(LOGTAG, "Failed to retrieve media codec support list", e);
+      return new MediaCodecInfo[0];
     }
     return codecList;
   }
@@ -150,16 +163,10 @@ public final class HardwareCodecCapabilityUtils {
     final String[] hwPrefixes = getAllSupportedHWCodecPrefixes(false);
 
     for (final MediaCodecInfo info : getDecoderInfos()) {
+      final boolean isHw = isHardwareAccelerated(info, hwPrefixes);
       final String[] supportedTypes = info.getSupportedTypes();
       for (final String mimeType : info.getSupportedTypes()) {
-        boolean isHwPrefix = false;
-        for (final String prefix : hwPrefixes) {
-          if (info.getName().startsWith(prefix)) {
-            isHwPrefix = true;
-            break;
-          }
-        }
-        if (!isHwPrefix) {
+        if (!isHw) {
           mimeTypes.add("SW " + mimeType);
           continue;
         }
@@ -175,11 +182,28 @@ public final class HardwareCodecCapabilityUtils {
     return mimeTypes.toArray(new String[0]);
   }
 
+  @SuppressLint("NewApi")
+  private static boolean isHardwareAccelerated(
+      final MediaCodecInfo aCodecInfo, final String[] aHwPrefixes) {
+    // By public API.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      return aCodecInfo.isHardwareAccelerated();
+    }
+    // By name.
+    if (aHwPrefixes == null) {
+      return false;
+    }
+    for (final String prefix : aHwPrefixes) {
+      if (aCodecInfo.getName().startsWith(prefix)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   public static boolean checkSupportsAdaptivePlayback(
       final MediaCodec aCodec, final String aMimeType) {
-    // isFeatureSupported supported on API level >= 19.
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.KITKAT
-        || isAdaptivePlaybackBlacklisted(aMimeType)) {
+    if (isAdaptivePlaybackBlocklisted(aMimeType)) {
       return false;
     }
 
@@ -197,7 +221,7 @@ public final class HardwareCodecCapabilityUtils {
 
   // See Bug1360626 and
   // https://codereview.chromium.org/1869103002 for details.
-  private static boolean isAdaptivePlaybackBlacklisted(final String aMimeType) {
+  private static boolean isAdaptivePlaybackBlocklisted(final String aMimeType) {
     Log.d(LOGTAG, "The device ModelID is " + Build.MODEL);
     if (!aMimeType.equals("video/avc") && !aMimeType.equals("video/avc1")) {
       return false;
@@ -207,7 +231,7 @@ public final class HardwareCodecCapabilityUtils {
       return false;
     }
 
-    for (final String model : adaptivePlaybackBlacklist) {
+    for (final String model : adaptivePlaybackBlocklist) {
       if (Build.MODEL.startsWith(model)) {
         return true;
       }
@@ -217,66 +241,51 @@ public final class HardwareCodecCapabilityUtils {
 
   // Check if a given MIME Type has HW decode or encode support.
   public static boolean getHWCodecCapability(final String aMimeType, final boolean aIsEncoder) {
-    if (Build.VERSION.SDK_INT >= 20) {
-      for (int i = 0; i < MediaCodecList.getCodecCount(); ++i) {
-        final MediaCodecInfo info = MediaCodecList.getCodecInfoAt(i);
-        if (info.isEncoder() != aIsEncoder) {
-          continue;
+    for (final MediaCodecInfo info : getCodecList()) {
+      if (info.isEncoder() != aIsEncoder) {
+        continue;
+      }
+      String name = null;
+      for (final String mimeType : info.getSupportedTypes()) {
+        if (mimeType.equals(aMimeType)) {
+          name = info.getName();
+          break;
         }
-        String name = null;
-        for (final String mimeType : info.getSupportedTypes()) {
-          if (mimeType.equals(aMimeType)) {
-            name = info.getName();
-            break;
-          }
-        }
-        if (name == null) {
-          continue; // No HW support in this codec; try the next one.
-        }
-        Log.d(LOGTAG, "Found candidate" + (aIsEncoder ? " encoder " : " decoder ") + name);
+      }
+      if (name == null) {
+        continue; // No HW support in this codec; try the next one.
+      }
+      Log.d(LOGTAG, "Found candidate" + (aIsEncoder ? " encoder " : " decoder ") + name);
 
-        // Check if this is supported codec.
-        final String[] hwList = getSupportedHWCodecPrefixes(aMimeType, aIsEncoder);
-        if (hwList == null) {
-          continue;
-        }
-        boolean supportedCodec = false;
-        for (final String codecPrefix : hwList) {
-          if (name.startsWith(codecPrefix)) {
-            supportedCodec = true;
-            break;
-          }
-        }
-        if (!supportedCodec) {
-          continue;
-        }
+      if (!isHardwareAccelerated(info, getSupportedHWCodecPrefixes(aMimeType, aIsEncoder))) {
+        continue;
+      }
 
-        // Check if codec supports either yuv420 or nv12.
-        final CodecCapabilities capabilities = info.getCapabilitiesForType(aMimeType);
-        for (final int colorFormat : capabilities.colorFormats) {
-          Log.v(LOGTAG, "   Color: 0x" + Integer.toHexString(colorFormat));
-        }
-        if (Build.VERSION.SDK_INT >= 24) {
-          for (final MediaCodecInfo.CodecProfileLevel pl : capabilities.profileLevels) {
-            Log.v(
-                LOGTAG,
-                "   Profile: 0x"
-                    + Integer.toHexString(pl.profile)
-                    + "/Level=0x"
-                    + Integer.toHexString(pl.level));
-          }
-        }
-        final int codecColorFormat = getSupportsYUV420orNV12(capabilities);
-        if (codecColorFormat != COLOR_FORMAT_NOT_SUPPORTED) {
-          Log.d(
+      // Check if codec supports either yuv420 or nv12.
+      final CodecCapabilities capabilities = info.getCapabilitiesForType(aMimeType);
+      for (final int colorFormat : capabilities.colorFormats) {
+        Log.v(LOGTAG, "   Color: 0x" + Integer.toHexString(colorFormat));
+      }
+      if (Build.VERSION.SDK_INT >= 24) {
+        for (final MediaCodecInfo.CodecProfileLevel pl : capabilities.profileLevels) {
+          Log.v(
               LOGTAG,
-              "Found target"
-                  + (aIsEncoder ? " encoder " : " decoder ")
-                  + name
-                  + ". Color: 0x"
-                  + Integer.toHexString(codecColorFormat));
-          return true;
+              "   Profile: 0x"
+                  + Integer.toHexString(pl.profile)
+                  + "/Level=0x"
+                  + Integer.toHexString(pl.level));
         }
+      }
+      final int codecColorFormat = getSupportsYUV420orNV12(capabilities);
+      if (codecColorFormat != COLOR_FORMAT_NOT_SUPPORTED) {
+        Log.d(
+            LOGTAG,
+            "Found target"
+                + (aIsEncoder ? " encoder " : " decoder ")
+                + name
+                + ". Color: 0x"
+                + Integer.toHexString(codecColorFormat));
+        return true;
       }
     }
     // No HW codec.
@@ -359,7 +368,9 @@ public final class HardwareCodecCapabilityUtils {
             info.getCapabilitiesForType(aMimeType).profileLevels) {
           if ((aMimeType.equals(H264_MIME_TYPE)
                   && pl.profile == MediaCodecInfo.CodecProfileLevel.AVCProfileHigh10)
-              || (aMimeType.equals(VP9_MIME_TYPE) && is10BitVP9Profile(pl.profile))) {
+              || (aMimeType.equals(VP9_MIME_TYPE) && is10BitVP9Profile(pl.profile))
+              || (aMimeType.equals(HEVC_MIME_TYPE) && is10BitHEVCProfile(pl.profile))
+              || (aMimeType.equals(AV1_MIME_TYPE) && is10BitAV1Profile(pl.profile))) {
             return true;
           }
         }
@@ -386,12 +397,33 @@ public final class HardwareCodecCapabilityUtils {
       return true;
     }
 
-    if (Build.VERSION.SDK_INT >= 29
+    return Build.VERSION.SDK_INT >= 29
         && ((profile == MediaCodecInfo.CodecProfileLevel.VP9Profile2HDR10Plus)
-            || (profile == MediaCodecInfo.CodecProfileLevel.VP9Profile3HDR10Plus))) {
+            || (profile == MediaCodecInfo.CodecProfileLevel.VP9Profile3HDR10Plus));
+  }
+
+  @SuppressLint("NewApi")
+  private static boolean is10BitHEVCProfile(final int profile) {
+    if (profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10) {
       return true;
     }
+    // API 24+
+    if (Build.VERSION.SDK_INT < 29) {
+      return profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10;
+    }
+    // API 29+
+    return (profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10)
+        || (profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10Plus);
+  }
 
-    return false;
+  @SuppressLint("NewApi")
+  private static boolean is10BitAV1Profile(final int profile) {
+    if (Build.VERSION.SDK_INT < 29) {
+      // Be conservative when we cannot get supported profile.
+      return false;
+    }
+    return (profile == MediaCodecInfo.CodecProfileLevel.AV1ProfileMain10)
+        || (profile == MediaCodecInfo.CodecProfileLevel.AV1ProfileMain10HDR10)
+        || (profile == MediaCodecInfo.CodecProfileLevel.AV1ProfileMain10HDR10Plus);
   }
 }

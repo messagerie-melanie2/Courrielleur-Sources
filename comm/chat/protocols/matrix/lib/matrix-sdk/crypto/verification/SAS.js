@@ -5,32 +5,33 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.SasEvent = exports.SAS = void 0;
 var _anotherJson = _interopRequireDefault(require("another-json"));
-var _Base = require("./Base");
-var _Error = require("./Error");
-var _logger = require("../../logger");
-var _SASDecimal = require("./SASDecimal");
-var _event = require("../../@types/event");
-var _verification = require("../../crypto-api/verification");
-function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(arg) { var key = _toPrimitive(arg, "string"); return typeof key === "symbol" ? key : String(key); }
-function _toPrimitive(input, hint) { if (typeof input !== "object" || input === null) return input; var prim = input[Symbol.toPrimitive]; if (prim !== undefined) { var res = prim.call(input, hint || "default"); if (typeof res !== "object") return res; throw new TypeError("@@toPrimitive must return a primitive value."); } return (hint === "string" ? String : Number)(input); } /*
-                                                                                                                                                                                                                                                                                                                                                                                          Copyright 2018 - 2021 The Matrix.org Foundation C.I.C.
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Licensed under the Apache License, Version 2.0 (the "License");
-                                                                                                                                                                                                                                                                                                                                                                                          you may not use this file except in compliance with the License.
-                                                                                                                                                                                                                                                                                                                                                                                          You may obtain a copy of the License at
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                              http://www.apache.org/licenses/LICENSE-2.0
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Unless required by applicable law or agreed to in writing, software
-                                                                                                                                                                                                                                                                                                                                                                                          distributed under the License is distributed on an "AS IS" BASIS,
-                                                                                                                                                                                                                                                                                                                                                                                          WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-                                                                                                                                                                                                                                                                                                                                                                                          See the License for the specific language governing permissions and
-                                                                                                                                                                                                                                                                                                                                                                                          limitations under the License.
-                                                                                                                                                                                                                                                                                                                                                                                          */ /**
-                                                                                                                                                                                                                                                                                                                                                                                              * Short Authentication String (SAS) verification.
-                                                                                                                                                                                                                                                                                                                                                                                              */
+var _Base = require("./Base.js");
+var _Error = require("./Error.js");
+var _logger = require("../../logger.js");
+var _SASDecimal = require("./SASDecimal.js");
+var _event = require("../../@types/event.js");
+var _verification = require("../../crypto-api/verification.js");
+var _types = require("../../types.js");
+function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
+function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
+Copyright 2018 - 2021 The Matrix.org Foundation C.I.C.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/ /**
+ * Short Authentication String (SAS) verification.
+ */
 // backwards-compatibility exports
 
 const START_TYPE = _event.EventType.KeyVerificationStart;
@@ -38,26 +39,32 @@ const EVENTS = [_event.EventType.KeyVerificationAccept, _event.EventType.KeyVeri
 let olmutil;
 const newMismatchedSASError = (0, _Error.errorFactory)("m.mismatched_sas", "Mismatched short authentication string");
 const newMismatchedCommitmentError = (0, _Error.errorFactory)("m.mismatched_commitment", "Mismatched commitment");
+
+// This list was generated from the data in the Matrix specification [1] with the following command:
+//
+//    jq  -r '.[] |  "    [\"" + .emoji + "\", \"" + (.description|ascii_downcase) + "\"], // " + (.number|tostring)' sas-emoji.json
+//
+// [1]: https://github.com/matrix-org/matrix-spec/blob/main/data-definitions/sas-emoji.json
 const emojiMapping = [["🐶", "dog"],
-//  0
+// 0
 ["🐱", "cat"],
-//  1
+// 1
 ["🦁", "lion"],
-//  2
+// 2
 ["🐎", "horse"],
-//  3
+// 3
 ["🦄", "unicorn"],
-//  4
+// 4
 ["🐷", "pig"],
-//  5
+// 5
 ["🐘", "elephant"],
-//  6
+// 6
 ["🐰", "rabbit"],
-//  7
+// 7
 ["🐼", "panda"],
-//  8
+// 8
 ["🐓", "rooster"],
-//  9
+// 9
 ["🐧", "penguin"],
 // 10
 ["🐢", "turtle"],
@@ -98,7 +105,7 @@ const emojiMapping = [["🐶", "dog"],
 // 28
 ["❤️", "heart"],
 // 29
-["🙂", "smiley"],
+["😀", "smiley"],
 // 30
 ["🤖", "robot"],
 // 31
@@ -158,7 +165,7 @@ const emojiMapping = [["🐶", "dog"],
 // 58
 ["🔔", "bell"],
 // 59
-["⚓️", "anchor"],
+["⚓", "anchor"],
 // 60
 ["🎧", "headphones"],
 // 61
@@ -166,7 +173,6 @@ const emojiMapping = [["🐶", "dog"],
 // 62
 ["📌", "pin"] // 63
 ];
-
 function generateEmojiSas(sasBytes) {
   const emojis = [
   // just like base64 encoding
@@ -234,8 +240,9 @@ function intersection(anArray, aSet) {
 /** @deprecated use VerifierEvent */
 
 /** @deprecated use VerifierEvent */
-const SasEvent = _verification.VerifierEvent;
-exports.SasEvent = SasEvent;
+const SasEvent = exports.SasEvent = _verification.VerifierEvent;
+
+/** @deprecated Avoid referencing this class directly; instead use {@link Crypto.Verifier}. */
 class SAS extends _Base.VerificationBase {
   constructor(...args) {
     super(...args);
@@ -271,7 +278,7 @@ class SAS extends _Base.VerificationBase {
   }
   // eslint-disable-next-line @typescript-eslint/naming-convention
   static get NAME() {
-    return "m.sas.v1";
+    return _types.VerificationMethod.Sas;
   }
   get events() {
     return EVENTS;
@@ -449,6 +456,9 @@ class SAS extends _Base.VerificationBase {
         throw (0, _Error.newKeyMismatchError)();
       }
     });
+  }
+  getShowSasCallbacks() {
+    return this.sasEvent ?? null;
   }
 }
 exports.SAS = SAS;

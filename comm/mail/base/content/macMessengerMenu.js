@@ -5,22 +5,22 @@
 
 /* import-globals-from mailCore.js */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 // Load and add the menu item to the OS X Dock icon menu.
 addEventListener(
   "load",
   function () {
-    let dockMenuElement = document.getElementById("menu_mac_dockmenu");
-    let nativeMenu = Cc[
+    const dockMenuElement = document.getElementById("menu_mac_dockmenu");
+    const nativeMenu = Cc[
       "@mozilla.org/widget/standalonenativemenu;1"
     ].createInstance(Ci.nsIStandaloneNativeMenu);
 
     nativeMenu.init(dockMenuElement);
 
-    let dockSupport = Cc["@mozilla.org/widget/macdocksupport;1"].getService(
+    const dockSupport = Cc["@mozilla.org/widget/macdocksupport;1"].getService(
       Ci.nsIMacDockSupport
     );
     dockSupport.dockMenu = nativeMenu;
@@ -32,9 +32,9 @@ addEventListener(
  * When the Preferences window is actually loaded, this Listener is called.
  * Not doing this way could make DOM elements not available.
  */
-function loadListener(event) {
+function loadListener() {
   setTimeout(function () {
-    let prefWin = Services.wm.getMostRecentWindow("Mail:Preferences");
+    const prefWin = Services.wm.getMostRecentWindow("Mail:Preferences");
     prefWin.gSubDialog.open(
       "chrome://messenger/content/preferences/dockoptions.xhtml"
     );
@@ -46,7 +46,7 @@ function loadListener(event) {
  * This is done so subdialog opens as a child of it.
  */
 function PrefWindowObserver() {
-  this.observe = function (aSubject, aTopic, aData) {
+  this.observe = function (aSubject, aTopic) {
     if (aTopic == "domwindowopened") {
       aSubject.addEventListener("load", loadListener, {
         capture: false,
@@ -63,7 +63,7 @@ function PrefWindowObserver() {
  * opening Dock Options sub-dialog.
  */
 function openDockOptions() {
-  let win = Services.wm.getMostRecentWindow("Mail:Preferences");
+  const win = Services.wm.getMostRecentWindow("Mail:Preferences");
 
   if (win) {
     openOptionsDialog("paneGeneral");

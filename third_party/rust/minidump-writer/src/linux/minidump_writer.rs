@@ -1,25 +1,37 @@
-use crate::{
-    dir_section::{DirSection, DumpBuf},
-    linux::{
-        app_memory::AppMemoryList,
-        crash_context::CrashContext,
-        dso_debug,
-        errors::{InitError, WriterError},
-        maps_reader::{MappingInfo, MappingList},
-        ptrace_dumper::PtraceDumper,
-        sections::*,
-        thread_info::Pid,
+pub use crate::linux::auxv::{AuxvType, DirectAuxvDumpInfo};
+use {
+    crate::{
+        auxv::AuxvDumpInfo,
+        dir_section::{DirSection, DumpBuf},
+        linux::{
+            app_memory::AppMemoryList,
+            crash_context::CrashContext,
+            dso_debug,
+            errors::WriterError,
+            maps_reader::{MappingInfo, MappingList},
+            ptrace_dumper::PtraceDumper,
+            sections::*,
+        },
+        mem_writer::{Buffer, MemoryArrayWriter, MemoryWriter, MemoryWriterError},
+        minidump_format::*,
+        Pid,
     },
-    mem_writer::{Buffer, MemoryArrayWriter, MemoryWriter, MemoryWriterError},
-    minidump_format::*,
+    error_graph::{ErrorList, WriteErrorList},
+    std::{
+        io::{Seek, Write},
+        time::Duration,
+    },
 };
-use std::io::{Seek, Write};
 
 pub enum CrashingThreadContext {
     None,
     CrashContext(MDLocationDescriptor),
     CrashContextPlusAddress((MDLocationDescriptor, usize)),
 }
+
+/// The default timeout after a `SIGSTOP` after which minidump writing proceeds
+/// regardless of the process state
+pub const STOP_TIMEOUT: Duration = Duration::from_millis(100);
 
 pub struct MinidumpWriter {
     pub process_id: Pid,
@@ -34,6 +46,8 @@ pub struct MinidumpWriter {
     pub sanitize_stack: bool,
     pub crash_context: Option<CrashContext>,
     pub crashing_thread_context: CrashingThreadContext,
+    pub stop_timeout: Duration,
+    pub direct_auxv_dump_info: Option<DirectAuxvDumpInfo>,
 }
 
 // This doesn't work yet:
@@ -62,6 +76,8 @@ impl MinidumpWriter {
             sanitize_stack: false,
             crash_context: None,
             crashing_thread_context: CrashingThreadContext::None,
+            stop_timeout: STOP_TIMEOUT,
+            direct_auxv_dump_info: None,
         }
     }
 
@@ -100,11 +116,55 @@ impl MinidumpWriter {
         self
     }
 
+    /// Sets the timeout after `SIGSTOP` is sent to the process, if the process
+    /// has not stopped by the time the timeout has reached, we proceed with
+    /// minidump generation
+    pub fn stop_timeout(&mut self, duration: Duration) -> &mut Self {
+        self.stop_timeout = duration;
+        self
+    }
+
+    /// Directly set important Auxv info determined by the crashing process
+    ///
+    /// Since `/proc/{pid}/auxv` can sometimes be inaccessible, the calling process should prefer to transfer this
+    /// information directly using the Linux `getauxval()` call (if possible).
+    ///
+    /// Any field that is set to `0` will be considered unset. In that case, minidump-writer might try other techniques
+    /// to obtain it (like reading `/proc/{pid}/auxv`).
+    pub fn set_direct_auxv_dump_info(
+        &mut self,
+        direct_auxv_dump_info: DirectAuxvDumpInfo,
+    ) -> &mut Self {
+        self.direct_auxv_dump_info = Some(direct_auxv_dump_info);
+        self
+    }
+
     /// Generates a minidump and writes to the destination provided. Returns the in-memory
     /// version of the minidump as well.
     pub fn dump(&mut self, destination: &mut (impl Write + Seek)) -> Result<Vec<u8>> {
-        let mut dumper = PtraceDumper::new(self.process_id)?;
-        dumper.suspend_threads()?;
+        let auxv = self
+            .direct_auxv_dump_info
+            .clone()
+            .map(AuxvDumpInfo::from)
+            .unwrap_or_default();
+
+        let mut soft_errors = ErrorList::default();
+
+        let mut dumper = PtraceDumper::new_report_soft_errors(
+            self.process_id,
+            self.stop_timeout,
+            auxv,
+            soft_errors.subwriter(WriterError::InitErrors),
+        )?;
+
+        let threads_count = dumper.threads.len();
+
+        dumper.suspend_threads(soft_errors.subwriter(WriterError::SuspendThreadsErrors));
+
+        if dumper.threads.is_empty() {
+            soft_errors.push(WriterError::SuspendNoThreadsLeft(threads_count));
+        }
+
         dumper.late_init()?;
 
         if self.skip_stacks_if_mapping_unreferenced {
@@ -113,16 +173,12 @@ impl MinidumpWriter {
             }
 
             if !self.crash_thread_references_principal_mapping(&dumper) {
-                return Err(InitError::PrincipalMappingNotReferenced.into());
+                soft_errors.push(WriterError::PrincipalMappingNotReferenced);
             }
         }
 
         let mut buffer = Buffer::with_capacity(0);
-        self.generate_dump(&mut buffer, &mut dumper, destination)?;
-
-        // dumper would resume threads in drop() automatically,
-        // but in case there is an error, we want to catch it
-        dumper.resume_threads()?;
+        self.generate_dump(&mut buffer, &mut dumper, soft_errors, destination)?;
 
         Ok(buffer.into())
     }
@@ -156,15 +212,16 @@ impl MinidumpWriter {
             return true;
         }
 
-        let (stack_ptr, stack_len) = match dumper.get_stack_info(stack_pointer) {
+        let (valid_stack_pointer, stack_len) = match dumper.get_stack_info(stack_pointer) {
             Ok(x) => x,
             Err(_) => {
                 return false;
             }
         };
+
         let stack_copy = match PtraceDumper::copy_from_process(
             self.blamed_thread,
-            stack_ptr as *mut libc::c_void,
+            valid_stack_pointer,
             stack_len,
         ) {
             Ok(x) => x,
@@ -173,7 +230,7 @@ impl MinidumpWriter {
             }
         };
 
-        let sp_offset = stack_pointer - stack_ptr;
+        let sp_offset = stack_pointer.saturating_sub(valid_stack_pointer);
         self.principal_mapping
             .as_ref()
             .unwrap()
@@ -184,11 +241,12 @@ impl MinidumpWriter {
         &mut self,
         buffer: &mut DumpBuf,
         dumper: &mut PtraceDumper,
+        mut soft_errors: ErrorList<WriterError>,
         destination: &mut (impl Write + Seek),
     ) -> Result<()> {
         // A minidump file contains a number of tagged streams. This is the number
-        // of stream which we write.
-        let num_writers = 14u32;
+        // of streams which we write.
+        let num_writers = 18u32;
 
         let mut header_section = MemoryWriter::<MDRawHeader>::alloc(buffer)?;
 
@@ -214,27 +272,27 @@ impl MinidumpWriter {
         dir_section.write_to_file(buffer, None)?;
 
         let dirent = thread_list_stream::write(self, buffer, dumper)?;
-        // Write section to file
         dir_section.write_to_file(buffer, Some(dirent))?;
 
         let dirent = mappings::write(self, buffer, dumper)?;
-        // Write section to file
         dir_section.write_to_file(buffer, Some(dirent))?;
 
         app_memory::write(self, buffer)?;
-        // Write section to file
         dir_section.write_to_file(buffer, None)?;
 
         let dirent = memory_list_stream::write(self, buffer)?;
-        // Write section to file
         dir_section.write_to_file(buffer, Some(dirent))?;
 
         let dirent = exception_stream::write(self, buffer)?;
-        // Write section to file
         dir_section.write_to_file(buffer, Some(dirent))?;
 
-        let dirent = systeminfo_stream::write(buffer)?;
-        // Write section to file
+        let dirent = systeminfo_stream::write(
+            buffer,
+            soft_errors.subwriter(WriterError::WriteSystemInfoErrors),
+        )?;
+        dir_section.write_to_file(buffer, Some(dirent))?;
+
+        let dirent = memory_info_list_stream::write(self, buffer)?;
         dir_section.write_to_file(buffer, Some(dirent))?;
 
         let dirent = match self.write_file(buffer, "/proc/cpuinfo") {
@@ -242,9 +300,11 @@ impl MinidumpWriter {
                 stream_type: MDStreamType::LinuxCpuInfo as u32,
                 location,
             },
-            Err(_) => Default::default(),
+            Err(e) => {
+                soft_errors.push(WriterError::WriteCpuInfoFailed(e));
+                Default::default()
+            }
         };
-        // Write section to file
         dir_section.write_to_file(buffer, Some(dirent))?;
 
         let dirent = match self.write_file(buffer, &format!("/proc/{}/status", self.blamed_thread))
@@ -253,9 +313,11 @@ impl MinidumpWriter {
                 stream_type: MDStreamType::LinuxProcStatus as u32,
                 location,
             },
-            Err(_) => Default::default(),
+            Err(e) => {
+                soft_errors.push(WriterError::WriteThreadProcStatusFailed(e));
+                Default::default()
+            }
         };
-        // Write section to file
         dir_section.write_to_file(buffer, Some(dirent))?;
 
         let dirent = match self
@@ -266,9 +328,11 @@ impl MinidumpWriter {
                 stream_type: MDStreamType::LinuxLsbRelease as u32,
                 location,
             },
-            Err(_) => Default::default(),
+            Err(e) => {
+                soft_errors.push(WriterError::WriteOsReleaseInfoFailed(e));
+                Default::default()
+            }
         };
-        // Write section to file
         dir_section.write_to_file(buffer, Some(dirent))?;
 
         let dirent = match self.write_file(buffer, &format!("/proc/{}/cmdline", self.blamed_thread))
@@ -277,9 +341,11 @@ impl MinidumpWriter {
                 stream_type: MDStreamType::LinuxCmdLine as u32,
                 location,
             },
-            Err(_) => Default::default(),
+            Err(e) => {
+                soft_errors.push(WriterError::WriteCommandLineFailed(e));
+                Default::default()
+            }
         };
-        // Write section to file
         dir_section.write_to_file(buffer, Some(dirent))?;
 
         let dirent = match self.write_file(buffer, &format!("/proc/{}/environ", self.blamed_thread))
@@ -288,9 +354,11 @@ impl MinidumpWriter {
                 stream_type: MDStreamType::LinuxEnviron as u32,
                 location,
             },
-            Err(_) => Default::default(),
+            Err(e) => {
+                soft_errors.push(WriterError::WriteEnvironmentFailed(e));
+                Default::default()
+            }
         };
-        // Write section to file
         dir_section.write_to_file(buffer, Some(dirent))?;
 
         let dirent = match self.write_file(buffer, &format!("/proc/{}/auxv", self.blamed_thread)) {
@@ -298,9 +366,11 @@ impl MinidumpWriter {
                 stream_type: MDStreamType::LinuxAuxv as u32,
                 location,
             },
-            Err(_) => Default::default(),
+            Err(e) => {
+                soft_errors.push(WriterError::WriteAuxvFailed(e));
+                Default::default()
+            }
         };
-        // Write section to file
         dir_section.write_to_file(buffer, Some(dirent))?;
 
         let dirent = match self.write_file(buffer, &format!("/proc/{}/maps", self.blamed_thread)) {
@@ -308,22 +378,68 @@ impl MinidumpWriter {
                 stream_type: MDStreamType::LinuxMaps as u32,
                 location,
             },
-            Err(_) => Default::default(),
+            Err(e) => {
+                soft_errors.push(WriterError::WriteMapsFailed(e));
+                Default::default()
+            }
         };
-        // Write section to file
         dir_section.write_to_file(buffer, Some(dirent))?;
 
-        let dirent = dso_debug::write_dso_debug_stream(buffer, self.process_id, &dumper.auxv)
-            .unwrap_or_default();
-        // Write section to file
+        let dirent = match dso_debug::write_dso_debug_stream(buffer, self.process_id, &dumper.auxv)
+        {
+            Ok(dirent) => dirent,
+            Err(e) => {
+                soft_errors.push(WriterError::WriteDSODebugStreamFailed(e));
+                Default::default()
+            }
+        };
+        dir_section.write_to_file(buffer, Some(dirent))?;
+
+        let dirent = match self.write_file(buffer, &format!("/proc/{}/limits", self.blamed_thread))
+        {
+            Ok(location) => MDRawDirectory {
+                stream_type: MDStreamType::MozLinuxLimits as u32,
+                location,
+            },
+            Err(e) => {
+                soft_errors.push(WriterError::WriteLimitsFailed(e));
+                Default::default()
+            }
+        };
         dir_section.write_to_file(buffer, Some(dirent))?;
 
         let dirent = thread_names_stream::write(buffer, dumper)?;
-        // Write section to file
         dir_section.write_to_file(buffer, Some(dirent))?;
 
-        // If you add more directory entries, don't forget to update kNumWriters,
-        // above.
+        let dirent = match handle_data_stream::write(self, buffer) {
+            Ok(dirent) => dirent,
+            Err(e) => {
+                soft_errors.push(WriterError::WriteHandleDataStreamFailed(e));
+                Default::default()
+            }
+        };
+        dir_section.write_to_file(buffer, Some(dirent))?;
+
+        // ========================================================================================
+        //
+        // PAST THIS BANNER, THE THREADS ARE RUNNING IN THE TARGET PROCESS AGAIN. IF YOU NEED TO
+        // ADD NEW ENTRIES THAT ACCESS THE TARGET MEMORY, DO IT BEFORE HERE!
+        //
+        // ========================================================================================
+
+        // Collect any last-minute soft errors when trying to restart threads
+        dumper.resume_threads(soft_errors.subwriter(WriterError::ResumeThreadsErrors));
+
+        // If this fails, there's really nothing we can do about that (other than ignore it).
+        let dirent = write_soft_errors(buffer, soft_errors)
+            .map(|location| MDRawDirectory {
+                stream_type: MDStreamType::MozSoftErrors as u32,
+                location,
+            })
+            .unwrap_or_default();
+        dir_section.write_to_file(buffer, Some(dirent))?;
+
+        // If you add more directory entries, don't forget to update num_writers, above.
         Ok(())
     }
 
@@ -338,4 +454,14 @@ impl MinidumpWriter {
         let section = MemoryArrayWriter::write_bytes(buffer, &content);
         Ok(section.location())
     }
+}
+
+fn write_soft_errors(
+    buffer: &mut DumpBuf,
+    soft_errors: ErrorList<WriterError>,
+) -> Result<MDLocationDescriptor> {
+    let soft_errors_json_str =
+        serde_json::to_string_pretty(&soft_errors).map_err(WriterError::ConvertToJsonFailed)?;
+    let section = MemoryArrayWriter::write_bytes(buffer, soft_errors_json_str.as_bytes());
+    Ok(section.location())
 }

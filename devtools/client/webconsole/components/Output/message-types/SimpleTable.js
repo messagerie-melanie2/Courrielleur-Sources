@@ -5,7 +5,7 @@
 
 const {
   createFactory,
-} = require("resource://devtools/client/shared/vendor/react.js");
+} = require("resource://devtools/client/shared/vendor/react.mjs");
 const dom = require("resource://devtools/client/shared/vendor/react-dom-factories.js");
 
 const GripMessageBody = createFactory(
@@ -19,8 +19,10 @@ loader.lazyRequireGetter(
 );
 
 loader.lazyGetter(this, "MODE", function () {
-  return require("resource://devtools/client/shared/components/reps/index.js")
-    .MODE;
+  return ChromeUtils.importESModule(
+    "resource://devtools/client/shared/components/reps/index.mjs",
+    { global: "current" }
+  ).MODE;
 });
 
 const Message = createFactory(
@@ -34,17 +36,14 @@ SimpleTable.propTypes = {
   items: PropTypes.array.isRequired,
   dispatch: PropTypes.func.isRequired,
   serviceContainer: PropTypes.object.isRequired,
+  message: PropTypes.object.isRequired,
+  timestampsVisible: PropTypes.bool.isRequired,
+  open: PropTypes.bool,
 };
 
 function SimpleTable(props) {
-  const {
-    dispatch,
-    message,
-    serviceContainer,
-    timestampsVisible,
-    badge,
-    open,
-  } = props;
+  const { dispatch, message, serviceContainer, timestampsVisible, open } =
+    props;
 
   const {
     source,
@@ -114,7 +113,6 @@ function SimpleTable(props) {
   const topLevelClasses = ["cm-s-mozilla"];
   return Message({
     attachment,
-    badge,
     dispatch,
     indent,
     level,

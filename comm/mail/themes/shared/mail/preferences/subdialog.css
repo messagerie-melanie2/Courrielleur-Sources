@@ -10,15 +10,15 @@ xul|window > :is(xul|dialog, xul|hbox, xul|vbox) {
   /* This allows the focus ring to display fully when scrolling is enabled. */
   padding: 0 4px 4px;
   font-size: 1.1rem;
-  background-color: var(--in-content-page-background) !important;
 }
 
 .dialogOverlay {
   visibility: hidden;
-}
+  z-index: 1;
 
-.dialogOverlay[topmost="true"] {
-  background-color: rgba(0,0,0,0.5);
+  &[topmost="true"] {
+    background-color: rgba(0, 0, 0, 0.5);
+  }
 }
 
 .dialogBox {
@@ -29,10 +29,17 @@ xul|window > :is(xul|dialog, xul|hbox, xul|vbox) {
      when page colors are disabled */
   border: 1px solid transparent;
   border-radius: var(--arrowpanel-border-radius);
-  box-shadow: 0 2px 4px 0 rgba(0,0,0,0.5);
+  box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.5);
   display: flex;
   margin: 0;
   padding: 0;
+
+  &[resizable="true"] {
+    resize: both;
+    overflow: hidden;
+    min-height: 20em;
+    min-width: 66ch;
+  }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -41,13 +48,6 @@ xul|window > :is(xul|dialog, xul|hbox, xul|vbox) {
   .dialogBox {
     --in-content-page-background: #2a2a2e !important;
   }
-}
-
-.dialogBox[resizable="true"] {
-  resize: both;
-  overflow: hidden;
-  min-height: 20em;
-  min-width: 66ch;
 }
 
 .dialogTitleBar {
@@ -72,7 +72,20 @@ xul|window > :is(xul|dialog, xul|hbox, xul|vbox) {
   min-width: 40ch;
 }
 
+.contentPane {
+  padding: 0 4px 4px;
+
+  &.doScroll {
+    margin-inline: -4px;
+  }
+}
+
 .largeDialogContainer.doScroll {
   overflow-y: auto;
   flex: 1;
+  min-height: 100vh;
+}
+
+#selectOffline {
+  background-color: var(--in-content-page-background);
 }

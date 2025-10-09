@@ -2,19 +2,27 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+const { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
+);
+const { MailUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailUtils.sys.mjs"
 );
 
-/** @type MenuData */
+/** @type {MenuData} */
 const fileMenuData = {
   menu_New: {},
   menu_newNewMsgCmd: {},
   "calendar-new-event-menuitem": { hidden: true },
   "calendar-new-task-menuitem": { hidden: true },
-  menu_newFolder: { hidden: ["mailMessageTab", "contentTab"] },
-  menu_newVirtualFolder: { hidden: ["mailMessageTab", "contentTab"] },
-  newCreateEmailAccountMenuItem: {},
+  menu_newFolder: {
+    hidden: ["mailMessageTab", "contentTab"],
+    disabled: ["mailMessageWindow"],
+  },
+  menu_newVirtualFolder: {
+    hidden: ["mailMessageTab", "contentTab"],
+    disabled: ["mailMessageWindow"],
+  },
   newMailAccountMenuItem: {},
   newIMAccountMenuItem: {},
   newFeedAccountMenuItem: {},
@@ -37,10 +45,16 @@ const fileMenuData = {
   menu_getnextnmsg: { hidden: true },
   menu_sendunsentmsgs: { disabled: true },
   menu_subscribe: { disabled: true },
-  menu_deleteFolder: { disabled: true },
-  menu_renameFolder: { disabled: true },
-  menu_compactFolder: { disabled: ["mailMessageTab", "contentTab"] },
-  menu_emptyTrash: { disabled: ["mailMessageTab", "contentTab"] },
+  menu_deleteFolder: { disabled: true, hidden: ["mailMessageWindow"] },
+  menu_renameFolder: { disabled: true, hidden: ["mailMessageWindow"] },
+  menu_compactFolder: {
+    disabled: ["mailMessageTab", "contentTab"],
+    hidden: ["mailMessageWindow"],
+  },
+  menu_emptyTrash: {
+    disabled: ["mailMessageTab", "contentTab"],
+    hidden: ["mailMessageWindow"],
+  },
   offlineMenuItem: {},
   goOfflineMenuItem: {},
   menu_synchronizeOffline: {},
@@ -50,34 +64,50 @@ const fileMenuData = {
   printMenuItem: { disabled: ["mail3PaneTab"] },
   menu_FileQuitItem: {},
 };
-let helper = new MenuTestHelper("menu_File", fileMenuData);
+const nonMainWindowData = Object.fromEntries(
+  Object.entries(fileMenuData).filter(
+    ([id]) =>
+      ![
+        "calendar-new-event-menuitem",
+        "calendar-new-task-menuitem",
+        "calendar-new-calendar-menuitem",
+        "calendar-open-calendar-file-menuitem",
+        "calendar-save-menuitem",
+        "calendar-save-and-close-menuitem",
+        "menu_FileQuitItem",
+      ].includes(id)
+  )
+);
+const helper = new MenuTestHelper("menu_File", fileMenuData);
 
-let tabmail = document.getElementById("tabmail");
+const tabmail = document.getElementById("tabmail");
 let inboxFolder, plainFolder, rootFolder, testMessages, trashFolder;
 
 add_setup(async function () {
   document.getElementById("toolbar-menubar").removeAttribute("autohide");
 
-  let generator = new MessageGenerator();
+  const generator = new MessageGenerator();
 
-  MailServices.accounts.createLocalMailAccount();
-  let account = MailServices.accounts.accounts[0];
+  const account = MailServices.accounts.createLocalMailAccount();
   account.addIdentity(MailServices.accounts.createIdentity());
-  rootFolder = account.incomingServer.rootFolder;
+  rootFolder = account.incomingServer.rootFolder.QueryInterface(
+    Ci.nsIMsgLocalMailFolder
+  );
 
-  rootFolder.createSubfolder("file menu inbox", null);
   inboxFolder = rootFolder
-    .getChildNamed("file menu inbox")
+    .createLocalSubfolder("file menu inbox")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   inboxFolder.setFlag(Ci.nsMsgFolderFlags.Inbox);
   inboxFolder.addMessageBatch(
-    generator.makeMessages({ count: 5 }).map(message => message.toMboxString())
+    generator
+      .makeMessages({ count: 5 })
+      .map(message => message.toMessageString())
   );
   testMessages = [...inboxFolder.messages];
 
-  rootFolder.createSubfolder("file menu plain", null);
-  plainFolder = rootFolder.getChildNamed("file menu plain");
-
+  plainFolder = rootFolder
+    .createLocalSubfolder("file menu plain")
+    .QueryInterface(Ci.nsIMsgLocalMailFolder);
   trashFolder = rootFolder.getFolderWithFlags(Ci.nsMsgFolderFlags.Trash);
 
   window.OpenMessageInNewTab(testMessages[0], { background: true });
@@ -134,4 +164,26 @@ add_task(async function testMessageTab() {
 add_task(async function testContentTab() {
   tabmail.switchToTab(2);
   await helper.testAllItems("contentTab");
+});
+
+add_task(async function testMessageWindow() {
+  const messageWindowPromise = BrowserTestUtils.domWindowOpenedAndLoaded(
+    undefined,
+    async win =>
+      win.document.documentURI ==
+      "chrome://messenger/content/messageWindow.xhtml"
+  );
+  MailUtils.openMessageInNewWindow(testMessages[0]);
+
+  const messageWindow = await messageWindowPromise;
+  await SimpleTest.promiseFocus(messageWindow);
+  const windowTestHelper = new MenuTestHelper(
+    "menu_File",
+    nonMainWindowData,
+    messageWindow.document
+  );
+
+  await windowTestHelper.testAllItems("mailMessageWindow");
+
+  await BrowserTestUtils.closeWindow(messageWindow);
 });

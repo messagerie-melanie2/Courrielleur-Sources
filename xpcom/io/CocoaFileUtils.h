@@ -10,6 +10,7 @@
 #ifndef CocoaFileUtils_h_
 #define CocoaFileUtils_h_
 
+#include "CFTypeRefPtr.h"
 #include "nscore.h"
 #include "nsString.h"
 #include <CoreFoundation/CoreFoundation.h>
@@ -37,9 +38,7 @@ void AddQuarantineMetadataToFile(const CFStringRef filePath,
 void CopyQuarantineReferrerUrl(const CFStringRef aFilePath,
                                nsAString& aReferrer);
 
-CFURLRef GetTemporaryFolderCFURLRef();
-
-CFURLRef GetProductDirectoryCFURLRef(bool aLocal);
+CFTypeRefPtr<CFURLRef> GetProductDirectory(bool aLocal);
 
 }  // namespace CocoaFileUtils
 

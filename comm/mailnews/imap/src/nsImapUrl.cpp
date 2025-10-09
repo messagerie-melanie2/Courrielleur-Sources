@@ -7,12 +7,10 @@
 
 #include "nsImapUrl.h"
 #include "../public/nsIImapHostSessionList.h"
-#include "nsThreadUtils.h"
 #include "nsString.h"
 #include "prmem.h"
 #include "plstr.h"
 #include "prprf.h"
-#include "nsMemory.h"
 #include "nsCOMPtr.h"
 #include "nsImapUtils.h"
 #include "nsIImapMockChannel.h"
@@ -20,7 +18,6 @@
 #include "nsIImapMessageSink.h"
 #include "nsIImapServerSink.h"
 #include "nsImapNamespace.h"
-#include "nsICacheEntry.h"
 #include "nsIMsgFolder.h"
 #include "nsMsgUtils.h"
 #include "nsIMsgHdr.h"
@@ -30,12 +27,8 @@
 using namespace mozilla;
 extern LazyLogModule IMAPCache;  // defined in nsImapProtocol.cpp
 
-#define NS_IIMAPHOSTSESSIONLIST_CID                  \
-  {                                                  \
-    0x479ce8fc, 0xe725, 0x11d2, {                    \
-      0xa5, 0x05, 0x00, 0x60, 0xb0, 0xfc, 0x04, 0xb7 \
-    }                                                \
-  }
+#define NS_IIMAPHOSTSESSIONLIST_CID \
+  {0x479ce8fc, 0xe725, 0x11d2, {0xa5, 0x05, 0x00, 0x60, 0xb0, 0xfc, 0x04, 0xb7}}
 static NS_DEFINE_CID(kCImapHostSessionListCID, NS_IIMAPHOSTSESSIONLIST_CID);
 
 nsImapUrl::nsImapUrl() : mLock("nsImapUrl.mLock") {
@@ -328,7 +321,7 @@ NS_IMETHODIMP nsImapUrl::GetImapPartToFetch(char** result) {
         }
       }
     }  // if we got a wherepart
-  }    // if we got a m_listOfMessageIds
+  }  // if we got a m_listOfMessageIds
   return NS_OK;
 }
 
@@ -681,18 +674,18 @@ NS_IMETHODIMP nsImapUrl::AddOnlineDirectoryIfNecessary(
 
 // Converts from canonical format (hierarchy is indicated by '/' and all real
 // slashes ('/') are escaped) to the real online name on the server.
-NS_IMETHODIMP nsImapUrl::AllocateServerPath(const char* canonicalPath,
+NS_IMETHODIMP nsImapUrl::AllocateServerPath(const nsACString& canonicalPath,
                                             char onlineDelimiter,
-                                            char** aAllocatedPath) {
-  nsresult retVal = NS_OK;
+                                            nsACString& aAllocatedPath) {
   char* rv = NULL;
   char delimiterToUse = onlineDelimiter;
   if (onlineDelimiter == kOnlineHierarchySeparatorUnknown)
     GetOnlineSubDirSeparator(&delimiterToUse);
   NS_ASSERTION(delimiterToUse != kOnlineHierarchySeparatorUnknown,
                "hierarchy separator unknown");
-  if (canonicalPath)
-    rv = ReplaceCharsInCopiedString(canonicalPath, '/', delimiterToUse);
+  if (!canonicalPath.IsEmpty())
+    rv = ReplaceCharsInCopiedString(PromiseFlatCString(canonicalPath).get(),
+                                    '/', delimiterToUse);
   else
     rv = strdup("");
 
@@ -704,12 +697,9 @@ NS_IMETHODIMP nsImapUrl::AllocateServerPath(const char* canonicalPath,
     rv = onlineNameAdded;
   }
 
-  if (aAllocatedPath)
-    *aAllocatedPath = rv;
-  else
-    free(rv);
+  aAllocatedPath = nsDependentCString(rv);
 
-  return retVal;
+  return NS_OK;
 }
 
 // escape '/' as ^, ^ -> ^^ - use UnescapeSlashes to revert
@@ -802,15 +792,13 @@ static void unescapeSlashes(char* path, size_t* newLength) {
 // Converts the real online name on the server to canonical format:
 // result is hierarchy is indicated by '/' and all real slashes ('/') are
 // escaped. This method is only called from the IMAP thread.
-NS_IMETHODIMP nsImapUrl::AllocateCanonicalPath(const char* serverPath,
+NS_IMETHODIMP nsImapUrl::AllocateCanonicalPath(const nsACString& serverPath,
                                                char onlineDelimiter,
-                                               char** allocatedPath) {
-  NS_ENSURE_ARG_POINTER(serverPath);
-
+                                               nsACString& allocatedPath) {
   char delimiterToUse = onlineDelimiter;
-  *allocatedPath = nullptr;
+  allocatedPath.Truncate();
 
-  char* currentPath = (char*)serverPath;
+  nsCString currentPath = PromiseFlatCString(serverPath);
 
   nsresult rv;
   nsCOMPtr<nsIImapHostSessionList> hostSessionList =
@@ -838,49 +826,54 @@ NS_IMETHODIMP nsImapUrl::AllocateCanonicalPath(const char* serverPath,
       if (onlineDir.Last() != delimiterToUse) onlineDir += delimiterToUse;
     }
     int len = onlineDir.Length();
-    if (!PL_strncmp(onlineDir.get(), currentPath, len)) {
+    if (!PL_strncmp(onlineDir.get(), currentPath.get(), len)) {
       // This online path begins with the server sub directory
-      currentPath += len;
+      currentPath = Substring(currentPath, len, currentPath.Length());
 
-      // This might occur, but it's most likely something not good.
-      // Basically, it means we're doing something on the online sub directory
-      // itself.
-      NS_ASSERTION(*currentPath, "Oops ... null currentPath");
       // Also make sure that the first character in the mailbox name is not '/'.
-      NS_ASSERTION(*currentPath != '/',
+      NS_ASSERTION(currentPath.First() != '/',
                    "Oops ... currentPath starts with a slash");
     }
   }
 
-  return ConvertToCanonicalFormat(currentPath, delimiterToUse, allocatedPath);
+  rv = ConvertToCanonicalFormat(currentPath.get(), delimiterToUse,
+                                getter_Copies(allocatedPath));
+
+  return rv;
 }
 
 // this method is only called from the imap thread
-NS_IMETHODIMP nsImapUrl::CreateServerSourceFolderPathString(char** result) {
-  NS_ENSURE_ARG_POINTER(result);
-  AllocateServerPath(m_sourceCanonicalFolderPathSubString,
+NS_IMETHODIMP nsImapUrl::CreateServerSourceFolderPathString(
+    nsACString& result) {
+  if (!m_sourceCanonicalFolderPathSubString) {
+    return NS_ERROR_FAILURE;
+  }
+  AllocateServerPath(nsDependentCString(m_sourceCanonicalFolderPathSubString),
                      kOnlineHierarchySeparatorUnknown, result);
   return NS_OK;
 }
 
 // this method is called from the imap thread AND the UI thread...
-NS_IMETHODIMP nsImapUrl::CreateCanonicalSourceFolderPathString(char** result) {
-  NS_ENSURE_ARG_POINTER(result);
+NS_IMETHODIMP nsImapUrl::CreateCanonicalSourceFolderPathString(
+    nsACString& result) {
+  if (!m_sourceCanonicalFolderPathSubString) {
+    return NS_ERROR_FAILURE;
+  }
   MutexAutoLock mon(mLock);
-  *result = strdup(m_sourceCanonicalFolderPathSubString
-                       ? m_sourceCanonicalFolderPathSubString
-                       : "");
-  return (*result) ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+  result.Assign(m_sourceCanonicalFolderPathSubString);
+  return NS_OK;
 }
 
 // this method is called from the imap thread AND the UI thread...
 NS_IMETHODIMP nsImapUrl::CreateServerDestinationFolderPathString(
-    char** result) {
-  NS_ENSURE_ARG_POINTER(result);
+    nsACString& result) {
   MutexAutoLock mon(mLock);
-  nsresult rv = AllocateServerPath(m_destinationCanonicalFolderPathSubString,
-                                   kOnlineHierarchySeparatorUnknown, result);
-  return (*result) ? rv : NS_ERROR_OUT_OF_MEMORY;
+  if (!m_destinationCanonicalFolderPathSubString) {
+    return NS_ERROR_FAILURE;
+  }
+  return AllocateServerPath(
+      nsDependentCString(m_destinationCanonicalFolderPathSubString),
+      kOnlineHierarchySeparatorUnknown, result);
 }
 
 NS_IMETHODIMP nsImapUrl::SetMimePartSelectorDetected(
@@ -990,9 +983,11 @@ NS_IMETHODIMP nsImapUrl::GetUri(nsACString& aURI) {
     uint32_t key =
         m_listOfMessageIds ? strtoul(m_listOfMessageIds, nullptr, 10) : 0;
     nsCString canonicalPath;
-    AllocateCanonicalPath(m_sourceCanonicalFolderPathSubString,
-                          m_onlineSubDirSeparator,
-                          (getter_Copies(canonicalPath)));
+    if (m_sourceCanonicalFolderPathSubString) {
+      AllocateCanonicalPath(
+          nsDependentCString(m_sourceCanonicalFolderPathSubString),
+          m_onlineSubDirSeparator, canonicalPath);
+    }
     nsCString fullFolderPath("/");
     fullFolderPath.Append(m_userName);
     nsAutoCString hostName;

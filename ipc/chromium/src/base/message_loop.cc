@@ -8,7 +8,6 @@
 
 #include <algorithm>
 
-#include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/message_pump_default.h"
 #include "base/string_util.h"
@@ -20,13 +19,14 @@
 #include "nsITargetShutdownTask.h"
 #include "nsThreadUtils.h"
 
-#if defined(OS_MACOSX)
+#if defined(XP_DARWIN)
 #  include "base/message_pump_mac.h"
 #endif
-#if defined(OS_POSIX)
+#if defined(XP_UNIX)
 #  include "base/message_pump_libevent.h"
 #endif
-#if defined(OS_LINUX) || defined(OS_BSD)
+#if defined(XP_LINUX) || defined(__DragonFly__) || defined(XP_FREEBSD) || \
+    defined(XP_NETBSD) || defined(XP_OPENBSD)
 #  if defined(MOZ_WIDGET_GTK)
 #    include "base/message_pump_glib.h"
 #  endif
@@ -52,7 +52,7 @@ static base::ThreadLocalPointer<MessageLoop>& get_tls_ptr() {
 
 //------------------------------------------------------------------------------
 
-#if defined(OS_WIN)
+#if defined(XP_WIN)
 
 // Upon a SEH exception in this thread, it restores the original unhandled
 // exception filter.
@@ -70,7 +70,7 @@ static LPTOP_LEVEL_EXCEPTION_FILTER GetTopSEHFilter() {
   return top_filter;
 }
 
-#endif  // defined(OS_WIN)
+#endif  // defined(XP_WIN)
 
 //------------------------------------------------------------------------------
 
@@ -220,9 +220,9 @@ MessageLoop::MessageLoop(Type type, nsISerialEventTarget* aEventTarget)
       state_(NULL),
       run_depth_base_(1),
       shutting_down_(false),
-#ifdef OS_WIN
+#ifdef XP_WIN
       os_modal_loop_(false),
-#endif  // OS_WIN
+#endif  // XP_WIN
       transient_hang_timeout_(0),
       permanent_hang_timeout_(0),
       next_sequence_num_(0) {
@@ -250,7 +250,7 @@ MessageLoop::MessageLoop(Type type, nsISerialEventTarget* aEventTarget)
     case TYPE_MOZILLA_NONMAINTHREAD:
       pump_ = new mozilla::ipc::MessagePumpForNonMainThreads(aEventTarget);
       return;
-#if defined(OS_WIN) || defined(OS_MACOSX)
+#if defined(XP_WIN) || defined(XP_DARWIN)
     case TYPE_MOZILLA_NONMAINUITHREAD:
       pump_ = new mozilla::ipc::MessagePumpForNonMainUIThreads(aEventTarget);
       return;
@@ -265,7 +265,7 @@ MessageLoop::MessageLoop(Type type, nsISerialEventTarget* aEventTarget)
       break;
   }
 
-#if defined(OS_WIN)
+#if defined(XP_WIN)
   // TODO(rvargas): Get rid of the OS guards.
   if (type_ == TYPE_DEFAULT) {
     pump_ = new base::MessagePumpDefault();
@@ -275,19 +275,20 @@ MessageLoop::MessageLoop(Type type, nsISerialEventTarget* aEventTarget)
     DCHECK(type_ == TYPE_UI);
     pump_ = new base::MessagePumpForUI();
   }
-#elif defined(OS_POSIX)
+#else
   if (type_ == TYPE_UI) {
-#  if defined(OS_MACOSX)
+#  if defined(XP_DARWIN)
     pump_ = base::MessagePumpMac::Create();
-#  elif defined(OS_LINUX) || defined(OS_BSD)
+#  elif defined(XP_LINUX) || defined(__DragonFly__) || defined(XP_FREEBSD) || \
+      defined(XP_NETBSD) || defined(XP_OPENBSD)
     pump_ = new base::MessagePumpForUI();
-#  endif  // OS_LINUX
+#  endif  // XP_LINUX
   } else if (type_ == TYPE_IO) {
     pump_ = new base::MessagePumpLibevent();
   } else {
     pump_ = new base::MessagePumpDefault();
   }
-#endif    // OS_POSIX
+#endif
 
   // We want GetCurrentSerialEventTarget() to return the real nsThread if it
   // will be used to dispatch tasks. However, under all other cases; we'll want
@@ -349,7 +350,7 @@ void MessageLoop::Run() {
 // enable_SEH_restoration_ = true : any unhandled exception goes to the filter
 // that was existed before the loop was run.
 void MessageLoop::RunHandler() {
-#if defined(OS_WIN)
+#if defined(XP_WIN)
   if (exception_restoration_) {
     LPTOP_LEVEL_EXCEPTION_FILTER current_filter = GetTopSEHFilter();
     MOZ_SEH_TRY { RunInternal(); }
@@ -627,7 +628,7 @@ MessageLoop::AutoRunState::AutoRunState(MessageLoop* loop) : loop_(loop) {
 
   // Initialize the other fields:
   quit_received = false;
-#if defined(OS_WIN)
+#if defined(XP_WIN)
   dispatcher = NULL;
 #endif
 }
@@ -664,7 +665,7 @@ nsISerialEventTarget* MessageLoop::SerialEventTarget() { return mEventTarget; }
 //------------------------------------------------------------------------------
 // MessageLoopForUI
 
-#if defined(OS_WIN)
+#if defined(XP_WIN)
 
 void MessageLoopForUI::Run(Dispatcher* dispatcher) {
   AutoRunState save_state(this);
@@ -690,12 +691,12 @@ void MessageLoopForUI::PumpOutPendingPaintMessages() {
   pump_ui()->PumpOutPendingPaintMessages();
 }
 
-#endif  // defined(OS_WIN)
+#endif  // defined(XP_WIN)
 
 //------------------------------------------------------------------------------
 // MessageLoopForIO
 
-#if defined(OS_WIN)
+#if defined(XP_WIN)
 
 void MessageLoopForIO::RegisterIOHandler(HANDLE file, IOHandler* handler) {
   pump_io()->RegisterIOHandler(file, handler);
@@ -705,7 +706,7 @@ bool MessageLoopForIO::WaitForIOCompletion(DWORD timeout, IOHandler* filter) {
   return pump_io()->WaitForIOCompletion(timeout, filter);
 }
 
-#elif defined(OS_POSIX)
+#else
 
 bool MessageLoopForIO::WatchFileDescriptor(int fd, bool persistent, Mode mode,
                                            FileDescriptorWatcher* controller,
@@ -713,11 +714,6 @@ bool MessageLoopForIO::WatchFileDescriptor(int fd, bool persistent, Mode mode,
   return pump_libevent()->WatchFileDescriptor(
       fd, persistent, static_cast<base::MessagePumpLibevent::Mode>(mode),
       controller, delegate);
-}
-
-bool MessageLoopForIO::CatchSignal(int sig, SignalEvent* sigevent,
-                                   SignalWatcher* delegate) {
-  return pump_libevent()->CatchSignal(sig, sigevent, delegate);
 }
 
 #endif

@@ -18,7 +18,7 @@ SimpleTest.waitForExplicitFinish();
 
 let expectedConsoleCalls = [];
 
-function doConsoleCalls(aState)
+function doConsoleCalls()
 {
   const longString = (new Array(DevToolsServer.LONG_STRING_LENGTH + 2)).join("a");
 
@@ -34,6 +34,7 @@ function doConsoleCalls(aState)
   top.console.trace();
   top.console.dir(top.document, top.location);
   top.console.log("foo", longString);
+  top.console.table([Symbol("apples"), Symbol("bananas")]);
 
   const sandbox = new Cu.Sandbox(null, { invisibleToDebugger: true });
   const sandboxObj = sandbox.eval("new Object");
@@ -135,6 +136,18 @@ function doConsoleCalls(aState)
       ],
     },
     {
+      level: "table",
+      filename: /test_consoleapi/,
+      timeStamp: FRACTIONAL_NUMBER_REGEX,
+      arguments: [
+        {
+          type: "object",
+          actor: /[a-z]/,
+          class: "Array",
+        },
+      ],
+    },
+    {
       level: "log",
       filename: /test_consoleapi/,
       timeStamp: FRACTIONAL_NUMBER_REGEX,
@@ -186,7 +199,7 @@ async function startTest()
   onAttach(state, response);
 }
 
-function onAttach(aState, aResponse)
+function onAttach(aState)
 {
   onConsoleAPICall = onConsoleAPICall.bind(null, aState);
   aState.webConsoleFront.on("consoleAPICall", onConsoleAPICall);

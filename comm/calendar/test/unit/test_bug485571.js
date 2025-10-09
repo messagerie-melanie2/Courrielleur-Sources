@@ -4,8 +4,8 @@
 
 var { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUtils.sys.mjs");
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  CalAlarm: "resource:///modules/CalAlarm.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  CalAlarm: "resource:///modules/CalAlarm.sys.mjs",
 });
 
 function run_test() {
@@ -83,7 +83,7 @@ function run_test() {
 }
 
 function check_relative(aIcalString, aRelated) {
-  let alarm = new CalAlarm();
+  const alarm = new CalAlarm();
   alarm.icalString = aIcalString;
   equal(alarm.related, aRelated);
   equal(alarm.alarmDate, null);
@@ -91,9 +91,9 @@ function check_relative(aIcalString, aRelated) {
 }
 
 function check_absolute(aIcalString) {
-  let alarm = new CalAlarm();
+  const alarm = new CalAlarm();
   alarm.icalString = aIcalString;
   equal(alarm.related, Ci.calIAlarm.ALARM_RELATED_ABSOLUTE);
-  ok(alarm.alarmDate != null);
+  Assert.notEqual(alarm.alarmDate, null);
   equal(alarm.offset, null);
 }

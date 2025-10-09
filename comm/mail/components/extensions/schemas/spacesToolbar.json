@@ -1,6 +1,7 @@
 [
   {
     "namespace": "spacesToolbar",
+    "description": "The spacesToolbar API allows to manage built-in and custom spaces, and to add buttons for custom spaces to Thunderbird's spaces toolbar.",
     "max_manifest_version": 2,
     "types": [
       {
@@ -17,7 +18,7 @@
               }
             ],
             "optional": true,
-            "description": "Sets the background color of the badge. Can be specified as an array of four integers in the range [0,255] that make up the RGBA color of the badge. For example, opaque red is <value>[255, 0, 0, 255]</value>. Can also be a string with an HTML color name (<value>red</value>) or a HEX color value (<value>#FF0000</value> or <value>#F00</value>). Reset when set to an empty string."
+            "description": "Sets the background color of the badge. Can be specified as an array of four integers in the range [0,255] that make up the RGBA color of the badge. For example, opaque red is <var>[255, 0, 0, 255]</var>. Can also be a string with an HTML color name (<var>red</var>) or a HEX color value (<var>#FF0000</var> or <var>#F00</var>). Reset when set to an empty string."
           },
           "badgeText": {
             "type": "string",
@@ -42,7 +43,7 @@
             "items": {
               "$ref": "manifest.ThemeIcons"
             },
-            "description": "Specifies dark and light icons for the spaces toolbar button to be used with themes: The ``light`` icons will be used on dark backgrounds and vice versa. At least the set for <em>16px</em> icons should be specified. The set for <em>32px</em> icons will be used on screens with a very high pixel density, if specified."
+            "description": "Specifies dark and light icons for the spaces toolbar button to be used with themes: The <var>light</var> icons will be used on dark backgrounds and vice versa. At least the set for <em>16px</em> icons should be specified. The set for <em>32px</em> icons will be used on screens with a very high pixel density, if specified."
           },
           "title": {
             "type": "string",
@@ -52,13 +53,13 @@
           "url": {
             "type": "string",
             "optional": true,
-            "description": "The page url, loaded into a tab when the button is clicked. Supported are <value>https://</value> and <value>http://</value> links, as well as links to WebExtension pages."
+            "description": "The page url, loaded into a tab when the button is clicked. Supported are <var>https://</var> and <var>http://</var> links, as well as links to WebExtension pages."
           }
         }
       },
       {
         "id": "ColorArray",
-        "description": "An array of four integers in the range [0,255] that make up the RGBA color. For example, opaque red is <value>[255, 0, 0, 255]</value>.",
+        "description": "An array of four integers in the range [0,255] that make up the RGBA color. For example, opaque red is <var>[255, 0, 0, 255]</var>.",
         "type": "array",
         "items": {
           "type": "integer",
@@ -73,7 +74,7 @@
       {
         "name": "addButton",
         "type": "function",
-        "description": "Adds a new button to the spaces toolbar. Throws an exception, if the used ``id`` is not unique within the extension.",
+        "description": "Adds a new button to the spaces toolbar. Throws an exception, if the used <var>id</var> is not unique within the extension.",
         "async": "callback",
         "parameters": [
           {
@@ -84,7 +85,7 @@
           },
           {
             "name": "properties",
-            "description": "Properties of the new button. The ``url`` is mandatory.",
+            "description": "Properties of the new button. The <var>url</var> is mandatory.",
             "$ref": "spacesToolbar.ButtonProperties"
           },
           {
@@ -96,8 +97,7 @@
                 "name": "spaceId",
                 "type": "integer",
                 "description": "The id of the space belonging to the newly created button, as used by the tabs API.",
-                "minimum": 1,
-                "optional": true
+                "minimum": 1
               }
             ]
           }
@@ -163,7 +163,6 @@
               {
                 "name": "tab",
                 "$ref": "tabs.Tab",
-                "optional": true,
                 "description": "Details about the opened or activated tab."
               }
             ]

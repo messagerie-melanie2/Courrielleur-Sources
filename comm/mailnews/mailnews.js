@@ -4,10 +4,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+// This file contains settings for the shared (with SeaMonkey) mailnews backend.
+// Thunderbird specific settings and overrides are in all-thunderbird.js.
+
 // SpaceHit() function: whether spacebar advances to next unread message.
 pref("mail.advance_on_spacebar", true);
-
-pref("mailnews.logComposePerformance", false);
 
 pref("mail.wrap_long_lines", true);
 
@@ -63,14 +64,23 @@ pref("mailnews.headers.showReferences", false);
 // is displayed in the message pane or not...
 pref("mailnews.headers.showMessageId", false);
 
+// Show list management headers. RFC 2369.
+pref("mailnews.headers.showListHelp", false);
+pref("mailnews.headers.showListUnsubscribe", false);
+pref("mailnews.headers.showListSubscribe", false);
+pref("mailnews.headers.showListPost", false);
+pref("mailnews.headers.showListOwner", false);
+pref("mailnews.headers.showListArchive", false);
+// Show Archived-At header. RFC 5064.
+pref("mailnews.headers.showArchivedAt", false);
+
 // hidden pref for controlling if the message to a message-id
 // is opened in a new window or in the same window
 pref("mailnews.messageid.openInNewWindow", false);
 
 // hidden pref for url which will be used to open  message-ids
 // in browser (%mid ist replaced with the message-id)
-pref("mailnews.messageid_browser.url", "chrome://messenger-region/locale/region.properties");
-
+pref("mailnews.messageid_browser.url", "https://groups.google.com/search?q=messageid%3A%mid");
 
 // hidden pref for whether or not to warn when deleting filters. Default YES
 pref("mailnews.filters.confirm_delete", true);
@@ -90,10 +100,10 @@ pref("mailnews.headers.extraAddonHeaders", "");
 //   as defined in nsIMsgDBView.idl (byDate = 18, byId = 21 etc.)
 
 // for Mail/RSS/... (nsMsgDatabase)
-pref("mailnews.default_sort_order", 1);
+pref("mailnews.default_sort_order", 2);
 pref("mailnews.default_sort_type", 18);
 // for News (nsNewsDatabase)
-pref("mailnews.default_news_sort_order", 1);
+pref("mailnews.default_news_sort_order", 2);
 pref("mailnews.default_news_sort_type", 21);
 
 // hidden pref for whether "sort by date" and "sort by received date" in
@@ -125,9 +135,12 @@ pref("mailnews.headers.showSender", false);
 // be greater than one hour so daylight savings time changes don't affect us.
 // We will still always regenerate .msf files if the file size changes.
 pref("mail.db_timestamp_leeway", 4000);
-// How long should we leave idle db's open, in milliseconds.
+// MsgDBCacheManager will close databases that have been idle for idle_limit
+// milliseconds and are smaller than keep_open_size bytes.
 pref("mail.db.idle_limit", 300000);
-// How many db's should we leave open? LRU db's will be closed first
+pref("mail.db.keep_open_size", 1048576);
+// How many db's should we leave open? MsgDBCacheManager will close the
+// smallest and least-recently-used first.
 pref("mail.db.max_open", 30);
 
 // Should we allow folders over 4GB in size?
@@ -155,7 +168,6 @@ pref("mail.imap.expunge_after_delete", false);
 pref("mail.imap.check_deleted_before_expunge", false);
 pref("mail.imap.expunge_option", 0);
 pref("mail.imap.expunge_threshold_number", 20);
-pref("mail.imap.hdr_chunk_size", 200);
 // Should we filter imap messages based on new messages since the previous
 // highest UUID seen instead of unread?
 pref("mail.imap.filter_on_new", true);
@@ -196,8 +208,8 @@ pref("mail.quoted_size", 0);
 pref("mail.quoted_graphical", true);
 // use HTML-style quoting for quoting plain text
 pref("mail.quoteasblock", true);
+// Use CTE quoted-printable for mail bodies.
 pref("mail.strictly_mime", false);
-pref("mail.strictly_mime_headers", true);
 // The maximum number of entries in the "Recent" menu of the folder picker.
 pref("mail.folder_widget.max_recent", 25);
 // 0/1 (name param is encoded in a legacy way), 2(RFC 2231 only)
@@ -223,6 +235,8 @@ pref("mail.addr_book.mapit_url.5.name", "chrome://messenger-region/locale/region
 pref("mail.addr_book.mapit_url.5.format", "chrome://messenger-region/locale/region.properties");
 pref("mailnews.start_page.url", "chrome://messenger-region/locale/region.properties");
 pref("mail.accountwizard.deferstorage", false);
+// 0: name + email | 1: email only | 2: name only.
+pref("mail.addressDisplayFormat", 0);
 // |false|: Show both name and address, even for people in my addressbook.
 pref("mail.showCondensedAddresses", false);
 #endif
@@ -245,26 +259,17 @@ pref("carddav.sync.loglevel", "Warn");
 // Note, changing the fields searched might require changing labels:
 // SearchNameOrEmail.label in messenger.dtd,
 // searchNameAndEmail.emptytext in abMainWindow.dtd, etc.
-//
-// mail.addr_book.quicksearchquery.format will be used if mail.addr_book.show_phonetic_fields is "false"
 pref("mail.addr_book.quicksearchquery.format", "(or(DisplayName,c,@V)(FirstName,c,@V)(LastName,c,@V)(NickName,c,@V)(PrimaryEmail,c,@V)(SecondEmail,c,@V)(and(IsMailList,=,TRUE)(Notes,c,@V))(Company,c,@V)(Department,c,@V)(JobTitle,c,@V)(WebPage1,c,@V)(WebPage2,c,@V))");
-// mail.addr_book.quicksearchquery.format.phonetic will be used if mail.addr_book.show_phonetic_fields is "true"
-pref("mail.addr_book.quicksearchquery.format.phonetic", "(or(DisplayName,c,@V)(FirstName,c,@V)(LastName,c,@V)(NickName,c,@V)(PrimaryEmail,c,@V)(SecondEmail,c,@V)(and(IsMailList,=,TRUE)(Notes,c,@V))(Company,c,@V)(Department,c,@V)(JobTitle,c,@V)(WebPage1,c,@V)(WebPage2,c,@V)(PhoneticFirstName,c,@V)(PhoneticLastName,c,@V))");
 
 // mail.addr_book.autocompletequery.format is the model query used for:
 // * TB: Recipient Autocomplete (composition, mailing list properties dialogue)
 // * SM: Recipient Autocomplete (composition, mailing list properties dialogue)
-//
-// mail.addr_book.autocompletequery.format will be used if mail.addr_book.show_phonetic_fields is "false"
 pref("mail.addr_book.autocompletequery.format", "(or(DisplayName,c,@V)(FirstName,c,@V)(LastName,c,@V)(NickName,c,@V)(PrimaryEmail,c,@V)(SecondEmail,c,@V)(and(IsMailList,=,TRUE)(Notes,c,@V)))");
-// mail.addr_book.autocompletequery.format.phonetic will be used if mail.addr_book.show_phonetic_fields is "true"
-pref("mail.addr_book.autocompletequery.format.phonetic", "(or(DisplayName,c,@V)(FirstName,c,@V)(LastName,c,@V)(NickName,c,@V)(PrimaryEmail,c,@V)(SecondEmail,c,@V)(and(IsMailList,=,TRUE)(Notes,c,@V))(PhoneticFirstName,c,@V)(PhoneticLastName,c,@V))");
 
 // values for "mail.addr_book.lastnamefirst" are:
 //0=displayname, 1=lastname first, 2=firstname first
 pref("mail.addr_book.lastnamefirst", 0);
 pref("mail.addr_book.displayName.autoGeneration", true);
-pref("mail.addr_book.show_phonetic_fields", "chrome://messenger/locale/messenger.properties");
 pref("mail.html_compose",                   true);
 // you can specify multiple, option headers
 // this will show up in the address picker in the compose window
@@ -338,18 +343,18 @@ pref("mailnews.nntp.loglevel", "Warn");
 
 pref("mailnews.pop3.loglevel", "Warn");
 
-// If true, ImapService.jsm is used. Otherwise, nsImapService.cpp is used.
-pref("mailnews.imap.jsmodule", false);
-pref("mailnews.imap.loglevel", "Warn");
-
 pref("mail.operate_on_msgs_in_collapsed_threads", false);
 pref("mail.warn_on_collapsed_thread_operation", true);
 pref("mail.warn_on_shift_delete", true);
 pref("news.warn_on_delete", true);
 pref("mail.warn_on_delete_from_trash", true);
-pref("mail.purge_threshhold_mb", 200);
-pref("mail.prompt_purge_threshhold", true);
+pref("mail.purge_threshold_mb", 500);
+pref("mail.prompt_purge_threshold", true);
 pref("mail.purge.ask", true);
+
+// If true, a failure to read a message from offline storage will
+// discard it, to allow subsequent automatic reloading (self-healing).
+pref("mail.discard_offline_msg_on_failure", true);
 
 pref("mailnews.offline_sync_mail", false);
 pref("mailnews.offline_sync_news", false);
@@ -369,8 +374,6 @@ pref("mailnews.localizedRe", "chrome://messenger-region/locale/region.properties
 pref("mailnews.search_date_format", "chrome://messenger/locale/messenger.properties");
 pref("mailnews.search_date_separator", "chrome://messenger/locale/messenger.properties");
 pref("mailnews.search_date_leading_zeros", "chrome://messenger/locale/messenger.properties");
-// used to decide whether to migrate global quoting prefs
-pref("mailnews.quotingPrefs.version", 0);
 
 // the first time, we'll warn the user about the blind send, and they can disable the warning if they want.
 pref("mapi.blind-send.enabled", true);
@@ -432,10 +435,6 @@ pref("ldap_2.servers.default.attrmap.Custom4", "mozillaCustom4,custom4");
 pref("ldap_2.servers.default.attrmap.Notes", "description,notes");
 pref("ldap_2.servers.default.attrmap.LastModifiedDate", "modifytimestamp");
 
-pref("ldap_2.user_id", 0);
-// Update kCurrentListVersion in include/dirprefs.h if you change this
-pref("ldap_2.version", 3);
-
 pref("mailnews.ldap.loglevel", "Warn");
 
 pref("mailnews.confirm.moveFoldersToTrash", true);
@@ -456,7 +455,6 @@ pref("mailnews.open_tab_warning", 20);
 
 pref("mailnews.start_page.enabled", true);
 
-pref("mailnews.remember_selected_message", true);
 pref("mailnews.scroll_to_new_message", true);
 
 // if true, any click on a column header other than the thread column will unthread the view
@@ -466,7 +464,6 @@ pref("mailnews.thread_pane_column_unthreads", false);
 pref("mail.identity.default.compose_html", true);
 pref("mail.identity.default.valid", true);
 pref("mail.identity.default.fcc", true);
-pref("mail.identity.default.fcc_folder", "mailbox://nobody@Local%20Folders/Sent");
 pref("mail.identity.default.fcc_reply_follows_parent", false);
 pref("mail.identity.default.autocompleteToMyDomain", false);
 
@@ -474,6 +471,7 @@ pref("mail.identity.default.archive_enabled", true);
 // archive into 0: single folder, 1: yearly folder, 2: year/year-month folder
 pref("mail.identity.default.archive_granularity", 1);
 pref("mail.identity.default.archive_keep_folder_structure", false);
+pref("mail.identity.default.archive_recreate_inbox", false);
 
 // keep these defaults for backwards compatibility and migration
 
@@ -482,8 +480,6 @@ pref("mail.identity.default.bcc_self", false);
 pref("mail.identity.default.bcc_others", false);
 pref("mail.identity.default.bcc_list", "");
 
-pref("mail.identity.default.draft_folder", "mailbox://nobody@Local%20Folders/Drafts");
-pref("mail.identity.default.stationery_folder", "mailbox://nobody@Local%20Folders/Templates");
 pref("mail.identity.default.directoryServer", "");
 pref("mail.identity.default.overrideGlobal_Pref", false);
 pref("mail.identity.default.auto_quote", true);
@@ -528,7 +524,18 @@ pref("mail.smtpserver.default.clientid", "");
 //  https://bugzilla.mozilla.org/show_bug.cgi?id=1565379
 pref("mail.server.default.clientidEnabled", false);
 pref("mail.smtpserver.default.clientidEnabled", false);
-pref("mail.smtpserver.default.max_cached_connections", 3);
+
+// This limits the number of simultaneous SMTP connection to a server.
+// Currently if this is set to other than 1, it is changed to 1 internally, so
+// only 1 connection per server can actually occur.
+pref("mail.smtpserver.default.max_cached_connections", 1);
+
+// If set greater than 0, this limits the number of messages that can be sent
+// serially on an SMTP connection before the connection is closed and a new
+// connection is established to handle any additional messages, also subject to
+// this limit. Setting this to zero or less removes any message count per
+// connection limit.
+pref("mail.smtpserver.default.max_messages_per_connection", 10);
 
 pref("mail.smtpservers", "");
 pref("mail.accountmanager.accounts", "");
@@ -649,8 +656,6 @@ pref("mail.serverDefaultStoreContractID", "@mozilla.org/msgstore/berkeleystore;1
 // this number is divided by 100 before it is used. The classifier can be fine tuned
 // by changing this pref. Typical values are .99, .95, .90, .5, etc.
 pref("mail.adaptivefilters.junk_threshold", 90);
-// used to determine when to migrate global spam settings
-pref("mail.spam.version", 0);
 pref("mail.spam.logging.enabled", false);
 pref("mail.spam.manualMark", false);
 pref("mail.spam.markAsReadOnSpam", false);
@@ -695,7 +700,7 @@ pref("mail.smtp.useMatchingHostNameServer", false);
 pref("mail.smtp.useSenderForSmtpMailFrom", true);
 // cleartext password. @see nsIMsgIncomingServer.authMethod.
 pref("mail.smtpserver.default.authMethod", 3);
-// @see nsISmtpServer.socketType
+// @see nsIMsgOutgoingServer.socketType
 pref("mail.smtpserver.default.try_ssl", 0);
 
 // If true, SMTP LOGIN auth and POP3 USER/PASS auth, the last of the methods to try, will use Latin1.
@@ -741,11 +746,6 @@ pref("mailnews.display.disallow_mime_handlers", 0);
 //       This mode will limit the features available (e.g. uncommon
 //       attachment types and inline images) and is for paranoid users.
 
-// RSS rendering options, see prior 4 prefs above.
-pref("rss.display.prefer_plaintext", false);
-pref("rss.display.html_as", 0);
-pref("rss.display.disallow_mime_handlers", 0);
-
 // Feed message display (summary or web page), on select.
 // 0 - global override, load web page
 // 1 - global override, load summary
@@ -759,11 +759,6 @@ pref("rss.show.summary", 1);
 // 2 - toggle load summary and content-base url in message pane
 // 3 - load content-base url in browser
 pref("rss.show.content-base", 0);
-
-// Feed message additional web page display.
-// 0 - no action
-// 1 - load web page in default browser, on select
-pref("rss.message.loadWebPageOnSelect", 0);
 
 // Feed auto updates / "Pause Updates"
 // true  = If updating a feed results in an error code, disable the feed until next manual check or application restart.
@@ -781,7 +776,6 @@ pref("mail.forward_add_extension", true);
 // Prefix of for mail forwards. E.g. "Fwd" -> subject will be Fwd: <subject>
 pref("mail.forward_subject_prefix", "Fwd");
 
-pref("mail.startup.enabledMailCheckOnce", false);
 // RFC 2646=======
 pref("mailnews.send_plaintext_flowed", true);
 pref("mailnews.display.disable_format_flowed_support", false);
@@ -839,6 +833,7 @@ pref("mail.biff.alert.show_preview", true);
 pref("mail.biff.alert.show_subject", true);
 pref("mail.biff.alert.show_sender",  true);
 pref("mail.biff.alert.preview_length", 40);
+pref("mail.biff.alert.enabled_actions", "mark-as-read,delete");
 
 #ifdef XP_MACOSX
 pref("mail.biff.play_sound", false);
@@ -851,14 +846,27 @@ pref("mail.biff.play_sound.type", 0);
 // otherwise, this needs to be a file url
 pref("mail.biff.play_sound.url", "");
 pref("mail.biff.show_alert", true);
+
+#ifdef XP_UNIX
+#ifndef XP_MACOSX
+#ifdef NIGHTLY_BUILD
+pref("mail.biff.show_tray_icon_always", true);
+#else
+pref("mail.biff.show_tray_icon_always", false);
+#endif
+#endif
+#endif
 #ifdef XP_WIN
 pref("mail.biff.show_badge", true);
 pref("mail.biff.show_tray_icon", true);
 pref("mail.biff.show_tray_icon_always", false);
-pref("mail.biff.use_system_alert", false);
 #elifdef XP_MACOSX
 pref("mail.biff.animate_dock_icon", false);
-#elifdef XP_UNIX
+#endif
+
+// Use native OS notifications for Linux and Windows by default.
+// macOS only uses native notifications and it can't be changed.
+#ifndef XP_MACOSX
 pref("mail.biff.use_system_alert", true);
 #endif
 
@@ -880,8 +888,11 @@ pref("mail.biff.use_new_count_in_badge", false);
 pref("mail.biff.use_new_count_in_badge", true);
 #endif
 
-// For feed account serverType=rss sound on biff; if true, mail.biff.play_sound.* settings are used.
+// For feed account serverType=rss sound on biff.
+// Allow for a different sound to be played for new feed articles.
 pref("mail.feed.play_sound", false);
+pref("mail.feed.play_sound.type", 0);
+pref("mail.feed.play_sound.url", "");
 
 // Content disposition for attachments (except binary files and vcards).
 //   0= Content-Disposition: inline
@@ -895,32 +906,6 @@ pref("mailnews.show_send_progress", true);
 pref("mail.server.default.retainBy", 1);
 
 pref("mailnews.ui.junk.manualMarkAsJunkMarksRead", true);
-
-// for manual upgrades of certain UI features.
-// 1 -> 2 is for the folder pane tree landing, to hide the
-// unread and total columns, see messenger.js
-pref("mail.ui.folderpane.version", 1);
-
-// for manual upgrades of certain UI features.
-// 1 -> 2 is for the ab results pane tree landing
-// to hide the non default columns in the addressbook dialog
-// see abCommon.js and addressbook.js
-pref("mailnews.ui.addressbook_results.version", 1);
-// for manual upgrades of certain UI features.
-// 1 -> 2 is for the ab results pane tree landing
-// to hide the non default columns in the addressbook sidebar panel
-// see abCommon.js and addressbook-panel.js
-pref("mailnews.ui.addressbook_panel_results.version", 1);
-// for manual upgrades of certain UI features.
-// 1 -> 2 is for the ab results pane tree landing
-// to hide the non default columns in the select addresses dialog
-// see abCommon.js and abSelectAddressesDialog.js
-pref("mailnews.ui.select_addresses_results.version", 1);
-// for manual upgrades of certain UI features.
-// 1 -> 2 is for the ab results pane
-// to hide the non default columns in the advanced directory search dialog
-// see abCommon.js and abSearchDialog.js
-pref("mailnews.ui.advanced_directory_search_results.version", 1);
 
 // default description and color prefs for tags
 // (we keep the .labels. names for backwards compatibility)
@@ -1139,8 +1124,6 @@ pref("mailnews.oauth.usePrivateBrowser", false);
 
 pref("test.loghelper.loglevel", "Warn");
 
-// Use importDialog.xhtml by default, set to true to use aboutImport.xhtml.
-pref("mail.import.in_new_tab", false);
 pref("mail.import.loglevel", "Warn");
 
 pref("mail.export.loglevel", "Warn");
@@ -1148,3 +1131,13 @@ pref("mail.export.loglevel", "Warn");
 // When true, disk cache is used for messages not in offline store. If false,
 // memory cache is used instead. Both use the cache2 implementation.
 pref("mail.imap.use_disk_cache2", true);
+
+#ifdef MOZ_THUNDERBIRD_RUST
+  // Enable support for Microsoft Exchange via Exchange Web Services.
+#ifdef NIGHTLY_BUILD
+pref("experimental.mail.ews.enabled", true);
+#else
+pref("experimental.mail.ews.enabled", false);
+#endif
+
+#endif

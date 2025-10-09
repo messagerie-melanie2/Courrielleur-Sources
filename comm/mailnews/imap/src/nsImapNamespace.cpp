@@ -3,8 +3,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "msgCore.h"  // for pre-compiled headers
-
 #include "nsImapCore.h"
 #include "nsImapNamespace.h"
 #include "../public/nsIImapHostSessionList.h"
@@ -15,12 +13,8 @@
 //////////////////// nsImapNamespace
 ////////////////////////////////////////////////////////////////
 
-#define NS_IIMAPHOSTSESSIONLIST_CID                  \
-  {                                                  \
-    0x479ce8fc, 0xe725, 0x11d2, {                    \
-      0xa5, 0x05, 0x00, 0x60, 0xb0, 0xfc, 0x04, 0xb7 \
-    }                                                \
-  }
+#define NS_IIMAPHOSTSESSIONLIST_CID \
+  {0x479ce8fc, 0xe725, 0x11d2, {0xa5, 0x05, 0x00, 0x60, 0xb0, 0xfc, 0x04, 0xb7}}
 static NS_DEFINE_CID(kCImapHostSessionListCID, NS_IIMAPHOSTSESSIONLIST_CID);
 
 nsImapNamespace::nsImapNamespace(EIMAPNamespaceType type, const char* prefix,
@@ -347,7 +341,10 @@ nsImapNamespace* nsImapNamespaceList::GetNamespaceForFolder(
   if (convertedFolderName) {
     nsCOMPtr<nsIImapHostSessionList> hostSessionList =
         do_GetService(kCImapHostSessionListCID, &rv);
-    if (NS_FAILED(rv)) return nullptr;
+    if (NS_FAILED(rv)) {
+      PR_FREEIF(convertedFolderName);
+      return nullptr;
+    }
     hostSessionList->GetNamespaceForMailboxForHost(
         hostName, convertedFolderName, resultNamespace);
     PR_Free(convertedFolderName);

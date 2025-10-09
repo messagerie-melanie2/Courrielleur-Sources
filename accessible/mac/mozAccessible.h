@@ -85,13 +85,15 @@ enum CheckedState {
 // Given a gecko accessibility event type, post the relevant
 // system accessibility notification.
 // Note: when overriding or adding new events, make sure your events aren't
-// filtered out in Platform::ProxyEvent or AccessibleWrap::HandleAccEvent!
+// filtered out in Platform::PlatformEvent or AccessibleWrap::HandleAccEvent!
 - (void)handleAccessibleEvent:(uint32_t)eventType;
 
 - (void)handleAccessibleTextChangeEvent:(NSString*)change
                                inserted:(BOOL)isInserted
                             inContainer:(mozilla::a11y::Accessible*)container
                                      at:(int32_t)start;
+
+- (void)maybePostValidationErrorChanged;
 
 // internal method to retrieve a child at a given index.
 - (id)childAt:(uint32_t)i;
@@ -186,6 +188,12 @@ enum CheckedState {
 - (NSNumber*)moxEnabled;
 
 // override
+- (NSString*)moxInvalid;
+
+// override
+- (NSString*)moxErrorMessageElements;
+
+// override
 - (NSNumber*)moxFocused;
 
 // override
@@ -207,7 +215,16 @@ enum CheckedState {
 - (NSString*)moxARIALive;
 
 // override
+- (NSNumber*)moxARIAPosInSet;
+
+// override
+- (NSNumber*)moxARIASetSize;
+
+// override
 - (NSString*)moxARIARelevant;
+
+// override
+- (NSString*)moxPlaceholderValue;
 
 // override
 - (id)moxTitleUIElement;
@@ -235,6 +252,12 @@ enum CheckedState {
 
 // override
 - (id)moxFocusableAncestor;
+
+// override
+- (NSString*)moxLanguage;
+
+// override
+- (NSString*)moxKeyShortcutsValue;
 
 #ifndef RELEASE_OR_BETA
 // override

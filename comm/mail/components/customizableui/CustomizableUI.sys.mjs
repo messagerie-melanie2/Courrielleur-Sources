@@ -20,9 +20,9 @@ var gPanelsForWindow = new WeakMap();
 
 var CustomizableUIInternal = {
   addPanelCloseListeners(aPanel) {
-    Services.els.addSystemEventListener(aPanel, "click", this, false);
-    Services.els.addSystemEventListener(aPanel, "keypress", this, false);
-    let win = aPanel.ownerGlobal;
+    aPanel.addEventListener("click", this, { mozSystemGroup: true });
+    aPanel.addEventListener("keypress", this, { mozSystemGroup: true });
+    const win = aPanel.ownerGlobal;
     if (!gPanelsForWindow.has(win)) {
       gPanelsForWindow.set(win, new Set());
     }
@@ -30,10 +30,10 @@ var CustomizableUIInternal = {
   },
 
   removePanelCloseListeners(aPanel) {
-    Services.els.removeSystemEventListener(aPanel, "click", this, false);
-    Services.els.removeSystemEventListener(aPanel, "keypress", this, false);
-    let win = aPanel.ownerGlobal;
-    let panels = gPanelsForWindow.get(win);
+    aPanel.removeEventListener("click", this, { mozSystemGroup: true });
+    aPanel.removeEventListener("keypress", this, { mozSystemGroup: true });
+    const win = aPanel.ownerGlobal;
+    const panels = gPanelsForWindow.get(win);
     if (panels) {
       panels.delete(this._getPanelForNode(aPanel));
     }
@@ -73,7 +73,7 @@ var CustomizableUIInternal = {
     }
 
     let target = aEvent.target;
-    let panel = this._getPanelForNode(aEvent.currentTarget);
+    const panel = this._getPanelForNode(aEvent.currentTarget);
     // This can happen in e.g. customize mode. If there's no panel,
     // there's clearly nothing for us to close; pretend we're interactive.
     if (!panel) {
@@ -105,14 +105,14 @@ var CustomizableUIInternal = {
           break;
         }
       }
-      let tagName = target.localName;
+      const tagName = target.localName;
       inInput = tagName == "input";
       inItem = tagName == "toolbaritem" || tagName == "toolbarbutton";
-      let isMenuItem = tagName == "menuitem";
+      const isMenuItem = tagName == "menuitem";
       inMenu = inMenu || isMenuItem;
 
       if (isMenuItem && target.hasAttribute("closemenu")) {
-        let closemenuVal = target.getAttribute("closemenu");
+        const closemenuVal = target.getAttribute("closemenu");
         menuitemCloseMenu =
           closemenuVal == "single" || closemenuVal == "none"
             ? closemenuVal
@@ -136,7 +136,7 @@ var CustomizableUIInternal = {
       // We need specific code for popups: the item on which they were invoked
       // isn't necessarily in their parentNode chain:
       if (isMenuItem) {
-        let topmostMenuPopup = getMenuPopupForDescendant(target);
+        const topmostMenuPopup = getMenuPopupForDescendant(target);
         target =
           (topmostMenuPopup && topmostMenuPopup.triggerNode) ||
           target.parentNode;
@@ -164,14 +164,14 @@ var CustomizableUIInternal = {
   },
 
   hidePanelForNode(aNode) {
-    let panel = this._getPanelForNode(aNode);
+    const panel = this._getPanelForNode(aNode);
     if (panel) {
       lazy.PanelMultiView.hidePopup(panel);
     }
   },
 
   maybeAutoHidePanel(aEvent) {
-    let eventType = aEvent.type;
+    const eventType = aEvent.type;
     if (eventType == "keypress" && aEvent.keyCode != aEvent.DOM_VK_RETURN) {
       return;
     }
@@ -288,13 +288,13 @@ export var CustomizableUI = {
    * and an onWidgetBeforeDOMChange and onWidgetAfterDOMChange notification
    * for each window CustomizableUI knows about.
    *
-   * @param aWidgetId the ID of the widget to add
-   * @param aArea     the ID of the area to add the widget to
-   * @param aPosition the position at which to add the widget. If you do not
-   *                  pass a position, the widget will be added to the end
-   *                  of the area.
+   * @param {string} _aWidgetId - The ID of the widget to add.
+   * @param {string} _aArea - The ID of the area to add the widget to.
+   * @param {object} _aPosition - The position at which to add the widget.
+   *   If you do not pass a position, the widget will be added to the end
+   *   of the area.
    */
-  addWidgetToArea(aWidgetId, aArea, aPosition) {},
+  addWidgetToArea(_aWidgetId, _aArea, _aPosition) {},
   /**
    * Remove a widget from its area. If the widget cannot be removed from its
    * area, or is not in any area, this will no-op. Otherwise, this will fire an
@@ -302,17 +302,18 @@ export var CustomizableUI = {
    * onWidgetAfterDOMChange notification for each window CustomizableUI knows
    * about.
    *
-   * @param aWidgetId the ID of the widget to remove
+   * @param {string} _aWidgetId - The ID of the widget to remove.
    */
-  removeWidgetFromArea(aWidgetId) {},
+  removeWidgetFromArea(_aWidgetId) {},
   /**
    * Get the placement of a widget. This is by far the best way to obtain
    * information about what the state of your widget is. The internals of
    * this call are cheap (no DOM necessary) and you will know where the user
    * has put your widget.
    *
-   * @param aWidgetId the ID of the widget whose placement you want to know
-   * @returns
+   * @param {string} _aWidgetId - The ID of the widget whose placement you want
+   *   to know.
+   * @returns {?object}
    *   {
    *     area: "somearea", // The ID of the area where the widget is placed
    *     position: 42 // the index in the placements array corresponding to
@@ -323,7 +324,7 @@ export var CustomizableUI = {
    *
    *   null // if the widget is not placed anywhere (ie in the palette)
    */
-  getPlacementOfWidget(aWidgetId, aOnlyRegistered = true, aDeadAreas = false) {
+  getPlacementOfWidget(_aWidgetId) {
     return null;
   },
   /**
@@ -331,7 +332,7 @@ export var CustomizableUI = {
    * and overflowable toolbar implementations, unlikely to be useful for
    * consumers.
    *
-   * @param aPanel the panel to which listeners should be attached.
+   * @param {object} aPanel - The panel to which listeners should be attached.
    */
   addPanelCloseListeners(aPanel) {
     CustomizableUIInternal.addPanelCloseListeners(aPanel);
@@ -341,7 +342,7 @@ export var CustomizableUI = {
    * addPanelCloseListeners. For use from the menu panel and overflowable
    * toolbar implementations, unlikely to be useful for consumers.
    *
-   * @param aPanel the panel from which listeners should be removed.
+   * @param {object} aPanel - The panel from which listeners should be removed.
    */
   removePanelCloseListeners(aPanel) {
     CustomizableUIInternal.removePanelCloseListeners(aPanel);
@@ -351,10 +352,10 @@ export var CustomizableUI = {
    * all toolboxes will be notified. For use from Customize Mode only,
    * do not use otherwise.
    *
-   * @param aEvent the name of the event to send.
-   * @param aDetails optional, the details of the event.
-   * @param aWindow optional, the window in which to send the event.
+   * @param {string} _aEvent - The name of the event to send.
+   * @param {object} [_aDetails] - The optional details of the event.
+   * @param {Window} [_aWindow] - The optional window in which to send the event.
    */
-  dispatchToolboxEvent(aEvent, aDetails = {}, aWindow = null) {},
+  dispatchToolboxEvent(_aEvent, _aDetails, _aWindow) {},
 };
 Object.freeze(CustomizableUI);

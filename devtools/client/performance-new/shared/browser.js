@@ -14,11 +14,14 @@
  * @typedef {import("../@types/perf").PreferenceFront} PreferenceFront
  * @typedef {import("../@types/perf").PerformancePref} PerformancePref
  * @typedef {import("../@types/perf").RecordingSettings} RecordingSettings
- * @typedef {import("../@types/perf").RestartBrowserWithEnvironmentVariable} RestartBrowserWithEnvironmentVariable
  * @typedef {import("../@types/perf").GetActiveBrowserID} GetActiveBrowserID
- * @typedef {import("../@types/perf").MinimallyTypedGeckoProfile} MinimallyTypedGeckoProfile
- * * @typedef {import("../@types/perf").ProfilerViewMode} ProfilerViewMode
+ * @typedef {import("../@types/perf").ProfilerViewMode} ProfilerViewMode
+ * @typedef {import("../@types/perf").ProfilerPanel} ProfilerPanel
  */
+
+const {
+  gDevTools,
+} = require("resource://devtools/client/framework/devtools.js");
 
 /** @type {PerformancePref["UIBaseUrl"]} */
 const UI_BASE_URL_PREF = "devtools.performance.recording.ui-base-url";
@@ -43,12 +46,17 @@ const UI_BASE_URL_PATH_DEFAULT = "/from-browser";
  * Once a profile is received from the actor, it needs to be opened up in
  * profiler.firefox.com to be analyzed. This function opens up profiler.firefox.com
  * into a new browser tab.
- * @param {ProfilerViewMode | undefined} profilerViewMode - View mode for the Firefox Profiler
+ *
+ * @typedef {Object} OpenProfilerOptions
+ * @property {ProfilerViewMode | undefined} [profilerViewMode] - View mode for the Firefox Profiler
  *   front-end timeline. While opening the url, we should append a query string
  *   if a view other than "full" needs to be displayed.
+ * @property {ProfilerPanel} [defaultPanel] Allows to change the default opened panel.
+ *
+ * @param {OpenProfilerOptions} options
  * @returns {Promise<MockedExports.Browser>} The browser for the opened tab.
  */
-async function openProfilerTab(profilerViewMode) {
+async function openProfilerTab({ profilerViewMode, defaultPanel }) {
   // Allow the user to point to something other than profiler.firefox.com.
   const baseUrl = Services.prefs.getStringPref(
     UI_BASE_URL_PREF,
@@ -59,6 +67,7 @@ async function openProfilerTab(profilerViewMode) {
     UI_BASE_URL_PATH_PREF,
     UI_BASE_URL_PATH_DEFAULT
   );
+  const additionalPath = defaultPanel ? `/${defaultPanel}/` : "";
   // This controls whether we enable the active tab view when capturing in web
   // developer preset.
   const enableActiveTab = Services.prefs.getBoolPref(
@@ -82,7 +91,7 @@ async function openProfilerTab(profilerViewMode) {
     viewModeQueryString = `?view=${profilerViewMode}`;
   }
 
-  const urlToLoad = `${baseUrl}${baseUrlPath}${viewModeQueryString}`;
+  const urlToLoad = `${baseUrl}${baseUrlPath}${additionalPath}${viewModeQueryString}`;
 
   // Find the most recently used window, as the DevTools client could be in a variety
   // of hosts.
@@ -105,38 +114,21 @@ async function openProfilerTab(profilerViewMode) {
       forceNonPrivate: true,
       resolveOnContentBrowserCreated,
       userContextId: win.gBrowser?.contentPrincipal.userContextId,
+      relatedToCurrent: true,
     })
   );
   return contentBrowser;
 }
 
 /**
- * Flatten all the sharedLibraries of the different processes in the profile
- * into one list of libraries.
- * @param {MinimallyTypedGeckoProfile} profile - The profile JSON object
- * @returns {Library[]}
- */
-function sharedLibrariesFromProfile(profile) {
-  /**
-   * @param {MinimallyTypedGeckoProfile} processProfile
-   * @returns {Library[]}
-   */
-  function getLibsRecursive(processProfile) {
-    return processProfile.libs.concat(
-      ...processProfile.processes.map(getLibsRecursive)
-    );
-  }
-
-  return getLibsRecursive(profile);
-}
-
-/**
  * Restarts the browser with a given environment variable set to a value.
  *
- * @type {RestartBrowserWithEnvironmentVariable}
+ * @param {Record<string, string>} env
  */
-function restartBrowserWithEnvironmentVariable(envName, value) {
-  Services.env.set(envName, value);
+function restartBrowserWithEnvironmentVariable(env) {
+  for (const [envName, envValue] of Object.entries(env)) {
+    Services.env.set(envName, envValue);
+  }
 
   Services.startup.quit(
     Services.startup.eForceQuit | Services.startup.eRestart
@@ -152,7 +144,11 @@ function openFilePickerForObjdir(window, objdirs, changeObjdirs) {
   const FilePicker = Cc["@mozilla.org/filepicker;1"].createInstance(
     Ci.nsIFilePicker
   );
-  FilePicker.init(window, "Pick build directory", FilePicker.modeGetFolder);
+  FilePicker.init(
+    window.browsingContext,
+    "Pick build directory",
+    FilePicker.modeGetFolder
+  );
   FilePicker.open(rv => {
     if (rv == FilePicker.returnOK) {
       const path = FilePicker.file.path;
@@ -164,9 +160,53 @@ function openFilePickerForObjdir(window, objdirs, changeObjdirs) {
   });
 }
 
+/**
+ * Try to open the given script with line and column in the tab.
+ *
+ * If the profiled tab is not alive anymore, returns without doing anything.
+ *
+ * @param {number} tabId
+ * @param {string} scriptUrl
+ * @param {number} line
+ * @param {number} columnOneBased
+ */
+async function openScriptInDebugger(tabId, scriptUrl, line, columnOneBased) {
+  const win = Services.wm.getMostRecentWindow("navigator:browser");
+
+  // Iterate through all tabs in the current window and find the tab that we want.
+  const foundTab = win.gBrowser.tabs.find(
+    tab => tab.linkedBrowser.browserId === tabId
+  );
+
+  if (!foundTab) {
+    console.log(`No tab found with the tab id: ${tabId}`);
+    return;
+  }
+
+  // If a matching tab was found, switch to it.
+  win.gBrowser.selectedTab = foundTab;
+
+  // And open the devtools debugger with script.
+  const toolbox = await gDevTools.showToolboxForTab(foundTab, {
+    toolId: "jsdebugger",
+  });
+
+  toolbox.win.focus();
+
+  // In case profiler backend can't retrieve the column number, it can return zero.
+  const columnZeroBased = columnOneBased > 0 ? columnOneBased - 1 : 0;
+  await toolbox.viewSourceInDebugger(
+    scriptUrl,
+    line,
+    columnZeroBased,
+    /* sourceId = */ null,
+    "ProfilerOpenScript"
+  );
+}
+
 module.exports = {
   openProfilerTab,
-  sharedLibrariesFromProfile,
   restartBrowserWithEnvironmentVariable,
   openFilePickerForObjdir,
+  openScriptInDebugger,
 };

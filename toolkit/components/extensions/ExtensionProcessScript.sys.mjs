@@ -1,6 +1,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* eslint-disable mozilla/valid-lazy */
 
 /**
  * This script contains the minimum, skeleton content process code that we need
@@ -10,18 +11,26 @@
  */
 
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
-const lazy = {};
-
-ChromeUtils.defineESModuleGetters(lazy, {
+const lazy = XPCOMUtils.declareLazy({
   ExtensionChild: "resource://gre/modules/ExtensionChild.sys.mjs",
   ExtensionCommon: "resource://gre/modules/ExtensionCommon.sys.mjs",
   ExtensionContent: "resource://gre/modules/ExtensionContent.sys.mjs",
   ExtensionPageChild: "resource://gre/modules/ExtensionPageChild.sys.mjs",
+  ExtensionUserScriptsContent:
+    "resource://gre/modules/ExtensionUserScriptsContent.sys.mjs",
   ExtensionWorkerChild: "resource://gre/modules/ExtensionWorkerChild.sys.mjs",
   Schemas: "resource://gre/modules/Schemas.sys.mjs",
+  // We need to avoid touching Services.appinfo here in order to prevent
+  // the wrong version from being cached during xpcshell test startup.
+  isContentProcess: () =>
+    Services.appinfo.processType == Services.appinfo.PROCESS_TYPE_CONTENT,
+  isContentScriptProcess: () =>
+    lazy.isContentProcess ||
+    !WebExtensionPolicy.useRemoteWebExtensions ||
+    // Thunderbird still loads some content in the parent process.
+    AppConstants.MOZ_APP_NAME == "thunderbird",
 });
 
 import { ExtensionUtils } from "resource://gre/modules/ExtensionUtils.sys.mjs";
@@ -34,24 +43,8 @@ function getData(extension, key = "") {
   return sharedData.get(`extension/${extension.id}/${key}`);
 }
 
-// We need to avoid touching Services.appinfo here in order to prevent
-// the wrong version from being cached during xpcshell test startup.
-// eslint-disable-next-line mozilla/use-services
-XPCOMUtils.defineLazyGetter(lazy, "isContentProcess", () => {
-  return Services.appinfo.processType == Services.appinfo.PROCESS_TYPE_CONTENT;
-});
-
-XPCOMUtils.defineLazyGetter(lazy, "isContentScriptProcess", () => {
-  return (
-    lazy.isContentProcess ||
-    !WebExtensionPolicy.useRemoteWebExtensions ||
-    // Thunderbird still loads some content in the parent process.
-    AppConstants.MOZ_APP_NAME == "thunderbird"
-  );
-});
-
 var extensions = new DefaultWeakMap(policy => {
-  return new lazy.ExtensionChild.BrowserExtensionContent(policy);
+  return new lazy.ExtensionChild(policy);
 });
 
 var pendingExtensions = new Map();
@@ -60,7 +53,7 @@ var ExtensionManager;
 
 ExtensionManager = {
   // WeakMap<WebExtensionPolicy, Map<number, WebExtensionContentScript>>
-  registeredContentScripts: new DefaultWeakMap(policy => new Map()),
+  registeredContentScripts: new DefaultWeakMap(() => new Map()),
 
   init() {
     Services.cpmm.addMessageListener("Extension:Startup", this);
@@ -72,7 +65,9 @@ ExtensionManager = {
       this
     );
     Services.cpmm.addMessageListener("Extension:UpdateContentScripts", this);
+    Services.cpmm.addMessageListener("Extension:UpdateUserScriptWorlds", this);
     Services.cpmm.addMessageListener("Extension:UpdatePermissions", this);
+    Services.cpmm.addMessageListener("Extension:UpdateIgnoreQuarantine", this);
 
     this.updateStubExtensions();
 
@@ -321,12 +316,25 @@ ExtensionManager = {
           break;
         }
 
+        case "Extension:UpdateUserScriptWorlds": {
+          let policy = WebExtensionPolicy.getByID(data.id);
+
+          if (policy) {
+            lazy.ExtensionUserScriptsContent.updateWorldConfig(
+              extensions.get(policy),
+              data.reset,
+              data.update
+            );
+          }
+          break;
+        }
+
         case "Extension:UpdatePermissions": {
           let policy = WebExtensionPolicy.getByID(data.id);
           if (!policy) {
             break;
           }
-          // In the parent process, Extension.jsm updates the policy.
+          // In the parent process, Extension.sys.mjs updates the policy.
           if (lazy.isContentProcess) {
             lazy.ExtensionCommon.updateAllowedOrigins(
               policy,
@@ -343,13 +351,21 @@ ExtensionManager = {
                   perms.delete(perm);
                 }
               }
-              policy.permissions = perms;
+              policy.permissions = Array.from(perms);
             }
           }
 
           if (data.permissions.length && extensions.has(policy)) {
             // Notify ChildApiManager of permission changes.
             extensions.get(policy).emit("update-permissions");
+          }
+          break;
+        }
+
+        case "Extension:UpdateIgnoreQuarantine": {
+          let policy = WebExtensionPolicy.getByID(data.id);
+          if (policy?.active) {
+            policy.ignoreQuarantine = data.ignoreQuarantine;
           }
           break;
         }

@@ -128,14 +128,12 @@ already_AddRefed<SharedWorkerService> SharedWorkerService::GetOrCreate() {
   if (!sSharedWorkerService) {
     sSharedWorkerService = new SharedWorkerService();
     // ClearOnShutdown can only be called on main thread
-    nsresult rv = SchedulerGroup::Dispatch(
-        TaskCategory::Other,
-        NS_NewRunnableFunction("RegisterSharedWorkerServiceClearOnShutdown",
-                               []() {
-                                 StaticMutexAutoLock lock(sSharedWorkerMutex);
-                                 MOZ_ASSERT(sSharedWorkerService);
-                                 ClearOnShutdown(&sSharedWorkerService);
-                               }));
+    nsresult rv = SchedulerGroup::Dispatch(NS_NewRunnableFunction(
+        "RegisterSharedWorkerServiceClearOnShutdown", []() {
+          StaticMutexAutoLock lock(sSharedWorkerMutex);
+          MOZ_ASSERT(sSharedWorkerService);
+          ClearOnShutdown(&sSharedWorkerService);
+        }));
     Unused << NS_WARN_IF(NS_FAILED(rv));
   }
 
@@ -161,7 +159,7 @@ void SharedWorkerService::GetOrCreateWorkerManager(
       new GetOrCreateWorkerManagerRunnable(this, aActor, aData, aWindowID,
                                            aPortIdentifier);
 
-  nsresult rv = SchedulerGroup::Dispatch(TaskCategory::Other, r.forget());
+  nsresult rv = SchedulerGroup::Dispatch(r.forget());
   Unused << NS_WARN_IF(NS_FAILED(rv));
 }
 
@@ -204,11 +202,20 @@ void SharedWorkerService::GetOrCreateWorkerManagerOnMainThread(
   nsCOMPtr<nsIURI> resolvedScriptURL =
       DeserializeURI(aData.resolvedScriptURL());
   for (SharedWorkerManager* workerManager : mWorkerManagers) {
+    bool matchNameButNotOptions = false;
+
     managerHolder = workerManager->MatchOnMainThread(
-        this, aData.domain(), resolvedScriptURL, aData.name(), loadingPrincipal,
-        BasePrincipal::Cast(effectiveStoragePrincipal)->OriginAttributesRef());
+        this, aData, resolvedScriptURL, loadingPrincipal,
+        BasePrincipal::Cast(effectiveStoragePrincipal)->OriginAttributesRef(),
+        &matchNameButNotOptions);
     if (managerHolder) {
       break;
+    }
+
+    if (matchNameButNotOptions) {
+      MismatchOptionsErrorPropagationOnMainThread(aBackgroundEventTarget,
+                                                  aActor);
+      return;
     }
   }
 
@@ -248,6 +255,21 @@ void SharedWorkerService::ErrorPropagationOnMainThread(
   RefPtr<ErrorPropagationRunnable> r =
       new ErrorPropagationRunnable(aActor, aError);
   aBackgroundEventTarget->Dispatch(r.forget(), NS_DISPATCH_NORMAL);
+}
+
+void SharedWorkerService::MismatchOptionsErrorPropagationOnMainThread(
+    nsIEventTarget* aBackgroundEventTarget, SharedWorkerParent* aActor) {
+  MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(aBackgroundEventTarget);
+  MOZ_ASSERT(aActor);
+
+  aBackgroundEventTarget->Dispatch(
+      NS_NewRunnableFunction(__func__,
+                             [aActor = RefPtr(aActor)] {
+                               AssertIsOnBackgroundThread();
+                               aActor->MismatchOptionsErrorPropagation();
+                             }),
+      NS_DISPATCH_NORMAL);
 }
 
 void SharedWorkerService::RemoveWorkerManagerOnMainThread(

@@ -46,6 +46,8 @@
 #ifndef _MORKWRITER_
 #  include "morkWriter.h"
 #endif
+#include "prmem.h"
+
 // 456789_123456789_123456789_123456789_123456789_123456789_123456789_123456789
 
 // ````` ````` ````` ````` `````
@@ -241,7 +243,10 @@ morkFactory::MakeHeap(nsIMdbEnv* mev, nsIMdbHeap** acqHeap) {
     if (!outHeap) ev->OutOfMemoryError();
   }
   MORK_ASSERT(acqHeap);
-  if (acqHeap) *acqHeap = outHeap;
+  if (acqHeap)
+    *acqHeap = outHeap;
+  else
+    PR_Free(outHeap);
   return outErr;
 }
 // } ----- end heap methods -----

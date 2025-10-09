@@ -20,6 +20,7 @@
 %smimeDTD;
 ]>
 <html xmlns="http://www.w3.org/1999/xhtml"
+      lightweightthemes="true"
       xmlns:xul="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
       xmlns:html="http://www.w3.org/1999/xhtml">
 <head>
@@ -122,15 +123,14 @@
               flex="1"
               hidden="true">
           <html:div id="calendarInvitationDisplay">
-           <!-- The calendar invitation panel is displayed here. -->
+            <!-- The calendar invitation panel is displayed here. -->
           </html:div>
         </vbox>
 
         <!-- message view -->
         <browser id="messagepane"
-                 context="mailContext"
                  tooltip="aHTMLTooltip"
-                 style="height: 0px; min-height: 1px; background-color: field;"
+                 style="height: 0px; min-height: 1px;"
                  flex="1"
                  name="messagepane"
                  disablesecurity="true"
@@ -142,6 +142,8 @@
                  forcemessagemanager="true"
                  maychangeremoteness="true"
                  messagemanagergroup="single-page"
+                 autocompletepopup="PopupAutoComplete"
+                 manualactiveness="true"
                  onclick="return contentAreaClick(event);"
                  onresize="messagePaneOnResize();"/>
         <splitter id="attachment-splitter" orient="vertical"
@@ -150,9 +152,15 @@
         <vbox id="attachmentView" collapsed="true">
 #include msgAttachmentView.inc.xhtml
         </vbox>
-        <findbar id="FindToolbar" browserid="messagepane"/>
+        <findbar id="findToolbar" browserid="messagepane"/>
       </vbox>
 #include msgSecurityPane.inc.xhtml
     </hbox>
 </html:body>
+<popupset xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
+  <panel is="autocomplete-richlistbox-popup" id="PopupAutoComplete"
+         type="autocomplete"
+         role="group"
+         noautofocus="true"/>
+</popupset>
 </html>

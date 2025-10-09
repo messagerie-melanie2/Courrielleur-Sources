@@ -7,10 +7,13 @@
 
 #include "src/core/SkEdge.h"
 
+#include "include/private/base/SkDebug.h"
+#include "include/private/base/SkSafe32.h"
 #include "include/private/base/SkTo.h"
 #include "src/base/SkMathPriv.h"
 #include "src/core/SkFDot6.h"
 
+#include <algorithm>
 #include <utility>
 
 /*
@@ -48,7 +51,7 @@ void SkEdge::dump() const {
              SkFixedToFloat(realLastY),
              SkFixedToFloat(fX),
              SkFixedToFloat(fDX),
-             fWinding);
+             static_cast<int8_t>(fWinding));
 }
 #endif
 
@@ -70,13 +73,12 @@ int SkEdge::setLine(const SkPoint& p0, const SkPoint& p1, const SkIRect* clip, i
 #endif
     }
 
-    int winding = 1;
-
+    Winding winding = Winding::kCW;
     if (y0 > y1) {
         using std::swap;
         swap(x0, x1);
         swap(y0, y1);
-        winding = -1;
+        winding = Winding::kCCW;
     }
 
     int top = SkFDot6Round(y0);
@@ -98,9 +100,9 @@ int SkEdge::setLine(const SkPoint& p0, const SkPoint& p1, const SkIRect* clip, i
     fDX         = slope;
     fFirstY     = top;
     fLastY      = bot - 1;
-    fEdgeType   = kLine_Type;
+    fEdgeType   = Type::kLine;
     fCurveCount = 0;
-    fWinding    = SkToS8(winding);
+    fWinding    = winding;
     fCurveShift = 0;
 
     if (clip) {
@@ -112,7 +114,7 @@ int SkEdge::setLine(const SkPoint& p0, const SkPoint& p1, const SkIRect* clip, i
 // called from a curve subclass
 int SkEdge::updateLine(SkFixed x0, SkFixed y0, SkFixed x1, SkFixed y1)
 {
-    SkASSERT(fWinding == 1 || fWinding == -1);
+    SkASSERT(fWinding == Winding::kCW || fWinding == Winding::kCCW);
     SkASSERT(fCurveCount != 0);
 //    SkASSERT(fCurveShift != 0);
 
@@ -191,7 +193,7 @@ static inline int diff_to_shift(SkFDot6 dx, SkFDot6 dy, int shiftAA = 2)
     // ... but small enough so that our curves still look smooth
     // When shift > 0, we're using AA and everything is scaled up so we can
     // lower the accuracy.
-    dist = (dist + (1 << 4)) >> (3 + shiftAA);
+    dist = (dist + (1 << (2 + shiftAA))) >> (3 + shiftAA);
 
     // each subdivision (shift value) cuts this dist (error) by 1/4
     return (32 - SkCLZ(dist)) >> 1;
@@ -219,13 +221,13 @@ bool SkQuadraticEdge::setQuadraticWithoutUpdate(const SkPoint pts[3], int shift)
 #endif
     }
 
-    int winding = 1;
+    Winding winding = Winding::kCW;
     if (y0 > y2)
     {
         using std::swap;
         swap(x0, x2);
         swap(y0, y2);
-        winding = -1;
+        winding = Winding::kCCW;
     }
     SkASSERT(y0 <= y1 && y1 <= y2);
 
@@ -253,9 +255,9 @@ bool SkQuadraticEdge::setQuadraticWithoutUpdate(const SkPoint pts[3], int shift)
         shift = MAX_COEFF_SHIFT;
     }
 
-    fWinding    = SkToS8(winding);
+    fWinding = winding;
     //fCubicDShift only set for cubics
-    fEdgeType   = kQuad_Type;
+    fEdgeType = Type::kQuad;
     fCurveCount = SkToS8(1 << shift);
 
     /*
@@ -394,7 +396,7 @@ bool SkCubicEdge::setCubicWithoutUpdate(const SkPoint pts[4], int shift, bool so
 #endif
     }
 
-    int winding = 1;
+    Winding winding = Winding::kCW;
     if (sortY && y0 > y3)
     {
         using std::swap;
@@ -402,7 +404,7 @@ bool SkCubicEdge::setCubicWithoutUpdate(const SkPoint pts[4], int shift, bool so
         swap(x1, x2);
         swap(y0, y3);
         swap(y1, y2);
-        winding = -1;
+        winding = Winding::kCCW;
     }
 
     int top = SkFDot6Round(y0);
@@ -439,8 +441,8 @@ bool SkCubicEdge::setCubicWithoutUpdate(const SkPoint pts[4], int shift, bool so
         upShift = 10 - shift;
     }
 
-    fWinding    = SkToS8(winding);
-    fEdgeType   = kCubic_Type;
+    fWinding = winding;
+    fEdgeType = Type::kCubic;
     fCurveCount = SkToS8(SkLeftShift(-1, shift));
     fCurveShift = SkToU8(shift);
     fCubicDShift = SkToU8(downShift);

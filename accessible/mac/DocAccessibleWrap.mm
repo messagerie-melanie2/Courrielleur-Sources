@@ -6,6 +6,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "DocAccessibleWrap.h"
+#include "ARIAMap.h"
 #include "DocAccessible-inl.h"
 #include "nsAccUtils.h"
 
@@ -32,6 +33,16 @@ void DocAccessibleWrap::AttributeChanged(dom::Element* aElement,
                                          const nsAttrValue* aOldValue) {
   DocAccessible::AttributeChanged(aElement, aNameSpaceID, aAttribute, aModType,
                                   aOldValue);
+  if (aAttribute == nsGkAtoms::aria_errormessage) {
+    LocalAccessible* accessible =
+        mContent != aElement ? GetAccessible(aElement) : this;
+    if (!accessible) {
+      return;
+    }
+    FireDelayedEvent(nsIAccessibleEvent::EVENT_ERRORMESSAGE_CHANGED,
+                     accessible);
+  }
+
   if (aAttribute == nsGkAtoms::aria_live) {
     LocalAccessible* accessible =
         mContent != aElement ? GetAccessible(aElement) : this;
@@ -100,5 +111,10 @@ void DocAccessibleWrap::ProcessNewLiveRegions() {
 
 void DocAccessibleWrap::DoInitialUpdate() {
   DocAccessible::DoInitialUpdate();
+  if (IsLiveRegion(mDocumentNode->GetBodyElement())) {
+    // Check if this doc's body element is a live region
+    QueueNewLiveRegion(this);
+  }
+
   ProcessNewLiveRegions();
 }

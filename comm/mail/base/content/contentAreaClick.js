@@ -11,8 +11,9 @@
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-XPCOMUtils.defineLazyModuleGetters(this, {
-  PhishingDetector: "resource:///modules/PhishingDetector.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  PhishingDetector: "resource:///modules/PhishingDetector.sys.mjs",
+  BrowserUtils: "resource://gre/modules/BrowserUtils.sys.mjs",
 });
 XPCOMUtils.defineLazyPreferenceGetter(
   this,
@@ -25,6 +26,10 @@ XPCOMUtils.defineLazyPreferenceGetter(
   "canonicalAddonServerUrl",
   "extensions.canonicalAddonServer.url"
 );
+
+var { openLinkExternally } = ChromeUtils.importESModule(
+  "resource:///modules/LinkHelper.sys.mjs"
+);
 /**
  * Extract the href from the link click event.
  * We look for HTMLAnchorElement, HTMLAreaElement, HTMLLinkElement,
@@ -32,10 +37,11 @@ XPCOMUtils.defineLazyPreferenceGetter(
  * If the clicked element was a HTMLInputElement or HTMLButtonElement
  * we return the form action.
  *
- * @returns [href, linkText] the url and the text for the link being clicked.
+ * @returns {string[]} a tuple [href, linkText] the url and the text for the link
+ *   being clicked.
  */
-function hRefForClickEvent(aEvent, aDontCheckInputElement) {
-  let target =
+function hRefForClickEvent(aEvent) {
+  const target =
     aEvent.type == "command"
       ? document.commandDispatcher.focusedElement
       : aEvent.target;
@@ -48,37 +54,18 @@ function hRefForClickEvent(aEvent, aDontCheckInputElement) {
     return [null, null];
   }
 
-  let href = null;
-  let linkText = null;
   if (
-    HTMLAnchorElement.isInstance(target) ||
-    HTMLAreaElement.isInstance(target) ||
-    HTMLLinkElement.isInstance(target)
-  ) {
-    if (target.hasAttribute("href")) {
-      href = target.href;
-      linkText = gatherTextUnder(target);
-    }
-  } else if (
-    !aDontCheckInputElement &&
     (HTMLInputElement.isInstance(target) ||
-      HTMLButtonElement.isInstance(target))
+      HTMLButtonElement.isInstance(target)) &&
+    /^https?/.test(target.form?.action)
   ) {
-    if (target.form && target.form.action) {
-      href = target.form.action;
-    }
-  } else {
-    // We may be nested inside of a link node.
-    let linkNode = aEvent.target;
-    while (linkNode && !HTMLAnchorElement.isInstance(linkNode)) {
-      linkNode = linkNode.parentNode;
-    }
-
-    if (linkNode) {
-      href = linkNode.href;
-      linkText = gatherTextUnder(linkNode);
-    }
+    return [target.form.action, null];
   }
+
+  const [href, linkNode] =
+    BrowserUtils.hrefAndLinkNodeForClickEvent(aEvent) ?? [];
+  const labelNode = linkNode || target || null;
+  const linkText = labelNode && gatherTextUnder(labelNode);
   return [href, linkText];
 }
 
@@ -86,11 +73,11 @@ function hRefForClickEvent(aEvent, aDontCheckInputElement) {
  * Check whether the click target's or its ancestor's href
  * points to an anchor on the page.
  *
- * @param HTMLElement aTargetNode - the element node.
- * @returns - true if link pointing to anchor.
+ * @param {HTMLElement} aTargetNode - The element node..
+ * @returns {boolean} true if link pointing to anchor.
  */
 function isLinkToAnchorOnPage(aTargetNode) {
-  let url = aTargetNode.ownerDocument.URL;
+  const url = aTargetNode.ownerDocument.URL;
   if (!url.startsWith("http")) {
     return false;
   }
@@ -116,7 +103,7 @@ function isLinkToAnchorOnPage(aTargetNode) {
 // Called whenever the user clicks in the content area,
 // should always return true for click to go through.
 function contentAreaClick(aEvent) {
-  let target = aEvent.target;
+  const target = aEvent.target;
   if (target.localName == "browser") {
     // This is a remote browser. Nothing useful can happen in this process.
     return true;
@@ -129,12 +116,12 @@ function contentAreaClick(aEvent) {
     return true;
   }
 
-  let [href, linkText] = hRefForClickEvent(aEvent);
+  const [href, linkText] = hRefForClickEvent(aEvent);
 
   if (!href && !aEvent.button) {
     // Is this an image that we might want to scale?
 
-    if (HTMLImageElement.isInstance(target)) {
+    if (HTMLImageElement.isInstance(target) && target.src) {
       // Make sure it loaded successfully. No action if not or a broken link.
       var req = target.getRequest(Ci.nsIImageLoadingContent.CURRENT_REQUEST);
       if (!req || req.imageStatus & Ci.imgIRequest.STATUS_ERROR) {
@@ -143,14 +130,7 @@ function contentAreaClick(aEvent) {
 
       // Is it an image?
       if (target.localName == "img" && target.hasAttribute("overflowing")) {
-        if (target.hasAttribute("shrinktofit")) {
-          // Currently shrunk to fit, so unshrink it.
-          target.removeAttribute("shrinktofit");
-        } else {
-          // User wants to shrink now.
-          target.setAttribute("shrinktofit", true);
-        }
-
+        target.toggleAttribute("shrinktofit");
         return false;
       }
     }
@@ -164,7 +144,7 @@ function contentAreaClick(aEvent) {
   // We want all about, http and https links in the message pane to be loaded
   // externally in a browser, therefore we need to detect that here and redirect
   // as necessary.
-  let uri = makeURI(href);
+  const uri = makeURI(href);
   if (
     Cc["@mozilla.org/uriloader/external-protocol-service;1"]
       .getService(Ci.nsIExternalProtocolService)
@@ -186,7 +166,7 @@ function contentAreaClick(aEvent) {
   aEvent.preventDefault();
 
   // Let the phishing detector check the link.
-  let urlPhishCheckResult = PhishingDetector.warnOnSuspiciousLinkClick(
+  const urlPhishCheckResult = PhishingDetector.warnOnSuspiciousLinkClick(
     window,
     href,
     linkText

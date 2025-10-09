@@ -8,31 +8,24 @@
 
 "use strict";
 
-const { get_about_message, open_message_from_file } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-);
-const { close_window } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
-);
-const { waitForCondition } = ChromeUtils.import(
-  "resource://testing-common/mozmill/utils.jsm"
-);
-const { get_notification_button, wait_for_notification_to_show } =
-  ChromeUtils.import(
-    "resource://testing-common/mozmill/NotificationBoxHelpers.jsm"
+const { get_about_message, open_message_from_file } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
   );
-const { OpenPGPTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mozmill/OpenPGPTestUtils.jsm"
+const { get_notification_button, wait_for_notification_to_show } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/NotificationBoxHelpers.sys.mjs"
+  );
+const { OpenPGPTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/OpenPGPTestUtils.sys.mjs"
 );
 
-const { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+const { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
-const MSG_TEXT = "Sundays are nothing without callaloo.";
-
-function getMsgBodyTxt(mc) {
-  let msgPane = get_about_message(mc.window).getMessagePaneBrowser();
+function getMsgBodyTxt(msgc) {
+  const msgPane = get_about_message(msgc).getMessagePaneBrowser();
   return msgPane.contentDocument.documentElement.textContent;
 }
 
@@ -48,12 +41,12 @@ add_setup(async function () {
     "openpgp.example",
     "pop3"
   );
-  let aliceIdentity = MailServices.accounts.createIdentity();
+  const aliceIdentity = MailServices.accounts.createIdentity();
   aliceIdentity.email = "alice@openpgp.example";
   aliceAcct.addIdentity(aliceIdentity);
 
   // Set up the alice's private key.
-  let [id] = await OpenPGPTestUtils.importPrivateKey(
+  const [id] = await OpenPGPTestUtils.importPrivateKey(
     window,
     new FileUtils.File(
       getTestFilePath(
@@ -75,7 +68,7 @@ add_setup(async function () {
   );
 });
 
-let partialInlineTests = [
+const partialInlineTests = [
   {
     filename: "partial-encrypt-for-carol-plaintext.eml",
     expectDecryption: true,
@@ -131,7 +124,7 @@ let partialInlineTests = [
  * encrypted/signed inline PGP messages.
  */
 add_task(async function testPartialInlinePGPDecrypt() {
-  for (let test of partialInlineTests) {
+  for (const test of partialInlineTests) {
     if (!test.filename) {
       continue;
     }
@@ -139,22 +132,22 @@ add_task(async function testPartialInlinePGPDecrypt() {
     info(`Testing partial inline; filename=${test.filename}`);
 
     // Setup the message.
-    let mc = await open_message_from_file(
+    const msgc = await open_message_from_file(
       new FileUtils.File(getTestFilePath("data/eml/" + test.filename))
     );
-    let aboutMessage = get_about_message(mc.window);
+    const aboutMessage = get_about_message(msgc);
 
-    let notificationBox = "mail-notification-top";
-    let notificationValue = "decryptInlinePG";
+    const notificationBox = "mail-notification-top";
+    const notificationValue = "decryptInlinePG";
 
     // Ensure the "partially encrypted notification" is visible.
-    wait_for_notification_to_show(
+    await wait_for_notification_to_show(
       aboutMessage,
       notificationBox,
       notificationValue
     );
 
-    let body = getMsgBodyTxt(mc);
+    let body = getMsgBodyTxt(msgc);
 
     Assert.ok(
       body.includes("BEGIN PGP"),
@@ -165,7 +158,7 @@ add_task(async function testPartialInlinePGPDecrypt() {
     Assert.ok(body.includes("suffix"), "suffix should still be shown");
 
     // Click on the button to process the message subset.
-    let processButton = get_notification_button(
+    const processButton = get_notification_button(
       aboutMessage,
       notificationBox,
       notificationValue,
@@ -177,20 +170,20 @@ add_task(async function testPartialInlinePGPDecrypt() {
 
     // Assert that the message was processed and the partial content reminder
     // notification is visible.
-    wait_for_notification_to_show(
+    await wait_for_notification_to_show(
       aboutMessage,
       notificationBox,
       "decryptInlinePGReminder"
     );
 
     // Get updated body text after processing the PGP subset.
-    body = getMsgBodyTxt(mc);
+    body = getMsgBodyTxt(msgc);
 
     Assert.ok(!body.includes("prefix"), "prefix should not be shown");
     Assert.ok(!body.includes("suffix"), "suffix should not be shown");
 
     if (test.expectDecryption) {
-      let containsSecret = body.includes(
+      const containsSecret = body.includes(
         "Insert a coin to play your personal lucky melody."
       );
       if (test.expectSuccess) {
@@ -229,7 +222,7 @@ add_task(async function testPartialInlinePGPDecrypt() {
       }
     }
 
-    close_window(mc);
+    await BrowserTestUtils.closeWindow(msgc);
   }
 });
 

@@ -39,12 +39,8 @@ class nsITransfer;
 class nsIPrincipal;
 class MaybeCloseWindowHelper;
 
-#define EXTERNAL_APP_HANDLER_IID                     \
-  {                                                  \
-    0x50eb7479, 0x71ff, 0x4ef8, {                    \
-      0xb3, 0x1e, 0x3b, 0x59, 0xc8, 0xab, 0xb9, 0x24 \
-    }                                                \
-  }
+#define EXTERNAL_APP_HANDLER_IID \
+  {0x50eb7479, 0x71ff, 0x4ef8, {0xb3, 0x1e, 0x3b, 0x59, 0xc8, 0xab, 0xb9, 0x24}}
 
 /**
  * The helper app service. Responsible for handling content that Mozilla
@@ -88,7 +84,8 @@ class nsExternalHelperAppService : public nsIExternalHelperAppService,
                      nsIPrincipal* aRedirectPrincipal,
                      mozilla::dom::BrowsingContext* aBrowsingContext,
                      bool aWasTriggeredExternally,
-                     bool aHasValidUserGestureActivation) override;
+                     bool aHasValidUserGestureActivation,
+                     bool aNewWindowTarget) override;
   NS_IMETHOD SetProtocolHandlerDefaults(nsIHandlerInfo* aHandlerInfo,
                                         bool aOSHandlerExists) override;
 
@@ -253,7 +250,7 @@ class nsExternalHelperAppService : public nsIExternalHelperAppService,
 
  private:
   nsresult DoContentContentProcessHelper(
-      const nsACString& aMimeContentType, nsIRequest* aRequest,
+      const nsACString& aMimeContentType, nsIChannel* aChannel,
       mozilla::dom::BrowsingContext* aContentContext, bool aForceSave,
       nsIInterfaceRequestor* aWindowContext,
       nsIStreamListener** aStreamListener);
@@ -280,7 +277,7 @@ class nsExternalAppHandler final : public nsIStreamListener,
   NS_DECL_NSIBACKGROUNDFILESAVEROBSERVER
   NS_DECL_NSINAMED
 
-  NS_DECLARE_STATIC_IID_ACCESSOR(EXTERNAL_APP_HANDLER_IID)
+  NS_INLINE_DECL_STATIC_IID(EXTERNAL_APP_HANDLER_IID)
 
   /**
    * @param aMIMEInfo       MIMEInfo object, representing the type of the
@@ -313,8 +310,6 @@ class nsExternalAppHandler final : public nsIStreamListener,
    * Apply content conversions if needed.
    */
   void MaybeApplyDecodingForExtension(nsIRequest* request);
-
-  void SetShouldCloseWindow() { mShouldCloseWindow = true; }
 
  protected:
   bool IsDownloadSpam(nsIChannel* aChannel);
@@ -380,12 +375,6 @@ class nsExternalAppHandler final : public nsIStreamListener,
   bool mStopRequestIssued;
 
   bool mIsFileChannel;
-
-  /**
-   * True if the ExternalHelperAppChild told us that we should close the window
-   * if we handle the content as a download.
-   */
-  bool mShouldCloseWindow;
 
   /**
    * True if the file should be handled internally.
@@ -544,8 +533,8 @@ class nsExternalAppHandler final : public nsIStreamListener,
                         const nsString& path);
 
   /**
-   * Set in HelperAppDlg.jsm. This is always null after the user has chosen an
-   * action.
+   * Set in HelperAppDlg.sys.mjs. This is always null after the user has chosen
+   * an action.
    */
   nsCOMPtr<nsIWebProgressListener2> mDialogProgressListener;
   /**
@@ -566,6 +555,5 @@ class nsExternalAppHandler final : public nsIStreamListener,
 
   RefPtr<nsExternalHelperAppService> mExtProtSvc;
 };
-NS_DEFINE_STATIC_IID_ACCESSOR(nsExternalAppHandler, EXTERNAL_APP_HANDLER_IID)
 
 #endif  // nsExternalHelperAppService_h__

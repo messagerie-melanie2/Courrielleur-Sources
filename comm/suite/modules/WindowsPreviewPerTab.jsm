@@ -48,7 +48,6 @@ var EXPORTED_SYMBOLS = ["AeroPeek"];
 const {NetUtil} = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
 const {PlacesUtils} = ChromeUtils.import("resource://gre/modules/PlacesUtils.jsm");
 const {PrivateBrowsingUtils} = ChromeUtils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
-const {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 // Pref to enable/disable preview-per-tab.
@@ -160,8 +159,7 @@ function PreviewController(win, tab) {
 }
 
 PreviewController.prototype = {
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsITaskbarPreviewController,
-                                         Ci.nsIDOMEventListener]),
+  QueryInterface: ChromeUtils.generateQI([Ci.nsITaskbarPreviewController]),
 
   _cachedWidth: 0,
   _cachedHeight: 0,
@@ -338,7 +336,7 @@ PreviewController.prototype = {
     return true;
   },
 
-  // nsIDOMEventListener
+  // EventListener
   handleEvent: function (evt) {
     switch (evt.type) {
       case "TabAttrModified":
@@ -503,7 +501,7 @@ TabWindow.prototype = {
     }
   },
 
-  //// nsIDOMEventListener
+  // EventListener
   handleEvent: function (evt) {
     let tab = evt.originalTarget;
     switch (evt.type) {
@@ -837,7 +835,7 @@ var AeroPeek = {
   // nsINavHistoryObserver implementation
   onBeginUpdateBatch() {},
   onEndUpdateBatch() {},
-  onVisit() {},
+  onVisits() {},
   onTitleChanged() {},
   onFrecencyChanged() {},
   onManyFrecenciesChanged() {},
@@ -856,9 +854,9 @@ var AeroPeek = {
     }
   },
 
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsISupportsWeakReference,
-                                         Ci.nsINavHistoryObserver,
-                                         Ci.nsIObserver]),
+  QueryInterface: ChromeUtils.generateQI([Ci.nsISupportsWeakReference,
+                                          Ci.nsINavHistoryObserver,
+                                          Ci.nsIObserver]),
 };
 
 XPCOMUtils.defineLazyGetter(AeroPeek, "cacheTimer", () =>

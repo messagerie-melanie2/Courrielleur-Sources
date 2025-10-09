@@ -67,10 +67,10 @@ bool DocumentChannelParent::Init(dom::CanonicalBrowsingContext* aContext,
       const DocumentCreationArgs& docArgs = aArgs.elementCreationArgs();
 
       promise = mDocumentLoadListener->OpenDocument(
-          loadState, aArgs.cacheKey(), Some(aArgs.channelId()),
-          aArgs.asyncOpenTime(), aArgs.timing(), std::move(clientInfo),
-          Some(docArgs.uriModified()), Some(docArgs.isXFOError()),
-          contentParent, &rv);
+          loadState, docArgs.loadFlags(), aArgs.cacheKey(),
+          Some(aArgs.channelId()), aArgs.asyncOpenTime(), aArgs.timing(),
+          std::move(clientInfo), docArgs.uriModified(),
+          Some(docArgs.isEmbeddingBlockedError()), contentParent, &rv);
     } else {
       const ObjectCreationArgs& objectArgs = aArgs.elementCreationArgs();
 
@@ -149,7 +149,7 @@ DocumentChannelParent::RedirectToRealChannel(
 
   RedirectToRealChannelArgs args;
   mDocumentLoadListener->SerializeRedirectData(
-      args, false, aRedirectFlags, aLoadFlags, cp, std::move(earlyHints),
+      args, false, aRedirectFlags, aLoadFlags, std::move(earlyHints),
       aEarlyHintLinkType);
   return SendRedirectToRealChannel(args, std::move(aStreamFilterEndpoints));
 }

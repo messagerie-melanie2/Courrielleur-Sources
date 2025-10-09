@@ -25,10 +25,11 @@ def run_hg(cmd):
         capture_output=True,
         text=True,
         env=env,
+        check=False,
     )
     if res.returncode != 0:
         print(
-            "Hit return code {} running '{}'. Aborting.".format(res.returncode, cmd),
+            f"Hit return code {res.returncode} running '{cmd}'. Aborting.",
             file=sys.stderr,
         )
         print(res.stderr)
@@ -44,10 +45,11 @@ def run_git(cmd, working_dir):
         capture_output=True,
         text=True,
         cwd=working_dir,
+        check=False,
     )
     if res.returncode != 0:
         print(
-            "Hit return code {} running '{}'. Aborting.".format(res.returncode, cmd),
+            f"Hit return code {res.returncode} running '{cmd}'. Aborting.",
             file=sys.stderr,
         )
         print(res.stderr)
@@ -62,13 +64,15 @@ def run_shell(cmd, capture_output=True):
         shell=True,
         capture_output=capture_output,
         text=True,
+        check=False,
     )
     if res.returncode != 0:
         print(
-            "Hit return code {} running '{}'. Aborting.".format(res.returncode, cmd),
+            f"Hit return code {res.returncode} running '{cmd}'. Aborting.",
             file=sys.stderr,
         )
-        print(res.stderr)
+        if capture_output:
+            print(res.stderr)
         sys.exit(1)
     output_lines = []
     if capture_output:
@@ -76,3 +80,21 @@ def run_shell(cmd, capture_output=True):
         output_lines = [] if len(stdout) == 0 else stdout.split("\n")
 
     return output_lines
+
+
+def get_last_line(file_path):
+    # technique from https://stackoverflow.com/questions/46258499/how-to-read-the-last-line-of-a-file-in-python
+    with open(file_path, "rb") as f:
+        try:  # catch OSError in case of a one line file
+            f.seek(-2, os.SEEK_END)
+            while f.read(1) != b"\n":
+                f.seek(-2, os.SEEK_CUR)
+        except OSError:
+            f.seek(0)
+        return f.readline().decode().strip()
+
+
+def update_resume_state(state, resume_state_filename):
+    with open(resume_state_filename, "w") as ofile:
+        ofile.write(state)
+        ofile.write("\n")

@@ -3,29 +3,22 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* eslint-disable mozilla/valid-lazy */
 
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 import { ExtensionUtils } from "resource://gre/modules/ExtensionUtils.sys.mjs";
 
-const lazy = {};
-
-ChromeUtils.defineESModuleGetters(lazy, {
+const lazy = XPCOMUtils.declareLazy({
   ExtensionParent: "resource://gre/modules/ExtensionParent.sys.mjs",
-});
-XPCOMUtils.defineLazyServiceGetter(
-  lazy,
-  "ProxyService",
-  "@mozilla.org/network/protocol-proxy-service;1",
-  "nsIProtocolProxyService"
-);
-
-XPCOMUtils.defineLazyGetter(lazy, "tabTracker", () => {
-  return lazy.ExtensionParent.apiManager.global.tabTracker;
-});
-XPCOMUtils.defineLazyGetter(lazy, "getCookieStoreIdForOriginAttributes", () => {
-  return lazy.ExtensionParent.apiManager.global
-    .getCookieStoreIdForOriginAttributes;
+  ProxyService: {
+    service: "@mozilla.org/network/protocol-proxy-service;1",
+    iid: Ci.nsIProtocolProxyService,
+  },
+  getCookieStoreIdForOriginAttributes: () =>
+    lazy.ExtensionParent.apiManager.global.getCookieStoreIdForOriginAttributes,
+  /** @returns {TabTrackerBase} */
+  tabTracker: () => lazy.ExtensionParent.apiManager.global.tabTracker,
 });
 
 // DNS is resolved on the SOCKS proxy server.
@@ -170,9 +163,9 @@ const ProxyInfoData = {
         `ProxyInfoData: Invalid proxy server authorization header: "${proxyAuthorizationHeader}"`
       );
     }
-    if (type !== "https") {
+    if (type !== "https" && type !== "http") {
       throw new ExtensionError(
-        `ProxyInfoData: ProxyAuthorizationHeader requires type "https"`
+        `ProxyInfoData: ProxyAuthorizationHeader requires type "https" or "http"`
       );
     }
   },
@@ -282,8 +275,8 @@ export class ProxyChannelFilter {
     );
   }
 
-  // Originally duplicated from WebRequest.jsm with small changes.  Keep this
-  // in sync with WebRequest.jsm as well as parent/ext-webRequest.js when
+  // Originally duplicated from WebRequest.sys.mjs with small changes.  Keep this
+  // in sync with WebRequest.sys.mjs as well as parent/ext-webRequest.js when
   // apropiate.
   getRequestData(channel, extraData) {
     let originAttributes = channel.loadInfo?.originAttributes;
@@ -344,7 +337,7 @@ export class ProxyChannelFilter {
       let wrapper = ChannelWrapper.get(channel);
 
       let browserData = { tabId: -1, windowId: -1 };
-      if (wrapper.browserElement) {
+      if (XULElement.isInstance(wrapper.browserElement)) {
         browserData = lazy.tabTracker.getBrowserData(wrapper.browserElement);
       }
 
@@ -418,6 +411,6 @@ export class ProxyChannelFilter {
   }
 
   destroy() {
-    lazy.ProxyService.unregisterFilter(this);
+    lazy.ProxyService.unregisterChannelFilter(this);
   }
 }

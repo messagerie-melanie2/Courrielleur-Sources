@@ -66,8 +66,9 @@ export default [
     labelId: "toolbar-get-messages",
     templateId: "getMessagesTemplate",
     requiredModules: [
-      "chrome://messenger/content/unifiedtoolbar/unified-toolbar-button.mjs",
+      "chrome://messenger/content/unifiedtoolbar/get-messages-button.mjs",
     ],
+    hasContextMenu: true,
   },
   {
     id: "address-book",
@@ -129,6 +130,14 @@ export default [
     id: "new-task",
     labelId: "toolbar-new-task",
     templateId: "newTaskTemplate",
+    requiredModules: [
+      "chrome://messenger/content/unifiedtoolbar/unified-toolbar-button.mjs",
+    ],
+  },
+  {
+    id: "create-contact",
+    labelId: "toolbar-create-contact",
+    templateId: "createContactTemplate",
     requiredModules: [
       "chrome://messenger/content/unifiedtoolbar/unified-toolbar-button.mjs",
     ],
@@ -438,6 +447,34 @@ export default [
     labelId: "toolbar-unifinder",
     spaces: ["calendar"],
     templateId: "calendarUnifinderTemplate",
+    requiredModules: [
+      "chrome://messenger/content/unifiedtoolbar/unified-toolbar-button.mjs",
+    ],
+  },
+  // Address book space
+  {
+    id: "create-address-book",
+    labelId: "toolbar-create-address-book",
+    spaces: ["addressbook"],
+    templateId: "createAddressBookTemplate",
+    requiredModules: [
+      "chrome://messenger/content/unifiedtoolbar/create-address-book-button.mjs",
+    ],
+  },
+  {
+    id: "create-list",
+    labelId: "toolbar-create-list",
+    spaces: ["addressbook"],
+    templateId: "createListTemplate",
+    requiredModules: [
+      "chrome://messenger/content/unifiedtoolbar/unified-toolbar-button.mjs",
+    ],
+  },
+  {
+    id: "import-contacts",
+    labelId: "toolbar-import-contacts",
+    spaces: ["addressbook"],
+    templateId: "importContactsTemplate",
     requiredModules: [
       "chrome://messenger/content/unifiedtoolbar/unified-toolbar-button.mjs",
     ],

@@ -7,6 +7,7 @@
 #define nsMaybeWeakPtr_h_
 
 #include "mozilla/Attributes.h"
+#include "mozilla/Try.h"
 #include "nsCOMPtr.h"
 #include "nsIWeakReferenceUtils.h"
 #include "nsTArray.h"
@@ -19,8 +20,8 @@ template <class T>
 class nsMaybeWeakPtr {
  public:
   nsMaybeWeakPtr() = default;
-  MOZ_IMPLICIT nsMaybeWeakPtr(T* aRef) : mPtr(aRef), mWeak(false) {}
-  MOZ_IMPLICIT nsMaybeWeakPtr(const nsCOMPtr<nsIWeakReference>& aRef)
+  explicit nsMaybeWeakPtr(T* aRef) : mPtr(aRef), mWeak(false) {}
+  explicit nsMaybeWeakPtr(const nsCOMPtr<nsIWeakReference>& aRef)
       : mPtr(aRef), mWeak(true) {}
 
   nsMaybeWeakPtr<T>& operator=(T* aRef) {
@@ -35,18 +36,24 @@ class nsMaybeWeakPtr {
     return *this;
   }
 
-  bool operator==(const nsMaybeWeakPtr<T>& other) const {
-    return mPtr == other.mPtr;
+  bool operator==(const nsMaybeWeakPtr<T>& aOther) const {
+    return mPtr == aOther.mPtr;
+  }
+
+  bool operator==(T* const& aStrong) const { return !mWeak && mPtr == aStrong; }
+
+  bool operator==(const nsCOMPtr<nsIWeakReference>& aWeak) const {
+    return mWeak && mPtr == aWeak;
   }
 
   nsISupports* GetRawValue() const { return mPtr.get(); }
   bool IsWeak() const { return mWeak; }
 
-  const nsCOMPtr<T> GetValue() const;
+  nsCOMPtr<T> GetValue() const;
 
  private:
   nsCOMPtr<nsISupports> mPtr;
-  bool mWeak;
+  bool mWeak = false;
 };
 
 // nsMaybeWeakPtrArray is an array of MaybeWeakPtr objects, that knows how to
@@ -55,7 +62,7 @@ class nsMaybeWeakPtr {
 
 template <class T>
 class nsMaybeWeakPtrArray : public CopyableTArray<nsMaybeWeakPtr<T>> {
-  typedef nsTArray<nsMaybeWeakPtr<T>> MaybeWeakArray;
+  using MaybeWeakArray = nsTArray<nsMaybeWeakPtr<T>>;
 
   nsresult SetMaybeWeakPtr(nsMaybeWeakPtr<T>& aRef, T* aElement,
                            bool aOwnsWeak) {
@@ -116,7 +123,7 @@ class nsMaybeWeakPtrArray : public CopyableTArray<nsMaybeWeakPtr<T>> {
 };
 
 template <class T>
-const nsCOMPtr<T> nsMaybeWeakPtr<T>::GetValue() const {
+nsCOMPtr<T> nsMaybeWeakPtr<T>::GetValue() const {
   if (!mPtr) {
     return nullptr;
   }
@@ -126,20 +133,18 @@ const nsCOMPtr<T> nsMaybeWeakPtr<T>::GetValue() const {
 
   if (mWeak) {
     nsCOMPtr<nsIWeakReference> weakRef = do_QueryInterface(mPtr);
-    if (weakRef) {
-      ref = do_QueryReferent(weakRef, &rv);
-      if (NS_SUCCEEDED(rv)) {
-        return ref;
-      }
+    if (NS_WARN_IF(!weakRef)) {
+      return nullptr;
     }
+    ref = do_QueryReferent(weakRef, &rv);
+    NS_WARNING_ASSERTION(NS_SUCCEEDED(rv) || rv == NS_ERROR_NULL_POINTER,
+                         "QueryReferent failed with non-null pointer");
   } else {
     ref = do_QueryInterface(mPtr, &rv);
-    if (NS_SUCCEEDED(rv)) {
-      return ref;
-    }
+    NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                         "QueryInterface failed with non-null pointer");
   }
-
-  return nullptr;
+  return ref;
 }
 
 template <typename T>
@@ -161,10 +166,10 @@ inline void ImplCycleCollectionTraverse(
 // Call a method on each element in the array, but only if the element is
 // non-null.
 
-#define ENUMERATE_WEAKARRAY(array, type, method)                          \
-  for (uint32_t array_idx = 0; array_idx < array.Length(); ++array_idx) { \
-    const nsCOMPtr<type>& e = array.ElementAt(array_idx).GetValue();      \
-    if (e) e->method;                                                     \
+#define ENUMERATE_WEAKARRAY(array, type, method)                            \
+  for (uint32_t array_idx = 0; array_idx < (array).Length(); ++array_idx) { \
+    const nsCOMPtr<type>& e = (array).ElementAt(array_idx).GetValue();      \
+    if (e) e->method;                                                       \
   }
 
 #endif

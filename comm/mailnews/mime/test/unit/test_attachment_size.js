@@ -12,14 +12,14 @@ var {
   SyntheticPartLeaf,
   SyntheticPartMultiMixed,
   SyntheticMessageSet,
-} = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-var { MessageInjection } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageInjection.jsm"
+var { MessageInjection } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageInjection.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 // Somehow we hit the blocklist service, and that needs appInfo defined
@@ -270,18 +270,18 @@ add_task(function endTest() {
 });
 
 async function test_message_attachments(info) {
-  let synMsg = msgGen.makeMessage(info);
-  let synSet = new SyntheticMessageSet([synMsg]);
+  const synMsg = msgGen.makeMessage(info);
+  const synSet = new SyntheticMessageSet([synMsg]);
   await messageInjection.addSetsToFolders([inbox], [synSet]);
 
-  let msgURI = synSet.getMsgURI(0);
-  let msgService = MailServices.messageServiceFromURI(msgURI);
+  const msgURI = synSet.getMsgURI(0);
+  const msgService = MailServices.messageServiceFromURI(msgURI);
   await PromiseTestUtils.promiseDelay(200);
-  let streamListener = new PromiseTestUtils.PromiseStreamListener({
+  const streamListener = new PromiseTestUtils.PromiseStreamListener({
     onStopRequest(request) {
       request.QueryInterface(Ci.nsIMailChannel);
-      for (let attachment of request.attachments) {
-        let attachmentSize = parseInt(attachment.get("X-Mozilla-PartSize"));
+      for (const attachment of request.attachments) {
+        const attachmentSize = parseInt(attachment.get("X-Mozilla-PartSize"));
         dump(
           "*** Size is " + attachmentSize + " (expecting " + info.size + ")\n"
         );
@@ -309,11 +309,11 @@ async function test_message_attachments(info) {
  * counts bytes differently on Windows, where it counts newlines (\r\n) as 2
  * bytes. Mac and Linux treats them as 1 byte.
  *
- * @param message a synthetic message from makeMessage()
- * @returns the message's size in bytes
+ * @param {SyntheticMessage} message - A synthetic message from makeMessage()
+ * @returns {integer} the message's size in bytes.
  */
 function get_message_size(message) {
-  let messageString = message.toMessageString();
+  const messageString = message.toMessageString();
   if (EPSILON == 4) {
     // Windows
     return messageString.length;

@@ -5,18 +5,14 @@
 "use strict";
 
 var { click_account_tree_row, get_account_tree_row, open_advanced_settings } =
-  ChromeUtils.import(
-    "resource://testing-common/mozmill/AccountManagerHelpers.jsm"
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/AccountManagerHelpers.sys.mjs"
   );
-var { FAKE_SERVER_HOSTNAME, mc } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+var { FAKE_SERVER_HOSTNAME } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-var { input_value, delete_all_existing } = ChromeUtils.import(
-  "resource://testing-common/mozmill/KeyboardHelpers.jsm"
-);
-
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { input_value, delete_all_existing } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/KeyboardHelpers.sys.mjs"
 );
 
 var PORT_NUMBERS_TO_TEST = [
@@ -31,19 +27,19 @@ var gTestNumber;
 async function subtest_check_set_port_number(tab, dontSet) {
   // This test expects the following POP account to exist by default
   // with port number 110 and no security.
-  let server = MailServices.accounts.findServer(
+  const server = MailServices.accounts.findServer(
     "tinderbox",
     FAKE_SERVER_HOSTNAME,
     "pop3"
   );
-  let account = MailServices.accounts.FindAccountForServer(server);
+  const account = MailServices.accounts.findAccountForServer(server);
 
-  let accountRow = get_account_tree_row(account.key, "am-server.xhtml", tab);
-  click_account_tree_row(tab, accountRow);
+  const accountRow = get_account_tree_row(account.key, "am-server.xhtml", tab);
+  await click_account_tree_row(tab, accountRow);
 
-  let iframe =
+  const iframe =
     tab.browser.contentWindow.document.getElementById("contentFrame");
-  let portElem = iframe.contentDocument.getElementById("server.port");
+  const portElem = iframe.contentDocument.getElementById("server.port");
   portElem.focus();
 
   if (portElem.value != PORT_NUMBERS_TO_TEST[gTestNumber - 1]) {
@@ -56,8 +52,8 @@ async function subtest_check_set_port_number(tab, dontSet) {
   }
 
   if (!dontSet) {
-    delete_all_existing(mc, portElem);
-    input_value(mc, PORT_NUMBERS_TO_TEST[gTestNumber]);
+    delete_all_existing(window, portElem);
+    input_value(window, PORT_NUMBERS_TO_TEST[gTestNumber]);
 
     await new Promise(resolve => setTimeout(resolve));
   }

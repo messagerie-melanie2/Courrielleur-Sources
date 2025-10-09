@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { AddrBookCard } = ChromeUtils.import(
-  "resource:///modules/AddrBookCard.jsm"
+const { AddrBookCard } = ChromeUtils.importESModule(
+  "resource:///modules/AddrBookCard.sys.mjs"
 );
 
 /**
@@ -21,19 +21,23 @@ add_task(async function () {
    * cleared when the preference changes.
    */
   function getDisplayNameInAddressBook() {
-    let card = MailServices.ab.cardForEmailAddress("first.last@invalid");
+    const card = MailServices.ab.cardForEmailAddress("first.last@invalid");
     if (!card) {
       return null;
     }
 
-    let preferDisplayName = card.getPropertyAsBool("PreferDisplayName", true);
-    return preferDisplayName ? card.displayName : card.primaryEmail;
+    return card.displayName || card.primaryEmail;
   }
 
   Assert.equal(getPrefValue(), -999, "pref has no initial value");
   Assert.equal(getDisplayNameInAddressBook(), null, "card doesn't exist yet");
 
-  let book = MailServices.ab.getDirectory(kPABData.URI);
+  const dirPrefId = MailServices.ab.newAddressBook(
+    "new book",
+    "",
+    Ci.nsIAbManager.JS_DIRECTORY_TYPE
+  );
+  const book = MailServices.ab.getDirectoryFromId(dirPrefId);
   let card = new AddrBookCard();
   card.firstName = "first";
   card.lastName = "last";
@@ -52,28 +56,24 @@ add_task(async function () {
   Assert.equal(getDisplayNameInAddressBook(), "display");
 
   [card] = book.childCards;
-  card.setPropertyAsBool("PreferDisplayName", true);
-  book.modifyCard(card);
-
-  Assert.equal(getPrefValue(), 3, "pref updated by adding flag");
-  Assert.equal(getDisplayNameInAddressBook(), "display");
-
-  [card] = book.childCards;
   card.displayName = "display name";
   book.modifyCard(card);
 
-  Assert.equal(getPrefValue(), 4, "pref updated by changing display name");
+  Assert.equal(getPrefValue(), 3, "pref updated by changing display name");
   Assert.equal(getDisplayNameInAddressBook(), "display name");
-
-  [card] = book.childCards;
-  card.setPropertyAsBool("PreferDisplayName", false);
-  book.modifyCard(card);
-
-  Assert.equal(getPrefValue(), 5, "pref updated by clearing flag");
-  Assert.equal(getDisplayNameInAddressBook(), "first.last@invalid");
 
   book.deleteCards([card]);
 
-  Assert.equal(getPrefValue(), 6, "pref updated by deleting card");
+  Assert.equal(getPrefValue(), 4, "pref updated by deleting card");
+  Assert.equal(getDisplayNameInAddressBook(), null, "card no longer exists");
+
+  book.addCard(card);
+
+  Assert.equal(getPrefValue(), 5, "pref updated by adding card");
+  Assert.equal(getDisplayNameInAddressBook(), "display name");
+
+  await promiseDirectoryRemoved(book.URI);
+
+  Assert.equal(getPrefValue(), 6, "pref updated by removing book");
   Assert.equal(getDisplayNameInAddressBook(), null, "card no longer exists");
 });

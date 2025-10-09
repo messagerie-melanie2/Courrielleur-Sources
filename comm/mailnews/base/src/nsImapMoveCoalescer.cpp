@@ -11,10 +11,7 @@
 #include "nsMsgFolderFlags.h"
 #include "nsIMsgHdr.h"
 #include "nsIMsgImapMailFolder.h"
-#include "nsThreadUtils.h"
 #include "nsServiceManagerUtils.h"
-#include "nsComponentManagerUtils.h"
-#include "mozilla/ArrayUtils.h"
 
 NS_IMPL_ISUPPORTS(nsImapMoveCoalescer, nsIUrlListener)
 
@@ -23,6 +20,8 @@ nsImapMoveCoalescer::nsImapMoveCoalescer(nsIMsgFolder* sourceFolder,
   m_sourceFolder = sourceFolder;
   m_msgWindow = msgWindow;
   m_hasPendingMoves = false;
+  m_doNewMailNotification = false;
+  m_outstandingMoves = 0;
 }
 
 nsImapMoveCoalescer::~nsImapMoveCoalescer() {}
@@ -133,9 +132,9 @@ nsImapMoveCoalescer::OnStopRunningUrl(nsIURI* aUrl, nsresult aExitCode) {
 }
 
 nsTArray<nsMsgKey>* nsImapMoveCoalescer::GetKeyBucket(uint32_t keyArrayIndex) {
-  NS_ASSERTION(keyArrayIndex < MOZ_ARRAY_LENGTH(m_keyBuckets), "invalid index");
+  NS_ASSERTION(keyArrayIndex < std::size(m_keyBuckets), "invalid index");
 
-  return keyArrayIndex < mozilla::ArrayLength(m_keyBuckets)
+  return keyArrayIndex < std::size(m_keyBuckets)
              ? &(m_keyBuckets[keyArrayIndex])
              : nullptr;
 }
@@ -154,23 +153,19 @@ NS_IMETHODIMP nsMoveCoalescerCopyListener::OnStartCopy() {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-/* void OnProgress (in uint32_t aProgress, in uint32_t aProgressMax); */
 NS_IMETHODIMP nsMoveCoalescerCopyListener::OnProgress(uint32_t aProgress,
                                                       uint32_t aProgressMax) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-/* void SetMessageKey (in uint32_t aKey); */
 NS_IMETHODIMP nsMoveCoalescerCopyListener::SetMessageKey(uint32_t aKey) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-/* void GetMessageId (in nsACString aMessageId); */
 NS_IMETHODIMP nsMoveCoalescerCopyListener::GetMessageId(nsACString& messageId) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
-/* void OnStopCopy (in nsresult aStatus); */
 NS_IMETHODIMP nsMoveCoalescerCopyListener::OnStopCopy(nsresult aStatus) {
   nsresult rv = NS_OK;
   if (NS_SUCCEEDED(aStatus)) {

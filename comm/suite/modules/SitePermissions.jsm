@@ -4,7 +4,6 @@
 
 var EXPORTED_SYMBOLS = [ "SitePermissions" ];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { XPCOMUtils } = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 var gStringBundle =
@@ -784,13 +783,41 @@ var gPermissionObject = {
     exactHostMatch: true
   },
 
-};
+  "shortcuts": {
+    states: [ SitePermissions.ALLOW, SitePermissions.BLOCK ],
+  },
 
-// Delete this entry while being pre-off
-// or the persistent-storage permission would appear in Page info's Permission section
-if (!Services.prefs.getBoolPref("browser.storageManager.enabled")) {
-  delete gPermissionObject["persistent-storage"];
-}
+  "allowXULXBL": {
+  },
+
+  "login-saving": {
+  },
+
+  "object": {
+  },
+
+  "offline-app": {
+    getDefault() {
+      if (Services.prefs.getBoolPref("offline-apps.allow_by_default", false))
+        return SitePermissions.ALLOW;
+
+      if (Services.prefs.getBoolPref("browser.offline-apps.notify"))
+        return SitePermissions.BLOCK;
+
+      return SitePermissions.UNKNOWN;
+    }
+  },
+
+  "script": {
+  },
+
+  "stylesheet": {
+  },
+
+  "trackingprotection": {
+  },
+
+};
 
 XPCOMUtils.defineLazyPreferenceGetter(SitePermissions, "temporaryPermissionExpireTime",
                                       "privacy.temporary_permission_expire_time_ms", 3600 * 1000);

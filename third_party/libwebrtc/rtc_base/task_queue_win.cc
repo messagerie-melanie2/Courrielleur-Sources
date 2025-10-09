@@ -35,12 +35,12 @@ static_assert(false, "This file should not be built, see Bug 1797161.");
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <queue>
 #include <utility>
 
 #include "absl/functional/any_invocable.h"
 #include "absl/strings/string_view.h"
-#include "absl/types/optional.h"
 #include "api/task_queue/task_queue_base.h"
 #include "api/units/time_delta.h"
 #include "api/units/timestamp.h"
@@ -169,11 +169,15 @@ class TaskQueueWin : public TaskQueueBase {
   ~TaskQueueWin() override = default;
 
   void Delete() override;
-  void PostTask(absl::AnyInvocable<void() &&> task) override;
-  void PostDelayedTask(absl::AnyInvocable<void() &&> task,
-                       TimeDelta delay) override;
-  void PostDelayedHighPrecisionTask(absl::AnyInvocable<void() &&> task,
-                                    TimeDelta delay) override;
+
+ protected:
+  void PostTaskImpl(absl::AnyInvocable<void() &&> task,
+                    const PostTaskTraits& traits,
+                    const Location& location) override;
+  void PostDelayedTaskImpl(absl::AnyInvocable<void() &&> task,
+                           TimeDelta delay,
+                           const PostDelayedTaskTraits& traits,
+                           const Location& location) override;
   void RunPendingTasks();
 
  private:
@@ -215,7 +219,7 @@ TaskQueueWin::TaskQueueWin(absl::string_view queue_name,
 
 void TaskQueueWin::Delete() {
   RTC_DCHECK(!IsCurrent());
-  RTC_CHECK(thread_.GetHandle() != absl::nullopt);
+  RTC_CHECK(thread_.GetHandle() != std::nullopt);
   while (
       !::PostThreadMessage(GetThreadId(*thread_.GetHandle()), WM_QUIT, 0, 0)) {
     RTC_CHECK_EQ(ERROR_NOT_ENOUGH_QUOTA, ::GetLastError());
@@ -226,32 +230,30 @@ void TaskQueueWin::Delete() {
   delete this;
 }
 
-void TaskQueueWin::PostTask(absl::AnyInvocable<void() &&> task) {
+void TaskQueueWin::PostTaskImpl(absl::AnyInvocable<void() &&> task,
+                                const PostTaskTraits& traits,
+                                const Location& location) {
   MutexLock lock(&pending_lock_);
   pending_.push(std::move(task));
   ::SetEvent(in_queue_);
 }
 
-void TaskQueueWin::PostDelayedTask(absl::AnyInvocable<void() &&> task,
-                                   TimeDelta delay) {
+void TaskQueueWin::PostDelayedTaskImpl(absl::AnyInvocable<void() &&> task,
+                                       TimeDelta delay,
+                                       const PostDelayedTaskTraits& traits,
+                                       const Location& location) {
   if (delay <= TimeDelta::Zero()) {
     PostTask(std::move(task));
     return;
   }
 
   auto* task_info = new DelayedTaskInfo(delay, std::move(task));
-  RTC_CHECK(thread_.GetHandle() != absl::nullopt);
+  RTC_CHECK(thread_.GetHandle() != std::nullopt);
   if (!::PostThreadMessage(GetThreadId(*thread_.GetHandle()),
                            WM_QUEUE_DELAYED_TASK, 0,
                            reinterpret_cast<LPARAM>(task_info))) {
     delete task_info;
   }
-}
-
-void TaskQueueWin::PostDelayedHighPrecisionTask(
-    absl::AnyInvocable<void() &&> task,
-    TimeDelta delay) {
-  PostDelayedTask(std::move(task), delay);
 }
 
 void TaskQueueWin::RunPendingTasks() {

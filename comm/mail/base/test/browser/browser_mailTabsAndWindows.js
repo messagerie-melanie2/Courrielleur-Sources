@@ -2,75 +2,84 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-var { MailUtils } = ChromeUtils.import("resource:///modules/MailUtils.jsm");
-var { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { MailUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailUtils.sys.mjs"
+);
+var { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
 
 let folderA, messagesA, folderB, messagesB;
 
 add_setup(async function () {
-  let tabmail = document.getElementById("tabmail");
-  if (tabmail.tabInfo.length > 1) {
-    info(`Will close ${tabmail.tabInfo.length - 1} tabs left over from others`);
-    for (let i = tabmail.tabInfo.length - 1; i > 0; i--) {
-      tabmail.closeTab(i);
-    }
-  }
+  const tabmail = document.getElementById("tabmail");
   Assert.equal(tabmail.tabInfo.length, 1, "should be set up with one tab");
+  tabmail.closeOtherTabs(0);
 
-  let generator = new MessageGenerator();
+  const generator = new MessageGenerator();
 
-  MailServices.accounts.createLocalMailAccount();
-  let account = MailServices.accounts.accounts[0];
-  let rootFolder = account.incomingServer.rootFolder;
+  const account = MailServices.accounts.createLocalMailAccount();
+  const rootFolder = account.incomingServer.rootFolder.QueryInterface(
+    Ci.nsIMsgLocalMailFolder
+  );
 
-  rootFolder.createSubfolder("mailTabsA", null);
   folderA = rootFolder
-    .getChildNamed("mailTabsA")
+    .createLocalSubfolder("mailTabsA")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   folderA.addMessageBatch(
-    generator.makeMessages({ count: 5 }).map(message => message.toMboxString())
+    generator
+      .makeMessages({ count: 5 })
+      .map(message => message.toMessageString())
   );
   messagesA = [...folderA.messages];
 
-  rootFolder.createSubfolder("mailTabsB", null);
   folderB = rootFolder
-    .getChildNamed("mailTabsB")
+    .createLocalSubfolder("mailTabsB")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   folderB.addMessageBatch(
-    generator.makeMessages({ count: 2 }).map(message => message.toMboxString())
+    generator
+      .makeMessages({ count: 2 })
+      .map(message => message.toMessageString())
   );
   messagesB = [...folderB.messages];
 
   registerCleanupFunction(() => {
+    Services.prefs.clearUserPref("mail.tabs.loadInBackground");
     MailServices.accounts.removeAccount(account, false);
   });
 });
 
 add_task(async function testTabs() {
-  let tabmail = document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   Assert.equal(tabmail.tabInfo.length, 1, "should start off with one tab open");
-  Assert.equal(tabmail.currentTabInfo, tabmail.tabInfo[0], "should show tab0");
+  Assert.deepEqual(
+    tabmail.tabInfo.map(t => t.selected),
+    [true]
+  );
+  Assert.equal(tabmail.currentTabInfo, tabmail.tabInfo[0], "should show tab 0");
 
-  // Check the first tab.
+  info("Check the first tab.");
 
-  let firstTab = tabmail.currentTabInfo;
+  const firstTab = tabmail.currentTabInfo;
   Assert.equal(firstTab.mode.name, "mail3PaneTab");
   Assert.equal(firstTab.mode.tabType.name, "mailTab");
 
-  let firstChromeBrowser = firstTab.chromeBrowser;
+  const firstChromeBrowser = firstTab.chromeBrowser;
   Assert.equal(firstChromeBrowser.currentURI.spec, "about:3pane");
   Assert.equal(tabmail.currentAbout3Pane, firstChromeBrowser.contentWindow);
 
-  let firstMessageBrowser =
+  const firstWebBrowser =
+    firstChromeBrowser.contentDocument.getElementById("webBrowser");
+  const firstMultiMessageBrowser =
+    firstChromeBrowser.contentDocument.getElementById("multiMessageBrowser");
+  const firstMessageBrowser =
     firstChromeBrowser.contentDocument.getElementById("messageBrowser");
   Assert.equal(firstMessageBrowser.currentURI.spec, "about:message");
 
-  let firstMessagePane =
+  const firstMessagePane =
     firstMessageBrowser.contentDocument.getElementById("messagepane");
   Assert.equal(firstMessagePane.currentURI.spec, "about:blank");
   Assert.equal(
@@ -81,7 +90,16 @@ add_task(async function testTabs() {
   Assert.equal(firstTab.browser, null);
   Assert.equal(firstTab.linkedBrowser, null);
 
-  let { folderTree, threadTree, messagePane, paneLayout } =
+  Assert.ok(
+    !firstWebBrowser.docShellIsActive,
+    "first web browser should NOT be visible"
+  );
+  Assert.ok(
+    !firstMessagePane.docShellIsActive,
+    "first message browser should NOT be visible"
+  );
+
+  const { folderTree, threadTree, messagePane, paneLayout } =
     firstChromeBrowser.contentWindow;
 
   firstTab.folder = folderA;
@@ -103,17 +121,25 @@ add_task(async function testTabs() {
   Assert.equal(firstTab.message, messagesA[0]);
   Assert.equal(firstTab.browser, firstMessagePane);
   Assert.equal(firstTab.linkedBrowser, firstMessagePane);
+  Assert.ok(
+    !firstWebBrowser.docShellIsActive,
+    "first web browser should NOT be visible"
+  );
+  Assert.ok(
+    firstMessagePane.docShellIsActive,
+    "first message browser should be visible"
+  );
 
-  Assert.ok(BrowserTestUtils.is_visible(folderTree));
-  Assert.ok(BrowserTestUtils.is_visible(firstMessageBrowser));
+  Assert.ok(BrowserTestUtils.isVisible(folderTree));
+  Assert.ok(BrowserTestUtils.isVisible(firstMessageBrowser));
 
   paneLayout.folderPaneVisible = false;
-  Assert.ok(BrowserTestUtils.is_hidden(folderTree));
-  Assert.ok(BrowserTestUtils.is_visible(firstMessageBrowser));
+  Assert.ok(BrowserTestUtils.isHidden(folderTree));
+  Assert.ok(BrowserTestUtils.isVisible(firstMessageBrowser));
 
   paneLayout.messagePaneVisible = false;
-  Assert.ok(BrowserTestUtils.is_hidden(folderTree));
-  Assert.ok(BrowserTestUtils.is_hidden(firstMessageBrowser));
+  Assert.ok(BrowserTestUtils.isHidden(folderTree));
+  Assert.ok(BrowserTestUtils.isHidden(firstMessageBrowser));
   Assert.equal(
     tabmail.currentAboutMessage,
     null,
@@ -123,12 +149,12 @@ add_task(async function testTabs() {
   Assert.equal(firstTab.linkedBrowser, null);
 
   paneLayout.folderPaneVisible = true;
-  Assert.ok(BrowserTestUtils.is_visible(folderTree));
-  Assert.ok(BrowserTestUtils.is_hidden(firstMessageBrowser));
+  Assert.ok(BrowserTestUtils.isVisible(folderTree));
+  Assert.ok(BrowserTestUtils.isHidden(firstMessageBrowser));
 
   paneLayout.messagePaneVisible = true;
-  Assert.ok(BrowserTestUtils.is_visible(folderTree));
-  Assert.ok(BrowserTestUtils.is_visible(firstMessageBrowser));
+  Assert.ok(BrowserTestUtils.isVisible(folderTree));
+  Assert.ok(BrowserTestUtils.isVisible(firstMessageBrowser));
   Assert.equal(
     tabmail.currentAboutMessage,
     firstMessageBrowser.contentWindow,
@@ -140,17 +166,12 @@ add_task(async function testTabs() {
   Assert.equal(firstChromeBrowser.contentWindow.tabOrWindow, firstTab);
   Assert.equal(firstMessageBrowser.contentWindow.tabOrWindow, firstTab);
 
-  // Select multiple messages.
-
-  let firstMultiMessageBrowser =
-    firstChromeBrowser.contentDocument.getElementById("multiMessageBrowser");
-  let firstWebBrowser =
-    firstChromeBrowser.contentDocument.getElementById("webBrowser");
+  info("Select multiple messages.");
 
   threadTree.selectedIndices = [1, 2];
-  Assert.ok(BrowserTestUtils.is_hidden(firstWebBrowser));
-  Assert.ok(BrowserTestUtils.is_hidden(firstMessageBrowser));
-  Assert.ok(BrowserTestUtils.is_visible(firstMultiMessageBrowser));
+  Assert.ok(BrowserTestUtils.isHidden(firstWebBrowser));
+  Assert.ok(BrowserTestUtils.isHidden(firstMessageBrowser));
+  Assert.ok(BrowserTestUtils.isVisible(firstMultiMessageBrowser));
   Assert.equal(
     tabmail.currentAboutMessage,
     null,
@@ -158,19 +179,27 @@ add_task(async function testTabs() {
   );
   Assert.equal(firstTab.browser, null);
   Assert.equal(firstTab.linkedBrowser, null);
+  Assert.ok(
+    !firstWebBrowser.docShellIsActive,
+    "first web browser should NOT be visible"
+  );
+  Assert.ok(
+    !firstMessagePane.docShellIsActive,
+    "first message browser should NOT be visible"
+  );
 
-  // Load a web page.
+  info("Load a web page.");
 
-  let loadedPromise = BrowserTestUtils.browserLoaded(
+  const loadedPromise = BrowserTestUtils.browserLoaded(
     firstWebBrowser,
     false,
     "http://mochi.test:8888/"
   );
   messagePane.displayWebPage("http://mochi.test:8888/");
   await loadedPromise;
-  Assert.ok(BrowserTestUtils.is_visible(firstWebBrowser));
-  Assert.ok(BrowserTestUtils.is_hidden(firstMessageBrowser));
-  Assert.ok(BrowserTestUtils.is_hidden(firstMultiMessageBrowser));
+  Assert.ok(BrowserTestUtils.isVisible(firstWebBrowser));
+  Assert.ok(BrowserTestUtils.isHidden(firstMessageBrowser));
+  Assert.ok(BrowserTestUtils.isHidden(firstMultiMessageBrowser));
   Assert.equal(firstWebBrowser.currentURI.spec, "http://mochi.test:8888/");
   Assert.equal(
     tabmail.currentAboutMessage,
@@ -179,13 +208,21 @@ add_task(async function testTabs() {
   );
   Assert.equal(firstTab.browser, firstWebBrowser);
   Assert.equal(firstTab.linkedBrowser, firstWebBrowser);
+  Assert.ok(
+    firstWebBrowser.docShellIsActive,
+    "first web browser should be visible"
+  );
+  Assert.ok(
+    !firstMessagePane.docShellIsActive,
+    "first message browser should NOT be visible"
+  );
 
-  // Go back to a single selection.
+  info("Go back to a single selection.");
 
   threadTree.selectedIndex = 0;
-  Assert.ok(BrowserTestUtils.is_hidden(firstWebBrowser));
-  Assert.ok(BrowserTestUtils.is_visible(firstMessageBrowser));
-  Assert.ok(BrowserTestUtils.is_hidden(firstMultiMessageBrowser));
+  Assert.ok(BrowserTestUtils.isHidden(firstWebBrowser));
+  Assert.ok(BrowserTestUtils.isVisible(firstMessageBrowser));
+  Assert.ok(BrowserTestUtils.isHidden(firstMultiMessageBrowser));
   Assert.equal(
     tabmail.currentAboutMessage,
     firstMessageBrowser.contentWindow,
@@ -193,54 +230,98 @@ add_task(async function testTabs() {
   );
   Assert.equal(firstTab.browser, firstMessagePane);
   Assert.equal(firstTab.linkedBrowser, firstMessagePane);
+  Assert.ok(
+    !firstWebBrowser.docShellIsActive,
+    "first web browser should NOT be visible"
+  );
+  Assert.ok(
+    firstMessagePane.docShellIsActive,
+    "first message browser should be visible"
+  );
 
-  // Open some more tabs. These should open in the background.
+  Services.prefs.setBoolPref("mail.tabs.loadInBackground", true);
+  info("Open some more tabs. These should open in the background.");
 
   window.MsgOpenNewTabForFolders([folderB], {
     folderPaneVisible: true,
     messagePaneVisible: true,
   });
 
-  for (let message of messagesB) {
+  for (const message of messagesB) {
     window.OpenMessageInNewTab(message, {});
   }
 
   Assert.equal(tabmail.tabInfo.length, 4);
+  Assert.deepEqual(
+    tabmail.tabInfo.map(t => t.selected),
+    [true, false, false, false]
+  );
   Assert.equal(tabmail.currentTabInfo, firstTab);
   Assert.equal(tabmail.currentAbout3Pane, firstChromeBrowser.contentWindow);
   Assert.equal(tabmail.currentAboutMessage, firstMessageBrowser.contentWindow);
 
-  // Check the second tab.
+  info("Check the second tab.");
 
-  tabmail.switchToTab(1);
-  Assert.equal(tabmail.currentTabInfo, tabmail.tabInfo[1]);
-
-  let secondTab = tabmail.currentTabInfo;
+  const secondTab = tabmail.tabInfo[1];
   Assert.equal(secondTab.mode.name, "mail3PaneTab");
   Assert.equal(secondTab.mode.tabType.name, "mailTab");
 
-  let secondChromeBrowser = secondTab.chromeBrowser;
+  const secondChromeBrowser = secondTab.chromeBrowser;
   await ensureBrowserLoaded(secondChromeBrowser);
   Assert.equal(secondChromeBrowser.currentURI.spec, "about:3pane");
-  Assert.equal(tabmail.currentAbout3Pane, secondChromeBrowser.contentWindow);
 
-  let secondMessageBrowser =
+  const secondWebBrowser =
+    secondChromeBrowser.contentDocument.getElementById("webBrowser");
+  const secondMessageBrowser =
     secondChromeBrowser.contentDocument.getElementById("messageBrowser");
   await ensureBrowserLoaded(secondMessageBrowser);
   Assert.equal(secondMessageBrowser.currentURI.spec, "about:message");
 
-  let secondMessagePane =
+  const secondMessagePane =
     secondMessageBrowser.contentDocument.getElementById("messagepane");
   Assert.equal(secondMessagePane.currentURI.spec, "about:blank");
+  Assert.equal(secondTab.browser, null);
+  Assert.equal(secondTab.linkedBrowser, null);
+  Assert.equal(secondTab.folder, folderB);
+
+  Assert.ok(
+    !secondWebBrowser.docShellIsActive,
+    "second web browser should NOT be visible"
+  );
+  Assert.ok(
+    !secondMessagePane.docShellIsActive,
+    "second message browser should NOT be visible"
+  );
+
+  tabmail.switchToTab(1);
+  Assert.deepEqual(
+    tabmail.tabInfo.map(t => t.selected),
+    [false, true, false, false]
+  );
+  Assert.equal(tabmail.currentTabInfo, tabmail.tabInfo[1]);
+  Assert.equal(tabmail.currentAbout3Pane, secondChromeBrowser.contentWindow);
   Assert.equal(
     tabmail.currentAboutMessage,
     null,
     "currentAboutMessage should be null with no message selected"
   );
-  Assert.equal(secondTab.browser, null);
-  Assert.equal(secondTab.linkedBrowser, null);
 
-  Assert.equal(secondTab.folder, folderB);
+  Assert.ok(
+    !secondWebBrowser.docShellIsActive,
+    "second web browser should NOT be visible"
+  );
+  Assert.ok(
+    !secondMessagePane.docShellIsActive,
+    "second message browser should NOT be visible"
+  );
+  Assert.ok(
+    !firstWebBrowser.docShellIsActive,
+    "first web browser should NOT be visible"
+  );
+  Assert.ok(
+    !firstMessagePane.docShellIsActive,
+    "first message browser should NOT be visible"
+  );
 
   secondChromeBrowser.contentWindow.threadTree.selectedIndex = 0;
   Assert.equal(
@@ -248,82 +329,284 @@ add_task(async function testTabs() {
     secondMessageBrowser.contentWindow,
     "currentAboutMessage should have a value with a message selected"
   );
+  Assert.ok(
+    !secondWebBrowser.docShellIsActive,
+    "second web browser should NOT be visible"
+  );
+  Assert.ok(
+    secondMessagePane.docShellIsActive,
+    "second message browser should be visible"
+  );
 
   Assert.equal(secondChromeBrowser.contentWindow.tabOrWindow, secondTab);
   Assert.equal(secondMessageBrowser.contentWindow.tabOrWindow, secondTab);
 
-  // Check the third tab.
+  info("Check the third tab.");
 
-  tabmail.switchToTab(2);
-  Assert.equal(tabmail.currentTabInfo, tabmail.tabInfo[2]);
-
-  let thirdTab = tabmail.currentTabInfo;
+  const thirdTab = tabmail.tabInfo[2];
   Assert.equal(thirdTab.mode.name, "mailMessageTab");
   Assert.equal(thirdTab.mode.tabType.name, "mailTab");
 
-  let thirdChromeBrowser = thirdTab.chromeBrowser;
+  const thirdChromeBrowser = thirdTab.chromeBrowser;
   await ensureBrowserLoaded(thirdChromeBrowser);
   Assert.equal(thirdChromeBrowser.currentURI.spec, "about:message");
-  Assert.equal(tabmail.currentAbout3Pane, null);
-  Assert.equal(tabmail.currentAboutMessage, thirdChromeBrowser.contentWindow);
 
-  let thirdMessagePane =
+  const thirdMessagePane =
     thirdChromeBrowser.contentDocument.getElementById("messagepane");
   Assert.equal(thirdMessagePane.currentURI.spec, messageToURL(messagesB[0]));
   Assert.equal(thirdTab.browser, thirdMessagePane);
   Assert.equal(thirdTab.linkedBrowser, thirdMessagePane);
+
+  Assert.ok(
+    !thirdMessagePane.docShellIsActive,
+    "third message browser should NOT be visible"
+  );
+
+  tabmail.switchToTab(2);
+  Assert.deepEqual(
+    tabmail.tabInfo.map(t => t.selected),
+    [false, false, true, false]
+  );
+  Assert.equal(tabmail.currentTabInfo, tabmail.tabInfo[2]);
+  Assert.equal(tabmail.currentAbout3Pane, null);
+  Assert.equal(tabmail.currentAboutMessage, thirdChromeBrowser.contentWindow);
+
+  Assert.ok(
+    thirdMessagePane.docShellIsActive,
+    "third message browser should be visible"
+  );
+  Assert.ok(
+    !secondWebBrowser.docShellIsActive,
+    "second web browser should NOT be visible"
+  );
+  Assert.ok(
+    !secondMessagePane.docShellIsActive,
+    "second message browser should NOT be visible"
+  );
 
   Assert.equal(thirdTab.folder, folderB);
   Assert.equal(thirdTab.message, messagesB[0]);
 
   Assert.equal(thirdChromeBrowser.contentWindow.tabOrWindow, thirdTab);
 
-  // Check the fourth tab.
+  info("Check the fourth tab.");
 
-  tabmail.switchToTab(3);
-  Assert.equal(tabmail.currentTabInfo, tabmail.tabInfo[3]);
-
-  let fourthTab = tabmail.currentTabInfo;
+  const fourthTab = tabmail.tabInfo[3];
   Assert.equal(fourthTab.mode.name, "mailMessageTab");
   Assert.equal(fourthTab.mode.tabType.name, "mailTab");
 
-  let fourthChromeBrowser = fourthTab.chromeBrowser;
+  const fourthChromeBrowser = fourthTab.chromeBrowser;
   await ensureBrowserLoaded(fourthChromeBrowser);
   Assert.equal(fourthChromeBrowser.currentURI.spec, "about:message");
-  Assert.equal(tabmail.currentAbout3Pane, null);
-  Assert.equal(tabmail.currentAboutMessage, fourthChromeBrowser.contentWindow);
 
-  let fourthMessagePane =
+  const fourthMessagePane =
     fourthChromeBrowser.contentDocument.getElementById("messagepane");
   Assert.equal(fourthMessagePane.currentURI.spec, messageToURL(messagesB[1]));
   Assert.equal(fourthTab.browser, fourthMessagePane);
   Assert.equal(fourthTab.linkedBrowser, fourthMessagePane);
-
   Assert.equal(fourthTab.folder, folderB);
   Assert.equal(fourthTab.message, messagesB[1]);
 
+  Assert.ok(
+    !fourthMessagePane.docShellIsActive,
+    "fourth message browser should NOT be visible"
+  );
+
+  tabmail.switchToTab(3);
+  Assert.deepEqual(
+    tabmail.tabInfo.map(t => t.selected),
+    [false, false, false, true]
+  );
+  Assert.equal(tabmail.currentTabInfo, tabmail.tabInfo[3]);
+  Assert.equal(tabmail.currentAbout3Pane, null);
+  Assert.equal(tabmail.currentAboutMessage, fourthChromeBrowser.contentWindow);
+
+  Assert.ok(
+    fourthMessagePane.docShellIsActive,
+    "fourth message browser should be visible"
+  );
+  Assert.ok(
+    !thirdMessagePane.docShellIsActive,
+    "third message browser should NOT be visible"
+  );
+
   Assert.equal(fourthChromeBrowser.contentWindow.tabOrWindow, fourthTab);
 
-  // Close tabs.
+  info("Close tabs.");
 
   tabmail.closeTab(3);
+  Assert.deepEqual(
+    tabmail.tabInfo.map(t => t.selected),
+    [false, false, true]
+  );
   Assert.equal(tabmail.currentTabInfo, thirdTab);
   Assert.equal(tabmail.currentAbout3Pane, null);
   Assert.equal(tabmail.currentAboutMessage, thirdChromeBrowser.contentWindow);
 
   tabmail.closeTab(2);
+  Assert.deepEqual(
+    tabmail.tabInfo.map(t => t.selected),
+    [false, true]
+  );
   Assert.equal(tabmail.currentTabInfo, secondTab);
   Assert.equal(tabmail.currentAbout3Pane, secondChromeBrowser.contentWindow);
   Assert.equal(tabmail.currentAboutMessage, secondMessageBrowser.contentWindow);
 
   tabmail.closeTab(1);
+  Assert.deepEqual(
+    tabmail.tabInfo.map(t => t.selected),
+    [true]
+  );
   Assert.equal(tabmail.currentTabInfo, firstTab);
   Assert.equal(tabmail.currentAbout3Pane, firstChromeBrowser.contentWindow);
   Assert.equal(tabmail.currentAboutMessage, firstMessageBrowser.contentWindow);
+  Assert.equal(firstTab.browser, firstMessagePane);
+  Assert.equal(firstTab.linkedBrowser, firstMessagePane);
+  Assert.ok(
+    !firstWebBrowser.docShellIsActive,
+    "first web browser should NOT be visible"
+  );
+  Assert.ok(
+    firstMessagePane.docShellIsActive,
+    "first message browser should be visible"
+  );
+
+  Services.prefs.setBoolPref("mail.tabs.loadInBackground", false);
+  info("Open a new mail tab. Focus should switch to the new tab.");
+
+  window.OpenMessageInNewTab(messagesB[0], {});
+
+  Assert.equal(tabmail.tabInfo.length, 2);
+  Assert.deepEqual(
+    tabmail.tabInfo.map(t => t.selected),
+    [false, true]
+  );
+
+  const secondOpenedTab = tabmail.tabInfo[1];
+  Assert.equal(secondOpenedTab.mode.name, "mailMessageTab");
+  Assert.equal(secondOpenedTab.mode.tabType.name, "mailTab");
+
+  const secondOpenedChromeBrowser = secondOpenedTab.chromeBrowser;
+  await ensureBrowserLoaded(secondOpenedChromeBrowser);
+  Assert.equal(secondOpenedChromeBrowser.currentURI.spec, "about:message");
+
+  const secondOpenedMessagePane =
+    secondOpenedChromeBrowser.contentDocument.getElementById("messagepane");
+  await ensureBrowserLoaded(secondOpenedMessagePane);
+  Assert.equal(
+    secondOpenedMessagePane.currentURI.spec,
+    messageToURL(messagesB[0])
+  );
+  Assert.equal(secondOpenedTab.browser, secondOpenedMessagePane);
+  Assert.equal(secondOpenedTab.linkedBrowser, secondOpenedMessagePane);
+
+  tabmail.closeTab(1);
+  Assert.equal(tabmail.tabInfo.length, 1);
+  Assert.deepEqual(
+    tabmail.tabInfo.map(t => t.selected),
+    [true]
+  );
+
+  info("Open a content tab.");
+  // This test isn't about content tabs, but we're testing docShell visibility
+  // for everything else, and we need another tab to test about:3pane, so this
+  // seemed like a good place to test docShell visibility for content tabs.
+
+  const contentTab = tabmail.openTab("contentTab", {
+    background: true,
+    url: "https://example.org/browser/comm/mail/base/test/browser/files/sampleContent.html",
+  });
+  const contentTabBrowser = contentTab.browser;
+  Assert.ok(
+    !contentTabBrowser.docShellIsActive,
+    "content tab browser should NOT be visible"
+  );
+
+  tabmail.switchToTab(contentTab);
+  Assert.ok(
+    contentTabBrowser.docShellIsActive,
+    "content tab browser should be visible"
+  );
+  Assert.ok(
+    !firstWebBrowser.docShellIsActive,
+    "first web browser should NOT be visible"
+  );
+  Assert.ok(
+    !firstMessagePane.docShellIsActive,
+    "first message browser should NOT be visible"
+  );
+
+  info("While in the background, load a web page.");
+
+  messagePane.displayWebPage("https://example.org/");
+  Assert.ok(
+    !firstWebBrowser.docShellIsActive,
+    "first web browser should NOT be visible"
+  );
+  Assert.ok(
+    !firstMessagePane.docShellIsActive,
+    "first message browser should NOT be visible"
+  );
+
+  tabmail.switchToTab(firstTab);
+  Assert.ok(
+    !contentTabBrowser.docShellIsActive,
+    "content tab browser should NOT be visible"
+  );
+  Assert.ok(
+    firstWebBrowser.docShellIsActive,
+    "first web browser should be visible"
+  );
+  Assert.ok(
+    !firstMessagePane.docShellIsActive,
+    "first message browser should NOT be visible"
+  );
+
+  tabmail.switchToTab(contentTab);
+  Assert.ok(
+    contentTabBrowser.docShellIsActive,
+    "content tab browser should be visible"
+  );
+  Assert.ok(
+    !firstWebBrowser.docShellIsActive,
+    "first web browser should NOT be visible"
+  );
+  Assert.ok(
+    !firstMessagePane.docShellIsActive,
+    "first message browser should NOT be visible"
+  );
+
+  info("While in the background, load a message.");
+
+  threadTree.selectedIndex = 1;
+  Assert.ok(
+    !firstWebBrowser.docShellIsActive,
+    "first web browser should NOT be visible"
+  );
+  Assert.ok(
+    !firstMessagePane.docShellIsActive,
+    "first message browser should NOT be visible"
+  );
+
+  tabmail.closeTab(contentTab);
+  Assert.ok(
+    !firstWebBrowser.docShellIsActive,
+    "first web browser should NOT be visible"
+  );
+  Assert.ok(
+    firstMessagePane.docShellIsActive,
+    "first message browser should be visible"
+  );
+
+  threadTree.selectedIndex = -1;
+  Assert.ok(
+    !firstMessagePane.docShellIsActive,
+    "first message browser should NOT be visible"
+  );
 });
 
 add_task(async function testMessageWindow() {
-  let messageWindowPromise = BrowserTestUtils.domWindowOpenedAndLoaded(
+  const messageWindowPromise = BrowserTestUtils.domWindowOpenedAndLoaded(
     undefined,
     async win =>
       win.document.documentURI ==
@@ -331,8 +614,8 @@ add_task(async function testMessageWindow() {
   );
   MailUtils.openMessageInNewWindow(messagesB[0]);
 
-  let messageWindow = await messageWindowPromise;
-  let messageBrowser = messageWindow.messageBrowser;
+  const messageWindow = await messageWindowPromise;
+  const messageBrowser = messageWindow.messageBrowser;
   await ensureBrowserLoaded(messageBrowser);
   Assert.equal(messageBrowser.contentWindow.tabOrWindow, messageWindow);
 
@@ -349,7 +632,8 @@ async function ensureBrowserLoaded(browser) {
 }
 
 function messageToURL(message) {
-  let messageService = MailServices.messageServiceFromURI("mailbox-message://");
-  let uri = message.folder.getUriForMsg(message);
+  const messageService =
+    MailServices.messageServiceFromURI("mailbox-message://");
+  const uri = message.folder.getUriForMsg(message);
   return messageService.getUrlForUri(uri).spec;
 }

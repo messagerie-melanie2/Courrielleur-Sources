@@ -6,21 +6,13 @@
  * Message DB Cache manager
  */
 
-/* :::::::: Constants and Helpers ::::::::::::::: */
-
-import { MailServices } from "resource:///modules/MailServices.sys.mjs";
-
 var log = console.createInstance({
   prefix: "mailnews.database.dbcache",
   maxLogLevel: "Warn",
   maxLogLevelPref: "mailnews.database.dbcache.loglevel",
 });
 
-/**
- */
 var DBCACHE_INTERVAL_DEFAULT_MS = 60000; // 1 minute
-
-/* :::::::: The Module ::::::::::::::: */
 
 export var msgDBCacheManager = {
   _initialized: false,
@@ -108,6 +100,7 @@ export var msgDBCacheManager = {
    * Checks if any DBs need to be closed due to inactivity or too many of them open.
    */
   checkCachedDBs() {
+    const keepOpenSize = Services.prefs.getIntPref("mail.db.keep_open_size");
     const idleLimit = Services.prefs.getIntPref("mail.db.idle_limit");
     const maxOpenDBs = Services.prefs.getIntPref("mail.db.max_open");
 
@@ -121,8 +114,6 @@ export var msgDBCacheManager = {
     );
     // Count databases that are already closed or get closed now due to inactivity.
     let numClosing = 0;
-    // Count databases whose folder is open in a window.
-    let numOpenInWindow = 0;
     const dbs = [];
     for (const db of cachedDBs) {
       if (!db.folder?.databaseOpen) {
@@ -132,15 +123,8 @@ export var msgDBCacheManager = {
         continue;
       }
 
-      if (MailServices.mailSession.IsFolderOpenInWindow(db.folder)) {
-        // The folder is open in a window so this DB must not be closed.
-        log.debug("Skipping, DB open in window for folder: " + db.folder.name);
-        numOpenInWindow++;
-        continue;
-      }
-
-      if (db.lastUseTime < closeThreshold) {
-        // DB open too log without activity.
+      if (db.lastUseTime < closeThreshold && db.databaseSize < keepOpenSize) {
+        // DB open too long without activity.
         log.debug("Closing expired DB for folder: " + db.folder.name);
         db.folder.msgDatabase = null;
         numClosing++;
@@ -150,26 +134,22 @@ export var msgDBCacheManager = {
       // Database eligible for closing.
       dbs.push(db);
     }
-    log.info(
-      "DBs open in a window: " +
-        numOpenInWindow +
-        ", DBs open: " +
-        dbs.length +
-        ", DBs already closing: " +
-        numClosing
-    );
-    let dbsToClose = Math.max(
-      dbs.length - Math.max(maxOpenDBs - numOpenInWindow, 0),
-      0
-    );
+    log.info(`DBs open: ${dbs.length}, DBs already closing: ${numClosing}`);
+    let dbsToClose = Math.max(dbs.length - Math.max(maxOpenDBs, 0), 0);
     if (dbsToClose > 0) {
       // Close some DBs so that we do not have more than maxOpenDBs.
       // However, we skipped DBs for folders that are open in a window
       // so if there are so many windows open, it may be possible for
       // more than maxOpenDBs folders to stay open after this loop.
       log.info("Need to close " + dbsToClose + " more DBs");
-      // Order databases by lowest lastUseTime (oldest) at the end.
-      dbs.sort((a, b) => b.lastUseTime - a.lastUseTime);
+      // Order databases by size (smallest) and lowest lastUseTime (oldest)
+      // at the end. In practice this is dominated by the size, but not
+      // completely.
+      dbs.sort(
+        (a, b) =>
+          Math.log10(b.databaseSize) * b.lastUseTime -
+          Math.log10(a.databaseSize) * a.lastUseTime
+      );
       while (dbsToClose > 0) {
         const db = dbs.pop();
         log.debug("Closing DB for folder: " + db.folder.name);

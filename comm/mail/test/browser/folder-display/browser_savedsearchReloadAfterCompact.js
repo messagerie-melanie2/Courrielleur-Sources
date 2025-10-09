@@ -9,9 +9,8 @@
 
 "use strict";
 
-var utils = ChromeUtils.import("resource://testing-common/mozmill/utils.jsm");
-var { gThreadManager } = ChromeUtils.import(
-  "resource://testing-common/mailnews/Maild.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 var {
@@ -21,16 +20,14 @@ var {
   get_about_3pane,
   inboxFolder,
   make_message_sets_in_folders,
-  mc,
   press_delete,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 var otherFolder;
 var folderVirtual;
-var synSets;
 
 /**
  * Add some messages to a folder, delete the first one, and create a saved
@@ -38,7 +35,7 @@ var synSets;
  */
 add_task(async function test_setup_virtual_folder_and_compact() {
   otherFolder = await create_folder();
-  synSets = await make_message_sets_in_folders([otherFolder], [{ count: 2 }]);
+  await make_message_sets_in_folders([otherFolder], [{ count: 2 }]);
 
   /**
    * We delete the first message in the local folder, so compaction of the
@@ -48,8 +45,8 @@ add_task(async function test_setup_virtual_folder_and_compact() {
    * view still gets rebuilt, such that there is a valid msg hdr at row 0.
    */
   await be_in_folder(otherFolder);
-  select_click_row(0);
-  press_delete();
+  await select_click_row(0);
+  await press_delete();
 
   folderVirtual = create_virtual_folder(
     [inboxFolder, otherFolder],
@@ -59,42 +56,26 @@ add_task(async function test_setup_virtual_folder_and_compact() {
   );
 
   await be_in_folder(folderVirtual);
-  select_click_row(0);
-  let urlListener = {
-    compactDone: false,
-
-    OnStartRunningUrl(aUrl) {},
-    OnStopRunningUrl(aUrl, aExitCode) {
-      this.compactDone = true;
-    },
-  };
+  await select_click_row(0);
   if (otherFolder.msgStore.supportsCompaction) {
-    otherFolder.compactAll(urlListener, null);
-
-    utils.waitFor(
-      () => urlListener.compactDone,
-      "Timeout waiting for compact to complete",
-      10000,
-      100
-    );
+    const listener = new PromiseTestUtils.PromiseUrlListener();
+    otherFolder.compactAll(listener, null);
+    await listener.promise;
   }
   // Let the event queue clear.
   await new Promise(resolve => setTimeout(resolve));
-  // Check view is still valid
-  get_about_3pane().gDBView.getMsgHdrAt(0);
 
-  Assert.report(
-    false,
-    undefined,
-    undefined,
-    "Test ran to completion successfully"
+  // Check view is still valid
+  Assert.ok(
+    get_about_3pane().gDBView.getMsgHdrAt(0),
+    "view hdr 0 should be ok"
   );
 });
 
-add_task(async function endTest() {
+registerCleanupFunction(async () => {
   // Fixing possible nsIMsgDBHdr.markHasAttachments onEndMsgDownload runs.
   //  Found in chaosmode.
-  var thread = gThreadManager.currentThread;
+  var thread = Services.tm.currentThread;
   while (thread.hasPendingEvents()) {
     thread.processNextEvent(true);
   }

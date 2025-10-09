@@ -1,18 +1,22 @@
 registerCleanupFunction(() => {
   Services.prefs.clearUserPref("sidebar.position_start");
-  SidebarUI.hide();
+  SidebarController.hide();
 });
 
 const EXPECTED_START_ORDINALS = [
-  ["sidebar-box", 1],
-  ["sidebar-splitter", 2],
-  ["appcontent", 3],
+  ["sidebar-main", 1],
+  ["sidebar-launcher-splitter", 2],
+  ["sidebar-box", 3],
+  ["sidebar-splitter", 4],
+  ["tabbrowser-tabbox", 5],
 ];
 
 const EXPECTED_END_ORDINALS = [
+  ["sidebar-main", 5],
+  ["sidebar-launcher-splitter", 4],
   ["sidebar-box", 3],
   ["sidebar-splitter", 2],
-  ["appcontent", 1],
+  ["tabbrowser-tabbox", 1],
 ];
 
 function getBrowserChildrenWithOrdinals() {
@@ -23,8 +27,8 @@ function getBrowserChildrenWithOrdinals() {
 }
 
 add_task(async function () {
-  await SidebarUI.show("viewBookmarksSidebar");
-  SidebarUI.showSwitcherPanel();
+  await SidebarController.show("viewBookmarksSidebar");
+  SidebarController.showSwitcherPanel();
 
   let reversePositionButton = document.getElementById(
     "sidebar-reverse-position"
@@ -36,34 +40,34 @@ add_task(async function () {
   Assert.deepEqual(
     getBrowserChildrenWithOrdinals(),
     EXPECTED_START_ORDINALS,
-    "Correct ordinal (start)"
+    "Correct browser ordinal (start)"
   );
-  ok(!box.hasAttribute("positionend"), "Positioned start");
+  ok(!box.hasAttribute("sidebar-positionend"), "Positioned start");
 
   // Moved to right
-  SidebarUI.reversePosition();
-  SidebarUI.showSwitcherPanel();
+  SidebarController.reversePosition();
+  SidebarController.showSwitcherPanel();
   Assert.deepEqual(
     getBrowserChildrenWithOrdinals(),
     EXPECTED_END_ORDINALS,
-    "Correct ordinal (end)"
+    "Correct browser ordinal (end)"
   );
   isnot(
     reversePositionButton.getAttribute("label"),
     originalLabel,
     "Label changed"
   );
-  ok(box.hasAttribute("positionend"), "Positioned end");
+  ok(box.hasAttribute("sidebar-positionend"), "Positioned end");
 
   // Moved to back to left
-  SidebarUI.reversePosition();
-  SidebarUI.showSwitcherPanel();
+  SidebarController.reversePosition();
+  SidebarController.showSwitcherPanel();
   Assert.deepEqual(
     getBrowserChildrenWithOrdinals(),
     EXPECTED_START_ORDINALS,
-    "Correct ordinal (start)"
+    "Correct browser ordinal (start)"
   );
-  ok(!box.hasAttribute("positionend"), "Positioned start");
+  ok(!box.hasAttribute("sidebar-positionend"), "Positioned start");
   is(
     reversePositionButton.getAttribute("label"),
     originalLabel,

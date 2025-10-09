@@ -15,9 +15,9 @@
           // enabled, so dereferencing it would throw a ReferenceError (which
           // is then caught in the .catch() clause).
           return window.navigator.serviceWorker.register("serviceworker.js");
-        }).then(registration => {
+        }).then(() => {
           return {success: true};
-        }).catch(error => {
+        }).catch(() => {
           return {success: false};
         });
       }
@@ -36,7 +36,7 @@
 
       function iframeRegisterAndUnregister() {
         var frame = window.document.createElement("iframe");
-        var promise = new Promise(function(resolve, reject) {
+        var promise = new Promise(function(resolve) {
           frame.addEventListener("load", function() {
             Promise.resolve().then(_ => {
               return frame.contentWindow.navigator.serviceWorker.register("serviceworker.js");
@@ -45,13 +45,62 @@
             }).then(_ => {
               frame.remove();
               resolve({success: true});
-            }).catch(error => {
+            }).catch(() => {
               resolve({success: false});
             });
           }, {once: true});
         });
         frame.src = "browser_toolbox_options_enabled_serviceworkers_testing.html";
         window.document.body.appendChild(frame);
+        return promise;
+      }
+
+      async function workerRegisterAndUnregister() {
+        const { promise, resolve } = Promise.withResolvers();
+        const worker = new Worker(URL.createObjectURL(new Blob([`
+          onmessage = async (ev) => {
+            try {
+              const swr = await navigator.serviceWorker.register(ev.data);
+              await swr.unregister();
+              postMessage({ success: true });
+            } catch (err) {
+              postMessage({ success: err.message });
+            }
+          }
+        `])));
+        worker.addEventListener("message", ev => resolve(ev.data), { once: true });
+        // (A blob worker can't use relative URLs)
+        worker.postMessage(new URL("serviceworker.js", location.href).toString());
+        return promise;
+      }
+
+      async function windowOpenAndDeleteCache() {
+        try {
+          const cacheName = "devtools-enable-sw";
+          await caches.open(cacheName);
+          const success = await caches.delete(cacheName);
+          return { success };
+        } catch (err) {
+          return { success: err.message };
+        }
+      }
+
+      async function workerOpenAndDeleteCache() {
+        const { promise, resolve } = Promise.withResolvers();
+        const worker = new Worker(URL.createObjectURL(new Blob([`
+          onmessage = async (ev) => {
+            try {
+              const cacheName = "devtools-enable-sw";
+              await caches.open(cacheName);
+              const success = await caches.delete(cacheName);
+              postMessage({ success });
+            } catch (err) {
+              postMessage({ success: err.message });
+            }
+          }
+        `])));
+        worker.addEventListener("message", ev => resolve(ev.data), { once: true });
+        worker.postMessage("start");
         return promise;
       }
 
@@ -68,6 +117,18 @@
           }
           case "devtools:sw-test:iframe:register-and-unregister": {
             response = iframeRegisterAndUnregister();
+            break;
+          }
+          case "devtools:sw-test:worker:register-and-unregister": {
+            response = workerRegisterAndUnregister();
+            break;
+          }
+          case "devtools:cache-test:window:open-and-delete": {
+            response = windowOpenAndDeleteCache();
+            break;
+          }
+          case "devtools:cache-test:worker:open-and-delete": {
+            response = workerOpenAndDeleteCache();
             break;
           }
         }

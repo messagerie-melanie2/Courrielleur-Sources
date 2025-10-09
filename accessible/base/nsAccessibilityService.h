@@ -6,6 +6,7 @@
 #ifndef __nsAccessibilityService_h__
 #define __nsAccessibilityService_h__
 
+#include "mozilla/a11y/CacheConstants.h"
 #include "mozilla/a11y/DocManager.h"
 #include "mozilla/a11y/FocusManager.h"
 #include "mozilla/a11y/Platform.h"
@@ -13,6 +14,7 @@
 #include "mozilla/a11y/SelectionManager.h"
 #include "mozilla/Preferences.h"
 
+#include "nsAtomHashKeys.h"
 #include "nsIContent.h"
 #include "nsIObserver.h"
 #include "nsIAccessibleEvent.h"
@@ -69,14 +71,14 @@ struct MarkupAttrInfo {
 };
 
 struct MarkupMapInfo {
-  const nsStaticAtom* const tag;
+  nsStaticAtom* const tag;
   New_Accessible* new_func;
   a11y::role role;
   MarkupAttrInfo attrs[4];
 };
 
 struct XULMarkupMapInfo {
-  const nsStaticAtom* const tag;
+  nsStaticAtom* const tag;
   New_Accessible* new_func;
 };
 
@@ -90,6 +92,23 @@ void PrefChanged(const char* aPref, void* aClosure);
  */
 EPlatformDisabledState ReadPlatformDisabledState();
 
+/**
+ * RAII class to prevent new cache domains from being requested. This is
+ * necessary in some cases when code for an OS accessibility API requires
+ * information in order to fire an event. We don't necessarily know that a
+ * client is even interested in that event, so requesting data that the client
+ * may never query doesn't make sense.
+ */
+class MOZ_RAII CacheDomainActivationBlocker {
+ public:
+  CacheDomainActivationBlocker();
+  ~CacheDomainActivationBlocker();
+
+ private:
+  // Used to manage re-entry.
+  static uint32_t sEntryCount;
+};
+
 }  // namespace a11y
 }  // namespace mozilla
 
@@ -101,6 +120,10 @@ class nsAccessibilityService final : public mozilla::a11y::DocManager,
  public:
   typedef mozilla::a11y::LocalAccessible LocalAccessible;
   typedef mozilla::a11y::DocAccessible DocAccessible;
+
+  static const uint64_t kDefaultCacheDomains =
+      mozilla::a11y::CacheDomain::NameAndDescription |
+      mozilla::a11y::CacheDomain::State;
 
   // nsIListenerChangeListener
   NS_IMETHOD ListenersChanged(nsIArray* aEventChanges) override;
@@ -243,6 +266,19 @@ class nsAccessibilityService final : public mozilla::a11y::DocManager,
   void NotifyOfDevPixelRatioChange(mozilla::PresShell* aPresShell,
                                    int32_t aAppUnitsPerDevPixel);
 
+  /**
+   * Notify accessibility that an element explicitly set for an attribute is
+   * about to change. See dom::Element::ExplicitlySetAttrElement.
+   */
+  void NotifyAttrElementWillChange(mozilla::dom::Element* aElement,
+                                   nsAtom* aAttr);
+
+  /**
+   * Notify accessibility that an element explicitly set for an attribute has
+   * changed. See dom::Element::ExplicitlySetAttrElement.
+   */
+  void NotifyAttrElementChanged(mozilla::dom::Element* aElement, nsAtom* aAttr);
+
   // nsAccessibiltiyService
 
   /**
@@ -255,6 +291,15 @@ class nsAccessibilityService final : public mozilla::a11y::DocManager,
    */
   static bool ShouldCreateImgAccessible(mozilla::dom::Element* aElement,
                                         DocAccessible* aDocument);
+
+  /*
+   * Set the currently-active cache domains.
+   */
+  void SetCacheDomains(uint64_t aCacheDomains);
+
+  bool CacheDomainIsActive(uint64_t aCacheDomain) const {
+    return (gCacheDomains & aCacheDomain) != mozilla::a11y::CacheDomain::None;
+  }
 
   /**
    * Creates an accessible for the given DOM node.
@@ -283,7 +328,7 @@ class nsAccessibilityService final : public mozilla::a11y::DocManager,
     const mozilla::a11y::MarkupMapInfo* markupMap =
         GetMarkupMapInfoFor(aSource);
     if (markupMap) {
-      for (size_t i = 0; i < mozilla::ArrayLength(markupMap->attrs); i++) {
+      for (size_t i = 0; i < std::size(markupMap->attrs); i++) {
         const mozilla::a11y::MarkupAttrInfo* info = markupMap->attrs + i;
         if (info->name == aAtom) {
           return info->value;
@@ -317,6 +362,9 @@ class nsAccessibilityService final : public mozilla::a11y::DocManager,
     ePlatformAPI = 1 << 2,
   };
 
+  static uint64_t GetActiveCacheDomains() { return gCacheDomains; }
+  bool ShouldAllowNewCacheDomains() { return mShouldAllowNewCacheDomains; }
+
 #if defined(ANDROID)
   static mozilla::Monitor& GetAndroidMonitor();
 #endif
@@ -332,7 +380,7 @@ class nsAccessibilityService final : public mozilla::a11y::DocManager,
   /**
    * Initialize accessibility service.
    */
-  bool Init();
+  bool Init(uint64_t aCacheDomains = kDefaultCacheDomains);
 
   /**
    * Shutdowns accessibility service.
@@ -381,8 +429,17 @@ class nsAccessibilityService final : public mozilla::a11y::DocManager,
    */
   static uint32_t gConsumers;
 
-  using MarkupMap = nsTHashMap<nsPtrHashKey<const nsAtom>,
-                               const mozilla::a11y::MarkupMapInfo*>;
+  /**
+   * Contains the currently active cache domains.
+   */
+  static uint64_t gCacheDomains;
+  // True if requesting new cache domains should be allowed, false if this
+  // should be disallowed. This should only be changed by
+  // CacheDomainActivationBlocker.
+  bool mShouldAllowNewCacheDomains = true;
+
+  // Can be weak because all atoms are known static
+  using MarkupMap = nsTHashMap<nsAtom*, const mozilla::a11y::MarkupMapInfo*>;
   MarkupMap mHTMLMarkupMap;
   MarkupMap mMathMLMarkupMap;
 
@@ -403,12 +460,11 @@ class nsAccessibilityService final : public mozilla::a11y::DocManager,
   const mozilla::a11y::MarkupMapInfo* GetMarkupMapInfoFor(
       mozilla::a11y::Accessible* aAcc) const;
 
-  nsTHashMap<nsPtrHashKey<const nsAtom>, const mozilla::a11y::XULMarkupMapInfo*>
-      mXULMarkupMap;
+  nsTHashMap<nsAtom*, const mozilla::a11y::XULMarkupMapInfo*> mXULMarkupMap;
 
   friend nsAccessibilityService* GetAccService();
-  friend nsAccessibilityService* GetOrCreateAccService(uint32_t);
-  friend void MaybeShutdownAccService(uint32_t);
+  friend nsAccessibilityService* GetOrCreateAccService(uint32_t, uint64_t);
+  friend void MaybeShutdownAccService(uint32_t, bool);
   friend void mozilla::a11y::PrefChanged(const char*, void*);
   friend mozilla::a11y::FocusManager* mozilla::a11y::FocusMgr();
   friend mozilla::a11y::SelectionManager* mozilla::a11y::SelectionMgr();
@@ -416,6 +472,7 @@ class nsAccessibilityService final : public mozilla::a11y::DocManager,
   friend mozilla::a11y::xpcAccessibleApplication*
   mozilla::a11y::XPCApplicationAcc();
   friend class xpcAccessibilityService;
+  friend class mozilla::a11y::CacheDomainActivationBlocker;
 };
 
 /**
@@ -429,12 +486,18 @@ inline nsAccessibilityService* GetAccService() {
  * Return accessibility service instance; creating one if necessary.
  */
 nsAccessibilityService* GetOrCreateAccService(
-    uint32_t aNewConsumer = nsAccessibilityService::ePlatformAPI);
+    uint32_t aNewConsumer = nsAccessibilityService::ePlatformAPI,
+    uint64_t aCacheDomains = nsAccessibilityService::GetActiveCacheDomains());
 
 /**
  * Shutdown accessibility service if needed.
+ * @param aFormerConsumer The ServiceConsumer that is no longer using the
+ *        service.
+ * @param aAsync True to shut down the service asynchronously using a runnable.
+ *        This should be used to avoid reentry if this is called during the
+ *        shutdown of a document.
  */
-void MaybeShutdownAccService(uint32_t aFormerConsumer);
+void MaybeShutdownAccService(uint32_t aFormerConsumer, bool aAsync = false);
 
 /**
  * Return true if we're in a content process and not B2G.
@@ -446,99 +509,49 @@ inline bool IPCAccessibilityActive() { return XRE_IsContentProcess(); }
  * nsAccessibilityService::GetStringEventType() method.
  */
 static const char kEventTypeNames[][40] = {
-    "unknown",                           //
-    "show",                              // EVENT_SHOW
-    "hide",                              // EVENT_HIDE
-    "reorder",                           // EVENT_REORDER
-    "active decendent change",           // EVENT_ACTIVE_DECENDENT_CHANGED
-    "focus",                             // EVENT_FOCUS
-    "state change",                      // EVENT_STATE_CHANGE
-    "location change",                   // EVENT_LOCATION_CHANGE
-    "name changed",                      // EVENT_NAME_CHANGE
-    "description change",                // EVENT_DESCRIPTION_CHANGE
-    "value change",                      // EVENT_VALUE_CHANGE
-    "help change",                       // EVENT_HELP_CHANGE
-    "default action change",             // EVENT_DEFACTION_CHANGE
-    "action change",                     // EVENT_ACTION_CHANGE
-    "accelerator change",                // EVENT_ACCELERATOR_CHANGE
-    "selection",                         // EVENT_SELECTION
-    "selection add",                     // EVENT_SELECTION_ADD
-    "selection remove",                  // EVENT_SELECTION_REMOVE
-    "selection within",                  // EVENT_SELECTION_WITHIN
-    "alert",                             // EVENT_ALERT
-    "foreground",                        // EVENT_FOREGROUND
-    "menu start",                        // EVENT_MENU_START
-    "menu end",                          // EVENT_MENU_END
-    "menupopup start",                   // EVENT_MENUPOPUP_START
-    "menupopup end",                     // EVENT_MENUPOPUP_END
-    "capture start",                     // EVENT_CAPTURE_START
-    "capture end",                       // EVENT_CAPTURE_END
-    "movesize start",                    // EVENT_MOVESIZE_START
-    "movesize end",                      // EVENT_MOVESIZE_END
-    "contexthelp start",                 // EVENT_CONTEXTHELP_START
-    "contexthelp end",                   // EVENT_CONTEXTHELP_END
-    "dragdrop start",                    // EVENT_DRAGDROP_START
-    "dragdrop end",                      // EVENT_DRAGDROP_END
-    "dialog start",                      // EVENT_DIALOG_START
-    "dialog end",                        // EVENT_DIALOG_END
-    "scrolling start",                   // EVENT_SCROLLING_START
-    "scrolling end",                     // EVENT_SCROLLING_END
-    "minimize start",                    // EVENT_MINIMIZE_START
-    "minimize end",                      // EVENT_MINIMIZE_END
-    "document load complete",            // EVENT_DOCUMENT_LOAD_COMPLETE
-    "document reload",                   // EVENT_DOCUMENT_RELOAD
-    "document load stopped",             // EVENT_DOCUMENT_LOAD_STOPPED
-    "document attributes changed",       // EVENT_DOCUMENT_ATTRIBUTES_CHANGED
-    "document content changed",          // EVENT_DOCUMENT_CONTENT_CHANGED
-    "property changed",                  // EVENT_PROPERTY_CHANGED
-    "page changed",                      // EVENT_PAGE_CHANGED
-    "text attribute changed",            // EVENT_TEXT_ATTRIBUTE_CHANGED
-    "text caret moved",                  // EVENT_TEXT_CARET_MOVED
-    "text changed",                      // EVENT_TEXT_CHANGED
-    "text inserted",                     // EVENT_TEXT_INSERTED
-    "text removed",                      // EVENT_TEXT_REMOVED
-    "text updated",                      // EVENT_TEXT_UPDATED
-    "text selection changed",            // EVENT_TEXT_SELECTION_CHANGED
-    "visible data changed",              // EVENT_VISIBLE_DATA_CHANGED
-    "text column changed",               // EVENT_TEXT_COLUMN_CHANGED
-    "section changed",                   // EVENT_SECTION_CHANGED
-    "table caption changed",             // EVENT_TABLE_CAPTION_CHANGED
-    "table model changed",               // EVENT_TABLE_MODEL_CHANGED
-    "table summary changed",             // EVENT_TABLE_SUMMARY_CHANGED
-    "table row description changed",     // EVENT_TABLE_ROW_DESCRIPTION_CHANGED
-    "table row header changed",          // EVENT_TABLE_ROW_HEADER_CHANGED
-    "table row insert",                  // EVENT_TABLE_ROW_INSERT
-    "table row delete",                  // EVENT_TABLE_ROW_DELETE
-    "table row reorder",                 // EVENT_TABLE_ROW_REORDER
-    "table column description changed",  // EVENT_TABLE_COLUMN_DESCRIPTION_CHANGED
-    "table column header changed",       // EVENT_TABLE_COLUMN_HEADER_CHANGED
-    "table column insert",               // EVENT_TABLE_COLUMN_INSERT
-    "table column delete",               // EVENT_TABLE_COLUMN_DELETE
-    "table column reorder",              // EVENT_TABLE_COLUMN_REORDER
-    "window activate",                   // EVENT_WINDOW_ACTIVATE
-    "window create",                     // EVENT_WINDOW_CREATE
-    "window deactivate",                 // EVENT_WINDOW_DEACTIVATE
-    "window destroy",                    // EVENT_WINDOW_DESTROY
-    "window maximize",                   // EVENT_WINDOW_MAXIMIZE
-    "window minimize",                   // EVENT_WINDOW_MINIMIZE
-    "window resize",                     // EVENT_WINDOW_RESIZE
-    "window restore",                    // EVENT_WINDOW_RESTORE
-    "hyperlink end index changed",       // EVENT_HYPERLINK_END_INDEX_CHANGED
-    "hyperlink number of anchors changed",  // EVENT_HYPERLINK_NUMBER_OF_ANCHORS_CHANGED
-    "hyperlink selected link changed",  // EVENT_HYPERLINK_SELECTED_LINK_CHANGED
-    "hypertext link activated",         // EVENT_HYPERTEXT_LINK_ACTIVATED
-    "hypertext link selected",          // EVENT_HYPERTEXT_LINK_SELECTED
-    "hyperlink start index changed",    // EVENT_HYPERLINK_START_INDEX_CHANGED
-    "hypertext changed",                // EVENT_HYPERTEXT_CHANGED
-    "hypertext links count changed",    // EVENT_HYPERTEXT_NLINKS_CHANGED
-    "object attribute changed",         // EVENT_OBJECT_ATTRIBUTE_CHANGED
-    "virtual cursor changed",           // EVENT_VIRTUALCURSOR_CHANGED
-    "text value change",                // EVENT_TEXT_VALUE_CHANGE
-    "scrolling",                        // EVENT_SCROLLING
-    "announcement",                     // EVENT_ANNOUNCEMENT
-    "live region added",                // EVENT_LIVE_REGION_ADDED
-    "live region removed",              // EVENT_LIVE_REGION_REMOVED
-    "inner reorder",                    // EVENT_INNER_REORDER
+    "unknown",                   //
+    "show",                      // EVENT_SHOW
+    "hide",                      // EVENT_HIDE
+    "reorder",                   // EVENT_REORDER
+    "focus",                     // EVENT_FOCUS
+    "state change",              // EVENT_STATE_CHANGE
+    "name changed",              // EVENT_NAME_CHANGE
+    "description change",        // EVENT_DESCRIPTION_CHANGE
+    "value change",              // EVENT_VALUE_CHANGE
+    "selection",                 // EVENT_SELECTION
+    "selection add",             // EVENT_SELECTION_ADD
+    "selection remove",          // EVENT_SELECTION_REMOVE
+    "selection within",          // EVENT_SELECTION_WITHIN
+    "alert",                     // EVENT_ALERT
+    "menu start",                // EVENT_MENU_START
+    "menu end",                  // EVENT_MENU_END
+    "menupopup start",           // EVENT_MENUPOPUP_START
+    "menupopup end",             // EVENT_MENUPOPUP_END
+    "dragdrop start",            // EVENT_DRAGDROP_START
+    "scrolling start",           // EVENT_SCROLLING_START
+    "scrolling end",             // EVENT_SCROLLING_END
+    "document load complete",    // EVENT_DOCUMENT_LOAD_COMPLETE
+    "document reload",           // EVENT_DOCUMENT_RELOAD
+    "document load stopped",     // EVENT_DOCUMENT_LOAD_STOPPED
+    "text attribute changed",    // EVENT_TEXT_ATTRIBUTE_CHANGED
+    "text caret moved",          // EVENT_TEXT_CARET_MOVED
+    "text inserted",             // EVENT_TEXT_INSERTED
+    "text removed",              // EVENT_TEXT_REMOVED
+    "text selection changed",    // EVENT_TEXT_SELECTION_CHANGED
+    "window activate",           // EVENT_WINDOW_ACTIVATE
+    "window deactivate",         // EVENT_WINDOW_DEACTIVATE
+    "window maximize",           // EVENT_WINDOW_MAXIMIZE
+    "window minimize",           // EVENT_WINDOW_MINIMIZE
+    "window restore",            // EVENT_WINDOW_RESTORE
+    "object attribute changed",  // EVENT_OBJECT_ATTRIBUTE_CHANGED
+    "text value change",         // EVENT_TEXT_VALUE_CHANGE
+    "scrolling",                 // EVENT_SCROLLING
+    "announcement",              // EVENT_ANNOUNCEMENT
+    "live region added",         // EVENT_LIVE_REGION_ADDED
+    "live region removed",       // EVENT_LIVE_REGION_REMOVED
+    "inner reorder",             // EVENT_INNER_REORDER
+    "live region changed",       // EVENT_LIVE_REGION_CHANGED
+    "errormessage changed",      // EVENT_ERRORMESSAGE_CHANGED
 };
 
 #endif

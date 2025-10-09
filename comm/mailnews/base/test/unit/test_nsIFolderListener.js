@@ -6,11 +6,11 @@
  * Test that adding nsIFolderListener in js does not cause any crash.
  */
 
-var { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-var { MessageInjection } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageInjection.jsm"
+var { MessageInjection } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageInjection.sys.mjs"
 );
 
 var folderListener = {
@@ -21,7 +21,6 @@ var folderListener = {
   onFolderPropertyChanged() {},
   onFolderIntPropertyChanged() {},
   onFolderBoolPropertyChanged() {},
-  onFolderUnicharPropertyChanged() {},
   onFolderPropertyFlagChanged() {},
   onFolderEvent() {},
 };
@@ -30,7 +29,7 @@ var targetFolder;
 var messageInjection;
 
 add_setup(async function () {
-  let msgGen = new MessageGenerator();
+  const msgGen = new MessageGenerator();
   messageInjection = new MessageInjection({ mode: "local" }, msgGen);
 
   targetFolder = await messageInjection.makeEmptyFolder();

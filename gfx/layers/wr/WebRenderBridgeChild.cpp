@@ -10,6 +10,7 @@
 #include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/layers/CompositableClient.h"
 #include "mozilla/layers/CompositorBridgeChild.h"
+#include "mozilla/layers/CompositorManagerChild.h"
 #include "mozilla/layers/ImageDataSerializer.h"
 #include "mozilla/layers/IpcResourceUpdateQueue.h"
 #include "mozilla/layers/StackingContextHelper.h"
@@ -66,8 +67,6 @@ void WebRenderBridgeChild::DoDestroy() {
 
   // mDestroyed is used to prevent calling Send__delete__() twice.
   // When this function is called from CompositorBridgeChild::Destroy().
-  // mActiveResourceTracker is not cleared here, since it is
-  // used by PersistentBufferProviderShared.
   mDestroyed = true;
   mManager = nullptr;
 }
@@ -107,7 +106,7 @@ void WebRenderBridgeChild::UpdateResources(
 bool WebRenderBridgeChild::EndTransaction(
     DisplayListData&& aDisplayListData, TransactionId aTransactionId,
     bool aContainsSVGGroup, const mozilla::VsyncId& aVsyncId,
-    const mozilla::TimeStamp& aVsyncStartTime,
+    bool aRenderOffscreen, const mozilla::TimeStamp& aVsyncStartTime,
     const mozilla::TimeStamp& aRefreshStartTime,
     const mozilla::TimeStamp& aTxnStartTime, const nsCString& aTxnURL) {
   MOZ_ASSERT(!mDestroyed);
@@ -127,7 +126,8 @@ bool WebRenderBridgeChild::EndTransaction(
   bool ret = this->SendSetDisplayList(
       std::move(aDisplayListData), mDestroyedActors, GetFwdTransactionId(),
       aTransactionId, aContainsSVGGroup, aVsyncId, aVsyncStartTime,
-      aRefreshStartTime, aTxnStartTime, aTxnURL, fwdTime, payloads);
+      aRefreshStartTime, aTxnStartTime, aTxnURL, fwdTime, payloads,
+      aRenderOffscreen);
 
   // With multiple render roots, we may not have sent all of our
   // mParentCommands, so go ahead and go through our mParentCommands and ensure
@@ -349,7 +349,8 @@ LayersIPCActor* WebRenderBridgeChild::GetLayersIPCActor() {
   return static_cast<LayersIPCActor*>(GetCompositorBridgeChild());
 }
 
-void WebRenderBridgeChild::SyncWithCompositor() {
+void WebRenderBridgeChild::SyncWithCompositor(
+    const Maybe<uint64_t>& aWindowID) {
   if (!IPCOpen()) {
     return;
   }
@@ -444,30 +445,18 @@ void WebRenderBridgeChild::UseTextures(
                                                   OpUseTexture(textures)));
 }
 
-void WebRenderBridgeChild::UseRemoteTexture(CompositableClient* aCompositable,
-                                            const RemoteTextureId aTextureId,
-                                            const RemoteTextureOwnerId aOwnerId,
-                                            const gfx::IntSize aSize,
-                                            const TextureFlags aFlags) {
+void WebRenderBridgeChild::UseRemoteTexture(
+    CompositableClient* aCompositable, const RemoteTextureId aTextureId,
+    const RemoteTextureOwnerId aOwnerId, const gfx::IntSize aSize,
+    const TextureFlags aFlags, const RefPtr<FwdTransactionTracker>& aTracker) {
   AddWebRenderParentCommand(CompositableOperation(
       aCompositable->GetIPCHandle(),
       OpUseRemoteTexture(aTextureId, aOwnerId, aSize, aFlags)));
+  TrackFwdTransaction(aTracker);
 }
 
-void WebRenderBridgeChild::EnableRemoteTexturePushCallback(
-    CompositableClient* aCompositable, const RemoteTextureOwnerId aOwnerId,
-    const gfx::IntSize aSize, const TextureFlags aFlags) {
-  AddWebRenderParentCommand(CompositableOperation(
-      aCompositable->GetIPCHandle(),
-      OpEnableRemoteTexturePushCallback(aOwnerId, aSize, aFlags)));
-}
-
-void WebRenderBridgeChild::UpdateFwdTransactionId() {
-  GetCompositorBridgeChild()->UpdateFwdTransactionId();
-}
-
-uint64_t WebRenderBridgeChild::GetFwdTransactionId() {
-  return GetCompositorBridgeChild()->GetFwdTransactionId();
+FwdTransactionCounter& WebRenderBridgeChild::GetFwdTransactionCounter() {
+  return GetCompositorBridgeChild()->GetFwdTransactionCounter();
 }
 
 bool WebRenderBridgeChild::InForwarderThread() { return NS_IsMainThread(); }
@@ -501,7 +490,7 @@ mozilla::ipc::IPCResult WebRenderBridgeChild::RecvWrReleasedImages(
 void WebRenderBridgeChild::BeginClearCachedResources() {
   mSentDisplayList = false;
   mIsInClearCachedResources = true;
-  // Clear display list and animtaions at parent side before clearing cached
+  // Clear display list and animations at parent side before clearing cached
   // resources on client side. It prevents to clear resources before clearing
   // display list at parent side.
   SendClearCachedResources();
@@ -519,11 +508,8 @@ void WebRenderBridgeChild::EndClearCachedResources() {
 void WebRenderBridgeChild::SetWebRenderLayerManager(
     WebRenderLayerManager* aManager) {
   MOZ_ASSERT(aManager && !mManager);
-  mManager = aManager;
-
   MOZ_ASSERT(NS_IsMainThread() || !XRE_IsContentProcess());
-  mActiveResourceTracker =
-      MakeUnique<ActiveResourceTracker>(1000, "CompositableForwarder", nullptr);
+  mManager = aManager;
 }
 
 ipc::IShmemAllocator* WebRenderBridgeChild::GetShmemAllocator() {
@@ -596,6 +582,21 @@ void WebRenderBridgeChild::StartCaptureSequence(const nsCString& aPath,
 
 void WebRenderBridgeChild::StopCaptureSequence() {
   this->SendStopCaptureSequence();
+}
+
+bool WebRenderBridgeChild::SendEnsureConnected(
+    TextureFactoryIdentifier* textureFactoryIdentifier,
+    MaybeIdNamespace* maybeIdNamespace, nsCString* error) {
+  auto* manager = CompositorManagerChild::GetInstance();
+  if (XRE_IsParentProcess()) {
+    manager->SetSyncIPCStartTimeStamp();
+  }
+  auto ret = PWebRenderBridgeChild::SendEnsureConnected(
+      textureFactoryIdentifier, maybeIdNamespace, error);
+  if (XRE_IsParentProcess()) {
+    manager->ClearSyncIPCStartTimeStamp();
+  }
+  return ret;
 }
 
 }  // namespace layers

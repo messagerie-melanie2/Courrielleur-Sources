@@ -17,7 +17,7 @@ from mozperftest.runner import HERE
 from mozperftest.utils import load_class
 
 
-class Transformer(object):
+class Transformer:
     """Abstract class for data transformers."""
 
     def __init__(self, files=None, custom_transformer=None, logger=None, prefix=None):
@@ -216,7 +216,7 @@ def get_transformers(dirpath=None):
     for file in tfm_files:
         members = get_transformer(file.resolve().as_posix(), True)
 
-        for (name, tfm_class) in members:
+        for name, tfm_class in members:
             if name in ret:
                 raise NotebookDuplicateTransformsError(
                     f"Duplicated transformer {name} "

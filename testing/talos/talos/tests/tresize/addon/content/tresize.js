@@ -23,7 +23,7 @@ async function runTest(callback, locationSearch) {
         }
 
         if (marker) {
-          Profiler.pause(marker);
+          Profiler.subtestEnd(marker);
         }
         window.removeEventListener("MozAfterPaint", painted, true);
         let time = event.paintTimeStamp - startTime;
@@ -31,18 +31,22 @@ async function runTest(callback, locationSearch) {
       }
       window.addEventListener("MozAfterPaint", painted, true);
       if (marker) {
-        Profiler.resume(marker);
+        Profiler.subtestStart(marker);
       }
       startTime = window.performance.now();
       action();
     });
   }
 
-  // Position the intial window and set up profiling...
-  let windowSize = 425;
+  // Position the initial window and set up profiling...
+  const kTargetInnerSize = 425;
+  let windowSize = {
+    height: window.outerHeight - window.innerHeight + kTargetInnerSize,
+    width: window.outerWidth - window.innerWidth + kTargetInnerSize,
+  };
   await measurePaintTime(() => {
     window.moveTo(10, 10);
-    window.resizeTo(windowSize, windowSize);
+    window.resizeTo(windowSize.width, windowSize.height);
   });
 
   Profiler.initFromURLQueryParams(locationSearch);
@@ -51,10 +55,11 @@ async function runTest(callback, locationSearch) {
   let times = [];
   for (let i = 0; i < MAX; i++) {
     const marker = `resize ${i}`;
-    windowSize += INCREMENT;
+    windowSize.width += INCREMENT;
+    windowSize.height += INCREMENT;
 
     let time = await measurePaintTime(() => {
-      window.resizeTo(windowSize, windowSize);
+      window.resizeTo(windowSize.width, windowSize.height);
     }, marker);
     times.push(time);
 

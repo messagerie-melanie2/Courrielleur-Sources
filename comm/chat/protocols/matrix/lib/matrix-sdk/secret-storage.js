@@ -4,11 +4,14 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.ServerSideSecretStorageImpl = exports.SECRET_STORAGE_ALGORITHM_V1_AES = void 0;
+exports.calculateKeyCheck = calculateKeyCheck;
 exports.trimTrailingEquals = trimTrailingEquals;
-var _client = require("./client");
-var _aes = require("./crypto/aes");
-var _randomstring = require("./randomstring");
-var _logger = require("./logger");
+var _client = require("./client.js");
+var _randomstring = require("./randomstring.js");
+var _logger = require("./logger.js");
+var _encryptAESSecretStorageItem = _interopRequireDefault(require("./utils/encryptAESSecretStorageItem.js"));
+var _decryptAESSecretStorageItem = _interopRequireDefault(require("./utils/decryptAESSecretStorageItem.js"));
+function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }
 /*
 Copyright 2021-2023 The Matrix.org Foundation C.I.C.
 
@@ -31,7 +34,7 @@ limitations under the License.
  * @see https://spec.matrix.org/v1.6/client-server-api/#storage
  */
 
-const SECRET_STORAGE_ALGORITHM_V1_AES = "m.secret_storage.v1.aes-hmac-sha2";
+const SECRET_STORAGE_ALGORITHM_V1_AES = exports.SECRET_STORAGE_ALGORITHM_V1_AES = "m.secret_storage.v1.aes-hmac-sha2";
 
 /**
  * Common base interface for Secret Storage Keys.
@@ -88,7 +91,7 @@ const SECRET_STORAGE_ALGORITHM_V1_AES = "m.secret_storage.v1.aes-hmac-sha2";
  * Normally this will just be an {@link ServerSideSecretStorageImpl}, but for backwards
  * compatibility some methods allow other implementations.
  */
-exports.SECRET_STORAGE_ALGORITHM_V1_AES = SECRET_STORAGE_ALGORITHM_V1_AES;
+
 /**
  * Implementation of Server-side secret storage.
  *
@@ -160,7 +163,7 @@ class ServerSideSecretStorageImpl {
    *     keyId: the ID of the key
    *     keyInfo: details about the key (iv, mac, passphrase)
    */
-  async addKey(algorithm, opts = {}, keyId) {
+  async addKey(algorithm, opts, keyId) {
     if (algorithm !== SECRET_STORAGE_ALGORITHM_V1_AES) {
       throw new Error(`Unknown key algorithm ${algorithm}`);
     }
@@ -173,14 +176,12 @@ class ServerSideSecretStorageImpl {
     if (opts.passphrase) {
       keyInfo.passphrase = opts.passphrase;
     }
-    if (opts.key) {
-      const {
-        iv,
-        mac
-      } = await (0, _aes.calculateKeyCheck)(opts.key);
-      keyInfo.iv = iv;
-      keyInfo.mac = mac;
-    }
+    const {
+      iv,
+      mac
+    } = await calculateKeyCheck(opts.key);
+    keyInfo.iv = iv;
+    keyInfo.mac = mac;
 
     // Create a unique key id. XXX: this is racey.
     if (!keyId) {
@@ -240,7 +241,7 @@ class ServerSideSecretStorageImpl {
       if (info.mac) {
         const {
           mac
-        } = await (0, _aes.calculateKeyCheck)(key, info.iv);
+        } = await calculateKeyCheck(key, info.iv);
         return trimTrailingEquals(info.mac) === trimTrailingEquals(mac);
       } else {
         // if we have no information, we have to assume the key is right
@@ -394,10 +395,10 @@ class ServerSideSecretStorageImpl {
     if (keys[keyId].algorithm === SECRET_STORAGE_ALGORITHM_V1_AES) {
       const decryption = {
         encrypt: function (secret) {
-          return (0, _aes.encryptAES)(secret, privateKey, name);
+          return (0, _encryptAESSecretStorageItem.default)(secret, privateKey, name);
         },
         decrypt: function (encInfo) {
-          return (0, _aes.decryptAES)(encInfo, privateKey, name);
+          return (0, _decryptAESSecretStorageItem.default)(encInfo, privateKey, name);
         }
       };
       return [keyId, decryption];
@@ -428,4 +429,20 @@ function trimTrailingEquals(input) {
   } else {
     return input;
   }
+}
+
+// string of zeroes, for calculating the key check
+const ZERO_STR = "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+
+/**
+ * Calculate the MAC for checking the key.
+ * See https://spec.matrix.org/v1.11/client-server-api/#msecret_storagev1aes-hmac-sha2, steps 3 and 4.
+ *
+ * @param key - the key to use
+ * @param iv - The initialization vector as a base64-encoded string.
+ *     If omitted, a random initialization vector will be created.
+ * @returns An object that contains, `mac` and `iv` properties.
+ */
+function calculateKeyCheck(key, iv) {
+  return (0, _encryptAESSecretStorageItem.default)(ZERO_STR, key, "", iv);
 }

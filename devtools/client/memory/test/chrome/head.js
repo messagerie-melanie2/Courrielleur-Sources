@@ -3,8 +3,8 @@
 
 "use strict";
 
-var { BrowserLoader } = ChromeUtils.import(
-  "resource://devtools/shared/loader/browser-loader.js"
+var { BrowserLoader } = ChromeUtils.importESModule(
+  "resource://devtools/shared/loader/browser-loader.sys.mjs"
 );
 var { require } = BrowserLoader({
   baseURI: "resource://devtools/client/memory/",
@@ -49,10 +49,9 @@ const { L10N } = require("resource://devtools/client/memory/utils.js");
 
 var models = require("resource://devtools/client/memory/models.js");
 
-var Immutable = require("resource://devtools/client/shared/vendor/immutable.js");
-var React = require("resource://devtools/client/shared/vendor/react.js");
+var React = require("resource://devtools/client/shared/vendor/react.mjs");
 const dom = require("resource://devtools/client/shared/vendor/react-dom-factories.js");
-var ReactDOM = require("resource://devtools/client/shared/vendor/react-dom.js");
+var ReactDOM = require("resource://devtools/client/shared/vendor/react-dom.mjs");
 var { createFactory } = React;
 var Heap = createFactory(
   require("resource://devtools/client/memory/components/Heap.js")

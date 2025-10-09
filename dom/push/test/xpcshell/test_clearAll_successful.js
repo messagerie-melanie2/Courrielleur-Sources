@@ -7,7 +7,7 @@ var db;
 var unregisterDefers = {};
 var userAgentID = "4ce480ef-55b2-4f83-924c-dcd35ab978b4";
 
-function promiseUnregister(keyID, code) {
+function promiseUnregister(keyID) {
   return new Promise(r => (unregisterDefers[keyID] = r));
 }
 
@@ -20,6 +20,8 @@ function run_test() {
 }
 
 add_task(async function setup() {
+  Services.fog.testResetFOG();
+
   db = PushServiceWebSocket.newPushDB();
   registerCleanupFunction(() => db.drop().then(() => db.close()));
 
@@ -41,7 +43,7 @@ add_task(async function setup() {
     db,
     makeWebSocket(uri) {
       return new MockWebSocket(uri, {
-        onHello(request) {
+        onHello() {
           this.serverSendMsg(
             JSON.stringify({
               messageType: "hello",
@@ -108,6 +110,12 @@ add_task(async function test_sanitize() {
   });
 
   await promiseCleared;
+
+  equal(
+    Glean.webPush.unsubscribedByClearingData.testGetValue(),
+    2,
+    "Should increment the Glean counter for the removed records"
+  );
 
   deepEqual(
     modifiedScopes.sort(compareAscending),

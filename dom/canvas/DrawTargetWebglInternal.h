@@ -10,46 +10,11 @@
 #include "DrawTargetWebgl.h"
 
 #include "mozilla/HashFunctions.h"
+#include "mozilla/gfx/Etagere.h"
 #include "mozilla/gfx/PathSkia.h"
 #include "mozilla/gfx/WPFGpuRaster.h"
 
 namespace mozilla::gfx {
-
-// TexturePacker implements a bin-packing algorithm for 2D rectangles. It uses
-// a binary tree that partitions the space of a node at a given split. This
-// produces two children, one on either side of the split. This subdivision
-// proceeds recursively as necessary.
-class TexturePacker {
- public:
-  explicit TexturePacker(const IntRect& aBounds, bool aAvailable = true)
-      : mBounds(aBounds),
-        mAvailable(aAvailable ? std::min(aBounds.width, aBounds.height) : 0) {}
-
-  Maybe<IntPoint> Insert(const IntSize& aSize);
-
-  bool Remove(const IntRect& aBounds);
-
-  const IntRect& GetBounds() const { return mBounds; }
-
- private:
-  bool IsLeaf() const { return !mChildren; }
-  bool IsFullyAvailable() const { return IsLeaf() && mAvailable > 0; }
-
-  void DiscardChildren() { mChildren.reset(); }
-
-  // If applicable, the two children produced by picking a single axis split
-  // within the node's bounds and subdividing the bounds there.
-  UniquePtr<TexturePacker[]> mChildren;
-  // The bounds enclosing this node and any children within it.
-  IntRect mBounds;
-  // For a leaf node, specifies the size of the smallest dimension available to
-  // allocate. For a branch node, specifies largest potential available size of
-  // all children. This can be used during the allocation process to rapidly
-  // reject certain sub-trees without having to search all the way to a leaf
-  // node if we know that largest available size within the sub-tree wouldn't
-  // fit the requested size.
-  int mAvailable = 0;
-};
 
 // CacheEnty is a generic interface for various items that need to be cached to
 // a texture.
@@ -113,7 +78,7 @@ class CacheImpl {
   typedef LinkedList<RefPtr<T>> ListType;
 
   // Whether the cache should be small and space-efficient or prioritize speed.
-  static constexpr size_t kNumChains = BIG ? 499 : 17;
+  static constexpr size_t kNumChains = BIG ? 499 : 71;
 
  public:
   ~CacheImpl() {
@@ -132,6 +97,45 @@ class CacheImpl {
   ListType mChains[kNumChains];
 };
 
+// BackingTexture provides information about the shared or standalone texture
+// that is backing a texture handle.
+class BackingTexture {
+ public:
+  BackingTexture(const IntSize& aSize, SurfaceFormat aFormat,
+                 const RefPtr<WebGLTexture>& aTexture);
+
+  SurfaceFormat GetFormat() const { return mFormat; }
+  IntSize GetSize() const { return mSize; }
+
+  static inline size_t UsedBytes(SurfaceFormat aFormat, const IntSize& aSize) {
+    return size_t(BytesPerPixel(aFormat)) * size_t(aSize.width) *
+           size_t(aSize.height);
+  }
+
+  size_t UsedBytes() const { return UsedBytes(GetFormat(), GetSize()); }
+
+  const RefPtr<WebGLTexture>& GetWebGLTexture() const { return mTexture; }
+
+  bool IsInitialized() const { return mFlags & INITIALIZED; }
+  void MarkInitialized() { mFlags |= INITIALIZED; }
+
+  bool IsRenderable() const { return mFlags & RENDERABLE; }
+  void MarkRenderable() { mFlags |= RENDERABLE; }
+
+ protected:
+  IntSize mSize;
+  SurfaceFormat mFormat;
+  RefPtr<WebGLTexture> mTexture;
+
+ private:
+  enum Flags : uint8_t {
+    INITIALIZED = 1 << 0,
+    RENDERABLE = 1 << 1,
+  };
+
+  uint8_t mFlags = 0;
+};
+
 // TextureHandle is an abstract base class for supplying textures to drawing
 // commands that may be backed by different resource types (such as a shared
 // or standalone texture). It may be further linked to use-specific metadata
@@ -144,29 +148,33 @@ class TextureHandle : public RefCounted<TextureHandle>,
   enum Type { SHARED, STANDALONE };
 
   virtual Type GetType() const = 0;
-  virtual const RefPtr<WebGLTextureJS>& GetWebGLTexture() const = 0;
   virtual IntRect GetBounds() const = 0;
   IntSize GetSize() const { return GetBounds().Size(); }
-  virtual IntSize GetBackingSize() const = 0;
   virtual SurfaceFormat GetFormat() const = 0;
-  virtual size_t UsedBytes() const = 0;
 
-  static inline size_t UsedBytes(SurfaceFormat aFormat, const IntSize& aSize) {
-    return size_t(BytesPerPixel(aFormat)) * size_t(aSize.width) *
-           size_t(aSize.height);
+  virtual BackingTexture* GetBackingTexture() = 0;
+
+  size_t UsedBytes() const {
+    return BackingTexture::UsedBytes(GetFormat(), GetSize());
   }
 
   virtual void UpdateSize(const IntSize& aSize) {}
 
-  virtual void Cleanup(DrawTargetWebgl::SharedContext& aContext) {}
+  virtual void Cleanup(SharedContextWebgl& aContext) {}
 
   virtual ~TextureHandle() {}
 
   bool IsValid() const { return mValid; }
   void Invalidate() { mValid = false; }
 
-  void SetSurface(SourceSurface* aSurface) { mSurface = aSurface; }
-  SourceSurface* GetSurface() const { return mSurface; }
+  void ClearSurface() { mSurface = nullptr; }
+  void SetSurface(const RefPtr<SourceSurface>& aSurface) {
+    mSurface = aSurface;
+  }
+  already_AddRefed<SourceSurface> GetSurface() const {
+    RefPtr<SourceSurface> surface(mSurface);
+    return surface.forget();
+  }
 
   float GetSigma() const { return mSigma; }
   void SetSigma(float aSigma) { mSigma = aSigma; }
@@ -185,14 +193,14 @@ class TextureHandle : public RefCounted<TextureHandle>,
 
   // Note as used if there is corresponding surface or cache entry.
   bool IsUsed() const {
-    return mSurface || (mCacheEntry && mCacheEntry->IsValid());
+    return !mSurface.IsDead() || (mCacheEntry && mCacheEntry->IsValid());
   }
 
  private:
   bool mValid = true;
   // If applicable, weak pointer to the SourceSurface that is linked to this
   // TextureHandle.
-  SourceSurface* mSurface = nullptr;
+  ThreadSafeWeakPtr<SourceSurface> mSurface;
   // If this TextureHandle stores a cached shadow, then we need to remember the
   // blur sigma used to produce the shadow.
   float mSigma = -1.0f;
@@ -208,32 +216,24 @@ class SharedTextureHandle;
 // SharedTexture is a large slab texture that is subdivided (by using a
 // TexturePacker) to hold many small SharedTextureHandles. This avoids needing
 // to allocate many WebGL textures for every single small Canvas 2D texture.
-class SharedTexture : public RefCounted<SharedTexture> {
+class SharedTexture : public RefCounted<SharedTexture>, public BackingTexture {
  public:
   MOZ_DECLARE_REFCOUNTED_TYPENAME(SharedTexture)
 
   SharedTexture(const IntSize& aSize, SurfaceFormat aFormat,
-                const RefPtr<WebGLTextureJS>& aTexture);
+                const RefPtr<WebGLTexture>& aTexture);
+  ~SharedTexture();
 
   already_AddRefed<SharedTextureHandle> Allocate(const IntSize& aSize);
-  bool Free(const SharedTextureHandle& aHandle);
+  bool Free(SharedTextureHandle& aHandle);
 
-  SurfaceFormat GetFormat() const { return mFormat; }
-  IntSize GetSize() const { return mPacker.GetBounds().Size(); }
-
-  size_t UsedBytes() const {
-    return TextureHandle::UsedBytes(GetFormat(), GetSize());
+  bool HasAllocatedHandles() const {
+    return mAtlasAllocator && Etagere::etagere_atlas_allocator_allocated_space(
+                                  mAtlasAllocator) > 0;
   }
 
-  bool HasAllocatedHandles() const { return mAllocatedHandles > 0; }
-
-  const RefPtr<WebGLTextureJS>& GetWebGLTexture() const { return mTexture; }
-
  private:
-  TexturePacker mPacker;
-  SurfaceFormat mFormat;
-  RefPtr<WebGLTextureJS> mTexture;
-  size_t mAllocatedHandles = 0;
+  Etagere::AtlasAllocator* mAtlasAllocator = nullptr;
 };
 
 // SharedTextureHandle is an allocated region within a large SharedTexture page
@@ -244,28 +244,23 @@ class SharedTextureHandle : public TextureHandle {
  public:
   MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(SharedTextureHandle, override)
 
-  SharedTextureHandle(const IntRect& aBounds, SharedTexture* aTexture);
+  SharedTextureHandle(Etagere::AllocationId aId, const IntRect& aBounds,
+                      SharedTexture* aTexture);
 
   Type GetType() const override { return Type::SHARED; }
 
-  const RefPtr<WebGLTextureJS>& GetWebGLTexture() const override {
-    return mTexture->GetWebGLTexture();
-  }
-
   IntRect GetBounds() const override { return mBounds; }
-  IntSize GetBackingSize() const override { return mTexture->GetSize(); }
 
   SurfaceFormat GetFormat() const override { return mTexture->GetFormat(); }
 
-  size_t UsedBytes() const override {
-    return TextureHandle::UsedBytes(GetFormat(), mBounds.Size());
-  }
+  BackingTexture* GetBackingTexture() override { return mTexture.get(); }
 
-  void Cleanup(DrawTargetWebgl::SharedContext& aContext) override;
+  void Cleanup(SharedContextWebgl& aContext) override;
 
   const RefPtr<SharedTexture>& GetOwner() const { return mTexture; }
 
  private:
+  Etagere::AllocationId mAllocationId = Etagere::INVALID_ALLOCATION_ID;
   IntRect mBounds;
   RefPtr<SharedTexture> mTexture;
 };
@@ -273,36 +268,30 @@ class SharedTextureHandle : public TextureHandle {
 // StandaloneTexture is a texture that can not be effectively shared within
 // a SharedTexture page, such that it is better to assign it its own WebGL
 // texture.
-class StandaloneTexture : public TextureHandle {
+class StandaloneTexture : public TextureHandle, public BackingTexture {
  public:
   MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(StandaloneTexture, override)
 
   StandaloneTexture(const IntSize& aSize, SurfaceFormat aFormat,
-                    const RefPtr<WebGLTextureJS>& aTexture);
+                    const RefPtr<WebGLTexture>& aTexture);
 
   Type GetType() const override { return Type::STANDALONE; }
 
-  SurfaceFormat GetFormat() const override { return mFormat; }
-
-  const RefPtr<WebGLTextureJS>& GetWebGLTexture() const override {
-    return mTexture;
+  IntRect GetBounds() const override {
+    return IntRect(IntPoint(0, 0), BackingTexture::GetSize());
   }
 
-  IntRect GetBounds() const override { return IntRect(IntPoint(0, 0), mSize); }
-  IntSize GetBackingSize() const override { return mSize; }
-
-  size_t UsedBytes() const override {
-    return TextureHandle::UsedBytes(mFormat, mSize);
+  SurfaceFormat GetFormat() const override {
+    return BackingTexture::GetFormat();
   }
+
+  using BackingTexture::UsedBytes;
+
+  BackingTexture* GetBackingTexture() override { return this; }
 
   void UpdateSize(const IntSize& aSize) override { mSize = aSize; }
 
-  void Cleanup(DrawTargetWebgl::SharedContext& aContext) override;
-
- private:
-  IntSize mSize;
-  SurfaceFormat mFormat;
-  RefPtr<WebGLTextureJS> mTexture;
+  void Cleanup(SharedContextWebgl& aContext) override;
 };
 
 // GlyphCacheEntry stores rendering metadata for a rendered text run, as well
@@ -367,9 +356,14 @@ class GlyphCache : public LinkedListElement<GlyphCache>,
       const IntRect& aBounds, const IntRect& aFullBounds, HashNumber aHash,
       const StrokeOptions* aOptions);
 
+  bool IsWhitespace(const GlyphBuffer& aBuffer) const;
+  void SetLastWhitespace(const GlyphBuffer& aBuffer);
+
  private:
   // Weak pointer to the owning font
   ScaledFont* mFont;
+  // The last whitespace queried from this cache
+  Maybe<uint32_t> mLastWhitespace;
 };
 
 struct QuantizedPath {
@@ -395,6 +389,12 @@ struct PathVertexRange {
   bool IsValid() const { return mLength > 0; }
 };
 
+enum class AAStrokeMode {
+  Unsupported,
+  Geometry,
+  Mask,
+};
+
 // PathCacheEntry stores a rasterized version of a supplied path with a given
 // pattern.
 class PathCacheEntry : public CacheEntryImpl<PathCacheEntry> {
@@ -402,14 +402,15 @@ class PathCacheEntry : public CacheEntryImpl<PathCacheEntry> {
   MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(PathCacheEntry, override)
 
   PathCacheEntry(QuantizedPath&& aPath, Pattern* aPattern,
-                 StoredStrokeOptions* aStrokeOptions, const Matrix& aTransform,
-                 const IntRect& aBounds, const Point& aOrigin, HashNumber aHash,
-                 float aSigma = -1.0f);
+                 StoredStrokeOptions* aStrokeOptions, AAStrokeMode aStrokeMode,
+                 const Matrix& aTransform, const IntRect& aBounds,
+                 const Point& aOrigin, HashNumber aHash, float aSigma = -1.0f);
 
   bool MatchesPath(const QuantizedPath& aPath, const Pattern* aPattern,
                    const StrokeOptions* aStrokeOptions,
-                   const Matrix& aTransform, const IntRect& aBounds,
-                   const Point& aOrigin, HashNumber aHash, float aSigma);
+                   AAStrokeMode aStrokeMode, const Matrix& aTransform,
+                   const IntRect& aBounds, const Point& aOrigin,
+                   HashNumber aHash, float aSigma);
 
   static HashNumber HashPath(const QuantizedPath& aPath,
                              const Pattern* aPattern, const Matrix& aTransform,
@@ -434,6 +435,8 @@ class PathCacheEntry : public CacheEntryImpl<PathCacheEntry> {
   UniquePtr<Pattern> mPattern;
   // The StrokeOptions used for stroked paths, if applicable
   UniquePtr<StoredStrokeOptions> mStrokeOptions;
+  // The AAStroke mode used for rendering a stroked path.
+  AAStrokeMode mAAStrokeMode = AAStrokeMode::Unsupported;
   // The shadow blur sigma
   float mSigma;
   // If the path has cached geometry in the vertex buffer.
@@ -446,8 +449,9 @@ class PathCache : public CacheImpl<PathCacheEntry, true> {
 
   already_AddRefed<PathCacheEntry> FindOrInsertEntry(
       QuantizedPath aPath, const Pattern* aPattern,
-      const StrokeOptions* aStrokeOptions, const Matrix& aTransform,
-      const IntRect& aBounds, const Point& aOrigin, float aSigma = -1.0f);
+      const StrokeOptions* aStrokeOptions, AAStrokeMode aStrokeMode,
+      const Matrix& aTransform, const IntRect& aBounds, const Point& aOrigin,
+      float aSigma = -1.0f);
 
   void ClearVertexRanges();
 };

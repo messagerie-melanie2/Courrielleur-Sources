@@ -23,6 +23,7 @@ class nsGlobalWindowInner;
 
 namespace mozilla {
 class LogModule;
+class nsRFPTargetSetIDL;
 
 namespace dom {
 
@@ -51,21 +52,23 @@ class BrowsingContextGroup;
   /* Whether this window's channel has been marked as a third-party      \
    * tracking resource */                                                \
   FIELD(IsThirdPartyTrackingResourceWindow, bool)                        \
+  /* Whether this window is using its unpartitioned cookies due to       \
+   * the Storage Access API */                                           \
+  FIELD(UsingStorageAccess, bool)                                        \
   FIELD(ShouldResistFingerprinting, bool)                                \
+  FIELD(OverriddenFingerprintingSettings, Maybe<RFPTargetSet>)           \
   FIELD(IsSecureContext, bool)                                           \
   FIELD(IsOriginalFrameSource, bool)                                     \
   /* Mixed-Content: If the corresponding documentURI is https,           \
    * then this flag is true. */                                          \
   FIELD(IsSecure, bool)                                                  \
-  /* Whether the user has overriden the mixed content blocker to allow   \
-   * mixed content loads to happen */                                    \
-  FIELD(AllowMixedContent, bool)                                         \
   /* Whether this window has registered a "beforeunload" event           \
    * handler */                                                          \
   FIELD(HasBeforeUnload, bool)                                           \
   /* Controls whether the WindowContext is currently considered to be    \
    * activated by a gesture */                                           \
-  FIELD(UserActivationState, UserActivation::State)                      \
+  FIELD(UserActivationStateAndModifiers,                                 \
+        UserActivation::StateAndModifiers::DataT)                        \
   FIELD(EmbedderPolicy, nsILoadInfo::CrossOriginEmbedderPolicy)          \
   /* True if this document tree contained at least a HTMLMediaElement.   \
    * This should only be set on top level context. */                    \
@@ -132,6 +135,11 @@ class WindowContext : public nsISupports, public nsWrapperCache {
     return GetShouldResistFingerprinting();
   }
 
+  bool UsingStorageAccess() const { return GetUsingStorageAccess(); }
+
+  already_AddRefed<nsIRFPTargetSetIDL>
+  GetOverriddenFingerprintingSettingsWebIDL() const;
+
   nsGlobalWindowInner* GetInnerWindow() const;
   Document* GetDocument() const;
   Document* GetExtantDoc() const;
@@ -154,6 +162,9 @@ class WindowContext : public nsISupports, public nsWrapperCache {
   Span<RefPtr<BrowsingContext>> NonSyntheticChildren() {
     return mNonSyntheticChildren;
   }
+
+  BrowsingContext* NonSyntheticLightDOMChildAt(uint32_t aIndex);
+  uint32_t NonSyntheticLightDOMChildrenCount();
 
   // Cast this object to it's parent-process canonical form.
   WindowGlobalParent* Canonical();
@@ -180,9 +191,16 @@ class WindowContext : public nsISupports, public nsWrapperCache {
   // 'MIXED' state flags, and should only be called on the top window context.
   void AddSecurityState(uint32_t aStateFlags);
 
+  UserActivation::State GetUserActivationState() const {
+    return UserActivation::StateAndModifiers(
+               GetUserActivationStateAndModifiers())
+        .GetState();
+  }
+
   // This function would be called when its corresponding window is activated
   // by user gesture.
-  void NotifyUserGestureActivation();
+  void NotifyUserGestureActivation(
+      UserActivation::Modifiers aModifiers = UserActivation::Modifiers::None());
 
   // This function would be called when we want to reset the user gesture
   // activation flag.
@@ -197,13 +215,25 @@ class WindowContext : public nsISupports, public nsWrapperCache {
   // out.
   bool HasValidTransientUserGestureActivation();
 
-  // See `mUserGestureStart`.
+  // See `mLastActivationTimestamp`.
   const TimeStamp& GetUserGestureStart() const;
 
   // Return true if the corresponding window has valid transient user gesture
   // activation and the transient user gesture activation had been consumed
   // successfully.
   bool ConsumeTransientUserGestureActivation();
+
+  // Return true if its corresponding window has history activation.
+  bool HasValidHistoryActivation() const;
+
+  // Consume the history-action user activation.
+  void ConsumeHistoryActivation();
+
+  // Update the history-action user activation for this window context
+  void UpdateLastHistoryActivation();
+
+  bool GetTransientUserGestureActivationModifiers(
+      UserActivation::Modifiers* aModifiers);
 
   bool CanShowPopup();
 
@@ -244,8 +274,6 @@ class WindowContext : public nsISupports, public nsWrapperCache {
   // Overload `CanSet` to get notifications for a particular field being set.
   bool CanSet(FieldIndex<IDX_IsSecure>, const bool& aIsSecure,
               ContentParent* aSource);
-  bool CanSet(FieldIndex<IDX_AllowMixedContent>, const bool& aAllowMixedContent,
-              ContentParent* aSource);
 
   bool CanSet(FieldIndex<IDX_HasBeforeUnload>, const bool& aHasBeforeUnload,
               ContentParent* aSource);
@@ -266,8 +294,12 @@ class WindowContext : public nsISupports, public nsWrapperCache {
   bool CanSet(FieldIndex<IDX_IsThirdPartyTrackingResourceWindow>,
               const bool& aIsThirdPartyTrackingResourceWindow,
               ContentParent* aSource);
+  bool CanSet(FieldIndex<IDX_UsingStorageAccess>,
+              const bool& aUsingStorageAccess, ContentParent* aSource);
   bool CanSet(FieldIndex<IDX_ShouldResistFingerprinting>,
               const bool& aShouldResistFingerprinting, ContentParent* aSource);
+  bool CanSet(FieldIndex<IDX_OverriddenFingerprintingSettings>,
+              const Maybe<RFPTargetSet>& aValue, ContentParent* aSource);
   bool CanSet(FieldIndex<IDX_IsSecureContext>, const bool& aIsSecureContext,
               ContentParent* aSource);
   bool CanSet(FieldIndex<IDX_IsOriginalFrameSource>,
@@ -292,8 +324,9 @@ class WindowContext : public nsISupports, public nsWrapperCache {
   bool CanSet(FieldIndex<IDX_DelegatedExactHostMatchPermissions>,
               const PermissionDelegateHandler::DelegatedPermissionList& aValue,
               ContentParent* aSource);
-  bool CanSet(FieldIndex<IDX_UserActivationState>,
-              const UserActivation::State& aUserActivationState,
+  bool CanSet(FieldIndex<IDX_UserActivationStateAndModifiers>,
+              const UserActivation::StateAndModifiers::DataT&
+                  aUserActivationStateAndModifiers,
               ContentParent* aSource) {
     return true;
   }
@@ -326,12 +359,16 @@ class WindowContext : public nsISupports, public nsWrapperCache {
   void DidSet(FieldIndex<I>) {}
   template <size_t I, typename T>
   void DidSet(FieldIndex<I>, T&& aOldValue) {}
-  void DidSet(FieldIndex<IDX_UserActivationState>);
+  void DidSet(FieldIndex<IDX_UserActivationStateAndModifiers>);
 
   // Recomputes whether we can execute scripts in this WindowContext based on
   // the value of AllowJavascript() and whether scripts are allowed in the
   // BrowsingContext.
   void RecomputeCanExecuteScripts(bool aApplyChanges = true);
+
+  void ClearLightDOMChildren();
+
+  void EnsureLightDOMChildren();
 
   const uint64_t mInnerWindowId;
   const uint64_t mOuterWindowId;
@@ -353,6 +390,12 @@ class WindowContext : public nsISupports, public nsWrapperCache {
   // from named targeting, `Window.frames` etc.
   nsTArray<RefPtr<BrowsingContext>> mNonSyntheticChildren;
 
+  // mNonSyntheticLightDOMChildren is otherwise the same as
+  // mNonSyntheticChildren, but it contains only those BrowsingContexts where
+  // embedder is in light DOM. The contents of the array are computed lazily and
+  // cleared if there are changes to mChildren.
+  Maybe<nsTArray<RefPtr<BrowsingContext>>> mNonSyntheticLightDOMChildren;
+
   bool mIsDiscarded = false;
   bool mIsInProcess = false;
 
@@ -361,9 +404,15 @@ class WindowContext : public nsISupports, public nsWrapperCache {
   // BrowsingContext.
   bool mCanExecuteScripts = true;
 
+  // https://html.spec.whatwg.org/multipage/interaction.html#last-activation-timestamp
   // The start time of user gesture, this is only available if the window
   // context is in process.
-  TimeStamp mUserGestureStart;
+  TimeStamp mLastActivationTimestamp;
+
+  // https://html.spec.whatwg.org/#history-action-activation
+  // This is set to mLastActivationTimestamp every time ConsumeHistoryActivation
+  // is called.
+  TimeStamp mHistoryActivation;
 };
 
 using WindowContextTransaction = WindowContext::BaseTransaction;

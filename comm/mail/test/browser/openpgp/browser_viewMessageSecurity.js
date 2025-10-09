@@ -10,50 +10,45 @@
 "use strict";
 
 const {
-  create_encrypted_smime_message,
-  add_message_to_folder,
   be_in_folder,
   get_about_message,
   get_special_folder,
-  mc,
   select_click_row,
   press_delete,
-  plan_for_message_display,
   wait_for_message_display_completion,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 const {
   get_notification_button,
   wait_for_notification_to_show,
   wait_for_notification_to_stop,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/NotificationBoxHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/NotificationBoxHelpers.sys.mjs"
 );
-const { OpenPGPTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mozmill/OpenPGPTestUtils.jsm"
+const { OpenPGPTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/OpenPGPTestUtils.sys.mjs"
 );
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
-const { SmimeUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/smimeUtils.jsm"
+const { SmimeUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/SmimeUtils.sys.mjs"
 );
 
-const { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+const { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 const MSG_TEXT = "Sundays are nothing without callaloo.";
 
-function getMsgBodyTxt(mc) {
-  let msgPane = get_about_message(mc.window).getMessagePaneBrowser();
+function getMsgBodyTxt() {
+  const msgPane = get_about_message(window).getMessagePaneBrowser();
   return msgPane.contentDocument.documentElement.textContent;
 }
 
 var aliceAcct;
 var aliceIdentity;
-var initialKeyIdPref = "";
 var gInbox;
 
 /**
@@ -77,7 +72,7 @@ add_setup(async function () {
   aliceAcct.addIdentity(aliceIdentity);
 
   // Set up the alice's private key.
-  let [id] = await OpenPGPTestUtils.importPrivateKey(
+  const [id] = await OpenPGPTestUtils.importPrivateKey(
     window,
     new FileUtils.File(
       getTestFilePath(
@@ -86,7 +81,6 @@ add_setup(async function () {
     )
   );
 
-  initialKeyIdPref = aliceIdentity.getUnicharAttribute("openpgp_key_id");
   aliceIdentity.setUnicharAttribute("openpgp_key_id", id);
 
   // Import and accept the public key for Bob, our verified sender.
@@ -109,11 +103,11 @@ add_setup(async function () {
  * encryption states.
  */
 add_task(async function testSmimeOpenPgpSelection() {
-  let smimeFile = new FileUtils.File(
+  const smimeFile = new FileUtils.File(
     getTestFilePath("data/smime/alice.env.eml")
   );
   // Fetch a local OpenPGP message.
-  let openPgpFile = new FileUtils.File(
+  const openPgpFile = new FileUtils.File(
     getTestFilePath(
       "data/eml/signed-by-0xfbfcc82a015e7330-encrypted-to-0xf231550c4f47e38e.eml"
     )
@@ -148,9 +142,9 @@ add_task(async function testSmimeOpenPgpSelection() {
   await copyListener.promise;
 
   // Select the second row, which should contain the S/MIME message.
-  select_click_row(1);
+  await select_click_row(-2);
 
-  let aboutMessage = get_about_message();
+  const aboutMessage = get_about_message();
   Assert.equal(
     aboutMessage.document
       .getElementById("encryptionTechBtn")
@@ -162,12 +156,12 @@ add_task(async function testSmimeOpenPgpSelection() {
     "S/MIME message should be decrypted"
   );
 
-  let openpgpprocessed = BrowserTestUtils.waitForEvent(
+  const openpgpprocessed = BrowserTestUtils.waitForEvent(
     aboutMessage.document,
     "openpgpprocessed"
   );
   // Select the first row, which should contain the OpenPGP message.
-  select_click_row(0);
+  await select_click_row(-1);
   await openpgpprocessed;
 
   Assert.equal(
@@ -177,7 +171,7 @@ add_task(async function testSmimeOpenPgpSelection() {
     "OpenPGP"
   );
 
-  Assert.ok(getMsgBodyTxt(mc).includes(MSG_TEXT), "message text is in body");
+  Assert.ok(getMsgBodyTxt().includes(MSG_TEXT), "message text is in body");
   Assert.ok(
     OpenPGPTestUtils.hasSignedIconState(aboutMessage.document, "verified"),
     "signed verified icon is displayed"
@@ -188,9 +182,9 @@ add_task(async function testSmimeOpenPgpSelection() {
   );
 
   // Delete the two generated messages.
-  press_delete();
-  select_click_row(0);
-  press_delete();
+  await press_delete();
+  await select_click_row(-1);
+  await press_delete();
 });
 
 /**
@@ -198,14 +192,14 @@ add_task(async function testSmimeOpenPgpSelection() {
  */
 add_task(async function testBrokenMSExchangeEncryption() {
   // Fetch a broken MS-Exchange encrypted message.
-  let brokenFile = new FileUtils.File(
+  const brokenFile = new FileUtils.File(
     getTestFilePath("data/eml/alice-broken-exchange.eml")
   );
-  let notificationBox = "mail-notification-top";
-  let notificationValue = "brokenExchange";
+  const notificationBox = "mail-notification-top";
+  const notificationValue = "brokenExchange";
 
   // Add the broken OpenPGP message to the inbox folder.
-  let copyListener = new PromiseTestUtils.PromiseCopyListener();
+  const copyListener = new PromiseTestUtils.PromiseCopyListener();
   MailServices.copy.copyFileMessage(
     brokenFile,
     gInbox,
@@ -219,18 +213,18 @@ add_task(async function testBrokenMSExchangeEncryption() {
   await copyListener.promise;
 
   // Select the first row, which should contain the OpenPGP message.
-  select_click_row(0);
+  await select_click_row(-1);
 
   // Assert the "corrupted by MS-Exchange" notification is visible.
-  let aboutMessage = get_about_message();
-  wait_for_notification_to_show(
+  const aboutMessage = get_about_message();
+  await wait_for_notification_to_show(
     aboutMessage,
     notificationBox,
     notificationValue
   );
 
   // Click on the "repair" button.
-  let repairButton = get_notification_button(
+  const repairButton = get_notification_button(
     aboutMessage,
     notificationBox,
     notificationValue,
@@ -238,11 +232,10 @@ add_task(async function testBrokenMSExchangeEncryption() {
       popup: null,
     }
   );
-  plan_for_message_display(mc);
   EventUtils.synthesizeMouseAtCenter(repairButton, {}, aboutMessage);
 
   // Wait for the "fixing in progress" notification to go away.
-  wait_for_notification_to_stop(
+  await wait_for_notification_to_stop(
     aboutMessage,
     notificationBox,
     "brokenExchangeProgress"
@@ -251,7 +244,7 @@ add_task(async function testBrokenMSExchangeEncryption() {
   // The broken exchange repair process generates a new fixed message body and
   // then copies the new message in the same folder. Therefore, we need to wait
   // for the message to be automatically reloaded and reselected.
-  wait_for_message_display_completion(mc, true);
+  await wait_for_message_display_completion(window, true);
 
   // Assert that the message was repaired and decrypted.
   await TestUtils.waitForCondition(
@@ -260,34 +253,51 @@ add_task(async function testBrokenMSExchangeEncryption() {
   );
 
   // Delete the message.
-  press_delete();
-}).skip(); // TODO
+  await press_delete();
+});
 
 /**
  * Test the working keyboard shortcut event listener for the message header.
  * Ctrl+Alt+S for Windows and Linux, Control+Cmd+S for macOS.
  */
 add_task(async function testMessageSecurityShortcut() {
-  // Create an S/MIME message and add it to the inbox folder.
-  await add_message_to_folder([gInbox], create_encrypted_smime_message());
+  // Add an S/MIME message to the inbox folder.
+  const smimeFile = new FileUtils.File(
+    getTestFilePath("data/smime/alice.env.eml")
+  );
+
+  // Add the fetched S/MIME message to the inbox folder.
+  const copyListener = new PromiseTestUtils.PromiseCopyListener();
+  MailServices.copy.copyFileMessage(
+    smimeFile,
+    gInbox,
+    null,
+    false,
+    0,
+    "",
+    copyListener,
+    null
+  );
+  await copyListener.promise;
 
   // Select the first row, which should contain the S/MIME message.
-  select_click_row(0);
+  await select_click_row(-1);
 
-  let aboutMessage = get_about_message();
+  const aboutMessage = get_about_message();
   Assert.equal(
     aboutMessage.document
       .getElementById("encryptionTechBtn")
       .querySelector("span").textContent,
-    "S/MIME"
+    "S/MIME",
+    "should indicate S/MIME encrypted"
   );
 
-  let modifiers =
+  const modifiers =
     AppConstants.platform == "macosx"
       ? { accelKey: true, ctrlKey: true }
       : { accelKey: true, altKey: true };
 
-  let popupshown = BrowserTestUtils.waitForEvent(
+  const popupshown = BrowserTestUtils.waitForEvent(
     aboutMessage.document.getElementById("messageSecurityPanel"),
     "popupshown"
   );
@@ -298,10 +308,10 @@ add_task(async function testMessageSecurityShortcut() {
   await popupshown;
 
   // Select the row again since the focus moved to the popup panel.
-  select_click_row(0);
+  await select_click_row(-1);
   // Delete the message.
-  press_delete();
-}).skip(); // TODO
+  await press_delete();
+});
 
 registerCleanupFunction(async function tearDown() {
   // Reset the OpenPGP key and delete the account.

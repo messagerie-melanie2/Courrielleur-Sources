@@ -8,9 +8,6 @@
  * Test the export logins file picker appears.
  */
 
-let { OSKeyStore } = ChromeUtils.importESModule(
-  "resource://gre/modules/OSKeyStore.sys.mjs"
-);
 let { TelemetryTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/TelemetryTestUtils.sys.mjs"
 );
@@ -18,6 +15,14 @@ let { TelemetryTestUtils } = ChromeUtils.importESModule(
 let { MockFilePicker } = SpecialPowers;
 
 add_setup(async function () {
+  const exampleLogin = LoginTestUtils.testData.formLogin({
+    origin: "https://www.example.com",
+    formActionOrigin: "https://www.example.com",
+    username: "username",
+    password: "password",
+    timePasswordChanged: new Date("2025-02-05").getTime(),
+  });
+  await Services.logins.addLoginAsync(exampleLogin);
   await TestUtils.waitForCondition(() => {
     Services.telemetry.clearEvents();
     let events = Services.telemetry.snapshotEvents(
@@ -27,12 +32,13 @@ add_setup(async function () {
     return !events || !events.length;
   }, "Waiting for content telemetry events to get cleared");
 
-  MockFilePicker.init(window);
+  MockFilePicker.init(window.browsingContext);
   MockFilePicker.useAnyFile();
   MockFilePicker.returnValue = MockFilePicker.returnOK;
 
   registerCleanupFunction(() => {
     MockFilePicker.cleanup();
+    LoginTestUtils.clearData();
   });
 });
 

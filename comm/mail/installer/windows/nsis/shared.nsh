@@ -28,11 +28,11 @@
   ClearErrors
   WriteRegStr HKLM "Software\Mozilla" "${BrandShortName}InstallerTest" "Write Test"
   ${If} ${Errors}
-    StrCpy $TmpVal "HKCU"
+    StrCpy $RegHive "HKCU"
   ${Else}
     SetShellVarContext all    ; Set SHCTX to all users (e.g. HKLM)
     DeleteRegValue HKLM "Software\Mozilla" "${BrandShortName}InstallerTest"
-    StrCpy $TmpVal "HKLM"
+    StrCpy $RegHive "HKLM"
     ${RegCleanMain} "Software\Mozilla"
     ${RegCleanUninstall}
     ${UpdateProtocolHandlers}
@@ -75,37 +75,21 @@
     ${EndIf}
   ${EndIf}
 
-  ; Adds a pinned Task Bar shortcut (see MigrateTaskBarShortcut for details).
-  ; When we enabled this feature for Windows 10 & 11 we decided _not_ to pin
-  ; during an update (even once) because we already offered to do when the
-  ; the user originally installed, and we don't want to go against their
-  ; explicit wishes.
-  ; For Windows 7 and 8, we've been doing this ~forever, and those users may
-  ; not have experienced the onboarding offer to pin to taskbar, so we're
-  ; leaving it enabled there.
-  ${If} ${AtMostWin2012R2}
-    ${MigrateTaskBarShortcut} "$AddTaskbarSC"
-  ${EndIf}
-
   ; Update the name/icon/AppModelID of our shortcuts as needed, then update the
   ; lastwritetime of the Start Menu shortcut to clear the tile icon cache.
   ; Do this for both shell contexts in case the user has shortcuts in multiple
   ; locations, then restore the previous context at the end.
   SetShellVarContext all
   ${UpdateShortcutsBranding}
-  ${If} ${AtLeastWin8}
-    ${TouchStartMenuShortcut}
-  ${EndIf}
+  ${TouchStartMenuShortcut}
   Call FixShortcutAppModelIDs
   SetShellVarContext current
   ${UpdateShortcutsBranding}
-  ${If} ${AtLeastWin8}
-    ${TouchStartMenuShortcut}
-  ${EndIf}
+  ${TouchStartMenuShortcut}
   Call FixShortcutAppModelIDs
-  ${If} $TmpVal == "HKLM"
+  ${If} $RegHive == "HKLM"
     SetShellVarContext all
-  ${ElseIf} $TmpVal == "HKCU"
+  ${ElseIf} $RegHive == "HKCU"
     SetShellVarContext current
   ${EndIf}
 
@@ -132,7 +116,7 @@
   Pop $R0
   ${If} $R0 == "true"
   ; Only proceed if we have HKLM write access
-  ${AndIf} $TmpVal == "HKLM"
+  ${AndIf} $RegHive == "HKLM"
     ; We check to see if the maintenance service install was already attempted.
     ; Since the Maintenance service can be installed either x86 or x64,
     ; always use the 64-bit registry for checking if an attempt was made.
@@ -171,6 +155,8 @@
     ${EndIf}
   ${EndIf}
 !endif
+
+  ${WriteToastNotificationRegistration} $RegHive
 !macroend
 !define PostUpdate "!insertmacro PostUpdate"
 
@@ -212,9 +198,7 @@
 !macro HideShortcuts
   StrCpy $R1 "Software\Clients\Mail\${ClientsRegName}\InstallInfo"
   WriteRegDWORD HKLM "$R1" "IconsVisible" 0
-  ${If} ${AtLeastWin8}
-    WriteRegDWORD HKCU "$R1" "IconsVisible" 0
-  ${EndIf}
+  WriteRegDWORD HKCU "$R1" "IconsVisible" 0
 
   SetShellVarContext all  ; Set $DESKTOP to All Users
   ${Unless} ${FileExists} "$DESKTOP\${BrandShortName}.lnk"
@@ -273,17 +257,14 @@
 !macro ShowShortcuts
   StrCpy $R1 "Software\Clients\Mail\${ClientsRegName}\InstallInfo"
   WriteRegDWORD HKLM "$R1" "IconsVisible" 1
-  ${If} ${AtLeastWin8}
-    WriteRegDWORD HKCU "$R1" "IconsVisible" 1
-  ${EndIf}
+  WriteRegDWORD HKCU "$R1" "IconsVisible" 1
 
   SetShellVarContext all  ; Set $DESKTOP to All Users
   ${Unless} ${FileExists} "$DESKTOP\${BrandShortName}.lnk"
     CreateShortCut "$DESKTOP\${BrandShortName}.lnk" "$INSTDIR\${FileMainEXE}"
     ${If} ${FileExists} "$DESKTOP\${BrandShortName}.lnk"
       ShellLink::SetShortCutWorkingDirectory "$DESKTOP\${BrandShortName}.lnk" "$INSTDIR"
-      ${If} ${AtLeastWin7}
-      ${AndIf} "$AppUserModelID" != ""
+      ${If} "$AppUserModelID" != ""
         ApplicationID::Set "$DESKTOP\${BrandShortName}.lnk" "$AppUserModelID" "true"
       ${EndIf}
     ${Else}
@@ -293,8 +274,7 @@
         ${If} ${FileExists} "$DESKTOP\${BrandShortName}.lnk"
           ShellLink::SetShortCutWorkingDirectory "$DESKTOP\${BrandShortName}.lnk" \
                                                  "$INSTDIR"
-          ${If} ${AtLeastWin7}
-          ${AndIf} "$AppUserModelID" != ""
+          ${If} "$AppUserModelID" != ""
             ApplicationID::Set "$DESKTOP\${BrandShortName}.lnk" "$AppUserModelID" "true"
           ${EndIf}
         ${EndIf}
@@ -308,8 +288,7 @@
     ${If} ${FileExists} "$SMPROGRAMS\${BrandShortName}.lnk"
       ShellLink::SetShortCutWorkingDirectory "$SMPROGRAMS\${BrandShortName}.lnk" \
                                              "$INSTDIR"
-      ${If} ${AtLeastWin7}
-      ${AndIf} "$AppUserModelID" != ""
+      ${If} "$AppUserModelID" != ""
         ApplicationID::Set "$SMPROGRAMS\${BrandShortName}.lnk" "$AppUserModelID" "true"
       ${EndIf}
     ${Else}
@@ -320,23 +299,11 @@
         ${If} ${FileExists} "$SMPROGRAMS\${BrandShortName}.lnk"
           ShellLink::SetShortCutWorkingDirectory "$SMPROGRAMS\${BrandShortName}.lnk" \
                                                  "$INSTDIR"
-          ${If} ${AtLeastWin7}
-          ${AndIf} "$AppUserModelID" != ""
+          ${If} "$AppUserModelID" != ""
             ApplicationID::Set "$SMPROGRAMS\${BrandShortName}.lnk" "$AppUserModelID" "true"
           ${EndIf}
         ${EndIf}
       ${EndUnless}
-    ${EndIf}
-  ${EndUnless}
-
-  ; Windows 7 doesn't use the QuickLaunch directory
-  ${Unless} ${AtLeastWin7}
-  ${AndUnless} ${FileExists} "$QUICKLAUNCH\${BrandShortName}.lnk"
-    CreateShortCut "$QUICKLAUNCH\${BrandShortName}.lnk" \
-                   "$INSTDIR\${FileMainEXE}"
-    ${If} ${FileExists} "$QUICKLAUNCH\${BrandShortName}.lnk"
-      ShellLink::SetShortCutWorkingDirectory "$QUICKLAUNCH\${BrandShortName}.lnk" \
-                                             "$INSTDIR"
     ${EndIf}
   ${EndUnless}
 !macroend
@@ -712,38 +679,68 @@
 
 ; Add Software\Mozilla\ registry entries (uses SHCTX).
 !macro SetAppKeys
+  ; Check if this is an ESR release and if so add registry values so it is
+  ; possible to determine that this is an ESR install (bug 726781).
+  ClearErrors
+  ${WordFind} "${UpdateChannel}" "esr" "E#" $3
+  ${If} ${Errors}
+    StrCpy $3 ""
+  ${Else}
+    StrCpy $3 " ESR"
+  ${EndIf}
+
   ${GetLongPath} "$INSTDIR" $8
-  StrCpy $0 "Software\Mozilla\${BrandFullNameInternal}\${AppVersion} (${AB_CD})\Main"
-  ${WriteRegStr2} $TmpVal "$0" "Install Directory" "$8" 0
-  ${WriteRegStr2} $TmpVal "$0" "PathToExe" "$8\${FileMainEXE}" 0
+  StrCpy $0 "Software\Mozilla\${BrandFullNameInternal}\${AppVersion}$3 (${ARCH} ${AB_CD})\Main"
+  ${WriteRegStr2} $RegHive "$0" "Install Directory" "$8" 0
+  ${WriteRegStr2} $RegHive "$0" "PathToExe" "$8\${FileMainEXE}" 0
 
-  StrCpy $0 "Software\Mozilla\${BrandFullNameInternal}\${AppVersion} (${AB_CD})\Uninstall"
-  ${WriteRegStr2} $TmpVal "$0" "Description" "${BrandFullNameInternal} ${AppVersion} (${ARCH} ${AB_CD})" 0
+  StrCpy $0 "Software\Mozilla\${BrandFullNameInternal}\${AppVersion}$3 (${ARCH} ${AB_CD})\Uninstall"
+  ${WriteRegStr2} $RegHive "$0" "Description" "${BrandFullNameInternal} ${AppVersion}$3 (${ARCH} ${AB_CD})" 0
 
-  StrCpy $0 "Software\Mozilla\${BrandFullNameInternal}\${AppVersion} (${AB_CD})"
-  ${WriteRegStr2} $TmpVal  "$0" "" "${AppVersion} (${AB_CD})" 0
+  StrCpy $0 "Software\Mozilla\${BrandFullNameInternal}\${AppVersion}$3 (${ARCH} ${AB_CD})"
+  ${WriteRegStr2} $RegHive  "$0" "" "${AppVersion}$3 (${ARCH} ${AB_CD})" 0
+  ${If} "$3" == ""
+    DeleteRegValue SHCTX "$0" "ESR"
+  ${Else}
+    ${WriteRegDWORD2} $RegHive "$0" "ESR" 1 0
+  ${EndIf}
 
-  StrCpy $0 "Software\Mozilla\${BrandFullNameInternal} ${AppVersion}\bin"
-  ${WriteRegStr2} $TmpVal "$0" "PathToExe" "$8\${FileMainEXE}" 0
+  StrCpy $0 "Software\Mozilla\${BrandFullNameInternal} ${AppVersion}$3\bin"
+  ${WriteRegStr2} $RegHive "$0" "PathToExe" "$8\${FileMainEXE}" 0
 
-  StrCpy $0 "Software\Mozilla\${BrandFullNameInternal} ${AppVersion}\extensions"
-  ${WriteRegStr2} $TmpVal "$0" "Components" "$8\components" 0
-  ${WriteRegStr2} $TmpVal "$0" "Plugins" "$8\plugins" 0
+  StrCpy $0 "Software\Mozilla\${BrandFullNameInternal} ${AppVersion}$3\extensions"
+  ${WriteRegStr2} $RegHive "$0" "Components" "$8\components" 0
+  ${WriteRegStr2} $RegHive "$0" "Plugins" "$8\plugins" 0
 
-  StrCpy $0 "Software\Mozilla\${BrandFullNameInternal} ${AppVersion}"
-  ${WriteRegStr2} $TmpVal "$0" "GeckoVer" "${GREVersion}" 0
+  StrCpy $0 "Software\Mozilla\${BrandFullNameInternal} ${AppVersion}$3"
+  ${WriteRegStr2} $RegHive "$0" "GeckoVer" "${GREVersion}" 0
+  ${If} "$3" == ""
+    DeleteRegValue SHCTX "$0" "ESR"
+  ${Else}
+    ${WriteRegDWORD2} $RegHive "$0" "ESR" 1 0
+  ${EndIf}
 
   StrCpy $0 "Software\Mozilla\${BrandFullNameInternal}"
-  ${WriteRegStr2} $TmpVal "$0" "" "${AppVersion}" 0
-  ${WriteRegStr2} $TmpVal "$0" "CurrentVersion" "${AppVersion} (${AB_CD})" 0
-  ${WriteRegStr2} $TmpVal "$0" "GeckoVersion" "${GREVersion}" 0
+  ${WriteRegStr2} $RegHive "$0" "" "${AppVersion}" 0
+  ${WriteRegStr2} $RegHive "$0" "CurrentVersion" "${AppVersion}$3 (${ARCH} ${AB_CD})" 0
+  ${WriteRegStr2} $RegHive "$0" "GeckoVersion" "${GREVersion}" 0
 !macroend
 !define SetAppKeys "!insertmacro SetAppKeys"
 
 ; Add uninstall registry entries. This macro tests for write access to determine
 ; if the uninstall keys should be added to HKLM or HKCU.
 !macro SetUninstallKeys
-  StrCpy $0 "Software\Microsoft\Windows\CurrentVersion\Uninstall\${BrandFullNameInternal} ${AppVersion} (${ARCH} ${AB_CD})"
+  ; Check if this is an ESR release and if so add registry values so it is
+  ; possible to determine that this is an ESR install (bug 726781).
+  ClearErrors
+  ${WordFind} "${UpdateChannel}" "esr" "E#" $3
+  ${If} ${Errors}
+    StrCpy $3 ""
+  ${Else}
+    StrCpy $3 " ESR"
+  ${EndIf}
+
+  StrCpy $0 "Software\Microsoft\Windows\CurrentVersion\Uninstall\${BrandFullNameInternal} ${AppVersion}$3 (${ARCH} ${AB_CD})"
 
   StrCpy $2 ""
   ClearErrors
@@ -771,9 +768,9 @@
 
 
     ; Write the uninstall registry keys
-    ${WriteRegStr2} $1 "$0" "Comments" "${BrandFullNameInternal} ${AppVersion} (${ARCH} ${AB_CD})" 0
+    ${WriteRegStr2} $1 "$0" "Comments" "${BrandFullNameInternal} ${AppVersion}$3 (${ARCH} ${AB_CD})" 0
     ${WriteRegStr2} $1 "$0" "DisplayIcon" "$8\${FileMainEXE},0" 0
-    ${WriteRegStr2} $1 "$0" "DisplayName" "${BrandFullNameInternal} (${ARCH} ${AB_CD})" 0
+    ${WriteRegStr2} $1 "$0" "DisplayName" "${BrandFullNameInternal}$3 (${ARCH} ${AB_CD})" 0
     ${WriteRegStr2} $1 "$0" "DisplayVersion" "${AppVersion}" 0
     ${WriteRegStr2} $1 "$0" "InstallLocation" "$8" 0
     ${WriteRegStr2} $1 "$0" "Publisher" "Mozilla" 0
@@ -786,7 +783,7 @@
     ${GetSize} "$8" "/S=0K" $R2 $R3 $R4
     ${WriteRegDWORD2} $1 "$0" "EstimatedSize" $R2 0
 
-    ${If} "$TmpVal" == "HKLM"
+    ${If} "$RegHive" == "HKLM"
       SetShellVarContext all     ; Set SHCTX to all users (e.g. HKLM)
     ${Else}
       SetShellVarContext current  ; Set SHCTX to the current user (e.g. HKCU)
@@ -1022,10 +1019,8 @@
       WriteRegDWORD HKCU \
         "Software\Mozilla\${AppName}\Installer\$AppUserModelID" \
         "WasPinnedToTaskbar" 1
-      ${If} ${AtLeastWin7}
-        ${If} "${SHOULD_PIN}" == "1"
-          ${PinToTaskBar}
-        ${EndIf}
+      ${If} "${SHOULD_PIN}" == "1"
+        ${PinToTaskBar}
       ${EndIf}
     ${EndIf}
   ${EndIf}
@@ -1034,8 +1029,8 @@
 
 !define GetPinningSupportedByWindowsVersionWithoutSystemPopup "!insertmacro GetPinningSupportedByWindowsVersionWithoutSystemPopup "
 
-; Starting with a version of Windows 11 (10.0.22621), the OS will show a system popup
-; when trying to pin to the taskbar.
+; Starting with Windows 10 (> 10.0.19045.3996) and Windows 11 (> 10.0.22621.2361),
+; the OS will show a system popup when trying to pin to the taskbar.
 ;
 ; Pass in the variable to put the output into. A '1' means pinning is supported on this
 ; OS without generating a popup, a '0' means pinning will generate a system popup.
@@ -1049,8 +1044,16 @@
 ;
 ; The number for that version of windows is still unclear (it might be 22H2 or 23H2)
 ; and it's not supported by the version of WinVer.nsh we have anyways,
-; so instead we are confirming that it's a build of Windows that is less
-; than 10.0 BuildNumber: 22621 to do pinning in the installer.
+; so instead we are manually retrieving the major, minor, build and ubr numbers
+; (Update Build Revision) and confirming that the build numbers work to do pinning
+; in the installer.
+;
+; NOTE: there are currently running Windows where pinning fails and is a no-op. We haven't quite
+; determined how to identify when that will happen, and it's so far only been reported
+; on the newest versions of Windows. GetPinningSupportedByWindowsVersionWithoutSystemPopup
+; will current report that pinning is not supported in these cases, due to reporting
+; pinning as not supported on the newest builds of Windows.
+;
 !macro GetPinningSupportedByWindowsVersionWithoutSystemPopup outvar
   !define pin_lbl lbl_GPSBWVWSP_${__COUNTER__}
 
@@ -1073,14 +1076,25 @@
   ; operator, so we do everything by hand with `IntCmp`.  The below lines
   ; translate to:
   ; StrCpy ${outvar} '0'  ; default to false
-  ; ${If} $0 <= 10
-  ;   ${If} $1 <= 0
-  ;     ${If} $2 < 22621
+  ; ${If} $0 == 10
+  ;   ${If} $1 == 0
+  ;     ${If} $2 < 19045
   ;       StrCpy ${outvar} '1'
-  ;     ${ElseIf} $2 == 22621
-  ;       ${If} $3 < 2361
+  ;     ${ElseIf} $2 == 19045
+  ;       ; Test Windows 10
+  ;       ${If} $3 < 3996
   ;         StrCpy ${outvar} '1'
   ;       ${Endif}
+  ;     ; 22000 is the version number that splits between Win 10 and 11
+  ;     ${ElseIf} $2 >= 22000
+  ;       ; Test Windows 11
+  ;       ${If} $2 < 22621
+  ;         StrCpy ${outvar} '1'
+  ;       ${ElseIf} $2 == 22621
+  ;         ${If} $3 < 2361
+  ;           StrCpy ${outvar} '1'
+  ;         ${EndIf}
+  ;       ${EndIf}
   ;     ${EndIf}
   ;  ${Endif}
   ; ${EndIf}
@@ -1093,12 +1107,32 @@
   ; If the minor version is greater than 0, no pinning in setup
   IntCmp $1 0 "" "" ${pin_lbl}_bad
 
+  ; If the build number equals 19045, we have to test the UBR
+  ; If it's greater than 19045, then we have to check if
+  ; it's a Windows 11 build or not to determine if more testing
+  ; is needed
+  IntCmp $2 19045 ${pin_lbl}_test_win10 ${pin_lbl}_good ""
+
+  ; If the major number is less than 22000, then we're between
+  ; 19046 and 22000, meaning pinning will produce a popup
+  IntCmp $2 22000 "" ${pin_lbl}_bad ""
+
+  ${pin_lbl}_test_win11:
+
   ; If the build number is less than 22621, jump to pinning; if greater than, no pinning
   IntCmp $2 22621 "" ${pin_lbl}_good ${pin_lbl}_bad
 
   ; Only if the version is 10.0.22621 do we fall through to here
   ; If the UBR is greater than or equal to 2361, jump to no pinning
-  IntCmp $3 2361 ${pin_lbl}_bad "" ${pin_lbl}_bad
+  ; Otherwise jump to pinning
+  IntCmp $3 2361 ${pin_lbl}_bad ${pin_lbl}_good ${pin_lbl}_bad
+
+  ${pin_lbl}_test_win10:
+
+  ; Only if the version is 10.0.19045 or greater (but not Windows 11) do we fall
+  ; through to here.
+  ; If the UBR is greater than or equal to 3996, jump to no pinning
+  IntCmp $3 3996 ${pin_lbl}_bad ${pin_lbl}_good ${pin_lbl}_bad
 
   ${pin_lbl}_good:
 
@@ -1136,92 +1170,86 @@
 ; model ID removes a pinned pinned Start Menu shortcut this will also add a
 ; pinned Start Menu shortcut.
 !macro PinToTaskBar
-  ${If} ${AtLeastWin7}
-    StrCpy $8 "false" ; Whether a shortcut had to be created
-    ${IsPinnedToTaskBar} "$INSTDIR\${FileMainEXE}" $R9
-    ${If} "$R9" == "false"
-      ; Find an existing Start Menu shortcut or create one to use for pinning
-      ${GetShortcutsLogPath} $0
-      ${If} ${FileExists} "$0"
-        ClearErrors
-        ReadINIStr $1 "$0" "STARTMENU" "Shortcut0"
-        ${Unless} ${Errors}
-          SetShellVarContext all ; Set SHCTX to all users
-          ${Unless} ${FileExists} "$SMPROGRAMS\$1"
-            SetShellVarContext current ; Set SHCTX to the current user
+  StrCpy $8 "false" ; Whether a shortcut had to be created
+  ${IsPinnedToTaskBar} "$INSTDIR\${FileMainEXE}" $R9
+  ${If} "$R9" == "false"
+    ; Find an existing Start Menu shortcut or create one to use for pinning
+    ${GetShortcutsLogPath} $0
+    ${If} ${FileExists} "$0"
+      ClearErrors
+      ReadINIStr $1 "$0" "STARTMENU" "Shortcut0"
+      ${Unless} ${Errors}
+        SetShellVarContext all ; Set SHCTX to all users
+        ${Unless} ${FileExists} "$SMPROGRAMS\$1"
+          SetShellVarContext current ; Set SHCTX to the current user
             ${Unless} ${FileExists} "$SMPROGRAMS\$1"
-              StrCpy $8 "true"
-              CreateShortCut "$SMPROGRAMS\$1" "$INSTDIR\${FileMainEXE}"
-              ${If} ${FileExists} "$SMPROGRAMS\$1"
-                ShellLink::SetShortCutWorkingDirectory "$SMPROGRAMS\$1" \
-                                                       "$INSTDIR"
-                ${If} "$AppUserModelID" != ""
-                  ApplicationID::Set "$SMPROGRAMS\$1" "$AppUserModelID" "true"
-                ${EndIf}
+            StrCpy $8 "true"
+            CreateShortCut "$SMPROGRAMS\$1" "$INSTDIR\${FileMainEXE}"
+            ${If} ${FileExists} "$SMPROGRAMS\$1"
+              ShellLink::SetShortCutWorkingDirectory "$SMPROGRAMS\$1" \
+                                                     "$INSTDIR"
+              ${If} "$AppUserModelID" != ""
+                ApplicationID::Set "$SMPROGRAMS\$1" "$AppUserModelID" "true"
               ${EndIf}
-            ${EndUnless}
+            ${EndIf}
+          ${EndUnless}
+        ${EndUnless}
+
+        ${If} ${FileExists} "$SMPROGRAMS\$1"
+          ; Count of Start Menu pinned shortcuts before unpinning.
+          ${PinnedToStartMenuLnkCount} $R9
+
+          ; Having multiple shortcuts pointing to different installations with
+          ; the same AppUserModelID (e.g. side by side installations of the
+          ; same version) will make the TaskBar shortcut's lists into an bad
+          ; state where the lists are not shown. To prevent this first
+          ; uninstall the pinned item.
+          ApplicationID::UninstallPinnedItem "$SMPROGRAMS\$1"
+
+          ; Count of Start Menu pinned shortcuts after unpinning.
+          ${PinnedToStartMenuLnkCount} $R8
+
+          ; If there is a change in the number of Start Menu pinned shortcuts
+          ; assume that unpinning unpinned a side by side installation from
+          ; the Start Menu and pin this installation to the Start Menu.
+          ${Unless} $R8 == $R9
+            ; Pin the shortcut to the Start Menu. 5381 is the shell32.dll
+            ; resource id for the "Pin to Start Menu" string.
+            InvokeShellVerb::DoIt "$SMPROGRAMS" "$1" "5381"
           ${EndUnless}
 
-          ${If} ${FileExists} "$SMPROGRAMS\$1"
-            ; Count of Start Menu pinned shortcuts before unpinning.
-            ${PinnedToStartMenuLnkCount} $R9
-
-            ; Having multiple shortcuts pointing to different installations with
-            ; the same AppUserModelID (e.g. side by side installations of the
-            ; same version) will make the TaskBar shortcut's lists into an bad
-            ; state where the lists are not shown. To prevent this first
-            ; uninstall the pinned item.
-            ApplicationID::UninstallPinnedItem "$SMPROGRAMS\$1"
-
-            ; Count of Start Menu pinned shortcuts after unpinning.
-            ${PinnedToStartMenuLnkCount} $R8
-
-            ; If there is a change in the number of Start Menu pinned shortcuts
-            ; assume that unpinning unpinned a side by side installation from
-            ; the Start Menu and pin this installation to the Start Menu.
-            ${Unless} $R8 == $R9
-              ; Pin the shortcut to the Start Menu. 5381 is the shell32.dll
-              ; resource id for the "Pin to Start Menu" string.
-              InvokeShellVerb::DoIt "$SMPROGRAMS" "$1" "5381"
-            ${EndUnless}
-
-            ${If} ${AtMostWin2012R2}
-              ; Pin the shortcut to the TaskBar. 5386 is the shell32.dll
-              ; resource id for the "Pin to Taskbar" string.
-              InvokeShellVerb::DoIt "$SMPROGRAMS" "$1" "5386"
-            ${ElseIf} ${AtMostWaaS} 1809
-              ; In Windows 10 the "Pin to Taskbar" resource was removed, so we
-              ; can't access the verb that way anymore. We have a create a
-              ; command key using the GUID that's assigned to this action and
-              ; then invoke that as a verb. This works up until build 1809.
-              ReadRegStr $R9 HKLM \
-                "Software\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\Windows.taskbarpin" \
-                "ExplorerCommandHandler"
-              WriteRegStr HKCU "Software\Classes\*\shell\${AppRegNameMail}-$AppUserModelID" "ExplorerCommandHandler" $R9
-              InvokeShellVerb::DoIt "$SMPROGRAMS" "$1" "${AppRegNameMail}-$AppUserModelID"
-              DeleteRegKey HKCU "Software\Classes\*\shell\${AppRegNameMail}-$AppUserModelID"
-            ${Else}
-              ; In Windows 10 1903 and up, and Windows 11 prior to 22H2, the above no
-              ; longer works. We have yet another method for these versions
-              ; which is detailed in the PinToTaskbar plugin code.
-              ${If} ${IsPinningSupportedByWindowsVersionWithoutSystemPopup}
-                PinToTaskbar::Pin "$SMPROGRAMS\$1"
-              ${EndIf}
-            ${EndIf}
-
-            ; Delete the shortcut if it was created
-            ${If} "$8" == "true"
-              Delete "$SMPROGRAMS\$1"
-            ${EndIf}
-          ${EndIf}
-
-          ${If} $TmpVal == "HKCU"
-            SetShellVarContext current ; Set SHCTX to the current user
+          ${If} ${AtMostWaaS} 1809
+            ; In Windows 10 the "Pin to Taskbar" resource was removed, so we
+            ; can't access the verb that way anymore. We have to create a
+            ; command key using the GUID that's assigned to this action and
+            ; then invoke that as a verb. This works up until build 1809
+            ReadRegStr $R9 HKLM \
+              "Software\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\Windows.taskbarpin" \
+              "ExplorerCommandHandler"
+            WriteRegStr HKCU "Software\Classes\*\shell\${AppRegNameMail}-$AppUserModelID" "ExplorerCommandHandler" $R9
+            InvokeShellVerb::DoIt "$SMPROGRAMS" "$1" "${AppRegNameMail}-$AppUserModelID"
+            DeleteRegKey HKCU "Software\Classes\*\shell\${AppRegNameMail}-$AppUserModelID"
           ${Else}
-            SetShellVarContext all ; Set SHCTX to all users
+            ; In Windows 10 1903 and up, and Windows 11 prior to 22H2, the above no
+            ; longer works. We have yet another method for these versions
+            ; which is detailed in the PinToTaskbar plugin code.
+            ${If} ${IsPinningSupportedByWindowsVersionWithoutSystemPopup}
+              PinToTaskbar::Pin "$SMPROGRAMS\$1"
+            ${EndIf}
           ${EndIf}
-        ${EndUnless}
-      ${EndIf}
+
+          ; Delete the shortcut if it was created
+          ${If} "$8" == "true"
+            Delete "$SMPROGRAMS\$1"
+          ${EndIf}
+        ${EndIf}
+
+        ${If} $RegHive == "HKCU"
+          SetShellVarContext current ; Set SHCTX to the current user
+        ${Else}
+          SetShellVarContext all ; Set SHCTX to all users
+        ${EndIf}
+      ${EndUnless}
     ${EndIf}
   ${EndIf}
 !macroend
@@ -1329,14 +1357,13 @@
   Push "end"
   Push "AccessibleMarshal.dll"
   Push "freebl3.dll"
-  Push "nssckbi.dll"
   Push "nspr4.dll"
   Push "nssdbm3.dll"
   Push "sqlite3.dll"
   Push "mozsqlite3.dll"
   Push "xpcom.dll"
+  Push "crashhelper.exe"
   Push "crashreporter.exe"
-  Push "minidump-analyzer.exe"
   Push "pingsender.exe"
   Push "updater.exe"
   Push "mozwer.dll"
@@ -1351,8 +1378,7 @@
 
 ; Helper for updating the shortcut application model IDs.
 Function FixShortcutAppModelIDs
-  ${If} ${AtLeastWin7}
-  ${AndIf} "$AppUserModelID" != ""
+  ${If} "$AppUserModelID" != ""
     ${UpdateShortcutAppModelIDs} "$INSTDIR\${FileMainEXE}" "$AppUserModelID" $0
   ${EndIf}
 FunctionEnd
@@ -1525,9 +1551,7 @@ Function SetAsDefaultMailAppUserHKCU
 
   SetShellVarContext current  ; Set SHCTX to the current user (e.g. HKCU)
 
-  ${If} ${AtLeastWin8}
-    ${SetHandlersMail}
-  ${EndIf}
+  ${SetHandlersMail}
 
   ClearErrors
   ReadRegStr $0 HKLM "Software\RegisteredApplications" "${AppRegNameMail}"
@@ -1565,9 +1589,7 @@ Function SetAsDefaultNewsAppUserHKCU
 
   SetShellVarContext current  ; Set SHCTX to the current user (e.g. HKCU)
 
-  ${If} ${AtLeastWin8}
-    ${SetHandlersNews}
-  ${EndIf}
+  ${SetHandlersNews}
 
   ClearErrors
   ReadRegStr $0 HKLM "Software\RegisteredApplications" "${AppRegNameNews}"
@@ -1601,9 +1623,7 @@ Function SetAsDefaultCalendarAppUserHKCU
 
   SetShellVarContext current  ; Set SHCTX to the current user (e.g. HKCU)
 
-  ${If} ${AtLeastWin8}
-    ${SetHandlersCalendar}
-  ${EndIf}
+  ${SetHandlersCalendar}
 
   ClearErrors
   ReadRegStr $0 HKLM "Software\RegisteredApplications" "${AppRegNameCalendar}"
@@ -1615,3 +1635,41 @@ Function SetAsDefaultCalendarAppUserHKCU
 FunctionEnd
 
 !endif
+
+!macro WriteToastNotificationRegistration RegKey
+  ; Find or create a GUID to use for this installation.  For simplicity, We
+  ; always update our registration.
+  ClearErrors
+  ReadRegStr $0 SHCTX "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "CustomActivator"
+  ${If} "$0" == ""
+    ; Create a GUID.
+    System::Call "rpcrt4::UuidCreate(g . r0)i"
+    ; StringFromGUID2 (which is what System::Call uses internally to stringify
+    ; GUIDs) includes braces in its output.  In this case, we want the braces.
+  ${EndIf}
+
+  ; Check if this is an ESR release.
+  ClearErrors
+  ${WordFind} "${UpdateChannel}" "esr" "E#" $1
+  ${If} ${Errors}
+    StrCpy $1 ""
+  ${Else}
+    StrCpy $1 " ESR"
+  ${EndIf}
+
+  ; Write the following keys and values to the registry.
+  ; HKEY_CURRENT_USER\Software\Classes\AppID\{GUID}                                     DllSurrogate    : REG_SZ        = ""
+  ;                                   \AppUserModelId\{ToastAumidPrefix}{install hash}  CustomActivator : REG_SZ        = {GUID}
+  ;                                                                                     DisplayName     : REG_EXPAND_SZ = {display name}
+  ;                                                                                     IconUri         : REG_EXPAND_SZ = {icon path}
+  ;                                   \CLSID\{GUID}                                     AppID           : REG_SZ        = {GUID}
+  ;                                                \InprocServer32                      (Default)       : REG_SZ        = {notificationserver.dll path}
+  ${WriteRegStr2} ${RegKey} "Software\Classes\AppID\$0" "DllSurrogate" "" 0
+  ${WriteRegStr2} ${RegKey} "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "CustomActivator" "$0" 0
+  ${WriteRegStr2} ${RegKey} "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "DisplayName" "${BrandFullNameInternal}$1" 0
+  ; Sadly, we can't use embedded resources like `firefox.exe,1`.
+  ${WriteRegStr2} ${RegKey} "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "IconUri" "$INSTDIR\VisualElements\VisualElements_70.png" 0
+  ${WriteRegStr2} ${RegKey} "Software\Classes\CLSID\$0" "AppID" "$0" 0
+  ${WriteRegStr2} ${RegKey} "Software\Classes\CLSID\$0\InProcServer32" "" "$INSTDIR\notificationserver.dll" 0
+!macroend
+!define WriteToastNotificationRegistration "!insertmacro WriteToastNotificationRegistration"

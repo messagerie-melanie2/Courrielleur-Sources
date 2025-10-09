@@ -21,6 +21,21 @@ struct IsURIInListMatch {
   bool firstMatch, secondMatch;
 };
 
+std::ostream& operator<<(std::ostream& aStream,
+                         const nsContentUtils::ParsedRange& aParsedRange) {
+  if (aParsedRange.Start()) {
+    aStream << *aParsedRange.Start();
+  }
+
+  aStream << "-";
+
+  if (aParsedRange.End()) {
+    aStream << *aParsedRange.End();
+  }
+
+  return aStream;
+}
+
 TEST(DOM_Base_ContentUtils, IsURIInList)
 {
   nsCOMPtr<nsIURI> uri, subURI;
@@ -143,4 +158,107 @@ TEST(DOM_Base_ContentUtils, StringifyJSON_Object_UndefinedIsVoidString)
                                             UndefinedIsVoidString));
 
   ASSERT_TRUE(serializedValue.EqualsLiteral("{\"key1\":\"Hello World!\"}"));
+}
+
+TEST(DOM_Base_ContentUtils, ParseSingleRangeHeader)
+{
+  // Parsing a simple range should succeed
+  EXPECT_EQ(nsContentUtils::ParseSingleRangeRequest("bytes=0-42"_ns, false),
+            mozilla::Some(nsContentUtils::ParsedRange(mozilla::Some(0),
+                                                      mozilla::Some(42))));
+
+  // Range containing a invalid rangeStart should fail
+  EXPECT_EQ(nsContentUtils::ParseSingleRangeRequest("bytes= t-200"_ns, true),
+            mozilla::Nothing());
+
+  // Range containing whitespace, with allowWhitespace=false should fail.
+  EXPECT_EQ(nsContentUtils::ParseSingleRangeRequest("bytes= 2-200"_ns, false),
+            mozilla::Nothing());
+
+  // Range containing whitespace, with allowWhitespace=true should succeed
+  EXPECT_EQ(
+      nsContentUtils::ParseSingleRangeRequest("bytes \t= 2 - 200"_ns, true),
+      mozilla::Some(
+          nsContentUtils::ParsedRange(mozilla::Some(2), mozilla::Some(200))));
+
+  // Range containing invalid whitespace should fail
+  EXPECT_EQ(
+      nsContentUtils::ParseSingleRangeRequest("bytes \r= 2 - 200"_ns, true),
+      mozilla::Nothing());
+
+  // Range without a rangeStart should succeed
+  EXPECT_EQ(nsContentUtils::ParseSingleRangeRequest("bytes\t=\t-200"_ns, true),
+            mozilla::Some(nsContentUtils::ParsedRange(mozilla::Nothing(),
+                                                      mozilla::Some(200))));
+
+  // Range without a rangeEnd should succeed
+  EXPECT_EQ(nsContentUtils::ParseSingleRangeRequest("bytes=55-"_ns, true),
+            mozilla::Some(nsContentUtils::ParsedRange(mozilla::Some(55),
+                                                      mozilla::Nothing())));
+
+  // Range without a rangeStart or rangeEnd should fail
+  EXPECT_EQ(nsContentUtils::ParseSingleRangeRequest("bytes\t=\t-"_ns, true),
+            mozilla::Nothing());
+
+  // Range with extra characters should fail
+  EXPECT_EQ(nsContentUtils::ParseSingleRangeRequest("bytes=0-42 "_ns, true),
+            mozilla::Nothing());
+
+  // Range with rangeStart > rangeEnd should fail
+  EXPECT_EQ(nsContentUtils::ParseSingleRangeRequest("bytes=42-0 "_ns, true),
+            mozilla::Nothing());
+}
+
+TEST(DOM_Base_ContentUtils, IsAllowedNonCorsRange)
+{
+  EXPECT_EQ(nsContentUtils::IsAllowedNonCorsRange("bytes=-200"_ns), false);
+  EXPECT_EQ(nsContentUtils::IsAllowedNonCorsRange("bytes= 200-"_ns), false);
+  EXPECT_EQ(nsContentUtils::IsAllowedNonCorsRange("bytes=201-200"_ns), false);
+  EXPECT_EQ(nsContentUtils::IsAllowedNonCorsRange("bytes=200-201 "_ns), false);
+  EXPECT_EQ(nsContentUtils::IsAllowedNonCorsRange("bytes=200-"_ns), true);
+  EXPECT_EQ(nsContentUtils::IsAllowedNonCorsRange("bytes=200-201"_ns), true);
+  EXPECT_EQ(nsContentUtils::IsAllowedNonCorsRange("bytes=-200 "_ns), false);
+}
+
+TEST(DOM_Base_ContentUtils, MaybeFixIPv6Host)
+{
+  struct TestCase {
+    const char* input;
+    const char* expectedOutput;
+  };
+
+  const TestCase testCases[] = {
+      // Hosts containing colons without brackets - brackets should be added
+      {"2001:db8::1", "[2001:db8::1]"},  // IPv6 address
+      {"::1", "[::1]"},                  // IPv6 loopback
+      {"::", "[::]"},                    // IPv6 unspecified address
+      // Hosts containing colons but already with brackets - should remain
+      // unchanged
+      {"[2001:db8::1]", "[2001:db8::1]"},
+      {"[::1]", "[::1]"},
+      // Hosts without colons - should remain unchanged
+      {"example.com", "example.com"},
+      {"localhost", "localhost"},
+      {"", ""},  // Empty string
+      // Single colon - length less than 2, so brackets are not added
+      {":", ":"},
+      // Hosts starting with '[' or ending with ']', but not both - no brackets
+      // are added.
+      {"[example.com", "[example.com"},
+      {"example.com]", "example.com]"},
+      // Hosts with misordered brackets - no brackets are added
+      {"]example[", "]example["},
+      // Hosts with length less than 2 - no brackets added
+      {"a", "a"},
+      // Hosts with colons but length less than 2 - no brackets added
+      {":", ":"},
+  };
+
+  for (const auto& testCase : testCases) {
+    nsCString host(testCase.input);
+    nsContentUtils::MaybeFixIPv6Host(host);
+    ASSERT_TRUE(host.Equals(testCase.expectedOutput))
+    << "Input: '" << testCase.input << "', Expected: '"
+    << testCase.expectedOutput << "', Got: '" << host.get() << "'";
+  }
 }

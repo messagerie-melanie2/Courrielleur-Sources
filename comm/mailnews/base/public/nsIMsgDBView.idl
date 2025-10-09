@@ -215,10 +215,13 @@ interface nsIMsgDBView : nsISupports
   /** A shim of XULTreeElement, with only the methods called by nsMsgDBView. */
   void setJSTree(in nsIMsgJSTree tree);
 
-  void open(in nsIMsgFolder folder, in nsMsgViewSortTypeValue sortType, in nsMsgViewSortOrderValue sortOrder, in nsMsgViewFlagsTypeValue viewFlags, out long count);
+  void open(in nsIMsgFolder folder,
+            in nsMsgViewSortTypeValue sortType,
+            in nsMsgViewSortOrderValue sortOrder,
+            in nsMsgViewFlagsTypeValue viewFlags);
   void openWithHdrs(in nsIMsgEnumerator aHeaders, in nsMsgViewSortTypeValue aSortType,
                       in nsMsgViewSortOrderValue aSortOrder,
-                      in nsMsgViewFlagsTypeValue aViewFlags, out long aCount);
+                      in nsMsgViewFlagsTypeValue aViewFlags);
   void close();
 
   void init(in nsIMessenger aMessengerInstance, in nsIMsgWindow aMsgWindow, in nsIMsgDBViewCommandUpdater aCommandUpdater);
@@ -254,7 +257,6 @@ interface nsIMsgDBView : nsISupports
    *  value is to affect the secondary sort of a grouped view.
    */
   attribute nsMsgViewSortOrderValue secondarySortOrder;
-  readonly attribute nsMsgKey keyForFirstSelectedMessage;
   readonly attribute nsMsgViewIndex viewIndexForFirstSelectedMsg;
   /**
    * this method will automatically expand the destination thread,
@@ -295,12 +297,7 @@ interface nsIMsgDBView : nsISupports
    *  If the "mail.operate_on_msgs_in_collapsed_threads" preference is enabled,
    *  then any collapsed thread roots that are selected will also (conceptually)
    *  have all of the messages in that thread selected and they will be included
-   *  in the returned list. The one exception to this is if the front end fails
-   *  to summarize the selection, and we fall back to just displaying a single
-   *  message. In that case, we won't include the children of the collapsed
-   *  thread. However, the numSelected attribute will count those children,
-   *  because the summarizeSelection code uses that to know that it should
-   *  try to summarize the selection.
+   *  in the returned list.
    *
    * If the user has right-clicked on a message, this will return that message
    *  (and any collapsed children if so enabled) and not the selection prior to
@@ -314,7 +311,14 @@ interface nsIMsgDBView : nsISupports
   Array<AUTF8String> getURIsForSelection();
   Array<nsMsgViewIndex> getIndicesForSelection();
 
+  /**
+   * Returns URI of first selected message, or null if none is selected.
+   */
   readonly attribute AUTF8String URIForFirstSelectedMessage;
+
+  /**
+   * Returns first selected message, or null if none is selected.
+   */
   readonly attribute nsIMsgDBHdr hdrForFirstSelectedMessage;
 
   /**
@@ -325,7 +329,6 @@ interface nsIMsgDBView : nsISupports
    */
   readonly attribute unsigned long numSelected;
   readonly attribute nsMsgViewIndex msgToSelectAfterDelete;
-  readonly attribute nsMsgViewIndex currentlyDisplayedMessage;
 
   /**
    * Number of messages in view, including messages in collapsed threads.
@@ -333,17 +336,6 @@ interface nsIMsgDBView : nsISupports
    * with unread.
    */
   readonly attribute long numMsgsInView;
-  // used by "go to folder" feature
-  // and "remember last selected message" feature
-  // if key is not found, we don't select.
-  void selectMsgByKey(in nsMsgKey key);
-
-  void selectFolderMsgByKey(in nsIMsgFolder aFolder, in nsMsgKey aKey);
-  // we'll suppress displaying messages if the message pane is collapsed
-  attribute boolean suppressMsgDisplay;
-
-  // we'll suppress command updating during folder loading
-  attribute boolean suppressCommandUpdating;
 
   /**
    * Suppress change notifications. This is faster than Begin/EndUpdateBatch
@@ -360,18 +352,20 @@ interface nsIMsgDBView : nsISupports
   readonly attribute boolean supportsThreading;
 
   attribute nsIMsgSearchSession searchSession;
-  readonly attribute boolean removeRowOnMoveOrDelete;
 
   /**
-   * Finds the view index of the passed in msgKey. Note this should not
-   * be called on cross-folder views since the msgKey may not be unique.
+   * Finds the view index of the passed in message URI. If the message is part
+   * of a collapsed thread and expand is false, the view index of the root
+   * message is returned.
    *
-   * @param aMsgKey - key to find.
-   * @param aExpand - whether to expand a collapsed thread to find the key.
+   * @param msgUri - The message URI to find.
+   * @param expand - Whether to expand a collapsed thread to find the message.
    *
-   * @return        - view index of msg hdr, -1 if hdr not found.
+   * @returns the view index for the message URI, or nsMsgViewIndex_None if no
+   *   message with this URI was found.
    */
-  nsMsgViewIndex findIndexFromKey(in nsMsgKey aMsgKey, in boolean aExpand);
+  nsMsgViewIndex findIndexForMsgURI(in AUTF8String msgUri, in boolean expand);
+
   /**
    * Finds the view index of the passed in msgHdr.
    *
@@ -402,30 +396,6 @@ interface nsIMsgDBView : nsISupports
    * @return         the thread object at the requested view index
    */
   nsIMsgThread getThreadContainingIndex(in nsMsgViewIndex aIndex);
-
-  /**
-   * Insert rows into the view. The caller should use NoteChange() below to
-   * update the view.
-   *
-   * @param aIndex   view index for insertion start.
-   * @param aNumRows number of rows to insert.
-   * @param aKey     msgKey.
-   * @param aFlags   msgFlags.
-   * @param aLevel   treeview indent level.
-   * @param aFolder  nsIMsgFolder, required for search/xfvf views.
-   */
-  void insertTreeRows(in nsMsgViewIndex aIndex, in unsigned long aNumRows,
-                      in nsMsgKey aKey, in nsMsgViewFlagsTypeValue aFlags,
-                      in unsigned long aLevel, in nsIMsgFolder aFolder);
-
-  /**
-   * Remove rows from the view.  The caller should use NoteChange() below to
-   * update the view.
-   *
-   * @param aIndex   view index for removal start.
-   * @param aNumRows number of rows to remove.
-   */
-  void removeTreeRows(in nsMsgViewIndex aIndex, in unsigned long aNumRows);
 
   /**
    * Notify tree that rows have changed.
@@ -510,31 +480,11 @@ interface nsIMsgDBView : nsISupports
 [scriptable, uuid(ce8f52ee-e742-4b31-8bdd-2b3a8168a117)]
 interface nsIMsgDBViewCommandUpdater : nsISupports
 {
-  /* Eventually we'll flush this out into some kind of rich interface
-  which may take specific selection changed type notifications like
-  no selections, single selection, multi-selection, etc. For starters,
-  we are going to keep it generic. The back end will only push an update
-  command status when the # of selected items changes.
-  */
-
-  void updateCommandStatus();
-
-  /* displayed message has changed */
-  void displayMessageChanged(in nsIMsgFolder aFolder, in AString aSubject, in ACString aKeywords);
-
   /**
-  * allows the backend to tell the front end to re-determine
-  * which message we should selet after a delete or move
-  */
+   * Allows the backend to tell the front end to re-determine
+   * which message we should select after a delete or move.
+   */
   void updateNextMessageAfterDelete();
-
-  /**
-  * tell the front end that the selection has changed, and may need to be
-  * resummarized.
-  *
-  * @return   true if we did summarize, false otherwise.
-  */
-  boolean summarizeSelection();
 
   /**
    * Tell the front end that the selected message was removed and it should update.

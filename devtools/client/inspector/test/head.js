@@ -22,7 +22,6 @@ Services.scriptloader.loadSubScript(
   this
 );
 
-const { LocalizationHelper } = require("resource://devtools/shared/l10n.js");
 const INSPECTOR_L10N = new LocalizationHelper(
   "devtools/client/locales/inspector.properties"
 );
@@ -132,10 +131,12 @@ function pickElement(inspector, selector, x, y) {
  *        X-offset from the top-left corner of the element matching the provided selector
  * @param {Number} y
  *        Y-offset from the top-left corner of the element matching the provided selector
+ * @param {Object} eventOptions
+ *        Options that will be passed to synthesizeMouse
  * @return {Promise} promise that resolves when both the "picker-node-hovered" and
  *                   "highlighter-shown" events are emitted.
  */
-async function hoverElement(inspector, selector, x, y) {
+async function hoverElement(inspector, selector, x, y, eventOptions = {}) {
   const { waitForHighlighterTypeShown } = getHighlighterTestHelpers(inspector);
   info(`Waiting for element "${selector}" to be hovered`);
   const onHovered = inspector.toolbox.nodePicker.once("picker-node-hovered");
@@ -160,7 +161,7 @@ async function hoverElement(inspector, selector, x, y) {
   if (isNaN(x) || isNaN(y)) {
     BrowserTestUtils.synthesizeMouseAtCenter(
       selector,
-      { type: "mousemove" },
+      { ...eventOptions, type: "mousemove" },
       browsingContext
     );
   } else {
@@ -168,7 +169,7 @@ async function hoverElement(inspector, selector, x, y) {
       selector,
       x,
       y,
-      { type: "mousemove" },
+      { ...eventOptions, type: "mousemove" },
       browsingContext
     );
   }
@@ -815,6 +816,11 @@ function waitForStyleEditor(toolbox, href) {
       // A helper that resolves the promise once it receives an editor that
       // matches the expected href. Returns false if the editor was not correct.
       const gotEditor = editor => {
+        if (!editor) {
+          info("Editor went away after selected?");
+          return false;
+        }
+
         const currentHref = editor.styleSheet.href;
         if (!href || (href && currentHref.endsWith(href))) {
           info("Stylesheet editor selected");
@@ -977,7 +983,7 @@ async function assertShowPreviewTooltip(view, target) {
  *        The DOM Element on which a tooltip should appear
  */
 async function assertTooltipHiddenOnMouseOut(tooltip, target) {
-  // The tooltip actually relies on mousemove events to check if it sould be hidden.
+  // The tooltip actually relies on mousemove events to check if it should be hidden.
   const mouseEvent = new target.ownerDocument.defaultView.MouseEvent(
     "mousemove",
     {
@@ -993,20 +999,164 @@ async function assertTooltipHiddenOnMouseOut(tooltip, target) {
 }
 
 /**
- * Get the rule editor from the rule-view given its index
+ * Check the content of a `var()` tooltip on a given rule and property name.
  *
  * @param {CssRuleView} view
- *        The instance of the rule-view panel
- * @param {Number} childrenIndex
- *        The children index of the element to get
- * @param {Number} nodeIndex
- *        The child node index of the element to get
- * @return {DOMNode} The rule editor if any at this index
+ * @param {String} ruleSelector
+ * @param {String} propertyName
+ * @param {Object} tooltipExpected
+ * @param {String} tooltipExpected.header: The HTML for the top section
+ *        (might be the only section when the variable is not a registered property and
+ *        there is no starting-style, nor computed value).
+ * @param {Array<String>} tooltipExpected.headerClasses: Classes applied on the header element
+ *        (no need to include `variable-value` which is always added).
+ * @param {String} tooltipExpected.computed: The HTML for the computed value section.
+ * @param {Array<String>} tooltipExpected.computedClasses: Classes applied on the computed value element.
+ * @param {Integer} tooltipExpected.index: The index in the property value for the variable
+ *        element we want to check. Defaults to 0 so we can quickly check values when only
+ *        one variable is used.
+ * @param {Boolean} tooltipExpected.isMatched: Is the element matched or unmatched, defaults
+ *        to true.
+ * @param {String} tooltipExpected.startingStyle: The HTML for the starting-style section.
+ *        Pass undefined if the tooltip isn't supposed to have a `@starting-style` section.
+ * @param {Array<String>} tooltipExpected.startingStyleClasses: Classes applied on the
+ *        starting-style value element.
+ * @param {Object} tooltipExpected.registeredProperty: Object whose properties should match
+ *        the displayed registered property fields, e.g:
+ *        {syntax:`"&lt;color&gt;"`, inherits:"true", "initial-value": "10px"}
+ *        The properties values are the HTML of the dd elements.
+ *        Pass undefined if the tooltip isn't supposed to have a @property section.
  */
-function getRuleViewRuleEditor(view, childrenIndex, nodeIndex) {
-  return nodeIndex !== undefined
-    ? view.element.children[childrenIndex].childNodes[nodeIndex]._ruleEditor
-    : view.element.children[childrenIndex]._ruleEditor;
+async function assertVariableTooltipForProperty(
+  view,
+  ruleSelector,
+  propertyName,
+  {
+    computed,
+    computedClasses = ["theme-fg-color1"],
+    header,
+    headerClasses = ["theme-fg-color1"],
+    index = 0,
+    isMatched = true,
+    registeredProperty,
+    startingStyle,
+    startingStyleClasses = ["theme-fg-color1"],
+  }
+) {
+  // retrieve tooltip target
+  const variableEl = await waitFor(
+    () =>
+      getRuleViewProperty(
+        view,
+        ruleSelector,
+        propertyName
+      ).valueSpan.querySelectorAll(".inspector-variable,.inspector-unmatched")[
+        index
+      ]
+  );
+
+  if (isMatched) {
+    ok(
+      !variableEl.classList.contains("inspector-unmatched"),
+      `CSS variable #${index} for ${propertyName} in ${ruleSelector} is matched`
+    );
+  } else {
+    ok(
+      variableEl.classList.contains("inspector-unmatched"),
+      `CSS variable #${index} for ${propertyName} in ${ruleSelector} is unmatched`
+    );
+  }
+
+  const previewTooltip = await assertShowPreviewTooltip(view, variableEl);
+  const valueEl = previewTooltip.panel.querySelector(".variable-value");
+  const computedValueEl = previewTooltip.panel.querySelector(".computed div");
+  const startingStyleEl = previewTooltip.panel.querySelector(
+    ".starting-style div"
+  );
+  const registeredPropertyEl = previewTooltip.panel.querySelector(
+    ".registered-property dl"
+  );
+  is(
+    valueEl?.innerHTML,
+    header,
+    `CSS variable #${index} preview tooltip has expected header text for ${propertyName} in ${ruleSelector}`
+  );
+  Assert.deepEqual(
+    [...valueEl.classList],
+    ["variable-value", ...headerClasses],
+    `CSS variable #${index} preview tooltip has expected classes for ${propertyName} in ${ruleSelector}`
+  );
+
+  if (typeof computed !== "string") {
+    is(
+      computedValueEl,
+      null,
+      `CSS variable #${index} preview tooltip doesn't have computed value section for ${propertyName} in ${ruleSelector}`
+    );
+  } else {
+    is(
+      computedValueEl?.innerHTML,
+      computed,
+      `CSS variable #${index} preview tooltip has expected computed value section for ${propertyName} in ${ruleSelector}`
+    );
+    Assert.deepEqual(
+      [...computedValueEl.classList],
+      computedClasses,
+      `CSS variable #${index} preview tooltip has expected classes on computed value for ${propertyName} in ${ruleSelector}`
+    );
+  }
+
+  if (!registeredProperty) {
+    is(
+      registeredPropertyEl,
+      null,
+      `CSS variable #${index} preview tooltip doesn't have registered property section for ${propertyName} in ${ruleSelector}`
+    );
+  } else {
+    const dts = registeredPropertyEl.querySelectorAll("dt");
+    const registeredPropertyEntries = Object.entries(registeredProperty);
+    is(
+      dts.length,
+      registeredPropertyEntries.length,
+      `CSS variable #${index} preview tooltip has the expected number of element in the registered property section for ${propertyName} in ${ruleSelector}`
+    );
+    for (let i = 0; i < registeredPropertyEntries.length; i++) {
+      const [label, value] = registeredPropertyEntries[i];
+      const dt = dts[i];
+      const dd = dt.nextElementSibling;
+      is(
+        dt.innerText,
+        `${label}:`,
+        `CSS variable #${index} preview tooltip has expected ${label} registered property element for ${propertyName} in ${ruleSelector}`
+      );
+      is(
+        dd.innerHTML,
+        value,
+        `CSS variable #${index} preview tooltip has expected HTML for ${label} registered property element for ${propertyName} in ${ruleSelector}`
+      );
+    }
+  }
+
+  if (!startingStyle) {
+    is(
+      startingStyleEl,
+      null,
+      `CSS variable #${index} preview tooltip doesn't have a starting-style section for ${propertyName} in ${ruleSelector}`
+    );
+  } else {
+    is(
+      startingStyleEl?.innerHTML,
+      startingStyle,
+      `CSS variable #${index} preview tooltip has expected starting-style section for ${propertyName} in ${ruleSelector}`
+    );
+    Assert.deepEqual(
+      [...startingStyleEl.classList],
+      startingStyleClasses,
+      `CSS variable #${index} preview tooltip has expected classes on starting-style value for ${propertyName} in ${ruleSelector}`
+    );
+  }
+
+  await assertTooltipHiddenOnMouseOut(previewTooltip, variableEl);
 }
 
 /**
@@ -1062,7 +1212,7 @@ async function toggleShapesHighlighter(
   );
   const highlighters = view.highlighters;
   const container = getRuleViewProperty(view, selector, property).valueSpan;
-  const shapesToggle = container.querySelector(".ruleview-shapeswatch");
+  const shapesToggle = container.querySelector(".inspector-shapeswatch");
 
   const metaKey = options.transformMode;
   const ctrlKey = options.transformMode;
@@ -1453,6 +1603,110 @@ async function isNodeCorrectlyHighlighted(highlighterTestFront, selector) {
         boxModel[boxType].points[point].y,
         quad[point].y,
         `${selector} ${boxType} point ${point} y coordinate is correct`
+      );
+    }
+  }
+}
+
+/**
+ * Get the position and size of the measuring tool.
+ *
+ * @param {Object} Object returned by getHighlighterHelperFor()
+ * @return {Promise<Object>} A promise that resolves with an object containing
+ *    the x, y, width, and height properties of the measuring tool which has
+ *    been drawn on-screen
+ */
+async function getAreaRect({ getElementAttribute }) {
+  // The 'box-path' element holds the width and height of the
+  // measuring area as well as the position relative to its
+  // parent <g> element.
+  const d = await getElementAttribute("box-path", "d");
+  // The tool element itself is a <g> element grouping all paths.
+  // Though <g> elements do not have coordinates by themselves,
+  // therefore it is positioned using the 'transform' CSS property.
+  // So, in order to get the position of the measuring area, the
+  // coordinates need to be read from the translate() function.
+  const transform = await getElementAttribute("tool", "transform");
+  const reDir = /(\d+) (\d+)/g;
+  const reTransform = /(\d+),(\d+)/;
+  const coords = {
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+  };
+  let match;
+  while ((match = reDir.exec(d))) {
+    let [, x, y] = match;
+    x = Number(x);
+    y = Number(y);
+    if (x < coords.x) {
+      coords.x = x;
+    }
+    if (y < coords.y) {
+      coords.y = y;
+    }
+    if (x > coords.width) {
+      coords.width = x;
+    }
+    if (y > coords.height) {
+      coords.height = y;
+    }
+  }
+
+  match = reTransform.exec(transform);
+  coords.x += Number(match[1]);
+  coords.y += Number(match[2]);
+
+  return coords;
+}
+
+/**
+ * Follow a sequence of keys to be pressed in the markup view search input and check
+ * that the input value and the suggestions are the expected ones.
+ *
+ * @param {Inspector} inspector
+ * @param {Array} expected: This is the array describing the sequence.
+ *        Each item hasthe following shape:
+ *        - key {String}: The keyboard key that is pressed
+ *        - value {String}: The expected input value after the key was pressed
+ *        - suggestions {Array<String>}: An array of the labels in the autocomplete popup.
+ *                                       Pass an empty array if the popup should be hidden.
+ */
+async function checkMarkupSearchSuggestions(inspector, expected) {
+  const searchBox = inspector.searchBox;
+  const popup = inspector.searchSuggestions.searchPopup;
+
+  await focusSearchBoxUsingShortcut(inspector.panelWin);
+
+  for (const { key, suggestions, value } of expected) {
+    info("Pressing " + key + " to get " + JSON.stringify(suggestions));
+
+    const command = once(searchBox, "input");
+    const onSearchProcessingDone =
+      inspector.searchSuggestions.once("processing-done");
+    EventUtils.synthesizeKey(key, {}, inspector.panelWin);
+    await command;
+
+    is(searchBox.value, value, "search input has expected value");
+
+    info("Waiting for search query to complete");
+    await onSearchProcessingDone;
+
+    info(
+      "Query completed. Performing checks for input '" +
+        searchBox.value +
+        "' - key pressed: " +
+        key
+    );
+
+    if (suggestions.length === 0) {
+      ok(!popup.isOpen, `There is no suggestion for "${searchBox.value}"`);
+    } else {
+      Assert.deepEqual(
+        popup.getItems().map(item => item.label),
+        suggestions,
+        `Suggestions are correct for "${searchBox.value}"`
       );
     }
   }

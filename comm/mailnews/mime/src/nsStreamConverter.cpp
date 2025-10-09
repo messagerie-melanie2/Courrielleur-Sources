@@ -2,10 +2,9 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #include "nsCOMPtr.h"
 #include <stdio.h>
-#include "mimecom.h"
-#include "modmimee.h"
 #include "nscore.h"
 #include "nsStreamConverter.h"
 #include "prmem.h"
@@ -15,10 +14,7 @@
 #include "mimemoz2.h"
 #include "nsMimeTypes.h"
 #include "nsString.h"
-#include "nsUnicharUtils.h"
-#include "nsMemory.h"
 #include "nsIPipe.h"
-#include "nsMimeStringResources.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
 #include "nsNetUtil.h"
@@ -27,10 +23,8 @@
 #include "mozITXTToHTMLConv.h"
 #include "nsIMsgMailNewsUrl.h"
 #include "nsINntpUrl.h"
-#include "nsIMsgWindow.h"
 #include "nsICategoryManager.h"
 #include "nsMsgUtils.h"
-#include "mozilla/ArrayUtils.h"
 
 #define PREF_MAIL_DISPLAY_GLYPH "mail.display_glyph"
 #define PREF_MAIL_DISPLAY_STRUCT "mail.display_struct"
@@ -67,9 +61,12 @@ void bridge_set_output_type(void* bridgeStream, nsMimeOutputType aType) {
   nsMIMESession* session = (nsMIMESession*)bridgeStream;
 
   if (session) {
-    // BAD ASSUMPTION!!!! NEED TO CHECK aType
-    mime_stream_data* msd = (mime_stream_data*)session->data_object;
-    if (msd) msd->format_out = aType;  // output format type
+    mime_stream_data* msd = session->data_object.AsMimeStreamData();
+    if (!msd) {
+      return;
+    }
+
+    msd->format_out = aType;  // output format type
   }
 }
 
@@ -86,16 +83,15 @@ nsresult bridge_new_new_uri(void* bridgeStream, nsIURI* aURI,
 
       if ((aOutputType == nsMimeOutput::nsMimeMessageDraftOrTemplate) ||
           (aOutputType == nsMimeOutput::nsMimeMessageEditorTemplate)) {
-        mime_draft_data* mdd = (mime_draft_data*)session->data_object;
-        if (mdd->options) {
+        mime_draft_data* mdd = session->data_object.AsMimeDraftData();
+        if (mdd && mdd->options) {
           default_charset = &(mdd->options->default_charset);
           override_charset = &(mdd->options->override_charset);
           url_name = &(mdd->url_name);
         }
       } else {
-        mime_stream_data* msd = (mime_stream_data*)session->data_object;
-
-        if (msd->options) {
+        mime_stream_data* msd = session->data_object.AsMimeStreamData();
+        if (msd && msd->options) {
           default_charset = &(msd->options->default_charset);
           override_charset = &(msd->options->override_charset);
           url_name = &(msd->url_name);
@@ -147,12 +143,15 @@ nsresult bridge_new_new_uri(void* bridgeStream, nsIURI* aURI,
   return NS_OK;
 }
 
-static int mime_headers_callback(void* closure, MimeHeaders* headers) {
-  // We get away with this because this doesn't get called on draft operations.
-  mime_stream_data* msd = (mime_stream_data*)closure;
+static int mime_headers_callback(MimeClosure closure, MimeHeaders* headers) {
+  NS_ASSERTION(closure && headers, "null mime stream data or headers");
+  if (!closure || !headers) return 0;
 
-  NS_ASSERTION(msd && headers, "null mime stream data or headers");
-  if (!msd || !headers) return 0;
+  // This doesn't get called on draft operations.
+  mime_stream_data* msd = closure.AsMimeStreamData();
+  if (!msd) {
+    return 0;
+  }
 
   NS_ASSERTION(!msd->headers, "non-null mime stream data headers");
   msd->headers = MimeHeaders_copy(headers);
@@ -167,8 +166,8 @@ nsresult bridge_set_mime_stream_converter_listener(
   if ((session) && (session->data_object)) {
     if ((aOutputType == nsMimeOutput::nsMimeMessageDraftOrTemplate) ||
         (aOutputType == nsMimeOutput::nsMimeMessageEditorTemplate)) {
-      mime_draft_data* mdd = (mime_draft_data*)session->data_object;
-      if (mdd->options) {
+      mime_draft_data* mdd = session->data_object.AsMimeDraftData();
+      if (mdd && mdd->options) {
         if (listener) {
           mdd->options->caller_need_root_headers = true;
           mdd->options->decompose_headers_info_fn = mime_headers_callback;
@@ -178,9 +177,8 @@ nsresult bridge_set_mime_stream_converter_listener(
         }
       }
     } else {
-      mime_stream_data* msd = (mime_stream_data*)session->data_object;
-
-      if (msd->options) {
+      mime_stream_data* msd = session->data_object.AsMimeStreamData();
+      if (msd && msd->options) {
         if (listener) {
           msd->options->caller_need_root_headers = true;
           msd->options->decompose_headers_info_fn = mime_headers_callback;
@@ -336,7 +334,7 @@ nsresult nsStreamConverter::DetermineOutputFormat(const char* aUrl,
     // prefix by checking that the following character is either null or the
     // next query element
     const char* remainder;
-    for (uint32_t n = 0; n < MOZ_ARRAY_LENGTH(rgTypes); ++n) {
+    for (uint32_t n = 0; n < std::size(rgTypes); ++n) {
       remainder = SkipPrefix(header, rgTypes[n].headerType);
       if (remainder && (*remainder == '\0' || *remainder == '&')) {
         mOutputFormat = rgTypes[n].outputFormat;
@@ -367,14 +365,13 @@ nsresult nsStreamConverter::InternalCleanup(void) {
  */
 nsStreamConverter::nsStreamConverter() {
   // Init member variables...
-  mWrapperOutput = false;
   mBridgeStream = nullptr;
   mOutputFormat = "text/html";
   mAlreadyKnowOutputType = false;
   mForwardInline = false;
   mForwardInlineFilter = false;
   mOverrideComposeFormat = false;
-
+  mOutputType = nsMimeOutput::nsMimeUnknown;
   mPendingRequest = nullptr;
 }
 
@@ -408,12 +405,6 @@ NS_IMETHODIMP nsStreamConverter::Init(nsIURI* aURI,
   }
 
   switch (newType) {
-    case nsMimeOutput::nsMimeMessageSplitDisplay:  // the wrapper HTML output to
-                                                   // produce the split
-                                                   // header/body display
-      mWrapperOutput = true;
-      mOutputFormat = "text/html";
-      break;
     case nsMimeOutput::nsMimeMessageHeaderDisplay:  // the split header/body
                                                     // display
       mOutputFormat = "text/xml";
@@ -588,17 +579,6 @@ nsresult nsStreamConverter::SetMimeOutputType(nsMimeOutputType aType) {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsStreamConverter::GetMimeOutputType(
-    nsMimeOutputType* aOutFormat) {
-  nsresult rv = NS_OK;
-  if (aOutFormat)
-    *aOutFormat = mOutputType;
-  else
-    rv = NS_ERROR_NULL_POINTER;
-
-  return rv;
-}
-
 //
 // This is needed by libmime for MHTML link processing...this is the URI
 // associated with this input stream
@@ -725,30 +705,6 @@ nsresult nsStreamConverter::OnDataAvailable(nsIRequest* request,
   nsresult rc = NS_OK;  // should this be an error instead?
   uint32_t written;
 
-  // If this is the first time through and we are supposed to be
-  // outputting the wrapper two pane URL, then do it now.
-  if (mWrapperOutput) {
-    char outBuf[1024];
-    const char output[] =
-        "\
-<HTML>\
-<FRAMESET ROWS=\"30%%,70%%\">\
-<FRAME NAME=messageHeader SRC=\"%s?header=only\">\
-<FRAME NAME=messageBody SRC=\"%s?header=none\">\
-</FRAMESET>\
-</HTML>";
-
-    nsAutoCString url;
-    if (NS_FAILED(mURI->GetSpec(url))) return NS_ERROR_FAILURE;
-
-    PR_snprintf(outBuf, sizeof(outBuf), output, url.get(), url.get());
-
-    if (mEmitter) mEmitter->Write(nsDependentCString(outBuf), &written);
-
-    // rhp: will this stop the stream???? Not sure.
-    return NS_ERROR_FAILURE;
-  }
-
   nsCOMPtr<nsIInputStream> stream = aIStream;
   NS_ENSURE_TRUE(stream, NS_ERROR_NULL_POINTER);
   char* buf = (char*)PR_Malloc(aLength);
@@ -763,8 +719,7 @@ nsresult nsStreamConverter::OnDataAvailable(nsIRequest* request,
   char* endPtr = buf + readLen;
 
   // First let see if the stream contains null characters
-  for (readPtr = buf; readPtr < endPtr && *readPtr; readPtr++)
-    ;
+  for (readPtr = buf; readPtr < endPtr && *readPtr; readPtr++);
 
   // Did we find a null character? Then, we need to cleanup the stream
   if (readPtr < endPtr) {
@@ -802,14 +757,6 @@ nsresult nsStreamConverter::OnDataAvailable(nsIRequest* request,
 // called only once, at the beginning of a URL load.
 //
 nsresult nsStreamConverter::OnStartRequest(nsIRequest* request) {
-#ifdef DEBUG_rhp
-  printf("nsStreamConverter::OnStartRequest()\n");
-#endif
-
-#ifdef DEBUG_mscott
-  mConvertContentTime = PR_IntervalNow();
-#endif
-
   // here's a little bit of hackery....
   // since the mime converter is now between the channel
   // and the
@@ -856,11 +803,15 @@ nsresult nsStreamConverter::OnStopRequest(nsIRequest* request,
 
       if ((mOutputType == nsMimeOutput::nsMimeMessageDraftOrTemplate) ||
           (mOutputType == nsMimeOutput::nsMimeMessageEditorTemplate)) {
-        mime_draft_data* mdd = (mime_draft_data*)tSession->data_object;
-        if (mdd) workHeaders = &(mdd->headers);
+        mime_draft_data* mdd = tSession->data_object.AsMimeDraftData();
+        if (mdd) {
+          workHeaders = &(mdd->headers);
+        }
       } else {
-        mime_stream_data* msd = (mime_stream_data*)tSession->data_object;
-        if (msd) workHeaders = &(msd->headers);
+        mime_stream_data* msd = tSession->data_object.AsMimeStreamData();
+        if (msd) {
+          workHeaders = &(msd->headers);
+        }
       }
 
       if (workHeaders) {
@@ -974,8 +925,23 @@ NS_IMETHODIMP nsStreamConverter::FirePendingStartRequest() {
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsStreamConverter::MaybeRetarget(nsIRequest* request) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
 NS_IMETHODIMP nsStreamConverter::GetConvertedType(const nsACString& aFromType,
                                                   nsIChannel* aChannel,
                                                   nsACString& aToType) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+// Methods for nsIThreadRetargetableStreamListener
+
+nsresult nsStreamConverter::OnDataFinished(nsresult aStatusCode) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+nsresult nsStreamConverter::CheckListenerChain() {
   return NS_ERROR_NOT_IMPLEMENTED;
 }

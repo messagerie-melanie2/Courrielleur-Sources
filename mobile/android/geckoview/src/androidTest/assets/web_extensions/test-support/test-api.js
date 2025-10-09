@@ -20,15 +20,15 @@ this.test = class extends ExtensionAPI {
   onStartup() {
     ChromeUtils.registerWindowActor("TestSupport", {
       child: {
-        moduleURI:
-          "resource://android/assets/web_extensions/test-support/TestSupportChild.jsm",
+        esModuleURI:
+          "resource://android/assets/web_extensions/test-support/TestSupportChild.sys.mjs",
       },
       allFrames: true,
     });
     ChromeUtils.registerProcessActor("TestSupportProcess", {
       child: {
-        moduleURI:
-          "resource://android/assets/web_extensions/test-support/TestSupportProcessChild.jsm",
+        esModuleURI:
+          "resource://android/assets/web_extensions/test-support/TestSupportProcessChild.sys.mjs",
       },
     });
   }
@@ -91,6 +91,10 @@ this.test = class extends ExtensionAPI {
           return Preferences.get(prefs);
         },
 
+        /* Clears a given user preference. */
+        async clearUserPref(pref) {
+          Services.prefs.clearUserPref(pref);
+        },
         /* Gets link color for a given selector. */
         async getLinkColor(tabId, selector) {
           return getActorForTab(tabId, "TestSupport").sendQuery(
@@ -107,6 +111,12 @@ this.test = class extends ExtensionAPI {
           const tab = context.extension.tabManager.get(tabId);
           const pids = E10SUtils.getBrowserPids(tab.browser);
           return pids[0];
+        },
+
+        async waitForContentTransformsReceived(tabId) {
+          return getActorForTab(tabId).sendQuery(
+            "WaitForContentTransformsReceived"
+          );
         },
 
         async getAllBrowserPids() {
@@ -142,10 +152,6 @@ this.test = class extends ExtensionAPI {
           overrideService.clearAllOverrides();
         },
 
-        async setScalar(id, value) {
-          return Services.telemetry.scalarSet(id, value);
-        },
-
         async setResolutionAndScaleTo(tabId, resolution) {
           return getActorForTab(tabId, "TestSupport").sendQuery(
             "SetResolutionAndScaleTo",
@@ -173,6 +179,12 @@ this.test = class extends ExtensionAPI {
           // well.
           await getActorForTab(tabId, "TestSupport").sendQuery(
             "FlushApzRepaints"
+          );
+        },
+
+        async zoomToFocusedInput(tabId) {
+          await getActorForTab(tabId, "TestSupport").sendQuery(
+            "ZoomToFocusedInput"
           );
         },
 
@@ -210,6 +222,14 @@ this.test = class extends ExtensionAPI {
           return sss.clearAll();
         },
 
+        async isSessionHistoryInParentRunning() {
+          return Services.appinfo.sessionHistoryInParent;
+        },
+
+        async isFissionRunning() {
+          return Services.appinfo.fissionAutostart;
+        },
+
         async triggerCookieBannerDetected(tabId) {
           const actor = getActorForTab(tabId, "CookieBanner");
           return actor.receiveMessage({
@@ -222,6 +242,34 @@ this.test = class extends ExtensionAPI {
           return actor.receiveMessage({
             name: "CookieBanner::HandledBanner",
           });
+        },
+
+        async triggerTranslationsOffer(tabId) {
+          const browser = context.extension.tabManager.get(tabId).browser;
+          const { CustomEvent } = browser.ownerGlobal;
+          return browser.dispatchEvent(
+            new CustomEvent("TranslationsParent:OfferTranslation", {
+              bubbles: true,
+            })
+          );
+        },
+
+        async triggerLanguageStateChange(tabId, languageState) {
+          const browser = context.extension.tabManager.get(tabId).browser;
+          const { CustomEvent } = browser.ownerGlobal;
+          return browser.dispatchEvent(
+            new CustomEvent("TranslationsParent:LanguageState", {
+              bubbles: true,
+              detail: languageState,
+            })
+          );
+        },
+
+        async setHandlingUserInput(tabId, handlingUserInput) {
+          return getActorForTab(tabId, "TestSupport").sendQuery(
+            "SetHandlingUserInput",
+            { handlingUserInput }
+          );
         },
       },
     };

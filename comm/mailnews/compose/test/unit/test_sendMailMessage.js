@@ -5,11 +5,11 @@
  * between mailnews and SMTP server. It does not check the data of the message
  * either side of the link, it will be extended later to do that.
  */
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 var server;
@@ -40,23 +40,25 @@ async function test_RFC2821() {
     // First do test with identity email address used for smtp MAIL FROM.
     Services.prefs.setBoolPref("mail.smtp.useSenderForSmtpMailFrom", false);
 
-    let urlListener = new PromiseTestUtils.PromiseUrlListener();
-    MailServices.smtp.sendMailMessage(
+    let messageId = Cc["@mozilla.org/messengercompose/computils;1"]
+      .createInstance(Ci.nsIMsgCompUtils)
+      .msgGenerateMessageId(identity, null);
+
+    let listener = new PromiseTestUtils.PromiseMsgOutgoingListener();
+    smtpServer.sendMailMessage(
       testFile,
-      kTo,
+      MailServices.headerParser.parseEncodedHeaderW(kTo),
+      [],
       identity,
       kSender,
       null,
-      urlListener,
-      null,
       null,
       false,
-      "",
-      {},
-      {}
+      messageId,
+      listener
     );
 
-    await urlListener.promise;
+    await listener.promise;
 
     var transaction = server.playTransaction();
     do_check_transaction(transaction, [
@@ -72,23 +74,25 @@ async function test_RFC2821() {
     // Now do the same test with sender's email address used for smtp MAIL FROM.
     Services.prefs.setBoolPref("mail.smtp.useSenderForSmtpMailFrom", true);
 
-    urlListener = new PromiseTestUtils.PromiseUrlListener();
-    MailServices.smtp.sendMailMessage(
+    messageId = Cc["@mozilla.org/messengercompose/computils;1"]
+      .createInstance(Ci.nsIMsgCompUtils)
+      .msgGenerateMessageId(identity, null);
+
+    listener = new PromiseTestUtils.PromiseMsgOutgoingListener();
+    smtpServer.sendMailMessage(
       testFile,
-      kTo,
+      MailServices.headerParser.parseEncodedHeaderW(kTo),
+      [],
       identity,
       kSender,
       null,
-      urlListener,
-      null,
       null,
       false,
-      "",
-      {},
-      {}
+      messageId,
+      listener
     );
 
-    await urlListener.promise;
+    await listener.promise;
 
     transaction = server.playTransaction();
     do_check_transaction(transaction, [
@@ -112,23 +116,25 @@ async function test_RFC2821() {
     // First do test with identity email address used for smtp MAIL FROM.
     Services.prefs.setBoolPref("mail.smtp.useSenderForSmtpMailFrom", false);
 
-    urlListener = new PromiseTestUtils.PromiseUrlListener();
-    MailServices.smtp.sendMailMessage(
+    messageId = Cc["@mozilla.org/messengercompose/computils;1"]
+      .createInstance(Ci.nsIMsgCompUtils)
+      .msgGenerateMessageId(identity, null);
+
+    listener = new PromiseTestUtils.PromiseMsgOutgoingListener();
+    smtpServer.sendMailMessage(
       testFile,
-      kTo,
+      MailServices.headerParser.parseEncodedHeaderW(kTo),
+      [],
       identity,
       kSender,
       null,
-      urlListener,
-      null,
       null,
       false,
-      "",
-      {},
-      {}
+      messageId,
+      listener
     );
 
-    await urlListener.promise;
+    await listener.promise;
 
     transaction = server.playTransaction();
     do_check_transaction(transaction, [
@@ -145,23 +151,25 @@ async function test_RFC2821() {
     // Now do the same test with sender's email address used for smtp MAIL FROM.
     Services.prefs.setBoolPref("mail.smtp.useSenderForSmtpMailFrom", true);
 
-    urlListener = new PromiseTestUtils.PromiseUrlListener();
-    MailServices.smtp.sendMailMessage(
+    messageId = Cc["@mozilla.org/messengercompose/computils;1"]
+      .createInstance(Ci.nsIMsgCompUtils)
+      .msgGenerateMessageId(identity, null);
+
+    listener = new PromiseTestUtils.PromiseMsgOutgoingListener();
+    smtpServer.sendMailMessage(
       testFile,
-      kTo,
+      MailServices.headerParser.parseEncodedHeaderW(kTo),
+      [],
       identity,
       kSender,
       null,
-      urlListener,
-      null,
       null,
       false,
-      "",
-      {},
-      {}
+      messageId,
+      listener
     );
 
-    await urlListener.promise;
+    await listener.promise;
 
     transaction = server.playTransaction();
     do_check_transaction(transaction, [
@@ -176,7 +184,7 @@ async function test_RFC2821() {
   } finally {
     server.stop();
 
-    var thread = gThreadManager.currentThread;
+    var thread = Services.tm.currentThread;
     while (thread.hasPendingEvents()) {
       thread.processNextEvent(true);
     }

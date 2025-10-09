@@ -14,46 +14,94 @@
 
 // msgHdrView.js
 /* globals AdjustHeaderView ClearCurrentHeaders ClearPendingReadTimer
-   HideMessageHeaderPane OnLoadMsgHeaderPane OnTagsChange
+   HideMessageHeaderPane initFolderDBListener OnLoadMsgHeaderPane OnTagsChange
    OnUnloadMsgHeaderPane HandleAllAttachments AttachmentMenuController */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
+ChromeUtils.defineESModuleGetters(
+  this,
+  {
+    adaptMessageForDarkMode: "chrome://messenger/content/DarkReader.mjs",
+  },
+  { global: "current" }
+);
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  UIDensity: "resource:///modules/UIDensity.jsm",
-  UIFontSize: "resource:///modules/UIFontSize.jsm",
-  NetUtil: "resource://gre/modules/NetUtil.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
+  UIDensity: "resource:///modules/UIDensity.sys.mjs",
+  UIFontSize: "resource:///modules/UIFontSize.sys.mjs",
 });
 
 const messengerBundle = Services.strings.createBundle(
   "chrome://messenger/locale/messenger.properties"
 );
 
+const prefersDarkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
 var gMessage, gMessageURI;
 var autodetectCharset;
+
+let reloadTimeout = null;
+function timeoutReload() {
+  if (reloadTimeout) {
+    return;
+  }
+  // Clear the event queue before reloading the message. Several prefs may
+  // be changed at once.
+  reloadTimeout = setTimeout(() => {
+    reloadTimeout = null;
+    ReloadMessage();
+  });
+}
 
 function getMessagePaneBrowser() {
   return document.getElementById("messagepane");
 }
 
-function messagePaneOnResize() {
+/**
+ * Handle "resize" events on the messagepane.
+ */
+async function messagePaneOnResize() {
   const doc = getMessagePaneBrowser().contentDocument;
   // Bail out if it's http content or we don't have images.
   if (doc?.URL.startsWith("http") || !doc?.images) {
     return;
   }
 
-  for (let img of doc.images) {
-    img.toggleAttribute(
-      "overflowing",
-      img.clientWidth - doc.body.offsetWidth >= 0 &&
-        (img.clientWidth <= img.naturalWidth || !img.naturalWidth)
-    );
+  const availableWidth = Math.max(
+    document.body.scrollWidth,
+    window.visualViewport.width
+  );
+
+  const adjustImg = img => {
+    if (img.hasAttribute("shrinktofit")) {
+      // overflowing: Whether the image is overflowing visible area.
+      img.toggleAttribute("overflowing", img.naturalWidth > img.clientWidth);
+    } else if (img.hasAttribute("overflowing")) {
+      const isOverflowing = img.clientWidth >= availableWidth;
+      img.toggleAttribute("overflowing", isOverflowing);
+      img.toggleAttribute("shrinktofit", !isOverflowing);
+    }
+  };
+
+  for (const img of doc.querySelectorAll(
+    "img:is([shrinktofit],[overflowing])"
+  )) {
+    if (img.closest("[href]")) {
+      continue;
+    }
+    if (!img.complete) {
+      img.addEventListener("load", event => adjustImg(event.target), {
+        once: true,
+      });
+    } else {
+      adjustImg(img);
+    }
   }
 }
 
@@ -65,7 +113,7 @@ function ReloadMessage() {
 }
 
 function MailSetCharacterSet() {
-  let messageService = MailServices.messageServiceFromURI(gMessageURI);
+  const messageService = MailServices.messageServiceFromURI(gMessageURI);
   gMessage = messageService.messageURIToMsgHdr(gMessageURI);
   messageService.loadMessage(
     gMessageURI,
@@ -111,7 +159,8 @@ window.addEventListener("DOMContentLoaded", event => {
 
   // There might not be a msgWindow variable on the top window
   // if we're e.g. showing a message in a dedicated window.
-  if (top.msgWindow) {
+  // For a new profile, statusFeedback will be null at this point.
+  if (top.msgWindow?.statusFeedback) {
     // Necessary plumbing to communicate status updates back to
     // the user.
     browser.docShell
@@ -122,9 +171,48 @@ window.addEventListener("DOMContentLoaded", event => {
       );
   }
 
+  if (Services.prefs.getBoolPref("mail.advance_on_spacebar")) {
+    getMessagePaneBrowser().addEventListener("keydown", ev => {
+      if (
+        ev.key == " " &&
+        !ev.altKey &&
+        !ev.ctrlKey &&
+        !ev.metaKey &&
+        ev.target.localName == "body"
+      ) {
+        ev.preventDefault();
+        top.goDoCommand("cmd_space", ev);
+      }
+    });
+  }
+
   window.dispatchEvent(
     new CustomEvent("aboutMessageLoaded", { bubbles: true })
   );
+
+  window.addEventListener("MsgLoaded", msgObserver);
+  prefersDarkQuery.addEventListener("change", msgObserver);
+
+  const disableDarkReaderToggle = document.getElementById("disableDarkReader");
+  disableDarkReaderToggle.checked = !Services.prefs.getBoolPref(
+    "mail.dark-reader.enabled",
+    true
+  );
+  document.l10n.setAttributes(
+    disableDarkReaderToggle,
+    disableDarkReaderToggle.checked
+      ? "dark-message-mode-toggle-disabled"
+      : "dark-message-mode-toggle-enabled"
+  );
+  disableDarkReaderToggle.addEventListener("click", e => {
+    Services.prefs.setBoolPref("mail.dark-reader.enabled", !e.target.checked);
+    document.l10n.setAttributes(
+      disableDarkReaderToggle,
+      disableDarkReaderToggle.checked
+        ? "dark-message-mode-toggle-disabled"
+        : "dark-message-mode-toggle-enabled"
+    );
+  });
 });
 
 window.addEventListener("unload", () => {
@@ -133,9 +221,17 @@ window.addEventListener("unload", () => {
   MailServices.mailSession.RemoveFolderListener(folderListener);
   preferenceObserver.cleanUp();
   Services.obs.removeObserver(msgObserver, "message-content-updated");
+  window.removeEventListener("MsgLoaded", msgObserver);
+  prefersDarkQuery.removeEventListener("change", msgObserver);
   gViewWrapper?.close();
 });
 
+/**
+ * Display a message.
+ *
+ * @param {string} uri - The message URI.
+ * @param {?DBViewWrapper} viewWrapper - View wrapper.
+ */
 function displayMessage(uri, viewWrapper) {
   // Clear the state flags, if this window is re-used.
   window.msgLoaded = false;
@@ -159,6 +255,9 @@ function displayMessage(uri, viewWrapper) {
   if (!uri) {
     HideMessageHeaderPane();
     MailE10SUtils.loadAboutBlank(getMessagePaneBrowser());
+    // Deactivate the message pane browser. This might not be the same browser
+    // as the one in the previous line.
+    getMessagePaneBrowser().docShellIsActive = false;
     window.msgLoaded = true;
     window.dispatchEvent(
       new CustomEvent("messageURIChanged", { bubbles: true, detail: uri })
@@ -166,30 +265,36 @@ function displayMessage(uri, viewWrapper) {
     return;
   }
 
-  let messageService = MailServices.messageServiceFromURI(uri);
+  const messageService = MailServices.messageServiceFromURI(uri);
   gMessage = messageService.messageURIToMsgHdr(uri);
   gFolder = gMessage.folder;
+  initFolderDBListener();
 
   messageHistory.push(uri);
 
-  if (gFolder) {
-    if (viewWrapper) {
-      if (viewWrapper != gViewWrapper) {
+  if (parent == top) {
+    // This is needed for registering transactions on stand-alone windows.
+    dbViewWrapperListener.msgWindow = parent.msgWindow;
+  }
+
+  if (!gViewWrapper) {
+    if (gFolder) {
+      if (viewWrapper) {
         gViewWrapper = viewWrapper.clone(dbViewWrapperListener);
+      } else {
+        gViewWrapper = new DBViewWrapper(dbViewWrapperListener);
+        gViewWrapper._viewFlags = Ci.nsMsgViewFlagsType.kThreadedDisplay;
+        gViewWrapper.open(gFolder);
       }
     } else {
       gViewWrapper = new DBViewWrapper(dbViewWrapperListener);
-      gViewWrapper._viewFlags = Ci.nsMsgViewFlagsType.kThreadedDisplay;
-      gViewWrapper.open(gFolder);
+      gViewWrapper.openSearchView();
     }
-  } else {
-    gViewWrapper = new DBViewWrapper(dbViewWrapperListener);
-    gViewWrapper.openSearchView();
   }
   gDBView = gViewWrapper.dbView;
-  let selection = (gDBView.selection = new TreeSelection());
+  const selection = (gDBView.selection = new TreeSelection());
   selection.view = gDBView;
-  let index = gDBView.findIndexOfMsgHdr(gMessage, true);
+  const index = gDBView.findIndexOfMsgHdr(gMessage, true);
   selection.select(index == nsMsgViewIndex_None ? -1 : index);
   gDBView?.setJSTree({
     QueryInterface: ChromeUtils.generateQI(["nsIMsgJSTree"]),
@@ -200,31 +305,55 @@ function displayMessage(uri, viewWrapper) {
     endUpdateBatch() {
       this._inBatch = false;
     },
-    ensureRowIsVisible(index) {},
+    ensureRowIsVisible() {},
     invalidate() {},
-    invalidateRange(startIndex, endIndex) {},
-    rowCountChanged(index, count) {
-      let wasSuppressed = gDBView.selection.selectEventsSuppressed;
+    invalidateRange() {},
+    rowCountChanged(idx, count) {
+      if (!gDBView.selection) {
+        return;
+      }
+      const wasSuppressed = gDBView.selection.selectEventsSuppressed;
       gDBView.selection.selectEventsSuppressed = true;
-      gDBView.selection.adjustSelection(index, count);
+      gDBView.selection.adjustSelection(idx, count);
       gDBView.selection.selectEventsSuppressed = wasSuppressed;
     },
     currentIndex: null,
   });
 
-  if (gMessage.flags & Ci.nsMsgMessageFlags.HasRe) {
+  const flags = gMessage.flags;
+  if (flags & Ci.nsMsgMessageFlags.HasRe) {
     document.title = `Re: ${gMessage.mime2DecodedSubject || ""}`;
   } else {
     document.title = gMessage.mime2DecodedSubject;
   }
 
-  let browser = getMessagePaneBrowser();
+  if (parent.tabOrWindow) {
+    // We could end up here before `tabOrWindow` has been set. If the parent
+    // window is about:3pane, get it from there.
+    window.tabOrWindow = parent.tabOrWindow;
+  }
+
+  const browser = getMessagePaneBrowser();
   const browserChanged = MailE10SUtils.changeRemoteness(browser, null);
-  // The message pane browser should inherit `docShellIsActive` from the
-  // about:message browser, but changing remoteness causes that to not happen.
-  browser.docShellIsActive = !document.hidden;
+  // If we're in a background tab, mark the docShell as inactive, so that the
+  // message doesn't get marked as read by `autoMarkAsRead` or
+  // `nsImapService::LoadMessage`.
+  browser.docShellIsActive =
+    Window.isInstance(window.tabOrWindow) || window.tabOrWindow?.selected;
   browser.docShell.allowAuth = false;
   browser.docShell.allowDNSPrefetch = false;
+
+  // See nsMsgContentPolicy::SetDisableItemsOnMailNewsUrlDocshells().
+  const SANDBOX_ALL_FLAGS = 0xfffff;
+  const SANDBOXED_AUXILIARY_NAVIGATION = 0x2;
+  const SANDBOXED_ORIGIN = 0x10;
+  const SANDBOXED_TOPLEVEL_NAVIGATION_USER_ACTIVATION = 0x20000;
+  let sandboxFlags = SANDBOX_ALL_FLAGS;
+  sandboxFlags &= ~SANDBOXED_AUXILIARY_NAVIGATION;
+  sandboxFlags &= ~SANDBOXED_ORIGIN;
+  sandboxFlags &= ~SANDBOXED_TOPLEVEL_NAVIGATION_USER_ACTIVATION;
+  // Flags - contrary to sandbox csp values - *prevent* a given feature.
+  browser.browsingContext.sandboxFlags = sandboxFlags;
 
   if (browserChanged) {
     browser.docShell
@@ -235,7 +364,7 @@ function displayMessage(uri, viewWrapper) {
       );
   }
 
-  if (gMessage.flags & Ci.nsMsgMessageFlags.Partial) {
+  if (flags & Ci.nsMsgMessageFlags.Partial) {
     document.body.classList.add("partial-message");
   } else if (document.body.classList.contains("partial-message")) {
     document.body.classList.remove("partial-message");
@@ -243,9 +372,9 @@ function displayMessage(uri, viewWrapper) {
   }
 
   // @implements {nsIUrlListener}
-  let urlListener = {
-    OnStartRunningUrl(url) {},
-    OnStopRunningUrl(url, status) {
+  const urlListener = {
+    OnStartRunningUrl() {},
+    OnStopRunningUrl(url) {
       window.msgLoading = true;
       window.dispatchEvent(
         new CustomEvent("messageURIChanged", { bubbles: true, detail: uri })
@@ -253,7 +382,14 @@ function displayMessage(uri, viewWrapper) {
       if (url instanceof Ci.nsIMsgMailNewsUrl && url.seeOtherURI) {
         // Show error page if needed.
         HideMessageHeaderPane();
-        MailE10SUtils.loadURI(getMessagePaneBrowser(), url.seeOtherURI);
+        browser.browsingContext.sandboxFlags = 0;
+        MailE10SUtils.loadURI(browser, url.seeOtherURI);
+      }
+      if (flags & Ci.nsMsgMessageFlags.New) {
+        // Close any notification we might have about this message.
+        Cc["@mozilla.org/system-alerts-service;1"]
+          .getService(Ci.nsIAlertsService)
+          .closeAlert(uri);
       }
     },
   };
@@ -274,7 +410,7 @@ function displayMessage(uri, viewWrapper) {
     let title = messengerBundle.GetStringFromName("nocachedbodytitle");
     // This string includes some HTML! Get rid of it.
     title = title.replace(/<\/?title>/gi, "");
-    let body = messengerBundle.GetStringFromName("nocachedbodybody2");
+    const body = messengerBundle.GetStringFromName("nocachedbodybody2");
     HideMessageHeaderPane();
     MailE10SUtils.loadURI(
       getMessagePaneBrowser(),
@@ -300,7 +436,7 @@ function displayMessage(uri, viewWrapper) {
 var folderListener = {
   QueryInterface: ChromeUtils.generateQI(["nsIFolderListener"]),
 
-  onFolderRemoved(parentFolder, childFolder) {},
+  onFolderRemoved() {},
   onMessageRemoved(parentFolder, msg) {
     messageHistory.onMessageRemoved(parentFolder, msg);
   },
@@ -320,6 +456,19 @@ var msgObserver = {
       displayMessage(data, gViewWrapper);
     }
   },
+
+  handleEvent(event) {
+    switch (event.type) {
+      case "MsgLoaded":
+        if (prefersDarkQuery.matches) {
+          adaptMessageForDarkMode(getMessagePaneBrowser());
+        }
+        break;
+      case "change":
+        timeoutReload();
+        break;
+    }
+  },
 };
 
 var preferenceObserver = {
@@ -328,6 +477,8 @@ var preferenceObserver = {
   _topics: [
     "mail.inline_attachments",
     "mail.show_headers",
+    "mail.addressDisplayFormat",
+    "mail.dark-reader.enabled",
     "mail.showCondensedAddresses",
     "mailnews.display.disallow_mime_handlers",
     "mailnews.display.html_as",
@@ -336,16 +487,14 @@ var preferenceObserver = {
     "rss.show.summary",
   ],
 
-  _reloadTimeout: null,
-
   init() {
-    for (let topic of this._topics) {
+    for (const topic of this._topics) {
       Services.prefs.addObserver(topic, this);
     }
   },
 
   cleanUp() {
-    for (let topic of this._topics) {
+    for (const topic of this._topics) {
       Services.prefs.removeObserver(topic, this);
     }
   },
@@ -354,14 +503,11 @@ var preferenceObserver = {
     if (data == "mail.show_headers") {
       AdjustHeaderView(Services.prefs.getIntPref(data));
     }
-    if (!this._reloadTimeout) {
-      // Clear the event queue before reloading the message. Several prefs may
-      // be changed at once.
-      this._reloadTimeout = setTimeout(() => {
-        this._reloadTimeout = null;
-        ReloadMessage();
-      });
+    if (data == "mail.dark-reader.enabled") {
+      document.getElementById("disableDarkReader").checked =
+        !Services.prefs.getBoolPref(data);
     }
+    timeoutReload();
   },
 };
 
@@ -443,8 +589,8 @@ var messageHistory = {
     if (!messageURI) {
       return;
     }
-    let currentItem = this._history[this._currentIndex];
-    let currentFolder = gFolder?.URI;
+    const currentItem = this._history[this._currentIndex];
+    const currentFolder = gFolder?.URI;
     if (
       currentItem &&
       messageURI === currentItem.messageURI &&
@@ -452,10 +598,10 @@ var messageHistory = {
     ) {
       return;
     }
-    let nextMessageIndex = this._currentIndex + 1;
+    const nextMessageIndex = this._currentIndex + 1;
     let erasedFuture = false;
     if (nextMessageIndex < this._history.length) {
-      let nextMessage = this._history[nextMessageIndex];
+      const nextMessage = this._history[nextMessageIndex];
       if (
         nextMessage &&
         messageURI === nextMessage.messageURI &&
@@ -476,7 +622,8 @@ var messageHistory = {
     this._history.push({ messageURI, folderURI: currentFolder });
     this._currentIndex = nextMessageIndex;
     if (this._history.length > this.MAX_HISTORY_SIZE) {
-      let amountOfItemsToRemove = this._history.length - this.MAX_HISTORY_SIZE;
+      const amountOfItemsToRemove =
+        this._history.length - this.MAX_HISTORY_SIZE;
       this._history.splice(0, amountOfItemsToRemove);
       this._currentIndex -= amountOfItemsToRemove;
     }
@@ -496,7 +643,7 @@ var messageHistory = {
    *   taken.
    */
   pop(delta) {
-    let targetIndex = this._getAbsoluteIndex(delta);
+    const targetIndex = this._getAbsoluteIndex(delta);
     if (this._currentIndex == targetIndex && gMessage) {
       return null;
     }
@@ -538,7 +685,7 @@ var messageHistory = {
    *   current history.
    */
   canPop(delta) {
-    let resultIndex = this._currentIndex + delta;
+    const resultIndex = this._currentIndex + delta;
     return (
       resultIndex >= 0 &&
       resultIndex < this._history.length &&
@@ -567,13 +714,13 @@ commandController.registerCallback(
   () => commandController.isCommandEnabled("cmd_shiftDeleteMessage")
 );
 commandController.registerCallback("cmd_find", () =>
-  document.getElementById("FindToolbar").onFindCommand()
+  document.getElementById("findToolbar").onFindCommand()
 );
 commandController.registerCallback("cmd_findAgain", () =>
-  document.getElementById("FindToolbar").onFindAgainCommand(false)
+  document.getElementById("findToolbar").onFindAgainCommand(false)
 );
 commandController.registerCallback("cmd_findPrevious", () =>
-  document.getElementById("FindToolbar").onFindAgainCommand(true)
+  document.getElementById("findToolbar").onFindAgainCommand(true)
 );
 commandController.registerCallback("cmd_print", () => {
   top.PrintUtils.startPrintWindow(getMessagePaneBrowser().browsingContext, {});

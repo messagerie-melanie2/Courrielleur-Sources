@@ -1,7 +1,7 @@
 <!-- This Source Code Form is subject to the terms of the Mozilla Public
    - License, v. 2.0. If a copy of the MPL was not distributed with this file,
    - You can obtain one at http://mozilla.org/MPL/2.0/. -->
-<!DOCTYPE html>
+<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -20,6 +20,11 @@
       rel="stylesheet"
       href="chrome://browser/skin/migration/migration-dialog-window.css"
     />
+    <script src="chrome://global/content/customElements.js"></script>
+    <script
+      src="chrome://browser/content/migration/migration-wizard-constants.mjs"
+      type="module"
+    ></script>
     <script
       src="chrome://browser/content/migration/migration-wizard.mjs"
       type="module"
@@ -27,8 +32,6 @@
     <script src="chrome://browser/content/migration/migration-dialog-window.js"></script>
   </head>
   <body>
-    <migration-wizard id="wizard" dialog-mode>
-      <panel-list></panel-list>
-    </migration-wizard>
+    <migration-wizard id="wizard" dialog-mode></migration-wizard>
   </body>
 </html>

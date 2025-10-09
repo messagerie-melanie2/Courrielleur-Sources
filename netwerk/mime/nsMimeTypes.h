@@ -31,6 +31,7 @@
 #define APPLICATION_GZIP2 "application/gzip"
 #define APPLICATION_GZIP3 "application/x-gunzip"
 #define APPLICATION_BROTLI "application/brotli"
+#define APPLICATION_ZSTD "application/zstd"
 #define APPLICATION_ZIP "application/zip"
 #define APPLICATION_HTTP_INDEX_FORMAT "application/http-index-format"
 #define APPLICATION_ECMASCRIPT "application/ecmascript"
@@ -140,6 +141,7 @@
 #define IMAGE_JPEG "image/jpeg"
 #define IMAGE_JPG "image/jpg"
 #define IMAGE_PJPEG "image/pjpeg"
+#define IMAGE_JPEG_PDF "image/x-jpeg-pdf"
 #define IMAGE_PNG "image/png"
 #define IMAGE_APNG "image/apng"
 #define IMAGE_X_PNG "image/x-png"
@@ -245,6 +247,7 @@
 #define ENCODING_UUENCODE3 "uuencode"
 #define ENCODING_UUENCODE4 "uue"
 #define ENCODING_YENCODE "x-yencode"
+#define ENCODING_ZSTD "zstd"
 
 /* Some names of parameters that various MIME headers include.
  */

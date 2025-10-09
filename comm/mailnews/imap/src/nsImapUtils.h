@@ -7,7 +7,7 @@
 #define NS_IMAPUTILS_H
 
 #include "nsString.h"
-#include "MailNewsTypes.h"
+#include "MailNewsTypes2.h"
 #include "nsTArray.h"
 #include "nsIMailboxSpec.h"
 #include "nsCOMPtr.h"
@@ -25,10 +25,10 @@ extern nsresult nsImapURI2FullName(const char* rootURI, const char* hostname,
                                    const char* uriStr, char** name);
 
 extern nsresult nsParseImapMessageURI(const nsACString& uri,
-                                      nsCString& folderURI, uint32_t* key,
-                                      char** part);
+                                      nsACString& folderURI, nsMsgKey* key,
+                                      nsACString& mimePart);
 
-extern nsresult nsBuildImapMessageURI(const char* baseURI, uint32_t key,
+extern nsresult nsBuildImapMessageURI(const char* baseURI, nsMsgKey key,
                                       nsACString& uri);
 
 extern nsresult nsCreateImapBaseMessageURI(const nsACString& baseURI,

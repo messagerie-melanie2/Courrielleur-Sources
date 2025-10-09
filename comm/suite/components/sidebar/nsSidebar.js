@@ -35,7 +35,6 @@ const nsIClassInfo     = Ci.nsIClassInfo;
 // File extension for Sherlock search plugin description files
 const SHERLOCK_FILE_EXT_REGEXP = /\.src$/i;
 
-var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 var {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 function nsSidebar()
@@ -300,7 +299,7 @@ nsSidebar.prototype.classInfo = XPCOMUtils.generateCI({
     flags: nsIClassInfo.DOM_OBJECT});
 
 nsSidebar.prototype.QueryInterface =
-    XPCOMUtils.generateQI([nsISidebar]);
+    ChromeUtils.generateQI([Ci.nsISidebar]);
 
 nsSidebar.prototype.classID = SIDEBAR_CID;
 

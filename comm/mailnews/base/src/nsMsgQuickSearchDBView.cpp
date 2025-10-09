@@ -27,10 +27,8 @@ NS_IMPL_ISUPPORTS_INHERITED(nsMsgQuickSearchDBView, nsMsgDBView, nsIMsgDBView,
 NS_IMETHODIMP nsMsgQuickSearchDBView::Open(nsIMsgFolder* folder,
                                            nsMsgViewSortTypeValue sortType,
                                            nsMsgViewSortOrderValue sortOrder,
-                                           nsMsgViewFlagsTypeValue viewFlags,
-                                           int32_t* pCount) {
-  nsresult rv =
-      nsMsgDBView::Open(folder, sortType, sortOrder, viewFlags, pCount);
+                                           nsMsgViewFlagsTypeValue viewFlags) {
+  nsresult rv = nsMsgDBView::Open(folder, sortType, sortOrder, viewFlags);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (!m_db) return NS_ERROR_NULL_POINTER;
@@ -38,7 +36,6 @@ NS_IMETHODIMP nsMsgQuickSearchDBView::Open(nsIMsgFolder* folder,
 
   int32_t count;
   rv = InitThreadedView(count);
-  if (pCount) *pCount = count;
   return rv;
 }
 
@@ -91,9 +88,7 @@ NS_IMETHODIMP nsMsgQuickSearchDBView::DoCommand(
                                   false);
 
     for (uint32_t i = 0; NS_SUCCEEDED(rv) && i < GetSize(); i++) {
-      nsCOMPtr<nsIMsgDBHdr> msgHdr;
-      m_db->GetMsgHdrForKey(m_keys[i], getter_AddRefs(msgHdr));
-      rv = m_db->MarkHdrRead(msgHdr, true, nullptr);
+      rv = m_db->MarkRead(m_keys[i], true, nullptr);
     }
 
     m_folder->EnableNotifications(nsIMsgFolder::allMessageCountNotifications,
@@ -356,6 +351,7 @@ nsMsgQuickSearchDBView::OnNewSearch() {
   // this needs to happen after we remove all the keys, since RowCountChanged()
   // will call our GetRowCount()
   if (mTree) mTree->RowCountChanged(0, -oldSize);
+  if (mJSTree) mJSTree->RowCountChanged(0, -oldSize);
   uint32_t folderFlags = 0;
   if (m_viewFolder) m_viewFolder->GetFlags(&folderFlags);
   // check if it's a virtual folder - if so, we should get the cached hits
@@ -485,15 +481,13 @@ nsresult nsMsgQuickSearchDBView::SortThreads(
     }
   }
 
+  // Need to sort the top level threads now by sort order, even if it's by id
+  // and ascending (which is the order per above), to ensure certain side
+  // effects of nsMsgDBView::Sort().
   m_sortType = nsMsgViewSortType::byNone;  // sort from scratch
-  // need to sort the top level threads now by sort order, if it's not by id
-  // and ascending (which is the order per above).
-  if (!(sortType == nsMsgViewSortType::byId &&
-        sortOrder == nsMsgViewSortOrder::ascending)) {
-    m_keys.SwapElements(threadRootIds);
-    nsMsgDBView::Sort(sortType, sortOrder);
-    threadRootIds.SwapElements(m_keys);
-  }
+  m_keys.SwapElements(threadRootIds);
+  nsMsgDBView::Sort(sortType, sortOrder);
+  threadRootIds.SwapElements(m_keys);
   m_keys.Clear();
   m_levels.Clear();
   m_flags.Clear();
@@ -743,11 +737,10 @@ NS_IMETHODIMP
 nsMsgQuickSearchDBView::OpenWithHdrs(nsIMsgEnumerator* aHeaders,
                                      nsMsgViewSortTypeValue aSortType,
                                      nsMsgViewSortOrderValue aSortOrder,
-                                     nsMsgViewFlagsTypeValue aViewFlags,
-                                     int32_t* aCount) {
+                                     nsMsgViewFlagsTypeValue aViewFlags) {
   if (aViewFlags & nsMsgViewFlagsType::kGroupBySort)
     return nsMsgGroupView::OpenWithHdrs(aHeaders, aSortType, aSortOrder,
-                                        aViewFlags, aCount);
+                                        aViewFlags);
 
   m_sortType = aSortType;
   m_sortOrder = aSortOrder;
@@ -765,7 +758,6 @@ nsMsgQuickSearchDBView::OpenWithHdrs(nsIMsgEnumerator* aHeaders,
       break;
     }
   }
-  *aCount = m_keys.Length();
   return rv;
 }
 

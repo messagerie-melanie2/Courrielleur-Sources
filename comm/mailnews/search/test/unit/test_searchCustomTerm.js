@@ -9,8 +9,8 @@
 /* import-globals-from ../../../test/resources/searchTestUtils.js */
 load("../../../resources/searchTestUtils.js");
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var kCustomId = "xpcomtest@mozilla.org#test";
@@ -45,7 +45,7 @@ var customTerm = {
       scope == Ci.nsMsgSearchScope.offlineMail && op == Ci.nsMsgSearchOp.Is
     );
   },
-  getAvailableOperators(scope) {
+  getAvailableOperators() {
     return [Ci.nsMsgSearchOp.Is];
   },
   match(msgHdr, searchValue, searchOp) {
@@ -63,21 +63,24 @@ function run_test() {
   localAccountUtils.loadLocalMailAccount();
   MailServices.filters.addCustomTerm(customTerm);
 
+  /** @implements {nsIMsgCopyServiceListener} */
   var copyListener = {
-    OnStartCopy() {},
-    OnProgress(aProgress, aProgressMax) {},
-    SetMessageKey(aKey) {
+    onStartCopy() {},
+    onProgress() {},
+    setMessageKey(aKey) {
       gHdr = localAccountUtils.inboxFolder.GetMessageHeader(aKey);
     },
-    SetMessageId(aMessageId) {},
-    OnStopCopy(aStatus) {
+    getMessageId() {
+      return null;
+    },
+    onStopCopy() {
       doTest();
     },
   };
 
   // Get a message into the local filestore.
   // function testSearch() continues the testing after the copy.
-  let bugmail1 = do_get_file("../../../data/bugmail1");
+  const bugmail1 = do_get_file("../../../data/bugmail1");
   do_test_pending();
 
   MailServices.copy.copyFileMessage(
@@ -93,7 +96,7 @@ function run_test() {
 }
 
 function doTest() {
-  let test = Tests.shift();
+  const test = Tests.shift();
   if (test) {
     gHdr.setStringProperty("theTestProperty", test.setValue);
     new TestSearch(

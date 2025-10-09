@@ -6,13 +6,16 @@
 
 #include <string>
 #include <unordered_set>
+#include <utility>
 
 #include "nsCOMPtr.h"
 #include "nsContentPolicyUtils.h"
+#include "nsContentSecurityUtils.h"
 #include "nsContentUtils.h"
 #include "nsCSPContext.h"
 #include "nsCSPParser.h"
 #include "nsCSPService.h"
+#include "nsCSPUtils.h"
 #include "nsGlobalWindowOuter.h"
 #include "nsError.h"
 #include "nsIAsyncVerifyRedirectCallback.h"
@@ -35,16 +38,20 @@
 #include "nsIContentPolicy.h"
 #include "nsSupportsPrimitives.h"
 #include "nsThreadUtils.h"
-#include "nsString.h"
 #include "nsScriptSecurityManager.h"
+#include "nsStreamUtils.h"
+#include "nsString.h"
 #include "nsStringStream.h"
 #include "mozilla/Logging.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/StaticPrefs_security.h"
-#include "mozilla/dom/CSPReportBinding.h"
 #include "mozilla/dom/CSPDictionariesBinding.h"
-#include "mozilla/ipc/PBackgroundSharedTypes.h"
+#include "mozilla/dom/CSPReportBinding.h"
+#include "mozilla/dom/CSPViolationReportBody.h"
+#include "mozilla/dom/ReportingUtils.h"
 #include "mozilla/dom/WindowGlobalParent.h"
+#include "mozilla/glean/DomSecurityMetrics.h"
+#include "mozilla/ipc/PBackgroundSharedTypes.h"
 #include "nsINetworkInterceptController.h"
 #include "nsSandboxFlags.h"
 #include "nsIScriptElement.h"
@@ -101,26 +108,32 @@ static bool ValidateDirectiveName(const nsAString& aDirective) {
 #endif  // DEBUG
 
 static void BlockedContentSourceToString(
-    nsCSPContext::BlockedContentSource aSource, nsACString& aString) {
+    CSPViolationData::BlockedContentSource aSource, nsACString& aString) {
   switch (aSource) {
-    case nsCSPContext::BlockedContentSource::eUnknown:
+    case CSPViolationData::BlockedContentSource::Unknown:
       aString.Truncate();
       break;
 
-    case nsCSPContext::BlockedContentSource::eInline:
+    case CSPViolationData::BlockedContentSource::Inline:
       aString.AssignLiteral("inline");
       break;
 
-    case nsCSPContext::BlockedContentSource::eEval:
+    case CSPViolationData::BlockedContentSource::Eval:
       aString.AssignLiteral("eval");
       break;
 
-    case nsCSPContext::BlockedContentSource::eSelf:
+    case CSPViolationData::BlockedContentSource::Self:
       aString.AssignLiteral("self");
       break;
 
-    case nsCSPContext::BlockedContentSource::eWasmEval:
+    case CSPViolationData::BlockedContentSource::WasmEval:
       aString.AssignLiteral("wasm-eval");
+      break;
+    case CSPViolationData::BlockedContentSource::TrustedTypesPolicy:
+      aString.AssignLiteral("trusted-types-policy");
+      break;
+    case CSPViolationData::BlockedContentSource::TrustedTypesSink:
+      aString.AssignLiteral("trusted-types-sink");
       break;
   }
 }
@@ -130,10 +143,9 @@ static void BlockedContentSourceToString(
 NS_IMETHODIMP
 nsCSPContext::ShouldLoad(nsContentPolicyType aContentType,
                          nsICSPEventListener* aCSPEventListener,
-                         nsIURI* aContentLocation,
+                         nsILoadInfo* aLoadInfo, nsIURI* aContentLocation,
                          nsIURI* aOriginalURIIfRedirect,
-                         bool aSendViolationReports, const nsAString& aNonce,
-                         bool aParserCreated, int16_t* outDecision) {
+                         bool aSendViolationReports, int16_t* outDecision) {
   if (CSPCONTEXTLOGENABLED()) {
     CSPCONTEXTLOG(("nsCSPContext::ShouldLoad, aContentLocation: %s",
                    aContentLocation->GetSpecOrDefault().get()));
@@ -162,11 +174,10 @@ nsCSPContext::ShouldLoad(nsContentPolicyType aContentType,
   bool permitted = permitsInternal(
       dir,
       nullptr,  // aTriggeringElement
-      aCSPEventListener, aContentLocation, aOriginalURIIfRedirect, aNonce,
+      aCSPEventListener, aLoadInfo, aContentLocation, aOriginalURIIfRedirect,
       false,  // allow fallback to default-src
       aSendViolationReports,
-      true,  // send blocked URI in violation reports
-      aParserCreated);
+      true);  // send blocked URI in violation reports
 
   *outDecision =
       permitted ? nsIContentPolicy::ACCEPT : nsIContentPolicy::REJECT_SERVER;
@@ -183,18 +194,18 @@ nsCSPContext::ShouldLoad(nsContentPolicyType aContentType,
 
 bool nsCSPContext::permitsInternal(
     CSPDirective aDir, Element* aTriggeringElement,
-    nsICSPEventListener* aCSPEventListener, nsIURI* aContentLocation,
-    nsIURI* aOriginalURIIfRedirect, const nsAString& aNonce, bool aSpecific,
-    bool aSendViolationReports, bool aSendContentLocationInViolationReports,
-    bool aParserCreated) {
+    nsICSPEventListener* aCSPEventListener, nsILoadInfo* aLoadInfo,
+    nsIURI* aContentLocation, nsIURI* aOriginalURIIfRedirect, bool aSpecific,
+    bool aSendViolationReports, bool aSendContentLocationInViolationReports) {
   EnsureIPCPoliciesRead();
   bool permits = true;
 
   nsAutoString violatedDirective;
+  nsAutoString violatedDirectiveString;
   for (uint32_t p = 0; p < mPolicies.Length(); p++) {
-    if (!mPolicies[p]->permits(aDir, aContentLocation, aNonce,
+    if (!mPolicies[p]->permits(aDir, aLoadInfo, aContentLocation,
                                !!aOriginalURIIfRedirect, aSpecific,
-                               aParserCreated, violatedDirective)) {
+                               violatedDirective, violatedDirectiveString)) {
       // If the policy is violated and not report-only, reject the load and
       // report to the console
       if (!mPolicies[p]->getReportOnlyFlag()) {
@@ -202,39 +213,34 @@ bool nsCSPContext::permitsInternal(
         permits = false;
       }
 
-      // In CSP 3.0 the effective directive doesn't become the actually used
-      // directive in case of a fallback from e.g. script-src-elem to
-      // script-src or default-src.
-      nsAutoString effectiveDirective;
-      effectiveDirective.AssignASCII(CSP_CSPDirectiveToString(aDir));
-
       // Callers should set |aSendViolationReports| to false if this is a
       // preload - the decision may be wrong due to the inability to get the
       // nonce, and will incorrectly fail the unit tests.
       if (aSendViolationReports) {
-        uint32_t lineNumber = 0;
-        uint32_t columnNumber = 0;
-        nsAutoString spec;
-        JSContext* cx = nsContentUtils::GetCurrentJSContext();
-        if (cx) {
-          nsJSUtils::GetCallingLocation(cx, spec, &lineNumber, &columnNumber);
-          // If GetCallingLocation fails linenumber & columnNumber are set to 0
-          // anyway so we can skip checking if that is the case.
-        }
+        auto loc = JSCallingLocation::Get();
+
+        using Resource = CSPViolationData::Resource;
+        Resource resource =
+            aSendContentLocationInViolationReports
+                ? Resource{nsCOMPtr<nsIURI>{aContentLocation}}
+                : Resource{CSPViolationData::BlockedContentSource::Unknown};
+
+        CSPViolationData cspViolationData{p,
+                                          std::move(resource),
+                                          aDir,
+                                          loc.FileName(),
+                                          loc.mLine,
+                                          loc.mColumn,
+                                          aTriggeringElement,
+                                          /* aSample */ u""_ns};
+
         AsyncReportViolation(
-            aTriggeringElement, aCSPEventListener,
-            (aSendContentLocationInViolationReports ? aContentLocation
-                                                    : nullptr),
-            BlockedContentSource::eUnknown, /* a BlockedContentSource */
+            aCSPEventListener, std::move(cspViolationData),
             aOriginalURIIfRedirect, /* in case of redirect originalURI is not
                                        null */
-            violatedDirective, effectiveDirective, p, /* policy index        */
-            u""_ns,                                   /* no observer subject */
-            spec,                                     /* source file      */
-            false,         // aReportSample (no sample)
-            u""_ns,        /* no script sample    */
-            lineNumber,    /* line number      */
-            columnNumber); /*  column number    */
+            violatedDirective, violatedDirectiveString,
+            u""_ns,  // no observer subject
+            false);  // aReportSample (no sample)
       }
     }
   }
@@ -329,7 +335,8 @@ nsresult nsCSPContext::InitFromOther(nsCSPContext* aOtherContext) {
   return NS_OK;
 }
 
-void nsCSPContext::EnsureIPCPoliciesRead() {
+NS_IMETHODIMP
+nsCSPContext::EnsureIPCPoliciesRead() {
   // Most likely the parser errors already happened before serializing
   // the policy for IPC.
   bool previous = mSuppressParserLogMessages;
@@ -346,6 +353,7 @@ void nsCSPContext::EnsureIPCPoliciesRead() {
   }
 
   mSuppressParserLogMessages = previous;
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -380,7 +388,8 @@ nsCSPContext::GetUpgradeInsecureRequests(bool* outUpgradeRequest) {
   *outUpgradeRequest = false;
   for (uint32_t i = 0; i < mPolicies.Length(); i++) {
     if (mPolicies[i]->hasDirective(
-            nsIContentSecurityPolicy::UPGRADE_IF_INSECURE_DIRECTIVE)) {
+            nsIContentSecurityPolicy::UPGRADE_IF_INSECURE_DIRECTIVE) &&
+        !mPolicies[i]->getReportOnlyFlag()) {
       *outUpgradeRequest = true;
       return NS_OK;
     }
@@ -452,26 +461,41 @@ nsCSPContext::AppendPolicy(const nsAString& aPolicyString, bool aReportOnly,
   if (policy) {
     if (policy->hasDirective(
             nsIContentSecurityPolicy::UPGRADE_IF_INSECURE_DIRECTIVE)) {
-      nsAutoCString selfURIspec, referrer;
+      nsAutoCString selfURIspec;
       if (mSelfURI) {
         mSelfURI->GetAsciiSpec(selfURIspec);
       }
-      CopyUTF16toUTF8(mReferrer, referrer);
       CSPCONTEXTLOG(
           ("nsCSPContext::AppendPolicy added UPGRADE_IF_INSECURE_DIRECTIVE "
            "self-uri=%s referrer=%s",
-           selfURIspec.get(), referrer.get()));
+           selfURIspec.get(), mReferrer.get()));
+    }
+    if (policy->hasDirective(
+            nsIContentSecurityPolicy::REQUIRE_TRUSTED_TYPES_FOR_DIRECTIVE)) {
+      if (mRequireTrustedTypesForDirectiveState !=
+          RequireTrustedTypesForDirectiveState::ENFORCE) {
+        mRequireTrustedTypesForDirectiveState =
+            policy->getReportOnlyFlag()
+                ? RequireTrustedTypesForDirectiveState::REPORT_ONLY
+                : RequireTrustedTypesForDirectiveState::ENFORCE;
+      }
+      if (nsCOMPtr<Document> doc = do_QueryReferent(mLoadingContext)) {
+        doc->SetHasPolicyWithRequireTrustedTypesForDirective(true);
+      }
     }
 
     mPolicies.AppendElement(policy);
-
-    // set the flag on the document for CSP telemetry
-    nsCOMPtr<Document> doc = do_QueryReferent(mLoadingContext);
-    if (doc) {
-      doc->SetHasCSP(true);
-    }
   }
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsCSPContext::GetRequireTrustedTypesForDirectiveState(
+    RequireTrustedTypesForDirectiveState*
+        aRequireTrustedTypesForDirectiveState) {
+  *aRequireTrustedTypesForDirectiveState =
+      mRequireTrustedTypesForDirectiveState;
   return NS_OK;
 }
 
@@ -482,9 +506,18 @@ nsCSPContext::GetAllowsEval(bool* outShouldReportViolation,
   *outShouldReportViolation = false;
   *outAllowsEval = true;
 
+  if (CSP_IsBrowserXHTML(mSelfURI)) {
+    // Allow eval in browser.xhtml, just like
+    // nsContentSecurityUtils::IsEvalAllowed allows it for other privileged
+    // contexts.
+    if (StaticPrefs::
+            security_allow_unsafe_dangerous_privileged_evil_eval_AtStartup()) {
+      return NS_OK;
+    }
+  }
+
   for (uint32_t i = 0; i < mPolicies.Length(); i++) {
-    if (!mPolicies[i]->allows(SCRIPT_SRC_DIRECTIVE, CSP_UNSAFE_EVAL, u""_ns,
-                              false)) {
+    if (!mPolicies[i]->allows(SCRIPT_SRC_DIRECTIVE, CSP_UNSAFE_EVAL, u""_ns)) {
       // policy is violated: must report the violation and allow the inline
       // script if the policy is report-only.
       *outShouldReportViolation = true;
@@ -503,17 +536,11 @@ nsCSPContext::GetAllowsWasmEval(bool* outShouldReportViolation,
   *outShouldReportViolation = false;
   *outAllowsWasmEval = true;
 
-  if (!StaticPrefs::security_csp_wasm_unsafe_eval_enabled()) {
-    // Allow and don't report when wasm-unsafe-eval isn't supported.
-    return NS_OK;
-  }
-
   for (uint32_t i = 0; i < mPolicies.Length(); i++) {
     // Either 'unsafe-eval' or 'wasm-unsafe-eval' can allow this
     if (!mPolicies[i]->allows(SCRIPT_SRC_DIRECTIVE, CSP_WASM_UNSAFE_EVAL,
-                              u""_ns, false) &&
-        !mPolicies[i]->allows(SCRIPT_SRC_DIRECTIVE, CSP_UNSAFE_EVAL, u""_ns,
-                              false)) {
+                              u""_ns) &&
+        !mPolicies[i]->allows(SCRIPT_SRC_DIRECTIVE, CSP_UNSAFE_EVAL, u""_ns)) {
       // policy is violated: must report the violation and allow the inline
       // script if the policy is report-only.
       *outShouldReportViolation = true;
@@ -527,11 +554,12 @@ nsCSPContext::GetAllowsWasmEval(bool* outShouldReportViolation,
 }
 
 // Helper function to report inline violations
-void nsCSPContext::reportInlineViolation(
+void nsCSPContext::ReportInlineViolation(
     CSPDirective aDirective, Element* aTriggeringElement,
     nsICSPEventListener* aCSPEventListener, const nsAString& aNonce,
-    bool aReportSample, const nsAString& aSample,
-    const nsAString& aViolatedDirective, const nsAString& aEffectiveDirective,
+    bool aReportSample, const nsAString& aSourceCode,
+    const nsAString& aViolatedDirective,
+    const nsAString& aViolatedDirectiveString, CSPDirective aEffectiveDirective,
     uint32_t aViolatedPolicyIndex,  // TODO, use report only flag for that
     uint32_t aLineNumber, uint32_t aColumnNumber) {
   nsString observerSubject;
@@ -554,36 +582,48 @@ void nsCSPContext::reportInlineViolation(
                                 STYLE_HASH_VIOLATION_OBSERVER_TOPIC);
   }
 
-  nsAutoString sourceFile;
-  uint32_t lineNumber;
-  uint32_t columnNumber;
-
-  JSContext* cx = nsContentUtils::GetCurrentJSContext();
-  if (!cx || !nsJSUtils::GetCallingLocation(cx, sourceFile, &lineNumber,
-                                            &columnNumber)) {
-    // use selfURI as the sourceFile
+  auto loc = JSCallingLocation::Get();
+  if (!loc) {
+    nsCString sourceFile;
+    // use selfURI as the source
     if (mSelfURI) {
-      nsAutoCString cSourceFile;
-      mSelfURI->GetSpec(cSourceFile);
-      sourceFile.Assign(NS_ConvertUTF8toUTF16(cSourceFile));
+      mSelfURI->GetSpec(sourceFile);
+      loc.mResource = AsVariant(std::move(sourceFile));
     }
-    lineNumber = aLineNumber;
-    columnNumber = aColumnNumber;
+    loc.mLine = aLineNumber;
+    loc.mColumn = aColumnNumber;
   }
 
-  AsyncReportViolation(aTriggeringElement, aCSPEventListener,
-                       nullptr,                        // aBlockedURI
-                       BlockedContentSource::eInline,  // aBlockedSource
-                       mSelfURI,                       // aOriginalURI
-                       aViolatedDirective,             // aViolatedDirective
-                       aEffectiveDirective,            // aEffectiveDirective
-                       aViolatedPolicyIndex,           // aViolatedPolicyIndex
-                       observerSubject,                // aObserverSubject
-                       sourceFile,                     // aSourceFile
-                       aReportSample,                  // aReportSample
-                       aSample,                        // aScriptSample
-                       lineNumber,                     // aLineNum
-                       columnNumber);                  // aColumnNum
+  nsAutoCString hashSHA256;
+  // We optionally include the hash to create more helpful error messages.
+  nsCOMPtr<nsICryptoHash> hasher;
+  if (NS_SUCCEEDED(
+          NS_NewCryptoHash(nsICryptoHash::SHA256, getter_AddRefs(hasher)))) {
+    NS_ConvertUTF16toUTF8 source(aSourceCode);
+    if (NS_SUCCEEDED(hasher->Update(
+            reinterpret_cast<const uint8_t*>(source.get()), source.Length()))) {
+      (void)hasher->Finish(true, hashSHA256);
+    }
+  }
+
+  CSPViolationData cspViolationData{
+      aViolatedPolicyIndex,
+      CSPViolationData::Resource{
+          CSPViolationData::BlockedContentSource::Inline},
+      aEffectiveDirective,
+      loc.FileName(),
+      loc.mLine,
+      loc.mColumn,
+      aTriggeringElement,
+      aSourceCode,
+      hashSHA256};
+
+  AsyncReportViolation(aCSPEventListener, std::move(cspViolationData),
+                       mSelfURI,            // aOriginalURI
+                       aViolatedDirective,  // aViolatedDirective
+                       aViolatedDirectiveString,
+                       observerSubject,  // aObserverSubject
+                       aReportSample);   // aReportSample
 }
 
 NS_IMETHODIMP
@@ -606,20 +646,37 @@ nsCSPContext::GetAllowsInline(CSPDirective aDirective, bool aHasUnsafeHash,
   }
 
   EnsureIPCPoliciesRead();
-  nsAutoString content(u""_ns);
+  nsAutoString content;
 
   // always iterate all policies, otherwise we might not send out all reports
   for (uint32_t i = 0; i < mPolicies.Length(); i++) {
-    bool allowed =
-        mPolicies[i]->allows(aDirective, CSP_UNSAFE_INLINE, u""_ns,
-                             aParserCreated) ||
-        mPolicies[i]->allows(aDirective, CSP_NONCE, aNonce, aParserCreated);
+    // https://w3c.github.io/webappsec-csp/#match-element-to-source-list
 
-    // If the inlined script or style is allowed by either unsafe-inline or the
-    // nonce, go ahead and shortcut this loop so we can avoid allocating
-    // unecessary strings
-    if (allowed) {
+    // Step 1. If §6.7.3.2 Does a source list allow all inline behavior for
+    // type? returns "Allows" given list and type, return "Matches".
+    if (mPolicies[i]->allowsAllInlineBehavior(aDirective)) {
       continue;
+    }
+
+    // Step 2. If type is "script" or "style", and §6.7.3.1 Is element
+    // nonceable? returns "Nonceable" when executed upon element:
+    if ((aDirective == SCRIPT_SRC_ELEM_DIRECTIVE ||
+         aDirective == STYLE_SRC_ELEM_DIRECTIVE) &&
+        aTriggeringElement && !aNonce.IsEmpty()) {
+#ifdef DEBUG
+      // NOTE: Folllowing Chrome "Is element nonceable?" doesn't apply to
+      // <style>.
+      if (aDirective == SCRIPT_SRC_ELEM_DIRECTIVE) {
+        // Our callers should have checked this.
+        MOZ_ASSERT(nsContentSecurityUtils::GetIsElementNonceableNonce(
+                       *aTriggeringElement) == aNonce);
+      }
+#endif
+
+      // Step 2.1. For each expression of list: [...]
+      if (mPolicies[i]->allows(aDirective, CSP_NONCE, aNonce)) {
+        continue;
+      }
     }
 
     // Check the content length to ensure the content is not allocated more than
@@ -636,15 +693,28 @@ nsCSPContext::GetAllowsInline(CSPDirective aDirective, bool aHasUnsafeHash,
       content = aContentOfPseudoScript;
     }
 
-    // Per https://w3c.github.io/webappsec-csp/#match-element-to-source-list
+    // Step 3. Let unsafe-hashes flag be false.
+    // Step 4. For each expression of list: [...]
+    bool unsafeHashesFlag =
+        mPolicies[i]->allows(aDirective, CSP_UNSAFE_HASHES, u""_ns);
+
     // Step 5. If type is "script" or "style", or unsafe-hashes flag is true:
     //
     // aHasUnsafeHash is true for event handlers (type "script attribute"),
     // style= attributes (type "style attribute") and the javascript: protocol.
-    if (!aHasUnsafeHash || mPolicies[i]->allows(aDirective, CSP_UNSAFE_HASHES,
-                                                u""_ns, aParserCreated)) {
-      allowed =
-          mPolicies[i]->allows(aDirective, CSP_HASH, content, aParserCreated);
+    if (!aHasUnsafeHash || unsafeHashesFlag) {
+      if (mPolicies[i]->allows(aDirective, CSP_HASH, content)) {
+        continue;
+      }
+    }
+
+    // TODO(Bug 1844290): Figure out how/if strict-dynamic for inline scripts is
+    // specified
+    bool allowed = false;
+    if ((aDirective == SCRIPT_SRC_ELEM_DIRECTIVE ||
+         aDirective == SCRIPT_SRC_ATTR_DIRECTIVE) &&
+        mPolicies[i]->allows(aDirective, CSP_STRICT_DYNAMIC, u""_ns)) {
+      allowed = !aParserCreated;
     }
 
     if (!allowed) {
@@ -654,109 +724,19 @@ nsCSPContext::GetAllowsInline(CSPDirective aDirective, bool aHasUnsafeHash,
         *outAllowsInline = false;
       }
       nsAutoString violatedDirective;
+      nsAutoString violatedDirectiveString;
       bool reportSample = false;
-      mPolicies[i]->getDirectiveStringAndReportSampleForContentType(
-          aDirective, violatedDirective, &reportSample);
+      mPolicies[i]->getViolatedDirectiveInformation(
+          aDirective, violatedDirective, violatedDirectiveString,
+          &reportSample);
 
-      // In CSP 3.0 the effective directive doesn't become the actually used
-      // directive in case of a fallback from e.g. script-src-elem to
-      // script-src or default-src.
-      nsAutoString effectiveDirective;
-      effectiveDirective.AssignASCII(CSP_CSPDirectiveToString(aDirective));
-
-      reportInlineViolation(aDirective, aTriggeringElement, aCSPEventListener,
+      ReportInlineViolation(aDirective, aTriggeringElement, aCSPEventListener,
                             aNonce, reportSample, content, violatedDirective,
-                            effectiveDirective, i, aLineNumber, aColumnNumber);
+                            violatedDirectiveString, aDirective, i, aLineNumber,
+                            aColumnNumber);
     }
   }
 
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsCSPContext::GetAllowsNavigateTo(nsIURI* aURI, bool aIsFormSubmission,
-                                  bool aWasRedirected, bool aEnforceAllowlist,
-                                  bool* outAllowsNavigateTo) {
-  /*
-   * The matrix below shows the different values of (aWasRedirect,
-   * aEnforceAllowlist) for the three different checks we do.
-   *
-   *  Navigation    | Start Loading  | Initiate Redirect | Document
-   *                | (nsDocShell)   | (nsCSPService)    |
-   *  -----------------------------------------------------------------
-   *  A -> B          (false,false)    -                   (false,true)
-   *  A -> ... -> B   (false,false)    (true,false)        (true,true)
-   */
-  *outAllowsNavigateTo = false;
-
-  EnsureIPCPoliciesRead();
-  // The 'form-action' directive overrules 'navigate-to' for form submissions.
-  // So in case this is a form submission and the directive 'form-action' is
-  // present then there is nothing for us to do here, see: 6.3.3.1.2
-  // https://www.w3.org/TR/CSP3/#navigate-to-pre-navigate
-  if (aIsFormSubmission) {
-    for (unsigned long i = 0; i < mPolicies.Length(); i++) {
-      if (mPolicies[i]->hasDirective(
-              nsIContentSecurityPolicy::FORM_ACTION_DIRECTIVE)) {
-        *outAllowsNavigateTo = true;
-        return NS_OK;
-      }
-    }
-  }
-
-  bool atLeastOneBlock = false;
-  for (unsigned long i = 0; i < mPolicies.Length(); i++) {
-    if (!mPolicies[i]->allowsNavigateTo(aURI, aWasRedirected,
-                                        aEnforceAllowlist)) {
-      if (!mPolicies[i]->getReportOnlyFlag()) {
-        atLeastOneBlock = true;
-      }
-
-      // If the load encountered a server side redirect, the spec suggests to
-      // remove the path component from the URI, see:
-      // https://www.w3.org/TR/CSP3/#source-list-paths-and-redirects
-      nsCOMPtr<nsIURI> blockedURIForReporting = aURI;
-      if (aWasRedirected) {
-        nsAutoCString prePathStr;
-        nsCOMPtr<nsIURI> prePathURI;
-        nsresult rv = aURI->GetPrePath(prePathStr);
-        NS_ENSURE_SUCCESS(rv, rv);
-        rv = NS_NewURI(getter_AddRefs(blockedURIForReporting), prePathStr);
-        NS_ENSURE_SUCCESS(rv, rv);
-      }
-
-      // Lines numbers and source file for the violation report
-      uint32_t lineNumber = 0;
-      uint32_t columnNumber = 0;
-      nsAutoCString spec;
-      JSContext* cx = nsContentUtils::GetCurrentJSContext();
-      if (cx) {
-        nsJSUtils::GetCallingLocation(cx, spec, &lineNumber, &columnNumber);
-        // If GetCallingLocation fails linenumber & columnNumber are set to 0
-        // anyway so we can skip checking if that is the case.
-      }
-
-      // Report the violation
-      nsresult rv = AsyncReportViolation(
-          nullptr,                                    // aTriggeringElement
-          nullptr,                                    // aCSPEventListener
-          blockedURIForReporting,                     // aBlockedURI
-          nsCSPContext::BlockedContentSource::eSelf,  // aBlockedSource
-          nullptr,                                    // aOriginalURI
-          u"navigate-to"_ns,                          // aViolatedDirective
-          u"navigate-to"_ns,                          // aEffectiveDirective
-          i,                                          // aViolatedPolicyIndex
-          u""_ns,                                     // aObserverSubject
-          NS_ConvertUTF8toUTF16(spec),                // aSourceFile
-          false,                                      // aReportSample
-          u""_ns,                                     // aScriptSample
-          lineNumber,                                 // aLineNum
-          columnNumber);                              // aColumnNum
-      NS_ENSURE_SUCCESS(rv, rv);
-    }
-  }
-
-  *outAllowsNavigateTo = !atLeastOneBlock;
   return NS_OK;
 }
 
@@ -787,23 +767,23 @@ nsCSPContext::GetAllowsNavigateTo(nsIURI* aURI, bool aIsFormSubmission,
 NS_IMETHODIMP
 nsCSPContext::LogViolationDetails(
     uint16_t aViolationType, Element* aTriggeringElement,
-    nsICSPEventListener* aCSPEventListener, const nsAString& aSourceFile,
+    nsICSPEventListener* aCSPEventListener, const nsACString& aSourceFile,
     const nsAString& aScriptSample, int32_t aLineNum, int32_t aColumnNum,
     const nsAString& aNonce, const nsAString& aContent) {
   EnsureIPCPoliciesRead();
 
-  BlockedContentSource blockedContentSource;
+  CSPViolationData::BlockedContentSource blockedContentSource;
   enum CSPKeyword keyword;
   nsAutoString observerSubject;
   if (aViolationType == nsIContentSecurityPolicy::VIOLATION_TYPE_EVAL) {
-    blockedContentSource = BlockedContentSource::eEval;
+    blockedContentSource = CSPViolationData::BlockedContentSource::Eval;
     keyword = CSP_UNSAFE_EVAL;
     observerSubject.AssignLiteral(EVAL_VIOLATION_OBSERVER_TOPIC);
   } else {
     NS_ASSERTION(
         aViolationType == nsIContentSecurityPolicy::VIOLATION_TYPE_WASM_EVAL,
         "unexpected aViolationType");
-    blockedContentSource = BlockedContentSource::eWasmEval;
+    blockedContentSource = CSPViolationData::BlockedContentSource::WasmEval;
     keyword = CSP_WASM_UNSAFE_EVAL;
     observerSubject.AssignLiteral(WASM_EVAL_VIOLATION_OBSERVER_TOPIC);
   }
@@ -811,21 +791,58 @@ nsCSPContext::LogViolationDetails(
   for (uint32_t p = 0; p < mPolicies.Length(); p++) {
     NS_ASSERTION(mPolicies[p], "null pointer in nsTArray<nsCSPPolicy>");
 
-    if (mPolicies[p]->allows(SCRIPT_SRC_DIRECTIVE, keyword, u""_ns, false)) {
+    if (mPolicies[p]->allows(SCRIPT_SRC_DIRECTIVE, keyword, u""_ns)) {
       continue;
     }
 
-    nsAutoString violatedDirective;
-    bool reportSample = false;
-    mPolicies[p]->getDirectiveStringAndReportSampleForContentType(
-        SCRIPT_SRC_DIRECTIVE, violatedDirective, &reportSample);
+    CSPViolationData cspViolationData{
+        p,
+        CSPViolationData::Resource{blockedContentSource},
+        /* aEffectiveDirective */ CSPDirective::SCRIPT_SRC_DIRECTIVE,
+        aSourceFile,
+        static_cast<uint32_t>(aLineNum),
+        static_cast<uint32_t>(aColumnNum),
+        aTriggeringElement,
+        aScriptSample};
 
-    AsyncReportViolation(aTriggeringElement, aCSPEventListener, nullptr,
-                         blockedContentSource, nullptr, violatedDirective,
-                         u"script-src"_ns /* aEffectiveDirective */, p,
-                         observerSubject, aSourceFile, reportSample,
-                         aScriptSample, aLineNum, aColumnNum);
+    LogViolationDetailsUnchecked(aCSPEventListener, std::move(cspViolationData),
+                                 observerSubject, ForceReportSample::No);
   }
+  return NS_OK;
+}
+
+void nsCSPContext::LogViolationDetailsUnchecked(
+    nsICSPEventListener* aCSPEventListener,
+    mozilla::dom::CSPViolationData&& aCSPViolationData,
+    const nsAString& aObserverSubject, ForceReportSample aForceReportSample) {
+  EnsureIPCPoliciesRead();
+
+  nsAutoString violatedDirectiveName;
+  nsAutoString violatedDirectiveNameAndValue;
+  bool reportSample = false;
+  mPolicies[aCSPViolationData.mViolatedPolicyIndex]
+      ->getViolatedDirectiveInformation(
+          aCSPViolationData.mEffectiveDirective, violatedDirectiveName,
+          violatedDirectiveNameAndValue, &reportSample);
+
+  if (aForceReportSample == ForceReportSample::Yes) {
+    reportSample = true;
+  }
+
+  AsyncReportViolation(aCSPEventListener, std::move(aCSPViolationData), nullptr,
+                       violatedDirectiveName, violatedDirectiveNameAndValue,
+                       aObserverSubject, reportSample);
+}
+
+NS_IMETHODIMP nsCSPContext::LogTrustedTypesViolationDetailsUnchecked(
+    CSPViolationData&& aCSPViolationData, const nsAString& aObserverSubject,
+    nsICSPEventListener* aCSPEventListener) {
+  EnsureIPCPoliciesRead();
+
+  // Trusted types don't support the "report-sample" keyword
+  // (https://github.com/w3c/trusted-types/issues/531#issuecomment-2194166146).
+  LogViolationDetailsUnchecked(aCSPEventListener, std::move(aCSPViolationData),
+                               aObserverSubject, ForceReportSample::Yes);
   return NS_OK;
 }
 
@@ -847,7 +864,7 @@ nsCSPContext::SetRequestContextWithDocument(Document* aDocument) {
   mQueueUpMessages = !mInnerWindowID;
   mCallingChannelLoadGroup = aDocument->GetDocumentLoadGroup();
   // set the flag on the document for CSP telemetry
-  mEventTarget = aDocument->EventTargetFor(TaskCategory::Other);
+  mEventTarget = GetMainThreadSerialEventTarget();
 
   MOZ_ASSERT(mLoadingPrincipal, "need a valid requestPrincipal");
   MOZ_ASSERT(mSelfURI, "need mSelfURI to translate 'self' into actual URI");
@@ -857,7 +874,7 @@ nsCSPContext::SetRequestContextWithDocument(Document* aDocument) {
 NS_IMETHODIMP
 nsCSPContext::SetRequestContextWithPrincipal(nsIPrincipal* aRequestPrincipal,
                                              nsIURI* aSelfURI,
-                                             const nsAString& aReferrer,
+                                             const nsACString& aReferrer,
                                              uint64_t aInnerWindowId) {
   NS_ENSURE_ARG(aRequestPrincipal);
 
@@ -882,9 +899,8 @@ nsIPrincipal* nsCSPContext::GetRequestPrincipal() { return mLoadingPrincipal; }
 nsIURI* nsCSPContext::GetSelfURI() { return mSelfURI; }
 
 NS_IMETHODIMP
-nsCSPContext::GetReferrer(nsAString& outReferrer) {
-  outReferrer.Truncate();
-  outReferrer.Append(mReferrer);
+nsCSPContext::GetReferrer(nsACString& outReferrer) {
+  outReferrer.Assign(mReferrer);
   return NS_OK;
 }
 
@@ -914,7 +930,7 @@ nsCSPContext::EnsureEventTarget(nsIEventTarget* aEventTarget) {
 
 struct ConsoleMsgQueueElem {
   nsString mMsg;
-  nsString mSourceName;
+  nsCString mSourceName;
   nsString mSourceLine;
   uint32_t mLineNumber;
   uint32_t mColumnNumber;
@@ -930,7 +946,7 @@ void nsCSPContext::flushConsoleMessages() {
   if (doc) {
     mInnerWindowID = doc->InnerWindowID();
     privateWindow =
-        !!doc->NodePrincipal()->OriginAttributesRef().mPrivateBrowsingId;
+        doc->NodePrincipal()->OriginAttributesRef().IsPrivateBrowsing();
   }
 
   mQueueUpMessages = false;
@@ -946,7 +962,7 @@ void nsCSPContext::flushConsoleMessages() {
 
 void nsCSPContext::logToConsole(const char* aName,
                                 const nsTArray<nsString>& aParams,
-                                const nsAString& aSourceName,
+                                const nsACString& aSourceName,
                                 const nsAString& aSourceLine,
                                 uint32_t aLineNumber, uint32_t aColumnNumber,
                                 uint32_t aSeverityFlag) {
@@ -955,12 +971,12 @@ void nsCSPContext::logToConsole(const char* aName,
   nsDependentCString category(aName);
 
   // Fallback
-  nsAutoString sourceName(aSourceName);
-  if (sourceName.IsEmpty() && mSelfURI) {
-    nsAutoCString spec;
+  nsAutoCString spec;
+  if (aSourceName.IsEmpty() && mSelfURI) {
     mSelfURI->GetSpec(spec);
-    CopyUTF8toUTF16(spec, sourceName);
   }
+
+  const auto& sourceName = aSourceName.IsEmpty() ? spec : aSourceName;
 
   // let's check if we have to queue up console messages
   if (mQueueUpMessages) {
@@ -968,7 +984,7 @@ void nsCSPContext::logToConsole(const char* aName,
     CSP_GetLocalizedStr(aName, aParams, msg);
     ConsoleMsgQueueElem& elem = *mConsoleMsgQueue.AppendElement();
     elem.mMsg = msg;
-    elem.mSourceName = PromiseFlatString(sourceName);
+    elem.mSourceName = sourceName;
     elem.mSourceLine = PromiseFlatString(aSourceLine);
     elem.mLineNumber = aLineNumber;
     elem.mColumnNumber = aColumnNumber;
@@ -978,10 +994,9 @@ void nsCSPContext::logToConsole(const char* aName,
   }
 
   bool privateWindow = false;
-  nsCOMPtr<Document> doc = do_QueryReferent(mLoadingContext);
-  if (doc) {
+  if (nsCOMPtr<Document> doc = do_QueryReferent(mLoadingContext)) {
     privateWindow =
-        !!doc->NodePrincipal()->OriginAttributesRef().mPrivateBrowsingId;
+        doc->NodePrincipal()->OriginAttributesRef().IsPrivateBrowsing();
   }
 
   CSP_LogLocalizedStr(aName, aParams, sourceName, aSourceLine, aLineNumber,
@@ -991,7 +1006,7 @@ void nsCSPContext::logToConsole(const char* aName,
 
 /**
  * Strip URI for reporting according to:
- * https://w3c.github.io/webappsec-csp/#security-violation-reports
+ * https://w3c.github.io/webappsec-csp/#strip-url-for-use-in-reports
  *
  * @param aSelfURI
  *        The URI of the CSP policy. Used for cross-origin checks.
@@ -1006,44 +1021,57 @@ void nsCSPContext::logToConsole(const char* aName,
 void StripURIForReporting(nsIURI* aSelfURI, nsIURI* aURI,
                           const nsAString& aEffectiveDirective,
                           nsACString& outStrippedURI) {
-  // If the origin of aURI is a globally unique identifier (for example,
-  // aURI has a scheme of data, blob, or filesystem), then
-  // return the ASCII serialization of uri’s scheme.
-  bool isHttpOrWs = (aURI->SchemeIs("http") || aURI->SchemeIs("https") ||
-                     aURI->SchemeIs("ws") || aURI->SchemeIs("wss"));
+  // Non-standard: For reports going to internal chrome: documents include the
+  // whole URI.
+  if (aSelfURI->SchemeIs("chrome")) {
+    aURI->GetSpecIgnoringRef(outStrippedURI);
+    return;
+  }
 
-  if (!isHttpOrWs) {
-    // not strictly spec compliant, but what we really care about is
-    // http/https. If it's not http/https, then treat aURI
-    // as if it's a globally unique identifier and just return the scheme.
+  // Step 1. If url’s scheme is not an HTTP(S) scheme, then return url’s scheme.
+  // https://github.com/w3c/webappsec-csp/issues/735: We also allow WS(S)
+  // schemes.
+  if (!net::SchemeIsHttpOrHttps(aURI) &&
+      !(aURI->SchemeIs("ws") || aURI->SchemeIs("wss"))) {
     aURI->GetScheme(outStrippedURI);
     return;
   }
 
+  // Step 2. Set url’s fragment to the empty string.
+  // Step 3. Set url’s username to the empty string.
+  // Step 3. Set url’s password to the empty string.
+  nsCOMPtr<nsIURI> stripped;
+  if (NS_FAILED(NS_MutateURI(aURI).SetRef(""_ns).SetUserPass(""_ns).Finalize(
+          stripped))) {
+    // Mutating the URI failed for some reason, just return the scheme.
+    aURI->GetScheme(outStrippedURI);
+    return;
+  }
+
+  // Non-standard: https://github.com/w3c/webappsec-csp/issues/735
   // For cross-origin URIs in frame-src also strip the path.
   // This prevents detailed tracking of pages loaded into an iframe
   // by the embedding page using a report-only policy.
   if (aEffectiveDirective.EqualsLiteral("frame-src") ||
       aEffectiveDirective.EqualsLiteral("object-src")) {
     nsIScriptSecurityManager* ssm = nsContentUtils::GetSecurityManager();
-    if (NS_FAILED(ssm->CheckSameOriginURI(aSelfURI, aURI, false, false))) {
-      aURI->GetPrePath(outStrippedURI);
+    if (NS_FAILED(ssm->CheckSameOriginURI(aSelfURI, stripped, false, false))) {
+      stripped->GetPrePath(outStrippedURI);
       return;
     }
   }
 
-  // Return aURI, with any fragment component removed.
-  aURI->GetSpecIgnoringRef(outStrippedURI);
+  // Step 4. Return the result of executing the URL serializer on url.
+  stripped->GetSpec(outStrippedURI);
 }
 
 nsresult nsCSPContext::GatherSecurityPolicyViolationEventData(
-    nsIURI* aBlockedURI, const nsACString& aBlockedString, nsIURI* aOriginalURI,
-    const nsAString& aEffectiveDirective, uint32_t aViolatedPolicyIndex,
-    const nsAString& aSourceFile, const nsAString& aScriptSample,
-    uint32_t aLineNum, uint32_t aColumnNum,
+    nsIURI* aOriginalURI, const nsAString& aEffectiveDirective,
+    const mozilla::dom::CSPViolationData& aCSPViolationData, bool aReportSample,
     mozilla::dom::SecurityPolicyViolationEventInit& aViolationEventInit) {
   EnsureIPCPoliciesRead();
-  NS_ENSURE_ARG_MAX(aViolatedPolicyIndex, mPolicies.Length() - 1);
+  NS_ENSURE_ARG_MAX(aCSPViolationData.mViolatedPolicyIndex,
+                    mPolicies.Length() - 1);
 
   MOZ_ASSERT(ValidateDirectiveName(aEffectiveDirective),
              "Invalid directive name");
@@ -1057,16 +1085,26 @@ nsresult nsCSPContext::GatherSecurityPolicyViolationEventData(
   CopyUTF8toUTF16(reportDocumentURI, aViolationEventInit.mDocumentURI);
 
   // referrer
-  aViolationEventInit.mReferrer = mReferrer;
+  CopyUTF8toUTF16(mReferrer, aViolationEventInit.mReferrer);
 
   // blocked-uri
-  if (aBlockedURI) {
+  // Corresponds to
+  // <https://w3c.github.io/webappsec-csp/#obtain-violation-blocked-uri>.
+  if (aCSPViolationData.mResource.is<nsCOMPtr<nsIURI>>()) {
     nsAutoCString reportBlockedURI;
-    StripURIForReporting(mSelfURI, aOriginalURI ? aOriginalURI : aBlockedURI,
-                         aEffectiveDirective, reportBlockedURI);
+    StripURIForReporting(
+        mSelfURI,
+        aOriginalURI ? aOriginalURI
+                     : aCSPViolationData.mResource.as<nsCOMPtr<nsIURI>>().get(),
+        aEffectiveDirective, reportBlockedURI);
     CopyUTF8toUTF16(reportBlockedURI, aViolationEventInit.mBlockedURI);
   } else {
-    CopyUTF8toUTF16(aBlockedString, aViolationEventInit.mBlockedURI);
+    nsAutoCString blockedContentSource;
+    BlockedContentSourceToString(
+        aCSPViolationData.mResource
+            .as<CSPViolationData::BlockedContentSource>(),
+        blockedContentSource);
+    CopyUTF8toUTF16(blockedContentSource, aViolationEventInit.mBlockedURI);
   }
 
   // effective-directive
@@ -1080,30 +1118,33 @@ nsresult nsCSPContext::GatherSecurityPolicyViolationEventData(
 
   // original-policy
   nsAutoString originalPolicy;
-  rv = this->GetPolicyString(aViolatedPolicyIndex, originalPolicy);
+  rv = this->GetPolicyString(aCSPViolationData.mViolatedPolicyIndex,
+                             originalPolicy);
   NS_ENSURE_SUCCESS(rv, rv);
   aViolationEventInit.mOriginalPolicy = originalPolicy;
 
   // source-file
-  if (!aSourceFile.IsEmpty()) {
+  if (!aCSPViolationData.mSourceFile.IsEmpty()) {
     // if aSourceFile is a URI, we have to make sure to strip fragments
     nsCOMPtr<nsIURI> sourceURI;
-    NS_NewURI(getter_AddRefs(sourceURI), aSourceFile);
+    NS_NewURI(getter_AddRefs(sourceURI), aCSPViolationData.mSourceFile);
     if (sourceURI) {
-      nsAutoCString spec;
-      StripURIForReporting(mSelfURI, sourceURI, aEffectiveDirective, spec);
-      CopyUTF8toUTF16(spec, aViolationEventInit.mSourceFile);
+      nsAutoCString stripped;
+      StripURIForReporting(mSelfURI, sourceURI, aEffectiveDirective, stripped);
+      CopyUTF8toUTF16(stripped, aViolationEventInit.mSourceFile);
     } else {
-      aViolationEventInit.mSourceFile = aSourceFile;
+      CopyUTF8toUTF16(aCSPViolationData.mSourceFile,
+                      aViolationEventInit.mSourceFile);
     }
   }
 
   // sample (already truncated)
-  aViolationEventInit.mSample = aScriptSample;
+  aViolationEventInit.mSample =
+      aReportSample ? aCSPViolationData.mSample : EmptyString();
 
   // disposition
   aViolationEventInit.mDisposition =
-      mPolicies[aViolatedPolicyIndex]->getReportOnlyFlag()
+      mPolicies[aCSPViolationData.mViolatedPolicyIndex]->getReportOnlyFlag()
           ? mozilla::dom::SecurityPolicyViolationEventDisposition::Report
           : mozilla::dom::SecurityPolicyViolationEventDisposition::Enforce;
 
@@ -1125,15 +1166,56 @@ nsresult nsCSPContext::GatherSecurityPolicyViolationEventData(
   aViolationEventInit.mStatusCode = statusCode;
 
   // line-number
-  aViolationEventInit.mLineNumber = aLineNum;
+  aViolationEventInit.mLineNumber = aCSPViolationData.mLineNumber;
 
   // column-number
-  aViolationEventInit.mColumnNumber = aColumnNum;
+  aViolationEventInit.mColumnNumber = aCSPViolationData.mColumnNumber;
 
   aViolationEventInit.mBubbles = true;
   aViolationEventInit.mComposed = true;
 
   return NS_OK;
+}
+
+bool nsCSPContext::ShouldThrottleReport(
+    const mozilla::dom::SecurityPolicyViolationEventInit& aViolationEventInit) {
+  // Fetch rate limiting preferences
+  const uint32_t kLimitCount =
+      StaticPrefs::security_csp_reporting_limit_count();
+  const uint32_t kTimeSpanSeconds =
+      StaticPrefs::security_csp_reporting_limit_timespan();
+
+  // Disable throttling if either of the preferences is set to 0.
+  if (kLimitCount == 0 || kTimeSpanSeconds == 0) {
+    return false;
+  }
+
+  TimeDuration throttleSpan = TimeDuration::FromSeconds(kTimeSpanSeconds);
+  if (mSendReportLimitSpanStart.IsNull() ||
+      ((TimeStamp::Now() - mSendReportLimitSpanStart) > throttleSpan)) {
+    // Initial call or timespan exceeded, reset counter and timespan.
+    mSendReportLimitSpanStart = TimeStamp::Now();
+    mSendReportLimitCount = 1;
+    // Also make sure we warn about omitted messages. (XXX or only do this once
+    // per context?)
+    mWarnedAboutTooManyReports = false;
+    return false;
+  }
+
+  if (mSendReportLimitCount < kLimitCount) {
+    mSendReportLimitCount++;
+    return false;
+  }
+
+  // Rate limit reached
+  if (!mWarnedAboutTooManyReports) {
+    logToConsole("tooManyReports", {},
+                 NS_ConvertUTF16toUTF8(aViolationEventInit.mSourceFile),
+                 aViolationEventInit.mSample, aViolationEventInit.mLineNumber,
+                 aViolationEventInit.mColumnNumber, nsIScriptError::errorFlag);
+    mWarnedAboutTooManyReports = true;
+  }
+  return true;
 }
 
 nsresult nsCSPContext::SendReports(
@@ -1142,6 +1224,53 @@ nsresult nsCSPContext::SendReports(
   EnsureIPCPoliciesRead();
   NS_ENSURE_ARG_MAX(aViolatedPolicyIndex, mPolicies.Length() - 1);
 
+  if (!StaticPrefs::security_csp_reporting_enabled() ||
+      ShouldThrottleReport(aViolationEventInit)) {
+    return NS_OK;
+  }
+
+  nsAutoString reportGroup;
+  mPolicies[aViolatedPolicyIndex]->getReportGroup(reportGroup);
+
+  // CSP Level 3 Reporting
+  if (StaticPrefs::dom_reporting_enabled() && !reportGroup.IsEmpty()) {
+    return SendReportsToEndpoints(reportGroup, aViolationEventInit);
+  }
+
+  nsTArray<nsString> reportURIs;
+  mPolicies[aViolatedPolicyIndex]->getReportURIs(reportURIs);
+
+  // [Deprecated] CSP Level 2 Reporting
+  if (!reportURIs.IsEmpty()) {
+    return SendReportsToURIs(reportURIs, aViolationEventInit);
+  }
+
+  return NS_OK;
+}
+
+nsresult nsCSPContext::SendReportsToEndpoints(
+    nsAutoString& reportGroup,
+    const mozilla::dom::SecurityPolicyViolationEventInit& aViolationEventInit) {
+  nsCOMPtr<Document> doc = do_QueryReferent(mLoadingContext);
+  if (!doc) {
+    return NS_ERROR_FAILURE;
+  }
+  nsPIDOMWindowInner* window = doc->GetInnerWindow();
+  if (NS_WARN_IF(!window)) {
+    return NS_ERROR_FAILURE;
+  }
+
+  RefPtr<CSPViolationReportBody> body =
+      new CSPViolationReportBody(window->AsGlobal(), aViolationEventInit);
+
+  ReportingUtils::Report(window->AsGlobal(), nsGkAtoms::cspViolation,
+                         reportGroup, aViolationEventInit.mDocumentURI, body);
+  return NS_OK;
+}
+
+nsresult nsCSPContext::SendReportsToURIs(
+    const nsTArray<nsString>& reportURIs,
+    const mozilla::dom::SecurityPolicyViolationEventInit& aViolationEventInit) {
   dom::CSPReport report;
 
   // blocked-uri
@@ -1173,7 +1302,8 @@ nsresult nsCSPContext::SendReports(
   // source-file
   if (!aViolationEventInit.mSourceFile.IsEmpty()) {
     report.mCsp_report.mSource_file.Construct();
-    report.mCsp_report.mSource_file.Value() = aViolationEventInit.mSourceFile;
+    CopyUTF16toUTF8(aViolationEventInit.mSourceFile,
+                    report.mCsp_report.mSource_file.Value());
   }
 
   // script-sample
@@ -1200,24 +1330,21 @@ nsresult nsCSPContext::SendReports(
   }
 
   // ---------- Assembled, now send it to all the report URIs ----------- //
-
-  nsTArray<nsString> reportURIs;
-  mPolicies[aViolatedPolicyIndex]->getReportURIs(reportURIs);
-
   nsCOMPtr<Document> doc = do_QueryReferent(mLoadingContext);
   nsCOMPtr<nsIURI> reportURI;
   nsCOMPtr<nsIChannel> reportChannel;
 
   nsresult rv;
   for (uint32_t r = 0; r < reportURIs.Length(); r++) {
-    nsAutoCString reportURICstring = NS_ConvertUTF16toUTF8(reportURIs[r]);
+    NS_ConvertUTF16toUTF8 reportURICstring(reportURIs[r]);
     // try to create a new uri from every report-uri string
     rv = NS_NewURI(getter_AddRefs(reportURI), reportURIs[r]);
     if (NS_FAILED(rv)) {
       AutoTArray<nsString, 1> params = {reportURIs[r]};
       CSPCONTEXTLOG(("Could not create nsIURI for report URI %s",
                      reportURICstring.get()));
-      logToConsole("triedToSendReport", params, aViolationEventInit.mSourceFile,
+      logToConsole("triedToSendReport", params,
+                   NS_ConvertUTF16toUTF8(aViolationEventInit.mSourceFile),
                    aViolationEventInit.mSample, aViolationEventInit.mLineNumber,
                    aViolationEventInit.mColumnNumber,
                    nsIScriptError::errorFlag);
@@ -1244,15 +1371,13 @@ nsresult nsCSPContext::SendReports(
     }
 
     // log a warning to console if scheme is not http or https
-    bool isHttpScheme =
-        reportURI->SchemeIs("http") || reportURI->SchemeIs("https");
-
-    if (!isHttpScheme) {
+    if (!net::SchemeIsHttpOrHttps(reportURI)) {
       AutoTArray<nsString, 1> params = {reportURIs[r]};
-      logToConsole(
-          "reportURInotHttpsOrHttp2", params, aViolationEventInit.mSourceFile,
-          aViolationEventInit.mSample, aViolationEventInit.mLineNumber,
-          aViolationEventInit.mColumnNumber, nsIScriptError::errorFlag);
+      logToConsole("reportURInotHttpsOrHttp2", params,
+                   NS_ConvertUTF16toUTF8(aViolationEventInit.mSourceFile),
+                   aViolationEventInit.mSample, aViolationEventInit.mLineNumber,
+                   aViolationEventInit.mColumnNumber,
+                   nsIScriptError::errorFlag);
       continue;
     }
 
@@ -1261,7 +1386,8 @@ nsresult nsCSPContext::SendReports(
     nsLoadFlags flags;
     rv = reportChannel->GetLoadFlags(&flags);
     NS_ENSURE_SUCCESS(rv, rv);
-    flags |= nsIRequest::LOAD_ANONYMOUS;
+    flags |= nsIRequest::LOAD_ANONYMOUS | nsIChannel::LOAD_BACKGROUND |
+             nsIChannel::LOAD_BYPASS_SERVICE_WORKER;
     rv = reportChannel->SetLoadFlags(flags);
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1287,8 +1413,7 @@ nsresult nsCSPContext::SendReports(
     NS_ASSERTION(sis,
                  "nsIStringInputStream is needed but not available to send CSP "
                  "violation reports");
-    nsAutoCString utf8CSPReport = NS_ConvertUTF16toUTF8(csp_report);
-    rv = sis->SetData(utf8CSPReport.get(), utf8CSPReport.Length());
+    rv = sis->SetUTF8Data(NS_ConvertUTF16toUTF8(csp_report));
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsCOMPtr<nsIUploadChannel> uploadChannel(do_QueryInterface(reportChannel));
@@ -1322,7 +1447,8 @@ nsresult nsCSPContext::SendReports(
       AutoTArray<nsString, 1> params = {reportURIs[r]};
       CSPCONTEXTLOG(("AsyncOpen failed for report URI %s",
                      NS_ConvertUTF16toUTF8(params[0]).get()));
-      logToConsole("triedToSendReport", params, aViolationEventInit.mSourceFile,
+      logToConsole("triedToSendReport", params,
+                   NS_ConvertUTF16toUTF8(aViolationEventInit.mSourceFile),
                    aViolationEventInit.mSample, aViolationEventInit.mLineNumber,
                    aViolationEventInit.mColumnNumber,
                    nsIScriptError::errorFlag);
@@ -1334,6 +1460,74 @@ nsresult nsCSPContext::SendReports(
   return NS_OK;
 }
 
+void nsCSPContext::HandleInternalPageViolation(
+    const CSPViolationData& aCSPViolationData,
+    const SecurityPolicyViolationEventInit& aInit,
+    const nsAString& aViolatedDirectiveNameAndValue) {
+  if (!mSelfURI || !mSelfURI->SchemeIs("chrome")) {
+    return;
+  }
+
+  nsAutoCString selfURISpec;
+  mSelfURI->GetSpec(selfURISpec);
+
+  glean::security::CspViolationInternalPageExtra extra;
+  extra.directive = Some(NS_ConvertUTF16toUTF8(aInit.mEffectiveDirective));
+
+  FilenameTypeAndDetails self =
+      nsContentSecurityUtils::FilenameToFilenameType(selfURISpec, true);
+  extra.selftype = Some(self.first);
+  extra.selfdetails = self.second;
+
+  FilenameTypeAndDetails source =
+      nsContentSecurityUtils::FilenameToFilenameType(
+          NS_ConvertUTF16toUTF8(aInit.mSourceFile), true);
+  extra.sourcetype = Some(source.first);
+  extra.sourcedetails = source.second;
+
+  extra.linenumber = Some(aInit.mLineNumber);
+  extra.columnnumber = Some(aInit.mColumnNumber);
+
+  // Don't collect samples for code that is probably not shipped by us.
+  if (source.first.EqualsLiteral("chromeuri") ||
+      source.first.EqualsLiteral("resourceuri") ||
+      source.first.EqualsLiteral("abouturi")) {
+    // aInit's sample requires the 'report-sample' keyword.
+    extra.sample = Some(NS_ConvertUTF16toUTF8(aCSPViolationData.mSample));
+  }
+
+  if (aInit.mBlockedURI.EqualsLiteral("inline")) {
+    extra.blockeduritype = Some("inline"_ns);
+  } else {
+    FilenameTypeAndDetails blocked =
+        nsContentSecurityUtils::FilenameToFilenameType(
+            NS_ConvertUTF16toUTF8(aInit.mBlockedURI), true);
+    extra.blockeduritype = Some(blocked.first);
+    extra.blockeduridetails = blocked.second;
+  }
+
+  glean::security::csp_violation_internal_page.Record(Some(extra));
+
+#ifdef DEBUG
+  if (!StaticPrefs::security_csp_testing_allow_internal_csp_violation()) {
+    NS_ConvertUTF16toUTF8 directive(aViolatedDirectiveNameAndValue);
+    nsAutoCString effectiveDirective;
+    effectiveDirective.Assign(
+        CSP_CSPDirectiveToString(aCSPViolationData.mEffectiveDirective));
+    nsFmtCString s(
+        FMT_STRING("Unexpected CSP violation on page {} caused by {} (URL: {}, "
+                   "Source: {}) violating the directive: \"{}\" (file: {} "
+                   "line: {}). For debugging you can set the pref "
+                   "security.csp.testing.allow_internal_csp_violation=true."),
+        selfURISpec.get(), effectiveDirective.get(),
+        NS_ConvertUTF16toUTF8(aInit.mBlockedURI).get(),
+        NS_ConvertUTF16toUTF8(aCSPViolationData.mSample).get(), directive.get(),
+        aCSPViolationData.mSourceFile.get(), aCSPViolationData.mLineNumber);
+    MOZ_CRASH_UNSAFE(s.get());
+  }
+#endif
+}
+
 nsresult nsCSPContext::FireViolationEvent(
     Element* aTriggeringElement, nsICSPEventListener* aCSPEventListener,
     const mozilla::dom::SecurityPolicyViolationEventInit& aViolationEventInit) {
@@ -1342,6 +1536,8 @@ nsresult nsCSPContext::FireViolationEvent(
     if (aViolationEventInit.ToJSON(json)) {
       aCSPEventListener->OnCSPViolationEvent(json);
     }
+
+    return NS_OK;
   }
 
   // 1. If target is not null, and global is a Window, and target’s
@@ -1392,44 +1588,37 @@ nsresult nsCSPContext::FireViolationEvent(
  */
 class CSPReportSenderRunnable final : public Runnable {
  public:
-  CSPReportSenderRunnable(
-      Element* aTriggeringElement, nsICSPEventListener* aCSPEventListener,
-      nsIURI* aBlockedURI,
-      nsCSPContext::BlockedContentSource aBlockedContentSource,
-      nsIURI* aOriginalURI, uint32_t aViolatedPolicyIndex, bool aReportOnlyFlag,
-      const nsAString& aViolatedDirective, const nsAString& aEffectiveDirective,
-      const nsAString& aObserverSubject, const nsAString& aSourceFile,
-      bool aReportSample, const nsAString& aScriptSample, uint32_t aLineNum,
-      uint32_t aColumnNum, nsCSPContext* aCSPContext)
+  CSPReportSenderRunnable(nsICSPEventListener* aCSPEventListener,
+                          CSPViolationData&& aCSPViolationData,
+                          nsIURI* aOriginalURI, bool aReportOnlyFlag,
+                          const nsAString& aViolatedDirectiveName,
+                          const nsAString& aViolatedDirectiveNameAndValue,
+                          const nsAString& aObserverSubject, bool aReportSample,
+                          nsCSPContext* aCSPContext)
       : mozilla::Runnable("CSPReportSenderRunnable"),
-        mTriggeringElement(aTriggeringElement),
         mCSPEventListener(aCSPEventListener),
-        mBlockedURI(aBlockedURI),
-        mBlockedContentSource(aBlockedContentSource),
+        mCSPViolationData(std::move(aCSPViolationData)),
         mOriginalURI(aOriginalURI),
-        mViolatedPolicyIndex(aViolatedPolicyIndex),
         mReportOnlyFlag(aReportOnlyFlag),
         mReportSample(aReportSample),
-        mViolatedDirective(aViolatedDirective),
-        mEffectiveDirective(aEffectiveDirective),
-        mSourceFile(aSourceFile),
-        mScriptSample(aScriptSample),
-        mLineNum(aLineNum),
-        mColumnNum(aColumnNum),
+        mViolatedDirectiveName(aViolatedDirectiveName),
+        mViolatedDirectiveNameAndValue(aViolatedDirectiveNameAndValue),
         mCSPContext(aCSPContext) {
-    NS_ASSERTION(!aViolatedDirective.IsEmpty(),
+    NS_ASSERTION(!aViolatedDirectiveName.IsEmpty(),
                  "Can not send reports without a violated directive");
     // the observer subject is an nsISupports: either an nsISupportsCString
     // from the arg passed in directly, or if that's empty, it's the blocked
     // source.
-    if (aObserverSubject.IsEmpty() && mBlockedURI) {
-      mObserverSubject = aBlockedURI;
+    if (aObserverSubject.IsEmpty() &&
+        mCSPViolationData.mResource.is<nsCOMPtr<nsIURI>>()) {
+      mObserverSubject = mCSPViolationData.mResource.as<nsCOMPtr<nsIURI>>();
       return;
     }
 
     nsAutoCString subject;
     if (aObserverSubject.IsEmpty()) {
-      BlockedContentSourceToString(aBlockedContentSource, subject);
+      BlockedContentSourceToString(
+          mCSPViolationData.BlockedContentSourceOrUnknown(), subject);
     } else {
       CopyUTF16toUTF8(aObserverSubject, subject);
     }
@@ -1440,36 +1629,20 @@ class CSPReportSenderRunnable final : public Runnable {
       supportscstr->SetData(subject);
       mObserverSubject = do_QueryInterface(supportscstr);
     }
-
-    // Truncate sample string.
-    uint32_t length = mScriptSample.Length();
-    if (length > nsCSPContext::ScriptSampleMaxLength()) {
-      uint32_t desiredLength = nsCSPContext::ScriptSampleMaxLength();
-      // Don't cut off right before a low surrogate. Just include it.
-      if (NS_IS_LOW_SURROGATE(mScriptSample[desiredLength])) {
-        desiredLength++;
-      }
-      mScriptSample.Replace(nsCSPContext::ScriptSampleMaxLength(),
-                            length - desiredLength,
-                            nsContentUtils::GetLocalizedEllipsis());
-    }
   }
 
   NS_IMETHOD Run() override {
     MOZ_ASSERT(NS_IsMainThread());
 
-    nsresult rv;
-
     // 0) prepare violation data
     mozilla::dom::SecurityPolicyViolationEventInit init;
 
-    nsAutoCString blockedContentSource;
-    BlockedContentSourceToString(mBlockedContentSource, blockedContentSource);
+    nsAutoString effectiveDirective;
+    effectiveDirective.AssignASCII(
+        CSP_CSPDirectiveToString(mCSPViolationData.mEffectiveDirective));
 
-    rv = mCSPContext->GatherSecurityPolicyViolationEventData(
-        mBlockedURI, blockedContentSource, mOriginalURI, mEffectiveDirective,
-        mViolatedPolicyIndex, mSourceFile,
-        mReportSample ? mScriptSample : EmptyString(), mLineNum, mColumnNum,
+    nsresult rv = mCSPContext->GatherSecurityPolicyViolationEventData(
+        mOriginalURI, effectiveDirective, mCSPViolationData, mReportSample,
         init);
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1478,117 +1651,190 @@ class CSPReportSenderRunnable final : public Runnable {
         mozilla::services::GetObserverService();
     if (mObserverSubject && observerService) {
       rv = observerService->NotifyObservers(
-          mObserverSubject, CSP_VIOLATION_TOPIC, mViolatedDirective.get());
+          mObserverSubject, CSP_VIOLATION_TOPIC, mViolatedDirectiveName.get());
       NS_ENSURE_SUCCESS(rv, rv);
     }
 
     // 2) send reports for the policy that was violated
-    mCSPContext->SendReports(init, mViolatedPolicyIndex);
+    mCSPContext->SendReports(init, mCSPViolationData.mViolatedPolicyIndex);
 
     // 3) log to console (one per policy violation)
+    ReportToConsole();
 
-    if (mBlockedURI) {
-      mBlockedURI->GetSpec(blockedContentSource);
-      if (blockedContentSource.Length() >
-          nsCSPContext::ScriptSampleMaxLength()) {
-        bool isData = mBlockedURI->SchemeIs("data");
-        if (NS_SUCCEEDED(rv) && isData &&
-            blockedContentSource.Length() >
-                nsCSPContext::ScriptSampleMaxLength()) {
-          blockedContentSource.Truncate(nsCSPContext::ScriptSampleMaxLength());
-          blockedContentSource.Append(
-              NS_ConvertUTF16toUTF8(nsContentUtils::GetLocalizedEllipsis()));
-        }
-      }
-    }
+    // 4) For internal pages we might send the failure to telemetry or crash.
+    mCSPContext->HandleInternalPageViolation(mCSPViolationData, init,
+                                             mViolatedDirectiveNameAndValue);
 
-    if (blockedContentSource.Length() > 0) {
-      nsString blockedContentSource16 =
-          NS_ConvertUTF8toUTF16(blockedContentSource);
-      AutoTArray<nsString, 2> params = {mViolatedDirective,
-                                        blockedContentSource16};
-      mCSPContext->logToConsole(
-          mReportOnlyFlag ? "CSPROViolationWithURI" : "CSPViolationWithURI",
-          params, mSourceFile, mScriptSample, mLineNum, mColumnNum,
-          nsIScriptError::errorFlag);
-    }
-
-    // 4) fire violation event
+    // 5) fire violation event
     // A frame-ancestors violation has occurred, but we should not dispatch
     // the violation event to a potentially cross-origin ancestor.
-    if (!mViolatedDirective.EqualsLiteral("frame-ancestors")) {
-      mCSPContext->FireViolationEvent(mTriggeringElement, mCSPEventListener,
-                                      init);
+    if (!mViolatedDirectiveName.EqualsLiteral("frame-ancestors")) {
+      mCSPContext->FireViolationEvent(mCSPViolationData.mElement,
+                                      mCSPEventListener, init);
     }
 
     return NS_OK;
   }
 
  private:
-  RefPtr<Element> mTriggeringElement;
+  void ReportToConsole() const {
+    NS_ConvertUTF8toUTF16 effectiveDirective(
+        CSP_CSPDirectiveToString(mCSPViolationData.mEffectiveDirective));
+
+    const auto blockedContentSource =
+        mCSPViolationData.BlockedContentSourceOrUnknown();
+
+    switch (blockedContentSource) {
+      case CSPViolationData::BlockedContentSource::Inline: {
+        const char* errorName = nullptr;
+        if (mCSPViolationData.mEffectiveDirective ==
+                CSPDirective::STYLE_SRC_ATTR_DIRECTIVE ||
+            mCSPViolationData.mEffectiveDirective ==
+                CSPDirective::STYLE_SRC_ELEM_DIRECTIVE) {
+          errorName = mReportOnlyFlag ? "CSPROInlineStyleViolation2"
+                                      : "CSPInlineStyleViolation2";
+        } else if (mCSPViolationData.mEffectiveDirective ==
+                   CSPDirective::SCRIPT_SRC_ATTR_DIRECTIVE) {
+          errorName = mReportOnlyFlag ? "CSPROEventHandlerScriptViolation2"
+                                      : "CSPEventHandlerScriptViolation2";
+        } else {
+          MOZ_ASSERT(mCSPViolationData.mEffectiveDirective ==
+                     CSPDirective::SCRIPT_SRC_ELEM_DIRECTIVE);
+          errorName = mReportOnlyFlag ? "CSPROInlineScriptViolation2"
+                                      : "CSPInlineScriptViolation2";
+        }
+
+        AutoTArray<nsString, 3> params = {
+            mViolatedDirectiveNameAndValue, effectiveDirective,
+            NS_ConvertUTF8toUTF16(mCSPViolationData.mHashSHA256)};
+        mCSPContext->logToConsole(
+            errorName, params, mCSPViolationData.mSourceFile,
+            mCSPViolationData.mSample, mCSPViolationData.mLineNumber,
+            mCSPViolationData.mColumnNumber, nsIScriptError::errorFlag);
+        break;
+      }
+
+      case CSPViolationData::BlockedContentSource::Eval: {
+        AutoTArray<nsString, 2> params = {mViolatedDirectiveNameAndValue,
+                                          effectiveDirective};
+        mCSPContext->logToConsole(
+            mReportOnlyFlag ? "CSPROEvalScriptViolation"
+                            : "CSPEvalScriptViolation",
+            params, mCSPViolationData.mSourceFile, mCSPViolationData.mSample,
+            mCSPViolationData.mLineNumber, mCSPViolationData.mColumnNumber,
+            nsIScriptError::errorFlag);
+        break;
+      }
+
+      case CSPViolationData::BlockedContentSource::WasmEval: {
+        AutoTArray<nsString, 2> params = {mViolatedDirectiveNameAndValue,
+                                          effectiveDirective};
+        mCSPContext->logToConsole(
+            mReportOnlyFlag ? "CSPROWasmEvalScriptViolation"
+                            : "CSPWasmEvalScriptViolation",
+            params, mCSPViolationData.mSourceFile, mCSPViolationData.mSample,
+            mCSPViolationData.mLineNumber, mCSPViolationData.mColumnNumber,
+            nsIScriptError::errorFlag);
+        break;
+      }
+
+      case CSPViolationData::BlockedContentSource::TrustedTypesPolicy: {
+        AutoTArray<nsString, 1> params = {mViolatedDirectiveNameAndValue};
+
+        mCSPContext->logToConsole(
+            mReportOnlyFlag ? "CSPROTrustedTypesPolicyViolation"
+                            : "CSPTrustedTypesPolicyViolation",
+            params, mCSPViolationData.mSourceFile, mCSPViolationData.mSample,
+            mCSPViolationData.mLineNumber, mCSPViolationData.mColumnNumber,
+            nsIScriptError::errorFlag);
+        break;
+      }
+
+      case CSPViolationData::BlockedContentSource::TrustedTypesSink: {
+        mCSPContext->logToConsole(
+            mReportOnlyFlag ? "CSPROTrustedTypesSinkViolation"
+                            : "CSPTrustedTypesSinkViolation",
+            {}, mCSPViolationData.mSourceFile, mCSPViolationData.mSample,
+            mCSPViolationData.mLineNumber, mCSPViolationData.mColumnNumber,
+            nsIScriptError::errorFlag);
+        break;
+      }
+
+      case CSPViolationData::BlockedContentSource::Self:
+      case CSPViolationData::BlockedContentSource::Unknown: {
+        nsAutoString source(u"<unknown>"_ns);
+        if (mCSPViolationData.mResource.is<nsCOMPtr<nsIURI>>()) {
+          nsAutoCString uri;
+          auto blockedURI = mCSPViolationData.mResource.as<nsCOMPtr<nsIURI>>();
+          blockedURI->GetSpec(uri);
+
+          if (blockedURI->SchemeIs("data") &&
+              uri.Length() > nsCSPContext::ScriptSampleMaxLength()) {
+            uri.Truncate(nsCSPContext::ScriptSampleMaxLength());
+            uri.Append(
+                NS_ConvertUTF16toUTF8(nsContentUtils::GetLocalizedEllipsis()));
+          }
+
+          if (!uri.IsEmpty()) {
+            CopyUTF8toUTF16(uri, source);
+          }
+        }
+
+        const char* errorName = nullptr;
+        switch (mCSPViolationData.mEffectiveDirective) {
+          case CSPDirective::STYLE_SRC_ELEM_DIRECTIVE:
+            errorName =
+                mReportOnlyFlag ? "CSPROStyleViolation" : "CSPStyleViolation";
+            break;
+          case CSPDirective::SCRIPT_SRC_ELEM_DIRECTIVE:
+            errorName =
+                mReportOnlyFlag ? "CSPROScriptViolation" : "CSPScriptViolation";
+            break;
+          case CSPDirective::WORKER_SRC_DIRECTIVE:
+            errorName =
+                mReportOnlyFlag ? "CSPROWorkerViolation" : "CSPWorkerViolation";
+            break;
+          default:
+            errorName = mReportOnlyFlag ? "CSPROGenericViolation"
+                                        : "CSPGenericViolation";
+        }
+
+        AutoTArray<nsString, 3> params = {mViolatedDirectiveNameAndValue,
+                                          source, effectiveDirective};
+        mCSPContext->logToConsole(
+            errorName, params, mCSPViolationData.mSourceFile,
+            mCSPViolationData.mSample, mCSPViolationData.mLineNumber,
+            mCSPViolationData.mColumnNumber, nsIScriptError::errorFlag);
+      }
+    }
+  }
+
   nsCOMPtr<nsICSPEventListener> mCSPEventListener;
-  nsCOMPtr<nsIURI> mBlockedURI;
-  nsCSPContext::BlockedContentSource mBlockedContentSource;
+  CSPViolationData mCSPViolationData;
   nsCOMPtr<nsIURI> mOriginalURI;
-  uint32_t mViolatedPolicyIndex;
   bool mReportOnlyFlag;
   bool mReportSample;
-  nsString mViolatedDirective;
-  nsString mEffectiveDirective;
+  nsString mViolatedDirectiveName;
+  nsString mViolatedDirectiveNameAndValue;
   nsCOMPtr<nsISupports> mObserverSubject;
-  nsString mSourceFile;
-  nsString mScriptSample;
-  uint32_t mLineNum;
-  uint32_t mColumnNum;
   RefPtr<nsCSPContext> mCSPContext;
 };
 
-/**
- * Asynchronously notifies any nsIObservers listening to the CSP violation
- * topic that a violation occurred.  Also triggers report sending and console
- * logging.  All asynchronous on the main thread.
- *
- * @param aTriggeringElement
- *        The element that triggered this report violation. It can be null.
- * @param aBlockedContentSource
- *        Either a CSP Source (like 'self', as string) or nsIURI: the source
- *        of the violation.
- * @param aOriginalUri
- *        The original URI if the blocked content is a redirect, else null
- * @param aViolatedDirective
- *        the directive that was violated (string).
- * @param aViolatedPolicyIndex
- *        the index of the policy that was violated (so we know where to send
- *        the reports).
- * @param aObserverSubject
- *        optional, subject sent to the nsIObservers listening to the CSP
- *        violation topic.
- * @param aSourceFile
- *        name of the file containing the inline script violation
- * @param aScriptSample
- *        a sample of the violating inline script
- * @param aLineNum
- *        source line number of the violation (if available)
- * @param aColumnNum
- *        source column number of the violation (if available)
- */
 nsresult nsCSPContext::AsyncReportViolation(
-    Element* aTriggeringElement, nsICSPEventListener* aCSPEventListener,
-    nsIURI* aBlockedURI, BlockedContentSource aBlockedContentSource,
-    nsIURI* aOriginalURI, const nsAString& aViolatedDirective,
-    const nsAString& aEffectiveDirective, uint32_t aViolatedPolicyIndex,
-    const nsAString& aObserverSubject, const nsAString& aSourceFile,
-    bool aReportSample, const nsAString& aScriptSample, uint32_t aLineNum,
-    uint32_t aColumnNum) {
+    nsICSPEventListener* aCSPEventListener,
+    mozilla::dom::CSPViolationData&& aCSPViolationData, nsIURI* aOriginalURI,
+    const nsAString& aViolatedDirectiveName,
+    const nsAString& aViolatedDirectiveNameAndValue,
+    const nsAString& aObserverSubject, bool aReportSample) {
   EnsureIPCPoliciesRead();
-  NS_ENSURE_ARG_MAX(aViolatedPolicyIndex, mPolicies.Length() - 1);
+  NS_ENSURE_ARG_MAX(aCSPViolationData.mViolatedPolicyIndex,
+                    mPolicies.Length() - 1);
 
   nsCOMPtr<nsIRunnable> task = new CSPReportSenderRunnable(
-      aTriggeringElement, aCSPEventListener, aBlockedURI, aBlockedContentSource,
-      aOriginalURI, aViolatedPolicyIndex,
-      mPolicies[aViolatedPolicyIndex]->getReportOnlyFlag(), aViolatedDirective,
-      aEffectiveDirective, aObserverSubject, aSourceFile, aReportSample,
-      aScriptSample, aLineNum, aColumnNum, this);
+      aCSPEventListener, std::move(aCSPViolationData), aOriginalURI,
+      mPolicies[aCSPViolationData.mViolatedPolicyIndex]->getReportOnlyFlag(),
+      aViolatedDirectiveName, aViolatedDirectiveNameAndValue, aObserverSubject,
+      aReportSample, this);
 
   if (XRE_IsContentProcess()) {
     if (mEventTarget) {
@@ -1689,13 +1935,12 @@ nsCSPContext::PermitsAncestry(nsILoadInfo* aLoadInfo,
         permitsInternal(nsIContentSecurityPolicy::FRAME_ANCESTORS_DIRECTIVE,
                         nullptr,  // triggering element
                         nullptr,  // nsICSPEventListener
+                        nullptr,  // nsILoadInfo
                         ancestorsArray[a],
                         nullptr,  // no redirect here.
-                        u""_ns,   // no nonce
                         true,     // specific, do not use default-src
                         true,     // send violation reports
-                        okToSendAncestor,
-                        false);  // not parser created
+                        okToSendAncestor);
     if (!permits) {
       *outPermitsAncestry = false;
     }
@@ -1725,13 +1970,12 @@ nsCSPContext::Permits(Element* aTriggeringElement,
     }
   }
 
-  *outPermits =
-      permitsInternal(aDir, aTriggeringElement, aCSPEventListener, aURI,
-                      nullptr,  // no original (pre-redirect) URI
-                      u""_ns,   // no nonce
-                      aSpecific, aSendViolationReports,
-                      true,    // send blocked URI in violation reports
-                      false);  // not parser created
+  *outPermits = permitsInternal(aDir, aTriggeringElement, aCSPEventListener,
+                                nullptr,  // no nsILoadInfo
+                                aURI,
+                                nullptr,  // no original (pre-redirect) URI
+                                aSpecific, aSendViolationReports,
+                                true);  // send blocked URI in violation reports
 
   if (CSPCONTEXTLOGENABLED()) {
     CSPCONTEXTLOG(("nsCSPContext::Permits, aUri: %s, aDir: %s, isAllowed: %s",
@@ -1798,7 +2042,7 @@ nsCSPContext::GetCSPSandboxFlags(uint32_t* aOutSandboxFlags) {
            NS_ConvertUTF16toUTF8(policy).get()));
 
       AutoTArray<nsString, 1> params = {policy};
-      logToConsole("ignoringReportOnlyDirective", params, u""_ns, u""_ns, 0, 0,
+      logToConsole("ignoringReportOnlyDirective", params, ""_ns, u""_ns, 0, 1,
                    nsIScriptError::warningFlag);
     }
   }
@@ -1907,6 +2151,8 @@ void CSPReportRedirectSink::SetInterceptController(
 
 NS_IMETHODIMP
 nsCSPContext::Read(nsIObjectInputStream* aStream) {
+  CSPCONTEXTLOG(("nsCSPContext::Read"));
+
   nsresult rv;
   nsCOMPtr<nsISupports> supports;
 
@@ -1928,25 +2174,133 @@ nsCSPContext::Read(nsIObjectInputStream* aStream) {
   rv = aStream->Read32(&numPolicies);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  if (numPolicies == 0) {
+    return NS_OK;
+  }
+
+  // Note: This assume that there is no other data following the CSP!
+  // E10SUtils.deserializeCSP is the only user of this logic.
+  nsTArray<uint8_t> data;
+  rv = NS_ConsumeStream(aStream, UINT32_MAX, data);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Because of accidental backwards incompatible changes we have to try and
+  // parse multiple different versions of the CSP data. Starting with the
+  // current data format.
+  if (NS_SUCCEEDED(TryReadPolicies(PolicyDataVersion::Post136, Span(data),
+                                   numPolicies))) {
+    CSPCONTEXTLOG(("nsCSPContext::Read: Data was in version ::Post136."));
+    return NS_OK;
+  }
+
+  if (NS_SUCCEEDED(TryReadPolicies(PolicyDataVersion::Pre136, Span(data),
+                                   numPolicies))) {
+    CSPCONTEXTLOG(("nsCSPContext::Read: Data was in version ::Pre136."));
+    return NS_OK;
+  }
+
+  if (NS_SUCCEEDED(TryReadPolicies(PolicyDataVersion::V138_9PreRelease,
+                                   Span(data), numPolicies))) {
+    CSPCONTEXTLOG(
+        ("nsCSPContext::Read: Data was in version ::V138_9PreRelease."));
+    return NS_OK;
+  }
+
+  CSPCONTEXTLOG(("nsCSPContext::Read: Failed to read data!"));
+  return NS_ERROR_FAILURE;
+}
+
+nsresult nsCSPContext::TryReadPolicies(PolicyDataVersion aVersion,
+                                       Span<const uint8_t> aData,
+                                       uint32_t aNumPolicies) {
+  nsCOMPtr<nsIInputStream> binaryStream;
+  nsresult rv = NS_NewByteInputStream(
+      getter_AddRefs(binaryStream),
+      Span(reinterpret_cast<const char*>(aData.Elements()), aData.Length()),
+      NS_ASSIGNMENT_DEPEND);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIObjectInputStream> stream = NS_NewObjectInputStream(binaryStream);
+
+  // Like ReadBoolean, but ensures the byte is actually 0 or 1.
+  auto ReadBooleanSafe = [stream](bool* aBoolean) {
+    uint8_t raw = 0;
+    nsresult rv = stream->Read8(&raw);
+    NS_ENSURE_SUCCESS(rv, rv);
+    if (!(raw == 0 || raw == 1)) {
+      CSPCONTEXTLOG(("nsCSPContext::TryReadPolicies: Bad boolean value"));
+      return NS_ERROR_FAILURE;
+    }
+
+    *aBoolean = !!raw;
+    return NS_OK;
+  };
+
+  nsTArray<mozilla::ipc::ContentSecurityPolicy> policies;
   nsAutoString policyString;
+  while (aNumPolicies > 0) {
+    aNumPolicies--;
 
-  while (numPolicies > 0) {
-    numPolicies--;
-
-    rv = aStream->ReadString(policyString);
+    rv = stream->ReadString(policyString);
     NS_ENSURE_SUCCESS(rv, rv);
 
+    // nsCSPParser::policy removed all non-ASCII tokens while parsing the CSP
+    // that was serialized, so we shouldn't have any in this string. A non-ASCII
+    // character is thus a strong indicator for some kind of deserialization
+    // error.
+    if (!IsAscii(Span(policyString))) {
+      CSPCONTEXTLOG(
+          ("nsCSPContext::TryReadPolicies: Unexpected non-ASCII policy "
+           "string"));
+      return NS_ERROR_FAILURE;
+    }
+
     bool reportOnly = false;
-    rv = aStream->ReadBoolean(&reportOnly);
+    rv = ReadBooleanSafe(&reportOnly);
     NS_ENSURE_SUCCESS(rv, rv);
 
     bool deliveredViaMetaTag = false;
-    rv = aStream->ReadBoolean(&deliveredViaMetaTag);
+    rv = ReadBooleanSafe(&deliveredViaMetaTag);
     NS_ENSURE_SUCCESS(rv, rv);
-    AddIPCPolicy(mozilla::ipc::ContentSecurityPolicy(policyString, reportOnly,
-                                                     deliveredViaMetaTag));
+
+    bool hasRequireTrustedTypesForDirective = false;
+    if (aVersion == PolicyDataVersion::Post136 ||
+        aVersion == PolicyDataVersion::V138_9PreRelease) {
+      // Added in bug 1901492.
+      rv = ReadBooleanSafe(&hasRequireTrustedTypesForDirective);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+
+    if (aVersion == PolicyDataVersion::V138_9PreRelease) {
+      // This was added in bug 1942306, but wasn't really necessary.
+      // Removed again in bug 1958259.
+      uint32_t numExpressions;
+      rv = stream->Read32(&numExpressions);
+      NS_ENSURE_SUCCESS(rv, rv);
+      // We assume that because Trusted Types was disabled by default
+      // that no "trusted type expressions" were written during that time.
+      if (numExpressions != 0) {
+        return NS_ERROR_FAILURE;
+      }
+    }
+
+    policies.AppendElement(
+        ContentSecurityPolicy(policyString, reportOnly, deliveredViaMetaTag,
+                              hasRequireTrustedTypesForDirective));
   }
 
+  // Make sure all data was consumed.
+  uint64_t available = 0;
+  rv = stream->Available(&available);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (available) {
+    return NS_ERROR_FAILURE;
+  }
+
+  // Success! Add the policies now.
+  for (auto policy : policies) {
+    AddIPCPolicy(policy);
+  }
   return NS_OK;
 }
 
@@ -1964,6 +2318,11 @@ nsCSPContext::Write(nsIObjectOutputStream* aStream) {
   // Serialize all the policies.
   aStream->Write32(mPolicies.Length() + mIPCPolicies.Length());
 
+  // WARNING: Any change here needs to be backwards compatible because
+  // the serialized CSP data is used across different Firefox versions.
+  // Better just don't touch this.
+
+  // This writes data in the PolicyDataVersion::Post136 format.
   nsAutoString polStr;
   for (uint32_t p = 0; p < mPolicies.Length(); p++) {
     polStr.Truncate();
@@ -1971,17 +2330,29 @@ nsCSPContext::Write(nsIObjectOutputStream* aStream) {
     aStream->WriteWStringZ(polStr.get());
     aStream->WriteBoolean(mPolicies[p]->getReportOnlyFlag());
     aStream->WriteBoolean(mPolicies[p]->getDeliveredViaMetaTagFlag());
+    aStream->WriteBoolean(mPolicies[p]->hasRequireTrustedTypesForDirective());
   }
   for (auto& policy : mIPCPolicies) {
     aStream->WriteWStringZ(policy.policy().get());
     aStream->WriteBoolean(policy.reportOnlyFlag());
     aStream->WriteBoolean(policy.deliveredViaMetaTagFlag());
+    aStream->WriteBoolean(policy.hasRequireTrustedTypesForDirective());
   }
+
   return NS_OK;
 }
 
 void nsCSPContext::AddIPCPolicy(const ContentSecurityPolicy& aPolicy) {
   mIPCPolicies.AppendElement(aPolicy);
+  if (aPolicy.hasRequireTrustedTypesForDirective()) {
+    if (mRequireTrustedTypesForDirectiveState !=
+        RequireTrustedTypesForDirectiveState::ENFORCE) {
+      mRequireTrustedTypesForDirectiveState =
+          aPolicy.reportOnlyFlag()
+              ? RequireTrustedTypesForDirectiveState::REPORT_ONLY
+              : RequireTrustedTypesForDirectiveState::ENFORCE;
+    }
+  }
 }
 
 void nsCSPContext::SerializePolicies(
@@ -1991,7 +2362,8 @@ void nsCSPContext::SerializePolicies(
     policy->toString(policyString);
     aPolicies.AppendElement(
         ContentSecurityPolicy(policyString, policy->getReportOnlyFlag(),
-                              policy->getDeliveredViaMetaTagFlag()));
+                              policy->getDeliveredViaMetaTagFlag(),
+                              policy->hasRequireTrustedTypesForDirective()));
   }
 
   aPolicies.AppendElements(mIPCPolicies);

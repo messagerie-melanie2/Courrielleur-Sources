@@ -17,8 +17,9 @@
 #include "NSSErrorsService.h"
 #include "TLSTransportLayer.h"
 #include "mozilla/ChaosMode.h"
+#include "mozilla/glean/NetwerkMetrics.h"
+#include "mozilla/glean/NetwerkProtocolHttpMetrics.h"
 #include "mozilla/StaticPrefs_network.h"
-#include "mozilla/Telemetry.h"
 #include "mozpkix/pkixnss.h"
 #include "nsCRT.h"
 #include "nsHttpConnection.h"
@@ -41,13 +42,10 @@
 #include "sslt.h"
 
 namespace mozilla::net {
+extern const nsCString& TRRProviderKey();
+}
 
-enum TlsHandshakeResult : uint32_t {
-  EchConfigSuccessful = 0,
-  EchConfigFailed,
-  NoEchConfigSuccessful,
-  NoEchConfigFailed,
-};
+namespace mozilla::net {
 
 //-----------------------------------------------------------------------------
 // nsHttpConnection <public>
@@ -62,8 +60,6 @@ nsHttpConnection::nsHttpConnection() : mHttpHandler(gHttpHandler) {
   mIdleTimeout = (k5Sec < gHttpHandler->IdleTimeout())
                      ? k5Sec
                      : gHttpHandler->IdleTimeout();
-
-  mThroughCaptivePortal = gHttpHandler->GetThroughCaptivePortal();
 }
 
 nsHttpConnection::~nsHttpConnection() {
@@ -72,8 +68,8 @@ nsHttpConnection::~nsHttpConnection() {
   if (!mEverUsedSpdy) {
     LOG(("nsHttpConnection %p performed %d HTTP/1.x transactions\n", this,
          mHttp1xTransactionCount));
-    Telemetry::Accumulate(Telemetry::HTTP_REQUEST_PER_CONN,
-                          mHttp1xTransactionCount);
+    glean::http::request_per_conn.AccumulateSingleSample(
+        mHttp1xTransactionCount);
     nsHttpConnectionInfo* ci = nullptr;
     if (mTransaction) {
       ci = mTransaction->ConnectionInfo();
@@ -84,8 +80,8 @@ nsHttpConnection::~nsHttpConnection() {
 
     MOZ_ASSERT(ci);
     if (ci->GetIsTrrServiceChannel()) {
-      Telemetry::Accumulate(Telemetry::DNS_TRR_REQUEST_PER_CONN,
-                            mHttp1xTransactionCount);
+      mozilla::glean::networking::trr_request_count_per_conn.Get("h1"_ns).Add(
+          static_cast<int32_t>(mHttp1xTransactionCount));
     }
   }
 
@@ -93,23 +89,11 @@ nsHttpConnection::~nsHttpConnection() {
     uint32_t totalKBRead = static_cast<uint32_t>(mTotalBytesRead >> 10);
     LOG(("nsHttpConnection %p read %dkb on connection spdy=%d\n", this,
          totalKBRead, mEverUsedSpdy));
-    Telemetry::Accumulate(mEverUsedSpdy ? Telemetry::SPDY_KBREAD_PER_CONN2
-                                        : Telemetry::HTTP_KBREAD_PER_CONN2,
-                          totalKBRead);
-  }
-
-  if (mThroughCaptivePortal) {
-    if (mTotalBytesRead || mTotalBytesWritten) {
-      auto total =
-          Clamp<uint32_t>((mTotalBytesRead >> 10) + (mTotalBytesWritten >> 10),
-                          0, std::numeric_limits<uint32_t>::max());
-      Telemetry::ScalarAdd(
-          Telemetry::ScalarID::NETWORKING_DATA_TRANSFERRED_CAPTIVE_PORTAL,
-          total);
+    if (mEverUsedSpdy) {
+      glean::spdy::kbread_per_conn.Accumulate(totalKBRead);
+    } else {
+      glean::http::kbread_per_conn2.Accumulate(totalKBRead);
     }
-
-    Telemetry::ScalarAdd(
-        Telemetry::ScalarID::NETWORKING_HTTP_CONNECTIONS_CAPTIVE_PORTAL, 1);
   }
 
   if (mForceSendTimer) {
@@ -162,6 +146,9 @@ nsresult nsHttpConnection::Init(
   if (NS_SUCCEEDED(mErrorBeforeConnect)) {
     mSocketTransport->SetEventSink(this, nullptr);
     mSocketTransport->SetSecurityCallbacks(this);
+    ChangeConnectionState(ConnectionState::INITED);
+  } else {
+    SetCloseReason(ToCloseReason(mErrorBeforeConnect));
   }
 
   mTlsHandshaker = new TlsHandshaker(mConnInfo, this);
@@ -203,11 +190,16 @@ nsresult nsHttpConnection::TryTakeSubTransactions(
   return rv;
 }
 
-void nsHttpConnection::ResetTransaction(RefPtr<nsAHttpTransaction>&& trans) {
+void nsHttpConnection::ResetTransaction(RefPtr<nsAHttpTransaction>&& trans,
+                                        bool aForH2Proxy) {
   MOZ_ASSERT(trans);
   mSpdySession->SetConnection(trans->Connection());
   trans->SetConnection(nullptr);
   trans->DoNotRemoveAltSvc();
+  if (!aForH2Proxy) {
+    // Only do this when this is for websocket or webtransport over HTTP/2.
+    trans->SetResettingForTunnelConn(true);
+  }
   trans->Close(NS_ERROR_NET_RESET);
 }
 
@@ -216,12 +208,14 @@ nsresult nsHttpConnection::MoveTransactionsToSpdy(
   if (NS_FAILED(status)) {  // includes NS_ERROR_NOT_IMPLEMENTED
     MOZ_ASSERT(list.IsEmpty(), "sub transaction list not empty");
 
-    // If this transaction is used to drive websocket, we reset it to put it in
-    // the pending queue. Once we know if the server supports websocket or not,
-    // the pending queue will be processed.
+    // If this transaction is used to drive websocket or webtransport, we reset
+    // it to put it in the pending queue. Once we know if the server supports
+    // websocket or not, the pending queue will be processed.
     nsHttpTransaction* trans = mTransaction->QueryHttpTransaction();
-    if (trans && trans->IsWebsocketUpgrade()) {
-      LOG(("nsHttpConnection resetting transaction for websocket upgrade"));
+    if (trans && (trans->IsWebsocketUpgrade() || trans->IsForWebTransport())) {
+      LOG(
+          ("nsHttpConnection resetting transaction for websocket or "
+           "webtransport upgrade"));
       // websocket upgrade needs NonSticky for transaction reset
       mTransaction->MakeNonSticky();
       ResetTransaction(std::move(mTransaction));
@@ -257,8 +251,11 @@ nsresult nsHttpConnection::MoveTransactionsToSpdy(
     for (int32_t index = 0; index < count; ++index) {
       RefPtr<nsAHttpTransaction> transaction = list[index];
       nsHttpTransaction* trans = transaction->QueryHttpTransaction();
-      if (trans && trans->IsWebsocketUpgrade()) {
-        LOG(("nsHttpConnection resetting a transaction for websocket upgrade"));
+      if (trans &&
+          (trans->IsWebsocketUpgrade() || trans->IsForWebTransport())) {
+        LOG(
+            ("nsHttpConnection resetting a transaction for websocket or "
+             "webtransport upgrade"));
         // websocket upgrade needs NonSticky for transaction reset
         transaction->MakeNonSticky();
         ResetTransaction(std::move(transaction));
@@ -388,7 +385,7 @@ void nsHttpConnection::StartSpdy(nsITLSSocketControl* sslControl,
         // note that using NonSticky here won't work because it breaks
         // netwerk/test/unit/test_websocket_server.js - h1 ws with h2 proxy
         mTransaction->MakeRestartable();
-        ResetTransaction(std::move(mTransaction));
+        ResetTransaction(std::move(mTransaction), true);
         mTransaction = nullptr;
       } else {
         for (auto trans : list) {
@@ -465,13 +462,16 @@ void nsHttpConnection::PostProcessNPNSetup(bool handshakeSucceeded,
     // Telemetry for tls failure rate with and without esni;
     bool echConfigUsed = false;
     mSocketTransport->GetEchConfigUsed(&echConfigUsed);
-    TlsHandshakeResult result =
+    glean::http::EchconfigSuccessRateLabel label =
         echConfigUsed
-            ? (handshakeSucceeded ? TlsHandshakeResult::EchConfigSuccessful
-                                  : TlsHandshakeResult::EchConfigFailed)
-            : (handshakeSucceeded ? TlsHandshakeResult::NoEchConfigSuccessful
-                                  : TlsHandshakeResult::NoEchConfigFailed);
-    Telemetry::Accumulate(Telemetry::ECHCONFIG_SUCCESS_RATE, result);
+            ? (handshakeSucceeded
+                   ? glean::http::EchconfigSuccessRateLabel::eEchconfigsucceeded
+                   : glean::http::EchconfigSuccessRateLabel::eEchconfigfailed)
+            : (handshakeSucceeded ? glean::http::EchconfigSuccessRateLabel::
+                                        eNoechconfigsucceeded
+                                  : glean::http::EchconfigSuccessRateLabel::
+                                        eNoechconfigfailed);
+    glean::http::echconfig_success_rate.EnumGet(label).Add();
   }
 }
 
@@ -493,6 +493,7 @@ nsresult nsHttpConnection::Activate(nsAHttpTransaction* trans, uint32_t caps,
         caps));
 
   if (!mExperienced && !trans->IsNullTransaction()) {
+    mHasFirstHttpTransaction = true;
     if (mTlsHandshaker->NPNComplete()) {
       mExperienced = true;
     }
@@ -514,6 +515,12 @@ nsresult nsHttpConnection::Activate(nsAHttpTransaction* trans, uint32_t caps,
 
   mTransactionCaps = caps;
   mPriority = pri;
+
+  if (mHasFirstHttpTransaction && mExperienced) {
+    mHasFirstHttpTransaction = false;
+    mExperienceState |= ConnectionExperienceState::Experienced;
+  }
+
   if (mTransaction && (mUsingSpdyVersion != SpdyVersion::NONE)) {
     return AddTransaction(trans, pri);
   }
@@ -551,14 +558,27 @@ nsresult nsHttpConnection::Activate(nsAHttpTransaction* trans, uint32_t caps,
     }
   }
 
+  // take ownership of the transaction
+  mTransaction = trans;
+
   // Update security callbacks
   nsCOMPtr<nsIInterfaceRequestor> callbacks;
   trans->GetSecurityCallbacks(getter_AddRefs(callbacks));
   SetSecurityCallbacks(callbacks);
   mTlsHandshaker->SetupSSL(mInSpdyTunnel, mForcePlainText);
+  if (mTlsHandshaker->NPNComplete()) {
+    // For non-HTTPS connection, change the state to TRANSFERING directly.
+    ChangeConnectionState(ConnectionState::TRANSFERING);
+  } else {
+    ChangeConnectionState(ConnectionState::TLS_HANDSHAKING);
+  }
 
-  // take ownership of the transaction
-  mTransaction = trans;
+  nsCOMPtr<nsITLSSocketControl> tlsSocketControl;
+  if (NS_SUCCEEDED(mSocketTransport->GetTlsSocketControl(
+          getter_AddRefs(tlsSocketControl))) &&
+      tlsSocketControl) {
+    tlsSocketControl->SetBrowserId(mTransaction->BrowserId());
+  }
 
   MOZ_ASSERT(!mIdleMonitoring, "Activating a connection with an Idle Monitor");
   mIdleMonitoring = false;
@@ -648,35 +668,47 @@ nsresult nsHttpConnection::AddTransaction(nsAHttpTransaction* httpTransaction,
 
 nsresult nsHttpConnection::CreateTunnelStream(
     nsAHttpTransaction* httpTransaction, nsHttpConnection** aHttpConnection,
-    bool aIsWebSocket) {
+    bool aIsExtendedCONNECT) {
   if (!mSpdySession) {
     return NS_ERROR_UNEXPECTED;
   }
 
-  RefPtr<nsHttpConnection> conn = mSpdySession->CreateTunnelStream(
-      httpTransaction, mCallbacks, mRtt, aIsWebSocket);
+  auto result = mSpdySession->CreateTunnelStream(httpTransaction, mCallbacks,
+                                                 mRtt, aIsExtendedCONNECT);
+  if (result.isErr()) {
+    return result.unwrapErr();
+  }
+  RefPtr<nsHttpConnection> conn = result.unwrap();
+
   // We need to store the refrence of the Http2Session in the tunneled
   // connection, so when nsHttpConnection::DontReuse is called the Http2Session
   // can't be reused.
-  if (aIsWebSocket) {
+  if (aIsExtendedCONNECT) {
     LOG(
         ("nsHttpConnection::CreateTunnelStream %p Set h2 session %p to "
          "tunneled conn %p",
          this, mSpdySession.get(), conn.get()));
-    conn->mWebSocketHttp2Session = mSpdySession;
+    conn->mExtendedCONNECTHttp2Session = mSpdySession;
   }
   conn.forget(aHttpConnection);
   return NS_OK;
 }
 
 void nsHttpConnection::Close(nsresult reason, bool aIsShutdown) {
-  LOG(("nsHttpConnection::Close [this=%p reason=%" PRIx32 "]\n", this,
-       static_cast<uint32_t>(reason)));
+  LOG(("nsHttpConnection::Close [this=%p reason=%" PRIx32
+       " mExperienceState=%x]\n",
+       this, static_cast<uint32_t>(reason),
+       static_cast<uint32_t>(mExperienceState)));
+
+  if (mConnectionState != ConnectionState::CLOSED) {
+    RecordConnectionCloseTelemetry(reason);
+    ChangeConnectionState(ConnectionState::CLOSED);
+  }
 
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
   mTlsHandshaker->NotifyClose();
   mContinueHandshakeDone = nullptr;
-  mWebSocketHttp2Session = nullptr;
+  mExtendedCONNECTHttp2Session = nullptr;
   // Ensure TCP keepalive timer is stopped.
   if (mTCPKeepaliveTransitionTimer) {
     mTCPKeepaliveTransitionTimer->Cancel();
@@ -712,7 +744,7 @@ void nsHttpConnection::Close(nsresult reason, bool aIsShutdown) {
       gHttpHandler->ClearHostMapping(mConnInfo);
     }
     if (mTlsHandshaker->EarlyDataWasAvailable() &&
-        SecurityErrorThatMayNeedRestart(reason)) {
+        PossibleZeroRTTRetryError(reason)) {
       gHttpHandler->Exclude0RttTcp(mConnInfo);
     }
 
@@ -742,6 +774,13 @@ void nsHttpConnection::Close(nsresult reason, bool aIsShutdown) {
     }
     mKeepAlive = false;
   }
+
+  if (mConnInfo->GetIsTrrServiceChannel() && !mLastTRRResponseTime.IsNull() &&
+      NS_SUCCEEDED(reason) && !aIsShutdown) {
+    // Record telemetry keyed by TRR provider.
+    glean::network::trr_idle_close_time_h1.Get(TRRProviderKey())
+        .AccumulateRawDuration(TimeStamp::Now() - mLastTRRResponseTime);
+  }
 }
 
 void nsHttpConnection::MarkAsDontReuse() {
@@ -758,10 +797,10 @@ void nsHttpConnection::DontReuse() {
   MarkAsDontReuse();
   if (mSpdySession) {
     mSpdySession->DontReuse();
-  } else if (mWebSocketHttp2Session) {
-    LOG(("nsHttpConnection::DontReuse %p mWebSocketHttp2Session=%p\n", this,
-         mWebSocketHttp2Session.get()));
-    mWebSocketHttp2Session->DontReuse();
+  } else if (mExtendedCONNECTHttp2Session) {
+    LOG(("nsHttpConnection::DontReuse %p mExtendedCONNECTHttp2Session=%p\n",
+         this, mExtendedCONNECTHttp2Session.get()));
+    mExtendedCONNECTHttp2Session->DontReuse();
   }
 }
 
@@ -864,14 +903,6 @@ bool nsHttpConnection::IsAlive() {
   bool alive;
   nsresult rv = mSocketTransport->IsAlive(&alive);
   if (NS_FAILED(rv)) alive = false;
-
-// #define TEST_RESTART_LOGIC
-#ifdef TEST_RESTART_LOGIC
-  if (!alive) {
-    LOG(("pretending socket is still alive to test restart logic\n"));
-    alive = true;
-  }
-#endif
 
   return alive;
 }
@@ -1045,25 +1076,26 @@ void nsHttpConnection::HandleTunnelResponse(uint16_t responseStatus,
       *reset = true;
     }
     nsresult rv;
-    // CONNECT only flag doesn't do the tls setup. https here only
-    // ensures a proxy tunnel was used not that tls is setup.
     if (isHttps) {
-      if (!onlyConnect) {
-        if (mConnInfo->UsingHttpsProxy()) {
-          LOG(("%p new TLSFilterTransaction %s %d\n", this, mConnInfo->Origin(),
-               mConnInfo->OriginPort()));
-          SetupSecondaryTLS();
-        }
+      bool skipSSL = false;
+      if (mConnInfo->UsingHttpsProxy() ||
+          mTransactionCaps & NS_HTTP_TLS_TUNNEL) {
+        LOG(("%p SetupSecondaryTLS %s %d\n", this, mConnInfo->Origin(),
+             mConnInfo->OriginPort()));
+        SetupSecondaryTLS();
+      } else if (onlyConnect) {
+        MOZ_ASSERT(mConnInfo->UsingOnlyHttpProxy(), "Must be a HTTP proxy");
 
+        // We have CONNECT only flag and a HTTP proxy is used here, so we can
+        // just skip setting up SSL. We have to mark this as complete to finish
+        // the transaction and be upgraded.
+        mTlsHandshaker->SetNPNComplete();
+        skipSSL = true;
+      }
+
+      if (!skipSSL) {
         rv = mTlsHandshaker->InitSSLParams(false, true);
         LOG(("InitSSLParams [rv=%" PRIx32 "]\n", static_cast<uint32_t>(rv)));
-      } else {
-        // We have an https protocol but the CONNECT only flag was
-        // specified. The consumer only wants a raw socket to the
-        // proxy. We have to mark this as complete to finish the
-        // transaction and be upgraded. OnSocketReadable() uses this
-        // to detect an inactive tunnel and blocks completion.
-        mTlsHandshaker->SetNPNComplete();
       }
     }
     rv = mSocketOut->AsyncWait(this, 0, 0, nullptr);
@@ -1209,7 +1241,7 @@ uint32_t nsHttpConnection::ReadTimeoutTick(PRIntervalTime now) {
            PR_IntervalToMilliseconds(mTransaction->ResponseTimeout())));
 
       mResponseTimeoutEnabled = false;
-
+      SetCloseReason(ConnectionCloseReason::IDLE_TIMEOUT);
       // This will also close the connection
       CloseTransaction(mTransaction, NS_ERROR_NET_TIMEOUT);
       return UINT32_MAX;
@@ -1234,6 +1266,7 @@ uint32_t nsHttpConnection::ReadTimeoutTick(PRIntervalTime now) {
            gHttpHandler->TLSHandshakeTimeout()));
 
       // This will also close the connection
+      SetCloseReason(ConnectionCloseReason::TLS_TIMEOUT);
       CloseTransaction(mTransaction, NS_ERROR_NET_TIMEOUT);
       return UINT32_MAX;
     }
@@ -1474,6 +1507,13 @@ void nsHttpConnection::CloseTransaction(nsAHttpTransaction* trans,
     mSpdySession = nullptr;
   }
 
+  if ((NS_SUCCEEDED(reason) || NS_BASE_STREAM_CLOSED == reason) &&
+      trans->ConnectionInfo() &&
+      trans->ConnectionInfo()->GetIsTrrServiceChannel()) {
+    // save time of last successful response
+    mLastTRRResponseTime = TimeStamp::Now();
+  }
+
   if (mTransaction) {
     LOG(("  closing associated mTransaction"));
     mHttp1xTransactionCount += mTransaction->Http1xTransactionCount();
@@ -1558,7 +1598,10 @@ nsresult nsHttpConnection::OnReadSegment(const char* buf, uint32_t count,
   } else {
     mLastWriteTime = PR_IntervalNow();
     mSocketOutCondition = NS_OK;  // reset condition
-    if (!TunnelSetupInProgress()) mTotalBytesWritten += *countRead;
+    if (!TunnelSetupInProgress()) {
+      mTotalBytesWritten += *countRead;
+      mExperienceState |= ConnectionExperienceState::First_Request_Sent;
+    }
   }
 
   return mSocketOutCondition;
@@ -1586,14 +1629,15 @@ nsresult nsHttpConnection::OnSocketWritable() {
       return NS_ERROR_FAILURE;
     }
 
-    if (mState == HttpConnectionState::REQUEST) {
+    if (mState == HttpConnectionState::REQUEST &&
+        mTlsHandshaker->EnsureNPNComplete()) {
       // Don't need to check this each write attempt since it is only
       // updated after OnSocketWritable completes.
       // We've already done primary tls (if needed) and sent our CONNECT.
       // If we're doing a CONNECT only request there's no need to write
-      // the http transaction or do the SSL handshake here.
-      LOG(("return ok because proxy connect successful\n"));
-      return NS_OK;
+      // the http transaction.
+      LOG(("return NS_BASE_STREAM_CLOSED to make transaction closed\n"));
+      return NS_BASE_STREAM_CLOSED;
     }
   }
 
@@ -1635,9 +1679,10 @@ nsresult nsHttpConnection::OnSocketWritable() {
           }
 
           LOG(("  writing transaction request stream\n"));
-          rv = mTransaction->ReadSegmentsAgain(this,
-                                               nsIOService::gDefaultSegmentSize,
-                                               &transactionBytes, &again);
+          RefPtr<nsAHttpTransaction> transaction = mTransaction;
+          rv = transaction->ReadSegmentsAgain(this,
+                                              nsIOService::gDefaultSegmentSize,
+                                              &transactionBytes, &again);
           if (mTlsHandshaker->EarlyDataUsed()) {
             mContentBytesWritten0RTT += transactionBytes;
             if (NS_FAILED(rv) && rv != NS_BASE_STREAM_WOULD_BLOCK) {
@@ -1660,7 +1705,8 @@ nsresult nsHttpConnection::OnSocketWritable() {
          static_cast<uint32_t>(mSocketOutCondition), again));
 
     // XXX some streams return NS_BASE_STREAM_CLOSED to indicate EOF.
-    if (rv == NS_BASE_STREAM_CLOSED && !mTransaction->IsDone()) {
+    if (rv == NS_BASE_STREAM_CLOSED &&
+        (mTransaction && !mTransaction->IsDone())) {
       rv = NS_OK;
       transactionBytes = 0;
     }
@@ -1703,9 +1749,11 @@ nsresult nsHttpConnection::OnSocketWritable() {
       // When Spdy tunnel is used we need to explicitly set when a request is
       // done.
       if ((mState != HttpConnectionState::SETTING_UP_TUNNEL) && !mSpdySession) {
-        nsHttpTransaction* trans = mTransaction->QueryHttpTransaction();
+        nsHttpTransaction* trans =
+            mTransaction ? mTransaction->QueryHttpTransaction() : nullptr;
         // needed for websocket over h2 (direct)
-        if (!trans || !trans->IsWebsocketUpgrade()) {
+        if (!trans ||
+            (!trans->IsWebsocketUpgrade() && !trans->IsForWebTransport())) {
           mRequestDone = true;
         }
       }
@@ -1744,6 +1792,7 @@ nsresult nsHttpConnection::OnWriteSegment(char* buf, uint32_t count,
     mSocketInCondition = NS_BASE_STREAM_CLOSED;
   } else {
     mSocketInCondition = NS_OK;  // reset condition
+    mExperienceState |= ConnectionExperienceState::First_Response_Received;
   }
 
   return mSocketInCondition;
@@ -1806,7 +1855,8 @@ nsresult nsHttpConnection::OnSocketReadable() {
       rv = NS_ERROR_FAILURE;
       LOG(("  No Transaction In OnSocketWritable\n"));
     } else {
-      rv = mTransaction->WriteSegmentsAgain(
+      RefPtr<nsAHttpTransaction> transaction = mTransaction;
+      rv = transaction->WriteSegmentsAgain(
           this, nsIOService::gDefaultSegmentSize, &n, &again);
     }
     LOG(("nsHttpConnection::OnSocketReadable %p trans->ws rv=%" PRIx32
@@ -2253,6 +2303,11 @@ void nsHttpConnection::CheckForTraffic(bool check) {
 }
 
 void nsHttpConnection::SetEvent(nsresult aStatus) {
+  LOG(("nsHttpConnection::SetEvent [this=%p status=%" PRIx32 "]\n", this,
+       static_cast<uint32_t>(aStatus)));
+  if (!mBootstrappedTimingsSet) {
+    mBootstrappedTimingsSet = true;
+  }
   switch (aStatus) {
     case NS_NET_STATUS_RESOLVING_HOST:
       mBootstrappedTimings.domainLookupStart = TimeStamp::Now();
@@ -2295,17 +2350,17 @@ bool nsHttpConnection::NoClientCertAuth() const {
   return !tlsSocketControl->GetClientCertSent();
 }
 
-WebSocketSupport nsHttpConnection::GetWebSocketSupport() {
-  LOG3(("nsHttpConnection::GetWebSocketSupport"));
+ExtendedCONNECTSupport nsHttpConnection::GetExtendedCONNECTSupport() {
+  LOG3(("nsHttpConnection::GetExtendedCONNECTSupport"));
   if (!UsingSpdy()) {
-    return WebSocketSupport::SUPPORTED;
+    return ExtendedCONNECTSupport::SUPPORTED;
   }
-  LOG3(("nsHttpConnection::GetWebSocketSupport checking spdy session"));
+  LOG3(("nsHttpConnection::ExtendedCONNECTSupport checking spdy session"));
   if (mSpdySession) {
-    return mSpdySession->GetWebSocketSupport();
+    return mSpdySession->GetExtendedCONNECTSupport();
   }
 
-  return WebSocketSupport::NO_SUPPORT;
+  return ExtendedCONNECTSupport::NO_SUPPORT;
 }
 
 bool nsHttpConnection::IsProxyConnectInProgress() {
@@ -2376,6 +2431,8 @@ void nsHttpConnection::HandshakeDoneInternal() {
     return;
   }
 
+  ChangeConnectionState(ConnectionState::TRANSFERING);
+
   nsCOMPtr<nsITLSSocketControl> tlsSocketControl;
   GetTLSSocketControl(getter_AddRefs(tlsSocketControl));
   if (!tlsSocketControl) {
@@ -2397,6 +2454,20 @@ void nsHttpConnection::HandshakeDoneInternal() {
   nsAutoCString negotiatedNPN;
   DebugOnly<nsresult> rvDebug = securityInfo->GetNegotiatedNPN(negotiatedNPN);
   MOZ_ASSERT(NS_SUCCEEDED(rvDebug));
+
+  nsAutoCString transactionNPN;
+  transactionNPN = mConnInfo->GetNPNToken();
+  LOG(("negotiatedNPN: %s - transactionNPN: %s", negotiatedNPN.get(),
+       transactionNPN.get()));
+  if (!transactionNPN.IsEmpty() && negotiatedNPN != transactionNPN) {
+    LOG(("Resetting connection due to mismatched NPN token"));
+    mozilla::glean::network::alpn_mismatch_count.Get(negotiatedNPN).Add();
+    DontReuse();
+    if (mTransaction) {
+      mTransaction->Close(NS_ERROR_NET_RESET);
+    }
+    return;
+  }
 
   bool earlyDataAccepted = false;
   if (mTlsHandshaker->EarlyDataUsed()) {
@@ -2445,9 +2516,10 @@ void nsHttpConnection::HandshakeDoneInternal() {
   mConnInfo->SetLessThanTls13(
       (tlsVersion < nsITLSSocketControl::TLS_VERSION_1_3) &&
       (tlsVersion != nsITLSSocketControl::SSL_VERSION_UNKNOWN));
-
+#ifndef ANDROID
   mTlsHandshaker->EarlyDataTelemetry(tlsVersion, earlyDataAccepted,
                                      mContentBytesWritten0RTT);
+#endif
   mTlsHandshaker->EarlyDataDone();
 
   if (!earlyDataAccepted) {
@@ -2493,8 +2565,6 @@ void nsHttpConnection::HandshakeDoneInternal() {
       StartSpdy(tlsSocketControl, mSpdySession->SpdyVersion());
     }
   }
-
-  Telemetry::Accumulate(Telemetry::SPDY_NPN_CONNECT, UsingSpdy());
 
   mTlsHandshaker->FinishNPNSetup(true, true);
   Unused << ResumeSend();
@@ -2567,6 +2637,19 @@ nsresult nsHttpConnection::SendConnectRequest(void* closure,
   return mProxyConnectStream->ReadSegments(ReadFromStream, closure,
                                            nsIOService::gDefaultSegmentSize,
                                            transactionBytes);
+}
+
+WebTransportSessionBase* nsHttpConnection::GetWebTransportSession(
+    nsAHttpTransaction* aTransaction) {
+  LOG(
+      ("nsHttpConnection::GetWebTransportSession %p mSpdySession=%p "
+       "mExtendedCONNECTHttp2Session=%p",
+       this, mSpdySession.get(), mExtendedCONNECTHttp2Session.get()));
+  if (!mExtendedCONNECTHttp2Session) {
+    return nullptr;
+  }
+
+  return mExtendedCONNECTHttp2Session->GetWebTransportSession(aTransaction);
 }
 
 }  // namespace mozilla::net

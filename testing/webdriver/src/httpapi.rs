@@ -307,7 +307,43 @@ pub fn standard_routes<U: WebDriverExtensionRoute>() -> Vec<(Method, &'static st
             "/session/{sessionId}/actions",
             Route::ReleaseActions,
         ),
+        (Method::POST, "/session/{sessionId}/permissions", Route::SetPermission),
         (Method::POST, "/session/{sessionId}/print", Route::Print),
+        (
+            Method::POST,
+            "/session/{sessionId}/webauthn/authenticator",
+            Route::WebAuthnAddVirtualAuthenticator,
+        ),
+        (
+            Method::DELETE,
+            "/session/{sessionId}/webauthn/authenticator/{authenticatorId}",
+            Route::WebAuthnRemoveVirtualAuthenticator,
+        ),
+        (
+            Method::POST,
+            "/session/{sessionId}/webauthn/authenticator/{authenticatorId}/credential",
+            Route::WebAuthnAddCredential,
+        ),
+        (
+            Method::GET,
+            "/session/{sessionId}/webauthn/authenticator/{authenticatorId}/credentials",
+            Route::WebAuthnGetCredentials,
+        ),
+        (
+            Method::DELETE,
+            "/session/{sessionId}/webauthn/authenticator/{authenticatorId}/credentials/{credentialId}",
+            Route::WebAuthnRemoveCredential,
+        ),
+        (
+            Method::DELETE,
+            "/session/{sessionId}/webauthn/authenticator/{authenticatorId}/credentials",
+            Route::WebAuthnRemoveAllCredentials,
+        ),
+        (
+            Method::POST,
+            "/session/{sessionId}/webauthn/authenticator/{authenticatorId}/uv",
+            Route::WebAuthnSetUserVerified,
+        ),
         (Method::GET, "/status", Route::Status),
     ]
 }
@@ -379,8 +415,16 @@ pub enum Route<U: WebDriverExtensionRoute> {
     TakeScreenshot,
     TakeElementScreenshot,
     Print,
+    SetPermission,
     Status,
     Extension(U),
+    WebAuthnAddVirtualAuthenticator,
+    WebAuthnRemoveVirtualAuthenticator,
+    WebAuthnAddCredential,
+    WebAuthnGetCredentials,
+    WebAuthnRemoveCredential,
+    WebAuthnRemoveAllCredentials,
+    WebAuthnSetUserVerified,
 }
 
 pub trait WebDriverExtensionRoute: Clone + Send + PartialEq {

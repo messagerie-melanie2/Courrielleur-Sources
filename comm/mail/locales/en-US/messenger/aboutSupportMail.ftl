@@ -18,6 +18,9 @@ identity-name = Identity
 send-via-email = Send via email
 
 app-basics-telemetry = Telemetry Data
+
+app-basics-glean = Glean Data
+
 app-basics-cache-use = Cache Use
 
 mail-libs-title = Libraries
@@ -31,3 +34,6 @@ libs-rnp-status-ok = OK
 libs-rnp-status-load-failed = Failed to load. OpenPGP will not work.
 libs-rnp-status-incompatible = Incompatible version. OpenPGP will not work.
 libs-rnp-status-unofficial = Unofficial version. OpenPGP might not work as expected.
+
+libs-otr-status-ok = OK
+libs-otr-status-error = Failed to load. OTR chat encryption will not work.

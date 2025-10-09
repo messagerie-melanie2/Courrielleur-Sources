@@ -7,7 +7,13 @@ var { XMPPAccountPrototype } = ChromeUtils.importESModule(
 var { XMPPSession } = ChromeUtils.importESModule(
   "resource:///modules/xmpp-session.sys.mjs"
 );
-var { SRVRecord } = ChromeUtils.import("resource:///modules/DNS.jsm");
+
+function SRVRecord(aPrio, aWeight, aHost, aPort) {
+  this.prio = aPrio;
+  this.weight = aWeight;
+  this.host = aHost;
+  this.port = aPort;
+}
 
 function FakeXMPPSession() {}
 FakeXMPPSession.prototype = {
@@ -15,14 +21,7 @@ FakeXMPPSession.prototype = {
   _account: { __proto__: XMPPAccountPrototype },
   _host: null,
   _port: 0,
-  connect(
-    aHostOrigin,
-    aPortOrigin,
-    aSecurity,
-    aProxy,
-    aHost = aHostOrigin,
-    aPort = aPortOrigin
-  ) {},
+  connect() {},
   _connectNextRecord() {
     this.isConnectNextRecord = true;
   },
@@ -30,8 +29,8 @@ FakeXMPPSession.prototype = {
   // Used to indicate that method _connectNextRecord is called or not.
   isConnectNextRecord: false,
 
-  LOG(aMsg) {},
-  WARN(aMsg) {},
+  LOG() {},
+  WARN() {},
 };
 
 var TEST_DATA = [
@@ -94,8 +93,8 @@ var TEST_DATA = [
 ];
 
 function run_test() {
-  for (let currentQuery of TEST_DATA) {
-    let session = new FakeXMPPSession();
+  for (const currentQuery of TEST_DATA) {
+    const session = new FakeXMPPSession();
     try {
       session._handleSrvQuery(currentQuery.input);
       equal(session._srvRecords.length, currentQuery.output.length);

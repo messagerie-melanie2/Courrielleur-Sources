@@ -7,10 +7,12 @@
 /* import-globals-from item-editing/calendar-item-editing.js */
 /* import-globals-from widgets/mouseoverPreviews.js */
 
-/* globals cal */
+var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
 
 /**
  * The tree view for a CalendarTaskTree.
+ *
+ * @implements {nsITreeView}
  */
 class CalendarTaskTreeView {
   /**
@@ -80,29 +82,23 @@ class CalendarTaskTreeView {
    * Removes an array of old items from the list, and adds an array of new items if
    * they match the currently applied filter.
    *
-   * @param {object[]} newItems - An array of new items to add.
-   * @param {object[]} oldItems - An array of old items to remove.
-   * @param {boolean} [doNotSort] - Whether to re-sort the list after modifying it.
-   * @param {boolean} [selectNew] - Whether to select the new tasks.
+   * @param {calIItemBase[]} newItems - An array of new items to add.
+   * @param {calIItemBase[]} oldItems - An array of old items to remove.
+   * @param {boolean} [doNotSort=false] - Whether to re-sort the list after modifying it.
+   * @param {boolean} [selectNew=false] - Whether to select the new tasks.
    */
-  modifyItems(newItems = [], oldItems = [], doNotSort, selectNew) {
-    let selItem = this.tree.currentTask;
+  modifyItems(newItems, oldItems, doNotSort = false, selectNew = false) {
+    const selItem = this.tree.currentTask;
     let selIndex = this.tree.currentIndex;
     let firstHash = null;
-    let remIndexes = [];
+    const remIndexes = [];
 
     this.tree.beginUpdateBatch();
 
-    let idiff = new cal.item.ItemDiff();
-    idiff.load(oldItems);
-    idiff.difference(newItems);
-    idiff.complete();
-    let delItems = idiff.deletedItems;
-    let addItems = idiff.addedItems;
-    let modItems = idiff.modifiedItems;
+    const { deletedItems, addedItems, modifiedItems } = cal.item.interDiff(oldItems, newItems);
 
     // Find the indexes of the old items that need to be removed.
-    for (let item of delItems.mArray) {
+    for (const item of deletedItems) {
       if (item.hashId in this.tree.mHash2Index) {
         // The old item needs to be removed.
         remIndexes.push(this.tree.mHash2Index[item.hashId]);
@@ -111,7 +107,7 @@ class CalendarTaskTreeView {
     }
 
     // Modified items need to be updated.
-    for (let item of modItems.mArray) {
+    for (const item of modifiedItems) {
       if (item.hashId in this.tree.mHash2Index) {
         // Make sure we're using the new version of a modified item.
         this.tree.mTaskArray[this.tree.mHash2Index[item.hashId]] = item;
@@ -127,9 +123,9 @@ class CalendarTaskTreeView {
       });
 
     // Add the new items.
-    for (let item of addItems.mArray) {
+    for (const item of addedItems) {
       if (!(item.hashId in this.tree.mHash2Index)) {
-        let index = this.tree.mTaskArray.length;
+        const index = this.tree.mTaskArray.length;
         this.tree.mTaskArray.push(item);
         this.tree.mHash2Index[item.hashId] = index;
         this.tree.rowCountChanged(index, 1);
@@ -166,7 +162,7 @@ class CalendarTaskTreeView {
    * Remove all tasks from the list/tree.
    */
   clear() {
-    let count = this.tree.mTaskArray.length;
+    const count = this.tree.mTaskArray.length;
     if (count > 0) {
       this.tree.mTaskArray = [];
       this.tree.mHash2Index = {};
@@ -181,7 +177,7 @@ class CalendarTaskTreeView {
    * @param {object} item - The task object to refresh.
    */
   updateItem(item) {
-    let index = this.tree.mHash2Index[item.hashId];
+    const index = this.tree.mHash2Index[item.hashId];
     if (index) {
       this.tree.invalidateRow(index);
     }
@@ -194,17 +190,17 @@ class CalendarTaskTreeView {
    * @param {Event} event - An event.
    * @param {object} [col] - A column object.
    * @param {object} [row] - A row object.
-   * @returns {object | false} The task object related to the event or false if none found.
+   * @returns {?calITodo} the task object related to the event, if any.
    */
   getItemFromEvent(event, col, row) {
-    let { col: eventColumn, row: eventRow } = this.tree.getCellAt(event.clientX, event.clientY);
+    const { col: eventColumn, row: eventRow } = this.tree.getCellAt(event.clientX, event.clientY);
     if (col) {
       col.value = eventColumn;
     }
     if (row) {
       row.value = eventRow;
     }
-    return eventRow > -1 && this.tree.mTaskArray[eventRow];
+    return eventRow > -1 ? this.tree.mTaskArray[eventRow] : null;
   }
 
   // nsITreeView Methods and Properties
@@ -214,8 +210,8 @@ class CalendarTaskTreeView {
   }
 
   getCellProperties(row, col) {
-    let rowProps = this.getRowProperties(row);
-    let colProps = this.getColumnProperties(col);
+    const rowProps = this.getRowProperties(row);
+    const colProps = this.getColumnProperties(col);
     return rowProps + (rowProps && colProps ? " " : "") + colProps;
   }
 
@@ -225,7 +221,7 @@ class CalendarTaskTreeView {
 
   getRowProperties(row) {
     let properties = [];
-    let item = this.tree.mTaskArray[row];
+    const item = this.tree.mTaskArray[row];
     if (item.priority > 0 && item.priority < 5) {
       properties.push("highpriority");
     } else if (item.priority > 5 && item.priority < 10) {
@@ -254,7 +250,7 @@ class CalendarTaskTreeView {
   }
 
   cycleCell(row, col) {
-    let task = this.tree.mTaskArray[row];
+    const task = this.tree.mTaskArray[row];
 
     // Prevent toggling completed status for parent items of
     // repeating tasks or when the calendar is read-only.
@@ -262,9 +258,9 @@ class CalendarTaskTreeView {
       return;
     }
     if (col != null) {
-      let content = col.element.getAttribute("itemproperty");
+      const content = col.element.getAttribute("itemproperty");
       if (content == "completed") {
-        let newTask = task.clone().QueryInterface(Ci.calITodo);
+        const newTask = task.clone().QueryInterface(Ci.calITodo);
         newTask.isCompleted = !task.completedDate;
         doTransaction("modify", newTask, newTask.calendar, task, null);
       }
@@ -280,19 +276,19 @@ class CalendarTaskTreeView {
       this.sortDirection = "descending";
     }
     this.selectedColumn = col.element;
-    let selectedItems = this.tree.selectedTasks;
+    const selectedItems = this.tree.selectedTasks;
     this.tree.sortItems();
     if (selectedItems != undefined) {
       this.tree.view.selection.clearSelection();
-      for (let item of selectedItems) {
-        let index = this.tree.mHash2Index[item.hashId];
+      for (const item of selectedItems) {
+        const index = this.tree.mHash2Index[item.hashId];
         this.tree.view.selection.toggleSelect(index);
       }
     }
   }
 
   getCellText(row, col) {
-    let task = this.tree.mTaskArray[row];
+    const task = this.tree.mTaskArray[row];
     if (!task) {
       return "";
     }
@@ -301,7 +297,9 @@ class CalendarTaskTreeView {
     switch (property) {
       case "title":
         // Return title, or "Untitled" if empty/null.
-        return task.title ? task.title.replace(/\n/g, " ") : cal.l10n.getCalString("eventUntitled");
+        return task.title
+          ? task.title.replace(/\n/g, " ")
+          : CalendarTaskTreeView.l10n.formatValueSync("event-untitled");
       case "entryDate":
       case "dueDate":
       case "completedDate":
@@ -329,7 +327,7 @@ class CalendarTaskTreeView {
   }
 
   getCellValue(row, col) {
-    let task = this.tree.mTaskArray[row];
+    const task = this.tree.mTaskArray[row];
     if (!task) {
       return null;
     }
@@ -340,22 +338,23 @@ class CalendarTaskTreeView {
     return null;
   }
 
-  setCellValue(row, col, value) {
+  setCellValue() {
     return null;
   }
 
-  getImageSrc(row, col) {
+  getImageSrc() {
     return "";
   }
 
-  isEditable(row, col) {
+  isEditable() {
     return true;
   }
 
   /**
-   * Called to link the task tree to the tree view.  A null argument un-sets/un-links the tree.
+   * Called to link the task tree to the tree view.
+   * A null argument un-sets/un-links the tree.
    *
-   * @param {object | null} tree
+   * @param {?XULTreeElement} tree
    */
   setTree(tree) {
     const hasOldTree = this.tree != null;
@@ -373,21 +372,21 @@ class CalendarTaskTreeView {
     this.tree = tree;
   }
 
-  isContainer(row) {
+  isContainer() {
     return false;
   }
-  isContainerOpen(row) {
+  isContainerOpen() {
     return false;
   }
-  isContainerEmpty(row) {
-    return false;
-  }
-
-  isSeparator(row) {
+  isContainerEmpty() {
     return false;
   }
 
-  isSorted(row) {
+  isSeparator() {
+    return false;
+  }
+
+  isSorted() {
     return false;
   }
 
@@ -395,20 +394,20 @@ class CalendarTaskTreeView {
     return false;
   }
 
-  drop(row, orientation) {}
+  drop() {}
 
-  getParentIndex(row) {
+  getParentIndex() {
     return -1;
   }
 
-  getLevel(row) {
+  getLevel() {
     return 0;
   }
 
   // End nsITreeView Methods and Properties
   // Task Tree Event Handlers
 
-  onSelect(event) {}
+  onSelect() {}
 
   /**
    * Handle double click events.
@@ -453,13 +452,13 @@ class CalendarTaskTreeView {
       }
       case " ": {
         if (this.tree.currentIndex > -1) {
-          let col = this.tree.querySelector("[itemproperty='completed']");
+          const col = this.tree.querySelector("[itemproperty='completed']");
           this.cycleCell(this.tree.currentIndex, { element: col });
         }
         break;
       }
       case "Enter": {
-        let index = this.tree.currentIndex;
+        const index = this.tree.currentIndex;
         if (index > -1) {
           modifyEventWithDialog(this.tree.mTaskArray[index]);
         }
@@ -484,8 +483,8 @@ class CalendarTaskTreeView {
   /**
    * Format a datetime object for display.
    *
-   * @param {object} dateTime - From a todo object, not a JavaScript date.
-   * @returns {string} Formatted string version of the datetime ("" if invalid).
+   * @param {calIDateTime} dateTime - Datetime, from a calITodo object.
+   * @returns {string} a formatted string version of the datetime ("" if invalid).
    */
   _formatDateTime(dateTime) {
     return dateTime && dateTime.isValid
@@ -493,3 +492,9 @@ class CalendarTaskTreeView {
       : "";
   }
 }
+
+ChromeUtils.defineLazyGetter(
+  CalendarTaskTreeView,
+  "l10n",
+  () => new Localization(["calendar/calendar.ftl"], true)
+);

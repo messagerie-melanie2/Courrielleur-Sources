@@ -5,7 +5,6 @@
 "use strict";
 
 async function runTests(browser, accDoc) {
-  await waitForImageMap(browser, accDoc);
   const dpr = await getContentDPR(browser);
 
   await testChildAtPoint(
@@ -60,7 +59,9 @@ async function runTests(browser, accDoc) {
   await testChildAtPoint(dpr, 1, 1, area, area, area);
 
   info("Test image maps. Their children are not in the layout tree.");
+  await waitForImageMap(browser, accDoc);
   const imgmap = findAccessibleChildByID(accDoc, "imgmap");
+  ok(imgmap, "Image map exists");
   const theLetterA = imgmap.firstChild;
   await hitTest(browser, imgmap, theLetterA, theLetterA);
   await hitTest(
@@ -103,9 +104,86 @@ async function runTests(browser, accDoc) {
   );
 
   info("Testing wrapped text");
-  const wrappedTextP = findAccessibleChildByID(accDoc, "wrappedTextP");
-  const wrappedTextA = findAccessibleChildByID(accDoc, "wrappedTextA");
-  await hitTest(browser, wrappedTextP, wrappedTextA, wrappedTextA.firstChild);
+  const wrappedTextLinkFirstP = findAccessibleChildByID(
+    accDoc,
+    "wrappedTextLinkFirstP"
+  );
+  const wrappedTextLinkFirstA = findAccessibleChildByID(
+    accDoc,
+    "wrappedTextLinkFirstA"
+  );
+  await hitTest(
+    browser,
+    wrappedTextLinkFirstP,
+    wrappedTextLinkFirstA,
+    wrappedTextLinkFirstA.firstChild
+  );
+  const wrappedTextLeafFirstP = findAccessibleChildByID(
+    accDoc,
+    "wrappedTextLeafFirstP"
+  );
+  const wrappedTextLeafFirstMark = findAccessibleChildByID(
+    accDoc,
+    "wrappedTextLeafFirstMark"
+  );
+  await hitTest(
+    browser,
+    wrappedTextLeafFirstP,
+    wrappedTextLeafFirstMark,
+    wrappedTextLeafFirstMark.firstChild
+  );
+  const wrappedTextNestedInlineP = findAccessibleChildByID(
+    accDoc,
+    "wrappedTextNestedInlineP"
+  );
+  const wrappedTextNestedInlineEm = findAccessibleChildByID(
+    accDoc,
+    "wrappedTextNestedInlineEm"
+  );
+  const wrappedTextNestedInlineStrong = findAccessibleChildByID(
+    accDoc,
+    "wrappedTextNestedInlineStrong"
+  );
+  await hitTest(
+    browser,
+    wrappedTextNestedInlineP,
+    wrappedTextNestedInlineEm,
+    wrappedTextNestedInlineStrong.firstChild
+  );
+  const wrappedTextPre = findAccessibleChildByID(accDoc, "wrappedTextPre");
+  const wrappedTextPreCode = findAccessibleChildByID(
+    accDoc,
+    "wrappedTextPreCode"
+  );
+  await hitTest(
+    browser,
+    wrappedTextPre,
+    wrappedTextPreCode,
+    wrappedTextPreCode.firstChild
+  );
+  // hitTest() can only test the first character. We need to test a subsequent
+  // character for this case.
+  let [x, y, w] = await getContentBoundsForDOMElm(
+    browser,
+    "wrappedTextPreCode"
+  );
+  // Use the top center of the element.
+  x = x + w / 2;
+  await untilCacheIs(
+    () => getChildAtPoint(wrappedTextPre, x, y, true),
+    wrappedTextPreCode.firstChild,
+    `Wrong deepest child accessible at the point (${x}, ${y}) of wrappedTextPre, sought wrappedTextPreCode leaf`
+  );
+
+  info("Testing image");
+  const imageP = findAccessibleChildByID(accDoc, "imageP");
+  const image = findAccessibleChildByID(accDoc, "image");
+  await hitTest(browser, imageP, image, image);
+
+  info("Testing image map with 0-sized area");
+  const mapWith0AreaP = findAccessibleChildByID(accDoc, "mapWith0AreaP");
+  const mapWith0Area = findAccessibleChildByID(accDoc, "mapWith0Area");
+  await hitTest(browser, mapWith0AreaP, mapWith0Area, mapWith0Area);
 }
 
 addAccessibleTask(
@@ -148,8 +226,30 @@ addAccessibleTask(
     <p id="containerWithInaccessibleChild_p2">bye</p>
   </div>
 
-  <p id="wrappedTextP" style="width: 3ch; font-family: monospace;">
-    <a id="wrappedTextA" href="https://example.com/">a</a>b cd
+  <p id="wrappedTextLinkFirstP" style="width: 3ch; font-family: monospace;">
+    <a id="wrappedTextLinkFirstA" href="https://example.com/">a</a>b cd
+  </p>
+
+  <p id="wrappedTextLeafFirstP" style="width: 3ch; font-family: monospace;">
+    <mark id="wrappedTextLeafFirstMark">a</mark><a href="https://example.com/">b cd</a>
+  </p>
+
+  <p id="wrappedTextNestedInlineP" style="width: 1ch; font-family: monospace;">
+    <em id="wrappedTextNestedInlineEm"><strong id="wrappedTextNestedInlineStrong">y </strong>z</em>
+  </p>
+
+  <pre id="wrappedTextPre"><code id="wrappedTextPreCode">ab cd
+e</pre>
+
+  <p id="imageP">
+    <img id="image" src="http://example.com/a11y/accessible/tests/mochitest/letters.gif">
+  </p>
+
+  <map id="0Area">
+    <area shape="rect">
+  </map>
+  <p id="mapWith0AreaP">
+    <img id="mapWith0Area" src="http://example.com/a11y/accessible/tests/mochitest/letters.gif" usemap="#0Area">
   </p>
   `,
   runTests,
@@ -336,4 +436,91 @@ addAccessibleTask(
     );
   },
   { chrome: false, iframe: true, remoteIframe: true }
+);
+
+/**
+ * Verify that hit testing correctly ignores
+ * elements with pointer-events: none;
+ */
+addAccessibleTask(
+  `<div id="container" style="position:relative;"><button id="obscured">click me</button><div id="overlay" style="pointer-events:none; top:0; bottom:0; left:0; right:0; position: absolute;"></div></div><button id="clickable">I am clickable</button>`,
+  async function (browser, docAcc) {
+    const container = findAccessibleChildByID(docAcc, "container");
+    const obscured = findAccessibleChildByID(docAcc, "obscured");
+    const clickable = findAccessibleChildByID(docAcc, "clickable");
+    const dpr = await getContentDPR(browser);
+    let [targetX, targetY, targetW, targetH] = Layout.getBounds(obscured, dpr);
+    const [x, y] = Layout.getBounds(docAcc, dpr);
+    await testChildAtPoint(
+      dpr,
+      targetX - x + targetW / 2,
+      targetY - y + targetH / 2,
+      docAcc,
+      container, // Direct Child
+      obscured // Deepest Child
+    );
+
+    [targetX, targetY, targetW, targetH] = Layout.getBounds(clickable, dpr);
+    await testChildAtPoint(
+      dpr,
+      targetX - x + targetW / 2,
+      targetY - y + targetH / 2,
+      docAcc,
+      clickable, // Direct Child
+      clickable // Deepest Child
+    );
+  },
+  { chrome: false, iframe: true, remoteIframe: true }
+);
+
+/**
+ * Test hit testing on elements which change to display: contents.
+ */
+addAccessibleTask(
+  `
+<style>
+  p {
+    font-family: monospace;
+  }
+</style>
+<details id="detailsOpen" open>
+  <summary>summary</summary>
+  <p id="detailsOpenP">detailsOpenP</p>
+</details>
+<details id="details">
+  <summary>summary</summary>
+  <p id="detailsP">detailsP</p>
+</details>
+<div id="outer">
+  <p>before</p>
+  <div id="inner" role="group">
+    <p id="innerP" hidden>innerP</p>
+  </div>
+</div>
+  `,
+  async function testChangeDisplayContents(browser, docAcc) {
+    const detailsOpen = findAccessibleChildByID(docAcc, "detailsOpen");
+    const detailsOpenP = findAccessibleChildByID(docAcc, "detailsOpenP");
+    await hitTest(browser, detailsOpen, detailsOpenP, detailsOpenP.firstChild);
+
+    info("Opening details");
+    let shown = waitForEvent(EVENT_SHOW, "detailsP");
+    await invokeContentTask(browser, [], () => {
+      content.document.getElementById("details").open = true;
+    });
+    const detailsP = (await shown).accessible;
+    // There is a <slot> between details and detailsP which has display:
+    // contents.
+    await hitTest(browser, detailsP.parent, detailsP, detailsP.firstChild);
+
+    info("Setting display: contents on inner, showing innerP");
+    shown = waitForEvent(EVENT_SHOW, "innerP");
+    await invokeContentTask(browser, [], () => {
+      content.document.getElementById("inner").style.display = "contents";
+      content.document.getElementById("innerP").hidden = false;
+    });
+    const innerP = (await shown).accessible;
+    const inner = findAccessibleChildByID(docAcc, "inner");
+    await hitTest(browser, inner, innerP, innerP.firstChild);
+  }
 );

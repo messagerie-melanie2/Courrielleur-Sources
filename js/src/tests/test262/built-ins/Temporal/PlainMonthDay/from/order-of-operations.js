@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| shell-option(--enable-temporal) skip-if(!this.hasOwnProperty('Temporal')||!xulRuntime.shell) -- Temporal is not enabled unconditionally, requires shell-options
 // Copyright (C) 2020 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -9,13 +9,14 @@ includes: [compareArray.js, temporalHelpers.js]
 features: [Temporal]
 ---*/
 
+const expectedOptionsReading = [
+  "get options.overflow",
+  "get options.overflow.toString",
+  "call options.overflow.toString",
+];
+
 const expected = [
   "get fields.calendar",
-  // ToTemporalCalendarWithISODefault
-  "has fields.calendar.calendar",
-  // CalendarFields
-  "get fields.calendar.fields",
-  "call fields.calendar.fields",
   // PrepareTemporalFields
   "get fields.day",
   "get fields.day.valueOf",
@@ -29,14 +30,7 @@ const expected = [
   "get fields.year",
   "get fields.year.valueOf",
   "call fields.year.valueOf",
-  // CalendarMonthDayFromFields
-  "get fields.calendar.monthDayFromFields",
-  "call fields.calendar.monthDayFromFields",
-  // inside Calendar.p.monthDayFromFields
-  "get options.overflow",
-  "get options.overflow.toString",
-  "call options.overflow.toString",
-];
+].concat(expectedOptionsReading);
 const actual = [];
 
 const fields = TemporalHelpers.propertyBagObserver(actual, {
@@ -44,12 +38,25 @@ const fields = TemporalHelpers.propertyBagObserver(actual, {
   month: 1.7,
   monthCode: "M01",
   day: 1.7,
-  calendar: TemporalHelpers.calendarObserver(actual, "fields.calendar"),
-}, "fields");
+  calendar: "iso8601",
+}, "fields", ["calendar"]);
 
-const options = TemporalHelpers.propertyBagObserver(actual, { overflow: "constrain" }, "options");
+const options = TemporalHelpers.propertyBagObserver(actual, {
+  overflow: "constrain",
+  extra: "property",
+}, "options");
 
 Temporal.PlainMonthDay.from(fields, options);
 assert.compareArray(actual, expected, "order of operations");
+
+actual.splice(0);  // clear for next test
+
+Temporal.PlainMonthDay.from(new Temporal.PlainMonthDay(5, 2), options);
+assert.compareArray(actual, expectedOptionsReading, "order of operations when cloning a PlainMonthDay instance");
+
+actual.splice(0);
+
+Temporal.PlainMonthDay.from("05-02", options);
+assert.compareArray(actual, expectedOptionsReading, "order of operations when parsing a string");
 
 reportCompare(0, 0);

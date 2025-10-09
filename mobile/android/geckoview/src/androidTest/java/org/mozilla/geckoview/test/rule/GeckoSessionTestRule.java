@@ -68,7 +68,9 @@ import org.mozilla.gecko.util.ThreadUtils;
 import org.mozilla.geckoview.Autocomplete;
 import org.mozilla.geckoview.Autofill;
 import org.mozilla.geckoview.ContentBlocking;
+import org.mozilla.geckoview.ExperimentDelegate;
 import org.mozilla.geckoview.GeckoDisplay;
+import org.mozilla.geckoview.GeckoPreferenceController;
 import org.mozilla.geckoview.GeckoResult;
 import org.mozilla.geckoview.GeckoRuntime;
 import org.mozilla.geckoview.GeckoRuntime.ActivityDelegate;
@@ -88,8 +90,8 @@ import org.mozilla.geckoview.GeckoSession.TextInputDelegate;
 import org.mozilla.geckoview.GeckoSessionSettings;
 import org.mozilla.geckoview.MediaSession;
 import org.mozilla.geckoview.OrientationController;
-import org.mozilla.geckoview.RuntimeTelemetry;
 import org.mozilla.geckoview.SessionTextInput;
+import org.mozilla.geckoview.TranslationsController;
 import org.mozilla.geckoview.WebExtension;
 import org.mozilla.geckoview.WebExtensionController;
 import org.mozilla.geckoview.WebNotificationDelegate;
@@ -775,6 +777,7 @@ public class GeckoSessionTestRule implements TestRule {
     DEFAULT_DELEGATES.add(ScrollDelegate.class);
     DEFAULT_DELEGATES.add(SelectionActionDelegate.class);
     DEFAULT_DELEGATES.add(TextInputDelegate.class);
+    DEFAULT_DELEGATES.add(TranslationsController.SessionTranslation.Delegate.class);
   }
 
   private static final Set<Class<?>> DEFAULT_RUNTIME_DELEGATES = new HashSet<>();
@@ -807,6 +810,7 @@ public class GeckoSessionTestRule implements TestRule {
           ScrollDelegate,
           SelectionActionDelegate,
           TextInputDelegate,
+          TranslationsController.SessionTranslation.Delegate,
           // Runtime delegates
           ActivityDelegate,
           Autocomplete.StorageDelegate,
@@ -821,13 +825,12 @@ public class GeckoSessionTestRule implements TestRule {
       return null;
     }
 
-    // The default impl of this will call `onLocationChange(2)` which causes duplicated
-    // call records, to avoid that we implement it here so that it doesn't do anything.
     @Override
     public void onLocationChange(
         @NonNull GeckoSession session,
         @Nullable String url,
-        @NonNull List<ContentPermission> perms) {}
+        @NonNull final List<ContentPermission> perms,
+        @NonNull Boolean hasUserGesture) {}
 
     @Override
     public void onShutdown() {}
@@ -866,8 +869,24 @@ public class GeckoSessionTestRule implements TestRule {
   protected boolean mClosedSession;
   protected boolean mIgnoreCrash;
 
+  @Nullable private Map<String, String> mServerCustomHeaders = null;
+  @Nullable private Map<String, TestServer.ResponseModifier> mResponseModifiers = null;
+
   public GeckoSessionTestRule() {
     mDefaultSettings = new GeckoSessionSettings.Builder().build();
+  }
+
+  public GeckoSessionTestRule(@Nullable Map<String, String> mServerCustomHeaders) {
+    this();
+    this.mServerCustomHeaders = mServerCustomHeaders;
+  }
+
+  public GeckoSessionTestRule(
+      @Nullable Map<String, String> serverCustomHeaders,
+      @Nullable Map<String, TestServer.ResponseModifier> responseModifiers) {
+    this();
+    this.mServerCustomHeaders = serverCustomHeaders;
+    this.mResponseModifiers = responseModifiers;
   }
 
   /**
@@ -967,8 +986,17 @@ public class GeckoSessionTestRule implements TestRule {
     return RuntimeCreator.getRuntime();
   }
 
-  public void setTelemetryDelegate(final RuntimeTelemetry.Delegate delegate) {
-    RuntimeCreator.setTelemetryDelegate(delegate);
+  /** Sets an experiment delegate on the runtime creator. */
+  public void setExperimentDelegate(final ExperimentDelegate delegate) {
+    RuntimeCreator.setExperimentDelegate(delegate);
+  }
+
+  /**
+   * Convenience method to facilitate setting a preference delegate in order to use the test harness
+   * delegate callback framework.
+   */
+  public void setPreferenceDelegate(final GeckoPreferenceController.Observer.Delegate delegate) {
+    RuntimeCreator.setGeckoPreferenceDelegate(delegate);
   }
 
   public @Nullable GeckoDisplay getDisplay() {
@@ -988,6 +1016,9 @@ public class GeckoSessionTestRule implements TestRule {
       session.setAutofillDelegate((Autofill.Delegate) delegate);
     } else if (cls == MediaSession.Delegate.class) {
       session.setMediaSessionDelegate((MediaSession.Delegate) delegate);
+    } else if (cls == TranslationsController.SessionTranslation.Delegate.class) {
+      session.setTranslationsSessionDelegate(
+          (TranslationsController.SessionTranslation.Delegate) delegate);
     } else {
       GeckoSession.class.getMethod("set" + cls.getSimpleName(), cls).invoke(session, delegate);
     }
@@ -1060,6 +1091,9 @@ public class GeckoSessionTestRule implements TestRule {
     if (cls == MediaSession.Delegate.class) {
       return GeckoSession.class.getMethod("getMediaSessionDelegate").invoke(session);
     }
+    if (cls == TranslationsController.SessionTranslation.Delegate.class) {
+      return GeckoSession.class.getMethod("getTranslationsSessionDelegate").invoke(session);
+    }
     return GeckoSession.class.getMethod("get" + cls.getSimpleName()).invoke(session);
   }
 
@@ -1122,7 +1156,7 @@ public class GeckoSessionTestRule implements TestRule {
 
   private static RuntimeException unwrapRuntimeException(final Throwable e) {
     final Throwable cause = e.getCause();
-    if (cause != null && cause instanceof RuntimeException) {
+    if (cause instanceof RuntimeException) {
       return (RuntimeException) cause;
     } else if (e instanceof RuntimeException) {
       return (RuntimeException) e;
@@ -1431,7 +1465,7 @@ public class GeckoSessionTestRule implements TestRule {
     mLastWaitStart = 0;
     mLastWaitEnd = 0;
     mTimeoutMillis = 0;
-    RuntimeCreator.setTelemetryDelegate(null);
+    RuntimeCreator.setExperimentDelegate(null);
   }
 
   // These markers are used by runjunit.py to capture the logcat of a test
@@ -1464,7 +1498,11 @@ public class GeckoSessionTestRule implements TestRule {
       public void evaluate() throws Throwable {
         final AtomicReference<Throwable> exceptionRef = new AtomicReference<>();
 
-        mServer = new TestServer(InstrumentationRegistry.getInstrumentation().getTargetContext());
+        mServer =
+            new TestServer(
+                InstrumentationRegistry.getInstrumentation().getTargetContext(),
+                mServerCustomHeaders,
+                mResponseModifiers);
 
         mInstrumentation.runOnMainSync(
             () -> {
@@ -2039,14 +2077,23 @@ public class GeckoSessionTestRule implements TestRule {
   }
 
   /**
-   * Synthesize a mouse move event at the specified location using the main session. The session
-   * must have been created with a display.
+   * Synthesize a mouse event at the specified location using the main session. The session must
+   * have been created with a display.
    *
    * @param session Target session
+   * @param downTime A time when any buttons are down
+   * @param action An action such as MotionEvent.ACTION_DOWN
    * @param x X coordinate
    * @param y Y coordinate
+   * @param buttonState A button stats such as MotionEvent.BUTTON_PRIMARY
    */
-  public void synthesizeMouseMove(final @NonNull GeckoSession session, final int x, final int y) {
+  public void synthesizeMouse(
+      final @NonNull GeckoSession session,
+      final long downTime,
+      final int action,
+      final int x,
+      final int y,
+      final int buttonState) {
     final MotionEvent.PointerProperties pointerProperty = new MotionEvent.PointerProperties();
     pointerProperty.id = 0;
     pointerProperty.toolType = MotionEvent.TOOL_TYPE_MOUSE;
@@ -2060,17 +2107,16 @@ public class GeckoSessionTestRule implements TestRule {
     final MotionEvent.PointerCoords[] pointerCoords =
         new MotionEvent.PointerCoords[] {pointerCoord};
 
-    final long moveTime = SystemClock.uptimeMillis();
     final MotionEvent moveEvent =
         MotionEvent.obtain(
-            moveTime,
+            downTime,
             SystemClock.uptimeMillis(),
-            MotionEvent.ACTION_HOVER_MOVE,
+            action,
             1,
             pointerProperties,
             pointerCoords,
             0,
-            0,
+            buttonState,
             1.0f,
             1.0f,
             0,
@@ -2078,6 +2124,19 @@ public class GeckoSessionTestRule implements TestRule {
             InputDevice.SOURCE_MOUSE,
             0);
     session.getPanZoomController().onTouchEvent(moveEvent);
+  }
+
+  /**
+   * Synthesize a mouse move event at the specified location using the main session. The session
+   * must have been created with a display.
+   *
+   * @param session Target session
+   * @param x X coordinate
+   * @param y Y coordinate
+   */
+  public void synthesizeMouseMove(final @NonNull GeckoSession session, final int x, final int y) {
+    final long moveTime = SystemClock.uptimeMillis();
+    synthesizeMouse(session, moveTime, MotionEvent.ACTION_HOVER_MOVE, x, y, 0);
   }
 
   /**
@@ -2426,6 +2485,10 @@ public class GeckoSessionTestRule implements TestRule {
     return dblPid.intValue();
   }
 
+  public void waitForContentTransformsReceived(final @NonNull GeckoSession session) {
+    webExtensionApiCall(session, "WaitForContentTransformsReceived", null);
+  }
+
   public String getProfilePath() {
     return (String) webExtensionApiCall("GetProfilePath", null);
   }
@@ -2452,8 +2515,7 @@ public class GeckoSessionTestRule implements TestRule {
   }
 
   public boolean getActive(final @NonNull GeckoSession session) {
-    final Boolean isActive = (Boolean) webExtensionApiCall(session, "GetActive", null);
-    return isActive;
+    return (Boolean) webExtensionApiCall(session, "GetActive", null);
   }
 
   public void triggerCookieBannerDetected(final @NonNull GeckoSession session) {
@@ -2462,6 +2524,20 @@ public class GeckoSessionTestRule implements TestRule {
 
   public void triggerCookieBannerHandled(final @NonNull GeckoSession session) {
     webExtensionApiCall(session, "TriggerCookieBannerHandled", null);
+  }
+
+  public void triggerTranslationsOffer(final @NonNull GeckoSession session) {
+    webExtensionApiCall(session, "TriggerTranslationsOffer", null);
+  }
+
+  public void triggerLanguageStateChange(
+      final @NonNull GeckoSession session, final @NonNull JSONObject languageState) {
+    webExtensionApiCall(
+        session,
+        "TriggerLanguageStateChange",
+        args -> {
+          args.put("languageState", languageState);
+        });
   }
 
   private Object waitForMessage(final WebExtension.Port port, final String id) {
@@ -2614,6 +2690,22 @@ public class GeckoSessionTestRule implements TestRule {
   }
 
   /**
+   * Called to clear a user set value from a specific preference. This will, in effect, reset the
+   * value to the default value. If no default value exists the preference will cease to exist.
+   *
+   * <p>See nsIPrefBranch.idl for more details.
+   *
+   * @param pref Pref name.
+   */
+  public void clearUserPref(final @NonNull String pref) {
+    webExtensionApiCall(
+        "ClearUserPref",
+        args -> {
+          args.put("pref", pref);
+        });
+  }
+
+  /**
    * Gets the color of a link for a given selector.
    *
    * @param selector Selector that matches the link
@@ -2668,21 +2760,6 @@ public class GeckoSessionTestRule implements TestRule {
     void setArgs(JSONObject object) throws JSONException;
   }
 
-  /**
-   * Sets value to the given scalar.
-   *
-   * @param id the scalar to be set.
-   * @param value the value to set.
-   */
-  public <T> void setScalar(final String id, final T value) {
-    webExtensionApiCall(
-        "SetScalar",
-        args -> {
-          args.put("id", id);
-          args.put("value", value);
-        });
-  }
-
   /** Invokes nsIDOMWindowUtils.setResolutionAndScaleTo. */
   public void setResolutionAndScaleTo(final GeckoSession session, final float resolution) {
     webExtensionApiCall(
@@ -2698,9 +2775,24 @@ public class GeckoSessionTestRule implements TestRule {
     webExtensionApiCall(session, "FlushApzRepaints", null);
   }
 
+  /** Invokes nsIDOMWindowUtils.zoomToFocusedInput. */
+  public void zoomToFocusedInput(final GeckoSession session) {
+    webExtensionApiCall(session, "ZoomToFocusedInput", null);
+  }
+
   /** Invokes a simplified version of promiseAllPaintsDone in paint_listener.js. */
   public void promiseAllPaintsDone(final GeckoSession session) {
     webExtensionApiCall(session, "PromiseAllPaintsDone", null);
+  }
+
+  /** Invokes nsIDOMWindowUtils.setHandlingUserInput. */
+  public void setHandlingUserInput(final GeckoSession session, final boolean handlingUserInput) {
+    webExtensionApiCall(
+        session,
+        "SetHandlingUserInput",
+        args -> {
+          args.put("handlingUserInput", handlingUserInput);
+        });
   }
 
   /** Returns true if Gecko is using a GPU process. */
@@ -2721,6 +2813,16 @@ public class GeckoSessionTestRule implements TestRule {
   /** Clears sites from the HSTS list. */
   public void clearHSTSState() {
     webExtensionApiCall("ClearHSTSState", null);
+  }
+
+  /** Checks if SHIP is running. */
+  public boolean isSessionHistoryInParentRunning() {
+    return (Boolean) webExtensionApiCall("IsSessionHistoryInParentRunning", null);
+  }
+
+  /** Checks if fission is running. */
+  public boolean isFissionRunning() {
+    return (Boolean) webExtensionApiCall("IsFissionRunning", null);
   }
 
   private Object webExtensionApiCall(

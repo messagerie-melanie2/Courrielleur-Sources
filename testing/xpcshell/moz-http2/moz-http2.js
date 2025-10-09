@@ -18,6 +18,7 @@ var crypto = require("crypto");
 const dnsPacket = require(`${node_http2_root}/../dns-packet`);
 const ip = require(`${node_http2_root}/../node_ip`);
 const { fork } = require("child_process");
+const { spawn } = require("child_process");
 const path = require("path");
 const zlib = require("zlib");
 
@@ -56,7 +57,7 @@ var framer_module = node_http2_root + "/lib/protocol/framer";
 var http2_framer = require(framer_module);
 var Serializer = http2_framer.Serializer;
 var originalTransform = Serializer.prototype._transform;
-var newTransform = function (frame, encoding, done) {
+var newTransform = function (frame) {
   if (frame.type == "DATA") {
     // Insert our empty DATA frame
     const emptyFrame = {};
@@ -181,6 +182,15 @@ moreData.prototype = {
     } else {
       setTimeout(executeRunLater, 1, this);
     }
+  },
+};
+
+var resetLater = function () {};
+resetLater.prototype = {
+  resp: null,
+
+  onTimeout: function onTimeout() {
+    this.resp.stream.reset("HTTP_1_1_REQUIRED");
   },
 };
 
@@ -347,6 +357,7 @@ function handleRequest(req, res) {
       return null;
     }
 
+    let answers = [];
     if (packet.questions.length && packet.questions[0].name.endsWith(".pd")) {
       // Bug 1543811: test edns padding extension. Return whether padding was
       // included via the first half of the ip address (1.1 vs 2.2) and the
@@ -357,6 +368,16 @@ function handleRequest(req, res) {
         packet.additionals[0].type == "OPT" &&
         packet.additionals[0].options.some(o => o.type === "PADDING")
       ) {
+        // add padding to the response, because the client must be able ignore it
+        answers.push({
+          name: ".",
+          type: "PADDING",
+          data: Buffer.from(
+            // PADDING_PADDING_PADDING
+            "50414444494e475f50414444494e475f50414444494e47",
+            "hex"
+          ),
+        });
         responseIP =
           "1.1." +
           ((requestPayload.length >> 8) & 0xff) +
@@ -397,7 +418,6 @@ function handleRequest(req, res) {
       return responseIP;
     }
 
-    let answers = [];
     if (
       responseIP != "none" &&
       responseType(packet, responseIP) == packet.questions[0].type
@@ -503,7 +523,7 @@ function handleRequest(req, res) {
         arg => {
           writeResponse(arg[0], arg[1]);
         },
-        delay,
+        delay + 1,
         [response, buf]
       );
       return;
@@ -774,6 +794,17 @@ function handleRequest(req, res) {
       return;
     }
     res.setHeader("X-H11Required-Stream-Ok", h11required_header);
+  } else if (u.pathname === "/h11required_with_content") {
+    if (req.httpVersionMajor === 2) {
+      res.setHeader("Content-Type", "text/plain");
+      res.setHeader("Content-Length", "ok".length);
+      res.writeHead(200);
+      res.write("ok");
+      let resetFunc = new resetLater();
+      resetFunc.resp = res;
+      setTimeout(executeRunLater, 1, resetFunc);
+      return;
+    }
   } else if (u.pathname === "/rstonce") {
     if (!didRst && req.httpVersionMajor === 2) {
       didRst = true;
@@ -824,6 +855,16 @@ function handleRequest(req, res) {
     });
     push.writeHead(200, pushResponseHeaders);
     push.end("ok");
+  } else if (u.pathname === "/hugecontinuedheaders") {
+    for (let i = 0; i < u.query.size; i++) {
+      res.setHeader(
+        "X-Test-Header-" + i,
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".repeat(1024)
+      );
+    }
+    res.writeHead(200);
+    res.end(content);
+    return;
   } else if (u.pathname === "/altsvc1") {
     if (
       req.httpVersionMajor != 2 ||
@@ -862,16 +903,20 @@ function handleRequest(req, res) {
   // for use with test_http3.js
   else if (u.pathname === "/http3-test") {
     res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Alt-Svc", "h3-29=" + req.headers["x-altsvc"]);
+    res.setHeader("Alt-Svc", "h3=" + req.headers["x-altsvc"]);
   }
   // for use with test_http3.js
   else if (u.pathname === "/http3-test2") {
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader(
       "Alt-Svc",
-      "h2=foo2.example.com:8000,h3-29=" +
-        req.headers["x-altsvc"] +
-        ",h3-30=foo2.example.com:8443"
+      "h2=foo2.example.com:8000,h3=" + req.headers["x-altsvc"]
+    );
+  } else if (u.pathname === "/http3-test3") {
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader(
+      "Alt-Svc",
+      "h3-29=" + req.headers["x-altsvc"] + ",h3=" + req.headers["x-altsvc"]
     );
   }
   // for use with test_trr.js
@@ -1143,7 +1188,7 @@ function handleRequest(req, res) {
           flush: false,
           data: {
             priority,
-            name: "foo.example.com",
+            name: packet.questions[0].name,
             values: [
               { key: "alpn", value: "h2" },
               { key: "port", value: serverPort },
@@ -1521,6 +1566,25 @@ function handleRequest(req, res) {
       res.setHeader("x-conditional", "true");
     }
     // default response from here
+  } else if (u.pathname === "/immutable-test-expired-with-Expires-header") {
+    res.setHeader("Cache-Control", "immutable");
+    res.setHeader("Expires", "Mon, 01 Jan 1990 00:00:00 GMT");
+    res.setHeader("Etag", "3");
+
+    if (req.headers["if-none-match"]) {
+      res.setHeader("x-conditional", "true");
+    }
+  } else if (
+    u.pathname === "/immutable-test-expired-with-last-modified-header"
+  ) {
+    res.setHeader("Cache-Control", "public, max-age=3600, immutable");
+    res.setHeader("Date", "Mon, 01 Jan 1990 00:00:00 GMT");
+    res.setHeader("Last-modified", "Mon, 01 Jan 1990 00:00:00 GMT");
+    res.setHeader("Etag", "4");
+
+    if (req.headers["if-none-match"]) {
+      res.setHeader("x-conditional", "true");
+    }
   } else if (u.pathname === "/origin-4") {
     let originList = [];
     req.stream.connection.originFrame(originList);
@@ -1649,7 +1713,7 @@ function handleRequest(req, res) {
   } else if (u.pathname === "/redirect_to_http") {
     res.setHeader(
       "Location",
-      `http://test.httpsrr.redirect.com:${u.query.port}/redirect_to_http`
+      `http://test.httpsrr.redirect.com:${u.query.port}/redirect_to_http?port=${u.query.port}`
     );
     res.writeHead(307);
     res.end("");
@@ -1724,7 +1788,7 @@ server.on("connection", function (socket) {
   });
 });
 
-server.on("connect", function (req, clientSocket, head) {
+server.on("connect", function (req, clientSocket) {
   clientSocket.write(
     "HTTP/1.1 404 Not Found\r\nProxy-agent: Node.js-Proxy\r\n\r\n"
   );
@@ -1789,6 +1853,17 @@ let httpServer = http.createServer((req, res) => {
     if (u.pathname == "/fork") {
       let id = forkProcess();
       computeAndSendBackResponse(id);
+      return;
+    }
+
+    if (u.pathname == "/forkH3Server") {
+      forkH3Server(u.query.path, u.query.dbPath)
+        .then(result => {
+          computeAndSendBackResponse(result);
+        })
+        .catch(error => {
+          computeAndSendBackResponse(error);
+        });
       return;
     }
 
@@ -1859,10 +1934,27 @@ let httpServer = http.createServer((req, res) => {
   });
 });
 
+function forkH3Server(serverPath, dbPath) {
+  const args = [dbPath];
+  let process = spawn(serverPath, args);
+  let id = forkProcessInternal(process);
+  // Return a promise that resolves when we receive data from stdout
+  return new Promise((resolve, _) => {
+    process.stdout.on("data", data => {
+      console.log(data.toString());
+      resolve({ id, output: data.toString().trim() });
+    });
+  });
+}
+
 function forkProcess() {
   let scriptPath = path.resolve(__dirname, "moz-http2-child.js");
-  let id = makeid(6);
   let forked = fork(scriptPath);
+  return forkProcessInternal(forked);
+}
+
+function forkProcessInternal(forked) {
+  let id = makeid(6);
   forked.errors = "";
   globalObjects[id] = forked;
   forked.on("message", msg => {

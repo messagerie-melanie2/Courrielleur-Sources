@@ -9,15 +9,14 @@ impl<'a> Parse<'a> for Comments<'a> {
         let comments = parser.step(|mut cursor| {
             let mut comments = Vec::new();
             loop {
-                let (comment, c) = match cursor.comment() {
+                let (comment, c) = match cursor.comment()? {
                     Some(pair) => pair,
                     None => break,
                 };
                 cursor = c;
-                comments.push(if comment.starts_with(";;") {
-                    &comment[2..]
-                } else {
-                    &comment[2..comment.len() - 2]
+                comments.push(match comment.strip_prefix(";;") {
+                    Some(rest) => rest,
+                    None => &comment[2..comment.len() - 2],
                 });
             }
             Ok((comments, cursor))

@@ -65,29 +65,16 @@ class SearchUtils {
    *   Match at each sub domain, for example "a.b.c.com" will be matched at
    *   "a.b.c.com", "b.c.com", and "c.com". Partial matches are always returned
    *   after perfect matches.
-   * @param {boolean} [options.onlyEnabled]
-   *   Match only engines that have not been disabled on the Search Preferences
-   *   list.
-   * @returns {Array<nsISearchEngine>}
+   * @returns {Promise<nsISearchEngine[]>}
    *   An array of all matching engines. An empty array if there are none.
    */
-  async enginesForDomainPrefix(
-    prefix,
-    { matchAllDomainLevels = false, onlyEnabled = false } = {}
-  ) {
+  async enginesForDomainPrefix(prefix, { matchAllDomainLevels = false } = {}) {
     try {
       await this.init();
     } catch {
       return [];
     }
     prefix = prefix.toLowerCase();
-
-    let disabledEngines = onlyEnabled
-      ? Services.prefs
-          .getStringPref("browser.search.hiddenOneOffs", "")
-          .split(",")
-          .filter(e => !!e)
-      : [];
 
     // Array of partially matched engines, added through matchPrefix().
     let partialMatchEngines = [];
@@ -104,7 +91,7 @@ class SearchUtils {
     let perfectMatchEngines = [];
     let perfectMatchEngineSet = new Set();
     for (let engine of await Services.search.getVisibleEngines()) {
-      if (disabledEngines.includes(engine.name)) {
+      if (engine.hideOneOffButton) {
         continue;
       }
       let domain = engine.searchUrlDomain;
@@ -144,12 +131,16 @@ class SearchUtils {
   /**
    * Gets the engine with a given alias.
    *
+   * Note: engines returned from this list may be updated at any time. If you
+   * are caching the icon or other fields for more than a single engagement of
+   * the urlbar, consider observing the SEARCH_ENGINE_TOPIC.
+   *
    * @param {string} alias
    *   A search engine alias.  The alias string comparison is case insensitive.
    * @param {string} [searchString]
    *   Optional. If provided, we also enforce that there must be a space after
    *   the alias in the search string.
-   * @returns {nsISearchEngine}
+   * @returns {Promise<nsISearchEngine>}
    *   The matching engine or null if there isn't one.
    */
   async engineForAlias(alias, searchString = null) {
@@ -172,11 +163,8 @@ class SearchUtils {
   }
 
   /**
-   * The list of engines with token ("@") aliases.
-   *
-   * @returns {Array}
-   *   Array of objects { engine, tokenAliases } for token alias engines or
-   *   null if SearchService has not initialized.
+   * The list of engines with token ("@") aliases. May be empty if the search
+   * service has not initialized.
    */
   async tokenAliasEngines() {
     try {
@@ -273,6 +261,7 @@ class SearchUtils {
     } else if (searchMode.source) {
       scalarKey =
         lazy.UrlbarUtils.getResultSourceName(searchMode.source) || "other";
+      scalarKey += searchMode.restrictType ? `_${searchMode.restrictType}` : "";
     }
 
     return scalarKey;
@@ -296,35 +285,6 @@ class SearchUtils {
         }
       }
     }
-  }
-
-  /**
-   * Checks if the given uri is constructed by the default search engine.
-   * When passing URI's to check against, it's best to use the "original" URI
-   * that was requested, as the server may have redirected the request.
-   *
-   * @param {nsIURI | string} uri
-   *   The uri to check.
-   * @returns {string}
-   *   The search terms used.
-   *   Will return an empty string if it's not a default SERP
-   *   or if the default engine hasn't been initialized.
-   */
-  getSearchTermIfDefaultSerpUri(uri) {
-    if (!Services.search.hasSuccessfullyInitialized || !uri) {
-      return "";
-    }
-
-    // Creating a URI can throw.
-    try {
-      if (typeof uri == "string") {
-        uri = Services.io.newURI(uri);
-      }
-    } catch (e) {
-      return "";
-    }
-
-    return Services.search.defaultEngine.searchTermFromResult(uri);
   }
 
   /**

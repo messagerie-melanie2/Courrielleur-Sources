@@ -5,10 +5,8 @@
 #ifndef __nsRssIncomingServer_h
 #define __nsRssIncomingServer_h
 
-#include "mozilla/Attributes.h"
 #include "nsIRssIncomingServer.h"
 #include "nsILocalMailIncomingServer.h"
-#include "nsMsgIncomingServer.h"
 #include "nsIMsgFolderListener.h"
 #include "nsMailboxServer.h"
 
@@ -31,7 +29,6 @@ class nsRssIncomingServer : public nsMailboxServer,
   NS_IMETHOD GetServerRequiresPasswordForBiff(
       bool* aServerRequiresPasswordForBiff) override;
   NS_IMETHOD GetCanSearchMessages(bool* canSearchMessages) override;
-  NS_IMETHOD GetSortOrder(int32_t* aSortOrder) override;
 
   nsRssIncomingServer();
 

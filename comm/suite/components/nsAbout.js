@@ -2,7 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 var {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 const SCRIPT = Ci.nsIAboutModule.ALLOW_SCRIPT;
@@ -36,7 +35,7 @@ About.prototype = {
   // synctabsURI: "chrome://communicator/content/aboutSyncTabs.xul",
 
   classID: Components.ID("{d54f2c89-8fd6-4eeb-a7a4-51d4dcdf460f}"),
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIAboutModule]),
+  QueryInterface: ChromeUtils.generateQI(["nsIAboutModule"]);
 
   getModule: function(aURI) {
     return aURI.pathQueryRef.replace(/-|\W.*$/g, "").toLowerCase();

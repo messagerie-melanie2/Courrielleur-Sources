@@ -21,22 +21,11 @@ var _testLoggerContexts = [];
 var _testLoggerContextId = 0;
 var _testLoggerActiveContext;
 
-var _logHelperInterestedListeners = false;
-
 /**
  * Let test code extend the list of allowed XPCOM errors.
  */
 var logHelperAllowedErrors = ["NS_ERROR_FAILURE"];
 var logHelperAllowedWarnings = [/Quirks Mode/];
-
-/**
- * Let other test helping code decide whether to register for potentially
- *  expensive notifications based on whether anyone can even hear those
- *  results.
- */
-function logHelperHasInterestedListeners() {
-  return _logHelperInterestedListeners;
-}
 
 /**
  * Tunnel nsIScriptErrors that show up on the error console to ConsoleInstance.
@@ -59,7 +48,7 @@ var _errorConsoleTunnel = {
     Services.obs.removeObserver(this, "quit-application");
   },
 
-  observe(aMessage, aTopic, aData) {
+  observe(aMessage, aTopic) {
     if (aTopic == "quit-application") {
       this.shutdown();
       return;
@@ -76,16 +65,16 @@ var _errorConsoleTunnel = {
         // An XPCOM error aMessage looks like this:
         //   [JavaScript Error: "uncaught exception: 2147500037"]
         // Capture the number, and allow known XPCOM results.
-        let matches = /JavaScript Error: "(\w+)/.exec(aMessage);
+        const matches = /JavaScript Error: "(\w+)/.exec(aMessage);
         let XPCOMresult = null;
         if (matches) {
-          for (let result in Cr) {
+          for (const result in Cr) {
             if (matches[1] == Cr[result]) {
               XPCOMresult = result;
               break;
             }
           }
-          let message = XPCOMresult || aMessage;
+          const message = XPCOMresult || aMessage;
           if (logHelperAllowedErrors.some(e => e == matches[1])) {
             if (XPCOMresult) {
               info("Ignoring XPCOM error: " + message);
@@ -142,21 +131,6 @@ function _init_log_helper() {
   //  in more situations where we might otherwise silently be cool with bad
   //  things happening.
   _errorConsoleTunnel.initialize();
-
-  if (_logHelperInterestedListeners) {
-    if (!_do_not_wrap_xpcshell) {
-      _wrap_xpcshell_functions();
-    }
-
-    // Send a message telling the listeners about the test file being run.
-    _xpcshellLogger.info({
-      _jsonMe: true,
-      _isContext: true,
-      _specialContext: "lifecycle",
-      _id: "start",
-      testFile: _TEST_FILE,
-    });
-  }
 }
 _init_log_helper();
 
@@ -176,7 +150,7 @@ function mark_test_start(aName, aParameter, aDepth) {
   // clear out any existing contexts
   mark_test_end(aDepth);
 
-  let term = aDepth == 0 ? "test" : "subtest";
+  const term = aDepth == 0 ? "test" : "subtest";
   _testLoggerActiveContext = {
     type: term,
     name: aName,
@@ -205,7 +179,7 @@ function mark_test_end(aPopTo) {
   }
   // clear out any existing contexts
   while (_testLoggerContexts.length > aPopTo) {
-    let context = _testLoggerContexts.pop();
+    const context = _testLoggerContexts.pop();
     _mailnewsTestLogger.info(
       context._id,
       "Finished " +
@@ -231,7 +205,7 @@ function mark_test_end(aPopTo) {
  *   support code.
  */
 function mark_sub_test_start(aName, aParameter, aNest) {
-  let depth = aNest ? _testLoggerContexts.length : 1;
+  const depth = aNest ? _testLoggerContexts.length : 1;
   mark_test_start(aName, aParameter, depth);
 }
 
@@ -246,25 +220,11 @@ function mark_sub_test_end() {
   mark_test_end(_testLoggerContexts.length - 1);
 }
 
-/**
- * Express that all tests were run to completion.  This helps the listener
- *  distinguish between successful termination and abort-style termination where
- *  the process just keeled over and on one told us.
- *
- * This also tells us to clean up.
- */
-function mark_all_tests_run() {
-  // make sure all tests get closed out
-  mark_test_end();
-
-  _xpcshellLogger.info("All finished");
-}
-
 function _explode_flags(aFlagWord, aFlagDefs) {
-  let flagList = [];
+  const flagList = [];
 
-  for (let flagName in aFlagDefs) {
-    let flagVal = aFlagDefs[flagName];
+  for (const flagName in aFlagDefs) {
+    const flagVal = aFlagDefs[flagName];
     if (flagVal & aFlagWord) {
       flagList.push(flagName);
     }
@@ -294,15 +254,15 @@ function __value_copy(aObj, aDepthAllowed) {
  *   call ourselves.
  */
 function __simple_obj_copy(aObj, aDepthAllowed) {
-  let oot = {};
-  let nextDepth = aDepthAllowed - 1;
-  for (let key in aObj) {
+  const oot = {};
+  const nextDepth = aDepthAllowed - 1;
+  for (const key in aObj) {
     // avoid triggering getters
     if (aObj.__lookupGetter__(key)) {
       oot[key] = "*getter*";
       continue;
     }
-    let value = aObj[key];
+    const value = aObj[key];
 
     if (value == null) {
       oot[key] = null;
@@ -332,7 +292,6 @@ var _INTERESTING_MESSAGE_HEADER_PROPERTIES = {
   "gloda-dirty": 0,
   junkscore: "",
   junkscoreorigin: "",
-  msgOffset: 0,
   offlineMsgSize: 0,
 };
 
@@ -371,9 +330,9 @@ function _normalize_for_json(aObj, aDepthAllowed, aJsonMeNotNeeded) {
       flags: _explode_flags(aObj.flags, Ci.nsMsgFolderFlags),
     };
   } else if (aObj instanceof Ci.nsIMsgDBHdr) {
-    let properties = {};
-    for (let name in _INTERESTING_MESSAGE_HEADER_PROPERTIES) {
-      let propType = _INTERESTING_MESSAGE_HEADER_PROPERTIES[name];
+    const properties = {};
+    for (const name in _INTERESTING_MESSAGE_HEADER_PROPERTIES) {
+      const propType = _INTERESTING_MESSAGE_HEADER_PROPERTIES[name];
       if (propType === 0) {
         properties[name] =
           aObj.getStringProperty(name) != ""
@@ -398,14 +357,14 @@ function _normalize_for_json(aObj, aDepthAllowed, aJsonMeNotNeeded) {
     // === Generic ===
     // DOM nodes, including elements
     let name = aObj.nodeName;
-    let objAttrs = {};
+    const objAttrs = {};
 
     if (Element.isInstance(aObj)) {
       name += "#" + aObj.getAttribute("id");
     }
 
     if ("attributes" in aObj) {
-      let nodeAttrs = aObj.attributes;
+      const nodeAttrs = aObj.attributes;
       for (let iAttr = 0; iAttr < nodeAttrs.length; iAttr++) {
         objAttrs[nodeAttrs[iAttr].name] = nodeAttrs[iAttr].value;
       }
@@ -483,7 +442,7 @@ function _normalize_for_json(aObj, aDepthAllowed, aJsonMeNotNeeded) {
     };
   }
 
-  for (let [checkType, handler] of _registered_json_normalizers) {
+  for (const [checkType, handler] of _registered_json_normalizers) {
     if (aObj instanceof checkType) {
       return handler(aObj);
     }
@@ -498,15 +457,11 @@ function _normalize_for_json(aObj, aDepthAllowed, aJsonMeNotNeeded) {
     };
   }
 
-  let simple_obj = __simple_obj_copy(aObj, aDepthAllowed);
+  const simple_obj = __simple_obj_copy(aObj, aDepthAllowed);
   if (!aJsonMeNotNeeded) {
     simple_obj._jsonMe = true;
   }
   return simple_obj;
-}
-
-function register_json_normalizer(aType, aHandler) {
-  _registered_json_normalizers.push([aType, aHandler]);
 }
 
 /*

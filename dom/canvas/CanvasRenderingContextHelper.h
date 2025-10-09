@@ -6,7 +6,9 @@
 #ifndef MOZILLA_DOM_CANVASRENDERINGCONTEXTHELPER_H_
 #define MOZILLA_DOM_CANVASRENDERINGCONTEXTHELPER_H_
 
+#include "mozilla/UniquePtr.h"
 #include "mozilla/dom/BindingDeclarations.h"
+#include "mozilla/gfx/Point.h"
 #include "mozilla/layers/LayersTypes.h"
 #include "nsSize.h"
 
@@ -16,6 +18,10 @@ class nsIGlobalObject;
 namespace mozilla {
 
 class ErrorResult;
+
+namespace layers {
+class SurfaceDescriptor;
+}  // namespace layers
 
 namespace dom {
 
@@ -52,10 +58,6 @@ class CanvasRenderingContextHelper {
                                nsAString& outParams,
                                bool* const outCustomParseOptions);
 
-  void ToBlob(JSContext* aCx, nsIGlobalObject* global, BlobCallback& aCallback,
-              const nsAString& aType, JS::Handle<JS::Value> aParams,
-              bool aUsePlaceholder, ErrorResult& aRv);
-
   void ToBlob(JSContext* aCx, EncodeCompleteCallback* aCallback,
               const nsAString& aType, JS::Handle<JS::Value> aParams,
               bool aUsePlaceholder, ErrorResult& aRv);
@@ -63,6 +65,9 @@ class CanvasRenderingContextHelper {
   void ToBlob(EncodeCompleteCallback* aCallback, nsAString& aType,
               const nsAString& aEncodeOptions, bool aUsingCustomOptions,
               bool aUsePlaceholder, ErrorResult& aRv);
+
+  virtual UniquePtr<uint8_t[]> GetImageBuffer(int32_t* aOutFormat,
+                                              gfx::IntSize* aOutImageSize);
 
   already_AddRefed<nsISupports> GetOrCreateContext(
       JSContext* aCx, const nsAString& aContextId,
@@ -78,11 +83,14 @@ class CanvasRenderingContextHelper {
   already_AddRefed<nsICanvasRenderingContextInternal> CreateContextHelper(
       CanvasContextType aContextType, layers::LayersBackend aCompositorBackend);
 
-  virtual nsIntSize GetWidthHeight() = 0;
+  virtual CSSIntSize GetWidthHeight() = 0;
 
   CanvasContextType mCurrentContextType;
   nsCOMPtr<nsICanvasRenderingContextInternal> mCurrentContext;
 };
+
+Maybe<layers::SurfaceDescriptor> ValidSurfaceDescriptorForRemoteCanvas2d(
+    const layers::SurfaceDescriptor&);
 
 }  // namespace dom
 namespace CanvasUtils {

@@ -4,24 +4,26 @@
 
 requestLongerTimeout(2);
 
-const { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+const { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
+);
+const { ensure_cards_view, ensure_table_view } = ChromeUtils.importESModule(
+  "resource://testing-common/MailViewHelpers.sys.mjs"
 );
 
-let tabmail = document.getElementById("tabmail");
-let about3Pane = tabmail.currentAbout3Pane;
-let threadTree = about3Pane.threadTree;
+const tabmail = document.getElementById("tabmail");
+const about3Pane = tabmail.currentAbout3Pane;
+const threadTree = about3Pane.threadTree;
 // Not `currentAboutMessage` as (a) that's null right now, and (b) we'll be
 // testing things that happen when about:message is hidden.
-let aboutMessage = about3Pane.messageBrowser.contentWindow;
-let messagePaneBrowser = aboutMessage.getMessagePaneBrowser();
-let multiMessageView = about3Pane.multiMessageBrowser.contentWindow;
-let generator = new MessageGenerator();
+const aboutMessage = about3Pane.messageBrowser.contentWindow;
+const messagePaneBrowser = aboutMessage.getMessagePaneBrowser();
+const multiMessageView = about3Pane.multiMessageBrowser.contentWindow;
+const generator = new MessageGenerator();
 let rootFolder, sourceMessageIDs;
 
 add_setup(async function () {
-  MailServices.accounts.createLocalMailAccount();
-  let account = MailServices.accounts.accounts[0];
+  const account = MailServices.accounts.createLocalMailAccount();
   account.addIdentity(MailServices.accounts.createIdentity());
   rootFolder = account.incomingServer.rootFolder.QueryInterface(
     Ci.nsIMsgLocalMailFolder
@@ -34,11 +36,13 @@ add_setup(async function () {
 
 /** Test a real folder, unthreaded. */
 add_task(async function testUnthreaded() {
-  let folderA = rootFolder
+  const folderA = rootFolder
     .createLocalSubfolder("threadTreeDeletingA")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   folderA.addMessageBatch(
-    generator.makeMessages({ count: 15 }).map(message => message.toMboxString())
+    generator
+      .makeMessages({ count: 15 })
+      .map(message => message.toMessageString())
   );
 
   sourceMessageIDs = Array.from(folderA.messages, m => m.messageId);
@@ -47,7 +51,7 @@ add_task(async function testUnthreaded() {
     messagePaneVisible: true,
     folderURI: folderA.URI,
   });
-  await ensure_cards_view();
+  await ensure_cards_view(document);
   goDoCommand("cmd_sort", { target: { value: "unthreaded" } });
 
   await subtest();
@@ -55,7 +59,7 @@ add_task(async function testUnthreaded() {
 
 /** Test a real folder with threads. */
 add_task(async function testThreaded() {
-  let folderB = rootFolder
+  const folderB = rootFolder
     .createLocalSubfolder("threadTreeDeletingB")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   folderB.addMessageBatch(
@@ -66,7 +70,7 @@ add_task(async function testThreaded() {
       ...generator.makeMessages({ count: 1 }),
       ...generator.makeMessages({ count: 2, msgsPerThread: 2 }),
       ...generator.makeMessages({ count: 2 }),
-    ].map(message => message.toMboxString())
+    ].map(message => message.toMessageString())
   );
 
   sourceMessageIDs = Array.from(folderB.messages, m => m.messageId);
@@ -83,18 +87,20 @@ add_task(async function testThreaded() {
 
 /** Test a virtual folder with a single backing folder. */
 add_task(async function testSingleVirtual() {
-  let folderC = rootFolder
+  const folderC = rootFolder
     .createLocalSubfolder("threadTreeDeletingC")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   folderC.addMessageBatch(
-    generator.makeMessages({ count: 15 }).map(message => message.toMboxString())
+    generator
+      .makeMessages({ count: 15 })
+      .map(message => message.toMessageString())
   );
 
-  let virtualFolderC = rootFolder.createLocalSubfolder(
+  const virtualFolderC = rootFolder.createLocalSubfolder(
     "threadTreeDeletingVirtualC"
   );
   virtualFolderC.setFlag(Ci.nsMsgFolderFlags.Virtual);
-  let folderInfoC = virtualFolderC.msgDatabase.dBFolderInfo;
+  const folderInfoC = virtualFolderC.msgDatabase.dBFolderInfo;
   // Search for something instead of all messages, as the "ALL" search could
   // detected and the backing folder displayed instead, defeating the point of
   // this test.
@@ -113,27 +119,29 @@ add_task(async function testSingleVirtual() {
 
 /** Test a virtual folder with multiple backing folders. */
 add_task(async function testXFVirtual() {
-  let folderD = rootFolder
+  const folderD = rootFolder
     .createLocalSubfolder("threadTreeDeletingD")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   folderD.addMessageBatch(
-    generator.makeMessages({ count: 4 }).map(message => message.toMboxString())
+    generator
+      .makeMessages({ count: 4 })
+      .map(message => message.toMessageString())
   );
 
-  let folderE = rootFolder
+  const folderE = rootFolder
     .createLocalSubfolder("threadTreeDeletingE")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   folderE.addMessageBatch(
     generator
       .makeMessages({ count: 11, msgsPerThread: 3 })
-      .map(message => message.toMboxString())
+      .map(message => message.toMessageString())
   );
 
-  let virtualFolderDE = rootFolder.createLocalSubfolder(
+  const virtualFolderDE = rootFolder.createLocalSubfolder(
     "threadTreeDeletingVirtualDE"
   );
   virtualFolderDE.setFlag(Ci.nsMsgFolderFlags.Virtual);
-  let folderInfoY = virtualFolderDE.msgDatabase.dBFolderInfo;
+  const folderInfoY = virtualFolderDE.msgDatabase.dBFolderInfo;
   folderInfoY.setCharProperty("searchStr", "AND (date,is after,31-Dec-1999)");
   folderInfoY.setCharProperty(
     "searchFolderUri",
@@ -157,15 +165,17 @@ add_task(async function testXFVirtual() {
 
 /** Test a real folder with a quick filter applied. */
 add_task(async function testQuickFiltered() {
-  let folderF = rootFolder
+  const folderF = rootFolder
     .createLocalSubfolder("threadTreeDeletingF")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   folderF.addMessageBatch(
-    generator.makeMessages({ count: 30 }).map(message => message.toMboxString())
+    generator
+      .makeMessages({ count: 30 })
+      .map(message => message.toMessageString())
   );
-  let flaggedMessages = [];
+  const flaggedMessages = [];
   let i = 0;
-  for (let message of folderF.messages) {
+  for (const message of folderF.messages) {
     if (i++ % 2) {
       flaggedMessages.push(message);
     }
@@ -177,7 +187,7 @@ add_task(async function testQuickFiltered() {
     messagePaneVisible: true,
     folderURI: folderF.URI,
   });
-  let filterer = about3Pane.quickFilterBar.filterer;
+  const filterer = about3Pane.quickFilterBar.filterer;
   filterer.clear();
   filterer.visible = true;
   filterer.setFilterValue("starred", true);
@@ -188,11 +198,13 @@ add_task(async function testQuickFiltered() {
 
 /** Test a folder sorted by date descending. */
 add_task(async function testSortDescending() {
-  let folderG = rootFolder
+  const folderG = rootFolder
     .createLocalSubfolder("threadTreeDeletingG")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   folderG.addMessageBatch(
-    generator.makeMessages({ count: 15 }).map(message => message.toMboxString())
+    generator
+      .makeMessages({ count: 15 })
+      .map(message => message.toMessageString())
   );
 
   sourceMessageIDs = Array.from(folderG.messages, m => m.messageId).reverse();
@@ -208,11 +220,13 @@ add_task(async function testSortDescending() {
 
 /** Test a folder sorted by subject. */
 add_task(async function testSortBySubject() {
-  let folderH = rootFolder
+  const folderH = rootFolder
     .createLocalSubfolder("threadTreeDeletingH")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   folderH.addMessageBatch(
-    generator.makeMessages({ count: 15 }).map(message => message.toMboxString())
+    generator
+      .makeMessages({ count: 15 })
+      .map(message => message.toMessageString())
   );
 
   sourceMessageIDs = Array.from(folderH.messages)
@@ -223,7 +237,7 @@ add_task(async function testSortBySubject() {
     messagePaneVisible: true,
     folderURI: folderH.URI,
   });
-  goDoCommand("cmd_sort", { target: { value: "bySubject" } });
+  goDoCommand("cmd_sort", { target: { value: "subjectCol" } });
 
   await subtest();
 });
@@ -233,28 +247,27 @@ add_task(async function testSortBySubject() {
  * the scrolling and leave the tree in a bad scroll position.
  */
 add_task(async function testDeletionWhileScrolling() {
-  let folderI = rootFolder
+  const folderI = rootFolder
     .createLocalSubfolder("threadTreeDeletingI")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   folderI.addMessageBatch(
     generator
       .makeMessages({ count: 500 })
-      .map(message => message.toMboxString())
+      .map(message => message.toMessageString())
   );
 
-  await ensure_table_view();
+  await ensure_table_view(document);
   about3Pane.restoreState({
     messagePaneVisible: false,
     folderURI: folderI.URI,
   });
 
+  const timeout = !AppConstants.DEBUG ? 1000 : 3000;
   const scrollListener = {
     async promiseScrollingStopped() {
-      this.lastTime = Date.now();
-      await TestUtils.waitForCondition(
-        () => Date.now() - this.lastTime > 1000,
-        "waiting for scrolling to stop"
-      );
+      await BrowserTestUtils.waitForEvent(threadTree, "scrollend");
+      // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+      await new Promise(resolve => setTimeout(resolve, timeout));
       delete this.direction;
       delete this.lastPosition;
     },
@@ -265,7 +278,7 @@ add_task(async function testDeletionWhileScrolling() {
     setNoScrollExpectation() {
       this.direction = 0;
     },
-    handleEvent(event) {
+    handleEvent() {
       if (this.direction === 0) {
         Assert.report(true, undefined, undefined, "unexpected scroll event");
         return;
@@ -273,41 +286,50 @@ add_task(async function testDeletionWhileScrolling() {
 
       const position = threadTree.scrollTop;
       if (this.direction == -1) {
-        Assert.lessOrEqual(position, this.lastPosition);
+        Assert.lessOrEqual(
+          position,
+          this.lastPosition,
+          "should have scrolled up"
+        );
       } else if (this.direction == 1) {
-        Assert.greaterOrEqual(position, this.lastPosition);
+        Assert.greaterOrEqual(
+          position,
+          this.lastPosition,
+          "should have scrolled down"
+        );
       }
       this.lastPosition = position;
-      this.lastTime = Date.now();
     },
   };
 
-  async function delayThenPress(millis, key) {
+  async function delayThenPressAndWaitForSelect(millis, key) {
     // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
     await new Promise(resolve => setTimeout(resolve, millis));
     if (key) {
+      const eventPromise = BrowserTestUtils.waitForEvent(threadTree, "select");
       EventUtils.synthesizeKey(key, {}, about3Pane);
-      await TestUtils.waitForTick();
+      await eventPromise;
     }
   }
 
   threadTree.addEventListener("scroll", scrollListener);
+  let scrollend = scrollListener.promiseScrollingStopped();
   threadTree.table.body.focus();
   threadTree.selectedIndex = 299;
-  await scrollListener.promiseScrollingStopped();
+  await scrollend;
 
-  let stopPromise = scrollListener.promiseScrollingStopped();
+  scrollend = scrollListener.promiseScrollingStopped();
   scrollListener.setScrollExpectation(-1);
 
   // Page up a few times then delete some messages.
+  await delayThenPressAndWaitForSelect(0, "VK_PAGE_UP");
+  await delayThenPressAndWaitForSelect(60, "VK_PAGE_UP");
+  await delayThenPressAndWaitForSelect(60, "VK_PAGE_UP");
+  await delayThenPressAndWaitForSelect(400, "VK_DELETE");
+  await delayThenPressAndWaitForSelect(80, "VK_DELETE");
 
-  await delayThenPress(0, "VK_PAGE_UP");
-  await delayThenPress(60, "VK_PAGE_UP");
-  await delayThenPress(60, "VK_PAGE_UP");
-  await delayThenPress(400, "VK_DELETE");
-  await delayThenPress(80, "VK_DELETE");
+  await scrollend;
 
-  await stopPromise;
   Assert.equal(
     threadTree.getFirstVisibleIndex(),
     threadTree.selectedIndex,
@@ -316,34 +338,41 @@ add_task(async function testDeletionWhileScrolling() {
 
   // Page down a few times then delete some messages.
 
-  stopPromise = scrollListener.promiseScrollingStopped();
+  scrollend = scrollListener.promiseScrollingStopped();
   scrollListener.setScrollExpectation(1);
 
-  await delayThenPress(60, "VK_PAGE_DOWN");
-  await delayThenPress(60, "VK_PAGE_DOWN");
-  await delayThenPress(60, "VK_PAGE_DOWN");
-  await delayThenPress(300, "VK_DELETE");
-  await delayThenPress(80, "VK_DELETE");
-  await delayThenPress(80, "VK_DELETE");
-  await delayThenPress(80, "VK_DELETE");
-  await delayThenPress(80, "VK_DELETE");
+  await delayThenPressAndWaitForSelect(60, "VK_PAGE_DOWN");
+  await delayThenPressAndWaitForSelect(60, "VK_PAGE_DOWN");
+  await delayThenPressAndWaitForSelect(60, "VK_PAGE_DOWN");
+  await delayThenPressAndWaitForSelect(300, "VK_DELETE");
+  await delayThenPressAndWaitForSelect(80, "VK_DELETE");
+  await delayThenPressAndWaitForSelect(80, "VK_DELETE");
+  await delayThenPressAndWaitForSelect(80, "VK_DELETE");
+  await delayThenPressAndWaitForSelect(80, "VK_DELETE");
 
-  await stopPromise;
+  await scrollend;
+
   Assert.equal(
     threadTree.getLastVisibleIndex(),
     threadTree.selectedIndex,
     "selected row should be the last visible row"
   );
-
   // Select a message somewhere in the middle then delete it.
-
+  // Shouldn't scroll.
   scrollListener.setNoScrollExpectation();
-  threadTree.selectedIndex -= 10;
-  await delayThenPress(80, "VK_DELETE");
-  await delayThenPress(80, "VK_DELETE");
-  await delayThenPress(80, "VK_DELETE");
+  const targetIndex = threadTree.selectedIndex - 10;
+  const selectEvent = BrowserTestUtils.waitForEvent(
+    threadTree,
+    "select",
+    false,
+    () => threadTree.selectedIndex == targetIndex
+  );
+  threadTree.selectedIndex = targetIndex;
+  await selectEvent;
+  await delayThenPressAndWaitForSelect(80, "VK_DELETE");
+  await delayThenPressAndWaitForSelect(80, "VK_DELETE");
+  await delayThenPressAndWaitForSelect(80, "VK_DELETE");
 
-  await delayThenPress(1000);
   Assert.less(
     threadTree.getFirstVisibleIndex(),
     threadTree.selectedIndex,
@@ -363,9 +392,10 @@ async function subtest() {
     () => threadTree.table.body.rows.length == 15,
     "waiting for all of the table rows"
   );
+  await new Promise(resolve => about3Pane.requestAnimationFrame(resolve));
 
-  let dbView = about3Pane.gDBView;
-  let subjects = [];
+  const dbView = about3Pane.gDBView;
+  const subjects = [];
   for (let i = 0; i < 15; i++) {
     subjects.push(dbView.cellTextForColumn(i, "subjectCol"));
   }
@@ -447,7 +477,7 @@ async function messageLoaded(index) {
 
 async function _doDelete(callback, index, expectedLoad) {
   let selectCount = 0;
-  let onSelect = () => selectCount++;
+  const onSelect = () => selectCount++;
   threadTree.addEventListener("select", onSelect);
 
   let selectPromise;
@@ -468,6 +498,7 @@ async function _doDelete(callback, index, expectedLoad) {
   }
 
   threadTree.removeEventListener("select", onSelect);
+  await new Promise(resolve => about3Pane.requestAnimationFrame(resolve));
 }
 
 async function doDeleteCommand(expectedLoad) {
@@ -483,7 +514,7 @@ async function doDeleteCommand(expectedLoad) {
 async function doDeleteClick(expectedLoad) {
   await _doDelete(
     function () {
-      let messageView =
+      const messageView =
         threadTree.selectedIndices.length == 1
           ? aboutMessage
           : multiMessageView;
@@ -501,7 +532,7 @@ async function doDeleteClick(expectedLoad) {
 async function doDeleteExternal(index, expectedLoad) {
   await _doDelete(
     function () {
-      let message = about3Pane.gDBView.getMsgHdrAt(index);
+      const message = about3Pane.gDBView.getMsgHdrAt(index);
       message.folder.deleteMessages(
         [message], // messages
         null, // msgWindow
@@ -528,14 +559,14 @@ async function verifySelection(rowCount, selectedIndices, currentIndex) {
     selectedIndices,
     "table's selected indices"
   );
-  let selectedRows = Array.from(threadTree.querySelectorAll(".selected"));
+  const selectedRows = Array.from(threadTree.querySelectorAll(".selected"));
   Assert.equal(
     selectedRows.length,
     selectedIndices.length,
     "number of rows with .selected class"
   );
-  for (let index of selectedIndices) {
-    let row = threadTree.getRowAtIndex(index);
+  for (const index of selectedIndices) {
+    const row = threadTree.getRowAtIndex(index);
     Assert.ok(
       selectedRows.includes(row),
       `.selected row at ${index} is expected`
@@ -543,7 +574,7 @@ async function verifySelection(rowCount, selectedIndices, currentIndex) {
   }
 
   Assert.equal(threadTree.currentIndex, currentIndex, "table's current index");
-  let currentRows = threadTree.querySelectorAll(".current");
+  const currentRows = threadTree.querySelectorAll(".current");
   Assert.equal(currentRows.length, 1, "one row should have .current");
   Assert.equal(
     currentRows[0],
@@ -551,7 +582,7 @@ async function verifySelection(rowCount, selectedIndices, currentIndex) {
     `.current row at ${currentIndex} is expected`
   );
 
-  let contextTargetRows = threadTree.querySelectorAll(".context-menu-target");
+  const contextTargetRows = threadTree.querySelectorAll(".context-menu-target");
   Assert.equal(
     contextTargetRows.length,
     0,
@@ -560,7 +591,7 @@ async function verifySelection(rowCount, selectedIndices, currentIndex) {
 }
 
 function verifySubjects(expectedSubjects) {
-  let actualSubjects = Array.from(
+  const actualSubjects = Array.from(
     threadTree.table.body.rows,
     row =>
       row.querySelector(".thread-card-subject-container > .subject").textContent

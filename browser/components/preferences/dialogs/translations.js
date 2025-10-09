@@ -20,6 +20,10 @@ const ALWAYS_TRANSLATE_LANGS_PREF =
 const NEVER_TRANSLATE_LANGS_PREF =
   "browser.translations.neverTranslateLanguages";
 
+ChromeUtils.defineESModuleGetters(this, {
+  TranslationsParent: "resource://gre/actors/TranslationsParent.sys.mjs",
+});
+
 function Tree(aId, aData) {
   this._data = aData;
   this._tree = document.getElementById(aId);
@@ -56,29 +60,29 @@ Tree.prototype = {
   get rowCount() {
     return this._data.length;
   },
-  getCellText(aRow, aColumn) {
+  getCellText(aRow) {
     return this._data[aRow];
   },
-  isSeparator(aIndex) {
+  isSeparator() {
     return false;
   },
   isSorted() {
     return false;
   },
-  isContainer(aIndex) {
+  isContainer() {
     return false;
   },
-  setTree(aTree) {},
-  getImageSrc(aRow, aColumn) {},
-  getCellValue(aRow, aColumn) {},
-  cycleHeader(column) {},
-  getRowProperties(row) {
+  setTree() {},
+  getImageSrc() {},
+  getCellValue() {},
+  cycleHeader() {},
+  getRowProperties() {
     return "";
   },
-  getColumnProperties(column) {
+  getColumnProperties() {
     return "";
   },
-  getCellProperties(row, column) {
+  getCellProperties() {
     return "";
   },
   QueryInterface: ChromeUtils.generateQI(["nsITreeView"]),
@@ -103,18 +107,7 @@ var gTranslationsSettings = {
     }
 
     // Load site permissions into an array.
-    this._neverTranslateSites = [];
-    for (const perm of Services.perms.getAllByTypes([
-      TRANSLATIONS_PERMISSION,
-    ])) {
-      if (perm.capability === Services.perms.DENY_ACTION) {
-        this._neverTranslateSites.push(perm.principal.origin);
-      }
-    }
-    let stripProtocol = s => s?.replace(/^\w+:/, "") || "";
-    this._neverTranslateSites.sort((a, b) => {
-      return stripProtocol(a).localeCompare(stripProtocol(b));
-    });
+    this._neverTranslateSites = TranslationsParent.listNeverTranslateSites();
 
     // Load language tags into arrays.
     this._alwaysTranslateLangs = this.getAlwaysTranslateLanguages();
@@ -124,6 +117,9 @@ var gTranslationsSettings = {
     Services.obs.addObserver(this, "perm-changed");
     Services.prefs.addObserver(ALWAYS_TRANSLATE_LANGS_PREF, this);
     Services.prefs.addObserver(NEVER_TRANSLATE_LANGS_PREF, this);
+
+    window.addEventListener("unload", this);
+    document.addEventListener("command", this);
 
     // Build trees from the arrays.
     this._alwaysTranslateLangsTree = new Tree(
@@ -138,6 +134,15 @@ var gTranslationsSettings = {
       "neverTranslateSitesTree",
       this._neverTranslateSites
     );
+
+    for (let { tree } of [
+      this._alwaysTranslateLangsTree,
+      this._neverTranslateLangsTree,
+      this._neverTranslateSiteTree,
+    ]) {
+      tree.addEventListener("keypress", this);
+      tree.addEventListener("select", this);
+    }
 
     // Ensure the UI for each group is in the correct state.
     this.onSelectAlwaysTranslateLanguage();
@@ -286,6 +291,66 @@ var gTranslationsSettings = {
     }
   },
 
+  handleEvent(event) {
+    switch (event.type) {
+      case "unload":
+        this.removeObservers();
+        break;
+      case "command":
+        switch (event.target.id) {
+          case "key_close":
+            window.close();
+            break;
+
+          case "removeAlwaysTranslateLanguage":
+            this.onRemoveAlwaysTranslateLanguage();
+            break;
+          case "removeAllAlwaysTranslateLanguages":
+            this.onRemoveAllAlwaysTranslateLanguages();
+            break;
+          case "removeNeverTranslateLanguage":
+            this.onRemoveNeverTranslateLanguage();
+            break;
+          case "removeAllNeverTranslateLanguages":
+            this.onRemoveAllNeverTranslateLanguages();
+            break;
+          case "removeNeverTranslateSite":
+            this.onRemoveNeverTranslateSite();
+            break;
+          case "removeAllNeverTranslateSites":
+            this.onRemoveAllNeverTranslateSites();
+            break;
+        }
+        break;
+      case "keypress":
+        switch (event.currentTarget.id) {
+          case "alwaysTranslateLanguagesTree":
+            this.onAlwaysTranslateLanguageKeyPress(event);
+            break;
+          case "neverTranslateLanguagesTree":
+            this.onNeverTranslateLanguageKeyPress(event);
+            break;
+          case "neverTranslateSitesTree":
+            this.onNeverTranslateSiteKeyPress(event);
+            break;
+        }
+        break;
+      case "select":
+        switch (event.currentTarget.id) {
+          case "alwaysTranslateLanguagesTree":
+            this.onSelectAlwaysTranslateLanguage();
+            break;
+          case "neverTranslateLanguagesTree":
+            this.onSelectNeverTranslateLanguage();
+            break;
+          case "neverTranslateSitesTree":
+            this.onSelectNeverTranslateSite();
+            break;
+        }
+        break;
+    }
+  },
+
   /**
    * Ensures that buttons states are enabled/disabled accordingly based on the
    * content of the trees.
@@ -381,9 +446,7 @@ var gTranslationsSettings = {
     let removedNeverTranslateSites =
       this._neverTranslateSiteTree.getSelectedItems();
     for (let origin of removedNeverTranslateSites) {
-      let principal =
-        Services.scriptSecurityManager.createContentPrincipalFromOrigin(origin);
-      Services.perms.removeFromPrincipal(principal, TRANSLATIONS_PERMISSION);
+      TranslationsParent.setNeverTranslateSiteByOrigin(false, origin);
     }
   },
 
@@ -419,9 +482,7 @@ var gTranslationsSettings = {
     );
 
     for (let origin of removedNeverTranslateSites) {
-      let principal =
-        Services.scriptSecurityManager.createContentPrincipalFromOrigin(origin);
-      Services.perms.removeFromPrincipal(principal, TRANSLATIONS_PERMISSION);
+      TranslationsParent.setNeverTranslateSiteByOrigin(false, origin);
     }
 
     this.onSelectNeverTranslateSite();
@@ -463,3 +524,5 @@ var gTranslationsSettings = {
     Services.prefs.removeObserver(NEVER_TRANSLATE_LANGS_PREF, this);
   },
 };
+
+window.addEventListener("load", () => gTranslationsSettings.onLoad());

@@ -6,6 +6,7 @@ use super::request::InfoConfiguration;
 use super::{CollectionKeys, GlobalState};
 use crate::engine::{CollSyncIds, EngineSyncAssociation, SyncEngine};
 use crate::error;
+use crate::error::{info, trace, warn};
 use crate::KeyBundle;
 use crate::ServerTimestamp;
 
@@ -111,7 +112,7 @@ impl<'state> LocalCollStateMachine<'state> {
 
             LocalCollState::SyncIdChanged { ids } => {
                 let assoc = EngineSyncAssociation::Connected(ids);
-                log::info!("Resetting {} engine", engine.collection_name());
+                info!("Resetting {} engine", engine.collection_name());
                 engine.reset(&assoc)?;
                 Ok(LocalCollState::Unknown { assoc })
             }
@@ -132,14 +133,14 @@ impl<'state> LocalCollStateMachine<'state> {
         // 10 goes around.
         let mut count = 0;
         loop {
-            log::trace!("LocalCollState in {:?}", s);
+            trace!("LocalCollState in {:?}", s);
             match s {
                 LocalCollState::Ready { coll_state } => return Ok(Some(coll_state)),
                 LocalCollState::Declined | LocalCollState::NoSuchCollection => return Ok(None),
                 _ => {
                     count += 1;
                     if count > 10 {
-                        log::warn!("LocalCollStateMachine appears to be looping");
+                        warn!("LocalCollStateMachine appears to be looping");
                         return Ok(None);
                     }
                     // should we have better loop detection? Our limit of 10
@@ -168,11 +169,12 @@ mod tests {
     use super::super::request::{InfoCollections, InfoConfiguration};
     use super::super::CollectionKeys;
     use super::*;
+    use crate::bso::{IncomingBso, OutgoingBso};
     use crate::engine::CollectionRequest;
-    use crate::engine::{IncomingChangeset, OutgoingChangeset};
     use crate::record_types::{MetaGlobalEngine, MetaGlobalRecord};
     use crate::{telemetry, CollectionName};
     use anyhow::Result;
+    use nss::ensure_initialized;
     use std::cell::{Cell, RefCell};
     use std::collections::HashMap;
     use sync_guid::Guid;
@@ -230,26 +232,34 @@ mod tests {
             self.collection_name.into()
         }
 
-        fn apply_incoming(
+        fn stage_incoming(
             &self,
-            _inbound: Vec<IncomingChangeset>,
+            _inbound: Vec<IncomingBso>,
             _telem: &mut telemetry::Engine,
-        ) -> Result<OutgoingChangeset> {
-            unreachable!("these tests shouldn't call these");
-        }
-
-        fn sync_finished(
-            &self,
-            _new_timestamp: ServerTimestamp,
-            _records_synced: Vec<Guid>,
         ) -> Result<()> {
             unreachable!("these tests shouldn't call these");
         }
 
-        fn get_collection_requests(
+        fn apply(
+            &self,
+            _timestamp: ServerTimestamp,
+            _telem: &mut telemetry::Engine,
+        ) -> Result<Vec<OutgoingBso>> {
+            unreachable!("these tests shouldn't call these");
+        }
+
+        fn set_uploaded(&self, _new_timestamp: ServerTimestamp, _ids: Vec<Guid>) -> Result<()> {
+            unreachable!("these tests shouldn't call these");
+        }
+
+        fn sync_finished(&self) -> Result<()> {
+            unreachable!("these tests shouldn't call these");
+        }
+
+        fn get_collection_request(
             &self,
             _server_timestamp: ServerTimestamp,
-        ) -> Result<Vec<CollectionRequest>> {
+        ) -> Result<Option<CollectionRequest>> {
             unreachable!("these tests shouldn't call these");
         }
 
@@ -270,6 +280,7 @@ mod tests {
 
     #[test]
     fn test_unknown() {
+        ensure_initialized();
         let root_key = KeyBundle::new_random().expect("should work");
         let gs = get_global_state(&root_key);
         let engine = TestSyncEngine::new("unknown", EngineSyncAssociation::Disconnected);
@@ -280,6 +291,7 @@ mod tests {
 
     #[test]
     fn test_known_no_state() {
+        ensure_initialized();
         let root_key = KeyBundle::new_random().expect("should work");
         let gs = get_global_state(&root_key);
         let engine = TestSyncEngine::new("bookmarks", EngineSyncAssociation::Disconnected);
@@ -297,6 +309,7 @@ mod tests {
 
     #[test]
     fn test_known_wrong_state() {
+        ensure_initialized();
         let root_key = KeyBundle::new_random().expect("should work");
         let gs = get_global_state(&root_key);
         let engine = TestSyncEngine::new(
@@ -320,6 +333,7 @@ mod tests {
 
     #[test]
     fn test_known_good_state() {
+        ensure_initialized();
         let root_key = KeyBundle::new_random().expect("should work");
         let gs = get_global_state(&root_key);
         let engine = TestSyncEngine::new(
@@ -336,6 +350,7 @@ mod tests {
 
     #[test]
     fn test_declined() {
+        ensure_initialized();
         let root_key = KeyBundle::new_random().expect("should work");
         let mut gs = get_global_state(&root_key);
         gs.global.declined.push("bookmarks".to_string());

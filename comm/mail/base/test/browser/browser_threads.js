@@ -2,14 +2,17 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+const { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
+);
+const { ensure_cards_view, ensure_table_view } = ChromeUtils.importESModule(
+  "resource://testing-common/MailViewHelpers.sys.mjs"
 );
 
-let tabmail = document.getElementById("tabmail");
-let about3Pane = tabmail.currentAbout3Pane;
-let { threadPane, threadTree } = about3Pane;
-let { notificationBox } = threadPane;
+const tabmail = document.getElementById("tabmail");
+const about3Pane = tabmail.currentAbout3Pane;
+const { threadPane, threadTree } = about3Pane;
+const { notificationBox } = threadPane;
 let rootFolder, testFolder, testMessages;
 
 add_setup(async function () {
@@ -19,22 +22,22 @@ add_setup(async function () {
   );
   document.getElementById("toolbar-menubar").removeAttribute("autohide");
 
-  let generator = new MessageGenerator();
+  const generator = new MessageGenerator();
 
-  MailServices.accounts.createLocalMailAccount();
-  let account = MailServices.accounts.accounts[0];
+  const account = MailServices.accounts.createLocalMailAccount();
   account.addIdentity(MailServices.accounts.createIdentity());
-  rootFolder = account.incomingServer.rootFolder;
+  rootFolder = account.incomingServer.rootFolder.QueryInterface(
+    Ci.nsIMsgLocalMailFolder
+  );
 
-  rootFolder.createSubfolder("threads", null);
   testFolder = rootFolder
-    .getChildNamed("threads")
+    .createLocalSubfolder("threads")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
 
   testFolder.addMessageBatch(
     generator
       .makeMessages({ count: 25, msgsPerThread: 5 })
-      .map(message => message.toMboxString())
+      .map(message => message.toMessageString())
   );
   testMessages = [...testFolder.messages];
 
@@ -42,9 +45,11 @@ add_setup(async function () {
   about3Pane.paneLayout.messagePaneVisible = false;
   goDoCommand("cmd_expandAllThreads");
 
-  await ensure_table_view();
+  await ensure_table_view(document);
 
   // Check the initial state of a sample of messages.
+
+  await new Promise(about3Pane.requestAnimationFrame);
 
   checkRowThreadState(0, true);
   checkRowThreadState(1, false);
@@ -57,7 +62,7 @@ add_setup(async function () {
   checkRowThreadState(20, true);
 
   registerCleanupFunction(async () => {
-    await ensure_cards_view();
+    await ensure_cards_view(document);
     MailServices.accounts.removeAccount(account, false);
     about3Pane.paneLayout.messagePaneVisible = true;
     Services.prefs.clearUserPref("mail.ignore_thread.learn_more_url");
@@ -69,7 +74,7 @@ add_setup(async function () {
  * message.
  */
 add_task(async function checkDoubleClickOnThreadButton() {
-  let row = threadTree.getRowAtIndex(20);
+  const row = threadTree.getRowAtIndex(20);
   Assert.ok(
     !row.classList.contains("collapsed"),
     "The thread row should be expanded"
@@ -77,7 +82,7 @@ add_task(async function checkDoubleClickOnThreadButton() {
 
   Assert.equal(tabmail.tabInfo.length, 1, "Only 1 tab currently visible");
 
-  let button = row.querySelector(".thread-container .twisty");
+  const button = row.querySelector(".thread-container .twisty");
   // Simulate a double click on the twisty icon.
   EventUtils.synthesizeMouseAtCenter(button, { clickCount: 2 }, about3Pane);
 
@@ -155,24 +160,20 @@ add_task(async function testIgnoreThread() {
 
   // Check the notification about the ignored thread.
 
-  let notification =
+  const notification =
     notificationBox.getNotificationWithValue("ignoreThreadInfo");
-  let label = notification.shadowRoot.querySelector(
-    "label.notification-message"
-  );
+  const label = notification.messageText;
   Assert.stringContains(label.textContent, testMessages[5].subject);
-  let buttons = notification.shadowRoot.querySelectorAll(
-    "button.notification-button"
-  );
+  const buttons = notification.querySelectorAll("button.notification-button");
   Assert.equal(buttons.length, 2);
 
   // Click the Learn More button, and check it opens the support page in a new tab.
-  let tabOpenPromise = BrowserTestUtils.waitForEvent(
+  const tabOpenPromise = BrowserTestUtils.waitForEvent(
     tabmail.tabContainer,
     "TabOpen"
   );
   EventUtils.synthesizeMouseAtCenter(buttons[0], {}, about3Pane);
-  let event = await tabOpenPromise;
+  const event = await tabOpenPromise;
   await BrowserTestUtils.browserLoaded(event.detail.tabInfo.browser);
   Assert.equal(
     event.detail.tabInfo.browser.currentURI.spec,
@@ -184,6 +185,7 @@ add_task(async function testIgnoreThread() {
   // Click the Undo button, and check it stops ignoring the thread.
   EventUtils.synthesizeMouseAtCenter(buttons[1], {}, about3Pane);
   await TestUtils.waitForCondition(() => !notification.parentNode);
+  await new Promise(about3Pane.requestAnimationFrame);
   checkRowThreadState(1, true);
 
   goDoCommand("cmd_expandAllThreads");
@@ -236,20 +238,17 @@ add_task(async function testIgnoreSubthread() {
 
   // Check the notification about the ignored subthread.
 
-  let notification =
+  const notification =
     notificationBox.getNotificationWithValue("ignoreThreadInfo");
-  let label = notification.shadowRoot.querySelector(
-    "label.notification-message"
-  );
+  const label = notification.messageText;
   Assert.stringContains(label.textContent, testMessages[17].subject);
-  let buttons = notification.shadowRoot.querySelectorAll(
-    "button.notification-button"
-  );
+  const buttons = notification.querySelectorAll("button.notification-button");
   Assert.equal(buttons.length, 2);
 
   // Click the Undo button, and check it stops ignoring the subthread.
   EventUtils.synthesizeMouseAtCenter(buttons[1], {}, about3Pane);
   await TestUtils.waitForCondition(() => !notification.parentNode);
+  await new Promise(about3Pane.requestAnimationFrame);
   checkRowThreadState(17, false);
   checkRowThreadState(18, false);
   checkRowThreadState(19, false);
@@ -278,31 +277,87 @@ add_task(async function testWatchThread() {
   checkRowThreadState(21, false);
 });
 
-async function checkContextMenu(index, expectedStates, itemToActivate) {
-  let contextMenu = about3Pane.document.getElementById("mailContext");
-  let row = threadTree.getRowAtIndex(index);
+add_task(async function testIconsUnThreaded() {
+  // Show the ignored messages.
+  goDoCommand("cmd_viewIgnoredThreads");
+  goDoCommand("cmd_expandAllThreads");
 
-  let shownPromise = BrowserTestUtils.waitForEvent(contextMenu, "popupshown");
+  threadTree.selectedIndex = 0;
+  await checkContextMenu(
+    0,
+    { "mailContext-ignoreThread": false },
+    "mailContext-ignoreThread"
+  );
+  goDoCommand("cmd_expandAllThreads");
+
+  threadTree.selectedIndex = 17;
+  await checkMessageMenu({ killSubthread: false });
+  await checkContextMenu(
+    17,
+    { "mailContext-ignoreSubthread": false },
+    "mailContext-ignoreSubthread"
+  );
+
+  threadTree.selectedIndex = 20;
+  await checkMessageMenu({ watchThread: false });
+  await checkContextMenu(
+    20,
+    { "mailContext-watchThread": false },
+    "mailContext-watchThread"
+  );
+
+  goDoCommand("cmd_sort", { target: { value: "unthreaded" } });
+  await new Promise(about3Pane.requestAnimationFrame);
+
+  // Switched to unthreaded and test again.
+  threadTree.selectedIndex = 0;
+  checkRowUnThreadState(0, "ignore");
+  checkRowUnThreadState(1, "ignore");
+
+  threadTree.selectedIndex = 17;
+  checkRowUnThreadState(17, "ignoreSubthread");
+  checkRowUnThreadState(18, "ignoreSubthread");
+  checkRowUnThreadState(19, "ignoreSubthread");
+
+  threadTree.selectedIndex = 20;
+  checkRowUnThreadState(20, "watched");
+  checkRowUnThreadState(21, "watched");
+});
+
+async function checkContextMenu(index, expectedStates, itemToActivate) {
+  const contextMenu = about3Pane.document.getElementById("mailContext");
+  const row = threadTree.getRowAtIndex(index);
+
   EventUtils.synthesizeMouseAtCenter(
     row.querySelector(".subject-line"),
     { type: "contextmenu" },
     about3Pane
   );
-  await shownPromise;
+  await BrowserTestUtils.waitForPopupEvent(contextMenu, "shown");
 
-  for (let [id, checkedState] of Object.entries(expectedStates)) {
-    assertCheckedState(about3Pane.document.getElementById(id), checkedState);
+  for (const [id, checkedState] of Object.entries(expectedStates)) {
+    assertCheckedState(
+      about3Pane.document.getElementById(id),
+      checkedState,
+      id
+    );
   }
 
-  let hiddenPromise = BrowserTestUtils.waitForEvent(contextMenu, "popuphidden");
   if (itemToActivate) {
-    contextMenu.activateItem(
-      about3Pane.document.getElementById(itemToActivate)
-    );
+    const item = about3Pane.document.getElementById(itemToActivate);
+    if (item.parentElement != contextMenu) {
+      item.parentElement.parentElement.openMenu(true);
+      await BrowserTestUtils.waitForPopupEvent(item.parentElement, "shown");
+      item.parentElement.activateItem(item);
+      await BrowserTestUtils.waitForPopupEvent(item.parentElement, "hidden");
+    } else {
+      contextMenu.activateItem(item);
+    }
   } else {
     contextMenu.hidePopup();
   }
-  await hiddenPromise;
+  await BrowserTestUtils.waitForPopupEvent(contextMenu, "hidden");
+  await new Promise(about3Pane.requestAnimationFrame);
 }
 
 async function checkMessageMenu(expectedStates) {
@@ -311,50 +366,87 @@ async function checkMessageMenu(expectedStates) {
     return;
   }
 
-  let messageMenu = document.getElementById("messageMenu");
+  const messageMenu = document.getElementById("messageMenu");
 
-  let shownPromise = BrowserTestUtils.waitForEvent(
+  const shownPromise = BrowserTestUtils.waitForEvent(
     messageMenu.menupopup,
     "popupshown"
   );
   EventUtils.synthesizeMouseAtCenter(messageMenu, {}, window);
   await shownPromise;
 
-  for (let [id, checkedState] of Object.entries(expectedStates)) {
-    assertCheckedState(document.getElementById(id), checkedState);
+  for (const [id, checkedState] of Object.entries(expectedStates)) {
+    assertCheckedState(document.getElementById(id), checkedState, id);
   }
 
   messageMenu.menupopup.hidePopup();
+  await BrowserTestUtils.waitForPopupEvent(messageMenu.menupopup, "hidden");
 }
 
-function assertCheckedState(menuItem, checkedState) {
+function assertCheckedState(menuItem, checkedState, itemId) {
   if (checkedState) {
-    Assert.equal(menuItem.getAttribute("checked"), "true");
+    Assert.equal(
+      menuItem.getAttribute("checked"),
+      "true",
+      `Menu item ${itemId} should be checked`
+    );
   } else {
     Assert.ok(
       !menuItem.hasAttribute("checked") ||
-        menuItem.getAttribute("checked") == "false"
+        menuItem.getAttribute("checked") == "false",
+      `Menu item ${itemId} should not be checked`
     );
   }
 }
 
+function checkRowUnThreadState(index, expected) {
+  const row = threadTree.getRowAtIndex(index);
+  const icon = row.querySelector(".threadcol-column img");
+
+  Assert.ok(
+    !row.classList.contains("children"),
+    "row should not have the 'children' class"
+  );
+
+  Assert.ok(BrowserTestUtils.isVisible(icon), "icon should be visible");
+
+  const iconContent = getComputedStyle(icon).content;
+  switch (expected) {
+    case true:
+      Assert.stringContains(iconContent, "/thread-sm.svg");
+      break;
+    case "ignore":
+      Assert.stringContains(row.dataset.properties, "ignore");
+      Assert.stringContains(iconContent, "/thread-ignored.svg");
+      break;
+    case "ignoreSubthread":
+      Assert.stringContains(row.dataset.properties, "ignoreSubthread");
+      Assert.stringContains(iconContent, "/subthread-ignored.svg");
+      break;
+    case "watched":
+      Assert.stringContains(row.dataset.properties, "watch");
+      Assert.stringContains(iconContent, "/eye.svg");
+      break;
+  }
+}
+
 function checkRowThreadState(index, expected) {
-  let row = threadTree.getRowAtIndex(index);
-  let icon = row.querySelector(".threadcol-column img");
+  const row = threadTree.getRowAtIndex(index);
+  const icon = row.querySelector(".threadcol-column img");
 
   if (!expected) {
     Assert.ok(
       !row.classList.contains("children"),
       "row should not have the 'children' class"
     );
-    Assert.ok(BrowserTestUtils.is_hidden(icon), "icon should be hidden");
+    Assert.ok(BrowserTestUtils.isHidden(icon), "icon should be hidden");
     return;
   }
 
-  Assert.ok(BrowserTestUtils.is_visible(icon), "icon should be visible");
+  Assert.ok(BrowserTestUtils.isVisible(icon), "icon should be visible");
 
   let shouldHaveChildrenClass = true;
-  let iconContent = getComputedStyle(icon).content;
+  const iconContent = getComputedStyle(icon).content;
 
   switch (expected) {
     case true:

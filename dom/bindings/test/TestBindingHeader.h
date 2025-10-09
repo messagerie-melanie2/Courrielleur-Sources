@@ -38,39 +38,26 @@ namespace mozilla {
 namespace dom {
 
 // IID for nsRenamedInterface
-#define NS_RENAMED_INTERFACE_IID                     \
-  {                                                  \
-    0xd4b19ef3, 0xe68b, 0x4e3f, {                    \
-      0x94, 0xbc, 0xc9, 0xde, 0x3a, 0x69, 0xb0, 0xe8 \
-    }                                                \
-  }
+#define NS_RENAMED_INTERFACE_IID \
+  {0xd4b19ef3, 0xe68b, 0x4e3f, {0x94, 0xbc, 0xc9, 0xde, 0x3a, 0x69, 0xb0, 0xe8}}
 
 class nsRenamedInterface : public nsISupports, public nsWrapperCache {
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_RENAMED_INTERFACE_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_RENAMED_INTERFACE_IID)
   NS_DECL_ISUPPORTS
 
   // We need a GetParentObject to make binding codegen happy
   virtual nsISupports* GetParentObject();
 };
 
-NS_DEFINE_STATIC_IID_ACCESSOR(nsRenamedInterface, NS_RENAMED_INTERFACE_IID)
-
 // IID for the TestExternalInterface
-#define NS_TEST_EXTERNAL_INTERFACE_IID               \
-  {                                                  \
-    0xd5ba0c99, 0x9b1d, 0x4e71, {                    \
-      0x8a, 0x94, 0x56, 0x38, 0x6c, 0xa3, 0xda, 0x3d \
-    }                                                \
-  }
+#define NS_TEST_EXTERNAL_INTERFACE_IID \
+  {0xd5ba0c99, 0x9b1d, 0x4e71, {0x8a, 0x94, 0x56, 0x38, 0x6c, 0xa3, 0xda, 0x3d}}
 class TestExternalInterface : public nsISupports {
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_TEST_EXTERNAL_INTERFACE_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_TEST_EXTERNAL_INTERFACE_IID)
   NS_DECL_ISUPPORTS
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(TestExternalInterface,
-                              NS_TEST_EXTERNAL_INTERFACE_IID)
 
 class TestNonWrapperCacheInterface : public nsISupports {
  public:
@@ -130,29 +117,6 @@ class TestInterface : public nsISupports, public nsWrapperCache {
       JS::Handle<JSObject*>, JS::Handle<JSObject*>, const Sequence<Dict>&,
       JS::Handle<JS::Value>, const Optional<JS::Handle<JSObject*>>&,
       const Optional<JS::Handle<JSObject*>>&, ErrorResult&);
-
-  static already_AddRefed<TestInterface> Test3(const GlobalObject&,
-                                               const LongOrStringAnyRecord&,
-                                               ErrorResult&);
-
-  static already_AddRefed<TestInterface> Test4(
-      const GlobalObject&, const Record<nsString, Record<nsString, JS::Value>>&,
-      ErrorResult&);
-
-  static already_AddRefed<TestInterface> Test5(
-      const GlobalObject&,
-      const Record<
-          nsString,
-          Sequence<Record<nsString,
-                          Record<nsString, Sequence<Sequence<JS::Value>>>>>>&,
-      ErrorResult&);
-
-  static already_AddRefed<TestInterface> Test6(
-      const GlobalObject&,
-      const Sequence<Record<
-          nsCString,
-          Sequence<Sequence<Record<nsCString, Record<nsString, JS::Value>>>>>>&,
-      ErrorResult&);
 
   // Integer types
   int8_t ReadonlyByte();
@@ -731,7 +695,39 @@ class TestInterface : public nsISupports, public nsWrapperCache {
   // void PassUnionWithInterfaces(const TestInterfaceOrTestExternalInterface&
   // arg); void PassUnionWithInterfacesAndNullable(const
   // TestInterfaceOrNullOrTestExternalInterface& arg);
-  void PassUnionWithArrayBuffer(const ArrayBufferOrLong&);
+  void PassUnionWithArrayBuffer(const UTF8StringOrArrayBuffer& aArg) {
+    auto processor = [](const Span<uint8_t>& aData) -> int { return -1; };
+    static_assert(
+        std::is_same_v<decltype(ProcessTypedArraysFixed(aArg, processor)),
+                       Maybe<int>>,
+        "If the union can contain non-typedarray members we need to signal "
+        "that with a Maybe<…> rv.");
+  }
+  void PassUnionWithArrayBufferOrNull(
+      const UTF8StringOrArrayBufferOrNull& aArg) {
+    auto processor = [](const Span<uint8_t>& aData) -> int { return -1; };
+    static_assert(
+        std::is_same_v<decltype(ProcessTypedArraysFixed(aArg, processor)),
+                       Maybe<int>>,
+        "If the union can contain non-typedarray members or null we need to "
+        "signal that with a Maybe<…> rv.");
+  }
+  void PassUnionWithTypedArrays(const ArrayBufferViewOrArrayBuffer& aArg) {
+    auto processor = [](const Span<uint8_t>& aData) -> int { return -1; };
+    static_assert(
+        std::is_same_v<decltype(ProcessTypedArraysFixed(aArg, processor)), int>,
+        "If the union can't contain non-typedarray members or null we can just "
+        "return the result of calling the lambda.");
+  }
+  void PassUnionWithTypedArraysOrNull(
+      const ArrayBufferViewOrArrayBufferOrNull& aArg) {
+    auto processor = [](const Span<uint8_t>& aData) -> int { return -1; };
+    static_assert(
+        std::is_same_v<decltype(ProcessTypedArraysFixed(aArg, processor)),
+                       Maybe<int>>,
+        "If the union can contain non-typedarray members or null we need to "
+        "signal that with a Maybe<…> rv.");
+  }
   void PassUnionWithString(JSContext*, const StringOrObject&);
   void PassUnionWithEnum(JSContext*, const SupportedTypeOrObject&);
   // void PassUnionWithCallback(JSContext*, const TestCallbackOrLong&);
@@ -1142,6 +1138,13 @@ class TestInterface : public nsISupports, public nsWrapperCache {
   void PassUnionArrayBuffer(const StringOrArrayBuffer& foo);
   void PassUnionAllowSharedArrayBuffer(
       const StringOrMaybeSharedArrayBuffer& foo);
+  void passAllowSharedInt8ArrayOrInt16Array(
+      const MaybeSharedInt8ArrayOrMaybeSharedInt16Array&);
+
+  void GetReflectedHTMLAttributeReturningFrozenArray(
+      bool*, Nullable<nsTArray<RefPtr<Element>>>&) const;
+  void SetReflectedHTMLAttributeReturningFrozenArray(
+      const Nullable<Sequence<OwningNonNull<Element>>>&);
 
  private:
   // We add signatures here that _could_ start matching if the codegen
@@ -1360,6 +1363,48 @@ class TestInterface : public nsISupports, public nsWrapperCache {
   void PassString(NonNull<nsAString>&) = delete;
   void PassString(const OwningNonNull<nsAString>&) = delete;
   void PassString(OwningNonNull<nsAString>&) = delete;
+};
+
+class TestLegacyFactoryFunctionInterface : public nsISupports,
+                                           public nsWrapperCache {
+ public:
+  NS_DECL_ISUPPORTS
+
+  // We need a GetParentObject to make binding codegen happy
+  virtual nsISupports* GetParentObject();
+
+  // And now our actual WebIDL API
+  static already_AddRefed<TestLegacyFactoryFunctionInterface> Test3(
+      const GlobalObject&, const LongOrStringAnyRecord&, ErrorResult&);
+
+  static already_AddRefed<TestLegacyFactoryFunctionInterface> Test4(
+      const GlobalObject&, const Record<nsString, Record<nsString, JS::Value>>&,
+      ErrorResult&);
+};
+
+class TestLegacyFactoryFunctionInterface2 : public nsISupports,
+                                            public nsWrapperCache {
+ public:
+  NS_DECL_ISUPPORTS
+
+  // We need a GetParentObject to make binding codegen happy
+  virtual nsISupports* GetParentObject();
+
+  // And now our actual WebIDL API
+  static already_AddRefed<TestLegacyFactoryFunctionInterface2> Test5(
+      const GlobalObject&,
+      const Record<
+          nsString,
+          Sequence<Record<nsString,
+                          Record<nsString, Sequence<Sequence<JS::Value>>>>>>&,
+      ErrorResult&);
+
+  static already_AddRefed<TestLegacyFactoryFunctionInterface2> Test6(
+      const GlobalObject&,
+      const Sequence<Record<
+          nsCString,
+          Sequence<Sequence<Record<nsCString, Record<nsString, JS::Value>>>>>>&,
+      ErrorResult&);
 };
 
 class TestIndexedGetterInterface : public nsISupports, public nsWrapperCache {
@@ -1582,15 +1627,15 @@ class TestWorkerExposedInterface : public nsISupports, public nsWrapperCache {
   // We need a GetParentObject to make binding codegen happy
   nsISupports* GetParentObject();
 
-  void NeedsSubjectPrincipalMethod(Maybe<nsIPrincipal*>);
-  bool NeedsSubjectPrincipalAttr(Maybe<nsIPrincipal*>);
-  void SetNeedsSubjectPrincipalAttr(bool, Maybe<nsIPrincipal*>);
+  void NeedsSubjectPrincipalMethod(nsIPrincipal&);
+  bool NeedsSubjectPrincipalAttr(nsIPrincipal&);
+  void SetNeedsSubjectPrincipalAttr(bool, nsIPrincipal&);
   void NeedsCallerTypeMethod(CallerType);
   bool NeedsCallerTypeAttr(CallerType);
   void SetNeedsCallerTypeAttr(bool, CallerType);
-  void NeedsNonSystemSubjectPrincipalMethod(Maybe<nsIPrincipal*>);
-  bool NeedsNonSystemSubjectPrincipalAttr(Maybe<nsIPrincipal*>);
-  void SetNeedsNonSystemSubjectPrincipalAttr(bool, Maybe<nsIPrincipal*>);
+  void NeedsNonSystemSubjectPrincipalMethod(nsIPrincipal*);
+  bool NeedsNonSystemSubjectPrincipalAttr(nsIPrincipal*);
+  void SetNeedsNonSystemSubjectPrincipalAttr(bool, nsIPrincipal*);
 };
 
 class TestHTMLConstructorInterface : public nsGenericHTMLElement {
@@ -1764,6 +1809,20 @@ class TestPrefChromeOnlySCFuncConstructorForInterface : public nsISupports,
   // in the generated constructor.
   static already_AddRefed<TestPrefChromeOnlySCFuncConstructorForInterface>
   Constructor(const GlobalObject&);
+};
+
+class TestCallbackDictUnionOverload : public nsISupports,
+                                      public nsWrapperCache {
+ public:
+  NS_DECL_ISUPPORTS
+  virtual nsISupports* GetParentObject();
+
+  void Overload1(bool);
+  void Overload1(TestCallback&);
+  void Overload1(const GrandparentDict&);
+  void Overload2(bool);
+  void Overload2(const GrandparentDict&);
+  void Overload2(TestCallback&);
 };
 
 }  // namespace dom

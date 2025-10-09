@@ -85,7 +85,7 @@ class JsepSession {
   virtual bool RemoteIsIceLite() const = 0;
   virtual std::vector<std::string> GetIceOptions() const = 0;
 
-  virtual nsresult AddDtlsFingerprint(const std::string& algorithm,
+  virtual nsresult AddDtlsFingerprint(const nsACString& algorithm,
                                       const std::vector<uint8_t>& value) = 0;
 
   virtual nsresult AddRtpExtension(
@@ -242,6 +242,30 @@ class JsepSession {
   }
 
   virtual bool CheckNegotiationNeeded() const = 0;
+
+  void CountTransceivers(
+      uint16_t (&recvonly)[SdpMediaSection::kMediaTypes],
+      uint16_t (&sendonly)[SdpMediaSection::kMediaTypes],
+      uint16_t (&sendrecv)[SdpMediaSection::kMediaTypes]) const {
+    memset(recvonly, 0, sizeof(recvonly));
+    memset(sendonly, 0, sizeof(sendonly));
+    memset(sendrecv, 0, sizeof(sendrecv));
+
+    for (const auto& transceiver : GetTransceivers()) {
+      if (!transceiver.IsNegotiated()) {
+        continue;
+      }
+      if ((transceiver.mRecvTrack.GetActive() &&
+           transceiver.mSendTrack.GetActive()) ||
+          transceiver.GetMediaType() == SdpMediaSection::kApplication) {
+        ++sendrecv[transceiver.GetMediaType()];
+      } else if (transceiver.mRecvTrack.GetActive()) {
+        ++recvonly[transceiver.GetMediaType()];
+      } else if (transceiver.mSendTrack.GetActive()) {
+        ++sendonly[transceiver.GetMediaType()];
+      }
+    }
+  }
 
   void CountTracksAndDatachannels(
       uint16_t (&receiving)[SdpMediaSection::kMediaTypes],

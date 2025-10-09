@@ -12,7 +12,6 @@ var {
   getStack,
   callFunctionWithAsyncStack,
 } = require("resource://devtools/shared/platform/stack.js");
-const defer = require("resource://devtools/shared/defer.js");
 
 /**
  * Base class for client-side actor fronts.
@@ -269,37 +268,59 @@ class Front extends Pool {
    * Update the actor from its representation.
    * Subclasses should override this.
    */
-  form(form) {}
+  form() {}
 
   /**
    * Send a packet on the connection.
+   *
+   * @param {Object} packet
+   * @param {Object} options
+   * @param {Boolean} options.bulk
+   *        To be set to true, if the packet relates to bulk request.
+   *        Bulk request allows to send raw bytes over the wire instead of
+   *        having to create a JSON string packet.
+   * @param {Function} options.clientBulkCallback
+   *        For bulk request, function called with a StreamWriter as only argument.
+   *        This is called when the StreamWriter is available in order to send
+   *        bytes to the server.
    */
-  send(packet) {
-    if (packet.to) {
+  send(packet, { bulk = false, clientBulkCallback = null } = {}) {
+    // The connection might be closed during the promise resolution
+    if (!this.conn?._transport) {
+      return;
+    }
+
+    if (!bulk) {
+      if (!packet.to) {
+        packet.to = this.actorID;
+      }
       this.conn._transport.send(packet);
     } else {
-      packet.to = this.actorID;
-      // The connection might be closed during the promise resolution
-      if (this.conn && this.conn._transport) {
-        this.conn._transport.send(packet);
+      if (!packet.actor) {
+        packet.actor = this.actorID;
       }
+      this.conn._transport.startBulkSend(packet).then(clientBulkCallback);
     }
   }
 
   /**
    * Send a two-way request on the connection.
+   *
+   * See `send()` jsdoc for parameters definition.
    */
-  request(packet) {
-    const deferred = defer();
+  request(packet, { bulk = false, clientBulkCallback = null } = {}) {
+    const deferred = Promise.withResolvers();
     // Save packet basics for debugging
     const { to, type } = packet;
     this._requests.push({
       deferred,
       to: to || this.actorID,
       type,
+      packet,
       stack: getStack(),
+      clientBulkCallback,
     });
-    this.send(packet);
+    this.send(packet, { bulk, clientBulkCallback });
     return deferred.promise;
   }
 
@@ -364,7 +385,7 @@ class Front extends Pool {
       throw err;
     }
 
-    const { deferred, stack } = this._requests.shift();
+    const { deferred, packet: clientPacket, stack } = this._requests.shift();
     callFunctionWithAsyncStack(
       () => {
         if (packet.error) {
@@ -381,6 +402,11 @@ class Front extends Pool {
             message += ` (${fileName}:${lineNumber}:${columnNumber})`;
           }
           const packetError = new Error(message);
+
+          // Pass the packets on the exception object to convey them to AppErrorBoundary
+          packetError.serverPacket = packet;
+          packetError.clientPacket = clientPacket;
+
           deferred.reject(packetError);
         } else {
           deferred.resolve(packet);
@@ -389,6 +415,14 @@ class Front extends Pool {
       stack,
       "DevTools RDP"
     );
+  }
+
+  /**
+   * DevToolsClient will notify Fronts about bulk packet via this method.
+   */
+  onBulkPacket(packet) {
+    // We can actually consider the bulk packet as a regular packet.
+    this.onPacket(packet);
   }
 
   hasRequests() {

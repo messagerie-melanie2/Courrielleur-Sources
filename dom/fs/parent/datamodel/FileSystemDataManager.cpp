@@ -6,12 +6,17 @@
 
 #include "FileSystemDataManager.h"
 
+#include "ErrorList.h"
 #include "FileSystemDatabaseManager.h"
 #include "FileSystemDatabaseManagerVersion001.h"
+#include "FileSystemDatabaseManagerVersion002.h"
 #include "FileSystemFileManager.h"
 #include "FileSystemHashSource.h"
+#include "FileSystemParentTypes.h"
+#include "NotifyUtils.h"
 #include "ResultStatement.h"
 #include "SchemaVersion001.h"
+#include "SchemaVersion002.h"
 #include "fs/FileSystemConstants.h"
 #include "mozIStorageService.h"
 #include "mozStorageCID.h"
@@ -19,11 +24,14 @@
 #include "mozilla/StaticPtr.h"
 #include "mozilla/dom/FileSystemLog.h"
 #include "mozilla/dom/FileSystemManagerParent.h"
+#include "mozilla/dom/QMResult.h"
+#include "mozilla/dom/quota/ClientDirectoryLock.h"
 #include "mozilla/dom/quota/ClientImpl.h"
-#include "mozilla/dom/quota/DirectoryLock.h"
+#include "mozilla/dom/quota/HashKeys.h"
 #include "mozilla/dom/quota/QuotaCommon.h"
 #include "mozilla/dom/quota/QuotaManager.h"
 #include "mozilla/dom/quota/ResultExtensions.h"
+#include "mozilla/dom/quota/ThreadUtils.h"
 #include "mozilla/dom/quota/UsageInfo.h"
 #include "mozilla/ipc/BackgroundParent.h"
 #include "nsBaseHashtable.h"
@@ -40,19 +48,15 @@ namespace mozilla::dom::fs::data {
 
 namespace {
 
-// nsCStringHashKey with disabled memmove
-class nsCStringHashKeyDM : public nsCStringHashKey {
- public:
-  explicit nsCStringHashKeyDM(const nsCStringHashKey::KeyTypePointer aKey)
-      : nsCStringHashKey(aKey) {}
-  enum { ALLOW_MEMMOVE = false };
-};
-
 // When CheckedUnsafePtr's checking is enabled, it's necessary to ensure that
 // the hashtable uses the copy constructor instead of memmove for moving entries
 // since memmove will break CheckedUnsafePtr in a memory-corrupting way.
+
+// The assertion type must be the same as the assertion type used for defining
+// the base class for FileSystemDataManager in FileSystemDataManager.h!
 using FileSystemDataManagerHashKey =
-    std::conditional<DiagnosticAssertEnabled::value, nsCStringHashKeyDM,
+    std::conditional<ReleaseAssertEnabled::value,
+                     quota::nsCStringHashKeyWithDisabledMemmove,
                      nsCStringHashKey>::type;
 
 // Raw (but checked when the diagnostic assert is enabled) references as we
@@ -109,10 +113,12 @@ void RemoveFileSystemDataManager(const Origin& aOrigin) {
   }
 }
 
+}  // namespace
+
 Result<ResultConnection, QMResult> GetStorageConnection(
     const quota::OriginMetadata& aOriginMetadata,
     const int64_t aDirectoryLockId) {
-  MOZ_ASSERT(aDirectoryLockId >= 0);
+  MOZ_ASSERT(aDirectoryLockId >= -1);
 
   // Ensure that storage is initialized and file system folder exists!
   QM_TRY_INSPECT(const auto& dbFileUrl,
@@ -134,8 +140,6 @@ Result<ResultConnection, QMResult> GetStorageConnection(
 
   return result;
 }
-
-}  // namespace
 
 Result<EntryId, QMResult> GetRootHandle(const Origin& origin) {
   MOZ_ASSERT(!origin.IsEmpty());
@@ -161,7 +165,9 @@ FileSystemDataManager::FileSystemDataManager(
       mBackgroundTarget(WrapNotNull(GetCurrentSerialEventTarget())),
       mIOTarget(std::move(aIOTarget)),
       mIOTaskQueue(std::move(aIOTaskQueue)),
+      mDirectoryLockId(-1),
       mRegCount(0),
+      mVersion(0),
       mState(State::Initial) {}
 
 FileSystemDataManager::~FileSystemDataManager() {
@@ -312,15 +318,35 @@ void FileSystemDataManager::Unregister() {
 void FileSystemDataManager::RegisterActor(
     NotNull<FileSystemManagerParent*> aActor) {
   MOZ_ASSERT(!mBackgroundThreadAccessible.Access()->mActors.Contains(aActor));
+  MOZ_ASSERT(mState == State::Open);
+  MOZ_ASSERT(mDirectoryLockHandle);
 
   mBackgroundThreadAccessible.Access()->mActors.Insert(aActor);
+
+  aActor->SetRegistered(true);
+
+  // It can happen that FileSystemDataManager::AbortOperationsForLocks is
+  // called during async CreateFileSystemManagerParent operation when the actor
+  // is not yet registered. FileSystemDataManager::RequestAllowToClose is not
+  // able to propagate the RequestAllowToClose notification to the actor in
+  // that case. However, one a new actor is registered, we can check the
+  // directory lock if it has been invalidated and eventually notify the actor
+  // about the abort.
+
+  if (mDirectoryLockHandle->Invalidated()) {
+    aActor->RequestAllowToClose();
+  }
 }
 
 void FileSystemDataManager::UnregisterActor(
     NotNull<FileSystemManagerParent*> aActor) {
   MOZ_ASSERT(mBackgroundThreadAccessible.Access()->mActors.Contains(aActor));
+  MOZ_ASSERT(mState == State::Open);
+  MOZ_ASSERT(mDirectoryLockHandle);
 
   mBackgroundThreadAccessible.Access()->mActors.Remove(aActor);
+
+  aActor->SetRegistered(false);
 
   if (IsInactive()) {
     BeginClose();
@@ -359,70 +385,213 @@ RefPtr<BoolPromise> FileSystemDataManager::OnClose() {
   return mClosePromiseHolder.Ensure(__func__);
 }
 
-bool FileSystemDataManager::IsLocked(const EntryId& aEntryId) const {
+// Note: Input can be temporary or main file id
+Result<bool, QMResult> FileSystemDataManager::IsLocked(
+    const FileId& aFileId) const {
+  auto checkIfEntryIdIsLocked = [this, &aFileId]() -> Result<bool, QMResult> {
+    QM_TRY_INSPECT(const EntryId& entryId,
+                   mDatabaseManager->GetEntryId(aFileId));
+
+    return IsLocked(entryId);
+  };
+
+  auto valueToSome = [](auto aValue) { return Some(std::move(aValue)); };
+
+  QM_TRY_UNWRAP(Maybe<bool> maybeLocked,
+                QM_OR_ELSE_LOG_VERBOSE_IF(
+                    // Expression.
+                    (checkIfEntryIdIsLocked().map(valueToSome)),
+                    // Predicate.
+                    IsSpecificError<NS_ERROR_DOM_NOT_FOUND_ERR>,
+                    // Fallback.
+                    ([](const auto&) -> Result<Maybe<bool>, QMResult> {
+                      return Some(false);  // Non-existent files are not locked.
+                    })));
+
+  if (!maybeLocked) {
+    // If the metadata is inaccessible, we block modifications.
+    return true;
+  }
+
+  return *maybeLocked;
+}
+
+Result<bool, QMResult> FileSystemDataManager::IsLocked(
+    const EntryId& aEntryId) const {
   return mExclusiveLocks.Contains(aEntryId) || mSharedLocks.Contains(aEntryId);
 }
 
-nsresult FileSystemDataManager::LockExclusive(const EntryId& aEntryId) {
-  if (IsLocked(aEntryId)) {
-    return NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR;
+Result<FileId, QMResult> FileSystemDataManager::LockExclusive(
+    const EntryId& aEntryId) {
+  QM_TRY_UNWRAP(const bool isLocked, IsLocked(aEntryId));
+  if (isLocked) {
+    return Err(QMResult(NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR));
   }
+
+  QM_TRY_INSPECT(const FileId& fileId,
+                 mDatabaseManager->EnsureFileId(aEntryId));
 
   // If the file has been removed, we should get a file not found error.
   // Otherwise, if usage tracking cannot be started because file size is not
   // known and attempts to read it are failing, lock is denied to freeze the
   // quota usage until the (external) blocker is gone or the file is removed.
-  QM_TRY(MOZ_TO_RESULT(mDatabaseManager->BeginUsageTracking(aEntryId)));
+  QM_TRY(QM_TO_RESULT(mDatabaseManager->BeginUsageTracking(fileId)));
 
   LOG_VERBOSE(("ExclusiveLock"));
   mExclusiveLocks.Insert(aEntryId);
 
-  return NS_OK;
+  return fileId;
 }
 
+// TODO: Improve reporting of failures, see bug 1840811.
 void FileSystemDataManager::UnlockExclusive(const EntryId& aEntryId) {
   MOZ_ASSERT(mExclusiveLocks.Contains(aEntryId));
 
   LOG_VERBOSE(("ExclusiveUnlock"));
   mExclusiveLocks.Remove(aEntryId);
 
+  QM_TRY_INSPECT(const FileId& fileId, mDatabaseManager->GetFileId(aEntryId),
+                 QM_VOID);
+
   // On error, usage tracking remains on to prevent writes until usage is
   // updated successfully.
-  QM_TRY(MOZ_TO_RESULT(mDatabaseManager->UpdateUsage(aEntryId)), QM_VOID);
-  QM_TRY(MOZ_TO_RESULT(mDatabaseManager->EndUsageTracking(aEntryId)), QM_VOID);
+  QM_TRY(MOZ_TO_RESULT(mDatabaseManager->UpdateUsage(fileId)), QM_VOID);
+  QM_TRY(MOZ_TO_RESULT(mDatabaseManager->EndUsageTracking(fileId)), QM_VOID);
 }
 
-nsresult FileSystemDataManager::LockShared(const EntryId& aEntryId) {
+Result<FileId, QMResult> FileSystemDataManager::LockShared(
+    const EntryId& aEntryId) {
   if (mExclusiveLocks.Contains(aEntryId)) {
-    return NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR;
+    return Err(QMResult(NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR));
   }
 
   auto& count = mSharedLocks.LookupOrInsert(aEntryId);
   if (!(1u + CheckedUint32(count)).isValid()) {  // don't make the count invalid
-    return NS_ERROR_UNEXPECTED;
+    return Err(QMResult(NS_ERROR_UNEXPECTED));
   }
+
+  QM_TRY_INSPECT(const FileId& fileId,
+                 mDatabaseManager->EnsureTemporaryFileId(aEntryId));
+
+  // If the file has been removed, we should get a file not found error.
+  // Otherwise, if usage tracking cannot be started because file size is not
+  // known and attempts to read it are failing, lock is denied to freeze the
+  // quota usage until the (external) blocker is gone or the file is removed.
+  QM_TRY(QM_TO_RESULT(mDatabaseManager->BeginUsageTracking(fileId)));
 
   ++count;
   LOG_VERBOSE(("SharedLock %u", count));
 
-  return NS_OK;
+  return fileId;
 }
 
-void FileSystemDataManager::UnlockShared(const EntryId& aEntryId) {
-  MOZ_ASSERT(!mExclusiveLocks.Contains(aEntryId));
-  MOZ_ASSERT(mSharedLocks.Contains(aEntryId));
+// TODO: Improve reporting of failures, see bug 1840811.
+void FileSystemDataManager::UnlockShared(const EntryId& aEntryId,
+                                         const FileId& aFileId, bool aAbort) {
+  const bool wasDeprecated = [&]() {
+    // Someone recreated the file and put an exclusive lock on it
+    if (mExclusiveLocks.Contains(aEntryId)) {
+      aAbort = true;
+    }
 
-  auto entry = mSharedLocks.Lookup(aEntryId);
-  MOZ_ASSERT(entry);
+    auto entry = mDeprecatedLocks.Lookup(aEntryId);
+    if (!entry) {
+      return false;
+    }
 
-  MOZ_ASSERT(entry.Data() > 0);
-  --entry.Data();
+    auto& fileIdData = entry.Data();
+    auto fileIdIt = fileIdData.IndexOf(aFileId);
+    if (nsTArray<FileId>::NoIndex == fileIdIt) {
+      return false;
+    }
 
-  LOG_VERBOSE(("SharedUnlock %u", *entry));
+    fileIdData.UnorderedRemoveElementAt(fileIdIt);
 
-  if (0u == entry.Data()) {
-    entry.Remove();
+    if (fileIdData.IsEmpty()) {
+      entry.Remove();
+    }
+
+    return true;
+  }();
+
+  // Deprecated locks are per file. A file cannot be
+  // both in active use with a shared lock and deprecated,
+  // while entries can.
+  if (!wasDeprecated) {
+    MOZ_ASSERT(!mExclusiveLocks.Contains(aEntryId));
+
+    auto entry = mSharedLocks.Lookup(aEntryId);
+    if (!entry) {
+      return;
+    }
+
+    MOZ_ASSERT(entry.Data() > 0);
+    --entry.Data();
+
+    LOG_VERBOSE(("SharedUnlock %u", *entry));
+
+    if (0u == entry.Data()) {
+      entry.Remove();
+    }
   }
+
+  // If underlying file does not exist but should close, abort instead.
+  if (!aAbort) {
+    QM_WARNONLY_TRY_UNWRAP(const Maybe<bool> doesFileExist,
+                           mDatabaseManager->DoesFileExist(aEntryId));
+    const bool exists = doesFileExist.isSome() && doesFileExist.ref();
+    if (!exists) {
+      aAbort = true;
+    }
+  }
+
+  // On error, usage tracking remains on to prevent writes until usage is
+  // updated successfully.
+  QM_TRY(MOZ_TO_RESULT(mDatabaseManager->UpdateUsage(aFileId)), QM_VOID);
+  QM_TRY(MOZ_TO_RESULT(mDatabaseManager->EndUsageTracking(aFileId)), QM_VOID);
+  QM_TRY(
+      MOZ_TO_RESULT(mDatabaseManager->MergeFileId(aEntryId, aFileId, aAbort)),
+      QM_VOID);
+}
+
+void FileSystemDataManager::DeprecateSharedLocks(const EntryId& aEntryId,
+                                                 const FileId& aFileId) {
+  auto oldEntry = mSharedLocks.Lookup(aEntryId);
+  if (!oldEntry) {
+    return;
+  }
+
+  auto& deprecatedEntries = mDeprecatedLocks.LookupOrInsert(aEntryId);
+  MOZ_ASSERT(!deprecatedEntries.Contains(aFileId));
+  deprecatedEntries.AppendElement(aFileId);
+
+  MOZ_ASSERT(oldEntry.Data() >= 1);
+  if (oldEntry.Data() == 1) {
+    oldEntry.Remove();
+  } else {
+    --oldEntry.Data();
+  }
+}
+
+bool FileSystemDataManager::IsLockedWithDeprecatedSharedLock(
+    const EntryId& aEntryId, const FileId& aFileId) const {
+  MOZ_ASSERT(!aEntryId.IsEmpty());
+  MOZ_ASSERT(!aFileId.IsEmpty());
+
+  auto entry = mDeprecatedLocks.Lookup(aEntryId);
+  if (!entry) {
+    return false;
+  }
+
+  return nsTArray<FileId>::NoIndex != entry.Data().IndexOf(aFileId);
+}
+
+FileMode FileSystemDataManager::GetMode(bool aKeepData) const {
+  if (1 == mVersion) {
+    return FileMode::EXCLUSIVE;
+  }
+
+  return aKeepData ? FileMode::SHARED_FROM_COPY : FileMode::SHARED_FROM_EMPTY;
 }
 
 bool FileSystemDataManager::IsInactive() const {
@@ -442,80 +611,109 @@ RefPtr<BoolPromise> FileSystemDataManager::BeginOpen() {
 
   mState = State::Opening;
 
-  RefPtr<quota::ClientDirectoryLock> directoryLock =
-      mQuotaManager->CreateDirectoryLock(
-          quota::PERSISTENCE_TYPE_DEFAULT, mOriginMetadata,
-          mozilla::dom::quota::Client::FILESYSTEM,
-          /* aExclusive */ false);
-
-  directoryLock->Acquire()
+  mQuotaManager
+      ->OpenClientDirectory(
+          {mOriginMetadata, mozilla::dom::quota::Client::FILESYSTEM})
       ->Then(GetCurrentSerialEventTarget(), __func__,
-             [self = RefPtr<FileSystemDataManager>(this),
-              directoryLock = directoryLock](
-                 const BoolPromise::ResolveOrRejectValue& value) mutable {
-               if (value.IsReject()) {
-                 return BoolPromise::CreateAndReject(value.RejectValue(),
-                                                     __func__);
-               }
-
-               self->mDirectoryLock = std::move(directoryLock);
-
-               return BoolPromise::CreateAndResolve(true, __func__);
-             })
-      ->Then(mQuotaManager->IOThread(), __func__,
              [self = RefPtr<FileSystemDataManager>(this)](
-                 const BoolPromise::ResolveOrRejectValue& value) {
+                 quota::QuotaManager::ClientDirectoryLockHandlePromise::
+                     ResolveOrRejectValue&& value) {
                if (value.IsReject()) {
                  return BoolPromise::CreateAndReject(value.RejectValue(),
                                                      __func__);
                }
 
-               QM_TRY(MOZ_TO_RESULT(
-                          EnsureFileSystemDirectory(self->mOriginMetadata)),
-                      CreateAndRejectBoolPromise);
+               self->mDirectoryLockHandle = std::move(value.ResolveValue());
+
+               MOZ_ASSERT(self->mDirectoryLockHandle->Id() >= 0);
+               self->mDirectoryLockId = self->mDirectoryLockHandle->Id();
+
+               if (self->mDirectoryLockHandle->Invalidated()) {
+                 return BoolPromise::CreateAndReject(NS_ERROR_ABORT, __func__);
+               }
+
+               NotifyDatabaseWorkStarted();
 
                return BoolPromise::CreateAndResolve(true, __func__);
              })
-      ->Then(MutableIOTaskQueuePtr(), __func__,
-             [self = RefPtr<FileSystemDataManager>(this)](
-                 const BoolPromise::ResolveOrRejectValue& value) {
-               if (value.IsReject()) {
-                 return BoolPromise::CreateAndReject(value.RejectValue(),
-                                                     __func__);
-               }
+      ->Then(
+          mQuotaManager->IOThread(), __func__,
+          [self = RefPtr<FileSystemDataManager>(this)](
+              const BoolPromise::ResolveOrRejectValue& value) {
+            if (value.IsReject()) {
+              return BoolPromise::CreateAndReject(value.RejectValue(),
+                                                  __func__);
+            }
 
-               QM_TRY_UNWRAP(
-                   auto connection,
-                   fs::data::GetStorageConnection(self->mOriginMetadata,
-                                                  self->mDirectoryLock->Id()),
-                   CreateAndRejectBoolPromiseFromQMResult);
+            QM_TRY(
+                MOZ_TO_RESULT(EnsureFileSystemDirectory(self->mOriginMetadata)),
+                CreateAndRejectBoolPromise);
 
-               QM_TRY_UNWRAP(DatabaseVersion version,
-                             SchemaVersion001::InitializeConnection(
-                                 connection, self->mOriginMetadata.mOrigin),
-                             CreateAndRejectBoolPromiseFromQMResult);
+            quota::SleepIfEnabled(
+                StaticPrefs::dom_fs_databaseInitialization_pauseOnIOThreadMs());
 
-               if (1 == version) {
-                 QM_TRY_UNWRAP(
-                     FileSystemFileManager fmRes,
-                     FileSystemFileManager::CreateFileSystemFileManager(
-                         self->mOriginMetadata),
-                     CreateAndRejectBoolPromiseFromQMResult);
+            return BoolPromise::CreateAndResolve(true, __func__);
+          })
+      ->Then(
+          MutableIOTaskQueuePtr(), __func__,
+          [self = RefPtr<FileSystemDataManager>(this)](
+              const BoolPromise::ResolveOrRejectValue& value) {
+            if (value.IsReject()) {
+              return BoolPromise::CreateAndReject(value.RejectValue(),
+                                                  __func__);
+            }
 
-                 QM_TRY_UNWRAP(
-                     EntryId rootId,
-                     fs::data::GetRootHandle(self->mOriginMetadata.mOrigin),
-                     CreateAndRejectBoolPromiseFromQMResult);
+            QM_TRY_UNWRAP(auto connection,
+                          GetStorageConnection(self->mOriginMetadata,
+                                               self->mDirectoryLockId),
+                          CreateAndRejectBoolPromiseFromQMResult);
 
-                 self->mDatabaseManager =
-                     MakeUnique<FileSystemDatabaseManagerVersion001>(
-                         self, std::move(connection),
-                         MakeUnique<FileSystemFileManager>(std::move(fmRes)),
-                         rootId);
-               }
+            QM_TRY_UNWRAP(UniquePtr<FileSystemFileManager> fmPtr,
+                          FileSystemFileManager::CreateFileSystemFileManager(
+                              self->mOriginMetadata),
+                          CreateAndRejectBoolPromiseFromQMResult);
 
-               return BoolPromise::CreateAndResolve(true, __func__);
-             })
+            QM_TRY_UNWRAP(
+                self->mVersion,
+                QM_OR_ELSE_WARN_IF(
+                    // Expression.
+                    SchemaVersion002::InitializeConnection(
+                        connection, *fmPtr, self->mOriginMetadata.mOrigin),
+                    // Predicate.
+                    ([](const auto&) { return true; }),
+                    // Fallback.
+                    ([&self, &connection](const auto&) {
+                      QM_TRY_RETURN(SchemaVersion001::InitializeConnection(
+                          connection, self->mOriginMetadata.mOrigin));
+                    })),
+                CreateAndRejectBoolPromiseFromQMResult);
+
+            QM_TRY_UNWRAP(
+                EntryId rootId,
+                fs::data::GetRootHandle(self->mOriginMetadata.mOrigin),
+                CreateAndRejectBoolPromiseFromQMResult);
+
+            switch (self->mVersion) {
+              case 1: {
+                self->mDatabaseManager =
+                    MakeUnique<FileSystemDatabaseManagerVersion001>(
+                        self, std::move(connection), std::move(fmPtr), rootId);
+                break;
+              }
+
+              case 2: {
+                self->mDatabaseManager =
+                    MakeUnique<FileSystemDatabaseManagerVersion002>(
+                        self, std::move(connection), std::move(fmPtr), rootId);
+                break;
+              }
+
+              default:
+                break;
+            }
+
+            return BoolPromise::CreateAndResolve(true, __func__);
+          })
       ->Then(GetCurrentSerialEventTarget(), __func__,
              [self = RefPtr<FileSystemDataManager>(this)](
                  const BoolPromise::ResolveOrRejectValue& value) {
@@ -558,7 +756,10 @@ RefPtr<BoolPromise> FileSystemDataManager::BeginClose() {
       ->Then(MutableBackgroundTargetPtr(), __func__,
              [self = RefPtr<FileSystemDataManager>(this)](
                  const ShutdownPromise::ResolveOrRejectValue&) {
-               self->mDirectoryLock = nullptr;
+               {
+                 auto destroyingDirectoryLockHandle =
+                     std::move(self->mDirectoryLockHandle);
+               }
 
                RemoveFileSystemDataManager(self->mOriginMetadata.mOrigin);
 

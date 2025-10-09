@@ -27,11 +27,11 @@ const COLORSWATCH = true;
 //    expected post label corresponding with the input box value,
 //    boolean representing if there should be a colour swatch visible,
 //  ]
-const testData = [
+const SIMPLE_TEST_DATA = [
   ["v", "v", -1, 0, null, !COLORSWATCH],
   ["a", "va", -1, 0, null, !COLORSWATCH],
   ["r", "var", -1, 0, null, !COLORSWATCH],
-  ["(", "var()", -1, 0, null, !COLORSWATCH],
+  ["(", "var(--abc)", 0, 9, null, !COLORSWATCH],
   ["-", "var(--abc)", 0, 9, "inherit", !COLORSWATCH],
   ["VK_BACK_SPACE", "var(-)", -1, 0, null, !COLORSWATCH],
   ["-", "var(--abc)", 0, 9, "inherit", !COLORSWATCH],
@@ -49,6 +49,31 @@ const testData = [
   ["VK_LEFT", "var(--ghi)", -1, 0, null, !COLORSWATCH],
 ];
 
+const IN_FUNCTION_TEST_DATA = [
+  ["c", "c", -1, 0, null, !COLORSWATCH],
+  ["a", "ca", -1, 0, null, !COLORSWATCH],
+  ["l", "cal", -1, 0, null, !COLORSWATCH],
+  ["c", "calc", -1, 0, null, !COLORSWATCH],
+  ["(", "calc()", -1, 0, null, !COLORSWATCH],
+  // include all the "simple test" steps, only wrapping the expected input value
+  // inside `calc()`
+  ...SIMPLE_TEST_DATA.map(data => [
+    data[0],
+    `calc(${data[1]})`,
+    ...data.slice(2),
+  ]),
+];
+
+const FALLBACK_VALUE_TEST_DATA = [
+  ["v", "v", -1, 0, null, !COLORSWATCH],
+  ["a", "va", -1, 0, null, !COLORSWATCH],
+  ["r", "var", -1, 0, null, !COLORSWATCH],
+  ["(", "var(--abc)", 0, 9, null, !COLORSWATCH],
+  ["VK_RIGHT", "var(--abc)", -1, 0, null, !COLORSWATCH],
+  [",", "var(--abc,wheat)", 0, 3, null, COLORSWATCH],
+  ["w", "var(--abc,wheat)", 0, 2, null, COLORSWATCH],
+];
+
 const CSS_VARIABLES = [
   ["--abc", "inherit"],
   ["--def", "transparent"],
@@ -61,27 +86,53 @@ const CSS_VARIABLES = [
   ["--yz", "hsla(120, 60%, 70%, 0.3)"],
 ];
 
-const mockGetCSSValuesForPropertyName = function (propertyName) {
-  return [];
-};
-
 add_task(async function () {
   await addTab(
     "data:text/html;charset=utf-8,inplace editor CSS variable autocomplete"
   );
   const { host, doc } = await createHost();
 
+  info("Test simple var() completion");
+  await createEditorAndRunCompletionTest(doc, SIMPLE_TEST_DATA);
+
+  info("Test var() in calc() completion");
+  await createEditorAndRunCompletionTest(doc, IN_FUNCTION_TEST_DATA);
+
+  info("Test var() fallback completion");
+  await createEditorAndRunCompletionTest(doc, FALLBACK_VALUE_TEST_DATA, {
+    color: ["wheat", "white", "yellow"],
+  });
+
+  host.destroy();
+  gBrowser.removeCurrentTab();
+});
+
+async function createEditorAndRunCompletionTest(
+  doc,
+  testData,
+  mockValues = {}
+) {
   const popup = new AutocompletePopup(doc, { autoSelect: true });
 
   await new Promise(resolve => {
     createInplaceEditorAndClick(
       {
-        start: runAutocompletionTest,
+        start: async editor => {
+          for (const data of testData) {
+            await testCompletion(data, editor);
+          }
+
+          EventUtils.synthesizeKey("VK_RETURN", {}, editor.input.defaultView);
+        },
         contentType: InplaceEditor.CONTENT_TYPES.CSS_VALUE,
         property: {
           name: "color",
         },
-        cssVariables: new Map(CSS_VARIABLES),
+        cssProperties: {
+          getNames: () => Object.keys(mockValues),
+          getValues: propertyName => mockValues[propertyName] || [],
+        },
+        getCssVariables: () => new Map(CSS_VARIABLES),
         done: resolve,
         popup,
       },
@@ -90,17 +141,4 @@ add_task(async function () {
   });
 
   popup.destroy();
-  host.destroy();
-  gBrowser.removeCurrentTab();
-});
-
-const runAutocompletionTest = async function (editor) {
-  info("Starting to test for css variable completion");
-  editor._getCSSValuesForPropertyName = mockGetCSSValuesForPropertyName;
-
-  for (const data of testData) {
-    await testCompletion(data, editor);
-  }
-
-  EventUtils.synthesizeKey("VK_RETURN", {}, editor.input.defaultView);
-};
+}

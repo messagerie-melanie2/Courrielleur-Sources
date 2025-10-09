@@ -2,10 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
-var { CalReadableStreamFactory } = ChromeUtils.import(
-  "resource:///modules/CalReadableStreamFactory.jsm"
-);
+import { cal } from "resource:///modules/calendar/calUtils.sys.mjs";
+
+import { CalReadableStreamFactory } from "resource:///modules/CalReadableStreamFactory.sys.mjs";
 
 // This is a non-sync ics file. It reads the file pointer to by uri when set,
 // then writes it on updates. External changes to the file will be
@@ -16,10 +15,6 @@ var { CalReadableStreamFactory } = ChromeUtils.import(
 function icsNSResolver(prefix) {
   const ns = { D: "DAV:" };
   return ns[prefix] || null;
-}
-
-function icsXPathFirst(aNode, aExpr, aType) {
-  return cal.xml.evalXPathFirst(aNode, aExpr, icsNSResolver, aType);
 }
 
 var calICSCalendarClassID = Components.ID("{f8438bff-a3c9-4ed5-b23f-2663b5469abf}");
@@ -144,16 +139,16 @@ export class CalICSCalendar extends cal.provider.BaseClass {
       throw new Components.Exception("Calendar is not writable", Ci.calIErrors.CAL_IS_READONLY);
     }
 
-    let adoptCallback = this._cachedAdoptItemCallback;
+    const adoptCallback = this._cachedAdoptItemCallback;
 
-    let item = await new Promise(resolve => {
+    const item = await new Promise(resolve => {
       this.startBatch();
       this._queue.push({
         action: "add",
         item: aItem,
-        listener: item => {
+        listener: adoptedItem => {
           this.endBatch();
-          resolve(item);
+          resolve(adoptedItem);
         },
       });
       this.#processQueue();
@@ -169,21 +164,21 @@ export class CalICSCalendar extends cal.provider.BaseClass {
   // it returns.
   _cachedModifyItemCallback = null;
 
-  async modifyItem(aNewItem, aOldItem) {
+  async modifyItem(newItem, oldItem) {
     if (this.readOnly) {
       throw new Components.Exception("Calendar is not writable", Ci.calIErrors.CAL_IS_READONLY);
     }
 
-    let modifyCallback = this._cachedModifyItemCallback;
-    let item = await new Promise(resolve => {
+    const modifyCallback = this._cachedModifyItemCallback;
+    const item = await new Promise(resolve => {
       this.startBatch();
       this._queue.push({
         action: "modify",
-        newItem: aNewItem,
-        oldItem: aOldItem,
-        listener: item => {
+        newItem,
+        oldItem,
+        listener: modifiedItem => {
           this.endBatch();
-          resolve(item);
+          resolve(modifiedItem);
         },
       });
       this.#processQueue();
@@ -239,7 +234,7 @@ export class CalICSCalendar extends cal.provider.BaseClass {
    * @returns {ReadableStream<calIItemBase>}
    */
   getItems(aItemFilter, aCount, aRangeStart, aRangeEndEx) {
-    let self = this;
+    const self = this;
     return CalReadableStreamFactory.createBoundedReadableStream(
       aCount,
       CalReadableStreamFactory.defaultQueueSize,
@@ -248,7 +243,7 @@ export class CalICSCalendar extends cal.provider.BaseClass {
           self._queue.push({
             action: "get_items",
             exec: async () => {
-              for await (let value of cal.iterate.streamValues(
+              for await (const value of cal.iterate.streamValues(
                 self.#memoryCalendar.getItems(aItemFilter, aCount, aRangeStart, aRangeEndEx)
               )) {
                 controller.enqueue(value);
@@ -303,7 +298,7 @@ export class CalICSCalendar extends cal.provider.BaseClass {
   }
 
   #doRefresh(force) {
-    let channel = Services.io.newChannelFromURI(
+    const channel = Services.io.newChannelFromURI(
       this.#uri,
       null,
       Services.scriptSecurityManager.getSystemPrincipal(),
@@ -313,7 +308,7 @@ export class CalICSCalendar extends cal.provider.BaseClass {
     );
     this.#prepareChannel(channel, force);
 
-    let streamLoader = Cc["@mozilla.org/network/stream-loader;1"].createInstance(
+    const streamLoader = Cc["@mozilla.org/network/stream-loader;1"].createInstance(
       Ci.nsIStreamLoader
     );
 
@@ -398,13 +393,13 @@ export class CalICSCalendar extends cal.provider.BaseClass {
     // Wrap parsing in a try block. Will ignore errors. That's a good thing
     // for non-existing or empty files, but not good for invalid files.
     // That's why we put them in readOnly mode
-    let parser = Cc["@mozilla.org/calendar/ics-parser;1"].createInstance(Ci.calIIcsParser);
-    let self = this;
-    let listener = {
+    const parser = Cc["@mozilla.org/calendar/ics-parser;1"].createInstance(Ci.calIIcsParser);
+    const self = this;
+    const listener = {
       // calIIcsParsingListener
       onParsingComplete(rc, parser_) {
         try {
-          for (let item of parser_.getItems()) {
+          for (const item of parser_.getItems()) {
             self.#memoryCalendar.adoptItem(item);
           }
           self.#unmappedComponents = parser_.getComponents();
@@ -501,10 +496,10 @@ export class CalICSCalendar extends cal.provider.BaseClass {
     }
 
     channel.notificationCallbacks = this;
-    let uploadChannel = channel.QueryInterface(Ci.nsIUploadChannel);
+    const uploadChannel = channel.QueryInterface(Ci.nsIUploadChannel);
 
     // Set the content of the upload channel to our ICS file.
-    let icsStream = serializer.serializeToInputStream();
+    const icsStream = serializer.serializeToInputStream();
     uploadChannel.setUploadStream(icsStream, "text/calendar", -1);
 
     channel.asyncOpen(this);
@@ -513,14 +508,14 @@ export class CalICSCalendar extends cal.provider.BaseClass {
   async #doWriteICS() {
     cal.LOG("[calICSCalendar] Writing ICS File " + this.uri.spec);
 
-    let serializer = Cc["@mozilla.org/calendar/ics-serializer;1"].createInstance(
+    const serializer = Cc["@mozilla.org/calendar/ics-serializer;1"].createInstance(
       Ci.calIIcsSerializer
     );
-    for (let comp of this.#unmappedComponents) {
+    for (const comp of this.#unmappedComponents) {
       serializer.addComponent(comp);
     }
 
-    for (let prop of this.#unmappedProperties) {
+    for (const prop of this.#unmappedProperties) {
       switch (prop.propertyName) {
         // we always set the current name and timezone:
         case "X-WR-CALNAME":
@@ -555,7 +550,7 @@ export class CalICSCalendar extends cal.provider.BaseClass {
       // All events are returned. Now set up a channel and a
       // streamloader to upload.  onStopRequest will be called
       // once the write has finished
-      let channel = Services.io.newChannelFromURI(
+      const channel = Services.io.newChannelFromURI(
         this.#uri,
         null,
         Services.scriptSecurityManager.getSystemPrincipal(),
@@ -566,7 +561,7 @@ export class CalICSCalendar extends cal.provider.BaseClass {
 
       // Allow the hook to add things to the channel, like a
       // header that checks etags
-      let notChanged = this.#hooks.onBeforePut(channel);
+      const notChanged = this.#hooks.onBeforePut(channel);
       if (notChanged) {
         // Prevent Thunderbird from exiting entirely until we've finished
         // uploading one way or another
@@ -602,19 +597,19 @@ export class CalICSCalendar extends cal.provider.BaseClass {
 
   // nsIStreamListener impl
   // For after publishing. Do error checks here
-  onStartRequest(aRequest) {}
+  onStartRequest() {}
 
-  onDataAvailable(aRequest, aInputStream, aOffset, aCount) {
+  onDataAvailable(aRequest, aInputStream) {
     // All data must be consumed. For an upload channel, there is
     // no meaningful data. So it gets read and then ignored
-    let scriptableInputStream = Cc["@mozilla.org/scriptableinputstream;1"].createInstance(
+    const scriptableInputStream = Cc["@mozilla.org/scriptableinputstream;1"].createInstance(
       Ci.nsIScriptableInputStream
     );
     scriptableInputStream.init(aInputStream);
     scriptableInputStream.read(-1);
   }
 
-  onStopRequest(aRequest, aStatusCode) {
+  onStopRequest(aRequest) {
     let httpChannel;
     let requestSucceeded = false;
     try {
@@ -725,11 +720,11 @@ export class CalICSCalendar extends cal.provider.BaseClass {
     cal.ASSERT(this.#locked, "unexpected!");
 
     this.#modificationActions.forEach(action => {
-      let listener = action.listener;
+      const listener = action.listener;
       if (typeof listener == "function") {
         listener(action.item);
       } else if (listener) {
-        let args = action.opCompleteArgs;
+        const args = action.opCompleteArgs;
         cal.ASSERT(args, "missing onOperationComplete call!");
         if (Components.isSuccessCode(args[1]) && errCode && !Components.isSuccessCode(errCode)) {
           listener.onOperationComplete(args[0], errCode, args[2], args[3], null);
@@ -751,7 +746,7 @@ export class CalICSCalendar extends cal.provider.BaseClass {
 
   /**
    * @see nsIInterfaceRequestor
-   * @see calProviderUtils.jsm
+   * @see calProviderUtils.sys.mjs
    */
   getInterface = cal.provider.InterfaceRequestor_getInterface;
 
@@ -798,7 +793,7 @@ export class CalICSCalendar extends cal.provider.BaseClass {
 
       function purgeBackupsByType(files, type) {
         // filter out backups of the type we care about.
-        let filteredFiles = files.filter(file =>
+        const filteredFiles = files.filter(file =>
           file.name.includes("calBackupData_" + pseudoID + "_" + type)
         );
         // Sort by lastmodifed
@@ -806,7 +801,7 @@ export class CalICSCalendar extends cal.provider.BaseClass {
         // And delete the oldest files, and keep the desired number of
         // old backups
         for (let i = 0; i < filteredFiles.length - numBackupFiles; ++i) {
-          let file = backupDir.clone();
+          const file = backupDir.clone();
           file.append(filteredFiles[i].name);
 
           try {
@@ -821,8 +816,8 @@ export class CalICSCalendar extends cal.provider.BaseClass {
 
       function purgeOldBackups() {
         // Enumerate files in the backupdir for expiry of old backups
-        let files = [];
-        for (let file of backupDir.directoryEntries) {
+        const files = [];
+        for (const file of backupDir.directoryEntries) {
           if (file.isFile()) {
             files.push({ name: file.leafName, lastmodified: file.lastModifiedTime });
           }
@@ -835,24 +830,8 @@ export class CalICSCalendar extends cal.provider.BaseClass {
         }
       }
 
-      function copyToOverwriting(oldFile, newParentDir, newName) {
-        try {
-          let newFile = newParentDir.clone();
-          newFile.append(newName);
-
-          if (newFile.exists()) {
-            newFile.remove(false);
-          }
-          oldFile.copyTo(newParentDir, newName);
-        } catch (e) {
-          cal.ERROR("[calICSCalendar] Backup failed, no copy: " + e);
-          // Error in making a daily/initial backup.
-          // not fatal, so just continue
-        }
-      }
-
-      let backupDays = Services.prefs.getIntPref("calendar.backup.days", 1);
-      let numBackupFiles = Services.prefs.getIntPref("calendar.backup.filenum", 3);
+      const backupDays = Services.prefs.getIntPref("calendar.backup.days", 1);
+      const numBackupFiles = Services.prefs.getIntPref("calendar.backup.filenum", 3);
 
       let backupDir;
       try {
@@ -885,14 +864,14 @@ export class CalICSCalendar extends cal.provider.BaseClass {
       }
 
       let doInitialBackup = false;
-      let initialBackupFile = backupDir.clone();
+      const initialBackupFile = backupDir.clone();
       initialBackupFile.append(makeName("initial"));
       if (!initialBackupFile.exists()) {
         doInitialBackup = true;
       }
 
       let doDailyBackup = false;
-      let backupTime = this.getProperty("backup-time2");
+      const backupTime = this.getProperty("backup-time2");
       if (!backupTime || new Date().getTime() > backupTime + backupDays * 24 * 60 * 60 * 1000) {
         // It's time do to a daily backup
         doDailyBackup = true;
@@ -904,14 +883,14 @@ export class CalICSCalendar extends cal.provider.BaseClass {
         dailyBackupFileName = makeDailyFileName(backupDir);
       }
 
-      let backupFile = backupDir.clone();
+      const backupFile = backupDir.clone();
       backupFile.append(makeName("edit"));
-      backupFile.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, parseInt("0600", 8));
+      backupFile.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, 0o600);
 
       purgeOldBackups();
 
       // Now go download the remote file, and store it somewhere local.
-      let channel = Services.io.newChannelFromURI(
+      const channel = Services.io.newChannelFromURI(
         this.#uri,
         null,
         Services.scriptSecurityManager.getSystemPrincipal(),
@@ -922,18 +901,26 @@ export class CalICSCalendar extends cal.provider.BaseClass {
       channel.loadFlags |= Ci.nsIRequest.LOAD_BYPASS_CACHE;
       channel.notificationCallbacks = this;
 
-      let downloader = Cc["@mozilla.org/network/downloader;1"].createInstance(Ci.nsIDownloader);
-      let listener = {
-        onDownloadComplete(opdownloader, request, ctxt, status, result) {
+      const url = this.#uri.spec;
+      const downloader = Cc["@mozilla.org/network/downloader;1"].createInstance(Ci.nsIDownloader);
+      // @implements {nsIDownloadObserver}
+      const listener = {
+        async onDownloadComplete(opdownloader, request, status, result) {
+          if (status == Cr.NS_ERROR_FILE_NOT_FOUND) {
+            // Looks like there was no file to back up; ok.
+            resolve();
+            return;
+          }
           if (!Components.isSuccessCode(status)) {
-            reject();
+            reject(new Error(`Backup ${url} FAILED; status=0x${status.toString(16)}`));
             return;
           }
           if (doInitialBackup) {
-            copyToOverwriting(result, backupDir, makeName("initial"));
+            const newName = makeName("initial");
+            await IOUtils.copy(result.path, PathUtils.join(backupDir.path, newName));
           }
           if (doDailyBackup) {
-            copyToOverwriting(result, backupDir, dailyBackupFileName);
+            await IOUtils.copy(result.path, PathUtils.join(backupDir.path, dailyBackupFileName));
           }
           resolve();
         },
@@ -1015,7 +1002,7 @@ class calICSObserver {
 // dummyHooks are for transport types that don't have hooks of their own.
 // Also serves as poor-mans interface definition.
 class dummyHooks {
-  onBeforeGet(aChannel, aForceRefresh) {
+  onBeforeGet() {
     return true;
   }
 
@@ -1024,11 +1011,11 @@ class dummyHooks {
    *                    didn't change, there might be no data in this GET), true
    *                    in all other cases
    */
-  onAfterGet(aChannel) {
+  onAfterGet() {
     return true;
   }
 
-  onBeforePut(aChannel) {
+  onBeforePut() {
     return true;
   }
 
@@ -1048,7 +1035,7 @@ class httpHooks {
   }
 
   onBeforeGet(aChannel, aForceRefresh) {
-    let httpchannel = aChannel.QueryInterface(Ci.nsIHttpChannel);
+    const httpchannel = aChannel.QueryInterface(Ci.nsIHttpChannel);
     httpchannel.setRequestHeader("Accept", "text/calendar,text/plain;q=0.8,*/*;q=0.5", false);
 
     if (this.#etag && !aForceRefresh) {
@@ -1064,7 +1051,7 @@ class httpHooks {
   }
 
   onAfterGet(aChannel) {
-    let httpchannel = aChannel.QueryInterface(Ci.nsIHttpChannel);
+    const httpchannel = aChannel.QueryInterface(Ci.nsIHttpChannel);
     let responseStatus = 0;
     let responseStatusCategory = 0;
 
@@ -1122,7 +1109,7 @@ class httpHooks {
 
   onBeforePut(aChannel) {
     if (this.#etag) {
-      let httpchannel = aChannel.QueryInterface(Ci.nsIHttpChannel);
+      const httpchannel = aChannel.QueryInterface(Ci.nsIHttpChannel);
 
       // Apache doesn't work correctly with if-match on a PUT method,
       // so use the webdav header
@@ -1132,7 +1119,7 @@ class httpHooks {
   }
 
   onAfterPut(aChannel, aRespFunc) {
-    let httpchannel = aChannel.QueryInterface(Ci.nsIHttpChannel);
+    const httpchannel = aChannel.QueryInterface(Ci.nsIHttpChannel);
     try {
       this.#etag = httpchannel.getResponseHeader("ETag");
       aRespFunc();
@@ -1142,8 +1129,8 @@ class httpHooks {
       // because there is a time in which we don't know the right
       // etag.
       // Try to do the best we can, by immediately getting the etag.
-      let etagListener = {};
-      let self = this; // need to reference in callback
+      const etagListener = {};
+      const self = this; // need to reference in callback
 
       etagListener.onStreamComplete = function (
         aLoader,
@@ -1154,21 +1141,23 @@ class httpHooks {
       ) {
         let multistatus;
         try {
-          let str = new TextDecoder().decode(Uint8Array.from(aResult));
+          const str = new TextDecoder().decode(Uint8Array.from(aResult));
           multistatus = cal.xml.parseString(str);
         } catch (ex) {
           cal.LOG("[calICSCalendar] Failed to fetch channel etag");
         }
 
-        self.#etag = icsXPathFirst(
+        self.#etag = cal.xml.evalXPathFirst(
           multistatus,
-          "/D:propfind/D:response/D:propstat/D:prop/D:getetag"
+          "/D:propfind/D:response/D:propstat/D:prop/D:getetag",
+          icsNSResolver,
+          XPathResult.ANY_TYPE
         );
         aRespFunc();
       };
-      let queryXml = '<D:propfind xmlns:D="DAV:"><D:prop><D:getetag/></D:prop></D:propfind>';
+      const queryXml = '<D:propfind xmlns:D="DAV:"><D:prop><D:getetag/></D:prop></D:propfind>';
 
-      let etagChannel = cal.provider.prepHttpChannel(
+      const etagChannel = cal.provider.prepHttpChannel(
         aChannel.URI,
         queryXml,
         "text/xml; charset=utf-8",
@@ -1176,7 +1165,7 @@ class httpHooks {
       );
       etagChannel.setRequestHeader("Depth", "0", false);
       etagChannel.requestMethod = "PROPFIND";
-      let streamLoader = Cc["@mozilla.org/network/stream-loader;1"].createInstance(
+      const streamLoader = Cc["@mozilla.org/network/stream-loader;1"].createInstance(
         Ci.nsIStreamLoader
       );
 
@@ -1186,8 +1175,8 @@ class httpHooks {
   }
 
   // nsIProgressEventSink
-  onProgress(aRequest, aProgress, aProgressMax) {}
-  onStatus(aRequest, aStatus, aStatusArg) {}
+  onProgress() {}
+  onStatus() {}
 
   getInterface(aIid) {
     if (aIid.equals(Ci.nsIProgressEventSink)) {
@@ -1200,7 +1189,7 @@ class httpHooks {
 class fileHooks {
   #lastModified = null;
 
-  onBeforeGet(aChannel, aForceRefresh) {
+  onBeforeGet() {
     return true;
   }
 
@@ -1210,7 +1199,7 @@ class fileHooks {
    *                    in all other cases
    */
   onAfterGet(aChannel) {
-    let filechannel = aChannel.QueryInterface(Ci.nsIFileChannel);
+    const filechannel = aChannel.QueryInterface(Ci.nsIFileChannel);
     if (this.#lastModified && this.#lastModified == filechannel.file.lastModifiedTime) {
       return false;
     }
@@ -1219,7 +1208,7 @@ class fileHooks {
   }
 
   onBeforePut(aChannel) {
-    let filechannel = aChannel.QueryInterface(Ci.nsIFileChannel);
+    const filechannel = aChannel.QueryInterface(Ci.nsIFileChannel);
     if (this.#lastModified && this.#lastModified != filechannel.file.lastModifiedTime) {
       return false;
     }
@@ -1227,7 +1216,7 @@ class fileHooks {
   }
 
   onAfterPut(aChannel, aRespFunc) {
-    let filechannel = aChannel.QueryInterface(Ci.nsIFileChannel);
+    const filechannel = aChannel.QueryInterface(Ci.nsIFileChannel);
     this.#lastModified = filechannel.file.lastModifiedTime;
     aRespFunc();
     return true;

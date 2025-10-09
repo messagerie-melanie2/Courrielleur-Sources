@@ -14,14 +14,14 @@ namespace mozilla::dom {
 using mozilla::ipc::PrincipalInfo;
 using mozilla::ipc::PrincipalInfoToPrincipal;
 
-ClientInfo::ClientInfo(const nsID& aId, ClientType aType,
+ClientInfo::ClientInfo(const nsID& aId, const Maybe<nsID>& aAgentClusterId,
+                       ClientType aType,
                        const mozilla::ipc::PrincipalInfo& aPrincipalInfo,
-                       const TimeStamp& aCreationTime)
-    : mData(MakeUnique<IPCClientInfo>(aId, mozilla::Nothing(), aType,
-                                      aPrincipalInfo, aCreationTime, ""_ns,
-                                      mozilla::dom::FrameType::None,
-                                      mozilla::Nothing(), mozilla::Nothing())) {
-}
+                       const TimeStamp& aCreationTime, const nsCString& aURL,
+                       mozilla::dom::FrameType aFrameType)
+    : mData(MakeUnique<IPCClientInfo>(
+          aId, aAgentClusterId, aType, aPrincipalInfo, aCreationTime, aURL,
+          aFrameType, mozilla::Nothing(), mozilla::Nothing())) {}
 
 ClientInfo::ClientInfo(const IPCClientInfo& aData)
     : mData(MakeUnique<IPCClientInfo>(aData)) {}
@@ -34,9 +34,10 @@ ClientInfo& ClientInfo::operator=(const ClientInfo& aRight) {
   return *this;
 }
 
-ClientInfo::ClientInfo(ClientInfo&& aRight) : mData(std::move(aRight.mData)) {}
+ClientInfo::ClientInfo(ClientInfo&& aRight) noexcept
+    : mData(std::move(aRight.mData)) {}
 
-ClientInfo& ClientInfo::operator=(ClientInfo&& aRight) {
+ClientInfo& ClientInfo::operator=(ClientInfo&& aRight) noexcept {
   mData.reset();
   mData = std::move(aRight.mData);
   return *this;
@@ -89,15 +90,15 @@ const IPCClientInfo& ClientInfo::ToIPC() const { return *mData; }
 bool ClientInfo::IsPrivateBrowsing() const {
   switch (PrincipalInfo().type()) {
     case PrincipalInfo::TContentPrincipalInfo: {
-      auto& p = PrincipalInfo().get_ContentPrincipalInfo();
-      return p.attrs().mPrivateBrowsingId != 0;
+      const auto& p = PrincipalInfo().get_ContentPrincipalInfo();
+      return p.attrs().IsPrivateBrowsing();
     }
     case PrincipalInfo::TSystemPrincipalInfo: {
       return false;
     }
     case PrincipalInfo::TNullPrincipalInfo: {
-      auto& p = PrincipalInfo().get_NullPrincipalInfo();
-      return p.attrs().mPrivateBrowsingId != 0;
+      const auto& p = PrincipalInfo().get_NullPrincipalInfo();
+      return p.attrs().IsPrivateBrowsing();
     }
     default: {
       // clients should never be expanded principals
@@ -107,7 +108,6 @@ bool ClientInfo::IsPrivateBrowsing() const {
 }
 
 Result<nsCOMPtr<nsIPrincipal>, nsresult> ClientInfo::GetPrincipal() const {
-  MOZ_ASSERT(NS_IsMainThread());
   return PrincipalInfoToPrincipal(PrincipalInfo());
 }
 

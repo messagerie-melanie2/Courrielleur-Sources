@@ -13,7 +13,7 @@ function checkSteps(importDocument, currentStep, totalSteps) {
   ok(
     stepNav
       .querySelector(`*:nth-child(${currentStep})`)
-      .classList.contains("current"),
+      ?.classList.contains("current"),
     `Expected step ${currentStep} is active`
   );
 }
@@ -22,32 +22,34 @@ function checkVisiblePane(importDocument, activePaneId, activeStepId) {
   const panes = importDocument.querySelectorAll(".tabPane");
   for (const pane of panes) {
     if (pane.id === activePaneId) {
-      ok(BrowserTestUtils.is_visible(pane), `Pane ${activePaneId} is visible`);
-      const steps = pane.querySelectorAll("section");
+      ok(BrowserTestUtils.isVisible(pane), `Pane ${activePaneId} is visible`);
+      const steps = pane.querySelectorAll("section[id]");
       for (const step of steps) {
         if (step.id === activeStepId) {
           ok(
-            BrowserTestUtils.is_visible(step),
+            BrowserTestUtils.isVisible(step),
             `Step ${activeStepId} is visible`
           );
         } else {
-          ok(BrowserTestUtils.is_hidden(step), `Step ${step.id} is hidden`);
+          ok(BrowserTestUtils.isHidden(step), `Step ${step.id} is hidden`);
         }
       }
     } else {
-      ok(BrowserTestUtils.is_hidden(pane), `Pane ${pane.id} is not visible`);
+      ok(BrowserTestUtils.isHidden(pane), `Pane ${pane.id} is not visible`);
     }
   }
 }
 
 add_setup(() => {
-  MockFilePicker.init(window);
+  MockFilePicker.init(window.browsingContext);
   registerCleanupFunction(() => {
     MockFilePicker.cleanup();
   });
 });
 
 add_task(async function testProfileImport() {
+  Services.fog.testResetFOG();
+
   const profileDir = await IOUtils.createUniqueDirectory(
     PathUtils.tempDir,
     "profile-tmp"
@@ -82,21 +84,21 @@ add_task(async function testProfileImport() {
   });
 
   const tab = await new Promise(resolve => {
-    const tab = window.openTab("contentTab", {
+    const newTab = window.openTab("contentTab", {
       url: "about:import",
       onLoad() {
-        resolve(tab);
+        resolve(newTab);
       },
     });
   });
   const importDocument = tab.browser.contentDocument;
 
   ok(
-    BrowserTestUtils.is_hidden(importDocument.getElementById("exportDocs")),
+    BrowserTestUtils.isHidden(importDocument.getElementById("exportDocs")),
     "Export docs link is hidden"
   );
   ok(
-    BrowserTestUtils.is_visible(importDocument.getElementById("importDocs")),
+    BrowserTestUtils.isVisible(importDocument.getElementById("importDocs")),
     "Import docs link is visible"
   );
 
@@ -108,9 +110,7 @@ add_task(async function testProfileImport() {
     "Thunderbird profile is selected by default"
   );
   ok(
-    BrowserTestUtils.is_hidden(
-      importDocument.getElementById("startBackButton")
-    ),
+    BrowserTestUtils.isHidden(importDocument.getElementById("startBackButton")),
     "Back button is hidden in first step"
   );
   await BrowserTestUtils.synthesizeMouseAtCenter(
@@ -124,13 +124,13 @@ add_task(async function testProfileImport() {
     {
       attributes: true,
     },
-    () => BrowserTestUtils.is_visible(appPane)
+    () => BrowserTestUtils.isVisible(appPane)
   );
 
   checkSteps(importDocument, 2, 4);
   checkVisiblePane(importDocument, "tabPane-app", "app-profiles");
   ok(
-    BrowserTestUtils.is_visible(
+    BrowserTestUtils.isVisible(
       importDocument.getElementById("profileBackButton")
     ),
     "Back button is visible"
@@ -151,7 +151,7 @@ add_task(async function testProfileImport() {
     {
       attributes: true,
     },
-    () => BrowserTestUtils.is_visible(itemsStep)
+    () => BrowserTestUtils.isVisible(itemsStep)
   );
 
   checkSteps(importDocument, 3, 4);
@@ -167,13 +167,13 @@ add_task(async function testProfileImport() {
     {
       attributes: true,
     },
-    () => BrowserTestUtils.is_visible(summaryStep)
+    () => BrowserTestUtils.isVisible(summaryStep)
   );
 
   checkSteps(importDocument, 4, 4);
   checkVisiblePane(importDocument, "tabPane-app", "app-summary");
   ok(
-    BrowserTestUtils.is_hidden(
+    BrowserTestUtils.isHidden(
       importDocument.getElementById("profileNextButton")
     ),
     "Can't advance from summary step"
@@ -193,10 +193,10 @@ add_task(async function testProfileImport() {
     {
       attributes: true,
     },
-    () => BrowserTestUtils.is_visible(progressPane)
+    () => BrowserTestUtils.isVisible(progressPane)
   );
   ok(
-    BrowserTestUtils.is_hidden(importDocument.getElementById("appStartImport")),
+    BrowserTestUtils.isHidden(importDocument.getElementById("appStartImport")),
     "Import button is hidden while import is in progress"
   );
 
@@ -206,16 +206,32 @@ add_task(async function testProfileImport() {
     {
       attributes: true,
     },
-    () => BrowserTestUtils.is_visible(finish)
+    () => BrowserTestUtils.isVisible(finish)
   );
   ok(
-    BrowserTestUtils.is_visible(progressPane),
+    BrowserTestUtils.isVisible(progressPane),
     "When import succeeds and finish is shown, progress is still displayed"
   );
 
   // We close the tab ourselves instead of hitting the finish button, since
   // restarting Thunderbird within the test is a headache.
   document.getElementById("tabmail").closeTab(tab);
+
+  const gleanEvents = Glean.mail.import.testGetValue();
+  Assert.equal(
+    gleanEvents.length,
+    1,
+    "the import should have been recorded in telemetry"
+  );
+  Assert.deepEqual(
+    gleanEvents[0].extra,
+    {
+      importer: "Thunderbird,directory",
+      types: "accounts,addressBooks,calendars,mailMessages",
+      result: "succeeded",
+    },
+    "the telemetry data should be correct"
+  );
 });
 
 add_task(async function testImportLargeZIP() {
@@ -255,10 +271,10 @@ add_task(async function testImportLargeZIP() {
   });
 
   const tab = await new Promise(resolve => {
-    const tab = window.openTab("contentTab", {
+    const newTab = window.openTab("contentTab", {
       url: "about:import",
       onLoad() {
-        resolve(tab);
+        resolve(newTab);
       },
     });
   });
@@ -272,9 +288,7 @@ add_task(async function testImportLargeZIP() {
     "Thunderbird profile is selected by default"
   );
   ok(
-    BrowserTestUtils.is_hidden(
-      importDocument.getElementById("startBackButton")
-    ),
+    BrowserTestUtils.isHidden(importDocument.getElementById("startBackButton")),
     "Back button is hidden in first step"
   );
   await BrowserTestUtils.synthesizeMouseAtCenter(
@@ -288,13 +302,13 @@ add_task(async function testImportLargeZIP() {
     {
       attributes: true,
     },
-    () => BrowserTestUtils.is_visible(appPane)
+    () => BrowserTestUtils.isVisible(appPane)
   );
 
   checkSteps(importDocument, 2, 4);
   checkVisiblePane(importDocument, "tabPane-app", "app-profiles");
   ok(
-    BrowserTestUtils.is_visible(
+    BrowserTestUtils.isVisible(
       importDocument.getElementById("profileBackButton")
     ),
     "Back button is visible"

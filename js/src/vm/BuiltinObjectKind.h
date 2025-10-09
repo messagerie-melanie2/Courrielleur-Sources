@@ -11,7 +11,6 @@
 
 #include "jstypes.h"
 
-class JS_PUBLIC_API JSAtom;
 struct JS_PUBLIC_API JSContext;
 class JS_PUBLIC_API JSObject;
 
@@ -30,21 +29,16 @@ class GlobalObject;
 enum class BuiltinObjectKind : uint8_t {
   // Built-in constructors.
   Array,
-  ArrayBuffer,
-  Int32Array,
-  Iterator,
+  ListFormat,
   Map,
   Promise,
   RegExp,
   Set,
-  SharedArrayBuffer,
   Symbol,
 
   // Built-in prototypes.
   FunctionPrototype,
-  ObjectPrototype,
-  RegExpPrototype,
-  StringPrototype,
+  IteratorPrototype,
 
   // Built-in Intl prototypes.
   DateTimeFormatPrototype,

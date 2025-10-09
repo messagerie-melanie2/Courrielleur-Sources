@@ -11,17 +11,11 @@ SimpleTest.requestCompleteLog();
  * matching the offending error. If an object has multiple regex criteria, they
  * ALL need to match an error in order for that error not to cause a test
  * failure. */
-let whitelist = [
+const ignoreList = [
   // CodeMirror is imported as-is, see bug 1004423.
   { sourceName: /codemirror\.css$/i, isFromDevTools: true },
   {
     sourceName: /devtools\/content\/debugger\/src\/components\/([A-z\/]+).css/i,
-    isFromDevTools: true,
-  },
-  // Highlighter CSS uses a UA-only pseudo-class, see bug 985597.
-  {
-    sourceName: /highlighters\.css$/i,
-    errorMessage: /Unknown pseudo-class.*moz-native-anonymous/i,
     isFromDevTools: true,
   },
   // UA-only media features.
@@ -33,25 +27,19 @@ let whitelist = [
   },
   {
     sourceName:
-      /\b(contenteditable|EditorOverride|svg|forms|html|mathml|ua)\.css$/i,
+      /\b(contenteditable|EditorOverride|svg|forms|html|mathml|ua|scrollbars|xul)\.css$/i,
     errorMessage: /Unknown pseudo-class.*-moz-/i,
     isFromDevTools: false,
   },
   {
     sourceName:
-      /\b(scrollbars|xul|html|mathml|ua|forms|svg|manageDialog|autocomplete-item-shared|formautofill)\.css$/i,
+      /\b(scrollbars|xul|html|mathml|ua|EditorOverride|contenteditable|forms|svg|manageDialog|autocomplete-item-shared|formautofill)\.css$/i,
     errorMessage: /Unknown property.*-moz-/i,
     isFromDevTools: false,
   },
   {
-    sourceName: /(scrollbars|xul)\.css$/i,
-    errorMessage: /Unknown pseudo-class.*-moz-/i,
-    isFromDevTools: false,
-  },
-  // Reserved to UA sheets unless layout.css.overflow-clip-box.enabled flipped to true.
-  {
-    sourceName: /(?:res|gre-resources)\/forms\.css$/i,
-    errorMessage: /Unknown property.*overflow-clip-box/i,
+    sourceName: /\b(html)\.css$/i,
+    errorMessage: /Error in parsing value for ‘content’/i,
     isFromDevTools: false,
   },
   // These variables are declared somewhere else, and error when we load the
@@ -70,65 +58,39 @@ let whitelist = [
       /Unknown property ‘text-size-adjust’\. {2}Declaration dropped\./i,
     isFromDevTools: false,
   },
-  // PDF.js uses a property that is currently only supported in chrome.
-  {
-    sourceName: /web\/viewer\.css$/i,
-    errorMessage:
-      /Unknown property ‘forced-color-adjust’\. {2}Declaration dropped\./i,
-    isFromDevTools: false,
-  },
-  {
-    sourceName: /overlay\.css$/i,
-    errorMessage: /Unknown pseudo-class.*moz-native-anonymous/i,
-    isFromDevTools: false,
-  },
 ];
 
-if (!Services.prefs.getBoolPref("layout.css.color-mix.enabled")) {
-  // Reserved to UA sheets unless layout.css.color-mix.enabled flipped to true.
-  whitelist.push({
-    sourceName: /\b(autocomplete-item)\.css$/,
-    errorMessage: /Expected color but found \u2018color-mix\u2019./i,
-    isFromDevTools: false,
-    platforms: ["windows"],
-  });
-}
-
-if (!Services.prefs.getBoolPref("layout.css.math-depth.enabled")) {
-  // mathml.css UA sheet rule for math-depth.
-  whitelist.push({
-    sourceName: /\b(scrollbars|mathml)\.css$/i,
-    errorMessage: /Unknown property .*\bmath-depth\b/i,
-    isFromDevTools: false,
-  });
-}
-
-if (!Services.prefs.getBoolPref("layout.css.math-style.enabled")) {
-  // mathml.css UA sheet rule for math-style.
-  whitelist.push({
-    sourceName: /(?:res|gre-resources)\/mathml\.css$/i,
-    errorMessage: /Unknown property .*\bmath-style\b/i,
+if (!Services.prefs.getBoolPref("layout.css.zoom.enabled")) {
+  ignoreList.push({
+    sourceName: /\bscrollbars\.css$/i,
+    errorMessage: /Error in parsing value for ‘zoom’/i,
     isFromDevTools: false,
   });
 }
 
 if (!Services.prefs.getBoolPref("layout.css.scroll-anchoring.enabled")) {
-  whitelist.push({
+  ignoreList.push({
     sourceName: /webconsole\.css$/i,
     errorMessage: /Unknown property .*\boverflow-anchor\b/i,
     isFromDevTools: true,
   });
 }
 
-if (!Services.prefs.getBoolPref("layout.css.forced-colors.enabled")) {
-  whitelist.push({
-    sourceName: /pdf\.js\/web\/viewer\.css$/,
-    errorMessage: /Expected media feature name but found ‘forced-colors’*/i,
+if (!Services.prefs.getBoolPref("dom.viewTransitions.enabled")) {
+  // view-transition selectors
+  ignoreList.push({
+    sourceName: /\b(ua)\.css$/i,
+    errorMessage: /Unknown pseudo-class.*view-transition/i,
+    isFromDevTools: false,
+  });
+  ignoreList.push({
+    sourceName: /\b(ua)\.css$/i,
+    errorMessage: /Unknown property.*view-transition/i,
     isFromDevTools: false,
   });
 }
 
-let propNameWhitelist = [
+const propNameAllowlist = [
   // These custom properties are retrieved directly from CSSOM
   // in videocontrols.xml to get pre-defined style instead of computed
   // dimensions, which is why they are not referenced by CSS.
@@ -149,35 +111,35 @@ let propNameWhitelist = [
   { propName: "--bezier-grid-color", isFromDevTools: true },
 ];
 
-let thunderbirdWhitelist = [];
+const thunderbirdIgnoreList = [];
 
 // Add suffix to stylesheets' URI so that we always load them here and
 // have them parsed. Add a random number so that even if we run this
 // test multiple times, it would be unlikely to affect each other.
 const kPathSuffix = "?always-parse-css-" + Math.random();
 
-function dumpWhitelistItem(item) {
+function dumpAllowlistItem(item) {
   return JSON.stringify(item, (key, value) => {
     return value instanceof RegExp ? value.toString() : value;
   });
 }
 
 /**
- * Check if an error should be ignored due to matching one of the whitelist
- * objects defined in whitelist
+ * Check if an error should be ignored due to matching one of the allowlist
+ * objects.
  *
- * @param aErrorObject the error to check
- * @returns true if the error should be ignored, false otherwise.
+ * @param {object} aErrorObject - The error to check.
+ * @returns {boolean} true if the error should be ignored, false otherwise.
  */
 function ignoredError(aErrorObject) {
-  for (let list of [whitelist, thunderbirdWhitelist]) {
-    for (let whitelistItem of list) {
+  for (const list of [ignoreList, thunderbirdIgnoreList]) {
+    for (const allowlistItem of list) {
       let matches = true;
       let catchAll = true;
-      for (let prop of ["sourceName", "errorMessage"]) {
-        if (whitelistItem.hasOwnProperty(prop)) {
+      for (const prop of ["sourceName", "errorMessage"]) {
+        if (allowlistItem.hasOwnProperty(prop)) {
           catchAll = false;
-          if (!whitelistItem[prop].test(aErrorObject[prop] || "")) {
+          if (!allowlistItem[prop].test(aErrorObject[prop] || "")) {
             matches = false;
             break;
           }
@@ -186,18 +148,18 @@ function ignoredError(aErrorObject) {
       if (catchAll) {
         ok(
           false,
-          "A whitelist item is catching all errors. " +
-            dumpWhitelistItem(whitelistItem)
+          "An allowlist item is catching all errors. " +
+            dumpAllowlistItem(allowlistItem)
         );
         continue;
       }
       if (matches) {
-        whitelistItem.used = true;
-        let { sourceName, errorMessage } = aErrorObject;
+        allowlistItem.used = true;
+        const { sourceName, errorMessage } = aErrorObject;
         info(
           `Ignored error "${errorMessage}" on ${sourceName} ` +
-            "because of whitelist item " +
-            dumpWhitelistItem(whitelistItem)
+            "because of allowlist item " +
+            dumpAllowlistItem(allowlistItem)
         );
         return true;
       }
@@ -216,25 +178,25 @@ var resHandler = Services.io
   .QueryInterface(Ci.nsIResProtocolHandler);
 var gResourceMap = [];
 function trackResourcePrefix(prefix) {
-  let uri = Services.io.newURI("resource://" + prefix + "/");
+  const uri = Services.io.newURI("resource://" + prefix + "/");
   gResourceMap.unshift([prefix, resHandler.resolveURI(uri)]);
 }
 trackResourcePrefix("gre");
 trackResourcePrefix("app");
 
 function getBaseUriForChromeUri(chromeUri) {
-  let chromeFile = chromeUri + "gobbledygooknonexistentfile.reallynothere";
-  let uri = Services.io.newURI(chromeFile);
-  let fileUri = gChromeReg.convertChromeURL(uri);
+  const chromeFile = chromeUri + "gobbledygooknonexistentfile.reallynothere";
+  const uri = Services.io.newURI(chromeFile);
+  const fileUri = gChromeReg.convertChromeURL(uri);
   return fileUri.resolve(".");
 }
 
 function parseManifest(manifestUri) {
   return fetchFile(manifestUri.spec).then(data => {
-    for (let line of data.split("\n")) {
-      let [type, ...argv] = line.split(/\s+/);
+    for (const line of data.split("\n")) {
+      const [type, ...argv] = line.split(/\s+/);
       if (type == "content" || type == "skin") {
-        let chromeUri = `chrome://${argv[0]}/${type}/`;
+        const chromeUri = `chrome://${argv[0]}/${type}/`;
         gChromeMap.set(getBaseUriForChromeUri(chromeUri), chromeUri);
       } else if (type == "resource") {
         trackResourcePrefix(argv[0]);
@@ -246,11 +208,13 @@ function parseManifest(manifestUri) {
 function convertToCodeURI(fileUri) {
   let baseUri = fileUri;
   let path = "";
+  // @see https://github.com/eslint/eslint/issues/17807
+  // eslint-disable-next-line no-constant-condition
   while (true) {
-    let slashPos = baseUri.lastIndexOf("/", baseUri.length - 2);
+    const slashPos = baseUri.lastIndexOf("/", baseUri.length - 2);
     if (slashPos <= 0) {
       // File not accessible from chrome protocol, try resource://
-      for (let res of gResourceMap) {
+      for (const res of gResourceMap) {
         if (fileUri.startsWith(res[1])) {
           return fileUri.replace(res[1], "resource://" + res[0] + "/");
         }
@@ -273,9 +237,9 @@ function messageIsCSSError(msg) {
     msg.category.includes("CSS") &&
     msg.sourceName.endsWith(kPathSuffix)
   ) {
-    let sourceName = msg.sourceName.slice(0, -kPathSuffix.length);
-    let msgInfo = { sourceName, errorMessage: msg.errorMessage };
-    // Check if this error is whitelisted in whitelist
+    const sourceName = msg.sourceName.slice(0, -kPathSuffix.length);
+    const msgInfo = { sourceName, errorMessage: msg.errorMessage };
+    // Check if this error is ignore in allowlist
     if (!ignoredError(msgInfo)) {
       ok(false, `Got error message for ${sourceName}: ${msg.errorMessage}`);
       return true;
@@ -286,54 +250,54 @@ function messageIsCSSError(msg) {
 
 let imageURIsToReferencesMap = new Map();
 let customPropsToReferencesMap = new Map();
+const customPropsDefinitionFileMap = new Map();
 
 function neverMatches(mediaList) {
   const perPlatformMediaQueryMap = {
     macosx: ["(-moz-platform: macos)"],
-    win: [
-      "(-moz-platform: windows)",
-      "(-moz-platform: windows-win7)",
-      "(-moz-platform: windows-win8)",
-      "(-moz-platform: windows-win10)",
-    ],
+    win: ["(-moz-platform: windows)"],
     linux: ["(-moz-platform: linux)"],
     android: ["(-moz-platform: android)"],
   };
-  for (let platform in perPlatformMediaQueryMap) {
-    if (platform === AppConstants.platform) {
-      continue;
-    }
-    if (perPlatformMediaQueryMap[platform].includes(mediaList.mediaText)) {
-      // This query only matches on another platform that isn't ours.
-      return true;
+  for (const platform in perPlatformMediaQueryMap) {
+    const inThisPlatform = platform === AppConstants.platform;
+    for (const media of perPlatformMediaQueryMap[platform]) {
+      if (inThisPlatform && mediaList.mediaText == "not " + media) {
+        // This query can't match on this platform.
+        return true;
+      }
+      if (!inThisPlatform && mediaList.mediaText == media) {
+        // This query only matches on another platform that isn't ours.
+        return true;
+      }
     }
   }
   return false;
 }
 
-function processCSSRules(sheet) {
-  for (let rule of sheet.cssRules) {
+function processCSSRules(container) {
+  for (const rule of container.cssRules) {
     if (rule.media && neverMatches(rule.media)) {
       continue;
     }
-    if (
-      CSSConditionRule.isInstance(rule) ||
-      CSSKeyframesRule.isInstance(rule)
-    ) {
-      processCSSRules(rule);
+    if (rule.styleSheet) {
+      processCSSRules(rule.styleSheet); // @import
       continue;
     }
-    if (!CSSStyleRule.isInstance(rule) && !CSSKeyframeRule.isInstance(rule)) {
-      continue;
+    if (rule.cssRules) {
+      processCSSRules(rule); // @supports, @media, @layer (block), @keyframes, style rules with nested rules.
     }
-
+    if (!rule.style) {
+      continue; // @layer (statement), @font-feature-values, @counter-style
+    }
     // Extract urls from the css text.
-    // Note: CSSRule.cssText always has double quotes around URLs even
+    // Note: CSSRule.style.cssText always has double quotes around URLs even
     //       when the original CSS file didn't.
-    let urls = rule.cssText.match(/url\("[^"]*"\)/g);
+    const cssText = rule.style.cssText;
+    const urls = cssText.match(/url\("[^"]*"\)/g);
     // Extract props by searching all "--" preceded by "var(" or a non-word
     // character.
-    let props = rule.cssText.match(/(var\(|\W)(--[\w\-]+)/g);
+    const props = cssText.match(/(var\(\s*|\W|^)(--[\w\-]+)/g);
     if (!urls && !props) {
       continue;
     }
@@ -346,11 +310,11 @@ function processCSSRules(sheet) {
       }
 
       // Make the url absolute and remove the ref.
-      let baseURI = Services.io.newURI(rule.parentStyleSheet.href);
+      const baseURI = Services.io.newURI(rule.parentStyleSheet.href);
       url = Services.io.newURI(url, null, baseURI).specIgnoringRef;
 
       // Store the image url along with the css file referencing it.
-      let baseUrl = baseURI.spec.split("?always-parse-css")[0];
+      const baseUrl = baseURI.spec.split("?always-parse-css")[0];
       if (!imageURIsToReferencesMap.has(url)) {
         imageURIsToReferencesMap.set(url, new Set([baseUrl]));
       } else {
@@ -360,15 +324,23 @@ function processCSSRules(sheet) {
 
     for (let prop of props || []) {
       if (prop.startsWith("var(")) {
-        prop = prop.substring(4);
-        let prevValue = customPropsToReferencesMap.get(prop) || 0;
+        prop = prop.substring(4).trim();
+        const prevValue = customPropsToReferencesMap.get(prop) || 0;
         customPropsToReferencesMap.set(prop, prevValue + 1);
       } else {
         // Remove the extra non-word character captured by the regular
-        // expression.
-        prop = prop.substring(1);
+        // expression if needed.
+        if (prop[0] != "-") {
+          prop = prop.substring(1);
+        }
         if (!customPropsToReferencesMap.has(prop)) {
           customPropsToReferencesMap.set(prop, undefined);
+          if (!customPropsDefinitionFileMap.has(prop)) {
+            customPropsDefinitionFileMap.set(prop, new Set());
+          }
+          customPropsDefinitionFileMap
+            .get(prop)
+            .add(container.href || container.parentStyleSheet.href);
         }
       }
     }
@@ -378,12 +350,12 @@ function processCSSRules(sheet) {
 function chromeFileExists(aURI) {
   let available = 0;
   try {
-    let channel = NetUtil.newChannel({
+    const channel = NetUtil.newChannel({
       uri: aURI,
       loadUsingSystemPrincipal: true,
     });
-    let stream = channel.open();
-    let sstream = Cc["@mozilla.org/scriptableinputstream;1"].createInstance(
+    const stream = channel.open();
+    const sstream = Cc["@mozilla.org/scriptableinputstream;1"].createInstance(
       Ci.nsIScriptableInputStream
     );
     sstream.init(stream);
@@ -403,7 +375,7 @@ add_task(async function checkAllTheCSS() {
   // better to not have some messages from previous tests in the array.
   Services.console.reset();
 
-  let appDir = Services.dirsvc.get("GreD", Ci.nsIFile);
+  const appDir = Services.dirsvc.get("GreD", Ci.nsIFile);
   // This asynchronously produces a list of URLs (sadly, mostly sync on our
   // test infrastructure because it runs against jarfiles there, and
   // our zipreader APIs are all sync)
@@ -411,8 +383,8 @@ add_task(async function checkAllTheCSS() {
 
   // Create a clean iframe to load all the files into. This needs to live at a
   // chrome URI so that it's allowed to load and parse any styles.
-  let testFile = getRootDirectory(gTestPath) + "dummy_page.html";
-  let { HiddenFrame } = ChromeUtils.importESModule(
+  const testFile = getRootDirectory(gTestPath) + "dummy_page.html";
+  const { HiddenFrame } = ChromeUtils.importESModule(
     "resource://gre/modules/HiddenFrame.sys.mjs"
   );
   let hiddenFrame = new HiddenFrame();
@@ -422,7 +394,7 @@ add_task(async function checkAllTheCSS() {
     "html:iframe"
   );
   win.document.documentElement.appendChild(iframe);
-  let iframeLoaded = BrowserTestUtils.waitForEvent(iframe, "load", true);
+  const iframeLoaded = BrowserTestUtils.waitForEvent(iframe, "load", true);
   iframe.contentWindow.location = testFile;
   await iframeLoaded;
   let doc = iframe.contentWindow.document;
@@ -431,7 +403,7 @@ add_task(async function checkAllTheCSS() {
   // Parse and remove all manifests from the list.
   // NOTE that this must be done before filtering out devtools paths
   // so that all chrome paths can be recorded.
-  let manifestURIs = [];
+  const manifestURIs = [];
   uris = uris.filter(uri => {
     if (uri.pathQueryRef.endsWith(".manifest")) {
       manifestURIs.push(uri);
@@ -443,22 +415,21 @@ add_task(async function checkAllTheCSS() {
   await throttledMapPromises(manifestURIs, parseManifest);
 
   // filter out either the devtools paths or the non-devtools paths:
-  let isDevtools = SimpleTest.harnessParameters.subsuite == "devtools";
-  let devtoolsPathBits = ["devtools"];
+  const isDevtools = SimpleTest.harnessParameters.subsuite == "devtools";
+  const devtoolsPathBits = ["devtools"];
   uris = uris.filter(
     uri => isDevtools == devtoolsPathBits.some(path => uri.spec.includes(path))
   );
 
-  let loadCSS = chromeUri =>
+  const loadCSS = chromeUri =>
     new Promise(resolve => {
-      let linkEl, onLoad, onError;
-      onLoad = e => {
+      const onLoad = () => {
         processCSSRules(linkEl.sheet);
         resolve();
         linkEl.removeEventListener("load", onLoad);
         linkEl.removeEventListener("error", onError);
       };
-      onError = e => {
+      const onError = () => {
         ok(
           false,
           "Loading " + linkEl.getAttribute("href") + " threw an error!"
@@ -467,7 +438,7 @@ add_task(async function checkAllTheCSS() {
         linkEl.removeEventListener("load", onLoad);
         linkEl.removeEventListener("error", onError);
       };
-      linkEl = doc.createElement("link");
+      const linkEl = doc.createElement("link");
       linkEl.setAttribute("rel", "stylesheet");
       linkEl.setAttribute("type", "text/css");
       linkEl.addEventListener("load", onLoad);
@@ -479,7 +450,7 @@ add_task(async function checkAllTheCSS() {
   // We build a list of promises that get resolved when their respective
   // files have loaded and produced no errors.
   const kInContentCommonCSS = "chrome://global/skin/in-content/common.css";
-  let allPromises = uris
+  const allPromises = uris
     .map(uri => convertToCodeURI(uri.spec))
     .filter(uri => uri !== kInContentCommonCSS);
 
@@ -494,19 +465,19 @@ add_task(async function checkAllTheCSS() {
   await throttledMapPromises(allPromises, loadCSS);
 
   // Check if all the files referenced from CSS actually exist.
-  for (let [image, references] of imageURIsToReferencesMap) {
+  for (const [image, references] of imageURIsToReferencesMap) {
     if (!chromeFileExists(image)) {
-      for (let ref of references) {
-        let whitelisted = false;
-        for (let whitelistItem of thunderbirdWhitelist) {
-          if (whitelistItem.sourceName.test(ref)) {
-            whitelistItem.used = true;
-            whitelisted = true;
+      for (const ref of references) {
+        let ignored = false;
+        for (const allowlistItem of thunderbirdIgnoreList) {
+          if (allowlistItem.sourceName.test(ref)) {
+            allowlistItem.used = true;
+            ignored = true;
             info("missing " + image + " referenced from " + ref);
             break;
           }
         }
-        if (!whitelisted) {
+        if (!ignored) {
           ok(false, "missing " + image + " referenced from " + ref);
         }
       }
@@ -514,10 +485,10 @@ add_task(async function checkAllTheCSS() {
   }
 
   // Check if all the properties that are defined are referenced.
-  for (let [prop, refCount] of customPropsToReferencesMap) {
+  for (const [prop, refCount] of customPropsToReferencesMap) {
     if (!refCount) {
       let ignored = false;
-      for (let item of propNameWhitelist) {
+      for (const item of propNameAllowlist) {
         if (item.propName == prop && isDevtools == item.isFromDevTools) {
           item.used = true;
           if (
@@ -535,30 +506,30 @@ add_task(async function checkAllTheCSS() {
     }
   }
 
-  let messages = Services.console.getMessageArray();
+  const messages = Services.console.getMessageArray();
   // Count errors (the test output will list actual issues for us, as well
   // as the ok(false) in messageIsCSSError.
-  let errors = messages.filter(messageIsCSSError);
+  const errors = messages.filter(messageIsCSSError);
   is(
     errors.length,
     0,
     "All the styles (" + allPromises.length + ") loaded without errors."
   );
 
-  // Confirm that all whitelist rules have been used.
-  function checkWhitelist(list) {
-    for (let item of list) {
+  // Confirm that all allowlist rules have been used.
+  function checkAllowlist(list) {
+    for (const item of list) {
       if (
         !item.used &&
         isDevtools == item.isFromDevTools &&
         (!item.platforms || item.platforms.includes(AppConstants.platform)) &&
         !item.intermittent
       ) {
-        ok(false, "Unused whitelist item: " + dumpWhitelistItem(item));
+        ok(false, "Unused allowlist item: " + dumpAllowlistItem(item));
       }
     }
   }
-  checkWhitelist(thunderbirdWhitelist);
+  checkAllowlist(thunderbirdIgnoreList);
 
   // Clean up to avoid leaks:
   doc.head.innerHTML = "";

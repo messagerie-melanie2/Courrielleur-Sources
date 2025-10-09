@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 FTP_PLATFORMS_PER_BOUNCER_PLATFORM = {
     "linux": "linux-i686",
     "linux64": "linux-x86_64",
+    "linux64-aarch64": "linux-aarch64",
     "osx": "mac",
     "win": "win32",
     "win64": "win64",
@@ -54,8 +55,9 @@ CONFIG_PER_BOUNCER_PRODUCT = {
     "installer": {
         "path_template": RELEASES_PATH_TEMPLATE,
         "file_names": {
-            "linux": "{product}-{version}.tar.bz2",
-            "linux64": "{product}-{version}.tar.bz2",
+            "linux": "{product}-{version}.tar.xz",
+            "linux64": "{product}-{version}.tar.xz",
+            "linux64-aarch64": "{product}-{version}.tar.xz",
             "osx": "{pretty_product}%20{version}.dmg",
             "win": "{pretty_product}%20Setup%20{version}.exe",
             "win64": "{pretty_product}%20Setup%20{version}.exe",
@@ -101,6 +103,7 @@ CONFIG_PER_BOUNCER_PRODUCT = {
         "file_names": {
             "win": "{pretty_product}%20Setup%20{version}.msix",
             "win64": "{pretty_product}%20Setup%20{version}.msix",
+            "win64-aarch64": "{pretty_product}%20Setup%20{version}.msix",
         },
     },
     "pkg": {
@@ -131,19 +134,19 @@ def make_task_worker(config, jobs):
             job,
             "worker-type",
             item_name=job["name"],
-            **{"release-level": release_level(config.params["project"])}
+            **{"release-level": release_level(config.params["project"])},
         )
         resolve_keyed_by(
             job,
             "scopes",
             item_name=job["name"],
-            **{"release-level": release_level(config.params["project"])}
+            **{"release-level": release_level(config.params["project"])},
         )
         resolve_keyed_by(
             job,
             "bouncer-products",
             item_name=job["name"],
-            **{"release-type": config.params["release_type"]}
+            **{"release-type": config.params["release_type"]},
         )
 
         # No need to filter out ja-JP-mac, we need to upload both; but we do
@@ -164,7 +167,7 @@ def make_task_worker(config, jobs):
         if job["worker"]["entries"]:
             yield job
         else:
-            logger.warn(
+            logger.warning(
                 'No bouncer entries defined in bouncer submission task for "{}". \
 Job deleted.'.format(
                     job["name"]
@@ -186,7 +189,7 @@ def craft_bouncer_entries(config, job):
     if previous_versions_string:
         previous_versions = previous_versions_string.split(", ")
     else:
-        logger.warn(
+        logger.warning(
             'No partials defined! Bouncer submission task won\'t send any \
 partial-related entry for "{}"'.format(
                 job["name"]
@@ -310,9 +313,7 @@ def craft_bouncer_product_name(
         )
     )
 
-    return "{product}-{version}{postfix}".format(
-        product=product.capitalize(), version=current_version, postfix=postfix
-    )
+    return f"{product.capitalize()}-{current_version}{postfix}"
 
 
 def craft_ssl_only(bouncer_product, project):

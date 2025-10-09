@@ -3,38 +3,45 @@
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
 // Dependencies
-import React, { Component } from "react";
-import PropTypes from "prop-types";
-import { connect } from "../../utils/connect";
+import React, {
+  Component,
+  Fragment,
+} from "devtools/client/shared/vendor/react";
+import {
+  div,
+  button,
+  span,
+  footer,
+} from "devtools/client/shared/vendor/react-dom-factories";
+import PropTypes from "devtools/client/shared/vendor/react-prop-types";
+import { connect } from "devtools/client/shared/vendor/react-redux";
+const MenuButton = require("resource://devtools/client/shared/components/menu/MenuButton.js");
+const MenuItem = require("resource://devtools/client/shared/components/menu/MenuItem.js");
+const MenuList = require("resource://devtools/client/shared/components/menu/MenuList.js");
+import { prefs } from "../../utils/prefs";
+import { createLocation } from "../../utils/location";
 
 // Selectors
 import {
-  getSelectedLocation,
   getMainThreadHost,
   getExpandedState,
   getProjectDirectoryRoot,
   getProjectDirectoryRootName,
+  getProjectDirectoryRootFullName,
   getSourcesTreeSources,
   getFocusedSourceItem,
-  getContext,
-  getGeneratedSourceByURL,
-  getBlackBoxRanges,
   getHideIgnoredSources,
-} from "../../selectors";
+} from "../../selectors/index";
 
 // Actions
-import actions from "../../actions";
+import actions from "../../actions/index";
 
 // Components
 import SourcesTreeItem from "./SourcesTreeItem";
 import AccessibleImage from "../shared/AccessibleImage";
 
-// Utils
-import { getRawSourceURL } from "../../utils/source";
-import { createLocation } from "../../utils/location";
-
-const classnames = require("devtools/client/shared/classnames.js");
-const Tree = require("devtools/client/shared/components/Tree");
+const classnames = require("resource://devtools/client/shared/classnames.js");
+const Tree = require("resource://devtools/client/shared/components/Tree.js");
 
 function shouldAutoExpand(item, mainThreadHost) {
   // There is only one case where we want to force auto expand,
@@ -42,84 +49,29 @@ function shouldAutoExpand(item, mainThreadHost) {
   return item.type == "group" && item.groupName === mainThreadHost;
 }
 
-/**
- * Get the SourceItem displayed in the SourceTree for a given "tree location".
- *
- * @param {Object} treeLocation
- *        An object containing  the Source coming from the sources.js reducer and the source actor
- *        See getTreeLocation().
- * @param {object} rootItems
- *        Result of getSourcesTreeSources selector, containing all sources sorted in a tree structure.
- *        items to be displayed in the source tree.
- * @return {SourceItem}
- *        The directory source item where the given source is displayed.
- */
-function getSourceItemForTreeLocation(treeLocation, rootItems) {
-  // Sources without URLs are not visible in the SourceTree
-  const { source, sourceActor } = treeLocation;
-
-  if (!source.url) {
-    return null;
-  }
-  const { displayURL } = source;
-  function findSourceInItem(item, path) {
-    if (item.type == "source") {
-      if (item.source.url == source.url) {
-        return item;
-      }
-      return null;
-    }
-    // Bail out if we the current item doesn't match the source
-    if (item.type == "thread" && item.threadActorID != sourceActor?.thread) {
-      return null;
-    }
-    if (item.type == "group" && displayURL.group != item.groupName) {
-      return null;
-    }
-    if (item.type == "directory" && !path.startsWith(item.path)) {
-      return null;
-    }
-    // Otherwise, walk down the tree if this ancestor item seems to match
-    for (const child of item.children) {
-      const match = findSourceInItem(child, path);
-      if (match) {
-        return match;
-      }
-    }
-
-    return null;
-  }
-  for (const rootItem of rootItems) {
-    // Note that when we are setting a project root, rootItem
-    // may no longer be only Thread Item, but also be Group, Directory or Source Items.
-    const item = findSourceInItem(rootItem, displayURL.path);
-    if (item) {
-      return item;
-    }
-  }
-  return null;
-}
-
 class SourcesTree extends Component {
   constructor(props) {
     super(props);
 
-    this.state = {};
+    this.state = {
+      hasOverflow: undefined,
+    };
+
+    // Monitor resize to check if the source tree shows a scrollbar.
+    this.onResize = this.onResize.bind(this);
+    this.resizeObserver = new ResizeObserver(this.onResize);
   }
 
   static get propTypes() {
     return {
-      cx: PropTypes.object.isRequired,
-      mainThreadHost: PropTypes.string.isRequired,
+      mainThreadHost: PropTypes.string,
       expanded: PropTypes.object.isRequired,
       focusItem: PropTypes.func.isRequired,
       focused: PropTypes.object,
       projectRoot: PropTypes.string.isRequired,
-      selectSource: PropTypes.func.isRequired,
-      selectedTreeLocation: PropTypes.object,
+      selectMayBePrettyPrintedLocation: PropTypes.func.isRequired,
       setExpandedState: PropTypes.func.isRequired,
-      blackBoxRanges: PropTypes.object.isRequired,
-      rootItems: PropTypes.object.isRequired,
+      rootItems: PropTypes.array.isRequired,
       clearProjectDirectoryRoot: PropTypes.func.isRequired,
       projectRootName: PropTypes.string.isRequired,
       setHideOrShowIgnoredSources: PropTypes.func.isRequired,
@@ -127,41 +79,40 @@ class SourcesTree extends Component {
     };
   }
 
-  // FIXME: https://bugzilla.mozilla.org/show_bug.cgi?id=1774507
-  UNSAFE_componentWillReceiveProps(nextProps) {
-    const { selectedTreeLocation } = this.props;
+  onResize() {
+    const tree = this.refs.tree;
+    if (!tree) {
+      return;
+    }
 
-    // We might fail to find the source if its thread is registered late,
-    // so that we should re-search the selected source if state.focused is null.
-    if (
-      nextProps.selectedTreeLocation?.source &&
-      (nextProps.selectedTreeLocation.source != selectedTreeLocation?.source ||
-        (nextProps.selectedTreeLocation.source ===
-          selectedTreeLocation?.source &&
-          nextProps.selectedTreeLocation.sourceActor !=
-            selectedTreeLocation?.sourceActor) ||
-        !this.props.focused)
-    ) {
-      const sourceItem = getSourceItemForTreeLocation(
-        nextProps.selectedTreeLocation,
-        this.props.rootItems
-      );
-      if (sourceItem) {
-        // Walk up the tree to expand all ancestor items up to the root of the tree.
-        const expanded = new Set(this.props.expanded);
-        let parentDirectory = sourceItem;
-        while (parentDirectory) {
-          expanded.add(this.getKey(parentDirectory));
-          parentDirectory = this.getParent(parentDirectory);
-        }
-        this.props.setExpandedState(expanded);
-        this.onFocus(sourceItem);
-      }
+    // "treeRef" is created via createRef() in the Tree component.
+    const treeEl = tree.treeRef.current;
+    const hasOverflow = treeEl.scrollHeight > treeEl.clientHeight;
+    if (hasOverflow !== this.state.hasOverflow) {
+      this.setState({ hasOverflow });
     }
   }
 
+  componentDidUpdate() {
+    this.onResize();
+  }
+
+  componentDidMount() {
+    this.resizeObserver.observe(this.refs.pane);
+    this.onResize();
+  }
+
+  componentWillUnmount() {
+    this.resizeObserver.disconnect();
+  }
+
   selectSourceItem = item => {
-    this.props.selectSource(this.props.cx, item.source, item.sourceActor);
+    // Use a dedicated selection method to handle edgecases around pretty printed sources
+    // When a source is pretty printed, the `item.source` still refers to the minified source,
+    // whereas we expect to open the pretty printed version (if it exists).
+    this.props.selectMayBePrettyPrintedLocation(
+      createLocation({ source: item.source, sourceActor: item.sourceActor })
+    );
   };
 
   onFocus = item => {
@@ -183,7 +134,10 @@ class SourcesTree extends Component {
   };
 
   setExpanded = (item, isExpanded, shouldIncludeChildren) => {
-    const { expanded } = this.props;
+    // Note that setExpandedState relies on us to clone this Set
+    // which is going to be store as-is in the reducer.
+    const expanded = new Set(this.props.expanded);
+
     let changed = false;
     const expandItem = i => {
       const key = this.getKey(i);
@@ -220,10 +174,12 @@ class SourcesTree extends Component {
   }
 
   renderEmptyElement(message) {
-    return (
-      <div key="empty" className="no-sources-message">
-        {message}
-      </div>
+    return div(
+      {
+        key: "empty",
+        className: "no-sources-message",
+      },
+      message
     );
   }
 
@@ -291,92 +247,55 @@ class SourcesTree extends Component {
     return skipEmptyDirectories(item.parent);
   };
 
-  /**
-   * Computes 4 lists:
-   *  - `sourcesInside`: the list of all Source Items that are
-   *    children of the current item (can be thread/group/directory).
-   *    This include any nested level of children.
-   *  - `sourcesOutside`: all other Source Items.
-   *    i.e. all sources that are in any other folder of any group/thread.
-   *  - `allInsideBlackBoxed`, all sources of `sourcesInside` which are currently
-   *    blackboxed.
-   *  - `allOutsideBlackBoxed`, all sources of `sourcesOutside` which are currently
-   *    blackboxed.
-   */
-  getBlackBoxSourcesGroups = item => {
-    const allSources = [];
-    function collectAllSources(list, _item) {
-      if (_item.children) {
-        _item.children.forEach(i => collectAllSources(list, i));
-      }
-      if (_item.type == "source") {
-        list.push(_item.source);
-      }
-    }
-    for (const rootItem of this.props.rootItems) {
-      collectAllSources(allSources, rootItem);
-    }
-
-    const sourcesInside = [];
-    collectAllSources(sourcesInside, item);
-
-    const sourcesOutside = allSources.filter(
-      source => !sourcesInside.includes(source)
-    );
-    const allInsideBlackBoxed = sourcesInside.every(
-      source => this.props.blackBoxRanges[source.url]
-    );
-    const allOutsideBlackBoxed = sourcesOutside.every(
-      source => this.props.blackBoxRanges[source.url]
-    );
-
-    return {
-      sourcesInside,
-      sourcesOutside,
-      allInsideBlackBoxed,
-      allOutsideBlackBoxed,
-    };
-  };
-
   renderProjectRootHeader() {
-    const { cx, projectRootName } = this.props;
+    const { projectRootName, projectRootFullName } = this.props;
 
     if (!projectRootName) {
       return null;
     }
-
-    return (
-      <div key="root" className="sources-clear-root-container">
-        <button
-          className="sources-clear-root"
-          onClick={() => this.props.clearProjectDirectoryRoot(cx)}
-          title={L10N.getStr("removeDirectoryRoot.label")}
-        >
-          <AccessibleImage className="home" />
-          <AccessibleImage className="breadcrumb" />
-          <span className="sources-clear-root-label">{projectRootName}</span>
-        </button>
-      </div>
+    return div(
+      {
+        key: "root",
+        className: "sources-clear-root-container",
+      },
+      button(
+        {
+          className: "sources-clear-root",
+          onClick: () => this.props.clearProjectDirectoryRoot(),
+          title: L10N.getFormatStr("removeDirectoryRoot.label"),
+        },
+        React.createElement(AccessibleImage, {
+          className: "back",
+        })
+      ),
+      div({ className: "devtools-separator" }),
+      span(
+        {
+          className: "sources-clear-root-label",
+          title: L10N.getFormatStr(
+            "directoryRoot.tooltip.label",
+            projectRootFullName || projectRootName
+          ),
+        },
+        projectRootName
+      )
     );
   }
 
-  renderItem = (item, depth, focused, _, expanded) => {
-    const { mainThreadHost, projectRoot } = this.props;
-    return (
-      <SourcesTreeItem
-        item={item}
-        depth={depth}
-        focused={focused}
-        autoExpand={shouldAutoExpand(item, mainThreadHost)}
-        expanded={expanded}
-        focusItem={this.onFocus}
-        selectSourceItem={this.selectSourceItem}
-        projectRoot={projectRoot}
-        setExpanded={this.setExpanded}
-        getBlackBoxSourcesGroups={this.getBlackBoxSourcesGroups}
-        getParent={this.getParent}
-      />
-    );
+  renderItem = (item, depth, focused, arrow, expanded) => {
+    const { mainThreadHost } = this.props;
+    return React.createElement(SourcesTreeItem, {
+      arrow,
+      item,
+      depth,
+      focused,
+      autoExpand: shouldAutoExpand(item, mainThreadHost),
+      expanded,
+      focusItem: this.onFocus,
+      selectSourceItem: this.selectSourceItem,
+      setExpanded: this.setExpanded,
+      getParent: this.getParent,
+    });
   };
 
   renderTree() {
@@ -391,8 +310,6 @@ class SourcesTree extends Component {
       getParent: this.getParent,
       getKey: this.getKey,
       getRoots: this.getRoots,
-      itemHeight: 21,
-      key: this.isEmpty() ? "empty" : "full",
       onCollapse: this.onCollapse,
       onExpand: this.onExpand,
       onFocus: this.onFocus,
@@ -400,111 +317,140 @@ class SourcesTree extends Component {
         return this.props.expanded.has(this.getKey(item));
       },
       onActivate: this.onActivate,
+      ref: "tree",
       renderItem: this.renderItem,
       preventBlur: true,
     };
-
-    return <Tree {...treeProps} />;
+    return React.createElement(Tree, treeProps);
   }
 
   renderPane(child) {
     const { projectRoot } = this.props;
-
-    return (
-      <div
-        key="pane"
-        className={classnames("sources-pane", {
+    return div(
+      {
+        key: "pane",
+        className: classnames("sources-pane", {
           "sources-list-custom-root": !!projectRoot,
-        })}
-      >
-        {child}
-      </div>
+        }),
+      },
+      child
     );
   }
 
   renderFooter() {
     if (this.props.hideIgnoredSources) {
-      return (
-        <footer className="source-list-footer">
-          {L10N.getStr("ignoredSourcesHidden")}
-          <button
-            className="devtools-togglebutton"
-            onClick={() => this.props.setHideOrShowIgnoredSources(false)}
-            title={L10N.getStr("showIgnoredSources.tooltip.label")}
-          >
-            {L10N.getStr("showIgnoredSources")}
-          </button>
-        </footer>
+      return footer(
+        {
+          className: "source-list-footer",
+        },
+        L10N.getStr("ignoredSourcesHidden"),
+        button(
+          {
+            className: "devtools-togglebutton",
+            onClick: () => this.props.setHideOrShowIgnoredSources(false),
+            title: L10N.getStr("showIgnoredSources.tooltip.label"),
+          },
+          L10N.getStr("showIgnoredSources")
+        )
       );
     }
     return null;
   }
 
+  renderSettingsButton() {
+    const { toolboxDoc } = this.context;
+    return React.createElement(
+      MenuButton,
+      {
+        menuId: "sources-tree-settings-menu-button",
+        toolboxDoc,
+        className:
+          "devtools-button command-bar-button debugger-settings-menu-button",
+        title: L10N.getStr("sources-settings.button.label"),
+        "aria-label": L10N.getStr("sources-settings.button.label"),
+      },
+      () => this.renderSettingsMenuItems()
+    );
+  }
+
+  renderSettingsMenuItems() {
+    return React.createElement(
+      MenuList,
+      {
+        id: "sources-tree-settings-menu-list",
+      },
+      React.createElement(MenuItem, {
+        key: "debugger-settings-menu-item-hide-ignored-sources",
+        className: "menu-item debugger-settings-menu-item-hide-ignored-sources",
+        checked: prefs.hideIgnoredSources,
+        label: L10N.getStr("settings.hideIgnoredSources.label"),
+        tooltip: L10N.getStr("settings.hideIgnoredSources.tooltip"),
+        onClick: () =>
+          this.props.setHideOrShowIgnoredSources(!prefs.hideIgnoredSources),
+      }),
+      React.createElement(MenuItem, {
+        key: "debugger-settings-menu-item-show-content-scripts",
+        className: "menu-item debugger-settings-menu-item-show-content-scripts",
+        checked: prefs.showContentScripts,
+        label: L10N.getStr("sources-settings.showContentScripts.label"),
+        tooltip: L10N.getStr("sources-settings.showContentScripts.tooltip"),
+        onClick: () =>
+          this.props.setShowContentScripts(!prefs.showContentScripts),
+      })
+    );
+  }
+
   render() {
     const { projectRoot } = this.props;
-    return (
-      <div
-        key="pane"
-        className={classnames("sources-list", {
+    return div(
+      {
+        key: "pane",
+        ref: "pane",
+        className: classnames("sources-list", {
           "sources-list-custom-root": !!projectRoot,
-        })}
-      >
-        {this.isEmpty() ? (
-          this.renderEmptyElement(L10N.getStr("noSourcesText"))
-        ) : (
-          <>
-            {this.renderProjectRootHeader()}
-            {this.renderTree()}
-            {this.renderFooter()}
-          </>
-        )}
-      </div>
+          "sources-list-has-overflow": this.state.hasOverflow,
+        }),
+      },
+      this.renderSettingsButton(),
+      this.renderProjectRootHeader(),
+      this.isEmpty()
+        ? this.renderEmptyElement(
+            L10N.getStr(
+              projectRoot ? "noSourcesInDirectoryRootText" : "noSourcesText"
+            )
+          )
+        : React.createElement(
+            Fragment,
+            null,
+            this.renderTree(),
+            this.renderFooter()
+          )
     );
   }
 }
 
-function getTreeLocation(state, location) {
-  // In the SourceTree, we never show the pretty printed sources and only
-  // the minified version, so if we are selecting a pretty file, fake selecting
-  // the minified version.
-  if (location?.source.isPrettyPrinted) {
-    const source = getGeneratedSourceByURL(
-      state,
-      getRawSourceURL(location.source.url)
-    );
-    if (source) {
-      return createLocation({
-        source,
-        // A source actor is required by getSourceItemForTreeLocation
-        // in order to know in which thread this source relates to.
-        sourceActor: location.sourceActor,
-      });
-    }
-  }
-  return location;
-}
+SourcesTree.contextTypes = {
+  toolboxDoc: PropTypes.object,
+};
 
 const mapStateToProps = state => {
-  const rootItems = getSourcesTreeSources(state);
-
   return {
-    cx: getContext(state),
-    selectedTreeLocation: getTreeLocation(state, getSelectedLocation(state)),
     mainThreadHost: getMainThreadHost(state),
     expanded: getExpandedState(state),
     focused: getFocusedSourceItem(state),
     projectRoot: getProjectDirectoryRoot(state),
-    rootItems,
-    blackBoxRanges: getBlackBoxRanges(state),
+    rootItems: getSourcesTreeSources(state),
     projectRootName: getProjectDirectoryRootName(state),
+    projectRootFullName: getProjectDirectoryRootFullName(state),
     hideIgnoredSources: getHideIgnoredSources(state),
   };
 };
 
 export default connect(mapStateToProps, {
-  selectSource: actions.selectSource,
+  selectMayBePrettyPrintedLocation: actions.selectMayBePrettyPrintedLocation,
   setExpandedState: actions.setExpandedState,
   focusItem: actions.focusItem,
   clearProjectDirectoryRoot: actions.clearProjectDirectoryRoot,
   setHideOrShowIgnoredSources: actions.setHideOrShowIgnoredSources,
+  setShowContentScripts: actions.setShowContentScripts,
 })(SourcesTree);

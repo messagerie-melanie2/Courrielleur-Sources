@@ -22,7 +22,7 @@ struct IDataObject;
  * Native Win32 Clipboard wrapper
  */
 
-class nsClipboard : public nsBaseClipboard, public nsIObserver {
+class nsClipboard final : public nsBaseClipboard, public nsIObserver {
   virtual ~nsClipboard();
 
  public:
@@ -33,12 +33,6 @@ class nsClipboard : public nsBaseClipboard, public nsIObserver {
   // nsIObserver
   NS_DECL_NSIOBSERVER
 
-  // nsIClipboard
-  NS_IMETHOD HasDataMatchingFlavors(const nsTArray<nsCString>& aFlavorList,
-                                    int32_t aWhichClipboard,
-                                    bool* _retval) override;
-  NS_IMETHOD EmptyClipboard(int32_t aWhichClipboard) override;
-
   // Internal Native Routines
   enum class MightNeedToFlush : bool { No, Yes };
   static nsresult CreateNativeDataObject(nsITransferable* aTransferable,
@@ -47,6 +41,9 @@ class nsClipboard : public nsBaseClipboard, public nsIObserver {
   static nsresult SetupNativeDataObject(nsITransferable* aTransferable,
                                         IDataObject* aDataObj,
                                         MightNeedToFlush* = nullptr);
+  static mozilla::Result<nsCOMPtr<nsISupports>, nsresult> GetDataFromDataObject(
+      IDataObject* aDataObject, UINT anIndex, nsIWidget* aWindow,
+      const nsCString& aFlavor);
   static nsresult GetDataFromDataObject(IDataObject* aDataObject, UINT anIndex,
                                         nsIWidget* aWindow,
                                         nsITransferable* aTransferable);
@@ -65,11 +62,16 @@ class nsClipboard : public nsBaseClipboard, public nsIObserver {
   // registered as clipboard format "text/html" to support previous versions
   // of Gecko.
   static UINT GetFormat(const char* aMimeStr, bool aMapHTMLMime = true);
+  // This function returns a secondary format for a given MIME string, if any.
+  // This is something that Firefox can read and convert to the expected type.
+  static mozilla::Maybe<UINT> GetSecondaryFormat(const char* aMimeStr);
 
   static UINT GetClipboardFileDescriptorFormatA();
   static UINT GetClipboardFileDescriptorFormatW();
   static UINT GetHtmlClipboardFormat();
   static UINT GetCustomClipboardFormat();
+  mozilla::Result<int32_t, nsresult> GetNativeClipboardSequenceNumber(
+      ClipboardType aWhichClipboard) override;
 
  protected:
   // @param aDataObject must be non-nullptr.
@@ -78,10 +80,13 @@ class nsClipboard : public nsBaseClipboard, public nsIObserver {
 
   // Implement the native clipboard behavior.
   NS_IMETHOD SetNativeClipboardData(nsITransferable* aTransferable,
-                                    nsIClipboardOwner* aOwner,
-                                    int32_t aWhichClipboard) override;
-  NS_IMETHOD GetNativeClipboardData(nsITransferable* aTransferable,
-                                    int32_t aWhichClipboard) override;
+                                    ClipboardType aWhichClipboard) override;
+  mozilla::Result<nsCOMPtr<nsISupports>, nsresult> GetNativeClipboardData(
+      const nsACString& aFlavor, ClipboardType aWhichClipboard) override;
+  nsresult EmptyNativeClipboardData(ClipboardType aWhichClipboard) override;
+  mozilla::Result<bool, nsresult> HasNativeClipboardDataMatchingFlavors(
+      const nsTArray<nsCString>& aFlavorList,
+      ClipboardType aWhichClipboard) override;
 
   static bool IsInternetShortcut(const nsAString& inFileName);
   static bool FindURLFromLocalFile(IDataObject* inDataObject, UINT inIndex,

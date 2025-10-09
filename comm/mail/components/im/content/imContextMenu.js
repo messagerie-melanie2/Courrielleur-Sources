@@ -6,6 +6,10 @@
 /* globals gatherTextUnder, goUpdateGlobalEditMenuItems, makeURLAbsolute, Services */
 /* import-globals-from ../../../base/content/widgets/browserPopups.js */
 
+var { openLinkExternally } = ChromeUtils.importESModule(
+  "resource:///modules/LinkHelper.sys.mjs"
+);
+
 var gChatContextMenu = null;
 
 function imContextMenu(aXulMenu) {
@@ -46,7 +50,7 @@ imContextMenu.prototype = {
     ).nextElementSibling;
     // remove the action menuitems added last time we opened the popup
     while (elt && elt.localName != "menuseparator") {
-      let tmp = elt.nextElementSibling;
+      const tmp = elt.nextElementSibling;
       elt.remove();
       elt = tmp;
     }
@@ -83,7 +87,7 @@ imContextMenu.prototype = {
     this.showItem("context-copy", this.isContentSelected);
     this.showItem("context-selectall", !this.onLink || this.isContentSelected);
     if (!this.initedActions) {
-      let actor =
+      const actor =
         nsContextMenu.contentData.browser.browsingContext.currentWindowGlobal?.getActor(
           "ChatAction"
         );
@@ -115,9 +119,9 @@ imContextMenu.prototype = {
     this.showItem("context-sep-messageactions", actions.length > 0);
 
     // Display action menu items.
-    let sep = document.getElementById("context-sep-messageactions");
-    for (let [index, label] of actions.entries()) {
-      let menuitem = document.createXULElement("menuitem");
+    const sep = document.getElementById("context-sep-messageactions");
+    for (const [index, label] of actions.entries()) {
+      const menuitem = document.createXULElement("menuitem");
       menuitem.setAttribute("label", label);
       menuitem.addEventListener("command", () => {
         nsContextMenu.contentData.browser.browsingContext.currentWindowGlobal
@@ -143,9 +147,10 @@ imContextMenu.prototype = {
 
   // Open linked-to URL in a new window.
   openLink(aURI) {
-    Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-      .getService(Ci.nsIExternalProtocolService)
-      .loadURI(aURI || this.linkURI, nsContextMenu.contentData.principal);
+    openLinkExternally(aURI || this.linkURI, {
+      addToHistory: false,
+      principal: nsContextMenu.contentData.principal,
+    });
   },
 
   // Generate email address and put it on clipboard.
@@ -247,8 +252,7 @@ imContextMenu.prototype = {
  * space. A maximum of 150 characters will be returned, regardless of the value
  * of aCharLen.
  *
- * @param aCharLen
- *        The maximum number of characters to return.
+ * @param {integer} aCharLen - The maximum number of characters to return.
  */
 function getBrowserSelection(aCharLen) {
   // selections of more than 150 characters aren't useful

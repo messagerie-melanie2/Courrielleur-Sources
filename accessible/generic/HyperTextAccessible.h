@@ -144,9 +144,6 @@ class HyperTextAccessible : public AccessibleWrap,
    * Get/set caret offset, if no caret then -1.
    */
   virtual int32_t CaretOffset() const override;
-  virtual void SetCaretOffset(int32_t aOffset) override;
-
-  virtual int32_t CaretLineNumber() override;
 
   /**
    * Return the caret rect and the widget containing the caret within this
@@ -157,11 +154,6 @@ class HyperTextAccessible : public AccessibleWrap,
    */
   mozilla::LayoutDeviceIntRect GetCaretRect(nsIWidget** aWidget);
 
-  /**
-   * Return true if caret is at end of line.
-   */
-  bool IsCaretAtEndOfLine() const;
-
   virtual int32_t SelectionCount() override;
 
   virtual bool SelectionBoundsAt(int32_t aSelectionNum, int32_t* aStartOffset,
@@ -170,35 +162,11 @@ class HyperTextAccessible : public AccessibleWrap,
   MOZ_CAN_RUN_SCRIPT_BOUNDARY virtual bool RemoveFromSelection(
       int32_t aSelectionNum) override;
 
-  /**
-   * Scroll the given text range to the given point.
-   */
-  void ScrollSubstringToPoint(int32_t aStartOffset, int32_t aEndOffset,
-                              uint32_t aCoordinateType, int32_t aX, int32_t aY);
-
-  /**
-   * Return a range that encloses the text control or the document this
-   * accessible belongs to.
-   */
-  void EnclosingRange(TextRange& aRange) const;
+  virtual void ScrollSubstringToPoint(int32_t aStartOffset, int32_t aEndOffset,
+                                      uint32_t aCoordinateType, int32_t aX,
+                                      int32_t aY) override;
 
   virtual void SelectionRanges(nsTArray<TextRange>* aRanges) const override;
-
-  /**
-   * Return an array of disjoint ranges of visible text within the text control
-   * or the document this accessible belongs to.
-   */
-  void VisibleRanges(nsTArray<TextRange>* aRanges) const;
-
-  /**
-   * Return a range containing the given accessible.
-   */
-  void RangeByChild(LocalAccessible* aChild, TextRange& aRange) const;
-
-  /**
-   * Return a range containing an accessible at the given point.
-   */
-  void RangeAtPoint(int32_t aX, int32_t aY, TextRange& aRange) const;
 
   //////////////////////////////////////////////////////////////////////////////
   // EditableTextAccessible
@@ -246,10 +214,6 @@ class HyperTextAccessible : public AccessibleWrap,
    */
   void GetSelectionDOMRanges(SelectionType aSelectionType,
                              nsTArray<nsRange*>* aRanges);
-
-  // TODO: annotate this with `MOZ_CAN_RUN_SCRIPT` instead.
-  MOZ_CAN_RUN_SCRIPT_BOUNDARY nsresult SetSelectionRange(int32_t aStartPos,
-                                                         int32_t aEndPos);
 
   // Helpers
 

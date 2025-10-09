@@ -7,58 +7,28 @@
 #ifndef mozilla_dom_WebAuthnUtil_h
 #define mozilla_dom_WebAuthnUtil_h
 
-/*
- * Utility functions used by both WebAuthnManager and U2FTokenManager.
- */
-
-#include "ipc/EnumSerializer.h"
-#include "mozilla/dom/CryptoBuffer.h"
 #include "mozilla/dom/WebAuthenticationBinding.h"
 #include "ipc/IPCMessageUtils.h"
 
 namespace mozilla::dom {
 
-enum class U2FOperation { Register, Sign };
+bool IsValidAppId(const nsCOMPtr<nsIPrincipal>& aPrincipal,
+                  const nsCString& aAppId);
 
-bool EvaluateAppID(nsPIDOMWindowInner* aParent, const nsString& aOrigin,
-                   /* in/out */ nsString& aAppId);
+bool IsWebAuthnAllowedInDocument(const nsCOMPtr<Document>& aDoc);
 
-nsresult AssembleAuthenticatorData(const CryptoBuffer& rpIdHashBuf,
-                                   const uint8_t flags,
-                                   const CryptoBuffer& counterBuf,
-                                   const CryptoBuffer& attestationDataBuf,
-                                   /* out */ CryptoBuffer& authDataBuf);
+bool IsWebAuthnAllowedForPrincipal(const nsCOMPtr<nsIPrincipal>& aPrincipal);
 
-nsresult AssembleAttestationObject(const CryptoBuffer& aRpIdHash,
-                                   const CryptoBuffer& aPubKeyBuf,
-                                   const CryptoBuffer& aKeyHandleBuf,
-                                   const CryptoBuffer& aAttestationCertBuf,
-                                   const CryptoBuffer& aSignatureBuf,
-                                   bool aForceNoneAttestation,
-                                   /* out */ CryptoBuffer& aAttestationObjBuf);
+bool IsWebAuthnAllowedForTransportSecurityInfo(
+    nsITransportSecurityInfo* aSecurityInfo);
 
-nsresult U2FDecomposeSignResponse(const CryptoBuffer& aResponse,
-                                  /* out */ uint8_t& aFlags,
-                                  /* out */ CryptoBuffer& aCounterBuf,
-                                  /* out */ CryptoBuffer& aSignatureBuf);
+nsresult DefaultRpId(const nsCOMPtr<nsIPrincipal>& aPrincipal,
+                     /* out */ nsACString& aRpId);
 
-nsresult U2FDecomposeRegistrationResponse(
-    const CryptoBuffer& aResponse,
-    /* out */ CryptoBuffer& aPubKeyBuf,
-    /* out */ CryptoBuffer& aKeyHandleBuf,
-    /* out */ CryptoBuffer& aAttestationCertBuf,
-    /* out */ CryptoBuffer& aSignatureBuf);
+bool IsValidRpId(const nsCOMPtr<nsIPrincipal>& aPrincipal,
+                 const nsACString& aRpId);
 
-nsresult U2FDecomposeECKey(const CryptoBuffer& aPubKeyBuf,
-                           /* out */ CryptoBuffer& aXcoord,
-                           /* out */ CryptoBuffer& aYcoord);
-
-nsresult HashCString(const nsACString& aIn, /* out */ CryptoBuffer& aOut);
-
-nsresult BuildTransactionHashes(const nsCString& aRpId,
-                                const nsCString& aClientDataJSON,
-                                /* out */ CryptoBuffer& aRpIdHash,
-                                /* out */ CryptoBuffer& aClientDataHash);
+nsresult HashCString(const nsACString& aIn, /* out */ nsTArray<uint8_t>& aOut);
 
 }  // namespace mozilla::dom
 

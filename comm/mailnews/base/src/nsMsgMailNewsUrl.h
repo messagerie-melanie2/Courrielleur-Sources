@@ -11,15 +11,11 @@
 #include "nsISupports.h"
 #include "nsIUrlListener.h"
 #include "nsTObserverArray.h"
-#include "nsIMsgWindow.h"
-#include "nsIMsgStatusFeedback.h"
 #include "nsCOMPtr.h"
-#include "nsCOMArray.h"
 #include "nsIMimeHeaders.h"
 #include "nsIMsgMailNewsUrl.h"
 #include "nsIURL.h"
 #include "nsIURIWithSpecialOrigin.h"
-#include "nsILoadGroup.h"
 #include "nsIMsgSearchSession.h"
 #include "nsICacheEntry.h"
 #include "nsIWeakReferenceUtils.h"
@@ -37,10 +33,10 @@
 //
 //////////////////////////////////////////////////////////////////////////////////
 
-class NS_MSG_BASE nsMsgMailNewsUrl : public nsIMsgMailNewsUrl,
-                                     public nsIURIWithSpecialOrigin,
-                                     public nsISerializable,
-                                     public nsIClassInfo {
+class nsMsgMailNewsUrl : public nsIMsgMailNewsUrl,
+                         public nsIURIWithSpecialOrigin,
+                         public nsISerializable,
+                         public nsIClassInfo {
  public:
   nsMsgMailNewsUrl();
 

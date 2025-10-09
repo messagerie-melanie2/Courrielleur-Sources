@@ -3,24 +3,45 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
+import { HPKEConfigManager } from "resource://gre/modules/HPKEConfigManager.sys.mjs";
 
 let lazy = {};
 
-XPCOMUtils.defineLazyGetter(lazy, "logConsole", function () {
+ChromeUtils.defineLazyGetter(lazy, "logConsole", function () {
   return console.createInstance({
     prefix: "DAPTelemetrySender",
     maxLogLevelPref: "toolkit.telemetry.dap.logLevel",
   });
 });
 ChromeUtils.defineESModuleGetters(lazy, {
+  AsyncShutdown: "resource://gre/modules/AsyncShutdown.sys.mjs",
   NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
+  setTimeout: "resource://gre/modules/Timer.sys.mjs",
+  ObliviousHTTP: "resource://gre/modules/ObliviousHTTP.sys.mjs",
 });
 
-const PREF_LEADER = "toolkit.telemetry.dap_leader";
-const PREF_HELPER = "toolkit.telemetry.dap_helper";
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "gTelemetryEnabled",
+  "datareporting.healthreport.uploadEnabled",
+  false
+);
 
-XPCOMUtils.defineLazyPreferenceGetter(lazy, "LEADER", PREF_LEADER, undefined);
-XPCOMUtils.defineLazyPreferenceGetter(lazy, "HELPER", PREF_HELPER, undefined);
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "gDapEndpoint",
+  "toolkit.telemetry.dap.leader.url"
+);
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "gLeaderHpke",
+  "toolkit.telemetry.dap.leader.hpke"
+);
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "gHelperHpke",
+  "toolkit.telemetry.dap.helper.hpke"
+);
 
 /**
  * The purpose of this singleton is to handle sending of DAP telemetry data.
@@ -31,66 +52,144 @@ XPCOMUtils.defineLazyPreferenceGetter(lazy, "HELPER", PREF_HELPER, undefined);
  */
 
 export const DAPTelemetrySender = new (class {
-  startup() {
-    lazy.logConsole.info("Performing DAP startup");
+  /**
+   * @typedef { 'sum' | 'sumvec' | 'histogram' } VDAF
+   */
 
-    if (lazy.NimbusFeatures.dapTelemetry.getVariable("task1Enabled")) {
-      // For now we are sending a constant value because it simplifies verification.
-      let measurement = 3;
-      this.sendVerificationTaskReport(measurement);
+  /**
+   * Task configuration must match a configured task on the DAP server.
+   *
+   * @typedef {object} Task
+   * @property {string} id - The task ID in urlsafe_base64 encoding.
+   * @property {VDAF} vdaf - The VDAF used by the task.
+   * @property {number} [bits] - The bit-width of integers in sum/sumvec measurements.
+   * @property {number} [length] - The number of vector/histogram elements.
+   * @property {number} time_precision - The rounding granularity in seconds
+   *                                     that is applied to timestamps attached
+   *                                     to the report.
+   */
+
+  async startup() {
+    if (
+      Services.startup.isInOrBeyondShutdownPhase(
+        Ci.nsIAppStartup.SHUTDOWN_PHASE_APPSHUTDOWNCONFIRMED
+      )
+    ) {
+      lazy.logConsole.warn(
+        "DAPTelemetrySender startup not possible due to shutdown."
+      );
+      return;
+    }
+
+    // Note that this can block until the ExperimentAPI is available.
+    // This is fine as we depend on it. In case of a race with shutdown
+    // it will reject, making the below getVariable calls return null.
+    await lazy.NimbusFeatures.dapTelemetry.ready();
+
+    if (
+      lazy.NimbusFeatures.dapTelemetry.getVariable("enabled") &&
+      lazy.NimbusFeatures.dapTelemetry.getVariable("task1Enabled")
+    ) {
+      let tasks = [];
+      lazy.logConsole.debug("Task 1 is enabled.");
+      let task1_id =
+        lazy.NimbusFeatures.dapTelemetry.getVariable("task1TaskId");
+      if (task1_id !== undefined && task1_id != "") {
+        let task = {
+          // this is testing task 1
+          id: task1_id,
+          vdaf: "sumvec",
+          bits: 8,
+          length: 20,
+          time_precision: 300,
+        };
+        tasks.push(task);
+
+        lazy.setTimeout(
+          () => this.timedSendTestReports(tasks),
+          this.timeout_value()
+        );
+
+        lazy.NimbusFeatures.dapTelemetry.onUpdate(async () => {
+          if (typeof this.counters !== "undefined") {
+            await this.sendTestReports(tasks, { reason: "nimbus-update" });
+          }
+        });
+      }
+
+      this._asyncShutdownBlocker = async () => {
+        lazy.logConsole.debug(`Sending on shutdown.`);
+        // Shorter timeout to prevent crashing due to blocking shutdown
+        await this.sendTestReports(tasks, {
+          timeout: 2_000,
+          reason: "shutdown",
+        });
+      };
+
+      lazy.AsyncShutdown.appShutdownConfirmed.addBlocker(
+        "DAPTelemetrySender: sending data",
+        this._asyncShutdownBlocker
+      );
     }
   }
 
-  async sendTestReports() {
-    /** @typedef { 'u8' | 'vecu16'} measurementtype */
-
-    /**
-     * @typedef {object} Task
-     * @property {string} id_hexstring - The task's ID hex encoded.
-     * @property {string} id_base64 - The same ID base 64 encoded.
-     * @property {string} leader_endpoint - Base URL for the leader.
-     * @property {string} helper_endpoint - Base URL for the helper.
-     * @property {number} time_precision - Timestamps (in s) are rounded to the nearest multiple of this.
-     * @property {measurementtype} measurement_type - Defines measurements and aggregations used by this task. Effectively specifying the VDAF.
-     */
-
-    // For now tasks are hardcoded here.
-    const tasks = [
-      {
-        // this is load testing task 1
-        id_hexstring:
-          "423303e27f25fcc1c1a0badb09f2d3162f210b6eb87c2e7d48a1cfbe23c5d2af",
-        id_base64: "QjMD4n8l_MHBoLrbCfLTFi8hC264fC59SKHPviPF0q8",
-        leader_endpoint: null,
-        helper_endpoint: null,
-        time_precision: 60, // TODO what is a reasonable value
-        measurement_type: "u8",
-      },
-      {
-        // this is load testing task 2
-        id_hexstring:
-          "0d2646305876ea10585cd68abe12ff3780070373f99439f5f689f5bc53c1c493",
-        id_base64: "DSZGMFh26hBYXNaKvhL_N4AHA3P5lDn19on1vFPBxJM",
-        leader_endpoint: null,
-        helper_endpoint: null,
-        time_precision: 60,
-        measurement_type: "vecu16",
-      },
-    ];
-
+  async sendTestReports(tasks, options = {}) {
     for (let task of tasks) {
       let measurement;
-      if (task.measurement_type == "u8") {
+      if (task.vdaf == "sum") {
         measurement = 3;
-      } else if (task.measurement_type == "vecu16") {
-        measurement = new Uint16Array(1024);
+      } else if (task.vdaf == "sumvec") {
+        measurement = new Array(20).fill(0);
         let r = Math.floor(Math.random() * 10);
         measurement[r] += 1;
-        measurement[1000] += 1;
+        measurement[19] += 1;
+      } else if (task.vdaf == "histogram") {
+        measurement = Math.floor(Math.random() * 15);
+      } else {
+        throw new Error(`Unknown VDAF ${task.vdaf}`);
       }
 
-      await this.sendTestReport(task, measurement);
+      await this.sendDAPMeasurement(task, measurement, options);
     }
+  }
+
+  async timedSendTestReports(tasks) {
+    lazy.logConsole.debug("Sending on timer.");
+    await this.sendTestReports(tasks);
+    lazy.setTimeout(
+      () => this.timedSendTestReports(tasks),
+      this.timeout_value()
+    );
+  }
+
+  timeout_value() {
+    const MINUTE = 60 * 1000;
+    return MINUTE * (9 + Math.random() * 2); // 9 - 11 minutes
+  }
+
+  /**
+   * Internal testing function to verify the DAP aggregator keys match current
+   * values advertised by servers.
+   */
+  async checkHpkeKeys() {
+    async function check_key(url, expected) {
+      let response = await fetch(url + "/hpke_config");
+      let body = await response.arrayBuffer();
+      let actual = ChromeUtils.base64URLEncode(body, { pad: false });
+      if (actual != expected) {
+        throw new Error(`HPKE for ${url} does not match`);
+      }
+    }
+    await Promise.allSettled([
+      await check_key(
+        Services.prefs.getStringPref("toolkit.telemetry.dap.leader.url"),
+        Services.prefs.getStringPref("toolkit.telemetry.dap.leader.hpke")
+      ),
+      await check_key(
+        Services.prefs.getStringPref("toolkit.telemetry.dap.helper.url"),
+        Services.prefs.getStringPref("toolkit.telemetry.dap.helper.hpke")
+      ),
+    ]);
   }
 
   /**
@@ -98,102 +197,115 @@ export const DAPTelemetrySender = new (class {
    *
    * @param {Task} task
    *   Definition of the task for which the measurement was taken.
-   * @param {number} measurement
+   * @param {number|Array<Number>} measurement
    *   The measured value for which a report is generated.
+   * @param {object} options
+   * @param {number} options.timeout
+   *   The timeout for request in milliseconds. Defaults to 30s.
+   * @param {string} options.reason
+   *   A string to indicate the reason for triggering a submission. This is
+   *   currently ignored and not recorded.
+   * @param {string} options.ohttp_relay
+   * @param {Uint8Array} options.ohttp_hpke
+   *   If an OHTTP relay is specified, the reports are uploaded over OHTTP.
    */
-  async sendTestReport(task, measurement) {
-    task.leader_endpoint = lazy.LEADER;
-    if (!task.leader_endpoint) {
-      lazy.logConsole.error('Preference "' + PREF_LEADER + '" not set');
-      return;
-    }
-
-    task.helper_endpoint = lazy.HELPER;
-    if (!task.helper_endpoint) {
-      lazy.logConsole.error('Preference "' + PREF_HELPER + '" not set');
-      return;
-    }
-
+  async sendDAPMeasurement(task, measurement, options = {}) {
     try {
-      let report = await this.generateReport(task, measurement);
-      Glean.dap.reportGenerationStatus.success.add(1);
-      await this.sendReport(task.leader_endpoint, report);
+      const controller = new AbortController();
+      lazy.setTimeout(() => controller.abort(), options.timeout ?? 30_000);
+
+      let keys = {
+        leader_hpke: HPKEConfigManager.decodeKey(lazy.gLeaderHpke),
+        helper_hpke: HPKEConfigManager.decodeKey(lazy.gHelperHpke),
+      };
+
+      let report = this.generateReport(task, measurement, keys);
+
+      await this.sendReport(
+        lazy.gDapEndpoint,
+        task.id,
+        report,
+        controller.signal,
+        options
+      );
     } catch (e) {
-      Glean.dap.reportGenerationStatus.failure.add(1);
-      lazy.logConsole.error("DAP report generation failed: " + e.message);
+      if (e.name === "AbortError") {
+        lazy.logConsole.error("Aborted DAP report generation: ", e);
+      } else {
+        lazy.logConsole.error("DAP report generation failed: " + e);
+      }
+
+      throw e;
     }
   }
 
+  /*
+   * @typedef {object} AggregatorKeys
+   * @property {Uint8Array} leader_hpke - The leader's DAP HPKE key.
+   * @property {Uint8Array} helper_hpke - The helper's DAP HPKE key.
+   */
+
   /**
-   * Downloads HPKE configs for endpoints and generates report.
+   * Generates the encrypted DAP report.
    *
    * @param {Task} task
    *   Definition of the task for which the measurement was taken.
-   * @param {number} measurement
+   * @param {number|Array<number>} measurement
    *   The measured value for which a report is generated.
-   * @returns Promise
-   * @resolves {Uint8Array} The generated binary report data.
-   * @rejects {Error} If an exception is thrown while generating the report.
+   * @param {AggregatorKeys} keys
+   *   The DAP encryption keys for each aggregator.
+   *
+   * @returns {ArrayBuffer} The generated binary report data.
    */
-  async generateReport(task, measurement) {
-    let [leader_config_bytes, helper_config_bytes] = await Promise.all([
-      this.getHpkeConfig(
-        task.leader_endpoint + "/hpke_config?task_id=" + task.id_base64
-      ),
-      this.getHpkeConfig(
-        task.helper_endpoint + "/hpke_config?task_id=" + task.id_base64
-      ),
-    ]);
-    let task_id = hexString2Binary(task.id_hexstring);
-    let report = {};
-    if (task.measurement_type == "u8") {
-      Services.DAPTelemetry.GetReportU8(
-        leader_config_bytes,
-        helper_config_bytes,
+  generateReport(task, measurement, keys) {
+    let task_id = new Uint8Array(
+      ChromeUtils.base64URLDecode(task.id, { padding: "ignore" })
+    );
+
+    let reportOut = {};
+
+    if (task.vdaf === "sum") {
+      Services.DAPTelemetry.GetReportPrioSum(
+        keys.leader_hpke,
+        keys.helper_hpke,
         measurement,
         task_id,
+        task.bits,
         task.time_precision,
-        report
+        reportOut
       );
-    } else if (task.measurement_type == "vecu16") {
-      Services.DAPTelemetry.GetReportVecU16(
-        leader_config_bytes,
-        helper_config_bytes,
+    } else if (task.vdaf === "sumvec") {
+      if (measurement.length != task.length) {
+        throw new Error(
+          "Measurement vector length doesn't match task configuration"
+        );
+      }
+      Services.DAPTelemetry.GetReportPrioSumVec(
+        keys.leader_hpke,
+        keys.helper_hpke,
         measurement,
         task_id,
+        task.bits,
         task.time_precision,
-        report
+        reportOut
+      );
+    } else if (task.vdaf === "histogram") {
+      Services.DAPTelemetry.GetReportPrioHistogram(
+        keys.leader_hpke,
+        keys.helper_hpke,
+        measurement,
+        task_id,
+        task.length,
+        task.time_precision,
+        reportOut
       );
     } else {
       throw new Error(
-        `Unknown measurement type for task ${task.id_base64}: ${task.measurement_type}`
+        `Unknown measurement type for task ${task.id}: ${task.vdaf} ${task.bits}`
       );
     }
-    let reportData = new Uint8Array(report.value);
-    return reportData;
-  }
 
-  /**
-   * Fetches TLS encoded HPKE config from a URL.
-   *
-   * @param {string} endpoint
-   *   The URL from where to get the data.
-   * @returns Promise
-   * @resolves {Uint8Array} The binary representation of the endpoint configuration.
-   * @rejects {Error} If an exception is thrown while fetching the configuration.
-   */
-  async getHpkeConfig(endpoint) {
-    let response = await fetch(endpoint);
-    if (!response.ok) {
-      throw new Error(
-        `Failed to retrieve HPKE config for DAP from: ${endpoint}. Response: ${
-          response.status
-        }: ${await response.text()}.`
-      );
-    }
-    let buffer = await response.arrayBuffer();
-    let hpke_config_bytes = new Uint8Array(buffer);
-    return hpke_config_bytes;
+    return new Uint8Array(reportOut.value).buffer;
   }
 
   /**
@@ -201,58 +313,74 @@ export const DAPTelemetrySender = new (class {
    *
    * @param {string} leader_endpoint
    *   The URL for the leader.
-   * @param {Uint8Array} report
+   * @param {string} task_id
+   *   Base64 encoded task_id as it appears in the upload path.
+   * @param {ArrayBuffer} report
    *   Raw bytes of the TLS encoded report.
+   * @param {AbortSignal} abortSignal
+   *   Can be used to cancel network requests. Does not cancel computation.
+   * @param {object} options
+   * @param {string} options.ohttp_relay
+   * @param {Uint8Array} options.ohttp_hpke
+   *   If an OHTTP relay is specified, the reports are uploaded over OHTTP. In
+   *   this case, the OHTTP and DAP keys must be provided and this code will not
+   *   attempt to fetch them.
+   *
    * @returns Promise
    * @resolves {undefined} Once the attempt to send the report completes, whether or not it was successful.
    */
-  async sendReport(leader_endpoint, report) {
-    const upload_path = leader_endpoint + "/upload";
+  async sendReport(leader_endpoint, task_id, report, abortSignal, options) {
+    // If telemetry disabled, don't upload DAP reports either.
+    if (!lazy.gTelemetryEnabled) {
+      return;
+    }
+
+    const upload_path = leader_endpoint + "/tasks/" + task_id + "/reports";
     try {
-      let response = await fetch(upload_path, {
-        method: "POST",
+      let requestOptions = {
+        method: "PUT",
         headers: { "Content-Type": "application/dap-report" },
         body: report,
-      });
+        signal: abortSignal,
+      };
+      let response;
+      if (options.ohttp_relay) {
+        response = await lazy.ObliviousHTTP.ohttpRequest(
+          options.ohttp_relay,
+          options.ohttp_hpke,
+          upload_path,
+          requestOptions
+        );
+      } else {
+        response = await fetch(upload_path, requestOptions);
+      }
 
       if (response.status != 200) {
         const content_type = response.headers.get("content-type");
         if (content_type && content_type === "application/json") {
           // A JSON error from the DAP server.
           let error = await response.json();
-          lazy.logConsole.error(
+          throw new Error(
             `Sending failed. HTTP response: ${response.status} ${response.statusText}. Error: ${error.type} ${error.title}`
           );
         } else {
           // A different error, e.g. from a load-balancer.
           let error = await response.text();
-          lazy.logConsole.error(
+          throw new Error(
             `Sending failed. HTTP response: ${response.status} ${response.statusText}. Error: ${error}`
           );
         }
-
-        Glean.dap.uploadStatus.failure.add(1);
       } else {
-        lazy.logConsole.info("DAP report sent");
-        Glean.dap.uploadStatus.success.add(1);
+        lazy.logConsole.debug("DAP report sent");
       }
     } catch (err) {
-      lazy.logConsole.error("Failed to send report. fetch failed", err);
-      Glean.dap.uploadStatus.failure.add(1);
+      if (err.name === "AbortError") {
+        lazy.logConsole.error("Aborted DAP report sending: ", err);
+      } else {
+        lazy.logConsole.error("Failed to send report: ", err);
+      }
+
+      throw err;
     }
   }
 })();
-
-/**
- * Converts a hex representation of a byte string into an array
- * @param {string} hexstring - a list of bytes represented as a hex string two characters per bytes
- * @return {Uint8Array} - the input byte list as an array
- */
-function hexString2Binary(hexstring) {
-  const binlen = hexstring.length / 2;
-  let binary = new Uint8Array(binlen);
-  for (var i = 0; i < binlen; i++) {
-    binary[i] = parseInt(hexstring.substring(2 * i, 2 * (i + 1)), 16);
-  }
-  return binary;
-}

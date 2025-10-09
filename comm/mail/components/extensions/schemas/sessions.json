@@ -1,6 +1,21 @@
 [
   {
+    "namespace": "manifest",
+    "types": [
+      {
+        "$extend": "OptionalPermission",
+        "choices": [
+          {
+            "type": "string",
+            "enum": ["sessions"]
+          }
+        ]
+      }
+    ]
+  },
+  {
     "namespace": "sessions",
+    "description": "The sessions API allows to add tab related session data to Thunderbird's tabs, which will be restored on app restart.",
     "functions": [
       {
         "name": "setTabValue",
@@ -27,7 +42,7 @@
       {
         "name": "getTabValue",
         "type": "function",
-        "description": "Retrieve a previously stored value for a given tab, given its key.",
+        "description": "Retrieve a previously stored value for a given tab, given its key. Returns <var>undefined</var> if the requested <var>key</var> does not exist for the given <var>tabId</var>.",
         "async": "callback",
         "parameters": [
           {

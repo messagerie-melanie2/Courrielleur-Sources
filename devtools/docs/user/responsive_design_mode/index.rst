@@ -106,7 +106,7 @@ Just above the viewport there is a label "no device selected"; click this to see
 - Touch event simulation
 
 
-Additionally, Firefox sets the `User-Agent <https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/User-Agent>`_ HTTP request header to identify itself as the default browser on the selected device. For example, if you've selected an iPhone, then Firefox identifies itself as Safari. The `navigator.userAgent <https://developer.mozilla.org/en-US/docs/Web/API/Navigator/userAgent>`_ property is set to the same value.
+Additionally, Firefox sets the `User-Agent <https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/User-Agent>`_ HTTP request header to identify itself as the default browser on the selected device. For example, if you've selected an iPhone, then Firefox identifies itself as Safari. The `navigator.userAgent <https://developer.mozilla.org/en-US/docs/Web/API/Navigator/userAgent>`_ property is set to the same value.
 
 .. raw:: html
 
@@ -201,6 +201,11 @@ The table below lists the numbers associated with each network type, but please 
     - 30 Mb/s
     - 15 Mb/s
     - 2
+
+  * - Offline
+    - 0 Mb/s
+    - 0 Mb/s
+    - 5
 
 To select a network, click the list box that's initially labeled "No throttling":
 

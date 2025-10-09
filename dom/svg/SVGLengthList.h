@@ -15,7 +15,6 @@
 #include "SVGElement.h"
 #include "nsTArray.h"
 #include "SVGLength.h"
-#include "mozilla/dom/SVGLengthBinding.h"
 
 namespace mozilla {
 
@@ -174,8 +173,7 @@ class SVGLengthList {
  */
 class SVGLengthListAndInfo : public SVGLengthList {
  public:
-  SVGLengthListAndInfo()
-      : mElement(nullptr), mAxis(0), mCanZeroPadList(false) {}
+  SVGLengthListAndInfo() : mElement(nullptr), mAxis(0), mCanZeroPadList(true) {}
 
   SVGLengthListAndInfo(dom::SVGElement* aElement, uint8_t aAxis,
                        bool aCanZeroPadList)
@@ -304,33 +302,29 @@ class MOZ_STACK_CLASS SVGUserUnitList {
  public:
   SVGUserUnitList() : mList(nullptr), mElement(nullptr), mAxis(0) {}
 
-  void Init(const SVGLengthList* aList, dom::SVGElement* aElement,
+  void Init(const SVGLengthList* aList, const dom::SVGElement* aElement,
             uint8_t aAxis) {
     mList = aList;
     mElement = aElement;
     mAxis = aAxis;
   }
 
-  void Clear() { mList = nullptr; }
+  bool IsEmpty() const { return mList->IsEmpty(); }
 
-  bool IsEmpty() const { return !mList || mList->IsEmpty(); }
-
-  uint32_t Length() const { return mList ? mList->Length() : 0; }
+  uint32_t Length() const { return mList->Length(); }
 
   /// This may return a non-finite value
   float operator[](uint32_t aIndex) const {
-    return (*mList)[aIndex].GetValueInUserUnits(mElement, mAxis);
+    return (*mList)[aIndex].GetValueInPixelsWithZoom(mElement, mAxis);
   }
 
   bool HasPercentageValueAt(uint32_t aIndex) const {
-    const SVGLength& length = (*mList)[aIndex];
-    return length.GetUnit() ==
-           dom::SVGLength_Binding::SVG_LENGTHTYPE_PERCENTAGE;
+    return (*mList)[aIndex].IsPercentage();
   }
 
  private:
   const SVGLengthList* mList;
-  dom::SVGElement* mElement;
+  const dom::SVGElement* mElement;
   uint8_t mAxis;
 };
 

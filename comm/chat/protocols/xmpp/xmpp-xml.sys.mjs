@@ -106,14 +106,33 @@ export var SupportedFeatures = [
   NS.version,
 ];
 
-/* Stanza Builder */
+/**
+ * XMPP Stanza Builder
+ */
 export var Stanza = {
   NS,
 
-  /* Create a presence stanza */
+  /**
+   * Create a presence stanza.
+   *
+   * @param {Record<string, string | null>} [aAttr] - A mapping of attributes to values.
+   * @param {string | XMLNode | string[] | XMLNode[]} [aData] - The data to append, can be a string, a XMLNode, or an array
+   *  of strings or XMLNodes.
+   * @returns {XMLNode} The new presence stanza.
+   */
   presence: (aAttr, aData) => Stanza.node("presence", null, aAttr, aData),
 
-  /* Create a message stanza */
+  /**
+   * Create a message stanza.
+   *
+   * @param {string} aTo - The target of the stanza.
+   * @param {string} [aMsg] - The message body.
+   * @param {string} [aState] - The typing state.
+   * @param {Record<string, string>} [aAttr] - A mapping of attributes to values.
+   * @param {string | XMLNode | string[] | XMLNode[]} [aData] - The data to append, can be a string, a XMLNode, or an array
+   *  of strings or XMLNodes.
+   * @returns {XMLNode} The new XML node.
+   */
   message(aTo, aMsg, aState, aAttr = {}, aData = []) {
     aAttr.to = aTo;
     if (!("type" in aAttr)) {
@@ -131,9 +150,18 @@ export var Stanza = {
     return Stanza.node("message", null, aAttr, aData);
   },
 
-  /* Create a iq stanza */
+  /**
+   * Create a iq stanza.
+   *
+   * @param {string} aType - The type attribute.
+   * @param {string} [aId] - The ID of the stanza.
+   * @param {string} [aTo] - The target of the stanza.
+   * @param {string | XMLNode | string[] | XMLNode[]} [aData] - The data to append, can be a string, a XMLNode, or an array
+   *  of strings or XMLNodes.
+   * @returns {XMLNode} The new XML node.
+   */
   iq(aType, aId, aTo, aData) {
-    let attrs = { type: aType };
+    const attrs = { type: aType };
     if (aId) {
       attrs.id = aId;
     }
@@ -143,14 +171,23 @@ export var Stanza = {
     return this.node("iq", null, attrs, aData);
   },
 
-  /* Create a XML node */
+  /**
+   * Create a XML node.
+   *
+   * @param {string} aName - The tag name of the node.
+   * @param {string} aNs - The tag namespace.
+   * @param {Record<string, string | null>} [aAttr] - A mapping of attributes to values.
+   * @param {string | XMLNode | string[] | XMLNode[]} [aData] - The data to append, can be a string, a XMLNode, or an array
+   *  of strings or XMLNodes.
+   * @returns {XMLNode} The new XML node.
+   */
   node(aName, aNs, aAttr, aData) {
-    let node = new XMLNode(null, aNs, aName, aName, aAttr);
+    const node = new XMLNode(null, aNs, aName, aName, aAttr);
     if (aData) {
       if (!Array.isArray(aData)) {
         aData = [aData];
       }
-      for (let child of aData) {
+      for (const child of aData) {
         node[typeof child == "string" ? "addText" : "addChild"](child);
       }
     }
@@ -159,45 +196,86 @@ export var Stanza = {
   },
 };
 
-/* Text node
- * Contains a text */
+/**
+ * A text node.
+ *
+ * @param {string} aText - The text inside the node.
+ */
 function TextNode(aText) {
   this.text = aText;
 }
 TextNode.prototype = {
+  /**
+   * The node type.
+   *
+   * @type {string}
+   * @readonly
+   */
   get type() {
     return "text";
   },
 
+  /**
+   * Add text to the node.
+   *
+   * @param {string} aText - The text to append to the node.
+   */
   append(aText) {
     this.text += aText;
   },
 
-  /* For debug purposes, returns an indented (unencoded) string */
-  convertToString(aIndent) {
+  /**
+   * For debug purposes, returns an indented (unencoded) string.
+   *
+   * @param {string} [aIndent] - A string prefix.
+   * @returns {string} The debug string.
+   */
+  convertToString(aIndent = "") {
     return aIndent + this.text + "\n";
   },
 
-  /* Returns the encoded XML */
+  /**
+   * Returns the encoded XML.
+   *
+   * @returns {string} The string encoded as XML.
+   */
   getXML() {
     return Cc["@mozilla.org/txttohtmlconv;1"]
       .getService(Ci.mozITXTToHTMLConv)
       .scanTXT(this.text, Ci.mozITXTToHTMLConv.kEntities);
   },
 
-  /* To read the unencoded data. */
+  /**
+   * To read the unencoded data.
+   *
+   * @type {string}
+   * @readonly
+   */
   get innerText() {
     return this.text;
   },
 };
 
-/* XML node */
-/* https://www.w3.org/TR/2008/REC-xml-20081126 */
-/* aUri is the namespace. */
-/* aLocalName must have value, otherwise throws. */
-/* aAttr is an object */
-/* Example: <f:a xmlns:f='g' d='1'> is parsed to
-   uri/namespace='g', localName='a', qName='f:a', attributes={d='1'} */
+/**
+ * XML node
+ *
+ * Example: <f:a xmlns:f='g' d='1'> is parsed to
+ *    uri/namespace='g', localName='a', qName='f:a', attributes={d='1'}
+ *
+ * https://www.w3.org/TR/2008/REC-xml-20081126
+ *
+ * @param {XMLNode | null} aParentNode - The parent XMLNode
+ * @param {string} aUri - The XML namespace.
+ * @param {string} aLocalName - The tag name. Must have value, otherwise throws.
+ * @param {string} [aQName] - The fully qualified tag name. Defaults to aLocalName if not provided.
+ * @param {Record<string, string | null>} [aAttr] - A mapping of attributes to values.
+ *
+ * @property {string} uri
+ * @property {string} localName
+ * @property {string} qName
+ * @property {Record<string, string>} attributes
+ * @property {(XMLNode | TextNode)[]} children
+ */
 function XMLNode(
   aParentNode,
   aUri,
@@ -216,7 +294,7 @@ function XMLNode(
   this.attributes = {};
   this.children = [];
 
-  for (let attributeName in aAttr) {
+  for (const attributeName in aAttr) {
     // Each attribute specification has a name and a value.
     if (aAttr[attributeName]) {
       this.attributes[attributeName] = aAttr[attributeName];
@@ -224,18 +302,35 @@ function XMLNode(
   }
 }
 XMLNode.prototype = {
+  /**
+   * The node type.
+   *
+   * @type {string}
+   * @readonly
+   */
   get type() {
     return "node";
   },
 
-  /* Add a new child node */
+  /**
+   * Add a new child node.
+   *
+   * @param {XMLNode | TextNode} aNode - The new child node.
+   */
   addChild(aNode) {
     this.children.push(aNode);
   },
 
-  /* Add text node */
+  /**
+   * Add a child text node.
+   *
+   * If the last child is already a text node, then concatenates to that node.
+   * Otherwise, a new text node is created.
+   *
+   * @param {string} aText - The new text to add.
+   */
   addText(aText) {
-    let lastIndex = this.children.length - 1;
+    const lastIndex = this.children.length - 1;
     if (lastIndex >= 0 && this.children[lastIndex] instanceof TextNode) {
       this.children[lastIndex].append(aText);
     } else {
@@ -243,25 +338,34 @@ XMLNode.prototype = {
     }
   },
 
-  /* Get child elements by namespace */
+  /**
+   * Get child elements by namespace, always strips text nodes.
+   *
+   * @param {string} aNS - The namespace to filter by.
+   * @returns {XMLNode[]} The children with the matching namespace.
+   */
   getChildrenByNS(aNS) {
     return this.children.filter(c => c.uri == aNS);
   },
 
-  /* Get the first element anywhere inside the node (including child nodes)
-     that matches the query.
-     A query consists of an array of localNames. */
+  /**
+   * Get the first element anywhere inside the node (including child nodes)
+   * that matches the query.
+   *
+   * @param {string[]} aQuery - A query consists of an array of localNames.
+   * @returns {XMLNode | null} The matching node.
+   */
   getElement(aQuery) {
     if (aQuery.length == 0) {
       return this;
     }
 
-    let nq = aQuery.slice(1);
-    for (let child of this.children) {
+    const nq = aQuery.slice(1);
+    for (const child of this.children) {
       if (child.type == "text" || child.localName != aQuery[0]) {
         continue;
       }
-      let n = child.getElement(nq);
+      const n = child.getElement(nq);
       if (n) {
         return n;
       }
@@ -270,44 +374,62 @@ XMLNode.prototype = {
     return null;
   },
 
-  /* Get all elements of the node (including child nodes) that match the query.
-     A query consists of an array of localNames. */
+  /**
+   * Get all elements of the node (including child nodes) that match the query.
+   *
+   * @param {string[]} aQuery - A query consists of an array of localNames.
+   * @returns {XMLNode[]} The matching nodes.
+   */
   getElements(aQuery) {
     if (aQuery.length == 0) {
       return [this];
     }
 
-    let c = this.getChildren(aQuery[0]);
-    let nq = aQuery.slice(1);
+    const c = this.getChildren(aQuery[0]);
+    const nq = aQuery.slice(1);
     let res = [];
-    for (let child of c) {
-      let n = child.getElements(nq);
+    for (const child of c) {
+      const n = child.getElements(nq);
       res = res.concat(n);
     }
 
     return res;
   },
 
-  /* Get immediate children by the node name */
+  /**
+   * Get immediate children by the node name.
+   *
+   * @param {string} aName - The tag name to filter by.
+   * @returns {XMLNode[]} The children with the matching tag name.
+   */
   getChildren(aName) {
     return this.children.filter(c => c.type != "text" && c.localName == aName);
   },
 
-  // Test if the node is a stanza and its namespace is valid.
+  /**
+   * Test if the node is a stanza and its namespace is valid.
+   *
+   * @returns {boolean} True if it is a valid XMPP stanza.
+   */
   isXmppStanza() {
     if (!TOP_LEVEL_ELEMENTS.hasOwnProperty(this.qName)) {
       return false;
     }
-    let ns = TOP_LEVEL_ELEMENTS[this.qName];
+    const ns = TOP_LEVEL_ELEMENTS[this.qName];
     return ns == this.uri || (Array.isArray(ns) && ns.includes(this.uri));
   },
 
-  /* Returns indented XML */
+  /**
+   * For debug purposes, returns indented XML
+   *
+   * @param {string} [aIndent] - A string prefix.
+   * @returns {string} The debug string.
+   */
   convertToString(aIndent = "") {
-    let s =
+    const s =
       aIndent + "<" + this.qName + this._getXmlns() + this._getAttributeText();
     let content = "";
-    for (let child of this.children) {
+    for (const child of this.children) {
       content += child.convertToString(aIndent + " ");
     }
     return (
@@ -317,27 +439,55 @@ XMLNode.prototype = {
     );
   },
 
-  /* Returns the XML */
+  /**
+   * Returns the XML.
+   *
+   * @returns {string} The encoded XML.
+   */
   getXML() {
-    let s = "<" + this.qName + this._getXmlns() + this._getAttributeText();
-    let innerXML = this.innerXML;
+    const s = "<" + this.qName + this._getXmlns() + this._getAttributeText();
+    const innerXML = this.innerXML;
     return s + (innerXML ? ">" + innerXML + "</" + this.qName : "/") + ">";
   },
 
+  /**
+   * Returns the inner XML of children nodes.
+   *
+   * @type {string}
+   * @readonly
+   */
   get innerXML() {
     return this.children.map(c => c.getXML()).join("");
   },
+  /**
+   * Returns the inner text from children nodes.
+   *
+   * @type {string}
+   * @readonly
+   */
   get innerText() {
     return this.children.map(c => c.innerText).join("");
   },
 
   /* Private methods */
+  /**
+   * Get the XML namespace as a property suitable for serialization.
+   *
+   * @returns {string} The XML namespace property.
+   * @private
+   */
   _getXmlns() {
     return this.uri ? ' xmlns="' + this.uri + '"' : "";
   },
+  /**
+   * Get the serialized attributes.
+   *
+   * @returns {string} The serialized attributes.
+   * @private
+   */
   _getAttributeText() {
     let s = "";
-    for (let name in this.attributes) {
+    for (const name in this.attributes) {
       s += " " + name + '="' + this.attributes[name] + '"';
     }
     return s;
@@ -349,15 +499,15 @@ export function XMPPParser(aListener) {
 
   // We only get tagName from onclosetag callback, but we need more, so save the
   // opening tags.
-  let tagStack = [];
+  const tagStack = [];
   this._parser = SAX.parser(true, { xmlns: true, lowercase: true });
   this._parser.onopentag = node => {
     if (this._parser.error) {
       // sax-js doesn't stop on error, but we want to.
       return;
     }
-    let attrs = {};
-    for (let [name, attr] of Object.entries(node.attributes)) {
+    const attrs = {};
+    for (const [name, attr] of Object.entries(node.attributes)) {
       if (name == "xmlns") {
         continue;
       }
@@ -370,7 +520,7 @@ export function XMPPParser(aListener) {
     if (this._parser.error) {
       return;
     }
-    let node = tagStack.pop();
+    const node = tagStack.pop();
     if (tagName == node.name) {
       this.endElement(node.uri, node.local, node.name);
     } else {
@@ -378,6 +528,12 @@ export function XMPPParser(aListener) {
     }
   };
   this._parser.ontext = t => {
+    if (this._parser.error) {
+      return;
+    }
+    this.characters(t);
+  };
+  this._parser.oncdata = t => {
     if (this._parser.error) {
       return;
     }
@@ -408,17 +564,17 @@ XMPPParser.prototype = {
    * @param {string} data - Raw XML byte string.
    */
   onDataAvailable(data) {
-    let bytes = new Uint8Array(data.length);
+    const bytes = new Uint8Array(data.length);
     for (let i = 0; i < data.length; i++) {
       bytes[i] = data.charCodeAt(i);
     }
-    let utf8Data = this._decoder.decode(bytes);
+    const utf8Data = this._decoder.decode(bytes);
     this._parser.write(utf8Data);
   },
 
   startElement(aUri, aLocalName, aQName, aAttributes) {
     if (aQName == "stream:stream") {
-      let node = new XMLNode(null, aUri, aLocalName, aQName, aAttributes);
+      const node = new XMLNode(null, aUri, aLocalName, aQName, aAttributes);
       // The node we created doesn't have children, but
       // <stream:stream> isn't closed, so avoid displaying /> at the end.
       this._logReceivedData(node.convertToString().slice(0, -3) + ">\n");
@@ -440,7 +596,7 @@ XMPPParser.prototype = {
       return;
     }
 
-    let node = new XMLNode(this._node, aUri, aLocalName, aQName, aAttributes);
+    const node = new XMLNode(this._node, aUri, aLocalName, aQName, aAttributes);
     if (this._node) {
       this._node.addChild(node);
     }
@@ -448,6 +604,11 @@ XMPPParser.prototype = {
     this._node = node;
   },
 
+  /**
+   * Add text to the current node (or create a new text node).
+   *
+   * @param {string} aCharacters
+   */
   characters(aCharacters) {
     if (!this._node) {
       // Ignore whitespace received on the stream to keep the connection alive.
@@ -484,10 +645,12 @@ XMPPParser.prototype = {
       if (this._node.isXmppStanza()) {
         this._logReceivedData(this._node.convertToString());
         try {
-          this._listener.onXmppStanza(this._node);
+          const result = this._listener.onXmppStanza(this._node);
+          if (result && "then" in result) {
+            result.catch(console.error);
+          }
         } catch (e) {
           console.error(e);
-          dump(e + "\n");
         }
       } else {
         this._listener.onXMLError(

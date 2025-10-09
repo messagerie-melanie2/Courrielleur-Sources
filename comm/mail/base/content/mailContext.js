@@ -3,29 +3,31 @@
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
 // mailCommon.js
-/* globals commandController */
+/* globals commandController, dbViewWrapperListener */
 
 // about:3pane and about:message must BOTH provide these:
 
 /* globals goDoCommand */ // globalOverlay.js
 /* globals gDBView, gFolder, gViewWrapper, messengerBundle */
 
-/* globals gEncryptedURIService */ // mailCommon.js
-
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
+var { openLinkExternally, openWebSearch } = ChromeUtils.importESModule(
+  "resource:///modules/LinkHelper.sys.mjs"
+);
 
-XPCOMUtils.defineLazyModuleGetters(this, {
+ChromeUtils.defineESModuleGetters(this, {
+  EnigmailURIs: "chrome://openpgp/content/modules/uris.sys.mjs",
+  MailUtils: "resource:///modules/MailUtils.sys.mjs",
+  PhishingDetector: "resource:///modules/PhishingDetector.sys.mjs",
+  TagUtils: "resource:///modules/TagUtils.sys.mjs",
+
   calendarDeactivator:
-    "resource:///modules/calendar/calCalendarDeactivator.jsm",
-  EnigmailURIs: "chrome://openpgp/content/modules/uris.jsm",
-  MailUtils: "resource:///modules/MailUtils.jsm",
-  PhishingDetector: "resource:///modules/PhishingDetector.jsm",
-  TagUtils: "resource:///modules/TagUtils.jsm",
+    "resource:///modules/calendar/calCalendarDeactivator.sys.mjs",
 });
 
 /**
@@ -40,14 +42,14 @@ function openContextMenu({ data, target }, browser) {
     return false;
   }
 
-  if (browser.getAttribute("context") != "mailContext") {
+  if (browser.id != "messagepane") {
     return false;
   }
 
   mailContextMenu.setAsMessagePaneContextMenu(data, target.browsingContext);
-  let screenX = data.context.screenXDevPx / window.devicePixelRatio;
-  let screenY = data.context.screenYDevPx / window.devicePixelRatio;
-  let popup = document.getElementById("mailContext");
+  const screenX = data.context.screenXDevPx / window.devicePixelRatio;
+  const screenY = data.context.screenYDevPx / window.devicePixelRatio;
+  const popup = document.getElementById("mailContext");
   popup.openPopupAtScreen(screenX, screenY, true);
 
   return true;
@@ -67,6 +69,7 @@ var mailContextMenu = {
     "mailContext-openConversation": "cmd_openConversation",
     "mailContext-replyNewsgroup": "cmd_replyGroup",
     "mailContext-replySender": "cmd_replySender",
+    "navContext-reply": "cmd_reply",
     "mailContext-replyAll": "cmd_replyall",
     "mailContext-replyList": "cmd_replylist",
     "mailContext-forward": "cmd_forward",
@@ -79,12 +82,11 @@ var mailContextMenu = {
     "mailContext-addNewTag": "cmd_addTag",
     "mailContext-manageTags": "cmd_manageTags",
     "mailContext-tagRemoveAll": "cmd_removeTags",
-    "mailContext-markReadByDate": "cmd_markReadByDate",
     "mailContext-markFlagged": "cmd_markAsFlagged",
+    "navContext-archive": "cmd_archive",
     "mailContext-archive": "cmd_archive",
     "mailContext-moveToFolderAgain": "cmd_moveToFolderAgain",
     "mailContext-decryptToFolder": "cmd_copyDecryptedTo",
-    "mailContext-delete": "cmd_deleteMessage",
     "mailContext-ignoreThread": "cmd_killThread",
     "mailContext-ignoreSubthread": "cmd_killSubthread",
     "mailContext-watchThread": "cmd_watchThread",
@@ -96,11 +98,16 @@ var mailContextMenu = {
   // More commands handled by commandController, except these ones get
   // disabled instead of hidden.
   _alwaysVisibleCommands: {
+    "navContext-markRead": "cmd_markAsRead",
     "mailContext-markRead": "cmd_markAsRead",
+    "navContext-markUnread": "cmd_markAsUnread",
     "mailContext-markUnread": "cmd_markAsUnread",
     "mailContext-markThreadAsRead": "cmd_markThreadAsRead",
+    "mailContext-markReadByDate": "cmd_markReadByDate",
     "mailContext-markAllRead": "cmd_markAllRead",
+    "navContext-markAsJunk": "cmd_markAsJunk",
     "mailContext-markAsJunk": "cmd_markAsJunk",
+    "navContext-markAsNotJunk": "cmd_markAsNotJunk",
     "mailContext-markAsNotJunk": "cmd_markAsNotJunk",
     "mailContext-recalculateJunkScore": "cmd_recalculateJunkScore",
   },
@@ -181,6 +188,9 @@ var mailContextMenu = {
       return;
     }
     if (this._selectionIsOverridden) {
+      // Prevent selection of a new message if there's a delete in progress.
+      dbViewWrapperListener._nextViewIndexAfterDelete = null;
+
       window.threadTree._selection.selectEventsSuppressed = true;
       window.threadPane.restoreSelection({ notify: false });
       this._selectionIsOverridden = false;
@@ -199,7 +209,7 @@ var mailContextMenu = {
     delete this.selectionInfo;
     this.inThreadTree = true;
 
-    for (let id of [
+    for (const id of [
       "mailContext-openInBrowser",
       "mailContext-openLinkInBrowser",
       "mailContext-copylink",
@@ -220,7 +230,7 @@ var mailContextMenu = {
 
   setAsMessagePaneContextMenu({ context, selectionInfo }, browsingContext) {
     function showItem(id, show) {
-      let item = document.getElementById(id);
+      const item = document.getElementById(id);
       if (item) {
         item.hidden = !show;
       }
@@ -237,7 +247,7 @@ var mailContextMenu = {
       context.onLink && !context.onMailtoLink
     );
     showItem("mailContext-copylink", context.onLink && !context.onMailtoLink);
-    showItem("mailContext-savelink", context.onLink);
+    showItem("mailContext-savelink", context.onLink && !context.onMailtoLink);
     showItem(
       "mailContext-reportPhishingURL",
       context.onLink && !context.onMailtoLink
@@ -257,7 +267,7 @@ var mailContextMenu = {
       selectionInfo && !selectionInfo.docSelectionIsCollapsed
     );
 
-    let searchTheWeb = document.getElementById("mailContext-searchTheWeb");
+    const searchTheWeb = document.getElementById("mailContext-searchTheWeb");
     if (!searchTheWeb.hidden) {
       let key = "openSearch.label";
       let abbrSelection;
@@ -277,19 +287,19 @@ var mailContextMenu = {
 
   fillMailContextMenu(event) {
     function showItem(id, show) {
-      let item = document.getElementById(id);
+      const item = document.getElementById(id);
       if (item) {
         item.hidden = !show;
       }
     }
 
     function enableItem(id, enabled) {
-      let item = document.getElementById(id);
+      const item = document.getElementById(id);
       item.disabled = !enabled;
     }
 
     function checkItem(id, checked) {
-      let item = document.getElementById(id);
+      const item = document.getElementById(id);
       if (item) {
         // Convert truthy/falsy to boolean before string.
         item.setAttribute("checked", !!checked);
@@ -302,14 +312,14 @@ var mailContextMenu = {
     }
 
     // Hide things that don't work yet.
-    for (let id of [
+    for (const id of [
       "mailContext-openInBrowser",
       "mailContext-recalculateJunkScore",
     ]) {
       showItem(id, false);
     }
 
-    let onSpecialItem =
+    const onSpecialItem =
       this.context?.isContentSelected ||
       this.context?.onCanvas ||
       this.context?.onLink ||
@@ -318,63 +328,90 @@ var mailContextMenu = {
       this.context?.onVideo ||
       this.context?.onTextInput;
 
-    for (let id of ["mailContext-tags", "mailContext-mark"]) {
-      showItem(id, !onSpecialItem);
-    }
-
     // Ask commandController about the commands it controls.
-    for (let [id, command] of Object.entries(this._commands)) {
+    for (const [id, command] of Object.entries(this._commands)) {
       showItem(
         id,
         !onSpecialItem && commandController.isCommandEnabled(command)
       );
     }
-    for (let [id, command] of Object.entries(this._alwaysVisibleCommands)) {
+    for (const [id, command] of Object.entries(this._alwaysVisibleCommands)) {
       showItem(id, !onSpecialItem);
       enableItem(id, commandController.isCommandEnabled(command));
     }
 
-    let inAbout3Pane = !!window.threadTree;
-    let inThreadTree = !!this.inThreadTree;
+    showItem(
+      "navContext-delete",
+      !onSpecialItem && commandController.isCommandEnabled("cmd_deleteMessage")
+    );
+    showItem("mailContext-navigation", !onSpecialItem);
+    showItem("mailContext-sep-navigation", !onSpecialItem);
 
-    let message =
+    const inAbout3Pane = !!window.threadTree;
+    const inThreadTree = !!this.inThreadTree;
+
+    const message =
       gFolder || gViewWrapper.isSynthetic
         ? gDBView?.hdrForFirstSelectedMessage
         : top.messenger.msgHdrFromURI(window.gMessageURI);
-    let folder = message?.folder;
-    let isDummyMessage = !gViewWrapper.isSynthetic && !folder;
+    const folder = message?.folder;
+    const isDummyMessage = !gViewWrapper.isSynthetic && !folder;
 
-    let numSelectedMessages = isDummyMessage ? 1 : gDBView.numSelected;
-    let isNewsgroup = folder?.isSpecialFolder(
+    const numSelectedMessages = isDummyMessage ? 1 : gDBView.numSelected;
+    const isNewsgroup = folder?.isSpecialFolder(
       Ci.nsMsgFolderFlags.Newsgroup,
       true
     );
-    let canMove =
+    const canMove =
       numSelectedMessages >= 1 && !isNewsgroup && folder?.canDeleteMessages;
-    let canCopy = numSelectedMessages >= 1;
+    const canCopy = numSelectedMessages >= 1;
+
+    const isJunk =
+      message.getStringProperty("junkscore") ==
+      Ci.nsIJunkMailPlugin.IS_SPAM_SCORE;
+
+    if (numSelectedMessages == 1) {
+      // Hide junk button that isn't opposite of current state.
+      showItem("navContext-markAsJunk", !isJunk);
+      showItem("navContext-markAsNotJunk", isJunk);
+    } else {
+      showItem("navContext-markAsJunk", true);
+      showItem("navContext-markAsNotJunk", false);
+    }
+    const areIMAPDeleted = gViewWrapper.dbView
+      .getSelectedMsgHdrs()
+      .every(msg => msg.flags & Ci.nsMsgMessageFlags.IMAPDeleted);
 
     setSingleSelection("mailContext-openNewTab", inThreadTree);
     setSingleSelection("mailContext-openNewWindow", inThreadTree);
     setSingleSelection(
       "mailContext-openContainingFolder",
-      (!isDummyMessage && !inAbout3Pane) || gViewWrapper.isSynthetic
+      !onSpecialItem &&
+        ((!isDummyMessage && !inAbout3Pane) || gViewWrapper.isSynthetic)
     );
     setSingleSelection("mailContext-forward", !onSpecialItem);
-    setSingleSelection("mailContext-forwardAsMenu", !onSpecialItem);
+    setSingleSelection("mailContext-forwardAsInline", !onSpecialItem);
+    document.l10n.setAttributes(
+      document.getElementById("mailContext-forwardAsAttachment"),
+      "mail-context-menu-forward-as-attachment",
+      {
+        count: numSelectedMessages,
+      }
+    );
     showItem(
-      "mailContext-multiForwardAsAttachment",
-      numSelectedMessages > 1 &&
+      "mailContext-forwardAsAttachment",
+      !onSpecialItem &&
+        numSelectedMessages &&
         commandController.isCommandEnabled("cmd_forwardAttachment")
     );
 
-    if (isDummyMessage) {
+    if (isDummyMessage || onSpecialItem) {
       showItem("mailContext-tags", false);
     } else {
       showItem("mailContext-tags", true);
       this._initMessageTags();
     }
 
-    showItem("mailContext-mark", !isDummyMessage);
     checkItem("mailContext-markFlagged", message?.isFlagged);
 
     setSingleSelection("mailContext-copyMessageUrl", !!isNewsgroup);
@@ -390,16 +427,20 @@ var mailContextMenu = {
     // extractFromEmail can't work on dummy messages.
     showItem(
       "mailContext-calendar-convert-menu",
-      numSelectedMessages == 1 &&
+      !onSpecialItem &&
+        numSelectedMessages == 1 &&
         !isDummyMessage &&
         calendarDeactivator.isCalendarActivated
     );
 
+    const contextDelete = document.getElementById("navContext-delete");
+    contextDelete.setAttribute("active", !!areIMAPDeleted);
+    contextDelete.dataset.imapDeleted = !!areIMAPDeleted;
     document.l10n.setAttributes(
-      document.getElementById("mailContext-delete"),
-      message.flags & Ci.nsMsgMessageFlags.IMAPDeleted
-        ? "mail-context-undelete-messages"
-        : "mail-context-delete-messages",
+      contextDelete,
+      areIMAPDeleted
+        ? "mail-context-messages-undelete"
+        : "mail-context-messages-delete",
       {
         count: numSelectedMessages,
       }
@@ -423,8 +464,14 @@ var mailContextMenu = {
       window.threadTree && numSelectedMessages > 1
     );
 
+    this._ensureSubmenuVisibility();
+    // Special case: mark menu shouldn't be shown on external messages.
+    if (isDummyMessage) {
+      showItem("mailContext-mark", false);
+    }
+
     let lastItem;
-    for (let child of document.getElementById("mailContext").children) {
+    for (const child of document.getElementById("mailContext").children) {
       if (child.localName == "menuseparator") {
         child.hidden = !lastItem || lastItem.localName == "menuseparator";
       }
@@ -438,15 +485,15 @@ var mailContextMenu = {
 
     // The rest of this block sends menu information to WebExtensions.
 
-    let selectionInfo = this.selectionInfo;
-    let isContentSelected = selectionInfo
+    const selectionInfo = this.selectionInfo;
+    const isContentSelected = selectionInfo
       ? !selectionInfo.docSelectionIsCollapsed
       : false;
-    let textSelected = selectionInfo ? selectionInfo.text : "";
-    let isTextSelected = !!textSelected.length;
+    const textSelected = selectionInfo ? selectionInfo.text : "";
+    const isTextSelected = !!textSelected.length;
 
-    let tabmail = top.document.getElementById("tabmail");
-    let subject = {
+    const tabmail = top.document.getElementById("tabmail");
+    const subject = {
       menu: event.target,
       tab: tabmail ? tabmail.currentTabInfo : top,
       isContentSelected,
@@ -474,6 +521,21 @@ var mailContextMenu = {
     Services.obs.notifyObservers(subject, "on-build-contextmenu");
   },
 
+  /**
+   * Hide all top level submenus of the context menu that have no visibile items.
+   * Ignores separators since they are only a visual aid for the user and not
+   * actual features making the menu worth showing. Excludes generated submenus.
+   */
+  _ensureSubmenuVisibility() {
+    for (const menu of document.querySelectorAll(
+      "#mailContext > menu:not(#mailContext-tags,#mailContext-moveMenu,#mailContext-copyMenu)"
+    )) {
+      menu.hidden = Array.from(menu.menupopup.children).every(
+        child => child.hidden || child.localName === "menuseparator"
+      );
+    }
+  },
+
   onMailContextMenuCommand(event) {
     // If commandController handles this command, ask it to do so.
     if (event.target.id in this._commands) {
@@ -489,13 +551,21 @@ var mailContextMenu = {
     }
 
     switch (event.target.id) {
+      case "navContext-delete":
+        commandController.doCommand(
+          // No Shift-Undelete.
+          event.shiftKey && event.target.dataset.imapDeleted == "false"
+            ? "cmd_shiftDeleteMessage"
+            : "cmd_deleteMessage"
+        );
+        break;
       // Links
       // case "mailContext-openInBrowser":
       //   this._openInBrowser();
       //   break;
       case "mailContext-openLinkInBrowser":
         // Only called in about:message.
-        top.openLinkExternally(this.context.linkURL);
+        openLinkExternally(this.context.linkURL);
         break;
       case "mailContext-copylink":
         goDoCommand("cmd_copyLink");
@@ -510,7 +580,7 @@ var mailContextMenu = {
           false, // skipPrompt
           null, // referrerInfo
           null, // cookieJarSettings
-          this.browsingContext.window.document, // sourceDocument
+          this.browsingContext.window?.document, // sourceDocument
           null, // isContentWindowPrivate,
           Services.scriptSecurityManager.getSystemPrincipal() // principal
         );
@@ -530,7 +600,7 @@ var mailContextMenu = {
         );
         break;
       case "mailContext-copyemail": {
-        let addresses = top.getEmail(this.context.linkURL);
+        const addresses = top.getEmail(this.context.linkURL);
         Cc["@mozilla.org/widget/clipboardhelper;1"]
           .getService(Ci.nsIClipboardHelper)
           .copyString(addresses);
@@ -567,14 +637,15 @@ var mailContextMenu = {
 
       // Search
       case "mailContext-searchTheWeb":
-        top.openWebSearch(this.selectionInfo.text);
+        openWebSearch(this.selectionInfo.text);
         break;
 
-      // Open messages
+      // Open messages in the background.
       case "mailContext-openNewTab":
         top.OpenMessageInNewTab(gDBView.hdrForFirstSelectedMessage, {
           event,
           viewWrapper: gViewWrapper,
+          background: true,
         });
         break;
       case "mailContext-openNewWindow":
@@ -590,8 +661,8 @@ var mailContextMenu = {
       // Move/copy/archive/convert/delete
       // (Move and Copy sub-menus are handled in the default case.)
       case "mailContext-copyMessageUrl": {
-        let message = gDBView.hdrForFirstSelectedMessage;
-        let server = message?.folder?.server;
+        const message = gDBView.hdrForFirstSelectedMessage;
+        const server = message?.folder?.server;
 
         if (!server) {
           return;
@@ -653,12 +724,10 @@ var mailContextMenu = {
    * Refresh the contents of the tag popup menu/panel.
    * Used for example for appmenu/Message/Tag panel.
    *
-   * @param {Element} parent - Parent element that will contain the menu items.
-   * @param {string} [elementName] - Type of menu item, e.g. "menuitem", "toolbarbutton".
-   * @param {string} [classes] - Classes to set on the menu items.
+   * @see InitMessageTags()
    */
   _initMessageTags() {
-    let parent = document.getElementById("mailContext-tagpopup");
+    const parent = document.getElementById("mailContext-tagpopup");
     // Remove any existing non-static items (clear tags list before rebuilding it).
     // There is a separator element above the dynamically added tag elements, so
     // remove dynamically added elements below the separator.
@@ -667,36 +736,39 @@ var mailContextMenu = {
     }
 
     // Create label and accesskey for the static "remove all tags" item.
-    let removeItem = document.getElementById("mailContext-tagRemoveAll");
+    const removeItem = document.getElementById("mailContext-tagRemoveAll");
     removeItem.label = messengerBundle.GetStringFromName(
       "mailnews.tags.remove"
     );
 
     // Rebuild the list.
-    let message = gDBView.hdrForFirstSelectedMessage;
-    let currentTags = message
+    const message = gDBView.hdrForFirstSelectedMessage;
+    const currentTags = message
       ? message.getStringProperty("keywords").split(" ")
       : [];
     let index = 1;
 
-    for (let tagInfo of MailServices.tags.getAllTags()) {
-      let msgHasTag = currentTags.includes(tagInfo.key);
+    for (const tagInfo of MailServices.tags.getAllTags()) {
+      const msgHasTag = currentTags.includes(tagInfo.key);
       if (tagInfo.ordinal.includes("~AUTOTAG") && !msgHasTag) {
         return;
       }
 
-      let item = document.createXULElement("menuitem");
-      item.accessKey = index < 10 ? index : "";
+      const item = document.createXULElement("menuitem");
+      const accessKey = index < 10 ? index : "";
+      if (accessKey !== "") {
+        item.accessKey = accessKey;
+      }
       item.label = messengerBundle.formatStringFromName(
         "mailnews.tags.format",
-        [item.accessKey, tagInfo.tag]
+        [accessKey, tagInfo.tag]
       );
       item.setAttribute("type", "checkbox");
       if (msgHasTag) {
         item.setAttribute("checked", "true");
       }
       item.value = tagInfo.key;
-      item.addEventListener("command", event =>
+      item.addEventListener("command", () =>
         this._toggleMessageTag(
           tagInfo.key,
           item.getAttribute("checked") == "true"
@@ -712,13 +784,13 @@ var mailContextMenu = {
   },
 
   removeAllMessageTags() {
-    let selectedMessages = gDBView.getSelectedMsgHdrs();
+    const selectedMessages = gDBView.getSelectedMsgHdrs();
     if (!selectedMessages.length) {
       return;
     }
 
     let messages = [];
-    let allKeys = MailServices.tags
+    const allKeys = MailServices.tags
       .getAllTags()
       .map(t => t.key)
       .join(" ");
@@ -731,7 +803,7 @@ var mailContextMenu = {
     // and untag takes a key argument. Furthermore, we only delete known tags,
     // keeping other keywords like (non)junk intact.
     for (let i = 0; i < selectedMessages.length; ++i) {
-      let msgHdr = selectedMessages[i];
+      const msgHdr = selectedMessages[i];
       if (prevHdrFolder != msgHdr.folder) {
         if (prevHdrFolder) {
           prevHdrFolder.removeKeywordsFromMessages(messages, allKeys);
@@ -748,8 +820,8 @@ var mailContextMenu = {
 
   _toggleMessageTag(key, addKey) {
     let messages = [];
-    let selectedMessages = gDBView.getSelectedMsgHdrs();
-    let toggler = addKey
+    const selectedMessages = gDBView.getSelectedMsgHdrs();
+    const toggler = addKey
       ? "addKeywordsToMessages"
       : "removeKeywordsFromMessages";
     let prevHdrFolder = null;
@@ -759,7 +831,7 @@ var mailContextMenu = {
     // better, but nsIMsgDBView doesn't handle commands with arguments,
     // and (un)tag takes a key argument.
     for (let i = 0; i < selectedMessages.length; ++i) {
-      let msgHdr = selectedMessages[i];
+      const msgHdr = selectedMessages[i];
       if (prevHdrFolder != msgHdr.folder) {
         if (prevHdrFolder) {
           prevHdrFolder[toggler](messages, key);
@@ -781,22 +853,22 @@ var mailContextMenu = {
    * @param {number} keyNumber - The number (1 through 9) associated with the tag.
    */
   _toggleMessageTagKey(keyNumber) {
-    let msgHdr = gDBView.hdrForFirstSelectedMessage;
+    const msgHdr = gDBView.hdrForFirstSelectedMessage;
     if (!msgHdr) {
       return;
     }
 
-    let tagArray = MailServices.tags.getAllTags();
+    const tagArray = MailServices.tags.getAllTags();
     if (keyNumber > tagArray.length) {
       return;
     }
 
-    let key = tagArray[keyNumber - 1].key;
-    let curKeys = msgHdr.getStringProperty("keywords").split(" ");
+    const key = tagArray[keyNumber - 1].key;
+    const curKeys = msgHdr.getStringProperty("keywords").split(" ");
     if (msgHdr.label) {
       curKeys.push("$label" + msgHdr.label);
     }
-    let addKey = !curKeys.includes(key);
+    const addKey = !curKeys.includes(key);
 
     this._toggleMessageTag(key, addKey);
   },
@@ -810,7 +882,7 @@ var mailContextMenu = {
         result: "",
         okCallback: (name, color) => {
           MailServices.tags.addTag(name, color, "");
-          let key = MailServices.tags.getKeyForTag(name);
+          const key = MailServices.tags.getKeyForTag(name);
           TagUtils.addTagToAllDocumentSheets(key, color);
 
           this._toggleMessageTag(key, true);

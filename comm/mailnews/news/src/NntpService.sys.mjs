@@ -4,6 +4,11 @@
 
 import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 
+const lazy = {};
+ChromeUtils.defineESModuleGetters(lazy, {
+  NewsDownloader: "resource:///modules/NewsDownloader.sys.mjs",
+});
+
 /**
  * @implements {nsINntpService}
  */
@@ -17,29 +22,6 @@ export class NntpService {
       );
     }
     return this._cacheStorage;
-  }
-
-  generateNewsHeaderValsForPosting(
-    newsgroupsList,
-    outNewsgroupsHeader,
-    outNewsHostHeader
-  ) {
-    const groups = newsgroupsList.split(",");
-    outNewsgroupsHeader.value = newsgroupsList;
-    let hosts = groups.map(name => this._findHostFromGroupName(name));
-    hosts = [...new Set(hosts)].filter(Boolean);
-    const host = hosts[0];
-    if (!host) {
-      outNewsHostHeader.value = "";
-      return;
-    }
-    if (hosts.length > 1) {
-      throw Components.Exception(
-        `Cross posting not allowed, hosts=${hosts.join(",")}`,
-        Cr.NS_ERROR_ILLEGAL_VALUE
-      );
-    }
-    outNewsHostHeader.value = host;
   }
 
   postMessage(messageFile, groupNames, accountKey, urlListener, msgWindow) {
@@ -207,19 +189,30 @@ export class NntpService {
         ];
         client.send(content.join("\r\n"));
         client.send("\r\n.\r\n");
+      };
 
-        newsFolder.removeMessage(messageKey);
-        newsFolder.cancelComplete();
+      client.onDone = status => {
+        if (Components.isSuccessCode(status)) {
+          newsFolder.removeMessage(messageKey);
+          newsFolder.cancelComplete();
+        }
       };
     });
   }
 
   downloadNewsgroupsForOffline(msgWindow, urlListener) {
-    const { NewsDownloader } = ChromeUtils.importESModule(
-      "resource:///modules/NewsDownloader.sys.mjs"
-    );
-    const downloader = new NewsDownloader(msgWindow, urlListener);
-    downloader.start();
+    const downloader = new lazy.NewsDownloader(msgWindow, urlListener);
+    downloader.downloadAllOfflineNewsgroups();
+  }
+
+  downloadFolderForOffline(folder, msgWindow) {
+    const downloader = new lazy.NewsDownloader(msgWindow);
+    downloader.downloadFolder(folder);
+  }
+
+  downloadMessagesForOffline(folder, keys, msgWindow) {
+    const downloader = new lazy.NewsDownloader(msgWindow);
+    downloader.downloadMessages(folder, keys);
   }
 
   /**

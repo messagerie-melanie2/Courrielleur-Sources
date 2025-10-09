@@ -469,16 +469,16 @@ HTMLBreadcrumbs.prototype = {
    */
   prettyPrintNodeAsXHTML(node) {
     const tagLabel = this.doc.createElementNS(NS_XHTML, "span");
-    tagLabel.className = "breadcrumbs-widget-item-tag plain";
+    tagLabel.className = "breadcrumbs-widget-item-tag";
 
     const idLabel = this.doc.createElementNS(NS_XHTML, "span");
-    idLabel.className = "breadcrumbs-widget-item-id plain";
+    idLabel.className = "breadcrumbs-widget-item-id";
 
     const classesLabel = this.doc.createElementNS(NS_XHTML, "span");
-    classesLabel.className = "breadcrumbs-widget-item-classes plain";
+    classesLabel.className = "breadcrumbs-widget-item-classes";
 
     const pseudosLabel = this.doc.createElementNS(NS_XHTML, "span");
-    pseudosLabel.className = "breadcrumbs-widget-item-pseudo-classes plain";
+    pseudosLabel.className = "breadcrumbs-widget-item-pseudo-classes";
 
     let tagText = node.isShadowRoot ? SHADOW_ROOT_TAGNAME : node.displayName;
     if (node.isMarkerPseudoElement) {
@@ -588,9 +588,8 @@ HTMLBreadcrumbs.prototype = {
 
   /**
    * On mouse out, make sure to unhighlight.
-   * @param {DOMEvent} event.
    */
-  handleMouseOut(event) {
+  handleMouseOut() {
     this.inspector.highlighters.hideHighlighterType(
       this.inspector.highlighters.TYPES.BOXMODEL
     );
@@ -682,10 +681,13 @@ HTMLBreadcrumbs.prototype = {
       this.currentIndex > -1 &&
       this.currentIndex < this.nodeHierarchy.length
     ) {
-      this.nodeHierarchy[this.currentIndex].button.removeAttribute("checked");
+      this.nodeHierarchy[this.currentIndex].button.setAttribute(
+        "aria-pressed",
+        "false"
+      );
     }
     if (index > -1) {
-      this.nodeHierarchy[index].button.setAttribute("checked", "true");
+      this.nodeHierarchy[index].button.setAttribute("aria-pressed", "true");
     } else {
       // Unset active active descendant when all buttons are unselected.
       this.outer.removeAttribute("aria-activedescendant");
@@ -847,23 +849,36 @@ HTMLBreadcrumbs.prototype = {
       return false;
     }
 
-    for (const { type, added, removed, target, attributeName } of mutations) {
-      if (type === "childList") {
-        // Only interested in childList mutations if the added or removed
-        // nodes are currently displayed.
-        return (
-          added.some(node => this.indexOf(node) > -1) ||
-          removed.some(node => this.indexOf(node) > -1)
-        );
-      } else if (type === "attributes" && this.indexOf(target) > -1) {
-        // Only interested in attributes mutations if the target is
-        // currently displayed, and the attribute is either id or class.
-        return attributeName === "class" || attributeName === "id";
+    for (const mutation of mutations) {
+      if (this._isInterestingMutation(mutation)) {
+        return true;
       }
     }
 
-    // Catch all return in case the mutations array was empty, or in case none
-    // of the changes iterated above were interesting.
+    return false;
+  },
+
+  /**
+   * Check if the provided mutation (from a markupmutation event) is relevant
+   * for the current breadcrumbs.
+   *
+   * @param {Object} mutation The mutation to check.
+   * @return {Boolean} true if the mutation is relevant, false otherwise.
+   */
+  _isInterestingMutation(mutation) {
+    const { type, added, removed, target, attributeName } = mutation;
+    if (type === "childList") {
+      // Only interested in childList mutations if the added or removed
+      // nodes are currently displayed.
+      return (
+        added.some(node => this.indexOf(node) > -1) ||
+        removed.some(node => this.indexOf(node) > -1)
+      );
+    } else if (type === "attributes" && this.indexOf(target) > -1) {
+      // Only interested in attributes mutations if the target is
+      // currently displayed, and the attribute is either id or class.
+      return attributeName === "class" || attributeName === "id";
+    }
     return false;
   },
 

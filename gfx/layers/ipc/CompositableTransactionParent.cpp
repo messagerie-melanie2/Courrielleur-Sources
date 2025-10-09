@@ -51,6 +51,12 @@ bool CompositableParentManager::ReceiveCompositableUpdate(
       aCompositable->RemoveTextureHost(tex);
       break;
     }
+    case CompositableOperationDetail::TOpClearImages: {
+      const OpClearImages& op = aDetail.get_OpClearImages();
+
+      aCompositable->ClearImages(op.type());
+      break;
+    }
     case CompositableOperationDetail::TOpUseTexture: {
       const OpUseTexture& op = aDetail.get_OpUseTexture();
 
@@ -93,16 +99,6 @@ bool CompositableParentManager::ReceiveCompositableUpdate(
                                      GetChildProcessId(), op.size(),
                                      op.textureFlags());
       host->UseRemoteTexture();
-      break;
-    }
-    case CompositableOperationDetail::TOpEnableRemoteTexturePushCallback: {
-      const OpEnableRemoteTexturePushCallback& op =
-          aDetail.get_OpEnableRemoteTexturePushCallback();
-
-      aCompositable->SetAsyncRef(
-          AsyncCompositableRef(GetChildProcessId(), aHandle));
-      aCompositable->EnableRemoteTexturePushCallback(
-          op.ownerId(), GetChildProcessId(), op.size(), op.textureFlags());
       break;
     }
     default: {

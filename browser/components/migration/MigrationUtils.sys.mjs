@@ -8,19 +8,29 @@ import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  AMBrowserExtensionsImport: "resource://gre/modules/AddonManager.sys.mjs",
   LoginHelper: "resource://gre/modules/LoginHelper.sys.mjs",
   PlacesUIUtils: "resource:///modules/PlacesUIUtils.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
   Sqlite: "resource://gre/modules/Sqlite.sys.mjs",
-  WindowsRegistry: "resource://gre/modules/WindowsRegistry.sys.mjs",
   setTimeout: "resource://gre/modules/Timer.sys.mjs",
+  MigrationWizardConstants:
+    "chrome://browser/content/migration/migration-wizard-constants.mjs",
 });
+
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "gCanGetPermissionsOnPlatformPromise",
+  () => {
+    let fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
+    return fp.isModeSupported(Ci.nsIFilePicker.modeGetFolder);
+  }
+);
 
 var gMigrators = null;
 var gFileMigrators = null;
 var gProfileStartup = null;
 var gL10n = null;
-var gPreviousDefaultBrowserKey = "";
 
 let gForceExitSpinResolve = false;
 let gKeepUndoData = false;
@@ -28,7 +38,7 @@ let gUndoData = null;
 
 function getL10n() {
   if (!gL10n) {
-    gL10n = new Localization(["browser/migration.ftl"]);
+    gL10n = new Localization(["browser/migrationWizard.ftl"]);
   }
   return gL10n;
 }
@@ -130,6 +140,52 @@ class MigrationUtils {
       "browser.migrate.history.maxAgeInDays",
       180
     );
+
+    ChromeUtils.registerWindowActor("MigrationWizard", {
+      parent: {
+        esModuleURI: "resource:///actors/MigrationWizardParent.sys.mjs",
+      },
+
+      child: {
+        esModuleURI: "resource:///actors/MigrationWizardChild.sys.mjs",
+        events: {
+          "MigrationWizard:RequestState": { wantUntrusted: true },
+          "MigrationWizard:BeginMigration": { wantUntrusted: true },
+          "MigrationWizard:RequestSafariPermissions": { wantUntrusted: true },
+          "MigrationWizard:SelectManualPasswordFile": { wantUntrusted: true },
+          "MigrationWizard:OpenAboutAddons": { wantUntrusted: true },
+          "MigrationWizard:PermissionsNeeded": { wantUntrusted: true },
+          "MigrationWizard:GetPermissions": { wantUntrusted: true },
+          "MigrationWizard:OpenURL": { wantUntrusted: true },
+        },
+      },
+
+      includeChrome: true,
+      allFrames: true,
+      matches: [
+        "about:welcome",
+        "about:welcome?*",
+        "about:preferences",
+        "about:settings",
+        "chrome://browser/content/migration/migration-dialog-window.html",
+        "chrome://browser/content/spotlight.html",
+        "about:firefoxview",
+      ],
+    });
+
+    ChromeUtils.defineLazyGetter(this, "IS_LINUX_SNAP_PACKAGE", () => {
+      if (
+        AppConstants.platform != "linux" ||
+        !Cc["@mozilla.org/gio-service;1"]
+      ) {
+        return false;
+      }
+
+      let gIOSvc = Cc["@mozilla.org/gio-service;1"].getService(
+        Ci.nsIGIOService
+      );
+      return gIOSvc.isRunningUnderSnap;
+    });
   }
 
   resourceTypes = Object.freeze({
@@ -143,11 +199,12 @@ class MigrationUtils {
     OTHERDATA: 0x0040,
     SESSION: 0x0080,
     PAYMENT_METHODS: 0x0100,
+    EXTENSIONS: 0x0200,
   });
 
   /**
    * Helper for implementing simple asynchronous cases of migration resources'
-   * |migrate(aCallback)| (see MigratorBase).  If your |migrate| method
+   * ``migrate(aCallback)`` (see MigratorBase).  If your ``migrate`` method
    * just waits for some file to be read, for example, and then migrates
    * everything right away, you can wrap the async-function with this helper
    * and not worry about notifying the callback.
@@ -178,7 +235,7 @@ class MigrationUtils {
    *   throws when it's called, aCallback(false) is called, otherwise
    *   aCallback(true) is called.
    * @param {Function} aCallback
-   *   the callback function passed to |migrate|.
+   *   the callback function passed to ``migrate``.
    * @returns {Function}
    *   the wrapped function.
    */
@@ -356,7 +413,7 @@ class MigrationUtils {
       });
 
     Services.tm.spinEventLoopUntil(
-      "MigrationUtils.jsm:MU_spinResolve",
+      "MigrationUtils.sys.mjs:MU_spinResolve",
       () => done || gForceExitSpinResolve
     );
     if (!done) {
@@ -370,18 +427,13 @@ class MigrationUtils {
 
   /**
    * Returns the migrator for the given source, if any data is available
-   * for this source, or null otherwise.
-   *
-   * If null is returned,  either no data can be imported for the given migrator,
-   * or aMigratorKey is invalid  (e.g. ie on mac, or mosaic everywhere).  This
-   * method should be used rather than direct getService for future compatibility
-   * (see bug 718280).
+   * for this source, or if permissions are required in order to read
+   * data from this source. Returns null otherwise.
    *
    * @param {string} aKey
    *   Internal name of the migration source. See `availableMigratorKeys`
    *   for supported values by OS.
-   *
-   * @returns {MigratorBase}
+   * @returns {Promise<MigratorBase|null>}
    *   A profile migrator implementing nsIBrowserProfileMigrator, if it can
    *   import any data, null otherwise.
    */
@@ -393,7 +445,18 @@ class MigrationUtils {
     }
 
     try {
-      return migrator && (await migrator.isSourceAvailable()) ? migrator : null;
+      if (!migrator) {
+        return null;
+      }
+
+      if (
+        (await migrator.isSourceAvailable()) ||
+        (!(await migrator.hasPermissions()) && migrator.canGetPermissions())
+      ) {
+        return migrator;
+      }
+
+      return null;
     } catch (ex) {
       console.error(ex);
       return null;
@@ -467,51 +530,6 @@ class MigrationUtils {
       console.error("Could not detect default browser: ", ex);
     }
 
-    // "firefox" is the least useful entry here, and might just be because we've set
-    // ourselves as the default (on Windows 7 and below). In that case, check if we
-    // have a registry key that tells us where to go:
-    if (
-      key == "firefox" &&
-      AppConstants.isPlatformAndVersionAtMost("win", "6.2")
-    ) {
-      // Because we remove the registry key, reading the registry key only works once.
-      // We save the value for subsequent calls to avoid hard-to-trace bugs when multiple
-      // consumers ask for this key.
-      if (gPreviousDefaultBrowserKey) {
-        key = gPreviousDefaultBrowserKey;
-      } else {
-        // We didn't have a saved value, so check the registry.
-        const kRegPath = "Software\\Mozilla\\Firefox";
-        let oldDefault = lazy.WindowsRegistry.readRegKey(
-          Ci.nsIWindowsRegKey.ROOT_KEY_CURRENT_USER,
-          kRegPath,
-          "OldDefaultBrowserCommand"
-        );
-        if (oldDefault) {
-          // Remove the key:
-          lazy.WindowsRegistry.removeRegKey(
-            Ci.nsIWindowsRegKey.ROOT_KEY_CURRENT_USER,
-            kRegPath,
-            "OldDefaultBrowserCommand"
-          );
-          try {
-            let file = Cc["@mozilla.org/file/local;1"].createInstance(
-              Ci.nsILocalFileWin
-            );
-            file.initWithCommandLine(oldDefault);
-            key =
-              APP_DESC_TO_KEY[file.getVersionInfoField("FileDescription")] ||
-              key;
-            // Save the value for future callers.
-            gPreviousDefaultBrowserKey = key;
-          } catch (ex) {
-            console.error(
-              "Could not convert old default browser value to description."
-            );
-          }
-        }
-      }
-    }
     return key;
   }
 
@@ -536,8 +554,8 @@ class MigrationUtils {
   }
 
   /**
-   * Show the migration wizard.  On mac, this may just focus the wizard if it's
-   * already running, in which case aOpener and aOptions are ignored.
+   * Show the migration wizard in about:preferences, or if there is not an existing
+   * browser window open, in a new top-level dialog window.
    *
    * NB: If you add new consumers, please add a migration entry point constant to
    * MIGRATION_ENTRYPOINTS and supply that entrypoint with the entrypoint property
@@ -561,10 +579,9 @@ class MigrationUtils {
    * @param {string} [aOptions.profileId]
    *   An identifier for the profile to use when migrating.
    * @returns {Promise<undefined>}
-   *   If the new content-modal migration dialog is enabled and an
-   *   about:preferences tab can be opened, this will resolve when
+   *   If an about:preferences tab can be opened, this will resolve when
    *   that tab has been switched to. Otherwise, this will resolve
-   *   just after opening the dialog window.
+   *   just after opening the top-level dialog window.
    */
   showMigrationWizard(aOpener, aOptions) {
     // When migration is kicked off from about:welcome, there are
@@ -581,10 +598,6 @@ class MigrationUtils {
     //   The migration wizard will open in a new top-level content
     //   window.
     //
-    // "legacy":
-    //   The legacy migration wizard will open, even if the new migration
-    //   wizard is enabled by default.
-    //
     // "default" / other
     //   The user will be directed to the migration wizard in
     //   about:preferences. The tab will not close once the
@@ -594,77 +607,54 @@ class MigrationUtils {
       "default"
     );
 
-    let aboutWelcomeLegacyBehavior =
-      aboutWelcomeBehavior == "legacy" &&
-      aOptions.entrypoint == this.MIGRATION_ENTRYPOINTS.NEWTAB;
+    let entrypoint = aOptions.entrypoint || this.MIGRATION_ENTRYPOINTS.UNKNOWN;
+    Glean.browserMigration.entryPointCategorical[entrypoint].add(1);
 
-    if (
-      Services.prefs.getBoolPref(
-        "browser.migrate.content-modal.enabled",
-        false
-      ) &&
-      !aOptions?.isStartupMigration &&
-      !aboutWelcomeLegacyBehavior
-    ) {
-      let entrypoint =
-        aOptions.entrypoint || this.MIGRATION_ENTRYPOINTS.UNKNOWN;
-      Services.telemetry
-        .getHistogramById("FX_MIGRATION_ENTRY_POINT_CATEGORICAL")
-        .add(entrypoint);
+    let openStandaloneWindow = blocking => {
+      let features = "dialog,centerscreen,resizable=no";
 
-      let openStandaloneWindow = () => {
-        const FEATURES = "dialog,centerscreen,resizable=no";
-        const win = Services.ww.openWindow(
-          aOpener,
-          "chrome://browser/content/migration/migration-dialog-window.html",
-          "_blank",
-          FEATURES,
-          {
-            onResize: () => {
-              win.sizeToContent();
-            },
-            options: aOptions,
-          }
-        );
-        return Promise.resolve();
-      };
-
-      if (aOptions.isStartupMigration) {
-        openStandaloneWindow();
-        return Promise.resolve();
+      if (blocking) {
+        features += ",modal";
       }
 
-      if (aOpener?.openPreferences) {
-        if (aOptions.entrypoint == this.MIGRATION_ENTRYPOINTS.NEWTAB) {
-          if (aboutWelcomeBehavior == "autoclose") {
-            return aOpener.openPreferences("general-migrate-autoclose");
-          } else if (aboutWelcomeBehavior == "standalone") {
-            openStandaloneWindow();
-            return Promise.resolve();
-          }
+      Services.ww.openWindow(
+        aOpener,
+        "chrome://browser/content/migration/migration-dialog-window.html",
+        "_blank",
+        features,
+        {
+          options: aOptions,
         }
-        return aOpener.openPreferences("general-migrate");
+      );
+      return Promise.resolve();
+    };
+
+    if (aOptions.isStartupMigration) {
+      // Record that the uninstaller requested a profile refresh
+      if (Services.env.get("MOZ_UNINSTALLER_PROFILE_REFRESH")) {
+        Services.env.set("MOZ_UNINSTALLER_PROFILE_REFRESH", "");
+        Glean.migration.uninstallerProfileRefresh.set(true);
       }
 
-      // If somehow we failed to open about:preferences, fall back to opening
-      // the top-level window.
-      openStandaloneWindow();
+      openStandaloneWindow(true /* blocking */);
       return Promise.resolve();
     }
-    // Legacy migration dialog
-    const DIALOG_URL = "chrome://browser/content/migration/migration.xhtml";
-    let features = "chrome,dialog,modal,centerscreen,titlebar,resizable=no";
-    if (AppConstants.platform == "macosx" && !this.isStartupMigration) {
-      let win = Services.wm.getMostRecentWindow("Browser:MigrationWizard");
-      if (win) {
-        win.focus();
-        return Promise.resolve();
+
+    if (aOpener?.openPreferences) {
+      if (aOptions.entrypoint == this.MIGRATION_ENTRYPOINTS.NEWTAB) {
+        if (aboutWelcomeBehavior == "autoclose") {
+          return aOpener.openPreferences("general-migrate-autoclose");
+        } else if (aboutWelcomeBehavior == "standalone") {
+          openStandaloneWindow(false /* blocking */);
+          return Promise.resolve();
+        }
       }
-      // On mac, the migration wiazrd should only be modal in the case of
-      // startup-migration.
-      features = "centerscreen,chrome,resizable=no";
+      return aOpener.openPreferences("general-migrate");
     }
-    Services.ww.openWindow(aOpener, DIALOG_URL, "_blank", features, aOptions);
+
+    // If somehow we failed to open about:preferences, fall back to opening
+    // the top-level window.
+    openStandaloneWindow(false /* blocking */);
     return Promise.resolve();
   }
 
@@ -682,8 +672,6 @@ class MigrationUtils {
    *   source-selection page will be displayed, either with the default
    *   browser selected, if it could be detected and if there is a
    *   migrator for it, or with the first option selected as a fallback
-   *   (The first option is hardcoded to be the most common browser for
-   *    the OS we run on.  See migration.xhtml).
    * @param {string|null} [aProfileToMigrate=null]
    *   If set, the migration wizard will import from the profile indicated.
    * @throws
@@ -783,6 +771,7 @@ class MigrationUtils {
     logins: 0,
     history: 0,
     cards: 0,
+    extensions: 0,
   };
 
   getImportedCount(type) {
@@ -874,40 +863,68 @@ class MigrationUtils {
   }
 
   /**
+   * Called by MigrationWizardParent during a migration to indicate that a
+   * manual migration of logins occurred via import from a CSV / TSV file, and
+   * should be counted towards the total number of imported logins.
+   *
+   * @param {number} totalLogins
+   *   The number of logins imported manually from a CSV / TSV file.
+   */
+  notifyLoginsManuallyImported(totalLogins) {
+    this._importQuantities.logins += totalLogins;
+  }
+
+  /**
    * Iterates through the favicons, sniffs for a mime type,
    * and uses the mime type to properly import the favicon.
+   *
+   * Note: You may not want to await on the returned promise, especially if by
+   *       doing so there's risk of interrupting the migration of more critical
+   *       data (e.g. bookmarks).
    *
    * @param {object[]} favicons
    *   An array of Objects with these properties:
    *     {Uint8Array} faviconData: The binary data of a favicon
    *     {nsIURI} uri: The URI of the associated page
    */
-  insertManyFavicons(favicons) {
+  async insertManyFavicons(favicons) {
     let sniffer = Cc["@mozilla.org/image/loader;1"].createInstance(
       Ci.nsIContentSniffer
     );
+
     for (let faviconDataItem of favicons) {
-      let mimeType = sniffer.getMIMETypeFromContent(
-        null,
-        faviconDataItem.faviconData,
-        faviconDataItem.faviconData.length
-      );
-      let fakeFaviconURI = Services.io.newURI(
-        "fake-favicon-uri:" + faviconDataItem.uri.spec
-      );
-      lazy.PlacesUtils.favicons.replaceFaviconData(
-        fakeFaviconURI,
-        faviconDataItem.faviconData,
-        mimeType
-      );
-      lazy.PlacesUtils.favicons.setAndFetchFaviconForPage(
-        faviconDataItem.uri,
-        fakeFaviconURI,
-        true,
-        lazy.PlacesUtils.favicons.FAVICON_LOAD_NON_PRIVATE,
-        null,
-        Services.scriptSecurityManager.getSystemPrincipal()
-      );
+      try {
+        // getMIMETypeFromContent throws error if could not get the mime type
+        // from the data.
+        let mimeType = sniffer.getMIMETypeFromContent(
+          null,
+          faviconDataItem.faviconData,
+          faviconDataItem.faviconData.length
+        );
+
+        let dataURL = await new Promise((resolve, reject) => {
+          let buffer = new Uint8ClampedArray(faviconDataItem.faviconData);
+          let blob = new Blob([buffer], { type: mimeType });
+          let reader = new FileReader();
+          reader.addEventListener("load", () => resolve(reader.result));
+          reader.addEventListener("error", reject);
+          reader.readAsDataURL(blob);
+        });
+
+        let fakeFaviconURI = Services.io.newURI(
+          "fake-favicon-uri:" + faviconDataItem.uri.spec
+        );
+        lazy.PlacesUtils.favicons
+          .setFaviconForPage(
+            faviconDataItem.uri,
+            fakeFaviconURI,
+            Services.io.newURI(dataURL)
+          )
+          .catch(console.warn);
+      } catch (e) {
+        // Even if error happens for favicon, continue the process.
+        console.warn(e);
+      }
     }
   }
 
@@ -925,6 +942,52 @@ class MigrationUtils {
         console.error("Failed to insert credit card due to error: ", e, card);
       }
     }
+  }
+
+  /**
+   * Responsible for calling the AddonManager API that ultimately installs the
+   * matched add-ons.
+   *
+   * @param {string} migratorKey a migrator key that we pass to
+   *                             `AMBrowserExtensionsImport` as the "browser
+   *                             identifier" used to match add-ons
+   * @param {string[]} extensionIDs a list of extension IDs from another browser
+   * @returns {(lazy.MigrationWizardConstants.PROGRESS_VALUE|string[])[]}
+   *   An array whose first element is a `MigrationWizardConstants.PROGRESS_VALUE`
+   *   and second element is an array of imported add-on ids.
+   */
+  async installExtensionsWrapper(migratorKey, extensionIDs) {
+    const totalExtensions = extensionIDs.length;
+
+    let importedAddonIDs = [];
+    try {
+      const result = await lazy.AMBrowserExtensionsImport.stageInstalls(
+        migratorKey,
+        extensionIDs
+      );
+      importedAddonIDs = result.importedAddonIDs;
+    } catch (e) {
+      console.error(`Failed to import extensions: ${e}`);
+    }
+
+    this._importQuantities.extensions += importedAddonIDs.length;
+
+    if (!importedAddonIDs.length) {
+      return [
+        lazy.MigrationWizardConstants.PROGRESS_VALUE.WARNING,
+        importedAddonIDs,
+      ];
+    }
+    if (totalExtensions == importedAddonIDs.length) {
+      return [
+        lazy.MigrationWizardConstants.PROGRESS_VALUE.SUCCESS,
+        importedAddonIDs,
+      ];
+    }
+    return [
+      lazy.MigrationWizardConstants.PROGRESS_VALUE.INFO,
+      importedAddonIDs,
+    ];
   }
 
   initializeUndoData() {
@@ -991,13 +1054,9 @@ class MigrationUtils {
       let url = pageInfo.url;
       if (url instanceof Ci.nsIURI) {
         url = pageInfo.url.spec;
-      } else if (typeof url != "string") {
-        pageInfo.url.href;
       }
 
-      try {
-        new URL(url);
-      } catch (ex) {
+      if (!URL.canParse(url)) {
         // This won't save and we won't need to 'undo' it, so ignore this URL.
         continue;
       }
@@ -1034,12 +1093,12 @@ class MigrationUtils {
    * Enum for the entrypoint that is being used to start migration.
    * Callers can use the MIGRATION_ENTRYPOINTS getter to use these.
    *
-   * These values are what's written into the FX_MIGRATION_ENTRY_POINT
-   * histogram after a migration.
+   * These values are what's written into the
+   * FX_MIGRATION_ENTRY_POINT_CATEGORICAL histogram after a migration.
    *
    * @see MIGRATION_ENTRYPOINTS
    * @readonly
-   * @enum {number}
+   * @enum {string}
    */
   #MIGRATION_ENTRYPOINTS_ENUM = Object.freeze({
     /** The entrypoint was not supplied */
@@ -1071,6 +1130,9 @@ class MigrationUtils {
 
     /** Migration is being started from about:preferences */
     PREFERENCES: "preferences",
+
+    /** Migration is being started from about:firefoxview */
+    FIREFOX_VIEW: "firefox_view",
   });
 
   /**
@@ -1084,54 +1146,8 @@ class MigrationUtils {
   }
 
   /**
-   * Translates an entrypoint string into the proper numeric value for the legacy
-   * FX_MIGRATION_ENTRY_POINT histogram.
-   *
-   * @param {string} entrypoint
-   *   The entrypoint to translate from MIGRATION_ENTRYPOINTS.
-   * @returns {number}
-   *   The numeric value for the legacy FX_MIGRATION_ENTRY_POINT histogram.
-   */
-  getLegacyMigrationEntrypoint(entrypoint) {
-    switch (entrypoint) {
-      case this.MIGRATION_ENTRYPOINTS.FIRSTRUN: {
-        return 1;
-      }
-      case this.MIGRATION_ENTRYPOINTS.FXREFRESH: {
-        return 2;
-      }
-      case this.MIGRATION_ENTRYPOINTS.PLACES: {
-        return 3;
-      }
-      case this.MIGRATION_ENTRYPOINTS.PASSWORDS: {
-        return 4;
-      }
-      case this.MIGRATION_ENTRYPOINTS.NEWTAB: {
-        return 5;
-      }
-      case this.MIGRATION_ENTRYPOINTS.FILE_MENU: {
-        return 6;
-      }
-      case this.MIGRATION_ENTRYPOINTS.HELP_MENU: {
-        return 7;
-      }
-      case this.MIGRATION_ENTRYPOINTS.BOOKMARKS_TOOLBAR: {
-        return 8;
-      }
-      case this.MIGRATION_ENTRYPOINTS.PREFERENCES: {
-        return 9;
-      }
-      case this.MIGRATION_ENTRYPOINTS.UNKNOWN:
-      // Intentional fall-through
-      default: {
-        return 0; // Unknown
-      }
-    }
-  }
-
-  /**
-   * Enum for the numeric value written to the FX_MIGRATION_SOURCE_BROWSER,
-   * and FX_STARTUP_MIGRATION_EXISTING_DEFAULT_BROWSER histograms.
+   * Enum for the numeric value written to the FX_MIGRATION_SOURCE_BROWSER.
+   * histogram
    *
    * @see getSourceIdForTelemetry
    * @readonly
@@ -1163,6 +1179,18 @@ class MigrationUtils {
 
   get HISTORY_MAX_AGE_IN_MILLISECONDS() {
     return this.HISTORY_MAX_AGE_IN_DAYS * 24 * 60 * 60 * 1000;
+  }
+
+  /**
+   * Determines whether or not the underlying platform supports creating
+   * native file pickers that can do folder selection, which is a
+   * pre-requisite for getting read-access permissions for data from other
+   * browsers that we can import from.
+   *
+   * @returns {Promise<boolean>}
+   */
+  canGetPermissionsOnPlatform() {
+    return lazy.gCanGetPermissionsOnPlatformPromise;
   }
 }
 

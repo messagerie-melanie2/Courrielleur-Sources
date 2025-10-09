@@ -6,18 +6,21 @@ about-addressbook-title = Address Book
 
 ## Toolbar
 
-about-addressbook-toolbar-new-address-book =
-  .label = New Address Book
+about-addressbook-toolbar-add-address-book =
+  .label = Add Local Address Book
 about-addressbook-toolbar-add-carddav-address-book =
   .label = Add CardDAV Address Book
 about-addressbook-toolbar-add-ldap-address-book =
   .label = Add LDAP Address Book
-about-addressbook-toolbar-new-contact =
-  .label = New Contact
-about-addressbook-toolbar-new-list =
-  .label = New List
-about-addressbook-toolbar-import =
-  .label = Import
+
+books-pane-create-contact-button = New Contact
+  .title = Create a new contact
+books-pane-create-book-button =
+  .title = Create a new address book
+books-pane-create-list-button =
+  .title = Create a new mailing list
+books-pane-import-button = Import
+  .title = Import address books
 
 ## Books
 
@@ -67,10 +70,12 @@ about-addressbook-confirm-remove-remote-book =
 
 # Variables:
 # $name (String) - Name of the address book that will be searched.
-about-addressbook-search =
-  .placeholder = Search { $name }
-about-addressbook-search-all =
-  .placeholder = Search all address books
+about-addressbook-search2 =
+  .label = Search { $name }
+  .placeholder = Search { $name }…
+about-addressbook-search-all2 =
+  .label = Search all address books
+  .placeholder = Search all address books…
 
 about-addressbook-sort-button2 =
   .title = List display options
@@ -101,46 +106,91 @@ about-addressbook-column-header-generatedname2 = Name
   .title = Sort by name
 about-addressbook-column-label-generatedname2 =
   .label = Name
+# Variables:
+# $title (String) - Contact name for tooltip.
+about-addressbook-cell-generatedname2 =
+  .aria-label = Name
+  .title = { $title }
 
 about-addressbook-column-header-emailaddresses2 = Email Addresses
   .title = Sort by email addresses
 about-addressbook-column-label-emailaddresses2 =
   .label = Email Addresses
+# Variables:
+# $title (String) - Contact email addresses for tooltip.
+about-addressbook-cell-emailaddresses2 =
+  .aria-label = Email Addresses
+  .title = { $title }
 
 about-addressbook-column-header-nickname2 = Nickname
   .title = Sort by nickname
 about-addressbook-column-label-nickname2 =
   .label = Nickname
+# Variables:
+# $title (String) - Contact nickname for tooltip.
+about-addressbook-cell-nickname2 =
+  .aria-label = Nickname
+  .title = { $title }
 
 about-addressbook-column-header-phonenumbers2 = Phone Numbers
   .title = Sort by phone numbers
 about-addressbook-column-label-phonenumbers2 =
   .label = Phone Numbers
+# Variables:
+# $title (String) - Contact phone numbers for tooltip.
+about-addressbook-cell-phonenumbers2 =
+  .aria-label = Phone Numbers
+  .title = { $title }
 
 about-addressbook-column-header-addresses2 = Addresses
   .title = Sort by addresses
 about-addressbook-column-label-addresses2 =
   .label = Addresses
+# Variables:
+# $title (String) - Contact addresses for tooltip.
+about-addressbook-cell-addresses2 =
+  .aria-label = Addresses
+  .title = { $title }
 
 about-addressbook-column-header-title2 = Title
   .title = Sort by title
 about-addressbook-column-label-title2 =
   .label = Title
+# Variables:
+# $title (String) - Contact job title for tooltip.
+about-addressbook-cell-title2 =
+  .aria-label = Title
+  .title = { $title }
 
 about-addressbook-column-header-department2 = Department
   .title = Sort by department
 about-addressbook-column-label-department2 =
   .label = Department
+# Variables:
+# $title (String) - Contact department for tooltip.
+about-addressbook-cell-department2 =
+  .aria-label = Department
+  .title = { $title }
 
 about-addressbook-column-header-organization2 = Organization
   .title = Sort by organization
 about-addressbook-column-label-organization2 =
   .label = Organization
+# Variables:
+# $title (String) - Contact organization for tooltip.
+about-addressbook-cell-organization2 =
+  .aria-label = Organization
+  .title = { $title }
 
 about-addressbook-column-header-addrbook2 = Address Book
   .title = Sort by address book
 about-addressbook-column-label-addrbook2 =
   .label = Address Book
+# Variables:
+# $title (String) - Contact address for tooltip.
+about-addressbook-cell-addrbook2 =
+  .aria-label = Address Book
+  .title = { $title }
 
 about-addressbook-cards-context-write =
   .label = Write
@@ -238,8 +288,6 @@ about-addressbook-details-edit-photo =
   .title = Edit contact photo
 
 about-addressbook-new-contact-header = New Contact
-
-about-addressbook-prefer-display-name = Prefer display name over message header
 
 about-addressbook-write-action-button = Write
 about-addressbook-event-action-button = Event

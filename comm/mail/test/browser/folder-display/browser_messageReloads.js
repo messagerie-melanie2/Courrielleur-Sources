@@ -21,8 +21,8 @@ var {
   select_click_row,
   switch_tab,
   toggle_message_pane,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 var folder;
@@ -36,14 +36,14 @@ add_task(async function test_message_reloads_work_with_message_pane_toggles() {
   await be_in_folder(folder);
 
   assert_message_pane_visible();
-  select_click_row(0);
+  await select_click_row(0);
   // Toggle the message pane off, then on
   toggle_message_pane();
   assert_message_pane_hidden();
   toggle_message_pane();
   assert_message_pane_visible();
   // Open a new tab with the same message
-  let tab = await open_folder_in_new_tab(folder);
+  const tab = await open_folder_in_new_tab(folder);
   // Toggle the message pane off
   assert_message_pane_visible();
   toggle_message_pane();
@@ -51,7 +51,7 @@ add_task(async function test_message_reloads_work_with_message_pane_toggles() {
   // Go back to the first tab, and make sure the message is actually displayed
   await switch_tab(0);
   assert_message_pane_visible();
-  assert_selected_and_displayed(0);
+  await assert_selected_and_displayed(0);
 
   close_tab(tab);
 

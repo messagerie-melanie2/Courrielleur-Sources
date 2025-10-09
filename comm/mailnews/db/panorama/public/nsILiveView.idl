@@ -1,0 +1,81 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+#include "nsISupports.idl"
+
+interface nsIFolder;
+interface nsILiveViewListener;
+
+[scriptable, builtinclass, uuid(f13755f5-9a54-4503-9531-1f5bcb2f84c7)]
+interface nsILiveView : nsISupports {
+  /**
+   * Initialization functions.
+   * Once a LiveView is initialised with one of these functions, or a database
+   * call is made on an uninitialised LiveView, these cannot be called again.
+   */
+  void initWithFolder(in nsIFolder folder);
+  void initWithFolders(in Array<nsIFolder> folders);
+  // `tag` is the tag's identifier (nsIMsgTag.key).
+  void initWithTag(in AUTF8String tag);
+
+  cenum SortColumn : 8 {
+    DATE = 1,
+    SUBJECT = 2,
+    SENDER = 3,
+    READ_FLAG = 4,
+    MARKED_FLAG = 5,
+  };
+
+  /**
+   * Which property the messages are sorted by.
+   */
+  attribute nsILiveView_SortColumn sortColumn;
+
+  /**
+   * If the messages are sorted in descending order.
+   */
+  attribute boolean sortDescending;
+
+  /**
+   * Get the total number of messages in the database matching this live view.
+   */
+  unsigned long long countMessages();
+
+  /**
+   * Get the number of unread messages in the database matching this live view.
+   */
+  unsigned long long countUnreadMessages();
+
+  /**
+   * Get the messages matching this live view from the database. The return
+   * value is a JS array of plain objects containing the message properties.
+   */
+  [implicit_jscontext]
+  jsval selectMessages([optional] in unsigned long long limit,
+                       [optional] in unsigned long long offset);
+
+  /**
+   * Register as the one and only listener for this live view.
+   */
+  [implicit_jscontext]
+  void setListener(in nsILiveViewListener listener);
+
+  /**
+   * Clean up this live view's listener, if it exists.
+   */
+  void clearListener();
+};
+
+[scriptable, uuid(94bc7a80-60af-4ffc-b7a6-6a799b66f9b6)]
+interface nsILiveViewListener : nsISupports {
+  /**
+   * A message matching the live view's filters was added to the database.
+   */
+  void onMessageAdded(in jsval message);
+
+  /**
+   * A message matching the live view's filters was removed from the database.
+   */
+  void onMessageRemoved(in jsval message);
+};

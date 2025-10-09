@@ -21,7 +21,6 @@
  * @param {string} aCustomId - Id string for the custom action, if aAttrib is Custom
  * @param {string} aArbitraryHeader - For OtherHeader case, header.
  * @param {string|integer} aHdrProperty - For HdrProperty and Uint32HdrProperty case
- *
  */
 function TestSearch(
   aFolder,
@@ -35,10 +34,10 @@ function TestSearch(
   aHdrProperty
 ) {
   var searchListener = {
-    onSearchHit(dbHdr, folder) {
+    onSearchHit() {
       hitCount++;
     },
-    onSearchDone(status) {
+    onSearchDone() {
       print("Finished search does " + aHitCount + " equal " + hitCount + "?");
       searchSession = null;
       Assert.equal(aHitCount, hitCount);

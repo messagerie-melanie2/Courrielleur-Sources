@@ -38,10 +38,9 @@
 #include "vm/Realm.h"
 
 /* static */
-js::DateTimeInfo::ShouldRFP js::DateTimeInfo::shouldRFP(JS::Realm* realm) {
-  return realm->behaviors().shouldResistFingerprinting()
-             ? DateTimeInfo::ShouldRFP::Yes
-             : DateTimeInfo::ShouldRFP::No;
+js::DateTimeInfo::ForceUTC js::DateTimeInfo::forceUTC(JS::Realm* realm) {
+  return realm->creationOptions().forceUTC() ? DateTimeInfo::ForceUTC::Yes
+                                             : DateTimeInfo::ForceUTC::No;
 }
 
 static bool ComputeLocalTime(time_t local, struct tm* ptm) {
@@ -149,10 +148,9 @@ static int32_t UTCToLocalStandardOffsetSeconds() {
   // Finally, compare the seconds-based components of the local non-DST
   // representation and the UTC representation to determine the actual
   // difference.
-  int utc_secs =
-      utc.tm_hour * SecondsPerHour + utc.tm_min * int(SecondsPerMinute);
+  int utc_secs = utc.tm_hour * SecondsPerHour + utc.tm_min * SecondsPerMinute;
   int local_secs =
-      local.tm_hour * SecondsPerHour + local.tm_min * int(SecondsPerMinute);
+      local.tm_hour * SecondsPerHour + local.tm_min * SecondsPerMinute;
 
   // Same-day?  Just subtract the seconds counts.
   if (utc.tm_mday == local.tm_mday) {
@@ -233,8 +231,7 @@ void js::DateTimeInfo::updateTimeZone() {
   }
 }
 
-js::DateTimeInfo::DateTimeInfo(bool shouldResistFingerprinting)
-    : shouldResistFingerprinting_(shouldResistFingerprinting) {
+js::DateTimeInfo::DateTimeInfo(bool forceUTC) : forceUTC_(forceUTC) {
   // Set the time zone status into the invalid state, so we compute the actual
   // defaults on first access. We don't yet want to initialize neither <ctime>
   // nor ICU's time zone classes, because that may cause I/O operations slowing
@@ -245,8 +242,8 @@ js::DateTimeInfo::DateTimeInfo(bool shouldResistFingerprinting)
 js::DateTimeInfo::~DateTimeInfo() = default;
 
 int64_t js::DateTimeInfo::toClampedSeconds(int64_t milliseconds) {
-  int64_t seconds = milliseconds / int64_t(msPerSecond);
-  int64_t millis = milliseconds % int64_t(msPerSecond);
+  int64_t seconds = milliseconds / msPerSecond;
+  int64_t millis = milliseconds % msPerSecond;
 
   // Round towards the start of time.
   if (millis < 0) {
@@ -257,7 +254,7 @@ int64_t js::DateTimeInfo::toClampedSeconds(int64_t milliseconds) {
     seconds = MaxTimeT;
   } else if (seconds < MinTimeT) {
     /* Go ahead a day to make localtime work (does not work with 0). */
-    seconds = SecondsPerDay;
+    seconds = MinTimeT + SecondsPerDay;
   }
   return seconds;
 }
@@ -267,7 +264,7 @@ int32_t js::DateTimeInfo::computeDSTOffsetMilliseconds(int64_t utcSeconds) {
   MOZ_ASSERT(utcSeconds <= MaxTimeT);
 
 #if JS_HAS_INTL_API
-  int64_t utcMilliseconds = utcSeconds * int64_t(msPerSecond);
+  int64_t utcMilliseconds = utcSeconds * msPerSecond;
 
   return timeZone()->GetDSTOffsetMs(utcMilliseconds).unwrapOr(0);
 #else
@@ -405,7 +402,7 @@ int32_t js::DateTimeInfo::computeUTCOffsetMilliseconds(int64_t localSeconds) {
   MOZ_ASSERT(localSeconds >= MinTimeT);
   MOZ_ASSERT(localSeconds <= MaxTimeT);
 
-  int64_t localMilliseconds = localSeconds * int64_t(msPerSecond);
+  int64_t localMilliseconds = localSeconds * msPerSecond;
 
   return timeZone()->GetUTCOffsetMs(localMilliseconds).unwrapOr(0);
 }
@@ -414,7 +411,7 @@ int32_t js::DateTimeInfo::computeLocalOffsetMilliseconds(int64_t utcSeconds) {
   MOZ_ASSERT(utcSeconds >= MinTimeT);
   MOZ_ASSERT(utcSeconds <= MaxTimeT);
 
-  UDate utcMilliseconds = UDate(utcSeconds * int64_t(msPerSecond));
+  UDate utcMilliseconds = UDate(utcSeconds * msPerSecond);
 
   return timeZone()->GetOffsetMs(utcMilliseconds).unwrapOr(0);
 }
@@ -484,10 +481,12 @@ bool js::DateTimeInfo::internalTimeZoneDisplayName(char16_t* buf, size_t buflen,
 
 mozilla::intl::TimeZone* js::DateTimeInfo::timeZone() {
   if (!timeZone_) {
-    // For resist finger printing mode we always use the UTC time zone.
+    // For resist finger printing mode we always use the Atlantic/Reykjavik time
+    // zone as a "real world" UTC equivalent.
     mozilla::Maybe<mozilla::Span<const char16_t>> timeZoneOverride;
-    if (shouldResistFingerprinting_) {
-      timeZoneOverride = mozilla::Some(mozilla::MakeStringSpan(u"UTC"));
+    if (forceUTC_) {
+      timeZoneOverride =
+          mozilla::Some(mozilla::MakeStringSpan(u"Atlantic/Reykjavik"));
     }
 
     auto timeZone = mozilla::intl::TimeZone::TryCreate(timeZoneOverride);
@@ -506,17 +505,17 @@ mozilla::intl::TimeZone* js::DateTimeInfo::timeZone() {
 #endif /* JS_HAS_INTL_API */
 
 /* static */ js::ExclusiveData<js::DateTimeInfo>* js::DateTimeInfo::instance;
-/* static */ js::ExclusiveData<js::DateTimeInfo>* js::DateTimeInfo::instanceRFP;
+/* static */ js::ExclusiveData<js::DateTimeInfo>* js::DateTimeInfo::instanceUTC;
 
 bool js::InitDateTimeState() {
-  MOZ_ASSERT(!DateTimeInfo::instance && !DateTimeInfo::instanceRFP,
+  MOZ_ASSERT(!DateTimeInfo::instance && !DateTimeInfo::instanceUTC,
              "we should be initializing only once");
 
   DateTimeInfo::instance =
       js_new<ExclusiveData<DateTimeInfo>>(mutexid::DateTimeInfoMutex, false);
-  DateTimeInfo::instanceRFP =
+  DateTimeInfo::instanceUTC =
       js_new<ExclusiveData<DateTimeInfo>>(mutexid::DateTimeInfoMutex, true);
-  return DateTimeInfo::instance && DateTimeInfo::instanceRFP;
+  return DateTimeInfo::instance && DateTimeInfo::instanceUTC;
 }
 
 /* static */
@@ -755,7 +754,7 @@ void js::DateTimeInfo::internalResyncICUDefaultTimeZone() {
   // instance depending on the resist fingerprinting status. For now we return
   // early to prevent overwriting the default time zone with the UTC time zone
   // used by RFP.
-  if (shouldResistFingerprinting_) {
+  if (forceUTC_) {
     return;
   }
 

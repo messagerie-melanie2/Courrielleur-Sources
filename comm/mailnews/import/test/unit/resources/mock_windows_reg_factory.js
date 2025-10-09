@@ -11,7 +11,7 @@ function MockWindowsRegKey(registryData) {
 MockWindowsRegKey.prototype = {
   QueryInterface: ChromeUtils.generateQI(["nsIWindowsRegKey"]),
 
-  open(aRootKey, aRelPath, aMode) {
+  open(aRootKey, aRelPath) {
     if (!this._registryData[aRelPath]) {
       throw Components.Exception("", Cr.NS_ERROR_FAILURE);
     }
@@ -20,7 +20,7 @@ MockWindowsRegKey.prototype = {
 
   close() {},
 
-  openChild(aRelPath, aMode) {
+  openChild(aRelPath) {
     if (
       !this._registryData[this._keyPath] ||
       !this._registryData[this._keyPath][aRelPath]
@@ -28,8 +28,8 @@ MockWindowsRegKey.prototype = {
       throw Components.Exception("", Cr.NS_ERROR_FAILURE);
     }
 
-    let child = new MockWindowsRegKey({});
-    let newKeyPath = this._keyPath + "\\" + aRelPath;
+    const child = new MockWindowsRegKey({});
+    const newKeyPath = this._keyPath + "\\" + aRelPath;
     child._keyPath = newKeyPath;
     child._registryData[newKeyPath] =
       this._registryData[this._keyPath][aRelPath];
@@ -41,8 +41,8 @@ MockWindowsRegKey.prototype = {
   },
 
   getChildName(aIndex) {
-    let keys = Object.keys(this._registryData[this._keyPath]);
-    let keyAtIndex = keys[aIndex];
+    const keys = Object.keys(this._registryData[this._keyPath]);
+    const keyAtIndex = keys[aIndex];
     if (!keyAtIndex) {
       throw Components.Exception("", Cr.NS_ERROR_FAILURE);
     }

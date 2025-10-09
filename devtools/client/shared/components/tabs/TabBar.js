@@ -10,8 +10,8 @@ const {
   Component,
   createFactory,
   createRef,
-} = require("resource://devtools/client/shared/vendor/react.js");
-const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.js");
+} = require("resource://devtools/client/shared/vendor/react.mjs");
+const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.mjs");
 const dom = require("resource://devtools/client/shared/vendor/react-dom-factories.js");
 
 const Sidebar = createFactory(
@@ -73,7 +73,7 @@ class Tabbar extends Component {
     super(props, context);
     const { activeTabId, children = [] } = props;
     const tabs = this.createTabs(children);
-    const activeTab = tabs.findIndex((tab, index) => tab.id === activeTabId);
+    const activeTab = tabs.findIndex(tab => tab.id === activeTabId);
 
     this.state = {
       activeTab: activeTab === -1 ? 0 : activeTab,
@@ -103,7 +103,7 @@ class Tabbar extends Component {
   UNSAFE_componentWillReceiveProps(nextProps) {
     const { activeTabId, children = [] } = nextProps;
     const tabs = this.createTabs(children);
-    const activeTab = tabs.findIndex((tab, index) => tab.id === activeTabId);
+    const activeTab = tabs.findIndex(tab => tab.id === activeTabId);
 
     if (
       activeTab !== this.state.activeTab ||

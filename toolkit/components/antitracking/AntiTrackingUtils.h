@@ -49,6 +49,14 @@ class AntiTrackingUtils final {
   static bool CreateStoragePermissionKey(nsIPrincipal* aPrincipal,
                                          nsACString& aKey);
 
+  static void CreateStorageFramePermissionKey(const nsACString& aTrackingSite,
+                                              nsACString& aPermissionKey);
+
+  // Given a principal, returns the per-frame storage permission key that will
+  // be used for the principal.  Returns true on success.
+  static bool CreateStorageFramePermissionKey(nsIPrincipal* aPrincipal,
+                                              nsACString& aKey);
+
   // Given and embedded URI, returns the permission for allowing storage access
   // requests from that URI's site. This permission is site-scoped in two ways:
   // the principal it is stored under and the suffix built from aURI are both
@@ -72,6 +80,12 @@ class AntiTrackingUtils final {
   // Returns the number of sites that give this principal's origin storage
   // access.
   static Maybe<size_t> CountSitesAllowStorageAccess(nsIPrincipal* aPrincipal);
+
+  // Test whether or not there is a storage access permission in aTopPrincipal
+  // with secondary key for embedee aPrincipal.
+  static nsresult TestStoragePermissionInParent(nsIPrincipal* aTopPrincipal,
+                                                nsIPrincipal* aPrincipal,
+                                                uint32_t* aResult);
 
   // Returns the storage permission state for the given channel. And this is
   // meant to be called in the parent process. This only reflects the fact that
@@ -153,6 +167,16 @@ class AntiTrackingUtils final {
    * that is not exposed to child processes.
    */
   static void UpdateAntiTrackingInfoForChannel(nsIChannel* aChannel);
+
+ private:
+  // Helper function for ComputeIsThirdPartyToTopWindow to peer into the
+  // partition
+  // key in the case that we don't have any other way to determine
+  // third-partiness to the top level, e.g. third party SharedWorker script
+  // loads.
+  static nsresult IsThirdPartyToPartitionKeySite(nsIChannel* aChannel,
+                                                 const nsCOMPtr<nsIURI>& aURI,
+                                                 bool* aIsThirdParty);
 };
 
 }  // namespace mozilla

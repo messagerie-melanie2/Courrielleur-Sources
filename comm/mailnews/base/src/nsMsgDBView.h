@@ -7,6 +7,7 @@
 #define _nsMsgDBView_H_
 
 #include "nsIMsgDBView.h"
+#include "nsIMsgTagService.h"
 #include "nsIMsgWindow.h"
 #include "nsIMessenger.h"
 #include "nsIMsgDatabase.h"
@@ -22,7 +23,6 @@
 #include "nsIImapIncomingServer.h"
 #include "nsIMsgFilterPlugin.h"
 #include "nsIStringBundle.h"
-#include "nsMsgTagService.h"
 #include "nsCOMArray.h"
 #include "nsTArray.h"
 #include "nsTHashtable.h"
@@ -84,10 +84,10 @@ class nsMsgDBViewService final : public nsIMsgDBViewService {
   NS_DECL_ISUPPORTS
   NS_DECL_NSIMSGDBVIEWSERVICE
 
-  nsMsgDBViewService(){};
+  nsMsgDBViewService() {};
 
  protected:
-  ~nsMsgDBViewService(){};
+  ~nsMsgDBViewService() {};
 };
 
 // This is an abstract implementation class.
@@ -141,11 +141,6 @@ class nsMsgDBView : public nsIMsgDBView,
   RefPtr<mozilla::dom::XULTreeElement> mTree;
   nsCOMPtr<nsIMsgJSTree> mJSTree;
   nsCOMPtr<nsITreeSelection> mTreeSelection;
-  // We cache this to determine when to push command status notifications.
-  uint32_t mNumSelectedRows;
-  // Set when the message pane is collapsed.
-  bool mSuppressMsgDisplay;
-  bool mSuppressCommandUpdating;
   // Set when we're telling the outline a row is being removed. Used to
   // suppress msg loading during delete/move operations.
   bool mRemovingRow;
@@ -164,6 +159,7 @@ class nsMsgDBView : public nsIMsgDBView,
   nsresult FetchPriority(nsIMsgDBHdr* aHdr, nsAString& aPriorityString);
   nsresult FetchLabel(nsIMsgDBHdr* aHdr, nsAString& aLabelString);
   nsresult FetchTags(nsIMsgDBHdr* aHdr, nsAString& aTagString);
+  nsresult FetchTagKeys(nsIMsgDBHdr* aHdr, nsAString& aTagString);
   nsresult FetchKeywords(nsIMsgDBHdr* aHdr, nsACString& keywordString);
   nsresult FetchRowKeywords(nsMsgViewIndex aRow, nsIMsgDBHdr* aHdr,
                             nsACString& keywordString);
@@ -287,8 +283,6 @@ class nsMsgDBView : public nsIMsgDBView,
   virtual nsMsgViewIndex FindKey(nsMsgKey key, bool expand);
   virtual nsresult GetDBForViewIndex(nsMsgViewIndex index, nsIMsgDatabase** db);
   virtual nsCOMArray<nsIMsgFolder>* GetFolders();
-  virtual nsresult GetFolderFromMsgURI(const nsACString& aMsgURI,
-                                       nsIMsgFolder** aFolder);
 
   virtual nsresult ListIdsInThread(nsIMsgThread* threadHdr,
                                    nsMsgViewIndex viewIndex,
@@ -323,12 +317,9 @@ class nsMsgDBView : public nsIMsgDBView,
   nsresult SetMsgHdrJunkStatus(nsIJunkMailPlugin* aJunkPlugin,
                                nsIMsgDBHdr* aMsgHdr,
                                nsMsgJunkStatus aNewClassification);
-  nsresult ToggleReadByIndex(nsMsgViewIndex index);
-  nsresult SetReadByIndex(nsMsgViewIndex index, bool read);
   nsresult SetThreadOfMsgReadByIndex(nsMsgViewIndex index,
                                      nsTArray<nsMsgKey>& keysMarkedRead,
                                      bool read);
-  nsresult SetFlaggedByIndex(nsMsgViewIndex index, bool mark);
   nsresult OrExtraFlag(nsMsgViewIndex index, uint32_t orflag);
   nsresult AndExtraFlag(nsMsgViewIndex index, uint32_t andflag);
   nsresult SetExtraFlag(nsMsgViewIndex index, uint32_t extraflag);
@@ -371,6 +362,8 @@ class nsMsgDBView : public nsIMsgDBView,
   nsresult GetLocationCollationKey(nsIMsgDBHdr* msgHdr,
                                    nsTArray<uint8_t>& result);
   void PushSort(const MsgViewSortColumnInfo& newSort);
+  void UpdateSortInfo(nsMsgViewSortTypeValue sortType,
+                      nsMsgViewSortOrderValue sortOrder);
   nsresult EncodeColumnSort(nsString& columnSortString);
   nsresult DecodeColumnSort(nsString& columnSortString);
   // For view navigation.
@@ -381,8 +374,6 @@ class nsMsgDBView : public nsIMsgDBView,
   nsresult FindNextFlagged(nsMsgViewIndex startIndex,
                            nsMsgViewIndex* pResultIndex);
   nsresult FindFirstNew(nsMsgViewIndex* pResultIndex);
-  nsresult FindPrevUnread(nsMsgKey startKey, nsMsgKey* pResultKey,
-                          nsMsgKey* resultThreadId);
   nsresult FindFirstFlagged(nsMsgViewIndex* pResultIndex);
   nsresult FindPrevFlagged(nsMsgViewIndex startIndex,
                            nsMsgViewIndex* pResultIndex);
@@ -413,7 +404,6 @@ class nsMsgDBView : public nsIMsgDBView,
                                     nsMsgViewIndex startOfThread,
                                     nsMsgViewIndex viewIndex);
   nsresult GetImapDeleteModel(nsIMsgFolder* folder);
-  nsresult UpdateDisplayMessage(nsMsgViewIndex viewPosition);
   nsresult GetDBForHeader(nsIMsgDBHdr* msgHdr, nsIMsgDatabase** db);
 
   bool AdjustReadFlag(nsIMsgDBHdr* msgHdr, uint32_t* msgFlags);
@@ -433,12 +423,6 @@ class nsMsgDBView : public nsIMsgDBView,
   nsCOMPtr<nsIMsgDBHdr> m_cachedHdr;
   nsMsgKey m_cachedMsgKey;
 
-  // We need to store the message key for the message we are currently
-  // displaying to ensure we don't try to redisplay the same message just
-  // because the selection changed (i.e. after a sort).
-  nsMsgKey m_currentlyDisplayedMsgKey;
-  nsCString m_currentlyDisplayedMsgUri;
-  nsMsgViewIndex m_currentlyDisplayedViewIndex;
   // If we're deleting messages, we want to hold off loading messages on
   // selection changed until the delete is done and we want to batch
   // notifications.
@@ -456,9 +440,6 @@ class nsMsgDBView : public nsIMsgDBView,
   bool mSortThreadsByRoot;  // As opposed to by the newest message.
   bool m_sortValid;
   bool m_checkedCustomColumns;
-  bool mSelectionSummarized;
-  // We asked the front end to summarize the selection and it did not.
-  bool mSummarizeFailed;
   uint8_t m_saveRestoreSelectionDepth;
 
   nsCOMPtr<nsIMsgDatabase> m_db;
@@ -514,11 +495,6 @@ class nsMsgDBView : public nsIMsgDBView,
   nsIMsgCustomColumnHandler* GetCurColumnHandler();
   bool CustomColumnsInSortAndNotRegistered();
   void EnsureCustomColumnsValid();
-
-#ifdef DEBUG_David_Bienvenu
-  void InitEntryInfoForIndex(nsMsgViewIndex i, IdKey& EntryInfo);
-  void ValidateSort();
-#endif
 
  protected:
   static nsresult InitDisplayFormats();

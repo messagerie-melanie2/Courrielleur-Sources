@@ -18,21 +18,16 @@
 #include "modules/audio_processing/include/audio_processing.h"
 #include "modules/audio_processing/include/aec_dump.h"
 #include "mozilla/UniquePtr.h"
-#include "mozilla/dom/RTCPeerConnectionBinding.h"
-#include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
 #include "mozilla/StaticPtr.h"
-#include "mozilla/Telemetry.h"
-#include "mozilla/Types.h"
+#include "mozilla/glean/DomMediaWebrtcMetrics.h"
 #include "mozilla/dom/RTCStatsReportBinding.h"
 #include "nsCRTGlue.h"
 #include "nsIIOService.h"
 #include "nsIObserver.h"
 #include "nsIObserverService.h"
-#include "nsNetCID.h"               // NS_SOCKETTRANSPORTSERVICE_CONTRACTID
 #include "nsServiceManagerUtils.h"  // do_GetService
 #include "PeerConnectionImpl.h"
-#include "prcvar.h"
 #include "transport/runnable_utils.h"
 #include "WebrtcGlobalChild.h"
 #include "WebrtcGlobalInformation.h"
@@ -134,11 +129,12 @@ class DummyAudioProcessing : public AudioProcessing {
   }
   void set_stream_key_pressed(bool) override { MOZ_CRASH("Unexpected call"); }
   bool CreateAndAttachAecDump(absl::string_view, int64_t,
-                              rtc::TaskQueue*) override {
+                              absl::Nonnull<TaskQueueBase*>) override {
     MOZ_CRASH("Unexpected call");
     return false;
   }
-  bool CreateAndAttachAecDump(FILE*, int64_t, rtc::TaskQueue*) override {
+  bool CreateAndAttachAecDump(FILE*, int64_t,
+                              absl::Nonnull<TaskQueueBase*>) override {
     MOZ_CRASH("Unexpected call");
     return false;
   }
@@ -165,7 +161,7 @@ SharedWebrtcState::SharedWebrtcState(
     RefPtr<AbstractThread> aCallWorkerThread,
     webrtc::AudioState::Config&& aAudioStateConfig,
     RefPtr<webrtc::AudioDecoderFactory> aAudioDecoderFactory,
-    UniquePtr<webrtc::WebRtcKeyValueConfig> aTrials)
+    UniquePtr<webrtc::FieldTrialsView> aTrials)
     : mCallWorkerThread(std::move(aCallWorkerThread)),
       mAudioStateConfig(std::move(aAudioStateConfig)),
       mAudioDecoderFactory(std::move(aAudioDecoderFactory)),
@@ -270,7 +266,6 @@ nsresult PeerConnectionCtx::InitializeGlobal() {
     }
   }
 
-  EnableWebRtcLog();
   return NS_OK;
 }
 
@@ -292,34 +287,58 @@ void PeerConnectionCtx::Destroy() {
     instance->Cleanup();
     delete instance;
   }
-
-  StopWebRtcLog();
 }
 
 template <typename T>
 static void RecordCommonRtpTelemetry(const T& list, const T& lastList,
                                      const bool isRemote) {
-  using namespace Telemetry;
   for (const auto& s : list) {
     const bool isAudio = s.mKind.Find(u"audio") != -1;
     if (s.mPacketsLost.WasPassed() && s.mPacketsReceived.WasPassed()) {
       if (const uint64_t total =
               s.mPacketsLost.Value() + s.mPacketsReceived.Value()) {
-        HistogramID id =
-            isRemote ? (isAudio ? WEBRTC_AUDIO_QUALITY_OUTBOUND_PACKETLOSS_RATE
-                                : WEBRTC_VIDEO_QUALITY_OUTBOUND_PACKETLOSS_RATE)
-                     : (isAudio ? WEBRTC_AUDIO_QUALITY_INBOUND_PACKETLOSS_RATE
-                                : WEBRTC_VIDEO_QUALITY_INBOUND_PACKETLOSS_RATE);
-        Accumulate(id, (s.mPacketsLost.Value() * 1000) / total);
+        // Because this is an integer and we would like some extra precision
+        // the unit is per mille (1/1000) instead of percent (1/100).
+        uint32_t sample = (s.mPacketsLost.Value() * 1000) / total;
+        if (isRemote) {
+          if (isAudio) {
+            glean::webrtc::audio_quality_outbound_packetloss_rate
+                .AccumulateSingleSample(sample);
+          } else {
+            glean::webrtc::video_quality_outbound_packetloss_rate
+                .AccumulateSingleSample(sample);
+          }
+        } else {
+          if (isAudio) {
+            glean::webrtc::audio_quality_inbound_packetloss_rate
+                .AccumulateSingleSample(sample);
+          } else {
+            glean::webrtc::video_quality_inbound_packetloss_rate
+                .AccumulateSingleSample(sample);
+          }
+        }
       }
     }
     if (s.mJitter.WasPassed()) {
-      HistogramID id = isRemote
-                           ? (isAudio ? WEBRTC_AUDIO_QUALITY_OUTBOUND_JITTER
-                                      : WEBRTC_VIDEO_QUALITY_OUTBOUND_JITTER)
-                           : (isAudio ? WEBRTC_AUDIO_QUALITY_INBOUND_JITTER
-                                      : WEBRTC_VIDEO_QUALITY_INBOUND_JITTER);
-      Accumulate(id, s.mJitter.Value() * 1000);
+      TimeDuration sample =
+          TimeDuration::FromMilliseconds(s.mJitter.Value() * 1000);
+      if (isRemote) {
+        if (isAudio) {
+          glean::webrtc::audio_quality_outbound_jitter.AccumulateRawDuration(
+              sample);
+        } else {
+          glean::webrtc::video_quality_outbound_jitter.AccumulateRawDuration(
+              sample);
+        }
+      } else {
+        if (isAudio) {
+          glean::webrtc::audio_quality_inbound_jitter.AccumulateRawDuration(
+              sample);
+        } else {
+          glean::webrtc::video_quality_inbound_jitter.AccumulateRawDuration(
+              sample);
+        }
+      }
     }
   }
 }
@@ -333,8 +352,6 @@ static void RecordCommonRtpTelemetry(const T& list, const T& lastList,
 
 void PeerConnectionCtx::DeliverStats(
     UniquePtr<dom::RTCStatsReportInternal>&& aReport) {
-  using namespace Telemetry;
-
   // First, get reports from a second ago, if any, for calculations below
   UniquePtr<dom::RTCStatsReportInternal> lastReport;
   {
@@ -361,15 +378,18 @@ void PeerConnectionCtx::DeliverStats(
               !lastS.mBytesReceived.WasPassed()) {
             break;
           }
-          HistogramID id = isAudio
-                               ? WEBRTC_AUDIO_QUALITY_INBOUND_BANDWIDTH_KBITS
-                               : WEBRTC_VIDEO_QUALITY_INBOUND_BANDWIDTH_KBITS;
           // We could accumulate values until enough time has passed
           // and then Accumulate() but this isn't that important
-          Accumulate(
-              id,
+          uint32_t sample =
               ((s.mBytesReceived.Value() - lastS.mBytesReceived.Value()) * 8) /
-                  deltaMs);
+              deltaMs;
+          if (isAudio) {
+            glean::webrtc::audio_quality_inbound_bandwidth_kbits
+                .AccumulateSingleSample(sample);
+          } else {
+            glean::webrtc::video_quality_inbound_bandwidth_kbits
+                .AccumulateSingleSample(sample);
+          }
           break;
         }
       }
@@ -380,9 +400,13 @@ void PeerConnectionCtx::DeliverStats(
   for (const auto& s : aReport->mRemoteInboundRtpStreamStats) {
     if (s.mRoundTripTime.WasPassed()) {
       const bool isAudio = s.mKind.Find(u"audio") != -1;
-      HistogramID id = isAudio ? WEBRTC_AUDIO_QUALITY_OUTBOUND_RTT
-                               : WEBRTC_VIDEO_QUALITY_OUTBOUND_RTT;
-      Accumulate(id, s.mRoundTripTime.Value() * 1000);
+      TimeDuration sample =
+          TimeDuration::FromMilliseconds(s.mRoundTripTime.Value() * 1000);
+      if (isAudio) {
+        glean::webrtc::audio_quality_outbound_rtt.AccumulateRawDuration(sample);
+      } else {
+        glean::webrtc::video_quality_outbound_rtt.AccumulateRawDuration(sample);
+      }
     }
   }
 
@@ -465,7 +489,6 @@ void PeerConnectionCtx::AddPeerConnection(const std::string& aKey,
   if (mPeerConnections.empty()) {
     AudioState::Config audioStateConfig;
     audioStateConfig.audio_mixer = new rtc::RefCountedObject<DummyAudioMixer>();
-    AudioProcessingBuilder audio_processing_builder;
     audioStateConfig.audio_processing =
         new rtc::RefCountedObject<DummyAudioProcessing>();
     audioStateConfig.audio_device_module =
@@ -486,8 +509,8 @@ void PeerConnectionCtx::AddPeerConnection(const std::string& aKey,
                            MediaThreadType::WEBRTC_CALL_THREAD)
                        .release());
 
-    UniquePtr<webrtc::WebRtcKeyValueConfig> trials =
-        WrapUnique(new NoTrialsConfig());
+    UniquePtr<webrtc::FieldTrialsView> trials =
+        WrapUnique(new MozTrialsConfig());
 
     mSharedWebrtcState = MakeAndAddRef<SharedWebrtcState>(
         new CallWorkerThread(std::move(callWorkerThread)),
@@ -529,6 +552,12 @@ void PeerConnectionCtx::ClearClosedStats() {
     }
   }
 }
+
+PeerConnectionCtx::PeerConnectionCtx()
+    : mGMPReady(false),
+      mLogHandle(EnsureWebrtcLogging()),
+      mTransportHandler(
+          MediaTransportHandler::Create(GetMainThreadSerialEventTarget())) {}
 
 nsresult PeerConnectionCtx::Initialize() {
   MOZ_ASSERT(NS_IsMainThread());

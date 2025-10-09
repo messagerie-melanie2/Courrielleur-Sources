@@ -13,38 +13,19 @@
 
 /* ::::: special toolbar colors ::::: */
 
-@media (-moz-platform: windows-win10) and (-moz-windows-default-theme) {
-  #menubar-items > #mail-menubar > menu[disabled="true"] {
-    background-color: transparent;
-  }
-
-  #menubar-items > #mail-menubar >
-    menu:not([disabled="true"])[_moz-menuactive="true"] {
-    background-color: hsla(0, 0%, 0%, .12);
-  }
-
-  @media (prefers-color-scheme: dark) {
-    #menubar-items > #mail-menubar >
-      menu:not([disabled="true"])[_moz-menuactive="true"] {
-      background-color: hsla(0, 0%, 100%, .2);
-    }
-  }
-}
-
 #composeContentBox {
   appearance: none;
   color: -moz-dialogtext;
   background-color: -moz-Dialog;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2) inset;
   border-top-width: 0;
-}
 
-#composeContentBox:-moz-window-inactive {
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1) inset;
+  &:-moz-window-inactive {
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1) inset;
+  }
 }
 
 #MsgHeadersToolbar {
-  color: -moz-DialogText;
   text-shadow: none;
   padding-block: 4px 2px;
 }
@@ -53,53 +34,47 @@
   margin-bottom: 0;
 }
 
-@media (-moz-windows-classic) {
-  :root:not(:-moz-lwtheme) .autocomplete-richlistitem {
-    --arrowpanel-dimmed: Highlight;
-  }
-}
-
 @media (prefers-contrast) {
-  #msgSubject:not(:-moz-lwtheme),
-  #msgIdentity:not(:-moz-lwtheme),
-  .address-container:not(:-moz-lwtheme) {
-    --toolbarbutton-hover-bordercolor: ThreeDShadow;
-  }
+  :root:not([lwtheme]) {
+    & #msgSubject,
+    & #msgIdentity,
+    .address-container {
+      --toolbarbutton-hover-bordercolor: ThreeDShadow;
 
-  #msgSubject:not(:-moz-lwtheme):hover,
-  #msgIdentity:not(:-moz-lwtheme):hover,
-  .address-container:not(:-moz-lwtheme):hover {
-    --toolbarbutton-hover-bordercolor: ThreeDDarkShadow;
-  }
+      &:hover {
+        --toolbarbutton-hover-bordercolor: ThreeDDarkShadow;
+      }
+    }
 
-  #MsgHeadersToolbar:not(:-moz-lwtheme) .address-pill {
-    box-shadow: inset 0 0 0 1px ThreeDShadow;
-  }
+    & #MsgHeadersToolbar {
 
-  #MsgHeadersToolbar:not(:-moz-lwtheme) .address-pill:hover:not(.editing),
-  #MsgHeadersToolbar:not(:-moz-lwtheme) .address-pill:focus:not(.editing) {
-    box-shadow: inset 0 0 0 1px SelectedItem;
-  }
+      & .address-pill {
+        box-shadow: inset 0 0 0 1px ThreeDShadow;
 
-  #MsgHeadersToolbar:not(:-moz-lwtheme) .address-pill[selected] {
-    color: SelectedItemText;
-    background-color: SelectedItem;
-    box-shadow: inset 0 0 0 1px SelectedItem, inset 0 0 0 2em SelectedItem;
-  }
+        &:where(:hover, :focus):not(.editing) {
+          box-shadow: inset 0 0 0 1px SelectedItem;
+        }
 
-  #MsgHeadersToolbar:not(:-moz-lwtheme) .address-pill[selected]:hover:not(.editing),
-  #MsgHeadersToolbar:not(:-moz-lwtheme) .address-pill[selected]:focus:not(.editing) {
-    box-shadow: inset 0 0 0 1px SelectedItemText, inset 0 0 0 2em SelectedItem;
-    text-shadow: none;
-  }
+        &[selected] {
+          color: SelectedItemText;
+          background-color: SelectedItem;
+          box-shadow: inset 0 0 0 1px SelectedItem, inset 0 0 0 2em SelectedItem;
 
-  #MsgHeadersToolbar:not(:-moz-lwtheme) .address-pill:not([selected]) .pill-indicator {
-    fill: ThreeDShadow;
-  }
+          &:where(:hover, :focus):not(.editing) {
+            box-shadow: inset 0 0 0 1px SelectedItemText, inset 0 0 0 2em SelectedItem;
+            text-shadow: none;
+          }
+        }
 
-  #MsgHeadersToolbar:not(:-moz-lwtheme)
-    .address-pill:not([selected],.editing):hover .pill-indicator {
-    fill: SelectedItem;
+        &:not([selected]) .pill-indicator {
+          fill: ThreeDShadow;
+        }
+
+        &:not([selected], .editing):hover .pill-indicator {
+          fill: SelectedItem;
+        }
+      }
+    }
   }
 }
 
@@ -109,23 +84,23 @@
 
 #msgIdentity {
   box-shadow: none;
-}
 
-#msgIdentity:-moz-focusring:not([open="true"])::part(label-box) {
-  outline: none;
-}
-
-@media (prefers-contrast) {
-  #msgIdentity::part(label-box) {
-    background-color: transparent !important;
-    color: inherit !important;
+  &:-moz-focusring:not([open="true"])::part(label-box) {
+    outline: none;
   }
-}
 
-#msgIdentity::part(text-input) {
-  background-color: inherit;
-  color: inherit;
-  margin-block: 2px;
+  @media (prefers-contrast) {
+    &::part(label-box) {
+      background-color: transparent !important;
+      color: inherit !important;
+    }
+  }
+
+  &::part(text-input) {
+    background-color: inherit;
+    color: inherit;
+    margin-block: 2px;
+  }
 }
 
 .address-label-container {
@@ -133,7 +108,7 @@
 }
 
 .address-container {
-  padding: 0 4px;
+  padding-block: 0;
 }
 
 #msgIdentity,
@@ -164,29 +139,15 @@ toolbarbutton.formatting-button {
 /* ::::: address book sidebar ::::: */
 
 #compose-toolbox {
-  appearance: none;
   border-bottom: 1px solid var(--chrome-content-separator-color);
-}
-
-@media (-moz-windows-default-theme) {
-  @media (-moz-platform: windows-win8),
-         (-moz-platform: windows-win10) {
-    #compose-toolbox:not(:-moz-lwtheme) {
-      --chrome-content-separator-color: #c2c2c2;
-    }
-  }
-}
-
-toolbar:not(:-moz-lwtheme) {
-  appearance: none;
 }
 
 #compose-toolbox > toolbar:not([type="menubar"]) {
   padding: 2px 1px;
-}
 
-#compose-toolbox > toolbar:not([type="menubar"]):-moz-lwtheme {
-  text-shadow: none;
+  :root[lwtheme] & {
+    text-shadow: none;
+  }
 }
 
 /* ::::: autocomplete icons ::::: */
@@ -200,11 +161,4 @@ toolbar:not(:-moz-lwtheme) {
 
 #contactsBrowser {
   background-color: -moz-Dialog;
-}
-
-@media (-moz-windows-glass) {
-  #compose-toolbox:not(:-moz-lwtheme) {
-    color: black;
-    text-shadow: 0 0 .7em white, 0 0 .7em white, 0 1px 0 rgba(255, 255, 255, .4);
-  }
 }

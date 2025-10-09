@@ -3,6 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "ImportDebug.h"
 #include "nsString.h"
 #include "nsCOMPtr.h"
 #include "nsISupportsPrimitives.h"
@@ -11,7 +12,9 @@
 #include "nsIImportGeneric.h"
 #include "nsIDirectoryEnumerator.h"
 #include "nsIFile.h"
+#include "nsLocalFile.h"
 #include "nsIStringBundle.h"
+#include "nsIMsgDatabase.h"
 #include "nsIMsgFolder.h"
 #include "nsIMsgHdr.h"
 #include "nsIMsgPluggableStore.h"
@@ -49,40 +52,6 @@ nsAppleMailImportModule::~nsAppleMailImportModule() {
 }
 
 NS_IMPL_ISUPPORTS(nsAppleMailImportModule, nsIImportModule)
-
-NS_IMETHODIMP nsAppleMailImportModule::GetName(char16_t** aName) {
-  if (!mBundle) {
-    return NS_ERROR_FAILURE;
-  }
-  nsAutoString name;
-  nsresult rv = mBundle->GetStringFromName("ApplemailImportName", name);
-  NS_ENSURE_SUCCESS(rv, rv);
-  *aName = ToNewUnicode(name);
-  return rv;
-}
-
-NS_IMETHODIMP nsAppleMailImportModule::GetDescription(char16_t** aName) {
-  if (!mBundle) {
-    return NS_ERROR_FAILURE;
-  }
-  nsAutoString name;
-  nsresult rv = mBundle->GetStringFromName("ApplemailImportDescription", name);
-  NS_ENSURE_SUCCESS(rv, rv);
-  *aName = ToNewUnicode(name);
-  return rv;
-}
-
-NS_IMETHODIMP nsAppleMailImportModule::GetSupports(char** aSupports) {
-  NS_ENSURE_ARG_POINTER(aSupports);
-  *aSupports = strdup(NS_IMPORT_MAIL_STR);
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsAppleMailImportModule::GetSupportsUpgrade(bool* aUpgrade) {
-  NS_ENSURE_ARG_POINTER(aUpgrade);
-  *aUpgrade = false;
-  return NS_OK;
-}
 
 NS_IMETHODIMP nsAppleMailImportModule::GetImportInterface(
     const char* aImportType, nsISupports** aInterface) {
@@ -143,28 +112,17 @@ nsAppleMailImportMail::~nsAppleMailImportMail() {
 
 NS_IMPL_ISUPPORTS(nsAppleMailImportMail, nsIImportMail)
 
-NS_IMETHODIMP nsAppleMailImportMail::GetDefaultLocation(nsIFile** aLocation,
-                                                        bool* aFound,
-                                                        bool* aUserVerify) {
-  NS_ENSURE_ARG_POINTER(aFound);
+NS_IMETHODIMP nsAppleMailImportMail::GetDefaultLocation(nsIFile** aLocation) {
   NS_ENSURE_ARG_POINTER(aLocation);
-  NS_ENSURE_ARG_POINTER(aUserVerify);
 
   *aLocation = nullptr;
-  *aFound = false;
-  *aUserVerify = true;
 
   // try to find current user's top-level Mail folder
-  nsCOMPtr<nsIFile> mailFolder(do_CreateInstance(NS_LOCAL_FILE_CONTRACTID));
-  if (mailFolder) {
-    nsresult rv =
-        mailFolder->InitWithNativePath(nsLiteralCString(DEFAULT_MAIL_FOLDER));
-    if (NS_SUCCEEDED(rv)) {
-      *aFound = true;
-      *aUserVerify = false;
-      mailFolder.forget(aLocation);
-    }
-  }
+  nsCOMPtr<nsIFile> mailFolder;
+  nsresult rv = NS_NewNativeLocalFile(nsLiteralCString(DEFAULT_MAIL_FOLDER),
+                                      getter_AddRefs(mailFolder));
+  NS_ENSURE_SUCCESS(rv, rv);
+  mailFolder.forget(aLocation);
 
   return NS_OK;
 }
@@ -197,10 +155,9 @@ NS_IMETHODIMP nsAppleMailImportMail::FindMailboxes(
     // 2. look for "global" mailboxes, that don't belong to any specific
     // account. they are inside the
     //    root's Mailboxes/ folder
-    nsCOMPtr<nsIFile> mailboxesDir(
-        do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv));
+    nsCOMPtr<nsIFile> mailboxesDir = new nsLocalFile();
+    rv = mailboxesDir->InitWithFile(aMailboxFile);
     if (NS_SUCCEEDED(rv)) {
-      mailboxesDir->InitWithFile(aMailboxFile);
       rv = mailboxesDir->Append(u"Mailboxes"_ns);
       if (NS_SUCCEEDED(rv)) {
         IMPORT_LOG0("Looking for global Apple mailboxes");
@@ -432,11 +389,9 @@ nsresult nsAppleMailImportMail::FindMboxDirs(
 
       IMPORT_LOG1("trying to locate a '%s'",
                   NS_ConvertUTF16toUTF8(siblingMailboxDirPath).get());
-      nsCOMPtr<nsIFile> siblingMailboxDir(
-          do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv));
-      if (NS_FAILED(rv)) continue;
-
+      nsCOMPtr<nsIFile> siblingMailboxDir = new nsLocalFile();
       rv = siblingMailboxDir->InitWithPath(siblingMailboxDirPath);
+      if (NS_FAILED(rv)) continue;
       bool reallyExists = false;
       siblingMailboxDir->Exists(&reallyExists);
 
@@ -508,7 +463,7 @@ nsAppleMailImportMail::ImportMailbox(nsIImportMailboxDescriptor* aMailbox,
     rv = messagesFolder->GetDirectoryEntries(
         getter_AddRefs(directoryEnumerator));
     if (NS_FAILED(rv)) {
-      ReportStatus(u"ApplemailImportMailboxConvertError", mailboxName,
+      ReportStatus(u"ApplemailImportMailboxConverterror", mailboxName,
                    errorLog);
       SetLogs(successLog, errorLog, aSuccessLog, aErrorLog);
       return NS_ERROR_FAILURE;
@@ -524,11 +479,20 @@ nsAppleMailImportMail::ImportMailbox(nsIImportMailboxDescriptor* aMailbox,
       return NS_ERROR_FAILURE;
     }
 
+    nsCOMPtr<nsIMsgDatabase> db;
+    rv = aDstFolder->GetMsgDatabase(getter_AddRefs(db));
+    if (NS_FAILED(rv)) {
+      ReportStatus(u"ApplemailImportMailboxConverterror", mailboxName,
+                   errorLog);
+      SetLogs(successLog, errorLog, aSuccessLog, aErrorLog);
+      return NS_ERROR_FAILURE;
+    }
+
     bool hasMore = false;
-    nsCOMPtr<nsIOutputStream> outStream;
 
     while (NS_SUCCEEDED(directoryEnumerator->HasMoreElements(&hasMore)) &&
            hasMore) {
+      nsCOMPtr<nsIOutputStream> outStream;
       // get the next file entry
       nsCOMPtr<nsIFile> currentEntry;
       directoryEnumerator->GetNextFile(getter_AddRefs(currentEntry));
@@ -544,7 +508,9 @@ nsAppleMailImportMail::ImportMailbox(nsIImportMailboxDescriptor* aMailbox,
       if (!StringEndsWith(leafName, u".emlx"_ns)) continue;
 
       nsCOMPtr<nsIMsgDBHdr> msgHdr;
-      rv = msgStore->GetNewMsgOutputStream(aDstFolder, getter_AddRefs(msgHdr),
+      rv = db->CreateNewHdr(nsMsgKey_None, getter_AddRefs(msgHdr));
+      if (NS_FAILED(rv)) break;
+      rv = msgStore->GetNewMsgOutputStream(aDstFolder,
                                            getter_AddRefs(outStream));
       if (NS_FAILED(rv)) break;
 
@@ -552,11 +518,11 @@ nsAppleMailImportMail::ImportMailbox(nsIImportMailboxDescriptor* aMailbox,
       if (NS_SUCCEEDED(nsEmlxHelperUtils::AddEmlxMessageToStream(currentEntry,
                                                                  outStream))) {
         mProgress++;
-        msgStore->FinishNewMessage(outStream, msgHdr);
-        outStream = nullptr;
+        nsAutoCString storeToken;
+        msgStore->FinishNewMessage(aDstFolder, outStream, storeToken);
+        msgHdr->SetStoreToken(storeToken);
       } else {
-        msgStore->DiscardNewMessage(outStream, msgHdr);
-        outStream = nullptr;
+        msgStore->DiscardNewMessage(aDstFolder, outStream);
         break;
       }
     }

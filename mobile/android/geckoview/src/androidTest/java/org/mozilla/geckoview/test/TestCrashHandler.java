@@ -16,7 +16,12 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.Messenger;
 import android.os.RemoteException;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import org.json.JSONException;
+import org.json.JSONObject;
 import org.mozilla.geckoview.GeckoRuntime;
 import org.mozilla.geckoview.test.util.UiThreadUtils;
 
@@ -102,16 +107,26 @@ public class TestCrashHandler extends Service {
      * Tests should call this to notify the crash handler that the next crash it sees is intentional
      * and that its intent should be checked for correctness.
      *
+     * @param expectedProcessVisibility The visibility of the process the incoming crash is expected
+     *     to be for.
      * @param expectedProcessType The type of process the incoming crash is expected to be for.
+     * @param expectedRemoteType The type of content process the incoming crash is expected to be
+     *     for.
      */
-    public void setEvalNextCrashDump(final String expectedProcessType) {
+    public void setEvalNextCrashDump(
+        final String expectedProcessVisibility,
+        final String expectedProcessType,
+        final String expectedRemoteType) {
       setEvalResult(null);
       mReceiver.post(
           new Runnable() {
             @Override
             public void run() {
               final Bundle bundle = new Bundle();
+              bundle.putString(
+                  GeckoRuntime.EXTRA_CRASH_PROCESS_VISIBILITY, expectedProcessVisibility);
               bundle.putString(GeckoRuntime.EXTRA_CRASH_PROCESS_TYPE, expectedProcessType);
+              bundle.putString(GeckoRuntime.EXTRA_CRASH_REMOTE_TYPE, expectedRemoteType);
               final Message msg = Message.obtain(null, MSG_EVAL_NEXT_CRASH_DUMP, bundle);
               msg.replyTo = mMessenger;
 
@@ -170,7 +185,9 @@ public class TestCrashHandler extends Service {
 
   private static final class MessageHandler extends Handler {
     private Messenger mReplyToMessenger;
+    private String mExpectedProcessVisibility;
     private String mExpectedProcessType;
+    private String mExpectedRemoteType;
 
     MessageHandler() {}
 
@@ -179,7 +196,9 @@ public class TestCrashHandler extends Service {
       if (msg.what == MSG_EVAL_NEXT_CRASH_DUMP) {
         mReplyToMessenger = msg.replyTo;
         Bundle bundle = (Bundle) msg.obj;
+        mExpectedProcessVisibility = bundle.getString(GeckoRuntime.EXTRA_CRASH_PROCESS_VISIBILITY);
         mExpectedProcessType = bundle.getString(GeckoRuntime.EXTRA_CRASH_PROCESS_TYPE);
+        mExpectedRemoteType = bundle.getString(GeckoRuntime.EXTRA_CRASH_REMOTE_TYPE);
         return;
       }
 
@@ -203,8 +222,16 @@ public class TestCrashHandler extends Service {
       mReplyToMessenger = null;
     }
 
+    public String getExpectedProcessVisibility() {
+      return mExpectedProcessVisibility;
+    }
+
     public String getExpectedProcessType() {
       return mExpectedProcessType;
+    }
+
+    public String getExpectedRemoteType() {
+      return mExpectedRemoteType;
     }
   }
 
@@ -212,6 +239,20 @@ public class TestCrashHandler extends Service {
   private MessageHandler mMsgHandler;
 
   public TestCrashHandler() {}
+
+  private static JSONObject readExtraFile(final String filePath) throws IOException, JSONException {
+    final byte[] buffer = new byte[4096];
+    final FileInputStream inputStream = new FileInputStream(filePath);
+    final ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+    int bytesRead = 0;
+
+    while ((bytesRead = inputStream.read(buffer)) != -1) {
+      outputStream.write(buffer, 0, bytesRead);
+    }
+
+    final String contents = new String(outputStream.toByteArray(), "UTF-8");
+    return new JSONObject(contents);
+  }
 
   private EvalResult evalCrashInfo(final Intent intent) {
     if (!intent.getAction().equals(GeckoRuntime.ACTION_CRASHED)) {
@@ -224,7 +265,18 @@ public class TestCrashHandler extends Service {
 
     final File extrasFile = new File(intent.getStringExtra(GeckoRuntime.EXTRA_EXTRAS_PATH));
     final boolean extrasFileExists = extrasFile.exists();
-    extrasFile.delete();
+    try {
+      final JSONObject annotations = readExtraFile(extrasFile.getPath());
+      final String moz_crash_reason = annotations.getString("MozCrashReason");
+
+      if (!moz_crash_reason.startsWith("MOZ_CRASH(")) {
+        return new EvalResult(false, "Missing or invalid child crash annotations");
+      }
+
+      extrasFile.delete();
+    } catch (final Exception e) {
+      return new EvalResult(false, e.toString());
+    }
 
     if (!dumpFileExists) {
       return new EvalResult(false, "Dump file should exist");
@@ -232,6 +284,21 @@ public class TestCrashHandler extends Service {
 
     if (!extrasFileExists) {
       return new EvalResult(false, "Extras file should exist");
+    }
+
+    final String expectedProcessVisibility = mMsgHandler.getExpectedProcessVisibility();
+    final String processVisibility =
+        intent.getStringExtra(GeckoRuntime.EXTRA_CRASH_PROCESS_VISIBILITY);
+    if (processVisibility == null) {
+      return new EvalResult(false, "Intent missing process visibility");
+    }
+    if (!processVisibility.equals(expectedProcessVisibility)) {
+      return new EvalResult(
+          false,
+          "Expected process visibility "
+              + expectedProcessVisibility
+              + ", found "
+              + processVisibility);
     }
 
     final String expectedProcessType = mMsgHandler.getExpectedProcessType();
@@ -242,6 +309,14 @@ public class TestCrashHandler extends Service {
     if (!processType.equals(expectedProcessType)) {
       return new EvalResult(
           false, "Expected process type " + expectedProcessType + ", found " + processType);
+    }
+
+    final String expectedRemoteType = mMsgHandler.getExpectedRemoteType();
+    final String remoteType = intent.getStringExtra(GeckoRuntime.EXTRA_CRASH_REMOTE_TYPE);
+    if ((remoteType == null && expectedRemoteType != null)
+        || (remoteType != null && !remoteType.equals(expectedRemoteType))) {
+      return new EvalResult(
+          false, "Expected remote type " + expectedRemoteType + ", found " + remoteType);
     }
 
     return new EvalResult(true, "Crash Dump OK");

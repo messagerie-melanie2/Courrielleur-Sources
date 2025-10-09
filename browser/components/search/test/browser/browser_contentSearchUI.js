@@ -21,19 +21,8 @@ ChromeUtils.defineESModuleGetters(this, {
   FormHistoryTestUtils:
     "resource://testing-common/FormHistoryTestUtils.sys.mjs",
   SearchSuggestionController:
-    "resource://gre/modules/SearchSuggestionController.sys.mjs",
+    "moz-src:///toolkit/components/search/SearchSuggestionController.sys.mjs",
 });
-
-const pageURL = getRootDirectory(gTestPath) + TEST_PAGE_BASENAME;
-BrowserTestUtils.registerAboutPage(
-  registerCleanupFunction,
-  "test-about-content-search-ui",
-  pageURL,
-  Ci.nsIAboutModule.URI_SAFE_FOR_UNTRUSTED_CONTENT |
-    Ci.nsIAboutModule.URI_MUST_LOAD_IN_CHILD |
-    Ci.nsIAboutModule.ALLOW_SCRIPT |
-    Ci.nsIAboutModule.URI_CAN_LOAD_IN_PRIVILEGEDABOUT_PROCESS
-);
 
 requestLongerTimeout(2);
 
@@ -261,6 +250,19 @@ let extension1;
 let extension2;
 
 add_setup(async function () {
+  const pageURL = getRootDirectory(gTestPath) + TEST_PAGE_BASENAME;
+
+  let cleanupAboutPage;
+  await BrowserTestUtils.registerAboutPage(
+    callback => (cleanupAboutPage = callback),
+    "test-about-content-search-ui",
+    pageURL,
+    Ci.nsIAboutModule.URI_SAFE_FOR_UNTRUSTED_CONTENT |
+      Ci.nsIAboutModule.URI_MUST_LOAD_IN_CHILD |
+      Ci.nsIAboutModule.ALLOW_SCRIPT |
+      Ci.nsIAboutModule.URI_CAN_LOAD_IN_PRIVILEGEDABOUT_PROCESS
+  );
+
   let originalOnMessageSearch = ContentSearch._onMessageSearch;
   let originalOnMessageManageEngines = ContentSearch._onMessageManageEngines;
 
@@ -290,8 +292,20 @@ add_setup(async function () {
   }
 
   registerCleanupFunction(async () => {
+    // Ensure tabs are closed before we continue on with the cleanup.
+    for (let tab of tabs) {
+      BrowserTestUtils.removeTab(tab);
+    }
+    Services.search.restoreDefaultEngines();
+
+    await TestUtils.waitForTick();
+
     ContentSearch._onMessageSearch = originalOnMessageSearch;
     ContentSearch._onMessageManageEngines = originalOnMessageManageEngines;
+
+    if (cleanupAboutPage) {
+      await cleanupAboutPage();
+    }
   });
 
   await promiseTab();
@@ -755,22 +769,6 @@ add_task(async function cycleEngines() {
     TEST_ENGINE2.name,
     "Should have correctly cycled the engine"
   );
-  TelemetryTestUtils.assertEvents(
-    [
-      {
-        object: "change_default",
-        value: "user_searchbar",
-        extra: {
-          prev_id: TEST_ENGINE1.id,
-          new_id: TEST_ENGINE2.id,
-          new_name: TEST_ENGINE2.name,
-          new_load_path: TEST_ENGINE2.loadPath,
-          new_sub_url: "",
-        },
-      },
-    ],
-    { category: "search", method: "engine" }
-  );
 
   let snapshot = await Glean.searchEngineDefault.changed.testGetValue();
   delete snapshot[0].timestamp;
@@ -782,7 +780,7 @@ add_task(async function cycleEngines() {
       extra: {
         new_load_path: TEST_ENGINE2.loadPath,
         previous_engine_id: TEST_ENGINE1.id,
-        change_source: "user_searchbar",
+        change_reason: "user_searchbar",
         new_engine_id: TEST_ENGINE2.id,
         new_display_name: TEST_ENGINE2.name,
         new_submission_url: "",
@@ -803,23 +801,6 @@ add_task(async function cycleEngines() {
     "Should have correctly cycled the engine"
   );
 
-  TelemetryTestUtils.assertEvents(
-    [
-      {
-        object: "change_default",
-        value: "user_searchbar",
-        extra: {
-          prev_id: TEST_ENGINE2.id,
-          new_id: TEST_ENGINE1.id,
-          new_name: TEST_ENGINE1.name,
-          new_load_path: TEST_ENGINE1.loadPath,
-          new_sub_url: "",
-        },
-      },
-    ],
-    { category: "search", method: "engine" }
-  );
-
   snapshot = await Glean.searchEngineDefault.changed.testGetValue();
   delete snapshot[1].timestamp;
   Assert.deepEqual(
@@ -830,7 +811,7 @@ add_task(async function cycleEngines() {
       extra: {
         new_load_path: TEST_ENGINE1.loadPath,
         previous_engine_id: TEST_ENGINE2.id,
-        change_source: "user_searchbar",
+        change_reason: "user_searchbar",
         new_engine_id: TEST_ENGINE1.id,
         new_display_name: TEST_ENGINE1.name,
         new_submission_url: "",
@@ -1096,10 +1077,6 @@ add_task(async function settings() {
   await msg("reset");
 });
 
-add_task(async function cleanup() {
-  Services.search.restoreDefaultEngines();
-});
-
 function checkState(
   actualState,
   expectedInputVal,
@@ -1147,10 +1124,10 @@ function checkState(
 }
 
 var gMsgMan;
-
+var tabs = [];
 async function promiseTab() {
   let tab = await BrowserTestUtils.openNewForegroundTab(gBrowser);
-  registerCleanupFunction(() => BrowserTestUtils.removeTab(tab));
+  tabs.push(tab);
 
   let loadedPromise = BrowserTestUtils.firstBrowserLoaded(window);
   openTrustedLinkIn("about:test-about-content-search-ui", "current");

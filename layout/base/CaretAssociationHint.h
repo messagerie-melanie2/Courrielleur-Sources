@@ -4,17 +4,34 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef CaretAssociationHint_h___
-#define CaretAssociationHint_h___
+#ifndef mozilla_CaretAssociationHint_h
+#define mozilla_CaretAssociationHint_h
 
 namespace mozilla {
 
+template <typename PT, typename CT>
+class RangeBoundaryBase;
+
+namespace intl {
+class BidiEmbeddingLevel;
+};
+
 /**
  * Hint whether a caret is associated with the content before a
- * given character offset (ASSOCIATE_BEFORE), or with the content after a given
- * character offset (ASSOCIATE_AFTER).
+ * given character offset (Before), or with the content after a given
+ * character offset (After).
  */
-enum CaretAssociationHint { CARET_ASSOCIATE_BEFORE, CARET_ASSOCIATE_AFTER };
+enum class CaretAssociationHint { Before, After };
+
+/**
+ * Return better caret association hint for aCaretPoint than aDefault.
+ * This computes the result from layout.  Therefore, you should flush pending
+ * layout before calling this.
+ */
+template <typename PT, typename CT>
+CaretAssociationHint ComputeCaretAssociationHint(
+    CaretAssociationHint aDefault, intl::BidiEmbeddingLevel aBidiLevel,
+    const RangeBoundaryBase<PT, CT>& aCaretPoint);
 
 }  // namespace mozilla
 

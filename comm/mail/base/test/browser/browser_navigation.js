@@ -2,17 +2,19 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+requestLongerTimeout(2);
+
+const { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
-let tabmail = document.getElementById("tabmail");
-let about3Pane = tabmail.currentAbout3Pane;
-let { messageBrowser, multiMessageBrowser, threadTree } = about3Pane;
-let mailboxService = MailServices.messageServiceFromURI("mailbox:");
+const tabmail = document.getElementById("tabmail");
+const about3Pane = tabmail.currentAbout3Pane;
+const { messageBrowser, multiMessageBrowser, threadTree } = about3Pane;
+const mailboxService = MailServices.messageServiceFromURI("mailbox:");
 let folderA,
   folderAMessages,
   folderB,
@@ -25,52 +27,55 @@ let folderA,
 add_setup(async function () {
   Services.prefs.setBoolPref("mailnews.mark_message_read.auto", false);
 
-  let generator = new MessageGenerator();
+  const generator = new MessageGenerator();
 
-  MailServices.accounts.createLocalMailAccount();
-  let account = MailServices.accounts.accounts[0];
+  const account = MailServices.accounts.createLocalMailAccount();
   account.addIdentity(MailServices.accounts.createIdentity());
-  let rootFolder = account.incomingServer.rootFolder;
+  const rootFolder = account.incomingServer.rootFolder.QueryInterface(
+    Ci.nsIMsgLocalMailFolder
+  );
 
-  rootFolder.createSubfolder("Navigation A", null);
   folderA = rootFolder
-    .getChildNamed("Navigation A")
+    .createLocalSubfolder("Navigation A")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   folderA.addMessageBatch(
-    generator.makeMessages({ count: 5 }).map(message => message.toMboxString())
+    generator
+      .makeMessages({ count: 5 })
+      .map(message => message.toMessageString())
   );
   folderAMessages = [...folderA.messages];
   folderA.markAllMessagesRead(null);
 
-  rootFolder.createSubfolder("Navigation B", null);
   folderB = rootFolder
-    .getChildNamed("Navigation B")
+    .createLocalSubfolder("Navigation B")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   folderB.addMessageBatch(
-    generator.makeMessages({ count: 5 }).map(message => message.toMboxString())
+    generator
+      .makeMessages({ count: 5 })
+      .map(message => message.toMessageString())
   );
   folderBMessages = [...folderB.messages];
   folderB.markAllMessagesRead(null);
 
-  rootFolder.createSubfolder("Navigation C", null);
   folderC = rootFolder
-    .getChildNamed("Navigation C")
+    .createLocalSubfolder("Navigation C")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   // Add a lot of messages so scrolling can be tested.
   folderC.addMessageBatch(
     generator
       .makeMessages({ count: 500 })
-      .map(message => message.toMboxString())
+      .map(message => message.toMessageString())
   );
   folderC.addMessageBatch(
-    generator.makeMessages({ count: 5 }).map(message => message.toMboxString())
+    generator
+      .makeMessages({ count: 5 })
+      .map(message => message.toMessageString())
   );
   folderCMessages = [...folderC.messages];
   folderC.markAllMessagesRead(null);
 
-  rootFolder.createSubfolder("Navigation D", null);
   folderD = rootFolder
-    .getChildNamed("Navigation D")
+    .createLocalSubfolder("Navigation D")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   folderD.addMessageBatch(
     generator
@@ -78,7 +83,7 @@ add_setup(async function () {
         count: 12,
         msgsPerThread: 3,
       })
-      .map(message => message.toMboxString())
+      .map(message => message.toMessageString())
   );
   folderDMessages = [...folderD.messages];
   folderD.markAllMessagesRead(null);
@@ -261,9 +266,7 @@ add_task(async function testNextUnreadMessageInAbout3Pane() {
   // collapsed.
   about3Pane.displayFolder(folderD.URI);
   threadTree.selectedIndex = 0;
-  let selectPromise = BrowserTestUtils.waitForEvent(threadTree, "select");
   goDoCommand("cmd_collapseAllThreads");
-  await selectPromise;
   assertSelectedMessage(folderDMessages[0]);
 
   // Go to the next thread without expanding it.
@@ -421,6 +424,15 @@ add_task(async function testPreviousUnreadMessageInAbout3Pane() {
     [folderCMessages[500], folderCMessages[501], folderCMessages[504]],
     false
   );
+  folderD.markMessagesRead(
+    [
+      folderDMessages[0],
+      folderDMessages[3],
+      folderDMessages[7],
+      folderDMessages[8],
+    ],
+    false
+  );
 
   about3Pane.displayFolder(folderC.URI);
   threadTree.scrollToIndex(504, true);
@@ -450,6 +462,44 @@ add_task(async function testPreviousUnreadMessageInAbout3Pane() {
   threadTree.removeEventListener("select", reportBadSelectEvent);
   messagePaneBrowser.removeEventListener("load", reportBadLoad, true);
 
+  about3Pane.displayFolder(folderD.URI);
+  goDoCommand("cmd_collapseAllThreads");
+  threadTree.scrollToIndex(3, true);
+  // Ensure the scrolling from the previous line happens.
+  await new Promise(resolve => requestAnimationFrame(resolve));
+  threadTree.selectedIndex = 3;
+  assertSelectedMessage(folderDMessages[9]);
+  await assertDisplayedThread(folderDMessages[9]);
+
+  goDoCommand("cmd_previousUnreadMsg");
+  assertSelectedMessage(folderDMessages[8]);
+  await assertDisplayedMessage(aboutMessage, folderDMessages[8]);
+
+  goDoCommand("cmd_previousUnreadMsg");
+  assertSelectedMessage(folderDMessages[7]);
+  await assertDisplayedMessage(aboutMessage, folderDMessages[7]);
+
+  goDoCommand("cmd_previousUnreadMsg");
+  assertSelectedMessage(folderDMessages[3]);
+  await assertDisplayedMessage(aboutMessage, folderDMessages[3]);
+
+  goDoCommand("cmd_previousUnreadMsg");
+  assertSelectedMessage(folderDMessages[0]);
+  await assertDisplayedMessage(aboutMessage, folderDMessages[0]);
+
+  threadTree.addEventListener("select", reportBadSelectEvent);
+  messagePaneBrowser.addEventListener("load", reportBadLoad, true);
+  goDoCommand("cmd_previousUnreadMsg");
+  assertSelectedMessage(folderDMessages[0]);
+  await assertDisplayedMessage(aboutMessage, folderDMessages[0]);
+
+  // Wait to prove bad things didn't happen.
+  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+  await new Promise(resolve => setTimeout(resolve, 500));
+  threadTree.removeEventListener("select", reportBadSelectEvent);
+  messagePaneBrowser.removeEventListener("load", reportBadLoad, true);
+
+  folderD.markAllMessagesRead(null);
   threadTree.selectedIndex = -1;
   await assertNoDisplayedMessage(aboutMessage);
 });
@@ -492,6 +542,44 @@ add_task(async function testPreviousUnreadMessageInAWindow() {
     folderCMessages[504],
     subtestPreviousUnreadMessage
   );
+});
+
+/**
+ * Tests that no unnecessary scrolling happens in an unthreaded view
+ * (Bug 1941139).
+ */
+add_task(async function testPreviousUnreadMessageScrolling() {
+  const aboutMessage = messageBrowser.contentWindow;
+
+  folderC.markMessagesRead([folderCMessages[404]], false);
+  about3Pane.displayFolder(folderC.URI);
+  about3Pane.sortController.sortUnthreaded();
+
+  threadTree.scrollToIndex(400, true);
+  // Ensure the scrolling from the previous line happens.
+  await new Promise(resolve => requestAnimationFrame(resolve));
+
+  threadTree.selectedIndex = 405;
+  assertSelectedMessage(folderCMessages[405]);
+  await assertDisplayedMessage(aboutMessage, folderCMessages[405]);
+
+  goDoCommand("cmd_previousUnreadMsg");
+  assertSelectedMessage(folderCMessages[404]);
+  await assertDisplayedMessage(aboutMessage, folderCMessages[404]);
+
+  // Wait to prove bad things didn't happen.
+  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+  await new Promise(resolve => setTimeout(resolve, 500));
+  Assert.equal(
+    threadTree.getFirstVisibleIndex(),
+    400,
+    "No scrolling should have happened."
+  );
+
+  threadTree.selectedIndex = -1;
+  await assertNoDisplayedMessage(aboutMessage);
+  about3Pane.sortController.sortUnthreaded();
+  folderC.markMessagesRead([folderCMessages[404]], true);
 });
 
 /**
@@ -826,7 +914,7 @@ add_task(async function testMessageHistoryInAbout3Pane() {
   await assertDisplayedMessage(aboutMessage, folderAMessages[1]);
 
   threadTree.selectedIndex = -1;
-  let currentFolderBMessages = [...folderB.messages];
+  const currentFolderBMessages = [...folderB.messages];
   movedMessage = currentFolderBMessages.find(
     message => !folderBMessages.includes(message)
   );
@@ -919,8 +1007,8 @@ function assertSelectedMessage(expected, comment) {
 
 async function assertDisplayedMessage(aboutMessage, expected) {
   const messagePaneBrowser = aboutMessage.getMessagePaneBrowser();
-  let mailboxURL = expected.folder.getUriForMsg(expected);
-  let messageURI = mailboxService.getUrlForUri(mailboxURL);
+  const mailboxURL = expected.folder.getUriForMsg(expected);
+  const messageURI = mailboxService.getUrlForUri(mailboxURL);
 
   if (
     messagePaneBrowser.webProgess?.isLoadingDocument ||
@@ -945,14 +1033,14 @@ async function assertDisplayedMessage(aboutMessage, expected) {
 }
 
 async function assertDisplayedThread(firstMessage) {
-  let items = multiMessageBrowser.contentDocument.querySelectorAll("li");
+  const items = multiMessageBrowser.contentDocument.querySelectorAll("li");
   Assert.equal(
     items[0].dataset.messageId,
     firstMessage.messageId,
     "correct thread displayed"
   );
   Assert.ok(
-    BrowserTestUtils.is_visible(multiMessageBrowser),
+    BrowserTestUtils.isVisible(multiMessageBrowser),
     "multimessageview visible"
   );
 }
@@ -976,7 +1064,7 @@ async function assertNoDisplayedMessage(aboutMessage) {
     "about:blank",
     "no message displayed"
   );
-  Assert.ok(BrowserTestUtils.is_hidden(messageBrowser), "about:message hidden");
+  Assert.ok(BrowserTestUtils.isHidden(messageBrowser), "about:message hidden");
 }
 
 function reportBadSelectEvent() {
@@ -998,7 +1086,7 @@ function reportBadLoad() {
 }
 
 function moveMessage(sourceFolder, message, targetFolder) {
-  let copyListener = new PromiseTestUtils.PromiseCopyListener();
+  const copyListener = new PromiseTestUtils.PromiseCopyListener();
   MailServices.copy.copyMessages(
     sourceFolder,
     [message],
@@ -1012,7 +1100,7 @@ function moveMessage(sourceFolder, message, targetFolder) {
 }
 
 async function withMessageInATab(message, subtest) {
-  let tabPromise = BrowserTestUtils.waitForEvent(window, "MsgLoaded");
+  const tabPromise = BrowserTestUtils.waitForEvent(window, "MsgLoaded");
   window.OpenMessageInNewTab(message, { background: false });
   await tabPromise;
   await new Promise(resolve => setTimeout(resolve));
@@ -1023,9 +1111,9 @@ async function withMessageInATab(message, subtest) {
 }
 
 async function withMessageInAWindow(message, subtest) {
-  let winPromise = BrowserTestUtils.domWindowOpenedAndLoaded();
+  const winPromise = BrowserTestUtils.domWindowOpenedAndLoaded();
   window.MsgOpenNewWindowForMessage(message);
-  let win = await winPromise;
+  const win = await winPromise;
   await BrowserTestUtils.waitForEvent(win, "MsgLoaded");
   await TestUtils.waitForCondition(() => Services.focus.activeWindow == win);
 

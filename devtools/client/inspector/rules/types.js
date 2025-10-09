@@ -4,7 +4,7 @@
 
 "use strict";
 
-const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.js");
+const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.mjs");
 
 /**
  * A CSS class.
@@ -114,8 +114,8 @@ exports.pseudoClasses = {
 const selector = (exports.selector = {
   // Function that returns a Promise containing an unique CSS selector.
   getUniqueSelector: PropTypes.func,
-  // Array of the selectors that match the selected element.
-  matchedSelectors: PropTypes.arrayOf(PropTypes.string),
+  // Array of the indexes in `selectors` that match the selected element.
+  matchedSelectorIndexes: PropTypes.arrayOf(PropTypes.number),
   // The CSS rule's selector text content.
   selectorText: PropTypes.string,
   // Array of the CSS rule's selectors.
@@ -131,14 +131,6 @@ exports.rule = {
 
   // An unique CSS rule id.
   id: PropTypes.string,
-
-  // An object containing information about the CSS rule's inheritance.
-  inheritance: PropTypes.shape({
-    // The NodeFront of the element this rule was inherited from.
-    inherited: PropTypes.object,
-    // A header label for where the element this rule was inherited from.
-    inheritedSource: PropTypes.string,
-  }),
 
   // Whether or not the rule does not match the current selected element.
   isUnmatched: PropTypes.bool,

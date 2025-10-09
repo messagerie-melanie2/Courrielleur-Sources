@@ -18,6 +18,11 @@
   <script class="testbody" type="text/javascript">
     "use strict";
 
+    let authenticatorId = null;
+    add_task(async () => {
+      authenticatorId = await addVirtualAuthenticator();
+    });
+
     is(navigator.authentication, undefined, "navigator.authentication does not exist any longer");
     isnot(navigator.credentials, undefined, "Credential Management API endpoint must exist");
     isnot(navigator.credentials.create, undefined, "CredentialManagement create API endpoint must exist");
@@ -31,7 +36,6 @@
     let validCred = null;
 
     add_task(test_setup_valid_credential);
-    add_task(test_without_credential);
     add_task(test_with_credential);
     add_task(test_unexpected_option);
     add_task(test_unexpected_option_with_credential);
@@ -41,14 +45,8 @@
     add_task(test_too_many_credentials);
     add_task(test_unexpected_option_unknown_credential_type);
     add_task(test_empty_credential_list);
-    add_task(() => {
-      // Enable USB tokens.
-      return SpecialPowers.pushPrefEnv({"set": [
-        ["security.webauth.webauthn_enable_softtoken", false],
-        ["security.webauth.webauthn_enable_usbtoken", true],
-      ]});
-    });
-    add_task(test_usb_empty_credential_list);
+    add_task(test_credential_protection_policy_uv_optional_with_list);
+    add_task(test_credential_protection_policy_uv_required);
 
     function requestGetAssertion(params) {
       return navigator.credentials.get(params);
@@ -85,27 +83,14 @@
     // Set up a valid credential
     async function test_setup_valid_credential() {
       let publicKey = {
-        rp: {id: document.domain, name: "none", icon: "none"},
-        user: {id: new Uint8Array(), name: "none", icon: "none", displayName: "none"},
+        rp: {id: document.domain, name: "none"},
+        user: {id: new Uint8Array(), name: "none", displayName: "none"},
         challenge: crypto.getRandomValues(new Uint8Array(16)),
         pubKeyCredParams: [{type: "public-key", alg: cose_alg_ECDSA_w_SHA256}],
       };
 
       return navigator.credentials.create({publicKey})
       .then(res => validCred = {type: "public-key", id: res.rawId} );
-    }
-
-    // Test basic good call, but without giving a credential so expect failures
-    // this is OK by the standard, but not supported by U2F-backed authenticators
-    // like the soft token in use here.
-    async function test_without_credential() {
-      let publicKey = {
-        challenge: gAssertionChallenge
-      };
-
-      await requestGetAssertion({publicKey})
-        .then(arrivingHereIsBad)
-        .catch(expectInvalidStateError);
     }
 
     // Test with a valid credential
@@ -121,7 +106,7 @@
     }
 
     // Test with an unexpected option. That won't stop anything, and we'll
-    // fail with InvalidState just as if we had no valid credentials -- which
+    // fail with NotAllowed just as if we had no valid credentials -- which
     // we don't.
     async function test_unexpected_option() {
       let publicKey = {
@@ -131,7 +116,7 @@
 
       await requestGetAssertion({publicKey})
         .then(arrivingHereIsBad)
-        .catch(expectInvalidStateError);
+        .catch(expectNotAllowedError);
     }
 
     // Test with an unexpected option but a valid credential
@@ -172,7 +157,7 @@
 
       await requestGetAssertion({publicKey})
         .then(arrivingHereIsBad)
-        .catch(expectInvalidStateError);
+        .catch(expectNotAllowedError);
     }
 
     // Test with an unknown credential
@@ -184,7 +169,7 @@
 
       await requestGetAssertion({publicKey})
         .then(arrivingHereIsBad)
-        .catch(expectInvalidStateError);
+        .catch(expectNotAllowedError);
     }
 
     // Test with too many credentials
@@ -210,12 +195,10 @@
 
       await requestGetAssertion({publicKey})
         .then(arrivingHereIsBad)
-        .catch(expectInvalidStateError);
+        .catch(expectNotAllowedError);
     }
 
     // Test with an empty credential list
-    // This will return InvalidStateError since the softotken consents, but
-    // there are no valid credentials.
     async function test_empty_credential_list() {
       let publicKey = {
         challenge: gAssertionChallenge,
@@ -224,28 +207,91 @@
 
       await requestGetAssertion({publicKey})
         .then(arrivingHereIsBad)
-        .catch(expectInvalidStateError);
+        .catch(expectNotAllowedError);
     }
 
-    // Test with an empty credential list
-    async function test_usb_empty_credential_list() {
+    async function test_credential_protection_policy_uv_optional_with_list() {
       let publicKey = {
-        challenge: gAssertionChallenge,
-        allowCredentials: []
+        rp: {id: document.domain, name: "none"},
+        user: {id: new Uint8Array(), name: "none", displayName: "none"},
+        challenge: crypto.getRandomValues(new Uint8Array(16)),
+        authenticatorSelection: { residentKey: "required"},
+        pubKeyCredParams: [{type: "public-key", alg: cose_alg_ECDSA_w_SHA256}],
+        extensions: { credentialProtectionPolicy: "userVerificationOptionalWithCredentialIDList" },
       };
 
-      let ctrl = new AbortController();
-      let request = requestGetAssertion({publicKey, signal: ctrl.signal})
-                         .then(arrivingHereIsBad)
-                         .catch(expectAbortError);
+      let protectedCred = null;
+      await navigator.credentials.create({publicKey})
+      .then(res => protectedCred = {type: "public-key", id: res.rawId} );
 
-      // Wait a tick for the statemachine to start.
-      await Promise.resolve();
+      publicKey = {
+        challenge: gAssertionChallenge,
+        allowCredentials: [protectedCred],
+        userVerification: "discouraged"
+      };
 
-      // The request should time out. We'll abort it here and will fail or
-      // succeed upon resolution, when the error code is checked.
-      ctrl.abort();
-      await request;
+      // User verification is optional for this request. So it should succeed
+      // both with and without user verification as long as the credential ID
+      // is provided in allowCredentials.
+      setUserVerified(authenticatorId, true)
+      await requestGetAssertion({publicKey})
+        .then(arrivingHereIsGood)
+        .catch(arrivingHereIsBad);
+
+      setUserVerified(authenticatorId, false)
+      await requestGetAssertion({publicKey})
+        .then(arrivingHereIsGood)
+        .catch(arrivingHereIsBad);
+
+      // User verification is required if the credential ID is not provided in
+      // allowCredentials.
+      publicKey = {
+        challenge: gAssertionChallenge,
+        allowCredentials: [],
+        userVerification: "discouraged"
+      };
+      await requestGetAssertion({publicKey})
+        .then(arrivingHereIsBad)
+        .catch(arrivingHereIsGood);
+
+      setUserVerified(authenticatorId, true)
+      await requestGetAssertion({publicKey})
+        .then(arrivingHereIsGood)
+        .catch(arrivingHereIsBad);
+    }
+
+    async function test_credential_protection_policy_uv_required() {
+      let publicKey = {
+        rp: {id: document.domain, name: "none"},
+        user: {id: new Uint8Array(), name: "none", displayName: "none"},
+        challenge: crypto.getRandomValues(new Uint8Array(16)),
+        pubKeyCredParams: [{type: "public-key", alg: cose_alg_ECDSA_w_SHA256}],
+        extensions: { credentialProtectionPolicy: "userVerificationRequired" },
+      };
+
+      let protectedCred = null;
+      await navigator.credentials.create({publicKey})
+      .then(res => protectedCred = {type: "public-key", id: res.rawId} );
+
+      publicKey = {
+        challenge: gAssertionChallenge,
+        allowCredentials: [protectedCred],
+        userVerification: "discouraged"
+      };
+
+      // User verification is required; this should succeed.
+      setUserVerified(authenticatorId, true)
+      await requestGetAssertion({publicKey})
+        .then(arrivingHereIsGood)
+        .catch(arrivingHereIsBad);
+
+      // The same request should fail without user verification.
+      setUserVerified(authenticatorId, false)
+      await requestGetAssertion({publicKey})
+        .then(arrivingHereIsBad)
+        .catch(arrivingHereIsGood);
+
+      setUserVerified(authenticatorId, true)
     }
   </script>
 

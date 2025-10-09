@@ -43,6 +43,7 @@
 #ifdef MOZ_UPDATER
 @APPNAME@/Contents/Library/LaunchServices
 #endif
+@APPNAME@/Contents/Frameworks
 @APPNAME@/Contents/PkgInfo
 @APPNAME@/Contents/Library/Spotlight/thunderbird.mdimporter/
 @RESPATH@/thunderbird.icns
@@ -61,8 +62,12 @@
 @BINPATH@/uninstall/helper.exe
 #endif
 #ifdef MOZ_UPDATER
-@RESPATH@/update.locale
+@RESPATH@/default.locale
 @RESPATH@/updater.ini
+#endif
+
+#if defined(MOZ_UPDATE_AGENT)
+@RESPATH@/locale.ini
 #endif
 
 #ifdef LLVM_SYMBOLIZER
@@ -71,12 +76,6 @@
 
 #ifdef MOZ_CLANG_RT_ASAN_LIB
 @BINPATH@/@MOZ_CLANG_RT_ASAN_LIB@
-#endif
-
-#ifdef MOZ_DMD
-; DMD
-@RESPATH@/dmd.py
-@RESPATH@/fix_stacks.py
 #endif
 
 #ifdef PKG_LOCALE_MANIFEST
@@ -105,20 +104,16 @@
 #endif
 #ifdef XP_MACOSX
 @BINPATH@/@MOZ_CHILD_PROCESS_NAME@.app/
-#else
-@BINPATH@/@MOZ_CHILD_PROCESS_NAME@
+@BINPATH@/@MOZ_EME_PROCESS_NAME@.app/
 #endif
 #ifdef XP_WIN
+@BINPATH@/@MOZ_CHILD_PROCESS_NAME@
 #if MOZ_PACKAGE_MSVC_DLLS
 @BINPATH@/@MSVC_C_RUNTIME_DLL@
 #ifdef MSVC_C_RUNTIME_1_DLL
 @BINPATH@/@MSVC_C_RUNTIME_1_DLL@
 #endif
 @BINPATH@/@MSVC_CXX_RUNTIME_DLL@
-#endif
-#if MOZ_PACKAGE_WIN_UCRT_DLLS
-@BINPATH@/api-ms-win-*.dll
-@BINPATH@/ucrtbase.dll
 #endif
 #endif
 #ifdef MOZ_GTK
@@ -134,8 +129,6 @@
 ; build because we haven't run the relevant parts of configure, so we guess
 ; here and trust what came from our source build.
 #if defined(MOZ_ARTIFACT_BUILDS) && defined(XP_WIN)
-@BINPATH@/api-ms-win-*.dll
-@BINPATH@/ucrtbase.dll
 @BINPATH@/vcruntime*.dll
 @BINPATH@/msvcp*.dll
 @BINPATH@/libEGL.dll
@@ -154,18 +147,22 @@
 @BINPATH@/VisualElements/VisualElements_150.png
 @BINPATH@/VisualElements/VisualElements_70.png
 #else
+#ifndef XP_MACOSX
 @BINPATH@/@MOZ_APP_NAME@-bin
+#endif
 @BINPATH@/@MOZ_APP_NAME@
 #endif
 @RESPATH@/application.ini
 #ifdef MOZ_UPDATER
+# update-settings.ini has been removed on macOS.
+#ifndef XP_MACOSX
 @RESPATH@/update-settings.ini
 #endif
+#endif
 @BINPATH@/@DLL_PREFIX@lgpllibs@DLL_SUFFIX@
-#ifdef MOZ_FFVPX
+@BINPATH@/@DLL_PREFIX@gkcodecs@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@mozavutil@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@mozavcodec@DLL_SUFFIX@
-#endif
 @RESPATH@/platform.ini
 #ifndef MOZ_FOLD_LIBS
 @RESPATH@/@DLL_PREFIX@mozsqlite3@DLL_SUFFIX@
@@ -173,13 +170,6 @@
 #ifdef UNIX_BUT_NOT_MAC
 #ifdef MOZ_UPDATER
 @RESPATH@/icons/*.png
-#endif
-#endif
-#ifdef XP_WIN
-#ifdef _AMD64_
-@BINPATH@/@DLL_PREFIX@qipcap64@DLL_SUFFIX@
-#else
-@BINPATH@/@DLL_PREFIX@qipcap@DLL_SUFFIX@
 #endif
 #endif
 
@@ -193,7 +183,6 @@
 ; interfaces.manifest doesn't get packaged because it is dynamically
 ; re-created at packaging time when linking the xpts that will actually
 ; go into the package, so the test related interfaces aren't included.
-@RESPATH@/components/msgMime.manifest
 @RESPATH@/components/MailComponents.manifest
 @RESPATH@/chrome/toolkit@JAREXT@
 @RESPATH@/chrome/toolkit.manifest
@@ -213,6 +202,7 @@
 @RESPATH@/chrome/icons/default/calendar-general-dialog.ico
 #elifdef UNIX_BUT_NOT_MAC
 @RESPATH@/chrome/icons/default/*.png
+@RESPATH@/chrome/icons/default/*.svg
 #endif
 
 ; Gloda
@@ -276,7 +266,10 @@
 
 ; default pref files
 @RESPATH@/defaults/pref/all-thunderbird.js
+# channel-prefs.js has been removed on macOS.
+#ifndef XP_MACOSX
 @RESPATH@/defaults/pref/channel-prefs.js
+#endif
 @RESPATH@/defaults/pref/composer.js
 @RESPATH@/defaults/pref/mailnews.js
 @RESPATH@/defaults/pref/mdn.js
@@ -335,11 +328,10 @@
 @RESPATH@/@PREF_DIR@/calendar.js
 
 # Files added to components directory via `FINAL_TARGET_FILES.components`.
-@RESPATH@/components/calCachedCalendar.js
-@RESPATH@/components/calICSService-worker.js
-@RESPATH@/components/calItemBase.js
 
+#ifdef MOZ_SERVICES_SYNC
 @RESPATH@/components/SyncComponents.manifest
+#endif
 @RESPATH@/components/servicesComponents.manifest
 @RESPATH@/components/servicesSettings.manifest
 @RESPATH@/components/cryptoComponents.manifest
@@ -358,17 +350,19 @@
 
 ; Modules
 @RESPATH@/modules/*
+@RESPATH@/moz-src/*
 @RESPATH@/actors/*
 
 ; ANGLE GLES-on-D3D rendering library
 #ifdef MOZ_ANGLE_RENDERER
 @BINPATH@/libEGL.dll
 @BINPATH@/libGLESv2.dll
-
-#ifdef MOZ_D3DCOMPILER_VISTA_DLL
-@BINPATH@/@MOZ_D3DCOMPILER_VISTA_DLL@
-#endif
 #endif # MOZ_ANGLE_RENDERER
+
+#ifdef MOZ_DXCOMPILER
+@BINPATH@/@MOZ_DXC_DLL_NAME@
+@BINPATH@/@MOZ_DXIL_DLL_NAME@
+#endif
 
 ; Background tasks-specific preferences.  These are in the GRE
 ; location since they apply to all tasks at this time.
@@ -380,7 +374,6 @@
 ; Style Sheets, Graphics and other Resources used by the layout engine.
 @RESPATH@/res/EditorOverride.css
 @RESPATH@/res/contenteditable.css
-@RESPATH@/res/designmode.css
 @RESPATH@/res/table-add-column-after-active.gif
 @RESPATH@/res/table-add-column-after-hover.gif
 @RESPATH@/res/table-add-column-after.gif
@@ -439,7 +432,6 @@
 @BINPATH@/@DLL_PREFIX@freebl3@DLL_SUFFIX@
 #endif
 @BINPATH@/@DLL_PREFIX@nss3@DLL_SUFFIX@
-@BINPATH@/@DLL_PREFIX@nssckbi@DLL_SUFFIX@
 #ifndef MOZ_FOLD_LIBS
 @BINPATH@/@DLL_PREFIX@nssutil3@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@smime3@DLL_SUFFIX@
@@ -449,14 +441,6 @@
 #endif
 @RESPATH@/chrome/pippki@JAREXT@
 @RESPATH@/chrome/pippki.manifest
-
-; preprocessor.py doesn't handle parentheses, so while the following could be
-; expressed in a single line, it's more clear to break them up.
-#if defined(XP_WIN) || defined(XP_MACOSX)
-#if !defined(_ARM64_)
-@BINPATH@/@DLL_PREFIX@osclientcerts@DLL_SUFFIX@
-#endif
-#endif
 
 ; For process sandboxing
 #if defined(MOZ_SANDBOX)
@@ -489,28 +473,31 @@
 @BINPATH@/crashreporter.app/
 #else
 @BINPATH@/crashreporter@BIN_SUFFIX@
-@RESPATH@/crashreporter.ini
-#ifdef XP_UNIX
-@RESPATH@/Throbber-small.gif
-#elif defined(XP_WIN)
+#if defined(XP_WIN)
 @BINPATH@/@DLL_PREFIX@mozwer@DLL_SUFFIX@
 #endif
 #endif
-#ifdef MOZ_CRASHREPORTER_INJECTOR
-@RESPATH@/crashreporter-override.ini
-@BINPATH@/breakpadinjector.dll
-#endif
 #endif
 
-; [ minidump-analyzer ]
+; [ crashhelper ]
 ;
 #ifdef MOZ_CRASHREPORTER
-@BINPATH@/minidump-analyzer@BIN_SUFFIX@
+@BINPATH@/crashhelper@BIN_SUFFIX@
 #endif
 
 ; [ Ping Sender ]
 ;
 @BINPATH@/pingsender@BIN_SUFFIX@
 
+; [ Notification COM Server ]
+;
+#if defined(MOZ_NOTIFICATION_SERVER)
+@BINPATH@/@DLL_PREFIX@notificationserver@DLL_SUFFIX@
+#endif
+
 ; Shutdown Terminator
 @RESPATH@/components/terminator.manifest
+
+; Shipped so that Glean tests are enabled on CI even if we have disabled
+; them during regular usage.
+@RESPATH@/interesting_serverknobs.json

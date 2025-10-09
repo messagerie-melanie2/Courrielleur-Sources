@@ -75,7 +75,9 @@ add_task(async function test_disable_style() {
     "second child color after disabling style"
   );
 
-  await BrowserTestUtils.reloadTab(tab, true);
+  await BrowserTestUtils.reloadTab(tab, {
+    includeSubFrames: true,
+  });
 
   // Check the menu:
   let { menupopup } = document.getElementById("pageStyleMenu");
@@ -91,7 +93,7 @@ add_task(async function test_disable_style() {
     await SpecialPowers.spawn(
       tab.linkedBrowser,
       [],
-      () => content.docShell.contentViewer.authorStyleDisabled
+      () => content.docShell.docViewer.authorStyleDisabled
     ),
     "Author style should still be disabled."
   );

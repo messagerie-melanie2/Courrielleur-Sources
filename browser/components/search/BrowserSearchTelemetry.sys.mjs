@@ -5,9 +5,10 @@
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
-  PartnerLinkAttribution: "resource:///modules/PartnerLinkAttribution.sys.mjs",
+  ContextId: "moz-src:///browser/modules/ContextId.sys.mjs",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
-  SearchSERPTelemetry: "resource:///modules/SearchSERPTelemetry.sys.mjs",
+  SearchSERPTelemetry:
+    "moz-src:///browser/components/search/SearchSERPTelemetry.sys.mjs",
   UrlbarSearchUtils: "resource:///modules/UrlbarSearchUtils.sys.mjs",
 });
 
@@ -44,7 +45,7 @@ class BrowserSearchTelemetryHandler {
    * Determines if we should record a search for this browser instance.
    * Private Browsing mode is normally skipped.
    *
-   * @param {browser} browser
+   * @param {XULBrowserElement} browser
    *   The browser where the search was loaded.
    * @returns {boolean}
    *   True if the search should be recorded, false otherwise.
@@ -57,66 +58,34 @@ class BrowserSearchTelemetryHandler {
   }
 
   /**
-   * Records the method by which the user selected a result from the urlbar or
-   * searchbar.
+   * Records the method by which the user selected a result from the searchbar.
    *
    * @param {Event} event
    *        The event that triggered the selection.
-   * @param {string} source
-   *        Either "urlbar" or "searchbar" depending on the source.
    * @param {number} index
    *        The index that the user chose in the popup, or -1 if there wasn't a
    *        selection.
-   * @param {string} userSelectionBehavior
-   *        How the user cycled through results before picking the current match.
-   *        Could be one of "tab", "arrow" or "none".
    */
-  recordSearchSuggestionSelectionMethod(
-    event,
-    source,
-    index,
-    userSelectionBehavior = "none"
-  ) {
-    // If the contents of the histogram are changed then
-    // `UrlbarTestUtils.SELECTED_RESULT_METHODS` should also be updated.
-    if (source == "searchbar" && userSelectionBehavior != "none") {
-      throw new Error("Did not expect a selection behavior for the searchbar.");
-    }
-
-    let histogram = Services.telemetry.getHistogramById(
-      source == "urlbar"
-        ? "FX_URLBAR_SELECTED_RESULT_METHOD"
-        : "FX_SEARCHBAR_SELECTED_RESULT_METHOD"
-    );
-    // command events are from the one-off context menu.  Treat them as clicks.
-    // Note that we don't care about MouseEvent subclasses here, since
-    // those are not clicks.
+  recordSearchSuggestionSelectionMethod(event, index) {
+    // command events are from the one-off context menu. Treat them as clicks.
+    // Note that we only care about MouseEvent subclasses here when the
+    // event type is "click", or else the subclasses are associated with
+    // non-click interactions.
     let isClick =
       event &&
       (ChromeUtils.getClassName(event) == "MouseEvent" ||
+        event.type == "click" ||
         event.type == "command");
     let category;
     if (isClick) {
       category = "click";
     } else if (index >= 0) {
-      switch (userSelectionBehavior) {
-        case "tab":
-          category = "tabEnterSelection";
-          break;
-        case "arrow":
-          category = "arrowEnterSelection";
-          break;
-        case "rightClick":
-          // Selected by right mouse button.
-          category = "rightClickEnter";
-          break;
-        default:
-          category = "enterSelection";
-      }
+      category = "enterSelection";
     } else {
       category = "enter";
     }
-    histogram.add(category);
+
+    Glean.searchbar.selectedResultMethod[category].add(1);
   }
 
   /**
@@ -136,12 +105,9 @@ class BrowserSearchTelemetryHandler {
       return;
     }
 
-    let scalarKey = lazy.UrlbarSearchUtils.getSearchModeScalarKey(searchMode);
-    Services.telemetry.keyedScalarAdd(
-      "urlbar.searchmode." + searchMode.entry,
-      scalarKey,
-      1
-    );
+    let label = lazy.UrlbarSearchUtils.getSearchModeScalarKey(searchMode);
+    let name = searchMode.entry.replace(/_([a-z])/g, (m, p) => p.toUpperCase());
+    Glean.urlbarSearchmode[name]?.[label].add(1);
   }
 
   /**
@@ -151,7 +117,7 @@ class BrowserSearchTelemetryHandler {
    * Telemetry records only search counts per engine and action origin, but
    * nothing pertaining to the search contents themselves.
    *
-   * @param {browser} browser
+   * @param {XULBrowserElement} browser
    *        The browser where the search originated.
    * @param {nsISearchEngine} engine
    *        The engine handling the search.
@@ -172,6 +138,10 @@ class BrowserSearchTelemetryHandler {
    * @throws if source is not in the known sources list.
    */
   recordSearch(browser, engine, source, details = {}) {
+    if (engine.clickUrl) {
+      this.#reportSearchInGlean(engine.clickUrl);
+    }
+
     try {
       if (!this.shouldRecordSearchCount(browser)) {
         return;
@@ -183,7 +153,6 @@ class BrowserSearchTelemetryHandler {
 
       const countIdPrefix = `${engine.telemetryId}.`;
       const countIdSource = countIdPrefix + source;
-      let histogram = Services.telemetry.getKeyedHistogramById("SEARCH_COUNTS");
 
       if (
         details.alias &&
@@ -192,10 +161,31 @@ class BrowserSearchTelemetryHandler {
       ) {
         // This is a keyword search using an AppProvided engine.
         // Record the source as "alias", not "urlbar".
-        histogram.add(countIdPrefix + "alias");
+        Glean.sap.deprecatedCounts[countIdPrefix + "alias"].add();
       } else {
-        histogram.add(countIdSource);
+        Glean.sap.deprecatedCounts[countIdSource].add();
       }
+
+      // When an engine is overridden by a third party, then we report the
+      // override and skip reporting the partner code, since we don't have
+      // a requirement to report the partner code in that case.
+      let isOverridden = !!engine.overriddenById;
+
+      // Strict equality is used because we want to only match against the
+      // empty string and not other values. We would have `engine.partnerCode`
+      // return `undefined`, but the XPCOM interfaces force us to return an
+      // empty string.
+      let reportPartnerCode = !isOverridden && engine.partnerCode !== "";
+
+      Glean.sap.counts.record({
+        source,
+        provider_id: engine.isAppProvided ? engine.id : "other",
+        provider_name: engine.name,
+        // If no code is reported, we must returned undefined, Glean will then
+        // not report the field.
+        partner_code: reportPartnerCode ? engine.partnerCode : undefined,
+        overridden_by_third_party: isOverridden.toString(),
+      });
 
       // Dispatch the search signal to other handlers.
       switch (source) {
@@ -208,10 +198,10 @@ class BrowserSearchTelemetryHandler {
           break;
         case "abouthome":
         case "newtab":
-          this._recordSearch(browser, engine, details.url, source, "enter");
+          this._recordSearch(browser, engine, source, "enter");
           break;
         default:
-          this._recordSearch(browser, engine, details.url, source);
+          this._recordSearch(browser, engine, source);
           break;
       }
       if (["urlbar-handoff", "abouthome", "newtab"].includes(source)) {
@@ -233,10 +223,26 @@ class BrowserSearchTelemetryHandler {
   }
 
   /**
+   * Records visits to a search engine's search form.
+   *
+   * @param {nsISearchEngine} engine
+   *   The engine whose search form is being visited.
+   * @param {string} source
+   *   Where the search form was opened from.
+   *   This can be "urlbar" or "searchbar".
+   */
+  recordSearchForm(engine, source) {
+    Glean.sap.searchFormCounts.record({
+      source,
+      provider_id: engine.isAppProvided ? engine.id : "other",
+    });
+  }
+
+  /**
    * This function handles the "urlbar", "urlbar-oneoff", "searchbar" and
    * "searchbar-oneoff" sources.
    *
-   * @param {browser} browser
+   * @param {XULBrowserElement} browser
    *   The browser where the search originated.
    * @param {nsISearchEngine} engine
    *   The engine handling the search.
@@ -258,35 +264,43 @@ class BrowserSearchTelemetryHandler {
       action = "alias";
     }
 
-    this._recordSearch(browser, engine, details.url, source, action);
+    this._recordSearch(browser, engine, source, action);
   }
 
-  _recordSearch(browser, engine, url, source, action = null) {
-    if (url) {
-      lazy.PartnerLinkAttribution.makeSearchEngineRequest(engine, url).catch(
-        console.error
-      );
-    }
-
+  _recordSearch(browser, engine, source, action = null) {
     let scalarSource = KNOWN_SEARCH_SOURCES.get(source);
-
     lazy.SearchSERPTelemetry.recordBrowserSource(browser, scalarSource);
 
-    let scalarKey = action ? "search_" + action : "search";
-    Services.telemetry.keyedScalarAdd(
-      "browser.engagement.navigation." + scalarSource,
-      scalarKey,
-      1
-    );
-    Services.telemetry.recordEvent(
-      "navigation",
-      "search",
-      scalarSource,
-      action,
-      {
-        engine: engine.telemetryId,
+    let label = action ? "search_" + action : "search";
+    let name = scalarSource.replace(/_([a-z])/g, (m, p) => p.toUpperCase());
+    Glean.browserEngagementNavigation[name][label].add(1);
+  }
+
+  /**
+   * Records the search in Glean for contextual services.
+   *
+   * @param {string} reportingUrl
+   *   The url to be sent to contextual services.
+   */
+  async #reportSearchInGlean(reportingUrl) {
+    let defaultValuesByGleanKey = {
+      contextId: await lazy.ContextId.request(),
+    };
+
+    let sendGleanPing = valuesByGleanKey => {
+      valuesByGleanKey = { ...defaultValuesByGleanKey, ...valuesByGleanKey };
+      for (let [gleanKey, value] of Object.entries(valuesByGleanKey)) {
+        let glean = Glean.searchWith[gleanKey];
+        if (value !== undefined && value !== "") {
+          glean.set(value);
+        }
       }
-    );
+      GleanPings.searchWith.submit();
+    };
+
+    sendGleanPing({
+      reportingUrl,
+    });
   }
 }
 

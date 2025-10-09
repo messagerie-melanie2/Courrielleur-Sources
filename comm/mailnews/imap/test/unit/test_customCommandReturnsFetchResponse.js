@@ -7,8 +7,8 @@
  * Bug 778246
  */
 
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 // IMAP pump
@@ -41,23 +41,23 @@ add_setup(async function () {
   );
   gMessage.xCustomList = [];
   IMAPPump.mailbox.addMessage(gMessage);
-  let listener = new PromiseTestUtils.PromiseUrlListener();
+  const listener = new PromiseTestUtils.PromiseUrlListener();
   IMAPPump.inbox.updateFolderWithListener(null, listener);
   await listener.promise;
 });
 
 add_task(async function testStoreCustomList() {
-  let msgHdr = mailTestUtils.firstMsgHdr(IMAPPump.inbox);
+  const msgHdr = mailTestUtils.firstMsgHdr(IMAPPump.inbox);
   gExpectedLength = gCustomList.length;
-  let uri = IMAPPump.inbox.issueCommandOnMsgs(
+  const uri = IMAPPump.inbox.issueCommandOnMsgs(
     "STORE",
     msgHdr.messageKey + " X-CUSTOM-LIST (" + gCustomList.join(" ") + ")",
     gMsgWindow
   );
   uri.QueryInterface(Ci.nsIMsgMailNewsUrl);
   // Listens for response from customCommandResult request for X-CUSTOM-LIST.
-  let storeCustomListSetListener = new PromiseTestUtils.PromiseUrlListener({
-    OnStopRunningUrl(aUrl, aExitCode) {
+  const storeCustomListSetListener = new PromiseTestUtils.PromiseUrlListener({
+    OnStopRunningUrl(aUrl) {
       aUrl.QueryInterface(Ci.nsIImapUrl);
       Assert.equal(
         aUrl.customCommandResult,
@@ -71,40 +71,41 @@ add_task(async function testStoreCustomList() {
 });
 
 add_task(async function testStoreMinusCustomList() {
-  let msgHdr = mailTestUtils.firstMsgHdr(IMAPPump.inbox);
+  const msgHdr = mailTestUtils.firstMsgHdr(IMAPPump.inbox);
   gExpectedLength--;
-  let uri = IMAPPump.inbox.issueCommandOnMsgs(
+  const uri = IMAPPump.inbox.issueCommandOnMsgs(
     "STORE",
     msgHdr.messageKey + " -X-CUSTOM-LIST (" + gCustomList[0] + ")",
     gMsgWindow
   );
   uri.QueryInterface(Ci.nsIMsgMailNewsUrl);
   // Listens for response from customCommandResult request for X-CUSTOM-LIST.
-  let storeCustomListRemovedListener = new PromiseTestUtils.PromiseUrlListener({
-    OnStopRunningUrl(aUrl, aExitCode) {
-      aUrl.QueryInterface(Ci.nsIImapUrl);
-      Assert.equal(
-        aUrl.customCommandResult,
-        "(" + gMessage.xCustomList.join(" ") + ")"
-      );
-      Assert.equal(gMessage.xCustomList.length, gExpectedLength);
-    },
-  });
+  const storeCustomListRemovedListener =
+    new PromiseTestUtils.PromiseUrlListener({
+      OnStopRunningUrl(aUrl) {
+        aUrl.QueryInterface(Ci.nsIImapUrl);
+        Assert.equal(
+          aUrl.customCommandResult,
+          "(" + gMessage.xCustomList.join(" ") + ")"
+        );
+        Assert.equal(gMessage.xCustomList.length, gExpectedLength);
+      },
+    });
   uri.RegisterListener(storeCustomListRemovedListener);
   await storeCustomListRemovedListener.promise;
 });
 
 add_task(async function testStorePlusCustomList() {
-  let msgHdr = mailTestUtils.firstMsgHdr(IMAPPump.inbox);
+  const msgHdr = mailTestUtils.firstMsgHdr(IMAPPump.inbox);
   gExpectedLength++;
-  let uri = IMAPPump.inbox.issueCommandOnMsgs(
+  const uri = IMAPPump.inbox.issueCommandOnMsgs(
     "STORE",
     msgHdr.messageKey + ' +X-CUSTOM-LIST ("Custom4")',
     gMsgWindow
   );
   uri.QueryInterface(Ci.nsIMsgMailNewsUrl);
-  let storeCustomListAddedListener = new PromiseTestUtils.PromiseUrlListener({
-    OnStopRunningUrl(aUrl, aExitCode) {
+  const storeCustomListAddedListener = new PromiseTestUtils.PromiseUrlListener({
+    OnStopRunningUrl(aUrl) {
       aUrl.QueryInterface(Ci.nsIImapUrl);
       Assert.equal(
         aUrl.customCommandResult,
@@ -128,7 +129,7 @@ add_task(function endTest() {
 
 // given a test file, return the file uri spec
 function specForFileName(aFileName) {
-  let file = do_get_file("../../../data/" + aFileName);
-  let msgfileuri = Services.io.newFileURI(file).QueryInterface(Ci.nsIFileURL);
+  const file = do_get_file("../../../data/" + aFileName);
+  const msgfileuri = Services.io.newFileURI(file).QueryInterface(Ci.nsIFileURL);
   return msgfileuri.spec;
 }

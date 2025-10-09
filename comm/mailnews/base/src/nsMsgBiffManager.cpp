@@ -5,14 +5,12 @@
 
 #include "nsMsgBiffManager.h"
 #include "nsIMsgAccountManager.h"
-#include "nsStatusBarBiffManager.h"
 #include "nsCOMArray.h"
 #include "mozilla/Logging.h"
 #include "nspr.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
 #include "nsIObserverService.h"
-#include "nsComponentManagerUtils.h"
 #include "nsServiceManagerUtils.h"
 #include "nsMsgUtils.h"
 #include "nsITimer.h"
@@ -20,12 +18,8 @@
 
 #define PREF_BIFF_JITTER "mail.biff.add_interval_jitter"
 
-#define NS_STATUSBARBIFFMANAGER_CID                  \
-  {                                                  \
-    0x7f9a9fb0, 0x4161, 0x11d4, {                    \
-      0x98, 0x76, 0x00, 0xc0, 0x4f, 0xa0, 0xd2, 0xa6 \
-    }                                                \
-  }
+#define NS_STATUSBARBIFFMANAGER_CID \
+  {0x7f9a9fb0, 0x4161, 0x11d4, {0x98, 0x76, 0x00, 0xc0, 0x4f, 0xa0, 0xd2, 0xa6}}
 static NS_DEFINE_CID(kStatusBarBiffManagerCID, NS_STATUSBARBIFFMANAGER_CID);
 
 static mozilla::LazyLogModule MsgBiffLogModule("MsgBiff");
@@ -280,7 +274,7 @@ nsresult nsMsgBiffManager::PerformBiff() {
   MOZ_LOG(MsgBiffLogModule, mozilla::LogLevel::Info, ("performing biffs"));
 
   uint32_t count = mBiffArray.Length();
-  for (uint32_t i = 0; i < count; i++) {
+  for (int32_t i = 0; i < (int32_t)count; i++) {
     // Take a copy of the entry rather than the a reference so that we can
     // remove and add if necessary, but keep the references and memory alive.
     nsBiffEntry current = mBiffArray[i];
@@ -328,10 +322,6 @@ nsresult nsMsgBiffManager::PerformBiff() {
         SetNextBiffTime(current, currentTime);
         AddBiffEntry(current);
       }
-#ifdef DEBUG_David_Bienvenu
-      else
-        printf("dest account performing biff\n");
-#endif
     } else
       // since we're in biff order, there's no reason to keep checking
       break;

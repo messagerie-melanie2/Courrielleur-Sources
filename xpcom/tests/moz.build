@@ -33,7 +33,10 @@ SimplePrograms(test_progs)
 
 USE_LIBS += ["mozglue"]
 
-XPCSHELL_TESTS_MANIFESTS += ["unit/xpcshell.ini"]
+if CONFIG["MOZ_ASAN"] or CONFIG["MOZ_UBSAN"] or CONFIG["MOZ_TSAN"]:
+    USE_LIBS += ["sanitizer-options"]
+
+XPCSHELL_TESTS_MANIFESTS += ["unit/xpcshell.toml"]
 
 if CONFIG["COMPILE_ENVIRONMENT"]:
     TEST_HARNESS_FILES.xpcshell.xpcom.tests.unit += [
@@ -48,10 +51,6 @@ XPIDL_SOURCES += [
 LOCAL_INCLUDES += [
     "../base",
     "../ds",
-]
-
-RESOURCE_FILES += [
-    "test.properties",
 ]
 
 CRASHTEST_MANIFESTS += ["crashtests/crashtests.list"]

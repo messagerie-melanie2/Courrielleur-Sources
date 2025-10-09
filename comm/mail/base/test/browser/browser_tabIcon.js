@@ -2,40 +2,38 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { GlodaIndexer } = ChromeUtils.import(
-  "resource:///modules/gloda/GlodaIndexer.jsm"
+const { GlodaIndexer } = ChromeUtils.importESModule(
+  "resource:///modules/gloda/GlodaIndexer.sys.mjs"
 );
-const { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+const { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 const TEST_DOCUMENT_URL =
   "http://mochi.test:8888/browser/comm/mail/base/test/browser/files/sampleContent.html";
-const TEST_IMAGE_URL =
-  "http://mochi.test:8888/browser/comm/mail/base/test/browser/files/tb-logo.png";
 
-let tabmail = document.getElementById("tabmail");
+const tabmail = document.getElementById("tabmail");
 let rootFolder, testFolder, testMessages;
 
 add_setup(async function () {
-  MailServices.accounts.createLocalMailAccount();
-  let account = MailServices.accounts.accounts[0];
+  const account = MailServices.accounts.createLocalMailAccount();
   account.addIdentity(MailServices.accounts.createIdentity());
-  rootFolder = account.incomingServer.rootFolder;
+  rootFolder = account.incomingServer.rootFolder.QueryInterface(
+    Ci.nsIMsgLocalMailFolder
+  );
 
-  rootFolder.createSubfolder("tabIcon", null);
   testFolder = rootFolder
-    .getChildNamed("tabIcon")
+    .createLocalSubfolder("tabIcon")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
 
-  let messageFile = new FileUtils.File(
+  const messageFile = new FileUtils.File(
     getTestFilePath("files/sampleContent.eml")
   );
   Assert.ok(messageFile.exists(), "test data file should exist");
-  let promiseCopyListener = new PromiseTestUtils.PromiseCopyListener();
+  const promiseCopyListener = new PromiseTestUtils.PromiseCopyListener();
   // Copy gIncomingMailFile into the Inbox.
   MailServices.copy.copyFileMessage(
     messageFile,
@@ -62,7 +60,7 @@ add_task(async function testMsgInFolder() {
   await BrowserTestUtils.browserLoaded(
     tabmail.currentAboutMessage.getMessagePaneBrowser()
   );
-  let icon = tabmail.tabInfo[0].tabNode.querySelector(".tab-icon-image");
+  const icon = tabmail.tabInfo[0].tabNode.querySelector(".tab-icon-image");
   await TestUtils.waitForCondition(() => icon.complete, "Icon loaded");
   Assert.equal(
     icon.src,
@@ -76,24 +74,24 @@ add_task(async function testMsgInTab() {
     tabmail.tabInfo[1].chromeBrowser,
     "MsgLoaded"
   );
-  let tab = tabmail.tabInfo[1];
-  let icon = tab.tabNode.querySelector(".tab-icon-image");
+  const tab = tabmail.tabInfo[1];
+  const icon = tab.tabNode.querySelector(".tab-icon-image");
   await TestUtils.waitForCondition(() => icon.complete, "Icon loaded");
   Assert.equal(icon.src, "chrome://messenger/skin/icons/new/compact/draft.svg");
 });
 
 add_task(async function testContentTab() {
-  let tab = window.openTab("contentTab", {
+  const tab = window.openTab("contentTab", {
     url: TEST_DOCUMENT_URL,
     background: false,
   });
   await BrowserTestUtils.browserLoaded(tab.browser);
 
-  let icon = tab.tabNode.querySelector(".tab-icon-image");
-
+  const icon = tab.tabNode.querySelector(".tab-icon-image");
   // Start of TEST_IMAGE_URL as data url.
-  await TestUtils.waitForCondition(
-    () => icon.src.startsWith("data:image/png;base64,iVBORw0KGgoAAAANSUhEU"),
-    "Waited for icon to be correct"
+  await BrowserTestUtils.waitForMutationCondition(
+    icon,
+    { attributes: true, attributeFilter: ["src"] },
+    () => icon.src.startsWith("data:image/png;base64,iVBORw0KGgoAAAANSUhEU")
   );
 });

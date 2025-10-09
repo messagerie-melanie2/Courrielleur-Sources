@@ -14,19 +14,26 @@ var gFolderBundle = null;
 var gDefaultColor = "";
 var gMsgFolder;
 
-var { FolderTreeProperties } = ChromeUtils.import(
-  "resource:///modules/FolderTreeProperties.jsm"
+var { FolderTreeProperties } = ChromeUtils.importESModule(
+  "resource:///modules/FolderTreeProperties.sys.mjs"
 );
-var { FolderUtils } = ChromeUtils.import("resource:///modules/FolderUtils.jsm");
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { FolderUtils } = ChromeUtils.importESModule(
+  "resource:///modules/FolderUtils.sys.mjs"
 );
-var { MailUtils } = ChromeUtils.import("resource:///modules/MailUtils.jsm");
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
+);
+var { MailUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailUtils.sys.mjs"
+);
 var { PluralForm } = ChromeUtils.importESModule(
-  "resource://gre/modules/PluralForm.sys.mjs"
+  "resource:///modules/PluralForm.sys.mjs"
 );
-var { VirtualFolderHelper } = ChromeUtils.import(
-  "resource:///modules/VirtualFolderWrapper.jsm"
+var { VirtualFolderHelper } = ChromeUtils.importESModule(
+  "resource:///modules/VirtualFolderWrapper.sys.mjs"
+);
+var { UIFontSize } = ChromeUtils.importESModule(
+  "resource:///modules/UIFontSize.sys.mjs"
 );
 
 window.addEventListener("DOMContentLoaded", onLoad);
@@ -75,7 +82,7 @@ function onLoad() {
 
     if (windowArgs.searchTerms) {
       // then add them to our search session
-      for (let searchTerm of windowArgs.searchTerms) {
+      for (const searchTerm of windowArgs.searchTerms) {
         gSearchTermSession.appendTerm(searchTerm);
       }
     }
@@ -98,7 +105,7 @@ function onLoad() {
       }
     }
 
-    let folderNameField = document.getElementById("name");
+    const folderNameField = document.getElementById("name");
     folderNameField.removeAttribute("hidden");
     folderNameField.focus();
     if (windowArgs.newFolderName) {
@@ -117,6 +124,7 @@ function onLoad() {
   }
   updateOnlineSearchState();
   updateFoldersCount();
+  UIFontSize.registerWindow(window);
 }
 
 function setupSearchRows(aSearchTerms) {
@@ -129,16 +137,19 @@ function setupSearchRows(aSearchTerms) {
 }
 
 function updateOnlineSearchState() {
-  var enableCheckbox = false;
-  var checkbox = document.getElementById("searchOnline");
-  // only enable the checkbox for selection, for online servers
-  var srchFolderUriArray = gSearchFolderURIs.split("|");
-  if (srchFolderUriArray[0]) {
-    var realFolder = MailUtils.getOrCreateFolder(srchFolderUriArray[0]);
-    enableCheckbox = realFolder.server.offlineSupportLevel; // anything greater than 0 is an online server like IMAP or news
-  }
+  // Enable only if there are search folders on online servers such as IMAP or
+  // NNTP (offlineSupportLevel > 0).
+  const includesOnlineServers =
+    gSearchFolderURIs &&
+    gSearchFolderURIs
+      .split("|")
+      .some(
+        folderURI =>
+          MailUtils.getExistingFolder(folderURI).server.offlineSupportLevel
+      );
 
-  if (enableCheckbox) {
+  const checkbox = document.getElementById("searchOnline");
+  if (includesOnlineServers) {
     checkbox.removeAttribute("disabled");
   } else {
     checkbox.setAttribute("disabled", true);
@@ -147,13 +158,13 @@ function updateOnlineSearchState() {
 }
 
 function InitDialogWithVirtualFolder(aVirtualFolder) {
-  let virtualFolderWrapper = VirtualFolderHelper.wrapVirtualFolder(
+  const virtualFolderWrapper = VirtualFolderHelper.wrapVirtualFolder(
     window.arguments[0].folder
   );
   gMsgFolder = window.arguments[0].folder;
 
-  let styles = getComputedStyle(document.body);
-  let folderColors = {
+  const styles = getComputedStyle(document.body);
+  const folderColors = {
     Inbox: styles.getPropertyValue("--folder-color-inbox"),
     Sent: styles.getPropertyValue("--folder-color-sent"),
     Outbox: styles.getPropertyValue("--folder-color-outbox"),
@@ -170,25 +181,25 @@ function InitDialogWithVirtualFolder(aVirtualFolder) {
 
   // when editing an existing folder, hide the folder picker that stores the parent location of the folder
   document.getElementById("msgNewFolderPicker").collapsed = true;
-  let items = document.getElementsByClassName("chooseFolderLocation");
-  for (let item of items) {
+  const items = document.getElementsByClassName("chooseFolderLocation");
+  for (const item of items) {
     item.setAttribute("hidden", true);
   }
-  let folderNameField = document.getElementById("existingName");
+  const folderNameField = document.getElementById("existingName");
   folderNameField.removeAttribute("hidden");
 
   // Show the icon color options.
   document.getElementById("iconColorContainer").collapsed = false;
 
-  let folderType = FolderUtils.getSpecialFolderString(gMsgFolder);
+  const folderType = FolderUtils.getSpecialFolderString(gMsgFolder);
   if (folderType in folderColors) {
     gDefaultColor = folderColors[folderType];
   }
 
-  let colorInput = document.getElementById("color");
+  const colorInput = document.getElementById("color");
   colorInput.value =
     FolderTreeProperties.getColor(aVirtualFolder.URI) || gDefaultColor;
-  colorInput.addEventListener("input", event => {
+  colorInput.addEventListener("input", () => {
     // Preview the chosen color.
     Services.obs.notifyObservers(
       gMsgFolder,
@@ -196,7 +207,7 @@ function InitDialogWithVirtualFolder(aVirtualFolder) {
       colorInput.value
     );
   });
-  let resetColorButton = document.getElementById("resetColor");
+  const resetColorButton = document.getElementById("resetColor");
   resetColorButton.addEventListener("click", function () {
     colorInput.value = gDefaultColor;
     // Preview the default color.
@@ -216,7 +227,7 @@ function InitDialogWithVirtualFolder(aVirtualFolder) {
   setupSearchRows(gSearchTermSession.searchTerms);
 
   // set the name of the folder
-  let name = gFolderBundle.formatStringFromName("verboseFolderFormat", [
+  const name = gFolderBundle.formatStringFromName("verboseFolderFormat", [
     aVirtualFolder.prettyName,
     aVirtualFolder.server.prettyName,
   ]);
@@ -254,7 +265,7 @@ function onOK(event) {
       gSearchTermSession
     );
     // save the settings
-    let virtualFolderWrapper = VirtualFolderHelper.wrapVirtualFolder(
+    const virtualFolderWrapper = VirtualFolderHelper.wrapVirtualFolder(
       window.arguments[0].folder
     );
     virtualFolderWrapper.searchTerms = gSearchTermSession.searchTerms;
@@ -285,8 +296,9 @@ function onOK(event) {
     // check to see if we already have a folder with the same name and alert the user if so...
     var parentFolder = MailUtils.getOrCreateFolder(uri);
 
-    // sanity check the name based on the logic used by nsMsgBaseUtils.cpp. It can't start with a '.', it can't end with a '.', '~' or ' '.
-    // it can't contain a ';' or '#'.
+    // See ILLEGAL_FOLDER_CHARS. Name can't start with a '.', it can't end with
+    // a '.', '~' or ' '. It can't contain a ';' or '#'.
+    // TODO: these get hashed by NS_MsgHashIfNecessary(). Skip this check here?
     if (/^\.|[\.\~ ]$|[\;\#]/.test(name)) {
       Services.prompt.alert(
         window,
@@ -295,7 +307,8 @@ function onOK(event) {
       );
       event.preventDefault();
       return;
-    } else if (parentFolder.containsChildNamed(name)) {
+    }
+    if (parentFolder.containsChildNamed(name)) {
       Services.prompt.alert(
         window,
         null,
@@ -319,7 +332,7 @@ function onOK(event) {
   }
 }
 
-function onCancel(event) {
+function onCancel() {
   if (gMsgFolder) {
     // Clear any previewed color.
     Services.obs.notifyObservers(gMsgFolder, "folder-color-preview");
@@ -354,18 +367,18 @@ function onFolderListDialogCallback(searchFolderURIs) {
 }
 
 function updateFoldersCount() {
-  let srchFolderUriArray = gSearchFolderURIs.split("|");
-  let folderCount = gSearchFolderURIs ? srchFolderUriArray.length : 0;
-  let foldersList = document.getElementById("chosenFoldersCount");
+  const srchFolderUriArray = gSearchFolderURIs.split("|");
+  const folderCount = gSearchFolderURIs ? srchFolderUriArray.length : 0;
+  const foldersList = document.getElementById("chosenFoldersCount");
   foldersList.textContent = PluralForm.get(
     folderCount,
     gMessengerBundle.GetStringFromName("virtualFolderSourcesChosen")
   ).replace("#1", folderCount);
   if (folderCount > 0) {
-    let folderNames = [];
-    for (let folderURI of srchFolderUriArray) {
-      let folder = MailUtils.getOrCreateFolder(folderURI);
-      let name = this.gMessengerBundle.formatStringFromName(
+    const folderNames = [];
+    for (const folderURI of srchFolderUriArray) {
+      const folder = MailUtils.getOrCreateFolder(folderURI);
+      const name = this.gMessengerBundle.formatStringFromName(
         "verboseFolderFormat",
         [folder.prettyName, folder.server.prettyName]
       );

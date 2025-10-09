@@ -9,6 +9,7 @@
 
 #include <android/log.h>
 #include <pthread.h>
+#include <sys/prctl.h>
 
 #include "mozilla/Assertions.h"
 #include "mozilla/java/GeckoAppShellWrappers.h"
@@ -23,21 +24,21 @@ namespace jni {
 
 namespace detail {
 
-#define DEFINE_PRIMITIVE_TYPE_ADAPTER(NativeType, JNIType, JNIName, ABIName)   \
-                                                                               \
-  constexpr JNIType (JNIEnv::*TypeAdapter<NativeType>::Call)(                  \
-      jobject, jmethodID, CallArgs::JValueType) MOZ_JNICALL_ABI;               \
-  constexpr JNIType (JNIEnv::*TypeAdapter<NativeType>::StaticCall)(            \
-      jclass, jmethodID, CallArgs::JValueType) MOZ_JNICALL_ABI;                \
-  constexpr JNIType (JNIEnv::*TypeAdapter<NativeType>::Get)(jobject, jfieldID) \
-      ABIName;                                                                 \
-  constexpr JNIType (JNIEnv::*TypeAdapter<NativeType>::StaticGet)(             \
-      jclass, jfieldID) ABIName;                                               \
-  constexpr void (JNIEnv::*TypeAdapter<NativeType>::Set)(jobject, jfieldID,    \
-                                                         JNIType) ABIName;     \
-  constexpr void (JNIEnv::*TypeAdapter<NativeType>::StaticSet)(                \
-      jclass, jfieldID, JNIType) ABIName;                                      \
-  constexpr void (JNIEnv::*TypeAdapter<NativeType>::GetArray)(                 \
+#define DEFINE_PRIMITIVE_TYPE_ADAPTER(NativeType, JNIType, JNIName, ABIName) \
+                                                                             \
+  constexpr JNIType (JNIEnv::* TypeAdapter<NativeType>::Call)(               \
+      jobject, jmethodID, CallArgs::JValueType) MOZ_JNICALL_ABI;             \
+  constexpr JNIType (JNIEnv::* TypeAdapter<NativeType>::StaticCall)(         \
+      jclass, jmethodID, CallArgs::JValueType) MOZ_JNICALL_ABI;              \
+  constexpr JNIType (JNIEnv::* TypeAdapter<NativeType>::Get)(                \
+      jobject, jfieldID) ABIName;                                            \
+  constexpr JNIType (JNIEnv::* TypeAdapter<NativeType>::StaticGet)(          \
+      jclass, jfieldID) ABIName;                                             \
+  constexpr void (JNIEnv::* TypeAdapter<NativeType>::Set)(jobject, jfieldID, \
+                                                          JNIType) ABIName;  \
+  constexpr void (JNIEnv::* TypeAdapter<NativeType>::StaticSet)(             \
+      jclass, jfieldID, JNIType) ABIName;                                    \
+  constexpr void (JNIEnv::* TypeAdapter<NativeType>::GetArray)(              \
       JNIType##Array, jsize, jsize, JNIType*)
 
 DEFINE_PRIMITIVE_TYPE_ADAPTER(bool, jboolean, Boolean, /*nothing*/);
@@ -164,10 +165,20 @@ JNIEnv* GetEnvForThread() {
     return env;
   }
 
+  // By default the VM has a nasty habit of overwriting our lovely
+  // thread names with "Thread-<n>" making them hard to identify in a debugger,
+  // so we pass the name in AttachArgs below to prevent that from happening.
+  // PR_GET_NAME requires a 16 byte buffer: https://linux.die.net/man/2/prctl.
+  // JNI_VERSION_1_4 is required for NewDirectByteBuffer.
+  char threadName[16] = {'\0'};
+  prctl(PR_GET_NAME, threadName);
+  JavaVMAttachArgs attachArgs{
+      .version = JNI_VERSION_1_4, .name = threadName, .group = nullptr};
+
   // We don't have a saved JNIEnv, so try to get one.
   // AttachCurrentThread() does the same thing as GetEnv() when a thread is
   // already attached, so we don't have to call GetEnv() at all.
-  if (!sJavaVM->AttachCurrentThread(&env, nullptr)) {
+  if (!sJavaVM->AttachCurrentThread(&env, &attachArgs)) {
     MOZ_ASSERT(env);
     MOZ_ALWAYS_TRUE(!pthread_setspecific(sThreadEnvKey, env));
     return env;
@@ -221,7 +232,7 @@ bool HandleUncaughtException(JNIEnv* aEnv) {
 bool ReportException(JNIEnv* aEnv, jthrowable aExc, jstring aStack) {
   bool result = true;
 
-  result &= NS_SUCCEEDED(CrashReporter::AnnotateCrashReport(
+  result &= NS_SUCCEEDED(CrashReporter::RecordAnnotationNSCString(
       CrashReporter::Annotation::JavaStackTrace,
       String::Ref::From(aStack)->ToCString()));
 

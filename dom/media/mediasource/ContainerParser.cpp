@@ -13,16 +13,14 @@
 #include "MoofParser.h"
 #include "mozilla/Logging.h"
 #include "mozilla/Maybe.h"
-#include "mozilla/Result.h"
+#include "mozilla/Try.h"
 #include "MediaData.h"
 #include "nsMimeTypes.h"
-#ifdef MOZ_FMP4
-#  include "AtomType.h"
-#  include "BufferReader.h"
-#  include "ByteStream.h"
-#  include "MP4Interval.h"
-#  include "SampleIterator.h"
-#endif
+#include "AtomType.h"
+#include "BufferReader.h"
+#include "ByteStream.h"
+#include "MP4Interval.h"
+#include "SampleIterator.h"
 #include "SourceBufferResource.h"
 #include <algorithm>
 
@@ -310,8 +308,6 @@ class WebMContainerParser
   Maybe<WebMTimeDataOffset> mLastMapping;
 };
 
-#ifdef MOZ_FMP4
-
 DDLoggedTypeDeclNameAndBase(MP4Stream, ByteStream);
 
 class MP4Stream : public ByteStream, public DecoderDoctorLifeLogger<MP4Stream> {
@@ -439,9 +435,19 @@ class MP4ContainerParser : public ContainerParser,
         const uint8_t* typec = reader.Peek(4);
         MOZ_TRY_VAR(tmp, reader.ReadU32());
         AtomType type(tmp);
-        MSE_DEBUGVEX(&aParser, "Checking atom:'%c%c%c%c' @ %u", typec[0],
-                     typec[1], typec[2], typec[3],
-                     (uint32_t)reader.Offset() - 8);
+        // We've seen fourcc not being ASCII in the wild. In this rare case,
+        // print hex values instead of the ascii representation.
+        if (isprint(typec[0]) && isprint(typec[1]) && isprint(typec[2]) &&
+            isprint(typec[3])) {
+          MSE_DEBUGVEX(&aParser, "Checking atom:'%c%c%c%c' @ %u", typec[0],
+                       typec[1], typec[2], typec[3],
+                       (uint32_t)reader.Offset() - 8);
+        } else {
+          MSE_DEBUGVEX(&aParser,
+                       "Checking atom (not ASCII):'0x%02x%02x%02x%02x' @ %u",
+                       typec[0], typec[1], typec[2], typec[3],
+                       (uint32_t)reader.Offset() - 8);
+        }
         if (std::find(std::begin(validBoxes), std::end(validBoxes), type) ==
             std::end(validBoxes)) {
           // No valid box found, no point continuing.
@@ -595,9 +601,6 @@ class MP4ContainerParser : public ContainerParser,
   RefPtr<MP4Stream> mStream;
   UniquePtr<MoofParser> mParser;
 };
-#endif  // MOZ_FMP4
-
-#ifdef MOZ_FMP4
 DDLoggedTypeDeclNameAndBase(ADTSContainerParser, ContainerParser);
 
 class ADTSContainerParser
@@ -737,7 +740,6 @@ class ADTSContainerParser
   // Especially when we generate the timestamps ourselves.
   int64_t GetRoundingError() override { return 0; }
 };
-#endif  // MOZ_FMP4
 
 /*static*/
 UniquePtr<ContainerParser> ContainerParser::CreateForMIMEType(
@@ -747,7 +749,6 @@ UniquePtr<ContainerParser> ContainerParser::CreateForMIMEType(
     return MakeUnique<WebMContainerParser>(aType);
   }
 
-#ifdef MOZ_FMP4
   if (aType.Type() == MEDIAMIMETYPE(VIDEO_MP4) ||
       aType.Type() == MEDIAMIMETYPE(AUDIO_MP4)) {
     return MakeUnique<MP4ContainerParser>(aType);
@@ -755,7 +756,6 @@ UniquePtr<ContainerParser> ContainerParser::CreateForMIMEType(
   if (aType.Type() == MEDIAMIMETYPE("audio/aac")) {
     return MakeUnique<ADTSContainerParser>(aType);
   }
-#endif
 
   return MakeUnique<ContainerParser>(aType);
 }

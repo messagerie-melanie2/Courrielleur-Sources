@@ -7,6 +7,7 @@
 #include "FileSystemManagerParent.h"
 
 #include "FileSystemDatabaseManager.h"
+#include "FileSystemParentTypes.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/dom/FileBlobImpl.h"
 #include "mozilla/dom/FileSystemAccessHandle.h"
@@ -40,12 +41,19 @@ FileSystemManagerParent::FileSystemManagerParent(
 
 FileSystemManagerParent::~FileSystemManagerParent() {
   LOG(("Destroying FileSystemManagerParent %p", this));
+  MOZ_ASSERT(!mRegistered);
 }
 
 void FileSystemManagerParent::AssertIsOnIOTarget() const {
   MOZ_ASSERT(mDataManager);
 
   mDataManager->AssertIsOnIOTarget();
+}
+
+bool FileSystemManagerParent::IsAlive() const {
+  mozilla::ipc::AssertIsOnBackgroundThread();
+
+  return !!mDataManager;
 }
 
 const RefPtr<fs::data::FileSystemDataManager>&
@@ -102,10 +110,9 @@ IPCResult FileSystemManagerParent::RecvGetFileHandle(
     aResolver(response);
   };
 
-  const ContentType& type = VoidCString();  // Currently cannot be set by user
   QM_TRY_UNWRAP(fs::EntryId entryId,
                 mDataManager->MutableDatabaseManagerPtr()->GetOrCreateFile(
-                    aRequest.handle(), type, aRequest.create()),
+                    aRequest.handle(), aRequest.create()),
                 IPC_OK(), reportError);
   MOZ_ASSERT(!entryId.IsEmpty());
 
@@ -191,24 +198,39 @@ mozilla::ipc::IPCResult FileSystemManagerParent::RecvGetWritable(
   AssertIsOnIOTarget();
   MOZ_ASSERT(mDataManager);
 
-  auto reportError = [aResolver](nsresult rv) { aResolver(rv); };
-  const EntryId& entryId = aRequest.entryId();
-  // TODO: Change to LockShared after temporary files
-  QM_TRY(MOZ_TO_RESULT(mDataManager->LockExclusive(entryId)), IPC_OK(),
-         reportError);
+  const fs::FileMode mode = mDataManager->GetMode(aRequest.keepData());
 
-  auto autoUnlock = MakeScopeExit([self = RefPtr{this}, &entryId] {
-    // TODO: Change to UnlockShared after temporary files
-    self->mDataManager->UnlockExclusive(entryId);
-  });
+  auto reportError = [aResolver](const auto& aRv) {
+    aResolver(ToNSResult(aRv));
+  };
+
+  // TODO: Get rid of mode and switching based on it, have the right unlocking
+  // automatically
+  const fs::EntryId& entryId = aRequest.entryId();
+  QM_TRY_UNWRAP(
+      fs::FileId fileId,
+      (mode == fs::FileMode::EXCLUSIVE ? mDataManager->LockExclusive(entryId)
+                                       : mDataManager->LockShared(entryId)),
+      IPC_OK(), reportError);
+  MOZ_ASSERT(!fileId.IsEmpty());
+
+  auto autoUnlock = MakeScopeExit(
+      [self = RefPtr<FileSystemManagerParent>(this), &entryId, &fileId, mode] {
+        if (mode == fs::FileMode::EXCLUSIVE) {
+          self->mDataManager->UnlockExclusive(entryId);
+        } else {
+          self->mDataManager->UnlockShared(entryId, fileId, /* aAbort */ true);
+        }
+      });
 
   fs::ContentType type;
   fs::TimeStamp lastModifiedMilliSeconds;
   fs::Path path;
   nsCOMPtr<nsIFile> file;
-  QM_TRY(MOZ_TO_RESULT(mDataManager->MutableDatabaseManagerPtr()->GetFile(
-             entryId, type, lastModifiedMilliSeconds, path, file)),
-         IPC_OK(), reportError);
+  QM_TRY(
+      MOZ_TO_RESULT(mDataManager->MutableDatabaseManagerPtr()->GetFile(
+          entryId, fileId, mode, type, lastModifiedMilliSeconds, path, file)),
+      IPC_OK(), reportError);
 
   if (LOG_ENABLED()) {
     nsAutoString path;
@@ -219,7 +241,7 @@ mozilla::ipc::IPCResult FileSystemManagerParent::RecvGetWritable(
 
   auto writableFileStreamParent =
       MakeNotNull<RefPtr<FileSystemWritableFileStreamParent>>(
-          this, aRequest.entryId());
+          this, aRequest.entryId(), fileId, mode == fs::FileMode::EXCLUSIVE);
 
   QM_TRY_UNWRAP(
       nsCOMPtr<nsIRandomAccessStream> stream,
@@ -260,18 +282,25 @@ IPCResult FileSystemManagerParent::RecvGetFile(
 
   // You can create a File with getFile() even if the file is locked
   // XXX factor out this part of the code for accesshandle/ and getfile
-  auto reportError = [aResolver](nsresult rv) {
+  auto reportError = [aResolver](const auto& rv) {
     LOG(("getFile() Failed!"));
-    aResolver(rv);
+    aResolver(ToNSResult(rv));
   };
+
+  const auto& entryId = aRequest.entryId();
+
+  QM_TRY_INSPECT(
+      const fs::FileId& fileId,
+      mDataManager->MutableDatabaseManagerPtr()->EnsureFileId(entryId),
+      IPC_OK(), reportError);
 
   fs::ContentType type;
   fs::TimeStamp lastModifiedMilliSeconds;
   fs::Path path;
   nsCOMPtr<nsIFile> fileObject;
   QM_TRY(MOZ_TO_RESULT(mDataManager->MutableDatabaseManagerPtr()->GetFile(
-             aRequest.entryId(), type, lastModifiedMilliSeconds, path,
-             fileObject)),
+             entryId, fileId, fs::FileMode::EXCLUSIVE, type,
+             lastModifiedMilliSeconds, path, fileObject)),
          IPC_OK(), reportError);
 
   if (LOG_ENABLED()) {
@@ -382,7 +411,7 @@ IPCResult FileSystemManagerParent::RecvRemoveEntry(
       IPC_OK(), reportError);
 
   if (isDeleted) {
-    FileSystemRemoveEntryResponse response(NS_OK);
+    FileSystemRemoveEntryResponse response(void_t{});
     aResolver(response);
 
     return IPC_OK();
@@ -400,7 +429,7 @@ IPCResult FileSystemManagerParent::RecvRemoveEntry(
     return IPC_OK();
   }
 
-  FileSystemRemoveEntryResponse response(NS_OK);
+  FileSystemRemoveEntryResponse response(void_t{});
   aResolver(response);
 
   return IPC_OK();
@@ -420,12 +449,12 @@ IPCResult FileSystemManagerParent::RecvMoveEntry(
     aResolver(response);
   };
 
-  QM_TRY_UNWRAP(bool moved,
-                mDataManager->MutableDatabaseManagerPtr()->MoveEntry(
-                    aRequest.handle(), aRequest.destHandle()),
-                IPC_OK(), reportError);
+  QM_TRY_INSPECT(const EntryId& newId,
+                 mDataManager->MutableDatabaseManagerPtr()->MoveEntry(
+                     aRequest.handle(), aRequest.destHandle()),
+                 IPC_OK(), reportError);
 
-  fs::FileSystemMoveEntryResponse response(moved ? NS_OK : NS_ERROR_FAILURE);
+  fs::FileSystemMoveEntryResponse response(newId);
   aResolver(response);
   return IPC_OK();
 }
@@ -445,12 +474,12 @@ IPCResult FileSystemManagerParent::RecvRenameEntry(
     aResolver(response);
   };
 
-  QM_TRY_UNWRAP(bool moved,
-                mDataManager->MutableDatabaseManagerPtr()->RenameEntry(
-                    aRequest.handle(), aRequest.name()),
-                IPC_OK(), reportError);
+  QM_TRY_INSPECT(const EntryId& newId,
+                 mDataManager->MutableDatabaseManagerPtr()->RenameEntry(
+                     aRequest.handle(), aRequest.name()),
+                 IPC_OK(), reportError);
 
-  fs::FileSystemMoveEntryResponse response(moved ? NS_OK : NS_ERROR_FAILURE);
+  fs::FileSystemMoveEntryResponse response(newId);
   aResolver(response);
   return IPC_OK();
 }
@@ -485,7 +514,9 @@ void FileSystemManagerParent::ActorDestroy(ActorDestroyReason aWhy) {
 
   InvokeAsync(mDataManager->MutableBackgroundTargetPtr(), __func__,
               [self = RefPtr<FileSystemManagerParent>(this)]() {
-                self->mDataManager->UnregisterActor(WrapNotNull(self));
+                if (self->mRegistered) {
+                  self->mDataManager->UnregisterActor(WrapNotNull(self));
+                }
 
                 self->mDataManager = nullptr;
 

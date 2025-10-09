@@ -9,8 +9,7 @@
 class ProcessPower final : public BaseProfilerCount {
  public:
   ProcessPower()
-      : BaseProfilerCount("Process Power", nullptr, nullptr, "power",
-                          "Power utilization") {}
+      : BaseProfilerCount("Process Power", "power", "Power utilization") {}
 
   CountSample Sample() override {
     CountSample result;
@@ -36,12 +35,4 @@ class ProcessPower final : public BaseProfilerCount {
   }
 };
 
-PowerCounters::PowerCounters() : mProcessPower(new ProcessPower()) {
-  if (mProcessPower) {
-    (void)mCounters.append(mProcessPower.get());
-  }
-}
-
-PowerCounters::~PowerCounters() { mCounters.clear(); }
-
-void PowerCounters::Sample() {}
+PowerCounters::PowerCounters() { (void)mCounters.append(new ProcessPower()); }

@@ -26,11 +26,6 @@ using nsIRequest::TRRMode from "nsIRequest.h";
 namespace mozilla {
 namespace net {
 
-struct H2PushedStreamArg {
-  PHttpTransaction transWithPushedStream;
-  uint32_t pushedStreamId;
-};
-
 struct NetworkAddressArg {
   NetAddr selfAddr;
   NetAddr peerAddr;
@@ -58,14 +53,18 @@ parent:
                        uint32_t                            HTTPSSVCReceivedStage,
                        bool                                supportsHttp3,
                        TRRMode trrMode,
-                       TRRSkippedReason trrSkipReason);
+                       TRRSkippedReason trrSkipReason,
+                       uint32_t caps,
+                       TimeStamp onStartRequestStart,
+                       HttpConnectionInfoCloneArgs connInfoArgs);
   async OnTransportStatus(nsresult status,
                           int64_t progress,
                           int64_t progressMax,
                           NetworkAddressArg? networkAddressArg);
   async OnDataAvailable(nsCString data,
                         uint64_t  offset,
-                        uint32_t  count);
+                        uint32_t  count,
+                        TimeStamp onDataAvailableStart);
   async OnStopRequest(nsresult status,
                       bool responseIsComplete,
                       int64_t transferSize,
@@ -73,12 +72,8 @@ parent:
                       nsHttpHeaderArray? responseTrailers,
                       TransactionObserverResult? transactionObserverResult,
                       TimeStamp lastActiveTabOptimization,
-                      uint32_t caps,
-                      HttpConnectionInfoCloneArgs connInfoArgs);
+                      TimeStamp onStopRequestStart);
   async OnInitFailed(nsresult status);
-  async OnH2PushStream(uint32_t pushedStreamId,
-                       nsCString resourceUrl,
-                       nsCString requestString);
   async EarlyHint(nsCString linkHeader, nsCString referrerPolicy, nsCString cspHeader);
 
 child:
@@ -97,7 +92,6 @@ child:
              bool responseTimeoutEnabled,
              uint64_t channelId,
              bool hasTransactionObserver,
-             H2PushedStreamArg? pushedStreamArg,
              PInputChannelThrottleQueue? throttleQueue,
              bool aIsDocumentLoad,
              TimeStamp aRedirectStart,

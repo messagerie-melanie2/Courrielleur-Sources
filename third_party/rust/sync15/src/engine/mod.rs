@@ -19,20 +19,21 @@
 //! * Code which implements the [crate::engine::bridged_engine::BridgedEngine]
 //!   trait. These engines are a "bridge" between the Desktop JS Sync world and
 //!   this rust code.
+//!
 //! While these engines end up doing the same thing, the difference is due to
 //! implementation differences between the Desktop Sync client and the Rust
 //! client.
+//!
 //! We intend merging these engines - the first step will be to merge the
 //! types and payload management used by these traits, then to combine the
 //! requirements into a single trait that captures both use-cases.
 mod bridged_engine;
-mod changeset;
 mod request;
 mod sync_engine;
 
-pub use bridged_engine::{ApplyResults, BridgedEngine};
-pub use changeset::{IncomingChangeset, OutgoingChangeset};
+pub use bridged_engine::{ApplyResults, BridgedEngine, BridgedEngineAdaptor};
 #[cfg(feature = "sync-client")]
 pub(crate) use request::CollectionPost;
+
 pub use request::{CollectionRequest, RequestOrder};
 pub use sync_engine::{CollSyncIds, EngineSyncAssociation, SyncEngine, SyncEngineId};

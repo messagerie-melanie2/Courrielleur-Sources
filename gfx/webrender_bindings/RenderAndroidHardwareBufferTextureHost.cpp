@@ -7,7 +7,9 @@
 #include "RenderAndroidHardwareBufferTextureHost.h"
 
 #include "mozilla/layers/AndroidHardwareBuffer.h"
+#include "mozilla/layers/TextureHostOGL.h"
 #include "mozilla/webrender/RenderThread.h"
+#include "mozilla/gfx/2D.h"
 #include "GLContextEGL.h"
 #include "GLLibraryEGL.h"
 #include "GLReadTexImageHelper.h"
@@ -47,19 +49,18 @@ bool RenderAndroidHardwareBufferTextureHost::EnsureLockable() {
   }
 
   auto fenceFd = mAndroidHardwareBuffer->GetAndResetAcquireFence();
-  if (fenceFd.IsValid()) {
+  if (fenceFd) {
     const auto& gle = gl::GLContextEGL::Cast(mGL);
     const auto& egl = gle->mEgl;
 
-    auto rawFD = fenceFd.TakePlatformHandle();
     const EGLint attribs[] = {LOCAL_EGL_SYNC_NATIVE_FENCE_FD_ANDROID,
-                              rawFD.get(), LOCAL_EGL_NONE};
+                              fenceFd.get(), LOCAL_EGL_NONE};
 
     EGLSync sync =
         egl->fCreateSync(LOCAL_EGL_SYNC_NATIVE_FENCE_ANDROID, attribs);
     if (sync) {
       // Release fd here, since it is owned by EGLSync
-      Unused << rawFD.release();
+      Unused << fenceFd.release();
 
       if (egl->IsExtensionSupported(gl::EGLExtension::KHR_wait_sync)) {
         egl->fWaitSync(sync, 0);
@@ -130,9 +131,10 @@ wr::WrExternalImage RenderAndroidHardwareBufferTextureHost::Lock(
     return InvalidToWrExternalImage();
   }
 
-  const auto uvs = GetUvCoords(GetSize());
-  return NativeTextureToWrExternalImage(
-      mTextureHandle, uvs.first.x, uvs.first.y, uvs.second.x, uvs.second.y);
+  const gfx::IntSize size = GetSize();
+  return NativeTextureToWrExternalImage(mTextureHandle, 0.0, 0.0,
+                                        static_cast<float>(size.width),
+                                        static_cast<float>(size.height));
 }
 
 void RenderAndroidHardwareBufferTextureHost::Unlock() {}
@@ -180,7 +182,7 @@ gfx::SurfaceFormat RenderAndroidHardwareBufferTextureHost::GetFormat() const {
   return gfx::SurfaceFormat::UNKNOWN;
 }
 
-already_AddRefed<DataSourceSurface>
+already_AddRefed<gfx::DataSourceSurface>
 RenderAndroidHardwareBufferTextureHost::ReadTexImage() {
   if (!mGL) {
     mGL = RenderThread::Get()->SingletonGL();
@@ -195,8 +197,9 @@ RenderAndroidHardwareBufferTextureHost::ReadTexImage() {
 
   /* Allocate resulting image surface */
   int32_t stride = GetSize().width * BytesPerPixel(GetFormat());
-  RefPtr<DataSourceSurface> surf = Factory::CreateDataSourceSurfaceWithStride(
-      GetSize(), GetFormat(), stride);
+  RefPtr<gfx::DataSourceSurface> surf =
+      gfx::Factory::CreateDataSourceSurfaceWithStride(GetSize(), GetFormat(),
+                                                      stride);
   if (!surf) {
     return nullptr;
   }
@@ -206,8 +209,8 @@ RenderAndroidHardwareBufferTextureHost::ReadTexImage() {
   int shaderConfig = config.mFeatures;
 
   bool ret = mGL->ReadTexImageHelper()->ReadTexImage(
-      surf, mTextureHandle, LOCAL_GL_TEXTURE_EXTERNAL, GetSize(), shaderConfig,
-      /* aYInvert */ false);
+      surf, mTextureHandle, LOCAL_GL_TEXTURE_EXTERNAL, GetSize(),
+      gfx::Matrix4x4(), shaderConfig, /* aYInvert */ false);
   if (!ret) {
     return nullptr;
   }
@@ -223,8 +226,8 @@ bool RenderAndroidHardwareBufferTextureHost::MapPlane(
     return false;
   }
 
-  DataSourceSurface::MappedSurface map;
-  if (!readback->Map(DataSourceSurface::MapType::READ, &map)) {
+  gfx::DataSourceSurface::MappedSurface map;
+  if (!readback->Map(gfx::DataSourceSurface::MapType::READ, &map)) {
     return false;
   }
 
@@ -240,6 +243,14 @@ void RenderAndroidHardwareBufferTextureHost::UnmapPlanes() {
     mReadback->Unmap();
     mReadback = nullptr;
   }
+}
+
+RefPtr<layers::TextureSource>
+RenderAndroidHardwareBufferTextureHost::CreateTextureSource(
+    layers::TextureSourceProvider* aProvider) {
+  return new layers::AndroidHardwareBufferTextureSource(
+      aProvider, mAndroidHardwareBuffer, mAndroidHardwareBuffer->mFormat,
+      LOCAL_GL_TEXTURE_EXTERNAL, LOCAL_GL_CLAMP_TO_EDGE, GetSize());
 }
 
 }  // namespace wr

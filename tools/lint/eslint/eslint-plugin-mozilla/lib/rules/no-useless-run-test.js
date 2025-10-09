@@ -11,7 +11,7 @@
 module.exports = {
   meta: {
     docs: {
-      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/no-useless-run-test.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/rules/no-useless-run-test.html",
     },
     fixable: "code",
     messages: {
@@ -36,7 +36,7 @@ module.exports = {
           context.report({
             node,
             fix: fixer => {
-              let sourceCode = context.getSourceCode();
+              let sourceCode = context.sourceCode;
               let startNode;
               if (sourceCode.getCommentsBefore) {
                 // ESLint 4 has getCommentsBefore.

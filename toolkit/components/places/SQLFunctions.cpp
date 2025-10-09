@@ -829,31 +829,103 @@ CalculateAltFrecencyFunction::OnFunctionCall(mozIStorageValueArray* aArguments,
       "lambda (lambda) AS ( "
       "  SELECT ln(2) / :halfLifeDays "
       "), "
+      "interactions AS ( "
+      "  SELECT "
+      "    place_id, "
+      "    created_at * 1000 AS visit_date "
+      "  FROM "
+      "    moz_places_metadata "
+      "  WHERE "
+      "    place_id = :pageId "
+      // The view time preferences are in seconds while the total view time is
+      // in milliseconds.
+      "      AND (total_view_time >= :viewTimeSeconds * 1000 "
+      "        OR (total_view_time >= :viewTimeIfManyKeypressesSeconds * 1000 "
+      "          AND key_presses >= :manyKeypresses)) "
+      "  ORDER BY created_at DESC "
+      "  LIMIT :numSampledVisits "
+      "), "
+      "visit_interaction AS ( "
+      "  SELECT "
+      "    vs.id, "
+      "    vs.from_visit, "
+      "    vs.place_id, "
+      "    vs.visit_date, "
+      "    vs.visit_type, "
+      "    vs.session, "
+      "    vs.source, "
+      "    ( "
+      "      SELECT EXISTS ( "
+      "        SELECT 1 "
+      "        FROM interactions i "
+      "        WHERE vs.visit_date BETWEEN "
+      // Visit dates are in microseconds while the visit gap is in seconds.
+      "          i.visit_date - :maxVisitGapSeconds * 1000000 "
+      "            AND i.visit_date + :maxVisitGapSeconds * 1000000 "
+      "      ) "
+      "    ) AS is_interesting "
+      "  FROM moz_historyvisits vs "
+      "  WHERE place_id = :pageId "
+      "    AND vs.visit_date BETWEEN "
+      "      strftime('%s', 'now', :maxDaysFromToday) * 1000000 "
+      "        AND strftime('%s', 'now', '+1 day') * 1000000 "
+      "  UNION ALL "
+      "  SELECT "
+      "    NULL AS id, "
+      "    0 AS from_visit, "
+      "    i.place_id, "
+      "    i.visit_date, "
+      "    1 AS visit_type, "
+      "    0 AS session, "
+      "    0 AS source, "
+      "    1 AS is_interesting "
+      "  FROM interactions i "
+      "  WHERE NOT EXISTS ( "
+      "    SELECT 1 FROM moz_historyvisits vs "
+      "    WHERE  place_id = :pageId "
+      "      AND vs.visit_date BETWEEN "
+      "        i.visit_date - :maxVisitGapSeconds * 1000000 "
+      "        AND i.visit_date + :maxVisitGapSeconds * 1000000 "
+      "  ) "
+      "  ORDER BY visit_date DESC "
+      "  LIMIT :numSampledVisits "
+      "), "
       "visits (days, weight) AS ( "
       "  SELECT "
       "    v.visit_date / 86400000000, "
+      // A visit is given a score based on a variety of factors, such as
+      // whether it was a bookmark, how the user got to the page, and whether
+      // or not it was a redirect. The score will be boosted if the visit was
+      // interesting and it was not a redirect. A visit is interesting if a user
+      // spent a lot of time viewing the page or they typed a lot of keypresses.
       "    (SELECT CASE "
-      "      WHEN IFNULL(s.visit_type, v.visit_type) = 3 "     // is a bookmark
-      "        OR  ( v.source <> 3 "                           // is a search
-      "          AND IFNULL(s.visit_type, v.visit_type) = 2 "  // is typed
+      "      WHEN IFNULL(s.visit_type, v.visit_type) = 3 "  // from a bookmark
+      "        OR v.source = 2 "                            // is a bookmark
+      "        OR  ( IFNULL(s.visit_type, v.visit_type) = 2 "  // is typed
+      "          AND v.source <> 3 "                           // not a search
       "          AND t.id IS NULL AND NOT :isRedirect "        // not a redirect
       "        ) "
-      "      THEN :highWeight "
+      "      THEN "
+      "        CASE "
+      "          WHEN v.is_interesting = 1 THEN :veryHighWeight "
+      "          ELSE :highWeight "
+      "        END "
       "      WHEN t.id IS NULL AND NOT :isRedirect "  // not a redirect
       "       AND IFNULL(s.visit_type, v.visit_type) NOT IN (4, 8, 9) "
-      "      THEN :mediumWeight "
+      "      THEN "
+      "        CASE "
+      "          WHEN v.is_interesting = 1 THEN :highWeight "
+      "          ELSE :mediumWeight "
+      "         END "
       "      ELSE :lowWeight "
       "     END) "
-      "  FROM moz_historyvisits v "
+      "  FROM visit_interaction v "
       // If it's a redirect target, use the visit_type of the source.
       "  LEFT JOIN moz_historyvisits s ON s.id = v.from_visit "
       "                               AND v.visit_type IN (5,6) "
       // If it's a redirect, use a low weight.
       "  LEFT JOIN moz_historyvisits t ON t.from_visit = v.id "
       "                               AND t.visit_type IN (5,6) "
-      "  WHERE v.place_id = :pageId "
-      "  ORDER BY v.visit_date DESC "
-      "  LIMIT :numSampledVisits "
       "), "
       "bookmark (days, weight) AS ( "
       "  SELECT dateAdded / 86400000000, 100 "
@@ -879,8 +951,7 @@ CalculateAltFrecencyFunction::OnFunctionCall(mozIStorageValueArray* aArguments,
       "ELSE "
       "  reference.days + CAST (( "
       "    ln( "
-      "      (sum(score) / samples_count * MAX(visit_count, samples_count)) * "
-      "        exp(-lambda) "
+      "      sum(score) / samples_count * MAX(visit_count, samples_count) "
       "    ) / lambda "
       "  ) AS INTEGER) "
       "END "
@@ -913,6 +984,37 @@ CalculateAltFrecencyFunction::OnFunctionCall(mozIStorageValueArray* aArguments,
   rv = stmt->BindInt64ByName(
       "highWeight"_ns,
       StaticPrefs::places_frecency_pages_alternative_highWeight_AtStartup());
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = stmt->BindInt64ByName(
+      "veryHighWeight"_ns,
+      StaticPrefs::
+          places_frecency_pages_alternative_veryHighWeight_AtStartup());
+  NS_ENSURE_SUCCESS(rv, rv);
+  nsCString maxDaysFromToday = nsPrintfCString(
+      "-%d days",
+      StaticPrefs::
+          places_frecency_pages_alternative_maxDaysFromToday_AtStartup());
+  rv = stmt->BindUTF8StringByName("maxDaysFromToday"_ns, maxDaysFromToday);
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = stmt->BindInt64ByName(
+      "maxVisitGapSeconds"_ns,
+      StaticPrefs::
+          places_frecency_pages_alternative_interactions_maxVisitGapSeconds_AtStartup());
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = stmt->BindInt64ByName(
+      "viewTimeSeconds"_ns,
+      StaticPrefs::
+          places_frecency_pages_alternative_interactions_viewTimeSeconds_AtStartup());
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = stmt->BindInt64ByName(
+      "manyKeypresses"_ns,
+      StaticPrefs::
+          places_frecency_pages_alternative_interactions_manyKeypresses_AtStartup());
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = stmt->BindInt64ByName(
+      "viewTimeIfManyKeypressesSeconds"_ns,
+      StaticPrefs::
+          places_frecency_pages_alternative_interactions_viewTimeIfManyKeypressesSeconds_AtStartup());
   NS_ENSURE_SUCCESS(rv, rv);
 
   bool hasResult = false;
@@ -1134,16 +1236,15 @@ GetQueryParamFunction::OnFunctionCall(mozIStorageValueArray* aArguments,
 
   RefPtr<nsVariant> result = new nsVariant();
   if (!queryString.IsEmpty() && !paramName.IsEmpty()) {
-    URLParams::Parse(
-        queryString,
-        [&paramName, &result](const nsAString& aName, const nsAString& aValue) {
-          NS_ConvertUTF16toUTF8 name(aName);
-          if (!paramName.Equals(name)) {
-            return true;
-          }
-          result->SetAsAString(aValue);
-          return false;
-        });
+    URLParams::Parse(queryString, true,
+                     [&paramName, &result](const nsACString& aName,
+                                           const nsACString& aValue) {
+                       if (!paramName.Equals(aName)) {
+                         return true;
+                       }
+                       result->SetAsACString(aValue);
+                       return false;
+                     });
   }
 
   result.forget(_result);
@@ -1191,19 +1292,19 @@ HashFunction::OnFunctionCall(mozIStorageValueArray* aArguments,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-//// MD5 Function
+//// SHA256Hex Function
 
 /* static */
-nsresult MD5HexFunction::create(mozIStorageConnection* aDBConn) {
-  RefPtr<MD5HexFunction> function = new MD5HexFunction();
-  return aDBConn->CreateFunction("md5hex"_ns, -1, function);
+nsresult SHA256HexFunction::create(mozIStorageConnection* aDBConn) {
+  RefPtr<SHA256HexFunction> function = new SHA256HexFunction();
+  return aDBConn->CreateFunction("sha256hex"_ns, -1, function);
 }
 
-NS_IMPL_ISUPPORTS(MD5HexFunction, mozIStorageFunction)
+NS_IMPL_ISUPPORTS(SHA256HexFunction, mozIStorageFunction)
 
 NS_IMETHODIMP
-MD5HexFunction::OnFunctionCall(mozIStorageValueArray* aArguments,
-                               nsIVariant** _result) {
+SHA256HexFunction::OnFunctionCall(mozIStorageValueArray* aArguments,
+                                  nsIVariant** _result) {
   // Must have non-null function arguments.
   MOZ_ASSERT(aArguments);
 
@@ -1217,8 +1318,8 @@ MD5HexFunction::OnFunctionCall(mozIStorageValueArray* aArguments,
   nsCOMPtr<nsICryptoHash> hasher =
       do_CreateInstance(NS_CRYPTO_HASH_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
-  // MD5 is not a secure hash function, but it's ok for this use.
-  rv = hasher->Init(nsICryptoHash::MD5);
+  // SHA256 is not super strong but fine for our mapping needs.
+  rv = hasher->Init(nsICryptoHash::SHA256);
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = hasher->Update(reinterpret_cast<const uint8_t*>(str.BeginReading()),
@@ -1475,6 +1576,45 @@ NS_IMETHODIMP
 InvalidateDaysOfHistoryFunction::OnFunctionCall(mozIStorageValueArray* aArgs,
                                                 nsIVariant** _result) {
   nsNavHistory::InvalidateDaysOfHistory();
+  return NS_OK;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//// Target folder guid from places query Function
+
+/* static */
+nsresult TargetFolderGuidFunction::create(mozIStorageConnection* aDBConn) {
+  RefPtr<TargetFolderGuidFunction> function = new TargetFolderGuidFunction();
+  nsresult rv = aDBConn->CreateFunction("target_folder_guid"_ns, 1, function);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return NS_OK;
+}
+
+NS_IMPL_ISUPPORTS(TargetFolderGuidFunction, mozIStorageFunction)
+
+NS_IMETHODIMP
+TargetFolderGuidFunction::OnFunctionCall(mozIStorageValueArray* aArguments,
+                                         nsIVariant** _result) {
+  // Must have non-null function arguments.
+  MOZ_ASSERT(aArguments);
+  // Must have one argument.
+  DebugOnly<uint32_t> numArgs = 0;
+  MOZ_ASSERT(NS_SUCCEEDED(aArguments->GetNumEntries(&numArgs)) && numArgs == 1,
+             "unexpected number of arguments");
+
+  nsDependentCString queryURI = getSharedUTF8String(aArguments, 0);
+  Maybe<nsCString> targetFolderGuid =
+      nsNavHistory::GetTargetFolderGuid(queryURI);
+
+  if (targetFolderGuid.isSome()) {
+    RefPtr<nsVariant> result = new nsVariant();
+    result->SetAsACString(*targetFolderGuid);
+    result.forget(_result);
+  } else {
+    *_result = MakeAndAddRef<NullVariant>().take();
+  }
+
   return NS_OK;
 }
 

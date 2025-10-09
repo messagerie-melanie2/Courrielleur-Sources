@@ -2,16 +2,16 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-// Test that Imapd.jsm fakeserver correctly emulates GMail server
+// Test that Imapd.sys.mjs fakeserver correctly emulates GMail server
 // That means X-GM-EXT-1 capability and GMail flavor XLIST
 // per https://developers.google.com/google-apps/gmail/imap_extensions
 
 // IMAP pump
-var { IMAPPump, setupIMAPPump, teardownIMAPPump } = ChromeUtils.import(
-  "resource://testing-common/mailnews/IMAPpump.jsm"
+var { IMAPPump, setupIMAPPump, teardownIMAPPump } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/IMAPpump.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 setupIMAPPump("GMail");
@@ -45,17 +45,17 @@ add_setup(async function () {
   IMAPPump.daemon.createMailbox("test", {});
 
   handler = IMAPPump.server._handlerCreator(IMAPPump.daemon);
-  let response = handler.onError("1", "LOGIN user password");
+  const response = handler.onError("1", "LOGIN user password");
   Assert.ok(response.includes("OK"));
   // wait for imap pump to do its thing or else we get memory leaks
-  let listener = new PromiseTestUtils.PromiseUrlListener();
+  const listener = new PromiseTestUtils.PromiseUrlListener();
   IMAPPump.inbox.updateFolderWithListener(null, listener);
   await listener.promise;
 });
 
 // test that 'XLIST "" "*"' returns the proper responses
 add_task(function testXlist() {
-  let response = handler.onError("2", 'XLIST "" "*"');
+  const response = handler.onError("2", 'XLIST "" "*"');
 
   Assert.ok(response.includes('* LIST (\\HasNoChildren \\Inbox) "/" "INBOX"'));
   Assert.ok(

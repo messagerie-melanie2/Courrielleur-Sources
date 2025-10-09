@@ -54,11 +54,17 @@ class BaselineFrame {
     // See comment above 'isDebuggee' in vm/Realm.h for explanation
     // of invariants of debuggee compartments, scripts, and frames.
     DEBUGGEE = 1 << 6,
+
+    // Frame is executing Realm-independent Jitcode, which requires
+    // a valid interpreterScript_ field.
+    REALM_INDEPENDENT = 1 << 7,
   };
 
  protected:  // Silence Clang warning about unused private fields.
-  // The fields below are only valid if RUNNING_IN_INTERPRETER.
+  // The fields below are only valid if RUNNING_IN_INTERPRETER or
+  // isRealmIndependent().
   JSScript* interpreterScript_;
+  // The fields below are only valid if RUNNING_IN_INTERPRETER.
   jsbytecode* interpreterPC_;
   ICEntry* interpreterICEntry_;
 
@@ -109,7 +115,9 @@ class BaselineFrame {
   bool isConstructing() const {
     return CalleeTokenIsConstructing(calleeToken());
   }
-  JSScript* script() const { return ScriptFromCalleeToken(calleeToken()); }
+  JSScript* script() const {
+    return MaybeForwardedScriptFromCalleeToken(calleeToken());
+  }
   JSFunction* callee() const { return CalleeTokenToFunction(calleeToken()); }
   Value calleev() const { return ObjectValue(*callee()); }
 
@@ -123,12 +131,36 @@ class BaselineFrame {
     return frameSize / sizeof(Value);
   }
 
+  Value newTarget() const {
+    MOZ_ASSERT(isFunctionFrame());
+    MOZ_ASSERT(!callee()->isArrow());
+
+    if (isConstructing()) {
+      unsigned pushedArgs = std::max(numFormalArgs(), numActualArgs());
+      return argv()[pushedArgs];
+    }
+    return UndefinedValue();
+  }
+
 #ifdef DEBUG
   size_t debugNumValueSlots() const { return numValueSlots(debugFrameSize()); }
 #endif
 
   Value* valueSlot(size_t slot) const {
+#ifndef ENABLE_PORTABLE_BASELINE_INTERP
+    // Assert that we're within the frame, but only if the "debug
+    // frame size" has been set. Ordinarily if we are in C++ code
+    // looking upward at a baseline frame, it will be, because it is
+    // set for the *previous* frame when we push an exit frame and
+    // call back into C++ from generated baseline code. However, the
+    // portable baseline interpreter uses accessors on BaselineFrame
+    // directly within the active frame and so the "debug frame size"
+    // hasn't been set (and it would be expensive to constantly update
+    // it). Because this is only used for assertions, and is not
+    // needed for correctness, we can disable this check below when
+    // PBL is enabled.
     MOZ_ASSERT(slot < debugNumValueSlots());
+#endif
     return (Value*)this - (slot + 1);
   }
 
@@ -174,7 +206,6 @@ class BaselineFrame {
     // Clearing the RUNNING_IN_INTERPRETER flag is sufficient, but we also null
     // out the interpreter fields to ensure we don't use stale values.
     flags_ &= ~RUNNING_IN_INTERPRETER;
-    interpreterScript_ = nullptr;
     interpreterPC_ = nullptr;
   }
 
@@ -215,6 +246,7 @@ class BaselineFrame {
   }
 
   bool runningInInterpreter() const { return flags_ & RUNNING_IN_INTERPRETER; }
+  bool isRealmIndependent() const { return flags_ & REALM_INDEPENDENT; }
 
   JSScript* interpreterScript() const {
     MOZ_ASSERT(runningInInterpreter());
@@ -224,6 +256,19 @@ class BaselineFrame {
   jsbytecode* interpreterPC() const {
     MOZ_ASSERT(runningInInterpreter());
     return interpreterPC_;
+  }
+  jsbytecode*& interpreterPC() {
+    MOZ_ASSERT(runningInInterpreter());
+    return interpreterPC_;
+  }
+
+  ICEntry* interpreterICEntry() const {
+    MOZ_ASSERT(runningInInterpreter());
+    return interpreterICEntry_;
+  }
+  ICEntry*& interpreterICEntry() {
+    MOZ_ASSERT(runningInInterpreter());
+    return interpreterICEntry_;
   }
 
   void setInterpreterFields(JSScript* script, jsbytecode* pc);
@@ -261,12 +306,17 @@ class BaselineFrame {
 
   inline CallObject& callObj() const;
 
+  void setFlag(uint32_t flag) { flags_ |= flag; }
   void setFlags(uint32_t flags) { flags_ = flags; }
 
   [[nodiscard]] inline bool pushLexicalEnvironment(JSContext* cx,
                                                    Handle<LexicalScope*> scope);
-  [[nodiscard]] inline bool freshenLexicalEnvironment(JSContext* cx);
-  [[nodiscard]] inline bool recreateLexicalEnvironment(JSContext* cx);
+  template <bool IsDebuggee>
+  [[nodiscard]] inline bool freshenLexicalEnvironment(
+      JSContext* cx, const jsbytecode* pc = nullptr);
+  template <bool IsDebuggee>
+  [[nodiscard]] inline bool recreateLexicalEnvironment(
+      JSContext* cx, const jsbytecode* pc = nullptr);
 
   [[nodiscard]] bool initFunctionEnvironmentObjects(JSContext* cx);
   [[nodiscard]] bool pushClassBodyEnvironment(JSContext* cx,

@@ -51,23 +51,11 @@ add_task(async function test() {
       await Services.fog.testFlushAllChildren();
       Assert.equal(Glean.pdfjs.editing.freetext.testGetValue() || 0, 0);
 
-      await enableEditor(browser, "FreeText");
+      await enableEditor(browser, "FreeText", 1);
       await addFreeText(browser, "hello", spanBox);
 
       await BrowserTestUtils.waitForCondition(
         async () => (await countElements(browser, ".freeTextEditor")) !== 0
-      );
-      Assert.equal(await countElements(browser, ".freeTextEditor"), 1);
-
-      await Services.fog.testFlushAllChildren();
-
-      Assert.equal(Glean.pdfjs.editing.freetext.testGetValue(), 1);
-
-      spanBox = await getSpanBox(browser, "forums and ask questions");
-      await addFreeText(browser, "world", spanBox);
-
-      await BrowserTestUtils.waitForCondition(
-        async () => (await countElements(browser, ".freeTextEditor")) !== 1
       );
       Assert.equal(await countElements(browser, ".freeTextEditor"), 2);
 
@@ -75,11 +63,23 @@ add_task(async function test() {
 
       Assert.equal(Glean.pdfjs.editing.freetext.testGetValue(), 2);
 
+      spanBox = await getSpanBox(browser, "forums and ask questions");
+      await addFreeText(browser, "world", spanBox);
+
+      await BrowserTestUtils.waitForCondition(
+        async () => (await countElements(browser, ".freeTextEditor")) !== 1
+      );
+      Assert.equal(await countElements(browser, ".freeTextEditor"), 3);
+
+      await Services.fog.testFlushAllChildren();
+
+      Assert.equal(Glean.pdfjs.editing.freetext.testGetValue(), 3);
+
       Assert.equal(Glean.pdfjs.editing.print.testGetValue() || 0, 0);
       document.getElementById("cmd_print").doCommand();
       await BrowserTestUtils.waitForCondition(() => {
         let preview = document.querySelector(".printPreviewBrowser");
-        return preview && BrowserTestUtils.is_visible(preview);
+        return preview && BrowserTestUtils.isVisible(preview);
       });
       EventUtils.synthesizeKey("KEY_Escape");
 
@@ -87,10 +87,8 @@ add_task(async function test() {
 
       Assert.equal(Glean.pdfjs.editing.print.testGetValue(), 1);
 
-      await SpecialPowers.spawn(browser, [], async function () {
-        var viewer = content.wrappedJSObject.PDFViewerApplication;
-        await viewer.close();
-      });
+      await waitForPdfJSClose(browser);
+      await SpecialPowers.popPrefEnv();
     }
   );
 });

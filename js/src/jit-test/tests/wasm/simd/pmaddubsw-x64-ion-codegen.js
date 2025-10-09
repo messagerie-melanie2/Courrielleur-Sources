@@ -1,11 +1,11 @@
-// |jit-test| skip-if: !wasmSimdEnabled() || wasmCompileMode() != "ion"
+// |jit-test| --setpref=wasm_unroll_loops=false; skip-if: !wasmSimdEnabled() || wasmCompileMode() != "ion"
 
 // Testing _mm_maddubs_epi16 / vpmaddubsw behavoir for all platforms.
 //
 // Bug 1762413 adds specialization for emscripten's pattern to directly
 // emit PMADDUBSW machine code.
 
-const isX64 = getBuildConfiguration().x64 && !getBuildConfiguration().simulator;
+const isX64 = getBuildConfiguration("x64") && !getBuildConfiguration("simulator");
 
 // Simple test.
 const simple = wasmTextToBinary(`(module 

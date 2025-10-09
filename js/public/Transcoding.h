@@ -19,7 +19,14 @@
 
 #include "js/TypeDecls.h"
 
+// Underlying opaque type.
+namespace js::frontend {
+struct InitialStencilAndDelazifications;
+}  // namespace js::frontend
+
 namespace JS {
+
+using Stencil = js::frontend::InitialStencilAndDelazifications;
 
 class JS_PUBLIC_API ReadOnlyCompileOptions;
 
@@ -34,8 +41,6 @@ struct TranscodeSource final {
   const char* filename;
   const uint32_t lineno;
 };
-
-using TranscodeSources = mozilla::Vector<TranscodeSource>;
 
 enum class TranscodeResult : uint8_t {
   // Successful encoding / decoding.
@@ -81,60 +86,9 @@ inline bool IsTranscodingBytecodeAligned(const void* offset) {
   return IsTranscodingBytecodeOffsetAligned(size_t(offset));
 }
 
-// Finish incremental encoding started by JS::StartIncrementalEncoding.
-//
-//   * Regular script case
-//     the |script| argument must be the top-level script returned from
-//     |JS::InstantiateGlobalStencil| with the same stencil
-//
-//   * Module script case
-//     the |script| argument must be the script returned by
-//     |JS::GetModuleScript| called on the module returned by
-//     |JS::InstantiateModuleStencil| with the same stencil
-//
-//     NOTE: |JS::GetModuleScript| doesn't work after evaluating the
-//           module script.  For the case, use Handle<JSObject*> variant of
-//           this function below.
-//
-// The |buffer| argument of |FinishIncrementalEncoding| is used for appending
-// the encoded bytecode into the buffer. If any of these functions failed, the
-// content of |buffer| would be undefined.
-//
-// |buffer| contains encoded CompilationStencil.
-//
-// If the `buffer` isn't empty, the start of the `buffer` should meet
-// IsTranscodingBytecodeAligned, and the length should meet
-// IsTranscodingBytecodeOffsetAligned.
-//
-// NOTE: As long as IsTranscodingBytecodeOffsetAligned is met, that means
-//       there's JS::BytecodeOffsetAlignment+extra bytes in the buffer,
-//       IsTranscodingBytecodeAligned should be guaranteed to meet by
-//       malloc, used by MallocAllocPolicy in mozilla::Vector.
-extern JS_PUBLIC_API bool FinishIncrementalEncoding(JSContext* cx,
-                                                    Handle<JSScript*> script,
-                                                    TranscodeBuffer& buffer);
-
-// Similar to |JS::FinishIncrementalEncoding|, but receives module obect.
-//
-// The |module| argument must be the module returned by
-// |JS::InstantiateModuleStencil| with the same stencil that's passed to
-// |JS::StartIncrementalEncoding|.
-extern JS_PUBLIC_API bool FinishIncrementalEncoding(JSContext* cx,
-                                                    Handle<JSObject*> module,
-                                                    TranscodeBuffer& buffer);
-
-// Abort incremental encoding started by JS::StartIncrementalEncoding.
-extern JS_PUBLIC_API void AbortIncrementalEncoding(Handle<JSScript*> script);
-extern JS_PUBLIC_API void AbortIncrementalEncoding(Handle<JSObject*> module);
-
 // Check if the compile options and script's flag matches.
 //
 // JS::DecodeScript* and JS::DecodeOffThreadScript internally check this.
-//
-// JS::DecodeMultiStencilsOffThread checks some options shared across multiple
-// scripts. Caller is responsible for checking each script with this API when
-// using the decoded script instead of compiling a new script wiht the given
-// options.
 extern JS_PUBLIC_API bool CheckCompileOptionsMatch(
     const ReadOnlyCompileOptions& options, JSScript* script);
 

@@ -2,6 +2,44 @@
   "data": [
     {
       "name": "bergamot-translator",
+      "schema": 1749068911282,
+      "license": "MPL-2.0",
+      "release": "v0.6.0",
+      "version": "3.0",
+      "revision": "1de4a085d3a7afb625c51a60aabb5ad298e4059f",
+      "attachment": {
+        "hash": "a3a89d9ad0a4ed8f27bf3e403701b23f5709816f6376438503f2fa5b0182c2dc",
+        "size": 4960506,
+        "filename": "bergamot-translator.wasm",
+        "location": "main-workspace/translations-wasm/05082c31-aee8-4249-9e01-c1865afd7520.wasm",
+        "mimetype": "application/wasm"
+      },
+      "fx_release": "141.0a1",
+      "filter_expression": "",
+      "id": "4fd32605-9889-4dd9-9fc7-577ad1136746",
+      "last_modified": 1749069444811
+    },
+    {
+      "name": "bergamot-translator",
+      "schema": 1734370203944,
+      "license": "MPL-2.0",
+      "release": "v0.5.0",
+      "version": "2.0",
+      "revision": "b475d25cb4568dd7bf37f80b8804030f1820bd4b",
+      "attachment": {
+        "hash": "e67e2f8be1a3fc0d9b00adce8b641cdf767bf3de90f1b3ccf732c2d711304fa3",
+        "size": 4956176,
+        "filename": "bergamot-translator.wasm",
+        "location": "main-workspace/translations-wasm/ec4aab08-4e7c-4a62-a7a5-ee6874a5d1a2.wasm",
+        "mimetype": "application/wasm"
+      },
+      "fx_release": "135.0a1",
+      "filter_expression": "",
+      "id": "876af1dd-dfce-4766-8ca3-fd08cc067bc4",
+      "last_modified": 1734380308791
+    },
+    {
+      "name": "bergamot-translator",
       "schema": 1705698520049,
       "license": "MPL-2.0",
       "release": "v0.4.5",
@@ -38,24 +76,6 @@
       "last_modified": 1681500422552
     },
     {
-      "name": "bergamot-translator",
-      "schema": 1681242478400,
-      "license": "MPL-2.0",
-      "release": "v0.4.4",
-      "version": "1.0",
-      "revision": "5ae1b1ebb3fa9a3eabed8a64ca6798154bd486eb",
-      "attachment": {
-        "hash": "dad40ec05e6e26f6df56aa37f0d3a208adcd5d35d3347e0f9a8a267c89d4f947",
-        "size": 5175863,
-        "filename": "bergamot-translator.wasm",
-        "location": "main-workspace/translations-wasm/3453d482-85f3-43f2-bdb9-cf86228b721b.wasm",
-        "mimetype": "application/wasm"
-      },
-      "filter_expression": "",
-      "id": "9aaec48d-7855-4fd5-88d7-9213747e9ef5",
-      "last_modified": 1681500422546
-    },
-    {
       "name": "fasttext-wasm",
       "schema": 1681242495582,
       "license": "MIT",
@@ -74,5 +94,5 @@
       "last_modified": 1681500422542
     }
   ],
-  "timestamp": 1705701099603
+  "timestamp": 1749069444811
 }

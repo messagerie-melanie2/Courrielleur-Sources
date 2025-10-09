@@ -7,15 +7,17 @@
 
 "use strict";
 
+// Showing/hiding the preview tooltip can be slow as we wait for CodeMirror scroll...
+requestLongerTimeout(2);
+
 add_task(async function () {
   const dbg = await initDebugger("doc-preview.html", "preview.js");
 
   await testPreviews(dbg, "testInline", [
-    { line: 17, column: 16, expression: "obj?.prop", result: 2 },
+    { line: 17, column: 16, expression: "prop", result: 2 },
   ]);
 
   await selectSource(dbg, "preview.js");
-  await testBucketedArray(dbg);
 
   await testPreviews(dbg, "empties", [
     { line: 6, column: 9, expression: "a", result: '""' },
@@ -25,8 +27,8 @@ add_task(async function () {
   ]);
 
   await testPreviews(dbg, "objects", [
-    { line: 27, column: 10, expression: "empty", result: "No properties" },
-    { line: 28, column: 22, expression: "obj?.foo", result: 1 },
+    { line: 27, column: 10, expression: "empty", result: "Object" },
+    { line: 28, column: 22, expression: "foo", result: 1 },
   ]);
 
   await testPreviews(dbg, "smalls", [
@@ -42,12 +44,12 @@ add_task(async function () {
   ]);
 
   await testPreviews(dbg, "classPreview", [
-    { line: 50, column: 20, expression: "this.x", result: 1 },
-    { line: 50, column: 29, expression: "this.#privateVar", result: 2 },
+    { line: 50, column: 20, expression: "x", result: 1 },
+    { line: 50, column: 29, expression: "#privateVar", result: 2 },
     {
       line: 50,
       column: 47,
-      expression: "Foo.#privateStatic",
+      expression: "#privateStatic",
       fields: [
         ["first", `"a"`],
         ["second", `"b"`],
@@ -62,9 +64,83 @@ add_task(async function () {
         ["#privateVar", "2"],
       ],
     },
-    { line: 51, column: 39, expression: "this.#privateVar", result: 2 },
+    { line: 51, column: 39, expression: "#privateVar", result: 2 },
   ]);
 
+  await testPreviews(dbg, "multipleTokens", [
+    { line: 81, column: 4, expression: "foo", result: "Object" },
+    { line: 81, column: 11, expression: "blip", result: "Object" },
+    { line: 82, column: 8, expression: "bar", result: "Object" },
+    { line: 84, column: 16, expression: "boom", result: `0` },
+  ]);
+
+  await testPreviews(dbg, "thisProperties", [
+    { line: 96, column: 13, expression: "myProperty", result: "Object" },
+    { line: 96, column: 23, expression: "x", result: "this-myProperty-x" },
+    {
+      line: 98,
+      column: 13,
+      expression: "propertyName",
+      result: "myProperty",
+    },
+    {
+      line: 98,
+      column: 26,
+      expression: "y",
+      result: "this-myProperty-y",
+    },
+    {
+      line: 99,
+      column: 14,
+      expression: "propertyName",
+      result: "myProperty",
+    },
+    {
+      line: 99,
+      column: 28,
+      expression: "z",
+      result: "this-myProperty-z",
+    },
+  ]);
+
+  await testPreviews(dbg, "valueOfExpression", [
+    { line: 107, column: 6, expression: "value", result: "foo" },
+  ]);
+
+  await testPreviews(dbg, "spawnWorker", [
+    { line: 126, column: 6, expression: "worker", result: "Worker" },
+  ]);
+
+  // javascript.options.experimental.explicit_resource_management is set to true, but it's
+  // only supported on Nightly at the moment, so only check for SuppressedError if
+  // they're supported.
+  if (AppConstants.ENABLE_EXPLICIT_RESOURCE_MANAGEMENT) {
+    info("Check that preview works in a script with `using` keyword");
+
+    const onPaused = waitForPaused(dbg);
+    dbg.commands.scriptCommand.execute(
+      `
+      {
+        using erm = {
+          [Symbol.dispose]() {},
+          foo: 42
+        };
+        console.log(erm.foo);
+        debugger;
+      }`,
+      {}
+    );
+
+    await onPaused;
+    await assertPreviews(dbg, [
+      // assignment
+      { line: 3, column: 16, expression: "erm", result: "Object" },
+      { line: 7, column: 26, expression: "foo", result: "42" },
+    ]);
+    await resume(dbg);
+  }
+
+  await selectSource(dbg, "preview.js");
   info(
     "Check that closing the preview tooltip doesn't release the underlying object actor"
   );
@@ -79,19 +155,24 @@ add_task(async function () {
       fields: [["hello", "{…}"]],
     },
   ]);
-  await closePreviewAtPos(dbg, 60, 7);
 
   info("Display the popup again and try to expand a property");
-  const popupEl = await tryHovering(dbg, 60, 7, "popup");
+  const { element: popupEl, tokenEl } = await tryHovering(
+    dbg,
+    60,
+    7,
+    "previewPopup"
+  );
   const nodes = popupEl.querySelectorAll(".preview-popup .node");
   const initialNodesLength = nodes.length;
-  nodes[0].querySelector(".arrow").click();
+  nodes[1].querySelector(".theme-twisty").click();
   await waitFor(
     () =>
       popupEl.querySelectorAll(".preview-popup .node").length >
       initialNodesLength
   );
   ok(true, `"hello" was expanded`);
+  await closePreviewForToken(dbg, tokenEl, "popup");
   await resume(dbg);
 });
 
@@ -103,21 +184,4 @@ async function testPreviews(dbg, fnName, previews) {
   await resume(dbg);
 
   info(`Ran tests for ${fnName}`);
-}
-
-async function testBucketedArray(dbg) {
-  invokeInTab("largeArray");
-  await waitForPaused(dbg);
-  await tryHovering(dbg, 34, 10, "popup");
-  const preview = dbg.selectors.getPreview();
-
-  is(
-    preview.properties.map(p => p.name).join(" "),
-    "[0…99] [100…100] length <prototype>",
-    "Popup properties are bucketed"
-  );
-
-  is(preview.properties[0].meta.endIndex, 99, "first bucket ends at 99");
-  is(preview.properties[2].contents.value, 101, "length is 101");
-  await resume(dbg);
 }

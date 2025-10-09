@@ -8,7 +8,7 @@ import gdb
 import gdb.printing
 
 
-class GeckoPrettyPrinter(object):
+class GeckoPrettyPrinter:
     pp = gdb.printing.RegexpCollectionPrettyPrinter("GeckoPrettyPrinters")
 
     def __init__(self, name, regexp):
@@ -25,6 +25,7 @@ import gdbpp.linkedlist  # noqa: F401
 import gdbpp.owningthread  # noqa: F401
 import gdbpp.smartptr  # noqa: F401
 import gdbpp.string  # noqa: F401
+import gdbpp.syncedcontext  # noqa: F401
 import gdbpp.tarray  # noqa: F401
 import gdbpp.thashtable  # noqa: F401
 

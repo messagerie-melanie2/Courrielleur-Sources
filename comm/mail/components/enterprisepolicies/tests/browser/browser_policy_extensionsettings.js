@@ -8,12 +8,13 @@ const BASE_URL =
   "http://mochi.test:8888/browser/comm/mail/components/enterprisepolicies/tests/browser/";
 
 async function openTab(url) {
-  let tab = window.openContentTab(url, null, null);
+  const tab = window.openContentTab(url, null, null);
   if (
-    tab.browser.webProgress?.isLoadingDocument ||
+    tab.browser.ownerDocument.readyState != "complete" ||
+    !tab.browser.currentURI ||
     tab.browser.currentURI?.spec == "about:blank"
   ) {
-    await BrowserTestUtils.browserLoaded(tab.browser);
+    await BrowserTestUtils.browserLoaded(tab.browser, false, url);
   }
   return tab;
 }
@@ -30,7 +31,7 @@ async function openTab(url) {
 function promisePopupNotificationShown(name) {
   return new Promise(resolve => {
     function popupshown() {
-      let notification = PopupNotifications.getNotification(name);
+      const notification = PopupNotifications.getNotification(name);
       if (!notification) {
         return;
       }
@@ -80,10 +81,10 @@ add_task(async function test_install_source_blocked_link() {
       },
     },
   });
-  let popupPromise = promisePopupNotificationShown(
+  const popupPromise = promisePopupNotificationShown(
     "addon-install-policy-blocked"
   );
-  let tab = await openTab(`${BASE_URL}extensionsettings.html`);
+  const tab = await openTab(`${BASE_URL}extensionsettings.html`);
 
   await SpecialPowers.spawn(tab.linkedBrowser, [], () => {
     content.document.getElementById("policytest").click();
@@ -104,16 +105,16 @@ add_task(async function test_install_source_blocked_installtrigger() {
       },
     },
   });
-  let popupPromise = promisePopupNotificationShown(
+  const popupPromise = promisePopupNotificationShown(
     "addon-install-policy-blocked"
   );
-  let tab = await openTab(`${BASE_URL}extensionsettings.html`);
+  const tab = await openTab(`${BASE_URL}extensionsettings.html`);
 
   await SpecialPowers.spawn(tab.linkedBrowser, [], () => {
     content.document.getElementById("policytest_installtrigger").click();
   });
-  let popup = await popupPromise;
-  let description = popup.querySelector(".popup-notification-description");
+  const popup = await popupPromise;
+  const description = popup.querySelector(".popup-notification-description");
   ok(
     description.textContent.endsWith("blocked_install_message"),
     "Custom install message present"
@@ -132,10 +133,10 @@ add_task(async function test_install_source_blocked_otherdomain() {
       },
     },
   });
-  let popupPromise = promisePopupNotificationShown(
+  const popupPromise = promisePopupNotificationShown(
     "addon-install-policy-blocked"
   );
-  let tab = await openTab(`${BASE_URL}extensionsettings.html`);
+  const tab = await openTab(`${BASE_URL}extensionsettings.html`);
 
   await SpecialPowers.spawn(tab.linkedBrowser, [], () => {
     content.document.getElementById("policytest_otherdomain").click();
@@ -155,10 +156,10 @@ add_task(async function test_install_source_blocked_direct() {
       },
     },
   });
-  let popupPromise = promisePopupNotificationShown(
+  const popupPromise = promisePopupNotificationShown(
     "addon-install-policy-blocked"
   );
-  let tab = await openTab(`${BASE_URL}extensionsettings.html`);
+  const tab = await openTab(`${BASE_URL}extensionsettings.html`);
 
   await SpecialPowers.spawn(
     tab.linkedBrowser,
@@ -182,8 +183,10 @@ add_task(async function test_install_source_allowed_link() {
       },
     },
   });
-  let popupPromise = promisePopupNotificationShown("addon-webext-permissions");
-  let tab = await openTab(`${BASE_URL}extensionsettings.html`);
+  const popupPromise = promisePopupNotificationShown(
+    "addon-webext-permissions"
+  );
+  const tab = await openTab(`${BASE_URL}extensionsettings.html`);
 
   await SpecialPowers.spawn(tab.linkedBrowser, [], () => {
     content.document.getElementById("policytest").click();
@@ -203,8 +206,10 @@ add_task(async function test_install_source_allowed_installtrigger() {
       },
     },
   });
-  let popupPromise = promisePopupNotificationShown("addon-webext-permissions");
-  let tab = await openTab(`${BASE_URL}extensionsettings.html`);
+  const popupPromise = promisePopupNotificationShown(
+    "addon-webext-permissions"
+  );
+  const tab = await openTab(`${BASE_URL}extensionsettings.html`);
 
   await SpecialPowers.spawn(tab.linkedBrowser, [], () => {
     content.document.getElementById("policytest_installtrigger").click();
@@ -224,8 +229,10 @@ add_task(async function test_install_source_allowed_otherdomain() {
       },
     },
   });
-  let popupPromise = promisePopupNotificationShown("addon-webext-permissions");
-  let tab = await openTab(`${BASE_URL}extensionsettings.html`);
+  const popupPromise = promisePopupNotificationShown(
+    "addon-webext-permissions"
+  );
+  const tab = await openTab(`${BASE_URL}extensionsettings.html`);
 
   await SpecialPowers.spawn(tab.linkedBrowser, [], () => {
     content.document.getElementById("policytest_otherdomain").click();
@@ -245,8 +252,10 @@ add_task(async function test_install_source_allowed_direct() {
       },
     },
   });
-  let popupPromise = promisePopupNotificationShown("addon-webext-permissions");
-  let tab = await openTab(`${BASE_URL}extensionsettings.html`);
+  const popupPromise = promisePopupNotificationShown(
+    "addon-webext-permissions"
+  );
+  const tab = await openTab(`${BASE_URL}extensionsettings.html`);
 
   await SpecialPowers.spawn(
     tab.linkedBrowser,

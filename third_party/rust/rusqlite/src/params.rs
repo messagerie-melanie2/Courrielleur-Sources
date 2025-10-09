@@ -41,7 +41,7 @@ use sealed::Sealed;
 /// - Using the [`rusqlite::params!`](crate::params!) macro, e.g.
 ///   `thing.query(rusqlite::params![1, "foo", bar])`. This is mostly useful for
 ///   heterogeneous lists where the number of parameters greater than 16, or
-///   homogenous lists of parameters where the number of parameters exceeds 32.
+///   homogeneous lists of parameters where the number of parameters exceeds 32.
 ///
 /// - For small homogeneous lists of parameters, they can either be passed as:
 ///
@@ -53,7 +53,7 @@ use sealed::Sealed;
 ///
 ///         (Note: in this case we don't implement this for slices for coherence
 ///         reasons, so it really is only for the "reference to array" types —
-///         hence why the number of parameters must be <= 32 or you need to
+///         hence why the number of parameters must be <= 32, or you need to
 ///         reach for `rusqlite::params!`)
 ///
 ///     Unfortunately, in the current design it's not possible to allow this for
@@ -70,7 +70,7 @@ use sealed::Sealed;
 /// ```rust,no_run
 /// # use rusqlite::{Connection, Result, params};
 /// fn update_rows(conn: &Connection) -> Result<()> {
-///     let mut stmt = conn.prepare("INSERT INTO test (a, b) VALUES (?, ?)")?;
+///     let mut stmt = conn.prepare("INSERT INTO test (a, b) VALUES (?1, ?2)")?;
 ///
 ///     // Using a tuple:
 ///     stmt.execute((0, "foobar"))?;
@@ -108,7 +108,7 @@ use sealed::Sealed;
 ///   parameters, or lists where the number of parameters exceeds 32.
 ///
 /// - As a slice of `&[(&str, &dyn ToSql)]`. This is what essentially all of
-///   these boil down to in the end, conceptually at least. In theory you can
+///   these boil down to in the end, conceptually at least. In theory, you can
 ///   pass this as `stmt`.
 ///
 /// - As array references, similar to the positional params. This looks like
@@ -124,7 +124,7 @@ use sealed::Sealed;
 /// ```rust,no_run
 /// # use rusqlite::{Connection, Result, named_params};
 /// fn insert(conn: &Connection) -> Result<()> {
-///     let mut stmt = conn.prepare("INSERT INTO test (key, value) VALUES (:key, :value)")?;
+///     let mut stmt = conn.prepare("INSERT INTO test (key, value) VALUES (:key, :val)")?;
 ///     // Using `rusqlite::params!`:
 ///     stmt.execute(named_params! { ":key": "one", ":val": 2 })?;
 ///     // Alternatively:
@@ -138,9 +138,7 @@ use sealed::Sealed;
 /// ## No parameters
 ///
 /// You can just use an empty tuple or the empty array literal to run a query
-/// that accepts no parameters. (The `rusqlite::NO_PARAMS` constant which was
-/// common in previous versions of this library is no longer needed, and is now
-/// deprecated).
+/// that accepts no parameters.
 ///
 /// ### Example (no parameters)
 ///
@@ -192,14 +190,13 @@ pub trait Params: Sealed {
 }
 
 // Explicitly impl for empty array. Critically, for `conn.execute([])` to be
-// unambiguous, this must be the *only* implementation for an empty array. This
-// avoids `NO_PARAMS` being a necessary part of the API.
+// unambiguous, this must be the *only* implementation for an empty array.
 //
 // This sadly prevents `impl<T: ToSql, const N: usize> Params for [T; N]`, which
 // forces people to use `params![...]` or `rusqlite::params_from_iter` for long
-// homogenous lists of parameters. This is not that big of a deal, but is
+// homogeneous lists of parameters. This is not that big of a deal, but is
 // unfortunate, especially because I mostly did it because I wanted a simple
-// syntax for no-params that didnt require importing -- the empty tuple fits
+// syntax for no-params that didn't require importing -- the empty tuple fits
 // that nicely, but I didn't think of it until much later.
 //
 // Admittedly, if we did have the generic impl, then we *wouldn't* support the
@@ -267,7 +264,7 @@ macro_rules! single_tuple_impl {
     }
 }
 
-// We use a the macro for the rest, but don't bother with trying to implement it
+// We use a macro for the rest, but don't bother with trying to implement it
 // in a single invocation (it's possible to do, but my attempts were almost the
 // same amount of code as just writing it out this way, and much more dense --
 // it is a more complicated case than the TryFrom macro we have for row->tuple).
@@ -357,7 +354,7 @@ impl_for_array_ref!(
 /// fn query(conn: &Connection, ids: &BTreeSet<String>) -> Result<()> {
 ///     assert_eq!(ids.len(), 3, "Unrealistic sample code");
 ///
-///     let mut stmt = conn.prepare("SELECT * FROM users WHERE id IN (?, ?, ?)")?;
+///     let mut stmt = conn.prepare("SELECT * FROM users WHERE id IN (?1, ?2, ?3)")?;
 ///     let _rows = stmt.query(params_from_iter(ids.iter()))?;
 ///
 ///     // use _rows...
@@ -410,7 +407,7 @@ impl_for_array_ref!(
 /// production-ready:
 ///
 /// - production code should ensure `usernames` isn't so large that it will
-///   surpass [`conn.limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER)`][limits]),
+///   surpass [`conn.limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER)`][limits],
 ///   chunking if too large. (Note that the limits api requires rusqlite to have
 ///   the "limits" feature).
 ///

@@ -54,6 +54,7 @@ CrashGenerationServer::CrashGenerationServer(
       exit_callback_(exit_callback),
       exit_context_(exit_context),
       generate_dumps_(generate_dumps),
+      dump_dir_mutex_(PTHREAD_MUTEX_INITIALIZER),
       dump_dir_(dump_path.empty() ? "/tmp" : dump_path),
       started_(false),
       receive_port_(mach_port_name),
@@ -89,6 +90,14 @@ bool CrashGenerationServer::Stop() {
   return !started_;
 }
 
+void
+CrashGenerationServer::SetPath(const char* dump_path)
+{
+  pthread_mutex_lock(&dump_dir_mutex_);
+  this->dump_dir_ = string(dump_path);
+  pthread_mutex_unlock(&dump_dir_mutex_);
+}
+
 // static
 void *CrashGenerationServer::WaitForMessages(void *server) {
   pthread_setname_np("Breakpad CrashGenerationServer");
@@ -112,7 +121,7 @@ bool CrashGenerationServer::WaitForOneMessage() {
         mach_port_t crashing_thread = message.GetTranslatedPort(1);
         mach_port_t handler_thread = message.GetTranslatedPort(2);
         mach_port_t ack_port = message.GetTranslatedPort(3);
-        ClientInfo client(info.child_pid);
+        ClientInfo client(info.child_pid, remote_task);
 
         bool result;
         std::string dump_path;
@@ -120,7 +129,9 @@ bool CrashGenerationServer::WaitForOneMessage() {
           ScopedTaskSuspend suspend(remote_task);
 
           MinidumpGenerator generator(remote_task, handler_thread);
+          pthread_mutex_lock(&dump_dir_mutex_);
           dump_path = generator.UniqueNameInDirectory(dump_dir_, NULL);
+          pthread_mutex_unlock(&dump_dir_mutex_);
         
           if (info.exception_type && info.exception_code) {
             generator.SetExceptionInformation(info.exception_type,

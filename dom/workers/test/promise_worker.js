@@ -1,5 +1,7 @@
 "use strict";
 
+/* eslint-disable mozilla/no-comparison-or-assignment-inside-ok */
+
 function ok(a, msg) {
   dump("OK: " + !!a + "  =>  " + a + " " + msg + "\n");
   postMessage({ type: "status", status: !!a, msg: a + ": " + msg });
@@ -428,6 +430,7 @@ function promiseThenNoArg() {
     resolve(42);
   });
 
+  // eslint-disable-next-line promise/valid-params
   var clone = promise.then();
   isnot(promise, clone, "These 2 promise objs are different");
   promise.then(function (v) {
@@ -473,6 +476,7 @@ function promiseCatchNoArg() {
     reject(42);
   });
 
+  // eslint-disable-next-line promise/valid-params
   var clone = promise.catch();
   isnot(promise, clone, "These 2 promise objs are different");
   promise.catch(function (v) {

@@ -2,25 +2,78 @@
 Implementations for `BlockContext` methods.
 */
 
-use super::{
-    index::BoundsCheckResult, make_local, selection::Selection, Block, BlockContext, Dimension,
-    Error, Instruction, LocalType, LookupType, LoopContext, ResultMember, Writer, WriterFlags,
-};
-use crate::{arena::Handle, proc::TypeResolution};
+use alloc::vec::Vec;
+
+use arrayvec::ArrayVec;
 use spirv::Word;
+
+use super::{
+    index::BoundsCheckResult, selection::Selection, Block, BlockContext, Dimension, Error,
+    Instruction, LocalType, LookupType, NumericType, ResultMember, WrappedFunction, Writer,
+    WriterFlags,
+};
+use crate::{arena::Handle, proc::index::GuardedIndex, Statement};
 
 fn get_dimension(type_inner: &crate::TypeInner) -> Dimension {
     match *type_inner {
-        crate::TypeInner::Scalar { .. } => Dimension::Scalar,
+        crate::TypeInner::Scalar(_) => Dimension::Scalar,
         crate::TypeInner::Vector { .. } => Dimension::Vector,
         crate::TypeInner::Matrix { .. } => Dimension::Matrix,
         _ => unreachable!(),
     }
 }
 
+/// How to derive the type of `OpAccessChain` instructions from Naga IR.
+///
+/// Most of the time, we compile Naga IR to SPIR-V instructions whose result
+/// types are simply the direct SPIR-V analog of the Naga IR's. But in some
+/// cases, the Naga IR and SPIR-V types need to diverge.
+///
+/// This enum specifies how [`BlockContext::write_access_chain`] should
+/// choose a SPIR-V result type for the `OpAccessChain` it generates, based on
+/// the type of the given Naga IR [`Expression`] it's generating code for.
+///
+/// [`Expression`]: crate::Expression
+enum AccessTypeAdjustment {
+    /// No adjustment needed: the SPIR-V type should be the direct
+    /// analog of the Naga IR expression type.
+    ///
+    /// For most access chains, this is the right thing: the Naga IR access
+    /// expression produces a [`Pointer`] to the element / component, and the
+    /// SPIR-V `OpAccessChain` instruction does the same.
+    ///
+    /// [`Pointer`]: crate::TypeInner::Pointer
+    None,
+
+    /// The SPIR-V type should be an `OpPointer` to the direct analog of the
+    /// Naga IR expression's type.
+    ///
+    /// This is necessary for indexing binding arrays in the [`Handle`] address
+    /// space:
+    ///
+    /// - In Naga IR, referencing a binding array [`GlobalVariable`] in the
+    ///   [`Handle`] address space produces a value of type [`BindingArray`],
+    ///   not a pointer to such. And [`Access`] and [`AccessIndex`] expressions
+    ///   operate on handle binding arrays by value, and produce handle values,
+    ///   not pointers.
+    ///
+    /// - In SPIR-V, a binding array `OpVariable` produces a pointer to an
+    ///   array, and `OpAccessChain` instructions operate on pointers,
+    ///   regardless of whether the elements are opaque types or not.
+    ///
+    /// See also the documentation for [`BindingArray`].
+    ///
+    /// [`Handle`]: crate::AddressSpace::Handle
+    /// [`GlobalVariable`]: crate::GlobalVariable
+    /// [`BindingArray`]: crate::TypeInner::BindingArray
+    /// [`Access`]: crate::Expression::Access
+    /// [`AccessIndex`]: crate::Expression::AccessIndex
+    IntroducePointer(spirv::StorageClass),
+}
+
 /// The results of emitting code for a left-hand-side expression.
 ///
-/// On success, `write_expression_pointer` returns one of these.
+/// On success, `write_access_chain` returns one of these.
 enum ExpressionPointer {
     /// The pointer to the expression's value is available, as the value of the
     /// expression with the given id.
@@ -38,7 +91,7 @@ enum ExpressionPointer {
 }
 
 /// The termination statement to be added to the end of the block
-pub enum BlockExit {
+enum BlockExit {
     /// Generates an OpReturn (void return)
     Return,
     /// Generates an OpBranch to the specified block
@@ -59,6 +112,42 @@ pub enum BlockExit {
     },
 }
 
+/// What code generation did with a provided [`BlockExit`] value.
+///
+/// A function that accepts a [`BlockExit`] argument should return a value of
+/// this type, to indicate whether the code it generated ended up using the
+/// provided exit, or ignored it and did a non-local exit of some other kind
+/// (say, [`Break`] or [`Continue`]). Some callers must use this information to
+/// decide whether to generate the target block at all.
+///
+/// [`Break`]: Statement::Break
+/// [`Continue`]: Statement::Continue
+#[must_use]
+enum BlockExitDisposition {
+    /// The generated code used the provided `BlockExit` value. If it included a
+    /// block label, the caller should be sure to actually emit the block it
+    /// refers to.
+    Used,
+
+    /// The generated code did not use the provided `BlockExit` value. If it
+    /// included a block label, the caller should not bother to actually emit
+    /// the block it refers to, unless it knows the block is needed for
+    /// something else.
+    Discarded,
+}
+
+#[derive(Clone, Copy, Default)]
+struct LoopContext {
+    continuing_id: Option<Word>,
+    break_id: Option<Word>,
+}
+
+#[derive(Debug)]
+pub(crate) struct DebugInfoInner<'a> {
+    pub source_code: &'a str,
+    pub source_file_id: Word,
+}
+
 impl Writer {
     // Flip Y coordinate to adjust for coordinate space difference
     // between SPIR-V and our IR.
@@ -69,12 +158,7 @@ impl Writer {
         position_id: Word,
         body: &mut Vec<Instruction>,
     ) -> Result<(), Error> {
-        let float_ptr_type_id = self.get_type_id(LookupType::Local(LocalType::Value {
-            vector_size: None,
-            kind: crate::ScalarKind::Float,
-            width: 4,
-            pointer_space: Some(spirv::StorageClass::Output),
-        }));
+        let float_ptr_type_id = self.get_f32_pointer_type_id(spirv::StorageClass::Output);
         let index_y_id = self.get_index_constant(1);
         let access_id = self.id_gen.next();
         body.push(Instruction::access_chain(
@@ -84,12 +168,7 @@ impl Writer {
             &[index_y_id],
         ));
 
-        let float_type_id = self.get_type_id(LookupType::Local(LocalType::Value {
-            vector_size: None,
-            kind: crate::ScalarKind::Float,
-            width: 4,
-            pointer_space: None,
-        }));
+        let float_type_id = self.get_f32_type_id();
         let load_id = self.id_gen.next();
         body.push(Instruction::load(float_type_id, load_id, access_id, None));
 
@@ -111,14 +190,9 @@ impl Writer {
         frag_depth_id: Word,
         body: &mut Vec<Instruction>,
     ) -> Result<(), Error> {
-        let float_type_id = self.get_type_id(LookupType::Local(LocalType::Value {
-            vector_size: None,
-            kind: crate::ScalarKind::Float,
-            width: 4,
-            pointer_space: None,
-        }));
-        let value0_id = self.get_constant_scalar(crate::ScalarValue::Float(0.0), 4);
-        let value1_id = self.get_constant_scalar(crate::ScalarValue::Float(1.0), 4);
+        let float_type_id = self.get_f32_type_id();
+        let zero_scalar_id = self.get_constant_scalar(crate::Literal::F32(0.0));
+        let one_scalar_id = self.get_constant_scalar(crate::Literal::F32(1.0));
 
         let original_id = self.id_gen.next();
         body.push(Instruction::load(
@@ -134,7 +208,7 @@ impl Writer {
             spirv::GLOp::FClamp,
             float_type_id,
             clamp_id,
-            &[original_id, value0_id, value1_id],
+            &[original_id, zero_scalar_id, one_scalar_id],
         ));
 
         body.push(Instruction::store(frag_depth_id, clamp_id, None));
@@ -183,35 +257,156 @@ impl Writer {
     }
 }
 
-impl<'w> BlockContext<'w> {
-    /// Decide whether to put off emitting instructions for `expr_handle`.
+impl BlockContext<'_> {
+    /// Generates code to ensure that a loop is bounded. Should be called immediately
+    /// after adding the OpLoopMerge instruction to `block`. This function will
+    /// [`consume()`](crate::back::spv::Function::consume) `block` and append its
+    /// instructions to a new [`Block`], which will be returned to the caller for it to
+    /// consumed prior to writing the loop body.
     ///
-    /// We would like to gather together chains of `Access` and `AccessIndex`
-    /// Naga expressions into a single `OpAccessChain` SPIR-V instruction. To do
-    /// this, we don't generate instructions for these exprs when we first
-    /// encounter them. Their ids in `self.writer.cached.ids` are left as zero. Then,
-    /// once we encounter a `Load` or `Store` expression that actually needs the
-    /// chain's value, we call `write_expression_pointer` to handle the whole
-    /// thing in one fell swoop.
-    fn is_intermediate(&self, expr_handle: Handle<crate::Expression>) -> bool {
-        match self.ir_function.expressions[expr_handle] {
-            crate::Expression::GlobalVariable(handle) => {
-                let ty = self.ir_module.global_variables[handle].ty;
-                match self.ir_module.types[ty].inner {
-                    crate::TypeInner::BindingArray { .. } => false,
-                    _ => true,
-                }
-            }
-            crate::Expression::LocalVariable(_) => true,
-            crate::Expression::FunctionArgument(index) => {
-                let arg = &self.ir_function.arguments[index as usize];
-                self.ir_module.types[arg.ty].inner.pointer_space().is_some()
-            }
+    /// Additionally this function will populate [`force_loop_bounding_vars`](crate::back::spv::Function::force_loop_bounding_vars),
+    /// ensuring that [`Function::to_words()`](crate::back::spv::Function::to_words) will
+    /// declare the required variables.
+    ///
+    /// See [`crate::back::msl::Writer::gen_force_bounded_loop_statements`] for details
+    /// of why this is required.
+    fn write_force_bounded_loop_instructions(&mut self, mut block: Block, merge_id: Word) -> Block {
+        let uint_type_id = self.writer.get_u32_type_id();
+        let uint2_type_id = self.writer.get_vec2u_type_id();
+        let uint2_ptr_type_id = self
+            .writer
+            .get_vec2u_pointer_type_id(spirv::StorageClass::Function);
+        let bool_type_id = self.writer.get_bool_type_id();
+        let bool2_type_id = self.writer.get_vec2_bool_type_id();
+        let zero_uint_const_id = self.writer.get_constant_scalar(crate::Literal::U32(0));
+        let zero_uint2_const_id = self.writer.get_constant_composite(
+            LookupType::Local(LocalType::Numeric(NumericType::Vector {
+                size: crate::VectorSize::Bi,
+                scalar: crate::Scalar::U32,
+            })),
+            &[zero_uint_const_id, zero_uint_const_id],
+        );
+        let one_uint_const_id = self.writer.get_constant_scalar(crate::Literal::U32(1));
+        let max_uint_const_id = self
+            .writer
+            .get_constant_scalar(crate::Literal::U32(u32::MAX));
+        let max_uint2_const_id = self.writer.get_constant_composite(
+            LookupType::Local(LocalType::Numeric(NumericType::Vector {
+                size: crate::VectorSize::Bi,
+                scalar: crate::Scalar::U32,
+            })),
+            &[max_uint_const_id, max_uint_const_id],
+        );
 
-            // The chain rule: if this `Access...`'s `base` operand was
-            // previously omitted, then omit this one, too.
-            _ => self.cached.ids[expr_handle.index()] == 0,
+        let loop_counter_var_id = self.gen_id();
+        if self.writer.flags.contains(WriterFlags::DEBUG) {
+            self.writer
+                .debugs
+                .push(Instruction::name(loop_counter_var_id, "loop_bound"));
         }
+        let var = super::LocalVariable {
+            id: loop_counter_var_id,
+            instruction: Instruction::variable(
+                uint2_ptr_type_id,
+                loop_counter_var_id,
+                spirv::StorageClass::Function,
+                Some(max_uint2_const_id),
+            ),
+        };
+        self.function.force_loop_bounding_vars.push(var);
+
+        let break_if_block = self.gen_id();
+
+        self.function
+            .consume(block, Instruction::branch(break_if_block));
+        block = Block::new(break_if_block);
+
+        // Load the current loop counter value from its variable. We use a vec2<u32> to
+        // simulate a 64-bit counter.
+        let load_id = self.gen_id();
+        block.body.push(Instruction::load(
+            uint2_type_id,
+            load_id,
+            loop_counter_var_id,
+            None,
+        ));
+
+        // If both the high and low u32s have reached 0 then break. ie
+        // if (all(eq(loop_counter, vec2(0)))) { break; }
+        let eq_id = self.gen_id();
+        block.body.push(Instruction::binary(
+            spirv::Op::IEqual,
+            bool2_type_id,
+            eq_id,
+            zero_uint2_const_id,
+            load_id,
+        ));
+        let all_eq_id = self.gen_id();
+        block.body.push(Instruction::relational(
+            spirv::Op::All,
+            bool_type_id,
+            all_eq_id,
+            eq_id,
+        ));
+
+        let inc_counter_block_id = self.gen_id();
+        block.body.push(Instruction::selection_merge(
+            inc_counter_block_id,
+            spirv::SelectionControl::empty(),
+        ));
+        self.function.consume(
+            block,
+            Instruction::branch_conditional(all_eq_id, merge_id, inc_counter_block_id),
+        );
+        block = Block::new(inc_counter_block_id);
+
+        // To simulate a 64-bit counter we always decrement the low u32, and decrement
+        // the high u32 when the low u32 overflows. ie
+        // counter -= vec2(select(0u, 1u, counter.y == 0), 1u);
+        // Count down from u32::MAX rather than up from 0 to avoid hang on
+        // certain Intel drivers. See <https://github.com/gfx-rs/wgpu/issues/7319>.
+        let low_id = self.gen_id();
+        block.body.push(Instruction::composite_extract(
+            uint_type_id,
+            low_id,
+            load_id,
+            &[1],
+        ));
+        let low_overflow_id = self.gen_id();
+        block.body.push(Instruction::binary(
+            spirv::Op::IEqual,
+            bool_type_id,
+            low_overflow_id,
+            low_id,
+            zero_uint_const_id,
+        ));
+        let carry_bit_id = self.gen_id();
+        block.body.push(Instruction::select(
+            uint_type_id,
+            carry_bit_id,
+            low_overflow_id,
+            one_uint_const_id,
+            zero_uint_const_id,
+        ));
+        let decrement_id = self.gen_id();
+        block.body.push(Instruction::composite_construct(
+            uint2_type_id,
+            decrement_id,
+            &[carry_bit_id, one_uint_const_id],
+        ));
+        let result_id = self.gen_id();
+        block.body.push(Instruction::binary(
+            spirv::Op::ISub,
+            uint2_type_id,
+            result_id,
+            load_id,
+            decrement_id,
+        ));
+        block
+            .body
+            .push(Instruction::store(loop_counter_var_id, result_id, None));
+
+        block
     }
 
     /// Cache an expression for a value.
@@ -220,32 +415,153 @@ impl<'w> BlockContext<'w> {
         expr_handle: Handle<crate::Expression>,
         block: &mut Block,
     ) -> Result<(), Error> {
-        let result_type_id = self.get_expression_type_id(&self.fun_info[expr_handle].ty);
+        let is_named_expression = self
+            .ir_function
+            .named_expressions
+            .contains_key(&expr_handle);
 
+        if self.fun_info[expr_handle].ref_count == 0 && !is_named_expression {
+            return Ok(());
+        }
+
+        let result_type_id = self.get_expression_type_id(&self.fun_info[expr_handle].ty);
         let id = match self.ir_function.expressions[expr_handle] {
-            crate::Expression::Access { base, index: _ } if self.is_intermediate(base) => {
-                // See `is_intermediate`; we'll handle this later in
-                // `write_expression_pointer`.
-                0
+            crate::Expression::Literal(literal) => self.writer.get_constant_scalar(literal),
+            crate::Expression::Constant(handle) => {
+                let init = self.ir_module.constants[handle].init;
+                self.writer.constant_ids[init]
+            }
+            crate::Expression::Override(_) => return Err(Error::Override),
+            crate::Expression::ZeroValue(_) => self.writer.get_constant_null(result_type_id),
+            crate::Expression::Compose { ty, ref components } => {
+                self.temp_list.clear();
+                if self.expression_constness.is_const(expr_handle) {
+                    self.temp_list.extend(
+                        crate::proc::flatten_compose(
+                            ty,
+                            components,
+                            &self.ir_function.expressions,
+                            &self.ir_module.types,
+                        )
+                        .map(|component| self.cached[component]),
+                    );
+                    self.writer
+                        .get_constant_composite(LookupType::Handle(ty), &self.temp_list)
+                } else {
+                    self.temp_list
+                        .extend(components.iter().map(|&component| self.cached[component]));
+
+                    let id = self.gen_id();
+                    block.body.push(Instruction::composite_construct(
+                        result_type_id,
+                        id,
+                        &self.temp_list,
+                    ));
+                    id
+                }
+            }
+            crate::Expression::Splat { size, value } => {
+                let value_id = self.cached[value];
+                let components = &[value_id; 4][..size as usize];
+
+                if self.expression_constness.is_const(expr_handle) {
+                    let ty = self
+                        .writer
+                        .get_expression_lookup_type(&self.fun_info[expr_handle].ty);
+                    self.writer.get_constant_composite(ty, components)
+                } else {
+                    let id = self.gen_id();
+                    block.body.push(Instruction::composite_construct(
+                        result_type_id,
+                        id,
+                        components,
+                    ));
+                    id
+                }
             }
             crate::Expression::Access { base, index } => {
                 let base_ty_inner = self.fun_info[base].ty.inner_with(&self.ir_module.types);
                 match *base_ty_inner {
+                    crate::TypeInner::Pointer { .. } | crate::TypeInner::ValuePointer { .. } => {
+                        // When we have a chain of `Access` and `AccessIndex` expressions
+                        // operating on pointers, we want to generate a single
+                        // `OpAccessChain` instruction for the whole chain. Put off
+                        // generating any code for this until we find the `Expression`
+                        // that actually dereferences the pointer.
+                        0
+                    }
+                    _ if self.function.spilled_accesses.contains(base) => {
+                        // As far as Naga IR is concerned, this expression does not yield
+                        // a pointer (we just checked, above), but this backend spilled it
+                        // to a temporary variable, so SPIR-V thinks we're accessing it
+                        // via a pointer.
+
+                        // Since the base expression was spilled, mark this access to it
+                        // as spilled, too.
+                        self.function.spilled_accesses.insert(expr_handle);
+                        self.maybe_access_spilled_composite(expr_handle, block, result_type_id)?
+                    }
                     crate::TypeInner::Vector { .. } => {
                         self.write_vector_access(expr_handle, base, index, block)?
+                    }
+                    crate::TypeInner::Array { .. } | crate::TypeInner::Matrix { .. } => {
+                        // See if `index` is known at compile time.
+                        match GuardedIndex::from_expression(
+                            index,
+                            &self.ir_function.expressions,
+                            self.ir_module,
+                        ) {
+                            GuardedIndex::Known(value) => {
+                                // If `index` is known and in bounds, we can just use
+                                // `OpCompositeExtract`.
+                                //
+                                // At the moment, validation rejects programs if this
+                                // index is out of bounds, so we don't need bounds checks.
+                                // However, that rejection is incorrect, since WGSL says
+                                // that `let` bindings are not constant expressions
+                                // (#6396). So eventually we will need to emulate bounds
+                                // checks here.
+                                let id = self.gen_id();
+                                let base_id = self.cached[base];
+                                block.body.push(Instruction::composite_extract(
+                                    result_type_id,
+                                    id,
+                                    base_id,
+                                    &[value],
+                                ));
+                                id
+                            }
+                            GuardedIndex::Expression(_) => {
+                                // We are subscripting an array or matrix that is not
+                                // behind a pointer, using an index computed at runtime.
+                                // SPIR-V has no instructions that do this, so the best we
+                                // can do is spill the value to a new temporary variable,
+                                // at which point we can get a pointer to that and just
+                                // use `OpAccessChain` in the usual way.
+                                self.spill_to_internal_variable(base, block);
+
+                                // Since the base was spilled, mark this access to it as
+                                // spilled, too.
+                                self.function.spilled_accesses.insert(expr_handle);
+                                self.maybe_access_spilled_composite(
+                                    expr_handle,
+                                    block,
+                                    result_type_id,
+                                )?
+                            }
+                        }
                     }
                     crate::TypeInner::BindingArray {
                         base: binding_type, ..
                     } => {
-                        let binding_array_false_pointer = LookupType::Local(LocalType::Pointer {
-                            base: binding_type,
-                            class: spirv::StorageClass::UniformConstant,
-                        });
-
-                        let result_id = match self.write_expression_pointer(
+                        // Only binding arrays in the `Handle` address space will take
+                        // this path, since we handled the `Pointer` case above.
+                        let result_id = match self.write_access_chain(
                             expr_handle,
                             block,
-                            Some(binding_array_false_pointer),
+                            AccessTypeAdjustment::IntroducePointer(
+                                spirv::StorageClass::UniformConstant,
+                            ),
                         )? {
                             ExpressionPointer::Ready { pointer_id } => pointer_id,
                             ExpressionPointer::Conditional { .. } => {
@@ -255,7 +571,7 @@ impl<'w> BlockContext<'w> {
                             }
                         };
 
-                        let binding_type_id = self.get_type_id(LookupType::Handle(binding_type));
+                        let binding_type_id = self.get_handle_type_id(binding_type);
 
                         let load_id = self.gen_id();
                         block.body.push(Instruction::load(
@@ -265,15 +581,14 @@ impl<'w> BlockContext<'w> {
                             None,
                         ));
 
+                        // Subsequent image operations require the image/sampler to be decorated as NonUniform
+                        // if the image/sampler binding array was accessed with a non-uniform index
+                        // see VUID-RuntimeSpirv-NonUniform-06274
                         if self.fun_info[index].uniformity.non_uniform_result.is_some() {
-                            self.writer.require_any(
-                                "NonUniformEXT",
-                                &[spirv::Capability::ShaderNonUniform],
-                            )?;
-                            self.writer.use_extension("SPV_EXT_descriptor_indexing");
                             self.writer
-                                .decorate(load_id, spirv::Decoration::NonUniform, &[]);
+                                .decorate_non_uniform_binding_array_access(load_id)?;
                         }
+
                         load_id
                     }
                     ref other => {
@@ -283,18 +598,32 @@ impl<'w> BlockContext<'w> {
                             other
                         );
                         return Err(Error::Validation(
-                            "only vectors may be dynamically indexed by value",
+                            "only vectors and arrays may be dynamically indexed by value",
                         ));
                     }
                 }
             }
-            crate::Expression::AccessIndex { base, index: _ } if self.is_intermediate(base) => {
-                // See `is_intermediate`; we'll handle this later in
-                // `write_expression_pointer`.
-                0
-            }
             crate::Expression::AccessIndex { base, index } => {
                 match *self.fun_info[base].ty.inner_with(&self.ir_module.types) {
+                    crate::TypeInner::Pointer { .. } | crate::TypeInner::ValuePointer { .. } => {
+                        // When we have a chain of `Access` and `AccessIndex` expressions
+                        // operating on pointers, we want to generate a single
+                        // `OpAccessChain` instruction for the whole chain. Put off
+                        // generating any code for this until we find the `Expression`
+                        // that actually dereferences the pointer.
+                        0
+                    }
+                    _ if self.function.spilled_accesses.contains(base) => {
+                        // As far as Naga IR is concerned, this expression does not yield
+                        // a pointer (we just checked, above), but this backend spilled it
+                        // to a temporary variable, so SPIR-V thinks we're accessing it
+                        // via a pointer.
+
+                        // Since the base expression was spilled, mark this access to it
+                        // as spilled, too.
+                        self.function.spilled_accesses.insert(expr_handle);
+                        self.maybe_access_spilled_composite(expr_handle, block, result_type_id)?
+                    }
                     crate::TypeInner::Vector { .. }
                     | crate::TypeInner::Matrix { .. }
                     | crate::TypeInner::Array { .. }
@@ -316,15 +645,14 @@ impl<'w> BlockContext<'w> {
                     crate::TypeInner::BindingArray {
                         base: binding_type, ..
                     } => {
-                        let binding_array_false_pointer = LookupType::Local(LocalType::Pointer {
-                            base: binding_type,
-                            class: spirv::StorageClass::UniformConstant,
-                        });
-
-                        let result_id = match self.write_expression_pointer(
+                        // Only binding arrays in the `Handle` address space will take
+                        // this path, since we handled the `Pointer` case above.
+                        let result_id = match self.write_access_chain(
                             expr_handle,
                             block,
-                            Some(binding_array_false_pointer),
+                            AccessTypeAdjustment::IntroducePointer(
+                                spirv::StorageClass::UniformConstant,
+                            ),
                         )? {
                             ExpressionPointer::Ready { pointer_id } => pointer_id,
                             ExpressionPointer::Conditional { .. } => {
@@ -334,7 +662,7 @@ impl<'w> BlockContext<'w> {
                             }
                         };
 
-                        let binding_type_id = self.get_type_id(LookupType::Handle(binding_type));
+                        let binding_type_id = self.get_handle_type_id(binding_type);
 
                         let load_id = self.gen_id();
                         block.body.push(Instruction::load(
@@ -353,19 +681,7 @@ impl<'w> BlockContext<'w> {
                 }
             }
             crate::Expression::GlobalVariable(handle) => {
-                self.writer.global_variables[handle.index()].access_id
-            }
-            crate::Expression::Constant(handle) => self.writer.constant_ids[handle.index()],
-            crate::Expression::Splat { size, value } => {
-                let value_id = self.cached[value];
-                let components = [value_id; 4];
-                let id = self.gen_id();
-                block.body.push(Instruction::composite_construct(
-                    result_type_id,
-                    id,
-                    &components[..size as usize],
-                ));
-                id
+                self.writer.global_variables[handle].access_id
             }
             crate::Expression::Swizzle {
                 size,
@@ -387,23 +703,6 @@ impl<'w> BlockContext<'w> {
                 ));
                 id
             }
-            crate::Expression::Compose {
-                ty: _,
-                ref components,
-            } => {
-                self.temp_list.clear();
-                for &component in components {
-                    self.temp_list.push(self.cached[component]);
-                }
-
-                let id = self.gen_id();
-                block.body.push(Instruction::composite_construct(
-                    result_type_id,
-                    id,
-                    &self.temp_list,
-                ));
-                id
-            }
             crate::Expression::Unary { op, expr } => {
                 let id = self.gen_id();
                 let expr_id = self.cached[expr];
@@ -413,16 +712,10 @@ impl<'w> BlockContext<'w> {
                     crate::UnaryOperator::Negate => match expr_ty_inner.scalar_kind() {
                         Some(crate::ScalarKind::Float) => spirv::Op::FNegate,
                         Some(crate::ScalarKind::Sint) => spirv::Op::SNegate,
-                        Some(crate::ScalarKind::Bool) => spirv::Op::LogicalNot,
-                        Some(crate::ScalarKind::Uint) | None => {
-                            log::error!("Unable to negate {:?}", expr_ty_inner);
-                            return Err(Error::FeatureNotImplemented("negation"));
-                        }
+                        _ => return Err(Error::Validation("Unexpected kind for negation")),
                     },
-                    crate::UnaryOperator::Not => match expr_ty_inner.scalar_kind() {
-                        Some(crate::ScalarKind::Bool) => spirv::Op::LogicalNot,
-                        _ => spirv::Op::Not,
-                    },
+                    crate::UnaryOperator::LogicalNot => spirv::Op::LogicalNot,
+                    crate::UnaryOperator::BitwiseNot => spirv::Op::Not,
                 };
 
                 block
@@ -434,201 +727,227 @@ impl<'w> BlockContext<'w> {
                 let id = self.gen_id();
                 let left_id = self.cached[left];
                 let right_id = self.cached[right];
+                let left_type_id = self.get_expression_type_id(&self.fun_info[left].ty);
+                let right_type_id = self.get_expression_type_id(&self.fun_info[right].ty);
 
-                let left_ty_inner = self.fun_info[left].ty.inner_with(&self.ir_module.types);
-                let right_ty_inner = self.fun_info[right].ty.inner_with(&self.ir_module.types);
+                if let Some(function_id) =
+                    self.writer
+                        .wrapped_functions
+                        .get(&WrappedFunction::BinaryOp {
+                            op,
+                            left_type_id,
+                            right_type_id,
+                        })
+                {
+                    block.body.push(Instruction::function_call(
+                        result_type_id,
+                        id,
+                        *function_id,
+                        &[left_id, right_id],
+                    ));
+                } else {
+                    let left_ty_inner = self.fun_info[left].ty.inner_with(&self.ir_module.types);
+                    let right_ty_inner = self.fun_info[right].ty.inner_with(&self.ir_module.types);
 
-                let left_dimension = get_dimension(left_ty_inner);
-                let right_dimension = get_dimension(right_ty_inner);
+                    let left_dimension = get_dimension(left_ty_inner);
+                    let right_dimension = get_dimension(right_ty_inner);
 
-                let mut reverse_operands = false;
+                    let mut reverse_operands = false;
 
-                let spirv_op = match op {
-                    crate::BinaryOperator::Add => match *left_ty_inner {
-                        crate::TypeInner::Scalar { kind, .. }
-                        | crate::TypeInner::Vector { kind, .. } => match kind {
-                            crate::ScalarKind::Float => spirv::Op::FAdd,
-                            _ => spirv::Op::IAdd,
-                        },
-                        crate::TypeInner::Matrix {
-                            columns,
-                            rows,
-                            width,
-                        } => {
-                            self.write_matrix_matrix_column_op(
-                                block,
-                                id,
-                                result_type_id,
-                                left_id,
-                                right_id,
+                    let spirv_op = match op {
+                        crate::BinaryOperator::Add => match *left_ty_inner {
+                            crate::TypeInner::Scalar(scalar)
+                            | crate::TypeInner::Vector { scalar, .. } => match scalar.kind {
+                                crate::ScalarKind::Float => spirv::Op::FAdd,
+                                _ => spirv::Op::IAdd,
+                            },
+                            crate::TypeInner::Matrix {
                                 columns,
                                 rows,
-                                width,
-                                spirv::Op::FAdd,
-                            );
+                                scalar,
+                            } => {
+                                self.write_matrix_matrix_column_op(
+                                    block,
+                                    id,
+                                    result_type_id,
+                                    left_id,
+                                    right_id,
+                                    columns,
+                                    rows,
+                                    scalar.width,
+                                    spirv::Op::FAdd,
+                                );
 
-                            self.cached[expr_handle] = id;
-                            return Ok(());
-                        }
-                        _ => unimplemented!(),
-                    },
-                    crate::BinaryOperator::Subtract => match *left_ty_inner {
-                        crate::TypeInner::Scalar { kind, .. }
-                        | crate::TypeInner::Vector { kind, .. } => match kind {
-                            crate::ScalarKind::Float => spirv::Op::FSub,
-                            _ => spirv::Op::ISub,
+                                self.cached[expr_handle] = id;
+                                return Ok(());
+                            }
+                            _ => unimplemented!(),
                         },
-                        crate::TypeInner::Matrix {
-                            columns,
-                            rows,
-                            width,
-                        } => {
-                            self.write_matrix_matrix_column_op(
-                                block,
-                                id,
-                                result_type_id,
-                                left_id,
-                                right_id,
+                        crate::BinaryOperator::Subtract => match *left_ty_inner {
+                            crate::TypeInner::Scalar(scalar)
+                            | crate::TypeInner::Vector { scalar, .. } => match scalar.kind {
+                                crate::ScalarKind::Float => spirv::Op::FSub,
+                                _ => spirv::Op::ISub,
+                            },
+                            crate::TypeInner::Matrix {
                                 columns,
                                 rows,
-                                width,
-                                spirv::Op::FSub,
-                            );
+                                scalar,
+                            } => {
+                                self.write_matrix_matrix_column_op(
+                                    block,
+                                    id,
+                                    result_type_id,
+                                    left_id,
+                                    right_id,
+                                    columns,
+                                    rows,
+                                    scalar.width,
+                                    spirv::Op::FSub,
+                                );
 
-                            self.cached[expr_handle] = id;
-                            return Ok(());
-                        }
-                        _ => unimplemented!(),
-                    },
-                    crate::BinaryOperator::Multiply => match (left_dimension, right_dimension) {
-                        (Dimension::Scalar, Dimension::Vector) => {
-                            self.write_vector_scalar_mult(
-                                block,
-                                id,
-                                result_type_id,
-                                right_id,
-                                left_id,
-                                right_ty_inner,
-                            );
+                                self.cached[expr_handle] = id;
+                                return Ok(());
+                            }
+                            _ => unimplemented!(),
+                        },
+                        crate::BinaryOperator::Multiply => {
+                            match (left_dimension, right_dimension) {
+                                (Dimension::Scalar, Dimension::Vector) => {
+                                    self.write_vector_scalar_mult(
+                                        block,
+                                        id,
+                                        result_type_id,
+                                        right_id,
+                                        left_id,
+                                        right_ty_inner,
+                                    );
 
-                            self.cached[expr_handle] = id;
-                            return Ok(());
-                        }
-                        (Dimension::Vector, Dimension::Scalar) => {
-                            self.write_vector_scalar_mult(
-                                block,
-                                id,
-                                result_type_id,
-                                left_id,
-                                right_id,
-                                left_ty_inner,
-                            );
+                                    self.cached[expr_handle] = id;
+                                    return Ok(());
+                                }
+                                (Dimension::Vector, Dimension::Scalar) => {
+                                    self.write_vector_scalar_mult(
+                                        block,
+                                        id,
+                                        result_type_id,
+                                        left_id,
+                                        right_id,
+                                        left_ty_inner,
+                                    );
 
-                            self.cached[expr_handle] = id;
-                            return Ok(());
+                                    self.cached[expr_handle] = id;
+                                    return Ok(());
+                                }
+                                (Dimension::Vector, Dimension::Matrix) => {
+                                    spirv::Op::VectorTimesMatrix
+                                }
+                                (Dimension::Matrix, Dimension::Scalar) => {
+                                    spirv::Op::MatrixTimesScalar
+                                }
+                                (Dimension::Scalar, Dimension::Matrix) => {
+                                    reverse_operands = true;
+                                    spirv::Op::MatrixTimesScalar
+                                }
+                                (Dimension::Matrix, Dimension::Vector) => {
+                                    spirv::Op::MatrixTimesVector
+                                }
+                                (Dimension::Matrix, Dimension::Matrix) => {
+                                    spirv::Op::MatrixTimesMatrix
+                                }
+                                (Dimension::Vector, Dimension::Vector)
+                                | (Dimension::Scalar, Dimension::Scalar)
+                                    if left_ty_inner.scalar_kind()
+                                        == Some(crate::ScalarKind::Float) =>
+                                {
+                                    spirv::Op::FMul
+                                }
+                                (Dimension::Vector, Dimension::Vector)
+                                | (Dimension::Scalar, Dimension::Scalar) => spirv::Op::IMul,
+                            }
                         }
-                        (Dimension::Vector, Dimension::Matrix) => spirv::Op::VectorTimesMatrix,
-                        (Dimension::Matrix, Dimension::Scalar) => spirv::Op::MatrixTimesScalar,
-                        (Dimension::Scalar, Dimension::Matrix) => {
-                            reverse_operands = true;
-                            spirv::Op::MatrixTimesScalar
-                        }
-                        (Dimension::Matrix, Dimension::Vector) => spirv::Op::MatrixTimesVector,
-                        (Dimension::Matrix, Dimension::Matrix) => spirv::Op::MatrixTimesMatrix,
-                        (Dimension::Vector, Dimension::Vector)
-                        | (Dimension::Scalar, Dimension::Scalar)
-                            if left_ty_inner.scalar_kind() == Some(crate::ScalarKind::Float) =>
-                        {
-                            spirv::Op::FMul
-                        }
-                        (Dimension::Vector, Dimension::Vector)
-                        | (Dimension::Scalar, Dimension::Scalar) => spirv::Op::IMul,
-                    },
-                    crate::BinaryOperator::Divide => match left_ty_inner.scalar_kind() {
-                        Some(crate::ScalarKind::Sint) => spirv::Op::SDiv,
-                        Some(crate::ScalarKind::Uint) => spirv::Op::UDiv,
-                        Some(crate::ScalarKind::Float) => spirv::Op::FDiv,
-                        _ => unimplemented!(),
-                    },
-                    crate::BinaryOperator::Modulo => match left_ty_inner.scalar_kind() {
-                        // TODO: handle undefined behavior
-                        // if right == 0 return 0
-                        // if left == min(type_of(left)) && right == -1 return 0
-                        Some(crate::ScalarKind::Sint) => spirv::Op::SRem,
-                        // TODO: handle undefined behavior
-                        // if right == 0 return 0
-                        Some(crate::ScalarKind::Uint) => spirv::Op::UMod,
-                        // TODO: handle undefined behavior
-                        // if right == 0 return ? see https://github.com/gpuweb/gpuweb/issues/2798
-                        Some(crate::ScalarKind::Float) => spirv::Op::FRem,
-                        _ => unimplemented!(),
-                    },
-                    crate::BinaryOperator::Equal => match left_ty_inner.scalar_kind() {
-                        Some(crate::ScalarKind::Sint | crate::ScalarKind::Uint) => {
-                            spirv::Op::IEqual
-                        }
-                        Some(crate::ScalarKind::Float) => spirv::Op::FOrdEqual,
-                        Some(crate::ScalarKind::Bool) => spirv::Op::LogicalEqual,
-                        _ => unimplemented!(),
-                    },
-                    crate::BinaryOperator::NotEqual => match left_ty_inner.scalar_kind() {
-                        Some(crate::ScalarKind::Sint | crate::ScalarKind::Uint) => {
-                            spirv::Op::INotEqual
-                        }
-                        Some(crate::ScalarKind::Float) => spirv::Op::FOrdNotEqual,
-                        Some(crate::ScalarKind::Bool) => spirv::Op::LogicalNotEqual,
-                        _ => unimplemented!(),
-                    },
-                    crate::BinaryOperator::Less => match left_ty_inner.scalar_kind() {
-                        Some(crate::ScalarKind::Sint) => spirv::Op::SLessThan,
-                        Some(crate::ScalarKind::Uint) => spirv::Op::ULessThan,
-                        Some(crate::ScalarKind::Float) => spirv::Op::FOrdLessThan,
-                        _ => unimplemented!(),
-                    },
-                    crate::BinaryOperator::LessEqual => match left_ty_inner.scalar_kind() {
-                        Some(crate::ScalarKind::Sint) => spirv::Op::SLessThanEqual,
-                        Some(crate::ScalarKind::Uint) => spirv::Op::ULessThanEqual,
-                        Some(crate::ScalarKind::Float) => spirv::Op::FOrdLessThanEqual,
-                        _ => unimplemented!(),
-                    },
-                    crate::BinaryOperator::Greater => match left_ty_inner.scalar_kind() {
-                        Some(crate::ScalarKind::Sint) => spirv::Op::SGreaterThan,
-                        Some(crate::ScalarKind::Uint) => spirv::Op::UGreaterThan,
-                        Some(crate::ScalarKind::Float) => spirv::Op::FOrdGreaterThan,
-                        _ => unimplemented!(),
-                    },
-                    crate::BinaryOperator::GreaterEqual => match left_ty_inner.scalar_kind() {
-                        Some(crate::ScalarKind::Sint) => spirv::Op::SGreaterThanEqual,
-                        Some(crate::ScalarKind::Uint) => spirv::Op::UGreaterThanEqual,
-                        Some(crate::ScalarKind::Float) => spirv::Op::FOrdGreaterThanEqual,
-                        _ => unimplemented!(),
-                    },
-                    crate::BinaryOperator::And => match left_ty_inner.scalar_kind() {
-                        Some(crate::ScalarKind::Bool) => spirv::Op::LogicalAnd,
-                        _ => spirv::Op::BitwiseAnd,
-                    },
-                    crate::BinaryOperator::ExclusiveOr => spirv::Op::BitwiseXor,
-                    crate::BinaryOperator::InclusiveOr => match left_ty_inner.scalar_kind() {
-                        Some(crate::ScalarKind::Bool) => spirv::Op::LogicalOr,
-                        _ => spirv::Op::BitwiseOr,
-                    },
-                    crate::BinaryOperator::LogicalAnd => spirv::Op::LogicalAnd,
-                    crate::BinaryOperator::LogicalOr => spirv::Op::LogicalOr,
-                    crate::BinaryOperator::ShiftLeft => spirv::Op::ShiftLeftLogical,
-                    crate::BinaryOperator::ShiftRight => match left_ty_inner.scalar_kind() {
-                        Some(crate::ScalarKind::Sint) => spirv::Op::ShiftRightArithmetic,
-                        Some(crate::ScalarKind::Uint) => spirv::Op::ShiftRightLogical,
-                        _ => unimplemented!(),
-                    },
-                };
+                        crate::BinaryOperator::Divide => match left_ty_inner.scalar_kind() {
+                            Some(crate::ScalarKind::Sint) => spirv::Op::SDiv,
+                            Some(crate::ScalarKind::Uint) => spirv::Op::UDiv,
+                            Some(crate::ScalarKind::Float) => spirv::Op::FDiv,
+                            _ => unimplemented!(),
+                        },
+                        crate::BinaryOperator::Modulo => match left_ty_inner.scalar_kind() {
+                            // TODO: handle undefined behavior
+                            // if right == 0 return ? see https://github.com/gpuweb/gpuweb/issues/2798
+                            Some(crate::ScalarKind::Float) => spirv::Op::FRem,
+                            Some(crate::ScalarKind::Sint | crate::ScalarKind::Uint) => {
+                                unreachable!("Should have been handled by wrapped function")
+                            }
+                            _ => unimplemented!(),
+                        },
+                        crate::BinaryOperator::Equal => match left_ty_inner.scalar_kind() {
+                            Some(crate::ScalarKind::Sint | crate::ScalarKind::Uint) => {
+                                spirv::Op::IEqual
+                            }
+                            Some(crate::ScalarKind::Float) => spirv::Op::FOrdEqual,
+                            Some(crate::ScalarKind::Bool) => spirv::Op::LogicalEqual,
+                            _ => unimplemented!(),
+                        },
+                        crate::BinaryOperator::NotEqual => match left_ty_inner.scalar_kind() {
+                            Some(crate::ScalarKind::Sint | crate::ScalarKind::Uint) => {
+                                spirv::Op::INotEqual
+                            }
+                            Some(crate::ScalarKind::Float) => spirv::Op::FOrdNotEqual,
+                            Some(crate::ScalarKind::Bool) => spirv::Op::LogicalNotEqual,
+                            _ => unimplemented!(),
+                        },
+                        crate::BinaryOperator::Less => match left_ty_inner.scalar_kind() {
+                            Some(crate::ScalarKind::Sint) => spirv::Op::SLessThan,
+                            Some(crate::ScalarKind::Uint) => spirv::Op::ULessThan,
+                            Some(crate::ScalarKind::Float) => spirv::Op::FOrdLessThan,
+                            _ => unimplemented!(),
+                        },
+                        crate::BinaryOperator::LessEqual => match left_ty_inner.scalar_kind() {
+                            Some(crate::ScalarKind::Sint) => spirv::Op::SLessThanEqual,
+                            Some(crate::ScalarKind::Uint) => spirv::Op::ULessThanEqual,
+                            Some(crate::ScalarKind::Float) => spirv::Op::FOrdLessThanEqual,
+                            _ => unimplemented!(),
+                        },
+                        crate::BinaryOperator::Greater => match left_ty_inner.scalar_kind() {
+                            Some(crate::ScalarKind::Sint) => spirv::Op::SGreaterThan,
+                            Some(crate::ScalarKind::Uint) => spirv::Op::UGreaterThan,
+                            Some(crate::ScalarKind::Float) => spirv::Op::FOrdGreaterThan,
+                            _ => unimplemented!(),
+                        },
+                        crate::BinaryOperator::GreaterEqual => match left_ty_inner.scalar_kind() {
+                            Some(crate::ScalarKind::Sint) => spirv::Op::SGreaterThanEqual,
+                            Some(crate::ScalarKind::Uint) => spirv::Op::UGreaterThanEqual,
+                            Some(crate::ScalarKind::Float) => spirv::Op::FOrdGreaterThanEqual,
+                            _ => unimplemented!(),
+                        },
+                        crate::BinaryOperator::And => match left_ty_inner.scalar_kind() {
+                            Some(crate::ScalarKind::Bool) => spirv::Op::LogicalAnd,
+                            _ => spirv::Op::BitwiseAnd,
+                        },
+                        crate::BinaryOperator::ExclusiveOr => spirv::Op::BitwiseXor,
+                        crate::BinaryOperator::InclusiveOr => match left_ty_inner.scalar_kind() {
+                            Some(crate::ScalarKind::Bool) => spirv::Op::LogicalOr,
+                            _ => spirv::Op::BitwiseOr,
+                        },
+                        crate::BinaryOperator::LogicalAnd => spirv::Op::LogicalAnd,
+                        crate::BinaryOperator::LogicalOr => spirv::Op::LogicalOr,
+                        crate::BinaryOperator::ShiftLeft => spirv::Op::ShiftLeftLogical,
+                        crate::BinaryOperator::ShiftRight => match left_ty_inner.scalar_kind() {
+                            Some(crate::ScalarKind::Sint) => spirv::Op::ShiftRightArithmetic,
+                            Some(crate::ScalarKind::Uint) => spirv::Op::ShiftRightLogical,
+                            _ => unimplemented!(),
+                        },
+                    };
 
-                block.body.push(Instruction::binary(
-                    spirv_op,
-                    result_type_id,
-                    id,
-                    if reverse_operands { right_id } else { left_id },
-                    if reverse_operands { left_id } else { right_id },
-                ));
+                    block.body.push(Instruction::binary(
+                        spirv_op,
+                        result_type_id,
+                        id,
+                        if reverse_operands { right_id } else { left_id },
+                        if reverse_operands { left_id } else { right_id },
+                    ));
+                }
                 id
             }
             crate::Expression::Math {
@@ -690,34 +1009,54 @@ impl<'w> BlockContext<'w> {
                         Some(crate::ScalarKind::Uint) => spirv::GLOp::UMax,
                         other => unimplemented!("Unexpected max({:?})", other),
                     }),
-                    Mf::Clamp => MathOp::Ext(match arg_scalar_kind {
-                        Some(crate::ScalarKind::Float) => spirv::GLOp::FClamp,
-                        Some(crate::ScalarKind::Sint) => spirv::GLOp::SClamp,
-                        Some(crate::ScalarKind::Uint) => spirv::GLOp::UClamp,
+                    Mf::Clamp => match arg_scalar_kind {
+                        // Clamp is undefined if min > max. In practice this means it can use a median-of-three
+                        // instruction to determine the value. This is fine according to the WGSL spec for float
+                        // clamp, but integer clamp _must_ use min-max. As such we write out min/max.
+                        Some(crate::ScalarKind::Float) => MathOp::Ext(spirv::GLOp::FClamp),
+                        Some(_) => {
+                            let (min_op, max_op) = match arg_scalar_kind {
+                                Some(crate::ScalarKind::Sint) => {
+                                    (spirv::GLOp::SMin, spirv::GLOp::SMax)
+                                }
+                                Some(crate::ScalarKind::Uint) => {
+                                    (spirv::GLOp::UMin, spirv::GLOp::UMax)
+                                }
+                                _ => unreachable!(),
+                            };
+
+                            let max_id = self.gen_id();
+                            block.body.push(Instruction::ext_inst(
+                                self.writer.gl450_ext_inst_id,
+                                max_op,
+                                result_type_id,
+                                max_id,
+                                &[arg0_id, arg1_id],
+                            ));
+
+                            MathOp::Custom(Instruction::ext_inst(
+                                self.writer.gl450_ext_inst_id,
+                                min_op,
+                                result_type_id,
+                                id,
+                                &[max_id, arg2_id],
+                            ))
+                        }
                         other => unimplemented!("Unexpected max({:?})", other),
-                    }),
+                    },
                     Mf::Saturate => {
-                        let (maybe_size, width) = match *arg_ty {
-                            crate::TypeInner::Vector { size, width, .. } => (Some(size), width),
-                            crate::TypeInner::Scalar { width, .. } => (None, width),
+                        let (maybe_size, scalar) = match *arg_ty {
+                            crate::TypeInner::Vector { size, scalar } => (Some(size), scalar),
+                            crate::TypeInner::Scalar(scalar) => (None, scalar),
                             ref other => unimplemented!("Unexpected saturate({:?})", other),
                         };
-
-                        let mut arg1_id = self
-                            .writer
-                            .get_constant_scalar(crate::ScalarValue::Float(0.0), width);
-                        let mut arg2_id = self
-                            .writer
-                            .get_constant_scalar(crate::ScalarValue::Float(1.0), width);
+                        let scalar = crate::Scalar::float(scalar.width);
+                        let mut arg1_id = self.writer.get_constant_scalar_with(0, scalar)?;
+                        let mut arg2_id = self.writer.get_constant_scalar_with(1, scalar)?;
 
                         if let Some(size) = maybe_size {
-                            let ty = LocalType::Value {
-                                vector_size: Some(size),
-                                kind: crate::ScalarKind::Float,
-                                width,
-                                pointer_space: None,
-                            }
-                            .into();
+                            let ty =
+                                LocalType::Numeric(NumericType::Vector { size, scalar }).into();
 
                             self.temp_list.clear();
                             self.temp_list.resize(size as _, arg1_id);
@@ -759,13 +1098,17 @@ impl<'w> BlockContext<'w> {
                     Mf::Floor => MathOp::Ext(spirv::GLOp::Floor),
                     Mf::Fract => MathOp::Ext(spirv::GLOp::Fract),
                     Mf::Trunc => MathOp::Ext(spirv::GLOp::Trunc),
-                    Mf::Modf => MathOp::Ext(spirv::GLOp::Modf),
-                    Mf::Frexp => MathOp::Ext(spirv::GLOp::Frexp),
+                    Mf::Modf => MathOp::Ext(spirv::GLOp::ModfStruct),
+                    Mf::Frexp => MathOp::Ext(spirv::GLOp::FrexpStruct),
                     Mf::Ldexp => MathOp::Ext(spirv::GLOp::Ldexp),
                     // geometry
                     Mf::Dot => match *self.fun_info[arg].ty.inner_with(&self.ir_module.types) {
                         crate::TypeInner::Vector {
-                            kind: crate::ScalarKind::Float,
+                            scalar:
+                                crate::Scalar {
+                                    kind: crate::ScalarKind::Float,
+                                    ..
+                                },
                             ..
                         } => MathOp::Custom(Instruction::binary(
                             spirv::Op::Dot,
@@ -783,6 +1126,14 @@ impl<'w> BlockContext<'w> {
                                 arg1_id,
                                 size as u32,
                                 block,
+                                |result_id, composite_id, index| {
+                                    Instruction::composite_extract(
+                                        result_type_id,
+                                        result_id,
+                                        composite_id,
+                                        &[index],
+                                    )
+                                },
                             );
                             self.cached[expr_handle] = id;
                             return Ok(());
@@ -791,6 +1142,97 @@ impl<'w> BlockContext<'w> {
                             "Correct TypeInner for dot product should be already validated"
                         ),
                     },
+                    fun @ (Mf::Dot4I8Packed | Mf::Dot4U8Packed) => {
+                        if self
+                            .writer
+                            .require_all(&[
+                                spirv::Capability::DotProduct,
+                                spirv::Capability::DotProductInput4x8BitPacked,
+                            ])
+                            .is_ok()
+                        {
+                            // Write optimized code using `PackedVectorFormat4x8Bit`.
+                            if self.writer.lang_version() < (1, 6) {
+                                // SPIR-V 1.6 supports the required capabilities natively, so the extension
+                                // is only required for earlier versions. See right column of
+                                // <https://registry.khronos.org/SPIR-V/specs/unified1/SPIRV.html#OpSDot>.
+                                self.writer.use_extension("SPV_KHR_integer_dot_product");
+                            }
+
+                            let op = match fun {
+                                Mf::Dot4I8Packed => spirv::Op::SDot,
+                                Mf::Dot4U8Packed => spirv::Op::UDot,
+                                _ => unreachable!(),
+                            };
+
+                            block.body.push(Instruction::ternary(
+                                op,
+                                result_type_id,
+                                id,
+                                arg0_id,
+                                arg1_id,
+                                spirv::PackedVectorFormat::PackedVectorFormat4x8Bit as Word,
+                            ));
+                        } else {
+                            // Fall back to a polyfill since `PackedVectorFormat4x8Bit` is not available.
+                            let (extract_op, arg0_id, arg1_id) = match fun {
+                                Mf::Dot4U8Packed => (spirv::Op::BitFieldUExtract, arg0_id, arg1_id),
+                                Mf::Dot4I8Packed => {
+                                    // Convert both packed arguments to signed integers so that we can apply the
+                                    // `BitFieldSExtract` operation on them in `write_dot_product` below.
+                                    let new_arg0_id = self.gen_id();
+                                    block.body.push(Instruction::unary(
+                                        spirv::Op::Bitcast,
+                                        result_type_id,
+                                        new_arg0_id,
+                                        arg0_id,
+                                    ));
+
+                                    let new_arg1_id = self.gen_id();
+                                    block.body.push(Instruction::unary(
+                                        spirv::Op::Bitcast,
+                                        result_type_id,
+                                        new_arg1_id,
+                                        arg1_id,
+                                    ));
+
+                                    (spirv::Op::BitFieldSExtract, new_arg0_id, new_arg1_id)
+                                }
+                                _ => unreachable!(),
+                            };
+
+                            let eight = self.writer.get_constant_scalar(crate::Literal::U32(8));
+
+                            const VEC_LENGTH: u8 = 4;
+                            let bit_shifts: [_; VEC_LENGTH as usize] =
+                                core::array::from_fn(|index| {
+                                    self.writer
+                                        .get_constant_scalar(crate::Literal::U32(index as u32 * 8))
+                                });
+
+                            self.write_dot_product(
+                                id,
+                                result_type_id,
+                                arg0_id,
+                                arg1_id,
+                                VEC_LENGTH as Word,
+                                block,
+                                |result_id, composite_id, index| {
+                                    Instruction::ternary(
+                                        extract_op,
+                                        result_type_id,
+                                        result_id,
+                                        composite_id,
+                                        bit_shifts[index as usize],
+                                        eight,
+                                    )
+                                },
+                            );
+                        }
+
+                        self.cached[expr_handle] = id;
+                        return Ok(());
+                    }
                     Mf::Outer => MathOp::Custom(Instruction::binary(
                         spirv::Op::OuterProduct,
                         result_type_id,
@@ -826,15 +1268,10 @@ impl<'w> BlockContext<'w> {
                             // if the selector is a scalar, we need to splat it
                             (
                                 &crate::TypeInner::Vector { size, .. },
-                                &crate::TypeInner::Scalar { kind, width },
+                                &crate::TypeInner::Scalar(scalar),
                             ) => {
                                 let selector_type_id =
-                                    self.get_type_id(LookupType::Local(LocalType::Value {
-                                        vector_size: Some(size),
-                                        kind,
-                                        width,
-                                        pointer_space: None,
-                                    }));
+                                    self.get_numeric_type_id(NumericType::Vector { size, scalar });
                                 self.temp_list.clear();
                                 self.temp_list.resize(size as usize, arg2_id);
 
@@ -868,6 +1305,12 @@ impl<'w> BlockContext<'w> {
                         arg0_id,
                     )),
                     Mf::Determinant => MathOp::Ext(spirv::GLOp::Determinant),
+                    Mf::QuantizeToF16 => MathOp::Custom(Instruction::unary(
+                        spirv::Op::QuantizeToF16,
+                        result_type_id,
+                        id,
+                        arg0_id,
+                    )),
                     Mf::ReverseBits => MathOp::Custom(Instruction::unary(
                         spirv::Op::BitReverse,
                         result_type_id,
@@ -875,28 +1318,23 @@ impl<'w> BlockContext<'w> {
                         arg0_id,
                     )),
                     Mf::CountTrailingZeros => {
-                        let uint = crate::ScalarValue::Uint(32);
                         let uint_id = match *arg_ty {
-                            crate::TypeInner::Vector { size, width, .. } => {
-                                let ty = LocalType::Value {
-                                    vector_size: Some(size),
-                                    kind: crate::ScalarKind::Uint,
-                                    width,
-                                    pointer_space: None,
-                                }
-                                .into();
+                            crate::TypeInner::Vector { size, scalar } => {
+                                let ty =
+                                    LocalType::Numeric(NumericType::Vector { size, scalar }).into();
 
                                 self.temp_list.clear();
                                 self.temp_list.resize(
                                     size as _,
-                                    self.writer.get_constant_scalar(uint, width),
+                                    self.writer
+                                        .get_constant_scalar_with(scalar.width * 8, scalar)?,
                                 );
 
                                 self.writer.get_constant_composite(ty, &self.temp_list)
                             }
-                            crate::TypeInner::Scalar { width, .. } => {
-                                self.writer.get_constant_scalar(uint, width)
-                            }
+                            crate::TypeInner::Scalar(scalar) => self
+                                .writer
+                                .get_constant_scalar_with(scalar.width * 8, scalar)?,
                             _ => unreachable!(),
                         };
 
@@ -918,43 +1356,45 @@ impl<'w> BlockContext<'w> {
                         ))
                     }
                     Mf::CountLeadingZeros => {
-                        let int = crate::ScalarValue::Sint(31);
-
-                        let (int_type_id, int_id) = match *arg_ty {
-                            crate::TypeInner::Vector { size, width, .. } => {
-                                let ty = LocalType::Value {
-                                    vector_size: Some(size),
-                                    kind: crate::ScalarKind::Sint,
-                                    width,
-                                    pointer_space: None,
-                                }
-                                .into();
+                        let (int_type_id, int_id, width) = match *arg_ty {
+                            crate::TypeInner::Vector { size, scalar } => {
+                                let ty =
+                                    LocalType::Numeric(NumericType::Vector { size, scalar }).into();
 
                                 self.temp_list.clear();
-                                self.temp_list
-                                    .resize(size as _, self.writer.get_constant_scalar(int, width));
+                                self.temp_list.resize(
+                                    size as _,
+                                    self.writer
+                                        .get_constant_scalar_with(scalar.width * 8 - 1, scalar)?,
+                                );
 
                                 (
                                     self.get_type_id(ty),
                                     self.writer.get_constant_composite(ty, &self.temp_list),
+                                    scalar.width,
                                 )
                             }
-                            crate::TypeInner::Scalar { width, .. } => (
-                                self.get_type_id(LookupType::Local(LocalType::Value {
-                                    vector_size: None,
-                                    kind: crate::ScalarKind::Sint,
-                                    width,
-                                    pointer_space: None,
-                                })),
-                                self.writer.get_constant_scalar(int, width),
+                            crate::TypeInner::Scalar(scalar) => (
+                                self.get_numeric_type_id(NumericType::Scalar(scalar)),
+                                self.writer
+                                    .get_constant_scalar_with(scalar.width * 8 - 1, scalar)?,
+                                scalar.width,
                             ),
                             _ => unreachable!(),
+                        };
+
+                        if width != 4 {
+                            unreachable!("This is validated out until a polyfill is implemented. https://github.com/gfx-rs/wgpu/issues/5276");
                         };
 
                         let msb_id = self.gen_id();
                         block.body.push(Instruction::ext_inst(
                             self.writer.gl450_ext_inst_id,
-                            spirv::GLOp::FindUMsb,
+                            if width != 4 {
+                                spirv::GLOp::FindILsb
+                            } else {
+                                spirv::GLOp::FindUMsb
+                            },
                             int_type_id,
                             msb_id,
                             &[arg0_id],
@@ -980,40 +1420,300 @@ impl<'w> BlockContext<'w> {
                             Some(crate::ScalarKind::Sint) => spirv::Op::BitFieldSExtract,
                             other => unimplemented!("Unexpected sign({:?})", other),
                         };
+
+                        // The behavior of ExtractBits is undefined when offset + count > bit_width. We need
+                        // to first sanitize the offset and count first. If we don't do this, AMD and Intel
+                        // will return out-of-spec values if the extracted range is not within the bit width.
+                        //
+                        // This encodes the exact formula specified by the wgsl spec:
+                        // https://gpuweb.github.io/gpuweb/wgsl/#extractBits-unsigned-builtin
+                        //
+                        // w = sizeof(x) * 8
+                        // o = min(offset, w)
+                        // tmp = w - o
+                        // c = min(count, tmp)
+                        //
+                        // bitfieldExtract(x, o, c)
+
+                        let bit_width = arg_ty.scalar_width().unwrap() * 8;
+                        let width_constant = self
+                            .writer
+                            .get_constant_scalar(crate::Literal::U32(bit_width as u32));
+
+                        let u32_type =
+                            self.get_numeric_type_id(NumericType::Scalar(crate::Scalar::U32));
+
+                        // o = min(offset, w)
+                        let offset_id = self.gen_id();
+                        block.body.push(Instruction::ext_inst(
+                            self.writer.gl450_ext_inst_id,
+                            spirv::GLOp::UMin,
+                            u32_type,
+                            offset_id,
+                            &[arg1_id, width_constant],
+                        ));
+
+                        // tmp = w - o
+                        let max_count_id = self.gen_id();
+                        block.body.push(Instruction::binary(
+                            spirv::Op::ISub,
+                            u32_type,
+                            max_count_id,
+                            width_constant,
+                            offset_id,
+                        ));
+
+                        // c = min(count, tmp)
+                        let count_id = self.gen_id();
+                        block.body.push(Instruction::ext_inst(
+                            self.writer.gl450_ext_inst_id,
+                            spirv::GLOp::UMin,
+                            u32_type,
+                            count_id,
+                            &[arg2_id, max_count_id],
+                        ));
+
                         MathOp::Custom(Instruction::ternary(
                             op,
                             result_type_id,
                             id,
                             arg0_id,
-                            arg1_id,
-                            arg2_id,
+                            offset_id,
+                            count_id,
                         ))
                     }
-                    Mf::InsertBits => MathOp::Custom(Instruction::quaternary(
-                        spirv::Op::BitFieldInsert,
-                        result_type_id,
-                        id,
-                        arg0_id,
-                        arg1_id,
-                        arg2_id,
-                        arg3_id,
-                    )),
-                    Mf::FindLsb => MathOp::Ext(spirv::GLOp::FindILsb),
-                    Mf::FindMsb => MathOp::Ext(match arg_scalar_kind {
-                        Some(crate::ScalarKind::Uint) => spirv::GLOp::FindUMsb,
-                        Some(crate::ScalarKind::Sint) => spirv::GLOp::FindSMsb,
-                        other => unimplemented!("Unexpected findMSB({:?})", other),
-                    }),
+                    Mf::InsertBits => {
+                        // The behavior of InsertBits has the same undefined behavior as ExtractBits.
+
+                        let bit_width = arg_ty.scalar_width().unwrap() * 8;
+                        let width_constant = self
+                            .writer
+                            .get_constant_scalar(crate::Literal::U32(bit_width as u32));
+
+                        let u32_type =
+                            self.get_numeric_type_id(NumericType::Scalar(crate::Scalar::U32));
+
+                        // o = min(offset, w)
+                        let offset_id = self.gen_id();
+                        block.body.push(Instruction::ext_inst(
+                            self.writer.gl450_ext_inst_id,
+                            spirv::GLOp::UMin,
+                            u32_type,
+                            offset_id,
+                            &[arg2_id, width_constant],
+                        ));
+
+                        // tmp = w - o
+                        let max_count_id = self.gen_id();
+                        block.body.push(Instruction::binary(
+                            spirv::Op::ISub,
+                            u32_type,
+                            max_count_id,
+                            width_constant,
+                            offset_id,
+                        ));
+
+                        // c = min(count, tmp)
+                        let count_id = self.gen_id();
+                        block.body.push(Instruction::ext_inst(
+                            self.writer.gl450_ext_inst_id,
+                            spirv::GLOp::UMin,
+                            u32_type,
+                            count_id,
+                            &[arg3_id, max_count_id],
+                        ));
+
+                        MathOp::Custom(Instruction::quaternary(
+                            spirv::Op::BitFieldInsert,
+                            result_type_id,
+                            id,
+                            arg0_id,
+                            arg1_id,
+                            offset_id,
+                            count_id,
+                        ))
+                    }
+                    Mf::FirstTrailingBit => MathOp::Ext(spirv::GLOp::FindILsb),
+                    Mf::FirstLeadingBit => {
+                        if arg_ty.scalar_width() == Some(4) {
+                            let thing = match arg_scalar_kind {
+                                Some(crate::ScalarKind::Uint) => spirv::GLOp::FindUMsb,
+                                Some(crate::ScalarKind::Sint) => spirv::GLOp::FindSMsb,
+                                other => unimplemented!("Unexpected firstLeadingBit({:?})", other),
+                            };
+                            MathOp::Ext(thing)
+                        } else {
+                            unreachable!("This is validated out until a polyfill is implemented. https://github.com/gfx-rs/wgpu/issues/5276");
+                        }
+                    }
                     Mf::Pack4x8unorm => MathOp::Ext(spirv::GLOp::PackUnorm4x8),
                     Mf::Pack4x8snorm => MathOp::Ext(spirv::GLOp::PackSnorm4x8),
                     Mf::Pack2x16float => MathOp::Ext(spirv::GLOp::PackHalf2x16),
                     Mf::Pack2x16unorm => MathOp::Ext(spirv::GLOp::PackUnorm2x16),
                     Mf::Pack2x16snorm => MathOp::Ext(spirv::GLOp::PackSnorm2x16),
+                    fun @ (Mf::Pack4xI8 | Mf::Pack4xU8 | Mf::Pack4xI8Clamp | Mf::Pack4xU8Clamp) => {
+                        let (int_type, is_signed) = match fun {
+                            Mf::Pack4xI8 | Mf::Pack4xI8Clamp => (crate::ScalarKind::Sint, true),
+                            Mf::Pack4xU8 | Mf::Pack4xU8Clamp => (crate::ScalarKind::Uint, false),
+                            _ => unreachable!(),
+                        };
+                        let should_clamp = matches!(fun, Mf::Pack4xI8Clamp | Mf::Pack4xU8Clamp);
+                        let uint_type_id =
+                            self.get_numeric_type_id(NumericType::Scalar(crate::Scalar::U32));
+
+                        let int_type_id =
+                            self.get_numeric_type_id(NumericType::Scalar(crate::Scalar {
+                                kind: int_type,
+                                width: 4,
+                            }));
+
+                        let mut last_instruction = Instruction::new(spirv::Op::Nop);
+
+                        let zero = self.writer.get_constant_scalar(crate::Literal::U32(0));
+                        let mut preresult = zero;
+                        block
+                            .body
+                            .reserve(usize::from(VEC_LENGTH) * (2 + usize::from(is_signed)));
+
+                        let eight = self.writer.get_constant_scalar(crate::Literal::U32(8));
+                        const VEC_LENGTH: u8 = 4;
+                        for i in 0..u32::from(VEC_LENGTH) {
+                            let offset =
+                                self.writer.get_constant_scalar(crate::Literal::U32(i * 8));
+                            let mut extracted = self.gen_id();
+                            block.body.push(Instruction::binary(
+                                spirv::Op::CompositeExtract,
+                                int_type_id,
+                                extracted,
+                                arg0_id,
+                                i,
+                            ));
+                            if is_signed {
+                                let casted = self.gen_id();
+                                block.body.push(Instruction::unary(
+                                    spirv::Op::Bitcast,
+                                    uint_type_id,
+                                    casted,
+                                    extracted,
+                                ));
+                                extracted = casted;
+                            }
+                            if should_clamp {
+                                let (min, max, clamp_op) = if is_signed {
+                                    (
+                                        crate::Literal::I32(-128),
+                                        crate::Literal::I32(127),
+                                        spirv::GLOp::SClamp,
+                                    )
+                                } else {
+                                    (
+                                        crate::Literal::U32(0),
+                                        crate::Literal::U32(255),
+                                        spirv::GLOp::UClamp,
+                                    )
+                                };
+                                let [min, max] =
+                                    [min, max].map(|lit| self.writer.get_constant_scalar(lit));
+
+                                let clamp_id = self.gen_id();
+                                block.body.push(Instruction::ext_inst(
+                                    self.writer.gl450_ext_inst_id,
+                                    clamp_op,
+                                    result_type_id,
+                                    clamp_id,
+                                    &[extracted, min, max],
+                                ));
+
+                                extracted = clamp_id;
+                            }
+                            let is_last = i == u32::from(VEC_LENGTH - 1);
+                            if is_last {
+                                last_instruction = Instruction::quaternary(
+                                    spirv::Op::BitFieldInsert,
+                                    result_type_id,
+                                    id,
+                                    preresult,
+                                    extracted,
+                                    offset,
+                                    eight,
+                                )
+                            } else {
+                                let new_preresult = self.gen_id();
+                                block.body.push(Instruction::quaternary(
+                                    spirv::Op::BitFieldInsert,
+                                    result_type_id,
+                                    new_preresult,
+                                    preresult,
+                                    extracted,
+                                    offset,
+                                    eight,
+                                ));
+                                preresult = new_preresult;
+                            }
+                        }
+
+                        MathOp::Custom(last_instruction)
+                    }
                     Mf::Unpack4x8unorm => MathOp::Ext(spirv::GLOp::UnpackUnorm4x8),
                     Mf::Unpack4x8snorm => MathOp::Ext(spirv::GLOp::UnpackSnorm4x8),
                     Mf::Unpack2x16float => MathOp::Ext(spirv::GLOp::UnpackHalf2x16),
                     Mf::Unpack2x16unorm => MathOp::Ext(spirv::GLOp::UnpackUnorm2x16),
                     Mf::Unpack2x16snorm => MathOp::Ext(spirv::GLOp::UnpackSnorm2x16),
+                    fun @ (Mf::Unpack4xI8 | Mf::Unpack4xU8) => {
+                        let (int_type, extract_op, is_signed) = match fun {
+                            Mf::Unpack4xI8 => {
+                                (crate::ScalarKind::Sint, spirv::Op::BitFieldSExtract, true)
+                            }
+                            Mf::Unpack4xU8 => {
+                                (crate::ScalarKind::Uint, spirv::Op::BitFieldUExtract, false)
+                            }
+                            _ => unreachable!(),
+                        };
+
+                        let sint_type_id =
+                            self.get_numeric_type_id(NumericType::Scalar(crate::Scalar::I32));
+
+                        let eight = self.writer.get_constant_scalar(crate::Literal::U32(8));
+                        let int_type_id =
+                            self.get_numeric_type_id(NumericType::Scalar(crate::Scalar {
+                                kind: int_type,
+                                width: 4,
+                            }));
+                        block
+                            .body
+                            .reserve(usize::from(VEC_LENGTH) * 2 + usize::from(is_signed));
+                        let arg_id = if is_signed {
+                            let new_arg_id = self.gen_id();
+                            block.body.push(Instruction::unary(
+                                spirv::Op::Bitcast,
+                                sint_type_id,
+                                new_arg_id,
+                                arg0_id,
+                            ));
+                            new_arg_id
+                        } else {
+                            arg0_id
+                        };
+
+                        const VEC_LENGTH: u8 = 4;
+                        let parts: [_; VEC_LENGTH as usize] =
+                            core::array::from_fn(|_| self.gen_id());
+                        for (i, part_id) in parts.into_iter().enumerate() {
+                            let index = self
+                                .writer
+                                .get_constant_scalar(crate::Literal::U32(i as u32 * 8));
+                            block.body.push(Instruction::ternary(
+                                extract_op,
+                                int_type_id,
+                                part_id,
+                                arg_id,
+                                index,
+                                eight,
+                            ));
+                        }
+
+                        MathOp::Custom(Instruction::composite_construct(result_type_id, id, &parts))
+                    }
                 };
 
                 block.body.push(match math_op {
@@ -1030,226 +1730,20 @@ impl<'w> BlockContext<'w> {
             }
             crate::Expression::LocalVariable(variable) => self.function.variables[&variable].id,
             crate::Expression::Load { pointer } => {
-                match self.write_expression_pointer(pointer, block, None)? {
-                    ExpressionPointer::Ready { pointer_id } => {
-                        let id = self.gen_id();
-                        let atomic_space =
-                            match *self.fun_info[pointer].ty.inner_with(&self.ir_module.types) {
-                                crate::TypeInner::Pointer { base, space } => {
-                                    match self.ir_module.types[base].inner {
-                                        crate::TypeInner::Atomic { .. } => Some(space),
-                                        _ => None,
-                                    }
-                                }
-                                _ => None,
-                            };
-                        let instruction = if let Some(space) = atomic_space {
-                            let (semantics, scope) = space.to_spirv_semantics_and_scope();
-                            let scope_constant_id = self.get_scope_constant(scope as u32);
-                            let semantics_id = self.get_index_constant(semantics.bits());
-                            Instruction::atomic_load(
-                                result_type_id,
-                                id,
-                                pointer_id,
-                                scope_constant_id,
-                                semantics_id,
-                            )
-                        } else {
-                            Instruction::load(result_type_id, id, pointer_id, None)
-                        };
-                        block.body.push(instruction);
-                        id
-                    }
-                    ExpressionPointer::Conditional { condition, access } => {
-                        //TODO: support atomics?
-                        self.write_conditional_indexed_load(
-                            result_type_id,
-                            condition,
-                            block,
-                            move |id_gen, block| {
-                                // The in-bounds path. Perform the access and the load.
-                                let pointer_id = access.result_id.unwrap();
-                                let value_id = id_gen.next();
-                                block.body.push(access);
-                                block.body.push(Instruction::load(
-                                    result_type_id,
-                                    value_id,
-                                    pointer_id,
-                                    None,
-                                ));
-                                value_id
-                            },
-                        )
-                    }
-                }
+                self.write_checked_load(pointer, block, AccessTypeAdjustment::None, result_type_id)?
             }
             crate::Expression::FunctionArgument(index) => self.function.parameter_id(index),
             crate::Expression::CallResult(_)
             | crate::Expression::AtomicResult { .. }
-            | crate::Expression::RayQueryProceedResult => self.cached[expr_handle],
+            | crate::Expression::WorkGroupUniformLoadResult { .. }
+            | crate::Expression::RayQueryProceedResult
+            | crate::Expression::SubgroupBallotResult
+            | crate::Expression::SubgroupOperationResult { .. } => self.cached[expr_handle],
             crate::Expression::As {
                 expr,
                 kind,
                 convert,
-            } => {
-                use crate::ScalarKind as Sk;
-
-                let expr_id = self.cached[expr];
-                let (src_kind, src_size, src_width, is_matrix) =
-                    match *self.fun_info[expr].ty.inner_with(&self.ir_module.types) {
-                        crate::TypeInner::Scalar { kind, width } => (kind, None, width, false),
-                        crate::TypeInner::Vector { kind, width, size } => {
-                            (kind, Some(size), width, false)
-                        }
-                        crate::TypeInner::Matrix { width, .. } => (kind, None, width, true),
-                        ref other => {
-                            log::error!("As source {:?}", other);
-                            return Err(Error::Validation("Unexpected Expression::As source"));
-                        }
-                    };
-
-                enum Cast {
-                    Identity,
-                    Unary(spirv::Op),
-                    Binary(spirv::Op, Word),
-                    Ternary(spirv::Op, Word, Word),
-                }
-
-                let cast = if is_matrix {
-                    // we only support identity casts for matrices
-                    Cast::Unary(spirv::Op::CopyObject)
-                } else {
-                    match (src_kind, kind, convert) {
-                        // Filter out identity casts. Some Adreno drivers are
-                        // confused by no-op OpBitCast instructions.
-                        (src_kind, kind, convert)
-                            if src_kind == kind && convert.unwrap_or(src_width) == src_width =>
-                        {
-                            Cast::Identity
-                        }
-                        (Sk::Bool, Sk::Bool, _) => Cast::Unary(spirv::Op::CopyObject),
-                        (_, _, None) => Cast::Unary(spirv::Op::Bitcast),
-                        // casting to a bool - generate `OpXxxNotEqual`
-                        (_, Sk::Bool, Some(_)) => {
-                            let (op, value) = match src_kind {
-                                Sk::Sint => (spirv::Op::INotEqual, crate::ScalarValue::Sint(0)),
-                                Sk::Uint => (spirv::Op::INotEqual, crate::ScalarValue::Uint(0)),
-                                Sk::Float => {
-                                    (spirv::Op::FUnordNotEqual, crate::ScalarValue::Float(0.0))
-                                }
-                                Sk::Bool => unreachable!(),
-                            };
-                            let zero_scalar_id = self.writer.get_constant_scalar(value, src_width);
-                            let zero_id = match src_size {
-                                Some(size) => {
-                                    let ty = LocalType::Value {
-                                        vector_size: Some(size),
-                                        kind: src_kind,
-                                        width: src_width,
-                                        pointer_space: None,
-                                    }
-                                    .into();
-
-                                    self.temp_list.clear();
-                                    self.temp_list.resize(size as _, zero_scalar_id);
-
-                                    self.writer.get_constant_composite(ty, &self.temp_list)
-                                }
-                                None => zero_scalar_id,
-                            };
-
-                            Cast::Binary(op, zero_id)
-                        }
-                        // casting from a bool - generate `OpSelect`
-                        (Sk::Bool, _, Some(dst_width)) => {
-                            let (val0, val1) = match kind {
-                                Sk::Sint => {
-                                    (crate::ScalarValue::Sint(0), crate::ScalarValue::Sint(1))
-                                }
-                                Sk::Uint => {
-                                    (crate::ScalarValue::Uint(0), crate::ScalarValue::Uint(1))
-                                }
-                                Sk::Float => (
-                                    crate::ScalarValue::Float(0.0),
-                                    crate::ScalarValue::Float(1.0),
-                                ),
-                                Sk::Bool => unreachable!(),
-                            };
-                            let scalar0_id = self.writer.get_constant_scalar(val0, dst_width);
-                            let scalar1_id = self.writer.get_constant_scalar(val1, dst_width);
-                            let (accept_id, reject_id) = match src_size {
-                                Some(size) => {
-                                    let ty = LocalType::Value {
-                                        vector_size: Some(size),
-                                        kind,
-                                        width: dst_width,
-                                        pointer_space: None,
-                                    }
-                                    .into();
-
-                                    self.temp_list.clear();
-                                    self.temp_list.resize(size as _, scalar0_id);
-
-                                    let vec0_id =
-                                        self.writer.get_constant_composite(ty, &self.temp_list);
-
-                                    self.temp_list.fill(scalar1_id);
-
-                                    let vec1_id =
-                                        self.writer.get_constant_composite(ty, &self.temp_list);
-
-                                    (vec1_id, vec0_id)
-                                }
-                                None => (scalar1_id, scalar0_id),
-                            };
-
-                            Cast::Ternary(spirv::Op::Select, accept_id, reject_id)
-                        }
-                        (Sk::Float, Sk::Uint, Some(_)) => Cast::Unary(spirv::Op::ConvertFToU),
-                        (Sk::Float, Sk::Sint, Some(_)) => Cast::Unary(spirv::Op::ConvertFToS),
-                        (Sk::Float, Sk::Float, Some(dst_width)) if src_width != dst_width => {
-                            Cast::Unary(spirv::Op::FConvert)
-                        }
-                        (Sk::Sint, Sk::Float, Some(_)) => Cast::Unary(spirv::Op::ConvertSToF),
-                        (Sk::Sint, Sk::Sint, Some(dst_width)) if src_width != dst_width => {
-                            Cast::Unary(spirv::Op::SConvert)
-                        }
-                        (Sk::Uint, Sk::Float, Some(_)) => Cast::Unary(spirv::Op::ConvertUToF),
-                        (Sk::Uint, Sk::Uint, Some(dst_width)) if src_width != dst_width => {
-                            Cast::Unary(spirv::Op::UConvert)
-                        }
-                        // We assume it's either an identity cast, or int-uint.
-                        _ => Cast::Unary(spirv::Op::Bitcast),
-                    }
-                };
-
-                let id = self.gen_id();
-                let instruction = match cast {
-                    Cast::Identity => None,
-                    Cast::Unary(op) => Some(Instruction::unary(op, result_type_id, id, expr_id)),
-                    Cast::Binary(op, operand) => Some(Instruction::binary(
-                        op,
-                        result_type_id,
-                        id,
-                        expr_id,
-                        operand,
-                    )),
-                    Cast::Ternary(op, op1, op2) => Some(Instruction::ternary(
-                        op,
-                        result_type_id,
-                        id,
-                        expr_id,
-                        op1,
-                        op2,
-                    )),
-                };
-                if let Some(instruction) = instruction {
-                    block.body.push(instruction);
-                    id
-                } else {
-                    expr_id
-                }
-            }
+            } => self.write_as_expression(expr, convert, kind, block, result_type_id)?,
             crate::Expression::ImageLoad {
                 image,
                 coordinate,
@@ -1302,23 +1796,22 @@ impl<'w> BlockContext<'w> {
                 let object_ty = self.fun_info[accept].ty.inner_with(&self.ir_module.types);
 
                 if let (
-                    &crate::TypeInner::Scalar {
-                        kind: crate::ScalarKind::Bool,
-                        width,
-                    },
+                    &crate::TypeInner::Scalar(
+                        condition_scalar @ crate::Scalar {
+                            kind: crate::ScalarKind::Bool,
+                            ..
+                        },
+                    ),
                     &crate::TypeInner::Vector { size, .. },
                 ) = (condition_ty, object_ty)
                 {
                     self.temp_list.clear();
                     self.temp_list.resize(size as usize, condition_id);
 
-                    let bool_vector_type_id =
-                        self.get_type_id(LookupType::Local(LocalType::Value {
-                            vector_size: Some(size),
-                            kind: crate::ScalarKind::Bool,
-                            width,
-                            pointer_space: None,
-                        }));
+                    let bool_vector_type_id = self.get_numeric_type_id(NumericType::Vector {
+                        size,
+                        scalar: condition_scalar,
+                    });
 
                     let id = self.gen_id();
                     block.body.push(Instruction::composite_construct(
@@ -1374,10 +1867,6 @@ impl<'w> BlockContext<'w> {
                     Rf::Any => spirv::Op::Any,
                     Rf::IsNan => spirv::Op::IsNan,
                     Rf::IsInf => spirv::Op::IsInf,
-                    //TODO: these require Kernel capability
-                    Rf::IsFinite | Rf::IsNormal => {
-                        return Err(Error::FeatureNotImplemented("is finite/normal"))
-                    }
                 };
                 let id = self.gen_id();
                 block
@@ -1387,10 +1876,27 @@ impl<'w> BlockContext<'w> {
             }
             crate::Expression::ArrayLength(expr) => self.write_runtime_array_length(expr, block)?,
             crate::Expression::RayQueryGetIntersection { query, committed } => {
-                if !committed {
-                    return Err(Error::FeatureNotImplemented("candidate intersection"));
-                }
-                self.write_ray_query_get_intersection(query, block)
+                let query_id = self.cached[query];
+                let func_id = self
+                    .writer
+                    .write_ray_query_get_intersection_function(committed, self.ir_module);
+                let ray_intersection = self.ir_module.special_types.ray_intersection.unwrap();
+                let intersection_type_id = self.get_handle_type_id(ray_intersection);
+                let id = self.gen_id();
+                block.body.push(Instruction::function_call(
+                    intersection_type_id,
+                    id,
+                    func_id,
+                    &[query_id],
+                ));
+                id
+            }
+            crate::Expression::RayQueryVertexPositions { query, committed } => {
+                self.writer.require_any(
+                    "RayQueryVertexPositions",
+                    &[spirv::Capability::RayQueryPositionFetchKHR],
+                )?;
+                self.write_ray_query_return_vertex_position(query, block, committed)
             }
         };
 
@@ -1398,89 +1904,361 @@ impl<'w> BlockContext<'w> {
         Ok(())
     }
 
+    /// Helper which focuses on generating the `As` expressions and the various conversions
+    /// that need to happen because of that.
+    fn write_as_expression(
+        &mut self,
+        expr: Handle<crate::Expression>,
+        convert: Option<u8>,
+        kind: crate::ScalarKind,
+
+        block: &mut Block,
+        result_type_id: u32,
+    ) -> Result<u32, Error> {
+        use crate::ScalarKind as Sk;
+        let expr_id = self.cached[expr];
+        let ty = self.fun_info[expr].ty.inner_with(&self.ir_module.types);
+
+        // Matrix casts needs special treatment in SPIR-V, as the cast functions
+        // can take vectors or scalars, but not matrices. In order to cast a matrix
+        // we need to cast each column of the matrix individually and construct a new
+        // matrix from the converted columns.
+        if let crate::TypeInner::Matrix {
+            columns,
+            rows,
+            scalar,
+        } = *ty
+        {
+            let Some(convert) = convert else {
+                // No conversion needs to be done, passes through.
+                return Ok(expr_id);
+            };
+
+            if convert == scalar.width {
+                // No conversion needs to be done, passes through.
+                return Ok(expr_id);
+            }
+
+            if kind != Sk::Float {
+                // Only float conversions are supported for matrices.
+                return Err(Error::Validation("Matrices must be floats"));
+            }
+
+            // Type of each extracted column
+            let column_src_ty =
+                self.get_type_id(LookupType::Local(LocalType::Numeric(NumericType::Vector {
+                    size: rows,
+                    scalar,
+                })));
+
+            // Type of the column after conversion
+            let column_dst_ty =
+                self.get_type_id(LookupType::Local(LocalType::Numeric(NumericType::Vector {
+                    size: rows,
+                    scalar: crate::Scalar {
+                        kind,
+                        width: convert,
+                    },
+                })));
+
+            let mut components = ArrayVec::<Word, 4>::new();
+
+            for column in 0..columns as usize {
+                let column_id = self.gen_id();
+                block.body.push(Instruction::composite_extract(
+                    column_src_ty,
+                    column_id,
+                    expr_id,
+                    &[column as u32],
+                ));
+
+                let column_conv_id = self.gen_id();
+                block.body.push(Instruction::unary(
+                    spirv::Op::FConvert,
+                    column_dst_ty,
+                    column_conv_id,
+                    column_id,
+                ));
+
+                components.push(column_conv_id);
+            }
+
+            let construct_id = self.gen_id();
+
+            block.body.push(Instruction::composite_construct(
+                result_type_id,
+                construct_id,
+                &components,
+            ));
+
+            return Ok(construct_id);
+        }
+
+        let (src_scalar, src_size) = match *ty {
+            crate::TypeInner::Scalar(scalar) => (scalar, None),
+            crate::TypeInner::Vector { scalar, size } => (scalar, Some(size)),
+            ref other => {
+                log::error!("As source {:?}", other);
+                return Err(Error::Validation("Unexpected Expression::As source"));
+            }
+        };
+
+        enum Cast {
+            Identity(Word),
+            Unary(spirv::Op, Word),
+            Binary(spirv::Op, Word, Word),
+            Ternary(spirv::Op, Word, Word, Word),
+        }
+        let cast = match (src_scalar.kind, kind, convert) {
+            // Filter out identity casts. Some Adreno drivers are
+            // confused by no-op OpBitCast instructions.
+            (src_kind, kind, convert)
+                if src_kind == kind
+                    && convert.filter(|&width| width != src_scalar.width).is_none() =>
+            {
+                Cast::Identity(expr_id)
+            }
+            (Sk::Bool, Sk::Bool, _) => Cast::Unary(spirv::Op::CopyObject, expr_id),
+            (_, _, None) => Cast::Unary(spirv::Op::Bitcast, expr_id),
+            // casting to a bool - generate `OpXxxNotEqual`
+            (_, Sk::Bool, Some(_)) => {
+                let op = match src_scalar.kind {
+                    Sk::Sint | Sk::Uint => spirv::Op::INotEqual,
+                    Sk::Float => spirv::Op::FUnordNotEqual,
+                    Sk::Bool | Sk::AbstractInt | Sk::AbstractFloat => unreachable!(),
+                };
+                let zero_scalar_id = self.writer.get_constant_scalar_with(0, src_scalar)?;
+                let zero_id = match src_size {
+                    Some(size) => {
+                        let ty = LocalType::Numeric(NumericType::Vector {
+                            size,
+                            scalar: src_scalar,
+                        })
+                        .into();
+
+                        self.temp_list.clear();
+                        self.temp_list.resize(size as _, zero_scalar_id);
+
+                        self.writer.get_constant_composite(ty, &self.temp_list)
+                    }
+                    None => zero_scalar_id,
+                };
+
+                Cast::Binary(op, expr_id, zero_id)
+            }
+            // casting from a bool - generate `OpSelect`
+            (Sk::Bool, _, Some(dst_width)) => {
+                let dst_scalar = crate::Scalar {
+                    kind,
+                    width: dst_width,
+                };
+                let zero_scalar_id = self.writer.get_constant_scalar_with(0, dst_scalar)?;
+                let one_scalar_id = self.writer.get_constant_scalar_with(1, dst_scalar)?;
+                let (accept_id, reject_id) = match src_size {
+                    Some(size) => {
+                        let ty = LocalType::Numeric(NumericType::Vector {
+                            size,
+                            scalar: dst_scalar,
+                        })
+                        .into();
+
+                        self.temp_list.clear();
+                        self.temp_list.resize(size as _, zero_scalar_id);
+
+                        let vec0_id = self.writer.get_constant_composite(ty, &self.temp_list);
+
+                        self.temp_list.fill(one_scalar_id);
+
+                        let vec1_id = self.writer.get_constant_composite(ty, &self.temp_list);
+
+                        (vec1_id, vec0_id)
+                    }
+                    None => (one_scalar_id, zero_scalar_id),
+                };
+
+                Cast::Ternary(spirv::Op::Select, expr_id, accept_id, reject_id)
+            }
+            // Avoid undefined behaviour when casting from a float to integer
+            // when the value is out of range for the target type. Additionally
+            // ensure we clamp to the correct value as per the WGSL spec.
+            //
+            // https://www.w3.org/TR/WGSL/#floating-point-conversion:
+            // * If X is exactly representable in the target type T, then the
+            //   result is that value.
+            // * Otherwise, the result is the value in T closest to
+            //   truncate(X) and also exactly representable in the original
+            //   floating point type.
+            (Sk::Float, Sk::Sint | Sk::Uint, Some(width)) => {
+                let dst_scalar = crate::Scalar { kind, width };
+                let (min, max) =
+                    crate::proc::min_max_float_representable_by(src_scalar, dst_scalar);
+                let expr_type_id = self.get_expression_type_id(&self.fun_info[expr].ty);
+
+                let maybe_splat_const = |writer: &mut Writer, const_id| match src_size {
+                    None => const_id,
+                    Some(size) => {
+                        let constituent_ids = [const_id; crate::VectorSize::MAX];
+                        writer.get_constant_composite(
+                            LookupType::Local(LocalType::Numeric(NumericType::Vector {
+                                size,
+                                scalar: src_scalar,
+                            })),
+                            &constituent_ids[..size as usize],
+                        )
+                    }
+                };
+                let min_const_id = self.writer.get_constant_scalar(min);
+                let min_const_id = maybe_splat_const(self.writer, min_const_id);
+                let max_const_id = self.writer.get_constant_scalar(max);
+                let max_const_id = maybe_splat_const(self.writer, max_const_id);
+
+                let clamp_id = self.gen_id();
+                block.body.push(Instruction::ext_inst(
+                    self.writer.gl450_ext_inst_id,
+                    spirv::GLOp::FClamp,
+                    expr_type_id,
+                    clamp_id,
+                    &[expr_id, min_const_id, max_const_id],
+                ));
+
+                let op = match dst_scalar.kind {
+                    crate::ScalarKind::Sint => spirv::Op::ConvertFToS,
+                    crate::ScalarKind::Uint => spirv::Op::ConvertFToU,
+                    _ => unreachable!(),
+                };
+                Cast::Unary(op, clamp_id)
+            }
+            (Sk::Float, Sk::Float, Some(dst_width)) if src_scalar.width != dst_width => {
+                Cast::Unary(spirv::Op::FConvert, expr_id)
+            }
+            (Sk::Sint, Sk::Float, Some(_)) => Cast::Unary(spirv::Op::ConvertSToF, expr_id),
+            (Sk::Sint, Sk::Sint, Some(dst_width)) if src_scalar.width != dst_width => {
+                Cast::Unary(spirv::Op::SConvert, expr_id)
+            }
+            (Sk::Uint, Sk::Float, Some(_)) => Cast::Unary(spirv::Op::ConvertUToF, expr_id),
+            (Sk::Uint, Sk::Uint, Some(dst_width)) if src_scalar.width != dst_width => {
+                Cast::Unary(spirv::Op::UConvert, expr_id)
+            }
+            (Sk::Uint, Sk::Sint, Some(dst_width)) if src_scalar.width != dst_width => {
+                Cast::Unary(spirv::Op::SConvert, expr_id)
+            }
+            (Sk::Sint, Sk::Uint, Some(dst_width)) if src_scalar.width != dst_width => {
+                Cast::Unary(spirv::Op::UConvert, expr_id)
+            }
+            // We assume it's either an identity cast, or int-uint.
+            _ => Cast::Unary(spirv::Op::Bitcast, expr_id),
+        };
+        Ok(match cast {
+            Cast::Identity(expr) => expr,
+            Cast::Unary(op, op1) => {
+                let id = self.gen_id();
+                block
+                    .body
+                    .push(Instruction::unary(op, result_type_id, id, op1));
+                id
+            }
+            Cast::Binary(op, op1, op2) => {
+                let id = self.gen_id();
+                block
+                    .body
+                    .push(Instruction::binary(op, result_type_id, id, op1, op2));
+                id
+            }
+            Cast::Ternary(op, op1, op2, op3) => {
+                let id = self.gen_id();
+                block
+                    .body
+                    .push(Instruction::ternary(op, result_type_id, id, op1, op2, op3));
+                id
+            }
+        })
+    }
+
     /// Build an `OpAccessChain` instruction.
     ///
     /// Emit any needed bounds-checking expressions to `block`.
     ///
-    /// Some cases we need to generate a different return type than what the IR gives us.
-    /// This is because pointers to binding arrays don't exist in the IR, but we need to
-    /// create them to create an access chain in SPIRV.
+    /// Give the `OpAccessChain` a result type based on `expr_handle`, adjusted
+    /// according to `type_adjustment`; see the documentation for
+    /// [`AccessTypeAdjustment`] for details.
     ///
     /// On success, the return value is an [`ExpressionPointer`] value; see the
     /// documentation for that type.
-    fn write_expression_pointer(
+    fn write_access_chain(
         &mut self,
         mut expr_handle: Handle<crate::Expression>,
         block: &mut Block,
-        return_type_override: Option<LookupType>,
+        type_adjustment: AccessTypeAdjustment,
     ) -> Result<ExpressionPointer, Error> {
-        let result_lookup_ty = match self.fun_info[expr_handle].ty {
-            TypeResolution::Handle(ty_handle) => match return_type_override {
-                // We use the return type override as a special case for binding arrays as the OpAccessChain
-                // needs to return a pointer, but indexing into a binding array just gives you the type of
-                // the binding in the IR.
-                Some(ty) => ty,
-                None => LookupType::Handle(ty_handle),
-            },
-            TypeResolution::Value(ref inner) => LookupType::Local(make_local(inner).unwrap()),
+        let result_type_id = {
+            let resolution = &self.fun_info[expr_handle].ty;
+            match type_adjustment {
+                AccessTypeAdjustment::None => self.writer.get_expression_type_id(resolution),
+                AccessTypeAdjustment::IntroducePointer(class) => {
+                    self.writer.get_resolution_pointer_id(resolution, class)
+                }
+            }
         };
-        let result_type_id = self.get_type_id(result_lookup_ty);
 
-        // The id of the boolean `and` of all dynamic bounds checks up to this point. If
-        // `None`, then we haven't done any dynamic bounds checks yet.
+        // The id of the boolean `and` of all dynamic bounds checks up to this point.
         //
-        // When we have a chain of bounds checks, we combine them with `OpLogicalAnd`, not
-        // a short-circuit branch. This means we might do comparisons we don't need to,
-        // but we expect these checks to almost always succeed, and keeping branches to a
-        // minimum is essential.
+        // See `extend_bounds_check_condition_chain` for a full explanation.
         let mut accumulated_checks = None;
+
+        // Is true if we are accessing into a binding array with a non-uniform index.
+        let mut is_non_uniform_binding_array = false;
 
         self.temp_list.clear();
         let root_id = loop {
+            // If `expr_handle` was spilled, then the temporary variable has exactly
+            // the value we want to start from.
+            if let Some(spilled) = self.function.spilled_composites.get(&expr_handle) {
+                // The root id of the `OpAccessChain` instruction is the temporary
+                // variable we spilled the composite to.
+                break spilled.id;
+            }
+
             expr_handle = match self.ir_function.expressions[expr_handle] {
                 crate::Expression::Access { base, index } => {
-                    let index_id = match self.write_bounds_check(base, index, block)? {
-                        BoundsCheckResult::KnownInBounds(known_index) => {
-                            // Even if the index is known, `OpAccessIndex`
-                            // requires expression operands, not literals.
-                            let scalar = crate::ScalarValue::Uint(known_index as u64);
-                            self.writer.get_constant_scalar(scalar, 4)
-                        }
-                        BoundsCheckResult::Computed(computed_index_id) => computed_index_id,
-                        BoundsCheckResult::Conditional(comparison_id) => {
-                            match accumulated_checks {
-                                Some(prior_checks) => {
-                                    let combined = self.gen_id();
-                                    block.body.push(Instruction::binary(
-                                        spirv::Op::LogicalAnd,
-                                        self.writer.get_bool_type_id(),
-                                        combined,
-                                        prior_checks,
-                                        comparison_id,
-                                    ));
-                                    accumulated_checks = Some(combined);
-                                }
-                                None => {
-                                    // Start a fresh chain of checks.
-                                    accumulated_checks = Some(comparison_id);
-                                }
-                            }
+                    is_non_uniform_binding_array |=
+                        self.is_nonuniform_binding_array_access(base, index);
 
-                            // Either way, the index to use is unchanged.
-                            self.cached[index]
-                        }
-                    };
+                    let index = GuardedIndex::Expression(index);
+                    let index_id =
+                        self.write_access_chain_index(base, index, &mut accumulated_checks, block)?;
                     self.temp_list.push(index_id);
 
                     base
                 }
                 crate::Expression::AccessIndex { base, index } => {
-                    let const_id = self.get_index_constant(index);
-                    self.temp_list.push(const_id);
+                    // Decide whether we're indexing a struct (bounds checks
+                    // forbidden) or anything else (bounds checks required).
+                    let mut base_ty = self.fun_info[base].ty.inner_with(&self.ir_module.types);
+                    if let crate::TypeInner::Pointer { base, .. } = *base_ty {
+                        base_ty = &self.ir_module.types[base].inner;
+                    }
+                    let index_id = if let crate::TypeInner::Struct { .. } = *base_ty {
+                        self.get_index_constant(index)
+                    } else {
+                        // `index` is constant, so this can't possibly require
+                        // setting `is_nonuniform_binding_array_access`.
+
+                        // Even though the index value is statically known, `base`
+                        // may be a runtime-sized array, so we still need to go
+                        // through the bounds check process.
+                        self.write_access_chain_index(
+                            base,
+                            GuardedIndex::Known(index),
+                            &mut accumulated_checks,
+                            block,
+                        )?
+                    };
+
+                    self.temp_list.push(index_id);
                     base
                 }
                 crate::Expression::GlobalVariable(handle) => {
-                    let gv = &self.writer.global_variables[handle.index()];
+                    let gv = &self.writer.global_variables[handle];
                     break gv.access_id;
                 }
                 crate::Expression::LocalVariable(variable) => {
@@ -1494,10 +2272,13 @@ impl<'w> BlockContext<'w> {
             }
         };
 
-        let pointer = if self.temp_list.is_empty() {
-            ExpressionPointer::Ready {
-                pointer_id: root_id,
-            }
+        let (pointer_id, expr_pointer) = if self.temp_list.is_empty() {
+            (
+                root_id,
+                ExpressionPointer::Ready {
+                    pointer_id: root_id,
+                },
+            )
         } else {
             self.temp_list.reverse();
             let pointer_id = self.gen_id();
@@ -1508,16 +2289,284 @@ impl<'w> BlockContext<'w> {
             // caller to generate the branch, the access, the load or store, and
             // the zero value (for loads). Otherwise, we can emit the access
             // ourselves, and just hand them the id of the pointer.
-            match accumulated_checks {
+            let expr_pointer = match accumulated_checks {
                 Some(condition) => ExpressionPointer::Conditional { condition, access },
                 None => {
                     block.body.push(access);
                     ExpressionPointer::Ready { pointer_id }
                 }
+            };
+            (pointer_id, expr_pointer)
+        };
+        // Subsequent load, store and atomic operations require the pointer to be decorated as NonUniform
+        // if the binding array was accessed with a non-uniform index
+        // see VUID-RuntimeSpirv-NonUniform-06274
+        if is_non_uniform_binding_array {
+            self.writer
+                .decorate_non_uniform_binding_array_access(pointer_id)?;
+        }
+
+        Ok(expr_pointer)
+    }
+
+    fn is_nonuniform_binding_array_access(
+        &mut self,
+        base: Handle<crate::Expression>,
+        index: Handle<crate::Expression>,
+    ) -> bool {
+        let crate::Expression::GlobalVariable(var_handle) = self.ir_function.expressions[base]
+        else {
+            return false;
+        };
+
+        // The access chain needs to be decorated as NonUniform
+        // see VUID-RuntimeSpirv-NonUniform-06274
+        let gvar = &self.ir_module.global_variables[var_handle];
+        let crate::TypeInner::BindingArray { .. } = self.ir_module.types[gvar.ty].inner else {
+            return false;
+        };
+
+        self.fun_info[index].uniformity.non_uniform_result.is_some()
+    }
+
+    /// Compute a single index operand to an `OpAccessChain` instruction.
+    ///
+    /// Given that we are indexing `base` with `index`, apply the appropriate
+    /// bounds check policies, emitting code to `block` to clamp `index` or
+    /// determine whether it's in bounds. Return the SPIR-V instruction id of
+    /// the index value we should actually use.
+    ///
+    /// Extend `accumulated_checks` to include the results of any needed bounds
+    /// checks. See [`BlockContext::extend_bounds_check_condition_chain`].
+    fn write_access_chain_index(
+        &mut self,
+        base: Handle<crate::Expression>,
+        index: GuardedIndex,
+        accumulated_checks: &mut Option<Word>,
+        block: &mut Block,
+    ) -> Result<Word, Error> {
+        match self.write_bounds_check(base, index, block)? {
+            BoundsCheckResult::KnownInBounds(known_index) => {
+                // Even if the index is known, `OpAccessChain`
+                // requires expression operands, not literals.
+                let scalar = crate::Literal::U32(known_index);
+                Ok(self.writer.get_constant_scalar(scalar))
+            }
+            BoundsCheckResult::Computed(computed_index_id) => Ok(computed_index_id),
+            BoundsCheckResult::Conditional {
+                condition_id: condition,
+                index_id: index,
+            } => {
+                self.extend_bounds_check_condition_chain(accumulated_checks, condition, block);
+
+                // Use the index from the `Access` expression unchanged.
+                Ok(index)
+            }
+        }
+    }
+
+    /// Add a condition to a chain of bounds checks.
+    ///
+    /// As we build an `OpAccessChain` instruction govered by
+    /// [`BoundsCheckPolicy::ReadZeroSkipWrite`], we accumulate a chain of
+    /// dynamic bounds checks, one for each index in the chain, which must all
+    /// be true for that `OpAccessChain`'s execution to be well-defined. This
+    /// function adds the boolean instruction id `comparison_id` to `chain`.
+    ///
+    /// If `chain` is `None`, that means there are no bounds checks in the chain
+    /// yet. If chain is `Some(id)`, then `id` is the conjunction of all the
+    /// bounds checks in the chain.
+    ///
+    /// When we have multiple bounds checks, we combine them with
+    /// `OpLogicalAnd`, not a short-circuit branch. This means we might do
+    /// comparisons we don't need to, but we expect these checks to almost
+    /// always succeed, and keeping branches to a minimum is essential.
+    ///
+    /// [`BoundsCheckPolicy::ReadZeroSkipWrite`]: crate::proc::BoundsCheckPolicy
+    fn extend_bounds_check_condition_chain(
+        &mut self,
+        chain: &mut Option<Word>,
+        comparison_id: Word,
+        block: &mut Block,
+    ) {
+        match *chain {
+            Some(ref mut prior_checks) => {
+                let combined = self.gen_id();
+                block.body.push(Instruction::binary(
+                    spirv::Op::LogicalAnd,
+                    self.writer.get_bool_type_id(),
+                    combined,
+                    *prior_checks,
+                    comparison_id,
+                ));
+                *prior_checks = combined;
+            }
+            None => {
+                // Start a fresh chain of checks.
+                *chain = Some(comparison_id);
+            }
+        }
+    }
+
+    fn write_checked_load(
+        &mut self,
+        pointer: Handle<crate::Expression>,
+        block: &mut Block,
+        access_type_adjustment: AccessTypeAdjustment,
+        result_type_id: Word,
+    ) -> Result<Word, Error> {
+        match self.write_access_chain(pointer, block, access_type_adjustment)? {
+            ExpressionPointer::Ready { pointer_id } => {
+                let id = self.gen_id();
+                let atomic_space =
+                    match *self.fun_info[pointer].ty.inner_with(&self.ir_module.types) {
+                        crate::TypeInner::Pointer { base, space } => {
+                            match self.ir_module.types[base].inner {
+                                crate::TypeInner::Atomic { .. } => Some(space),
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    };
+                let instruction = if let Some(space) = atomic_space {
+                    let (semantics, scope) = space.to_spirv_semantics_and_scope();
+                    let scope_constant_id = self.get_scope_constant(scope as u32);
+                    let semantics_id = self.get_index_constant(semantics.bits());
+                    Instruction::atomic_load(
+                        result_type_id,
+                        id,
+                        pointer_id,
+                        scope_constant_id,
+                        semantics_id,
+                    )
+                } else {
+                    Instruction::load(result_type_id, id, pointer_id, None)
+                };
+                block.body.push(instruction);
+                Ok(id)
+            }
+            ExpressionPointer::Conditional { condition, access } => {
+                //TODO: support atomics?
+                let value = self.write_conditional_indexed_load(
+                    result_type_id,
+                    condition,
+                    block,
+                    move |id_gen, block| {
+                        // The in-bounds path. Perform the access and the load.
+                        let pointer_id = access.result_id.unwrap();
+                        let value_id = id_gen.next();
+                        block.body.push(access);
+                        block.body.push(Instruction::load(
+                            result_type_id,
+                            value_id,
+                            pointer_id,
+                            None,
+                        ));
+                        value_id
+                    },
+                );
+                Ok(value)
+            }
+        }
+    }
+
+    fn spill_to_internal_variable(&mut self, base: Handle<crate::Expression>, block: &mut Block) {
+        use indexmap::map::Entry;
+
+        // Make sure we have an internal variable to spill `base` to.
+        let spill_variable_id = match self.function.spilled_composites.entry(base) {
+            Entry::Occupied(preexisting) => preexisting.get().id,
+            Entry::Vacant(vacant) => {
+                // Generate a new internal variable of the appropriate
+                // type for `base`.
+                let pointer_type_id = self.writer.get_resolution_pointer_id(
+                    &self.fun_info[base].ty,
+                    spirv::StorageClass::Function,
+                );
+                let id = self.writer.id_gen.next();
+                vacant.insert(super::LocalVariable {
+                    id,
+                    instruction: Instruction::variable(
+                        pointer_type_id,
+                        id,
+                        spirv::StorageClass::Function,
+                        None,
+                    ),
+                });
+                id
             }
         };
 
-        Ok(pointer)
+        // Perform the store even if we already had a spill variable for `base`.
+        // Consider this code:
+        //
+        // var x = ...;
+        // var y = ...;
+        // var z = ...;
+        // for (i = 0; i<2; i++) {
+        //     let a = array(i, i, i);
+        //     if (i == 0) {
+        //         x += a[y];
+        //     } else [
+        //         x += a[z];
+        //     }
+        // }
+        //
+        // The value of `a` needs to be spilled so we can subscript it with `y` and `z`.
+        //
+        // When we generate SPIR-V for `a[y]`, we will create the spill
+        // variable, and store `a`'s value in it.
+        //
+        // When we generate SPIR-V for `a[z]`, we will notice that the spill
+        // variable for `a` has already been declared, but it is still essential
+        // that we store `a` into it, so that `a[z]` sees this iteration's value
+        // of `a`.
+        let base_id = self.cached[base];
+        block
+            .body
+            .push(Instruction::store(spill_variable_id, base_id, None));
+    }
+
+    /// Generate an access to a spilled temporary, if necessary.
+    ///
+    /// Given `access`, an [`Access`] or [`AccessIndex`] expression that refers
+    /// to a component of a composite value that has been spilled to a temporary
+    /// variable, determine whether other expressions are going to use
+    /// `access`'s value:
+    ///
+    /// - If so, perform the access and cache that as the value of `access`.
+    ///
+    /// - Otherwise, generate no code and cache no value for `access`.
+    ///
+    /// Return `Ok(0)` if no value was fetched, or `Ok(id)` if we loaded it into
+    /// the instruction given by `id`.
+    ///
+    /// [`Access`]: crate::Expression::Access
+    /// [`AccessIndex`]: crate::Expression::AccessIndex
+    fn maybe_access_spilled_composite(
+        &mut self,
+        access: Handle<crate::Expression>,
+        block: &mut Block,
+        result_type_id: Word,
+    ) -> Result<Word, Error> {
+        let access_uses = self.function.access_uses.get(&access).map_or(0, |r| *r);
+        if access_uses == self.fun_info[access].ref_count {
+            // This expression is only used by other `Access` and
+            // `AccessIndex` expressions, so we don't need to cache a
+            // value for it yet.
+            Ok(0)
+        } else {
+            // There are other expressions that are going to expect this
+            // expression's value to be cached, not just other `Access` or
+            // `AccessIndex` expressions. We must actually perform the
+            // access on the spill variable now.
+            self.write_checked_load(
+                access,
+                block,
+                AccessTypeAdjustment::IntroducePointer(spirv::StorageClass::Function),
+                result_type_id,
+            )
+        }
     }
 
     /// Build the instructions for matrix - matrix column operations
@@ -1536,12 +2585,10 @@ impl<'w> BlockContext<'w> {
     ) {
         self.temp_list.clear();
 
-        let vector_type_id = self.get_type_id(LookupType::Local(LocalType::Value {
-            vector_size: Some(rows),
-            kind: crate::ScalarKind::Float,
-            width,
-            pointer_space: None,
-        }));
+        let vector_type_id = self.get_numeric_type_id(NumericType::Vector {
+            size: rows,
+            scalar: crate::Scalar::float(width),
+        });
 
         for index in 0..columns as u32 {
             let column_id_left = self.gen_id();
@@ -1589,7 +2636,10 @@ impl<'w> BlockContext<'w> {
         vector: &crate::TypeInner,
     ) {
         let (size, kind) = match *vector {
-            crate::TypeInner::Vector { size, kind, .. } => (size, kind),
+            crate::TypeInner::Vector {
+                size,
+                scalar: crate::Scalar { kind, .. },
+            } => (size, kind),
             _ => unreachable!(),
         };
 
@@ -1618,6 +2668,12 @@ impl<'w> BlockContext<'w> {
     }
 
     /// Build the instructions for the arithmetic expression of a dot product
+    ///
+    /// The argument `extractor` is a function that maps `(result_id,
+    /// composite_id, index)` to an instruction that extracts the `index`th
+    /// entry of the value with ID `composite_id` and assigns it to the slot
+    /// with id `result_id` (which must have type `result_type_id`).
+    #[expect(clippy::too_many_arguments)]
     fn write_dot_product(
         &mut self,
         result_id: Word,
@@ -1626,25 +2682,16 @@ impl<'w> BlockContext<'w> {
         arg1_id: Word,
         size: u32,
         block: &mut Block,
+        extractor: impl Fn(Word, Word, Word) -> Instruction,
     ) {
-        let mut partial_sum = self.writer.write_constant_null(result_type_id);
+        let mut partial_sum = self.writer.get_constant_null(result_type_id);
         let last_component = size - 1;
         for index in 0..=last_component {
             // compute the product of the current components
             let a_id = self.gen_id();
-            block.body.push(Instruction::composite_extract(
-                result_type_id,
-                a_id,
-                arg0_id,
-                &[index],
-            ));
+            block.body.push(extractor(a_id, arg0_id, index));
             let b_id = self.gen_id();
-            block.body.push(Instruction::composite_extract(
-                result_type_id,
-                b_id,
-                arg1_id,
-                &[index],
-            ));
+            block.body.push(extractor(b_id, arg1_id, index));
             let prod_id = self.gen_id();
             block.body.push(Instruction::binary(
                 spirv::Op::IMul,
@@ -1674,37 +2721,83 @@ impl<'w> BlockContext<'w> {
         }
     }
 
-    pub(super) fn write_block(
+    /// Generate one or more SPIR-V blocks for `naga_block`.
+    ///
+    /// Use `label_id` as the label for the SPIR-V entry point block.
+    ///
+    /// If control reaches the end of the SPIR-V block, terminate it according
+    /// to `exit`. This function's return value indicates whether it acted on
+    /// this parameter or not; see [`BlockExitDisposition`].
+    ///
+    /// If the block contains [`Break`] or [`Continue`] statements,
+    /// `loop_context` supplies the labels of the SPIR-V blocks to jump to. If
+    /// either of these labels are `None`, then it should have been a Naga
+    /// validation error for the corresponding statement to occur in this
+    /// context.
+    ///
+    /// [`Break`]: Statement::Break
+    /// [`Continue`]: Statement::Continue
+    fn write_block(
         &mut self,
         label_id: Word,
-        statements: &[crate::Statement],
+        naga_block: &crate::Block,
         exit: BlockExit,
         loop_context: LoopContext,
-    ) -> Result<(), Error> {
+        debug_info: Option<&DebugInfoInner>,
+    ) -> Result<BlockExitDisposition, Error> {
         let mut block = Block::new(label_id);
-
-        for statement in statements {
+        for (statement, span) in naga_block.span_iter() {
+            if let (Some(debug_info), false) = (
+                debug_info,
+                matches!(
+                    statement,
+                    &(Statement::Block(..)
+                        | Statement::Break
+                        | Statement::Continue
+                        | Statement::Kill
+                        | Statement::Return { .. }
+                        | Statement::Loop { .. })
+                ),
+            ) {
+                let loc: crate::SourceLocation = span.location(debug_info.source_code);
+                block.body.push(Instruction::line(
+                    debug_info.source_file_id,
+                    loc.line_number,
+                    loc.line_position,
+                ));
+            };
             match *statement {
-                crate::Statement::Emit(ref range) => {
+                Statement::Emit(ref range) => {
                     for handle in range.clone() {
-                        self.cache_expression_value(handle, &mut block)?;
+                        // omit const expressions as we've already cached those
+                        if !self.expression_constness.is_const(handle) {
+                            self.cache_expression_value(handle, &mut block)?;
+                        }
                     }
                 }
-                crate::Statement::Block(ref block_statements) => {
+                Statement::Block(ref block_statements) => {
                     let scope_id = self.gen_id();
                     self.function.consume(block, Instruction::branch(scope_id));
 
                     let merge_id = self.gen_id();
-                    self.write_block(
+                    let merge_used = self.write_block(
                         scope_id,
                         block_statements,
                         BlockExit::Branch { target: merge_id },
                         loop_context,
+                        debug_info,
                     )?;
 
-                    block = Block::new(merge_id);
+                    match merge_used {
+                        BlockExitDisposition::Used => {
+                            block = Block::new(merge_id);
+                        }
+                        BlockExitDisposition::Discarded => {
+                            return Ok(BlockExitDisposition::Discarded);
+                        }
+                    }
                 }
-                crate::Statement::If {
+                Statement::If {
                     condition,
                     ref accept,
                     ref reject,
@@ -1738,25 +2831,35 @@ impl<'w> BlockContext<'w> {
                     );
 
                     if let Some(block_id) = accept_id {
-                        self.write_block(
+                        // We can ignore the `BlockExitDisposition` returned here because,
+                        // even if `merge_id` is not actually reachable, it is always
+                        // referred to by the `OpSelectionMerge` instruction we emitted
+                        // earlier.
+                        let _ = self.write_block(
                             block_id,
                             accept,
                             BlockExit::Branch { target: merge_id },
                             loop_context,
+                            debug_info,
                         )?;
                     }
                     if let Some(block_id) = reject_id {
-                        self.write_block(
+                        // We can ignore the `BlockExitDisposition` returned here because,
+                        // even if `merge_id` is not actually reachable, it is always
+                        // referred to by the `OpSelectionMerge` instruction we emitted
+                        // earlier.
+                        let _ = self.write_block(
                             block_id,
                             reject,
                             BlockExit::Branch { target: merge_id },
                             loop_context,
+                            debug_info,
                         )?;
                     }
 
                     block = Block::new(merge_id);
                 }
-                crate::Statement::Switch {
+                Statement::Switch {
                     selector,
                     ref cases,
                 } => {
@@ -1823,19 +2926,28 @@ impl<'w> BlockContext<'w> {
                         } else {
                             merge_id
                         };
-                        self.write_block(
+                        // We can ignore the `BlockExitDisposition` returned here because
+                        // `case_finish_id` is always referred to by either:
+                        //
+                        // - the `OpSwitch`, if it's the next case's label for a
+                        //   fall-through, or
+                        //
+                        // - the `OpSelectionMerge`, if it's the switch's overall merge
+                        //   block because there's no fall-through.
+                        let _ = self.write_block(
                             *label_id,
                             &case.body,
                             BlockExit::Branch {
                                 target: case_finish_id,
                             },
                             inner_context,
+                            debug_info,
                         )?;
                     }
 
                     block = Block::new(merge_id);
                 }
-                crate::Statement::Loop {
+                Statement::Loop {
                     ref body,
                     ref continuing,
                     break_if,
@@ -1851,14 +2963,31 @@ impl<'w> BlockContext<'w> {
                     // SPIR-V requires the continuing to the `OpLoopMerge`,
                     // so we have to start a new block with it.
                     block = Block::new(preamble_id);
+                    // HACK the loop statement is begin with branch instruction,
+                    // so we need to put `OpLine` debug info before merge instruction
+                    if let Some(debug_info) = debug_info {
+                        let loc: crate::SourceLocation = span.location(debug_info.source_code);
+                        block.body.push(Instruction::line(
+                            debug_info.source_file_id,
+                            loc.line_number,
+                            loc.line_position,
+                        ))
+                    }
                     block.body.push(Instruction::loop_merge(
                         merge_id,
                         continuing_id,
                         spirv::SelectionControl::NONE,
                     ));
+
+                    if self.force_loop_bounding {
+                        block = self.write_force_bounded_loop_instructions(block, merge_id);
+                    }
                     self.function.consume(block, Instruction::branch(body_id));
 
-                    self.write_block(
+                    // We can ignore the `BlockExitDisposition` returned here because,
+                    // even if `continuing_id` is not actually reachable, it is always
+                    // referred to by the `OpLoopMerge` instruction we emitted earlier.
+                    let _ = self.write_block(
                         body_id,
                         body,
                         BlockExit::Branch {
@@ -1868,6 +2997,7 @@ impl<'w> BlockContext<'w> {
                             continuing_id: Some(continuing_id),
                             break_id: Some(merge_id),
                         },
+                        debug_info,
                     )?;
 
                     let exit = match break_if {
@@ -1880,7 +3010,10 @@ impl<'w> BlockContext<'w> {
                         },
                     };
 
-                    self.write_block(
+                    // We can ignore the `BlockExitDisposition` returned here because,
+                    // even if `merge_id` is not actually reachable, it is always referred
+                    // to by the `OpLoopMerge` instruction we emitted earlier.
+                    let _ = self.write_block(
                         continuing_id,
                         continuing,
                         exit,
@@ -1888,23 +3021,24 @@ impl<'w> BlockContext<'w> {
                             continuing_id: None,
                             break_id: Some(merge_id),
                         },
+                        debug_info,
                     )?;
 
                     block = Block::new(merge_id);
                 }
-                crate::Statement::Break => {
+                Statement::Break => {
                     self.function
                         .consume(block, Instruction::branch(loop_context.break_id.unwrap()));
-                    return Ok(());
+                    return Ok(BlockExitDisposition::Discarded);
                 }
-                crate::Statement::Continue => {
+                Statement::Continue => {
                     self.function.consume(
                         block,
                         Instruction::branch(loop_context.continuing_id.unwrap()),
                     );
-                    return Ok(());
+                    return Ok(BlockExitDisposition::Discarded);
                 }
-                crate::Statement::Return { value: Some(value) } => {
+                Statement::Return { value: Some(value) } => {
                     let value_id = self.cached[value];
                     let instruction = match self.function.entry_point_context {
                         // If this is an entry point, and we need to return anything,
@@ -1921,22 +3055,26 @@ impl<'w> BlockContext<'w> {
                         None => Instruction::return_value(value_id),
                     };
                     self.function.consume(block, instruction);
-                    return Ok(());
+                    return Ok(BlockExitDisposition::Discarded);
                 }
-                crate::Statement::Return { value: None } => {
+                Statement::Return { value: None } => {
                     self.function.consume(block, Instruction::return_void());
-                    return Ok(());
+                    return Ok(BlockExitDisposition::Discarded);
                 }
-                crate::Statement::Kill => {
+                Statement::Kill => {
                     self.function.consume(block, Instruction::kill());
-                    return Ok(());
+                    return Ok(BlockExitDisposition::Discarded);
                 }
-                crate::Statement::Barrier(flags) => {
+                Statement::Barrier(flags) => {
                     self.writer.write_barrier(flags, &mut block);
                 }
-                crate::Statement::Store { pointer, value } => {
+                Statement::Store { pointer, value } => {
                     let value_id = self.cached[value];
-                    match self.write_expression_pointer(pointer, &mut block, None)? {
+                    match self.write_access_chain(
+                        pointer,
+                        &mut block,
+                        AccessTypeAdjustment::None,
+                    )? {
                         ExpressionPointer::Ready { pointer_id } => {
                             let atomic_space = match *self.fun_info[pointer]
                                 .ty
@@ -1983,13 +3121,13 @@ impl<'w> BlockContext<'w> {
                         }
                     };
                 }
-                crate::Statement::ImageStore {
+                Statement::ImageStore {
                     image,
                     coordinate,
                     array_index,
                     value,
                 } => self.write_image_store(image, coordinate, array_index, value, &mut block)?,
-                crate::Statement::Call {
+                Statement::Call {
                     function: local_function,
                     ref arguments,
                     result,
@@ -2015,26 +3153,35 @@ impl<'w> BlockContext<'w> {
                         &self.temp_list,
                     ));
                 }
-                crate::Statement::Atomic {
+                Statement::Atomic {
                     pointer,
                     ref fun,
                     value,
                     result,
                 } => {
                     let id = self.gen_id();
-                    let result_type_id = self.get_expression_type_id(&self.fun_info[result].ty);
+                    // Compare-and-exchange operations produce a struct result,
+                    // so use `result`'s type if it is available. For no-result
+                    // operations, fall back to `value`'s type.
+                    let result_type_id =
+                        self.get_expression_type_id(&self.fun_info[result.unwrap_or(value)].ty);
 
-                    self.cached[result] = id;
+                    if let Some(result) = result {
+                        self.cached[result] = id;
+                    }
 
-                    let pointer_id =
-                        match self.write_expression_pointer(pointer, &mut block, None)? {
-                            ExpressionPointer::Ready { pointer_id } => pointer_id,
-                            ExpressionPointer::Conditional { .. } => {
-                                return Err(Error::FeatureNotImplemented(
-                                    "Atomics out-of-bounds handling",
-                                ));
-                            }
-                        };
+                    let pointer_id = match self.write_access_chain(
+                        pointer,
+                        &mut block,
+                        AccessTypeAdjustment::None,
+                    )? {
+                        ExpressionPointer::Ready { pointer_id } => pointer_id,
+                        ExpressionPointer::Conditional { .. } => {
+                            return Err(Error::FeatureNotImplemented(
+                                "Atomics out-of-bounds handling",
+                            ));
+                        }
+                    };
 
                     let space = self.fun_info[pointer]
                         .ty
@@ -2047,62 +3194,115 @@ impl<'w> BlockContext<'w> {
                     let value_id = self.cached[value];
                     let value_inner = self.fun_info[value].ty.inner_with(&self.ir_module.types);
 
+                    let crate::TypeInner::Scalar(scalar) = *value_inner else {
+                        return Err(Error::FeatureNotImplemented(
+                            "Atomics with non-scalar values",
+                        ));
+                    };
+
                     let instruction = match *fun {
-                        crate::AtomicFunction::Add => Instruction::atomic_binary(
-                            spirv::Op::AtomicIAdd,
-                            result_type_id,
-                            id,
-                            pointer_id,
-                            scope_constant_id,
-                            semantics_id,
-                            value_id,
-                        ),
-                        crate::AtomicFunction::Subtract => Instruction::atomic_binary(
-                            spirv::Op::AtomicISub,
-                            result_type_id,
-                            id,
-                            pointer_id,
-                            scope_constant_id,
-                            semantics_id,
-                            value_id,
-                        ),
-                        crate::AtomicFunction::And => Instruction::atomic_binary(
-                            spirv::Op::AtomicAnd,
-                            result_type_id,
-                            id,
-                            pointer_id,
-                            scope_constant_id,
-                            semantics_id,
-                            value_id,
-                        ),
-                        crate::AtomicFunction::InclusiveOr => Instruction::atomic_binary(
-                            spirv::Op::AtomicOr,
-                            result_type_id,
-                            id,
-                            pointer_id,
-                            scope_constant_id,
-                            semantics_id,
-                            value_id,
-                        ),
-                        crate::AtomicFunction::ExclusiveOr => Instruction::atomic_binary(
-                            spirv::Op::AtomicXor,
-                            result_type_id,
-                            id,
-                            pointer_id,
-                            scope_constant_id,
-                            semantics_id,
-                            value_id,
-                        ),
+                        crate::AtomicFunction::Add => {
+                            let spirv_op = match scalar.kind {
+                                crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
+                                    spirv::Op::AtomicIAdd
+                                }
+                                crate::ScalarKind::Float => spirv::Op::AtomicFAddEXT,
+                                _ => unimplemented!(),
+                            };
+                            Instruction::atomic_binary(
+                                spirv_op,
+                                result_type_id,
+                                id,
+                                pointer_id,
+                                scope_constant_id,
+                                semantics_id,
+                                value_id,
+                            )
+                        }
+                        crate::AtomicFunction::Subtract => {
+                            let (spirv_op, value_id) = match scalar.kind {
+                                crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
+                                    (spirv::Op::AtomicISub, value_id)
+                                }
+                                crate::ScalarKind::Float => {
+                                    // HACK: SPIR-V doesn't have a atomic subtraction,
+                                    // so we add the negated value instead.
+                                    let neg_result_id = self.gen_id();
+                                    block.body.push(Instruction::unary(
+                                        spirv::Op::FNegate,
+                                        result_type_id,
+                                        neg_result_id,
+                                        value_id,
+                                    ));
+                                    (spirv::Op::AtomicFAddEXT, neg_result_id)
+                                }
+                                _ => unimplemented!(),
+                            };
+                            Instruction::atomic_binary(
+                                spirv_op,
+                                result_type_id,
+                                id,
+                                pointer_id,
+                                scope_constant_id,
+                                semantics_id,
+                                value_id,
+                            )
+                        }
+                        crate::AtomicFunction::And => {
+                            let spirv_op = match scalar.kind {
+                                crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
+                                    spirv::Op::AtomicAnd
+                                }
+                                _ => unimplemented!(),
+                            };
+                            Instruction::atomic_binary(
+                                spirv_op,
+                                result_type_id,
+                                id,
+                                pointer_id,
+                                scope_constant_id,
+                                semantics_id,
+                                value_id,
+                            )
+                        }
+                        crate::AtomicFunction::InclusiveOr => {
+                            let spirv_op = match scalar.kind {
+                                crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
+                                    spirv::Op::AtomicOr
+                                }
+                                _ => unimplemented!(),
+                            };
+                            Instruction::atomic_binary(
+                                spirv_op,
+                                result_type_id,
+                                id,
+                                pointer_id,
+                                scope_constant_id,
+                                semantics_id,
+                                value_id,
+                            )
+                        }
+                        crate::AtomicFunction::ExclusiveOr => {
+                            let spirv_op = match scalar.kind {
+                                crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
+                                    spirv::Op::AtomicXor
+                                }
+                                _ => unimplemented!(),
+                            };
+                            Instruction::atomic_binary(
+                                spirv_op,
+                                result_type_id,
+                                id,
+                                pointer_id,
+                                scope_constant_id,
+                                semantics_id,
+                                value_id,
+                            )
+                        }
                         crate::AtomicFunction::Min => {
-                            let spirv_op = match *value_inner {
-                                crate::TypeInner::Scalar {
-                                    kind: crate::ScalarKind::Sint,
-                                    width: _,
-                                } => spirv::Op::AtomicSMin,
-                                crate::TypeInner::Scalar {
-                                    kind: crate::ScalarKind::Uint,
-                                    width: _,
-                                } => spirv::Op::AtomicUMin,
+                            let spirv_op = match scalar.kind {
+                                crate::ScalarKind::Sint => spirv::Op::AtomicSMin,
+                                crate::ScalarKind::Uint => spirv::Op::AtomicUMin,
                                 _ => unimplemented!(),
                             };
                             Instruction::atomic_binary(
@@ -2116,15 +3316,9 @@ impl<'w> BlockContext<'w> {
                             )
                         }
                         crate::AtomicFunction::Max => {
-                            let spirv_op = match *value_inner {
-                                crate::TypeInner::Scalar {
-                                    kind: crate::ScalarKind::Sint,
-                                    width: _,
-                                } => spirv::Op::AtomicSMax,
-                                crate::TypeInner::Scalar {
-                                    kind: crate::ScalarKind::Uint,
-                                    width: _,
-                                } => spirv::Op::AtomicUMax,
+                            let spirv_op = match scalar.kind {
+                                crate::ScalarKind::Sint => spirv::Op::AtomicSMax,
+                                crate::ScalarKind::Uint => spirv::Op::AtomicUMax,
                                 _ => unimplemented!(),
                             };
                             Instruction::atomic_binary(
@@ -2149,27 +3343,19 @@ impl<'w> BlockContext<'w> {
                             )
                         }
                         crate::AtomicFunction::Exchange { compare: Some(cmp) } => {
-                            let scalar_type_id = match *value_inner {
-                                crate::TypeInner::Scalar { kind, width } => {
-                                    self.get_type_id(LookupType::Local(LocalType::Value {
-                                        vector_size: None,
-                                        kind,
-                                        width,
-                                        pointer_space: None,
-                                    }))
-                                }
-                                _ => unimplemented!(),
-                            };
+                            let scalar_type_id =
+                                self.get_numeric_type_id(NumericType::Scalar(scalar));
                             let bool_type_id =
-                                self.get_type_id(LookupType::Local(LocalType::Value {
-                                    vector_size: None,
-                                    kind: crate::ScalarKind::Bool,
-                                    width: crate::BOOL_WIDTH,
-                                    pointer_space: None,
-                                }));
+                                self.get_numeric_type_id(NumericType::Scalar(crate::Scalar::BOOL));
 
                             let cas_result_id = self.gen_id();
                             let equality_result_id = self.gen_id();
+                            let equality_operator = match scalar.kind {
+                                crate::ScalarKind::Sint | crate::ScalarKind::Uint => {
+                                    spirv::Op::IEqual
+                                }
+                                _ => unimplemented!(),
+                            };
                             let mut cas_instr = Instruction::new(spirv::Op::AtomicCompareExchange);
                             cas_instr.set_type(scalar_type_id);
                             cas_instr.set_result(cas_result_id);
@@ -2181,7 +3367,7 @@ impl<'w> BlockContext<'w> {
                             cas_instr.add_operand(self.cached[cmp]);
                             block.body.push(cas_instr);
                             block.body.push(Instruction::binary(
-                                spirv::Op::IEqual,
+                                equality_operator,
                                 bool_type_id,
                                 equality_result_id,
                                 cas_result_id,
@@ -2197,8 +3383,89 @@ impl<'w> BlockContext<'w> {
 
                     block.body.push(instruction);
                 }
-                crate::Statement::RayQuery { query, ref fun } => {
+                Statement::ImageAtomic {
+                    image,
+                    coordinate,
+                    array_index,
+                    fun,
+                    value,
+                } => {
+                    self.write_image_atomic(
+                        image,
+                        coordinate,
+                        array_index,
+                        fun,
+                        value,
+                        &mut block,
+                    )?;
+                }
+                Statement::WorkGroupUniformLoad { pointer, result } => {
+                    self.writer
+                        .write_barrier(crate::Barrier::WORK_GROUP, &mut block);
+                    let result_type_id = self.get_expression_type_id(&self.fun_info[result].ty);
+                    // Embed the body of
+                    match self.write_access_chain(
+                        pointer,
+                        &mut block,
+                        AccessTypeAdjustment::None,
+                    )? {
+                        ExpressionPointer::Ready { pointer_id } => {
+                            let id = self.gen_id();
+                            block.body.push(Instruction::load(
+                                result_type_id,
+                                id,
+                                pointer_id,
+                                None,
+                            ));
+                            self.cached[result] = id;
+                        }
+                        ExpressionPointer::Conditional { condition, access } => {
+                            self.cached[result] = self.write_conditional_indexed_load(
+                                result_type_id,
+                                condition,
+                                &mut block,
+                                move |id_gen, block| {
+                                    // The in-bounds path. Perform the access and the load.
+                                    let pointer_id = access.result_id.unwrap();
+                                    let value_id = id_gen.next();
+                                    block.body.push(access);
+                                    block.body.push(Instruction::load(
+                                        result_type_id,
+                                        value_id,
+                                        pointer_id,
+                                        None,
+                                    ));
+                                    value_id
+                                },
+                            )
+                        }
+                    }
+                    self.writer
+                        .write_barrier(crate::Barrier::WORK_GROUP, &mut block);
+                }
+                Statement::RayQuery { query, ref fun } => {
                     self.write_ray_query_function(query, fun, &mut block);
+                }
+                Statement::SubgroupBallot {
+                    result,
+                    ref predicate,
+                } => {
+                    self.write_subgroup_ballot(predicate, result, &mut block)?;
+                }
+                Statement::SubgroupCollectiveOperation {
+                    ref op,
+                    ref collective_op,
+                    argument,
+                    result,
+                } => {
+                    self.write_subgroup_operation(op, collective_op, argument, result, &mut block)?;
+                }
+                Statement::SubgroupGather {
+                    ref mode,
+                    argument,
+                    result,
+                } => {
+                    self.write_subgroup_gather(mode, argument, result, &mut block)?;
                 }
             }
         }
@@ -2208,8 +3475,8 @@ impl<'w> BlockContext<'w> {
             // need to end it with some kind of return instruction.
             BlockExit::Return => match self.ir_function.result {
                 Some(ref result) if self.function.entry_point_context.is_none() => {
-                    let type_id = self.get_type_id(LookupType::Handle(result.ty));
-                    let null_id = self.writer.write_constant_null(type_id);
+                    let type_id = self.get_handle_type_id(result.ty);
+                    let null_id = self.writer.get_constant_null(type_id);
                     Instruction::return_value(null_id)
                 }
                 _ => Instruction::return_void(),
@@ -2230,6 +3497,24 @@ impl<'w> BlockContext<'w> {
         };
 
         self.function.consume(block, termination);
+        Ok(BlockExitDisposition::Used)
+    }
+
+    pub(super) fn write_function_body(
+        &mut self,
+        entry_id: Word,
+        debug_info: Option<&DebugInfoInner>,
+    ) -> Result<(), Error> {
+        // We can ignore the `BlockExitDisposition` returned here because
+        // `BlockExit::Return` doesn't refer to a block.
+        let _ = self.write_block(
+            entry_id,
+            &self.ir_function.body,
+            BlockExit::Return,
+            LoopContext::default(),
+            debug_info,
+        )?;
+
         Ok(())
     }
 }

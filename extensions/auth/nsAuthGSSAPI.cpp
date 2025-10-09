@@ -21,7 +21,7 @@
 #include "nsNativeCharsetUtils.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/SharedLibrary.h"
-#include "mozilla/Telemetry.h"
+#include "mozilla/glean/SecurityManagerSslMetrics.h"
 
 #include "nsAuthGSSAPI.h"
 
@@ -74,22 +74,23 @@ static struct GSSFunction {
 static bool gssNativeImp = true;
 static PRLibrary* gssLibrary = nullptr;
 
-#define gss_display_status_ptr ((gss_display_status_type)*gssFuncs[0].func)
-#define gss_init_sec_context_ptr ((gss_init_sec_context_type)*gssFuncs[1].func)
-#define gss_indicate_mechs_ptr ((gss_indicate_mechs_type)*gssFuncs[2].func)
-#define gss_release_oid_set_ptr ((gss_release_oid_set_type)*gssFuncs[3].func)
+#define gss_display_status_ptr ((gss_display_status_type) * gssFuncs[0].func)
+#define gss_init_sec_context_ptr \
+  ((gss_init_sec_context_type) * gssFuncs[1].func)
+#define gss_indicate_mechs_ptr ((gss_indicate_mechs_type) * gssFuncs[2].func)
+#define gss_release_oid_set_ptr ((gss_release_oid_set_type) * gssFuncs[3].func)
 #define gss_delete_sec_context_ptr \
-  ((gss_delete_sec_context_type)*gssFuncs[4].func)
-#define gss_import_name_ptr ((gss_import_name_type)*gssFuncs[5].func)
-#define gss_release_buffer_ptr ((gss_release_buffer_type)*gssFuncs[6].func)
-#define gss_release_name_ptr ((gss_release_name_type)*gssFuncs[7].func)
-#define gss_wrap_ptr ((gss_wrap_type)*gssFuncs[8].func)
-#define gss_unwrap_ptr ((gss_unwrap_type)*gssFuncs[9].func)
+  ((gss_delete_sec_context_type) * gssFuncs[4].func)
+#define gss_import_name_ptr ((gss_import_name_type) * gssFuncs[5].func)
+#define gss_release_buffer_ptr ((gss_release_buffer_type) * gssFuncs[6].func)
+#define gss_release_name_ptr ((gss_release_name_type) * gssFuncs[7].func)
+#define gss_wrap_ptr ((gss_wrap_type) * gssFuncs[8].func)
+#define gss_unwrap_ptr ((gss_unwrap_type) * gssFuncs[9].func)
 
 #ifdef XP_MACOSX
 static PRFuncPtr KLCacheHasValidTicketsPtr;
 #  define KLCacheHasValidTickets_ptr \
-    ((KLCacheHasValidTickets_type)*KLCacheHasValidTicketsPtr)
+    ((KLCacheHasValidTickets_type) * KLCacheHasValidTicketsPtr)
 #endif
 
 static nsresult gssInit() {
@@ -134,7 +135,7 @@ static nsresult gssInit() {
         "libcom_err.so", "libkrb5.so",   "libgssapi.so"};
 
     PRLibSpec libSpec;
-    for (size_t i = 0; i < ArrayLength(verLibNames); ++i) {
+    for (size_t i = 0; i < std::size(verLibNames); ++i) {
       libSpec.type = PR_LibSpec_Pathname;
       libSpec.value.pathname = verLibNames[i];
       lib = PR_LoadLibraryWithFlags(libSpec, PR_LD_GLOBAL);
@@ -150,7 +151,7 @@ static nsresult gssInit() {
         "libgssapi.so.1"       /* Heimdal - Suse9, CITI - FC, MDK, Suse10*/
     };
 
-    for (size_t i = 0; i < ArrayLength(verLibNames) && !lib; ++i) {
+    for (size_t i = 0; i < std::size(verLibNames) && !lib; ++i) {
       lib = PR_LoadLibrary(verLibNames[i]);
 
       /* The CITI libgssapi library calls exit() during
@@ -167,7 +168,7 @@ static nsresult gssInit() {
       }
     }
 
-    for (size_t i = 0; i < ArrayLength(libNames) && !lib; ++i) {
+    for (size_t i = 0; i < std::size(libNames) && !lib; ++i) {
       char* libName = PR_GetLibraryName(nullptr, libNames[i]);
       if (libName) {
         lib = PR_LoadLibrary(libName);
@@ -342,10 +343,10 @@ nsAuthGSSAPI::Init(const nsACString& serviceName, uint32_t serviceFlags,
 
   static bool sTelemetrySent = false;
   if (!sTelemetrySent) {
-    mozilla::Telemetry::Accumulate(mozilla::Telemetry::NTLM_MODULE_USED_2,
-                                   serviceFlags & nsIAuthModule::REQ_PROXY_AUTH
-                                       ? NTLM_MODULE_KERBEROS_PROXY
-                                       : NTLM_MODULE_KERBEROS_DIRECT);
+    mozilla::glean::security::ntlm_module_used.AccumulateSingleSample(
+        serviceFlags & nsIAuthModule::REQ_PROXY_AUTH
+            ? NTLM_MODULE_KERBEROS_PROXY
+            : NTLM_MODULE_KERBEROS_DIRECT);
     sTelemetrySent = true;
   }
 

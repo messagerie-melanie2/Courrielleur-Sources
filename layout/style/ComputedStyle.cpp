@@ -94,7 +94,7 @@ static bool ContainingBlockMayHaveChanged(const ComputedStyle& aOldStyle,
 
 nsChangeHint ComputedStyle::CalcStyleDifference(const ComputedStyle& aNewStyle,
                                                 uint32_t* aEqualStructs) const {
-  AUTO_PROFILER_LABEL("ComputedStyle::CalcStyleDifference", LAYOUT);
+  AUTO_PROFILER_LABEL_HOT("ComputedStyle::CalcStyleDifference", LAYOUT);
   static_assert(StyleStructConstants::kStyleStructCount <= 32,
                 "aEqualStructs is not big enough");
 
@@ -153,7 +153,7 @@ nsChangeHint ComputedStyle::CalcStyleDifference(const ComputedStyle& aNewStyle,
   // FIXME: The order of these DO_STRUCT_DIFFERENCE calls is no longer
   // significant.  With a small amount of effort, we could replace them with a
   // #include "nsStyleStructList.h".
-  DO_STRUCT_DIFFERENCE_WITH_ARGS(Display, (, *StylePosition()));
+  DO_STRUCT_DIFFERENCE_WITH_ARGS(Display, (, *this));
   DO_STRUCT_DIFFERENCE(XUL);
   DO_STRUCT_DIFFERENCE(Column);
   DO_STRUCT_DIFFERENCE(Content);
@@ -164,10 +164,10 @@ nsChangeHint ComputedStyle::CalcStyleDifference(const ComputedStyle& aNewStyle,
   DO_STRUCT_DIFFERENCE(Table);
   DO_STRUCT_DIFFERENCE(UIReset);
   DO_STRUCT_DIFFERENCE(Text);
-  DO_STRUCT_DIFFERENCE_WITH_ARGS(List, (, *StyleDisplay()));
+  DO_STRUCT_DIFFERENCE_WITH_ARGS(List, (, *this));
   DO_STRUCT_DIFFERENCE(SVGReset);
   DO_STRUCT_DIFFERENCE(SVG);
-  DO_STRUCT_DIFFERENCE_WITH_ARGS(Position, (, *StyleVisibility()));
+  DO_STRUCT_DIFFERENCE_WITH_ARGS(Position, (, *this));
   DO_STRUCT_DIFFERENCE(Font);
   DO_STRUCT_DIFFERENCE(Margin);
   DO_STRUCT_DIFFERENCE(Padding);
@@ -326,7 +326,7 @@ static nscolor ExtractColor(const ComputedStyle& aStyle,
 #define STYLE_STRUCT(name_, fields_)                                           \
   template <>                                                                  \
   nscolor ComputedStyle::GetVisitedDependentColor(                             \
-      decltype(nsStyle##name_::MOZ_ARG_1 fields_) nsStyle##name_::*aField)     \
+      decltype(nsStyle##name_::MOZ_ARG_1 fields_) nsStyle##name_::* aField)    \
       const {                                                                  \
     MOZ_ASSERT(MOZ_FOR_EACH(STYLE_FIELD, (nsStyle##name_, ), fields_) false,   \
                "Getting visited-dependent color for a field in nsStyle" #name_ \

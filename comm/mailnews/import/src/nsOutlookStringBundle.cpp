@@ -6,7 +6,6 @@
 #include "prprf.h"
 #include "prmem.h"
 #include "nsCOMPtr.h"
-#include "nsMsgUtils.h"
 #include "nsIStringBundle.h"
 #include "nsOutlookStringBundle.h"
 #include "mozilla/Components.h"
@@ -14,7 +13,8 @@
 #define OUTLOOK_MSGS_URL \
   "chrome://messenger/locale/outlookImportMsgs.properties"
 
-nsCOMPtr<nsIStringBundle> nsOutlookStringBundle::m_pBundle = nullptr;
+MOZ_RUNINIT nsCOMPtr<nsIStringBundle> nsOutlookStringBundle::m_pBundle =
+    nullptr;
 
 void nsOutlookStringBundle::GetStringBundle(void) {
   if (m_pBundle) return;

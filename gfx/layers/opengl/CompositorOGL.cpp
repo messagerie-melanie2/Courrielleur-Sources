@@ -50,7 +50,7 @@
 #include "HeapCopyOfStackArray.h"
 #include "GLBlitHelper.h"
 #include "mozilla/gfx/Swizzle.h"
-#ifdef MOZ_WAYLAND
+#ifdef MOZ_WIDGET_GTK
 #  include "mozilla/widget/GtkCompositorWidget.h"
 #endif
 #if MOZ_WIDGET_ANDROID
@@ -422,7 +422,7 @@ bool CompositorOGL::Initialize(nsCString* const out_failureReason) {
     mGLContext->fGenFramebuffers(1, &testFBO);
     GLuint testTexture = 0;
 
-    for (uint32_t i = 0; i < ArrayLength(textureTargets); i++) {
+    for (uint32_t i = 0; i < std::size(textureTargets); i++) {
       GLenum target = textureTargets[i];
       if (!target) continue;
 
@@ -747,7 +747,11 @@ Maybe<IntRect> CompositorOGL::BeginFrame(const nsIntRegion& aInvalidRegion,
     mWidgetSize = LayoutDeviceIntSize::FromUnknownSize(rect.Size());
 #ifdef MOZ_WAYLAND
     if (mWidget && mWidget->AsGTK()) {
-      mWidget->AsGTK()->SetEGLNativeWindowSize(mWidgetSize);
+      // Wayland only check we have correct window size to avoid
+      // rendering artifacts.
+      if (!mWidget->AsGTK()->SetEGLNativeWindowSize(mWidgetSize)) {
+        return Nothing();
+      }
     }
 #endif
   } else {
@@ -799,8 +803,8 @@ Maybe<IntRect> CompositorOGL::BeginFrame(const nsIntRegion& aInvalidRegion,
   if (regionToClear.IsEmpty() &&
       mGLContext->IsSupported(GLFeature::invalidate_framebuffer)) {
     GLenum attachments[] = {LOCAL_GL_COLOR};
-    mGLContext->fInvalidateFramebuffer(
-        LOCAL_GL_FRAMEBUFFER, MOZ_ARRAY_LENGTH(attachments), attachments);
+    mGLContext->fInvalidateFramebuffer(LOCAL_GL_FRAMEBUFFER,
+                                       std::size(attachments), attachments);
   } else {
     clearBits |= LOCAL_GL_COLOR_BUFFER_BIT;
   }
@@ -1027,7 +1031,7 @@ ShaderConfigOGL CompositorOGL::GetShaderConfigFor(Effect* aEffect,
           source->GetFormat() == gfx::SurfaceFormat::R8G8B8A8 ||
               source->GetFormat() == gfx::SurfaceFormat::R8G8B8X8 ||
               source->GetFormat() == gfx::SurfaceFormat::R5G6B5_UINT16 ||
-              source->GetFormat() == gfx::SurfaceFormat::YUV422);
+              source->GetFormat() == gfx::SurfaceFormat::YUY2);
       config = ShaderConfigFromTargetAndFormat(source->GetTextureTarget(),
                                                source->GetFormat());
       if (!texturedEffect->mPremultiplied) {
@@ -1461,16 +1465,13 @@ void CompositorOGL::InitializeVAO(const GLuint aAttrib, const GLint aComponents,
 #ifdef MOZ_DUMP_PAINTING
 template <typename T>
 void WriteSnapshotToDumpFile_internal(T* aObj, DataSourceSurface* aSurf) {
-  nsCString string(aObj->Name());
-  string.Append('-');
-  string.AppendInt((uint64_t)aObj);
   if (gfxUtils::sDumpPaintFile != stderr) {
-    fprintf_stderr(gfxUtils::sDumpPaintFile, R"(array["%s"]=")",
-                   string.BeginReading());
-  }
-  gfxUtils::DumpAsDataURI(aSurf, gfxUtils::sDumpPaintFile);
-  if (gfxUtils::sDumpPaintFile != stderr) {
-    fprintf_stderr(gfxUtils::sDumpPaintFile, R"(";)");
+    gfxUtils::DumpAsDataURI(aSurf, gfxUtils::sDumpPaintFile);
+  } else {
+    nsCString uri = gfxUtils::GetAsDataURI(aSurf);
+    nsPrintfCString string(R"(array["%s-%)" PRIu64 R"("]="%s";\n)",
+                           aObj->Name(), uint64_t(aObj), uri.BeginReading());
+    fprintf_stderr(gfxUtils::sDumpPaintFile, "%s", string.get());
   }
 }
 
@@ -1636,7 +1637,7 @@ void CompositorOGL::Pause() {
   if (!gl() || gl()->IsDestroyed()) return;
   // ReleaseSurface internally calls MakeCurrent
   gl()->ReleaseSurface();
-#elif defined(MOZ_WAYLAND)
+#elif defined(MOZ_WIDGET_GTK)
   // ReleaseSurface internally calls MakeCurrent
   gl()->ReleaseSurface();
 #endif
@@ -1644,7 +1645,7 @@ void CompositorOGL::Pause() {
 
 bool CompositorOGL::Resume() {
 #if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_UIKIT) || \
-    defined(MOZ_WAYLAND)
+    defined(MOZ_WIDGET_GTK)
   if (!gl() || gl()->IsDestroyed()) return false;
 
   // RenewSurface internally calls MakeCurrent.

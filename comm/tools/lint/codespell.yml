@@ -4,11 +4,15 @@ codespell:
     include:
         - comm/calendar/locales/en-US/
         - comm/chat/locales/en-US/
+        - comm/docs/
         - comm/mail/branding/
-        - comm/mail/components/telemetry/
+        - comm/mail/components/inappnotifications/docs/
+        - comm/mail/components/storybook/docs/
+        - comm/mail/installer/windows/docs/
         - comm/mail/locales/en-US/
         - comm/mailnews/extensions/fts3/
         - comm/python/
+        - comm/taskcluster/comm_taskgraph/
         - comm/taskcluster/docs/
         - comm/third_party/
         - comm/README.md
@@ -38,10 +42,10 @@ codespell:
         - rst
         - md
         - ftl
+        - rs
     support-files:
         - 'tools/lint/spell/**'
         - 'comm/tools/lint/spell/**'
     type: external
-    setup: spell:setup
     payload: commlint:lint_wrapper
     wraps: spell:lint

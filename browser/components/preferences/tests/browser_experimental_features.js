@@ -3,6 +3,11 @@
 
 "use strict";
 
+add_setup(async function setup() {
+  const cleanup = await setupLabsTest();
+  registerCleanupFunction(cleanup);
+});
+
 add_task(async function testPrefRequired() {
   await SpecialPowers.pushPrefEnv({
     set: [["browser.preferences.experimental", false]],
@@ -16,6 +21,8 @@ add_task(async function testPrefRequired() {
   ok(experimentalCategory.hidden, "The category is hidden");
 
   BrowserTestUtils.removeTab(gBrowser.selectedTab);
+
+  await SpecialPowers.popPrefEnv();
 });
 
 add_task(async function testCanOpenWithPref() {
@@ -46,6 +53,8 @@ add_task(async function testCanOpenWithPref() {
   );
 
   BrowserTestUtils.removeTab(gBrowser.selectedTab);
+
+  await SpecialPowers.popPrefEnv();
 });
 
 add_task(async function testSearchFindsExperiments() {
@@ -61,14 +70,16 @@ add_task(async function testSearchFindsExperiments() {
   ok(!experimentalCategory.hidden, "The category is not hidden");
 
   await TestUtils.waitForCondition(
-    () => doc.getElementById("firefoxExperimentalCategory"),
+    () => doc.querySelector("#pane-experimental-featureGates > .featureGate"),
     "Waiting for experimental features category to get initialized"
   );
   await evaluateSearchResults(
-    "advanced configuration",
+    "in development and evolving",
     ["pane-experimental-featureGates"],
     /* include experiments */ true
   );
 
   BrowserTestUtils.removeTab(gBrowser.selectedTab);
+
+  await SpecialPowers.popPrefEnv();
 });

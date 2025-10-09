@@ -2,7 +2,7 @@
 # cargo-vet config file
 
 [cargo-vet]
-version = "0.7"
+version = "0.10"
 
 [imports.bytecode-alliance]
 url = "https://raw.githubusercontent.com/bytecodealliance/wasmtime/main/supply-chain/audits.toml"
@@ -19,9 +19,21 @@ url = "https://raw.githubusercontent.com/divviup/libprio-rs/main/supply-chain/au
 [imports.mozilla]
 url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
 
+[policy.allocator-api2]
+audit-as-crates-io = true
+notes = "This is the upstream code without the Box implementation which may have a soundness issue."
+
+[policy.any_all_workaround]
+audit-as-crates-io = true
+notes = "This is the upstream code plus the ARM intrinsics workaround from qcms, see bug 1882209."
+
 [policy.autocfg]
 audit-as-crates-io = true
 notes = "This is the upstream code plus a few local fixes, see bug 1685697."
+
+[policy."bindgen:0.69.4"]
+audit-as-crates-io = true
+notes = "This is the upstream code plus a fix for clang trunk. See bug 1894093."
 
 [policy.chardetng]
 audit-as-crates-io = true
@@ -35,17 +47,17 @@ notes = "This is a crate Henri wrote which is also published. We should probably
 audit-as-crates-io = true
 notes = "This is a pinned version of the upstream code, presumably to get a fix that hadn't been released yet. We should consider switching to the latest official release."
 
+[policy.cose]
+audit-as-crates-io = true
+notes = "This is upstream plus a warning fix from bug 1823866."
+
 [policy.cssparser]
 audit-as-crates-io = true
-notes = "Upstream code plus nesting changes that haven't been published yet authored by us"
+notes = "This is a pinned version of the upstream code. This can be removed when new version gets published."
 
 [policy.cssparser-macros]
 audit-as-crates-io = true
-notes = "Needed because this crate lives along cssparser"
-
-[policy.d3d12]
-audit-as-crates-io = true
-notes = "Unpublished wgpu revisions point to unpublished d3d12 revisions."
+notes = "This is a pinned version of the upstream code. This can be removed when new version gets published."
 
 [policy.firefox-on-glean]
 audit-as-crates-io = false
@@ -72,6 +84,14 @@ notes = "Used for fuzzing."
 criteria = "safe-to-run"
 notes = "Used for testing."
 
+[policy.icu_capi]
+audit-as-crates-io = true
+notes = "Patched version of upstream"
+
+[policy.icu_segmenter_data]
+audit-as-crates-io = true
+notes = "Patched version of upstream"
+
 [policy.l10nregistry]
 dependency-criteria = { fluent-testing = "safe-to-run", tokio = "safe-to-run" }
 notes = "This crate has two testing-only dependencies which are specified as regular-but-optional rather than a dev-dependencies, because they need to be available to both benchmarks and integration tests."
@@ -79,6 +99,10 @@ notes = "This crate has two testing-only dependencies which are specified as reg
 [policy.libudev-sys]
 audit-as-crates-io = false
 notes = "This override is an api-compatible fork with an orthogonal implementation."
+
+[policy.malloc_size_of_derive]
+audit-as-crates-io = false
+notes = "This was originally servo code which Bobby Holley put on crates.io some years ago and that was moved in-tree as first-party code later on."
 
 [policy.marionette]
 audit-as-crates-io = false
@@ -88,9 +112,37 @@ notes = "This is a first-party crate which is also published to crates.io. We ce
 audit-as-crates-io = true
 notes = "This is a pinned version of the upstream code, presumably to get a fix that hadn't been released yet. We should consider switching to the latest official release."
 
-[policy."mio:0.6.23"]
+[policy.mls-rs]
 audit-as-crates-io = true
-notes = "Version 0.6.23 is a local fork of upstream which just twiddles some dependencies."
+notes = "This is a pinned version of the upstream code, pending update of the crate."
+
+[policy.mls-rs-codec]
+audit-as-crates-io = true
+notes = "This is a pinned version of the upstream code, pending update of the crate."
+
+[policy.mls-rs-codec-derive]
+audit-as-crates-io = true
+notes = "This is a pinned version of the upstream code, pending update of the crate."
+
+[policy.mls-rs-core]
+audit-as-crates-io = true
+notes = "This is a pinned version of the upstream code, pending update of the crate."
+
+[policy.mls-rs-crypto-hpke]
+audit-as-crates-io = true
+notes = "This is a pinned version of the upstream code, pending update of the crate."
+
+[policy.mls-rs-crypto-traits]
+audit-as-crates-io = true
+notes = "This is a pinned version of the upstream code, pending update of the crate."
+
+[policy.mls-rs-identity-x509]
+audit-as-crates-io = true
+notes = "This is a pinned version of the upstream code, pending update of the crate."
+
+[policy.mls-rs-provider-sqlite]
+audit-as-crates-io = true
+notes = "This is a pinned version of the upstream code, pending update of the crate."
 
 [policy.mozbuild]
 audit-as-crates-io = false
@@ -103,6 +155,11 @@ notes = "This is a first-party crate which is also published to crates.io. We ce
 [policy.mozglue-static]
 dependency-criteria = { rustc_version = "safe-to-run" }
 notes = "The rustc_version dependency is only used in the build script, and does not generate any runtime code"
+
+[policy.mozilla-central-workspace-hack]
+audit-as-crates-io = false
+criteria = "safe-to-run"
+notes = "This is a first-party crate which is also published to crates.io as a convenience for other in-tree crates that depend on it and are published as well. The dependencies from this crate are dependencies of other crates that will get the right criteria through them, but using safe-to-deploy for this one would be too broad."
 
 [policy.mozprofile]
 audit-as-crates-io = false
@@ -124,17 +181,29 @@ audit-as-crates-io = false
 
 [policy.naga]
 audit-as-crates-io = true
-notes = "wgpu-core pins this crate."
+notes = "Part of the wgpu repository, pinned as the rest of wgpu crates."
 
-[policy.packed_simd]
+[policy.nss-gk-api]
 audit-as-crates-io = true
-notes = "Based on upstream, see bug 1719674."
+notes = "This is a pinned version of the upstream code, pending update of the crate."
+
+[policy.objc]
+audit-as-crates-io = true
+notes = "This is the upstream code plus a backported fix."
+
+[policy.osclientcerts]
+audit-as-crates-io = false
+notes = "This is a first-party crate that happens to have been pushed to crates.io a very long time ago but was yanked."
 
 [policy.peek-poke]
 audit-as-crates-io = false
 
 [policy.peek-poke-derive]
 audit-as-crates-io = false
+
+[policy.plist]
+audit-as-crates-io = true
+notes = "This is the upstream code plus one local fix, see bug 1874167."
 
 [policy.pulse]
 audit-as-crates-io = false
@@ -156,10 +225,6 @@ notes = "This is a first-party crate which is also published to crates.io, but w
 audit-as-crates-io = true
 notes = "This is a first-party crate which is also published to crates.io, but we should publish audits for it for the benefit of the ecosystem."
 
-[policy.smoosh]
-criteria = "safe-to-run"
-notes = "We're not shipping this and have no plans to ship it."
-
 [policy.storage]
 audit-as-crates-io = false
 notes = "This is a first-party crate which is entirely unrelated to the crates.io package of the same name."
@@ -168,13 +233,20 @@ notes = "This is a first-party crate which is entirely unrelated to the crates.i
 audit-as-crates-io = false
 notes = "This is a first-party crate, maintained by the appservices team, which is entirely unrelated to the crates.io package of the same name."
 
+[policy.to_shmem]
+audit-as-crates-io = true
+notes = "This is a first-party crate which is also published to crates.io"
+
+[policy.to_shmem_derive]
+audit-as-crates-io = true
+notes = "This is a first-party crate which is also published to crates.io"
+
+[policy.unicode-bidi]
+audit-as-crates-io = true
+
 [policy.viaduct]
 audit-as-crates-io = false
 notes = "This is a first-party crate, maintained by the appservices team, which is entirely unrelated to the crates.io package of the same name."
-
-[policy.warp]
-audit-as-crates-io = true
-notes = "This is a third-party crate, with an extra patch."
 
 [policy.webdriver]
 audit-as-crates-io = false
@@ -194,6 +266,14 @@ audit-as-crates-io = false
 audit-as-crates-io = true
 notes = "Upstream project which we pin."
 
+[policy.wgpu-core-deps-apple]
+audit-as-crates-io = true
+notes = "Upstream project which we pin."
+
+[policy.wgpu-core-deps-windows-linux-android]
+audit-as-crates-io = true
+notes = "Upstream project which we pin."
+
 [policy.wgpu-hal]
 audit-as-crates-io = true
 notes = "Upstream project which we pin."
@@ -202,16 +282,12 @@ notes = "Upstream project which we pin."
 audit-as-crates-io = true
 notes = "Upstream project which we pin."
 
+[policy.windows]
+audit-as-crates-io = true
+notes = "Local override of the crates.io crate that uses a non-vendored local copy of the downloaded crate"
+
 [policy.wr_malloc_size_of]
 audit-as-crates-io = false
-
-[[exemptions.adler]]
-version = "1.0.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.ahash]]
-version = "0.7.6"
-criteria = "safe-to-deploy"
 
 [[exemptions.alsa]]
 version = "0.4.3"
@@ -225,18 +301,6 @@ criteria = "safe-to-deploy"
 version = "0.2.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.askama_derive]]
-version = "0.11.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.askama_escape]]
-version = "0.10.3"
-criteria = "safe-to-deploy"
-
-[[exemptions.askama_shared]]
-version = "0.12.2"
-criteria = "safe-to-deploy"
-
 [[exemptions.async-task]]
 version = "4.0.3"
 criteria = "safe-to-deploy"
@@ -245,24 +309,12 @@ criteria = "safe-to-deploy"
 version = "1.3.3"
 criteria = "safe-to-deploy"
 
-[[exemptions.bitflags]]
-version = "1.3.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.bitreader]]
-version = "0.3.6"
-criteria = "safe-to-deploy"
-
 [[exemptions.block]]
 version = "0.1.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.cache-padded]]
 version = "1.2.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.camino]]
-version = "1.0.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.chrono]]
@@ -275,18 +327,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.clang-sys]]
 version = "1.3.3"
-criteria = "safe-to-deploy"
-
-[[exemptions.clap]]
-version = "3.1.18"
-criteria = "safe-to-deploy"
-
-[[exemptions.clap_derive]]
-version = "3.1.18"
-criteria = "safe-to-deploy"
-
-[[exemptions.clap_lex]]
-version = "0.2.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.cookie]]
@@ -317,10 +357,6 @@ criteria = "safe-to-deploy"
 version = "0.2.2"
 criteria = "safe-to-deploy"
 
-[[exemptions.crc32fast]]
-version = "1.3.2"
-criteria = "safe-to-deploy"
-
 [[exemptions.crossbeam-channel]]
 version = "0.5.4"
 criteria = "safe-to-deploy"
@@ -335,10 +371,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.crossbeam-utils]]
 version = "0.8.8"
-criteria = "safe-to-deploy"
-
-[[exemptions.d3d12]]
-version = "0.4.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.darling]]
@@ -360,6 +392,11 @@ criteria = "safe-to-deploy"
 [[exemptions.dbus]]
 version = "0.6.5"
 criteria = "safe-to-deploy"
+
+[[exemptions.derive_more-impl]]
+version = "1.0.0-beta.2"
+criteria = "safe-to-deploy"
+notes = "The crate is new to version 1.0.x, and derived from older versions of derive_more. The differences against 0.99.17 have been audited, but cargo-vet cannot record this information."
 
 [[exemptions.devd-rs]]
 version = "0.3.4"
@@ -421,18 +458,6 @@ criteria = "safe-to-deploy"
 version = "2.7.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.fuchsia-zircon]]
-version = "0.3.3"
-criteria = "safe-to-run"
-
-[[exemptions.fuchsia-zircon-sys]]
-version = "0.3.3"
-criteria = "safe-to-run"
-
-[[exemptions.futures]]
-version = "0.3.21"
-criteria = "safe-to-deploy"
-
 [[exemptions.futures-macro]]
 version = "0.3.21"
 criteria = "safe-to-deploy"
@@ -485,16 +510,8 @@ criteria = "safe-to-deploy"
 version = "0.7.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.hermit-abi]]
-version = "0.1.19"
-criteria = "safe-to-deploy"
-
 [[exemptions.hexf-parse]]
 version = "0.2.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.instant]]
-version = "0.1.12"
 criteria = "safe-to-deploy"
 
 [[exemptions.ioctl-sys]]
@@ -503,10 +520,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.itertools]]
 version = "0.10.3"
-criteria = "safe-to-deploy"
-
-[[exemptions.khronos-egl]]
-version = "4.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.khronos_api]]
@@ -535,10 +548,6 @@ notes = "The in-gecko feature that we enable makes only pre-built bindings used,
 version = "0.2.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.line-wrap]]
-version = "0.1.1"
-criteria = "safe-to-run"
-
 [[exemptions.lmdb-rkv-sys]]
 version = "0.11.2"
 criteria = "safe-to-deploy"
@@ -561,10 +570,6 @@ criteria = "safe-to-deploy"
 version = "0.6.5"
 criteria = "safe-to-deploy"
 
-[[exemptions.metal]]
-version = "0.23.1"
-criteria = "safe-to-deploy"
-
 [[exemptions.midir]]
 version = "0.7.0"
 criteria = "safe-to-deploy"
@@ -577,48 +582,20 @@ criteria = "safe-to-deploy"
 version = "0.2.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.miniz_oxide]]
-version = "0.5.3"
-criteria = "safe-to-deploy"
-
 [[exemptions.mio]]
 version = "0.8.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.mio-extras]]
-version = "2.0.6"
-criteria = "safe-to-run"
-
-[[exemptions.miow]]
-version = "0.3.7"
 criteria = "safe-to-deploy"
 
 [[exemptions.murmurhash3]]
 version = "0.0.5"
 criteria = "safe-to-deploy"
 
-[[exemptions.net2]]
-version = "0.2.37"
-criteria = "safe-to-run"
-
 [[exemptions.nix]]
 version = "0.15.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.nom]]
-version = "7.1.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.ntapi]]
-version = "0.3.7"
-criteria = "safe-to-deploy"
-
 [[exemptions.objc]]
 version = "0.2.7"
-criteria = "safe-to-deploy"
-
-[[exemptions.objc_exception]]
-version = "0.1.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.object]]
@@ -627,42 +604,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.once_cell]]
 version = "1.12.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.os_str_bytes]]
-version = "6.1.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.owning_ref]]
-version = "0.4.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.packed_simd]]
-version = "0.3.8"
-criteria = "safe-to-deploy"
-
-[[exemptions.phf]]
-version = "0.10.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.phf_codegen]]
-version = "0.10.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.phf_generator]]
-version = "0.10.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.phf_macros]]
-version = "0.10.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.phf_shared]]
-version = "0.10.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.pin-project-lite]]
-version = "0.2.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.plain]]
@@ -677,10 +618,6 @@ criteria = "safe-to-run"
 version = "0.2.16"
 criteria = "safe-to-deploy"
 
-[[exemptions.proc-macro-error]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
 [[exemptions.profiling]]
 version = "1.0.6"
 criteria = "safe-to-deploy"
@@ -693,28 +630,8 @@ criteria = "safe-to-deploy"
 version = "0.8.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.qlog]]
-version = "0.4.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.quick-error]]
 version = "1.2.3"
-criteria = "safe-to-deploy"
-
-[[exemptions.rand]]
-version = "0.8.5"
-criteria = "safe-to-deploy"
-
-[[exemptions.rand_chacha]]
-version = "0.3.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.rand_core]]
-version = "0.6.3"
-criteria = "safe-to-deploy"
-
-[[exemptions.redox_syscall]]
-version = "0.2.13"
 criteria = "safe-to-deploy"
 
 [[exemptions.remove_dir_all]]
@@ -769,22 +686,6 @@ criteria = "safe-to-deploy"
 version = "1.5.2"
 criteria = "safe-to-deploy"
 
-[[exemptions.sfv]]
-version = "0.9.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.sha2]]
-version = "0.10.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.shlex]]
-version = "1.1.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.signal-hook-registry]]
-version = "1.4.1"
-criteria = "safe-to-run"
-
 [[exemptions.siphasher]]
 version = "0.3.10"
 criteria = "safe-to-deploy"
@@ -797,45 +698,13 @@ criteria = "safe-to-deploy"
 version = "0.2.0+1.5.4"
 criteria = "safe-to-deploy"
 
-[[exemptions.stable_deref_trait]]
-version = "1.2.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.static_assertions]]
-version = "1.1.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.strsim]]
-version = "0.10.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.tempfile]]
 version = "3.3.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.terminal_size]]
-version = "0.1.17"
-criteria = "safe-to-deploy"
-
-[[exemptions.textwrap]]
-version = "0.15.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.time]]
 version = "0.1.44"
 criteria = "safe-to-deploy"
-
-[[exemptions.time]]
-version = "0.3.9"
-criteria = "safe-to-run"
-
-[[exemptions.time-macros]]
-version = "0.2.4"
-criteria = "safe-to-run"
-
-[[exemptions.tokio]]
-version = "1.17.0"
-criteria = "safe-to-run"
 
 [[exemptions.triple_buffer]]
 version = "5.0.6"
@@ -856,10 +725,6 @@ criteria = "safe-to-run"
 [[exemptions.unix_str]]
 version = "1.0.0"
 criteria = "safe-to-run"
-
-[[exemptions.url]]
-version = "2.1.0"
-criteria = "safe-to-deploy"
 
 [[exemptions.uuid]]
 version = "0.8.2"
@@ -888,11 +753,3 @@ criteria = "safe-to-deploy"
 [[exemptions.xml-rs]]
 version = "0.8.4"
 criteria = "safe-to-deploy"
-
-[[exemptions.yaml-rust]]
-version = "0.4.5"
-criteria = "safe-to-run"
-
-[[exemptions.zip]]
-version = "0.6.2"
-criteria = "safe-to-run"

@@ -1,4 +1,4 @@
-//! [`ToSql`] and [`FromSql`] implementation for [`url::Url`].
+//! [`ToSql`] and [`FromSql`] implementation for [`Url`].
 use crate::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 use crate::Result;
 use url::Url;
@@ -18,7 +18,7 @@ impl FromSql for Url {
         match value {
             ValueRef::Text(s) => {
                 let s = std::str::from_utf8(s).map_err(|e| FromSqlError::Other(Box::new(e)))?;
-                Url::parse(s).map_err(|e| FromSqlError::Other(Box::new(e)))
+                Self::parse(s).map_err(|e| FromSqlError::Other(Box::new(e)))
             }
             _ => Err(FromSqlError::InvalidType),
         }
@@ -49,7 +49,7 @@ mod test {
         let url2 = "http://www.example2.com/👌";
 
         db.execute(
-            "INSERT INTO urls (i, v) VALUES (0, ?), (1, ?), (2, ?), (3, ?)",
+            "INSERT INTO urls (i, v) VALUES (0, ?1), (1, ?2), (2, ?3), (3, ?4)",
             // also insert a non-hex encoded url (which might be present if it was
             // inserted separately)
             params![url0, url1, url2, "illegal"],
@@ -74,7 +74,7 @@ mod test {
                 );
             }
             e => {
-                panic!("Expected conversion failure, got {}", e);
+                panic!("Expected conversion failure, got {e}");
             }
         }
         Ok(())

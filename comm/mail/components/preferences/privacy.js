@@ -11,6 +11,13 @@ var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
+ChromeUtils.defineLazyGetter(this, "AboutLoginsL10n", () => {
+  return new Localization([
+    "branding/brand.ftl",
+    "messenger/preferences/passwordManager.ftl",
+  ]);
+});
+
 ChromeUtils.defineESModuleGetters(this, {
   LoginHelper: "resource://gre/modules/LoginHelper.sys.mjs",
   OSKeyStore: "resource://gre/modules/OSKeyStore.sys.mjs",
@@ -21,6 +28,7 @@ const PREF_UPLOAD_ENABLED = "datareporting.healthreport.uploadEnabled";
 Preferences.addAll([
   { id: "mail.spam.manualMark", type: "bool" },
   { id: "mail.spam.manualMarkMode", type: "int" },
+  { id: "mailnews.ui.junk.manualMarkAsJunkMarksRead", type: "bool" },
   { id: "mail.spam.markAsReadOnSpam", type: "bool" },
   { id: "mail.spam.logging.enabled", type: "bool" },
   { id: "mail.phishing.detection.enabled", type: "bool" },
@@ -37,6 +45,7 @@ Preferences.addAll([
   { id: "places.history.enabled", type: "bool" },
   { id: "network.cookie.cookieBehavior", type: "int" },
   { id: "network.cookie.blockFutureCookies", type: "bool" },
+  { id: "privacy.globalprivacycontrol.enabled", type: "bool" },
   { id: "privacy.donottrackheader.enabled", type: "bool" },
   { id: "security.default_personal_cert", type: "string" },
   { id: "security.disable_button.openCertManager", type: "bool" },
@@ -76,6 +85,7 @@ var gPrivacyPane = {
     );
 
     this._initMasterPasswordUI();
+    this._initOSAuthentication();
 
     if (AppConstants.MOZ_DATA_REPORTING) {
       this.initDataCollection();
@@ -133,17 +143,19 @@ var gPrivacyPane = {
    * if cookies are enabled.
    */
   readAcceptCookies() {
-    let pref = Preferences.get("network.cookie.cookieBehavior");
-    let exceptionsButton = document.getElementById("cookieExceptions");
-    let acceptThirdPartyLabel = document.getElementById(
+    const pref = Preferences.get("network.cookie.cookieBehavior");
+    const exceptionsButton = document.getElementById("cookieExceptions");
+    const acceptThirdPartyLabel = document.getElementById(
       "acceptThirdPartyLabel"
     );
-    let acceptThirdPartyMenu = document.getElementById("acceptThirdPartyMenu");
-    let showCookiesButton = document.getElementById("showCookiesButton");
+    const acceptThirdPartyMenu = document.getElementById(
+      "acceptThirdPartyMenu"
+    );
+    const showCookiesButton = document.getElementById("showCookiesButton");
 
     // enable the rest of the UI for anything other than "disable all cookies"
-    let acceptCookies = pref.value != 2;
-    let cookieBehaviorLocked = Services.prefs.prefIsLocked(
+    const acceptCookies = pref.value != 2;
+    const cookieBehaviorLocked = Services.prefs.prefIsLocked(
       "network.cookie.cookieBehavior"
     );
 
@@ -159,12 +171,14 @@ var gPrivacyPane = {
    * Enables/disables the "keep until" label and menulist in response to the
    * "accept cookies" checkbox being checked or unchecked.
    *
-   * @returns 0 if cookies are accepted, 2 if they are not;
-   *         the value network.cookie.cookieBehavior should get
+   * @returns {integer} 0 if cookies are accepted, 2 if they are not;
+   *   the value network.cookie.cookieBehavior
    */
   writeAcceptCookies() {
-    let accept = document.getElementById("acceptCookies");
-    let acceptThirdPartyMenu = document.getElementById("acceptThirdPartyMenu");
+    const accept = document.getElementById("acceptCookies");
+    const acceptThirdPartyMenu = document.getElementById(
+      "acceptThirdPartyMenu"
+    );
     // if we're enabling cookies, automatically select 'accept third party always'
     if (accept.checked) {
       acceptThirdPartyMenu.selectedIndex = 0;
@@ -177,8 +191,8 @@ var gPrivacyPane = {
    * Displays fine-grained, per-site preferences for cookies.
    */
   showCookieExceptions() {
-    let bundle = document.getElementById("bundlePreferences");
-    let params = {
+    const bundle = document.getElementById("bundlePreferences");
+    const params = {
       blockVisible: true,
       sessionVisible: true,
       allowVisible: true,
@@ -197,7 +211,7 @@ var gPrivacyPane = {
   /**
    * Displays all the user's cookies in a dialog.
    */
-  showCookies(aCategory) {
+  showCookies() {
     gSubDialog.open("chrome://messenger/content/preferences/cookies.xhtml");
   },
 
@@ -205,7 +219,7 @@ var gPrivacyPane = {
    * Converts between network.cookie.cookieBehavior and the third-party cookie UI
    */
   readAcceptThirdPartyCookies() {
-    let pref = Preferences.get("network.cookie.cookieBehavior");
+    const pref = Preferences.get("network.cookie.cookieBehavior");
     switch (pref.value) {
       case 0:
         return "always";
@@ -221,7 +235,7 @@ var gPrivacyPane = {
   },
 
   writeAcceptThirdPartyCookies() {
-    let accept = document.getElementById("acceptThirdPartyMenu").selectedItem;
+    const accept = document.getElementById("acceptThirdPartyMenu").selectedItem;
     switch (accept.value) {
       case "always":
         return 0;
@@ -240,8 +254,8 @@ var gPrivacyPane = {
    * iframes.
    */
   showRemoteContentExceptions() {
-    let bundle = document.getElementById("bundlePreferences");
-    let params = {
+    const bundle = document.getElementById("bundlePreferences");
+    const params = {
       blockVisible: true,
       sessionVisible: false,
       allowVisible: true,
@@ -341,8 +355,8 @@ var gPrivacyPane = {
       Ci.nsIPKCS11ModuleDB
     );
     if (secmodDB.isFIPSEnabled) {
-      let title = document.getElementById("fips-title").textContent;
-      let desc = document.getElementById("fips-desc").textContent;
+      const title = document.getElementById("fips-title").textContent;
+      const desc = document.getElementById("fips-desc").textContent;
       Services.prompt.alert(window, title, desc);
       this._initMasterPasswordUI();
     } else {
@@ -360,12 +374,11 @@ var gPrivacyPane = {
     // OS reauthenticate functionality is not available on Linux yet (bug 1527745)
     if (
       !LoginHelper.isPrimaryPasswordSet() &&
-      Services.prefs.getBoolPref("signon.management.page.os-auth.enabled") &&
-      AppConstants.platform != "linux"
+      LoginHelper.getOSAuthEnabled(LoginHelper.OS_AUTH_FOR_PASSWORDS_PREF)
     ) {
-      let messageId =
+      const messageId =
         "primary-password-os-auth-dialog-message-" + AppConstants.platform;
-      let [messageText, captionText] = await document.l10n.formatMessages([
+      const [messageText, captionText] = await document.l10n.formatMessages([
         {
           id: messageId,
         },
@@ -373,8 +386,8 @@ var gPrivacyPane = {
           id: "master-password-os-auth-dialog-caption",
         },
       ]);
-      let win = Services.wm.getMostRecentWindow("");
-      let loggedIn = await OSKeyStore.ensureLoggedIn(
+      const win = Services.wm.getMostRecentWindow("");
+      const loggedIn = await OSKeyStore.ensureLoggedIn(
         messageText.value,
         captionText.value,
         win,
@@ -388,6 +401,54 @@ var gPrivacyPane = {
     gSubDialog.open("chrome://mozapps/content/preferences/changemp.xhtml", {
       closingCallback: this._initMasterPasswordUI.bind(this),
     });
+  },
+
+  async _toggleOSAuth() {
+    const osReauthCheckbox = document.getElementById("osReauthCheckbox");
+
+    const messageText = await AboutLoginsL10n.formatValue(
+      "password-os-auth-change-dialog-message"
+    );
+    const captionText = await AboutLoginsL10n.formatValue(
+      "password-os-auth-dialog-caption"
+    );
+    const win =
+      osReauthCheckbox.ownerGlobal.docShell.chromeEventHandler.ownerGlobal;
+
+    // Calling OSKeyStore.ensureLoggedIn() instead of LoginHelper.verifyOSAuth()
+    // since we want to authenticate user each time this stting is changed.
+    const isAuthorized = (
+      await OSKeyStore.ensureLoggedIn(messageText, captionText, win, false)
+    ).authenticated;
+    if (!isAuthorized) {
+      osReauthCheckbox.checked = !osReauthCheckbox.checked;
+      return;
+    }
+
+    // If osReauthCheckbox is checked enable osauth.
+    LoginHelper.setOSAuthEnabled(
+      LoginHelper.OS_AUTH_FOR_PASSWORDS_PREF,
+      osReauthCheckbox.checked
+    );
+  },
+
+  _initOSAuthentication() {
+    const osReauthCheckbox = document.getElementById("osReauthCheckbox");
+    if (!OSKeyStore.canReauth()) {
+      osReauthCheckbox.hidden = true;
+      return;
+    }
+
+    osReauthCheckbox.setAttribute(
+      "checked",
+      LoginHelper.getOSAuthEnabled(LoginHelper.OS_AUTH_FOR_PASSWORDS_PREF)
+    );
+
+    setEventListener(
+      "osReauthCheckbox",
+      "command",
+      gPrivacyPane._toggleOSAuth.bind(gPrivacyPane)
+    );
   },
 
   /**
@@ -444,7 +505,7 @@ var gPrivacyPane = {
    * Displays the learn more health report page when a user opts out of data collection.
    */
   showDataDeletion() {
-    let url =
+    const url =
       Services.urlFormatter.formatURLPref("app.support.baseURL") +
       "telemetry-clientid";
     window.open(url, "_blank");
@@ -469,8 +530,8 @@ var gPrivacyPane = {
    */
   _setupLearnMoreLink(pref, element) {
     // set up the Learn More link with the correct URL
-    let url = Services.urlFormatter.formatURLPref(pref);
-    let el = document.getElementById(element);
+    const url = Services.urlFormatter.formatURLPref(pref);
+    const el = document.getElementById(element);
 
     if (url) {
       el.setAttribute("href", url);
@@ -488,7 +549,7 @@ var gPrivacyPane = {
       "FHRLearnMore"
     );
 
-    let checkbox = document.getElementById("submitHealthReportBox");
+    const checkbox = document.getElementById("submitHealthReportBox");
 
     // Telemetry is only sending data if MOZ_TELEMETRY_REPORTING is defined.
     // We still want to display the preferences panel if that's not the case, but
@@ -510,7 +571,7 @@ var gPrivacyPane = {
    * Update the health report preference with state from checkbox.
    */
   updateSubmitHealthReport() {
-    let checkbox = document.getElementById("submitHealthReportBox");
+    const checkbox = document.getElementById("submitHealthReportBox");
 
     Services.prefs.setBoolPref(PREF_UPLOAD_ENABLED, checkbox.checked);
 
@@ -520,9 +581,9 @@ var gPrivacyPane = {
   },
 
   initE2eeCheckboxes() {
-    let on = document.getElementById("emailE2eeAutoEnable");
-    let off = document.getElementById("emailE2eeAutoDisable");
-    let notify = document.getElementById("emailE2eeAutoDisableNotify");
+    const on = document.getElementById("emailE2eeAutoEnable");
+    const off = document.getElementById("emailE2eeAutoDisable");
+    const notify = document.getElementById("emailE2eeAutoDisableNotify");
 
     on.checked = Preferences.get("mail.e2ee.auto_enable").value;
     off.checked = Preferences.get("mail.e2ee.auto_disable").value;
@@ -538,9 +599,9 @@ var gPrivacyPane = {
   },
 
   updateE2eeCheckboxes() {
-    let on = document.getElementById("emailE2eeAutoEnable");
-    let off = document.getElementById("emailE2eeAutoDisable");
-    let notify = document.getElementById("emailE2eeAutoDisableNotify");
+    const on = document.getElementById("emailE2eeAutoEnable");
+    const off = document.getElementById("emailE2eeAutoDisable");
+    const notify = document.getElementById("emailE2eeAutoDisableNotify");
 
     if (!on.checked) {
       off.disabled = true;

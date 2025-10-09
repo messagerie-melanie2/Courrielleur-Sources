@@ -41,8 +41,6 @@
 
 #include <vector>
 
-#include "nsThreadUtils.h"
-
 #include "linux/crash_generation/crash_generation_server.h"
 #include "linux/crash_generation/client_info.h"
 #include "linux/handler/exception_handler.h"
@@ -53,9 +51,9 @@
 
 #if defined(MOZ_OXIDIZED_BREAKPAD)
 #  include "mozilla/toolkit/crashreporter/rust_minidump_writer_linux_ffi_generated.h"
-#  include <sys/signalfd.h>
-#  include "nsString.h"
-#endif
+#endif // defined(MOZ_OXIDIZED_BREAKPAD)
+
+#include "mozilla/Alignment.h"
 
 static const char kCommandQuit = 'x';
 
@@ -63,18 +61,19 @@ namespace google_breakpad {
 
 CrashGenerationServer::CrashGenerationServer(
   const int listen_fd,
-  OnClientDumpRequestCallback dump_callback,
+#if defined(MOZ_OXIDIZED_BREAKPAD)
+  std::function<GetAuxvInfoCallback> get_auxv_info,
+#endif // defined(MOZ_OXIDIZED_BREAKPAD)
+  std::function<OnClientDumpRequestCallback> dump_callback,
   void* dump_context,
-  OnClientExitingCallback exit_callback,
-  void* exit_context,
-  bool generate_dumps,
   const string* dump_path) :
     server_fd_(listen_fd),
-    dump_callback_(dump_callback),
+#if defined(MOZ_OXIDIZED_BREAKPAD)
+    get_auxv_info_(std::move(get_auxv_info)),
+#endif // defined(MOZ_OXIDIZED_BREAKPAD)
+    dump_callback_(std::move(dump_callback)),
     dump_context_(dump_context),
-    exit_callback_(exit_callback),
-    exit_context_(exit_context),
-    generate_dumps_(generate_dumps),
+    dump_dir_mutex_(PTHREAD_MUTEX_INITIALIZER),
     started_(false)
 {
   if (dump_path)
@@ -110,8 +109,11 @@ CrashGenerationServer::Start()
   control_pipe_in_ = control_pipe[0];
   control_pipe_out_ = control_pipe[1];
 
-  if (pthread_create(&thread_, NULL,
-                     ThreadMain, reinterpret_cast<void*>(this)))
+  if (pthread_create(&thread_, nullptr,
+                    [](void* context) -> void* {
+                      reinterpret_cast<CrashGenerationServer*>(context)->Run();
+                      return nullptr;
+                    }, this))
     return false;
 
   started_ = true;
@@ -137,6 +139,14 @@ CrashGenerationServer::Stop()
   started_ = false;
 }
 
+void
+CrashGenerationServer::SetPath(const char* dump_path)
+{
+  pthread_mutex_lock(&dump_dir_mutex_);
+  this->dump_dir_ = string(dump_path);
+  pthread_mutex_unlock(&dump_dir_mutex_);
+}
+
 //static
 bool
 CrashGenerationServer::CreateReportChannel(int* server_fd, int* client_fd)
@@ -152,8 +162,6 @@ CrashGenerationServer::CreateReportChannel(int* server_fd, int* client_fd)
     return false;
 
   if (fcntl(fds[1], F_SETFL, O_NONBLOCK))
-    return false;
-  if (fcntl(fds[1], F_SETFD, FD_CLOEXEC))
     return false;
 
   *client_fd = fds[0];
@@ -215,7 +223,7 @@ CrashGenerationServer::ClientEvent(short revents)
 
   struct msghdr msg = {0};
   struct iovec iov[1];
-  char crash_context[kCrashContextSize];
+  MOZ_ALIGNED_DECL(16, char crash_context[kCrashContextSize]);
   char control[kControlMsgSize];
   const ssize_t expected_msg_size = sizeof(crash_context);
 
@@ -275,7 +283,7 @@ CrashGenerationServer::ClientEvent(short revents)
 #if defined(MOZ_OXIDIZED_BREAKPAD)
   ExceptionHandler::CrashContext* breakpad_cc =
       reinterpret_cast<ExceptionHandler::CrashContext*>(crash_context);
-  nsCString error_msg;
+  char* error_msg = nullptr;
   siginfo_t& si = breakpad_cc->siginfo;
   signalfd_siginfo signalfd_si = {};
   signalfd_si.ssi_signo = si.si_signo;
@@ -292,12 +300,29 @@ CrashGenerationServer::ClientEvent(short revents)
       break;
   }
 
-  // Ignoring the return-value here for now.
-  // The function always creates an empty minidump file even in case of an
-  // error. So we'll report that as well via the callback-functions.
-  bool res = write_minidump_linux_with_context(
-      minidump_filename.c_str(), crashing_pid, &breakpad_cc->context,
-      &breakpad_cc->float_state, &signalfd_si, breakpad_cc->tid, &error_msg);
+  bool res = false;
+
+  MinidumpWriterContext* writer = minidump_writer_create(
+    minidump_filename.c_str(),
+    crashing_pid,
+    breakpad_cc->tid,
+    &error_msg
+  );
+  DirectAuxvDumpInfo auxvInfo = {};
+  if (writer && get_auxv_info_ && get_auxv_info_(crashing_pid, &auxvInfo)) {
+    minidump_writer_set_direct_auxv_dump_info(writer, &auxvInfo);
+  }
+  if (writer) {
+    const fpregset_t *float_state = nullptr;
+
+#  ifndef __arm__
+    float_state = reinterpret_cast<const fpregset_t *>(&breakpad_cc->float_state);
+#  endif
+
+    minidump_writer_set_crash_context(writer, &breakpad_cc->context, float_state, &signalfd_si);
+
+    res = minidump_writer_dump(writer, &error_msg);
+  }
 #else
   if (!google_breakpad::WriteMinidump(minidump_filename.c_str(),
                                       crashing_pid, crash_context,
@@ -321,8 +346,9 @@ CrashGenerationServer::ClientEvent(short revents)
   // (Closing this will make the child's sys_read unblock and return 0.)
   close(signal_fd);
 
-  if (exit_callback_) {
-    exit_callback_(exit_context_, info);
+  info.set_error_msg(nullptr);
+  if (error_msg) {
+    free_minidump_error_msg(error_msg);
   }
 
   return true;
@@ -360,19 +386,12 @@ CrashGenerationServer::MakeMinidumpFilename(string& outFilename)
     return false;
 
   char path[PATH_MAX];
+  pthread_mutex_lock(&dump_dir_mutex_);
   snprintf(path, sizeof(path), "%s/%s.dmp", dump_dir_.c_str(), guidString);
+  pthread_mutex_unlock(&dump_dir_mutex_);
 
   outFilename = path;
   return true;
-}
-
-// static
-void*
-CrashGenerationServer::ThreadMain(void *arg)
-{
-  NS_SetCurrentThreadName("Breakpad Server");
-  reinterpret_cast<CrashGenerationServer*>(arg)->Run();
-  return NULL;
 }
 
 }  // namespace google_breakpad

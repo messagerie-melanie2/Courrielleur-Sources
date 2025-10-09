@@ -1,5 +1,7 @@
-/* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
-/* vim: set sts=2 sw=2 et tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
 let gMessages;
@@ -11,7 +13,7 @@ async function testExecuteMessageDisplayActionWithOptions(msg, options = {}) {
     )}`
   );
 
-  let extensionOptions = {};
+  const extensionOptions = {};
   extensionOptions.manifest = {
     commands: {
       _execute_message_display_action: {
@@ -30,18 +32,16 @@ async function testExecuteMessageDisplayActionWithOptions(msg, options = {}) {
       "popup.html";
 
     extensionOptions.files = {
-      "popup.html": `
-        <!DOCTYPE html>
+      "popup.html": `<!DOCTYPE html>
         <html>
           <head>
             <meta charset="utf-8">
-            <script src="popup.js"></script>
+            <script defer="defer" src="popup.js"></script>
           </head>
           <body>
             Popup
           </body>
-        </html>
-      `,
+        </html>`,
       "popup.js": function () {
         browser.test.log("sending from-message-display-action-popup");
         browser.runtime.sendMessage("from-message-display-action-popup");
@@ -50,8 +50,8 @@ async function testExecuteMessageDisplayActionWithOptions(msg, options = {}) {
   }
 
   extensionOptions.background = () => {
-    browser.test.onMessage.addListener((message, withPopup) => {
-      browser.commands.onCommand.addListener(commandName => {
+    browser.test.onMessage.addListener((_message, withPopup) => {
+      browser.commands.onCommand.addListener(() => {
         browser.test.fail(
           "The onCommand listener should never fire for a valid _execute_* command."
         );
@@ -72,8 +72,8 @@ async function testExecuteMessageDisplayActionWithOptions(msg, options = {}) {
         }
       });
 
-      browser.runtime.onMessage.addListener(msg => {
-        if (msg == "from-message-display-action-popup") {
+      browser.runtime.onMessage.addListener(message => {
+        if (message == "from-message-display-action-popup") {
           browser.test.notifyPass(
             "execute-message-display-action-popup-opened"
           );
@@ -83,9 +83,10 @@ async function testExecuteMessageDisplayActionWithOptions(msg, options = {}) {
       browser.test.log("Sending send-keys");
       browser.test.sendMessage("send-keys");
     });
+    browser.test.sendMessage("ready");
   };
 
-  let extension = ExtensionTestUtils.loadExtension(extensionOptions);
+  const extension = ExtensionTestUtils.loadExtension(extensionOptions);
 
   extension.onMessage("send-keys", () => {
     info("Simulating ALT+SHIFT+J");
@@ -98,7 +99,7 @@ async function testExecuteMessageDisplayActionWithOptions(msg, options = {}) {
 
   await extension.startup();
 
-  let tabmail = document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   let messageWindow = window;
   let aboutMessage = tabmail.currentAboutMessage;
   switch (options.displayType) {
@@ -113,6 +114,7 @@ async function testExecuteMessageDisplayActionWithOptions(msg, options = {}) {
   }
   await SimpleTest.promiseFocus(aboutMessage);
 
+  await extension.awaitMessage("ready");
   // trigger setup of listeners in background and the send-keys msg
   extension.sendMessage("withPopup", options.withPopup);
 
@@ -142,22 +144,22 @@ async function testExecuteMessageDisplayActionWithOptions(msg, options = {}) {
 }
 
 add_setup(async () => {
-  let account = createAccount();
-  let rootFolder = account.incomingServer.rootFolder;
-  let subFolders = rootFolder.subFolders;
-  createMessages(subFolders[0], 10);
+  const account = createAccount();
+  const rootFolder = account.incomingServer.rootFolder;
+  const subFolders = rootFolder.subFolders;
+  await createMessages(subFolders[0], 10);
   gMessages = [...subFolders[0].messages];
 
-  let about3Pane = document.getElementById("tabmail").currentAbout3Pane;
+  const about3Pane = document.getElementById("tabmail").currentAbout3Pane;
   about3Pane.displayFolder(subFolders[0].URI);
   about3Pane.threadTree.selectedIndex = 0;
 });
 
-let popupJobs = [true, false];
-let displayJobs = ["3pane", "tab", "window"];
+const popupJobs = [true, false];
+const displayJobs = ["3pane", "tab", "window"];
 
-for (let popupJob of popupJobs) {
-  for (let displayJob of displayJobs) {
+for (const popupJob of popupJobs) {
+  for (const displayJob of displayJobs) {
     add_task(async () => {
       await testExecuteMessageDisplayActionWithOptions(gMessages[1], {
         withPopup: popupJob,

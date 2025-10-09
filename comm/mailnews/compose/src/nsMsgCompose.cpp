@@ -4,23 +4,22 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsMsgCompose.h"
+#include "MailNewsTypes.h"
 #include "mozilla/dom/Document.h"
 #include "nsPIDOMWindow.h"
 #include "mozIDOMWindow.h"
+#include "nsIMsgMessageService.h"
 #include "nsISelectionController.h"
 #include "nsMsgI18N.h"
-#include "nsMsgQuote.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
 #include "nsIDocumentEncoder.h"  // for editor output flags
 #include "nsMsgCompUtils.h"
-#include "nsComposeStrings.h"
 #include "nsIMsgSend.h"
 #include "nsMailHeaders.h"
 #include "nsMsgPrompts.h"
 #include "nsMimeTypes.h"
-#include "nsICharsetConverterManager.h"
-#include "nsTextFormatter.h"
+#include "mozilla/Encoding.h"
 #include "nsIHTMLEditor.h"
 #include "nsIEditor.h"
 #include "plstr.h"
@@ -31,7 +30,6 @@
 #include "nsIDocShellTreeItem.h"
 #include "nsIDocShellTreeOwner.h"
 #include "nsIWindowMediator.h"
-#include "nsIURL.h"
 #include "mozilla/intl/AppDateTimeFormat.h"
 #include "nsIMsgComposeService.h"
 #include "nsIMsgComposeProgressParams.h"
@@ -40,7 +38,7 @@
 #include "nsImapCore.h"
 #include "nsUnicharUtils.h"
 #include "nsNetUtil.h"
-#include "nsIContentViewer.h"
+#include "nsIDocumentViewer.h"
 #include "nsIMsgMdnGenerator.h"
 #include "plbase64.h"
 #include "nsIMsgAccountManager.h"
@@ -49,7 +47,6 @@
 #include "nsMsgFolderFlags.h"
 #include "nsMsgMessageFlags.h"
 #include "nsIMsgDatabase.h"
-#include "nsStringStream.h"
 #include "nsArrayUtils.h"
 #include "nsIMsgWindow.h"
 #include "nsITextToSubURI.h"
@@ -61,11 +58,12 @@
 #include "mozilla/mailnews/MimeHeaderParser.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ErrorResult.h"
-#include "mozilla/Telemetry.h"
+#include "mozilla/glean/CommMailComponentsComposeMetrics.h"
 #include "mozilla/dom/HTMLAnchorElement.h"
 #include "mozilla/dom/HTMLImageElement.h"
 #include "mozilla/dom/Selection.h"
-#include "mozilla/dom/PromiseNativeHandler.h"
+#include "mozilla/dom/Promise.h"
+#include "mozilla/dom/Promise-inl.h"  // IWYU pragma: keep
 #include "mozilla/Utf8.h"
 #include "nsStreamConverter.h"
 #include "nsIObserverService.h"
@@ -232,7 +230,7 @@ bool nsMsgCompose::IsEmbeddedObjectSafe(const char* originalScheme,
                                         Element* element) {
   nsresult rv;
 
-  nsAutoString objURL;
+  nsAutoCString objURL;
 
   if (!originalScheme || !originalPath)  // Having a null host is OK.
     return false;
@@ -240,12 +238,15 @@ bool nsMsgCompose::IsEmbeddedObjectSafe(const char* originalScheme,
   RefPtr<HTMLImageElement> image = HTMLImageElement::FromNode(element);
   RefPtr<HTMLAnchorElement> anchor = HTMLAnchorElement::FromNode(element);
 
-  if (image)
-    image->GetSrc(objURL);
-  else if (anchor)
+  if (image) {
+    nsAutoString src;
+    image->GetSrc(src);
+    objURL = NS_ConvertUTF16toUTF8(src);
+  } else if (anchor) {
     anchor->GetHref(objURL);
-  else
+  } else {
     return false;
+  }
 
   if (!objURL.IsEmpty()) {
     nsCOMPtr<nsIURI> uri;
@@ -503,9 +504,6 @@ nsMsgCompose::ConvertAndLoadComposeWindow(nsString& aPrefix, nsString& aBuf,
       int32_t reply_on_top = 0;
       m_identity->GetReplyOnTop(&reply_on_top);
       if (reply_on_top == 1) {
-        // HTML editor eats one line break but not a whole paragraph.
-        if (aHTMLEditor && !paragraphMode) htmlEditor->InsertLineBreak();
-
         // add one newline if a signature comes before the quote, two otherwise
         bool includeSignature = true;
         bool sig_bottom = true;
@@ -682,14 +680,14 @@ nsMsgCompose::ConvertAndLoadComposeWindow(nsString& aPrefix, nsString& aBuf,
             if (brBeforeDiv) {
               tagLocalName = brBeforeDiv->LocalName();
               if (tagLocalName.EqualsLiteral("br")) {
-                rv = htmlEditor->DeleteNode(brBeforeDiv);
+                rv = htmlEditor->DeleteNode(brBeforeDiv, false, 1);
                 NS_ENSURE_SUCCESS(rv, rv);
               }
             }
           }
 
           // Clean up the <br> we inserted.
-          rv = htmlEditor->DeleteNode(extraBr);
+          rv = htmlEditor->DeleteNode(extraBr, false, 1);
           NS_ENSURE_SUCCESS(rv, rv);
         }
 
@@ -771,18 +769,12 @@ nsMsgCompose::ConvertAndLoadComposeWindow(nsString& aPrefix, nsString& aBuf,
   if (selCon)
     selCon->ScrollSelectionIntoView(
         nsISelectionController::SELECTION_NORMAL,
-        nsISelectionController::SELECTION_ANCHOR_REGION, true);
+        nsISelectionController::SELECTION_ANCHOR_REGION,
+        nsISelectionController::SCROLL_SYNCHRONOUS);
 
   htmlEditor->EnableUndo(true);
   SetBodyModified(false);
 
-#ifdef MSGCOMP_TRACE_PERFORMANCE
-  nsCOMPtr<nsIMsgComposeService> composeService(
-      do_GetService("@mozilla.org/messengercompose;1"));
-  composeService->TimeStamp(
-      "Finished inserting data into the editor. The window is finally ready!",
-      false);
-#endif
   return NS_OK;
 }
 
@@ -865,11 +857,71 @@ nsMsgCompose::Initialize(nsIMsgComposeParams* aParams,
 
 #ifndef MOZ_SUITE
   if (m_composeHTML) {
-    Telemetry::ScalarAdd(Telemetry::ScalarID::TB_COMPOSE_FORMAT_HTML, 1);
+    mozilla::glean::compose::compose_format.Get("HTML"_ns).Add(1);
   } else {
-    Telemetry::ScalarAdd(Telemetry::ScalarID::TB_COMPOSE_FORMAT_PLAIN_TEXT, 1);
+    mozilla::glean::compose::compose_format.Get("PlainText"_ns).Add(1);
   }
-  Telemetry::Accumulate(Telemetry::TB_COMPOSE_TYPE, type);
+
+  nsAutoCString gleanCompType;
+  switch (type) {
+    case nsIMsgCompType::New:
+      gleanCompType = "New"_ns;
+      break;
+    case nsIMsgCompType::Reply:
+      gleanCompType = "Reply"_ns;
+      break;
+    case nsIMsgCompType::ReplyAll:
+      gleanCompType = "ReplyAll"_ns;
+      break;
+    case nsIMsgCompType::ForwardAsAttachment:
+      gleanCompType = "ForwardAsAttachment"_ns;
+      break;
+    case nsIMsgCompType::ForwardInline:
+      gleanCompType = "ForwardInline"_ns;
+      break;
+    case nsIMsgCompType::NewsPost:
+      gleanCompType = "NewsPost"_ns;
+      break;
+    case nsIMsgCompType::ReplyToSender:
+      gleanCompType = "ReplyToSender"_ns;
+      break;
+    case nsIMsgCompType::ReplyToGroup:
+      gleanCompType = "ReplyToGroup"_ns;
+      break;
+    case nsIMsgCompType::ReplyToSenderAndGroup:
+      gleanCompType = "ReplyToSenderAndGroup"_ns;
+      break;
+    case nsIMsgCompType::Draft:
+      gleanCompType = "Draft"_ns;
+      break;
+    case nsIMsgCompType::Template:
+      gleanCompType = "Template"_ns;
+      break;
+    case nsIMsgCompType::MailToUrl:
+      gleanCompType = "MailToUrl"_ns;
+      break;
+    case nsIMsgCompType::ReplyWithTemplate:
+      gleanCompType = "ReplyWithTemplate"_ns;
+      break;
+    case nsIMsgCompType::ReplyToList:
+      gleanCompType = "ReplyToList"_ns;
+      break;
+    case nsIMsgCompType::Redirect:
+      gleanCompType = "Redirect"_ns;
+      break;
+    case nsIMsgCompType::EditAsNew:
+      gleanCompType = "EditAsNew"_ns;
+      break;
+    case nsIMsgCompType::EditTemplate:
+      gleanCompType = "EditTemplate"_ns;
+      break;
+    default:
+      NS_WARNING("Unexpected compose type");
+      break;
+  }
+  if (!gleanCompType.IsEmpty()) {
+    mozilla::glean::compose::compose_type.Get(gleanCompType).Add(1);
+  }
 #endif
 
   if (composeFields) {
@@ -1041,6 +1093,13 @@ nsMsgCompose::SendMsgToServer(MSG_DeliverMode deliverMode,
       if (deliverMode == nsIMsgCompDeliverMode::AutoSaveAsDraft)
         deliverMode = nsIMsgCompDeliverMode::SaveAsDraft;
 
+      // When saving a draft, ensure each instance has a new messageId generated
+      // so imap search finds a unique match. This is needed for non-UIDPLUS
+      // imap servers.
+      if (deliverMode == nsIMsgCompDeliverMode::SaveAsDraft ||
+          deliverMode == nsIMsgCompDeliverMode::SaveAsTemplate)
+        m_compFields->SetMessageId("");
+
       RefPtr<nsIMsgCompose> msgCompose(this);
       composeSendListener->SetMsgCompose(msgCompose);
       composeSendListener->SetDeliverMode(deliverMode);
@@ -1127,7 +1186,7 @@ NS_IMETHODIMP nsMsgCompose::SendMsg(MSG_DeliverMode deliverMode,
   if (progress) {
     mProgress = progress;
 
-    if (deliverMode != nsIMsgCompDeliverMode::AutoSaveAsDraft) {
+    if (m_window && deliverMode != nsIMsgCompDeliverMode::AutoSaveAsDraft) {
       nsAutoString msgSubject;
       m_compFields->GetSubject(msgSubject);
 
@@ -1191,13 +1250,13 @@ NS_IMETHODIMP nsMsgCompose::SendMsg(MSG_DeliverMode deliverMode,
         if (index != kNotFound) userid.SetLength(index);
 
         if (userid.IsEmpty())
-          attachment->SetName(u"vcard.vcf"_ns);
+          attachment->SetName("vcard.vcf"_ns);
         else {
           // Replace any dot with underscore to stop vCards
           // generating false positives with some heuristic scanners
           userid.ReplaceChar('.', '_');
           userid.AppendLiteral(".vcf");
-          attachment->SetName(NS_ConvertASCIItoUTF16(userid));
+          attachment->SetName(userid);
         }
 
         attachment->SetUrl(vCardUrl);
@@ -1248,10 +1307,13 @@ NS_IMETHODIMP nsMsgCompose::SendMsg(MSG_DeliverMode deliverMode,
     self->DeleteTmpAttachments();
   };
   if (promise) {
-    RefPtr<DomPromiseListener> listener = new DomPromiseListener(
-        [&](JSContext*, JS::Handle<JS::Value>) { DeleteTmpAttachments(); },
-        handleFailure);
-    promise->AppendNativeHandler(listener);
+    promise->AddCallbacksWithCycleCollectedArgs(
+        [self = RefPtr(this)](JSContext*, JS::Handle<JS::Value> aValue,
+                              ErrorResult&) { self->DeleteTmpAttachments(); },
+        [handleFailure](JSContext*, JS::Handle<JS::Value> aValue,
+                        ErrorResult&) {
+          handleFailure(Promise::TryExtractNSResultFromRejectionValue(aValue));
+        });
     promise.forget(aPromise);
   } else if (NS_FAILED(rv)) {
     handleFailure(rv);
@@ -1570,7 +1632,7 @@ nsresult nsMsgCompose::CreateMessage(const nsACString& originalMsgURI,
     rv = GetMsgDBHdrFromURI(msgUri, getter_AddRefs(msgHdr));
     if (NS_SUCCEEDED(rv)) {
       nsAutoCString messageId;
-      msgHdr->GetMessageId(getter_Copies(messageId));
+      msgHdr->GetMessageId(messageId);
 
       nsAutoCString reference;
       // When forwarding we only use the original message for "References:" -
@@ -1590,7 +1652,7 @@ nsresult nsMsgCompose::CreateMessage(const nsACString& originalMsgURI,
         }
         reference.Trim(" ", false, true);
       }
-      msgHdr->GetMessageId(getter_Copies(messageId));
+      msgHdr->GetMessageId(messageId);
       reference.Append('<');
       reference.Append(messageId);
       reference.Append('>');
@@ -1744,7 +1806,7 @@ nsresult nsMsgCompose::CreateMessage(const nsACString& originalMsgURI,
         case nsIMsgCompType::ForwardAsAttachment: {
           // Add the forwarded message in the references, first
           nsAutoCString messageId;
-          msgHdr->GetMessageId(getter_Copies(messageId));
+          msgHdr->GetMessageId(messageId);
           if (isFirstPass) {
             nsAutoCString reference;
             reference.Append('<');
@@ -1800,8 +1862,9 @@ nsresult nsMsgCompose::CreateMessage(const nsACString& originalMsgURI,
             // change all '.' to '_'  see bug #271211
             sanitizedSubj.ReplaceChar(u".", u'_');
             if (addExtension) sanitizedSubj.AppendLiteral(".eml");
-            attachment->SetName(sanitizedSubj);
+            attachment->SetName(NS_ConvertUTF16toUTF8(sanitizedSubj));
             attachment->SetUrl(nsDependentCString(uri));
+            attachment->SetContentType("message/rfc822"_ns);
             m_compFields->AddAttachment(attachment);
           }
 
@@ -1821,7 +1884,7 @@ nsresult nsMsgCompose::CreateMessage(const nsACString& originalMsgURI,
           // For a redirect, set the Reply-To: header to what was in the
           // original From: header...
           nsAutoCString author;
-          msgHdr->GetAuthor(getter_Copies(author));
+          msgHdr->GetAuthor(author);
           m_compFields->SetSubject(subject);
           m_compFields->SetReplyTo(author.get());
 
@@ -1837,7 +1900,7 @@ nsresult nsMsgCompose::CreateMessage(const nsACString& originalMsgURI,
           // will work when the new recipient eventually replies to the
           // original sender.
           nsAutoCString messageId;
-          msgHdr->GetMessageId(getter_Copies(messageId));
+          msgHdr->GetMessageId(messageId);
           if (isFirstPass) {
             nsAutoCString reference;
             reference.Append('<');
@@ -1857,7 +1920,12 @@ nsresult nsMsgCompose::CreateMessage(const nsACString& originalMsgURI,
       }
     }
     isFirstPass = false;
-    uri = nextUri + 1;
+    if (nextUri) {
+      // `nextUri` can be a null pointer if `strstr` did not find `://` in the
+      // URI earlier. Only increment it if that is not the case, to avoid
+      // undefined behaviors.
+      uri = nextUri + 1;
+    }
   } while (nextUri);
   PR_Free(uriList);
   return rv;
@@ -1912,14 +1980,14 @@ NS_IMETHODIMP nsMsgCompose::GetOriginalMsgURI(nsACString& originalMsgURI) {
 QuotingOutputStreamListener::~QuotingOutputStreamListener() {}
 
 QuotingOutputStreamListener::QuotingOutputStreamListener(
-    nsIMsgDBHdr* originalMsgHdr, bool quoteHeaders, bool headersOnly,
+    nsIMsgDBHdr* origMsgHdr, bool quoteHeaders, bool headersOnly,
     nsIMsgIdentity* identity, nsIMsgQuote* msgQuote, bool quoteOriginal,
     const nsACString& htmlToQuote) {
   nsresult rv;
   mQuoteHeaders = quoteHeaders;
   mHeadersOnly = headersOnly;
   mIdentity = identity;
-  mOrigMsgHdr = originalMsgHdr;
+  mOrigMsgHdr = origMsgHdr;
   mUnicodeBufferCharacterLength = 0;
   mQuoteOriginal = quoteOriginal;
   mHtmlToQuote = htmlToQuote;
@@ -1937,10 +2005,10 @@ QuotingOutputStreamListener::QuotingOutputStreamListener(
         replyHeaderAuthorWroteOnDate, replyHeaderOriginalmessage);
 
     // For the built message body...
-    if (originalMsgHdr && !quoteHeaders) {
+    if (origMsgHdr && !quoteHeaders) {
       // Setup the cite information....
       nsCString myGetter;
-      if (NS_SUCCEEDED(originalMsgHdr->GetMessageId(getter_Copies(myGetter)))) {
+      if (NS_SUCCEEDED(origMsgHdr->GetMessageId(myGetter))) {
         if (!myGetter.IsEmpty()) {
           nsAutoCString buf;
           mCiteReference.AssignLiteral("mid:");
@@ -1994,7 +2062,7 @@ QuotingOutputStreamListener::QuotingOutputStreamListener(
 
         if (headerDate) {
           PRTime originalMsgDate;
-          rv = originalMsgHdr->GetDate(&originalMsgDate);
+          rv = origMsgHdr->GetDate(&originalMsgDate);
           if (NS_SUCCEEDED(rv)) {
             nsAutoString citeDatePart;
             if ((placeholderIndex = mCitePrefix.Find(u"#2")) != kNotFound) {
@@ -2020,7 +2088,7 @@ QuotingOutputStreamListener::QuotingOutputStreamListener(
 
         if ((placeholderIndex = mCitePrefix.Find(u"#1")) != kNotFound) {
           nsAutoCString author;
-          rv = originalMsgHdr->GetAuthor(getter_Copies(author));
+          rv = origMsgHdr->GetAuthor(author);
           if (NS_SUCCEEDED(rv)) {
             nsAutoString citeAuthor;
             ExtractName(EncodedHeader(author), citeAuthor);
@@ -2194,7 +2262,7 @@ QuotingOutputStreamListener::OnStopRequest(nsIRequest* request,
 
       nsTArray<RefPtr<nsIMsgIdentity>> identities;
       nsCString accountKey;
-      mOrigMsgHdr->GetAccountKey(getter_Copies(accountKey));
+      mOrigMsgHdr->GetAccountKey(accountKey);
       if (replyToSelfCheckAll) {
         // Check all available identities if the pref was set.
         accountManager->GetAllIdentities(identities);
@@ -2479,23 +2547,9 @@ QuotingOutputStreamListener::OnStopRequest(nsIRequest* request,
     }
   }
 
-#ifdef MSGCOMP_TRACE_PERFORMANCE
-  nsCOMPtr<nsIMsgComposeService> composeService(
-      do_GetService("@mozilla.org/messengercompose;1"));
-  composeService->TimeStamp(
-      "Done with MIME. Now we're updating the UI elements", false);
-#endif
-
   if (mQuoteOriginal)
     compose->NotifyStateListeners(
         nsIMsgComposeNotificationType::ComposeFieldsReady, NS_OK);
-
-#ifdef MSGCOMP_TRACE_PERFORMANCE
-  composeService->TimeStamp(
-      "Addressing widget, window title and focus are now set, time to insert "
-      "the body",
-      false);
-#endif
 
   if (!mHeadersOnly) mMsgBody.AppendLiteral("</html>");
 
@@ -2650,7 +2704,8 @@ nsresult QuotingOutputStreamListener::InsertToCompose(nsIEditor* aEditor,
     // flushed and PresShell/PresContext/Frames may be dead. See bug 418470.
     selCon->ScrollSelectionIntoView(
         nsISelectionController::SELECTION_NORMAL,
-        nsISelectionController::SELECTION_ANCHOR_REGION, true);
+        nsISelectionController::SELECTION_ANCHOR_REGION,
+        nsISelectionController::SCROLL_SYNCHRONOUS);
 
   return NS_OK;
 }
@@ -2875,7 +2930,7 @@ NS_IMETHODIMP nsMsgCompose::RememberQueuedDisposition() {
 
       nsCString messageId;
       mMsgSend->GetMessageId(messageId);
-      msgHdr->SetMessageId(messageId.get());
+      msgHdr->SetMessageId(messageId);
       if (!mOriginalMsgURI.IsEmpty()) {
         msgDB->SetAttributeOnPendingHdr(msgHdr, ORIG_URI_PROPERTY,
                                         mOriginalMsgURI.get());
@@ -2963,15 +3018,16 @@ NS_IMETHODIMP nsMsgCompose::OnStartSending(const char* aMsgID,
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgCompose::OnProgress(const char* aMsgID, uint32_t aProgress,
-                                       uint32_t aProgressMax) {
+NS_IMETHODIMP nsMsgCompose::OnSendProgress(const char* aMsgID,
+                                           uint32_t aProgress,
+                                           uint32_t aProgressMax) {
   nsTObserverArray<nsCOMPtr<nsIMsgSendListener>>::ForwardIterator iter(
       mExternalSendListeners);
   nsCOMPtr<nsIMsgSendListener> externalSendListener;
 
   while (iter.HasMore()) {
     externalSendListener = iter.GetNext();
-    externalSendListener->OnProgress(aMsgID, aProgress, aProgressMax);
+    externalSendListener->OnSendProgress(aMsgID, aProgress, aProgressMax);
   }
   return NS_OK;
 }
@@ -3094,14 +3150,14 @@ nsresult nsMsgComposeSendListener::OnStartSending(const char* aMsgID,
   return NS_OK;
 }
 
-nsresult nsMsgComposeSendListener::OnProgress(const char* aMsgID,
-                                              uint32_t aProgress,
-                                              uint32_t aProgressMax) {
+nsresult nsMsgComposeSendListener::OnSendProgress(const char* aMsgID,
+                                                  uint32_t aProgress,
+                                                  uint32_t aProgressMax) {
   nsresult rv;
   nsCOMPtr<nsIMsgSendListener> composeSendListener =
       do_QueryReferent(mWeakComposeObj, &rv);
   if (NS_SUCCEEDED(rv) && composeSendListener)
-    composeSendListener->OnProgress(aMsgID, aProgress, aProgressMax);
+    composeSendListener->OnSendProgress(aMsgID, aProgress, aProgressMax);
   return NS_OK;
 }
 
@@ -3586,7 +3642,7 @@ nsresult nsMsgCompose::LoadDataFromFile(nsIFile* file, nsString& sigData,
   file->IsDirectory(&isDirectory);
   if (isDirectory) {
     NS_ERROR("file is a directory");
-    return NS_MSG_ERROR_READING_FILE;
+    return NS_ERROR_FAILURE;
   }
 
   nsAutoCString data;
@@ -4965,7 +5021,7 @@ nsMsgCompose::SetIdentity(nsIMsgIdentity* aIdentity) {
       nsCOMPtr<nsIEditor> editor(m_editor);  // Strong reference.
       editor->BeginTransaction();
       tempNode = node->GetPreviousSibling();
-      rv = editor->DeleteNode(node);
+      rv = editor->DeleteNode(node, false, 1);
       if (NS_FAILED(rv)) {
         editor->EndTransaction();
         return rv;
@@ -4974,7 +5030,8 @@ nsMsgCompose::SetIdentity(nsIMsgIdentity* aIdentity) {
       // Also, remove the <br> right before the signature.
       if (tempNode) {
         tagLocalName = tempNode->LocalName();
-        if (tagLocalName.EqualsLiteral("br")) editor->DeleteNode(tempNode);
+        if (tagLocalName.EqualsLiteral("br"))
+          editor->DeleteNode(tempNode, false, 1);
       }
       editor->EndTransaction();
     }

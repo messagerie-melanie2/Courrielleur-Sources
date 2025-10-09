@@ -10,8 +10,11 @@ ChromeUtils.defineESModuleGetters(this, {
 
 add_setup(async function () {
   Services.telemetry.clearEvents();
-  Services.telemetry.clearScalars();
   makeProfileResettable();
+
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.urlbar.scotchBonnet.enableOverride", false]],
+  });
 });
 
 // Tests the refresh tip.
@@ -38,19 +41,21 @@ add_task(async function refresh() {
 add_task(async function clear() {
   // Pick the tip, which should open the refresh dialog.  Click its cancel
   // button.
+  let useOldClearHistoryDialog = Services.prefs.getBoolPref(
+    "privacy.sanitize.useOldClearHistoryDialog"
+  );
+  let dialogURL = useOldClearHistoryDialog
+    ? "chrome://browser/content/sanitize.xhtml"
+    : "chrome://browser/content/sanitize_v2.xhtml";
   await checkIntervention({
     searchString: SEARCH_STRINGS.CLEAR,
     tip: UrlbarProviderInterventions.TIP_TYPE.CLEAR,
     title: "Clear your cache, cookies, history and more.",
     button: "Choose What to Clear…",
     awaitCallback() {
-      return BrowserTestUtils.promiseAlertDialog(
-        "cancel",
-        "chrome://browser/content/sanitize.xhtml",
-        {
-          isSubDialog: true,
-        }
-      );
+      return BrowserTestUtils.promiseAlertDialog("cancel", dialogURL, {
+        isSubDialog: true,
+      });
     },
   });
 });
@@ -77,46 +82,6 @@ add_task(async function clear_private() {
   await UrlbarTestUtils.promisePopupClose(win, () => win.gURLBar.blur());
 
   await BrowserTestUtils.closeWindow(win);
-});
-
-// Tests that if multiple interventions of the same type are seen in the same
-// engagement, only one instance is recorded in Telemetry.
-add_task(async function multipleInterventionsInOneEngagement() {
-  Services.telemetry.clearScalars();
-  let result = (await awaitTip(SEARCH_STRINGS.REFRESH, window))[0];
-  Assert.strictEqual(
-    result.payload.type,
-    UrlbarProviderInterventions.TIP_TYPE.REFRESH
-  );
-  result = (await awaitTip(SEARCH_STRINGS.CLEAR, window))[0];
-  Assert.strictEqual(
-    result.payload.type,
-    UrlbarProviderInterventions.TIP_TYPE.CLEAR
-  );
-  result = (await awaitTip(SEARCH_STRINGS.REFRESH, window))[0];
-  Assert.strictEqual(
-    result.payload.type,
-    UrlbarProviderInterventions.TIP_TYPE.REFRESH
-  );
-
-  // Blur the urlbar so that the engagement is ended.
-  await UrlbarTestUtils.promisePopupClose(window, () => gURLBar.blur());
-
-  const scalars = TelemetryTestUtils.getProcessScalars("parent", true, true);
-  // We should only record one impression for the Refresh tip. Although it was
-  // seen twice, it was in the same engagement.
-  TelemetryTestUtils.assertKeyedScalar(
-    scalars,
-    "urlbar.tips",
-    `${UrlbarProviderInterventions.TIP_TYPE.REFRESH}-shown`,
-    1
-  );
-  TelemetryTestUtils.assertKeyedScalar(
-    scalars,
-    "urlbar.tips",
-    `${UrlbarProviderInterventions.TIP_TYPE.CLEAR}-shown`,
-    1
-  );
 });
 
 // Test the result of UrlbarProviderInterventions.isActive()
@@ -174,8 +139,10 @@ add_task(async function testIsActive() {
     // calculated the score.
     UrlbarProviderInterventions.currentTip = null;
 
-    const isActive = UrlbarProviderInterventions.isActive({ searchString });
-    Assert.equal(isActive, expectedActive, "Result of isAcitive is correct");
+    const isActive = await UrlbarProviderInterventions.isActive({
+      searchString,
+    });
+    Assert.equal(isActive, expectedActive, "Result of isActive is correct");
     const isScoreCalculated = UrlbarProviderInterventions.currentTip !== null;
     Assert.equal(
       isScoreCalculated,
@@ -258,14 +225,5 @@ add_task(async function pickHelp() {
     // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
     await new Promise(r => setTimeout(r, 2000));
     Assert.strictEqual(gDialogBox.isOpen, false, "No dialog should be open");
-
-    // Check telemetry.
-    const scalars = TelemetryTestUtils.getProcessScalars("parent", true, true);
-    TelemetryTestUtils.assertKeyedScalar(
-      scalars,
-      "urlbar.tips",
-      `${UrlbarProviderInterventions.TIP_TYPE.CLEAR}-help`,
-      1
-    );
   });
 });

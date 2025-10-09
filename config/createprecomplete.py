@@ -6,7 +6,6 @@
 # longer present in a complete update. The current working directory is used for
 # the location to enumerate and to create the precomplete file.
 
-import io
 import os
 
 
@@ -24,7 +23,11 @@ def get_build_entries(root_path):
             if not (
                 rel_path_file.endswith("channel-prefs.js")
                 or rel_path_file.endswith("update-settings.ini")
-                or rel_path_file.find("distribution/") != -1
+                or "/ChannelPrefs.framework/" in rel_path_file
+                or rel_path_file.startswith("ChannelPrefs.framework/")
+                or "/UpdateSettings.framework/" in rel_path_file
+                or rel_path_file.startswith("UpdateSettings.framework/")
+                or "distribution/" in rel_path_file
             ):
                 rel_file_path_set.add(rel_path_file)
 
@@ -57,7 +60,7 @@ def generate_precomplete(root_path):
     precomplete_file_path = os.path.join(root_path, rel_path_precomplete)
     # Open the file so it exists before building the list of files and open it
     # in binary mode to prevent OS specific line endings.
-    precomplete_file = io.open(precomplete_file_path, mode="wt", newline="\n")
+    precomplete_file = open(precomplete_file_path, mode="w", newline="\n")
     rel_file_path_list, rel_dir_path_list = get_build_entries(root_path)
     for rel_file_path in rel_file_path_list:
         precomplete_file.write('remove "' + rel_file_path + '"\n')

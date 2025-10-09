@@ -4,17 +4,21 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::constants::{Cipher, Version};
-use crate::err::Res;
-use crate::p11::{PK11SymKey, SymKey};
-use crate::ssl;
-use crate::ssl::{PRUint16, PRUint64, PRUint8, SSLAeadContext};
+use std::{
+    fmt,
+    ops::{Deref, DerefMut},
+    os::raw::{c_char, c_uint},
+    ptr::null_mut,
+};
 
-use std::convert::{TryFrom, TryInto};
-use std::fmt;
-use std::ops::{Deref, DerefMut};
-use std::os::raw::{c_char, c_uint};
-use std::ptr::null_mut;
+use crate::{
+    constants::{Cipher, Version},
+    err::Res,
+    experimental_api,
+    p11::{PK11SymKey, SymKey},
+    scoped_ptr,
+    ssl::{PRUint16, PRUint64, PRUint8, SSLAeadContext},
+};
 
 experimental_api!(SSL_MakeAead(
     version: PRUint16,
@@ -49,14 +53,15 @@ experimental_api!(SSL_AeadDecrypt(
 experimental_api!(SSL_DestroyAead(ctx: *mut SSLAeadContext));
 scoped_ptr!(AeadContext, SSLAeadContext, SSL_DestroyAead);
 
-pub struct Aead {
+pub struct RealAead {
     ctx: AeadContext,
 }
 
-impl Aead {
+impl RealAead {
     /// Create a new AEAD based on the indicated TLS version and cipher suite.
     ///
     /// # Errors
+    ///
     /// Returns `Error` when the supporting NSS functions fail.
     pub fn new(version: Version, cipher: Cipher, secret: &SymKey, prefix: &str) -> Res<Self> {
         let s: *mut PK11SymKey = **secret;
@@ -64,8 +69,7 @@ impl Aead {
     }
 
     #[must_use]
-    #[allow(clippy::unused_self)]
-    pub fn expansion(&self) -> usize {
+    pub const fn expansion(&self) -> usize {
         16
     }
 
@@ -76,7 +80,7 @@ impl Aead {
         prefix: &str,
     ) -> Res<Self> {
         let p = prefix.as_bytes();
-        let mut ctx: *mut ssl::SSLAeadContext = null_mut();
+        let mut ctx: *mut SSLAeadContext = null_mut();
         SSL_MakeAead(
             version,
             cipher,
@@ -90,12 +94,13 @@ impl Aead {
         })
     }
 
-    /// Decrypt a plaintext.
+    /// Encrypt a plaintext.
     ///
     /// The space provided in `output` needs to be larger than `input` by
     /// the value provided in `Aead::expansion`.
     ///
     /// # Errors
+    ///
     /// If the input can't be protected or any input is too large for NSS.
     pub fn encrypt<'a>(
         &self,
@@ -107,7 +112,7 @@ impl Aead {
         let mut l: c_uint = 0;
         unsafe {
             SSL_AeadEncrypt(
-                *self.ctx.deref(),
+                *self.ctx,
                 count,
                 aad.as_ptr(),
                 c_uint::try_from(aad.len())?,
@@ -118,16 +123,48 @@ impl Aead {
                 c_uint::try_from(output.len())?,
             )
         }?;
-        Ok(&output[0..(l.try_into()?)])
+        Ok(&output[..l.try_into()?])
+    }
+
+    /// Encrypt `data` consisting of `aad` and plaintext `data` in place.
+    ///
+    /// The last `Aead::expansion` of `data` is overwritten by the AEAD tag by this function.
+    /// Therefore, a buffer should be provided that is that much larger than the plaintext.
+    ///
+    /// # Panics
+    ///
+    /// If `data` is shorter than `<self as Aead>::expansion()`.
+    ///
+    /// # Errors
+    ///
+    /// If the input can't be protected or any input is too large for NSS.
+    pub fn encrypt_in_place<'a>(
+        &self,
+        count: u64,
+        aad: &[u8],
+        data: &'a mut [u8],
+    ) -> Res<&'a mut [u8]> {
+        let mut l: c_uint = 0;
+        unsafe {
+            SSL_AeadEncrypt(
+                *self.ctx,
+                count,
+                aad.as_ptr(),
+                c_uint::try_from(aad.len())?,
+                data.as_ptr(),
+                c_uint::try_from(data.len() - self.expansion())?,
+                data.as_ptr(),
+                &mut l,
+                c_uint::try_from(data.len())?,
+            )
+        }?;
+        Ok(&mut data[..l.try_into()?])
     }
 
     /// Decrypt a ciphertext.
     ///
-    /// Note that NSS insists upon having extra space available for decryption, so
-    /// the buffer for `output` should be the same length as `input`, even though
-    /// the final result will be shorter.
-    ///
     /// # Errors
+    ///
     /// If the input isn't authenticated or any input is too large for NSS.
     pub fn decrypt<'a>(
         &self,
@@ -138,8 +175,11 @@ impl Aead {
     ) -> Res<&'a [u8]> {
         let mut l: c_uint = 0;
         unsafe {
+            // Note that NSS insists upon having extra space available for decryption, so
+            // the buffer for `output` should be the same length as `input`, even though
+            // the final result will be shorter.
             SSL_AeadDecrypt(
-                *self.ctx.deref(),
+                *self.ctx,
                 count,
                 aad.as_ptr(),
                 c_uint::try_from(aad.len())?,
@@ -150,11 +190,45 @@ impl Aead {
                 c_uint::try_from(output.len())?,
             )
         }?;
-        Ok(&output[0..(l.try_into()?)])
+        Ok(&output[..l.try_into()?])
+    }
+
+    /// Decrypt a ciphertext in place.
+    /// Returns a subslice of `data` (without the last `<self as Aead>::expansion()` bytes),
+    /// that has been decrypted in place.
+    ///
+    /// # Errors
+    ///
+    /// If the input isn't authenticated or any input is too large for NSS.
+    pub fn decrypt_in_place<'a>(
+        &self,
+        count: u64,
+        aad: &[u8],
+        data: &'a mut [u8],
+    ) -> Res<&'a mut [u8]> {
+        let mut l: c_uint = 0;
+        unsafe {
+            // Note that NSS insists upon having extra space available for decryption, so
+            // the buffer for `output` should be the same length as `input`, even though
+            // the final result will be shorter.
+            SSL_AeadDecrypt(
+                *self.ctx,
+                count,
+                aad.as_ptr(),
+                c_uint::try_from(aad.len())?,
+                data.as_ptr(),
+                c_uint::try_from(data.len())?,
+                data.as_ptr(),
+                &mut l,
+                c_uint::try_from(data.len())?,
+            )
+        }?;
+        debug_assert_eq!(usize::try_from(l)?, data.len() - self.expansion());
+        Ok(&mut data[..l.try_into()?])
     }
 }
 
-impl fmt::Debug for Aead {
+impl fmt::Debug for RealAead {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "[AEAD Context]")
     }

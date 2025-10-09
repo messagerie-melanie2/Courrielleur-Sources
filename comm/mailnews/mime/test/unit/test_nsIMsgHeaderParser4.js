@@ -4,8 +4,8 @@
  * Test suite for nsIMsgHeaderParser::makeFromDisplayAddress.
  * This is what is used to parse in the user input from addressing fields.
  */
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 function run_test() {
@@ -112,23 +112,28 @@ function run_test() {
         ["Marge", "marge@example.com"],
       ],
     },
-    // Junk after a bracketed email address to be ignored.
+    // Junk after last bracketed email address to be ignored.
     {
       displayString: "<attacker@example.com>friend@example.com",
       addresses: [["", "attacker@example.com"]],
     },
     {
       displayString:
-        "<attacker2@example.com><friend2@example.com>,foo <attacker3@example.com><friend3@example.com>",
+        "<attacker2@example.com><friend2@example.com>,foo <attacker3@example.com> <friend3@example.com>",
       addresses: [
-        ["", "attacker2@example.com"],
-        ["foo", "attacker3@example.com"],
+        ["<attacker2@example.com>", "friend2@example.com"],
+        ["foo <attacker3@example.com>", "friend3@example.com"],
       ],
     },
     {
       displayString:
-        'jay "bad" ass <name@evil.com> <someone-else@bad.com> <name@evil.commercial.org>',
-      addresses: [['jay "bad" ass', "name@evil.com"]],
+        'jay "bad" ass <name@evil.com> xy <someone-else@bad.com> <name@evil.commercial.org>',
+      addresses: [
+        [
+          'jay "bad" ass <name@evil.com> xy <someone-else@bad.com>',
+          "name@evil.commercial.org",
+        ],
+      ],
     },
 
     {
@@ -186,10 +191,10 @@ function run_test() {
   // Test -  strings
 
   for (let i = 0; i < checks.length; ++i) {
-    let addrs = MailServices.headerParser.makeFromDisplayAddress(
+    const addrs = MailServices.headerParser.makeFromDisplayAddress(
       checks[i].displayString
     );
-    let checkaddrs = checks[i].addresses;
+    const checkaddrs = checks[i].addresses;
     Assert.equal(addrs.length, checkaddrs.length, "Number of parsed addresses");
     for (let j = 0; j < addrs.length; j++) {
       Assert.equal(addrs[j].name, checkaddrs[j][0], "Parsed name");

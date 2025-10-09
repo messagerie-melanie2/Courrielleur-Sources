@@ -29,6 +29,7 @@
 
           "name": {
             "type": "string",
+            "description": "Name must be at least 2, and should be at most 75 characters",
             "optional": false,
             "preprocess": "localize"
           },
@@ -121,7 +122,9 @@
 
           "incognito": {
             "type": "string",
-            "enum": ["not_allowed", "spanning"],
+            "description": "The 'split' value is not supported.",
+            "enum": ["not_allowed", "spanning", "split"],
+            "postprocess": "incognitoSplitUnsupportedAndFallback",
             "default": "spanning",
             "optional": true
           },
@@ -131,26 +134,23 @@
               {
                 "type": "object",
                 "properties": {
-                  "page": { "$ref": "ExtensionURL" },
-                  "persistent": {
+                  "service_worker": {
                     "optional": true,
-                    "type": "boolean",
-                    "max_manifest_version": 2,
-                    "default": true
-                  }
-                },
-                "additionalProperties": { "$ref": "UnrecognizedProperty" }
-              },
-              {
-                "type": "object",
-                "properties": {
+                    "$ref": "ExtensionURL"
+                  },
+                  "page": {
+                    "optional": true,
+                    "$ref": "ExtensionURL"
+                  },
                   "scripts": {
+                    "optional": true,
                     "type": "array",
                     "items": { "$ref": "ExtensionURL" }
                   },
                   "type": {
                     "optional": true,
                     "type": "string",
+                    "description": "Only supported for page/scripts; not for service_worker yet, see bug 1775574",
                     "enum": ["module", "classic"]
                   },
                   "persistent": {
@@ -158,26 +158,33 @@
                     "type": "boolean",
                     "max_manifest_version": 2,
                     "default": true
+                  },
+                  "preferred_environment": {
+                    "optional": true,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": ["service_worker", "document"],
+                      "onError": "warn"
+                    }
                   }
                 },
-                "additionalProperties": { "$ref": "UnrecognizedProperty" }
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "service_worker": { "$ref": "ExtensionURL" }
-                },
-                "postprocess": "requireBackgroundServiceWorkerEnabled"
+                "additionalProperties": { "$ref": "UnrecognizedProperty" },
+                "postprocess": "checkRequiredManifestBackgroundKeys"
               }
             ],
             "optional": true
           },
 
+          "options_page": {
+            "$ref": "ExtensionURL",
+            "optional": true,
+            "description": "Alias property for options_ui.page, ignored when options_ui.page is set. When using this property the options page is always opened in a new tab."
+          },
+
           "options_ui": {
             "type": "object",
-
             "optional": true,
-
             "properties": {
               "page": { "$ref": "ExtensionURL" },
               "browser_style": {
@@ -262,6 +269,17 @@
           },
 
           "host_permissions": {
+            "min_manifest_version": 3,
+            "type": "array",
+            "items": {
+              "$ref": "MatchPattern",
+              "onError": "warn"
+            },
+            "optional": true,
+            "default": []
+          },
+
+          "optional_host_permissions": {
             "min_manifest_version": 3,
             "type": "array",
             "items": {
@@ -421,31 +439,6 @@
         }
       },
       {
-        "id": "WebExtensionSitePermissionsManifest",
-        "type": "object",
-        "description": "Represents a WebExtension site permissions manifest.json file",
-
-        "$import": "ManifestBase",
-        "properties": {
-          "site_permissions": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-              "$ref": "SitePermission"
-            }
-          },
-          "install_origins": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 1,
-            "items": {
-              "type": "string",
-              "format": "origin"
-            }
-          }
-        }
-      },
-      {
         "id": "ThemeIcons",
         "type": "object",
         "properties": {
@@ -463,6 +456,15 @@
           }
         },
         "additionalProperties": { "$ref": "UnrecognizedProperty" }
+      },
+      {
+        "id": "OptionalOnlyPermission",
+        "choices": [
+          {
+            "type": "string",
+            "enum": []
+          }
+        ]
       },
       {
         "id": "OptionalPermissionNoPrompt",
@@ -492,6 +494,7 @@
         "id": "OptionalPermissionOrOrigin",
         "choices": [
           { "$ref": "OptionalPermission" },
+          { "$ref": "OptionalOnlyPermission" },
           { "$ref": "MatchPattern" }
         ]
       },
@@ -501,6 +504,47 @@
           {
             "type": "string",
             "enum": ["mozillaAddons"]
+          }
+        ]
+      },
+      {
+        "id": "CommonDataCollectionPermission",
+        "choices": [
+          {
+            "type": "string",
+            "enum": [
+              "authenticationInfo",
+              "bookmarksInfo",
+              "browsingActivity",
+              "financialAndPaymentInfo",
+              "healthInfo",
+              "locationInfo",
+              "personalCommunications",
+              "personallyIdentifyingInfo",
+              "searchTerms",
+              "websiteActivity",
+              "websiteContent"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "DataCollectionPermission",
+        "choices": [
+          { "$ref": "CommonDataCollectionPermission" },
+          {
+            "type": "string",
+            "enum": ["none"]
+          }
+        ]
+      },
+      {
+        "id": "OptionalDataCollectionPermission",
+        "choices": [
+          { "$ref": "CommonDataCollectionPermission" },
+          {
+            "type": "string",
+            "enum": ["technicalAndInteraction"]
           }
         ]
       },
@@ -525,15 +569,6 @@
       {
         "id": "PermissionOrOrigin",
         "choices": [{ "$ref": "Permission" }, { "$ref": "MatchPattern" }]
-      },
-      {
-        "id": "SitePermission",
-        "choices": [
-          {
-            "type": "string",
-            "enum": ["midi", "midi-sysex"]
-          }
-        ]
       },
       {
         "id": "HttpURL",
@@ -594,8 +629,40 @@
           "strict_max_version": {
             "type": "string",
             "optional": true
+          },
+
+          "admin_install_only": {
+            "type": "boolean",
+            "optional": true
+          },
+
+          "data_collection_permissions": {
+            "type": "object",
+            "optional": true,
+            "properties": {
+              "required": {
+                "type": "array",
+                "items": {
+                  "$ref": "DataCollectionPermission",
+                  "onError": "warn"
+                },
+                "optional": true,
+                "default": [],
+                "postprocess": "checkValidRequiredDataCollection"
+              },
+              "optional": {
+                "type": "array",
+                "items": {
+                  "$ref": "OptionalDataCollectionPermission",
+                  "onError": "warn"
+                },
+                "optional": true,
+                "default": []
+              }
+            }
           }
-        }
+        },
+        "additionalProperties": { "$ref": "UnrecognizedProperty" }
       },
       {
         "id": "GeckoAndroidSpecificProperties",
@@ -610,7 +677,7 @@
             "optional": true
           }
         },
-        "additionalProperties": { "type": "any" }
+        "additionalProperties": { "$ref": "UnrecognizedProperty" }
       },
       {
         "id": "DeprecatedApplications",
@@ -730,13 +797,24 @@
           "match_about_blank": {
             "type": "boolean",
             "optional": true,
-            "description": "If matchAboutBlank is true, then the code is also injected in about:blank and about:srcdoc frames if your extension has access to its parent document. Code cannot be inserted in top-level about:-frames. By default it is <code>false</code>."
+            "description": "If match_about_blank is true, then the code is also injected in about:blank and about:srcdoc frames if your extension has access to its parent document. Ignored if match_origin_as_fallback is specified. By default it is <code>false</code>."
+          },
+          "match_origin_as_fallback": {
+            "type": "boolean",
+            "optional": true,
+            "description": "If match_origin_as_fallback is true, then the code is also injected in about:, data:, blob: when their origin matches the pattern in 'matches', even if the actual document origin is opaque (due to the use of CSP sandbox or iframe sandbox). Match patterns in 'matches' must specify a wildcard path glob. By default it is <code>false</code>."
           },
           "run_at": {
             "$ref": "extensionTypes.RunAt",
             "optional": true,
             "default": "document_idle",
             "description": "The soonest that the JavaScript or CSS will be injected into the tab. Defaults to \"document_idle\"."
+          },
+          "world": {
+            "$ref": "extensionTypes.ExecutionWorld",
+            "optional": true,
+            "default": "ISOLATED",
+            "description": "The JavaScript world for a script to execute within. Defaults to \"ISOLATED\"."
           }
         }
       },

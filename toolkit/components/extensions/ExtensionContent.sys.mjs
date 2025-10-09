@@ -3,28 +3,36 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* eslint-disable mozilla/valid-lazy */
 
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
-const lazy = {};
-
-ChromeUtils.defineESModuleGetters(lazy, {
+const lazy = XPCOMUtils.declareLazy({
   ExtensionProcessScript:
     "resource://gre/modules/ExtensionProcessScript.sys.mjs",
   ExtensionTelemetry: "resource://gre/modules/ExtensionTelemetry.sys.mjs",
+  ExtensionUserScriptsContent:
+    "resource://gre/modules/ExtensionUserScriptsContent.sys.mjs",
   LanguageDetector:
-    "resource://gre/modules/translation/LanguageDetector.sys.mjs",
+    "resource://gre/modules/translations/LanguageDetector.sys.mjs",
   Schemas: "resource://gre/modules/Schemas.sys.mjs",
   WebNavigationFrames: "resource://gre/modules/WebNavigationFrames.sys.mjs",
-});
 
-XPCOMUtils.defineLazyServiceGetter(
-  lazy,
-  "styleSheetService",
-  "@mozilla.org/content/style-sheet-service;1",
-  "nsIStyleSheetService"
-);
+  styleSheetService: {
+    service: "@mozilla.org/content/style-sheet-service;1",
+    iid: Ci.nsIStyleSheetService,
+  },
+  isContentScriptProcess: () =>
+    Services.appinfo.processType === Services.appinfo.PROCESS_TYPE_CONTENT ||
+    !WebExtensionPolicy.useRemoteWebExtensions ||
+    // Thunderbird still loads some content in the parent process.
+    AppConstants.MOZ_APP_NAME == "thunderbird",
+  orderedContentScripts: {
+    pref: "extensions.webextensions.content_scripts.ordered",
+    default: true,
+  },
+});
 
 const Timer = Components.Constructor(
   "@mozilla.org/timer;1",
@@ -39,8 +47,10 @@ const ScriptError = Components.Constructor(
 );
 
 import {
+  ChildAPIManager,
   ExtensionChild,
   ExtensionActivityLogChild,
+  Messenger,
 } from "resource://gre/modules/ExtensionChild.sys.mjs";
 import { ExtensionCommon } from "resource://gre/modules/ExtensionCommon.sys.mjs";
 import { ExtensionUtils } from "resource://gre/modules/ExtensionUtils.sys.mjs";
@@ -59,19 +69,9 @@ const {
   CanOfAPIs,
   SchemaAPIManager,
   defineLazyGetter,
+  redefineGetter,
   runSafeSyncWithoutClone,
 } = ExtensionCommon;
-
-const { BrowserExtensionContent, ChildAPIManager, Messenger } = ExtensionChild;
-
-XPCOMUtils.defineLazyGetter(lazy, "isContentScriptProcess", () => {
-  return (
-    Services.appinfo.processType === Services.appinfo.PROCESS_TYPE_CONTENT ||
-    !WebExtensionPolicy.useRemoteWebExtensions ||
-    // Thunderbird still loads some content in the parent process.
-    AppConstants.MOZ_APP_NAME == "thunderbird"
-  );
-});
 
 var DocumentManager;
 
@@ -111,6 +111,12 @@ class CacheMap extends DefaultMap {
 
     this.expiryTimeout = timeout;
 
+    // DocumentManager clears scriptCaches early under memory pressure. For
+    // this to work, DocumentManager.lazyInit() should be called. In practice,
+    // ScriptCache/CSSCache/CSSCodeCache are only instantiated and populated
+    // when a content script/style is to be injected. This always depends on a
+    // ContentScriptContextChild instance, which is always paired with a call
+    // to DocumentManager.lazyInit().
     scriptCaches.add(this);
 
     // This ensures that all the cached scripts and stylesheets are deleted
@@ -142,7 +148,7 @@ class CacheMap extends DefaultMap {
       super.get(url).timer.cancel();
     }
 
-    super.delete(url);
+    return super.delete(url);
   }
 
   clear(timeout = SCRIPT_CLEAR_TIMEOUT_MS) {
@@ -160,16 +166,18 @@ class CacheMap extends DefaultMap {
 
 class ScriptCache extends CacheMap {
   constructor(options, extension) {
-    super(SCRIPT_EXPIRY_TIMEOUT_MS, null, extension);
-    this.options = options;
-  }
-
-  defaultConstructor(url) {
-    let promise = ChromeUtils.compileScript(url, this.options);
-    promise.then(script => {
-      promise.script = script;
-    });
-    return promise;
+    super(
+      SCRIPT_EXPIRY_TIMEOUT_MS,
+      url => {
+        /** @type {Promise<PrecompiledScript> & { script?: PrecompiledScript }} */
+        let promise = ChromeUtils.compileScript(url, options);
+        promise.then(script => {
+          promise.script = script;
+        });
+        return promise;
+      },
+      extension
+    );
   }
 }
 
@@ -183,31 +191,23 @@ class BaseCSSCache extends CacheMap {
     super(expiryTimeout, defaultConstructor, extension);
   }
 
-  addDocument(key, document) {
-    sheetCacheDocuments.get(this.get(key)).add(document);
-  }
-
-  deleteDocument(key, document) {
-    sheetCacheDocuments.get(this.get(key)).delete(document);
-  }
-
   delete(key) {
     if (this.has(key)) {
-      let promise = this.get(key);
+      let sheetPromise = this.get(key);
 
       // Never remove a sheet from the cache if it's still being used by a
       // document. Rule processors can be shared between documents with the
       // same preloaded sheet, so we only lose by removing them while they're
       // still in use.
       let docs = ChromeUtils.nondeterministicGetWeakSetKeys(
-        sheetCacheDocuments.get(promise)
+        sheetCacheDocuments.get(sheetPromise)
       );
       if (docs.length) {
         return;
       }
     }
 
-    super.delete(key);
+    return super.delete(key);
   }
 }
 
@@ -220,11 +220,14 @@ class CSSCache extends BaseCSSCache {
       CSS_EXPIRY_TIMEOUT_MS,
       url => {
         let uri = Services.io.newURI(url);
-        return lazy.styleSheetService
-          .preloadSheetAsync(uri, sheetType)
-          .then(sheet => {
-            return { url, sheet };
-          });
+        const sheetPromise = lazy.styleSheetService.preloadSheetAsync(
+          uri,
+          sheetType
+        );
+        sheetPromise.then(sheet => {
+          sheetPromise.sheet = sheet;
+        });
+        return sheetPromise;
       },
       extension
     );
@@ -270,65 +273,95 @@ class CSSCodeCache extends BaseCSSCache {
       "data:text/css;extension=style;charset=utf-8," +
         encodeURIComponent(cssCode)
     );
-    const value = lazy.styleSheetService
-      .preloadSheetAsync(uri, this.sheetType)
-      .then(sheet => {
-        return { sheet, uri };
-      });
+    const sheetPromise = lazy.styleSheetService.preloadSheetAsync(
+      uri,
+      this.sheetType
+    );
+    sheetPromise.then(sheet => {
+      sheetPromise.sheet = sheet;
+    });
+    // styleURI: windowUtils.removeSheet requires a URI to identify the sheet.
+    sheetPromise.styleURI = uri;
 
-    super.set(hash, value);
+    super.set(hash, sheetPromise);
   }
 }
 
-defineLazyGetter(
-  BrowserExtensionContent.prototype,
-  "staticScripts",
-  function () {
-    return new ScriptCache({ hasReturnValue: false }, this);
-  }
-);
+defineLazyGetter(ExtensionChild.prototype, "staticScripts", function () {
+  return new ScriptCache({ hasReturnValue: false }, this);
+});
 
-defineLazyGetter(
-  BrowserExtensionContent.prototype,
-  "dynamicScripts",
-  function () {
-    return new ScriptCache({ hasReturnValue: true }, this);
-  }
-);
+defineLazyGetter(ExtensionChild.prototype, "dynamicScripts", function () {
+  return new ScriptCache({ hasReturnValue: true }, this);
+});
 
-defineLazyGetter(BrowserExtensionContent.prototype, "userCSS", function () {
+defineLazyGetter(ExtensionChild.prototype, "anonStaticScripts", function () {
+  // TODO bug 1651557: Use dynamic name to improve debugger experience.
+  const filename = "<anonymous code>";
+  return new ScriptCache({ filename, hasReturnValue: false }, this);
+});
+
+defineLazyGetter(ExtensionChild.prototype, "anonDynamicScripts", function () {
+  // TODO bug 1651557: Use dynamic name to improve debugger experience.
+  const filename = "<anonymous code>";
+  return new ScriptCache({ filename, hasReturnValue: true }, this);
+});
+
+defineLazyGetter(ExtensionChild.prototype, "userCSS", function () {
   return new CSSCache(Ci.nsIStyleSheetService.USER_SHEET, this);
 });
 
-defineLazyGetter(BrowserExtensionContent.prototype, "authorCSS", function () {
+defineLazyGetter(ExtensionChild.prototype, "authorCSS", function () {
   return new CSSCache(Ci.nsIStyleSheetService.AUTHOR_SHEET, this);
 });
 
 // These two caches are similar to the above but specialized to cache the cssCode
 // using an hash computed from the cssCode string as the key (instead of the generated data
 // URI which can be pretty long for bigger injected cssCode).
-defineLazyGetter(BrowserExtensionContent.prototype, "userCSSCode", function () {
+defineLazyGetter(ExtensionChild.prototype, "userCSSCode", function () {
   return new CSSCodeCache(Ci.nsIStyleSheetService.USER_SHEET, this);
 });
 
-defineLazyGetter(
-  BrowserExtensionContent.prototype,
-  "authorCSSCode",
-  function () {
-    return new CSSCodeCache(Ci.nsIStyleSheetService.AUTHOR_SHEET, this);
-  }
-);
+defineLazyGetter(ExtensionChild.prototype, "authorCSSCode", function () {
+  return new CSSCodeCache(Ci.nsIStyleSheetService.AUTHOR_SHEET, this);
+});
+
+/**
+ * This is still an ExtensionChild, but with the properties added above.
+ * Unfortunately we can't express that using just JSDocs types locally,
+ * so this needs to be used with `& ExtensionChild` explicitly below.
+ *
+ * @typedef {object} ExtensionChildContent
+ * @property {ScriptCache} staticScripts
+ * @property {ScriptCache} dynamicScripts
+ * @property {ScriptCache} anonStaticScripts
+ * @property {ScriptCache} anonDynamicScripts
+ * @property {CSSCache} userCSS
+ * @property {CSSCache} authorCSS
+ * @property {CSSCodeCache} userCSSCode
+ * @property {CSSCodeCache} authorCSSCode
+ */
+
+/**
+ * Script/style injections depend on compiled scripts/styles. If the previously
+ * compiled script or style is not found, we block that and later script/style
+ * executions until compilation finishes. This is achieved by storing a Promise
+ * for that compilation in this gPendingScriptBlockers, for a given context.
+ *
+ * @type {WeakMap<ContentScriptContextChild, Promise>}
+ */
+const gPendingScriptBlockers = new WeakMap();
 
 // Represents a content script.
 class Script {
   /**
-   * @param {BrowserExtensionContent} extension
+   * @param {ExtensionChild & ExtensionChildContent} extension
    * @param {WebExtensionContentScript|object} matcher
    *        An object with a "matchesWindowGlobal" method and content script
    *        execution details. This is usually a plain WebExtensionContentScript
-   *        except when the script is run via `tabs.executeScript`. In this
-   *        case, the object may have some extra properties:
-   *        wantReturnValue, removeCSS, cssOrigin, jsCode
+   *        except when the script is run via `tabs.executeScript` or
+   *        `scripting.executeScript`. In this case, the object may have some
+   *        extra properties: wantReturnValue, removeCSS, cssOrigin
    */
   constructor(extension, matcher) {
     this.scriptType = "content_script";
@@ -336,7 +369,10 @@ class Script {
     this.matcher = matcher;
 
     this.runAt = this.matcher.runAt;
+    this.world = this.matcher.world;
     this.js = this.matcher.jsPaths;
+    this.jsCode = null; // tabs/scripting.executeScript + ISOLATED world.
+    this.jsCodeCompiledScript = null; // scripting.executeScript + MAIN world.
     this.css = this.matcher.cssPaths.slice();
     this.cssCodeHash = null;
 
@@ -347,8 +383,15 @@ class Script {
       extension[this.cssOrigin === "user" ? "userCSS" : "authorCSS"];
     this.cssCodeCache =
       extension[this.cssOrigin === "user" ? "userCSSCode" : "authorCSSCode"];
-    this.scriptCache =
-      extension[matcher.wantReturnValue ? "dynamicScripts" : "staticScripts"];
+    if (this.world === "MAIN") {
+      this.scriptCache = matcher.wantReturnValue
+        ? extension.anonDynamicScripts
+        : extension.anonStaticScripts;
+    } else {
+      this.scriptCache = matcher.wantReturnValue
+        ? extension.dynamicScripts
+        : extension.staticScripts;
+    }
 
     /** @type {WeakSet<Document>} A set of documents injected into. */
     this.injectedInto = new WeakSet();
@@ -379,6 +422,37 @@ class Script {
     this.cssCodeCache.addCSSCode(this.cssCodeHash, cssCode);
   }
 
+  addJSCode(jsCode) {
+    if (!jsCode) {
+      return;
+    }
+    if (this.world === "MAIN") {
+      // To support the scripting.executeScript API, we would like to execute a
+      // string in the context of the web page in #injectIntoMainWorld().
+      // To do so without being blocked by the web page's CSP, we convert
+      // jsCode to a PrecompiledScript, which is then executed by the logic
+      // that is usually used for file-based execution.
+      const dataUrl = `data:text/javascript,${encodeURIComponent(jsCode)}`;
+      const options = {
+        hasReturnValue: this.matcher.wantReturnValue,
+        // Redact the file name to hide actual script content from web pages.
+        // TODO bug 1651557: Use dynamic name to improve debugger experience.
+        filename: "<anonymous code>",
+      };
+      // Note: this logic is similar to this.scriptCaches.get(...), but we are
+      // not using scriptCaches because we don't want the URL to be cached.
+      /** @type {Promise<PrecompiledScript> & {script?: PrecompiledScript}} */
+      let promised = ChromeUtils.compileScript(dataUrl, options);
+      promised.then(script => {
+        promised.script = script;
+      });
+      this.jsCodeCompiledScript = promised;
+    } else {
+      // this.world === "ISOLATED".
+      this.jsCode = jsCode;
+    }
+  }
+
   compileScripts() {
     return this.js.map(url => this.scriptCache.get(url));
   }
@@ -395,35 +469,7 @@ class Script {
   cleanup(window) {
     if (this.requiresCleanup) {
       if (window) {
-        let { windowUtils } = window;
-
-        let type =
-          this.cssOrigin === "user"
-            ? windowUtils.USER_SHEET
-            : windowUtils.AUTHOR_SHEET;
-
-        for (let url of this.css) {
-          this.cssCache.deleteDocument(url, window.document);
-
-          if (!window.closed) {
-            runSafeSyncWithoutClone(
-              windowUtils.removeSheetUsingURIString,
-              url,
-              type
-            );
-          }
-        }
-
-        const { cssCodeHash } = this;
-
-        if (cssCodeHash && this.cssCodeCache.has(cssCodeHash)) {
-          if (!window.closed) {
-            this.cssCodeCache.get(cssCodeHash).then(({ uri }) => {
-              runSafeSyncWithoutClone(windowUtils.removeSheet, uri, type);
-            });
-          }
-          this.cssCodeCache.deleteDocument(cssCodeHash, window.document);
-        }
+        this.removeStyleSheets(window);
       }
 
       // Clear any sheets that were kept alive past their timeout as
@@ -454,13 +500,20 @@ class Script {
     }
 
     try {
-      if (this.runAt === "document_end") {
-        await promiseDocumentReady(window.document);
-      } else if (this.runAt === "document_idle") {
-        await Promise.race([
-          promiseDocumentIdle(window),
-          promiseDocumentLoaded(window.document),
-        ]);
+      // In case of initial about:blank documents, inject immediately without
+      // awaiting the runAt logic in the blocks below, to avoid getting stuck
+      // due to https://bugzilla.mozilla.org/show_bug.cgi?id=1900222#c7
+      // This is only relevant for dynamic code execution because declarative
+      // content scripts do not run on initial about:blank - bug 1415539).
+      if (!window.document.isInitialDocument) {
+        if (this.runAt === "document_end") {
+          await promiseDocumentReady(window.document);
+        } else if (this.runAt === "document_idle") {
+          await Promise.race([
+            promiseDocumentIdle(window),
+            promiseDocumentLoaded(window.document),
+          ]);
+        }
       }
 
       return this.inject(context, reportExceptions);
@@ -473,7 +526,7 @@ class Script {
    * Tries to inject this script into the given window and sandbox, if
    * there are pending operations for the window's current load state.
    *
-   * @param {BaseContext} context
+   * @param {ContentScriptContextChild} context
    *        The content script context into which to inject the scripts.
    * @param {boolean} reportExceptions
    *        Defaults to true and reports any exception directly to the console
@@ -483,90 +536,116 @@ class Script {
    *        execution is complete.
    */
   async inject(context, reportExceptions = true) {
-    DocumentManager.lazyInit();
+    // NOTE: Avoid unnecessary use of "await" in this function, because doing
+    // so can delay script execution beyond the scheduled point. In particular,
+    // document_start scripts should run "immediately" in most cases.
+
     if (this.requiresCleanup) {
       context.addScript(this);
     }
 
-    const { cssCodeHash } = this;
+    // To avoid another await (which affects timing) or .then() chaining
+    // (which would create a new Promise that could duplicate a rejection),
+    // we store the index where we expect the result of a Promise.all() call.
+    let scriptsIndex, sheetsIndex;
+    let sheets = this.getCompiledStyleSheets(context.contentWindow);
+    let scripts = this.getCompiledScripts(context);
 
-    let cssPromise;
-    if (this.css.length || cssCodeHash) {
-      let window = context.contentWindow;
-      let { windowUtils } = window;
+    let executionBlockingPromises = [];
+    if (gPendingScriptBlockers.has(context) && lazy.orderedContentScripts) {
+      executionBlockingPromises.push(gPendingScriptBlockers.get(context));
+    }
+    if (scripts instanceof Promise) {
+      scriptsIndex = executionBlockingPromises.length;
+      executionBlockingPromises.push(scripts);
+    }
+    if (sheets instanceof Promise) {
+      sheetsIndex = executionBlockingPromises.length;
+      executionBlockingPromises.push(sheets);
+    }
 
-      let type =
-        this.cssOrigin === "user"
-          ? windowUtils.USER_SHEET
-          : windowUtils.AUTHOR_SHEET;
+    if (executionBlockingPromises.length) {
+      let promise = Promise.all(executionBlockingPromises);
 
-      if (this.removeCSS) {
-        for (let url of this.css) {
-          this.cssCache.deleteDocument(url, window.document);
+      // If we're supposed to inject at the start of the document load,
+      // and we haven't already missed that point, block further parsing
+      // until the scripts/styles have been loaded.
+      // This maximizes the chance of content scripts executing before other
+      // scripts in the web page.
+      //
+      // Blocking the full parser is overkill if we are only awaiting style
+      // compilation, since we only need to block the parts that are dependent
+      // on CSS (layout, onload event, CSSOM, etc). But we have an API to do
+      // the former and not atter, so we do it that way. This hopefully isn't a
+      // performance problem since there are no network loads involved, and
+      // since we cache the stylesheets on first load. We should fix this up if
+      // it does becomes a problem.
+      const { document } = context.contentWindow;
+      if (
+        this.runAt === "document_start" &&
+        document.readyState !== "complete"
+      ) {
+        document.blockParsing(promise, { blockScriptCreated: false });
+      }
 
-          runSafeSyncWithoutClone(
-            windowUtils.removeSheetUsingURIString,
-            url,
-            type
-          );
+      // Store a promise that never rejects, so that failure to compile scripts
+      // or styles here does not prevent the scheduling of others.
+      let promiseSettled = promise.then(
+        () => {},
+        () => {}
+      );
+      gPendingScriptBlockers.set(context, promiseSettled);
+
+      // Note: in theory, the following async await could result in script
+      // execution being scheduled too late. That would be an issue for
+      // document_start scripts. In practice, this is not a problem because the
+      // compiled script is cached in the process, and preloading to compile
+      // starts as soon as the network request for the document has been
+      // received (see ExtensionPolicyService::CheckRequest).
+      //
+      // We use blockParsing() for document_start scripts (and styles) to
+      // ensure that the DOM remains blocked when scripts are still compiling.
+      try {
+        // NOTE: This is the ONLY await in this injectInto function!
+        const compiledResults = await promise;
+        if (sheetsIndex !== undefined) {
+          sheets = compiledResults[sheetsIndex];
         }
-
-        if (cssCodeHash && this.cssCodeCache.has(cssCodeHash)) {
-          const { uri } = await this.cssCodeCache.get(cssCodeHash);
-          this.cssCodeCache.deleteDocument(cssCodeHash, window.document);
-
-          runSafeSyncWithoutClone(windowUtils.removeSheet, uri, type);
+        if (scriptsIndex !== undefined) {
+          scripts = compiledResults[scriptsIndex];
         }
-      } else {
-        cssPromise = Promise.all(this.loadCSS()).then(sheets => {
-          let window = context.contentWindow;
-          if (!window) {
-            return;
-          }
-
-          for (let { url, sheet } of sheets) {
-            this.cssCache.addDocument(url, window.document);
-
-            runSafeSyncWithoutClone(windowUtils.addSheet, sheet, type);
-          }
-        });
-
-        if (cssCodeHash) {
-          cssPromise = cssPromise.then(async () => {
-            const { sheet } = await this.cssCodeCache.get(cssCodeHash);
-            this.cssCodeCache.addDocument(cssCodeHash, window.document);
-
-            runSafeSyncWithoutClone(windowUtils.addSheet, sheet, type);
-          });
-        }
-
-        // We're loading stylesheets via the stylesheet service, which means
-        // that the normal mechanism for blocking layout and onload for pending
-        // stylesheets aren't in effect (since there's no document to block). So
-        // we need to do something custom here, similar to what we do for
-        // scripts. Blocking parsing is overkill, since we really just want to
-        // block layout and onload. But we have an API to do the former and not
-        // the latter, so we do it that way. This hopefully isn't a performance
-        // problem since there are no network loads involved, and since we cache
-        // the stylesheets on first load. We should fix this up if it does becomes
-        // a problem.
-        if (this.css.length) {
-          context.contentWindow.document.blockParsing(cssPromise, {
-            blockScriptCreated: false,
-          });
+      } finally {
+        // gPendingScriptBlockers may be overwritten by another inject() call,
+        // so check that this is the latest inject() attempt before clearing.
+        if (gPendingScriptBlockers.get(context) === promiseSettled) {
+          gPendingScriptBlockers.delete(context);
         }
       }
     }
 
-    let scripts = this.getCompiledScripts(context);
-    if (scripts instanceof Promise) {
-      scripts = await scripts;
+    let window = context.contentWindow;
+    if (!window) {
+      // context unloaded or went into bfcache before compilation completed.
+      return;
     }
 
-    // Make sure we've injected any related CSS before we run content scripts.
-    await cssPromise;
-
-    let result;
+    if (this.css.length || this.cssCodeHash) {
+      if (this.removeCSS) {
+        this.removeStyleSheets(window);
+        // The tabs.removeCSS and scripting.removeCSS are never combined with
+        // script execution, so we can now return early.
+        return;
+      }
+      // Make sure we've injected any related CSS before we run content scripts.
+      let { windowUtils } = window;
+      let type =
+        this.cssOrigin === "user"
+          ? windowUtils.USER_SHEET
+          : windowUtils.AUTHOR_SHEET;
+      for (const sheet of sheets) {
+        runSafeSyncWithoutClone(windowUtils.addSheet, sheet, type);
+      }
+    }
 
     const { extension } = context;
 
@@ -577,44 +656,105 @@ class Script {
       context
     );
     try {
-      for (let script of scripts) {
-        result = script.executeInGlobal(context.cloneScope, {
-          reportExceptions,
-        });
+      if (this.world === "MAIN") {
+        return this.#injectIntoMainWorld(context, scripts, reportExceptions);
       }
-
-      if (this.matcher.jsCode) {
-        result = Cu.evalInSandbox(
-          this.matcher.jsCode,
-          context.cloneScope,
-          "latest",
-          "sandbox eval code",
-          1
+      if (this.world === "USER_SCRIPT") {
+        return this.#injectIntoUserScriptWorld(
+          context,
+          scripts,
+          reportExceptions
         );
       }
+      return this.#injectIntoIsolatedWorld(context, scripts, reportExceptions);
     } finally {
       lazy.ExtensionTelemetry.contentScriptInjection.stopwatchFinish(
         extension,
         context
       );
     }
+  }
+
+  #injectIntoIsolatedWorld(context, scripts, reportExceptions) {
+    let result;
+
+    // Note: every script execution can potentially destroy the context, in
+    // which case context.cloneScope becomes null (bug 1403505).
+    for (let script of scripts) {
+      result = script.executeInGlobal(context.cloneScope, { reportExceptions });
+    }
+
+    if (this.jsCode) {
+      result = Cu.evalInSandbox(
+        this.jsCode,
+        context.cloneScope,
+        "latest",
+        // TODO bug 1651557: Use dynamic name to improve debugger experience.
+        "sandbox eval code",
+        1
+      );
+    }
+
+    return result;
+  }
+
+  #injectIntoUserScriptWorld(context, scripts, reportExceptions) {
+    let worldId = this.matcher.worldId;
+    let sandbox = lazy.ExtensionUserScriptsContent.sandboxFor(context, worldId);
+
+    let result;
+    // Note: every script execution can potentially destroy the context or
+    // navigate the window, in which case context.active will be false.
+    for (let script of scripts) {
+      if (!context.active) {
+        // Return instead of throw, to avoid logspam like bug 1403505.
+        return;
+      }
+      result = script.executeInGlobal(sandbox, { reportExceptions });
+    }
+
+    // NOTE: if userScripts.execute() is implemented (bug 1930776), we may have
+    // to account for this.jsCode here (via addJSCode).
+
+    return result;
+  }
+
+  #injectIntoMainWorld(context, scripts, reportExceptions) {
+    let result;
+
+    // Note: every script execution can potentially destroy the context or
+    // navigate the window, in which case context.contentWindow will be null,
+    // which would cause an error to be thrown (bug 1403505).
+    for (let script of scripts) {
+      result = script.executeInGlobal(context.contentWindow, {
+        reportExceptions,
+      });
+    }
+
+    // Note: string-based code execution (=our implementation of func+args in
+    // scripting.executeScript) is not handled here, because we compile it in
+    // addJSCode() and include it in the scripts array via getCompiledScripts().
+    // We cannot use context.contentWindow.eval() here because the web page's
+    // CSP may block it.
 
     return result;
   }
 
   /**
-   *  Get the compiled scripts (if they are already precompiled and cached) or a promise which resolves
-   *  to the precompiled scripts (once they have been compiled and cached).
+   * Get the compiled scripts (if they are already precompiled and cached) or a
+   * promise which resolves to the precompiled scripts (once they have been
+   * compiled and cached).
    *
-   * @param {BaseContext} context
-   *        The document to block the parsing on, if the scripts are not yet precompiled and cached.
+   * @param {ContentScriptContextChild} context
+   *        The context where the caller intends to run the compiled script.
    *
-   * @returns {Array<PreloadedScript> | Promise<Array<PreloadedScript>>}
-   *          Returns an array of preloaded scripts if they are already available, or a promise which
-   *          resolves to the array of the preloaded scripts once they are precompiled and cached.
+   * @returns {PrecompiledScript[] | Promise<PrecompiledScript[]>}
    */
   getCompiledScripts(context) {
     let scriptPromises = this.compileScripts();
+    if (this.jsCodeCompiledScript) {
+      scriptPromises.push(this.jsCodeCompiledScript);
+    }
     let scripts = scriptPromises.map(promise => promise.script);
 
     // If not all scripts are already available in the cache, block
@@ -631,9 +771,8 @@ class Script {
         p.catch(error => {
           Services.console.logMessage(
             new ScriptError(
-              `${error.name}: ${error.message}`,
+              error.toString(),
               error.fileName,
-              null,
               error.lineNumber,
               error.columnNumber,
               Ci.nsIScriptError.errorFlag,
@@ -644,28 +783,73 @@ class Script {
         });
       }
 
-      // If we're supposed to inject at the start of the document load,
-      // and we haven't already missed that point, block further parsing
-      // until the scripts have been loaded.
-      const { document } = context.contentWindow;
-      if (
-        this.runAt === "document_start" &&
-        document.readyState !== "complete"
-      ) {
-        document.blockParsing(promise, { blockScriptCreated: false });
-      }
-
       return promise;
     }
 
     return scripts;
+  }
+
+  getCompiledStyleSheets(window) {
+    const sheetPromises = this.loadCSS();
+    if (this.cssCodeHash) {
+      sheetPromises.push(this.cssCodeCache.get(this.cssCodeHash));
+    }
+    if (window) {
+      for (const sheetPromise of sheetPromises) {
+        sheetCacheDocuments.get(sheetPromise).add(window.document);
+      }
+    }
+
+    let sheets = sheetPromises.map(sheetPromise => sheetPromise.sheet);
+    if (!sheets.every(sheet => sheet)) {
+      return Promise.all(sheetPromises);
+    }
+    return sheets;
+  }
+
+  removeStyleSheets(window) {
+    let { windowUtils } = window;
+
+    let type =
+      this.cssOrigin === "user"
+        ? windowUtils.USER_SHEET
+        : windowUtils.AUTHOR_SHEET;
+
+    for (let url of this.css) {
+      if (this.cssCache.has(url)) {
+        const sheetPromise = this.cssCache.get(url);
+        sheetCacheDocuments.get(sheetPromise).delete(window.document);
+      }
+
+      if (!window.closed) {
+        runSafeSyncWithoutClone(
+          windowUtils.removeSheetUsingURIString,
+          url,
+          type
+        );
+      }
+    }
+
+    const { cssCodeHash } = this;
+
+    if (cssCodeHash && this.cssCodeCache.has(cssCodeHash)) {
+      const sheetPromise = this.cssCodeCache.get(cssCodeHash);
+      sheetCacheDocuments.get(sheetPromise).delete(window.document);
+      if (sheetPromise.sheet && !window.closed) {
+        runSafeSyncWithoutClone(
+          windowUtils.removeSheet,
+          sheetPromise.styleURI,
+          type
+        );
+      }
+    }
   }
 }
 
 // Represents a user script.
 class UserScript extends Script {
   /**
-   * @param {BrowserExtensionContent} extension
+   * @param {ExtensionChild & ExtensionChildContent} extension
    * @param {WebExtensionContentScript|object} matcher
    *        An object with a "matchesWindowGlobal" method and content script
    *        execution details.
@@ -694,12 +878,22 @@ class UserScript extends Script {
   }
 
   async inject(context) {
-    DocumentManager.lazyInit();
-
     let scripts = this.getCompiledScripts(context);
     if (scripts instanceof Promise) {
+      // If we're supposed to inject at the start of the document load,
+      // and we haven't already missed that point, block further parsing
+      // until the scripts have been loaded.
+      const { document } = context.contentWindow;
+      if (
+        this.runAt === "document_start" &&
+        document.readyState !== "complete"
+      ) {
+        document.blockParsing(scripts, { blockScriptCreated: false });
+      }
       scripts = await scripts;
     }
+    // NOTE: Other than "await scripts" above, there is no other "await" before
+    // execution. This ensures that document_start scripts execute immediately.
 
     let apiScript, sandboxScripts;
 
@@ -760,6 +954,7 @@ class UserScript extends Script {
       wantGlobalProperties: ["XMLHttpRequest", "fetch", "WebSocket"],
       originAttributes: contentPrincipal.originAttributes,
       metadata: {
+        "browser-id": context.browserId,
         "inner-window-id": context.innerWindowID,
         addonId: this.extension.policy.id,
       },
@@ -785,9 +980,9 @@ var contentScripts = new DefaultWeakMap(matcher => {
  * An execution context for semi-privileged extension content scripts.
  *
  * This is the child side of the ContentScriptContextParent class
- * defined in ExtensionParent.jsm.
+ * defined in ExtensionParent.sys.mjs.
  */
-class ContentScriptContextChild extends BaseContext {
+export class ContentScriptContextChild extends BaseContext {
   constructor(extension, contentWindow) {
     super("content_child", extension);
 
@@ -839,12 +1034,14 @@ class ContentScriptContextChild extends BaseContext {
       // the content script to be associated with both the extension and
       // the tab holding the content page.
       let metadata = {
+        "browser-id": this.browserId,
         "inner-window-id": this.innerWindowID,
         addonId: extensionPrincipal.addonId,
       };
 
       let isMV2 = extension.manifestVersion == 2;
       let wantGlobalProperties;
+      let sandboxContentSecurityPolicy;
       if (isMV2) {
         // In MV2, fetch/XHR support cross-origin requests.
         // WebSocket was also included to avoid CSP effects (bug 1676024).
@@ -852,11 +1049,16 @@ class ContentScriptContextChild extends BaseContext {
       } else {
         // In MV3, fetch/XHR have the same capabilities as the web page.
         wantGlobalProperties = [];
+        // In MV3, the base CSP is enforced for content scripts. Overrides are
+        // currently not supported, but this was considered at some point, see
+        // https://bugzilla.mozilla.org/show_bug.cgi?id=1581611#c10
+        sandboxContentSecurityPolicy = extension.policy.baseCSP;
       }
       this.sandbox = Cu.Sandbox(principal, {
         metadata,
         sandboxName: `Content Script ${extension.policy.debugName}`,
         sandboxPrototype: contentWindow,
+        sandboxContentSecurityPolicy,
         sameZoneAs: contentWindow,
         wantXrays: true,
         isWebExtensionContentScript: true,
@@ -906,13 +1108,6 @@ class ContentScriptContextChild extends BaseContext {
     });
 
     this.url = contentWindow.location.href;
-
-    defineLazyGetter(this, "chromeObj", () => {
-      let chromeObj = Cu.createObjectIn(this.sandbox);
-
-      this.childManager.inject(chromeObj);
-      return chromeObj;
-    });
 
     lazy.Schemas.exportLazyGetter(
       this.sandbox,
@@ -989,40 +1184,46 @@ class ContentScriptContextChild extends BaseContext {
         Cu.createObjectIn(this.contentWindow, { defineAs: "chrome" });
       }
     }
+    Services.obs.notifyObservers(this.sandbox, "content-script-destroyed");
     Cu.nukeSandbox(this.sandbox);
 
     this.sandbox = null;
   }
-}
 
-defineLazyGetter(ContentScriptContextChild.prototype, "messenger", function () {
-  return new Messenger(this);
-});
-
-defineLazyGetter(
-  ContentScriptContextChild.prototype,
-  "childManager",
-  function () {
+  get childManager() {
     apiManager.lazyInit();
-
-    let localApis = {};
-    let can = new CanOfAPIs(this, apiManager, localApis);
-
+    let can = new CanOfAPIs(this, apiManager, {});
     let childManager = new ChildAPIManager(this, this.messageManager, can, {
       envType: "content_parent",
       url: this.url,
     });
-
     this.callOnClose(childManager);
-
-    return childManager;
+    return redefineGetter(this, "childManager", childManager);
   }
-);
 
-// Responsible for creating ExtensionContexts and injecting content
-// scripts into them when new documents are created.
+  get chromeObj() {
+    let chromeObj = Cu.createObjectIn(this.sandbox);
+    this.childManager.inject(chromeObj);
+    return redefineGetter(this, "chromeObj", chromeObj);
+  }
+
+  get messenger() {
+    return redefineGetter(this, "messenger", new Messenger(this));
+  }
+}
+
+// Responsible for tracking the lifetime of a document, to manage the lifetime
+// of ContentScriptContextChild instances for that document. When a caller
+// wants to run extension code in a document (often in a sandbox) and need to
+// have that code's lifetime be bound to the document, they call
+// ExtensionContent.getContext() (indirectly via ExtensionChild's getContext()).
+//
+// As part of the initialization of a ContentScriptContextChild, the document's
+// lifetime is tracked here, by DocumentManager. This DocumentManager ensures
+// that the ContentScriptContextChild and any supporting caches are cleared
+// when the document is destroyed.
 DocumentManager = {
-  // Map[windowId -> Map[ExtensionChild -> ContentScriptContextChild]]
+  /** @type {Map<number, Map<ExtensionChild, ContentScriptContextChild>>} */
   contexts: new Map(),
 
   initialized: false,
@@ -1043,7 +1244,7 @@ DocumentManager = {
   },
 
   observers: {
-    "inner-window-destroyed"(subject, topic, data) {
+    "inner-window-destroyed"(subject) {
       let windowId = subject.QueryInterface(Ci.nsISupportsPRUint64).data;
 
       // Close any existent content-script context for the destroyed window.
@@ -1067,6 +1268,11 @@ DocumentManager = {
     },
   },
 
+  /**
+   * @param {object} subject
+   * @param {keyof typeof DocumentManager.observers} topic
+   * @param {any} data
+   */
   observe(subject, topic, data) {
     this.observers[topic].call(this, subject, topic, data);
   },
@@ -1088,6 +1294,11 @@ DocumentManager = {
     if (!extensions) {
       extensions = new Map();
       this.contexts.set(winId, extensions);
+      // When ExtensionContent.getContext() calls DocumentManager.getContexts,
+      // it is about to create ContentScriptContextChild instances that wraps
+      // the document. Call DocumentManager.lazyInit() to ensure that we have
+      // the relevant observers to close contexts as needed.
+      this.lazyInit();
     }
 
     return extensions;
@@ -1102,24 +1313,25 @@ DocumentManager = {
     }
   },
 
-  getContentScriptGlobals(window) {
-    let extensions = this.contexts.get(getInnerWindowID(window));
-
-    if (extensions) {
-      return Array.from(extensions.values(), ctx => ctx.sandbox);
+  getAllContentScriptGlobals() {
+    const sandboxes = [];
+    for (let extensions of this.contexts.values()) {
+      for (let ctx of extensions.values()) {
+        sandboxes.push(ctx.sandbox);
+      }
     }
-
-    return [];
+    return sandboxes;
   },
 
   initExtensionContext(extension, window) {
+    // Note: getContext() always returns an ContentScriptContextChild instance.
+    // This can be a content script, or a sandbox holding the extension APIs
+    // for an extension document embedded in a non-extension document.
     extension.getContext(window).injectAPI();
   },
 };
 
 export var ExtensionContent = {
-  BrowserExtensionContent,
-
   contentScripts,
 
   shutdownExtension(extension) {
@@ -1127,17 +1339,26 @@ export var ExtensionContent = {
   },
 
   // This helper is exported to be integrated in the devtools RDP actors,
-  // that can use it to retrieve the existent WebExtensions ContentScripts
-  // of a target window and be able to show the ContentScripts source in the
-  // DevTools Debugger panel.
-  getContentScriptGlobals(window) {
-    return DocumentManager.getContentScriptGlobals(window);
+  // that can use it to retrieve all the existent WebExtensions ContentScripts
+  // running in the current content process and be able to show the
+  // ContentScripts source in the DevTools Debugger panel.
+  getAllContentScriptGlobals() {
+    return DocumentManager.getAllContentScriptGlobals();
   },
 
   initExtensionContext(extension, window) {
     DocumentManager.initExtensionContext(extension, window);
   },
 
+  /**
+   * Implementation of extension.getContext(window), which returns the "context"
+   * that wraps the current document in the window. The returned context is
+   * aware of the document's lifetime, including bfcache transitions.
+   *
+   * @param {ExtensionChild} extension
+   * @param {DOMWindow} window
+   * @returns {ContentScriptContextChild}
+   */
   getContext(extension, window) {
     let extensions = DocumentManager.getContexts(window);
 
@@ -1236,9 +1457,13 @@ export var ExtensionContent = {
       wantReturnValue: options.wantReturnValue,
       removeCSS: options.removeCSS,
       cssOrigin: options.cssOrigin,
-      jsCode: options.jsCode,
     });
     let script = contentScripts.get(matcher);
+
+    if (options.jsCode) {
+      script.addJSCode(options.jsCode);
+      delete options.jsCode;
+    }
 
     // Add the cssCode to the script, so that it can be converted into a cached URL.
     await script.addCSSCode(options.cssCode);

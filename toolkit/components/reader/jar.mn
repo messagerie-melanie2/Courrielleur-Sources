@@ -4,3 +4,5 @@
 
 toolkit.jar:
   content/global/reader/aboutReader.html             (content/aboutReader.html)
+  content/global/reader/moz-slider.css               (moz-slider.css)
+  content/global/reader/moz-slider.mjs               (moz-slider.mjs)

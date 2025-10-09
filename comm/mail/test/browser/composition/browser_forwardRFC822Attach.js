@@ -14,23 +14,17 @@ var {
   get_msg_source,
   open_compose_with_forward_as_attachments,
   save_compose_message,
-} = ChromeUtils.import("resource://testing-common/mozmill/ComposeHelpers.jsm");
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+);
 var {
   be_in_folder,
   get_special_folder,
-  mc,
   open_message_from_file,
   press_delete,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-);
-var { close_window } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
-);
-
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 var gDrafts;
@@ -40,26 +34,26 @@ add_setup(async function () {
 });
 
 async function forwardDirect(aFilePath, aExpectedText) {
-  let file = new FileUtils.File(getTestFilePath(`data/${aFilePath}`));
-  let msgc = await open_message_from_file(file);
+  const file = new FileUtils.File(getTestFilePath(`data/${aFilePath}`));
+  const msgc = await open_message_from_file(file);
 
-  let cwc = open_compose_with_forward_as_attachments(msgc);
+  const cwc = await open_compose_with_forward_as_attachments(msgc);
 
-  await save_compose_message(cwc.window);
-  close_compose_window(cwc);
-  close_window(msgc);
+  await save_compose_message(cwc);
+  await close_compose_window(cwc);
+  await BrowserTestUtils.closeWindow(msgc);
 
   await be_in_folder(gDrafts);
-  let draftMsg = select_click_row(0);
+  const draftMsg = await select_click_row(0);
 
-  let draftMsgContent = await get_msg_source(draftMsg);
+  const draftMsgContent = await get_msg_source(draftMsg);
 
   Assert.ok(
     draftMsgContent.includes(aExpectedText),
     "Failed to find expected text"
   );
 
-  press_delete(mc); // clean up the created draft
+  await press_delete(window); // clean up the created draft
 }
 
 add_task(async function test_forwarding_long_html_line_as_attachment() {

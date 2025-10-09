@@ -16,7 +16,7 @@ add_task(async function testProfileExport() {
   const filePath = Services.io
     .newURI(PathUtils.toFileURI(zipFile))
     .QueryInterface(Ci.nsIFileURL);
-  MockFilePicker.init(window);
+  MockFilePicker.init(window.browsingContext);
   MockFilePicker.setFiles([filePath.file]);
   registerCleanupFunction(async () => {
     await IOUtils.remove(profileDir, {
@@ -26,11 +26,10 @@ add_task(async function testProfileExport() {
   });
 
   const tab = await new Promise(resolve => {
-    const tab = window.openTab("contentTab", {
-      url: "about:import",
-      onLoad(event, browser) {
-        browser.contentWindow.showTab("tab-export", true);
-        resolve(tab);
+    const newTab = window.openTab("contentTab", {
+      url: "about:import#export",
+      onLoad() {
+        resolve(newTab);
       },
     });
   });
@@ -38,11 +37,11 @@ add_task(async function testProfileExport() {
   const exportPane = importDocument.getElementById("tabPane-export");
 
   ok(
-    BrowserTestUtils.is_visible(importDocument.getElementById("exportDocs")),
+    BrowserTestUtils.isVisible(importDocument.getElementById("exportDocs")),
     "Export docs link is visible"
   );
   ok(
-    BrowserTestUtils.is_hidden(importDocument.getElementById("importDocs")),
+    BrowserTestUtils.isHidden(importDocument.getElementById("importDocs")),
     "Import docs link is hidden"
   );
 
@@ -57,10 +56,10 @@ add_task(async function testProfileExport() {
     {
       attributes: true,
     },
-    () => BrowserTestUtils.is_visible(progressPane)
+    () => BrowserTestUtils.isVisible(progressPane)
   );
   ok(
-    BrowserTestUtils.is_hidden(importDocument.getElementById("exportButton")),
+    BrowserTestUtils.isHidden(importDocument.getElementById("exportButton")),
     "Export button is hidden while export is in progress"
   );
 
@@ -70,10 +69,10 @@ add_task(async function testProfileExport() {
     {
       attributes: true,
     },
-    () => BrowserTestUtils.is_visible(finish)
+    () => BrowserTestUtils.isVisible(finish)
   );
   ok(
-    BrowserTestUtils.is_visible(progressPane),
+    BrowserTestUtils.isVisible(progressPane),
     "When export succeeds and finish is shown, progress is still displayed"
   );
 
@@ -93,5 +92,5 @@ add_task(async function testProfileExport() {
 
   const exportZipStat = await IOUtils.stat(zipFile);
   info(exportZipStat.size);
-  ok(exportZipStat.size > 10, "Zip is not empty");
+  Assert.greater(exportZipStat.size, 10, "Zip is not empty");
 });

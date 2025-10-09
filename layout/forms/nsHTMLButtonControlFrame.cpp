@@ -8,18 +8,18 @@
 
 #include "mozilla/Baseline.h"
 #include "mozilla/PresShell.h"
-#include "nsContainerFrame.h"
-#include "nsIFormControlFrame.h"
 #include "nsIFrameInlines.h"
+#include "nsContainerFrame.h"
+#include "nsPresContextInlines.h"
 #include "nsPresContext.h"
+#include "nsLayoutUtils.h"
 #include "nsGkAtoms.h"
-#include "nsButtonFrameRenderer.h"
-#include "nsCSSAnonBoxes.h"
-#include "nsNameSpaceManager.h"
 #include "nsDisplayList.h"
+#include "nsCSSRendering.h"
 #include <algorithm>
 
 using namespace mozilla;
+using namespace mozilla::image;
 
 nsContainerFrame* NS_NewHTMLButtonControlFrame(PresShell* aPresShell,
                                                ComputedStyle* aStyle) {
@@ -36,15 +36,8 @@ nsHTMLButtonControlFrame::nsHTMLButtonControlFrame(ComputedStyle* aStyle,
 
 nsHTMLButtonControlFrame::~nsHTMLButtonControlFrame() = default;
 
-void nsHTMLButtonControlFrame::Init(nsIContent* aContent,
-                                    nsContainerFrame* aParent,
-                                    nsIFrame* aPrevInFlow) {
-  nsContainerFrame::Init(aContent, aParent, aPrevInFlow);
-  mRenderer.SetFrame(this, PresContext());
-}
-
 NS_QUERYFRAME_HEAD(nsHTMLButtonControlFrame)
-  NS_QUERYFRAME_ENTRY(nsIFormControlFrame)
+  NS_QUERYFRAME_ENTRY(nsHTMLButtonControlFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
 
 #ifdef ACCESSIBILITY
@@ -53,13 +46,11 @@ a11y::AccType nsHTMLButtonControlFrame::AccessibleType() {
 }
 #endif
 
-void nsHTMLButtonControlFrame::SetFocus(bool aOn, bool aRepaint) {}
-
 nsresult nsHTMLButtonControlFrame::HandleEvent(nsPresContext* aPresContext,
                                                WidgetGUIEvent* aEvent,
                                                nsEventStatus* aEventStatus) {
-  // if disabled do nothing
-  if (mRenderer.isDisabled()) {
+  if (mContent->AsElement()->IsDisabled()) {
+    // If disabled do nothing
     return NS_OK;
   }
 
@@ -68,13 +59,13 @@ nsresult nsHTMLButtonControlFrame::HandleEvent(nsPresContext* aPresContext,
   return nsIFrame::HandleEvent(aPresContext, aEvent, aEventStatus);
 }
 
-bool nsHTMLButtonControlFrame::ShouldClipPaintingToBorderBox() {
-  return IsInput() || StyleDisplay()->mOverflowX != StyleOverflow::Visible;
+bool nsHTMLButtonControlFrame::ShouldClipPaintingToBorderBox() const {
+  // FIXME(emilio): probably should account for per-axis clipping...
+  return StyleDisplay()->mOverflowX != StyleOverflow::Visible;
 }
 
 void nsHTMLButtonControlFrame::BuildDisplayList(
     nsDisplayListBuilder* aBuilder, const nsDisplayListSet& aLists) {
-  nsDisplayList onTop(aBuilder);
   if (IsVisibleForPainting()) {
     // Clip the button itself to its border area for event hit testing.
     Maybe<DisplayListClipState::AutoSaveRestore> eventClipState;
@@ -87,10 +78,8 @@ void nsHTMLButtonControlFrame::BuildDisplayList(
           rect, hasRadii ? radii : nullptr);
     }
 
-    mRenderer.DisplayButton(aBuilder, aLists.BorderBackground(), &onTop);
+    DisplayBorderBackgroundOutline(aBuilder, aLists);
   }
-
-  nsDisplayListCollection set(aBuilder);
 
   {
     DisplayListClipState::AutoSaveRestore clipState(aBuilder);
@@ -100,49 +89,27 @@ void nsHTMLButtonControlFrame::BuildDisplayList(
       nsRect rect(aBuilder->ToReferenceFrame(this), GetSize());
       rect.Deflate(border);
       nscoord radii[8];
-      bool hasRadii = GetPaddingBoxBorderRadii(radii);
+      const bool hasRadii = GetPaddingBoxBorderRadii(radii);
       clipState.ClipContainingBlockDescendants(rect,
                                                hasRadii ? radii : nullptr);
     }
 
-    BuildDisplayListForChild(aBuilder, mFrames.FirstChild(), set,
+    BuildDisplayListForChild(aBuilder, mFrames.FirstChild(), aLists,
                              DisplayChildFlag::ForcePseudoStackingContext);
   }
 
-  // Put the foreground outline and focus rects on top of the children
-  set.Content()->AppendToTop(&onTop);
-  set.MoveTo(aLists);
-
-  DisplayOutline(aBuilder, aLists);
-
-  // to draw border when selected in editor
+  // To draw border when selected in editor
   DisplaySelectionOverlay(aBuilder, aLists.Content());
 }
 
-nscoord nsHTMLButtonControlFrame::GetMinISize(gfxContext* aRenderingContext) {
-  nscoord result;
-  DISPLAY_MIN_INLINE_SIZE(this, result);
+nscoord nsHTMLButtonControlFrame::IntrinsicISize(
+    const IntrinsicSizeInput& aInput, IntrinsicISizeType aType) {
   if (Maybe<nscoord> containISize = ContainIntrinsicISize()) {
-    result = *containISize;
-  } else {
-    nsIFrame* kid = mFrames.FirstChild();
-    result = nsLayoutUtils::IntrinsicForContainer(aRenderingContext, kid,
-                                                  IntrinsicISizeType::MinISize);
+    return *containISize;
   }
-  return result;
-}
-
-nscoord nsHTMLButtonControlFrame::GetPrefISize(gfxContext* aRenderingContext) {
-  nscoord result;
-  DISPLAY_PREF_INLINE_SIZE(this, result);
-  if (Maybe<nscoord> containISize = ContainIntrinsicISize()) {
-    result = *containISize;
-  } else {
-    nsIFrame* kid = mFrames.FirstChild();
-    result = nsLayoutUtils::IntrinsicForContainer(
-        aRenderingContext, kid, IntrinsicISizeType::PrefISize);
-  }
-  return result;
+  return nsLayoutUtils::IntrinsicForContainer(
+      aInput.mContext, mFrames.FirstChild(), aType,
+      aInput.mPercentageBasisForChildren);
 }
 
 void nsHTMLButtonControlFrame::Reflow(nsPresContext* aPresContext,
@@ -151,7 +118,6 @@ void nsHTMLButtonControlFrame::Reflow(nsPresContext* aPresContext,
                                       nsReflowStatus& aStatus) {
   MarkInReflow();
   DO_GLOBAL_REFLOW_COUNT("nsHTMLButtonControlFrame");
-  DISPLAY_REFLOW(aPresContext, this, aReflowInput, aDesiredSize, aStatus);
   MOZ_ASSERT(aStatus.IsEmpty(), "Caller should pass a fresh reflow status!");
 
   // Reflow the child
@@ -237,29 +203,27 @@ void nsHTMLButtonControlFrame::ReflowButtonContents(
     // Button has a fixed block-size -- that's its content-box bSize.
     buttonContentBox.BSize(wm) = aButtonReflowInput.ComputedBSize();
   } else {
-    // Button is intrinsically sized -- it should shrinkwrap the
-    // button-contents' bSize. But if it has size containment in block axis,
-    // ignore the contents and use contain-intrinsic-block-size.
-    nscoord bSize = aButtonReflowInput.mFrame->ContainIntrinsicBSize().valueOr(
-        contentsDesiredSize.BSize(wm));
-
+    // Button is intrinsically sized -- it should shrinkwrap the contents'
+    // bSize.
+    // If we have size containment in block axis, ignore the contents and use
+    // contain-intrinsic-block-size. The combobox content size with no content
+    // is one line-height, not zero.
+    const Maybe<nscoord> containBSize = ContainIntrinsicBSize(
+        IsComboboxControlFrame() ? aButtonReflowInput.GetLineHeight() : 0);
+    const nscoord bSize = containBSize.valueOr(contentsDesiredSize.BSize(wm));
     // Make sure we obey min/max-bSize in the case when we're doing intrinsic
     // sizing (we get it for free when we have a non-intrinsic
     // aButtonReflowInput.ComputedBSize()).  Note that we do this before
     // adjusting for borderpadding, since mComputedMaxBSize and
     // mComputedMinBSize are content bSizes.
-    buttonContentBox.BSize(wm) =
-        NS_CSS_MINMAX(bSize, aButtonReflowInput.ComputedMinBSize(),
-                      aButtonReflowInput.ComputedMaxBSize());
+    buttonContentBox.BSize(wm) = aButtonReflowInput.ApplyMinMaxBSize(bSize);
   }
   if (aButtonReflowInput.ComputedISize() != NS_UNCONSTRAINEDSIZE) {
     buttonContentBox.ISize(wm) = aButtonReflowInput.ComputedISize();
   } else {
     nscoord iSize = aButtonReflowInput.mFrame->ContainIntrinsicISize().valueOr(
         contentsDesiredSize.ISize(wm));
-    buttonContentBox.ISize(wm) =
-        NS_CSS_MINMAX(iSize, aButtonReflowInput.ComputedMinISize(),
-                      aButtonReflowInput.ComputedMaxISize());
+    buttonContentBox.ISize(wm) = aButtonReflowInput.ApplyMinMaxISize(iSize);
   }
 
   // Center child in the block-direction in the button
@@ -350,25 +314,6 @@ BaselineSharingGroup nsHTMLButtonControlFrame::GetDefaultBaselineSharingGroup()
 nscoord nsHTMLButtonControlFrame::SynthesizeFallbackBaseline(
     mozilla::WritingMode aWM, BaselineSharingGroup aBaselineGroup) const {
   return Baseline::SynthesizeBOffsetFromMarginBox(this, aWM, aBaselineGroup);
-}
-
-nsresult nsHTMLButtonControlFrame::SetFormProperty(nsAtom* aName,
-                                                   const nsAString& aValue) {
-  if (nsGkAtoms::value == aName) {
-    return mContent->AsElement()->SetAttr(kNameSpaceID_None, nsGkAtoms::value,
-                                          aValue, true);
-  }
-  return NS_OK;
-}
-
-ComputedStyle* nsHTMLButtonControlFrame::GetAdditionalComputedStyle(
-    int32_t aIndex) const {
-  return mRenderer.GetComputedStyle(aIndex);
-}
-
-void nsHTMLButtonControlFrame::SetAdditionalComputedStyle(
-    int32_t aIndex, ComputedStyle* aComputedStyle) {
-  mRenderer.SetComputedStyle(aIndex, aComputedStyle);
 }
 
 void nsHTMLButtonControlFrame::AppendDirectlyOwnedAnonBoxes(

@@ -3,106 +3,179 @@
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
 import { isConsole } from "../utils/preview";
-import { findBestMatchExpression } from "../utils/ast";
 import { getGrip, getFront } from "../utils/evaluation-result";
-import { getExpressionFromCoords } from "../utils/editor/get-expression";
-import { isNodeTest } from "../utils/environment";
 
 import {
-  getPreview,
   isLineInScope,
   isSelectedFrameVisible,
   getSelectedSource,
   getSelectedLocation,
   getSelectedFrame,
-  getSymbols,
   getCurrentThread,
-  getPreviewCount,
   getSelectedException,
-} from "../selectors";
+  getSelectedTraceIndex,
+  getAllTraces,
+} from "../selectors/index";
 
 import { getMappedExpression } from "./expressions";
+const {
+  TRACER_FIELDS_INDEXES,
+} = require("resource://devtools/server/actors/tracer.js");
 
-function findExpressionMatch(state, codeMirror, tokenPos) {
+async function findExpressionMatches(state, editor, tokenPos) {
   const location = getSelectedLocation(state);
   if (!location) {
-    return null;
+    return [];
   }
-
-  const symbols = getSymbols(state, location);
-
-  let match;
-  if (!symbols) {
-    match = getExpressionFromCoords(codeMirror, tokenPos);
-  } else {
-    match = findBestMatchExpression(symbols, tokenPos);
-  }
-  return match;
+  return editor.findBestMatchExpressions(tokenPos);
 }
 
-export function updatePreview(cx, target, tokenPos, codeMirror) {
-  return ({ dispatch, getState }) => {
-    const cursorPos = target.getBoundingClientRect();
-
-    if (
-      !isSelectedFrameVisible(getState()) ||
-      !isLineInScope(getState(), tokenPos.line)
-    ) {
-      return;
+/**
+ * Get a preview object for the currently selected frame in the JS Tracer.
+ *
+ * @param {Object} target
+ *        The hovered DOM Element within CodeMirror rendering.
+ * @param {Object} tokenPos
+ *        The CodeMirror position object for the hovered token.
+ * @param {Object} editor
+ *        The CodeMirror editor object.
+ */
+export function getTracerPreview(target, tokenPos, editor) {
+  return async thunkArgs => {
+    const { getState } = thunkArgs;
+    const selectedTraceIndex = getSelectedTraceIndex(getState());
+    if (selectedTraceIndex == null) {
+      return null;
     }
 
-    const match = findExpressionMatch(getState(), codeMirror, tokenPos);
-    if (!match) {
-      return;
+    const trace = getAllTraces(getState())[selectedTraceIndex];
+
+    // We may be selecting a mutation trace, which doesn't expose any value,
+    // so only consider method calls.
+    if (trace[TRACER_FIELDS_INDEXES.TYPE] != "enter") {
+      return null;
     }
 
-    const { expression, location } = match;
-
-    if (isConsole(expression)) {
-      return;
+    const matches = await findExpressionMatches(getState(), editor, tokenPos);
+    if (!matches.length) {
+      return null;
     }
 
-    dispatch(setPreview(cx, expression, location, tokenPos, cursorPos, target));
-  };
-}
-
-export function setPreview(
-  cx,
-  expression,
-  location,
-  tokenPos,
-  cursorPos,
-  target
-) {
-  return async ({ dispatch, getState, client }) => {
-    dispatch({ type: "START_PREVIEW" });
-    const previewCount = getPreviewCount(getState());
-    if (getPreview(getState())) {
-      dispatch(clearPreview(cx));
-    }
-
+    let { expression, location } = matches[0];
     const source = getSelectedSource(getState());
-    if (!source) {
-      return;
-    }
-
-    const thread = getCurrentThread(getState());
-    const selectedFrame = getSelectedFrame(getState(), thread);
-
     if (location && source.isOriginal) {
-      const mapResult = await dispatch(getMappedExpression(expression));
+      const thread = getCurrentThread(getState());
+      const mapResult = await getMappedExpression(
+        expression,
+        thread,
+        thunkArgs
+      );
       if (mapResult) {
         expression = mapResult.expression;
       }
     }
 
-    if (!selectedFrame) {
-      return;
+    const argumentValues = trace[TRACER_FIELDS_INDEXES.ENTER_ARGS];
+    const argumentNames = trace[TRACER_FIELDS_INDEXES.ENTER_ARG_NAMES];
+    if (!argumentNames || !argumentValues) {
+      return null;
     }
 
-    const { result } = await client.evaluate(expression, {
-      frameId: selectedFrame.id,
-    });
+    const argumentIndex = argumentNames.indexOf(expression);
+    if (argumentIndex == -1) {
+      return null;
+    }
+
+    const result = argumentValues[argumentIndex];
+    // Values are either primitives, or an Object Front
+    const resultGrip = result?.getGrip ? result?.getGrip() : result;
+
+    const root = {
+      // Force updating the ObjectInspector when hovering same-name variable on another trace.
+      // See ObjectInspector.getNodeKey.
+      path: `${selectedTraceIndex}-${expression}`,
+      contents: {
+        value: resultGrip,
+        front: getFront(result),
+      },
+    };
+    return {
+      previewType: "tracer",
+      target,
+      tokenPos,
+      cursorPos: target.getBoundingClientRect(),
+      expression,
+      root,
+      resultGrip,
+    };
+  };
+}
+
+/**
+ * Get a preview object for the currently paused frame, if paused.
+ *
+ * @param {Object} target
+ *        The hovered DOM Element within CodeMirror rendering.
+ * @param {Object} tokenPos
+ *        The CodeMirror position object for the hovered token.
+ * @param {Object} editor
+ *        The CodeMirror editor object.
+ */
+export function getPausedPreview(target, tokenPos, editor) {
+  return async thunkArgs => {
+    const { getState, client } = thunkArgs;
+    if (
+      !isSelectedFrameVisible(getState()) ||
+      !isLineInScope(getState(), tokenPos.line)
+    ) {
+      return null;
+    }
+
+    const source = getSelectedSource(getState());
+    if (!source) {
+      return null;
+    }
+    const thread = getCurrentThread(getState());
+    const selectedFrame = getSelectedFrame(getState());
+    if (!selectedFrame) {
+      return null;
+    }
+    const matches = await findExpressionMatches(getState(), editor, tokenPos);
+    if (!matches.length) {
+      return null;
+    }
+
+    let { expression, location } = matches[0];
+
+    if (isConsole(expression)) {
+      return null;
+    }
+
+    if (location && source.isOriginal) {
+      const mapResult = await getMappedExpression(
+        expression,
+        thread,
+        thunkArgs
+      );
+      if (mapResult) {
+        expression = mapResult.expression;
+      }
+    }
+
+    const { result, hasException, exception } = await client.evaluate(
+      expression,
+      {
+        frameId: selectedFrame.id,
+      }
+    );
+
+    // The evaluation shouldn't return an exception.
+    if (hasException) {
+      const errorClass = exception?.getGrip()?.class || "Error";
+      throw new Error(
+        `Debugger internal exception: Preview for <${expression}> threw a ${errorClass}`
+      );
+    }
 
     const resultGrip = getGrip(result);
 
@@ -111,7 +184,7 @@ export function setPreview(
     // Accommodating for null allows us to show preview for falsy values
     // line "", false, null, Nan, and more
     if (resultGrip === null) {
-      return;
+      return null;
     }
 
     // Handle cases where the result is invisible to the debugger
@@ -122,7 +195,7 @@ export function setPreview(
       typeof resultGrip.class === "string" &&
       resultGrip.class.includes("InvisibleToDebugger")
     ) {
-      return;
+      return null;
     }
 
     const root = {
@@ -132,80 +205,53 @@ export function setPreview(
         front: getFront(result),
       },
     };
-    const properties = await client.loadObjectProperties(root, thread);
 
-    // The first time a popup is rendered, the mouse should be hovered
-    // on the token. If it happens to be hovered on whitespace, it should
-    // not render anything
-    if (!target.matches(":hover") && !isNodeTest()) {
-      return;
-    }
-
-    // Don't finish dispatching if another setPreview was started
-    if (previewCount != getPreviewCount(getState())) {
-      return;
-    }
-
-    dispatch({
-      type: "SET_PREVIEW",
-      cx,
-      value: {
-        expression,
-        resultGrip,
-        properties,
-        root,
-        location,
-        tokenPos,
-        cursorPos,
-        target,
-      },
-    });
+    return {
+      previewType: "pause",
+      target,
+      tokenPos,
+      cursorPos: target.getBoundingClientRect(),
+      expression,
+      root,
+      resultGrip,
+    };
   };
 }
 
-export function clearPreview(cx) {
-  return ({ dispatch, getState, client }) => {
-    const currentSelection = getPreview(getState());
-    if (!currentSelection) {
+export function getExceptionPreview(target, tokenPos, editor) {
+  return async ({ getState }) => {
+    const matches = await findExpressionMatches(getState(), editor, tokenPos);
+    if (!matches.length) {
+      return null;
+    }
+    let exception;
+    // Lezer might return multiple matches in certain scenarios.
+    // Example: For this expression `[].inlineException()` is likely to throw an exception,
+    // but if the user hovers over `inlineException` lezer finds 2 matches :
+    // 1) `inlineException` for `PropertyName`,
+    // 2) `[].inlineException()` for `MemberExpression`
+    // Babel seems to only include the `inlineException`.
+    for (const match of matches) {
+      const tokenColumnStart = match.location.start.column + 1;
+      exception = getSelectedException(
+        getState(),
+        tokenPos.line,
+        tokenColumnStart
+      );
+      if (exception) {
+        break;
+      }
+    }
+
+    if (!exception) {
       return null;
     }
 
-    return dispatch({
-      type: "CLEAR_PREVIEW",
-      cx,
-    });
-  };
-}
-
-export function setExceptionPreview(cx, target, tokenPos, codeMirror) {
-  return async ({ dispatch, getState }) => {
-    const cursorPos = target.getBoundingClientRect();
-
-    const match = findExpressionMatch(getState(), codeMirror, tokenPos);
-    if (!match) {
-      return;
-    }
-
-    const tokenColumnStart = match.location.start.column + 1;
-    const exception = getSelectedException(
-      getState(),
-      tokenPos.line,
-      tokenColumnStart
-    );
-    if (!exception) {
-      return;
-    }
-
-    dispatch({
-      type: "SET_PREVIEW",
-      cx,
-      value: {
-        exception,
-        location: match.location,
-        tokenPos,
-        cursorPos,
-        target,
-      },
-    });
+    return {
+      target,
+      tokenPos,
+      cursorPos: target.getBoundingClientRect(),
+      exception,
+    };
   };
 }

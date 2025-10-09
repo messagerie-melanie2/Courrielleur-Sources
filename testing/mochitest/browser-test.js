@@ -16,6 +16,29 @@ ChromeUtils.defineESModuleGetters(this, {
   AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
 });
 
+// saveScopeVariablesAsJSON is an experimental feature which will attempt to
+// save the values of all variables when a test fails (ie an assert fails).
+// It relies on the DevTools Debugger API to inspect variables and for the
+// moment will only be enabled if either:
+// - the preference devtools.testing.testScopes is set to true
+// - the environment variable MOZ_DEVTOOLS_TEST_SCOPES is set to 1
+//
+// For instance for a try push, you can enable it with
+// `./mach try fuzzy --env MOZ_DEVTOOLS_TEST_SCOPES=1`
+ChromeUtils.defineLazyGetter(this, "saveScopeVariablesAsJSON", () => {
+  const isDevToolsTestScopesEnabled =
+    Services.prefs.getBoolPref("devtools.testing.testScopes", false) ||
+    Services.env.get("MOZ_DEVTOOLS_TEST_SCOPES") === "1";
+  return () => {
+    if (isDevToolsTestScopesEnabled) {
+      ChromeUtils.importESModule(
+        "resource://devtools/shared/test-helpers/dump-scope.sys.mjs",
+        { global: "devtools" }
+      ).dumpScope();
+    }
+  };
+});
+
 const SIMPLETEST_OVERRIDES = [
   "ok",
   "record",
@@ -45,7 +68,7 @@ var TabDestroyObserver = {
     Services.obs.removeObserver(this, "message-manager-disconnect");
   },
 
-  observe(subject, topic, data) {
+  observe(subject, topic) {
     if (topic == "message-manager-close") {
       this.outstanding.add(subject);
     } else if (topic == "message-manager-disconnect") {
@@ -69,6 +92,7 @@ var TabDestroyObserver = {
 
 function testInit() {
   gConfig = readConfig();
+
   if (gConfig.testRoot == "browser") {
     // Make sure to launch the test harness for the first opened window only
     var prefs = Services.prefs;
@@ -157,15 +181,6 @@ function Tester(aTests, structuredLogger, aCallback) {
     this.EventUtils
   );
 
-  this._scriptLoader.loadSubScript(
-    "chrome://mochikit/content/tests/SimpleTest/AccessibilityUtils.js",
-    // AccessibilityUtils are integrated with EventUtils to perform additional
-    // accessibility checks for certain user interactions (clicks, etc). Load
-    // them into the EventUtils scope here.
-    this.EventUtils
-  );
-  this.AccessibilityUtils = this.EventUtils.AccessibilityUtils;
-
   // Make sure our SpecialPowers actor is instantiated, in case it was
   // registered after our DOMWindowCreated event was fired (which it
   // most likely was).
@@ -188,6 +203,17 @@ function Tester(aTests, structuredLogger, aCallback) {
 
   window.SpecialPowers.SimpleTest = this.SimpleTest;
   window.SpecialPowers.setAsDefaultAssertHandler();
+
+  this._scriptLoader.loadSubScript(
+    "chrome://mochikit/content/tests/SimpleTest/AccessibilityUtils.js",
+    // AccessibilityUtils are integrated with EventUtils to perform additional
+    // accessibility checks for certain user interactions (clicks, etc). Load
+    // them into the EventUtils scope here.
+    this.EventUtils
+  );
+  this.AccessibilityUtils = this.EventUtils.AccessibilityUtils;
+
+  this.AccessibilityUtils.init(this.SimpleTest);
 
   var extensionUtilsScope = {
     registerCleanupFunction: fn => {
@@ -377,7 +403,7 @@ Tester.prototype = {
 
   async promiseMainWindowReady() {
     if (window.gBrowserInit) {
-      await window.gBrowserInit.idleTasksFinishedPromise;
+      await window.gBrowserInit.idleTasksFinished.promise;
     }
   },
 
@@ -410,8 +436,8 @@ Tester.prototype = {
     let baseMsg = timedOut
       ? "Found a {elt} after previous test timed out"
       : this.currentTest
-      ? "Found an unexpected {elt} at the end of test run"
-      : "Found an unexpected {elt}";
+        ? "Found an unexpected {elt} at the end of test run"
+        : "Found an unexpected {elt}";
 
     // Remove stale tabs
     if (
@@ -513,7 +539,7 @@ Tester.prototype = {
     this.SimpleTest.waitForFocus(aCallback);
   },
 
-  finish: function Tester_finish(aSkipSummary) {
+  finish: function Tester_finish() {
     var passCount = this.tests.reduce((a, f) => a + f.passCount, 0);
     var failCount = this.tests.reduce((a, f) => a + f.failCount, 0);
     var todoCount = this.tests.reduce((a, f) => a + f.todoCount, 0);
@@ -523,6 +549,8 @@ Tester.prototype = {
 
     TabDestroyObserver.destroy();
     Services.console.unregisterListener(this);
+
+    this.AccessibilityUtils.uninit();
 
     // It's important to terminate the module to avoid crashes on shutdown.
     this.PromiseTestUtils.uninit();
@@ -549,7 +577,6 @@ Tester.prototype = {
 
     // Tests complete, notify the callback and return
     this.callback(this.tests);
-    this.accService = null;
     this.callback = null;
     this.tests = null;
   },
@@ -560,7 +587,7 @@ Tester.prototype = {
     this.repeat = 0;
   },
 
-  observe: function Tester_observe(aSubject, aTopic, aData) {
+  observe: function Tester_observe(aSubject, aTopic) {
     if (!aTopic) {
       this.onConsoleMessage(aSubject);
     }
@@ -629,6 +656,12 @@ Tester.prototype = {
         AppConstants.platform == "linux" &&
         name == "nsAvailableMemoryWatcher"
       ) {
+        continue;
+      }
+
+      // Ignore ScrollFrameActivityTracker, it's a 4s timer which could begin
+      // shortly after the end of a test and cause failure. See bug 1878627.
+      if (name == "ScrollFrameActivityTracker") {
         continue;
       }
 
@@ -722,6 +755,10 @@ Tester.prototype = {
 
       Services.obs.notifyObservers(null, "test-complete");
 
+      // Ensure to reset the clipboard in case the test has modified it,
+      // so it won't affect the next tests.
+      window.SpecialPowers.clipboardCopyString("");
+
       if (
         this.currentTest.passCount === 0 &&
         this.currentTest.failCount === 0 &&
@@ -792,6 +829,8 @@ Tester.prototype = {
 
       // eslint-disable-next-line no-undef
       await new Promise(resolve => SpecialPowers.flushPrefEnv(resolve));
+
+      window.SpecialPowers.cleanupAllClipboard();
 
       if (gConfig.cleanupCrashes) {
         let gdir = Services.dirsvc.get("UAppData", Ci.nsIFile);
@@ -1032,7 +1071,7 @@ Tester.prototype = {
             let sidebar = document.getElementById("sidebar");
             if (sidebar) {
               sidebar.setAttribute("src", "data:text/html;charset=utf-8,");
-              sidebar.docShell.createAboutBlankContentViewer(null, null);
+              sidebar.docShell.createAboutBlankDocumentViewer(null, null);
               sidebar.setAttribute("src", "about:blank");
             }
           }
@@ -1210,7 +1249,7 @@ Tester.prototype = {
 
     this.SimpleTest.reset();
     // Reset accessibility environment.
-    this.AccessibilityUtils.reset(this.a11y_checks);
+    this.AccessibilityUtils.reset(this.a11y_checks, this.currentTest.path);
 
     // Load the tests into a testscope
     let currentScope = (this.currentTest.scope = new testScope(
@@ -1253,7 +1292,6 @@ Tester.prototype = {
           err
             ? {
                 name: err.message,
-                ex: err.stack,
                 stack: err.stack,
                 allowFailure: currentTest.allowFailure,
               }
@@ -1434,7 +1472,11 @@ Tester.prototype = {
             );
             self.currentTest.timedOut = true;
             self.currentTest.scope.__waitTimer = null;
-            self.nextTest();
+            if (gConfig.timeoutAsPass) {
+              self.nextTest();
+            } else {
+              self.finish();
+            }
           },
           gTimeoutSeconds * 1000,
         ]);
@@ -1557,6 +1599,10 @@ function testResult({ name, pass, todo, ex, stack, allowFailure }) {
     // eslint-disable-next-line no-debugger
     debugger;
   }
+
+  // Optionally, test variables can be saved to a file, which will be uploaded
+  // as an artifact if the test is running on try.
+  saveScopeVariablesAsJSON();
 }
 
 function testMessage(msg) {
@@ -1890,3 +1936,11 @@ testScope.prototype = {
     }
   },
 };
+
+/* import-globals-from ../modules/Mochia.js */
+Services.scriptloader.loadSubScript(
+  "resource://testing-common/Mochia.js",
+  this
+);
+
+Mochia(testScope);

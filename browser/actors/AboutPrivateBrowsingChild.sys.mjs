@@ -8,8 +8,8 @@ import { RemotePageChild } from "resource://gre/actors/RemotePageChild.sys.mjs";
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  EnrollmentType: "resource://nimbus/ExperimentAPI.sys.mjs",
   NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
-  ExperimentAPI: "resource://nimbus/ExperimentAPI.sys.mjs",
 });
 
 export class AboutPrivateBrowsingChild extends RemotePageChild {
@@ -27,24 +27,24 @@ export class AboutPrivateBrowsingChild extends RemotePageChild {
         defineAs: "PrivateBrowsingShouldHideDefault",
       }
     );
-    Cu.exportFunction(this.PrivateBrowsingEnableNewLogo.bind(this), window, {
-      defineAs: "PrivateBrowsingEnableNewLogo",
-    });
     Cu.exportFunction(
-      this.PrivateBrowsingExposureTelemetry.bind(this),
+      this.PrivateBrowsingPromoExposureTelemetry.bind(this),
       window,
-      { defineAs: "PrivateBrowsingExposureTelemetry" }
+      { defineAs: "PrivateBrowsingPromoExposureTelemetry" }
     );
+    Cu.exportFunction(this.FeltPrivacyExposureTelemetry.bind(this), window, {
+      defineAs: "FeltPrivacyExposureTelemetry",
+    });
   }
 
   PrivateBrowsingRecordClick(source) {
-    const experiment = lazy.ExperimentAPI.getExperimentMetaData({
-      featureId: "pbNewtab",
-    });
-    if (experiment) {
-      Services.telemetry.recordEvent("aboutprivatebrowsing", "click", source);
+    const metadata = lazy.NimbusFeatures.pbNewtab.getEnrollmentMetadata(
+      lazy.EnrollmentType.EXPERIMENT
+    );
+    if (metadata) {
+      Glean.aboutprivatebrowsing["click" + source].record();
     }
-    return experiment;
+    return !!metadata;
   }
 
   PrivateBrowsingShouldHideDefault() {
@@ -52,13 +52,11 @@ export class AboutPrivateBrowsingChild extends RemotePageChild {
     return config?.content?.hideDefault;
   }
 
-  PrivateBrowsingEnableNewLogo() {
-    return lazy.NimbusFeatures.majorRelease2022.getVariable(
-      "feltPrivacyPBMNewLogo"
-    );
+  PrivateBrowsingPromoExposureTelemetry() {
+    lazy.NimbusFeatures.pbNewtab.recordExposureEvent({ once: false });
   }
 
-  PrivateBrowsingExposureTelemetry() {
-    lazy.NimbusFeatures.pbNewtab.recordExposureEvent({ once: false });
+  FeltPrivacyExposureTelemetry() {
+    lazy.NimbusFeatures.feltPrivacy.recordExposureEvent({ once: true });
   }
 }

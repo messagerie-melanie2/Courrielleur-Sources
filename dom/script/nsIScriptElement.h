@@ -7,6 +7,7 @@
 #ifndef nsIScriptElement_h___
 #define nsIScriptElement_h___
 
+#include "js/ColumnNumber.h"  // JS::ColumnNumberOneOrigin
 #include "js/loader/ScriptKind.h"
 #include "mozilla/AlreadyAddRefed.h"
 #include "mozilla/Assertions.h"
@@ -29,23 +30,20 @@ class nsIURI;
 
 namespace mozilla::dom {
 class Document;
+enum class FetchPriority : uint8_t;
 enum class ReferrerPolicy : uint8_t;
 }  // namespace mozilla::dom
 
 // Must be kept in sync with xpcom/rust/xpcom/src/interfaces/nonidl.rs
-#define NS_ISCRIPTELEMENT_IID                        \
-  {                                                  \
-    0xe60fca9b, 0x1b96, 0x4e4e, {                    \
-      0xa9, 0xb4, 0xdc, 0x98, 0x4f, 0x88, 0x3f, 0x9c \
-    }                                                \
-  }
+#define NS_ISCRIPTELEMENT_IID \
+  {0xe60fca9b, 0x1b96, 0x4e4e, {0xa9, 0xb4, 0xdc, 0x98, 0x4f, 0x88, 0x3f, 0x9c}}
 
 /**
  * Internal interface implemented by script elements
  */
 class nsIScriptElement : public nsIScriptLoaderObserver {
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_ISCRIPTELEMENT_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_ISCRIPTELEMENT_IID)
 
   explicit nsIScriptElement(mozilla::dom::FromParser aFromParser)
       : mLineNumber(1),
@@ -106,10 +104,10 @@ class nsIScriptElement : public nsIScriptLoaderObserver {
    *  - GetScriptURI()
    *  - GetScriptExternal()
    */
-  virtual void FreezeExecutionAttrs(mozilla::dom::Document*) = 0;
+  virtual void FreezeExecutionAttrs(const mozilla::dom::Document*) = 0;
 
   /**
-   * Is the script a module script. Currently only supported by HTML scripts.
+   * Is the script a module script.
    */
   bool GetScriptIsModule() {
     MOZ_ASSERT(mFrozen, "Not ready for this call yet!");
@@ -117,7 +115,7 @@ class nsIScriptElement : public nsIScriptLoaderObserver {
   }
 
   /**
-   * Is the script an import map. Currently only supported by HTML scripts.
+   * Is the script an import map.
    */
   bool GetScriptIsImportMap() {
     MOZ_ASSERT(mFrozen, "Not ready for this call yet!");
@@ -125,7 +123,7 @@ class nsIScriptElement : public nsIScriptLoaderObserver {
   }
 
   /**
-   * Is the script deferred. Currently only supported by HTML scripts.
+   * Is the script deferred.
    */
   bool GetScriptDeferred() {
     MOZ_ASSERT(mFrozen, "Not ready for this call yet!");
@@ -133,7 +131,7 @@ class nsIScriptElement : public nsIScriptLoaderObserver {
   }
 
   /**
-   * Is the script async. Currently only supported by HTML scripts.
+   * Is the script async.
    */
   bool GetScriptAsync() {
     MOZ_ASSERT(mFrozen, "Not ready for this call yet!");
@@ -157,11 +155,11 @@ class nsIScriptElement : public nsIScriptLoaderObserver {
 
   uint32_t GetScriptLineNumber() { return mLineNumber; }
 
-  void SetScriptColumnNumber(uint32_t aColumnNumber) {
+  void SetScriptColumnNumber(JS::ColumnNumberOneOrigin aColumnNumber) {
     mColumnNumber = aColumnNumber;
   }
 
-  uint32_t GetScriptColumnNumber() { return mColumnNumber; }
+  JS::ColumnNumberOneOrigin GetScriptColumnNumber() { return mColumnNumber; }
 
   void SetIsMalformed() { mMalformed = true; }
 
@@ -237,6 +235,13 @@ class nsIScriptElement : public nsIScriptLoaderObserver {
   }
 
   /**
+   * Get the fetch priority
+   * (https://html.spec.whatwg.org/multipage/scripting.html#attr-script-fetchpriority)
+   * of the script element.
+   */
+  virtual mozilla::dom::FetchPriority GetFetchPriority() const = 0;
+
+  /**
    * Get referrer policy of the script element
    */
   virtual mozilla::dom::ReferrerPolicy GetReferrerPolicy();
@@ -277,6 +282,13 @@ class nsIScriptElement : public nsIScriptLoaderObserver {
   virtual nsIContent* GetAsContent() = 0;
 
   /**
+   * Determine whether this is a(n) classic/module/importmap script.
+   */
+  void DetermineKindFromType(const mozilla::dom::Document* aOwnerDoc);
+
+  bool IsClassicNonAsyncDefer();
+
+  /**
    * The start line number of the script.
    */
   uint32_t mLineNumber;
@@ -284,7 +296,7 @@ class nsIScriptElement : public nsIScriptLoaderObserver {
   /**
    * The start column number of the script.
    */
-  uint32_t mColumnNumber;
+  JS::ColumnNumberOneOrigin mColumnNumber;
 
   /**
    * The "already started" flag per HTML5.
@@ -353,7 +365,5 @@ class nsIScriptElement : public nsIScriptLoaderObserver {
    */
   nsWeakPtr mCreatorParser;
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(nsIScriptElement, NS_ISCRIPTELEMENT_IID)
 
 #endif  // nsIScriptElement_h___

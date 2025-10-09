@@ -121,13 +121,6 @@ bool MP3TrackDemuxer::Init() {
   mInfo->mBitDepth = 16;
   mInfo->mMimeType = "audio/mpeg";
   mInfo->mDuration = Duration().valueOr(TimeUnit::FromInfinity());
-  Mp3CodecSpecificData mp3CodecData{};
-  if (mEncoderDelay) {
-    mp3CodecData.mEncoderDelayFrames = mEncoderDelay;
-    mp3CodecData.mEncoderPaddingFrames = mEncoderPadding;
-  }
-  mInfo->mCodecSpecificConfig =
-      AudioCodecSpecificVariant{std::move(mp3CodecData)};
 
   MP3LOG("Init mInfo={mRate=%d mChannels=%d mBitDepth=%d mDuration=%s (%lfs)}",
          mInfo->mRate, mInfo->mChannels, mInfo->mBitDepth,
@@ -270,7 +263,7 @@ RefPtr<MP3TrackDemuxer::SamplesPromise> MP3TrackDemuxer::GetSamples(
       return SamplesPromise::CreateAndReject(NS_ERROR_DOM_MEDIA_DEMUXER_ERR,
                                              __func__);
     }
-    frames->AppendSample(frame);
+    frames->AppendSample(std::move(frame));
   }
 
   MP3LOGV("GetSamples() End mSamples.Size()=%zu aNumSamples=%d mOffset=%" PRIu64

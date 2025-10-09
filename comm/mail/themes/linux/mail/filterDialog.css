@@ -32,16 +32,17 @@
   min-width: 3em;
   padding: 0;
   margin: 2px;
-}
 
-.small-button + .small-button {
-  margin-inline: 0 4px;
+  & + & {
+    margin-inline: 0 4px;
+  }
 }
 
 toolbarbutton[is="toolbarbutton-menu-button"] {
+  padding-block: 1px !important;
   padding-inline-end: 8px !important;
-}
 
-toolbarbutton[is="toolbarbutton-menu-button"] > dropmarker {
-  padding-inline-start: 6px;
+  & > dropmarker {
+    margin-inline: 3px -3px;
+  }
 }

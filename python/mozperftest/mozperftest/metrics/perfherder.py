@@ -31,24 +31,6 @@ class Perfherder(Layer):
     arguments = COMMON_ARGS
     arguments.update(
         {
-            "app": {
-                "type": str,
-                "default": "firefox",
-                "choices": [
-                    "firefox",
-                    "chrome-m",
-                    "chrome",
-                    "chromium",
-                    "fennec",
-                    "geckoview",
-                    "fenix",
-                    "refbrow",
-                ],
-                "help": (
-                    "Shorthand name of application that is "
-                    "being tested (used in perfherder data)."
-                ),
-            },
             "stats": {
                 "action": "store_true",
                 "default": False,
@@ -108,8 +90,9 @@ class Perfherder(Layer):
             self.warning("No results left after filtering")
             return metadata
 
-        # XXX Add version info into this data
         app_info = {"name": self.get_arg("app", default="firefox")}
+        if metadata.binary_version:
+            app_info["version"] = metadata.binary_version
 
         # converting the metrics list into a mapping where
         # keys are the metrics nane
@@ -128,11 +111,15 @@ class Perfherder(Layer):
             # XXX Instead of just passing replicates here, we should build
             # up a partial perfherder data blob (with options) and subtest
             # overall values.
-            subtests = {}
+            subtests = []
             for r in res:
+                subtest = {}
                 vals = [v["value"] for v in r["data"] if is_number(v["value"])]
                 if vals:
-                    subtests[r["subtest"]] = vals
+                    subtest["name"] = r["subtest"]
+                    subtest["replicates"] = vals
+                    subtest["result"] = r
+                    subtests.append(subtest)
 
             perfherder_data = self._build_blob(
                 subtests,
@@ -169,8 +156,8 @@ class Perfherder(Layer):
 
         file = "perfherder-data.json"
         if prefix:
-            file = "{}-{}".format(prefix, file)
-        self.info("Writing perfherder results to {}".format(os.path.join(output, file)))
+            file = f"{prefix}-{file}"
+        self.info(f"Writing perfherder results to {os.path.join(output, file)}")
 
         # XXX "suites" key error occurs when using self.info so a print
         # is being done for now.
@@ -303,12 +290,14 @@ class Perfherder(Layer):
 
         allvals = []
         alert_thresholds = []
-        for measurement in subtests:
-            reps = subtests[measurement]
+        for subtest_res in subtests:
+            measurement = subtest_res["name"]
+            reps = subtest_res["replicates"]
+            extra_info = subtest_res["result"]
             allvals.extend(reps)
 
             if len(reps) == 0:
-                self.warning("No replicates found for {}, skipping".format(measurement))
+                self.warning(f"No replicates found for {measurement}, skipping")
                 continue
 
             # Gather extra settings specified from within a metric specification
@@ -333,14 +322,31 @@ class Perfherder(Layer):
 
                 break
 
+            # The settings specified in the result (from `extra_info`) override
+            # the settings from the metric info which comes from the `--perfherder-metrics`
+            # argument. The `or` check ensures that if the extra_info setting is defined,
+            # but is `None`, then we use the option defined above from the CLI args.
             subtest = {
                 "name": measurement,
                 "replicates": reps,
-                "lowerIsBetter": subtest_lower_is_better,
-                "value": None,
-                "unit": subtest_unit,
-                "shouldAlert": should_alert or measurement in subtest_should_alert,
+                "value": extra_info.get("value"),
+                "unit": extra_info.get("unit") or subtest_unit,
             }
+
+            # These two need to be done with if statements since they are boolean
+            # and the `or` check won't work with them (e.g. when a result specified setting
+            # is False, and the CLI arg is True).
+            if extra_info.get("shouldAlert") is not None:
+                subtest["shouldAlert"] = extra_info["shouldAlert"]
+            else:
+                subtest["shouldAlert"] = (
+                    should_alert or measurement in subtest_should_alert
+                )
+
+            if extra_info.get("lowerIsBetter") is not None:
+                subtest["lowerIsBetter"] = extra_info["lowerIsBetter"]
+            else:
+                subtest["lowerIsBetter"] = subtest_lower_is_better
 
             if has_callable_method(transformer_obj, "subtest_summary"):
                 subtest["value"] = transformer_obj.subtest_summary(subtest)
@@ -370,5 +376,7 @@ class Perfherder(Layer):
             val = transformer_obj.summary(suite)
             if val is not None:
                 suite["value"] = val
+        elif summary:
+            suite["value"] = summary
 
         return perfherder

@@ -1,11 +1,21 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
 enum TaskPriority {
   "user-blocking",
   "user-visible",
   "background"
 };
 
+dictionary TaskSignalAnyInit {
+  (TaskPriority or TaskSignal) priority = "user-visible";
+};
+
 [Exposed=(Window, Worker), Pref="dom.enable_web_task_scheduling"]
 interface TaskSignal : AbortSignal {
+  [NewObject] static TaskSignal _any(sequence<AbortSignal> signals, optional TaskSignalAnyInit init = {});
+
   readonly attribute TaskPriority priority;
 
   attribute EventHandler onprioritychange;
@@ -27,6 +37,9 @@ interface Scheduler {
     SchedulerPostTaskCallback callback,
     optional SchedulerPostTaskOptions options = {}
   );
+
+  [BinaryName="yieldImpl"]
+  Promise<undefined> yield();
 };
 
 dictionary TaskControllerInit {

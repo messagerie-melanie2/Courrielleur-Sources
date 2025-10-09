@@ -30,12 +30,12 @@ AntiTracking.runTest(
   },
   async _ => {
     await new Promise(resolve => {
-      Services.clearData.deleteData(Ci.nsIClearDataService.CLEAR_ALL, value =>
+      Services.clearData.deleteData(Ci.nsIClearDataService.CLEAR_ALL, () =>
         resolve()
       );
     });
   },
-  [["urlclassifier.trackingAnnotationSkipURLs", "TRACKING.EXAMPLE.ORG"]],
+  [["urlclassifier.trackingAnnotationSkipURLs", "*://tracking.example.org/*"]],
   false, // run the window.open() test
   false, // run the user interaction test
   Ci.nsIWebProgressListener.STATE_COOKIES_BLOCKED_TRACKER, // expect blocking notifications
@@ -74,7 +74,7 @@ AntiTracking.runTest(
   },
   async _ => {
     await new Promise(resolve => {
-      Services.clearData.deleteData(Ci.nsIClearDataService.CLEAR_ALL, value =>
+      Services.clearData.deleteData(Ci.nsIClearDataService.CLEAR_ALL, () =>
         resolve()
       );
     });
@@ -82,7 +82,7 @@ AntiTracking.runTest(
   [
     [
       "urlclassifier.trackingAnnotationSkipURLs",
-      "foobar.example,*.example.org,baz.example",
+      "*://foobar.example/*,*://*.example.org/*,*://baz.example/*",
     ],
   ],
   false, // run the window.open() test
@@ -108,12 +108,17 @@ AntiTracking.runTest(
   },
   async _ => {
     await new Promise(resolve => {
-      Services.clearData.deleteData(Ci.nsIClearDataService.CLEAR_ALL, value =>
+      Services.clearData.deleteData(Ci.nsIClearDataService.CLEAR_ALL, () =>
         resolve()
       );
     });
   },
-  [["urlclassifier.trackingAnnotationSkipURLs", "*.tracking.example.org"]],
+  [
+    [
+      "urlclassifier.trackingAnnotationSkipURLs",
+      "*://*.foo.tracking.example.org/*",
+    ],
+  ],
   false, // run the window.open() test
   false, // run the user interaction test
   Ci.nsIWebProgressListener.STATE_COOKIES_BLOCKED_TRACKER, // expect blocking notifications
@@ -137,13 +142,13 @@ AntiTracking.runTest(
   },
   async _ => {
     await new Promise(resolve => {
-      Services.clearData.deleteData(Ci.nsIClearDataService.CLEAR_ALL, value =>
+      Services.clearData.deleteData(Ci.nsIClearDataService.CLEAR_ALL, () =>
         resolve()
       );
     });
   },
   [
-    ["urlclassifier.trackingAnnotationSkipURLs", "TRACKING.EXAMPLE.ORG"],
+    ["urlclassifier.trackingAnnotationSkipURLs", "*://tracking.example.org/*"],
     ["privacy.antitracking.enableWebcompat", false],
   ],
   false, // run the window.open() test

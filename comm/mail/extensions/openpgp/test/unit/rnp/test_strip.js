@@ -8,15 +8,17 @@
 
 "use strict";
 
-const { RNP } = ChromeUtils.import("chrome://openpgp/content/modules/RNP.jsm");
-const { EnigmailKeyRing } = ChromeUtils.import(
-  "chrome://openpgp/content/modules/keyRing.jsm"
+const { RNP } = ChromeUtils.importESModule(
+  "chrome://openpgp/content/modules/RNP.sys.mjs"
 );
-const { OpenPGPTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mozmill/OpenPGPTestUtils.jsm"
+const { EnigmailKeyRing } = ChromeUtils.importESModule(
+  "chrome://openpgp/content/modules/keyRing.sys.mjs"
 );
-const { MailStringUtils } = ChromeUtils.import(
-  "resource:///modules/MailStringUtils.jsm"
+const { OpenPGPTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/OpenPGPTestUtils.sys.mjs"
+);
+const { MailStringUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailStringUtils.sys.mjs"
 );
 
 const keyDir = "../../../../../test/browser/openpgp/data/keys";
@@ -36,7 +38,7 @@ add_task(async function testStripSignatures() {
     do_get_file(`${keyDir}/heisenberg-signed-by-pinkman.asc`)
   );
 
-  let heisenbergFpr = "8E3D32E652A254F05BEA9F66CF3EB4AFCAC29340";
+  const heisenbergFpr = "8E3D32E652A254F05BEA9F66CF3EB4AFCAC29340";
   let foundKeys = await RNP.getKeys(["0x" + heisenbergFpr]);
 
   Assert.equal(foundKeys.length, 1);
@@ -50,7 +52,7 @@ add_task(async function testStripSignatures() {
   // plus one foreign certification signature.
   Assert.equal(sigs[0].sigList.length, 2);
 
-  let reducedKey = RNP.getMultiplePublicKeys([], ["0x" + heisenbergFpr], []);
+  const reducedKey = RNP.getMultiplePublicKeys([], ["0x" + heisenbergFpr], []);
 
   // Delete the key we have previously imported
   await RNP.deleteKey(heisenbergFpr);
@@ -58,9 +60,9 @@ add_task(async function testStripSignatures() {
   Assert.equal(foundKeys.length, 0);
 
   // Import the reduced key
-  let errorObj = {};
-  let fingerPrintObj = {};
-  let result = await EnigmailKeyRing.importKeyAsync(
+  const errorObj = {};
+  const fingerPrintObj = {};
+  const result = await EnigmailKeyRing.importKeyAsync(
     null,
     false,
     reducedKey,
@@ -69,8 +71,7 @@ add_task(async function testStripSignatures() {
     errorObj,
     fingerPrintObj,
     false,
-    [],
-    false
+    []
   );
   Assert.equal(result, 0);
 
@@ -84,12 +85,12 @@ add_task(async function testStripSignatures() {
 });
 
 add_task(async function testKeyWithUnicodeComment() {
-  let keyFile = do_get_file(`${keyDir}/key-with-utf8-comment.asc`);
-  let keyBlock = await IOUtils.readUTF8(keyFile.path);
+  const keyFile = do_get_file(`${keyDir}/key-with-utf8-comment.asc`);
+  const keyBlock = await IOUtils.readUTF8(keyFile.path);
 
-  let errorObj = {};
-  let fingerPrintObj = {};
-  let result = await EnigmailKeyRing.importKeyAsync(
+  const errorObj = {};
+  const fingerPrintObj = {};
+  const result = await EnigmailKeyRing.importKeyAsync(
     null,
     false,
     keyBlock,
@@ -98,25 +99,24 @@ add_task(async function testKeyWithUnicodeComment() {
     errorObj,
     fingerPrintObj,
     false,
-    [],
-    false
+    []
   );
   Assert.equal(result, 0);
 
-  let fpr = "72514F43D0060FC588E80238852C55E6D2AFD7EF";
-  let foundKeys = await RNP.getKeys(["0x" + fpr]);
+  const fpr = "72514F43D0060FC588E80238852C55E6D2AFD7EF";
+  const foundKeys = await RNP.getKeys(["0x" + fpr]);
 
   Assert.equal(foundKeys.length, 1);
 });
 
 add_task(async function testBinaryKey() {
-  let keyFile = do_get_file(`${keyDir}/key-binary.gpg`);
-  let keyData = await IOUtils.read(keyFile.path);
-  let keyBlock = MailStringUtils.uint8ArrayToByteString(keyData);
+  const keyFile = do_get_file(`${keyDir}/key-binary.gpg`);
+  const keyData = await IOUtils.read(keyFile.path);
+  const keyBlock = MailStringUtils.uint8ArrayToByteString(keyData);
 
-  let errorObj = {};
-  let fingerPrintObj = {};
-  let result = await EnigmailKeyRing.importKeyAsync(
+  const errorObj = {};
+  const fingerPrintObj = {};
+  const result = await EnigmailKeyRing.importKeyAsync(
     null,
     false,
     keyBlock,
@@ -125,13 +125,12 @@ add_task(async function testBinaryKey() {
     errorObj,
     fingerPrintObj,
     false,
-    [],
-    false
+    []
   );
   Assert.equal(result, 0);
 
-  let fpr = "683F775BA2E5F0ADEBB29697A2D1B914F722004E";
-  let foundKeys = await RNP.getKeys(["0x" + fpr]);
+  const fpr = "683F775BA2E5F0ADEBB29697A2D1B914F722004E";
+  const foundKeys = await RNP.getKeys(["0x" + fpr]);
 
   Assert.equal(foundKeys.length, 1);
 });

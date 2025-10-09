@@ -6,11 +6,9 @@
 
 "use strict";
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "MailExtensionShortcuts",
-  "resource:///modules/MailExtensionShortcuts.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  MailExtensionShortcuts: "resource:///modules/MailExtensionShortcuts.sys.mjs",
+});
 
 this.commands = class extends ExtensionAPIPersistent {
   PERSISTENT_EVENTS = {
@@ -18,14 +16,14 @@ this.commands = class extends ExtensionAPIPersistent {
     // available after fire.wakeup() has fulfilled (ensuring the convert() function
     // has been called).
 
-    onCommand({ context, fire }) {
+    onCommand({ fire }) {
       const { extension } = this;
       const { tabManager } = extension;
       async function listener(eventName, commandName) {
         if (fire.wakeup) {
           await fire.wakeup();
         }
-        let tab = tabManager.convert(tabTracker.activeTab);
+        const tab = tabManager.convert(tabTracker.activeTab);
         fire.async(commandName, tab);
       }
       this.on("command", listener);
@@ -33,13 +31,12 @@ this.commands = class extends ExtensionAPIPersistent {
         unregister: () => {
           this.off("command", listener);
         },
-        convert(_fire, _context) {
-          fire = _fire;
-          context = _context;
+        convert(newFire) {
+          fire = newFire;
         },
       };
     },
-    onChanged({ context, fire }) {
+    onChanged({ fire }) {
       async function listener(eventName, changeInfo) {
         if (fire.wakeup) {
           await fire.wakeup();
@@ -51,9 +48,8 @@ this.commands = class extends ExtensionAPIPersistent {
         unregister: () => {
           this.off("shortcutChanged", listener);
         },
-        convert(_fire, _context) {
-          fire = _fire;
-          context = _context;
+        convert(newFire) {
+          fire = newFire;
         },
       };
     },
@@ -63,8 +59,8 @@ this.commands = class extends ExtensionAPIPersistent {
     return MailExtensionShortcuts.removeCommandsFromStorage(extensionId);
   }
 
-  async onManifestEntry(entryName) {
-    let shortcuts = new MailExtensionShortcuts({
+  async onManifestEntry() {
+    const shortcuts = new MailExtensionShortcuts({
       extension: this.extension,
       onCommand: name => this.emit("command", name),
       onShortcutChanged: changeInfo => this.emit("shortcutChanged", changeInfo),
@@ -84,6 +80,8 @@ this.commands = class extends ExtensionAPIPersistent {
         getAll: () => this.extension.shortcuts.allCommands(),
         update: args => this.extension.shortcuts.updateCommand(args),
         reset: name => this.extension.shortcuts.resetCommand(name),
+        openShortcutSettings: () =>
+          this.extension.shortcuts.openShortcutSettings(),
         onCommand: new EventManager({
           context,
           module: "commands",

@@ -33,12 +33,12 @@ import androidx.test.core.app.ApplicationProvider;
 import java.util.ArrayList;
 import java.util.List;
 import org.appspot.apprtc.AppRTCBluetoothManager.State;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLog;
+import org.robolectric.RobolectricTestRunner;
 
 /**
  * Verifies basic behavior of the AppRTCBluetoothManager class.
@@ -46,7 +46,7 @@ import org.robolectric.shadows.ShadowLog;
  * but a mocked version is used instead. Hence, the parts "driven" by the AppRTC
  * audio manager are not included in this test.
  */
-@RunWith(LocalRobolectricTestRunner.class)
+@RunWith(RobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class BluetoothManagerTest {
   private static final String TAG = "BluetoothManagerTest";
@@ -148,9 +148,9 @@ public class BluetoothManagerTest {
   @Test
   public void testBluetoothDefaultStartStopStates() {
     bluetoothManager.start();
-    assertEquals(bluetoothManager.getState(), State.HEADSET_UNAVAILABLE);
+    assertEquals(State.HEADSET_UNAVAILABLE, bluetoothManager.getState());
     bluetoothManager.stop();
-    assertEquals(bluetoothManager.getState(), State.UNINITIALIZED);
+    assertEquals(State.UNINITIALIZED, bluetoothManager.getState());
   }
 
   // Verify correct state after receiving BluetoothServiceListener.onServiceConnected()
@@ -158,10 +158,10 @@ public class BluetoothManagerTest {
   @Test
   public void testBluetoothServiceListenerConnectedWithNoHeadset() {
     bluetoothManager.start();
-    assertEquals(bluetoothManager.getState(), State.HEADSET_UNAVAILABLE);
+    assertEquals(State.HEADSET_UNAVAILABLE, bluetoothManager.getState());
     simulateBluetoothServiceConnectedWithNoConnectedHeadset();
     verify(mockedAppRtcAudioManager, times(1)).updateAudioDeviceState();
-    assertEquals(bluetoothManager.getState(), State.HEADSET_UNAVAILABLE);
+    assertEquals(State.HEADSET_UNAVAILABLE, bluetoothManager.getState());
   }
 
   // Verify correct state after receiving BluetoothServiceListener.onServiceConnected()
@@ -170,20 +170,20 @@ public class BluetoothManagerTest {
   @Test
   public void testBluetoothServiceListenerConnectedWithHeadset() {
     bluetoothManager.start();
-    assertEquals(bluetoothManager.getState(), State.HEADSET_UNAVAILABLE);
+    assertEquals(State.HEADSET_UNAVAILABLE, bluetoothManager.getState());
     simulateBluetoothServiceConnectedWithConnectedHeadset();
     verify(mockedAppRtcAudioManager, times(1)).updateAudioDeviceState();
-    assertEquals(bluetoothManager.getState(), State.HEADSET_AVAILABLE);
+    assertEquals(State.HEADSET_AVAILABLE, bluetoothManager.getState());
   }
 
   // Verify correct state after receiving BluetoothProfile.ServiceListener.onServiceDisconnected().
   @Test
   public void testBluetoothServiceListenerDisconnected() {
     bluetoothManager.start();
-    assertEquals(bluetoothManager.getState(), State.HEADSET_UNAVAILABLE);
+    assertEquals(State.HEADSET_UNAVAILABLE, bluetoothManager.getState());
     simulateBluetoothServiceDisconnected();
     verify(mockedAppRtcAudioManager, times(1)).updateAudioDeviceState();
-    assertEquals(bluetoothManager.getState(), State.HEADSET_UNAVAILABLE);
+    assertEquals(State.HEADSET_UNAVAILABLE, bluetoothManager.getState());
   }
 
   // Verify correct state after BluetoothServiceListener.onServiceConnected() and
@@ -193,11 +193,11 @@ public class BluetoothManagerTest {
   @Test
   public void testBluetoothHeadsetConnected() {
     bluetoothManager.start();
-    assertEquals(bluetoothManager.getState(), State.HEADSET_UNAVAILABLE);
+    assertEquals(State.HEADSET_UNAVAILABLE, bluetoothManager.getState());
     simulateBluetoothServiceConnectedWithConnectedHeadset();
     simulateBluetoothHeadsetConnected();
     verify(mockedAppRtcAudioManager, times(2)).updateAudioDeviceState();
-    assertEquals(bluetoothManager.getState(), State.HEADSET_AVAILABLE);
+    assertEquals(State.HEADSET_AVAILABLE, bluetoothManager.getState());
   }
 
   // Verify correct state sequence for a case when a BT headset is available,
@@ -205,18 +205,18 @@ public class BluetoothManagerTest {
   @Test
   public void testBluetoothScoAudioStartAndStop() {
     bluetoothManager.start();
-    assertEquals(bluetoothManager.getState(), State.HEADSET_UNAVAILABLE);
+    assertEquals(State.HEADSET_UNAVAILABLE, bluetoothManager.getState());
     simulateBluetoothServiceConnectedWithConnectedHeadset();
-    assertEquals(bluetoothManager.getState(), State.HEADSET_AVAILABLE);
+    assertEquals(State.HEADSET_AVAILABLE, bluetoothManager.getState());
     bluetoothManager.startScoAudio();
-    assertEquals(bluetoothManager.getState(), State.SCO_CONNECTING);
+    assertEquals(State.SCO_CONNECTING, bluetoothManager.getState());
     simulateBluetoothScoConnectionConnected();
-    assertEquals(bluetoothManager.getState(), State.SCO_CONNECTED);
+    assertEquals(State.SCO_CONNECTED, bluetoothManager.getState());
     bluetoothManager.stopScoAudio();
     simulateBluetoothScoConnectionDisconnected();
-    assertEquals(bluetoothManager.getState(), State.SCO_DISCONNECTING);
+    assertEquals(State.SCO_DISCONNECTING,bluetoothManager.getState());
     bluetoothManager.stop();
-    assertEquals(bluetoothManager.getState(), State.UNINITIALIZED);
+    assertEquals(State.UNINITIALIZED, bluetoothManager.getState());
     verify(mockedAppRtcAudioManager, times(3)).updateAudioDeviceState();
   }
 

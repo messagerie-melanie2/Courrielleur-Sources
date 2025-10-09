@@ -13,7 +13,6 @@
 #include "prmem.h"
 #include "nsEmitterUtils.h"
 #include "nsMimeStringResources.h"
-#include "msgCore.h"
 #include "nsEmitterUtils.h"
 #include "nsIMimeStreamConverter.h"
 #include "mozilla/Logging.h"
@@ -199,21 +198,18 @@ char* nsMimeBaseEmitter::MimeGetStringByName(const char* aHeaderName) {
 }
 
 char* nsMimeBaseEmitter::MimeGetStringByID(int32_t aID) {
-  nsresult res = NS_OK;
-
   if (!m_stringBundle) {
     static const char propertyURL[] = MIME_URL;
 
     nsCOMPtr<nsIStringBundleService> sBundleService =
         mozilla::components::StringBundle::Service();
     if (sBundleService)
-      res = sBundleService->CreateBundle(propertyURL,
-                                         getter_AddRefs(m_stringBundle));
+      sBundleService->CreateBundle(propertyURL, getter_AddRefs(m_stringBundle));
   }
 
   if (m_stringBundle) {
     nsString val;
-    res = m_stringBundle->GetStringFromID(aID, val);
+    nsresult res = m_stringBundle->GetStringFromID(aID, val);
 
     if (NS_FAILED(res)) return nullptr;
 
@@ -364,11 +360,6 @@ nsMimeBaseEmitter::Write(const nsACString& buf, uint32_t* amountWritten) {
   nsresult rv = NS_OK;
   uint32_t needToWrite;
 
-#ifdef DEBUG_BenB
-  // If you want to see libmime output...
-  printf("%s", buf);
-#endif
-
   MOZ_LOG(gMimeEmitterLogModule, mozilla::LogLevel::Info,
           ("%s", PromiseFlatCString(buf).get()));
   //
@@ -420,8 +411,9 @@ nsresult nsMimeBaseEmitter::WriteHelper(const nsACString& buf,
     uint64_t avail;
     rv = mInputStream->Available(&avail);
     if (NS_SUCCEEDED(rv) && avail) {
-      mOutListener->OnDataAvailable(mChannel, mInputStream, 0,
-                                    std::min(avail, uint64_t(PR_UINT32_MAX)));
+      rv = mOutListener->OnDataAvailable(
+          mChannel, mInputStream, 0, std::min(avail, uint64_t(PR_UINT32_MAX)));
+      NS_ENSURE_SUCCESS(rv, rv);
 
       // try writing again...
       rv = mOutStream->Write(buf.BeginReading(), buf.Length(), countWritten);
@@ -945,13 +937,13 @@ nsMimeBaseEmitter::Complete() {
     mozilla::DebugOnly<nsresult> rv2 = mInputStream->Available(&bytesInStream);
     NS_ASSERTION(NS_SUCCEEDED(rv2), "Available failed");
     if (bytesInStream) {
-      mOutListener->OnDataAvailable(
+      rv = mOutListener->OnDataAvailable(
           mChannel, mInputStream, 0,
           std::min(bytesInStream, uint64_t(PR_UINT32_MAX)));
     }
   }
 
-  return NS_OK;
+  return rv;
 }
 
 //

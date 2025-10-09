@@ -6,8 +6,8 @@
 // Assume whatever test loaded this file already has mailTestUtils.
 /* globals mailTestUtils */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var allTestedEvents =
@@ -218,20 +218,24 @@ var gMFListener = {
   },
 };
 
-// Copy listener, for proceeding after each operation.
+/**
+ * Copy listener, for proceeding after each operation.
+ *
+ * @implements {nsIMsgCopyServiceListener}
+ */
 var copyListener = {
   // For copyFileMessage: this should be the folder the message is being stored to
   mFolderStoredIn: null,
   mMessageId: "",
-  OnStartCopy() {},
-  OnProgress(aProgress, aProgressMax) {},
-  SetMessageKey(aKey) {
+  onStartCopy() {},
+  onProgress() {},
+  setMessageKey(aKey) {
     gHdrsReceived.push(this.mFolderStoredIn.GetMessageHeader(aKey));
   },
-  GetMessageId(aMessageId) {
-    aMessageId = { value: this.mMessageId };
+  getMessageId() {
+    return this.mMessageId;
   },
-  OnStopCopy(aStatus) {
+  onStopCopy(aStatus) {
     // Check: message successfully copied.
     Assert.equal(aStatus, 0);
     gCurrStatus |= kStatus.onStopCopyDone;
@@ -281,7 +285,7 @@ function hasExactlyElements(array, elements) {
     }
   } else if (Array.isArray(elements)) {
     Assert.equal(elements.length, array.length);
-    for (let el of elements) {
+    for (const el of elements) {
       Assert.equal(typeof el, "object");
       Assert.equal(
         el instanceof Ci.nsIMsgDBHdr || el instanceof Ci.nsIMsgFolder,
@@ -346,9 +350,9 @@ function verify(event) {
         if (event[1].length < expected[1].length) {
           do_throw("Not enough reported classified messages.");
         }
-        let ignoreCount = event[1].length - expected[1].length;
+        const ignoreCount = event[1].length - expected[1].length;
         for (let i = 0; i < expected[1].length; i++) {
-          let eventHeader = event[1][i + ignoreCount];
+          const eventHeader = event[1][i + ignoreCount];
           Assert.equal(expected[1][i], eventHeader.messageId);
         }
       } else {
@@ -393,8 +397,8 @@ function verify(event) {
       //  so the best we can do is make sure they match up.  To this end,
       //  we check that the message-id header values match up.
       for (let iMsg = 0; iMsg < event[2].length; iMsg++) {
-        let srcHdr = event[2][iMsg];
-        let destHdr = event[4][iMsg];
+        const srcHdr = event[2][iMsg];
+        const destHdr = event[4][iMsg];
         Assert.equal(srcHdr.messageId, destHdr.messageId);
       }
       break;

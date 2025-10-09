@@ -239,7 +239,13 @@ static constexpr Register WasmTableCallIndexReg = ABINonArgReg3;
 // Registers used for ref calls.
 static constexpr Register WasmCallRefCallScratchReg0 = ABINonArgReg0;
 static constexpr Register WasmCallRefCallScratchReg1 = ABINonArgReg1;
+static constexpr Register WasmCallRefCallScratchReg2 = ABINonArgReg2;
 static constexpr Register WasmCallRefReg = ABINonArgReg3;
+
+// Registers used for wasm tail calls operations.
+static constexpr Register WasmTailCallInstanceScratchReg = ABINonArgReg1;
+static constexpr Register WasmTailCallRAScratchReg = ABINonArgReg2;
+static constexpr Register WasmTailCallFPScratchReg = ABINonArgReg3;
 
 // Register used as a scratch along the return path in the fast js -> wasm stub
 // code.  This must not overlap ReturnReg, JSReturnOperand, or InstanceReg.
@@ -385,6 +391,7 @@ class Assembler : public AssemblerX86Shared {
   }
   void push(ImmPtr imm) { push(ImmWord(uintptr_t(imm.value))); }
   void push(FloatRegister src) {
+    MOZ_ASSERT(src.isDouble(), "float32 and simd128 not supported");
     subq(Imm32(sizeof(double)), StackPointer);
     vmovsd(src, Address(StackPointer, 0));
   }
@@ -395,6 +402,7 @@ class Assembler : public AssemblerX86Shared {
   }
 
   void pop(FloatRegister src) {
+    MOZ_ASSERT(src.isDouble(), "float32 and simd128 not supported");
     vmovsd(Address(StackPointer, 0), src);
     addq(Imm32(sizeof(double)), StackPointer);
   }

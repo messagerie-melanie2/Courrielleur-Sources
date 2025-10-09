@@ -11,21 +11,19 @@
 #include "EditorDOMPoint.h"
 #include "EditorForwards.h"
 
+#include "mozilla/dom/Text.h"
 #include "nsCycleCollectionParticipant.h"  // various macros
-#include "nsID.h"                          // NS_DECLARE_STATIC_IID_ACCESSOR
+#include "nsID.h"                          // NS_INLINE_DECL_STATIC_IID
 #include "nsISupportsImpl.h"               // NS_DECL_ISUPPORTS_INHERITED
 #include "nsString.h"                      // nsString members
 #include "nscore.h"                        // NS_IMETHOD, nsAString
 
 namespace mozilla {
-namespace dom {
-class Text;
-}  // namespace dom
 
 /**
  * A transaction that inserts text into a content node.
  */
-class InsertTextTransaction final : public EditTransactionBase {
+class InsertTextTransaction : public EditTransactionBase {
  protected:
   InsertTextTransaction(EditorBase& aEditorBase,
                         const nsAString& aStringToInsert,
@@ -56,36 +54,65 @@ class InsertTextTransaction final : public EditTransactionBase {
   /**
    * Return the string data associated with this transaction.
    */
-  void GetData(nsString& aResult);
+  const nsString& GetData() const { return mStringToInsert; }
+
+  /**
+   * Return the `Text` node to insert text (or delete text from).
+   */
+  dom::Text* GetTextNode() const;
 
   template <typename EditorDOMPointType>
   EditorDOMPointType SuggestPointToPutCaret() const {
-    if (NS_WARN_IF(!mTextNode)) {
+    dom::Text* const textNode = GetTextNode();
+    if (NS_WARN_IF(!textNode)) {
       return EditorDOMPointType();
     }
-    return EditorDOMPointType(mTextNode, mOffset + mStringToInsert.Length());
+    return EditorDOMPointType(textNode, mOffset + mStringToInsert.Length());
   }
 
   friend std::ostream& operator<<(std::ostream& aStream,
                                   const InsertTextTransaction& aTransaction);
 
- private:
+ protected:
   virtual ~InsertTextTransaction() = default;
 
   // Return true if aOtherTransaction immediately follows this transaction.
-  bool IsSequentialInsert(InsertTextTransaction& aOtherTrasaction);
-
-  // The Text node to operate upon.
-  RefPtr<dom::Text> mTextNode;
-
-  // The offset into mTextNode where the insertion is to take place.
-  uint32_t mOffset;
-
-  // The text to insert into mTextNode at mOffset.
-  nsString mStringToInsert;
+  bool IsSequentialInsert(InsertTextTransaction& aOtherTransaction) const;
 
   // The editor, which we'll need to get the selection.
   RefPtr<EditorBase> mEditorBase;
+  // The text to insert into mTextNode at mOffset.
+  nsString mStringToInsert;
+  // The offset into mTextNode where the insertion is to take place.
+  uint32_t mOffset;
+};
+
+/**
+ * Private class for InsertTextTransaction when it needs to handle a transaction
+ * of `HTMLEditor`.
+ */
+class InsertTextIntoTextNodeTransaction final : public InsertTextTransaction {
+ public:
+  NS_DECL_ISUPPORTS_INHERITED
+  NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(InsertTextIntoTextNodeTransaction,
+                                           InsertTextTransaction)
+
+  friend std::ostream& operator<<(
+      std::ostream& aStream,
+      const InsertTextIntoTextNodeTransaction& aTransaction);
+
+ private:
+  NS_DECL_EDITTRANSACTIONBASE_GETASMETHODS_OVERRIDE(
+      InsertTextIntoTextNodeTransaction)
+
+  InsertTextIntoTextNodeTransaction(EditorBase& aEditorBase,
+                                    const nsAString& aStringToInsert,
+                                    const EditorDOMPointInText& aPointToInsert);
+  virtual ~InsertTextIntoTextNodeTransaction() = default;
+
+  RefPtr<dom::Text> mTextNode;
+
+  friend class InsertTextTransaction;
 };
 
 }  // namespace mozilla

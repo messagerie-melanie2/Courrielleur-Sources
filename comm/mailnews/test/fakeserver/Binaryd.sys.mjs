@@ -96,7 +96,7 @@ export class BinaryServer {
     const server = this;
 
     socket.asyncListen({
-      async onSocketAccepted(socket, transport) {
+      async onSocketAccepted(acceptedSocket, transport) {
         const conn = new Connection(transport);
         server._connections.add(conn);
         try {
@@ -165,7 +165,7 @@ class Connection {
   }
 
   /**
-   * @returns true if close() has been called.
+   * @returns {boolean} true if close() has been called.
    */
   isClosed() {
     return this._transport === null;

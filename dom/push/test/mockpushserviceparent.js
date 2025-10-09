@@ -18,7 +18,7 @@ function waterfall(...callbacks) {
         }),
       Promise.resolve()
     )
-    .catch(Cu.reportError);
+    .catch(console.error);
 }
 
 /**
@@ -85,7 +85,7 @@ addMessageListener("socket-setup", function () {
   });
 });
 
-addMessageListener("socket-teardown", function (msg) {
+addMessageListener("socket-teardown", function () {
   pushService
     .restoreServiceBackend()
     .then(_ => {
@@ -97,7 +97,7 @@ addMessageListener("socket-teardown", function (msg) {
       sendAsyncMessage("socket-server-teardown");
     })
     .catch(error => {
-      Cu.reportError(`Error restoring service backend: ${error}`);
+      console.error(`Error restoring service backend: ${error}`);
     });
 });
 
@@ -132,7 +132,7 @@ var MockService = {
 
   handleResponse(response) {
     if (!this.resolvers.has(response.id)) {
-      Cu.reportError(`Unexpected response for request ${response.id}`);
+      console.error(`Unexpected response for request ${response.id}`);
       return;
     }
     let resolver = this.resolvers.get(response.id);
@@ -171,9 +171,15 @@ var MockService = {
 };
 
 async function replaceService(service) {
-  await pushService.service.uninit();
+  // `?.` because `service` can be null
+  // (either by calling this function with null, or the push module doesn't have the
+  // field at all e.g. in GeckoView)
+  // Passing null here resets it to the default implementation on desktop
+  // (so `.service` never becomes null there) but not for GeckoView.
+  // XXX(krosylight): we need to remove this deviation.
+  await pushService.service?.uninit();
   pushService.service = service;
-  await pushService.service.init();
+  await pushService.service?.init();
 }
 
 addMessageListener("service-replace", function () {
@@ -182,7 +188,7 @@ addMessageListener("service-replace", function () {
       sendAsyncMessage("service-replaced");
     })
     .catch(error => {
-      Cu.reportError(`Error replacing service: ${error}`);
+      console.error(`Error replacing service: ${error}`);
     });
 });
 
@@ -192,7 +198,7 @@ addMessageListener("service-restore", function () {
       sendAsyncMessage("service-restored");
     })
     .catch(error => {
-      Cu.reportError(`Error restoring service: ${error}`);
+      console.error(`Error restoring service: ${error}`);
     });
 });
 

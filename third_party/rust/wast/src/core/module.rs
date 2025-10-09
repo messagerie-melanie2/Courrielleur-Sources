@@ -1,3 +1,4 @@
+use crate::core::binary::EncodeOptions;
 use crate::core::*;
 use crate::parser::{Parse, Parser, Result};
 use crate::token::{Id, Index, NameAnnotation, Span};
@@ -85,11 +86,7 @@ impl<'a> Module<'a> {
     /// This function can return an error for name resolution errors and other
     /// expansion-related errors.
     pub fn encode(&mut self) -> std::result::Result<Vec<u8>, crate::Error> {
-        self.resolve()?;
-        Ok(match &self.kind {
-            ModuleKind::Text(fields) => crate::core::binary::encode(&self.id, &self.name, fields),
-            ModuleKind::Binary(blobs) => blobs.iter().flat_map(|b| b.iter().cloned()).collect(),
-        })
+        EncodeOptions::default().encode_module(self)
     }
 
     pub(crate) fn validate(&self, parser: Parser<'_>) -> Result<()> {
@@ -106,16 +103,15 @@ impl<'a> Module<'a> {
         }
         Ok(())
     }
-}
 
-impl<'a> Parse<'a> for Module<'a> {
-    fn parse(parser: Parser<'a>) -> Result<Self> {
-        let _r = parser.register_annotation("custom");
-        let span = parser.parse::<kw::module>()?.0;
+    pub(crate) fn parse_without_module_keyword(
+        module_keyword_span: Span,
+        parser: Parser<'a>,
+    ) -> Result<Self> {
         let id = parser.parse()?;
         let name = parser.parse()?;
 
-        let kind = if parser.peek::<kw::binary>() {
+        let kind = if parser.peek::<kw::binary>()? {
             parser.parse::<kw::binary>()?;
             let mut data = Vec::new();
             while !parser.is_empty() {
@@ -126,10 +122,19 @@ impl<'a> Parse<'a> for Module<'a> {
             ModuleKind::Text(ModuleField::parse_remaining(parser)?)
         };
         Ok(Module {
-            span,
+            span: module_keyword_span,
             id,
             name,
             kind,
+        })
+    }
+}
+
+impl<'a> Parse<'a> for Module<'a> {
+    fn parse(parser: Parser<'a>) -> Result<Self> {
+        parser.with_standard_annotations_registered(|parser| {
+            let span = parser.parse::<kw::module>()?.0;
+            Self::parse_without_module_keyword(span, parser)
         })
     }
 }
@@ -154,7 +159,7 @@ pub enum ModuleField<'a> {
 }
 
 impl<'a> ModuleField<'a> {
-    pub(crate) fn parse_remaining(parser: Parser<'a>) -> Result<Vec<ModuleField>> {
+    pub(crate) fn parse_remaining(parser: Parser<'a>) -> Result<Vec<ModuleField<'a>>> {
         let mut fields = Vec::new();
         while !parser.is_empty() {
             fields.push(parser.parens(ModuleField::parse)?);
@@ -165,44 +170,47 @@ impl<'a> ModuleField<'a> {
 
 impl<'a> Parse<'a> for ModuleField<'a> {
     fn parse(parser: Parser<'a>) -> Result<Self> {
-        if parser.peek::<Type<'a>>() {
+        if parser.peek::<Type<'a>>()? {
             return Ok(ModuleField::Type(parser.parse()?));
         }
-        if parser.peek::<kw::rec>() {
+        if parser.peek::<kw::rec>()? {
             return Ok(ModuleField::Rec(parser.parse()?));
         }
-        if parser.peek::<kw::import>() {
+        if parser.peek::<kw::import>()? {
             return Ok(ModuleField::Import(parser.parse()?));
         }
-        if parser.peek::<kw::func>() {
+        if parser.peek::<kw::func>()? {
             return Ok(ModuleField::Func(parser.parse()?));
         }
-        if parser.peek::<kw::table>() {
+        if parser.peek::<kw::table>()? {
             return Ok(ModuleField::Table(parser.parse()?));
         }
-        if parser.peek::<kw::memory>() {
+        if parser.peek::<kw::memory>()? {
             return Ok(ModuleField::Memory(parser.parse()?));
         }
-        if parser.peek::<kw::global>() {
+        if parser.peek::<kw::global>()? {
             return Ok(ModuleField::Global(parser.parse()?));
         }
-        if parser.peek::<kw::export>() {
+        if parser.peek::<kw::export>()? {
             return Ok(ModuleField::Export(parser.parse()?));
         }
-        if parser.peek::<kw::start>() {
+        if parser.peek::<kw::start>()? {
             parser.parse::<kw::start>()?;
             return Ok(ModuleField::Start(parser.parse()?));
         }
-        if parser.peek::<kw::elem>() {
+        if parser.peek::<kw::elem>()? {
             return Ok(ModuleField::Elem(parser.parse()?));
         }
-        if parser.peek::<kw::data>() {
+        if parser.peek::<kw::data>()? {
             return Ok(ModuleField::Data(parser.parse()?));
         }
-        if parser.peek::<kw::tag>() {
+        if parser.peek::<kw::tag>()? {
             return Ok(ModuleField::Tag(parser.parse()?));
         }
-        if parser.peek::<annotation::custom>() {
+        if parser.peek::<annotation::custom>()?
+            || parser.peek::<annotation::producers>()?
+            || parser.peek::<annotation::dylink_0>()?
+        {
             return Ok(ModuleField::Custom(parser.parse()?));
         }
         Err(parser.error("expected valid module field"))

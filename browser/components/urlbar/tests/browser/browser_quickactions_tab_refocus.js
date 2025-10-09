@@ -13,7 +13,7 @@ add_setup(async function setup() {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.urlbar.quickactions.enabled", true],
-      ["browser.urlbar.suggest.quickactions", true],
+      ["browser.urlbar.secondaryActions.featureGate", true],
       ["browser.urlbar.shortcuts.quickactions", true],
     ],
   });
@@ -51,11 +51,6 @@ add_task(async function test_about_pages() {
       component: "button[name=extension]",
     },
     {
-      firstInput: "plugins",
-      uri: "about:addons",
-      component: "button[name=plugin]",
-    },
-    {
       firstInput: "themes",
       uri: "about:addons",
       component: "button[name=theme]",
@@ -83,14 +78,14 @@ add_task(async function test_about_pages() {
     );
     if (firstLoad) {
       info("Load initial URI");
-      BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, uri);
+      BrowserTestUtils.startLoadingURIString(gBrowser.selectedBrowser, uri);
     } else {
       info("Open about page by quick action");
       await UrlbarTestUtils.promiseAutocompleteResultPopup({
         window,
         value: firstInput,
       });
-      EventUtils.synthesizeKey("KEY_ArrowDown", {}, window);
+      EventUtils.synthesizeKey("KEY_Tab", {}, window);
       EventUtils.synthesizeKey("KEY_Enter", {}, window);
     }
     await onLoad;
@@ -106,7 +101,7 @@ add_task(async function test_about_pages() {
       window,
       value: secondInput || firstInput,
     });
-    EventUtils.synthesizeKey("KEY_ArrowDown", {}, window);
+    EventUtils.synthesizeKey("KEY_Tab", {}, window);
     EventUtils.synthesizeKey("KEY_Enter", {}, window);
     Assert.equal(
       gBrowser.selectedTab,
@@ -137,10 +132,6 @@ add_task(async function test_about_addons_pages() {
       testFun: async () => isSelected("button[name=discover]"),
     },
     {
-      cmd: "plugins",
-      testFun: async () => isSelected("button[name=plugin]"),
-    },
-    {
       cmd: "extensions",
       testFun: async () => isSelected("button[name=extension]"),
     },
@@ -158,7 +149,7 @@ add_task(async function test_about_addons_pages() {
       window,
       value: cmd,
     });
-    EventUtils.synthesizeKey("KEY_ArrowDown", {}, window);
+    EventUtils.synthesizeKey("KEY_Tab", {}, window);
     EventUtils.synthesizeKey("KEY_Enter", {}, window);
     await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
     Assert.ok(await testFun(), "The page content is correct");
@@ -175,7 +166,7 @@ add_task(async function test_about_addons_pages() {
       window,
       value: cmd,
     });
-    EventUtils.synthesizeKey("KEY_ArrowDown", {}, window);
+    EventUtils.synthesizeKey("KEY_Tab", {}, window);
     EventUtils.synthesizeKey("KEY_Enter", {}, window);
     await BrowserTestUtils.waitForCondition(() => testFun());
     Assert.ok(true, "The tab correspondent action is selected");

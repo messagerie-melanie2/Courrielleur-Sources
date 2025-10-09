@@ -16,12 +16,8 @@
 
 class nsDocShell;
 
-#define DOCUMENT_CHANNEL_IID                         \
-  {                                                  \
-    0x6977bc44, 0xb1db, 0x41b7, {                    \
-      0xb5, 0xc5, 0xe2, 0x13, 0x68, 0x22, 0xc9, 0x8f \
-    }                                                \
-  }
+#define DOCUMENT_CHANNEL_IID \
+  {0x6977bc44, 0xb1db, 0x41b7, {0xb5, 0xc5, 0xe2, 0x13, 0x68, 0x22, 0xc9, 0x8f}}
 
 namespace mozilla {
 namespace net {
@@ -45,7 +41,7 @@ class DocumentChannel : public nsIIdentChannel {
   NS_DECL_NSICHANNEL
   NS_DECL_NSIIDENTCHANNEL
 
-  NS_DECLARE_STATIC_IID_ACCESSOR(DOCUMENT_CHANNEL_IID)
+  NS_INLINE_DECL_STATIC_IID(DOCUMENT_CHANNEL_IID)
 
   void SetNavigationTiming(nsDOMNavigationTiming* aTiming) {
     mTiming = aTiming;
@@ -67,7 +63,7 @@ class DocumentChannel : public nsIIdentChannel {
   static already_AddRefed<DocumentChannel> CreateForDocument(
       nsDocShellLoadState* aLoadState, class LoadInfo* aLoadInfo,
       nsLoadFlags aLoadFlags, nsIInterfaceRequestor* aNotificationCallbacks,
-      uint32_t aCacheKey, bool aUriModified, bool aIsXFOError);
+      uint32_t aCacheKey, bool aUriModified, bool aIsEmbeddingBlockedError);
   static already_AddRefed<DocumentChannel> CreateForObject(
       nsDocShellLoadState* aLoadState, class LoadInfo* aLoadInfo,
       nsLoadFlags aLoadFlags, nsIInterfaceRequestor* aNotificationCallbacks);
@@ -77,7 +73,7 @@ class DocumentChannel : public nsIIdentChannel {
  protected:
   DocumentChannel(nsDocShellLoadState* aLoadState, class LoadInfo* aLoadInfo,
                   nsLoadFlags aLoadFlags, uint32_t aCacheKey, bool aUriModified,
-                  bool aIsXFOError);
+                  bool aIsEmbeddingBlockedError);
 
   void ShutdownListeners(nsresult aStatusCode);
   virtual void DeleteIPDL() {}
@@ -106,12 +102,11 @@ class DocumentChannel : public nsIIdentChannel {
   // mUriModified is true if we're doing a history load and the URI of the
   // session history had been modified by pushState/replaceState.
   bool mUriModified = false;
-  // mIsXFOError is true if we're handling a load error and the status of the
-  // failed channel is NS_ERROR_XFO_VIOLATION.
-  bool mIsXFOError = false;
+  // mIsEmbeddingBlockedError is true if we're handling a load error and the
+  // status of the failed channel is NS_ERROR_XFO_VIOLATION or
+  // NS_ERROR_CSP_FRAME_ANCESTOR_VIOLATION.
+  bool mIsEmbeddingBlockedError = false;
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(DocumentChannel, DOCUMENT_CHANNEL_IID)
 
 }  // namespace net
 }  // namespace mozilla

@@ -6,7 +6,7 @@
 
 "use strict";
 
-XPCOMUtils.defineLazyGetter(this, "strBundle", function () {
+ChromeUtils.defineLazyGetter(this, "strBundle", function () {
   return Services.strings.createBundle(
     "chrome://global/locale/extensions.properties"
   );
@@ -42,6 +42,8 @@ const installType = addon => {
     return "sideload";
   } else if (addon.isSystem) {
     return "other";
+  } else if (addon.isInstalledByEnterprisePolicy) {
+    return "admin";
   }
   return "normal";
 };
@@ -188,7 +190,7 @@ this.management = class extends ExtensionAPIPersistent {
         unregister: () => {
           this.addonListener.off(eventName, listener);
         },
-        convert(_fire, context) {
+        convert(_fire) {
           fire = _fire;
         },
       };
@@ -306,13 +308,17 @@ this.management = class extends ExtensionAPIPersistent {
           if (!addon) {
             throw new ExtensionError(`No such addon ${id}`);
           }
-          if (addon.type !== "theme") {
-            throw new ExtensionError("setEnabled applies only to theme addons");
-          }
-          if (addon.isSystem) {
+
+          if (
+            addon.type !== "theme" &&
+            !extension.isInstalledByEnterprisePolicy
+          ) {
             throw new ExtensionError(
-              "setEnabled cannot be used with a system addon"
+              "setEnabled can only be used for themes or by addons installed by enterprise policy"
             );
+          }
+          if (!checkAllowedAddon(addon)) {
+            throw new ExtensionError("setEnabled not allowed for this addon");
           }
           if (enabled) {
             await addon.enable();

@@ -10,7 +10,6 @@
 #include "mozilla/a11y/AccGroupInfo.h"
 #include "mozilla/Variant.h"
 #include "nsTHashMap.h"
-#include "nsAtom.h"
 #include "nsStringFwd.h"
 #include "mozilla/gfx/Matrix.h"
 
@@ -60,6 +59,43 @@ struct DeleteEntry {
   bool operator!=(const DeleteEntry& aOther) const { return false; }
 };
 
+/**
+ * An attribute that applies to an offset range in a text leaf. This allows it
+ * to span only part of a text leaf. This is used for spelling errors,
+ * highlights, etc. which are mapped to DOM selections. This is in contrast to
+ * most other attributes which can only apply to an entire text leaf and so just
+ * reside on the leaf itself, rather than requiring offsets.
+ */
+struct TextOffsetAttribute {
+  // An offset used to indicate that this attribute extends outside of this
+  // leaf.
+  static const int32_t kOutsideLeaf = -1;
+  // The offset in the text leaf where the attribute starts. If this is
+  // kOutsideLeaf, the attribute begins before this leaf, crossing Accessibles.
+  int32_t mStartOffset;
+  // The offset in the text leaf where the attribute ends (exclusive). If this
+  // is kOutsideLeaf, the attribute ends after this leaf, crossing Accessibles.
+  int32_t mEndOffset;
+  // The attribute:
+  // nsGkAtoms::grammar: Grammar error.
+  // nsGkAtoms::mark: Semantic highlight such as a text fragment.
+  // nsGkAtoms::spelling: Spelling error.
+  RefPtr<nsAtom> mAttribute;
+
+  bool operator==(const TextOffsetAttribute& aOther) const {
+    return mStartOffset == aOther.mStartOffset &&
+           mEndOffset == aOther.mEndOffset && mAttribute == aOther.mAttribute;
+  }
+
+  bool operator!=(const TextOffsetAttribute& aOther) const {
+    return !(*this == aOther);
+  }
+
+  bool operator<(const TextOffsetAttribute& aOther) const {
+    return mStartOffset < aOther.mStartOffset;
+  }
+};
+
 class AccAttributes {
   // Warning! An AccAttributes can contain another AccAttributes. This is
   // intended for object and text attributes. However, the nested
@@ -70,9 +106,10 @@ class AccAttributes {
       Variant<bool, float, double, int32_t, RefPtr<nsAtom>, nsTArray<int32_t>,
               CSSCoord, FontSize, Color, DeleteEntry, UniquePtr<nsString>,
               RefPtr<AccAttributes>, uint64_t, UniquePtr<AccGroupInfo>,
-              UniquePtr<gfx::Matrix4x4>, nsTArray<uint64_t>>;
+              UniquePtr<gfx::Matrix4x4>, nsTArray<uint64_t>,
+              nsTArray<TextOffsetAttribute>>;
   static_assert(sizeof(AttrValueType) <= 16);
-  using AtomVariantMap = nsTHashMap<nsRefPtrHashKey<nsAtom>, AttrValueType>;
+  using AtomVariantMap = nsTHashMap<RefPtr<nsAtom>, AttrValueType>;
 
  protected:
   ~AccAttributes() = default;
@@ -139,6 +176,17 @@ class AccAttributes {
     if (auto value = mData.Lookup(aAttrName)) {
       if (value->is<RefPtr<T>>()) {
         RefPtr<const T> ref = value->as<RefPtr<T>>();
+        return ref;
+      }
+    }
+    return nullptr;
+  }
+
+  template <typename T>
+  const T* GetAttributeWeakPtr(nsAtom* aAttrName) const {
+    if (auto value = mData.Lookup(aAttrName)) {
+      if (value->is<RefPtr<T>>()) {
+        const T* ref = value->as<RefPtr<T>>();
         return ref;
       }
     }
@@ -282,6 +330,10 @@ class AccAttributes {
   static void StringFromValueAndName(nsAtom* aAttrName,
                                      const AttrValueType& aValue,
                                      nsAString& aValueString);
+
+  // Opts AccAttributes into the common ToString function.
+  friend std::ostream& operator<<(std::ostream& aStream,
+                                  const AccAttributes& aAttributes);
 
   AtomVariantMap mData;
 

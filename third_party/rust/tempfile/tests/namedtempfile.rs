@@ -1,14 +1,27 @@
 #![deny(rust_2018_idioms)]
 
-use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use tempfile::{tempdir, Builder, NamedTempFile, TempPath};
+use tempfile::{env, tempdir, Builder, NamedTempFile, TempPath};
 
 fn exists<P: AsRef<Path>>(path: P) -> bool {
     std::fs::metadata(path.as_ref()).is_ok()
+}
+
+#[test]
+fn test_prefix() {
+    let tmpfile = NamedTempFile::with_prefix("prefix").unwrap();
+    let name = tmpfile.path().file_name().unwrap().to_str().unwrap();
+    assert!(name.starts_with("prefix"));
+}
+
+#[test]
+fn test_suffix() {
+    let tmpfile = NamedTempFile::with_suffix("suffix").unwrap();
+    let name = tmpfile.path().file_name().unwrap().to_str().unwrap();
+    assert!(name.ends_with("suffix"));
 }
 
 #[test]
@@ -87,7 +100,7 @@ fn test_persist_noclobber() {
 fn test_customnamed() {
     let tmpfile = Builder::new()
         .prefix("tmp")
-        .suffix(&".rs".to_string())
+        .suffix(&".rs")
         .rand_bytes(12)
         .tempfile()
         .unwrap();
@@ -100,9 +113,9 @@ fn test_customnamed() {
 #[test]
 fn test_append() {
     let mut tmpfile = Builder::new().append(true).tempfile().unwrap();
-    tmpfile.write(b"a").unwrap();
+    tmpfile.write_all(b"a").unwrap();
     tmpfile.seek(SeekFrom::Start(0)).unwrap();
-    tmpfile.write(b"b").unwrap();
+    tmpfile.write_all(b"b").unwrap();
 
     tmpfile.seek(SeekFrom::Start(0)).unwrap();
     let mut buf = vec![0u8; 1];
@@ -269,10 +282,10 @@ fn test_write_after_close() {
 
 #[test]
 fn test_change_dir() {
-    env::set_current_dir(env::temp_dir()).unwrap();
+    std::env::set_current_dir(env::temp_dir()).unwrap();
     let tmpfile = NamedTempFile::new_in(".").unwrap();
-    let path = env::current_dir().unwrap().join(tmpfile.path());
-    env::set_current_dir("/").unwrap();
+    let path = std::env::current_dir().unwrap().join(tmpfile.path());
+    std::env::set_current_dir("/").unwrap();
     drop(tmpfile);
     assert!(!exists(path))
 }
@@ -296,6 +309,18 @@ fn test_into_parts() {
     let mut buf = String::new();
     file.read_to_string(&mut buf).unwrap();
     assert_eq!("abcdefgh", buf);
+}
+
+#[test]
+fn test_from_parts() {
+    let mut file = NamedTempFile::new().unwrap();
+    write!(file, "abcd").expect("write failed");
+
+    let (file, temp_path) = file.into_parts();
+
+    let file = NamedTempFile::from_parts(file, temp_path);
+
+    assert!(file.path().exists());
 }
 
 #[test]
@@ -325,4 +350,165 @@ fn test_keep() {
         assert_eq!("abcde", buf);
     }
     std::fs::remove_file(&path).unwrap();
+}
+
+#[test]
+fn test_builder_keep() {
+    let mut tmpfile = Builder::new().keep(true).tempfile().unwrap();
+    write!(tmpfile, "abcde").unwrap();
+    let path = tmpfile.path().to_owned();
+    drop(tmpfile);
+
+    {
+        // Try opening it again.
+        let mut f = File::open(&path).unwrap();
+        let mut buf = String::new();
+        f.read_to_string(&mut buf).unwrap();
+        assert_eq!("abcde", buf);
+    }
+    std::fs::remove_file(&path).unwrap();
+}
+
+#[test]
+fn test_make() {
+    let tmpfile = Builder::new().make(|path| File::create(path)).unwrap();
+
+    assert!(tmpfile.path().is_file());
+}
+
+#[test]
+fn test_make_in() {
+    let tmp_dir = tempdir().unwrap();
+
+    let tmpfile = Builder::new()
+        .make_in(tmp_dir.path(), |path| File::create(path))
+        .unwrap();
+
+    assert!(tmpfile.path().is_file());
+    assert_eq!(tmpfile.path().parent(), Some(tmp_dir.path()));
+}
+
+#[test]
+fn test_make_fnmut() {
+    let mut count = 0;
+
+    // Show that an FnMut can be used.
+    let tmpfile = Builder::new()
+        .make(|path| {
+            count += 1;
+            File::create(path)
+        })
+        .unwrap();
+
+    assert!(tmpfile.path().is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn test_make_uds() {
+    use std::os::unix::net::UnixListener;
+
+    let temp_sock = Builder::new()
+        .prefix("tmp")
+        .suffix(".sock")
+        .rand_bytes(12)
+        .make(|path| UnixListener::bind(path))
+        .unwrap();
+
+    assert!(temp_sock.path().exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn test_make_uds_conflict() {
+    use std::io::ErrorKind;
+    use std::os::unix::net::UnixListener;
+
+    let sockets = std::iter::repeat_with(|| {
+        Builder::new()
+            .prefix("tmp")
+            .suffix(".sock")
+            .rand_bytes(1)
+            .make(|path| UnixListener::bind(path))
+    })
+    .take_while(|r| match r {
+        Ok(_) => true,
+        Err(e) if matches!(e.kind(), ErrorKind::AddrInUse | ErrorKind::AlreadyExists) => false,
+        Err(e) => panic!("unexpected error {e}"),
+    })
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap();
+
+    // Number of sockets we can create. Depends on whether or not the filesystem is case sensitive.
+
+    #[cfg(target_os = "macos")]
+    const NUM_FILES: usize = 36;
+    #[cfg(not(target_os = "macos"))]
+    const NUM_FILES: usize = 62;
+
+    assert_eq!(sockets.len(), NUM_FILES);
+
+    for socket in sockets {
+        assert!(socket.path().exists());
+    }
+}
+
+/// Make sure we re-seed with system randomness if we run into a conflict.
+#[test]
+fn test_reseed() {
+    // Deterministic seed.
+    fastrand::seed(42);
+
+    let mut attempts = 0;
+    let _files: Vec<_> = std::iter::repeat_with(|| {
+        Builder::new()
+            .make(|path| {
+                attempts += 1;
+                File::options().write(true).create_new(true).open(path)
+            })
+            .unwrap()
+    })
+    .take(5)
+    .collect();
+
+    assert_eq!(5, attempts);
+    attempts = 0;
+
+    // Re-seed to cause a conflict.
+    fastrand::seed(42);
+
+    let _f = Builder::new()
+        .make(|path| {
+            attempts += 1;
+            File::options().write(true).create_new(true).open(path)
+        })
+        .unwrap();
+
+    // We expect exactly three conflict before we re-seed with system randomness.
+    assert_eq!(4, attempts);
+}
+
+// Issue #224.
+#[test]
+fn test_overly_generic_bounds() {
+    pub struct Foo<T>(T);
+
+    impl<T> Foo<T>
+    where
+        T: Sync + Send + 'static,
+        for<'a> &'a T: Write + Read,
+    {
+        pub fn new(foo: T) -> Self {
+            Self(foo)
+        }
+    }
+
+    // Don't really need to run this. Only care if it compiles.
+    if let Ok(file) = File::open("i_do_not_exist") {
+        let mut f;
+        let _x = {
+            f = Foo::new(file);
+            &mut f
+        };
+    }
 }

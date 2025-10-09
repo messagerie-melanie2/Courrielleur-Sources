@@ -35,15 +35,11 @@ static ShCompileOptions ChooseValidatorCompileOptions(
   options.initGLPosition = true;
   options.initializeUninitializedLocals = true;
   options.initOutputVariables = true;
-
-#ifdef XP_MACOSX
-  options.removeInvariantAndCentroidForESSL3 = true;
-#else
-  // We want to do this everywhere, but to do this on Mac, we need
-  // to do it only on Mac OSX > 10.6 as this causes the shader
-  // compiler in 10.6 to crash
   options.clampIndirectArrayBounds = true;
-#endif
+
+  if (kIsMacOS) {
+    options.removeInvariantAndCentroidForESSL3 = true;
+  }
 
   if (gl->WorkAroundDriverBugs()) {
     if (kIsMacOS) {
@@ -134,7 +130,6 @@ std::unique_ptr<webgl::ShaderValidator> WebGLContext::CreateShaderValidator(
   const auto outputLanguage = ShaderOutput(gl);
 
   ShBuiltInResources resources;
-  memset(&resources, 0, sizeof(resources));
   sh::InitBuiltInResources(&resources);
 
   resources.HashFunction = webgl::IdentifierHashFunc;
@@ -190,6 +185,32 @@ std::unique_ptr<webgl::ShaderValidator> WebGLContext::CreateShaderValidator(
     }
 #endif
   }
+
+  // -
+
+  resources.MaxVariableSizeInBytes = [&]() -> size_t {
+    const auto kibytes = StaticPrefs::webgl_glsl_max_var_size_in_kibytes();
+    if (kibytes >= 0) {
+      return static_cast<size_t>(kibytes) * 1024;
+    }
+
+    return resources.MaxVariableSizeInBytes;
+  }();
+
+  resources.MaxPrivateVariableSizeInBytes = [&]() -> size_t {
+    const auto bytes = StaticPrefs::webgl_glsl_max_private_var_size_in_bytes();
+    if (bytes >= 0) {
+      return static_cast<size_t>(bytes);
+    }
+
+    if (kIsMacOS) {
+      return 128 * 1024;  // 8k vec4s
+    }
+
+    return resources.MaxPrivateVariableSizeInBytes;
+  }();
+
+  // -
 
   const auto compileOptions =
       webgl::ChooseValidatorCompileOptions(resources, gl);

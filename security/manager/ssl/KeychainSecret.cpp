@@ -21,32 +21,6 @@ KeychainSecret::KeychainSecret() {}
 
 KeychainSecret::~KeychainSecret() {}
 
-nsresult KeychainSecret::Lock() {
-  // https://developer.apple.com/documentation/security/1402180-seckeychainlock
-  // Passing `nullptr` locks the default keychain.
-  OSStatus rv = SecKeychainLock(nullptr);
-  if (rv != errSecSuccess) {
-    MOZ_LOG(gKeychainSecretLog, LogLevel::Debug,
-            ("SecKeychainLock failed: %d", rv));
-    return NS_ERROR_FAILURE;
-  }
-  return NS_OK;
-}
-
-nsresult KeychainSecret::Unlock() {
-  // https://developer.apple.com/documentation/security/1400341-seckeychainunlock
-  // This attempts to unlock the default keychain. Using `false` indicates we
-  // aren't passing in a password (if the keychain is locked, a dialog will
-  // appear for the user).
-  OSStatus rv = SecKeychainUnlock(nullptr, 0, nullptr, false);
-  if (rv != errSecSuccess) {
-    MOZ_LOG(gKeychainSecretLog, LogLevel::Debug,
-            ("SecKeychainUnlock failed: %d", rv));
-    return NS_ERROR_FAILURE;
-  }
-  return NS_OK;
-}
-
 ScopedCFType<CFStringRef> MozillaStringToCFString(const nsACString& stringIn) {
   // https://developer.apple.com/documentation/corefoundation/1543419-cfstringcreatewithbytes
   ScopedCFType<CFStringRef> stringOut(CFStringCreateWithBytes(
@@ -94,10 +68,10 @@ nsresult KeychainSecret::StoreSecret(const nsACString& aSecret,
     return NS_ERROR_FAILURE;
   }
   const void* values[] = {kSecClassGenericPassword, label.get(), secret.get()};
-  static_assert(ArrayLength(keys) == ArrayLength(values),
+  static_assert(std::size(keys) == std::size(values),
                 "mismatched SecItemAdd key/value array sizes");
   ScopedCFType<CFDictionaryRef> addDictionary(CFDictionaryCreate(
-      nullptr, (const void**)&keys, (const void**)&values, ArrayLength(keys),
+      nullptr, (const void**)&keys, (const void**)&values, std::size(keys),
       &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
   // https://developer.apple.com/documentation/security/1401659-secitemadd
   OSStatus osrv = SecItemAdd(addDictionary.get(), nullptr);
@@ -122,10 +96,10 @@ nsresult KeychainSecret::DeleteSecret(const nsACString& aLabel) {
     return NS_ERROR_FAILURE;
   }
   const void* values[] = {kSecClassGenericPassword, label.get()};
-  static_assert(ArrayLength(keys) == ArrayLength(values),
+  static_assert(std::size(keys) == std::size(values),
                 "mismatched SecItemDelete key/value array sizes");
   ScopedCFType<CFDictionaryRef> deleteDictionary(CFDictionaryCreate(
-      nullptr, (const void**)&keys, (const void**)&values, ArrayLength(keys),
+      nullptr, (const void**)&keys, (const void**)&values, std::size(keys),
       &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
   // https://developer.apple.com/documentation/security/1395547-secitemdelete
   OSStatus rv = SecItemDelete(deleteDictionary.get());
@@ -158,10 +132,10 @@ nsresult KeychainSecret::RetrieveSecret(const nsACString& aLabel,
   }
   const void* values[] = {kSecClassGenericPassword, label.get(),
                           kSecMatchLimitOne, kCFBooleanTrue, kCFBooleanTrue};
-  static_assert(ArrayLength(keys) == ArrayLength(values),
+  static_assert(std::size(keys) == std::size(values),
                 "mismatched SecItemCopyMatching key/value array sizes");
   ScopedCFType<CFDictionaryRef> searchDictionary(CFDictionaryCreate(
-      nullptr, (const void**)&keys, (const void**)&values, ArrayLength(keys),
+      nullptr, (const void**)&keys, (const void**)&values, std::size(keys),
       &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
   CFTypeRef item;
   // https://developer.apple.com/documentation/security/1398306-secitemcopymatching

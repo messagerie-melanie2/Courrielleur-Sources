@@ -27,6 +27,7 @@
 #define PORT_FreeArena PORT_FreeArena_stub
 #define PORT_GetError PORT_GetError_stub
 #define PORT_NewArena PORT_NewArena_stub
+#define PORT_SaveZero PORT_SaveZero_stub
 #define PORT_SetError PORT_SetError_stub
 #define PORT_ZAlloc PORT_ZAlloc_stub
 #define PORT_ZFree PORT_ZFree_stub
@@ -43,6 +44,7 @@
 #define NSS_SecureMemcmp NSS_SecureMemcmp_stub
 #define NSS_SecureMemcmpZero NSS_SecureMemcmpZero_stub
 #define NSS_SecureSelect NSS_SecureSelect_stub
+#define NSS_GetSystemFIPSEnabled NSS_GetSystemFIPSEnabled_stub
 
 #define PR_Assert PR_Assert_stub
 #define PR_Access PR_Access_stub

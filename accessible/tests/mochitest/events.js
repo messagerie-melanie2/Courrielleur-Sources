@@ -16,6 +16,8 @@ const EVENT_DOCUMENT_LOAD_COMPLETE =
 const EVENT_DOCUMENT_RELOAD = nsIAccessibleEvent.EVENT_DOCUMENT_RELOAD;
 const EVENT_DOCUMENT_LOAD_STOPPED =
   nsIAccessibleEvent.EVENT_DOCUMENT_LOAD_STOPPED;
+const EVENT_ERRORMESSAGE_CHANGED =
+  nsIAccessibleEvent.EVENT_ERRORMESSAGE_CHANGED;
 const EVENT_HIDE = nsIAccessibleEvent.EVENT_HIDE;
 const EVENT_FOCUS = nsIAccessibleEvent.EVENT_FOCUS;
 const EVENT_NAME_CHANGE = nsIAccessibleEvent.EVENT_NAME_CHANGE;
@@ -928,10 +930,7 @@ function eventQueue(aEventType) {
     return invoker.getID();
   };
 
-  this.setInvokerStatus = function eventQueue_setInvokerStatus(
-    aStatus,
-    aLogMsg
-  ) {
+  this.setInvokerStatus = function eventQueue_setInvokerStatus(aStatus) {
     this.mNextInvokerStatus = aStatus;
 
     // Uncomment it to debug invoker processing logic.
@@ -2348,7 +2347,7 @@ var gA11yEventApplicantsCount = 0;
 
 var gA11yEventObserver = {
   // eslint-disable-next-line complexity
-  observe: function observe(aSubject, aTopic, aData) {
+  observe: function observe(aSubject, aTopic) {
     if (aTopic != "accessible-event") {
       return;
     }

@@ -15,16 +15,13 @@
 #include "mozilla/Mutex.h"
 #include "mozilla/extensions/WebExtensionPolicy.h"
 
-namespace Json {
-class Value;
-}
-
 namespace mozilla {
+
+class JSONWriter;
 
 class ContentPrincipal final : public BasePrincipal {
  public:
   NS_IMETHOD QueryInterface(REFNSIID aIID, void** aInstancePtr) override;
-  uint32_t GetHashValue() override;
   NS_IMETHOD GetURI(nsIURI** aURI) override;
   NS_IMETHOD GetDomain(nsIURI** aDomain) override;
   NS_IMETHOD SetDomain(nsIURI* aDomain) override;
@@ -49,7 +46,8 @@ class ContentPrincipal final : public BasePrincipal {
 
   RefPtr<extensions::WebExtensionPolicyCore> AddonPolicyCore();
 
-  virtual nsresult PopulateJSONObject(Json::Value& aObject) override;
+  virtual nsresult WriteJSONInnerProperties(JSONWriter& aWriter) override;
+
   // Serializable keys are the valid enum fields the serialization supports
   enum SerializableKeys : uint8_t {
     eURI = 0,
@@ -57,10 +55,13 @@ class ContentPrincipal final : public BasePrincipal {
     eSuffix,
     eMax = eSuffix
   };
-  typedef mozilla::BasePrincipal::KeyValT<SerializableKeys> KeyVal;
 
-  static already_AddRefed<BasePrincipal> FromProperties(
-      nsTArray<ContentPrincipal::KeyVal>& aFields);
+  static constexpr char URIKey = '0';
+  static_assert(eURI == 0);
+  static constexpr char DomainKey = '1';
+  static_assert(eDomain == 1);
+  static constexpr char SuffixKey = '2';
+  static_assert(eSuffix == 2);
 
   class Deserializer : public BasePrincipal::Deserializer {
    public:
@@ -84,11 +85,7 @@ class ContentPrincipal final : public BasePrincipal {
 
 }  // namespace mozilla
 
-#define NS_PRINCIPAL_CID                             \
-  {                                                  \
-    0x653e0e4d, 0x3ee4, 0x45fa, {                    \
-      0xb2, 0x72, 0x97, 0xc2, 0x0b, 0xc0, 0x1e, 0xb8 \
-    }                                                \
-  }
+#define NS_PRINCIPAL_CID \
+  {0x653e0e4d, 0x3ee4, 0x45fa, {0xb2, 0x72, 0x97, 0xc2, 0x0b, 0xc0, 0x1e, 0xb8}}
 
 #endif  // mozilla_ContentPrincipal_h

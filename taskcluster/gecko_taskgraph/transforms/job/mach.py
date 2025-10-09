@@ -25,12 +25,12 @@ mach_schema = Schema(
         # if true, perform a checkout of a comm-central based branch inside the
         # gecko checkout
         Required("comm-checkout"): bool,
+        # Prefix ENV variables with a string
+        Optional("prefix-env"): {str: str},
         # Base work directory used to set up the task.
         Optional("workdir"): str,
-        # Context to substitute into the command using format string
-        # substitution (e.g {value}). This is useful if certain aspects of the
-        # command need to be generated in transforms.
-        Optional("command-context"): dict,
+        # Use the specified caches.
+        Optional("use-caches"): Any(bool, [str]),
     }
 )
 
@@ -54,8 +54,9 @@ def configure_mach(config, job, taskdesc):
     if python:
         del run["python-version"]
 
-        if worker["os"] == "macosx" and python == 3:
-            python = "/usr/local/bin/python3"
+        if taskdesc.get("use-python", "system") == "system":
+            if worker["os"] == "macosx" and python == 3:
+                python = "/usr/local/bin/python3"
 
         python = str(python)
         try:
@@ -65,6 +66,12 @@ def configure_mach(config, job, taskdesc):
             pass
 
         additional_prefix.append(python)
+
+    prefix_env = run.get("prefix-env")
+    if prefix_env:
+        del run["prefix-env"]
+        for name, prefix in prefix_env.items():
+            additional_prefix.append(f"{name}={prefix}${name}")
 
     command_prefix = " ".join(additional_prefix + ["./mach "])
 

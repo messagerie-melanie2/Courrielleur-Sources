@@ -109,7 +109,7 @@ dbtest_main()
 
     Echo "test opening the database readonly in an empty directory"
     mkdir $EMPTY_DIR
-    ${BINDIR}/tstclnt -h  ${HOST}  -d $EMPTY_DIR
+    ${BINDIR}/tstclnt -h ${HOST} -d $EMPTY_DIR
     ret=$?
     if [ $ret -ne 1 ]; then
       html_failed "Tstclnt succeded in an empty directory $ret"
@@ -366,7 +366,7 @@ dbtest_main()
       RARRAY=($dtime)
       TIMEARRAY=(${RARRAY[1]//./ })
       echo "${TIMEARRAY[0]} seconds"
-      test ${TIMEARRAY[0]} -lt 2
+      test ${TIMEARRAY[0]} -lt 5
       ret=$?
       html_msg ${ret} 0 "certutil dump keys with explicit default trust flags"
     fi

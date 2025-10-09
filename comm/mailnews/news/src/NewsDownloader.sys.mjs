@@ -2,54 +2,97 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+import { MailServices } from "resource:///modules/MailServices.sys.mjs";
+
+import { NntpUtils } from "resource:///modules/NntpUtils.sys.mjs";
+
+const lazy = {};
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () => new Localization(["messenger/news.ftl"])
 );
-var { NntpUtils } = ChromeUtils.import("resource:///modules/NntpUtils.jsm");
+ChromeUtils.defineLazyGetter(lazy, "messengerBundle", () =>
+  Services.strings.createBundle(
+    "chrome://messenger/locale/messenger.properties"
+  )
+);
 
 /**
- * Download articles in all subscribed newsgroups for offline use.
+ * Download articles in subscribed newsgroups for offline use.
  */
 export class NewsDownloader {
   _logger = NntpUtils.logger;
 
   /**
    * @param {nsIMsgWindow} msgWindow - The associated msg window.
-   * @param {nsIUrlListener} urlListener - Callback for the request.
+   * @param {nsIUrlListener} [urlListener=null] - Optional callback for the
+   *   request.
    */
   constructor(msgWindow, urlListener) {
     this._msgWindow = msgWindow;
     this._urlListener = urlListener;
-
-    this._bundle = Services.strings.createBundle(
-      "chrome://messenger/locale/news.properties"
-    );
   }
 
   /**
-   * Actually start the download process.
+   * Download matching articles in all newsgroups that are set for offline use.
    */
-  async start() {
+  async downloadAllOfflineNewsgroups() {
     this._logger.debug("Start downloading articles for offline use");
-    let servers = MailServices.accounts.allServers.filter(
+    const servers = MailServices.accounts.allServers.filter(
       x => x.type == "nntp"
     );
     // Download all servers concurrently.
     await Promise.all(
       servers.map(async server => {
-        let folders = server.rootFolder.descendants;
-        for (let folder of folders) {
+        const folders = server.rootFolder.descendants;
+        for (const folder of folders) {
           if (folder.flags & Ci.nsMsgFolderFlags.Offline) {
             // Download newsgroups set for offline use in a server one by one.
-            await this._downloadFolder(folder);
+            await this._downloadArticles(folder);
           }
         }
       })
     );
 
-    this._urlListener.OnStopRunningUrl(null, Cr.NS_OK);
+    this._urlListener?.OnStopRunningUrl(null, Cr.NS_OK);
 
     this._logger.debug("Finished downloading articles for offline use");
+    this._msgWindow.statusFeedback.showStatusString("");
+  }
+
+  /**
+   * Download all matching articles in a single newsgroup.
+   *
+   * @param {nsIMsgFolder} folder - The newsgroup folder.
+   */
+  async downloadFolder(folder) {
+    this._logger.debug(
+      "Start downloading articles for offline use in single folder."
+    );
+
+    await this._downloadArticles(folder);
+
+    this._logger.debug(
+      "Finished downloading articles for offline use in single folder."
+    );
+    this._msgWindow.statusFeedback.showStatusString("");
+  }
+
+  /**
+   * Download specific articles in a single newsgroup.
+   *
+   * @param {nsIMsgFolder} folder - The newsgroup folder.
+   * @param {nsMsgKey[]} keys - The keys of the messages to download.
+   */
+  async downloadMessages(folder, keys) {
+    this._logger.debug("Start downloading specific articles for offline use");
+
+    await this._downloadArticles(folder, keys);
+
+    this._logger.debug(
+      "Finished downloading specific articles for offline use"
+    );
     this._msgWindow.statusFeedback.showStatusString("");
   }
 
@@ -57,16 +100,28 @@ export class NewsDownloader {
    * Download articles in a newsgroup one by one.
    *
    * @param {nsIMsgFolder} folder - The newsgroup folder.
+   * @param {nsMsgKey[]} [keys=null] - If set, the keys of the messages to
+   *   download, otherwise all messages matching the download settings for
+   *   the folder are retrieved.
    */
-  async _downloadFolder(folder) {
+  async _downloadArticles(folder, keys = null) {
     this._logger.debug(`Start downloading ${folder.URI}`);
 
-    folder.QueryInterface(Ci.nsIMsgNewsFolder).saveArticleOffline = true;
-    let keysToDownload = await this._getKeysToDownload(folder);
+    keys ??= [...(await this._getKeysToDownload(folder))];
+    if (!keys.length) {
+      await this._updateStatus(folder, "no-articles-to-download", {
+        newsgroup: folder.prettyName,
+      });
+      return;
+    }
 
-    let i = 0;
-    let total = keysToDownload.size;
-    for (let key of keysToDownload) {
+    await this._updateStatus(folder, "downloading-articles-for-offline", {
+      count: keys.length,
+      newsgroup: folder.prettyName,
+    });
+
+    folder.QueryInterface(Ci.nsIMsgNewsFolder).saveArticleOffline = true;
+    for (const key of keys) {
       await new Promise(resolve => {
         MailServices.nntp.fetchMessage(folder, key, this._msgWindow, null, {
           OnStartRunningUrl() {},
@@ -75,32 +130,28 @@ export class NewsDownloader {
           },
         });
       });
-      this._msgWindow.statusFeedback.showStatusString(
-        this._bundle.formatStringFromName("downloadingArticlesForOffline", [
-          ++i,
-          total,
-          folder.prettyName,
-        ])
-      );
     }
-
     folder.saveArticleOffline = false;
+    folder.refreshSizeOnDisk();
+
+    this._logger.debug(`Finished downloading ${folder.URI}`);
   }
 
   /**
-   * Use a search session to find articles that match the download settings
-   * and we don't already have.
+   * Use a search session to find messages that match the download settings,
+   * excluding those already available offline or belonging to ignored
+   * (sub-)threads.
    *
    * @param {nsIMsgFolder} folder - The newsgroup folder.
    * @returns {Set<number>}
    */
   async _getKeysToDownload(folder) {
-    let searchSession = Cc[
+    const searchSession = Cc[
       "@mozilla.org/messenger/searchSession;1"
     ].createInstance(Ci.nsIMsgSearchSession);
-    let termValue = searchSession.createTerm().value;
+    const termValue = searchSession.createTerm().value;
 
-    let downloadSettings = folder.downloadSettings;
+    const downloadSettings = folder.downloadSettings;
     if (downloadSettings.downloadUnreadOnly) {
       termValue.attrib = Ci.nsMsgSearchAttrib.MsgStatus;
       termValue.status = Ci.nsMsgMessageFlags.Read;
@@ -133,17 +184,34 @@ export class NewsDownloader {
       null
     );
 
-    let keysToDownload = new Set();
+    if (folder.server.limitOfflineMessageSize && folder.server.maxMessageSize) {
+      termValue.attrib = Ci.nsMsgSearchAttrib.Size;
+      termValue.size = folder.server.maxMessageSize;
+      searchSession.addSearchTerm(
+        Ci.nsMsgSearchAttrib.Size,
+        Ci.nsMsgSearchOp.IsLessThan,
+        termValue,
+        true,
+        null
+      );
+    }
+
+    const keysToDownload = new Set();
+    const msgDatabase = folder.msgDatabase;
     await new Promise(resolve => {
       searchSession.registerListener(
         {
-          onSearchHit(hdr, folder) {
-            if (!(hdr.flags & Ci.nsMsgMessageFlags.Offline)) {
-              // Only need to download articles we don't already have.
-              keysToDownload.add(hdr.messageKey);
+          onSearchHit(hdr) {
+            if (
+              hdr.flags & Ci.nsMsgMessageFlags.Offline ||
+              hdr.isKilled ||
+              msgDatabase.isIgnored(hdr.messageKey)
+            ) {
+              return;
             }
+            keysToDownload.add(hdr.messageKey);
           },
-          onSearchDone: status => {
+          onSearchDone: () => {
             resolve();
           },
         },
@@ -154,5 +222,21 @@ export class NewsDownloader {
     });
 
     return keysToDownload;
+  }
+
+  /**
+   * Show a status message in the status bar.
+   *
+   * @param {nsIMsgFolder} folder - The newsgroup folder the message is about.
+   * @param {string} statusName - A string name in news.ftl.
+   * @param {object} params - Params to format the string.
+   */
+  async _updateStatus(folder, statusName, params) {
+    this._msgWindow?.statusFeedback?.showStatusString(
+      lazy.messengerBundle.formatStringFromName("statusMessage", [
+        folder.server.prettyName,
+        await lazy.l10n.formatValue(statusName, params),
+      ])
+    );
   }
 }

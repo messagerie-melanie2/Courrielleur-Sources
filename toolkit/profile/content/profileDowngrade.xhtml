@@ -3,8 +3,7 @@
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
-<?xml-stylesheet href="chrome://global/skin/global.css" type="text/css"?>
-<?xml-stylesheet href="chrome://mozapps/skin/profileDowngrade.css" type="text/css"?>
+<?csp default-src chrome:; style-src chrome: 'unsafe-inline'; ?>
 
 <!DOCTYPE window>
 
@@ -12,11 +11,15 @@
         xmlns:html="http://www.w3.org/1999/xhtml"
         prefwidth="min-width"
         data-l10n-id="profiledowngrade-window2"
-        data-l10n-attrs="title,style"
-        onload="init()">
+        data-l10n-attrs="title,style">
 <linkset>
+  <html:link rel="stylesheet" href="chrome://global/skin/global.css" />
+  <html:link
+    rel="stylesheet"
+    href="chrome://mozapps/skin/profileDowngrade.css"
+  />
+
   <html:link rel="localization" href="branding/brand.ftl"/>
-  <html:link rel="localization" href="toolkit/branding/accounts.ftl"/>
   <html:link rel="localization" href="toolkit/global/profileDowngrade.ftl"/>
 </linkset>
 <dialog buttons="accept,extra1" buttonpack="end"
@@ -29,10 +32,8 @@
   <hbox flex="1" align="start">
     <image id="info" role="presentation"/>
     <vbox flex="1">
-      <description data-l10n-id="profiledowngrade-nosync"></description>
-#ifdef MOZ_SERVICES_SYNC
-      <description data-l10n-id="profiledowngrade-sync"></description>
-#endif
+      <description id="nosync" data-l10n-id="profiledowngrade-nosync"></description>
+      <description id="sync" data-l10n-id="profiledowngrade-sync2"></description>
     </vbox>
   </hbox>
 

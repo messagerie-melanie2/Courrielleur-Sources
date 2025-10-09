@@ -102,7 +102,7 @@ static bool HasUserNamespaceSupport() {
       "/proc/self/ns/net",
       "/proc/self/ns/ipc",
   };
-  for (size_t i = 0; i < ArrayLength(paths); ++i) {
+  for (size_t i = 0; i < std::size(paths); ++i) {
     if (access(paths[i], F_OK) == -1) {
       MOZ_ASSERT(errno == ENOENT);
       return false;
@@ -134,13 +134,28 @@ static bool CanCreateUserNamespace() {
   // the new capabilities (in this case, cloning another namespace) to
   // detect AppArmor policies that allow CLONE_NEWUSER but don't allow
   // doing anything useful with it.
-  pid_t pid = syscall(__NR_clone, SIGCHLD | CLONE_NEWUSER | CLONE_NEWPID,
-                      nullptr, nullptr, nullptr, nullptr);
+  //
+  // Bug 1884347: There's a new AppArmor feature which can result in
+  // unsharing NEWUSER and NEWPID (or NEWNET etc.) in one syscall
+  // being allowed, but further use of capabilities will be blocked
+  // afterwards.  That may be a bug, but we need to handle it.
+  pid_t pid = syscall(__NR_clone, SIGCHLD | CLONE_NEWUSER, nullptr, nullptr,
+                      nullptr, nullptr);
   if (pid == 0) {
-    // In the child.  Do as little as possible.
-    _exit(0);
+    // The exact meaning of `unshare(CLONE_NEWPID)` is slightly
+    // counterintuitive but in this case it doesn't matter.  This just
+    // needs to be some operation that attempts to use capabilities,
+    // to check if it's blocked by an LSM.
+    int rv = unshare(CLONE_NEWPID);
+    if (rv < 0) {
+      SANDBOX_LOG_ERRNO("CanCreateUserNamespace() unshare(CLONE_NEWPID)");
+    }
+
+    // Exit with status 0 on success, 1 on failure.
+    _exit(rv == 0 ? 0 : 1);
   }
   if (pid == -1) {
+    SANDBOX_LOG_ERRNO("CanCreateUserNamespace() clone() failure");
     // Failure.
     MOZ_ASSERT(errno == EINVAL ||  // unsupported
                errno == EPERM ||   // root-only, or we're already chrooted
@@ -149,9 +164,21 @@ static bool CanCreateUserNamespace() {
     return false;
   }
   // Otherwise, in the parent and successful.
-  bool waitpid_ok = HANDLE_EINTR(waitpid(pid, nullptr, 0)) == pid;
+  int wstatus;
+  bool waitpid_ok = HANDLE_EINTR(waitpid(pid, &wstatus, 0)) == pid;
   MOZ_ASSERT(waitpid_ok);
   if (!waitpid_ok) {
+    SANDBOX_LOG_ERRNO("CanCreateUserNamespace() waitpid(%d) failure", pid);
+    return false;
+  }
+  // Check for failures reported by the child process.
+  if (!WIFEXITED(wstatus) || WEXITSTATUS(wstatus) != 0) {
+    if (!(WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 1)) {
+      SANDBOX_LOG(
+          "CanCreateUserNamespace() waitpid(%d) child process failure %08x",
+          pid, wstatus);
+    }
+    setenv(kCacheEnvName, "0", 1);
     return false;
   }
   setenv(kCacheEnvName, "1", 1);
@@ -159,7 +186,7 @@ static bool CanCreateUserNamespace() {
 }
 
 /* static */
-const SandboxInfo SandboxInfo::sSingleton = SandboxInfo();
+MOZ_RUNINIT const SandboxInfo SandboxInfo::sSingleton = SandboxInfo();
 
 SandboxInfo::SandboxInfo() {
   int flags = 0;
@@ -193,6 +220,9 @@ SandboxInfo::SandboxInfo() {
   }
   if (getenv("MOZ_SANDBOX_LOGGING")) {
     flags |= kVerbose;
+  }
+  if (getenv("MOZ_SANDBOX_LOGGING_FOR_TESTS")) {
+    flags |= kVerboseTests;
   }
 
   mFlags = static_cast<Flags>(flags);

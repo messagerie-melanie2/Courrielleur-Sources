@@ -5,12 +5,12 @@
 /* global cal, calendarNavigationBar, CalendarFilteredViewMixin, calFilterProperties, currentView,
      gCurrentMode, MozElements, MozXULElement, Services, toggleOrientation */
 
+/* eslint-enable valid-jsdoc */
+
 "use strict";
 
 // Wrap in a block to prevent leaking to window scope.
 {
-  const { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUtils.sys.mjs");
-
   /**
    * Calendar observer for calendar view elements. Used in CalendarBaseView class.
    *
@@ -36,7 +36,7 @@
       this.calView.flashAlarm(alarmItem, false);
     }
 
-    onNotification(item) {}
+    onNotification() {}
 
     onRemoveAlarmsByItem(item) {
       // Stop the flashing for the item.
@@ -53,7 +53,7 @@
       }
     }
 
-    onAlarmsLoaded(calendar) {}
+    onAlarmsLoaded() {}
 
     // End calIAlarmServiceObserver
   }
@@ -95,6 +95,7 @@
       }
       this.#isInitialized = true;
 
+      this.weekStartOffset = Services.prefs.getIntPref("calendar.week.start");
       this.calICalendarView = this.getCustomInterfaceCallback(Ci.calICalendarView);
 
       this.addEventListener("move", event => {
@@ -153,7 +154,7 @@
         }
       });
 
-      this.addEventListener("MozMagnifyGestureStart", event => {
+      this.addEventListener("MozMagnifyGestureStart", () => {
         this.mMagnifyAmount = 0;
       });
 
@@ -262,10 +263,13 @@
 
       this.setAttribute("type", this.type);
 
-      window.addEventListener("viewresize", event => {
+      window.addEventListener("viewresize", () => {
         if (gCurrentMode == "calendar" && this.isVisible()) {
           this.onResize();
         }
+      });
+      window.addEventListener("uifontsizechange", () => {
+        this.onFontSizeChange();
       });
 
       // Add a preference observer to monitor changes.
@@ -290,12 +294,20 @@
 
     /**
      * Handle resizing by adjusting the view to the new size.
-     *
-     * @param {calICalendarView} [calViewElem] - A calendar view element.
      */
     onResize() {
       // Child classes should provide the implementation.
       throw new Error(this.constructor.name + ".onResize not implemented");
+    }
+
+    /**
+     * Called when the font size of the UI changes. Triggers a resize if the
+     * view is active.
+     */
+    onFontSizeChange() {
+      if (gCurrentMode == "calendar" && this.isVisible()) {
+        this.onResize();
+      }
     }
 
     /**
@@ -483,13 +495,13 @@
     // are implemented in subclasses).
 
     addItems(items) {
-      for (let item of items) {
+      for (const item of items) {
         this.doAddItem(item);
       }
     }
 
     removeItems(items) {
-      for (let item of items) {
+      for (const item of items) {
         this.doRemoveItem(item);
       }
     }
@@ -527,6 +539,9 @@
         case "calendar.week.d6saturdaysoff":
           this.updateDaysOffPrefs();
           break;
+        case "calendar.week.start":
+          this.weekStartOffset = Services.prefs.getIntPref("calendar.week.start");
+          break;
         case "calendar.alarms.indicator.show":
         case "calendar.date.format":
         case "calendar.view.showLocation":
@@ -552,7 +567,7 @@
         [5, "d5fridaysoff", "false"],
         [6, "d6saturdaysoff", "true"],
       ];
-      const filterDaysOff = ([number, name, defaultValue]) =>
+      const filterDaysOff = ([, name, defaultValue]) =>
         Services.prefs.getBoolPref(prefix + name, defaultValue);
 
       this.daysOffArray = daysOffPrefs.filter(filterDaysOff).map(pref => pref[0]);
@@ -574,18 +589,18 @@
       this.goToDay(this.selectedDay);
     }
 
-    handlePreference(subject, topic, pref) {
+    handlePreference() {
       // Do nothing by default.
     }
 
-    flashAlarm(alarmItem, stop) {
+    flashAlarm() {
       // Do nothing by default.
     }
 
     // calICalendarView Methods
 
     /**
-     * @note This is overridden in each of the built-in calendar views.
+     * NOTE: This is overridden in each of the built-in calendar views.
      * It's only left here in case some extension is relying on it.
      */
     goToDay(date) {
@@ -625,21 +640,14 @@
       return dateList;
     }
 
-    zoomIn(level) {}
+    zoomIn() {}
 
-    zoomOut(level) {}
+    zoomOut() {}
 
     zoomReset() {}
 
     // End calICalendarView Methods
   }
-
-  XPCOMUtils.defineLazyPreferenceGetter(
-    CalendarBaseView.prototype,
-    "weekStartOffset",
-    "calendar.week.start",
-    0
-  );
 
   MozXULElement.implementCustomInterface(CalendarBaseView, [Ci.calICalendarView]);
 

@@ -10,14 +10,14 @@
 var { FileUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/FileUtils.sys.mjs"
 );
-var { MessageGenerator, SyntheticMessageSet } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { MessageGenerator, SyntheticMessageSet } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-var { MessageInjection } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageInjection.jsm"
+var { MessageInjection } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageInjection.sys.mjs"
 );
-var { MsgHdrToMimeMessage } = ChromeUtils.import(
-  "resource:///modules/gloda/MimeMessage.jsm"
+var { MsgHdrToMimeMessage } = ChromeUtils.importESModule(
+  "resource:///modules/gloda/MimeMessage.sys.mjs"
 );
 
 var msgGen;
@@ -25,11 +25,11 @@ var messageInjection;
 
 function initNSS() {
   // Copy the NSS database files over.
-  let profile = FileUtils.getDir("ProfD", []);
-  let files = ["cert9.db", "key4.db"];
-  let directory = do_get_file("../../../../data/db-tinderbox-invalid");
-  for (let f of files) {
-    let keydb = directory.clone();
+  const profile = FileUtils.getDir("ProfD", []);
+  const files = ["cert9.db", "key4.db"];
+  const directory = do_get_file("../../../../data/db-tinderbox-invalid");
+  for (const f of files) {
+    const keydb = directory.clone();
     keydb.append(f);
     keydb.copyTo(profile, f);
   }
@@ -45,19 +45,19 @@ add_setup(async function () {
 });
 
 add_task(async function test_smime_mimemsg() {
-  let msg = msgGen.makeEncryptedSMimeMessage({
+  const msg = msgGen.makeEncryptedSMimeMessage({
     from: ["Tinderbox", "tinderbox@foo.invalid"],
     to: [["Tinderbox", "tinderbox@foo.invalid"]],
     subject: "Albertine disparue (La Fugitive)",
     body: { body: encrypted_blurb },
   });
-  let synSet = new SyntheticMessageSet([msg]);
+  const synSet = new SyntheticMessageSet([msg]);
   await messageInjection.addSetsToFolders(
     [messageInjection.getInboxFolder()],
     [synSet]
   );
 
-  let msgHdr = synSet.getMsgHdr(0);
+  const msgHdr = synSet.getMsgHdr(0);
 
   let promiseResolve;
   let promise = new Promise(resolve => {

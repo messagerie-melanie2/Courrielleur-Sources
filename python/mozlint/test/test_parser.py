@@ -38,7 +38,7 @@ def test_parse_valid_linter(parse):
     assert "extensions" in lintobj
     assert "include" in lintobj
     assert lintobj["include"] == ["."]
-    assert set(lintobj["extensions"]) == set(["js", "jsm"])
+    assert set(lintobj["extensions"]) == set(["js"])
 
 
 def test_parser_valid_multiple(parse):
@@ -59,6 +59,7 @@ def test_parser_valid_multiple(parse):
         "invalid_include_with_glob.yml",
         "invalid_exclude.yml",
         "invalid_support_files.yml",
+        "invalid_ext_and_exclude_ext.yml",
         "missing_attrs.yml",
         "missing_definition.yml",
         "non_existing_include.yml",

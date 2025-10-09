@@ -2,19 +2,18 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { DNS } = ChromeUtils.import("resource:///modules/DNS.jsm");
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-import { l10nHelper } from "resource:///modules/imXPCOMUtils.sys.mjs";
+import { DNS } from "resource:///modules/DNS.sys.mjs";
 import { Socket } from "resource:///modules/socket.sys.mjs";
 import { Stanza, XMPPParser } from "resource:///modules/xmpp-xml.sys.mjs";
 import { XMPPAuthMechanisms } from "resource:///modules/xmpp-authmechs.sys.mjs";
 
 const lazy = {};
 
-XPCOMUtils.defineLazyGetter(lazy, "_", () =>
-  l10nHelper("chrome://chat/locale/xmpp.properties")
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () => new Localization(["chat/xmpp.ftl"], true)
 );
-
 export function XMPPSession(
   aHost,
   aPort,
@@ -36,7 +35,7 @@ export function XMPPSession(
   if (!aJID.node) {
     aAccount.reportDisconnecting(
       Ci.prplIAccount.ERROR_INVALID_USERNAME,
-      lazy._("connection.error.invalidUsername")
+      lazy.l10n.formatValueSync("connection-error-invalid-username")
     );
     aAccount.reportDisconnected();
     return;
@@ -63,7 +62,9 @@ export function XMPPSession(
   }
 
   // RFC 6120 (Section 3.2.1): SRV lookup.
-  this._account.reportConnecting(lazy._("connection.srvLookup"));
+  this._account.reportConnecting(
+    lazy.l10n.formatValueSync("connection-srv-lookup")
+  );
   DNS.srv("_xmpp-client._tcp." + this._host)
     .then(aResult => this._handleSrvQuery(aResult))
     .catch(aError => {
@@ -74,7 +75,7 @@ export function XMPPSession(
         // service is decidedly not available at this domain.
         this._account.reportDisconnecting(
           Ci.prplIAccount.ERROR_OTHER_ERROR,
-          lazy._("connection.error.XMPPNotSupported")
+          lazy.l10n.formatValueSync("connection-error-xmpp-not-supported")
         );
         this._account.reportDisconnected();
         return;
@@ -89,7 +90,7 @@ export function XMPPSession(
 }
 
 XMPPSession.prototype = {
-  /* for the socket.jsm helper */
+  /* for the socket.sys.mjs helper */
   __proto__: Socket,
   connectTimeout: 60,
   readWriteTimeout: 300,
@@ -111,7 +112,7 @@ XMPPSession.prototype = {
     if (this.onXmppStanza != this.stanzaListeners.accountListening) {
       return;
     }
-    let now = Date.now();
+    const now = Date.now();
     if (aJustSentSomething) {
       this._lastSendTime = now;
     } else {
@@ -180,7 +181,7 @@ XMPPSession.prototype = {
       return;
     }
 
-    let record = this._srvRecords.shift();
+    const record = this._srvRecords.shift();
 
     // RFC 3920 (Section 5.1): Certificates MUST be checked against the
     // hostname as provided by the initiating entity (e.g. user).
@@ -245,7 +246,7 @@ XMPPSession.prototype = {
 
   /* This method handles callbacks for specific ids. */
   execHandler(aId, aStanza) {
-    let handler = this._handlers.get(aId);
+    const handler = this._handlers.get(aId);
     if (!handler) {
       return false;
     }
@@ -284,13 +285,13 @@ XMPPSession.prototype = {
     if (!this._encrypted && this._connectionSecurity == "require_tls") {
       this.onError(
         Ci.prplIAccount.ERROR_ENCRYPTION_ERROR,
-        lazy._("connection.error.startTLSNotSupported")
+        lazy.l10n.formatValueSync("connection-error-start-tls-not-supported")
       );
       return;
     }
 
     this.onXmppStanza = this.stanzaListeners.legacyAuth;
-    let s = Stanza.iq(
+    const s = Stanza.iq(
       "get",
       null,
       this._domain,
@@ -307,7 +308,7 @@ XMPPSession.prototype = {
   // If aResource is null, it will request to bind a server-generated
   // resourcepart, otherwise request to bind a client-submitted resourcepart.
   _requestBind(aResource) {
-    let resourceNode = aResource
+    const resourceNode = aResource
       ? Stanza.node("resource", null, null, aResource)
       : null;
     this.sendStanza(
@@ -333,7 +334,9 @@ XMPPSession.prototype = {
     // Clear SRV results since we have connected.
     this._srvRecords = [];
 
-    this._account.reportConnecting(lazy._("connection.initializingStream"));
+    this._account.reportConnecting(
+      lazy.l10n.formatValueSync("connection-initializing-stream")
+    );
     this.startStream();
   },
 
@@ -352,17 +355,21 @@ XMPPSession.prototype = {
 
   /* The connection got disconnected without us closing it. */
   onConnectionClosed() {
-    this._networkError(lazy._("connection.error.serverClosedConnection"));
+    this._networkError(
+      lazy.l10n.formatValueSync("connection-error-server-closed-connection")
+    );
   },
   onConnectionSecurityError(aTLSError, aNSSErrorMessage) {
-    let error = this._account.handleConnectionSecurityError(this);
+    const error = this._account.handleConnectionSecurityError(this);
     this.onError(error, aNSSErrorMessage);
   },
   onConnectionReset() {
-    this._networkError(lazy._("connection.error.resetByPeer"));
+    this._networkError(
+      lazy.l10n.formatValueSync("connection-error-reset-by-peer")
+    );
   },
   onConnectionTimedOut() {
-    this._networkError(lazy._("connection.error.timedOut"));
+    this._networkError(lazy.l10n.formatValueSync("connection-error-timed-out"));
   },
   _networkError(aMessage) {
     this.onError(Ci.prplIAccount.ERROR_NETWORK_ERROR, aMessage);
@@ -376,7 +383,9 @@ XMPPSession.prototype = {
       this.ERROR(aError + ": " + aException + "\n" + this._lastReceivedData);
     }
     if (aError != "parse-warning" && aError != "parsing-characters") {
-      this._networkError(lazy._("connection.error.receivedUnexpectedData"));
+      this._networkError(
+        lazy.l10n.formatValueSync("connection-error-received-unexpected-data")
+      );
     }
   },
 
@@ -388,14 +397,16 @@ XMPPSession.prototype = {
         this.ERROR(
           "Unexpected stanza " + aStanza.localName + ", expected 'features'"
         );
-        this._networkError(lazy._("connection.error.incorrectResponse"));
+        this._networkError(
+          lazy.l10n.formatValueSync("connection-error-incorrect-response")
+        );
         return;
       }
 
-      let starttls = aStanza.getElement(["starttls"]);
+      const starttls = aStanza.getElement(["starttls"]);
       if (starttls && this._security.includes("starttls")) {
         this._account.reportConnecting(
-          lazy._("connection.initializingEncryption")
+          lazy.l10n.formatValueSync("connection-initializing-encryption")
         );
         this.sendStanza(Stanza.node("starttls", Stanza.NS.tls));
         this.onXmppStanza = this.stanzaListeners.startTLS;
@@ -404,14 +415,14 @@ XMPPSession.prototype = {
       if (starttls && starttls.children.some(c => c.localName == "required")) {
         this.onError(
           Ci.prplIAccount.ERROR_ENCRYPTION_ERROR,
-          lazy._("connection.error.startTLSRequired")
+          lazy.l10n.formatValueSync("connection-error-start-tls-required")
         );
         return;
       }
       if (!starttls && this._connectionSecurity == "require_tls") {
         this.onError(
           Ci.prplIAccount.ERROR_ENCRYPTION_ERROR,
-          lazy._("connection.error.startTLSNotSupported")
+          lazy.l10n.formatValueSync("connection-error-start-tls-not-supported")
         );
         return;
       }
@@ -420,13 +431,23 @@ XMPPSession.prototype = {
       this.onXmppStanza = this.stanzaListeners.startAuth;
       this.onXmppStanza(aStanza);
     },
-    startTLS(aStanza) {
+    async startTLS(aStanza) {
       if (aStanza.localName != "proceed") {
-        this._networkError(lazy._("connection.error.failedToStartTLS"));
+        this._networkError(
+          lazy.l10n.formatValueSync("connection-error-failed-to-start-tls")
+        );
         return;
       }
 
-      this.startTLS();
+      try {
+        await this.startTLS();
+      } catch (error) {
+        this.ERROR("Error starting TLS", error);
+        this._networkError(
+          lazy.l10n.formatValueSync("connection-error-failed-to-start-tls")
+        );
+        return;
+      }
       this._encrypted = true;
       this.startStream();
       this.onXmppStanza = this.stanzaListeners.startAuth;
@@ -436,17 +457,21 @@ XMPPSession.prototype = {
         this.ERROR(
           "Unexpected stanza " + aStanza.localName + ", expected 'features'"
         );
-        this._networkError(lazy._("connection.error.incorrectResponse"));
+        this._networkError(
+          lazy.l10n.formatValueSync("connection-error-incorrect-response")
+        );
         return;
       }
 
       let mechs = aStanza.getElement(["mechanisms"]);
       if (!mechs) {
-        let auth = aStanza.getElement(["auth"]);
+        const auth = aStanza.getElement(["auth"]);
         if (auth && auth.uri == Stanza.NS.auth_feature) {
           this.startLegacyAuth();
         } else {
-          this._networkError(lazy._("connection.error.noAuthMec"));
+          this._networkError(
+            lazy.l10n.formatValueSync("connection-error-no-auth-mec")
+          );
         }
         return;
       }
@@ -455,12 +480,12 @@ XMPPSession.prototype = {
       // a bit differently as we want to avoid it over an unencrypted
       // connection, except if the user has explicitly allowed that
       // behavior.
-      let authMechanisms = this._account.authMechanisms || XMPPAuthMechanisms;
+      const authMechanisms = this._account.authMechanisms || XMPPAuthMechanisms;
       let selectedMech = "";
       let canUsePlain = false;
       mechs = mechs.getChildren("mechanism");
-      for (let m of mechs) {
-        let mech = m.innerText;
+      for (const m of mechs) {
+        const mech = m.innerText;
         if (mech == "PLAIN" && !this._encrypted) {
           // If PLAIN is proposed over an unencrypted connection,
           // remember that it's a possibility but don't bother
@@ -478,7 +503,9 @@ XMPPSession.prototype = {
         } else {
           this.onError(
             Ci.prplIAccount.ERROR_AUTHENTICATION_IMPOSSIBLE,
-            lazy._("connection.error.notSendingPasswordInClear")
+            lazy.l10n.formatValueSync(
+              "connection-error-not-sending-password-in-clear"
+            )
           );
           return;
         }
@@ -486,33 +513,35 @@ XMPPSession.prototype = {
       if (!selectedMech) {
         this.onError(
           Ci.prplIAccount.ERROR_AUTHENTICATION_IMPOSSIBLE,
-          lazy._("connection.error.noCompatibleAuthMec")
+          lazy.l10n.formatValueSync("connection-error-no-compatible-auth-mec")
         );
         return;
       }
-      let authMec = authMechanisms[selectedMech](
+      const authMec = authMechanisms[selectedMech](
         this._jid.node,
         this._password,
         this._domain
       );
       this._password = null;
 
-      this._account.reportConnecting(lazy._("connection.authenticating"));
+      this._account.reportConnecting(
+        lazy.l10n.formatValueSync("connection-authenticating")
+      );
       this.onXmppStanza = this.stanzaListeners.authDialog.bind(this, authMec);
       this.onXmppStanza(null); // the first auth step doesn't read anything
     },
     authDialog(aAuthMec, aStanza) {
       if (aStanza && aStanza.localName == "failure") {
-        let errorMsg = "authenticationFailure";
+        let errorMsg = "authentication-failure";
         if (
           aStanza.getElement(["not-authorized"]) ||
           aStanza.getElement(["bad-auth"])
         ) {
-          errorMsg = "notAuthorized";
+          errorMsg = "not-authorized";
         }
         this.onError(
           Ci.prplIAccount.ERROR_AUTHENTICATION_FAILED,
-          lazy._("connection.error." + errorMsg)
+          lazy.l10n.formatValueSync(`connection-error-${errorMsg}`)
         );
         return;
       }
@@ -524,7 +553,7 @@ XMPPSession.prototype = {
         this.ERROR("Error in auth mechanism: " + e);
         this.onError(
           Ci.prplIAccount.ERROR_AUTHENTICATION_FAILED,
-          lazy._("connection.error.authenticationFailure")
+          lazy.l10n.formatValueSync("connection-error-authentication-failure")
         );
         return;
       }
@@ -543,7 +572,9 @@ XMPPSession.prototype = {
             this.ERROR("Error resolving auth mechanism result: " + e);
             this.onError(
               Ci.prplIAccount.ERROR_AUTHENTICATION_FAILED,
-              lazy._("connection.error.authenticationFailure")
+              lazy.l10n.formatValueSync(
+                "connection-error-authentication-failure"
+              )
             );
           }
         );
@@ -556,29 +587,33 @@ XMPPSession.prototype = {
     startBind(aStanza) {
       if (!aStanza.getElement(["bind"])) {
         this.ERROR("Unexpected lack of the bind feature");
-        this._networkError(lazy._("connection.error.incorrectResponse"));
+        this._networkError(
+          lazy.l10n.formatValueSync("connection-error-incorrect-response")
+        );
         return;
       }
 
-      this._account.reportConnecting(lazy._("connection.gettingResource"));
+      this._account.reportConnecting(
+        lazy.l10n.formatValueSync("connection-getting-resource")
+      );
       this._requestBind(this._resource);
       this.onXmppStanza = this.stanzaListeners.bindResult;
     },
     bindResult(aStanza) {
       if (aStanza.attributes.type == "error") {
-        let error = this._account.parseError(aStanza);
+        const error = this._account.parseError(aStanza);
         let message;
         switch (error.condition) {
           case "resource-constraint":
             // RFC 6120 (7.6.2.1): Resource Constraint.
             // The account has reached a limit on the number of simultaneous
             // connected resources allowed.
-            message = "connection.error.failedMaxResourceLimit";
+            message = "connection-error-failed-max-resource-limit";
             break;
           case "bad-request":
             // RFC 6120 (7.7.2.1): Bad Request.
             // The provided resourcepart cannot be processed by the server.
-            message = "connection.error.failedResourceNotValid";
+            message = "connection-error-failed-resource-not-valid";
             break;
           case "conflict":
             // RFC 6120 (7.7.2.2): Conflict.
@@ -588,15 +623,17 @@ XMPPSession.prototype = {
             return;
           default:
             this.WARN(`Unhandled bind result error ${error.condition}.`);
-            message = "connection.error.failedToGetAResource";
+            message = "connection-error-failed-to-get-a-resource";
         }
-        this._networkError(lazy._(message));
+        this._networkError(lazy.l10n.formatValueSync(message));
         return;
       }
 
       let jid = aStanza.getElement(["bind", "jid"]);
       if (!jid) {
-        this._networkError(lazy._("connection.error.failedToGetAResource"));
+        this._networkError(
+          lazy.l10n.formatValueSync("connection-error-failed-to-get-a-resource")
+        );
         return;
       }
       jid = jid.innerText;
@@ -607,25 +644,27 @@ XMPPSession.prototype = {
     },
     legacyAuth(aStanza) {
       if (aStanza.attributes.type == "error") {
-        let error = aStanza.getElement(["error"]);
+        const error = aStanza.getElement(["error"]);
         if (!error) {
-          this._networkError(lazy._("connection.error.incorrectResponse"));
+          this._networkError(
+            lazy.l10n.formatValueSync("connection-error-incorrect-response")
+          );
           return;
         }
 
-        let code = parseInt(error.attributes.code, 10);
+        const code = parseInt(error.attributes.code, 10);
         if (code == 401) {
           // Failed Authentication (Incorrect Credentials)
           this.onError(
             Ci.prplIAccount.ERROR_AUTHENTICATION_FAILED,
-            lazy._("connection.error.notAuthorized")
+            lazy.l10n.formatValueSync("connection-error-not-authorized")
           );
           return;
         } else if (code == 406) {
           // Failed Authentication (Required Information Not Provided)
           this.onError(
             Ci.prplIAccount.ERROR_AUTHENTICATION_FAILED,
-            lazy._("connection.error.authenticationFailure")
+            lazy.l10n.formatValueSync("connection-error-authentication-failure")
           );
           return;
         }
@@ -640,7 +679,9 @@ XMPPSession.prototype = {
       }
 
       if (aStanza.attributes.type != "result") {
-        this._networkError(lazy._("connection.error.incorrectResponse"));
+        this._networkError(
+          lazy.l10n.formatValueSync("connection-error-incorrect-response")
+        );
         return;
       }
 
@@ -651,14 +692,16 @@ XMPPSession.prototype = {
         return;
       }
 
-      let query = aStanza.getElement(["query"]);
-      let values = {};
-      for (let c of query.children) {
+      const query = aStanza.getElement(["query"]);
+      const values = {};
+      for (const c of query.children) {
         values[c.qName] = c.innerText;
       }
 
       if (!("username" in values) || !("resource" in values)) {
-        this._networkError(lazy._("connection.error.incorrectResponse"));
+        this._networkError(
+          lazy.l10n.formatValueSync("connection-error-incorrect-response")
+        );
         return;
       }
 
@@ -675,26 +718,26 @@ XMPPSession.prototype = {
         );
       }
 
-      let children = [
+      const children = [
         Stanza.node("username", null, null, this._jid.node),
         Stanza.node("resource", null, null, this._resource),
       ];
 
       let logString;
       if ("digest" in values && this._streamId) {
-        let hashBase = this._streamId + this._password;
+        const hashBase = this._streamId + this._password;
 
-        let ch = Cc["@mozilla.org/security/hash;1"].createInstance(
+        const ch = Cc["@mozilla.org/security/hash;1"].createInstance(
           Ci.nsICryptoHash
         );
         ch.init(ch.SHA1);
         // Non-US-ASCII characters MUST be encoded as UTF-8 since the
         // SHA-1 hashing algorithm operates on byte arrays.
-        let data = [...new TextEncoder().encode(hashBase)];
+        const data = [...new TextEncoder().encode(hashBase)];
         ch.update(data, data.length);
-        let hash = ch.finish(false);
-        let toHexString = charCode => ("0" + charCode.toString(16)).slice(-2);
-        let digest = Object.keys(hash)
+        const hash = ch.finish(false);
+        const toHexString = charCode => ("0" + charCode.toString(16)).slice(-2);
+        const digest = Object.keys(hash)
           .map(i => toHexString(hash.charCodeAt(i)))
           .join("");
 
@@ -708,7 +751,9 @@ XMPPSession.prototype = {
         ) {
           this.onError(
             Ci.prplIAccount.ERROR_AUTHENTICATION_IMPOSSIBLE,
-            lazy._("connection.error.notSendingPasswordInClear")
+            lazy.l10n.formatValueSync(
+              "connection-error-not-sending-password-in-clear"
+            )
           );
           return;
         }
@@ -717,12 +762,12 @@ XMPPSession.prototype = {
       } else {
         this.onError(
           Ci.prplIAccount.ERROR_AUTHENTICATION_IMPOSSIBLE,
-          lazy._("connection.error.noCompatibleAuthMec")
+          lazy.l10n.formatValueSync("connection-error-no-compatible-auth-mec")
         );
         return;
       }
 
-      let s = Stanza.iq(
+      const s = Stanza.iq(
         "set",
         null,
         this._domain,
@@ -735,20 +780,20 @@ XMPPSession.prototype = {
         `<iq type="set".../> (${logString})`
       );
     },
-    sessionStarted(aStanza) {
+    sessionStarted() {
       this.resetPingTimer();
       this._account.onConnection();
       this.LOG("Account successfully connected.");
       this.onXmppStanza = this.stanzaListeners.accountListening;
     },
     accountListening(aStanza) {
-      let id = aStanza.attributes.id;
+      const id = aStanza.attributes.id;
       if (id && this.execHandler(id, aStanza)) {
         return;
       }
 
       this._account.onXmppStanza(aStanza);
-      let name = aStanza.qName;
+      const name = aStanza.qName;
       if (name == "presence") {
         this._account.onPresenceStanza(aStanza);
       } else if (name == "message") {
@@ -758,7 +803,7 @@ XMPPSession.prototype = {
       }
     },
   },
-  onXmppStanza(aStanza) {
+  onXmppStanza() {
     this.ERROR("should not be reached\n");
   },
 };

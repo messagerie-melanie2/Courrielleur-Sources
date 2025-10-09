@@ -3,16 +3,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "msgCore.h"
 #include "nsImapHostSessionList.h"
 #include "nsImapNamespace.h"
 #include "nsIImapIncomingServer.h"
 #include "nsCOMPtr.h"
 #include "nsIMsgIncomingServer.h"
 #include "nsIObserverService.h"
-#include "nsServiceManagerUtils.h"
-#include "nsMsgUtils.h"
 #include "mozilla/Services.h"
+#include "nsString.h"
+#include "plstr.h"
 
 nsIMAPHostInfo::nsIMAPHostInfo(const char* serverKey,
                                nsIImapIncomingServer* server) {
@@ -22,13 +21,7 @@ nsIMAPHostInfo::nsIMAPHostInfo(const char* serverKey,
   fNextHost = NULL;
   fCapabilityFlags = kCapabilityUndefined;
   fHierarchyDelimiters = NULL;
-#ifdef DEBUG_bienvenu1
-  fHaveWeEverDiscoveredFolders =
-      true;  // try this, see what bad happens - we'll need to
-             // figure out a way to make new accounts have it be false
-#else
-  fHaveWeEverDiscoveredFolders = false;  // try this, see what bad happens
-#endif
+  fHaveWeEverDiscoveredFolders = false;
   fDiscoveryForHostInProgress = false;
   fCanonicalOnlineSubDir = NULL;
   fNamespaceList = nsImapNamespaceList::CreatensImapNamespaceList();

@@ -4,6 +4,10 @@
 
 @import url("chrome://messenger/skin/messenger.css");
 
+.inline-notification-wrapper {
+  max-width: 95vw;
+}
+
 description {
   padding-inline: 2px;
 }
@@ -23,16 +27,16 @@ description {
 
 .wizard-section {
   transition: transform 230ms ease, opacity 230ms ease;
-}
 
-.wizard-section.hide {
-  transform: translateY(-100%);
-  opacity: 0;
-}
+  &.hide {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
 
-.wizard-section.hide-reverse {
-  transform: translateY(100%);
-  opacity: 0;
+  &.hide-reverse {
+    transform: translateY(100%);
+    opacity: 0;
+  }
 }
 
 .grid-size {
@@ -69,6 +73,16 @@ description {
 .loading-status {
   width: 16px;
   height: 16px;
+  -moz-context-properties: fill;
+  fill: var(--selected-item-color);
+}
+
+#wizardCreateKey.in-subdialog {
+  /*
+   * Prevent the subdialog from growing too tall if the section doesn't have
+   * an initial height.
+   */
+  height: 1px;
 }
 
 /* Import key list */
@@ -92,12 +106,12 @@ description {
   border: 1px solid var(--in-content-border-color);
   background-color: rgba(215, 215, 219, 0.2);
   margin-bottom: 6px;
-}
 
-.key-import-row.selected {
-  border: 1px solid #45A1FF;
-  background-color: rgba(69, 161, 255, 0.2);
-  margin-bottom: 0;
+  &.selected {
+    border: 1px solid #45a1ff;
+    background-color: rgba(69, 161, 255, 0.2);
+    margin-bottom: 0;
+  }
 }
 
 .openpgp-key-id {
@@ -106,6 +120,8 @@ description {
 
 .openpgp-key-name {
   font-size: 0.9em;
+  text-wrap: auto;
+  padding-inline-end: 6px;
 }
 
 .openpgp-image-btn .button-icon {
@@ -120,10 +136,14 @@ description {
 
 .extra-information-label {
   display: grid;
-  grid-template-columns: auto max-content;
+  grid-template-columns: auto minmax(360px, max-content);
   row-gap: 5px;
-  align-items: center;
+  align-items: baseline;
   margin-inline-end: 10px;
+
+  & > label:not(.extra-information-label-type) {
+    text-wrap: wrap;
+  }
 }
 
 .extra-information-label-type {
@@ -145,8 +165,12 @@ description {
   display: flex;
   align-items: center;
   flex-wrap: nowrap;
+
+  & input:not([type="number"],[type="color"]) {
+    flex: 1;
+  }
 }
 
-.input-container input:not([type="number"],[type="color"]) {
-  flex: 1;
+menupopup[needsgutter] > :is(menu, menuitem)::before {
+  display: none;
 }

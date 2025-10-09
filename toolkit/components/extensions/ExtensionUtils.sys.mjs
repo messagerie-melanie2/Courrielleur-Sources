@@ -3,19 +3,15 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* eslint-disable mozilla/valid-lazy */
 
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
-const lazy = {};
-
-ChromeUtils.defineESModuleGetters(lazy, {
+const lazy = XPCOMUtils.declareLazy({
   setTimeout: "resource://gre/modules/Timer.sys.mjs",
+  // xpcshell doesn't handle idle callbacks well.
+  idleTimeout: () => (Services.appinfo.name === "XPCShell" ? 500 : undefined),
 });
-
-// xpcshell doesn't handle idle callbacks well.
-XPCOMUtils.defineLazyGetter(lazy, "idleTimeout", () =>
-  Services.appinfo.name === "XPCShell" ? 500 : undefined
-);
 
 // It would be nicer to go through `Services.appinfo`, but some tests need to be
 // able to replace that field with a custom implementation before it is first
@@ -45,7 +41,7 @@ function promiseTimeout(delay) {
  * An Error subclass for which complete error messages are always passed
  * to extensions, rather than being interpreted as an unknown error.
  */
-class ExtensionError extends DOMException {
+export class ExtensionError extends DOMException {
   constructor(message) {
     super(message, "ExtensionError");
   }
@@ -69,7 +65,7 @@ function filterStack(error) {
  * only logged internally and raised to the worker script as
  * the generic unexpected error).
  */
-class WorkerExtensionError extends DOMException {
+export class WorkerExtensionError extends DOMException {
   constructor(message) {
     super(message, "Error");
   }
@@ -79,6 +75,7 @@ class WorkerExtensionError extends DOMException {
  * Similar to a WeakMap, but creates a new key with the given
  * constructor if one is not present.
  */
+// @ts-ignore (https://github.com/microsoft/TypeScript/issues/56664)
 class DefaultWeakMap extends WeakMap {
   constructor(defaultConstructor = undefined, init = undefined) {
     super(init);
@@ -123,12 +120,12 @@ function getInnerWindowID(window) {
  * A set with a limited number of slots, which flushes older entries as
  * newer ones are added.
  *
- * @param {integer} limit
+ * @param {number} limit
  *        The maximum size to trim the set to after it grows too large.
- * @param {integer} [slop = limit * .25]
+ * @param {number} [slop = limit * .25]
  *        The number of extra entries to allow in the set after it
  *        reaches the size limit, before it is truncated to the limit.
- * @param {iterable} [iterable]
+ * @param {Iterable} [iterable]
  *        An iterable of initial entries to add to the set.
  */
 class LimitedSet extends Set {
@@ -155,7 +152,7 @@ class LimitedSet extends Set {
     if (this.size >= this.limit + this.slop && !this.has(item)) {
       this.truncate(this.limit - 1);
     }
-    super.add(item);
+    return super.add(item);
   }
 }
 
@@ -232,7 +229,7 @@ function promiseDocumentLoaded(doc) {
  * @param {boolean} [useCapture = true]
  *        If true, listen for the even in the capturing rather than
  *        bubbling phase.
- * @param {Event} [test]
+ * @param {function(Event): boolean} [test]
  *        An optional test function which, when called with the
  *        observer's subject and data, should return true if this is the
  *        expected event, false otherwise.
@@ -242,7 +239,7 @@ function promiseEvent(
   element,
   eventName,
   useCapture = true,
-  test = event => true
+  test = () => true
 ) {
   return new Promise(resolve => {
     function listener(event) {
@@ -261,7 +258,7 @@ function promiseEvent(
  *
  * @param {string} topic
  *        The topic to observe.
- * @param {function(nsISupports, string)} [test]
+ * @param {function(any, string): boolean} [test]
  *        An optional test function which, when called with the
  *        observer's subject and data, should return true if this is the
  *        expected notification, false otherwise.
@@ -346,5 +343,4 @@ export var ExtensionUtils = {
   DefaultWeakMap,
   ExtensionError,
   LimitedSet,
-  WorkerExtensionError,
 };

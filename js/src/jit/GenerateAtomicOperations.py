@@ -9,7 +9,7 @@
 import buildconfig
 
 is_64bit = "JS_64BIT" in buildconfig.defines
-cpu_arch = buildconfig.substs["CPU_ARCH"]
+cpu_arch = buildconfig.substs["TARGET_CPU"]
 is_gcc = buildconfig.substs["CC_TYPE"] == "gcc"
 
 
@@ -50,8 +50,6 @@ def gen_load(fun_name, cpp_type, size, barrier):
     # - MacroAssembler::wasmLoad
     if cpu_arch in ("x86", "x86_64"):
         insns = ""
-        if barrier:
-            insns += fmt_insn("mfence")
         if size == 8:
             insns += fmt_insn("movb (%[arg]), %[res]")
         elif size == 16:
@@ -61,8 +59,6 @@ def gen_load(fun_name, cpp_type, size, barrier):
         else:
             assert size == 64
             insns += fmt_insn("movq (%[arg]), %[res]")
-        if barrier:
-            insns += fmt_insn("mfence")
         return """
             INLINE_ATTR %(cpp_type)s %(fun_name)s(const %(cpp_type)s* arg) {
                 %(cpp_type)s res;
@@ -78,8 +74,6 @@ def gen_load(fun_name, cpp_type, size, barrier):
         }
     if cpu_arch == "aarch64":
         insns = ""
-        if barrier:
-            insns += fmt_insn("dmb ish")
         if size == 8:
             insns += fmt_insn("ldrb %w[res], [%x[arg]]")
         elif size == 16:
@@ -106,8 +100,6 @@ def gen_load(fun_name, cpp_type, size, barrier):
         }
     if cpu_arch == "arm":
         insns = ""
-        if barrier:
-            insns += fmt_insn("dmb sy")
         if size == 8:
             insns += fmt_insn("ldrb %[res], [%[arg]]")
         elif size == 16:
@@ -141,8 +133,6 @@ def gen_store(fun_name, cpp_type, size, barrier):
     # - MacroAssembler::wasmStore
     if cpu_arch in ("x86", "x86_64"):
         insns = ""
-        if barrier:
-            insns += fmt_insn("mfence")
         if size == 8:
             insns += fmt_insn("movb %[val], (%[addr])")
         elif size == 16:
@@ -638,6 +628,31 @@ def gen_fetchop(fun_name, cpp_type, size, op):
     raise Exception("Unexpected arch")
 
 
+def gen_pause(fun_name):
+    if cpu_arch in ("x86", "x86_64"):
+        return r"""
+            INLINE_ATTR void %(fun_name)s() {
+                asm volatile ("pause" :::);
+            }""" % {
+            "fun_name": fun_name,
+        }
+    if cpu_arch == "aarch64":
+        return r"""
+            INLINE_ATTR void %(fun_name)s() {
+                asm volatile ("isb" ::: "memory");
+            }""" % {
+            "fun_name": fun_name,
+        }
+    if cpu_arch == "arm":
+        return r"""
+            INLINE_ATTR void %(fun_name)s() {
+                asm volatile ("yield" :::);
+            }""" % {
+            "fun_name": fun_name,
+        }
+    raise Exception("Unexpected arch")
+
+
 def gen_copy(fun_name, cpp_type, size, unroll, direction):
     assert direction in ("down", "up")
     offset = 0
@@ -649,6 +664,9 @@ def gen_copy(fun_name, cpp_type, size, unroll, direction):
             if size == 1:
                 insns += fmt_insn("movb OFFSET(%[src]), %[scratch]")
                 insns += fmt_insn("movb %[scratch], OFFSET(%[dst])")
+            elif size == 2:
+                insns += fmt_insn("movw OFFSET(%[src]), %[scratch]")
+                insns += fmt_insn("movw %[scratch], OFFSET(%[dst])")
             elif size == 4:
                 insns += fmt_insn("movl OFFSET(%[src]), %[scratch]")
                 insns += fmt_insn("movl %[scratch], OFFSET(%[dst])")
@@ -660,6 +678,12 @@ def gen_copy(fun_name, cpp_type, size, unroll, direction):
             if size == 1:
                 insns += fmt_insn("ldrb %w[scratch], [%x[src], OFFSET]")
                 insns += fmt_insn("strb %w[scratch], [%x[dst], OFFSET]")
+            elif size == 2:
+                insns += fmt_insn("ldrh %w[scratch], [%x[src], OFFSET]")
+                insns += fmt_insn("strh %w[scratch], [%x[dst], OFFSET]")
+            elif size == 4:
+                insns += fmt_insn("ldr %w[scratch], [%x[src], OFFSET]")
+                insns += fmt_insn("str %w[scratch], [%x[dst], OFFSET]")
             else:
                 assert size == 8
                 insns += fmt_insn("ldr %x[scratch], [%x[src], OFFSET]")
@@ -668,6 +692,9 @@ def gen_copy(fun_name, cpp_type, size, unroll, direction):
             if size == 1:
                 insns += fmt_insn("ldrb %[scratch], [%[src], #OFFSET]")
                 insns += fmt_insn("strb %[scratch], [%[dst], #OFFSET]")
+            elif size == 2:
+                insns += fmt_insn("ldrh %[scratch], [%[src], #OFFSET]")
+                insns += fmt_insn("strh %[scratch], [%[dst], #OFFSET]")
             else:
                 assert size == 4
                 insns += fmt_insn("ldr %[scratch], [%[src], #OFFSET]")
@@ -805,6 +832,9 @@ def generate_atomics_header(c_out):
         if is_64bit:
             contents += gen_fetchop("AtomicXor64SeqCst", "uint64_t", 64, "xor")
 
+        # Pause or yield instruction.
+        contents += gen_pause("AtomicPause")
+
         # See comment in jit/AtomicOperations-shared-jit.cpp for an explanation.
         wordsize = 8 if is_64bit else 4
         words_in_block = 8
@@ -846,7 +876,9 @@ def generate_atomics_header(c_out):
         contents += gen_copy(
             "AtomicCopyWordUnsynchronized", "uintptr_t", wordsize, 1, "down"
         )
-        contents += gen_copy("AtomicCopyByteUnsynchronized", "uint8_t", 1, 1, "down")
+        contents += gen_copy("AtomicCopy32Unsynchronized", "uint32_t", 4, 1, "down")
+        contents += gen_copy("AtomicCopy16Unsynchronized", "uint16_t", 2, 1, "down")
+        contents += gen_copy("AtomicCopy8Unsynchronized", "uint8_t", 1, 1, "down")
 
         contents += "\n"
         contents += (

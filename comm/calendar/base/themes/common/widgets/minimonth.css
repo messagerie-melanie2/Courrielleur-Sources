@@ -3,37 +3,37 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 calendar-minimonth {
-  --mmMainColor: -moz-DialogText;
-  --mmMainBackground: var(--color-gray-05);
-  --mmMainBorderColor: var(--color-gray-20);
+  --mmMainColor: var(--sidebar-text-color, FieldText);
+  --mmMainBackground: light-dark(var(--color-gray-05), var(--color-gray-70));
+  --mmMainBorderColor: light-dark(var(--color-gray-20), var(--color-gray-50));
   --mmMainBorderRadius: 6px;
-  --mmHighlightColor: var(--selected-item-text-color);
-  --mmHighlightBackground: var(--selected-item-color);
-  --mmHighlightBorderColor: var(--selected-item-color);
-  --mmBoxBackground: var(--color-gray-20);
-  --mmBoxBorderColor: var(--color-gray-20);
+    --mmHighlightColor: var(--sidebar-highlight-text-color, var(--selected-item-text-color));
+    --mmHighlightBackground: var(--sidebar-highlight-background-color, var(--selected-item-color));
+    --mmHighlightBorderColor: var(--sidebar-highlight-background-color, var(--selected-item-color));
+  --mmBoxBackground: light-dark(var(--color-gray-20), var(--color-gray-50));
+  --mmBoxBorderColor: light-dark(var(--color-gray-20), var(--color-gray-40));
   --mmBoxPadding: 0;
-  --mmBoxItemColor: var(--color-gray-30);
+  --mmBoxItemColor: light-dark(var(--color-gray-30), var(--color-gray-40));
   --mmBoxItemBorderColor: transparent;
   --mmBoxItemPadding: 2px;
-  --mmDayColor: var(--color-gray-70);
+  --mmDayColor: light-dark(var(--color-gray-70), var(--color-gray-10));
   --mmDayBackground: transparent;
   --mmDayBorderColor: transparent;
-  --mmDayOtherColor: var(--color-gray-40);
-  --mmDayWeekColor: var(--color-ink-40);
+  --mmDayOtherColor: light-dark(var(--color-gray-40), var(--color-gray-50));
+  --mmDayWeekColor: light-dark(var(--color-ink-40), var(--color-ink-40));
   --mmDayOtherBackground: transparent;
   --mmDayOtherBorderColor: transparent;
-  --mmDayTodayColor: var(--color-gray-90);
+  --mmDayTodayColor: light-dark(var(--color-gray-90), var(--color-ink-10));
   --mmDayTodayBackground: color-mix(in srgb, var(--color-ink-40) 20%, transparent);
   --mmDayTodayBorderColor: transparent;
-  --mmDaySelectedColor: var(--color-blue-60);
-  --mmDaySelectedBackground: var(--color-blue-10);
-  --mmDaySelectedBorderColor: var(--color-blue-50);
-  --mmDaySelectedTodayBackground: var(--color-blue-10);
-  --mmDaySelectedTodayBorderColor: var(--color-blue-50);
+  --mmDaySelectedColor: var(--selected-item-color);
+  --mmDaySelectedBackground: color-mix(in srgb, var(--selected-item-color) 40%, transparent);
+  --mmDaySelectedBorderColor: color-mix(in srgb, var(--selected-item-color) 70%, transparent);
+  --mmDaySelectedTodayBackground: color-mix(in srgb, var(--selected-item-color) 20%, transparent);
+  --mmDaySelectedTodayBorderColor: color-mix(in srgb, var(--selected-item-color) 70%, transparent);
   --mmDayBorderRadius: 3px;
   --mmDayPadding: 4px;
-  --mmDayBusyColor: var(--color-blue-50);
+  --mmDayBusyColor: var(--selected-item-color);
   --mmDayBusyIndicatorSize: 4px;
 }
 
@@ -57,37 +57,8 @@ calendar-minimonth {
   --mmDayOtherBorderColor: transparent;
 }
 
-@media (prefers-color-scheme: dark) {
-  calendar-minimonth {
-    --mmMainColor: var(--sidebar-text-color, FieldText);
-    --mmMainBackground: var(--color-gray-70);
-    --mmMainBorderColor: var(--color-gray-50);
-    --mmHighlightColor: var(--sidebar-highlight-text-color, var(--selected-item-text-color));
-    --mmHighlightBackground: var(--sidebar-highlight-background-color, var(--selected-item-color));
-    --mmHighlightBorderColor: var(--sidebar-highlight-background-color, var(--selected-item-color));
-    --mmBoxBackground: var(--color-gray-50);
-    --mmBoxBorderColor: var(--color-gray-40);
-    --mmBoxItemColor: var(--color-gray-40);
-    --mmBoxItemBorderColor:  transparent;
-    --mmDayTodayColor: var(--color-ink-10);
-    --mmDayTodayBorderColor: transparent;
-    --mmDayColor: var(--color-gray-10);
-    --mmDayBackground: transparent;
-    --mmDayBorderColor: transparent;
-    --mmDayOtherColor: var(--color-gray-50);
-    --mmDayOtherBackground: transparent;
-    --mmDayOtherBorderColor: transparent;
-    --mmDaySelectedColor: var(--color-ink-10);
-    --mmDaySelectedBackground: color-mix(in srgb, var(--color-blue-40) 20%, transparent);
-    --mmDaySelectedBorderColor: var(--color-blue-50);
-    --mmDaySelectedTodayBackground: color-mix(in srgb, var(--color-blue-40) 30%, transparent);
-    --mmDaySelectedTodayBorderColor: var(--color-blue-50);
-    --mmDayWeekColor: var(--color-ink-40);
-  }
-}
-
 @media (prefers-contrast) {
-  calendar-minimonth:not(:-moz-lwtheme) {
+  :root:not([lwtheme]) calendar-minimonth {
     --mmMainBackground: transparent;
     --mmBoxBackground: ButtonFace;
     --mmBoxBorderColor: var(--color-gray-30);
@@ -212,19 +183,15 @@ calendar-minimonth[readonly="true"] .minimonth-readonly-header {
 }
 
 @media (prefers-color-scheme: dark) {
-  .button.minimonth-nav-btn:active,
-  .button.minimonth-nav-btn:hover,
-  .button.minimonth-nav-btn:focus,
-  .button.minimonth-nav-btn:enabled:is(:hover, :focus-visible, :active) {
+  .button.minimonth-nav-btn:is(:hover, :active),
+  .button.minimonth-nav-btn:enabled:is(:hover, :active) {
     background-color: var(--color-gray-60);
   }
 }
 
 @media (prefers-contrast) {
-  .button.minimonth-nav-btn:not(:-moz-lwtheme):active,
-  .button.minimonth-nav-btn:not(:-moz-lwtheme):hover,
-  .button.minimonth-nav-btn:not(:-moz-lwtheme):focus,
-  .button.minimonth-nav-btn:not(:-moz-lwtheme):enabled:is(:hover, :focus-visible, :active) {
+  :root:not([lwtheme]) .button.minimonth-nav-btn:is(:hover, :active),
+  :root:not([lwtheme]) .button.minimonth-nav-btn:enabled:is(:hover, :active) {
     background-color: var(--mmDaySelectedBackground);
     color: var(--mmDaySelectedColor);
     stroke: var(--mmDaySelectedColor);
@@ -255,7 +222,8 @@ calendar-minimonth[readonly="true"] .minimonth-readonly-header {
   padding: 4px;
 }
 
-.minimonth-cal-box th, .minimonth-cal-box td {
+.minimonth-cal-box th,
+.minimonth-cal-box td {
   width: 12.5%; /* 100% / 8 columns */
 }
 

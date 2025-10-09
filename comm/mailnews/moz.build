@@ -3,6 +3,9 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+with Files("**"):
+    BUG_COMPONENT = ("Mailnews Core", "General")
+
 DIRS += [
     "addrbook",
     "base",
@@ -23,9 +26,13 @@ DIRS += [
     "local/src",
     "mime",
     "news",
+    "protocols",
     "search/public",
     "search/src",
 ]
+
+if CONFIG["MOZ_PANORAMA"]:
+    DIRS += ["db/panorama"]
 
 TEST_DIRS += [
     "imap/test",
@@ -51,22 +58,40 @@ DEFINES["MOZ_WIDGET_TOOLKIT"] = CONFIG["MOZ_WIDGET_TOOLKIT"]
 JAR_MANIFESTS += ["jar.mn"]
 
 TESTING_JS_MODULES.mailnews += [
-    "test/fakeserver/Auth.jsm",
-    "test/fakeserver/Binaryd.jsm",
-    "test/fakeserver/Imapd.jsm",
-    "test/fakeserver/Ldapd.jsm",
-    "test/fakeserver/Maild.jsm",
-    "test/fakeserver/Nntpd.jsm",
-    "test/fakeserver/Pop3d.jsm",
-    "test/fakeserver/Smtpd.jsm",
-    "test/resources/IMAPpump.jsm",
-    "test/resources/LocalAccountUtils.jsm",
-    "test/resources/MailTestUtils.jsm",
-    "test/resources/MessageGenerator.jsm",
-    "test/resources/MessageInjection.jsm",
-    "test/resources/NetworkTestUtils.jsm",
-    "test/resources/PromiseTestUtils.jsm",
-    "test/resources/smimeUtils.jsm",
+    "test/fakeserver/Auth.sys.mjs",
+    "test/fakeserver/Binaryd.sys.mjs",
+    "test/fakeserver/EwsServer.sys.mjs",
+    "test/fakeserver/Imapd.sys.mjs",
+    "test/fakeserver/Ldapd.sys.mjs",
+    "test/fakeserver/Maild.sys.mjs",
+    "test/fakeserver/Nntpd.sys.mjs",
+    "test/fakeserver/Pop3d.sys.mjs",
+    "test/fakeserver/Smtpd.sys.mjs",
+    "test/resources/HttpsProxy.sys.mjs",
+    "test/resources/IMAPpump.sys.mjs",
+    "test/resources/LocalAccountUtils.sys.mjs",
+    "test/resources/MailTestUtils.sys.mjs",
+    "test/resources/MessageGenerator.sys.mjs",
+    "test/resources/MessageInjection.sys.mjs",
+    "test/resources/NetworkTestUtils.sys.mjs",
+    "test/resources/OAuth2TestUtils.sys.mjs",
+    "test/resources/ProfileCreator.sys.mjs",
+    "test/resources/PromiseTestUtils.sys.mjs",
+    "test/resources/ServerTestUtils.sys.mjs",
+    "test/resources/SmimeUtils.sys.mjs",
+]
+TESTING_JS_MODULES.mailnews.certs += [
+    "test/certs/dav.cert",
+    "test/certs/dav.key",
+    "test/certs/expired.cert",
+    "test/certs/expired.key",
+    "test/certs/notyetvalid.cert",
+    "test/certs/notyetvalid.key",
+    "test/certs/oauth.cert",
+    "test/certs/oauth.key",
+    "test/certs/selfsigned.cert",
+    "test/certs/valid.cert",
+    "test/certs/valid.key",
 ]
 
 if "comm" in CONFIG["MOZ_BUILD_APP"]:

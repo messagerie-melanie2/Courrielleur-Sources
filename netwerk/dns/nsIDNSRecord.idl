@@ -8,6 +8,7 @@
 
 %{ C++
 namespace mozilla {
+class TimeStamp;
 namespace net {
 union NetAddr;
 }
@@ -16,6 +17,7 @@ union NetAddr;
 %}
 native NetAddr(mozilla::net::NetAddr);
 [ref] native nsNetAddrTArrayRef(nsTArray<mozilla::net::NetAddr>);
+native TimeStamp(mozilla::TimeStamp);
 interface nsINetAddr;
 
 /**
@@ -26,12 +28,12 @@ interface nsINetAddr;
  * like an enumerator, allowing the caller to easily step through the
  * list of IP addresses.
  */
-[scriptable, uuid(f92228ae-c417-4188-a604-0830a95e7eb9)]
+[scriptable, builtinclass, uuid(f92228ae-c417-4188-a604-0830a95e7eb9)]
 interface nsIDNSRecord : nsISupports
 {
 };
 
-[scriptable, uuid(cb260e20-943f-4309-953b-78c90d3a7638)]
+[scriptable, builtinclass, uuid(cb260e20-943f-4309-953b-78c90d3a7638)]
 interface nsIDNSAddrRecord : nsIDNSRecord
 {
     /**
@@ -111,12 +113,12 @@ interface nsIDNSAddrRecord : nsIDNSRecord
     /**
      * Record retreived with TRR.
      */
-    bool IsTRR();
+    boolean IsTRR();
 
     /**
      * Record is resolved in socket process.
      */
-    bool resolvedInSocketProcess();
+    boolean resolvedInSocketProcess();
 
     /**
      * This attribute is only set if TRR is used and it measures time between
@@ -151,4 +153,9 @@ interface nsIDNSAddrRecord : nsIDNSRecord
      * Returns the ttl of this record.
      */
     readonly attribute uint32_t ttl;
+
+     /**
+     * Returns the timestamp when this record is updated.
+     */
+    [noscript] readonly attribute TimeStamp lastUpdate;
 };

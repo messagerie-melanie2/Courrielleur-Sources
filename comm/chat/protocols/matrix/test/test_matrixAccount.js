@@ -83,7 +83,7 @@ add_task(async function test_getGroupConversation() {
     }
   });
 
-  let allowedGetRoomIds = new Set(["baz"]);
+  const allowedGetRoomIds = new Set(["baz"]);
   const mockAccount = getAccount({
     getRoom(roomId) {
       if (this._rooms.has(roomId)) {
@@ -198,7 +198,7 @@ add_task(async function test_joinChat() {
       if (key === "roomIdOrAlias") {
         return roomId;
       }
-      ok(false, "Unknown chat room field");
+      ok(false, `Unknown chat room field "${key}"`);
       return null;
     },
   };
@@ -225,7 +225,7 @@ add_task(async function test_getDMRoomIdsForUserId() {
           getMyMembership() {
             return roomId === "!left:example.com" ? "leave" : "join";
           },
-          getMember(userId) {
+          getMember() {
             return {
               membership: "invite",
             };
@@ -350,7 +350,7 @@ add_task(async function test_invitedToChat_cannotDenyServerNotice() {
 add_task(async function test_deleteAccount() {
   let clientLoggedIn = true;
   let storesCleared;
-  let storesPromise = new Promise(resolve => {
+  const storesPromise = new Promise(resolve => {
     storesCleared = resolve;
   });
   let stopped = false;
@@ -396,4 +396,14 @@ add_task(async function test_deleteAccount() {
   ok(stopped);
   equal(removedListeners, MatrixSDK.ClientEvent.Sync);
   equal(account._verificationRequestTimeouts.size, 0);
+});
+
+add_task(function test_getChatRoomFieldValuesFromString() {
+  const result =
+    MatrixAccount.prototype.getChatRoomFieldValuesFromString("#test:test");
+  Assert.deepEqual(
+    result.values,
+    { roomIdOrAlias: "#test:test" },
+    "Unexpected channel for bare channel"
+  );
 });

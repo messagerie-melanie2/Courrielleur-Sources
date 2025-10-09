@@ -8,20 +8,8 @@ const { XPCOMUtils } = ChromeUtils.importESModule(
 const { AppConstants } = ChromeUtils.importESModule(
   "resource://gre/modules/AppConstants.sys.mjs"
 );
-const { showStreamSharingMenu, webrtcUI } = ChromeUtils.import(
-  "resource:///modules/webrtcUI.jsm"
-);
-
-ChromeUtils.defineModuleGetter(
-  this,
-  "MacOSWebRTCStatusbarIndicator",
-  "resource:///modules/webrtcUI.jsm"
-);
-
-ChromeUtils.defineModuleGetter(
-  this,
-  "BrowserWindowTracker",
-  "resource:///modules/BrowserWindowTracker.jsm"
+const { showStreamSharingMenu, webrtcUI } = ChromeUtils.importESModule(
+  "resource:///modules/webrtcUI.sys.mjs"
 );
 
 XPCOMUtils.defineLazyServiceGetter(
@@ -59,7 +47,7 @@ function closingInternally() {
  * Main control object for the WebRTC global indicator
  */
 const WebRTCIndicator = {
-  init(event) {
+  init() {
     addEventListener("load", this);
     addEventListener("unload", this);
 
@@ -80,10 +68,9 @@ const WebRTCIndicator = {
       false
     );
 
-    this.hideGlobalIndicator = Services.prefs.getBoolPref(
-      "privacy.webrtc.hideGlobalIndicator",
-      false
-    );
+    this.hideGlobalIndicator =
+      Services.prefs.getBoolPref("privacy.webrtc.hideGlobalIndicator", false) ||
+      Services.appinfo.isWayland;
 
     if (this.hideGlobalIndicator) {
       this.setVisibility(false);
@@ -553,8 +540,9 @@ const WebRTCIndicator = {
       toggleEl.checked
     );
     Services.ppmm.sharedData.flush();
-    let l10nId =
-      "webrtc-microphone-" + (toggleEl.checked ? "muted" : "unmuted");
+    let l10nId = toggleEl.checked
+      ? "webrtc-microphone-muted"
+      : "webrtc-microphone-unmuted";
     document.l10n.setAttributes(toggleEl, l10nId);
   },
 
@@ -570,7 +558,9 @@ const WebRTCIndicator = {
   toggleCameraMute(toggleEl) {
     Services.ppmm.sharedData.set("WebRTC:GlobalCameraMute", toggleEl.checked);
     Services.ppmm.sharedData.flush();
-    let l10nId = "webrtc-camera-" + (toggleEl.checked ? "muted" : "unmuted");
+    let l10nId = toggleEl.checked
+      ? "webrtc-camera-muted"
+      : "webrtc-camera-unmuted";
     document.l10n.setAttributes(toggleEl, l10nId);
   },
 

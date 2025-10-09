@@ -49,7 +49,7 @@ function trapReport(context) {
         astUtils.isSpecificMemberAccess(
           initialization.callee,
           "ChromeUtils",
-          /^import(ESModule|)$/
+          /^importESModule$/
         )
       ) {
         // Hack alert: our eslint env is pretty confused about `require` and
@@ -79,7 +79,7 @@ function trapReport(context) {
         let node = obj.node.parent;
         // Then remove a comma after it, or a comma before
         // if there's no comma after it.
-        let sourceCode = context.getSourceCode();
+        let sourceCode = context.sourceCode;
         let rangeToRemove = node.range;
         let tokenAfter = sourceCode.getTokenAfter(node);
         let tokenBefore = sourceCode.getTokenBefore(node);
@@ -114,7 +114,7 @@ function trapReport(context) {
 module.exports = {
   meta: {
     docs: {
-      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/no-redeclare-with-import-autofix.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/rules/no-redeclare-with-import-autofix.html",
     },
     messages: {
       ...baseRule.meta.messages,
@@ -138,13 +138,6 @@ module.exports = {
   },
 
   create(context) {
-    // Test modules get the browser env applied wrongly in some cases,
-    // don't try and remove imports there. This works out of the box
-    // for sys.mjs modules because eslint won't check builtinGlobals
-    // for the no-redeclare rule.
-    if (context.getFilename().endsWith(".jsm")) {
-      return {};
-    }
     let newOptions = [{ builtinGlobals: true }];
     const contextForBaseRule = Object.create(context, {
       report: {

@@ -19,8 +19,8 @@ class PathBuilderSkia : public PathBuilder {
  public:
   MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(PathBuilderSkia, override)
 
-  PathBuilderSkia(const Matrix& aTransform, const SkPath& aPath,
-                  FillRule aFillRule);
+  PathBuilderSkia(SkPath&& aPath, FillRule aFillRule,
+                  const Point& aCurrentPoint, const Point& aBeginPoint);
   explicit PathBuilderSkia(FillRule aFillRule);
 
   void MoveTo(const Point& aPoint) override;
@@ -36,6 +36,8 @@ class PathBuilderSkia : public PathBuilder {
   void AppendPath(const SkPath& aPath);
 
   BackendType GetBackendType() const override { return BackendType::SKIA; }
+
+  bool IsActive() const override { return mPath.countPoints() > 0; }
 
   static already_AddRefed<PathBuilder> Create(FillRule aFillRule);
 
@@ -66,6 +68,9 @@ class PathSkia : public Path {
       FillRule aFillRule) const override;
   already_AddRefed<PathBuilder> TransformedCopyToBuilder(
       const Matrix& aTransform, FillRule aFillRule) const override;
+  already_AddRefed<PathBuilder> MoveToBuilder(FillRule aFillRule) override;
+  already_AddRefed<PathBuilder> TransformedMoveToBuilder(
+      const Matrix& aTransform, FillRule aFillRule) override;
 
   bool ContainsPoint(const Point& aPoint,
                      const Matrix& aTransform) const override;
@@ -94,6 +99,8 @@ class PathSkia : public Path {
   bool GetFillPath(const StrokeOptions& aStrokeOptions,
                    const Matrix& aTransform, SkPath& aFillPath,
                    const Maybe<Rect>& aClipRect = Nothing()) const;
+
+  bool IsEmpty() const override;
 
  private:
   friend class DrawTargetSkia;

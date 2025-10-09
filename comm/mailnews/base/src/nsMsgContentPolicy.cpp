@@ -4,13 +4,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsMsgContentPolicy.h"
-#include "nsIMsgMailSession.h"
 #include "nsIPermissionManager.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
-#include "nsIAbManager.h"
-#include "nsIAbDirectory.h"
-#include "nsIAbCard.h"
 #include "nsIMsgWindow.h"
 #include "nsIMsgHdr.h"
 #include "nsIEncryptedSMIMEURIsSrvc.h"
@@ -28,7 +24,6 @@
 #include "nsINntpUrl.h"
 #include "nsILoadInfo.h"
 #include "nsSandboxFlags.h"
-#include "nsQueryObject.h"
 #include "mozilla/dom/WindowGlobalParent.h"
 #include "mozilla/SyncRunnable.h"
 #include "nsIObserverService.h"
@@ -95,7 +90,7 @@ bool nsMsgContentPolicy::ShouldAcceptRemoteContentForSender(
 
   // extract the e-mail address from the msg hdr
   nsCString author;
-  nsresult rv = aMsgHdr->GetAuthor(getter_Copies(author));
+  nsresult rv = aMsgHdr->GetAuthor(author);
   NS_ENSURE_SUCCESS(rv, false);
 
   nsCString emailAddress;
@@ -141,7 +136,6 @@ bool nsMsgContentPolicy::IsTrustedDomain(nsIURI* aContentLocation) {
 
 NS_IMETHODIMP
 nsMsgContentPolicy::ShouldLoad(nsIURI* aContentLocation, nsILoadInfo* aLoadInfo,
-                               const nsACString& aMimeGuess,
                                int16_t* aDecision) {
   nsresult rv = NS_OK;
   ExtContentPolicyType aContentType = aLoadInfo->GetExternalContentPolicyType();
@@ -171,13 +165,6 @@ nsMsgContentPolicy::ShouldLoad(nsIURI* aContentLocation, nsILoadInfo* aLoadInfo,
 
   NS_ENSURE_ARG_POINTER(aContentLocation);
 
-#ifdef DEBUG_MsgContentPolicy
-  fprintf(stderr, "aContentType: %d\naContentLocation = %s\n", aContentType,
-          aContentLocation->GetSpecOrDefault().get());
-  fprintf(stderr, "aRequestingContext is %s\n",
-          aRequestingContext ? "not null" : "null");
-#endif
-
 #ifndef MOZ_THUNDERBIRD
   // Go find out if we are dealing with mailnews. Anything else
   // isn't our concern and we accept content.
@@ -192,50 +179,63 @@ nsMsgContentPolicy::ShouldLoad(nsIURI* aContentLocation, nsILoadInfo* aLoadInfo,
 
   switch (aContentType) {
       // Plugins (nsIContentPolicy::TYPE_OBJECT) are blocked on document load.
-    case ExtContentPolicy::TYPE_DOCUMENT:
+    case ExtContentPolicy::TYPE_DOCUMENT: {
       // At this point, we have no intention of supporting a different JS
       // setting on a subdocument, so we don't worry about TYPE_SUBDOCUMENT
       // here.
 
-      if (NS_IsMainThread()) {
-        rv = SetDisableItemsOnMailNewsUrlDocshells(aContentLocation, aLoadInfo);
-      } else {
-        auto SetDisabling = [&, location = nsCOMPtr(aContentLocation),
-                             loadInfo = nsCOMPtr(aLoadInfo)]() -> auto {
-          rv = SetDisableItemsOnMailNewsUrlDocshells(location, loadInfo);
-        };
-        nsCOMPtr<nsIRunnable> task =
-            NS_NewRunnableFunction("SetDisabling", SetDisabling);
-        mozilla::SyncRunnable::DispatchToThread(
-            mozilla::GetMainThreadSerialEventTarget(), task);
+      // Assert document mailnews urls are always loaded in the parent process.
+      nsCOMPtr<nsIMsgMessageUrl> msgURL(do_QueryInterface(aContentLocation));
+      if (msgURL) {
+        MOZ_RELEASE_ASSERT(
+            XRE_IsParentProcess(),
+            "nsIMsgMessageUrls needs to be loaded in the content process");
       }
-      // if something went wrong during the tweaking, reject this content
-      if (NS_FAILED(rv)) {
-        NS_WARNING("Failed to set disable items on docShells");
-        *aDecision = nsIContentPolicy::REJECT_TYPE;
-        return NS_OK;
+
+      if (!XRE_IsParentProcess()) {
+        // For content process documents, do nothing.
+        // Notably clicking javascript: links end up run in the content process
+        // which would crash the process since
+        // SetDisableItemsOnMailNewsUrlDocshells calls SetAllowJavascript that
+        // is only allowed in the parent process.
+      } else {
+        if (NS_IsMainThread()) {
+          rv = SetDisableItemsOnMailNewsUrlDocshells(aContentLocation,
+                                                     aLoadInfo);
+        } else {
+          auto SetDisabling = [&, location = nsCOMPtr(aContentLocation),
+                               loadInfo = nsCOMPtr(aLoadInfo)]() -> auto {
+            rv = SetDisableItemsOnMailNewsUrlDocshells(location, loadInfo);
+          };
+          nsCOMPtr<nsIRunnable> task =
+              NS_NewRunnableFunction("SetDisabling", SetDisabling);
+          mozilla::SyncRunnable::DispatchToThread(
+              mozilla::GetMainThreadSerialEventTarget(), task);
+        }
+        // if something went wrong during the tweaking, reject this content
+        if (NS_FAILED(rv)) {
+          NS_WARNING("Failed to set disable items on docShells");
+          *aDecision = nsIContentPolicy::REJECT_TYPE;
+          return NS_OK;
+        }
       }
       break;
-
-    case ExtContentPolicy::TYPE_CSP_REPORT:
+    }
+    case ExtContentPolicy::TYPE_CSP_REPORT: {
       // We cannot block CSP reports.
       *aDecision = nsIContentPolicy::ACCEPT;
       return NS_OK;
       break;
-
-    default:
+    }
+    default: {
       break;
+    }
   }
 
   // NOTE: Not using NS_ENSURE_ARG_POINTER because this is a legitimate case
   // that can happen.  Also keep in mind that the default policy used for a
   // failure code is ACCEPT.
   if (!aRequestingLocation) return NS_ERROR_INVALID_POINTER;
-
-#ifdef DEBUG_MsgContentPolicy
-  fprintf(stderr, "aRequestingLocation = %s\n",
-          aRequestingLocation->GetSpecOrDefault().get());
-#endif
 
   // If the requesting location is safe, accept the content location request.
   if (IsSafeRequestingLocation(aRequestingLocation)) return rv;
@@ -300,7 +300,6 @@ nsMsgContentPolicy::ShouldLoad(nsIURI* aContentLocation, nsILoadInfo* aLoadInfo,
   }
 
   // Never load unexposed protocols except for web protocols and file.
-  // Protocols like ftp are always blocked.
   if (ShouldBlockUnexposedProtocol(aContentLocation)) return NS_OK;
 
   // Mailnews URIs are not loaded in child processes, so I think that beyond
@@ -327,19 +326,14 @@ nsMsgContentPolicy::ShouldLoad(nsIURI* aContentLocation, nsILoadInfo* aLoadInfo,
   nsCOMPtr<nsIURI> originatorLocation;
   dom::CanonicalBrowsingContext* cbc = targetContext->Canonical();
   if (cbc) {
-    dom::WindowGlobalParent* wgp = cbc->GetCurrentWindowGlobal();
-    if (wgp) {
-      originatorLocation = wgp->GetDocumentURI();
-    }
+    originatorLocation = cbc->GetCurrentURI();
   }
   if (!originatorLocation) {
+    // We end up here for the load of an iframe created by a script (at least).
+    // TODO: are there cases where this should block?
+    *aDecision = nsIContentPolicy::ACCEPT;
     return NS_OK;
   }
-
-#ifdef DEBUG_MsgContentPolicy
-  fprintf(stderr, "originatorLocation = %s\n",
-          originatorLocation->GetSpecOrDefault().get());
-#endif
 
   // Don't load remote content for encrypted messages.
   nsCOMPtr<nsIEncryptedSMIMEURIsService> encryptedURIService = do_GetService(
@@ -533,11 +527,16 @@ bool nsMsgContentPolicy::ShouldBlockUnexposedProtocol(
   rv = aContentLocation->SchemeIs("blob", &isBlob);
   NS_ENSURE_SUCCESS(rv, true);
 
+  bool isJavaScript;
+  rv = aContentLocation->SchemeIs("javascript", &isJavaScript);
+  NS_ENSURE_SUCCESS(rv, true);
+
   bool isFile;
   rv = aContentLocation->SchemeIs("file", &isFile);
   NS_ENSURE_SUCCESS(rv, true);
 
-  return !isHttp && !isHttps && !isWs && !isWss && !isBlob && !isFile;
+  return !isHttp && !isHttps && !isWs && !isWss && !isBlob && !isJavaScript &&
+         !isFile;
 }
 
 /**
@@ -787,6 +786,9 @@ nsresult nsMsgContentPolicy::SetDisableItemsOnMailNewsUrlDocshells(
     NS_ENSURE_SUCCESS(rv, rv);
     rv = browsingContext->SetAllowContentRetargetingOnChildren(false);
     NS_ENSURE_SUCCESS(rv, rv);
+
+    // See displayMessage() in aboutMessage.js.
+
     // NOTE! Do not set single sandboxing flags only. Sandboxing -  when used -
     // starts off with all things sandboxed, and individual sandbox keywords
     // will *allow* the specific feature.
@@ -818,9 +820,6 @@ nsresult nsMsgContentPolicy::SetDisableItemsOnMailNewsUrlDocshells(
     rv = browsingContext->SetAllowContentRetargetingOnChildren(true);
     NS_ENSURE_SUCCESS(rv, rv);
   }
-
-  rv = docShell->SetAllowPlugins(false);
-  NS_ENSURE_SUCCESS(rv, rv);
 
   return NS_OK;
 }
@@ -877,9 +876,7 @@ nsresult nsMsgContentPolicy::GetOriginatingURIForContext(
 
 NS_IMETHODIMP
 nsMsgContentPolicy::ShouldProcess(nsIURI* aContentLocation,
-                                  nsILoadInfo* aLoadInfo,
-                                  const nsACString& aMimeGuess,
-                                  int16_t* aDecision) {
+                                  nsILoadInfo* aLoadInfo, int16_t* aDecision) {
   // XXX Returning ACCEPT is presumably only a reasonable thing to do if we
   // think that ShouldLoad is going to catch all possible cases (i.e. that
   // everything we use to make decisions is going to be available at
@@ -913,7 +910,7 @@ NS_IMETHODIMP nsMsgContentPolicy::Observe(nsISupports* aSubject,
  */
 NS_IMETHODIMP
 nsMsgContentPolicy::AddExposedProtocol(const nsACString& aScheme) {
-  if (mCustomExposedProtocols.Contains(nsCString(aScheme))) return NS_OK;
+  if (mCustomExposedProtocols.Contains(aScheme)) return NS_OK;
 
   mCustomExposedProtocols.AppendElement(aScheme);
 
@@ -922,7 +919,7 @@ nsMsgContentPolicy::AddExposedProtocol(const nsACString& aScheme) {
 
 NS_IMETHODIMP
 nsMsgContentPolicy::RemoveExposedProtocol(const nsACString& aScheme) {
-  mCustomExposedProtocols.RemoveElement(nsCString(aScheme));
+  mCustomExposedProtocols.RemoveElement(aScheme);
 
   return NS_OK;
 }

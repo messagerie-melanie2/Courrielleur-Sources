@@ -24,12 +24,12 @@ const startupPhases = {
   // Anything loaded during app-startup must have a compelling reason
   // to run before we have even selected the user profile.
   // Consider loading your code after first paint instead,
-  // eg. from MailGlue.jsm' _onFirstWindowLoaded method).
+  // eg. from MailGlue.sys.mjs' _onFirstWindowLoaded method).
   "before profile selection": {
     allowlist: {
       modules: new Set([
-        "resource:///modules/MailGlue.jsm",
-        "resource:///modules/StartupRecorder.jsm",
+        "resource:///modules/MailGlue.sys.mjs",
+        "resource:///modules/StartupRecorder.sys.mjs",
         "resource://gre/modules/ActorManagerParent.sys.mjs",
         "resource://gre/modules/AppConstants.sys.mjs",
         "resource://gre/modules/CustomElementsListener.sys.mjs",
@@ -47,17 +47,16 @@ const startupPhases = {
   "before opening first browser window": {
     denylist: {
       modules: new Set([
-        "chrome://openpgp/content/modules/constants.jsm",
+        "chrome://openpgp/content/modules/constants.sys.mjs",
         "resource:///modules/IMServices.sys.mjs",
         "resource:///modules/imXPCOMUtils.sys.mjs",
         "resource:///modules/jsProtoHelper.sys.mjs",
         "resource:///modules/logger.sys.mjs",
-        "resource:///modules/MailNotificationManager.jsm",
-        "resource:///modules/MailNotificationService.jsm",
-        "resource:///modules/MsgIncomingServer.jsm",
+        "resource:///modules/MailNotificationManager.sys.mjs",
+        "resource:///modules/MailNotificationService.sys.mjs",
+        "resource:///modules/MsgIncomingServer.sys.mjs",
       ]),
       services: new Set([
-        "@mozilla.org/chat/logger;1",
         "@mozilla.org/mail/notification-manager;1",
         "@mozilla.org/newMailNotificationService;1",
       ]),
@@ -70,24 +69,21 @@ const startupPhases = {
   "before first paint": {
     denylist: {
       modules: new Set([
-        "chrome://openpgp/content/BondOpenPGP.jsm",
-        "chrome://openpgp/content/modules/core.jsm",
+        "chrome://openpgp/content/BondOpenPGP.sys.mjs",
+        "chrome://openpgp/content/modules/core.sys.mjs",
         "resource:///modules/index_im.sys.mjs",
-        "resource:///modules/MsgDBCacheManager.jsm",
-        "resource:///modules/PeriodicFilterManager.jsm",
+        "resource:///modules/MsgDBCacheManager.sys.mjs",
+        "resource:///modules/PeriodicFilterManager.sys.mjs",
         "resource://gre/modules/Blocklist.sys.mjs",
         "resource://gre/modules/NewTabUtils.sys.mjs",
         "resource://gre/modules/Sqlite.sys.mjs",
         // Bug 1660907: These core modules shouldn't really be being loaded
         // until sometime after first paint.
         // "resource://gre/modules/PlacesUtils.sys.mjs",
-        // "resource://gre/modules/Preferences.jsm",
+        // "resource://gre/modules/Preferences.sys.mjs",
         // These can probably be pushed back even further.
       ]),
-      services: new Set([
-        "@mozilla.org/browser/search-service;1",
-        "@mozilla.org/msgDatabase/msgDBService;1",
-      ]),
+      services: new Set(["@mozilla.org/browser/search-service;1"]),
     },
   },
 
@@ -97,27 +93,27 @@ const startupPhases = {
   "before handling user events": {
     denylist: {
       modules: new Set([
-        "resource:///modules/gloda/Everybody.jsm",
-        "resource:///modules/gloda/Gloda.jsm",
-        "resource:///modules/gloda/GlodaContent.jsm",
-        "resource:///modules/gloda/GlodaDatabind.jsm",
-        "resource:///modules/gloda/GlodaDataModel.jsm",
-        "resource:///modules/gloda/GlodaDatastore.jsm",
-        "resource:///modules/gloda/GlodaExplicitAttr.jsm",
-        "resource:///modules/gloda/GlodaFundAttr.jsm",
-        "resource:///modules/gloda/GlodaMsgIndexer.jsm",
-        "resource:///modules/gloda/GlodaPublic.jsm",
-        "resource:///modules/gloda/GlodaQueryClassFactory.jsm",
-        "resource:///modules/gloda/GlodaUtils.jsm",
-        "resource:///modules/gloda/IndexMsg.jsm",
-        "resource:///modules/gloda/MimeMessage.jsm",
-        "resource:///modules/gloda/NounFreetag.jsm",
-        "resource:///modules/gloda/NounMimetype.jsm",
-        "resource:///modules/gloda/NounTag.jsm",
+        "resource:///modules/gloda/Everybody.sys.mjs",
+        "resource:///modules/gloda/Gloda.sys.mjs",
+        "resource:///modules/gloda/GlodaContent.sys.mjs",
+        "resource:///modules/gloda/GlodaDatabind.sys.mjs",
+        "resource:///modules/gloda/GlodaDataModel.sys.mjs",
+        "resource:///modules/gloda/GlodaDatastore.sys.mjs",
+        "resource:///modules/gloda/GlodaExplicitAttr.sys.mjs",
+        "resource:///modules/gloda/GlodaFundAttr.sys.mjs",
+        "resource:///modules/gloda/GlodaMsgIndexer.sys.mjs",
+        "resource:///modules/gloda/GlodaPublic.sys.mjs",
+        "resource:///modules/gloda/GlodaQueryClassFactory.sys.mjs",
+        "resource:///modules/gloda/GlodaUtils.sys.mjs",
+        "resource:///modules/gloda/IndexMsg.sys.mjs",
+        "resource:///modules/gloda/MimeMessage.sys.mjs",
+        "resource:///modules/gloda/NounFreetag.sys.mjs",
+        "resource:///modules/gloda/NounMimetype.sys.mjs",
+        "resource:///modules/gloda/NounTag.sys.mjs",
         "resource:///modules/index_im.sys.mjs",
-        "resource:///modules/jsmime.jsm",
-        "resource:///modules/MimeJSComponents.jsm",
-        "resource:///modules/mimeParser.jsm",
+        "resource:///modules/jsmime.sys.mjs",
+        "resource:///modules/MimeJSComponents.sys.mjs",
+        "resource:///modules/mimeParser.sys.mjs",
         "resource://gre/modules/BookmarkHTMLUtils.sys.mjs",
         "resource://gre/modules/Bookmarks.sys.mjs",
         "resource://gre/modules/ContextualIdentityService.sys.mjs",
@@ -126,7 +122,7 @@ const startupPhases = {
         "resource://gre/modules/FxAccountsStorage.sys.mjs",
         "resource://gre/modules/PlacesBackups.sys.mjs",
         "resource://gre/modules/PlacesSyncUtils.sys.mjs",
-        "resource://gre/modules/PushComponents.jsm",
+        "resource://gre/modules/PushComponents.sys.mjs",
       ]),
       services: new Set([
         "@mozilla.org/browser/annotation-service;1",
@@ -144,42 +140,49 @@ const startupPhases = {
   "before becoming idle": {
     denylist: {
       modules: new Set([
-        "resource:///modules/AddrBookManager.jsm",
-        "resource:///modules/DisplayNameUtils.jsm",
-        "resource:///modules/gloda/Facet.jsm",
-        "resource:///modules/gloda/GlodaMsgSearcher.jsm",
-        "resource:///modules/gloda/SuffixTree.jsm",
-        "resource:///modules/GlodaAutoComplete.jsm",
-        "resource:///modules/ImapIncomingServer.jsm",
-        "resource:///modules/ImapMessageMessageService.jsm",
-        "resource:///modules/ImapMessageService.jsm",
+        "resource:///modules/AddrBookManager.sys.mjs",
+        "resource:///modules/DisplayNameUtils.sys.mjs",
+        "resource:///modules/gloda/Facet.sys.mjs",
+        "resource:///modules/gloda/GlodaMsgSearcher.sys.mjs",
+        "resource:///modules/gloda/SuffixTree.sys.mjs",
+        "resource:///modules/GlodaAutoComplete.sys.mjs",
+        "resource:///modules/ImapIncomingServer.sys.mjs",
+        "resource:///modules/ImapMessageMessageService.sys.mjs",
+        "resource:///modules/ImapMessageService.sys.mjs",
         // Skipped due to the way ImapModuleLoader and registerProtocolHandler
         // works, uncomment once ImapModuleLoader is removed and imap-js becomes
         // the only IMAP implemention.
-        // "resource:///modules/ImapProtocolHandler.jsm",
-        "resource:///modules/ImapService.jsm",
-        "resource:///modules/NntpIncomingServer.jsm",
-        "resource:///modules/NntpMessageService.jsm",
-        "resource:///modules/NntpProtocolHandler.jsm",
-        "resource:///modules/NntpProtocolInfo.jsm",
-        "resource:///modules/NntpService.jsm",
-        "resource:///modules/Pop3IncomingServer.jsm",
-        "resource:///modules/Pop3ProtocolHandler.jsm",
-        "resource:///modules/Pop3ProtocolInfo.jsm",
-        // "resource:///modules/Pop3Service.jsm",
-        "resource:///modules/SmtpClient.jsm",
-        "resource:///modules/SMTPProtocolHandler.jsm",
-        "resource:///modules/SmtpServer.jsm",
-        "resource:///modules/SmtpService.jsm",
-        "resource:///modules/TemplateUtils.jsm",
+        // "resource:///modules/ImapProtocolHandler.sys.mjs",
+        "resource:///modules/ImapService.sys.mjs",
+        "resource:///modules/NntpIncomingServer.sys.mjs",
+        "resource:///modules/NntpMessageService.sys.mjs",
+        "resource:///modules/NntpProtocolHandler.sys.mjs",
+        "resource:///modules/NntpProtocolInfo.sys.mjs",
+        "resource:///modules/NntpService.sys.mjs",
+        "resource:///modules/Pop3IncomingServer.sys.mjs",
+        "resource:///modules/Pop3ProtocolHandler.sys.mjs",
+        "resource:///modules/Pop3ProtocolInfo.sys.mjs",
+        // "resource:///modules/Pop3Service.sys.mjs",
+        "resource:///modules/SmtpClient.sys.mjs",
+        "resource:///modules/SMTPProtocolHandler.sys.mjs",
+        "resource:///modules/SmtpServer.sys.mjs",
+        "resource:///modules/SmtpService.sys.mjs",
+        "resource:///modules/TemplateUtils.sys.mjs",
         "resource://gre/modules/AsyncPrefs.sys.mjs",
-        "resource://gre/modules/LoginManagerContextMenu.jsm",
-        "resource://pdf.js/PdfStreamConverter.jsm",
+        "resource://gre/modules/LoginManagerContextMenu.sys.mjs",
+        "resource://pdf.js/PdfStreamConverter.sys.mjs",
       ]),
       services: new Set(["@mozilla.org/autocomplete/search;1?name=gloda"]),
     },
   },
 };
+
+if (!Services.prefs.getBoolPref("mail.panorama.enabled", false)) {
+  // TODO: Reinstate this unconditionally when the new database is registered by default.
+  startupPhases["before first paint"].denylist.services.add(
+    "@mozilla.org/msgDatabase/msgDBService;1"
+  );
+}
 
 add_task(async function () {
   if (
@@ -195,11 +198,11 @@ add_task(async function () {
     return;
   }
 
-  let startupRecorder =
+  const startupRecorder =
     Cc["@mozilla.org/test/startuprecorder;1"].getService().wrappedJSObject;
   await startupRecorder.done;
 
-  let data = Cu.cloneInto(startupRecorder.data.code, {});
+  const data = Cu.cloneInto(startupRecorder.data.code, {});
   function getStack(scriptType, name) {
     if (scriptType == "modules") {
       return Cu.getModuleImportStack(name);
@@ -211,9 +214,9 @@ add_task(async function () {
   // it doesn't contribute to the actual test.
   SimpleTest.requestCompleteLog();
   let previous;
-  for (let phase in data) {
-    for (let scriptType in data[phase]) {
-      for (let f of data[phase][scriptType].sort()) {
+  for (const phase in data) {
+    for (const scriptType in data[phase]) {
+      for (const f of data[phase][scriptType].sort()) {
         // phases are ordered, so if a script wasn't loaded yet at the immediate
         // previous phase, it wasn't loaded during any of the previous phases
         // either, and is new in the current phase.
@@ -228,11 +231,11 @@ add_task(async function () {
     previous = phase;
   }
 
-  for (let phase in startupPhases) {
-    let loadedList = data[phase];
-    let allowlist = startupPhases[phase].allowlist || null;
+  for (const phase in startupPhases) {
+    const loadedList = data[phase];
+    const allowlist = startupPhases[phase].allowlist || null;
     if (allowlist) {
-      for (let scriptType in allowlist) {
+      for (const scriptType in allowlist) {
         loadedList[scriptType] = loadedList[scriptType].filter(c => {
           if (!allowlist[scriptType].has(c)) {
             return true;
@@ -245,8 +248,8 @@ add_task(async function () {
           0,
           `should have no unexpected ${scriptType} loaded ${phase}`
         );
-        for (let script of loadedList[scriptType]) {
-          let message = `unexpected ${scriptType}: ${script}`;
+        for (const script of loadedList[scriptType]) {
+          const message = `unexpected ${scriptType}: ${script}`;
           record(false, message, undefined, getStack(scriptType, script));
         }
         is(
@@ -254,17 +257,17 @@ add_task(async function () {
           0,
           `all ${scriptType} allowlist entries should have been used`
         );
-        for (let script of allowlist[scriptType]) {
+        for (const script of allowlist[scriptType]) {
           ok(false, `unused ${scriptType} allowlist entry: ${script}`);
         }
       }
     }
-    let denylist = startupPhases[phase].denylist || null;
+    const denylist = startupPhases[phase].denylist || null;
     if (denylist) {
-      for (let scriptType in denylist) {
-        for (let file of denylist[scriptType]) {
-          let loaded = loadedList[scriptType].includes(file);
-          let message = `${file} is not allowed ${phase}`;
+      for (const scriptType in denylist) {
+        for (const file of denylist[scriptType]) {
+          const loaded = loadedList[scriptType].includes(file);
+          const message = `${file} is not allowed ${phase}`;
           if (!loaded) {
             ok(true, message);
           } else {

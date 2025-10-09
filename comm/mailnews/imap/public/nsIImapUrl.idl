@@ -16,17 +16,6 @@ typedef long nsImapState;
 
 typedef unsigned short imapMessageFlagsType;
 
-typedef long nsImapContentModifiedType;
-
-[scriptable, uuid(2e91901e-ff6c-11d3-b9fa-00108335942a)]
-interface nsImapContentModifiedTypes : nsISupports
-{
-  const long IMAP_CONTENT_NOT_MODIFIED = 0;
-  const long IMAP_CONTENT_MODIFIED_VIEW_INLINE = 1;
-  const long IMAP_CONTENT_MODIFIED_VIEW_AS_LINKS = 2;
-  const long IMAP_CONTENT_FORCE_CONTENT_NOT_MODIFIED = 3;
-} ;
-
 [scriptable, uuid(fe2a8f9e-2886-4146-9896-27fff660c69f)]
 interface nsIImapUrl : nsISupports
 {
@@ -49,11 +38,11 @@ interface nsIImapUrl : nsISupports
   attribute ACString customCommandResult;
   readonly attribute ACString customAddFlags;
   readonly attribute ACString customSubtractFlags;
-  void allocateCanonicalPath(in string aServerPath, in char aOnlineDelimiter, out string aAllocatedPath);
-  void allocateServerPath(in string aCanonicalPath, in char aOnlineDelimiter, out string aAllocatedPath);
-  string createServerSourceFolderPathString();
-  string createCanonicalSourceFolderPathString();
-  string createServerDestinationFolderPathString();
+  AUTF8String allocateCanonicalPath(in AUTF8String aServerPath, in char aOnlineDelimiter);
+  AUTF8String allocateServerPath(in AUTF8String aCanonicalPath, in char aOnlineDelimiter);
+  AUTF8String createServerSourceFolderPathString();
+  AUTF8String createCanonicalSourceFolderPathString();
+  AUTF8String createServerDestinationFolderPathString();
 
   string addOnlineDirectoryIfNecessary(in string onlineMailboxName);
   void createSearchCriteriaString(out string aResult);

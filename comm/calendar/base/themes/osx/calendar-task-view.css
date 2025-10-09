@@ -10,7 +10,9 @@
 }
 
 #task-addition-box {
-  border-bottom-color: #bebebe
+  border-bottom-color: #bebebe;
+  height: 1.5em;
+  min-height: 32px;
 }
 
 /* Hide the magnifying glass icon */
@@ -24,11 +26,6 @@
 @media not (prefers-color-scheme: dark) {
   #task-addition-box:-moz-window-inactive {
     border-bottom-color: hsl(0, 0%, 85%);
-    background: -moz-mac-chrome-inactive;
-  }
-
-  #calendar-task-details-container:-moz-window-inactive {
-    background-color: -moz-mac-chrome-inactive;
   }
 }
 
@@ -38,4 +35,8 @@
 
 #calendar-add-task-button > .toolbarbutton-text {
   margin-inline-start: 0;
+}
+
+:is(#task-actions-category-popup, #calendar-context-calendar-menupopup) > menuitem::before {
+  display: none;
 }

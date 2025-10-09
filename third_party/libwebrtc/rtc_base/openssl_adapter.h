@@ -37,14 +37,6 @@
 
 namespace rtc {
 
-namespace webrtc_openssl_adapter_internal {
-
-// Local definition, since absl::StrJoin is not allow-listed. Declared in header
-// file only for unittests.
-std::string StrJoin(const std::vector<std::string>& list, char delimiter);
-
-}  // namespace webrtc_openssl_adapter_internal
-
 class OpenSSLAdapter final : public SSLAdapter {
  public:
   static bool InitializeSSL();
@@ -64,7 +56,7 @@ class OpenSSLAdapter final : public SSLAdapter {
   void SetIgnoreBadCert(bool ignore) override;
   void SetAlpnProtocols(const std::vector<std::string>& protos) override;
   void SetEllipticCurves(const std::vector<std::string>& curves) override;
-  void SetMode(SSLMode mode) override;
+  [[deprecated]] void SetMode(SSLMode mode) override;
   void SetCertVerifier(SSLCertificateVerifier* ssl_cert_verifier) override;
   void SetIdentity(std::unique_ptr<SSLIdentity> identity) override;
   void SetRole(SSLRole role) override;
@@ -124,10 +116,8 @@ class OpenSSLAdapter final : public SSLAdapter {
   int DoSslWrite(const void* pv, size_t cb, int* error);
   bool SSLPostConnectionCheck(SSL* ssl, absl::string_view host);
 
-#if !defined(NDEBUG)
-  // In debug builds, logs info about the state of the SSL connection.
+  // Logs info about the state of the SSL connection.
   static void SSLInfoCallback(const SSL* ssl, int where, int ret);
-#endif
 
 #if defined(OPENSSL_IS_BORINGSSL) && \
     defined(WEBRTC_EXCLUDE_BUILT_IN_SSL_ROOT_CERTS)
@@ -229,7 +219,7 @@ class OpenSSLAdapterFactory : public SSLAdapterFactory {
   // Holds a cache of existing SSL Sessions.
   std::unique_ptr<OpenSSLSessionCache> ssl_session_cache_;
   // Provides an optional custom callback for verifying SSL certificates, this
-  // in currently only used for TLS-TURN connections.
+  // in currently only used for TURN/TLS connections.
   SSLCertificateVerifier* ssl_cert_verifier_ = nullptr;
   // TODO(benwright): Remove this when context is moved to OpenSSLCommon.
   // Hold a friend class to the OpenSSLAdapter to retrieve the context.

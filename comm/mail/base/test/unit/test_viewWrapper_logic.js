@@ -13,8 +13,8 @@ initViewWrapperTestUtils({ mode: "local" });
  *  clears the other flag.  (Because they're mutually exclusive, you see.)
  */
 add_task(async function test_threading_grouping_mutual_exclusion() {
-  let viewWrapper = make_view_wrapper();
-  let folder = await messageInjection.makeEmptyFolder();
+  const viewWrapper = make_view_wrapper();
+  const folder = await messageInjection.makeEmptyFolder();
 
   await view_open(viewWrapper, folder);
   // enter an update that will never conclude.  this is fine.
@@ -37,8 +37,8 @@ add_task(async function test_threading_grouping_mutual_exclusion() {
  *  |specialViewThreadsWithUnread| has them all be properly mutually exclusive.
  */
 add_task(async function test_threads_special_views_mutual_exclusion() {
-  let viewWrapper = make_view_wrapper();
-  let folder = await messageInjection.makeEmptyFolder();
+  const viewWrapper = make_view_wrapper();
+  const folder = await messageInjection.makeEmptyFolder();
 
   await view_open(viewWrapper, folder);
   // enter an update that will never conclude. this is fine.
@@ -80,16 +80,13 @@ add_task(async function test_threads_special_views_mutual_exclusion() {
  *  the sort.)
  */
 add_task(async function test_sort_primary() {
-  let viewWrapper = make_view_wrapper();
+  const viewWrapper = make_view_wrapper();
   // we need to put messages in the folder or the sort logic doesn't actually
   //  save the sort state. (this is the C++ view's fault.)
-  let [[folder]] = await messageInjection.makeFoldersWithSets(1, [{}]);
+  const [[folder]] = await messageInjection.makeFoldersWithSets(1, [{}]);
 
   await view_open(viewWrapper, folder);
-  viewWrapper.sort(
-    Ci.nsMsgViewSortType.byDate,
-    Ci.nsMsgViewSortOrder.ascending
-  );
+  viewWrapper.sort("dateCol", Ci.nsMsgViewSortOrder.ascending);
   assert_equals(
     viewWrapper.dbView.sortType,
     Ci.nsMsgViewSortType.byDate,
@@ -103,10 +100,7 @@ add_task(async function test_sort_primary() {
     true
   );
 
-  viewWrapper.sort(
-    Ci.nsMsgViewSortType.byAuthor,
-    Ci.nsMsgViewSortOrder.descending
-  );
+  viewWrapper.sort("senderCol", Ci.nsMsgViewSortOrder.descending);
   assert_equals(
     viewWrapper.dbView.sortType,
     Ci.nsMsgViewSortType.byAuthor,
@@ -122,49 +116,6 @@ add_task(async function test_sort_primary() {
 });
 
 /**
- * Verify that we handle explicit secondary sorts correctly.
- */
-add_task(async function test_sort_secondary_explicit() {
-  let viewWrapper = make_view_wrapper();
-  // we need to put messages in the folder or the sort logic doesn't actually
-  //  save the sort state. (this is the C++ view's fault.)
-  let [[folder]] = await messageInjection.makeFoldersWithSets(1, [{}]);
-
-  await view_open(viewWrapper, folder);
-  viewWrapper.sort(
-    Ci.nsMsgViewSortType.byAuthor,
-    Ci.nsMsgViewSortOrder.ascending,
-    Ci.nsMsgViewSortType.bySubject,
-    Ci.nsMsgViewSortOrder.descending
-  );
-  // check once for what we just did, then again after refreshing to make
-  //  sure the sort order 'stuck'
-  for (let i = 0; i < 2; i++) {
-    assert_equals(
-      viewWrapper.dbView.sortType,
-      Ci.nsMsgViewSortType.byAuthor,
-      "sort should be by author"
-    );
-    assert_equals(
-      viewWrapper.dbView.sortOrder,
-      Ci.nsMsgViewSortOrder.ascending,
-      "sort order should be ascending"
-    );
-    assert_equals(
-      viewWrapper.dbView.secondarySortType,
-      Ci.nsMsgViewSortType.bySubject,
-      "secondary sort should be by subject"
-    );
-    assert_equals(
-      viewWrapper.dbView.secondarySortOrder,
-      Ci.nsMsgViewSortOrder.descending,
-      "secondary sort order should be descending"
-    );
-    await view_refresh(viewWrapper);
-  }
-});
-
-/**
  * Verify that we handle implicit secondary sorts correctly.
  * An implicit secondary sort is when we sort by Y, then we sort by X, and it's
  *  okay to have the effective sort of [X, Y].  The UI has/wants this, so, uh,
@@ -173,20 +124,14 @@ add_task(async function test_sort_secondary_explicit() {
  *  this for us.  Why?  Because we re-create the view all the bloody time.
  */
 add_task(async function test_sort_secondary_implicit() {
-  let viewWrapper = make_view_wrapper();
+  const viewWrapper = make_view_wrapper();
   // we need to put messages in the folder or the sort logic doesn't actually
   //  save the sort state. (this is the C++ view's fault.)
-  let [[folder]] = await messageInjection.makeFoldersWithSets(1, [{}]);
+  const [[folder]] = await messageInjection.makeFoldersWithSets(1, [{}]);
 
   await view_open(viewWrapper, folder);
-  viewWrapper.magicSort(
-    Ci.nsMsgViewSortType.bySubject,
-    Ci.nsMsgViewSortOrder.descending
-  );
-  viewWrapper.magicSort(
-    Ci.nsMsgViewSortType.byAuthor,
-    Ci.nsMsgViewSortOrder.ascending
-  );
+  viewWrapper.sort("subjectCol", Ci.nsMsgViewSortOrder.descending);
+  viewWrapper.sort("senderCol", Ci.nsMsgViewSortOrder.ascending);
   // check once for what we just did, then again after refreshing to make
   //  sure the sort order 'stuck'
   for (let i = 0; i < 2; i++) {
@@ -224,16 +169,16 @@ add_task(async function test_sort_secondary_implicit() {
  *  a view rebuild.
  */
 add_task(async function test_sort_group_by_sort() {
-  let viewWrapper = make_view_wrapper();
+  const viewWrapper = make_view_wrapper();
   // we need to put messages in the folder or the sort logic doesn't actually
   //  save the sort state. (this is the C++ view's fault.)
-  let [[folder]] = await messageInjection.makeFoldersWithSets(1, [{}]);
+  const [[folder]] = await messageInjection.makeFoldersWithSets(1, [{}]);
   await view_open(viewWrapper, folder);
 
   // - start out by being in an illegal (for group-by-sort) sort mode and
   //  switch to group-by-sort.
   // (sorting changes are synchronous)
-  viewWrapper.sort(Ci.nsMsgViewSortType.byId, Ci.nsMsgViewSortOrder.descending);
+  viewWrapper.sort("idCol", Ci.nsMsgViewSortOrder.descending);
   await view_group_by_sort(viewWrapper, true);
 
   // there should have been no explosion, and we should have changed to date
@@ -246,12 +191,8 @@ add_task(async function test_sort_group_by_sort() {
   // - return to unthreaded, have an illegal secondary sort, go group-by-sort
   await view_group_by_sort(viewWrapper, false);
 
-  viewWrapper.sort(
-    Ci.nsMsgViewSortType.byDate,
-    Ci.nsMsgViewSortOrder.descending,
-    Ci.nsMsgViewSortType.byId,
-    Ci.nsMsgViewSortOrder.descending
-  );
+  viewWrapper.sort("idCol", Ci.nsMsgViewSortOrder.descending);
+  viewWrapper.sort("dateCol", Ci.nsMsgViewSortOrder.descending);
 
   await view_group_by_sort(viewWrapper, true);
   // we should now only have a single sort type and it should be date
@@ -268,10 +209,7 @@ add_task(async function test_sort_group_by_sort() {
 
   // - try and make group-by-sort sort by something illegal
   // (we're still in group-by-sort mode)
-  viewWrapper.magicSort(
-    Ci.nsMsgViewSortType.byId,
-    Ci.nsMsgViewSortOrder.descending
-  );
+  viewWrapper.sort("idCol", Ci.nsMsgViewSortOrder.descending);
   assert_equals(
     viewWrapper.primarySortType,
     Ci.nsMsgViewSortType.byDate,
@@ -285,8 +223,8 @@ add_task(async function test_sort_group_by_sort() {
  *  presumably visible).
  */
 add_task(async function test_mailviews_persistence() {
-  let viewWrapper = make_view_wrapper();
-  let folder = await messageInjection.makeEmptyFolder();
+  const viewWrapper = make_view_wrapper();
+  const folder = await messageInjection.makeEmptyFolder();
 
   // open the folder, ensure it is using the default mail view
   await view_open(viewWrapper, folder);
@@ -321,10 +259,10 @@ add_task(async function test_mailviews_persistence() {
  * - That the view update depth is zeroed by a close so that we don't
  *    get into awkward states.
  *
- * @bug 498145
+ * @see bug 498145
  */
 add_task(function test_view_update_depth_logic() {
-  let viewWrapper = make_view_wrapper();
+  const viewWrapper = make_view_wrapper();
 
   // create an instance-specific dummy method that counts calls t
   //  _applyViewChanges

@@ -9,18 +9,23 @@ add_task(async function () {
   let pageURI = NetUtil.newURI("http://www.places.test/page/");
   await PlacesTestUtils.addVisits(pageURI);
   let faviconURI = NetUtil.newURI("http://www.places.test/favicon.ico");
-  PlacesUtils.favicons.replaceFaviconDataFromDataURL(
+  await PlacesTestUtils.setFaviconForPage(
+    pageURI,
     faviconURI,
-    SMALLPNG_DATA_URI.spec,
-    0,
-    systemPrincipal
+    SMALLPNG_DATA_URI
   );
-  await setFaviconForPage(pageURI, faviconURI);
 
   // Sanity checks.
-  Assert.equal(await getFaviconUrlForPage(pageURI), faviconURI.spec);
   Assert.equal(
-    await getFaviconUrlForPage("https://places.test/somethingelse/"),
+    (await PlacesTestUtils.getFaviconForPage(pageURI)).uri.spec,
+    faviconURI.spec
+  );
+  Assert.equal(
+    (
+      await PlacesTestUtils.getFaviconForPage(
+        "https://places.test/somethingelse/"
+      )
+    ).uri.spec,
     faviconURI.spec
   );
 
@@ -44,7 +49,10 @@ add_task(async function () {
   await PlacesUtils.history.remove(pageURI);
 
   // Still works since the icon has not been removed.
-  Assert.equal(await getFaviconUrlForPage(pageURI), faviconURI.spec);
+  Assert.equal(
+    (await PlacesTestUtils.getFaviconForPage(pageURI)).uri.spec,
+    faviconURI.spec
+  );
 
   // Remove all the pages for the given domain.
   await PlacesUtils.history.remove("http://places.test/page2/");
@@ -70,36 +78,32 @@ add_task(async function test_removePagesByTimeframe() {
 
   // Add a normal icon to the most recent page.
   let faviconURI = NetUtil.newURI(`${BASE_URL}/page/favicon.ico`);
-  PlacesUtils.favicons.replaceFaviconDataFromDataURL(
+  await PlacesTestUtils.setFaviconForPage(
+    pageURI,
     faviconURI,
-    SMALLSVG_DATA_URI.spec,
-    0,
-    systemPrincipal
+    SMALLSVG_DATA_URI
   );
-  await setFaviconForPage(pageURI, faviconURI);
   // Add a root icon to the most recent page.
   let rootIconURI = NetUtil.newURI(`${BASE_URL}/favicon.ico`);
-  PlacesUtils.favicons.replaceFaviconDataFromDataURL(
+  await PlacesTestUtils.setFaviconForPage(
+    pageURI,
     rootIconURI,
-    SMALLPNG_DATA_URI.spec,
-    0,
-    systemPrincipal
+    SMALLPNG_DATA_URI
   );
-  await setFaviconForPage(pageURI, rootIconURI);
 
   // Sanity checks.
   Assert.equal(
-    await getFaviconUrlForPage(pageURI),
+    (await PlacesTestUtils.getFaviconForPage(pageURI)).uri.spec,
     faviconURI.spec,
     "Should get the biggest icon"
   );
   Assert.equal(
-    await getFaviconUrlForPage(pageURI, 1),
+    (await PlacesTestUtils.getFaviconForPage(pageURI, 1)).uri.spec,
     rootIconURI.spec,
     "Should get the smallest icon"
   );
   Assert.equal(
-    await getFaviconUrlForPage(oldPageURI),
+    (await PlacesTestUtils.getFaviconForPage(oldPageURI)).uri.spec,
     rootIconURI.spec,
     "Should get the root icon"
   );
@@ -141,16 +145,14 @@ add_task(async function test_different_host() {
   let pageURI = NetUtil.newURI("http://places.test/page/");
   await PlacesTestUtils.addVisits(pageURI);
   let faviconURI = NetUtil.newURI("http://mozilla.test/favicon.ico");
-  PlacesUtils.favicons.replaceFaviconDataFromDataURL(
+  await PlacesTestUtils.setFaviconForPage(
+    pageURI,
     faviconURI,
-    SMALLPNG_DATA_URI.spec,
-    0,
-    systemPrincipal
+    SMALLPNG_DATA_URI
   );
-  await setFaviconForPage(pageURI, faviconURI);
 
   Assert.equal(
-    await getFaviconUrlForPage(pageURI),
+    (await PlacesTestUtils.getFaviconForPage(pageURI)).uri.spec,
     faviconURI.spec,
     "Should get the png icon"
   );
@@ -166,19 +168,28 @@ add_task(async function test_different_host() {
 add_task(async function test_same_size() {
   // Add two icons with the same size, one is a root icon. Check that the
   // non-root icon is preferred when a smaller size is requested.
-  let data = readFileData(do_get_file("favicon-normal32.png"));
+  let dataURL = await readFileDataAsDataURL(
+    do_get_file("favicon-normal32.png"),
+    "image/png"
+  );
   let pageURI = NetUtil.newURI("http://new_places.test/page/");
   await PlacesTestUtils.addVisits(pageURI);
 
   let faviconURI = NetUtil.newURI("http://new_places.test/favicon.ico");
-  PlacesUtils.favicons.replaceFaviconData(faviconURI, data, "image/png");
-  await setFaviconForPage(pageURI, faviconURI);
+  await PlacesTestUtils.setFaviconForPage(
+    pageURI.spec,
+    faviconURI.spec,
+    dataURL
+  );
   faviconURI = NetUtil.newURI("http://new_places.test/another_icon.ico");
-  PlacesUtils.favicons.replaceFaviconData(faviconURI, data, "image/png");
-  await setFaviconForPage(pageURI, faviconURI);
+  await PlacesTestUtils.setFaviconForPage(
+    pageURI.spec,
+    faviconURI.spec,
+    dataURL
+  );
 
   Assert.equal(
-    await getFaviconUrlForPage(pageURI, 20),
+    (await PlacesTestUtils.getFaviconForPage(pageURI, 20)).uri.spec,
     faviconURI.spec,
     "Should get the non-root icon"
   );
@@ -207,31 +218,19 @@ add_task(async function test_root_on_different_host() {
   // Root favicon for TEST_URL1.
   const ICON_URL = "http://places1.test/favicon.ico";
   let iconURI = NetUtil.newURI(ICON_URL);
-  PlacesUtils.favicons.replaceFaviconDataFromDataURL(
-    iconURI,
-    SMALLPNG_DATA_URI.spec,
-    0,
-    systemPrincipal
-  );
-  await setFaviconForPage(pageURI1, iconURI);
+  await PlacesTestUtils.setFaviconForPage(pageURI1, iconURI, SMALLPNG_DATA_URI);
   Assert.equal(await getRootValue(ICON_URL), 1, "Check root == 1");
   Assert.equal(
-    await getFaviconUrlForPage(pageURI1, 16),
+    (await PlacesTestUtils.getFaviconForPage(pageURI1, 16)).uri.spec,
     ICON_URL,
     "The icon should been found"
   );
 
   // Same favicon for TEST_URL2.
-  PlacesUtils.favicons.replaceFaviconDataFromDataURL(
-    iconURI,
-    SMALLPNG_DATA_URI.spec,
-    0,
-    systemPrincipal
-  );
-  await setFaviconForPage(pageURI2, iconURI);
+  await PlacesTestUtils.setFaviconForPage(pageURI2, iconURI, SMALLPNG_DATA_URI);
   Assert.equal(await getRootValue(ICON_URL), 1, "Check root == 1");
   Assert.equal(
-    await getFaviconUrlForPage(pageURI2, 16),
+    (await PlacesTestUtils.getFaviconForPage(pageURI2, 16)).uri.spec,
     ICON_URL,
     "The icon should be found"
   );
@@ -239,7 +238,7 @@ add_task(async function test_root_on_different_host() {
   await PlacesUtils.history.remove(pageURI1);
 
   Assert.equal(
-    await getFaviconUrlForPage(pageURI2, 16),
+    (await PlacesTestUtils.getFaviconForPage(pageURI2, 16)).uri.spec,
     ICON_URL,
     "The icon should not have been removed"
   );

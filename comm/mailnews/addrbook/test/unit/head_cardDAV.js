@@ -2,16 +2,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { CardDAVDirectory } = ChromeUtils.import(
-  "resource:///modules/CardDAVDirectory.jsm"
+const { CardDAVDirectory } = ChromeUtils.importESModule(
+  "resource:///modules/CardDAVDirectory.sys.mjs"
 );
-const { CardDAVServer } = ChromeUtils.import(
-  "resource://testing-common/CardDAVServer.jsm"
+const { CardDAVServer } = ChromeUtils.importESModule(
+  "resource://testing-common/CardDAVServer.sys.mjs"
 );
 const { TestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/TestUtils.sys.mjs"
 );
-Cu.importGlobalProperties(["fetch"]);
 
 do_get_profile();
 
@@ -19,7 +18,7 @@ registerCleanupFunction(function () {
   load("../../../resources/mailShutdown.js");
 });
 
-function initDirectory() {
+async function initDirectory() {
   // Set up a new directory and get the cards from the server. Do this by
   // creating an instance of CardDAVDirectory rather than through the address
   // book manager, so that we can access the internals of the directory.
@@ -48,14 +47,14 @@ function initDirectory() {
 
   if (!Services.logins.findLogins(CardDAVServer.origin, null, "test").length) {
     // Save a username and password to the login manager.
-    let loginInfo = Cc["@mozilla.org/login-manager/loginInfo;1"].createInstance(
-      Ci.nsILoginInfo
-    );
+    const loginInfo = Cc[
+      "@mozilla.org/login-manager/loginInfo;1"
+    ].createInstance(Ci.nsILoginInfo);
     loginInfo.init(CardDAVServer.origin, null, "test", "bob", "bob", "", "");
-    Services.logins.addLogin(loginInfo);
+    await Services.logins.addLoginAsync(loginInfo);
   }
 
-  let directory = new CardDAVDirectory();
+  const directory = new CardDAVDirectory();
   directory.init("jscarddav://carddav.sqlite");
   return directory;
 }
@@ -63,7 +62,7 @@ function initDirectory() {
 async function clearDirectory(directory) {
   await directory.cleanUp();
 
-  let database = do_get_profile();
+  const database = do_get_profile();
   database.append("carddav.sqlite");
   database.remove(false);
 }
@@ -74,11 +73,11 @@ async function checkCardsOnServer(expectedCards) {
   await fetch(`${CardDAVServer.origin}/ping`);
 
   info("Checking cards on server are correct.");
-  let actualCards = [...CardDAVServer.cards];
+  const actualCards = [...CardDAVServer.cards];
   Assert.equal(actualCards.length, Object.keys(expectedCards).length);
 
   for (let [href, { etag, vCard }] of actualCards) {
-    let baseName = href
+    const baseName = href
       .substring(CardDAVServer.path.length)
       .replace(/\.vcf$/, "");
     info(baseName);
@@ -92,7 +91,7 @@ async function checkCardsOnServer(expectedCards) {
   }
 }
 
-let observer = {
+const observer = {
   notifications: {
     "addrbook-contact-created": [],
     "addrbook-contact-updated": [],
@@ -105,21 +104,21 @@ let observer = {
     }
     this.isInited = true;
 
-    for (let key of Object.keys(this.notifications)) {
+    for (const key of Object.keys(this.notifications)) {
       Services.obs.addObserver(observer, key);
     }
   },
   checkAndClearNotifications(expected) {
     Assert.deepEqual(this.notifications, expected);
-    for (let array of Object.values(this.notifications)) {
+    for (const array of Object.values(this.notifications)) {
       array.length = 0;
     }
   },
   observe(subject, topic) {
-    let uid = subject.QueryInterface(Ci.nsIAbCard).UID;
+    const uid = subject.QueryInterface(Ci.nsIAbCard).UID;
     info(`${topic}: ${uid}`);
     if (this.pendingPromise && this.pendingPromise.topic == topic) {
-      let promise = this.pendingPromise;
+      const promise = this.pendingPromise;
       this.pendingPromise = null;
       promise.resolve(uid);
       return;
@@ -133,7 +132,7 @@ let observer = {
   },
 };
 
-add_task(async () => {
+add_setup(async () => {
   CardDAVServer.open("bob", "bob");
   registerCleanupFunction(async () => {
     await CardDAVServer.close();
@@ -143,7 +142,7 @@ add_task(async () => {
 // Checks two vCard strings have the same lines, in any order.
 // Not very smart but smart enough.
 function vCardEqual(lhs, rhs, message) {
-  let lhsLines = lhs.split("\r\n").sort();
-  let rhsLines = rhs.split("\r\n").sort();
+  const lhsLines = lhs.split("\r\n").sort();
+  const rhsLines = rhs.split("\r\n").sort();
   Assert.deepEqual(lhsLines, rhsLines, message);
 }

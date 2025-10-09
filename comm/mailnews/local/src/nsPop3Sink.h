@@ -6,6 +6,7 @@
 #define nsPop3Sink_h__
 
 #include "nscore.h"
+#include "nsCOMPtr.h"
 #include "nsIPop3Sink.h"
 #include "nsIOutputStream.h"
 #include "prmem.h"
@@ -19,14 +20,6 @@
 class nsParseNewMailState;
 class nsIMsgFolder;
 
-struct partialRecord {
-  partialRecord();
-  ~partialRecord();
-
-  nsCOMPtr<nsIMsgDBHdr> m_msgDBHdr;
-  nsCString m_uidl;
-};
-
 class nsPop3Sink : public nsIPop3Sink {
  public:
   nsPop3Sink();
@@ -34,8 +27,6 @@ class nsPop3Sink : public nsIPop3Sink {
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIPOP3SINK
   nsresult GetServerFolder(nsIMsgFolder** aFolder);
-  nsresult FindPartialMessages();
-  void CheckPartialMessages(nsIPop3Protocol* protocol);
 
   static char* GetDummyEnvelope(void);
 
@@ -43,13 +34,13 @@ class nsPop3Sink : public nsIPop3Sink {
   virtual ~nsPop3Sink();
   nsresult WriteLineToMailbox(const nsACString& buffer);
   nsresult ReleaseFolderLock();
+  nsresult DiscardStalePartialMessages(nsIPop3Protocol* protocol);
 
   uint32_t m_biffState;
   int32_t m_numNewMessages;
   int32_t m_numNewMessagesInFolder;
   int32_t m_numMsgsDownloaded;
   bool m_senderAuthed;
-  nsCString m_outputBuffer;
   nsCOMPtr<nsIPop3IncomingServer> m_popServer;
   // Currently the folder we want to update about biff info
   nsCOMPtr<nsIMsgFolder> m_folder;
@@ -64,7 +55,6 @@ class nsPop3Sink : public nsIPop3Sink {
   nsCString m_baseMessageUri;
   nsCString m_origMessageUri;
   nsCString m_accountKey;
-  nsTArray<partialRecord*> m_partialMsgsArray;
 };
 
 #endif

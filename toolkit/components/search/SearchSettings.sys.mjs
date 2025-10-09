@@ -2,20 +2,18 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
+  AppProvidedSearchEngine:
+    "moz-src:///toolkit/components/search/AppProvidedSearchEngine.sys.mjs",
   DeferredTask: "resource://gre/modules/DeferredTask.sys.mjs",
-  SearchUtils: "resource://gre/modules/SearchUtils.sys.mjs",
+  ObjectUtils: "resource://gre/modules/ObjectUtils.sys.mjs",
+  SearchUtils: "moz-src:///toolkit/components/search/SearchUtils.sys.mjs",
 });
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  ObjectUtils: "resource://gre/modules/ObjectUtils.jsm",
-});
-
-XPCOMUtils.defineLazyGetter(lazy, "logConsole", () => {
+ChromeUtils.defineLazyGetter(lazy, "logConsole", () => {
   return console.createInstance({
     prefix: "SearchSettings",
     maxLogLevel: lazy.SearchUtils.loggingEnabled ? "Debug" : "Warn",
@@ -23,6 +21,27 @@ XPCOMUtils.defineLazyGetter(lazy, "logConsole", () => {
 });
 
 const SETTINGS_FILENAME = "search.json.mozlz4";
+
+/**
+ * A map of engine ids to their previous names. These are required for
+ * ensuring that user's settings are correctly migrated for users upgrading
+ * from a settings file prior to settings version 7 (Firefox 108).
+ *
+ * @type {Map<string, string>}
+ */
+const ENGINE_ID_TO_OLD_NAME_MAP = new Map([
+  ["wikipedia-hy", "Wikipedia (hy)"],
+  ["wikipedia-kn", "Wikipedia (kn)"],
+  ["wikipedia-lv", "Vikipēdija"],
+  ["wikipedia-NO", "Wikipedia (no)"],
+  ["wikipedia-el", "Wikipedia (el)"],
+  ["wikipedia-lt", "Wikipedia (lt)"],
+  ["wikipedia-my", "Wikipedia (my)"],
+  ["wikipedia-pa", "Wikipedia (pa)"],
+  ["wikipedia-pt", "Wikipedia (pt)"],
+  ["wikipedia-si", "Wikipedia (si)"],
+  ["wikipedia-tr", "Wikipedia (tr)"],
+]);
 
 /**
  * This class manages the saves search settings.
@@ -33,12 +52,22 @@ const SETTINGS_FILENAME = "search.json.mozlz4";
 export class SearchSettings {
   constructor(searchService) {
     this.#searchService = searchService;
+
+    // Once the search service has initialized, schedule a write to ensure
+    // that any settings that may have changed or need updating are handled.
+    searchService.promiseInitialized.then(() => {
+      this._delayedWrite();
+    });
   }
 
   QueryInterface = ChromeUtils.generateQI([Ci.nsIObserver]);
 
   // Delay for batching invalidation of the JSON settings (ms)
   static SETTINGS_INVALIDATION_DELAY = 1000;
+
+  get #settingsFilePath() {
+    return PathUtils.join(PathUtils.profileDir, SETTINGS_FILENAME);
+  }
 
   /**
    * A reference to the pending DeferredTask, if there is one.
@@ -93,11 +122,14 @@ export class SearchSettings {
   #settings = null;
 
   /**
-   * @type {object} A deep copy of #settings.
-   *   #cachedSettings is updated when we read the settings from disk and when
-   *   we write settings to disk. #cachedSettings is compared with #settings
-   *   before we do a write to disk. If there's no change to the settings
-   *   attributes, then we don't write the settings to disk.
+   * #cachedSettings is updated when we read the settings from disk and when
+   * we write settings to disk. #cachedSettings is compared with #settings
+   * before we do a write to disk. If there's no change to the settings
+   * attributes, then we don't write the settings to disk.
+   *
+   * This is a deep copy of #settings.
+   *
+   * @type {object}
    */
   #cachedSettings = {};
 
@@ -115,30 +147,39 @@ export class SearchSettings {
   }
 
   /**
+   * Whether the last `get` reset the settings because they were corrupt.
+   */
+  lastGetCorrupt = false;
+
+  /**
    * Reads the settings file.
    *
    * @param {string} origin
    *   If this parameter is "test", then the settings will not be written. As
    *   some tests manipulate the settings directly, we allow turning off writing to
    *   avoid writing stale settings data.
-   * @returns {object}
+   * @returns {Promise<object>}
    *   Returns the settings file data.
    */
   async get(origin = "") {
+    this.lastGetCorrupt = false;
+
     let json;
     await this._ensurePendingWritesCompleted(origin);
     try {
-      let settingsFilePath = PathUtils.join(
-        PathUtils.profileDir,
-        SETTINGS_FILENAME
-      );
-      json = await IOUtils.readJSON(settingsFilePath, { decompress: true });
+      json = await IOUtils.readJSON(this.#settingsFilePath, {
+        decompress: true,
+      });
       if (!json.engines || !json.engines.length) {
         throw new Error("no engine in the file");
       }
     } catch (ex) {
-      lazy.logConsole.debug("get: No settings file exists, new profile?", ex);
-      json = {};
+      if (DOMException.isInstance(ex) && ex.name === "NotFoundError") {
+        lazy.logConsole.debug("get: No settings file exists, new profile?", ex);
+        return this.#resetSettings(false);
+      }
+      lazy.logConsole.error("get: Settings file empty or corrupt.", ex);
+      return this.#resetSettings(true);
     }
 
     this.#settings = json;
@@ -148,27 +189,52 @@ export class SearchSettings {
       this.#settings.metaData = {};
     }
 
-    // Versions of gecko older than 82 stored the order flag as a preference.
-    // This was changed in version 6 of the settings file.
-    if (
-      this.#settings.version < 6 ||
-      !("useSavedOrder" in this.#settings.metaData)
-    ) {
-      const prefName = lazy.SearchUtils.BROWSER_SEARCH_PREF + "useDBForOrder";
-      let useSavedOrder = Services.prefs.getBoolPref(prefName, false);
-
-      this.setMetaDataAttribute("useSavedOrder", useSavedOrder);
-
-      // Clear the old pref so it isn't lying around.
-      Services.prefs.clearUserPref(prefName);
-    }
-
-    // Added in Firefox 110.
-    if (this.#settings.version < 8 && Array.isArray(this.#settings.engines)) {
-      this.#migrateTelemetryLoadPaths();
+    try {
+      await this.#migrateSettings();
+    } catch (ex) {
+      lazy.logConsole.error("get: Migration failed.", ex);
+      return this.#resetSettings(true);
     }
 
     return structuredClone(json);
+  }
+
+  /**
+   * Resets the search settings without writing to disk yet.
+   *
+   * If the reset is due to a corrupt settings file, the corrupt file is
+   * backed up, the lastSettingsCorruptTime pref is set to the current time,
+   * and this.lastGetCorrupt is set to true.
+   *
+   * @param {boolean} corrupt
+   *   Whether the reset is carried out because the settings are corrupt.
+   * @returns {Promise<object>}
+   *   New empty search settings.
+   */
+  async #resetSettings(corrupt) {
+    this.#settings = { metaData: {} };
+    this.#cachedSettings = {};
+
+    if (corrupt) {
+      this.lastGetCorrupt = true;
+      Services.prefs.setIntPref(
+        lazy.SearchUtils.BROWSER_SEARCH_PREF + "lastSettingsCorruptTime",
+        Date.now() / 1000
+      );
+      try {
+        await IOUtils.move(
+          this.#settingsFilePath,
+          this.#settingsFilePath + ".bak"
+        );
+      } catch (ex) {
+        lazy.logConsole.warn(
+          "#resetSettings: Unable to create backup of corrupt settings file.",
+          ex
+        );
+      }
+    }
+
+    return structuredClone(this.#settings);
   }
 
   /**
@@ -285,10 +351,9 @@ export class SearchSettings {
       this.#cachedSettings = structuredClone(this.#settings);
 
       lazy.logConsole.debug("_write: Writing to settings file.");
-      let path = PathUtils.join(PathUtils.profileDir, SETTINGS_FILENAME);
-      await IOUtils.writeJSON(path, settings, {
+      await IOUtils.writeJSON(this.#settingsFilePath, settings, {
         compress: true,
-        tmpPath: path + ".tmp",
+        tmpPath: this.#settingsFilePath + ".tmp",
       });
       lazy.logConsole.debug("_write: settings file written to disk.");
       Services.obs.notifyObservers(
@@ -347,7 +412,6 @@ export class SearchSettings {
    *
    * @returns {*}
    *   A copy of the settings metadata object.
-   *
    */
   getSettingsMetaData() {
     return { ...this.#settings.metaData };
@@ -358,21 +422,36 @@ export class SearchSettings {
    *
    * @param {string} name
    *   The name of the attribute to get.
+   * @param {boolean} isAppProvided
+   *   |true| if the engine associated with the attribute is an application
+   *          provided engine.
    * @returns {*}
-   *   The value of the attribute, or undefined if not known or an empty strings
-   *   if it does not match the verification hash.
+   *   The value of the attribute.
+   *   We return undefined if the value of the attribute is not known or does
+   *   not match the verification hash.
    */
-  getVerifiedMetaDataAttribute(name) {
-    let val = this.getMetaDataAttribute(name);
+  getVerifiedMetaDataAttribute(name, isAppProvided) {
+    let attribute = this.getMetaDataAttribute(name);
+
+    // If the selected engine is an application provided one, we can relax the
+    // verification hash check to reduce the annoyance for users who
+    // backup/sync their profile in custom ways.
+    if (isAppProvided) {
+      return attribute;
+    }
+
     if (
-      val &&
+      attribute &&
       this.getMetaDataAttribute(this.getHashName(name)) !=
-        lazy.SearchUtils.getVerificationHash(val)
+        lazy.SearchUtils.getVerificationHash(attribute)
     ) {
-      lazy.logConsole.warn("getVerifiedGlobalAttr, invalid hash for", name);
+      lazy.logConsole.warn(
+        "getVerifiedMetaDataAttribute, invalid hash for",
+        name
+      );
       return undefined;
     }
-    return val;
+    return attribute;
   }
 
   /**
@@ -387,7 +466,7 @@ export class SearchSettings {
    */
   setEngineMetaDataAttribute(engineName, property, value) {
     let engines = [...this.#searchService._engines.values()];
-    let engine = engines.find(engine => engine._name == engineName);
+    let engine = engines.find(e => e._name == engineName);
     if (engine) {
       engine._metaData[property] = value;
       this._delayedWrite();
@@ -405,9 +484,7 @@ export class SearchSettings {
    *   The value of the attribute, or undefined if not known.
    */
   getEngineMetaDataAttribute(engineName, property) {
-    let engine = this.#settings.engines.find(
-      engine => engine._name == engineName
-    );
+    let engine = this.#settings.engines.find(e => e._name == engineName);
     return engine._metaData[property] ?? undefined;
   }
 
@@ -467,11 +544,19 @@ export class SearchSettings {
           case lazy.SearchUtils.MODIFIED_TYPE.REMOVED:
             this._delayedWrite();
             break;
+          case lazy.SearchUtils.MODIFIED_TYPE.ICON_CHANGED:
+            // Application Provided Search Engines have their icons stored in
+            // Remote Settings, so we don't need to update the saved settings.
+            if (
+              !(engine?.wrappedJSObject instanceof lazy.AppProvidedSearchEngine)
+            ) {
+              this._delayedWrite();
+            }
+            break;
         }
         break;
       case lazy.SearchUtils.TOPIC_SEARCH_SERVICE:
         switch (verb) {
-          case "init-complete":
           case "engines-reloaded":
             this._delayedWrite();
             break;
@@ -562,24 +647,35 @@ export class SearchSettings {
   }
 
   /**
-   * Migrates telemetry load paths for versions of settings prior to v8.
+   * Finds the settings for the engine, based on the version of the settings
+   * passed in. Older versions of settings used the engine name as the key,
+   * whereas newer versions now use the engine id.
+   *
+   * @param {object} settings
+   *   The saved settings object.
+   * @param {string} engineId
+   *   The id of the engine.
+   * @param {string} engineName
+   *   The name of the engine.
+   * @returns {object|undefined}
+   *   The engine settings if found, undefined otherwise.
    */
-  #migrateTelemetryLoadPaths() {
-    for (let engine of this.#settings.engines) {
-      if (!engine._loadPath) {
-        continue;
+  static findSettingsForEngine(settings, engineId, engineName) {
+    if (settings.version <= 6) {
+      let engineSettings = settings.engines?.find(e => e._name == engineName);
+      if (!engineSettings) {
+        // If we can't find the engine settings with the current name,
+        // see if there was an older name.
+        let oldEngineName = ENGINE_ID_TO_OLD_NAME_MAP.get(engineId);
+        if (oldEngineName) {
+          engineSettings = settings.engines?.find(
+            e => e._name == oldEngineName
+          );
+        }
       }
-      if (engine._loadPath.includes("set-via-policy")) {
-        engine._loadPath = "[policy]";
-      } else if (engine._loadPath.includes("set-via-user")) {
-        engine._loadPath = "[user]";
-      } else if (engine._loadPath.startsWith("[other]addEngineWithDetails:")) {
-        engine._loadPath = engine._loadPath.replace(
-          "[other]addEngineWithDetails:",
-          "[addon]"
-        );
-      }
+      return engineSettings;
     }
+    return settings.engines?.find(e => e.id == engineId);
   }
 
   /**
@@ -588,7 +684,7 @@ export class SearchSettings {
    *
    * @param {string} engineName
    *   The name of the engine.
-   * @returns {SearchEngine}
+   * @returns {nsISearchEngine}
    *   The associated engine if found, null otherwise.
    */
   #getEngineByName(engineName) {
@@ -599,5 +695,221 @@ export class SearchSettings {
     }
 
     return null;
+  }
+
+  /**
+   * Migrates older settings to the latest version.
+   * Does not migrate the engine IDs yet because that happens
+   * after the ApplicationProvidedEngines have been loaded.
+   */
+  async #migrateSettings() {
+    this.#migrateTo6();
+    this.#migrateTo8();
+    this.#migrateTo9();
+    this.#migrateTo10();
+    this.#migrateTo11();
+    await this.#migrateTo12();
+  }
+
+  #migrateTo6() {
+    // Versions of gecko older than 82 stored the order flag as a preference.
+    // See bug 1642995.
+    if (
+      this.#settings.version < 6 ||
+      !("useSavedOrder" in this.#settings.metaData)
+    ) {
+      const prefName = lazy.SearchUtils.BROWSER_SEARCH_PREF + "useDBForOrder";
+      let useSavedOrder = Services.prefs.getBoolPref(prefName, false);
+
+      this.setMetaDataAttribute("useSavedOrder", useSavedOrder);
+
+      // Clear the old pref so it isn't lying around.
+      Services.prefs.clearUserPref(prefName);
+    }
+  }
+
+  #migrateTo8() {
+    // The load path is changed to better differentiate policy/user/
+    // add-on engines for telemetry. See bug 1801813.
+    if (this.#settings.version < 8 && Array.isArray(this.#settings.engines)) {
+      for (let engine of this.#settings.engines) {
+        if (!engine._loadPath) {
+          continue;
+        }
+        if (engine._loadPath.includes("set-via-policy")) {
+          engine._loadPath = "[policy]";
+        } else if (engine._loadPath.includes("set-via-user")) {
+          engine._loadPath = "[user]";
+        } else if (
+          engine._loadPath.startsWith("[other]addEngineWithDetails:")
+        ) {
+          engine._loadPath = engine._loadPath.replace(
+            "[other]addEngineWithDetails:",
+            "[addon]"
+          );
+        }
+      }
+    }
+  }
+
+  #migrateTo9() {
+    // The hiddenOneOffs pref is moved to the search settings.
+    // See bug 1643887.
+    if (this.#settings.version < 9 && this.#settings.engines) {
+      const hiddenOneOffsPrefs = Services.prefs.getStringPref(
+        "browser.search.hiddenOneOffs",
+        ""
+      );
+      for (const engine of this.#settings.engines) {
+        engine._metaData.hideOneOffButton = hiddenOneOffsPrefs.includes(
+          engine._name
+        );
+      }
+      Services.prefs.clearUserPref("browser.search.hiddenOneOffs");
+    }
+  }
+
+  #migrateTo10() {
+    // The format of the IDs of app provided engines is changed.
+    // See bug 1870687.
+    if (
+      this.#settings.version > 6 &&
+      this.#settings.version < 10 &&
+      this.#settings.engines
+    ) {
+      let changedEngines = new Map();
+      for (let engine of this.#settings.engines) {
+        if (engine._isAppProvided && engine.id) {
+          let oldId = engine.id;
+          engine.id = engine.id
+            .replace("@search.mozilla.orgdefault", "")
+            .replace("@search.mozilla.org", "-");
+          changedEngines.set(oldId, engine.id);
+        }
+      }
+
+      const PROPERTIES_CONTAINING_IDS = [
+        "privateDefaultEngineId",
+        "appDefaultEngineId",
+        "defaultEngineId",
+      ];
+
+      for (let prop of PROPERTIES_CONTAINING_IDS) {
+        if (changedEngines.has(this.#settings.metaData[prop])) {
+          this.#settings.metaData[prop] = changedEngines.get(
+            this.#settings.metaData[prop]
+          );
+        }
+      }
+    }
+  }
+
+  #migrateTo11() {
+    // The keys of _iconMapObj are changed from width and height to width only.
+    // See bug 1655066.
+    if (this.#settings.version < 11 && this.#settings.engines) {
+      for (let engine of this.#settings.engines) {
+        if (!engine._iconMapObj) {
+          continue;
+        }
+        let oldIconMap = engine._iconMapObj;
+        engine._iconMapObj = {};
+
+        for (let [sizeStr, icon] of Object.entries(oldIconMap)) {
+          let sizeObj;
+          try {
+            sizeObj = JSON.parse(sizeStr);
+          } catch {}
+          if (
+            typeof sizeObj === "object" &&
+            "width" in sizeObj &&
+            parseInt(sizeObj.width) > 0 &&
+            sizeObj.width == sizeObj.height
+          ) {
+            engine._iconMapObj[sizeObj.width] = icon;
+          } else if (typeof sizeObj === "number") {
+            // This happens if the user copies a version 11+ search config to
+            // an old install, which gets updated eventually; see bug 1940533.
+            engine._iconMapObj[sizeObj] = icon;
+          }
+        }
+      }
+    }
+  }
+
+  async #migrateTo12() {
+    // _iconURL is removed and its icon is stored in _iconMapObj instead.
+    // See bug 1655076.
+    if (this.#settings.version < 12 && this.#settings.engines) {
+      for (let engine of this.#settings.engines) {
+        if (engine._iconURL) {
+          let iconURL = engine._iconURL;
+          delete engine._iconURL;
+
+          let uri = lazy.SearchUtils.makeURI(iconURL);
+          if (!uri) {
+            continue;
+          }
+
+          // The URL should be either a data or moz-extension URL so this should
+          // always succeed and be fast. We skip other schemes just to be sure.
+          // If we fail to fetch or decode the icon, we assume it's 16x16.
+          switch (uri.scheme) {
+            case "moz-extension":
+              try {
+                await lazy.AddonManager.readyPromise;
+              } catch (e) {
+                if (e == "shutting down") {
+                  throw new Error("Addon manager shutting down");
+                } else {
+                  throw new Error("Addon manager failed");
+                }
+              }
+              break;
+            case "data":
+              break;
+            default:
+              continue;
+          }
+
+          let byteArray, contentType;
+          try {
+            [byteArray, contentType] = await lazy.SearchUtils.fetchIcon(uri);
+          } catch {
+            lazy.logConsole.warn(
+              `_iconURL migration: failed to load icon of search engine ${engine._name}.`
+            );
+            engine._iconMapObj ||= {};
+            engine._iconMapObj[16] = iconURL;
+            continue;
+          }
+
+          // MAX_ICON_SIZE is not enforced in some cases. In those cases, we
+          // rescale the icon to 32x32.
+          if (byteArray.length > lazy.SearchUtils.MAX_ICON_SIZE) {
+            try {
+              [byteArray, contentType] = lazy.SearchUtils.rescaleIcon(
+                byteArray,
+                contentType
+              );
+              let url =
+                "data:" + contentType + ";base64," + byteArray.toBase64();
+
+              engine._iconMapObj ||= {};
+              engine._iconMapObj[32] = url;
+            } catch {
+              lazy.logConsole.warn(
+                `_iconURL migration: failed to resize icon of search engine ${engine._name}.`
+              );
+            }
+            continue;
+          }
+
+          let size = lazy.SearchUtils.decodeSize(byteArray, contentType, 16);
+          engine._iconMapObj ||= {};
+          engine._iconMapObj[size] = iconURL;
+        }
+      }
+    }
   }
 }

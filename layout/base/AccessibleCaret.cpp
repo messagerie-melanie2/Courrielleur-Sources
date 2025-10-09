@@ -7,18 +7,25 @@
 #include "AccessibleCaret.h"
 
 #include "AccessibleCaretLogger.h"
+#include "mozilla/Assertions.h"
+#include "mozilla/BuiltInStyleSheets.h"
+#include "mozilla/Components.h"
+#include "mozilla/ErrorResult.h"
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/dom/Document.h"
+#include "mozilla/dom/ShadowRoot.h"
 #include "mozilla/ToString.h"
 #include "nsCanvasFrame.h"
 #include "nsCaret.h"
 #include "nsCSSFrameConstructor.h"
 #include "nsDOMTokenList.h"
+#include "nsGenericHTMLElement.h"
 #include "nsIFrame.h"
 #include "nsLayoutUtils.h"
 #include "nsPlaceholderFrame.h"
+#include "nsIPrefetchService.h"
 
 namespace mozilla {
 using namespace dom;
@@ -33,9 +40,8 @@ using namespace dom;
 
 NS_IMPL_ISUPPORTS(AccessibleCaret::DummyTouchListener, nsIDOMEventListener)
 
-const nsLiteralString AccessibleCaret::sTextOverlayElementId =
-    u"text-overlay"_ns;
-const nsLiteralString AccessibleCaret::sCaretImageElementId = u"image"_ns;
+static constexpr auto kTextOverlayElementId = u"text-overlay"_ns;
+static constexpr auto kCaretImageElementId = u"image"_ns;
 
 #define AC_PROCESS_ENUM_TO_STREAM(e) \
   case (e):                          \
@@ -75,7 +81,6 @@ AccessibleCaret::AccessibleCaret(PresShell* aPresShell)
     : mPresShell(aPresShell) {
   // Check all resources required.
   if (mPresShell) {
-    MOZ_ASSERT(RootFrame());
     MOZ_ASSERT(mPresShell->GetDocument());
     InjectCaretElement(mPresShell->GetDocument());
   }
@@ -87,12 +92,20 @@ AccessibleCaret::~AccessibleCaret() {
   }
 }
 
+dom::Element* AccessibleCaret::TextOverlayElement() const {
+  return mCaretElementHolder->Root()->GetElementById(kTextOverlayElementId);
+}
+
+dom::Element* AccessibleCaret::CaretImageElement() const {
+  return mCaretElementHolder->Root()->GetElementById(kCaretImageElementId);
+}
+
 void AccessibleCaret::SetAppearance(Appearance aAppearance) {
   if (mAppearance == aAppearance) {
     return;
   }
 
-  ErrorResult rv;
+  IgnoredErrorResult rv;
   CaretElement().ClassList()->Remove(AppearanceString(mAppearance), rv);
   MOZ_ASSERT(!rv.Failed(), "Remove old appearance failed!");
 
@@ -171,7 +184,6 @@ void AccessibleCaret::EnsureApzAware() {
   // if that's the case we register a dummy listener if there isn't one on
   // the element already.
   if (!CaretElement().IsApzAware()) {
-    // FIXME(emilio): Is this needed anymore?
     CaretElement().AddEventListener(u"touchstart"_ns, mDummyTouchListener,
                                     false);
   }
@@ -183,43 +195,44 @@ bool AccessibleCaret::IsInPositionFixedSubtree() const {
 }
 
 void AccessibleCaret::InjectCaretElement(Document* aDocument) {
-  IgnoredErrorResult rv;
-  RefPtr<Element> element = CreateCaretElement(aDocument);
-  mCaretElementHolder =
-      aDocument->InsertAnonymousContent(*element, /* aForce = */ false, rv);
+  mCaretElementHolder = aDocument->InsertAnonymousContent(IgnoreErrors());
+  MOZ_RELEASE_ASSERT(mCaretElementHolder, "We must have anonymous content!");
 
-  MOZ_ASSERT(!rv.Failed(), "Insert anonymous content should not fail!");
-  MOZ_ASSERT(mCaretElementHolder, "We must have anonymous content!");
-
-  // InsertAnonymousContent will clone the element to make an AnonymousContent.
-  // Since event listeners are not being cloned when cloning a node, we need to
-  // add the listener here.
+  CreateCaretElement();
   EnsureApzAware();
 }
 
-already_AddRefed<Element> AccessibleCaret::CreateCaretElement(
-    Document* aDocument) const {
+void AccessibleCaret::CreateCaretElement() const {
   // Content structure of AccessibleCaret
   // <div class="moz-accessiblecaret">  <- CaretElement()
-  //   <div id="text-overlay">          <- TextOverlayElement()
-  //   <div id="image">                 <- CaretImageElement()
+  //   <#shadow-root>
+  //     <div id="text-overlay">          <- TextOverlayElement()
+  //     <div id="image">                 <- CaretImageElement()
 
-  ErrorResult rv;
-  RefPtr<Element> parent = aDocument->CreateHTMLElement(nsGkAtoms::div);
-  parent->ClassList()->Add(u"moz-accessiblecaret"_ns, rv);
-  parent->ClassList()->Add(u"none"_ns, rv);
+  constexpr bool kNotify = false;
 
-  auto CreateAndAppendChildElement =
-      [aDocument, &parent](const nsLiteralString& aElementId) {
-        RefPtr<Element> child = aDocument->CreateHTMLElement(nsGkAtoms::div);
-        child->SetAttr(kNameSpaceID_None, nsGkAtoms::id, aElementId, true);
-        parent->AppendChildTo(child, false, IgnoreErrors());
-      };
+  Element& host = CaretElement();
+  host.SetAttr(kNameSpaceID_None, nsGkAtoms::_class,
+               u"moz-accessiblecaret none"_ns, kNotify);
 
-  CreateAndAppendChildElement(sTextOverlayElementId);
-  CreateAndAppendChildElement(sCaretImageElementId);
+  ShadowRoot* root = mCaretElementHolder->Root();
+  Document* doc = host.OwnerDoc();
+  {
+    // FIXME(emilio): This papers over prefetch service initialization order
+    // issues, see bug 1968390.
+    nsCOMPtr<nsIPrefetchService> prefetchService(components::Prefetch::Service());
+    Unused << prefetchService;
+  }
+  root->AppendBuiltInStyleSheet(BuiltInStyleSheet::AccessibleCaret);
 
-  return parent.forget();
+  auto CreateAndAppendChildElement = [&](const nsLiteralString& aElementId) {
+    RefPtr<Element> child = doc->CreateHTMLElement(nsGkAtoms::div);
+    child->SetAttr(kNameSpaceID_None, nsGkAtoms::id, aElementId, kNotify);
+    mCaretElementHolder->Root()->AppendChildTo(child, kNotify, IgnoreErrors());
+  };
+
+  CreateAndAppendChildElement(kTextOverlayElementId);
+  CreateAndAppendChildElement(kCaretImageElementId);
 }
 
 void AccessibleCaret::RemoveCaretElement(Document* aDocument) {
@@ -288,10 +301,8 @@ nsIFrame* AccessibleCaret::RootFrame() const {
 }
 
 nsIFrame* AccessibleCaret::CustomContentContainerFrame() const {
-  nsCanvasFrame* canvasFrame = mPresShell->GetCanvasFrame();
-  Element* container = canvasFrame->GetCustomContentContainer();
-  nsIFrame* containerFrame = container->GetPrimaryFrame();
-  return containerFrame;
+  Element* container = mPresShell->GetDocument()->GetCustomContentContainer();
+  return container->GetPrimaryFrame();
 }
 
 void AccessibleCaret::SetCaretElementStyle(const nsRect& aRect,

@@ -31,8 +31,10 @@ appmenuitem-downloads =
   .label = Downloads
 appmenuitem-passwords =
     .label = Passwords
-appmenuitem-addons-and-themes =
-    .label = Add-ons and themes
+appmenuitem-extensions-and-themes =
+    .label = Extensions and themes
+appmenuitem-extensions =
+    .label = Extensions
 appmenuitem-print =
   .label = Print…
 appmenuitem-find-in-page =
@@ -81,8 +83,13 @@ appmenu-remote-tabs-turn-on-sync =
 
 # This is shown after the tabs list if we can display more tabs by clicking on the button
 appmenu-remote-tabs-showmore =
-  .label = Show More Tabs
+  .label = Show more tabs
   .tooltiptext = Show more tabs from this device
+
+# This is shown as the label for an element to show inactive tabs from this device.
+appmenu-remote-tabs-show-inactive-tabs =
+  .label = Inactive tabs
+  .tooltiptext = See inactive tabs on this device
 
 # This is shown beneath the name of a device when that device has no open tabs
 appmenu-remote-tabs-notabs = No open tabs
@@ -105,7 +112,7 @@ appmenu-remote-tabs-unverified = Your account needs to be verified.
 appmenuitem-fxa-toolbar-sync-now2 = Sync now
 appmenuitem-fxa-sign-in = Sign in to { -brand-product-name }
 appmenuitem-fxa-manage-account = Manage account
-appmenu-fxa-header2 = { -fxaccount-brand-name(capitalization: "sentence") }
+appmenu-account-header = Account
 # Variables
 # $time (string) - Localized relative time since last sync (e.g. 1 second ago,
 # 3 hours ago, etc.)
@@ -115,19 +122,12 @@ appmenu-fxa-sync-and-save-data2 = Sync and save data
 appmenu-fxa-signed-in-label = Sign In
 appmenu-fxa-setup-sync =
     .label = Turn On Syncing…
-
+appmenu-fxa-setup-sync-new = Turn On
 appmenuitem-save-page =
     .label = Save page as…
 
-## What's New panel in App menu.
-
-whatsnew-panel-header = What’s New
-
-# Checkbox displayed at the bottom of the What's New panel, allowing users to
-# enable/disable What's New notifications.
-whatsnew-panel-footer-checkbox =
-  .label = Notify about new features
-  .accesskey = f
+appmenuitem-fxa-sync-off-title = Sync is off
+appmenuitem-fxa-sync-off-description = Protect and access your bookmarks, passwords, and more anywhere.
 
 ## The Firefox Profiler – The popup is the UI to turn on the profiler, and record
 ## performance profiles. To enable it go to profiler.firefox.com and click
@@ -193,7 +193,7 @@ profiler-popup-capture-shortcut =
 ## They are shown in the popup's select box.
 
 # Presets and their l10n IDs are defined in the file
-# devtools/client/performance-new/shared/background.jsm.js
+# devtools/client/performance-new/shared/background.sys.mjs
 # Please take care that the same values are also defined in devtools' perftools.ftl.
 
 profiler-popup-presets-web-developer-description = Recommended preset for most web app debugging, with low overhead.
@@ -220,6 +220,10 @@ profiler-popup-presets-power-description = Preset for investigating power use bu
 # "Power" is used in the sense of energy (electricity used by the computer).
 profiler-popup-presets-power-label =
   .label = Power
+
+profiler-popup-presets-debug-description = Preset for debugging in { -brand-shorter-name }. High overhead, do not use for performance work but use for focusing on understanding browser behavior.
+profiler-popup-presets-debug-label =
+  .label = Debug
 
 profiler-popup-presets-custom-label =
   .label = Custom
@@ -254,8 +258,6 @@ appmenu-get-help =
 appmenu-help-more-troubleshooting-info =
     .label = More troubleshooting information
     .accesskey = t
-appmenu-help-report-site-issue =
-    .label = Report site issue…
 appmenu-help-share-ideas =
     .label = Share ideas and feedback…
     .accesskey = S
@@ -290,3 +292,32 @@ appmenu-customizetoolbar =
 appmenu-developer-tools-subheader = Browser tools
 appmenu-developer-tools-extensions =
     .label = Extensions for developers
+appmenuitem-report-broken-site =
+  .label = Report broken site
+
+## Panel for privacy and security products
+
+appmenuitem-sign-in-account = Sign in to your account
+
+appmenuitem-monitor-title = { -monitor-brand-short-name }
+appmenuitem-monitor-description = Get data breach alerts
+appmenuitem-relay-title = { -relay-brand-short-name }
+appmenuitem-relay-description = Mask your real email and phone
+appmenuitem-services-relay-description = Launch email masks dashboard
+appmenuitem-vpn-title = { -mozilla-vpn-brand-name }
+appmenuitem-vpn-description = Protect your online activity
+
+appmenu-services-header = My services
+appmenu-other-protection-header = Try other protection tools from { -vendor-short-name }:
+
+## Profiles panel
+
+appmenu-profiles-2 =
+    .label = Profiles
+appmenu-other-profiles = Other profiles
+appmenu-manage-profiles =
+    .label = Manage profiles
+appmenu-create-profile =
+    .label = New profile
+appmenu-edit-profile =
+    .aria-label = Edit profile

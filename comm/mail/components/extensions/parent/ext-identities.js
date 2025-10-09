@@ -2,18 +2,25 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "MailServices",
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
+
 ChromeUtils.defineESModuleGetters(this, {
   DeferredTask: "resource://gre/modules/DeferredTask.sys.mjs",
 });
 
+var { convertMailIdentity, getMailAccounts } = ChromeUtils.importESModule(
+  "resource:///modules/ExtensionAccounts.sys.mjs"
+);
+
+var { NOTIFICATION_COLLAPSE_TIME } = ChromeUtils.importESModule(
+  "resource:///modules/ExtensionUtilities.sys.mjs"
+);
+
 function findIdentityAndAccount(identityId) {
-  for (let account of MailServices.accounts.accounts) {
-    for (let identity of account.identities) {
+  for (const account of getMailAccounts()) {
+    for (const identity of account.identities) {
       if (identity.key == identityId) {
         return { account, identity };
       }
@@ -23,8 +30,8 @@ function findIdentityAndAccount(identityId) {
 }
 
 function checkForProtectedProperties(details) {
-  const protectedProperties = ["id", "accountId"];
-  for (let [key, value] of Object.entries(details)) {
+  const protectedProperties = ["id", "accountId", "encryptionCapabilities"];
+  for (const [key, value] of Object.entries(details)) {
     // Check only properties explicitly provided.
     if (value != null && protectedProperties.includes(key)) {
       throw new ExtensionError(
@@ -35,7 +42,7 @@ function checkForProtectedProperties(details) {
 }
 
 function updateIdentity(identity, details) {
-  for (let [key, value] of Object.entries(details)) {
+  for (const [key, value] of Object.entries(details)) {
     // Update only properties explicitly provided.
     if (value == null) {
       continue;
@@ -77,8 +84,8 @@ var identitiesTracker = new (class extends EventEmitter {
     // Keep track of identities and their values, to suppress superfluous
     // update notifications. The deferredTask timer is used to collapse multiple
     // update notifications.
-    for (let account of MailServices.accounts.accounts) {
-      for (let identity of account.identities) {
+    for (const account of getMailAccounts()) {
+      for (const identity of account.identities) {
         this.identities.set(
           identity.key,
           convertMailIdentity(account, identity)
@@ -90,7 +97,7 @@ var identitiesTracker = new (class extends EventEmitter {
   incrementListeners() {
     this.listenerCount++;
     if (this.listenerCount == 1) {
-      for (let topic of this._notifications) {
+      for (const topic of this._notifications) {
         Services.obs.addObserver(this, topic);
       }
       Services.prefs.addObserver("mail.identity.", this);
@@ -99,7 +106,7 @@ var identitiesTracker = new (class extends EventEmitter {
   decrementListeners() {
     this.listenerCount--;
     if (this.listenerCount == 0) {
-      for (let topic of this._notifications) {
+      for (const topic of this._notifications) {
         Services.obs.removeObserver(this, topic);
       }
       Services.prefs.removeObserver("mail.identity.", this);
@@ -107,18 +114,21 @@ var identitiesTracker = new (class extends EventEmitter {
   }
 
   emitPendingNotification(key) {
-    let ia = findIdentityAndAccount(key);
+    const ia = findIdentityAndAccount(key);
     if (!ia) {
       return;
     }
 
-    let oldValues = this.identities.get(key);
-    let newValues = convertMailIdentity(ia.account, ia.identity);
-    let changedValues = {};
-    for (let propertyName of Object.keys(newValues)) {
+    const oldValues = this.identities.get(key);
+    const newValues = convertMailIdentity(ia.account, ia.identity);
+    const changedValues = {};
+    for (const propertyName of Object.keys(newValues)) {
       if (
         !oldValues.hasOwnProperty(propertyName) ||
-        oldValues[propertyName] != newValues[propertyName]
+        // The objects being returned by the API are always in the same order,
+        // so stringify can be used as a simple deep assertion.
+        JSON.stringify(oldValues[propertyName]) !=
+          JSON.stringify(newValues[propertyName])
       ) {
         changedValues[propertyName] = newValues[propertyName];
       }
@@ -126,7 +136,7 @@ var identitiesTracker = new (class extends EventEmitter {
     if (Object.keys(changedValues).length > 0) {
       changedValues.accountId = ia.account.key;
       changedValues.id = ia.identity.key;
-      let notification =
+      const notification =
         Object.keys(oldValues).length == 0
           ? "account-identity-added"
           : "account-identity-updated";
@@ -142,7 +152,7 @@ var identitiesTracker = new (class extends EventEmitter {
     switch (topic) {
       case "account-identity-added":
         {
-          let key = data;
+          const key = data;
           this.identities.set(key, {});
           this.deferredNotifications.get(key).arm();
         }
@@ -150,7 +160,7 @@ var identitiesTracker = new (class extends EventEmitter {
 
       case "nsPref:changed":
         {
-          let key = data.split(".").slice(2, 3).pop();
+          const key = data.split(".").slice(2, 3).pop();
 
           // Ignore update notifications for created identities, before they are
           // added to an account (looks like they are cloned from a default
@@ -168,7 +178,7 @@ var identitiesTracker = new (class extends EventEmitter {
 
       case "account-identity-removed":
         {
-          let key = data;
+          const key = data;
           if (
             key &&
             this.identities.has(key) &&
@@ -193,7 +203,7 @@ this.identities = class extends ExtensionAPIPersistent {
     // available after fire.wakeup() has fulfilled (ensuring the convert() function
     // has been called).
 
-    onCreated({ context, fire }) {
+    onCreated({ fire }) {
       async function listener(event, key, identity) {
         if (fire.wakeup) {
           await fire.wakeup();
@@ -205,13 +215,12 @@ this.identities = class extends ExtensionAPIPersistent {
         unregister: () => {
           identitiesTracker.off("account-identity-added", listener);
         },
-        convert(newFire, extContext) {
+        convert(newFire) {
           fire = newFire;
-          context = extContext;
         },
       };
     },
-    onUpdated({ context, fire }) {
+    onUpdated({ fire }) {
       async function listener(event, key, changedValues) {
         if (fire.wakeup) {
           await fire.wakeup();
@@ -223,13 +232,12 @@ this.identities = class extends ExtensionAPIPersistent {
         unregister: () => {
           identitiesTracker.off("account-identity-updated", listener);
         },
-        convert(newFire, extContext) {
+        convert(newFire) {
           fire = newFire;
-          context = extContext;
         },
       };
     },
-    onDeleted({ context, fire }) {
+    onDeleted({ fire }) {
       async function listener(event, key) {
         if (fire.wakeup) {
           await fire.wakeup();
@@ -241,9 +249,8 @@ this.identities = class extends ExtensionAPIPersistent {
         unregister: () => {
           identitiesTracker.off("account-identity-removed", listener);
         },
-        convert(newFire, extContext) {
+        convert(newFire) {
           fire = newFire;
-          context = extContext;
         },
       };
     },
@@ -262,24 +269,24 @@ this.identities = class extends ExtensionAPIPersistent {
     return {
       identities: {
         async list(accountId) {
-          let accounts = accountId
+          const accounts = accountId
             ? [MailServices.accounts.getAccount(accountId)]
-            : MailServices.accounts.accounts;
+            : getMailAccounts();
 
-          let identities = [];
-          for (let account of accounts) {
-            for (let identity of account.identities) {
+          const identities = [];
+          for (const account of accounts) {
+            for (const identity of account.identities) {
               identities.push(convertMailIdentity(account, identity));
             }
           }
           return identities;
         },
         async get(identityId) {
-          let ia = findIdentityAndAccount(identityId);
+          const ia = findIdentityAndAccount(identityId);
           return ia ? convertMailIdentity(ia.account, ia.identity) : null;
         },
         async delete(identityId) {
-          let ia = findIdentityAndAccount(identityId);
+          const ia = findIdentityAndAccount(identityId);
           if (!ia) {
             throw new ExtensionError(`Identity not found: ${identityId}`);
           }
@@ -294,20 +301,20 @@ this.identities = class extends ExtensionAPIPersistent {
           ia.account.removeIdentity(ia.identity);
         },
         async create(accountId, details) {
-          let account = MailServices.accounts.getAccount(accountId);
+          const account = MailServices.accounts.getAccount(accountId);
           if (!account) {
             throw new ExtensionError(`Account not found: ${accountId}`);
           }
           // Abort and throw, if details include protected properties.
           checkForProtectedProperties(details);
 
-          let identity = MailServices.accounts.createIdentity();
+          const identity = MailServices.accounts.createIdentity();
           updateIdentity(identity, details);
           account.addIdentity(identity);
           return convertMailIdentity(account, identity);
         },
         async update(identityId, details) {
-          let ia = findIdentityAndAccount(identityId);
+          const ia = findIdentityAndAccount(identityId);
           if (!ia) {
             throw new ExtensionError(`Identity not found: ${identityId}`);
           }
@@ -318,15 +325,15 @@ this.identities = class extends ExtensionAPIPersistent {
           return convertMailIdentity(ia.account, ia.identity);
         },
         async getDefault(accountId) {
-          let account = MailServices.accounts.getAccount(accountId);
+          const account = MailServices.accounts.getAccount(accountId);
           return convertMailIdentity(account, account?.defaultIdentity);
         },
         async setDefault(accountId, identityId) {
-          let account = MailServices.accounts.getAccount(accountId);
+          const account = MailServices.accounts.getAccount(accountId);
           if (!account) {
             throw new ExtensionError(`Account not found: ${accountId}`);
           }
-          for (let identity of account.identities) {
+          for (const identity of account.identities) {
             if (identity.key == identityId) {
               account.defaultIdentity = identity;
               return;

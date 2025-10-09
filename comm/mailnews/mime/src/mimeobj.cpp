@@ -13,6 +13,8 @@
  */
 
 #include "mimeobj.h"
+#include "mimemult.h"
+#include "nsMailHeaders.h"
 #include "prmem.h"
 #include "plstr.h"
 #include "prio.h"
@@ -20,21 +22,13 @@
 #include "prlog.h"
 #include "nsMimeTypes.h"
 #include "nsMimeStringResources.h"
-#include "nsMsgUtils.h"
-#include "mimemsg.h"
-#include "mimemapl.h"
-
-/* Way to destroy any notions of modularity or class hierarchy, Terry! */
-#include "mimetpla.h"
-#include "mimethtm.h"
-#include "mimecont.h"
 
 MimeDefClass(MimeObject, MimeObjectClass, mimeObjectClass, NULL);
 
 static int MimeObject_initialize(MimeObject*);
 static void MimeObject_finalize(MimeObject*);
 static int MimeObject_parse_begin(MimeObject*);
-static int MimeObject_parse_buffer(const char*, int32_t, MimeObject*);
+static int MimeObject_parse_buffer(const char*, int32_t, MimeClosure);
 static int MimeObject_parse_line(const char*, int32_t, MimeObject*);
 static int MimeObject_parse_eof(MimeObject*, bool);
 static int MimeObject_parse_end(MimeObject*, bool);
@@ -216,16 +210,17 @@ static int MimeObject_parse_begin(MimeObject* obj) {
 }
 
 static int MimeObject_parse_buffer(const char* buffer, int32_t size,
-                                   MimeObject* obj) {
+                                   MimeClosure closure) {
+  MimeObject* obj = closure.AsMimeObject();
+  if (!obj) {
+    return -1;
+  }
+
   NS_ASSERTION(!obj->closed_p, "object shouldn't be closed");
   if (obj->closed_p) return -1;
 
   return mime_LineBuffer(buffer, size, &obj->ibuffer, &obj->ibuffer_size,
-                         &obj->ibuffer_fp, true,
-                         ((int (*)(char*, int32_t, void*))
-                          /* This cast is to turn void into MimeObject */
-                          obj->clazz->parse_line),
-                         obj);
+                         &obj->ibuffer_fp, true, obj->clazz->parse_line, obj);
 }
 
 static int MimeObject_parse_line(const char* line, int32_t length,

@@ -163,7 +163,7 @@ static void SendPing(void* aClosure, nsIContent* aContent, nsIURI* aURI,
     bool isPrivateWin = false;
     if (doc) {
       isPrivateWin =
-          doc->NodePrincipal()->OriginAttributesRef().mPrivateBrowsingId > 0;
+          doc->NodePrincipal()->OriginAttributesRef().IsPrivateBrowsing();
     }
 
     bool sameOrigin = NS_SUCCEEDED(
@@ -253,7 +253,7 @@ static void ForEachPing(nsIContent* aContent, ForEachPingCallback aCallback,
   }
 
   nsAutoString value;
-  aContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::ping, value);
+  aContent->AsElement()->GetAttr(nsGkAtoms::ping, value);
   if (value.IsEmpty()) {
     return;
   }
@@ -278,7 +278,7 @@ static void ForEachPing(nsIContent* aContent, ForEachPingCallback aCallback,
       continue;
     }
     // Explicitly not allow loading data: URIs
-    if (!net::SchemeIsData(uri)) {
+    if (!uri->SchemeIs("data")) {
       aCallback(aClosure, aContent, uri, ios);
     }
   }
@@ -319,7 +319,7 @@ nsresult nsPingListener::StartTimeout(DocGroup* aDocGroup) {
   return NS_NewTimerWithFuncCallback(
       getter_AddRefs(mTimer), OnPingTimeout, mLoadGroup, PING_TIMEOUT,
       nsITimer::TYPE_ONE_SHOT, "nsPingListener::StartTimeout",
-      aDocGroup->EventTargetFor(TaskCategory::Network));
+      GetMainThreadSerialEventTarget());
 }
 
 NS_IMETHODIMP

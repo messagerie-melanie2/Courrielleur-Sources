@@ -212,6 +212,68 @@ appmenu-addons-and-themes =
 
 ## Context menu
 
+context-menu-mark-read =
+    .aria-label = Mark as Read
+    .tooltiptext = Mark as Read
+
+context-menu-mark-unread =
+    .aria-label = Mark as Unread
+    .tooltiptext = Mark as Unread
+
+context-menu-mark-reply =
+    .aria-label = Reply
+    .tooltiptext = Reply
+
+context-menu-archive =
+    .aria-label = Archive
+    .tooltiptext = Archive
+
+context-menu-mark-junk =
+    .aria-label = Mark as Junk
+    .tooltiptext = Mark as Junk
+
+context-menu-mark-not-junk =
+    .aria-label = Mark as not Junk
+    .tooltiptext = Mark as not Junk
+
+mail-context-menu-open =
+    .label = Open
+    .accesskey = O
+
+mail-context-menu-reply =
+    .label = Reply
+    .accesskey = R
+
+mail-context-menu-forward-redirect =
+    .label = Forward and Redirect
+    .accesskey = F
+
+mail-context-menu-forward-forward =
+    .label = Forward
+    .accesskey = F
+
+mail-context-menu-forward-inline =
+    .label = Inline
+    .accesskey = I
+
+# Variables:
+# $count (Number) - Number of selected messages.
+mail-context-menu-forward-as-attachment =
+    .label =
+        { $count ->
+            [one] As Attachment
+           *[other] As Attachments
+        }
+    .accesskey = A
+
+mail-context-menu-organize =
+    .label = Organize
+    .accesskey = g
+
+mail-context-menu-threads =
+    .label = Threads
+    .accesskey = T
+
 context-menu-redirect-msg =
     .label = Redirect
 
@@ -221,21 +283,25 @@ context-menu-cancel-msg =
 
 # Variables:
 # $count (Number) - Number of selected messages.
-mail-context-delete-messages =
+mail-context-messages-delete =
     .label =
         { $count ->
             [one] Delete Message
            *[other] Delete Selected Messages
         }
+    .tooltiptext =
+        { mail-context-messages-delete.label }
 
 # Variables:
 # $count (Number) - Number of selected messages.
-mail-context-undelete-messages =
+mail-context-messages-undelete =
     .label =
         { $count ->
             [one] Undelete Message
            *[other] Undelete Selected Messages
         }
+    .tooltiptext =
+        { mail-context-messages-undelete.label }
 
 context-menu-decrypt-to-folder2 =
     .label = Create Decrypted Copy In
@@ -250,12 +316,20 @@ message-header-msg-flagged =
     .title = Starred
     .aria-label = Starred
 
+message-header-delete =
+    .label = Delete
+    .tooltiptext = Delete this message
+
+message-header-undelete =
+    .label = Undelete
+    .tooltiptext = Undelete this message
+
 # Variables:
 # $address (String) - The email address of the recipient this picture belongs to.
 message-header-recipient-avatar =
     .alt = Profile picture of { $address }.
 
-## Message header cutomize panel
+## Message header customize panel
 
 message-header-customize-panel-title = Message Header Settings
 
@@ -297,6 +371,10 @@ message-header-large-subject =
 message-header-all-headers =
     .label = Show all headers
     .accesskey = a
+
+message-header-dark-message-toggle =
+    .label = Show the dark message mode toggle
+    .accesskey = d
 
 ## Action Button Context Menu
 
@@ -466,7 +544,7 @@ quick-filter-bar-toggle =
   .accesskey = Q
 
 # This is the key used to show the quick filter bar.
-# This should match quick-filter-bar-textbox-shortcut in about3Pane.ftl.
+# This should match quick-filter-bar-search-shortcut in about3Pane.ftl.
 quick-filter-bar-show =
   .key = k
 
@@ -482,3 +560,10 @@ openpgp-forget = Forget OpenPGP passphrases
 #   $limit (String) - Current quota limit (may include unit)
 quota-panel-percent-used = { $percent }% full
   .title = IMAP quota: { $usage } used of { $limit } total
+
+## Actions for the New Mail Notification
+
+mark-as-read-action = Mark as Read
+delete-action = Delete
+mark-as-starred-action = Mark as Starred
+mark-as-spam-action = Mark as Spam

@@ -25,14 +25,6 @@ namespace a11y {
 class TextRange;
 class xpcAccessibleGeneric;
 
-#if !defined(XP_WIN)
-class DocAccessiblePlatformExtParent;
-#endif
-
-#ifdef ANDROID
-class SessionAccessibility;
-#endif
-
 /*
  * These objects live in the main process and comunicate with and represent
  * an accessible document in a content process.
@@ -106,48 +98,27 @@ class DocAccessibleParent : public RemoteAccessible,
   virtual mozilla::ipc::IPCResult RecvEvent(const uint64_t& aID,
                                             const uint32_t& aType) override;
 
-  virtual mozilla::ipc::IPCResult RecvShowEvent(
-      nsTArray<AccessibleData>&& aNewTree, const bool& aEventSuppressed,
-      const bool& aComplete, const bool& aFromUser) override;
-  virtual mozilla::ipc::IPCResult RecvHideEvent(const uint64_t& aRootID,
-                                                const bool& aFromUser) override;
   mozilla::ipc::IPCResult RecvStateChangeEvent(const uint64_t& aID,
                                                const uint64_t& aState,
                                                const bool& aEnabled) final;
 
   mozilla::ipc::IPCResult RecvCaretMoveEvent(
-      const uint64_t& aID,
-#if defined(XP_WIN)
-      const LayoutDeviceIntRect& aCaretRect,
-#endif
+      const uint64_t& aID, const LayoutDeviceIntRect& aCaretRect,
       const int32_t& aOffset, const bool& aIsSelectionCollapsed,
-      const bool& aIsAtEndOfLine, const int32_t& aGranularity) final;
+      const bool& aIsAtEndOfLine, const int32_t& aGranularity,
+      const bool& aFromUser) final;
 
-  virtual mozilla::ipc::IPCResult RecvTextChangeEvent(
-      const uint64_t& aID, const nsAString& aStr, const int32_t& aStart,
-      const uint32_t& aLen, const bool& aIsInsert,
-      const bool& aFromUser) override;
+  virtual mozilla::ipc::IPCResult RecvMutationEvents(
+      nsTArray<MutationEventData>&& aData) override;
 
-#if defined(XP_WIN)
-  virtual mozilla::ipc::IPCResult RecvSyncTextChangeEvent(
-      const uint64_t& aID, const nsAString& aStr, const int32_t& aStart,
-      const uint32_t& aLen, const bool& aIsInsert,
-      const bool& aFromUser) override;
+  virtual mozilla::ipc::IPCResult RecvRequestAckMutationEvents() override;
 
   virtual mozilla::ipc::IPCResult RecvFocusEvent(
       const uint64_t& aID, const LayoutDeviceIntRect& aCaretRect) override;
-#endif  // defined(XP_WIN)
 
   virtual mozilla::ipc::IPCResult RecvSelectionEvent(
       const uint64_t& aID, const uint64_t& aWidgetID,
       const uint32_t& aType) override;
-
-  virtual mozilla::ipc::IPCResult RecvVirtualCursorChangeEvent(
-      const uint64_t& aID, const uint64_t& aOldPositionID,
-      const int32_t& aOldStartOffset, const int32_t& aOldEndOffset,
-      const uint64_t& aNewPositionID, const int32_t& aNewStartOffset,
-      const int32_t& aNewEndOffset, const int16_t& aReason,
-      const int16_t& aBoundaryType, const bool& aFromUser) override;
 
   virtual mozilla::ipc::IPCResult RecvScrollingEvent(
       const uint64_t& aID, const uint64_t& aType, const uint32_t& aScrollX,
@@ -181,8 +152,11 @@ class DocAccessibleParent : public RemoteAccessible,
       NotNull<PDocAccessibleParent*> aChildDoc, const uint64_t& aID) override;
 
   void Unbind() {
-    if (DocAccessibleParent* parent = ParentDoc()) {
-      parent->RemoveChildDoc(this);
+    if (RemoteAccessible* parent = RemoteParent()) {
+      DocAccessibleParent* parentDoc = parent->Document();
+      parent->ClearChildDoc(this);
+      DebugOnly<bool> result = parentDoc->mChildDocs.RemoveElement(mActorID);
+      MOZ_ASSERT(result);
     }
 
     SetParent(nullptr);
@@ -197,7 +171,6 @@ class DocAccessibleParent : public RemoteAccessible,
    * of the document this object represents.
    */
   DocAccessibleParent* ParentDoc() const;
-  static const uint64_t kNoParentDoc = UINT64_MAX;
 
   /**
    * Called when a document in a content process notifies the main process of a
@@ -217,21 +190,6 @@ class DocAccessibleParent : public RemoteAccessible,
 
   void RemovePendingOOPChildDoc(dom::BrowserBridgeParent* aBridge) {
     mPendingOOPChildDocs.Remove(aBridge);
-  }
-
-  /*
-   * Called when the document in the content process this object represents
-   * notifies the main process a child document has been removed.
-   */
-  void RemoveChildDoc(DocAccessibleParent* aChildDoc) {
-    RemoteAccessible* parent = aChildDoc->RemoteParent();
-    MOZ_ASSERT(parent);
-    if (parent) {
-      aChildDoc->RemoteParent()->ClearChildDoc(aChildDoc);
-    }
-    DebugOnly<bool> result = mChildDocs.RemoveElement(aChildDoc->mActorID);
-    aChildDoc->mParentDoc = kNoParentDoc;
-    MOZ_ASSERT(result);
   }
 
   void RemoveAccessible(RemoteAccessible* aAccessible) {
@@ -270,16 +228,6 @@ class DocAccessibleParent : public RemoteAccessible,
    */
   void SetEmulatedWindowHandle(HWND aWindowHandle);
   HWND GetEmulatedWindowHandle() const { return mEmulatedWindowHandle; }
-#endif
-
-#if !defined(XP_WIN)
-  virtual bool DeallocPDocAccessiblePlatformExtParent(
-      PDocAccessiblePlatformExtParent* aActor) override;
-
-  virtual PDocAccessiblePlatformExtParent*
-  AllocPDocAccessiblePlatformExtParent() override;
-
-  DocAccessiblePlatformExtParent* GetPlatformExtension();
 #endif
 
   // Accessible
@@ -349,10 +297,6 @@ class DocAccessibleParent : public RemoteAccessible,
 
   size_t SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) override;
 
-#ifdef ANDROID
-  RefPtr<SessionAccessibility> mSessionAccessibility;
-#endif
-
  private:
   ~DocAccessibleParent();
 
@@ -394,8 +338,17 @@ class DocAccessibleParent : public RemoteAccessible,
    */
   void ShutdownOrPrepareForMove(RemoteAccessible* aAcc);
 
+  mozilla::ipc::IPCResult ProcessShowEvent(nsTArray<AccessibleData>&& aNewTree,
+                                           const bool& aEventSuppressed,
+                                           const bool& aComplete,
+                                           const bool& aFromUser);
+  mozilla::ipc::IPCResult ProcessHideEvent(const uint64_t& aRootID,
+                                           const bool& aFromUser);
+  mozilla::ipc::IPCResult ProcessTextChangeEvent(
+      const uint64_t& aID, const nsAString& aStr, const int32_t& aStart,
+      const uint32_t& aLen, const bool& aIsInsert, const bool& aFromUser);
+
   nsTArray<uint64_t> mChildDocs;
-  uint64_t mParentDoc;
 
 #if defined(XP_WIN)
   // The handle associated with the emulated window that contains this document

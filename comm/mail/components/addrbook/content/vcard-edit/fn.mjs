@@ -3,11 +3,9 @@
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
 const lazy = {};
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "VCardPropertyEntry",
-  "resource:///modules/VCardUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  VCardPropertyEntry: "resource:///modules/VCardUtils.sys.mjs",
+});
 
 /**
  * @implements {VCardPropertyEntryView}
@@ -19,8 +17,6 @@ export class VCardFNComponent extends HTMLElement {
 
   /** @type {HTMLElement} */
   displayEl;
-  /** @type {HTMLElement} */
-  preferDisplayEl;
 
   static newVCardPropertyEntry() {
     return new lazy.VCardPropertyEntry("fn", {}, "text", "");
@@ -28,8 +24,8 @@ export class VCardFNComponent extends HTMLElement {
 
   constructor() {
     super();
-    let template = document.getElementById("template-vcard-edit-fn");
-    let clonedTemplate = template.content.cloneNode(true);
+    const template = document.getElementById("template-vcard-edit-fn");
+    const clonedTemplate = template.content.cloneNode(true);
     this.appendChild(clonedTemplate);
   }
 
@@ -43,7 +39,6 @@ export class VCardFNComponent extends HTMLElement {
         },
         { once: true }
       );
-      this.preferDisplayEl = this.querySelector("#vCardPreferDisplayName");
       this.fromVCardPropertyEntryToUI();
     }
   }

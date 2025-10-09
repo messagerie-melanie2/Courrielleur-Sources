@@ -4,16 +4,19 @@
 
 /* globals PROTO_TREE_VIEW */
 
-var { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
+var { XPCOMUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
+);
+var { UIFontSize } = ChromeUtils.importESModule(
+  "resource:///modules/UIFontSize.sys.mjs"
 );
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  FolderUtils: "resource:///modules/FolderUtils.jsm",
-  MailUtils: "resource:///modules/MailUtils.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  FolderUtils: "resource:///modules/FolderUtils.sys.mjs",
+  MailUtils: "resource:///modules/MailUtils.sys.mjs",
 });
 
 var gFolderTreeView = new PROTO_TREE_VIEW();
@@ -23,8 +26,8 @@ var gSelectOffline = {
   _rollbackMap: new Map(),
 
   load() {
-    for (let account of FolderUtils.allAccountsSorted(true)) {
-      let server = account.incomingServer;
+    for (const account of FolderUtils.allAccountsSorted(true)) {
+      const server = account.incomingServer;
       if (
         server instanceof Ci.nsIPop3IncomingServer &&
         server.deferredToAccount
@@ -41,6 +44,8 @@ var gSelectOffline = {
     this._treeElement = document.getElementById("synchronizeTree");
     // TODO: Expand relevant rows.
     this._treeElement.view = gFolderTreeView;
+
+    UIFontSize.registerWindow(window);
   },
 
   onKeyPress(aEvent) {
@@ -49,10 +54,10 @@ var gSelectOffline = {
       return;
     }
 
-    let selection = this._treeElement.view.selection;
-    let start = {};
-    let end = {};
-    let numRanges = selection.getRangeCount();
+    const selection = this._treeElement.view.selection;
+    const start = {};
+    const end = {};
+    const numRanges = selection.getRangeCount();
 
     for (let range = 0; range < numRanges; range++) {
       selection.getRangeAt(range, start, end);
@@ -74,7 +79,7 @@ var gSelectOffline = {
       return;
     }
 
-    let treeCellInfo = this._treeElement.getCellAt(
+    const treeCellInfo = this._treeElement.getCellAt(
       aEvent.clientX,
       aEvent.clientY
     );
@@ -87,7 +92,7 @@ var gSelectOffline = {
   },
 
   _toggle(aRow) {
-    let folder = gFolderTreeView._rowMap[aRow]._folder;
+    const folder = gFolderTreeView._rowMap[aRow]._folder;
 
     if (folder.isServer) {
       return;
@@ -106,7 +111,7 @@ var gSelectOffline = {
   },
 
   onCancel() {
-    for (let [folder, value] of this._rollbackMap) {
+    for (const [folder, value] of this._rollbackMap) {
       if (value != folder.getFlag(Ci.nsMsgFolderFlags.Offline)) {
         folder.toggleFlag(Ci.nsMsgFolderFlags.Offline);
       }
@@ -158,7 +163,7 @@ class FolderRow {
     let properties = "";
     switch (column?.id) {
       case "folderNameCol":
-        // From folderUtils.jsm.
+        // From folderUtils.sys.mjs.
         properties = FolderUtils.getFolderProperties(this._folder, this.open);
         break;
       case "syncCol":
@@ -177,7 +182,7 @@ class FolderRow {
   get children() {
     if (this._children === null) {
       this._children = [];
-      for (let subFolder of this._folder.subFolders) {
+      for (const subFolder of this._folder.subFolders) {
         if (subFolder.supportsOffline) {
           this._children.push(new FolderRow(subFolder, this));
         }

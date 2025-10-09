@@ -2,17 +2,14 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-#include "nsMsgAttachedFile.h"
+
+#include "nsIMsgSend.h"
+#include "nsIURI.h"
+#include "nsMsgAttachmentData.h"
 
 NS_IMPL_ISUPPORTS(nsMsgAttachedFile, nsIMsgAttachedFile)
 
-nsMsgAttachedFile::nsMsgAttachedFile()
-    : m_size(0),
-      m_unprintableCount(0),
-      m_highbitCount(0),
-      m_ctlCount(0),
-      m_nullCount(0),
-      m_maxLineLength(0) {}
+nsMsgAttachedFile::nsMsgAttachedFile() {}
 
 nsMsgAttachedFile::~nsMsgAttachedFile() {}
 
@@ -80,27 +77,6 @@ NS_IMETHODIMP nsMsgAttachedFile::SetCloudPartInfo(
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgAttachedFile::GetXMacType(nsACString& aXMacType) {
-  aXMacType = m_xMacType;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAttachedFile::SetXMacType(const nsACString& aXMacType) {
-  m_xMacType = aXMacType;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAttachedFile::GetXMacCreator(nsACString& aXMacCreator) {
-  aXMacCreator = m_xMacCreator;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAttachedFile::SetXMacCreator(
-    const nsACString& aXMacCreator) {
-  m_xMacCreator = aXMacCreator;
-  return NS_OK;
-}
-
 NS_IMETHODIMP nsMsgAttachedFile::GetRealName(nsACString& aRealName) {
   aRealName = m_realName;
   return NS_OK;
@@ -108,72 +84,5 @@ NS_IMETHODIMP nsMsgAttachedFile::GetRealName(nsACString& aRealName) {
 
 NS_IMETHODIMP nsMsgAttachedFile::SetRealName(const nsACString& aRealName) {
   m_realName = aRealName;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAttachedFile::GetSize(uint32_t* aSize) {
-  NS_ENSURE_ARG_POINTER(aSize);
-  *aSize = m_size;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAttachedFile::SetSize(uint32_t aSize) {
-  m_size = aSize;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAttachedFile::GetUnprintableCount(
-    uint32_t* aUnprintableCount) {
-  NS_ENSURE_ARG_POINTER(aUnprintableCount);
-  *aUnprintableCount = m_unprintableCount;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAttachedFile::SetUnprintableCount(
-    uint32_t aUnprintableCount) {
-  m_unprintableCount = aUnprintableCount;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAttachedFile::GetHighbitCount(uint32_t* aHighbitCount) {
-  NS_ENSURE_ARG_POINTER(aHighbitCount);
-  *aHighbitCount = m_highbitCount;
-  return NS_OK;
-}
-NS_IMETHODIMP nsMsgAttachedFile::SetHighbitCount(uint32_t aHighbitCount) {
-  m_highbitCount = aHighbitCount;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAttachedFile::GetCtlCount(uint32_t* aCtlCount) {
-  NS_ENSURE_ARG_POINTER(aCtlCount);
-  *aCtlCount = m_ctlCount;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAttachedFile::SetCtlCount(uint32_t aCtlCount) {
-  m_ctlCount = aCtlCount;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAttachedFile::GetNullCount(uint32_t* aNullCount) {
-  NS_ENSURE_ARG_POINTER(aNullCount);
-  *aNullCount = m_nullCount;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAttachedFile::SetNullCount(uint32_t aNullCount) {
-  m_nullCount = aNullCount;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAttachedFile::GetMaxLineLength(uint32_t* aMaxLineLength) {
-  NS_ENSURE_ARG_POINTER(aMaxLineLength);
-  *aMaxLineLength = m_maxLineLength;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgAttachedFile::SetMaxLineLength(uint32_t aMaxLineLength) {
-  m_maxLineLength = aMaxLineLength;
   return NS_OK;
 }

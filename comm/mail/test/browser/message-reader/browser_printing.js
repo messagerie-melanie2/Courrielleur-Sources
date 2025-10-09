@@ -8,24 +8,16 @@
 
 "use strict";
 
-var { close_compose_window, open_compose_with_reply } = ChromeUtils.import(
-  "resource://testing-common/mozmill/ComposeHelpers.jsm"
-);
 var {
   add_message_to_folder,
   assert_selected_and_displayed,
   be_in_folder,
   create_folder,
   create_message,
-  mc,
   select_click_row,
   open_message_from_file,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-);
-
-var { close_window } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 var folder = null;
@@ -50,20 +42,20 @@ add_setup(async function () {
  */
 add_task(async function test_open_printpreview() {
   await be_in_folder(folder);
-  let msg = select_click_row(0);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   // Trigger print using Ctrl+P.
-  EventUtils.synthesizeKey("P", { accelKey: true }, mc.window);
+  EventUtils.synthesizeKey("P", { accelKey: true }, window);
 
   let preview;
   // Ensure we're showing the preview...
   await BrowserTestUtils.waitForCondition(() => {
     preview = document.querySelector(".printPreviewBrowser");
-    return preview && BrowserTestUtils.is_visible(preview);
+    return preview && BrowserTestUtils.isVisible(preview);
   });
 
-  let subject = preview.contentDocument.querySelector(
+  const subject = preview.contentDocument.querySelector(
     ".moz-main-header tr > td"
   ).textContent;
   Assert.equal(
@@ -72,16 +64,16 @@ add_task(async function test_open_printpreview() {
     "preview subject should be correct"
   );
 
-  let body = preview.contentDocument
+  const body = preview.contentDocument
     .querySelector(".moz-text-flowed")
     .textContent.trim();
   Assert.equal(body, BODY0, "preview body should be correct");
 
-  EventUtils.synthesizeKey("VK_ESCAPE", {}, mc.window);
+  EventUtils.synthesizeKey("VK_ESCAPE", {}, window);
 
   // Wait for the preview to go away.
   await TestUtils.waitForCondition(
-    () => !mc.window.document.querySelector(".printPreviewBrowser")
+    () => !document.querySelector(".printPreviewBrowser")
   );
 });
 
@@ -95,13 +87,13 @@ add_task(async function test_named_page() {
   );
   const msgc = await open_message_from_file(file);
 
-  EventUtils.synthesizeKey("P", { accelKey: true }, msgc.window);
+  EventUtils.synthesizeKey("P", { accelKey: true }, msgc);
 
   let preview;
   // Ensure we're showing the preview...
   await BrowserTestUtils.waitForCondition(() => {
-    preview = msgc.window.document.querySelector(".printPreviewBrowser");
-    return preview && BrowserTestUtils.is_visible(preview);
+    preview = msgc.document.querySelector(".printPreviewBrowser");
+    return preview && BrowserTestUtils.isVisible(preview);
   });
 
   Assert.equal(
@@ -110,5 +102,5 @@ add_task(async function test_named_page() {
     "preview should only include one page (and ignore the CSS named page)"
   );
 
-  close_window(msgc);
+  await BrowserTestUtils.closeWindow(msgc);
 });

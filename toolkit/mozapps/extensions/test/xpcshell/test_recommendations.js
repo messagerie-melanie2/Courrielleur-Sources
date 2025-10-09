@@ -3,19 +3,14 @@ http://creativecommons.org/publicdomain/zero/1.0/ */
 
 "use strict";
 
-const { XPIInstall } = ChromeUtils.import(
-  "resource://gre/modules/addons/XPIInstall.jsm"
+const { XPIExports } = ChromeUtils.importESModule(
+  "resource://gre/modules/addons/XPIExports.sys.mjs"
 );
 
 ChromeUtils.defineESModuleGetters(this, {
   ExtensionPermissions: "resource://gre/modules/ExtensionPermissions.sys.mjs",
+  Management: "resource://gre/modules/Extension.sys.mjs",
 });
-
-ChromeUtils.defineModuleGetter(
-  this,
-  "Management",
-  "resource://gre/modules/Extension.jsm"
-);
 
 AddonTestUtils.init(this);
 AddonTestUtils.overrideCertDB();
@@ -265,7 +260,7 @@ add_task(async function test_temporary() {
     states: ["recommended"],
     validity: { not_before, not_after },
   });
-  let addon = await XPIInstall.installTemporaryAddon(xpi);
+  let addon = await XPIExports.XPIInstall.installTemporaryAddon(xpi);
 
   checkRecommended(addon, false);
 
@@ -294,7 +289,7 @@ add_task(async function test_temporary_directory() {
     true
   );
 
-  let addon = await XPIInstall.installTemporaryAddon(extDir);
+  let addon = await XPIExports.XPIInstall.installTemporaryAddon(extDir);
 
   checkRecommended(addon, false);
 
@@ -324,27 +319,31 @@ add_task(async function test_builtin() {
   await extension.unload();
 });
 
-add_task(async function test_theme() {
-  const id = "theme@test.web.extension";
-  let xpi = AddonTestUtils.createTempWebExtensionFile({
-    manifest: {
-      browser_specific_settings: { gecko: { id } },
-      theme: {},
-    },
-    files: {
-      [RECOMMENDATION_FILE_NAME]: {
-        addon_id: id,
-        states: ["recommended"],
-        validity: { not_before, not_after },
+add_task(
+  // Non-extension add-ons are not supported on Android, but test installs static theme.
+  { skip_if: () => AppConstants.platform == "android" },
+  async function test_theme() {
+    const id = "theme@test.web.extension";
+    let xpi = AddonTestUtils.createTempWebExtensionFile({
+      manifest: {
+        browser_specific_settings: { gecko: { id } },
+        theme: {},
       },
-    },
-  });
-  let { addon } = await AddonTestUtils.promiseInstallFile(xpi);
+      files: {
+        [RECOMMENDATION_FILE_NAME]: {
+          addon_id: id,
+          states: ["recommended"],
+          validity: { not_before, not_after },
+        },
+      },
+    });
+    let { addon } = await AddonTestUtils.promiseInstallFile(xpi);
 
-  checkRecommended(addon, false);
+    checkRecommended(addon, false);
 
-  await addon.uninstall();
-});
+    await addon.uninstall();
+  }
+);
 
 add_task(async function test_not_recommended() {
   const id = "not-recommended@test.web.extension";

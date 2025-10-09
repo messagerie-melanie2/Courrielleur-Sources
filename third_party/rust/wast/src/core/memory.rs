@@ -34,8 +34,8 @@ pub enum MemoryKind<'a> {
 
     /// The data of this memory, starting from 0, explicitly listed
     Inline {
-        /// Whether or not this will be creating a 32-bit memory
-        is_32: bool,
+        /// Whether or not this will be creating a 64-bit memory
+        is64: bool,
         /// The inline data specified for this memory
         data: Vec<DataVal<'a>>,
     },
@@ -59,11 +59,14 @@ impl<'a> Parse<'a> for Memory<'a> {
                 import,
                 ty: parser.parse()?,
             }
-        } else if l.peek::<LParen>() || parser.peek2::<LParen>() {
-            let is_32 = if parser.parse::<Option<kw::i32>>()?.is_some() {
-                true
+        } else if l.peek::<LParen>()?
+            || ((parser.peek::<kw::i32>()? || parser.peek::<kw::i64>()?)
+                && parser.peek2::<LParen>()?)
+        {
+            let is64 = if parser.parse::<Option<kw::i32>>()?.is_some() {
+                false
             } else {
-                parser.parse::<Option<kw::i64>>()?.is_none()
+                parser.parse::<Option<kw::i64>>()?.is_some()
             };
             let data = parser.parens(|parser| {
                 parser.parse::<kw::data>()?;
@@ -73,8 +76,8 @@ impl<'a> Parse<'a> for Memory<'a> {
                 }
                 Ok(data)
             })?;
-            MemoryKind::Inline { data, is_32 }
-        } else if l.peek::<u32>() || l.peek::<kw::i32>() || l.peek::<kw::i64>() {
+            MemoryKind::Inline { data, is64 }
+        } else if l.peek::<u32>()? || l.peek::<kw::i32>()? || l.peek::<kw::i64>()? {
             MemoryKind::Normal(parser.parse()?)
         } else {
             return Err(l.error());
@@ -133,19 +136,19 @@ impl<'a> Parse<'a> for Data<'a> {
         let id = parser.parse()?;
         let name = parser.parse()?;
 
-        let kind = if parser.peek::<&[u8]>() {
+        let kind = if parser.peek::<&[u8]>()? || parser.peek::<RParen>()? {
             DataKind::Passive
 
         // ... and otherwise we must be attached to a particular memory as well
         // as having an initialization offset.
         } else {
-            let memory = if parser.peek::<u32>() {
+            let memory = if parser.peek::<u32>()? {
                 // FIXME: this is only here to accomodate
                 // proposals/threads/imports.wast at this current moment in
                 // time, this probably should get removed when the threads
                 // proposal is rebased on the current spec.
                 Index::Num(parser.parse()?, span)
-            } else if parser.peek2::<kw::memory>() {
+            } else if parser.peek2::<kw::memory>()? {
                 parser.parens(|p| {
                     p.parse::<kw::memory>()?;
                     p.parse()
@@ -154,7 +157,7 @@ impl<'a> Parse<'a> for Data<'a> {
                 Index::Num(0, span)
             };
             let offset = parser.parens(|parser| {
-                if parser.peek::<kw::offset>() {
+                if parser.peek::<kw::offset>()? {
                     parser.parse::<kw::offset>()?;
                     parser.parse()
                 } else {
@@ -163,9 +166,7 @@ impl<'a> Parse<'a> for Data<'a> {
                     // single-instruction expression.
                     let insn = parser.parse()?;
                     if parser.is_empty() {
-                        return Ok(Expression {
-                            instrs: [insn].into(),
-                        });
+                        return Ok(Expression::one(insn));
                     }
 
                     // This is support for what is currently invalid syntax
@@ -179,12 +180,11 @@ impl<'a> Parse<'a> for Data<'a> {
                     //    (data (offset ...))
                     //
                     // but alas
-                    let expr: Expression = parser.parse()?;
+                    let mut expr: Expression = parser.parse()?;
                     let mut instrs = Vec::from(expr.instrs);
                     instrs.push(insn);
-                    Ok(Expression {
-                        instrs: instrs.into(),
-                    })
+                    expr.instrs = instrs.into();
+                    Ok(expr)
                 }
             })?;
             DataKind::Active { memory, offset }
@@ -233,7 +233,7 @@ impl DataVal<'_> {
 
 impl<'a> Parse<'a> for DataVal<'a> {
     fn parse(parser: Parser<'a>) -> Result<Self> {
-        if !parser.peek::<LParen>() {
+        if !parser.peek::<LParen>()? {
             return Ok(DataVal::String(parser.parse()?));
         }
 
@@ -246,8 +246,8 @@ impl<'a> Parse<'a> for DataVal<'a> {
                 || consume::<kw::i16, i16, _>(p, l, r, |u, v| v.extend(&u.to_le_bytes()))?
                 || consume::<kw::i32, i32, _>(p, l, r, |u, v| v.extend(&u.to_le_bytes()))?
                 || consume::<kw::i64, i64, _>(p, l, r, |u, v| v.extend(&u.to_le_bytes()))?
-                || consume::<kw::f32, Float32, _>(p, l, r, |u, v| v.extend(&u.bits.to_le_bytes()))?
-                || consume::<kw::f64, Float64, _>(p, l, r, |u, v| v.extend(&u.bits.to_le_bytes()))?
+                || consume::<kw::f32, F32, _>(p, l, r, |u, v| v.extend(&u.bits.to_le_bytes()))?
+                || consume::<kw::f64, F64, _>(p, l, r, |u, v| v.extend(&u.bits.to_le_bytes()))?
                 || consume::<kw::v128, V128Const, _>(p, l, r, |u, v| v.extend(&u.to_le_bytes()))?
             {
                 Ok(DataVal::Integral(result))
@@ -265,7 +265,7 @@ impl<'a> Parse<'a> for DataVal<'a> {
         where
             F: Fn(U, &mut Vec<u8>),
         {
-            if !lookahead.peek::<T>() {
+            if !lookahead.peek::<T>()? {
                 return Ok(false);
             }
             parser.parse::<T>()?;

@@ -26,32 +26,21 @@ const { TelemetryArchive } = ChromeUtils.importESModule(
 const { TelemetryUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/TelemetryUtils.sys.mjs"
 );
-const { Preferences } = ChromeUtils.importESModule(
-  "resource://gre/modules/Preferences.sys.mjs"
-);
 const { ContentTaskUtils } = ChromeUtils.importESModule(
   "resource://testing-common/ContentTaskUtils.sys.mjs"
 );
 const { TestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/TestUtils.sys.mjs"
 );
-const { TelemetryArchiveTesting } = ChromeUtils.importESModule(
-  "resource://testing-common/TelemetryArchiveTesting.sys.mjs"
-);
-
-ChromeUtils.defineESModuleGetters(this, {
-  JsonSchemaValidator:
-    "resource://gre/modules/components-utils/JsonSchemaValidator.sys.mjs",
-  jwcrypto: "resource://services-crypto/jwcrypto.sys.mjs",
-});
 
 const PING_FORMAT_VERSION = 4;
 const DELETION_REQUEST_PING_TYPE = "deletion-request";
 const TEST_PING_TYPE = "test-ping-type";
 
 var gClientID = null;
+var gProfileGroupID = null;
 
-XPCOMUtils.defineLazyGetter(this, "DATAREPORTING_PATH", async function () {
+ChromeUtils.defineLazyGetter(this, "DATAREPORTING_PATH", async function () {
   return PathUtils.join(PathUtils.profileDir, "datareporting");
 });
 
@@ -123,6 +112,7 @@ function checkPingFormat(aPing, aType, aHasClientId, aHasEnvironment) {
 
   // Check the clientId and environment fields, as needed.
   Assert.equal("clientId" in aPing, aHasClientId);
+  Assert.equal("profileGroupId" in aPing, aHasClientId);
   Assert.equal("environment" in aPing, aHasEnvironment);
 }
 
@@ -165,7 +155,7 @@ add_task(async function test_simplePing() {
   // Update the Telemetry Server preference with the address of the local server.
   // Otherwise we might end up sending stuff to a non-existing server after
   // |TelemetryController.testReset| is called.
-  Preferences.set(
+  Services.prefs.setStringPref(
     TelemetryUtils.Preferences.Server,
     "http://localhost:" + PingServer.port
   );
@@ -179,7 +169,10 @@ add_task(async function test_simplePing() {
 
 add_task(async function test_disableDataUpload() {
   const OPTIN_PROBE = "telemetry.data_upload_optin";
-  const isUnified = Preferences.get(TelemetryUtils.Preferences.Unified, false);
+  const isUnified = Services.prefs.getBoolPref(
+    TelemetryUtils.Preferences.Unified,
+    false
+  );
   if (!isUnified) {
     // Skipping the test if unified telemetry is off, as no deletion-request ping will be generated.
     return;
@@ -198,12 +191,18 @@ add_task(async function test_disableDataUpload() {
   let ping = await PingServer.promiseNextPing();
   checkPingFormat(ping, TEST_PING_TYPE, true, false);
   let firstClientId = ping.clientId;
+  let firstProfileGroupId = ping.profileGroupId;
 
   Assert.ok(firstClientId, "Test ping needs a client ID");
   Assert.notEqual(
     TelemetryUtils.knownClientID,
     firstClientId,
     "Client ID should be valid and random"
+  );
+  Assert.notEqual(
+    TelemetryUtils.knownProfileGroupID,
+    firstProfileGroupId,
+    "Profile group ID should be valid and random"
   );
 
   // The next step should trigger an event, watch for it.
@@ -212,7 +211,10 @@ add_task(async function test_disableDataUpload() {
   );
 
   // Disable FHR upload: this should trigger a deletion-request ping.
-  Preferences.set(TelemetryUtils.Preferences.FhrUploadEnabled, false);
+  Services.prefs.setBoolPref(
+    TelemetryUtils.Preferences.FhrUploadEnabled,
+    false
+  );
 
   // Wait for the disable event
   await disableObserved;
@@ -229,7 +231,7 @@ add_task(async function test_disableDataUpload() {
   );
 
   // Restore FHR Upload.
-  Preferences.set(TelemetryUtils.Preferences.FhrUploadEnabled, true);
+  Services.prefs.setBoolPref(TelemetryUtils.Preferences.FhrUploadEnabled, true);
 
   // We need to wait until the scalar is set
   await ContentTaskUtils.waitForCondition(() => {
@@ -253,6 +255,13 @@ add_task(async function test_disableDataUpload() {
     secondClientId,
     "The client id must have changed"
   );
+  let secondProfileGroupId =
+    TelemetryController.getCurrentPingData().profileGroupId;
+  Assert.notEqual(
+    firstProfileGroupId,
+    secondProfileGroupId,
+    "The profile group id must have changed"
+  );
   // Simulate a failure in sending the deletion-request ping by disabling the HTTP server.
   await PingServer.stop();
 
@@ -260,7 +269,10 @@ add_task(async function test_disableDataUpload() {
   TelemetryController.submitExternalPing(TEST_PING_TYPE, {});
 
   // Disable FHR upload to send a deletion-request ping again.
-  Preferences.set(TelemetryUtils.Preferences.FhrUploadEnabled, false);
+  Services.prefs.setBoolPref(
+    TelemetryUtils.Preferences.FhrUploadEnabled,
+    false
+  );
   // Wait for the deletion-request ping to be submitted.
   await TelemetryController.testPromiseDeletionRequestPingSubmitted();
 
@@ -284,7 +296,7 @@ add_task(async function test_disableDataUpload() {
   PingServer.start();
   // We set the new server using the pref, otherwise it would get reset with
   // |TelemetryController.testReset|.
-  Preferences.set(
+  Services.prefs.setStringPref(
     TelemetryUtils.Preferences.Server,
     "http://localhost:" + PingServer.port
   );
@@ -295,7 +307,7 @@ add_task(async function test_disableDataUpload() {
   await TelemetryController.testReset();
 
   // Re-enable Telemetry
-  Preferences.set(TelemetryUtils.Preferences.FhrUploadEnabled, true);
+  Services.prefs.setBoolPref(TelemetryUtils.Preferences.FhrUploadEnabled, true);
 
   // Send a test ping
   await sendPing(true, false);
@@ -315,6 +327,11 @@ add_task(async function test_disableDataUpload() {
     ping.clientId,
     "Client ID should be different from the previous value"
   );
+  Assert.notEqual(
+    firstProfileGroupId,
+    ping.profileGroupId,
+    "The profile group ID should change"
+  );
 
   // The "deletion-request" ping should come next, as it was pending.
   ping = await PingServer.promiseNextPing();
@@ -323,6 +340,11 @@ add_task(async function test_disableDataUpload() {
     secondClientId,
     ping.clientId,
     "Deletion must be requested for correct client id"
+  );
+  Assert.equal(
+    secondProfileGroupId,
+    ping.profileGroupId,
+    "Deletion must be requested for correct profile group id"
   );
 
   // Wait on ping activity to settle before moving on to the next test. If we were
@@ -336,7 +358,7 @@ add_task(async function test_disableDataUpload() {
 add_task(async function test_pingHasClientId() {
   // Make sure we have no cached client ID for this test: we'll try to send
   // a ping with it while Telemetry is being initialized.
-  Preferences.reset(TelemetryUtils.Preferences.CachedClientId);
+  Services.prefs.clearUserPref(TelemetryUtils.Preferences.CachedClientId);
   await TelemetryController.testShutdown();
   await ClientID._reset();
   await TelemetryStorage.testClearPendingPings();
@@ -363,12 +385,18 @@ add_task(async function test_pingHasClientId() {
   // don't unintentionally trigger its loading. We'll still need the client ID
   // to see if the ping looks sane.
   gClientID = await ClientID.getClientID();
+  gProfileGroupID = await ClientID.getProfileGroupID();
 
   checkPingFormat(ping, TEST_PING_TYPE, true, false);
   Assert.equal(
     ping.clientId,
     gClientID,
     "The correct clientId must be reported."
+  );
+  Assert.equal(
+    ping.profileGroupId,
+    gProfileGroupID,
+    "The correct profileGroupId must be reported."
   );
 
   // Shutdown Telemetry so we can safely restart it.
@@ -391,10 +419,15 @@ add_task(async function test_pingHasClientId() {
     gClientID,
     "Telemetry should report the correct cached clientId."
   );
+  Assert.equal(
+    ping.profileGroupId,
+    gProfileGroupID,
+    "Telemetry should report the correct cached profileGroupId."
+  );
 
   // Check that sending a ping without relying on the cache, after the
   // initialization, still works.
-  Preferences.reset(TelemetryUtils.Preferences.CachedClientId);
+  Services.prefs.clearUserPref(TelemetryUtils.Preferences.CachedClientId);
   await TelemetryController.testShutdown();
   await TelemetryStorage.testClearPendingPings();
   await TelemetryController.testReset();
@@ -405,6 +438,11 @@ add_task(async function test_pingHasClientId() {
     ping.clientId,
     gClientID,
     "The correct clientId must be reported."
+  );
+  Assert.equal(
+    ping.profileGroupId,
+    gProfileGroupID,
+    "The correct profileGroupId must be reported."
   );
   Assert.equal(
     h.snapshot().sum,
@@ -437,6 +475,11 @@ add_task(async function test_pingHasEnvironmentAndClientId() {
     gClientID,
     "The correct clientId must be reported."
   );
+  Assert.equal(
+    ping.profileGroupId,
+    gProfileGroupID,
+    "The correct profileGroupId must be reported."
+  );
 });
 
 add_task(async function test_archivePings() {
@@ -446,11 +489,14 @@ add_task(async function test_archivePings() {
   // Disable ping upload so that pings don't get sent.
   // With unified telemetry the FHR upload pref controls this,
   // with non-unified telemetry the Telemetry enabled pref.
-  const isUnified = Preferences.get(TelemetryUtils.Preferences.Unified, false);
+  const isUnified = Services.prefs.getBoolPref(
+    TelemetryUtils.Preferences.Unified,
+    false
+  );
   const uploadPref = isUnified
     ? TelemetryUtils.Preferences.FhrUploadEnabled
     : TelemetryUtils.Preferences.TelemetryEnabled;
-  Preferences.set(uploadPref, false);
+  Services.prefs.setBoolPref(uploadPref, false);
 
   // If we're using unified telemetry, disabling ping upload will generate a "deletion-request" ping. Catch it.
   if (isUnified) {
@@ -475,7 +521,7 @@ add_task(async function test_archivePings() {
   // Check that pings don't get archived if not allowed to.
   now = new Date(2010, 10, 18, 12, 0, 0);
   fakeNow(now);
-  Preferences.set(TelemetryUtils.Preferences.ArchiveEnabled, false);
+  Services.prefs.setBoolPref(TelemetryUtils.Preferences.ArchiveEnabled, false);
   pingId = await sendPing(true, true);
   let promise = TelemetryArchive.promiseArchivedPingById(pingId);
   Assert.ok(
@@ -484,8 +530,8 @@ add_task(async function test_archivePings() {
   );
 
   // Enable archiving and the upload so that pings get sent and archived again.
-  Preferences.set(uploadPref, true);
-  Preferences.set(TelemetryUtils.Preferences.ArchiveEnabled, true);
+  Services.prefs.setBoolPref(uploadPref, true);
+  Services.prefs.setBoolPref(TelemetryUtils.Preferences.ArchiveEnabled, true);
 
   now = new Date(2014, 6, 18, 22, 0, 0);
   fakeNow(now);
@@ -527,7 +573,7 @@ add_task(async function test_midnightPingSendFuzzing() {
   // A ping after midnight within the fuzzing delay should not get sent.
   now = new Date(2030, 5, 2, 0, 40, 0);
   fakeNow(now);
-  PingServer.registerPingHandler((req, res) => {
+  PingServer.registerPingHandler(() => {
     Assert.ok(false, "No ping should be received yet.");
   });
   let timerPromise = waitForTimer();
@@ -618,7 +664,7 @@ add_task(async function test_telemetryCleanFHRDatabase() {
     PathUtils.join(profileDir, CUSTOM_DB_NAME + "-wal"),
     PathUtils.join(profileDir, CUSTOM_DB_NAME + "-shm"),
   ];
-  Preferences.set(FHR_DBNAME_PREF, CUSTOM_DB_NAME);
+  Services.prefs.setStringPref(FHR_DBNAME_PREF, CUSTOM_DB_NAME);
 
   // Write fake DB files to the profile directory.
   for (let dbFilePath of CUSTOM_DB_PATHS) {
@@ -644,7 +690,7 @@ add_task(async function test_telemetryCleanFHRDatabase() {
   await TelemetryStorage.removeFHRDatabase();
 
   // Check that we're able to remove a FHR DB with the default name.
-  Preferences.reset(FHR_DBNAME_PREF);
+  Services.prefs.clearUserPref(FHR_DBNAME_PREF);
 
   const DEFAULT_DB_PATHS = [
     PathUtils.join(profileDir, DEFAULT_DB_NAME),
@@ -695,6 +741,7 @@ add_task(async function test_sendNewProfile() {
     await TelemetryController.testShutdown();
     await TelemetryStorage.testClearPendingPings();
     PingServer.clearRequests();
+    await TelemetryController.testReset();
   };
   await resetTest();
 
@@ -704,14 +751,20 @@ add_task(async function test_sendNewProfile() {
     "session-state.json"
   );
   await IOUtils.remove(stateFilePath);
-  Preferences.set(PREF_NEWPROFILE_DELAY, 1);
-  Preferences.set(PREF_NEWPROFILE_ENABLED, true);
+  Services.prefs.setIntPref(PREF_NEWPROFILE_DELAY, 1);
+  Services.prefs.setBoolPref(PREF_NEWPROFILE_ENABLED, true);
 
   // Check that a new-profile ping is sent on the first session.
   let nextReq = PingServer.promiseNextRequest();
   await TelemetryController.testReset();
   let req = await nextReq;
   let ping = decodeRequestPayload(req);
+  if (ping.type == "event") {
+    // We might have received an event ping if the new-profile ping was sent
+    // after the event ping. In that case, check again for the new-profile ping.
+    req = await PingServer.promiseNextRequest();
+    ping = decodeRequestPayload(req);
+  }
   checkPingFormat(ping, NEWPROFILE_PING_TYPE, true, true);
   Assert.equal(
     ping.payload.reason,
@@ -723,6 +776,30 @@ add_task(async function test_sendNewProfile() {
     "The new-profile ping generated after startup must have processes.parent data"
   );
 
+  if (
+    AppConstants.platform == "win" &&
+    AppConstants.MOZ_APP_NAME !== "thunderbird"
+  ) {
+    Assert.ok(
+      "scalars" in ping.payload.processes.parent,
+      "The new-profile ping should have a field for scalars"
+    );
+
+    Assert.ok(
+      "installation.firstSeen.failure_reason" in
+        ping.payload.processes.parent.scalars,
+      "The new-profile ping should have an installation.firstSeen.failure_reason scalar"
+    );
+
+    Assert.equal(
+      ping.payload.processes.parent.scalars[
+        "installation.firstSeen.failure_reason"
+      ],
+      "NotFoundError",
+      "The new-profile ping should return NotFoundError as we don't have a telemetry state file"
+    );
+  }
+
   // Check that is not sent with the pingsender during startup.
   Assert.throws(
     () => req.getHeader("X-PingSender-Version"),
@@ -733,13 +810,19 @@ add_task(async function test_sendNewProfile() {
   // Make sure that the new-profile ping is sent at shutdown if it wasn't sent before.
   await resetTest();
   await IOUtils.remove(stateFilePath);
-  Preferences.reset(PREF_NEWPROFILE_DELAY);
+  Services.prefs.clearUserPref(PREF_NEWPROFILE_DELAY);
 
   nextReq = PingServer.promiseNextRequest();
   await TelemetryController.testReset();
   await TelemetryController.testShutdown();
   req = await nextReq;
   ping = decodeRequestPayload(req);
+  if (ping.type == "event") {
+    // We might have received an event ping if the new-profile ping was sent
+    // after the event ping. In that case, check again for the new-profile ping.
+    req = await PingServer.promiseNextRequest();
+    ping = decodeRequestPayload(req);
+  }
   checkPingFormat(ping, NEWPROFILE_PING_TYPE, true, true);
   Assert.equal(
     ping.payload.reason,
@@ -750,6 +833,30 @@ add_task(async function test_sendNewProfile() {
     "parent" in ping.payload.processes,
     "The new-profile ping generated at shutdown must have processes.parent data"
   );
+
+  if (
+    AppConstants.platform == "win" &&
+    AppConstants.MOZ_APP_NAME !== "thunderbird"
+  ) {
+    Assert.ok(
+      "scalars" in ping.payload.processes.parent,
+      "The new-profile ping should have a field for scalars"
+    );
+
+    Assert.ok(
+      "installation.firstSeen.failure_reason" in
+        ping.payload.processes.parent.scalars,
+      "The new-profile ping should have an installation.firstSeen.failure_reason scalar"
+    );
+
+    Assert.equal(
+      ping.payload.processes.parent.scalars[
+        "installation.firstSeen.failure_reason"
+      ],
+      "NotFoundError",
+      "The new-profile ping should return NotFoundError as we don't have a telemetry state file"
+    );
+  }
 
   // Check that the new-profile ping is sent at shutdown using the pingsender.
   Assert.equal(
@@ -786,323 +893,8 @@ add_task(async function test_sendNewProfile() {
   await TelemetryController.testShutdown();
 
   // Reset the pref and restart Telemetry.
-  Preferences.reset(PREF_NEWPROFILE_ENABLED);
+  Services.prefs.clearUserPref(PREF_NEWPROFILE_ENABLED);
   PingServer.resetPingHandler();
-});
-
-add_task(async function test_encryptedPing() {
-  if (gIsAndroid) {
-    // The underlying jwcrypto module being used here is not currently available on Android.
-    return;
-  }
-  Cu.importGlobalProperties(["crypto"]);
-
-  const ECDH_PARAMS = {
-    name: "ECDH",
-    namedCurve: "P-256",
-  };
-
-  const privateKey = {
-    crv: "P-256",
-    d: "rcs093UlGDG6piwHenmSDoAxbzMIXT43JkQbkt3xEmI",
-    ext: true,
-    key_ops: ["deriveKey"],
-    kty: "EC",
-    x: "h12feyTYBZ__wO_AnM1a5-KTDlko3-YyQ_en19jyrs0",
-    y: "6GSfzo14ehDyH5E-xCOedJDAYlN0AGPMCtIgFbheLko",
-  };
-
-  const publicKey = {
-    crv: "P-256",
-    ext: true,
-    kty: "EC",
-    x: "h12feyTYBZ__wO_AnM1a5-KTDlko3-YyQ_en19jyrs0",
-    y: "6GSfzo14ehDyH5E-xCOedJDAYlN0AGPMCtIgFbheLko",
-  };
-
-  const pioneerId = "12345";
-  const schemaName = "abc";
-  const schemaNamespace = "def";
-  const schemaVersion = 2;
-
-  Services.prefs.setStringPref("toolkit.telemetry.pioneerId", pioneerId);
-
-  // Stop the sending task and then start it again.
-  await TelemetrySend.shutdown();
-  // Reset the controller to spin the ping sending task.
-  await TelemetryController.testReset();
-
-  // Submit a ping with a custom payload, which will be encrypted.
-  let payload = { canary: "test" };
-  let pingPromise = TelemetryController.submitExternalPing(
-    "pioneer-study",
-    payload,
-    {
-      studyName: "pioneer-dev-1@allizom.org",
-      addPioneerId: true,
-      useEncryption: true,
-      encryptionKeyId: "pioneer-dev-20200423",
-      publicKey,
-      schemaName,
-      schemaNamespace,
-      schemaVersion,
-    }
-  );
-
-  // Wait for the ping to be archived.
-  const pingId = await pingPromise;
-
-  let archivedCopy = await TelemetryArchive.promiseArchivedPingById(pingId);
-
-  Assert.notEqual(
-    archivedCopy.payload.encryptedData,
-    payload,
-    "The encrypted payload must not match the plaintext."
-  );
-
-  Assert.equal(
-    archivedCopy.payload.pioneerId,
-    pioneerId,
-    "Pioneer ID in ping must match the pref."
-  );
-
-  // Validate ping against schema.
-  const schema = {
-    $schema: "http://json-schema.org/draft-04/schema#",
-    properties: {
-      application: {
-        additionalProperties: false,
-        properties: {
-          architecture: {
-            type: "string",
-          },
-          buildId: {
-            pattern: "^[0-9]{10}",
-            type: "string",
-          },
-          channel: {
-            type: "string",
-          },
-          displayVersion: {
-            pattern: "^[0-9]{2,3}\\.",
-            type: "string",
-          },
-          name: {
-            type: "string",
-          },
-          platformVersion: {
-            pattern: "^[0-9]{2,3}\\.",
-            type: "string",
-          },
-          vendor: {
-            type: "string",
-          },
-          version: {
-            pattern: "^[0-9]{2,3}\\.",
-            type: "string",
-          },
-          xpcomAbi: {
-            type: "string",
-          },
-        },
-        required: [
-          "architecture",
-          "buildId",
-          "channel",
-          "name",
-          "platformVersion",
-          "version",
-          "vendor",
-          "xpcomAbi",
-        ],
-        type: "object",
-      },
-      creationDate: {
-        pattern:
-          "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$",
-        type: "string",
-      },
-      id: {
-        pattern:
-          "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$",
-        type: "string",
-      },
-      payload: {
-        description: "",
-        properties: {
-          encryptedData: {
-            description: "JOSE/JWE encrypted payload.",
-            type: "string",
-          },
-          encryptionKeyId: {
-            description: "JOSE/JWK key id, e.g. pioneer-20170520.",
-            type: "string",
-          },
-          pioneerId: {
-            description: "Custom pioneer id, must not be Telemetry clientId",
-            pattern:
-              "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$",
-            type: "string",
-          },
-          schemaName: {
-            description:
-              "Name of a schema used for validation of the encryptedData",
-            maxLength: 100,
-            minLength: 1,
-            pattern: "^\\S+$",
-            type: "string",
-          },
-          schemaNamespace: {
-            description:
-              "The namespace of the schema used for validation and routing to a dataset.",
-            maxLength: 100,
-            minLength: 1,
-            pattern: "^\\S+$",
-            type: "string",
-          },
-          schemaVersion: {
-            description: "Integer version number of the schema",
-            minimum: 1,
-            type: "integer",
-          },
-          studyName: {
-            description: "Name of a particular study. Usually the addon_id.",
-            maxLength: 100,
-            minLength: 1,
-            pattern: "^\\S+$",
-            type: "string",
-          },
-        },
-        required: [
-          "encryptedData",
-          "encryptionKeyId",
-          "pioneerId",
-          "studyName",
-          "schemaName",
-          "schemaNamespace",
-          "schemaVersion",
-        ],
-        title: "pioneer-study",
-        type: "object",
-      },
-      type: {
-        description: "doc_type, restated",
-        enum: ["pioneer-study"],
-        type: "string",
-      },
-      version: {
-        maximum: 4,
-        minimum: 4,
-        type: "integer",
-      },
-    },
-    required: [
-      "application",
-      "creationDate",
-      "id",
-      "payload",
-      "type",
-      "version",
-    ],
-    title: "pioneer-study",
-    type: "object",
-  };
-
-  const result = JsonSchemaValidator.validate(archivedCopy, schema);
-
-  Assert.ok(
-    result.valid,
-    `Archived ping should validate against schema: ${result.error}`
-  );
-
-  // check that payload can be decrypted.
-  const privateJWK = await crypto.subtle.importKey(
-    "jwk",
-    privateKey,
-    ECDH_PARAMS,
-    false,
-    ["deriveKey"]
-  );
-
-  const decryptedJWE = await jwcrypto.decryptJWE(
-    archivedCopy.payload.encryptedData,
-    privateJWK
-  );
-
-  Assert.deepEqual(
-    JSON.parse(new TextDecoder("utf-8").decode(decryptedJWE)),
-    payload,
-    "decrypted payload should match"
-  );
-});
-
-add_task(async function test_encryptedPing_overrideId() {
-  if (gIsAndroid) {
-    // The underlying jwcrypto module being used here is not currently available on Android.
-    return;
-  }
-  Cu.importGlobalProperties(["crypto"]);
-
-  const publicKey = {
-    crv: "P-256",
-    ext: true,
-    kty: "EC",
-    x: "h12feyTYBZ__wO_AnM1a5-KTDlko3-YyQ_en19jyrs0",
-    y: "6GSfzo14ehDyH5E-xCOedJDAYlN0AGPMCtIgFbheLko",
-  };
-
-  const prefPioneerId = "12345";
-  const overriddenPioneerId = "c0ffeeaa-bbbb-abab-baba-eeff0ceeff0c";
-  const schemaName = "abc";
-  const schemaNamespace = "def";
-  const schemaVersion = 2;
-
-  Services.prefs.setStringPref("toolkit.telemetry.pioneerId", prefPioneerId);
-
-  let archiveTester = new TelemetryArchiveTesting.Checker();
-  await archiveTester.promiseInit();
-
-  // Submit a ping with a custom payload, which will be encrypted.
-  let payload = { canary: "test" };
-  let pingPromise = TelemetryController.submitExternalPing(
-    "test-pioneer-study-override",
-    payload,
-    {
-      studyName: "pioneer-dev-1@allizom.org",
-      addPioneerId: true,
-      overridePioneerId: overriddenPioneerId,
-      useEncryption: true,
-      encryptionKeyId: "pioneer-dev-20200423",
-      publicKey,
-      schemaName,
-      schemaNamespace,
-      schemaVersion,
-    }
-  );
-
-  // Wait for the ping to be submitted, to have the ping id to scan the
-  // archive for.
-  const pingId = await pingPromise;
-
-  // And then wait for the ping to be available in the archive.
-  await TestUtils.waitForCondition(
-    () => archiveTester.promiseFindPing("test-pioneer-study-override", []),
-    "Failed to find the pioneer ping"
-  );
-
-  let archivedCopy = await TelemetryArchive.promiseArchivedPingById(pingId);
-
-  Assert.notEqual(
-    archivedCopy.payload.encryptedData,
-    payload,
-    "The encrypted payload must not match the plaintext."
-  );
-
-  Assert.equal(
-    archivedCopy.payload.pioneerId,
-    overriddenPioneerId,
-    "Pioneer ID in ping must match the provided override."
-  );
 });
 
 // Testing shutdown and checking that pings sent afterwards are rejected.
@@ -1131,11 +923,8 @@ add_task(async function test_newCanRecordsMatchTheOld() {
 add_task(function test_histogram_filtering() {
   const COUNT_ID = "TELEMETRY_TEST_COUNT";
   const KEYED_ID = "TELEMETRY_TEST_KEYED_COUNT";
-  const count = Telemetry.getHistogramById(COUNT_ID);
-  const keyed = Telemetry.getKeyedHistogramById(KEYED_ID);
-
-  count.add(1);
-  keyed.add("a", 1);
+  Glean.testOnlyIpc.aCounterForHgram.add();
+  Glean.testOnlyIpc.aLabeledCounterForKeyedCountHgram.a.add(1);
 
   let snapshot = Telemetry.getSnapshotForHistograms(
     "main",
@@ -1174,11 +963,11 @@ add_task(function test_histogram_filtering() {
 });
 
 add_task(function test_scalar_filtering() {
-  const COUNT_ID = "telemetry.test.unsigned_int_kind";
-  const KEYED_ID = "telemetry.test.keyed_unsigned_int";
+  const COUNT_ID = "telemetry.test.mirror_for_quantity";
+  const KEYED_ID = "telemetry.test.mirror_for_labeled_quantity";
 
-  Telemetry.scalarSet(COUNT_ID, 2);
-  Telemetry.keyedScalarSet(KEYED_ID, "a", 2);
+  Glean.testOnly.meaningOfLife.set(2);
+  Glean.testOnly.buttonJars.a.set(2);
 
   let snapshot = Telemetry.getSnapshotForScalars(
     "main",

@@ -1,177 +1,66 @@
-From: Michael Froman <mfroman@mozilla.com>
-Date: Thu, 20 Apr 2023 14:52:00 -0500
-Subject: Bug 1828517 - (fix-a138c6c8a5) handle file moves in BUILD.gn
+From: Nico Grunbaum <na-g@nostrum.com>
+Date: Wed, 15 Nov 2023 22:33:00 +0000
+Subject: Bug 1863041 - P0 - add device filter control to
+ RTCCameraVideoCapturer;r=pehrsons,webrtc-reviewers
 
-Mercurial Revision: https://hg.mozilla.org/mozilla-central/rev/cf7e333da17689b3c115a6ffd07fab042bc5f086
+I have filed this bug upstream: https://bugs.chromium.org/p/webrtc/issues/detail?id=15639
+
+Differential Revision: https://phabricator.services.mozilla.com/D193172
+Mercurial Revision: https://hg.mozilla.org/mozilla-central/rev/91a763d768b74acc9cf4828f91a86df4a7b092ce
 ---
- rtc_base/BUILD.gn | 24 ++++++++++++++++++++++++
- 1 file changed, 24 insertions(+)
+ .../capturer/RTCCameraVideoCapturer.h         |  5 ++++-
+ .../capturer/RTCCameraVideoCapturer.m         | 19 +++++++++++++++----
+ 2 files changed, 19 insertions(+), 5 deletions(-)
 
-diff --git a/rtc_base/BUILD.gn b/rtc_base/BUILD.gn
-index 0b1e2a6208..7573a137ab 100644
---- a/rtc_base/BUILD.gn
-+++ b/rtc_base/BUILD.gn
-@@ -1147,6 +1147,7 @@ if (!build_with_chromium) {
+diff --git a/sdk/objc/components/capturer/RTCCameraVideoCapturer.h b/sdk/objc/components/capturer/RTCCameraVideoCapturer.h
+index 5185fa866e..6aeb577b13 100644
+--- a/sdk/objc/components/capturer/RTCCameraVideoCapturer.h
++++ b/sdk/objc/components/capturer/RTCCameraVideoCapturer.h
+@@ -26,7 +26,10 @@ RTC_OBJC_EXPORT
+ @property(readonly, nonatomic) AVCaptureSession *captureSession;
+ 
+ // Returns list of available capture devices that support video capture.
+-+ (NSArray<AVCaptureDevice *> *)captureDevices;
+++ (NSArray<AVCaptureDevice *> *)captureDevicesWithDeviceTypes:
++    (NSArray<AVCaptureDeviceType> *)deviceTypes;
++// Returns list of default capture devices types
+++ (NSArray<AVCaptureDeviceType> *)defaultCaptureDeviceTypes;
+ // Returns list of formats that are supported by this class for this device.
+ + (NSArray<AVCaptureDeviceFormat *> *)supportedFormatsForDevice:
+     (AVCaptureDevice *)device;
+diff --git a/sdk/objc/components/capturer/RTCCameraVideoCapturer.m b/sdk/objc/components/capturer/RTCCameraVideoCapturer.m
+index ff55bd7f19..60b1dbbfb5 100644
+--- a/sdk/objc/components/capturer/RTCCameraVideoCapturer.m
++++ b/sdk/objc/components/capturer/RTCCameraVideoCapturer.m
+@@ -124,16 +124,27 @@ const int64_t kNanosecondsPerSecond = 1000000000;
+   [[NSNotificationCenter defaultCenter] removeObserver:self];
  }
  
- rtc_library("network") {
-+if (!build_with_mozilla) {
-   visibility = [ "*" ]
-   sources = [
-     "network.cc",
-@@ -1185,16 +1186,20 @@ rtc_library("network") {
-     deps += [ ":win32" ]
-   }
+-+ (NSArray<AVCaptureDevice *> *)captureDevices {
+++ (NSArray<AVCaptureDevice *> *)captureDevicesWithDeviceTypes:
++    (NSArray<AVCaptureDeviceType> *)deviceTypes {
+   AVCaptureDeviceDiscoverySession *session = [AVCaptureDeviceDiscoverySession
+-      discoverySessionWithDeviceTypes:@[
+-        AVCaptureDeviceTypeBuiltInWideAngleCamera
+-      ]
++      discoverySessionWithDeviceTypes:deviceTypes
+                             mediaType:AVMediaTypeVideo
+                              position:AVCaptureDevicePositionUnspecified];
+   return session.devices;
  }
+ 
+++ (NSArray<AVCaptureDeviceType> *)defaultCaptureDeviceTypes {
++  NSArray *types = @[ AVCaptureDeviceTypeBuiltInWideAngleCamera ];
++#if !defined(WEBRTC_IOS)
++  if (@available(macOS 14.0, *)) {
++    types = [types arrayByAddingObject:AVCaptureDeviceTypeExternal];
++  } else {
++    types = [types arrayByAddingObject:AVCaptureDeviceTypeExternalUnknown];
++  }
++#endif
++  return types;
 +}
- 
- rtc_library("socket_address_pair") {
-+if (!build_with_mozilla) {
-   sources = [
-     "socket_address_pair.cc",
-     "socket_address_pair.h",
-   ]
-   deps = [ ":socket_address" ]
- }
-+}
- 
- rtc_library("net_helper") {
-+if (!build_with_mozilla) {
-   visibility = [ "*" ]
-   sources = [
-     "net_helper.cc",
-@@ -1203,8 +1208,10 @@ rtc_library("net_helper") {
-   absl_deps = [ "//third_party/abseil-cpp/absl/strings" ]
-   deps = [ "system:rtc_export" ]
- }
-+}
- 
- rtc_library("socket_adapters") {
-+if (!build_with_mozilla) {
-   visibility = [ "*" ]
-   sources = [
-     "socket_adapters.cc",
-@@ -1224,6 +1231,7 @@ rtc_library("socket_adapters") {
-   ]
-   absl_deps = [ "//third_party/abseil-cpp/absl/strings" ]
- }
-+}
- 
- rtc_library("network_route") {
-   sources = [
-@@ -1238,6 +1246,7 @@ rtc_library("network_route") {
- }
- 
- rtc_library("async_tcp_socket") {
-+if (!build_with_mozilla) {
-   sources = [
-     "async_tcp_socket.cc",
-     "async_tcp_socket.h",
-@@ -1256,8 +1265,10 @@ rtc_library("async_tcp_socket") {
-     "third_party/sigslot",
-   ]
- }
-+}
- 
- rtc_library("async_udp_socket") {
-+if (!build_with_mozilla) {
-   visibility = [ "*" ]
-   sources = [
-     "async_udp_socket.cc",
-@@ -1279,8 +1290,10 @@ rtc_library("async_udp_socket") {
-   ]
-   absl_deps = [ "//third_party/abseil-cpp/absl/types:optional" ]
- }
-+}
- 
- rtc_library("async_packet_socket") {
-+if (!build_with_mozilla) {
-   visibility = [ "*" ]
-   sources = [
-     "async_packet_socket.cc",
-@@ -1298,6 +1311,7 @@ rtc_library("async_packet_socket") {
-     "third_party/sigslot",
-   ]
- }
-+}
- 
- rtc_library("mdns_responder_interface") {
-   sources = [ "mdns_responder_interface.h" ]
-@@ -1310,6 +1324,7 @@ rtc_library("dscp") {
- }
- 
- rtc_library("proxy_info") {
-+if (!build_with_mozilla) {
-   visibility = [ "*" ]
-   sources = [
-     "proxy_info.cc",
-@@ -1320,6 +1335,7 @@ rtc_library("proxy_info") {
-     ":socket_address",
-   ]
- }
-+}
- 
- rtc_library("file_rotating_stream") {
-   sources = [
-@@ -1348,6 +1364,7 @@ rtc_library("data_rate_limiter") {
- }
- 
- rtc_library("unique_id_generator") {
-+if (!build_with_mozilla) {
-   sources = [
-     "unique_id_generator.cc",
-     "unique_id_generator.h",
-@@ -1362,6 +1379,7 @@ rtc_library("unique_id_generator") {
-   ]
-   absl_deps = [ "//third_party/abseil-cpp/absl/strings" ]
- }
-+}
- 
- rtc_library("crc32") {
-   sources = [
-@@ -1389,6 +1407,7 @@ rtc_library("stream") {
- }
- 
- rtc_library("rtc_certificate_generator") {
-+if (!build_with_mozilla) {
-   visibility = [ "*" ]
-   sources = [
-     "rtc_certificate_generator.cc",
-@@ -1406,8 +1425,10 @@ rtc_library("rtc_certificate_generator") {
-     "//third_party/abseil-cpp/absl/types:optional",
-   ]
- }
-+}
- 
- rtc_library("ssl") {
-+if (!build_with_mozilla) {
-   visibility = [ "*" ]
-   sources = [
-     "helpers.cc",
-@@ -1506,6 +1527,7 @@ rtc_library("ssl") {
-     deps += [ ":win32" ]
-   }
- }
-+}
- 
- rtc_library("crypt_string") {
-   sources = [
-@@ -1515,6 +1537,7 @@ rtc_library("crypt_string") {
- }
- 
- rtc_library("http_common") {
-+if (!build_with_mozilla) {
-   sources = [
-     "http_common.cc",
-     "http_common.h",
-@@ -1531,6 +1554,7 @@ rtc_library("http_common") {
- 
-   absl_deps = [ "//third_party/abseil-cpp/absl/strings" ]
- }
-+}
- 
- rtc_source_set("gtest_prod") {
-   sources = [ "gtest_prod_util.h" ]
--- 
-2.34.1
-
++
+ + (NSArray<AVCaptureDeviceFormat *> *)supportedFormatsForDevice:
+     (AVCaptureDevice *)device {
+   // Support opening the device in any format. We make sure it's converted to a

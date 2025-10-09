@@ -2,15 +2,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-// Test that Imapd.jsm fakeserver correctly implements LIST-EXTENDED imap
+// Test that Imapd.sys.mjs fakeserver correctly implements LIST-EXTENDED imap
 // extension (RFC 5258 - http://tools.ietf.org/html/rfc5258)
 
 // IMAP pump
-var { IMAPPump, setupIMAPPump, teardownIMAPPump } = ChromeUtils.import(
-  "resource://testing-common/mailnews/IMAPpump.jsm"
+var { IMAPPump, setupIMAPPump, teardownIMAPPump } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/IMAPpump.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 // Globals
@@ -45,17 +45,17 @@ add_setup(async function () {
   IMAPPump.daemon.createMailbox("Vegetable/Corn", {});
 
   handler = IMAPPump.server._handlerCreator(IMAPPump.daemon);
-  let response = handler.onError("1", "LOGIN user password");
+  const response = handler.onError("1", "LOGIN user password");
   Assert.ok(response.includes("OK"));
   // wait for imap pump to do it's thing or else we get memory leaks
-  let listener = new PromiseTestUtils.PromiseUrlListener();
+  const listener = new PromiseTestUtils.PromiseUrlListener();
   IMAPPump.inbox.updateFolderWithListener(null, listener);
   await listener.promise;
 });
 
 // test that 'LIST "" "*"' returns the proper responses (standard LIST usage)
 add_task(function testList() {
-  let response = handler.onError("2", 'LIST "" "*"');
+  const response = handler.onError("2", 'LIST "" "*"');
 
   Assert.ok(response.includes('* LIST (\\Marked \\NoInferiors) "/" "INBOX"'));
   Assert.ok(response.includes('* LIST () "/" "Fruit"'));
@@ -70,7 +70,7 @@ add_task(function testList() {
 
 // test that 'LIST (SUBSCRIBED) "" "*"' returns the proper responses
 add_task(function testListSelectSubscribed() {
-  let response = handler.onError("3", 'LIST (SUBSCRIBED) "" "*"');
+  const response = handler.onError("3", 'LIST (SUBSCRIBED) "" "*"');
 
   Assert.ok(
     response.includes(
@@ -93,7 +93,7 @@ add_task(function testListSelectSubscribed() {
 
 // test that 'LIST "" "%" RETURN (CHILDEREN)' returns the proper responses
 add_task(function testListReturnChilderen() {
-  let response = handler.onError("4", 'LIST "" "%" RETURN (CHILDREN)');
+  const response = handler.onError("4", 'LIST "" "%" RETURN (CHILDREN)');
 
   Assert.ok(response.includes('* LIST (\\Marked \\NoInferiors) "/" "INBOX"'));
   Assert.ok(response.includes('* LIST (\\HasChildren) "/" "Fruit"'));
@@ -108,7 +108,7 @@ add_task(function testListReturnChilderen() {
 
 // test that 'LIST "" "*" RETURN (SUBSCRIBED)' returns the proper responses
 add_task(function testListReturnSubscribed() {
-  let response = handler.onError("5", 'LIST "" "*" RETURN (SUBSCRIBED)');
+  const response = handler.onError("5", 'LIST "" "*" RETURN (SUBSCRIBED)');
 
   Assert.ok(
     response.includes(
@@ -129,7 +129,7 @@ add_task(function testListReturnSubscribed() {
 
 // test that 'LIST "" ("INBOX" "Tofu" "Vegetable/%")' returns the proper responses
 add_task(function testListSelectMultiple() {
-  let response = handler._dispatchCommand("LIST", [
+  const response = handler._dispatchCommand("LIST", [
     "",
     '("INBOX" "Tofu" "Vegetable/%")',
   ]);

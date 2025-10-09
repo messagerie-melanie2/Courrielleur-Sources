@@ -141,6 +141,8 @@ function systemColor(c) {
     if (alphaString.includes(".")) {
       while (alphaString[alphaString.length - 1] == "0")
         alphaString = alphaString.substring(0, alphaString.length - 1);
+      if (alphaString == "0.")
+        alphaString = "0";
     }
     return `rgba(${r}, ${g}, ${b}, ${alphaString})`;
 }
@@ -182,12 +184,12 @@ function part2()
        "border-bottom-color is blocked");
     is(cs4.backgroundColor, systemColor("ButtonFace"), "background-color not broken on inputs");
     is(cs4.color, systemColor("ButtonText"), "color not broken on inputs");
-    is(cs4.borderTopColor, systemColor("ThreeDLightShadow"), "border-top-color not broken on inputs");
-    is(cs4.borderRightColor, systemColor("ThreeDLightShadow"),
+    is(cs4.borderTopColor, systemColor("ButtonBorder"), "border-top-color not broken on inputs");
+    is(cs4.borderRightColor, systemColor("ButtonBorder"),
        "border-right-color not broken on inputs");
-    is(cs4.borderLeftColor, systemColor("ThreeDLightShadow"),
+    is(cs4.borderLeftColor, systemColor("ButtonBorder"),
        "border-left-color not broken on inputs");
-    is(cs4.borderBottomColor, systemColor("ThreeDLightShadow"),
+    is(cs4.borderBottomColor, systemColor("ButtonBorder"),
        "border-bottom-color not broken on inputs");
     is(cs8.borderImageSource, cs9.borderImageSource, "border-image-source is blocked");
     is(toRGBA(cs11.backgroundColor).a, 0, "background-color transparency is preserved on buttons");

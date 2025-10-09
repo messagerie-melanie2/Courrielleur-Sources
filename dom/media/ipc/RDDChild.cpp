@@ -5,6 +5,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "RDDChild.h"
 
+#include "TelemetryProbesReporter.h"
+#include "VideoUtils.h"
 #include "mozilla/FOGIPC.h"
 #include "mozilla/RDDProcessManager.h"
 #include "mozilla/dom/ContentParent.h"
@@ -142,6 +144,13 @@ mozilla::ipc::IPCResult RDDChild::RecvGetModulesTrust(
 
 mozilla::ipc::IPCResult RDDChild::RecvUpdateMediaCodecsSupported(
     const media::MediaCodecsSupported& aSupported) {
+#if defined(XP_MACOSX) || defined(XP_LINUX)
+  // We report this on GPUChild on Windows and Android
+  if (ContainHardwareCodecsSupported(aSupported)) {
+    mozilla::TelemetryProbesReporter::ReportDeviceMediaCodecSupported(
+        aSupported);
+  }
+#endif
   dom::ContentParent::BroadcastMediaCodecsSupportedUpdate(
       RemoteDecodeIn::RddProcess, aSupported);
   return IPC_OK();
@@ -193,7 +202,7 @@ mozilla::ipc::IPCResult RDDChild::RecvFOGData(ByteBuf&& aBuf) {
 
 void RDDChild::ActorDestroy(ActorDestroyReason aWhy) {
   if (aWhy == AbnormalShutdown) {
-    GenerateCrashReport(OtherPid());
+    GenerateCrashReport();
   }
 
   auto* gpm = gfx::GPUProcessManager::Get();

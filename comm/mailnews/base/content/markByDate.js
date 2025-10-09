@@ -4,6 +4,10 @@
 
 /* import-globals-from dateFormat.js */
 
+var { UIFontSize } = ChromeUtils.importESModule(
+  "resource:///modules/UIFontSize.sys.mjs"
+);
+
 var MILLISECONDS_PER_HOUR = 60 * 60 * 1000;
 var MICROSECONDS_PER_DAY = 1000 * MILLISECONDS_PER_HOUR * 24;
 
@@ -25,6 +29,8 @@ function onLoad() {
   // we convert it to a date string, and then the time part is truncated
   upperDateBox.value = convertDateToString(initialDate);
   upperDateBox.select(); // allows to start overwriting immediately
+
+  UIFontSize.registerWindow(window);
 }
 
 function onAccept() {
@@ -81,20 +87,17 @@ function markInDatabase(lower, upper) {
     return;
   }
 
-  let searchSession = Cc[
+  const searchSession = Cc[
     "@mozilla.org/messenger/searchSession;1"
   ].createInstance(Ci.nsIMsgSearchSession);
-  let searchTerms = [];
+  const searchTerms = [];
   searchSession.addScopeTerm(Ci.nsMsgSearchScope.offlineMail, messageFolder);
 
-  const nsMsgSearchAttrib = Ci.nsMsgSearchAttrib;
-  const nsMsgSearchOp = Ci.nsMsgSearchOp;
-
   let searchTerm = searchSession.createTerm();
-  searchTerm.attrib = nsMsgSearchAttrib.Date;
-  searchTerm.op = nsMsgSearchOp.IsBefore;
+  searchTerm.attrib = Ci.nsMsgSearchAttrib.Date;
+  searchTerm.op = Ci.nsMsgSearchOp.IsBefore;
   let value = searchTerm.value;
-  value.attrib = nsMsgSearchAttrib.Date;
+  value.attrib = Ci.nsMsgSearchAttrib.Date;
   value.date = upper;
   searchTerm.value = value;
   searchTerms.push(searchTerm);
@@ -102,17 +105,17 @@ function markInDatabase(lower, upper) {
   if (lower) {
     searchTerm = searchSession.createTerm();
     searchTerm.booleanAnd = true;
-    searchTerm.attrib = nsMsgSearchAttrib.Date;
-    searchTerm.op = nsMsgSearchOp.IsAfter;
+    searchTerm.attrib = Ci.nsMsgSearchAttrib.Date;
+    searchTerm.op = Ci.nsMsgSearchOp.IsAfter;
     value = searchTerm.value;
-    value.attrib = nsMsgSearchAttrib.Date;
+    value.attrib = Ci.nsMsgSearchAttrib.Date;
     value.date = lower;
     searchTerm.value = value;
     searchTerms.push(searchTerm);
   }
 
-  let msgEnumerator = messageDatabase.getFilterEnumerator(searchTerms);
-  let headers = [...msgEnumerator];
+  const msgEnumerator = messageDatabase.getFilterEnumerator(searchTerms);
+  const headers = [...msgEnumerator];
 
   if (headers.length) {
     messageFolder.markMessagesRead(headers, true);

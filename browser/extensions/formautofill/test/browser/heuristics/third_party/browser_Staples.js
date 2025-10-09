@@ -18,7 +18,7 @@ add_heuristic_tests(
             { fieldName: "address-line1" },
             { fieldName: "email" },
             { fieldName: "tel" },
-            { fieldName: "tel" },  // Extension
+            { fieldName: "tel-extension", reason: "update-heuristic" },  // Extension
             { fieldName: "organization" },
           ]
         },
@@ -37,7 +37,7 @@ add_heuristic_tests(
             { fieldName: "address-line1" },
             { fieldName: "email" },
             { fieldName: "tel" },
-            { fieldName: "tel" },  // Extension
+            { fieldName: "tel-extension", reason: "update-heuristic" },  // Extension
             { fieldName: "organization" },
           ],
         },
@@ -52,7 +52,7 @@ add_heuristic_tests(
           },
           fields: [
             { fieldName: "cc-number", reason: "fathom" },
-            { fieldName: "cc-exp" },
+            { fieldName: "cc-exp", reason:"update-heuristic" },
             // {fieldName: "cc-csc"},
           ],
         },
@@ -67,7 +67,7 @@ add_heuristic_tests(
           },
           fields: [
             { fieldName: "cc-number", reason: "fathom" },
-            { fieldName: "cc-exp" },
+            { fieldName: "cc-exp", reason:"update-heuristic" },
             // { fieldName: "cc-csc"},
           ],
         },

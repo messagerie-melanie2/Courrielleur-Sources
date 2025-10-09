@@ -48,15 +48,24 @@ NS_IMPL_FRAMEARENA_HELPERS(nsFileControlFrame)
 
 nsFileControlFrame::nsFileControlFrame(ComputedStyle* aStyle,
                                        nsPresContext* aPresContext)
-    : nsBlockFrame(aStyle, aPresContext, kClassID) {
-  AddStateBits(NS_BLOCK_FLOAT_MGR);
-}
+    : nsBlockFrame(aStyle, aPresContext, kClassID) {}
 
 void nsFileControlFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
                               nsIFrame* aPrevInFlow) {
   nsBlockFrame::Init(aContent, aParent, aPrevInFlow);
 
   mMouseListener = new DnDListener(this);
+}
+
+void nsFileControlFrame::Reflow(nsPresContext* aPresContext,
+                                ReflowOutput& aReflowOutput,
+                                const ReflowInput& aReflowInput,
+                                nsReflowStatus& aStatus) {
+  nsBlockFrame::Reflow(aPresContext, aReflowOutput, aReflowInput, aStatus);
+
+  // Form control frame should be monolithic, and cannot be split, so our reflow
+  // status should be fully-complete.
+  aStatus.Reset();
 }
 
 void nsFileControlFrame::Destroy(DestroyContext& aContext) {
@@ -153,10 +162,7 @@ void nsFileControlFrame::AppendAnonymousContentTo(
 NS_QUERYFRAME_HEAD(nsFileControlFrame)
   NS_QUERYFRAME_ENTRY(nsFileControlFrame)
   NS_QUERYFRAME_ENTRY(nsIAnonymousContentCreator)
-  NS_QUERYFRAME_ENTRY(nsIFormControlFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsBlockFrame)
-
-void nsFileControlFrame::SetFocus(bool aOn, bool aRepaint) {}
 
 static void AppendBlobImplAsDirectory(nsTArray<OwningFileOrDirectory>& aArray,
                                       BlobImpl* aBlobImpl,
@@ -173,7 +179,7 @@ static void AppendBlobImplAsDirectory(nsTArray<OwningFileOrDirectory>& aArray,
   }
 
   nsCOMPtr<nsIFile> file;
-  nsresult rv = NS_NewLocalFile(fullpath, true, getter_AddRefs(file));
+  nsresult rv = NS_NewLocalFile(fullpath, getter_AddRefs(file));
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return;
   }
@@ -213,8 +219,7 @@ nsFileControlFrame::DnDListener::HandleEvent(Event* aEvent) {
 
   RefPtr<HTMLInputElement> inputElement =
       HTMLInputElement::FromNode(mFrame->GetContent());
-  bool supportsMultiple =
-      inputElement->HasAttr(kNameSpaceID_None, nsGkAtoms::multiple);
+  bool supportsMultiple = inputElement->HasAttr(nsGkAtoms::multiple);
   if (!CanDropTheseFiles(dataTransfer, supportsMultiple)) {
     dataTransfer->SetDropEffect(u"none"_ns);
     aEvent->StopPropagation();
@@ -283,9 +288,9 @@ nsFileControlFrame::DnDListener::HandleEvent(Event* aEvent) {
           nsContentUtils::DispatchInputEvent(inputElement);
       NS_WARNING_ASSERTION(NS_SUCCEEDED(rvIgnored),
                            "Failed to dispatch input event");
-      nsContentUtils::DispatchTrustedEvent(
-          inputElement->OwnerDoc(), static_cast<nsINode*>(inputElement),
-          u"change"_ns, CanBubble::eYes, Cancelable::eNo);
+      nsContentUtils::DispatchTrustedEvent(inputElement->OwnerDoc(),
+                                           inputElement, u"change"_ns,
+                                           CanBubble::eYes, Cancelable::eNo);
     }
   }
 
@@ -298,9 +303,8 @@ nsresult nsFileControlFrame::DnDListener::GetBlobImplForWebkitDirectory(
 
   HTMLInputElement* inputElement =
       HTMLInputElement::FromNode(mFrame->GetContent());
-  bool webkitDirPicker =
-      StaticPrefs::dom_webkitBlink_dirPicker_enabled() &&
-      inputElement->HasAttr(kNameSpaceID_None, nsGkAtoms::webkitdirectory);
+  bool webkitDirPicker = StaticPrefs::dom_webkitBlink_dirPicker_enabled() &&
+                         inputElement->HasAttr(nsGkAtoms::webkitdirectory);
   if (!webkitDirPicker) {
     return NS_OK;
   }
@@ -378,15 +382,11 @@ nsresult nsFileControlFrame::GetFrameName(nsAString& aResult) const {
 }
 #endif
 
-nsresult nsFileControlFrame::SetFormProperty(nsAtom* aName,
-                                             const nsAString& aValue) {
-  if (nsGkAtoms::value == aName) {
-    if (MiddleCroppingBlockFrame* f =
-            do_QueryFrame(mTextContent->GetPrimaryFrame())) {
-      f->UpdateDisplayedValueToUncroppedValue(true);
-    }
+void nsFileControlFrame::SelectedFilesUpdated() {
+  if (MiddleCroppingBlockFrame* f =
+          do_QueryFrame(mTextContent->GetPrimaryFrame())) {
+    f->UpdateDisplayedValueToUncroppedValue(true);
   }
-  return NS_OK;
 }
 
 #ifdef ACCESSIBILITY

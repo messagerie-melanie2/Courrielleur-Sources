@@ -10,6 +10,7 @@
  * liability, trademark and document use rules apply.
  */
 
-[Exposed=Window, SecureContext, Pref="dom.audioworklet.enabled"]
+[Exposed=Window, SecureContext]
 interface AudioWorklet : Worklet {
+  readonly attribute MessagePort port;
 };

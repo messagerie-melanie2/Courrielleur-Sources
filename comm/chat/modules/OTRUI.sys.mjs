@@ -4,11 +4,10 @@
 
 import { IMServices } from "resource:///modules/IMServices.sys.mjs";
 import { OTR } from "resource:///modules/OTR.sys.mjs";
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 const lazy = {};
 
-XPCOMUtils.defineLazyGetter(
+ChromeUtils.defineLazyGetter(
   lazy,
   "l10n",
   () => new Localization(["messenger/otr/otrUI.ftl"], true)
@@ -38,10 +37,10 @@ function initStrings() {
     ["otr:auth-waiting", _str("auth-waiting")],
   ]);
 
-  let sl = _str("start-label");
-  let al = _str("auth-label");
-  let rfl = _str("refresh-label");
-  let ral = _str("reauth-label");
+  const sl = _str("start-label");
+  const al = _str("auth-label");
+  const rfl = _str("refresh-label");
+  const ral = _str("reauth-label");
 
   trustMap = new Map([
     [
@@ -108,24 +107,24 @@ export var OTRUI = {
   },
 
   addMenuObserver() {
-    for (let win of Services.ww.getWindowEnumerator()) {
+    for (const win of Services.ww.getWindowEnumerator()) {
       OTRUI.addMenus(win);
     }
     Services.obs.addObserver(OTRUI, "domwindowopened");
   },
 
   removeMenuObserver() {
-    for (let win of Services.ww.getWindowEnumerator()) {
+    for (const win of Services.ww.getWindowEnumerator()) {
       OTRUI.removeMenus(win);
     }
     Services.obs.removeObserver(OTRUI, "domwindowopened");
   },
 
   addMenus(win) {
-    let doc = win.document;
+    const doc = win.document;
     // Account for unready windows
     if (doc.readyState !== "complete") {
-      let listen = function () {
+      const listen = function () {
         win.removeEventListener("load", listen);
         OTRUI.addMenus(win);
       };
@@ -134,7 +133,7 @@ export var OTRUI = {
   },
 
   removeMenus(win) {
-    let doc = win.document;
+    const doc = win.document;
     OTRUI.removeBuddyContextMenu(doc);
   },
 
@@ -143,15 +142,15 @@ export var OTRUI = {
       return; // Not the buddy list context menu
     }
 
-    let sep = doc.createXULElement("menuseparator");
+    const sep = doc.createXULElement("menuseparator");
     sep.setAttribute("id", "otrsep");
-    let menuitem = doc.createXULElement("menuitem");
+    const menuitem = doc.createXULElement("menuitem");
     menuitem.setAttribute("label", _str("buddycontextmenu-label"));
     menuitem.setAttribute("id", "otrcont");
     menuitem.addEventListener("command", () => {
-      let args = OTRUI.contactWrapper(contact);
+      const args = OTRUI.contactWrapper(contact);
       args.wrappedJSObject = args;
-      let features = "chrome,modal,centerscreen,resizable=no,minimizable=no";
+      const features = "chrome,modal,centerscreen,resizable=no,minimizable=no";
       Services.ww.openWindow(
         null,
         OTR_ADD_FINGER_DIALOG_URL,
@@ -162,7 +161,7 @@ export var OTRUI = {
     });
 
     buddyContextMenu.addEventListener("popupshowing", e => {
-      let target = e.target.triggerNode;
+      const target = e.target.triggerNode;
       if (target.localName == "richlistitem") {
         menuitem.hidden = false;
         sep.hidden = false;
@@ -178,11 +177,11 @@ export var OTRUI = {
   },
 
   removeBuddyContextMenu(doc) {
-    let s = doc.getElementById("otrsep");
+    const s = doc.getElementById("otrsep");
     if (s) {
       s.remove();
     }
-    let p = doc.getElementById("otrcont");
+    const p = doc.getElementById("otrcont");
     if (p) {
       p.remove();
     }
@@ -208,8 +207,8 @@ export var OTRUI = {
       return;
     }
 
-    let acc = OTRUI.accountsToGenKey.pop();
-    let fp = OTR.privateKeyFingerprint(acc.name, acc.prot);
+    const acc = OTRUI.accountsToGenKey.pop();
+    const fp = OTR.privateKeyFingerprint(acc.name, acc.prot);
     if (!fp) {
       OTR.generatePrivateKey(acc.name, acc.prot).then(
         OTRUI.loopKeyGenSuccess,
@@ -221,7 +220,7 @@ export var OTRUI = {
   },
 
   genMissingKeys() {
-    for (let acc of IMServices.accounts.getAccounts()) {
+    for (const acc of IMServices.accounts.getAccounts()) {
       OTRUI.accountsToGenKey.push({
         name: acc.normalizedName,
         prot: acc.protocol.normalizedName,
@@ -250,7 +249,7 @@ export var OTRUI = {
 
     this.debug = Services.prefs.getBoolPref("chat.otr.trace", false);
 
-    OTR.init({});
+    OTR.init();
     if (!OTR.libLoaded) {
       return;
     }
@@ -271,7 +270,7 @@ export var OTRUI = {
         Services.obs.addObserver(OTRUI, "conversation-closed");
         Services.obs.addObserver(OTRUI, "prpl-quit");
 
-        for (let conv of IMServices.conversations.getConversations()) {
+        for (const conv of IMServices.conversations.getConversations()) {
           OTRUI.initConv(conv);
         }
         OTRUI.addMenuObserver();
@@ -289,7 +288,7 @@ export var OTRUI = {
       return OTR.disconnect(aConv, true);
     }
     let allGood = true;
-    for (let conv of IMServices.conversations.getConversations()) {
+    for (const conv of IMServices.conversations.getConversations()) {
       if (conv.isChat) {
         continue;
       }
@@ -301,9 +300,9 @@ export var OTRUI = {
   },
 
   openAuth(window, name, mode, uiConv, contactInfo) {
-    let otrAuth = this.globalDoc.querySelector(".otr-auth");
+    const otrAuth = this.globalDoc.querySelector(".otr-auth");
     otrAuth.disabled = true;
-    let win = window.openDialog(
+    const win = window.openDialog(
       "chrome://chat/content/otr-auth.xhtml",
       "auth=" + name,
       "centerscreen,resizable=no,minimizable=no",
@@ -318,8 +317,8 @@ export var OTRUI = {
     });
   },
 
-  closeAuth(context) {
-    let win = windowRefs.get(context.username);
+  closeAuth(username) {
+    const win = windowRefs.get(username);
     if (win) {
       win.close();
     }
@@ -375,7 +374,7 @@ export var OTRUI = {
    */
   addButton(aObject) {
     this.globalDoc = aObject.ownerDocument;
-    let _conv = aObject._conv;
+    const _conv = aObject._conv;
     OTRUI.visibleConv = _conv;
     if (
       _conv.encryptionState === Ci.prplIConversation.ENCRYPTION_NOT_SUPPORTED
@@ -395,7 +394,7 @@ export var OTRUI = {
       return;
     }
     OTRUI.visibleConv = null;
-    let otrContainer = this.globalDoc.querySelector(".encryption-container");
+    const otrContainer = this.globalDoc.querySelector(".encryption-container");
     OTRUI.noOtrPossible(otrContainer);
   },
 
@@ -419,7 +418,7 @@ export var OTRUI = {
     }
     OTRUI.visibleConv = _conv;
     let convBinding;
-    for (let element of this.globalDoc.getElementById("conversationsBox")
+    for (const element of this.globalDoc.getElementById("conversationsBox")
       .children) {
       if (!element.hidden) {
         convBinding = element;
@@ -449,8 +448,8 @@ export var OTRUI = {
       return;
     }
 
-    let otrContainer = doc.querySelector(".encryption-container");
-    let otrButton = doc.querySelector(".encryption-button");
+    const otrContainer = doc.querySelector(".encryption-container");
+    const otrButton = doc.querySelector(".encryption-button");
     if (_conv != null && _conv.isChat) {
       OTRUI.noOtrPossible(otrContainer, context);
       return;
@@ -464,7 +463,7 @@ export var OTRUI = {
     }
 
     try {
-      let uiConv = OTR.getUIConvFromContext(context);
+      const uiConv = OTR.getUIConvFromContext(context);
       if (uiConv != null && !(uiConv === this.visibleConv)) {
         return;
       }
@@ -480,8 +479,8 @@ export var OTRUI = {
         return;
       }
       if (addSystemMessage) {
-        let trust = OTRUI.getTrustSettings(context);
-        let id = "state-" + trust.class;
+        const trust = OTRUI.getTrustSettings(context);
+        const id = "state-" + trust.class;
         let msg;
         if (OTR.trust(context) == OTR.trustState.TRUST_NOT_PRIVATE) {
           msg = lazy.l10n.formatValueSync(id);
@@ -496,10 +495,10 @@ export var OTRUI = {
     }
 
     otrContainer.hidden = false;
-    let otrStart = doc.querySelector(".otr-start");
-    let otrEnd = doc.querySelector(".otr-end");
-    let otrAuth = doc.querySelector(".otr-auth");
-    let trust = OTRUI.getTrustSettings(context);
+    const otrStart = doc.querySelector(".otr-start");
+    const otrEnd = doc.querySelector(".otr-end");
+    const otrAuth = doc.querySelector(".otr-auth");
+    const trust = OTRUI.getTrustSettings(context);
     otrButton.setAttribute(
       "tooltiptext",
       _strArgs("state-" + trust.class, { name: context.username })
@@ -516,8 +515,8 @@ export var OTRUI = {
   },
 
   alertTrust(context) {
-    let uiConv = OTR.getUIConvFromContext(context);
-    let trust = OTRUI.getTrustSettings(context);
+    const uiConv = OTR.getUIConvFromContext(context);
+    const trust = OTRUI.getTrustSettings(context);
     uiConv.systemMessage(
       _strArgs("afterauth-" + trust.class, { name: context.username }),
       false,
@@ -526,24 +525,24 @@ export var OTRUI = {
   },
 
   getTrustSettings(context) {
-    let result = trustMap.get(OTR.trust(context));
+    const result = trustMap.get(OTR.trust(context));
     return result;
   },
 
-  askAuth(aObject) {
-    let uiConv = OTR.getUIConvFromContext(aObject.context);
+  async askAuth(aObject) {
+    const uiConv = OTR.getUIConvFromContext(aObject.context);
     if (!uiConv) {
       return;
     }
 
-    let name = uiConv.target.normalizedName;
-    let msg = _strArgs("verify-request", { name });
+    const name = uiConv.target.normalizedName;
+    const msg = _strArgs("verify-request", { name });
     // Trigger the update of the unread message counter.
     uiConv.notifyVerifyOTR(msg);
     Services.obs.notifyObservers(uiConv, "new-otr-verification-request");
 
-    let window = this.globalDoc.defaultView;
-    let buttons = [
+    const window = this.globalDoc.defaultView;
+    const buttons = [
       {
         label: _str("finger-verify"),
         accessKey: _str("finger-verify-access-key"),
@@ -557,13 +556,13 @@ export var OTRUI = {
         label: _str("finger-ignore"),
         accessKey: _str("finger-ignore-access-key"),
         callback() {
-          let context = OTR.getContext(uiConv.target);
+          const context = OTR.getContext(uiConv.target);
           OTR.abortSMP(context);
         },
       },
     ];
 
-    let notification = this.globalBox.appendNotification(
+    const notification = await this.globalBox.appendNotification(
       `ask-auth-${name}`,
       {
         label: msg,
@@ -572,12 +571,15 @@ export var OTRUI = {
       buttons
     );
 
-    notification.removeAttribute("dismissable");
+    notification.dismissable = false;
   },
 
-  closeAskAuthNotification(aObject) {
-    let name = aObject.context.username;
-    let notification = this.globalBox.getNotificationWithValue(
+  closeAskAuthNotification(name) {
+    if (!name) {
+      return;
+    }
+
+    const notification = this.globalBox.getNotificationWithValue(
       `ask-auth-${name}`
     );
     if (!notification) {
@@ -587,13 +589,24 @@ export var OTRUI = {
     this.globalBox.removeNotification(notification);
   },
 
+  closeUnverifiedWithUsername(username) {
+    for (const notification of this.globalBox.allNotifications) {
+      if (
+        username == notification.getAttribute("user") &&
+        notification.getAttribute("value") == AUTH_STATUS_UNVERIFIED
+      ) {
+        notification.close();
+      }
+    }
+  },
+
   closeUnverified(context) {
-    let uiConv = OTR.getUIConvFromContext(context);
+    const uiConv = OTR.getUIConvFromContext(context);
     if (!uiConv) {
       return;
     }
 
-    for (let notification of this.globalBox.allNotifications) {
+    for (const notification of this.globalBox.allNotifications) {
       if (
         context.username == notification.getAttribute("user") &&
         notification.getAttribute("value") == AUTH_STATUS_UNVERIFIED
@@ -604,7 +617,7 @@ export var OTRUI = {
   },
 
   hideUserNotifications(context) {
-    for (let notification of this.globalBox.allNotifications) {
+    for (const notification of this.globalBox.allNotifications) {
       if (context.username == notification.getAttribute("user")) {
         notification.close();
       }
@@ -612,7 +625,7 @@ export var OTRUI = {
   },
 
   hideAllOTRNotifications() {
-    for (let notification of this.globalBox.allNotifications) {
+    for (const notification of this.globalBox.allNotifications) {
       if (notification.getAttribute("protocol") == "otr") {
         notification.setAttribute("hidden", "true");
       }
@@ -620,30 +633,29 @@ export var OTRUI = {
   },
 
   showUserNotifications(context) {
-    let name = context.username;
-    for (let notification of this.globalBox.allNotifications) {
+    const name = context.username;
+    for (const notification of this.globalBox.allNotifications) {
       if (name == notification.getAttribute("user")) {
-        notification.removeAttribute("hidden");
+        notification.hidden = false;
       }
     }
   },
 
-  notifyUnverified(context, seen) {
-    let uiConv = OTR.getUIConvFromContext(context);
+  async notifyUnverified(context, seen) {
+    const uiConv = OTR.getUIConvFromContext(context);
     if (!uiConv) {
       return;
     }
 
-    let name = context.username;
-    let window = this.globalDoc.defaultView;
+    const name = context.username;
+    const window = this.globalDoc.defaultView;
 
-    let buttons = [
+    const buttons = [
       {
         label: _str("finger-verify"),
         accessKey: _str("finger-verify-access-key"),
         callback() {
-          let name = uiConv.target.normalizedName;
-          OTRUI.openAuth(window, name, "start", uiConv);
+          OTRUI.openAuth(window, uiConv.target.normalizedName, "start", uiConv);
           // prevent closing of notification bar when the button is hit
           return true;
         },
@@ -652,13 +664,12 @@ export var OTRUI = {
         label: _str("finger-ignore"),
         accessKey: _str("finger-ignore-access-key"),
         callback() {
-          let context = OTR.getContext(uiConv.target);
-          OTR.abortSMP(context);
+          OTR.abortSMP(OTR.getContext(uiConv.target));
         },
       },
     ];
 
-    let notification = this.globalBox.appendNotification(
+    const notification = await this.globalBox.appendNotification(
       name,
       {
         label: _strArgs(`finger-${seen}`, { name }),
@@ -674,7 +685,7 @@ export var OTRUI = {
     notification.setAttribute("protocol", "otr");
     notification.setAttribute("status", AUTH_STATUS_UNVERIFIED);
     // Prevent users from dismissing this notification.
-    notification.removeAttribute("dismissable");
+    notification.dismissable = false;
 
     if (!this.visibleConv) {
       return;
@@ -686,12 +697,12 @@ export var OTRUI = {
   },
 
   closeVerification(context) {
-    let uiConv = OTR.getUIConvFromContext(context);
+    const uiConv = OTR.getUIConvFromContext(context);
     if (!uiConv) {
       return;
     }
 
-    let prevNotification = OTRUI.globalBox.getNotificationWithValue(
+    const prevNotification = OTRUI.globalBox.getNotificationWithValue(
       context.username
     );
     if (prevNotification) {
@@ -699,10 +710,15 @@ export var OTRUI = {
     }
   },
 
-  notifyVerification(context, key, cancelable, verifiable) {
-    let uiConv = OTR.getUIConvFromContext(context);
-    if (!uiConv) {
-      return;
+  async notifyVerification(context, key, cancelable, verifiable) {
+    const cachedUsername = context.username;
+
+    let cachedUiConv = null;
+    if (cancelable || verifiable) {
+      cachedUiConv = OTR.getUIConvFromContext(context);
+      if (!cachedUiConv) {
+        return;
+      }
     }
 
     OTRUI.closeVerification(context);
@@ -714,23 +730,22 @@ export var OTRUI = {
           label: _str("auth-cancel"),
           accessKey: _str("auth-cancel-access-key"),
           callback() {
-            let context = OTR.getContext(uiConv.target);
-            OTR.abortSMP(context);
+            OTR.abortSMP(OTR.getContext(cachedUiConv.target));
           },
         },
       ];
     }
 
     if (verifiable) {
-      let window = this.globalDoc.defaultView;
+      const window = this.globalDoc.defaultView;
 
       buttons = [
         {
           label: _str("finger-verify"),
           accessKey: _str("finger-verify-access-key"),
           callback() {
-            let name = uiConv.target.normalizedName;
-            OTRUI.openAuth(window, name, "start", uiConv);
+            const name = cachedUiConv.target.normalizedName;
+            OTRUI.openAuth(window, name, "start", cachedUiConv);
             // prevent closing of notification bar when the button is hit
             return true;
           },
@@ -739,8 +754,7 @@ export var OTRUI = {
           label: _str("finger-ignore"),
           accessKey: _str("finger-ignore-access-key"),
           callback() {
-            let context = OTR.getContext(uiConv.target);
-            OTR.abortSMP(context);
+            OTR.abortSMP(OTR.getContext(cachedUiConv.target));
           },
         },
       ];
@@ -763,9 +777,10 @@ export var OTRUI = {
         break;
     }
 
-    OTRUI.closeUnverified(context);
-    let notification = this.globalBox.appendNotification(
-      context.username,
+    OTRUI.closeUnverifiedWithUsername(cachedUsername);
+
+    const notification = await this.globalBox.appendNotification(
+      cachedUsername,
       {
         label: authLabelMap.get(key),
         priority,
@@ -775,7 +790,7 @@ export var OTRUI = {
 
     // Set the user attribute so we can show and hide notifications based on the
     // currently viewed conversation.
-    notification.setAttribute("user", context.username);
+    notification.setAttribute("user", cachedUsername);
     // Set custom attributes for CSS styling.
     notification.setAttribute("protocol", "otr");
     notification.setAttribute("status", key);
@@ -789,15 +804,21 @@ export var OTRUI = {
     if (!dismissable) {
       // Prevent users from dismissing this notification if something is in
       // progress or an action is required.
-      notification.removeAttribute("dismissable");
+      notification.dismissable = false;
     }
   },
 
-  updateAuth(aObj) {
-    // let uiConv = OTR.getUIConvFromContext(aObj.context);
+  async updateAuth(aObj) {
+    const username = aObj.context.username;
+
     if (!aObj.progress) {
-      OTRUI.closeAuth(aObj.context);
-      OTRUI.notifyVerification(aObj.context, "otr:auth-error", false, false);
+      OTRUI.closeAuth(username);
+      await OTRUI.notifyVerification(
+        aObj.context,
+        "otr:auth-error",
+        false,
+        false
+      );
     } else if (aObj.progress === 100) {
       let key;
       let verifiable = false;
@@ -815,18 +836,23 @@ export var OTRUI = {
           OTR.notifyTrust(aObj.context);
         }
       }
-      OTRUI.notifyVerification(aObj.context, key, false, verifiable);
+      await OTRUI.notifyVerification(aObj.context, key, false, verifiable);
     } else {
       // TODO: show the aObj.progress to the user with a
       //   <progressmeter mode="determined" value="10" />
-      OTRUI.notifyVerification(aObj.context, "otr:auth-waiting", true, false);
+      await OTRUI.notifyVerification(
+        aObj.context,
+        "otr:auth-waiting",
+        true,
+        false
+      );
     }
-    OTRUI.closeAskAuthNotification(aObj);
+    OTRUI.closeAskAuthNotification(username);
   },
 
   onAccountCreated(acc) {
-    let account = acc.normalizedName;
-    let protocol = acc.protocol.normalizedName;
+    const account = acc.normalizedName;
+    const protocol = acc.protocol.normalizedName;
     Promise.resolve();
     if (OTR.privateKeyFingerprint(account, protocol) === null) {
       OTR.generatePrivateKey(account, protocol).catch(
@@ -855,7 +881,7 @@ export var OTRUI = {
   },
 
   onContactAdded(contact) {
-    let args = OTRUI.contactWrapper(contact);
+    const args = OTRUI.contactWrapper(contact);
     if (
       OTR.getFingerprintsForRecipient(
         args.account,
@@ -866,7 +892,7 @@ export var OTRUI = {
       return;
     }
     args.wrappedJSObject = args;
-    let features = "chrome,modal,centerscreen,resizable=no,minimizable=no";
+    const features = "chrome,modal,centerscreen,resizable=no,minimizable=no";
     Services.ww.openWindow(null, OTR_ADD_FINGER_DIALOG_URL, "", features, args);
   },
 
@@ -878,20 +904,21 @@ export var OTRUI = {
     switch (aTopic) {
       case "nsPref:changed":
         break;
-      case "conversation-loaded":
+      case "conversation-loaded": {
         doc = aObject.ownerDocument;
-        let windowtype = doc.documentElement.getAttribute("windowtype");
+        const windowtype = doc.documentElement.getAttribute("windowtype");
         if (windowtype !== "mail:3pane") {
           return;
         }
         OTRUI.addButton(aObject);
         break;
+      }
       case "conversation-closed":
         if (aObject.isChat) {
           return;
         }
         this.globalBox.removeAllNotifications();
-        OTRUI.closeAuth(OTR.getContext(aObject));
+        OTRUI.closeAuth(OTR.getContext(aObject).username);
         OTRUI.disconnect(aObject);
         break;
       // case "contact-signed-off":
@@ -903,7 +930,7 @@ export var OTRUI = {
         OTRUI.addMenus(aObject);
         break;
       case "otr:generate": {
-        let result = OTR.generatePrivateKeySync(
+        const result = OTR.generatePrivateKeySync(
           aObject.account,
           aObject.protocol
         );
@@ -918,7 +945,7 @@ export var OTRUI = {
           aTopic === "otr:disconnected" ||
           OTR.trust(aObject) !== OTR.trustState.TRUST_UNVERIFIED
         ) {
-          OTRUI.closeAuth(aObject);
+          OTRUI.closeAuth(aObject.username);
           OTRUI.closeUnverified(aObject);
           OTRUI.closeVerification(aObject);
         }
@@ -926,7 +953,7 @@ export var OTRUI = {
         break;
       case "otr:unverified":
         if (!this.globalDoc) {
-          let win = Services.wm.getMostRecentWindow("mail:3pane");
+          const win = Services.wm.getMostRecentWindow("mail:3pane");
           if (!win) {
             return;
           }
@@ -955,7 +982,7 @@ export var OTRUI = {
         OTRUI.updateAuth(aObject);
         break;
       case "otr:cancel-ask-auth":
-        OTRUI.closeAskAuthNotification(aObject);
+        OTRUI.closeAskAuthNotification(aObject.context.username);
         break;
     }
   },
@@ -988,7 +1015,7 @@ export var OTRUI = {
     Services.obs.removeObserver(OTRUI, "conversation-closed");
     Services.obs.removeObserver(OTRUI, "prpl-quit");
 
-    for (let conv of IMServices.conversations.getConversations()) {
+    for (const conv of IMServices.conversations.getConversations()) {
       OTRUI.resetConv(conv);
     }
     OTR.removeObserver(OTRUI);

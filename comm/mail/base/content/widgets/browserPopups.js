@@ -7,6 +7,9 @@
 /* globals saveURL */ // From contentAreaUtils.js
 /* globals goUpdateCommand */ // From globalOverlay.js
 
+var { openLinkExternally } = ChromeUtils.importESModule(
+  "resource:///modules/LinkHelper.sys.mjs"
+);
 var { AppConstants } = ChromeUtils.importESModule(
   "resource://gre/modules/AppConstants.sys.mjs"
 );
@@ -22,11 +25,9 @@ var { ShortcutUtils } = ChromeUtils.importESModule(
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-ChromeUtils.defineModuleGetter(
-  this,
-  "MailUtils",
-  "resource:///modules/MailUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  MailUtils: "resource:///modules/MailUtils.sys.mjs",
+});
 var { E10SUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/E10SUtils.sys.mjs"
 );
@@ -40,7 +41,7 @@ function openContextMenu({ data }, browser, actor) {
     return;
   }
 
-  let wgp = actor.manager;
+  const wgp = actor.manager;
 
   if (!wgp.isCurrentGlobal) {
     // Don't display context menus for unloaded documents
@@ -49,7 +50,7 @@ function openContextMenu({ data }, browser, actor) {
 
   // NOTE: We don't use `wgp.documentURI` here as we want to use the failed
   // channel URI in the case we have loaded an error page.
-  let documentURIObject = wgp.browsingContext.currentURI;
+  const documentURIObject = wgp.browsingContext.currentURI;
 
   let frameReferrerInfo = data.frameReferrerInfo;
   if (frameReferrerInfo) {
@@ -61,7 +62,7 @@ function openContextMenu({ data }, browser, actor) {
     linkReferrerInfo = E10SUtils.deserializeReferrerInfo(linkReferrerInfo);
   }
 
-  let frameID = nsContextMenu.WebNavigationFrames.getFrameId(
+  const frameID = nsContextMenu.WebNavigationFrames.getFrameId(
     wgp.browsingContext
   );
 
@@ -95,8 +96,8 @@ function openContextMenu({ data }, browser, actor) {
 
   // Note: `popup` must be in `document`, but `browser` might be in a
   // different document, such as about:3pane.
-  let popup = document.getElementById(browser.getAttribute("context"));
-  let context = nsContextMenu.contentData.context;
+  const popup = document.getElementById(browser.getAttribute("context"));
+  const context = nsContextMenu.contentData.context;
 
   // Fill in some values in the context from the WindowGlobalParent actor.
   context.principal = wgp.documentPrincipal;
@@ -108,9 +109,9 @@ function openContextMenu({ data }, browser, actor) {
   // We don't have access to the original event here, as that happened in
   // another process. Therefore we synthesize a new MouseEvent to propagate the
   // inputSource to the subsequently triggered popupshowing event.
-  let newEvent = document.createEvent("MouseEvent");
-  let screenX = context.screenXDevPx / window.devicePixelRatio;
-  let screenY = context.screenYDevPx / window.devicePixelRatio;
+  const newEvent = document.createEvent("MouseEvent");
+  const screenX = context.screenXDevPx / window.devicePixelRatio;
+  const screenY = context.screenYDevPx / window.devicePixelRatio;
   newEvent.initNSMouseEvent(
     "contextmenu",
     true,
@@ -178,7 +179,7 @@ class nsContextMenu {
 
     if (!aIsShift) {
       // The rest of this block sends menu information to WebExtensions.
-      let subject = {
+      const subject = {
         menu: aXulMenu,
         tab: document.getElementById("tabmail")
           ? document.getElementById("tabmail").currentTabInfo
@@ -223,8 +224,8 @@ class nsContextMenu {
 
     // If all items in the menu are hidden, set this.shouldDisplay to false
     // so that the callers know to not even display the empty menu.
-    let contextPopup = document.getElementById("browserContext");
-    for (let item of contextPopup.children) {
+    const contextPopup = document.getElementById("browserContext");
+    for (const item of contextPopup.children) {
       if (!item.hidden) {
         return;
       }
@@ -344,7 +345,7 @@ class nsContextMenu {
         this.contentData.spellInfo,
         this.actor.manager
       );
-      let canSpell = gSpellChecker.canSpellCheck && this.canSpellCheck;
+      const canSpell = gSpellChecker.canSpellCheck && this.canSpellCheck;
       this.showItem("browserContext-spell-check-enabled", canSpell);
       this.showItem("browserContext-spell-separator", canSpell);
     }
@@ -373,13 +374,13 @@ class nsContextMenu {
     openDictionaryList();
   }
   initSpellingItems() {
-    let canSpell =
+    const canSpell =
       gSpellChecker.canSpellCheck &&
       !gSpellChecker.initialSpellCheckPending &&
       this.canSpellCheck;
-    let showDictionaries = canSpell && gSpellChecker.enabled;
-    let onMisspelling = gSpellChecker.overMisspelling;
-    let showUndo = canSpell && gSpellChecker.canUndo();
+    const showDictionaries = canSpell && gSpellChecker.enabled;
+    const onMisspelling = gSpellChecker.overMisspelling;
+    const showUndo = canSpell && gSpellChecker.canUndo();
     this.showItem("browserContext-spell-check-enabled", canSpell);
     this.showItem("browserContext-spell-separator", canSpell);
     document
@@ -395,10 +396,10 @@ class nsContextMenu {
       onMisspelling || showUndo
     );
     if (onMisspelling) {
-      let addMenuItem = document.getElementById(
+      const addMenuItem = document.getElementById(
         "browserContext-spell-add-to-dictionary"
       );
-      let suggestionCount = gSpellChecker.addSuggestionsToMenu(
+      const suggestionCount = gSpellChecker.addSuggestionsToMenu(
         addMenuItem.parentNode,
         addMenuItem,
         this.spellSuggestions
@@ -414,13 +415,13 @@ class nsContextMenu {
     // dictionary list
     this.showItem("browserContext-spell-dictionaries", showDictionaries);
     if (canSpell) {
-      let dictMenu = document.getElementById(
+      const dictMenu = document.getElementById(
         "browserContext-spell-dictionaries-menu"
       );
-      let dictSep = document.getElementById(
+      const dictSep = document.getElementById(
         "browserContext-spell-language-separator"
       );
-      let count = gSpellChecker.addDictionaryListToMenu(dictMenu, dictSep);
+      const count = gSpellChecker.addDictionaryListToMenu(dictMenu, dictSep);
       this.showItem(dictSep, count > 0);
       this.showItem("browserContext-spell-add-dictionaries-main", false);
     } else if (this.onSpellcheckable) {
@@ -467,16 +468,16 @@ class nsContextMenu {
     this.showItem("browserContext-composeemailto", this.onMailtoLink);
     this.showItem("browserContext-addemail", this.onMailtoLink);
 
-    let searchTheWeb = document.getElementById("browserContext-searchTheWeb");
+    const searchTheWeb = document.getElementById("browserContext-searchTheWeb");
     this.showItem(
       searchTheWeb,
       !this.onPlayableMedia && this.isContentSelected
     );
 
     if (!searchTheWeb.hidden) {
-      let selection = this.textSelected;
+      const selection = this.textSelected;
 
-      let bundle = document.getElementById("bundle_messenger");
+      const bundle = document.getElementById("bundle_messenger");
       let key = "openSearch.label";
       let abbrSelection;
       if (selection.length > 15) {
@@ -494,14 +495,14 @@ class nsContextMenu {
     }
   }
   initMediaPlayerItems() {
-    let onMedia = this.onVideo || this.onAudio;
+    const onMedia = this.onVideo || this.onAudio;
     // Several mutually exclusive items.... play/pause, mute/unmute, show/hide
     this.showItem("browserContext-media-play", onMedia && this.target.paused);
     this.showItem("browserContext-media-pause", onMedia && !this.target.paused);
     this.showItem("browserContext-media-mute", onMedia && !this.target.muted);
     this.showItem("browserContext-media-unmute", onMedia && this.target.muted);
     if (onMedia) {
-      let hasError =
+      const hasError =
         this.target.error != null ||
         this.target.networkState == this.target.NETWORK_NO_SOURCE;
       this.setItemAttr("browserContext-media-play", "disabled", hasError);
@@ -512,7 +513,10 @@ class nsContextMenu {
   }
   initBackForwardMenuItemTooltip(menuItemId, l10nId, shortcutId) {
     // On macOS regular menuitems are used and the shortcut isn't added.
-    if (AppConstants.platform == "macosx") {
+    if (
+      AppConstants.platform == "macosx" &&
+      Services.prefs.getBoolPref("widget.macos.native-context-menus", true)
+    ) {
       return;
     }
 
@@ -524,13 +528,13 @@ class nsContextMenu {
       // want to format the menu item tooltip to remove "$shortcut" string.
       shortcut = "";
     }
-    let menuItem = document.getElementById(menuItemId);
+    const menuItem = document.getElementById(menuItemId);
     document.l10n.setAttributes(menuItem, l10nId, { shortcut });
   }
   initBrowserItems() {
     // Work out if we are a context menu on a special item e.g. an image, link
     // etc.
-    let onSpecialItem =
+    const onSpecialItem =
       this.isContentSelected ||
       this.onCanvas ||
       this.onLink ||
@@ -540,7 +544,7 @@ class nsContextMenu {
       this.onTextInput;
 
     // Internal about:* pages should not show nav items.
-    let shouldShowNavItems =
+    const shouldShowNavItems =
       !onSpecialItem && this.browser.currentURI.scheme != "about";
 
     // Ensure these commands are updated with their current status.
@@ -551,12 +555,17 @@ class nsContextMenu {
       goUpdateCommand("cmd_reload");
     }
 
-    let stopped = document.getElementById("cmd_stop").hasAttribute("disabled");
+    const stopped = document
+      .getElementById("cmd_stop")
+      .hasAttribute("disabled");
     this.showItem("browserContext-reload", shouldShowNavItems && stopped);
     this.showItem("browserContext-stop", shouldShowNavItems && !stopped);
     this.showItem("browserContext-sep-navigation", shouldShowNavItems);
 
-    if (AppConstants.platform == "macosx") {
+    if (
+      AppConstants.platform == "macosx" &&
+      Services.prefs.getBoolPref("widget.macos.native-context-menus", true)
+    ) {
       this.showItem("browserContext-back", shouldShowNavItems);
       this.showItem("browserContext-forward", shouldShowNavItems);
     } else {
@@ -592,11 +601,11 @@ class nsContextMenu {
     );
   }
   initSeparators() {
-    let separators = Array.from(
+    const separators = Array.from(
       this.xulMenu.querySelectorAll(":scope > menuseparator")
     );
     let lastShownSeparator = null;
-    for (let separator of separators) {
+    for (const separator of separators) {
       let shouldShow = this.shouldShowSeparator(separator);
       if (
         !shouldShow &&
@@ -619,11 +628,9 @@ class nsContextMenu {
   /**
    * Get a computed style property for an element.
    *
-   * @param  aElem
-   *         A DOM node
-   * @param  aProp
-   *         The desired CSS property
-   * @returns the value of the property
+   * @param {Node} aElem - A DOM node.
+   * @param {string} aProp - The desired CSS property.
+   * @returns {string} the value of the property.
    */
   getComputedStyle(aElem, aProp) {
     return aElem.ownerGlobal.getComputedStyle(aElem).getPropertyValue(aProp);
@@ -633,8 +640,8 @@ class nsContextMenu {
    * Determine whether the clicked-on link can be saved, and whether it
    * may be saved according to the ScriptSecurityManager.
    *
-   * @returns true if the protocol can be persisted and if the target has
-   *         permission to link to the URL, false if not
+   * @returns {boolean} true if the protocol can be persisted and if the
+   *   target has permission to link to the URL, false if not.
    */
   isLinkSaveable() {
     try {
@@ -736,10 +743,8 @@ class nsContextMenu {
    * Set a DOM node's hidden property by passing in the node's id or the
    * element itself.
    *
-   * @param aItemOrId
-   *        a DOM node or the id of a DOM node
-   * @param aShow
-   *        true to show, false to hide
+   * @param {Node|string} aItemOrId - A DOM node or the id of a DOM node.
+   * @param {boolean} aShow - true to show, false to hide.
    */
   showItem(aItemOrId, aShow) {
     var item =
@@ -755,8 +760,8 @@ class nsContextMenu {
    * Set a DOM node's disabled property by passing in the node's id or the
    * element itself.
    *
-   * @param aItemOrId  A DOM node or the id of a DOM node
-   * @param aEnabled   True to enable the element, false to disable.
+   * @param {Node|string} aItemOrId - A DOM node or the id of a DOM node.
+   * @param {boolean} aEnabled - true to enable the element, false to disable.
    */
   enableItem(aItemOrId, aEnabled) {
     var item =
@@ -771,12 +776,10 @@ class nsContextMenu {
    * value is null, then it removes the attribute (which works
    * nicely for the disabled attribute).
    *
-   * @param  aId
-   *         The id of an element
-   * @param  aAttr
-   *         The attribute name
-   * @param  aVal
-   *         The value to set the attribute to, or null to remove the attribute
+   * @param {string} aId - The id of an element.
+   * @param {string} aAttr - The attribute name.
+   * @param {?string} aVal - The value to set the attribute to, or null to
+   *   remove the attribute.
    */
   setItemAttr(aId, aAttr, aVal) {
     var elem = document.getElementById(aId);
@@ -795,7 +798,7 @@ class nsContextMenu {
    * Get an absolute URL for clicked-on link, from the href property or by
    * resolving an XLink URL by hand.
    *
-   * @returns the string absolute URL for the clicked-on link
+   * @returns {string} the string absolute URL for the clicked-on link.
    */
   getLinkURL() {
     if (this.link.href) {
@@ -814,7 +817,7 @@ class nsContextMenu {
   /**
    * Generate a URI object from the linkURL spec
    *
-   * @returns an nsIURI if possible, or null if not
+   * @returns {?nsIURI} an nsIURI if possible, or null if not.
    */
   getLinkURI() {
     try {
@@ -828,7 +831,7 @@ class nsContextMenu {
   /**
    * Get the scheme for the clicked-on linkURI, if present.
    *
-   * @returns a scheme, possibly undefined, or null if there's no linkURI
+   * @returns {?string} a scheme, possibly undefined, or null if there's no linkURI
    */
   getLinkProtocol() {
     if (this.linkURI) {
@@ -850,7 +853,7 @@ class nsContextMenu {
   /**
    * Determines whether the focused window has something selected.
    *
-   * @returns true if there is a selection, false if not
+   * @returns {boolean} true if there is a selection, false if not
    */
   isContentSelection() {
     return !document.commandDispatcher.focusedWindow.getSelection().isCollapsed;
@@ -859,11 +862,9 @@ class nsContextMenu {
   /**
    * Convert relative URL to absolute, using a provided <base>.
    *
-   * @param  aBase
-   *         The URL string to use as the base
-   * @param  aUrl
-   *         The possibly-relative URL string
-   * @returns The string absolute URL
+   * @param {string} aBase - The URL string to use as the base.
+   * @param {string} aUrl - The possibly-relative URL string.
+   * @returns {string} The string absolute URL.
    */
   makeURLAbsolute(aBase, aUrl) {
     // Construct nsIURL.
@@ -875,9 +876,8 @@ class nsContextMenu {
   /**
    * Determine whether a DOM node is a text or password input, or a textarea.
    *
-   * @param  aNode
-   *         The DOM node to check
-   * @returns true for textboxes, false for other elements
+   * @param {Node} aNode - The DOM node to check.
+   * @returns {boolean} true for textboxes, false for other elements
    */
   isTargetATextBox(aNode) {
     if (HTMLInputElement.isInstance(aNode)) {
@@ -891,8 +891,8 @@ class nsContextMenu {
    * Determine whether a separator should be shown based on whether
    * there are any non-hidden items between it and the previous separator.
    *
-   * @param {DomElement} element - The separator element.
-   * @returns {boolean} True if the separator should be shown, false if not.
+   * @param {Element} element - The separator element.
+   * @returns {boolean} true if the separator should be shown, false if not.
    */
   shouldShowSeparator(element) {
     if (element) {
@@ -910,7 +910,7 @@ class nsContextMenu {
   /**
    * Ensures that there isn't a separator shown at the bottom of the menu.
    *
-   * @param aPopup  The menu to check.
+   * @param {Element} aPopup - The menu to check.
    */
   checkLastSeparator(aPopup) {
     let sibling = aPopup.lastElementChild;
@@ -929,39 +929,15 @@ class nsContextMenu {
   }
 
   openInBrowser() {
-    let url = this.contentData?.documentURIObject?.spec;
+    const url = this.contentData?.documentURIObject?.spec;
     if (!url) {
       return;
     }
-    PlacesUtils.history
-      .insert({
-        url,
-        visits: [
-          {
-            date: new Date(),
-          },
-        ],
-      })
-      .catch(console.error);
-    Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-      .getService(Ci.nsIExternalProtocolService)
-      .loadURI(Services.io.newURI(url));
+    openLinkExternally(url);
   }
 
   openLinkInBrowser() {
-    PlacesUtils.history
-      .insert({
-        url: this.linkURL,
-        visits: [
-          {
-            date: new Date(),
-          },
-        ],
-      })
-      .catch(console.error);
-    Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-      .getService(Ci.nsIExternalProtocolService)
-      .loadURI(this.linkURI);
+    openLinkExternally(this.linkURI);
   }
 
   mediaCommand(command) {

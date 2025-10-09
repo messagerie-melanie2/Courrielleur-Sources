@@ -3,10 +3,6 @@
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
 
-<?xml-stylesheet href="chrome://messenger/skin/accountManage.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/icons.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/folderMenus.css" type="text/css"?>
-
 <!DOCTYPE html [ <!ENTITY % trashDTD SYSTEM "chrome://messenger/locale/am-server-top.dtd">
 %trashDTD; ]>
 
@@ -17,6 +13,13 @@
 >
   <head>
     <title>&serverSettings.label;</title>
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src chrome:; script-src chrome: 'unsafe-inline'; style-src chrome: 'unsafe-inline'"
+    />
+    <link rel="stylesheet" href="chrome://messenger/skin/accountManage.css" />
+    <link rel="stylesheet" href="chrome://messenger/skin/icons.css" />
+    <link rel="stylesheet" href="chrome://messenger/skin/folderMenus.css" />
     <script
       defer="defer"
       src="chrome://messenger/content/globalOverlay.js"
@@ -37,7 +40,7 @@
     ></script>
     <script>
       // FIXME: move to script file.
-      window.addEventListener("load", event => {
+      window.addEventListener("load", () => {
         parent.onPanelLoaded("am-server.xhtml");
       });
     </script>
@@ -154,7 +157,7 @@
                 <label
                   value="&connectionSecurity.label;"
                   accesskey="&connectionSecurity.accesskey;"
-                  control="server.socketType"
+                  control="server."
                 />
               </html:td>
               <html:td>
@@ -168,12 +171,6 @@
                     <menuitem
                       value="0"
                       label="&connectionSecurityType-0.label;"
-                    />
-                    <menuitem
-                      id="connectionSecurityType-1"
-                      value="1"
-                      label="&connectionSecurityType-1.label;"
-                      disabled="true"
                     />
                     <menuitem
                       value="2"

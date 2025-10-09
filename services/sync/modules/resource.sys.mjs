@@ -11,8 +11,6 @@ import { CommonUtils } from "resource://services-common/utils.sys.mjs";
 import { Utils } from "resource://services-sync/util.sys.mjs";
 import { setTimeout, clearTimeout } from "resource://gre/modules/Timer.sys.mjs";
 
-/* global AbortController */
-
 /*
  * Resource represents a remote network resource, identified by a URI.
  * Create an instance like so:
@@ -217,7 +215,7 @@ Resource.prototype = {
     // Make a lazy getter to convert the json response into an object.
     // Note that this can cause a parse error to be thrown far away from the
     // actual fetch, so be warned!
-    XPCOMUtils.defineLazyGetter(ret, "obj", () => {
+    ChromeUtils.defineLazyGetter(ret, "obj", () => {
       try {
         return JSON.parse(ret.data);
       } catch (ex) {

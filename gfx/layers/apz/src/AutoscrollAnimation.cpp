@@ -11,13 +11,12 @@
 #include "AsyncPanZoomController.h"
 #include "APZCTreeManager.h"
 #include "FrameMetrics.h"
-#include "mozilla/Telemetry.h"  // for Telemetry
 
 namespace mozilla {
 namespace layers {
 
 // Helper function for AutoscrollAnimation::DoSample().
-// Basically copied as-is from toolkit/actors/AutoScrollChild.jsm.
+// Basically copied as-is from toolkit/actors/AutoScrollChild.sys.mjs.
 static float Accelerate(ScreenCoord curr, ScreenCoord start) {
   static const int speed = 12;
   float val = (curr - start) / speed;

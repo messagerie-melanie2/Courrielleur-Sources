@@ -6,14 +6,10 @@
 #ifndef nsLocalUndoTxn_h__
 #define nsLocalUndoTxn_h__
 
-#include "mozilla/Attributes.h"
 #include "msgCore.h"
 #include "nsIMsgFolder.h"
-#include "nsMailboxService.h"
 #include "nsMsgTxn.h"
-#include "MailNewsTypes.h"
 #include "nsTArray.h"
-#include "nsCOMPtr.h"
 #include "nsIFolderListener.h"
 #include "nsIWeakReferenceUtils.h"
 
@@ -40,12 +36,6 @@ class nsLocalMoveCopyMsgTxn : public nsIFolderListener, public nsMsgTxn {
   nsresult UndoImapDeleteFlag(nsIMsgFolder* aFolder,
                               nsTArray<nsMsgKey>& aKeyArray, bool deleteFlag);
   nsresult UndoTransactionInternal();
-  // If the store using this undo transaction can "undelete" a message,
-  // it will call this function on the transaction; This makes undo/redo
-  // easy because message keys don't change after undo/redo. Otherwise,
-  // we need to adjust the src or dst keys after every undo/redo action
-  // to note the new keys.
-  void SetCanUndelete(bool canUndelete) { m_canUndelete = canUndelete; }
 
  private:
   virtual ~nsLocalMoveCopyMsgTxn();
@@ -55,7 +45,6 @@ class nsLocalMoveCopyMsgTxn : public nsIFolderListener, public nsMsgTxn {
   nsTArray<nsMsgKey> m_dstKeyArray;
   bool m_isMove;
   bool m_srcIsImap4;
-  bool m_canUndelete;
   nsTArray<uint32_t> m_dstSizeArray;
   bool m_undoing;  // if false, re-doing
   uint32_t m_numHdrsCopied;

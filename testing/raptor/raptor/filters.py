@@ -4,7 +4,6 @@
 
 # originally taken from /testing/talos/talos/filter.py
 
-import math
 
 """
 data filters:
@@ -25,7 +24,7 @@ Each filter is a simple function, but it also have attached a special
 _FILTERS = {}
 
 
-class Filter(object):
+class Filter:
     def __init__(self, func, *args, **kwargs):
         """
         Takes a filter function, and save args and kwargs that
@@ -59,15 +58,11 @@ def register_filter(func):
     all filters defined in this module
     should be registered
     """
-    global _FILTERS
-
     _FILTERS[func.__name__] = func
     return func
 
 
 def filters(*args):
-    global _FILTERS
-
     filters_ = [_FILTERS[filter] for filter in args]
     return filters_
 
@@ -179,11 +174,10 @@ def geometric_mean(series):
     """
     geometric_mean: http://en.wikipedia.org/wiki/Geometric_mean
     """
-    total = 0
-    for i in series:
-        total += math.log(i + 1)
-    # pylint --py3k W1619
-    return math.exp(total / len(series)) - 1
+
+    from scipy.stats.mstats import gmean
+
+    return gmean(series)
 
 
 # filters that return a list
@@ -273,9 +267,3 @@ def v8_subtest(series, name):
 
     # pylint --py3k W1619
     return reference[name] / geometric_mean(series)
-
-
-@register_filter
-@define_filter
-def responsiveness_Metric(val_list):
-    return sum([float(x) * float(x) / 1000000.0 for x in val_list])

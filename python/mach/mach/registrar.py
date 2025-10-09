@@ -3,10 +3,9 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import time
+from copy import deepcopy
 from cProfile import Profile
 from pathlib import Path
-
-import six
 
 from .base import MachError
 
@@ -18,7 +17,7 @@ Run |mach help| to show a list of all commands available to the current context.
 """.lstrip()
 
 
-class MachRegistrar(object):
+class MachRegistrar:
     """Container for mach command and config providers."""
 
     def __init__(self):
@@ -86,7 +85,13 @@ class MachRegistrar(object):
         return fail_conditions
 
     def _run_command_handler(
-        self, handler, context, debug_command=False, profile_command=False, **kwargs
+        self,
+        handler,
+        context,
+        command_site_manager=None,
+        debug_command=False,
+        profile_command=False,
+        **kwargs,
     ):
         instance = MachRegistrar._instance(handler, context, **kwargs)
         fail_conditions = MachRegistrar._fail_conditions(handler, instance)
@@ -99,7 +104,10 @@ class MachRegistrar(object):
         self.command_depth += 1
         fn = handler.func
         if handler.virtualenv_name:
-            instance.activate_virtualenv()
+            if command_site_manager:
+                instance.virtualenv_manager = command_site_manager
+            else:
+                instance.activate_virtualenv()
 
         profile = None
         if profile_command:
@@ -131,7 +139,7 @@ class MachRegistrar(object):
             print(f"python3 -m snakeviz {profile_file.name}")
 
         result = result or 0
-        assert isinstance(result, six.integer_types)
+        assert isinstance(result, int)
 
         if not debug_command:
             postrun = getattr(context, "post_dispatch_handler", None)
@@ -155,7 +163,17 @@ class MachRegistrar(object):
 
         Commands can use this to call other commands.
         """
-        handler = self.command_handlers[name]
+        from mach.command_util import load_command_module_from_command_name
+
+        handler = self.command_handlers.get(name)
+
+        if not handler:
+            load_command_module_from_command_name(name, context.topdir)
+            handler = self.command_handlers.get(name)
+            if not handler:
+                raise MachError(
+                    f"Mach was not able to load the module for the '{name}' command."
+                )
 
         if subcommand:
             handler = handler.subcommand_handlers[subcommand]
@@ -163,20 +181,25 @@ class MachRegistrar(object):
         if handler.parser:
             parser = handler.parser
 
-            # save and restore existing defaults so **kwargs don't persist across
-            # subsequent invocations of Registrar.dispatch()
-            old_defaults = parser._defaults.copy()
-            parser.set_defaults(**kwargs)
-            kwargs, unknown = parser.parse_known_args(argv or [])
-            kwargs = vars(kwargs)
-            parser._defaults = old_defaults
+            # save and restore existing defaults and actions so **kwargs don't
+            # persist across subsequent invocations of Registrar.dispatch()
+            old_defaults = deepcopy(parser._defaults)
+            old_actions = deepcopy(parser._actions)
+
+            try:
+                parser.set_defaults(**kwargs)
+                kwargs, unknown = parser.parse_known_args(argv or [])
+                kwargs = vars(kwargs)
+            finally:
+                parser._defaults = old_defaults
+                parser._actions = old_actions
 
             if unknown:
                 if subcommand:
-                    name = "{} {}".format(name, subcommand)
+                    name = f"{name} {subcommand}"
                 parser.error(
                     "unrecognized arguments for {}: {}".format(
-                        name, ", ".join(["'{}'".format(arg) for arg in unknown])
+                        name, ", ".join([f"'{arg}'" for arg in unknown])
                     )
                 )
 

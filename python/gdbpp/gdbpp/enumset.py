@@ -10,7 +10,7 @@ from gdbpp import GeckoPrettyPrinter
 
 
 @GeckoPrettyPrinter("mozilla::EnumSet", "^mozilla::EnumSet<.*>$")
-class enumset_printer(object):
+class enumset_printer:
     def __init__(self, value):
         self.value = value
         self.enum_type = value.type.template_argument(0)
@@ -21,7 +21,7 @@ class enumset_printer(object):
         return (
             ("flag", gdb.Value(i).cast(self.enum_type))
             for i in range(0, max_bit)
-            if ((bitfield & (2 ** i)) != 0)
+            if ((bitfield & (2**i)) != 0)
         )
 
     def to_string(self):

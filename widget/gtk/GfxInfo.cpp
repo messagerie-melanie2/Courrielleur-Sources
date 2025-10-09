@@ -20,7 +20,7 @@
 
 #include "mozilla/gfx/Logging.h"
 #include "mozilla/SSE.h"
-#include "mozilla/Telemetry.h"
+#include "mozilla/glean/GfxMetrics.h"
 #include "mozilla/XREAppData.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/GUniquePtr.h"
@@ -40,9 +40,11 @@
 // How long we wait for data from glxtest/vaapi test process in milliseconds.
 #define GFX_TEST_TIMEOUT 4000
 #define VAAPI_TEST_TIMEOUT 2000
+#define V4L2_TEST_TIMEOUT 2000
 
 #define GLX_PROBE_BINARY u"glxtest"_ns
 #define VAAPI_PROBE_BINARY u"vaapitest"_ns
+#define V4L2_PROBE_BINARY u"v4l2test"_ns
 
 namespace mozilla::widget {
 
@@ -58,6 +60,7 @@ constexpr int CODEC_HW_H264 = 1 << 4;
 constexpr int CODEC_HW_VP8 = 1 << 5;
 constexpr int CODEC_HW_VP9 = 1 << 6;
 constexpr int CODEC_HW_AV1 = 1 << 7;
+constexpr int CODEC_HW_HEVC = 1 << 8;
 
 nsresult GfxInfo::Init() {
   mGLMajorVersion = 0;
@@ -73,17 +76,17 @@ nsresult GfxInfo::Init() {
 }
 
 void GfxInfo::AddCrashReportAnnotations() {
-  CrashReporter::AnnotateCrashReport(CrashReporter::Annotation::AdapterVendorID,
-                                     mVendorId);
-  CrashReporter::AnnotateCrashReport(CrashReporter::Annotation::AdapterDeviceID,
-                                     mDeviceId);
-  CrashReporter::AnnotateCrashReport(
+  CrashReporter::RecordAnnotationNSCString(
+      CrashReporter::Annotation::AdapterVendorID, mVendorId);
+  CrashReporter::RecordAnnotationNSCString(
+      CrashReporter::Annotation::AdapterDeviceID, mDeviceId);
+  CrashReporter::RecordAnnotationNSCString(
       CrashReporter::Annotation::AdapterDriverVendor, mDriverVendor);
-  CrashReporter::AnnotateCrashReport(
+  CrashReporter::RecordAnnotationNSCString(
       CrashReporter::Annotation::AdapterDriverVersion, mDriverVersion);
-  CrashReporter::AnnotateCrashReport(CrashReporter::Annotation::IsWayland,
-                                     mIsWayland);
-  CrashReporter::AnnotateCrashReport(
+  CrashReporter::RecordAnnotationBool(CrashReporter::Annotation::IsWayland,
+                                      mIsWayland);
+  CrashReporter::RecordAnnotationNSCString(
       CrashReporter::Annotation::DesktopEnvironment,
       GetDesktopEnvironmentIdentifier());
 
@@ -127,7 +130,7 @@ static bool ManageChildProcess(const char* aProcessName, int* aPID, int* aPipe,
   const TimeStamp deadline =
       TimeStamp::Now() + TimeDuration::FromMilliseconds(aTimeout);
 
-  struct pollfd pfd {};
+  struct pollfd pfd{};
   pfd.fd = *aPipe;
   pfd.events = POLLIN;
 
@@ -308,7 +311,7 @@ void GfxInfo::GetData() {
 
   // only useful for Linux kernel version check for FGLRX driver.
   // assumes X client == X server, which is sad.
-  struct utsname unameobj {};
+  struct utsname unameobj{};
   if (uname(&unameobj) >= 0) {
     mOS.Assign(unameobj.sysname);
     mOSRelease.Assign(unameobj.release);
@@ -702,6 +705,10 @@ void GfxInfo::GetDataVAAPI() {
         media::MCSInfo::AddSupport(
             media::MediaCodecsSupport::AV1HardwareDecode);
       }
+      if (mVAAPISupportedCodecs & CODEC_HW_HEVC) {
+        media::MCSInfo::AddSupport(
+            media::MediaCodecsSupport::HEVCHardwareDecode);
+      }
     } else if (!strcmp(line, "WARNING") || !strcmp(line, "ERROR")) {
       gfxCriticalNote << "vaapitest: " << line;
       line = NS_strtok("\n", &bufptr);
@@ -714,6 +721,121 @@ void GfxInfo::GetDataVAAPI() {
 #endif
 }
 
+// Probe all V4L2 devices and check their capabilities
+void GfxInfo::GetDataV4L2() {
+  if (mIsV4L2Supported.isSome()) {
+    // We have already probed v4l2 support, no need to do it again.
+    return;
+  }
+  mIsV4L2Supported = Some(false);
+
+#ifdef MOZ_ENABLE_V4L2
+  DIR* dir = opendir("/dev");
+  if (!dir) {
+    gfxCriticalNote << "Could not list /dev\n";
+    return;
+  }
+  struct dirent* dir_entry;
+  while ((dir_entry = readdir(dir))) {
+    if (!strncmp(dir_entry->d_name, "video", 5)) {
+      nsCString path = "/dev/"_ns;
+      path += nsDependentCString(dir_entry->d_name);
+      V4L2ProbeDevice(path);
+    }
+  }
+  closedir(dir);
+#endif  // MOZ_ENABLE_V4L2
+}
+
+// Check the capabilities of a single V4L2 device.  If the device doesn't work
+// or doesn't support any codecs we recognise, then we just ignore it.  If it
+// does support recognised codecs then add these codecs to the supported list
+// and mark V4L2 as supported: We only need a single working device to enable
+// V4L2, when we come to decode FFmpeg will probe all the devices and choose
+// the appropriate one.
+void GfxInfo::V4L2ProbeDevice(nsCString& dev) {
+  char* v4l2Data = nullptr;
+  auto free = mozilla::MakeScopeExit([&] { g_free((void*)v4l2Data); });
+
+  int v4l2Pipe = -1;
+  int v4l2PID = 0;
+  const char* args[] = {"-d", dev.get(), nullptr};
+  v4l2PID = FireTestProcess(V4L2_PROBE_BINARY, &v4l2Pipe, args);
+  if (!v4l2PID) {
+    gfxCriticalNote << "Failed to start v4l2test process\n";
+    return;
+  }
+
+  if (!ManageChildProcess("v4l2test", &v4l2PID, &v4l2Pipe, V4L2_TEST_TIMEOUT,
+                          &v4l2Data)) {
+    gfxCriticalNote << "v4l2test: ManageChildProcess failed\n";
+    return;
+  }
+
+  char* bufptr = v4l2Data;
+  char* line;
+  nsTArray<nsCString> capFormats;
+  nsTArray<nsCString> outFormats;
+  bool supported = false;
+  // Use gfxWarning rather than gfxCriticalNote from here on because the
+  // errors/warnings output by v4l2test are generally just caused by devices
+  // which aren't M2M decoders. Set gfx.logging.level=5 to see these messages.
+
+  while ((line = NS_strtok("\n", &bufptr))) {
+    if (!strcmp(line, "V4L2_SUPPORTED")) {
+      line = NS_strtok("\n", &bufptr);
+      if (!line) {
+        gfxWarning() << "v4l2test: Failed to get V4L2 support\n";
+        return;
+      }
+      supported = !strcmp(line, "TRUE");
+    } else if (!strcmp(line, "V4L2_CAPTURE_FMTS")) {
+      line = NS_strtok("\n", &bufptr);
+      if (!line) {
+        gfxWarning() << "v4l2test: Failed to get V4L2 CAPTURE formats\n";
+        return;
+      }
+      char* capture_fmt;
+      while ((capture_fmt = NS_strtok(" ", &line))) {
+        capFormats.AppendElement(capture_fmt);
+      }
+    } else if (!strcmp(line, "V4L2_OUTPUT_FMTS")) {
+      line = NS_strtok("\n", &bufptr);
+      if (!line) {
+        gfxWarning() << "v4l2test: Failed to get V4L2 OUTPUT formats\n";
+        return;
+      }
+      char* output_fmt;
+      while ((output_fmt = NS_strtok(" ", &line))) {
+        outFormats.AppendElement(output_fmt);
+      }
+    } else if (!strcmp(line, "WARNING") || !strcmp(line, "ERROR")) {
+      line = NS_strtok("\n", &bufptr);
+      if (line) {
+        gfxWarning() << "v4l2test: " << line << "\n";
+      }
+      return;
+    }
+  }
+
+  // If overall SUPPORTED flag is not TRUE then stop now
+  if (!supported) {
+    return;
+  }
+
+  // Currently the V4L2 decode platform only supports YUV420 and NV12
+  if (!capFormats.Contains("YV12") && !capFormats.Contains("NV12")) {
+    return;
+  }
+
+  // Supported codecs
+  if (outFormats.Contains("H264")) {
+    mIsV4L2Supported = Some(true);
+    media::MCSInfo::AddSupport(media::MediaCodecsSupport::H264HardwareDecode);
+    mV4L2SupportedCodecs |= CODEC_HW_H264;
+  }
+}
+
 const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
   if (!sDriverInfo->Length()) {
     // Mesa 10.0 provides the GLX_MESA_query_renderer extension, which allows us
@@ -721,32 +843,32 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
     APPEND_TO_DRIVER_BLOCKLIST_EXT(
         OperatingSystem::Linux, ScreenSizeStatus::All, BatteryStatus::All,
         WindowProtocol::All, DriverVendor::MesaAll, DeviceFamily::All,
-        GfxDriverInfo::allFeatures, nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION,
-        DRIVER_LESS_THAN, V(10, 0, 0, 0), "FEATURE_FAILURE_OLD_MESA",
-        "Mesa 10.0");
+        GfxDriverInfo::optionalFeatures,
+        nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_LESS_THAN,
+        V(10, 0, 0, 0), "FEATURE_FAILURE_OLD_MESA", "Mesa 10.0");
 
     // NVIDIA Mesa baseline (see bug 1714391).
     APPEND_TO_DRIVER_BLOCKLIST_EXT(
         OperatingSystem::Linux, ScreenSizeStatus::All, BatteryStatus::All,
         WindowProtocol::All, DriverVendor::MesaNouveau, DeviceFamily::All,
-        GfxDriverInfo::allFeatures, nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION,
-        DRIVER_LESS_THAN, V(11, 0, 0, 0), "FEATURE_FAILURE_OLD_NV_MESA",
-        "Mesa 11.0");
+        GfxDriverInfo::optionalFeatures,
+        nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_LESS_THAN,
+        V(11, 0, 0, 0), "FEATURE_FAILURE_OLD_NV_MESA", "Mesa 11.0");
 
     // NVIDIA baseline (ported from old blocklist)
     APPEND_TO_DRIVER_BLOCKLIST_EXT(
         OperatingSystem::Linux, ScreenSizeStatus::All, BatteryStatus::All,
         WindowProtocol::All, DriverVendor::NonMesaAll, DeviceFamily::NvidiaAll,
-        GfxDriverInfo::allFeatures, nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION,
-        DRIVER_LESS_THAN, V(257, 21, 0, 0), "FEATURE_FAILURE_OLD_NVIDIA",
-        "NVIDIA 257.21");
+        GfxDriverInfo::optionalFeatures,
+        nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_LESS_THAN,
+        V(257, 21, 0, 0), "FEATURE_FAILURE_OLD_NVIDIA", "NVIDIA 257.21");
 
     // fglrx baseline (chosen arbitrarily as 2013-07-22 release).
     APPEND_TO_DRIVER_BLOCKLIST(
         OperatingSystem::Linux, DeviceFamily::AtiAll,
-        GfxDriverInfo::allFeatures, nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION,
-        DRIVER_LESS_THAN, V(13, 15, 100, 1), "FEATURE_FAILURE_OLD_FGLRX",
-        "fglrx 13.15.100.1");
+        GfxDriverInfo::optionalFeatures,
+        nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_LESS_THAN,
+        V(13, 15, 100, 1), "FEATURE_FAILURE_OLD_FGLRX", "fglrx 13.15.100.1");
 
     ////////////////////////////////////
     // FEATURE_WEBRENDER
@@ -840,14 +962,14 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
     // Bug 1635186 - Poor performance with video playing in a background window
     // on XWayland. Keep in sync with FEATURE_X11_EGL below to only enable them
     // together by default. Only Mesa and Nvidia binary drivers are expected
-    // on Wayland rigth now.
+    // on Wayland right now.
     APPEND_TO_DRIVER_BLOCKLIST_EXT(
         OperatingSystem::Linux, ScreenSizeStatus::All, BatteryStatus::All,
         WindowProtocol::XWayland, DriverVendor::MesaAll, DeviceFamily::All,
         nsIGfxInfo::FEATURE_WEBRENDER,
         nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_LESS_THAN,
-        V(21, 0, 0, 0), "FEATURE_FAILURE_WEBRENDER_BUG_1635186",
-        "Mesa 21.0.0.0");
+        V(17, 0, 0, 0), "FEATURE_FAILURE_WEBRENDER_BUG_1635186",
+        "Mesa 17.0.0.0");
 
     // Bug 1815481 - Disable mesa drivers in virtual machines.
     APPEND_TO_DRIVER_BLOCKLIST_EXT(
@@ -905,43 +1027,46 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
 
     ////////////////////////////////////
     // FEATURE_DMABUF
-    // Disabled due to high volume crash tracked in bug 1788573.
+    // Disabled due to high volume crash tracked in bug 1788573, fixed in the
+    // 545 driver.
     APPEND_TO_DRIVER_BLOCKLIST_EXT(
         OperatingSystem::Linux, ScreenSizeStatus::All, BatteryStatus::All,
         WindowProtocol::All, DriverVendor::NonMesaAll, DeviceFamily::NvidiaAll,
         nsIGfxInfo::FEATURE_DMABUF, nsIGfxInfo::FEATURE_BLOCKED_DEVICE,
-        DRIVER_COMPARISON_IGNORED, V(0, 0, 0, 0), "FEATURE_FAILURE_BUG_1788573",
-        "");
+        DRIVER_LESS_THAN, V(545, 23, 6, 0), "FEATURE_FAILURE_BUG_1788573", "");
+
+    // Disabled due to high volume crash tracked in bug 1913778. It appears that
+    // only this version of the driver is affected.
+    APPEND_TO_DRIVER_BLOCKLIST_EXT(
+        OperatingSystem::Linux, ScreenSizeStatus::All, BatteryStatus::All,
+        WindowProtocol::All, DriverVendor::MesaRadeonsi, DeviceFamily::AtiAll,
+        nsIGfxInfo::FEATURE_DMABUF, nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION,
+        DRIVER_EQUAL, V(24, 1, 3, 0), "FEATURE_FAILURE_BUG_1913778", "");
 
     ////////////////////////////////////
     // FEATURE_DMABUF_SURFACE_EXPORT
-    // Disabled due to:
+    // Disabled on all Mesa drivers due to various issue, among them:
     // https://gitlab.freedesktop.org/mesa/mesa/-/issues/6666
     // https://gitlab.freedesktop.org/mesa/mesa/-/issues/6796
-    APPEND_TO_DRIVER_BLOCKLIST_EXT(
-        OperatingSystem::Linux, ScreenSizeStatus::All, BatteryStatus::All,
-        WindowProtocol::All, DriverVendor::MesaAll, DeviceFamily::AtiAll,
-        nsIGfxInfo::FEATURE_DMABUF_SURFACE_EXPORT,
-        nsIGfxInfo::FEATURE_BLOCKED_DEVICE, DRIVER_COMPARISON_IGNORED,
-        V(0, 0, 0, 0), "FEATURE_FAILURE_BROKEN_DRIVER", "");
-
-    // Disabled due to:
     // https://gitlab.freedesktop.org/mesa/mesa/-/issues/6688
-    APPEND_TO_DRIVER_BLOCKLIST_EXT(
-        OperatingSystem::Linux, ScreenSizeStatus::All, BatteryStatus::All,
-        WindowProtocol::All, DriverVendor::MesaAll, DeviceFamily::IntelAll,
-        nsIGfxInfo::FEATURE_DMABUF_SURFACE_EXPORT,
-        nsIGfxInfo::FEATURE_BLOCKED_DEVICE, DRIVER_COMPARISON_IGNORED,
-        V(0, 0, 0, 0), "FEATURE_FAILURE_BROKEN_DRIVER", "");
-
-    // Disabled due to:
     // https://gitlab.freedesktop.org/mesa/mesa/-/issues/6988
     APPEND_TO_DRIVER_BLOCKLIST_EXT(
         OperatingSystem::Linux, ScreenSizeStatus::All, BatteryStatus::All,
-        WindowProtocol::All, DriverVendor::MesaAll, DeviceFamily::QualcommAll,
+        WindowProtocol::All, DriverVendor::MesaAll, DeviceFamily::All,
         nsIGfxInfo::FEATURE_DMABUF_SURFACE_EXPORT,
         nsIGfxInfo::FEATURE_BLOCKED_DEVICE, DRIVER_COMPARISON_IGNORED,
         V(0, 0, 0, 0), "FEATURE_FAILURE_BROKEN_DRIVER", "");
+
+    ////////////////////////////////////
+    // FEATURE_DMABUF_WEBGL
+    // Disabled due to DMABuf rendering/correctness with WebGL on Nvidia driver,
+    // tracked in bug 1924578.
+    APPEND_TO_DRIVER_BLOCKLIST_EXT(
+        OperatingSystem::Linux, ScreenSizeStatus::All, BatteryStatus::All,
+        WindowProtocol::All, DriverVendor::NonMesaAll, DeviceFamily::NvidiaAll,
+        nsIGfxInfo::FEATURE_DMABUF_WEBGL, nsIGfxInfo::FEATURE_BLOCKED_DEVICE,
+        DRIVER_COMPARISON_IGNORED, V(0, 0, 0, 0), "FEATURE_FAILURE_BUG_1924578",
+        "");
 
     ////////////////////////////////////
     // FEATURE_HARDWARE_VIDEO_DECODING
@@ -977,14 +1102,15 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         nsIGfxInfo::FEATURE_BLOCKED_DEVICE, DRIVER_COMPARISON_IGNORED,
         V(0, 0, 0, 0), "FEATURE_HARDWARE_VIDEO_DECODING_NO_R600", "");
 
-    // Disable on Release/late Beta on AMD
-#if !defined(EARLY_BETA_OR_EARLIER)
-    APPEND_TO_DRIVER_BLOCKLIST(OperatingSystem::Linux, DeviceFamily::AtiAll,
-                               nsIGfxInfo::FEATURE_HARDWARE_VIDEO_DECODING,
-                               nsIGfxInfo::FEATURE_BLOCKED_DEVICE,
-                               DRIVER_COMPARISON_IGNORED, V(0, 0, 0, 0),
-                               "FEATURE_HARDWARE_VIDEO_DECODING_DISABLE", "");
-#endif
+    // Disable on AMD devices using broken Mesa (Bug 1837140).
+    // https://gitlab.freedesktop.org/mesa/mesa/-/commit/0c024bbe641b092bbb
+    APPEND_TO_DRIVER_BLOCKLIST_EXT(
+        OperatingSystem::Linux, ScreenSizeStatus::All, BatteryStatus::All,
+        WindowProtocol::All, DriverVendor::MesaAll, DeviceFamily::AtiAll,
+        nsIGfxInfo::FEATURE_HARDWARE_VIDEO_DECODING,
+        nsIGfxInfo::FEATURE_BLOCKED_DEVICE, DRIVER_LESS_THAN, V(24, 2, 0, 0),
+        "FEATURE_HARDWARE_VIDEO_DECODING_AMD_DISABLE", "Mesa 24.2.0");
+
     ////////////////////////////////////
     // FEATURE_HW_DECODED_VIDEO_ZERO_COPY - ALLOWLIST
     APPEND_TO_DRIVER_BLOCKLIST2(OperatingSystem::Linux, DeviceFamily::All,
@@ -993,14 +1119,13 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
                                 DRIVER_COMPARISON_IGNORED, V(0, 0, 0, 0),
                                 "FEATURE_ROLLOUT_ALL");
 
-    // Disable on all AMD devices using Mesa (Bug 1802844).
+    // Disable on AMD devices using broken Mesa (Bug 1837138).
     APPEND_TO_DRIVER_BLOCKLIST_EXT(
         OperatingSystem::Linux, ScreenSizeStatus::All, BatteryStatus::All,
         WindowProtocol::All, DriverVendor::MesaAll, DeviceFamily::AtiAll,
         nsIGfxInfo::FEATURE_HW_DECODED_VIDEO_ZERO_COPY,
-        nsIGfxInfo::FEATURE_BLOCKED_DEVICE, DRIVER_COMPARISON_IGNORED,
-        V(0, 0, 0, 0), "FEATURE_HARDWARE_VIDEO_ZERO_COPY_LINUX_AMD_DISABLE",
-        "");
+        nsIGfxInfo::FEATURE_BLOCKED_DEVICE, DRIVER_LESS_THAN, V(24, 2, 0, 0),
+        "FEATURE_HARDWARE_VIDEO_ZERO_COPY_LINUX_AMD_DISABLE", "Mesa 24.2.0.0");
 
     ////////////////////////////////////
     // FEATURE_WEBRENDER_PARTIAL_PRESENT
@@ -1011,6 +1136,14 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         nsIGfxInfo::FEATURE_BLOCKED_DEVICE, DRIVER_COMPARISON_IGNORED,
         V(0, 0, 0, 0), "FEATURE_ROLLOUT_WR_PARTIAL_PRESENT_NVIDIA_BINARY", "");
 
+    APPEND_TO_DRIVER_BLOCKLIST_EXT(
+        OperatingSystem::Linux, ScreenSizeStatus::All, BatteryStatus::All,
+        WindowProtocol::XWayland, DriverVendor::MesaAll, DeviceFamily::All,
+        nsIGfxInfo::FEATURE_WEBRENDER_PARTIAL_PRESENT,
+        nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_LESS_THAN,
+        V(21, 0, 0, 0), "FEATURE_FAILURE_WEBRENDER_PARTIAL_PRESENT_BUG_1677892",
+        "Mesa 21.0.0.0");
+
     ////////////////////////////////////
 
     APPEND_TO_DRIVER_BLOCKLIST_EXT(
@@ -1020,13 +1153,19 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         DRIVER_COMPARISON_IGNORED, V(0, 0, 0, 0),
         "FEATURE_FAILURE_THREADSAFE_GL_NOUVEAU", "");
 
-    // Disabled due to high volume crash tracked in bug 1788573.
+    // Disabled due to high volume crash tracked in bug 1788573, fixed in the
+    // 545 driver.
     APPEND_TO_DRIVER_BLOCKLIST_EXT(
         OperatingSystem::Linux, ScreenSizeStatus::All, BatteryStatus::All,
         WindowProtocol::All, DriverVendor::NonMesaAll, DeviceFamily::NvidiaAll,
         nsIGfxInfo::FEATURE_THREADSAFE_GL, nsIGfxInfo::FEATURE_BLOCKED_DEVICE,
-        DRIVER_COMPARISON_IGNORED, V(0, 0, 0, 0), "FEATURE_FAILURE_BUG_1788573",
-        "");
+        DRIVER_LESS_THAN, V(545, 23, 6, 0), "FEATURE_FAILURE_BUG_1788573", "");
+
+    // AMD R600 family does not perform well with WebRender.
+    APPEND_TO_DRIVER_BLOCKLIST(
+        OperatingSystem::Linux, DeviceFamily::AmdR600,
+        nsIGfxInfo::FEATURE_WEBRENDER, nsIGfxInfo::FEATURE_BLOCKED_DEVICE,
+        DRIVER_COMPARISON_IGNORED, V(0, 0, 0, 0), "AMD_R600_FAMILY", "");
   }
   return *sDriverInfo;
 }
@@ -1159,13 +1298,15 @@ nsresult GfxInfo::GetFeatureStatusImpl(
   } kFeatureToCodecs[] = {{nsIGfxInfo::FEATURE_H264_HW_DECODE, CODEC_HW_H264},
                           {nsIGfxInfo::FEATURE_VP8_HW_DECODE, CODEC_HW_VP8},
                           {nsIGfxInfo::FEATURE_VP9_HW_DECODE, CODEC_HW_VP9},
-                          {nsIGfxInfo::FEATURE_AV1_HW_DECODE, CODEC_HW_AV1}};
+                          {nsIGfxInfo::FEATURE_AV1_HW_DECODE, CODEC_HW_AV1},
+                          {nsIGfxInfo::FEATURE_HEVC_HW_DECODE, CODEC_HW_HEVC}};
 
   for (const auto& pair : kFeatureToCodecs) {
     if (aFeature != pair.mFeature) {
       continue;
     }
-    if (mVAAPISupportedCodecs & pair.mCodec) {
+    if ((mVAAPISupportedCodecs & pair.mCodec) ||
+        (mV4L2SupportedCodecs & pair.mCodec)) {
       *aStatus = nsIGfxInfo::FEATURE_STATUS_OK;
     } else {
       *aStatus = nsIGfxInfo::FEATURE_BLOCKED_PLATFORM_TEST;
@@ -1177,25 +1318,23 @@ nsresult GfxInfo::GetFeatureStatusImpl(
   auto ret = GfxInfoBase::GetFeatureStatusImpl(
       aFeature, aStatus, aSuggestedDriverVersion, aDriverInfo, aFailureId, &os);
 
-  // Probe VA-API on supported devices only
+  // Probe VA-API/V4L2 on supported devices only
   if (aFeature == nsIGfxInfo::FEATURE_HARDWARE_VIDEO_DECODING) {
     if (!StaticPrefs::media_hardware_video_decoding_enabled_AtStartup()) {
       return ret;
     }
-    bool probeHWDecode = false;
-#ifdef MOZ_WAYLAND
-    probeHWDecode =
+    bool probeHWDecode =
         mIsAccelerated &&
         (*aStatus == nsIGfxInfo::FEATURE_STATUS_OK ||
-         StaticPrefs::media_hardware_video_decoding_force_enabled_AtStartup() ||
-         StaticPrefs::media_ffmpeg_vaapi_enabled_AtStartup());
-#endif
+         StaticPrefs::media_hardware_video_decoding_force_enabled_AtStartup());
     if (probeHWDecode) {
       GetDataVAAPI();
+      GetDataV4L2();
     } else {
       mIsVAAPISupported = Some(false);
+      mIsV4L2Supported = Some(false);
     }
-    if (!mIsVAAPISupported.value()) {
+    if (!mIsVAAPISupported.value() && !mIsV4L2Supported.value()) {
       *aStatus = nsIGfxInfo::FEATURE_BLOCKED_PLATFORM_TEST;
       aFailureId = "FEATURE_FAILURE_VIDEO_DECODING_TEST_FAILED";
     }
@@ -1240,8 +1379,7 @@ GfxInfo::GetWindowProtocol(nsAString& aWindowProtocol) {
   } else {
     aWindowProtocol = GfxDriverInfo::GetWindowProtocol(WindowProtocol::X11);
   }
-  Telemetry::ScalarSet(Telemetry::ScalarID::GFX_LINUX_WINDOW_PROTOCOL,
-                       aWindowProtocol);
+  glean::gfx::linux_window_protocol.Set(NS_ConvertUTF16toUTF8(aWindowProtocol));
   return NS_OK;
 }
 

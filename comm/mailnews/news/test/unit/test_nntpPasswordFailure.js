@@ -13,11 +13,11 @@
  *     we get a new password prompt and can enter the password.
  */
 
-var { mailTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MailTestUtils.jsm"
+var { mailTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MailTestUtils.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 /* import-globals-from ../../../test/resources/alertTestUtils.js */
@@ -68,7 +68,7 @@ add_setup(function () {
 
 add_task(async function getMail1() {
   // Now get mail.
-  let urlListener = new PromiseTestUtils.PromiseUrlListener({
+  const urlListener = new PromiseTestUtils.PromiseUrlListener({
     OnStopRunningUrl(url, result) {
       // On the last attempt, we should have successfully got one mail.
       Assert.equal(folder.getTotalMessages(false), attempt == 4 ? 1 : 0);
@@ -99,7 +99,7 @@ add_task(async function getMail1() {
 });
 
 add_task(async function getMail2() {
-  let urlListener = new PromiseTestUtils.PromiseUrlListener({
+  const urlListener = new PromiseTestUtils.PromiseUrlListener({
     OnStopRunningUrl(url, result) {
       // On the last attempt, we should have successfully got one mail.
       Assert.equal(folder.getTotalMessages(false), attempt == 4 ? 1 : 0);
@@ -128,7 +128,7 @@ add_task(function endTest() {
   // Clean up nicely the test.
   server.stop();
 
-  var thread = gThreadManager.currentThread;
+  var thread = Services.tm.currentThread;
   while (thread.hasPendingEvents()) {
     thread.processNextEvent(true);
   }
@@ -144,17 +144,7 @@ function alertPS(parent, aDialogText, aText) {
   dump("Alert Title: " + aDialogText + "\nAlert Text: " + aText + "\n");
 }
 
-function confirmExPS(
-  parent,
-  aDialogTitle,
-  aText,
-  aButtonFlags,
-  aButton0Title,
-  aButton1Title,
-  aButton2Title,
-  aCheckMsg,
-  aCheckState
-) {
+function confirmExPS() {
   switch (++attempt) {
     // First attempt, retry.
     case 1:

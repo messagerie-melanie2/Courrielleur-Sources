@@ -10,7 +10,8 @@ var { loader, require } = ChromeUtils.importESModule(
 
 var { useDistinctSystemPrincipalLoader, releaseDistinctSystemPrincipalLoader } =
   ChromeUtils.importESModule(
-    "resource://devtools/shared/loader/DistinctSystemPrincipalLoader.sys.mjs"
+    "resource://devtools/shared/loader/DistinctSystemPrincipalLoader.sys.mjs",
+    { global: "shared" }
   );
 
 // Require this module to setup core modules
@@ -76,15 +77,9 @@ function hideStatusMessage() {
 var connect = async function () {
   // Initiate the connection
 
-  // MOZ_BROWSER_TOOLBOX_INPUT_CONTEXT is set by the target Firefox instance
-  // before opening the Browser Toolbox.
-  // If "devtools.webconsole.input.context" is true, the variable is set to "1",
-  // otherwise it is set to "0".
-  Services.prefs.setBoolPref(
-    "devtools.webconsole.input.context",
-    Services.env.get("MOZ_BROWSER_TOOLBOX_INPUT_CONTEXT") === "1"
-  );
-  // Similar, but for the Browser Toolbox mode
+  // MOZ_BROWSER_TOOLBOX_FORCE_MULTIPROCESS is set by the target Firefox instance
+  // before opening the Browser Toolbox, it's set to "1" if multiprocess mode should
+  // be forced (for example, when running mochitest with `--jsdebugger`).
   if (Services.env.get("MOZ_BROWSER_TOOLBOX_FORCE_MULTIPROCESS") === "1") {
     Services.prefs.setCharPref("devtools.browsertoolbox.scope", "everything");
   }
@@ -137,9 +132,6 @@ function setPrefDefaults() {
     true
   );
 
-  // We force enabling the performance panel in the browser toolbox.
-  Services.prefs.setBoolPref("devtools.performance.enabled", true);
-
   // Bug 1773226: Try to avoid session restore to reopen a transient browser window
   // if we ever opened a URL from the browser toolbox. (but it doesn't seem to be enough)
   Services.prefs.setBoolPref("browser.sessionstore.resume_from_crash", false);
@@ -185,7 +177,7 @@ window.addEventListener(
   { once: true }
 );
 
-function onCloseCommand(event) {
+function onCloseCommand() {
   window.close();
 }
 

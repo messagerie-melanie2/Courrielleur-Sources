@@ -9,6 +9,21 @@
 #include "softoken.h"
 #include "hmacct.h"
 
+/* Wrappers to avoid undefined behavior calling functions through a pointer of incorrect type. */
+static void
+SFTKMAC_CMAC_Destroy(void *ctx, PRBool freeit)
+{
+    CMACContext *cctx = ctx;
+    CMAC_Destroy(cctx, freeit);
+}
+
+static void
+SFTKMAC_HMAC_Destroy(void *ctx, PRBool freeit)
+{
+    HMACContext *hctx = ctx;
+    HMAC_Destroy(hctx, freeit);
+}
+
 /* sftk_HMACMechanismToHash converts a PKCS#11 MAC mechanism into a freebl hash
  * type. */
 HASH_HashType
@@ -31,6 +46,14 @@ sftk_HMACMechanismToHash(CK_MECHANISM_TYPE mech)
             return HASH_AlgSHA384;
         case CKM_SHA512_HMAC:
             return HASH_AlgSHA512;
+        case CKM_SHA3_224_HMAC:
+            return HASH_AlgSHA3_224;
+        case CKM_SHA3_256_HMAC:
+            return HASH_AlgSHA3_256;
+        case CKM_SHA3_384_HMAC:
+            return HASH_AlgSHA3_384;
+        case CKM_SHA3_512_HMAC:
+            return HASH_AlgSHA3_512;
     }
     return HASH_AlgNULL;
 }
@@ -147,7 +170,7 @@ loser:
 }
 
 void
-sftk_HMACConstantTime_Update(void *pctx, const void *data, unsigned int len)
+sftk_HMACConstantTime_Update(void *pctx, const unsigned char *data, unsigned int len)
 {
     sftk_MACConstantTimeCtx *ctx = (sftk_MACConstantTimeCtx *)pctx;
     PORT_CheckSuccess(HMAC_ConstantTime(
@@ -160,7 +183,7 @@ sftk_HMACConstantTime_Update(void *pctx, const void *data, unsigned int len)
 }
 
 void
-sftk_SSLv3MACConstantTime_Update(void *pctx, const void *data, unsigned int len)
+sftk_SSLv3MACConstantTime_Update(void *pctx, const unsigned char *data, unsigned int len)
 {
     sftk_MACConstantTimeCtx *ctx = (sftk_MACConstantTimeCtx *)pctx;
     PORT_CheckSuccess(SSLv3_MAC_ConstantTime(
@@ -173,7 +196,7 @@ sftk_SSLv3MACConstantTime_Update(void *pctx, const void *data, unsigned int len)
 }
 
 void
-sftk_MACConstantTime_EndHash(void *pctx, void *out, unsigned int *outLength,
+sftk_MACConstantTime_EndHash(void *pctx, unsigned char *out, unsigned int *outLength,
                              unsigned int maxLength)
 {
     const sftk_MACConstantTimeCtx *ctx = (sftk_MACConstantTimeCtx *)pctx;
@@ -209,7 +232,7 @@ sftk_MAC_Create(CK_MECHANISM_TYPE mech, SFTKObject *key, sftk_MACCtx **ret_ctx)
 
     ret = sftk_MAC_Init(*ret_ctx, mech, key);
     if (ret != CKR_OK) {
-        sftk_MAC_Destroy(*ret_ctx, PR_TRUE);
+        sftk_MAC_DestroyContext(*ret_ctx, PR_TRUE);
     }
 
     return ret;
@@ -265,6 +288,10 @@ sftk_MAC_InitRaw(sftk_MACCtx *ctx, CK_MECHANISM_TYPE mech, const unsigned char *
         case CKM_SHA256_HMAC:
         case CKM_SHA384_HMAC:
         case CKM_SHA512_HMAC:
+        case CKM_SHA3_224_HMAC:
+        case CKM_SHA3_256_HMAC:
+        case CKM_SHA3_384_HMAC:
+        case CKM_SHA3_512_HMAC:
             hashObj = HASH_GetRawHashObject(sftk_HMACMechanismToHash(mech));
 
             /* Because we condition above only on hashes we know to be valid,
@@ -278,7 +305,7 @@ sftk_MAC_InitRaw(sftk_MACCtx *ctx, CK_MECHANISM_TYPE mech, const unsigned char *
             goto hmac;
         case CKM_AES_CMAC:
             ctx->mac.cmac = CMAC_Create(CMAC_AES, key, key_len);
-            ctx->destroy_func = (void (*)(void *, PRBool))(&CMAC_Destroy);
+            ctx->destroy_func = SFTKMAC_CMAC_Destroy;
 
             /* Copy the behavior of sftk_doCMACInit here. */
             if (ctx->mac.cmac == NULL) {
@@ -301,7 +328,7 @@ sftk_MAC_InitRaw(sftk_MACCtx *ctx, CK_MECHANISM_TYPE mech, const unsigned char *
 
 hmac:
     ctx->mac.hmac = HMAC_Create(hashObj, key, key_len, isFIPS);
-    ctx->destroy_func = (void (*)(void *, PRBool))(&HMAC_Destroy);
+    ctx->destroy_func = SFTKMAC_HMAC_Destroy;
 
     /* Copy the behavior of sftk_doHMACInit here. */
     if (ctx->mac.hmac == NULL) {
@@ -341,6 +368,10 @@ sftk_MAC_Reset(sftk_MACCtx *ctx)
         case CKM_SHA256_HMAC:
         case CKM_SHA384_HMAC:
         case CKM_SHA512_HMAC:
+        case CKM_SHA3_224_HMAC:
+        case CKM_SHA3_256_HMAC:
+        case CKM_SHA3_384_HMAC:
+        case CKM_SHA3_512_HMAC:
             HMAC_Begin(ctx->mac.hmac);
             break;
         case CKM_AES_CMAC:
@@ -369,6 +400,10 @@ sftk_MAC_Update(sftk_MACCtx *ctx, const CK_BYTE *data, unsigned int data_len)
         case CKM_SHA256_HMAC:
         case CKM_SHA384_HMAC:
         case CKM_SHA512_HMAC:
+        case CKM_SHA3_224_HMAC:
+        case CKM_SHA3_256_HMAC:
+        case CKM_SHA3_384_HMAC:
+        case CKM_SHA3_512_HMAC:
             /* HMAC doesn't indicate failure in the return code. */
             HMAC_Update(ctx->mac.hmac, data, data_len);
             break;
@@ -389,7 +424,7 @@ sftk_MAC_Update(sftk_MACCtx *ctx, const CK_BYTE *data, unsigned int data_len)
 }
 
 CK_RV
-sftk_MAC_Finish(sftk_MACCtx *ctx, CK_BYTE_PTR result, unsigned int *result_len, unsigned int max_result_len)
+sftk_MAC_End(sftk_MACCtx *ctx, CK_BYTE_PTR result, unsigned int *result_len, unsigned int max_result_len)
 {
     unsigned int actual_result_len;
 
@@ -401,6 +436,10 @@ sftk_MAC_Finish(sftk_MACCtx *ctx, CK_BYTE_PTR result, unsigned int *result_len, 
         case CKM_SHA256_HMAC:
         case CKM_SHA384_HMAC:
         case CKM_SHA512_HMAC:
+        case CKM_SHA3_224_HMAC:
+        case CKM_SHA3_256_HMAC:
+        case CKM_SHA3_384_HMAC:
+        case CKM_SHA3_512_HMAC:
             /* HMAC doesn't indicate failure in the return code. Additionally,
              * unlike CMAC, it doesn't support partial results. This means that we
              * need to allocate a buffer if max_result_len < ctx->mac_size. */
@@ -458,7 +497,7 @@ sftk_MAC_Finish(sftk_MACCtx *ctx, CK_BYTE_PTR result, unsigned int *result_len, 
 }
 
 void
-sftk_MAC_Destroy(sftk_MACCtx *ctx, PRBool free_it)
+sftk_MAC_DestroyContext(sftk_MACCtx *ctx, PRBool free_it)
 {
     if (ctx == NULL) {
         return;

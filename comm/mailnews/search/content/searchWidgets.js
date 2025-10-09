@@ -11,15 +11,17 @@
 
 // Wrap in a block to prevent leaking to window scope.
 {
-  const { MailServices } = ChromeUtils.import(
-    "resource:///modules/MailServices.jsm"
+  const { MailServices } = ChromeUtils.importESModule(
+    "resource:///modules/MailServices.sys.mjs"
   );
-  const { MailUtils } = ChromeUtils.import("resource:///modules/MailUtils.jsm");
+  const { MailUtils } = ChromeUtils.importESModule(
+    "resource:///modules/MailUtils.sys.mjs"
+  );
 
   const updateParentNode = parentNode => {
     if (parentNode.hasAttribute("initialActionIndex")) {
-      let actionIndex = parentNode.getAttribute("initialActionIndex");
-      let filterAction = gFilter.getActionAt(actionIndex);
+      const actionIndex = parentNode.getAttribute("initialActionIndex");
+      const filterAction = gFilter.getActionAt(actionIndex);
       parentNode.initWithAction(filterAction);
     }
     parentNode.updateRemoveButton();
@@ -34,7 +36,7 @@
       menulist.setAttribute("flex", "1");
       menulist.appendChild(menuPopup);
 
-      for (let taginfo of MailServices.tags.getAllTags()) {
+      for (const taginfo of MailServices.tags.getAllTags()) {
         const newMenuItem = document.createXULElement("menuitem");
         newMenuItem.setAttribute("label", taginfo.tag);
         newMenuItem.setAttribute("value", taginfo.key);
@@ -104,11 +106,11 @@
 
       this.appendChild(menulist);
 
-      let ruleaction = this.closest(".ruleaction");
-      let raMenulist = ruleaction.querySelector(
+      const ruleaction = this.closest(".ruleaction");
+      const raMenulist = ruleaction.querySelector(
         '[is="ruleactiontype-menulist"]'
       );
-      for (let { label, value } of raMenulist.findTemplates()) {
+      for (const { label, value } of raMenulist.findTemplates()) {
         menulist.appendItem(label, value);
       }
       updateParentNode(ruleaction);
@@ -396,8 +398,8 @@
         // -1 means not initialized
         return null;
       }
-      let isCustom = isNaN(this.value);
-      let typedValue = isCustom ? this.value : parseInt(this.value);
+      const isCustom = isNaN(this.value);
+      const typedValue = isCustom ? this.value : parseInt(this.value);
       // custom attribute to style the unavailable menulist item
       this.menulist.setAttribute(
         "unavailable",
@@ -461,10 +463,10 @@
       this.menulist.selectedItem = this.validMenuitem;
     }
 
-    onSelect(event) {
+    onSelect() {
       if (this.menulist.value == Ci.nsMsgSearchAttrib.OtherHeader) {
         // Customize menuitem selected.
-        let args = {};
+        const args = {};
         window.openDialog(
           "chrome://messenger/content/CustomHeaders.xhtml",
           "",
@@ -520,13 +522,13 @@
     get valueLabel() {
       if (isNaN(this.value)) {
         // is this a custom term?
-        let customTerm = MailServices.filters.getCustomTerm(this.value);
+        const customTerm = MailServices.filters.getCustomTerm(this.value);
         if (customTerm) {
           return customTerm.name;
         }
         // The custom term may be missing after the extension that added it
         // was disabled or removed. We need to notify the user.
-        let scriptError = Cc["@mozilla.org/scripterror;1"].createInstance(
+        const scriptError = Cc["@mozilla.org/scripterror;1"].createInstance(
           Ci.nsIScriptError
         );
         scriptError.init(
@@ -547,9 +549,9 @@
     }
 
     get valueIds() {
-      let result = this.validityTable.getAvailableAttributes();
+      const result = this.validityTable.getAvailableAttributes();
       // add any available custom search terms
-      for (let customTerm of MailServices.filters.getCustomTerms()) {
+      for (const customTerm of MailServices.filters.getCustomTerms()) {
         // For custom terms, the array element is a string with the custom id
         // instead of the integer attribute
         if (customTerm.getAvailable(this.searchScope, null)) {
@@ -560,8 +562,8 @@
     }
 
     get valueStrings() {
-      let strings = [];
-      let ids = this.valueIds;
+      const strings = [];
+      const ids = this.valueIds;
       let hdrsArray = null;
       try {
         let hdrs = Services.prefs.getCharPref("mailnews.customHeaders");
@@ -572,7 +574,7 @@
       for (let i = 0; i < ids.length; i++) {
         if (isNaN(ids[i])) {
           // Is this a custom search term?
-          let customTerm = MailServices.filters.getCustomTerm(ids[i]);
+          const customTerm = MailServices.filters.getCustomTerm(ids[i]);
           if (customTerm) {
             strings[i] = customTerm.name;
           } else {
@@ -617,9 +619,9 @@
     }
 
     get valueIds() {
-      let isCustom = isNaN(this.searchAttribute);
+      const isCustom = isNaN(this.searchAttribute);
       if (isCustom) {
-        let customTerm = MailServices.filters.getCustomTerm(
+        const customTerm = MailServices.filters.getCustomTerm(
           this.searchAttribute
         );
         if (customTerm) {
@@ -631,8 +633,8 @@
     }
 
     get valueStrings() {
-      let strings = [];
-      let ids = this.valueIds;
+      const strings = [];
+      const ids = this.valueIds;
       for (let i = 0; i < ids.length; i++) {
         strings[i] = this.stringBundle.GetStringFromID(ids[i]);
       }
@@ -713,15 +715,15 @@
      * @returns {MozMenuList} - The newly created menulist.
      */
     static _createMenulist(itemDataList) {
-      let menulist = document.createXULElement("menulist");
+      const menulist = document.createXULElement("menulist");
       menulist.classList.add("search-value-menulist");
-      let menupopup = document.createXULElement("menupopup");
+      const menupopup = document.createXULElement("menupopup");
       menupopup.classList.add("search-value-popup");
 
-      let bundle = this.stringBundle;
+      const bundle = this.stringBundle;
 
-      for (let itemData of itemDataList) {
-        let item = document.createXULElement("menuitem");
+      for (const itemData of itemDataList) {
+        const item = document.createXULElement("menuitem");
         item.classList.add("search-value-menuitem");
         item.label =
           itemData.label || bundle.GetStringFromName(itemData.stringId);
@@ -747,10 +749,12 @@
         switch (type) {
           case "text":
             input = document.createElement("input");
+            input.type = "text";
             input.classList.add("input-inline", "search-value-input");
             break;
           case "date":
             input = document.createElement("input");
+            input.type = "text";
             input.classList.add("input-inline", "search-value-input");
             if (!value) {
               // Newly created date input shows today's date.
@@ -832,7 +836,7 @@
               { stringId: "junkScoreOriginPlugin", value: "plugin" },
               { stringId: "junkScoreOriginUser", value: "user" },
               { stringId: "junkScoreOriginFilter", value: "filter" },
-              { stringId: "junkScoreOriginWhitelist", value: "whitelist" },
+              { stringId: "junkScoreOriginAllowlist", value: "allowlist" },
               { stringId: "junkScoreOriginImapFlag", value: "imapflag" },
             ]);
             break;
@@ -887,12 +891,13 @@
         case "tags":
         case "junk-status":
         case "attachment-status":
-        case "junk-origin":
-          let item = this.input.querySelector(`menuitem[value="${value}"]`);
+        case "junk-origin": {
+          const item = this.input.querySelector(`menuitem[value="${value}"]`);
           if (item) {
             this.input.selectedItem = item;
           }
           break;
+        }
         case "none":
           // Silently ignore the value.
           break;
@@ -989,7 +994,7 @@
      *   leave unset to not change the value.
      */
     updateDisplay(value) {
-      let operator = Number(this.internalOperator);
+      const operator = Number(this.internalOperator);
       switch (Number(this.internalAttribute)) {
         // Use the index to hide/show the appropriate child.
         case Ci.nsMsgSearchAttrib.Priority:
@@ -1132,8 +1137,8 @@
      * value.
      */
     save() {
-      let searchValue = this.value;
-      let searchAttribute = this.searchAttribute;
+      const searchValue = this.value;
+      const searchAttribute = this.searchAttribute;
 
       searchValue.attrib = isNaN(searchAttribute)
         ? Ci.nsMsgSearchAttrib.Custom
@@ -1206,15 +1211,15 @@
         this.hasConnected = true;
 
         this.setAttribute("is", "ruleactiontype-menulist");
-        this.addEventListener("command", event => {
+        this.addEventListener("command", () => {
           this.parentNode.setAttribute("value", this.value);
           checkActionsReorder();
         });
 
-        this.addEventListener("popupshowing", event => {
-          let unavailableActions = this.usedActionsList();
+        this.addEventListener("popupshowing", () => {
+          const unavailableActions = this.usedActionsList();
           for (let index = 0; index < this.menuitems.length; index++) {
-            let menu = this.menuitems[index];
+            const menu = this.menuitems[index];
             menu.setAttribute("disabled", menu.value in unavailableActions);
           }
         });
@@ -1231,10 +1236,10 @@
         // Differentiate between creating a new, next available action,
         // and creating a row which will be initialized with an action.
         if (!this.parentNode.hasAttribute("initialActionIndex")) {
-          let unavailableActions = this.usedActionsList();
+          const unavailableActions = this.usedActionsList();
           // Select the first one that's not in the list.
           for (let index = 0; index < this.menuitems.length; index++) {
-            let menu = this.menuitems[index];
+            const menu = this.menuitems[index];
             if (!(menu.value in unavailableActions) && !menu.hidden) {
               this.value = menu.value;
               this.parentNode.setAttribute("value", menu.value);
@@ -1248,8 +1253,8 @@
       }
 
       hideInvalidActions() {
-        let menupopup = this.menupopup;
-        let scope = getScopeFromFilterList(gFilterList);
+        const menupopup = this.menupopup;
+        const scope = getScopeFromFilterList(gFilterList);
 
         // Walk through the list of filter actions and hide any actions which aren't valid
         // for our given scope (news, imap, pop, etc) and context.
@@ -1299,10 +1304,10 @@
       }
 
       addCustomActions() {
-        let menupopup = this.menupopup;
+        const menupopup = this.menupopup;
         for (let i = 0; i < gCustomActions.length; i++) {
-          let customAction = gCustomActions[i];
-          let menuitem = document.createXULElement("menuitem");
+          const customAction = gCustomActions[i];
+          const menuitem = document.createXULElement("menuitem");
           menuitem.setAttribute("label", customAction.name);
           menuitem.setAttribute("value", customAction.id);
           menuitem.setAttribute("isCustom", "true");
@@ -1318,14 +1323,14 @@
        *                    currently being used by other filteractionrows.
        */
       usedActionsList() {
-        let usedActions = {};
-        let currentFilterActionRow = this.parentNode;
-        let listBox = currentFilterActionRow.parentNode; // need to account for the list item.
+        const usedActions = {};
+        const currentFilterActionRow = this.parentNode;
+        const listBox = currentFilterActionRow.parentNode; // need to account for the list item.
         // Now iterate over each list item in the list box.
         for (let index = 0; index < listBox.getRowCount(); index++) {
-          let filterActionRow = listBox.getItemAtIndex(index);
+          const filterActionRow = listBox.getItemAtIndex(index);
           if (filterActionRow != currentFilterActionRow) {
-            let actionValue = filterActionRow.getAttribute("value");
+            const actionValue = filterActionRow.getAttribute("value");
 
             // Let custom actions decide if dups are allowed.
             let isCustom = false;
@@ -1374,7 +1379,7 @@
        *                      a value.
        */
       findTemplates() {
-        let identities = MailServices.accounts.getIdentitiesForServer(
+        const identities = MailServices.accounts.getIdentitiesForServer(
           gFilterList.folder.server
         );
         // Typically if this is Local Folders.
@@ -1386,13 +1391,13 @@
           }
         }
 
-        let templates = [];
-        let foldersScanned = [];
+        const templates = [];
+        const foldersScanned = [];
 
-        for (let identity of identities) {
+        for (const identity of identities) {
           let enumerator = null;
-          let msgFolder = MailUtils.getExistingFolder(
-            identity.stationeryFolder
+          const msgFolder = MailUtils.getExistingFolder(
+            identity.templatesFolderURI
           );
           // If we already processed this folder, do not set enumerator
           // so that we skip this identity.
@@ -1405,8 +1410,8 @@
             continue;
           }
 
-          for (let header of enumerator) {
-            let uri =
+          for (const header of enumerator) {
+            const uri =
               msgFolder.URI +
               "?messageId=" +
               header.messageId +
@@ -1539,7 +1544,7 @@
       return false;
     }
 
-    _fireEvent(aName) {
+    _fireEvent() {
       // This provides a dummy _fireEvent function that the richlistbox expects to
       // be able to call. See bug 202036.
     }
@@ -1559,11 +1564,10 @@
 
     initWithAction(aFilterAction) {
       let filterActionStr;
-      let actionTarget = this.children[1];
-      let actionItem = actionTarget.ruleactiontargetElement;
-      let nsMsgFilterAction = Ci.nsMsgFilterAction;
+      const actionTarget = this.children[1];
+      const actionItem = actionTarget.ruleactiontargetElement;
       switch (aFilterAction.type) {
-        case nsMsgFilterAction.Custom:
+        case Ci.nsMsgFilterAction.Custom: {
           filterActionStr = aFilterAction.customId;
           if (actionItem) {
             actionItem.children[0].value = aFilterAction.strValue;
@@ -1580,7 +1584,7 @@
             }
           }
           if (needCustomLabel) {
-            let menuitem = document.createXULElement("menuitem");
+            const menuitem = document.createXULElement("menuitem");
             menuitem.setAttribute(
               "label",
               gFilterBundle.getString("filterMissingCustomAction")
@@ -1588,7 +1592,7 @@
             menuitem.setAttribute("value", filterActionStr);
             menuitem.disabled = true;
             this.mRuleActionType.menupopup.appendChild(menuitem);
-            let scriptError = Cc["@mozilla.org/scripterror;1"].createInstance(
+            const scriptError = Cc["@mozilla.org/scripterror;1"].createInstance(
               Ci.nsIScriptError
             );
             scriptError.init(
@@ -1603,27 +1607,28 @@
             Services.console.logMessage(scriptError);
           }
           break;
-        case nsMsgFilterAction.MoveToFolder:
-        case nsMsgFilterAction.CopyToFolder:
+        }
+        case Ci.nsMsgFilterAction.MoveToFolder:
+        case Ci.nsMsgFilterAction.CopyToFolder:
           actionItem.children[0].value = aFilterAction.targetFolderUri;
           break;
-        case nsMsgFilterAction.Reply:
-        case nsMsgFilterAction.Forward:
+        case Ci.nsMsgFilterAction.Reply:
+        case Ci.nsMsgFilterAction.Forward:
           actionItem.children[0].value = aFilterAction.strValue;
           break;
-        case nsMsgFilterAction.ChangePriority:
+        case Ci.nsMsgFilterAction.ChangePriority:
           actionItem.children[0].value = aFilterAction.priority;
           break;
-        case nsMsgFilterAction.JunkScore:
+        case Ci.nsMsgFilterAction.JunkScore:
           actionItem.children[0].value = aFilterAction.junkScore;
           break;
-        case nsMsgFilterAction.AddTag:
+        case Ci.nsMsgFilterAction.AddTag:
           actionItem.children[0].value = aFilterAction.strValue;
           break;
         default:
           break;
       }
-      if (aFilterAction.type != nsMsgFilterAction.Custom) {
+      if (aFilterAction.type != Ci.nsMsgFilterAction.Custom) {
         filterActionStr = gFilterActionStrings[aFilterAction.type];
       }
       this.mRuleActionType.value = filterActionStr;
@@ -1639,23 +1644,24 @@
      * @returns {boolean} - true if this row represents a valid filter action.
      */
     validateAction() {
-      let filterActionString = this.getAttribute("value");
-      let actionTarget = this.children[1];
-      let actionTargetLabel =
+      const filterActionString = this.getAttribute("value");
+      const actionTarget = this.children[1];
+      const actionTargetLabel =
         actionTarget.ruleactiontargetElement &&
         actionTarget.ruleactiontargetElement.children[0].value;
       let errorString, customError;
 
       switch (filterActionString) {
         case "movemessage":
-        case "copymessage":
-          let msgFolder = actionTargetLabel
+        case "copymessage": {
+          const msgFolder = actionTargetLabel
             ? MailUtils.getOrCreateFolder(actionTargetLabel)
             : null;
           if (!msgFolder || !msgFolder.canFileMessages) {
             errorString = "mustSelectFolder";
           }
           break;
+        }
         case "forwardmessage":
           if (
             actionTargetLabel.length < 3 ||
@@ -1700,24 +1706,23 @@
      * @param {object} aFilter - filter object to save.
      */
     saveToFilter(aFilter) {
-      let filterAction = aFilter.createAction();
-      let filterActionString = this.getAttribute("value");
+      const filterAction = aFilter.createAction();
+      const filterActionString = this.getAttribute("value");
       filterAction.type = gFilterActionStrings.indexOf(filterActionString);
-      let actionTarget = this.children[1];
-      let actionItem = actionTarget.ruleactiontargetElement;
-      let nsMsgFilterAction = Ci.nsMsgFilterAction;
+      const actionTarget = this.children[1];
+      const actionItem = actionTarget.ruleactiontargetElement;
       switch (filterAction.type) {
-        case nsMsgFilterAction.ChangePriority:
+        case Ci.nsMsgFilterAction.ChangePriority:
           filterAction.priority = actionItem.children[0].getAttribute("value");
           break;
-        case nsMsgFilterAction.MoveToFolder:
-        case nsMsgFilterAction.CopyToFolder:
+        case Ci.nsMsgFilterAction.MoveToFolder:
+        case Ci.nsMsgFilterAction.CopyToFolder:
           filterAction.targetFolderUri = actionItem.children[0].value;
           break;
-        case nsMsgFilterAction.JunkScore:
+        case Ci.nsMsgFilterAction.JunkScore:
           filterAction.junkScore = actionItem.children[0].value;
           break;
-        case nsMsgFilterAction.Custom:
+        case Ci.nsMsgFilterAction.Custom:
           filterAction.customId = filterActionString;
         // Fall through to set the value.
         default:
@@ -1738,7 +1743,7 @@
     }
 
     addRow() {
-      let listItem = document.createXULElement("richlistitem", {
+      const listItem = document.createXULElement("richlistitem", {
         is: "ruleaction-richlistitem",
       });
       listItem.classList.add("ruleaction");
@@ -1753,7 +1758,7 @@
 
     removeRow() {
       // this.mListBox will fail after the row is removed, so save a reference.
-      let listBox = this.mListBox;
+      const listBox = this.mListBox;
       if (listBox.getRowCount() > 1) {
         this.remove();
       }

@@ -4,16 +4,17 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "Accessible.h"
-#include "AccGroupInfo.h"
 #include "ARIAMap.h"
 #include "nsAccUtils.h"
 #include "nsIURI.h"
+#include "Pivot.h"
 #include "Relation.h"
 #include "States.h"
 #include "mozilla/a11y/FocusManager.h"
 #include "mozilla/a11y/HyperTextAccessibleBase.h"
 #include "mozilla/BasicEvents.h"
 #include "mozilla/Components.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "nsIStringBundle.h"
 
 #ifdef A11Y_LOG
@@ -77,6 +78,39 @@ bool Accessible::IsBefore(const Accessible* aAcc) const {
   return otherPos > 0;
 }
 
+const Accessible* Accessible::GetClosestCommonInclusiveAncestor(
+    const Accessible* aAcc) const {
+  if (aAcc == this) {
+    return this;
+  }
+
+  // Build the chain of parents.
+  const Accessible* thisAnc = this;
+  const Accessible* otherAnc = aAcc;
+  AutoTArray<const Accessible*, 30> thisAncs, otherAncs;
+  do {
+    thisAncs.AppendElement(thisAnc);
+    thisAnc = thisAnc->Parent();
+  } while (thisAnc);
+  do {
+    otherAncs.AppendElement(otherAnc);
+    otherAnc = otherAnc->Parent();
+  } while (otherAnc);
+
+  // Find where the parent chain differs.
+  size_t thisPos = thisAncs.Length(), otherPos = otherAncs.Length();
+  const Accessible* common = nullptr;
+  for (size_t len = std::min(thisPos, otherPos); len > 0; --len) {
+    const Accessible* thisChild = thisAncs.ElementAt(--thisPos);
+    const Accessible* otherChild = otherAncs.ElementAt(--otherPos);
+    if (thisChild != otherChild) {
+      break;
+    }
+    common = thisChild;
+  }
+  return common;
+}
+
 Accessible* Accessible::FocusedChild() {
   Accessible* doc = nsAccUtils::DocumentFor(this);
   Accessible* child = doc->FocusedChild();
@@ -134,7 +168,8 @@ bool Accessible::IsTextRole() {
                        roleMapEntry->role == roles::IMAGE_MAP ||
                        roleMapEntry->role == roles::SLIDER ||
                        roleMapEntry->role == roles::PROGRESSBAR ||
-                       roleMapEntry->role == roles::SEPARATOR)) {
+                       roleMapEntry->role == roles::SEPARATOR ||
+                       roleMapEntry->role == roles::METER)) {
     return false;
   }
 
@@ -419,16 +454,6 @@ already_AddRefed<nsIURI> Accessible::AnchorURIAt(uint32_t aAnchorIndex) const {
   return nullptr;
 }
 
-bool Accessible::IsSearchbox() const {
-  const nsRoleMapEntry* roleMapEntry = ARIARoleMap();
-  if (roleMapEntry && roleMapEntry->Is(nsGkAtoms::searchbox)) {
-    return true;
-  }
-
-  RefPtr<nsAtom> inputType = InputType();
-  return inputType == nsGkAtoms::search;
-}
-
 #ifdef A11Y_LOG
 void Accessible::DebugDescription(nsCString& aDesc) const {
   aDesc.Truncate();
@@ -464,8 +489,12 @@ void Accessible::DebugDescription(nsCString& aDesc) const {
 void Accessible::DebugPrint(const char* aPrefix,
                             const Accessible* aAccessible) {
   nsAutoCString desc;
-  aAccessible->DebugDescription(desc);
-#  if defined(ANDROID)
+  if (aAccessible) {
+    aAccessible->DebugDescription(desc);
+  } else {
+    desc.AssignLiteral("[null]");
+  }
+#  if defined(ANDROID) || defined(MOZ_WIDGET_UIKIT)
   printf_stderr("%s %s\n", aPrefix, desc.get());
 #  else
   printf("%s %s\n", aPrefix, desc.get());
@@ -474,7 +503,8 @@ void Accessible::DebugPrint(const char* aPrefix,
 
 #endif
 
-void Accessible::TranslateString(const nsString& aKey, nsAString& aStringOut) {
+void Accessible::TranslateString(const nsString& aKey, nsAString& aStringOut,
+                                 const nsTArray<nsString>& aParams) {
   nsCOMPtr<nsIStringBundleService> stringBundleService =
       components::StringBundle::Service();
   if (!stringBundleService) return;
@@ -486,8 +516,14 @@ void Accessible::TranslateString(const nsString& aKey, nsAString& aStringOut) {
   if (!stringBundle) return;
 
   nsAutoString xsValue;
-  nsresult rv = stringBundle->GetStringFromName(
-      NS_ConvertUTF16toUTF8(aKey).get(), xsValue);
+  nsresult rv = NS_OK;
+  if (aParams.IsEmpty()) {
+    rv = stringBundle->GetStringFromName(NS_ConvertUTF16toUTF8(aKey).get(),
+                                         xsValue);
+  } else {
+    rv = stringBundle->FormatStringFromName(NS_ConvertUTF16toUTF8(aKey).get(),
+                                            aParams, xsValue);
+  }
   if (NS_SUCCEEDED(rv)) aStringOut.Assign(xsValue);
 }
 
@@ -505,6 +541,24 @@ const Accessible* Accessible::ActionAncestor() const {
 }
 
 nsStaticAtom* Accessible::LandmarkRole() const {
+  // For certain cases below (e.g. ARIA region, HTML <header>), whether it is
+  // actually a landmark is conditional. Rather than duplicating that
+  // conditional logic here, we check the Gecko role.
+  if (const nsRoleMapEntry* roleMapEntry = ARIARoleMap()) {
+    // Explicit ARIA role should take precedence.
+    if (roleMapEntry->Is(nsGkAtoms::region)) {
+      if (Role() == roles::REGION) {
+        return nsGkAtoms::region;
+      }
+    } else if (roleMapEntry->Is(nsGkAtoms::form)) {
+      if (Role() == roles::FORM) {
+        return nsGkAtoms::form;
+      }
+    } else if (roleMapEntry->IsOfType(eLandmark)) {
+      return roleMapEntry->roleAtom;
+    }
+  }
+
   nsAtom* tagName = TagName();
   if (!tagName) {
     // Either no associated content, or no cache.
@@ -536,37 +590,37 @@ nsStaticAtom* Accessible::LandmarkRole() const {
   }
 
   if (tagName == nsGkAtoms::section) {
-    nsAutoString name;
-    Name(name);
-    if (!name.IsEmpty()) {
+    if (Role() == roles::REGION) {
       return nsGkAtoms::region;
     }
   }
 
   if (tagName == nsGkAtoms::form) {
-    nsAutoString name;
-    Name(name);
-    if (!name.IsEmpty()) {
+    if (Role() == roles::FORM_LANDMARK) {
       return nsGkAtoms::form;
     }
   }
 
-  const nsRoleMapEntry* roleMapEntry = ARIARoleMap();
-  return roleMapEntry && roleMapEntry->IsOfType(eLandmark)
-             ? roleMapEntry->roleAtom
-             : nullptr;
+  if (tagName == nsGkAtoms::search) {
+    return nsGkAtoms::search;
+  }
+
+  return nullptr;
 }
 
 nsStaticAtom* Accessible::ComputedARIARole() const {
   const nsRoleMapEntry* roleMap = ARIARoleMap();
+  if (roleMap && roleMap->IsOfType(eDPub)) {
+    return roleMap->roleAtom;
+  }
   if (roleMap && roleMap->roleAtom != nsGkAtoms::_empty &&
-      // region has its own Gecko role and it needs to be handled specially.
+      // region and form have their own Gecko roles and need to be handled
+      // specially.
       roleMap->roleAtom != nsGkAtoms::region &&
+      roleMap->roleAtom != nsGkAtoms::form &&
       (roleMap->roleRule == kUseNativeRole || roleMap->IsOfType(eLandmark) ||
        roleMap->roleAtom == nsGkAtoms::alertdialog ||
-       roleMap->roleAtom == nsGkAtoms::feed ||
-       roleMap->roleAtom == nsGkAtoms::rowgroup ||
-       roleMap->roleAtom == nsGkAtoms::searchbox)) {
+       roleMap->roleAtom == nsGkAtoms::feed)) {
     // Explicit ARIA role (e.g. specified via the role attribute) which does not
     // map to a unique Gecko role.
     return roleMap->roleAtom;
@@ -576,18 +630,10 @@ nsStaticAtom* Accessible::ComputedARIARole() const {
     // Landmark role from native markup; e.g. <main>, <nav>.
     return LandmarkRole();
   }
-  if (geckoRole == roles::GROUPING) {
-    // Gecko doesn't differentiate between group and rowgroup. It uses
-    // roles::GROUPING for both.
-    nsAtom* tag = TagName();
-    if (tag == nsGkAtoms::tbody || tag == nsGkAtoms::tfoot ||
-        tag == nsGkAtoms::thead) {
-      return nsGkAtoms::rowgroup;
-    }
-  }
   // Role from native markup or layout.
 #define ROLE(_geckoRole, stringRole, ariaRole, atkRole, macRole, macSubrole, \
-             msaaRole, ia2Role, androidClass, nameRule)                      \
+             msaaRole, ia2Role, androidClass, iosIsElement, uiaControlType,  \
+             nameRule)                                                       \
   case roles::_geckoRole:                                                    \
     return ariaRole;
   switch (geckoRole) {
@@ -607,12 +653,15 @@ void Accessible::ApplyImplicitState(uint64_t& aState) const {
     }
   }
 
-  // If this is an ARIA item of the selectable widget and if it's focused and
-  // not marked unselected explicitly (i.e. aria-selected="false") then expose
-  // it as selected to make ARIA widget authors life easier.
+  // If this is an option, tab or treeitem and if it's focused and not marked
+  // unselected explicitly (i.e. aria-selected="false") then expose it as
+  // selected to make ARIA widget authors life easier.
   const nsRoleMapEntry* roleMapEntry = ARIARoleMap();
-  if (roleMapEntry && !(aState & states::SELECTED) &&
-      ARIASelected().valueOr(true)) {
+  if (roleMapEntry &&
+      (roleMapEntry->Is(nsGkAtoms::option) ||
+       roleMapEntry->Is(nsGkAtoms::tab) ||
+       roleMapEntry->Is(nsGkAtoms::treeitem)) &&
+      !(aState & states::SELECTED) && ARIASelected().valueOr(true)) {
     // Special case for tabs: focused tab or focus inside related tab panel
     // implies selected state.
     if (roleMapEntry->role == roles::PAGETAB) {
@@ -631,7 +680,16 @@ void Accessible::ApplyImplicitState(uint64_t& aState) const {
       }
     } else if (aState & states::FOCUSED) {
       Accessible* container = nsAccUtils::GetSelectableContainer(this, aState);
-      if (container && !(container->State() & states::MULTISELECTABLE)) {
+      AUTO_PROFILER_MARKER_TEXT(
+          "Accessible::ApplyImplicitState::ImplicitSelection", A11Y, {}, ""_ns);
+      auto HasExplicitSelection = [](Accessible* aAcc) {
+        Pivot p = Pivot(aAcc);
+        PivotARIASelectedRule rule;
+        return p.First(rule) != nullptr;
+      };
+
+      if (container && !(container->State() & states::MULTISELECTABLE) &&
+          !HasExplicitSelection(container)) {
         aState |= states::SELECTED;
       }
     }
@@ -640,6 +698,12 @@ void Accessible::ApplyImplicitState(uint64_t& aState) const {
   if (Opacity() == 1.0f && !(aState & states::INVISIBLE)) {
     aState |= states::OPAQUE1;
   }
+}
+
+bool Accessible::NameIsEmpty() const {
+  nsAutoString name;
+  Name(name);
+  return name.IsEmpty();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -654,8 +718,6 @@ uint32_t KeyBinding::AccelModifier() {
       return kControl;
     case MODIFIER_META:
       return kMeta;
-    case MODIFIER_OS:
-      return kOS;
     default:
       MOZ_CRASH("Handle the new result of WidgetInputEvent::AccelModifier()");
       return 0;

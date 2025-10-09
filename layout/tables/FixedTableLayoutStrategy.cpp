@@ -32,7 +32,6 @@ FixedTableLayoutStrategy::~FixedTableLayoutStrategy() = default;
 
 /* virtual */
 nscoord FixedTableLayoutStrategy::GetMinISize(gfxContext* aRenderingContext) {
-  DISPLAY_MIN_INLINE_SIZE(mTableFrame, mMinISize);
   if (mMinISize != NS_INTRINSIC_ISIZE_UNKNOWN) {
     return mMinISize;
   }
@@ -69,7 +68,8 @@ nscoord FixedTableLayoutStrategy::GetMinISize(gfxContext* aRenderingContext) {
       continue;
     }
     nscoord spacing = mTableFrame->GetColSpacing(col);
-    const auto* styleISize = &colFrame->StylePosition()->ISize(wm);
+    auto styleISize = colFrame->StylePosition()->ISize(
+        wm, colFrame->StyleDisplay()->mPosition);
     if (styleISize->ConvertsToLength()) {
       result += styleISize->ToLength();
     } else if (styleISize->ConvertsToPercentage()) {
@@ -82,7 +82,8 @@ nscoord FixedTableLayoutStrategy::GetMinISize(gfxContext* aRenderingContext) {
       nsTableCellFrame* cellFrame =
           cellMap->GetCellInfoAt(0, col, &originates, &colSpan);
       if (cellFrame) {
-        styleISize = &cellFrame->StylePosition()->ISize(wm);
+        styleISize = cellFrame->StylePosition()->ISize(
+            wm, cellFrame->StyleDisplay()->mPosition);
         if (styleISize->ConvertsToLength() || styleISize->IsMinContent() ||
             styleISize->IsMaxContent()) {
           nscoord cellISize = nsLayoutUtils::IntrinsicForContainer(
@@ -119,9 +120,7 @@ nscoord FixedTableLayoutStrategy::GetPrefISize(gfxContext* aRenderingContext,
   // algorithm to find the narrowest inline size that would hold all of
   // those intrinsic inline sizes), but it wouldn't be compatible with
   // other browsers.
-  nscoord result = nscoord_MAX;
-  DISPLAY_PREF_INLINE_SIZE(mTableFrame, result);
-  return result;
+  return nscoord_MAX;
 }
 
 /* virtual */
@@ -199,7 +198,8 @@ void FixedTableLayoutStrategy::ComputeColumnISizes(
     }
     oldColISizes.AppendElement(colFrame->GetFinalISize());
     colFrame->ResetPrefPercent();
-    const auto* styleISize = &colFrame->StylePosition()->ISize(wm);
+    auto styleISize = colFrame->StylePosition()->ISize(
+        wm, colFrame->StyleDisplay()->mPosition);
     nscoord colISize;
     if (styleISize->ConvertsToLength()) {
       colISize = styleISize->ToLength();
@@ -218,7 +218,8 @@ void FixedTableLayoutStrategy::ComputeColumnISizes(
           cellMap->GetCellInfoAt(0, col, &originates, &colSpan);
       if (cellFrame) {
         const nsStylePosition* cellStylePos = cellFrame->StylePosition();
-        styleISize = &cellStylePos->ISize(wm);
+        styleISize =
+            cellStylePos->ISize(wm, cellFrame->StyleDisplay()->mPosition);
         if (styleISize->ConvertsToLength() || styleISize->IsMaxContent() ||
             styleISize->IsMinContent()) {
           // XXX This should use real percentage padding

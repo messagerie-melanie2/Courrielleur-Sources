@@ -23,7 +23,7 @@ with Files("*KeyboardLayout*"):
 with Files("OSK*"):
     BUG_COMPONENT = ("Core", "DOM: UI Events & Focus Handling")
 
-with Files("*TSFTextStore*"):
+with Files("*TSF*"):
     BUG_COMPONENT = ("Core", "DOM: UI Events & Focus Handling")
 
 DIRS += [
@@ -33,12 +33,14 @@ DIRS += [
 TEST_DIRS += ["tests"]
 
 EXPORTS += [
+    "nsAppShell.h",
     "nsdefs.h",
     "WindowHook.h",
     "WinUtils.h",
 ]
 
 EXPORTS.mozilla += [
+    "ScreenHelperWin.h",
     "ShellHeaderOnlyUtils.h",
     "ToastNotificationHeaderOnlyUtils.h",
     "UrlmonHeaderOnlyUtils.h",
@@ -52,6 +54,7 @@ EXPORTS.mozilla.widget += [
     "CompositorWidgetChild.h",
     "CompositorWidgetParent.h",
     "InProcessWinCompositorWidget.h",
+    "JumpListBuilder.h",
     "nsWindowLoggedMessages.h",
     "WinCompositorWidget.h",
     "WinCompositorWindowThread.h",
@@ -60,6 +63,7 @@ EXPORTS.mozilla.widget += [
     "WinEventObserver.h",
     "WinMessages.h",
     "WinModifierKeyState.h",
+    "WinRegistry.h",
     "WinTaskbar.h",
     "WinWindowOcclusionTracker.h",
 ]
@@ -67,11 +71,11 @@ EXPORTS.mozilla.widget += [
 UNIFIED_SOURCES += [
     "AudioSession.cpp",
     "CompositorWidgetChild.cpp",
+    "DirectManipulationOwner.cpp",
     "GfxInfo.cpp",
     "IEnumFE.cpp",
     "IMMHandler.cpp",
-    "InkCollector.cpp",
-    "JumpListItem.cpp",
+    "JumpListBuilder.cpp",
     "KeyboardLayout.cpp",
     "LSPAnnotator.cpp",
     "nsAppShell.cpp",
@@ -87,7 +91,6 @@ UNIFIED_SOURCES += [
     "nsSound.cpp",
     "nsToolkit.cpp",
     "nsUserIdleServiceWin.cpp",
-    "nsUXThemeData.cpp",
     "nsWindow.cpp",
     "nsWindowDbg.cpp",
     "nsWindowGfx.cpp",
@@ -103,13 +106,19 @@ UNIFIED_SOURCES += [
     "TaskbarPreviewButton.cpp",
     "TaskbarTabPreview.cpp",
     "TaskbarWindowPreview.cpp",
-    "WidgetTraceEvent.cpp",
+    "TSFEmptyTextStore.cpp",
+    "TSFInputScope.cpp",
+    "TSFStaticSink.cpp",
+    "TSFTextStore.cpp",
+    "TSFTextStoreBase.cpp",
     "WinCompositorWindowThread.cpp",
     "WindowHook.cpp",
     "WindowsConsole.cpp",
     "WinEventObserver.cpp",
     "WinIMEHandler.cpp",
+    "WinMouseScrollHandler.cpp",
     "WinPointerEvents.cpp",
+    "WinRegistry.cpp",
     "WinTaskbar.cpp",
     "WinTextEventDispatcherListener.cpp",
     "WinUtils.cpp",
@@ -120,7 +129,6 @@ UNIFIED_SOURCES += [
 SOURCES += [
     "CompositorWidgetParent.cpp",
     "InProcessWinCompositorWidget.cpp",
-    "JumpListBuilder.cpp",
     "MediaKeysEventSourceFactory.cpp",
     "nsBidiKeyboard.cpp",
     "nsFilePicker.cpp",
@@ -130,18 +138,12 @@ SOURCES += [
     "WinCompositorWidget.cpp",
     "WindowsSMTCProvider.cpp",
     "WindowsUIUtils.cpp",
-    "WinMouseScrollHandler.cpp",
-]
-
-# These files redefine the winsdk api version macro and we don't want it to leak to other files.
-SOURCES += [
-    "DirectManipulationOwner.cpp",
 ]
 
 # Needs INITGUID and we don't allow INITGUID in unified sources since bug 970429.
 SOURCES += [
     "InputDeviceUtils.cpp",
-    "TSFTextStore.cpp",
+    "TSFUtils.cpp",
 ]
 
 if CONFIG["NS_PRINTING"]:
@@ -178,27 +180,33 @@ LOCAL_INCLUDES += [
     "/layout/generic",
     "/layout/style",
     "/layout/xul",
+    "/toolkit/components/jsoncpp/include",
     "/toolkit/xre",
     "/widget",
     "/widget/headless",
     "/xpcom/base",
 ]
 
+if CONFIG["MOZ_BUILD_APP"] == "browser":
+    DEFINES["MOZ_BUILD_APP_IS_BROWSER"] = True
+
 DEFINES["MOZ_UNICODE"] = True
 DEFINES["MOZ_APP_NAME"] = '"%s"' % CONFIG["MOZ_APP_NAME"]
 # Turn `firefox` into `Firefox`.
 DEFINES["MOZ_TOAST_APP_NAME"] = '"%s"' % CONFIG["MOZ_APP_NAME"].title()
 
-for var in ("MOZ_ENABLE_D3D10_LAYER",):
-    if CONFIG[var]:
-        DEFINES[var] = True
+USE_LIBS += [
+    "jsoncpp",
+]
 
 OS_LIBS += [
     "ktmw32",
     "rpcrt4",
     "urlmon",
+    "winmm",
 ]
 
+# mingw is missing Windows toast notification definitions.
 if CONFIG["CC_TYPE"] == "clang-cl":
     SOURCES += [
         "ToastNotification.cpp",

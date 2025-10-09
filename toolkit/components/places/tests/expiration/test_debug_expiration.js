@@ -356,15 +356,10 @@ add_task(async function test_expire_icons() {
     }
 
     if (entry.icon) {
-      PlacesUtils.favicons.replaceFaviconDataFromDataURL(
-        Services.io.newURI(entry.icon),
-        dataUrl,
-        0,
-        Services.scriptSecurityManager.getSystemPrincipal()
-      );
-      await PlacesTestUtils.addFavicons(new Map([[entry.page, entry.icon]]));
+      await PlacesTestUtils.setFaviconForPage(entry.page, entry.icon, dataUrl);
+      let favicon = await PlacesTestUtils.getFaviconForPage(entry.page);
       Assert.equal(
-        await getFaviconUrlForPage(entry.page),
+        favicon.uri.spec,
         entry.icon,
         "Sanity check the icon exists"
       );
@@ -380,13 +375,7 @@ add_task(async function test_expire_icons() {
     }
 
     if (entry.root) {
-      PlacesUtils.favicons.replaceFaviconDataFromDataURL(
-        Services.io.newURI(entry.root),
-        dataUrl,
-        0,
-        Services.scriptSecurityManager.getSystemPrincipal()
-      );
-      await PlacesTestUtils.addFavicons(new Map([[entry.page, entry.root]]));
+      await PlacesTestUtils.setFaviconForPage(entry.page, entry.root, dataUrl);
     }
 
     if (entry.iconExpired) {
@@ -406,8 +395,9 @@ add_task(async function test_expire_icons() {
       });
     }
     if (entry.icon) {
+      let favicon = await PlacesTestUtils.getFaviconForPage(entry.page);
       Assert.equal(
-        await getFaviconUrlForPage(entry.page),
+        favicon.uri.spec,
         entry.icon,
         "Sanity check the initial icon value"
       );
@@ -421,30 +411,19 @@ add_task(async function test_expire_icons() {
   for (let entry of entries) {
     Assert.ok(page_in_database(entry.page));
 
+    let favicon = await PlacesTestUtils.getFaviconForPage(entry.page);
     if (!entry.removed) {
-      Assert.equal(
-        await getFaviconUrlForPage(entry.page),
-        entry.icon,
-        entry.desc
-      );
+      Assert.equal(favicon.uri.spec, entry.icon, entry.desc);
       continue;
     }
 
     if (entry.root) {
-      Assert.equal(
-        await getFaviconUrlForPage(entry.page),
-        entry.root,
-        entry.desc
-      );
+      Assert.equal(favicon.uri.spec, entry.root, entry.desc);
       continue;
     }
 
     if (entry.icon) {
-      await Assert.rejects(
-        getFaviconUrlForPage(entry.page),
-        /Unable to find an icon/,
-        entry.desc
-      );
+      await Assert.equal(favicon, null, entry.desc);
       continue;
     }
 

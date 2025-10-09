@@ -3,7 +3,7 @@ import os
 from six.moves.urllib.parse import quote
 
 from marionette_driver import By, errors
-from marionette_driver.marionette import Alert, HTMLElement
+from marionette_driver.marionette import Alert, WebElement
 from marionette_driver.wait import Wait
 
 from marionette_harness import MarionetteTestCase, WindowManagerMixin
@@ -74,7 +74,7 @@ class TestExecuteContent(MarionetteTestCase):
         )
 
     def assert_is_web_element(self, element):
-        self.assertIsInstance(element, HTMLElement)
+        self.assertIsInstance(element, WebElement)
 
     def test_return_number(self):
         self.assertEqual(1, self.marionette.execute_script("return 1"))
@@ -221,6 +221,16 @@ class TestExecuteContent(MarionetteTestCase):
             os.path.relpath(__file__.replace(".pyc", ".py")), cm.exception.stacktrace
         )
         self.assertIn("b is not defined", str(cm.exception))
+
+    def test_syntaxerror_stack(self):
+        with self.assertRaises(errors.JavascriptException) as cm:
+            self.marionette.execute_script("notAFunc() {")
+
+        # by default execute_script pass the name of the python file
+        self.assertIn(
+            os.path.relpath(__file__.replace(".pyc", ".py")), cm.exception.stacktrace
+        )
+        self.assertIn("SyntaxError: unexpected token: '{'", str(cm.exception))
 
     def test_permission(self):
         for sandbox in ["default", None]:
@@ -566,4 +576,7 @@ class TestExecuteChrome(WindowManagerMixin, TestExecuteContent):
         pass
 
     def test_return_value_on_alert(self):
+        pass
+
+    def test_syntaxerror_stack(self):
         pass

@@ -6,17 +6,21 @@
 
 "use strict";
 
-const { ASRouterTargeting } = ChromeUtils.import(
-  "resource://activity-stream/lib/ASRouterTargeting.jsm"
+const { ASRouterTargeting } = ChromeUtils.importESModule(
+  "resource:///modules/asrouter/ASRouterTargeting.sys.mjs"
 );
-
 const { BackgroundUpdate } = ChromeUtils.importESModule(
   "resource://gre/modules/BackgroundUpdate.sys.mjs"
+);
+const { NimbusTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/NimbusTestUtils.sys.mjs"
 );
 
 const { maybeSubmitBackgroundUpdatePing } = ChromeUtils.importESModule(
   "resource://gre/modules/backgroundtasks/BackgroundTask_backgroundupdate.sys.mjs"
 );
+
+NimbusTestUtils.init(this);
 
 XPCOMUtils.defineLazyServiceGetter(
   this,
@@ -30,7 +34,7 @@ add_setup(function test_setup() {
   do_get_profile();
 
   // We need to initialize it once, otherwise operations will be stuck in the pre-init queue.
-  Services.fog.initializeFOG();
+  Services.fog.initializeFOG(undefined, "firefox.desktop.background.update");
 
   setupProfileService();
 });
@@ -138,7 +142,7 @@ async function do_readTargeting(content, beforeNextSubmitCallback) {
 
 // Missing targeting is anticipated.
 add_task(async function test_targeting_missing() {
-  await do_readTargeting(null, reason => {
+  await do_readTargeting(null, _reason => {
     Assert.equal(false, Glean.backgroundUpdate.targetingExists.testGetValue());
 
     Assert.equal(
@@ -150,7 +154,7 @@ add_task(async function test_targeting_missing() {
 
 // Malformed JSON yields an exception.
 add_task(async function test_targeting_exception() {
-  await do_readTargeting("{", reason => {
+  await do_readTargeting("{", _reason => {
     Assert.equal(false, Glean.backgroundUpdate.targetingExists.testGetValue());
 
     Assert.equal(
@@ -169,9 +173,46 @@ add_task(async function test_targeting_exists() {
     profileAgeCreated: ASRouterTargeting.Environment.profileAgeCreated,
     firefoxVersion: ASRouterTargeting.Environment.firefoxVersion,
   };
-  let targetSnapshot = await ASRouterTargeting.getEnvironmentSnapshot(target);
 
-  await do_readTargeting(JSON.stringify(targetSnapshot), reason => {
+  // Arrange fake experiment enrollment details.
+  const { manager, cleanup } = await NimbusTestUtils.setupTest();
+
+  await manager.enroll(
+    NimbusTestUtils.factories.recipe.withFeatureConfig("foo", {
+      featureId: "testFeature",
+    }),
+    "test"
+  );
+  await manager.unenroll("foo");
+  await manager.enroll(
+    NimbusTestUtils.factories.recipe.withFeatureConfig("bar", {
+      featureId: "testFeature",
+    }),
+    "test"
+  );
+  await manager.unenroll("bar");
+  await manager.enroll(
+    NimbusTestUtils.factories.recipe.withFeatureConfig("baz", {
+      featureId: "testFeature",
+    }),
+    "test"
+  );
+
+  await manager.enroll(
+    NimbusTestUtils.factories.recipe("rol1", { isRollout: true }),
+    "test"
+  );
+  await manager.unenroll("rol1");
+  await manager.enroll(
+    NimbusTestUtils.factories.recipe("rol2", { isRollout: true }),
+    "test"
+  );
+
+  let targetSnapshot = await ASRouterTargeting.getEnvironmentSnapshot({
+    targets: [manager.createTargetingContext(), target],
+  });
+
+  await do_readTargeting(JSON.stringify(targetSnapshot), _reason => {
     Assert.equal(true, Glean.backgroundUpdate.targetingExists.testGetValue());
 
     Assert.equal(
@@ -220,5 +261,38 @@ add_task(async function test_targeting_exists() {
     targetCurrentDate.setHours(0, 0, 0, 0);
 
     Assert.equal(targetCurrentDate.toISOString(), currentDate.toISOString());
+
+    // Verify active experiments.
+    Assert.deepEqual(
+      {
+        branch: "control",
+        extra: { source: "defaultProfile", type: "nimbus-nimbus" },
+      },
+      Services.fog.testGetExperimentData("baz"),
+      "experiment data for active experiment 'baz' is correct"
+    );
+
+    Assert.deepEqual(
+      {
+        branch: "control",
+        extra: { source: "defaultProfile", type: "nimbus-rollout" },
+      },
+      Services.fog.testGetExperimentData("rol2"),
+      "experiment data for active experiment 'rol2' is correct"
+    );
+
+    // Bug 1879247: there is currently no API (even test-only) to get experiment
+    // data for inactive experiments.
+    for (let inactive of ["bar", "foo", "rol1"]) {
+      Assert.equal(
+        null,
+        Services.fog.testGetExperimentData(inactive),
+        `no experiment data for inactive experiment '${inactive}`
+      );
+    }
   });
+
+  await manager.unenroll("baz");
+  await manager.unenroll("rol2");
+  await cleanup();
 });

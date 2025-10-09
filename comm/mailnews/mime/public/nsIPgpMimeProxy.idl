@@ -2,11 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "nsIMailChannel.idl"
 #include "nsIStreamListener.idl"
 #include "nsIURI.idl"
 
 %{C++
-typedef int (*MimeDecodeCallbackFun)(const char *buf, int32_t buf_size, void *output_closure);
+typedef int (*MimeDecodeCallbackFun)(const char *buf, int32_t buf_size, int output_closure_type, void *output_closure);
 
 #define NS_PGPMIMEPROXY_CLASSNAME "PGP/Mime Decryption"
 #define NS_PGPMIMEPROXY_CONTRACTID "@mozilla.org/mime/pgp-mime-decrypt;1"
@@ -23,15 +24,17 @@ native MimeDecodeCallbackFun(MimeDecodeCallbackFun);
  * nsIPgpMimeProxy is a proxy for a (JS-)addon for OpenPGP/MIME decryption
  */
 
-[scriptable, uuid(815c4fbe-0e7c-45b6-8324-f7044c7252ac)]
+[scriptable, builtinclass, uuid(815c4fbe-0e7c-45b6-8324-f7044c7252ac)]
 interface nsIPgpMimeProxy : nsIStreamListener
 {
   /**
    * set the decoder callback into mimelib
    */
   [noscript] void setMimeCallback(in MimeDecodeCallbackFun outputFun,
+                                  in int32_t outputClosureType,
                                   in voidPtr outputClosure,
-                                  in nsIURI myUri);
+                                  in nsIURI myUri,
+                                  in nsIMailChannel mailChannel);
 
   [noscript] void removeMimeCallback();
 
@@ -84,6 +87,8 @@ interface nsIPgpMimeProxy : nsIStreamListener
    * Pass the decrypted data back from the decryptor and onto to libMime.
    */
   void outputDecryptedData(in string buf, in unsigned long count);
+
+  readonly attribute nsIMailChannel mailChannel;
 };
 
 

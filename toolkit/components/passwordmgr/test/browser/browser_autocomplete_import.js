@@ -4,7 +4,7 @@ const { ChromeMigrationUtils } = ChromeUtils.importESModule(
 const { ExperimentAPI } = ChromeUtils.importESModule(
   "resource://nimbus/ExperimentAPI.sys.mjs"
 );
-const { ExperimentFakes } = ChromeUtils.importESModule(
+const { NimbusTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/NimbusTestUtils.sys.mjs"
 );
 const { sinon } = ChromeUtils.importESModule(
@@ -38,7 +38,7 @@ add_setup(async function setup() {
     .stub(MigrationUtils, "getMigrator")
     .resolves(gTestMigrator);
 
-  const doExperimentCleanup = await ExperimentFakes.enrollWithFeatureConfig({
+  const doExperimentCleanup = await NimbusTestUtils.enrollWithFeatureConfig({
     featureId: "password-autocomplete",
     value: { directMigrateSingleProfile: true },
   });
@@ -82,7 +82,7 @@ add_task(async function check_fluent_ids() {
  * through importing those logins.
  */
 add_task(async function import_suggestion_wizard() {
-  let wizard;
+  let wizardTab;
 
   await BrowserTestUtils.withNewTab(
     {
@@ -110,11 +110,10 @@ add_task(async function import_suggestion_wizard() {
       info("Clicking on importable suggestion");
       const wizardPromise = BrowserTestUtils.waitForMigrationWizard(window);
 
-      // The modal window blocks execution, so avoid calling directly.
-      executeSoon(() => EventUtils.synthesizeMouseAtCenter(importableItem, {}));
+      EventUtils.synthesizeMouseAtCenter(importableItem, {});
 
-      wizard = await wizardPromise;
-      Assert.ok(wizard, "Wizard opened");
+      wizardTab = await wizardPromise;
+      Assert.ok(wizardTab, "Wizard opened");
       Assert.equal(
         gTestMigrator.migrate.callCount,
         0,
@@ -125,10 +124,10 @@ add_task(async function import_suggestion_wizard() {
     }
   );
 
-  // Close the wizard in the end of the test. If we close the wizard when the tab
+  // Close the wizard tab in the end of the test. If we close the wizard when the tab
   // is still opened, the username field will be focused again, which triggers another
   // importable suggestion.
-  await BrowserTestUtils.closeMigrationWizard(wizard);
+  await BrowserTestUtils.removeTab(wizardTab);
 });
 
 add_task(async function import_suggestion_learn_more() {

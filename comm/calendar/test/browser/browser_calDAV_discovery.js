@@ -2,12 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { CalDAVServer } = ChromeUtils.import("resource://testing-common/calendar/CalDAVServer.jsm");
-var { DNS } = ChromeUtils.import("resource:///modules/DNS.jsm");
+var { CalDAVServer } = ChromeUtils.importESModule(
+  "resource://testing-common/calendar/CalDAVServer.sys.mjs"
+);
+var { DNS } = ChromeUtils.importESModule("resource:///modules/DNS.sys.mjs");
 
 async function openWizard(...args) {
   await CalendarTestUtils.openCalendarTab(window);
-  let wizardPromise = BrowserTestUtils.promiseAlertDialog(
+  const wizardPromise = BrowserTestUtils.promiseAlertDialog(
     undefined,
     "chrome://calendar/content/calendar-creation.xhtml",
     {
@@ -23,9 +25,9 @@ async function openWizard(...args) {
 }
 
 async function handleWizard(wizardWindow, { username, url, password, expectedCalendars }) {
-  let wizardDocument = wizardWindow.document;
-  let acceptButton = wizardDocument.querySelector("dialog").getButton("accept");
-  let cancelButton = wizardDocument.querySelector("dialog").getButton("cancel");
+  const wizardDocument = wizardWindow.document;
+  const acceptButton = wizardDocument.querySelector("dialog").getButton("accept");
+  const cancelButton = wizardDocument.querySelector("dialog").getButton("cancel");
 
   // Select calendar type.
 
@@ -59,15 +61,15 @@ async function handleWizard(wizardWindow, { username, url, password, expectedCal
 
   Assert.ok(!acceptButton.disabled);
 
-  let promptPromise = handlePasswordPrompt(password);
+  const promptPromise = handlePasswordPrompt(password);
   EventUtils.synthesizeKey("VK_RETURN", {}, wizardWindow);
   await promptPromise;
 
   // Select calendars.
 
-  let list = wizardDocument.getElementById("network-calendar-list");
+  const list = wizardDocument.getElementById("network-calendar-list");
   await TestUtils.waitForCondition(
-    () => BrowserTestUtils.is_visible(list),
+    () => BrowserTestUtils.isVisible(list),
     "waiting for calendar list to appear",
     200,
     100
@@ -75,7 +77,7 @@ async function handleWizard(wizardWindow, { username, url, password, expectedCal
 
   Assert.equal(list.childElementCount, expectedCalendars.length);
   for (let i = 0; i < expectedCalendars.length; i++) {
-    let item = list.children[i];
+    const item = list.children[i];
 
     Assert.equal(item.calendar.uri.spec, expectedCalendars[i].uri);
     Assert.equal(
@@ -102,7 +104,7 @@ async function handlePasswordPrompt(password) {
 
       prompt.document.getElementById("password1Textbox").value = password;
 
-      let checkbox = prompt.document.getElementById("checkbox");
+      const checkbox = prompt.document.getElementById("checkbox");
       Assert.greater(checkbox.getBoundingClientRect().width, 0);
       Assert.ok(checkbox.checked);
 
@@ -125,7 +127,7 @@ add_task(async function testDNS() {
   };
   DNS.txt = function (name) {
     Assert.equal(name, "_caldavs._tcp.dnstest.invalid");
-    return [{ data: "path=/browser/comm/calendar/test/browser/data/dns.sjs" }];
+    return [{ strings: ["path=/browser/comm/calendar/test/browser/data/dns.sjs"] }];
   };
 
   await openWizard({
@@ -161,7 +163,150 @@ add_task(async function testWellKnown() {
     password: "alice",
     expectedCalendars: [
       {
-        uri: CalDAVServer.url,
+        uri: `${CalDAVServer.origin}/calendars/alice/test/`,
+        name: "CalDAV Test",
+        color: "rgb(255, 128, 0)",
+      },
+    ],
+  });
+
+  CalDAVServer.close();
+});
+
+/**
+ * Test that the magic URL /.well-known/caldav works, even if the server returns
+ * a 404 status for the resourcetype property (as done by iCloud.com).
+ * Verify successfull discovery, if current-user-principal and calendar-home-set
+ * are returned by the principal request.
+ */
+add_task(async function testWellKnown_noResourceType_earlyCalendarHomeSet() {
+  CalDAVServer.open("alice", "alice");
+  // Return a 404 status for the resourcetype property. Return a 200 status for
+  // current-user-principal and calendar-home-set. Implementation should then use
+  // the available calendar-home-set.
+  CalDAVServer.server.registerPathHandler("/principals/", (_request, response) => {
+    response.setStatusLine("1.1", 207, "Multi-Status");
+    response.setHeader("Content-Type", "text/xml");
+    response.write(
+      `<multistatus xmlns="DAV:">
+          <response>
+            <href>/principals/</href>
+            <propstat>
+              <prop>
+                <current-user-principal xmlns="DAV:">
+                  <href>/principals/alice/</href>
+                </current-user-principal>
+                <calendar-home-set xmlns="urn:ietf:params:xml:ns:caldav">
+                  <href>/calendars/alice/</href>
+                </calendar-home-set>
+              </prop>
+              <status>HTTP/1.1 200 OK</status>
+           </propstat>
+           <propstat>
+            <prop>
+              <resourcetype xmlns="DAV:"/>
+            </prop>
+            <status>HTTP/1.1 404 Not Found</status>
+          </propstat>
+          </response>
+        </multistatus>`.replace(/>\s+</g, "><")
+    );
+  });
+  // This should not be executed. Any empty response will cause the test to fail.
+  CalDAVServer.server.registerPathHandler("/principals/alice/", () => {
+    Assert.report(
+      true,
+      undefined,
+      undefined,
+      "The current-user-principal (/principal/alice/) returned by the /principal/ request should have been ignored, if a calendar-home-set was returned as well."
+    );
+  });
+  await openWizard({
+    username: "alice",
+    url: CalDAVServer.origin,
+    password: "alice",
+    expectedCalendars: [
+      {
+        uri: `${CalDAVServer.origin}/calendars/alice/test/`,
+        name: "CalDAV Test",
+        color: "rgb(255, 128, 0)",
+      },
+    ],
+  });
+
+  CalDAVServer.close();
+});
+
+/**
+ * Test that the magic URL /.well-known/caldav works, even if the server returns
+ * a 404 status for the resourcetype property (as done by iCloud.com).
+ * Verify successfull discovery, if only the current-user-principal is returned
+ * by the principal request.
+ */
+add_task(async function testWellKnown_noResourceType() {
+  CalDAVServer.open("alice", "alice");
+  // Return a 404 status for the resourcetype property. Return a 200 status for
+  // current-user-principal.
+  CalDAVServer.server.registerPathHandler("/principals/", (request, response) => {
+    response.setStatusLine("1.1", 207, "Multi-Status");
+    response.setHeader("Content-Type", "text/xml");
+    response.write(
+      `<multistatus xmlns="DAV:">
+          <response>
+            <href>/principals/</href>
+            <propstat>
+              <prop>
+                <current-user-principal xmlns="DAV:">
+                  <href>/principals/alice/</href>
+                </current-user-principal>
+              </prop>
+              <status>HTTP/1.1 200 OK</status>
+           </propstat>
+           <propstat>
+            <prop>
+              <resourcetype xmlns="DAV:"/>
+            </prop>
+            <status>HTTP/1.1 404 Not Found</status>
+          </propstat>
+          </response>
+        </multistatus>`.replace(/>\s+</g, "><")
+    );
+  });
+  // Return a 404 status for the resourcetype property. Return a 200 status for
+  // calendar-home-set.
+  CalDAVServer.server.registerPathHandler("/principals/alice/", (request, response) => {
+    response.setStatusLine("1.1", 207, "Multi-Status");
+    response.setHeader("Content-Type", "text/xml");
+    response.write(
+      `<multistatus xmlns="DAV:">
+          <response>
+            <href>/principals/alice/</href>
+            <propstat>
+              <prop>
+                <calendar-home-set xmlns="urn:ietf:params:xml:ns:caldav">
+                  <href>/calendars/alice/</href>
+                </calendar-home-set>
+              </prop>
+              <status>HTTP/1.1 200 OK</status>
+           </propstat>
+           <propstat>
+            <prop>
+              <resourcetype xmlns="DAV:"/>
+            </prop>
+            <status>HTTP/1.1 404 Not Found</status>
+          </propstat>
+          </response>
+        </multistatus>`.replace(/>\s+</g, "><")
+    );
+  });
+
+  await openWizard({
+    username: "alice",
+    url: CalDAVServer.origin,
+    password: "alice",
+    expectedCalendars: [
+      {
+        uri: `${CalDAVServer.origin}/calendars/alice/test/`,
         name: "CalDAV Test",
         color: "rgb(255, 128, 0)",
       },
@@ -184,7 +329,7 @@ add_task(async function testCalendarWithOnlyReadPriv() {
     password: "alice",
     expectedCalendars: [
       {
-        uri: CalDAVServer.url,
+        uri: `${CalDAVServer.origin}/calendars/alice/test/`,
         name: "CalDAV Test",
         color: "rgb(255, 128, 0)",
         readOnly: true,
@@ -207,7 +352,7 @@ add_task(async function testCalendarWithoutPrivs() {
     password: "alice",
     expectedCalendars: [
       {
-        uri: CalDAVServer.url,
+        uri: `${CalDAVServer.origin}/calendars/alice/test/`,
         name: "CalDAV Test",
         color: "rgb(255, 128, 0)",
         readOnly: true,
@@ -230,7 +375,7 @@ add_task(async function testCalendarWithNoPrivSupport() {
     password: "alice",
     expectedCalendars: [
       {
-        uri: CalDAVServer.url,
+        uri: `${CalDAVServer.origin}/calendars/alice/test/`,
         name: "CalDAV Test",
         color: "rgb(255, 128, 0)",
         readOnly: false,

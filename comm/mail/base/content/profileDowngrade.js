@@ -4,11 +4,14 @@
 
 let gParams;
 
+var { openLinkExternally } = ChromeUtils.importESModule(
+  "resource:///modules/LinkHelper.sys.mjs"
+);
 const { AppConstants } = ChromeUtils.importESModule(
   "resource://gre/modules/AppConstants.sys.mjs"
 );
 
-window.addEventListener("load", event => {
+window.addEventListener("load", () => {
   init();
 });
 
@@ -44,10 +47,8 @@ function moreInfo(event) {
   }
   event.preventDefault();
 
-  let uri = Services.io.newURI(
+  const uri = Services.io.newURI(
     "https://support.mozilla.org/kb/unable-launch-older-version-profile"
   );
-  Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-    .getService(Ci.nsIExternalProtocolService)
-    .loadURI(uri);
+  openLinkExternally(uri, { addToHistory: false });
 }

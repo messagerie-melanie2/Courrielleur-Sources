@@ -18,6 +18,9 @@ const gElements = {
     .querySelector("login-list")
     .shadowRoot.querySelector("login-filter"),
   menuButton: document.querySelector("menu-button"),
+  get exportButton() {
+    return this.menuButton.shadowRoot.querySelector(".menuitem-export");
+  },
   // removeAllLogins button is nested inside of menuButton
   get removeAllButton() {
     return this.menuButton.shadowRoot.querySelector(
@@ -32,6 +35,7 @@ function updateNoLogins() {
   document.documentElement.classList.toggle("no-logins", numberOfLogins == 0);
   gElements.loginList.classList.toggle("no-logins", numberOfLogins == 0);
   gElements.loginItem.classList.toggle("no-logins", numberOfLogins == 0);
+  gElements.exportButton.disabled = numberOfLogins == 0;
   gElements.removeAllButton.disabled = numberOfLogins == 0;
 }
 
@@ -121,6 +125,9 @@ window.addEventListener("AboutLoginsChromeToContent", event => {
       break;
     }
     case "Setup": {
+      gElements.loginList.selectLoginByDomainOrGuid(
+        event.detail.value.preselectedLogin
+      );
       handleAllLogins(event.detail.value.logins);
       handleSyncState(event.detail.value.syncState);
       gElements.loginList.setSortDirection(event.detail.value.selectedSort);
@@ -153,14 +160,14 @@ window.addEventListener("AboutLoginsRemoveAllLoginsDialog", () => {
   let loginItem = document.querySelector("login-item");
   let options = {};
   if (fxaLoggedIn && passwordSyncEnabled) {
-    options.title = "about-logins-confirm-remove-all-sync-dialog-title";
-    options.message = "about-logins-confirm-remove-all-sync-dialog-message";
+    options.title = "about-logins-confirm-remove-all-sync-dialog-title2";
+    options.message = "about-logins-confirm-remove-all-sync-dialog-message3";
   } else {
-    options.title = "about-logins-confirm-remove-all-dialog-title";
-    options.message = "about-logins-confirm-remove-all-dialog-message";
+    options.title = "about-logins-confirm-remove-all-dialog-title2";
+    options.message = "about-logins-confirm-remove-all-dialog-message2";
   }
   options.confirmCheckboxLabel =
-    "about-logins-confirm-remove-all-dialog-checkbox-label";
+    "about-logins-confirm-remove-all-dialog-checkbox-label2";
   options.confirmButtonLabel =
     "about-logins-confirm-remove-all-dialog-confirm-button-label";
   options.count = numberOfLogins;
@@ -195,14 +202,13 @@ window.addEventListener("AboutLoginsRemoveAllLoginsDialog", () => {
 
 window.addEventListener("AboutLoginsExportPasswordsDialog", async () => {
   recordTelemetryEvent({
-    object: "export",
-    method: "mgmt_menu_item_used",
+    name: "mgmtMenuItemUsedExport",
   });
   let dialog = document.querySelector("confirmation-dialog");
   let options = {
-    title: "about-logins-confirm-export-dialog-title",
-    message: "about-logins-confirm-export-dialog-message",
-    confirmButtonLabel: "about-logins-confirm-export-dialog-confirm-button",
+    title: "about-logins-confirm-export-dialog-title2",
+    message: "about-logins-confirm-export-dialog-message2",
+    confirmButtonLabel: "about-logins-confirm-export-dialog-confirm-button2",
   };
   try {
     await dialog.show(options);
@@ -217,7 +223,7 @@ window.addEventListener("AboutLoginsExportPasswordsDialog", async () => {
 async function interceptFocusKey() {
   // Intercept Ctrl+F on the page to focus login filter box
   const [findKey] = await document.l10n.formatMessages([
-    { id: "about-logins-login-filter" },
+    { id: "about-logins-login-filter2" },
   ]);
   const focusKey = findKey.attributes
     .find(a => a.name == "key")
@@ -242,8 +248,7 @@ let searchParamsChanged = false;
 let { protocol, pathname, searchParams } = new URL(document.location);
 
 recordTelemetryEvent({
-  method: "open_management",
-  object: searchParams.get("entryPoint") || "direct",
+  name: "openManagement" + (searchParams.get("entryPoint") || "Direct"),
 });
 
 if (searchParams.has("entryPoint")) {
@@ -277,12 +282,6 @@ if (searchParamsChanged) {
 }
 
 if (!searchParamsChanged) {
-  if (document.location.hash) {
-    const loginDomainOrGuid = decodeURIComponent(
-      document.location.hash.slice(1)
-    );
-    gElements.loginList.selectLoginByDomainOrGuid(loginDomainOrGuid);
-  }
   gElements.loginFilter.focus();
   document.dispatchEvent(new CustomEvent("AboutLoginsInit", { bubbles: true }));
 }

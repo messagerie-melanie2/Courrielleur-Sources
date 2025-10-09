@@ -8,6 +8,7 @@ Transform the partials task into an actual task description.
 import logging
 
 from taskgraph.transforms.base import TransformSequence
+from taskgraph.util.dependencies import get_primary_dependency
 from taskgraph.util.taskcluster import get_artifact_prefix
 from taskgraph.util.treeherder import inherit_treeherder_from_dep
 
@@ -47,14 +48,14 @@ def _generate_task_output_files(job, filenames, locale=None):
 
 
 def identify_desired_signing_keys(project, product):
-    if project in ["mozilla-central", "comm-central", "oak"]:
+    if project in ["mozilla-central", "comm-central", "larch", "pine", "maple"]:
         return "nightly"
     if project == "mozilla-beta":
         if product == "devedition":
             return "nightly"
         return "release"
     if (
-        project in ["mozilla-release", "comm-beta"]
+        project in ["mozilla-release", "comm-release", "comm-beta"]
         or project.startswith("mozilla-esr")
         or project.startswith("comm-esr")
     ):
@@ -68,7 +69,8 @@ def make_task_description(config, jobs):
     if not config.params.get("release_history"):
         return
     for job in jobs:
-        dep_job = job["primary-dependency"]
+        dep_job = get_primary_dependency(config, job)
+        assert dep_job
 
         treeherder = inherit_treeherder_from_dep(job, dep_job)
         treeherder.setdefault("symbol", "p(N)")
@@ -102,11 +104,7 @@ def make_task_description(config, jobs):
         locale_suffix = ""
         if locale:
             locale_suffix = f"{locale}/"
-        artifact_path = "<{}/{}/{}target.complete.mar>".format(
-            dep_job.kind,
-            get_artifact_prefix(dep_job),
-            locale_suffix,
-        )
+        artifact_path = f"<{dep_job.kind}/{get_artifact_prefix(dep_job)}/{locale_suffix}target.complete.mar>"
         for build in sorted(builds):
             partial_info = {
                 "locale": build_locale,

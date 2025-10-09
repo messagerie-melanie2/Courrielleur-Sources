@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| shell-option(--enable-temporal) skip-if(!this.hasOwnProperty('Temporal')||!xulRuntime.shell) -- Temporal is not enabled unconditionally, requires shell-options
 // Copyright (C) 2021 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -15,19 +15,9 @@ info: |
 features: [Temporal]
 ---*/
 
-const tests = [
-  [[], "05-02", "built-in ISO"],
-  [[{ toString() { return "custom"; } }], "1972-05-02[u-ca=custom]", "custom"],
-  [[{ toString() { return "iso8601"; } }], "05-02", "custom with iso8601 toString"],
-  [[{ toString() { return "ISO8601"; } }], "1972-05-02[u-ca=ISO8601]", "custom with caps toString"],
-  [[{ toString() { return "\u0131so8601"; } }], "1972-05-02[u-ca=\u0131so8601]", "custom with dotless i toString"],
-];
-
-for (const [args, expected, description] of tests) {
-  const monthday = new Temporal.PlainMonthDay(5, 2, ...args);
-  const result = monthday.toString({ calendarName: undefined });
-  assert.sameValue(result, expected, `default calendarName option is auto with ${description} calendar`);
-  // See options-object.js for {} and options-undefined.js for absent options arg
-}
+const monthday = new Temporal.PlainMonthDay(5, 2);
+const result = monthday.toString({ calendarName: undefined });
+assert.sameValue(result, "05-02", `default calendarName option is auto with built-in ISO calendar`);
+// See options-object.js for {} and options-undefined.js for absent options arg
 
 reportCompare(0, 0);

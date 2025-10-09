@@ -27,6 +27,17 @@ void FileSystemManagerChild::CloseAllWritables(
   nsTArray<RefPtr<BoolPromise>> promises;
   CloseAllWritablesImpl(promises);
 
+  // FileSystemManagerChild::CloseAllWritables is sometimes called from
+  // FileSystemManager::Shutdown which can be called late in app shutdown
+  // when GetCurrentSerialEventTarget returns null. At that point there
+  // are no writable file streams. The problem with GetCurrentSerialEventTarget
+  // returning null can be solved by calling the callback directly without
+  // dispatching a new runnable.
+  if (promises.IsEmpty()) {
+    aCallback();
+    return;
+  }
+
   BoolPromise::AllSettled(GetCurrentSerialEventTarget(), promises)
       ->Then(GetCurrentSerialEventTarget(), __func__,
              [callback = std::move(aCallback)](
@@ -56,7 +67,7 @@ bool FileSystemManagerChild::AllWritableFileStreamsClosed() const {
       continue;
     }
 
-    if (!handle->IsClosed()) {
+    if (!handle->IsDone()) {
       return false;
     }
   }
@@ -81,6 +92,8 @@ FileSystemManagerChild::AllocPFileSystemWritableFileStreamChild() {
 
 ::mozilla::ipc::IPCResult FileSystemManagerChild::RecvCloseAll(
     CloseAllResolver&& aResolver) {
+  mCloseAllReceived = true;
+
   nsTArray<RefPtr<BoolPromise>> promises;
 
   // NOTE: getFile() creates blobs that read the data from the child;
@@ -122,8 +135,12 @@ void FileSystemManagerChild::CloseAllWritablesImpl(T& aPromises) {
     auto* const child = static_cast<FileSystemWritableFileStreamChild*>(item);
     auto* const handle = child->MutableWritableFileStreamPtr();
 
-    if (handle && !handle->IsClosed()) {
-      aPromises.AppendElement(handle->BeginClose());
+    if (handle) {
+      if (handle->IsOpen()) {
+        aPromises.AppendElement(handle->BeginAbort());
+      } else if (handle->IsFinishing()) {
+        aPromises.AppendElement(handle->OnDone());
+      }
     }
   }
 }

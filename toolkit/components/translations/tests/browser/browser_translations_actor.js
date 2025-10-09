@@ -17,49 +17,187 @@ add_task(async function test_pivot_language_behavior() {
     "Expect 4 console.error messages notifying of the lack of a pivot language."
   );
 
-  const { actor, cleanup } = await setupActorTest({
-    languagePairs: [
-      { fromLang: "en", toLang: "es", isBeta: false },
-      { fromLang: "es", toLang: "en", isBeta: false },
-      { fromLang: "en", toLang: "yue", isBeta: true },
-      { fromLang: "yue", toLang: "en", isBeta: true },
-      // This is not a bi-directional translation.
-      { fromLang: "is", toLang: "en", isBeta: false },
-      // These are non-pivot languages.
-      { fromLang: "zh", toLang: "ja", isBeta: true },
-      { fromLang: "ja", toLang: "zh", isBeta: true },
-    ],
+  const fromLanguagePairs = [
+    { fromLang: "en", toLang: "es" },
+    { fromLang: "es", toLang: "en" },
+    { fromLang: "en", toLang: "yue" },
+    { fromLang: "yue", toLang: "en" },
+    // This is not a bi-directional translation.
+    { fromLang: "is", toLang: "en" },
+    // These are non-pivot languages.
+    { fromLang: "zh", toLang: "ja" },
+    { fromLang: "ja", toLang: "zh" },
+  ];
+
+  // Sort the language pairs, as the order is not guaranteed.
+  function sort(list) {
+    return list.sort((a, b) =>
+      `${a.fromLang ?? a.sourceLanguage}-${a.toLang ?? a.targetLanguage}`.localeCompare(
+        `${b.fromLang ?? b.sourceLanguage}-${b.toLang ?? b.targetLanguage}`
+      )
+    );
+  }
+
+  const { cleanup } = await setupActorTest({
+    languagePairs: fromLanguagePairs,
   });
 
-  const { languagePairs } = await actor.getSupportedLanguages();
+  const { languagePairs } = await TranslationsParent.getSupportedLanguages();
 
   // The pairs aren't guaranteed to be sorted.
   languagePairs.sort((a, b) =>
-    TranslationsParent.languagePairKey(a.fromLang, a.toLang).localeCompare(
-      TranslationsParent.languagePairKey(b.fromLang, b.toLang)
+    TranslationsParent.nonPivotKey(
+      a.fromLang,
+      a.toLang,
+      a.variant
+    ).localeCompare(
+      TranslationsParent.nonPivotKey(b.fromLang, b.toLang, b.variant)
     )
   );
 
-  Assert.deepEqual(
-    languagePairs,
-    [
-      { fromLang: "en", toLang: "es", isBeta: false },
-      { fromLang: "en", toLang: "yue", isBeta: true },
-      { fromLang: "es", toLang: "en", isBeta: false },
-      { fromLang: "is", toLang: "en", isBeta: false },
-      { fromLang: "yue", toLang: "en", isBeta: true },
-    ],
-    "Non-pivot languages were removed."
-  );
+  if (SpecialPowers.isDebugBuild) {
+    Assert.deepEqual(
+      sort(languagePairs),
+      sort([
+        { sourceLanguage: "en", targetLanguage: "es", variant: undefined },
+        { sourceLanguage: "en", targetLanguage: "yue", variant: undefined },
+        { sourceLanguage: "es", targetLanguage: "en", variant: undefined },
+        { sourceLanguage: "is", targetLanguage: "en", variant: undefined },
+        { sourceLanguage: "yue", targetLanguage: "en", variant: undefined },
+      ]),
+      "Non-pivot languages were removed on debug builds."
+    );
+  } else {
+    Assert.deepEqual(
+      sort(languagePairs),
+      sort(
+        fromLanguagePairs.map(({ fromLang, toLang }) => ({
+          sourceLanguage: fromLang,
+          targetLanguage: toLang,
+          varient: undefined,
+        }))
+      ),
+      "Non-pivot languages are retained on non-debug builds."
+    );
+  }
 
-  return cleanup();
+  await cleanup();
+});
+
+/**
+ * This test case ensures that stand-alone functions to check language support match the
+ * state of the available language pairs.
+ */
+add_task(async function test_language_support_checks() {
+  const { cleanup } = await setupActorTest({
+    languagePairs: [
+      { fromLang: PIVOT_LANGUAGE, toLang: "es" },
+      { fromLang: "es", toLang: PIVOT_LANGUAGE },
+      { fromLang: PIVOT_LANGUAGE, toLang: "fr" },
+      { fromLang: "fr", toLang: PIVOT_LANGUAGE },
+      { fromLang: PIVOT_LANGUAGE, toLang: "pl" },
+      { fromLang: "pl", toLang: PIVOT_LANGUAGE },
+      // Only supported as a source language
+      { fromLang: "fi", toLang: PIVOT_LANGUAGE },
+      // Only supported as a target language
+      { fromLang: PIVOT_LANGUAGE, toLang: "sl" },
+    ],
+  });
+
+  const { languagePairs } = await TranslationsParent.getSupportedLanguages();
+  for (const { sourceLanguage, targetLanguage } of languagePairs) {
+    ok(
+      await TranslationsParent.findCompatibleSourceLangTag(sourceLanguage),
+      "Each from-language should be supported as a translation source language."
+    );
+
+    ok(
+      await TranslationsParent.findCompatibleTargetLangTag(targetLanguage),
+      "Each to-language should be supported as a translation target language."
+    );
+
+    is(
+      Boolean(
+        await TranslationsParent.findCompatibleTargetLangTag(sourceLanguage)
+      ),
+      languagePairs.some(({ targetLanguage }) =>
+        TranslationsUtils.langTagsMatch(sourceLanguage, targetLanguage)
+      ),
+      "A from-language should be supported as a to-language if it also exists in the to-language list."
+    );
+
+    is(
+      Boolean(
+        await TranslationsParent.findCompatibleSourceLangTag(targetLanguage)
+      ),
+      languagePairs.some(({ sourceLanguage }) =>
+        TranslationsUtils.langTagsMatch(sourceLanguage, targetLanguage)
+      ),
+      "A to-language should be supported as a from-language if it also exists in the from-language list."
+    );
+  }
+
+  await usingAppLocale("en", async () => {
+    const expected = "en";
+    const actual = await TranslationsParent.getTopPreferredSupportedToLang();
+    is(
+      actual,
+      expected,
+      "The top supported to-language should match the expected language tag"
+    );
+  });
+
+  await usingAppLocale("es", async () => {
+    const expected = "es";
+    const actual = await TranslationsParent.getTopPreferredSupportedToLang();
+    is(
+      actual,
+      expected,
+      "The top supported to-language should match the expected language tag"
+    );
+  });
+
+  // Only supported as a source language
+  await usingAppLocale("fi", async () => {
+    const expected = "en";
+    const actual = await TranslationsParent.getTopPreferredSupportedToLang();
+    is(
+      actual,
+      expected,
+      "The top supported to-language should match the expected language tag"
+    );
+  });
+
+  // Only supported as a target language
+  await usingAppLocale("sl", async () => {
+    const expected = "sl";
+    const actual = await TranslationsParent.getTopPreferredSupportedToLang();
+    is(
+      actual,
+      expected,
+      "The top supported to-language should match the expected language tag"
+    );
+  });
+
+  // Not supported as a source language or a target language.
+  await usingAppLocale("ja", async () => {
+    const expected = "en";
+    const actual = await TranslationsParent.getTopPreferredSupportedToLang();
+    is(
+      actual,
+      expected,
+      "The top supported to-language should match the expected language tag"
+    );
+  });
+
+  await cleanup();
 });
 
 async function usingAppLocale(locale, callback) {
   info(`Mocking the locale "${locale}", expect missing resource errors.`);
-  const { availableLocales, requestedLocales } = Services.locale;
-  Services.locale.availableLocales = [locale];
-  Services.locale.requestedLocales = [locale];
+  const cleanupLocales = await mockLocales({
+    appLocales: [locale],
+  });
 
   if (Services.locale.appLocaleAsBCP47 !== locale) {
     throw new Error("Unable to change the app locale.");
@@ -67,14 +205,13 @@ async function usingAppLocale(locale, callback) {
   await callback();
 
   // Reset back to the originals.
-  Services.locale.availableLocales = availableLocales;
-  Services.locale.requestedLocales = requestedLocales;
+  await cleanupLocales();
 }
 
 add_task(async function test_translating_to_and_from_app_language() {
   const PIVOT_LANGUAGE = "en";
 
-  const { actor, cleanup } = await setupActorTest({
+  const { cleanup } = await setupActorTest({
     languagePairs: [
       { fromLang: PIVOT_LANGUAGE, toLang: "es" },
       { fromLang: "es", toLang: PIVOT_LANGUAGE },
@@ -91,8 +228,8 @@ add_task(async function test_translating_to_and_from_app_language() {
    */
   function getUniqueLanguagePairs(records) {
     const langPairs = new Set();
-    for (const { fromLang, toLang } of records) {
-      langPairs.add(TranslationsParent.languagePairKey(fromLang, toLang));
+    for (const { fromLang, toLang, variant } of records) {
+      langPairs.add(TranslationsParent.nonPivotKey(fromLang, toLang, variant));
     }
     return Array.from(langPairs)
       .sort()
@@ -110,14 +247,14 @@ add_task(async function test_translating_to_and_from_app_language() {
     requested,
     message,
     languagePairs,
-    isForDeletion,
+    includePivotRecords,
   }) {
     return usingAppLocale(app, async () => {
       Assert.deepEqual(
         getUniqueLanguagePairs(
-          await actor.getRecordsForTranslatingToAndFromAppLanguage(
+          await TranslationsParent.getRecordsForTranslatingToAndFromAppLanguage(
             requested,
-            isForDeletion
+            includePivotRecords
           )
         ),
         languagePairs,
@@ -131,6 +268,7 @@ add_task(async function test_translating_to_and_from_app_language() {
       "When the app locale is the pivot language, download another language.",
     app: PIVOT_LANGUAGE,
     requested: "fr",
+    includePivotRecords: true,
     languagePairs: [
       { fromLang: PIVOT_LANGUAGE, toLang: "fr" },
       { fromLang: "fr", toLang: PIVOT_LANGUAGE },
@@ -141,6 +279,7 @@ add_task(async function test_translating_to_and_from_app_language() {
     message: "When a pivot language is required, they are both downloaded.",
     app: "fr",
     requested: "pl",
+    includePivotRecords: true,
     languagePairs: [
       { fromLang: PIVOT_LANGUAGE, toLang: "fr" },
       { fromLang: PIVOT_LANGUAGE, toLang: "pl" },
@@ -154,6 +293,7 @@ add_task(async function test_translating_to_and_from_app_language() {
       "When downloading the pivot language, only download the one for the app's locale.",
     app: "es",
     requested: PIVOT_LANGUAGE,
+    includePivotRecords: true,
     languagePairs: [
       { fromLang: PIVOT_LANGUAGE, toLang: "es" },
       { fromLang: "es", toLang: PIVOT_LANGUAGE },
@@ -165,7 +305,7 @@ add_task(async function test_translating_to_and_from_app_language() {
       "Delete just the requested language when the app locale is the pivot language",
     app: PIVOT_LANGUAGE,
     requested: "fr",
-    isForDeletion: true,
+    includePivotRecords: false,
     languagePairs: [
       { fromLang: PIVOT_LANGUAGE, toLang: "fr" },
       { fromLang: "fr", toLang: PIVOT_LANGUAGE },
@@ -176,7 +316,7 @@ add_task(async function test_translating_to_and_from_app_language() {
     message: "Delete just the requested language, and not the pivot.",
     app: "fr",
     requested: "pl",
-    isForDeletion: true,
+    includePivotRecords: false,
     languagePairs: [
       { fromLang: PIVOT_LANGUAGE, toLang: "pl" },
       { fromLang: "pl", toLang: PIVOT_LANGUAGE },
@@ -187,7 +327,7 @@ add_task(async function test_translating_to_and_from_app_language() {
     message: "Delete just the requested language, and not the pivot.",
     app: "fr",
     requested: "pl",
-    isForDeletion: true,
+    includePivotRecords: false,
     languagePairs: [
       { fromLang: PIVOT_LANGUAGE, toLang: "pl" },
       { fromLang: "pl", toLang: PIVOT_LANGUAGE },
@@ -198,7 +338,7 @@ add_task(async function test_translating_to_and_from_app_language() {
     message: "Delete just the pivot → app and app → pivot.",
     app: "es",
     requested: PIVOT_LANGUAGE,
-    isForDeletion: true,
+    includePivotRecords: false,
     languagePairs: [
       { fromLang: PIVOT_LANGUAGE, toLang: "es" },
       { fromLang: "es", toLang: PIVOT_LANGUAGE },
@@ -210,8 +350,35 @@ add_task(async function test_translating_to_and_from_app_language() {
       "If the app and request language are the same, nothing is returned.",
     app: "fr",
     requested: "fr",
+    includePivotRecords: true,
     languagePairs: [],
   });
 
-  return cleanup();
+  await cleanup();
+});
+
+add_task(async function test_firstVisualChange() {
+  const { cleanup } = await setupActorTest({
+    languagePairs: [{ fromLang: "en", toLang: "es" }],
+  });
+
+  const parent = getTranslationsParent();
+
+  Assert.equal(
+    parent.languageState.hasVisibleChange,
+    false,
+    "No visual translation change has occurred yet"
+  );
+
+  parent.receiveMessage({
+    name: "Translations:ReportFirstVisibleChange",
+  });
+
+  Assert.equal(
+    parent.languageState.hasVisibleChange,
+    true,
+    "A change occurred."
+  );
+
+  await cleanup();
 });

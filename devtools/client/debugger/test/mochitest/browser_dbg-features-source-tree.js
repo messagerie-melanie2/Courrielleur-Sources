@@ -124,10 +124,10 @@ add_task(async function testSimpleSourcesWithManualClickExpand() {
   info("Test the download file context menu");
   // Before trigerring the menu, mock the file picker
   const MockFilePicker = SpecialPowers.MockFilePicker;
-  MockFilePicker.init(window);
-  const nsiFile = FileUtils.getFile("TmpD", [
-    `export_source_content_${Date.now()}.log`,
-  ]);
+  MockFilePicker.init(window.browsingContext);
+  const nsiFile = new FileUtils.File(
+    PathUtils.join(PathUtils.tempDir, `export_source_content_${Date.now()}.log`)
+  );
   MockFilePicker.setFiles([nsiFile]);
   const path = nsiFile.path;
 
@@ -320,11 +320,12 @@ add_task(async function testSourceTreeOnTheIntegrationTestPage() {
     .getAllThreads()
     .find(thread => thread.name == "Main Thread");
 
+  // When EFT is disabled the iframe's source is meld into the main target.
+  const expectedSameUrlSources = isEveryFrameTargetEnabled() ? 3 : 4;
   is(
     sourceActors.filter(actor => actor.thread == mainThread.actor).length,
-    // When EFT is disabled the iframe's source is meld into the main target
-    isEveryFrameTargetEnabled() ? 3 : 4,
-    "same-url.js is loaded 3 times in the main thread"
+    expectedSameUrlSources,
+    `same-url.js is loaded ${expectedSameUrlSources} times in the main thread`
   );
 
   if (isEveryFrameTargetEnabled()) {
@@ -341,7 +342,7 @@ add_task(async function testSourceTreeOnTheIntegrationTestPage() {
 
   const workerThread = dbg.selectors
     .getAllThreads()
-    .find(thread => thread.name == testServer.urlFor("same-url.sjs"));
+    .find(thread => thread.url == testServer.urlFor("same-url.sjs"));
 
   is(
     sourceActors.filter(actor => actor.thread == workerThread.actor).length,
@@ -364,11 +365,26 @@ add_task(async function testSourceTreeOnTheIntegrationTestPage() {
   // Framework icons are only displayed when we parse the source,
   // which happens when we select the source
   assertSourceIcon(dbg, "react-component-module.js", "javascript");
-  await selectSource(dbg, "react-component-module.js");
-  assertSourceIcon(dbg, "react-component-module.js", "react");
+  const onResumed = SpecialPowers.spawn(
+    gBrowser.selectedBrowser,
+    [],
+    function () {
+      content.eval("pauseInReact()");
+    }
+  );
+  await waitForPaused(dbg);
+  assertSourceIcon(dbg, "react-component-module.js", "javascript");
+  await resume(dbg);
+  await onResumed;
+
+  info("Select an original source while bundle should be opened by default");
+  // The setting should be ignored when selecting a source from the source tree
+  await dbg.actions.setDefaultSelectedLocation(false);
+  await selectSourceFromSourceTree(dbg, "original.js");
+  assertTextContentOnLine(dbg, 1, `window.bar = function bar() {`);
 
   info("Verify blackbox source icon");
-  await selectSource(dbg, "script.js");
+  await selectSourceFromSourceTree(dbg, "script.js");
   await clickElement(dbg, "blackbox");
   await waitForDispatch(dbg.store, "BLACKBOX_WHOLE_SOURCES");
   assertSourceIcon(dbg, "script.js", "blackBox");
@@ -377,7 +393,7 @@ add_task(async function testSourceTreeOnTheIntegrationTestPage() {
   assertSourceIcon(dbg, "script.js", "javascript");
 
   info("Assert the content of the named eval");
-  await selectSource(dbg, "named-eval.js");
+  await selectSourceFromSourceTree(dbg, "named-eval.js");
   assertTextContentOnLine(dbg, 3, `console.log("named-eval");`);
 
   info("Assert that nameless eval don't show up in the source tree");
@@ -387,7 +403,7 @@ add_task(async function testSourceTreeOnTheIntegrationTestPage() {
   await resume(dbg);
 
   info("Assert the content of sources with query string");
-  await selectSource(dbg, "query.js?x=1");
+  await selectSourceFromSourceTree(dbg, "query.js?x=1");
   const tab = findElement(dbg, "activeTab");
   is(tab.innerText, "query.js?x=1", "Tab label is query.js?x=1");
   assertTextContentOnLine(
@@ -436,26 +452,40 @@ add_task(async function testSourceTreeOnTheIntegrationTestPage() {
 add_task(async function testSourceTreeWithWebExtensionContentScript() {
   const extension = await installAndStartContentScriptExtension();
 
-  info("Without the chrome preference, the content script doesn't show up");
-  await pushPref("devtools.chrome.enabled", false);
+  // Ensure that the setting to show content script is off before running the test
+  await pushPref("devtools.debugger.show-content-scripts", false);
   let dbg = await initDebugger("doc-content-script-sources.html");
   // Let some time for unexpected source to appear
   await wait(1000);
-  await waitForSourcesInSourceTree(dbg, []);
+  // There is no content script, but still html pages inline sources
+  await waitForSourcesInSourceTree(dbg, [
+    "doc-content-script-sources.html",
+    "doc-strict.html",
+  ]);
   await dbg.toolbox.closeToolbox();
 
-  info("With the chrome preference, the content script shows up");
-  await pushPref("devtools.chrome.enabled", true);
   const toolbox = await openToolboxForTab(gBrowser.selectedTab, "jsdebugger");
   dbg = createDebuggerContext(toolbox);
-  await waitForSourcesInSourceTree(dbg, ["content_script.js"]);
-  await selectSource(dbg, "content_script.js");
+
+  info("Enable the content script setting");
+  await toggleSourcesTreeSettingsMenuItem(dbg, {
+    className: ".debugger-settings-menu-item-show-content-scripts",
+    isChecked: false,
+  });
+
+  await waitForSourcesInSourceTree(dbg, [
+    "doc-content-script-sources.html",
+    "doc-strict.html",
+    "content_script.js",
+  ]);
+  await selectSourceFromSourceTree(dbg, "content_script.js");
   ok(
     findElementWithSelector(dbg, ".sources-list .focused"),
     "Source is focused"
   );
 
-  const contentScriptGroupItem = findSourceNodeWithText(
+  // Note that the thread item also contains the extension name
+  const contentScriptGroupItem = findSourceTreeGroupByName(
     dbg,
     "Test content script extension"
   );

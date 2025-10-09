@@ -7,8 +7,6 @@
 // Import modules
 //////////////////////////////////////////////////////////////
 
-var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
-
 //////////////////////////////////////////////////////////////
 // Global variables
 //////////////////////////////////////////////////////////////
@@ -220,9 +218,7 @@ function add_datasource_to_other_panels(link) {
   debug("Current URL:  " +url);
   debug("Current link: " +link);
 
-  var uri = Cc['@mozilla.org/network/standard-url;1'].createInstance();
-  uri = uri.QueryInterface(Ci.nsIURI);
-  uri.spec = url;
+  var uri = Services.io.newURI(url);
   uri = uri.resolve(link);
 
   debug("New URL:      " +uri);
@@ -427,17 +423,13 @@ function CustomizePanel()
 function BrowseMorePanels()
 {
   var url = '';
-  var browser_url = "chrome://navigator/content/navigator.xul";
   var locale;
   try {
     url = Services.prefs.getCharPref("sidebar.customize.more_panels.url");
-    var temp = Services.prefs.getCharPref("browser.chromeURL");
-    if (temp)
-      browser_url = temp;
   } catch(ex) {
     debug("Unable to get prefs: "+ex);
   }
-  window.openDialog(browser_url, "_blank", "chrome,all,dialog=no", url);
+  window.openDialog(AppConstants.BROWSER_CHROME_URL, "_blank", "chrome,all,dialog=no", url);
 }
 
 function customize_getBrowserURL()

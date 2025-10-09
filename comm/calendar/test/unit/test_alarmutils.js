@@ -2,13 +2,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
+var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
 var { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUtils.sys.mjs");
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  CalAlarm: "resource:///modules/CalAlarm.jsm",
-  CalEvent: "resource:///modules/CalEvent.jsm",
-  CalTodo: "resource:///modules/CalTodo.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  CalAlarm: "resource:///modules/CalAlarm.sys.mjs",
+  CalEvent: "resource:///modules/CalEvent.sys.mjs",
+  CalTodo: "resource:///modules/CalTodo.sys.mjs",
 });
 
 function run_test() {
@@ -45,7 +45,7 @@ add_task(async function test_setDefaultValues_events() {
   cal.alarms.setDefaultValues(item);
   equal(item.getAlarms().length, 0);
 
-  let mockCalendar = {
+  const mockCalendar = {
     getProperty() {
       return ["SHOUT"];
     },
@@ -70,8 +70,8 @@ add_task(async function test_setDefaultValues_events() {
 
 add_task(async function test_setDefaultValues_tasks() {
   let item, alarm;
-  let calnow = cal.dtz.now;
-  let nowDate = cal.createDateTime("20150815T120000");
+  const calnow = cal.dtz.now;
+  const nowDate = cal.createDateTime("20150815T120000");
   cal.dtz.now = function () {
     return nowDate;
   };
@@ -105,7 +105,7 @@ add_task(async function test_setDefaultValues_tasks() {
   cal.alarms.setDefaultValues(item);
   equal(item.getAlarms().length, 0);
 
-  let mockCalendar = {
+  const mockCalendar = {
     getProperty() {
       return ["SHOUT"];
     },
@@ -130,11 +130,11 @@ add_task(async function test_setDefaultValues_tasks() {
 });
 
 add_task(async function test_calculateAlarmDate() {
-  let item = new CalEvent();
+  const item = new CalEvent();
   item.startDate = cal.createDateTime("20150815T120000");
   item.endDate = cal.createDateTime("20150815T130000");
 
-  let calculateAlarmDate = cal.alarms.calculateAlarmDate.bind(cal.alarms, item);
+  const calculateAlarmDate = cal.alarms.calculateAlarmDate.bind(cal.alarms, item);
 
   let alarm = new CalAlarm();
   alarm.related = Ci.calIAlarm.ALARM_RELATED_ABSOLUTE;

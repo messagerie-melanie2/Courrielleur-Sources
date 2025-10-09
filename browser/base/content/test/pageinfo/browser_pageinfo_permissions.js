@@ -7,8 +7,8 @@ const TEST_ORIGIN_CERT_ERROR = "https://expired.example.com";
 const LOW_TLS_VERSION = "https://tls1.example.com/";
 
 async function testPermissions(defaultPermission) {
-  await BrowserTestUtils.withNewTab(TEST_ORIGIN, async function (browser) {
-    let pageInfo = BrowserPageInfo(TEST_ORIGIN, "permTab");
+  await BrowserTestUtils.withNewTab(TEST_ORIGIN, async function () {
+    let pageInfo = BrowserCommands.pageInfo(TEST_ORIGIN, "permTab");
     await BrowserTestUtils.waitForEvent(pageInfo, "load");
 
     let defaultCheckbox = await TestUtils.waitForCondition(() =>
@@ -31,7 +31,7 @@ async function testPermissions(defaultPermission) {
     ok(!defaultCheckbox.checked, "The default checkbox should not be checked.");
 
     defaultCheckbox.checked = true;
-    defaultCheckbox.dispatchEvent(new Event("command"));
+    defaultCheckbox.doCommand();
 
     ok(
       !PermissionTestUtils.getPermissionObject(gBrowser.currentURI, "geo"),
@@ -39,7 +39,7 @@ async function testPermissions(defaultPermission) {
     );
 
     defaultCheckbox.checked = false;
-    defaultCheckbox.dispatchEvent(new Event("command"));
+    defaultCheckbox.doCommand();
 
     ok(
       !PermissionTestUtils.getPermissionObject(gBrowser.currentURI, "geo"),
@@ -52,7 +52,7 @@ async function testPermissions(defaultPermission) {
     );
 
     radioGroup.selectedItem = blockRadioButton;
-    blockRadioButton.dispatchEvent(new Event("command"));
+    blockRadioButton.doCommand();
 
     is(
       PermissionTestUtils.getPermissionObject(gBrowser.currentURI, "geo")
@@ -62,7 +62,7 @@ async function testPermissions(defaultPermission) {
     );
 
     radioGroup.selectedItem = defaultRadioButton;
-    defaultRadioButton.dispatchEvent(new Event("command"));
+    defaultRadioButton.doCommand();
 
     ok(
       !PermissionTestUtils.getPermissionObject(gBrowser.currentURI, "geo"),
@@ -94,11 +94,11 @@ add_task(async function test_CertificateError() {
 
   await pageLoaded;
 
-  let pageInfo = BrowserPageInfo(TEST_ORIGIN_CERT_ERROR, "permTab");
+  let pageInfo = BrowserCommands.pageInfo(TEST_ORIGIN_CERT_ERROR, "permTab");
   await BrowserTestUtils.waitForEvent(pageInfo, "load");
   let permissionTab = pageInfo.document.getElementById("permTab");
   await TestUtils.waitForCondition(
-    () => BrowserTestUtils.is_visible(permissionTab),
+    () => BrowserTestUtils.isVisible(permissionTab),
     "Permission tab should be visible."
   );
 
@@ -145,11 +145,11 @@ add_task(async function test_NetworkError() {
 
   await pageLoaded;
 
-  let pageInfo = BrowserPageInfo(LOW_TLS_VERSION, "permTab");
+  let pageInfo = BrowserCommands.pageInfo(LOW_TLS_VERSION, "permTab");
   await BrowserTestUtils.waitForEvent(pageInfo, "load");
   let permissionTab = pageInfo.document.getElementById("permTab");
   await TestUtils.waitForCondition(
-    () => BrowserTestUtils.is_visible(permissionTab),
+    () => BrowserTestUtils.isVisible(permissionTab),
     "Permission tab should be visible."
   );
 
@@ -192,8 +192,8 @@ add_task(async function test_default_geo_permission() {
 
 // Test special behavior for cookie permissions.
 add_task(async function test_cookie_permission() {
-  await BrowserTestUtils.withNewTab(TEST_ORIGIN, async function (browser) {
-    let pageInfo = BrowserPageInfo(TEST_ORIGIN, "permTab");
+  await BrowserTestUtils.withNewTab(TEST_ORIGIN, async function () {
+    let pageInfo = BrowserCommands.pageInfo(TEST_ORIGIN, "permTab");
     await BrowserTestUtils.waitForEvent(pageInfo, "load");
 
     let defaultCheckbox = await TestUtils.waitForCondition(() =>
@@ -220,7 +220,7 @@ add_task(async function test_cookie_permission() {
     );
 
     radioGroup.selectedItem = blockRadioButton;
-    blockRadioButton.dispatchEvent(new Event("command"));
+    blockRadioButton.doCommand();
 
     is(
       PermissionTestUtils.testPermission(gBrowser.currentURI, "cookie"),
@@ -229,7 +229,7 @@ add_task(async function test_cookie_permission() {
     );
 
     radioGroup.selectedItem = allowRadioButton;
-    allowRadioButton.dispatchEvent(new Event("command"));
+    allowRadioButton.doCommand();
 
     is(
       PermissionTestUtils.testPermission(gBrowser.currentURI, "cookie"),
@@ -239,7 +239,7 @@ add_task(async function test_cookie_permission() {
     ok(!defaultCheckbox.checked, "The default checkbox should not be checked.");
 
     defaultCheckbox.checked = true;
-    defaultCheckbox.dispatchEvent(new Event("command"));
+    defaultCheckbox.doCommand();
 
     is(
       PermissionTestUtils.testPermission(gBrowser.currentURI, "cookie"),

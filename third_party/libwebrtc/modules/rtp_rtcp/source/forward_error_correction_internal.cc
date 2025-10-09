@@ -163,7 +163,7 @@ rtc::ArrayView<const uint8_t> PacketMaskTable::LookUp(int num_media_packets,
 
   // Generate FEC code mask for {num_media_packets(M), num_fec_packets(N)} (use
   // N FEC packets to protect M media packets) In the mask, each FEC packet
-  // occupies one row, each bit / coloumn represent one media packet. E.g. Row
+  // occupies one row, each bit / column represent one media packet. E.g. Row
   // A, Col/Bit B is set to 1, means FEC packet A will have protection for media
   // packet B.
 
@@ -471,7 +471,7 @@ void GeneratePacketMasks(int num_media_packets,
     UnequalProtectionMask(num_media_packets, num_fec_packets, num_imp_packets,
                           num_mask_bytes, packet_mask, mask_table);
   }  // End of UEP modification
-}  // End of GetPacketMasks
+}    // End of GetPacketMasks
 
 size_t PacketMaskSize(size_t num_sequence_numbers) {
   RTC_DCHECK_LE(num_sequence_numbers, 8 * kUlpfecPacketMaskSizeLBitSet);

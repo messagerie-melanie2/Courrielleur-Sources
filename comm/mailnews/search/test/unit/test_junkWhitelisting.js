@@ -14,8 +14,8 @@ load("../../../resources/abSetup.js");
 /* import-globals-from ../../../test/resources/POP3pump.js */
 load("../../../resources/POP3pump.js");
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 /*
@@ -54,7 +54,7 @@ function run_test() {
 
 function continueTest() {
   // get the message headers
-  for (let header of localAccountUtils.inboxFolder.messages) {
+  for (const header of localAccountUtils.inboxFolder.messages) {
     hdrs.push(header);
   }
 
@@ -68,7 +68,7 @@ function continueTest() {
 }
 
 function doChecks(server) {
-  let spamSettings = server.spamSettings;
+  const spamSettings = server.spamSettings;
 
   // default is to use the whitelist
   Assert.ok(spamSettings.useWhiteList);
@@ -105,7 +105,7 @@ function doChecks(server) {
   // Set an empty white list.
   // To really empty this, I have to change the default value as well
   Services.prefs.setCharPref("mail.server.default.whiteListAbURI", "");
-  server.setCharValue("whiteListAbURI", "");
+  server.setStringValue("whiteListAbURI", "");
   spamSettings.initialize(server);
   Assert.ok(!spamSettings.checkWhiteList(hdrs[kDomainTest]));
 
@@ -125,7 +125,7 @@ function doChecks(server) {
   Assert.ok(!spamSettings.checkWhiteList(hdrs[kDomainExample]));
 
   // add back the Personal Address Book
-  server.setCharValue("whiteListAbURI", kPABData.URI);
+  server.setStringValue("whiteListAbURI", kPABData.URI);
   spamSettings.initialize(server);
   Assert.ok(spamSettings.checkWhiteList(hdrs[kDomainTest]));
 
@@ -134,16 +134,16 @@ function doChecks(server) {
    */
 
   // setup
-  let account = MailServices.accounts.FindAccountForServer(server);
-  let identity = MailServices.accounts.createIdentity();
+  const account = MailServices.accounts.findAccountForServer(server);
+  const identity = MailServices.accounts.createIdentity();
   // start with an email that does not match
   identity.email = "iAmNotTheSender@test.invalid";
   account.addIdentity(identity);
 
   // setup account and identify for the deferred-from fake server
-  let fakeAccount = MailServices.accounts.createAccount();
+  const fakeAccount = MailServices.accounts.createAccount();
   fakeAccount.incomingServer = gPOP3Pump.fakeServer;
-  let fakeIdentity = MailServices.accounts.createIdentity();
+  const fakeIdentity = MailServices.accounts.createIdentity();
   // start with an email that does not match
   fakeIdentity.email = "iAmNotTheSender@wrong.invalid";
   fakeAccount.addIdentity(fakeIdentity);
@@ -152,7 +152,7 @@ function doChecks(server) {
   // settings. But because we are testing here one of those other settings,
   // let's just pretend that it works like the real POP3 stuff, and set
   // the correct setting for deferring.
-  gPOP3Pump.fakeServer.setCharValue("deferred_to_account", "account1");
+  gPOP3Pump.fakeServer.setStringValue("deferred_to_account", "account1");
 
   // suppress whitelisting for sender
   server.setBoolValue("inhibitWhiteListingIdentityUser", true);

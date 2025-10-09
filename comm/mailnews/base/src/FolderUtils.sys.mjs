@@ -12,9 +12,10 @@ const OUTGOING_FOLDER_FLAGS =
   Ci.nsMsgFolderFlags.Queue |
   Ci.nsMsgFolderFlags.Templates;
 
+const ONE_MONTH_IN_MILLISECONDS = 31 * 24 * 60 * 60 * 1000;
+
 export var FolderUtils = {
   allAccountsSorted,
-  compareAccounts,
   folderNameCompare,
   getFolderIcon,
   getFolderProperties,
@@ -23,6 +24,7 @@ export var FolderUtils = {
   canRenameDeleteJunkMail,
   isSmartTagsFolder,
   isSmartVirtualFolder,
+  ONE_MONTH_IN_MILLISECONDS,
   OUTGOING_FOLDER_FLAGS,
 };
 
@@ -132,35 +134,6 @@ function getFolderProperties(aFolder, aOpen) {
 }
 
 /**
- * Returns the sort order value based on the server type to be used for sorting.
- * The servers (accounts) go in the following order:
- * (0) default account, (1) other mail accounts, (2) Local Folders,
- * (3) IM accounts, (4) RSS, (5) News, (9) others (no server)
- * This ordering is encoded in the .sortOrder property of each server type.
- *
- * @param {nsIMsgIncomingServer} aServer -The server to get sort order for.
- */
-function getServerSortOrder(aServer) {
-  // If there is no server sort this object to the end.
-  if (!aServer) {
-    return 999999999;
-  }
-
-  // Otherwise get the server sort order from the Account manager.
-  return MailServices.accounts.getSortOrder(aServer);
-}
-
-/**
- * Compares the passed in accounts according to their precedence.
- */
-function compareAccounts(aAccount1, aAccount2) {
-  return (
-    getServerSortOrder(aAccount1.incomingServer) -
-    getServerSortOrder(aAccount2.incomingServer)
-  );
-}
-
-/**
  * Returns a list of accounts sorted by server type.
  *
  * @param {boolean} aExcludeIMAccounts - Remove IM accounts from the list?
@@ -182,7 +155,8 @@ function allAccountsSorted(aExcludeIMAccounts) {
 }
 
 /**
- * Returns the most recently used/modified folders from the passed in list.
+ * Returns the most recently used/modified folders from the passed in list,
+ * sorted by recentness.
  *
  * @param {nsIMsgFolder[]} aFolderList - The array of folders to search
  *   for recent folders.
@@ -193,7 +167,7 @@ function allAccountsSorted(aExcludeIMAccounts) {
  */
 function getMostRecentFolders(aFolderList, aMaxHits, aTimeProperty) {
   const recentFolders = [];
-  const monthOld = Math.floor((Date.now() - 31 * 24 * 60 * 60 * 1000) / 1000);
+  const monthOld = Math.floor((Date.now() - ONE_MONTH_IN_MILLISECONDS) / 1000);
 
   /**
    * This sub-function will add a folder to the recentFolders array if it
@@ -203,23 +177,13 @@ function getMostRecentFolders(aFolderList, aMaxHits, aTimeProperty) {
    *
    * @param {nsIMsgFolders} aFolder - The folder to check for recency.
    */
-  let oldestTime = 0;
   function addIfRecent(aFolder) {
     let time = 0;
     try {
       time = Number(aFolder.getStringProperty(aTimeProperty)) || 0;
     } catch (e) {}
-    if (time <= oldestTime || time < monthOld) {
+    if (time < monthOld) {
       return;
-    }
-
-    if (recentFolders.length == aMaxHits) {
-      recentFolders.sort((a, b) => a.time < b.time);
-      recentFolders.pop();
-      oldestTime =
-        recentFolders.length > 0
-          ? recentFolders[recentFolders.length - 1].time
-          : 0;
     }
     recentFolders.push({ folder: aFolder, time });
   }
@@ -228,7 +192,8 @@ function getMostRecentFolders(aFolderList, aMaxHits, aTimeProperty) {
     addIfRecent(folder);
   }
 
-  return recentFolders.map(f => f.folder);
+  recentFolders.sort((a, b) => b.time - a.time);
+  return recentFolders.slice(0, aMaxHits).map(f => f.folder);
 }
 
 /**

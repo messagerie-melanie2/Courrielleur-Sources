@@ -4,17 +4,21 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-<?xml-stylesheet href="chrome://global/skin/global.css" type="text/css"?>
-<?xml-stylesheet href="chrome://browser/skin/setDesktopBackground.css" type="text/css"?>
+<?csp default-src chrome:; style-src chrome: 'unsafe-inline'; ?>
 
 <window xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
         xmlns:html="http://www.w3.org/1999/xhtml"
         windowtype="Shell:SetDesktopBackground"
-        onload="gSetBackground.load();"
         data-l10n-id="set-desktop-background-window"
         style="min-width: 30em;">
 
 <linkset>
+  <html:link rel="stylesheet" href="chrome://global/skin/global.css" />
+  <html:link
+    rel="stylesheet"
+    href="chrome://browser/skin/setDesktopBackground.css"
+  />
+
   <html:link rel="localization" href="browser/setDesktopBackground.ftl"/>
 </linkset>
 
@@ -32,16 +36,13 @@
     <script src="chrome://browser/content/utilityOverlay.js"/>
 #endif
 
-    <stringbundle id="backgroundBundle"
-                  src="chrome://browser/locale/shellservice.properties"/>
     <script src="chrome://browser/content/setDesktopBackground.js"/>
     <script src="chrome://global/content/contentAreaUtils.js"/>
 
 #ifndef XP_MACOSX
     <hbox align="center">
       <label data-l10n-id="set-background-position"/>
-      <menulist id="menuPosition"
-                oncommand="gSetBackground.updatePosition();" native="true">
+      <menulist id="menuPosition" native="true">
         <menupopup>
           <menuitem data-l10n-id="set-background-center"  value="CENTER"/>
           <menuitem data-l10n-id="set-background-tile"    value="TILE"/>
@@ -53,9 +54,7 @@
       </menulist>
       <spacer flex="1"/>
       <label data-l10n-id="set-background-color"/>
-      <html:input id="desktopColor"
-                  type="color"
-                  onchange="gSetBackground.updateColor(this.value);"/>
+      <html:input id="desktopColor" type="color"/>
     </hbox>
 #endif
 
@@ -75,11 +74,9 @@
 
     <hbox pack="end">
       <button id="setDesktopBackground"
-              data-l10n-id="set-desktop-background-accept"
-              oncommand="gSetBackground.setDesktopBackground();"/>
+              data-l10n-id="set-desktop-background-accept"/>
       <button id="showDesktopPreferences"
               data-l10n-id="open-desktop-prefs"
-              oncommand="gSetBackground.showDesktopPrefs();"
               hidden="true"/>
     </hbox>
 #endif

@@ -8,20 +8,21 @@
  * Tests for composition when a key is expired.
  */
 
-const { close_compose_window, open_compose_new_mail } = ChromeUtils.import(
-  "resource://testing-common/mozmill/ComposeHelpers.jsm"
+const { open_compose_new_mail } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ComposeHelpers.sys.mjs"
 );
 
-const { get_notification, wait_for_notification_to_show } = ChromeUtils.import(
-  "resource://testing-common/mozmill/NotificationBoxHelpers.jsm"
+const { get_notification, wait_for_notification_to_show } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/NotificationBoxHelpers.sys.mjs"
+  );
+
+const { OpenPGPTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/OpenPGPTestUtils.sys.mjs"
 );
 
-const { OpenPGPTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mozmill/OpenPGPTestUtils.jsm"
-);
-
-const { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+const { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var gAccount;
@@ -79,15 +80,15 @@ add_task(async function testExpiredKeyShowsNotificationBar() {
     "openpgp_key_id",
     gExpiredKeyId.replace(/^0x/, "")
   );
-  let cwc = open_compose_new_mail();
+  const cwc = await open_compose_new_mail();
 
-  wait_for_notification_to_show(
-    cwc.window,
+  await wait_for_notification_to_show(
+    cwc,
     "compose-notification-bottom",
     "openpgpSenderKeyExpired"
   );
-  let notification = get_notification(
-    cwc.window,
+  const notification = get_notification(
+    cwc,
     "compose-notification-bottom",
     "openpgpSenderKeyExpired"
   );
@@ -101,11 +102,11 @@ add_task(async function testExpiredKeyShowsNotificationBar() {
 
   const buttons = notification._buttons;
   Assert.equal(
-    buttons[0]["l10n-id"],
+    buttons[0].buttonInfo["l10n-id"],
     "settings-context-open-account-settings-item2",
     "button0 should be the button to open account settings"
   );
-  cwc.window.close();
+  cwc.close();
 });
 
 add_task(async function testKeyWithoutExpiryDoesNotShowNotification() {
@@ -118,13 +119,13 @@ add_task(async function testKeyWithoutExpiryDoesNotShowNotification() {
     "openpgp_key_id",
     gNotExpiredKeyId.replace(/^0x/, "")
   );
-  let cwc = open_compose_new_mail();
+  const cwc = await open_compose_new_mail();
 
   // Give it some time to potentially start showing.
   // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
   await new Promise(resolve => setTimeout(resolve, 200));
-  let notification = get_notification(
-    cwc.window,
+  const notification = get_notification(
+    cwc,
     "compose-notification-bottom",
     "openpgpSenderKeyExpired"
   );
@@ -133,5 +134,5 @@ add_task(async function testKeyWithoutExpiryDoesNotShowNotification() {
     notification === null,
     "the expiry warning should not be visible if the key is not expired"
   );
-  cwc.window.close();
+  cwc.close();
 });

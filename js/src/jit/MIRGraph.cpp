@@ -10,8 +10,10 @@
 #include "jit/InlineScriptTree.h"
 #include "jit/IonOptimizationLevels.h"
 #include "jit/JitSpewer.h"
+#include "jit/MIR-wasm.h"
 #include "jit/MIR.h"
 #include "jit/MIRGenerator.h"
+#include "wasm/WasmMetadata.h"
 
 using namespace js;
 using namespace js::jit;
@@ -20,7 +22,8 @@ MIRGenerator::MIRGenerator(CompileRealm* realm,
                            const JitCompileOptions& options,
                            TempAllocator* alloc, MIRGraph* graph,
                            const CompileInfo* info,
-                           const OptimizationInfo* optimizationInfo)
+                           const OptimizationInfo* optimizationInfo,
+                           const wasm::CodeMetadata* wasmCodeMeta)
     : realm(realm),
       runtime(realm ? realm->runtime() : nullptr),
       outerInfo_(info),
@@ -38,13 +41,17 @@ MIRGenerator::MIRGenerator(CompileRealm* realm,
                                    : false),
       bigIntsCanBeInNursery_(realm ? realm->zone()->canNurseryAllocateBigInts()
                                    : false),
-      minWasmHeapLength_(0),
+      minWasmMemory0Length_(0),
       options(options),
-      gs_(alloc) {}
+      gs_(alloc, wasmCodeMeta) {}
 
 bool MIRGenerator::licmEnabled() const {
   return optimizationInfo().licmEnabled() && !disableLICM_ &&
          !outerInfo().hadLICMInvalidation();
+}
+
+bool MIRGenerator::branchHintingEnabled() const {
+  return outerInfo().branchHintingEnabled();
 }
 
 mozilla::GenericErrorResult<AbortReason> MIRGenerator::abort(AbortReason r) {
@@ -575,9 +582,7 @@ MBasicBlock::MBasicBlock(MIRGraph& graph, const CompileInfo& info,
       mark_(false),
       immediatelyDominated_(graph.alloc()),
       immediateDominator_(nullptr),
-      trackedSite_(site),
-      lineno_(0u),
-      columnIndex_(0u) {
+      trackedSite_(site) {
   MOZ_ASSERT(trackedSite_, "trackedSite_ is non-nullptr");
 }
 

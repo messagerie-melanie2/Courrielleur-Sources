@@ -3,7 +3,7 @@
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
 import { getSelectedLocation } from "./selected-location";
-import { getSource } from "../selectors";
+import { getSource } from "../selectors/index";
 
 /**
  * Note that arguments can be created via `createLocation`.
@@ -21,21 +21,36 @@ export function createLocation({
   // Line 0 represents no specific line chosen for action
   line = 0,
   column,
-
-  sourceUrl = "",
 }) {
   return {
     source,
     sourceActor,
-    // Alias which should probably be migrate to query source and sourceActor?
-    sourceId: source.id,
     sourceActorId: sourceActor?.id,
 
+    // # Quick overview of 1-based versus 0-based lines and columns #
+    //
+    // In the Debugger frontend, we use these location objects to refer to a precise line and column.
+    // Locations objects use 1-based `line` and 0-based `column`.
+    //
+    // In the frontend, the Source Map library, as well as CodeMirror 6, both match the location objects convention
+    // and use 1-based for lines and 0-based for columns.
+    // CodeMirror 5 uses 0-based lines and 0-based columns.
+    //
+    // This also matches RDP conventions.
+    // Breakpoints sent to the RDP server and breakable positions fetched from the RDP server
+    // are using 1-based lines and 0-based columns.
+    //
+    // But within the RDP server, there is a mapping between RDP packets and Spidermonkey
+    // as Spidermonkey use 1-based lines **and** columns.
+    // This data is mostly coming from and driven by
+    // JSScript::lineno and JSScript::column
+    // https://searchfox.org/mozilla-central/rev/4c065f1df299065c305fb48b36cdae571a43d97c/js/src/vm/JSScript.h#1567-1570
+    //
+    // Spidermonkey also matches the lines and columns mentioned in tests to assert the (selected) locations.
+    // We are using human readeable numbers and both lines and columns are 1-based.
+    // This actually matches the numbers displayed in the UI to the user as we always display 1-based numbers.
     line,
     column,
-
-    // Is this still used anywhere??
-    sourceUrl,
   };
 }
 
@@ -47,13 +62,10 @@ export function createLocation({
 export function debuggerToSourceMapLocation(location) {
   return {
     sourceId: location.source.id,
-    line: location.line,
-    column: location.column,
-
-    // Also add sourceUrl attribute as this may be preserved in jest tests
-    // where we return the exact same object.
-    // This will be removed by bug 1822783.
-    sourceUrl: location.sourceUrl,
+    // In case of errors loading the source, we might not have a precise location.
+    // Defaults to first line and column.
+    line: location.line || 1,
+    column: location.column || 0,
   };
 }
 
@@ -126,9 +138,5 @@ export function sourceMapToDebuggerLocation(state, location) {
   return createLocation({
     ...location,
     source,
-
-    // Ensure having location with sourceUrl attribute set.
-    // To be removed in bug 1822783.
-    sourceUrl: source.url,
   });
 }

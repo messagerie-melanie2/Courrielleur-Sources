@@ -553,6 +553,11 @@ nsresult SdpHelper::CopyStickyParams(const SdpMediaSection& source,
         new SdpFlagAttribute(SdpAttribute::kRtcpRsizeAttribute));
   }
 
+  // Keep extmap-allow-mixed setting
+  if (sourceAttrs.HasAttribute(SdpAttribute::kExtmapAllowMixedAttribute)) {
+    destAttrs.SetAttribute(
+        new SdpFlagAttribute(SdpAttribute::kExtmapAllowMixedAttribute));
+  }
   return NS_OK;
 }
 
@@ -618,8 +623,7 @@ void SdpHelper::AppendSdpParseErrors(
     std::string* aErrorString) {
   std::ostringstream os;
   for (auto i = aErrors.begin(); i != aErrors.end(); ++i) {
-    os << "SDP Parse Error on line " << i->first << ": " + i->second
-       << std::endl;
+    os << "SDP Parse Error on line " << i->first << ": " + i->second << '\n';
   }
   *aErrorString += os.str();
 }

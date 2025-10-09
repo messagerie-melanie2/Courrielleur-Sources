@@ -21,19 +21,18 @@ import time
 
 import mozcrash
 import mozfile
-import six
 from mozlog import get_proxy_logger
 
 from talos import results, talosconfig, utils
 from talos.cmanager import CounterManagement
 from talos.ffsetup import FFSetup
 from talos.talos_process import run_browser
-from talos.utils import TalosCrash, TalosError, TalosRegression, run_in_debug_mode
+from talos.utils import TalosCrash, TalosRegression, run_in_debug_mode
 
 LOG = get_proxy_logger()
 
 
-class TTest(object):
+class TTest:
     def check_for_crashes(self, browser_config, minidump_dir, test_name):
         # check for minidumps
         found = mozcrash.check_for_crashes(
@@ -44,7 +43,7 @@ class TTest(object):
         if found:
             raise TalosCrash("Found crashes after test run, terminating test")
 
-    def runTest(self, browser_config, test_config):
+    def runTest(self, browser_config, test_config, utility_path=None):
         """
             Runs an url based test on the browser as specified in the
             browser_config dictionary
@@ -58,29 +57,20 @@ class TTest(object):
         """
 
         with FFSetup(browser_config, test_config) as setup:
-            return self._runTest(browser_config, test_config, setup)
+            return self._runTest(
+                browser_config, test_config, setup, utility_path=utility_path
+            )
 
     @staticmethod
     def _get_counter_prefix():
         if platform.system() == "Linux":
             return "linux"
         elif platform.system() in ("Windows", "Microsoft"):
-            if "6.1" in platform.version():  # w7
-                return "w7"
-            elif "6.2" in platform.version():  # w8
-                return "w8"
-            # Bug 1264325 - FIXME: with python 2.7.11: reports win8 instead of 8.1
-            elif "6.3" in platform.version():
-                return "w8"
-            # Bug 1264325 - FIXME: with python 2.7.11: reports win8 instead of 10
-            elif "10.0" in platform.version():
-                return "w8"
-            else:
-                raise TalosError("unsupported windows version")
+            return "win"
         elif platform.system() == "Darwin":
             return "mac"
 
-    def _runTest(self, browser_config, test_config, setup):
+    def _runTest(self, browser_config, test_config, setup, utility_path=None):
         minidump_dir = os.path.join(setup.profile_dir, "minidumps")
         counters = test_config.get("%s_counters" % self._get_counter_prefix(), [])
         resolution = test_config["resolution"]
@@ -108,13 +98,6 @@ class TTest(object):
             for c in test_config.get("xperf_counters", []):
                 global_counters[c] = []
 
-        if test_config.get("responsiveness") and platform.system() != "Darwin":
-            # ignore osx for now as per bug 1245793
-            setup.env["MOZ_INSTRUMENT_EVENT_LOOP"] = "1"
-            setup.env["MOZ_INSTRUMENT_EVENT_LOOP_THRESHOLD"] = "20"
-            setup.env["MOZ_INSTRUMENT_EVENT_LOOP_INTERVAL"] = "10"
-            global_counters["responsiveness"] = []
-
         setup.env["MOZ_DISABLE_NONLOCAL_CONNECTIONS"] = "1"
 
         # instantiate an object to hold test results
@@ -122,7 +105,7 @@ class TTest(object):
             test_config, global_counters, browser_config.get("framework")
         )
 
-        for i in six.moves.range(test_config["cycles"]):
+        for i in range(test_config["cycles"]):
             time.sleep(0.25)
             LOG.info(
                 "Running cycle %d/%d for %s test..."
@@ -200,6 +183,7 @@ class TTest(object):
                     debug=browser_config["debug"],
                     debugger=browser_config["debugger"],
                     debugger_args=browser_config["debugger_args"],
+                    utility_path=utility_path,
                 )
             except Exception:
                 self.check_for_crashes(

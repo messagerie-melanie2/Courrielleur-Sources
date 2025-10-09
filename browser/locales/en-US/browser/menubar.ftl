@@ -5,7 +5,7 @@
 # NOTE: For English locales, strings in this file should be in APA-style Title Case.
 # See https://apastyle.apa.org/style-grammar-guidelines/capitalization/title-case
 #
-# NOTE: For Engineers, please don't re-use these strings outside of the menubar.
+# NOTE: For Engineers, please don't reuse these strings outside of the menubar.
 
 ## Application Menu (macOS only)
 
@@ -219,6 +219,9 @@ menu-history-undo-menu =
     .label = Recently Closed Tabs
 menu-history-undo-window-menu =
     .label = Recently Closed Windows
+# "Search" is a verb, as in "Search in History"
+menu-history-search =
+    .label = Search History
 
 ## Bookmarks Menu
 
@@ -231,6 +234,9 @@ menu-bookmark-tab =
     .label = Bookmark Current Tab…
 menu-edit-bookmark =
     .label = Edit This Bookmark…
+# "Search" is a verb, as in "Search in bookmarks"
+menu-bookmarks-search =
+    .label = Search Bookmarks
 menu-bookmarks-all-tabs =
     .label = Bookmark All Tabs…
 menu-bookmarks-toolbar =
@@ -240,6 +246,15 @@ menu-bookmarks-other =
 menu-bookmarks-mobile =
     .label = Mobile Bookmarks
 
+## Profiles Menu
+
+menu-profiles =
+    .label = Profiles
+menu-profiles-manage-profiles =
+    .label = Manage profiles
+menu-profiles-new-profile =
+    .label = New profile
+
 ## Tools Menu
 
 menu-tools =
@@ -248,9 +263,9 @@ menu-tools =
 menu-tools-downloads =
     .label = Downloads
     .accesskey = D
-menu-tools-addons-and-themes =
-    .label = Add-ons and Themes
-    .accesskey = A
+menu-tools-extensions-and-themes =
+    .label = Extensions and Themes
+    .accesskey = E
 menu-tools-fxa-sign-in2 =
     .label = Sign In
     .accesskey = g
@@ -312,8 +327,6 @@ menu-get-help =
 menu-help-more-troubleshooting-info =
     .label = More Troubleshooting Information
     .accesskey = T
-menu-help-report-site-issue =
-    .label = Report Site Issue…
 menu-help-share-ideas =
     .label = Share Ideas and Feedback…
     .accesskey = S
@@ -334,3 +347,5 @@ menu-help-report-deceptive-site =
 menu-help-not-deceptive =
     .label = This Isn’t a Deceptive Site…
     .accesskey = D
+menu-report-broken-site =
+  .label = Report Broken Site

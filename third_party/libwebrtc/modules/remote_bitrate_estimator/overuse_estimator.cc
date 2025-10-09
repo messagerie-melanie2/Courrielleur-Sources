@@ -15,43 +15,26 @@
 
 #include <algorithm>
 
-#include "api/network_state_predictor.h"
-#include "modules/remote_bitrate_estimator/test/bwe_test_logging.h"
+#include "api/transport/bandwidth_usage.h"
 #include "rtc_base/logging.h"
 
 namespace webrtc {
+namespace {
 
-enum { kMinFramePeriodHistoryLength = 60 };
-enum { kDeltaCounterMax = 1000 };
+constexpr int kMinFramePeriodHistoryLength = 60;
+constexpr int kDeltaCounterMax = 1000;
 
-OveruseEstimator::OveruseEstimator(const OverUseDetectorOptions& options)
-    : options_(options),
-      num_of_deltas_(0),
-      slope_(options_.initial_slope),
-      offset_(options_.initial_offset),
-      prev_offset_(options_.initial_offset),
-      E_(),
-      process_noise_(),
-      avg_noise_(options_.initial_avg_noise),
-      var_noise_(options_.initial_var_noise),
-      ts_delta_hist_() {
-  memcpy(E_, options_.initial_e, sizeof(E_));
-  memcpy(process_noise_, options_.initial_process_noise,
-         sizeof(process_noise_));
-}
+}  // namespace
 
-OveruseEstimator::~OveruseEstimator() {
-  ts_delta_hist_.clear();
-}
+OveruseEstimator::OveruseEstimator() = default;
 
 void OveruseEstimator::Update(int64_t t_delta,
                               double ts_delta,
                               int size_delta,
                               BandwidthUsage current_hypothesis,
-                              int64_t now_ms) {
+                              int64_t /* now_ms */) {
   const double min_frame_period = UpdateMinFramePeriod(ts_delta);
   const double t_ts_delta = t_delta - ts_delta;
-  BWE_TEST_LOGGING_PLOT(1, "dm_ms", now_ms, t_ts_delta);
   double fs_delta = size_delta;
 
   ++num_of_deltas_;
@@ -73,8 +56,6 @@ void OveruseEstimator::Update(int64_t t_delta,
   const double h[2] = {fs_delta, 1.0};
   const double Eh[2] = {E_[0][0] * h[0] + E_[0][1] * h[1],
                         E_[1][0] * h[0] + E_[1][1] * h[1]};
-
-  BWE_TEST_LOGGING_PLOT(1, "d_ms", now_ms, slope_ * h[0] - offset_);
 
   const double residual = t_ts_delta - slope_ * h[0] - offset_;
 
@@ -119,11 +100,6 @@ void OveruseEstimator::Update(int64_t t_delta,
   slope_ = slope_ + K[0] * residual;
   prev_offset_ = offset_;
   offset_ = offset_ + K[1] * residual;
-
-  BWE_TEST_LOGGING_PLOT(1, "kc", now_ms, K[0]);
-  BWE_TEST_LOGGING_PLOT(1, "km", now_ms, K[1]);
-  BWE_TEST_LOGGING_PLOT(1, "slope_1/bps", now_ms, slope_);
-  BWE_TEST_LOGGING_PLOT(1, "var_noise", now_ms, var_noise_);
 }
 
 double OveruseEstimator::UpdateMinFramePeriod(double ts_delta) {

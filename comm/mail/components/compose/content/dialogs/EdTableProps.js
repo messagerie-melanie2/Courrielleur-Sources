@@ -2,7 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* import-globals-from ../editorUtilities.js */
 /* import-globals-from EdDialogCommon.js */
 
 // Cancel() is in EdDialogCommon.js
@@ -73,8 +72,7 @@ var gCanDelete = false;
 var gUseCSS = true;
 var gActiveEditor;
 
-// dialog initialization code
-
+window.addEventListener("load", Startup);
 document.addEventListener("dialogaccept", onAccept);
 document.addEventListener("dialogextra1", Apply);
 document.addEventListener("dialogcancel", onCancel);
@@ -734,6 +732,8 @@ function MoveSelection(forward) {
       // Cell spans from a Col above, look for the next cell in column
       newColIndex += gCellData.actualColSpan;
     }
+    // @see https://github.com/eslint/eslint/issues/17807
+    // eslint-disable-next-line no-constant-condition
   } while (true);
 
   // Save data for current selection before changing
@@ -771,9 +771,9 @@ function MoveSelection(forward) {
   try {
     var selectionController = gActiveEditor.selectionController;
     selectionController.scrollSelectionIntoView(
-      selectionController.SELECTION_NORMAL,
-      selectionController.SELECTION_ANCHOR_REGION,
-      true
+      Ci.nsISelectionController.SELECTION_NORMAL,
+      Ci.nsISelectionController.SELECTION_ANCHOR_REGION,
+      Ci.nsISelectionController.SCROLL_SYNCHRONOUS
     );
   } catch (e) {}
 
@@ -1087,15 +1087,6 @@ function ValidateData() {
   return true;
 }
 
-function ChangeCellTextbox(textboxID) {
-  // Filter input for just integers
-  forceInteger(textboxID);
-
-  if (gDialog.TabBox.selectedTab == gDialog.CellTab) {
-    gCellDataChanged = true;
-  }
-}
-
 // Call this when a textbox or menulist is changed
 //   so the checkbox is automatically set
 function SetCheckbox(checkboxID) {
@@ -1313,20 +1304,20 @@ function ApplyTableAttributes() {
 /* eslint-enable complexity */
 
 function ApplyCellAttributes() {
-  let selectedCells = gActiveEditor.getSelectedCells();
+  const selectedCells = gActiveEditor.getSelectedCells();
   if (selectedCells.length == 0) {
     return;
   }
 
   if (selectedCells.length == 1) {
-    let cell = selectedCells[0];
+    const cell = selectedCells[0];
     // When only one cell is selected, simply clone entire element,
     //  thus CSS and JS from Advanced edit is copied
 
     gActiveEditor.cloneAttributes(cell, globalCellElement);
 
     if (gDialog.CellStyleCheckbox.checked) {
-      let currentStyleIndex = cell.nodeName.toLowerCase() == "th" ? 1 : 0;
+      const currentStyleIndex = cell.nodeName.toLowerCase() == "th" ? 1 : 0;
       if (gDialog.CellStyleList.selectedIndex != currentStyleIndex) {
         // Switch cell types
         // (replaces with new cell and copies attributes and contents)
@@ -1336,7 +1327,7 @@ function ApplyCellAttributes() {
   } else {
     // Apply changes to all selected cells
     // XXX THIS DOESN'T COPY ADVANCED EDIT CHANGES!
-    for (let cell of selectedCells) {
+    for (const cell of selectedCells) {
       ApplyAttributesToOneCell(cell);
     }
   }

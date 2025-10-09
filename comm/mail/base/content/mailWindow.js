@@ -15,10 +15,11 @@
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-XPCOMUtils.defineLazyModuleGetters(this, {
-  appIdleManager: "resource:///modules/AppIdleManager.jsm",
-  Gloda: "resource:///modules/gloda/GlodaPublic.jsm",
-  UIDensity: "resource:///modules/UIDensity.jsm",
+
+ChromeUtils.defineESModuleGetters(this, {
+  Gloda: "resource:///modules/gloda/GlodaPublic.sys.mjs",
+  UIDensity: "resource:///modules/UIDensity.sys.mjs",
+  appIdleManager: "resource:///modules/AppIdleManager.sys.mjs",
 });
 
 XPCOMUtils.defineLazyScriptGetter(
@@ -54,7 +55,6 @@ function OnMailWindowUnload() {
 
   msgWindow.closeWindow();
 
-  msgWindow.notificationCallbacks = null;
   window.MsgStatusFeedback.unload();
   Cc["@mozilla.org/activity-manager;1"]
     .getService(Ci.nsIActivityManager)
@@ -66,18 +66,18 @@ function OnMailWindowUnload() {
  * that the images can be accessed in a paste elsewhere.
  */
 function onCopyOrDragStart(e) {
-  let browser = getBrowser();
+  const browser = getBrowser();
   if (!browser) {
     return;
   }
 
   // We're only interested if this is in the message content.
-  let sourceDoc = browser.contentDocument;
+  const sourceDoc = browser.contentDocument;
   if (e.target.ownerDocument != sourceDoc) {
     return;
   }
-  let sourceURL = sourceDoc.URL;
-  let protocol = sourceURL.substr(0, sourceURL.indexOf(":")).toLowerCase();
+  const sourceURL = sourceDoc.URL;
+  const protocol = sourceURL.substr(0, sourceURL.indexOf(":")).toLowerCase();
   if (
     !(
       Services.io.getProtocolHandler(protocol) instanceof
@@ -88,16 +88,16 @@ function onCopyOrDragStart(e) {
     return;
   }
 
-  let imgMap = new Map(); // Mapping img.src -> dataURL.
+  const imgMap = new Map(); // Mapping img.src -> dataURL.
 
   // For copy, the data of what is to be copied is not accessible at this point.
   // Figure out what images are a) part of the selection and b) visible in
   // the current document. If their source isn't http or data already, convert
   // them to data URLs.
 
-  let selection = sourceDoc.getSelection();
-  let draggedImg = selection.isCollapsed ? e.target : null;
-  for (let img of sourceDoc.images) {
+  const selection = sourceDoc.getSelection();
+  const draggedImg = selection.isCollapsed ? e.target : null;
+  for (const img of sourceDoc.images) {
     if (/^(https?|data):/.test(img.src)) {
       continue;
     }
@@ -111,7 +111,7 @@ function onCopyOrDragStart(e) {
       continue;
     }
 
-    let style = window.getComputedStyle(img);
+    const style = window.getComputedStyle(img);
     if (style.display == "none" || style.visibility == "hidden") {
       continue;
     }
@@ -123,12 +123,12 @@ function onCopyOrDragStart(e) {
 
     // We don't need to wait for the image to load. If it isn't already loaded
     // in the source document, we wouldn't want it anyway.
-    let canvas = sourceDoc.createElement("canvas");
+    const canvas = sourceDoc.createElement("canvas");
     canvas.width = img.width;
     canvas.height = img.height;
     canvas.getContext("2d").drawImage(img, 0, 0, img.width, img.height);
 
-    let type = /\.jpe?g$/i.test(img.src) ? "image/jpg" : "image/png";
+    const type = /\.jpe?g$/i.test(img.src) ? "image/jpg" : "image/png";
     imgMap.set(img.src, canvas.toDataURL(type));
   }
 
@@ -137,25 +137,25 @@ function onCopyOrDragStart(e) {
     return;
   }
 
-  let clonedSelection = draggedImg
+  const clonedSelection = draggedImg
     ? draggedImg.cloneNode(false)
     : selection.getRangeAt(0).cloneContents();
-  let div = sourceDoc.createElement("div");
+  const div = sourceDoc.createElement("div");
   div.appendChild(clonedSelection);
 
-  let images = div.querySelectorAll("img");
-  for (let img of images) {
+  const images = div.querySelectorAll("img");
+  for (const img of images) {
     if (!imgMap.has(img.src)) {
       continue;
     }
     img.src = imgMap.get(img.src);
   }
 
-  let html = div.innerHTML;
-  let parserUtils = Cc["@mozilla.org/parserutils;1"].getService(
+  const html = div.innerHTML;
+  const parserUtils = Cc["@mozilla.org/parserutils;1"].getService(
     Ci.nsIParserUtils
   );
-  let plain = parserUtils.convertToPlainText(
+  const plain = parserUtils.convertToPlainText(
     html,
     Ci.nsIDocumentEncoder.OutputForPlainTextClipboardCopy,
     0
@@ -219,7 +219,7 @@ function toggleCaretBrowsing() {
   }
 
   let useCaret = Services.prefs.getBoolPref(caretPref, false);
-  let warn = Services.prefs.getBoolPref(warnPref, true);
+  const warn = Services.prefs.getBoolPref(warnPref, true);
   if (!warn || useCaret) {
     // Toggle immediately.
     try {
@@ -236,7 +236,7 @@ function toggleCaretBrowsing() {
       { id: "caret-browsing-prompt-check-text" },
     ])
     .then(([title, promptText, checkText]) => {
-      let checkValue = { value: false };
+      const checkValue = { value: false };
 
       useCaret =
         0 ===
@@ -276,13 +276,12 @@ function InitMsgWindow() {
   msgWindow.statusFeedback = statusFeedback;
   MailServices.mailSession.AddMsgWindow(msgWindow);
   msgWindow.rootDocShell.allowAuth = true;
-  msgWindow.rootDocShell.appType = Ci.nsIDocShell.APP_TYPE_MAIL;
   // Ensure we don't load xul error pages into the main window
   msgWindow.rootDocShell.useErrorPages = false;
 
   document.addEventListener("dragstart", onCopyOrDragStart, true);
 
-  let keypressListener = {
+  const keypressListener = {
     handleEvent: event => {
       if (event.defaultPrevented) {
         return;
@@ -298,18 +297,16 @@ function InitMsgWindow() {
       }
     },
   };
-  Services.els.addSystemEventListener(
-    document,
-    "keypress",
-    keypressListener,
-    false
-  );
+  document.addEventListener("keypress", keypressListener, {
+    mozSystemGroup: true,
+  });
 }
 
 // We're going to implement our status feedback for the mail window in JS now.
 // the following contains the implementation of our status feedback object
 
 function nsMsgStatusFeedback() {
+  this._urlText = document.getElementById("urlText");
   this._statusText = document.getElementById("statusText");
   this._statusPanel = document.getElementById("statusbar-display");
   this._progressBar = document.getElementById("statusbar-icon");
@@ -318,6 +315,7 @@ function nsMsgStatusFeedback() {
   );
   this._throbber = document.getElementById("throbber-box");
   this._activeProcesses = [];
+  this._statusQueue = [];
 
   // make sure the stop button is accurate from the get-go
   goUpdateCommand("cmd_stop");
@@ -332,6 +330,7 @@ function nsMsgStatusFeedback() {
  */
 nsMsgStatusFeedback.prototype = {
   // Document elements.
+  _urlText: null,
   _statusText: null,
   _statusPanel: null,
   _progressBar: null,
@@ -344,12 +343,12 @@ nsMsgStatusFeedback.prototype = {
   // How many start meteors have been requested.
   _startRequests: 0,
   _meteorsSpinning: false,
-  _defaultStatusText: "",
   _progressBarVisible: false,
   _activeProcesses: null,
   _statusFeedbackProgress: -1,
   _statusLastShown: 0,
-  _lastStatusText: null,
+  _statusQueue: null,
+  _timeoutDelay: ChromeUtils.isInAutomation ? 50 : 500,
 
   // unload - call to remove links to listeners etc.
   unload() {
@@ -359,20 +358,12 @@ nsMsgStatusFeedback.prototype = {
     }, this);
   },
 
-  // nsIXULBrowserWindow implementation.
-  setJSStatus(status) {
-    if (status.length > 0) {
-      this.showStatusString(status);
-    }
-  },
-
   /*
    * Set the statusbar display for hovered links, from browser.js.
    *
    * @param {String} url - The href to display.
-   * @param {Element} anchorElt - Element.
    */
-  setOverLink(url, anchorElt) {
+  setOverLink(url) {
     if (url) {
       url = Services.textToSubURI.unEscapeURIForUI(url);
 
@@ -384,8 +375,10 @@ nsMsgStatusFeedback.prototype = {
       );
     }
 
+    this._urlText.collapsed = !url;
+
     if (!document.getElementById("status-bar").hidden) {
-      this._statusText.value = url;
+      this._urlText.value = url;
     } else {
       // Statusbar invisible: Show link in statuspanel instead.
       // TODO: consider porting the Firefox implementation of LinkTargetDisplay.
@@ -394,12 +387,12 @@ nsMsgStatusFeedback.prototype = {
   },
 
   // Called before links are navigated to to allow us to retarget them if needed.
-  onBeforeLinkTraversal(originalTarget, linkURI, linkNode, isAppTab) {
+  onBeforeLinkTraversal(originalTarget) {
     return originalTarget;
   },
 
   // Called by BrowserParent::RecvShowTooltip, needed for tooltips in content tabs.
-  showTooltip(xDevPix, yDevPix, tooltip, direction, browser) {
+  showTooltip(xDevPix, yDevPix, tooltip, direction) {
     if (
       Cc["@mozilla.org/widget/dragservice;1"]
         .getService(Ci.nsIDragService)
@@ -408,7 +401,7 @@ nsMsgStatusFeedback.prototype = {
       return;
     }
 
-    let elt = document.getElementById("remoteBrowserTooltip");
+    const elt = document.getElementById("remoteBrowserTooltip");
     elt.label = tooltip;
     elt.style.direction = direction;
     elt.openPopupAtScreen(
@@ -421,12 +414,12 @@ nsMsgStatusFeedback.prototype = {
 
   // Called by BrowserParent::RecvHideTooltip, needed for tooltips in content tabs.
   hideTooltip() {
-    let elt = document.getElementById("remoteBrowserTooltip");
+    const elt = document.getElementById("remoteBrowserTooltip");
     elt.hidePopup();
   },
 
   getTabCount() {
-    let tabmail = document.getElementById("tabmail");
+    const tabmail = document.getElementById("tabmail");
     // messageWindow.xhtml does not have multiple tabs.
     return tabmail ? tabmail.tabs.length : 1;
   },
@@ -439,50 +432,52 @@ nsMsgStatusFeedback.prototype = {
     "nsISupportsWeakReference",
   ]),
 
-  // nsIMsgStatusFeedback implementation.
+  /**
+   * @param {string} statusText - The status string to display.
+   * @see {nsIMsgStatusFeedback}
+   */
   showStatusString(statusText) {
-    if (!statusText) {
-      statusText = this._defaultStatusText;
-    } else {
-      this._defaultStatusText = "";
-    }
     // Let's make sure the display doesn't flicker.
-    const timeBetweenDisplay = 500;
-    const now = Date.now();
-    if (now - this._statusLastShown > timeBetweenDisplay) {
-      // Cancel any pending status message. The timeout is not guaranteed
-      // to run within timeBetweenDisplay milliseconds.
-      this._lastStatusText = null;
-
-      this._statusLastShown = now;
+    const MIN_DISPLAY_TIME = 750;
+    if (
+      !this._statusIntervalId &&
+      Date.now() - this._statusLastShown > MIN_DISPLAY_TIME
+    ) {
+      this._statusLastShown = Date.now();
       if (this._statusText.value != statusText) {
         this._statusText.value = statusText;
       }
-    } else {
-      if (this._lastStatusText !== null) {
-        // There's already a pending display. Replace it.
-        this._lastStatusText = statusText;
+      return;
+    }
+    if (this._statusQueue.length >= 10) {
+      // Drop further messages until the queue has cleared up.
+      return;
+    }
+    if (!statusText && this._statusQueue.length > 0) {
+      // Don't queue empty strings in the middle.
+      return;
+    }
+    this._statusQueue.push(statusText);
+    if (this._statusIntervalId) {
+      return;
+    }
+
+    // Arrange for this to be shown in MIN_DISPLAY_TIME ms.
+    this._statusIntervalId = setInterval(() => {
+      const text = this._statusQueue.shift();
+      if (text === undefined) {
+        clearInterval(this._statusIntervalId);
+        this._statusIntervalId = null;
+        if (!this._meteorsSpinning) {
+          this._statusText.value = ""; // Clear status text once done.
+        }
         return;
       }
-      // Arrange for this to be shown in timeBetweenDisplay milliseconds.
-      this._lastStatusText = statusText;
-      setTimeout(() => {
-        if (this._lastStatusText !== null) {
-          this._statusLastShown = Date.now();
-          if (this._statusText.value != this._lastStatusText) {
-            this._statusText.value = this._lastStatusText;
-          }
-          this._lastStatusText = null;
-        }
-      }, timeBetweenDisplay);
-    }
-  },
-
-  setStatusString(status) {
-    if (status.length > 0) {
-      this._defaultStatusText = status;
-      this._statusText.value = status;
-    }
+      this._statusLastShown = Date.now();
+      if (this._statusText.value != text) {
+        this._statusText.value = text;
+      }
+    }, MIN_DISPLAY_TIME);
   },
 
   _startMeteors() {
@@ -514,7 +509,7 @@ nsMsgStatusFeedback.prototype = {
     ) {
       this._startTimeoutID = setTimeout(
         () => window.MsgStatusFeedback._startMeteors(),
-        500
+        this._timeoutDelay
       );
     }
 
@@ -527,7 +522,7 @@ nsMsgStatusFeedback.prototype = {
   },
 
   _stopMeteors() {
-    this.showStatusString(this._defaultStatusText);
+    this.showStatusString("");
 
     // stop the throbber
     if (this._throbber) {
@@ -556,6 +551,7 @@ nsMsgStatusFeedback.prototype = {
     if (this._startRequests == 0 && this._startTimeoutID) {
       clearTimeout(this._startTimeoutID);
       this._startTimeoutID = null;
+      this.showStatusString("");
     }
 
     // If we have no more pending starts and we don't have a stop timeout
@@ -569,7 +565,7 @@ nsMsgStatusFeedback.prototype = {
     ) {
       this._stopTimeoutID = setTimeout(
         () => window.MsgStatusFeedback._stopMeteors(),
-        500
+        this._timeoutDelay
       );
     }
   },
@@ -660,15 +656,10 @@ nsMsgStatusFeedback.prototype = {
   },
 
   // nsIActivityListener
-  onStateChanged(aActivity, aOldState) {},
+  onStateChanged() {},
 
-  onProgressChanged(
-    aActivity,
-    aStatusText,
-    aWorkUnitsCompleted,
-    aTotalWorkUnits
-  ) {
-    let index = this._activeProcesses.indexOf(aActivity);
+  onProgressChanged(aActivity, aStatusText) {
+    const index = this._activeProcesses.indexOf(aActivity);
 
     // Iterate through the list trying to find the first active process, but
     // only go as far as our process.
@@ -693,7 +684,7 @@ nsMsgStatusFeedback.prototype = {
     this.updateProgress();
   },
 
-  onHandlerChanged(aActivity) {},
+  onHandlerChanged() {},
 };
 
 /**
@@ -702,20 +693,13 @@ nsMsgStatusFeedback.prototype = {
  * on the getBrowser function.
  */
 function getBrowser() {
-  let tabmail = document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   return tabmail ? tabmail.getBrowserForSelectedTab() : null;
-}
-
-// Given the server, open the twisty and the set the selection
-// on inbox of that server.
-// prompt if offline.
-function OpenInboxForServer(server) {
-  // TODO: Reimplement this or fix the caller?
 }
 
 /** Update state of zoom type (text vs. full) menu item. */
 function UpdateFullZoomMenu() {
-  let cmdItem = document.getElementById("cmd_fullZoomToggle");
+  const cmdItem = document.getElementById("cmd_fullZoomToggle");
   cmdItem.setAttribute("checked", !ZoomManager.useFullZoom);
 }
 
@@ -758,12 +742,12 @@ nsBrowserAccess.prototype = {
       return null;
     }
 
-    let loadInBackground = Services.prefs.getBoolPref(
+    const loadInBackground = Services.prefs.getBoolPref(
       "browser.tabs.loadDivertedInBackground"
     );
 
-    let tabmail = win.document.getElementById("tabmail");
-    let newTab = tabmail.openTab("contentTab", {
+    const tabmail = win.document.getElementById("tabmail");
+    const newTab = tabmail.openTab("contentTab", {
       background: loadInBackground,
       csp: aCsp,
       linkHandler: aMessageManagerGroup,
@@ -853,12 +837,12 @@ nsBrowserAccess.prototype = {
     aSkipLoad
   ) {
     if (aWhere == Ci.nsIBrowserDOMWindow.OPEN_PRINT_BROWSER) {
-      let browser =
+      const browser =
         PrintUtils.handleStaticCloneCreatedForPrint(aOpenWindowInfo);
       return browser ? browser.browsingContext : null;
     }
 
-    let isExternal = !!(aFlags & Ci.nsIBrowserDOMWindow.OPEN_EXTERNAL);
+    const isExternal = !!(aFlags & Ci.nsIBrowserDOMWindow.OPEN_EXTERNAL);
 
     if (aOpenWindowInfo && isExternal) {
       throw Components.Exception(
@@ -904,7 +888,7 @@ nsBrowserAccess.prototype = {
       );
     }
 
-    let browser = this._openURIInNewTab(
+    const browser = this._openURIInNewTab(
       aURI,
       referrerInfo,
       isExternal,
@@ -939,7 +923,7 @@ nsBrowserAccess.prototype = {
       return null;
     }
 
-    let isExternal = !!(aFlags & Ci.nsIBrowserDOMWindow.OPEN_EXTERNAL);
+    const isExternal = !!(aFlags & Ci.nsIBrowserDOMWindow.OPEN_EXTERNAL);
 
     return this._openURIInNewTab(
       aURI,
@@ -958,7 +942,7 @@ nsBrowserAccess.prototype = {
   },
 
   get tabCount() {
-    let tabmail = document.getElementById("tabmail");
+    const tabmail = document.getElementById("tabmail");
     // messageWindow.xhtml does not have multiple tabs.
     return tabmail ? tabmail.tabInfo.length : 1;
   },
@@ -969,7 +953,7 @@ nsBrowserAccess.prototype = {
  * Only the "open in tab" option is supported, so that's what we'll do here.
  */
 function switchToTabHavingURI(aURI, aOpenNew, aOpenParams = {}) {
-  let tabmail = document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   let matchingIndex = -1;
   if (tabmail) {
     // about:preferences should be opened through openPreferencesTab().
@@ -978,17 +962,17 @@ function switchToTabHavingURI(aURI, aOpenNew, aOpenParams = {}) {
       return true;
     }
 
-    let openURI = makeURI(aURI);
-    let tabInfo = tabmail.tabInfo;
+    const openURI = makeURI(aURI);
+    const tabInfo = tabmail.tabInfo;
 
     // Check if we already have the same URL open in a content tab.
     for (let tabIndex = 0; tabIndex < tabInfo.length; tabIndex++) {
       if (tabInfo[tabIndex].mode.name == "contentTab") {
-        let browserFunc =
+        const browserFunc =
           tabInfo[tabIndex].mode.getBrowser ||
           tabInfo[tabIndex].mode.tabType.getBrowser;
         if (browserFunc) {
-          let browser = browserFunc.call(
+          const browser = browserFunc.call(
             tabInfo[tabIndex].mode.tabType,
             tabInfo[tabIndex]
           );
@@ -1033,7 +1017,7 @@ var contentProgress = {
   },
 
   callListeners(method, args) {
-    for (let listener of this._listeners.values()) {
+    for (const listener of this._listeners.values()) {
       if (method in listener) {
         try {
           listener[method](...args);
@@ -1125,6 +1109,15 @@ window.addEventListener("aboutMessageLoaded", event => {
   );
   // Also add a copy listener so we can process images.
   event.target.document.addEventListener("copy", onCopyOrDragStart, true);
+
+  // eslint-disable-next-line no-shadow
+  event.target.document.addEventListener("keypress", event => {
+    if ((event.key == "Backspace" || event.key == "Delete") && event.repeat) {
+      // Bail on delete event if there is a repeat event to prevent deleting
+      // multiple messages by mistake from a longer key press.
+      event.preventDefault();
+    }
+  });
 });
 
 // Listener to correctly set the busy flag on the webBrowser in about:3pane. All

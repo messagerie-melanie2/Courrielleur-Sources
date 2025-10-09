@@ -40,13 +40,13 @@ using namespace mozilla::gfx;
 
 /* static */
 already_AddRefed<ImageClient> ImageClient::CreateImageClient(
-    CompositableType aCompositableHostType, CompositableForwarder* aForwarder,
-    TextureFlags aFlags) {
+    CompositableType aCompositableHostType, ImageUsageType aUsageType,
+    CompositableForwarder* aForwarder, TextureFlags aFlags) {
   RefPtr<ImageClient> result = nullptr;
   switch (aCompositableHostType) {
     case CompositableType::IMAGE:
-      result =
-          new ImageClientSingle(aForwarder, aFlags, CompositableType::IMAGE);
+      result = new ImageClientSingle(aForwarder, aFlags,
+                                     CompositableType::IMAGE, aUsageType);
       break;
     case CompositableType::UNKNOWN:
       result = nullptr;
@@ -66,21 +66,17 @@ void ImageClient::RemoveTexture(TextureClient* aTexture) {
 
 ImageClientSingle::ImageClientSingle(CompositableForwarder* aFwd,
                                      TextureFlags aFlags,
-                                     CompositableType aType)
-    : ImageClient(aFwd, aFlags, aType) {}
+                                     CompositableType aType,
+                                     ImageUsageType aUsageType)
+    : ImageClient(aFwd, aFlags, aType, aUsageType) {}
 
 TextureInfo ImageClientSingle::GetTextureInfo() const {
-  return TextureInfo(CompositableType::IMAGE);
+  return TextureInfo(CompositableType::IMAGE, mUsageType,
+                     TextureFlags::DEFAULT);
 }
 
-void ImageClientSingle::FlushAllImages() {
-  for (auto& b : mBuffers) {
-    // It should be safe to just assume a default render root here, even if
-    // the texture actually presents in a content render root, as the only
-    // risk would be if the content render root has not / is not going to
-    // generate a frame before the texture gets cleared.
-    RemoveTexture(b.mTextureClient);
-  }
+void ImageClientSingle::ClearImagesInHost(ClearImagesType aType) {
+  GetForwarder()->ClearImagesFromCompositable(this, aType);
   mBuffers.Clear();
 }
 
@@ -120,6 +116,7 @@ already_AddRefed<TextureClient> ImageClient::CreateTextureClientForImage(
     texture = AndroidSurfaceTextureData::CreateTextureClient(
         typedImage->GetHandle(), size, typedImage->GetContinuous(),
         typedImage->GetOriginPos(), typedImage->GetHasAlpha(),
+        typedImage->GetForceBT709ColorSpace(),
         typedImage->GetTransformOverride(),
         aKnowsCompositor->GetTextureForwarder(), TextureFlags::DEFAULT);
 #endif
@@ -146,6 +143,7 @@ already_AddRefed<TextureClient> ImageClient::CreateTextureClientForImage(
       if (!dt) {
         gfxWarning()
             << "ImageClientSingle::UpdateImage failed in BorrowDrawTarget";
+        texture->Unlock();
         return nullptr;
       }
       MOZ_ASSERT(surface.get());
@@ -268,9 +266,10 @@ bool ImageClientSingle::AddTextureClient(TextureClient* aTexture) {
 void ImageClientSingle::OnDetach() { mBuffers.Clear(); }
 
 ImageClient::ImageClient(CompositableForwarder* aFwd, TextureFlags aFlags,
-                         CompositableType aType)
+                         CompositableType aType, ImageUsageType aUsageType)
     : CompositableClient(aFwd, aFlags),
       mType(aType),
+      mUsageType(aUsageType),
       mLastUpdateGenerationCounter(0) {}
 
 }  // namespace layers

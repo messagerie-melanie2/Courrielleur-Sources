@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const DOH_DOORHANGER_DECISION_PREF = "doh-rollout.doorhanger-decision";
 const NETWORK_TRR_MODE_PREF = "network.trr.mode";
 
@@ -11,14 +9,22 @@ const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
+  // eslint-disable-next-line mozilla/no-browser-refs-in-toolkit
+  CustomizableUI: "resource:///modules/CustomizableUI.sys.mjs",
+  ExperimentAPI: "resource://nimbus/ExperimentAPI.sys.mjs",
   FxAccounts: "resource://gre/modules/FxAccounts.sys.mjs",
   MigrationUtils: "resource:///modules/MigrationUtils.sys.mjs",
+  PlacesTransactions: "resource://gre/modules/PlacesTransactions.sys.mjs",
+  // eslint-disable-next-line mozilla/no-browser-refs-in-toolkit
+  PlacesUIUtils: "resource:///modules/PlacesUIUtils.sys.mjs",
+  PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
+  // eslint-disable-next-line mozilla/no-browser-refs-in-toolkit
+  SelectableProfileService:
+    "resource:///modules/profiles/SelectableProfileService.sys.mjs",
+  // eslint-disable-next-line mozilla/no-browser-refs-in-toolkit
+  Spotlight: "resource:///modules/asrouter/Spotlight.sys.mjs",
   UIState: "resource://services-sync/UIState.sys.mjs",
-  UITour: "resource:///modules/UITour.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  Spotlight: "resource://activity-stream/lib/Spotlight.jsm",
+  UITour: "moz-src:///browser/components/uitour/UITour.sys.mjs",
 });
 
 export const SpecialMessageActions = {
@@ -93,12 +99,19 @@ export const SpecialMessageActions = {
   },
 
   /**
+   * Pin current application to Windows start menu.
+   */
+  pinToStartMenu(window) {
+    return window.getShellService().pinToStartMenu();
+  },
+
+  /**
    *  Set browser as the operating system default browser.
    *
    *  @param {Window} window Reference to a window object
    */
-  setDefaultBrowser(window) {
-    window.getShellService().setAsDefault();
+  async setDefaultBrowser(window) {
+    await window.getShellService().setAsDefault();
   },
 
   /**
@@ -157,11 +170,6 @@ export const SpecialMessageActions = {
           ],
         ],
         [
-          // controls the snippets section
-          "browser.newtabpage.activity-stream.feeds.snippets",
-          layout.snippets,
-        ],
-        [
           // controls the topstories section
           "browser.newtabpage.activity-stream.feeds.system.topstories",
           layout.topstories,
@@ -191,26 +199,50 @@ export const SpecialMessageActions = {
   setPref(pref) {
     // Array of prefs that are allowed to be edited by SET_PREF
     const allowedPrefs = [
+      "browser.aboutwelcome.didSeeFinalScreen",
       "browser.dataFeatureRecommendations.enabled",
       "browser.migrate.content-modal.about-welcome-behavior",
-      "browser.migrate.content-modal.enabled",
       "browser.migrate.content-modal.import-all.enabled",
       "browser.migrate.preferences-entrypoint.enabled",
+      "browser.shell.checkDefaultBrowser",
+      "browser.shell.setDefaultGuidanceNotifications",
       "browser.startup.homepage",
+      "browser.startup.windowsLaunchOnLogin.disableLaunchOnLoginPrompt",
       "browser.privateWindowSeparation.enabled",
       "browser.firefox-view.feature-tour",
       "browser.pdfjs.feature-tour",
+      "browser.newtab.feature-tour",
       "cookiebanners.service.mode",
       "cookiebanners.service.mode.privateBrowsing",
       "cookiebanners.service.detectOnly",
+      "messaging-system.askForFeedback",
+      "browser.toolbars.bookmarks.visibility",
+      "sidebar.verticalTabs",
+      "sidebar.revamp",
+      "sidebar.visibility",
+      "browser.crashReports.unsubmittedCheck.autoSubmit2",
+      "datareporting.healthreport.uploadEnabled",
+      "datareporting.policy.currentPolicyVersion",
+      "datareporting.policy.dataSubmissionPolicyAcceptedVersion",
+      "datareporting.policy.dataSubmissionPolicyNotifiedTime",
+      "datareporting.policy.minimumPolicyVersion",
     ];
 
-    if (!allowedPrefs.includes(pref.name)) {
+    if (
+      !allowedPrefs.includes(pref.name) &&
+      !pref.name.startsWith("messaging-system-action.")
+    ) {
       pref.name = `messaging-system-action.${pref.name}`;
     }
     // If pref has no value, reset it, otherwise set it to desired value
     switch (typeof pref.value) {
       case "object":
+        if (pref.value.timestamp) {
+          Services.prefs.setStringPref(pref.name, Date.now().toString());
+        } else {
+          Services.prefs.clearUserPref(pref.name);
+        }
+        break;
       case "undefined":
         Services.prefs.clearUserPref(pref.name);
         break;
@@ -289,7 +321,7 @@ export const SpecialMessageActions = {
           Ci.nsISupportsWeakReference,
         ]),
 
-        observe(aSubject, aTopic, aData) {
+        observe() {
           let state = lazy.UIState.get();
           if (state.status === lazy.UIState.STATUS_SIGNED_IN) {
             // We completed sign-in, so tear down our listener / observer and resolve
@@ -352,6 +384,147 @@ export const SpecialMessageActions = {
   },
 
   /**
+   * Sets the visibility of bookmarks toolbar.
+   *
+   * @param {Window} window Reference to a window object
+   * @param {string} visibility Visibility options which can be "always", "newtab", or "never"
+   */
+  setBookmarksToolbarVisibility(window, visibility) {
+    Services.prefs.setCharPref(
+      "browser.toolbars.bookmarks.visibility",
+      visibility
+    );
+
+    lazy.CustomizableUI.setToolbarVisibility(
+      window.document.getElementById("PersonalToolbar").id,
+      visibility,
+      false
+    );
+  },
+
+  /**
+   * Bookmarks the current tab.
+   *
+   * @param {Window} window Reference to a window object
+   * @param {boolean} shouldHideDialog True if bookmark dialog should be hidden
+   * @param {boolean} shouldHideConfirmationHint True if bookmark confirmation hint should be hidden
+   */
+  async bookmarkCurrentTab(
+    window,
+    shouldHideDialog = false,
+    shouldHideConfirmationHint = false
+  ) {
+    if (!window.top.gBrowser) {
+      return;
+    }
+
+    // Bookmark current tab without showing the bookmark dialog
+    if (shouldHideDialog) {
+      let browser = window.top.gBrowser.selectedBrowser;
+      let url = URL.fromURI(Services.io.createExposableURI(browser.currentURI));
+
+      let info = await lazy.PlacesUtils.bookmarks.fetch({ url });
+      let parentGuid = await lazy.PlacesUIUtils.defaultParentGuid;
+      info = { url, parentGuid };
+      let charset = null;
+      let isErrorPage = false;
+
+      // Check if the current tab is an error page,
+      // if so, attempt to get the title from the history entry
+      if (browser.documentURI) {
+        isErrorPage = /^about:(neterror|certerror|blocked)/.test(
+          browser.documentURI.spec
+        );
+      }
+      try {
+        if (isErrorPage) {
+          let entry = await lazy.PlacesUtils.history.fetch(browser.currentURI);
+          if (entry) {
+            info.title = entry.title;
+          }
+        } else {
+          info.title = browser.contentTitle;
+        }
+        info.title = info.title || url.href;
+        charset = browser.characterSet;
+      } catch (e) {
+        console.error(e);
+      }
+
+      // Creates new bookmark
+      info.guid = await lazy.PlacesTransactions.NewBookmark(info).transact();
+
+      if (charset) {
+        lazy.PlacesUIUtils.setCharsetForPage(url, charset, window).catch(
+          console.error
+        );
+      }
+      window.gURLBar.handleRevert();
+
+      if (!shouldHideConfirmationHint) {
+        window.StarUI.showConfirmation();
+      }
+    } else {
+      // Bookmarks current tab with bookmark dialog shown
+      window.top.PlacesCommandHook.bookmarkTabs([
+        window.top.gBrowser.selectedTab,
+      ]);
+    }
+  },
+
+  async createAndOpenProfile() {
+    await lazy.SelectableProfileService.createNewProfile();
+  },
+
+  async submitOnboardingOptOutPing() {
+    // `onboarding-opt-out` pings can always be sent.
+    GleanPings.onboardingOptOut.setEnabled(true);
+
+    // The `onboarding-opt-out` ping does not include any info sections, and
+    // therefore needs to capture experiments and rollouts independently.  This
+    // data layout agrees with the `nimbus-targeting-context` ping for ease of
+    // analysis.
+    let ctx = lazy.ExperimentAPI.manager.createTargetingContext();
+
+    Glean.onboardingOptOut.activeExperiments.set(await ctx.activeExperiments);
+    Glean.onboardingOptOut.activeRollouts.set(await ctx.activeRollouts);
+    Glean.onboardingOptOut.enrollmentsMap.set(
+      Object.entries(await ctx.enrollmentsMap).map(
+        ([experimentSlug, branchSlug]) => ({
+          experimentSlug,
+          branchSlug,
+        })
+      )
+    );
+
+    GleanPings.onboardingOptOut.submit("set_upload_enabled");
+  },
+
+  async handleMultiAction(actions, browser, orderedExecution) {
+    if (orderedExecution) {
+      for (const action of actions) {
+        try {
+          await this.handleAction(action, browser);
+        } catch (err) {
+          console.error("Error in MULTI_ACTION event:", err);
+          throw err;
+        }
+      }
+      return;
+    }
+    // If order doesn't matter, allow actions to run concurrently
+    await Promise.all(
+      actions.map(async action => {
+        try {
+          await this.handleAction(action, browser);
+        } catch (err) {
+          throw new Error(`Error in MULTI_ACTION event: ${err.message}`);
+        }
+      })
+    );
+  },
+
+  /**
    * Processes "Special Message Actions", which are definitions of behaviors such as opening tabs
    * installing add-ons, or focusing the awesome bar that are allowed to can be triggered from
    * Messaging System interactions.
@@ -360,20 +533,22 @@ export const SpecialMessageActions = {
    * @param browser {Browser} The browser most relevant to the message.
    * @returns {Promise<unknown>} Type depends on action type. See cases below.
    */
+  /* eslint-disable-next-line complexity */
   async handleAction(action, browser) {
     const window = browser.ownerGlobal;
     switch (action.type) {
       case "SHOW_MIGRATION_WIZARD":
-        Services.tm.dispatchToMainThread(() =>
-          lazy.MigrationUtils.showMigrationWizard(window, {
-            entrypoint: lazy.MigrationUtils.MIGRATION_ENTRYPOINTS.NEWTAB,
-            migratorKey: action.data?.source,
-          })
-        );
+        lazy.MigrationUtils.showMigrationWizard(window, {
+          entrypoint: lazy.MigrationUtils.MIGRATION_ENTRYPOINTS.NEWTAB,
+          migratorKey: action.data?.source,
+        });
         break;
       case "OPEN_PRIVATE_BROWSER_WINDOW":
         // Forcefully open about:privatebrowsing
         window.OpenBrowserWindow({ private: true });
+        break;
+      case "OPEN_SIDEBAR":
+        window.SidebarController.show(action.data);
         break;
       case "OPEN_URL":
         window.openLinkIn(
@@ -429,18 +604,38 @@ export const SpecialMessageActions = {
       case "PIN_FIREFOX_TO_TASKBAR":
         await this.pinFirefoxToTaskbar(window, action.data?.privatePin);
         break;
+      case "PIN_FIREFOX_TO_START_MENU":
+        await this.pinToStartMenu(window);
+        break;
       case "PIN_AND_DEFAULT":
+        // We must explicitly await pinning to the taskbar before
+        // trying to set as default. If we fall back to setting
+        // as default through the Windows Settings menu that interferes
+        // with showing the pinning notification as we no longer have
+        // window focus.
         await this.pinFirefoxToTaskbar(window, action.data?.privatePin);
-        this.setDefaultBrowser(window);
+        await this.setDefaultBrowser(window);
         break;
       case "SET_DEFAULT_BROWSER":
-        this.setDefaultBrowser(window);
+        await this.setDefaultBrowser(window);
         break;
       case "SET_DEFAULT_PDF_HANDLER":
         this.setDefaultPDFHandler(
           window,
           action.data?.onlyIfKnownBrowser ?? false
         );
+        break;
+      case "DECLINE_DEFAULT_PDF_HANDLER":
+        Services.prefs.setBoolPref(
+          "browser.shell.checkDefaultPDF.silencedByUser",
+          true
+        );
+        break;
+      case "CONFIRM_LAUNCH_ON_LOGIN":
+        const { WindowsLaunchOnLogin } = ChromeUtils.importESModule(
+          "resource://gre/modules/WindowsLaunchOnLogin.sys.mjs"
+        );
+        await WindowsLaunchOnLogin.createLaunchOnLogin();
         break;
       case "PIN_CURRENT_TAB":
         let tab = window.gBrowser.selectedTab;
@@ -455,7 +650,7 @@ export const SpecialMessageActions = {
         }
         const data = action.data;
         const url = await lazy.FxAccounts.config.promiseConnectAccountURI(
-          (data && data.entrypoint) || "snippets",
+          data && data.entrypoint,
           (data && data.extraParams) || {}
         );
         // Use location provided; if not specified, replace the current tab.
@@ -513,14 +708,10 @@ export const SpecialMessageActions = {
         this.setPref(action.data.pref);
         break;
       case "MULTI_ACTION":
-        await Promise.all(
-          action.data.actions.map(async action => {
-            try {
-              await this.handleAction(action, browser);
-            } catch (err) {
-              throw new Error(`Error in MULTI_ACTION event: ${err.message}`);
-            }
-          })
+        await this.handleMultiAction(
+          action.data.actions,
+          browser,
+          action.data.orderedExecution
         );
         break;
       default:
@@ -535,6 +726,36 @@ export const SpecialMessageActions = {
         break;
       case "RELOAD_BROWSER":
         browser.reload();
+        break;
+      case "FOCUS_URLBAR":
+        window.gURLBar.focus();
+        window.gURLBar.select();
+        break;
+      case "BOOKMARK_CURRENT_TAB":
+        this.bookmarkCurrentTab(
+          window,
+          action.data?.shouldHideDialog,
+          action.data?.shouldHideConfirmationHint
+        );
+        break;
+      case "SET_BOOKMARKS_TOOLBAR_VISIBILITY":
+        this.setBookmarksToolbarVisibility(window, action.data?.visibility);
+        break;
+      case "DATAREPORTING_NOTIFY_DATA_POLICY_INTERACTED":
+        Services.obs.notifyObservers(
+          null,
+          "datareporting:notify-data-policy:interacted"
+        );
+        break;
+      case "CREATE_NEW_SELECTABLE_PROFILE":
+        this.createAndOpenProfile();
+        break;
+      case "SUBMIT_ONBOARDING_OPT_OUT_PING":
+        this.submitOnboardingOptOutPing();
+        break;
+      case "SET_SEARCH_MODE":
+        window.gURLBar.searchMode = action.data;
+        window.gURLBar.focus();
         break;
     }
     return undefined;

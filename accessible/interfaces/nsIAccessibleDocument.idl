@@ -8,6 +8,7 @@
 interface nsIAccessiblePivot;
 interface mozIDOMWindowProxy;
 
+webidl BrowsingContext;
 webidl Document;
 
 /**
@@ -64,12 +65,12 @@ interface nsIAccessibleDocument : nsISupports
   readonly attribute unsigned long childDocumentCount;
 
   /**
-   * The virtual cursor pivot this document manages.
-   */
-  readonly attribute nsIAccessiblePivot virtualCursor;
-
-  /**
    * Return the child document accessible at the given index.
    */
   nsIAccessibleDocument getChildDocumentAt(in unsigned long index);
+
+  /**
+   * The BrowsingContext of this document.
+   */
+  readonly attribute BrowsingContext browsingContext;
 };

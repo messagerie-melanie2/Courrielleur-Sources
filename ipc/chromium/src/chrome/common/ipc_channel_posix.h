@@ -8,7 +8,6 @@
 #define CHROME_COMMON_IPC_CHANNEL_POSIX_H_
 
 #include "chrome/common/ipc_channel.h"
-#include "chrome/common/ipc_channel_capability.h"
 
 #include <sys/socket.h>  // for CMSG macros
 
@@ -18,9 +17,12 @@
 #include <list>
 
 #include "base/message_loop.h"
+#include "base/process.h"
 #include "base/task.h"
 
+#include "mozilla/EventTargetAndLockCapability.h"
 #include "mozilla/Maybe.h"
+#include "mozilla/Mutex.h"
 #include "mozilla/Queue.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/UniquePtrExtensions.h"
@@ -35,41 +37,25 @@ class Channel::ChannelImpl : public MessageLoopForIO::Watcher {
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING_WITH_DELETE_ON_EVENT_TARGET(
       ChannelImpl, IOThread().GetEventTarget());
 
-  using ChannelId = Channel::ChannelId;
-
   // Mirror methods of Channel, see ipc_channel.h for description.
-  ChannelImpl(const ChannelId& channel_id, Mode mode, Listener* listener);
-  ChannelImpl(ChannelHandle pipe, Mode mode, Listener* listener);
-  bool Connect() MOZ_EXCLUDES(SendMutex());
+  ChannelImpl(ChannelHandle pipe, Mode mode, base::ProcessId other_pid);
+  bool Connect(Listener* listener) MOZ_EXCLUDES(SendMutex());
   void Close() MOZ_EXCLUDES(SendMutex());
-  Listener* set_listener(Listener* listener) {
-    IOThread().AssertOnCurrentThread();
-    chan_cap_.NoteOnIOThread();
-    Listener* old = listener_;
-    listener_ = listener;
-    return old;
-  }
+
   // NOTE: `Send` may be called on threads other than the I/O thread.
   bool Send(mozilla::UniquePtr<Message> message) MOZ_EXCLUDES(SendMutex());
-  void GetClientFileDescriptorMapping(int* src_fd, int* dest_fd) const;
 
-  void CloseClientFileDescriptor();
-
-  int32_t OtherPid() {
-    IOThread().AssertOnCurrentThread();
-    chan_cap_.NoteOnIOThread();
-    return other_pid_;
-  }
+  void SetOtherPid(base::ProcessId other_pid);
 
   // See the comment in ipc_channel.h for info on IsClosed()
   // NOTE: `IsClosed` may be called on threads other than the I/O thread.
   bool IsClosed() MOZ_EXCLUDES(SendMutex()) {
     mozilla::MutexAutoLock lock(SendMutex());
-    chan_cap_.NoteSendMutex();
+    chan_cap_.NoteLockHeld();
     return pipe_ == -1;
   }
 
-#if defined(OS_MACOSX)
+#if defined(XP_DARWIN)
   void SetOtherMachTask(task_t task) MOZ_EXCLUDES(SendMutex());
 
   void StartAcceptingMachPorts(Mode mode) MOZ_EXCLUDES(SendMutex());
@@ -78,20 +64,12 @@ class Channel::ChannelImpl : public MessageLoopForIO::Watcher {
  private:
   ~ChannelImpl() { Close(); }
 
-  void Init(Mode mode, Listener* listener)
-      MOZ_REQUIRES(SendMutex(), IOThread());
-  bool CreatePipe(Mode mode) MOZ_REQUIRES(SendMutex(), IOThread());
+  void Init(Mode mode) MOZ_REQUIRES(SendMutex(), IOThread());
   void SetPipe(int fd) MOZ_REQUIRES(SendMutex(), IOThread());
-  void SetOtherPid(int other_pid) MOZ_REQUIRES(IOThread())
-      MOZ_EXCLUDES(SendMutex()) {
-    mozilla::MutexAutoLock lock(SendMutex());
-    chan_cap_.NoteExclusiveAccess();
-    other_pid_ = other_pid;
-  }
   bool PipeBufHasSpaceAfter(size_t already_written)
       MOZ_REQUIRES_SHARED(chan_cap_);
   bool EnqueueHelloMessage() MOZ_REQUIRES(SendMutex(), IOThread());
-  bool ConnectLocked() MOZ_REQUIRES(SendMutex(), IOThread());
+  bool ContinueConnect() MOZ_REQUIRES(SendMutex(), IOThread());
   void CloseLocked() MOZ_REQUIRES(SendMutex(), IOThread());
 
   bool ProcessIncomingMessages() MOZ_REQUIRES(IOThread());
@@ -101,7 +79,7 @@ class Channel::ChannelImpl : public MessageLoopForIO::Watcher {
   virtual void OnFileCanReadWithoutBlocking(int fd) override;
   virtual void OnFileCanWriteWithoutBlocking(int fd) override;
 
-#if defined(OS_MACOSX)
+#if defined(XP_DARWIN)
   void CloseDescriptors(uint32_t pending_fd_id) MOZ_REQUIRES(IOThread())
       MOZ_EXCLUDES(SendMutex());
 
@@ -115,18 +93,18 @@ class Channel::ChannelImpl : public MessageLoopForIO::Watcher {
       MOZ_REQUIRES(SendMutex());
   void OutputQueuePop() MOZ_REQUIRES(SendMutex());
 
-  const ChannelCapability::Thread& IOThread() const
-      MOZ_RETURN_CAPABILITY(chan_cap_.IOThread()) {
-    return chan_cap_.IOThread();
+  const mozilla::EventTargetCapability<nsISerialEventTarget>& IOThread() const
+      MOZ_RETURN_CAPABILITY(chan_cap_.Target()) {
+    return chan_cap_.Target();
   }
 
-  ChannelCapability::Mutex& SendMutex()
-      MOZ_RETURN_CAPABILITY(chan_cap_.SendMutex()) {
-    return chan_cap_.SendMutex();
+  mozilla::Mutex& SendMutex() MOZ_RETURN_CAPABILITY(chan_cap_.Lock()) {
+    return chan_cap_.Lock();
   }
 
-  // Compound capability of a Mutex and the IO thread.
-  ChannelCapability chan_cap_;
+  // Compound capability of the IO thread and a Mutex.
+  mozilla::EventTargetAndLockCapability<nsISerialEventTarget, mozilla::Mutex>
+      chan_cap_;
 
   Mode mode_ MOZ_GUARDED_BY(IOThread());
 
@@ -150,8 +128,6 @@ class Channel::ChannelImpl : public MessageLoopForIO::Watcher {
   mozilla::Maybe<PartialWrite> partial_write_ MOZ_GUARDED_BY(SendMutex());
 
   int pipe_ MOZ_GUARDED_BY(chan_cap_);
-  // The client end of our socketpair().
-  int client_pipe_ MOZ_GUARDED_BY(IOThread());
   // The SO_SNDBUF value of pipe_, or 0 if unknown.
   unsigned pipe_buf_len_ MOZ_GUARDED_BY(chan_cap_);
 
@@ -196,9 +172,10 @@ class Channel::ChannelImpl : public MessageLoopForIO::Watcher {
 
   // We keep track of the PID of the other side of this channel so that we can
   // record this when generating logs of IPC messages.
-  int32_t other_pid_ MOZ_GUARDED_BY(chan_cap_) = -1;
+  base::ProcessId other_pid_ MOZ_GUARDED_BY(chan_cap_) =
+      base::kInvalidProcessId;
 
-#if defined(OS_MACOSX)
+#if defined(XP_DARWIN)
   struct PendingDescriptors {
     uint32_t id;
     nsTArray<mozilla::UniqueFileHandle> handles;

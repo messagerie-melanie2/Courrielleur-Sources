@@ -48,6 +48,7 @@ enum class TracerKind {
   UnmarkGray,
   VerifyTraceProtoAndIface,
   CompartmentCheck,
+  HeapCheck
 };
 
 enum class WeakMapTraceAction {
@@ -135,7 +136,8 @@ class TracingContext {
   // currently set tracing context.
   class Functor {
    public:
-    virtual void operator()(TracingContext* tcx, char* buf, size_t bufsize) = 0;
+    virtual void operator()(TracingContext* tcx, const char* name, char* buf,
+                            size_t bufsize) = 0;
   };
 
  private:
@@ -308,6 +310,9 @@ namespace js {
 
 class AbstractGeneratorObject;
 class SavedFrame;
+namespace wasm {
+class AnyRef;
+}  // namespace wasm
 
 namespace gc {
 
@@ -345,7 +350,7 @@ template <typename T>
 inline void TraceEdge(JSTracer* trc, JS::Heap<T>* thingp, const char* name) {
   MOZ_ASSERT(thingp);
   if (*thingp) {
-    js::gc::TraceExternalEdge(trc, thingp->unsafeGet(), name);
+    js::gc::TraceExternalEdge(trc, thingp->unsafeAddress(), name);
   }
 }
 
@@ -355,7 +360,7 @@ inline void TraceEdge(JSTracer* trc, JS::TenuredHeap<T>* thingp,
   MOZ_ASSERT(thingp);
   if (T ptr = thingp->unbarrieredGetPtr()) {
     js::gc::TraceExternalEdge(trc, &ptr, name);
-    thingp->setPtr(ptr);
+    thingp->unbarrieredSetPtr(ptr);
   }
 }
 
@@ -378,6 +383,7 @@ JS_FOR_EACH_PUBLIC_TAGGED_GC_POINTER_TYPE(JS_DECLARE_TRACE_ROOT)
 // to not be *actual* overloads, but for the moment we still declare them here.
 JS_DECLARE_TRACE_ROOT(js::AbstractGeneratorObject*)
 JS_DECLARE_TRACE_ROOT(js::SavedFrame*)
+JS_DECLARE_TRACE_ROOT(js::wasm::AnyRef)
 
 #undef JS_DECLARE_TRACE_ROOT
 
@@ -397,7 +403,7 @@ inline bool IsTracerKind(JSTracer* trc, JS::TracerKind kind) {
 // This method does not check if |*edgep| is non-null before tracing through
 // it, so callers must check any nullable pointer before calling this method.
 extern JS_PUBLIC_API void UnsafeTraceManuallyBarrieredEdge(JSTracer* trc,
-                                                           JSObject** edgep,
+                                                           JSObject** thingp,
                                                            const char* name);
 
 namespace gc {

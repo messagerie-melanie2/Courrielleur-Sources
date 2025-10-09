@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| shell-option(--enable-temporal) skip-if(!this.hasOwnProperty('Temporal')||!xulRuntime.shell) -- Temporal is not enabled unconditionally, requires shell-options
 // Copyright (C) 2022 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -22,14 +22,10 @@ const expected = [
   "get options.smallestUnit",
   "get options.smallestUnit.toString",
   "call options.smallestUnit.toString",
-  "get this.calendar[Symbol.toPrimitive]",
-  "get this.calendar.toString",
-  "call this.calendar.toString",
 ];
 const actual = [];
 
-const calendar = TemporalHelpers.calendarObserver(actual, "this.calendar");
-const instance = new Temporal.PlainDateTime(1990, 11, 3, 15, 54, 37, 123, 456, 789, calendar);
+const instance = new Temporal.PlainDateTime(1990, 11, 3, 15, 54, 37, 123, 456, 789, "iso8601");
 // clear observable operations that occurred during the constructor call
 actual.splice(0);
 
@@ -56,9 +52,6 @@ const expectedForFractionalSecondDigits = [
   "get options.roundingMode.toString",
   "call options.roundingMode.toString",
   "get options.smallestUnit",
-  "get this.calendar[Symbol.toPrimitive]",
-  "get this.calendar.toString",
-  "call this.calendar.toString",
 ];
 
 instance.toString(

@@ -4,13 +4,21 @@ createComputePipeline and createComputePipelineAsync validation tests.
 Note: entry point matching tests are in shader_module/entry_point.spec.ts
 `;
 
+import { AllFeaturesMaxLimitsGPUTest } from '../.././gpu_test.js';
 import { makeTestGroup } from '../../../common/framework/test_group.js';
+import { keysOf } from '../../../common/util/data_tables.js';
 import { kValue } from '../../util/constants.js';
 import { TShaderStage, getShaderWithEntryPoint } from '../../util/shader.js';
 
-import { ValidationTest } from './validation_test.js';
+import {
+  kAPIResources,
+  getWGSLShaderForResource,
+  getAPIBindGroupLayoutForResource,
+  doResourcesMatch,
+} from './utils.js';
+import * as vtu from './validation_test_utils.js';
 
-class F extends ValidationTest {
+class F extends AllFeaturesMaxLimitsGPUTest {
   getShaderModule(
     shaderStage: TShaderStage = 'compute',
     entryPoint: string = 'main'
@@ -31,9 +39,9 @@ Call the API with valid compute shader and matching valid entryPoint, making sur
 `
   )
   .params(u => u.combine('isAsync', [true, false]))
-  .fn(async t => {
+  .fn(t => {
     const { isAsync } = t.params;
-    t.doCreateComputePipelineTest(isAsync, true, {
+    vtu.doCreateComputePipelineTest(t, isAsync, true, {
       layout: 'auto',
       compute: { module: t.getShaderModule('compute', 'main'), entryPoint: 'main' },
     });
@@ -46,12 +54,12 @@ Tests calling createComputePipeline(Async) with a invalid compute shader, and ch
 `
   )
   .params(u => u.combine('isAsync', [true, false]))
-  .fn(async t => {
+  .fn(t => {
     const { isAsync } = t.params;
-    t.doCreateComputePipelineTest(isAsync, false, {
+    vtu.doCreateComputePipelineTest(t, isAsync, false, {
       layout: 'auto',
       compute: {
-        module: t.createInvalidShaderModule(),
+        module: vtu.createInvalidShaderModule(t),
         entryPoint: 'main',
       },
     });
@@ -69,7 +77,7 @@ and check that the APIs only accept compute shader.
       .combine('isAsync', [true, false])
       .combine('shaderModuleStage', ['compute', 'vertex', 'fragment'] as TShaderStage[])
   )
-  .fn(async t => {
+  .fn(t => {
     const { isAsync, shaderModuleStage } = t.params;
     const descriptor = {
       layout: 'auto' as const,
@@ -78,7 +86,7 @@ and check that the APIs only accept compute shader.
         entryPoint: 'main',
       },
     };
-    t.doCreateComputePipelineTest(isAsync, shaderModuleStage === 'compute', descriptor);
+    vtu.doCreateComputePipelineTest(t, isAsync, shaderModuleStage === 'compute', descriptor);
   });
 
 g.test('shader_module,device_mismatch')
@@ -86,10 +94,8 @@ g.test('shader_module,device_mismatch')
     'Tests createComputePipeline(Async) cannot be called with a shader module created from another device'
   )
   .paramsSubcasesOnly(u => u.combine('isAsync', [true, false]).combine('mismatched', [true, false]))
-  .beforeAllSubcases(t => {
-    t.selectMismatchedDeviceOrSkipTestCase(undefined);
-  })
-  .fn(async t => {
+  .beforeAllSubcases(t => t.usesMismatchedDevice())
+  .fn(t => {
     const { isAsync, mismatched } = t.params;
 
     const sourceDevice = mismatched ? t.mismatchedDevice : t.device;
@@ -106,7 +112,7 @@ g.test('shader_module,device_mismatch')
       },
     };
 
-    t.doCreateComputePipelineTest(isAsync, !mismatched, descriptor);
+    vtu.doCreateComputePipelineTest(t, isAsync, !mismatched, descriptor);
   });
 
 g.test('pipeline_layout,device_mismatch')
@@ -114,10 +120,8 @@ g.test('pipeline_layout,device_mismatch')
     'Tests createComputePipeline(Async) cannot be called with a pipeline layout created from another device'
   )
   .paramsSubcasesOnly(u => u.combine('isAsync', [true, false]).combine('mismatched', [true, false]))
-  .beforeAllSubcases(t => {
-    t.selectMismatchedDeviceOrSkipTestCase(undefined);
-  })
-  .fn(async t => {
+  .beforeAllSubcases(t => t.usesMismatchedDevice())
+  .fn(t => {
     const { isAsync, mismatched } = t.params;
     const sourceDevice = mismatched ? t.mismatchedDevice : t.device;
 
@@ -131,7 +135,7 @@ g.test('pipeline_layout,device_mismatch')
       },
     };
 
-    t.doCreateComputePipelineTest(isAsync, !mismatched, descriptor);
+    vtu.doCreateComputePipelineTest(t, isAsync, !mismatched, descriptor);
   });
 
 g.test('limits,workgroup_storage_size')
@@ -150,7 +154,7 @@ Tests calling createComputePipeline(Async) validation for compute using <= devic
       .beginSubcases()
       .combine('countDeltaFromLimit', [0, 1])
   )
-  .fn(async t => {
+  .fn(t => {
     const { isAsync, type, _typeSize, countDeltaFromLimit } = t.params;
     const countAtLimit = Math.floor(t.device.limits.maxComputeWorkgroupStorageSize / _typeSize);
     const count = countAtLimit + countDeltaFromLimit;
@@ -169,7 +173,7 @@ Tests calling createComputePipeline(Async) validation for compute using <= devic
         entryPoint: 'main',
       },
     };
-    t.doCreateComputePipelineTest(isAsync, count <= countAtLimit, descriptor);
+    vtu.doCreateComputePipelineTest(t, isAsync, count <= countAtLimit, descriptor);
   });
 
 g.test('limits,invocations_per_workgroup')
@@ -191,7 +195,7 @@ Tests calling createComputePipeline(Async) validation for compute using <= devic
         [1, 8, 33],
       ])
   )
-  .fn(async t => {
+  .fn(t => {
     const { isAsync, size } = t.params;
 
     const descriptor = {
@@ -207,7 +211,8 @@ Tests calling createComputePipeline(Async) validation for compute using <= devic
       },
     };
 
-    t.doCreateComputePipelineTest(
+    vtu.doCreateComputePipelineTest(
+      t,
       isAsync,
       size[0] * size[1] * size[2] <= t.device.limits.maxComputeInvocationsPerWorkgroup,
       descriptor
@@ -233,9 +238,9 @@ Tests calling createComputePipeline(Async) validation for compute workgroup_size
         [1, 1, 63],
         [1, 1, 64],
         [1, 1, 65],
-      ])
+      ] as const)
   )
-  .fn(async t => {
+  .fn(t => {
     const { isAsync, size } = t.params;
 
     const descriptor = {
@@ -251,14 +256,15 @@ Tests calling createComputePipeline(Async) validation for compute workgroup_size
       },
     };
 
-    size[1] = size[1] ?? 1;
-    size[2] = size[2] ?? 1;
+    const workgroupX = size[0];
+    const workgroupY = size[1] ?? 1;
+    const workgroupZ = size[2] ?? 1;
 
     const _success =
-      size[0] <= t.device.limits.maxComputeWorkgroupSizeX &&
-      size[1] <= t.device.limits.maxComputeWorkgroupSizeY &&
-      size[2] <= t.device.limits.maxComputeWorkgroupSizeZ;
-    t.doCreateComputePipelineTest(isAsync, _success, descriptor);
+      workgroupX <= t.device.limits.maxComputeWorkgroupSizeX &&
+      workgroupY <= t.device.limits.maxComputeWorkgroupSizeY &&
+      workgroupZ <= t.device.limits.maxComputeWorkgroupSizeZ;
+    vtu.doCreateComputePipelineTest(t, isAsync, _success, descriptor);
   });
 
 g.test('overrides,identifier')
@@ -274,6 +280,7 @@ Tests calling createComputePipeline(Async) validation for overridable constants 
         { constants: {}, _success: true },
         { constants: { c0: 0 }, _success: true },
         { constants: { c0: 0, c1: 1 }, _success: true },
+        { constants: { 'c0\0': 0 }, _success: false },
         { constants: { c9: 0 }, _success: false },
         { constants: { 1: 0 }, _success: true },
         { constants: { c3: 0 }, _success: false }, // pipeline constant id is specified for c3
@@ -281,9 +288,11 @@ Tests calling createComputePipeline(Async) validation for overridable constants 
         { constants: { 1000: 0 }, _success: true },
         { constants: { 9999: 0 }, _success: false },
         { constants: { 1000: 0, c2: 0 }, _success: false },
+        { constants: { 数: 0 }, _success: true },
+        { constants: { séquençage: 0 }, _success: false }, // test unicode is not normalized
       ] as { constants: Record<string, GPUPipelineConstantValue>; _success: boolean }[])
   )
-  .fn(async t => {
+  .fn(t => {
     const { isAsync, constants, _success } = t.params;
 
     const descriptor = {
@@ -293,14 +302,16 @@ Tests calling createComputePipeline(Async) validation for overridable constants 
           code: `
             override c0: bool = true;      // type: bool
             override c1: u32 = 0u;          // default override
+            override 数: u32 = 0u;          // non-ASCII
+            override séquençage: u32 = 0u;  // normalizable unicode (WGSL does not normalize)
             @id(1000) override c2: u32 = 10u;  // default
             @id(1) override c3: u32 = 11u;     // default
             @compute @workgroup_size(1) fn main () {
               // make sure the overridable constants are not optimized out
               _ = u32(c0);
               _ = u32(c1);
-              _ = u32(c2);
-              _ = u32(c3);
+              _ = u32(c2 + séquençage);
+              _ = u32(c3 + 数);
             }`,
         }),
         entryPoint: 'main',
@@ -308,7 +319,7 @@ Tests calling createComputePipeline(Async) validation for overridable constants 
       },
     };
 
-    t.doCreateComputePipelineTest(isAsync, _success, descriptor);
+    vtu.doCreateComputePipelineTest(t, isAsync, _success, descriptor);
   });
 
 g.test('overrides,uninitialized')
@@ -327,7 +338,7 @@ Tests calling createComputePipeline(Async) validation for uninitialized overrida
         { constants: { c0: 0, c2: 0, c5: 0, c8: 0, c1: 0 }, _success: true },
       ] as { constants: Record<string, GPUPipelineConstantValue>; _success: boolean }[])
   )
-  .fn(async t => {
+  .fn(t => {
     const { isAsync, constants, _success } = t.params;
 
     const descriptor = {
@@ -366,7 +377,7 @@ Tests calling createComputePipeline(Async) validation for uninitialized overrida
       },
     };
 
-    t.doCreateComputePipelineTest(isAsync, _success, descriptor);
+    vtu.doCreateComputePipelineTest(t, isAsync, _success, descriptor);
   });
 
 g.test('overrides,value,type_error')
@@ -385,7 +396,7 @@ Tests calling createComputePipeline(Async) validation for constant values like i
         { constants: { cf: Number.NEGATIVE_INFINITY }, _success: false },
       ] as const)
   )
-  .fn(async t => {
+  .fn(t => {
     const { isAsync, constants, _success } = t.params;
 
     const descriptor = {
@@ -403,7 +414,7 @@ Tests calling createComputePipeline(Async) validation for constant values like i
       },
     };
 
-    t.doCreateComputePipelineTest(isAsync, _success, descriptor, 'TypeError');
+    vtu.doCreateComputePipelineTest(t, isAsync, _success, descriptor, 'TypeError');
   });
 
 g.test('overrides,value,validation_error')
@@ -411,7 +422,7 @@ g.test('overrides,value,validation_error')
     `
 Tests calling createComputePipeline(Async) validation for unrepresentable constant values in compute stage.
 
-TODO(#2060): test with last_f64_castable.
+TODO(#2060): test with last_castable_pipeline_override.
 `
   )
   .params(u =>
@@ -427,17 +438,22 @@ TODO(#2060): test with last_f64_castable.
         { constants: { ci: kValue.i32.positive.max }, _success: true },
         { constants: { ci: kValue.i32.positive.max + 1 }, _success: false },
         { constants: { cf: kValue.f32.negative.min }, _success: true },
-        { constants: { cf: kValue.f32.negative.first_f64_not_castable }, _success: false },
+        {
+          constants: { cf: kValue.f32.negative.first_non_castable_pipeline_override },
+          _success: false,
+        },
         { constants: { cf: kValue.f32.positive.max }, _success: true },
-        { constants: { cf: kValue.f32.positive.first_f64_not_castable }, _success: false },
+        {
+          constants: { cf: kValue.f32.positive.first_non_castable_pipeline_override },
+          _success: false,
+        },
         // Conversion to boolean can't fail
         { constants: { cb: Number.MAX_VALUE }, _success: true },
         { constants: { cb: kValue.i32.negative.min - 1 }, _success: true },
       ] as { constants: Record<string, GPUPipelineConstantValue>; _success: boolean }[])
   )
-  .fn(async t => {
+  .fn(t => {
     const { isAsync, constants, _success } = t.params;
-
     const descriptor = {
       layout: 'auto' as const,
       compute: {
@@ -459,7 +475,41 @@ TODO(#2060): test with last_f64_castable.
       },
     };
 
-    t.doCreateComputePipelineTest(isAsync, _success, descriptor);
+    vtu.doCreateComputePipelineTest(t, isAsync, _success, descriptor);
+  });
+
+g.test('overrides,entry_point,validation_error')
+  .desc(
+    `
+Tests that pipeline constant (override) errors only trigger on entry point usage.
+`
+  )
+  .params(u =>
+    u //
+      .combine('isAsync', [true, false])
+      .combine('pipeEntryPoint', ['main_success', 'main_pipe_error'])
+  )
+  .fn(t => {
+    const { isAsync, pipeEntryPoint } = t.params;
+    const descriptor = {
+      layout: 'auto' as const,
+      compute: {
+        module: t.device.createShaderModule({
+          code: `
+          override cu: u32 = 0u;
+          override cx: u32 = 1u/cu;
+          @compute @workgroup_size(1) fn main_success () {
+            _ = cu;
+          }
+          @compute @workgroup_size(1) fn main_pipe_error () {
+            _ = cx;
+          }`,
+        }),
+        entryPoint: pipeEntryPoint,
+      },
+    };
+
+    vtu.doCreateComputePipelineTest(t, isAsync, pipeEntryPoint === 'main_success', descriptor);
   });
 
 g.test('overrides,value,validation_error,f16')
@@ -468,7 +518,7 @@ g.test('overrides,value,validation_error,f16')
 Tests calling createComputePipeline(Async) validation for unrepresentable f16 constant values in compute stage.
 
 TODO(#2060): Tighten the cases around the valid/invalid boundary once we have WGSL spec
-clarity on whether values like f16.positive.last_f64_castable would be valid. See issue.
+clarity on whether values like f16.positive.last_castable_pipeline_override would be valid. See issue.
 `
   )
   .params(u =>
@@ -476,19 +526,29 @@ clarity on whether values like f16.positive.last_f64_castable would be valid. Se
       .combine('isAsync', [true, false])
       .combineWithParams([
         { constants: { cf16: kValue.f16.negative.min }, _success: true },
-        { constants: { cf16: kValue.f16.negative.first_f64_not_castable }, _success: false },
+        {
+          constants: { cf16: kValue.f16.negative.first_non_castable_pipeline_override },
+          _success: false,
+        },
         { constants: { cf16: kValue.f16.positive.max }, _success: true },
-        { constants: { cf16: kValue.f16.positive.first_f64_not_castable }, _success: false },
+        {
+          constants: { cf16: kValue.f16.positive.first_non_castable_pipeline_override },
+          _success: false,
+        },
         { constants: { cf16: kValue.f32.negative.min }, _success: false },
         { constants: { cf16: kValue.f32.positive.max }, _success: false },
-        { constants: { cf16: kValue.f32.negative.first_f64_not_castable }, _success: false },
-        { constants: { cf16: kValue.f32.positive.first_f64_not_castable }, _success: false },
+        {
+          constants: { cf16: kValue.f32.negative.first_non_castable_pipeline_override },
+          _success: false,
+        },
+        {
+          constants: { cf16: kValue.f32.positive.first_non_castable_pipeline_override },
+          _success: false,
+        },
       ] as const)
   )
-  .beforeAllSubcases(t => {
-    t.selectDeviceOrSkipTestCase({ requiredFeatures: ['shader-f16'] });
-  })
-  .fn(async t => {
+  .fn(t => {
+    t.skipIfDeviceDoesNotHaveFeature('shader-f16');
     const { isAsync, constants, _success } = t.params;
 
     const descriptor = {
@@ -508,7 +568,7 @@ clarity on whether values like f16.positive.last_f64_castable would be valid. Se
       },
     };
 
-    t.doCreateComputePipelineTest(isAsync, _success, descriptor);
+    vtu.doCreateComputePipelineTest(t, isAsync, _success, descriptor);
   });
 
 const kOverridesWorkgroupSizeShaders = {
@@ -548,7 +608,7 @@ Tests calling createComputePipeline(Async) validation for overridable constants 
         { constants: { x: 16, y: 1, z: 1 }, _success: true },
       ] as { constants: Record<string, GPUPipelineConstantValue>; _success: boolean }[])
   )
-  .fn(async t => {
+  .fn(t => {
     const { isAsync, type, constants, _success } = t.params;
 
     const descriptor = {
@@ -562,7 +622,7 @@ Tests calling createComputePipeline(Async) validation for overridable constants 
       },
     };
 
-    t.doCreateComputePipelineTest(isAsync, _success, descriptor);
+    vtu.doCreateComputePipelineTest(t, isAsync, _success, descriptor);
   });
 
 g.test('overrides,workgroup_size,limits')
@@ -576,7 +636,7 @@ Tests calling createComputePipeline(Async) validation for overridable constants 
       .combine('isAsync', [true, false])
       .combine('type', ['u32', 'i32'] as const)
   )
-  .fn(async t => {
+  .fn(t => {
     const { isAsync, type } = t.params;
 
     const limits = t.device.limits;
@@ -597,7 +657,7 @@ Tests calling createComputePipeline(Async) validation for overridable constants 
         },
       };
 
-      t.doCreateComputePipelineTest(isAsync, _success, descriptor);
+      vtu.doCreateComputePipelineTest(t, isAsync, _success, descriptor);
     };
 
     testFn(limits.maxComputeWorkgroupSizeX, 1, 1, true);
@@ -627,7 +687,7 @@ Tests calling createComputePipeline(Async) validation for overridable constants 
     u //
       .combine('isAsync', [true, false])
   )
-  .fn(async t => {
+  .fn(t => {
     const { isAsync } = t.params;
 
     const limits = t.device.limits;
@@ -660,10 +720,55 @@ Tests calling createComputePipeline(Async) validation for overridable constants 
         },
       };
 
-      t.doCreateComputePipelineTest(isAsync, _success, descriptor);
+      vtu.doCreateComputePipelineTest(t, isAsync, _success, descriptor);
     };
 
     testFn(1, 1, true);
     testFn(maxVec4Count + 1, 0, false);
     testFn(0, maxMat4Count + 1, false);
+  });
+
+g.test('resource_compatibility')
+  .desc(
+    'Tests validation of resource (bind group) compatibility between pipeline layout and WGSL shader'
+  )
+  .params(u =>
+    u //
+      .combine('apiResource', keysOf(kAPIResources))
+      .beginSubcases()
+      .combine('isAsync', [true, false] as const)
+      .combine('wgslResource', keysOf(kAPIResources))
+  )
+  .fn(t => {
+    const apiResource = kAPIResources[t.params.apiResource];
+    const wgslResource = kAPIResources[t.params.wgslResource];
+    t.skipIf(
+      wgslResource.storageTexture !== undefined &&
+        wgslResource.storageTexture.access !== 'write-only' &&
+        !t.hasLanguageFeature('readonly_and_readwrite_storage_textures'),
+      'Storage textures require language feature'
+    );
+    t.skipIfTextureViewDimensionNotSupported(wgslResource.texture?.viewDimension);
+
+    const layout = t.device.createPipelineLayout({
+      bindGroupLayouts: [
+        getAPIBindGroupLayoutForResource(t.device, GPUShaderStage.COMPUTE, apiResource),
+      ],
+    });
+
+    const descriptor = {
+      layout,
+      compute: {
+        module: t.device.createShaderModule({
+          code: getWGSLShaderForResource('compute', wgslResource),
+        }),
+        entryPoint: 'main',
+      },
+    };
+    vtu.doCreateComputePipelineTest(
+      t,
+      t.params.isAsync,
+      doResourcesMatch(apiResource, wgslResource),
+      descriptor
+    );
   });

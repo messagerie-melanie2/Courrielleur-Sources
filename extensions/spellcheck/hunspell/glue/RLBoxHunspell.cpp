@@ -4,9 +4,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/Assertions.h"
-#ifdef MOZ_WASM_SANDBOXING_HUNSPELL
-#  include "mozilla/ipc/LibrarySandboxPreload.h"
-#endif
 #include "RLBoxHunspell.h"
 #include "mozHunspellRLBoxGlue.h"
 #include "mozHunspellRLBoxHost.h"
@@ -60,8 +57,8 @@ RLBoxHunspell* RLBoxHunspell::Create(const nsCString& affpath,
   const w2c_mem_capacity capacity = get_valid_wasm2c_memory_capacity(
       expectedMaxMemory, true /* wasm's 32-bit memory */);
 
-  bool success =
-      sandbox->create_sandbox(/* shouldAbortOnFailure = */ false, &capacity);
+  bool success = sandbox->create_sandbox(/* shouldAbortOnFailure = */ false,
+                                         &capacity, "rlbox_wasm2c_hunspell");
 #elif defined(MOZ_WASM_SANDBOXING_HUNSPELL)
   bool success = sandbox->create_sandbox(/* shouldAbortOnFailure = */ false);
 #else

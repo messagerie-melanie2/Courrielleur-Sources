@@ -1,4 +1,4 @@
-53553
+53587
 0/nm
 0th/pt
 1/n1
@@ -13605,7 +13605,7 @@ abbé/SM
 abdicate/GNDSX
 abdication/M
 abdomen/SM
-abdominal
+abdominal/Y
 abduct/DSG
 abductee/MS
 abduction/SM
@@ -13630,7 +13630,7 @@ abide/GS
 abiding/Y
 ability/IEMS
 abject/YP
-abjection/M
+abjection/MS
 abjectness/M
 abjuration/SM
 abjuratory
@@ -13641,6 +13641,7 @@ ablation/M
 ablative/MS
 ablaze
 able/UT
+ableism
 abler
 abloom
 ablution/SM
@@ -13650,7 +13651,8 @@ abnormal/Y
 abnormality/SM
 aboard
 abode/MS
-abolish/GDS
+abolish/ZGLDRS
+abolishment/SM
 abolition/M
 abolitionism/M
 abolitionist/SM
@@ -13796,7 +13798,7 @@ accompaniment/MS
 accompanist/SM
 accompany/DSG
 accomplice/SM
-accomplish/DSLG
+accomplish/DRSLZG
 accomplished/U
 accomplishment/MS
 accord/GMDS
@@ -13965,6 +13967,8 @@ adaptability/M
 adaptation/MS
 adapter/M
 adaption/S
+adaptive/PY
+adaptivity
 add-on/S
 add/SDRBZG
 addend/MS
@@ -14282,6 +14286,7 @@ aggravation/M
 aggregate/MGNDSX
 aggregation/M
 aggregator/SM
+aggress/DSGV
 aggression/M
 aggressive/PY
 aggressiveness/M
@@ -17053,6 +17058,8 @@ biologic
 biological/Y
 biologist/MS
 biology/SM
+bioluminescence/S
+bioluminescent
 biomarker/MS
 biomass/MS
 biomechanics
@@ -17601,6 +17608,7 @@ booklet/MS
 bookmaker/SM
 bookmaking/M
 bookmark/SMDG
+bookmarklet/S
 bookmobile/SM
 bookplate/MS
 bookseller/MS
@@ -17892,6 +17900,7 @@ breastplate/SM
 breaststroke/SM
 breastwork/MS
 breath/MDRSZGB
+breathability
 breathalyze/ZGDRS
 breathe
 breather/M
@@ -18740,7 +18749,7 @@ capsulize/DSG
 capt
 captain/SMDG
 captaincy/SM
-captcha
+captcha/S
 caption/SMDG
 captious/YP
 captiousness/M
@@ -19015,6 +19024,7 @@ categorical/Y
 categorization/MS
 categorize/GDS
 category/SM
+catenary/S
 cater/ZGJDRS
 catercorner
 caterer/M
@@ -19649,6 +19659,7 @@ choler/M
 cholera/M
 choleric
 cholesterol/M
+cholla/MS
 chomp/ZGMDRS
 choose/ZGRS
 chooser/M
@@ -19677,6 +19688,7 @@ choreographically
 choreographs
 choreography/M
 chorister/SM
+chorizo/MS
 choroid/MS
 chortle/MZGDRS
 chortler/M
@@ -21339,6 +21351,7 @@ coproduct/MS
 copse/SM
 copter/SM
 copula/SM
+copular
 copulate/GNVDS
 copulation/M
 copulative/SM
@@ -21945,6 +21958,7 @@ crocodile/SM
 crocus/MS
 croft/SRZG
 croissant/MS
+cromulent
 crone/SM
 crony/SM
 cronyism/M
@@ -22560,6 +22574,7 @@ deb/SM
 debacle/MS
 debarkation/M
 debarment/M
+debatable/U
 debate/BMZR
 debater/M
 debating/M
@@ -22592,6 +22607,7 @@ decal/MS
 decampment/M
 decapitate/XGNDS
 decapitator/MS
+decarboxylation
 decathlete/S
 decathlon/SM
 decay/GD
@@ -22879,6 +22895,7 @@ demoniac
 demoniacal/Y
 demonic
 demonically
+demonization/S
 demonize/GDS
 demonology/SM
 demonstrability
@@ -23025,6 +23042,7 @@ derv
 dervish/MS
 desalinate/GNDS
 desalination/M
+desalinator/SM
 desalinization/M
 desalinize/GDS
 descant/M
@@ -23943,7 +23961,7 @@ doodlebug/SM
 doodler/M
 doohickey/SM
 doolally
-doom/MDGS
+doom/MDRZGS
 doomsayer/MS
 doomsday/M
 doomster/S
@@ -28983,6 +29001,7 @@ grievous/PY
 grievousness/M
 griffin/SM
 griffon/SM
+grift/ZGSDR
 grill/SGMDJ
 grille/MS
 grim/DYPG
@@ -29293,6 +29312,7 @@ gyve/MGDS
 h'm
 h/NRSXZGVJ
 ha/SH
+habanero/MS
 habeas
 haberdasher/SM
 haberdashery/SM
@@ -29369,7 +29389,7 @@ hairsplitter/SM
 hairsplitting/M
 hairspray/S
 hairspring/MS
-hairstyle/MS
+hairstyle/MGS
 hairstylist/SM
 hairy/TRP
 haj
@@ -30853,7 +30873,7 @@ hypothermia/M
 hypotheses
 hypothesis/M
 hypothesize/DSG
-hypothetical/Y
+hypothetical/YS
 hypothyroid/M
 hypothyroidism/M
 hyssop/M
@@ -30914,6 +30934,7 @@ idealistic
 idealistically
 idealization/MS
 idealize/DSG
+ideation/S
 idem
 idempotent
 identical/Y
@@ -32980,8 +33001,10 @@ kitty/SM
 kiwi/MS
 kiwifruit/MS
 kl
+klansmen
 klaxon/S
-kleptocracy
+kleptocracy/S
+kleptocrat/S
 kleptomania/M
 kleptomaniac/SM
 kludge/GDS
@@ -33155,6 +33178,7 @@ lager/M
 laggard/MYS
 lagged
 lagging/M
+laggy
 lagniappe/SM
 lagoon/SM
 laid/IA
@@ -36917,6 +36941,9 @@ neurologist/SM
 neurology/M
 neuron/MS
 neuronal
+neuropathic
+neuropathically
+neuropathy/S
 neurophysiology's
 neuroscience/MS
 neuroscientist/MS
@@ -38281,6 +38308,7 @@ ought
 oughtn't
 ounce/MS
 our/S
+ourself
 ourselves
 oust/ZGDRS
 ouster/M
@@ -38621,6 +38649,7 @@ overrule/GDS
 overrun/SM
 overrunning
 oversampling
+oversaturate/NDS
 oversaw
 oversea/S
 oversee/RSZ
@@ -40351,7 +40380,7 @@ plateau/SMDG
 plateful/SM
 platelet/SM
 platen/M
-platform/SGMD
+platform/SZGMDR
 plating/M
 platinum/M
 platitude/SM
@@ -43057,6 +43086,7 @@ renege/DRSZG
 reneger/M
 renew/DSBG
 renewable/S
+renewably
 renewal/MS
 rennet/M
 rennin/M
@@ -43703,6 +43733,8 @@ romaine/MS
 roman/M
 romance/MZGDRS
 romancer/M
+romanization/S
+romanize/GDS
 romantic/MS
 romantically
 romanticism/M
@@ -46769,6 +46801,7 @@ specialist/MS
 specialization/MS
 specialize/GDS
 specialty/SM
+speciation
 specie/SM
 species/M
 specif
@@ -50941,6 +50974,7 @@ unctuous/YP
 unctuousness/M
 uncut
 undaunted/Y
+undebatably
 undecided/SM
 undemonstrative/Y
 undeniably

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
 import androidx.compose.material.Text
@@ -22,47 +23,53 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
 import org.mozilla.fenix.R
-import org.mozilla.fenix.compose.annotation.LightDarkPreview
 import org.mozilla.fenix.theme.FirefoxTheme
 
 /**
- * The header UI used for micro-survey.
+ * The header UI used for microsurvey.
  *
  * @param title The text that will be visible on the header.
  * @param onCloseButtonClick Invoked when the close button is clicked.
  */
 @Composable
-fun MicroSurveyHeader(
+fun MicrosurveyHeader(
     title: String,
     onCloseButtonClick: () -> Unit,
 ) {
     Row(
-        horizontalArrangement = Arrangement.Center,
+        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
     ) {
-        Image(
-            painter = painterResource(R.drawable.ic_firefox),
-            contentDescription = null, // todo update to string res once a11y strings are available.
-            modifier = Modifier.size(24.dp),
-        )
-
-        Spacer(modifier = Modifier.width(8.dp))
-
-        Text(
-            text = title,
-            style = FirefoxTheme.typography.headline7,
-            color = FirefoxTheme.colors.textPrimary,
-            modifier = Modifier.weight(1f),
-        )
-
+        Row(
+            modifier = Modifier
+                .wrapContentWidth()
+                .weight(1f, fill = false)
+                .padding(start = 32.dp),
+        ) {
+            Image(
+                painter = painterResource(R.drawable.ic_firefox),
+                contentDescription = stringResource(id = R.string.microsurvey_app_icon_content_description),
+                modifier = Modifier.size(24.dp),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = title,
+                style = FirefoxTheme.typography.headline6,
+                color = FirefoxTheme.colors.textPrimary,
+            )
+        }
         IconButton(onClick = onCloseButtonClick) {
             Icon(
                 painter = painterResource(id = R.drawable.ic_close),
-                contentDescription = null, // todo update to string res once a11y strings are available.
+                contentDescription = stringResource(id = R.string.microsurvey_close_button_content_description),
                 tint = FirefoxTheme.colors.iconPrimary,
                 modifier = Modifier.size(20.dp),
             )
@@ -71,16 +78,18 @@ fun MicroSurveyHeader(
 }
 
 @PreviewScreenSizes
-@LightDarkPreview
+@PreviewLightDark
+@Preview(
+    name = "Large Font",
+    fontScale = 2.0f,
+)
 @Composable
-private fun MicroSurveyHeaderPreview() {
+private fun MicrosurveyHeaderPreview() {
     FirefoxTheme {
         Box(
-            modifier = Modifier
-                .background(color = FirefoxTheme.colors.layer1)
-                .padding(16.dp),
+            modifier = Modifier.background(color = FirefoxTheme.colors.layer1),
         ) {
-            MicroSurveyHeader(stringResource(R.string.micro_survey_survey_header_2)) {}
+            MicrosurveyHeader(stringResource(R.string.micro_survey_survey_header_2)) {}
         }
     }
 }

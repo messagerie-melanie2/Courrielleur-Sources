@@ -20,8 +20,8 @@
 load("../../../resources/alertTestUtils.js");
 load("../../../resources/passwordStorage.js");
 
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 var server;
@@ -79,7 +79,7 @@ add_setup(async function () {
 
 add_task(async function getMail1() {
   // Now get the mail.
-  let urlListener = new PromiseTestUtils.PromiseUrlListener();
+  const urlListener = new PromiseTestUtils.PromiseUrlListener();
   MailServices.pop3.GetNewMail(
     gDummyMsgWindow,
     urlListener,
@@ -100,7 +100,7 @@ add_task(async function getMail1() {
   Assert.equal(attempt, 2);
 
   // Check that we haven't forgotten the login even though we've retried and cancelled.
-  let logins = Services.logins.findLogins(
+  const logins = Services.logins.findLogins(
     "mailbox://localhost",
     null,
     "mailbox://localhost"
@@ -115,7 +115,7 @@ add_task(async function getMail1() {
 
 add_task(async function getMail2() {
   // Now get the mail.
-  let urlListener = new PromiseTestUtils.PromiseUrlListener();
+  const urlListener = new PromiseTestUtils.PromiseUrlListener();
   MailServices.pop3.GetNewMail(
     gDummyMsgWindow,
     urlListener,
@@ -129,7 +129,7 @@ add_task(async function getMail2() {
   Assert.equal(localAccountUtils.inboxFolder.getTotalMessages(false), 1);
 
   // Now check the new one has been saved.
-  let logins = Services.logins.findLogins(
+  const logins = Services.logins.findLogins(
     "mailbox://localhost",
     null,
     "mailbox://localhost"
@@ -146,7 +146,7 @@ add_task(function endTest() {
   server = null;
   daemon = null;
   incomingServer = null;
-  var thread = gThreadManager.currentThread;
+  var thread = Services.tm.currentThread;
   while (thread.hasPendingEvents()) {
     thread.processNextEvent(true);
   }
@@ -161,17 +161,7 @@ function alertPS(parent, aDialogText, aText) {
   info("Alert Title: " + aDialogText + "\nAlert Text: " + aText);
 }
 
-function confirmExPS(
-  parent,
-  aDialogTitle,
-  aText,
-  aButtonFlags,
-  aButton0Title,
-  aButton1Title,
-  aButton2Title,
-  aCheckMsg,
-  aCheckState
-) {
+function confirmExPS() {
   switch (++attempt) {
     // First attempt, retry.
     case 1:

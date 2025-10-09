@@ -2,23 +2,21 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* global gMessageHeader, gShowCondensedEmailAddresses, openUILink */
+/* global gMessageHeader, gMessage */
 
 {
-  const { MailServices } = ChromeUtils.import(
-    "resource:///modules/MailServices.jsm"
+  const { MailServices } = ChromeUtils.importESModule(
+    "resource:///modules/MailServices.sys.mjs"
   );
 
   const lazy = {};
-  ChromeUtils.defineModuleGetter(
-    lazy,
-    "DisplayNameUtils",
-    "resource:///modules/DisplayNameUtils.jsm"
-  );
-  ChromeUtils.defineModuleGetter(
-    lazy,
-    "TagUtils",
-    "resource:///modules/TagUtils.jsm"
+  ChromeUtils.defineESModuleGetters(lazy, {
+    DisplayNameUtils: "resource:///modules/DisplayNameUtils.sys.mjs",
+    MailUtils: "resource:///modules/MailUtils.sys.mjs",
+    TagUtils: "resource:///modules/TagUtils.sys.mjs",
+  });
+  const { openUILink } = ChromeUtils.importESModule(
+    "resource:///modules/LinkHelper.sys.mjs"
   );
 
   class MultiRecipientRow extends HTMLDivElement {
@@ -98,7 +96,7 @@
         ],
 
         addObservers() {
-          for (let topic of this._notifications) {
+          for (const topic of this._notifications) {
             Services.obs.addObserver(this, topic);
           }
           this._added = true;
@@ -109,7 +107,7 @@
           if (!this._added) {
             return;
           }
-          for (let topic of this._notifications) {
+          for (const topic of this._notifications) {
             Services.obs.removeObserver(this, topic);
           }
           this._added = false;
@@ -120,7 +118,7 @@
           this.removeObservers();
         },
 
-        observe: (subject, topic, data) => {
+        observe: (subject, topic) => {
           switch (topic) {
             case "addrbook-directory-created":
             case "addrbook-directory-deleted":
@@ -158,7 +156,7 @@
         return;
       }
 
-      for (let recipient of [...this.recipientsList.childNodes].filter(
+      for (const recipient of [...this.recipientsList.childNodes].filter(
         r => r.cardDetails?.book?.dirPrefId == subject.dirPrefId
       )) {
         recipient.updateRecipient();
@@ -182,8 +180,8 @@
         return;
       }
 
-      let addresses = subject.emailAddresses;
-      for (let recipient of [...this.recipientsList.childNodes].filter(
+      const addresses = subject.emailAddresses;
+      for (const recipient of [...this.recipientsList.childNodes].filter(
         r => r.emailAddress && addresses.includes(r.emailAddress)
       )) {
         recipient.updateRecipient();
@@ -207,7 +205,7 @@
       this.#maxLinesBeforeMore = Services.prefs.getIntPref(
         "mailnews.headers.show_n_lines_before_more"
       );
-      let showAllHeaders =
+      const showAllHeaders =
         this.#maxLinesBeforeMore < 1 ||
         Services.prefs.getIntPref("mail.show_headers") ==
           Ci.nsMimeHeaderDisplayTypes.AllHeaders ||
@@ -217,7 +215,7 @@
 
     buildRecipients(showAllHeaders) {
       // Determine focus before clearing the children.
-      let focusIndex = [...this.recipientsList.childNodes].findIndex(node =>
+      const focusIndex = [...this.recipientsList.childNodes].findIndex(node =>
         node.contains(document.activeElement)
       );
       this.recipientsList.replaceChildren();
@@ -229,7 +227,7 @@
       // is not always accurate when viewing the first email. We should defer
       // the generation of the multi recipient rows only after all the other
       // headers have been populated.
-      let availableWidth = !showAllHeaders
+      const availableWidth = !showAllHeaders
         ? this.recipientsList.getBoundingClientRect().width
         : 0;
 
@@ -239,7 +237,7 @@
       // Track how many rows are being populated by recipients.
       let rows = 1;
       for (let [count, recipient] of this.#recipients.entries()) {
-        let li = document.createElement("li", { is: "header-recipient" });
+        const li = document.createElement("li", { is: "header-recipient" });
         // Set an id before connected callback is called on the element.
         li.id = `${this.dataset.headerName}Recipient${count}`;
         // Append the element to the DOM to trigger the connectedCallback.
@@ -279,7 +277,7 @@
 
         // Append the "more" button inside a list item to be properly handled
         // as an inline element of the recipients list UI.
-        let buttonLi = document.createElement("li");
+        const buttonLi = document.createElement("li");
         buttonLi.appendChild(this.moreButton);
         this.recipientsList.appendChild(buttonLi);
         currentRowWidth += buttonLi.getBoundingClientRect().width;
@@ -287,13 +285,13 @@
         // Reverse loop through the added list item and remove them until
         // they all fit in the current row alongside the "more" button.
         for (; count && currentRowWidth > availableWidth; count--) {
-          let toRemove = this.recipientsList.childNodes[count];
+          const toRemove = this.recipientsList.childNodes[count];
           currentRowWidth -= toRemove.getBoundingClientRect().width;
           toRemove.remove();
         }
 
         // Skip the "more" button, which is present if we reached this stage.
-        let lastRecipientIndex = this.recipientsList.childNodes.length - 2;
+        const lastRecipientIndex = this.recipientsList.childNodes.length - 2;
         // Add a unique class to the last visible recipient to remove the
         // comma separator added via pseudo element.
         this.recipientsList.childNodes[lastRecipientIndex].classList.add(
@@ -305,7 +303,7 @@
 
       if (focusIndex >= 0) {
         // If we had focus before, restore focus to the same index, or the last node.
-        let focusNode =
+        const focusNode =
           this.recipientsList.childNodes[
             Math.min(focusIndex, this.recipientsList.childNodes.length - 1)
           ];
@@ -401,15 +399,17 @@
       this.abIndicator.tabIndex = -1;
       this.abIndicator.addEventListener("click", event => {
         event.stopPropagation();
+        if (event.detail == 2) {
+          return; // Ignore double clicks.
+        }
         if (this.cardDetails.card) {
           gMessageHeader.editContact(this);
           return;
         }
-
         this.addToAddressBook();
       });
 
-      let img = document.createElement("img");
+      const img = document.createElement("img");
       img.id = `${this.id}AbIcon`;
       img.src = "chrome://messenger/skin/icons/new/address-book-indicator.svg";
       document.l10n.setAttributes(
@@ -472,9 +472,8 @@
       }
 
       this.abIndicator.hidden = false;
-      let card = MailServices.ab.cardForEmailAddress(
-        this.#recipient.emailAddress
-      );
+      const card = MailServices.ab.cardForEmailAddress(this.emailAddress);
+
       this.cardDetails = {
         card,
         book: card
@@ -482,26 +481,29 @@
           : null,
       };
 
-      let displayName = lazy.DisplayNameUtils.formatDisplayName(
+      const displayName = lazy.DisplayNameUtils.formatDisplayName(
         this.emailAddress,
         this.displayName,
         this.dataset.headerName,
         this.cardDetails.card
       );
 
+      const showCondensedAddress = Services.prefs.getBoolPref(
+        "mail.showCondensedAddresses"
+      );
       // Show only the display name if we have a valid card and the user wants
       // to show a condensed header (without the full email address) for saved
       // contacts.
-      if (gShowCondensedEmailAddresses && displayName) {
+      if (showCondensedAddress && displayName) {
         this.email.textContent = displayName;
-        this.email.setAttribute("title", this.#recipient.fullAddress);
+        this.email.setAttribute("title", this.fullAddress);
       } else {
-        this.email.textContent = this.#recipient.fullAddress;
+        this.email.textContent = this.fullAddress;
         this.email.removeAttribute("title");
       }
 
       if (this.dataset.headerName == "from") {
-        if (gShowCondensedEmailAddresses) {
+        if (showCondensedAddress) {
           this.nameLine.textContent =
             displayName || this.displayName || this.fullAddress;
         } else {
@@ -510,7 +512,7 @@
         this.addressLine.textContent = this.emailAddress;
       }
 
-      let hasCard = this.cardDetails.card;
+      const hasCard = this.cardDetails.card;
       // Update the style of the indicator button.
       this.abIndicator.classList.toggle("in-address-book", hasCard);
       document.l10n.setAttributes(
@@ -540,10 +542,10 @@
       }
 
       // We have a card, so let's try to fetch the image.
-      let card = this.cardDetails.card;
-      let photoURL = card.photoURL;
+      const card = this.cardDetails.card;
+      const photoURL = card.photoURL;
       if (photoURL) {
-        let img = document.createElement("img");
+        const img = document.createElement("img");
         document.l10n.setAttributes(img, "message-header-recipient-avatar", {
           address: this.emailAddress,
         });
@@ -559,7 +561,7 @@
     }
 
     _createAvatarPlaceholder() {
-      let letter = document.createElement("span");
+      const letter = document.createElement("span");
       letter.textContent = Array.from(
         this.nameLine.textContent || this.displayName || this.fullAddress
       )[0]?.toUpperCase();
@@ -569,13 +571,13 @@
     }
 
     addToAddressBook() {
-      let card = Cc["@mozilla.org/addressbook/cardproperty;1"].createInstance(
+      const card = Cc["@mozilla.org/addressbook/cardproperty;1"].createInstance(
         Ci.nsIAbCard
       );
       card.displayName = this.#recipient.displayName;
       card.primaryEmail = this.#recipient.emailAddress;
 
-      let addressBook = MailServices.ab.getDirectory(
+      const addressBook = MailServices.ab.getDirectory(
         "jsaddrbook://abook.sqlite"
       );
       addressBook.addCard(card);
@@ -586,29 +588,33 @@
   });
 
   class SimpleHeaderRow extends HTMLDivElement {
-    constructor() {
-      super();
-
-      this.addEventListener("contextmenu", event => {
-        gMessageHeader.openCopyPopup(event, this);
-      });
-    }
-
     connectedCallback() {
       if (this.hasConnected) {
         return;
       }
       this.hasConnected = true;
+      this.addEventListener("contextmenu", this);
 
       this.setAttribute("is", "simple-header-row");
       this.heading = document.createElement("span");
       this.heading.id = `${this.dataset.headerName}Heading`;
       this.heading.classList.add("row-heading");
-      let sep = document.createElement("span");
+      const sep = document.createElement("span");
       sep.classList.add("screen-reader-only");
       sep.setAttribute("data-l10n-name", "field-separator");
       this.heading.appendChild(sep);
+      this.localizeHeading();
 
+      this.appendChild(this.heading);
+
+      this.classList.add("header-row");
+      this.tabIndex = 0;
+
+      this.value = document.createElement("span");
+      this.appendChild(this.value);
+    }
+
+    localizeHeading() {
       if (
         ["organization", "subject", "date", "user-agent"].includes(
           this.dataset.headerName
@@ -633,13 +639,12 @@
           }
         );
       }
-      this.appendChild(this.heading);
+    }
 
-      this.classList.add("header-row");
-      this.tabIndex = 0;
-
-      this.value = document.createElement("span");
-      this.appendChild(this.value);
+    handleEvent(event) {
+      if (event.type == "contextmenu") {
+        gMessageHeader.openCopyPopup(event, this);
+      }
     }
 
     /**
@@ -666,6 +671,43 @@
     }
   }
   customElements.define("simple-header-row", SimpleHeaderRow, {
+    extends: "div",
+  });
+
+  /**
+   * A row giving special functionality to the List-ID header.
+   */
+  class ListIdHeaderRow extends SimpleHeaderRow {
+    localizeHeading() {
+      document.l10n.setAttributes(this.heading, `message-header-list-id-field`);
+    }
+
+    connectedCallback() {
+      if (this.hasConnected) {
+        return;
+      }
+      super.connectedCallback();
+      this.hasConnected = true;
+
+      this.addEventListener("click", this);
+      this.addEventListener("keypress", this);
+    }
+
+    handleEvent(event) {
+      if (
+        event.type == "contextmenu" ||
+        event.type == "click" ||
+        (event.type == "keypress" && event.key == "Enter")
+      ) {
+        this.dispatchEvent(
+          new CustomEvent("openListId", {
+            detail: { screenX: event.screenX, screenY: event.screenY },
+          })
+        );
+      }
+    }
+  }
+  customElements.define("list-id-header-row", ListIdHeaderRow, {
     extends: "div",
   });
 
@@ -696,11 +738,143 @@
     extends: "div",
   });
 
+  /**
+   * Headers that can have one or many URLs, like for list management: RFC 2369.
+   */
+  class MultiURLHeaderRow extends HTMLDivElement {
+    /**
+     * The array of all the URLs that need to be shown in this row.
+     *
+     * @type {string[]}
+     */
+    #urls = [];
+
+    connectedCallback() {
+      if (this.hasConnected) {
+        return;
+      }
+      this.hasConnected = true;
+
+      this.setAttribute("is", "multi-url-header-row");
+      this.classList.add("multi-url-header-row");
+
+      this.heading = document.createElement("span");
+      this.heading.id = `${this.dataset.headerName}Heading`;
+      this.heading.classList.add("row-heading");
+      const sep = document.createElement("span");
+      sep.classList.add("screen-reader-only");
+      sep.dataset.l10nName = "field-separator";
+      this.heading.appendChild(sep);
+
+      if (
+        [
+          "list-help",
+          "list-unsubscribe",
+          "list-subscribe",
+          "list-post",
+          "list-owner",
+          "list-archive",
+          "archived-at",
+        ].includes(this.dataset.headerName)
+      ) {
+        // message-header-list-help-field
+        // message-header-list-unsubscribe-field
+        // message-header-list-subscribe-field
+        // message-header-list-post-field
+        // message-header-list-owner-field
+        // message-header-list-archive-field
+        // message-header-archived-at-field
+        document.l10n.setAttributes(
+          this.heading,
+          `message-header-${this.dataset.headerName}-field`
+        );
+      } else {
+        // If this a row used by a header we don't map to a localization.
+        // Use directly that header value as label.
+        document.l10n.setAttributes(
+          this.heading,
+          "message-header-custom-field",
+          {
+            fieldName: this.dataset.prettyHeaderName,
+          }
+        );
+      }
+
+      this.classList.add("header-row");
+      this.tabIndex = 0;
+
+      this.idsList = document.createElement("ol");
+      this.idsList.classList.add("url-list");
+      this.append(this.heading, this.idsList);
+    }
+
+    addURL(url) {
+      this.#urls.push(url);
+    }
+
+    buildView() {
+      this.idsList.replaceChildren(
+        ...this.#urls.map(urlText => {
+          const li = document.createElement("li");
+          li.classList.add("header-message-url");
+
+          // URLs are usually surrounded by <>.
+          const url = urlText
+            .replace(/\s*^<([^>]+)>\s*/, "$1")
+            .replace(/[<>\s]/g, "");
+          if (!/^(https?|mailto):/.test(url)) {
+            li.textContent = urlText;
+          } else {
+            const a = document.createElement("a");
+            a.href = encodeURI(url);
+            a.textContent = urlText;
+            a.title = url;
+            a.onclick = this.handleLinkEvent;
+            a.onkeydown = this.handleLinkEvent;
+            a.oncontextmenu = this.handleLinkEvent;
+            li.appendChild(a);
+          }
+          return li;
+        })
+      );
+    }
+
+    /**
+     * @param {Event} event - Event to handle.
+     */
+    handleLinkEvent(event) {
+      if (
+        (event.type == "click" && event.button != 2) ||
+        (event.type == "keydown" && event.key == "Enter")
+      ) {
+        event.preventDefault();
+        if (event.target.href.startsWith("mailto:")) {
+          const [identity] = lazy.MailUtils.getIdentityForHeader(gMessage);
+          top.composeEmailTo(event.target.href, identity);
+          return;
+        }
+        openUILink(event.target.href, event);
+        return;
+      }
+      if (event.type == "contextmenu") {
+        gMessageHeader.openCopyPopup(event, this);
+      }
+    }
+
+    clear() {
+      this.#urls = [];
+      this.idsList.replaceChildren();
+    }
+  }
+  customElements.define("multi-url-header-row", MultiURLHeaderRow, {
+    extends: "div",
+  });
+
   class HeaderNewsgroupsRow extends HTMLDivElement {
     /**
      * The array of all the newsgroups that need to be shown in this row.
      *
-     * @type {Array<object>}
+     * @type {string[]}
      */
     #newsgroups = [];
 
@@ -736,8 +910,8 @@
 
     buildView() {
       this.newsgroupsList.replaceChildren();
-      for (let newsgroup of this.#newsgroups) {
-        let li = document.createElement("li", { is: "header-newsgroup" });
+      for (const newsgroup of this.#newsgroups) {
+        const li = document.createElement("li", { is: "header-newsgroup" });
         this.newsgroupsList.appendChild(li);
         li.textContent = newsgroup;
       }
@@ -809,7 +983,7 @@
       // Clear old tags.
       this.tagsList.replaceChildren();
 
-      for (let tag of tags) {
+      for (const tag of tags) {
         // For each tag, create a label, give it the font color that corresponds to the
         // color of the tag and append it.
         let tagName;
@@ -822,14 +996,14 @@
         }
 
         // Create a label for the tag name and set the color.
-        let li = document.createElement("li");
+        const li = document.createElement("li");
         li.tabIndex = 0;
         li.classList.add("tag");
         li.textContent = tagName;
 
-        let color = MailServices.tags.getColorForKey(tag);
+        const color = MailServices.tags.getColorForKey(tag);
         if (color) {
-          let textColor = !lazy.TagUtils.isColorContrastEnough(color)
+          const textColor = !lazy.TagUtils.isColorContrastEnough(color)
             ? "white"
             : "black";
           li.setAttribute(
@@ -854,7 +1028,7 @@
     /**
      * The array of all the IDs that need to be shown in this row.
      *
-     * @type {Array<object>}
+     * @type {string[]}
      */
     #ids = [];
 
@@ -870,7 +1044,7 @@
       this.heading = document.createElement("span");
       this.heading.id = `${this.dataset.headerName}Heading`;
       this.heading.classList.add("row-heading");
-      let sep = document.createElement("span");
+      const sep = document.createElement("span");
       sep.classList.add("screen-reader-only");
       sep.setAttribute("data-l10n-name", "field-separator");
       this.heading.appendChild(sep);
@@ -910,8 +1084,8 @@
 
     buildView(showAll = false) {
       this.idsList.replaceChildren();
-      for (let [count, id] of this.#ids.entries()) {
-        let li = document.createElement("li", { is: "header-message-id" });
+      for (const [count, id] of this.#ids.entries()) {
+        const li = document.createElement("li", { is: "header-message-id" });
         li.id = id;
         this.idsList.appendChild(li);
         if (!showAll && count < this.#ids.length - 1 && this.#ids.length > 1) {
@@ -924,7 +1098,7 @@
 
       if (!showAll && this.#ids.length > 1) {
         this.idsList.lastElementChild.classList.add("last-before-button");
-        let liButton = document.createElement("li");
+        const liButton = document.createElement("li");
         liButton.appendChild(this.toggleButton);
         this.idsList.appendChild(liButton);
       }

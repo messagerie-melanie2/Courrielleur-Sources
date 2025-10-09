@@ -4,8 +4,8 @@
 
 var { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUtils.sys.mjs");
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  CalEvent: "resource:///modules/CalEvent.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  CalEvent: "resource:///modules/CalEvent.sys.mjs",
 });
 
 function run_test() {
@@ -19,9 +19,9 @@ function run_test() {
 }
 
 function really_run_test() {
-  let event = new CalEvent();
+  const event = new CalEvent();
 
-  let str = [
+  const str = [
     "BEGIN:VCALENDAR",
     "PRODID:-//RDU Software//NONSGML HandCal//EN",
     "VERSION:2.0",
@@ -59,7 +59,7 @@ function really_run_test() {
     "",
   ].join("\r\n");
 
-  let strTz = [
+  const strTz = [
     "BEGIN:VTIMEZONE",
     "TZID:America/New_York",
     "BEGIN:STANDARD",
@@ -80,8 +80,8 @@ function really_run_test() {
 
   event.icalString = str;
 
-  let startDate = event.startDate;
-  let endDate = event.endDate;
+  const startDate = event.startDate;
+  const endDate = event.endDate;
 
   startDate.timezone = cal.timezoneService.getTimezone(startDate.timezone.tzid);
   endDate.timezone = cal.timezoneService.getTimezone(endDate.timezone.tzid);

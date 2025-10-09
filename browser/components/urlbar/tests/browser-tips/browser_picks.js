@@ -13,11 +13,6 @@ add_setup(async function () {
   registerCleanupFunction(() => {
     window.windowUtils.disableNonTestMouseEvents(false);
   });
-  Services.telemetry.clearScalars();
-  Services.telemetry.clearEvents();
-  await SpecialPowers.pushPrefEnv({
-    set: [["browser.urlbar.eventTelemetry.enabled", true]],
-  });
 });
 
 add_task(async function enter_mainButton_url() {
@@ -114,16 +109,15 @@ async function doTest({ click, buttonUrl = undefined, helpUrl = undefined }) {
     });
   }
 
+  const deferred = Promise.withResolvers();
+
   // Add our test provider.
   let provider = new UrlbarTestUtils.TestProvider({
     results: [makeTipResult({ buttonUrl, helpUrl })],
     priority: 1,
+    onEngagement: () => deferred.resolve(),
   });
   UrlbarProvidersManager.registerProvider(provider);
-
-  let onEngagementPromise = new Promise(
-    resolve => (provider.onEngagement = resolve)
-  );
 
   // Do a search to show our tip result.
   await UrlbarTestUtils.promiseAutocompleteResultPopup({
@@ -133,9 +127,7 @@ async function doTest({ click, buttonUrl = undefined, helpUrl = undefined }) {
   });
   let row = await UrlbarTestUtils.waitForAutocompleteResultAt(window, 0);
   let mainButton = row._buttons.get("0");
-  let target = helpUrl
-    ? row._buttons.get(UrlbarPrefs.get("resultMenu") ? "menu" : "help")
-    : mainButton;
+  let target = helpUrl ? row._buttons.get("menu") : mainButton;
 
   // If we're picking the tip with the keyboard, TAB to select the proper
   // target.
@@ -147,50 +139,6 @@ async function doTest({ click, buttonUrl = undefined, helpUrl = undefined }) {
       `${target.className} should be selected.`
     );
   }
-
-  // Now pick the target and wait for provider.onEngagement to be called and
-  // the URL to load if necessary.
-  let loadPromise;
-  if (buttonUrl || helpUrl) {
-    loadPromise = BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
-  }
-  await UrlbarTestUtils.promisePopupClose(window, () => {
-    if (helpUrl && UrlbarPrefs.get("resultMenu")) {
-      UrlbarTestUtils.openResultMenuAndPressAccesskey(window, "h", {
-        openByMouse: click,
-        resultIndex: 0,
-      });
-    } else if (click) {
-      EventUtils.synthesizeMouseAtCenter(target, {});
-    } else {
-      EventUtils.synthesizeKey("KEY_Enter");
-    }
-  });
-  await onEngagementPromise;
-  await loadPromise;
-
-  // Check telemetry.
-  let scalars = TelemetryTestUtils.getProcessScalars("parent", true, true);
-  TelemetryTestUtils.assertKeyedScalar(
-    scalars,
-    "urlbar.tips",
-    helpUrl ? "test-help" : "test-picked",
-    1
-  );
-  TelemetryTestUtils.assertEvents(
-    [
-      {
-        category: "urlbar",
-        method: "engagement",
-        object:
-          click && !(helpUrl && UrlbarPrefs.get("resultMenu"))
-            ? "click"
-            : "enter",
-        value: "typed",
-      },
-    ],
-    { category: "urlbar" }
-  );
 
   // Done.
   UrlbarProvidersManager.unregisterProvider(provider);
@@ -214,9 +162,7 @@ function makeTipResult({ buttonUrl, helpUrl }) {
       ],
       helpUrl,
       helpL10n: {
-        id: UrlbarPrefs.get("resultMenu")
-          ? "urlbar-result-menu-tip-get-help"
-          : "urlbar-tip-help-icon",
+        id: "urlbar-result-menu-tip-get-help",
       },
     }
   );

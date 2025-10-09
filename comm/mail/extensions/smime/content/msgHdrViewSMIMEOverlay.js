@@ -11,6 +11,8 @@
 // mailCommon.js
 /* globals gEncryptedURIService */
 
+/* eslint-enable valid-jsdoc */
+
 var gMyLastEncryptedURI = null;
 
 var gSMIMEBundle = null;
@@ -18,12 +20,10 @@ var gSMIMEBundle = null;
 var gSignatureStatusForURI = null;
 var gEncryptionStatusForURI = null;
 
-// Get the necko URL for the message URI.
-function neckoURLForMessageURI(aMessageURI) {
-  let msgSvc = MailServices.messageServiceFromURI(aMessageURI);
-  let neckoURI = msgSvc.getUrlForUri(aMessageURI);
-  return neckoURI.spec;
-}
+const lazy = {};
+ChromeUtils.defineESModuleGetters(lazy, {
+  EnigmailFuncs: "chrome://openpgp/content/modules/funcs.sys.mjs",
+});
 
 var gIgnoreStatusFromMimePart = null;
 
@@ -40,8 +40,8 @@ function setIgnoreStatusFromMimePart(mimePart) {
  *   for the message.
  * @param {"ok"|"notok"|null} encryptedState - The encrypted state of the
  *   message.
- * @param {"ok"|"notok"|"verified"|"unverified"|"unknown"|"mismatch"|null}
- *   signedState - The signed state of the message.
+ * @param {"ok"|"notok"|"verified"|"unverified"|"unknown"|"mismatch"|null} signedState -
+     The signed state of the message.
  * @param {boolean} forceShow - Show the box if unsigned and unencrypted.
  * @param {string} mimePartNumber - Should be set to the MIME part number
  *   that triggers this status update. If the value matches a currently
@@ -61,13 +61,13 @@ function setMessageCryptoBox(
     return;
   }
 
-  let container = document.getElementById("cryptoBox");
-  let encryptedIcon = document.getElementById("encryptedHdrIcon");
-  let signedIcon = document.getElementById("signedHdrIcon");
-  let button = document.getElementById("encryptionTechBtn");
-  let buttonText = button.querySelector(".crypto-label");
+  const container = document.getElementById("cryptoBox");
+  const encryptedIcon = document.getElementById("encryptedHdrIcon");
+  const signedIcon = document.getElementById("signedHdrIcon");
+  const button = document.getElementById("encryptionTechBtn");
+  const buttonText = button.querySelector(".crypto-label");
 
-  let hidden = !forceShow && (!tech || (!encryptedState && !signedState));
+  const hidden = !forceShow && (!tech || (!encryptedState && !signedState));
   container.hidden = hidden;
   button.hidden = hidden;
   if (hidden) {
@@ -154,16 +154,19 @@ function smimeEncryptedStateToString(encryptedState) {
  *   that triggers this status update.
  */
 function refreshSmimeMessageEncryptionStatus(mimePartNumber = undefined) {
-  let signed = smimeSignedStateToString(gSignatureStatus);
-  let encrypted = smimeEncryptedStateToString(gEncryptionStatus);
+  const signed = smimeSignedStateToString(gSignatureStatus);
+  const encrypted = smimeEncryptedStateToString(gEncryptionStatus);
   setMessageCryptoBox("S/MIME", encrypted, signed, false, mimePartNumber);
 }
 
-var smimeHeaderSink = {
+/** @implements {nsIMsgSMIMESink} */
+var smimeSink = {
+  QueryInterface: ChromeUtils.generateQI(["nsIMsgSMIMESink"]),
+
   /**
-   * @returns the URI of the selected message, or null if the current
-   *         message displayed isn't in a folder, for example if the
-   *         message is displayed in a separate window.
+   * @returns {?string} the URI of the selected message, or null if the current
+   *   message displayed isn't in a folder, for example if the message is
+   *   displayed in a separate window.
    */
   getSelectedMessageURI() {
     if (!gMessage) {
@@ -180,9 +183,28 @@ var smimeHeaderSink = {
       return null;
     }
 
-    return neckoURLForMessageURI(gMessageURI);
+    return MailServices.neckoURLForMessageURI(gMessageURI);
   },
 
+  /**
+   * Request that security status from the given MIME part
+   * shall be ignored (not shown in the UI).
+   *
+   * @param {string} originMimePartNumber - Ignore security status
+   *   of this MIME part.
+   */
+  ignoreStatusFrom(originMimePartNumber) {
+    setIgnoreStatusFromMimePart(originMimePartNumber);
+  },
+
+  /**
+   * @param {integer} aNestingLevel - Nesting level.
+   * @param {integer} aSignatureStatus - Signature status.
+   * @param {nsIX509Cert} aSignerCert - Certificate of signer.
+   * @param {string} aMsgNeckoURL - URL processed.
+   * @param {string} aOriginMimePartNumber - The MIME part that triggered this
+   *   status report.
+   */
   signedStatus(
     aNestingLevel,
     aSignatureStatus,
@@ -202,7 +224,7 @@ var smimeHeaderSink = {
       return;
     }
 
-    if (aMsgNeckoURL != this.getSelectedMessageURI()) {
+    if (!lazy.EnigmailFuncs.isCurrentMessage(gMessageURI, aMsgNeckoURL)) {
       // Status isn't for selected message.
       return;
     }
@@ -222,7 +244,7 @@ var smimeHeaderSink = {
 
     refreshSmimeMessageEncryptionStatus(aOriginMimePartNumber);
 
-    let signed = smimeSignedStateToString(aSignatureStatus);
+    const signed = smimeSignedStateToString(aSignatureStatus);
     if (signed == "unknown" || signed == "mismatch") {
       this.showSenderIfSigner();
     }
@@ -255,7 +277,7 @@ var smimeHeaderSink = {
       return;
     }
 
-    let fromMailboxes = MailServices.headerParser
+    const fromMailboxes = MailServices.headerParser
       .extractHeaderAddressMailboxes(currentHeaderData.from.headerValue)
       .split(",");
     for (let i = 0; i < fromMailboxes.length; i++) {
@@ -264,13 +286,19 @@ var smimeHeaderSink = {
       }
     }
 
-    let senderInfo = { name: "sender", outputFunction: outputEmailAddresses };
-    let senderEntry = new MsgHeaderEntry("expanded", senderInfo);
-
-    gExpandedHeaderView[senderInfo.name] = senderEntry;
+    const entry = gExpandedHeaderList.find(h => h.name == "sender");
+    entry.hidden = false;
     UpdateExpandedMessageHeaders();
   },
 
+  /**
+   * @param {integer} aNestingLevel - Nesting level.
+   * @param {integer} aEncryptionStatus - Encryption status.
+   * @param {nsIX509Cert} aRecipientCert - Certificate of recipient.
+   * @param {string} aMsgNeckoURL - URL processed.
+   * @param {string} aOriginMimePartNumber - The MIME part that triggered this
+   *   status report.
+   */
   encryptionStatus(
     aNestingLevel,
     aEncryptionStatus,
@@ -290,7 +318,7 @@ var smimeHeaderSink = {
       return;
     }
 
-    if (aMsgNeckoURL != this.getSelectedMessageURI()) {
+    if (!lazy.EnigmailFuncs.isCurrentMessage(gMessageURI, aMsgNeckoURL)) {
       // Status isn't for selected message.
       return;
     }
@@ -315,7 +343,7 @@ var smimeHeaderSink = {
       gMyLastEncryptedURI = gMessageURI;
       gEncryptedURIService.rememberEncrypted(gMyLastEncryptedURI);
       gEncryptedURIService.rememberEncrypted(
-        neckoURLForMessageURI(gMyLastEncryptedURI)
+        MailServices.neckoURLForMessageURI(gMyLastEncryptedURI)
       );
     }
 
@@ -343,6 +371,9 @@ var smimeHeaderSink = {
               `<html>
               <head>
                 <title>${title}</title>
+                <link rel="stylesheet"
+                      href="chrome://messenger/skin/error-pages.css"
+                      type="text/css">
               </head>
               <body>
                 <h1>${title}</h1>
@@ -364,19 +395,13 @@ var smimeHeaderSink = {
       })
     );
   },
-
-  ignoreStatusFrom(aOriginMimePartNumber) {
-    setIgnoreStatusFromMimePart(aOriginMimePartNumber);
-  },
-
-  QueryInterface: ChromeUtils.generateQI(["nsIMsgSMIMEHeaderSink"]),
 };
 
 function forgetEncryptedURI() {
   if (gMyLastEncryptedURI && gEncryptedURIService) {
     gEncryptedURIService.forgetEncrypted(gMyLastEncryptedURI);
     gEncryptedURIService.forgetEncrypted(
-      neckoURLForMessageURI(gMyLastEncryptedURI)
+      MailServices.neckoURLForMessageURI(gMyLastEncryptedURI)
     );
     gMyLastEncryptedURI = null;
   }
@@ -422,7 +447,7 @@ function onSMIMEBeforeShowHeaderPane() {
   }
 }
 
-function msgHdrViewSMIMEOnLoad(event) {
+function msgHdrViewSMIMEOnLoad() {
   window.crypto.enableSmartCardEvents = true;
   document.addEventListener("smartcard-insert", onSmartCardChange);
   document.addEventListener("smartcard-remove", onSmartCardChange);
@@ -446,7 +471,7 @@ function msgHdrViewSMIMEOnLoad(event) {
   ].getService(Ci.nsIEncryptedSMIMEURIsService);
 }
 
-function msgHdrViewSMIMEOnUnload(event) {
+function msgHdrViewSMIMEOnUnload() {
   window.crypto.enableSmartCardEvents = false;
   document.removeEventListener("smartcard-insert", onSmartCardChange);
   document.removeEventListener("smartcard-remove", onSmartCardChange);

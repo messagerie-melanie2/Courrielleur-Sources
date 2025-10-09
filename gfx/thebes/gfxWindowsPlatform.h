@@ -103,24 +103,6 @@ class gfxWindowsPlatform final : public gfxPlatform {
   virtual already_AddRefed<gfxASurface> CreateOffscreenSurface(
       const IntSize& aSize, gfxImageFormat aFormat) override;
 
-  enum RenderMode {
-    /* Use GDI and windows surfaces */
-    RENDER_GDI = 0,
-
-    /* Use 32bpp image surfaces and call StretchDIBits */
-    RENDER_IMAGE_STRETCH32,
-
-    /* Use 32bpp image surfaces, and do 32->24 conversion before calling
-       StretchDIBits */
-    RENDER_IMAGE_STRETCH24,
-
-    /* Use Direct2D rendering */
-    RENDER_DIRECT2D,
-
-    /* max */
-    RENDER_MODE_MAX
-  };
-
   bool IsDirect2DBackend();
 
   /**
@@ -139,7 +121,7 @@ class gfxWindowsPlatform final : public gfxPlatform {
   void VerifyD2DDevice(bool aAttemptForce);
 
   void GetCommonFallbackFonts(uint32_t aCh, Script aRunScript,
-                              eFontPresentation aPresentation,
+                              FontPresentation aPresentation,
                               nsTArray<const char*>& aFontList) override;
 
   bool CanUseHardwareVideoDecoding() override;
@@ -147,7 +129,7 @@ class gfxWindowsPlatform final : public gfxPlatform {
   void CompositorUpdated() override;
 
   bool DidRenderingDeviceReset(
-      DeviceResetReason* aResetReason = nullptr) override;
+      mozilla::gfx::DeviceResetReason* aResetReason = nullptr) override;
   void SchedulePaintIfDeviceReset() override;
   void CheckForContentOnlyDeviceReset();
 
@@ -169,8 +151,6 @@ class gfxWindowsPlatform final : public gfxPlatform {
 
  public:
   static nsresult GetGpuTimeSinceProcessStartInMs(uint64_t* aResult);
-
-  bool DwmCompositionEnabled();
 
   static bool IsOptimus();
 
@@ -195,9 +175,6 @@ class gfxWindowsPlatform final : public gfxPlatform {
 
   static bool CheckVariationFontSupport();
 
-  // Always false for content processes.
-  bool SupportsHDR() override { return mSupportsHDR; }
-
  protected:
   bool AccelerateLayersByDefault() override { return true; }
 
@@ -216,18 +193,7 @@ class gfxWindowsPlatform final : public gfxPlatform {
 
   BackendPrefsData GetBackendPrefs() const override;
 
-  void UpdateSupportsHDR();
-
-  RenderMode mRenderMode;
-  bool mSupportsHDR;
-
  private:
-  enum class DwmCompositionStatus : uint32_t {
-    Unknown,
-    Disabled,
-    Enabled,
-  };
-
   void Init();
   void InitAcceleration() override;
   void InitWebRenderConfig() override;
@@ -250,9 +216,6 @@ class gfxWindowsPlatform final : public gfxPlatform {
   void RecordStartupTelemetry();
 
   bool mInitializedDevices = false;
-
-  mozilla::Atomic<DwmCompositionStatus, mozilla::ReleaseAcquire>
-      mDwmCompositionStatus;
 
   // Cached contents of the output color profile file
   nsTArray<uint8_t> mCachedOutputColorProfile;

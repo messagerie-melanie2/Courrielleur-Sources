@@ -53,6 +53,7 @@ class nsCopyRequest {
 
   nsCOMPtr<nsISupports> m_srcSupport;  // ui source folder or file spec
   nsCOMPtr<nsIMsgFolder> m_dstFolder;
+  nsCOMPtr<nsIMsgFolder> m_arrFolder;  // folder copied/moved
   nsCOMPtr<nsIMsgWindow> m_msgWindow;
   nsCOMPtr<nsIMsgCopyServiceListener> m_listener;
   nsCOMPtr<nsITransactionManager> m_txnMgr;
@@ -62,8 +63,9 @@ class nsCopyRequest {
   bool m_processed;
   uint32_t m_newMsgFlags;
   nsCString m_newMsgKeywords;
-  nsString m_dstFolderName;                   // used for copy folder.
+  nsCString m_dstFolderName;                  // used for copy folder.
   nsTArray<nsCopySource*> m_copySourceArray;  // array of nsCopySource
+  bool mPendingRemoval;
 };
 
 class nsMsgCopyService : public nsIMsgCopyService {

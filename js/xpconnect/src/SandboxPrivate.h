@@ -7,15 +7,15 @@
 #ifndef __SANDBOXPRIVATE_H__
 #define __SANDBOXPRIVATE_H__
 
-#include "mozilla/WeakPtr.h"
+#include "mozilla/SchedulerGroup.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StorageAccess.h"
+#include "mozilla/WeakPtr.h"
 #include "mozilla/net/CookieJarSettings.h"
 #include "nsContentUtils.h"
 #include "nsIGlobalObject.h"
 #include "nsIScriptObjectPrincipal.h"
 #include "nsIPrincipal.h"
-#include "nsGlobalWindowInner.h"
 #include "nsWeakReference.h"
 #include "nsWrapperCache.h"
 
@@ -24,11 +24,11 @@
 #include "js/Object.h"  // JS::GetPrivate, JS::SetPrivate
 #include "js/RootingAPI.h"
 
-class SandboxPrivate : public nsIGlobalObject,
-                       public nsIScriptObjectPrincipal,
-                       public nsSupportsWeakReference,
-                       public mozilla::SupportsWeakPtr,
-                       public nsWrapperCache {
+class SandboxPrivate final : public nsIGlobalObject,
+                             public nsIScriptObjectPrincipal,
+                             public nsSupportsWeakReference,
+                             public mozilla::SupportsWeakPtr,
+                             public nsWrapperCache {
  public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS_AMBIGUOUS(SandboxPrivate,
@@ -44,6 +44,10 @@ class SandboxPrivate : public nsIGlobalObject,
     nsIScriptObjectPrincipal* sop =
         static_cast<nsIScriptObjectPrincipal*>(sbp.forget().take());
     JS::SetObjectISupports(global, sop);
+
+    JS::SetRealmReduceTimerPrecisionCallerType(
+        js::GetNonCCWObjectRealm(global),
+        RTPCallerTypeToToken(GetPrivate(global)->GetRTPCallerType()));
   }
 
   static SandboxPrivate* GetPrivate(JSObject* obj) {
@@ -68,19 +72,30 @@ class SandboxPrivate : public nsIGlobalObject,
     return GetWrapperPreserveColor();
   }
 
+  nsICookieJarSettings* GetCookieJarSettings() override {
+    MOZ_ASSERT(NS_IsMainThread());
+    return mCookieJarSettings;
+  }
+
   mozilla::StorageAccess GetStorageAccess() final {
     MOZ_ASSERT(NS_IsMainThread());
     if (mozilla::StaticPrefs::dom_serviceWorkers_testing_enabled()) {
       // XXX: This is a hack to workaround bug 1732159 and is not intended
       return mozilla::StorageAccess::eAllow;
     }
-    nsCOMPtr<nsICookieJarSettings> cookieJarSettings =
-        mozilla::net::CookieJarSettings::Create(mPrincipal);
+
     return mozilla::StorageAllowedForServiceWorker(mPrincipal,
-                                                   cookieJarSettings);
+                                                   mCookieJarSettings);
   }
 
   void ForgetGlobalObject(JSObject* obj) { ClearWrapper(obj); }
+
+  nsISerialEventTarget* SerialEventTarget() const final {
+    return mozilla::GetMainThreadSerialEventTarget();
+  }
+  nsresult Dispatch(already_AddRefed<nsIRunnable>&& aRunnable) const final {
+    return mozilla::SchedulerGroup::Dispatch(std::move(aRunnable));
+  }
 
   virtual JSObject* WrapObject(JSContext* cx,
                                JS::Handle<JSObject*> aGivenProto) override {
@@ -97,20 +112,26 @@ class SandboxPrivate : public nsIGlobalObject,
     return 0;
   }
 
-  bool ShouldResistFingerprinting(
-      RFPTarget aTarget = RFPTarget::Unknown) const override {
+  bool ShouldResistFingerprinting(RFPTarget aTarget) const override {
     return nsContentUtils::ShouldResistFingerprinting(
         "Presently we don't have enough context to make an informed decision"
         "on JS Sandboxes. See 1782853",
         aTarget);
   }
 
+  bool IsXPCSandbox() override { return true; }
+
  private:
-  explicit SandboxPrivate(nsIPrincipal* principal) : mPrincipal(principal) {}
+  explicit SandboxPrivate(nsIPrincipal* principal)
+      : mPrincipal(principal),
+        mCookieJarSettings(
+            mozilla::net::CookieJarSettings::Create(mPrincipal)) {}
 
   virtual ~SandboxPrivate() = default;
 
   nsCOMPtr<nsIPrincipal> mPrincipal;
+
+  nsCOMPtr<nsICookieJarSettings> mCookieJarSettings;
 
   RefPtr<JS::loader::ModuleLoaderBase> mModuleLoader;
 };

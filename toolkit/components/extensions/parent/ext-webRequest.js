@@ -8,7 +8,28 @@ ChromeUtils.defineESModuleGetters(this, {
   WebRequest: "resource://gre/modules/WebRequest.sys.mjs",
 });
 
-var { parseMatchPatterns } = ExtensionUtils;
+var { parseMatchPatterns, DefaultMap } = ExtensionUtils;
+
+const MAX_HANDLER_BEHAVIOR_CHANGED_CALLS_PER_10_MINUTES = 20;
+const TIME_10_MINUTES_IN_MS = 10 * 60 * 1000;
+
+// The timestamp of handlerBehaviorChanged calls which weren't rejected,
+// per extension id.
+const handlerBehaviorChangedTimeStampsMap = new DefaultMap(() => []);
+
+function clearOldTimeStamps(timestamps, now) {
+  while (timestamps.length) {
+    if (timestamps[0] < now - TIME_10_MINUTES_IN_MS) {
+      timestamps.shift();
+    } else {
+      break;
+    }
+  }
+}
+
+function handlerBehaviorChangedCallAllowed(timestamps) {
+  return timestamps.length < MAX_HANDLER_BEHAVIOR_CHANGED_CALLS_PER_10_MINUTES;
+}
 
 // The guts of a WebRequest event handler.  Takes care of converting
 // |details| parameter when invoking listeners.
@@ -64,12 +85,16 @@ function registerEvent(
     filter2.incognito = filter.incognito;
   }
 
-  let blockingAllowed = extension.hasPermission("webRequestBlocking");
+  let blockingAllowed =
+    eventName == "onAuthRequired"
+      ? extension.hasPermission("webRequestBlocking") ||
+        extension.hasPermission("webRequestAuthProvider")
+      : extension.hasPermission("webRequestBlocking");
 
   let info2 = [];
   if (info) {
     for (let desc of info) {
-      if (desc == "blocking" && !blockingAllowed) {
+      if ((desc == "blocking" || desc == "asyncBlocking") && !blockingAllowed) {
         // This is usually checked in the child process (based on the API schemas, where these options
         // should be checked with the "webRequestBlockingPermissionRequired" postprocess property),
         // but it is worth to also check it here just in case a new webRequest has been added and
@@ -136,7 +161,10 @@ function makeWebRequestEventRegistrar(event) {
 this.webRequest = class extends ExtensionAPIPersistent {
   primeListener(event, fire, params, isInStartup) {
     // During early startup if the listener does not use blocking we do not prime it.
-    if (!isInStartup || params[1]?.includes("blocking")) {
+    if (
+      !isInStartup ||
+      params[1]?.some(v => v === "blocking" || v === "asyncBlocking")
+    ) {
       return super.primeListener(event, fire, params, isInStartup);
     }
   }
@@ -189,7 +217,8 @@ this.webRequest = class extends ExtensionAPIPersistent {
           this
         ),
         onCompleted: makeWebRequestEventAPI(context, "onCompleted", this),
-        getSecurityInfo: function (requestId, options = {}) {
+        getSecurityInfo: (requestId, options) => {
+          options ??= {};
           return WebRequest.getSecurityInfo({
             id: requestId,
             policy: context.extension.policy,
@@ -197,8 +226,22 @@ this.webRequest = class extends ExtensionAPIPersistent {
             options,
           });
         },
-        handlerBehaviorChanged: function () {
-          // TODO: Flush all caches.
+        handlerBehaviorChanged: () => {
+          let timestamps = handlerBehaviorChangedTimeStampsMap.get(
+            context.extension.id
+          );
+
+          const now = Date.now();
+          clearOldTimeStamps(timestamps, now);
+          if (!handlerBehaviorChangedCallAllowed(timestamps)) {
+            context.extension.logger.warn(
+              `The number of webRequest.handlerBehaviorChanged calls exceeds the limit: ${MAX_HANDLER_BEHAVIOR_CHANGED_CALLS_PER_10_MINUTES} calls per 10 minutes`
+            );
+            return;
+          }
+          timestamps.push(now);
+
+          ChromeUtils.clearResourceCache({ target: "content" });
         },
       },
     };

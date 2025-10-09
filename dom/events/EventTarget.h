@@ -41,27 +41,33 @@ enum class CallerType : uint32_t;
 enum class EventCallbackDebuggerNotificationType : uint8_t;
 
 // IID for the dom::EventTarget interface
-#define NS_EVENTTARGET_IID                           \
-  {                                                  \
-    0xde651c36, 0x0053, 0x4c67, {                    \
-      0xb1, 0x3d, 0x67, 0xb9, 0x40, 0xfc, 0x82, 0xe4 \
-    }                                                \
-  }
+#define NS_EVENTTARGET_IID \
+  {0xde651c36, 0x0053, 0x4c67, {0xb1, 0x3d, 0x67, 0xb9, 0x40, 0xfc, 0x82, 0xe4}}
 
 class EventTarget : public nsISupports, public nsWrapperCache {
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_EVENTTARGET_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_EVENTTARGET_IID)
+
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+
+  void SetIsOnMainThread() {
+    MOZ_ASSERT(NS_IsMainThread());
+    mRefCnt.SetIsOnMainThread();
+  }
+
+#ifndef NS_BUILD_REFCNT_LOGGING
+  MozExternalRefCountType NonVirtualAddRef();
+  MozExternalRefCountType NonVirtualRelease();
+#endif
 
   // WebIDL API
   static already_AddRefed<EventTarget> Constructor(const GlobalObject& aGlobal,
                                                    ErrorResult& aRv);
   void AddEventListener(const nsAString& aType, EventListener* aCallback,
                         const AddEventListenerOptionsOrBoolean& aOptions,
-                        const Nullable<bool>& aWantsUntrusted,
-                        ErrorResult& aRv);
+                        const Nullable<bool>& aWantsUntrusted);
   void RemoveEventListener(const nsAString& aType, EventListener* aCallback,
-                           const EventListenerOptionsOrBoolean& aOptions,
-                           ErrorResult& aRv);
+                           const EventListenerOptionsOrBoolean& aOptions);
 
  protected:
   /**
@@ -134,16 +140,16 @@ class EventTarget : public nsISupports, public nsWrapperCache {
   virtual bool IsInnerWindow() const { return false; }
   virtual bool IsOuterWindow() const { return false; }
   virtual bool IsRootWindow() const { return false; }
-  nsPIDOMWindowInner* GetAsWindowInner();
-  const nsPIDOMWindowInner* GetAsWindowInner() const;
-  nsPIDOMWindowOuter* GetAsWindowOuter();
-  const nsPIDOMWindowOuter* GetAsWindowOuter() const;
+  nsPIDOMWindowInner* GetAsInnerWindow();
+  const nsPIDOMWindowInner* GetAsInnerWindow() const;
+  nsPIDOMWindowOuter* GetAsOuterWindow();
+  const nsPIDOMWindowOuter* GetAsOuterWindow() const;
   inline nsPIWindowRoot* GetAsWindowRoot();
   inline const nsPIWindowRoot* GetAsWindowRoot() const;
-  nsPIDOMWindowInner* AsWindowInner();
-  const nsPIDOMWindowInner* AsWindowInner() const;
-  nsPIDOMWindowOuter* AsWindowOuter();
-  const nsPIDOMWindowOuter* AsWindowOuter() const;
+  nsPIDOMWindowInner* AsInnerWindow();
+  const nsPIDOMWindowInner* AsInnerWindow() const;
+  nsPIDOMWindowOuter* AsOuterWindow();
+  const nsPIDOMWindowOuter* AsOuterWindow() const;
   inline nsPIWindowRoot* AsWindowRoot();
   inline const nsPIWindowRoot* AsWindowRoot() const;
 
@@ -262,6 +268,26 @@ class EventTarget : public nsISupports, public nsWrapperCache {
   virtual void GetEventTargetParent(EventChainPreVisitor& aVisitor) = 0;
 
   /**
+   * Called on the activation target during dispatch of activation events.
+   * https://dom.spec.whatwg.org/#eventtarget-legacy-pre-activation-behavior
+   */
+  virtual void LegacyPreActivationBehavior(EventChainVisitor& aVisitor) {}
+
+  /**
+   * Called on the activation target during dispatch of activation events.
+   * https://dom.spec.whatwg.org/#eventtarget-activation-behavior
+   */
+  MOZ_CAN_RUN_SCRIPT
+  virtual void ActivationBehavior(EventChainPostVisitor& aVisitor) {}
+
+  /**
+   * Called on the activation target during dispatch of activation events.
+   * https://dom.spec.whatwg.org/#eventtarget-legacy-canceled-activation-behavior
+   */
+  virtual void LegacyCanceledActivationBehavior(
+      EventChainPostVisitor& aVisitor) {}
+
+  /**
    * Called before the capture phase of the event flow and after event target
    * chain creation. This is used to handle things that must be executed before
    * dispatching the event to DOM.
@@ -334,12 +360,10 @@ class EventTarget : public nsISupports, public nsWrapperCache {
                                   const Nullable<bool>& aWantsUntrusted);
 };
 
-NS_DEFINE_STATIC_IID_ACCESSOR(EventTarget, NS_EVENTTARGET_IID)
-
 #define NS_IMPL_FROMEVENTTARGET_GENERIC(_class, _check, _const)             \
   template <typename T>                                                     \
   static auto FromEventTarget(_const T& aEventTarget)                       \
-      ->decltype(static_cast<_const _class*>(&aEventTarget)) {              \
+      -> decltype(static_cast<_const _class*>(&aEventTarget)) {             \
     return aEventTarget._check ? static_cast<_const _class*>(&aEventTarget) \
                                : nullptr;                                   \
   }                                                                         \
@@ -408,5 +432,22 @@ NS_DEFINE_STATIC_IID_ACCESSOR(EventTarget, NS_EVENTTARGET_IID)
 
 }  // namespace dom
 }  // namespace mozilla
+
+#ifdef NS_BUILD_REFCNT_LOGGING
+#  define NON_VIRTUAL_ADDREF_RELEASE(class_) /* Nothing */
+#else
+#  define NON_VIRTUAL_ADDREF_RELEASE(class_)                                 \
+    namespace mozilla {                                                      \
+    template <>                                                              \
+    class RefPtrTraits<class_> {                                             \
+     public:                                                                 \
+      static void Release(class_* aObject) { aObject->NonVirtualRelease(); } \
+      static void AddRef(class_* aObject) { aObject->NonVirtualAddRef(); }   \
+    };                                                                       \
+    }
+
+#endif
+
+NON_VIRTUAL_ADDREF_RELEASE(mozilla::dom::EventTarget)
 
 #endif  // mozilla_dom_EventTarget_h_

@@ -13,7 +13,6 @@ transforms:
 task-defaults:
     name: update-verify-config
     run-on-projects: []  # to make sure this never runs as part of CI
-    run-on-releases: [beta, esr128]  # Remove after shipping first comm-release
     shipping-phase: promote
     worker-type: b-linux-gcp
     worker:
@@ -30,6 +29,7 @@ task-defaults:
     extra:
         app-name: mail
         branch-prefix: comm
+        last-linux-bz2-version: "134.99.0"
         archive-prefix:
             by-release-level:
                 staging: "http://ftp.stage.mozaws.net/pub"
@@ -55,8 +55,9 @@ task-defaults:
         last-watershed:
             by-release-type:
                 beta: "79.0b2"
-                release(-rc)?: "116.0"
+                release(-rc)?: "129.0"
                 esr128: "128.0esr"
+                esr140: "140.0esr"
                 default: "default"
 
 tasks:

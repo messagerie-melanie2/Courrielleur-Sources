@@ -15,20 +15,20 @@ var {
   open_compose_with_reply,
   open_compose_with_reply_to_all,
   open_compose_with_reply_to_list,
-} = ChromeUtils.import("resource://testing-common/mozmill/ComposeHelpers.jsm");
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+);
 var {
   add_message_to_folder,
   assert_selected_and_displayed,
   be_in_folder,
   create_message,
-  mc,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 var folder;
-var i = 0;
 
 var myEmail = "me@example.com";
 var myEmail2 = "otherme@example.com";
@@ -36,18 +36,18 @@ var myEmail2 = "otherme@example.com";
 var identity;
 var identity2;
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 add_setup(function () {
   requestLongerTimeout(4);
 
   // Now set up an account with some identities.
-  let account = MailServices.accounts.createAccount();
+  const account = MailServices.accounts.createAccount();
   account.incomingServer = MailServices.accounts.createIncomingServer(
     "nobody",
-    "Reply Addresses Testing",
+    "ReplyAddressesTesting",
     "pop3"
   );
 
@@ -75,27 +75,27 @@ add_setup(function () {
  * Helper to open a reply, check the fields are as expected, and close the
  * reply window.
  *
- * @param aReplyFunction which reply function to call
- * @param aExpectedFields the fields expected
+ * @param {Function} aReplyFunction - Which reply function to call.
+ * @param {object} aExpectedFields - The fields expected.
  */
-function checkReply(aReplyFunction, aExpectedFields) {
-  let rwc = aReplyFunction();
+async function checkReply(aReplyFunction, aExpectedFields) {
+  const rwc = await aReplyFunction();
   checkToAddresses(rwc, aExpectedFields);
-  close_compose_window(rwc);
+  await close_compose_window(rwc);
 }
 
 /**
  * Helper to check that the reply window has the expected address fields.
  */
-function checkToAddresses(replyWinController, expectedFields) {
-  let rows = replyWinController.window.document.querySelectorAll(
+function checkToAddresses(replyWin, expectedFields) {
+  const rows = replyWin.document.querySelectorAll(
     "#recipientsContainer .address-row:not(.hidden)"
   );
 
-  let obtainedFields = [];
-  for (let row of rows) {
-    let addresses = [];
-    for (let pill of row.querySelectorAll("mail-address-pill")) {
+  const obtainedFields = [];
+  for (const row of rows) {
+    const addresses = [];
+    for (const pill of row.querySelectorAll("mail-address-pill")) {
       addresses.push(pill.fullAddress);
     }
 
@@ -103,9 +103,9 @@ function checkToAddresses(replyWinController, expectedFields) {
   }
 
   // Check what we expect is there.
-  for (let type in expectedFields) {
-    let expected = expectedFields[type];
-    let obtained = obtainedFields[type];
+  for (const type in expectedFields) {
+    const expected = expectedFields[type];
+    const obtained = obtainedFields[type];
 
     for (let i = 0; i < expected.length; i++) {
       if (!obtained || !obtained.includes(expected[i])) {
@@ -132,9 +132,9 @@ function checkToAddresses(replyWinController, expectedFields) {
   }
 
   // Check there's no "extra" fields either.
-  for (let type in obtainedFields) {
-    let expected = expectedFields[type];
-    let obtained = obtainedFields[type];
+  for (const type in obtainedFields) {
+    const expected = expectedFields[type];
+    const obtained = obtainedFields[type];
     if (!expected) {
       throw new Error(
         "Didn't expect a field for type=" + type + "; obtained=" + obtained
@@ -143,11 +143,13 @@ function checkToAddresses(replyWinController, expectedFields) {
   }
 
   // Check if the input "aria-label" attribute was properly updated.
-  for (let row of rows) {
-    let addrLabel = row.querySelector(".address-label-container > label").value;
-    let addrTextbox = row.querySelector(".address-row-input");
-    let ariaLabel = addrTextbox.getAttribute("aria-label");
-    let pillCount = row.querySelectorAll("mail-address-pill").length;
+  for (const row of rows) {
+    const addrLabel = row.querySelector(
+      ".address-label-container > label"
+    ).value;
+    const addrTextbox = row.querySelector(".address-row-input");
+    const ariaLabel = addrTextbox.getAttribute("aria-label");
+    const pillCount = row.querySelectorAll("mail-address-pill").length;
 
     switch (pillCount) {
       case 0:
@@ -225,7 +227,7 @@ function ensureNoAutoBcc(aIdentity) {
  * - reply list: goes to the list
  */
 add_task(async function testReplyToMungedReplyToList() {
-  let msg0 = create_message({
+  const msg0 = create_message({
     from: "Tester <test@example.com>",
     to: "munged.list@example.com, someone.else@example.com",
     subject: "testReplyToMungedReplyToList",
@@ -237,16 +239,16 @@ add_task(async function testReplyToMungedReplyToList() {
   await add_message_to_folder([folder], msg0);
 
   await be_in_folder(folder);
-  let msg = select_click_row(i++);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   ensureNoAutoCc(identity);
 
-  checkReply(open_compose_with_reply, {
+  await checkReply(open_compose_with_reply, {
     addr_to: ["Tester <test@example.com>"],
   });
 
-  checkReply(open_compose_with_reply_to_all, {
+  await checkReply(open_compose_with_reply_to_all, {
     addr_to: [
       "Munged List <munged.list@example.com>",
       "someone.else@example.com",
@@ -254,7 +256,7 @@ add_task(async function testReplyToMungedReplyToList() {
     ],
   });
 
-  checkReply(open_compose_with_reply_to_list, {
+  await checkReply(open_compose_with_reply_to_list, {
     addr_to: ["munged.list@example.com"],
   });
 });
@@ -263,7 +265,7 @@ add_task(async function testReplyToMungedReplyToList() {
  * Tests that addresses get set properly when doing a normal reply.
  */
 add_task(async function testToCcReply() {
-  let msg0 = create_message({
+  const msg0 = create_message({
     from: "Homer <homer@example.com>",
     to: "Mr Burns <mrburns@example.com>, workers@example.com, " + myEmail,
     cc: "Lisa <lisa@example.com>",
@@ -272,18 +274,18 @@ add_task(async function testToCcReply() {
   await add_message_to_folder([folder], msg0);
 
   await be_in_folder(folder);
-  let msg = select_click_row(i++);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   ensureNoAutoCc(identity);
-  checkReply(
+  await checkReply(
     open_compose_with_reply,
     // To: From
     { addr_to: ["Homer <homer@example.com>"] }
   );
 
   useAutoCc(identity, myEmail + ", smithers@example.com");
-  checkReply(
+  await checkReply(
     open_compose_with_reply,
     // To: From
     // Cc: identity Cc list, including self.
@@ -299,7 +301,7 @@ add_task(async function testToCcReply() {
  * Tests that addresses get set properly when doing a normal reply to all.
  */
 add_task(async function testToCcReplyAll() {
-  let msg0 = create_message({
+  const msg0 = create_message({
     from: "Homer <homer@example.com>",
     to: "Mr Burns <mrburns@example.com>, workers@example.com, " + myEmail,
     cc: "Lisa <lisa@example.com>",
@@ -308,11 +310,11 @@ add_task(async function testToCcReplyAll() {
   await add_message_to_folder([folder], msg0);
 
   await be_in_folder(folder);
-  let msg = select_click_row(i++);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   ensureNoAutoCc(identity);
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: From + Tos without me.
     // Cc: original Ccs
@@ -327,7 +329,7 @@ add_task(async function testToCcReplyAll() {
   );
 
   useAutoCc(identity, myEmail + ", smithers@example.com");
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: From + Tos without me.
     // Cc: original Ccs + auto-Ccs
@@ -348,7 +350,7 @@ add_task(async function testToCcReplyAll() {
  * where when recipients aren't all ascii.
  */
 add_task(async function testToCcReplyAllInternational() {
-  let msg0 = create_message({
+  const msg0 = create_message({
     from: "Hideaki / =?iso-2022-jp?B?GyRCNUhGIzFRTEAbKEI=?= <hideaki@example.com>",
     to:
       "Mr Burns <mrburns@example.com>, =?UTF-8?B?w4VrZQ==?= <ake@example.com>, " +
@@ -370,11 +372,11 @@ add_task(async function testToCcReplyAllInternational() {
   await add_message_to_folder([folder], msg0);
 
   await be_in_folder(folder);
-  let msg = select_click_row(i++);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   ensureNoAutoCc(identity);
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: From + Tos without me.
     // Cc: original Ccs
@@ -390,7 +392,7 @@ add_task(async function testToCcReplyAllInternational() {
   );
 
   useAutoCc(identity, "Åsa <asa@example.com>");
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: From + Tos without me.
     // Cc: original Ccs + auto-Ccs
@@ -412,7 +414,7 @@ add_task(async function testToCcReplyAllInternational() {
  * reply-to set.
  */
 add_task(async function testToCcReplyWhenReplyToSet() {
-  let msg0 = create_message({
+  const msg0 = create_message({
     from: "Homer <homer@example.com>",
     to: "workers@example.com",
     cc: "Lisa <lisa@example.com>, " + myEmail,
@@ -425,18 +427,18 @@ add_task(async function testToCcReplyWhenReplyToSet() {
   await add_message_to_folder([folder], msg0);
 
   await be_in_folder(folder);
-  let msg = select_click_row(i++);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   ensureNoAutoCc(identity);
-  checkReply(
+  await checkReply(
     open_compose_with_reply,
     // To: reply-to
     { addr_to: ["marge@example.com"] }
   );
 
   useAutoCc(identity, myEmail + ", smithers@example.com");
-  checkReply(
+  await checkReply(
     open_compose_with_reply,
     // To: reply-to
     // Cc: auto-Ccs
@@ -453,7 +455,7 @@ add_task(async function testToCcReplyWhenReplyToSet() {
  * w/ Reply-To.
  */
 add_task(async function testToCcReplyAllWhenReplyToSet() {
-  let msg0 = create_message({
+  const msg0 = create_message({
     from: "Homer <homer@example.com>",
     to: "workers@example.com",
     cc: "Lisa <lisa@example.com>, " + myEmail,
@@ -466,11 +468,11 @@ add_task(async function testToCcReplyAllWhenReplyToSet() {
   await add_message_to_folder([folder], msg0);
 
   await be_in_folder(folder);
-  let msg = select_click_row(i++);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   ensureNoAutoCc(identity);
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: Reply-To + Tos
     // Cc: original Ccs without me.
@@ -481,7 +483,7 @@ add_task(async function testToCcReplyAllWhenReplyToSet() {
   );
 
   useAutoCc(identity, myEmail + ", smithers@example.com");
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: Reply-To + Tos
     // Cc: original Ccs + auto-Ccs (which includes me!)
@@ -497,7 +499,7 @@ add_task(async function testToCcReplyAllWhenReplyToSet() {
  * Tests that addresses get set properly when doing a reply to list.
  */
 add_task(async function testReplyToList() {
-  let msg0 = create_message({
+  const msg0 = create_message({
     from: "Homer <homer@example.com>",
     to: "workers-list@example.com",
     cc: "Lisa <lisa@example.com>, " + myEmail,
@@ -509,18 +511,18 @@ add_task(async function testReplyToList() {
   await add_message_to_folder([folder], msg0);
 
   await be_in_folder(folder);
-  let msg = select_click_row(i++);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   ensureNoAutoCc(identity);
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_list,
     // To: the list
     { addr_to: ["workers-list@example.com"] }
   );
 
   useAutoCc(identity, myEmail + ", smithers@example.com");
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_list,
     // To: the list
     // Cc: auto-Ccs
@@ -537,7 +539,7 @@ add_task(async function testReplyToList() {
  * list post.
  */
 add_task(async function testReplySenderForListPost() {
-  let msg0 = create_message({
+  const msg0 = create_message({
     from: "Homer <homer@example.com>",
     to: "workers-list@example.com",
     cc: "Lisa <lisa@example.com>, " + myEmail,
@@ -549,18 +551,18 @@ add_task(async function testReplySenderForListPost() {
   await add_message_to_folder([folder], msg0);
 
   await be_in_folder(folder);
-  let msg = select_click_row(i++);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   ensureNoAutoCc(identity);
-  checkReply(
+  await checkReply(
     open_compose_with_reply,
     // To: From
     { addr_to: ["Homer <homer@example.com>"] }
   );
 
   useAutoCc(identity, myEmail + ", smithers@example.com");
-  checkReply(
+  await checkReply(
     open_compose_with_reply,
     // To: From
     // Cc: auto-Ccs
@@ -576,7 +578,7 @@ add_task(async function testReplySenderForListPost() {
  * Tests that addresses get set properly when doing a reply all to a list post.
  */
 add_task(async function testReplyToAllForListPost() {
-  let msg0 = create_message({
+  const msg0 = create_message({
     from: "Homer <homer@example.com>",
     to: "workers-list@example.com",
     cc: "Lisa <lisa@example.com>, " + myEmail,
@@ -588,11 +590,11 @@ add_task(async function testReplyToAllForListPost() {
   await add_message_to_folder([folder], msg0);
 
   await be_in_folder(folder);
-  let msg = select_click_row(i++);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   ensureNoAutoCc(identity);
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: From + original To
     // Cc: original CC without me
@@ -603,7 +605,7 @@ add_task(async function testReplyToAllForListPost() {
   );
 
   useAutoCc(identity, myEmail + ", smithers@example.com");
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: From + original To
     // Cc: original CC + auto-Ccs (including me!)
@@ -620,7 +622,7 @@ add_task(async function testReplyToAllForListPost() {
  * post when also reply-to is set.
  */
 add_task(async function testReplyToListWhenReplyToSet() {
-  let msg0 = create_message({
+  const msg0 = create_message({
     from: "Homer <homer@example.com>",
     to: "workers-list@example.com, " + myEmail,
     cc: "Lisa <lisa@example.com>",
@@ -634,11 +636,11 @@ add_task(async function testReplyToListWhenReplyToSet() {
   await add_message_to_folder([folder], msg0);
 
   await be_in_folder(folder);
-  let msg = select_click_row(i++);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   ensureNoAutoCc(identity);
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: Reply-To, original Tos
     // Cc: original Cc
@@ -649,7 +651,7 @@ add_task(async function testReplyToListWhenReplyToSet() {
   );
 
   useAutoCc(identity, myEmail + ", smithers@example.com");
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: Reply-To, original Tos
     // Cc: original Cc + auto-Ccs
@@ -668,7 +670,7 @@ add_task(async function testReplyToListWhenReplyToSet() {
  * @see http://cr.yp.to/proto/replyto.html
  */
 add_task(async function testMailReplyTo() {
-  let msg0 = create_message({
+  const msg0 = create_message({
     from: "Homer <homer@example.com>",
     to: "workers-list@example.com",
     cc: "Lisa <lisa@example.com>",
@@ -681,18 +683,18 @@ add_task(async function testMailReplyTo() {
   await add_message_to_folder([folder], msg0);
 
   await be_in_folder(folder);
-  let msg = select_click_row(i++);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   ensureNoAutoCc(identity);
-  checkReply(
+  await checkReply(
     open_compose_with_reply,
     // To: Mail-Reply-To
     { addr_to: ["Homer S. <homer@example.com>"] }
   );
 
   useAutoCc(identity, myEmail + ", smithers@example.com");
-  checkReply(
+  await checkReply(
     open_compose_with_reply,
     // To: Mail-Reply-To
     // Cc: auto-Ccs
@@ -711,7 +713,7 @@ add_task(async function testMailReplyTo() {
  * @see http://cr.yp.to/proto/replyto.html
  */
 add_task(async function testMailFollowupTo() {
-  let msg0 = create_message({
+  const msg0 = create_message({
     from: "Homer <homer@example.com>",
     to: "workers-list@example.com, " + myEmail,
     cc: "Lisa <lisa@example.com>",
@@ -725,18 +727,18 @@ add_task(async function testMailFollowupTo() {
   await add_message_to_folder([folder], msg0);
 
   await be_in_folder(folder);
-  let msg = select_click_row(i++);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   ensureNoAutoCc(identity);
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: Mail-Followup-To
     { addr_to: ["workers-list@example.com"] }
   );
 
   useAutoCc(identity, myEmail + ", smithers@example.com");
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: Mail-Followup-To
     // Cc: auto-Ccs
@@ -752,7 +754,7 @@ add_task(async function testMailFollowupTo() {
  * Tests that addresses get set properly for reply to self.
  */
 add_task(async function testReplyToSelfReply() {
-  let msg0 = create_message({
+  const msg0 = create_message({
     // Upper case just to make sure we don't care about case sensitivity.
     from: myEmail.toUpperCase(),
     to: "Bart <bart@example.com>, Maggie <maggie@example.com>",
@@ -766,11 +768,11 @@ add_task(async function testReplyToSelfReply() {
   await add_message_to_folder([folder], msg0);
 
   await be_in_folder(folder);
-  let msg = select_click_row(i++);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   ensureNoAutoCc(identity);
-  checkReply(
+  await checkReply(
     open_compose_with_reply,
     // To: original To
     // Reply-To: original Reply-To
@@ -781,7 +783,7 @@ add_task(async function testReplyToSelfReply() {
   );
 
   useAutoCc(identity, myEmail + ", smithers@example.com");
-  checkReply(
+  await checkReply(
     open_compose_with_reply,
     // To: original To
     // Cc: auto-Ccs
@@ -800,7 +802,7 @@ add_task(async function testReplyToSelfReply() {
  * be treated as a followup.
  */
 add_task(async function testReplyToSelfReplyAll() {
-  let msg0 = create_message({
+  const msg0 = create_message({
     from: myEmail,
     to: "Bart <bart@example.com>, Maggie <maggie@example.com>",
     cc: "Lisa <lisa@example.com>",
@@ -813,11 +815,11 @@ add_task(async function testReplyToSelfReplyAll() {
   await add_message_to_folder([folder], msg0);
 
   await be_in_folder(folder);
-  let msg = select_click_row(i++);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   ensureNoAutoCc(identity);
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: original To
     // Cc: original Cc
@@ -833,7 +835,7 @@ add_task(async function testReplyToSelfReplyAll() {
 
   useAutoCc(identity, myEmail + ", smithers@example.com");
   useAutoBcc(identity, "Lisa <lisa@example.com>");
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: original To
     // Cc: original Cc (auto-Ccs would have been included here already)
@@ -856,7 +858,7 @@ add_task(async function testReplyToSelfReplyAll() {
  * or from Gmail. This should be treated as a followup.
  */
 add_task(async function testReplyToSelfNotOriginalSourceMsgReplyAll() {
-  let msg0 = create_message({
+  const msg0 = create_message({
     from: myEmail2,
     to: "Bart <bart@example.com>, Maggie <maggie@example.com>",
     cc: "Lisa <lisa@example.com>",
@@ -868,12 +870,12 @@ add_task(async function testReplyToSelfNotOriginalSourceMsgReplyAll() {
   await add_message_to_folder([folder], msg0);
 
   await be_in_folder(folder);
-  let msg = select_click_row(i++);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   ensureNoAutoCc(identity2);
   useAutoBcc(identity2, myEmail + ", smithers@example.com");
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: original To
     // Cc: original Cc
@@ -890,7 +892,7 @@ add_task(async function testReplyToSelfNotOriginalSourceMsgReplyAll() {
 
   useAutoCc(identity2, myEmail + ", smithers@example.com");
   useAutoBcc(identity2, "moe@example.com,bart@example.com,lisa@example.com");
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: original To
     // Cc: original Cc (auto-Ccs would have been included here already)
@@ -907,7 +909,7 @@ add_task(async function testReplyToSelfNotOriginalSourceMsgReplyAll() {
   stopUsingAutoBcc(identity2);
 
   useAutoBcc(identity2, myEmail2 + ", smithers@example.com");
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: original To
     // Cc: original Cc (auto-Ccs would have been included here already)
@@ -928,7 +930,7 @@ add_task(async function testReplyToSelfNotOriginalSourceMsgReplyAll() {
  * followup.
  */
 add_task(async function testReplyToOtherIdentity() {
-  let msg0 = create_message({
+  const msg0 = create_message({
     from: myEmail,
     to: myEmail2 + ", barney@example.com",
     cc: "Lisa <lisa@example.com>",
@@ -940,12 +942,12 @@ add_task(async function testReplyToOtherIdentity() {
   await add_message_to_folder([folder], msg0);
 
   await be_in_folder(folder);
-  let msg = select_click_row(i++);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   ensureNoAutoCc(identity2);
   ensureNoAutoBcc(identity2);
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: from + to (except me2)
     // Cc: original Cc
@@ -962,7 +964,7 @@ add_task(async function testReplyToOtherIdentity() {
  * this should be treated as a followup.
  */
 add_task(async function testReplyToSelfWithBccs() {
-  let msg0 = create_message({
+  const msg0 = create_message({
     from: myEmail,
     to: myEmail,
     cc: myEmail2 + ", Lisa <lisa@example.com>",
@@ -975,11 +977,11 @@ add_task(async function testReplyToSelfWithBccs() {
   await add_message_to_folder([folder], msg0);
 
   await be_in_folder(folder);
-  let msg = select_click_row(i++);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   ensureNoAutoCc(identity);
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: original To
     // Cc: original Cc
@@ -999,7 +1001,7 @@ add_task(async function testReplyToSelfWithBccs() {
  * this be treated as a followup.
  */
 add_task(async function testReplyToOtherIdentityWithBccs() {
-  let msg0 = create_message({
+  const msg0 = create_message({
     from: myEmail,
     to: myEmail2,
     cc: "Lisa <lisa@example.com>",
@@ -1011,11 +1013,11 @@ add_task(async function testReplyToOtherIdentityWithBccs() {
   await add_message_to_folder([folder], msg0);
 
   await be_in_folder(folder);
-  let msg = select_click_row(i++);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   ensureNoAutoCc(identity);
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: original To
     // Cc: original Cc
@@ -1032,7 +1034,7 @@ add_task(async function testReplyToOtherIdentityWithBccs() {
  * Tests that addresses get set properly for a nntp reply-all.
  */
 add_task(async function testNewsgroupsReplyAll() {
-  let msg0 = create_message({
+  const msg0 = create_message({
     from: "Homer <homer@example.com>",
     to: "test1-list@example.org",
     subject: "testNewsgroupsReplyAll - sent to two newsgroups and a list",
@@ -1043,11 +1045,11 @@ add_task(async function testNewsgroupsReplyAll() {
   await add_message_to_folder([folder], msg0);
 
   await be_in_folder(folder);
-  let msg = select_click_row(i++);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   ensureNoAutoCc(identity);
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: From, original To
     // Newsgroups: original Ccs
@@ -1058,7 +1060,7 @@ add_task(async function testNewsgroupsReplyAll() {
   );
 
   useAutoCc(identity, myEmail + ", smithers@example.com");
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: From, original To
     // Newsgroups: original Ccs
@@ -1076,7 +1078,7 @@ add_task(async function testNewsgroupsReplyAll() {
  * is set.
  */
 add_task(async function testNewsgroupsReplyAllFollowupTo() {
-  let msg0 = create_message({
+  const msg0 = create_message({
     from: "Homer <homer@example.com>",
     to: "test1-list@example.org, " + myEmail,
     subject: "testNewsgroupsReplyAllFollowupTo - Followup-To set",
@@ -1088,11 +1090,11 @@ add_task(async function testNewsgroupsReplyAllFollowupTo() {
   await add_message_to_folder([folder], msg0);
 
   await be_in_folder(folder);
-  let msg = select_click_row(i++);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   ensureNoAutoCc(identity);
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: From + original To (except me)
     // Newsgroups: <Followup-To>
@@ -1103,7 +1105,7 @@ add_task(async function testNewsgroupsReplyAllFollowupTo() {
   );
 
   useAutoCc(identity, myEmail + ", smithers@example.com");
-  checkReply(
+  await checkReply(
     open_compose_with_reply_to_all,
     // To: From + original To (except me)
     // Cc: auto-Ccs
@@ -1122,7 +1124,7 @@ add_task(async function testNewsgroupsReplyAllFollowupTo() {
  * and a Reply-To exists.
  */
 add_task(async function testToFromWithReplyTo() {
-  let msg0 = create_message({
+  const msg0 = create_message({
     from: myEmail,
     to: myEmail,
     subject: "testToFromWithReplyTo - To=From w/ Reply-To set",
@@ -1131,11 +1133,11 @@ add_task(async function testToFromWithReplyTo() {
   await add_message_to_folder([folder], msg0);
 
   await be_in_folder(folder);
-  let msg = select_click_row(i++);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   ensureNoAutoCc(identity);
-  checkReply(
+  await checkReply(
     open_compose_with_reply,
     // To: Reply-To
     { addr_to: ["Flanders <flanders@example.com>"] }

@@ -8,9 +8,10 @@
 #define ViewRegion_h
 
 #include "Units.h"
+#include "nsRegion.h"
 #include "nsTArray.h"
 
-class nsChildView;
+class nsCocoaWindow;
 
 @class NSView;
 
@@ -23,21 +24,23 @@ class ViewRegion {
  public:
   ~ViewRegion();
 
-  mozilla::LayoutDeviceIntRegion Region() { return mRegion; }
+  const mozilla::LayoutDeviceIntRegion& Region() const { return mRegion; }
+  Span<NSView* const> Views() const { return mViews; }
 
   /**
    * Update the region.
    * @param aRegion  The new region.
-   * @param aCoordinateConverter  The nsChildView to use for converting
-   *   LayoutDeviceIntRect device pixel coordinates into Cocoa NSRect coordinates.
+   * @param aCoordinateConverter  The nsCocoaWindow to use for converting
+   *   LayoutDeviceIntRect device pixel coordinates into Cocoa NSRect
+   * coordinates.
    * @param aContainerView  The view that's going to be the superview of the
    *   NSViews which will be created for this region.
    * @param aViewCreationCallback  A block that instantiates new NSViews.
    * @return  Whether or not the region changed.
    */
   bool UpdateRegion(const mozilla::LayoutDeviceIntRegion& aRegion,
-                    const nsChildView& aCoordinateConverter, NSView* aContainerView,
-                    NSView* (^aViewCreationCallback)());
+                    const nsCocoaWindow& aCoordinateConverter,
+                    NSView* aContainerView, NSView* (^aViewCreationCallback)());
 
   /**
    * Return an NSView from the region, if there is any.

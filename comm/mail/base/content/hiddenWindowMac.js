@@ -3,9 +3,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+window.addEventListener("load", hiddenWindowStartup);
+
 function hiddenWindowStartup() {
   // Disable menus which are not appropriate
-  let disabledItems = [
+  const disabledItems = [
     "menu_newFolder",
     "newMailAccountMenuItem",
     "newNewsgroupAccountMenuItem",
@@ -109,7 +111,7 @@ function hiddenWindowStartup() {
   ];
 
   let element;
-  for (let id of disabledItems) {
+  for (const id of disabledItems) {
     element = document.getElementById(id);
     if (element) {
       element.setAttribute("disabled", "true");
@@ -120,5 +122,11 @@ function hiddenWindowStartup() {
   element = document.getElementById("sep-window-list");
   if (element) {
     element.setAttribute("hidden", "true");
+  }
+
+  // Unhide tasksMenuMail to enable the CMD + 1 key.
+  var openMail3Pane_menuitem = document.getElementById("tasksMenuMail");
+  if (openMail3Pane_menuitem) {
+    openMail3Pane_menuitem.removeAttribute("hidden");
   }
 }

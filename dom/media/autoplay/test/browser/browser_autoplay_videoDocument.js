@@ -22,7 +22,13 @@ async function checkIsVideoDocumentAutoplay(browser) {
       ));
     return played;
   });
-  ok(played, "Should be able to play in video document.");
+  // On Android, we won't allow top level video document to autoplay.
+  const expectToPlay = SpecialPowers.Services.appinfo.OS != "Android";
+  is(
+    played,
+    expectToPlay,
+    `Should ${expectToPlay ? "" : "NOT "} be able to play a video document.`
+  );
 }
 
 async function checkIsIframeVideoDocumentAutoplay(browser) {
@@ -31,8 +37,8 @@ async function checkIsIframeVideoDocumentAutoplay(browser) {
     const iframe = content.document.createElement("iframe");
     iframe.src = pageURL;
     content.document.body.appendChild(iframe);
-    const iframeLoaded = new Promise((resolve, reject) => {
-      iframe.addEventListener("load", e => resolve(), { once: true });
+    const iframeLoaded = new Promise(resolve => {
+      iframe.addEventListener("load", () => resolve(), { once: true });
     });
     await iframeLoaded;
     return iframe.browsingContext;

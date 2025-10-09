@@ -60,6 +60,20 @@ nsresult nsLookAndFeel::GetSystemColors() {
   return NS_OK;
 }
 
+nsresult nsLookAndFeel::GetKeyboardLayoutImpl(nsACString& aLayout) {
+  if (!jni::IsAvailable()) {
+    return NS_ERROR_FAILURE;
+  }
+
+  auto layoutStr = java::GeckoAppShell::GetKeyboardLayout();
+  if (!layoutStr) {
+    return NS_ERROR_FAILURE;
+  }
+
+  aLayout.Assign(layoutStr->ToCString());
+  return NS_OK;
+}
+
 void nsLookAndFeel::NativeInit() {
   EnsureInitSystemColors();
   EnsureInitShowPassword();
@@ -119,10 +133,6 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aColorScheme,
   switch (aID) {
       // These colors don't seem to be used for anything anymore in Mozilla
       // The CSS2 colors below are used.
-    case ColorID::MozMenubartext:
-      aColor = mSystemColors.colorForeground;
-      break;
-
     case ColorID::ThemedScrollbarThumbInactive:
     case ColorID::ThemedScrollbarThumb:
       // We don't need to care about the Active and Hover colors because Android
@@ -194,7 +204,6 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aColorScheme,
       break;
     case ColorID::Infotext:
     case ColorID::Threeddarkshadow:  // 3-D shadow outer edge color
-    case ColorID::MozButtondefault:  // default button border color
       aColor = NS_RGB(0x00, 0x00, 0x00);
       break;
     case ColorID::Menu:
@@ -214,7 +223,6 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aColorScheme,
     case ColorID::Field:
     case ColorID::Threedhighlight:
     case ColorID::MozCombobox:
-    case ColorID::MozEventreerow:
       aColor = NS_RGB(0xff, 0xff, 0xff);
       break;
 
@@ -239,9 +247,6 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aColorScheme,
     case ColorID::MozColheaderhovertext:
       aColor = NS_RGB(0x10, 0x10, 0x10);
       break;
-    case ColorID::MozDragtargetzone:
-      aColor = mSystemColors.textColorHighlight;
-      break;
     case ColorID::MozButtonhoverface:
     case ColorID::MozButtonactiveface:
       aColor = NS_RGB(0xf3, 0xf0, 0xed);
@@ -256,12 +261,15 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aColorScheme,
     case ColorID::MozOddtreerow:
       aColor = NS_TRANSPARENT;
       break;
-    case ColorID::MozNativehyperlinktext:
-      aColor = NS_RGB(0, 0, 0xee);
-      break;
+    case ColorID::Linktext:
+    case ColorID::Visitedtext:
+    case ColorID::Activetext:
     case ColorID::Marktext:
     case ColorID::Mark:
+    case ColorID::MozAutofillBackground:
     case ColorID::SpellCheckerUnderline:
+    case ColorID::TargetTextBackground:
+    case ColorID::TargetTextForeground:
       aColor = GetStandinForNativeColor(aID, aColorScheme);
       break;
     default:
@@ -277,6 +285,14 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
   nsresult rv = NS_OK;
 
   switch (aID) {
+    case IntID::ScrollbarFadeBeginDelay:
+      aResult = 450;
+      break;
+
+    case IntID::ScrollbarFadeDuration:
+      aResult = 300;
+      break;
+
     case IntID::ScrollButtonLeftMouseButtonAction:
       aResult = 0;
       break;
@@ -298,10 +314,6 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
       aResult = 1;
       break;
 
-    case IntID::ShowCaretDuringSelection:
-      aResult = 0;
-      break;
-
     case IntID::SelectTextfieldsOnKeyFocus:
       // Select textfield content when focused by kbd
       // used by EventStateManager::sTextfieldSelectModel
@@ -310,10 +322,6 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
 
     case IntID::SubmenuDelay:
       aResult = 200;
-      break;
-
-    case IntID::TooltipDelay:
-      aResult = 500;
       break;
 
     case IntID::MenusCanOverlapOSBar:
@@ -346,8 +354,11 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
       aResult = java::GeckoSystemStateListener::PrefersReducedMotion();
       break;
 
+    case IntID::UseAccessibilityTheme:
+    // If high contrast is enabled, enable prefers-reduced-transparency media
+    // query as well as there is no dedicated option.
     case IntID::PrefersReducedTransparency:
-      aResult = 0;
+      aResult = java::GeckoSystemStateListener::PrefersContrast();
       break;
 
     case IntID::InvertedColors:
@@ -384,6 +395,10 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
     case IntID::TouchDeviceSupportPresent:
       // Touch support is always enabled on android.
       aResult = 1;
+      break;
+
+    case IntID::PointingDeviceKinds:
+      aResult = java::GeckoAppShell::GetPointingDeviceKinds();
       break;
 
     default:

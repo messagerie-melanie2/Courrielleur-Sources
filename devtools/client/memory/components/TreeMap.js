@@ -6,7 +6,7 @@
 
 const {
   Component,
-} = require("resource://devtools/client/shared/vendor/react.js");
+} = require("resource://devtools/client/shared/vendor/react.mjs");
 const dom = require("resource://devtools/client/shared/vendor/react-dom-factories.js");
 const { treeMapModel } = require("resource://devtools/client/memory/models.js");
 const startVisualization = require("resource://devtools/client/memory/components/tree-map/start.js");
@@ -38,7 +38,7 @@ class TreeMap extends Component {
     return oldTreeMap !== newTreeMap;
   }
 
-  componentDidUpdate(prevProps) {
+  componentDidUpdate() {
     this._stopVisualization();
 
     if (this.props.treeMap && this.props.treeMap.report) {

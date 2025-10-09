@@ -59,6 +59,43 @@ def assert_paths(a, b):
             "extensions": ["py"],
             "expected": ["a.py", "subdir1/b.py"],
         },
+        pytest.param(
+            {
+                "paths": [
+                    "a.py",
+                    "a.js",
+                    "subdir1/b.py",
+                    "subdir2/c.py",
+                    "subdir1/subdir3/d.py",
+                ],
+                "include": ["."],
+                "exclude": [],
+                "exclude_extensions": ["py"],
+                "expected": ["a.js"],
+            },
+            id="Excluding .py should only return .js file.",
+        ),
+        pytest.param(
+            {
+                "paths": [
+                    "a.py",
+                    "a.js",
+                    "subdir1/b.py",
+                    "subdir2/c.py",
+                    "subdir1/subdir3/d.py",
+                ],
+                "include": ["."],
+                "exclude": [],
+                "exclude_extensions": ["js"],
+                "expected": [
+                    "a.py",
+                    "subdir1/b.py",
+                    "subdir2/c.py",
+                    "subdir1/subdir3/d.py",
+                ],
+            },
+            id="Excluding .js should only return .py files.",
+        ),
         {
             "paths": ["a.py", "a.js", "subdir2"],
             "include": ["."],
@@ -86,6 +123,12 @@ def assert_paths(a, b):
             "exclude": [],
             "expected": [],
         },
+        {
+            "paths": ["a.py"],
+            "include": ["a.js"],
+            "exclude": [],
+            "expected": [],
+        },
     ),
 )
 def test_filterpaths(test):
@@ -104,24 +147,47 @@ def test_filterpaths(test):
             "paths": ["subdir1/b.js"],
             "config": {
                 "exclude": ["subdir1"],
-                "extensions": "js",
+                "extensions": ["js"],
             },
             "expected": [],
         },
         {
-            "paths": ["subdir1/subdir3"],
+            "paths": ["subdir1"],
             "config": {
                 "exclude": ["subdir1"],
-                "extensions": "js",
+                "extensions": ["js"],
             },
             "expected": [],
         },
+        pytest.param(
+            {
+                "paths": ["a.py", "subdir1"],
+                "config": {
+                    "exclude": ["subdir1"],
+                    "exclude_extensions": ["gob"],
+                },
+                "expected": ["a.py"],
+            },
+            id="Excluding both subdirs and nonsense extensions returns other files.",
+        ),
+        pytest.param(
+            {
+                "paths": ["a.py", "a.js", "subdir1"],
+                "config": {
+                    "exclude": [],
+                    "exclude_extensions": ["py"],
+                },
+                "expected": ["a.js", "subdir1/subdir3/d.js", "subdir1/b.js"],
+            },
+            id="Excluding .py files returns only non-.py files, also from subdirs.",
+        ),
     ),
 )
 def test_expand_exclusions(test):
     expected = test.pop("expected", [])
 
-    paths = list(pathutils.expand_exclusions(test["paths"], test["config"], root))
+    input_paths = [os.path.join(root, p) for p in test["paths"]]
+    paths = list(pathutils.expand_exclusions(input_paths, test["config"], root))
     assert_paths(paths, expected)
 
 
@@ -158,7 +224,7 @@ def test_collapse(paths, expected):
         else:
             inputs.append(path)
 
-    print("inputs: {}".format(inputs))
+    print(f"inputs: {inputs}")
     assert_paths(pathutils.collapse(inputs), expected)
 
 

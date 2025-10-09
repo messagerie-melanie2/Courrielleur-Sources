@@ -1,5 +1,12 @@
+use alloc::{
+    borrow::ToOwned,
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
+use core::{error::Error, fmt, ops::Range};
+
 use crate::{Arena, Handle, UniqueArena};
-use std::{error::Error, fmt, ops::Range};
 
 /// A source code span, used for error reporting.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -11,6 +18,7 @@ pub struct Span {
 
 impl Span {
     pub const UNDEFINED: Self = Self { start: 0, end: 0 };
+
     /// Creates a new `Span` from a range of byte indices
     ///
     /// Note: end is exclusive, it doesn't belong to the `Span`
@@ -72,8 +80,8 @@ impl Span {
     pub fn location(&self, source: &str) -> SourceLocation {
         let prefix = &source[..self.start as usize];
         let line_number = prefix.matches('\n').count() as u32 + 1;
-        let line_start = prefix.rfind('\n').map(|pos| pos + 1).unwrap_or(0);
-        let line_position = source[line_start..self.start as usize].chars().count() as u32 + 1;
+        let line_start = prefix.rfind('\n').map(|pos| pos + 1).unwrap_or(0) as u32;
+        let line_position = self.start - line_start + 1;
 
         SourceLocation {
             line_number,
@@ -93,7 +101,7 @@ impl From<Range<usize>> for Span {
     }
 }
 
-impl std::ops::Index<Span> for str {
+impl core::ops::Index<Span> for str {
     type Output = str;
 
     #[inline]
@@ -104,16 +112,17 @@ impl std::ops::Index<Span> for str {
 
 /// A human-readable representation for a span, tailored for text source.
 ///
-/// Corresponds to the positional members of [`GPUCompilationMessage`][gcm] from
-/// the WebGPU specification, except that `offset` and `length` are in bytes
-/// (UTF-8 code units), instead of UTF-16 code units.
+/// Roughly corresponds to the positional members of [`GPUCompilationMessage`][gcm] from
+/// the WebGPU specification, except
+/// - `offset` and `length` are in bytes (UTF-8 code units), instead of UTF-16 code units.
+/// - `line_position` is in bytes (UTF-8 code units), instead of UTF-16 code units.
 ///
 /// [gcm]: https://www.w3.org/TR/webgpu/#gpucompilationmessage
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct SourceLocation {
     /// 1-based line number.
     pub line_number: u32,
-    /// 1-based column of the start of this span
+    /// 1-based column in code units (in bytes) of the start of the span.
     pub line_position: u32,
     /// 0-based Offset in code units (in bytes) of the start of the span.
     pub offset: u32,
@@ -128,7 +137,6 @@ pub type SpanContext = (Span, String);
 #[derive(Debug, Clone)]
 pub struct WithSpan<E> {
     inner: E,
-    #[cfg(feature = "span")]
     spans: Vec<SpanContext>,
 }
 
@@ -136,7 +144,7 @@ impl<E> fmt::Display for WithSpan<E>
 where
     E: fmt::Display,
 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.inner.fmt(f)
     }
 }
@@ -165,7 +173,6 @@ impl<E> WithSpan<E> {
     pub const fn new(inner: E) -> Self {
         Self {
             inner,
-            #[cfg(feature = "span")]
             spans: Vec::new(),
         }
     }
@@ -181,20 +188,15 @@ impl<E> WithSpan<E> {
     }
 
     /// Iterator over stored [`SpanContext`]s.
-    pub fn spans(&self) -> impl Iterator<Item = &SpanContext> + ExactSizeIterator {
-        #[cfg(feature = "span")]
-        return self.spans.iter();
-        #[cfg(not(feature = "span"))]
-        return std::iter::empty();
+    pub fn spans(&self) -> impl ExactSizeIterator<Item = &SpanContext> {
+        self.spans.iter()
     }
 
     /// Add a new span with description.
-    #[cfg_attr(not(feature = "span"), allow(unused_variables, unused_mut))]
     pub fn with_span<S>(mut self, span: Span, description: S) -> Self
     where
         S: ToString,
     {
-        #[cfg(feature = "span")]
         if span.is_defined() {
             self.spans.push((span, description.to_string()));
         }
@@ -220,7 +222,6 @@ impl<E> WithSpan<E> {
     {
         WithSpan {
             inner: self.inner.into(),
-            #[cfg(feature = "span")]
             spans: self.spans,
         }
     }
@@ -231,31 +232,21 @@ impl<E> WithSpan<E> {
     where
         F: FnOnce(E) -> WithSpan<E2>,
     {
-        #[cfg_attr(not(feature = "span"), allow(unused_mut))]
         let mut res = func(self.inner);
-        #[cfg(feature = "span")]
         res.spans.extend(self.spans);
         res
     }
 
-    #[cfg(feature = "span")]
     /// Return a [`SourceLocation`] for our first span, if we have one.
     pub fn location(&self, source: &str) -> Option<SourceLocation> {
-        if self.spans.is_empty() {
+        if self.spans.is_empty() || source.is_empty() {
             return None;
         }
 
         Some(self.spans[0].0.location(source))
     }
 
-    #[cfg(not(feature = "span"))]
-    /// Return a [`SourceLocation`] for our first span, if we have one.
-    pub fn location(&self, _source: &str) -> Option<SourceLocation> {
-        None
-    }
-
-    #[cfg(feature = "span")]
-    fn diagnostic(&self) -> codespan_reporting::diagnostic::Diagnostic<()>
+    pub(crate) fn diagnostic(&self) -> codespan_reporting::diagnostic::Diagnostic<()>
     where
         E: Error,
     {
@@ -282,7 +273,7 @@ impl<E> WithSpan<E> {
     }
 
     /// Emits a summary of the error to standard error stream.
-    #[cfg(feature = "span")]
+    #[cfg(feature = "stderr")]
     pub fn emit_to_stderr(&self, source: &str)
     where
         E: Error,
@@ -291,23 +282,29 @@ impl<E> WithSpan<E> {
     }
 
     /// Emits a summary of the error to standard error stream.
-    #[cfg(feature = "span")]
+    #[cfg(feature = "stderr")]
     pub fn emit_to_stderr_with_path(&self, source: &str, path: &str)
     where
         E: Error,
     {
         use codespan_reporting::{files, term};
-        use term::termcolor::{ColorChoice, StandardStream};
 
         let files = files::SimpleFile::new(path, source);
         let config = term::Config::default();
-        let writer = StandardStream::stderr(ColorChoice::Auto);
+
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "termcolor")] {
+                let writer = term::termcolor::StandardStream::stderr(term::termcolor::ColorChoice::Auto);
+            } else {
+                let writer = std::io::stderr();
+            }
+        }
+
         term::emit(&mut writer.lock(), &config, &files, &self.diagnostic())
             .expect("cannot write error");
     }
 
     /// Emits a summary of the error to a string.
-    #[cfg(feature = "span")]
     pub fn emit_to_string(&self, source: &str) -> String
     where
         E: Error,
@@ -316,25 +313,27 @@ impl<E> WithSpan<E> {
     }
 
     /// Emits a summary of the error to a string.
-    #[cfg(feature = "span")]
     pub fn emit_to_string_with_path(&self, source: &str, path: &str) -> String
     where
         E: Error,
     {
         use codespan_reporting::{files, term};
-        use term::termcolor::NoColor;
 
         let files = files::SimpleFile::new(path, source);
-        let config = codespan_reporting::term::Config::default();
-        let mut writer = NoColor::new(Vec::new());
-        term::emit(&mut writer, &config, &files, &self.diagnostic()).expect("cannot write error");
-        String::from_utf8(writer.into_inner()).unwrap()
+        let config = term::Config::default();
+
+        let mut writer = crate::error::DiagnosticBuffer::new();
+        term::emit(writer.inner_mut(), &config, &files, &self.diagnostic())
+            .expect("cannot write error");
+        writer.into_string()
     }
 }
 
 /// Convenience trait for [`Error`] to be able to apply spans to anything.
 pub(crate) trait AddSpan: Sized {
+    /// The returned output type.
     type Output;
+
     /// See [`WithSpan::new`].
     fn with_span(self) -> Self::Output;
     /// See [`WithSpan::with_span`].
@@ -345,37 +344,9 @@ pub(crate) trait AddSpan: Sized {
     fn with_span_handle<T, A: SpanProvider<T>>(self, handle: Handle<T>, arena: &A) -> Self::Output;
 }
 
-/// Trait abstracting over getting a span from an [`Arena`] or a [`UniqueArena`].
-pub(crate) trait SpanProvider<T> {
-    fn get_span(&self, handle: Handle<T>) -> Span;
-    fn get_span_context(&self, handle: Handle<T>) -> SpanContext {
-        match self.get_span(handle) {
-            x if !x.is_defined() => (Default::default(), "".to_string()),
-            known => (
-                known,
-                format!("{} {:?}", std::any::type_name::<T>(), handle),
-            ),
-        }
-    }
-}
-
-impl<T> SpanProvider<T> for Arena<T> {
-    fn get_span(&self, handle: Handle<T>) -> Span {
-        self.get_span(handle)
-    }
-}
-
-impl<T> SpanProvider<T> for UniqueArena<T> {
-    fn get_span(&self, handle: Handle<T>) -> Span {
-        self.get_span(handle)
-    }
-}
-
-impl<E> AddSpan for E
-where
-    E: Error,
-{
+impl<E> AddSpan for E {
     type Output = WithSpan<Self>;
+
     fn with_span(self) -> WithSpan<Self> {
         WithSpan::new(self)
     }
@@ -397,10 +368,38 @@ where
     }
 }
 
+/// Trait abstracting over getting a span from an [`Arena`] or a [`UniqueArena`].
+pub(crate) trait SpanProvider<T> {
+    fn get_span(&self, handle: Handle<T>) -> Span;
+    fn get_span_context(&self, handle: Handle<T>) -> SpanContext {
+        match self.get_span(handle) {
+            x if !x.is_defined() => (Default::default(), "".to_string()),
+            known => (
+                known,
+                format!("{} {:?}", core::any::type_name::<T>(), handle),
+            ),
+        }
+    }
+}
+
+impl<T> SpanProvider<T> for Arena<T> {
+    fn get_span(&self, handle: Handle<T>) -> Span {
+        self.get_span(handle)
+    }
+}
+
+impl<T> SpanProvider<T> for UniqueArena<T> {
+    fn get_span(&self, handle: Handle<T>) -> Span {
+        self.get_span(handle)
+    }
+}
+
 /// Convenience trait for [`Result`], adding a [`MapErrWithSpan::map_err_inner`]
 /// mapping to [`WithSpan::and_then`].
-pub trait MapErrWithSpan<E, E2>: Sized {
+pub(crate) trait MapErrWithSpan<E, E2>: Sized {
+    /// The returned output type.
     type Output: Sized;
+
     fn map_err_inner<F, E3>(self, func: F) -> Self::Output
     where
         F: FnOnce(E) -> WithSpan<E3>,
@@ -409,6 +408,7 @@ pub trait MapErrWithSpan<E, E2>: Sized {
 
 impl<T, E, E2> MapErrWithSpan<E, E2> for Result<T, WithSpan<E>> {
     type Output = Result<T, WithSpan<E2>>;
+
     fn map_err_inner<F, E3>(self, func: F) -> Result<T, WithSpan<E2>>
     where
         F: FnOnce(E) -> WithSpan<E3>,

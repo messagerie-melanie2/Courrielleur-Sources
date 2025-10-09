@@ -10,11 +10,11 @@
  * test_smtpPasswordFailure2.js.
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 /* import-globals-from ../../../test/resources/alertTestUtils.js */
@@ -34,16 +34,7 @@ var kUsername = "testsmtp";
 var kInvalidPassword = "smtptest";
 var kValidPassword = "smtptest1";
 
-function confirmExPS(
-  aDialogTitle,
-  aText,
-  aButtonFlags,
-  aButton0Title,
-  aButton1Title,
-  aButton2Title,
-  aCheckMsg,
-  aCheckState
-) {
+function confirmExPS() {
   switch (++attempt) {
     // First attempt, retry.
     case 1:
@@ -102,7 +93,8 @@ add_task(async function () {
   // Handle the server in a try/catch/finally loop so that we always will stop
   // the server if something fails.
   try {
-    // Start the fake SMTP server
+    // Start the fake SMTP server. The server's socket type defaults to
+    // Ci.nsMsgSocketType.plain, so no need to set it.
     server.start();
     var smtpServer = getBasicSmtpServer(server.port);
     var identity = getSmtpIdentity(kIdentityMail, smtpServer);
@@ -111,28 +103,29 @@ add_task(async function () {
     test = "Auth sendMailMessage";
 
     smtpServer.authMethod = Ci.nsMsgAuthMethod.passwordCleartext;
-    smtpServer.socketType = Ci.nsMsgSocketType.plain;
     smtpServer.username = kUsername;
 
     dump("Send\n");
 
-    let urlListener = new PromiseTestUtils.PromiseUrlListener();
-    MailServices.smtp.sendMailMessage(
+    const messageId = Cc["@mozilla.org/messengercompose/computils;1"]
+      .createInstance(Ci.nsIMsgCompUtils)
+      .msgGenerateMessageId(identity, null);
+
+    const listener = new PromiseTestUtils.PromiseMsgOutgoingListener();
+    smtpServer.sendMailMessage(
       testFile,
-      kTo,
+      MailServices.headerParser.parseEncodedHeaderW(kTo),
+      [],
       identity,
       kSender,
       null,
-      urlListener,
-      null,
       null,
       false,
-      "",
-      {},
-      {}
+      messageId,
+      listener
     );
 
-    await urlListener.promise;
+    await listener.promise;
 
     dump("End Send\n");
 
@@ -155,7 +148,7 @@ add_task(async function () {
     ]);
 
     // Now check the new one has been saved.
-    let logins = Services.logins.findLogins(
+    const logins = Services.logins.findLogins(
       "smtp://localhost",
       null,
       "smtp://localhost"
@@ -170,7 +163,7 @@ add_task(async function () {
   } finally {
     server.stop();
 
-    var thread = gThreadManager.currentThread;
+    var thread = Services.tm.currentThread;
     while (thread.hasPendingEvents()) {
       thread.processNextEvent(true);
     }

@@ -5,13 +5,10 @@
 
 #include "nsMsgSendReport.h"
 
-#include "msgCore.h"
 #include "nsIMsgCompose.h"
 #include "nsMsgPrompts.h"
 #include "nsError.h"
-#include "nsComposeStrings.h"
 #include "nsIStringBundle.h"
-#include "nsServiceManagerUtils.h"
 #include "mozilla/Components.h"
 
 NS_IMPL_ISUPPORTS(nsMsgProcessReport, nsIMsgProcessReport)
@@ -251,14 +248,10 @@ NS_IMETHODIMP nsMsgSendReport::DisplayReport(mozIDOMWindowProxy* window,
 #endif
     switch (currError) {
       case NS_BINDING_ABORTED:
-      case NS_MSG_UNABLE_TO_SEND_LATER:
-      case NS_MSG_UNABLE_TO_SAVE_DRAFT:
-      case NS_MSG_UNABLE_TO_SAVE_TEMPLATE:
         // Ignore, don't need to repeat ourself.
         break;
       default:
-        const char* errorString = errorStringNameForErrorCode(currError);
-        nsMsgGetMessageByName(errorString, currMessage);
+        nsMsgGetMessageByName("sendFailed", currMessage);
         break;
     }
 #ifdef __GNUC__
@@ -268,10 +261,10 @@ NS_IMETHODIMP nsMsgSendReport::DisplayReport(mozIDOMWindowProxy* window,
 
   if (mDeliveryMode == nsIMsgCompDeliverMode::Now ||
       mDeliveryMode == nsIMsgCompDeliverMode::SendUnsent) {
-    // SMTP is taking care of it's own error message and will return
-    // NS_ERROR_BUT_DONT_SHOW_ALERT as error code. In that case, we must not
+    // SMTP is taking care of its own error message and will return
+    // NS_ERROR_ABORT as error code. In that case, we must not
     // show an alert ourself.
-    if (currError == NS_ERROR_BUT_DONT_SHOW_ALERT) {
+    if (currError == NS_ERROR_ABORT) {
       mAlreadyDisplayReport = true;
       return NS_OK;
     }

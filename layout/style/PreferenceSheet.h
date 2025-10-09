@@ -27,9 +27,6 @@ struct PreferenceSheet {
 
       nscolor mDefault = NS_RGB(0, 0, 0);
       nscolor mDefaultBackground = NS_RGB(0xFF, 0xFF, 0xFF);
-
-      nscolor mFocusText = mDefault;
-      nscolor mFocusBackground = mDefaultBackground;
     } mLightColors, mDarkColors;
 
     const Colors& ColorsFor(ColorScheme aScheme) const {
@@ -44,43 +41,32 @@ struct PreferenceSheet {
     bool mUsePrefColors = false;
     bool mUseStandins = false;
     bool mMustUseLightColorSet = false;
+    bool mMustUseLightSystemColors = false;
 
-    // Sometimes we can force a color scheme on a document, or honor the
-    // preferred color-scheme in more cases, depending on whether we're forcing
-    // colors or not.
-    enum class ColorSchemeChoice : uint8_t {
-      // We're not forcing colors, use standard algorithm based on specified
-      // style and meta tags and so on.
-      Standard,
-      // We can honor whatever the preferred color-scheme for the document is
-      // (the preferred color-scheme of the user, since we're forcing colors).
-      UserPreferred,
-      Light,
-      Dark,
-    };
-
-    ColorSchemeChoice mColorSchemeChoice = ColorSchemeChoice::Standard;
-
-    // Whether the non-native theme should use real system colors for widgets.
-    bool NonNativeThemeShouldBeHighContrast() const;
+    ColorScheme mColorScheme = ColorScheme::Light;
 
     void Load(bool aIsChrome);
     void LoadColors(bool aIsLight);
   };
-
-  static void EnsureInitialized() {
-    if (sInitialized) {
-      return;
-    }
-    Initialize();
-  }
 
   static void Refresh() {
     sInitialized = false;
     Initialize();
   }
 
-  static bool AffectedByPref(const nsACString&);
+  enum class ChromeColorSchemeSetting { Light, Dark, System };
+  static ChromeColorSchemeSetting ColorSchemeSettingForChrome();
+
+  static ColorScheme ColorSchemeForChrome() {
+    MOZ_ASSERT(sInitialized);
+    return ChromePrefs().mColorScheme;
+  }
+
+  static ColorScheme PreferredColorSchemeForContent() {
+    MOZ_ASSERT(sInitialized);
+    return ContentPrefs().mColorScheme;
+  }
+  static ColorScheme ThemeDerivedColorSchemeForContent();
 
   static Prefs& ContentPrefs() {
     MOZ_ASSERT(sInitialized);

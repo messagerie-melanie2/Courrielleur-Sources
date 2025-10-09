@@ -10,23 +10,17 @@
 #include <cstdint>
 #include <iterator>
 #include <map>
-#include <unordered_map>
 #include <string>
 #include <type_traits>
 #include <utility>
-#include <vector>
 #include "ErrorList.h"
-#include "base/basictypes.h"
-#include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/pickle.h"
-#include "base/string_util.h"
-#include "build/build_config.h"
 #include "chrome/common/ipc_message.h"
 #include "mozilla/CheckedInt.h"
-#include "mozilla/IntegerRange.h"
+#include "mozilla/ipc/SharedMemoryMapping.h"
 
-#if defined(OS_WIN)
+#if defined(XP_WIN)
 #  include <windows.h>
 #endif
 
@@ -39,13 +33,25 @@ namespace mozilla::ipc {
 class IProtocol;
 template <typename P>
 struct IPDLParamTraits;
-class SharedMemory;
+namespace shared_memory {
+class Cursor;
+}
 
 // Implemented in ProtocolUtils.cpp
 MOZ_NEVER_INLINE void PickleFatalError(const char* aMsg, IProtocol* aActor);
 }  // namespace mozilla::ipc
 
 namespace IPC {
+
+/**
+ * This constant determines the threshold size (in bytes) for deciding whether
+ * shared memory should be used during serialization/deserialization handled
+ * by the MessageBufferWriter class.
+ *
+ * NOTE: Even above this threshold, if MessageBufferWriter fails to allocate a
+ * shared memory region, it may still fall-back to sending the message inline.
+ */
+constexpr uint32_t kMessageBufferShmemThreshold = 64 * 1024;  // 64 KB
 
 /**
  * Context used to serialize into an IPC::Message. Provides relevant context
@@ -83,6 +89,11 @@ class MOZ_STACK_CLASS MessageWriter final {
 
 #undef FORWARD_WRITE
 
+  template <class T>
+  bool WriteScalar(const T& result) {
+    return message_.WriteScalar(result);
+  }
+
   bool WriteData(const char* data, uint32_t length) {
     return message_.WriteData(data, length);
   }
@@ -107,7 +118,7 @@ class MOZ_STACK_CLASS MessageWriter final {
     message_.WritePort(std::move(port));
   }
 
-#if defined(OS_MACOSX) || defined(OS_IOS)
+#if defined(XP_DARWIN)
   bool WriteMachSendRight(mozilla::UniqueMachSendRight port) {
     return message_.WriteMachSendRight(std::move(port));
   }
@@ -115,6 +126,10 @@ class MOZ_STACK_CLASS MessageWriter final {
 
   void FatalError(const char* aErrorMsg) const {
     mozilla::ipc::PickleFatalError(aErrorMsg, actor_);
+  }
+
+  void NoteLargeBufferShmemFailure(uint32_t aLargeBufferSize) {
+    message_.NoteLargeBufferShmemFailure(aLargeBufferSize);
   }
 
  private:
@@ -164,6 +179,11 @@ class MOZ_STACK_CLASS MessageReader final {
 
 #undef FORWARD_READ
 
+  template <class T>
+  [[nodiscard]] bool ReadScalar(T* const result) {
+    return message_.ReadScalar(&iter_, result);
+  }
+
   [[nodiscard]] bool ReadBytesInto(void* data, uint32_t length) {
     return message_.ReadBytesInto(&iter_, data, length);
   }
@@ -192,7 +212,7 @@ class MOZ_STACK_CLASS MessageReader final {
     return message_.ConsumePort(&iter_, port);
   }
 
-#if defined(OS_MACOSX) || defined(OS_IOS)
+#if defined(XP_DARWIN)
   [[nodiscard]] bool ConsumeMachSendRight(mozilla::UniqueMachSendRight* port) {
     return message_.ConsumeMachSendRight(&iter_, port);
   }
@@ -460,7 +480,7 @@ inline constexpr auto ParamTraitsReadUsesOutParam()
 }  // namespace detail
 
 template <typename P>
-inline bool WARN_UNUSED_RESULT ReadParam(MessageReader* reader, P* p) {
+[[nodiscard]] inline bool ReadParam(MessageReader* reader, P* p) {
   if constexpr (!detail::ParamTraitsReadUsesOutParam<P>()) {
     auto maybe = ParamTraits<P>::Read(reader);
     if (maybe) {
@@ -474,7 +494,7 @@ inline bool WARN_UNUSED_RESULT ReadParam(MessageReader* reader, P* p) {
 }
 
 template <typename P>
-inline ReadResult<P> WARN_UNUSED_RESULT ReadParam(MessageReader* reader) {
+[[nodiscard]] inline ReadResult<P> ReadParam(MessageReader* reader) {
   if constexpr (!detail::ParamTraitsReadUsesOutParam<P>()) {
     return ParamTraits<P>::Read(reader);
   } else {
@@ -511,8 +531,7 @@ class MOZ_STACK_CLASS MessageBufferWriter {
 
  private:
   MessageWriter* writer_;
-  RefPtr<mozilla::ipc::SharedMemory> shmem_;
-  char* buffer_ = nullptr;
+  mozilla::UniquePtr<mozilla::ipc::shared_memory::Cursor> shmem_cursor_;
   uint32_t remaining_ = 0;
 };
 
@@ -543,8 +562,7 @@ class MOZ_STACK_CLASS MessageBufferReader {
 
  private:
   MessageReader* reader_;
-  RefPtr<mozilla::ipc::SharedMemory> shmem_;
-  const char* buffer_ = nullptr;
+  mozilla::UniquePtr<mozilla::ipc::shared_memory::Cursor> shmem_cursor_;
   uint32_t remaining_ = 0;
 };
 
@@ -666,8 +684,7 @@ bool ReadSequenceParamImpl(MessageReader* reader, mozilla::Maybe<I>&& data,
  * If the type satisfies kUseWriteBytes, output iterators are not supported.
  */
 template <typename P, typename F>
-bool WARN_UNUSED_RESULT ReadSequenceParam(MessageReader* reader,
-                                          F&& allocator) {
+[[nodiscard]] bool ReadSequenceParam(MessageReader* reader, F&& allocator) {
   uint32_t length = 0;
   if (!reader->ReadUInt32(&length)) {
     reader->FatalError("failed to read byte length in ReadSequenceParam");
@@ -714,6 +731,17 @@ struct ParamTraitsFundamental<bool> {
   }
   static bool Read(MessageReader* reader, param_type* r) {
     return reader->ReadBool(r);
+  }
+};
+
+template <>
+struct ParamTraitsFundamental<char> {
+  typedef char param_type;
+  static void Write(MessageWriter* writer, const param_type& p) {
+    writer->WriteScalar(p);
+  }
+  static bool Read(MessageReader* reader, param_type* r) {
+    return reader->ReadScalar(r);
   }
 };
 
@@ -787,6 +815,28 @@ struct ParamTraitsFundamental<double> {
 
 template <class P>
 struct ParamTraitsFixed : ParamTraitsFundamental<P> {};
+
+template <>
+struct ParamTraitsFixed<int8_t> {
+  typedef int8_t param_type;
+  static void Write(MessageWriter* writer, const param_type& p) {
+    writer->WriteScalar(p);
+  }
+  static bool Read(MessageReader* reader, param_type* r) {
+    return reader->ReadScalar(r);
+  }
+};
+
+template <>
+struct ParamTraitsFixed<uint8_t> {
+  typedef uint8_t param_type;
+  static void Write(MessageWriter* writer, const param_type& p) {
+    writer->WriteScalar(p);
+  }
+  static bool Read(MessageReader* reader, param_type* r) {
+    return reader->ReadScalar(r);
+  }
+};
 
 template <>
 struct ParamTraitsFixed<int16_t> {
@@ -891,7 +941,7 @@ struct ParamTraitsStd<std::map<K, V>> {
 template <class P>
 struct ParamTraitsWindows : ParamTraitsStd<P> {};
 
-#if defined(OS_WIN)
+#if defined(XP_WIN)
 template <>
 struct ParamTraitsWindows<HANDLE> {
   static_assert(sizeof(HANDLE) == sizeof(intptr_t), "Wrong size for HANDLE?");
@@ -915,7 +965,7 @@ struct ParamTraitsWindows<HWND> {
     return reader->ReadIntPtr(reinterpret_cast<intptr_t*>(r));
   }
 };
-#endif  // defined(OS_WIN)
+#endif  // defined(XP_WIN)
 
 // Various ipc/chromium types.
 
@@ -965,7 +1015,7 @@ struct ParamTraitsIPC<mozilla::UniqueFileHandle> {
   }
 };
 
-#if defined(OS_MACOSX) || defined(OS_IOS)
+#if defined(XP_DARWIN)
 // `UniqueMachSendRight` may be serialized over IPC channels. On the receiving
 // side, the UniqueMachSendRight is the local name of the right which was
 // transmitted.

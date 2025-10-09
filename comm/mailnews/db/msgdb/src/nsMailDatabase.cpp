@@ -6,7 +6,6 @@
 #include "msgCore.h"
 #include "nsMailDatabase.h"
 #include "nsDBFolderInfo.h"
-#include "nsMsgLocalFolderHdrs.h"
 #include "nsNetUtil.h"
 #include "nsMsgOfflineImapOperation.h"
 #include "nsMsgFolderFlags.h"
@@ -32,21 +31,6 @@ nsMailDatabase::nsMailDatabase() : m_reparse(false) {
 }
 
 nsMailDatabase::~nsMailDatabase() {}
-
-// caller passes in upgrading==true if they want back a db even if the db is out
-// of date. If so, they'll extract out the interesting info from the db, close
-// it, delete it, and then try to open the db again, prior to reparsing.
-nsresult nsMailDatabase::Open(nsMsgDBService* aDBService, nsIFile* aSummaryFile,
-                              bool aCreate, bool aUpgrading) {
-#ifdef DEBUG
-  nsString leafName;
-  aSummaryFile->GetLeafName(leafName);
-  if (!StringEndsWith(leafName, NS_LITERAL_STRING_FROM_CSTRING(SUMMARY_SUFFIX),
-                      nsCaseInsensitiveStringComparator))
-    NS_ERROR("non summary file passed into open");
-#endif
-  return nsMsgDatabase::Open(aDBService, aSummaryFile, aCreate, aUpgrading);
-}
 
 NS_IMETHODIMP nsMailDatabase::ForceClosed() {
   m_mdbAllOfflineOpsTable = nullptr;
@@ -94,7 +78,7 @@ NS_IMETHODIMP nsMailDatabase::GetSummaryValid(bool* aResult) {
     // of the summary file. For now, this is an expected condition when the
     // message database is being opened from a URL in
     // nsMailboxUrl::GetMsgHdrForKey() which calls
-    // nsMsgDBService::OpenMailDBFromFile() without a folder.
+    // nsMsgDBService::CachedDBForFilePath() without a folder.
     // Returning an error here would lead to the deletion of the MSF in the
     // caller nsMsgDatabase::CheckForErrors().
     *aResult = true;
@@ -179,6 +163,8 @@ NS_IMETHODIMP nsMailDatabase::GetOfflineOpForKey(
     if (NS_SUCCEEDED(err) && offlineOpRow) {
       NS_IF_ADDREF(*offlineOp =
                        new nsMsgOfflineImapOperation(this, offlineOpRow));
+      // The offlineOpRow uses msgKey as its oid, but we'll also explicitly
+      // set the messageKey field.
       (*offlineOp)->SetMessageKey(msgKey);
     }
     if (!hasOid && m_dbFolderInfo) {
@@ -196,6 +182,38 @@ NS_IMETHODIMP nsMailDatabase::GetOfflineOpForKey(
   }
 
   return err;
+}
+
+NS_IMETHODIMP nsMailDatabase::HasOfflineActivity(bool* hasOffline) {
+  *hasOffline = false;
+  nsresult rv = GetAllOfflineOpsTable();
+  NS_ENSURE_SUCCESS(rv, rv);
+  nsIMdbTableRowCursor* rowCursor;
+
+  if (m_mdbAllOfflineOpsTable) {
+    rv = m_mdbAllOfflineOpsTable->GetTableRowCursor(GetEnv(), -1, &rowCursor);
+
+    if (NS_SUCCEEDED(rv) && rowCursor) {
+      mdb_pos outPos;
+      nsIMdbRow* offlineOpRow;
+
+      rv = rowCursor->NextRow(GetEnv(), &offlineOpRow, &outPos);
+      if (NS_SUCCEEDED(rv)) {
+        if (!(outPos < 0 || offlineOpRow == nullptr)) {
+          *hasOffline = true;
+        }
+        if (offlineOpRow) {
+          offlineOpRow->Release();
+        }
+      }
+    }
+
+    if (rowCursor) {
+      rowCursor->Release();
+    }
+  }
+
+  return rv;
 }
 
 NS_IMETHODIMP nsMailDatabase::ListAllOfflineOpIds(
@@ -280,101 +298,3 @@ NS_IMETHODIMP nsMailDatabase::ListAllOfflineDeletes(
 // This is used to remember that the db is out of sync with the mail folder
 // and needs to be regenerated.
 void nsMailDatabase::SetReparse(bool reparse) { m_reparse = reparse; }
-
-class nsMsgOfflineOpEnumerator : public nsSimpleEnumerator {
- public:
-  const nsID& DefaultInterface() override {
-    return NS_GET_IID(nsIMsgOfflineImapOperation);
-  }
-
-  // nsISimpleEnumerator methods:
-  NS_DECL_NSISIMPLEENUMERATOR
-
-  explicit nsMsgOfflineOpEnumerator(nsMailDatabase* db);
-
- protected:
-  ~nsMsgOfflineOpEnumerator() override;
-  nsresult GetRowCursor();
-  nsresult PrefetchNext();
-  nsMailDatabase* mDB;
-  nsIMdbTableRowCursor* mRowCursor;
-  nsCOMPtr<nsIMsgOfflineImapOperation> mResultOp;
-  bool mDone;
-  bool mNextPrefetched;
-};
-
-nsMsgOfflineOpEnumerator::nsMsgOfflineOpEnumerator(nsMailDatabase* db)
-    : mDB(db), mRowCursor(nullptr), mDone(false) {
-  NS_ADDREF(mDB);
-  mNextPrefetched = false;
-}
-
-nsMsgOfflineOpEnumerator::~nsMsgOfflineOpEnumerator() {
-  NS_IF_RELEASE(mRowCursor);
-  NS_RELEASE(mDB);
-}
-
-nsresult nsMsgOfflineOpEnumerator::GetRowCursor() {
-  nsresult rv = NS_OK;
-  mDone = false;
-
-  if (!mDB || !mDB->m_mdbAllOfflineOpsTable) return NS_ERROR_NULL_POINTER;
-
-  rv = mDB->m_mdbAllOfflineOpsTable->GetTableRowCursor(mDB->GetEnv(), -1,
-                                                       &mRowCursor);
-  return rv;
-}
-
-NS_IMETHODIMP nsMsgOfflineOpEnumerator::GetNext(nsISupports** aItem) {
-  NS_ENSURE_ARG_POINTER(aItem);
-
-  nsresult rv = NS_OK;
-  if (!mNextPrefetched) rv = PrefetchNext();
-  if (NS_SUCCEEDED(rv)) {
-    if (mResultOp) {
-      NS_ADDREF(*aItem = mResultOp);
-      mNextPrefetched = false;
-    }
-  }
-  return rv;
-}
-
-nsresult nsMsgOfflineOpEnumerator::PrefetchNext() {
-  nsresult rv = NS_OK;
-  nsIMdbRow* offlineOpRow;
-  mdb_pos rowPos;
-
-  if (!mRowCursor) {
-    rv = GetRowCursor();
-    if (NS_FAILED(rv)) return rv;
-  }
-
-  rv = mRowCursor->NextRow(mDB->GetEnv(), &offlineOpRow, &rowPos);
-  if (!offlineOpRow) {
-    mDone = true;
-    return NS_ERROR_FAILURE;
-  }
-  if (NS_FAILED(rv)) {
-    mDone = true;
-    return rv;
-  }
-
-  nsIMsgOfflineImapOperation* op =
-      new nsMsgOfflineImapOperation(mDB, offlineOpRow);
-  mResultOp = op;
-  if (!op) return NS_ERROR_OUT_OF_MEMORY;
-
-  if (mResultOp) {
-    mNextPrefetched = true;
-    return NS_OK;
-  }
-  return NS_ERROR_FAILURE;
-}
-
-NS_IMETHODIMP nsMsgOfflineOpEnumerator::HasMoreElements(bool* aResult) {
-  NS_ENSURE_ARG_POINTER(aResult);
-
-  if (!mNextPrefetched) PrefetchNext();
-  *aResult = !mDone;
-  return NS_OK;
-}

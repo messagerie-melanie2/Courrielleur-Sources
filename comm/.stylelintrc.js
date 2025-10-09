@@ -9,9 +9,9 @@
 const fs = require("fs");
 const path = require("path");
 
-function readFile(path) {
+function readFile(filePath) {
   return fs
-    .readFileSync(path, { encoding: "utf-8" })
+    .readFileSync(filePath, { encoding: "utf-8" })
     .split("\n")
     .filter(p => p && !p.startsWith("#"))
     .map(p => p.replace(/^comm\//, ""));
@@ -24,6 +24,7 @@ const ignoreFiles = [
 
 module.exports = {
   extends: ["stylelint-config-recommended"],
+  plugins: ["@stylistic/stylelint-plugin"],
   ignoreFiles,
   rules: {
     /* Disabled because of `-moz-element(#foo)` which gets misparsed. */
@@ -45,9 +46,19 @@ module.exports = {
       true,
       {
         ignoreFunctions: [
-          "-moz-image-rect" /* Used for cropping images */,
           "add" /* Used in mathml.css */,
+          "-moz-symbolic-icon" /* Used for GTK icons */,
         ],
+      },
+    ],
+    /*
+     * Disabled on custom properties due to issues with calc:
+     * https://github.com/stylelint/stylelint/issues/2586
+     */
+    "length-zero-no-unit": [
+      true,
+      {
+        ignore: ["custom-properties"],
       },
     ],
 
@@ -235,5 +246,23 @@ module.exports = {
         ignorePseudoClasses: ["popover-open"],
       },
     ],
+    "selector-pseudo-element-no-unknown": [
+      true,
+      {
+        ignorePseudoElements: ["slider-track", "slider-fill", "slider-thumb"],
+      },
+    ],
+
+    "media-feature-name-no-unknown": true,
+    "media-feature-name-value-no-unknown": true,
+    "max-nesting-depth": 5,
+
+    "@stylistic/color-hex-case": "lower",
+    "@stylistic/selector-list-comma-newline-after": "always",
+    "@stylistic/selector-max-empty-lines": 0,
+    // attribute selector should "look like html"
+    "@stylistic/selector-attribute-operator-space-before": "never",
+    "@stylistic/selector-attribute-operator-space-after": "never",
+    "@stylistic/selector-attribute-brackets-space-inside": "never",
   },
 };

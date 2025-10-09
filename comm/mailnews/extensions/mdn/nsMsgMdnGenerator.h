@@ -8,14 +8,14 @@
 
 #include "nsIMsgMdnGenerator.h"
 #include "nsCOMPtr.h"
-#include "nsIUrlListener.h"
+#include "nsIMsgOutgoingServer.h"
+#include "nsIRequestObserver.h"
 #include "nsIMsgIncomingServer.h"
 #include "nsIOutputStream.h"
 #include "nsIFile.h"
 #include "nsIMsgIdentity.h"
 #include "nsIMsgWindow.h"
 #include "nsIMimeHeaders.h"
-#include "nsString.h"
 #include "MailNewsTypes2.h"
 
 #define eNeverSendOp ((int32_t)0)
@@ -23,11 +23,12 @@
 #define eAskMeOp ((int32_t)2)
 #define eDeniedOp ((int32_t)3)
 
-class nsMsgMdnGenerator : public nsIMsgMdnGenerator, public nsIUrlListener {
+class nsMsgMdnGenerator : public nsIMsgMdnGenerator,
+                          public nsIMsgOutgoingListener {
  public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSIMSGMDNGENERATOR
-  NS_DECL_NSIURLLISTENER
+  NS_DECL_NSIMSGOUTGOINGLISTENER
 
   nsMsgMdnGenerator();
 
@@ -69,7 +70,10 @@ class nsMsgMdnGenerator : public nsIMsgMdnGenerator, public nsIUrlListener {
   nsMsgKey m_key;
   nsCString m_email;
   nsCString m_mimeSeparator;
+  // The Message-ID of the MDN reply.
   nsCString m_messageId;
+  // The Message-ID of the message the MDN reply is for.
+  nsCString m_originalMessageId;
   nsCOMPtr<nsIMsgFolder> m_folder;
   nsCOMPtr<nsIMsgIncomingServer> m_server;
   nsCOMPtr<nsIMimeHeaders> m_headers;

@@ -13,7 +13,6 @@
 #include "WinUtils.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/StaticPrefs_dom.h"
-#include "mozilla/WindowsVersion.h"
 #include "mozilla/dom/MouseEventBinding.h"
 
 using namespace mozilla;
@@ -31,10 +30,6 @@ WinPointerEvents::WinPointerEvents() { InitLibrary(); }
 /* Load and shutdown */
 void WinPointerEvents::InitLibrary() {
   MOZ_ASSERT(XRE_IsParentProcess());
-  if (!IsWin8OrLater()) {
-    // Only Win8 or later supports WM_POINTER*
-    return;
-  }
   if (getPointerType) {
     // Return if we already initialized the PointerEvent related interfaces
     return;
@@ -110,10 +105,19 @@ bool WinPointerEvents::GetPointerPenInfo(uint32_t aPointerId,
   return getPointerPenInfo(aPointerId, aPenInfo);
 }
 
-bool WinPointerEvents::ShouldEnableInkCollector() {
-  // We need InkCollector on Win7. For Win8 or later, we handle WM_POINTER* for
-  // pen.
-  return !IsWin8OrLater();
+void WinPointerEvents::GetPointerFrameTouchInfo(
+    uint32_t pointerId, nsTArray<POINTER_TOUCH_INFO>& aTouchInfoArray) {
+  uint32_t pointerCount = 0;
+  if (!::GetPointerFrameTouchInfo(pointerId, &pointerCount, nullptr)) {
+    return;
+  }
+  if (!pointerCount) {
+    return;
+  }
+
+  aTouchInfoArray.SetLength(pointerCount);
+  ::GetPointerFrameTouchInfo(pointerId, &pointerCount,
+                             aTouchInfoArray.Elements());
 }
 
 bool WinPointerEvents::ShouldRollupOnPointerEvent(UINT aMsg, WPARAM aWParam) {

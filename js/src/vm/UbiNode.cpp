@@ -275,6 +275,7 @@ template JS::Zone* TracerConcrete<js::Scope>::zone() const;
 template JS::Zone* TracerConcrete<JS::Symbol>::zone() const;
 template JS::Zone* TracerConcrete<BigInt>::zone() const;
 template JS::Zone* TracerConcrete<JSString>::zone() const;
+template JS::Zone* TracerConcrete<js::gc::SmallBuffer>::zone() const;
 
 template <typename Referent>
 UniquePtr<EdgeRange> TracerConcrete<Referent>::edges(JSContext* cx,
@@ -315,6 +316,8 @@ template UniquePtr<EdgeRange> TracerConcrete<JS::Symbol>::edges(
 template UniquePtr<EdgeRange> TracerConcrete<BigInt>::edges(
     JSContext* cx, bool wantNames) const;
 template UniquePtr<EdgeRange> TracerConcrete<JSString>::edges(
+    JSContext* cx, bool wantNames) const;
+template UniquePtr<EdgeRange> TracerConcrete<js::gc::SmallBuffer>::edges(
     JSContext* cx, bool wantNames) const;
 
 template <typename Referent>
@@ -372,7 +375,7 @@ namespace JS {
 namespace ubi {
 
 RootList::RootList(JSContext* cx, bool wantNames /* = false */)
-    : cx(cx), edges(), wantNames(wantNames), inited(false) {}
+    : cx(cx), wantNames(wantNames), inited(false) {}
 
 std::pair<bool, JS::AutoCheckCannotGC> RootList::init() {
   EdgeVectorTracer tracer(cx->runtime(), &edges, wantNames);

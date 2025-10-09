@@ -15,7 +15,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/StaticPrefs_webgl.h"
-#include "mozilla/Telemetry.h"
+#include "mozilla/glean/GfxMetrics.h"
 #include "mozilla/Components.h"
 #include "mozilla/gfx/Logging.h"
 #include "mozilla/dom/ContentChild.h"
@@ -29,7 +29,7 @@ static const char* sCrashGuardNames[] = {
     "glcontext",
     "wmfvpxvideo",
 };
-static_assert(MOZ_ARRAY_LENGTH(sCrashGuardNames) == NUM_CRASH_GUARD_TYPES,
+static_assert(std::size(sCrashGuardNames) == NUM_CRASH_GUARD_TYPES,
               "CrashGuardType updated without a name string");
 
 static inline void BuildCrashGuardPrefName(CrashGuardType aType,
@@ -156,7 +156,7 @@ DriverCrashGuard::~DriverCrashGuard() {
     dom::ContentChild::GetSingleton()->SendEndDriverCrashGuard(uint32_t(mType));
   }
 
-  CrashReporter::RemoveCrashReportAnnotation(
+  CrashReporter::UnrecordAnnotation(
       CrashReporter::Annotation::GraphicsStartupTest);
 }
 
@@ -195,7 +195,7 @@ void DriverCrashGuard::ActivateGuard() {
   // attribute a random parent process crash to a graphics problem in a child
   // process.
   if (mMode != Mode::Proxy) {
-    CrashReporter::AnnotateCrashReport(
+    CrashReporter::RecordAnnotationBool(
         CrashReporter::Annotation::GraphicsStartupTest, true);
   }
 
@@ -447,8 +447,8 @@ void D3D11LayersCrashGuard::RecordTelemetry(TelemetryState aState) {
     return;
   }
 
-  Telemetry::Accumulate(Telemetry::GRAPHICS_DRIVER_STARTUP_TEST,
-                        int32_t(aState));
+  glean::gfx::graphics_driver_startup_test.AccumulateSingleSample(
+      int32_t(aState));
   sTelemetryStateRecorded = true;
 }
 

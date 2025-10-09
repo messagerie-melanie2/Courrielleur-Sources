@@ -2,13 +2,17 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-addIdentity(createAccount());
+"use strict";
+
+add_setup(async () => {
+  addIdentity(createAccount());
+});
 
 async function checkComposeBody(expected, waitForEvent) {
-  let composeWindows = [...Services.wm.getEnumerator("msgcompose")];
+  const composeWindows = [...Services.wm.getEnumerator("msgcompose")];
   Assert.equal(composeWindows.length, 1);
 
-  let composeWindow = composeWindows[0];
+  const composeWindow = composeWindows[0];
   if (waitForEvent) {
     await BrowserTestUtils.waitForEvent(
       composeWindow,
@@ -16,17 +20,17 @@ async function checkComposeBody(expected, waitForEvent) {
     );
   }
 
-  let composeEditor = composeWindow.GetCurrentEditorElement();
+  const composeEditor = composeWindow.GetCurrentEditorElement();
 
   await checkContent(composeEditor, expected);
 }
 
 /** Tests browser.tabs.insertCSS and browser.tabs.removeCSS. */
 add_task(async function testInsertRemoveCSS() {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
-        let tab = await browser.compose.beginNew();
+        const tab = await browser.compose.beginNew();
         await window.sendMessage();
 
         await browser.tabs.insertCSS(tab.id, {
@@ -83,12 +87,82 @@ add_task(async function testInsertRemoveCSS() {
   await extension.unload();
 });
 
-/** Tests browser.tabs.insertCSS fails without the "compose" permission. */
-add_task(async function testInsertRemoveCSSNoPermissions() {
-  let extension = ExtensionTestUtils.loadExtension({
+/** Tests browser.scripting.insertCSS and browser.scripting.removeCSS. */
+add_task(async function testInsertRemoveCSSViaScriptingAPI() {
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
-        let tab = await browser.compose.beginNew();
+        const tab = await browser.compose.beginNew();
+        await window.sendMessage();
+
+        await browser.scripting.insertCSS({
+          target: { tabId: tab.id },
+          css: "body { background-color: lime; }",
+        });
+        await window.sendMessage();
+
+        await browser.scripting.removeCSS({
+          target: { tabId: tab.id },
+          css: "body { background-color: lime; }",
+        });
+        await window.sendMessage();
+
+        await browser.scripting.insertCSS({
+          target: { tabId: tab.id },
+          files: ["test.css"],
+        });
+        await window.sendMessage();
+
+        await browser.scripting.removeCSS({
+          target: { tabId: tab.id },
+          files: ["test.css"],
+        });
+        await window.sendMessage();
+
+        await browser.tabs.remove(tab.id);
+        browser.test.notifyPass("finished");
+      },
+      "test.css": "body { background-color: green; }",
+      "utils.js": await getUtilsJS(),
+    },
+    manifest: {
+      background: { scripts: ["utils.js", "background.js"] },
+      permissions: ["compose", "scripting"],
+    },
+  });
+
+  await extension.startup();
+
+  await extension.awaitMessage();
+  await checkComposeBody({ backgroundColor: "rgba(0, 0, 0, 0)" });
+  extension.sendMessage();
+
+  await extension.awaitMessage();
+  await checkComposeBody({ backgroundColor: "rgb(0, 255, 0)" });
+  extension.sendMessage();
+
+  await extension.awaitMessage();
+  await checkComposeBody({ backgroundColor: "rgba(0, 0, 0, 0)" });
+  extension.sendMessage();
+
+  await extension.awaitMessage();
+  await checkComposeBody({ backgroundColor: "rgb(0, 128, 0)" });
+  extension.sendMessage();
+
+  await extension.awaitMessage();
+  await checkComposeBody({ backgroundColor: "rgba(0, 0, 0, 0)" });
+  extension.sendMessage();
+
+  await extension.awaitFinish("finished");
+  await extension.unload();
+});
+
+/** Tests browser.tabs.insertCSS fails without the "compose" permission. */
+add_task(async function testInsertRemoveCSSNoPermissions() {
+  const extension = ExtensionTestUtils.loadExtension({
+    files: {
+      "background.js": async () => {
+        const tab = await browser.compose.beginNew();
 
         await browser.test.assertRejects(
           browser.tabs.insertCSS(tab.id, {
@@ -142,10 +216,10 @@ add_task(async function testInsertRemoveCSSNoPermissions() {
 
 /** Tests browser.tabs.executeScript. */
 add_task(async function testExecuteScript() {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
-        let tab = await browser.compose.beginNew();
+        const tab = await browser.compose.beginNew();
         await window.sendMessage();
 
         await browser.tabs.executeScript(tab.id, {
@@ -191,12 +265,69 @@ add_task(async function testExecuteScript() {
   await extension.unload();
 });
 
-/** Tests browser.tabs.executeScript fails without the "compose" permission. */
-add_task(async function testExecuteScriptNoPermissions() {
-  let extension = ExtensionTestUtils.loadExtension({
+/** Tests browser.scripting.executeScript. */
+add_task(async function testExecuteScriptViaScriptingAPI() {
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
-        let tab = await browser.compose.beginNew();
+        const tab = await browser.compose.beginNew();
+        await window.sendMessage();
+
+        await browser.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            document.body.setAttribute("foo", "bar");
+          },
+        });
+        await window.sendMessage();
+
+        await browser.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ["test.js"],
+        });
+        await window.sendMessage();
+
+        await browser.tabs.remove(tab.id);
+        browser.test.notifyPass("finished");
+      },
+      "test.js": () => {
+        document.body.textContent = "Hey look, the script ran!";
+      },
+      "utils.js": await getUtilsJS(),
+    },
+    manifest: {
+      background: { scripts: ["utils.js", "background.js"] },
+      permissions: ["compose", "scripting"],
+    },
+  });
+
+  await extension.startup();
+
+  await extension.awaitMessage();
+  await checkComposeBody({ textContent: "" });
+  extension.sendMessage();
+
+  await extension.awaitMessage();
+  await checkComposeBody({ foo: "bar" });
+  extension.sendMessage();
+
+  await extension.awaitMessage();
+  await checkComposeBody({
+    foo: "bar",
+    textContent: "Hey look, the script ran!",
+  });
+  extension.sendMessage();
+
+  await extension.awaitFinish("finished");
+  await extension.unload();
+});
+
+/** Tests browser.tabs.executeScript fails without the "compose" permission. */
+add_task(async function testExecuteScriptNoPermissions() {
+  const extension = ExtensionTestUtils.loadExtension({
+    files: {
+      "background.js": async () => {
+        const tab = await browser.compose.beginNew();
 
         await browser.test.assertRejects(
           browser.tabs.executeScript(tab.id, {
@@ -247,12 +378,14 @@ add_task(async function testExecuteScriptNoPermissions() {
   await extension.unload();
 });
 
-/** Tests the messenger alias is available. */
+/**
+ * Tests the messenger alias is available after browser.tabs.executeScript().
+ */
 add_task(async function testExecuteScriptAlias() {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
-        let tab = await browser.compose.beginNew();
+        const tab = await browser.compose.beginNew();
         await window.sendMessage();
 
         await browser.tabs.executeScript(tab.id, {
@@ -287,15 +420,61 @@ add_task(async function testExecuteScriptAlias() {
 });
 
 /**
+ * Tests messenger alias is available after browser.scripting.executeScript().
+ */
+add_task(async function testExecuteScriptAliasViaScriptingAPI() {
+  const extension = ExtensionTestUtils.loadExtension({
+    files: {
+      "background.js": async () => {
+        const tab = await browser.compose.beginNew();
+        await window.sendMessage();
+
+        await browser.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            // eslint-disable-next-line no-undef
+            const id = messenger.runtime.getManifest().applications.gecko.id;
+            document.body.textContent = id;
+          },
+        });
+        await window.sendMessage();
+
+        await browser.tabs.remove(tab.id);
+        browser.test.notifyPass("finished");
+      },
+      "utils.js": await getUtilsJS(),
+    },
+    manifest: {
+      applications: { gecko: { id: "compose_scripts@mochitest" } },
+      background: { scripts: ["utils.js", "background.js"] },
+      permissions: ["compose", "scripting"],
+    },
+  });
+
+  await extension.startup();
+
+  await extension.awaitMessage();
+  await checkComposeBody({ textContent: "" });
+  extension.sendMessage();
+
+  await extension.awaitMessage();
+  await checkComposeBody({ textContent: "compose_scripts@mochitest" });
+  extension.sendMessage();
+
+  await extension.awaitFinish("finished");
+  await extension.unload();
+});
+
+/**
  * Tests browser.composeScripts.register correctly adds CSS and JavaScript to
  * message composition windows opened after it was called. Also tests calling
  * `unregister` on the returned object.
  */
 add_task(async function testRegisterBeforeCompose() {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
-        let registeredScript = await browser.composeScripts.register({
+        const registeredScript = await browser.composeScripts.register({
           css: [{ code: "body { color: white }" }, { file: "test.css" }],
           js: [
             { code: `document.body.setAttribute("foo", "bar");` },
@@ -357,18 +536,18 @@ add_task(async function testRegisterBeforeCompose() {
 });
 
 /**
- * Tests browser.composeScripts.register correctly adds CSS and JavaScript to
+ * Tests browser.composeScripts.register does NOT adds CSS and JavaScript to
  * message composition windows already open when it was called. Also tests
  * calling `unregister` on the returned object.
  */
 add_task(async function testRegisterDuringCompose() {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
-        let tab = await browser.compose.beginNew();
+        const tab = await browser.compose.beginNew();
         await window.sendMessage();
 
-        let registeredScript = await browser.composeScripts.register({
+        const registeredScript = await browser.composeScripts.register({
           css: [{ code: "body { color: white }" }, { file: "test.css" }],
           js: [
             { code: `document.body.setAttribute("foo", "bar");` },
@@ -425,10 +604,10 @@ add_task(async function testRegisterDuringCompose() {
 
 /** Tests content_scripts in the manifest do not affect compose windows. */
 async function subtestContentScriptManifest(...permissions) {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
-        let tab = await browser.compose.beginNew();
+        const tab = await browser.compose.beginNew();
 
         await window.sendMessage();
 
@@ -481,7 +660,7 @@ add_task(async function testContentScriptManifest() {
 
 /** Tests registered content scripts do not affect compose windows. */
 async function subtestContentScriptRegister(...permissions) {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
         await browser.contentScripts.register({
@@ -491,7 +670,7 @@ async function subtestContentScriptRegister(...permissions) {
           matchAboutBlank: true,
         });
 
-        let tab = await browser.compose.beginNew();
+        const tab = await browser.compose.beginNew();
 
         await window.sendMessage();
 

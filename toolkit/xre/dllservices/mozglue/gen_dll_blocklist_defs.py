@@ -9,8 +9,6 @@ from copy import deepcopy
 from struct import unpack
 from uuid import UUID
 
-from six import iteritems
-
 H_HEADER = """/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This file was auto-generated from {0} by gen_dll_blocklist_data.py.  */
@@ -54,8 +52,6 @@ DLL_BLOCKLIST_DEFINITIONS_BEGIN_NAMED(gBlockedInprocDlls)
 
 # These flag names should match the ones defined in WindowsDllBlocklistInfo.h
 FLAGS_DEFAULT = "FLAGS_DEFAULT"
-BLOCK_WIN8_AND_OLDER = "BLOCK_WIN8_AND_OLDER"
-BLOCK_WIN7_AND_OLDER = "BLOCK_WIN7_AND_OLDER"
 USE_TIMESTAMP = "USE_TIMESTAMP"
 CHILD_PROCESSES_ONLY = "CHILD_PROCESSES_ONLY"
 BROWSER_PROCESS_ONLY = "BROWSER_PROCESS_ONLY"
@@ -65,12 +61,6 @@ UTILITY_PROCESSES_ONLY = "UTILITY_PROCESSES_ONLY"
 SOCKET_PROCESSES_ONLY = "SOCKET_PROCESSES_ONLY"
 GPU_PROCESSES_ONLY = "GPU_PROCESSES_ONLY"
 GMPLUGIN_PROCESSES_ONLY = "GMPLUGIN_PROCESSES_ONLY"
-
-# Only these flags are available in the input script
-INPUT_ONLY_FLAGS = {
-    BLOCK_WIN8_AND_OLDER,
-    BLOCK_WIN7_AND_OLDER,
-}
 
 
 def FILTER_ALLOW_ALL(entry):
@@ -111,7 +101,7 @@ ALL_DEFINITION_LISTS = (
 )
 
 
-class BlocklistDescriptor(object):
+class BlocklistDescriptor:
     """This class encapsulates every file that is output from this script.
     Each instance has a name, an "input specification", and optional "flag
     specification" and "output specification" entries.
@@ -191,7 +181,7 @@ class BlocklistDescriptor(object):
         assert not (set(flagspecs.keys()).difference(set(self._inspec.keys())))
 
         # Merge the flags from flagspec into _inspec's sets
-        for blocklist, flagspec in iteritems(flagspecs):
+        for blocklist, flagspec in flagspecs.items():
             spec = self._inspec[blocklist]
             if not isinstance(spec, set):
                 raise TypeError("Flag spec for list %s must be a set!" % blocklist)
@@ -266,7 +256,7 @@ class BlocklistDescriptor(object):
         # For each blocklist specified in the _inspec, we query the globals
         # for their entries, add any flags, and then add them to the
         # unified_list.
-        for blocklist, listflags in iteritems(self._inspec):
+        for blocklist, listflags in self._inspec.items():
 
             def add_list_flags(elem):
                 # We deep copy so that flags set for an entry in one blocklist
@@ -399,9 +389,9 @@ GENERATED_BLOCKLIST_FILES = [
 ]
 
 
-class PETimeStamp(object):
+class PETimeStamp:
     def __init__(self, ts):
-        max_timestamp = (2 ** 32) - 1
+        max_timestamp = (2**32) - 1
         if ts < 0 or ts > max_timestamp:
             raise ValueError("Invalid timestamp value")
         self._value = ts
@@ -410,7 +400,7 @@ class PETimeStamp(object):
         return "0x%08XU" % self._value
 
 
-class Version(object):
+class Version:
     """Encapsulates a DLL version."""
 
     ALL_VERSIONS = 0xFFFFFFFFFFFFFFFF
@@ -481,7 +471,7 @@ class Version(object):
         return str(self._ver)
 
 
-class DllBlocklistEntry(object):
+class DllBlocklistEntry:
     TEST_CONDITION = "defined(ENABLE_TESTS)"
 
     def __init__(self, name, ver, flags=(), **kwargs):
@@ -570,7 +560,7 @@ class DllBlocklistEntry(object):
 
         flags_str = ""
 
-        flags = self.get_flags_list()
+        flags = sorted(self.get_flags_list())
         if flags:
             flags_str = ", " + " | ".join(map(self.get_flag_string, flags))
 
@@ -708,7 +698,7 @@ class LspBlocklistEntry(DllBlocklistEntry):
             result = ",\n".join(
                 [
                     self.as_c_struct(guid, names)
-                    for guid, names in iteritems(LspBlocklistEntry.Guids)
+                    for guid, names in LspBlocklistEntry.Guids.items()
                 ]
             )
             print(result, file=output)
@@ -721,7 +711,6 @@ def exec_script_file(script_name, globals):
 
 
 def gen_blocklists(first_fd, defs_filename):
-
     BlocklistDescriptor.set_output_fd(first_fd)
 
     # exec_env defines the global variables that will be present in the
@@ -743,9 +732,6 @@ def gen_blocklists(first_fd, defs_filename):
         exec_env[defname] = []
         # For each defname, add a special list for test-only entries
         exec_env[derive_test_key(defname)] = []
-
-    # Import flags into exec_env
-    exec_env.update({flag: flag for flag in INPUT_ONLY_FLAGS})
 
     # Now execute the input script with exec_env providing the globals
     exec_script_file(defs_filename, exec_env)

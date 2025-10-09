@@ -3,23 +3,17 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#define MSGCOMP_TRACE_PERFORMANCE 1
-
 #include "nsIMsgComposeService.h"
 #include "nsCOMPtr.h"
-#include "mozIDOMWindow.h"
-#include "nsIAppWindow.h"
-#include "nsIObserver.h"
 #include "nsWeakReference.h"
 #include "nsIWeakReference.h"
 #include "nsIMimeStreamConverter.h"
 #include "nsInterfaceHashtable.h"
 
 #include "nsICommandLineHandler.h"
-#define ICOMMANDLINEHANDLER nsICommandLineHandler
 
 class nsMsgComposeService : public nsIMsgComposeService,
-                            public ICOMMANDLINEHANDLER,
+                            public nsICommandLineHandler,
                             public nsSupportsWeakReference {
  public:
   nsMsgComposeService();
@@ -35,7 +29,8 @@ class nsMsgComposeService : public nsIMsgComposeService,
 
  private:
   virtual ~nsMsgComposeService();
-  bool mLogComposePerformance;
+
+  nsresult GetTo3PaneWindow();
 
   nsresult LoadDraftOrTemplate(
       const nsACString& aMsgURI, nsMimeOutputType aOutType,
@@ -57,12 +52,6 @@ class nsMsgComposeService : public nsIMsgComposeService,
   // When doing a reply and the settings are enabled, get the HTML of the
   // selected text in the original message window so that it can be quoted
   // instead of the entire message.
-  nsresult GetOrigWindowSelection(MSG_ComposeType type,
-                                  mozilla::dom::Selection* selection,
+  nsresult GetOrigWindowSelection(mozilla::dom::Selection* selection,
                                   nsACString& aSelHTML);
-
-#ifdef MSGCOMP_TRACE_PERFORMANCE
-  PRIntervalTime mStartTime;
-  PRIntervalTime mPreviousTime;
-#endif
 };

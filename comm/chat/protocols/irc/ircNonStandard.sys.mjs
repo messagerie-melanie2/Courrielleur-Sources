@@ -12,8 +12,6 @@
  *  https://github.com/atheme/charybdis/blob/master/include/numeric.h
  *  https://github.com/unrealircd/unrealircd/blob/unreal42/include/numeric.h
  */
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-import { l10nHelper } from "resource:///modules/imXPCOMUtils.sys.mjs";
 import { ircHandlerPriorities } from "resource:///modules/ircHandlerPriorities.sys.mjs";
 import {
   conversationErrorMessage,
@@ -21,8 +19,10 @@ import {
 } from "resource:///modules/ircUtils.sys.mjs";
 
 const lazy = {};
-XPCOMUtils.defineLazyGetter(lazy, "_", () =>
-  l10nHelper("chrome://chat/locale/irc.properties")
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () => new Localization(["chat/irc.ftl"], true)
 );
 
 export var ircNonStandard = {
@@ -43,7 +43,7 @@ export var ircNonStandard = {
         // We fake the last LIST time so that we will retry LIST the next time
         // the user requires it after the interval specified.
         const kMinute = 60000;
-        let waitTime = aMessage.params[1].split(" ")[7] * 1000 || kMinute;
+        const waitTime = aMessage.params[1].split(" ")[7] * 1000 || kMinute;
         this._lastListTime = Date.now() + waitTime - kListRefreshInterval;
         return true;
       }
@@ -55,7 +55,7 @@ export var ircNonStandard = {
         return false;
       }
 
-      let target = aMessage.params[0].toLowerCase();
+      const target = aMessage.params[0].toLowerCase();
 
       // If we receive a ZNC error message requesting a password, the
       // serverPassword preference was not set by the user. Attempt to log into
@@ -76,7 +76,7 @@ export var ircNonStandard = {
           // Otherwise, put the account in an error state.
           this.gotDisconnected(
             Ci.prplIAccount.ERROR_AUTHENTICATION_IMPOSSIBLE,
-            lazy._("connection.error.passwordRequired")
+            lazy.l10n.formatValueSync("connection-error-password-required")
           );
         }
 
@@ -91,7 +91,7 @@ export var ircNonStandard = {
       // Note that if the user's nick is auth this COULD be a notice directed at
       // them. For reference: moznet sends Auth (previously sent AUTH), freenode
       // sends *.
-      let isAuth = target == "auth" && this._nickname.toLowerCase() != "auth";
+      const isAuth = target == "auth" && this._nickname.toLowerCase() != "auth";
       if (!aMessage.params[1].startsWith("***") && !isAuth) {
         this.getConversation(aMessage.origin).writeMessage(
           aMessage.origin,
@@ -107,7 +107,7 @@ export var ircNonStandard = {
       return false;
     },
 
-    "042": function (aMessage) {
+    "042": function () {
       // RPL_YOURID (IRCnet)
       // <nick> <id> :your unique ID
       return true;
@@ -139,13 +139,13 @@ export var ircNonStandard = {
       return false;
     },
 
-    328(aMessage) {
+    328() {
       // RPL_CHANNEL_URL (Bahamut & Austhex)
       // <channel> :<URL>
       return true;
     },
 
-    329(aMessage) {
+    329() {
       // RPL_CREATIONTIME (Bahamut & Unreal)
       // <channel> <creation time>
       return true;
@@ -157,7 +157,7 @@ export var ircNonStandard = {
       // RPL_WHOISACCOUNT (Charybdis, ircu & Quakenet)
       // <nick> <authname> :is logged in as
       if (aMessage.params.length == 4) {
-        let [, nick, authname] = aMessage.params;
+        const [, nick, authname] = aMessage.params;
         // If the authname differs from the nickname, add it to the WHOIS
         // information; otherwise, ignore it.
         if (this.normalize(nick) != this.normalize(authname)) {
@@ -173,7 +173,7 @@ export var ircNonStandard = {
       return this.setWhois(aMessage.params[1], { bot: true });
     },
 
-    338(aMessage) {
+    338() {
       // RPL_CHANPASSOK
       // RPL_WHOISACTUALLY (ircu, Bahamut, Charybdis)
       // <nick> <user> <ip> :actually using host
@@ -183,11 +183,11 @@ export var ircNonStandard = {
     378(aMessage) {
       // RPL_WHOISHOST (Unreal & Charybdis)
       // <nick> :is connecting from <host> <ip>
-      let [host, ip] = aMessage.params[2].split(" ").slice(-2);
+      const [host, ip] = aMessage.params[2].split(" ").slice(-2);
       return this.setWhois(aMessage.params[1], { host, ip });
     },
 
-    379(aMessage) {
+    379() {
       // RPL_WHOISMODES (Unreal, Inspircd)
       // <nick> :is using modes <modes>
       // Sent in response to a WHOIS on the user.
@@ -223,12 +223,12 @@ export var ircNonStandard = {
       // so you are automatically being transferred to the redirect channel.
       // Join redirect channel so when the automatic join happens, we are
       // not surprised.
-      this.joinChat(this.getChatRoomDefaultFieldValues(aMessage.params[2]));
+      this.joinChat(this.getChatRoomFieldValuesFromString(aMessage.params[2]));
       // Mark requested channel as left and add a system message.
       return conversationErrorMessage(
         this,
         aMessage,
-        "error.channelForward",
+        "error-channel-forward",
         true,
         false
       );
@@ -237,7 +237,11 @@ export var ircNonStandard = {
     499(aMessage) {
       // ERR_CHANOWNPRIVNEEDED (Unreal)
       // <channel> :You're not the channel owner (status +q is needed)
-      return conversationErrorMessage(this, aMessage, "error.notChannelOwner");
+      return conversationErrorMessage(
+        this,
+        aMessage,
+        "error-not-channel-owner"
+      );
     },
 
     671(aMessage) {

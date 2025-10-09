@@ -8,11 +8,11 @@
  * See Bug 805626
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 var { TestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/TestUtils.sys.mjs"
@@ -33,7 +33,7 @@ add_task(async function createDraftsFolder() {
   await PromiseTestUtils.promiseFolderAdded("Drafts");
   gDraftsFolder = IMAPPump.incomingServer.rootFolder.getChildNamed("Drafts");
   Assert.ok(gDraftsFolder instanceof Ci.nsIMsgImapMailFolder);
-  let listener = new PromiseTestUtils.PromiseUrlListener();
+  const listener = new PromiseTestUtils.PromiseUrlListener();
   gDraftsFolder.updateFolderWithListener(null, listener);
   await listener.promise;
 });
@@ -43,7 +43,7 @@ add_task(async function goOffline() {
   Services.prefs.setIntPref("offline.download.download_messages", 2);
 
   IMAPPump.incomingServer.closeCachedConnections();
-  let thread = gThreadManager.currentThread;
+  const thread = Services.tm.currentThread;
   while (thread.hasPendingEvents()) {
     thread.processNextEvent(true);
   }
@@ -52,28 +52,30 @@ add_task(async function goOffline() {
 });
 
 add_task(async function saveDraft() {
-  let msgCompose = Cc["@mozilla.org/messengercompose/compose;1"].createInstance(
-    Ci.nsIMsgCompose
-  );
-  let fields = Cc[
+  const msgCompose = Cc[
+    "@mozilla.org/messengercompose/compose;1"
+  ].createInstance(Ci.nsIMsgCompose);
+  const fields = Cc[
     "@mozilla.org/messengercompose/composefields;1"
   ].createInstance(Ci.nsIMsgCompFields);
   fields.from = "Nobody <nobody@tinderbox.test>";
 
-  let params = Cc[
+  const params = Cc[
     "@mozilla.org/messengercompose/composeparams;1"
   ].createInstance(Ci.nsIMsgComposeParams);
   params.composeFields = fields;
   msgCompose.initialize(params);
 
   // Set up the identity.
-  let identity = MailServices.accounts.createIdentity();
-  identity.draftFolder = gDraftsFolder.URI;
+  const identity = MailServices.accounts.getFirstIdentityForServer(
+    IMAPPump.incomingServer
+  );
+  identity.draftsFolderURI = gDraftsFolder.URI;
 
-  let progress = Cc["@mozilla.org/messenger/progress;1"].createInstance(
+  const progress = Cc["@mozilla.org/messenger/progress;1"].createInstance(
     Ci.nsIMsgProgress
   );
-  let progressListener = new WebProgressListener();
+  const progressListener = new WebProgressListener();
   progress.registerListener(progressListener);
   msgCompose.sendMsg(
     Ci.nsIMsgSend.nsMsgSaveAsDraft,
@@ -88,7 +90,7 @@ add_task(async function saveDraft() {
 });
 
 add_task(async function goOnline() {
-  let offlineManager = Cc[
+  const offlineManager = Cc[
     "@mozilla.org/messenger/offline-manager;1"
   ].getService(Ci.nsIMsgOfflineManager);
   IMAPPump.daemon.closing = false;
@@ -122,24 +124,17 @@ function WebProgressListener() {
   });
 }
 WebProgressListener.prototype = {
-  onStateChange(aWebProgress, aRequest, aStateFlags, aStatus) {
+  onStateChange(aWebProgress, aRequest, aStateFlags) {
     if (aStateFlags & Ci.nsIWebProgressListener.STATE_STOP) {
       this._resolve();
     }
   },
 
-  onProgressChange(
-    aWebProgress,
-    aRequest,
-    aCurSelfProgress,
-    aMaxSelfProgress,
-    aCurTotalProgress,
-    aMaxTotalProgress
-  ) {},
-  onLocationChange(aWebProgress, aRequest, aLocation, aFlags) {},
-  onStatusChange(aWebProgress, aRequest, aStatus, aMessage) {},
-  onSecurityChange(aWebProgress, aRequest, state) {},
-  onContentBlockingEvent(aWebProgress, aRequest, aEvent) {},
+  onProgressChange() {},
+  onLocationChange() {},
+  onStatusChange() {},
+  onSecurityChange() {},
+  onContentBlockingEvent() {},
 
   QueryInterface: ChromeUtils.generateQI([
     "nsIWebProgressListener",

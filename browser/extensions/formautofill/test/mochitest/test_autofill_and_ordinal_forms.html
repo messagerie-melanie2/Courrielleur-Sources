@@ -16,8 +16,6 @@
 
 "use strict";
 
-SpecialPowers.pushPrefEnv({"set": [["security.allow_eval_with_system_principal", true]]});
-
 let MOCK_STORAGE = [{
   "given-name": "John",
   "additional-name": "R",
@@ -30,6 +28,8 @@ let MOCK_STORAGE = [{
 }];
 
 initPopupListener();
+
+let statusText = 'Also autofills address, name, organization';
 
 add_task(async function setupStorage() {
   await addAddress(MOCK_STORAGE[0]);
@@ -44,15 +44,18 @@ add_task(async function check_switch_autofill_form_popup() {
   await setInput("#tel", "");
   synthesizeKey("KEY_ArrowDown");
   await expectPopup();
-  checkMenuEntries(
+  checkMenuEntriesComment(
     [
-      `{"primary":"+13453453456","secondary":"123 Sesame Street."}`,
-      `{"primary":"","secondary":"","categories":["name","organization","address","tel"],"focusedCategory":"tel"}`,
+      makeAddressComment({
+        primary: "+13453453456",
+        secondary: "123 Sesame Street.",
+        status: statusText
+      }),
+      `{"primary":"","secondary":"","status":"${statusText}","style":"status"}`,
     ],
-    false
   );
 
-  await testMenuEntry(0, "!(el instanceof MozElements.MozAutocompleteRichlistitem)");
+  await testMenuEntry(0, "autocomplete-autofill-richlistitem");
 });
 
 add_task(async function check_switch_oridnal_form_popup() {
@@ -61,9 +64,9 @@ add_task(async function check_switch_oridnal_form_popup() {
   await setInput("#username", "");
   synthesizeKey("KEY_ArrowDown");
   await expectPopup();
-  checkMenuEntries(["petya"], false);
+  checkMenuEntries(["petya"], 0);
 
-  await testMenuEntry(0, "el instanceof MozElements.MozAutocompleteRichlistitem");
+  await testMenuEntry(0, "autocomplete-richlistitem");
 });
 
 add_task(async function check_switch_autofill_form_popup_back() {
@@ -72,15 +75,18 @@ add_task(async function check_switch_autofill_form_popup_back() {
   await setInput("#tel", "");
   synthesizeKey("KEY_ArrowDown");
   await expectPopup();
-  checkMenuEntries(
+  checkMenuEntriesComment(
     [
-      `{"primary":"+13453453456","secondary":"123 Sesame Street."}`,
-      `{"primary":"","secondary":"","categories":["name","organization","address","tel"],"focusedCategory":"tel"}`,
+      makeAddressComment({
+        primary: "+13453453456",
+        secondary: "123 Sesame Street.",
+        status: statusText
+      }),
+      `{"primary":"","secondary":"","status":"${statusText}","style":"status"}`,
     ],
-    false
   );
 
-  await testMenuEntry(0, "!(el instanceof MozElements.MozAutocompleteRichlistitem)");
+  await testMenuEntry(0, "autocomplete-autofill-richlistitem");
 });
 
 </script>

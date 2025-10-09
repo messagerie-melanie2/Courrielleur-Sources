@@ -2,6 +2,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #include "nsCOMPtr.h"
 #include "msgCore.h"
 #include "mimei.h"
@@ -20,9 +21,7 @@
 #include "nsIMIMEHeaderParam.h"
 #include "nsNetCID.h"
 #include "nsServiceManagerUtils.h"
-#include "nsMemory.h"
 #include <ctype.h>
-#include "nsMsgUtils.h"
 #include "mozilla/Unused.h"
 
 // Forward declares...
@@ -78,15 +77,6 @@ void MimeHeaders_free(MimeHeaders* hdrs) {
   PR_FREEIF(hdrs->munged_subject);
   hdrs->obuffer_fp = 0;
   hdrs->obuffer_size = 0;
-
-#ifdef DEBUG__
-  {
-    int i, size = sizeof(*hdrs);
-    uint32_t* array = (uint32_t*)hdrs;
-    for (i = 0; i < (size / sizeof(*array)); i++)
-      array[i] = (uint32_t)0xDEADBEEF;
-  }
-#endif /* DEBUG */
 
   PR_Free(hdrs);
 }
@@ -327,8 +317,8 @@ char* MimeHeaders_get(MimeHeaders* hdrs, const char* header_name, bool strip_p,
 
     /* Back up over whitespace before the colon. */
     ocolon = colon;
-    for (; colon > head && IS_SPACE(colon[-1]); colon--)
-      ;
+    for (; colon > head && IS_SPACE(colon[-1]); colon--) {
+    }
 
     /* If the strings aren't the same length, it doesn't match. */
     if (name_length != colon - head) continue;
@@ -371,8 +361,8 @@ char* MimeHeaders_get(MimeHeaders* hdrs, const char* header_name, bool strip_p,
        */
       if (strip_p) {
         for (s = contents; s < end && *s != ';' && *s != ',' && !IS_SPACE(*s);
-             s++)
-          ;
+             s++) {
+        }
         end = s;
       }
 
@@ -514,13 +504,13 @@ int MimeHeaders_write_all_headers(MimeHeaders* hdrs, MimeDisplayOptions* opt,
       /* colon = head + 4; contents = colon + 1; */
     } else {
       /* Find the colon. */
-      for (colon = head; colon < end && *colon != ':'; colon++)
-        ;
+      for (colon = head; colon < end && *colon != ':'; colon++) {
+      }
 
       /* Back up over whitespace before the colon. */
       ocolon = colon;
-      for (; colon > head && IS_SPACE(colon[-1]); colon--)
-        ;
+      for (; colon > head && IS_SPACE(colon[-1]); colon--) {
+      }
 
       contents = ocolon + 1;
     }

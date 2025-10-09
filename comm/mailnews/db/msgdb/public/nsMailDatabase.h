@@ -6,13 +6,11 @@
 #ifndef _nsMailDatabase_H_
 #define _nsMailDatabase_H_
 
-#include "mozilla/Attributes.h"
 #include "nsMsgDatabase.h"
 #include "nsTArray.h"
 
 #include "nsIDBChangeListener.h"
 #include "nsIMsgOfflineImapOperation.h"
-#include "nsISimpleEnumerator.h"
 #include "nsIFile.h"
 
 // This is the subclass of nsMsgDatabase that handles local mail messages.
@@ -25,8 +23,6 @@ class nsMailDatabase : public nsMsgDatabase {
   NS_IMETHOD DeleteMessages(nsTArray<nsMsgKey> const& nsMsgKeys,
                             nsIDBChangeListener* instigator) override;
 
-  nsresult Open(nsMsgDBService* aDBService, nsIFile* aSummaryFile, bool create,
-                bool upgrading) override;
   virtual nsMailDatabase* GetMailDB() { return this; }
 
   virtual uint32_t GetCurVersion() override { return kMsgDBVersion; }
@@ -40,8 +36,7 @@ class nsMailDatabase : public nsMsgDatabase {
 
   NS_IMETHOD ListAllOfflineOpIds(nsTArray<nsMsgKey>& offlineOpIds) override;
   NS_IMETHOD ListAllOfflineDeletes(nsTArray<nsMsgKey>& offlineDeletes) override;
-
-  friend class nsMsgOfflineOpEnumerator;
+  NS_IMETHOD HasOfflineActivity(bool* _retval) override;
 
  protected:
   nsresult GetAllOfflineOpsTable();  // get this on demand

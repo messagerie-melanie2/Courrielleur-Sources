@@ -13,12 +13,43 @@
 
 enum CanvasWindingRule { "nonzero", "evenodd" };
 
+enum CanvasLineCap { "butt", "round", "square" };
+enum CanvasLineJoin { "round", "bevel", "miter" };
+enum CanvasTextAlign { "start", "end", "left", "right", "center" };
+enum CanvasTextBaseline { "top", "hanging", "middle", "alphabetic", "ideographic", "bottom" };
+enum CanvasDirection { "ltr", "rtl", "inherit" };
+enum CanvasFontKerning { "auto", "normal", "none" };
+enum CanvasFontStretch { "ultra-condensed", "extra-condensed", "condensed", "semi-condensed", "normal", "semi-expanded", "expanded", "extra-expanded", "ultra-expanded" };
+enum CanvasFontVariantCaps { "normal", "small-caps", "all-small-caps", "petite-caps", "all-petite-caps", "unicase", "titling-caps" };
+enum CanvasTextRendering { "auto", "optimizeSpeed", "optimizeLegibility", "geometricPrecision" };
+
+enum CanvasContextProperties { "none", "fill", "stroke", "both" };
+
 [GenerateInit]
-dictionary ContextAttributes2D {
-  // whether or not we're planning to do a lot of readback operations
-  boolean willReadFrequently = false;
+dictionary CanvasRenderingContext2DSettings {
   // signal if the canvas contains an alpha channel
   boolean alpha = true;
+
+  boolean desynchronized = false;
+
+  PredefinedColorSpace colorSpace = "srgb";
+
+  // whether or not we're planning to do a lot of readback operations
+  boolean willReadFrequently = false;
+
+  [Func="nsRFPService::IsSystemPrincipalOrAboutFingerprintingProtection"]
+  boolean forceSoftwareRendering = false;
+};
+
+[GenerateInit]
+dictionary CanvasRenderingContext2DDebugInfo {
+  required boolean isAccelerated;
+
+  required boolean isShared;
+
+  required byte backendType;
+
+  required byte drawTargetType;
 };
 
 dictionary HitRegionOptions {
@@ -34,7 +65,8 @@ typedef (HTMLOrSVGImageElement or
          HTMLCanvasElement or
          HTMLVideoElement or
          OffscreenCanvas or
-         ImageBitmap) CanvasImageSource;
+         ImageBitmap or
+         VideoFrame) CanvasImageSource;
 
 [Exposed=Window]
 interface CanvasRenderingContext2D {
@@ -42,6 +74,11 @@ interface CanvasRenderingContext2D {
   // back-reference to the canvas.  Might be null if we're not
   // associated with a canvas.
   readonly attribute HTMLCanvasElement? canvas;
+
+  CanvasRenderingContext2DSettings getContextAttributes();
+
+  [Throws, Func="nsRFPService::IsSystemPrincipalOrAboutFingerprintingProtection"]
+  CanvasRenderingContext2DDebugInfo getDebugInfo(optional boolean ensureTarget = false);
 
   // Show the caret if appropriate when drawing
   [Func="CanvasUtils::HasDrawWindowPrivilege"]
@@ -133,6 +170,7 @@ interface mixin CanvasState {
   undefined save(); // push state on state stack
   undefined restore(); // pop state stack and restore state
   undefined reset(); // reset the rendering context to its default state
+  boolean isContextLost(); // return whether context is lost
 };
 
 interface mixin CanvasTransform {
@@ -174,7 +212,7 @@ interface mixin CanvasFillStrokeStyles {
   CanvasGradient createLinearGradient(double x0, double y0, double x1, double y1);
   [NewObject, Throws]
   CanvasGradient createRadialGradient(double x0, double y0, double r0, double x1, double y1, double r1);
-  [Pref="canvas.createConicGradient.enabled", NewObject]
+  [NewObject]
   CanvasGradient createConicGradient(double angle, double cx, double cy);
   [NewObject, Throws]
   CanvasPattern? createPattern(CanvasImageSource image, [LegacyNullToEmptyString] DOMString repetition);
@@ -191,7 +229,7 @@ interface mixin CanvasShadowStyles {
 };
 
 interface mixin CanvasFilters {
-  [Pref="canvas.filters.enabled", SetterThrows]
+  [SetterThrows]
   attribute UTF8String filter; // (default empty string = no filter)
 };
 
@@ -225,7 +263,7 @@ interface mixin CanvasDrawPath {
 };
 
 interface mixin CanvasUserInterface {
-  [Pref="canvas.focusring.enabled", Throws] undefined drawFocusIfNeeded(Element element);
+  [Throws] undefined drawFocusIfNeeded(Element element);
 // NOT IMPLEMENTED  undefined scrollPathIntoView();
 // NOT IMPLEMENTED  undefined scrollPathIntoView(Path path);
 };
@@ -241,6 +279,9 @@ interface mixin CanvasText {
 };
 
 interface mixin CanvasDrawImage {
+  [ChromeOnly]
+  attribute CanvasContextProperties contextProperties;
+
   [Throws, LenientFloat]
   undefined drawImage(CanvasImageSource image, double dx, double dy);
   [Throws, LenientFloat]
@@ -268,9 +309,8 @@ interface mixin CanvasPathDrawingStyles {
   // line caps/joins
   [LenientFloat]
   attribute double lineWidth; // (default 1)
-  attribute DOMString lineCap; // "butt", "round", "square" (default "butt")
-  [GetterThrows]
-  attribute DOMString lineJoin; // "round", "bevel", "miter" (default "miter")
+  attribute CanvasLineCap lineCap; // (default "butt")
+  attribute CanvasLineJoin lineJoin; // (default "miter")
   [LenientFloat]
   attribute double miterLimit; // (default 10)
 
@@ -284,14 +324,14 @@ interface mixin CanvasTextDrawingStyles {
   // text
   [SetterThrows]
   attribute UTF8String font; // (default 10px sans-serif)
-  attribute DOMString textAlign; // "start", "end", "left", "right", "center" (default: "start")
-  attribute DOMString textBaseline; // "top", "hanging", "middle", "alphabetic", "ideographic", "bottom" (default: "alphabetic")
-  attribute DOMString direction; // "ltr", "rtl", "inherit" (default: "inherit")
+  attribute CanvasTextAlign textAlign; // (default: "start")
+  attribute CanvasTextBaseline textBaseline; // (default: "alphabetic")
+  attribute CanvasDirection direction; // (default: "inherit")
   attribute UTF8String letterSpacing; // default: "0px"
-  attribute DOMString fontKerning; // "auto", "normal", "none" (default: "auto")
-// NOT IMPLEMENTED  attribute CanvasFontStretch fontStretch; // (default: "normal")
-// NOT IMPLEMENTED  attribute CanvasFontVariantCaps fontVariantCaps; // (default: "normal")
-// NOT IMPLEMENTED  attribute CanvasTextRendering textRendering; // (default: "auto")
+  attribute CanvasFontKerning fontKerning; // (default: "auto")
+  attribute CanvasFontStretch fontStretch; // (default: "normal")
+  attribute CanvasFontVariantCaps fontVariantCaps; // (default: "normal")
+  attribute CanvasTextRendering textRendering; // (default: "auto")
   attribute UTF8String wordSpacing; // default: "0px"
 };
 
@@ -325,8 +365,7 @@ interface mixin CanvasPathMethods {
   undefined ellipse(double x, double y, double radiusX, double radiusY, double rotation, double startAngle, double endAngle, optional boolean anticlockwise = false);
 };
 
-[Exposed=(Window,Worker),
- Func="mozilla::dom::OffscreenCanvas::PrefEnabledOnWorkerThread"]
+[Exposed=(Window,Worker)]
 interface CanvasGradient {
   // opaque object
   [Throws]
@@ -334,8 +373,7 @@ interface CanvasGradient {
   undefined addColorStop(float offset, UTF8String color);
 };
 
-[Exposed=(Window,Worker),
- Func="mozilla::dom::OffscreenCanvas::PrefEnabledOnWorkerThread"]
+[Exposed=(Window,Worker)]
 interface CanvasPattern {
   // opaque object
   // [Throws, LenientFloat] - could not do this overload because of bug 1020975
@@ -385,14 +423,12 @@ interface TextMetrics {
   readonly attribute double ideographicBaseline;
 };
 
-[Pref="canvas.path.enabled",
- Func="mozilla::dom::OffscreenCanvas::PrefEnabledOnWorkerThread",
- Exposed=(Window,Worker)]
+[Exposed=(Window,Worker)]
 interface Path2D
 {
   constructor();
   constructor(Path2D other);
-  constructor(DOMString pathString);
+  constructor(UTF8String pathString);
 
   [Throws] undefined addPath(Path2D path, optional DOMMatrix2DInit transform = {});
 };

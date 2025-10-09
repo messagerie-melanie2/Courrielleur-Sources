@@ -58,7 +58,6 @@ class AccessibleWrap : public LocalAccessible {
 
   // return the atk object for this AccessibleWrap
   virtual void GetNativeInterface(void** aOutAccessible) override;
-  virtual nsresult HandleAccEvent(AccEvent* aEvent) override;
 
   AtkObject* GetAtkObject(void);
   static AtkObject* GetAtkObject(LocalAccessible* aAccessible);
@@ -83,9 +82,6 @@ class AccessibleWrap : public LocalAccessible {
   nsresult FireAtkTextChangedEvent(AccEvent* aEvent, AtkObject* aObject);
 
   AtkObject* mAtkObject;
-
- private:
-  uint16_t CreateMaiInterfaces();
 };
 
 }  // namespace a11y

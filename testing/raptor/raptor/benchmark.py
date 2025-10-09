@@ -8,21 +8,26 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import threading
+import traceback
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 import mozfile
 from logger.logger import RaptorLogger
-from wptserve import handlers, server
 
 LOG = RaptorLogger(component="raptor-benchmark")
 here = pathlib.Path(__file__).parent.resolve()
 
 
-class Benchmark(object):
+class Benchmark:
     """utility class for running benchmarks in raptor"""
 
-    def __init__(self, config, test):
+    def __init__(self, config, test, debug_mode=False):
         self.config = config
         self.test = test
+        self.debug_mode = debug_mode
+        self.httpd = None
+        self.server_thread = None
 
         # Note that we can only change the repository, revision, and branch through here.
         # The path to the test should remain constant. If it needs to be changed, make a
@@ -48,8 +53,6 @@ class Benchmark(object):
         self.start_http_server()
 
     def start_http_server(self):
-        self.write_server_headers()
-
         # pick a free port
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind(("", 0))
@@ -59,33 +62,46 @@ class Benchmark(object):
         _webserver = "%s:%d" % (self.host, self.port)
 
         self.httpd = self.setup_webserver(_webserver)
-        self.httpd.start()
-
-    def write_server_headers(self):
-        # to add specific headers for serving files via wptserve, write out a headers dir file
-        # see http://wptserve.readthedocs.io/en/latest/handlers.html#file-handlers
-        LOG.info("writing wptserve headers file")
-        headers_file = pathlib.Path(self.bench_dir, "__dir__.headers")
-        file = headers_file.open("w")
-        file.write("Access-Control-Allow-Origin: *")
-        file.close()
-        LOG.info("wrote wpt headers file: %s" % headers_file)
+        self.server_thread = threading.Thread(target=self.httpd.serve_forever)
+        self.server_thread.start()
 
     def setup_webserver(self, webserver):
         LOG.info("starting webserver on %r" % webserver)
         LOG.info("serving benchmarks from here: %s" % self.bench_dir)
+
         self.host, self.port = webserver.split(":")
 
-        return server.WebTestHttpd(
-            host=self.host,
-            port=int(self.port),
-            doc_root=str(self.bench_dir),
-            routes=[("GET", "*", handlers.file_handler)],
-        )
+        class CustomHandler(SimpleHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"  # allow connection re-use
+            doc_root = self.bench_dir
+            verbose = self.debug_mode or self.config.get("verbose", False)
 
-    def stop_serve(self):
-        LOG.info("TODO: stop serving benchmark source")
-        pass
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs, directory=CustomHandler.doc_root)
+
+            def log_message(self, *args):
+                if CustomHandler.verbose:
+                    super(CustomHandler, self).log_message(*args)
+
+            def end_headers(self):
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+                self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
+                SimpleHTTPRequestHandler.end_headers(self)
+
+        return ThreadingHTTPServer((self.host, int(self.port)), CustomHandler)
+
+    def stop_http_server(self):
+        try:
+            if self.httpd:
+                self.httpd.shutdown()
+        except Exception:
+            LOG.warning(f"Failed to stop benchmark server: {traceback.format_exc()}")
+        try:
+            if self.server_thread:
+                self.server_thread.join(5)
+        except Exception:
+            LOG.warning(f"Failed to stop benchmark server: {traceback.format_exc()}")
 
     def _full_clone(self, benchmark_repository, dest):
         subprocess.check_call(
@@ -252,7 +268,7 @@ class Benchmark(object):
             raise ex
 
         if not external_repo_path.is_dir():
-            LOG.info("Cloning the benchmarks to {}".format(external_repo_path))
+            LOG.info(f"Cloning the benchmarks to {external_repo_path}")
             # Bug 1804694 - Use sparse checkouts instead of full clones
             # Locally, we should always do a full clone
             self._full_clone(benchmark_repository, external_repo_path)

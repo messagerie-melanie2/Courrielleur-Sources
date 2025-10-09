@@ -15,7 +15,6 @@
 #include "nsIDocShell.h"
 #include "nsIObserverService.h"
 #include "nsPresContext.h"
-#include "nsIScrollableFrame.h"
 #include "nsISelectionController.h"
 #include "nsISimpleEnumerator.h"
 #include "mozilla/dom/TouchEvent.h"
@@ -24,6 +23,8 @@
 #include "mozilla/EventStateManager.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/ScrollContainerFrame.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/TouchEvents.h"
 #include "nsView.h"
 #include "nsGkAtoms.h"
@@ -35,6 +36,7 @@
 #include "nsTreeColumns.h"
 #include "mozilla/dom/DocumentInlines.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/dom/ElementInternals.h"
 #include "mozilla/dom/HTMLLabelElement.h"
 #include "mozilla/dom/MouseEventBinding.h"
 #include "mozilla/dom/Selection.h"
@@ -114,6 +116,9 @@ void nsCoreUtils::DispatchClickEvent(XULTreeElement* aTree, int32_t aRowIndex,
   int32_t cnvdY = presContext->CSSPixelsToDevPixels(tcY + int32_t(rect.y) + 1) +
                   presContext->AppUnitsToDevPixels(offset.y);
 
+  // This isn't needed once bug 1924790 is fixed.
+  tcElm->OwnerDoc()->NotifyUserGestureActivation();
+
   // XUL is just desktop, so there is no real reason for senfing touch events.
   DispatchMouseEvent(eMouseDown, cnvdX, cnvdY, tcElm, tcFrame, presShell,
                      rootWidget);
@@ -126,8 +131,8 @@ void nsCoreUtils::DispatchMouseEvent(EventMessage aMessage, int32_t aX,
                                      int32_t aY, nsIContent* aContent,
                                      nsIFrame* aFrame, PresShell* aPresShell,
                                      nsIWidget* aRootWidget) {
-  WidgetMouseEvent event(true, aMessage, aRootWidget, WidgetMouseEvent::eReal,
-                         WidgetMouseEvent::eNormal);
+  MOZ_ASSERT(!IsPointerEventMessage(aMessage));
+  WidgetMouseEvent event(true, aMessage, aRootWidget, WidgetMouseEvent::eReal);
 
   event.mRefPoint = LayoutDeviceIntPoint(aX, aY);
 
@@ -244,29 +249,32 @@ nsresult nsCoreUtils::ScrollSubstringTo(nsIFrame* aFrame, nsRange* aRange,
   selection->AddRangeAndSelectFramesAndNotifyListeners(*aRange, IgnoreErrors());
 
   selection->ScrollIntoView(nsISelectionController::SELECTION_ANCHOR_REGION,
-                            aVertical, aHorizontal,
-                            Selection::SCROLL_SYNCHRONOUS);
+                            aVertical, aHorizontal, ScrollFlags::None,
+                            SelectionScrollMode::SyncNoFlush);
 
   selection->CollapseToStart(IgnoreErrors());
 
   return NS_OK;
 }
 
-void nsCoreUtils::ScrollFrameToPoint(nsIFrame* aScrollableFrame,
+void nsCoreUtils::ScrollFrameToPoint(nsIFrame* aScrollContainerFrame,
                                      nsIFrame* aFrame,
                                      const LayoutDeviceIntPoint& aPoint) {
-  nsIScrollableFrame* scrollableFrame = do_QueryFrame(aScrollableFrame);
-  if (!scrollableFrame) return;
+  ScrollContainerFrame* scrollContainerFrame =
+      do_QueryFrame(aScrollContainerFrame);
+  if (!scrollContainerFrame) {
+    return;
+  }
 
   nsPoint point = LayoutDeviceIntPoint::ToAppUnits(
       aPoint, aFrame->PresContext()->AppUnitsPerDevPixel());
   nsRect frameRect = aFrame->GetScreenRectInAppUnits();
   nsPoint deltaPoint = point - frameRect.TopLeft();
 
-  nsPoint scrollPoint = scrollableFrame->GetScrollPosition();
+  nsPoint scrollPoint = scrollContainerFrame->GetScrollPosition();
   scrollPoint -= deltaPoint;
 
-  scrollableFrame->ScrollTo(scrollPoint, ScrollMode::Instant);
+  scrollContainerFrame->ScrollTo(scrollPoint, ScrollMode::Instant);
 }
 
 void nsCoreUtils::ConvertScrollTypeToPercents(uint32_t aScrollType,
@@ -312,9 +320,9 @@ void nsCoreUtils::ConvertScrollTypeToPercents(uint32_t aScrollType,
       whenX = WhenToScroll::Always;
       break;
     default:
-      whereY = WhereToScroll::Nearest;
+      whereY = WhereToScroll::Center;
       whenY = WhenToScroll::IfNotFullyVisible;
-      whereX = WhereToScroll::Nearest;
+      whereX = WhereToScroll::Center;
       whenX = WhenToScroll::IfNotFullyVisible;
   }
   *aVertical = ScrollAxis(whereY, whenY);
@@ -368,7 +376,7 @@ PresShell* nsCoreUtils::GetPresShellFor(nsINode* aNode) {
 
 bool nsCoreUtils::GetID(nsIContent* aContent, nsAString& aID) {
   return aContent->IsElement() &&
-         aContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::id, aID);
+         aContent->AsElement()->GetAttr(nsGkAtoms::id, aID);
 }
 
 bool nsCoreUtils::GetUIntAttr(nsIContent* aContent, nsAtom* aAttr,
@@ -405,8 +413,7 @@ void nsCoreUtils::GetLanguageFor(nsIContent* aContent, nsIContent* aRootContent,
   nsIContent* walkUp = aContent;
   while (walkUp && walkUp != aRootContent &&
          (!walkUp->IsElement() ||
-          !walkUp->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::lang,
-                                        aLanguage))) {
+          !walkUp->AsElement()->GetAttr(nsGkAtoms::lang, aLanguage))) {
     walkUp = walkUp->GetParent();
   }
 }
@@ -533,7 +540,7 @@ void nsCoreUtils::ScrollTo(PresShell* aPresShell, nsIContent* aContent,
 bool nsCoreUtils::IsHTMLTableHeader(nsIContent* aContent) {
   return aContent->NodeInfo()->Equals(nsGkAtoms::th) ||
          (aContent->IsElement() &&
-          aContent->AsElement()->HasAttr(kNameSpaceID_None, nsGkAtoms::scope));
+          aContent->AsElement()->HasAttr(nsGkAtoms::scope));
 }
 
 bool nsCoreUtils::IsWhitespaceString(const nsAString& aString) {
@@ -620,4 +627,51 @@ bool nsCoreUtils::IsDocumentVisibleConsideringInProcessAncestors(
     }
   } while ((parent = parent->GetInProcessParentDocument()));
   return true;
+}
+
+bool nsCoreUtils::IsDescendantOfAnyShadowIncludingAncestor(
+    nsINode* aDescendant, nsINode* aStartAncestor) {
+  const nsINode* descRoot = aDescendant->SubtreeRoot();
+  nsINode* ancRoot = aStartAncestor->SubtreeRoot();
+  for (;;) {
+    if (ancRoot == descRoot) {
+      return true;
+    }
+    auto* shadow = mozilla::dom::ShadowRoot::FromNode(ancRoot);
+    if (!shadow || !shadow->GetHost()) {
+      break;
+    }
+    ancRoot = shadow->GetHost()->SubtreeRoot();
+  }
+  return false;
+}
+
+Element* nsCoreUtils::GetAriaActiveDescendantElement(Element* aElement) {
+  if (Element* activeDescendant = aElement->GetAriaActiveDescendantElement()) {
+    return activeDescendant;
+  }
+
+  if (auto* element = nsGenericHTMLElement::FromNode(aElement)) {
+    if (auto* internals = element->GetInternals()) {
+      return internals->GetAriaActiveDescendantElement();
+    }
+  }
+
+  return nullptr;
+}
+
+bool nsCoreUtils::IsTrimmedWhitespaceBeforeHardLineBreak(nsIFrame* aFrame) {
+  if (!aFrame->GetRect().IsEmpty() ||
+      !aFrame->HasAnyStateBits(TEXT_END_OF_LINE)) {
+    return false;
+  }
+  // Normally, accessibility calls nsIFrame::GetRenderedText with
+  // TrailingWhitespace::NoTrim. Using TrailingWhitespace::Trim instead trims 0
+  // width whitespace before a hard line break, resulting in an empty string if
+  // that is all the frame contains. Note that TrailingWhitespace::Trim does
+  // *not* trim whitespace before a soft line break (wrapped line).
+  nsIFrame::RenderedText text = aFrame->GetRenderedText(
+      0, UINT32_MAX, nsIFrame::TextOffsetType::OffsetsInContentText,
+      nsIFrame::TrailingWhitespace::Trim);
+  return text.mString.IsEmpty();
 }

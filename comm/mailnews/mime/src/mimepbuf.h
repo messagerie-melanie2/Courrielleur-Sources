@@ -6,7 +6,6 @@
 #ifndef _MIMEPBUF_H_
 #define _MIMEPBUF_H_
 
-#include "mimei.h"
 #include "modmimee.h"  // for MimeConverterOutputCallback
 
 /* This file provides the ability to save up the entire contents of a MIME
@@ -58,6 +57,6 @@ extern int MimePartBufferWrite(MimePartBufferData* data, const char* buf,
  */
 extern int MimePartBufferRead(MimePartBufferData* data,
                               MimeConverterOutputCallback read_fn,
-                              void* closure);
+                              MimeClosure closure);
 
 #endif /* _MIMEPBUF_H_ */

@@ -59,7 +59,7 @@ GlodaAttributeDBDef.prototype = {
    * Bind a parameter value to the attribute definition, allowing use of the
    *  attribute-parameter as an attribute.
    *
-   * @returns
+   * @returns {number} the id.
    */
   bindParameter(aValue) {
     // people probably shouldn't call us with null, but handle it
@@ -87,8 +87,8 @@ GlodaAttributeDBDef.prototype = {
    *  to directly convert the value of a property on an object that corresponds
    *  to a bound attribute.
    *
-   * @param {Array} aInstanceValues An array of instance values regardless of
-   *     whether or not the attribute is singular.
+   * @param {[][]} aInstanceValues - An array of instance values regardless of
+   *   whether or not the attribute is singular.
    */
   convertValuesToDBAttributes(aInstanceValues) {
     const nounDef = this.attrDef.objectNounDef;
@@ -335,6 +335,24 @@ GlodaFolder.prototype = {
     }
   },
   /**
+   * Indicate whether this folder is currently being repaired.  The
+   * |GlodaMsgIndexer| keeps this in-memory-only value up-to-date.
+   *
+   * @returns {boolean} if the folder is currently being repaired.
+   */
+  get rebuildingFolderSummary() {
+    return this._rebuildingFolderSummary;
+  },
+  /**
+   * Set whether this folder is currently being repaired.  This is really only
+   * for the |GlodaMsgIndexer| to set.
+   *
+   * @param {boolean} isRebuilding if the folder is currently being repaired.
+   */
+  set rebuildingFolderSummary(isRebuilding) {
+    this._rebuildingFolderSummary = isRebuilding;
+  },
+  /**
    * Indicate whether this folder is currently being compacted.  The
    *  |GlodaMsgIndexer| keeps this in-memory-only value up-to-date.
    */
@@ -421,10 +439,10 @@ GlodaFolder.prototype = {
    * Retrieve the nsIMsgFolder instance corresponding to this folder, providing
    *  an explanation of why you are requesting it for tracking/cleanup purposes.
    *
-   * @param aActivity One of the kActivity* constants.  If you pass
-   *     kActivityIndexing, we will set indexing for you, but you will need to
-   *     clear it when you are done.
-   * @returns The nsIMsgFolder if available, null on failure.
+   * @param {0|1|2} aActivity - One of the kActivity* constants. If you pass
+   *   kActivityIndexing, we will set indexing for you, but you will need to
+   *   clear it when you are done.
+   * @returns {?nsIMsgFolder} The nsIMsgFolder if available, null on failure.
    */
   getXPCOMFolder(aActivity) {
     switch (aActivity) {
@@ -445,7 +463,7 @@ GlodaFolder.prototype = {
   /**
    * Retrieve a GlodaAccount instance corresponding to this folder.
    *
-   * @returns The GlodaAccount instance.
+   * @returns {GlodaAccount} The GlodaAccount instance.
    */
   getAccount() {
     if (!this._account) {
@@ -457,7 +475,7 @@ GlodaFolder.prototype = {
 };
 
 /**
- * @class A message representation.
+ * @class GlodaMessage - A message representation.
  */
 export function GlodaMessage(
   aDatastore,
@@ -689,8 +707,8 @@ GlodaMessage.prototype = {
    * We provide hinting to the GlodaDatastore via the GlodaFolder so that it
    *  knows when it's a good time for it to go and detach from the database.
    *
-   * @returns The nsIMsgDBHdr associated with this message if available, null on
-   *     failure.
+   * @returns {?nsIMsgDBHdr} The nsIMsgDBHdr associated with this message if
+   *   available, null on failure.
    */
   get folderMessage() {
     if (this._folderID === null || this._messageKey === null) {

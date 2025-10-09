@@ -30,6 +30,7 @@
 #include "nsNetCID.h"
 #include "nsMsgMessageFlags.h"
 #include "mozilla/mailnews/MimeHeaderParser.h"
+#include "mozilla/ErrorNames.h"
 #include "mozilla/Logging.h"
 
 using namespace mozilla::mailnews;
@@ -250,10 +251,13 @@ STDMETHODIMP CMapiImp::SendDocuments(unsigned long aSession, LPSTR aDelimChar,
 
   if (NS_SUCCEEDED(rv))
     rv = nsMapiHook::ShowComposerWindow(aSession, pCompFields);
-  else
+  else {
+    nsAutoCString name;
+    mozilla::GetErrorName(rv, name);
     MOZ_LOG(MAPI, mozilla::LogLevel::Debug,
-            ("CMapiImp::SendDocument error rv = %x, paths = %s names = %s", rv,
-             aFilePaths, aFileNames));
+            ("CMapiImp::SendDocument error rv = %s, paths = %s names = %s",
+             name.get(), aFilePaths, aFileNames));
+  }
 
   return nsMAPIConfiguration::GetMAPIErrorFromNSError(rv);
 }
@@ -559,14 +563,14 @@ lpnsMapiMessage MsgMapiListContext::GetMessage(nsMsgKey key,
           (lpnsMapiRecipDesc)CoTaskMemAlloc(sizeof(nsMapiRecipDesc));
       memset(message->lpOriginator, 0, sizeof(nsMapiRecipDesc));
       if (message->lpOriginator) {
-        msgHdr->GetAuthor(getter_Copies(author));
+        msgHdr->GetAuthor(author);
         ConvertRecipientsToMapiFormat(EncodedHeader(author),
                                       message->lpOriginator, MAPI_ORIG);
       }
       // Pull out the To/CC info
       nsCString recipients, ccList;
-      msgHdr->GetRecipients(getter_Copies(recipients));
-      msgHdr->GetCcList(getter_Copies(ccList));
+      msgHdr->GetRecipients(recipients);
+      msgHdr->GetCcList(ccList);
 
       nsCOMArray<msgIAddressObject> parsedToRecips = EncodedHeader(recipients);
       nsCOMArray<msgIAddressObject> parsedCCRecips = EncodedHeader(ccList);
@@ -664,9 +668,11 @@ char* MsgMapiListContext::ConvertBodyToMapiFormat(nsIMsgDBHdr* hdr) {
   if (!fileLineStream) return nullptr;
 
   // ### really want to skip past headers...
+  nsCString storeToken;
   uint64_t messageOffset;
   uint32_t lineCount;
-  hdr->GetMessageOffset(&messageOffset);
+  hdr->GetStoreToken(storeToken);
+  messageOffset = storeToken.ToInteger64(&rv);
   hdr->GetLineCount(&lineCount);
   nsCOMPtr<nsISeekableStream> seekableStream = do_QueryInterface(fileStream);
   seekableStream->Seek(PR_SEEK_SET, messageOffset);

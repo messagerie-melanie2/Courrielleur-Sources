@@ -12,8 +12,11 @@ things. If there are no guarantees we can issue warnings instead of failures. Id
 
 import { makeTestGroup } from '../../../../common/framework/test_group.js';
 import { assert } from '../../../../common/util/util.js';
-import { GPUTest } from '../../../gpu_test.js';
+import { AllFeaturesMaxLimitsGPUTest } from '../../../gpu_test.js';
+import * as ttu from '../../../texture_test_utils.js';
 import { checkElementsEqual } from '../../../util/check_contents.js';
+import { TexelView } from '../../../util/texture/texel_view.js';
+import { PerPixelComparison } from '../../../util/texture/texture_ok.js';
 
 const kRTSize = 16;
 const kBytesPerRow = 256;
@@ -31,10 +34,10 @@ const checkerColors = [
 ];
 
 // renders texture a slanted plane placed in a specific way
-class SamplerAnisotropicFilteringSlantedPlaneTest extends GPUTest {
+class SamplerAnisotropicFilteringSlantedPlaneTest extends AllFeaturesMaxLimitsGPUTest {
   copyRenderTargetToBuffer(rt: GPUTexture): GPUBuffer {
     const byteLength = kRTSize * kBytesPerRow;
-    const buffer = this.device.createBuffer({
+    const buffer = this.createBufferTracked({
       size: byteLength,
       usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     });
@@ -51,7 +54,7 @@ class SamplerAnisotropicFilteringSlantedPlaneTest extends GPUTest {
   }
 
   private pipeline: GPURenderPipeline | undefined;
-  async init(): Promise<void> {
+  override async init(): Promise<void> {
     await super.init();
 
     this.pipeline = this.device.createRenderPipeline({
@@ -131,7 +134,7 @@ class SamplerAnisotropicFilteringSlantedPlaneTest extends GPUTest {
       layout: this.pipeline.getBindGroupLayout(0),
     });
 
-    const colorAttachment = this.device.createTexture({
+    const colorAttachment = this.createTextureTracked({
       format: kColorAttachmentFormat,
       size: { width: kRTSize, height: kRTSize, depthOrArrayLayers: 1 },
       usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT,
@@ -143,9 +146,9 @@ class SamplerAnisotropicFilteringSlantedPlaneTest extends GPUTest {
       colorAttachments: [
         {
           view: colorAttachmentView,
-          storeOp: 'store',
           clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
           loadOp: 'clear',
+          storeOp: 'store',
         },
       ],
     });
@@ -174,7 +177,7 @@ g.test('anisotropic_filter_checkerboard')
   .fn(async t => {
     // init texture with only a top level mipmap
     const textureSize = 32;
-    const texture = t.device.createTexture({
+    const texture = t.createTextureTracked({
       mipLevelCount: 1,
       size: { width: textureSize, height: textureSize, depthOrArrayLayers: 1 },
       format: kTextureFormat,
@@ -283,9 +286,12 @@ g.test('anisotropic_filter_mipmap_color')
       _generateWarningOnly: true,
     },
   ])
-  .fn(async t => {
-    const texture = t.createTexture2DWithMipmaps(colors);
-
+  .fn(t => {
+    const texture = ttu.createTextureFromTexelViewsMultipleMipmaps(
+      t,
+      colors.map(value => TexelView.fromTexelsAsBytes(kTextureFormat, _coords => value)),
+      { size: [4, 4, 1], usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING }
+    );
     const textureView = texture.createView();
 
     const sampler = t.device.createSampler({
@@ -297,15 +303,15 @@ g.test('anisotropic_filter_mipmap_color')
 
     const colorAttachment = t.drawSlantedPlane(textureView, sampler);
 
+    const pixelComparisons: PerPixelComparison<Uint8Array>[] = [];
     for (const entry of t.params._results) {
       if (entry.expected instanceof Uint8Array) {
         // equal exactly one color
-        t.expectSinglePixelIn2DTexture(colorAttachment, kColorAttachmentFormat, entry.coord, {
-          exp: entry.expected,
-          generateWarningOnly: t.params._generateWarningOnly,
-        });
+        pixelComparisons.push({ coord: entry.coord, exp: entry.expected });
       } else {
         // a lerp between two colors
+        // MAINTENANCE_TODO: Unify comparison to allow for a strict in-between comparison to support
+        //                   this kind of expectation.
         t.expectSinglePixelBetweenTwoValuesIn2DTexture(
           colorAttachment,
           kColorAttachmentFormat,
@@ -317,4 +323,9 @@ g.test('anisotropic_filter_mipmap_color')
         );
       }
     }
+    ttu.expectSinglePixelComparisonsAreOkInTexture(
+      t,
+      { texture: colorAttachment },
+      pixelComparisons
+    );
   });

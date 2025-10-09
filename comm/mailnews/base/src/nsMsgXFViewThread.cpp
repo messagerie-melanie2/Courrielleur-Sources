@@ -12,12 +12,28 @@ NS_IMPL_ISUPPORTS(nsMsgXFViewThread, nsIMsgThread)
 
 nsMsgXFViewThread::nsMsgXFViewThread(nsMsgSearchDBView* view,
                                      nsMsgKey threadId) {
+  m_numNewChildren = 0;
   m_numUnreadChildren = 0;
   m_numChildren = 0;
   m_flags = 0;
   m_newestMsgDate = 0;
   m_view = view;
   m_threadId = threadId;
+}
+
+already_AddRefed<nsMsgXFViewThread> nsMsgXFViewThread::Clone(
+    nsMsgSearchDBView* view) {
+  RefPtr<nsMsgXFViewThread> thread = new nsMsgXFViewThread(view, m_threadId);
+  thread->m_numNewChildren = m_numNewChildren;
+  thread->m_numUnreadChildren = m_numUnreadChildren;
+  thread->m_numChildren = m_numChildren;
+  thread->m_flags = m_flags;
+  thread->m_newestMsgDate = m_newestMsgDate;
+  thread->m_keys = m_keys.Clone();
+  thread->m_folders.SetCapacity(m_folders.Count());
+  thread->m_folders.AppendObjects(m_folders);
+  thread->m_levels = m_levels.Clone();
+  return thread.forget();
 }
 
 nsMsgXFViewThread::~nsMsgXFViewThread() {}
@@ -67,6 +83,12 @@ nsMsgXFViewThread::GetNumChildren(uint32_t* aNumChildren) {
   return NS_OK;
 }
 
+NS_IMETHODIMP nsMsgXFViewThread::GetNumNewChildren(uint32_t* aNumNewChildren) {
+  NS_ENSURE_ARG_POINTER(aNumNewChildren);
+  *aNumNewChildren = m_numNewChildren;
+  return NS_OK;
+}
+
 NS_IMETHODIMP
 nsMsgXFViewThread::GetNumUnreadChildren(uint32_t* aNumUnreadChildren) {
   NS_ENSURE_ARG_POINTER(aNumUnreadChildren);
@@ -104,6 +126,7 @@ nsresult nsMsgXFViewThread::AddHdr(nsIMsgDBHdr* newHdr, bool reparentChildren,
     SetFlags(m_flags | nsMsgMessageFlags::Watched);
 
   ChangeChildCount(1);
+  if (newHdrFlags & nsMsgMessageFlags::New) ChangeNewChildCount(1);
   if (!(newHdrFlags & nsMsgMessageFlags::Read)) ChangeUnreadChildCount(1);
 
   if (m_numChildren == 1) {
@@ -215,8 +238,9 @@ nsresult nsMsgXFViewThread::AddHdr(nsIMsgDBHdr* newHdr, bool reparentChildren,
       m_folders.InsertObjectAt(newHdrFolder, 0);
       whereInserted = 0;
       // Adjust level of old root hdr and its children
-      for (nsMsgViewIndex i = 1; i < m_keys.Length(); i++)
-        m_levels[i] = m_levels[1] + 1;
+      for (nsMsgViewIndex i = 1; i < m_keys.Length(); i++) {
+        m_levels[i] = m_levels[i] + 1;
+      }
     } else {
       m_keys.AppendElement(newHdrKey);
       m_levels.AppendElement(1);
@@ -293,6 +317,7 @@ nsMsgXFViewThread::RemoveChildHdr(nsIMsgDBHdr* child,
       m_keys.RemoveElementAt(childIndex);
       m_levels.RemoveElementAt(childIndex);
       m_folders.RemoveObjectAt(childIndex);
+      if (msgFlags & nsMsgMessageFlags::New) ChangeNewChildCount(-1);
       if (!(msgFlags & nsMsgMessageFlags::Read)) ChangeUnreadChildCount(-1);
 
       ChangeChildCount(-1);
@@ -333,6 +358,10 @@ int32_t nsMsgXFViewThread::HdrIndex(nsIMsgDBHdr* hdr) {
   return -1;
 }
 
+void nsMsgXFViewThread::ChangeNewChildCount(int32_t delta) {
+  m_numNewChildren += delta;
+}
+
 void nsMsgXFViewThread::ChangeUnreadChildCount(int32_t delta) {
   m_numUnreadChildren += delta;
 }
@@ -348,7 +377,7 @@ bool nsMsgXFViewThread::IsHdrParentOf(nsIMsgDBHdr* possibleParent,
   nsAutoCString reference;
 
   nsCString messageId;
-  possibleParent->GetMessageId(getter_Copies(messageId));
+  possibleParent->GetMessageId(messageId);
 
   while (referenceToCheck > 0) {
     possibleChild->GetStringReference(referenceToCheck - 1, reference);
@@ -397,6 +426,11 @@ nsMsgXFViewThread::GetNewestMsgDate(uint32_t* aResult) {
 NS_IMETHODIMP
 nsMsgXFViewThread::SetNewestMsgDate(uint32_t aNewestMsgDate) {
   m_newestMsgDate = aNewestMsgDate;
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsMsgXFViewThread::MarkChildNew(bool aNew) {
+  ChangeNewChildCount(aNew ? 1 : -1);
   return NS_OK;
 }
 

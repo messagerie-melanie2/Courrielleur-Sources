@@ -9,22 +9,10 @@ import signal
 import subprocess
 import sys
 
-import mozpack.path as mozpath
-from mozfile import which
 from mozlint import result
 from mozlint.pathutils import expand_exclusions
-from mozprocess import ProcessHandler
 
 here = os.path.abspath(os.path.dirname(__file__))
-BLACK_REQUIREMENTS_PATH = os.path.join(here, "black_requirements.txt")
-
-BLACK_INSTALL_ERROR = """
-Unable to install correct version of black
-Try to install it manually with:
-    $ pip install -U --require-hashes -r {}
-""".strip().format(
-    BLACK_REQUIREMENTS_PATH
-)
 
 
 def default_bindir():
@@ -56,8 +44,8 @@ def get_black_version(binary):
         # black, 21.11b1 (compiled: no)
         return re.match(r"black.*,( version)? (\S+)", output)[2]
     except TypeError as e:
-        print("Could not parse the version '{}'".format(output))
-        print("Error: {}".format(e))
+        print(f"Could not parse the version '{output}'")
+        print(f"Error: {e}")
 
 
 def parse_issues(config, output, paths, *, log):
@@ -65,8 +53,8 @@ def parse_issues(config, output, paths, *, log):
     reformatted = re.compile("^reformatted (.*)$", re.I)
     cannot_reformat = re.compile("^error: cannot format (.*?): (.*)$", re.I)
     results = []
-    for line in output:
-        line = line.decode("utf-8")
+    for l in output.split(b"\n"):
+        line = l.decode("utf-8").rstrip("\r\n")
         if line.startswith("All done!") or line.startswith("Oh no!"):
             break
 
@@ -92,79 +80,56 @@ def parse_issues(config, output, paths, *, log):
     return results
 
 
-class BlackProcess(ProcessHandler):
-    def __init__(self, config, *args, **kwargs):
-        self.config = config
-        kwargs["stream"] = False
-        ProcessHandler.__init__(self, *args, **kwargs)
-
-    def run(self, *args, **kwargs):
-        orig = signal.signal(signal.SIGINT, signal.SIG_IGN)
-        ProcessHandler.run(self, *args, **kwargs)
-        signal.signal(signal.SIGINT, orig)
-
-
 def run_process(config, cmd):
-    proc = BlackProcess(config, cmd)
-    proc.run()
+    orig = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    signal.signal(signal.SIGINT, orig)
     try:
+        output, _ = proc.communicate()
         proc.wait()
     except KeyboardInterrupt:
         proc.kill()
 
-    return proc.output
-
-
-def setup(root, **lintargs):
-    log = lintargs["log"]
-    virtualenv_bin_path = lintargs.get("virtualenv_bin_path")
-    # Using `which` searches multiple directories and handles `.exe` on Windows.
-    binary = which("black", path=(virtualenv_bin_path, default_bindir()))
-
-    if binary and os.path.exists(binary):
-        binary = mozpath.normsep(binary)
-        log.debug("Looking for black at {}".format(binary))
-        version = get_black_version(binary)
-        versions = [
-            line.split()[0].strip()
-            for line in open(BLACK_REQUIREMENTS_PATH).readlines()
-            if line.startswith("black==")
-        ]
-        if ["black=={}".format(version)] == versions:
-            log.debug("Black is present with expected version {}".format(version))
-            return 0
-        else:
-            log.debug("Black is present but unexpected version {}".format(version))
-
-    log.debug("Black needs to be installed or updated")
-    virtualenv_manager = lintargs["virtualenv_manager"]
-    try:
-        virtualenv_manager.install_pip_requirements(BLACK_REQUIREMENTS_PATH, quiet=True)
-    except subprocess.CalledProcessError:
-        print(BLACK_INSTALL_ERROR)
-        return 1
+    return output
 
 
 def run_black(config, paths, fix=None, *, log, virtualenv_bin_path):
     fixed = 0
     binary = os.path.join(virtualenv_bin_path or default_bindir(), "black")
 
-    log.debug("Black version {}".format(get_black_version(binary)))
+    log.debug(f"Black version {get_black_version(binary)}")
 
     cmd_args = [binary]
     if not fix:
         cmd_args.append("--check")
 
-    base_command = cmd_args + paths
-    log.debug("Command: {}".format(" ".join(base_command)))
-    output = parse_issues(config, run_process(config, base_command), paths, log=log)
+    if platform.system() == "Windows":
+        MAX_PATHS_PER_JOB = (
+            50  # set a max size to prevent command lines that are too long on Windows
+        )
+        chunked_paths = [
+            paths[i : i + MAX_PATHS_PER_JOB]
+            for i in range(0, len(paths), MAX_PATHS_PER_JOB)
+        ]
+    else:
+        chunked_paths = [paths]
 
-    # black returns an issue for fixed files as well
-    for eachIssue in output:
-        if eachIssue.message == "reformatted":
-            fixed += 1
+    all_output = []
 
-    return {"results": output, "fixed": fixed}
+    for paths_chunk in chunked_paths:
+        base_command = cmd_args + paths_chunk
+        log.debug("Command: {}".format(" ".join(base_command)))
+        output = parse_issues(
+            config, run_process(config, base_command), paths_chunk, log=log
+        )
+        all_output.extend(output)
+
+        # black returns an issue for fixed files as well
+        for eachIssue in output:
+            if eachIssue.message == "reformatted":
+                fixed += 1
+
+    return {"results": all_output, "fixed": fixed}
 
 
 def lint(paths, config, fix=None, **lintargs):

@@ -106,6 +106,10 @@ OptionsPanel.prototype = {
       "devtools.source-map.client-service.enabled",
       this._prefChanged
     );
+    Services.prefs.addObserver(
+      "devtools.toolbox.splitconsole.enabled",
+      this._prefChanged
+    );
     gDevTools.on("theme-registered", this._themeRegistered);
     gDevTools.on("theme-unregistered", this._themeUnregistered);
 
@@ -124,6 +128,10 @@ OptionsPanel.prototype = {
     Services.prefs.removeObserver("devtools.theme", this._prefChanged);
     Services.prefs.removeObserver(
       "devtools.source-map.client-service.enabled",
+      this._prefChanged
+    );
+    Services.prefs.removeObserver(
+      "devtools.toolbox.splitconsole.enabled",
       this._prefChanged
     );
 
@@ -145,10 +153,12 @@ OptionsPanel.prototype = {
       this.updateCurrentTheme();
     } else if (prefName === "devtools.source-map.client-service.enabled") {
       this.updateSourceMapPref();
+    } else if (prefName === "devtools.toolbox.splitconsole.enabled") {
+      this.toolbox.updateIsSplitConsoleEnabled();
     }
   },
 
-  _themeRegistered(themeId) {
+  _themeRegistered() {
     this.setupThemeList();
   },
 
@@ -242,11 +252,7 @@ OptionsPanel.prototype = {
           tool.id
         );
         // Record which tools were registered and unregistered.
-        telemetry.keyedScalarSet(
-          "devtools.tool.registered",
-          tool.id,
-          this.checked
-        );
+        Glean.devtoolsTool.registered[tool.id].set(this.checked);
       }
     };
 
@@ -424,17 +430,15 @@ OptionsPanel.prototype = {
    * Add extra checkbox options bound to a boolean preference.
    */
   setupAdditionalOptions() {
-    const prefDefinitions = [];
-
-    if (GetPref("devtools.custom-formatters")) {
-      prefDefinitions.push({
+    const prefDefinitions = [
+      {
         pref: "devtools.custom-formatters.enabled",
         l10nLabelId: "options-enable-custom-formatters-label",
         l10nTooltipId: "options-enable-custom-formatters-tooltip",
         id: "devtools-custom-formatters",
         parentId: "context-options",
-      });
-    }
+      },
+    ];
 
     const createPreferenceOption = ({
       pref,

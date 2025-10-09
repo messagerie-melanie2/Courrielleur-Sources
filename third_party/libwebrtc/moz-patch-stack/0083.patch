@@ -1,34 +1,38 @@
-From: Michael Froman <mfroman@mozilla.com>
-Date: Wed, 12 Apr 2023 16:03:00 +0000
-Subject: Bug 1826428 - remove libwebrtc's jvm_android.cc from build
- r=ng,webrtc-reviewers
+From: stransky <stransky@redhat.com>
+Date: Tue, 29 Aug 2023 12:43:00 +0000
+Subject: Bug 1821629 [DMABuf] Don't use DMABuf if it's disabled by Firefox gfx
+ config r=ng,webrtc-reviewers
 
-Based on info from John Lin and previous try runs, we're almost
-certainly not using this.  Let's try removing it from the build
-and landing it.  If no problems emerge, we'll be able to remove
-our custom changes to upstream code in jvm_android.cc.
-
-Differential Revision: https://phabricator.services.mozilla.com/D174793
-Mercurial Revision: https://hg.mozilla.org/mozilla-central/rev/dca1b97525487ae57d43ced1ebdb4a2d9c9dae89
+Differential Revision: https://phabricator.services.mozilla.com/D172224
+Mercurial Revision: https://hg.mozilla.org/mozilla-central/rev/158a888cad8869a2f0026fa7cfaaa13ecbfcf2ed
 ---
- modules/utility/BUILD.gn | 4 ++++
- 1 file changed, 4 insertions(+)
+ .../linux/wayland/shared_screencast_stream.cc            | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
 
-diff --git a/modules/utility/BUILD.gn b/modules/utility/BUILD.gn
-index 3fe4ca8c92..46bca17f02 100644
---- a/modules/utility/BUILD.gn
-+++ b/modules/utility/BUILD.gn
-@@ -47,6 +47,10 @@ rtc_source_set("utility") {
-       "../../rtc_base:platform_thread",
-       "../../rtc_base/system:arch",
-     ]
-+
-+    if (build_with_mozilla) {
-+      sources -= [ "source/jvm_android.cc" ]
-+    }
-   }
- }
+diff --git a/modules/desktop_capture/linux/wayland/shared_screencast_stream.cc b/modules/desktop_capture/linux/wayland/shared_screencast_stream.cc
+index 9aa50e19ee..09da88cad3 100644
+--- a/modules/desktop_capture/linux/wayland/shared_screencast_stream.cc
++++ b/modules/desktop_capture/linux/wayland/shared_screencast_stream.cc
+@@ -27,6 +27,13 @@
+ #include "rtc_base/synchronization/mutex.h"
+ #include "rtc_base/time_utils.h"
  
--- 
-2.34.1
-
++// Wrapper for gfxVars::UseDMABuf() as we can't include gfxVars here.
++// We don't want to use dmabuf of known broken systems.
++// See FEATURE_DMABUF for details.
++namespace mozilla::gfx {
++bool IsDMABufEnabled();
++}
++
+ namespace webrtc {
+ 
+ const int kBytesPerPixel = 4;
+@@ -268,7 +275,7 @@ void SharedScreenCastStreamPrivate::OnStreamParamChanged(
+   that->modifier_ =
+       has_modifier ? that->spa_video_format_.modifier : DRM_FORMAT_MOD_INVALID;
+   std::vector<const spa_pod*> params;
+-  const int buffer_types = has_modifier
++  const int buffer_types = has_modifier && mozilla::gfx::IsDMABufEnabled()
+                                ? (1 << SPA_DATA_DmaBuf) | (1 << SPA_DATA_MemFd)
+                                : (1 << SPA_DATA_MemFd);
+ 

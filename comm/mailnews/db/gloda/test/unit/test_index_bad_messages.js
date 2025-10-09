@@ -11,22 +11,28 @@ var {
   assertExpectedMessagesIndexed,
   glodaTestHelperInitialize,
   waitForGlodaIndexer,
-} = ChromeUtils.import("resource://testing-common/gloda/GlodaTestHelper.jsm");
-var { configureGlodaIndexing } = ChromeUtils.import(
-  "resource://testing-common/gloda/GlodaTestHelperFunctions.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/gloda/GlodaTestHelper.sys.mjs"
 );
-var { Gloda } = ChromeUtils.import("resource:///modules/gloda/GlodaPublic.jsm");
-var { GlodaMsgIndexer } = ChromeUtils.import(
-  "resource:///modules/gloda/IndexMsg.jsm"
+var { configureGlodaIndexing, waitForGlodaDBFlush } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/gloda/GlodaTestHelperFunctions.sys.mjs"
+  );
+var { Gloda } = ChromeUtils.importESModule(
+  "resource:///modules/gloda/GlodaPublic.sys.mjs"
 );
-var { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { GlodaMsgIndexer } = ChromeUtils.importESModule(
+  "resource:///modules/gloda/IndexMsg.sys.mjs"
 );
-var { MessageInjection } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageInjection.jsm"
+var { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
+);
+var { MessageInjection } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageInjection.sys.mjs"
 );
 
 const GLODA_BAD_MESSAGE_ID = 2;
+const GLODA_FIRST_VALID_MESSAGE_ID = 32;
 
 var illegalMessageTemplates = [
   // -- Authors
@@ -36,18 +42,12 @@ var illegalMessageTemplates = [
       From: "",
     },
   },
-  {
-    name: "too many authors (> 1)",
-    clobberHeaders: {
-      From: "Tweedle Dee <dee@example.com>, Tweedle Dum <dum@example.com>",
-    },
-  },
 ];
 
 var messageInjection;
 
 add_setup(function () {
-  let msgGen = new MessageGenerator();
+  const msgGen = new MessageGenerator();
   messageInjection = new MessageInjection({ mode: "local" }, msgGen);
   glodaTestHelperInitialize(messageInjection);
 });
@@ -55,8 +55,35 @@ add_setup(function () {
 add_task(async function test_illegal_message_no_author() {
   await illegal_message(illegalMessageTemplates[0]);
 });
-add_task(async function test_illegal_message_too_many_authors() {
-  await illegal_message(illegalMessageTemplates[1]);
+
+/**
+ * Test that a message containing multiple authors does get indexed using only
+ * the first author.
+ */
+add_task(async function test_message_multiple_authors() {
+  const [msgSet] = await messageInjection.makeNewSetsInFolders(
+    [messageInjection.getInboxFolder()],
+    [
+      {
+        count: 1,
+        clobberHeaders: {
+          From: "Tweedle Dee <dee@example.com>, Tweedle Dum <dum@example.com>",
+        },
+      },
+    ]
+  );
+
+  await waitForGlodaIndexer();
+  Assert.ok(...assertExpectedMessagesIndexed([msgSet]));
+
+  await waitForGlodaDBFlush();
+  const msgHdr = msgSet.getMsgHdr(0);
+  Assert.greaterOrEqual(
+    msgHdr.getUint32Property("gloda-id"),
+    GLODA_FIRST_VALID_MESSAGE_ID
+  );
+
+  Assert.equal(Gloda.isMessageIndexed(msgHdr), true);
 });
 
 /**
@@ -66,7 +93,7 @@ add_task(async function test_streaming_failure() {
   configureGlodaIndexing({ injectFaultIn: "streaming" });
 
   // Inject the messages.
-  let [msgSet] = await messageInjection.makeNewSetsInFolders(
+  const [msgSet] = await messageInjection.makeNewSetsInFolders(
     [messageInjection.getInboxFolder()],
     [{ count: 1 }]
   );
@@ -83,7 +110,7 @@ add_task(async function test_streaming_failure() {
   );
 
   // Make sure the header has the expected gloda bad message state.
-  let msgHdr = msgSet.getMsgHdr(0);
+  const msgHdr = msgSet.getMsgHdr(0);
   Assert.equal(msgHdr.getUint32Property("gloda-id"), GLODA_BAD_MESSAGE_ID);
 
   // Make sure gloda does not think the message is indexed
@@ -98,7 +125,7 @@ add_task(async function test_streaming_failure() {
  *  we should not attempt to index the message again.
  */
 add_task(async function test_recovery_and_no_second_attempts() {
-  let [, goodSet] = await messageInjection.makeNewSetsInFolders(
+  const [, goodSet] = await messageInjection.makeNewSetsInFolders(
     [messageInjection.getInboxFolder()],
     [{ count: 1, clobberHeaders: { From: "" } }, { count: 1 }]
   );
@@ -126,7 +153,7 @@ add_task(async function test_recovery_and_no_second_attempts() {
  */
 add_task(async function test_reindex_on_dirty_clear_dirty_on_fail() {
   // Inject a new illegal message
-  let [msgSet] = await messageInjection.makeNewSetsInFolders(
+  const [msgSet] = await messageInjection.makeNewSetsInFolders(
     [messageInjection.getInboxFolder()],
     [
       {
@@ -148,7 +175,7 @@ add_task(async function test_reindex_on_dirty_clear_dirty_on_fail() {
   );
 
   // Mark the message dirty, force the folder to be indexed.
-  let msgHdr = msgSet.getMsgHdr(0);
+  const msgHdr = msgSet.getMsgHdr(0);
   msgHdr.setUint32Property("gloda-dirty", 1);
   GlodaMsgIndexer.indexFolder(messageInjection.getInboxFolder());
   await waitForGlodaIndexer();
@@ -185,7 +212,7 @@ add_task(async function test_reindex_on_dirty_clear_dirty_on_fail() {
  */
 async function illegal_message(aInfo) {
   // Inject the messages.
-  let [msgSet] = await messageInjection.makeNewSetsInFolders(
+  const [msgSet] = await messageInjection.makeNewSetsInFolders(
     [messageInjection.getInboxFolder()],
     [{ count: 1, clobberHeaders: aInfo.clobberHeaders }]
   );
@@ -202,7 +229,7 @@ async function illegal_message(aInfo) {
   );
 
   // Make sure the header has the expected gloda bad message state.
-  let msgHdr = msgSet.getMsgHdr(0);
+  const msgHdr = msgSet.getMsgHdr(0);
   Assert.equal(msgHdr.getUint32Property("gloda-id"), GLODA_BAD_MESSAGE_ID);
 
   // Make sure gloda does not think the message is indexed.

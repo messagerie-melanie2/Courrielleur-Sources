@@ -13,7 +13,9 @@
 #include "include/private/base/SkDebug.h"
 #include "include/private/base/SkMalloc.h"
 #include "include/private/base/SkTLogic.h"
+#include "include/private/base/SkTo.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -93,57 +95,81 @@ public:
 
 
 namespace skia_private {
-/** Allocate an array of T elements, and free the array in the destructor
+/** Allocate an array of T elements on the heap. Once this goes out of scope, the
+ *  elements will be cleaned up "auto"matically.
  */
 template <typename T> class AutoTArray  {
 public:
     AutoTArray() {}
-    /** Allocate count number of T elements
-     */
-    explicit AutoTArray(int count) {
-        SkASSERT(count >= 0);
-        if (count) {
-            fArray.reset(new T[count]);
-        }
-        SkDEBUGCODE(fCount = count;)
+    // Allocate size number of T elements
+    explicit AutoTArray(size_t size) {
+        fSize = check_size_bytes_too_big<T>(size);
+        fData.reset(size > 0 ? new T[size] : nullptr);
     }
 
-    AutoTArray(AutoTArray&& other) : fArray(std::move(other.fArray)) {
-        SkDEBUGCODE(fCount = other.fCount; other.fCount = 0;)
+    // TODO: remove when all uses are gone.
+    explicit AutoTArray(int size) : AutoTArray(SkToSizeT(size)) {}
+
+    AutoTArray(AutoTArray&& other) : fData(std::move(other.fData)) {
+        fSize = std::exchange(other.fSize, 0);
     }
     AutoTArray& operator=(AutoTArray&& other) {
         if (this != &other) {
-            fArray = std::move(other.fArray);
-            SkDEBUGCODE(fCount = other.fCount; other.fCount = 0;)
+            fData = std::move(other.fData);
+            fSize = std::exchange(other.fSize, 0);
         }
         return *this;
     }
 
-    /** Reallocates given a new count. Reallocation occurs even if new count equals old count.
-     */
-    void reset(int count = 0) { *this = AutoTArray(count); }
-
-    /** Return the array of T elements. Will be NULL if count == 0
-     */
-    T* get() const { return fArray.get(); }
-
-    /** Return the nth element in the array
-     */
-    T&  operator[](int index) const {
-        SkASSERT((unsigned)index < (unsigned)fCount);
-        return fArray[index];
+    // Reallocates given a new count. Reallocation occurs even if new count equals old count.
+    void reset(size_t count = 0) {
+        *this = AutoTArray(count);
     }
 
-    /** Aliases matching other types, like std::vector. */
-    const T* data() const { return fArray.get(); }
-    T* data() { return fArray.get(); }
+    T* get() const { return fData.get(); }
+
+    T&  operator[](size_t index) const {
+        return fData[sk_collection_check_bounds(index, fSize)];
+    }
+
+    const T* data() const { return fData.get(); }
+    T* data() { return fData.get(); }
+
+    size_t size() const { return fSize; }
+    bool empty() const { return fSize == 0; }
+    size_t size_bytes() const { return sizeof(T) * fSize; }
+
+    T* begin() {
+        return fData;
+    }
+    const T* begin() const {
+        return fData;
+    }
+
+    // It's safe to use fItemArray + fSize because if fItemArray is nullptr then adding 0 is
+    // valid and returns nullptr. See [expr.add] in the C++ standard.
+    T* end() {
+        if (fData == nullptr) {
+            SkASSERT(fSize == 0);
+        }
+        return fData + fSize;
+    }
+    const T* end() const {
+        if (fData == nullptr) {
+            SkASSERT(fSize == 0);
+        }
+        return fData + fSize;
+    }
 
 private:
-    std::unique_ptr<T[]> fArray;
-    SkDEBUGCODE(int fCount = 0;)
+    std::unique_ptr<T[]> fData;
+    size_t fSize = 0;
 };
 
-/** Wraps AutoTArray, with room for kCountRequested elements preallocated.
+/** Like AutoTArray with room for kCountRequested elements preallocated on
+ *  the Stack. If count exceeds the space of the preallocation, the elements
+ *  will live on the heap. Once this goes out of scope, the elements will be
+ *  cleaned up "auto"matically.
  */
 template <int kCountRequested, typename T> class AutoSTArray {
 public:
@@ -223,8 +249,7 @@ public:
     /** Return the nth element in the array
      */
     T&  operator[](int index) const {
-        SkASSERT(index < fCount);
-        return fArray[index];
+        return fArray[sk_collection_check_bounds(index, fCount)];
     }
 
     /** Aliases matching other types, like std::vector. */
@@ -236,17 +261,25 @@ private:
 #if defined(SK_BUILD_FOR_GOOGLE3)
     // Stack frame size is limited for SK_BUILD_FOR_GOOGLE3. 4k is less than the actual max,
     // but some functions have multiple large stack allocations.
-    static const int kMaxBytes = 4 * 1024;
-    static const int kCount = kCountRequested * sizeof(T) > kMaxBytes
+    static constexpr int kMaxBytes = 4 * 1024;
+    static constexpr int kMinCount = kCountRequested * sizeof(T) > kMaxBytes
         ? kMaxBytes / sizeof(T)
         : kCountRequested;
 #else
-    static const int kCount = kCountRequested;
+    static constexpr int kMinCount = kCountRequested;
 #endif
 
-    int fCount;
+    // Because we are also storing an int, there is a tiny bit of padding that
+    // the C++ compiler adds after fStorage if sizeof(T) <= alignof(T*).
+    // Thus, we can expand how many elements are stored on the stack to make use of this
+    // (e.g. 1 extra element for 4 byte T if kCountRequested was even).
+    static_assert(alignof(int) <= alignof(T*) || alignof(int) <= alignof(T));
+    static constexpr int kCount =
+            SkAlignTo(kMinCount*sizeof(T) + sizeof(int), std::max(alignof(T*), alignof(T))) / sizeof(T);
+
     T* fArray;
-    alignas(T) char fStorage[kCount * sizeof(T)];
+    alignas(T) std::byte fStorage[kCount * sizeof(T)];
+    int fCount;
 };
 
 /** Manages an array of T elements, freeing the array in the destructor.
@@ -389,16 +422,16 @@ public:
 
 private:
     // Since we use uint32_t storage, we might be able to get more elements for free.
-    static const size_t kCountWithPadding = SkAlign4(kCountRequested*sizeof(T)) / sizeof(T);
+    static constexpr size_t kCountWithPadding = SkAlign4(kCountRequested*sizeof(T)) / sizeof(T);
 #if defined(SK_BUILD_FOR_GOOGLE3)
     // Stack frame size is limited for SK_BUILD_FOR_GOOGLE3. 4k is less than the actual max, but some functions
     // have multiple large stack allocations.
-    static const size_t kMaxBytes = 4 * 1024;
-    static const size_t kCount = kCountRequested * sizeof(T) > kMaxBytes
+    static constexpr size_t kMaxBytes = 4 * 1024;
+    static constexpr size_t kCount = kCountRequested * sizeof(T) > kMaxBytes
         ? kMaxBytes / sizeof(T)
         : kCountWithPadding;
 #else
-    static const size_t kCount = kCountWithPadding;
+    static constexpr size_t kCount = kCountWithPadding;
 #endif
 
     T*          fPtr;

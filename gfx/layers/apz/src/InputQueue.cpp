@@ -6,13 +6,17 @@
 
 #include "InputQueue.h"
 
+#include <inttypes.h>
+
 #include "AsyncPanZoomController.h"
 
 #include "GestureEventListener.h"
 #include "InputBlockState.h"
+#include "mozilla/Assertions.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/layers/APZInputBridge.h"
 #include "mozilla/layers/APZThreadUtils.h"
+#include "mozilla/RefPtr.h"
 #include "mozilla/ToString.h"
 #include "OverscrollHandoffState.h"
 #include "QueuedInput.h"
@@ -22,6 +26,7 @@
 
 static mozilla::LazyLogModule sApzInpLog("apz.inputqueue");
 #define INPQ_LOG(...) MOZ_LOG(sApzInpLog, LogLevel::Debug, (__VA_ARGS__))
+#define INPQ_LOG_TEST() MOZ_LOG_TEST(sApzInpLog, LogLevel::Debug)
 
 namespace mozilla {
 namespace layers {
@@ -118,7 +123,7 @@ APZEventResult InputQueue::ReceiveTouchInput(
       haveBehaviors |= mActiveTouchBlock->IsContentResponseTimerExpired();
     }
 
-    block = StartNewTouchBlock(aTarget, aFlags, false);
+    block = StartNewTouchBlock(aTarget, aFlags);
     INPQ_LOG("started new touch block %p id %" PRIu64 " for target %p\n",
              block.get(), block->GetBlockId(), aTarget.get());
 
@@ -136,7 +141,9 @@ APZEventResult InputQueue::ReceiveTouchInput(
       block->SetDuringFastFling();
       block->SetConfirmedTargetApzc(
           aTarget, InputBlockState::TargetConfirmationState::eConfirmed,
-          nullptr /* the block was just created so it has no events */,
+          InputQueueIterator() /* the block was just created so it has no events
+                                */
+          ,
           false /* not a scrollbar drag */);
       block->SetAllowedTouchBehaviors(currentBehaviors);
       INPQ_LOG("block %p tagged as fast-motion\n", block.get());
@@ -155,7 +162,12 @@ APZEventResult InputQueue::ReceiveTouchInput(
     // us any touch behaviors.
     MOZ_ASSERT(aTouchBehaviors.isNothing());
 
-    block = mActiveTouchBlock.get();
+    // If the active touch block is for a long tap, add new touch events into
+    // the original touch block, to ensure that they're only processed if the
+    // original touch block is not prevented.
+    block = mActiveTouchBlock && mActiveTouchBlock->ForLongTap()
+                ? mPrevActiveTouchBlock.get()
+                : mActiveTouchBlock.get();
     if (!block) {
       NS_WARNING(
           "Received a non-start touch event while no touch blocks active!");
@@ -187,11 +199,37 @@ APZEventResult InputQueue::ReceiveTouchInput(
     result.SetStatusForFastFling(*block, aFlags, consumableFlags, target);
   } else {  // handling depends on ArePointerEventsConsumable()
     bool consumable = consumableFlags.IsConsumable();
+    const bool wasInSlop = block->IsInSlop();
     if (block->UpdateSlopState(aEvent, consumable)) {
       INPQ_LOG("dropping event due to block %p being in %sslop\n", block.get(),
                consumable ? "" : "mini-");
       result.SetStatusAsConsumeNoDefault();
     } else {
+      // If all following conditions are met, we need to wait for a content
+      // response (again);
+      //  1) this is the first touch-move event bailing out from in-slop state
+      //     after a long-tap event has been fired
+      //  2) there's any APZ-aware event listeners
+      //  3) the event block hasn't yet been prevented
+      //
+      // An example scenario;
+      //  in the content there are two event listeners for `touchstart` and
+      //  `touchmove` respectively, and doing `preventDefault()` in the
+      //  `touchmove` event listener. Then if the user kept touching at a point
+      //  until a long-tap event happens, then if the user started moving their
+      // finger, we have to wait for a content response twice, one is for
+      // `touchstart` and one is for `touchmove`.
+      if (wasInSlop && aEvent.mType == MultiTouchInput::MULTITOUCH_MOVE &&
+          (block->WasLongTapProcessed() || block->IsWaitingLongTapResult()) &&
+          !block->IsTargetOriginallyConfirmed() && !block->ShouldDropEvents()) {
+        INPQ_LOG(
+            "bailing out from in-stop state in block %p after a long-tap "
+            "happened\n",
+            block.get());
+        block->ResetContentResponseTimerExpired();
+        ScheduleMainThreadTimeout(aTarget, block);
+      }
+      block->SetNeedsToWaitTouchMove(false);
       result.SetStatusForTouchEvent(*block, aFlags, consumableFlags, target);
     }
   }
@@ -260,6 +298,7 @@ APZEventResult InputQueue::ReceiveMouseInput(
 
     INPQ_LOG(
         "started new drag block %p id %" PRIu64
+        " "
         "for %sconfirmed target %p; on scrollbar: %d; on scrollthumb: %d\n",
         block.get(), block->GetBlockId(), aFlags.mTargetConfirmed ? "" : "un",
         aTarget.get(), aFlags.mHitScrollbar, aFlags.mHitScrollThumb);
@@ -320,7 +359,6 @@ APZEventResult InputQueue::ReceiveScrollWheelInput(
 
     mActiveWheelBlock = block;
 
-    CancelAnimationsForNewBlock(block, ExcludeWheel);
     MaybeRequestContentResponse(aTarget, block);
   } else {
     INPQ_LOG("received new wheel event in block %p\n", block.get());
@@ -404,13 +442,6 @@ APZEventResult InputQueue::ReceivePanGestureInput(
     TargetConfirmationFlags aFlags, const PanGestureInput& aEvent) {
   APZEventResult result(aTarget, aFlags);
 
-  if (aEvent.mType == PanGestureInput::PANGESTURE_MAYSTART ||
-      aEvent.mType == PanGestureInput::PANGESTURE_CANCELLED) {
-    // Ignore these events for now.
-    result.SetStatusAsConsumeDoDefault(aTarget);
-    return result;
-  }
-
   if (aEvent.mType == PanGestureInput::PANGESTURE_INTERRUPTED) {
     if (RefPtr<PanGestureBlockState> block = mActivePanGestureBlock.get()) {
       mQueuedInputs.AppendElement(MakeUnique<QueuedInput>(aEvent, *block));
@@ -420,8 +451,11 @@ APZEventResult InputQueue::ReceivePanGestureInput(
     return result;
   }
 
+  bool startsNewBlock = aEvent.mType == PanGestureInput::PANGESTURE_MAYSTART ||
+                        aEvent.mType == PanGestureInput::PANGESTURE_START;
+
   RefPtr<PanGestureBlockState> block;
-  if (aEvent.mType != PanGestureInput::PANGESTURE_START) {
+  if (!startsNewBlock) {
     block = mActivePanGestureBlock.get();
   }
 
@@ -445,10 +479,10 @@ APZEventResult InputQueue::ReceivePanGestureInput(
       // by turning the event into a pan-start below.
       return result;
     }
-    if (event.mType != PanGestureInput::PANGESTURE_START) {
-      // Only PANGESTURE_START events are allowed to start a new pan gesture
-      // block, but we really want to start a new block here, so we magically
-      // turn this input into a PANGESTURE_START.
+    if (!startsNewBlock) {
+      // Only PANGESTURE_MAYSTART or PANGESTURE_START events are allowed to
+      // start a new pan gesture block, but we really want to start a new block
+      // here, so we magically turn this input into a PANGESTURE_START.
       INPQ_LOG(
           "transmogrifying pan input %d to PANGESTURE_START for new block\n",
           event.mType);
@@ -458,9 +492,12 @@ APZEventResult InputQueue::ReceivePanGestureInput(
     INPQ_LOG("started new pan gesture block %p id %" PRIu64 " for target %p\n",
              block.get(), block->GetBlockId(), aTarget.get());
 
+    if (event.mType == PanGestureInput::PANGESTURE_MAYSTART) {
+      block->ConfirmForHoldGesture();
+    }
+
     mActivePanGestureBlock = block;
 
-    CancelAnimationsForNewBlock(block);
     const bool waitingForContentResponse =
         MaybeRequestContentResponse(aTarget, block);
 
@@ -592,9 +629,7 @@ bool InputQueue::MaybeRequestContentResponse(
 
 uint64_t InputQueue::InjectNewTouchBlock(AsyncPanZoomController* aTarget) {
   AutoRunImmediateTimeout timeoutRunner{this};
-  TouchBlockState* block =
-      StartNewTouchBlock(aTarget, TargetConfirmationFlags{true},
-                         /* aCopyPropertiesFromCurrent = */ true);
+  TouchBlockState* block = StartNewTouchBlockForLongTap(aTarget);
   INPQ_LOG("injecting new touch block %p with id %" PRIu64 " and target %p\n",
            block, block->GetBlockId(), aTarget);
   ScheduleMainThreadTimeout(aTarget, block);
@@ -603,18 +638,45 @@ uint64_t InputQueue::InjectNewTouchBlock(AsyncPanZoomController* aTarget) {
 
 TouchBlockState* InputQueue::StartNewTouchBlock(
     const RefPtr<AsyncPanZoomController>& aTarget,
-    TargetConfirmationFlags aFlags, bool aCopyPropertiesFromCurrent) {
-  TouchBlockState* newBlock =
-      new TouchBlockState(aTarget, aFlags, mTouchCounter);
-  if (aCopyPropertiesFromCurrent) {
-    // We should never enter here without a current touch block, because this
-    // codepath is invoked from the OnLongPress handler in
-    // AsyncPanZoomController, which should bail out if there is no current
-    // touch block.
-    MOZ_ASSERT(GetCurrentTouchBlock());
-    newBlock->CopyPropertiesFrom(*GetCurrentTouchBlock());
+    TargetConfirmationFlags aFlags) {
+  if (mPrevActiveTouchBlock && mActiveTouchBlock &&
+      mActiveTouchBlock->ForLongTap()) {
+    mPrevActiveTouchBlock->SetWaitingLongTapResult(false);
+    mPrevActiveTouchBlock = nullptr;
   }
 
+  TouchBlockState* newBlock =
+      new TouchBlockState(aTarget, aFlags, mTouchCounter);
+
+  mActiveTouchBlock = newBlock;
+  return newBlock;
+}
+
+TouchBlockState* InputQueue::StartNewTouchBlockForLongTap(
+    const RefPtr<AsyncPanZoomController>& aTarget) {
+  TouchBlockState* newBlock = new TouchBlockState(
+      aTarget, TargetConfirmationFlags{true}, mTouchCounter);
+
+  TouchBlockState* currentBlock = GetCurrentTouchBlock();
+  // We should never enter here without a current touch block, because this
+  // codepath is invoked from the OnLongPress handler in
+  // AsyncPanZoomController, which should bail out if there is no current
+  // touch block.
+  MOZ_ASSERT(currentBlock);
+  newBlock->CopyPropertiesFrom(*currentBlock);
+  newBlock->SetForLongTap();
+
+  // Tell the original touch block that we are going to fire a long tap event.
+  // NOTE: If we get a new touch-move event while we are waiting for a response
+  // of the long-tap event, we need to wait it before processing the original
+  // touch block because if the long-tap event response prevents us from
+  // scrolling we must stop processing any subsequent touch-move events in the
+  // same block.
+  currentBlock->SetWaitingLongTapResult(true);
+
+  // We need to keep the current block alive, it will be used once after this
+  // new touch block for long-tap was processed.
+  mPrevActiveTouchBlock = currentBlock;
   mActiveTouchBlock = newBlock;
   return newBlock;
 }
@@ -722,25 +784,29 @@ InputBlockState* InputQueue::GetBlockForId(uint64_t aInputBlockId) {
 }
 
 void InputQueue::AddInputBlockCallback(uint64_t aInputBlockId,
-                                       InputBlockCallbackInfo&& aCallbackInfo) {
+                                       InputBlockCallback&& aCallbackInfo) {
   mInputBlockCallbacks.insert(InputBlockCallbackMap::value_type(
       aInputBlockId, std::move(aCallbackInfo)));
 }
 
-InputBlockState* InputQueue::FindBlockForId(uint64_t aInputBlockId,
-                                            InputData** aOutFirstInput) {
-  for (const auto& queuedInput : mQueuedInputs) {
-    if (queuedInput->Block()->GetBlockId() == aInputBlockId) {
+InputBlockState* InputQueue::FindBlockForId(
+    uint64_t aInputBlockId, InputQueueIterator* aOutFirstInput) {
+  for (auto it = mQueuedInputs.begin(), end = mQueuedInputs.end(); it != end;
+       ++it) {
+    if ((*it)->Block()->GetBlockId() == aInputBlockId) {
       if (aOutFirstInput) {
-        *aOutFirstInput = queuedInput->Input();
+        *aOutFirstInput = InputQueueIterator(it, end);
       }
-      return queuedInput->Block();
+      return (*it)->Block();
     }
   }
 
   InputBlockState* block = nullptr;
   if (mActiveTouchBlock && mActiveTouchBlock->GetBlockId() == aInputBlockId) {
     block = mActiveTouchBlock.get();
+  } else if (mPrevActiveTouchBlock &&
+             mPrevActiveTouchBlock->GetBlockId() == aInputBlockId) {
+    block = mPrevActiveTouchBlock.get();
   } else if (mActiveWheelBlock &&
              mActiveWheelBlock->GetBlockId() == aInputBlockId) {
     block = mActiveWheelBlock.get();
@@ -760,7 +826,7 @@ InputBlockState* InputQueue::FindBlockForId(uint64_t aInputBlockId,
   // Since we didn't encounter this block while iterating through mQueuedInputs,
   // it must have no events associated with it at the moment.
   if (aOutFirstInput) {
-    *aOutFirstInput = nullptr;
+    *aOutFirstInput = InputQueueIterator();
   }
   return block;
 }
@@ -775,7 +841,7 @@ void InputQueue::MainThreadTimeout(uint64_t aInputBlockId) {
 
   INPQ_LOG("got a main thread timeout; block=%" PRIu64 "\n", aInputBlockId);
   bool success = false;
-  InputData* firstInput = nullptr;
+  InputQueueIterator firstInput;
   InputBlockState* inputBlock = FindBlockForId(aInputBlockId, &firstInput);
   if (inputBlock && inputBlock->AsCancelableBlock()) {
     CancelableBlockState* block = inputBlock->AsCancelableBlock();
@@ -795,6 +861,13 @@ void InputQueue::MainThreadTimeout(uint64_t aInputBlockId) {
     NS_WARNING("input block is not a cancelable block");
   }
   if (success) {
+    if (inputBlock->AsTouchBlock() && inputBlock->AsTouchBlock()->IsInSlop()) {
+      // If the touch block is still in slop, it's still possible this block
+      // needs to send a touchmove to content after the long-press gesture
+      // since preventDefault() in a touchmove event handler should stop
+      // handling the block at all.
+      inputBlock->AsTouchBlock()->SetNeedsToWaitTouchMove(true);
+    }
     ProcessQueue();
   }
 }
@@ -833,9 +906,18 @@ void InputQueue::ContentReceivedInputBlock(uint64_t aInputBlockId,
     success = block->SetContentResponse(aPreventDefault);
   } else if (inputBlock) {
     NS_WARNING("input block is not a cancelable block");
+  } else {
+    INPQ_LOG("couldn't find block=%" PRIu64 "\n", aInputBlockId);
   }
   if (success) {
-    ProcessQueue();
+    if (ProcessQueue()) {
+      // If we've switched the active touch block back to the original touch
+      // block from the block for long-tap, run ProcessQueue again.
+      // If we haven't yet received new touch-move events which need to be
+      // processed (e.g. we are waiting for a content response for a touch-move
+      // event), below ProcessQueue call is mostly no-op.
+      ProcessQueue();
+    }
   }
 }
 
@@ -846,7 +928,7 @@ void InputQueue::SetConfirmedTargetApzc(
   INPQ_LOG("got a target apzc; block=%" PRIu64 " guid=%s\n", aInputBlockId,
            aTargetApzc ? ToString(aTargetApzc->GetGuid()).c_str() : "");
   bool success = false;
-  InputData* firstInput = nullptr;
+  InputQueueIterator firstInput;
   InputBlockState* inputBlock = FindBlockForId(aInputBlockId, &firstInput);
   if (inputBlock && inputBlock->AsCancelableBlock()) {
     CancelableBlockState* block = inputBlock->AsCancelableBlock();
@@ -877,11 +959,15 @@ void InputQueue::ConfirmDragBlock(
            aTargetApzc ? ToString(aTargetApzc->GetGuid()).c_str() : "",
            aDragMetrics.mViewId);
   bool success = false;
-  InputData* firstInput = nullptr;
+  InputQueueIterator firstInput;
   InputBlockState* inputBlock = FindBlockForId(aInputBlockId, &firstInput);
   if (inputBlock && inputBlock->AsDragBlock()) {
     DragBlockState* block = inputBlock->AsDragBlock();
-    block->SetDragMetrics(aDragMetrics);
+
+    // We use the target initial scrollable rect for updating the thumb position
+    // during dragging the thumb even if the scrollable rect got expanded during
+    // the drag.
+    block->SetDragMetrics(aDragMetrics, aTargetApzc->GetScrollableRect());
     success = block->SetConfirmedTargetApzc(
         aTargetApzc, InputBlockState::TargetConfirmationState::eConfirmed,
         firstInput,
@@ -925,48 +1011,72 @@ void InputQueue::SetBrowserGestureResponse(uint64_t aInputBlockId,
 
 static APZHandledResult GetHandledResultFor(
     const AsyncPanZoomController* aApzc,
-    const InputBlockState& aCurrentInputBlock, nsEventStatus aEagerStatus) {
-  if (aCurrentInputBlock.ShouldDropEvents()) {
+    const InputBlockState* aCurrentInputBlock, const InputData& aEvent) {
+  if (aCurrentInputBlock->ShouldDropEvents()) {
     return APZHandledResult{APZHandledPlace::HandledByContent, aApzc};
   }
+
+  // For the remainder of the function, we know the event was *not*
+  // preventDefault()-ed, so we can pass DispatchToContent::No to helpers.
 
   if (!aApzc) {
     return APZHandledResult{APZHandledPlace::HandledByContent, aApzc};
   }
 
-  if (aApzc->IsRootContent()) {
-    // If the eager status was eIgnore, we would have returned an eager result
-    // of Unhandled if there had been no event handler. Now that we know the
-    // event handler did not preventDefault() the input block, return Unhandled
-    // as the delayed result.
-    // FIXME: A more accurate implementation would be to re-do the entire
-    // computation that determines the status (i.e. calling
-    // ArePointerEventsConsumable()) with the confirmed target APZC.
-    return (aEagerStatus == nsEventStatus_eConsumeDoDefault &&
-            aApzc->CanVerticalScrollWithDynamicToolbar())
-               ? APZHandledResult{APZHandledPlace::HandledByRoot, aApzc}
-               : APZHandledResult{APZHandledPlace::Unhandled, aApzc};
-  }
+  Maybe<APZHandledResult> result =
+      APZHandledResult::Initialize(aApzc, DispatchToContent::No);
 
-  auto [result, rootApzc] = aCurrentInputBlock.GetOverscrollHandoffChain()
-                                ->ScrollingDownWillMoveDynamicToolbar(aApzc);
-  if (!result) {
-    return APZHandledResult{APZHandledPlace::HandledByContent, aApzc};
+  if (aEvent.mInputType == MULTITOUCH_INPUT) {
+    PointerEventsConsumableFlags consumableFlags =
+        aApzc->ArePointerEventsConsumable(aCurrentInputBlock->AsTouchBlock(),
+                                          aEvent.AsMultiTouchInput());
+    APZHandledResult::UpdateForTouchEvent(result, *aCurrentInputBlock,
+                                          consumableFlags, aApzc,
+                                          DispatchToContent::No);
   }
-
-  // Return `HandledByRoot` if scroll positions in all relevant APZC are at the
-  // bottom edge and if there are contents covered by the dynamic toolbar.
-  MOZ_ASSERT(rootApzc && rootApzc->IsRootContent());
-  return APZHandledResult{APZHandledPlace::HandledByRoot, rootApzc};
+  // Initialize() and UpdateForTouchEvent() can only produce Nothing() in
+  // case of aDispatchToContent=true.
+  MOZ_RELEASE_ASSERT(result.isSome());
+  return *result;
 }
 
-void InputQueue::ProcessQueue() {
+bool InputQueue::ProcessQueue() {
   APZThreadUtils::AssertOnControllerThread();
 
   while (!mQueuedInputs.IsEmpty()) {
     InputBlockState* curBlock = mQueuedInputs[0]->Block();
     CancelableBlockState* cancelable = curBlock->AsCancelableBlock();
     if (cancelable && !cancelable->IsReadyForHandling()) {
+      if (MOZ_UNLIKELY(INPQ_LOG_TEST())) {
+        nsAutoCString additionalLog;
+        if (curBlock->AsTouchBlock()) {
+          // touch
+          additionalLog.AppendPrintf(
+              "waiting-long-tap-result: %d allowed-touch-behaviors: %d",
+              curBlock->AsTouchBlock()->IsWaitingLongTapResult(),
+              curBlock->AsTouchBlock()->HasAllowedTouchBehaviors());
+        } else if (curBlock->AsPanGestureBlock()) {
+          // pan gesture
+          additionalLog.AppendPrintf(
+              "waiting-browser-gesture-response: %d waiting-content-response: "
+              "%d",
+              curBlock->AsPanGestureBlock()
+                  ->IsWaitingForBrowserGestureResponse(),
+              curBlock->AsPanGestureBlock()->IsWaitingForContentResponse());
+        } else if (curBlock->AsPinchGestureBlock()) {
+          // pinch gesture
+          additionalLog.AppendPrintf(
+              "waiting-content-response: %d",
+              curBlock->AsPinchGestureBlock()->IsWaitingForContentResponse());
+        }
+
+        INPQ_LOG(
+            "skip processing %s block %p; target-confirmed: %d "
+            "content-responded: %d content-response-expired: %d %s",
+            cancelable->Type(), cancelable, cancelable->IsTargetConfirmed(),
+            cancelable->HasContentResponded(),
+            cancelable->IsContentResponseTimerExpired(), additionalLog.get());
+      }
       break;
     }
 
@@ -979,13 +1089,23 @@ void InputQueue::ProcessQueue() {
 
     // If there is an input block callback registered for this
     // input block, invoke it.
-    auto it = mInputBlockCallbacks.find(curBlock->GetBlockId());
-    if (it != mInputBlockCallbacks.end()) {
-      APZHandledResult handledResult =
-          GetHandledResultFor(target, *curBlock, it->second.mEagerStatus);
-      it->second.mCallback(curBlock->GetBlockId(), handledResult);
-      // The callback is one-shot; discard it after calling it.
-      mInputBlockCallbacks.erase(it);
+    //
+    // NOTE: In the case where the block is a touch block and the block is not
+    // ready to invoke the callback because of waiting a touch move response
+    // from content, we skip the block.
+    if (!curBlock->AsTouchBlock() ||
+        curBlock->AsTouchBlock()->IsReadyForCallback()) {
+      auto it = mInputBlockCallbacks.find(curBlock->GetBlockId());
+      if (it != mInputBlockCallbacks.end()) {
+        INPQ_LOG("invoking the callback for input from block %p id %" PRIu64
+                 "\n",
+                 curBlock, curBlock->GetBlockId());
+        APZHandledResult handledResult =
+            GetHandledResultFor(target, curBlock, *(mQueuedInputs[0]->Input()));
+        it->second(curBlock->GetBlockId(), handledResult);
+        // The callback is one-shot; discard it after calling it.
+        mInputBlockCallbacks.erase(it);
+      }
     }
 
     // target may be null here if the initial target was unconfirmed and then
@@ -1012,8 +1132,31 @@ void InputQueue::ProcessQueue() {
     mQueuedInputs.RemoveElementAt(0);
   }
 
+  bool processQueueAgain = false;
   if (CanDiscardBlock(mActiveTouchBlock)) {
+    const bool forLongTap = mActiveTouchBlock->ForLongTap();
+    const bool wasDefaultPrevented = mActiveTouchBlock->IsDefaultPrevented();
+    INPQ_LOG("discarding a touch block %p id %" PRIu64 "\n",
+             mActiveTouchBlock.get(), mActiveTouchBlock->GetBlockId());
     mActiveTouchBlock = nullptr;
+    MOZ_ASSERT_IF(forLongTap, mPrevActiveTouchBlock);
+    if (forLongTap) {
+      INPQ_LOG("switching back to the original touch block %p id %" PRIu64 "\n",
+               mPrevActiveTouchBlock.get(),
+               mPrevActiveTouchBlock->GetBlockId());
+
+      mPrevActiveTouchBlock->SetLongTapProcessed();
+      if (wasDefaultPrevented && !mPrevActiveTouchBlock->IsDefaultPrevented()) {
+        // Take over the preventDefaulted info for the long-tap event (i.e. for
+        // the contextmenu event) to the original touch block so that the
+        // original touch block will never process incoming touch events.
+        mPrevActiveTouchBlock->ResetContentResponseTimerExpired();
+        mPrevActiveTouchBlock->SetContentResponse(true);
+      }
+      mActiveTouchBlock = mPrevActiveTouchBlock;
+      mPrevActiveTouchBlock = nullptr;
+      processQueueAgain = true;
+    }
   }
   if (CanDiscardBlock(mActiveWheelBlock)) {
     mActiveWheelBlock = nullptr;
@@ -1030,6 +1173,8 @@ void InputQueue::ProcessQueue() {
   if (CanDiscardBlock(mActiveKeyboardBlock)) {
     mActiveKeyboardBlock = nullptr;
   }
+
+  return processQueueAgain;
 }
 
 bool InputQueue::CanDiscardBlock(InputBlockState* aBlock) {
@@ -1039,7 +1184,7 @@ bool InputQueue::CanDiscardBlock(InputBlockState* aBlock) {
       aBlock->MustStayActive()) {
     return false;
   }
-  InputData* firstInput = nullptr;
+  InputQueueIterator firstInput;
   FindBlockForId(aBlock->GetBlockId(), &firstInput);
   if (firstInput) {
     // The block has at least one input event still in the queue, so it's
@@ -1066,6 +1211,7 @@ void InputQueue::Clear() {
 
   mQueuedInputs.Clear();
   mActiveTouchBlock = nullptr;
+  mPrevActiveTouchBlock = nullptr;
   mActiveWheelBlock = nullptr;
   mActiveDragBlock = nullptr;
   mActivePanGestureBlock = nullptr;

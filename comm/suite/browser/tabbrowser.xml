@@ -23,15 +23,15 @@
     <content>
       <xul:stringbundle anonid="tbstringbundle" src="chrome://navigator/locale/tabbrowser.properties"/>
       <xul:tabbox anonid="tabbox" flex="1" eventnode="document">
-        <xul:hbox class="tab-drop-indicator-bar" collapsed="true">
-          <xul:image class="tab-drop-indicator" mousethrough="always"/>
-        </xul:hbox>
         <xul:hbox class="tabbrowser-strip" collapsed="true" tooltip="_child" context="_child"
                   anonid="strip"
                   ondragstart="this.parentNode.parentNode._onDragStart(event);"
                   ondragover="this.parentNode.parentNode._onDragOver(event);"
                   ondrop="this.parentNode.parentNode._onDrop(event);"
                   ondragleave="this.parentNode.parentNode._onDragLeave(event);">
+          <xul:hbox align="start">
+            <xul:image class="tab-drop-indicator" anonid="tab-drop-indicator" collapsed="true"/>
+          </xul:hbox>
           <xul:tooltip onpopupshowing="event.stopPropagation(); return this.parentNode.parentNode.parentNode.doPreview(this);"
                        onpopuphiding="this.parentNode.parentNode.parentNode.resetPreview(this);" orient="vertical">
             <xul:label class="tooltip-label" crop="right"/>
@@ -103,7 +103,7 @@
       </xul:tabbox>
       <children/>
     </content>
-    <implementation implements="nsIDOMEventListener, nsIObserver">
+    <implementation implements="nsIObserver">
       <field name="closingTabsEnum" readonly="true">
         ({ ALL: 0, OTHER: 1, TO_END: 2 });
       </field>
@@ -112,6 +112,9 @@
       </field>
       <field name="mTabBox" readonly="true">
         document.getAnonymousElementByAttribute(this, "anonid", "tabbox");
+      </field>
+      <field name="_tabDropIndicator">
+        document.getAnonymousElementByAttribute(this, "anonid", "tab-drop-indicator");
       </field>
       <field name="mStrip" readonly="true">
         document.getAnonymousElementByAttribute(this, "anonid", "strip");
@@ -751,14 +754,10 @@
               this.mFeeds.push(aLink);
             },
 
-            QueryInterface: function(aIID) {
-              if (aIID.equals(Ci.nsIWebProgressListener) ||
-                  aIID.equals(Ci.nsIWebProgressListener2) ||
-                  aIID.equals(Ci.nsISupportsWeakReference) ||
-                  aIID.equals(Ci.nsISupports))
-                return this;
-              throw Cr.NS_NOINTERFACE;
-            }
+            QueryInterface: ChromeUtils.generateQI([
+                Ci.nsIWebProgressListener,
+                Ci.nsIWebProgressListener2,
+                Ci.nsISupportsWeakReference]),
           });
         ]]>
         </body>
@@ -806,14 +805,9 @@
             {
             },
 
-            QueryInterface : function(aIID)
-            {
-              if (aIID.equals(Ci.nsIWebProgressListener) ||
-                  aIID.equals(Ci.nsISupportsWeakReference) ||
-                  aIID.equals(Ci.nsISupports))
-                return this;
-              throw Cr.NS_NOINTERFACE;
-            }
+            QueryInterface : ChromeUtils.generateQI([
+                Ci.nsIWebProgressListener,
+                Ci.nsISupportsWeakReference]),
           });
         ]]>
         </body>
@@ -978,9 +972,9 @@
         <body>
           <![CDATA[
             try {
-              aURI = Services.uriFixup.createExposableURI(aURI).spec;
+              aURI = Services.uriFixup.createExposableURI(aURI).displaySpec;
             } catch (e) {
-              aURI = aURI.spec;
+              aURI = aURI.displaySpec;
             }
 
             if (aURI == "about:blank")
@@ -1949,7 +1943,13 @@
 
             // navigate back to the proper page from the light page
             b.stop();
-            b.webNavigation.gotoIndex(0);
+            try {
+              b.webNavigation.gotoIndex(0);
+            } catch (e) {
+              // Might happen if the to be restored tag contains an invalid
+              // navigation scheme.
+              Cu.reportError(e);
+           }
 
             // reattach the old history
             b.webNavigation.sessionHistory = hist;
@@ -2448,7 +2448,7 @@
             aEvent.preventDefault();
             aEvent.stopPropagation();
 
-            var ib = document.getAnonymousElementByAttribute(this, "class", "tab-drop-indicator-bar");
+            var ind = this._tabDropIndicator;
 
             // autoscroll the tab strip if we drag over the scroll buttons,
             // even if we aren't dragging a tab
@@ -2470,58 +2470,59 @@
                 tabStrip.scrollByPixels((ltr ? 1 : -1) * pixelsToScroll);
             }
 
-            var ind = document.getAnonymousElementByAttribute(this, "class", "tab-drop-indicator");
-
             var draggedTab = aEvent.dataTransfer.mozSourceNode;
-            var within = draggedTab &&
-                         draggedTab.parentNode == this.tabContainer;
-            var newIndexOn = within ? -1 : this.getDropOnIndex(aEvent);
-
-            var ltr = window.getComputedStyle(this, null).direction == "ltr";
-            var arrowX, tabBoxObject;
-            if (newIndexOn != -1) {
-              tabBoxObject = this.tabs[newIndexOn].boxObject;
-              arrowX = tabBoxObject.screenX + tabBoxObject.width / 2;
-            }
-            else {
-              var newIndexBetween = this.getDropIndex(aEvent);
-              if (within) {
-                var tabIndex = this.getTabIndex(draggedTab);
-                if (newIndexBetween == tabIndex ||
-                    newIndexBetween == tabIndex + 1) {
-                  ib.collapsed = true;
-                  return;
-                }
-              }
-
-              if (newIndexBetween == this.tabs.length) {
-                tabBoxObject = this.tabs[this.tabs.length - 1].boxObject;
-                arrowX = tabBoxObject.x;
-                arrowX = tabBoxObject.screenX;
-                if (ltr) // for LTR "after" is on the right-hand side of the tab
-                  arrowX += tabBoxObject.width;
-              }
-              else {
-                tabBoxObject = this.tabs[newIndexBetween].boxObject;
-                arrowX = tabBoxObject.screenX;
-                if (!ltr) // for RTL "before" is on the right-hand side of the tab
-                  arrowX += tabBoxObject.width;
+            var newIndex = this.getDropIndex(aEvent);
+            if (draggedTab && draggedTab.parentNode == this.tabContainer) {
+              let tabIndex = this.getTabIndex(draggedTab);
+              if (newIndex == tabIndex || newIndex == tabIndex + 1) {
+                ind.collapsed = true;
+                return;
               }
             }
 
-            var boxObject = tabStrip.scrollBoxObject;
-            // Check pixelsToScroll as well to prevent noticable judder.
-            if (pixelsToScroll > 0 || arrowX >= boxObject.screenX + boxObject.width)
-              arrowX = boxObject.screenX + boxObject.width;
-            else if (pixelsToScroll < 0 || arrowX < boxObject.screenX)
-              arrowX = boxObject.screenX;
+            var scrollRect = tabStrip.scrollClientRect;
+            var rect = this.getBoundingClientRect();
+            var minMargin = scrollRect.left - rect.left;
+            var maxMargin = Math.min(minMargin + scrollRect.width,
+                                     scrollRect.right);
+            if (!ltr)
+              [minMargin, maxMargin] = [this.clientWidth - maxMargin,
+                                        this.clientWidth - minMargin];
+            var newMargin;
+            if (pixelsToScroll) {
+              // if we are scrolling, put the drop indicator at the edge
+              // so that it doesn't jump while scrolling
+              newMargin = (pixelsToScroll > 0) ? maxMargin : minMargin;
+            } else {
+              if (newIndex == this.tabs.length) {
+                let tabRect = this.mTabs[newIndex - 1].getBoundingClientRect();
+                if (ltr)
+                  newMargin = tabRect.right - rect.left;
+                else
+                  newMargin = rect.right - tabRect.left;
+              } else {
+                let tabRect = this.mTabs[newIndex].getBoundingClientRect();
+                if (ltr)
+                  newMargin = tabRect.left - rect.left;
+                else
+                  newMargin = rect.right - tabRect.right;
+              }
+              // ensure we never place the drop indicator beyond our limits
+              if (newMargin < minMargin)
+                newMargin = minMargin;
+              else if (newMargin > maxMargin)
+                newMargin = maxMargin;
+            }
 
-            if (ltr)
-              ind.style.marginLeft = (arrowX - this.boxObject.screenX) + "px";
-            else
-              ind.style.marginRight = (this.boxObject.screenX + this.boxObject.width - arrowX) + "px";
+            ind.collapsed = false;
 
-            ib.collapsed = false;
+            newMargin += ind.clientWidth / 2;
+            if (!ltr)
+              newMargin *= -1;
+
+            ind.style.MozTransform = "translate(" + Math.round(newMargin) + "px)";
+            ind.style.marginInlineStart = (-ind.clientWidth) + "px";
+            ind.style.marginTop = (-ind.clientHeight) + "px";
           ]]>
         </body>
       </method>
@@ -2530,9 +2531,7 @@
         <parameter name="aEvent"/>
         <body>
           <![CDATA[
-            document.getAnonymousElementByAttribute(this, "class",
-                                                    "tab-drop-indicator-bar")
-                    .collapsed = true;
+            this._tabDropIndicator.collapsed = true;
             aEvent.stopPropagation();
 
             var newIndex = this.getDropIndex(aEvent);
@@ -2614,9 +2613,7 @@
             if (target)
               return;
 
-            document.getAnonymousElementByAttribute(this, "class",
-                                                    "tab-drop-indicator-bar")
-                    .collapsed = true;
+            this._tabDropIndicator.collapsed = true;
             aEvent.stopPropagation();
           ]]>
         </body>
@@ -3387,7 +3384,7 @@
       </xul:stack>
     </content>
 
-    <implementation implements="nsIDOMEventListener">
+    <implementation>
       <constructor>
         <![CDATA[
           var tab = this.firstChild;
@@ -3546,7 +3543,7 @@
 
   <binding id="tabbrowser-alltabs-popup"
            extends="chrome://global/content/bindings/popup.xml#popup">
-    <implementation implements="nsIDOMEventListener">
+    <implementation>
       <method name="_tabOnTabClose">
         <parameter name="aEvent"/>
         <body>
@@ -3582,13 +3579,11 @@
         <body>
           <![CDATA[
             let tabContainer = document.getBindingParent(this);
-            let tabstripBO = tabContainer.arrowScrollbox.scrollBoxObject;
+            let scrollRect = tabContainer.arrowScrollbox.scrollClientRect;
 
-            for (let i = 0; i < this.childNodes.length; i++)
-            {
-              let curTabBO = this.childNodes[i].tab.boxObject;
-              if (curTabBO.screenX >= tabstripBO.screenX &&
-                  curTabBO.screenX + curTabBO.width <= tabstripBO.screenX + tabstripBO.width)
+            for (let i = 0; i < this.childNodes.length; i++) {
+              let tab = this.childNodes[i].tab.getBoundingClientRect();
+              if (scrollRect.left <= tab.left && tab.right <= scrollRect.right)
                 this.childNodes[i].removeAttribute("tabIsScrolled");
               else
                 this.childNodes[i].setAttribute("tabIsScrolled", "true");
@@ -3690,7 +3685,7 @@
       <![CDATA[
         var tab = event.target.tab;
         if (tab) {
-          let overLink = tab.linkedBrowser.currentURI.spec;
+          let overLink = tab.linkedBrowser.currentURI.displaySpec;
           if (overLink == "about:blank")
             overLink = "";
           XULBrowserWindow.setOverLink(overLink, null);

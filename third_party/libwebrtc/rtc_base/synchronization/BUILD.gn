@@ -6,11 +6,10 @@
 # in the file PATENTS.  All contributing project authors may
 # be found in the AUTHORS file in the root of the source tree.
 
-import("//third_party/google_benchmark/buildconfig.gni")
 import("../../webrtc.gni")
 if (is_android) {
-  import("//build/config/android/config.gni")
-  import("//build/config/android/rules.gni")
+  import("//chromium/build/config/android/config.gni")
+  import("//chromium/build/config/android/rules.gni")
 }
 
 rtc_library("yield") {
@@ -37,15 +36,18 @@ rtc_source_set("mutex") {
     "..:macromagic",
     "..:platform_thread_types",
     "../system:no_unique_address",
+    "//third_party/abseil-cpp/absl/base:core_headers",
   ]
-  absl_deps = [ "//third_party/abseil-cpp/absl/base:core_headers" ]
   if (rtc_use_absl_mutex) {
-    absl_deps += [ "//third_party/abseil-cpp/absl/synchronization" ]
+    deps += [ "//third_party/abseil-cpp/absl/synchronization" ]
   }
 }
 
 rtc_library("sequence_checker_internal") {
-  visibility = [ "../../api:sequence_checker" ]
+  visibility = [
+    "../../api:rtc_api_unittests",
+    "../../api:sequence_checker",
+  ]
   sources = [
     "sequence_checker_internal.cc",
     "sequence_checker_internal.h",
@@ -66,43 +68,41 @@ rtc_library("yield_policy") {
     "yield_policy.cc",
     "yield_policy.h",
   ]
-  deps = [ "..:checks" ]
-  absl_deps = [
+  deps = [
+    "..:checks",
     "//third_party/abseil-cpp/absl/base:config",
     "//third_party/abseil-cpp/absl/base:core_headers",
   ]
 }
 
-if (rtc_include_tests) {
-  if (enable_google_benchmarks) {
-    rtc_library("synchronization_unittests") {
-      testonly = true
-      sources = [
-        "mutex_unittest.cc",
-        "yield_policy_unittest.cc",
-      ]
-      deps = [
-        ":mutex",
-        ":yield",
-        ":yield_policy",
-        "..:checks",
-        "..:macromagic",
-        "..:platform_thread",
-        "..:rtc_event",
-        "..:threading",
-        "../../test:test_support",
-        "//third_party/google_benchmark",
-      ]
-    }
+if (rtc_include_tests && rtc_enable_google_benchmarks) {
+  rtc_library("synchronization_unittests") {
+    testonly = true
+    sources = [
+      "mutex_unittest.cc",
+      "yield_policy_unittest.cc",
+    ]
+    deps = [
+      ":mutex",
+      ":yield",
+      ":yield_policy",
+      "..:checks",
+      "..:macromagic",
+      "..:platform_thread",
+      "..:rtc_event",
+      "..:threading",
+      "../../test:test_support",
+      "//third_party/google_benchmark",
+    ]
+  }
 
-    rtc_library("mutex_benchmark") {
-      testonly = true
-      sources = [ "mutex_benchmark.cc" ]
-      deps = [
-        ":mutex",
-        "../system:unused",
-        "//third_party/google_benchmark",
-      ]
-    }
+  rtc_library("mutex_benchmark") {
+    testonly = true
+    sources = [ "mutex_benchmark.cc" ]
+    deps = [
+      ":mutex",
+      "../system:unused",
+      "//third_party/google_benchmark",
+    ]
   }
 }

@@ -1,8 +1,10 @@
-/* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
-/* vim: set sts=2 sw=2 et tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
-var testCommands = [
+const gTestCommands = [
   // Ctrl Shortcuts
   {
     name: "toggle-ctrl-a",
@@ -190,15 +192,15 @@ var testCommands = [
 requestLongerTimeout(2);
 
 add_task(async function test_user_defined_commands() {
-  let win1 = await openNewMailWindow();
+  const win1 = await openNewMailWindow();
 
-  let commands = {};
-  let isMac = AppConstants.platform == "macosx";
+  const commands = {};
+  const isMac = AppConstants.platform == "macosx";
   let totalMacOnlyCommands = 0;
-  let numberNumericCommands = 4;
+  const numberNumericCommands = 4;
 
-  for (let testCommand of testCommands) {
-    let command = {
+  for (const testCommand of gTestCommands) {
+    const command = {
       suggested_key: {},
     };
 
@@ -231,7 +233,7 @@ add_task(async function test_user_defined_commands() {
     browser.test.sendMessage("ready");
   }
 
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     manifest: {
       commands,
     },
@@ -239,7 +241,7 @@ add_task(async function test_user_defined_commands() {
   });
 
   SimpleTest.waitForExplicitFinish();
-  let waitForConsole = new Promise(resolve => {
+  const waitForConsole = new Promise(resolve => {
     SimpleTest.monitorConsole(resolve, [
       {
         message:
@@ -255,7 +257,7 @@ add_task(async function test_user_defined_commands() {
   await extension.awaitMessage("ready");
 
   async function runTest(window, expectedTabType) {
-    for (let testCommand of testCommands) {
+    for (const testCommand of gTestCommands) {
       if (testCommand.skip && testCommand.skip.includes(expectedTabType)) {
         continue;
       }
@@ -267,7 +269,7 @@ add_task(async function test_user_defined_commands() {
         testCommand.modifiers,
         window.browsingContext
       );
-      let message = await extension.awaitMessage("oncommand event received");
+      const message = await extension.awaitMessage("oncommand event received");
       is(
         message.commandName,
         testCommand.name,
@@ -282,25 +284,25 @@ add_task(async function test_user_defined_commands() {
   }
 
   // Create another window after the extension is loaded.
-  let win2 = await openNewMailWindow();
+  const win2 = await openNewMailWindow();
 
-  let totalTestCommands =
-    Object.keys(testCommands).length + numberNumericCommands;
-  let expectedCommandsRegistered = isMac
+  const totalTestCommands =
+    Object.keys(gTestCommands).length + numberNumericCommands;
+  const expectedCommandsRegistered = isMac
     ? totalTestCommands
     : totalTestCommands - totalMacOnlyCommands;
 
-  let account = createAccount();
+  const account = createAccount();
   addIdentity(account);
-  let win3 = await openComposeWindow(account);
+  const win3 = await openComposeWindow(account);
   // Some key combinations do not work if the TO field has focus.
   win3.document.querySelector("editor").focus();
 
   // Confirm the keysets have been added to all windows.
-  let keysetID = `ext-keyset-id-${makeWidgetId(extension.id)}`;
+  const keysetID = `ext-keyset-id-${makeWidgetId(extension.id)}`;
 
   let keyset = win1.document.getElementById(keysetID);
-  ok(keyset != null, "Expected keyset to exist");
+  Assert.notEqual(keyset, null, "Expected keyset to exist");
   is(
     keyset.children.length,
     expectedCommandsRegistered,
@@ -308,7 +310,7 @@ add_task(async function test_user_defined_commands() {
   );
 
   keyset = win2.document.getElementById(keysetID);
-  ok(keyset != null, "Expected keyset to exist");
+  Assert.notEqual(keyset, null, "Expected keyset to exist");
   is(
     keyset.children.length,
     expectedCommandsRegistered,
@@ -316,7 +318,7 @@ add_task(async function test_user_defined_commands() {
   );
 
   keyset = win3.document.getElementById(keysetID);
-  ok(keyset != null, "Expected keyset to exist");
+  Assert.notEqual(keyset, null, "Expected keyset to exist");
   is(
     keyset.children.length,
     expectedCommandsRegistered,
@@ -354,15 +356,15 @@ add_task(async function test_user_defined_commands() {
 });
 
 add_task(async function test_commands_MV3_event_page() {
-  let win1 = await openNewMailWindow();
+  const win1 = await openNewMailWindow();
 
-  let commands = {};
-  let isMac = AppConstants.platform == "macosx";
+  const commands = {};
+  const isMac = AppConstants.platform == "macosx";
   let totalMacOnlyCommands = 0;
-  let numberNumericCommands = 4;
+  const numberNumericCommands = 4;
 
-  for (let testCommand of testCommands) {
-    let command = {
+  for (const testCommand of gTestCommands) {
+    const command = {
       suggested_key: {},
     };
 
@@ -386,14 +388,14 @@ add_task(async function test_commands_MV3_event_page() {
   }
 
   function background() {
-    // Whenever the extension starts or wakes up, the eventCounter is reset and
-    // allows to observe the order of events fired. In case of a wake-up, the
-    // first observed event is the one that woke up the background.
-    let eventCounter = 0;
+    // Whenever the extension starts or wakes up, the backgroundEventCounter is
+    // reset and allows to observe the order of events fired. In case of a wake-up,
+    // the first observed event is the one that woke up the background.
+    let backgroundEventCounter = 0;
 
     browser.test.onMessage.addListener(async message => {
       if (message == "createPopup") {
-        let popup = await browser.windows.create({
+        const popup = await browser.windows.create({
           type: "popup",
           url: "example.html",
         });
@@ -403,27 +405,27 @@ add_task(async function test_commands_MV3_event_page() {
 
     browser.commands.onCommand.addListener(async (commandName, activeTab) => {
       browser.test.sendMessage("oncommand event received", {
-        eventCount: ++eventCounter,
+        eventCount: ++backgroundEventCounter,
         commandName,
         activeTab,
       });
     });
     browser.test.sendMessage("ready");
   }
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": background,
       "utils.js": await getUtilsJS(),
-      "example.html": `<!DOCTYPE HTML>
-      <html>
-      <head>
-        <title>EXAMPLE</title>
-        <meta http-equiv="content-type" content="text/html; charset=utf-8">
-      </head>
-      <body>
-        <p>This is an example page</p>
-      </body>
-      </html>`,
+      "example.html": `<!DOCTYPE html>
+        <html>
+          <head>
+            <title>EXAMPLE</title>
+            <meta charset="utf-8">
+          </head>
+          <body>
+            <p>This is an example page</p>
+          </body>
+        </html>`,
     },
     manifest: {
       manifest_version: 3,
@@ -434,7 +436,7 @@ add_task(async function test_commands_MV3_event_page() {
   });
 
   SimpleTest.waitForExplicitFinish();
-  let waitForConsole = new Promise(resolve => {
+  const waitForConsole = new Promise(resolve => {
     SimpleTest.monitorConsole(resolve, [
       {
         message:
@@ -454,12 +456,12 @@ add_task(async function test_commands_MV3_event_page() {
     primed: false,
   });
 
-  let gEventCounter = 0;
+  let eventCounter = 0;
   async function runTest(window, expectedTabType) {
     // The second run will terminate the background script before each keypress,
     // verifying that the background script is waking up correctly.
-    for (let terminateBackground of [false, true]) {
-      for (let testCommand of testCommands) {
+    for (const terminateBackground of [false, true]) {
+      for (const testCommand of gTestCommands) {
         if (testCommand.skip && testCommand.skip.includes(expectedTabType)) {
           continue;
         }
@@ -468,7 +470,7 @@ add_task(async function test_commands_MV3_event_page() {
         }
 
         if (terminateBackground) {
-          gEventCounter = 0;
+          eventCounter = 0;
         }
 
         if (terminateBackground) {
@@ -494,7 +496,9 @@ add_task(async function test_commands_MV3_event_page() {
           );
         }
 
-        let message = await extension.awaitMessage("oncommand event received");
+        const message = await extension.awaitMessage(
+          "oncommand event received"
+        );
         is(
           message.commandName,
           testCommand.name,
@@ -507,7 +511,7 @@ add_task(async function test_commands_MV3_event_page() {
         );
         is(
           message.eventCount,
-          ++gEventCounter,
+          ++eventCounter,
           `Event counter should be correct`
         );
       }
@@ -515,38 +519,38 @@ add_task(async function test_commands_MV3_event_page() {
   }
 
   // Create another window after the extension is loaded.
-  let win2 = await openNewMailWindow();
+  const win2 = await openNewMailWindow();
 
-  let totalTestCommands =
-    Object.keys(testCommands).length + numberNumericCommands;
-  let expectedCommandsRegistered = isMac
+  const totalTestCommands =
+    Object.keys(gTestCommands).length + numberNumericCommands;
+  const expectedCommandsRegistered = isMac
     ? totalTestCommands
     : totalTestCommands - totalMacOnlyCommands;
 
-  let account = createAccount();
+  const account = createAccount();
   addIdentity(account);
-  let win3 = await openComposeWindow(account);
+  const win3 = await openComposeWindow(account);
   // Some key combinations do not work if the TO field has focus.
   win3.document.querySelector("editor").focus();
 
   // Open a popup window.
-  let popupPromise = extension.awaitMessage("popupCreated");
+  const popupPromise = extension.awaitMessage("popupCreated");
   extension.sendMessage("createPopup");
-  let popup = await popupPromise;
-  let win4 = Services.wm.getOuterWindowWithId(popup.id);
+  const popup = await popupPromise;
+  const win4 = Services.wm.getOuterWindowWithId(popup.id);
 
   // Confirm the keysets have been added to all windows.
-  let keysetID = `ext-keyset-id-${makeWidgetId(extension.id)}`;
+  const keysetID = `ext-keyset-id-${makeWidgetId(extension.id)}`;
 
-  let windows = [
+  const windows = [
     { window: win1, autoRemove: false, type: "mail" },
     { window: win2, autoRemove: false, type: "mail" },
     { window: win3, autoRemove: false, type: "messageCompose" },
     { window: win4, autoRemove: true, type: "content" },
   ];
-  for (let i in windows) {
-    let keyset = windows[i].window.document.getElementById(keysetID);
-    ok(keyset != null, "Expected keyset to exist");
+  for (const i in windows) {
+    const keyset = windows[i].window.document.getElementById(keysetID);
+    Assert.notEqual(keyset, null, "Expected keyset to exist");
     is(
       keyset.children.length,
       expectedCommandsRegistered,
@@ -561,13 +565,13 @@ add_task(async function test_commands_MV3_event_page() {
   // Unload the extension and confirm that the keysets have been removed from
   // all windows.
   await extension.unload();
-  for (let i in windows) {
+  for (const i in windows) {
     // Extension popup windows are removed/closed on extension unload, so they
     // have to skip this part of the test.
     if (windows[i].autoRemove) {
       continue;
     }
-    let keyset = windows[i].window.document.getElementById(keysetID);
+    const keyset = windows[i].window.document.getElementById(keysetID);
     is(keyset, null, `Expected keyset to be removed from the window #${i}`);
     await BrowserTestUtils.closeWindow(windows[i].window);
   }

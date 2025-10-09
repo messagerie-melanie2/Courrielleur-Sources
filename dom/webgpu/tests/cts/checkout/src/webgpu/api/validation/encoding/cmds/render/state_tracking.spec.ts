@@ -4,11 +4,11 @@ Validation tests for setVertexBuffer/setIndexBuffer state (not validation). See 
 
 import { makeTestGroup } from '../../../../../../common/framework/test_group.js';
 import { range } from '../../../../../../common/util/util.js';
-import { ValidationTest } from '../../../validation_test.js';
+import { AllFeaturesMaxLimitsGPUTest } from '../../../../../gpu_test.js';
 
-class F extends ValidationTest {
+class F extends AllFeaturesMaxLimitsGPUTest {
   getVertexBuffer(): GPUBuffer {
-    return this.device.createBuffer({
+    return this.createBufferTracked({
       size: 256,
       usage: GPUBufferUsage.VERTEX,
     });
@@ -55,7 +55,7 @@ class F extends ValidationTest {
   }
 
   beginRenderPass(commandEncoder: GPUCommandEncoder): GPURenderPassEncoder {
-    const attachmentTexture = this.device.createTexture({
+    const attachmentTexture = this.createTextureTracked({
       format: 'rgba8unorm',
       size: { width: 16, height: 16, depthOrArrayLayers: 1 },
       usage: GPUTextureUsage.RENDER_ATTACHMENT,
@@ -97,7 +97,7 @@ In this test we test that missing index buffer for a used slot will cause valida
   )
   .unimplemented();
 
-g.test('vertex_buffers_inherit_from_previous_pipeline').fn(async t => {
+g.test('vertex_buffers_inherit_from_previous_pipeline').fn(t => {
   const pipeline1 = t.createRenderPipeline(1);
   const pipeline2 = t.createRenderPipeline(2);
 
@@ -132,7 +132,7 @@ g.test('vertex_buffers_inherit_from_previous_pipeline').fn(async t => {
   }
 });
 
-g.test('vertex_buffers_do_not_inherit_between_render_passes').fn(async t => {
+g.test('vertex_buffers_do_not_inherit_between_render_passes').fn(t => {
   const pipeline1 = t.createRenderPipeline(1);
   const pipeline2 = t.createRenderPipeline(2);
 

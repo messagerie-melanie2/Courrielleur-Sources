@@ -3,6 +3,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 import copy
 import os
+import sys
 from argparse import ArgumentParser, Namespace
 
 import mozlog
@@ -22,11 +23,19 @@ from mozperftest.system import get_layers as system_layers  # noqa
 from mozperftest.test import get_layers as test_layers  # noqa
 from mozperftest.utils import convert_day  # noqa
 
-FLAVORS = "desktop-browser", "mobile-browser", "doc", "xpcshell", "webpagetest"
+FLAVORS = (
+    "desktop-browser",
+    "mobile-browser",
+    "doc",
+    "xpcshell",
+    "webpagetest",
+    "mochitest",
+    "custom-script",
+    "alert",
+)
 
 
 class Options:
-
     general_args = {
         "--flavor": {
             "choices": FLAVORS,
@@ -58,17 +67,12 @@ class Options:
             "help": "Script containing hooks. Can be a path or a URL.",
         },
         "--verbose": {"action": "store_true", "default": False, "help": "Verbose mode"},
-        "--push-to-try": {
-            "action": "store_true",
-            "default": False,
-            "help": "Pushin the test to try",
-        },
         "--try-platform": {
             "nargs": "*",
             "type": str,
             "default": "linux",
             "help": "Platform to use on try",
-            "choices": ["g5", "pixel2", "linux", "mac", "win"],
+            "choices": ["linux", "mac", "win"],
         },
         "--on-try": {
             "action": "store_true",
@@ -80,6 +84,41 @@ class Options:
             "default": "today",
             "help": "Used in multi-commit testing, it specifies the day to get test builds from. "
             "Must follow the format `YYYY.MM.DD` or be `today` or `yesterday`.",
+        },
+        "--binary": {
+            "type": str,
+            "default": None,
+            "help": (
+                "The binary that needs to be tested (note that some layers "
+                "may use a custom approach for the binary specification)."
+            ),
+        },
+        "--app": {
+            "type": str,
+            "default": "firefox",
+            "choices": [
+                "firefox",
+                "chrome-m",
+                "chrome",
+                "fennec",
+                "geckoview",
+                "fenix",
+                "refbrow",
+                "focus",
+            ],
+            "help": (
+                "Shorthand name of application that is being tested. "
+                "Used in perfherder data, and other layers such as the "
+                "BinarySetup layer for getting the binary path, and version."
+            ),
+        },
+        "--gecko-profile": {
+            "action": "store_true",
+            "default": False,
+            "help": (
+                "Run tests with gecko profiling enabled (assumes test layer "
+                "has implemented it)."
+            ),
         },
     }
 
@@ -102,10 +141,10 @@ for layer in system_layers() + test_layers() + metrics_layers():
     }
 
     for option, value in layer.arguments.items():
-        option = "--%s-%s" % (layer.name, option.replace("_", "-"))
-        if option in Options.args:
-            raise KeyError("%s option already defined!" % option)
-        Options.args[option] = value
+        parsed_option = "--%s-%s" % (layer.name, option.replace("_", "-"))
+        if parsed_option in Options.args:
+            raise KeyError("%s option already defined!" % parsed_option)
+        Options.args[parsed_option] = value
 
 
 class PerftestArgumentParser(ArgumentParser):
@@ -146,13 +185,18 @@ class PerftestArgumentParser(ArgumentParser):
             res[key] = value
         return res
 
-    def _parse_known_args(self, arg_strings, namespace):
+    def _parse_known_args(self, arg_strings, namespace, intermixed=False):
         # at this point, the namespace is filled with default values
         # defined in the args
 
         # let's parse what the user really gave us in the CLI
         # in a new namespace
-        user_namespace, extras = super()._parse_known_args(arg_strings, Namespace())
+        if sys.version_info.minor > 11:
+            user_namespace, extras = super()._parse_known_args(
+                arg_strings, Namespace(), intermixed=intermixed
+            )
+        else:
+            user_namespace, extras = super()._parse_known_args(arg_strings, Namespace())
 
         self.set_by_user = list([name for name, value in user_namespace._get_kwargs()])
 
@@ -162,8 +206,10 @@ class PerftestArgumentParser(ArgumentParser):
 
         return namespace, extras
 
-    def parse_args(self, args=None, namespace=None):
+    def parse_args(self, args=None, namespace=None, intermixed=False):
         self.parse_helper(args)
+        if sys.version_info.minor > 11:
+            return super().parse_args(args, namespace, intermixed=intermixed)
         return super().parse_args(args, namespace)
 
     def parse_known_args(self, args=None, namespace=None):

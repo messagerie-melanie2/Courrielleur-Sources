@@ -1,15 +1,12 @@
 #!/usr/bin/env python
-# ***** BEGIN LICENSE BLOCK *****
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
-# ***** END LICENSE BLOCK *****
 """
 run talos tests in a virtualenv
 """
 
 import copy
-import io
 import json
 import multiprocessing
 import os
@@ -19,7 +16,7 @@ import shutil
 import subprocess
 import sys
 
-import six
+from mozsystemmonitor.resourcemonitor import SystemResourceMonitor
 
 import mozharness
 from mozharness.base.config import parse_config_file
@@ -111,6 +108,20 @@ class TalosOutputParser(OutputParser):
             self.critical(" %s" % line)
             self.update_worst_log_and_tbpl_levels(CRITICAL, TBPL_RETRY)
             return  # skip base parse_single_line
+
+        if line.startswith("SUITE-START "):
+            SystemResourceMonitor.begin_marker("suite", "")
+        elif line.startswith("SUITE-END "):
+            SystemResourceMonitor.end_marker("suite", "")
+        elif line.startswith("TEST-"):
+            part = line.split(" | ")
+            if part[0] == "TEST-START":
+                SystemResourceMonitor.begin_marker("test", part[1])
+            elif part[0] in ("TEST-OK", "TEST-UNEXPECTED-ERROR"):
+                SystemResourceMonitor.end_marker("test", part[1])
+        elif line.startswith("Running cycle ") or line.startswith("PROCESS-CRASH "):
+            SystemResourceMonitor.record_event(line)
+
         super(TalosOutputParser, self).parse_single_line(line)
 
 
@@ -166,14 +177,17 @@ class Talos(
                     "dest": "gecko_profile",
                     "action": "store_true",
                     "default": False,
-                    "help": "Whether or not to profile the test run and save the profile results",
+                    "help": (
+                        "Whether to profile the test run and save the profile results. "
+                        "Copy paste the parameters used in this profiling run directly from about:profiling in Nightly."
+                    ),
                 },
             ],
             [
                 ["--gecko-profile-interval"],
                 {
                     "dest": "gecko_profile_interval",
-                    "type": "int",
+                    "type": "float",
                     "help": "The interval between samples taken by the profiler (milliseconds)",
                 },
             ],
@@ -200,6 +214,14 @@ class Talos(
                     "dest": "gecko_profile_threads",
                     "type": "str",
                     "help": "Comma-separated list of threads to sample.",
+                },
+            ],
+            [
+                ["--gecko-profile-extra-threads"],
+                {
+                    "dest": "gecko_profile_extra_threads",
+                    "type": "str",
+                    "help": "Comma-separated list of extra threads to add to the default list of threads to profile.",
                 },
             ],
             [
@@ -246,6 +268,27 @@ class Talos(
                     "dest": "skip_preflight",
                     "default": False,
                     "help": "skip preflight commands to prepare machine.",
+                },
+            ],
+            [
+                ["--screenshot-on-failure"],
+                {
+                    "action": "store_true",
+                    "dest": "screenshot_on_failure",
+                    "default": False,
+                    "help": "Take a screenshot when the test fails.",
+                },
+            ],
+            [
+                ["--pdfPaintChunk"],
+                {
+                    "type": "int",
+                    "dest": "pdfpaint_chunk",
+                    "default": None,
+                    "help": (
+                        "Chunk of the pdfpaint test to run (each chunk runs at most 100 pdfs). "
+                        "Defaults to None to run all the pdfs at the same time."
+                    ),
                 },
             ],
         ]
@@ -396,7 +439,7 @@ class Talos(
         iframe_pattern = re.compile(r'(iframe.*")(\.\./.*\.html)"')
         for encoding in encodings:
             try:
-                with io.open(path, "r", encoding=encoding) as f:
+                with open(path, encoding=encoding) as f:
                     content = f.read()
 
                 def replace_iframe_src(match):
@@ -416,7 +459,7 @@ class Talos(
                     return match.group(1) + new_url
 
                 content = re.sub(iframe_pattern, replace_iframe_src, content)
-                with io.open(path, "w", encoding=encoding) as f:
+                with open(path, "w", encoding=encoding) as f:
                     f.write(content)
                 break
             except UnicodeDecodeError:
@@ -526,11 +569,13 @@ class Talos(
             kw_options["symbolsPath"] = self.symbols_path
         if self.config.get("project", None):
             kw_options["project"] = self.config["project"]
+        if self.config.get("pdfpaint_chunk", None):
+            kw_options["pdfPaintChunk"] = str(self.config["pdfpaint_chunk"])
 
         kw_options.update(kw)
         # talos expects tests to be in the format (e.g.) 'ts:tp5:tsvg'
         tests = kw_options.get("activeTests")
-        if tests and not isinstance(tests, six.string_types):
+        if tests and not isinstance(tests, str):
             tests = ":".join(tests)  # Talos expects this format
             kw_options["activeTests"] = tests
         for key, value in kw_options.items():
@@ -544,6 +589,11 @@ class Talos(
             options += self.config["talos_extra_options"]
         if self.config.get("code_coverage", False):
             options.extend(["--code-coverage"])
+        if (
+            self.config.get("screenshot_on_failure", False)
+            or os.environ.get("MOZ_AUTOMATION", None) is not None
+        ):
+            options.extend(["--screenshot-on-failure"])
 
         # Add extra_prefs defined by individual test suites in talos.json
         extra_prefs = self.query_suite_extra_prefs()
@@ -551,7 +601,7 @@ class Talos(
         if self.config["extra_prefs"]:
             extra_prefs.extend(self.config["extra_prefs"])
 
-        options.extend(["--setpref={}".format(p) for p in extra_prefs])
+        options.extend([f"--setpref={p}" for p in extra_prefs])
 
         # disabling fission can come from the --disable-fission cmd line argument; or in CI
         # it comes from a taskcluster transform which adds a --setpref for fission.autostart
@@ -701,6 +751,7 @@ class Talos(
         # Use in-tree wptserve for Python 3.10 compatibility
         extract_dirs = [
             "tools/wptserve/*",
+            "tools/wpt_third_party/h2/*",
             "tools/wpt_third_party/pywebsocket3/*",
         ]
         return super(Talos, self).download_and_extract(
@@ -756,7 +807,6 @@ class Talos(
             )
         self.register_virtualenv_module(
             requirements=[mozbase_requirements],
-            two_pass=True,
             editable=True,
         )
         super(Talos, self).create_virtualenv()
@@ -813,6 +863,9 @@ class Talos(
         env["MOZ_UPLOAD_DIR"] = self.query_abs_dirs()["abs_blob_upload_dir"]
         if not self.run_local:
             env["MINIDUMP_STACKWALK"] = self.query_minidump_stackwalk()
+            env["MOZ_FETCHES_DIR"] = os.environ.get("MOZ_FETCHES_DIR")
+        else:
+            env["MOZBUILD_PATH"] = self.config.get("mozbuild_path")
         env["MINIDUMP_SAVE_PATH"] = self.query_abs_dirs()["abs_blob_upload_dir"]
         env["RUST_BACKTRACE"] = "full"
         if not os.path.isdir(env["MOZ_UPLOAD_DIR"]):

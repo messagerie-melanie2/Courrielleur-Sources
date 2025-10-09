@@ -15,8 +15,10 @@
 #include "PerformanceTiming.h"
 
 namespace mozilla::dom {
+enum class RenderBlockingStatusType : uint8_t;
+
 #define IMPL_RESOURCE_TIMING_TAO_PROTECTED_TIMING_PROP(name)                \
-  DOMHighResTimeStamp name(Maybe<nsIPrincipal*>& aSubjectPrincipal) const { \
+  DOMHighResTimeStamp name(nsIPrincipal& aSubjectPrincipal) const {         \
     bool allowed = !mTimingData->RedirectCountReal()                        \
                        ? TimingAllowedForCaller(aSubjectPrincipal)          \
                        : ReportRedirectForCaller(aSubjectPrincipal, false); \
@@ -24,11 +26,19 @@ namespace mozilla::dom {
   }
 
 #define IMPL_RESOURCE_TIMING_TAO_PROTECTED_SIZE_PROP(name)                  \
-  uint64_t name(Maybe<nsIPrincipal*>& aSubjectPrincipal) const {            \
+  uint64_t name(nsIPrincipal& aSubjectPrincipal) const {                    \
     bool allowed = !mTimingData->RedirectCountReal()                        \
                        ? TimingAllowedForCaller(aSubjectPrincipal)          \
                        : ReportRedirectForCaller(aSubjectPrincipal, false); \
     return allowed ? mTimingData->name() : 0;                               \
+  }
+
+#define IMPL_RESOURCE_TIMING_CORS_PROTECTED_SIZE_PROP(name)  \
+  uint64_t name(nsIPrincipal& aSubjectPrincipal) const {     \
+    if (BodyInfoAccessAllowedForCaller(aSubjectPrincipal)) { \
+      return mTimingData->name();                            \
+    }                                                        \
+    return 0;                                                \
   }
 
 // http://www.w3.org/TR/resource-timing/#performanceresourcetiming
@@ -62,6 +72,8 @@ class PerformanceResourceTiming : public PerformanceEntry {
     mInitiatorType = aInitiatorType;
   }
 
+  RenderBlockingStatusType RenderBlockingStatus() const;
+
   void GetNextHopProtocol(nsAString& aNextHopProtocol) const {
     if (mTimingData->TimingAllowed()) {
       aNextHopProtocol = mTimingData->NextHopProtocol();
@@ -74,7 +86,7 @@ class PerformanceResourceTiming : public PerformanceEntry {
 
   DOMHighResTimeStamp FetchStart() const;
 
-  DOMHighResTimeStamp RedirectStart(Maybe<nsIPrincipal*>& aSubjectPrincipal,
+  DOMHighResTimeStamp RedirectStart(nsIPrincipal& aSubjectPrincipal,
                                     bool aEnsureSameOriginAndIgnoreTAO) const {
     // We have to check if all the redirect URIs whether had the same origin or
     // different origins with TAO headers set (since there is no check in
@@ -86,12 +98,12 @@ class PerformanceResourceTiming : public PerformanceEntry {
   }
 
   virtual DOMHighResTimeStamp RedirectStart(
-      Maybe<nsIPrincipal*>& aSubjectPrincipal) const {
+      nsIPrincipal& aSubjectPrincipal) const {
     return RedirectStart(aSubjectPrincipal,
                          false /* aEnsureSameOriginAndIgnoreTAO */);
   }
 
-  DOMHighResTimeStamp RedirectEnd(Maybe<nsIPrincipal*>& aSubjectPrincipal,
+  DOMHighResTimeStamp RedirectEnd(nsIPrincipal& aSubjectPrincipal,
                                   bool aEnsureSameOriginAndIgnoreTAO) const {
     // We have to check if all the redirect URIs whether had the same origin or
     // different origins with TAO headers set (since there is no check in
@@ -103,7 +115,7 @@ class PerformanceResourceTiming : public PerformanceEntry {
   }
 
   virtual DOMHighResTimeStamp RedirectEnd(
-      Maybe<nsIPrincipal*>& aSubjectPrincipal) const {
+      nsIPrincipal& aSubjectPrincipal) const {
     return RedirectEnd(aSubjectPrincipal,
                        false /* aEnsureSameOriginAndIgnoreTAO */);
   }
@@ -130,14 +142,46 @@ class PerformanceResourceTiming : public PerformanceEntry {
     return this;
   }
 
-  IMPL_RESOURCE_TIMING_TAO_PROTECTED_SIZE_PROP(TransferSize)
+  IMPL_RESOURCE_TIMING_CORS_PROTECTED_SIZE_PROP(EncodedBodySize);
+  IMPL_RESOURCE_TIMING_CORS_PROTECTED_SIZE_PROP(DecodedBodySize);
 
-  IMPL_RESOURCE_TIMING_TAO_PROTECTED_SIZE_PROP(EncodedBodySize)
+  uint64_t TransferSize(nsIPrincipal& aSubjectPrincipal) const {
+    const bool allowed =
+        !mTimingData->RedirectCountReal()
+            ? TimingAllowedForCaller(aSubjectPrincipal)
+            : ReportRedirectForCaller(aSubjectPrincipal, false);
+    if (!allowed) {
+      return 0;
+    }
+    // Resource is cached.
+    if (!mTimingData->TransferSize()) {
+      return 0;
+    }
+    auto encodedBodySize = EncodedBodySize(aSubjectPrincipal);
+    // The constant number added to transferSize replaces exposing the
+    // total byte size of the HTTP headers, as that may expose the
+    // presence of certain cookies.
+    // https://github.com/w3c/resource-timing/issues/238
+    return encodedBodySize + 300;
+  }
 
-  IMPL_RESOURCE_TIMING_TAO_PROTECTED_SIZE_PROP(DecodedBodySize)
+  uint16_t ResponseStatus(nsIPrincipal& aSubjectPrincipal) const {
+    if (BodyInfoAccessAllowedForCaller(aSubjectPrincipal)) {
+      return mTimingData->ResponseStatus();
+    }
+    return 0;
+  }
+
+  void GetContentType(nsAString& aContentType,
+                      nsIPrincipal& aSubjectPrincipal) const {
+    if (BodyInfoAccessAllowedForCaller(aSubjectPrincipal) ==
+        nsITimedChannel::BodyInfoAccess::ALLOW_ALL) {
+      aContentType = mTimingData->ContentType();
+    }
+  }
 
   void GetServerTiming(nsTArray<RefPtr<PerformanceServerTiming>>& aRetval,
-                       Maybe<nsIPrincipal*>& aSubjectPrincipal);
+                       nsIPrincipal& aSubjectPrincipal);
 
   size_t SizeOfIncludingThis(
       mozilla::MallocSizeOf aMallocSizeOf) const override;
@@ -148,12 +192,16 @@ class PerformanceResourceTiming : public PerformanceEntry {
   size_t SizeOfExcludingThis(
       mozilla::MallocSizeOf aMallocSizeOf) const override;
 
+  // Check if caller has access to the bodyInfo of the request, per Fetch spec.
+  nsITimedChannel::BodyInfoAccess BodyInfoAccessAllowedForCaller(
+      nsIPrincipal& aCaller) const;
+
   // Check if caller has access to cross-origin timings, either by the rules
   // from the spec, or based on addon permissions.
-  bool TimingAllowedForCaller(Maybe<nsIPrincipal*>& aCaller) const;
+  bool TimingAllowedForCaller(nsIPrincipal& aCaller) const;
 
   // Check if cross-origin redirects should be reported to the caller.
-  bool ReportRedirectForCaller(Maybe<nsIPrincipal*>& aCaller,
+  bool ReportRedirectForCaller(nsIPrincipal& aCaller,
                                bool aEnsureSameOriginAndIgnoreTAO) const;
 
   nsString mInitiatorType;

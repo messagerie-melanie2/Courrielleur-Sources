@@ -8,7 +8,7 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   ExtensionParent: "resource://gre/modules/ExtensionParent.sys.mjs",
 });
-let browserActionFor = extensionId => {
+const browserActionFor = extensionId => {
   const extension =
     lazy.ExtensionParent.GlobalManager.getExtension(extensionId);
   if (!extension) {
@@ -18,11 +18,12 @@ let browserActionFor = extensionId => {
 };
 
 const BADGE_BACKGROUND_COLOR = "--toolbar-button-badge-bg-color";
+const BADGE_TEXT_COLOR = "--toolbar-button-badge-text-color";
 
 /**
- * Attributes:
- * - extension: ID of the extension this button is for.
- * - open: true if the popup is currently open. Gets redirected to aria-pressed.
+ * @tagname extension-action-button
+ * @attribute {string} extension - ID of the extension this button is for.
+ * @attribute {boolean} open - true if the popup is currently open. Gets redirected to aria-pressed.
  */
 class ExtensionActionButton extends UnifiedToolbarButton {
   static get observedAttributes() {
@@ -56,9 +57,10 @@ class ExtensionActionButton extends UnifiedToolbarButton {
     if (this.#action.extension.hasPermission("menus")) {
       document.addEventListener("popupshowing", this.#action);
       if (this.#action.defaults.type == "menu") {
-        let menupopup = document.createXULElement("menupopup");
+        const menupopup = document.createXULElement("menupopup");
         menupopup.dataset.actionMenu = this.#action.manifestName;
         menupopup.dataset.extensionId = this.#action.extension.id;
+        menupopup.classList.add("webextension-menupopup");
         menupopup.addEventListener("popuphiding", event => {
           if (event.target.state === "open") {
             return;
@@ -92,7 +94,7 @@ class ExtensionActionButton extends UnifiedToolbarButton {
    * label, icon, badge, disabled and popup.
    *
    * @param {object} tabData - Properties for the button in the current tab. See
-   *   ExtensionToolbarButtons.jsm for more details.
+   *   ExtensionToolbarButtons.sys.mjs for more details.
    */
   applyTabData(tabData) {
     if (!this.#action) {
@@ -116,6 +118,18 @@ class ExtensionActionButton extends UnifiedToolbarButton {
     } else {
       this.style.removeProperty(BADGE_BACKGROUND_COLOR);
     }
+    if (tabData.badgeText && tabData.badgeTextColor) {
+      const textColor = tabData.badgeTextColor;
+      this.style.setProperty(
+        BADGE_TEXT_COLOR,
+        `rgba(${textColor[0]}, ${textColor[1]}, ${textColor[2]}, ${
+          textColor[3] / 255
+        })`
+      );
+    } else {
+      this.style.removeProperty(BADGE_TEXT_COLOR);
+    }
+
     this.toggleAttribute("popup", tabData.popup || tabData.type == "menu");
     if (!tabData.popup) {
       this.removeAttribute("aria-pressed");

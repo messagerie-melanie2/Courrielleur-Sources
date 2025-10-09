@@ -8,22 +8,16 @@
 
 "use strict";
 
-var utils = ChromeUtils.import("resource://testing-common/mozmill/utils.jsm");
 var { get_msg_source, open_compose_new_mail, setup_msg_contents } =
-  ChromeUtils.import("resource://testing-common/mozmill/ComposeHelpers.jsm");
-var { be_in_folder, get_special_folder, press_delete, select_click_row } =
-  ChromeUtils.import(
-    "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/ComposeHelpers.sys.mjs"
   );
-var { wait_for_notification_to_show } = ChromeUtils.import(
-  "resource://testing-common/mozmill/NotificationBoxHelpers.jsm"
-);
-var { plan_for_window_close, wait_for_window_close } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
-);
-
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { be_in_folder, get_special_folder, press_delete, select_click_row } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
+  );
+var { wait_for_notification_to_show } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/NotificationBoxHelpers.sys.mjs"
 );
 
 var gOutboxFolder;
@@ -36,7 +30,7 @@ add_setup(async function () {
 });
 
 function putHTMLOnClipboard(html) {
-  let trans = Cc["@mozilla.org/widget/transferable;1"].createInstance(
+  const trans = Cc["@mozilla.org/widget/transferable;1"].createInstance(
     Ci.nsITransferable
   );
 
@@ -44,7 +38,7 @@ function putHTMLOnClipboard(html) {
   trans.init(null);
   trans.addDataFlavor("text/html");
 
-  let wapper = Cc["@mozilla.org/supports-string;1"].createInstance(
+  const wapper = Cc["@mozilla.org/supports-string;1"].createInstance(
     Ci.nsISupportsString
   );
   wapper.data = html;
@@ -58,8 +52,8 @@ function putHTMLOnClipboard(html) {
  * the content when appropriate.
  */
 add_task(async function test_paste_file_urls() {
-  let cwc = open_compose_new_mail();
-  setup_msg_contents(
+  const cwc = await open_compose_new_mail();
+  await setup_msg_contents(
     cwc,
     "someone@example.com",
     "testing html paste",
@@ -67,12 +61,12 @@ add_task(async function test_paste_file_urls() {
   );
 
   const fname = "data/tb-logo.png";
-  let file = new FileUtils.File(getTestFilePath(fname));
-  let fileHandler = Services.io
+  const file = new FileUtils.File(getTestFilePath(fname));
+  const fileHandler = Services.io
     .getProtocolHandler("file")
     .QueryInterface(Ci.nsIFileProtocolHandler);
 
-  let dest = PathUtils.join(
+  const dest = PathUtils.join(
     Services.dirsvc.get("TmpD", Ci.nsIFile).path,
     file.leafName
   );
@@ -98,13 +92,9 @@ add_task(async function test_paste_file_urls() {
           "' alt='tmp' />"
       );
 
-      cwc.window.document.getElementById("messageEditor").focus();
+      cwc.document.getElementById("messageEditor").focus();
       // Ctrl+V = Paste
-      EventUtils.synthesizeKey(
-        "v",
-        { shiftKey: false, accelKey: true },
-        cwc.window
-      );
+      EventUtils.synthesizeKey("v", { shiftKey: false, accelKey: true }, cwc);
     })
     .catch(function (err) {
       throw new Error("Setting up img file FAILED: " + err);
@@ -112,23 +102,23 @@ add_task(async function test_paste_file_urls() {
 
   // Now wait for the paste, and for the file: based image to get converted
   // to data:.
-  utils.waitFor(function () {
-    let img = cwc.window.document
+  await TestUtils.waitForCondition(function () {
+    const img = cwc.document
       .getElementById("messageEditor")
       .contentDocument.getElementById("tmp-img");
     return img && img.naturalHeight == 84 && img.src.startsWith("data:");
   }, "Timeout waiting for pasted tmp image to be loaded ok");
 
   // For the non-existent (non-accessible!) image we should get a notification.
-  wait_for_notification_to_show(cwc.window, kBoxId, kNotificationId);
+  await wait_for_notification_to_show(cwc, kBoxId, kNotificationId);
 
-  plan_for_window_close(cwc);
-  cwc.window.goDoCommand("cmd_sendLater");
-  wait_for_window_close();
+  const closePromise = BrowserTestUtils.domWindowClosed(cwc);
+  cwc.goDoCommand("cmd_sendLater");
+  await closePromise;
 
   await be_in_folder(gOutboxFolder);
-  let outMsg = select_click_row(0);
-  let outMsgContent = await get_msg_source(outMsg);
+  const outMsg = await select_click_row(0);
+  const outMsgContent = await get_msg_source(outMsg);
 
   Assert.ok(
     outMsgContent.includes("file://foo/non-existent"),
@@ -145,5 +135,5 @@ add_task(async function test_paste_file_urls() {
     "tmp-img should be cid after send; content=" + outMsgContent
   );
 
-  press_delete(); // Delete the msg from Outbox.
+  await press_delete(); // Delete the msg from Outbox.
 });

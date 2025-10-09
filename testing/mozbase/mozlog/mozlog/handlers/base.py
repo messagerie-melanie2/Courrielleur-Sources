@@ -13,7 +13,7 @@ from mozlog.handlers.messagehandler import MessageHandler
 from mozlog.structuredlog import log_levels
 
 
-class BaseHandler(object):
+class BaseHandler:
     """A base handler providing message handling facilities to
     derived classes.
     """
@@ -111,10 +111,10 @@ class StreamHandler(BaseHandler):
                 # consequences for the executed tests, anyways).
                 try:
                     self.stream.write(formatted)
-                except (UnicodeEncodeError):
+                except UnicodeEncodeError:
                     return
             else:
-                if isinstance(formatted, six.text_type):
+                if isinstance(formatted, str):
                     self.stream.write(formatted.encode("utf-8", "replace"))
                 elif isinstance(formatted, str):
                     self.stream.write(formatted)

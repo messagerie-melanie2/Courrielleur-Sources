@@ -43,12 +43,8 @@ appmenu-new-account-panel =
   .label = New Account
   .accesskey = N
 
-appmenu-create-new-mail-account =
-  .label = Get a New Email
-  .accesskey = G
-
-appmenu-new-mail-account =
-  .label = Existing Email
+appmenu-new-email-account =
+  .label = Email
   .accesskey = E
 
 appmenu-new-calendar =
@@ -184,6 +180,10 @@ appmenu-tools-export =
   .label = Export
   .accesskey = E
 
+appmenu-export-for-mobile =
+  .label = Export for Mobile
+  .accesskey = p
+
 appmenu-tools-message-search =
   .label = Search Messages
   .accesskey = S
@@ -213,9 +213,9 @@ appmenu-help-get-help =
   .label = Get Help
   .accesskey = H
 
-appmenu-help-explore-features =
-  .label = Explore Features
-  .accesskey = F
+appmenu-help-get-release-help =
+    .label = Get Help with { -brand-short-name }
+    .accesskey = R
 
 appmenu-help-shortcuts =
   .label = Keyboard Shortcuts

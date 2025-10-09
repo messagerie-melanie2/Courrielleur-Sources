@@ -2,14 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { MessageGenerator, SyntheticMessageSet } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { MessageGenerator, SyntheticMessageSet } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-var { MessageInjection } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageInjection.jsm"
+var { MessageInjection } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageInjection.sys.mjs"
 );
-var { MsgHdrToMimeMessage } = ChromeUtils.import(
-  "resource:///modules/gloda/MimeMessage.jsm"
+var { MsgHdrToMimeMessage } = ChromeUtils.importESModule(
+  "resource:///modules/gloda/MimeMessage.sys.mjs"
 );
 
 const P7M_ATTACHMENT = "dGhpcyBpcyBub3QgYSByZWFsIHMvbWltZSBwN20gZW50aXR5";
@@ -20,7 +20,7 @@ var msgHdr;
 
 add_setup(async function () {
   // Create a message with a p7m attachment.
-  let synMsg = messageGenerator.makeMessage({
+  const synMsg = messageGenerator.makeMessage({
     attachments: [
       {
         body: P7M_ATTACHMENT,
@@ -31,7 +31,7 @@ add_setup(async function () {
       },
     ],
   });
-  let synSet = new SyntheticMessageSet([synMsg]);
+  const synSet = new SyntheticMessageSet([synMsg]);
   await messageInjection.addSetsToFolders([inbox], [synSet]);
   msgHdr = synSet.getMsgHdr(0);
 });

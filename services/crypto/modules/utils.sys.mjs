@@ -5,11 +5,10 @@
 import { Observers } from "resource://services-common/observers.sys.mjs";
 
 import { CommonUtils } from "resource://services-common/utils.sys.mjs";
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 const lazy = {};
 
-XPCOMUtils.defineLazyGetter(lazy, "textEncoder", function () {
+ChromeUtils.defineLazyGetter(lazy, "textEncoder", function () {
   return new TextEncoder();
 });
 
@@ -53,7 +52,7 @@ export var CryptoUtils = {
    * string containing bytes.
    */
   digestUTF8(message, hasher) {
-    let data = this._utf8Converter.convertToByteArray(message, {});
+    let data = lazy.textEncoder.encode(message);
     hasher.update(data, data.length);
     let result = hasher.finish(false);
     return result;
@@ -83,7 +82,7 @@ export var CryptoUtils = {
    * yourself.
    */
   updateUTF8(message, hasher) {
-    let bytes = this._utf8Converter.convertToByteArray(message, {});
+    let bytes = lazy.textEncoder.encode(message);
     hasher.update(bytes, bytes.length);
   },
 
@@ -96,7 +95,7 @@ export var CryptoUtils = {
   },
 
   sha256Base64(message) {
-    let data = this._utf8Converter.convertToByteArray(message, {});
+    let data = lazy.textEncoder.encode(message);
     let hasher = Cc["@mozilla.org/security/hash;1"].createInstance(
       Ci.nsICryptoHash
     );
@@ -135,11 +134,10 @@ export var CryptoUtils = {
   },
 
   /**
-   * @param {String} alg Hash algorithm (common values are SHA-1 or SHA-256)
-   * @param {ArrayBuffer} key
-   * @param {ArrayBuffer} data
-   * @param {Number} len Desired output length in bytes.
-   * @returns {Uint8Array}
+   * @param {string} alg Hash algorithm (common values are SHA-1 or SHA-256)
+   * @param {BufferSource} key
+   * @param {BufferSource} data
+   * @returns {Promise<Uint8Array>}
    */
   async hmac(alg, key, data) {
     const hmacKey = await crypto.subtle.importKey(
@@ -528,15 +526,6 @@ export var CryptoUtils = {
     };
   },
 };
-
-XPCOMUtils.defineLazyGetter(CryptoUtils, "_utf8Converter", function () {
-  let converter = Cc[
-    "@mozilla.org/intl/scriptableunicodeconverter"
-  ].createInstance(Ci.nsIScriptableUnicodeConverter);
-  converter.charset = "UTF-8";
-
-  return converter;
-});
 
 var Svc = {};
 

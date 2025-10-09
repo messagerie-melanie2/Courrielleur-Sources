@@ -7,11 +7,13 @@ add_task(async function testCollapse() {
     "testuser",
     "prpl-mochitest"
   );
+  const passwordPromise = TestUtils.topicObserved("account-updated");
   account.password = "this is a test";
+  await passwordPromise;
   account.connect();
 
   await openChatTab();
-  ok(BrowserTestUtils.is_visible(document.getElementById("chatPanel")));
+  ok(BrowserTestUtils.isVisible(document.getElementById("chatPanel")));
 
   const conversation = account.prplAccount.wrappedJSObject.makeDM("collapse");
   const convNode = getConversationItem(conversation);
@@ -21,7 +23,7 @@ add_task(async function testCollapse() {
 
   const chatConv = getChatConversationElement(conversation);
   ok(chatConv, "found conversation");
-  ok(BrowserTestUtils.is_visible(chatConv), "conversation visible");
+  ok(BrowserTestUtils.isVisible(chatConv), "conversation visible");
   const messageParent = await getChatMessageParent(chatConv);
 
   await addNotice(conversation, chatConv);
@@ -52,7 +54,7 @@ add_task(async function testCollapse() {
   const hiddenGroup = messageParent.querySelector(".hide-children");
   const toggle = hiddenGroup.querySelector(".eventToggle");
   ok(toggle);
-  ok(hiddenGroup.querySelectorAll(".event-row").length >= 5);
+  Assert.greaterOrEqual(hiddenGroup.querySelectorAll(".event-row").length, 5);
 
   toggle.click();
   await BrowserTestUtils.waitForMutationCondition(
@@ -74,12 +76,14 @@ add_task(async function testGrouping() {
     "testuser",
     "prpl-mochitest"
   );
+  const passwordPromise = TestUtils.topicObserved("account-updated");
   account.password = "this is a test";
+  await passwordPromise;
   account.connect();
 
   await openChatTab();
   ok(
-    BrowserTestUtils.is_visible(document.getElementById("chatPanel")),
+    BrowserTestUtils.isVisible(document.getElementById("chatPanel")),
     "Chat tab is visible"
   );
 
@@ -91,7 +95,7 @@ add_task(async function testGrouping() {
 
   const chatConv = getChatConversationElement(conversation);
   ok(chatConv, "Found conversation element");
-  ok(BrowserTestUtils.is_visible(chatConv), "conversation visible");
+  ok(BrowserTestUtils.isVisible(chatConv), "conversation visible");
   const messageParent = await getChatMessageParent(chatConv);
 
   conversation.addMessages([
@@ -127,7 +131,7 @@ add_task(async function testGrouping() {
     );
   } while (chatConv.convBrowser.getPendingMessagesCount() > 0);
 
-  for (let child of messageParent.children) {
+  for (const child of messageParent.children) {
     isnot(child.id, "insert", "Message element is not the insert point");
   }
   is(
@@ -146,12 +150,14 @@ add_task(async function testSystemMessageReplacement() {
     "testuser",
     "prpl-mochitest"
   );
+  const passwordPromise = TestUtils.topicObserved("account-updated");
   account.password = "this is a test";
+  await passwordPromise;
   account.connect();
 
   await openChatTab();
   ok(
-    BrowserTestUtils.is_visible(document.getElementById("chatPanel")),
+    BrowserTestUtils.isVisible(document.getElementById("chatPanel")),
     "Chat tab is visible"
   );
 
@@ -163,7 +169,7 @@ add_task(async function testSystemMessageReplacement() {
 
   const chatConv = getChatConversationElement(conversation);
   ok(chatConv, "Found conversation element");
-  ok(BrowserTestUtils.is_visible(chatConv), "conversation visible");
+  ok(BrowserTestUtils.isVisible(chatConv), "conversation visible");
   const messageParent = await getChatMessageParent(chatConv);
 
   conversation.addMessages([

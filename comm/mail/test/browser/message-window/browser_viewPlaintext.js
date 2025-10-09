@@ -8,22 +8,19 @@
 
 "use strict";
 
-var { open_message_from_file } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-);
-var { close_window } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
+var { open_message_from_file } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 /**
  * Retrieve the textual content of the message and compare it.
  *
- * @param aWindow         Message window.
- * @param aExpected       Expected content.
- * @param aDontWantToSee  Content of other MIME parts we don't want to see.
+ * @param {Window} aWindow - Message window.
+ * @param {string} aExpected - Expected content.
+ * @param {string} aDontWantToSee - Content of other MIME parts we don't want to see.
  */
 function check_content(aWindow, aExpected, aDontWantToSee) {
-  let messageContent = aWindow.content.document.documentElement.textContent;
+  const messageContent = aWindow.content.document.documentElement.textContent;
 
   if (aExpected != aDontWantToSee) {
     Assert.ok(
@@ -35,7 +32,7 @@ function check_content(aWindow, aExpected, aDontWantToSee) {
       "Found content that shouldn't be there"
     );
   } else {
-    let ind = messageContent.indexOf(aExpected);
+    const ind = messageContent.indexOf(aExpected);
     Assert.ok(ind >= 0, "Didn't find expected content");
     if (ind >= 0) {
       Assert.ok(
@@ -50,30 +47,30 @@ function check_content(aWindow, aExpected, aDontWantToSee) {
  * Load a message from a file and display it as plain text and HTML. Check that the
  * correct MIME part is displayed.
  *
- * @param aFilePath            Path to the file containing the message to load and display.
- * @param aExpectedPlainText   Expected content when viewed as plain text.
- * @param aExpectedHTML        Expected content when viewed as HTML.
+ * @param {string} aFilePath - Path to the file containing the message to load and display.
+ * @param {string} aExpectedPlainText - Expected content when viewed as plain text.
+ * @param {string} aExpectedHTML - Expected content when viewed as HTML.
  */
 async function checkSingleMessage(
   aFilePath,
   aExpectedPlainText,
   aExpectedHTML
 ) {
-  let file = new FileUtils.File(getTestFilePath(`data/${aFilePath}`));
+  const file = new FileUtils.File(getTestFilePath(`data/${aFilePath}`));
 
   // Load and display as plain text.
   Services.prefs.setBoolPref("mailnews.display.prefer_plaintext", true);
   Services.prefs.setIntPref("mailnews.display.html_as", 1);
   let msgc = await open_message_from_file(file);
-  check_content(msgc.window, aExpectedPlainText, aExpectedHTML);
-  close_window(msgc);
+  check_content(msgc, aExpectedPlainText, aExpectedHTML);
+  await BrowserTestUtils.closeWindow(msgc);
 
   // Load and display as HTML.
   Services.prefs.setBoolPref("mailnews.display.prefer_plaintext", false);
   Services.prefs.setIntPref("mailnews.display.html_as", 0);
   msgc = await open_message_from_file(file);
-  check_content(msgc.window, aExpectedHTML, aExpectedPlainText);
-  close_window(msgc);
+  check_content(msgc, aExpectedHTML, aExpectedPlainText);
+  await BrowserTestUtils.closeWindow(msgc);
 }
 
 /**

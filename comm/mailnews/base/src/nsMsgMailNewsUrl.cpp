@@ -6,12 +6,13 @@
 #include "msgCore.h"
 #include "nsMsgMailNewsUrl.h"
 #include "nsIMsgAccountManager.h"
+#include "nsIMsgStatusFeedback.h"
+#include "nsIMsgWindow.h"
 #include "nsString.h"
 #include "nsILoadGroup.h"
 #include "nsIDocShell.h"
 #include "nsIWebProgress.h"
 #include "nsIWebProgressListener.h"
-#include "nsIInterfaceRequestor.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIIOService.h"
 #include "nsNetCID.h"
@@ -161,12 +162,8 @@ NS_IMETHODIMP nsMsgMailNewsUrl::GetFlags(uint32_t* aFlags) {
   return NS_OK;
 }
 
-#define NS_MSGMAILNEWSURL_CID                        \
-  {                                                  \
-    0x3fdae3ab, 0x4ac1, 0x4ad4, {                    \
-      0xb2, 0x8a, 0x28, 0xd0, 0xfa, 0x36, 0x39, 0x29 \
-    }                                                \
-  }
+#define NS_MSGMAILNEWSURL_CID \
+  {0x3fdae3ab, 0x4ac1, 0x4ad4, {0xb2, 0x8a, 0x28, 0xd0, 0xfa, 0x36, 0x39, 0x29}}
 static NS_DEFINE_CID(kNS_MSGMAILNEWSURL_CID, NS_MSGMAILNEWSURL_CID);
 NS_IMETHODIMP nsMsgMailNewsUrl::GetClassIDNoAlloc(nsCID* aClassIDNoAlloc) {
   *aClassIDNoAlloc = kNS_MSGMAILNEWSURL_CID;
@@ -314,10 +311,6 @@ NS_IMETHODIMP nsMsgMailNewsUrl::GetMsgWindow(nsIMsgWindow** aMsgWindow) {
 }
 
 NS_IMETHODIMP nsMsgMailNewsUrl::SetMsgWindow(nsIMsgWindow* aMsgWindow) {
-#ifdef DEBUG_David_Bienvenu
-  NS_ASSERTION(aMsgWindow || !m_msgWindowWeak,
-               "someone crunching non-null msg window");
-#endif
   m_msgWindowWeak = do_GetWeakReference(aMsgWindow);
   return NS_OK;
 }
@@ -659,6 +652,15 @@ nsMsgMailNewsUrl::GetHasRef(bool* result) {
   return m_baseURL->GetHasRef(result);
 }
 
+NS_IMETHODIMP nsMsgMailNewsUrl::GetHasUserPass(bool* aHasUserPass) {
+  nsAutoCString username;
+  GetUsername(username);
+  nsAutoCString password;
+  GetPassword(password);
+  *aHasUserPass = !username.IsEmpty() || !password.IsEmpty();
+  return NS_OK;
+}
+
 NS_IMETHODIMP nsMsgMailNewsUrl::SchemeIs(const char* aScheme, bool* _retval) {
   return m_baseURL->SchemeIs(aScheme, _retval);
 }
@@ -770,6 +772,10 @@ nsresult nsMsgMailNewsUrl::SetQueryWithEncoding(
   return NS_MutateURI(m_baseURL)
       .SetQueryWithEncoding(aQuery, aEncoding)
       .Finalize(m_baseURL);
+}
+
+NS_IMETHODIMP nsMsgMailNewsUrl::GetHasQuery(bool* aHasQuery) {
+  return m_baseURL->GetHasQuery(aHasQuery);
 }
 
 NS_IMETHODIMP nsMsgMailNewsUrl::GetRef(nsACString& aRef) {
@@ -1046,14 +1052,6 @@ NS_IMETHODIMP nsMsgMailNewsUrl::SetFolder(nsIMsgFolder* /* aFolder */) {
 
 NS_IMETHODIMP nsMsgMailNewsUrl::GetFolder(nsIMsgFolder** /* aFolder */) {
   return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_IMETHODIMP nsMsgMailNewsUrl::GetIsMessageUri(bool* aIsMessageUri) {
-  NS_ENSURE_ARG(aIsMessageUri);
-  nsAutoCString scheme;
-  m_baseURL->GetScheme(scheme);
-  *aIsMessageUri = StringEndsWith(scheme, "-message"_ns);
-  return NS_OK;
 }
 
 NS_IMPL_ISUPPORTS(nsMsgMailNewsUrl::Mutator, nsIURISetters, nsIURIMutator)

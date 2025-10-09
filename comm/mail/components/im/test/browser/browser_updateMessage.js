@@ -7,11 +7,13 @@ add_task(async function testUpdate() {
     "testuser",
     "prpl-mochitest"
   );
+  const passwordPromise = TestUtils.topicObserved("account-updated");
   account.password = "this is a test";
+  await passwordPromise;
   account.connect();
 
   await openChatTab();
-  ok(BrowserTestUtils.is_visible(document.getElementById("chatPanel")));
+  ok(BrowserTestUtils.isVisible(document.getElementById("chatPanel")));
 
   const conversation = account.prplAccount.wrappedJSObject.makeMUC("collapse");
   const convNode = getConversationItem(conversation);
@@ -30,7 +32,7 @@ add_task(async function testUpdate() {
     chatConv.convBrowser,
     "MessagesDisplayed"
   );
-  ok(BrowserTestUtils.is_visible(chatConv), "conversation visible");
+  ok(BrowserTestUtils.isVisible(chatConv), "conversation visible");
   const messageParent = await getChatMessageParent(chatConv);
   await browserDisplayed;
 

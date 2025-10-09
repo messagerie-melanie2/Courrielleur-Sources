@@ -5,6 +5,11 @@
 import argparse
 import logging
 import os
+import platform
+import shutil
+import sys
+import tarfile
+import time
 
 import mozpack.path as mozpath
 from mach.decorators import Command, CommandArgument, SubCommand
@@ -45,25 +50,8 @@ def android(command_context):
 
 @SubCommand(
     "android",
-    "assemble-app",
-    """Assemble Firefox for Android.
-    See http://firefox-source-docs.mozilla.org/build/buildsystem/toolchains.html#firefox-for-android-with-gradle""",  # NOQA: E501
-)
-@CommandArgument("args", nargs=argparse.REMAINDER)
-def android_assemble_app(command_context, args):
-    ret = gradle(
-        command_context,
-        command_context.substs["GRADLE_ANDROID_APP_TASKS"] + ["-x", "lint"] + args,
-        verbose=True,
-    )
-
-    return ret
-
-
-@SubCommand(
-    "android",
-    "generate-sdk-bindings",
-    """Generate SDK bindings used when building GeckoView.""",
+    "export",
+    """Generate SDK bindings and GeckoView JNI wrappers used when building GeckoView.""",
 )
 @CommandArgument(
     "inputs",
@@ -71,7 +59,7 @@ def android_assemble_app(command_context, args):
     help="config files, like [/path/to/ClassName-classes.txt]+",
 )
 @CommandArgument("args", nargs=argparse.REMAINDER)
-def android_generate_sdk_bindings(command_context, inputs, args):
+def export(command_context, inputs, args):
     import itertools
 
     def stem(input):
@@ -83,25 +71,9 @@ def android_generate_sdk_bindings(command_context, inputs, args):
 
     ret = gradle(
         command_context,
-        command_context.substs["GRADLE_ANDROID_GENERATE_SDK_BINDINGS_TASKS"]
-        + [bindings_args]
-        + args,
-        verbose=True,
-    )
-
-    return ret
-
-
-@SubCommand(
-    "android",
-    "generate-generated-jni-wrappers",
-    """Generate GeckoView JNI wrappers used when building GeckoView.""",
-)
-@CommandArgument("args", nargs=argparse.REMAINDER)
-def android_generate_generated_jni_wrappers(command_context, args):
-    ret = gradle(
-        command_context,
         command_context.substs["GRADLE_ANDROID_GENERATE_GENERATED_JNI_WRAPPERS_TASKS"]
+        + command_context.substs["GRADLE_ANDROID_GENERATE_SDK_BINDINGS_TASKS"]
+        + [bindings_args]
         + args,
         verbose=True,
     )
@@ -175,6 +147,34 @@ def android_gradle_dependencies(command_context, args):
     return 0
 
 
+def get_maven_archive_paths(maven_folder):
+    for subdir, _, files in os.walk(maven_folder):
+        if "-SNAPSHOT" in subdir:
+            continue
+        for file in files:
+            yield os.path.join(subdir, file)
+
+
+def create_maven_archive(topobjdir):
+    gradle_folder = os.path.join(topobjdir, "gradle")
+    maven_folder = os.path.join(gradle_folder, "maven")
+
+    # Create the archive, with no compression: The archive contents are large
+    # files which cannot be significantly compressed; attempting to compress
+    # the archive is usually expensive in time and results in minimal
+    # reduction in size.
+    # Even though the archive is not compressed, use the .xz file extension
+    # so that the taskcluster worker also skips compression.
+    with tarfile.open(os.path.join(gradle_folder, "target.maven.tar.xz"), "w") as tar:
+        for abs_path in get_maven_archive_paths(maven_folder):
+            tar.add(
+                abs_path,
+                arcname=os.path.join(
+                    "geckoview", os.path.relpath(abs_path, maven_folder)
+                ),
+            )
+
+
 @SubCommand(
     "android",
     "archive-geckoview",
@@ -183,13 +183,24 @@ def android_gradle_dependencies(command_context, args):
 )
 @CommandArgument("args", nargs=argparse.REMAINDER)
 def android_archive_geckoview(command_context, args):
+    tasks = command_context.substs["GRADLE_ANDROID_ARCHIVE_GECKOVIEW_TASKS"]
+    subproject = command_context.substs.get("MOZ_ANDROID_SUBPROJECT")
+    if subproject in (None, "geckoview_example"):
+        tasks += command_context.substs[
+            "GRADLE_ANDROID_ARCHIVE_GECKOVIEW_SUBPROJECT_TASKS"
+        ]
     ret = gradle(
         command_context,
-        command_context.substs["GRADLE_ANDROID_ARCHIVE_GECKOVIEW_TASKS"] + args,
+        tasks + args,
         verbose=True,
     )
 
-    return ret
+    if ret != 0:
+        return ret
+    if "MOZ_AUTOMATION" in os.environ:
+        create_maven_archive(command_context.topobjdir)
+
+    return 0
 
 
 @SubCommand("android", "build-geckoview_example", """Build geckoview_example """)
@@ -207,6 +218,18 @@ def android_build_geckoview_example(command_context, args):
     )
 
     return 0
+
+
+@SubCommand("android", "compile-all", """Build all source files""")
+@CommandArgument("args", nargs=argparse.REMAINDER)
+def android_compile_all(command_context, args):
+    ret = gradle(
+        command_context,
+        command_context.substs["GRADLE_ANDROID_COMPILE_ALL_TASKS"] + args,
+        verbose=True,
+    )
+
+    return ret
 
 
 def install_app_bundle(command_context, bundle):
@@ -238,6 +261,28 @@ def android_install_geckoview_example(command_context, args):
     return 0
 
 
+@SubCommand("android", "install-fenix", """Install fenix """)
+@CommandArgument("args", nargs=argparse.REMAINDER)
+def android_install_fenix(command_context, args):
+    gradle(
+        command_context,
+        ["fenix:installFenixDebug"] + args,
+        verbose=True,
+    )
+    return 0
+
+
+@SubCommand("android", "install-focus", """Install focus """)
+@CommandArgument("args", nargs=argparse.REMAINDER)
+def android_install_focus(command_context, args):
+    gradle(
+        command_context,
+        ["focus-android:installFocusDebug"] + args,
+        verbose=True,
+    )
+    return 0
+
+
 @SubCommand(
     "android", "install-geckoview-test_runner", """Install geckoview.test_runner """
 )
@@ -247,6 +292,17 @@ def android_install_geckoview_test_runner(command_context, args):
         command_context,
         command_context.substs["GRADLE_ANDROID_INSTALL_GECKOVIEW_TEST_RUNNER_TASKS"]
         + args,
+        verbose=True,
+    )
+    return 0
+
+
+@SubCommand("android", "installFenixRelease", """Install fenix Release""")
+@CommandArgument("args", nargs=argparse.REMAINDER)
+def android_install_fenix_release(command_context, args):
+    gradle(
+        command_context,
+        ["-p", "mobile/android/fenix", "installFenixRelease"] + args,
         verbose=True,
     )
     return 0
@@ -328,7 +384,6 @@ def android_geckoview_docs(
     javadoc_path,
     upload_message,
 ):
-
     tasks = (
         command_context.substs["GRADLE_ANDROID_GECKOVIEW_DOCS_ARCHIVE_TASKS"]
         if archive or upload
@@ -450,10 +505,16 @@ def android_geckoview_docs(
     help="Verbose output for what commands the build is running.",
 )
 @CommandArgument("args", nargs=argparse.REMAINDER)
-def gradle(command_context, args, verbose=False):
+def gradle(command_context, args, verbose=False, gradle_path=None, topsrcdir=None):
     if not verbose:
         # Avoid logging the command
         command_context.log_manager.terminal_handler.setLevel(logging.CRITICAL)
+
+    if not gradle_path:
+        gradle_path = command_context.substs["GRADLE"]
+
+    if not topsrcdir:
+        topsrcdir = mozpath.join(command_context.topsrcdir)
 
     # In automation, JAVA_HOME is set via mozconfig, which needs
     # to be specially handled in each mach command. This turns
@@ -487,26 +548,36 @@ def gradle(command_context, args, verbose=False):
         gradle_flags += ["--console=plain"]
 
     env = os.environ.copy()
+
     env.update(
         {
             "GRADLE_OPTS": "-Dfile.encoding=utf-8",
             "JAVA_HOME": java_home,
             "JAVA_TOOL_OPTIONS": "-Dfile.encoding=utf-8",
+            # Let Gradle get the right Python path on Windows
+            "GRADLE_MACH_PYTHON": sys.executable,
         }
     )
     # Set ANDROID_SDK_ROOT if --with-android-sdk was set.
     # See https://bugzilla.mozilla.org/show_bug.cgi?id=1576471
     android_sdk_root = command_context.substs.get("ANDROID_SDK_ROOT", "")
     if android_sdk_root:
+        env["ANDROID_HOME"] = android_sdk_root
         env["ANDROID_SDK_ROOT"] = android_sdk_root
 
-    return command_context.run_process(
-        [command_context.substs["GRADLE"]] + gradle_flags + args,
+    should_print_status = env.get("MACH") and not env.get("NO_BUILDSTATUS_MESSAGES")
+    if should_print_status:
+        print("BUILDSTATUS " + str(time.time()) + " START_Gradle " + args[0])
+    rv = command_context.run_process(
+        [gradle_path] + gradle_flags + args,
         explicit_env=env,
         pass_thru=True,  # Allow user to run gradle interactively.
         ensure_exit_code=False,  # Don't throw on non-zero exit code.
-        cwd=mozpath.join(command_context.topsrcdir),
+        cwd=topsrcdir,
     )
+    if should_print_status:
+        print("BUILDSTATUS " + str(time.time()) + " END_Gradle " + args[0])
+    return rv
 
 
 @Command("gradle-install", category="devenv", conditions=[REMOVED])
@@ -588,8 +659,7 @@ def emulator(
             logging.WARN,
             "emulator",
             {},
-            "Emulator binary not found.\n"
-            "Install the Android SDK and make sure 'emulator' is in your PATH.",
+            "Emulator binary not found. Try |mach bootstrap|\n",
         )
         return 2
 
@@ -650,3 +720,122 @@ def emulator(
                 "Unable to retrieve Android emulator return code.",
             )
     return 0
+
+
+@SubCommand(
+    command="android-emulator",
+    subcommand="reset",
+    description="Resets the emulator and Android Virtual Device (AVD) by removing the "
+    "'ANDROID_AVD_HOME' directory and re-bootstrapping the emulator and AVD.",
+)
+def emulator_reset(command_context):
+    from mozboot import android
+
+    os_arch = platform.machine()
+    os_name = None
+    if platform.system() == "Windows":
+        os_name = "windows"
+    elif platform.system() == "Linux":
+        os_name = "linux"
+    elif platform.system() == "Darwin":
+        os_name = "macosx"
+    else:
+        raise Exception("Can't reset AVD on an unknown system")
+
+    avd_home_path = android.AVD_HOME_PATH
+
+    if avd_home_path.exists():
+        command_context.log(
+            logging.INFO, "emulator", {}, f"Removing AVD directory: '{avd_home_path}'"
+        )
+        try:
+            shutil.rmtree(avd_home_path)
+            command_context.log(
+                logging.INFO,
+                "emulator",
+                {},
+                f"Successfully removed AVD directory: '{avd_home_path}'",
+            )
+        except FileNotFoundError:
+            pass  # Directory doesn't exist, do nothing
+        except Exception as e:
+            command_context.log(
+                logging.ERROR,
+                "emulator",
+                {},
+                f"Failed to remove the AVD directory: '{avd_home_path}': {e}",
+            )
+
+    sdk_manager_tool_path = android.get_sdkmanager_tool_path(
+        android.get_sdk_path(os_name)
+    )
+    if not sdk_manager_tool_path.exists():
+        command_context.log(
+            logging.ERROR,
+            "emulator",
+            {},
+            f"Unable to proceed – 'sdkmanager' not found at {sdk_manager_tool_path}. "
+            f"Please run './mach bootstrap' to reinstall your Android SDK.",
+        )
+        return 1
+
+    normalized_arch = os_arch.lower()
+
+    if "x86" in normalized_arch or "amd64" in normalized_arch:
+        avd_manifest_path_for_arch = android.AVD_MANIFEST_X86_64
+    else:
+        avd_manifest_path_for_arch = android.AVD_MANIFEST_ARM64
+
+    command_context.log(
+        logging.INFO,
+        "emulator",
+        {},
+        f"Resetting emulator and AVD. AVD_MANIFEST_PATH='{avd_manifest_path_for_arch}'",
+    )
+
+    packages = android.get_android_packages(android.AndroidPackageList.EMULATOR)
+    avd_manifest = android.get_avd_manifest(avd_manifest_path_for_arch)
+
+    android.ensure_android_packages(
+        os_name,
+        os_arch,
+        packages,
+        no_interactive=True,
+        avd_manifest=avd_manifest,
+    )
+
+    android.ensure_android_avd(
+        os_name,
+        os_arch,
+        no_interactive=True,
+        avd_manifest=avd_manifest,
+    )
+
+
+@Command(
+    "adb",
+    category="devenv",
+    description="Run the version of Android Debug Bridge (adb) utility that the build system would use.",
+)
+@CommandArgument("args", nargs=argparse.REMAINDER)
+def adb(
+    command_context,
+    args,
+):
+    """Run the version of Android Debug Bridge (adb) utility that the build
+    system would use."""
+    from mozrunner.devices.android_device import get_adb_path
+
+    adb_path = get_adb_path(command_context)
+    if not adb_path:
+        command_context.log(
+            logging.ERROR,
+            "adb",
+            {},
+            "ADB not found. Did you run `mach bootstrap` with Android selected yet?",
+        )
+        return 1
+
+    return command_context.run_process(
+        [adb_path] + args, pass_thru=True, ensure_exit_code=False
+    )

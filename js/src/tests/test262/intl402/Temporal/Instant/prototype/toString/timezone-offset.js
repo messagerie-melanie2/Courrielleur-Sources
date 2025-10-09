@@ -1,17 +1,16 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| shell-option(--enable-temporal) skip-if(!this.hasOwnProperty('Temporal')||!xulRuntime.shell) -- Temporal is not enabled unconditionally, requires shell-options
 // Copyright (C) 2021 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
 /*---
 esid: sec-temporal.instant.prototype.tostring
-description: The time zone offset part of the string serialization (Intl time zones)
+description: The time zone offset part of the string serialization (IANA time zones)
 features: [BigInt, Temporal]
 ---*/
 
 const instant = new Temporal.Instant(0n);
 
-function test(timeZoneIdentifier, expected, description) {
-  const timeZone = new Temporal.TimeZone(timeZoneIdentifier);
+function test(timeZone, expected, description) {
   assert.sameValue(instant.toString({ timeZone }), expected, description);
 }
 

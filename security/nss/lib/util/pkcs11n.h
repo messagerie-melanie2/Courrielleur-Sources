@@ -55,6 +55,9 @@
 
 #define CKK_NSS_CHACHA20 (CKK_NSS + 4)
 
+#define CKK_NSS_KYBER (CKK_NSS + 5)
+#define CKK_NSS_ML_KEM (CKK_NSS + 6)
+
 /*
  * NSS-defined certificate types
  *
@@ -106,6 +109,8 @@
 #define CKA_NSS_VALIDATION_VERSION (CKA_NSS + 37)
 #define CKA_NSS_VALIDATION_LEVEL (CKA_NSS + 38)
 #define CKA_NSS_VALIDATION_MODULE_ID (CKA_NSS + 39)
+
+#define CKA_NSS_PARAMETER_SET (CKA_NSS + 40)
 
 /*
  * Trust attributes:
@@ -258,6 +263,20 @@
 #define CKM_NSS_SP800_108_FEEDBACK_KDF_DERIVE_DATA (CKM_NSS + 43)
 #define CKM_NSS_SP800_108_DOUBLE_PIPELINE_KDF_DERIVE_DATA (CKM_NSS + 44)
 
+/* Kyber */
+#define CKM_NSS_KYBER_KEY_PAIR_GEN (CKM_NSS + 45)
+#define CKM_NSS_KYBER (CKM_NSS + 46)
+
+/* TLS ECDHE key pair generation. This is used to indicate that a key pair is
+ * for use in a single TLS handshake, so NIST SP 800-56A pairwise consistency
+ * checks can be skipped. It is otherwise identical to CKM_EC_KEY_PAIR_GEN.
+ */
+#define CKM_NSS_ECDHE_NO_PAIRWISE_CHECK_KEY_PAIR_GEN (CKM_NSS + 47)
+
+/* ML-KEM */
+#define CKM_NSS_ML_KEM_KEY_PAIR_GEN (CKM_NSS + 48)
+#define CKM_NSS_ML_KEM (CKM_NSS + 49)
+
 /*
  * HISTORICAL:
  * Do not attempt to use these. They are only used by NSS's internal
@@ -276,6 +295,11 @@
 #define CKM_NSS_PBE_MD2_HMAC_KEY_GEN 0x8000000bUL
 
 #define CKM_TLS_PRF_GENERAL 0x80000373UL
+
+/* Parameter set identifiers */
+#define CKP_NSS (CKM_VENDOR_DEFINED | NSSCK_VENDOR_NSS)
+#define CKP_NSS_KYBER_768_ROUND3 (CKP_NSS + 1)
+#define CKP_NSS_ML_KEM_768 (CKP_NSS + 2)
 
 /* FIPS Indicator defines */
 #define CKS_NSS_UNINITIALIZED 0xffffffffUL
@@ -355,6 +379,8 @@ typedef struct CK_NSS_AEAD_PARAMS {
 /* NSS specific types */
 typedef CK_ULONG CK_NSS_VALIDATION_TYPE;
 
+typedef CK_ULONG CK_NSS_KEM_PARAMETER_SET_TYPE;
+
 /* Mandatory parameter for the CKM_NSS_HKDF_* key deriviation mechanisms.
    See RFC 5869.
 
@@ -385,90 +411,31 @@ typedef struct CK_NSS_HKDFParams {
 /*
  * CK_NSS_IKE_PRF_PLUS_PARAMS is a structure that provides the parameters to
  * the CKM_NSS_IKE_PRF_PLUS_DERIVE mechanism.
- * The fields of the structure have the following meanings:
- *      prfMechanism    underlying MAC mechanism used to generate the prf.
- *      bHasSeedKey     hSeed key is present.
- *      hSeedKey        optional seed from key
- *      pSeedData       optional seed from data.
- *      ulSeedDataLen   length of optional seed data.
- *        If no seed data is present this value is NULL.
+ * It is now standardized, so The struct is just an alias for the standard
+ * struct in pkcs11t.h.
  */
-typedef struct CK_NSS_IKE_PRF_PLUS_DERIVE_PARAMS {
-    CK_MECHANISM_TYPE prfMechanism;
-    CK_BBOOL bHasSeedKey;
-    CK_OBJECT_HANDLE hSeedKey;
-    CK_BYTE_PTR pSeedData;
-    CK_ULONG ulSeedDataLen;
-} CK_NSS_IKE_PRF_PLUS_DERIVE_PARAMS;
+typedef struct CK_IKE2_PRF_PLUS_DERIVE_PARAMS CK_NSS_IKE_PRF_PLUS_DERIVE_PARAMS;
 
 /* CK_NSS_IKE_PRF_DERIVE_PARAMS is a structure that provides the parameters to
- *  the CKM_NSS_IKE_PRF_DERIVE mechanism.
- *
- * The fields of the structure have the following meanings:
- *     prfMechanism underlying MAC mechanism used to generate the prf.
- *     bRekey       hNewKey is present.
- *     pNi          Ni value
- *     ulNiLen      length of Ni
- *     pNr          Nr value
- *     ulNrLen      length of Nr
- *     hNewKey      New key value to drive the rekey.
+ * the CKM_NSS_IKE_PRF_DERIVE mechanism.
+ * It is now standardized, so The struct is just an alias for the standard
+ * struct in pkcs11t.h.
  */
-typedef struct CK_NSS_IKE_PRF_DERIVE_PARAMS {
-    CK_MECHANISM_TYPE prfMechanism;
-    CK_BBOOL bDataAsKey;
-    CK_BBOOL bRekey;
-    CK_BYTE_PTR pNi;
-    CK_ULONG ulNiLen;
-    CK_BYTE_PTR pNr;
-    CK_ULONG ulNrLen;
-    CK_OBJECT_HANDLE hNewKey;
-} CK_NSS_IKE_PRF_DERIVE_PARAMS;
+typedef struct CK_IKE_PRF_DERIVE_PARAMS CK_NSS_IKE_PRF_DERIVE_PARAMS;
 
 /* CK_NSS_IKE1_PRF_DERIVE_PARAMS is a structure that provides the parameters
  * to the CKM_NSS_IKE_PRF_DERIVE mechanism.
- *
- * The fields of the structure have the following meanings:
- *     prfMechanism  underlying MAC mechanism used to generate the prf.
- *     bRekey        hNewKey is present.
- *     pCKYi         CKYi value
- *     ulCKYiLen     length of CKYi
- *     pCKYr         CKYr value
- *     ulCKYrLen     length of CKYr
- *     hNewKey       New key value to drive the rekey.
+ * It is now standardized, so The struct is just an alias for the standard
+ * struct in pkcs11t.h.
  */
-typedef struct CK_NSS_IKE1_PRF_DERIVE_PARAMS {
-    CK_MECHANISM_TYPE prfMechanism;
-    CK_BBOOL bHasPrevKey;
-    CK_OBJECT_HANDLE hKeygxy;
-    CK_OBJECT_HANDLE hPrevKey;
-    CK_BYTE_PTR pCKYi;
-    CK_ULONG ulCKYiLen;
-    CK_BYTE_PTR pCKYr;
-    CK_ULONG ulCKYrLen;
-    CK_BYTE keyNumber;
-} CK_NSS_IKE1_PRF_DERIVE_PARAMS;
+typedef struct CK_IKE1_PRF_DERIVE_PARAMS CK_NSS_IKE1_PRF_DERIVE_PARAMS;
 
 /* CK_NSS_IKE1_APP_B_PRF_DERIVE_PARAMS is a structure that provides the
  * parameters to the CKM_NSS_IKE_APP_B_PRF_DERIVE mechanism.
- *
- * The fields of the structure have the following meanings:
- *     prfMechanism  underlying MAC mechanism used to generate the prf.
- *     bHasKeygxy    hKeygxy exists
- *     hKeygxy       optional key to hash in the prf
- *     pExtraData    optional extra data to hash in the prf
- *     ulExtraData   length of the optional extra data.
- *
- * CK_NSS_IKE_APP_B_PRF_DERIVE can take wither CK_NSS_IKE1_APP_B_PRF_DRIVE_PARAMS
- * or a single CK_MECHANISM_TYPE. In the latter cases bHashKeygx is assumed to
- * be false and ulExtraDataLen is assumed to be '0'.
+ * It is now standardized, so The struct is just an alias for the standard
+ * struct in pkcs11t.h.
  */
-typedef struct CK_NSS_IKE1_APP_B_PRF_DERIVE_PARAMS {
-    CK_MECHANISM_TYPE prfMechanism;
-    CK_BBOOL bHasKeygxy;
-    CK_OBJECT_HANDLE hKeygxy;
-    CK_BYTE_PTR pExtraData;
-    CK_ULONG ulExtraDataLen;
-} CK_NSS_IKE1_APP_B_PRF_DERIVE_PARAMS;
+typedef struct CK_IKE1_EXTENDED_DERIVE_PARAMS CK_NSS_IKE1_APP_B_PRF_DERIVE_PARAMS;
 
 /*
  * Parameter for the TLS extended master secret key derivation mechanisms:
@@ -621,6 +588,32 @@ typedef struct CK_NSS_FIPS_FUNCTIONS {
     CK_VERSION version;
     CK_NSS_GetFIPSStatus NSC_NSSGetFIPSStatus;
 } CK_NSS_FIPS_FUNCTIONS;
+
+/* KEM interface. This may move to the normal PKCS #11 table in the future. For
+ * now it's called "Vendor NSS KEM Interface" */
+typedef CK_RV (*CK_NSS_Encapsulate)(CK_SESSION_HANDLE hSession,
+                                    CK_MECHANISM_PTR pMechanism,
+                                    CK_OBJECT_HANDLE hPublicKey,
+                                    CK_ATTRIBUTE_PTR pTemplate,
+                                    CK_ULONG ulAttributeCount,
+                                    CK_OBJECT_HANDLE_PTR phKey,
+                                    CK_BYTE_PTR pCiphertext,
+                                    CK_ULONG_PTR pulCiphertextLen);
+
+typedef CK_RV (*CK_NSS_Decapsulate)(CK_SESSION_HANDLE hSession,
+                                    CK_MECHANISM_PTR pMechanism,
+                                    CK_OBJECT_HANDLE hPrivateKey,
+                                    CK_BYTE_PTR pCiphertext,
+                                    CK_ULONG ulCiphertextLen,
+                                    CK_ATTRIBUTE_PTR pTemplate,
+                                    CK_ULONG ulAttributeCount,
+                                    CK_OBJECT_HANDLE_PTR phKey);
+
+typedef struct CK_NSS_KEM_FUNCTIONS {
+    CK_VERSION version;
+    CK_NSS_Encapsulate C_Encapsulate;
+    CK_NSS_Decapsulate C_Decapsulate;
+} CK_NSS_KEM_FUNCTIONS;
 
 /* There was an inconsistency between the spec and the header file in defining
  * the CK_GCM_PARAMS structure. The authoritative reference is the header file,

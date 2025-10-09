@@ -18,8 +18,11 @@
 using namespace JS;
 
 /* The class of the global object. */
-static const JSClass global_class = {"global", JSCLASS_GLOBAL_FLAGS,
-                                     &DefaultGlobalClassOps};
+static const JSClass global_class = {
+    "global",
+    JSCLASS_GLOBAL_FLAGS,
+    &DefaultGlobalClassOps,
+};
 
 static volatile int dontOptimizeMeAway = 0;
 
@@ -42,7 +45,7 @@ static void checkBool(bool success) {
 /* The warning reporter callback. */
 void reportWarning(JSContext* cx, JSErrorReport* report) {
   fprintf(stderr, "%s:%u: %s\n",
-          report->filename ? report->filename : "<no filename>",
+          report->filename ? report->filename.c_str() : "<no filename>",
           (unsigned int)report->lineno, report->message().c_str());
 }
 

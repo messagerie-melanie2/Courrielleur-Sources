@@ -8,21 +8,18 @@
  * or bad as expected.
  */
 
-var { MessageInjection } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageInjection.jsm"
+var { MessageInjection } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageInjection.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
-var { PromiseUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/PromiseUtils.sys.mjs"
-);
-var { SmimeUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/smimeUtils.jsm"
+var { SmimeUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/SmimeUtils.sys.mjs"
 );
 
 add_setup(function () {
-  let messageInjection = new MessageInjection({ mode: "local" });
+  const messageInjection = new MessageInjection({ mode: "local" });
   gInbox = messageInjection.getInboxFolder();
   SmimeUtils.ensureNSS();
 
@@ -40,6 +37,14 @@ add_setup(function () {
   );
   SmimeUtils.loadCertificateAndKey(
     do_get_file(smimeDataDirectory + "Dave.p12"),
+    "nss"
+  );
+  SmimeUtils.loadCertificateAndKey(
+    do_get_file(smimeDataDirectory + "../smime-interop/Fran.p12"),
+    "nss"
+  );
+  SmimeUtils.loadCertificateAndKey(
+    do_get_file(smimeDataDirectory + "../smime-interop/Fran-ec.p12"),
     "nss"
   );
 });
@@ -65,7 +70,7 @@ add_task(async function verifyTestCertsStillValid() {
     QueryInterface: ChromeUtils.generateQI(["nsIDoneFindCertForEmailCallback"]),
   };
 
-  let composeSecure = Cc[
+  const composeSecure = Cc[
     "@mozilla.org/messengercompose/composesecure;1"
   ].createInstance(Ci.nsIMsgComposeSecure);
   composeSecure.asyncFindCertByEmailAddr(
@@ -78,13 +83,17 @@ var gInbox;
 
 var smimeDataDirectory = "../../../data/smime/";
 
-let smimeHeaderSink = {
+/**
+ * @implements {nsIMsgSMIMESink}
+ */
+const smimeSink = {
   expectResults(maxLen) {
     // dump("Restarting for next test\n");
-    this._deferred = PromiseUtils.defer();
+    this._deferred = Promise.withResolvers();
     this._expectedEvents = maxLen;
     this.countReceived = 0;
     this._results = [];
+    // Ensure checkFinished() only produces results once.
     this._resultsProduced = false;
     this.haveSignedBad = false;
     this.haveEncryptionBad = false;
@@ -154,8 +163,11 @@ let smimeHeaderSink = {
       this._deferred.resolve(this._results);
     }
   },
-  QueryInterface: ChromeUtils.generateQI(["nsIMsgSMIMEHeaderSink"]),
+  QueryInterface: ChromeUtils.generateQI(["nsIMsgSMIMESink"]),
 };
+
+const gTextAliceBob = "This is a test message from Alice to Bob.";
+const gTextFran = "This is a test message to Fran.";
 
 /**
  * Note on FILENAMES taken from the NSS test suite:
@@ -193,7 +205,7 @@ var gMessages = [
     enc: true,
     sig: false,
     sig_good: false,
-    check_text: true,
+    check_text: gTextAliceBob,
   },
   {
     filename: "alice.dsig.SHA1.multipart.bad.eml",
@@ -206,14 +218,14 @@ var gMessages = [
     enc: true,
     sig: true,
     sig_good: false,
-    check_text: true,
+    check_text: gTextAliceBob,
   },
   {
     filename: "alice.dsig.SHA1.multipart.eml",
     enc: false,
     sig: true,
     sig_good: false,
-    check_text: true,
+    check_text: gTextAliceBob,
   },
   {
     filename: "alice.dsig.SHA1.multipart.mismatch-econtent.eml",
@@ -244,6 +256,7 @@ var gMessages = [
     enc: true,
     sig: true,
     sig_good: true,
+    check_text: gTextAliceBob,
   },
   {
     filename: "alice.dsig.SHA256.multipart.mismatch-econtent.eml",
@@ -268,6 +281,7 @@ var gMessages = [
     enc: true,
     sig: true,
     sig_good: true,
+    check_text: gTextAliceBob,
   },
   {
     filename: "alice.dsig.SHA384.multipart.mismatch-econtent.eml",
@@ -292,6 +306,7 @@ var gMessages = [
     enc: true,
     sig: true,
     sig_good: true,
+    check_text: gTextAliceBob,
   },
   {
     filename: "alice.dsig.SHA512.multipart.mismatch-econtent.eml",
@@ -304,14 +319,14 @@ var gMessages = [
     enc: false,
     sig: true,
     sig_good: false,
-    check_text: true,
+    check_text: gTextAliceBob,
   },
   {
     filename: "alice.sig.SHA1.opaque.env.eml",
     enc: true,
     sig: true,
     sig_good: false,
-    check_text: true,
+    check_text: gTextAliceBob,
   },
   {
     filename: "alice.sig.SHA256.opaque.eml",
@@ -324,6 +339,7 @@ var gMessages = [
     enc: true,
     sig: true,
     sig_good: true,
+    check_text: gTextAliceBob,
   },
   {
     filename: "alice.sig.SHA384.opaque.eml",
@@ -336,6 +352,7 @@ var gMessages = [
     enc: true,
     sig: true,
     sig_good: true,
+    check_text: gTextAliceBob,
   },
   {
     filename: "alice.sig.SHA512.opaque.eml",
@@ -348,9 +365,22 @@ var gMessages = [
     enc: true,
     sig: true,
     sig_good: true,
+    check_text: gTextAliceBob,
   },
 
   // encrypt-then-sign
+  // An outer signature layer, around encryption, is considered bad practice.
+  // However, it may happen when a MTA adds a transport-level signature
+  // to a message, in addition to whatever the message author might
+  // have already done.
+  // Bug 1806161 introduced an exception, where we ignore the outer
+  // signature, if the second layer is encryption. (This could result
+  // an inner signature layer, directly inside the encryption layer,
+  // to be interpreted as the message content's signature.)
+  // The following set of files has an outer signature, around an
+  // encryption layer, but there is no additional signature inside,
+  // so while our test code technically sees a signature, we ignore
+  // them, and as a result, they are treated as invalid.
   {
     filename: "alice.env.sig.SHA1.opaque.eml",
     enc: false,
@@ -361,7 +391,7 @@ var gMessages = [
   {
     filename: "alice.env.dsig.SHA1.multipart.eml",
     enc: false,
-    sig: true,
+    sig: false,
     sig_good: false,
   },
   {
@@ -373,10 +403,10 @@ var gMessages = [
   },
   {
     filename: "alice.env.dsig.SHA256.multipart.eml",
-    enc: false,
-    sig: true,
+    enc: true,
+    sig: false,
     sig_good: false,
-    extra: 1,
+    check_text: gTextAliceBob,
   },
   {
     filename: "alice.env.sig.SHA384.opaque.eml",
@@ -387,10 +417,10 @@ var gMessages = [
   },
   {
     filename: "alice.env.dsig.SHA384.multipart.eml",
-    enc: false,
-    sig: true,
+    enc: true,
+    sig: false,
     sig_good: false,
-    extra: 1,
+    check_text: gTextAliceBob,
   },
   {
     filename: "alice.env.sig.SHA512.opaque.eml",
@@ -401,10 +431,53 @@ var gMessages = [
   },
   {
     filename: "alice.env.dsig.SHA512.multipart.eml",
+    enc: true,
+    sig: false,
+    sig_good: false,
+    check_text: gTextAliceBob,
+  },
+
+  // encrypt (innermost), wrapped inside multipart/mixed, then signed (outermost)
+  // The exception from bug 1806161 must not become active, the encryption
+  // layer must be rejected, and the signature must not be ignored.
+  {
+    filename: "../smime-manual/alice.env.mixed.dsig.SHA256.multipart.eml",
     enc: false,
     sig: true,
     sig_good: false,
-    extra: 1,
+  },
+
+  // good signature (innermost), wrapped in encryption layer,
+  // then wrapped by another signature layer.
+  // The outer signature layer should be ignored, per bug 1806161.
+  {
+    filename: "../smime-manual/alice.dsig.SHA256.multipart.env.dsig.eml",
+    enc: true,
+    sig: true,
+    sig_good: true,
+    check_text: gTextAliceBob,
+  },
+
+  // This is the same structure as
+  // alice.dsig.SHA256.multipart.env.dsig.eml
+  // One of these tests (and files) could get removed.
+  // The outer signature layer should be ignored, per bug 1806161.
+  {
+    filename: "../smime-manual/outer-smime-bad-sig-inner-smime-enc-sig.eml",
+    enc: true,
+    sig: true,
+    sig_good: true,
+    check_text: gTextAliceBob,
+  },
+
+  // This is similar as above, but there is no inner signature.
+  // The outer signature layer should be ignored, per bug 1806161.
+  {
+    filename: "../smime-manual/outer-smime-bad-sig-inner-smime-enc.eml",
+    enc: true,
+    sig: false,
+    sig_good: false,
+    check_text: gTextAliceBob,
   },
 
   // encrypt-then-sign, then sign again
@@ -605,12 +678,42 @@ var gMessages = [
     dave: 1,
     extra: 1,
   },
+  {
+    filename: "../smime-interop/fran-oaep_ossl.env",
+    enc: true,
+    check_text: gTextFran,
+  },
+  {
+    filename: "../smime-interop/fran-oaep-label_ossl.env",
+    enc: true,
+    check_text: gTextFran,
+  },
+  {
+    filename: "../smime-interop/fran-oaep-sha256hash_ossl.env",
+    enc: true,
+    check_text: gTextFran,
+  },
+  {
+    filename: "../smime-interop/fran-oaep-sha256hash-sha256mgf_ossl.env",
+    enc: true,
+    check_text: gTextFran,
+  },
+  {
+    filename: "../smime-interop/fran-ec_ossl-aes128-sha256.env",
+    enc: true,
+    check_text: gTextFran,
+  },
+  {
+    filename: "../smime-interop/fran-ec_ossl-aes256-sha512.env",
+    enc: true,
+    check_text: gTextFran,
+  },
 ];
 
-let gCopyWaiter = PromiseUtils.defer();
+const gCopyWaiter = Promise.withResolvers();
 
 add_task(async function copy_messages() {
-  for (let msg of gMessages) {
+  for (const msg of gMessages) {
     let promiseCopyListener = new PromiseTestUtils.PromiseCopyListener();
 
     MailServices.copy.copyFileMessage(
@@ -635,7 +738,7 @@ add_task(async function check_smime_message() {
 
   let hdrIndex = 0;
 
-  for (let msg of gMessages) {
+  for (const msg of gMessages) {
     console.log("checking " + msg.filename);
 
     let numExpected = 1;
@@ -648,26 +751,26 @@ add_task(async function check_smime_message() {
       eventsExpected += msg.extra;
     }
 
-    let hdr = mailTestUtils.getMsgHdrN(gInbox, hdrIndex);
-    let uri = hdr.folder.getUriForMsg(hdr);
-    let sinkPromise = smimeHeaderSink.expectResults(eventsExpected);
+    const hdr = mailTestUtils.getMsgHdrN(gInbox, hdrIndex);
+    const uri = hdr.folder.getUriForMsg(hdr);
+    const sinkPromise = smimeSink.expectResults(eventsExpected);
 
-    let conversion = apply_mime_conversion(uri, smimeHeaderSink);
-    await conversion.promise;
-
-    let contents = conversion._data;
+    const conversion = apply_mime_conversion(uri, smimeSink);
+    const contents = await conversion.promise;
     // dump("contents: " + contents + "\n");
 
     if (!msg.sig || msg.sig_good || "check_text" in msg) {
-      let expected = "This is a test message from Alice to Bob.";
-      Assert.ok(contents.includes(expected));
+      Assert.ok(
+        contents.includes("check_text" in msg ? msg.check_text : gTextAliceBob)
+      );
     }
+
     // Check that we're also using the display output.
     Assert.ok(contents.includes("<html>"));
 
     await sinkPromise;
 
-    let r = smimeHeaderSink._results;
+    const r = smimeSink._results;
     Assert.equal(r.length, numExpected);
 
     let sigIndex = 0;
@@ -680,7 +783,7 @@ add_task(async function check_smime_message() {
     }
     if (msg.sig) {
       Assert.equal(r[sigIndex].type, "signed");
-      let cert = r[sigIndex].certificate;
+      const cert = r[sigIndex].certificate;
       if (msg.sig_good) {
         Assert.notEqual(cert, null);
       }

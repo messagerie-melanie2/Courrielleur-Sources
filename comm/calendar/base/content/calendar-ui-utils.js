@@ -14,8 +14,7 @@
 /* import-globals-from ../../../mail/base/content/globalOverlay.js */
 /* import-globals-from ../../../mail/base/content/utilityOverlay.js */
 
-var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
-var { PluralForm } = ChromeUtils.importESModule("resource://gre/modules/PluralForm.sys.mjs");
+var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
 var { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUtils.sys.mjs");
 
 /**
@@ -26,8 +25,8 @@ var { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUti
  * enabled again the lock gets removed, but the control only
  * gets enabled if *all* possibly held locks have been removed.
  *
- * @param elementId     The element ID of the element to disable.
- * @param lockId        The ID of the lock to set.
+ * @param {string} elementId - The element ID of the element to disable.
+ * @param {string} lockId - The ID of the lock to set.
  */
 function disableElementWithLock(elementId, lockId) {
   // unconditionally disable the element.
@@ -36,11 +35,11 @@ function disableElementWithLock(elementId, lockId) {
   // remember that this element has been locked with
   // the key passed as argument. we keep a primitive
   // form of ref-count in the attribute 'lock'.
-  let element = document.getElementById(elementId);
+  const element = document.getElementById(elementId);
   if (element) {
     if (!element.hasAttribute(lockId)) {
       element.setAttribute(lockId, "true");
-      let n = parseInt(element.getAttribute("lock") || 0, 10);
+      const n = parseInt(element.getAttribute("lock") || 0, 10);
       element.setAttribute("lock", n + 1);
     }
   }
@@ -51,12 +50,12 @@ function disableElementWithLock(elementId, lockId) {
  * above defined function 'disableElementWithLock()'.
  * See the respective comment for further details.
  *
- * @see disableElementWithLock
- * @param elementId     The element ID of the element to enable.
- * @param lockId        The ID of the lock to set.
+ * @see {disableElementWithLock()}
+ * @param {string} elementId - The element ID of the element to enable.
+ * @param {string} lockId - The ID of the lock to set.
  */
 function enableElementWithLock(elementId, lockId) {
-  let element = document.getElementById(elementId);
+  const element = document.getElementById(elementId);
   if (!element) {
     dump("unable to find " + elementId + "\n");
     return;
@@ -64,7 +63,7 @@ function enableElementWithLock(elementId, lockId) {
 
   if (element.hasAttribute(lockId)) {
     element.removeAttribute(lockId);
-    let n = parseInt(element.getAttribute("lock") || 0, 10) - 1;
+    const n = parseInt(element.getAttribute("lock") || 0, 10) - 1;
     if (n > 0) {
       element.setAttribute("lock", n);
     } else {
@@ -80,18 +79,18 @@ function enableElementWithLock(elementId, lockId) {
  * Sorts a sorted array of calendars by pref |calendar.list.sortOrder|.
  * Repairs that pref if dangling entries exist.
  *
- * @param calendars     An array of calendars to sort.
+ * @param {calICalendar[]} calendars - An array of calendars to sort.
  */
 function sortCalendarArray(calendars) {
-  let ret = calendars.concat([]);
-  let sortOrder = {};
-  let sortOrderPref = Services.prefs.getStringPref("calendar.list.sortOrder", "").split(" ");
+  const ret = calendars.concat([]);
+  const sortOrder = {};
+  const sortOrderPref = Services.prefs.getStringPref("calendar.list.sortOrder", "").split(" ");
   for (let i = 0; i < sortOrderPref.length; ++i) {
     sortOrder[sortOrderPref[i]] = i;
   }
   function sortFunc(cal1, cal2) {
-    let orderIdx1 = sortOrder[cal1.id] || -1;
-    let orderIdx2 = sortOrder[cal2.id] || -1;
+    const orderIdx1 = sortOrder[cal1.id] || -1;
+    const orderIdx2 = sortOrder[cal2.id] || -1;
     if (orderIdx1 < orderIdx2) {
       return -1;
     }
@@ -103,8 +102,8 @@ function sortCalendarArray(calendars) {
   ret.sort(sortFunc);
 
   // check and repair pref when an array of all calendars has been passed:
-  let sortOrderString = Services.prefs.getStringPref("calendar.list.sortOrder", "");
-  let wantedOrderString = ret.map(calendar => calendar.id).join(" ");
+  const sortOrderString = Services.prefs.getStringPref("calendar.list.sortOrder", "");
+  const wantedOrderString = ret.map(calendar => calendar.id).join(" ");
   if (wantedOrderString != sortOrderString && cal.manager.getCalendars().length == ret.length) {
     Services.prefs.setStringPref("calendar.list.sortOrder", wantedOrderString);
   }
@@ -116,22 +115,22 @@ function sortCalendarArray(calendars) {
  * Fills up a menu - either a menupopup or a menulist - with menuitems that refer
  * to calendars.
  *
- * @param aItem                 The event or task
- * @param aCalendarMenuParent   The direct parent of the menuitems - either a
- *                                menupopup or a menulist
- * @param aCalendarToUse        The default-calendar
- * @param aOnCommand            A string that is applied to the "oncommand"
- *                                attribute of each menuitem
- * @returns The index of the calendar that matches the
- *                                default-calendar. By default 0 is returned.
+ * @param {calIItemBase} aItem - The event or task.
+ * @param {Element} aCalendarMenuParent - The direct parent of the menuitems.
+ *   Either a menupopup or a menulist.
+ * @param {calICalendar} aCalendarToUse - The default-calendar.
+ * @param {string} aOnCommand - A string that is applied to the "oncommand"
+ *   attribute of each menuitem
+ * @returns {integer} The index of the calendar that matches the
+ *   default-calendar. By default 0 is returned.
  */
 function appendCalendarItems(aItem, aCalendarMenuParent, aCalendarToUse, aOnCommand) {
-  let calendarToUse = aCalendarToUse || aItem.calendar;
-  let calendars = sortCalendarArray(cal.manager.getCalendars());
+  const calendarToUse = aCalendarToUse || aItem.calendar;
+  const calendars = sortCalendarArray(cal.manager.getCalendars());
   let indexToSelect = 0;
   let index = -1;
   for (let i = 0; i < calendars.length; ++i) {
-    let calendar = calendars[i];
+    const calendar = calendars[i];
     if (
       calendar.id == calendarToUse.id ||
       (calendar &&
@@ -140,19 +139,16 @@ function appendCalendarItems(aItem, aCalendarMenuParent, aCalendarToUse, aOnComm
           (calendar == aItem.calendar && cal.acl.userCanModifyItem(aItem))) &&
         cal.item.isItemSupported(aItem, calendar))
     ) {
-      let menuitem = addMenuItem(aCalendarMenuParent, calendar.name, calendar.name);
+      const menuitem = addMenuItem(aCalendarMenuParent, calendar.name, calendar.name);
       menuitem.calendar = calendar;
       index++;
       if (aOnCommand) {
         menuitem.setAttribute("oncommand", aOnCommand);
       }
-      if (aCalendarMenuParent.localName == "menupopup") {
-        menuitem.setAttribute("type", "checkbox");
-      }
       if (calendarToUse && calendarToUse.id == calendar.id) {
         indexToSelect = index;
       }
-      let cssSafeId = cal.view.formatStringForCSSRule(calendar.id);
+      const cssSafeId = cal.view.formatStringForCSSRule(calendar.id);
       menuitem.style.setProperty("--item-color", `var(--calendar-${cssSafeId}-backcolor)`);
       menuitem.classList.add("menuitem-iconic");
     }
@@ -163,16 +159,17 @@ function appendCalendarItems(aItem, aCalendarMenuParent, aCalendarToUse, aOnComm
 /**
  * Helper function to add a menuitem to a menulist or similar.
  *
- * @param aParent     The XUL node to add the menuitem to.
- * @param aLabel      The label string of the menuitem.
- * @param aValue      The value attribute of the menuitem.
- * @param aCommand    The oncommand attribute of the menuitem.
- * @returns The newly created menuitem
+ * @param {Element} aParent - The node to add the menuitem to.
+ * @param {string} aLabel - The label string of the menuitem.
+ * @param {string} aValue - The value attribute of the menuitem.
+ * @param {string} aCommand - The oncommand attribute of the menuitem.
+ * @returns {Element} The newly created menuitem.
  */
 function addMenuItem(aParent, aLabel, aValue, aCommand) {
   let item = null;
   if (aParent.localName == "menupopup") {
     item = document.createXULElement("menuitem");
+    item.setAttribute("type", "checkbox");
     item.setAttribute("label", aLabel);
     if (aValue) {
       item.setAttribute("value", aValue);
@@ -188,60 +185,43 @@ function addMenuItem(aParent, aLabel, aValue, aCommand) {
 }
 
 /**
- * Gets the correct plural form of a given unit.
- *
- * @param aLength         The number to use to determine the plural form
- * @param aUnit           The unit to find the plural form of
- * @param aIncludeLength  (optional) If true, the length will be included in the
- *                          result. If false, only the pluralized unit is returned.
- * @returns A string containing the pluralized version of the unit
- */
-function unitPluralForm(aLength, aUnit, aIncludeLength = true) {
-  let unitProp =
-    {
-      minutes: "unitMinutes",
-      hours: "unitHours",
-      days: "unitDays",
-      weeks: "unitWeeks",
-    }[aUnit] || "unitMinutes";
-
-  return PluralForm.get(aLength, cal.l10n.getCalString(unitProp))
-    .replace("#1", aIncludeLength ? aLength : "")
-    .trim();
-}
-
-/**
  * Update the given unit label to show the correct plural form.
  *
- * @param aLengthFieldId     The ID of the element containing the number
- * @param aLabelId           The ID of the label to update.
- * @param aUnit              The unit to use for the label.
+ * @param {string} aLengthFieldId - The ID of the element containing the number.
+ * @param {string} aLabelId - The ID of the label to update.
+ * @param {string} aUnit - The unit to use for the label.
  */
 function updateUnitLabelPlural(aLengthFieldId, aLabelId, aUnit) {
-  let label = document.getElementById(aLabelId);
-  let length = Number(document.getElementById(aLengthFieldId).value);
+  const label = document.getElementById(aLabelId);
+  const count = Number(document.getElementById(aLengthFieldId).value);
 
-  label.value = unitPluralForm(length, aUnit, false);
+  // event-duration-label-minutes
+  // event-duration-label-hours
+  // event-duration-label-days
+  // event-duration-label-weeks
+  document.l10n.setAttributes(label, `event-duration-label-${aUnit}`, { count });
 }
 
 /**
  * Update the given menu to show the correct plural form in the list.
  *
- * @param aLengthFieldId    The ID of the element containing the number
- * @param aMenuId           The menu to update labels in.
+ * @param {string} aLengthFieldId - The ID of the element containing the number.
+ * @param {string} aMenuId - The menu to update labels in.
  */
 function updateMenuLabelsPlural(aLengthFieldId, aMenuId) {
-  let menu = document.getElementById(aMenuId);
-  let length = Number(document.getElementById(aLengthFieldId).value);
+  const menu = document.getElementById(aMenuId);
+  const count = Number(document.getElementById(aLengthFieldId).value);
 
   // update the menu items
-  let items = menu.getElementsByTagName("menuitem");
-  for (let menuItem of items) {
-    menuItem.label = unitPluralForm(length, menuItem.value, false);
+  const items = menu.getElementsByTagName("menuitem");
+  for (const menuItem of items) {
+    document.l10n.setAttributes(menuItem, `event-duration-menuitem-${menuItem.value}`, {
+      count,
+    });
   }
 
   // force the menu selection to redraw
-  let saveSelectedIndex = menu.selectedIndex;
+  const saveSelectedIndex = menu.selectedIndex;
   menu.selectedIndex = -1;
   menu.selectedIndex = saveSelectedIndex;
 }
@@ -252,15 +232,15 @@ function updateMenuLabelsPlural(aLengthFieldId, aMenuId) {
  * see also
  * http://www.w3.org/TR/DOM-Level-2-Style/css.html#CSS-CSSview-getComputedStyle
  *
- * @param aXULElement   The xul element to be inspected.
- * @param aStyleProps   The css style properties for which values are to be retrieved
- *                        e.g. 'font-size', 'min-width" etc.
- * @returns An integer value denoting the optimal minimum width
+ * @param {Elemen} aXULElement - The element to be inspected.
+ * @param {string[]} aStyleProps - The css style properties for which values
+ *   are to be retrieved, e.g. 'font-size', 'min-width" etc.
+ * @returns {integer} An integer value denoting the optimal minimum width.
  */
 function getSummarizedStyleValues(aXULElement, aStyleProps) {
   let retValue = 0;
-  let cssStyleDeclares = document.defaultView.getComputedStyle(aXULElement);
-  for (let prop of aStyleProps) {
+  const cssStyleDeclares = document.defaultView.getComputedStyle(aXULElement);
+  for (const prop of aStyleProps) {
     retValue += parseInt(cssStyleDeclares.getPropertyValue(prop), 10);
   }
   return retValue;
@@ -271,8 +251,8 @@ function getSummarizedStyleValues(aXULElement, aStyleProps) {
  * by considering the css rules for the min-width, padding, border, margin
  * and border of the box.
  *
- * @param aXULElement   The xul element to be inspected.
- * @returns An integer value denoting the optimal minimum width
+ * @param {Element} aXULElement - The element to be inspected.
+ * @returns {integer} An integer value denoting the optimal minimum width.
  */
 function getOptimalMinimumWidth(aXULElement) {
   return getSummarizedStyleValues(aXULElement, [
@@ -292,14 +272,14 @@ function getOptimalMinimumWidth(aXULElement) {
  * and border of the box. In its current state the line-height is considered
  * by assuming that it's size is about one third of the size of the font-size
  *
- * @param aXULElement   The xul-element to be inspected.
- * @returns An integer value denoting the optimal minimum height
+ * @param {Element} aXULElement -  The element to be inspected.
+ * @returns {integer} An integer value denoting the optimal minimum height.
  */
 function getOptimalMinimumHeight(aXULElement) {
   // the following line of code presumes that the line-height is set to "normal"
   // which is supposed to be a "reasonable distance" between the lines
-  let firstEntity = parseInt(1.35 * getSummarizedStyleValues(aXULElement, ["font-size"]), 10);
-  let secondEntity = getSummarizedStyleValues(aXULElement, [
+  const firstEntity = parseInt(1.35 * getSummarizedStyleValues(aXULElement, ["font-size"]), 10);
+  const secondEntity = getSummarizedStyleValues(aXULElement, [
     "padding-bottom",
     "padding-top",
     "margin-bottom",
@@ -313,10 +293,10 @@ function getOptimalMinimumHeight(aXULElement) {
 /**
  * Sets up the attendance context menu, based on the given items
  *
- * @param {Node}  aMenu   The context menu item containing the required
- *                          menu or menuitem elements
- * @param {Array} aItems - An array of the selected calEvent or calTodo
- *                          items to display the context menu for
+ * @param {Node} aMenu   The context menu item containing the required
+ *   menu or menuitem elements
+ * @param {calIItemBase[]} aItems - An array of the selected calEvent or calTodo
+ *   items to display the context menu for.
  */
 function setupAttendanceMenu(aMenu, aItems) {
   /**
@@ -419,9 +399,9 @@ function setupAttendanceMenu(aMenu, aItems) {
    *                                    as per RfC 5545
    */
   function checkMenuItem(aMenuItems, aScope, aPartStat) {
-    let toRemove = [];
-    let toAdd = [];
-    for (let item of aMenuItems) {
+    const toRemove = [];
+    const toAdd = [];
+    for (const item of aMenuItems) {
       if (item.getAttribute("scope") == aScope && item.nodeName != "label") {
         if (item.getAttribute("value") == aPartStat) {
           switch (item.nodeName) {
@@ -429,9 +409,9 @@ function setupAttendanceMenu(aMenu, aItems) {
               // Since menu elements cannot have checkmarks,
               // we add a menuitem for this partstat and hide
               // the menu element instead
-              let checkedId = "checked-" + item.getAttribute("id");
+              const checkedId = "checked-" + item.getAttribute("id");
               if (!document.getElementById(checkedId)) {
-                let checked = item.ownerDocument.createXULElement("menuitem");
+                const checked = item.ownerDocument.createXULElement("menuitem");
                 checked.setAttribute("type", "checkbox");
                 checked.setAttribute("checked", "true");
                 checked.setAttribute("label", item.getAttribute("label"));
@@ -453,7 +433,7 @@ function setupAttendanceMenu(aMenu, aItems) {
           if (item.getAttribute("id").startsWith("checked-")) {
             // we inserted a menuitem before for this partstat, so
             // we revert that now
-            let menu = document.getElementById(item.getAttribute("id").substr(8));
+            const menu = document.getElementById(item.getAttribute("id").substr(8));
             menu.removeAttribute("hidden");
             toRemove.push(item);
           } else {
@@ -464,10 +444,10 @@ function setupAttendanceMenu(aMenu, aItems) {
         }
       }
     }
-    for (let [item, checked] of toAdd) {
+    for (const [item, checked] of toAdd) {
       item.before(checked);
     }
-    for (let item of toRemove) {
+    for (const item of toRemove) {
       item.remove();
     }
   }
@@ -476,12 +456,11 @@ function setupAttendanceMenu(aMenu, aItems) {
    * Hides the items from the provided node list. If a partstat is provided,
    * only the matching item will be hidden
    *
-   * @param {NodeList}  aMenuItems    A list of DOM nodes
-   * @param {string}    aPartStat     [optional] A valid participation
-   *                                    status as per RfC 5545
+   * @param {NodeList} aNodeList - A list of DOM nodes.
+   * @param {string} [aPartStat] A valid participation status as per RFC 5545.
    */
   function hideItems(aNodeList, aPartStat = null) {
-    for (let item of aNodeList) {
+    for (const item of aNodeList) {
       if (aPartStat && aPartStat != item.getAttribute("value")) {
         continue;
       }
@@ -492,17 +471,16 @@ function setupAttendanceMenu(aMenu, aItems) {
   /**
    * Provides the user's participation status for a provided item
    *
-   * @param   {calEvent|calTodo}  aItem  The calendar item to inspect
-   * @returns {?string} The participation status string
-   *                                       as per RfC 5545 or null if no
-   *                                       participant was detected
+   * @param {calEvent|calTodo}  aItem - The calendar item to inspect
+   * @returns {?string} The participation status string as per RFC 5545 or null
+   *   if no participant was detected.
    */
   function getInvitationStatus(aItem) {
     let party = null;
     if (cal.itip.isInvitation(aItem)) {
       party = cal.itip.getInvitedAttendee(aItem);
     } else if (aItem.organizer && aItem.getAttendees().length) {
-      let calOrgId = aItem.calendar.getProperty("organizerId");
+      const calOrgId = aItem.calendar.getProperty("organizerId");
       if (calOrgId && calOrgId.toLowerCase() == aItem.organizer.id.toLowerCase()) {
         party = aItem.organizer;
       }
@@ -512,24 +490,24 @@ function setupAttendanceMenu(aMenu, aItems) {
 
   goUpdateCommand("calendar_attendance_command");
 
-  let singleMenuItems = aMenu.getElementsByAttribute("scope", "this-occurrence");
-  let seriesMenuItems = aMenu.getElementsByAttribute("scope", "all-occurrences");
-  let labels = aMenu.getElementsByAttribute("class", "calendar-context-heading-label");
+  const singleMenuItems = aMenu.getElementsByAttribute("scope", "this-occurrence");
+  const seriesMenuItems = aMenu.getElementsByAttribute("scope", "all-occurrences");
+  const labels = aMenu.getElementsByAttribute("class", "calendar-context-heading-label");
 
   if (aItems.length == 1) {
     // we offer options for both single and recurring items. In case of the
     // latter and the item is an occurrence, we offer status information and
     // actions for both, the occurrence and the series
-    let thisPartStat = getInvitationStatus(aItems[0]);
+    const thisPartStat = getInvitationStatus(aItems[0]);
 
     if (aItems[0].recurrenceId) {
       // we get the partstat - if this is null, no participant could
       // be identified, so we bail out
-      let seriesPartStat = getInvitationStatus(aItems[0].parentItem);
+      const seriesPartStat = getInvitationStatus(aItems[0].parentItem);
       if (seriesPartStat) {
         // let's make sure we display the labels to distinguish series
         // and occurrence
-        for (let label of labels) {
+        for (const label of labels) {
           label.removeAttribute("hidden");
         }
 

@@ -56,7 +56,7 @@ impl Encode for ComponentExportKind {
 ///
 /// // This exports a function named "foo"
 /// let mut exports = ComponentExportSection::new();
-/// exports.export("foo", "", ComponentExportKind::Func, 0, None);
+/// exports.export("foo", ComponentExportKind::Func, 0, None);
 ///
 /// let mut component = Component::new();
 /// component.section(&exports);
@@ -89,13 +89,11 @@ impl ComponentExportSection {
     pub fn export(
         &mut self,
         name: &str,
-        url: &str,
         kind: ComponentExportKind,
         index: u32,
         ty: Option<ComponentTypeRef>,
     ) -> &mut Self {
-        name.encode(&mut self.bytes);
-        url.encode(&mut self.bytes);
+        crate::encode_component_export_name(&mut self.bytes, name);
         kind.encode(&mut self.bytes);
         index.encode(&mut self.bytes);
         match ty {
@@ -122,4 +120,10 @@ impl ComponentSection for ComponentExportSection {
     fn id(&self) -> u8 {
         ComponentSectionId::Export.into()
     }
+}
+
+/// For more information on this see `encode_component_import_name`.
+pub(crate) fn encode_component_export_name(bytes: &mut Vec<u8>, name: &str) {
+    bytes.push(0x00);
+    name.encode(bytes);
 }

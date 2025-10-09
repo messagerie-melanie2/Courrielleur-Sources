@@ -10,17 +10,20 @@
   min-height: 51em;
 }
 
-#calendar-event-dialog:-moz-lwtheme,
-#calendar-task-dialog:-moz-lwtheme {
-  background-color: transparent;
+:root:not([lwtheme]) {
+  #calendar-event-dialog,
+  #calendar-task-dialog {
+    background-color: transparent;
+  }
+
+  #calendar-event-dialog-inner,
+  #calendar-task-dialog-inner {
+    background-image: none !important;
+  }
 }
 
-:root:not([lwt-tree]):-moz-lwtheme #calendar-item-panel-iframe {
+:root[lwtheme]:not([lwt-tree]) #calendar-item-panel-iframe {
   background-color: -moz-Dialog;
-}
-#calendar-event-dialog-inner:-moz-lwtheme,
-#calendar-task-dialog-inner:-moz-lwtheme {
-  background-image: none !important;
 }
 
 #calendar-event-dialog,
@@ -29,6 +32,11 @@
 #calendar-event-summary-dialog,
 #calendar-task-dialog-inner {
   padding: 0;
+}
+
+#calendar-event-dialog-inner,
+#calendar-task-dialog-inner {
+  background: -moz-Dialog !important; /* Override LW-theme background images. */
 }
 
 #calendar-event-dialog .todo-only,
@@ -193,7 +201,7 @@ label.label {
 }
 
 #item-calendar::part(icon),
-#item-calendar > menupopup > menuitem .menu-iconic-icon,
+#item-calendar > menupopup > menuitem .menu-icon,
 #item-categories::part(color) {
   width: 10px;
   height: 10px;
@@ -201,11 +209,11 @@ label.label {
   background-color: var(--item-color);
 }
 
-#item-categories > menupopup > menuitem .menu-iconic-left {
+#item-categories > menupopup > menuitem .menu-icon {
   margin-inline-end: 3px;
 }
 
-#item-categories > menupopup > menuitem .menu-iconic-text {
+#item-categories > menupopup > menuitem .menu-text {
   padding-inline-start: 15px;
   background-image: var(--icon-circle-small);
   background-position: left center;
@@ -214,7 +222,7 @@ label.label {
   fill: var(--item-color);
 }
 
-#item-categories > menupopup > menuitem .menu-iconic-text:dir(rtl) {
+#item-categories > menupopup > menuitem .menu-text:dir(rtl) {
   background-position-x: right;
 }
 
@@ -316,11 +324,10 @@ label.label {
 }
 
 #event-grid-tabbox #notify-options {
-  padding: 0px 9px;
+  padding: 0 9px;
 }
 
 #FormatToolbox {
-  appearance: none;
   padding-inline: 4px;
 }
 
@@ -370,19 +377,23 @@ label.label {
   fill: currentColor;
 }
 
-#AlignLeftItem, #AlignPopupButton[state="left"] {
+#AlignLeftItem,
+#AlignPopupButton[state="left"] {
   list-style-image: url("chrome://messenger/skin/icons/left-align.svg");
 }
 
-#AlignCenterItem, #AlignPopupButton[state="center"] {
+#AlignCenterItem,
+#AlignPopupButton[state="center"] {
   list-style-image: url("chrome://messenger/skin/icons/center-align.svg");
 }
 
-#AlignRightItem, #AlignPopupButton[state="right"] {
+#AlignRightItem,
+#AlignPopupButton[state="right"] {
   list-style-image: url("chrome://messenger/skin/icons/right-align.svg");
 }
 
-#AlignJustifyItem, #AlignPopupButton[state="justify"] {
+#AlignJustifyItem,
+#AlignPopupButton[state="justify"] {
   list-style-image: url("chrome://messenger/skin/icons/justify.svg");
 }
 
@@ -605,7 +616,7 @@ label.label {
 
 #status-notifications > .notificationbox-stack {
   background-color: transparent;
-  margin-inline: 6px;
+  padding-inline: 6px;
 }
 
 #calendar-item-summary {
@@ -613,8 +624,7 @@ label.label {
   margin-inline: 8px 10px;
 }
 
-#calendar-summary-dialog,
-#calendar-ics-file-dialog {
+#calendar-summary-dialog {
   min-width: 35em;
 }
 
@@ -623,55 +633,52 @@ label.label {
 #calendar-event-summary-dialog .item-location,
 #calendar-event-summary-dialog .item-title,
 #calendar-task-summary-dialog .item-location,
-#calendar-task-summary-dialog .item-title,
-#calendar-ics-file-dialog .item-location,
-#calendar-ics-file-dialog .item-title {
+#calendar-task-summary-dialog .item-title {
   padding-inline-start: 1px;
 }
 
 #calendar-summary-dialog .item-attachment-cell,
 #calendar-event-summary-dialog .item-attachment-cell,
-#calendar-task-summary-dialog .item-attachment-cell,
-#calendar-ics-file-dialog .item-attachment-cell {
-  margin-left: 0px;
+#calendar-task-summary-dialog .item-attachment-cell {
+  margin-left: 0;
 }
 
 #calendar-summary-dialog .item-attachment-cell-label,
 #calendar-event-summary-dialog .item-attachment-cell-label,
-#calendar-task-summary-dialog .item-attachment-cell-label,
-#calendar-ics-file-dialog .item-attachment-cell-label {
+#calendar-task-summary-dialog .item-attachment-cell-label {
   margin-left: 0;
 }
 
 #calendar-summary-dialog .item-description,
 #calendar-event-summary-dialog .item-description,
-#calendar-task-summary-dialog .item-description,
-#calendar-ics-file-dialog .item-description {
+#calendar-task-summary-dialog .item-description {
   border: 1px solid var(--field-border-color);
   margin: 2px 4px 0;
 }
 
 #calendar-summary-dialog .item-description a,
 #calendar-event-summary-dialog .item-description a,
-#calendar-task-summary-dialog .item-description a,
-#calendar-ics-file-dialog .item-description a {
-  color: -moz-nativehyperlinktext;
+#calendar-task-summary-dialog .item-description a {
+  color: LinkText;
+  color-scheme: light dark;
 }
 
 :root[lwt-tree-brighttext] #calendar-summary-dialog .item-description a,
 :root[lwt-tree-brighttext] #calendar-event-summary-dialog .item-description a,
-:root[lwt-tree-brighttext] #calendar-task-summary-dialog .item-description a,
-:root[lwt-tree-brighttext] #calendar-ics-file-dialog .item-description a {
+:root[lwt-tree-brighttext] #calendar-task-summary-dialog .item-description a {
   color: #0aa5ff;
 }
 
 #calendar-summary-dialog #item-start-row .headline,
 #calendar-event-summary-dialog #item-start-row .headline,
 #calendar-task-summary-dialog #item-start-row .headline,
-#calendar-ics-file-dialog #item-start-row .headline,
 #calendar-summary-dialog #item-end-row .headline,
 #calendar-event-summary-dialog #item-end-row .headline,
-#calendar-task-summary-dialog #item-end-row .headline,
-#calendar-ics-file-dialog #item-end-row .headline {
+#calendar-task-summary-dialog #item-end-row .headline {
   font-weight: normal;
+}
+
+.cloud-file-attach-image {
+  -moz-context-properties: fill;
+  fill: var(--selected-item-color);
 }

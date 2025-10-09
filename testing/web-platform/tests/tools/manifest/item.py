@@ -166,7 +166,11 @@ class TestharnessTest(URLManifestItem):
         return self._extras.get("pac")
 
     @property
-    def testdriver(self) -> Optional[Text]:
+    def testdriver_features(self) -> Optional[List[Text]]:
+        return self._extras.get("testdriver_features")
+
+    @property
+    def testdriver(self) -> Optional[bool]:
         return self._extras.get("testdriver")
 
     @property
@@ -183,6 +187,8 @@ class TestharnessTest(URLManifestItem):
             rv[-1]["timeout"] = self.timeout
         if self.pac is not None:
             rv[-1]["pac"] = self.pac
+        if self.testdriver_features is not None:
+            rv[-1]["testdriver_features"] = self.testdriver_features
         if self.testdriver:
             rv[-1]["testdriver"] = self.testdriver
         if self.jsshell:
@@ -240,6 +246,10 @@ class RefTest(URLManifestItem):
             rv[key] = v
         return rv
 
+    @property
+    def testdriver(self) -> Optional[bool]:
+        return self._extras.get("testdriver")
+
     def to_json(self) -> Tuple[Optional[Text], List[Tuple[Text, Text]], Dict[Text, Any]]:  # type: ignore
         rel_url = None if self._url == self.path else self._url
         rv: Tuple[Optional[Text], List[Tuple[Text, Text]], Dict[Text, Any]] = (rel_url, self.references, {})
@@ -252,6 +262,8 @@ class RefTest(URLManifestItem):
             extras["dpi"] = self.dpi
         if self.fuzzy:
             extras["fuzzy"] = list(self.fuzzy.items())
+        if self.testdriver:
+            extras["testdriver"] = self.testdriver
         return rv
 
     @classmethod
@@ -279,7 +291,7 @@ class PrintRefTest(RefTest):
 
     @property
     def page_ranges(self) -> PageRanges:
-        return self._extras.get("page_ranges", {})
+        return cast(PageRanges, self._extras.get("page_ranges", {}))
 
     def to_json(self):  # type: ignore
         rv = super().to_json()
@@ -315,6 +327,16 @@ class CrashTest(URLManifestItem):
     def timeout(self) -> Optional[Text]:
         return None
 
+    @property
+    def testdriver(self) -> Optional[bool]:
+        return self._extras.get("testdriver")
+
+    def to_json(self):  # type: ignore
+        rel_url, extras = super().to_json()
+        if self.testdriver:
+            extras["testdriver"] = self.testdriver
+        return rel_url, extras
+
 
 class WebDriverSpecTest(URLManifestItem):
     __slots__ = ()
@@ -340,3 +362,37 @@ class SupportFile(ManifestItem):
     @property
     def id(self) -> Text:
         return self.path
+
+
+class SpecItem(ManifestItem):
+    __slots__ = ("specs")
+
+    item_type = "spec"
+
+    def __init__(self,
+                 tests_root: Text,
+                 path: Text,
+                 specs: List[Text]
+                 ) -> None:
+        super().__init__(tests_root, path)
+        self.specs = specs
+
+    @property
+    def id(self) -> Text:
+        return self.path
+
+    def to_json(self) -> Tuple[Optional[Text], Dict[Text, Any]]:
+        rv: Tuple[Optional[Text], Dict[Any, Any]] = (None, {})
+        for i in range(len(self.specs)):
+            spec_key = f"spec_link{i+1}"
+            rv[-1][spec_key] = self.specs[i]
+        return rv
+
+    @classmethod
+    def from_json(cls,
+                  manifest: "Manifest",
+                  path: Text,
+                  obj: Any
+                  ) -> "ManifestItem":
+        """Not properly implemented and is not used."""
+        return cls("/", "", [])

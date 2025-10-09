@@ -23,7 +23,10 @@
   margin: auto;
   background: var(--in-content-page-background);
   color: var(--in-content-page-color);
-  box-shadow: var(--shadow-30);
+  box-shadow: var(--logins-dialog-shadow);
+  border: var(--logins-dialog-border);
+  border-radius: var(--logins-dialog-border-radius);
+
   /* show a border in high contrast mode */
   outline: 1px solid transparent;
 }
@@ -54,11 +57,13 @@
 .dismiss-icon {
   -moz-context-properties: fill;
   fill: currentColor;
+  user-select: none;
 }
 
 .warning-icon {
   -moz-context-properties: fill;
   fill: currentColor;
+  user-select: none;
   width: 40px;
   height: 40px;
   margin: 16px;

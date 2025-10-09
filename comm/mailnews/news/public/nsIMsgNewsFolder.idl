@@ -6,16 +6,11 @@
 #include "nsISupports.idl"
 #include "nsIMsgFolder.idl"
 
-%{C++
-#include "nsTArray.h"
-%}
-
 interface nsIMsgWindow;
 interface nsINntpIncomingServer;
 
 [scriptable, uuid(9a12c3a5-9de5-4c57-ace3-d51802b525a9)]
 interface nsIMsgNewsFolder : nsISupports {
-  readonly attribute AString unicodeName;
   /**|rawName| is an 8-bit string to represent the name of a newsgroup used by
    * a news server. It's offered for the convenience of callers so that they
    * don't have to convert |unicodeName| to the server-side name when
@@ -75,8 +70,8 @@ interface nsIMsgNewsFolder : nsISupports {
    * is wanted, it is the responsibility of the caller to manage it explicitly
    * with nsIMsgAsyncPrompter.
    */
-  bool getAuthenticationCredentials(in nsIMsgWindow aMsgWindow,
-    in bool mayPrompt, in bool mustPrompt);
+  boolean getAuthenticationCredentials(in nsIMsgWindow aMsgWindow,
+    in boolean mayPrompt, in boolean mustPrompt);
 
   /// The username that should be used for this group
   attribute ACString groupUsername;
@@ -98,43 +93,25 @@ interface nsIMsgNewsFolder : nsISupports {
   readonly attribute ACString charset;
 
   readonly attribute AUTF8String newsrcLine;
-  readonly attribute ACString optionLines;
-  readonly attribute ACString unsubscribedNewsgroupLines;
   void SetNewsrcHasChanged(in boolean newsrcHasChanged);
   void updateSummaryFromNNTPInfo(in long oldest, in long youngest, in long total);
   void removeMessage(in nsMsgKey key);
   void removeMessages(in Array<nsMsgKey> keys);
   void cancelComplete();
-  void cancelFailed();
 
   ACString getMessageIdForKey(in nsMsgKey key);
 
   void getNextNMessages(in nsIMsgWindow aMsgWindow);
 
   /**
-   * Begin loading a message into the folder's offline store.
-   * @param key - the key of the message being loaded (the folder must
-   *              already have the message in it's DB)
-   */
-  void notifyDownloadBegin(in nsMsgKey key);
-
-  /**
-   * Feed the next line of a message into the folder, to be invoked multiple
-   * times between notifyDownloadBegin() and notifyDownloadEnd().
+   * Feed the article (message) into the folder, allowing offline storage
+   * to take place if configured.
    *
-   * @param line - a single line of data to append to the message, including
-   *               end-of-line terminator.
+   * @param articleNumber - The article being loaded. It must already be in
+   *   the database.
+   * @param data - Article data, including end-of-line terminators.
    */
-  void notifyDownloadedLine(in ACString line);
-
-  /**
-   * Finish loading a message into the folder. If an error occurs, the
-   * folder hears about it via this function, and should abort the message.
-   *
-   * @param status - NS_OK if the operation was completed, an error code
-   *                 otherwise.
-   */
-  void notifyDownloadEnd(in nsresult status);
+  void notifyArticleDownloaded(in unsigned long articleNumber, in ACString data);
 
   void notifyFinishedDownloadinghdrs();
 
@@ -148,4 +125,6 @@ interface nsIMsgNewsFolder : nsISupports {
    * @param aMsgWindow  The standard message window object, for error dialogs.
    */
   void cancelMessage(in nsIMsgDBHdr aMsgHdr, in nsIMsgWindow aMsgWindow);
+
+  void refreshSizeOnDisk();
 };

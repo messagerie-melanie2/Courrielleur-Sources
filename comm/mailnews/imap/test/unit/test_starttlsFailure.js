@@ -11,11 +11,11 @@
 /* import-globals-from ../../../test/resources/alertTestUtils.js */
 load("../../../resources/alertTestUtils.js");
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 var gAlertResolve;
@@ -39,8 +39,8 @@ add_setup(async function () {
   localAccountUtils.loadLocalMailAccount();
 
   // We need an identity so that updateFolder doesn't fail.
-  let imapAccount = MailServices.accounts.createAccount();
-  let identity = MailServices.accounts.createIdentity();
+  const imapAccount = MailServices.accounts.createAccount();
+  const identity = MailServices.accounts.createIdentity();
   imapAccount.addIdentity(identity);
   imapAccount.defaultIdentity = identity;
   imapAccount.incomingServer = IMAPPump.incomingServer;
@@ -57,10 +57,10 @@ add_setup(async function () {
 
   registerAlertTestUtils();
 
-  let listener = new PromiseTestUtils.PromiseUrlListener();
+  const listener = new PromiseTestUtils.PromiseUrlListener();
   IMAPPump.inbox.updateFolderWithListener(gDummyMsgWindow, listener);
   await listener.promise
-    .then(res => {
+    .then(() => {
       throw new Error("updateFolderWithListener has to fail");
     })
     .catch(exitCode => {
@@ -69,7 +69,7 @@ add_setup(async function () {
 });
 
 add_task(async function check_alert() {
-  let alertText = await gGotAlert;
+  const alertText = await gGotAlert;
   Assert.ok(alertText.startsWith("Server localhost has disconnected"));
 });
 

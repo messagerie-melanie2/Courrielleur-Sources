@@ -47,9 +47,9 @@ CARGO_CONFIG_TEMPLATE = """\
 
 # Take advantage of the fact that cargo will treat lines starting with #
 # as comments to add preprocessing directives. This file can thus by copied
-# as-is to $topsrcdir/.cargo/config with no preprocessing to be used there
+# as-is to $topsrcdir/.cargo/config.toml with no preprocessing to be used there
 # (for e.g. independent tasks building rust code), or be preprocessed by
-# the build system to produce a .cargo/config with the right content.
+# the build system to produce a .cargo/config.toml with the right content.
 #define REPLACE_NAME {replace_name}
 #define VENDORED_DIRECTORY {directory}
 # We explicitly exclude the following section when preprocessing because
@@ -75,26 +75,14 @@ Cargo.lock to the HEAD version, run `git checkout -- Cargo.lock` or
 """
 
 
-WINDOWS_UNDESIRABLE_REASON = """\
-The windows and windows-sys crates and their dependencies are too big to \
-vendor, and is a risk of version duplication due to its current update \
-cadence. Until this is worked out with upstream, we prefer to avoid them.\
-"""
-
-PACKAGES_WE_DONT_WANT = {
-    "windows-sys": WINDOWS_UNDESIRABLE_REASON,
-    "windows": WINDOWS_UNDESIRABLE_REASON,
-    "windows_aarch64_msvc": WINDOWS_UNDESIRABLE_REASON,
-    "windows_i686_gnu": WINDOWS_UNDESIRABLE_REASON,
-    "windows_i686_msvc": WINDOWS_UNDESIRABLE_REASON,
-    "windows_x86_64_gnu": WINDOWS_UNDESIRABLE_REASON,
-    "windows_x86_64_msvc": WINDOWS_UNDESIRABLE_REASON,
-}
+PACKAGES_WE_DONT_WANT = {}
 
 PACKAGES_WE_ALWAYS_WANT_AN_OVERRIDE_OF = [
     "autocfg",
     "cmake",
     "vcpkg",
+    "windows",
+    "windows-targets",
 ]
 
 
@@ -102,7 +90,6 @@ PACKAGES_WE_ALWAYS_WANT_AN_OVERRIDE_OF = [
 # If you do need to make changes increasing the number of duplicates, please
 # add a comment as to why.
 TOLERATED_DUPES = {
-    "mio": 2,
     # Transition from time 0.1 to 0.3 underway, but chrono is stuck on 0.1
     # and hasn't been updated in 1.5 years (an hypothetical update is
     # expected to remove the dependency on time altogether).
@@ -172,20 +159,18 @@ class VendorRust(MozbuildObject):
         if not out.startswith("cargo"):
             return False
         version = LooseVersion(out.split()[1])
-        # Cargo 1.68.0 changed vendoring in a way that creates a lot of noise
+        # Cargo 1.85.0 changed vendoring in a way that creates a lot of noise
         # if we go back and forth between vendoring with an older version and
         # a newer version. Only allow the newer versions.
         minimum_rust_version = MINIMUM_RUST_VERSION
-        if LooseVersion("1.68.0") >= MINIMUM_RUST_VERSION:
-            minimum_rust_version = "1.68.0"
+        if LooseVersion("1.85.0") >= MINIMUM_RUST_VERSION:
+            minimum_rust_version = "1.85.0"
         if version < minimum_rust_version:
             self.log(
                 logging.ERROR,
                 "cargo_version",
                 {},
-                "Cargo >= {0} required (install Rust {0} or newer)".format(
-                    minimum_rust_version
-                ),
+                f"Cargo >= {minimum_rust_version} required (install Rust {minimum_rust_version} or newer)",
             )
             return False
         self.log(logging.DEBUG, "cargo_version", {}, "cargo is new enough")
@@ -287,6 +272,7 @@ Please commit or stash these changes before vendoring, or re-run with `--ignore-
         "ISC",
         "MIT",
         "MPL-2.0",
+        "Unicode-3.0",
         "Unicode-DFS-2016",
         "Unlicense",
         "Zlib",
@@ -310,12 +296,12 @@ Please commit or stash these changes before vendoring, or re-run with `--ignore-
     RUNTIME_LICENSE_PACKAGE_WHITELIST = {
         "BSD-2-Clause": [
             "arrayref",
-            "cloudabi",
-            "Inflector",
             "mach",
             "qlog",
         ],
-        "BSD-3-Clause": [],
+        "BSD-3-Clause": [
+            "subtle",
+        ],
     }
 
     # ICU4X is distributed as individual crates that all share the same LICENSE
@@ -323,7 +309,7 @@ Please commit or stash these changes before vendoring, or re-run with `--ignore-
     # define the SHA256 once here, to make the review process easier as new
     # ICU4X crates are vendored into the tree.
     ICU4X_LICENSE_SHA256 = (
-        "02420cc1b4c26d9a3318d60fd57048d015831249a5b776a1ada75cd227e78630"
+        "853f87c96f3d249f200fec6db1114427bc8bdf4afddc93c576956d78152ce978"
     )
 
     # This whitelist should only be used for packages that use a
@@ -340,9 +326,28 @@ Please commit or stash these changes before vendoring, or re-run with `--ignore-
         # we're whitelisting this fuchsia crate because it doesn't get built in the final
         # product but has a license-file that needs ignoring
         "fuchsia-cprng": "03b114f53e6587a398931762ee11e2395bfdba252a329940e2c8c9e81813845b",
-        # Old ICU4X crates for ICU4X 1.0, see comment above.
+        # ICU4X uses Unicode v3 license
+        "icu_calendar": ICU4X_LICENSE_SHA256,
+        "icu_calendar_data": ICU4X_LICENSE_SHA256,
+        "icu_collections": ICU4X_LICENSE_SHA256,
+        "icu_locid": ICU4X_LICENSE_SHA256,
+        "icu_locid_transform": ICU4X_LICENSE_SHA256,
+        "icu_locid_transform_data": ICU4X_LICENSE_SHA256,
+        "icu_properties": ICU4X_LICENSE_SHA256,
+        "icu_properties_data": ICU4X_LICENSE_SHA256,
+        "icu_provider": ICU4X_LICENSE_SHA256,
+        "icu_provider_adapters": ICU4X_LICENSE_SHA256,
+        "icu_provider_macros": ICU4X_LICENSE_SHA256,
+        "icu_segmenter": ICU4X_LICENSE_SHA256,
+        "litemap": ICU4X_LICENSE_SHA256,
+        "tinystr": ICU4X_LICENSE_SHA256,
+        "writeable": ICU4X_LICENSE_SHA256,
+        "yoke": ICU4X_LICENSE_SHA256,
         "yoke-derive": ICU4X_LICENSE_SHA256,
+        "zerofrom": ICU4X_LICENSE_SHA256,
         "zerofrom-derive": ICU4X_LICENSE_SHA256,
+        "zerovec": ICU4X_LICENSE_SHA256,
+        "zerovec-derive": ICU4X_LICENSE_SHA256,
     }
 
     @staticmethod
@@ -391,9 +396,7 @@ Please commit or stash these changes before vendoring, or re-run with `--ignore-
 
     def _check_licenses(self, vendor_dir: str) -> bool:
         def verify_acceptable_license(package: str, license: str) -> bool:
-            self.log(
-                logging.DEBUG, "package_license", {}, "has license {}".format(license)
-            )
+            self.log(logging.DEBUG, "package_license", {}, f"has license {license}")
 
             if not self.runtime_license(package, license):
                 if license not in self.BUILDTIME_LICENSE_WHITELIST:
@@ -401,13 +404,11 @@ Please commit or stash these changes before vendoring, or re-run with `--ignore-
                         logging.ERROR,
                         "package_license_error",
                         {},
-                        """Package {} has a non-approved license: {}.
+                        f"""Package {package} has a non-approved license: {license}.
 
     Please request license review on the package's license.  If the package's license
     is approved, please add it to the whitelist of suitable licenses.
-    """.format(
-                            package, license
-                        ),
+    """,
                     )
                     return False
                 elif package not in self.BUILDTIME_LICENSE_WHITELIST[license]:
@@ -415,16 +416,14 @@ Please commit or stash these changes before vendoring, or re-run with `--ignore-
                         logging.ERROR,
                         "package_license_error",
                         {},
-                        """Package {} has a license that is approved for build-time dependencies:
-    {}
+                        f"""Package {package} has a license that is approved for build-time dependencies:
+    {license}
     but the package itself is not whitelisted as being a build-time only package.
 
     If your package is build-time only, please add it to the whitelist of build-time
     only packages. Otherwise, you need to request license review on the package's license.
     If the package's license is approved, please add it to the whitelist of suitable licenses.
-    """.format(
-                            package, license
-                        ),
+    """,
                     )
                     return False
             return True
@@ -434,7 +433,7 @@ Please commit or stash these changes before vendoring, or re-run with `--ignore-
                 logging.DEBUG,
                 "package_check",
                 {},
-                "Checking license for {}".format(package_name),
+                f"Checking license for {package_name}",
             )
 
             toml_file = os.path.join(vendor_dir, package_name, "Cargo.toml")
@@ -450,9 +449,7 @@ Please commit or stash these changes before vendoring, or re-run with `--ignore-
                     logging.ERROR,
                     "package_invalid_license_format",
                     {},
-                    "package {} has an invalid `license` field (expected a string)".format(
-                        package_name
-                    ),
+                    f"package {package_name} has an invalid `license` field (expected a string)",
                 )
                 return False
 
@@ -461,9 +458,7 @@ Please commit or stash these changes before vendoring, or re-run with `--ignore-
                     logging.ERROR,
                     "package_invalid_license_format",
                     {},
-                    "package {} has an invalid `license-file` field (expected a string)".format(
-                        package_name
-                    ),
+                    f"package {package_name} has an invalid `license-file` field (expected a string)",
                 )
                 return False
 
@@ -474,7 +469,7 @@ Please commit or stash these changes before vendoring, or re-run with `--ignore-
                     logging.ERROR,
                     "package_no_license",
                     {},
-                    "package {} does not provide a license".format(package_name),
+                    f"package {package_name} does not provide a license",
                 )
                 return False
 
@@ -486,7 +481,7 @@ Please commit or stash these changes before vendoring, or re-run with `--ignore-
                     logging.ERROR,
                     "package_many_licenses",
                     {},
-                    "package {} provides too many licenses".format(package_name),
+                    f"package {package_name} provides too many licenses",
                 )
                 return False
 
@@ -499,7 +494,7 @@ Please commit or stash these changes before vendoring, or re-run with `--ignore-
                 logging.DEBUG,
                 "package_license_file",
                 {},
-                "package has license-file {}".format(license_file),
+                f"package has license-file {license_file}",
             )
 
             if package_name not in self.RUNTIME_LICENSE_FILE_PACKAGE_WHITELIST:
@@ -507,13 +502,11 @@ Please commit or stash these changes before vendoring, or re-run with `--ignore-
                     logging.ERROR,
                     "package_license_file_unknown",
                     {},
-                    """Package {} has an unreviewed license file: {}.
+                    f"""Package {package_name} has an unreviewed license file: {license_file}.
 
 Please request review on the provided license; if approved, the package can be added
 to the whitelist of packages whose licenses are suitable.
-""".format(
-                        package_name, license_file
-                    ),
+""",
                 )
                 return False
 
@@ -529,13 +522,11 @@ to the whitelist of packages whose licenses are suitable.
                     logging.ERROR,
                     "package_license_file_mismatch",
                     {},
-                    """Package {} has changed its license file: {} (hash {}).
+                    f"""Package {package_name} has changed its license file: {license_file} (hash {current_hash}).
 
 Please request review on the provided license; if approved, please update the
 license file's hash.
-""".format(
-                        package_name, license_file, current_hash
-                    ),
+""",
                 )
                 return False
             return True
@@ -556,7 +547,7 @@ license file's hash.
         for path in Path(self.topsrcdir).glob("build/rust/**/Cargo.toml"):
             with open(path) as fh:
                 cargo_toml = toml.load(fh)
-                path = path.relative_to(self.topsrcdir)
+                relative_path = path.relative_to(self.topsrcdir)
                 package = cargo_toml["package"]
                 key = (package["name"], package["version"])
                 if key in crates:
@@ -565,21 +556,21 @@ license file's hash.
                         "build_rust",
                         {
                             "path": crates[key],
-                            "path2": path,
+                            "path2": relative_path,
                             "crate": key[0],
                             "version": key[1],
                         },
                         "{path} and {path2} both contain {crate} {version}",
                     )
                     ret = False
-                crates[key] = path
+                crates[key] = relative_path
 
         for package in cargo_lock["package"]:
             key = (package["name"], package["version"])
             if key in crates and "source" not in package:
                 crates.pop(key)
 
-        for ((name, version), path) in crates.items():
+        for (name, version), path in crates.items():
             self.log(
                 logging.ERROR,
                 "build_rust",
@@ -589,9 +580,7 @@ license file's hash.
             ret = False
         return ret
 
-    def vendor(
-        self, ignore_modified=False, build_peers_said_large_imports_were_ok=False
-    ):
+    def vendor(self, ignore_modified=False, force=False):
         from mozbuild.mach_commands import cargo_vet
 
         self.populate_logger()
@@ -761,7 +750,13 @@ license file's hash.
             env=env,
         )
         if res.returncode:
-            vet = json.loads(res.stdout)
+            try:
+                vet = json.loads(res.stdout)
+            except Exception:
+                # Most likely, if we're in a situation where stdout is not JSON,
+                # stderr will have had some error message printed out, so falling
+                # back to a failure case with no additional error message is fine.
+                vet = {}
             logged_error = False
             for failure in vet.get("failures", []):
                 failure["crate"] = failure.pop("name")
@@ -831,7 +826,7 @@ license file's hash.
 
         # If we failed when checking the crates list and/or running `cargo vet`,
         # stop before invoking `cargo vendor`.
-        if failed:
+        if failed and not force:
             return False
 
         res = subprocess.run(
@@ -843,7 +838,7 @@ license file's hash.
         output = res.stdout.decode("UTF-8")
 
         # Get the snippet of configuration that cargo vendor outputs, and
-        # update .cargo/config with it.
+        # update .cargo/config.toml with it.
         # XXX(bug 1576765): Hopefully do something better after
         # https://github.com/rust-lang/cargo/issues/7280 is addressed.
         config = "\n".join(
@@ -877,7 +872,7 @@ license file's hash.
             mozpath.normsep(os.path.normcase(self.topsrcdir)),
         )
 
-        cargo_config = os.path.join(self.topsrcdir, ".cargo", "config.in")
+        cargo_config = os.path.join(self.topsrcdir, ".cargo", "config.toml.in")
         with open(cargo_config, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(
                 CARGO_CONFIG_TEMPLATE.format(
@@ -887,16 +882,14 @@ license file's hash.
                 )
             )
 
-        if not self._check_licenses(vendor_dir):
+        if not self._check_licenses(vendor_dir) and not force:
             self.log(
                 logging.ERROR,
                 "license_check_failed",
                 {},
-                """The changes from `mach vendor rust` will NOT be added to version control.
+                f"""The changes from `mach vendor rust` will NOT be added to version control.
 
-{notice}""".format(
-                    notice=CARGO_LOCK_NOTICE
-                ),
+{CARGO_LOCK_NOTICE}""",
             )
             self.repository.clean_directory(vendor_dir)
             return False
@@ -916,7 +909,7 @@ license file's hash.
 
         # Forcefully complain about large files being added, as history has
         # shown that large-ish files typically are not needed.
-        if large_files and not build_peers_said_large_imports_were_ok:
+        if large_files:
             self.log(
                 logging.ERROR,
                 "filesize_check",
@@ -939,7 +932,8 @@ The changes from `mach vendor rust` will NOT be added to version control.
             )
             self.repository.forget_add_remove_files(vendor_dir)
             self.repository.clean_directory(vendor_dir)
-            return False
+            if not force:
+                return False
 
         # Only warn for large imports, since we may just have large code
         # drops from time to time (e.g. importing features into m-c).
@@ -949,13 +943,22 @@ The changes from `mach vendor rust` will NOT be added to version control.
                 logging.WARN,
                 "filesize_check",
                 {},
-                """Your changes add {size} bytes of added files.
+                f"""Your changes add {cumulative_added_size} bytes of added files.
 
 Please consider finding ways to reduce the size of the vendored packages.
 For instance, check the vendored packages for unusually large test or
 benchmark files that don't need to be published to crates.io and submit
-a pull request upstream to ignore those files when publishing.""".format(
-                    size=cumulative_added_size
-                ),
+a pull request upstream to ignore those files when publishing.""",
             )
+        if "MOZ_AUTOMATION" in os.environ:
+            changed = self.repository.get_changed_files(mode="staged")
+            for file in changed:
+                self.log(
+                    logging.ERROR,
+                    "vendor-change",
+                    {"file": file},
+                    "File was modified by vendor: {file}",
+                )
+            if changed:
+                return False
         return True

@@ -8,6 +8,7 @@
 use super::{MTLTextureType, NSUInteger};
 use objc::runtime::{NO, YES};
 
+/// See <https://developer.apple.com/documentation/metal/mtldatatype>
 #[repr(u64)]
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
@@ -105,9 +106,37 @@ pub enum MTLDataType {
     RGB10A2Unorm = 75,
     RG11B10Float = 76,
     RGB9E5Float = 77,
+
+    RenderPipeline = 78,
+    ComputePipeline = 79,
+    IndirectCommandBuffer = 80,
+
+    Long = 81,
+    Long2 = 82,
+    Long3 = 83,
+    Long4 = 84,
+
+    ULong = 85,
+    ULong2 = 86,
+    ULong3 = 87,
+    ULong4 = 88,
+
+    VisibleFunctionTable = 115,
+    IntersectionFunctionTable = 116,
+    PrimitiveAccelerationStructure = 117,
+    InstanceAccelerationStructure = 118,
+
+    BFloat = 121,
+    BFloat2 = 122,
+    BFloat3 = 123,
+    BFloat4 = 124,
 }
 
+/// See <https://developer.apple.com/documentation/metal/mtlargumenttype>
 #[repr(u64)]
+#[deprecated(
+    note = "Since: iOS 8.0–16.0, iPadOS 8.0–16.0, macOS 10.11–13.0, Mac Catalyst 13.1–16.0, tvOS 9.0–16.0"
+)]
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum MTLArgumentType {
@@ -119,6 +148,7 @@ pub enum MTLArgumentType {
     Imageblock = 17,
 }
 
+/// See <https://developer.apple.com/documentation/metal/mtlargumentaccess>
 #[repr(u64)]
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
@@ -128,12 +158,12 @@ pub enum MTLArgumentAccess {
     WriteOnly = 2,
 }
 
+/// See <https://developer.apple.com/documentation/metal/mtlstructmember>
 pub enum MTLStructMember {}
 
 foreign_obj_type! {
     type CType = MTLStructMember;
     pub struct StructMember;
-    pub struct StructMemberRef;
 }
 
 impl StructMemberRef {
@@ -166,7 +196,6 @@ pub enum MTLStructMemberArray {}
 foreign_obj_type! {
     type CType = MTLStructMemberArray;
     pub struct StructMemberArray;
-    pub struct StructMemberArrayRef;
 }
 
 impl StructMemberArrayRef {
@@ -179,12 +208,12 @@ impl StructMemberArrayRef {
     }
 }
 
+/// See <https://developer.apple.com/documentation/metal/mtlstructtype>
 pub enum MTLStructType {}
 
 foreign_obj_type! {
     type CType = MTLStructType;
     pub struct StructType;
-    pub struct StructTypeRef;
 }
 
 impl StructTypeRef {
@@ -199,12 +228,12 @@ impl StructTypeRef {
     }
 }
 
+/// See <https://developer.apple.com/documentation/metal/mtlarraytype>
 pub enum MTLArrayType {}
 
 foreign_obj_type! {
     type CType = MTLArrayType;
     pub struct ArrayType;
-    pub struct ArrayTypeRef;
 }
 
 impl ArrayTypeRef {
@@ -229,12 +258,15 @@ impl ArrayTypeRef {
     }
 }
 
+/// <https://developer.apple.com/documentation/metal/mtlargument>
+#[deprecated(
+    note = "Since iOS 8.0–16.0, iPadOS 8.0–16.0, macOS 10.11–13.0, Mac Catalyst 13.1–16.0, tvOS 9.0–16.0"
+)]
 pub enum MTLArgument {}
 
 foreign_obj_type! {
     type CType = MTLArgument;
     pub struct Argument;
-    pub struct ArgumentRef;
 }
 
 impl ArgumentRef {
@@ -258,13 +290,7 @@ impl ArgumentRef {
     }
 
     pub fn is_active(&self) -> bool {
-        unsafe {
-            match msg_send![self, isActive] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, isActive] }
     }
 
     pub fn buffer_alignment(&self) -> NSUInteger {
@@ -300,12 +326,12 @@ impl ArgumentRef {
     }
 }
 
+/// See <https://developer.apple.com/documentation/metal/mtlargumentdescriptor>
 pub enum MTLArgumentDescriptor {}
 
 foreign_obj_type! {
     type CType = MTLArgumentDescriptor;
     pub struct ArgumentDescriptor;
-    pub struct ArgumentDescriptorRef;
 }
 
 impl ArgumentDescriptor {

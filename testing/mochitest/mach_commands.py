@@ -10,7 +10,6 @@ import warnings
 from argparse import Namespace
 from collections import defaultdict
 
-import six
 from mach.decorators import Command, CommandArgument
 from mozbuild.base import MachCommandConditions as conditions
 from mozbuild.base import MozbuildObject
@@ -58,7 +57,6 @@ parser = None
 
 
 class MochitestRunner(MozbuildObject):
-
     """Easily run mochitests.
 
     This currently contains just the basics for running mochitests. We may want
@@ -156,11 +154,6 @@ class MochitestRunner(MozbuildObject):
             manifest = TestManifest()
             manifest.tests.extend(tests)
             options.manifestFile = manifest
-
-        # Firefox for Android doesn't use e10s
-        if options.app is not None and "geckoview" not in options.app:
-            options.e10s = False
-            print("using e10s=False for non-geckoview app")
 
         return runtestsremote.run_test_harness(parser, options)
 
@@ -297,18 +290,20 @@ def run_mochitest_general(
             buildapp = app
             break
 
+    # Force the buildapp to be android if requested
+    if kwargs.get("android"):
+        buildapp = "android"
+
     flavors = None
     if flavor:
-        for fname, fobj in six.iteritems(ALL_FLAVORS):
+        for fname, fobj in ALL_FLAVORS.items():
             if flavor in fobj["aliases"]:
                 if buildapp not in fobj["enabled_apps"]:
                     continue
                 flavors = [fname]
                 break
     else:
-        flavors = [
-            f for f, v in six.iteritems(ALL_FLAVORS) if buildapp in v["enabled_apps"]
-        ]
+        flavors = [f for f, v in ALL_FLAVORS.items() if buildapp in v["enabled_apps"]]
 
     from mozbuild.controller.building import BuildDriver
 
@@ -398,6 +393,20 @@ def run_mochitest_general(
         # reason it doesn't get set when calling `activate_this.py` in the virtualenv.
         sys.executable = command_context.virtualenv_manager.python_path
 
+    if ("browser-chrome", "a11y") in suites and sys.platform == "win32":
+        # Only Windows a11y browser tests need this.
+        req = os.path.join(
+            "accessible",
+            "tests",
+            "browser",
+            "windows",
+            "a11y_setup_requirements.txt",
+        )
+        command_context.virtualenv_manager.activate()
+        command_context.virtualenv_manager.install_pip_requirements(
+            req, require_hashes=False
+        )
+
     # This is a hack to introduce an option in mach to not send
     # filtered tests to the mochitest harness. Mochitest harness will read
     # the master manifest in that case.
@@ -422,13 +431,13 @@ def run_mochitest_general(
             apps = fobj["enabled_apps"]
             name = fobj["aliases"][0]
             if s:
-                name = "{} --subsuite {}".format(name, s)
+                name = f"{name} --subsuite {s}"
 
             if buildapp not in apps:
                 reason = "requires {}".format(" or ".join(apps))
             else:
                 reason = "excluded by the command line"
-            msg.append("    mochitest -f {} ({})".format(name, reason))
+            msg.append(f"    mochitest -f {name} ({reason})")
         print(SUPPORTED_TESTS_NOT_FOUND.format(buildapp, "\n".join(sorted(msg))))
         return 1
 
@@ -541,5 +550,31 @@ def run_junit(command_context, no_install, **kwargs):
             "mach-mochitest", kwargs, {default_format: sys.stdout}, format_args
         )
 
+    if kwargs.get("mach_test") and kwargs.get("test_objects"):
+        test_classes = []
+        test_objects = kwargs.get("test_objects")
+        for test_object in test_objects:
+            test_classes.append(classname_for_test(test_object["name"]))
+        kwargs["test_filters"] = test_classes
+
     mochitest = command_context._spawn(MochitestRunner)
     return mochitest.run_geckoview_junit_test(command_context._mach_context, **kwargs)
+
+
+def classname_for_test(test):
+    """Convert path of test file to gradle recognized test suite name"""
+    test_path = os.path.join(
+        "mobile",
+        "android",
+        "geckoview",
+        "src",
+        "androidTest",
+        "java",
+    )
+    return (
+        os.path.normpath(test)
+        .split(os.path.normpath(test_path))[-1]
+        .removeprefix(os.path.sep)
+        .replace(os.path.sep, ".")
+        .removesuffix(".kt")
+    )

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <!-- This Source Code Form is subject to the terms of the Mozilla Public
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, you can obtain one at http://mozilla.org/MPL/2.0/. -->
@@ -6,6 +6,10 @@
   <head>
     <meta charset="utf-8" />
     <title id="title"></title>
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'"
+    />
     <style>
       table {
         width: 100%;
@@ -114,7 +118,7 @@
   </head>
   <body>
     <!-- This is what is printed when printing the calendar.
-       It is filled dynamically by calPrintUtils.jsm. -->
+       It is filled dynamically by calPrintUtils.sys.mjs. -->
     <div id="list-container"></div>
     <div id="month-container"></div>
     <div id="week-container"></div>

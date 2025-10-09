@@ -14,9 +14,14 @@
 // 3.  We verify that relevant opt-out prefs disable the Nimbus and Firefox
 //     Messaging System experience.
 
-const { ASRouterTargeting } = ChromeUtils.import(
-  "resource://activity-stream/lib/ASRouterTargeting.jsm"
+const { ASRouterTargeting } = ChromeUtils.importESModule(
+  "resource:///modules/asrouter/ASRouterTargeting.sys.mjs"
 );
+const { NimbusTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/NimbusTestUtils.sys.mjs"
+);
+
+NimbusTestUtils.init(this);
 
 // These randomization IDs were extracted by hand from Firefox instances.
 // Randomization is sufficiently stable to hard-code these IDs rather than
@@ -37,11 +42,13 @@ const BRANCH_MAP = {
 setupProfileService();
 
 let taskProfile;
+let manager;
+let cleanup;
 
 // Arrange a dummy Remote Settings server so that no non-local network
 // connections are opened.
 // And arrange dummy task profile.
-add_setup(() => {
+add_setup(async () => {
   info("Setting up profile service");
   let profileService = Cc["@mozilla.org/toolkit/profile-service;1"].getService(
     Ci.nsIToolkitProfileService
@@ -57,6 +64,49 @@ add_setup(() => {
   registerCleanupFunction(() => {
     taskProfile.remove(true);
   });
+
+  // Arrange fake experiment enrollment details.
+  ({ manager, cleanup } = await NimbusTestUtils.setupTest());
+
+  await manager.enroll(
+    NimbusTestUtils.factories.recipe.withFeatureConfig("foo", {
+      branchSlug: "treatment",
+      featureId: "testFeature",
+    }),
+    "test"
+  );
+  await manager.unenroll("foo");
+  await manager.enroll(
+    NimbusTestUtils.factories.recipe.withFeatureConfig("bar", {
+      branchSlug: "treatment",
+      featureId: "testFeature",
+    }),
+    "test"
+  );
+  await manager.unenroll("bar");
+  await manager.enroll(
+    NimbusTestUtils.factories.recipe.withFeatureConfig("baz", {
+      branchSlug: "treatment",
+      featureId: "testFeature",
+    }),
+    "test"
+  );
+
+  await manager.enroll(
+    NimbusTestUtils.factories.recipe("rol1", { isRollout: true }),
+    "test"
+  );
+  await manager.unenroll("rol1");
+  await manager.enroll(
+    NimbusTestUtils.factories.recipe("rol2", { isRollout: true }),
+    "test"
+  );
+});
+
+registerCleanupFunction(async () => {
+  await manager.unenroll("baz");
+  await manager.unenroll("rol2");
+  await cleanup();
 });
 
 function resetProfile(profile) {
@@ -115,8 +165,8 @@ async function doMessage({ extraArgs = [], extraEnv = {} } = {}) {
 // i.e., persisted.  Verify that messages are shown until we hit the lifetime
 // frequency caps.
 //
-// It's awkward to inspect the `ASRouter.jsm` internal state directly in this
-// manner, but this is the pattern for testing such things at the time of
+// It's awkward to inspect the `ASRouter.sys.mjs` internal state directly in
+// this manner, but this is the pattern for testing such things at the time of
 // writing.
 add_task(async function test_backgroundtask_caps() {
   let experimentFile = do_get_file("experiment.json");
@@ -264,6 +314,14 @@ const TARGETING_LIST = [
   // Filter based on `defaultProfile` targeting snapshot.
   ["(currentDate|date - defaultProfile.currentDate|date) > 0", 1],
   ["(currentDate|date - defaultProfile.currentDate|date) > 999999", 0],
+  // Filter based on `defaultProfile` experiment enrollment details.
+  ["'baz' in defaultProfile.activeExperiments", 1],
+  ["'bar' in defaultProfile.previousExperiments", 1],
+  ["'rol2' in defaultProfile.activeRollouts", 1],
+  ["'rol1' in defaultProfile.previousRollouts", 1],
+  ["defaultProfile.enrollmentsMap['baz'] == 'treatment'", 1],
+  ["defaultProfile.enrollmentsMap['bar'] == 'treatment'", 1],
+  ["'unknown' in defaultProfile.enrollmentsMap", 0],
 ];
 
 // Test that background tasks targeting works for Nimbus experiments.
@@ -277,7 +335,9 @@ add_task(async function test_backgroundtask_Nimbus_targeting() {
     currentDate: ASRouterTargeting.Environment.currentDate,
     firefoxVersion: ASRouterTargeting.Environment.firefoxVersion,
   };
-  let targetSnapshot = await ASRouterTargeting.getEnvironmentSnapshot(target);
+  let targetSnapshot = await ASRouterTargeting.getEnvironmentSnapshot({
+    targets: [manager.createTargetingContext(), target],
+  });
 
   for (let [targeting, expectedLength] of TARGETING_LIST) {
     // Start fresh each time.
@@ -331,7 +391,9 @@ add_task(async function test_backgroundtask_Messaging_targeting() {
     currentDate: ASRouterTargeting.Environment.currentDate,
     firefoxVersion: ASRouterTargeting.Environment.firefoxVersion,
   };
-  let targetSnapshot = await ASRouterTargeting.getEnvironmentSnapshot(target);
+  let targetSnapshot = await ASRouterTargeting.getEnvironmentSnapshot({
+    targets: [manager.createTargetingContext(), target],
+  });
 
   for (let [targeting, expectedLength] of TARGETING_LIST) {
     // Start fresh each time.

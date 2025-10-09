@@ -12,7 +12,6 @@
 #include "HTMLSplitOnSpacesTokenizer.h"
 #include "nsContentUtils.h"
 #include "nsCRTGlue.h"
-#include "nsIIDNService.h"
 #include "nsIIOService.h"
 #include "nsNetCID.h"
 #include "nsNetUtil.h"
@@ -21,8 +20,7 @@ using namespace mozilla;
 using namespace mozilla::dom;
 
 bool SingleLineTextInputTypeBase::IsMutable() const {
-  return !mInputElement->IsDisabled() &&
-         !mInputElement->HasAttr(kNameSpaceID_None, nsGkAtoms::readonly);
+  return !mInputElement->IsDisabledOrReadOnly();
 }
 
 bool SingleLineTextInputTypeBase::IsTooLong() const {
@@ -69,7 +67,7 @@ Maybe<bool> SingleLineTextInputTypeBase::HasPatternMismatch() const {
   }
 
   nsAutoString pattern;
-  if (!mInputElement->GetAttr(kNameSpaceID_None, nsGkAtoms::pattern, pattern)) {
+  if (!mInputElement->GetAttr(nsGkAtoms::pattern, pattern)) {
     return Some(false);
   }
 
@@ -82,8 +80,8 @@ Maybe<bool> SingleLineTextInputTypeBase::HasPatternMismatch() const {
 
   Document* doc = mInputElement->OwnerDoc();
   Maybe<bool> result = nsContentUtils::IsPatternMatching(
-      value, pattern, doc,
-      mInputElement->HasAttr(kNameSpaceID_None, nsGkAtoms::multiple));
+      value, std::move(pattern), doc,
+      mInputElement->HasAttr(nsGkAtoms::multiple));
   return result ? Some(!*result) : Nothing();
 }
 
@@ -131,7 +129,7 @@ bool EmailInputType::HasTypeMismatch() const {
     return false;
   }
 
-  return mInputElement->HasAttr(kNameSpaceID_None, nsGkAtoms::multiple)
+  return mInputElement->HasAttr(nsGkAtoms::multiple)
              ? !IsValidEmailAddressList(value)
              : !IsValidEmailAddress(value);
 }
@@ -256,34 +254,25 @@ bool EmailInputType::PunycodeEncodeEmailAddress(const nsAString& aEmail,
     return true;
   }
 
-  nsCOMPtr<nsIIDNService> idnSrv = do_GetService(NS_IDNSERVICE_CONTRACTID);
-  if (!idnSrv) {
-    NS_ERROR("nsIIDNService isn't present!");
-    return false;
-  }
-
   uint32_t indexOfDomain = *aIndexOfAt + 1;
 
   const nsDependentCSubstring domain = Substring(value, indexOfDomain);
-  bool ace;
-  if (NS_SUCCEEDED(idnSrv->IsACE(domain, &ace)) && !ace) {
-    nsAutoCString domainACE;
-    if (NS_FAILED(idnSrv->ConvertUTF8toACE(domain, domainACE))) {
+  nsAutoCString domainACE;
+  NS_DomainToASCII(domain, domainACE);
+
+  // NS_DomainToASCII does not check length (removed in bug 1788115), so we
+  // check for that limit here as required by the spec:
+  // https://html.spec.whatwg.org/#valid-e-mail-address
+  nsCCharSeparatedTokenizer tokenizer(domainACE, '.');
+  while (tokenizer.hasMoreTokens()) {
+    // XXX should check each token for not starting or ending with hyphen;
+    // https://bugzilla.mozilla.org/show_bug.cgi?id=1890466
+    if (tokenizer.nextToken().Length() > 63) {
       return false;
     }
-
-    // Bug 1788115 removed the 63 character limit from the
-    // IDNService::ConvertUTF8toACE so we check for that limit here as required
-    // by the spec: https://html.spec.whatwg.org/#valid-e-mail-address
-    nsCCharSeparatedTokenizer tokenizer(domainACE, '.');
-    while (tokenizer.hasMoreTokens()) {
-      if (tokenizer.nextToken().Length() > 63) {
-        return false;
-      }
-    }
-
-    value.Replace(indexOfDomain, domain.Length(), domainACE);
   }
+
+  value.Replace(indexOfDomain, domain.Length(), domainACE);
 
   aEncodedEmail = value;
   return true;

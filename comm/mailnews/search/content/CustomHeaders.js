@@ -3,6 +3,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+var { UIFontSize } = ChromeUtils.importESModule(
+  "resource:///modules/UIFontSize.sys.mjs"
+);
+
 var gAddButton;
 var gRemoveButton;
 var gHeaderInputElement;
@@ -18,7 +22,7 @@ document.addEventListener("dialogextra1", onAddHeader);
 document.addEventListener("dialogextra2", onRemoveHeader);
 
 function onLoad() {
-  let hdrs = Services.prefs.getCharPref("mailnews.customHeaders");
+  const hdrs = Services.prefs.getCharPref("mailnews.customHeaders");
   gHeaderInputElement = document.getElementById("headerInput");
   gHeaderInputElement.focus();
 
@@ -30,6 +34,8 @@ function onLoad() {
   initializeDialog(hdrs);
   updateAddButton(true);
   updateRemoveButton();
+
+  UIFontSize.registerWindow(window);
 }
 
 function initializeDialog(hdrs) {
@@ -78,11 +84,10 @@ function onOk() {
 }
 
 function customHeaderOverflow() {
-  var nsMsgSearchAttrib = Ci.nsMsgSearchAttrib;
   if (
     gArrayHdrs.length >=
-    nsMsgSearchAttrib.kNumMsgSearchAttributes -
-      nsMsgSearchAttrib.OtherHeader -
+    Ci.nsMsgSearchAttrib.kNumMsgSearchAttributes -
+      Ci.nsMsgSearchAttrib.OtherHeader -
       1
   ) {
     if (!gFilterBundle) {

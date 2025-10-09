@@ -14,7 +14,7 @@
 #include "DocAccessible.h"
 #include "nsEventShell.h"
 #include "Relation.h"
-#include "Role.h"
+#include "mozilla/a11y/Role.h"
 #include "States.h"
 #include "nsQueryObject.h"
 #include "nsTreeColumns.h"
@@ -636,7 +636,7 @@ LocalAccessible* XULTreeGridCellAccessible::GetSiblingAtOffset(
 }
 
 void XULTreeGridCellAccessible::DispatchClickEvent(
-    nsIContent* aContent, uint32_t aActionIndex) const {
+    uint32_t aActionIndex) const {
   if (IsDefunct()) return;
 
   RefPtr<dom::XULTreeElement> tree = mTree;

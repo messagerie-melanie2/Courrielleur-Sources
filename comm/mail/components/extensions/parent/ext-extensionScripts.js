@@ -6,26 +6,31 @@
 
 "use strict";
 
-var { ExtensionSupport } = ChromeUtils.import(
-  "resource:///modules/ExtensionSupport.jsm"
-);
-var { ExtensionUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/ExtensionUtils.sys.mjs"
-);
-
 var { getUniqueId } = ExtensionUtils;
 
-let scripts = new Set();
+const scripts = new Set();
 
 ExtensionSupport.registerWindowListener("ext-composeScripts", {
   chromeURLs: [
     "chrome://messenger/content/messengercompose/messengercompose.xhtml",
   ],
   onLoadWindow: async win => {
+    // The editor is not loading any content but just about:blank, so its
+    // readyState is "complete" already when we get here. The editor is modified
+    // according to the provided properties (reply, draft etc.) afterwards. The
+    // injection point "document_start" would be a good fit here directly, but it
+    // currently fails in ExtensionContent.sys.mjs, where the child actor does not
+    // find the editor window:
+    //   https://searchfox.org/mozilla-central/rev/fb2ad9ca7150890da5cadc458acdd10c87fd9a12/toolkit/components/extensions/ExtensionContent.sys.mjs#1245)
+    // Calls to script.executeInWindow() succeed only after waiting for the
+    // compose-editor-ready event.
     await new Promise(resolve =>
       win.addEventListener("compose-editor-ready", resolve, { once: true })
     );
-    for (let script of scripts) {
+    // Even after this point, the document could be modified by the compose API.
+    // We currently do not have a notification once *all* modifications to the
+    // editor are done. And it is probably difficult to get right.
+    for (const script of scripts) {
       if (script.type == "compose") {
         script.executeInWindow(
           win,
@@ -42,11 +47,12 @@ ExtensionSupport.registerWindowListener("ext-messageDisplayScripts", {
     "chrome://messenger/content/messenger.xhtml",
   ],
   onLoadWindow(win) {
-    win.addEventListener("MsgLoaded", event => {
+    win.addEventListener("MsgLoading", event => {
       // `event.target` is an about:message window.
-      let nativeTab = event.target.tabOrWindow;
-      for (let script of scripts) {
+      const nativeTab = event.target.tabOrWindow;
+      for (const script of scripts) {
         if (script.type == "messageDisplay") {
+          // Each script will be injected according to its runAt value.
           script.executeInWindow(
             win,
             script.extension.tabManager.wrapTab(nativeTab)
@@ -103,6 +109,7 @@ class ExtensionScriptParent {
     const options = {
       js: [],
       css: [],
+      runAt: details?.runAt ?? "document_idle",
     };
 
     if (details.js && details.js.length) {
@@ -127,13 +134,25 @@ class ExtensionScriptParent {
   }
 
   async executeInWindow(window, tab) {
-    for (let css of this.options.css) {
-      await tab.insertCSS(this.context, { ...css, frameId: null });
+    for (const css of this.options.css) {
+      await tab.insertCSS(this.context, {
+        ...css,
+        frameId: null,
+        runAt: this.options.runAt,
+      });
     }
-    for (let js of this.options.js) {
-      await tab.executeScript(this.context, { ...js, frameId: null });
+    for (const js of this.options.js) {
+      await tab.executeScript(this.context, {
+        ...js,
+        frameId: null,
+        runAt: this.options.runAt,
+      });
     }
-    window.dispatchEvent(new window.CustomEvent("extension-scripts-added"));
+    window.dispatchEvent(
+      new window.CustomEvent("extension-scripts-added", {
+        detail: { runAt: this.options.runAt },
+      })
+    );
   }
 }
 
@@ -147,7 +166,7 @@ this.extensionScripts = class extends ExtensionAPI {
     // Unregister all the scriptId related to a context when it is closed.
     context.callOnClose({
       close() {
-        for (let script of parentScriptsMap.values()) {
+        for (const script of parentScriptsMap.values()) {
           script.destroy();
         }
         parentScriptsMap.clear();
@@ -159,7 +178,6 @@ this.extensionScripts = class extends ExtensionAPI {
         async register(type, details) {
           const script = new ExtensionScriptParent(type, context, details);
           const { scriptId } = script;
-
           parentScriptsMap.set(scriptId, script);
           return scriptId;
         },

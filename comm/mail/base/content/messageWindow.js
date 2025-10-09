@@ -20,14 +20,11 @@
 var { AppConstants } = ChromeUtils.importESModule(
   "resource://gre/modules/AppConstants.sys.mjs"
 );
-var { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  BondOpenPGP: "chrome://openpgp/content/BondOpenPGP.jsm",
-  UIDensity: "resource:///modules/UIDensity.jsm",
-  UIFontSize: "resource:///modules/UIFontSize.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  BondOpenPGP: "chrome://openpgp/content/BondOpenPGP.sys.mjs",
+  UIDensity: "resource:///modules/UIDensity.sys.mjs",
+  UIFontSize: "resource:///modules/UIFontSize.sys.mjs",
 });
 
 var messageBrowser;
@@ -56,7 +53,7 @@ window.addEventListener("DOMContentLoaded", event => {
   });
   messageBrowser.addEventListener(
     "load",
-    event => (messageBrowser.contentWindow.tabOrWindow = window),
+    () => (messageBrowser.contentWindow.tabOrWindow = window),
     true
   );
 });
@@ -70,8 +67,8 @@ function OnLoadMessageWindow() {
   // Do this before the window loads.
   if (!document.documentElement.hasAttribute("width")) {
     // Prefer 860xfull height.
-    let defaultHeight = screen.availHeight;
-    let defaultWidth = screen.availWidth >= 860 ? 860 : screen.availWidth;
+    const defaultHeight = screen.availHeight;
+    const defaultWidth = screen.availWidth >= 860 ? 860 : screen.availWidth;
 
     // On small screens, default to maximized state.
     if (defaultHeight <= 600) {
@@ -96,7 +93,8 @@ function OnLoadMessageWindow() {
   messageBrowser.addEventListener("DOMTitleChanged", () => {
     if (messageBrowser.contentTitle) {
       if (AppConstants.platform == "macosx") {
-        document.title = messageBrowser.contentTitle;
+        document.getElementById("titlebar-title-label").value =
+          messageBrowser.contentTitle;
       } else {
         document.title =
           messageBrowser.contentTitle +
@@ -104,7 +102,13 @@ function OnLoadMessageWindow() {
           document.documentElement.getAttribute("titlemodifier");
       }
     } else {
-      document.title = document.documentElement.getAttribute("titlemodifier");
+      const titleModifier =
+        document.documentElement.getAttribute("titlemodifier");
+      if (AppConstants.platform == "macosx") {
+        document.getElementById("titlebar-title-label").value = titleModifier;
+      } else {
+        document.title = titleModifier;
+      }
     }
   });
 
@@ -118,7 +122,7 @@ function delayedOnLoadMessageWindow() {
   MailOfflineMgr.init();
   CreateMailWindowGlobals();
 
-  // Run menubar initialization first, to avoid TabsInTitlebar code picking
+  // Run menubar initialization first, to avoid CustomTitlebar code picking
   // up mutations from it and causing a reflow.
   if (AppConstants.platform != "macosx") {
     AutoHideMenubar.init();
@@ -168,7 +172,7 @@ function actuallyLoadMessage() {
    *   2: The nsIMsgDBView used to open us.
    */
   if (window.arguments && window.arguments.length) {
-    let contentWindow = messageBrowser.contentWindow;
+    const contentWindow = messageBrowser.contentWindow;
     if (window.arguments[0] instanceof Ci.nsIURI) {
       contentWindow.displayMessage(window.arguments[0].spec);
       return;
@@ -177,7 +181,7 @@ function actuallyLoadMessage() {
     let msgHdr, viewWrapperToClone;
     // message header as an object?
     if ("wrappedJSObject" in window.arguments[0]) {
-      let hdrObject = window.arguments[0].wrappedJSObject;
+      const hdrObject = window.arguments[0].wrappedJSObject;
       ({ msgHdr, viewWrapperToClone } = hdrObject);
     } else if (window.arguments[0] instanceof Ci.nsIMsgDBHdr) {
       // message header as a separate param?
@@ -200,12 +204,12 @@ function actuallyLoadMessage() {
  * supposed to be called whenever a message is supposed to be displayed in this
  * window.
  *
- * @param aMsgHdr the message to display
- * @param aViewWrapperToClone [optional] a DB view wrapper to clone for the
- *                            message window
+ * @param {nsIMsgDBHdr} aMsgHdr - the message to display
+ * @param {DBViewWrapper} [aViewWrapperToClone] a DB view wrapper to clone for
+ *   the message window.
  */
 function displayMessage(aMsgHdr, aViewWrapperToClone) {
-  let contentWindow = messageBrowser.contentWindow;
+  const contentWindow = messageBrowser.contentWindow;
   contentWindow.displayMessage(
     aMsgHdr.folder.getUriForMsg(aMsgHdr),
     aViewWrapperToClone
@@ -278,7 +282,9 @@ function HideMenus() {
     viewLayoutMenu.setAttribute("hidden", "true");
   }
 
-  let paneViewSeparator = document.getElementById("appmenu_paneViewSeparator");
+  const paneViewSeparator = document.getElementById(
+    "appmenu_paneViewSeparator"
+  );
   if (paneViewSeparator) {
     paneViewSeparator.setAttribute("hidden", "true");
   }
@@ -395,17 +401,17 @@ function HideMenus() {
     compactFolderMenu.setAttribute("hidden", "true");
   }
 
-  let trashSeparator = document.getElementById("trashMenuSeparator");
+  const trashSeparator = document.getElementById("trashMenuSeparator");
   if (trashSeparator) {
     trashSeparator.setAttribute("hidden", "true");
   }
 
-  let goStartPageSeparator = document.getElementById("goNextSeparator");
+  const goStartPageSeparator = document.getElementById("goNextSeparator");
   if (goStartPageSeparator) {
     goStartPageSeparator.hidden = true;
   }
 
-  let goRecentlyClosedTabsSeparator = document.getElementById(
+  const goRecentlyClosedTabsSeparator = document.getElementById(
     "goRecentlyClosedTabsSeparator"
   );
   if (goRecentlyClosedTabsSeparator) {
@@ -422,12 +428,12 @@ function HideMenus() {
     goFolder.hidden = true;
   }
 
-  let goStartPage = document.getElementById("goStartPage");
+  const goStartPage = document.getElementById("goStartPage");
   if (goStartPage) {
     goStartPage.hidden = true;
   }
 
-  let quickFilterBar = document.getElementById("appmenu_quickFilterBar");
+  const quickFilterBar = document.getElementById("appmenu_quickFilterBar");
   if (quickFilterBar) {
     quickFilterBar.hidden = true;
   }
@@ -447,7 +453,10 @@ function OnUnloadMessageWindow() {
   OnMailWindowUnload();
 }
 
-// MessageWindowController object (handles commands when one of the trees does not have focus)
+/**
+ * MessageWindowController - handles commands when one of the trees does not
+ * have focus.
+ */
 var MessageWindowController = {
   supportsCommand(command) {
     switch (command) {
@@ -470,6 +479,7 @@ var MessageWindowController = {
       case "cmd_viewNormalHeader":
       case "cmd_stop":
       case "cmd_chat":
+      case "cmd_newCard":
         return true;
       case "cmd_synchronizeOffline":
         return MailOfflineMgr.isOnline();
@@ -503,6 +513,7 @@ var MessageWindowController = {
       case "cmd_fullZoomToggle":
       case "cmd_viewAllHeader":
       case "cmd_viewNormalHeader":
+      case "cmd_newCard":
         return true;
       case "cmd_undo":
       case "cmd_redo":
@@ -521,15 +532,19 @@ var MessageWindowController = {
       return;
     }
 
+    // There may not be a "main" window if an .eml file was double-clicked.
+    let mainWindow;
     switch (command) {
       case "cmd_getNewMessages":
         MsgGetMessage();
         break;
       case "cmd_undo":
-        messenger.undo(msgWindow);
+        mainWindow = Services.wm.getMostRecentWindow("mail:3pane");
+        mainWindow?.messenger.undo(msgWindow);
         break;
       case "cmd_redo":
-        messenger.redo(msgWindow);
+        mainWindow = Services.wm.getMostRecentWindow("mail:3pane");
+        mainWindow?.messenger.redo(msgWindow);
         break;
       case "cmd_getMsgsForAuthAccounts":
         MsgGetMessagesForAllAuthenticatedAccounts();
@@ -544,13 +559,13 @@ var MessageWindowController = {
         ReloadMessage();
         break;
       case "cmd_find":
-        document.getElementById("FindToolbar").onFindCommand();
+        document.getElementById("findToolbar").onFindCommand();
         break;
       case "cmd_findAgain":
-        document.getElementById("FindToolbar").onFindAgainCommand(false);
+        document.getElementById("findToolbar").onFindAgainCommand(false);
         break;
       case "cmd_findPrevious":
-        document.getElementById("FindToolbar").onFindAgainCommand(true);
+        document.getElementById("findToolbar").onFindAgainCommand(true);
         break;
       case "cmd_viewAllHeader":
         MsgViewAllHeaders();
@@ -577,10 +592,10 @@ var MessageWindowController = {
         ZoomManager.toggleZoom();
         break;
       case "cmd_stop":
-        msgWindow.StopUrls();
+        messageBrowser.stop();
         break;
-      case "cmd_chat":
-        let win = Services.wm.getMostRecentWindow("mail:3pane");
+      case "cmd_chat": {
+        const win = Services.wm.getMostRecentWindow("mail:3pane");
         if (win) {
           win.focus();
           win.showChatTab();
@@ -594,10 +609,14 @@ var MessageWindowController = {
           );
         }
         break;
+      }
+      case "cmd_newCard":
+        openNewCardDialog();
+        break;
     }
   },
 
-  onEvent(event) {},
+  onEvent() {},
 };
 
 function SetupCommandUpdateHandlers() {
@@ -606,6 +625,13 @@ function SetupCommandUpdateHandlers() {
     0,
     messageBrowser.contentWindow.commandController
   );
+  // Use the main window's transaction manager.
+  // There may not be a "main" window if an .eml file was double-clicked.
+  const mainWindow = Services.wm.getMostRecentWindow("mail:3pane");
+  if (mainWindow) {
+    window.msgWindow.transactionManager =
+      mainWindow.msgWindow.transactionManager;
+  }
 }
 
 function UnloadCommandUpdateHandlers() {
@@ -738,5 +764,7 @@ function forwardToolbarMenu_init(popup) {
 }
 
 function GetSelectedMsgFolders() {
-  return [messageBrowser.contentWindow.gFolder];
+  return messageBrowser.contentWindow.gFolder
+    ? [messageBrowser.contentWindow.gFolder]
+    : [];
 }

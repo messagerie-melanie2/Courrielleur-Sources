@@ -5,31 +5,31 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.DehydrationManager = exports.DEHYDRATION_ALGORITHM = void 0;
 var _anotherJson = _interopRequireDefault(require("another-json"));
-var _olmlib = require("./olmlib");
-var _indexeddbCryptoStore = require("../crypto/store/indexeddb-crypto-store");
-var _aes = require("./aes");
-var _logger = require("../logger");
-var _httpApi = require("../http-api");
-function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(arg) { var key = _toPrimitive(arg, "string"); return typeof key === "symbol" ? key : String(key); }
-function _toPrimitive(input, hint) { if (typeof input !== "object" || input === null) return input; var prim = input[Symbol.toPrimitive]; if (prim !== undefined) { var res = prim.call(input, hint || "default"); if (typeof res !== "object") return res; throw new TypeError("@@toPrimitive must return a primitive value."); } return (hint === "string" ? String : Number)(input); } /*
-                                                                                                                                                                                                                                                                                                                                                                                          Copyright 2020-2021 The Matrix.org Foundation C.I.C.
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Licensed under the Apache License, Version 2.0 (the "License");
-                                                                                                                                                                                                                                                                                                                                                                                          you may not use this file except in compliance with the License.
-                                                                                                                                                                                                                                                                                                                                                                                          You may obtain a copy of the License at
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                              http://www.apache.org/licenses/LICENSE-2.0
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Unless required by applicable law or agreed to in writing, software
-                                                                                                                                                                                                                                                                                                                                                                                          distributed under the License is distributed on an "AS IS" BASIS,
-                                                                                                                                                                                                                                                                                                                                                                                          WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-                                                                                                                                                                                                                                                                                                                                                                                          See the License for the specific language governing permissions and
-                                                                                                                                                                                                                                                                                                                                                                                          limitations under the License.
-                                                                                                                                                                                                                                                                                                                                                                                          */
-const DEHYDRATION_ALGORITHM = "org.matrix.msc2697.v1.olm.libolm_pickle";
-exports.DEHYDRATION_ALGORITHM = DEHYDRATION_ALGORITHM;
+var _base = require("../base64.js");
+var _indexeddbCryptoStore = require("../crypto/store/indexeddb-crypto-store.js");
+var _logger = require("../logger.js");
+var _index = require("../http-api/index.js");
+var _decryptAESSecretStorageItem = _interopRequireDefault(require("../utils/decryptAESSecretStorageItem.js"));
+var _encryptAESSecretStorageItem = _interopRequireDefault(require("../utils/encryptAESSecretStorageItem.js"));
+function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
+function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
+Copyright 2020-2021 The Matrix.org Foundation C.I.C.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+const DEHYDRATION_ALGORITHM = exports.DEHYDRATION_ALGORITHM = "org.matrix.msc2697.v1.olm.libolm_pickle";
 const oneweek = 7 * 24 * 60 * 60 * 1000;
 class DehydrationManager {
   constructor(crypto) {
@@ -52,8 +52,8 @@ class DehydrationManager {
             time
           } = result;
           const pickleKey = Buffer.from(this.crypto.olmDevice.pickleKey);
-          const decrypted = await (0, _aes.decryptAES)(key, pickleKey, DEHYDRATION_ALGORITHM);
-          this.key = (0, _olmlib.decodeBase64)(decrypted);
+          const decrypted = await (0, _decryptAESSecretStorageItem.default)(key, pickleKey, DEHYDRATION_ALGORITHM);
+          this.key = (0, _base.decodeBase64)(decrypted);
           this.keyInfo = keyInfo;
           this.deviceDisplayName = deviceDisplayName;
           const now = Date.now();
@@ -121,7 +121,7 @@ class DehydrationManager {
       const pickleKey = Buffer.from(this.crypto.olmDevice.pickleKey);
 
       // update the crypto store with the timestamp
-      const key = await (0, _aes.encryptAES)((0, _olmlib.encodeBase64)(this.key), pickleKey, DEHYDRATION_ALGORITHM);
+      const key = await (0, _encryptAESSecretStorageItem.default)((0, _base.encodeBase64)(this.key), pickleKey, DEHYDRATION_ALGORITHM);
       await this.crypto.cryptoStore.doTxn("readwrite", [_indexeddbCryptoStore.IndexedDBCryptoStore.STORE_ACCOUNT], txn => {
         this.crypto.cryptoStore.storeSecretStorePrivateKey(txn, "dehydration", {
           keyInfo: this.keyInfo,
@@ -155,7 +155,7 @@ class DehydrationManager {
       }
       _logger.logger.log("Uploading account to server");
       // eslint-disable-next-line camelcase
-      const dehydrateResult = await this.crypto.baseApis.http.authedRequest(_httpApi.Method.Put, "/dehydrated_device", undefined, {
+      const dehydrateResult = await this.crypto.baseApis.http.authedRequest(_index.Method.Put, "/dehydrated_device", undefined, {
         device_data: deviceData,
         initial_device_display_name: this.deviceDisplayName
       }, {
@@ -213,7 +213,7 @@ class DehydrationManager {
         fallbackKeys[`signed_curve25519:${keyId}`] = k;
       }
       _logger.logger.log("Uploading keys to server");
-      await this.crypto.baseApis.http.authedRequest(_httpApi.Method.Post, "/keys/upload/" + encodeURI(deviceId), undefined, {
+      await this.crypto.baseApis.http.authedRequest(_index.Method.Post, "/keys/upload/" + encodeURI(deviceId), undefined, {
         "device_keys": deviceKeys,
         "one_time_keys": oneTimeKeys,
         "org.matrix.msc2732.fallback_keys": fallbackKeys

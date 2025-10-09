@@ -15,16 +15,31 @@
   },
   {
     "namespace": "identities",
+    "description": "The identities API allows to manage the user's identities (each account can have multiple identities).",
     "permissions": ["accountsRead"],
     "types": [
+      {
+        "id": "EncryptionCapabilities",
+        "type": "object",
+        "properties": {
+          "canEncrypt": {
+            "type": "boolean",
+            "description": "Whether the encryption technology is configured to support message encryption."
+          },
+          "canSign": {
+            "type": "boolean",
+            "description": "Whether the encryption technology is configured to support message signing."
+          }
+        }
+      },
       {
         "id": "MailIdentity",
         "type": "object",
         "properties": {
           "accountId": {
-            "type": "string",
+            "$ref": "accounts.MailAccountId",
             "optional": true,
-            "description": "The id of the :ref:`accounts.MailAccount` this identity belongs to. The ``accountId`` property is read-only."
+            "description": "The id of the $(ref:accounts.MailAccount) this identity belongs to. The <var>accountId</var> property is read-only."
           },
           "composeHtml": {
             "type": "boolean",
@@ -39,7 +54,7 @@
           "id": {
             "type": "string",
             "optional": true,
-            "description": "A unique identifier for this identity. The ``id`` property is read-only."
+            "description": "A unique identifier for this identity. The <var>id</var> property is read-only."
           },
           "label": {
             "type": "string",
@@ -70,6 +85,21 @@
             "type": "boolean",
             "optional": true,
             "description": "If the signature should be interpreted as plain text or as HTML."
+          },
+          "encryptionCapabilities": {
+            "type": "object",
+            "optional": true,
+            "description": "The encryption capabilities of this identity. Read only.",
+            "properties": {
+              "OpenPGP": {
+                "$ref": "identities.EncryptionCapabilities",
+                "description": "The capabilities of this identity for the OpenPGP encryption technology."
+              },
+              "S/MIME": {
+                "$ref": "identities.EncryptionCapabilities",
+                "description": "The capabilities of this identity for the S/MIME encryption technology."
+              }
+            }
           }
         }
       }
@@ -78,12 +108,12 @@
       {
         "name": "list",
         "type": "function",
-        "description": "Returns the identities of the specified account, or all identities if no account is specified. Do not expect the returned identities to be in any specific order. Use :ref:`identities.getDefault` to get the default identity of an account.",
+        "description": "Returns the identities of the specified account, or all identities if no account is specified. Do not expect the returned identities to be in any specific order. Use $(ref:identities.getDefault) to get the default identity of an account.",
         "async": "callback",
         "parameters": [
           {
             "name": "accountId",
-            "type": "string",
+            "$ref": "accounts.MailAccountId",
             "optional": true
           },
           {
@@ -104,7 +134,7 @@
       {
         "name": "get",
         "type": "function",
-        "description": "Returns details of the requested identity, or <value>null</value> if it doesn't exist.",
+        "description": "Returns details of the requested identity, or <var>null</var> if it doesn't exist.",
         "async": "callback",
         "parameters": [
           {
@@ -117,8 +147,14 @@
             "optional": true,
             "parameters": [
               {
-                "$ref": "identities.MailIdentity",
-                "optional": true
+                "choices": [
+                  {
+                    "$ref": "identities.MailIdentity"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             ]
           }
@@ -133,7 +169,7 @@
         "parameters": [
           {
             "name": "accountId",
-            "type": "string"
+            "$ref": "accounts.MailAccountId"
           },
           {
             "name": "details",
@@ -194,12 +230,12 @@
       {
         "name": "getDefault",
         "type": "function",
-        "description": "Returns the default identity for the requested account, or <value>null</value> if it is not defined.",
+        "description": "Returns the default identity for the requested account, or <var>null</var> if it is not defined.",
         "async": "callback",
         "parameters": [
           {
             "name": "accountId",
-            "type": "string"
+            "$ref": "accounts.MailAccountId"
           },
           {
             "type": "function",
@@ -207,7 +243,14 @@
             "optional": true,
             "parameters": [
               {
-                "$ref": "identities.MailIdentity"
+                "choices": [
+                  {
+                    "$ref": "identities.MailIdentity"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             ]
           }
@@ -221,7 +264,7 @@
         "parameters": [
           {
             "name": "accountId",
-            "type": "string"
+            "$ref": "accounts.MailAccountId"
           },
           {
             "name": "identityId",
@@ -260,7 +303,7 @@
       {
         "name": "onUpdated",
         "type": "function",
-        "description": "Fired when one or more properties of an identity have been modified. The returned :ref:`identities.MailIdentity` includes only the changed values.",
+        "description": "Fired when one or more properties of an identity have been modified. The returned $(ref:identities.MailIdentity) includes only the changed values.",
         "parameters": [
           {
             "name": "identityId",

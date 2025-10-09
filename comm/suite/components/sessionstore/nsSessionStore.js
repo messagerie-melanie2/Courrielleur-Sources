@@ -77,7 +77,6 @@ const CAPABILITIES = [
 // These are tab events that we listen to.
 const TAB_EVENTS = ["TabOpen", "TabClose", "TabSelect", "TabShow", "TabHide"];
 
-var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 var {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 var {NetUtil} = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
 
@@ -123,10 +122,9 @@ function SessionStoreService() {
 
 SessionStoreService.prototype = {
   classID: Components.ID("{d37ccdf1-496f-4135-9575-037180af010d}"),
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsISessionStore,
-                                         Ci.nsIDOMEventListener,
-                                         Ci.nsIObserver,
-                                         Ci.nsISupportsWeakReference]),
+  QueryInterface: ChromeUtils.generateQI([Ci.nsISessionStore,
+                                          Ci.nsIObserver,
+                                          Ci.nsISupportsWeakReference]),
 
   // xul:tab attributes to (re)store (extensions might want to hook in here);
   // the favicon is always saved for the about:sessionrestore page
@@ -493,7 +491,7 @@ SessionStoreService.prototype = {
 /* ........ Window Event Handlers .............. */
 
   /**
-   * Implement nsIDOMEventListener for handling various window and tab events
+   * Implement EventListener for handling various window and tab events
    */
   handleEvent: function sss_handleEvent(aEvent) {
     var win = aEvent.currentTarget.ownerDocument.defaultView;
@@ -3514,7 +3512,7 @@ SessionStoreService.prototype = {
     }
 
     var window =
-      Services.ww.openWindow(null, this._prefBranch.getCharPref("chromeURL"),
+      Services.ww.openWindow(null, AppConstants.BROWSER_CHROME_URL,
                              "_blank", features, argString);
 
     do {
@@ -4151,8 +4149,8 @@ function SessionStoreSHistoryListener(ss, aTab) {
 }
 
 SessionStoreSHistoryListener.prototype = {
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsISHistoryListener,
-                                         Ci.nsISupportsWeakReference]),
+  QueryInterface: ChromeUtils.generateQI([Ci.nsISHistoryListener,
+                                          Ci.nsISupportsWeakReference]),
   browser: null,
   ss: null,
   tab: null,

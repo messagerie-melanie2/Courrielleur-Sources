@@ -12,21 +12,17 @@ const path = require("path");
 const fs = require("fs");
 const helpers = require("./helpers");
 const htmlparser = require("htmlparser2");
+const testharnessEnvironment = require("./environments/testharness.js");
 
 const callExpressionDefinitions = [
   /^loader\.lazyGetter\((?:globalThis|this), "(\w+)"/,
   /^loader\.lazyServiceGetter\((?:globalThis|this), "(\w+)"/,
   /^loader\.lazyRequireGetter\((?:globalThis|this), "(\w+)"/,
-  /^XPCOMUtils\.defineLazyGetter\((?:globalThis|this), "(\w+)"/,
-  /^XPCOMUtils\.defineLazyModuleGetter\((?:globalThis|this), "(\w+)"/,
   /^ChromeUtils\.defineLazyGetter\((?:globalThis|this), "(\w+)"/,
-  /^ChromeUtils\.defineModuleGetter\((?:globalThis|this), "(\w+)"/,
   /^XPCOMUtils\.defineLazyPreferenceGetter\((?:globalThis|this), "(\w+)"/,
-  /^XPCOMUtils\.defineLazyProxy\((?:globalThis|this), "(\w+)"/,
   /^XPCOMUtils\.defineLazyScriptGetter\((?:globalThis|this), "(\w+)"/,
   /^XPCOMUtils\.defineLazyServiceGetter\((?:globalThis|this), "(\w+)"/,
   /^XPCOMUtils\.defineConstant\((?:globalThis|this), "(\w+)"/,
-  /^DevToolsUtils\.defineLazyModuleGetter\((?:globalThis|this), "(\w+)"/,
   /^DevToolsUtils\.defineLazyGetter\((?:globalThis|this), "(\w+)"/,
   /^Object\.defineProperty\((?:globalThis|this), "(\w+)"/,
   /^Reflect\.defineProperty\((?:globalThis|this), "(\w+)"/,
@@ -36,8 +32,6 @@ const callExpressionDefinitions = [
 const callExpressionMultiDefinitions = [
   "XPCOMUtils.defineLazyGlobalGetters(this,",
   "XPCOMUtils.defineLazyGlobalGetters(globalThis,",
-  "XPCOMUtils.defineLazyModuleGetters(this,",
-  "XPCOMUtils.defineLazyModuleGetters(globalThis,",
   "XPCOMUtils.defineLazyServiceGetters(this,",
   "XPCOMUtils.defineLazyServiceGetters(globalThis,",
   "ChromeUtils.defineESModuleGetters(this,",
@@ -50,7 +44,7 @@ const subScriptMatches = [
   /Services\.scriptloader\.loadSubScript\("(.*?)", this\)/,
 ];
 
-const workerImportFilenameMatch = /(.*\/)*((.*?)\.jsm?)/;
+const workerImportFilenameMatch = /(.*\/)*((.*?)\.js)/;
 
 /**
  * Parses a list of "name:boolean_value" or/and "name" options divided by comma
@@ -148,16 +142,16 @@ function convertCallExpressionToGlobals(node, isGlobal) {
     });
   }
 
+  // The definition matches below must be in the global scope for us to define
+  // a global, so bail out early if we're not a global.
+  if (!isGlobal) {
+    return [];
+  }
+
   let source;
   try {
     source = helpers.getASTSource(node);
   } catch (e) {
-    return [];
-  }
-
-  // The definition matches below must be in the global scope for us to define
-  // a global, so bail out early if we're not a global.
-  if (!isGlobal) {
     return [];
   }
 
@@ -326,6 +320,11 @@ function getGlobalsForScript(src, type, dir) {
     scriptName = path.join(helpers.rootDir, "testing", "mochitest", src);
   } else if (src.startsWith("/tests/")) {
     scriptName = path.join(helpers.rootDir, src.substring(7));
+  } else if (src.startsWith("/resources/testharness.js")) {
+    return Object.keys(testharnessEnvironment.globals).map(name => ({
+      name,
+      writable: true,
+    }));
   } else if (dir) {
     // Fallback to hoping this is a relative path.
     scriptName = path.join(dir, src);
@@ -632,7 +631,7 @@ module.exports = {
 
     let parser = {
       Program(node) {
-        globalScope = context.getScope();
+        globalScope = context.sourceCode.getScope(node);
       },
     };
     let filename = context.getFilename();
@@ -648,10 +647,14 @@ module.exports = {
     for (let type of Object.keys(GlobalsForNode.prototype)) {
       parser[type] = function (node) {
         if (type === "Program") {
-          globalScope = context.getScope();
+          globalScope = context.sourceCode.getScope(node);
           helpers.addGlobals(extraHTMLGlobals, globalScope);
         }
-        let globals = handler[type](node, context.getAncestors(), globalScope);
+        let globals = handler[type](
+          node,
+          context.sourceCode.getAncestors(node),
+          globalScope
+        );
         helpers.addGlobals(
           globals,
           globalScope,

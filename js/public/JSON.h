@@ -26,12 +26,19 @@ using JSONWriteCallback = bool (*)(const char16_t* buf, uint32_t len,
  *
  * In cases where JSON.stringify would return undefined, this function calls
  * |callback| with the string "null".
+ *
+ * If a length hint is passed, space will be reserved for at least that many
+ * characters.
  */
 extern JS_PUBLIC_API bool JS_Stringify(JSContext* cx,
                                        JS::MutableHandle<JS::Value> value,
                                        JS::Handle<JSObject*> replacer,
                                        JS::Handle<JS::Value> space,
                                        JSONWriteCallback callback, void* data);
+extern JS_PUBLIC_API bool JS_StringifyWithLengthHint(
+    JSContext* cx, JS::MutableHandle<JS::Value> value,
+    JS::Handle<JSObject*> replacer, JS::Handle<JS::Value> space,
+    JSONWriteCallback callback, void* data, size_t lengthHint);
 
 namespace JS {
 
@@ -119,6 +126,69 @@ namespace JS {
 extern JS_PUBLIC_API bool IsValidJSON(const JS::Latin1Char* chars,
                                       uint32_t len);
 extern JS_PUBLIC_API bool IsValidJSON(const char16_t* chars, uint32_t len);
+
+/**
+ * Handler with callbacks for JS::ParseJSONWithHandler.
+ *
+ * Each method is called during parsing the JSON string. If the method returns
+ * true, the parsing keeps going.  If the method returns false, the parsing
+ * stops and fails.
+ *
+ * The error method is called when syntax error happens while parsing the input.
+ * This method is not called when handler's method returns false.
+ */
+class JSONParseHandler {
+ public:
+  JSONParseHandler() {}
+  virtual ~JSONParseHandler() {}
+
+  // Called when '{' is found for an object.
+  virtual bool startObject() = 0;
+
+  // Called when a property name is found for an object.
+  // The character type depends on the input type and also the content of the
+  // property name. The consumer should implement both methods.
+  virtual bool propertyName(const JS::Latin1Char* name, size_t length) = 0;
+  virtual bool propertyName(const char16_t* name, size_t length) = 0;
+
+  // Called when '}' is found for an object.
+  virtual bool endObject() = 0;
+
+  // Called when '[' is found for an array.
+  virtual bool startArray() = 0;
+
+  // Called when ']' is found for an array.
+  virtual bool endArray() = 0;
+
+  // Called when a string is found.
+  // The character type depends on the input type and also the content of the
+  // string. The consumer should implement both methods.
+  virtual bool stringValue(const JS::Latin1Char* str, size_t length) = 0;
+  virtual bool stringValue(const char16_t* str, size_t length) = 0;
+
+  // Called when a number is found.
+  virtual bool numberValue(double d) = 0;
+
+  // Called when a boolean is found.
+  virtual bool booleanValue(bool v) = 0;
+
+  // Called when null is found.
+  virtual bool nullValue() = 0;
+
+  // Called when syntax error happens.
+  virtual void error(const char* msg, uint32_t line, uint32_t column) = 0;
+};
+
+/**
+ * Performs the JSON.parse operation as specified by ECMAScript, and call
+ * callbacks defined by the handler.
+ */
+extern JS_PUBLIC_API bool ParseJSONWithHandler(const JS::Latin1Char* chars,
+                                               uint32_t len,
+                                               JSONParseHandler* handler);
+extern JS_PUBLIC_API bool ParseJSONWithHandler(const char16_t* chars,
+                                               uint32_t len,
+                                               JSONParseHandler* handler);
 
 }  // namespace JS
 

@@ -64,12 +64,12 @@ Http3Listener.prototype = {
     read_stream(stream, cnt);
   },
 
-  onStopRequest: function testOnStopRequest(request, status) {
+  onStopRequest: function testOnStopRequest(request) {
     let httpVersion = "";
     try {
       httpVersion = request.protocolVersion;
     } catch (e) {}
-    Assert.equal(httpVersion, "h3-29");
+    Assert.equal(httpVersion, "h3");
 
     try {
       this._closure();

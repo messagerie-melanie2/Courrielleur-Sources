@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/*
+/**
  * This file currently contains a fairly general implementation of asynchronous
  *  indexing with a very explicit message indexing implementation.  As gloda
  *  will eventually want to index more than just messages, the message-specific
@@ -11,7 +11,6 @@
  */
 
 import { MailServices } from "resource:///modules/MailServices.sys.mjs";
-
 import { GlodaDatastore } from "resource:///modules/gloda/GlodaDatastore.sys.mjs";
 import {
   GlodaContact,
@@ -209,7 +208,7 @@ var PendingCommitTracker = {
    *  looking at the header's properties because we defer setting those
    *  until the SQLite commit happens.
    *
-   * @returns Tuple of [gloda id, dirty status].
+   * @returns {[]} Tuple of [gloda id, dirty status].
    */
   getGlodaState(aMsgHdr) {
     // If it's in the pending commit table, then the message is basically
@@ -308,7 +307,9 @@ var PendingCommitTracker = {
       //  rare and the number of pending headers is generally going to be
       //  small.
       if (key.indexOf(uri) == 0) {
+        const glodaId = this._indexedMessagesPendingCommitByKey[key];
         delete this._indexedMessagesPendingCommitByKey[key];
+        delete this._indexedMessagesPendingCommitByGlodaId[glodaId];
       }
     }
   },
@@ -588,10 +589,10 @@ export var GlodaMsgIndexer = {
    *  cutting down on duplicate code, this ensures that we are listening on
    *  the folder in case it tries to go away when we are using it.
    *
-   * @returns true when the folder was successfully entered, false when we need
-   *     to pend on notification of updating of the folder (due to re-parsing
-   *     or what have you).  In the event of an actual problem, an exception
-   *     will escape.
+   * @returns {boolean} true when the folder was successfully entered,
+   *   false when we need to pend on notification of updating of the folder
+   *   (due to re-parsing or what have you).  In the event of an actual problem,
+   *   an exception will escape.
    */
   _indexerEnterFolder(aFolderID) {
     // leave the folder if we haven't explicitly left it.
@@ -705,11 +706,11 @@ export var GlodaMsgIndexer = {
    * Synchronous helper to get an enumerator for the current folder (as found
    *  in |_indexingFolder|.
    *
-   * @param aEnumKind One of |kEnumAllMsgs|, |kEnumMsgsToIndex|, or
-   *     |kEnumIndexedMsgs|.
-   * @param [aAllowPreBadIds=false] Only valid for |kEnumIndexedMsgs|, tells us
-   *     that we should treat message with any gloda-id as dirty, not just
-   *     messages that have non-bad message id's.
+   * @param {0|1|2} aEnumKind - One of |kEnumAllMsgs|, |kEnumMsgsToIndex|, or
+   *   |kEnumIndexedMsgs|.
+   * @param {boolean} [aAllowPreBadIds=false] - Only valid for
+   *  |kEnumIndexedMsgs|, tells us that we should treat message with any
+   *  gloda-id as dirty, not just messages that have non-bad message ids.
    */
   _indexerGetEnumerator(aEnumKind, aAllowPreBadIds) {
     if (aEnumKind == this.kEnumMsgsToIndex) {
@@ -909,9 +910,21 @@ export var GlodaMsgIndexer = {
    *  actually ready to be indexed.  (The summary may have not existed, may have
    *  been out of date, or otherwise.)
    *
-   * @param aFolder An nsIMsgFolder, already QI'd.
+   * When a folder message summary file has been rebuilt via "Repair Folder",
+   * we trigger a re-indexing of the gloda folder as well.
+   *
+   * @param {nsIMsgFolder} aFolder - An nsIMsgFolder, already QI'd.
    */
   _onFolderLoaded(aFolder) {
+    const glodaFolder = GlodaDatastore._mapFolder(aFolder);
+    if (glodaFolder.rebuildingFolderSummary) {
+      glodaFolder.rebuildingFolderSummary = false;
+      glodaFolder._dirtyStatus = glodaFolder.kFolderFilthy;
+      GlodaDatastore.updateFolderDirtyStatus(glodaFolder);
+      GlodaMsgIndexer.indexingSweepNeeded = true;
+      return;
+    }
+
     if (
       this._pendingFolderEntry !== null &&
       aFolder.URI == this._pendingFolderEntry.URI
@@ -1048,11 +1061,12 @@ export var GlodaMsgIndexer = {
       // ignore folders that:
       // - have been deleted out of existence!
       // - are not dirty/have not been compacted
-      // - are actively being compacted
+      // - are actively being compacted or repaired
       if (
         glodaFolder._deleted ||
         (!glodaFolder.dirtyStatus && !glodaFolder.compacted) ||
-        glodaFolder.compacting
+        glodaFolder.compacting ||
+        glodaFolder.rebuildingFolderSummary
       ) {
         continue;
       }
@@ -1494,7 +1508,6 @@ export var GlodaMsgIndexer = {
           this._indexMessage(msgHdr, aCallbackHandle),
           { what: "indexMessage", msgHdr }
         );
-        GlodaIndexer._indexedMessageCount++;
         this._log.debug("<<<  back from _indexMessage");
       }
     }
@@ -1560,11 +1573,12 @@ export var GlodaMsgIndexer = {
       const glodaFolder = GlodaDatastore._mapFolderID(glodaFolderId);
 
       // Stay out of folders that:
-      // - are compacting / compacted and not yet processed
+      // - are compacting or being repaired / compacted and not yet processed
       // - got deleted (this would be redundant if we had a stance on id nukage)
       // (these things could have changed since we queued the event)
       if (
         glodaFolder.compacting ||
+        glodaFolder.rebuildingFolderSummary ||
         glodaFolder.compacted ||
         glodaFolder._deleted
       ) {
@@ -1623,15 +1637,13 @@ export var GlodaMsgIndexer = {
    *  |_indexMessage|, marking the message bad.  If we were not in an
    *  |_indexMessage| call, then fail to recover.
    *
-   * @param aJob The job that was being worked.  We ignore this for now.
-   * @param aContextStack The callbackHandle mechanism's context stack.  When we
-   *     invoke pushAndGo for _indexMessage we put something in so we can
-   *     detect when it is on the async stack.
-   * @param aException The exception that is necessitating we attempt to
-   *     recover.
+   * @param {IndexingJob} aJob - The job that was being worked. We ignore this for now.
+   * @param {object[]} aContextStack - The callbackHandle mechanism's context
+   *   stack. When we invoke pushAndGo for _indexMessage we put something in so
+   *   we can detect when it is on the async stack.
    *
-   * @returns 1 if we were able to recover (because we want the call stack
-   *     popped down to our worker), false if we can't.
+   * @returns {1|false} 1 if we were able to recover (because we want the call stack
+   *   popped down to our worker), false if we can't.
    */
   _recover_indexMessage(aJob, aContextStack) {
     // See if indexMessage is on the stack...
@@ -1843,10 +1855,10 @@ export var GlodaMsgIndexer = {
   /**
    * Determine whether a folder is suitable for indexing.
    *
-   * @param aMsgFolder An nsIMsgFolder you want to see if we should index.
-   *
-   * @returns true if we want to index messages in this type of folder, false if
-   *     we do not.
+   * @param {nsIMsgFolder} aMsgFolder - An nsIMsgFolder you want to see if we
+   *   should index.
+   * @returns {boolean} true if we want to index messages in this type of
+   *   folder, false if we do not.
    */
   shouldIndexFolder(aMsgFolder) {
     const folderFlags = aMsgFolder.flags;
@@ -1927,7 +1939,7 @@ export var GlodaMsgIndexer = {
    * Resets the indexing priority on the given folder to whatever the default
    * is for folders of that type.
    *
-   * @note Calls setFolderIndexingPriority under the hood, so has identical
+   * NOTE: Calls setFolderIndexingPriority under the hood, so has identical
    *       potential reindexing side-effects
    *
    * @param {nsIMsgFolder} aFolder
@@ -1962,6 +1974,8 @@ export var GlodaMsgIndexer = {
 
   /**
    * Queue all of the folders belonging to an account for indexing.
+   *
+   * @param {nsIMsgAccount} aAccount - Account to index.
    */
   indexAccount(aAccount) {
     const rootFolder = aAccount.incomingServer.rootFolder;
@@ -1983,20 +1997,27 @@ export var GlodaMsgIndexer = {
   /**
    * Queue a single folder for indexing given an nsIMsgFolder.
    *
-   * @param [aOptions.callback] A callback to invoke when the folder finishes
-   *     indexing.  First argument is true if the task ran to completion
-   *     successfully, false if we had to abort for some reason.
-   * @param [aOptions.force=false] Should we force the indexing of all messages
-   *     in the folder (true) or just index what hasn't been indexed (false).
-   * @returns true if we are going to index the folder, false if not.
+   * @param {nsIMsgFolder} aMsgFolder - Folder.
+   * @param {object} aOptions
+   * @param {Function} [aOptions.callback] - A callback to invoke when the
+   *   folder finishes indexing. First argument is true if the task ran to
+   *   completion successfully, false if we had to abort for some reason.
+   * @param {boolean} [aOptions.force=false] - Should we force the indexing of
+   *   all messages in the folder (true) or just index what hasn't been indexed
+   *   (false).
+   * @returns {boolean} true if we are going to index the folder, false if not.
    */
   indexFolder(aMsgFolder, aOptions) {
     if (!this.shouldIndexFolder(aMsgFolder)) {
       return false;
     }
     const glodaFolder = GlodaDatastore._mapFolder(aMsgFolder);
-    // stay out of compacting/compacted folders
-    if (glodaFolder.compacting || glodaFolder.compacted) {
+    // Stay out of compacting/compacted folders and folders being repaired.
+    if (
+      glodaFolder.compacting ||
+      glodaFolder.compacted ||
+      glodaFolder.rebuildingFolderSummary
+    ) {
       return false;
     }
 
@@ -2017,7 +2038,7 @@ export var GlodaMsgIndexer = {
   /**
    * Queue a list of messages for indexing.
    *
-   * @param aFoldersAndMessages List of [nsIMsgFolder, message key] tuples.
+   * @param {[]} aFoldersAndMessages - List of [nsIMsgFolder, message key] tuples.
    */
   indexMessages(aFoldersAndMessages) {
     const job = new IndexingJob("message", null);
@@ -2058,8 +2079,8 @@ export var GlodaMsgIndexer = {
    * - Be in a non-filthy folder.
    * - Be gloda-indexed and non-filthy.
    *
-   * @param aMsgHdr A message header.
-   * @returns true if the message is likely to have been indexed.
+   * @param {nsIMsgDBHdr} aMsgHdr - A message header.
+   * @returns {boolean} true if the message is likely to have been indexed.
    */
   isMessageIndexed(aMsgHdr) {
     // If it's in a folder that we flat out do not index, say no.
@@ -2108,8 +2129,8 @@ export var GlodaMsgIndexer = {
    *  new-to-us case, it works out to be cleaner to just treat them the same
    *  and take a very small performance hit.
    *
-   * @param aMsgHdrs array of messages to treat as potentially changed.
-   * @param aDirtyingEvent Is this event inherently dirtying?  Receiving a
+   * @param {nsIMsgDBHdr[]} aMsgHdrs - Messages to treat as potentially changed.
+   * @param {boolean} aDirtyingEvent - Is this event inherently dirtying?  Receiving a
    *     msgsClassified notification is not inherently dirtying because it is
    *     just telling us that a message exists.  We use this knowledge to
    *     ignore the msgsClassified notifications for messages we have received
@@ -2266,13 +2287,14 @@ export var GlodaMsgIndexer = {
   /* ***** Folder Changes ***** */
   /**
    * All additions and removals are queued for processing.  Indexing messages
-   *  is potentially phenomenally expensive, and deletion can still be
-   *  relatively expensive due to our need to delete the message, its
-   *  attributes, and all attributes that reference it.  Additionally,
-   *  attribute deletion costs are higher than attribute look-up because
-   *  there is the actual row plus its 3 indices, and our covering indices are
-   *  no help there.
+   * is potentially phenomenally expensive, and deletion can still be
+   * relatively expensive due to our need to delete the message, its
+   * attributes, and all attributes that reference it.  Additionally,
+   * attribute deletion costs are higher than attribute look-up because
+   * there is the actual row plus its 3 indices, and our covering indices are
+   * no help there.
    *
+   * @type {nsIMsgFolderListener}
    */
   _msgFolderListener: {
     indexer: null,
@@ -2682,19 +2704,19 @@ export var GlodaMsgIndexer = {
     folderDeleted(aFolder) {
       this.indexer._log.debug("folderDeleted notification");
       try {
-        const delFunc = function (aFolder, indexer) {
-          if (indexer._datastore._folderKnown(aFolder)) {
+        const delFunc = function (folder, indexer) {
+          if (indexer._datastore._folderKnown(folder)) {
             indexer._log.info(
-              "Processing deletion of folder " + aFolder.prettyName + "."
+              "Processing deletion of folder " + folder.prettyName + "."
             );
-            const glodaFolder = GlodaDatastore._mapFolder(aFolder);
+            const glodaFolder = GlodaDatastore._mapFolder(folder);
             indexer._datastore.markMessagesDeletedByFolderID(glodaFolder.id);
             indexer._datastore.deleteFolderByID(glodaFolder.id);
             GlodaDatastore._killGlodaFolderIntoTombstone(glodaFolder);
           } else {
             indexer._log.info(
               "Ignoring deletion of folder " +
-                aFolder.prettyName +
+                folder.prettyName +
                 " because it is unknown to gloda."
             );
           }
@@ -2832,6 +2854,13 @@ export var GlodaMsgIndexer = {
 
       // (We do not need to mark the folder dirty because if we were indexing
       //  it, it already must have been marked dirty.)
+
+      // Repairing a local folder may change message keys and fix other
+      // problems, so we prepare for a complete re-indexing of the folder.
+      if (!isCompacting) {
+        GlodaDatastore.markMessagesDeletedByFolderID(glodaFolder.id);
+        glodaFolder.rebuildingFolderSummary = true;
+      }
     },
 
     /**
@@ -2926,7 +2955,6 @@ export var GlodaMsgIndexer = {
       GlodaMsgIndexer.resetFolderIndexingPriority(aFolderItem);
     },
     onFolderBoolPropertyChanged() {},
-    onFolderUnicharPropertyChanged() {},
     /**
      * Notice when user activity adds/removes tags or changes a message's
      *  status.
@@ -3076,9 +3104,11 @@ export var GlodaMsgIndexer = {
    * Prior to calling this method, the caller must have invoked
    *  |_indexerEnterFolder|, leaving us with the following true invariants
    *  below.
+   *  - aMsgHdr.folder == this._indexingFolder
+   *  - aMsgHdr.folder.msgDatabase == this._indexingDatabase
    *
-   * @pre aMsgHdr.folder == this._indexingFolder
-   * @pre aMsgHdr.folder.msgDatabase == this._indexingDatabase
+   * @param {nsIMsgDBHdr} aMsgHdr
+   * @param {object} aCallbackHandle
    */
   *_indexMessage(aMsgHdr, aCallbackHandle) {
     this._log.debug(
@@ -3368,7 +3398,10 @@ export var GlodaMsgIndexer = {
    * (We are punting because we haven't implemented support for generating
    *  attributes like that yet.)
    *
-   * @TODO: implement deletion of attributes that reference (deleted) messages
+   * TODO: implement deletion of attributes that reference (deleted) messages.
+   *
+   * @param {nsIMsgDBHdr} aMessage
+   * @param {object} aCallbackHandle
    */
   *_deleteMessage(aMessage, aCallbackHandle) {
     this._log.debug("*** Deleting message: " + aMessage);

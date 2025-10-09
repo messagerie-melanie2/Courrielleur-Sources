@@ -43,19 +43,15 @@
       info(description);
 
       const rules =
-        InspectorUtils.getCSSStyleRules(target, undefined, isVisitedTest);
+        InspectorUtils.getMatchingCSSRules(target, undefined, isVisitedTest);
       ok(getRule(rules, validSelector),
          `Rule of ${validSelector} is in rules`);
       ok(!getRule(rules, invalidSelector),
          `Rule of ${invalidSelector} is not in rules`);
 
       const targetRule = getRule(rules, validSelector);
-      const isTargetSelectorMatched = InspectorUtils.selectorMatchesElement(
-        target, targetRule, 0, undefined, isVisitedTest
-      );
-      const isDivSelectorMatched = InspectorUtils.selectorMatchesElement(
-        target, targetRule, 1, undefined, isVisitedTest
-      );
+      const isTargetSelectorMatched = targetRule.selectorMatchesElement(0, target, undefined, isVisitedTest);
+      const isDivSelectorMatched = targetRule.selectorMatchesElement(1, target, undefined, isVisitedTest);
       ok(isTargetSelectorMatched,
          `${validSelector} selector is matched for the rule`);
       ok(!isDivSelectorMatched,

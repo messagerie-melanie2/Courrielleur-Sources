@@ -3,16 +3,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-<?xml-stylesheet href="chrome://global/skin/global.css"?>
-<?xml-stylesheet href="chrome://global/skin/popup.css"?>
-<?xml-stylesheet href="chrome://global/skin/autocomplete.css"?>
-<?xml-stylesheet href="chrome://messenger/skin/input-fields.css"?>
-<?xml-stylesheet href="chrome://messenger/skin/preferences/applications.css"?>
-<?xml-stylesheet href="chrome://global/skin/in-content/common.css"?>
-<?xml-stylesheet href="chrome://messenger/skin/preferences/preferences.css"?>
-<?xml-stylesheet href="chrome://calendar/skin/shared/calendar-preferences.css" type="text/css"?>
-<?xml-stylesheet href="chrome://calendar/skin/calendar.css"?>
-
 <!DOCTYPE html [
 <!ENTITY % brandDTD SYSTEM "chrome://branding/locale/brand.dtd">
 %brandDTD;
@@ -33,8 +23,29 @@
       scrolling="false">
 <head>
   <title data-l10n-id="preferences-doc-title2"></title>
-  <meta http-equiv="Content-Security-Policy" content="default-src chrome:; connect-src *; script-src chrome: 'unsafe-inline'; img-src chrome: moz-icon: https: data:; style-src chrome: data: 'unsafe-inline'; object-src 'none'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src chrome:; connect-src *; script-src chrome: 'unsafe-inline'; img-src chrome: moz-icon: https: data: blob:; style-src chrome: data: 'unsafe-inline'; object-src 'none'" />
   <meta name="color-scheme" content="light dark" />
+  <link rel="stylesheet" href="chrome://global/skin/global.css" />
+  <link rel="stylesheet" href="chrome://global/skin/popup.css" />
+  <link rel="stylesheet" href="chrome://global/skin/autocomplete.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/input-fields.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/widgets.css" />
+  <link
+    rel="stylesheet"
+    href="chrome://messenger/skin/preferences/applications.css"
+  />
+  <link rel="stylesheet" href="chrome://global/skin/in-content/common.css" />
+  <link
+    rel="stylesheet"
+    href="chrome://messenger/skin/preferences/preferences.css"
+  />
+  <link
+    rel="stylesheet"
+    href="chrome://calendar/skin/shared/calendar-preferences.css"
+  />
+  <link rel="stylesheet" href="chrome://calendar/skin/calendar.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/folderMenus.css" />
+
   <link rel="localization" href="branding/brand.ftl" />
   <link rel="localization" href="messenger/preferences/preferences.ftl" />
   <link rel="localization" href="messenger/preferences/fonts.ftl" />
@@ -46,7 +57,6 @@
   <link rel="localization" href="messenger/preferences/permissions.ftl" />
   <link rel="localization" href="messenger/preferences/cookies.ftl" />
   <link rel="localization" href="messenger/preferences/system-integration.ftl" />
-  <link rel="localization" href="messenger/preferences/colors.ftl" />
   <link rel="localization" href="messenger/preferences/dock-options.ftl" />
   <link rel="localization" href="messenger/preferences/notifications.ftl" />
   <link rel="localization" href="messenger/preferences/new-tag.ftl" />
@@ -60,7 +70,7 @@
   <link rel="localization" href="security/certificates/deviceManager.ftl" />
 #ifdef NIGHTLY_BUILD
   <link rel="localization" href="messenger/preferences/sync-dialog.ftl" />
-  <link rel="localization" href="messenger/firefoxAccounts.ftl" />
+  <link rel="localization" href="messenger/syncAccounts.ftl" />
 #endif
 
   <script defer="defer" src="chrome://global/content/preferencesBindings.js"></script>
@@ -103,6 +113,17 @@
                       src="chrome://messenger/skin/icons/new/touch/settings.svg"
                       alt="" />
             <label class="category-name" flex="1" data-l10n-id="pane-general-title"/>
+          </richlistitem>
+
+          <richlistitem id="category-appearance"
+                        class="category"
+                        value="paneAppearance"
+                        data-l10n-id="category-appearance"
+                        align="center">
+            <html:img class="category-icon"
+                      src="chrome://messenger/skin/icons/new/touch/paint-palette.svg"
+                      alt="" />
+            <label class="category-name" flex="1" data-l10n-id="pane-appearance-title"/>
           </richlistitem>
 
           <richlistitem id="category-compose"
@@ -160,6 +181,16 @@
             <label class="category-name" flex="1" data-l10n-id="pane-sync-title"/>
           </richlistitem>
 #endif
+          <richlistitem id="category-qrexport"
+                        class="category"
+                        value="paneQrExport"
+                        data-l10n-id="category-qr-export"
+                        align="center">
+            <html:img class="category-icon"
+                      src="chrome://messenger/skin/icons/lg/mobile-export.svg"
+                      alt="" />
+            <label class="category-name" flex="1" data-l10n-id="pane-qr-export-title"/>
+          </richlistitem>
         </richlistbox>
 
         <spacer flex="1"/>
@@ -191,12 +222,12 @@
           <hbox class="sticky-container" pack="end" align="top" flex="1">
             <search-textbox id="searchInput"
                             data-l10n-id="search-preferences-input2"
-                            data-l10n-attrs="placeholder, style"
-                            hidden="true"/>
+                            data-l10n-attrs="placeholder, style"/>
           </hbox>
           <vbox id="paneDeck">
 #include searchResults.inc.xhtml
 #include general.inc.xhtml
+#include appearance.inc.xhtml
 #include compose.inc.xhtml
 #include privacy.inc.xhtml
 #include chat.inc.xhtml
@@ -204,6 +235,7 @@
 #ifdef NIGHTLY_BUILD
 #include sync.inc.xhtml
 #endif
+#include qrExport.inc.xhtml
           </vbox>
         </vbox>
       </vbox>

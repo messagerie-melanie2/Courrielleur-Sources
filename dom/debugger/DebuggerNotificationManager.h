@@ -20,7 +20,7 @@ class DebuggerNotificationObserver;
 
 class DebuggerNotificationManager final : public nsISupports {
  public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(DebuggerNotificationManager)
 
   static RefPtr<DebuggerNotificationManager> ForDispatch(
@@ -37,7 +37,7 @@ class DebuggerNotificationManager final : public nsISupports {
   }
 
   explicit DebuggerNotificationManager(nsIGlobalObject* aDebuggeeGlobal)
-      : mDebuggeeGlobal(aDebuggeeGlobal), mNotificationObservers() {}
+      : mDebuggeeGlobal(aDebuggeeGlobal) {}
 
   bool Attach(DebuggerNotificationObserver* aObserver);
   bool Detach(DebuggerNotificationObserver* aObserver);

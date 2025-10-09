@@ -9,13 +9,10 @@
 
 #include "nsTArray.h"
 #include "seccomon.h"
+#include "mozilla/dom/BufferSourceBindingFwd.h"
 #include "mozilla/dom/TypedArray.h"
 
 namespace mozilla::dom {
-
-class ArrayBufferViewOrArrayBuffer;
-class OwningArrayBufferViewOrArrayBuffer;
-
 class CryptoBuffer : public FallibleTArray<uint8_t> {
  public:
   uint8_t* Assign(const CryptoBuffer& aData);
@@ -25,8 +22,8 @@ class CryptoBuffer : public FallibleTArray<uint8_t> {
   uint8_t* Assign(const nsTArray<uint8_t>& aData);
   uint8_t* Assign(const ArrayBuffer& aData);
   uint8_t* Assign(const ArrayBufferView& aData);
-  uint8_t* Assign(const ArrayBufferViewOrArrayBuffer& aData);
-  uint8_t* Assign(const OwningArrayBufferViewOrArrayBuffer& aData);
+  uint8_t* Assign(const BufferSource& aData);
+  uint8_t* Assign(const OwningBufferSource& aData);
   uint8_t* Assign(const Uint8Array& aArray);
 
   uint8_t* AppendSECItem(const SECItem* aItem);
@@ -35,9 +32,8 @@ class CryptoBuffer : public FallibleTArray<uint8_t> {
   nsresult FromJwkBase64(const nsString& aBase64);
   nsresult ToJwkBase64(nsString& aBase64) const;
   bool ToSECItem(PLArenaPool* aArena, SECItem* aItem) const;
-  JSObject* ToUint8Array(JSContext* aCx) const;
-  JSObject* ToArrayBuffer(JSContext* aCx) const;
-  bool ToNewUnsignedBuffer(uint8_t** aBuf, uint32_t* aBufLen) const;
+  JSObject* ToUint8Array(JSContext* aCx, ErrorResult& aError) const;
+  JSObject* ToArrayBuffer(JSContext* aCx, ErrorResult& aError) const;
 
   bool GetBigIntValue(unsigned long& aRetVal);
 

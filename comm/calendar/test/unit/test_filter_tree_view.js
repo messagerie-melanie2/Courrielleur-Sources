@@ -2,17 +2,21 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { CalendarTestUtils } = ChromeUtils.import(
-  "resource://testing-common/calendar/CalendarTestUtils.jsm"
+const { CalendarTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/calendar/CalendarTestUtils.sys.mjs"
 );
 const { TestUtils } = ChromeUtils.importESModule("resource://testing-common/TestUtils.sys.mjs");
 
-const { CalEvent } = ChromeUtils.import("resource:///modules/CalEvent.jsm");
-const { CalRecurrenceInfo } = ChromeUtils.import("resource:///modules/CalRecurrenceInfo.jsm");
-const { CalRecurrenceRule } = ChromeUtils.import("resource:///modules/CalRecurrenceRule.jsm");
+const { CalEvent } = ChromeUtils.importESModule("resource:///modules/CalEvent.sys.mjs");
+const { CalRecurrenceInfo } = ChromeUtils.importESModule(
+  "resource:///modules/CalRecurrenceInfo.sys.mjs"
+);
+const { CalRecurrenceRule } = ChromeUtils.importESModule(
+  "resource:///modules/CalRecurrenceRule.sys.mjs"
+);
 
 const { TreeSelection } = ChromeUtils.importESModule(
-  "chrome://messenger/content/tree-selection.mjs"
+  "chrome://messenger/content/TreeSelection.mjs"
 );
 
 Services.scriptloader.loadSubScript("chrome://messenger/content/jsTreeView.js");
@@ -137,7 +141,8 @@ add_task(async function testInitializeWithExistingCalenderEvents() {
 
     beginUpdateBatch() {},
     endUpdateBatch() {},
-    invalidateRow(index) {},
+    invalidateRow() {},
+    dispatchEvent() {},
   };
   view.setTree(tree);
 
@@ -257,7 +262,7 @@ add_task(async function testFilterFunction() {
   Assert.ok(view.selection.isSelected(0), "item 'one' should be selected");
 
   // Verify that setting filter function appropriately hides non-matching items.
-  view.setFilterFunction(item => {
+  view.applyFiltering(item => {
     return item.title.includes("f");
   });
   assertViewContainsItemsInOrder(view, "five");
@@ -276,7 +281,7 @@ add_task(async function testFilterFunction() {
   assertViewContainsItemsInOrder(view, "five", "four");
 
   // Verify that clearing the filter shows all items properly sorted.
-  view.clearFilter();
+  view.clearFiltering();
   assertViewContainsItemsInOrder(
     view,
     "five",
@@ -438,7 +443,8 @@ async function initializeCalendarAndView() {
 
     beginUpdateBatch() {},
     endUpdateBatch() {},
-    invalidateRow(index) {},
+    invalidateRow() {},
+    dispatchEvent() {},
   };
   view.setTree(tree);
 

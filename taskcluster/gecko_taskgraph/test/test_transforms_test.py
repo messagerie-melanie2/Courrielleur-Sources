@@ -26,6 +26,7 @@ def make_test_task():
             "mozharness": {"extra-options": []},
             "test-platform": "linux64",
             "treeherder-symbol": "g(t)",
+            "test-name": "task",
             "try-name": "task",
         }
         task.update(extra)
@@ -43,6 +44,7 @@ def test_split_variants(monkeypatch, run_full_config_transform, make_test_task):
             "foo": {
                 "description": "foo variant",
                 "suffix": "foo",
+                "mozinfo": "foo",
                 "component": "foo bar",
                 "expiration": "never",
                 "merge": {
@@ -56,6 +58,7 @@ def test_split_variants(monkeypatch, run_full_config_transform, make_test_task):
             "bar": {
                 "description": "bar variant",
                 "suffix": "bar",
+                "mozinfo": "bar",
                 "component": "foo bar",
                 "expiration": "never",
                 "when": {
@@ -99,7 +102,10 @@ def test_split_variants(monkeypatch, run_full_config_transform, make_test_task):
     )
     tasks = list(run_split_variants(input_task))
     assert len(tasks) == 1
-    assert tasks[0] == input_task
+
+    expected = input_task
+    expected["attributes"]["unittest_variant"] = None
+    assert tasks[0] == expected
 
     # test variants are split into expected tasks
     input_task = make_test_task(
@@ -110,7 +116,10 @@ def test_split_variants(monkeypatch, run_full_config_transform, make_test_task):
     )
     tasks = list(run_split_variants(input_task))
     assert len(tasks) == 3
-    assert tasks[0] == make_test_task()
+
+    expected = make_test_task()
+    expected["attributes"]["unittest_variant"] = None
+    assert tasks[0] == expected
     assert tasks[1] == make_expected("foo")
 
     expected = make_expected("bar")
@@ -144,7 +153,7 @@ def test_split_variants(monkeypatch, run_full_config_transform, make_test_task):
     )
     tasks = list(run_split_variants(input_task))
     assert len(tasks) == 2
-    assert "unittest_variant" not in tasks[0]["attributes"]
+    assert tasks[0]["attributes"]["unittest_variant"] is None
     assert tasks[1]["attributes"]["unittest_variant"] == "foo"
 
     # test 'run-without-variants=False'
@@ -233,16 +242,16 @@ def test_split_variants(monkeypatch, run_full_config_transform, make_test_task):
         pytest.param(
             {
                 "attributes": {},
-                "test-platform": "windows10-64-2004-ref-hw-2017-ccov/debug",
+                "test-platform": "windows11-64-2009-hw-ref-ccov/debug",
             },
             {
                 "platform": {
                     "arch": "64",
-                    "machine": "ref-hw-2017",
+                    "machine": "hw-ref",
                     "os": {
-                        "build": "2004",
+                        "build": "2009",
                         "name": "windows",
-                        "version": "10",
+                        "version": "11",
                     },
                 },
                 "build": {

@@ -3,20 +3,30 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+with Files("**"):
+    BUG_COMPONENT = ("Thunderbird", "Testing Infrastructure")
+
+DIRS += ["webextensions"]
+
 BROWSER_CHROME_MANIFESTS += [
-    "browser/browser-detachedWindows.ini",
-    "browser/browser-drawBelowTitlebar.ini",
-    "browser/browser-drawInTitlebar.ini",
-    "browser/browser.ini",
-    "performance/browser.ini",
-    "webextensions/browser.ini",
+    "browser/browser-detachedWindows.toml",
+    "browser/browser-drawBelowTitlebar.toml",
+    "browser/browser-drawInTitlebar.toml",
+    "browser/browser.toml",
+    "performance/browser.toml",
+    "widgets/browser.toml",
 ]
 
 XPCSHELL_TESTS_MANIFESTS += [
-    "unit/xpcshell.ini",
-    "unit/xpcshell_maildir.ini",
+    "unit/xpcshell.toml",
+    "unit/xpcshell_maildir.toml",
 ]
 
 TESTING_JS_MODULES += [
     "../../../../browser/components/customizableui/test/CustomizableUITestUtils.sys.mjs",
+    "IMAPServer.sys.mjs",
+    "MailViewHelpers.sys.mjs",
+    "NNTPServer.sys.mjs",
+    "POP3Server.sys.mjs",
+    "SMTPServer.sys.mjs",
 ]

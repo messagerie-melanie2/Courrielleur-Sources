@@ -16,15 +16,6 @@ with Files("browser/*autofocus*"):
 with Files("browser/*unload*"):
     BUG_COMPONENT = ("Core", "DOM: Events")
 
-with Files("browser/*1238427*"):
-    BUG_COMPONENT = ("Core", "DOM: Geolocation")
-
-with Files("browser/*Geolocation*"):
-    BUG_COMPONENT = ("Core", "DOM: Geolocation")
-
-with Files("browser/*geo_*"):
-    BUG_COMPONENT = ("Core", "DOM: Geolocation")
-
 with Files("browser/browser_cancel_keydown_keypress_event.js"):
     BUG_COMPONENT = ("Core", "DOM: UI Events & Focus Handling")
 
@@ -75,9 +66,6 @@ with Files("mochitest/gamepad/**"):
 # TODO: big mix of components here
 with Files("mochitest/general/**"):
     BUG_COMPONENT = ("Core", "DOM: Core & HTML")
-
-with Files("mochitest/geolocation/**"):
-    BUG_COMPONENT = ("Core", "DOM: Geolocation")
 
 with Files("mochitest/localstorage/**"):
     BUG_COMPONENT = ("Core", "Storage: localStorage & sessionStorage")
@@ -136,9 +124,6 @@ with Files("reftest/xml-stylesheet/**"):
 with Files("unit/**"):
     BUG_COMPONENT = ("Core", "DOM: Core & HTML")
 
-with Files("unit/*geolocation*"):
-    BUG_COMPONENT = ("Core", "DOM: Geolocation")
-
 with Files("unit/test_bug465752.js"):
     BUG_COMPONENT = ("Core", "CSS Parsing and Computation")
 
@@ -146,50 +131,47 @@ with Files("unit/test_PromiseDebugging.js"):
     BUG_COMPONENT = ("Core", "XPConnect")
 
 MOCHITEST_MANIFESTS += [
-    "mochitest/ajax/jquery/mochitest.ini",
-    "mochitest/ajax/mochikit/mochitest.ini",
-    "mochitest/ajax/prototype/mochitest.ini",
-    "mochitest/ajax/scriptaculous/mochitest.ini",
-    "mochitest/beacon/mochitest.ini",
-    "mochitest/bugs/mochitest.ini",
-    "mochitest/crypto/mochitest.ini",
-    "mochitest/dom-level0/mochitest.ini",
-    "mochitest/dom-level1-core/mochitest.ini",
-    "mochitest/dom-level2-core/mochitest.ini",
-    "mochitest/dom-level2-html/mochitest.ini",
-    "mochitest/fetch/mochitest.ini",
-    "mochitest/gamepad/mochitest.ini",
-    "mochitest/general/mochitest.ini",
-    "mochitest/geolocation/mochitest.ini",
-    "mochitest/integer-gemm/mochitest.ini",
-    "mochitest/keyhandling/mochitest.ini",
-    "mochitest/localstorage/mochitest.ini",
-    "mochitest/orientation/mochitest.ini",
-    "mochitest/pointerlock/mochitest.ini",
-    "mochitest/script/mochitest.ini",
-    "mochitest/sessionstorage/mochitest.ini",
-    "mochitest/storageevent/mochitest.ini",
-    "mochitest/webcomponents/mochitest.ini",
-    "mochitest/whatwg/mochitest.ini",
+    "mochitest/ajax/jquery/mochitest.toml",
+    "mochitest/ajax/mochikit/mochitest.toml",
+    "mochitest/ajax/prototype/mochitest.toml",
+    "mochitest/ajax/scriptaculous/mochitest.toml",
+    "mochitest/beacon/mochitest.toml",
+    "mochitest/bugs/mochitest.toml",
+    "mochitest/crypto/mochitest.toml",
+    "mochitest/dom-level0/mochitest.toml",
+    "mochitest/dom-level1-core/mochitest.toml",
+    "mochitest/dom-level2-core/mochitest.toml",
+    "mochitest/dom-level2-html/mochitest.toml",
+    "mochitest/fetch/mochitest.toml",
+    "mochitest/gamepad/mochitest.toml",
+    "mochitest/general/mochitest.toml",
+    "mochitest/integer-gemm/mochitest.toml",
+    "mochitest/keyhandling/mochitest.toml",
+    "mochitest/localstorage/mochitest.toml",
+    "mochitest/orientation/mochitest.toml",
+    "mochitest/pointerlock/mochitest.toml",
+    "mochitest/script/mochitest.toml",
+    "mochitest/sessionstorage/mochitest.toml",
+    "mochitest/storageevent/mochitest.toml",
+    "mochitest/webcomponents/mochitest.toml",
+    "mochitest/whatwg/mochitest.toml",
 ]
 
 MOCHITEST_CHROME_MANIFESTS += [
-    "mochitest/beacon/chrome.ini",
-    "mochitest/chrome/chrome.ini",
-    "mochitest/fs/chrome.ini",
-    "mochitest/general/chrome.ini",
-    "mochitest/geolocation/chrome.ini",
-    "mochitest/keyhandling/chrome.ini",
-    "mochitest/localstorage/chrome.ini",
-    "mochitest/sessionstorage/chrome.ini",
-    "mochitest/webcomponents/chrome.ini",
-    "mochitest/whatwg/chrome.ini",
+    "mochitest/beacon/chrome.toml",
+    "mochitest/chrome/chrome.toml",
+    "mochitest/fs/chrome.toml",
+    "mochitest/general/chrome.toml",
+    "mochitest/keyhandling/chrome.toml",
+    "mochitest/localstorage/chrome.toml",
+    "mochitest/sessionstorage/chrome.toml",
+    "mochitest/webcomponents/chrome.toml",
+    "mochitest/whatwg/chrome.toml",
 ]
 
-XPCSHELL_TESTS_MANIFESTS += ["unit/xpcshell.ini"]
+XPCSHELL_TESTS_MANIFESTS += ["unit/xpcshell.toml"]
 BROWSER_CHROME_MANIFESTS += [
-    "browser/browser.ini",
-    "browser/perfmetrics/browser.ini",
+    "browser/browser.toml",
 ]
 
 TEST_HARNESS_FILES.testing.mochitest.tests.dom.tests.mochitest.ajax.lib += [

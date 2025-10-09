@@ -6,8 +6,6 @@
 
 UNIFIED_SOURCES += [
     "sdnAccessible.cpp",
-    "sdnDocAccessible.cpp",
-    "sdnTextAccessible.cpp",
 ]
 
 LOCAL_INCLUDES += [
@@ -15,6 +13,7 @@ LOCAL_INCLUDES += [
     "/accessible/generic",
     "/accessible/html",
     "/accessible/windows/msaa",
+    "/accessible/windows/uia",
     "/accessible/xpcom",
     "/accessible/xul",
 ]

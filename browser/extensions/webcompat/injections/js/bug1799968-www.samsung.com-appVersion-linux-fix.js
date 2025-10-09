@@ -5,15 +5,16 @@
 "use strict";
 
 /**
- * Bug 1799968 - Build site patch for www.samsung.com
+ * Bug 1799968 - Build site patch for www.samsung.com on Linux
+ * Bug 1860417 - and Android
  * WebCompat issue #108993 - https://webcompat.com/issues/108993
  *
  * Samsung's Watch pages try to detect the OS via navigator.appVersion,
- * but fail with Linux because they expect it to contain the literal
- * string "linux", and their JS breaks.
+ * but fail with Linux and Android because they expect it to contain the
+ * literal string "linux", and their JS breaks.
  *
  * As such this site patch sets appVersion to "5.0 (Linux)", and is
- * only meant to be applied on Linux.
+ * only meant to be applied on Linux or Android.
  */
 
 /* globals exportFunction */
@@ -22,10 +23,7 @@ console.info(
   "navigator.appVersion has been shimmed for compatibility reasons. See https://webcompat.com/issues/108993 for details."
 );
 
-Object.defineProperty(navigator.wrappedJSObject, "appVersion", {
-  get: exportFunction(function () {
-    return "5.0 (Linux)";
-  }, window),
-
-  set: exportFunction(function () {}, window),
-});
+const nav = Object.getPrototypeOf(navigator.wrappedJSObject);
+const appVersion = Object.getOwnPropertyDescriptor(nav, "appVersion");
+appVersion.get = exportFunction(() => "5.0 (Linux)", window);
+Object.defineProperty(nav, "appVersion", appVersion);

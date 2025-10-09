@@ -2,13 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
-
-XPCOMUtils.defineLazyModuleGetters(this, {
-  CardDAVUtils: "resource:///modules/CardDAVUtils.jsm",
-  MailServices: "resource:///modules/MailServices.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  CardDAVUtils: "resource:///modules/CardDAVUtils.sys.mjs",
+  MailServices: "resource:///modules/MailServices.sys.mjs",
 });
 
 var log = console.createInstance({
@@ -25,7 +21,7 @@ var userContextId;
 window.addEventListener(
   "DOMContentLoaded",
   () => {
-    for (let id of [
+    for (const id of [
       "username",
       "location",
       "statusArea",
@@ -55,8 +51,8 @@ window.addEventListener(
  * the default placeholder.
  */
 function fillLocationPlaceholder() {
-  let parts = uiElements.username.value.split("@");
-  let domain = parts.length == 2 && parts[1] ? parts[1] : null;
+  const parts = uiElements.username.value.split("@");
+  const domain = parts.length == 2 && parts[1] ? parts[1] : null;
 
   if (domain) {
     uiElements.location.setAttribute("placeholder", domain);
@@ -68,7 +64,7 @@ function fillLocationPlaceholder() {
   }
 }
 
-function handleCardDAVURLInput(event) {
+function handleCardDAVURLInput() {
   changeCardDAVURL();
 }
 
@@ -77,7 +73,7 @@ function changeCardDAVURL() {
   setStatus();
 }
 
-function handleCardDAVURLBlur(event) {
+function handleCardDAVURLBlur() {
   if (
     uiElements.location.validity.typeMismatch &&
     !uiElements.location.value.match(/^https?:\/\//)
@@ -90,7 +86,7 @@ async function check() {
   // We might be accepting the dialog by pressing Enter in the URL input.
   handleCardDAVURLBlur();
 
-  let username = uiElements.username.value;
+  const username = uiElements.username.value;
 
   if (!uiElements.location.validity.valid && !username.split("@")[1]) {
     log.error(`Invalid URL: "${uiElements.location.value}"`);
@@ -128,8 +124,8 @@ async function check() {
   }
 
   // Create a list of CardDAV directories that already exist.
-  let existing = [];
-  for (let d of MailServices.ab.directories) {
+  const existing = [];
+  for (const d of MailServices.ab.directories) {
     if (d.dirType == Ci.nsIAbManager.CARDDAV_DIRECTORY_TYPE) {
       existing.push(d.getStringValue("carddav.url", ""));
     }
@@ -137,12 +133,12 @@ async function check() {
 
   // Display a checkbox for each directory that doesn't already exist.
   let alreadyAdded = 0;
-  for (let book of foundBooks) {
+  for (const book of foundBooks) {
     if (existing.includes(book.url.href)) {
       alreadyAdded++;
       continue;
     }
-    let checkbox = uiElements.availableBooks.appendChild(
+    const checkbox = uiElements.availableBooks.appendChild(
       document.createXULElement("checkbox")
     );
     checkbox.setAttribute("label", book.name);
@@ -171,11 +167,7 @@ function setStatus(status, message, args) {
     case "loading":
       uiElements.statusImage.setAttribute(
         "src",
-        "chrome://global/skin/icons/loading.png"
-      );
-      uiElements.statusImage.setAttribute(
-        "srcset",
-        "chrome://global/skin/icons/loading@2x.png 2x"
+        "chrome://messenger/skin/icons/spinning.svg"
       );
       break;
     case "error":
@@ -201,12 +193,12 @@ function setStatus(status, message, args) {
   }
 
   // Grow to fit the list of books. Uses `resizeBy` because it has special
-  // handling in SubDialog.jsm that the other resize functions don't have.
+  // handling in SubDialog.sys.mjs that the other resize functions don't have.
   window.resizeBy(0, Math.min(250, uiElements.availableBooks.scrollHeight));
   window.dispatchEvent(new CustomEvent("status-changed"));
 }
 
-window.addEventListener("dialogaccept", event => {
+window.addEventListener("dialogaccept", async event => {
   if (uiElements.resultsArea.hidden) {
     event.preventDefault();
     check();
@@ -217,9 +209,9 @@ window.addEventListener("dialogaccept", event => {
     return;
   }
 
-  for (let checkbox of uiElements.availableBooks.children) {
+  for (const checkbox of uiElements.availableBooks.children) {
     if (checkbox.checked) {
-      let book = checkbox._book.create();
+      const book = await checkbox._book.create();
       if (window.arguments[0]) {
         // Pass the UID of the book back to the opening window.
         window.arguments[0].newDirectoryUID = book.UID;

@@ -4,6 +4,7 @@
 
 from taskgraph.util.schema import Schema, optionally_keyed_by
 from voluptuous import Any, Optional, Required
+from voluptuous.validators import Length
 
 graph_config_schema = Schema(
     {
@@ -20,7 +21,7 @@ graph_config_schema = Schema(
         Required("product-dir"): str,
         Required("treeherder"): {
             # Mapping of treeherder group symbols to descriptive names
-            Required("group-names"): {str: str}
+            Required("group-names"): {str: Length(max=100)}
         },
         Required("index"): {Required("products"): [str]},
         Required("try"): {
@@ -42,6 +43,7 @@ graph_config_schema = Schema(
                     Optional("partial-updates"): bool,
                 }
             },
+            Optional("rebuild-kinds"): [str],
         },
         Required("merge-automation"): {
             Required("behaviors"): {
@@ -49,7 +51,7 @@ graph_config_schema = Schema(
                     Optional("from-branch"): str,
                     Required("to-branch"): str,
                     Optional("from-repo"): str,
-                    Required("to-repo"): str,
+                    Optional("to-repo"): str,
                     Required("version-files"): [
                         {
                             Required("filename"): str,
@@ -59,6 +61,7 @@ graph_config_schema = Schema(
                     ],
                     Required("replacements"): [[str]],
                     Required("merge-old-head"): bool,
+                    Optional("regex-replacements"): [[str]],
                     Optional("base-tag"): str,
                     Optional("end-tag"): str,
                     Optional("fetch-version-from"): str,
@@ -104,11 +107,25 @@ graph_config_schema = Schema(
                 }
             },
         },
-        Required("mac-notarization"): {
-            Required("mac-entitlements"): optionally_keyed_by(
-                "platform", "release-level", str
-            ),
+        Required("mac-signing"): {
             Required("mac-requirements"): optionally_keyed_by("platform", str),
+            Required("hardened-sign-config"): optionally_keyed_by(
+                "hardened-signing-type",
+                [
+                    {
+                        Optional("deep"): bool,
+                        Optional("runtime"): bool,
+                        Optional("force"): bool,
+                        Optional("requirements"): optionally_keyed_by(
+                            "release-product", "release-level", str
+                        ),
+                        Optional("entitlements"): optionally_keyed_by(
+                            "build-platform", "project", str
+                        ),
+                        Required("globs"): [str],
+                    }
+                ],
+            ),
         },
         Required("taskgraph"): {
             Optional(
@@ -116,6 +133,9 @@ graph_config_schema = Schema(
                 description="Python function to call to register extensions.",
             ): str,
             Optional("decision-parameters"): str,
+            Optional("run"): {
+                Optional("use-caches"): Any(bool, [str]),
+            },
         },
         Required("expiration-policy"): optionally_keyed_by("project", {str: str}),
     }

@@ -21,12 +21,11 @@ const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   ContentTask: "resource://testing-common/ContentTask.sys.mjs",
+  HttpServer: "resource://testing-common/httpd.sys.mjs",
   SpecialPowersParent: "resource://testing-common/SpecialPowersParent.sys.mjs",
+  SpecialPowersForProcess:
+    "resource://testing-common/SpecialPowersProcessActor.sys.mjs",
   TestUtils: "resource://testing-common/TestUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  HttpServer: "resource://testing-common/httpd.js",
 });
 
 XPCOMUtils.defineLazyServiceGetters(lazy, {
@@ -71,7 +70,7 @@ function promiseBrowserLoaded(browser, url, redirectUrl) {
         "nsIWebProgressListener",
       ]),
 
-      onStateChange(webProgress, request, stateFlags, statusCode) {
+      onStateChange(webProgress, request, stateFlags) {
         request.QueryInterface(Ci.nsIChannel);
 
         let requestURI =
@@ -100,7 +99,7 @@ function promiseBrowserLoaded(browser, url, redirectUrl) {
   });
 }
 
-class ContentPage {
+export class ContentPage {
   constructor(
     remote = gRemoteContentScripts,
     remoteSubframes = REMOTE_CONTENT_SUBFRAMES,
@@ -147,7 +146,7 @@ class ContentPage {
       Ci.nsIWebNavigation
     );
 
-    chromeShell.createAboutBlankContentViewer(system, system);
+    chromeShell.createAboutBlankDocumentViewer(system, system);
     this.windowlessBrowser.browsingContext.useGlobalHistory = false;
     let loadURIOptions = {
       triggeringPrincipal: system,
@@ -236,7 +235,7 @@ class ContentPage {
     this.browser.messageManager.loadFrameScript(frameScript, false, true);
   }
 
-  didChangeBrowserRemoteness(event) {
+  didChangeBrowserRemoteness() {
     // XXX: Tests can load their own additional frame scripts, so we may need to
     // track all scripts that have been loaded, and reload them here?
     this.loadFrameScript(frameScript);
@@ -260,6 +259,15 @@ class ContentPage {
 
   spawn(params, task) {
     return this.SpecialPowers.spawn(this.browser, params, task);
+  }
+
+  // Get a SpecialPowersForProcess instance associated with the content process
+  // of the currently loaded page. This allows callers to spawn() tasks that
+  // outlive the page (for as long as the page's process is around).
+  getCurrentContentProcessSpecialPowers() {
+    const testScope = XPCShellContentUtils.currentScope;
+    const domProcess = this.browsingContext.currentWindowGlobal.domProcess;
+    return new lazy.SpecialPowersForProcess(testScope, domProcess);
   }
 
   // Like spawn(), but uses the legacy ContentTask infrastructure rather than
@@ -422,14 +430,6 @@ export var XPCShellContentUtils = {
       response.setHeader("content-type", "application/json", true);
       response.write(JSON.stringify(obj));
     });
-  },
-
-  get remoteContentScripts() {
-    return gRemoteContentScripts;
-  },
-
-  set remoteContentScripts(val) {
-    gRemoteContentScripts = !!val;
   },
 
   async fetch(origin, url, options) {

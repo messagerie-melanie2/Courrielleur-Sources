@@ -3,14 +3,11 @@
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
-<?xml-stylesheet href="chrome://messenger/skin/accountManage.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger-newsblog/skin/feed-subscriptions.css" type="text/css"?>
-
 <!DOCTYPE html [ <!ENTITY % newsblogDTD SYSTEM "chrome://messenger-newsblog/locale/am-newsblog.dtd">
 %newsblogDTD;
-<!ENTITY %             feedDTD SYSTEM "chrome://messenger-newsblog/locale/feed-subscriptions.dtd" >
+<!ENTITY % feedDTD SYSTEM "chrome://messenger-newsblog/locale/feed-subscriptions.dtd">
 %feedDTD;
-<!ENTITY %   accountNoIdentDTD SYSTEM "chrome://messenger/locale/am-serverwithnoidentities.dtd" >
+<!ENTITY % accountNoIdentDTD SYSTEM "chrome://messenger/locale/am-serverwithnoidentities.dtd">
 %accountNoIdentDTD;
 <!ENTITY % accountServerTopDTD SYSTEM "chrome://messenger/locale/am-server-top.dtd">
 %accountServerTopDTD; ]>
@@ -22,6 +19,16 @@
 >
   <head>
     <title>&accountTitle.label;</title>
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src chrome:; script-src chrome: 'unsafe-inline'; style-src chrome: 'unsafe-inline'"
+    />
+    <link rel="localization" href="messenger/accountSettings.ftl" />
+    <link rel="stylesheet" href="chrome://messenger/skin/accountManage.css" />
+    <link
+      rel="stylesheet"
+      href="chrome://messenger-newsblog/skin/feed-subscriptions.css"
+    />
     <script
       defer="defer"
       src="chrome://messenger/content/globalOverlay.js"
@@ -57,27 +64,51 @@
     <vbox id="containerBox" flex="1">
       <hbox id="am-newsblog-title" class="dialogheader">
         <label class="dialogheader-title" defaultTitle="&accountTitle.label;" />
+        <spacer flex="1" />
+        <button
+          id="deleteAccount"
+          data-l10n-id="delete-account-button"
+          oncommand="top.onRemoveAccount(event);"
+        />
       </hbox>
 
       <description class="secDesc">&accountSettingsDesc.label;</description>
 
-      <hbox class="input-container">
-        <label
-          id="server.prettyNameLabel"
-          value="&accountName.label;"
-          accesskey="&accountName.accesskey;"
-          control="server.prettyName"
-        />
-        <html:input
-          id="server.prettyName"
-          type="text"
-          wsm_persist="true"
-          class="input-inline"
-          aria-labelledby="server.prettyNameLabel"
-          onblur="serverPrettyNameOnBlur(event);"
-          prefstring="mail.server.%serverkey%.name"
-        />
-      </hbox>
+      <html:div class="input-container" xmlns="http://www.w3.org/1999/xhtml">
+        <div class="input-container-column flex-grow">
+          <xul:label
+            id="server.prettyNameLabel"
+            value="&accountName.label;"
+            accesskey="&accountName.accesskey;"
+            control="server.prettyName"
+          />
+          <input
+            id="server.prettyName"
+            type="text"
+            wsm_persist="true"
+            class="input-inline"
+            aria-labelledby="server.prettyNameLabel"
+            onblur="serverPrettyNameOnBlur(event);"
+            prefstring="mail.server.%serverkey%.name"
+          />
+        </div>
+        <div class="input-container-column flex-no-grow">
+          <label
+            id="server.color.label"
+            for="serverColor"
+            data-l10n-id="account-settings-color-label"
+          />
+          <div class="input-container">
+            <input id="serverColor" type="color" class="input-inline" />
+            <button
+              id="resetColor"
+              type="button"
+              data-l10n-id="account-settings-reset-color-button"
+              class="button button-flat icon-button icon-only"
+            />
+          </div>
+        </div>
+      </html:div>
 
       <separator class="thin" />
 

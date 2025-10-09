@@ -1,19 +1,19 @@
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-var { mailTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MailTestUtils.jsm"
+var { mailTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MailTestUtils.sys.mjs"
 );
-var { localAccountUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/LocalAccountUtils.jsm"
+var { localAccountUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/LocalAccountUtils.sys.mjs"
 );
 
 var test = null;
 
-// WebApps.jsm called by ProxyAutoConfig (PAC) requires a valid nsIXULAppInfo.
+// WebApps.sys.mjs called by ProxyAutoConfig (PAC) requires a valid nsIXULAppInfo.
 var { getAppInfo, newAppInfo, updateAppInfo } = ChromeUtils.importESModule(
   "resource://testing-common/AppInfo.sys.mjs"
 );
@@ -24,27 +24,20 @@ do_get_profile();
 
 var gDEPTH = "../../../../";
 
-// Import the pop3 server scripts
-/* import-globals-from ../../../test/fakeserver/Maild.jsm */
-/* import-globals-from ../../../test/fakeserver/Auth.jsm */
-/* import-globals-from ../../../test/fakeserver/Pop3d.jsm */
-var {
-  nsMailServer,
-  gThreadManager,
-  fsDebugNone,
-  fsDebugAll,
-  fsDebugRecv,
-  fsDebugRecvSend,
-} = ChromeUtils.import("resource://testing-common/mailnews/Maild.jsm");
-var { AuthPLAIN, AuthLOGIN, AuthCRAM } = ChromeUtils.import(
-  "resource://testing-common/mailnews/Auth.jsm"
+var { nsMailServer } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/Maild.sys.mjs"
+);
+var { AuthPLAIN, AuthLOGIN, AuthCRAM } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/Auth.sys.mjs"
 );
 var {
   Pop3Daemon,
   POP3_RFC1939_handler,
   POP3_RFC2449_handler,
   POP3_RFC5034_handler,
-} = ChromeUtils.import("resource://testing-common/mailnews/Pop3d.jsm");
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/Pop3d.sys.mjs"
+);
 
 // Setup the daemon and server
 // If the debugOption is set, then it will be applied to the server.
@@ -67,7 +60,7 @@ function setupServerDaemon(debugOption) {
 
 function createPop3ServerAndLocalFolders(port, hostname = "localhost") {
   localAccountUtils.loadLocalMailAccount();
-  let server = localAccountUtils.create_incoming_server(
+  const server = localAccountUtils.create_incoming_server(
     "pop3",
     port,
     "fred",
@@ -77,20 +70,23 @@ function createPop3ServerAndLocalFolders(port, hostname = "localhost") {
   return server;
 }
 
+/** @implements {nsIMsgCopyServiceListener} */
 var gCopyListener = {
   callbackFunction: null,
   copiedMessageHeaderKeys: [],
-  OnStartCopy() {},
-  OnProgress(aProgress, aProgressMax) {},
-  SetMessageKey(aKey) {
+  onStartCopy() {},
+  onProgress() {},
+  setMessageKey(aKey) {
     try {
       this.copiedMessageHeaderKeys.push(aKey);
     } catch (ex) {
       dump(ex);
     }
   },
-  GetMessageId(aMessageId) {},
-  OnStopCopy(aStatus) {
+  getMessageId() {
+    return null;
+  },
+  onStopCopy(aStatus) {
     if (this.callbackFunction) {
       mailTestUtils.do_timeout_function(0, this.callbackFunction, null, [
         this.copiedMessageHeaderKeys,
@@ -101,18 +97,18 @@ var gCopyListener = {
 };
 
 /**
- * copyFileMessageInLocalFolder
  * A utility wrapper of nsIMsgCopyService.copyFileMessage to copy a message
  * into local inbox folder.
  *
- * @param aMessageFile     An instance of nsIFile to copy.
- * @param aMessageFlags    Message flags which will be set after message is
- *                         copied
- * @param aMessageKeyword  Keywords which will be set for newly copied
- *                         message
- * @param aMessageWindow   Window for notification callbacks, can be null
- * @param aCallback        Callback function which will be invoked after
- *                         message is copied
+ * @param {nsIFile} aMessageFile - An instance of nsIFile to copy.
+ * @param {integer} aMessageFlags - Message flags which will be set after
+ *   message is copied.
+ * @param {string} aMessageKeywords - Keywords which will be set for newly copied
+ *   message.
+ * @param {?nsIMsgWindow} aMessageWindow - Window for notification callbacks.
+ * @param {Function} aCallback - Callback function which will be invoked after
+ *   message is copied.
+ * @see {nsIMsgCopyService.copyFileMessage}
  */
 function copyFileMessageInLocalFolder(
   aMessageFile,
@@ -162,7 +158,7 @@ function do_check_transaction(real, expected) {
 }
 
 function create_temporary_directory() {
-  let directory = Services.dirsvc.get("TmpD", Ci.nsIFile);
+  const directory = Services.dirsvc.get("TmpD", Ci.nsIFile);
   directory.append("mailFolder");
   directory.createUnique(Ci.nsIFile.DIRECTORY_TYPE, parseInt("0700", 8));
   return directory;
@@ -172,8 +168,8 @@ function create_sub_folders(parent, subFolders) {
   parent.leafName = parent.leafName + ".sbd";
   parent.create(Ci.nsIFile.DIRECTORY_TYPE, parseInt("0700", 8));
 
-  for (let folder in subFolders) {
-    let subFolder = parent.clone();
+  for (const folder in subFolders) {
+    const subFolder = parent.clone();
     subFolder.append(subFolders[folder].name);
     subFolder.create(Ci.nsIFile.NORMAL_FILE_TYPE, parseInt("0600", 8));
     if (subFolders[folder].subFolders) {
@@ -182,26 +178,11 @@ function create_sub_folders(parent, subFolders) {
   }
 }
 
-function create_mail_directory(subFolders) {
-  let root = create_temporary_directory();
-
-  for (let folder in subFolders) {
-    if (!subFolders[folder].subFolders) {
-      continue;
-    }
-    let directory = root.clone();
-    directory.append(subFolders[folder].name);
-    create_sub_folders(directory, subFolders[folder].subFolders);
-  }
-
-  return root;
-}
-
 function setup_mailbox(type, mailboxPath) {
-  let user = Services.uuid.generateUUID().toString();
-  let incomingServer = MailServices.accounts.createIncomingServer(
+  const user = Services.uuid.generateUUID().toString();
+  const incomingServer = MailServices.accounts.createIncomingServer(
     user,
-    "Local Folder",
+    "test.localhost",
     type
   );
   incomingServer.localPath = mailboxPath;

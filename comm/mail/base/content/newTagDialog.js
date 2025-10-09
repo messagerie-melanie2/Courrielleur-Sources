@@ -2,18 +2,22 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var dialog;
+
+window.addEventListener("load", () => {
+  onLoad();
+});
 
 /**
  * Pass in keyToEdit as a window argument to turn this dialog into an edit
  * tag dialog.
  */
 function onLoad() {
-  let windowArgs = window.arguments[0];
+  const windowArgs = window.arguments[0];
 
   dialog = {};
 
@@ -54,7 +58,7 @@ function initializeForEditing(aTagKey) {
  */
 function onOKEditTag(event) {
   // get the tag name of the current key we are editing
-  let existingTagName = MailServices.tags.getTagForKey(dialog.editTagKey);
+  const existingTagName = MailServices.tags.getTagForKey(dialog.editTagKey);
 
   // it's ok if the name didn't change
   if (existingTagName != dialog.nameField.value) {

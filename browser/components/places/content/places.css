@@ -25,13 +25,10 @@ tree[is="places-tree"] > treechildren::-moz-tree-cell {
   z-index: 1;
 }
 
-/* Apply crisp rendering for favicons at exactly 2dppx resolution */
-@media (resolution: 2dppx) {
-  #bookmarksChildren,
-  .sidebar-placesTreechildren,
-  .placesTree > treechildren {
-    image-rendering: -moz-crisp-edges;
-  }
+.placesTree {
+  appearance: none;
+  margin: 0;
+  border: 0;
 }
 
 #searchFilter {

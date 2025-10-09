@@ -40,17 +40,17 @@ class HTMLImageElement final : public nsGenericHTMLElement,
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
 
-  virtual bool Draggable() const override;
+  bool Draggable() const override;
 
   ResponsiveImageSelector* GetResponsiveImageSelector() {
     return mResponsiveSelector.get();
   }
 
   // Element
-  virtual bool IsInteractiveHTMLContent() const override;
+  bool IsInteractiveHTMLContent() const override;
 
   // EventTarget
-  virtual void AsyncEventRunning(AsyncEventDispatcher* aEvent) override;
+  void AsyncEventRunning(AsyncEventDispatcher* aEvent) override;
 
   NS_IMPL_FROMNODE_HTML_WITH_TAG(HTMLImageElement, img)
 
@@ -58,33 +58,28 @@ class HTMLImageElement final : public nsGenericHTMLElement,
   CORSMode GetCORSMode() override;
 
   // nsIContent
-  virtual bool ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
-                              const nsAString& aValue,
-                              nsIPrincipal* aMaybeScriptedPrincipal,
-                              nsAttrValue& aResult) override;
-  virtual nsChangeHint GetAttributeChangeHint(const nsAtom* aAttribute,
-                                              int32_t aModType) const override;
+  bool ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
+                      const nsAString& aValue,
+                      nsIPrincipal* aMaybeScriptedPrincipal,
+                      nsAttrValue& aResult) override;
+  nsChangeHint GetAttributeChangeHint(const nsAtom* aAttribute,
+                                      int32_t aModType) const override;
   NS_IMETHOD_(bool) IsAttributeMapped(const nsAtom* aAttribute) const override;
-  virtual nsMapRuleToAttributesFunc GetAttributeMappingFunction()
-      const override;
+  nsMapRuleToAttributesFunc GetAttributeMappingFunction() const override;
 
   void GetEventTargetParent(EventChainPreVisitor& aVisitor) override;
   nsINode* GetScopeChainParent() const override;
 
-  bool IsHTMLFocusable(bool aWithMouse, bool* aIsFocusable,
+  bool IsHTMLFocusable(IsFocusableFlags, bool* aIsFocusable,
                        int32_t* aTabIndex) override;
 
-  virtual nsresult BindToTree(BindContext&, nsINode& aParent) override;
-  virtual void UnbindFromTree(bool aNullParent) override;
+  nsresult BindToTree(BindContext&, nsINode& aParent) override;
+  void UnbindFromTree(UnbindContext&) override;
 
-  virtual ElementState IntrinsicState() const override;
-  virtual nsresult Clone(dom::NodeInfo*, nsINode** aResult) const override;
+  nsresult Clone(dom::NodeInfo*, nsINode** aResult) const override;
 
-  virtual void NodeInfoChanged(Document* aOldDoc) override;
-
+  void NodeInfoChanged(Document* aOldDoc) override;
   nsresult CopyInnerTo(HTMLImageElement* aDest);
-
-  void MaybeLoadImage(bool aAlwaysForceLoad);
 
   bool IsMap() { return GetBoolAttr(nsGkAtoms::ismap); }
   void SetIsMap(bool aIsMap, ErrorResult& aError) {
@@ -99,7 +94,7 @@ class HTMLImageElement final : public nsGenericHTMLElement,
     SetUnsignedIntAttr(nsGkAtoms::height, aHeight, 0, aError);
   }
 
-  nsIntSize NaturalSize();
+  CSSIntSize NaturalSize();
   uint32_t NaturalHeight() { return NaturalSize().height; }
   uint32_t NaturalWidth() { return NaturalSize().width; }
 
@@ -187,23 +182,15 @@ class HTMLImageElement final : public nsGenericHTMLElement,
   }
   void GetDecoding(nsAString& aValue);
 
-  enum class Loading : uint8_t {
-    Eager,
-    Lazy,
-  };
-
   void SetLoading(const nsAString& aLoading, ErrorResult& aError) {
     SetHTMLAttr(nsGkAtoms::loading, aLoading, aError);
   }
-  void GetLoading(nsAString&) const;
 
   bool IsAwaitingLoadOrLazyLoading() const {
     return mLazyLoading || mPendingImageLoadTask;
   }
 
   bool IsLazyLoading() const { return mLazyLoading; }
-
-  Loading LoadingState() const;
 
   already_AddRefed<Promise> Decode(ErrorResult& aRv);
 
@@ -222,7 +209,7 @@ class HTMLImageElement final : public nsGenericHTMLElement,
   void SetForm(HTMLFormElement* aForm);
   void ClearForm(bool aRemoveFromForm);
 
-  virtual void DestroyContent() override;
+  void DestroyContent() override;
 
   void MediaFeatureValuesChanged();
 
@@ -265,41 +252,37 @@ class HTMLImageElement final : public nsGenericHTMLElement,
       const nsAString& aTypeAttr, const nsAString& aMediaAttr,
       nsAString& aResult);
 
-  enum class FromIntersectionObserver : bool { No, Yes };
-  enum class StartLoading : bool { No, Yes };
-  void StopLazyLoading(StartLoading);
+  enum class StartLoad : bool { No, Yes };
+  void StopLazyLoading(StartLoad = StartLoad::Yes);
 
   // This is used when restyling, for retrieving the extra style from the source
   // element.
-  const nsMappedAttributes* GetMappedAttributesFromSource() const;
+  const StyleLockedDeclarationBlock* GetMappedAttributesFromSource() const;
+
+  FetchPriority GetFetchPriorityForImage() const override;
 
  protected:
   virtual ~HTMLImageElement();
 
   // Update the responsive source synchronously and queues a task to run
   // LoadSelectedImage pending stable state.
-  //
-  // Pending Bug 1076583 this is only used by the responsive image
-  // algorithm (InResponsiveMode()) -- synchronous actions when just
-  // using img.src will bypass this, and update source and kick off
-  // image load synchronously.
   void UpdateSourceSyncAndQueueImageTask(
-      bool aAlwaysLoad, const HTMLSourceElement* aSkippedSource = nullptr);
+      bool aAlwaysLoad, bool aNotify,
+      const HTMLSourceElement* aSkippedSource = nullptr);
+
+  // Clears the current image load task.
+  void ClearImageLoadTask();
 
   // True if we have a srcset attribute or a <picture> parent, regardless of if
   // any valid responsive sources were parsed from either.
-  bool HaveSrcsetOrInPicture();
-
-  // True if we are using the newer image loading algorithm. This will be the
-  // only mode after Bug 1076583
-  bool InResponsiveMode();
+  bool HaveSrcsetOrInPicture() const;
 
   // True if the given URL equals the last URL that was loaded by this element.
   bool SelectedSourceMatchesLast(nsIURI* aSelectedSource);
 
   // Load the current mResponsiveSelector (responsive mode) or src attr image.
   // Note: This doesn't run the full selection for the responsive selector.
-  nsresult LoadSelectedImage(bool aForce, bool aNotify, bool aAlwaysLoad);
+  void LoadSelectedImage(bool aAlwaysLoad);
 
   // True if this string represents a type we would support on <source type>
   static bool SupportedPictureSourceType(const nsAString& aType);
@@ -318,9 +301,11 @@ class HTMLImageElement final : public nsGenericHTMLElement,
   void PictureSourceDimensionChanged(HTMLSourceElement* aSourceNode,
                                      bool aNotify);
 
-  void PictureSourceAdded(HTMLSourceElement* aSourceNode = nullptr);
+  void PictureSourceAdded(bool aNotify,
+                          HTMLSourceElement* aSourceNode = nullptr);
   // This should be called prior to the unbind, such that nextsibling works
-  void PictureSourceRemoved(HTMLSourceElement* aSourceNode = nullptr);
+  void PictureSourceRemoved(bool aNotify,
+                            HTMLSourceElement* aSourceNode = nullptr);
 
   // Re-evaluates all source nodes (picture <source>,<img>) and finds
   // the best source set for mResponsiveSelector. If a better source
@@ -352,8 +337,7 @@ class HTMLImageElement final : public nsGenericHTMLElement,
       Element* aSourceElement);
 
   MOZ_CAN_RUN_SCRIPT CSSIntPoint GetXY();
-  virtual JSObject* WrapNode(JSContext* aCx,
-                             JS::Handle<JSObject*> aGivenProto) override;
+  JSObject* WrapNode(JSContext*, JS::Handle<JSObject*> aGivenProto) override;
   void UpdateFormOwner();
 
   void BeforeSetAttr(int32_t aNameSpaceID, nsAtom* aName,
@@ -370,18 +354,17 @@ class HTMLImageElement final : public nsGenericHTMLElement,
   // Override for nsImageLoadingContent.
   nsIContent* AsContent() override { return this; }
 
-  // This is a weak reference that this element and the HTMLFormElement
-  // cooperate in maintaining.
-  HTMLFormElement* mForm;
-
   // Created when we're tracking responsive image state
   RefPtr<ResponsiveImageSelector> mResponsiveSelector;
+
+  // This is a weak reference that this element and the HTMLFormElement
+  // cooperate in maintaining.
+  HTMLFormElement* mForm = nullptr;
 
  private:
   bool SourceElementMatches(Element* aSourceElement);
 
-  static void MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
-                                    MappedDeclarations&);
+  static void MapAttributesIntoRule(MappedDeclarationsBuilder&);
   /**
    * This function is called by AfterSetAttr and OnAttrSetButNotChanged.
    * It will not be called if the value is being unset.
@@ -407,8 +390,6 @@ class HTMLImageElement final : public nsGenericHTMLElement,
   // Set this image as a lazy load image due to loading="lazy".
   void SetLazyLoading();
 
-  void StartLoadingIfNeeded();
-
   bool IsInPicture() const {
     return GetParentElement() &&
            GetParentElement()->IsHTMLElement(nsGkAtoms::picture);
@@ -419,19 +400,15 @@ class HTMLImageElement final : public nsGenericHTMLElement,
   void SetResponsiveSelector(RefPtr<ResponsiveImageSelector>&& aSource);
   void SetDensity(double aDensity);
 
-  // Queue an image load task (via microtask).
-  void QueueImageLoadTask(bool aAlwaysLoad);
-
-  bool mInDocResponsiveContent;
-
   RefPtr<ImageLoadTask> mPendingImageLoadTask;
+  nsCOMPtr<nsIURI> mSrcURI;
   nsCOMPtr<nsIPrincipal> mSrcTriggeringPrincipal;
   nsCOMPtr<nsIPrincipal> mSrcsetTriggeringPrincipal;
 
   // Last URL that was attempted to load by this element.
   nsCOMPtr<nsIURI> mLastSelectedSource;
   // Last pixel density that was selected.
-  double mCurrentDensity;
+  double mCurrentDensity = 1.0;
 };
 
 }  // namespace dom

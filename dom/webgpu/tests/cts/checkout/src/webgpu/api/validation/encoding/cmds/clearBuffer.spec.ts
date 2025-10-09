@@ -4,11 +4,11 @@ API validation tests for clearBuffer.
 
 import { makeTestGroup } from '../../../../../common/framework/test_group.js';
 import { kBufferUsages } from '../../../../capability_info.js';
-import { kResourceStates } from '../../../../gpu_test.js';
+import { kResourceStates, AllFeaturesMaxLimitsGPUTest } from '../../../../gpu_test.js';
 import { kMaxSafeMultipleOf8 } from '../../../../util/math.js';
-import { ValidationTest } from '../../validation_test.js';
+import * as vtu from '../../validation_test_utils.js';
 
-class F extends ValidationTest {
+class F extends AllFeaturesMaxLimitsGPUTest {
   TestClearBuffer(options: {
     buffer: GPUBuffer;
     offset: number | undefined;
@@ -31,10 +31,10 @@ export const g = makeTestGroup(F);
 g.test('buffer_state')
   .desc(`Test that clearing an invalid or destroyed buffer fails.`)
   .params(u => u.combine('bufferState', kResourceStates))
-  .fn(async t => {
+  .fn(t => {
     const { bufferState } = t.params;
 
-    const buffer = t.createBufferWithState(bufferState, {
+    const buffer = vtu.createBufferWithState(t, bufferState, {
       size: 8,
       usage: GPUBufferUsage.COPY_DST,
     });
@@ -57,19 +57,18 @@ g.test('buffer_state')
 g.test('buffer,device_mismatch')
   .desc(`Tests clearBuffer cannot be called with buffer created from another device.`)
   .paramsSubcasesOnly(u => u.combine('mismatched', [true, false]))
-  .beforeAllSubcases(t => {
-    t.selectMismatchedDeviceOrSkipTestCase(undefined);
-  })
-  .fn(async t => {
+  .beforeAllSubcases(t => t.usesMismatchedDevice())
+  .fn(t => {
     const { mismatched } = t.params;
     const sourceDevice = mismatched ? t.mismatchedDevice : t.device;
     const size = 8;
 
-    const buffer = sourceDevice.createBuffer({
-      size,
-      usage: GPUBufferUsage.COPY_DST,
-    });
-    t.trackForCleanup(buffer);
+    const buffer = t.trackForCleanup(
+      sourceDevice.createBuffer({
+        size,
+        usage: GPUBufferUsage.COPY_DST,
+      })
+    );
 
     t.TestClearBuffer({
       buffer,
@@ -86,10 +85,10 @@ g.test('default_args')
     { offset: 4, size: undefined },
     { offset: undefined, size: 8 },
   ] as const)
-  .fn(async t => {
+  .fn(t => {
     const { offset, size } = t.params;
 
-    const buffer = t.device.createBuffer({
+    const buffer = t.createBufferTracked({
       size: 16,
       usage: GPUBufferUsage.COPY_DST,
     });
@@ -108,10 +107,10 @@ g.test('buffer_usage')
     u //
       .combine('usage', kBufferUsages)
   )
-  .fn(async t => {
+  .fn(t => {
     const { usage } = t.params;
 
-    const buffer = t.device.createBuffer({
+    const buffer = t.createBufferTracked({
       size: 16,
       usage,
     });
@@ -143,10 +142,10 @@ g.test('size_alignment')
     { size: 20, _isSuccess: false },
     { size: undefined, _isSuccess: true },
   ] as const)
-  .fn(async t => {
+  .fn(t => {
     const { size, _isSuccess: isSuccess } = t.params;
 
-    const buffer = t.device.createBuffer({
+    const buffer = t.createBufferTracked({
       size: 16,
       usage: GPUBufferUsage.COPY_DST,
     });
@@ -177,10 +176,10 @@ g.test('offset_alignment')
     { offset: 20, _isSuccess: false },
     { offset: undefined, _isSuccess: true },
   ] as const)
-  .fn(async t => {
+  .fn(t => {
     const { offset, _isSuccess: isSuccess } = t.params;
 
-    const buffer = t.device.createBuffer({
+    const buffer = t.createBufferTracked({
       size: 16,
       usage: GPUBufferUsage.COPY_DST,
     });
@@ -194,17 +193,17 @@ g.test('offset_alignment')
   });
 
 g.test('overflow')
-  .desc(`Test that clears which may cause arthimetic overflows are invalid.`)
+  .desc(`Test that clears which may cause arithmetic overflows are invalid.`)
   .paramsSubcasesOnly([
     { offset: 0, size: kMaxSafeMultipleOf8 },
     { offset: 16, size: kMaxSafeMultipleOf8 },
     { offset: kMaxSafeMultipleOf8, size: 16 },
     { offset: kMaxSafeMultipleOf8, size: kMaxSafeMultipleOf8 },
   ] as const)
-  .fn(async t => {
+  .fn(t => {
     const { offset, size } = t.params;
 
-    const buffer = t.device.createBuffer({
+    const buffer = t.createBufferTracked({
       size: 16,
       usage: GPUBufferUsage.COPY_DST,
     });
@@ -229,10 +228,10 @@ g.test('out_of_bounds')
     { offset: 20, size: 16 },
     { offset: 20, size: 12, _isSuccess: true },
   ] as const)
-  .fn(async t => {
+  .fn(t => {
     const { offset, size, _isSuccess = false } = t.params;
 
-    const buffer = t.device.createBuffer({
+    const buffer = t.createBufferTracked({
       size: 32,
       usage: GPUBufferUsage.COPY_DST,
     });

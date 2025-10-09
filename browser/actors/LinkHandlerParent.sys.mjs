@@ -5,7 +5,9 @@
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
-  PlacesUIUtils: "resource:///modules/PlacesUIUtils.sys.mjs",
+  PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
+  OpenSearchManager:
+    "moz-src:///browser/components/search/OpenSearchManager.sys.mjs",
 });
 
 let gTestListeners = new Set();
@@ -35,7 +37,7 @@ export class LinkHandlerParent extends JSWindowActorParent {
           return;
         }
 
-        if (aMsg.data.canUseForTab) {
+        if (!aMsg.data.isRichIcon) {
           let tab = gBrowser.getTabForBrowser(browser);
           if (tab.hasAttribute("busy")) {
             tab.setAttribute("pendingicon", "true");
@@ -46,13 +48,6 @@ export class LinkHandlerParent extends JSWindowActorParent {
         break;
 
       case "Link:SetIcon":
-        // Cache the most recent icon and rich icon locally.
-        if (aMsg.data.canUseForTab) {
-          this.icon = aMsg.data;
-        } else {
-          this.richIcon = aMsg.data;
-        }
-
         if (!gBrowser) {
           return;
         }
@@ -67,14 +62,14 @@ export class LinkHandlerParent extends JSWindowActorParent {
           return;
         }
 
-        if (aMsg.data.canUseForTab) {
+        if (!aMsg.data.isRichIcon) {
           this.clearPendingIcon(gBrowser, browser);
         }
 
         this.notifyTestListeners("SetFailedIcon", aMsg.data);
         break;
 
-      case "Link:AddSearch":
+      case "Link:AddSearch": {
         if (!gBrowser) {
           return;
         }
@@ -84,10 +79,9 @@ export class LinkHandlerParent extends JSWindowActorParent {
           break;
         }
 
-        if (win.BrowserSearch) {
-          win.BrowserSearch.addEngine(browser, aMsg.data.engine);
-        }
+        lazy.OpenSearchManager.addEngine(browser, aMsg.data.engine);
         break;
+      }
     }
   }
 
@@ -105,14 +99,22 @@ export class LinkHandlerParent extends JSWindowActorParent {
   setIconFromLink(
     gBrowser,
     browser,
-    { pageURL, originalURL, canUseForTab, expiration, iconURL, canStoreIcon }
+    {
+      pageURL,
+      originalURL,
+      expiration,
+      iconURL,
+      canStoreIcon,
+      beforePageShow,
+      isRichIcon,
+    }
   ) {
     let tab = gBrowser.getTabForBrowser(browser);
     if (!tab) {
       return;
     }
 
-    if (canUseForTab) {
+    if (!isRichIcon) {
       this.clearPendingIcon(gBrowser, browser);
     }
 
@@ -123,7 +125,7 @@ export class LinkHandlerParent extends JSWindowActorParent {
       console.error(ex);
       return;
     }
-    if (iconURI.scheme != "data") {
+    if (!iconURI.schemeIs("data")) {
       try {
         Services.scriptSecurityManager.checkLoadURIWithPrincipal(
           browser.contentPrincipal,
@@ -136,21 +138,22 @@ export class LinkHandlerParent extends JSWindowActorParent {
     }
     if (canStoreIcon) {
       try {
-        lazy.PlacesUIUtils.loadFavicon(
-          browser,
-          Services.scriptSecurityManager.getSystemPrincipal(),
-          Services.io.newURI(pageURL),
-          Services.io.newURI(originalURL),
-          expiration,
-          iconURI
-        );
+        lazy.PlacesUtils.favicons
+          .setFaviconForPage(
+            Services.io.newURI(pageURL),
+            Services.io.newURI(originalURL),
+            iconURI,
+            expiration && lazy.PlacesUtils.toPRTime(expiration),
+            isRichIcon
+          )
+          .catch(console.error);
       } catch (ex) {
         console.error(ex);
       }
     }
 
-    if (canUseForTab) {
-      gBrowser.setIcon(tab, iconURL, originalURL);
+    if (!isRichIcon) {
+      gBrowser.setIcon(tab, iconURL, originalURL, null, beforePageShow);
     }
   }
 }

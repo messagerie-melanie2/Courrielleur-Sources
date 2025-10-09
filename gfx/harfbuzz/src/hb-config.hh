@@ -56,7 +56,6 @@
 
 #ifdef HB_LEAN
 #define HB_DISABLE_DEPRECATED
-#define HB_NDEBUG
 #define HB_NO_ATEXIT
 #define HB_NO_BUFFER_MESSAGE
 #define HB_NO_BUFFER_SERIALIZE
@@ -69,8 +68,6 @@
 #define HB_NO_FACE_COLLECT_UNICODES
 #define HB_NO_GETENV
 #define HB_NO_HINTING
-#define HB_NO_LANGUAGE_LONG
-#define HB_NO_LANGUAGE_PRIVATE_SUBTAG
 #define HB_NO_LAYOUT_FEATURE_PARAMS
 #define HB_NO_LAYOUT_COLLECT_GLYPHS
 #define HB_NO_LAYOUT_RARELY_USED
@@ -113,9 +110,12 @@
 /* Closure of options. */
 
 #ifdef HB_NO_BORING_EXPANSION
-#define HB_NO_AVAR2
 #define HB_NO_BEYOND_64K
 #define HB_NO_CUBIC_GLYF
+#define HB_NO_VAR_COMPOSITES
+#endif
+
+#ifdef HB_NO_VAR
 #define HB_NO_VAR_COMPOSITES
 #endif
 
@@ -146,6 +146,7 @@
 
 #ifdef HB_NO_DRAW
 #define HB_NO_OUTLINE
+#define HB_NO_PAINT
 #endif
 
 #ifdef HB_NO_GETENV
@@ -157,6 +158,7 @@
 #define HB_NO_FALLBACK_SHAPE
 #define HB_NO_OT_KERN
 #define HB_NO_OT_LAYOUT_BLOCKLIST
+#define HB_NO_AAT_LAYOUT_BLOCKLIST
 #define HB_NO_OT_SHAPE_FALLBACK
 #endif
 
@@ -184,13 +186,12 @@
 #endif
 
 #ifdef HB_OPTIMIZE_SIZE_MORE
-#define HB_NO_OT_LIGATURES_FAST_PATH
+#define HB_NO_OT_RULESETS_FAST_PATH
 #endif
 
 #ifdef HB_MINIMIZE_MEMORY_USAGE
 #define HB_NO_GDEF_CACHE
 #define HB_NO_OT_LAYOUT_LOOKUP_CACHE
-#define HB_NO_OT_FONT_ADVANCE_CACHE
 #define HB_NO_OT_FONT_CMAP_CACHE
 #endif
 

@@ -24,6 +24,11 @@ add_task(async function () {
       fontPreviewData?.dataURL,
       "Returned a font preview with a valid dataURL"
     );
+    is(
+      fontPreviewData.ctx.font,
+      `40px ${Services.appinfo.OS === "WINNT" ? "Arial" : `"Liberation Sans"`}, serif`,
+      "Expected font style was used in the canvas"
+    );
 
     // Create <img> element and load the generated preview into it
     // to check whether the image is valid and get its dimensions
@@ -36,8 +41,8 @@ add_task(async function () {
 
     const { naturalWidth: widthImage1, naturalHeight: heightImage1 } = image;
 
-    ok(widthImage1 > 0, "Preview width is greater than 0");
-    ok(heightImage1 > 0, "Preview height is greater than 0");
+    Assert.greater(widthImage1, 0, "Preview width is greater than 0");
+    Assert.greater(heightImage1, 0, "Preview height is greater than 0");
 
     // Create a preview with different text and compare
     // its dimensions with the first one
@@ -60,12 +65,14 @@ add_task(async function () {
 
     // Check whether the width is greater than with the default parameters
     // and that the height is the same
-    ok(
-      widthImage2 > widthImage1,
+    Assert.greater(
+      widthImage2,
+      widthImage1,
       "Preview width is greater than with default parameters"
     );
-    ok(
-      heightImage2 === heightImage1,
+    Assert.strictEqual(
+      heightImage2,
+      heightImage1,
       "Preview height is the same as with default parameters"
     );
 
@@ -89,12 +96,14 @@ add_task(async function () {
     const { naturalWidth: widthImage3, naturalHeight: heightImage3 } = image;
 
     // Check whether the width and height are smaller than with the default parameters
-    ok(
-      widthImage3 < widthImage1,
+    Assert.less(
+      widthImage3,
+      widthImage1,
       "Preview width is smaller than with default parameters"
     );
-    ok(
-      heightImage3 < heightImage1,
+    Assert.less(
+      heightImage3,
+      heightImage1,
       "Preview height is smaller than with default parameters"
     );
 
@@ -119,13 +128,71 @@ add_task(async function () {
 
     // Check whether the width is the same as with the default parameters
     // and that the height is greater
-    ok(
-      widthImage4 === widthImage1,
+    Assert.strictEqual(
+      widthImage4,
+      widthImage1,
       "Preview width is the same as with default parameters"
     );
-    ok(
-      heightImage4 > heightImage1,
+    Assert.greater(
+      heightImage4,
+      heightImage1,
       "Preview height is greater than with default parameters"
+    );
+
+    // Check generic family name
+    is(
+      getFontPreviewData("monospace", content.document).ctx.font,
+      `40px monospace, serif`,
+      "Expected font style was used in the canvas"
+    );
+
+    // Check font wrapped in double quotes
+    is(
+      getFontPreviewData(`"Zilla Bold"`, content.document).ctx.font,
+      `40px "Zilla Bold", serif`,
+      "Expected font style was used in the canvas"
+    );
+
+    // Check font wrapped in simple quotes
+    is(
+      getFontPreviewData(`'Font Awesome 5 Brands'`, content.document).ctx.font,
+      `40px "Font Awesome 5 Brands", serif`,
+      "Expected font style was used in the canvas"
+    );
+
+    // Check multiple font
+    is(
+      getFontPreviewData(`Menlo, monospace`, content.document).ctx.font,
+      `40px Menlo, monospace, serif`,
+      "Expected font style was used in the canvas"
+    );
+
+    // Check multiple font some with quotes, some not
+    is(
+      getFontPreviewData(
+        `Menlo Bold, "Fira Code", 'Mono Lisa', monospace`,
+        content.document
+      ).ctx.font,
+      `40px "Menlo Bold", "Fira Code", "Mono Lisa", monospace, serif`,
+      "Expected font style was used in the canvas"
+    );
+
+    // Check font-weight value
+    is(
+      getFontPreviewData(`monospace`, content.document, { fontWeight: "200" })
+        .ctx.font,
+      `200 40px monospace, serif`,
+      "Expected font style was used in the canvas"
+    );
+
+    // Check font-style value
+    is(
+      getFontPreviewData(`monospace`, content.document, {
+        fontWeight: "200",
+        fontStyle: "italic",
+      }).ctx.font,
+      `italic 200 40px monospace, serif`,
+      "Expected font style was used in the canvas"
     );
   });
 });

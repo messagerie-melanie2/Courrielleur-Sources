@@ -8,7 +8,6 @@
 
 #include "nscore.h"
 #include "mozilla/dom/Document.h"
-#include "nsMsgCompFields.h"
 #include "nsIMsgSend.h"
 #include "nsIMsgCompUtils.h"
 
@@ -47,27 +46,11 @@ PR_BEGIN_EXTERN_C
 // in as a template
 //
 nsresult nsMsgCreateTempFile(const char* tFileName, nsIFile** tFile);
-char* nsMsgCreateTempFileName(const char* tFileName);
 
 //
 // Various utilities for building parts of MIME encoded
 // messages during message composition
 //
-
-nsresult mime_sanity_check_fields_recipients(const char* to, const char* cc,
-                                             const char* bcc,
-                                             const char* newsgroups);
-
-nsresult mime_sanity_check_fields(
-    const char* from, const char* reply_to, const char* to, const char* cc,
-    const char* bcc, const char* fcc, const char* newsgroups,
-    const char* followup_to, const char* /*subject*/,
-    const char* /*references*/, const char* /*organization*/,
-    const char* /*other_random_headers*/);
-
-nsresult mime_generate_headers(nsIMsgCompFields* fields,
-                               nsMsgDeliverMode deliver_mode,
-                               msgIWritableStructuredHeaders* headers);
 
 char* mime_make_separator(const char* prefix);
 char* mime_gen_content_id(uint32_t aPartNum, const char* aEmailAddress);
@@ -85,12 +68,6 @@ bool mime_type_needs_charset(const char* type);
 char* msg_make_filename_qtext(const char* srcText, bool stripCRLFs);
 
 char* RFC2231ParmFolding(const char* parmName, const char* parmValue);
-
-//
-// Informational calls...
-//
-void nsMsgMIMESetConformToStandard(bool conform_p);
-bool nsMsgMIMEGetConformToStandard(void);
 
 //
 // network service type calls...

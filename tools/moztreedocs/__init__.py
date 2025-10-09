@@ -3,10 +3,8 @@
 # file, # You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import os
-import tempfile
-from pathlib import PurePath
+from pathlib import Path, PurePath
 
-import frontmatter
 import sphinx
 import sphinx.ext.apidoc
 import yaml
@@ -20,7 +18,7 @@ from mozpack.manifests import InstallManifest
 here = os.path.abspath(os.path.dirname(__file__))
 build = MozbuildObject.from_environment(cwd=here)
 
-MAIN_DOC_PATH = os.path.normpath(os.path.join(build.topsrcdir, "docs"))
+MAIN_DOC_PATH = Path(build.topsrcdir) / "docs"
 
 logger = sphinx.util.logging.getLogger(__name__)
 
@@ -39,7 +37,7 @@ def read_build_config(docdir):
 
     # Reading the Sphinx variables doesn't require a full build context.
     # Only define the parts we need.
-    class fakeconfig(object):
+    class fakeconfig:
         topsrcdir = build.topsrcdir
 
     variables = ("SPHINX_TREES", "SPHINX_PYTHON_PACKAGE_DIRS")
@@ -77,13 +75,13 @@ def read_build_config(docdir):
     return trees, python_package_dirs
 
 
-class _SphinxManager(object):
+class _SphinxManager:
     """Manages the generation of Sphinx documentation for the tree."""
 
     NO_AUTODOC = False
 
     def __init__(self, topsrcdir, main_path):
-        self.topsrcdir = topsrcdir
+        self.topsrcdir = Path(topsrcdir)
         self.conf_py_path = os.path.join(main_path, "conf.py")
         self.index_path = os.path.join(main_path, "index.rst")
 
@@ -121,47 +119,23 @@ class _SphinxManager(object):
             dirs = {os.path.dirname(f[0]) for f in finder.find("**")}
 
             test_dirs = {"test", "tests"}
-            excludes = {d for d in dirs if set(PurePath(d).parts) & test_dirs}
+            # Exclude directories whose path components match any in 'test_dirs'.
+            excludes = {
+                os.path.join(full, d)
+                for d in dirs
+                if set(PurePath(d).parts) & test_dirs
+            }
 
             args = list(base_args)
             args.append(full)
             args.extend(excludes)
 
-            sphinx.ext.apidoc.main(argv=args)
-
-    def _process_markdown(self, m, markdown_file, dest):
-        """
-        When dealing with a markdown file, we check if we have a front matter.
-        If this is the case, we read the information, create a temporary file,
-        reuse the front matter info into the md file
-        """
-        with open(markdown_file, "r", encoding="utf_8") as f:
-            # Load the front matter header
-            post = frontmatter.load(f)
-            if len(post.keys()) > 0:
-                # Has a front matter, use it
-                with tempfile.NamedTemporaryFile("w", delete=False) as fh:
-                    # Use the frontmatter title
-                    fh.write(post["title"] + "\n")
-                    # Add the md syntax for the title
-                    fh.write("=" * len(post["title"]) + "\n")
-                    # If there is a summary, add it
-                    if "summary" in post:
-                        fh.write(post["summary"] + "\n")
-                    # Write the content
-                    fh.write(post.__str__())
-                    fh.close()
-                    # Instead of a symlink, we copy the file
-                    m.add_copy(fh.name, dest)
-            else:
-                # No front matter, create the symlink like for rst
-                # as it will be the the same file
-                m.add_link(markdown_file, dest)
+            sphinx.ext.apidoc.main(args)
 
     def _synchronize_docs(self, app):
         m = InstallManifest()
 
-        with open(os.path.join(MAIN_DOC_PATH, "config.yml"), "r") as fh:
+        with open(os.path.join(MAIN_DOC_PATH, "config.yml")) as fh:
             tree_config = yaml.safe_load(fh)["categories"]
 
         m.add_link(self.conf_py_path, "conf.py")
@@ -173,12 +147,7 @@ class _SphinxManager(object):
                     source_path = os.path.normpath(os.path.join(root, f))
                     rel_source = source_path[len(source_dir) + 1 :]
                     target = os.path.normpath(os.path.join(dest, rel_source))
-                    if source_path.endswith(".md"):
-                        self._process_markdown(
-                            m, source_path, os.path.join(".", target)
-                        )
-                    else:
-                        m.add_link(source_path, target)
+                    m.add_link(source_path, target)
 
         copier = FileCopier()
         m.populate_registry(copier)
@@ -188,7 +157,7 @@ class _SphinxManager(object):
             self.staging_dir, remove_empty_directories=False, remove_unaccounted=False
         )
 
-        with open(self.index_path, "r") as fh:
+        with open(self.index_path) as fh:
             data = fh.read()
 
         def is_toplevel(key):

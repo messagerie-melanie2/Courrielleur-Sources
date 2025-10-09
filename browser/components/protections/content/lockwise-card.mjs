@@ -36,7 +36,7 @@ export default class LockwiseCard {
     // Attack link to Firefox Lockwise "How it works" page.
     const lockwiseReportLink = this.doc.getElementById("lockwise-how-it-works");
     lockwiseReportLink.addEventListener("click", () => {
-      this.doc.sendTelemetryEvent("click", "lw_about_link");
+      this.doc.sendTelemetryEvent("clickLwAboutLink");
     });
   }
 
@@ -45,19 +45,14 @@ export default class LockwiseCard {
     if (lockwiseCard.classList.contains("has-logins")) {
       if (lockwiseCard.classList.contains("breached-logins")) {
         this.doc.sendTelemetryEvent(
-          "click",
-          "lw_open_button",
+          "clickLwOpenButton",
           "manage_breached_passwords"
         );
       } else if (lockwiseCard.classList.contains("no-breached-logins")) {
-        this.doc.sendTelemetryEvent(
-          "click",
-          "lw_open_button",
-          "manage_passwords"
-        );
+        this.doc.sendTelemetryEvent("clickLwOpenButton", "manage_passwords");
       }
     } else if (lockwiseCard.classList.contains("no-logins")) {
-      this.doc.sendTelemetryEvent("click", "lw_open_button", "save_passwords");
+      this.doc.sendTelemetryEvent("clickLwOpenButton", "save_passwords");
     }
     RPMSendAsyncMessage("OpenAboutLogins");
   }
@@ -74,17 +69,17 @@ export default class LockwiseCard {
     if (hasLogins) {
       lockwiseCard.classList.remove("no-logins");
       lockwiseCard.classList.add("has-logins");
-      title.setAttribute("data-l10n-id", "passwords-title-logged-in");
-      headerContent.setAttribute(
-        "data-l10n-id",
+      document.l10n.setAttributes(title, "passwords-title-logged-in");
+      document.l10n.setAttributes(
+        headerContent,
         "lockwise-header-content-logged-in"
       );
       this.renderContentForLoggedInUser(numLogins, potentiallyBreachedLogins);
     } else {
       lockwiseCard.classList.remove("has-logins");
       lockwiseCard.classList.add("no-logins");
-      title.setAttribute("data-l10n-id", "lockwise-title");
-      headerContent.setAttribute("data-l10n-id", "passwords-header-content");
+      document.l10n.setAttributes(title, "lockwise-title");
+      document.l10n.setAttributes(headerContent, "passwords-header-content");
     }
 
     const lockwiseUI = document.querySelector(".card.lockwise-card.loading");
@@ -94,9 +89,9 @@ export default class LockwiseCard {
   /**
    * Displays strings indicating stored logins for a user.
    *
-   * @param {Number}  storedLogins
+   * @param {number}  storedLogins
    *        The number of browser-stored logins.
-   * @param {Number}  potentiallyBreachedLogins
+   * @param {number}  potentiallyBreachedLogins
    *        The number of potentially breached logins.
    */
   renderContentForLoggedInUser(storedLogins, potentiallyBreachedLogins) {

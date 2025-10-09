@@ -18,28 +18,42 @@ template_header = (
 )
 
 
+def sort_annotations(annotations):
+    """Return annotations in ascending alphabetical order ignoring case"""
+
+    return sorted(annotations.items(), key=lambda annotation: str.lower(annotation[0]))
+
+
 def validate_annotations(annotations):
     """Ensure that the annotations have all the required fields"""
 
-    for (name, data) in sorted(annotations.items()):
+    for name, data in annotations:
         if "description" not in data:
             print("Annotation " + name + " does not have a description\n")
             sys.exit(1)
         if "type" not in data:
             print("Annotation " + name + " does not have a type\n")
             sys.exit(1)
-        else:
-            annotation_type = data.get("type")
-            valid_types = ["boolean", "integer", "string"]
-            if not any(annotation_type == t for t in valid_types):
-                print(
-                    "Annotation "
-                    + name
-                    + " has an unknown type: "
-                    + annotation_type
-                    + "\n"
-                )
-                sys.exit(1)
+
+        annotation_type = data.get("type")
+        valid_types = ["string", "boolean", "u32", "u64", "usize", "object"]
+        if annotation_type not in valid_types:
+            print(
+                "Annotation " + name + " has an unknown type: " + annotation_type + "\n"
+            )
+            sys.exit(1)
+
+        annotation_scope = data.get("scope", "client")
+        valid_scopes = ["client", "report", "ping"]
+        if annotation_scope not in valid_scopes:
+            print(
+                "Annotation "
+                + name
+                + " has an unknown scope: "
+                + annotation_scope
+                + "\n"
+            )
+            sys.exit(1)
 
 
 def read_annotations(annotations_filename):
@@ -47,9 +61,9 @@ def read_annotations(annotations_filename):
     If an error is encountered quit the program."""
 
     try:
-        with open(annotations_filename, "r") as annotations_file:
-            annotations = yaml.safe_load(annotations_file)
-    except (IOError, ValueError) as e:
+        with open(annotations_filename) as annotations_file:
+            annotations = sort_annotations(yaml.safe_load(annotations_file))
+    except (OSError, ValueError) as e:
         print("Error parsing " + annotations_filename + ":\n" + str(e) + "\n")
         sys.exit(1)
 
@@ -63,22 +77,65 @@ def read_template(template_filename):
     If an error is encountered quit the program."""
 
     try:
-        with open(template_filename, "r") as template_file:
+        with open(template_filename) as template_file:
             template = template_file.read()
-    except IOError as ex:
+    except OSError as ex:
         print("Error when reading " + template_filename + ":\n" + str(ex) + "\n")
         sys.exit(1)
 
     return template
 
 
-def extract_crash_ping_allowlist(annotations):
-    """Extract an array holding the names of the annotations allowlisted for
-    inclusion in the crash ping."""
+def extract_crash_ping_allowedlist(annotations):
+    """Extract an array holding the names of the annotations allowed for
+    inclusion in a crash ping."""
 
     return [
-        name for (name, data) in sorted(annotations.items()) if data.get("ping", False)
+        name for (name, data) in annotations if data.get("scope", "client") == "ping"
     ]
+
+
+def extract_crash_report_allowedlist(annotations):
+    """Extract an array holding the names of the annotations allowed for
+    inclusion in a crash report (excluding those allowed for pings)."""
+
+    return [
+        name for (name, data) in annotations if data.get("scope", "client") == "report"
+    ]
+
+
+def extract_skiplist(annotations):
+    """Extract an array holding the names of the annotations that should be
+    skipped and the values which will cause them to be skipped."""
+
+    return [
+        (name, data.get("skip_if"))
+        for (name, data) in annotations
+        if len(data.get("skip_if", "")) > 0
+    ]
+
+
+def type_to_enum(annotation_type):
+    """Emit the enum value corresponding to each annotation type."""
+
+    if annotation_type == "string":
+        return "String"
+    elif annotation_type == "boolean":
+        return "Boolean"
+    elif annotation_type == "u32":
+        return "U32"
+    elif annotation_type == "u64":
+        return "U64"
+    elif annotation_type == "usize":
+        return "USize"
+    elif annotation_type == "object":
+        return "Object"
+
+
+def extract_types(annotations):
+    """Extract an array holding the type of each annotation."""
+
+    return [type_to_enum(data.get("type")) for (_, data) in annotations]
 
 
 ###############################################################################
@@ -89,10 +146,7 @@ def extract_crash_ping_allowlist(annotations):
 def generate_strings(annotations):
     """Generate strings corresponding to every annotation."""
 
-    names = [
-        '  "' + data.get("altname", name) + '"'
-        for (name, data) in sorted(annotations.items())
-    ]
+    names = ['  "' + data.get("altname", name) + '"' for (name, data) in annotations]
 
     return ",\n".join(names)
 
@@ -103,7 +157,7 @@ def generate_enum(annotations):
 
     enum = ""
 
-    for i, (name, _) in enumerate(sorted(annotations.items())):
+    for i, (name, _) in enumerate(annotations):
         enum += "  " + name + " = " + str(i) + ",\n"
 
     enum += "  Count = " + str(len(annotations))
@@ -111,10 +165,28 @@ def generate_enum(annotations):
     return enum
 
 
-def generate_array_initializer(contents):
+def generate_annotations_array_initializer(contents):
     """Generates the initializer for a C++ array of annotations."""
 
     initializer = ["  Annotation::" + name for name in contents]
+
+    return ",\n".join(initializer)
+
+
+def generate_skiplist_initializer(contents):
+    """Generates the initializer for a C++ array of AnnotationSkipValue structs."""
+
+    initializer = [
+        "  { Annotation::" + name + ', "' + value + '" }' for (name, value) in contents
+    ]
+
+    return ",\n".join(initializer)
+
+
+def generate_types_initializer(contents):
+    """Generates the initializer for a C++ array of AnnotationType values."""
+
+    initializer = ["  AnnotationType::" + typename for typename in contents]
 
     return ",\n".join(initializer)
 
@@ -123,13 +195,21 @@ def generate_header(template, annotations):
     """Generate a header by filling the template with the the list of
     annotations and return it as a string."""
 
-    allowlist = extract_crash_ping_allowlist(annotations)
+    pingallowedlist = extract_crash_ping_allowedlist(annotations)
+    reportallowedlist = extract_crash_report_allowedlist(annotations)
+    skiplist = extract_skiplist(annotations)
+    typelist = extract_types(annotations)
 
     return template_header + string.Template(template).substitute(
         {
             "enum": generate_enum(annotations),
             "strings": generate_strings(annotations),
-            "allowlist": generate_array_initializer(allowlist),
+            "pingallowedlist": generate_annotations_array_initializer(pingallowedlist),
+            "reportallowedlist": generate_annotations_array_initializer(
+                reportallowedlist
+            ),
+            "skiplist": generate_skiplist_initializer(skiplist),
+            "types": generate_types_initializer(typelist),
         }
     )
 
@@ -143,7 +223,7 @@ def emit_header(output, template_filename, annotations_filename):
 
     try:
         output.write(generated_header)
-    except IOError as ex:
+    except OSError as ex:
         print("Error while writing out the generated file:\n" + str(ex) + "\n")
         sys.exit(1)
 
@@ -168,11 +248,11 @@ def generate_java_array_initializer(contents):
 def generate_class(template, annotations):
     """Fill the class template from the list of annotations."""
 
-    allowlist = extract_crash_ping_allowlist(annotations)
+    allowedlist = extract_crash_ping_allowedlist(annotations)
 
     return template_header + string.Template(template).substitute(
         {
-            "allowlist": generate_java_array_initializer(allowlist),
+            "allowedlist": generate_java_array_initializer(allowedlist),
         }
     )
 
@@ -189,8 +269,8 @@ def emit_class(output, annotations_filename):
      * are kept in sync with the other C++ and JS users.
      */
     public class CrashReporterConstants {
-        public static final String[] ANNOTATION_ALLOWLIST = {
-    ${allowlist}
+        public static final String[] ANNOTATION_PING_ALLOWEDLIST = {
+    ${allowedlist}
         };
     }"""
     )
@@ -200,6 +280,6 @@ def emit_class(output, annotations_filename):
 
     try:
         output.write(generated_class)
-    except IOError as ex:
+    except OSError as ex:
         print("Error while writing out the generated file:\n" + str(ex) + "\n")
         sys.exit(1)

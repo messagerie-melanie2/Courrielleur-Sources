@@ -40,7 +40,7 @@ class FOGTestCase(TelemetryTestCase):
         self.fog_ping_server.start()
 
         self._logger.info(
-            "Submitting to FOG ping server at {}".format(self.fog_ping_server.url)
+            f"Submitting to FOG ping server at {self.fog_ping_server.url}"
         )
 
         self.marionette.enforce_gecko_prefs(
@@ -55,6 +55,8 @@ class FOGTestCase(TelemetryTestCase):
                 "logging.fog_control::*": 5,
                 "logging.glean::*": 5,
                 "logging.glean_core::*": 5,
+                # Slow down the user inactivity timeout (bug 1690728)
+                "dom.events.user_interaction_interval": 60000,
             }
         )
 

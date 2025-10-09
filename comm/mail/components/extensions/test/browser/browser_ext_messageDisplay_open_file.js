@@ -2,32 +2,37 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
+"use strict";
+
 requestLongerTimeout(4);
 
 let gRootFolder;
+
 add_setup(async () => {
-  let account = createAccount();
+  const account = createAccount();
   gRootFolder = account.incomingServer.rootFolder;
-  gRootFolder.createSubfolder("testFolder", null);
-  gRootFolder.createSubfolder("otherFolder", null);
-  await createMessages(gRootFolder.getChildNamed("testFolder"), 5);
+  const testFolder = await createSubfolder(gRootFolder, "testFolder");
+  await createSubfolder(gRootFolder, "otherFolder");
+  await createMessages(testFolder, 5);
 });
 
-async function testOpenMessages(testConfig) {
-  let extension = ExtensionTestUtils.loadExtension({
+async function testOpenMessages(mainTestConfig) {
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
         // Verify startup conditions.
-        let accounts = await browser.accounts.list();
+        const accounts = await browser.accounts.list();
         browser.test.assertEq(
           1,
           accounts.length,
           `number of accounts should be correct`
         );
 
-        let testFolder = accounts[0].folders.find(f => f.name == "testFolder");
+        const testFolder = accounts[0].folders.find(
+          f => f.name == "testFolder"
+        );
         browser.test.assertTrue(!!testFolder, "folder should exist");
-        let { messages } = await browser.messages.list(testFolder);
+        const { messages } = await browser.messages.list(testFolder.id);
         browser.test.assertEq(
           5,
           messages.length,
@@ -35,10 +40,10 @@ async function testOpenMessages(testConfig) {
         );
 
         // Get test properties.
-        let [testConfig] = await window.sendMessage("getTestConfig");
+        const [testConfig] = await window.sendMessage("getTestConfig");
 
-        async function open(message, testConfig) {
-          let properties = { ...testConfig };
+        async function open(message, config) {
+          const properties = { ...config };
           if (properties.headerMessageId) {
             properties.headerMessageId = message.headerMessageId;
           } else if (properties.messageId) {
@@ -58,7 +63,7 @@ async function testOpenMessages(testConfig) {
           switch (testConfig.windowType) {
             case "normal":
               {
-                let secondWindow = await browser.windows.create({
+                const secondWindow = await browser.windows.create({
                   type: testConfig.windowType,
                 });
                 testConfig.windowId = secondWindow.id;
@@ -67,7 +72,7 @@ async function testOpenMessages(testConfig) {
               break;
             case "popup":
               {
-                let secondWindow = await browser.windows.create({
+                const secondWindow = await browser.windows.create({
                   type: testConfig.windowType,
                 });
                 testConfig.windowId = secondWindow.id;
@@ -91,14 +96,14 @@ async function testOpenMessages(testConfig) {
           );
         } else {
           // Open multiple messages.
-          let promisedTabs = [];
+          const promisedTabs = [];
           promisedTabs.push(open(messages[0], testConfig));
           promisedTabs.push(open(messages[0], testConfig));
           promisedTabs.push(open(messages[1], testConfig));
           promisedTabs.push(open(messages[1], testConfig));
           promisedTabs.push(open(messages[2], testConfig));
           promisedTabs.push(open(messages[2], testConfig));
-          let openedTabs = await Promise.allSettled(promisedTabs);
+          const openedTabs = await Promise.allSettled(promisedTabs);
           for (let i = 0; i < openedTabs.length; i++) {
             browser.test.assertEq(
               "fulfilled",
@@ -106,7 +111,7 @@ async function testOpenMessages(testConfig) {
               `Promise for the opened message should have been fulfilled for message ${i}`
             );
 
-            let msg = await browser.messageDisplay.getDisplayedMessage(
+            const msg = await browser.messageDisplay.getDisplayedMessage(
               openedTabs[i].value.id
             );
             if (testConfig.file) {
@@ -143,11 +148,11 @@ async function testOpenMessages(testConfig) {
     },
   });
 
-  let about3Pane = document.getElementById("tabmail").currentAbout3Pane;
+  const about3Pane = document.getElementById("tabmail").currentAbout3Pane;
   about3Pane.displayFolder(gRootFolder.getChildNamed("otherFolder"));
 
   extension.onMessage("getTestConfig", async () => {
-    extension.sendMessage(testConfig);
+    extension.sendMessage(mainTestConfig);
   });
 
   await extension.startup();

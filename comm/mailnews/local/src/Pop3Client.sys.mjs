@@ -206,23 +206,7 @@ export class Pop3Client {
     await this._loadUidlState();
 
     const uidlState = this._uidlMap.get(uidl);
-    if (!uidlState) {
-      // This uidl is no longer on the server, use this._sink to delete the
-      // msgHdr.
-      try {
-        this._sink.beginMailDelivery(true, null);
-        this._folderLocked = true;
-        this._logger.debug(
-          `Folder lock acquired uri=${this._sink.folder.URI}.`
-        );
-        this._sink.incorporateBegin(uidl, 0);
-        this._actionDone(Cr.NS_ERROR_FAILURE);
-      } catch (e) {
-        this._actionError("pop3MessageWriteError");
-      }
-      return;
-    }
-    if (uidlState.status != UIDL_TOO_BIG) {
+    if (uidlState?.status != UIDL_TOO_BIG) {
       this._actionDone(Cr.NS_ERROR_FAILURE);
       return;
     }
@@ -268,6 +252,7 @@ export class Pop3Client {
 
   /**
    * Send `QUIT` request to the server.
+   *
    * @param {Function} nextAction - Callback function after QUIT response.
    */
   async quit(nextAction) {
@@ -471,7 +456,7 @@ export class Pop3Client {
     const content = await IOUtils.readUTF8(stateFile.path);
     this._uidlMap = new Map();
     let uidlLine = false;
-    for (const line of content.split(this._lineSeparator)) {
+    for (const line of content.split(/\r?\n/)) {
       if (!line) {
         continue;
       }
@@ -647,10 +632,7 @@ export class Pop3Client {
    */
   _actionChooseFirstAuthMethod = async () => {
     if (
-      [
-        Ci.nsMsgSocketType.trySTARTTLS,
-        Ci.nsMsgSocketType.alwaysSTARTTLS,
-      ].includes(this._server.socketType) &&
+      [Ci.nsMsgSocketType.alwaysSTARTTLS].includes(this._server.socketType) &&
       !this._secureTransport
     ) {
       if (this._capabilities.includes("STLS")) {
@@ -845,6 +827,9 @@ export class Pop3Client {
 
     if (this._nextAuthMethod) {
       // Try the next auth method.
+      this._logger.debug(
+        `AUTH ${this._currentAuthMethod} failed. Trying AUTH ${this._nextAuthMethod} next`
+      );
       this._actionAuth();
       return;
     }
@@ -856,7 +841,7 @@ export class Pop3Client {
     }
 
     if (
-      ["USERPASS", "PLAIN", "LOGIN", "CRAM-MD5"].includes(
+      ["USERPASS", "PLAIN", "LOGIN", "CRAM-MD5", "APOP"].includes(
         this._currentAuthMethod
       )
     ) {
@@ -912,36 +897,90 @@ export class Pop3Client {
   };
 
   /**
-   * The second step of PLAIN auth, send the auth token to the server.
+   * This is the second step of PLAIN auth. Handle response to AUTH PLAIN
+   * command.
    */
   _actionAuthPlain = async res => {
     if (!res.success) {
-      this._actionError("pop3UsernameFailure", [], res.statusText);
+      // Command "AUTH PLAIN" failed. If there is another auth mechanism, just
+      // log the failure and try the next mechanism.
+      if (this._nextAuthMethod) {
+        this._logger.debug(
+          `AUTH PLAIN failed. Trying AUTH ${this._nextAuthMethod} next`
+        );
+        this._actionAuth();
+      } else {
+        // There are no more auth mechanisms, produce a notification to the user
+        // that we are unable to authenticate (which also gets logged).
+        // FIXME: Need a new error string here indicating AUTH PLAIN command
+        // failed. Currently this says sending username failed but username was
+        // never sent.
+        this._actionError("pop3UsernameFailure", [], res.statusText);
+      }
       return;
     }
+    // AUTH PLAIN command succeeded. Obtain and send the plain auth token to the
+    // server.
     this._nextAction = this._actionAuthResponse;
     await this._send(await this._authenticator.getPlainToken(), true);
   };
 
   /**
-   * The second step of LOGIN auth, send the username to the server.
+   * This is the second step of LOGIN auth. Handle response to AUTH LOGIN
+   * command.
    */
-  _actionAuthLoginUser = async () => {
+  _actionAuthLoginUser = async res => {
+    if (!res.success) {
+      // Command "AUTH LOGIN" failed. If there is another auth mechanism, just
+      // log the failure and try the next mechanism.
+      if (this._nextAuthMethod) {
+        this._logger.debug(
+          `AUTH LOGIN failed, Trying AUTH ${this._nextAuthMethod} next`
+        );
+        this._actionAuth();
+      } else {
+        // There are no more auth mechanisms, produce a notification to the user
+        // that we are unable to authenticate (which also gets logged).
+        // FIXME: Need new error string here indicating AUTH LOGIN command
+        // failed. Currently this says sending username failed but username was
+        // never sent.
+        this._actionError("pop3UsernameFailure", [], res.statusText);
+      }
+      return;
+    }
+    // AUTH LOGIN command succeeded. Send the base64 username to the server.
+    // Note: The res.statusText here will be base64 "Username:" and is not
+    // verified.
     this._nextAction = this._actionAuthLoginPass;
-    this._logger.debug("AUTH LOGIN USER");
+    this._logger.debug("Sending username for AUTH LOGIN");
     await this._send(btoa(this._authenticator.username), true);
   };
 
   /**
-   * The third step of LOGIN auth, send the password to the server.
+   * This is the third step of LOGIN auth. Handle the response to send of
+   * username for LOGIN.
    */
   _actionAuthLoginPass = async res => {
     if (!res.success) {
-      this._actionError("pop3UsernameFailure", [], res.statusText);
+      // AUTH LOGIN username failed. If there is another auth mechanism, just
+      // log the failure and try the next mechanism.
+      if (this._nextAuthMethod) {
+        this._logger.debug(
+          `AUTH LOGIN username failed. Trying AUTH ${this._nextAuthMethod} next`
+        );
+        this._actionAuth();
+      } else {
+        // There are no more auth mechanisms, produce a notification to the user
+        // that we are unable to authenticate (which also gets logged).
+        this._actionError("pop3UsernameFailure", [], res.statusText);
+      }
       return;
     }
+    // Send of username for AUTH LOGIN succeeded. Send the base64 password to
+    // the server. Note: The res.statusText here will be base64 "Password:"
+    // and is not verified.
     this._nextAction = this._actionAuthResponse;
-    this._logger.debug("AUTH LOGIN PASS");
+    this._logger.debug("Sending password for AUTH LOGIN");
     let password = await this._authenticator.getPassword();
     if (
       !Services.prefs.getBoolPref(
@@ -950,9 +989,9 @@ export class Pop3Client {
       ) ||
       !/^[\x00-\xFF]+$/.test(password) // eslint-disable-line no-control-regex
     ) {
-      // Unlike PLAIN auth, the payload of LOGIN auth is not standardized. When
-      // `mail.smtp_login_pop3_user_pass_auth_is_latin1` is true, we apply
-      // base64 encoding directly. Otherwise, we convert it to UTF-8
+      // Unlike PLAIN auth, the payload of LOGIN auth is not standardized.
+      // When `mail.smtp_login_pop3_user_pass_auth_is_latin1` is true, we
+      // apply base64 encoding directly. Otherwise, we convert it to UTF-8
       // BinaryString first, to make it work with btoa().
       password = MailStringUtils.stringToByteString(password);
     }
@@ -1178,9 +1217,10 @@ export class Pop3Client {
         const uidlState = this._uidlMap.get(uidl);
         if (uidlState) {
           if (
-            uidlState.status == UIDL_KEEP &&
-            (!this._server.leaveMessagesOnServer ||
-              uidlState.receivedAt < this._cutOffTimestamp)
+            (uidlState.status == UIDL_KEEP &&
+              (!this._server.leaveMessagesOnServer ||
+                uidlState.receivedAt < this._cutOffTimestamp)) ||
+            uidlState.status == UIDL_DELETE
           ) {
             // Delete this message.
             this._messagesToHandle.push({
@@ -1188,15 +1228,13 @@ export class Pop3Client {
               messageNumber,
               status: UIDL_DELETE,
             });
-          } else if (
-            [UIDL_FETCH_BODY, UIDL_DELETE].includes(uidlState.status)
-          ) {
+          } else if (uidlState.status == UIDL_FETCH_BODY) {
             // Fetch the full message.
             this._newMessageTotal++;
             this._messagesToHandle.push({
               ...uidlState,
               messageNumber,
-              status: uidlState.status,
+              status: UIDL_FETCH_BODY,
             });
           } else {
             // Do nothing to this message.
@@ -1206,7 +1244,7 @@ export class Pop3Client {
           this._newMessageTotal++;
           // Fetch the full message or only headers depending on server settings
           // and message size.
-          const status =
+          const fetchHeaderStatus =
             this._server.headersOnly ||
             this._messageSizeMap.get(messageNumber) > this._maxMessageSize
               ? UIDL_TOO_BIG
@@ -1214,7 +1252,7 @@ export class Pop3Client {
           this._messagesToHandle.push({
             messageNumber,
             uidl,
-            status,
+            status: fetchHeaderStatus,
           });
         }
         this._sendNoopIfInactive();
@@ -1240,6 +1278,14 @@ export class Pop3Client {
           this._messagesToHandle = this._messagesToHandle.filter(
             msg => msg.uidl == this._singleUidlToDownload
           );
+          // The message may have since been removed from the server.
+          if (!this._messagesToHandle.length) {
+            this._logger.error(
+              `Single UIDL ${this._singleUidlToDownload} not found on server.`
+            );
+            this._actionDone(Cr.NS_ERROR_FILE_NOT_FOUND);
+            return;
+          }
           this._newUidlMap = this._uidlMap;
         }
 
@@ -1410,6 +1456,7 @@ export class Pop3Client {
           );
         } catch (e) {
           this._actionError("pop3MessageWriteError");
+          this._sink.incorporateAbort();
           return;
         }
       } else {
@@ -1442,6 +1489,7 @@ export class Pop3Client {
           );
         } catch (e) {
           this._actionError("pop3MessageWriteError");
+          this._sink.incorporateAbort();
           return;
         }
 
@@ -1493,6 +1541,7 @@ export class Pop3Client {
         this._sink.incorporateBegin(this._currentMessage.uidl, 0);
       } catch (e) {
         this._actionError("pop3MessageWriteError");
+        this._sink.incorporateAbort();
         return;
       }
     }
@@ -1504,6 +1553,7 @@ export class Pop3Client {
           this._sink.incorporateWrite(line, line.length);
         } catch (e) {
           this._actionError("pop3MessageWriteError");
+          this._sink.incorporateAbort();
           throw e; // Stop reading.
         }
         this._sendNoopIfInactive();
@@ -1518,6 +1568,7 @@ export class Pop3Client {
           );
         } catch (e) {
           this._actionError("pop3MessageWriteError");
+          this._sink.incorporateAbort();
           return;
         }
         if (this._server.leaveMessagesOnServer) {
@@ -1609,6 +1660,7 @@ export class Pop3Client {
 
   /**
    * Save popstate.dat when necessary, send QUIT.
+   *
    * @param {nsresult} status - Indicate if the last action succeeded.
    */
   _actionDone = async (status = Cr.NS_OK) => {
@@ -1649,6 +1701,7 @@ export class Pop3Client {
 
   /**
    * Notify listeners, close the socket and rest states.
+   *
    * @param {nsresult} status - Indicate if the last action succeeded.
    */
   _cleanUp = status => {
@@ -1659,7 +1712,7 @@ export class Pop3Client {
     if (runningUrl.value) {
       this.urlListener?.OnStopRunningUrl(this.runningUri, status);
     }
-    this.runningUri.SetUrlState(false, Cr.NS_OK);
+    this.runningUri.SetUrlState(false, status);
     this.onDone?.(status);
     if (this._folderLocked) {
       this._sink.abortMailDelivery(this);

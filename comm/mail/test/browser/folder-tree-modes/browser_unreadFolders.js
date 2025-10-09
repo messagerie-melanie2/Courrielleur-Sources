@@ -17,13 +17,11 @@ var {
   get_about_3pane,
   inboxFolder,
   make_message_sets_in_folders,
-  mc,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 var about3Pane;
-var rootFolder;
 var inboxSubfolder;
 var trashFolder;
 var trashSubfolder;
@@ -31,7 +29,6 @@ var inboxSet;
 
 add_setup(async function () {
   about3Pane = get_about_3pane();
-  rootFolder = inboxFolder.server.rootFolder;
 
   // Create a folder as a subfolder of the inbox
   inboxFolder.createSubfolder("UnreadFoldersA", null);
@@ -74,7 +71,7 @@ add_task(async function test_folder_population() {
  * change the selected folder in unread folders mode.
  */
 add_task(async function test_newly_added_folder() {
-  let [newSet] = await make_message_sets_in_folders(
+  const [newSet] = await make_message_sets_in_folders(
     [trashFolder],
     [{ count: 1 }]
   );

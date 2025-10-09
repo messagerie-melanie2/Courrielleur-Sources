@@ -20,7 +20,7 @@ namespace xsimd
     struct fma3;
 
     /**
-     * @ingroup arch
+     * @ingroup architectures
      *
      * AVX + FMA instructions
      */
@@ -29,11 +29,15 @@ namespace xsimd
     {
         static constexpr bool supported() noexcept { return XSIMD_WITH_FMA3_AVX; }
         static constexpr bool available() noexcept { return true; }
-        static constexpr unsigned version() noexcept { return generic::version(2, 1, 1); }
         static constexpr char const* name() noexcept { return "fma3+avx"; }
     };
 
 #if XSIMD_WITH_FMA3_AVX
+
+#if !XSIMD_WITH_AVX
+#error "architecture inconsistency: fma3+avx requires avx"
+#endif
+
     namespace types
     {
 

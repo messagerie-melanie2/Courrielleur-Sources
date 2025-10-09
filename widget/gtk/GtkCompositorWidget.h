@@ -10,6 +10,8 @@
 #include "mozilla/DataMutex.h"
 #include "mozilla/widget/CompositorWidget.h"
 #include "WindowSurfaceProvider.h"
+#include "mozilla/UniquePtr.h"
+#include "WaylandSurfaceLock.h"
 
 class nsIWidget;
 class nsWindow;
@@ -28,9 +30,8 @@ class PlatformCompositorWidgetDelegate : public CompositorWidgetDelegate {
       const LayoutDeviceIntSize& aClientSize) = 0;
   virtual GtkCompositorWidget* AsGtkCompositorWidget() { return nullptr; };
 
-  virtual void DisableRendering() = 0;
-  virtual void EnableRendering(const uintptr_t aXWindow,
-                               const bool aShaped) = 0;
+  virtual void CleanupResources() = 0;
+  virtual void SetRenderingSurface(const uintptr_t aXWindow) = 0;
 
   // CompositorWidgetDelegate Overrides
 
@@ -55,14 +56,12 @@ class GtkCompositorWidget : public CompositorWidget,
   void EndRemoteDrawing() override;
 
   already_AddRefed<gfx::DrawTarget> StartRemoteDrawingInRegion(
-      const LayoutDeviceIntRegion& aInvalidRegion,
-      layers::BufferMode* aBufferMode) override;
+      const LayoutDeviceIntRegion& aInvalidRegion) override;
   void EndRemoteDrawingInRegion(
       gfx::DrawTarget* aDrawTarget,
       const LayoutDeviceIntRegion& aInvalidRegion) override;
 
   LayoutDeviceIntSize GetClientSize() override;
-  void RemoteLayoutSizeUpdated(const LayoutDeviceRect& aSize);
 
   nsIWidget* RealWidget() override;
   GtkCompositorWidget* AsGTK() override { return this; }
@@ -74,35 +73,35 @@ class GtkCompositorWidget : public CompositorWidget,
 
   // Suspend rendering of this remote widget and clear all resources.
   // Can be used when underlying window is hidden/unmapped.
-  void DisableRendering() override;
+  void CleanupResources() override;
 
   // Resume rendering with to given aXWindow (X11) or nsWindow (Wayland).
-  void EnableRendering(const uintptr_t aXWindow, const bool aShaped) override;
+  void SetRenderingSurface(const uintptr_t aXWindow) override;
+
+  // If we fail to set window size (due to different screen scale or so)
+  // we can't paint the frame by compositor.
+  bool SetEGLNativeWindowSize(const LayoutDeviceIntSize& aEGLWindowSize);
 
 #if defined(MOZ_X11)
-  Window XWindow() const { return mXWindow; }
+  Window XWindow() const { return mProvider.GetXWindow(); }
 #endif
 #if defined(MOZ_WAYLAND)
-  void SetEGLNativeWindowSize(const LayoutDeviceIntSize& aEGLWindowSize);
   RefPtr<mozilla::layers::NativeLayerRoot> GetNativeLayerRoot() override;
 #endif
-
-  bool PreRender(WidgetRenderingContext* aContext) override {
-    return !mIsRenderingSuspended;
-  }
-  bool IsHidden() const override { return mIsRenderingSuspended; }
 
   // PlatformCompositorWidgetDelegate Overrides
 
   void NotifyClientSizeChanged(const LayoutDeviceIntSize& aClientSize) override;
   GtkCompositorWidget* AsGtkCompositorWidget() override { return this; }
 
+  UniquePtr<WaylandSurfaceLock> LockSurface();
+
  private:
 #if defined(MOZ_WAYLAND)
-  bool ConfigureWaylandBackend();
+  void ConfigureWaylandBackend();
 #endif
 #if defined(MOZ_X11)
-  bool ConfigureX11Backend(Window aXWindow, bool aShaped);
+  void ConfigureX11Backend(Window aXWindow);
 #endif
 #ifdef MOZ_LOGGING
   bool IsPopup();
@@ -120,15 +119,12 @@ class GtkCompositorWidget : public CompositorWidget,
   // of the two.
   DataMutex<LayoutDeviceIntSize> mClientSize;
 
+  // Holds rendering resources
   WindowSurfaceProvider mProvider;
 
-#if defined(MOZ_X11)
-  Window mXWindow = {};
-#endif
 #ifdef MOZ_WAYLAND
   RefPtr<mozilla::layers::NativeLayerRootWayland> mNativeLayerRoot;
 #endif
-  Atomic<bool> mIsRenderingSuspended{true};
 };
 
 }  // namespace widget

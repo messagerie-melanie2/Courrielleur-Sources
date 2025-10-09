@@ -48,12 +48,12 @@ struct SlicedInputStreamParams
 
 struct RemoteLazyInputStreamParams
 {
-  nullable RemoteLazyInputStream stream;
+  RemoteLazyInputStream stream;
 };
 
 struct DataPipeReceiverStreamParams
 {
-  nullable DataPipeReceiver pipe;
+  DataPipeReceiver pipe;
 };
 
 union InputStreamParams
@@ -72,7 +72,7 @@ union InputStreamParams
 
 struct EncryptedFileInputStreamParams
 {
-  FileInputStreamParams fileInputStreamParams;
+  InputStreamParams inputStreamParams;
   uint8_t[] key;
   uint32_t blockSize;
 };

@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| shell-option(--enable-temporal) skip-if(!this.hasOwnProperty('Temporal')||!xulRuntime.shell) -- Temporal is not enabled unconditionally, requires shell-options
 // Copyright (C) 2020 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -9,13 +9,16 @@ includes: [compareArray.js, temporalHelpers.js]
 features: [Temporal]
 ---*/
 
+const expectedOptionsReading = [
+  // GetTemporalOverflowOption
+  "get options.overflow",
+  "get options.overflow.toString",
+  "call options.overflow.toString",
+];
+
 const expected = [
-  // GetTemporalCalendarWithISODefault
+  // GetTemporalCalendarSlotValueWithISODefault
   "get fields.calendar",
-  "has fields.calendar.calendar",
-  // CalendarFields
-  "get fields.calendar.fields",
-  "call fields.calendar.fields",
   // PrepareTemporalFields
   "get fields.day",
   "get fields.day.valueOf",
@@ -47,17 +50,7 @@ const expected = [
   "get fields.year",
   "get fields.year.valueOf",
   "call fields.year.valueOf",
-  // InterpretTemporalDateTimeFields
-  "get options.overflow",
-  "get options.overflow.toString",
-  "call options.overflow.toString",
-  "get fields.calendar.dateFromFields",
-  "call fields.calendar.dateFromFields",
-  // inside Calendar.p.dateFromFields
-  "get options.overflow",
-  "get options.overflow.toString",
-  "call options.overflow.toString",
-];
+].concat(expectedOptionsReading);
 const actual = [];
 
 const fields = TemporalHelpers.propertyBagObserver(actual, {
@@ -71,12 +64,35 @@ const fields = TemporalHelpers.propertyBagObserver(actual, {
   millisecond: 1.7,
   microsecond: 1.7,
   nanosecond: 1.7,
-  calendar: TemporalHelpers.calendarObserver(actual, "fields.calendar"),
-}, "fields");
+  calendar: "iso8601",
+}, "fields", ["calendar"]);
 
-const options = TemporalHelpers.propertyBagObserver(actual, { overflow: "constrain" }, "options");
+const options = TemporalHelpers.propertyBagObserver(actual, {
+  overflow: "constrain",
+  extra: "property",
+}, "options");
 
 Temporal.PlainDateTime.from(fields, options);
 assert.compareArray(actual, expected, "order of operations");
+
+actual.splice(0);  // clear for next test
+
+Temporal.PlainDateTime.from(new Temporal.PlainDateTime(2000, 5, 2), options);
+assert.compareArray(actual, expectedOptionsReading, "order of operations when cloning a PlainDateTime instance");
+
+actual.splice(0);
+
+Temporal.PlainDateTime.from(new Temporal.PlainDate(2000, 5, 2), options);
+assert.compareArray(actual, expectedOptionsReading, "order of operations when converting a PlainDate instance");
+
+actual.splice(0);
+
+Temporal.PlainDateTime.from(new Temporal.ZonedDateTime(0n, "UTC"), options);
+assert.compareArray(actual, expectedOptionsReading, "order of operations when converting a ZonedDateTime instance");
+
+actual.splice(0);
+
+Temporal.PlainDateTime.from("2001-05-02", options);
+assert.compareArray(actual, expectedOptionsReading, "order of operations when parsing a string");
 
 reportCompare(0, 0);

@@ -2,19 +2,21 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { ICSServer } = ChromeUtils.import("resource://testing-common/calendar/ICSServer.jsm");
+var { ICSServer } = ChromeUtils.importESModule(
+  "resource://testing-common/calendar/ICSServer.sys.mjs"
+);
 
 ICSServer.open("bob", "bob");
-if (!Services.logins.findLogins(ICSServer.origin, null, "test").length) {
-  // Save a username and password to the login manager.
-  let loginInfo = Cc["@mozilla.org/login-manager/loginInfo;1"].createInstance(Ci.nsILoginInfo);
-  loginInfo.init(ICSServer.origin, null, "test", "bob", "bob", "", "");
-  Services.logins.addLogin(loginInfo);
-}
 
 let calendar;
 add_setup(async function () {
-  calendarObserver._onLoadPromise = PromiseUtils.defer();
+  if (!Services.logins.findLogins(ICSServer.origin, null, "test").length) {
+    // Save a username and password to the login manager.
+    const loginInfo = Cc["@mozilla.org/login-manager/loginInfo;1"].createInstance(Ci.nsILoginInfo);
+    loginInfo.init(ICSServer.origin, null, "test", "bob", "bob", "", "");
+    await Services.logins.addLoginAsync(loginInfo);
+  }
+  calendarObserver._onLoadPromise = Promise.withResolvers();
   calendar = createCalendar("ics", ICSServer.url, false);
   await calendarObserver._onLoadPromise.promise;
   info("calendar set-up complete");
@@ -31,7 +33,6 @@ async function promiseIdle() {
     () =>
       calendar.wrappedJSObject._queue.length == 0 && calendar.wrappedJSObject._isLocked === false
   );
-  await fetch(`${ICSServer.origin}/ping`);
 }
 
 add_task(async function testAlarms() {

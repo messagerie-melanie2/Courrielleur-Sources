@@ -3,7 +3,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "msgCore.h"
 #include "nsLocalUtils.h"
 #include "prsystem.h"
 #include "nsCOMPtr.h"
@@ -11,7 +10,6 @@
 // stuff for temporary root folder hack
 #include "nsIMsgAccountManager.h"
 #include "nsIMsgIncomingServer.h"
-#include "nsNativeCharsetUtils.h"
 
 #include "nsMsgUtils.h"
 #include "nsNetCID.h"
@@ -117,30 +115,29 @@ nsresult nsLocalURI2Path(const char* rootURI, const char* uriStr,
   rv = server->GetLocalPath(getter_AddRefs(localPath));
   NS_ENSURE_SUCCESS(rv, rv);
 
-#ifdef XP_WIN
-  nsString path = localPath->NativePath();
-  nsCString localNativePath;
-  NS_CopyUnicodeToNative(path, localNativePath);
-#else
-  nsCString localNativePath = localPath->NativePath();
+  nsAutoString localPathStr;
+  rv = localPath->GetPath(localPathStr);
+  NS_ENSURE_SUCCESS(rv, rv);
+  CopyUTF16toUTF8(localPathStr, pathResult);
+#if defined(XP_WIN)
+  pathResult.Insert('/', 0);
+  pathResult.ReplaceChar('\\', '/');
 #endif
-  nsEscapeNativePath(localNativePath);
-  pathResult = localNativePath.get();
   const char* curPos = uriStr + PL_strlen(rootURI);
   if (curPos) {
     // advance past hostname
     while ((*curPos) == '/') curPos++;
     while (*curPos && (*curPos) != '/') curPos++;
 
-    nsAutoCString newPath("");
+    nsAutoString newPath;
 
     // Unescape folder name
     nsCString unescapedStr;
     MsgUnescapeString(nsDependentCString(curPos), 0, unescapedStr);
-    NS_MsgCreatePathStringFromFolderURI(unescapedStr.get(), newPath, "none"_ns);
+    NS_MsgCreatePathStringFromFolderURI(unescapedStr.get(), newPath);
 
     pathResult.Append('/');
-    pathResult.Append(newPath);
+    pathResult.Append(NS_ConvertUTF16toUTF8(newPath));
   }
 
   return NS_OK;
@@ -198,11 +195,4 @@ nsresult nsCreateLocalBaseMessageURI(const nsACString& baseURI,
   baseMessageURI += tailURI;
 
   return NS_OK;
-}
-
-void nsEscapeNativePath(nsCString& nativePath) {
-#if defined(XP_WIN)
-  nativePath.Insert('/', 0);
-  nativePath.ReplaceChar('\\', '/');
-#endif
 }

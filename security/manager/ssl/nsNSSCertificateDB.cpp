@@ -8,8 +8,8 @@
 #include "CryptoTask.h"
 #include "ExtendedValidation.h"
 #include "NSSCertDBTrustDomain.h"
-#include "SharedSSLState.h"
 #include "certdb.h"
+#include "mozilla/glean/SecurityCertverifierMetrics.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Base64.h"
 #include "mozilla/Casting.h"
@@ -44,6 +44,10 @@
 #include "secerr.h"
 #include "ssl.h"
 
+#ifdef MOZ_WIDGET_ANDROID
+#  include "mozilla/java/ClientAuthCertificateManagerWrappers.h"
+#endif
+
 #ifdef XP_WIN
 #  include <winsock.h>  // for ntohl
 #endif
@@ -54,6 +58,24 @@ using namespace mozilla::psm;
 extern LazyLogModule gPIPNSSLog;
 
 NS_IMPL_ISUPPORTS(nsNSSCertificateDB, nsIX509CertDB)
+
+NS_IMETHODIMP
+nsNSSCertificateDB::CountTrustObjects(uint32_t* aCount) {
+  UniquePK11SlotInfo slot(PK11_GetInternalKeySlot());
+  PK11GenericObject* objects =
+      PK11_FindGenericObjects(slot.get(), CKO_NSS_TRUST);
+  int count = 0;
+  for (PK11GenericObject* cursor = objects; cursor;
+       cursor = PK11_GetNextGenericObject(cursor)) {
+    count++;
+  }
+  PK11_DestroyGenericObjects(objects);
+
+  mozilla::glean::cert_verifier::trust_obj_count.Set(count);
+
+  *aCount = count;
+  return NS_OK;
+}
 
 NS_IMETHODIMP
 nsNSSCertificateDB::FindCertByDBKey(const nsACString& aDBKey,
@@ -135,6 +157,7 @@ nsresult nsNSSCertificateDB::FindCertByDBKey(const nsACString& aDBKey,
   reader += issuerLen;
   MOZ_ASSERT(reader == decoded.EndReading());
 
+  AutoSearchingForClientAuthCertificates _;
   cert.reset(CERT_FindCertByIssuerAndSN(CERT_GetDefaultCertDB(), &issuerSN));
   return NS_OK;
 }
@@ -172,11 +195,25 @@ SECStatus ChangeCertTrustWithPossibleAuthentication(
     PR_SetError(SEC_ERROR_LIBRARY_FAILURE, 0);
     return SECFailure;
   }
+
+  RefPtr<SharedCertVerifier> certVerifier(GetDefaultCertVerifier());
+  if (!certVerifier) {
+    PR_SetError(SEC_ERROR_LIBRARY_FAILURE, 0);
+    return SECFailure;
+  }
+
   // NSS ignores the first argument to CERT_ChangeCertTrust
   SECStatus srv = CERT_ChangeCertTrust(nullptr, cert.get(), &trust);
-  if (srv == SECSuccess || PR_GetError() != SEC_ERROR_TOKEN_NOT_LOGGED_IN) {
-    return srv;
+  if (srv != SECSuccess && PR_GetError() != SEC_ERROR_TOKEN_NOT_LOGGED_IN) {
+    return SECFailure;
   }
+  if (srv == SECSuccess) {
+    certVerifier->ClearTrustCache();
+    return SECSuccess;
+  }
+
+  // CERT_ChangeCertTrust failed with SEC_ERROR_TOKEN_NOT_LOGGED_IN, so
+  // authenticate and try again.
   if (cert->slot) {
     // If this certificate is on an external PKCS#11 token, we have to
     // authenticate to that token.
@@ -189,7 +226,13 @@ SECStatus ChangeCertTrustWithPossibleAuthentication(
   if (srv != SECSuccess) {
     return srv;
   }
-  return CERT_ChangeCertTrust(nullptr, cert.get(), &trust);
+  srv = CERT_ChangeCertTrust(nullptr, cert.get(), &trust);
+  if (srv != SECSuccess) {
+    return srv;
+  }
+
+  certVerifier->ClearTrustCache();
+  return SECSuccess;
 }
 
 static nsresult ImportCertsIntoPermanentStorage(
@@ -1158,6 +1201,7 @@ nsNSSCertificateDB::GetCerts(nsTArray<RefPtr<nsIX509Cert>>& _retval) {
   }
 
   nsCOMPtr<nsIInterfaceRequestor> ctx = new PipUIContext();
+  AutoSearchingForClientAuthCertificates _;
   UniqueCERTCertList certList(PK11_ListCerts(PK11CertListUnique, ctx));
   if (!certList) {
     return NS_ERROR_FAILURE;
@@ -1166,62 +1210,28 @@ nsNSSCertificateDB::GetCerts(nsTArray<RefPtr<nsIX509Cert>>& _retval) {
                                                                   _retval);
 }
 
-NS_IMETHODIMP
-nsNSSCertificateDB::AsyncHasThirdPartyRoots(nsIAsyncBoolCallback* aCallback) {
-  NS_ENSURE_ARG_POINTER(aCallback);
-  nsMainThreadPtrHandle<nsIAsyncBoolCallback> callback(
-      new nsMainThreadPtrHolder<nsIAsyncBoolCallback>("AsyncHasThirdPartyRoots",
-                                                      aCallback));
-
-  return NS_DispatchBackgroundTask(
-      NS_NewRunnableFunction(
-          "nsNSSCertificateDB::AsyncHasThirdPartyRoots",
-          [cb = std::move(callback), self = RefPtr{this}] {
-            bool hasThirdPartyRoots = [self]() -> bool {
-              nsTArray<RefPtr<nsIX509Cert>> certs;
-              nsresult rv = self->GetCerts(certs);
-              if (NS_FAILED(rv)) {
-                return false;
-              }
-
-              for (const auto& cert : certs) {
-                bool isTrusted = false;
-                nsresult rv =
-                    self->IsCertTrusted(cert, nsIX509Cert::CA_CERT,
-                                        nsIX509CertDB::TRUSTED_SSL, &isTrusted);
-                if (NS_FAILED(rv)) {
-                  return false;
-                }
-
-                if (!isTrusted) {
-                  continue;
-                }
-
-                bool isBuiltInRoot = false;
-                rv = cert->GetIsBuiltInRoot(&isBuiltInRoot);
-                if (NS_FAILED(rv)) {
-                  return false;
-                }
-
-                if (!isBuiltInRoot) {
-                  return true;
-                }
-              }
-
-              return false;
-            }();
-
-            NS_DispatchToMainThread(NS_NewRunnableFunction(
-                "nsNSSCertificateDB::AsyncHasThirdPartyRoots callback",
-                [cb, hasThirdPartyRoots]() {
-                  cb->OnResult(hasThirdPartyRoots);
-                }));
-          }),
-      NS_DISPATCH_EVENT_MAY_BLOCK);
+static mozilla::Result<VerifyUsage, nsresult> MapX509UsageToVerifierUsage(
+    nsIX509CertDB::VerifyUsage usage) {
+  switch (usage) {
+    case nsIX509CertDB::verifyUsageTLSServer:
+      return VerifyUsage::TLSServer;
+    case nsIX509CertDB::verifyUsageTLSServerCA:
+      return VerifyUsage::TLSServerCA;
+    case nsIX509CertDB::verifyUsageTLSClient:
+      return VerifyUsage::TLSClient;
+    case nsIX509CertDB::verifyUsageTLSClientCA:
+      return VerifyUsage::TLSClientCA;
+    case nsIX509CertDB::verifyUsageEmailSigner:
+      return VerifyUsage::EmailSigner;
+    case nsIX509CertDB::verifyUsageEmailRecipient:
+      return VerifyUsage::EmailRecipient;
+    case nsIX509CertDB::verifyUsageEmailCA:
+      return VerifyUsage::EmailCA;
+  }
+  return Err(NS_ERROR_INVALID_ARG);
 }
 
-nsresult VerifyCertAtTime(nsIX509Cert* aCert,
-                          int64_t /*SECCertificateUsage*/ aUsage,
+nsresult VerifyCertAtTime(nsIX509Cert* aCert, nsIX509CertDB::VerifyUsage aUsage,
                           uint32_t aFlags, const nsACString& aHostname,
                           mozilla::pkix::Time aTime,
                           nsTArray<RefPtr<nsIX509Cert>>& aVerifiedChain,
@@ -1251,7 +1261,7 @@ nsresult VerifyCertAtTime(nsIX509Cert* aCert,
     return nsrv;
   }
 
-  if (!aHostname.IsVoid() && aUsage == certificateUsageSSLServer) {
+  if (!aHostname.IsVoid() && aUsage == nsIX509CertDB::verifyUsageTLSServer) {
     result =
         certVerifier->VerifySSLServerCert(certBytes, aTime,
                                           nullptr,  // Assume no context
@@ -1263,8 +1273,10 @@ nsresult VerifyCertAtTime(nsIX509Cert* aCert,
                                           OriginAttributes(), &evStatus);
   } else {
     const nsCString& flatHostname = PromiseFlatCString(aHostname);
+    VerifyUsage vu;
+    MOZ_TRY_VAR(vu, MapX509UsageToVerifierUsage(aUsage));
     result = certVerifier->VerifyCert(
-        certBytes, aUsage, aTime,
+        certBytes, vu, aTime,
         nullptr,  // Assume no context
         aHostname.IsVoid() ? nullptr : flatHostname.get(), resultChain, aFlags,
         Nothing(),  // extraCertificates
@@ -1291,9 +1303,9 @@ nsresult VerifyCertAtTime(nsIX509Cert* aCert,
 
 class VerifyCertAtTimeTask final : public CryptoTask {
  public:
-  VerifyCertAtTimeTask(nsIX509Cert* aCert, int64_t aUsage, uint32_t aFlags,
-                       const nsACString& aHostname, uint64_t aTime,
-                       nsICertVerificationCallback* aCallback)
+  VerifyCertAtTimeTask(nsIX509Cert* aCert, nsIX509CertDB::VerifyUsage aUsage,
+                       uint32_t aFlags, const nsACString& aHostname,
+                       uint64_t aTime, nsICertVerificationCallback* aCallback)
       : mCert(aCert),
         mUsage(aUsage),
         mFlags(aFlags),
@@ -1327,7 +1339,7 @@ class VerifyCertAtTimeTask final : public CryptoTask {
   }
 
   nsCOMPtr<nsIX509Cert> mCert;
-  int64_t mUsage;
+  nsIX509CertDB::VerifyUsage mUsage;
   uint32_t mFlags;
   nsCString mHostname;
   uint64_t mTime;
@@ -1339,7 +1351,7 @@ class VerifyCertAtTimeTask final : public CryptoTask {
 
 NS_IMETHODIMP
 nsNSSCertificateDB::AsyncVerifyCertAtTime(
-    nsIX509Cert* aCert, int64_t /*SECCertificateUsage*/ aUsage, uint32_t aFlags,
+    nsIX509Cert* aCert, nsIX509CertDB::VerifyUsage aUsage, uint32_t aFlags,
     const nsACString& aHostname, uint64_t aTime,
     nsICertVerificationCallback* aCallback) {
   RefPtr<VerifyCertAtTimeTask> task(new VerifyCertAtTimeTask(
@@ -1353,4 +1365,31 @@ nsNSSCertificateDB::ClearOCSPCache() {
   NS_ENSURE_TRUE(certVerifier, NS_ERROR_FAILURE);
   certVerifier->ClearOCSPCache();
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsNSSCertificateDB::GetAndroidCertificateFromAlias(
+    const nsAString& aAlias, /*out*/ nsIX509Cert** aResult) {
+  *aResult = nullptr;
+#ifndef MOZ_WIDGET_ANDROID
+  return NS_ERROR_NOT_AVAILABLE;
+#else
+  if (!jni::IsAvailable()) {
+    MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("JNI not available"));
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  jni::String::LocalRef alias = jni::StringParam(aAlias);
+  jni::ByteArray::LocalRef certificateBytes =
+      java::ClientAuthCertificateManager::GetCertificateFromAlias(alias);
+  if (!certificateBytes) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+  nsTArray<uint8_t> certificateByteArray(
+      certificateBytes->GetElements().Elements(), certificateBytes->Length());
+  nsCOMPtr<nsIX509Cert> certificate(
+      new nsNSSCertificate(std::move(certificateByteArray)));
+  certificate.forget(aResult);
+  return NS_OK;
+#endif  // MOZ_WIDGET_ANDROID
 }

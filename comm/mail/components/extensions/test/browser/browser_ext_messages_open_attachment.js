@@ -2,13 +2,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
+"use strict";
+
 add_setup(async () => {
-  MailServices.accounts.createLocalMailAccount();
-  let localRoot =
-    MailServices.accounts.localFoldersServer.rootFolder.QueryInterface(
-      Ci.nsIMsgLocalMailFolder
-    );
-  let folder = localRoot.createLocalSubfolder("AttachmentA");
+  const localAccount = createAccount("local");
+  const folder = await createSubfolder(
+    localAccount.incomingServer.rootFolder,
+    "AttachmentA"
+  );
+
   await createMessageFromFile(
     folder,
     getTestFilePath("messages/attachedMessageSample.eml")
@@ -16,15 +18,15 @@ add_setup(async () => {
 });
 
 add_task(async function testOpenAttachment() {
-  let files = {
+  const files = {
     "background.js": async () => {
-      let { messages } = await browser.messages.query({
+      const { messages } = await browser.messages.query({
         headerMessageId: "sample.eml@mime.sample",
       });
 
       async function testTab(tab) {
-        let tabPromise = window.waitForEvent("tabs.onCreated");
-        let messagePromise = window.waitForEvent(
+        const tabPromise = window.waitForEvent("tabs.onCreated");
+        const messagePromise = window.waitForEvent(
           "messageDisplay.onMessageDisplayed"
         );
         await browser.messages.openAttachment(
@@ -34,8 +36,8 @@ add_task(async function testOpenAttachment() {
           tab.id
         );
 
-        let [msgTab] = await tabPromise;
-        let [openedMsgTab, message] = await messagePromise;
+        const [msgTab] = await tabPromise;
+        const [openedMsgTab, message] = await messagePromise;
 
         browser.test.assertEq(
           msgTab.id,
@@ -52,16 +54,16 @@ add_task(async function testOpenAttachment() {
       }
 
       // Test using a mail tab.
-      let mailTab = await browser.mailTabs.getCurrent();
+      const mailTab = await browser.mailTabs.getCurrent();
       await testTab(mailTab);
 
       // Test using a content tab.
-      let contentTab = await browser.tabs.create({ url: "test.html" });
+      const contentTab = await browser.tabs.create({ url: "test.html" });
       await testTab(contentTab);
       await browser.tabs.remove(contentTab.id);
 
       // Test using a content window.
-      let contentWindow = await browser.windows.create({
+      const contentWindow = await browser.windows.create({
         type: "popup",
         url: "test.html",
       });
@@ -69,7 +71,7 @@ add_task(async function testOpenAttachment() {
       await browser.windows.remove(contentWindow.id);
 
       // Test using a message tab.
-      let messageTab = await browser.messageDisplay.open({
+      const messageTab = await browser.messageDisplay.open({
         messageId: messages[0].id,
         location: "tab",
       });
@@ -77,7 +79,7 @@ add_task(async function testOpenAttachment() {
       await browser.tabs.remove(messageTab.id);
 
       // Test using a message window.
-      let messageWindowTab = await browser.messageDisplay.open({
+      const messageWindowTab = await browser.messageDisplay.open({
         messageId: messages[0].id,
         location: "window",
       });
@@ -88,7 +90,7 @@ add_task(async function testOpenAttachment() {
     },
     "utils.js": await getUtilsJS(),
   };
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files,
     manifest: {
       background: { scripts: ["utils.js", "background.js"] },

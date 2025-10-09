@@ -4,11 +4,13 @@
 
 // Test of chaining copies between the same folders
 
-/* import-globals-from ../../../test/resources/MessageGenerator.jsm */
-load("../../../resources/MessageGenerator.jsm");
+var { addMessagesToFolder, MessageGenerator, MessageScenarioFactory } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
+  );
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var gCopySource;
@@ -36,7 +38,7 @@ var gTestArray = [
 
 function CopyNextMessage() {
   if (gMessages.length > 0) {
-    let msgHdr = gMessages.shift();
+    const msgHdr = gMessages.shift();
     MailServices.copy.copyMessages(
       gCopySource,
       [msgHdr],
@@ -53,8 +55,8 @@ function CopyNextMessage() {
 
 function run_test() {
   localAccountUtils.loadLocalMailAccount();
-  let messageGenerator = new MessageGenerator();
-  let scenarioFactory = new MessageScenarioFactory(messageGenerator);
+  const messageGenerator = new MessageGenerator();
+  const scenarioFactory = new MessageScenarioFactory(messageGenerator);
 
   // "Master" do_test_pending(), paired with a do_test_finished() at the end of
   // all the operations.
@@ -94,13 +96,17 @@ function endTest() {
   do_test_finished(); // for the one in run_test()
 }
 
-// nsIMsgCopyServiceListener implementation
+/**
+ * @implements {nsIMsgCopyServiceListener}
+ */
 var copyListener = {
-  OnStartCopy() {},
-  OnProgress(aProgress, aProgressMax) {},
-  SetMessageKey(aKey) {},
-  SetMessageId(aMessageId) {},
-  OnStopCopy(aStatus) {
+  onStartCopy() {},
+  onProgress() {},
+  setMessageKey() {},
+  getMessageId() {
+    return null;
+  },
+  onStopCopy(aStatus) {
     // Check: message successfully copied.
     Assert.equal(aStatus, 0);
     ++gCurTestNum;

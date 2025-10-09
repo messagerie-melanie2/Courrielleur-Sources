@@ -43,7 +43,6 @@ using ::webrtc::test::StdoutMetricsExporter;
 using ::webrtc::test::Unit;
 
 constexpr int kAnalyzerMaxThreadsCount = 1;
-constexpr int kMaxFramesInFlightPerStream = 10;
 constexpr int kFrameWidth = 320;
 constexpr int kFrameHeight = 240;
 
@@ -52,7 +51,6 @@ DefaultVideoQualityAnalyzerOptions AnalyzerOptionsForTest() {
   options.compute_psnr = true;
   options.compute_ssim = true;
   options.adjust_cropping_before_comparing_frames = false;
-  options.max_frames_in_flight_per_stream_count = kMaxFramesInFlightPerStream;
   options.report_detailed_frame_stats = true;
   return options;
 }
@@ -74,7 +72,7 @@ EncodedImage FakeEncode(const VideoFrame& frame) {
   packet_infos.push_back(RtpPacketInfo(
       /*ssrc=*/1,
       /*csrcs=*/{},
-      /*rtp_timestamp=*/frame.timestamp(),
+      /*rtp_timestamp=*/frame.rtp_timestamp(),
       /*receive_time=*/Timestamp::Micros(frame.timestamp_us() + 10000)));
   image.SetPacketInfos(RtpPacketInfos(packet_infos));
   return image;
@@ -162,8 +160,8 @@ std::vector<std::string> ToTestCases(const std::vector<Metric>& metrics) {
 TEST(DefaultVideoQualityAnalyzerMetricNamesTest, MetricNamesForP2PAreCorrect) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   DefaultMetricsLogger metrics_logger(Clock::GetRealTimeClock());
@@ -284,6 +282,11 @@ TEST(DefaultVideoQualityAnalyzerMetricNamesTest, MetricNamesForP2PAreCorrect) {
               .improvement_direction = ImprovementDirection::kSmallerIsBetter},
           MetricValidationInfo{
               .test_case = "test_case/alice_video",
+              .name = "rendered_frame_qp",
+              .unit = Unit::kUnitless,
+              .improvement_direction = ImprovementDirection::kSmallerIsBetter},
+          MetricValidationInfo{
+              .test_case = "test_case/alice_video",
               .name = "actual_encode_bitrate",
               .unit = Unit::kKilobitsPerSecond,
               .improvement_direction = ImprovementDirection::kNeitherIsBetter},
@@ -333,8 +336,8 @@ TEST(DefaultVideoQualityAnalyzerMetricNamesTest,
      MetricNamesFor3PeersAreCorrect) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   DefaultMetricsLogger metrics_logger(Clock::GetRealTimeClock());
@@ -454,6 +457,11 @@ TEST(DefaultVideoQualityAnalyzerMetricNamesTest,
           MetricValidationInfo{
               .test_case = "test_case/alice_video_alice_bob",
               .name = "qp_sl0",
+              .unit = Unit::kUnitless,
+              .improvement_direction = ImprovementDirection::kSmallerIsBetter},
+          MetricValidationInfo{
+              .test_case = "test_case/alice_video_alice_bob",
+              .name = "rendered_frame_qp",
               .unit = Unit::kUnitless,
               .improvement_direction = ImprovementDirection::kSmallerIsBetter},
           MetricValidationInfo{
@@ -600,6 +608,11 @@ TEST(DefaultVideoQualityAnalyzerMetricNamesTest,
               .improvement_direction = ImprovementDirection::kSmallerIsBetter},
           MetricValidationInfo{
               .test_case = "test_case/alice_video_alice_charlie",
+              .name = "rendered_frame_qp",
+              .unit = Unit::kUnitless,
+              .improvement_direction = ImprovementDirection::kSmallerIsBetter},
+          MetricValidationInfo{
+              .test_case = "test_case/alice_video_alice_charlie",
               .name = "actual_encode_bitrate",
               .unit = Unit::kKilobitsPerSecond,
               .improvement_direction = ImprovementDirection::kNeitherIsBetter},
@@ -649,8 +662,8 @@ TEST(DefaultVideoQualityAnalyzerMetricNamesTest,
      TestCaseFor3PeerIsTheSameAfterAllPeersLeft) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   DefaultMetricsLogger metrics_logger(Clock::GetRealTimeClock());
@@ -671,10 +684,10 @@ TEST(DefaultVideoQualityAnalyzerMetricNamesTest,
 
   std::vector<std::string> metrics =
       ToTestCases(metrics_logger.GetCollectedMetrics());
-  EXPECT_THAT(metrics, SizeIs(57));
-  EXPECT_THAT(metrics, Contains("test_case/alice_video_alice_bob").Times(28));
+  EXPECT_THAT(metrics, SizeIs(59));
+  EXPECT_THAT(metrics, Contains("test_case/alice_video_alice_bob").Times(29));
   EXPECT_THAT(metrics,
-              Contains("test_case/alice_video_alice_charlie").Times(28));
+              Contains("test_case/alice_video_alice_charlie").Times(29));
   EXPECT_THAT(metrics, Contains("test_case").Times(1));
 }
 

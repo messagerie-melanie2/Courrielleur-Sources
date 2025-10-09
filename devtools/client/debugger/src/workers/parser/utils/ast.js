@@ -2,12 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
-import parseScriptTags from "parse-script-tags";
+import { parseScriptTags } from "./parse-script-tags";
 import * as babelParser from "@babel/parser";
 import * as t from "@babel/types";
 import { getSource } from "../sources";
 
-let ASTs = new Map();
+const ASTs = new Map();
 
 function _parse(code, opts) {
   return babelParser.parse(code, {
@@ -25,34 +25,40 @@ const sourceOptions = {
       "classPrivateProperties",
       "classPrivateMethods",
       "classProperties",
+      "explicitResourceManagement",
+      "importAttributes",
       "objectRestSpread",
       "optionalChaining",
       "privateIn",
       "nullishCoalescingOperator",
+      "regexpUnicodeSets",
     ],
   },
   original: {
     sourceType: "unambiguous",
     tokens: true,
     plugins: [
-      "jsx",
-      "flow",
-      "doExpressions",
-      "optionalChaining",
-      "nullishCoalescingOperator",
-      "decorators-legacy",
-      "objectRestSpread",
-      "classStaticBlock",
-      "classPrivateProperties",
+      "asyncGenerators",
       "classPrivateMethods",
+      "classPrivateProperties",
       "classProperties",
+      "classStaticBlock",
+      "decorators-legacy",
+      "doExpressions",
+      "dynamicImport",
+      "explicitResourceManagement",
       "exportDefaultFrom",
       "exportNamespaceFrom",
-      "asyncGenerators",
+      "flow",
       "functionBind",
       "functionSent",
-      "dynamicImport",
+      "importAttributes",
+      "jsx",
+      "nullishCoalescingOperator",
+      "objectRestSpread",
+      "optionalChaining",
       "react-jsx",
+      "regexpUnicodeSets",
     ],
   },
 };
@@ -115,10 +121,12 @@ export function parseConsoleScript(text, opts) {
         "classStaticBlock",
         "classPrivateProperties",
         "classPrivateMethods",
+        "explicitResourceManagement",
         "objectRestSpread",
         "dynamicImport",
         "nullishCoalescingOperator",
         "optionalChaining",
+        "regexpUnicodeSets",
       ],
       ...opts,
       allowAwaitOutsideFunction: true,
@@ -179,18 +187,10 @@ export function getAst(sourceId) {
   return ast;
 }
 
-export function clearASTs() {
-  ASTs = new Map();
-}
-
-export function traverseAst(sourceId, visitor, state) {
-  const ast = getAst(sourceId);
-  if (!ast || !Object.keys(ast).length) {
-    return null;
+export function clearASTs(sourceIds) {
+  for (const sourceId of sourceIds) {
+    ASTs.delete(sourceId);
   }
-
-  t.traverse(ast, visitor, state);
-  return ast;
 }
 
 export function hasNode(rootNode, predicate) {

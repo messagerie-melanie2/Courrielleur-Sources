@@ -10,7 +10,7 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"]:
     ]
 
 # Important: for these tests to be run, they also need to be added
-# to testing/cppunittest.ini.
+# to testing/cppunittest.toml.
 CppUnitTests(
     [
         "TestAlgorithm",
@@ -75,8 +75,23 @@ CppUnitTests(
 if CONFIG["OS_ARCH"] != "WASI":
     CppUnitTests(
         [
+            "TestMPSCQueue",
             "TestSPSCQueue",
             "TestThreadSafeWeakPtr",
+        ]
+    )
+
+if CONFIG["OS_ARCH"] == "WINNT":
+    CppUnitTests(
+        [
+            "TestWinArchDefs",
+        ]
+    )
+
+if CONFIG["OS_ARCH"] == "Linux":
+    CppUnitTests(
+        [
+            "TestMozCrash",
         ]
     )
 
@@ -108,3 +123,6 @@ if CONFIG["CC_TYPE"] == "clang-cl":
 USE_LIBS += [
     "mozglue",
 ]
+
+if CONFIG["MOZ_ASAN"] or CONFIG["MOZ_UBSAN"] or CONFIG["MOZ_TSAN"]:
+    USE_LIBS += ["sanitizer-options"]

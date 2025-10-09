@@ -11,11 +11,8 @@
 
 "use strict";
 
-var { get_about_message, open_message_from_file } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-);
-var { close_window } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
+var { get_about_message, open_message_from_file } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 var gReferenceTextContent;
@@ -25,7 +22,7 @@ add_setup(async function () {
   Services.prefs.setIntPref("mailnews.display.html_as", 0);
   Services.prefs.setIntPref("mailnews.display.disallow_mime_handlers", 0);
 
-  let { textContent } = await extract_eml_body_textcontent(
+  const { textContent } = await extract_eml_body_textcontent(
     "./correctEncodingUTF8.eml",
     false
   );
@@ -33,22 +30,22 @@ add_setup(async function () {
 });
 
 async function check_display_charset(eml, expectedCharset) {
-  let file = new FileUtils.File(getTestFilePath(`data/${eml}`));
-  let msgc = await open_message_from_file(file);
-  let aboutMessage = get_about_message(msgc.window);
+  const file = new FileUtils.File(getTestFilePath(`data/${eml}`));
+  const msgc = await open_message_from_file(file);
+  const aboutMessage = get_about_message(msgc);
   is(aboutMessage.currentCharacterSet, expectedCharset);
-  close_window(msgc);
+  await BrowserTestUtils.closeWindow(msgc);
 }
 
 async function extract_eml_body_textcontent(eml, autodetect = true) {
-  let file = new FileUtils.File(getTestFilePath(`data/${eml}`));
-  let msgc = await open_message_from_file(file);
-  let aboutMessage = get_about_message(msgc.window);
+  const file = new FileUtils.File(getTestFilePath(`data/${eml}`));
+  const msgc = await open_message_from_file(file);
+  const aboutMessage = get_about_message(msgc);
 
   if (autodetect) {
     // Open other actions menu.
-    let popup = aboutMessage.document.getElementById("otherActionsPopup");
-    let popupShown = BrowserTestUtils.waitForEvent(popup, "popupshown");
+    const popup = aboutMessage.document.getElementById("otherActionsPopup");
+    const popupShown = BrowserTestUtils.waitForEvent(popup, "popupshown");
     EventUtils.synthesizeMouseAtCenter(
       aboutMessage.document.getElementById("otherActionsButton"),
       {},
@@ -57,8 +54,8 @@ async function extract_eml_body_textcontent(eml, autodetect = true) {
     await popupShown;
 
     // Click on the "Repair Text Encoding" item.
-    let hiddenPromise = BrowserTestUtils.waitForEvent(popup, "popuphidden");
-    let reloadPromise = BrowserTestUtils.browserLoaded(
+    const hiddenPromise = BrowserTestUtils.waitForEvent(popup, "popuphidden");
+    const reloadPromise = BrowserTestUtils.browserLoaded(
       aboutMessage.getMessagePaneBrowser()
     );
     EventUtils.synthesizeMouseAtCenter(
@@ -70,11 +67,11 @@ async function extract_eml_body_textcontent(eml, autodetect = true) {
     await reloadPromise;
   }
 
-  let textContent =
+  const textContent =
     aboutMessage.getMessagePaneBrowser().contentDocument.documentElement
       .textContent;
-  let charset = aboutMessage.currentCharacterSet;
-  close_window(msgc);
+  const charset = aboutMessage.currentCharacterSet;
+  await BrowserTestUtils.closeWindow(msgc);
   return { textContent, charset };
 }
 
@@ -83,7 +80,7 @@ async function extract_eml_body_textcontent(eml, autodetect = true) {
  * the expected charset was detected.
  */
 async function check_eml_textcontent(eml, expectedCharset) {
-  let { textContent, charset } = await extract_eml_body_textcontent(eml);
+  const { textContent, charset } = await extract_eml_body_textcontent(eml);
   is(textContent, gReferenceTextContent);
   is(charset, expectedCharset);
 }

@@ -12,8 +12,9 @@ var {
   create_body_part,
   create_deleted_attachment,
   create_detached_attachment,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/AttachmentHelpers.jsm"
+  create_enclosure_attachment,
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/AttachmentHelpers.sys.mjs"
 );
 var {
   add_message_to_folder,
@@ -21,15 +22,14 @@ var {
   create_folder,
   create_message,
   get_about_message,
-  mc,
   msgGen,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
-var { SyntheticPartLeaf, SyntheticPartMultiMixed } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { SyntheticPartLeaf, SyntheticPartMultiMixed } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
 
 var textAttachment =
@@ -51,10 +51,6 @@ var vcardAttachment =
   "YmVnaW46dmNhcmQNCmZuOkppbSBCb2INCm46Qm9iO0ppbQ0KZW1haWw7aW50ZXJuZXQ6Zm9v" +
   "QGJhci5jb20NCnZlcnNpb246Mi4xDQplbmQ6dmNhcmQNCg0K";
 var vcardSize = 90;
-
-var detachedName = "./attachment.txt";
-var missingName = "./nonexistent.txt";
-var deletedName = "deleted.txt";
 
 // create some messages that have various types of attachments
 var messages = [
@@ -174,6 +170,13 @@ var messages = [
     attachmentSizes: [-1, textAttachment.length],
     attachmentTotalSize: { size: 0, exact: true },
   },
+  {
+    name: "unc_attachment",
+    bodyPart: null,
+    attachments: [{ body: textAttachment, filename: "ubik.txt", format: "" }],
+    attachmentSizes: [-1, textAttachment.length],
+    attachmentTotalSize: { size: textAttachment.length, exact: false },
+  },
 ];
 
 add_setup(async function () {
@@ -189,27 +192,33 @@ add_setup(async function () {
   epsilon = "@mozilla.org/windows-registry-key;1" in Cc ? 4 : 2;
 
   // set up our detached/deleted attachments
-  var detachedFile = new FileUtils.File(
-    getTestFilePath(`data/${detachedName}`)
-  );
+  var detachedFile = new FileUtils.File(getTestFilePath(`data/attachment.txt`));
   var detached = create_body_part("Here is a file", [
     create_detached_attachment(detachedFile, "text/plain"),
   ]);
 
-  var missingFile = new FileUtils.File(getTestFilePath(`data/${missingName}`));
+  var missingFile = new FileUtils.File(getTestFilePath(`data/nonexistent.txt`));
   var missing = create_body_part(
     "Here is a file (but you deleted the external file, you silly oaf!)",
     [create_detached_attachment(missingFile, "text/plain")]
   );
 
   var deleted = create_body_part("Here is a file that you deleted", [
-    create_deleted_attachment(deletedName, "text/plain"),
+    create_deleted_attachment("deleted.txt", "text/plain"),
   ]);
 
   var attachedMessage = msgGen.makeMessage({
     body: { body: textAttachment },
     attachments: [{ body: textAttachment, filename: "ubik.txt", format: "" }],
   });
+
+  var uncEnclosure = create_body_part("UNC enclosure", [
+    create_enclosure_attachment(
+      "meow.mp3",
+      "audio/mpeg",
+      "file:///%5c%5cattacker.tld%5cmeow"
+    ),
+  ]);
 
   /* Much like the above comment, libmime counts bytes differently on Windows,
    * where it counts newlines (\r\n) as 2 bytes. Mac and Linux treats them as
@@ -252,6 +261,9 @@ add_setup(async function () {
         messages[i].attachmentSizes[0] = attachedMessageLength;
         messages[i].attachmentTotalSize.size += attachedMessageLength;
         break;
+      case "unc_attachment":
+        messages[i].bodyPart = uncEnclosure;
+        break;
     }
 
     await add_message_to_folder([folder], create_message(messages[i]));
@@ -261,16 +273,16 @@ add_setup(async function () {
 /**
  * Make sure that the attachment's size is what we expect
  *
- * @param index the attachment's index, starting at 0
- * @param expectedSize the expected size of the attachment, in bytes
+ * @param {integer} index - The attachment's index, starting at 0.
+ * @param {integer} expectedSize - The expected size of the attachment, in bytes.
  */
 function check_attachment_size(index, expectedSize) {
-  let win = get_about_message();
-  let list = win.document.getElementById("attachmentList");
-  let node = list.querySelectorAll("richlistitem.attachmentItem")[index];
+  const win = get_about_message();
+  const list = win.document.getElementById("attachmentList");
+  const node = list.querySelectorAll("richlistitem.attachmentItem")[index];
 
   // First, let's check that the attachment size is correct
-  let size = node.attachment.size;
+  const size = node.attachment.size;
   Assert.ok(
     Math.abs(size - expectedSize) <= epsilon,
     `Attachment "${node.attachment.name}" size should be within ${epsilon} ` +
@@ -288,12 +300,12 @@ function check_attachment_size(index, expectedSize) {
 /**
  * Make sure that the attachment's size is not displayed
  *
- * @param index the attachment's index, starting at 0
+ * @param {integer} index - The attachment's index, starting at 0.
  */
 function check_no_attachment_size(index) {
-  let win = get_about_message();
-  let list = win.document.getElementById("attachmentList");
-  let node = list.querySelectorAll("richlistitem.attachmentItem")[index];
+  const win = get_about_message();
+  const list = win.document.getElementById("attachmentList");
+  const node = list.querySelectorAll("richlistitem.attachmentItem")[index];
 
   Assert.equal(
     node.attachment.size,
@@ -302,7 +314,7 @@ function check_no_attachment_size(index) {
   );
 
   // If there's no size, the size attribute is the zero-width space.
-  let nodeSize = node.getAttribute("size");
+  const nodeSize = node.getAttribute("size");
   Assert.equal(
     nodeSize,
     "",
@@ -313,15 +325,15 @@ function check_no_attachment_size(index) {
 /**
  * Make sure that the total size of all attachments is what we expect.
  *
- * @param count the expected number of attachments
- * @param expectedSize the expected size in bytes of all the attachments
- * @param exact true if the size of all attachments is known, false otherwise
+ * @param {integer} count - The expected number of attachments.
+ * @param {integer} expectedSize - The expected size in bytes of all the attachments.
+ * @param {boolean} exact - true if the size of all attachments is known.
  */
 function check_total_attachment_size(count, expectedSize, exact) {
-  let win = get_about_message();
-  let list = win.document.getElementById("attachmentList");
-  let nodes = list.querySelectorAll("richlistitem.attachmentItem");
-  let sizeNode = win.document.getElementById("attachmentSize");
+  const win = get_about_message();
+  const list = win.document.getElementById("attachmentList");
+  const nodes = list.querySelectorAll("richlistitem.attachmentItem");
+  const sizeNode = win.document.getElementById("attachmentSize");
 
   Assert.equal(
     nodes.length,
@@ -332,10 +344,10 @@ function check_total_attachment_size(count, expectedSize, exact) {
   let lastPartID;
   let size = 0;
   for (let i = 0; i < nodes.length; i++) {
-    let attachment = nodes[i].attachment;
+    const attachment = nodes[i].attachment;
     if (!lastPartID || attachment.partID.indexOf(lastPartID) != 0) {
       lastPartID = attachment.partID;
-      let currSize = attachment.size;
+      const currSize = attachment.size;
       if (currSize > 0 && !isNaN(currSize)) {
         size += Number(currSize);
       }
@@ -349,9 +361,9 @@ function check_total_attachment_size(count, expectedSize, exact) {
   );
 
   // Next, make sure that the formatted size in the label is correct
-  let formattedSize = sizeNode.getAttribute("value");
+  const formattedSize = sizeNode.getAttribute("value");
   let expectedFormattedSize = messenger.formatFileSize(size);
-  let messengerBundle = mc.window.document.getElementById("bundle_messenger");
+  const messengerBundle = document.getElementById("bundle_messenger");
 
   if (!exact) {
     if (size == 0) {
@@ -376,18 +388,18 @@ function check_total_attachment_size(count, expectedSize, exact) {
  * Make sure that the individual and total attachment sizes for this message
  * are as expected
  *
- * @param index the index of the message to check in the thread pane
+ * @param {integer} index - The index of the message to check in the thread pane.
  */
 async function help_test_attachment_size(index) {
   await be_in_folder(folder);
-  select_click_row(index);
+  await select_click_row(index);
   info(`Testing message ${index}: ${messages[index].name}`);
-  let expectedSizes = messages[index].attachmentSizes;
+  const expectedSizes = messages[index].attachmentSizes;
 
-  let aboutMessage = get_about_message();
+  const aboutMessage = get_about_message();
   aboutMessage.toggleAttachmentList(true);
 
-  let attachmentList = aboutMessage.document.getElementById("attachmentList");
+  const attachmentList = aboutMessage.document.getElementById("attachmentList");
   await TestUtils.waitForCondition(
     () => !attachmentList.collapsed,
     "Attachment list is shown"
@@ -401,7 +413,7 @@ async function help_test_attachment_size(index) {
     }
   }
 
-  let totalSize = messages[index].attachmentTotalSize;
+  const totalSize = messages[index].attachmentTotalSize;
   check_total_attachment_size(
     expectedSizes.length,
     totalSize.size,

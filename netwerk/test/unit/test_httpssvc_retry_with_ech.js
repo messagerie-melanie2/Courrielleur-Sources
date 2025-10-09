@@ -101,8 +101,6 @@ function channelOpenPromise(chan, flags) {
     certOverrideService.setDisableAllSecurityChecksAndLetAttackersInterceptMyData(
       true
     );
-    let internal = chan.QueryInterface(Ci.nsIHttpChannelInternal);
-    internal.setWaitForHTTPSSVCRecord();
     chan.asyncOpen(new ChannelListener(finish, null, flags));
   });
 }
@@ -181,7 +179,7 @@ add_task(async function testConnectWithECH() {
 
   Services.prefs.setCharPref(
     "network.trr.uri",
-    `https://foo.example.com:${trrServer.port}/dns-query`
+    `https://foo.example.com:${trrServer.port()}/dns-query`
   );
 
   // Only the last record is valid to use.
@@ -260,7 +258,7 @@ add_task(async function testEchRetry() {
   Services.prefs.setIntPref("network.trr.mode", 3);
   Services.prefs.setCharPref(
     "network.trr.uri",
-    `https://foo.example.com:${trrServer.port}/dns-query`
+    `https://foo.example.com:${trrServer.port()}/dns-query`
   );
 
   // Only the last record is valid to use.
@@ -345,7 +343,7 @@ async function H3ECHTest(
 
   Services.prefs.setCharPref(
     "network.trr.uri",
-    `https://foo.example.com:${trrServer.port}/dns-query`
+    `https://foo.example.com:${trrServer.port()}/dns-query`
   );
   Services.prefs.setBoolPref("network.dns.port_prefixed_qname_https_rr", true);
 
@@ -361,7 +359,7 @@ async function H3ECHTest(
 
   let portPrefixedName = `_${h3Port}._https.public.example.com`;
   let vals = [
-    { key: "alpn", value: "h3-29" },
+    { key: "alpn", value: "h3" },
     { key: "port", value: h3Port },
   ];
   if (advertiseECH) {
@@ -409,7 +407,7 @@ async function H3ECHTest(
   let chan = makeChan(`https://public.example.com:${h3Port}`);
   let [req] = await channelOpenPromise(chan, CL_ALLOW_UNKNOWN_CL);
   req.QueryInterface(Ci.nsIHttpChannel);
-  Assert.equal(req.protocolVersion, "h3-29");
+  Assert.equal(req.protocolVersion, "h3");
   checkSecurityInfo(chan, true, advertiseECH);
 
   await trrServer.stop();

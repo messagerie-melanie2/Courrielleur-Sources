@@ -11,89 +11,22 @@
 #ifndef LOGGING_RTC_EVENT_LOG_EVENTS_RTC_EVENT_FIELD_ENCODING_PARSER_H_
 #define LOGGING_RTC_EVENT_LOG_EVENTS_RTC_EVENT_FIELD_ENCODING_PARSER_H_
 
+#include <cstddef>
+#include <cstdint>
+#include <optional>
 #include <string>
+#include <type_traits>
 #include <vector>
 
+#include "absl/base/attributes.h"
 #include "absl/strings/string_view.h"
+#include "api/array_view.h"
+#include "api/units/timestamp.h"
+#include "logging/rtc_event_log/events/fixed_length_encoding_parameters_v3.h"
 #include "logging/rtc_event_log/events/rtc_event_field_encoding.h"
-
-// TODO(terelius): Compared to a generic 'Status' class, this
-// class allows us additional information about the context
-// in which the error occurred. This is currently limited to
-// the source location (file and line), but we plan on adding
-// information about the event and field name being parsed.
-// If/when we start using absl::Status in WebRTC, consider
-// whether payloads would be an appropriate alternative.
-class RtcEventLogParseStatus {
-  template <typename T>
-  friend class RtcEventLogParseStatusOr;
-
- public:
-  static RtcEventLogParseStatus Success() { return RtcEventLogParseStatus(); }
-  static RtcEventLogParseStatus Error(absl::string_view error,
-                                      absl::string_view file,
-                                      int line) {
-    return RtcEventLogParseStatus(error, file, line);
-  }
-
-  bool ok() const { return error_.empty(); }
-  ABSL_DEPRECATED("Use ok() instead") explicit operator bool() const {
-    return ok();
-  }
-
-  std::string message() const { return error_; }
-
- private:
-  RtcEventLogParseStatus() : error_() {}
-  RtcEventLogParseStatus(absl::string_view error,
-                         absl::string_view file,
-                         int line)
-      : error_(std::string(error) + " (" + std::string(file) + ": " +
-               std::to_string(line) + ")") {}
-
-  std::string error_;
-};
-
-template <typename T>
-class RtcEventLogParseStatusOr {
- public:
-  RtcEventLogParseStatusOr(RtcEventLogParseStatus status)  // NOLINT
-      : status_(status), value_() {}
-  RtcEventLogParseStatusOr(const T& value)  // NOLINT
-      : status_(), value_(value) {}
-
-  bool ok() const { return status_.ok(); }
-
-  std::string message() const { return status_.message(); }
-
-  RtcEventLogParseStatus status() const { return status_; }
-
-  const T& value() const {
-    RTC_DCHECK(ok());
-    return value_;
-  }
-
-  T& value() {
-    RTC_DCHECK(ok());
-    return value_;
-  }
-
-  static RtcEventLogParseStatusOr Error(absl::string_view error,
-                                        absl::string_view file,
-                                        int line) {
-    return RtcEventLogParseStatusOr(error, file, line);
-  }
-
- private:
-  RtcEventLogParseStatusOr() : status_() {}
-  RtcEventLogParseStatusOr(absl::string_view error,
-                           absl::string_view file,
-                           int line)
-      : status_(error, file, line), value_() {}
-
-  RtcEventLogParseStatus status_;
-  T value_;
-};
+#include "logging/rtc_event_log/events/rtc_event_field_extraction.h"
+#include "logging/rtc_event_log/events/rtc_event_log_parse_status.h"
+#include "rtc_base/checks.h"
 
 namespace webrtc {
 
@@ -207,7 +140,7 @@ template <typename T,
 ABSL_MUST_USE_RESULT RtcEventLogParseStatus
 PopulateRtcEventMember(const rtc::ArrayView<uint8_t> positions,
                        const rtc::ArrayView<uint64_t> values,
-                       absl::optional<T> E::*member,
+                       std::optional<T> E::*member,
                        rtc::ArrayView<E> output) {
   size_t batch_size = positions.size();
   RTC_CHECK_EQ(output.size(), batch_size);
@@ -219,7 +152,7 @@ PopulateRtcEventMember(const rtc::ArrayView<uint8_t> positions,
       output[i].*member = DecodeFromUnsignedToType<T>(value_it);
       ++value_it;
     } else {
-      output[i].*member = absl::nullopt;
+      output[i].*member = std::nullopt;
     }
   }
   RTC_CHECK(value_it == values.end());

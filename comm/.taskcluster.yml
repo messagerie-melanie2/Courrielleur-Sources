@@ -197,13 +197,14 @@ tasks:
                       # run-task uses these to check out the source; the inputs
                       # to `mach taskgraph decision` are all on the command line.
                       $merge:
-                          - COMM_BASE_REPOSITORY: '${repoUrl}'
+                          - COMM_BASE_REPOSITORY: 'https://hg.mozilla.org/comm-unified'
                             COMM_BASE_REV: '${push.base_revision}'
                             COMM_HEAD_REPOSITORY: '${repoUrl}'
                             COMM_HEAD_REF: '${push.revision}'
                             COMM_HEAD_REV: '${push.revision}'
                             HG_STORE_PATH: /builds/worker/checkouts/hg-store
                             TASKCLUSTER_CACHES: /builds/worker/checkouts
+                            TASKCLUSTER_VOLUMES: /builds/worker/artifacts
                             MOZ_AUTOMATION: '1'
                             # mach generates pyc files when reading `mach_commands.py`
                             # This causes cached_task digest generation to be random for
@@ -217,7 +218,7 @@ tasks:
                                 ACTION_CALLBACK: '${action.cb_name}'
 
                   cache:
-                      "${trustDomain}-level-${repository.level}-checkouts-sparse-v3": /builds/worker/checkouts
+                      "${trustDomain}-level-${repository.level}-checkouts-sparse-v4": /builds/worker/checkouts
 
                   features:
                       taskclusterProxy: true
@@ -225,7 +226,7 @@ tasks:
 
                   # Note: This task is built server side without the context or tooling that
                   # exist in tree so we must hard code the hash
-                  image: 'mozillareleases/gecko_decision:4.0.0@sha256:9f69fe08c28e3cb3cc296451f0a2735df6e25d0e3c877ea735ef1b7f0b345b06'
+                  image: 'mozillareleases/gecko_decision:5.0.0@sha256:9e000c9fd31ee1723927aeea2b82b95ff2ecf32ebdb7a5d893300281a1452670'
 
                   maxRunTime: 1800
 
@@ -246,12 +247,12 @@ tasks:
                                 cd /builds/worker/checkouts/gecko &&
                                 ln -s /builds/worker/artifacts artifacts &&
                                 ./mach --log-no-times taskgraph action-callback
-                                --root=comm/taskcluster/ci
+                                --root=comm/taskcluster
                             else: >
                                 cd /builds/worker/checkouts/gecko &&
                                 ln -s /builds/worker/artifacts artifacts &&
                                 ./mach --log-no-times taskgraph decision
-                                --root=comm/taskcluster/ci
+                                --root=comm/taskcluster
                                 --pushlog-id='${push.pushlog_id}'
                                 --pushdate='${push.pushdate}'
                                 --project='${repository.project}'

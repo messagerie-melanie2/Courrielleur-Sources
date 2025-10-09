@@ -2,53 +2,56 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
+"use strict";
+
 requestLongerTimeout(2);
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
-let account = createAccount("pop3");
-createAccount("local");
-MailServices.accounts.defaultAccount = account;
+add_setup(async () => {
+  const account = createAccount("pop3");
+  createAccount("local");
+  MailServices.accounts.defaultAccount = account;
 
-let defaultIdentity = addIdentity(account);
-defaultIdentity.composeHtml = true;
-let nonDefaultIdentity = addIdentity(account);
-nonDefaultIdentity.composeHtml = false;
+  const defaultIdentity = addIdentity(account);
+  defaultIdentity.composeHtml = true;
+  const nonDefaultIdentity = addIdentity(account);
+  nonDefaultIdentity.composeHtml = false;
 
-let rootFolder = account.incomingServer.rootFolder;
-rootFolder.createSubfolder("test", null);
-let folder = rootFolder.getChildNamed("test");
-createMessages(folder, 4);
+  const rootFolder = account.incomingServer.rootFolder;
+  const folder = await createSubfolder(rootFolder, "test");
+  await createMessages(folder, 4);
+});
 
 add_task(async function testBody() {
-  let files = {
+  const files = {
     "background.js": async () => {
-      let accounts = await browser.accounts.list();
+      const accounts = await browser.accounts.list();
       browser.test.assertEq(2, accounts.length, "number of accounts");
-      let popAccount = accounts.find(a => a.type == "pop3");
+      const popAccount = accounts.find(a => a.type == "pop3");
       browser.test.assertEq(
         2,
         popAccount.identities.length,
         "number of identities"
       );
-      let [htmlIdentity, plainTextIdentity] = popAccount.identities;
-      let folder = popAccount.folders.find(f => f.name == "test");
-      let { messages } = await browser.messages.list(folder);
+      const [htmlIdentity, plainTextIdentity] = popAccount.identities;
+      const testFolder = popAccount.folders.find(f => f.name == "test");
+      const { messages } = await browser.messages.list(testFolder.id);
       browser.test.assertEq(4, messages.length, "number of messages");
 
-      let message0 = await browser.messages.getFull(messages[0].id);
-      let message0body = message0.parts[0].body;
+      const message0 = await browser.messages.getFull(messages[0].id);
+      const message0body = message0.parts[0].body;
 
       // Editor content of a newly opened composeWindow without setting a body.
-      let defaultHTML = "<body><p><br></p></body>";
+      const defaultHTML = "<body><p><br></p></body>";
       // Editor content after composeWindow.SetComposeDetails() has been used
       // to clear the body.
-      let setEmptyHTML = "<body><br></body>";
-      let plainTextBodyTag =
+      const setEmptyHTML = "<body><br></body>";
+      const plainTextBodyTag =
         '<body style="font-family: -moz-fixed; white-space: pre-wrap; width: 72ch;">';
-      let tests = [
+      const tests = [
         {
           // No arguments.
           funcName: "beginNew",
@@ -318,9 +321,9 @@ add_task(async function testBody() {
         },
       ];
 
-      for (let test of tests) {
+      for (const test of tests) {
         browser.test.log(JSON.stringify(test));
-        let createdWindowPromise = window.waitForEvent("windows.onCreated");
+        const createdWindowPromise = window.waitForEvent("windows.onCreated");
         try {
           await browser.compose[test.funcName](...test.arguments);
           if (test.throws) {
@@ -336,13 +339,13 @@ add_task(async function testBody() {
           }
         }
 
-        let [createdWindow] = await createdWindowPromise;
+        const [createdWindow] = await createdWindowPromise;
         browser.test.assertEq("messageCompose", createdWindow.type);
         if (test.expected) {
           browser.test.sendMessage("checkBody", test.expected);
           await window.waitForMessage();
         }
-        let removedWindowPromise = window.waitForEvent("windows.onRemoved");
+        const removedWindowPromise = window.waitForEvent("windows.onRemoved");
         browser.windows.remove(createdWindow.id);
         await removedWindowPromise;
       }
@@ -351,7 +354,7 @@ add_task(async function testBody() {
     },
     "utils.js": await getUtilsJS(),
   };
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files,
     manifest: {
       background: { scripts: ["utils.js", "background.js"] },
@@ -359,18 +362,18 @@ add_task(async function testBody() {
     },
   });
   extension.onMessage("checkBody", async expected => {
-    let composeWindows = [...Services.wm.getEnumerator("msgcompose")];
+    const composeWindows = [...Services.wm.getEnumerator("msgcompose")];
     is(composeWindows.length, 1);
     await new Promise(resolve => composeWindows[0].setTimeout(resolve));
 
     is(composeWindows[0].IsHTMLEditor(), expected.isHTML, "composition mode");
 
-    let editor = composeWindows[0].GetCurrentEditor();
+    const editor = composeWindows[0].GetCurrentEditor();
     // Get the actual message body. Fold Windows line-endings \r\n to \n.
-    let actualHTML = editor
+    const actualHTML = editor
       .outputToString("text/html", Ci.nsIDocumentEncoder.OutputRaw)
       .replace(/\r/g, "");
-    let actualPlainText = editor
+    const actualPlainText = editor
       .outputToString("text/plain", Ci.nsIDocumentEncoder.OutputRaw)
       .replace(/\r/g, "");
     if ("htmlIncludes" in expected) {

@@ -13,6 +13,21 @@
     !defined(__wasi__)
 #  define MOZ_DUMP_ASSERTION_STACK
 #endif
+#if defined(XP_WIN) && (defined(DEBUG) || defined(FUZZING))
+#  define MOZ_BUFFER_STDERR
+#endif
+
+// It appears that this is sometimes compiled without XP_WIN
+#if defined(_WIN32)
+#  include <process.h>
+#  define MOZ_GET_PID() _getpid()
+#elif !defined(__wasi__)
+#  include <unistd.h>
+#  define MOZ_GET_PID() getpid()
+#else
+// Prevent compiler warning
+#  define MOZ_GET_PID() -1
+#endif
 
 #include "mozilla/Attributes.h"
 #include "mozilla/Compiler.h"
@@ -38,9 +53,13 @@ MOZ_END_EXTERN_C
 #if defined(MOZ_HAS_MOZGLUE) || defined(MOZILLA_INTERNAL_API)
 static inline void AnnotateMozCrashReason(const char* reason) {
   gMozCrashReason = reason;
-  // See bug 1681846, on 32-bit Android ARM the compiler removes the store to
-  // gMozCrashReason if this barrier is not present.
-  asm volatile("" ::: "memory");
+  // The following assembly fakes a memory read/write to the compiler, which
+  // prevents the removal of gMozCrashReason store. See bug 1681846 and 1945507.
+#  if defined(__clang__)
+  asm volatile("" : "+r,m"(gMozCrashReason) : : "memory");
+#  else
+  asm volatile("" : "+m,r"(gMozCrashReason) : : "memory");
+#  endif
 }
 #  define MOZ_CRASH_ANNOTATE(...) AnnotateMozCrashReason(__VA_ARGS__)
 #else
@@ -80,7 +99,10 @@ MOZ_BEGIN_EXTERN_C
 #if defined(ANDROID) && defined(MOZ_DUMP_ASSERTION_STACK)
 MOZ_MAYBE_UNUSED static void MOZ_ReportAssertionFailurePrintFrame(
     const char* aBuf) {
-  __android_log_print(ANDROID_LOG_FATAL, "MOZ_Assert", "%s\n", aBuf);
+  __android_log_print(ANDROID_LOG_FATAL, "MOZ_Assert", "%s", aBuf);
+}
+MOZ_MAYBE_UNUSED static void MOZ_CrashPrintFrame(const char* aBuf) {
+  __android_log_print(ANDROID_LOG_FATAL, "MOZ_Crash", "%s", aBuf);
 }
 #endif
 
@@ -92,20 +114,29 @@ MOZ_MAYBE_UNUSED static void MOZ_ReportAssertionFailurePrintFrame(
  * method is primarily for internal use in this header, and only secondarily
  * for use in implementing release-build assertions.
  */
+
 MOZ_MAYBE_UNUSED static MOZ_COLD MOZ_NEVER_INLINE void
 MOZ_ReportAssertionFailure(const char* aStr, const char* aFilename,
                            int aLine) MOZ_PRETEND_NORETURN_FOR_STATIC_ANALYSIS {
   MOZ_FUZZING_HANDLE_CRASH_EVENT4("MOZ_ASSERT", aFilename, aLine, aStr);
 #ifdef ANDROID
   __android_log_print(ANDROID_LOG_FATAL, "MOZ_Assert",
-                      "Assertion failure: %s, at %s:%d\n", aStr, aFilename,
-                      aLine);
+                      "[%d] Assertion failure: %s, at %s:%d\n", MOZ_GET_PID(),
+                      aStr, aFilename, aLine);
 #  if defined(MOZ_DUMP_ASSERTION_STACK)
   MozWalkTheStackWithWriter(MOZ_ReportAssertionFailurePrintFrame, CallerPC(),
                             /* aMaxFrames */ 0);
 #  endif
 #else
-  fprintf(stderr, "Assertion failure: %s, at %s:%d\n", aStr, aFilename, aLine);
+#  if defined(MOZ_BUFFER_STDERR)
+  char msg[1024] = "";
+  snprintf(msg, sizeof(msg) - 1, "[%d] Assertion failure: %s, at %s:%d\n",
+           MOZ_GET_PID(), aStr, aFilename, aLine);
+  fputs(msg, stderr);
+#  else
+  fprintf(stderr, "[%d] Assertion failure: %s, at %s:%d\n", MOZ_GET_PID(), aStr,
+          aFilename, aLine);
+#  endif
 #  if defined(MOZ_DUMP_ASSERTION_STACK)
   MozWalkTheStack(stderr, CallerPC(), /* aMaxFrames */ 0);
 #  endif
@@ -118,15 +149,47 @@ MOZ_MAYBE_UNUSED static MOZ_COLD MOZ_NEVER_INLINE void MOZ_ReportCrash(
     int aLine) MOZ_PRETEND_NORETURN_FOR_STATIC_ANALYSIS {
 #ifdef ANDROID
   __android_log_print(ANDROID_LOG_FATAL, "MOZ_CRASH",
-                      "Hit MOZ_CRASH(%s) at %s:%d\n", aStr, aFilename, aLine);
+                      "[%d] Hit MOZ_CRASH(%s) at %s:%d\n", MOZ_GET_PID(), aStr,
+                      aFilename, aLine);
+#  if defined(MOZ_DUMP_ASSERTION_STACK)
+  MozWalkTheStackWithWriter(MOZ_CrashPrintFrame, CallerPC(),
+                            /* aMaxFrames */ 0);
+#  endif
 #else
-  fprintf(stderr, "Hit MOZ_CRASH(%s) at %s:%d\n", aStr, aFilename, aLine);
+#  if defined(MOZ_BUFFER_STDERR)
+  char msg[1024] = "";
+  snprintf(msg, sizeof(msg) - 1, "[%d] Hit MOZ_CRASH(%s) at %s:%d\n",
+           MOZ_GET_PID(), aStr, aFilename, aLine);
+  fputs(msg, stderr);
+#  else
+  fprintf(stderr, "[%d] Hit MOZ_CRASH(%s) at %s:%d\n", MOZ_GET_PID(), aStr,
+          aFilename, aLine);
+#  endif
 #  if defined(MOZ_DUMP_ASSERTION_STACK)
   MozWalkTheStack(stderr, CallerPC(), /* aMaxFrames */ 0);
 #  endif
   fflush(stderr);
 #endif
 }
+
+/*
+ * MOZ_ASSUME_UNREACHABLE_MARKER() expands to an expression which states that
+ * it is undefined behavior for execution to reach this point.  No guarantees
+ * are made about what will happen if this is reached at runtime.  Most code
+ * should use MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE because it has extra
+ * asserts.
+ */
+#if defined(__clang__) || defined(__GNUC__)
+#  define MOZ_ASSUME_UNREACHABLE_MARKER() __builtin_unreachable()
+#elif defined(_MSC_VER)
+#  define MOZ_ASSUME_UNREACHABLE_MARKER() __assume(0)
+#else
+#  ifdef __cplusplus
+#    define MOZ_ASSUME_UNREACHABLE_MARKER() ::abort()
+#  else
+#    define MOZ_ASSUME_UNREACHABLE_MARKER() abort()
+#  endif
+#endif
 
 /**
  * MOZ_REALLY_CRASH is used in the implementation of MOZ_CRASH().  You should
@@ -159,12 +222,13 @@ MOZ_MAYBE_UNUSED static MOZ_COLD MOZ_NORETURN MOZ_NEVER_INLINE void
 MOZ_NoReturn(int aLine) {
   *((volatile int*)NULL) = aLine;
   TerminateProcess(GetCurrentProcess(), 3);
+  MOZ_ASSUME_UNREACHABLE_MARKER();
 }
 
-#  define MOZ_REALLY_CRASH(line) \
-    do {                         \
-      __debugbreak();            \
-      MOZ_NoReturn(line);        \
+#  define MOZ_REALLY_CRASH(line)  \
+    do {                          \
+      MOZ_NOMERGE __debugbreak(); \
+      MOZ_NoReturn(line);         \
     } while (false)
 
 #elif __wasi__
@@ -172,6 +236,46 @@ MOZ_NoReturn(int aLine) {
 #  define MOZ_REALLY_CRASH(line) __builtin_trap()
 
 #else
+
+/*
+ * MOZ_CrashSequence() executes a sequence that causes the process to crash by
+ * writing the line number specified in the `aLine` parameter to the address
+ * provide by `aAddress`. The store is implemented as volatile assembly code to
+ * ensure it's always included in the output and always executed.
+ */
+static inline void MOZ_CrashSequence(void* aAddress, intptr_t aLine) {
+#  if defined(__i386__) || defined(__x86_64__)
+  asm volatile(
+      "mov %1, (%0);\n"  // Write the line number to the crashing address
+      :                  // no output registers
+      : "r"(aAddress), "r"(aLine));
+#  elif defined(__arm__) || defined(__aarch64__)
+  asm volatile(
+      "str %1,[%0];\n"  // Write the line number to the crashing address
+      :                 // no output registers
+      : "r"(aAddress), "r"(aLine));
+#  elif defined(__riscv) && (__riscv_xlen == 64)
+  asm volatile(
+      "sd %1,0(%0);\n"  // Write the line number to the crashing address
+      :                 // no output registers
+      : "r"(aAddress), "r"(aLine));
+#  elif defined(__sparc__) && defined(__arch64__)
+  asm volatile(
+      "stx %1,[%0];\n"  // Write the line number to the crashing address
+      :                 // no output registers
+      : "r"(aAddress), "r"(aLine));
+#  elif defined(__loongarch64)
+  asm volatile(
+      "st.d %1,%0,0;\n"  // Write the line number to the crashing address
+      :                  // no output registers
+      : "r"(aAddress), "r"(aLine));
+#  else
+#    warning \
+        "Unsupported architecture, replace the code below with assembly suitable to crash the process"
+  asm volatile("" ::: "memory");
+  *((volatile int*)aAddress) = aLine; /* NOLINT */
+#  endif
+}
 
 /*
  * MOZ_CRASH_WRITE_ADDR is the address to be used when performing a forced
@@ -184,22 +288,22 @@ MOZ_NoReturn(int aLine) {
  * SEGV at 0x0.
  */
 #  ifdef MOZ_UBSAN
-#    define MOZ_CRASH_WRITE_ADDR 0x1
+#    define MOZ_CRASH_WRITE_ADDR ((void*)0x1)
 #  else
 #    define MOZ_CRASH_WRITE_ADDR NULL
 #  endif
 
 #  ifdef __cplusplus
-#    define MOZ_REALLY_CRASH(line)                                  \
-      do {                                                          \
-        *((volatile int*)MOZ_CRASH_WRITE_ADDR) = line; /* NOLINT */ \
-        ::abort();                                                  \
+#    define MOZ_REALLY_CRASH(line)                     \
+      do {                                             \
+        MOZ_CrashSequence(MOZ_CRASH_WRITE_ADDR, line); \
+        MOZ_NOMERGE ::abort();                         \
       } while (false)
 #  else
-#    define MOZ_REALLY_CRASH(line)                                  \
-      do {                                                          \
-        *((volatile int*)MOZ_CRASH_WRITE_ADDR) = line; /* NOLINT */ \
-        abort();                                                    \
+#    define MOZ_REALLY_CRASH(line)                     \
+      do {                                             \
+        MOZ_CrashSequence(MOZ_CRASH_WRITE_ADDR, line); \
+        MOZ_NOMERGE abort();                           \
       } while (false)
 #  endif
 #endif
@@ -219,13 +323,13 @@ MOZ_NoReturn(int aLine) {
  * MOZ_CRASH() calls whose rationale is non-obvious; don't use it if it's
  * obvious why we're crashing.
  *
- * If we're a DEBUG build and we crash at a MOZ_CRASH which provides an
- * explanation-string, we print the string to stderr.  Otherwise, we don't
- * print anything; this is because we want MOZ_CRASH to be 100% safe in release
- * builds, and it's hard to print to stderr safely when memory might have been
- * corrupted.
+ * If we're a DEBUG, ASAN or FUZZING build and we crash at a MOZ_CRASH which
+ * provides an explanation-string, we print the string to stderr.  Otherwise,
+ * we don't print anything; this is because we want MOZ_CRASH to be 100% safe
+ * in release builds, and it's hard to print to stderr safely when memory might
+ * have been corrupted.
  */
-#if !(defined(DEBUG) || defined(FUZZING))
+#if !(defined(DEBUG) || defined(MOZ_ASAN) || defined(FUZZING))
 #  define MOZ_CRASH(...)                                                      \
     do {                                                                      \
       MOZ_FUZZING_HANDLE_CRASH_EVENT4("MOZ_CRASH", __FILE__, __LINE__, NULL); \
@@ -239,6 +343,19 @@ MOZ_NoReturn(int aLine) {
       MOZ_ReportCrash("" __VA_ARGS__, __FILE__, __LINE__);                    \
       MOZ_CRASH_ANNOTATE("MOZ_CRASH(" __VA_ARGS__ ")");                       \
       MOZ_REALLY_CRASH(__LINE__);                                             \
+    } while (false)
+#endif
+
+/*
+ * MOZ_DIAGNOSTIC_CRASH acts like MOZ_CRASH in a MOZ_DIAGNOSTIC_ASSERT_ENABLED
+ * build, and does nothing otherwise. See the comment later in this file for a
+ * description of when MOZ_DIAGNOSTIC_ASSERT_ENABLED is defined.
+ */
+#if defined(MOZ_DIAGNOSTIC_ASSERT_ENABLED)
+#  define MOZ_DIAGNOSTIC_CRASH(...) MOZ_CRASH(__VA_ARGS__)
+#else
+#  define MOZ_DIAGNOSTIC_CRASH(...) \
+    do { /* nothing */              \
     } while (false)
 #endif
 
@@ -257,7 +374,7 @@ MOZ_NoReturn(int aLine) {
 static MOZ_ALWAYS_INLINE_EVEN_DEBUG MOZ_COLD MOZ_NORETURN void MOZ_Crash(
     const char* aFilename, int aLine, const char* aReason) {
   MOZ_FUZZING_HANDLE_CRASH_EVENT4("MOZ_CRASH", aFilename, aLine, aReason);
-#if defined(DEBUG) || defined(FUZZING)
+#if defined(DEBUG) || defined(MOZ_ASAN) || defined(FUZZING)
   MOZ_ReportCrash(aReason, aFilename, aLine);
 #endif
   MOZ_CRASH_ANNOTATE(aReason);
@@ -330,12 +447,13 @@ MOZ_END_EXTERN_C
  * *only* during debugging, not "in the field". If you want the latter, use
  * MOZ_RELEASE_ASSERT, which applies to non-debug builds as well.
  *
- * MOZ_DIAGNOSTIC_ASSERT works like MOZ_RELEASE_ASSERT in Nightly/Aurora and
- * MOZ_ASSERT in Beta/Release - use this when a condition is potentially rare
- * enough to require real user testing to hit, but is not security-sensitive.
- * This can cause user pain, so use it sparingly. If a MOZ_DIAGNOSTIC_ASSERT
- * is firing, it should promptly be converted to a MOZ_ASSERT while the failure
- * is being investigated, rather than letting users suffer.
+ * MOZ_DIAGNOSTIC_ASSERT works like MOZ_RELEASE_ASSERT in Nightly and early beta
+ * and MOZ_ASSERT in late Beta and Release - use this when a condition is
+ * potentially rare enough to require real user testing to hit, but is not
+ * security-sensitive. This can cause user pain, so use it sparingly. If a
+ * MOZ_DIAGNOSTIC_ASSERT is firing, it should promptly be converted to a
+ * MOZ_ASSERT while the failure is being investigated, rather than letting users
+ * suffer.
  *
  * MOZ_DIAGNOSTIC_ASSERT_ENABLED is defined when MOZ_DIAGNOSTIC_ASSERT is like
  * MOZ_RELEASE_ASSERT rather than MOZ_ASSERT.
@@ -426,7 +544,7 @@ struct AssertionConditionType {
         ("MOZ_ASSERT", __VA_ARGS__))
 #else
 #  define MOZ_ASSERT(...) \
-    do {                  \
+    do { /* nothing */    \
     } while (false)
 #endif /* DEBUG */
 
@@ -437,8 +555,23 @@ struct AssertionConditionType {
         ("MOZ_DIAGNOSTIC_ASSERT", __VA_ARGS__))
 #else
 #  define MOZ_DIAGNOSTIC_ASSERT(...) \
-    do {                             \
+    do { /* nothing */               \
     } while (false)
+#endif
+
+/*
+ * MOZ_ASSERT_DEBUG_OR_FUZZING is like a MOZ_ASSERT but also enabled in builds
+ * that are non-DEBUG but FUZZING. This is useful for checks that are too
+ * expensive for Nightly in general but are still indicating potentially
+ * critical bugs.
+ * In fuzzing builds, the assert is rewritten to be a diagnostic assert because
+ * we already use this in other sensitive places and fuzzing automation is
+ * set to act on these under all circumstances.
+ */
+#ifdef FUZZING
+#  define MOZ_ASSERT_DEBUG_OR_FUZZING(...) MOZ_DIAGNOSTIC_ASSERT(__VA_ARGS__)
+#else
+#  define MOZ_ASSERT_DEBUG_OR_FUZZING(...) MOZ_ASSERT(__VA_ARGS__)
 #endif
 
 /*
@@ -459,7 +592,7 @@ struct AssertionConditionType {
     } while (false)
 #else
 #  define MOZ_ASSERT_IF(cond, expr) \
-    do {                            \
+    do { /* nothing */              \
     } while (false)
 #endif
 
@@ -479,27 +612,8 @@ struct AssertionConditionType {
     } while (false)
 #else
 #  define MOZ_DIAGNOSTIC_ASSERT_IF(cond, expr) \
-    do {                                       \
+    do { /* nothing */                         \
     } while (false)
-#endif
-
-/*
- * MOZ_ASSUME_UNREACHABLE_MARKER() expands to an expression which states that
- * it is undefined behavior for execution to reach this point.  No guarantees
- * are made about what will happen if this is reached at runtime.  Most code
- * should use MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE because it has extra
- * asserts.
- */
-#if defined(__clang__) || defined(__GNUC__)
-#  define MOZ_ASSUME_UNREACHABLE_MARKER() __builtin_unreachable()
-#elif defined(_MSC_VER)
-#  define MOZ_ASSUME_UNREACHABLE_MARKER() __assume(0)
-#else
-#  ifdef __cplusplus
-#    define MOZ_ASSUME_UNREACHABLE_MARKER() ::abort()
-#  else
-#    define MOZ_ASSUME_UNREACHABLE_MARKER() abort()
-#  endif
 #endif
 
 /*
@@ -597,18 +711,18 @@ struct AssertionConditionType {
 #endif
 
 /*
- * MOZ_ALWAYS_TRUE(expr) and friends always evaluate the provided expression,
- * in debug builds and in release builds both.  Then, in debug builds and
- * Nightly and DevEdition release builds, the value of the expression is
- * asserted either true or false using MOZ_DIAGNOSTIC_ASSERT.
+ * MOZ_ALWAYS_TRUE(expr) and friends always evaluate the provided expression, in
+ * both debug and release builds.  Then, in debug builds and Nightly and early
+ * beta builds, we crash using the string value of the expression as the message
+ * using MOZ_DIAGNOSTIC_CRASH.
  */
-#define MOZ_ALWAYS_TRUE(expr)              \
-  do {                                     \
-    if (MOZ_LIKELY(expr)) {                \
-      /* Silence [[nodiscard]]. */         \
-    } else {                               \
-      MOZ_DIAGNOSTIC_ASSERT(false, #expr); \
-    }                                      \
+#define MOZ_ALWAYS_TRUE(expr)      \
+  do {                             \
+    if (MOZ_LIKELY(expr)) {        \
+      /* Silence [[nodiscard]]. */ \
+    } else {                       \
+      MOZ_DIAGNOSTIC_CRASH(#expr); \
+    }                              \
   } while (false)
 
 #define MOZ_ALWAYS_FALSE(expr) MOZ_ALWAYS_TRUE(!(expr))
@@ -620,18 +734,19 @@ struct AssertionConditionType {
  */
 #ifdef FUZZING
 #  define MOZ_CRASH_UNLESS_FUZZING(...) \
-    do {                                \
+    do { /* nothing */                  \
     } while (0)
 #  define MOZ_ASSERT_UNLESS_FUZZING(...) \
-    do {                                 \
+    do { /* nothing */                   \
     } while (0)
 #else
 #  define MOZ_CRASH_UNLESS_FUZZING(...) MOZ_CRASH(__VA_ARGS__)
 #  define MOZ_ASSERT_UNLESS_FUZZING(...) MOZ_ASSERT(__VA_ARGS__)
 #endif
 
-#undef MOZ_DUMP_ASSERTION_STACK
+#undef MOZ_BUFFER_STDERR
 #undef MOZ_CRASH_CRASHREPORT
+#undef MOZ_DUMP_ASSERTION_STACK
 
 /*
  * This is only used by Array and nsTArray classes, therefore it is not
@@ -642,6 +757,33 @@ namespace mozilla::detail {
 MFBT_API MOZ_NORETURN MOZ_COLD void InvalidArrayIndex_CRASH(size_t aIndex,
                                                             size_t aLength);
 }  // namespace mozilla::detail
+#endif  // __cplusplus
+
+/*
+ * Provide a fake default value to be used when a value is required but none can
+ * sensibily be provided without adding undefined behavior or security issues.
+ *
+ * This function asserts and aborts if it ever executed.
+ *
+ * Example usage:
+ *
+ *   class Trooper {
+ *     const Droid& lookFor;
+ *     Trooper() : lookFor(MakeCompilerAssumeUnreachableFakeValue<
+                           const Droid&>()) {
+ *       // The class might be instantiated due to existing caller
+ *       // but this never happens in practice.
+ *     }
+ *   };
+ *
+ */
+#ifdef __cplusplus
+namespace mozilla {
+template <typename T>
+static inline T MakeCompilerAssumeUnreachableFakeValue() {
+  MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE();
+}
+}  // namespace mozilla
 #endif  // __cplusplus
 
 #endif /* mozilla_Assertions_h */

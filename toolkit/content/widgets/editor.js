@@ -16,13 +16,13 @@
           "nsIURIContentListener",
           "nsISupportsWeakReference",
         ]),
-        doContent(contentType, isContentPreferred, request, contentHandler) {
+        doContent() {
           return false;
         },
-        isPreferred(contentType, desiredContentType) {
+        isPreferred() {
           return false;
         },
-        canHandleContent(contentType, isContentPreferred, desiredContentType) {
+        canHandleContent() {
           return false;
         },
         loadCookie: null,
@@ -94,10 +94,6 @@
         .getInterface(Ci.nsIWebBrowserFind);
     }
 
-    get markupDocumentViewer() {
-      return this.docShell.contentViewer;
-    }
-
     get editingSession() {
       return this.docShell.editingSession;
     }
@@ -135,7 +131,7 @@
       return null;
     }
 
-    // Copied from toolkit/content/widgets/browser-custom-element.js.
+    // Copied from toolkit/content/widgets/browser-custom-element.mjs.
     // Send an asynchronous message to the remote child via an actor.
     // Note: use this only for messages through an actor. For old-style
     // messages, use the message manager.

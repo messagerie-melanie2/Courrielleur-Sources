@@ -14,10 +14,12 @@
     getCurrentTheme: "resource:///modules/imThemes.sys.mjs",
     getDocumentFragmentFromHTML: "resource:///modules/imThemes.sys.mjs",
     getHTMLForMessage: "resource:///modules/imThemes.sys.mjs",
+    IMServices: "resource:///modules/IMServices.sys.mjs",
     initHTMLDocument: "resource:///modules/imThemes.sys.mjs",
     insertHTMLForMessage: "resource:///modules/imThemes.sys.mjs",
     isNextMessage: "resource:///modules/imThemes.sys.mjs",
     wasNextMessage: "resource:///modules/imThemes.sys.mjs",
+    openLinkExternally: "resource:///modules/LinkHelper.sys.mjs",
     replaceHTMLForMessage: "resource:///modules/imThemes.sys.mjs",
     removeMessage: "resource:///modules/imThemes.sys.mjs",
     serializeSelection: "resource:///modules/imThemes.sys.mjs",
@@ -42,6 +44,7 @@
   class MozConversationBrowser extends customElements.get("browser") {
     constructor() {
       super();
+      LazyModules.IMServices.core.init();
 
       this._conv = null;
 
@@ -69,7 +72,7 @@
           return;
         }
 
-        let uri = Services.io.newURI(url);
+        const uri = Services.io.newURI(url);
 
         // http and https are the only schemes that are both
         // allowed by our IM filters and exposed.
@@ -80,10 +83,8 @@
         event.preventDefault();
         event.stopPropagation();
 
-        // loadURI can throw if the default browser is misconfigured.
-        Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-          .getService(Ci.nsIExternalProtocolService)
-          .loadURI(uri);
+        // openLinkExternally can throw if the default browser is misconfigured.
+        LazyModules.openLinkExternally(uri, { addToHistory: false });
       });
 
       this.addEventListener("keypress", event => {
@@ -162,7 +163,7 @@
       this.addEventListener("resize", this.browserResize);
 
       // @implements {nsIObserver}
-      this.prefObserver = (subject, topic, data) => {
+      this.prefObserver = () => {
         if (this.magicCopyEnabled) {
           this.enableMagicCopy();
         } else {
@@ -181,8 +182,8 @@
             !this.contentWindow.getSelection().isCollapsed
           );
         },
-        doCommand: command => {
-          let selection = this.contentWindow.getSelection();
+        doCommand: () => {
+          const selection = this.contentWindow.getSelection();
           if (selection.isCollapsed) {
             return;
           }
@@ -191,7 +192,7 @@
             .getService(Ci.nsIClipboardHelper)
             .copyString(LazyModules.serializeSelection(selection));
         },
-        onEvent(command) {},
+        onEvent() {},
         QueryInterface: ChromeUtils.generateQI(["nsIController"]),
       };
 
@@ -308,7 +309,7 @@
           Services.clipboard.kSelectionClipboard
         ) && Services.prefs.getBoolPref("clipboard.autocopy");
       if (this.autoCopyEnabled) {
-        let selection = this.contentWindow.getSelection();
+        const selection = this.contentWindow.getSelection();
         if (selection) {
           selection.addSelectionListener(this.chatSelectionListener);
         }
@@ -318,7 +319,7 @@
     disableMagicCopy() {
       this.contentWindow.controllers.removeController(this.copyController);
       if (this.autoCopyEnabled) {
-        let selection = this.contentWindow.getSelection();
+        const selection = this.contentWindow.getSelection();
         if (selection) {
           selection.removeSelectionListener(this.chatSelectionListener);
         }
@@ -369,7 +370,7 @@
 
     _updateConvScrollEnabled() {
       // Enable auto-scroll if the scrollbar is at the bottom.
-      let body = this.contentDocument.querySelector("body");
+      const body = this.contentDocument.querySelector("body");
       this._convScrollEnabled =
         body.scrollHeight <= body.scrollTop + body.clientHeight + 10;
       return this._convScrollEnabled;
@@ -428,7 +429,7 @@
         return;
       }
       if (this._messageDisplayPending || this._pendingMessages.length) {
-        let pendingIndex = this._pendingMessages.findIndex(
+        const pendingIndex = this._pendingMessages.findIndex(
           ({ msg: pendingMsg }) => pendingMsg.remoteId === msg.remoteId
         );
         if (
@@ -447,7 +448,7 @@
           isNext,
           false
         );
-        let ruler = this.contentDocument.getElementById("unread-ruler");
+        const ruler = this.contentDocument.getElementById("unread-ruler");
         if (ruler?._originalMsg?.remoteId === msg.remoteId) {
           ruler._originalMsg = msg;
           ruler.nextMsgHtml = htmlMessage;
@@ -492,7 +493,7 @@
         // should take no more than 100ms to feel 'immediate', but the perceived
         // performance if we flicker is likely even worse than having a barely
         // perceptible delay.
-        let deadline = Cu.now() + 200;
+        const deadline = Cu.now() + 200;
         this.displayPendingMessages({
           timeRemaining() {
             return deadline - Cu.now();
@@ -509,12 +510,12 @@
     // enumerator that creates message objects lazily to avoid
     // jank when displaying lots of messages.
     getNextPendingMessage() {
-      let length = this._pendingMessages.length;
+      const length = this._pendingMessages.length;
       if (this._nextPendingMessageIndex == length) {
         return null;
       }
 
-      let result = this._pendingMessages[this._nextPendingMessageIndex++];
+      const result = this._pendingMessages[this._nextPendingMessageIndex++];
 
       if (this._nextPendingMessageIndex == length) {
         this._pendingMessages = [];
@@ -533,10 +534,10 @@
         return;
       }
 
-      let max = this.getPendingMessagesCount();
+      const max = this.getPendingMessagesCount();
       do {
         // One message takes less than 2ms on average.
-        let msg = this.getNextPendingMessage();
+        const msg = this.getNextPendingMessage();
         if (!msg) {
           break;
         }
@@ -548,7 +549,7 @@
         );
       } while (timing.timeRemaining() > 2);
 
-      let event = document.createEvent("UIEvents");
+      const event = document.createEvent("UIEvents");
       event.initUIEvent("MessagesDisplayed", false, false, window, 0);
       if (this._pendingMessagesDisplayed < max) {
         if (this.progressBar) {
@@ -578,12 +579,12 @@
     }
 
     displayMessage(aMsg, aContext, aNoAutoScroll, aFirstUnread) {
-      let doc = this.contentDocument;
+      const doc = this.contentDocument;
 
       if (aMsg.noLog && aMsg.notification && aMsg.who == "sessionstart") {
         // New session log.
         if (this._lastMessage) {
-          let ruler = doc.createElement("hr");
+          const ruler = doc.createElement("hr");
           ruler.className = "sessionstart-ruler";
           this.contentChatNode.appendChild(ruler);
           this._sessions.push(ruler);
@@ -615,7 +616,7 @@
           next,
           aContext
         );
-        let ruler = doc.getElementById("unread-ruler");
+        const ruler = doc.getElementById("unread-ruler");
         ruler.nextMsgHtml = html;
         ruler._originalMsg = aMsg;
 
@@ -646,7 +647,7 @@
           insert.parentNode.insertBefore(marker, insert.nextElementSibling);
         }
       } else {
-        let html = LazyModules.getHTMLForMessage(
+        const html = LazyModules.getHTMLForMessage(
           aMsg,
           this.theme,
           next,
@@ -677,7 +678,7 @@
      * @returns {string} Message content ready for insertion.
      */
     prepareMessageContent(message) {
-      let cs = Cc["@mozilla.org/txttohtmlconv;1"].getService(
+      const cs = Cc["@mozilla.org/txttohtmlconv;1"].getService(
         Ci.mozITXTToHTMLConv
       );
 
@@ -708,7 +709,7 @@
       // Remove any existing ruler (occurs when the window has lost focus).
       this.removeUnreadRuler();
 
-      let ruler = this.contentDocument.createElement("hr");
+      const ruler = this.contentDocument.createElement("hr");
       ruler.id = "unread-ruler";
       this.contentChatNode.appendChild(ruler);
     }
@@ -718,8 +719,8 @@
         this._lastMessage.whenRead();
       }
 
-      let doc = this.contentDocument;
-      let ruler = doc.getElementById("unread-ruler");
+      const doc = this.contentDocument;
+      const ruler = doc.getElementById("unread-ruler");
       if (!ruler) {
         return;
       }
@@ -728,7 +729,7 @@
       let moveTo = doc.getElementById("insert-before");
       if (moveTo) {
         // Protect an existing insert node.
-        let actualInsert = doc.getElementById("insert");
+        const actualInsert = doc.getElementById("insert");
         if (actualInsert) {
           actualInsert.id = "actual-insert";
         }
@@ -739,7 +740,7 @@
         let moveToParent = moveTo.parentNode;
         range.selectNode(moveToParent);
         // eslint-disable-next-line no-unsanitized/method
-        let documentFragment = LazyModules.getDocumentFragmentFromHTML(
+        const documentFragment = LazyModules.getDocumentFragmentFromHTML(
           doc,
           ruler.nextMsgHtml
         );
@@ -754,7 +755,7 @@
         moveToParent.insertBefore(documentFragment, moveTo);
 
         // If this added an insert node, insert the next messages there.
-        let insert = doc.getElementById("insert");
+        const insert = doc.getElementById("insert");
         if (insert) {
           moveTo.remove();
           moveTo = insert;
@@ -762,7 +763,7 @@
         }
 
         // Move remaining messages from the message block following the ruler.
-        let nextMessagesStart = doc.getElementById("next-messages-start");
+        const nextMessagesStart = doc.getElementById("next-messages-start");
         if (nextMessagesStart) {
           range = doc.createRange();
           range.setStartAfter(nextMessagesStart);
@@ -796,7 +797,7 @@
       if (this._firstNonContextElt) {
         sectionElements.push(this._firstNonContextElt);
       }
-      let ruler = this.contentDocument.getElementById("unread-ruler");
+      const ruler = this.contentDocument.getElementById("unread-ruler");
       if (ruler) {
         sectionElements.push(ruler);
       }
@@ -804,10 +805,10 @@
 
       // Return ordered array of sections with entries
       // [Y, scrollY such that Y is centered]
-      let sections = [];
-      let maxY = this.contentWindow.scrollMaxY;
+      const sections = [];
+      const maxY = this.contentWindow.scrollMaxY;
       for (let i = 0; i < sectionElements.length; ++i) {
-        let y = sectionElements[i].offsetTop;
+        const y = sectionElements[i].offsetTop;
         // The section is unnecessary if close to top/bottom of conversation.
         if (y < this._maximalSectionOffset || maxY < y) {
           continue;
@@ -819,11 +820,11 @@
     }
 
     scrollToPreviousSection() {
-      let sections = this._getSections();
-      let y = this.contentWindow.scrollY;
+      const sections = this._getSections();
+      const y = this.contentWindow.scrollY;
       let newY = 0;
       for (let i = sections.length - 1; i >= 0; --i) {
-        let section = sections[i];
+        const section = sections[i];
         if (y > section[0]) {
           newY = section[1];
           break;
@@ -833,11 +834,11 @@
     }
 
     scrollToNextSection() {
-      let sections = this._getSections();
-      let y = this.contentWindow.scrollY;
+      const sections = this._getSections();
+      const y = this.contentWindow.scrollY;
       let newY = this.contentWindow.scrollMaxY;
       for (let i = 0; i < sections.length; ++i) {
-        let section = sections[i];
+        const section = sections[i];
         if (y + this._maximalSectionOffset < section[0]) {
           newY = section[1];
           break;
@@ -846,7 +847,7 @@
       this.contentWindow.scrollTo(0, newY);
     }
 
-    browserScroll(event) {
+    browserScroll() {
       if (this._scrollingIntoView) {
         // We have explicitly requested a scrollIntoView, ignore the event.
         this._scrollingIntoView = false;
@@ -878,7 +879,7 @@
       this._updateConvScrollEnabled();
     }
 
-    browserResize(event) {
+    browserResize() {
       if (this._convScrollEnabled && this._lastElement) {
         // The content area was resized and auto-scroll is enabled,
         // make sure the last inserted element is still visible

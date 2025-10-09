@@ -11,17 +11,14 @@
 #include "mozilla/StaticPrefs_intl.h"
 #include "nsCommandManager.h"
 #include "nsCOMPtr.h"
-#include "nsGlobalWindow.h"
 #include "nsString.h"
 #include "nsPrintfCString.h"
 #include "nsReadableUtils.h"
 #include "nsUnicharUtils.h"
-#include "nsGlobalWindowInner.h"
 #include "nsIHTMLContentSink.h"
 #include "nsIProtocolHandler.h"
 #include "nsIXMLContentSink.h"
 #include "nsHTMLParts.h"
-#include "nsHTMLStyleSheet.h"
 #include "nsGkAtoms.h"
 #include "nsPresContext.h"
 #include "nsPIDOMWindow.h"
@@ -29,7 +26,7 @@
 #include "nsIStreamListener.h"
 #include "nsIURI.h"
 #include "nsNetUtil.h"
-#include "nsIContentViewer.h"
+#include "nsIDocumentViewer.h"
 #include "nsDocShell.h"
 #include "nsDocShellLoadTypes.h"
 #include "nsIScriptContext.h"
@@ -76,9 +73,11 @@
 #include "nsSandboxFlags.h"
 #include "mozilla/dom/HTMLBodyElement.h"
 #include "mozilla/dom/HTMLDocumentBinding.h"
+#include "mozilla/dom/HTMLIFrameElement.h"
 #include "mozilla/dom/nsCSPContext.h"
 #include "mozilla/dom/Selection.h"
 #include "mozilla/dom/ShadowIncludingTreeIterator.h"
+#include "mozilla/glean/DomMetrics.h"
 #include "nsCharsetSource.h"
 #include "nsFocusManager.h"
 #include "nsIFrame.h"
@@ -103,10 +102,13 @@ static bool IsAsciiCompatible(const Encoding* aEncoding) {
   return aEncoding->IsAsciiCompatible() || aEncoding == ISO_2022_JP_ENCODING;
 }
 
-nsresult NS_NewHTMLDocument(Document** aInstancePtrResult, bool aLoadedAsData) {
+nsresult NS_NewHTMLDocument(Document** aInstancePtrResult,
+                            nsIPrincipal* aPrincipal,
+                            nsIPrincipal* aPartitionedPrincipal,
+                            bool aLoadedAsData) {
   RefPtr<nsHTMLDocument> doc = new nsHTMLDocument();
 
-  nsresult rv = doc->Init();
+  nsresult rv = doc->Init(aPrincipal, aPartitionedPrincipal);
 
   if (NS_FAILED(rv)) {
     *aInstancePtrResult = nullptr;
@@ -139,8 +141,9 @@ JSObject* nsHTMLDocument::WrapNode(JSContext* aCx,
   return HTMLDocument_Binding::Wrap(aCx, this, aGivenProto);
 }
 
-nsresult nsHTMLDocument::Init() {
-  nsresult rv = Document::Init();
+nsresult nsHTMLDocument::Init(nsIPrincipal* aPrincipal,
+                              nsIPrincipal* aPartitionedPrincipal) {
+  nsresult rv = Document::Init(aPrincipal, aPartitionedPrincipal);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Now reset the compatibility mode of the CSSLoader
@@ -180,15 +183,15 @@ void nsHTMLDocument::ResetToURI(nsIURI* aURI, nsILoadGroup* aLoadGroup,
   SetContentType(nsDependentCString("text/html"));
 }
 
-void nsHTMLDocument::TryReloadCharset(nsIContentViewer* aCv,
+void nsHTMLDocument::TryReloadCharset(nsIDocumentViewer* aViewer,
                                       int32_t& aCharsetSource,
                                       NotNull<const Encoding*>& aEncoding) {
-  if (aCv) {
+  if (aViewer) {
     int32_t reloadEncodingSource;
     const auto reloadEncoding =
-        aCv->GetReloadEncodingAndSource(&reloadEncodingSource);
+        aViewer->GetReloadEncodingAndSource(&reloadEncodingSource);
     if (kCharsetUninitialized != reloadEncodingSource) {
-      aCv->ForgetReloadEncoding();
+      aViewer->ForgetReloadEncoding();
 
       if (reloadEncodingSource <= aCharsetSource ||
           !IsAsciiCompatible(aEncoding)) {
@@ -203,7 +206,7 @@ void nsHTMLDocument::TryReloadCharset(nsIContentViewer* aCv,
   }
 }
 
-void nsHTMLDocument::TryUserForcedCharset(nsIContentViewer* aCv,
+void nsHTMLDocument::TryUserForcedCharset(nsIDocumentViewer* aViewer,
                                           nsIDocShell* aDocShell,
                                           int32_t& aCharsetSource,
                                           NotNull<const Encoding*>& aEncoding,
@@ -337,13 +340,9 @@ nsresult nsHTMLDocument::StartDocumentLoad(
   if (loadAsHtml5 && view) {
     // mDocumentURI hasn't been set, yet, so get the URI from the channel
     nsCOMPtr<nsIURI> uri;
-    aChannel->GetOriginalURI(getter_AddRefs(uri));
-    // Adapted from nsDocShell:
-    // GetSpec can be expensive for some URIs, so check the scheme first.
-    if (uri && uri->SchemeIs("about")) {
-      if (uri->GetSpecOrDefault().EqualsLiteral("about:blank")) {
-        loadAsHtml5 = false;
-      }
+    aChannel->GetURI(getter_AddRefs(uri));
+    if (NS_IsAboutBlankAllowQueryAndFragment(uri)) {
+      loadAsHtml5 = false;
     }
   }
 
@@ -392,25 +391,25 @@ nsresult nsHTMLDocument::StartDocumentLoad(
 
   // in this block of code, if we get an error result, we return it
   // but if we get a null pointer, that's perfectly legal for parent
-  // and parentContentViewer
+  // and parentViewer
   nsCOMPtr<nsIDocShellTreeItem> parentAsItem;
   if (docShell) {
     docShell->GetInProcessSameTypeParent(getter_AddRefs(parentAsItem));
   }
 
   nsCOMPtr<nsIDocShell> parent(do_QueryInterface(parentAsItem));
-  nsCOMPtr<nsIContentViewer> parentContentViewer;
+  nsCOMPtr<nsIDocumentViewer> parentViewer;
   if (parent) {
-    rv = parent->GetContentViewer(getter_AddRefs(parentContentViewer));
+    rv = parent->GetDocViewer(getter_AddRefs(parentViewer));
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  nsCOMPtr<nsIContentViewer> cv;
+  nsCOMPtr<nsIDocumentViewer> viewer;
   if (docShell) {
-    docShell->GetContentViewer(getter_AddRefs(cv));
+    docShell->GetDocViewer(getter_AddRefs(viewer));
   }
-  if (!cv) {
-    cv = std::move(parentContentViewer);
+  if (!viewer) {
+    viewer = std::move(parentViewer);
   }
 
   nsAutoCString urlSpec;
@@ -455,10 +454,10 @@ nsresult nsHTMLDocument::StartDocumentLoad(
     // charset menu.
     TryChannelCharset(aChannel, charsetSource, encoding, executor);
 
-    TryUserForcedCharset(cv, docShell, charsetSource, encoding,
+    TryUserForcedCharset(viewer, docShell, charsetSource, encoding,
                          forceAutoDetection);
 
-    TryReloadCharset(cv, charsetSource, encoding);  // For encoding reload
+    TryReloadCharset(viewer, charsetSource, encoding);  // For encoding reload
     TryParentCharset(docShell, charsetSource, encoding, forceAutoDetection);
   }
 
@@ -552,9 +551,99 @@ void nsHTMLDocument::RemovedForm() { --mNumForms; }
 
 int32_t nsHTMLDocument::GetNumFormsSynchronous() const { return mNumForms; }
 
-bool nsHTMLDocument::ResolveName(JSContext* aCx, const nsAString& aName,
-                                 JS::MutableHandle<JS::Value> aRetval,
-                                 ErrorResult& aError) {
+// https://html.spec.whatwg.org/multipage/dom.html#dom-document-nameditem
+void nsHTMLDocument::NamedGetter(JSContext* aCx, const nsAString& aName,
+                                 bool& aFound,
+                                 JS::MutableHandle<JSObject*> aRetVal,
+                                 mozilla::ErrorResult& aRv) {
+  if (!StaticPrefs::dom_document_name_getter_follow_spec_enabled()) {
+    JS::Rooted<JS::Value> v(aCx);
+    if ((aFound = ResolveNameForWindow(aCx, aName, &v, aRv))) {
+      SetUseCounter(mozilla::eUseCounter_custom_HTMLDocumentNamedGetterHit);
+      aRetVal.set(v.toObjectOrNull());
+    }
+    return;
+  }
+
+  aFound = false;
+  aRetVal.set(nullptr);
+
+  // Step 1. Let elements be the list of named elements with the name name that
+  // are in a document tree with the Document as their root.
+  IdentifierMapEntry* entry = mIdentifierMap.GetEntry(aName);
+  if (!entry) {
+    return;
+  }
+
+  nsBaseContentList* list = entry->GetDocumentNameContentList();
+  if (!list || list->Length() == 0) {
+    return;
+  }
+
+  JS::Rooted<JS::Value> v(aCx);
+  if (list->Length() == 1) {
+    nsIContent* element = list->Item(0);
+    if (auto iframe = HTMLIFrameElement::FromNode(element)) {
+      // Step 2. If elements has only one element, and that element is an iframe
+      // element, and that iframe element's content navigable is not null, then
+      // return the active WindowProxy of the element's content navigable.
+      Nullable<WindowProxyHolder> win = iframe->GetContentWindow();
+      if (win.IsNull()) {
+        return;
+      }
+
+      if (!ToJSValue(aCx, win.Value(), &v)) {
+        aRv.NoteJSContextException(aCx);
+        return;
+      }
+    } else {
+      // Step 3. Otherwise, if elements has only one element, return that
+      // element.
+      if (!ToJSValue(aCx, element, &v)) {
+        aRv.NoteJSContextException(aCx);
+        return;
+      }
+    }
+  } else {
+    // Step 4. Otherwise, return an HTMLCollection rooted at the Document node,
+    // whose filter matches only named elements with the name name.
+    if (!ToJSValue(aCx, list, &v)) {
+      aRv.NoteJSContextException(aCx);
+      return;
+    }
+  }
+
+  // To limit the possible performance/memory impact, only collect at most 10
+  // properties.
+  if (mShadowedHTMLDocumentProperties.Length() <= 10 &&
+      HTMLDocument_Binding::InterfaceHasNonEventHandlerProperty(aName)) {
+    if (!mShadowedHTMLDocumentProperties.Contains(aName)) {
+      mShadowedHTMLDocumentProperties.AppendElement(aName);
+    }
+  }
+
+  SetUseCounter(mozilla::eUseCounter_custom_HTMLDocumentNamedGetterHit);
+  aFound = true;
+  aRetVal.set(&v.toObject());
+}
+
+void nsHTMLDocument::GetSupportedNames(nsTArray<nsString>& aNames) {
+  if (!StaticPrefs::dom_document_name_getter_follow_spec_enabled()) {
+    GetSupportedNamesForWindow(aNames);
+    return;
+  }
+
+  for (const auto& entry : mIdentifierMap) {
+    if (entry.HasDocumentNameElement()) {
+      aNames.AppendElement(entry.GetKeyAsString());
+    }
+  }
+}
+
+bool nsHTMLDocument::ResolveNameForWindow(JSContext* aCx,
+                                          const nsAString& aName,
+                                          JS::MutableHandle<JS::Value> aRetval,
+                                          ErrorResult& aError) {
   IdentifierMapEntry* entry = mIdentifierMap.GetEntry(aName);
   if (!entry) {
     return false;
@@ -596,7 +685,7 @@ bool nsHTMLDocument::ResolveName(JSContext* aCx, const nsAString& aName,
   return true;
 }
 
-void nsHTMLDocument::GetSupportedNames(nsTArray<nsString>& aNames) {
+void nsHTMLDocument::GetSupportedNamesForWindow(nsTArray<nsString>& aNames) {
   for (const auto& entry : mIdentifierMap) {
     if (entry.HasNameElement() ||
         entry.HasIdElementExposedAsHTMLDocumentProperty()) {
@@ -736,8 +825,7 @@ void nsHTMLDocument::GetFormsAndFormControls(nsContentList** aFormList,
 
     holder = new ContentListHolder(this, htmlForms, htmlFormControls);
     RefPtr<ContentListHolder> runnable = holder;
-    if (NS_SUCCEEDED(
-            Dispatch(TaskCategory::GarbageCollection, runnable.forget()))) {
+    if (NS_SUCCEEDED(Dispatch(runnable.forget()))) {
       mContentListHolder = holder;
     }
   }

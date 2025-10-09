@@ -86,13 +86,8 @@ async function testMessages() {
   hud.iframeWindow.console.log("message from chrome window");
 
   // Spawn worker from a chrome window and log a message and an error
-  const workerCode = `console.log("message in parent worker");
-        throw new Error("error in parent worker");`;
-  const blob = new hud.iframeWindow.Blob([workerCode], {
-    type: "application/javascript",
-  });
   const chromeSpawnedWorker = new hud.iframeWindow.Worker(
-    URL.createObjectURL(blob)
+    getRootDirectory(gTestPath) + "test-parent-worker.js"
   );
 
   // Spawn Chrome worker from a chrome window and log a message
@@ -181,7 +176,6 @@ async function testMessages() {
   scriptErrorMessage.initWithWindowID(
     "Error from Services.console.logMessage",
     gBrowser.currentURI.prePath,
-    null,
     0,
     0,
     Ci.nsIScriptError.warningFlag,
@@ -297,7 +291,7 @@ async function checkComponentExceptionMessage(hud, exception) {
   ok(framesNode, "The Components.Exception stack is displayed right away");
 
   const frameNodes = framesNode.querySelectorAll(".frame");
-  ok(frameNodes.length > 1, "Got at least one frame in the stack");
+  Assert.greater(frameNodes.length, 1, "Got at least one frame in the stack");
   is(
     frameNodes[0].querySelector(".line").textContent,
     String(exception.lineNumber),

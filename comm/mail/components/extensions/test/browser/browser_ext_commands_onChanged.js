@@ -1,7 +1,11 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
 add_task(async function () {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     useAddonManager: "permanent",
     manifest: {
       browser_specific_settings: { gecko: { id: "commands@mochi.test" } },
@@ -19,7 +23,7 @@ add_task(async function () {
 
       const originalFoo = commands.foo;
 
-      let resolver = {};
+      const resolver = {};
       resolver.promise = new Promise(resolve => (resolver.resolve = resolve));
 
       browser.commands.onChanged.addListener(update => {

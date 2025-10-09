@@ -20,14 +20,15 @@ var {
   enter_folder,
   expand_folder,
   get_about_3pane,
-  mc,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
-var { MailUtils } = ChromeUtils.import("resource:///modules/MailUtils.jsm");
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailUtils.sys.mjs"
+);
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 /**
@@ -39,7 +40,7 @@ add_task(async function test_all_folders_toggle_folder_open_state() {
   // Test that we are in All Folders mode by default
   assert_folder_mode("all");
 
-  let pop3Server = MailServices.accounts.findServer(
+  const pop3Server = MailServices.accounts.findServer(
     "tinderbox",
     FAKE_SERVER_HOSTNAME,
     "pop3"
@@ -49,21 +50,21 @@ add_task(async function test_all_folders_toggle_folder_open_state() {
 
   // All folders mode should give us only 2 rows to start
   // (tinderbox account and local folders)
-  let accounts = 2;
+  const accounts = 2;
   assert_folder_tree_view_row_count(accounts);
 
-  let inbox = 1;
-  let trash = 1;
-  let outbox = 1;
-  let archives = 1;
-  let folderPaneA = 1;
+  const inbox = 1;
+  const trash = 1;
+  const outbox = 1;
+  const archives = 1;
+  const folderPaneA = 1;
   // Create archives folder - this is ugly, but essentially the same as
   // what mailWindowOverlay.js does. We can't use the built-in helper
   // method to create the folder because we need the archive flag to get
   // set before the folder added notification is sent out, which means
   // creating the folder object via RDF, setting the flag, and then
   // creating the storage, which sends the notification.
-  let folder = MailUtils.getOrCreateFolder(
+  const folder = MailUtils.getOrCreateFolder(
     pop3Server.rootFolder.URI + "/Archives"
   );
   folder.setFlag(Ci.nsMsgFolderFlags.Archive);
@@ -73,7 +74,7 @@ add_task(async function test_all_folders_toggle_folder_open_state() {
   assert_folder_tree_view_row_count(accounts + inbox + trash + archives);
   // close the tinderbox server.
   collapse_folder(pop3Server.rootFolder);
-  let folderA = await create_folder("FolderPaneA");
+  const folderA = await create_folder("FolderPaneA");
   await be_in_folder(folderA);
 
   // After creating our first folder we should have 6 rows visible
@@ -81,12 +82,12 @@ add_task(async function test_all_folders_toggle_folder_open_state() {
     accounts + inbox + trash + outbox + folderPaneA
   );
 
-  let about3Pane = get_about_3pane();
-  let oneFolderCount = about3Pane.folderTree.rowCount;
+  const about3Pane = get_about_3pane();
+  const oneFolderCount = about3Pane.folderTree.rowCount;
 
   // This makes sure the folder can be toggled
   folderA.createSubfolder("FolderPaneB", null);
-  let folderB = folderA.getChildNamed("FolderPaneB");
+  const folderB = folderA.getChildNamed("FolderPaneB");
   // Enter folderB, then enter folderA. This makes sure that folderA is not
   // collapsed.
   await enter_folder(folderB);

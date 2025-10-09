@@ -83,7 +83,7 @@ bool ScriptBytecodeCompress(Vector<uint8_t>& aBytecodeBuf,
                             Vector<uint8_t>& aCompressedBytecodeBufOut) {
   // TODO probably need to move this to a helper thread
 
-  AUTO_PROFILER_MARKER_TEXT("ScriptBytecodeCompress", JS, {}, ""_ns);
+  AUTO_PROFILER_MARKER_UNTYPED("ScriptBytecodeCompress", JS, {});
   PerfStats::AutoMetricRecording<PerfStats::Metric::JSBC_Compression>
       autoRecording;
 
@@ -94,6 +94,18 @@ bool ScriptBytecodeCompress(Vector<uint8_t>& aBytecodeBuf,
       uncompressedLength = uncompressedLayout.bytecodeLength();
   z_stream zstream{.next_in = uncompressedLayout.bytecode(),
                    .avail_in = uncompressedLength};
+
+  // Note: deflateInit needs to be called before deflateBound.
+  const uint32_t compressionLevel =
+      StaticPrefs::browser_cache_jsbc_compression_level();
+  if (deflateInit(&zstream, compressionLevel) != Z_OK) {
+    LOG(
+        ("ScriptLoadRequest: Unable to initialize bytecode cache "
+         "compression."));
+    return false;
+  }
+  auto autoDestroy = MakeScopeExit([&]() { deflateEnd(&zstream); });
+
   auto compressedLength = deflateBound(&zstream, uncompressedLength);
   if (!aCompressedBytecodeBufOut.resizeUninitialized(
           compressedLength + compressedLayout.preludeLength() +
@@ -106,16 +118,6 @@ bool ScriptBytecodeCompress(Vector<uint8_t>& aBytecodeBuf,
          sizeof(uncompressedLength));
   zstream.next_out = compressedLayout.bytecode();
   zstream.avail_out = compressedLength;
-
-  const uint32_t compressionLevel =
-      StaticPrefs::browser_cache_jsbc_compression_level();
-  if (deflateInit(&zstream, compressionLevel) != Z_OK) {
-    LOG(
-        ("ScriptLoadRequest: Unable to initialize bytecode cache "
-         "compression."));
-    return false;
-  }
-  auto autoDestroy = MakeScopeExit([&]() { deflateEnd(&zstream); });
 
   int ret = deflate(&zstream, Z_FINISH);
   if (ret == Z_MEM_ERROR) {
@@ -131,7 +133,7 @@ bool ScriptBytecodeCompress(Vector<uint8_t>& aBytecodeBuf,
 bool ScriptBytecodeDecompress(Vector<uint8_t>& aCompressedBytecodeBuf,
                               size_t aBytecodeOffset,
                               Vector<uint8_t>& aBytecodeBufOut) {
-  AUTO_PROFILER_MARKER_TEXT("ScriptBytecodeDecompress", JS, {}, ""_ns);
+  AUTO_PROFILER_MARKER_UNTYPED("ScriptBytecodeDecompress", JS, {});
   PerfStats::AutoMetricRecording<PerfStats::Metric::JSBC_Decompression>
       autoRecording;
 

@@ -8,9 +8,21 @@
 #include "WorkerPrivate.h"
 #include "WorkerRunnable.h"
 
+#include "mozilla/Logging.h"
 #include "mozilla/dom/ReferrerInfo.h"
 
 namespace mozilla::dom {
+
+static mozilla::LazyLogModule sWorkerEventTargetLog("WorkerEventTarget");
+
+#ifdef LOG
+#  undef LOG
+#endif
+#ifdef LOGV
+#  undef LOGV
+#endif
+#define LOG(args) MOZ_LOG(sWorkerEventTargetLog, LogLevel::Debug, args);
+#define LOGV(args) MOZ_LOG(sWorkerEventTargetLog, LogLevel::Verbose, args);
 
 namespace {
 
@@ -22,7 +34,7 @@ class WrappedControlRunnable final : public WorkerControlRunnable {
  public:
   WrappedControlRunnable(WorkerPrivate* aWorkerPrivate,
                          nsCOMPtr<nsIRunnable>&& aInner)
-      : WorkerControlRunnable(aWorkerPrivate, WorkerThreadUnchangedBusyCount),
+      : WorkerControlRunnable("WrappedControlRunnable"),
         mInner(std::move(aInner)) {}
 
   virtual bool PreDispatch(WorkerPrivate* aWorkerPrivate) override {
@@ -46,17 +58,72 @@ class WrappedControlRunnable final : public WorkerControlRunnable {
     // If the inner runnable is not cancellable, then just do the normal
     // WorkerControlRunnable thing.  This will end up calling Run().
     if (!cr) {
-      WorkerControlRunnable::Cancel();
-      return NS_OK;
+      return Run();
     }
 
     // Otherwise call the inner runnable's Cancel() and treat this like
     // a WorkerRunnable cancel.  We can't call WorkerControlRunnable::Cancel()
     // in this case since that would result in both Run() and the inner
     // Cancel() being called.
-    Unused << cr->Cancel();
-    return WorkerRunnable::Cancel();
+    return cr->Cancel();
   }
+
+#ifdef MOZ_COLLECTING_RUNNABLE_TELEMETRY
+  NS_IMETHOD GetName(nsACString& aName) override {
+    aName.AssignLiteral("WrappedControlRunnable(");
+    if (nsCOMPtr<nsINamed> named = do_QueryInterface(mInner)) {
+      nsAutoCString containedName;
+      named->GetName(containedName);
+      aName.Append(containedName);
+    } else {
+      aName.AppendLiteral("?");
+    }
+    aName.AppendLiteral(")");
+    return NS_OK;
+  }
+#endif
+};
+
+class WrappedDebuggerRunnable final : public WorkerDebuggerRunnable {
+  nsCOMPtr<nsIRunnable> mInner;
+
+  ~WrappedDebuggerRunnable() = default;
+
+ public:
+  WrappedDebuggerRunnable(WorkerPrivate* aWorkerPrivate,
+                          nsCOMPtr<nsIRunnable>&& aInner)
+      : WorkerDebuggerRunnable("WrappedDebuggerRunnable"),
+        mInner(std::move(aInner)) {}
+
+  virtual bool PreDispatch(WorkerPrivate* aWorkerPrivate) override {
+    // Silence bad assertions, this can be dispatched from any thread.
+    return true;
+  }
+
+  virtual void PostDispatch(WorkerPrivate* aWorkerPrivate,
+                            bool aDispatchResult) override {
+    // Silence bad assertions, this can be dispatched from any thread.
+  }
+
+  bool WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override {
+    mInner->Run();
+    return true;
+  }
+
+#ifdef MOZ_COLLECTING_RUNNABLE_TELEMETRY
+  NS_IMETHOD GetName(nsACString& aName) override {
+    aName.AssignLiteral("WrappedDebuggerRunnable(");
+    if (nsCOMPtr<nsINamed> named = do_QueryInterface(mInner)) {
+      nsAutoCString containedName;
+      named->GetName(containedName);
+      aName.Append(containedName);
+    } else {
+      aName.AppendLiteral("?");
+    }
+    aName.AppendLiteral(")");
+    return NS_OK;
+  }
+#endif
 };
 
 }  // anonymous namespace
@@ -68,10 +135,14 @@ WorkerEventTarget::WorkerEventTarget(WorkerPrivate* aWorkerPrivate,
     : mMutex("WorkerEventTarget"),
       mWorkerPrivate(aWorkerPrivate),
       mBehavior(aBehavior) {
+  LOG(("WorkerEventTarget::WorkerEventTarget [%p] aBehavior: %u", this,
+       (uint8_t)aBehavior));
   MOZ_DIAGNOSTIC_ASSERT(mWorkerPrivate);
 }
 
 void WorkerEventTarget::ForgetWorkerPrivate(WorkerPrivate* aWorkerPrivate) {
+  LOG(("WorkerEventTarget::ForgetWorkerPrivate [%p] aWorkerPrivate: %p", this,
+       aWorkerPrivate));
   MutexAutoLock lock(mMutex);
   MOZ_DIAGNOSTIC_ASSERT(!mWorkerPrivate || mWorkerPrivate == aWorkerPrivate);
   mWorkerPrivate = nullptr;
@@ -79,6 +150,8 @@ void WorkerEventTarget::ForgetWorkerPrivate(WorkerPrivate* aWorkerPrivate) {
 
 NS_IMETHODIMP
 WorkerEventTarget::DispatchFromScript(nsIRunnable* aRunnable, uint32_t aFlags) {
+  LOGV(("WorkerEventTarget::DispatchFromScript [%p] aRunnable: %p", this,
+        aRunnable));
   nsCOMPtr<nsIRunnable> runnable(aRunnable);
   return Dispatch(runnable.forget(), aFlags);
 }
@@ -87,6 +160,8 @@ NS_IMETHODIMP
 WorkerEventTarget::Dispatch(already_AddRefed<nsIRunnable> aRunnable,
                             uint32_t aFlags) {
   nsCOMPtr<nsIRunnable> runnable(aRunnable);
+  LOGV(
+      ("WorkerEventTarget::Dispatch [%p] aRunnable: %p", this, runnable.get()));
 
   MutexAutoLock lock(mMutex);
 
@@ -94,19 +169,49 @@ WorkerEventTarget::Dispatch(already_AddRefed<nsIRunnable> aRunnable,
     return NS_ERROR_FAILURE;
   }
 
+  if (mBehavior == Behavior::DebuggerOnly) {
+    RefPtr<WorkerDebuggerRunnable> r =
+        new WrappedDebuggerRunnable(mWorkerPrivate, std::move(runnable));
+    LOGV(
+        ("WorkerEventTarget::Dispatch [%p] Wrapped runnable as debugger "
+         "runnable(%p)",
+         this, r.get()));
+    if (!r->Dispatch(mWorkerPrivate)) {
+      LOGV(
+          ("WorkerEventTarget::Dispatch [%p] Dispatch as debugger runnable(%p) "
+           "fail",
+           this, r.get()));
+      return NS_ERROR_FAILURE;
+    }
+    return NS_OK;
+  }
+
   if (mBehavior == Behavior::Hybrid) {
+    LOGV(("WorkerEventTarget::Dispatch [%p] Dispatch as normal runnable(%p)",
+          this, runnable.get()));
+
     RefPtr<WorkerRunnable> r =
         mWorkerPrivate->MaybeWrapAsWorkerRunnable(runnable.forget());
-    if (r->Dispatch()) {
+    if (r->Dispatch(mWorkerPrivate)) {
       return NS_OK;
     }
-
     runnable = std::move(r);
+    LOGV((
+        "WorkerEventTarget::Dispatch [%p] Dispatch as normal runnable(%p) fail",
+        this, runnable.get()));
   }
 
   RefPtr<WorkerControlRunnable> r =
       new WrappedControlRunnable(mWorkerPrivate, std::move(runnable));
-  if (!r->Dispatch()) {
+  LOGV(
+      ("WorkerEventTarget::Dispatch [%p] Wrapped runnable as control "
+       "runnable(%p)",
+       this, r.get()));
+  if (!r->Dispatch(mWorkerPrivate)) {
+    LOGV(
+        ("WorkerEventTarget::Dispatch [%p] Dispatch as control runnable(%p) "
+         "fail",
+         this, r.get()));
     return NS_ERROR_FAILURE;
   }
 

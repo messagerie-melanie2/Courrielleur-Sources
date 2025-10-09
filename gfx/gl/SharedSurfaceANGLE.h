@@ -8,12 +8,24 @@
 
 #include <windows.h>
 #include <memory>
+
+#include "mozilla/layers/LayersTypes.h"
 #include "SharedSurface.h"
 
 struct IDXGIKeyedMutex;
+struct ID3D11Device;
 struct ID3D11Texture2D;
 
 namespace mozilla {
+
+namespace gfx {
+class FileHandleWrapper;
+}  // namespace gfx
+
+namespace layers {
+class FenceD3D11;
+}  // namespace layers
+
 namespace gl {
 
 class GLContext;
@@ -21,19 +33,25 @@ class EglDisplay;
 
 class SharedSurface_ANGLEShareHandle final : public SharedSurface {
  public:
+  const RefPtr<ID3D11Device> mDevice;
   const std::weak_ptr<EglDisplay> mEGL;
   const EGLSurface mPBuffer;
-  const HANDLE mShareHandle;
+  const RefPtr<gfx::FileHandleWrapper> mSharedHandle;
+  const Maybe<layers::CompositeProcessFencesHolderId> mFencesHolderId;
+  const RefPtr<layers::FenceD3D11> mWriteFence;
   const RefPtr<IDXGIKeyedMutex> mKeyedMutex;
 
   static UniquePtr<SharedSurface_ANGLEShareHandle> Create(
       const SharedSurfaceDesc&);
 
  private:
-  SharedSurface_ANGLEShareHandle(const SharedSurfaceDesc&,
-                                 const std::weak_ptr<EglDisplay>& egl,
-                                 EGLSurface pbuffer, HANDLE shareHandle,
-                                 const RefPtr<IDXGIKeyedMutex>& keyedMutex);
+  SharedSurface_ANGLEShareHandle(
+      const SharedSurfaceDesc&, const RefPtr<ID3D11Device> aDevice,
+      const std::weak_ptr<EglDisplay>& egl, EGLSurface pbuffer,
+      RefPtr<gfx::FileHandleWrapper>&& aSharedHandle,
+      const Maybe<layers::CompositeProcessFencesHolderId> aFencesHolderId,
+      const RefPtr<layers::FenceD3D11>& aWriteFence,
+      const RefPtr<IDXGIKeyedMutex>& keyedMutex);
 
  public:
   virtual ~SharedSurface_ANGLEShareHandle();

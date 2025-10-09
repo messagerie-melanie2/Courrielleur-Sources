@@ -40,9 +40,9 @@ def _relpath(path, start=None):
 os.path.relpath = _relpath
 
 # Characters that need to be escaped when used in shell words.
-shell_need_escapes = re.compile("[^\w\d%+,-./:=@'\"]", re.DOTALL)
+shell_need_escapes = re.compile("[^\\w\\d%+,-./:=@'\"]", re.DOTALL)
 # Characters that need to be escaped within double-quoted strings.
-shell_dquote_escapes = re.compile('[^\w\d%+,-./:=@"]', re.DOTALL)
+shell_dquote_escapes = re.compile('[^\\w\\d%+,-./:=@"]', re.DOTALL)
 
 
 def make_shell_cmd(l):
@@ -58,7 +58,7 @@ def make_shell_cmd(l):
 
 # An instance of this class collects the lists of passing, failing, and
 # timing-out tests, runs the progress bar, and prints a summary at the end.
-class Summary(object):
+class Summary:
     class SummaryBar(progressbar.ProgressBar):
         def __init__(self, limit):
             super(Summary.SummaryBar, self).__init__("", limit, 24)
@@ -114,7 +114,6 @@ class Summary(object):
             self.bar.finish()
 
         if self.failures:
-
             print("tests failed:")
             for test in self.failures:
                 test.show(sys.stdout)
@@ -124,7 +123,7 @@ class Summary(object):
                     with open(OPTIONS.worklist) as out:
                         for test in self.failures:
                             out.write(test.name + "\n")
-                except IOError as err:
+                except OSError as err:
                     sys.stderr.write(
                         "Error writing worklist file '%s': %s" % (OPTIONS.worklist, err)
                     )
@@ -135,7 +134,7 @@ class Summary(object):
                     with open(OPTIONS.write_failures, "w") as out:
                         for test in self.failures:
                             test.show(out)
-                except IOError as err:
+                except OSError as err:
                     sys.stderr.write(
                         "Error writing worklist file '%s': %s"
                         % (OPTIONS.write_failures, err)
@@ -408,7 +407,7 @@ def main(argv):
             with open(OPTIONS.worklist) as f:
                 for line in f:
                     test_set.update(os.path.join(OPTIONS.testdir, line.strip("\n")))
-        except IOError:
+        except OSError:
             # With worklist, a missing file means to start the process with
             # the complete list of tests.
             sys.stderr.write(
@@ -421,7 +420,7 @@ def main(argv):
             with open(OPTIONS.read_tests) as f:
                 for line in f:
                     test_set.update(os.path.join(OPTIONS.testdir, line.strip("\n")))
-        except IOError as err:
+        except OSError as err:
             sys.stderr.write(
                 "Error trying to read test file '%s': %s\n" % (OPTIONS.read_tests, err)
             )

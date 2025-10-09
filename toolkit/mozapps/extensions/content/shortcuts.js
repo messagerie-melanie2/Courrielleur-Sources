@@ -72,6 +72,13 @@ ChromeUtils.defineESModuleGetters(this, {
     "F10",
     "F11",
     "F12",
+    "F13",
+    "F14",
+    "F15",
+    "F16",
+    "F17",
+    "F18",
+    "F19",
   ];
   const functionKeys = new Set(_functionKeys);
   const validKeys = new Set([
@@ -283,7 +290,7 @@ ChromeUtils.defineESModuleGetters(this, {
     }
 
     return Object.entries(modifierMap)
-      .filter(([key, isDown]) => isDown)
+      .filter(([, isDown]) => isDown)
       .map(([key]) => key)
       .concat(getStringForEvent(e))
       .join("+");
@@ -332,17 +339,16 @@ ChromeUtils.defineESModuleGetters(this, {
   }
 
   function createDuplicateWarningBar(shortcut) {
-    let messagebar = document.createElement("message-bar");
+    let messagebar = document.createElement("moz-message-bar");
     messagebar.setAttribute("type", "warning");
 
-    let message = document.createElement("span");
     document.l10n.setAttributes(
-      message,
-      "shortcuts-duplicate-warning-message",
+      messagebar,
+      "shortcuts-duplicate-warning-message2",
       { shortcut }
     );
+    messagebar.setAttribute("data-l10n-attrs", "message");
 
-    messagebar.append(message);
     return messagebar;
   }
 
@@ -482,7 +488,7 @@ ChromeUtils.defineESModuleGetters(this, {
     return fragment;
   }
 
-  async function renderAddons(addons) {
+  async function renderAddons(addons, focusedExtensionId) {
     let frag = document.createDocumentFragment();
     let noShortcutAddons = [];
 
@@ -512,6 +518,9 @@ ChromeUtils.defineESModuleGetters(this, {
         let icon = AddonManager.getPreferredIconURL(addon, 24, window);
         card.setAttribute("addon-id", addon.id);
         card.setAttribute("addon-name", addon.name);
+        if (focusedExtensionId && addon.id === focusedExtensionId) {
+          card.classList.add("focused-extension");
+        }
         card.querySelector(".addon-icon").src = icon || FALLBACK_ICON;
         card.querySelector(".addon-name").textContent = addon.name;
 
@@ -605,7 +614,7 @@ ChromeUtils.defineESModuleGetters(this, {
               card.setAttribute("expanded", "true");
               setLabel("collapse");
               // If this as a keyboard event then focus the next input.
-              if (event.mozInputSource == MouseEvent.MOZ_SOURCE_KEYBOARD) {
+              if (event.inputSource == MouseEvent.MOZ_SOURCE_KEYBOARD) {
                 firstHiddenInput.focus();
               }
             }
@@ -626,12 +635,22 @@ ChromeUtils.defineESModuleGetters(this, {
     return frag;
   }
 
+  // focusExtension() is called from the view-loaded listener so that it doesn't
+  // interfere with ScrollOffsets.restore() in view-controller.js.
+  function focusExtension() {
+    document
+      .querySelector(".shortcut.card.focused-extension")
+      ?.scrollIntoView({ block: "center" });
+  }
+
   class AddonShortcuts extends HTMLElement {
     connectedCallback() {
+      document.addEventListener("view-loaded", focusExtension);
       setDuplicateWarnings();
     }
 
     disconnectedCallback() {
+      document.removeEventListener("view-loaded", focusExtension);
       error = null;
     }
 
@@ -641,10 +660,11 @@ ChromeUtils.defineESModuleGetters(this, {
       let addons = allAddons
         .filter(addon => addon.isActive)
         .sort((a, b) => a.name.localeCompare(b.name));
+      let extensionId = this.getAttribute("extension-id");
       let frag;
 
       if (addons.length) {
-        frag = await renderAddons(addons);
+        frag = await renderAddons(addons, extensionId);
       } else {
         frag = document.importNode(templates.noAddons.content, true);
       }

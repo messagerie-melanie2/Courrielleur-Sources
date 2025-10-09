@@ -170,7 +170,7 @@ nsresult StatusBarEntry::Init() {
   mIconData.hIcon = ::LoadIcon(::GetModuleHandle(NULL), IDI_APPLICATION);
 
   nsAutoString labelAttr;
-  mMenu->GetAttr(kNameSpaceID_None, nsGkAtoms::label, labelAttr);
+  mMenu->GetAttr(nsGkAtoms::label, labelAttr);
   const nsString& label = PromiseFlatString(labelAttr);
 
   size_t destLength = sizeof mIconData.szTip / (sizeof mIconData.szTip[0]);
@@ -190,7 +190,7 @@ nsresult StatusBarEntry::OnComplete(imgIContainer* aImage) {
   RefPtr<StatusBarEntry> kungFuDeathGrip = this;
 
   nsresult rv = nsWindowGfx::CreateIcon(
-      aImage, false, LayoutDeviceIntPoint(),
+      aImage, nullptr, false, LayoutDeviceIntPoint(),
       nsWindowGfx::GetIconMetrics(nsWindowGfx::kRegularIcon), &mIconData.hIcon);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -243,7 +243,7 @@ LRESULT StatusBarEntry::OnMessage(HWND hWnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
 
     if (LOWORD(lp) != WM_CONTEXTMENU &&
-        mMenu->HasAttr(kNameSpaceID_None, nsGkAtoms::contextmenu)) {
+        mMenu->HasAttr(nsGkAtoms::contextmenu)) {
       ::SetForegroundWindow(win);
       nsEventStatus status = nsEventStatus_eIgnore;
       WidgetMouseEvent event(true, eXULSystemStatusBarClick, nullptr,

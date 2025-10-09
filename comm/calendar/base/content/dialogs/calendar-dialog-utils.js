@@ -12,11 +12,12 @@
 /* import-globals-from ../item-editing/calendar-item-iframe.js */
 /* import-globals-from ../calendar-ui-utils.js */
 
-var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
+var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
+var { openLinkExternally } = ChromeUtils.importESModule("resource:///modules/LinkHelper.sys.mjs");
 var { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUtils.sys.mjs");
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  CalAlarm: "resource:///modules/CalAlarm.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  CalAlarm: "resource:///modules/CalAlarm.sys.mjs",
 });
 
 // Variables related to whether we are in a tab or a window dialog.
@@ -28,7 +29,7 @@ var gTabmail = null;
  * Initialize variables for tab vs window.
  */
 function intializeTabOrWindowVariables() {
-  let args = window.arguments[0];
+  const args = window.arguments[0];
   gInTab = args.inTab;
   if (gInTab) {
     gTabmail = parent.document.getElementById("tabmail");
@@ -43,7 +44,7 @@ function intializeTabOrWindowVariables() {
  * window.arguments[0].job.dispose()
  */
 function dispose() {
-  let args = window.arguments[0];
+  const args = window.arguments[0];
   if (args.job && args.job.dispose) {
     args.job.dispose();
   }
@@ -53,8 +54,8 @@ function dispose() {
  * Sets the id of a Dialog to another value to allow different CSS styles
  * to be used.
  *
- * @param aDialog               The Dialog to be changed.
- * @param aNewId                The new ID as String.
+ * @param {MozDialog} aDialog - The Dialog to be changed.
+ * @param {string} aNewId - The new ID as String.
  */
 function setDialogId(aDialog, aNewId) {
   aDialog.setAttribute("id", aNewId);
@@ -66,22 +67,22 @@ function setDialogId(aDialog, aNewId) {
  * This needs to be invoked after changing a dialog id while loading to apply the values for the
  * new dialog id.
  *
- * @param aDialog               The Dialog to apply the property values for
+ * @param {MozDialog} aDialog - The Dialog to apply the property values for.
  */
 function applyPersistedProperties(aDialog) {
-  let xulStore = Services.xulStore;
+  const xulStore = Services.xulStore;
   // first we need to detect which properties are persisted
-  let persistedProps = aDialog.getAttribute("persist") || "";
+  const persistedProps = aDialog.getAttribute("persist") || "";
   if (persistedProps == "") {
     return;
   }
-  let propNames = persistedProps.split(" ");
+  const propNames = persistedProps.split(" ");
   let { outerWidth: width, outerHeight: height } = aDialog;
   let doResize = false;
   // now let's apply persisted values if applicable
-  for (let propName of propNames) {
+  for (const propName of propNames) {
     if (xulStore.hasValue(aDialog.baseURI, aDialog.id, propName)) {
-      let propValue = xulStore.getValue(aDialog.baseURI, aDialog.id, propName);
+      const propValue = xulStore.getValue(aDialog.baseURI, aDialog.id, propName);
       if (propName == "width") {
         width = propValue;
         doResize = true;
@@ -105,16 +106,16 @@ function applyPersistedProperties(aDialog) {
  *
  * @param {Element} aMenuitem - The menuitem to create the alarm from.
  * @param {calICalendar} aCalendar - The calendar for getting the default alarm type.
- * @returns The calIAlarm with information from the menuitem.
+ * @returns {calIAlarm} The calIAlarm with information from the menuitem.
  */
 function createReminderFromMenuitem(aMenuitem, aCalendar) {
   let reminder = aMenuitem.reminder || new CalAlarm();
   // clone immutable reminders if necessary to set default values
-  let isImmutable = !reminder.isMutable;
+  const isImmutable = !reminder.isMutable;
   if (isImmutable) {
     reminder = reminder.clone();
   }
-  let offset = cal.createDuration();
+  const offset = cal.createDuration();
   offset[aMenuitem.getAttribute("unit")] = aMenuitem.getAttribute("length");
   offset.normalize();
   offset.isNegative = aMenuitem.getAttribute("origin") == "before";
@@ -150,9 +151,9 @@ function editReminder(
   calendar,
   timezone = cal.dtz.defaultTimezone
 ) {
-  let customItem = reminderList.querySelector(".reminder-custom-menuitem");
+  const customItem = reminderList.querySelector(".reminder-custom-menuitem");
 
-  let args = {
+  const args = {
     reminders: customItem.reminders,
     item: calendarItem,
     timezone,
@@ -189,15 +190,15 @@ function editReminder(
  */
 function updateReminderDetails(reminderDetails, reminderList, calendar) {
   // find relevant elements in the document
-  let reminderMultipleLabel = reminderDetails.querySelector(".reminder-multiple-alarms-label");
-  let iconBox = reminderDetails.querySelector(".alarm-icons-box");
-  let reminderSingleLabel = reminderDetails.querySelector(".reminder-single-alarms-label");
+  const reminderMultipleLabel = reminderDetails.querySelector(".reminder-multiple-alarms-label");
+  const iconBox = reminderDetails.querySelector(".alarm-icons-box");
+  const reminderSingleLabel = reminderDetails.querySelector(".reminder-single-alarms-label");
 
   let reminders = reminderList.querySelector(".reminder-custom-menuitem").reminders || [];
 
-  let actionValues = calendar.getProperty("capabilities.alarms.actionValues") || ["DISPLAY"];
-  let actionMap = {};
-  for (let action of actionValues) {
+  const actionValues = calendar.getProperty("capabilities.alarms.actionValues") || ["DISPLAY"];
+  const actionMap = {};
+  for (const action of actionValues) {
     actionMap[action] = true;
   }
 
@@ -228,7 +229,7 @@ function updateReminderDetails(reminderDetails, reminderList, calendar) {
       // This is one of the predefined dropdown items. We should show a
       // single icon in the icons box to tell the user what kind of alarm
       // this will be.
-      let mockAlarm = new CalAlarm();
+      const mockAlarm = new CalAlarm();
       mockAlarm.action = getDefaultAlarmType(calendar);
       cal.alarms.addReminderImages(iconBox, [mockAlarm]);
     }
@@ -244,8 +245,8 @@ function updateReminderDetails(reminderDetails, reminderList, calendar) {
  * @returns {boolean} True if the reminder matches a menu item, false if not.
  */
 function matchCustomReminderToMenuitem(reminder, reminderList, calendar) {
-  let defaultAlarmType = getDefaultAlarmType(calendar);
-  let reminderPopup = reminderList.menupopup;
+  const defaultAlarmType = getDefaultAlarmType(calendar);
+  const reminderPopup = reminderList.menupopup;
   if (
     reminder.related != Ci.calIAlarm.ALARM_RELATED_ABSOLUTE &&
     reminder.offset &&
@@ -253,26 +254,27 @@ function matchCustomReminderToMenuitem(reminder, reminderList, calendar) {
   ) {
     // Exactly one reminder that's not absolute, we may be able to match up
     // popup items.
-    let relation = reminder.related == Ci.calIAlarm.ALARM_RELATED_START ? "START" : "END";
+    const relation = reminder.related == Ci.calIAlarm.ALARM_RELATED_START ? "START" : "END";
 
     // If the time duration for offset is 0, means the reminder is '0 minutes before'
-    let origin = reminder.offset.inSeconds == 0 || reminder.offset.isNegative ? "before" : "after";
+    const origin =
+      reminder.offset.inSeconds == 0 || reminder.offset.isNegative ? "before" : "after";
 
-    let unitMap = {
+    const unitMap = {
       days: 86400,
       hours: 3600,
       minutes: 60,
     };
 
-    for (let menuitem of reminderPopup.children) {
+    for (const menuitem of reminderPopup.children) {
       if (
         menuitem.localName == "menuitem" &&
         menuitem.hasAttribute("length") &&
         menuitem.getAttribute("origin") == origin &&
         menuitem.getAttribute("relation") == relation
       ) {
-        let unitMult = unitMap[menuitem.getAttribute("unit")] || 1;
-        let length = menuitem.getAttribute("length") * unitMult;
+        const unitMult = unitMap[menuitem.getAttribute("unit")] || 1;
+        const length = menuitem.getAttribute("length") * unitMult;
 
         if (Math.abs(reminder.offset.inSeconds) == length) {
           menuitem.reminder = reminder.clone();
@@ -329,8 +331,8 @@ function loadReminders(reminders, reminderList, calendar) {
 function saveReminder(item, calendar, reminderList) {
   // We want to compare the old alarms with the new ones. If these are not
   // the same, then clear the snooze/dismiss times
-  let oldAlarmMap = {};
-  for (let alarm of item.getAlarms()) {
+  const oldAlarmMap = {};
+  for (const alarm of item.getAlarms()) {
     oldAlarmMap[alarm.icalString] = true;
   }
 
@@ -338,7 +340,7 @@ function saveReminder(item, calendar, reminderList) {
   item.clearAlarms();
 
   if (reminderList.value != "none") {
-    let menuitem = reminderList.selectedItem;
+    const menuitem = reminderList.selectedItem;
     let reminders;
 
     if (menuitem.reminders) {
@@ -354,9 +356,9 @@ function saveReminder(item, calendar, reminderList) {
       reminders = [createReminderFromMenuitem(menuitem, calendar)];
     }
 
-    let alarmCaps = item.calendar.getProperty("capabilities.alarms.actionValues") || ["DISPLAY"];
-    let alarmActions = {};
-    for (let action of alarmCaps) {
+    const alarmCaps = item.calendar.getProperty("capabilities.alarms.actionValues") || ["DISPLAY"];
+    const alarmActions = {};
+    for (const action of alarmCaps) {
       alarmActions[action] = true;
     }
 
@@ -365,8 +367,8 @@ function saveReminder(item, calendar, reminderList) {
   }
 
   // Compare alarms to see if something changed.
-  for (let alarm of item.getAlarms()) {
-    let ics = alarm.icalString;
+  for (const alarm of item.getAlarms()) {
+    const ics = alarm.icalString;
     if (ics in oldAlarmMap) {
       // The new alarm is also in the old set, remember this
       delete oldAlarmMap[ics];
@@ -380,12 +382,12 @@ function saveReminder(item, calendar, reminderList) {
 
   // If the alarms differ, clear the snooze/dismiss properties
   if (Object.keys(oldAlarmMap).length > 0) {
-    let cmp = "X-MOZ-SNOOZE-TIME";
+    const cmp = "X-MOZ-SNOOZE-TIME";
 
     // Recurring item alarms potentially have more snooze props, remove them
     // all.
-    let propsToDelete = [];
-    for (let [name] of item.properties) {
+    const propsToDelete = [];
+    for (const [name] of item.properties) {
       if (name.startsWith(cmp)) {
         propsToDelete.push(name);
       }
@@ -405,7 +407,7 @@ function saveReminder(item, calendar, reminderList) {
  * @returns {string} The default alarm type.
  */
 function getDefaultAlarmType(calendar) {
-  let alarmCaps = calendar.getProperty("capabilities.alarms.actionValues") || ["DISPLAY"];
+  const alarmCaps = calendar.getProperty("capabilities.alarms.actionValues") || ["DISPLAY"];
   return alarmCaps.includes("DISPLAY") ? "DISPLAY" : alarmCaps[0];
 }
 
@@ -416,11 +418,12 @@ function getDefaultAlarmType(calendar) {
  * @param {Element} reminderList - The reminders menu element.
  * @param {calIEvent | calITodo} calendarItem - The calendar item.
  * @param {number} lastAlarmSelection - Index of the previous selection in the reminders menu.
+ * @param {calICalendar} calendar - Calendar to use.
  * @param {Element} reminderDetails - The reminder details element.
  * @param {calITimezone} timezone - The relevant timezone.
- * @param {boolean} suppressDialogs - If true, controls are updated without prompting
- *                                    for changes with the dialog
- * @returns {number} Index of the item selected in the reminders menu.
+ * @param {boolean} suppressDialogs - If true, controls are updated without
+ *   prompting for changes with the dialog.
+ * @returns {integer} Index of the item selected in the reminders menu.
  */
 function commonUpdateReminder(
   reminderList,
@@ -438,7 +441,7 @@ function commonUpdateReminder(
     // Clear the reminder icons first, this will make sure that while the
     // dialog is open the default reminder image is not shown which may
     // confuse users.
-    let iconBox = reminderDetails.querySelector(".alarm-icons-box");
+    const iconBox = reminderDetails.querySelector(".alarm-icons-box");
     while (iconBox.lastChild) {
       iconBox.lastChild.remove();
     }
@@ -457,7 +460,7 @@ function commonUpdateReminder(
 
       // If one or no reminders were selected, we have a chance of mapping
       // them to the existing elements in the dropdown.
-      let customItem = reminderList.selectedItem;
+      const customItem = reminderList.selectedItem;
       if (customItem.reminders.length == 0) {
         // No reminder was selected
         reminderList.value = "none";
@@ -483,11 +486,11 @@ function commonUpdateReminder(
     enableElementWithLock("todo-has-duedate", "reminder-lock");
     enableElementWithLock("todo-has-entrydate", "reminder-lock");
 
-    let menuitem = reminderList.selectedItem;
+    const menuitem = reminderList.selectedItem;
     if (menuitem.value != "none") {
       // In case a reminder is selected, retrieve the array of alarms from
       // it, or create one from the currently selected menuitem.
-      let reminders = menuitem.reminders || [createReminderFromMenuitem(menuitem, calendar)];
+      const reminders = menuitem.reminders || [createReminderFromMenuitem(menuitem, calendar)];
 
       // If a reminder is related to the entry date...
       if (reminders.some(x => x.related == Ci.calIAlarm.ALARM_RELATED_START)) {
@@ -533,7 +536,7 @@ function commonUpdateReminder(
  * @param {Element} urlLink - The link element itself.
  */
 function updateLink(itemUrlString, linkRow, urlLink) {
-  let linkCommand = document.getElementById("cmd_toggle_link");
+  const linkCommand = document.getElementById("cmd_toggle_link");
 
   if (linkCommand) {
     // Disable if there is no url.
@@ -558,7 +561,7 @@ function updateLink(itemUrlString, linkRow, urlLink) {
     // Only show if its either an internal protocol handler, or its external
     // and there is an external app for the scheme
     handler = cal.wrapInstance(handler, Ci.nsIExternalProtocolHandler);
-    let show = !handler || handler.externalAppExistsForScheme(uri.scheme);
+    const show = !handler || handler.externalAppExistsForScheme(uri.scheme);
     linkRow.hidden = !show;
 
     setTimeout(() => {
@@ -570,8 +573,8 @@ function updateLink(itemUrlString, linkRow, urlLink) {
 }
 
 /**
- * Adapts the scheduling responsibility for caldav servers according to RfC 6638
- * based on forceEmailScheduling preference for the respective calendar
+ * Adapts the scheduling responsibility for CalDAV servers according to RFC 6638
+ * based on forceEmailScheduling preference for the respective calendar.
  *
  * @param {calIEvent|calIToDo} aItem - Item to apply the change on
  */
@@ -581,16 +584,17 @@ function adaptScheduleAgent(aItem) {
     aItem.calendar.type == "caldav" &&
     aItem.calendar.getProperty("capabilities.autoschedule.supported")
   ) {
-    let identity = aItem.calendar.getProperty("imip.identity");
-    let orgEmail = identity && identity.QueryInterface(Ci.nsIMsgIdentity).email;
-    let organizerAction = aItem.organizer && orgEmail && aItem.organizer.id == "mailto:" + orgEmail;
+    const identity = aItem.calendar.getProperty("imip.identity");
+    const orgEmail = identity?.QueryInterface(Ci.nsIMsgIdentity).email?.toLowerCase();
+    const isOrganizerAction =
+      aItem.organizer && orgEmail && aItem.organizer.id.toLowerCase() == "mailto:" + orgEmail;
     if (aItem.calendar.getProperty("forceEmailScheduling")) {
       cal.LOG("Enforcing clientside email based scheduling.");
-      // for attendees, we change schedule-agent only in case of an
+      // For attendees, we change schedule-agent only in case of an
       // organizer triggered action
-      if (organizerAction) {
+      if (isOrganizerAction) {
         aItem.getAttendees().forEach(aAttendee => {
-          // overwriting must always happen consistently for all
+          // Overwriting must always happen consistently for all
           // attendees regarding SERVER or CLIENT but must not override
           // e.g. NONE, so we only overwrite if the param is set to
           // SERVER or doesn't exist
@@ -608,13 +612,13 @@ function adaptScheduleAgent(aItem) {
         (aItem.organizer.getProperty("SCHEDULE-AGENT") == "SERVER" ||
           !aItem.organizer.getProperty("SCHEDULE-AGENT"))
       ) {
-        // for organizer, we change the schedule-agent only in case of
+        // For organizer, we change the schedule-agent only in case of
         // an attendee triggered action
         aItem.organizer.setProperty("SCHEDULE-AGENT", "CLIENT");
         aItem.organizer.deleteProperty("SCHEDULE-STATUS");
         aItem.organizer.deleteProperty("SCHEDULE-FORCE-SEND");
       }
-    } else if (organizerAction) {
+    } else if (isOrganizerAction) {
       aItem.getAttendees().forEach(aAttendee => {
         if (aAttendee.getProperty("SCHEDULE-AGENT") == "CLIENT") {
           aAttendee.deleteProperty("SCHEDULE-AGENT");
@@ -633,11 +637,12 @@ function adaptScheduleAgent(aItem) {
  * @param {calIEvent | calITodo} item - The calendar item.
  */
 function sendMailToOrganizer(item) {
-  let organizer = item.organizer;
-  let email = cal.email.getAttendeeEmail(organizer, true);
-  let emailSubject = cal.l10n.getString("calendar-event-dialog", "emailSubjectReply", [item.title]);
-  let identity = item.calendar.getProperty("imip.identity");
-  cal.email.sendTo(email, emailSubject, null, identity);
+  cal.email.sendTo(
+    cal.email.getAttendeeEmail(item.organizer, true),
+    `Re: ${item.title}`,
+    null,
+    item.calendar.getProperty("imip.identity")
+  );
 }
 
 /**
@@ -650,13 +655,11 @@ function openAttachmentFromItemSummary(aAttachmentId, item) {
   if (!aAttachmentId) {
     return;
   }
-  let attachments = item
+  const attachments = item
     .getAttachments()
     .filter(aAttachment => aAttachment.hashId == aAttachmentId);
 
   if (attachments.length && attachments[0].uri && attachments[0].uri.spec != "about:blank") {
-    Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-      .getService(Ci.nsIExternalProtocolService)
-      .loadURI(attachments[0].uri);
+    openLinkExternally(attachments[0].uri, { addToHistory: false });
   }
 }

@@ -32,6 +32,18 @@ pub struct Cookie {
     pub same_site: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialParameters {
+    pub credential_id: String,
+    pub is_resident_credential: bool,
+    pub rp_id: String,
+    pub private_key: String,
+    #[serde(default)]
+    pub user_handle: String,
+    pub sign_count: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Date(pub u64);
 
@@ -44,6 +56,7 @@ pub enum FrameId {
         serialize_with = "serialize_webelement_id"
     )]
     Element(WebElement),
+    Top,
 }
 
 // TODO(Henrik): Remove when ToMarionette trait has been fixed (Bug 1481776)

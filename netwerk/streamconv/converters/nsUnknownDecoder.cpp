@@ -24,6 +24,7 @@
 #include "nsQueryObject.h"
 #include "nsComponentManagerUtils.h"
 #include "nsServiceManagerUtils.h"
+#include "mozilla/StaticPrefs_network.h"
 
 #include <algorithm>
 
@@ -108,7 +109,8 @@ NS_INTERFACE_MAP_BEGIN(nsUnknownDecoder)
   NS_INTERFACE_MAP_ENTRY(nsIRequestObserver)
   NS_INTERFACE_MAP_ENTRY(nsIContentSniffer)
   NS_INTERFACE_MAP_ENTRY(nsIThreadRetargetableStreamListener)
-  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIStreamListener)
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports,
+                                   nsIThreadRetargetableStreamListener)
 NS_INTERFACE_MAP_END
 
 // ----
@@ -220,6 +222,11 @@ nsUnknownDecoder::OnDataAvailable(nsIRequest* request, nsIInputStream* aStream,
   }
 
   return rv;
+}
+
+NS_IMETHODIMP
+nsUnknownDecoder::MaybeRetarget(nsIRequest* request) {
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 // ----
@@ -474,9 +481,14 @@ void nsUnknownDecoder::DetermineContentType(nsIRequest* aRequest) {
     return;
   }
 
+  nsCOMPtr<nsIURI> uri;
+  NS_GetFinalChannelURI(channel, getter_AddRefs(uri));
+
   // We don't know what this is yet.  Before we just give up, try
   // the URI from the request.
-  if (SniffURI(aRequest)) {
+  if ((StaticPrefs::network_sniff_use_extension() ||
+       (uri && uri->SchemeIs("file"))) &&
+      SniffURI(aRequest)) {
 #ifdef DEBUG
     MutexAutoLock lock(mMutex);
     NS_ASSERTION(!mContentType.IsEmpty(),
@@ -552,7 +564,7 @@ bool nsUnknownDecoder::SniffForHTML(nsIRequest* aRequest) {
 
 bool nsUnknownDecoder::SniffForXML(nsIRequest* aRequest) {
   // First see whether we can glean anything from the uri...
-  if (!SniffURI(aRequest)) {
+  if (!StaticPrefs::network_sniff_use_extension() || !SniffURI(aRequest)) {
     // Oh well; just generic XML will have to do
     MutexAutoLock lock(mMutex);
     mContentType = TEXT_XML;
@@ -766,7 +778,8 @@ nsresult nsUnknownDecoder::ConvertEncodedData(nsIRequest* request,
             do_CreateInstance(NS_STRINGINPUTSTREAM_CONTRACTID);
         if (!rawStream) return NS_ERROR_FAILURE;
 
-        rv = rawStream->SetData((const char*)data, length);
+        // Other OnDataAvailable callers use `ShareData`, can we use that here?
+        rv = rawStream->CopyData((const char*)data, length);
         NS_ENSURE_SUCCESS(rv, rv);
 
         rv = listener->OnDataAvailable(request, rawStream, 0, length);
@@ -794,6 +807,20 @@ nsUnknownDecoder::CheckListenerChain() {
   }
 
   return listener->CheckListenerChain();
+}
+
+NS_IMETHODIMP
+nsUnknownDecoder::OnDataFinished(nsresult aStatus) {
+  nsCOMPtr<nsIThreadRetargetableStreamListener> listener;
+  {
+    MutexAutoLock lock(mMutex);
+    listener = do_QueryInterface(mNextListener);
+  }
+  if (listener) {
+    return listener->OnDataFinished(aStatus);
+  }
+
+  return NS_OK;
 }
 
 void nsBinaryDetector::DetermineContentType(nsIRequest* aRequest) {

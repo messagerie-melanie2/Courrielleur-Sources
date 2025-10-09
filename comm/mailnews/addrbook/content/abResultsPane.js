@@ -6,17 +6,11 @@
 
 /* import-globals-from ../../../mail/base/content/utilityOverlay.js */
 /* import-globals-from ../../../mail/components/addrbook/content/abCommon.js */
-/* import-globals-from abView.js */
 
-/**
- * Use of items in this file require:
- *
- * AbResultsPaneDoubleClick(card)
- *   Is called when the results pane is double-clicked, with the clicked card.
- * GetAbViewListener()
- *   Called when creating a new view
- */
-/* globals AbResultsPaneDoubleClick, GetAbViewListener */ // abContactsPane.js or abSearchDialog.js
+var { AddrBookDataAdapter } = ChromeUtils.importESModule(
+  "chrome://messenger/content/addressbook/AddrBookDataAdapter.mjs",
+  { global: "current" }
+);
 
 var kDefaultSortColumn = "GeneratedName";
 
@@ -49,44 +43,25 @@ function SetAbView(aURI, aSearchQuery, aSearchString) {
   // If we do have a URI, we want to allow updating the review even if the
   // URI is the same, as the search results may be different.
 
-  var sortColumn = kDefaultSortColumn;
-  var sortDirection = kDefaultAscending;
-
-  if (!gAbResultsTree) {
-    gAbResultsTree = document.getElementById("abResultsTree");
-    gAbResultsTree.controllers.appendController(ResultsPaneController);
-  }
-
-  if (gAbView) {
-    sortColumn = gAbView.sortColumn;
-    sortDirection = gAbView.sortDirection;
-  } else {
-    if (gAbResultsTree.hasAttribute("sortCol")) {
-      sortColumn = gAbResultsTree.getAttribute("sortCol");
-    }
-    var sortColumnNode = document.getElementById(sortColumn);
-    if (sortColumnNode && sortColumnNode.hasAttribute("sortDirection")) {
-      sortDirection = sortColumnNode.getAttribute("sortDirection");
-    }
-  }
-
-  gAbView = gAbResultsTree.view = new ABView(
+  const url = location.href.replace(/\?.*/, "");
+  const id = gAbResultsTree.id;
+  const sortColumn =
+    Services.xulStore.getValue(url, id, "sortColumn") || "GeneratedName";
+  const sortDirection =
+    Services.xulStore.getValue(url, id, "sortDirection") || "ascending";
+  gAbView = gAbResultsTree.view = new AddrBookDataAdapter(
     GetDirectoryFromURI(aURI),
     aSearchQuery,
     aSearchString,
-    GetAbViewListener(),
     sortColumn,
     sortDirection
-  ).QueryInterface(Ci.nsITreeView);
-  window.dispatchEvent(new CustomEvent("viewchange"));
-
-  UpdateSortIndicators(sortColumn, sortDirection);
+  );
 
   // If the selected address book is LDAP and the search box is empty,
   // inform the user of the empty results pane.
-  let abResultsTree = document.getElementById("abResultsTree");
-  let cardViewOuterBox = document.getElementById("CardViewOuterBox");
-  let blankResultsPaneMessageBox = document.getElementById(
+  const abResultsTree = document.getElementById("abResultsTree");
+  const cardViewOuterBox = document.getElementById("CardViewOuterBox");
+  const blankResultsPaneMessageBox = document.getElementById(
     "blankResultsPaneMessageBox"
   );
   if (aURI.startsWith("moz-abldapdirectory://") && !aSearchQuery) {
@@ -204,17 +179,17 @@ function GetSelectedAbCards() {
     return [];
   }
 
-  let cards = [];
+  const cards = [];
   var count = abView.selection.getRangeCount();
   for (let i = 0; i < count; ++i) {
-    let start = {};
-    let end = {};
+    const start = {};
+    const end = {};
 
     abView.selection.getRangeAt(i, start, end);
 
     for (let j = start.value; j <= end.value; ++j) {
       // avoid inserting null element into the list. GetRangeAt() may be buggy.
-      let tmp = abView.getCardFromRow(j);
+      const tmp = abView.getCardFromRow(j);
       if (tmp) {
         cards.push(tmp);
       }
@@ -248,76 +223,6 @@ function GetSelectedRows() {
   }
 
   return selectedRows;
-}
-
-function AbResultsPaneOnClick(event) {
-  // we only care about button 0 (left click) events
-  if (event.button != 0) {
-    return;
-  }
-
-  // all we need to worry about here is double clicks
-  // and column header clicks.
-  //
-  // we get in here for clicks on the "treecol" (headers)
-  // and the "scrollbarbutton" (scrollbar buttons)
-  // we don't want those events to cause a "double click"
-
-  var t = event.target;
-
-  if (t.localName == "treecol") {
-    var sortDirection;
-    var currentDirection = t.getAttribute("sortDirection");
-
-    // Revert the sort order. If none is set, use Ascending.
-    sortDirection =
-      currentDirection == kDefaultAscending
-        ? kDefaultDescending
-        : kDefaultAscending;
-
-    SortAndUpdateIndicators(t.id, sortDirection);
-  } else if (t.localName == "treechildren") {
-    // figure out what row the click was in
-    var row = gAbResultsTree.getRowAt(event.clientX, event.clientY);
-    if (row == -1) {
-      return;
-    }
-
-    if (event.detail == 2) {
-      AbResultsPaneDoubleClick(gAbView.getCardFromRow(row));
-    }
-  }
-}
-
-function SortAndUpdateIndicators(sortColumn, sortDirection) {
-  UpdateSortIndicators(sortColumn, sortDirection);
-
-  if (gAbView) {
-    gAbView.sortBy(sortColumn, sortDirection);
-  }
-}
-
-function UpdateSortIndicators(colID, sortDirection) {
-  var sortedColumn = null;
-
-  // set the sort indicator on the column we are sorted by
-  if (colID) {
-    sortedColumn = document.getElementById(colID);
-    if (sortedColumn) {
-      sortedColumn.setAttribute("sortDirection", sortDirection);
-      gAbResultsTree.setAttribute("sortCol", colID);
-    }
-  }
-
-  // remove the sort indicator from all the columns
-  // except the one we are sorted by
-  var currCol = gAbResultsTree.firstElementChild.firstElementChild;
-  while (currCol) {
-    if (currCol != sortedColumn && currCol.localName == "treecol") {
-      currCol.removeAttribute("sortDirection");
-    }
-    currCol = currCol.nextElementSibling;
-  }
 }
 
 // Controller object for Results Pane
@@ -385,15 +290,16 @@ var ResultsPaneController = {
         }
         return enabled;
       }
-      case "cmd_print":
+      case "cmd_print": {
         // cmd_print is currently only used in SeaMonkey.
         // Prevent printing when we don't have an opener (browserDOMWindow is
         // null).
-        let enabled = window.browserDOMWindow && GetNumSelectedCards() > 0;
+        const enabled = window.browserDOMWindow && GetNumSelectedCards() > 0;
         document.querySelectorAll("[command=cmd_print]").forEach(e => {
           e.disabled = !enabled;
         });
         return enabled;
+      }
       case "cmd_printcard":
         // Prevent printing when we don't have an opener (browserDOMWindow is
         // null).
@@ -426,12 +332,12 @@ function updateDeleteControls(
   goSetAccessKey("cmd_delete", accessKeyAttribute);
 
   // The toolbar button doesn't update itself from the command. Do that now.
-  let button = document.getElementById("button-abdelete");
+  const button = document.getElementById("button-abdelete");
   if (!button) {
     return;
   }
 
-  let command = document.getElementById("cmd_delete");
+  const command = document.getElementById("cmd_delete");
   button.label = command.getAttribute("label");
   button.setAttribute(
     "tooltiptext",
@@ -473,7 +379,7 @@ function makeMimeAddressFromCard(card) {
 
   let email;
   if (card.isMailList) {
-    let directory = GetDirectoryFromURI(card.mailListURI);
+    const directory = GetDirectoryFromURI(card.mailListURI);
     email = directory.description || card.displayName;
   } else {
     email = card.emailAddresses[0];

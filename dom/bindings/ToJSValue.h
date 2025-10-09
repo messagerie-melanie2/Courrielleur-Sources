@@ -25,7 +25,7 @@
 #include "mozilla/dom/BindingUtils.h"  // for MaybeWrapValue, MaybeWrapObjectOrNullValue, XPCOMObjectToJsval, GetOrCreateDOMReflector
 #include "mozilla/dom/CallbackObject.h"  // for CallbackObject
 #include "mozilla/dom/Record.h"
-#include "nsID.h"         // for NS_GET_TEMPLATE_IID, nsIID
+#include "nsID.h"         // for NS_GET_IID, nsIID
 #include "nsISupports.h"  // for nsISupports
 #include "nsStringFwd.h"  // for nsAString
 #include "nsTArrayForwardDeclare.h"
@@ -247,8 +247,7 @@ ToJSValue(JSContext* aCx, T& aArgument, JS::MutableHandle<JS::Value> aValue) {
 
   xpcObjectHelper helper(ToSupports(&aArgument));
   JS::Rooted<JSObject*> scope(aCx, JS::CurrentGlobalOrNull(aCx));
-  const nsIID& iid =
-      NS_GET_TEMPLATE_IID(binding_detail::ScriptableInterfaceType<T>);
+  const nsIID& iid = NS_GET_IID(binding_detail::ScriptableInterfaceType<T>);
   return XPCOMObjectToJsval(aCx, scope, helper, &iid, true, aValue);
 }
 
@@ -282,9 +281,8 @@ template <typename T>
 
 // Accept WebIDL dictionaries
 template <class T>
-[[nodiscard]] std::enable_if_t<std::is_base_of<DictionaryBase, T>::value, bool>
-ToJSValue(JSContext* aCx, const T& aArgument,
-          JS::MutableHandle<JS::Value> aValue) {
+[[nodiscard]] std::enable_if_t<is_dom_dictionary<T>, bool> ToJSValue(
+    JSContext* aCx, const T& aArgument, JS::MutableHandle<JS::Value> aValue) {
   return aArgument.ToObjectInternal(aCx, aValue);
 }
 
@@ -340,10 +338,8 @@ ToJSValue(JSContext* aCx, const T& aArgument,
 
 // Accept owning WebIDL unions.
 template <typename T>
-[[nodiscard]] std::enable_if_t<std::is_base_of<AllOwningUnionBase, T>::value,
-                               bool>
-ToJSValue(JSContext* aCx, const T& aArgument,
-          JS::MutableHandle<JS::Value> aValue) {
+[[nodiscard]] std::enable_if_t<is_dom_owning_union<T>, bool> ToJSValue(
+    JSContext* aCx, const T& aArgument, JS::MutableHandle<JS::Value> aValue) {
   JS::Rooted<JSObject*> global(aCx, JS::CurrentGlobalOrNull(aCx));
   return aArgument.ToJSVal(aCx, global, aValue);
 }

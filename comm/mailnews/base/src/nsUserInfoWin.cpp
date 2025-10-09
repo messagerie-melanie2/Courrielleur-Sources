@@ -5,10 +5,8 @@
 
 #include "nsUserInfo.h"
 
-#include "mozilla/ArrayUtils.h"  // ArrayLength
 #include "nsString.h"
 #include "windows.h"
-#include "nsCRT.h"
 
 #define SECURITY_WIN32
 #include "lm.h"
@@ -26,7 +24,7 @@ nsUserInfo::GetUsername(nsAString& aUsername) {
 
   // UNLEN is the max username length as defined in lmcons.h
   wchar_t username[UNLEN + 1];
-  DWORD size = mozilla::ArrayLength(username);
+  DWORD size = std::size(username);
   if (!GetUserNameW(username, &size)) return NS_OK;
 
   aUsername.Assign(username);
@@ -38,7 +36,7 @@ nsUserInfo::GetFullname(nsAString& aFullname) {
   aFullname.Truncate();
 
   wchar_t fullName[512];
-  DWORD size = mozilla::ArrayLength(fullName);
+  DWORD size = std::size(fullName);
 
   if (GetUserNameExW(NameDisplay, fullName, &size)) {
     aFullname.Assign(fullName);
@@ -46,7 +44,7 @@ nsUserInfo::GetFullname(nsAString& aFullname) {
     // Try to use the net APIs regardless of the error because it may be
     // able to obtain the information.
     wchar_t username[UNLEN + 1];
-    size = mozilla::ArrayLength(username);
+    size = std::size(username);
     if (!GetUserNameW(username, &size)) {
       return NS_OK;
     }
@@ -88,7 +86,7 @@ nsUserInfo::GetEmailAddress(nsAString& aEmailAddress) {
 
   // RFC3696 says max length of an email address is 254
   wchar_t emailAddress[255];
-  DWORD size = mozilla::ArrayLength(emailAddress);
+  DWORD size = std::size(emailAddress);
 
   if (!GetUserNameExW(NameUserPrincipal, emailAddress, &size)) {
     return NS_OK;

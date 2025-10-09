@@ -39,11 +39,13 @@ class HTMLFormSubmission {
    *
    * @param aForm the form to get a submission object based on
    * @param aSubmitter the submitter element (can be null)
+   * @param aEncoding the submiter element's encoding
    * @param aFormSubmission the form submission object (out param)
    */
   static nsresult GetFromForm(HTMLFormElement* aForm,
                               nsGenericHTMLElement* aSubmitter,
                               NotNull<const Encoding*>& aEncoding,
+                              FormData* aFormData,
                               HTMLFormSubmission** aFormSubmission);
 
   MOZ_COUNTED_DTOR_VIRTUAL(HTMLFormSubmission)
@@ -110,6 +112,8 @@ class HTMLFormSubmission {
 
   virtual DialogFormSubmission* GetAsDialogSubmission() { return nullptr; }
 
+  FormData* GetFormData() const { return mFormData; }
+
  protected:
   /**
    * Can only be constructed by subclasses.
@@ -127,6 +131,8 @@ class HTMLFormSubmission {
 
   // The character encoding of this form submission
   mozilla::NotNull<const mozilla::Encoding*> mEncoding;
+
+  RefPtr<FormData> mFormData;
 
   // Keep track of whether this form submission was user-initiated or not
   bool mInitiatedFromUserInput;
@@ -168,11 +174,9 @@ class EncodingFormSubmission : public HTMLFormSubmission {
 
 class DialogFormSubmission final : public HTMLFormSubmission {
  public:
-  DialogFormSubmission(nsAString& aResult, nsIURI* aActionURL,
-                       const nsAString& aTarget,
-                       NotNull<const Encoding*> aEncoding,
+  DialogFormSubmission(nsAString& aResult, NotNull<const Encoding*> aEncoding,
                        HTMLDialogElement* aDialogElement)
-      : HTMLFormSubmission(aActionURL, aTarget, aEncoding),
+      : HTMLFormSubmission(nullptr, u""_ns, aEncoding),
         mDialogElement(aDialogElement),
         mReturnValue(aResult) {}
   nsresult AddNameValuePair(const nsAString& aName,

@@ -12,6 +12,7 @@ DIRS += [
     "compatibility",
     "discovery",
     "heapsnapshot",
+    "images",
     "inspector",
     "jsbeautify",
     "layout",
@@ -28,19 +29,19 @@ DIRS += [
     "specs",
     "storage",
     "test-helpers",
+    "tests/objects",
     "transport",
     "webconsole",
     "worker",
 ]
 
 if CONFIG["MOZ_BUILD_APP"] != "mobile/android":
-    BROWSER_CHROME_MANIFESTS += ["tests/browser/browser.ini"]
+    BROWSER_CHROME_MANIFESTS += ["tests/browser/browser.toml"]
 
-BROWSER_CHROME_MANIFESTS += ["test-helpers/browser.ini"]
-XPCSHELL_TESTS_MANIFESTS += ["test-helpers/xpcshell.ini"]
+BROWSER_CHROME_MANIFESTS += ["test-helpers/browser.toml"]
 
-MOCHITEST_CHROME_MANIFESTS += ["tests/chrome/chrome.ini"]
-XPCSHELL_TESTS_MANIFESTS += ["tests/xpcshell/xpcshell.ini"]
+MOCHITEST_CHROME_MANIFESTS += ["tests/chrome/chrome.toml"]
+XPCSHELL_TESTS_MANIFESTS += ["tests/xpcshell/xpcshell.toml"]
 
 JAR_MANIFESTS += ["jar.mn"]
 
@@ -51,7 +52,6 @@ DevToolsModules(
     "constants.js",
     "content-observer.js",
     "debounce.js",
-    "defer.js",
     "DevToolsInfaillibleUtils.sys.mjs",
     "DevToolsUtils.js",
     "dom-helpers.js",
@@ -61,6 +61,7 @@ DevToolsModules(
     "extend.js",
     "flags.js",
     "generate-uuid.js",
+    "highlighters.mjs",
     "indentation.js",
     "indexed-db.js",
     "l10n.js",
@@ -69,10 +70,11 @@ DevToolsModules(
     "picker-constants.js",
     "plural-form.js",
     "protocol.js",
+    "string.js",
     "system.js",
     "ThreadSafeDevToolsUtils.js",
     "throttle.js",
-    "validate-breakpoint.jsm",
+    "validate-breakpoint.sys.mjs",
 )
 
 with Files("**"):

@@ -17,17 +17,14 @@
  * or bad as expected.
  */
 
-var { MessageInjection } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageInjection.jsm"
+var { MessageInjection } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageInjection.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
-var { PromiseUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/PromiseUtils.sys.mjs"
-);
-var { SmimeUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/smimeUtils.jsm"
+var { SmimeUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/SmimeUtils.sys.mjs"
 );
 
 registerCleanupFunction(() => {
@@ -42,7 +39,7 @@ add_setup(function () {
     true
   );
 
-  let messageInjection = new MessageInjection({ mode: "local" });
+  const messageInjection = new MessageInjection({ mode: "local" });
   gInbox = messageInjection.getInboxFolder();
   SmimeUtils.ensureNSS();
 
@@ -85,7 +82,7 @@ add_task(async function verifyTestCertsStillValid() {
     QueryInterface: ChromeUtils.generateQI(["nsIDoneFindCertForEmailCallback"]),
   };
 
-  let composeSecure = Cc[
+  const composeSecure = Cc[
     "@mozilla.org/messengercompose/composesecure;1"
   ].createInstance(Ci.nsIMsgComposeSecure);
   composeSecure.asyncFindCertByEmailAddr(
@@ -98,13 +95,14 @@ var gInbox;
 
 var smimeDataDirectory = "../../../data/smime/";
 
-let smimeHeaderSink = {
+const smimeSink = {
   expectResults(maxLen) {
     // dump("Restarting for next test\n");
-    this._deferred = PromiseUtils.defer();
+    this._deferred = Promise.withResolvers();
     this._expectedEvents = maxLen;
     this.countReceived = 0;
     this._results = [];
+    // Ensure checkFinished() only produces results once.
     this._resultsProduced = false;
     this.haveSignedBad = false;
     this.haveEncryptionBad = false;
@@ -174,7 +172,7 @@ let smimeHeaderSink = {
       this._deferred.resolve(this._results);
     }
   },
-  QueryInterface: ChromeUtils.generateQI(["nsIMsgSMIMEHeaderSink"]),
+  QueryInterface: ChromeUtils.generateQI(["nsIMsgSMIMESink"]),
 };
 
 /**
@@ -374,10 +372,9 @@ var gMessages = [
   },
   {
     filename: "alice.env.dsig.SHA1.multipart.eml",
-    enc: false,
-    sig: true,
+    enc: true,
+    sig: false,
     sig_good: false,
-    extra: 1,
   },
   {
     filename: "alice.env.sig.SHA256.opaque.eml",
@@ -388,10 +385,9 @@ var gMessages = [
   },
   {
     filename: "alice.env.dsig.SHA256.multipart.eml",
-    enc: false,
-    sig: true,
+    enc: true,
+    sig: false,
     sig_good: false,
-    extra: 1,
   },
   {
     filename: "alice.env.sig.SHA384.opaque.eml",
@@ -402,10 +398,9 @@ var gMessages = [
   },
   {
     filename: "alice.env.dsig.SHA384.multipart.eml",
-    enc: false,
-    sig: true,
+    enc: true,
+    sig: false,
     sig_good: false,
-    extra: 1,
   },
   {
     filename: "alice.env.sig.SHA512.opaque.eml",
@@ -416,10 +411,9 @@ var gMessages = [
   },
   {
     filename: "alice.env.dsig.SHA512.multipart.eml",
-    enc: false,
-    sig: true,
+    enc: true,
+    sig: false,
     sig_good: false,
-    extra: 1,
   },
 
   // encrypt-then-sign, then sign again
@@ -623,10 +617,10 @@ var gMessages = [
   },
 ];
 
-let gCopyWaiter = PromiseUtils.defer();
+const gCopyWaiter = Promise.withResolvers();
 
 add_task(async function copy_messages() {
-  for (let msg of gMessages) {
+  for (const msg of gMessages) {
     let promiseCopyListener = new PromiseTestUtils.PromiseCopyListener();
 
     MailServices.copy.copyFileMessage(
@@ -651,7 +645,7 @@ add_task(async function check_smime_message() {
 
   let hdrIndex = 0;
 
-  for (let msg of gMessages) {
+  for (const msg of gMessages) {
     console.log("checking " + msg.filename);
 
     let numExpected = 1;
@@ -664,18 +658,16 @@ add_task(async function check_smime_message() {
       eventsExpected += msg.extra;
     }
 
-    let hdr = mailTestUtils.getMsgHdrN(gInbox, hdrIndex);
-    let uri = hdr.folder.getUriForMsg(hdr);
-    let sinkPromise = smimeHeaderSink.expectResults(eventsExpected);
+    const hdr = mailTestUtils.getMsgHdrN(gInbox, hdrIndex);
+    const uri = hdr.folder.getUriForMsg(hdr);
+    const sinkPromise = smimeSink.expectResults(eventsExpected);
 
-    let conversion = apply_mime_conversion(uri, smimeHeaderSink);
-    await conversion.promise;
-
-    let contents = conversion._data;
+    const conversion = apply_mime_conversion(uri, smimeSink);
+    const contents = await conversion.promise;
     // dump("contents: " + contents + "\n");
 
     if (!msg.sig || msg.sig_good || "check_text" in msg) {
-      let expected = "This is a test message from Alice to Bob.";
+      const expected = "This is a test message from Alice to Bob.";
       Assert.ok(contents.includes(expected));
     }
     // Check that we're also using the display output.
@@ -683,7 +675,7 @@ add_task(async function check_smime_message() {
 
     await sinkPromise;
 
-    let r = smimeHeaderSink._results;
+    const r = smimeSink._results;
     Assert.equal(r.length, numExpected);
 
     let sigIndex = 0;
@@ -696,7 +688,7 @@ add_task(async function check_smime_message() {
     }
     if (msg.sig) {
       Assert.equal(r[sigIndex].type, "signed");
-      let cert = r[sigIndex].certificate;
+      const cert = r[sigIndex].certificate;
       if (msg.sig_good) {
         Assert.notEqual(cert, null);
       }

@@ -41,7 +41,7 @@ async function test_hint_asset(testName, asset, variant) {
 
   let observer = {
     QueryInterface: ChromeUtils.generateQI(["nsIObserver"]),
-    observe(aSubject, aTopic, aData) {
+    observe(aSubject, aTopic) {
       if (aTopic == "earlyhints-connectback") {
         numConnectBackRemaining -= 1;
       }
@@ -93,11 +93,25 @@ async function test_hint_asset(testName, asset, variant) {
   let gotRequestCount = await fetch(
     "http://example.com/browser/netwerk/test/browser/early_hint_pixel_count.sjs"
   ).then(response => response.json());
-  Assert.equal(
-    numConnectBackRemaining,
-    0,
-    `${testName} (${asset}) no remaining connect back expected`
-  );
+  if (
+    asset === "script" &&
+    variant === "cached" &&
+    numConnectBackRemaining === 1
+  ) {
+    // If the navigation cache is enabled (dom.script_loader.navigation_cache),
+    // the script can be cached in the per-process cache storage, and in that
+    // case the channel isn't opened, and the "earlyhints-connectback"
+    // notification isn't observed.
+    info(
+      `${testName} (${asset}+${variant}) in-memory-cached script's notification is skipped`
+    );
+  } else {
+    Assert.equal(
+      numConnectBackRemaining,
+      0,
+      `${testName} (${asset}+${variant}) no remaining connect back expected`
+    );
+  }
 
   let expectedRequestCount;
   if (variant === "normal") {
@@ -111,7 +125,7 @@ async function test_hint_asset(testName, asset, variant) {
   }
 
   await request_count_checking(
-    `${testName} (${asset})`,
+    `${testName} (${asset}+${variant})`,
     gotRequestCount,
     expectedRequestCount
   );
@@ -145,14 +159,12 @@ add_task(async function test_103_asset_javascript() {
 });
 
 // preload javascript module
-/* TODO(Bug 1798319): enable this test case
 add_task(async function test_103_asset_module() {
   await test_hint_asset("test_103_asset_normal", "module", "normal");
   await test_hint_asset("test_103_asset_hinted", "module", "hinted");
   await test_hint_asset("test_103_asset_reload", "module", "reload");
   await test_hint_asset("test_103_asset_cached", "module", "cached");
 });
-*/
 
 // preload font
 add_task(async function test_103_asset_font() {

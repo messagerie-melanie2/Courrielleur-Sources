@@ -31,6 +31,7 @@ using mozilla::ScreenRotation from "mozilla/WidgetUtils.h";
 using nsCSSPropertyID from "nsCSSPropertyID.h";
 using mozilla::hal::ScreenOrientation from "mozilla/HalIPCUtils.h";
 using struct mozilla::layers::TextureInfo from "mozilla/layers/CompositorTypes.h";
+using mozilla::CSSCoord from "Units.h";
 using mozilla::CSSPoint from "Units.h";
 using mozilla::CSSRect from "Units.h";
 using mozilla::gfx::IntSize from "mozilla/gfx/2D.h";
@@ -48,6 +49,7 @@ using mozilla::ParentLayerRect from "Units.h";
 using mozilla::LayoutDeviceIntRect from "Units.h";
 using mozilla::LayoutDevicePoint from "Units.h";
 using mozilla::LayoutDeviceRect from "Units.h";
+using mozilla::layers::ClearImagesType from "ImageContainer.h";
 using mozilla::layers::ScaleMode from "mozilla/layers/LayersTypes.h";
 using mozilla::layers::EventRegionsOverride from "mozilla/layers/LayersTypes.h";
 using mozilla::layers::DiagnosticTypes from "mozilla/layers/CompositorTypes.h";
@@ -64,10 +66,10 @@ using mozilla::layers::RemoteTextureId from "mozilla/layers/LayersTypes.h";
 using mozilla::layers::RemoteTextureOwnerId from "mozilla/layers/LayersTypes.h";
 using mozilla::layers::TransactionId from "mozilla/layers/LayersTypes.h";
 using mozilla::LengthPercentage from "mozilla/ServoStyleConsts.h";
-using mozilla::RayReferenceData from "mozilla/MotionPathUtils.h";
 using mozilla::StyleOffsetPath from "mozilla/ServoStyleConsts.h";
 using mozilla::StyleOffsetRotate from "mozilla/ServoStyleConsts.h";
 using mozilla::StylePositionOrAuto from "mozilla/ServoStyleConsts.h";
+using mozilla::StyleOffsetPosition from "mozilla/ServoStyleConsts.h";
 using mozilla::StyleRotate from "mozilla/ServoStyleConsts.h";
 using mozilla::StyleScale from "mozilla/ServoStyleConsts.h";
 using mozilla::StyleTranslate from "mozilla/ServoStyleConsts.h";
@@ -107,6 +109,7 @@ struct LayerColor { DeviceColor value; };
   LengthPercentage;
   StyleOffsetRotate;
   StylePositionOrAuto;
+  StyleOffsetPosition;
 };
 
 struct AnimationSegment {
@@ -120,11 +123,20 @@ struct AnimationSegment {
 };
 
 [Comparable] struct MotionPathData {
-  // the transform-origin property for motion in css pixels
+  // The transform-origin property for motion in css pixels
   CSSPoint origin;
-  // the adjustment for the anchor point of motion path.
+  // The adjustment for the anchor point of motion path.
   CSSPoint anchorAdjustment;
-  RayReferenceData rayReferenceData;
+  // The coord box of the containing block.
+  nsRect coordBox;
+  // The current position of this transfromed box in the coordinate system of
+  // its containing block.
+  nsPoint currentPosition;
+  // The reference length for computing ray(contain) (in css pixels).
+  CSSCoord rayContainReferenceLength;
+  // The resolved border-radius of its containing block. If the array size is
+  // zero, we don't have radius.
+  nscoord[] coordBoxInsetRadii;
 };
 
 [Comparable] struct PartialPrerenderData {
@@ -229,6 +241,8 @@ struct Animation {
   Animatable baseStyle;
   // An optional data specific for transform like properies.
   TransformData? transformData;
+  // This indicates that a transition whose start value should be replaced.
+  uint64_t? replacedTransitionId;
   // If this is present, the animation is driven by a ScrollTimeline, and
   // this structure contains information about that timeline.
   ScrollTimelineOptions? scrollTimelineOptions;
@@ -241,7 +255,7 @@ struct CompositorAnimations {
   uint64_t id;
 };
 
-struct ShmemSection {
+struct UntrustedShmemSection {
   Shmem shmem;
   uint32_t offset;
   uint32_t size;
@@ -252,7 +266,7 @@ struct CrossProcessSemaphoreDescriptor {
 };
 
 union ReadLockDescriptor {
-  ShmemSection;
+  UntrustedShmemSection;
   CrossProcessSemaphoreDescriptor;
   uintptr_t;
   null_t;
@@ -263,6 +277,13 @@ union ReadLockDescriptor {
  */
 struct OpRemoveTexture {
   PTexture texture;
+};
+
+/**
+ * Tells the CompositableHost to clear Images
+ */
+struct OpClearImages {
+  ClearImagesType type;
 };
 
 struct TimedTexture {
@@ -308,6 +329,8 @@ struct OpNotifyNotUsed {
 
 union CompositableOperationDetail {
   OpRemoveTexture;
+
+  OpClearImages;
 
   OpUseTexture;
 

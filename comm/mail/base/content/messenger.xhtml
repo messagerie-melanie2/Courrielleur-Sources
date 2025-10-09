@@ -5,43 +5,6 @@
 
 #filter substitution
 #define MAIN_WINDOW
-<?xml-stylesheet href="chrome://messenger/skin/mailWindow1.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/tagColors.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/shared/glodacomplete.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/tabmail.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/popupPanel.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/chat.css" type="text/css"?>
-<?xml-stylesheet href="chrome://chat/skin/imtooltip.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/messageHeader.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/icons.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/colors.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/folderMenus.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/attachmentList.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/searchBox.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/panelUI.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/contextMenu.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/input-fields.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/openpgp/inlineNotification.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/spacesToolbar.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/shared/unifiedToolbar.css" type="text/css"?>
-
-<!-- Calendar CSS -->
-<?xml-stylesheet href="chrome://calendar/skin/calendar.css" type="text/css"?>
-
-<?xml-stylesheet href="chrome://calendar/skin/calendar-event-dialog.css" type="text/css"?>
-<?xml-stylesheet href="chrome://calendar/skin/shared/dialogs/calendar-event-dialog.css" type="text/css"?>
-
-<?xml-stylesheet href="chrome://calendar/skin/today-pane.css" type="text/css"?>
-
-<?xml-stylesheet href="chrome://calendar/skin/calendar-unifinder.css" type="text/css"?>
-
-<?xml-stylesheet href="chrome://calendar/skin/calendar-task-tree.css" type="text/css"?>
-<?xml-stylesheet href="chrome://calendar/skin/calendar-task-view.css" type="text/css"?>
-
-<?xml-stylesheet href="chrome://calendar/skin/calendar-views.css" type="text/css"?>
-<?xml-stylesheet href="chrome://calendar/skin/shared/calendar-alarms.css" type="text/css"?>
-<?xml-stylesheet href="chrome://calendar/skin/shared/widgets/minimonth.css" type="text/css"?>
-<?xml-stylesheet href="chrome://calendar/skin/widgets/calendar-widgets.css" type="text/css"?>
 
 # All DTD information is stored in a separate file so that it can be shared by
 # hiddenWindowMac.xhtml.
@@ -62,6 +25,7 @@
       defaultTabTitle="&defaultTabTitle.label;"
       windowtype="mail:3pane"
       macanimationtype="document"
+      windowsmica="true"
       screenX="10" screenY="10"
       scrolling="false"
       persist="screenX screenY width height sizemode"
@@ -70,6 +34,72 @@
       fullscreenbutton="true"
       calendar-deactivated="">
 <head>
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src chrome:; script-src chrome: resource: 'unsafe-inline'; style-src chrome: 'unsafe-inline'; img-src chrome: data: moz-icon: https://addons.thunderbird.net"
+  />
+  <link rel="stylesheet" href="chrome://messenger/skin/mailWindow1.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/tagColors.css" />
+  <link
+    rel="stylesheet"
+    href="chrome://messenger/skin/shared/glodacomplete.css"
+  />
+  <link rel="stylesheet" href="chrome://messenger/skin/tabmail.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/popupPanel.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/chat.css" />
+  <link rel="stylesheet" href="chrome://chat/skin/imtooltip.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/messageHeader.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/icons.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/colors.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/containers.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/folderMenus.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/attachmentList.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/searchBox.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/panelUI.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/contextMenu.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/input-fields.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/inAppNotificationManager.css" />
+  <link
+    rel="stylesheet"
+    href="chrome://messenger/skin/openpgp/inlineNotification.css"
+  />
+  <link rel="stylesheet" href="chrome://messenger/skin/spacesToolbar.css" />
+  <link
+    rel="stylesheet"
+    href="chrome://messenger/skin/shared/unifiedToolbar.css"
+  />
+  <link rel="stylesheet" href="chrome://calendar/skin/calendar.css" />
+  <link
+    rel="stylesheet"
+    href="chrome://calendar/skin/calendar-event-dialog.css"
+  />
+  <link
+    rel="stylesheet"
+    href="chrome://calendar/skin/shared/dialogs/calendar-event-dialog.css"
+  />
+  <link
+    rel="stylesheet"
+    href="chrome://messenger/skin/calendar/calendarDialog.css"
+  />
+
+  <link rel="stylesheet" href="chrome://calendar/skin/today-pane.css" />
+  <link rel="stylesheet" href="chrome://calendar/skin/calendar-unifinder.css" />
+  <link rel="stylesheet" href="chrome://calendar/skin/calendar-task-tree.css" />
+  <link rel="stylesheet" href="chrome://calendar/skin/calendar-task-view.css" />
+  <link rel="stylesheet" href="chrome://calendar/skin/calendar-views.css" />
+  <link
+    rel="stylesheet"
+    href="chrome://calendar/skin/shared/calendar-alarms.css"
+  />
+  <link
+    rel="stylesheet"
+    href="chrome://calendar/skin/shared/widgets/minimonth.css"
+  />
+  <link
+    rel="stylesheet"
+    href="chrome://calendar/skin/widgets/calendar-widgets.css"
+  />
+
   <link rel="localization" href="branding/brand.ftl" />
   <link rel="localization" href="messenger/shortcuts.ftl" />
   <link rel="localization" href="messenger/messenger.ftl" />
@@ -81,16 +111,20 @@
   <link rel="localization" href="messenger/openpgp/openpgp.ftl" />
   <link rel="localization" href="messenger/openpgp/openpgp-frontend.ftl" />
   <link rel="localization" href="messenger/openpgp/msgReadStatus.ftl"/>
+  <link rel="localization" href="calendar/calendar.ftl" />
+  <link rel="localization" href="calendar/calendar-today-pane.ftl" />
   <link rel="localization" href="calendar/calendar-widgets.ftl" />
   <link rel="localization" href="calendar/calendar-context-menus.ftl" />
   <link rel="localization" href="calendar/calendar-editable-item.ftl" />
+  <link rel="localization" href="calendar/calendar-event-listing.ftl" />
   <link rel="localization" href="messenger/chat.ftl" />
   <link rel="localization" href="messenger/messageheader/headerFields.ftl" />
   <link rel="localization" href="messenger/mailWidgets.ftl" />
+  <link rel="localization" href="messenger/inAppNotifications.ftl" />
   <link rel="localization" href="messenger/unifiedToolbar.ftl" />
   <link rel="localization" href="messenger/unifiedToolbarItems.ftl" />
 #ifdef NIGHTLY_BUILD
-  <link rel="localization" href="messenger/firefoxAccounts.ftl" />
+  <link rel="localization" href="messenger/syncAccounts.ftl" />
 #endif
 
   <title>&titledefault.label;@PRE_RELEASE_SUFFIX@</title>
@@ -98,11 +132,9 @@
   <script defer="defer" src="chrome://messenger/content/globalOverlay.js"></script>
   <script defer="defer" src="chrome://global/content/editMenuOverlay.js"></script>
   <script defer="defer" src="chrome://messenger/content/mailWindow.js"></script>
-  <script defer="defer" src="chrome://messenger/content/selectionsummaries.js"></script>
   <script defer="defer" src="chrome://messenger/content/messenger.js"></script>
   <script defer="defer" src="chrome://messenger/content/specialTabs.js"></script>
   <script defer="defer" src="chrome://messenger/content/spacesToolbar.js"></script>
-  <script defer="defer" src="chrome://messenger/content/newmailaccount/provisionerCheckout.js"></script>
   <script defer="defer" src="chrome://messenger/content/glodaFacetTab.js"></script>
   <script defer="defer" src="chrome://messenger/content/searchBar.js"></script>
   <script defer="defer" src="chrome://messenger/content/mail3PaneWindowCommands.js"></script>
@@ -127,7 +159,6 @@
   <script defer="defer" src="chrome://messenger/content/msgViewPickerOverlay.js"></script>
   <script defer="defer" src="chrome://messenger/content/viewZoomOverlay.js"></script>
   <script defer="defer" src="chrome://communicator/content/utilityOverlay.js"></script>
-  <script defer="defer" src="chrome://messenger/content/newmailaccount/uriListener.js"></script>
   <script defer="defer" src="chrome://messenger/content/chat/chat-conversation-info.js"></script>
   <script defer="defer" src="chrome://gloda/content/autocomplete-richlistitem.js"></script>
   <script defer="defer" src="chrome://gloda/content/glodacomplete.js"></script>
@@ -172,6 +203,7 @@
 
   <script defer="defer" src="chrome://calendar/content/calendar-views-utils.js"></script>
   <script defer="defer" src="chrome://calendar/content/widgets/calendar-filter.js"></script>
+  <script defer="defer" src="chrome://calendar/content/widgets/calendar-filter-tree-view.js"></script>
   <script defer="defer" src="chrome://calendar/content/calendar-base-view.js"></script>
   <script defer="defer" src="chrome://calendar/content/widgets/calendar-dnd-widgets.js"></script>
   <script defer="defer" src="chrome://calendar/content/calendar-editable-item.js"></script>
@@ -203,7 +235,8 @@
 
   <!-- NEEDED FOR TODAY PANE AND TASKS VIEW -->
 
-  <script defer="defer" src="chrome://messenger/content/tree-listbox.js"></script>
+  <script type="module" src="chrome://messenger/content/orderable-tree-listbox.mjs"></script>
+  <script type="module" src="chrome://messenger/content/tree-listbox.mjs"></script>
   <script defer="defer" src="chrome://calendar/content/calendar-task-tree-utils.js"></script>
   <script defer="defer" src="chrome://calendar/content/today-pane-agenda.js"></script>
   <script defer="defer" src="chrome://calendar/content/today-pane.js"></script>
@@ -218,6 +251,8 @@
 
   <!-- NEEDED FOR MIGRATION CHECK AT INSTALL -->
   <script defer="defer" src="chrome://calendar/content/calendar-migration.js"></script>
+
+  <!-- Customizable shortcuts -->
   <script defer="defer" src="chrome://messenger/content/shortcutsOverlay.js"></script>
 
   <script defer="defer" src="chrome://messenger/content/accountcreation/accountHub.js"></script>
@@ -281,7 +316,7 @@
   </commandset>
   <commandset id="tasksCommands">
     <command id="cmd_newMessage" oncommand="goOpenNewMessage();"/>
-    <command id="cmd_newCard" oncommand="openNewCardDialog()"/>
+    <command id="cmd_newCard" oncommand="goDoCommand('cmd_newCard')"/>
   </commandset>
   <command id="cmd_close" oncommand="CloseTabOrWindow();"/>
   <command id="cmd_CustomizeMailToolbar"
@@ -408,7 +443,7 @@
     <popupnotificationcontent class="addon-webext-perm-notification-content" orient="vertical">
       <description id="addon-webext-perm-text" class="addon-webext-perm-text"/>
       <label id="addon-webext-perm-intro" class="addon-webext-perm-text"/>
-      <label id="addon-webext-perm-single-entry" class="addon-webext-perm-single-entry"/>
+      <label id ="addon-webext-perm-title-required" class="addon-webext-perm-title-required"/>
       <html:ul id="addon-webext-perm-list" class="addon-webext-perm-list"/>
       <description id="addon-webext-experiment-warning" class="addon-webext-experiment-warning"/>
       <hbox>
@@ -447,79 +482,86 @@
 </popupset>
 #endif
 
+<!--
+  Include in app notifications first to make them as easy as possible to get to
+  when navigating via keyboard. This is important if they miss the instructions
+  for the key command to be able to find what was announced.
+-->
+#include ../../components/inappnotifications/content/inAppNotificationTemplates.inc.xhtml
+
+<div class="in-app-notification-root" role="status"></div>
+
+<!-- Include the new calendar dialog. -->
+#include ../../components/calendar/content/calendar.inc.xhtml
+<div class="calendar-dialog-root"></div>
+
 #include ../../../calendar/base/content/calendar-context-menus-and-tooltips.inc.xhtml
 #include ../../components/unifiedtoolbar/content/unifiedToolbarTemplates.inc.xhtml
-
 #include spacesToolbar.inc.xhtml
 
 <!--
-  GTK needs to draw behind the lightweight theme toolbox backgrounds, thus the
-  extra box. Also this box allows a negative margin-top to slide the toolbox off
-  screen in fullscreen layout.
+  This box allows a negative margin-top to slide the toolbox off screen in
+  fullscreen layout.
 -->
-<box id="navigation-toolbox-background">
-  <toolbox id="navigation-toolbox" flex="1" labelalign="end" defaultlabelalign="end">
+<toolbox id="navigation-toolbox" labelalign="end" defaultlabelalign="end">
 
-    <vbox id="titlebar">
-      <html:unified-toolbar></html:unified-toolbar>
-      <!-- Menu -->
-      <toolbar id="toolbar-menubar"
-               class="chromeclass-menubar themeable-full"
-               type="menubar"
-#ifdef XP_MACOSX
-               autohide="true"
-#endif
+  <vbox id="titlebar">
+    <html:unified-toolbar></html:unified-toolbar>
+    <!-- Menu -->
+    <toolbar id="toolbar-menubar"
+             class="chromeclass-menubar themeable-full"
+             type="menubar"
+             autohide="true"
 #ifndef XP_MACOSX
-               data-l10n-id="toolbar-context-menu-menu-bar"
-               data-l10n-attrs="toolbarname"
+             data-l10n-id="toolbar-context-menu-menu-bar"
+             data-l10n-attrs="toolbarname"
 #endif
-               context="toolbar-context-menu"
-               mode="icons"
-               insertbefore="tabs-toolbar"
-               prependmenuitem="true">
+             context="toolbar-context-menu"
+             mode="icons"
+             insertbefore="tabs-toolbar"
+             prependmenuitem="true">
 # The entire main menubar is placed into messenger-menubar.inc.xhtml, so that it
 # can be shared with other top level windows.
 #include messenger-menubar.inc.xhtml
-      </toolbar>
+    </toolbar>
 
-      <toolbar id="tabs-toolbar" class="chromeclass-toolbar">
-        <tabs is="tabmail-tabs" id="tabmail-tabs"
-              flex="1"
-              align="end"
-              setfocus="false"
-              alltabsbutton="alltabs-button"
-              context="toolbar-context-menu"
-              collapsetoolbar="tabs-toolbar">
-          <html:img class="tab-drop-indicator"
-                    src="chrome://messenger/skin/icons/tab-drag-indicator.svg"
-                    alt=""
-                    hidden="hidden" />
-          <arrowscrollbox id="tabmail-arrowscrollbox"
-                          orient="horizontal"
-                          flex="1"
-                          clicktoscroll="true"
-                          style="min-width: 1px;">
-            <tab is="tabmail-tab" selected="true"
-                 class="tabmail-tab" crop="end"/>
-          </arrowscrollbox>
-        </tabs>
+    <toolbar id="tabs-toolbar" class="chromeclass-toolbar">
+      <tabs is="tabmail-tabs" id="tabmail-tabs"
+            flex="1"
+            align="end"
+            setfocus="false"
+            alltabsbutton="alltabs-button"
+            context="toolbar-context-menu"
+            collapsetoolbar="tabs-toolbar">
+        <html:img class="tab-drop-indicator"
+                  src="chrome://messenger/skin/icons/tab-drag-indicator.svg"
+                  alt=""
+                  hidden="hidden" />
+        <arrowscrollbox id="tabmail-arrowscrollbox"
+                        orient="horizontal"
+                        flex="1"
+                        clicktoscroll=""
+                        style="min-width: 1px;">
+          <tab is="tabmail-tab" selected="true"
+               class="tabmail-tab" crop="end"/>
+        </arrowscrollbox>
+      </tabs>
 
-        <toolbarbutton class="toolbarbutton-1 tabs-alltabs-button"
-                        id="alltabs-button"
-                        type="menu"
-                        hidden="true"
-                        tooltiptext="&listAllTabs.label;">
-          <menupopup is="tabmail-alltabs-menupopup" id="alltabs-popup"
-                      position="after_end"
-                      tabcontainer="tabmail-tabs"/>
-        </toolbarbutton>
+      <toolbarbutton class="toolbarbutton-1 tabs-alltabs-button"
+                      id="alltabs-button"
+                      type="menu"
+                      hidden="true"
+                      tooltiptext="&listAllTabs.label;">
+        <menupopup is="tabmail-alltabs-menupopup" id="alltabs-popup"
+                    position="after_end"
+                    tabcontainer="tabmail-tabs"/>
+      </toolbarbutton>
 
-      </toolbar>
+    </toolbar>
 
-    </vbox>
+  </vbox>
 
-  </toolbox>
-</box>
+</toolbox>
 
 <vbox id="messengerBody">
   <!-- XXX This extension point (tabmail-container) is only temporary!
@@ -563,8 +605,6 @@
       <!-- Hidden browser used for printing documents without displaying them. -->
       <browser id="hiddenPrintContent"
                type="content"
-               nodefaultsrc="true"
-               maychangeremoteness="true"
                hidden="true"/>
     </tabmail>
 #include ../../../calendar/base/content/calendar-today-pane.inc.xhtml
@@ -621,6 +661,7 @@
         <hbox flex="1">
           <browser id="preferencesbrowser"
                    type="content"
+                   manualactiveness="true"
                    flex="1"
                    disablehistory="true"
                    autocompletepopup="PopupAutoComplete"
@@ -667,5 +708,6 @@
 
 #include tabDialogs.inc.xhtml
 #include ../../components/accountcreation/templates/accountHubTemplate.inc.xhtml
+#include ../../components/customizableshortcuts/content/shortcutsContainerTemplate.inc.xhtml
 </html:body>
 </html>

@@ -2,10 +2,12 @@
  * Test suite for ensuring that the headers of messages are set properly.
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-const { MimeParser } = ChromeUtils.import("resource:///modules/mimeParser.jsm");
+const { MimeParser } = ChromeUtils.importESModule(
+  "resource:///modules/mimeParser.sys.mjs"
+);
 
 var CompFields = CC(
   "@mozilla.org/messengercompose/composefields;1",
@@ -13,10 +15,10 @@ var CompFields = CC(
 );
 
 function makeAttachment(opts = {}) {
-  let attachment = Cc[
+  const attachment = Cc[
     "@mozilla.org/messengercompose/attachment;1"
   ].createInstance(Ci.nsIMsgAttachment);
-  for (let key in opts) {
+  for (const key in opts) {
     attachment[key] = opts[key];
   }
   return attachment;
@@ -24,29 +26,29 @@ function makeAttachment(opts = {}) {
 
 function sendMessage(fieldParams, identity, opts = {}, attachments = []) {
   // Initialize compose fields
-  let fields = new CompFields();
-  for (let key in fieldParams) {
+  const fields = new CompFields();
+  for (const key in fieldParams) {
     fields[key] = fieldParams[key];
   }
-  for (let attachment of attachments) {
+  for (const attachment of attachments) {
     fields.addAttachment(attachment);
   }
 
   // Initialize compose params
-  let params = Cc[
+  const params = Cc[
     "@mozilla.org/messengercompose/composeparams;1"
   ].createInstance(Ci.nsIMsgComposeParams);
   params.composeFields = fields;
-  for (let key in opts) {
+  for (const key in opts) {
     params[key] = opts[key];
   }
 
   // Send the message
-  let msgCompose = MailServices.compose.initCompose(params);
-  let progress = Cc["@mozilla.org/messenger/progress;1"].createInstance(
+  const msgCompose = MailServices.compose.initCompose(params);
+  const progress = Cc["@mozilla.org/messenger/progress;1"].createInstance(
     Ci.nsIMsgProgress
   );
-  let promise = new Promise((resolve, reject) => {
+  const promise = new Promise((resolve, reject) => {
     progressListener.resolve = resolve;
     progressListener.reject = reject;
   });
@@ -62,7 +64,7 @@ function sendMessage(fieldParams, identity, opts = {}, attachments = []) {
 }
 
 function checkDraftHeaders(expectedHeaders, partNum = "") {
-  let msgData = mailTestUtils.loadMessageToString(
+  const msgData = mailTestUtils.loadMessageToString(
     gDraftFolder,
     mailTestUtils.firstMsgHdr(gDraftFolder)
   );
@@ -71,21 +73,21 @@ function checkDraftHeaders(expectedHeaders, partNum = "") {
 
 function checkMessageHeaders(msgData, expectedHeaders, partNum = "") {
   let seen = false;
-  let handler = {
+  const handler = {
     startPart(part, headers) {
       if (part != partNum) {
         return;
       }
       seen = true;
-      for (let header in expectedHeaders) {
-        let expected = expectedHeaders[header];
+      for (const header in expectedHeaders) {
+        const expected = expectedHeaders[header];
         if (expected === undefined) {
           Assert.ok(
             !headers.has(header),
             `Should not have header named "${header}"`
           );
         } else {
-          let value = headers.getRawHeader(header);
+          const value = headers.getRawHeader(header);
           Assert.equal(
             value && value.length,
             1,
@@ -106,8 +108,8 @@ function checkMessageHeaders(msgData, expectedHeaders, partNum = "") {
 }
 
 async function testEnvelope() {
-  let fields = new CompFields();
-  let identity = getSmtpIdentity(
+  const fields = new CompFields();
+  const identity = getSmtpIdentity(
     "from@tinderbox.invalid",
     getBasicSmtpServer()
   );
@@ -135,8 +137,8 @@ async function testEnvelope() {
 }
 
 async function testI18NEnvelope() {
-  let fields = new CompFields();
-  let identity = getSmtpIdentity(
+  const fields = new CompFields();
+  const identity = getSmtpIdentity(
     "from@tinderbox.invalid",
     getBasicSmtpServer()
   );
@@ -160,16 +162,16 @@ async function testI18NEnvelope() {
 }
 
 async function testIDNEnvelope() {
-  let fields = new CompFields();
-  let domain = "ケツァルコアトル.invalid";
+  const fields = new CompFields();
+  const domain = "ケツァルコアトル.invalid";
   // We match against rawHeaderText, so we need to encode the string as a binary
   // string instead of a unicode string.
-  let utf8Domain = String.fromCharCode.apply(
+  const utf8Domain = String.fromCharCode.apply(
     undefined,
     new TextEncoder("UTF-8").encode(domain)
   );
   // Bug 1034658: nsIMsgIdentity doesn't like IDN in its email addresses.
-  let identity = getSmtpIdentity(
+  const identity = getSmtpIdentity(
     "from@tinderbox.invalid",
     getBasicSmtpServer()
   );
@@ -191,14 +193,14 @@ async function testIDNEnvelope() {
 }
 
 async function testDraftInfo() {
-  let fields = new CompFields();
-  let identity = getSmtpIdentity(
+  const fields = new CompFields();
+  const identity = getSmtpIdentity(
     "from@tinderbox.invalid",
     getBasicSmtpServer()
   );
   await richCreateMessage(fields, [], identity);
   checkDraftHeaders({
-    FCC: identity.fccFolder,
+    FCC: identity.fccFolderURI,
     "X-Identity-Key": identity.key,
     "X-Mozilla-Draft-Info":
       "internal/draft; " +
@@ -255,8 +257,8 @@ async function testOtherHeadersAgentParam(sendAgent, minimalAgent) {
     );
   }
 
-  let fields = new CompFields();
-  let identity = getSmtpIdentity(
+  const fields = new CompFields();
+  const identity = getSmtpIdentity(
     "from@tinderbox.invalid",
     getBasicSmtpServer()
   );
@@ -264,9 +266,9 @@ async function testOtherHeadersAgentParam(sendAgent, minimalAgent) {
   fields.references = "<fake@tinderbox.invalid> <more@test.invalid>";
   fields.setHeader("X-Fake-Header", "124");
   let before = Date.now();
-  let msgHdr = await richCreateMessage(fields, [], identity);
+  const msgHdr = await richCreateMessage(fields, [], identity);
   let after = Date.now();
-  let msgData = mailTestUtils.loadMessageToString(msgHdr.folder, msgHdr);
+  const msgData = mailTestUtils.loadMessageToString(msgHdr.folder, msgHdr);
   let expectedAgent = undefined; // !sendAgent
   if (sendAgent) {
     if (minimalAgent) {
@@ -289,7 +291,7 @@ async function testOtherHeadersAgentParam(sendAgent, minimalAgent) {
   });
 
   // Check headers with dynamic content
-  let headers = MimeParser.extractHeaders(msgData);
+  const headers = MimeParser.extractHeaders(msgData);
   Assert.ok(headers.has("Message-Id"));
   Assert.ok(
     headers.getRawHeader("Message-Id")[0].endsWith("@tinderbox.invalid>")
@@ -300,7 +302,7 @@ async function testOtherHeadersAgentParam(sendAgent, minimalAgent) {
   // can't handle (specifically related to how 2-digit years). However, the
   // optimal RFC 5322 form is supported by Date.parse. If Date.parse fails, we
   // have a form that we shouldn't be using anyways.
-  let date = new Date(headers.getRawHeader("Date")[0]);
+  const date = new Date(headers.getRawHeader("Date")[0]);
   // If we have clock skew within the test, then our results are going to be
   // meaningless. Hopefully, this is only rarely the case.
   if (before > after) {
@@ -315,11 +317,11 @@ async function testOtherHeadersAgentParam(sendAgent, minimalAgent) {
   }
 
   // We truncate too-long References. Check this.
-  let references = [];
+  const references = [];
   for (let i = 0; i < 100; i++) {
     references.push("<" + i + "@test.invalid>");
   }
-  let expected = references.slice(47);
+  const expected = references.slice(47);
   expected.unshift(references[0]);
   fields.references = references.join(" ");
   await richCreateMessage(fields, [], identity);
@@ -408,9 +410,9 @@ async function createMsgAndCompareMessageId(
     fields = new CompFields();
   }
 
-  let msgHdr = await richCreateMessage(fields, [], identity);
-  let msgData = mailTestUtils.loadMessageToString(msgHdr.folder, msgHdr);
-  let headers = MimeParser.extractHeaders(msgData);
+  const msgHdr = await richCreateMessage(fields, [], identity);
+  const msgData = mailTestUtils.loadMessageToString(msgHdr.folder, msgHdr);
+  const headers = MimeParser.extractHeaders(msgData);
 
   // As of bug 1727181, the identity does not override the message-id header.
   Assert.ok(headers.has("Message-Id"), "the message has a Message-Id header");
@@ -435,8 +437,8 @@ async function testOtherHeadersNoAgent() {
 }
 
 async function testNewsgroups() {
-  let fields = new CompFields();
-  let nntpServer = localAccountUtils.create_incoming_server(
+  const fields = new CompFields();
+  const nntpServer = localAccountUtils.create_incoming_server(
     "nntp",
     534,
     "",
@@ -445,7 +447,7 @@ async function testNewsgroups() {
   nntpServer
     .QueryInterface(Ci.nsINntpIncomingServer)
     .subscribeToNewsgroup("mozilla.test");
-  let identity = getSmtpIdentity(
+  const identity = getSmtpIdentity(
     "from@tinderbox.invalid",
     getBasicSmtpServer()
   );
@@ -456,13 +458,12 @@ async function testNewsgroups() {
     // The identity should override the compose fields here.
     Newsgroups: "mozilla.test,mozilla.test.multimedia",
     "Followup-To": "mozilla.test",
-    "X-Mozilla-News-Host": "localhost",
   });
 }
 
 async function testSendHeaders() {
-  let fields = new CompFields();
-  let identity = getSmtpIdentity(
+  const fields = new CompFields();
+  const identity = getSmtpIdentity(
     "from@tinderbox.invalid",
     getBasicSmtpServer()
   );
@@ -502,9 +503,9 @@ async function testSendHeaders() {
 async function testContentHeaders() {
   // Disable RFC 2047 fallback
   Services.prefs.setIntPref("mail.strictly_mime.parm_folding", 2);
-  let fields = new CompFields();
+  const fields = new CompFields();
   fields.body = "A body";
-  let identity = getSmtpIdentity(
+  const identity = getSmtpIdentity(
     "from@tinderbox.invalid",
     getBasicSmtpServer()
   );
@@ -524,11 +525,11 @@ async function testContentHeaders() {
 
   // Attachments
   fields.body = "";
-  let plainAttachment = makeAttachment({
+  const plainAttachment = makeAttachment({
     url: "data:text/plain,oïl",
     name: "attachment.txt",
   });
-  let plainAttachmentHeaders = {
+  const plainAttachmentHeaders = {
     "Content-Type": "text/plain; charset=UTF-8",
     "Content-Transfer-Encoding": "base64",
     "Content-Disposition": 'attachment; filename="attachment.txt"',
@@ -555,11 +556,11 @@ async function testContentHeaders() {
   await richCreateMessage(fields, [plainAttachment], identity);
   checkDraftHeaders(plainAttachmentHeaders, "2");
 
-  let httpAttachment = makeAttachment({
+  const httpAttachment = makeAttachment({
     url: "data:text/html,<html></html>",
     name: "attachment.html",
   });
-  let httpAttachmentHeaders = {
+  const httpAttachmentHeaders = {
     "Content-Type": "text/html; charset=UTF-8",
     "Content-Disposition": 'attachment; filename="attachment.html"',
     "Content-Location": "data:text/html,<html></html>",
@@ -714,12 +715,12 @@ async function testContentHeaders() {
 }
 
 async function testSentMessage() {
-  let server = setupServerDaemon();
-  let daemon = server._daemon;
+  const server = setupServerDaemon();
+  const daemon = server._daemon;
   server.start();
   try {
-    let localserver = getBasicSmtpServer(server.port);
-    let identity = getSmtpIdentity("test@tinderbox.invalid", localserver);
+    const localserver = getBasicSmtpServer(server.port);
+    const identity = getSmtpIdentity("test@tinderbox.invalid", localserver);
     await sendMessage(
       {
         to: "Nobody <nobody@tinderbox.invalid>",
@@ -761,7 +762,7 @@ async function testSentMessage() {
       "Return-Receipt-To": "test@tinderbox.invalid",
     });
     server.resetTest();
-    let cloudAttachment = makeAttachment({
+    const cloudAttachment = makeAttachment({
       url: Services.io.newFileURI(do_get_file("data/test-UTF-8.txt")).spec,
       sendViaCloud: true,
       htmlAnnotation:

@@ -12,14 +12,10 @@
 var {
   assert_messages_in_view,
   be_in_folder,
-  close_tab,
   create_folder,
-  get_about_3pane,
   make_message_sets_in_folders,
-  mc,
-  open_folder_in_new_tab,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 var {
   assert_constraints_expressed,
@@ -31,8 +27,11 @@ var {
   toggle_tag_constraints,
   toggle_quick_filter_bar,
   cleanup_qfb_button,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/QuickFilterBarHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/QuickFilterBarHelpers.sys.mjs"
+);
+const { ensure_cards_view, ensure_table_view } = ChromeUtils.importESModule(
+  "resource://testing-common/MailViewHelpers.sys.mjs"
 );
 
 add_setup(async function () {
@@ -40,11 +39,11 @@ add_setup(async function () {
   // quick filter bar, we need to be inside folder
   const folder = await create_folder("QuickFilterBarFilterStickySetup");
   await be_in_folder(folder);
-  await ensure_table_view();
+  await ensure_table_view(document);
   await toggle_quick_filter_bar();
 
   registerCleanupFunction(async () => {
-    await ensure_cards_view();
+    await ensure_cards_view(document);
     await cleanup_qfb_button();
     // Quick filter bar is hidden by default, need to toggle it off.
     await toggle_quick_filter_bar();
@@ -55,15 +54,15 @@ add_setup(async function () {
  * Persist the current settings through folder change and inherit into a new tab.
  */
 add_task(async function test_sticky_basics() {
-  let folderOne = await create_folder("QuickFilterBarStickyBasics1");
-  let [unreadOne, readOne] = await make_message_sets_in_folders(
+  const folderOne = await create_folder("QuickFilterBarStickyBasics1");
+  const [unreadOne, readOne] = await make_message_sets_in_folders(
     [folderOne],
     [{ count: 1 }, { count: 1 }]
   );
   readOne.setRead(true);
 
-  let folderTwo = await create_folder("QuickFilterBarStickyBasics2");
-  let [unreadTwo, readTwo] = await make_message_sets_in_folders(
+  const folderTwo = await create_folder("QuickFilterBarStickyBasics2");
+  const [unreadTwo, readTwo] = await make_message_sets_in_folders(
     [folderTwo],
     [{ count: 1 }, { count: 1 }]
   );
@@ -71,7 +70,7 @@ add_task(async function test_sticky_basics() {
 
   // -- setup
   await be_in_folder(folderOne);
-  toggle_boolean_constraints("sticky", "unread");
+  await toggle_boolean_constraints("sticky", "unread");
   assert_messages_in_view(unreadOne);
 
   // -- change folders
@@ -102,16 +101,16 @@ add_task(async function test_sticky_basics() {
  *  identical (and tested to be identical in |test_sticky_basics|).
  */
 add_task(async function test_sticky_tags() {
-  let folderOne = await create_folder("QuickFilterBarStickyTags1");
-  let folderTwo = await create_folder("QuickFilterBarStickyTags2");
+  const folderOne = await create_folder("QuickFilterBarStickyTags1");
+  const folderTwo = await create_folder("QuickFilterBarStickyTags2");
   const tagA = "$label1",
     tagB = "$label2",
     tagC = "$label3";
-  let [, setTagA1, setTagB1] = await make_message_sets_in_folders(
+  const [, setTagA1, setTagB1] = await make_message_sets_in_folders(
     [folderOne],
     [{ count: 1 }, { count: 1 }, { count: 1 }]
   );
-  let [, setTagA2, setTagC2] = await make_message_sets_in_folders(
+  const [, setTagA2, setTagC2] = await make_message_sets_in_folders(
     [folderTwo],
     [{ count: 1 }, { count: 1 }, { count: 1 }]
   );
@@ -121,7 +120,7 @@ add_task(async function test_sticky_tags() {
   setTagC2.addTag(tagC);
 
   await be_in_folder(folderOne);
-  toggle_boolean_constraints("sticky", "tags");
+  await toggle_boolean_constraints("sticky", "tags");
   assert_tag_constraints_visible(tagA, tagB);
   assert_messages_in_view([setTagA1, setTagB1]);
 
@@ -131,14 +130,14 @@ add_task(async function test_sticky_tags() {
   assert_messages_in_view([setTagA2, setTagC2]);
 
   // -- do not re-facet since tag A was selected
-  toggle_tag_constraints(tagA);
+  await toggle_tag_constraints(tagA);
   await be_in_folder(folderOne);
   assert_tag_constraints_visible(tagA, tagC);
   assert_messages_in_view([setTagA1]);
 
   // -- if we turn off sticky, make sure that things clear when we change
   //     folders.  (we had a bug with this before.)
-  toggle_boolean_constraints("sticky");
+  await toggle_boolean_constraints("sticky");
   await be_in_folder(folderTwo);
   assert_constraints_expressed({});
   teardownTest();
@@ -150,12 +149,12 @@ add_task(async function test_sticky_tags() {
  *  |test_filter_text_constraints_propagate|.
  */
 add_task(async function test_sticky_text() {
-  let folderOne = await create_folder("QuickFilterBarStickyText1");
-  let folderTwo = await create_folder("QuickFilterBarStickyText2");
+  const folderOne = await create_folder("QuickFilterBarStickyText1");
+  const folderTwo = await create_folder("QuickFilterBarStickyText2");
 
   await be_in_folder(folderOne);
-  toggle_boolean_constraints("sticky");
-  set_filter_text("foo");
+  await toggle_boolean_constraints("sticky");
+  await set_filter_text("foo");
 
   await be_in_folder(folderTwo);
   assert_filter_text("foo");

@@ -3,47 +3,47 @@
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
-exports.MatrixCall = exports.CallType = exports.CallState = exports.CallParty = exports.CallEvent = exports.CallErrorCode = exports.CallError = exports.CallDirection = void 0;
+exports.MatrixCall = exports.FALLBACK_ICE_SERVER = exports.CallType = exports.CallState = exports.CallParty = exports.CallEvent = exports.CallErrorCode = exports.CallError = exports.CallDirection = void 0;
 exports.createNewMatrixCall = createNewMatrixCall;
 exports.genCallID = genCallID;
 exports.setTracksEnabled = setTracksEnabled;
 exports.supportsMatrixCall = supportsMatrixCall;
 var _uuid = require("uuid");
 var _sdpTransform = require("sdp-transform");
-var _logger = require("../logger");
-var _utils = require("../utils");
-var _event = require("../@types/event");
-var _randomstring = require("../randomstring");
-var _callEventTypes = require("./callEventTypes");
-var _callFeed = require("./callFeed");
-var _typedEventEmitter = require("../models/typed-event-emitter");
-var _deviceinfo = require("../crypto/deviceinfo");
-var _groupCall = require("./groupCall");
-var _httpApi = require("../http-api");
-function ownKeys(object, enumerableOnly) { var keys = Object.keys(object); if (Object.getOwnPropertySymbols) { var symbols = Object.getOwnPropertySymbols(object); enumerableOnly && (symbols = symbols.filter(function (sym) { return Object.getOwnPropertyDescriptor(object, sym).enumerable; })), keys.push.apply(keys, symbols); } return keys; }
-function _objectSpread(target) { for (var i = 1; i < arguments.length; i++) { var source = null != arguments[i] ? arguments[i] : {}; i % 2 ? ownKeys(Object(source), !0).forEach(function (key) { _defineProperty(target, key, source[key]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) : ownKeys(Object(source)).forEach(function (key) { Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key)); }); } return target; }
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(arg) { var key = _toPrimitive(arg, "string"); return typeof key === "symbol" ? key : String(key); }
-function _toPrimitive(input, hint) { if (typeof input !== "object" || input === null) return input; var prim = input[Symbol.toPrimitive]; if (prim !== undefined) { var res = prim.call(input, hint || "default"); if (typeof res !== "object") return res; throw new TypeError("@@toPrimitive must return a primitive value."); } return (hint === "string" ? String : Number)(input); } /*
-                                                                                                                                                                                                                                                                                                                                                                                          Copyright 2015, 2016 OpenMarket Ltd
-                                                                                                                                                                                                                                                                                                                                                                                          Copyright 2017 New Vector Ltd
-                                                                                                                                                                                                                                                                                                                                                                                          Copyright 2019, 2020 The Matrix.org Foundation C.I.C.
-                                                                                                                                                                                                                                                                                                                                                                                          Copyright 2021 - 2022 Šimon Brandner <simon.bra.ag@gmail.com>
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Licensed under the Apache License, Version 2.0 (the "License");
-                                                                                                                                                                                                                                                                                                                                                                                          you may not use this file except in compliance with the License.
-                                                                                                                                                                                                                                                                                                                                                                                          You may obtain a copy of the License at
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                              http://www.apache.org/licenses/LICENSE-2.0
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Unless required by applicable law or agreed to in writing, software
-                                                                                                                                                                                                                                                                                                                                                                                          distributed under the License is distributed on an "AS IS" BASIS,
-                                                                                                                                                                                                                                                                                                                                                                                          WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-                                                                                                                                                                                                                                                                                                                                                                                          See the License for the specific language governing permissions and
-                                                                                                                                                                                                                                                                                                                                                                                          limitations under the License.
-                                                                                                                                                                                                                                                                                                                                                                                          */ /**
-                                                                                                                                                                                                                                                                                                                                                                                              * This is an internal module. See {@link createNewMatrixCall} for the public API.
-                                                                                                                                                                                                                                                                                                                                                                                              */
+var _logger = require("../logger.js");
+var _utils = require("../utils.js");
+var _event = require("../@types/event.js");
+var _randomstring = require("../randomstring.js");
+var _callEventTypes = require("./callEventTypes.js");
+var _callFeed = require("./callFeed.js");
+var _typedEventEmitter = require("../models/typed-event-emitter.js");
+var _deviceinfo = require("../crypto/deviceinfo.js");
+var _groupCall = require("./groupCall.js");
+var _index = require("../http-api/index.js");
+function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
+function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
+function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
+Copyright 2015, 2016 OpenMarket Ltd
+Copyright 2017 New Vector Ltd
+Copyright 2019, 2020 The Matrix.org Foundation C.I.C.
+Copyright 2021 - 2022 Šimon Brandner <simon.bra.ag@gmail.com>
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/ /**
+ * This is an internal module. See {@link createNewMatrixCall} for the public API.
+ */
 var MediaType = /*#__PURE__*/function (MediaType) {
   MediaType["AUDIO"] = "audio";
   MediaType["VIDEO"] = "video";
@@ -54,7 +54,7 @@ var CodecName = /*#__PURE__*/function (CodecName) {
   return CodecName;
 }(CodecName || {}); // add more as needed
 // Used internally to specify modifications to codec parameters in SDP
-let CallState = /*#__PURE__*/function (CallState) {
+let CallState = exports.CallState = /*#__PURE__*/function (CallState) {
   CallState["Fledgling"] = "fledgling";
   CallState["InviteSent"] = "invite_sent";
   CallState["WaitLocalMedia"] = "wait_local_media";
@@ -66,26 +66,22 @@ let CallState = /*#__PURE__*/function (CallState) {
   CallState["Ended"] = "ended";
   return CallState;
 }({});
-exports.CallState = CallState;
-let CallType = /*#__PURE__*/function (CallType) {
+let CallType = exports.CallType = /*#__PURE__*/function (CallType) {
   CallType["Voice"] = "voice";
   CallType["Video"] = "video";
   return CallType;
 }({});
-exports.CallType = CallType;
-let CallDirection = /*#__PURE__*/function (CallDirection) {
+let CallDirection = exports.CallDirection = /*#__PURE__*/function (CallDirection) {
   CallDirection["Inbound"] = "inbound";
   CallDirection["Outbound"] = "outbound";
   return CallDirection;
 }({});
-exports.CallDirection = CallDirection;
-let CallParty = /*#__PURE__*/function (CallParty) {
+let CallParty = exports.CallParty = /*#__PURE__*/function (CallParty) {
   CallParty["Local"] = "local";
   CallParty["Remote"] = "remote";
   return CallParty;
 }({});
-exports.CallParty = CallParty;
-let CallEvent = /*#__PURE__*/function (CallEvent) {
+let CallEvent = exports.CallEvent = /*#__PURE__*/function (CallEvent) {
   CallEvent["Hangup"] = "hangup";
   CallEvent["State"] = "state";
   CallEvent["Error"] = "error";
@@ -101,8 +97,7 @@ let CallEvent = /*#__PURE__*/function (CallEvent) {
   CallEvent["PeerConnectionCreated"] = "peer_connection_created";
   return CallEvent;
 }({});
-exports.CallEvent = CallEvent;
-let CallErrorCode = /*#__PURE__*/function (CallErrorCode) {
+let CallErrorCode = exports.CallErrorCode = /*#__PURE__*/function (CallErrorCode) {
   CallErrorCode["UserHangup"] = "user_hangup";
   CallErrorCode["LocalOfferFailed"] = "local_offer_failed";
   CallErrorCode["NoUserMedia"] = "no_user_media";
@@ -126,11 +121,10 @@ let CallErrorCode = /*#__PURE__*/function (CallErrorCode) {
 /**
  * The version field that we set in m.call.* events
  */
-exports.CallErrorCode = CallErrorCode;
 const VOIP_PROTO_VERSION = "1";
 
 /** The fallback ICE server to use for STUN or TURN protocols. */
-const FALLBACK_ICE_SERVER = "stun:turn.matrix.org";
+const FALLBACK_ICE_SERVER = exports.FALLBACK_ICE_SERVER = "stun:turn.matrix.org";
 
 /** The length of time a call can be ringing for. */
 const CALL_TIMEOUT_MS = 60 * 1000; // ms
@@ -299,14 +293,22 @@ class MatrixCall extends _typedEventEmitter.TypedEventEmitter {
         return;
       }
       _logger.logger.warn(`Call ${this.callId} getUserMediaFailed() failed to get user media - ending call`, err);
-      this.emit(CallEvent.Error, new CallError(CallErrorCode.NoUserMedia, "Couldn't start capturing media! Is your microphone set up and " + "does this app have permission?", err), this);
+      this.emit(CallEvent.Error, new CallError(CallErrorCode.NoUserMedia, "Couldn't start capturing media! Is your microphone set up and does this app have permission?", err), this);
       this.terminate(CallParty.Local, CallErrorCode.NoUserMedia, false);
+    });
+    _defineProperty(this, "placeCallFailed", err => {
+      if (this.successor) {
+        this.successor.placeCallFailed(err);
+        return;
+      }
+      _logger.logger.warn(`Call ${this.callId} placeCallWithCallFeeds() failed - ending call`, err);
+      this.emit(CallEvent.Error, new CallError(CallErrorCode.IceFailed, "Couldn't start call! Invalid ICE server configuration.", err), this);
+      this.terminate(CallParty.Local, CallErrorCode.IceFailed, false);
     });
     _defineProperty(this, "onIceConnectionStateChanged", () => {
       if (this.callHasEnded()) {
         return; // because ICE can still complete as we're ending the call
       }
-
       _logger.logger.debug(`Call ${this.callId} onIceConnectionStateChanged() running (state=${this.peerConn?.iceConnectionState}, conn=${this.peerConn?.connectionState})`);
 
       // ideally we'd consider the call to be connected when we get media but
@@ -1092,7 +1094,7 @@ class MatrixCall extends _typedEventEmitter.TypedEventEmitter {
   /**
    * Starts/stops screensharing
    * @param enabled - the desired screensharing state
-   * @param desktopCapturerSourceId - optional id of the desktop capturer source to use
+   * @param opts - screen sharing options
    * @returns new screensharing state
    */
   async setScreensharingEnabled(enabled, opts) {
@@ -1138,7 +1140,7 @@ class MatrixCall extends _typedEventEmitter.TypedEventEmitter {
    * Starts/stops screensharing
    * Should be used ONLY if the opponent doesn't support SDPStreamMetadata
    * @param enabled - the desired screensharing state
-   * @param desktopCapturerSourceId - optional id of the desktop capturer source to use
+   * @param opts - screen sharing options
    * @returns new screensharing state
    */
   async setScreensharingEnabledWithoutMetadataSupport(enabled, opts) {
@@ -1404,7 +1406,6 @@ class MatrixCall extends _typedEventEmitter.TypedEventEmitter {
     _logger.logger.debug(`Call ${this.callId} gotUserMediaForInvite() run`);
     // Now we wait for the negotiationneeded event
   }
-
   async sendAnswer() {
     const answerContent = {
       answer: {
@@ -1433,7 +1434,7 @@ class MatrixCall extends _typedEventEmitter.TypedEventEmitter {
     } catch (error) {
       // We've failed to answer: back to the ringing state
       this.state = CallState.Ringing;
-      if (error instanceof _httpApi.MatrixError && error.event) this.client.cancelPendingEvent(error.event);
+      if (error instanceof _index.MatrixError && error.event) this.client.cancelPendingEvent(error.event);
       let code = CallErrorCode.SendAnswer;
       let message = "Failed to send answer";
       if (error.name == "UnknownDeviceError") {
@@ -1687,6 +1688,7 @@ class MatrixCall extends _typedEventEmitter.TypedEventEmitter {
         await this.peerConn.setLocalDescription(answer);
         _logger.logger.debug(`Call ${this.callId} onNegotiateReceived() create an answer`);
         this.sendVoipEvent(_event.EventType.CallNegotiate, {
+          lifetime: CALL_TIMEOUT_MS,
           description: this.peerConn.localDescription?.toJSON(),
           [_callEventTypes.SDPStreamMetadataKey]: this.getLocalSDPStreamMetadata(true)
         });
@@ -1813,7 +1815,7 @@ class MatrixCall extends _typedEventEmitter.TypedEventEmitter {
       await this.sendVoipEvent(eventType, content);
     } catch (error) {
       _logger.logger.error(`Call ${this.callId} gotLocalOffer() failed to send invite`, error);
-      if (error instanceof _httpApi.MatrixError && error.event) this.client.cancelPendingEvent(error.event);
+      if (error instanceof _index.MatrixError && error.event) this.client.cancelPendingEvent(error.event);
       let code = CallErrorCode.SignallingFailed;
       let message = "Signalling failed";
       if (this.state === CallState.CreateOffer) {
@@ -1859,24 +1861,38 @@ class MatrixCall extends _typedEventEmitter.TypedEventEmitter {
   getRidOfRTXCodecs() {
     // RTCRtpReceiver.getCapabilities and RTCRtpSender.getCapabilities don't seem to be supported on FF before v113
     if (!RTCRtpReceiver.getCapabilities || !RTCRtpSender.getCapabilities) return;
+    const screenshareVideoTransceiver = this.transceivers.get(getTransceiverKey(_callEventTypes.SDPStreamMetadataPurpose.Screenshare, "video"));
+
+    // setCodecPreferences isn't supported on FF (as of v113)
+    if (!screenshareVideoTransceiver || !screenshareVideoTransceiver.setCodecPreferences) return;
     const recvCodecs = RTCRtpReceiver.getCapabilities("video").codecs;
     const sendCodecs = RTCRtpSender.getCapabilities("video").codecs;
-    const codecs = [...sendCodecs, ...recvCodecs];
-    for (const codec of codecs) {
-      if (codec.mimeType === "video/rtx") {
-        const rtxCodecIndex = codecs.indexOf(codec);
-        codecs.splice(rtxCodecIndex, 1);
+    const codecs = [];
+    for (const codec of [...recvCodecs, ...sendCodecs]) {
+      if (codec.mimeType !== "video/rtx") {
+        codecs.push(codec);
+        try {
+          screenshareVideoTransceiver.setCodecPreferences(codecs);
+        } catch (e) {
+          // Specifically, Chrome around version 125 and Electron 30 (which is Chromium 124) return an H.264 codec in
+          // the sender's capabilities but throw when you try to set it. Hence... this mess.
+          // Specifically, that codec is:
+          // {
+          //   clockRate: 90000,
+          //   mimeType: "video/H264",
+          //   sdpFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640034",
+          // }
+          _logger.logger.info("Working around buggy WebRTC impl: claimed to support codec but threw when setting codec preferences", codec, e);
+          codecs.pop();
+        }
       }
     }
-    const screenshareVideoTransceiver = this.transceivers.get(getTransceiverKey(_callEventTypes.SDPStreamMetadataPurpose.Screenshare, "video"));
-    // setCodecPreferences isn't supported on FF (as of v113)
-    screenshareVideoTransceiver?.setCodecPreferences?.(codecs);
   }
   /**
    * @internal
    */
   async sendVoipEvent(eventType, content) {
-    const realContent = Object.assign({}, content, {
+    const realContent = _objectSpread(_objectSpread({}, content), {}, {
       version: VOIP_PROTO_VERSION,
       call_id: this.callId,
       party_id: this.ourPartyId,
@@ -2132,7 +2148,7 @@ class MatrixCall extends _typedEventEmitter.TypedEventEmitter {
     } catch (error) {
       // don't retry this event: we'll send another one later as we might
       // have more candidates by then.
-      if (error instanceof _httpApi.MatrixError && error.event) this.client.cancelPendingEvent(error.event);
+      if (error instanceof _index.MatrixError && error.event) this.client.cancelPendingEvent(error.event);
 
       // put all the candidates we failed to send back in the queue
       this.candidateSendQueue.push(...candidates);
@@ -2163,6 +2179,7 @@ class MatrixCall extends _typedEventEmitter.TypedEventEmitter {
       throw new Error("You CANNOT start a call without audio");
     }
     this.state = CallState.WaitLocalMedia;
+    let callFeed;
     try {
       const stream = await this.client.getMediaHandler().getUserMediaStream(audio, video);
 
@@ -2170,7 +2187,7 @@ class MatrixCall extends _typedEventEmitter.TypedEventEmitter {
       // we probably ought to just have one code path for adding streams)
       setTracksEnabled(stream.getAudioTracks(), true);
       setTracksEnabled(stream.getVideoTracks(), true);
-      const callFeed = new _callFeed.CallFeed({
+      callFeed = new _callFeed.CallFeed({
         client: this.client,
         roomId: this.roomId,
         userId: this.client.getUserId(),
@@ -2180,9 +2197,14 @@ class MatrixCall extends _typedEventEmitter.TypedEventEmitter {
         audioMuted: false,
         videoMuted: false
       });
-      await this.placeCallWithCallFeeds([callFeed]);
     } catch (e) {
       this.getUserMediaFailed(e);
+      return;
+    }
+    try {
+      await this.placeCallWithCallFeeds([callFeed]);
+    } catch (e) {
+      this.placeCallFailed(e);
       return;
     }
   }
@@ -2217,7 +2239,7 @@ class MatrixCall extends _typedEventEmitter.TypedEventEmitter {
   createPeerConnection() {
     const pc = new window.RTCPeerConnection({
       iceTransportPolicy: this.forceTURN ? "relay" : undefined,
-      iceServers: this.turnServers,
+      iceServers: this.turnServers.length ? this.turnServers : undefined,
       iceCandidatePoolSize: this.client.iceCandidatePoolSize,
       bundlePolicy: "max-bundle"
     });

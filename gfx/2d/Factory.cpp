@@ -50,13 +50,16 @@
 #  include <d3d10_1.h>
 #  include <stdlib.h>
 #  include "HelpersD2D.h"
-#  include "DXVA2Manager.h"
+#  include "ImageContainer.h"
+#  include "mozilla/layers/LayersSurfaces.h"
 #  include "mozilla/layers/TextureD3D11.h"
+#  include "mozilla/layers/VideoProcessorD3D11.h"
 #  include "nsWindowsHelpers.h"
 #endif
 
 #include "DrawTargetOffset.h"
 #include "DrawTargetRecording.h"
+#include "PathRecording.h"
 
 #include "SourceSurfaceRawData.h"
 
@@ -250,6 +253,8 @@ void Factory::Init(const Config& aConfig) {
 #else
   NativeFontResource::RegisterMemoryReporter();
 #endif
+
+  SourceSurfaceAlignedRawData::RegisterMemoryReporter();
 }
 
 void Factory::ShutDown() {
@@ -428,6 +433,8 @@ already_AddRefed<PathBuilder> Factory::CreatePathBuilder(BackendType aBackend,
     case BackendType::CAIRO:
       return PathBuilderCairo::Create(aFillRule);
 #endif
+    case BackendType::RECORDING:
+      return do_AddRef(new PathBuilderRecording(BackendType::SKIA, aFillRule));
     default:
       gfxCriticalNote << "Invalid PathBuilder type specified: "
                       << (int)aBackend;
@@ -594,11 +601,10 @@ already_AddRefed<UnscaledFont> Factory::CreateUnscaledFontFromFontDescriptor(
 #ifdef XP_DARWIN
 already_AddRefed<ScaledFont> Factory::CreateScaledFontForMacFont(
     CGFontRef aCGFont, const RefPtr<UnscaledFont>& aUnscaledFont, Float aSize,
-    const DeviceColor& aFontSmoothingBackgroundColor, bool aUseFontSmoothing,
-    bool aApplySyntheticBold, bool aHasColorGlyphs) {
-  return MakeAndAddRef<ScaledFontMac>(
-      aCGFont, aUnscaledFont, aSize, false, aFontSmoothingBackgroundColor,
-      aUseFontSmoothing, aApplySyntheticBold, aHasColorGlyphs);
+    bool aUseFontSmoothing, bool aApplySyntheticBold, bool aHasColorGlyphs) {
+  return MakeAndAddRef<ScaledFontMac>(aCGFont, aUnscaledFont, aSize, false,
+                                      aUseFontSmoothing, aApplySyntheticBold,
+                                      aHasColorGlyphs);
 }
 #endif
 
@@ -1105,6 +1111,40 @@ already_AddRefed<DataSourceSurface> Factory::CreateDataSourceSurfaceWithStride(
   return nullptr;
 }
 
+already_AddRefed<DataSourceSurface> Factory::CopyDataSourceSurface(
+    DataSourceSurface* aSource) {
+  // Don't worry too much about speed.
+  MOZ_ASSERT(aSource->GetFormat() == SurfaceFormat::R8G8B8A8 ||
+             aSource->GetFormat() == SurfaceFormat::R8G8B8X8 ||
+             aSource->GetFormat() == SurfaceFormat::B8G8R8A8 ||
+             aSource->GetFormat() == SurfaceFormat::B8G8R8X8);
+
+  DataSourceSurface::ScopedMap srcMap(aSource, DataSourceSurface::READ);
+  if (NS_WARN_IF(!srcMap.IsMapped())) {
+    MOZ_ASSERT_UNREACHABLE("CopyDataSourceSurface: Failed to map surface.");
+    return nullptr;
+  }
+
+  IntSize size = aSource->GetSize();
+  SurfaceFormat format = aSource->GetFormat();
+
+  RefPtr<DataSourceSurface> dst = CreateDataSourceSurfaceWithStride(
+      size, format, srcMap.GetStride(), /* aZero */ false);
+  if (NS_WARN_IF(!dst)) {
+    return nullptr;
+  }
+
+  DataSourceSurface::ScopedMap dstMap(dst, DataSourceSurface::WRITE);
+  if (NS_WARN_IF(!dstMap.IsMapped())) {
+    MOZ_ASSERT_UNREACHABLE("CopyDataSourceSurface: Failed to map surface.");
+    return nullptr;
+  }
+
+  SwizzleData(srcMap.GetData(), srcMap.GetStride(), format, dstMap.GetData(),
+              dstMap.GetStride(), format, size);
+  return dst.forget();
+}
+
 void Factory::CopyDataSourceSurface(DataSourceSurface* aSource,
                                     DataSourceSurface* aDest) {
   // Don't worry too much about speed.
@@ -1139,7 +1179,8 @@ void Factory::CopyDataSourceSurface(DataSourceSurface* aSource,
 /* static */
 already_AddRefed<DataSourceSurface>
 Factory::CreateBGRA8DataSourceSurfaceForD3D11Texture(
-    ID3D11Texture2D* aSrcTexture, uint32_t aArrayIndex) {
+    ID3D11Texture2D* aSrcTexture, uint32_t aArrayIndex,
+    gfx::ColorSpace2 aColorSpace, gfx::ColorRange aColorRange) {
   D3D11_TEXTURE2D_DESC srcDesc = {0};
   aSrcTexture->GetDesc(&srcDesc);
 
@@ -1149,17 +1190,50 @@ Factory::CreateBGRA8DataSourceSurfaceForD3D11Texture(
   if (NS_WARN_IF(!destTexture)) {
     return nullptr;
   }
-  if (!ReadbackTexture(destTexture, aSrcTexture, aArrayIndex)) {
+  if (!ReadbackTexture(destTexture, aSrcTexture, aArrayIndex, aColorSpace,
+                       aColorRange)) {
     return nullptr;
   }
   return destTexture.forget();
 }
 
+/* static */ nsresult Factory::CreateSdbForD3D11Texture(
+    ID3D11Texture2D* aSrcTexture, const IntSize& aSrcSize,
+    layers::SurfaceDescriptorBuffer& aSdBuffer,
+    const std::function<layers::MemoryOrShmem(uint32_t)>& aAllocate) {
+  D3D11_TEXTURE2D_DESC srcDesc = {0};
+  aSrcTexture->GetDesc(&srcDesc);
+  if (srcDesc.Width != uint32_t(aSrcSize.width) ||
+      srcDesc.Height != uint32_t(aSrcSize.height) ||
+      srcDesc.Format != DXGI_FORMAT_B8G8R8A8_UNORM) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
+
+  const auto format = gfx::SurfaceFormat::B8G8R8A8;
+  uint8_t* buffer = nullptr;
+  int32_t stride = 0;
+  nsresult rv = layers::Image::AllocateSurfaceDescriptorBufferRgb(
+      aSrcSize, format, buffer, aSdBuffer, stride, aAllocate);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  if (!ReadbackTexture(buffer, stride, aSrcTexture)) {
+    return NS_ERROR_FAILURE;
+  }
+
+  return NS_OK;
+}
+
 /* static */
-template <typename DestTextureT>
-bool Factory::ConvertSourceAndRetryReadback(DestTextureT* aDestCpuTexture,
+bool Factory::ConvertSourceAndRetryReadback(DataSourceSurface* aDestCpuTexture,
                                             ID3D11Texture2D* aSrcTexture,
-                                            uint32_t aArrayIndex) {
+                                            uint32_t aArrayIndex,
+                                            gfx::ColorSpace2 aColorSpace,
+                                            gfx::ColorRange aColorRange) {
+  MOZ_ASSERT(aDestCpuTexture);
+  MOZ_ASSERT(aSrcTexture);
+
   RefPtr<ID3D11Device> device;
   aSrcTexture->GetDevice(getter_AddRefs(device));
   if (!device) {
@@ -1167,57 +1241,57 @@ bool Factory::ConvertSourceAndRetryReadback(DestTextureT* aDestCpuTexture,
     return false;
   }
 
-  nsAutoCString error;
-  std::unique_ptr<DXVA2Manager> manager(
-      DXVA2Manager::CreateD3D11DXVA(nullptr, error, device));
-  if (!manager) {
-    gfxWarning() << "Failed to create DXVA2 manager!";
+  CD3D11_TEXTURE2D_DESC desc;
+  aSrcTexture->GetDesc(&desc);
+
+  if (desc.Format != DXGI_FORMAT_NV12 && desc.Format != DXGI_FORMAT_P010 &&
+      desc.Format != DXGI_FORMAT_P016) {
+    gfxWarning() << "Unexpected DXGI format";
     return false;
   }
+
+  desc = CD3D11_TEXTURE2D_DESC(
+      DXGI_FORMAT_B8G8R8A8_UNORM, desc.Width, desc.Height, 1, 1,
+      D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE);
 
   RefPtr<ID3D11Texture2D> newSrcTexture;
-  HRESULT hr = manager->CopyToBGRATexture(aSrcTexture, aArrayIndex,
-                                          getter_AddRefs(newSrcTexture));
+  HRESULT hr =
+      device->CreateTexture2D(&desc, nullptr, getter_AddRefs(newSrcTexture));
   if (FAILED(hr)) {
-    gfxWarning() << "Failed to copy to BGRA texture.";
+    gfxWarning() << "Failed to create newSrcTexture: " << gfx::hexa(hr);
     return false;
   }
 
-  return ReadbackTexture(aDestCpuTexture, newSrcTexture);
-}
-
-/* static */
-bool Factory::ReadbackTexture(layers::TextureData* aDestCpuTexture,
-                              ID3D11Texture2D* aSrcTexture) {
-  layers::MappedTextureData mappedData;
-  if (!aDestCpuTexture->BorrowMappedData(mappedData)) {
-    gfxWarning() << "Could not access in-memory texture";
+  RefPtr<layers::VideoProcessorD3D11> videoProcessor =
+      layers::VideoProcessorD3D11::Create(device);
+  if (!videoProcessor) {
+    gfxWarning() << "Failed to create VideoProcessorD3D11";
     return false;
   }
 
-  D3D11_TEXTURE2D_DESC srcDesc = {0};
-  aSrcTexture->GetDesc(&srcDesc);
-
-  // Special case: If the source and destination have different formats and the
-  // destination is B8G8R8A8 then convert the source to B8G8R8A8 and readback.
-  if ((srcDesc.Format != DXGIFormat(mappedData.format)) &&
-      (mappedData.format == SurfaceFormat::B8G8R8A8)) {
-    return ConvertSourceAndRetryReadback(aDestCpuTexture, aSrcTexture);
-  }
-
-  if ((IntSize(srcDesc.Width, srcDesc.Height) != mappedData.size) ||
-      (srcDesc.Format != DXGIFormat(mappedData.format))) {
-    gfxWarning() << "Attempted readback between incompatible textures";
+  hr = videoProcessor->Init(aDestCpuTexture->GetSize());
+  if (FAILED(hr)) {
+    gfxWarning() << "Failed to init VideoProcessorD3D11" << gfx::hexa(hr);
     return false;
   }
 
-  return ReadbackTexture(mappedData.data, mappedData.stride, aSrcTexture);
+  layers::VideoProcessorD3D11::InputTextureInfo info(aColorSpace, aColorRange,
+                                                     aArrayIndex, aSrcTexture);
+  if (!videoProcessor->CallVideoProcessorBlt(info, newSrcTexture)) {
+    gfxWarning() << "CallVideoProcessorBlt failed";
+    return false;
+  }
+
+  return ReadbackTexture(aDestCpuTexture, newSrcTexture, 0, aColorSpace,
+                         aColorRange);
 }
 
 /* static */
 bool Factory::ReadbackTexture(DataSourceSurface* aDestCpuTexture,
                               ID3D11Texture2D* aSrcTexture,
-                              uint32_t aArrayIndex) {
+                              uint32_t aArrayIndex,
+                              gfx::ColorSpace2 aColorSpace,
+                              gfx::ColorRange aColorRange) {
   D3D11_TEXTURE2D_DESC srcDesc = {0};
   aSrcTexture->GetDesc(&srcDesc);
 
@@ -1226,7 +1300,7 @@ bool Factory::ReadbackTexture(DataSourceSurface* aDestCpuTexture,
   if ((srcDesc.Format != DXGIFormat(aDestCpuTexture->GetFormat())) &&
       (aDestCpuTexture->GetFormat() == SurfaceFormat::B8G8R8A8)) {
     return ConvertSourceAndRetryReadback(aDestCpuTexture, aSrcTexture,
-                                         aArrayIndex);
+                                         aArrayIndex, aColorSpace, aColorRange);
   }
 
   if ((IntSize(srcDesc.Width, srcDesc.Height) != aDestCpuTexture->GetSize()) ||

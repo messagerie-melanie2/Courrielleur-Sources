@@ -4,25 +4,25 @@
 
 export class LinkHandlerParent extends JSWindowActorParent {
   receiveMessage(msg) {
-    let browser = this.browsingContext.top.embedderElement;
+    const browser = this.browsingContext.top.embedderElement;
     if (!browser) {
       return;
     }
 
     switch (msg.name) {
       case "Link:SetIcon":
-        this.setIconFromLink(browser, msg.data.iconURL, msg.data.canUseForTab);
+        this.setIconFromLink(browser, msg.data.iconURL, msg.data.isRichIcon);
         break;
     }
   }
 
-  setIconFromLink(browser, iconURL, canUseForTab) {
-    let tabmail = browser.ownerDocument.getElementById("tabmail");
+  setIconFromLink(browser, iconURL, isRichIcon) {
+    const tabmail = browser.ownerDocument.getElementById("tabmail");
     if (!tabmail) {
       return;
     }
 
-    let tab = tabmail.getTabForBrowser(browser);
+    const tab = tabmail.getTabForBrowser(browser);
     if (tab?.mode?.type != "contentTab") {
       return;
     }
@@ -46,7 +46,7 @@ export class LinkHandlerParent extends JSWindowActorParent {
       }
     }
 
-    if (canUseForTab) {
+    if (!isRichIcon) {
       tabmail.setTabFavIcon(
         tab,
         iconURL,

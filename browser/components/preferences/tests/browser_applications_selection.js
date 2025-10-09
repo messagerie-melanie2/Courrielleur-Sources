@@ -76,7 +76,7 @@ add_setup(async function () {
     Ci.nsIWebHandlerApp
   );
   handler2.name = "Handler 2";
-  handler2.uriTemplate = "http://example.org/second/%s";
+  handler2.uriTemplate = "https://example.org/second/%s";
   gDummyHandlers.push(handler1, handler2);
 
   function substituteWebHandlers(handlerInfo) {
@@ -335,10 +335,12 @@ add_task(async function sortingCheck() {
       "Number of items should not change."
     );
     for (let i = 0; i < siteItems.length - 1; ++i) {
-      let aType = siteItems[i].getAttribute("actionDescription").toLowerCase();
-      let bType = siteItems[i + 1]
-        .getAttribute("actionDescription")
-        .toLowerCase();
+      let aType = (
+        siteItems[i].getAttribute("actionDescription") || ""
+      ).toLowerCase();
+      let bType = (
+        siteItems[i + 1].getAttribute("actionDescription") || ""
+      ).toLowerCase();
       let result = 0;
       if (aType > bType) {
         result = 1;
@@ -375,10 +377,12 @@ add_task(async function sortingCheck() {
       "Number of items should not change."
     );
     for (let i = 0; i < siteItems.length - 1; ++i) {
-      let aType = siteItems[i].getAttribute("typeDescription").toLowerCase();
-      let bType = siteItems[i + 1]
-        .getAttribute("typeDescription")
-        .toLowerCase();
+      let aType = (
+        siteItems[i].getAttribute("typeDescription") || ""
+      ).toLowerCase();
+      let bType = (
+        siteItems[i + 1].getAttribute("typeDescription") || ""
+      ).toLowerCase();
       let result = 0;
       if (aType > bType) {
         result = 1;

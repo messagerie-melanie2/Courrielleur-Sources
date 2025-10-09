@@ -19,7 +19,7 @@ registerCleanupFunction(async () => {
 let Http3FailedListener = function () {};
 
 Http3FailedListener.prototype = {
-  onStartRequest: function testOnStartRequest(request) {},
+  onStartRequest: function testOnStartRequest() {},
 
   onDataAvailable: function testOnDataAvailable(request, stream, off, cnt) {
     this.amount += cnt;
@@ -74,7 +74,7 @@ add_task(async function test_fatal_error() {
   Services.prefs.setBoolPref("network.dns.disableIPv6", true);
   Services.prefs.setCharPref(
     "network.http.http3.alt-svc-mapping-for-testing",
-    "foo.example.com;h3-29=:" + h3Port
+    "foo.example.com;h3=:" + h3Port
   );
   Services.prefs.setIntPref("network.http.http3.backup_timer_delay", 0);
 
@@ -103,7 +103,7 @@ add_task(async function test_fatal_stream_error() {
 let CheckOnlyHttp2Listener = function () {};
 
 CheckOnlyHttp2Listener.prototype = {
-  onStartRequest: function testOnStartRequest(request) {},
+  onStartRequest: function testOnStartRequest() {},
 
   onDataAvailable: function testOnDataAvailable(request, stream, off, cnt) {
     read_stream(stream, cnt);

@@ -4,24 +4,21 @@
 
 "use strict";
 
-var EventUtils = ChromeUtils.import(
-  "resource://testing-common/mozmill/EventUtils.jsm"
+var { open_content_tab_with_url } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ContentTabHelpers.sys.mjs"
 );
-
-var { assert_content_tab_has_favicon, open_content_tab_with_url } =
-  ChromeUtils.import("resource://testing-common/mozmill/ContentTabHelpers.jsm");
-var { assert_element_visible, assert_element_not_visible } = ChromeUtils.import(
-  "resource://testing-common/mozmill/DOMHelpers.jsm"
-);
-
-var { be_in_folder, inboxFolder } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-);
-
-var { assert_tab_has_title, close_popup, mc, wait_for_popup_to_open } =
-  ChromeUtils.import(
-    "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+var { assert_element_visible, assert_element_not_visible } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/DOMHelpers.sys.mjs"
   );
+
+var { be_in_folder, inboxFolder } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
+);
+
+var { close_popup } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
+);
 
 var url =
   "http://mochi.test:8888/browser/comm/mail/test/browser/content-tabs/html/";
@@ -30,12 +27,16 @@ var whatsUrl = url + "whatsnew.html";
 add_task(async function test_content_tab_open() {
   // Need to open the thread pane to load the appropriate context menus.
   await be_in_folder(inboxFolder);
-  let tab = open_content_tab_with_url(whatsUrl);
+  const tab = await open_content_tab_with_url(whatsUrl);
 
-  assert_tab_has_title(tab, "What's New Content Test");
+  Assert.equal(
+    tab.title,
+    "What's New Content Test",
+    "tab should have correct title"
+  );
   // Check the location of the what's new image, this is via the link element
   // and therefore should be set and not favicon.png.
-  // assert_content_tab_has_favicon(tab, url + "whatsnew.png");
+  // Assert.equal(tab.favIconUrl, url + "whatsnew.png", "Checking tab favicon");
 
   // Check that window.content is set up correctly wrt content-primary and
   // content-targetable.
@@ -53,7 +54,7 @@ add_task(async function test_content_tab_open() {
  * spell checking options.
  */
 add_task(async function test_spellcheck_in_content_tabs() {
-  let tabmail = mc.window.document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
 
   // Test a few random items
   BrowserTestUtils.synthesizeMouseAtCenter(
@@ -72,11 +73,11 @@ add_task(async function test_spellcheck_in_content_tabs() {
     { type: "contextmenu" },
     tabmail.selectedTab.browser
   );
-  let browserContext = mc.window.document.getElementById("browserContext");
-  await wait_for_popup_to_open(browserContext);
+  const browserContext = document.getElementById("browserContext");
+  await BrowserTestUtils.waitForPopupEvent(browserContext, "shown");
   assert_element_visible("browserContext-spell-dictionaries");
   assert_element_visible("browserContext-spell-check-enabled");
-  await close_popup(mc, browserContext);
+  await close_popup(window, browserContext);
 
   // Different test
   BrowserTestUtils.synthesizeMouseAtCenter(
@@ -84,10 +85,10 @@ add_task(async function test_spellcheck_in_content_tabs() {
     { type: "contextmenu" },
     tabmail.selectedTab.browser
   );
-  await wait_for_popup_to_open(browserContext);
+  await BrowserTestUtils.waitForPopupEvent(browserContext, "shown");
   assert_element_not_visible("browserContext-spell-dictionaries");
   assert_element_not_visible("browserContext-spell-check-enabled");
-  await close_popup(mc, browserContext);
+  await close_popup(window, browserContext);
 
   // Right-click on "zombocom" and add to dictionary
   BrowserTestUtils.synthesizeMouse(
@@ -97,11 +98,10 @@ add_task(async function test_spellcheck_in_content_tabs() {
     { type: "contextmenu", button: 2 },
     tabmail.selectedTab.browser
   );
-  await wait_for_popup_to_open(browserContext);
-  let suggestions =
-    mc.window.document.getElementsByClassName("spell-suggestion");
+  await BrowserTestUtils.waitForPopupEvent(browserContext, "shown");
+  let suggestions = document.getElementsByClassName("spell-suggestion");
   Assert.ok(suggestions.length > 0, "What, is zombocom a registered word now?");
-  let addToDict = mc.window.document.getElementById(
+  const addToDict = document.getElementById(
     "browserContext-spell-add-to-dictionary"
   );
   if (AppConstants.platform == "macosx") {
@@ -111,7 +111,7 @@ add_task(async function test_spellcheck_in_content_tabs() {
   } else {
     EventUtils.synthesizeMouseAtCenter(addToDict, {}, addToDict.ownerGlobal);
   }
-  await close_popup(mc, browserContext);
+  await close_popup(window, browserContext);
 
   // Now check we don't have any suggestionss
   BrowserTestUtils.synthesizeMouse(
@@ -121,26 +121,33 @@ add_task(async function test_spellcheck_in_content_tabs() {
     { type: "contextmenu", button: 2 },
     tabmail.selectedTab.browser
   );
-  await wait_for_popup_to_open(browserContext);
-  suggestions = mc.window.document.getElementsByClassName("spell-suggestion");
+  await BrowserTestUtils.waitForPopupEvent(browserContext, "shown");
+  suggestions = document.getElementsByClassName("spell-suggestion");
   Assert.ok(suggestions.length == 0, "But I just taught you this word!");
-  await close_popup(mc, browserContext);
+  await close_popup(window, browserContext);
 });
 
-add_task(function test_content_tab_default_favicon() {
+add_task(async function test_content_tab_default_favicon() {
   const whatsUrl2 = url + "whatsnew1.html";
-  let tab = open_content_tab_with_url(whatsUrl2);
+  const tab = await open_content_tab_with_url(whatsUrl2);
 
-  assert_tab_has_title(tab, "What's New Content Test 1");
+  Assert.equal(
+    tab.title,
+    "What's New Content Test 1",
+    "tab should have correct title"
+  );
   // Check the location of the favicon, this should be the site favicon in this
   // test.
-  assert_content_tab_has_favicon(tab, "http://mochi.test:8888/favicon.ico");
+  await TestUtils.waitForCondition(
+    () => tab.favIconUrl == "http://mochi.test:8888/favicon.ico",
+    `Checking tab favicon; tab.favIconUrl=${tab.favIconUrl}`
+  );
 });
 
 add_task(async function test_content_tab_onbeforeunload() {
-  let tabmail = mc.window.document.getElementById("tabmail");
-  let count = tabmail.tabContainer.allTabs.length;
-  let tab = tabmail.tabInfo[count - 1];
+  const tabmail = document.getElementById("tabmail");
+  const count = tabmail.tabContainer.allTabs.length;
+  const tab = tabmail.tabInfo[count - 1];
   await SpecialPowers.spawn(tab.browser, [], () => {
     content.addEventListener("beforeunload", function (event) {
       event.returnValue = "Green llama in your car";
@@ -150,9 +157,31 @@ add_task(async function test_content_tab_onbeforeunload() {
   const interactionPref = "dom.require_user_interaction_for_beforeunload";
   Services.prefs.setBoolPref(interactionPref, false);
 
-  let dialogPromise = BrowserTestUtils.promiseAlertDialog("accept");
+  // Deny closing the tab.
+  const denyTabCloseDialogPromise =
+    BrowserTestUtils.promiseAlertDialog("cancel");
   tabmail.closeTab(tab);
-  await dialogPromise;
+  await denyTabCloseDialogPromise;
+
+  // The tab should still be open.
+  Assert.equal(
+    count,
+    tabmail.tabContainer.allTabs.length,
+    "Number of open tabs should be correct"
+  );
+
+  // Accept closing the tab.
+  const acceptTabCloseDialogPromise =
+    BrowserTestUtils.promiseAlertDialog("accept");
+  tabmail.closeTab(tab);
+  await acceptTabCloseDialogPromise;
+
+  // The tab should have been closed.
+  Assert.equal(
+    count - 1,
+    tabmail.tabContainer.allTabs.length,
+    "Number of open tabs should be correct after tab was closed"
+  );
 
   Services.prefs.clearUserPref(interactionPref);
 });
@@ -163,7 +192,7 @@ add_task(async function test_content_tab_onbeforeunload() {
 // - zoom?
 
 registerCleanupFunction(function () {
-  let tabmail = mc.window.document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   while (tabmail.tabInfo.length > 1) {
     tabmail.closeTab(1);
   }

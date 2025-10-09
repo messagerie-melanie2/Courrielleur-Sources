@@ -9,7 +9,6 @@
 #include "plstr.h"
 #include "nsString.h"
 #include "nsICategoryManager.h"
-#include "nsIServiceManager.h"
 #include "nsIStreamConverterService.h"
 #include "nsIStreamListener.h"
 #include "nsNetCID.h"
@@ -29,7 +28,7 @@ MailNewsDLF::CreateInstance(const char* aCommand, nsIChannel* aChannel,
                             const nsACString& aContentType,
                             nsIDocShell* aContainer, nsISupports* aExtraInfo,
                             nsIStreamListener** aDocListener,
-                            nsIContentViewer** aDocViewer) {
+                            nsIDocumentViewer** aDocViewer) {
   nsresult rv;
 
   bool viewSource =
@@ -76,7 +75,7 @@ NS_IMETHODIMP
 MailNewsDLF::CreateInstanceForDocument(nsISupports* aContainer,
                                        mozilla::dom::Document* aDocument,
                                        const char* aCommand,
-                                       nsIContentViewer** aDocViewer) {
+                                       nsIDocumentViewer** aDocViewer) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 

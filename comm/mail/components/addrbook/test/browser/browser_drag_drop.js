@@ -2,25 +2,25 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-let dragService = Cc["@mozilla.org/widget/dragservice;1"].getService(
+const dragService = Cc["@mozilla.org/widget/dragservice;1"].getService(
   Ci.nsIDragService
 );
 
 function doDrag(sourceIndex, destIndex, modifiers, expectedEffect) {
-  let abWindow = getAddressBookWindow();
-  let booksList = abWindow.document.getElementById("books");
-  let cardsList = abWindow.document.getElementById("cards");
+  const abWindow = getAddressBookWindow();
+  const booksList = abWindow.document.getElementById("books");
+  const cardsList = abWindow.document.getElementById("cards");
 
   let destElement = abWindow.document.body;
   if (destIndex !== null) {
     destElement = booksList.getRowAtIndex(destIndex);
   }
 
-  let [result, dataTransfer] = EventUtils.synthesizeDragOver(
+  const [result, dataTransfer] = EventUtils.synthesizeDragOver(
     cardsList.getRowAtIndex(sourceIndex),
     destElement,
     null,
-    null,
+    expectedEffect,
     abWindow,
     abWindow,
     modifiers
@@ -33,12 +33,15 @@ function doDrag(sourceIndex, destIndex, modifiers, expectedEffect) {
 }
 
 function doDragToBooksList(sourceIndex, destIndex, modifiers, expectedEffect) {
-  let abWindow = getAddressBookWindow();
-  let booksList = abWindow.document.getElementById("books");
+  const abWindow = getAddressBookWindow();
+  const booksList = abWindow.document.getElementById("books");
 
-  dragService.startDragSessionForTests(Ci.nsIDragService.DRAGDROP_ACTION_NONE);
+  dragService.startDragSessionForTests(
+    abWindow,
+    Ci.nsIDragService.DRAGDROP_ACTION_NONE
+  );
 
-  let [result, dataTransfer] = doDrag(
+  const [result, dataTransfer] = doDrag(
     sourceIndex,
     destIndex,
     modifiers,
@@ -53,38 +56,50 @@ function doDragToBooksList(sourceIndex, destIndex, modifiers, expectedEffect) {
     modifiers
   );
 
-  dragService.endDragSession(true);
+  dragService.getCurrentSession().endDragSession(true);
 }
 
 async function doDragToComposeWindow(sourceIndices, expectedPills) {
-  let params = Cc[
+  const params = Cc[
     "@mozilla.org/messengercompose/composeparams;1"
   ].createInstance(Ci.nsIMsgComposeParams);
   params.composeFields = Cc[
     "@mozilla.org/messengercompose/composefields;1"
   ].createInstance(Ci.nsIMsgCompFields);
 
-  let composeWindowPromise = BrowserTestUtils.domWindowOpened();
+  const composeWindowPromise = BrowserTestUtils.domWindowOpened();
   MailServices.compose.OpenComposeWindowWithParams(null, params);
-  let composeWindow = await composeWindowPromise;
+  const composeWindow = await composeWindowPromise;
+  const closePromise = BrowserTestUtils.domWindowClosed(composeWindow);
   await BrowserTestUtils.waitForEvent(composeWindow, "load");
-  let composeDocument = composeWindow.document;
-  let toAddrInput = composeDocument.getElementById("toAddrInput");
-  let toAddrRow = composeDocument.getElementById("addressRowTo");
+  const composeDocument = composeWindow.document;
+  const toAddrInput = composeDocument.getElementById("toAddrInput");
+  const toAddrRow = composeDocument.getElementById("addressRowTo");
 
-  let abWindow = getAddressBookWindow();
-  let cardsList = abWindow.document.getElementById("cards");
+  const abWindow = getAddressBookWindow();
+  const cardsList = abWindow.document.getElementById("cards");
 
-  dragService.startDragSessionForTests(Ci.nsIDragService.DRAGDROP_ACTION_NONE);
+  dragService.startDragSessionForTests(
+    abWindow,
+    Ci.nsIDragService.DRAGDROP_ACTION_NONE
+  );
 
   cardsList.selectedIndices = sourceIndices;
-  let [result, dataTransfer] = EventUtils.synthesizeDragOver(
+  const transitionPromise = BrowserTestUtils.waitForTransition(composeDocument);
+  const [result, dataTransfer] = EventUtils.synthesizeDragOver(
     cardsList.getRowAtIndex(sourceIndices[0]),
     toAddrInput,
     null,
     null,
     abWindow,
     composeWindow
+  );
+  await transitionPromise;
+  // Test that dragged contacts are not incorrectly recognized as attachments.
+  Assert.ok(
+    !composeDocument
+      .getElementById("dropAttachmentOverlay")
+      .classList.contains("show")
   );
   EventUtils.synthesizeDropAfterDragOver(
     result,
@@ -93,24 +108,25 @@ async function doDragToComposeWindow(sourceIndices, expectedPills) {
     composeWindow
   );
 
-  dragService.endDragSession(true);
+  dragService.getCurrentSession().endDragSession(true);
 
-  let pills = toAddrRow.querySelectorAll("mail-address-pill");
+  const pills = toAddrRow.querySelectorAll("mail-address-pill");
   Assert.equal(pills.length, expectedPills.length);
   for (let i = 0; i < expectedPills.length; i++) {
     Assert.equal(pills[i].label, expectedPills[i]);
   }
 
-  let promptPromise = BrowserTestUtils.promiseAlertDialog("extra1");
+  const promptPromise = BrowserTestUtils.promiseAlertDialog("extra1");
   composeWindow.goDoCommand("cmd_close");
   await promptPromise;
+  await closePromise;
 }
 
 function checkCardsInDirectory(directory, expectedCards = [], copiedCard) {
-  let actualCards = directory.childCards.slice();
+  const actualCards = directory.childCards.slice();
 
-  for (let card of expectedCards) {
-    let index = actualCards.findIndex(c => c.UID == card.UID);
+  for (const card of expectedCards) {
+    const index = actualCards.findIndex(c => c.UID == card.UID);
     Assert.greaterOrEqual(index, 0);
     actualCards.splice(index, 1);
   }
@@ -126,80 +142,155 @@ function checkCardsInDirectory(directory, expectedCards = [], copiedCard) {
   }
 }
 
+add_setup(async () => {
+  const account = MailServices.accounts.createAccount();
+  const identity = MailServices.accounts.createIdentity();
+  identity.email = "mochitest@localhost";
+  account.addIdentity(identity);
+  account.incomingServer = MailServices.accounts.createIncomingServer(
+    "user",
+    "test",
+    "pop3"
+  );
+  MailServices.accounts.defaultAccount = account;
+  registerCleanupFunction(() => {
+    MailServices.accounts.removeAccount(account, true);
+  });
+});
+
 add_task(async function test_drag() {
-  let sourceBook = createAddressBook("Source Book");
+  const sourceBook = createAddressBook("Source Book");
 
-  let contact1 = sourceBook.addCard(createContact("contact", "1"));
-  let contact2 = sourceBook.addCard(createContact("contact", "2"));
-  let contact3 = sourceBook.addCard(createContact("contact", "3"));
+  const contact1 = sourceBook.addCard(createContact("contact", "1"));
+  const contact2 = sourceBook.addCard(createContact("contact", "2"));
+  const contact3 = sourceBook.addCard(createContact("contact", "3"));
 
-  let abWindow = await openAddressBookWindow();
-  let cardsList = abWindow.document.getElementById("cards");
+  const abWindow = await openAddressBookWindow();
+  const cardsList = abWindow.document.getElementById("cards");
+
+  async function check(cards) {
+    const transferCards = dataTransfer.mozGetDataAt("moz/abcard-array", 0);
+    Assert.equal(transferCards.length, cards.length);
+    for (const [index, card] of Object.entries(cards)) {
+      Assert.ok(transferCards[index].equals(card));
+    }
+
+    const transferPlain = dataTransfer.mozGetDataAt("text/plain", 0);
+    Assert.equal(
+      transferPlain,
+      cards.map(card => `${card.displayName} <${card.primaryEmail}>`).join(",")
+    );
+
+    for (const [index, card] of Object.entries(cards)) {
+      const transferVCard = dataTransfer.mozGetDataAt("text/vcard", index);
+      Assert.stringContains(transferVCard, `\r\nUID:${card.UID}\r\n`);
+
+      const transferURL = dataTransfer.mozGetDataAt(
+        "application/x-moz-file-promise-url",
+        index
+      );
+      Assert.ok(transferURL.startsWith("data:text/vcard,BEGIN%3AVCARD%0D%0A"));
+
+      const transferFilename = dataTransfer.mozGetDataAt(
+        "application/x-moz-file-promise-dest-filename",
+        index
+      );
+      Assert.equal(transferFilename, `${card.displayName}.vcf`);
+
+      const flavorDataProvider = dataTransfer.mozGetDataAt(
+        "application/x-moz-file-promise",
+        index
+      );
+      Assert.ok(flavorDataProvider.QueryInterface(Ci.nsIFlavorDataProvider));
+
+      // Create a fake nsITransferable, mimicking what happens when a dragged
+      // message is dropped in a filesystem window.
+
+      const transferable = Cc[
+        "@mozilla.org/widget/transferable;1"
+      ].createInstance(Ci.nsITransferable);
+      transferable.init(window.docShell);
+
+      const supportsVCard = Cc["@mozilla.org/supports-string;1"].createInstance(
+        Ci.nsISupportsString
+      );
+      supportsVCard.data = transferVCard;
+      transferable.setTransferData("text/vcard", supportsVCard);
+
+      const supportsURI = Cc["@mozilla.org/supports-string;1"].createInstance(
+        Ci.nsISupportsString
+      );
+      supportsURI.data = transferURL;
+      transferable.setTransferData("text/plain", supportsURI);
+
+      const tempFile = Services.dirsvc.get("TmpD", Ci.nsIFile);
+      tempFile.append(transferFilename);
+      if (tempFile.exists()) {
+        tempFile.remove(false);
+      }
+      Assert.ok(!tempFile.exists());
+
+      const supportsLeafName = Cc[
+        "@mozilla.org/supports-string;1"
+      ].createInstance(Ci.nsISupportsString);
+      supportsLeafName.data = tempFile.leafName;
+      transferable.setTransferData(
+        "application/x-moz-file-promise-dest-filename",
+        supportsLeafName
+      );
+      transferable.setTransferData(
+        "application/x-moz-file-promise-dir",
+        tempFile.parent
+      );
+
+      flavorDataProvider.getFlavorData(
+        transferable,
+        "application/x-moz-file-promise",
+        {}
+      );
+      Assert.ok(tempFile.exists());
+
+      const fileContent = await IOUtils.readUTF8(tempFile.path);
+      Assert.stringContains(fileContent, `\r\nFN:${card.displayName}\r\n`);
+      Assert.stringContains(fileContent, `\r\nUID:${card.UID}\r\n`);
+    }
+  }
 
   // Drag just contact1.
 
-  dragService.startDragSessionForTests(Ci.nsIDragService.DRAGDROP_ACTION_NONE);
-
+  dragService.startDragSessionForTests(
+    abWindow,
+    Ci.nsIDragService.DRAGDROP_ACTION_NONE
+  );
   EventUtils.synthesizeMouseAtCenter(cardsList.getRowAtIndex(0), {}, abWindow);
   let [, dataTransfer] = doDrag(0, null, {}, "none");
-
-  let transferCards = dataTransfer.mozGetDataAt("moz/abcard-array", 0);
-  Assert.equal(transferCards.length, 1);
-  Assert.ok(transferCards[0].equals(contact1));
-
-  let transferUnicode = dataTransfer.getData("text/plain");
-  Assert.equal(transferUnicode, "contact 1 <contact.1@invalid>");
-
-  let transferVCard = dataTransfer.getData("text/vcard");
-  Assert.stringContains(transferVCard, `\r\nUID:${contact1.UID}\r\n`);
-
-  dragService.endDragSession(true);
+  await check([contact1]);
+  dragService.getCurrentSession().endDragSession(true);
 
   // Drag contact2 without selecting it.
 
-  dragService.startDragSessionForTests(Ci.nsIDragService.DRAGDROP_ACTION_NONE);
-
+  dragService.startDragSessionForTests(
+    abWindow,
+    Ci.nsIDragService.DRAGDROP_ACTION_NONE
+  );
   [, dataTransfer] = doDrag(1, null, {}, "none");
-
-  transferCards = dataTransfer.mozGetDataAt("moz/abcard-array", 0);
-  Assert.equal(transferCards.length, 1);
-  Assert.ok(transferCards[0].equals(contact2));
-
-  transferUnicode = dataTransfer.getData("text/plain");
-  Assert.equal(transferUnicode, "contact 2 <contact.2@invalid>");
-
-  transferVCard = dataTransfer.getData("text/vcard");
-  Assert.stringContains(transferVCard, `\r\nUID:${contact2.UID}\r\n`);
-
-  dragService.endDragSession(true);
+  await check([contact2]);
+  dragService.getCurrentSession().endDragSession(true);
 
   // Drag all contacts.
 
-  dragService.startDragSessionForTests(Ci.nsIDragService.DRAGDROP_ACTION_NONE);
-
+  dragService.startDragSessionForTests(
+    abWindow,
+    Ci.nsIDragService.DRAGDROP_ACTION_NONE
+  );
   EventUtils.synthesizeMouseAtCenter(
     cardsList.getRowAtIndex(2),
     { shiftKey: true },
     abWindow
   );
   [, dataTransfer] = doDrag(0, null, {}, "none");
-
-  transferCards = dataTransfer.mozGetDataAt("moz/abcard-array", 0);
-  Assert.equal(transferCards.length, 3);
-  Assert.ok(transferCards[0].equals(contact1));
-  Assert.ok(transferCards[1].equals(contact2));
-  Assert.ok(transferCards[2].equals(contact3));
-
-  transferUnicode = dataTransfer.getData("text/plain");
-  Assert.equal(
-    transferUnicode,
-    "contact 1 <contact.1@invalid>,contact 2 <contact.2@invalid>,contact 3 <contact.3@invalid>"
-  );
-
-  transferVCard = dataTransfer.getData("text/vcard");
-  Assert.stringContains(transferVCard, `\r\nUID:${contact1.UID}\r\n`);
-
-  dragService.endDragSession(true);
+  await check([contact1, contact2, contact3]);
+  dragService.getCurrentSession().endDragSession(true);
 
   await closeAddressBookWindow();
 
@@ -207,18 +298,18 @@ add_task(async function test_drag() {
 });
 
 add_task(async function test_drop_on_books_list() {
-  let sourceBook = createAddressBook("Source Book");
-  let sourceList = sourceBook.addMailList(createMailingList("Source List"));
-  let destBook = createAddressBook("Destination Book");
-  let destList = destBook.addMailList(createMailingList("Destination List"));
+  const sourceBook = createAddressBook("Source Book");
+  const sourceList = sourceBook.addMailList(createMailingList("Source List"));
+  const destBook = createAddressBook("Destination Book");
+  const destList = destBook.addMailList(createMailingList("Destination List"));
 
-  let contact1 = sourceBook.addCard(createContact("contact", "1"));
-  let contact2 = sourceBook.addCard(createContact("contact", "2"));
-  let contact3 = sourceBook.addCard(createContact("contact", "3"));
+  const contact1 = sourceBook.addCard(createContact("contact", "1"));
+  const contact2 = sourceBook.addCard(createContact("contact", "2"));
+  const contact3 = sourceBook.addCard(createContact("contact", "3"));
 
-  let abWindow = await openAddressBookWindow();
-  let booksList = abWindow.document.getElementById("books");
-  let cardsList = abWindow.document.getElementById("cards");
+  const abWindow = await openAddressBookWindow();
+  const booksList = abWindow.document.getElementById("books");
+  const cardsList = abWindow.document.getElementById("cards");
 
   checkCardsInDirectory(sourceBook, [contact1, contact2, contact3, sourceList]);
   checkCardsInDirectory(sourceList);
@@ -226,14 +317,17 @@ add_task(async function test_drop_on_books_list() {
   checkCardsInDirectory(destList);
 
   Assert.equal(booksList.rowCount, 7);
-  openDirectory(sourceBook);
+  await openDirectory(sourceBook);
 
   // Check drag effect set correctly for dragging a card.
 
   Assert.equal(cardsList.view.rowCount, 4);
   EventUtils.synthesizeMouseAtCenter(cardsList.getRowAtIndex(0), {}, abWindow);
 
-  dragService.startDragSessionForTests(Ci.nsIDragService.DRAGDROP_ACTION_NONE);
+  dragService.startDragSessionForTests(
+    abWindow,
+    Ci.nsIDragService.DRAGDROP_ACTION_NONE
+  );
 
   doDrag(0, 0, {}, "none"); // All Address Books
   doDrag(0, 0, { ctrlKey: true }, "none");
@@ -256,14 +350,17 @@ add_task(async function test_drop_on_books_list() {
   doDrag(0, 6, {}, "move"); // Collected Addresses
   doDrag(0, 6, { ctrlKey: true }, "copy");
 
-  dragService.endDragSession(true);
+  dragService.getCurrentSession().endDragSession(true);
 
   // Check drag effect set correctly for dragging a list.
 
   Assert.equal(cardsList.view.rowCount, 4);
   EventUtils.synthesizeMouseAtCenter(cardsList.getRowAtIndex(3), {}, abWindow);
 
-  dragService.startDragSessionForTests(Ci.nsIDragService.DRAGDROP_ACTION_NONE);
+  dragService.startDragSessionForTests(
+    abWindow,
+    Ci.nsIDragService.DRAGDROP_ACTION_NONE
+  );
 
   doDrag(3, 0, {}, "none"); // All Address Books
   doDrag(3, 0, { ctrlKey: true }, "none");
@@ -286,7 +383,7 @@ add_task(async function test_drop_on_books_list() {
   doDrag(3, 6, {}, "none"); // Collected Addresses
   doDrag(3, 6, { ctrlKey: true }, "none");
 
-  dragService.endDragSession(true);
+  dragService.getCurrentSession().endDragSession(true);
 
   // Drag contact1 into sourceList.
 
@@ -345,7 +442,7 @@ add_task(async function test_drop_on_books_list() {
   // This test doesn't actually catch the bug it was written for, but maybe
   // one day it will catch something.
 
-  openDirectory(destBook);
+  await openDirectory(destBook);
   Assert.equal(cardsList.view.rowCount, 3);
   EventUtils.synthesizeMouseAtCenter(cardsList.getRowAtIndex(0), {}, abWindow);
   doDragToBooksList(0, 2, {}, "none");
@@ -364,26 +461,25 @@ add_task(async function test_drop_on_books_list() {
 });
 
 add_task(async function test_drop_on_compose() {
-  MailServices.accounts.createLocalMailAccount();
-  let account = MailServices.accounts.accounts[0];
+  const account = MailServices.accounts.createLocalMailAccount();
   account.addIdentity(MailServices.accounts.createIdentity());
 
   registerCleanupFunction(async () => {
     MailServices.accounts.removeAccount(account, true);
   });
 
-  let sourceBook = createAddressBook("Source Book");
-  let sourceList = sourceBook.addMailList(createMailingList("Source List"));
+  const sourceBook = createAddressBook("Source Book");
+  const sourceList = sourceBook.addMailList(createMailingList("Source List"));
 
-  let contact1 = sourceBook.addCard(createContact("contact", "1"));
-  let contact2 = sourceBook.addCard(createContact("contact", "2"));
-  let contact3 = sourceBook.addCard(createContact("contact", "3"));
+  const contact1 = sourceBook.addCard(createContact("contact", "1"));
+  const contact2 = sourceBook.addCard(createContact("contact", "2"));
+  const contact3 = sourceBook.addCard(createContact("contact", "3"));
   sourceList.addCard(contact1);
   sourceList.addCard(contact2);
   sourceList.addCard(contact3);
 
-  let abWindow = await openAddressBookWindow();
-  let cardsList = abWindow.document.getElementById("cards");
+  const abWindow = await openAddressBookWindow();
+  const cardsList = abWindow.document.getElementById("cards");
   Assert.equal(cardsList.view.rowCount, 4);
 
   // One contact.

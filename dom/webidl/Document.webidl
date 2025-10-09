@@ -13,6 +13,7 @@
  * https://drafts.csswg.org/cssom/#extensions-to-the-document-interface
  * https://drafts.csswg.org/cssom-view/#extensions-to-the-document-interface
  * https://wicg.github.io/feature-policy/#policy
+ * https://wicg.github.io/scroll-to-text-fragment/#feature-detectability
  */
 
 interface ContentSecurityPolicy;
@@ -70,8 +71,6 @@ interface Document : Node {
   HTMLCollection getElementsByTagNameNS(DOMString? namespace, DOMString localName);
   [Pure]
   HTMLCollection getElementsByClassName(DOMString classNames);
-  [Pure]
-  Element? getElementById(DOMString elementId);
 
   // These DOM methods cannot be accessed by UA Widget scripts
   // because the DOM element reflectors will be in the content scope,
@@ -123,9 +122,12 @@ interface Document : Node {
 
 // https://html.spec.whatwg.org/multipage/dom.html#the-document-object
 partial interface Document {
+  [Throws, NeedsSubjectPrincipal=NonSystem]
+  static Document parseHTMLUnsafe((TrustedHTML or DOMString) html, optional SetHTMLUnsafeOptions options = {});
+
   [PutForwards=href, LegacyUnforgeable] readonly attribute Location? location;
   [SetterThrows]                           attribute DOMString domain;
-  readonly attribute DOMString referrer;
+  readonly attribute UTF8String referrer;
   [Throws] attribute DOMString cookie;
   readonly attribute DOMString lastModified;
   readonly attribute DOMString readyState;
@@ -154,13 +156,13 @@ partial interface Document {
   [CEReactions, Throws]
   Document open(optional DOMString unused1, optional DOMString unused2); // both arguments are ignored
   [CEReactions, Throws]
-  WindowProxy? open(USVString url, DOMString name, DOMString features);
+  WindowProxy? open(UTF8String url, DOMString name, DOMString features);
   [CEReactions, Throws]
   undefined close();
   [CEReactions, Throws]
-  undefined write(DOMString... text);
+  undefined write((TrustedHTML or DOMString)... text);
   [CEReactions, Throws]
-  undefined writeln(DOMString... text);
+  undefined writeln((TrustedHTML or DOMString)... text);
 
   // user interaction
   [Pure]
@@ -171,7 +173,7 @@ partial interface Document {
            attribute DOMString designMode;
   [CEReactions, Throws, NeedsSubjectPrincipal]
   boolean execCommand(DOMString commandId, optional boolean showUI = false,
-                      optional DOMString value = "");
+                      optional (TrustedHTML or DOMString) value = "");
   [Throws, NeedsSubjectPrincipal]
   boolean queryCommandEnabled(DOMString commandId);
   [Throws]
@@ -186,10 +188,6 @@ partial interface Document {
 
   // special event handler IDL attributes that only apply to Document objects
   [LegacyLenientThis] attribute EventHandler onreadystatechange;
-
-  // Gecko extensions?
-                attribute EventHandler onbeforescriptexecute;
-                attribute EventHandler onafterscriptexecute;
 
   /**
    * True if this document is synthetic : stand alone image, video, audio file,
@@ -349,27 +347,20 @@ partial interface Document {
     undefined enableStyleSheetsForSet (DOMString? name);
 };
 
+dictionary CaretPositionFromPointOptions {
+  [Pref="dom.shadowdom.new_caretPositionFromPoint_behavior.enabled"]
+  sequence<ShadowRoot> shadowRoots = [];
+};
+
 // https://drafts.csswg.org/cssom-view/#extensions-to-the-document-interface
 partial interface Document {
-    CaretPosition? caretPositionFromPoint (float x, float y);
+    CaretPosition? caretPositionFromPoint(float x, float y, optional CaretPositionFromPointOptions options = {});
 
     readonly attribute Element? scrollingElement;
 };
 
-// http://dev.w3.org/2006/webapi/selectors-api2/#interface-definitions
-partial interface Document {
-  [Throws, Pure]
-  Element?  querySelector(UTF8String selectors);
-  [Throws, Pure]
-  NodeList  querySelectorAll(UTF8String selectors);
-
-  //(Not implemented)Element?  find(DOMString selectors, optional (Element or sequence<Node>)? refNodes);
-  //(Not implemented)NodeList  findAll(DOMString selectors, optional (Element or sequence<Node>)? refNodes);
-};
-
 // https://drafts.csswg.org/web-animations/#extensions-to-the-document-interface
 partial interface Document {
-  [Func="Document::AreWebAnimationsTimelinesEnabled"]
   readonly attribute DocumentTimeline timeline;
 };
 
@@ -381,12 +372,24 @@ partial interface Document {
 
 //  Mozilla extensions of various sorts
 partial interface Document {
+  // @deprecated We are going to remove these (bug 1584269).
+  [Pref="dom.events.script_execute.enabled"]
+  attribute EventHandler onbeforescriptexecute;
+  [Pref="dom.events.script_execute.enabled"]
+  attribute EventHandler onafterscriptexecute;
+
   // Creates a new XUL element regardless of the document's default type.
   [ChromeOnly, CEReactions, NewObject, Throws]
   Element createXULElement(DOMString localName, optional (ElementCreationOptions or DOMString) options = {});
   // Wether the document was loaded using a nsXULPrototypeDocument.
   [ChromeOnly]
   readonly attribute boolean loadedFromPrototype;
+
+  // Whether we're in android's Picture-in-Picture mode.
+  // Top level document only (for now, if we want to deal with iframes, please
+  // also fix bug 1959448 while at it).
+  [Func="Document::CallerIsSystemPrincipalOrWebCompatAddon"]
+  readonly attribute boolean inAndroidPipMode;
 
   // The principal to use for the storage area of this document
   [ChromeOnly]
@@ -440,7 +443,10 @@ partial interface Document {
   [ChromeOnly]
   attribute boolean devToolsAnonymousAndShadowEventsEnabled;
 
-  [ChromeOnly] readonly attribute DOMString contentLanguage;
+  [ChromeOnly]
+  attribute boolean pausedByDevTools;
+
+  [ChromeOnly, BinaryName="contentLanguageForBindings"] readonly attribute DOMString contentLanguage;
 
   [ChromeOnly] readonly attribute nsILoadGroup? documentLoadGroup;
 
@@ -478,6 +484,16 @@ partial interface Document {
    */
   [ChromeOnly]
   sequence<ShadowRoot> getConnectedShadowRoots();
+
+  /**
+   * By default, we don't send resizes to inactive top browsers.
+   * Some callers (as of this writing the window sizing code and puppeteer)
+   * need to trigger these resizes.
+   *
+   * @param aIncludeInactive whether to include background tabs.
+   */
+  [ChromeOnly]
+  undefined synchronouslyUpdateRemoteBrowserDimensions(optional boolean aIncludeInactive = false);
 };
 
 dictionary BlockParsingOptions {
@@ -506,20 +522,10 @@ partial interface Document {
  * Chrome document anonymous content management.
  * This is a Chrome-only API that allows inserting fixed positioned anonymous
  * content on top of the current page displayed in the document.
- * The supplied content is cloned and inserted into the document's CanvasFrame.
- * Note that this only works for HTML documents.
  */
 partial interface Document {
-  /**
-   * Deep-clones the provided element and inserts it into the CanvasFrame.
-   * Returns an AnonymousContent instance that can be used to manipulate the
-   * inserted element.
-   *
-   * If aForce is true, tries to update layout to be able to insert the element
-   * synchronously.
-   */
   [ChromeOnly, NewObject, Throws]
-  AnonymousContent insertAnonymousContent(Element aElement, optional boolean aForce = false);
+  AnonymousContent insertAnonymousContent();
 
   /**
    * Removes the element inserted into the CanvasFrame given an AnonymousContent
@@ -552,7 +558,7 @@ partial interface Document {
 // webcompat extension the ability to request the storage access for a given
 // third party.
 partial interface Document {
-  [Func="Document::CallerCanAccessPrivilegeSSA", NewObject]
+  [Func="Document::CallerIsSystemPrincipalOrWebCompatAddon", NewObject]
   Promise<undefined> requestStorageAccessForOrigin(DOMString thirdPartyOrigin, optional boolean requireUserInteraction = true);
 };
 
@@ -732,4 +738,30 @@ partial interface Document {
   // context which isn't in bfcache.
   [ChromeOnly]
   boolean isActive();
+};
+
+Document includes NonElementParentNode;
+
+/**
+ * Extension to add the fragmentDirective property.
+ * https://wicg.github.io/scroll-to-text-fragment/#feature-detectability
+ */
+partial interface Document {
+    [Pref="dom.text_fragments.enabled", SameObject]
+    readonly attribute FragmentDirective fragmentDirective;
+};
+
+// https://drafts.csswg.org/css-view-transitions-1/#additions-to-document-api
+partial interface Document {
+  [Pref="dom.viewTransitions.enabled"]
+  ViewTransition startViewTransition(optional ViewTransitionUpdateCallback updateCallback);
+};
+
+// https://github.com/w3c/csswg-drafts/pull/10767 for the name divergence in the spec
+callback ViewTransitionUpdateCallback = Promise<any> ();
+
+// https://wicg.github.io/sanitizer-api/#sanitizer-api
+partial interface Document {
+  [Throws, Pref="dom.security.sanitizer.enabled"]
+  static Document parseHTML(DOMString html, optional SetHTMLOptions options = {});
 };

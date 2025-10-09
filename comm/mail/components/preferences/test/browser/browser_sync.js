@@ -17,7 +17,7 @@ FxAccounts.config.promiseChangeAvatarURI = entryPoint =>
   `https://example.org/?page=avatar&entryPoint=${entryPoint}`;
 
 const ALL_ENGINES = [
-  "accounts",
+  "servers",
   "identities",
   "addressbooks",
   "calendars",
@@ -28,7 +28,7 @@ const PREF_PREFIX = "services.sync.engine";
 let prefsWindow, prefsDocument, tabmail;
 
 add_setup(async function () {
-  for (let engine of ALL_ENGINES) {
+  for (const engine of ALL_ENGINES) {
     Services.prefs.setBoolPref(`${PREF_PREFIX}.${engine}`, true);
   }
 
@@ -36,11 +36,11 @@ add_setup(async function () {
   tabmail = document.getElementById("tabmail");
 
   /** @implements {nsIExternalProtocolService} */
-  let mockExternalProtocolService = {
+  const mockExternalProtocolService = {
     QueryInterface: ChromeUtils.generateQI(["nsIExternalProtocolService"]),
-    externalProtocolHandlerExists(protocolScheme) {},
-    isExposedProtocol(protocolScheme) {},
-    loadURI(uri, windowContext) {
+    externalProtocolHandlerExists() {},
+    isExposedProtocol() {},
+    loadURI(uri) {
       Assert.report(
         true,
         undefined,
@@ -50,7 +50,7 @@ add_setup(async function () {
     },
   };
 
-  let mockExternalProtocolServiceCID = MockRegistrar.register(
+  const mockExternalProtocolServiceCID = MockRegistrar.register(
     "@mozilla.org/uriloader/external-protocol-service;1",
     mockExternalProtocolService
   );
@@ -60,23 +60,23 @@ add_setup(async function () {
 });
 
 add_task(async function testSectionStates() {
-  let noFxaAccount = prefsDocument.getElementById("noFxaAccount");
-  let hasFxaAccount = prefsDocument.getElementById("hasFxaAccount");
-  let accountStates = [noFxaAccount, hasFxaAccount];
+  const noFxaAccount = prefsDocument.getElementById("noFxaAccount");
+  const hasFxaAccount = prefsDocument.getElementById("hasFxaAccount");
+  const accountStates = [noFxaAccount, hasFxaAccount];
 
-  let fxaLoginUnverified = prefsDocument.getElementById("fxaLoginUnverified");
-  let fxaLoginRejected = prefsDocument.getElementById("fxaLoginRejected");
-  let fxaLoginVerified = prefsDocument.getElementById("fxaLoginVerified");
-  let loginStates = [fxaLoginUnverified, fxaLoginRejected, fxaLoginVerified];
+  const fxaLoginUnverified = prefsDocument.getElementById("fxaLoginUnverified");
+  const fxaLoginRejected = prefsDocument.getElementById("fxaLoginRejected");
+  const fxaLoginVerified = prefsDocument.getElementById("fxaLoginVerified");
+  const loginStates = [fxaLoginUnverified, fxaLoginRejected, fxaLoginVerified];
 
-  let fxaDeviceInfo = prefsDocument.getElementById("fxaDeviceInfo");
-  let syncConnected = prefsDocument.getElementById("syncConnected");
-  let syncDisconnected = prefsDocument.getElementById("syncDisconnected");
-  let syncStates = [syncConnected, syncDisconnected];
+  const fxaDeviceInfo = prefsDocument.getElementById("fxaDeviceInfo");
+  const syncConnected = prefsDocument.getElementById("syncConnected");
+  const syncDisconnected = prefsDocument.getElementById("syncDisconnected");
+  const syncStates = [syncConnected, syncDisconnected];
 
   function assertStateVisible(states, visibleState) {
-    for (let state of states) {
-      let visible = BrowserTestUtils.is_visible(state);
+    for (const state of states) {
+      const visible = BrowserTestUtils.isVisible(state);
       Assert.equal(
         visible,
         state == visibleState,
@@ -95,7 +95,7 @@ add_task(async function testSectionStates() {
     assertStateVisible(accountStates, accountState);
     assertStateVisible(loginStates, loginState);
     Assert.equal(
-      BrowserTestUtils.is_visible(fxaDeviceInfo),
+      BrowserTestUtils.isVisible(fxaDeviceInfo),
       deviceInfoVisible,
       `fxaDeviceInfo should be ${deviceInfoVisible ? "visible" : "hidden"}`
     );
@@ -107,10 +107,10 @@ add_task(async function testSectionStates() {
       target = prefsDocument.getElementById(target);
     }
 
-    let tabPromise = BrowserTestUtils.waitForEvent(window, "TabOpen");
+    const tabPromise = BrowserTestUtils.waitForEvent(window, "TabOpen");
     EventUtils.synthesizeMouseAtCenter(target, {}, prefsWindow);
     await tabPromise;
-    let tab = tabmail.currentTabInfo;
+    const tab = tabmail.currentTabInfo;
     await BrowserTestUtils.browserLoaded(tab.browser);
     Assert.equal(
       tab.browser.currentURI.spec,
@@ -128,7 +128,7 @@ add_task(async function testSectionStates() {
   await assertTabOpens("noFxaSignIn", "?page=connect&entryPoint=");
 
   // Override the window's UIState object with mock values.
-  let baseState = {
+  const baseState = {
     email: "test@invalid",
     displayName: "Testy McTest",
     avatarURL:
@@ -195,7 +195,7 @@ add_task(async function testSectionStates() {
     deviceInfoVisible: true,
     syncState: syncDisconnected,
   });
-  let photo = fxaLoginVerified.querySelector(".contact-photo");
+  const photo = fxaLoginVerified.querySelector(".contact-photo");
   Assert.equal(
     photo.src,
     "https://example.org/browser/comm/mail/components/preferences/test/browser/files/avatar.png",
@@ -222,23 +222,20 @@ add_task(async function testSectionStates() {
   // Untested: Sign out button.
 
   info("Device name section");
-  let deviceNameInput = prefsDocument.getElementById("fxaDeviceNameInput");
-  let deviceNameCancel = prefsDocument.getElementById("fxaDeviceNameCancel");
-  let deviceNameSave = prefsDocument.getElementById("fxaDeviceNameSave");
-  let deviceNameChange = prefsDocument.getElementById(
+  const deviceNameInput = prefsDocument.getElementById("fxaDeviceNameInput");
+  const deviceNameCancel = prefsDocument.getElementById("fxaDeviceNameCancel");
+  const deviceNameSave = prefsDocument.getElementById("fxaDeviceNameSave");
+  const deviceNameChange = prefsDocument.getElementById(
     "fxaDeviceNameChangeDeviceName"
   );
   Assert.ok(deviceNameInput.readOnly, "input is read-only");
   Assert.ok(
-    BrowserTestUtils.is_hidden(deviceNameCancel),
+    BrowserTestUtils.isHidden(deviceNameCancel),
     "cancel button is hidden"
   );
+  Assert.ok(BrowserTestUtils.isHidden(deviceNameSave), "save button is hidden");
   Assert.ok(
-    BrowserTestUtils.is_hidden(deviceNameSave),
-    "save button is hidden"
-  );
-  Assert.ok(
-    BrowserTestUtils.is_visible(deviceNameChange),
+    BrowserTestUtils.isVisible(deviceNameChange),
     "change button is visible"
   );
 
@@ -246,30 +243,27 @@ add_task(async function testSectionStates() {
   Assert.ok(!deviceNameInput.readOnly, "input is writeable");
   Assert.equal(prefsDocument.activeElement, deviceNameInput, "input is active");
   Assert.ok(
-    BrowserTestUtils.is_visible(deviceNameCancel),
+    BrowserTestUtils.isVisible(deviceNameCancel),
     "cancel button is visible"
   );
   Assert.ok(
-    BrowserTestUtils.is_visible(deviceNameSave),
+    BrowserTestUtils.isVisible(deviceNameSave),
     "save button is visible"
   );
   Assert.ok(
-    BrowserTestUtils.is_hidden(deviceNameChange),
+    BrowserTestUtils.isHidden(deviceNameChange),
     "change button is hidden"
   );
 
   EventUtils.synthesizeMouseAtCenter(deviceNameCancel, {}, prefsWindow);
   Assert.ok(deviceNameInput.readOnly, "input is read-only");
   Assert.ok(
-    BrowserTestUtils.is_hidden(deviceNameCancel),
+    BrowserTestUtils.isHidden(deviceNameCancel),
     "cancel button is hidden"
   );
+  Assert.ok(BrowserTestUtils.isHidden(deviceNameSave), "save button is hidden");
   Assert.ok(
-    BrowserTestUtils.is_hidden(deviceNameSave),
-    "save button is hidden"
-  );
-  Assert.ok(
-    BrowserTestUtils.is_visible(deviceNameChange),
+    BrowserTestUtils.isVisible(deviceNameChange),
     "change button is visible"
   );
 
@@ -295,8 +289,8 @@ add_task(async function testSectionStates() {
 
 add_task(async function testEngines() {
   function assertEnginesEnabled(...expectedEnabled) {
-    for (let engine of ALL_ENGINES) {
-      let enabled = Services.prefs.getBoolPref(`${PREF_PREFIX}.${engine}`);
+    for (const engine of ALL_ENGINES) {
+      const enabled = Services.prefs.getBoolPref(`${PREF_PREFIX}.${engine}`);
       Assert.equal(
         enabled,
         expectedEnabled.includes(engine),
@@ -308,15 +302,15 @@ add_task(async function testEngines() {
   }
 
   function assertEnginesShown(...expectEngines) {
-    let ENGINES_TO_ITEMS = {
-      accounts: "showSyncAccount",
+    const ENGINES_TO_ITEMS = {
+      servers: "showSyncAccount",
       identities: "showSyncIdentity",
       addressbooks: "showSyncAddress",
       calendars: "showSyncCalendar",
       passwords: "showSyncPasswords",
     };
-    let expectItems = expectEngines.map(engine => ENGINES_TO_ITEMS[engine]);
-    let items = Array.from(
+    const expectItems = expectEngines.map(engine => ENGINES_TO_ITEMS[engine]);
+    const items = Array.from(
       prefsDocument.querySelectorAll("#showSyncedList > li:not([hidden])"),
       li => li.id
     );
@@ -324,7 +318,7 @@ add_task(async function testEngines() {
   }
 
   assertEnginesShown(...ALL_ENGINES);
-  Services.prefs.setBoolPref(`${PREF_PREFIX}.accounts`, false);
+  Services.prefs.setBoolPref(`${PREF_PREFIX}.servers`, false);
   assertEnginesShown("identities", "addressbooks", "calendars", "passwords");
   Services.prefs.setBoolPref(`${PREF_PREFIX}.identities`, false);
   Services.prefs.setBoolPref(`${PREF_PREFIX}.addressbooks`, false);
@@ -335,29 +329,29 @@ add_task(async function testEngines() {
 
   info("Checking the engine selection dialog");
   await openEngineDialog({
-    toggleEngines: ["accounts", "identities", "passwords"],
+    toggleEngines: ["servers", "identities", "passwords"],
   });
 
-  assertEnginesEnabled("accounts", "identities", "passwords");
-  assertEnginesShown("accounts", "identities", "passwords");
+  assertEnginesEnabled("servers", "identities", "passwords");
+  assertEnginesShown("servers", "identities", "passwords");
 
   await openEngineDialog({
-    expectEngines: ["accounts", "identities", "passwords"],
+    expectEngines: ["servers", "identities", "passwords"],
     toggleEngines: ["calendars", "passwords"],
     action: "cancel",
   });
 
-  assertEnginesEnabled("accounts", "identities", "passwords");
-  assertEnginesShown("accounts", "identities", "passwords");
+  assertEnginesEnabled("servers", "identities", "passwords");
+  assertEnginesShown("servers", "identities", "passwords");
 
   await openEngineDialog({
-    expectEngines: ["accounts", "identities", "passwords"],
+    expectEngines: ["servers", "identities", "passwords"],
     toggleEngines: ["calendars", "passwords"],
     action: "accept",
   });
 
-  assertEnginesEnabled("accounts", "identities", "calendars");
-  assertEnginesShown("accounts", "identities", "calendars");
+  assertEnginesEnabled("servers", "identities", "calendars");
+  assertEnginesShown("servers", "identities", "calendars");
 
   Services.prefs.setBoolPref(`${PREF_PREFIX}.addressbooks`, true);
   Services.prefs.setBoolPref(`${PREF_PREFIX}.passwords`, true);
@@ -371,49 +365,40 @@ async function openEngineDialog({
   button = "syncChangeOptions",
 }) {
   const ENGINES_TO_CHECKBOXES = {
-    accounts: "configSyncAccount",
+    servers: "configSyncAccount",
     identities: "configSyncIdentity",
     addressbooks: "configSyncAddress",
     calendars: "configSyncCalendar",
     passwords: "configSyncPasswords",
   };
-  let dialogPromise = BrowserTestUtils.promiseAlertDialogOpen(
-    undefined,
-    "chrome://messenger/content/preferences/syncDialog.xhtml",
-    { isSubDialog: true }
-  );
-  EventUtils.synthesizeMouseAtCenter(
+  await promiseSubDialog(
     prefsDocument.getElementById(button),
-    {},
-    prefsWindow
-  );
-  let dialogWindow = await dialogPromise;
-  let dialogDocument = dialogWindow.document;
-  await new Promise(resolve => dialogWindow.setTimeout(resolve));
+    "chrome://messenger/content/preferences/syncDialog.xhtml",
+    function (dialogWindow) {
+      const dialogDocument = dialogWindow.document;
 
-  let expectItems = expectEngines.map(engine => ENGINES_TO_CHECKBOXES[engine]);
+      const expectItems = expectEngines.map(
+        engine => ENGINES_TO_CHECKBOXES[engine]
+      );
 
-  let checkedItems = Array.from(
-    dialogDocument.querySelectorAll(`input[type="checkbox"]`)
-  )
-    .filter(cb => cb.checked)
-    .map(cb => cb.id);
-  Assert.deepEqual(
-    checkedItems,
-    expectItems,
-    "enabled engines checked correctly"
-  );
+      const checkedItems = Array.from(
+        dialogDocument.querySelectorAll(`input[type="checkbox"]`)
+      )
+        .filter(cb => cb.checked)
+        .map(cb => cb.id);
+      Assert.deepEqual(
+        checkedItems,
+        expectItems,
+        "enabled engines checked correctly"
+      );
 
-  for (let toggleItem of toggleEngines) {
-    let checkbox = dialogDocument.getElementById(
-      ENGINES_TO_CHECKBOXES[toggleItem]
-    );
-    checkbox.checked = !checkbox.checked;
-  }
-
-  EventUtils.synthesizeMouseAtCenter(
-    dialogDocument.querySelector("dialog").getButton(action),
-    {},
-    dialogWindow
+      for (const toggleItem of toggleEngines) {
+        const checkbox = dialogDocument.getElementById(
+          ENGINES_TO_CHECKBOXES[toggleItem]
+        );
+        checkbox.checked = !checkbox.checked;
+      }
+    },
+    action
   );
 }

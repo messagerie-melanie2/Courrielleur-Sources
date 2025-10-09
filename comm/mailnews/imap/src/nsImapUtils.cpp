@@ -3,12 +3,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "msgCore.h"
 #include "nsImapUtils.h"
 #include "nsCOMPtr.h"
 #include "prsystem.h"
 #include "prprf.h"
-#include "nsNetCID.h"
 
 #include "nsMsgUtils.h"
 #include "nsImapFlagAndUidState.h"
@@ -35,8 +33,8 @@ nsresult nsImapURI2FullName(const char* rootURI, const char* hostName,
 }
 
 /* parses ImapMessageURI */
-nsresult nsParseImapMessageURI(const nsACString& uri, nsCString& folderURI,
-                               uint32_t* key, char** part) {
+nsresult nsParseImapMessageURI(const nsACString& uri, nsACString& folderURI,
+                               nsMsgKey* key, nsACString& mimePart) {
   if (!key) return NS_ERROR_NULL_POINTER;
 
   const nsPromiseFlatCString& uriStr = PromiseFlatCString(uri);
@@ -45,8 +43,9 @@ nsresult nsParseImapMessageURI(const nsACString& uri, nsCString& folderURI,
   // e.g., when opening/saving attachments. We don't want to look for '#'
   // in that part of the uri, if the attachment name contains '#',
   // so check for that here.
-  if (StringBeginsWith(uriStr, "imap-message"_ns))
+  if (StringBeginsWith(uriStr, "imap-message"_ns)) {
     folderEnd = uriStr.Find("imap://");
+  }
 
   int32_t keySeparator = uriStr.RFindChar('#', folderEnd);
   if (keySeparator != -1) {
@@ -70,25 +69,26 @@ nsresult nsParseImapMessageURI(const nsACString& uri, nsCString& folderURI,
       }
     }
     nsAutoCString keyStr;
-    if (keyEndSeparator != -1)
+    if (keyEndSeparator != -1) {
       keyStr = Substring(uriStr, keySeparator + 1,
                          keyEndSeparator - (keySeparator + 1));
-    else
+    } else {
       keyStr = Substring(uriStr, keySeparator + 1);
+    }
 
     *key = strtoul(keyStr.get(), nullptr, 10);
 
-    if (part && keyEndSeparator != -1) {
+    if (keyEndSeparator != -1) {
       int32_t partPos = uriStr.Find("part=", keyEndSeparator);
       if (partPos != -1) {
-        *part = ToNewCString(Substring(uriStr, keyEndSeparator));
+        mimePart = Substring(uriStr, keyEndSeparator);
       }
     }
   }
   return NS_OK;
 }
 
-nsresult nsBuildImapMessageURI(const char* baseURI, uint32_t key,
+nsresult nsBuildImapMessageURI(const char* baseURI, nsMsgKey key,
                                nsACString& uri) {
   uri.Append(baseURI);
   uri.Append('#');
@@ -110,6 +110,7 @@ nsresult nsCreateImapBaseMessageURI(const nsACString& baseURI,
 NS_IMPL_ISUPPORTS(nsImapMailboxSpec, nsIMailboxSpec)
 
 nsImapMailboxSpec::nsImapMailboxSpec() {
+  mConnection = nullptr;
   mFolder_UIDVALIDITY = 0;
   mHighestModSeq = 0;
   mNumOfMessages = 0;
@@ -314,8 +315,9 @@ void ParseUidString(const char* uidString, nsTArray<nsMsgKey>& keys) {
   for (const char* curCharPtr = uidString; curChar && *curCharPtr;) {
     const char* currentKeyToken = curCharPtr;
     curChar = *curCharPtr;
-    while (curChar != ':' && curChar != ',' && curChar != '\0')
+    while (curChar != ':' && curChar != ',' && curChar != '\0') {
       curChar = *curCharPtr++;
+    }
 
     // we don't need to null terminate currentKeyToken because strtoul
     // stops at non-numeric chars.

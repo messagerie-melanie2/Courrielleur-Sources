@@ -4,19 +4,19 @@
 
 SimpleTest.requestCompleteLog();
 
-var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
-var { CalendarTestUtils } = ChromeUtils.import(
-  "resource://testing-common/calendar/CalendarTestUtils.jsm"
+var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
+var { CalendarTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/calendar/CalendarTestUtils.sys.mjs"
 );
-var { handleDeleteOccurrencePrompt } = ChromeUtils.import(
-  "resource://testing-common/calendar/CalendarUtils.jsm"
-);
-
-var { saveAndCloseItemDialog, setData } = ChromeUtils.import(
-  "resource://testing-common/calendar/ItemEditingHelpers.jsm"
+var { handleDeleteOccurrencePrompt } = ChromeUtils.importESModule(
+  "resource://testing-common/calendar/CalendarUtils.sys.mjs"
 );
 
-let calendarObserver = {
+var { saveAndCloseItemDialog, setData } = ChromeUtils.importESModule(
+  "resource://testing-common/calendar/ItemEditingHelpers.sys.mjs"
+);
+
+const calendarObserver = {
   QueryInterface: ChromeUtils.generateQI(["calIObserver"]),
 
   /* calIObserver */
@@ -52,7 +52,7 @@ let calendarObserver = {
       Assert.equal(this._batchCount, 1, "onAddItem must occur in a batch");
     }
   },
-  onModifyItem(newItem, oldItem) {
+  onModifyItem(newItem) {
     info(`onModifyItem ${newItem.calendar.id} ${newItem.id}`);
     if (this._batchRequired) {
       Assert.equal(this._batchCount, 1, "onModifyItem must occur in a batch");
@@ -61,9 +61,9 @@ let calendarObserver = {
   onDeleteItem(deletedItem) {
     info(`onDeleteItem ${deletedItem.calendar.id} ${deletedItem.id}`);
   },
-  onError(calendar, errNo, message) {},
-  onPropertyChanged(calendar, name, value, oldValue) {},
-  onPropertyDeleting(calendar, name) {},
+  onError() {},
+  onPropertyChanged() {},
+  onPropertyDeleting() {},
 };
 
 /**
@@ -100,21 +100,21 @@ function removeCalendar(calendar) {
   cal.manager.removeCalendar(calendar);
 }
 
-let alarmService = Cc["@mozilla.org/calendar/alarm-service;1"].getService(Ci.calIAlarmService);
+const alarmService = Cc["@mozilla.org/calendar/alarm-service;1"].getService(Ci.calIAlarmService);
 
-let alarmObserver = {
+const alarmObserver = {
   QueryInterface: ChromeUtils.generateQI(["calIAlarmServiceObserver"]),
 
   /* calIAlarmServiceObserver */
 
   _alarmCount: 0,
-  onAlarm(item, alarm) {
+  onAlarm() {
     info("onAlarm");
     this._alarmCount++;
   },
-  onRemoveAlarmsByItem(item) {},
-  onRemoveAlarmsByCalendar(calendar) {},
-  onAlarmsLoaded(calendar) {},
+  onRemoveAlarmsByItem() {},
+  onRemoveAlarmsByCalendar() {},
+  onAlarmsLoaded() {},
 };
 alarmService.addObserver(alarmObserver);
 registerCleanupFunction(async () => {
@@ -128,37 +128,39 @@ registerCleanupFunction(async () => {
  * Passing this test requires the active calendar to fire notifications in the correct sequence.
  */
 async function runTestAlarms() {
-  let today = cal.dtz.now();
-  let start = today.clone();
+  const today = cal.dtz.now();
+  const start = today.clone();
   start.day++;
   start.hour = start.minute = start.second = 0;
-  let end = start.clone();
+  const end = start.clone();
   end.hour++;
-  let repeatUntil = start.clone();
+  const repeatUntil = start.clone();
   repeatUntil.day += 15;
 
   await CalendarTestUtils.setCalendarView(window, "multiweek");
   await CalendarTestUtils.goToToday(window);
-  Assert.equal(window.unifinderTreeView.rowCount, 0, "unifinder event count");
+  Assert.equal(window.getUnifinderView().rowCount, 0, "there should be no events in the unifinder");
 
   alarmObserver._alarmCount = 0;
 
-  let alarmDialogPromise = BrowserTestUtils.promiseAlertDialog(
+  const alarmDialogPromise = BrowserTestUtils.promiseAlertDialog(
     undefined,
     "chrome://calendar/content/calendar-alarm-dialog.xhtml",
     {
       async callback(alarmWindow) {
         info("Alarm dialog opened");
-        let alarmDocument = alarmWindow.document;
+        const alarmDocument = alarmWindow.document;
 
-        let list = alarmDocument.getElementById("alarm-richlist");
-        let items = list.querySelectorAll(`richlistitem[is="calendar-alarm-widget-richlistitem"]`);
+        const list = alarmDocument.getElementById("alarm-richlist");
+        const items = list.querySelectorAll(
+          `richlistitem[is="calendar-alarm-widget-richlistitem"]`
+        );
         await TestUtils.waitForCondition(() => items.length);
         Assert.equal(items.length, 1);
 
         await new Promise(resolve => alarmWindow.setTimeout(resolve, 500));
 
-        let dismissButton = alarmDocument.querySelector("#alarm-dismiss-all-button");
+        const dismissButton = alarmDocument.querySelector("#alarm-dismiss-all-button");
         EventUtils.synthesizeMouseAtCenter(dismissButton, {}, alarmWindow);
       },
     }
@@ -179,7 +181,7 @@ async function runTestAlarms() {
   info("Alarm dialog closed");
 
   await new Promise(r => setTimeout(r, 2000));
-  Assert.equal(window.unifinderTreeView.rowCount, 1, "there should be one event in the unifinder");
+  Assert.equal(window.getUnifinderView().rowCount, 1, "there should be one event in the unifinder");
 
   Assert.equal(
     [...Services.wm.getEnumerator("Calendar:AlarmWindow")].length,
@@ -206,7 +208,7 @@ async function runTestAlarms() {
 
   await saveAndCloseItemDialog(dialogWindow);
 
-  Assert.equal(window.unifinderTreeView.rowCount, 1, "there should be one event in the unifinder");
+  Assert.equal(window.getUnifinderView().rowCount, 1, "there should be one event in the unifinder");
 
   Services.focus.focusedWindow = window;
 
@@ -238,13 +240,13 @@ async function runTestAlarms() {
     start.weekday + 1,
     1
   );
-  Assert.equal(window.unifinderTreeView.rowCount, 0, "there should be no events in the unifinder");
+  Assert.equal(window.getUnifinderView().rowCount, 0, "there should be no events in the unifinder");
 }
 
 const syncItem1Name = "holy cow, a new item!";
 const syncItem2Name = "a changed item";
 
-let syncChangesTest = {
+const syncChangesTest = {
   async setUp() {
     await CalendarTestUtils.openCalendarTab(window);
 
@@ -261,12 +263,12 @@ let syncChangesTest = {
   },
 
   get part1Item() {
-    let today = cal.dtz.now();
-    let start = today.clone();
+    const today = cal.dtz.now();
+    const start = today.clone();
     start.day += 9 - start.weekday;
     start.hour = 13;
     start.minute = start.second = 0;
-    let end = start.clone();
+    const end = start.clone();
     end.hour++;
 
     return CalendarTestUtils.dedent`
@@ -296,7 +298,7 @@ let syncChangesTest = {
     EventUtils.synthesizeMouseAtCenter(document.getElementById("refreshCalendar"), {});
 
     // Verify that the item we added appears in the calendar view.
-    let item = await CalendarTestUtils.multiweekView.waitForItemAt(window, 2, 3, 1);
+    const item = await CalendarTestUtils.multiweekView.waitForItemAt(window, 2, 3, 1);
     Assert.equal(item.item.title, syncItem1Name, "view should include newly-added item");
 
     // Verify that the today pane updates and shows the item we added.
@@ -313,12 +315,12 @@ let syncChangesTest = {
   },
 
   get part2Item() {
-    let today = cal.dtz.now();
-    let start = today.clone();
+    const today = cal.dtz.now();
+    const start = today.clone();
     start.day += 10 - start.weekday;
     start.hour = 9;
     start.minute = start.second = 0;
-    let end = start.clone();
+    const end = start.clone();
     end.hour++;
 
     return CalendarTestUtils.dedent`
@@ -346,7 +348,7 @@ let syncChangesTest = {
 
     // Verify that the item has updated in the calendar view.
     await CalendarTestUtils.multiweekView.waitForNoItemAt(window, 2, 3, 1);
-    let item = await CalendarTestUtils.multiweekView.waitForItemAt(window, 2, 4, 1);
+    const item = await CalendarTestUtils.multiweekView.waitForItemAt(window, 2, 4, 1);
     Assert.equal(item.item.title, syncItem2Name, "view should show updated item");
 
     // Verify that the today pane updates and shows the updated item.
@@ -389,13 +391,13 @@ async function calendarListContextMenu(target, menuItem) {
     "waiting for window to be focused"
   );
 
-  let contextMenu = document.getElementById("list-calendars-context-menu");
-  let shownPromise = BrowserTestUtils.waitForEvent(contextMenu, "popupshown");
+  const contextMenu = document.getElementById("list-calendars-context-menu");
+  const shownPromise = BrowserTestUtils.waitForEvent(contextMenu, "popupshown");
   EventUtils.synthesizeMouseAtCenter(target, { type: "contextmenu" });
   await shownPromise;
 
   if (menuItem) {
-    let hiddenPromise = BrowserTestUtils.waitForEvent(contextMenu, "popuphidden");
+    const hiddenPromise = BrowserTestUtils.waitForEvent(contextMenu, "popuphidden");
     contextMenu.activateItem(document.getElementById(menuItem));
     await hiddenPromise;
   }

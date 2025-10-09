@@ -18,15 +18,15 @@ MimeDefClass(MimeLeaf, MimeLeafClass, mimeLeafClass, &MIME_SUPERCLASS);
 static int MimeLeaf_initialize(MimeObject*);
 static void MimeLeaf_finalize(MimeObject*);
 static int MimeLeaf_parse_begin(MimeObject*);
-static int MimeLeaf_parse_buffer(const char*, int32_t, MimeObject*);
+static int MimeLeaf_parse_buffer(const char*, int32_t, MimeClosure);
 static int MimeLeaf_parse_line(const char*, int32_t, MimeObject*);
 static int MimeLeaf_close_decoder(MimeObject*);
 static int MimeLeaf_parse_eof(MimeObject*, bool);
 static bool MimeLeaf_displayable_inline_p(MimeObjectClass* clazz,
                                           MimeHeaders* hdrs);
 
-static int MimeLeafClassInitialize(MimeLeafClass* clazz) {
-  MimeObjectClass* oclass = (MimeObjectClass*)clazz;
+static int MimeLeafClassInitialize(MimeObjectClass* oclass) {
+  MimeLeafClass* clazz = (MimeLeafClass*)oclass;
   NS_ASSERTION(!oclass->class_initialized,
                "1.1 <rhp@netscape.com> 19 Mar 1999 12:00");
   oclass->initialize = MimeLeaf_initialize;
@@ -78,7 +78,7 @@ static void MimeLeaf_finalize(MimeObject* object) {
 
 static int MimeLeaf_parse_begin(MimeObject* obj) {
   MimeLeaf* leaf = (MimeLeaf*)obj;
-  MimeDecoderData* (*fn)(MimeConverterOutputCallback, void*) = 0;
+  MimeDecoderData* (*fn)(MimeConverterOutputCallback, MimeClosure) = 0;
 
   /* Initialize a decoder if necessary.
    */
@@ -92,10 +92,9 @@ static int MimeLeaf_parse_begin(MimeObject* obj) {
   else if (!PL_strcasecmp(obj->encoding, ENCODING_BASE64))
     fn = &MimeB64DecoderInit;
   else if (!PL_strcasecmp(obj->encoding, ENCODING_QUOTED_PRINTABLE))
-    leaf->decoder_data = MimeQPDecoderInit(
-        ((MimeConverterOutputCallback)((MimeLeafClass*)obj->clazz)
-             ->parse_decoded_buffer),
-        obj, obj);
+    leaf->decoder_data =
+        MimeQPDecoderInit(((MimeLeafClass*)obj->clazz)->parse_decoded_buffer,
+                          MimeClosure(MimeClosure::isMimeObject, obj), obj);
   else if (!PL_strcasecmp(obj->encoding, ENCODING_UUENCODE) ||
            !PL_strcasecmp(obj->encoding, ENCODING_UUENCODE2) ||
            !PL_strcasecmp(obj->encoding, ENCODING_UUENCODE3) ||
@@ -105,12 +104,8 @@ static int MimeLeaf_parse_begin(MimeObject* obj) {
     fn = &MimeYDecoderInit;
 
   if (fn) {
-    leaf->decoder_data =
-        fn(/* The MimeConverterOutputCallback cast is to turn the `void'
-              argument into `MimeObject'. */
-           ((MimeConverterOutputCallback)((MimeLeafClass*)obj->clazz)
-                ->parse_decoded_buffer),
-           obj);
+    leaf->decoder_data = fn(((MimeLeafClass*)obj->clazz)->parse_decoded_buffer,
+                            MimeClosure(MimeClosure::isMimeObject, obj));
 
     if (!leaf->decoder_data) return MIME_OUT_OF_MEMORY;
   }
@@ -119,7 +114,12 @@ static int MimeLeaf_parse_begin(MimeObject* obj) {
 }
 
 static int MimeLeaf_parse_buffer(const char* buffer, int32_t size,
-                                 MimeObject* obj) {
+                                 MimeClosure closure) {
+  MimeObject* obj = closure.AsMimeObject();
+  if (!obj) {
+    return -1;
+  }
+
   MimeLeaf* leaf = (MimeLeaf*)obj;
 
   NS_ASSERTION(!obj->closed_p, "1.1 <rhp@netscape.com> 19 Mar 1999 12:00");
@@ -139,7 +139,9 @@ static int MimeLeaf_parse_buffer(const char* buffer, int32_t size,
     rv = MimeDecoderWrite(leaf->decoder_data, buffer, size, &outSize);
     leaf->sizeSoFar += outSize;
   } else {
-    rv = ((MimeLeafClass*)obj->clazz)->parse_decoded_buffer(buffer, size, obj);
+    rv = ((MimeLeafClass*)obj->clazz)
+             ->parse_decoded_buffer(
+                 buffer, size, MimeClosure(MimeClosure::isMimeObject, obj));
     leaf->sizeSoFar += size;
   }
   return rv;

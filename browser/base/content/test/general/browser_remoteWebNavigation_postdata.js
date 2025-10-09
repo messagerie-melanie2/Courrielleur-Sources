@@ -6,12 +6,14 @@ function makeInputStream(aString) {
   let stream = Cc["@mozilla.org/io/string-input-stream;1"].createInstance(
     Ci.nsIStringInputStream
   );
-  stream.data = aString;
+  stream.setByteStringData(aString);
   return stream; // XPConnect will QI this to nsIInputStream for us.
 }
 
 add_task(async function test_remoteWebNavigation_postdata() {
-  let { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js");
+  let { HttpServer } = ChromeUtils.importESModule(
+    "resource://testing-common/httpd.sys.mjs"
+  );
   let { CommonUtils } = ChromeUtils.importESModule(
     "resource://services-common/utils.sys.mjs"
   );

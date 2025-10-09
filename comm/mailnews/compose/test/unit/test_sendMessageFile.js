@@ -11,8 +11,8 @@
  * mangling the message.
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var server;
@@ -25,12 +25,16 @@ var kTo = "to@foo.invalid";
 
 function msl() {}
 
+/**
+ * @implements {nsIMsgSendListener}
+ * @implements {nsIMsgCopyServiceListener}
+ */
 msl.prototype = {
   // nsIMsgSendListener
-  onStartSending(aMsgID, aMsgSize) {},
-  onProgress(aMsgID, aProgress, aProgressMax) {},
-  onStatus(aMsgID, aMsg) {},
-  onStopSending(aMsgID, aStatus, aMsg, aReturnFile) {
+  onStartSending() {},
+  onSendProgress() {},
+  onStatus() {},
+  onStopSending(aMsgID, aStatus) {
     try {
       Assert.equal(aStatus, 0);
 
@@ -48,22 +52,24 @@ msl.prototype = {
     } finally {
       server.stop();
 
-      var thread = gThreadManager.currentThread;
+      var thread = Services.tm.currentThread;
       while (thread.hasPendingEvents()) {
         thread.processNextEvent(false);
       }
     }
   },
-  onGetDraftFolderURI(aMsgID, aFolderURI) {},
-  onSendNotPerformed(aMsgID, aStatus) {},
-  onTransportSecurityError(msgID, status, secInfo, location) {},
+  onGetDraftFolderURI() {},
+  onSendNotPerformed() {},
+  onTransportSecurityError() {},
 
   // nsIMsgCopyServiceListener
-  OnStartCopy() {},
-  OnProgress(aProgress, aProgressMax) {},
-  SetMessageKey(aKey) {},
-  GetMessageId(aMessageId) {},
-  OnStopCopy(aStatus) {
+  onStartCopy() {},
+  onProgress() {},
+  setMessageKey() {},
+  getMessageId() {
+    return null;
+  },
+  onStopCopy(aStatus) {
     Assert.equal(aStatus, 0);
     try {
       // Now do a comparison of what is in the sent mail folder
@@ -164,7 +170,7 @@ add_task(async function run_the_test() {
   } finally {
     server.stop();
 
-    var thread = gThreadManager.currentThread;
+    var thread = Services.tm.currentThread;
     while (thread.hasPendingEvents()) {
       thread.processNextEvent(true);
     }

@@ -11,6 +11,7 @@
 #include "mozilla/PresShell.h"
 #include "mozilla/PrintedSheetFrame.h"
 #include "mozilla/dom/HTMLCanvasElement.h"
+#include "mozilla/gfx/Point.h"
 #include "mozilla/StaticPresData.h"
 
 #include "nsCOMPtr.h"
@@ -63,7 +64,7 @@ static const nsPagesPerSheetInfo kSupportedPagesPerSheet[] = {
 inline void SanityCheckPagesPerSheetInfo() {
 #ifdef DEBUG
   // Sanity-checks:
-  MOZ_ASSERT(ArrayLength(kSupportedPagesPerSheet) > 0,
+  MOZ_ASSERT(std::size(kSupportedPagesPerSheet) > 0,
              "Should have at least one pages-per-sheet option.");
   MOZ_ASSERT(kSupportedPagesPerSheet[0].mNumPages == 1,
              "The 0th index is reserved for default 1-page-per-sheet entry");
@@ -265,7 +266,6 @@ void nsPageSequenceFrame::Reflow(nsPresContext* aPresContext,
   MOZ_ASSERT(aPresContext->IsRootPaginatedDocument(),
              "A Page Sequence is only for real pages");
   DO_GLOBAL_REFLOW_COUNT("nsPageSequenceFrame");
-  DISPLAY_REFLOW(aPresContext, this, aReflowInput, aReflowOutput, aStatus);
   MOZ_ASSERT(aStatus.IsEmpty(), "Caller should pass a fresh reflow status!");
   NS_FRAME_TRACE_REFLOW_IN("nsPageSequenceFrame::Reflow");
 
@@ -343,7 +343,7 @@ void nsPageSequenceFrame::Reflow(nsPresContext* aPresContext,
     // frame, we need to call this:
     sheet->ClaimPageFrameFromPrevInFlow();
 
-    const nsSize sheetSize = sheet->PrecomputeSheetSize(aPresContext);
+    const nsSize sheetSize = sheet->ComputeSheetSize(aPresContext);
 
     // Reflow the sheet
     ReflowInput kidReflowInput(
@@ -371,7 +371,7 @@ void nsPageSequenceFrame::Reflow(nsPresContext* aPresContext,
     FinishReflowChild(kidFrame, aPresContext, kidReflowOutput, &kidReflowInput,
                       x, y, ReflowChildFlags::Default);
     MOZ_ASSERT(kidFrame->GetSize() == sheetSize,
-               "PrintedSheetFrame::PrecomputeSheetSize gave the wrong size!");
+               "PrintedSheetFrame::ComputeSheetSize() gave the wrong size!");
     y += kidReflowOutput.Height();
     y += pageCSSMargin.bottom;
 
@@ -584,7 +584,10 @@ nsresult nsPageSequenceFrame::PrePrintNextSheet(nsITimerCallback* aCallback,
       nsDeviceContext* dc = PresContext()->DeviceContext();
       PR_PL(("\n"));
       PR_PL(("***************** BeginPage *****************\n"));
-      rv = dc->BeginPage();
+      const gfx::IntSize sizeInPoints =
+          currentSheet->GetPrintTargetSizeInPoints(
+              dc->AppUnitsPerPhysicalInch());
+      rv = dc->BeginPage(sizeInPoints);
       NS_ENSURE_SUCCESS(rv, rv);
 
       mCalledBeginPage = true;
@@ -598,10 +601,10 @@ nsresult nsPageSequenceFrame::PrePrintNextSheet(nsITimerCallback* aCallback,
       }
 
       for (HTMLCanvasElement* canvas : Reversed(mCurrentCanvasList)) {
-        nsIntSize size = canvas->GetSize();
+        CSSIntSize size = canvas->GetSize();
 
-        RefPtr<DrawTarget> canvasTarget =
-            drawTarget->CreateSimilarDrawTarget(size, drawTarget->GetFormat());
+        RefPtr<DrawTarget> canvasTarget = drawTarget->CreateSimilarDrawTarget(
+            size.ToUnknownSize(), drawTarget->GetFormat());
         if (!canvasTarget) {
           continue;
         }
@@ -675,7 +678,10 @@ nsresult nsPageSequenceFrame::PrintNextSheet() {
       // page otherwise.
       PR_PL(("\n"));
       PR_PL(("***************** BeginPage *****************\n"));
-      rv = dc->BeginPage();
+      const gfx::IntSize sizeInPoints =
+          currentSheetFrame->GetPrintTargetSizeInPoints(
+              dc->AppUnitsPerPhysicalInch());
+      rv = dc->BeginPage(sizeInPoints);
       NS_ENSURE_SUCCESS(rv, rv);
     }
   }

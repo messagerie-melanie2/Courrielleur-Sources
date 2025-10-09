@@ -6,6 +6,7 @@ import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
+  collectSingleAddress: "resource:///modules/AddressCollector.sys.mjs",
   MailUtils: "resource:///modules/MailUtils.sys.mjs",
   MimeMessage: "resource:///modules/MimeMessage.sys.mjs",
   MsgUtils: "resource:///modules/MimeMessageUtils.sys.mjs",
@@ -29,6 +30,28 @@ export class MessageSend {
   ]);
   classID = Components.ID("{028b9c1e-8d0a-4518-80c2-842e07846eaa}");
 
+  /**
+   * Create an rfc822 message and send it.
+
+   * @param {nsIEditor} editor - nsIEditor instance that contains message.
+   *   May be a dummy, especially in the case of import.
+   * @param {nsIMsgIdentity} userIdentity - Identity to send from.
+   * @param {?string} accountKey - Account we're sending message from.
+   * @param {nsIMsgCompFields} compFields - Composition fields.
+   * @param {boolean} isDigest - Is this a digest message?
+   * @param {boolean} dontDeliver - Set to false by the import code -
+   *   used when we're trying to create a message from parts.
+   * @param {nsMsgDeliverMode} deliverMode - Delivery mode.
+   * @param {?nsIMsgDBHdr} msgToReplace - E.g., when saving a draft over an old draft.
+   * @param {string} bodyType - Content type of message body.
+   * @param {string} body - Message body text (should have native line endings)
+   * @param {?mozIDOMWindowProxy} parentWindow - Compose window.
+   * @param {?nsIMsgProgress} progress - Where to send progress info.
+   * @param {?nsIMsgSendListener} listener - Optional listener for send progress.
+   * @param {?string} smtpPassword - Optional smtp server password
+   * @param {?string} originalMsgURI - URI of original messsage.
+   * @param {nsIMsgCompType} compType - Compose type.
+   */
   async createAndSendMessage(
     editor,
     userIdentity,
@@ -58,6 +81,7 @@ export class MessageSend {
     this._sendListener = listener;
     this._parentWindow = parentWindow;
     this._originalMsgURI = originalMsgURI;
+    this._compType = compType;
     this._shouldRemoveMessageFile = true;
 
     this._sendReport = Cc[
@@ -124,7 +148,7 @@ export class MessageSend {
     } catch (e) {
       lazy.MsgUtils.sendLogger.error(e);
       let errorMsg = "";
-      if (e.result == lazy.MsgUtils.NS_MSG_ERROR_ATTACHING_FILE) {
+      if (e.result == Cr.NS_ERROR_FILE_NOT_FOUND) {
         errorMsg = this._composeBundle.formatStringFromName(
           "errorAttachingFile",
           [e.data.name || e.data.url]
@@ -338,13 +362,6 @@ export class MessageSend {
     return exitCode;
   }
 
-  getPartForDomIndex() {
-    throw Components.Exception(
-      "getPartForDomIndex not implemented",
-      Cr.NS_ERROR_NOT_IMPLEMENTED
-    );
-  }
-
   getProgress() {
     return this._sendProgress;
   }
@@ -451,27 +468,29 @@ export class MessageSend {
         );
         if (buttonPressed == 0) {
           // retry button clicked
-          // Check we have a progress dialog.
           if (
-            this._sendProgress.processCanceledByUser &&
+            this._sendProgress?.processCanceledByUser &&
             Services.prefs.getBoolPref("mailnews.show_send_progress")
           ) {
+            // We had a progress dialog and the user cancelled it, create a
+            // new one.
             const progress = Cc[
               "@mozilla.org/messenger/progress;1"
             ].createInstance(Ci.nsIMsgProgress);
 
-            const params = Cc[
+            const composeParams = Cc[
               "@mozilla.org/messengercompose/composeprogressparameters;1"
             ].createInstance(Ci.nsIMsgComposeProgressParams);
-            params.subject = this._parentWindow.gMsgCompose.compFields.subject;
-            params.deliveryMode = this._deliverMode;
+            composeParams.subject =
+              this._parentWindow.gMsgCompose.compFields.subject;
+            composeParams.deliveryMode = this._deliverMode;
 
             progress.openProgressDialog(
               this._parentWindow,
               this._sendProgress.msgWindow,
               "chrome://messenger/content/messengercompose/sendProgress.xhtml",
               false,
-              params
+              composeParams
             );
 
             progress.onStateChange(
@@ -488,7 +507,9 @@ export class MessageSend {
             this._isRetry = true;
           }
           // Ensure statusFeedback is set so progress percent bargraph occurs.
-          this._sendProgress.msgWindow.statusFeedback = this._sendProgress;
+          if (this._sendProgress instanceof Ci.nsIMsgStatusFeedback) {
+            this._sendProgress.msgWindow.statusFeedback = this._sendProgress;
+          }
 
           this._mimeDoFcc();
           return;
@@ -580,93 +601,113 @@ export class MessageSend {
   /**
    * Handle the exit code of message delivery.
    *
-   * @param {nsIURI} url - The delivered message uri.
+   * @param {nsIURI} serverURI - The URI of the server used for the delivery.
+   * @param {nsresult} exitCode - The exit code of message delivery.
+   * @param {?nsITransportSecurityInfo} secInfo - The info to use in case of a security error.
+   * @param {string} errMsg - A localized error message.
    * @param {boolean} isNewsDelivery - The message was delivered to newsgroup.
-   * @param {nsreault} exitCode - The exit code of message delivery.
    */
-  _deliveryExitProcessing(url, isNewsDelivery, exitCode) {
+  _deliveryExitProcessing(
+    serverURI,
+    exitCode,
+    secInfo,
+    errMsg,
+    isNewsDelivery
+  ) {
     lazy.MsgUtils.sendLogger.debug(
       `Delivery exit processing; exitCode=${exitCode}`
     );
     if (!Components.isSuccessCode(exitCode)) {
       let isNSSError = false;
-      const errorName = lazy.MsgUtils.getErrorStringName(exitCode);
-      let errorMsg;
-      if (
-        [
-          lazy.MsgUtils.NS_ERROR_SMTP_SEND_FAILED_UNKNOWN_SERVER,
-          lazy.MsgUtils.NS_ERROR_SMTP_SEND_FAILED_REFUSED,
-          lazy.MsgUtils.NS_ERROR_SMTP_SEND_FAILED_INTERRUPTED,
-          lazy.MsgUtils.NS_ERROR_SMTP_SEND_FAILED_TIMEOUT,
-          lazy.MsgUtils.NS_ERROR_SMTP_PASSWORD_UNDEFINED,
-          lazy.MsgUtils.NS_ERROR_SMTP_AUTH_FAILURE,
-          lazy.MsgUtils.NS_ERROR_SMTP_AUTH_GSSAPI,
-          lazy.MsgUtils.NS_ERROR_SMTP_AUTH_MECH_NOT_SUPPORTED,
-          lazy.MsgUtils.NS_ERROR_SMTP_AUTH_CHANGE_ENCRYPT_TO_PLAIN_NO_SSL,
-          lazy.MsgUtils.NS_ERROR_SMTP_AUTH_CHANGE_ENCRYPT_TO_PLAIN_SSL,
-          lazy.MsgUtils.NS_ERROR_SMTP_AUTH_CHANGE_PLAIN_TO_ENCRYPT,
-          lazy.MsgUtils.NS_ERROR_STARTTLS_FAILED_EHLO_STARTTLS,
-        ].includes(exitCode)
-      ) {
-        errorMsg = lazy.MsgUtils.formatStringWithSMTPHostName(
-          this._userIdentity,
-          this._composeBundle,
-          errorName
-        );
-      } else {
-        const nssErrorsService = Cc[
-          "@mozilla.org/nss_errors_service;1"
-        ].getService(Ci.nsINSSErrorsService);
-        try {
-          // This is a server security issue as determined by the Mozilla
-          // platform. To the Mozilla security message string, appended a string
-          // having additional information with the server name encoded.
-          errorMsg = nssErrorsService.getErrorMessage(exitCode);
-          errorMsg +=
-            "\n" +
-            lazy.MsgUtils.formatStringWithSMTPHostName(
-              this._userIdentity,
-              this._composeBundle,
-              "smtpSecurityIssue"
-            );
+      let isOverridable = false;
+
+      const nssErrorsService = Cc[
+        "@mozilla.org/nss_errors_service;1"
+      ].getService(Ci.nsINSSErrorsService);
+
+      if (secInfo?.errorCode) {
+        if (nssErrorsService.isNSSErrorCode(secInfo.errorCode)) {
           isNSSError = true;
-        } catch (e) {
-          if (url.errorMessage) {
-            // url.errorMessage is an already localized message, usually
-            // combined with the error message from SMTP server.
-            errorMsg = url.errorMessage;
-          } else if (errorName != "sendFailed") {
-            // Not the default string. A mailnews error occurred that does not
-            // require the server name to be encoded. Just print the descriptive
-            // string.
-            errorMsg = this._composeBundle.GetStringFromName(errorName);
-          } else {
-            errorMsg = this._composeBundle.GetStringFromName(
-              "sendFailedUnexpected"
-            );
-            // nsIStringBundle.formatStringFromName doesn't work with %X.
-            errorMsg.replace("%X", `0x${exitCode.toString(16)}`);
-            errorMsg =
-              "\n" +
-              lazy.MsgUtils.formatStringWithSMTPHostName(
-                this._userIdentity,
-                this._composeBundle,
-                "smtpSendFailedUnknownReason"
-              );
+          exitCode = nssErrorsService.getXPCOMFromNSSError(secInfo.errorCode);
+
+          if (
+            [
+              "MOZILLA_PKIX_ERROR_ADDITIONAL_POLICY_CONSTRAINT_FAILED",
+              "MOZILLA_PKIX_ERROR_CA_CERT_USED_AS_END_ENTITY",
+              "MOZILLA_PKIX_ERROR_EMPTY_ISSUER_NAME",
+              "MOZILLA_PKIX_ERROR_INADEQUATE_KEY_SIZE",
+              "MOZILLA_PKIX_ERROR_MITM_DETECTED",
+              "MOZILLA_PKIX_ERROR_NOT_YET_VALID_CERTIFICATE",
+              "MOZILLA_PKIX_ERROR_NOT_YET_VALID_ISSUER_CERTIFICATE",
+              "MOZILLA_PKIX_ERROR_SELF_SIGNED_CERT",
+              "MOZILLA_PKIX_ERROR_V1_CERT_USED_AS_CA",
+              "SEC_ERROR_CA_CERT_INVALID",
+              "SEC_ERROR_CERT_SIGNATURE_ALGORITHM_DISABLED",
+              "SEC_ERROR_EXPIRED_CERTIFICATE",
+              "SEC_ERROR_EXPIRED_ISSUER_CERTIFICATE",
+              "SEC_ERROR_INVALID_TIME",
+              "SEC_ERROR_UNKNOWN_ISSUER",
+              "SSL_ERROR_BAD_CERT_DOMAIN",
+            ].includes(secInfo?.errorCodeString)
+          ) {
+            isOverridable = true;
           }
         }
       }
-      if (isNSSError) {
-        const u = url.QueryInterface(Ci.nsIMsgMailNewsUrl);
-        this.notifyListenerOnTransportSecurityError(
-          null,
-          exitCode,
-          u.failedSecInfo,
-          u.asciiHostPort
-        );
+
+      let errorMsg;
+      if (!isNSSError) {
+        const errorName = lazy.MsgUtils.getErrorStringName(exitCode);
+        if (exitCode == Cr.NS_ERROR_FAILURE) {
+          errorMsg = errMsg;
+        } else if (
+          [
+            Cr.NS_ERROR_UNKNOWN_HOST,
+            Cr.NS_ERROR_UNKNOWN_PROXY_HOST,
+            Cr.NS_ERROR_CONNECTION_REFUSED,
+            Cr.NS_ERROR_PROXY_CONNECTION_REFUSED,
+            Cr.NS_ERROR_NET_INTERRUPT,
+            Cr.NS_ERROR_NET_TIMEOUT,
+            Cr.NS_ERROR_NET_RESET,
+          ].includes(exitCode)
+        ) {
+          errorMsg = lazy.MsgUtils.formatStringWithSMTPHostName(
+            this._userIdentity,
+            this._composeBundle,
+            errorName
+          );
+        } else if (errMsg) {
+          // errMsg is an already localized message, usually combined with the
+          // error message from SMTP server.
+          errorMsg = errMsg;
+        } else {
+          // May be the default string "sendFailed". Should be and error that
+          //  does require the server name to be encoded.
+          errorMsg = this._composeBundle.GetStringFromName(errorName);
+        }
+      } else {
+        // This is a server security issue as determined by the Mozilla
+        // platform. To the Mozilla security message string, appended a string
+        // having additional information with the server name encoded.
+        errorMsg = nssErrorsService.getErrorMessage(exitCode);
+        errorMsg +=
+          "\n" +
+          lazy.MsgUtils.formatStringWithSMTPHostName(
+            this._userIdentity,
+            this._composeBundle,
+            "smtpSecurityIssue"
+          );
       }
       this.notifyListenerOnStopSending(null, exitCode, null, null);
       this.fail(exitCode, errorMsg);
+      if (isNSSError && isOverridable) {
+        this.notifyListenerOnTransportSecurityError(
+          null,
+          exitCode,
+          secInfo,
+          serverURI.asciiHostPort
+        );
+      }
       return;
     }
 
@@ -688,39 +729,36 @@ export class MessageSend {
     this._doFcc();
   }
 
-  sendDeliveryCallback(url, isNewsDelivery, exitCode) {
+  sendDeliveryCallback(
+    serverURI,
+    exitCode,
+    secInfo,
+    errMsg,
+    isNewsDelivery = false
+  ) {
     if (isNewsDelivery) {
       if (
         !Components.isSuccessCode(exitCode) &&
-        exitCode != Cr.NS_ERROR_ABORT &&
-        !lazy.MsgUtils.isMsgError(exitCode)
+        exitCode != Cr.NS_ERROR_ABORT
       ) {
-        exitCode = lazy.MsgUtils.NS_ERROR_POST_FAILED;
+        exitCode = Cr.NS_ERROR_FAILURE;
+        errMsg = this._composeBundle.GetStringFromName("postFailed");
       }
-      return this._deliveryExitProcessing(url, isNewsDelivery, exitCode);
+      return this._deliveryExitProcessing(
+        serverURI,
+        exitCode,
+        secInfo,
+        errMsg,
+        isNewsDelivery
+      );
     }
-    if (!Components.isSuccessCode(exitCode)) {
-      switch (exitCode) {
-        case Cr.NS_ERROR_UNKNOWN_HOST:
-        case Cr.NS_ERROR_UNKNOWN_PROXY_HOST:
-          exitCode = lazy.MsgUtils.NS_ERROR_SMTP_SEND_FAILED_UNKNOWN_SERVER;
-          break;
-        case Cr.NS_ERROR_CONNECTION_REFUSED:
-        case Cr.NS_ERROR_PROXY_CONNECTION_REFUSED:
-          exitCode = lazy.MsgUtils.NS_ERROR_SMTP_SEND_FAILED_REFUSED;
-          break;
-        case Cr.NS_ERROR_NET_INTERRUPT:
-          exitCode = lazy.MsgUtils.NS_ERROR_SMTP_SEND_FAILED_INTERRUPTED;
-          break;
-        case Cr.NS_ERROR_NET_TIMEOUT:
-        case Cr.NS_ERROR_NET_RESET:
-          exitCode = lazy.MsgUtils.NS_ERROR_SMTP_SEND_FAILED_TIMEOUT;
-          break;
-        default:
-          break;
-      }
-    }
-    return this._deliveryExitProcessing(url, isNewsDelivery, exitCode);
+    return this._deliveryExitProcessing(
+      serverURI,
+      exitCode,
+      secInfo,
+      errMsg,
+      isNewsDelivery
+    );
   }
 
   get folderUri() {
@@ -791,7 +829,7 @@ export class MessageSend {
         [messenger.formatFileSize(file.fileSize)]
       );
       if (!Services.prompt.confirm(this._parentWindow, null, msg)) {
-        this.fail(lazy.MsgUtils.NS_ERROR_BUT_DONT_SHOW_ALERT, msg);
+        this.fail(Cr.NS_ERROR_ABORT);
         throw Components.Exception(
           "Cancelled sending large message",
           Cr.NS_ERROR_FAILURE
@@ -946,8 +984,8 @@ export class MessageSend {
       ) {
         // Typically, this appends "Sent-", "Drafts-" or "Templates-" to folder
         // and then has the account name appended, e.g., .../Sent-MyImapAccount.
-        const folder = lazy.MailUtils.getOrCreateFolder(this._folderUri);
-        folderUri += folder.name + "-";
+        const localFolder = lazy.MailUtils.getOrCreateFolder(this._folderUri);
+        folderUri += localFolder.name + "-";
       }
       if (this._fcc) {
         // Get the account name where the "save to" failed.
@@ -1058,11 +1096,9 @@ export class MessageSend {
           this._sendListener.onStopCopy(0);
         }
       } catch (e) {
-        // Ignore the return value of OnStopCopy. Non-zero nsresult will throw
+        // Ignore the return value of onStopCopy. Non-zero nsresult will throw
         // when going through XPConnect. In this case, we don't care about it.
-        console.warn(
-          `OnStopCopy failed with 0x${e.result.toString(16)}\n${e.stack}`
-        );
+        console.warn("onStopCopy failed", e);
       }
       this._cleanup();
     });
@@ -1102,51 +1138,86 @@ export class MessageSend {
   }
 
   /**
-   * Send this._deliveryFile to smtp service.
+   * Send this._deliveryFile to the outgoing service.
    */
   async _deliverAsMail() {
     this.sendReport.currentProcess = Ci.nsIMsgSendReport.process_SMTP;
     this._setStatusMessage(
       this._composeBundle.GetStringFromName("sendingMessage")
     );
-    const recipients = [
-      this._compFields.to,
-      this._compFields.cc,
-      this._compFields.bcc,
-    ].filter(Boolean);
-    this._collectAddressesToAddressBook(recipients);
-    const converter = Cc["@mozilla.org/messenger/mimeconverter;1"].getService(
-      Ci.nsIMimeConverter
-    );
-    const encodedRecipients = converter.encodeMimePartIIStr_UTF8(
-      recipients.join(","),
-      true,
-      0,
-      Ci.nsIMimeConverter.MIME_ENCODED_WORD_SIZE
-    );
+
+    // Turn the `to` and `cc` comp fields (which are both strings) into one
+    // continuous string, filtering out either of them if it's empty.
+    const visibleRecipients = [this._compFields.to, this._compFields.cc]
+      .filter(Boolean)
+      .join(",");
+
+    const parsedVisibleRecipients =
+      MailServices.headerParser.parseEncodedHeaderW(visibleRecipients);
+
+    // Parse the `bcc` comp field (a string) into a parsed array of
+    // `msgIAddressObject`.
+    let parsedBccRecipients = [];
+    if (this._compFields.bcc) {
+      parsedBccRecipients = MailServices.headerParser.parseEncodedHeaderW(
+        this._compFields.bcc
+      );
+    }
+
+    // Collect all recipients into the address book at once.
+    try {
+      this._collectAddressesToAddressBook(
+        [...parsedVisibleRecipients, ...parsedBccRecipients].filter(Boolean)
+      );
+    } catch (e) {
+      // Db access issues, etc. Not fatal for sending.
+      lazy.MsgUtils.sendLogger.warn(
+        `Collecting outging addresses FAILED: ${e.message}`,
+        e
+      );
+    }
+
     lazy.MsgUtils.sendLogger.debug(
       `Delivering mail message <${this._compFields.messageId}>`
     );
-    const deliveryListener = new MsgDeliveryListener(this, false);
+
+    const outgoingListener = new PromiseMsgOutgoingListener(this);
     const msgStatus =
       this._sendProgress instanceof Ci.nsIMsgStatusFeedback
         ? this._sendProgress
         : this._statusFeedback;
-    this._smtpRequest = {};
-    // Do async call. This is necessary to ensure _smtpRequest is set so that
-    // cancel function can be obtained.
-    await MailServices.outgoingServer.wrappedJSObject.sendMailMessage(
+
+    // Retrieve the relevant server to send this message from the outgoing
+    // server service (and make sure it gave us one).
+    const server = MailServices.outgoingServer.getServerByIdentity(
+      this._userIdentity
+    );
+    if (!server) {
+      lazy.MsgUtils.sendLogger.warn(
+        `No server found for identity with email ${this._userIdentity.email} and ` +
+          `smtpServerKey ${this._userIdentity.smtpServerKey}`
+      );
+      return;
+    }
+
+    // Send the message using the server that was retrieved.
+    server.sendMailMessage(
       this._deliveryFile,
-      encodedRecipients,
+      parsedVisibleRecipients,
+      parsedBccRecipients,
       this._userIdentity,
       this._compFields.from,
       this._smtpPassword,
-      deliveryListener,
       msgStatus,
       this._compFields.DSN,
       this._compFields.messageId,
-      this._smtpRequest
+      outgoingListener
     );
+
+    // Wait for the promise to resolve (i.e. for the send to start) before
+    // returning, to ensure the request is set (so it can be cancelled if
+    // necessary).
+    this._smtpRequest = await outgoingListener.requestPromise;
   }
 
   /**
@@ -1155,7 +1226,7 @@ export class MessageSend {
   _deliverAsNews() {
     this.sendReport.currentProcess = Ci.nsIMsgSendReport.process_NNTP;
     lazy.MsgUtils.sendLogger.debug("Delivering news message");
-    const deliveryListener = new MsgDeliveryListener(this, true);
+    const deliveryListener = new NewsDeliveryListener(this);
     let msgWindow;
     try {
       msgWindow =
@@ -1175,19 +1246,26 @@ export class MessageSend {
   /**
    * Collect outgoing addresses to address book.
    *
-   * @param {string[]} recipients - Outgoing addresses including to/cc/bcc.
+   * @param {msgIAddressObject[]} addresses - Outgoing addresses including to/cc/bcc.
    */
-  _collectAddressesToAddressBook(recipients) {
+  _collectAddressesToAddressBook(addresses) {
     const createCard = Services.prefs.getBoolPref(
       "mail.collect_email_address_outgoing",
       false
     );
 
-    const addressCollector = Cc[
-      "@mozilla.org/addressbook/services/addressCollector;1"
-    ].getService(Ci.nsIAbAddressCollector);
-    for (const recipient of recipients) {
-      addressCollector.collectAddress(recipient, createCard);
+    for (const addr of addresses) {
+      let displayName = addr.name;
+      // If we know this is a list, or it seems likely, don't collect the
+      // displayName which may contain the sender's name instead of the (only)
+      // name of the list.
+      if (
+        this._compType == Ci.nsIMsgCompType.ReplyToList ||
+        addr.name.includes(" via ")
+      ) {
+        displayName = "";
+      }
+      lazy.collectSingleAddress(addr.email, displayName, createCard);
     }
   }
 
@@ -1389,20 +1467,18 @@ export class MessageSend {
 }
 
 /**
- * A listener to be passed to the SMTP service.
+ * A listener to be passed to the NNTP service.
  *
  * @implements {nsIUrlListener}
  */
-class MsgDeliveryListener {
+class NewsDeliveryListener {
   QueryInterface = ChromeUtils.generateQI(["nsIUrlListener"]);
 
   /**
-   * @param {nsIMsgSend} msgSend - Send instance to use.
-   * @param {boolean} isNewsDelivery - Whether this is an nntp message delivery.
+   * @param {nsIMsgSend} msgSend - nsIMsgSend instance to use.
    */
-  constructor(msgSend, isNewsDelivery) {
+  constructor(msgSend) {
     this._msgSend = msgSend;
-    this._isNewsDelivery = isNewsDelivery;
   }
 
   OnStartRunningUrl() {
@@ -1411,9 +1487,96 @@ class MsgDeliveryListener {
 
   OnStopRunningUrl(url, exitCode) {
     lazy.MsgUtils.sendLogger.debug(`OnStopRunningUrl; exitCode=${exitCode}`);
-    const mailUrl = url.QueryInterface(Ci.nsIMsgMailNewsUrl);
-    mailUrl.UnRegisterListener(this);
 
-    this._msgSend.sendDeliveryCallback(url, this._isNewsDelivery, exitCode);
+    if (url instanceof Ci.nsIMsgMailNewsUrl) {
+      url.UnRegisterListener(this);
+    }
+
+    this._msgSend.sendDeliveryCallback(url, exitCode, null, null, true);
+  }
+}
+
+/**
+ * A listener to be passed to an outgoing mail server.
+ *
+ * It provides a Promise which resolves to a request (of type `nsIRequest`) when
+ * the message send begins. This request can be used to cancel the send attempt
+ * if requested by the user.
+ *
+ * Upon start and stop of the send attempt, this listener also calls the
+ * relevant callbacks on its `nsIMsgSend`.
+ *
+ * @implements {nsIMsgOutgoingListener}
+ */
+class PromiseMsgOutgoingListener {
+  /**
+   * The nsIMsgSend instance to notify on message send start/stop.
+   *
+   * @type {nsIMsgSend}
+   */
+  #msgSend;
+
+  /**
+   * A promise that resolves to a request that can be used to cancel the message
+   * send operation if requested.
+   *
+   * @type {Promise<nsIRequest>}
+   */
+  #requestPromise;
+
+  /**
+   * The handle to resolve `#requestPromise`.
+   *
+   * @type {function(nsIRequest): void}
+   */
+  #resolve;
+
+  QueryInterface = ChromeUtils.generateQI(["nsIMsgOutgoingListener"]);
+
+  /**
+   * @param {nsIMsgSend} msgSend - nsIMsgSend instance to notify on start/stop.
+   */
+  constructor(msgSend) {
+    this.#msgSend = msgSend;
+
+    // Initialize the Promise that will be resolved when the send attempt
+    // starts.
+    const { promise, resolve } = Promise.withResolvers();
+    this.#requestPromise = promise;
+    this.#resolve = resolve;
+  }
+
+  /**
+   * Notifies that the send attempt has started, and resolves the inner promise.
+   *
+   * @param {nsIRequest} request - A request that can be used to cancel the send
+   *   attempt.
+   */
+  onSendStart(request) {
+    this.#resolve(request);
+    this.#msgSend.notifyListenerOnStartSending(null, 0);
+  }
+
+  /**
+   * Notifies that the send attempt has finished.
+   *
+   * @param {nsIURI} serverURI - The URI of the server that was used to send.
+   * @param {nsresult} exitCode - The resulting status code for the send
+   *    attempt.
+   * @param {?nsITransportSecurityInfo} secInfo - The security context for the
+   *    send attempt.
+   * @param {?string} errMsg - An optional localized, human-readable error
+   *    message.
+   */
+  onSendStop(serverURI, exitCode, secInfo, errMsg) {
+    this.#msgSend.sendDeliveryCallback(serverURI, exitCode, secInfo, errMsg);
+  }
+
+  /**
+   * A promise which resolves with an `nsIRequest`, which can be used to cancel
+   * a send attempt.
+   */
+  get requestPromise() {
+    return this.#requestPromise;
   }
 }

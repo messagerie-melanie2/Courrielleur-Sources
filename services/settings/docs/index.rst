@@ -14,7 +14,7 @@ The ``get()`` method returns the list of entries for a specific key. Each entry 
 
 .. code-block:: js
 
-    const { RemoteSettings } = ChromeUtils.import("resource://services-settings/remote-settings.sys.mjs");
+    const { RemoteSettings } = ChromeUtils.importESModule("resource://services-settings/remote-settings.sys.mjs");
 
     const data = await RemoteSettings("a-key").get();
 
@@ -124,7 +124,10 @@ Remote files are not downloaded automatically. In order to keep attachments in s
         toDelete.map(record => client.attachments.deleteDownloaded(record))
       );
 
-      // Download new attachments
+      // Download a bundle of all attachments if local cache is empty (see details below)
+      client.attachments.cacheAll();
+
+      // OR download new attachments individually
       const fileContents = await Promise.all(
         toDownload.map(async record => {
           const { buffer } = await client.attachments.download(record);
@@ -133,7 +136,17 @@ Remote files are not downloaded automatically. In order to keep attachments in s
       );
     });
 
-The provided helper will:
+The provided ``cacheAll`` helper will:
+  - be a no-op if the local attachment cache is not empty
+    - Use ``pruneAttachments()`` to clear or set the ``force`` parameter to true if you know you want to override this.
+  - download and extract all attachments if bundling is enabled for the collection
+  - return a nullable boolean to inform the calling function what happened
+    - ``null`` if the attachment bundle download was not attempted (ex: client is offline)
+    - ``false`` if at least one attachment failed to be extracted
+    - ``true`` if the bundle was found and extracted without error
+
+
+The provided ``download`` helper will:
   - fetch the remote binary content
   - write the file in the local IndexedDB
   - check the file size
@@ -164,10 +177,6 @@ The provided helper will:
 
     A ``downloadAsBytes()`` method returning an ``ArrayBuffer`` is also available, if writing the attachment locally is not necessary.
 
-    Some ``downloadToDisk()`` and ``deleteFromDisk()`` methods are also available but generally discouraged, since they are prone to leaving extraneous files
-    in the profile directory (see `Bug 1634127 <https://bugzilla.mozilla.org/show_bug.cgi?id=1634127>`_).
-
-
 .. _services/initial-data:
 
 Initial data
@@ -177,9 +186,17 @@ It is possible to package a dump of the server records that will be loaded into 
 
 The JSON dump will serve as the default dataset for ``.get()``, instead of doing a round-trip to pull the latest data. It will also reduce the amount of data to be downloaded on the first synchronization.
 
-#. Place the JSON dump of the server records in the ``services/settings/dumps/main/`` folder
-#. Add the filename to the ``FINAL_TARGET_FILES`` list in ``services/settings/dumps/main/moz.build``
-#. Add the filename to the ``[browser]`` section of ``mobile/android/installer/package-manifest.in`` IF the file should be bundled with Android.
+#. Place the JSON dump of the server records in the ``services/settings/dumps/main/`` folder. Using this command:
+   ::
+
+      CID="your-collection"
+      curl "https://firefox.settings.services.mozilla.com/v1/buckets/main/collections/${CID}/changeset?_expected=0" | jq '{"data": .changes, "timestamp": .timestamp}' > services/settings/dumps/main/${CID}.json``
+
+#. Add the filename to the relevant ``FINAL_TARGET_FILES`` list in ``services/settings/dumps/main/moz.build``
+
+  * Please consider the application(s) where the collection is used and only include the dump file in the relevant builds.
+  * If it is only for Firefox desktop, i.e. ``browser/``, then add it to a build-specific browser section.
+  * If it is for all applications, i.e. outside of ``browser/`` are other specific area, then add it to the global section.
 
 Now, when ``RemoteSettings("some-key").get()`` is called from an empty profile, the ``some-key.json`` file is going to be loaded before the results are returned.
 
@@ -382,7 +399,7 @@ In order to enable verbose logging, set the log level preference to ``debug``.
 
 .. code-block:: javascript
 
-    Services.prefs.setCharPref("services.settings.loglevel", "debug");
+    Services.prefs.setStringPref("services.settings.loglevel", "debug");
 
 Remote Settings Dev Tools
 -------------------------
@@ -527,12 +544,14 @@ For example, they leverage advanced customization options (bucket, content-signa
 
 .. code-block:: js
 
-    const {RemoteSecuritySettings} = ChromeUtils.import("resource://gre/modules/psm/RemoteSecuritySettings.jsm");
+    const {RemoteSecuritySettings} =
+      ChromeUtils.importESModule("resource://gre/modules/psm/RemoteSecuritySettings.sys.mjs");
 
     RemoteSecuritySettings.init();
 
 
-    const {BlocklistPrivate} = ChromeUtils.import("resource://gre/modules/Blocklist.jsm");
+    const {BlocklistPrivate} =
+      ChromeUtils.importESModule("resource://gre/modules/Blocklist.sys.mjs");
 
     BlocklistPrivate.ExtensionBlocklistRS._ensureInitialized();
     BlocklistPrivate.PluginBlocklistRS._ensureInitialized();

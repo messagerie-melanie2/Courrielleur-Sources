@@ -3,7 +3,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 var {PluralForm} = ChromeUtils.import("resource://gre/modules/PluralForm.jsm");
 var {FeedUtils} = ChromeUtils.import("resource:///modules/FeedUtils.jsm");
 var { FolderUtils } = ChromeUtils.import("resource:///modules/FolderUtils.jsm");
@@ -1203,15 +1202,10 @@ BatchMessageMover.prototype =
     }
   },
 
-  QueryInterface(aIID) {
-    if (aIID.equals(Ci.nsIUrlListener) ||
-        aIID.equals(Ci.nsIMsgCopyServiceListener) ||
-        aIID.equals(Ci.nsIMsgFolderListener) ||
-        aIID.equals(Ci.nsIMsgOperationListener) ||
-        aIID.equals(Ci.nsISupports))
-      return this;
-    throw Cr.NS_ERROR_NO_INTERFACE;
-  }
+  QueryInterface: ChromeUtils.generateQI([Ci.nsIUrlListener,
+                                          Ci.nsIMsgCopyServiceListener,
+                                          Ci.nsIMsgFolderListener,
+                                          Ci.nsIMsgOperationListener]),
 }
 
 function MsgArchiveSelectedMessages(aEvent) {
@@ -1476,18 +1470,6 @@ function MsgOpenSelectedMessageInExistingWindow() {
       dump("reusing existing standalone message window failed: " + ex + "\n");
   }
   return false;
-}
-
-function MsgOpenSearch(aSearchStr, aEvent) {
-  // If you change /suite/navigator/navigator.js->BrowserSearch::loadSearch()
-  // make sure you make corresponding changes here.
-  var submission = Services.search.defaultEngine.getSubmission(aSearchStr);
-  if (!submission)
-    return;
-
-  var newTabPref = Services.prefs.getBoolPref("browser.search.opentabforcontextsearch");
-  var where = newTabPref ? aEvent && aEvent.shiftKey ? "tabshifted" : "tab" : "window";
-  openUILinkIn(submission.uri.spec, where, null, submission.postData);
 }
 
 function MsgOpenNewWindowForMessage(messageUri, folderUri) {

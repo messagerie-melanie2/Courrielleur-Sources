@@ -22,13 +22,14 @@
 
 #include "jstypes.h"
 
+#include "js/Prefs.h"
 #include "js/Value.h"
 #include "util/DiagnosticAssertions.h"
 
 /*
  * Allow extra GC poisoning to be enabled in crash-diagnostics and zeal
  * builds. Except in debug builds, this must be enabled by setting the
- * JSGC_EXTRA_POISONING environment variable.
+ * javascript.options.extra_gc_poisoning pref.
  */
 #if defined(JS_CRASH_DIAGNOSTICS) || defined(JS_GC_ZEAL)
 #  define JS_GC_ALLOW_EXTRA_POISONING 1
@@ -65,6 +66,7 @@ const uint8_t JS_FREED_HEAP_PTR_PATTERN = 0x6B;
 const uint8_t JS_FREED_CHUNK_PATTERN = 0x8B;
 const uint8_t JS_FREED_ARENA_PATTERN = 0x9B;
 const uint8_t JS_FRESH_MARK_STACK_PATTERN = 0x9F;
+const uint8_t JS_FREED_BUFFER_PATTERN = 0xAB;
 const uint8_t JS_RESET_VALUE_PATTERN = 0xBB;
 const uint8_t JS_POISONED_JSSCRIPT_DATA_PATTERN = 0xDB;
 const uint8_t JS_OOB_PARSE_NODE_PATTERN = 0xFF;
@@ -84,7 +86,7 @@ const uint8_t JS_SCOPE_DATA_TRAILING_NAMES_PATTERN = 0xCC;
 #  define JS_SWEPT_CODE_PATTERN 0xED  // IN instruction, crashes in user mode.
 #elif defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64)
 #  define JS_SWEPT_CODE_PATTERN 0xA3  // undefined instruction
-#elif defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)
+#elif defined(JS_CODEGEN_MIPS64)
 #  define JS_SWEPT_CODE_PATTERN 0x01  // undefined instruction
 #elif defined(JS_CODEGEN_LOONG64)
 #  define JS_SWEPT_CODE_PATTERN 0x01  // undefined instruction
@@ -184,25 +186,20 @@ static inline void AlwaysPoison(void* ptr, uint8_t value, size_t num,
   SetMemCheckKind(ptr, num, kind);
 }
 
-#if defined(JS_GC_ALLOW_EXTRA_POISONING)
-extern bool gExtraPoisoningEnabled;
-#endif
-
 // Conditionally poison a region of memory in debug builds and nightly builds
-// when enabled by setting the JSGC_EXTRA_POISONING environment variable. Used
+// when enabled by setting the javascript.options.extra_gc_poisoning pref. Used
 // by the GC in places where poisoning has a performance impact.
 static inline void Poison(void* ptr, uint8_t value, size_t num,
                           MemCheckKind kind) {
 #if defined(JS_GC_ALLOW_EXTRA_POISONING)
-  if (js::gExtraPoisoningEnabled) {
+  if (JS::Prefs::extra_gc_poisoning()) {
     PoisonImpl(ptr, value, num);
   }
 #endif
   SetMemCheckKind(ptr, num, kind);
 }
 
-// Poison a region of memory in debug builds. Can be disabled by setting the
-// JSGC_EXTRA_POISONING environment variable.
+// Poison a region of memory in debug builds only.
 static inline void DebugOnlyPoison(void* ptr, uint8_t value, size_t num,
                                    MemCheckKind kind) {
 #if defined(DEBUG)

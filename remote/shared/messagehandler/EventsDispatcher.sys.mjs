@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
@@ -14,10 +12,9 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "chrome://remote/content/shared/messagehandler/sessiondata/SessionData.sys.mjs",
   SessionDataMethod:
     "chrome://remote/content/shared/messagehandler/sessiondata/SessionData.sys.mjs",
-  TabManager: "chrome://remote/content/shared/TabManager.sys.mjs",
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "logger", () => lazy.Log.get());
+ChromeUtils.defineLazyGetter(lazy, "logger", () => lazy.Log.get());
 
 /**
  * Helper to listen to events which rely on SessionData.
@@ -59,6 +56,31 @@ export class EventsDispatcher {
     }
 
     this.#listenersByEventName = null;
+  }
+
+  /**
+   * Check for existing listeners for a given event name and a given context.
+   *
+   * @param {string} name
+   *     Name of the event to check.
+   * @param {ContextInfo} contextInfo
+   *     ContextInfo identifying the context to check.
+   *
+   * @returns {boolean}
+   *     True if there is a registered listener matching the provided arguments.
+   */
+  hasListener(name, contextInfo) {
+    if (!this.#listenersByEventName.has(name)) {
+      return false;
+    }
+
+    const listeners = this.#listenersByEventName.get(name);
+    for (const { contextDescriptor } of listeners.values()) {
+      if (this.#matchesContext(contextInfo, contextDescriptor)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -127,7 +149,13 @@ export class EventsDispatcher {
    */
   async update(subscriptions) {
     const sessionDataItemUpdates = [];
-    subscriptions.forEach(({ event, contextDescriptor, callback, enable }) => {
+    subscriptions.forEach(subscription => {
+      // Skip invalid subscriptions
+      if (subscription === null) {
+        return;
+      }
+
+      const { event, contextDescriptor, callback, enable } = subscription;
       if (enable) {
         // Setup listeners.
         if (!this.#listenersByEventName.has(event)) {
@@ -207,10 +235,16 @@ export class EventsDispatcher {
     if (
       contextDescriptor.type === lazy.ContextDescriptorType.TopBrowsingContext
     ) {
-      const eventBrowsingContext = lazy.TabManager.getBrowsingContextById(
-        contextInfo.contextId
-      );
+      const eventBrowsingContext = BrowsingContext.get(contextInfo.contextId);
       return eventBrowsingContext?.browserId === contextDescriptor.id;
+    }
+
+    if (contextDescriptor.type === lazy.ContextDescriptorType.UserContext) {
+      const eventBrowsingContext = BrowsingContext.get(contextInfo.contextId);
+      return (
+        eventBrowsingContext?.originAttributes.userContextId ===
+        contextDescriptor.id
+      );
     }
 
     return false;

@@ -9,7 +9,8 @@
 }
 
 #unifinder-searchBox {
-  height: 35px;
+  height: 1.5em;
+  min-height: 35px;
   border-bottom: 1px solid ThreeDShadow;
 }
 
@@ -18,7 +19,7 @@
 }
 
 @media not (prefers-color-scheme: dark) {
-  @media (-moz-windows-default-theme) {
+  @media not (prefers-contrast) {
     #unifinder-searchBox {
       background-color: #f8f8f8;
     }

@@ -14,7 +14,10 @@ AntiTracking.runTest(
       let principal = SpecialPowers.wrap(document).nodePrincipal;
       for (let perm of Services.perms.getAllForPrincipal(principal)) {
         // Ignore permissions other than storage access
-        if (!perm.type.startsWith("3rdPartyStorage^")) {
+        if (
+          !perm.type.startsWith("3rdPartyStorage^") &&
+          !perm.type.startsWith("3rdPartyFrameStorage^")
+        ) {
           continue;
         }
         is(
@@ -32,17 +35,12 @@ AntiTracking.runTest(
   // Cleanup callback
   async _ => {
     await new Promise(resolve => {
-      Services.clearData.deleteData(Ci.nsIClearDataService.CLEAR_ALL, value =>
+      Services.clearData.deleteData(Ci.nsIClearDataService.CLEAR_ALL, () =>
         resolve()
       );
     });
   },
-  [
-    [
-      "privacy.partition.always_partition_third_party_non_cookie_storage",
-      false,
-    ],
-  ], // extra prefs
+  [], // extra prefs
   true, // run the window.open() test
   true, // run the user interaction test
   0, // don't expect blocking notifications

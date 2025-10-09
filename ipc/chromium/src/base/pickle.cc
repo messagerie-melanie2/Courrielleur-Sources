@@ -23,7 +23,7 @@
 
 //------------------------------------------------------------------------------
 
-static_assert(MOZ_ALIGNOF(Pickle::memberAlignmentType) >= MOZ_ALIGNOF(uint32_t),
+static_assert(alignof(Pickle::memberAlignmentType) >= alignof(uint32_t),
               "Insufficient alignment");
 
 static const uint32_t kHeaderSegmentCapacity = 64;
@@ -62,7 +62,7 @@ struct Copier<T, sizeof(uint64_t), false> {
 #  else
     static const int loIndex = 1, hiIndex = 0;
 #  endif
-    static_assert(MOZ_ALIGNOF(uint32_t*) == MOZ_ALIGNOF(void*),
+    static_assert(alignof(uint32_t*) == alignof(void*),
                   "Pointers have different alignments");
     const uint32_t* src = reinterpret_cast<const uint32_t*>(iter);
     uint32_t* uint32dest = reinterpret_cast<uint32_t*>(dest);
@@ -76,7 +76,7 @@ template <typename T, size_t size>
 struct Copier<T, size, true> {
   static void Copy(T* dest, const char* iter) {
     // The pointer ought to be properly aligned.
-    DCHECK_EQ((((uintptr_t)iter) & (MOZ_ALIGNOF(T) - 1)), 0);
+    DCHECK_EQ((((uintptr_t)iter) & (alignof(T) - 1)), 0);
     *dest = *reinterpret_cast<const T*>(iter);
   }
 };
@@ -92,10 +92,10 @@ template <typename T>
 void PickleIterator::CopyInto(T* dest) {
   static_assert(std::is_trivially_copyable<T>::value,
                 "Copied type must be a POD type");
-  Copier<T, sizeof(T),
-         (MOZ_ALIGNOF(T) <=
-          sizeof(Pickle::memberAlignmentType))>::Copy(dest, iter_.Data());
+  Copier<T, sizeof(T), (alignof(T) <= sizeof(Pickle::memberAlignmentType))>::
+      Copy(dest, iter_.Data());
 }
+template void PickleIterator::CopyInto<char>(char*);
 
 bool Pickle::IteratorHasRoomFor(const PickleIterator& iter,
                                 uint32_t len) const {
@@ -127,6 +127,7 @@ Pickle::Pickle(uint32_t header_size, size_t segment_capacity)
   DCHECK(static_cast<memberAlignmentType>(header_size) >= sizeof(Header));
   DCHECK(header_size_ <= kHeaderSegmentCapacity);
   header_ = reinterpret_cast<Header*>(buffers_.Start());
+  memset(header_, 0, header_size_);
   header_->payload_size = 0;
 }
 
@@ -172,65 +173,33 @@ void Pickle::CopyFrom(const Pickle& other) {
 }
 
 bool Pickle::ReadBool(PickleIterator* iter, bool* result) const {
-  DCHECK(iter);
-
   int tmp;
-  if (!ReadInt(iter, &tmp)) return false;
+  if (!ReadScalar(iter, &tmp)) return false;
+
   DCHECK(0 == tmp || 1 == tmp);
   *result = tmp ? true : false;
+
   return true;
 }
 
 bool Pickle::ReadInt16(PickleIterator* iter, int16_t* result) const {
-  DCHECK(iter);
-
-  if (!IteratorHasRoomFor(*iter, sizeof(*result)))
-    return ReadBytesInto(iter, result, sizeof(*result));
-
-  iter->CopyInto(result);
-
-  UpdateIter(iter, sizeof(*result));
-  return true;
+  return ReadScalar(iter, result);
 }
 
 bool Pickle::ReadUInt16(PickleIterator* iter, uint16_t* result) const {
-  DCHECK(iter);
-
-  if (!IteratorHasRoomFor(*iter, sizeof(*result)))
-    return ReadBytesInto(iter, result, sizeof(*result));
-
-  iter->CopyInto(result);
-
-  UpdateIter(iter, sizeof(*result));
-  return true;
+  return ReadScalar(iter, result);
 }
 
 bool Pickle::ReadInt(PickleIterator* iter, int* result) const {
-  DCHECK(iter);
-
-  if (!IteratorHasRoomFor(*iter, sizeof(*result)))
-    return ReadBytesInto(iter, result, sizeof(*result));
-
-  iter->CopyInto(result);
-
-  UpdateIter(iter, sizeof(*result));
-  return true;
+  return ReadScalar(iter, result);
 }
 
 // Always written as a 64-bit value since the size for this type can
 // differ between architectures.
 bool Pickle::ReadLong(PickleIterator* iter, long* result) const {
-  DCHECK(iter);
+  int64_t big_result;
+  if (!ReadScalar(iter, &big_result)) return false;
 
-  int64_t big_result = 0;
-  if (IteratorHasRoomFor(*iter, sizeof(big_result))) {
-    iter->CopyInto(&big_result);
-    UpdateIter(iter, sizeof(big_result));
-  } else {
-    if (!ReadBytesInto(iter, &big_result, sizeof(big_result))) {
-      return false;
-    }
-  }
   DCHECK(big_result <= LONG_MAX && big_result >= LONG_MIN);
   *result = static_cast<long>(big_result);
 
@@ -240,17 +209,8 @@ bool Pickle::ReadLong(PickleIterator* iter, long* result) const {
 // Always written as a 64-bit value since the size for this type can
 // differ between architectures.
 bool Pickle::ReadULong(PickleIterator* iter, unsigned long* result) const {
-  DCHECK(iter);
-
-  uint64_t big_result = 0;
-  if (IteratorHasRoomFor(*iter, sizeof(big_result))) {
-    iter->CopyInto(&big_result);
-    UpdateIter(iter, sizeof(big_result));
-  } else {
-    if (!ReadBytesInto(iter, &big_result, sizeof(big_result))) {
-      return false;
-    }
-  }
+  uint64_t big_result;
+  if (!ReadScalar(iter, &big_result)) return false;
   DCHECK(big_result <= ULONG_MAX);
   *result = static_cast<unsigned long>(big_result);
 
@@ -258,68 +218,28 @@ bool Pickle::ReadULong(PickleIterator* iter, unsigned long* result) const {
 }
 
 bool Pickle::ReadLength(PickleIterator* iter, int* result) const {
-  if (!ReadInt(iter, result)) return false;
+  if (!ReadScalar(iter, result)) return false;
   return ((*result) >= 0);
 }
 
 bool Pickle::ReadInt32(PickleIterator* iter, int32_t* result) const {
-  DCHECK(iter);
-
-  if (!IteratorHasRoomFor(*iter, sizeof(*result)))
-    return ReadBytesInto(iter, result, sizeof(*result));
-
-  iter->CopyInto(result);
-
-  UpdateIter(iter, sizeof(*result));
-  return true;
+  return ReadScalar(iter, result);
 }
 
 bool Pickle::ReadUInt32(PickleIterator* iter, uint32_t* result) const {
-  DCHECK(iter);
-
-  if (!IteratorHasRoomFor(*iter, sizeof(*result)))
-    return ReadBytesInto(iter, result, sizeof(*result));
-
-  iter->CopyInto(result);
-
-  UpdateIter(iter, sizeof(*result));
-  return true;
+  return ReadScalar(iter, result);
 }
 
 bool Pickle::ReadInt64(PickleIterator* iter, int64_t* result) const {
-  DCHECK(iter);
-
-  if (!IteratorHasRoomFor(*iter, sizeof(*result)))
-    return ReadBytesInto(iter, result, sizeof(*result));
-
-  iter->CopyInto(result);
-
-  UpdateIter(iter, sizeof(*result));
-  return true;
+  return ReadScalar(iter, result);
 }
 
 bool Pickle::ReadUInt64(PickleIterator* iter, uint64_t* result) const {
-  DCHECK(iter);
-
-  if (!IteratorHasRoomFor(*iter, sizeof(*result)))
-    return ReadBytesInto(iter, result, sizeof(*result));
-
-  iter->CopyInto(result);
-
-  UpdateIter(iter, sizeof(*result));
-  return true;
+  return ReadScalar(iter, result);
 }
 
 bool Pickle::ReadDouble(PickleIterator* iter, double* result) const {
-  DCHECK(iter);
-
-  if (!IteratorHasRoomFor(*iter, sizeof(*result)))
-    return ReadBytesInto(iter, result, sizeof(*result));
-
-  iter->CopyInto(result);
-
-  UpdateIter(iter, sizeof(*result));
-  return true;
+  return ReadScalar(iter, result);
 }
 
 // Always written as a 64-bit value since the size for this type can
@@ -327,15 +247,8 @@ bool Pickle::ReadDouble(PickleIterator* iter, double* result) const {
 bool Pickle::ReadIntPtr(PickleIterator* iter, intptr_t* result) const {
   DCHECK(iter);
 
-  int64_t big_result = 0;
-  if (IteratorHasRoomFor(*iter, sizeof(big_result))) {
-    iter->CopyInto(&big_result);
-    UpdateIter(iter, sizeof(big_result));
-  } else {
-    if (!ReadBytesInto(iter, &big_result, sizeof(big_result))) {
-      return false;
-    }
-  }
+  int64_t big_result;
+  if (!ReadScalar(iter, &big_result)) return false;
 
   DCHECK(big_result <= std::numeric_limits<intptr_t>::max() &&
          big_result >= std::numeric_limits<intptr_t>::min());
@@ -346,15 +259,7 @@ bool Pickle::ReadIntPtr(PickleIterator* iter, intptr_t* result) const {
 
 bool Pickle::ReadUnsignedChar(PickleIterator* iter,
                               unsigned char* result) const {
-  DCHECK(iter);
-
-  if (!IteratorHasRoomFor(*iter, sizeof(*result)))
-    return ReadBytesInto(iter, result, sizeof(*result));
-
-  iter->CopyInto(result);
-
-  UpdateIter(iter, sizeof(*result));
-  return true;
+  return ReadScalar(iter, result);
 }
 
 bool Pickle::ReadString(PickleIterator* iter, std::string* result) const {
@@ -414,7 +319,7 @@ bool Pickle::IgnoreBytes(PickleIterator* iter, uint32_t length) const {
 MOZ_NEVER_INLINE
 bool Pickle::ReadSentinel(PickleIterator* iter, uint32_t sentinel) const {
   uint32_t found;
-  if (!ReadUInt32(iter, &found)) {
+  if (!ReadScalar(iter, &found)) {
     return false;
   }
   return found == sentinel;
@@ -461,7 +366,7 @@ void Pickle::BeginWrite(uint32_t length) {
 
   DCHECK(intptr_t(header_) % sizeof(memberAlignmentType) == 0);
 
-#ifdef ARCH_CPU_64_BITS
+#ifdef HAVE_64BIT_BUILD
   DCHECK_LE(length, std::numeric_limits<uint32_t>::max());
 #endif
 
@@ -551,8 +456,10 @@ bool Pickle::WriteBytesZeroCopy(void* data, uint32_t data_len,
     data = realloc(data, new_capacity);
   }
 #endif
-  buffers_.WriteBytesZeroCopy(reinterpret_cast<char*>(data), data_len,
-                              new_capacity);
+
+  // Shouldn't fail, because we're using InfallibleAllocPolicy.
+  MOZ_ALWAYS_TRUE(buffers_.WriteBytesZeroCopy(reinterpret_cast<char*>(data),
+                                              data_len, new_capacity));
 
   EndWrite(data_len);
   return true;

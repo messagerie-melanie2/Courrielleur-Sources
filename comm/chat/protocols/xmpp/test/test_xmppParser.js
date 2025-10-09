@@ -5,7 +5,7 @@ var { XMPPParser } = ChromeUtils.importESModule(
   "resource:///modules/xmpp-xml.sys.mjs"
 );
 
-let expectedResult =
+const expectedResult =
   '<presence xmlns="jabber:client" from="chat@example.com/Étienne" to="user@example.com/Thunderbird" \
 xml:lang="en" id="5ed0ae8b7051fa6169037da4e2a1ded6"><c xmlns="http://jabber.org/protocol/caps" \
 ver="ZyB1liM9c9GvKOnvl61+5ScWcqw=" node="https://example.com" hash="sha-1"/><x \
@@ -14,10 +14,10 @@ since="2021-04-13T11:52:16.538713+00:00"/><occupant-id xmlns="urn:xmpp:occupant-
 id="wNZPCZIVQ51D/heZQpOHi0ZgHXAEQonNPaLdyzLxHWs="/><x xmlns="http://jabber.org/protocol/muc#user"><item \
 xmlns="http://jabber.org/protocol/muc#user" jid="example@example.com/client" affiliation="member" \
 role="participant"/></x></presence>';
-let byteVersion = new TextEncoder().encode(expectedResult);
-let utf8Input = Array.from(byteVersion, byte => String.fromCharCode(byte)).join(
-  ""
-);
+const byteVersion = new TextEncoder().encode(expectedResult);
+const utf8Input = Array.from(byteVersion, byte =>
+  String.fromCharCode(byte)
+).join("");
 
 var TEST_DATA = [
   {
@@ -35,6 +35,20 @@ bescreen"d in night, so stumblest on my counsel?</body>\
 </message>',
     isError: false,
     description: "Message stanza with body element",
+  },
+  {
+    input:
+      '<message xmlns="jabber:client" from="juliet@capulet.example/balcony" \
+to="romeo@montague.example/garden" type="chat">\
+<body><![CDATA[Testing <b>No HTML here</b>]]></body>\
+</message>',
+    output:
+      '<message xmlns="jabber:client" \
+from="juliet@capulet.example/balcony" to="romeo@montague.example/garden" \
+type="chat"><body xmlns="jabber:client">Testing &lt;b&gt;No HTML here&lt;/b&gt;</body>\
+</message>',
+    isError: false,
+    description: "Message stanza with body element containing CDATA",
   },
   {
     input:
@@ -107,29 +121,73 @@ counsel?</value>\
   },
 ];
 
-function testXMPPParser() {
-  for (let current of TEST_DATA) {
-    let listener = {
+add_task(function testXMPPParser() {
+  for (const current of TEST_DATA) {
+    const listener = {
       onXMLError(aString) {
         ok(current.isError, aString + " - " + current.description);
       },
-      LOG(aString) {},
+      LOG() {},
       startLegacyAuth() {},
       onXmppStanza(aStanza) {
         equal(current.output, aStanza.getXML(), current.description);
         ok(!current.isError, current.description);
       },
     };
-    let parser = new XMPPParser(listener);
+    const parser = new XMPPParser(listener);
     parser.onDataAvailable(current.input);
     parser.destroy();
   }
+});
 
-  run_next_test();
-}
+add_task(async function testXMPPParser_async() {
+  for (const current of TEST_DATA.filter(test => !test.isError)) {
+    const { resolve, promise } = Promise.withResolvers();
+    const listener = {
+      onXMLError(error) {
+        ok(false, `${error} - ${current.description}}`);
+      },
+      LOG() {},
+      startLegacyAuth() {},
+      onXmppStanza(stanza) {
+        equal(current.output, stanza.getXML(), current.description);
+        ok(!current.isError, current.description);
+        resolve();
+        return promise;
+      },
+    };
+    const parser = new XMPPParser(listener);
+    parser.onDataAvailable(current.input);
+    await promise;
+    parser.destroy();
+  }
+});
 
-function run_test() {
-  add_test(testXMPPParser);
-
-  run_next_test();
-}
+add_task(async function testXMPPParser_asyncRejection() {
+  const { reject, promise } = Promise.withResolvers();
+  const testError = new Error("Stanza handling test error");
+  const [testData] = TEST_DATA;
+  const listener = {
+    onXMLError(error) {
+      ok(false, `${error} in rejection test`);
+    },
+    LOG() {},
+    startLegacyAuth() {},
+    onXmppStanza(stanza) {
+      equal(
+        testData.output,
+        stanza.getXML(),
+        "Stanza should have parsed as expected"
+      );
+      reject(testError);
+      return promise;
+    },
+  };
+  ok(!testData.isError, "Selected test data should be for a valid stanza");
+  const parser = new XMPPParser(listener);
+  parser.onDataAvailable(testData.input);
+  // We can't await the promise itself, since that would handle the rejection,
+  // and we want to ensure it's not unhandled.
+  await Promise.resolve();
+  parser.destroy();
+});

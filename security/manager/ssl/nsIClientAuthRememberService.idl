@@ -27,6 +27,11 @@ interface nsIClientAuthRememberRecord : nsISupports
 [scriptable, uuid(1dbc6eb6-0972-4bdb-9dc4-acd0abf72369)]
 interface nsIClientAuthRememberService : nsISupports
 {
+  cenum Duration : 8 {
+    Once = 0,
+    Permanent = 1,
+    Session = 2,
+  };
 
   [must_use]
   void forgetRememberedDecision(in ACString key);
@@ -36,25 +41,33 @@ interface nsIClientAuthRememberService : nsISupports
   Array<nsIClientAuthRememberRecord> getDecisions();
 
 
+  /**
+   * Remember the use of a particular client certificate for a particular
+   * hostname in the context of a given OriginAttributes for the given
+   * duration. The certificate may be null, indicating that no certificate was
+   * used.
+   */
   [must_use, noscript]
   void rememberDecision(in ACString aHostName,
                         in const_OriginAttributesRef aOriginAttributes,
-                        in nsIX509Cert aClientCert);
+                        in nsIX509Cert aClientCert,
+                        in nsIClientAuthRememberService_Duration aDuration);
 
   [implicit_jscontext]
   void rememberDecisionScriptable(in ACString aHostName,
                                   in jsval originAttributes,
-                                  in nsIX509Cert aClientCert);
+                                  in nsIX509Cert aClientCert,
+                                  in nsIClientAuthRememberService_Duration aDuration);
 
   [must_use, noscript]
-  bool hasRememberedDecision(in ACString aHostName,
-                             in const_OriginAttributesRef aOriginAttributes,
-                             out ACString aCertDBKey);
+  boolean hasRememberedDecision(in ACString aHostName,
+                                in const_OriginAttributesRef aOriginAttributes,
+                                out ACString aCertDBKey);
 
   [implicit_jscontext]
-  bool hasRememberedDecisionScriptable(in ACString aHostName,
-                                       in jsval originAttributes,
-                                       out ACString aCertDBKey);
+  boolean hasRememberedDecisionScriptable(in ACString aHostName,
+                                          in jsval originAttributes,
+                                          out ACString aCertDBKey);
 
   [must_use]
   void clearRememberedDecisions();

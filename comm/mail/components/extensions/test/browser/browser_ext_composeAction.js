@@ -2,20 +2,22 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-let account;
+"use strict";
+
+let gAccount;
 
 add_setup(async () => {
-  account = createAccount();
-  addIdentity(account);
+  gAccount = createAccount();
+  addIdentity(gAccount);
 });
 
 // This test uses a command from the menus API to open the popup.
 add_task(async function test_popup_open_with_menu_command() {
-  let composeWindow = await openComposeWindow(account);
+  const composeWindow = await openComposeWindow(gAccount);
   await focusWindow(composeWindow);
 
-  for (let area of ["maintoolbar", "formattoolbar"]) {
-    let testConfig = {
+  for (const area of ["maintoolbar", "formattoolbar"]) {
+    const testConfig = {
       actionType: "compose_action",
       testType: "open-with-menu-command",
       default_area: area,
@@ -39,7 +41,7 @@ add_task(async function test_popup_open_with_menu_command() {
 });
 
 add_task(async function test_theme_icons() {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     manifest: {
       applications: {
         gecko: {
@@ -62,40 +64,50 @@ add_task(async function test_theme_icons() {
 
   await extension.startup();
 
-  let composeWindow = await openComposeWindow(account);
+  const composeWindow = await openComposeWindow(gAccount);
   await focusWindow(composeWindow);
 
-  let uuid = extension.uuid;
-  let button = composeWindow.document.getElementById(
+  const uuid = extension.uuid;
+  const button = composeWindow.document.getElementById(
     "compose_action_mochi_test-composeAction-toolbarbutton"
   );
+  const defaultIcon = `url("moz-extension://${uuid}/default.png")`;
 
-  let dark_theme = await AddonManager.getAddonByID(
+  const dark_theme = await AddonManager.getAddonByID(
     "thunderbird-compact-dark@mozilla.org"
   );
-  await dark_theme.enable();
+  await Promise.all([
+    BrowserTestUtils.waitForEvent(composeWindow, "windowlwthemeupdate"),
+    dark_theme.enable(),
+  ]);
   await new Promise(resolve => requestAnimationFrame(resolve));
   Assert.equal(
     composeWindow.getComputedStyle(button).listStyleImage,
-    `url("moz-extension://${uuid}/light.png")`,
+    makeIconSet(`url("moz-extension://${uuid}/light.png")`, defaultIcon),
     `Dark theme should use light icon.`
   );
 
-  let light_theme = await AddonManager.getAddonByID(
+  const light_theme = await AddonManager.getAddonByID(
     "thunderbird-compact-light@mozilla.org"
   );
-  await light_theme.enable();
+  await Promise.all([
+    BrowserTestUtils.waitForEvent(composeWindow, "windowlwthemeupdate"),
+    light_theme.enable(),
+  ]);
   Assert.equal(
     composeWindow.getComputedStyle(button).listStyleImage,
-    `url("moz-extension://${uuid}/dark.png")`,
+    makeIconSet(`url("moz-extension://${uuid}/dark.png")`, defaultIcon),
     `Light theme should use dark icon.`
   );
 
   // Disabling a theme will enable the default theme.
-  await light_theme.disable();
+  await Promise.all([
+    BrowserTestUtils.waitForEvent(composeWindow, "windowlwthemeupdate"),
+    light_theme.disable(),
+  ]);
   Assert.equal(
     composeWindow.getComputedStyle(button).listStyleImage,
-    `url("moz-extension://${uuid}/default.png")`,
+    makeIconSet(defaultIcon),
     `Default theme should use default icon.`
   );
 
@@ -104,7 +116,7 @@ add_task(async function test_theme_icons() {
 });
 
 add_task(async function test_button_order() {
-  let composeWindow = await openComposeWindow(account);
+  const composeWindow = await openComposeWindow(gAccount);
   await focusWindow(composeWindow);
 
   await run_action_button_order_test(
@@ -138,11 +150,11 @@ add_task(async function test_button_order() {
 });
 
 add_task(async function test_upgrade() {
-  let composeWindow = await openComposeWindow(account);
+  const composeWindow = await openComposeWindow(gAccount);
   await focusWindow(composeWindow);
 
   // Add a compose_action, to make sure the currentSet has been initialized.
-  let extension1 = ExtensionTestUtils.loadExtension({
+  const extension1 = ExtensionTestUtils.loadExtension({
     useAddonManager: "permanent",
     manifest: {
       manifest_version: 2,
@@ -161,7 +173,7 @@ add_task(async function test_upgrade() {
   await extension1.awaitMessage("Extension1 ready");
 
   // Add extension without a compose_action.
-  let extension2 = ExtensionTestUtils.loadExtension({
+  const extension2 = ExtensionTestUtils.loadExtension({
     useAddonManager: "permanent",
     manifest: {
       manifest_version: 2,
@@ -177,7 +189,7 @@ add_task(async function test_upgrade() {
   await extension2.awaitMessage("Extension2 ready");
 
   // Update the extension, now including a compose_action.
-  let updatedExtension2 = ExtensionTestUtils.loadExtension({
+  const updatedExtension2 = ExtensionTestUtils.loadExtension({
     useAddonManager: "permanent",
     manifest: {
       manifest_version: 2,
@@ -195,7 +207,7 @@ add_task(async function test_upgrade() {
   await updatedExtension2.startup();
   await updatedExtension2.awaitMessage("Extension2 updated");
 
-  let button = composeWindow.document.getElementById(
+  const button = composeWindow.document.getElementById(
     "extension2_mochi_test-composeAction-toolbarbutton"
   );
 
@@ -209,13 +221,13 @@ add_task(async function test_upgrade() {
 });
 
 add_task(async function test_iconPath() {
-  let composeWindow = await openComposeWindow(account);
+  const composeWindow = await openComposeWindow(gAccount);
   await focusWindow(composeWindow);
 
   // String values for the default_icon manifest entry have been tested in the
   // theme_icons test already. Here we test imagePath objects for the manifest key
   // and string values as well as objects for the setIcons() function.
-  let files = {
+  const files = {
     "background.js": async () => {
       await window.sendMessage("checkState", "icon1.png");
 
@@ -230,7 +242,7 @@ add_task(async function test_iconPath() {
     "utils.js": await getUtilsJS(),
   };
 
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files,
     manifest: {
       applications: {
@@ -247,14 +259,14 @@ add_task(async function test_iconPath() {
   });
 
   extension.onMessage("checkState", async expected => {
-    let uuid = extension.uuid;
-    let button = composeWindow.document.getElementById(
+    const uuid = extension.uuid;
+    const button = composeWindow.document.getElementById(
       "compose_action_mochi_test-composeAction-toolbarbutton"
     );
 
     Assert.equal(
       window.getComputedStyle(button).listStyleImage,
-      `url("moz-extension://${uuid}/${expected}")`,
+      makeIconSet(`url("moz-extension://${uuid}/${expected}")`),
       `Icon path should be correct.`
     );
     extension.sendMessage();

@@ -7,6 +7,8 @@ var gListBox;
 var gEditButton;
 var gDeleteButton;
 
+window.addEventListener("load", mailViewListOnLoad);
+
 function mailViewListOnLoad() {
   gMailListView = Cc["@mozilla.org/messenger/mailviewlist;1"].getService(
     Ci.nsIMsgMailViewList
@@ -104,7 +106,7 @@ function onEditMailView() {
   }
 }
 
-function onMailViewSelect(event) {
+function onMailViewSelect() {
   updateButtons();
 }
 

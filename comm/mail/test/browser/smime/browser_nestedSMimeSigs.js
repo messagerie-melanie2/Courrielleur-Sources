@@ -9,23 +9,23 @@
 
 "use strict";
 
-var { open_message_from_file, get_about_message, smimeUtils_ensureNSS } =
-  ChromeUtils.import(
-    "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-  );
-var { close_window } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
+var { open_message_from_file, get_about_message } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
-function getMsgBodyTxt(mc) {
-  let msgPane = get_about_message(mc.window).getMessagePaneBrowser();
+var { SmimeUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/SmimeUtils.sys.mjs"
+);
+
+function getMsgBodyTxt(msgc) {
+  const msgPane = get_about_message(msgc).getMessagePaneBrowser();
   return msgPane.contentDocument.documentElement.textContent;
 }
 
 add_task(async function test_nested_sigs() {
-  smimeUtils_ensureNSS();
+  SmimeUtils.ensureNSS();
 
-  let msgc = await open_message_from_file(
+  const msgc = await open_message_from_file(
     new FileUtils.File(getTestFilePath("data/nested-sigs.eml"))
   );
 
@@ -34,7 +34,7 @@ add_task(async function test_nested_sigs() {
     "level 2 text is shown in body"
   );
 
-  close_window(msgc);
+  await BrowserTestUtils.closeWindow(msgc);
 });
 
 registerCleanupFunction(() => {
@@ -43,7 +43,7 @@ registerCleanupFunction(() => {
   Services.focus.focusedWindow = window;
   // Focus an element in the main window, then blur it again to avoid it
   // hijacking keypresses.
-  let mainWindowElement = document.getElementById("button-appmenu");
+  const mainWindowElement = document.getElementById("button-appmenu");
   mainWindowElement.focus();
   mainWindowElement.blur();
 });

@@ -83,8 +83,8 @@
     <keyset id="findKeys"/>
 
     <!-- Go Menu -->
-    <key keycode="VK_BACK" command="cmd_handleBackspace"/>
-    <key keycode="VK_BACK" command="cmd_handleShiftBackspace" modifiers="shift"/>
+    <key keycode="VK_BACK" command="cmd_handleBackspace" reserved="false"/>
+    <key keycode="VK_BACK" command="cmd_handleShiftBackspace" modifiers="shift" reserved="false"/>
 
     <!-- Bookmarks Menu -->
     <key id="addBookmarkKb" key="&addCurPageAsCmd.commandkey;" command="Browser:AddBookmark" modifiers="accel,shift"/>
@@ -207,6 +207,7 @@
     <!-- Content area context menu -->
     <command id="cmd_copyLink"/>
     <command id="cmd_copyImage"/>
+    <command id="cmd_searchselect"/>
 
     <!-- View Menu -->
     <command id="View:PageSource" oncommand="BrowserViewSource(gBrowser.selectedBrowser);" observes="isImage"/>
@@ -355,7 +356,7 @@
 
     <menu id="menu_View">
       <menupopup id="menu_View_Popup" onpopupshowing="EnableCharsetMenu();">
-        <menu label="&toolbarsCmd.label;" accesskey="&toolbarsCmd.accesskey;" id="menu_Toolbars">
+        <menu id="menu_Toolbars">
           <menupopup id="view_toolbars_popup"
                      onpopupshowing="updateToolbarStates(event);"
                      oncommand="onViewToolbarCommand(event);">

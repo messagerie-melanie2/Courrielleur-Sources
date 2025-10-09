@@ -11,18 +11,22 @@
  * and create derivative works of this document.
  */
 
-[Func="mozilla::dom::HTMLDialogElement::IsDialogEnabled",
- Exposed=Window]
+[Exposed=Window]
 interface HTMLDialogElement : HTMLElement {
   [HTMLConstructor] constructor();
+
+  [CEReactions, SetterThrows, Pref="dom.dialog.light-dismiss.enabled"]
+  attribute DOMString closedBy;
 
   [CEReactions, SetterThrows]
   attribute boolean open;
   attribute DOMString returnValue;
-  [CEReactions, Throws]
+  [CEReactions, Throws, UseCounter]
   undefined show();
   [CEReactions, Throws]
   undefined showModal();
   [CEReactions]
   undefined close(optional DOMString returnValue);
+  [CEReactions, Pref="dom.element.dialog.request_close.enabled"]
+  undefined requestClose(optional DOMString returnValue);
 };

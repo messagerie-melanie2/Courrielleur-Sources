@@ -58,6 +58,7 @@
 
 #include "mozilla/Logging.h"
 #include "LogModulePrefWatcher.h"
+#include "xpcpublic.h"
 
 #ifdef MOZ_MEMORY
 #  include "mozmemory.h"
@@ -113,6 +114,10 @@ bool ProcessSelectorMatches(ProcessSelector aSelector) {
 
   if (type == GeckoProcessType_Utility) {
     return !!(aSelector & Module::ALLOW_IN_UTILITY_PROCESS);
+  }
+
+  if (type == GeckoProcessType_GMPlugin) {
+    return !!(aSelector & Module::ALLOW_IN_GMPLUGIN_PROCESS);
   }
 
   // Only allow XPCOM modules which can be loaded in all processes to be loaded
@@ -294,6 +299,8 @@ nsresult nsComponentManagerImpl::Init() {
         ProcessSelectorMatches(ProcessSelector::ALLOW_IN_SOCKET_PROCESS);
     gProcessMatchTable[size_t(ProcessSelector::ALLOW_IN_RDD_PROCESS)] =
         ProcessSelectorMatches(ProcessSelector::ALLOW_IN_RDD_PROCESS);
+    gProcessMatchTable[size_t(ProcessSelector::ALLOW_IN_GMPLUGIN_PROCESS)] =
+        ProcessSelectorMatches(ProcessSelector::ALLOW_IN_GMPLUGIN_PROCESS);
     gProcessMatchTable[size_t(ProcessSelector::ALLOW_IN_GPU_AND_MAIN_PROCESS)] =
         ProcessSelectorMatches(ProcessSelector::ALLOW_IN_GPU_AND_MAIN_PROCESS);
     gProcessMatchTable[size_t(ProcessSelector::ALLOW_IN_GPU_AND_VR_PROCESS)] =
@@ -326,6 +333,12 @@ nsresult nsComponentManagerImpl::Init() {
         ProcessSelector::ALLOW_IN_GPU_RDD_VR_SOCKET_AND_UTILITY_PROCESS)] =
         ProcessSelectorMatches(
             ProcessSelector::ALLOW_IN_GPU_RDD_VR_SOCKET_AND_UTILITY_PROCESS);
+    gProcessMatchTable[size_t(
+        ProcessSelector::
+            ALLOW_IN_GPU_RDD_VR_SOCKET_UTILITY_AND_GMPLUGIN_PROCESS)] =
+        ProcessSelectorMatches(
+            ProcessSelector::
+                ALLOW_IN_GPU_RDD_VR_SOCKET_UTILITY_AND_GMPLUGIN_PROCESS);
   }
 
   MOZ_ASSERT(NOT_INITIALIZED == mStatus);
@@ -345,12 +358,15 @@ nsresult nsComponentManagerImpl::Init() {
     }
   }
 
+  // This needs to be initialized late enough, so that preferences service can
+  // be accessed but before the IO service, and we want it in all process types.
+  xpc::ReadOnlyPage::Init();
+
   bool loadChromeManifests;
   switch (XRE_GetProcessType()) {
     // We are going to assume that only a select few (see below) process types
     // want to load chrome manifests, and that any new process types will not
     // want to load them, because they're not going to be executing JS.
-    case GeckoProcessType_RemoteSandboxBroker:
     default:
       loadChromeManifests = false;
       break;
@@ -360,7 +376,6 @@ nsresult nsComponentManagerImpl::Init() {
     // processes really need chrome manifests...?
     case GeckoProcessType_Default:
     case GeckoProcessType_Content:
-    case GeckoProcessType_GMPlugin:
       loadChromeManifests = true;
       break;
   }
@@ -383,7 +398,7 @@ nsresult nsComponentManagerImpl::Init() {
     RefPtr<nsZipArchive> greOmnijar =
         mozilla::Omnijar::GetReader(mozilla::Omnijar::GRE);
     if (greOmnijar) {
-      cl->location.Init(greOmnijar, "chrome.manifest");
+      cl->location.Init(greOmnijar, "chrome.manifest"_ns);
     } else {
       nsCOMPtr<nsIFile> lf = CloneAndAppend(greDir, "chrome.manifest"_ns);
       cl->location.Init(lf);
@@ -394,7 +409,7 @@ nsresult nsComponentManagerImpl::Init() {
     if (appOmnijar) {
       cl = sModuleLocations->AppendElement();
       cl->type = NS_APP_LOCATION;
-      cl->location.Init(appOmnijar, "chrome.manifest");
+      cl->location.Init(appOmnijar, "chrome.manifest"_ns);
     } else {
       bool equals = false;
       appDir->Equals(greDir, &equals);
@@ -508,7 +523,7 @@ void nsComponentManagerImpl::RegisterManifest(NSLocationType aType,
 void nsComponentManagerImpl::ManifestManifest(ManifestProcessingContext& aCx,
                                               int aLineNo, char* const* aArgv) {
   char* file = aArgv[0];
-  FileLocation f(aCx.mFile, file);
+  FileLocation f(aCx.mFile, nsDependentCString(file));
   RegisterManifest(aCx.mType, f, aCx.mChromeOnly);
 }
 
@@ -1442,7 +1457,7 @@ nsComponentManagerImpl::RemoveBootstrappedManifestLocation(nsIFile* aLocation) {
   elem.type = NS_BOOTSTRAPPED_LOCATION;
 
   if (Substring(path, path.Length() - 4).EqualsLiteral(".xpi")) {
-    elem.location.Init(aLocation, "chrome.manifest");
+    elem.location.Init(aLocation, "chrome.manifest"_ns);
   } else {
     nsCOMPtr<nsIFile> lf = CloneAndAppend(aLocation, "chrome.manifest"_ns);
     elem.location.Init(lf);
@@ -1454,14 +1469,6 @@ nsComponentManagerImpl::RemoveBootstrappedManifestLocation(nsIFile* aLocation) {
 
   rv = cr->CheckForNewChrome();
   return rv;
-}
-
-NS_IMETHODIMP
-nsComponentManagerImpl::GetComponentJSMs(nsIUTF8StringEnumerator** aJSMs) {
-  nsCOMPtr<nsIUTF8StringEnumerator> result =
-      StaticComponents::GetComponentJSMs();
-  result.forget(aJSMs);
-  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -1525,7 +1532,7 @@ XRE_AddJarManifestLocation(NSLocationType aType, nsIFile* aLocation) {
       nsComponentManagerImpl::sModuleLocations->AppendElement();
 
   c->type = aType;
-  c->location.Init(aLocation, "chrome.manifest");
+  c->location.Init(aLocation, "chrome.manifest"_ns);
 
   if (nsComponentManagerImpl::gComponentManager &&
       nsComponentManagerImpl::NORMAL ==

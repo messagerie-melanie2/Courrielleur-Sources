@@ -3,6 +3,8 @@
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. *
  */
 
+"use strict";
+
 // Load subscript shared with all menu tests.
 Services.scriptloader.loadSubScript(
   new URL("head_menus.js", gTestPath).href,
@@ -12,21 +14,21 @@ Services.scriptloader.loadSubScript(
 const getCommonFiles = async () => {
   return {
     "utils.js": await getUtilsJS(),
-    "example.html": `<!DOCTYPE HTML>
-        <html>
+    "example.html": `<!DOCTYPE html>
+      <html>
         <head>
           <title>EXAMPLE</title>
-          <meta http-equiv="content-type" content="text/html; charset=utf-8">
+          <meta charset="utf-8">
         </head>
         <body>
         <p id="description">This is text.</p>
         </body>
-        </html>`,
-    "test.html": `<!DOCTYPE HTML>
-        <html>
+      </html>`,
+    "test.html": `<!DOCTYPE html>
+      <html>
         <head>
           <title>TEST</title>
-          <meta http-equiv="content-type" content="text/html; charset=utf-8">
+          <meta charset="utf-8">
         </head>
         <body>
           <p id="description">This is text.</p>
@@ -34,7 +36,7 @@ const getCommonFiles = async () => {
             <li><a id="link" href="example.html">link to example page</a>
           </ul>
         </body>
-        </html>`,
+      </html>`,
   };
 };
 
@@ -44,10 +46,10 @@ const subtest_clickOpenInBrowserContextMenu = async (extension, getBrowser) => {
   }
 
   async function testMenuNavItems(description, browser, expected) {
-    let menuId = browser.getAttribute("context");
-    let menu = browser.ownerGlobal.top.document.getElementById(menuId);
+    const menuId = browser.getAttribute("context");
+    const menu = browser.ownerGlobal.top.document.getElementById(menuId);
     await rightClickOnContent(menu, "#description", browser);
-    for (let [key, value] of Object.entries(expected)) {
+    for (const [key, value] of Object.entries(expected)) {
       Assert.ok(
         menu.querySelector(key),
         `[${description}] ${key} menu item should exist`
@@ -70,10 +72,7 @@ const subtest_clickOpenInBrowserContextMenu = async (extension, getBrowser) => {
           break;
       }
     }
-    // Wait a moment to make the test not fail.
-    // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
-    await new Promise(r => window.setTimeout(r, 125));
-    menu.hidePopup();
+    await closeMenuPopup(menu);
   }
 
   async function clickLink(browser) {
@@ -83,7 +82,7 @@ const subtest_clickOpenInBrowserContextMenu = async (extension, getBrowser) => {
   await extension.startup();
 
   await extension.awaitMessage("contextClick");
-  let browser = getBrowser();
+  const browser = getBrowser();
 
   // Wait till test.html is fully loaded and check the state of the nav items.
   await waitForLoad(browser, "test.html");
@@ -148,27 +147,27 @@ const subtest_clickOpenInBrowserContextMenu = async (extension, getBrowser) => {
   await extension.unload();
 };
 
-add_setup(() => {
-  let account = createAccount();
-  let rootFolder = account.incomingServer.rootFolder;
-  rootFolder.createSubfolder("test0", null);
+add_setup(async () => {
+  const account = createAccount();
+  const rootFolder = account.incomingServer.rootFolder;
+  await createSubfolder(rootFolder, "test0");
 
-  let subFolders = {};
-  for (let folder of rootFolder.subFolders) {
+  const subFolders = {};
+  for (const folder of rootFolder.subFolders) {
     subFolders[folder.name] = folder;
   }
-  createMessages(subFolders.test0, 5);
+  await createMessages(subFolders.test0, 5);
 
-  let about3Pane = document.getElementById("tabmail").currentAbout3Pane;
+  const about3Pane = document.getElementById("tabmail").currentAbout3Pane;
   about3Pane.displayFolder(subFolders.test0.URI);
 });
 
 add_task(async function test_tabs() {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
         const url = "test.html";
-        let testTab = await browser.tabs.create({ url });
+        const testTab = await browser.tabs.create({ url });
         await window.sendMessage("contextClick");
         await browser.tabs.remove(testTab.id);
 
@@ -191,11 +190,11 @@ add_task(async function test_tabs() {
 });
 
 add_task(async function test_windows() {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
         const url = "test.html";
-        let testWindow = await browser.windows.create({ type: "popup", url });
+        const testWindow = await browser.windows.create({ type: "popup", url });
         await window.sendMessage("contextClick");
         await browser.windows.remove(testWindow.id);
 
@@ -218,11 +217,11 @@ add_task(async function test_windows() {
 });
 
 add_task(async function test_mail3pane() {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": async () => {
         const url = "test.html";
-        let mailTabs = await browser.tabs.query({ type: "mail" });
+        const mailTabs = await browser.tabs.query({ type: "mail" });
         browser.test.assertEq(
           1,
           mailTabs.length,

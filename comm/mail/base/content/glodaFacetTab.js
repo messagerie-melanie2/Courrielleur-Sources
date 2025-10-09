@@ -2,11 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "GlodaMsgSearcher",
-  "resource:///modules/gloda/GlodaMsgSearcher.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  GlodaMsgSearcher: "resource:///modules/gloda/GlodaMsgSearcher.sys.mjs",
+});
 
 var glodaFacetTabType = {
   name: "glodaFacet",
@@ -34,7 +32,7 @@ var glodaFacetTabType = {
     );
 
     // First clone the page and set up the basics.
-    let clone = document
+    const clone = document
       .getElementById("glodaTab")
       .firstElementChild.cloneNode(true);
 
@@ -60,7 +58,7 @@ var glodaFacetTabType = {
         aTab.IMQuery = aTab.IMSearcher.query;
       }
 
-      let searchString = aTab.searcher.searchString;
+      const searchString = aTab.searcher.searchString;
       aTab.searchInputValue = aTab.searchString = searchString;
       aTab.title = searchString
         ? searchString
@@ -83,7 +81,7 @@ var glodaFacetTabType = {
       );
 
       // Wire up the search input icon click event
-      let searchInput = aTab.panel.querySelector(".remote-gloda-search");
+      const searchInput = aTab.panel.querySelector(".remote-gloda-search");
       searchInput.focus();
     }
 
@@ -98,11 +96,11 @@ var glodaFacetTabType = {
 
     this.lastTabId++;
   },
-  closeTab(aTab) {},
-  saveTabState(aTab) {
+  closeTab() {},
+  saveTabState() {
     // nothing to do; we are not multiplexed
   },
-  showTab(aTab) {
+  showTab() {
     // nothing to do; we are not multiplexed
   },
   getBrowser(aTab) {

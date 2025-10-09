@@ -22,7 +22,7 @@ const emptyTheme = {
 
 let defaultTheme = emptyTheme;
 // Map[windowId -> Theme instance]
-let windowOverrides = new Map();
+const windowOverrides = new Map();
 
 /**
  * Class representing either a global theme affecting all windows or an override on a specific window.
@@ -32,8 +32,13 @@ class Theme {
   /**
    * Creates a theme instance.
    *
-   * @param {string} extension - Extension that created the theme.
-   * @param {Integer} windowId - The windowId where the theme is applied.
+   * @param {object} options
+   * @param {string} options.extension - Extension that created the theme.
+   * @param {Integer} options.windowId - The windowId where the theme is applied.
+   * @param {object} options.details
+   * @param {object} options.darkDetails
+   * @param {object} options.experiment
+   * @param {object} options.startupData - startupData if this is a static theme.
    */
   constructor({
     extension,
@@ -48,15 +53,30 @@ class Theme {
     this.darkDetails = darkDetails;
     this.windowId = windowId;
 
-    if (startupData && startupData.lwtData) {
-      Object.assign(this, startupData);
+    if (startupData?.lwtData) {
+      // Parsed theme from a previous load() already available in startupData
+      // of parsed theme. We assume that reparsing the theme will yield the same
+      // result, and therefore reuse the value of startupData. This is a minor
+      // optimization; the more important use of startupData is before startup,
+      // by Extension.sys.mjs for LightweightThemeManager.fallbackThemeData.
+      //
+      // Note: the assumption "yield the same result" is not obviously true: the
+      // startupData persists across application updates, so it is possible for
+      // a browser update to occur that interprets the static theme differently.
+      // In this case we would still be using the old interpretation instead of
+      // the new one, until the user disables and re-enables/installs the theme.
+      this.lwtData = startupData.lwtData;
+      this.lwtStyles = startupData.lwtStyles;
+      this.lwtDarkStyles = startupData.lwtDarkStyles;
+      this.experiment = startupData.experiment;
     } else {
+      // lwtData will be populated by load().
+      this.lwtData = null;
       // TODO: Update this part after bug 1550090.
       this.lwtStyles = {};
-      this.lwtDarkStyles = null;
-      if (darkDetails) {
-        this.lwtDarkStyles = {};
-      }
+      this.lwtDarkStyles = darkDetails ? {} : null;
+
+      this.experiment = null;
 
       if (experiment) {
         if (extension.canUseThemeExperiment()) {
@@ -101,6 +121,7 @@ class Theme {
    * This method will override any currently applied theme.
    */
   load() {
+    // this.lwtData is usually null, unless populated from startupData.
     if (!this.lwtData) {
       this.loadDetails(this.details, this.lwtStyles);
       if (this.darkDetails) {
@@ -116,13 +137,19 @@ class Theme {
         this.lwtData.experiment = this.experiment;
       }
 
-      this.extension.startupData = {
-        lwtData: this.lwtData,
-        lwtStyles: this.lwtStyles,
-        lwtDarkStyles: this.lwtDarkStyles,
-        experiment: this.experiment,
-      };
-      this.extension.saveStartupData();
+      if (this.extension.type === "theme") {
+        // Store the parsed theme in startupData, so it is available early at
+        // browser startup, to use as LightweightThemeManager.fallbackThemeData,
+        // which is assigned from Extension.sys.mjs to avoid having to wait for
+        // this ext-theme.js file to be loaded.
+        this.extension.startupData = {
+          lwtData: this.lwtData,
+          lwtStyles: this.lwtStyles,
+          lwtDarkStyles: this.lwtDarkStyles,
+          experiment: this.experiment,
+        };
+        this.extension.saveStartupData();
+      }
     }
 
     if (this.windowId) {
@@ -170,8 +197,8 @@ class Theme {
    * @param {object} styles - Styles object in which to store the colors.
    */
   loadColors(colors, styles) {
-    for (let color of Object.keys(colors)) {
-      let val = colors[color];
+    for (const color of Object.keys(colors)) {
+      const val = colors[color];
 
       if (!val) {
         continue;
@@ -264,8 +291,8 @@ class Theme {
   loadImages(images, styles) {
     const { logger } = this.extension;
 
-    for (let image of Object.keys(images)) {
-      let val = images[image];
+    for (const image of Object.keys(images)) {
+      const val = images[image];
 
       if (!val) {
         continue;
@@ -273,12 +300,12 @@ class Theme {
 
       switch (image) {
         case "additional_backgrounds": {
-          let backgroundImages = val.map(img => this.getFileUrl(img));
+          const backgroundImages = val.map(img => this.getFileUrl(img));
           styles.additionalBackgrounds = backgroundImages;
           break;
         }
         case "theme_frame": {
-          let resolvedURL = this.getFileUrl(val);
+          const resolvedURL = this.getFileUrl(val);
           styles.headerURL = resolvedURL;
           break;
         }
@@ -303,11 +330,11 @@ class Theme {
    * Properties are commonly used to specify more advanced behavior of colors,
    * images or icons.
    *
-   * @param {object} - properties Dictionary mapping properties to values.
-   * @param {object} - styles Styles object in which to store the colors.
+   * @param {object} properties - Dictionary mapping properties to values.
+   * @param {object} styles - Styles object in which to store the colors.
    */
   loadProperties(properties, styles) {
-    let additionalBackgroundsCount =
+    const additionalBackgroundsCount =
       (styles.additionalBackgrounds && styles.additionalBackgrounds.length) ||
       0;
     const assertValidAdditionalBackgrounds = (property, valueCount) => {
@@ -329,8 +356,8 @@ class Theme {
       return true;
     };
 
-    for (let property of Object.getOwnPropertyNames(properties)) {
-      let val = properties[property];
+    for (const property of Object.getOwnPropertyNames(properties)) {
+      const val = properties[property];
 
       if (!val) {
         continue;
@@ -350,7 +377,7 @@ class Theme {
             break;
           }
 
-          let tiling = [];
+          const tiling = [];
           for (let i = 0, l = styles.additionalBackgrounds.length; i < l; ++i) {
             tiling.push(val[i] || "no-repeat");
           }
@@ -394,7 +421,7 @@ class Theme {
   }
 
   static unload(windowId) {
-    let lwtData = {
+    const lwtData = {
       theme: null,
     };
 
@@ -419,7 +446,7 @@ this.theme = class extends ExtensionAPIPersistent {
     // has been called).
 
     onUpdated({ fire, context }) {
-      let callback = async (event, theme, windowId) => {
+      const callback = async (event, theme, windowId) => {
         if (fire.wakeup) {
           await fire.wakeup();
         }
@@ -446,10 +473,12 @@ this.theme = class extends ExtensionAPIPersistent {
     },
   };
 
-  onManifestEntry(entryName) {
-    let { extension } = this;
-    let { manifest } = extension;
+  onManifestEntry() {
+    const { extension } = this;
+    const { manifest } = extension;
 
+    // Note: only static themes are processed here; extensions with the "theme"
+    // permission do not enter this code path.
     defaultTheme = new Theme({
       extension,
       details: manifest.theme,
@@ -464,8 +493,8 @@ this.theme = class extends ExtensionAPIPersistent {
       return;
     }
 
-    let { extension } = this;
-    for (let [windowId, theme] of windowOverrides) {
+    const { extension } = this;
+    for (const [windowId, theme] of windowOverrides) {
       if (theme.extension === extension) {
         Theme.unload(windowId);
       }
@@ -477,7 +506,7 @@ this.theme = class extends ExtensionAPIPersistent {
   }
 
   getAPI(context) {
-    let { extension } = context;
+    const { extension } = context;
 
     return {
       theme: {
@@ -520,7 +549,7 @@ this.theme = class extends ExtensionAPIPersistent {
               return Promise.reject(`Invalid window ID: ${windowId}`);
             }
 
-            let theme = windowOverrides.get(windowId) || defaultTheme;
+            const theme = windowOverrides.get(windowId) || defaultTheme;
             if (theme.extension !== extension) {
               return Promise.resolve();
             }

@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+"use strict";
+
 // Load subscript shared with all menu tests.
 Services.scriptloader.loadSubScript(
   new URL("head_menus.js", gTestPath).href,
@@ -9,17 +11,18 @@ Services.scriptloader.loadSubScript(
 );
 
 let gAccount, gFolders, gMessage;
+
 add_setup(async () => {
   await Services.search.init();
 
   gAccount = createAccount();
   addIdentity(gAccount);
   gFolders = gAccount.incomingServer.rootFolder.subFolders;
-  createMessages(gFolders[0], {
+  await createMessages(gFolders[0], {
     count: 1,
     body: {
       contentType: "text/html",
-      body: await fetch(`${URL_BASE}/content.html`).then(r => r.text()),
+      body: await IOUtils.readUTF8(getTestFilePath(`data/content.html`)),
     },
   });
   gMessage = [...gFolders[0].messages][0];
@@ -31,44 +34,58 @@ add_setup(async () => {
 });
 
 async function subtest_folder_pane(manifest) {
-  let extension = await getMenuExtension(manifest);
+  const extension = await getMenuExtension(manifest);
 
   await extension.startup();
   await extension.awaitMessage("menus-created");
 
-  let about3Pane = document.getElementById("tabmail").currentAbout3Pane;
-  let folderTree = about3Pane.document.getElementById("folderTree");
-  let menu = about3Pane.document.getElementById("folderPaneContext");
-  await rightClick(menu, folderTree.rows[1].querySelector(".container"));
+  const about3Pane = document.getElementById("tabmail").currentAbout3Pane;
+  const folderTree = about3Pane.document.getElementById("folderTree");
+  const menu = about3Pane.document.getElementById("folderPaneContext");
+  await openMenuPopup(menu, folderTree.rows[1].querySelector(".container"), {
+    type: "contextmenu",
+  });
   Assert.ok(menu.querySelector("#menus_mochi_test-menuitem-_folder_pane"));
-  menu.hidePopup();
+  await closeMenuPopup(menu);
 
   await checkShownEvent(
     extension,
     {
       menuIds: ["folder_pane"],
       contexts: ["folder_pane", "all"],
-      selectedFolder: manifest?.permissions?.includes("accountsRead")
-        ? { accountId: gAccount.key, path: "/Trash" }
+      selectedFolders: manifest?.permissions?.includes("accountsRead")
+        ? [{ accountId: gAccount.key, path: "/Trash" }]
         : undefined,
+      selectedFolder:
+        manifest?.permissions?.includes("accountsRead") &&
+        manifest?.manifest_version < 3
+          ? { accountId: gAccount.key, path: "/Trash" }
+          : undefined,
     },
-    { active: true, index: 0, mailTab: true }
+    { active: true, index: 0, type: "mail" }
   );
 
-  await rightClick(menu, folderTree.rows[0].querySelector(".container"));
+  await openMenuPopup(menu, folderTree.rows[0].querySelector(".container"), {
+    type: "contextmenu",
+  });
   Assert.ok(menu.querySelector("#menus_mochi_test-menuitem-_folder_pane"));
-  menu.hidePopup();
+  await closeMenuPopup(menu);
 
   await checkShownEvent(
     extension,
     {
       menuIds: ["folder_pane"],
       contexts: ["folder_pane", "all"],
-      selectedAccount: manifest?.permissions?.includes("accountsRead")
-        ? { id: gAccount.key, type: "none" }
+      selectedFolders: manifest?.permissions?.includes("accountsRead")
+        ? [{ accountId: gAccount.key, path: "/" }]
         : undefined,
+      selectedAccount:
+        manifest?.permissions?.includes("accountsRead") &&
+        manifest?.manifest_version < 3
+          ? { id: gAccount.key, type: "none" }
+          : undefined,
     },
-    { active: true, index: 0, mailTab: true }
+    { active: true, index: 0, type: "mail" }
   );
 
   await extension.unload();

@@ -4,8 +4,8 @@
 
 // Test of message count changes in virtual folder views
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var bugmail1 = do_get_file("../../../data/bugmail1");
@@ -41,15 +41,19 @@ function run_test() {
   return true;
 }
 
-// nsIMsgCopyServiceListener implementation
+/**
+ * @implements {nsIMsgCopyServiceListener}
+ */
 var copyListener = {
-  OnStartCopy() {},
-  OnProgress(aProgress, aProgressMax) {},
-  SetMessageKey(aKey) {
+  onStartCopy() {},
+  onProgress() {},
+  setMessageKey(aKey) {
     hdrs.push(localAccountUtils.inboxFolder.GetMessageHeader(aKey));
   },
-  SetMessageId(aMessageId) {},
-  OnStopCopy(aStatus) {
+  getMessageId() {
+    return null;
+  },
+  onStopCopy() {
     if (--messageCount) {
       MailServices.copy.copyFileMessage(
         bugmail1,
@@ -81,14 +85,14 @@ function setupVirtualFolder() {
   MailServices.tags.addTagForKey(tag1, tag1, null, null);
 
   // add tag1 to 4 messages
-  let messages0to3 = [hdrs[0], hdrs[1], hdrs[2], hdrs[3]];
+  const messages0to3 = [hdrs[0], hdrs[1], hdrs[2], hdrs[3]];
   localAccountUtils.inboxFolder.addKeywordsToMessages(messages0to3, tag1);
 
   // set 3 messages unread, 2 messages read
-  let messages0to2 = [hdrs[0], hdrs[1], hdrs[2]];
+  const messages0to2 = [hdrs[0], hdrs[1], hdrs[2]];
   localAccountUtils.inboxFolder.markMessagesRead(messages0to2, false);
 
-  let messages3to4 = [hdrs[3], hdrs[4]];
+  const messages3to4 = [hdrs[3], hdrs[4]];
   localAccountUtils.inboxFolder.markMessagesRead(messages3to4, true);
 
   // search will look for tag tag1 in the inbox folder
@@ -133,14 +137,14 @@ var searchListener = {
     numTotalMessages = 0;
     numUnreadMessages = 0;
   },
-  onSearchHit(dbHdr, folder) {
+  onSearchHit(dbHdr) {
     print("Search hit, isRead is " + dbHdr.isRead);
     numTotalMessages++;
     if (!dbHdr.isRead) {
       numUnreadMessages++;
     }
   },
-  onSearchDone(status) {
+  onSearchDone() {
     print("Finished search hitCount = " + numTotalMessages);
     var db = virtualFolder.msgDatabase;
     var dbFolderInfo = db.dBFolderInfo;

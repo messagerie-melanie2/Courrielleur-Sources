@@ -217,6 +217,10 @@ class FrameInfo {
                    BaselineFrame::reverseOffsetOfDebugFrameSize());
   }
 #endif
+  Address addressOfInterpreterScript() const {
+    return Address(FramePointer,
+                   BaselineFrame::reverseOffsetOfInterpreterScript());
+  }
 };
 
 class CompilerFrameInfo : public FrameInfo {
@@ -227,7 +231,7 @@ class CompilerFrameInfo : public FrameInfo {
 
  public:
   CompilerFrameInfo(JSScript* script, MacroAssembler& masm)
-      : FrameInfo(masm), script(script), stack(), spIndex(0) {}
+      : FrameInfo(masm), script(script), spIndex(0) {}
   [[nodiscard]] bool init(TempAllocator& alloc);
 
   size_t nlocals() const { return script->nfixed(); }
@@ -416,10 +420,6 @@ class InterpreterFrameInfo : public FrameInfo {
 
   void bumpInterpreterICEntry();
 
-  Address addressOfInterpreterScript() const {
-    return Address(FramePointer,
-                   BaselineFrame::reverseOffsetOfInterpreterScript());
-  }
   Address addressOfInterpreterPC() const {
     return Address(FramePointer, BaselineFrame::reverseOffsetOfInterpreterPC());
   }

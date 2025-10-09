@@ -6,7 +6,6 @@
 // from https://docs.microsoft.com/en-us/typography/fonts/windows_10_font_list
 // TODO: check whether we need to list legacy styled family names like "... Light".
 static const char* kBaseFonts[] = {
-  "AlternateGothic2 BT",
   "Arial",
   "Arial Black",
   "Bahnschrift",
@@ -28,7 +27,6 @@ static const char* kBaseFonts[] = {
   "Gabriola",
   "Gadugi",
   "Georgia",
-  "HoloLens MDL2 Assets",
   "Impact",
   "Javanese Text",
   "Leelawadee UI",
@@ -78,6 +76,7 @@ static const char* kBaseFonts[] = {
   "Segoe UI Symbol",
   "SimSun",
   "SimSun-ExtB",
+  "SimSun-ExtG",
   "Sitka Banner",
   "Sitka Display",
   "Sitka Heading",
@@ -103,7 +102,7 @@ static const char* kBaseFonts[] = {
 
 // Additional fonts provided by language-pack installation.
 static const char* kLangPackFonts[] = {
-  "Aharoni Bold",  // Hebrew Supplemental Fonts
+  "Aharoni",  // Hebrew Supplemental Fonts
   "Aldhabi",  // Arabic Script Supplemental Fonts
   "Andalus",  // Arabic Script Supplemental Fonts
   "Angsana New",  // Thai Supplemental Fonts
@@ -161,10 +160,21 @@ static const char* kLangPackFonts[] = {
   "MingLiU",  // Chinese (Traditional) Supplemental Fonts
   "MingLiU_HKSCS",  // Chinese (Traditional) Supplemental Fonts
   "Miriam",  // Hebrew Supplemental Fonts
+  "Miriam Fixed",  // Hebrew Supplemental Fonts
   "MoolBoran",  // Khmer Supplemental Fonts
   "MS Mincho",  // Japanese Supplemental Fonts
   "MS PMincho",  // Japanese Supplemental Fonts
   "Narkisim",  // Hebrew Supplemental Fonts
+  "Noto Sans HK",  // Chinese (Traditional, Hong Kong) Supplemental Fonts
+  "Noto Sans JP",  // Japanese Supplemental Fonts
+  "Noto Sans KR",  // Korean Supplemental Fonts
+  "Noto Sans SC",  // Chinese (Simplified) Supplemental Fonts
+  "Noto Sans TC",  // Chinese (Traditional) Supplemental Fonts
+  "Noto Serif HK",  // Chinese (Traditional, Hong Kong) Supplemental Fonts
+  "Noto Serif JP",  // Japanese Supplemental Fonts
+  "Noto Serif KR",  // Korean Supplemental Fonts
+  "Noto Serif SC",  // Chinese (Simplified) Supplemental Fonts
+  "Noto Serif TC",  // Chinese (Traditional) Supplemental Fonts
   "Nyala",  // Ethiopic Supplemental Fonts
   "Plantagenet Cherokee",  // Cherokee Supplemental Fonts
   "PMingLiU",  // Chinese (Traditional) Supplemental Fonts
@@ -178,7 +188,7 @@ static const char* kLangPackFonts[] = {
   "Simplified Arabic",  // Arabic Script Supplemental Fonts
   "Traditional Arabic",  // Arabic Script Supplemental Fonts
   "Tunga",  // Kannada Supplemental Fonts
-  "UD Digi Kyokasho",  // Japanese Supplemental Fonts
+  "UD Digi Kyokasho N-B",  // Japanese Supplemental Fonts
   "UD Digi Kyokasho N-R",  // Japanese Supplemental Fonts
   "UD Digi Kyokasho NK-B",  // Japanese Supplemental Fonts
   "UD Digi Kyokasho NK-R",  // Japanese Supplemental Fonts
@@ -198,4 +208,68 @@ static const char* kLangPackFonts[] = {
 //  "Neue Haas Grotesk Text Pro",  // Pan-European Supplemental Fonts - EXCLUDED
 //  "Rockwell Nova",  // Pan-European Supplemental Fonts - EXCLUDED
 //  "Verdana Pro",  // Pan-European Supplemental Fonts - EXCLUDED
+};
+
+struct FontSubstitute {
+  const char *substituteName;
+  const char *actualFontName;
+};
+
+static const FontSubstitute kFontSubstitutes[] = {
+  // Common substitutions
+  {"Arabic Transparent", "Arial"},
+  {"Arial Baltic", "Arial"},
+  {"Arial CE", "Arial"},
+  {"Arial CYR", "Arial"},
+  {"Arial Greek", "Arial"},
+  {"Arial TUR", "Arial"},
+  {"Courier New Baltic", "Courier New"},
+  {"Courier New CE", "Courier New"},
+  {"Courier New CYR", "Courier New"},
+  {"Courier New Greek", "Courier New"},
+  {"Courier New TUR", "Courier New"},
+  {"Helv", "Microsoft Sans Serif"},
+  {"Helvetica", "Arial"},
+  {"MS Shell Dlg 2", "Tahoma"},
+  {"Tahoma Armenian", "Tahoma"},
+  {"Times", "Times New Roman"},
+  {"Times New Roman Baltic", "Times New Roman"},
+  {"Times New Roman CE", "Times New Roman"},
+  {"Times New Roman CYR", "Times New Roman"},
+  {"Times New Roman Greek", "Times New Roman"},
+  {"Times New Roman TUR", "Times New Roman"},
+  {"Tms Rmn", "Times New Roman"},
+  // Common, except Japanese (which uses MS UI Gothic, instead)
+  {"MS Shell Dlg", "Microsoft Sans Serif"},
+  // Arabic
+  {"Arial (Arabic)", "Arial"},
+  {"Courier New (Arabic)", "Courier New"},
+  {"Times New Roman (Arabic)", "Times New Roman"},
+  // Cyrillic + Greek
+  {"Courier", "Courier New"},
+  // Greek
+  {"Fixedsys Greek", "Fixedsys"},
+  {"MS Serif Greek", "Times New Roman"},
+  {"MS Sans Serif Greek", "Microsoft Sans Serif"},
+  {"Small Fonts Greek", "Arial"},
+  {"System Greek", "System"},
+  // Hebrew
+  {"Arial (Hebrew)", "Arial"},
+  {"Courier New (Hebrew)", "Courier New"},
+  {"David Transparent", "David"},
+  {"Fixed Miriam Transparent", "Miriam Fixed"},
+  {"Miriam Transparent", "Miriam"},
+  {"Rod Transparent", "Rod"},
+  {"Times New Roman (Hebrew)", "Times New Roman"},
+  // Japanese
+  {"標準明朝", "ＭＳ 明朝"},
+  {"標準ゴシック", "ＭＳ ゴシック"},
+  {"ゴシック", "ＭＳ ゴシック"},
+  {"ｺﾞｼｯｸ", "ＭＳ ゴシック"},
+  {"ｸｰﾘｴ", "Courier New"},
+  {"ﾀｲﾑｽﾞﾛﾏﾝ", "Times New Roman"},
+  {"ﾍﾙﾍﾞﾁｶ", "Arial"},
+  // Simplified Chinese
+  {"FangSong_GB2312", "FangSong"},
+  {"KaiTi_GB2312", "KaiTi"},
 };

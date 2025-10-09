@@ -8,6 +8,7 @@
 
 #include "AudioNodeEngine.h"
 #include "AudioParamMap.h"
+#include "AudioWorklet.h"
 #include "AudioWorkletImpl.h"
 #include "js/Array.h"  // JS::{Get,Set}ArrayLength, JS::NewArrayLength
 #include "js/CallAndConstruct.h"  // JS::Call, JS::IsCallable
@@ -48,9 +49,11 @@ struct NamedAudioParamTimeline {
 
 struct ProcessorErrorDetails {
   ProcessorErrorDetails() : mLineno(0), mColno(0) {}
+  // Line number (1-origin).
   unsigned mLineno;
+  // Column number in UTF-16 code units (1-origin).
   unsigned mColno;
-  nsString mFilename;
+  nsCString mFilename;
   nsString mMessage;
 };
 
@@ -75,9 +78,9 @@ class WorkletNodeEngine final : public AudioNodeEngine {
                           UniqueMessagePortId& aPortIdentifier,
                           AudioNodeTrack* aTrack);
 
-  void RecvTimelineEvent(uint32_t aIndex, AudioTimelineEvent& aEvent) override {
+  void RecvTimelineEvent(uint32_t aIndex, AudioParamEvent& aEvent) override {
     MOZ_ASSERT(mDestination);
-    WebAudioUtils::ConvertAudioTimelineEventToTicks(aEvent, mDestination);
+    aEvent.ConvertToTicks(mDestination);
 
     if (aIndex < mParamTimelines.Length()) {
       mParamTimelines[aIndex].mTimeline.InsertEvent<int64_t>(aEvent);
@@ -229,14 +232,11 @@ void WorkletNodeEngine::SendProcessorError(AudioNodeTrack* aTrack,
     }
 
     ProcessorErrorDetails details;
-
-    CopyUTF8toUTF16(mozilla::MakeStringSpan(jsReport.report()->filename),
-                    details.mFilename);
-
+    details.mFilename.Assign(jsReport.report()->filename.c_str());
     xpc::ErrorReport::ErrorReportToMessageString(jsReport.report(),
                                                  details.mMessage);
     details.mLineno = jsReport.report()->lineno;
-    details.mColno = jsReport.report()->column;
+    details.mColno = jsReport.report()->column.oneOriginValue();
     MOZ_ASSERT(!jsReport.report()->isMuted);
 
     SendErrorToMainThread(aTrack, details);

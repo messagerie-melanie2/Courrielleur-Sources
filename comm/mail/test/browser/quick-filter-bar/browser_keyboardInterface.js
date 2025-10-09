@@ -16,10 +16,9 @@ var {
   create_folder,
   get_about_3pane,
   make_message_sets_in_folders,
-  mc,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 var {
   assert_constraints_expressed,
@@ -30,8 +29,11 @@ var {
   toggle_boolean_constraints,
   toggle_quick_filter_bar,
   cleanup_qfb_button,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/QuickFilterBarHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/QuickFilterBarHelpers.sys.mjs"
+);
+const { ensure_cards_view, ensure_table_view } = ChromeUtils.importESModule(
+  "resource://testing-common/MailViewHelpers.sys.mjs"
 );
 
 var folder;
@@ -41,13 +43,13 @@ add_setup(async function () {
   // We need a message so we can select it so we can find in message.
   await make_message_sets_in_folders([folder], [{ count: 1 }]);
   await be_in_folder(folder);
-  await ensure_table_view();
+  await ensure_table_view(document);
 
   // Quick filter bar is hidden by default, need to toggle it on.
   await toggle_quick_filter_bar();
 
   registerCleanupFunction(async () => {
-    await ensure_cards_view();
+    await ensure_cards_view(document);
     await cleanup_qfb_button();
     // Quick filter bar is hidden by default, need to toggle it off.
     await toggle_quick_filter_bar();
@@ -72,7 +74,7 @@ add_task(async function test_escape_rules() {
   // the common logic for each bit...
   async function legwork() {
     // apply two...
-    toggle_boolean_constraints("unread", "starred", "addrbook");
+    await toggle_boolean_constraints("unread", "starred", "addrbook");
     assert_constraints_expressed({
       unread: true,
       starred: true,
@@ -98,7 +100,7 @@ add_task(async function test_escape_rules() {
     await toggle_quick_filter_bar();
   }
 
-  let about3Pane = get_about_3pane();
+  const about3Pane = get_about_3pane();
 
   // 1) focus in the thread pane
   about3Pane.document.getElementById("threadTree").focus();
@@ -110,7 +112,7 @@ add_task(async function test_escape_rules() {
 
   // 3) focus in the text box and pretend to type stuff...
   about3Pane.document.getElementById("qfb-qs-textbox").focus();
-  set_filter_text("qxqxqxqx");
+  await set_filter_text("qxqxqxqx");
 
   // Escape should clear the text constraint but the bar should still be
   //  visible.  The trick here is that escape is clearing the text widget
@@ -132,50 +134,54 @@ add_task(async function test_escape_rules() {
  * Control-shift-k expands the quick filter bar when it's collapsed. When
  * already expanded, it focuses the text box and selects its text.
  */
-add_task(function test_control_shift_k_shows_quick_filter_bar() {
-  let about3Pane = get_about_3pane();
+add_task(async function test_control_shift_k_shows_quick_filter_bar() {
+  const about3Pane = get_about_3pane();
 
-  let dispatcha = mc.window.document.commandDispatcher;
-  let qfbTextbox = about3Pane.document.getElementById("qfb-qs-textbox");
+  const qfbTextbox = about3Pane.document.getElementById("qfb-qs-textbox");
 
   // focus explicitly on the thread pane so we know where the focus is.
   about3Pane.document.getElementById("threadTree").focus();
   // select a message so we can find in message
-  select_click_row(0);
+  await select_click_row(0);
 
   // hit control-shift-k to get in the quick filter box
   EventUtils.synthesizeKey("k", { accelKey: true, shiftKey: true });
-  if (dispatcha.focusedElement != qfbTextbox.inputField) {
-    throw new Error("control-shift-k did not focus quick filter textbox");
-  }
+  Assert.strictEqual(
+    about3Pane.document.activeElement,
+    qfbTextbox,
+    "control-shift-k did not focus quick filter textbox"
+  );
 
-  set_filter_text("search string");
+  await set_filter_text("search string");
 
   // hit control-shift-k to select the text in the quick filter box
   EventUtils.synthesizeKey("k", { accelKey: true, shiftKey: true });
-  if (dispatcha.focusedElement != qfbTextbox.inputField) {
-    throw new Error(
-      "second control-shift-k did not keep focus on filter textbox"
-    );
-  }
-  if (
-    qfbTextbox.inputField.selectionStart != 0 ||
-    qfbTextbox.inputField.selectionEnd != qfbTextbox.inputField.textLength
-  ) {
-    throw new Error(
-      "second control-shift-k did not select text in filter textbox"
-    );
-  }
+  Assert.strictEqual(
+    about3Pane.document.activeElement,
+    qfbTextbox,
+    "second control-shift-k did not keep focus on filter textbox"
+  );
+  const input = qfbTextbox.shadowRoot.querySelector("input");
+  Assert.equal(
+    input.selectionStart,
+    0,
+    "Selection starts at the beginning of the input"
+  );
+  Assert.equal(
+    input.selectionEnd,
+    "search string".length,
+    "Selection ends at the end of the input"
+  );
 
   // hit escape and make sure the text is cleared, but the quick filter bar is
   // still open.
-  EventUtils.synthesizeKey("VK_ESCAPE", {});
+  EventUtils.synthesizeKey("KEY_Escape", {});
   assert_quick_filter_bar_visible(true);
   assert_filter_text("");
 
   // hit escape one more time and make sure we finally collapsed the quick
   // filter bar.
-  EventUtils.synthesizeKey("VK_ESCAPE", {});
+  EventUtils.synthesizeKey("KEY_Escape", {});
   assert_quick_filter_bar_visible(false);
   teardownTest();
 });

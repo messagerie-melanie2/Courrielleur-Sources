@@ -23,7 +23,6 @@
 #include "mimeTextHTMLParsed.h"
 #include "prmem.h"
 #include "prlog.h"
-#include "msgCore.h"
 #include "nsContentUtils.h"
 #include "mozilla/dom/DOMParser.h"
 #include "mozilla/dom/Document.h"
@@ -44,9 +43,7 @@ static int MimeInlineTextHTMLParsed_parse_begin(MimeObject* obj);
 static int MimeInlineTextHTMLParsed_parse_eof(MimeObject*, bool);
 static void MimeInlineTextHTMLParsed_finalize(MimeObject* obj);
 
-static int MimeInlineTextHTMLParsedClassInitialize(
-    MimeInlineTextHTMLParsedClass* clazz) {
-  MimeObjectClass* oclass = (MimeObjectClass*)clazz;
+static int MimeInlineTextHTMLParsedClassInitialize(MimeObjectClass* oclass) {
   NS_ASSERTION(!oclass->class_initialized, "problem with superclass");
   oclass->parse_line = MimeInlineTextHTMLParsed_parse_line;
   oclass->parse_begin = MimeInlineTextHTMLParsed_parse_begin;
@@ -86,7 +83,7 @@ static int MimeInlineTextHTMLParsed_parse_eof(MimeObject* obj, bool abort_p) {
   mozilla::ErrorResult rv2;
   RefPtr<mozilla::dom::DOMParser> parser =
       mozilla::dom::DOMParser::CreateWithoutGlobal(rv2);
-  nsCOMPtr<mozilla::dom::Document> document = parser->ParseFromString(
+  nsCOMPtr<mozilla::dom::Document> document = parser->ParseFromStringInternal(
       rawHTML, mozilla::dom::SupportedType::Text_html, rv2);
   if (rv2.Failed()) return -1;
 

@@ -3,32 +3,50 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /**
- * Tests ExtensionSupport.jsm functions.
+ * Tests ExtensionSupport.sys.mjs functions.
  */
 
-var { close_compose_window, open_compose_new_mail } = ChromeUtils.import(
-  "resource://testing-common/mozmill/ComposeHelpers.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-var {
-  plan_for_new_window,
-  plan_for_window_close,
-  wait_for_new_window,
-  wait_for_window_close,
-} = ChromeUtils.import("resource://testing-common/mozmill/WindowHelpers.jsm");
 
-var { ExtensionSupport } = ChromeUtils.import(
-  "resource:///modules/ExtensionSupport.jsm"
+var { close_compose_window, open_compose_new_mail } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+  );
+var { promise_new_window } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/WindowHelpers.sys.mjs"
 );
+
+var { ExtensionSupport } = ChromeUtils.importESModule(
+  "resource:///modules/ExtensionSupport.sys.mjs"
+);
+
+add_setup(async () => {
+  const account = MailServices.accounts.createAccount();
+  const identity = MailServices.accounts.createIdentity();
+  identity.email = "mochitest@localhost";
+  account.addIdentity(identity);
+  account.incomingServer = MailServices.accounts.createIncomingServer(
+    "user",
+    "test",
+    "pop3"
+  );
+  MailServices.accounts.defaultAccount = account;
+  registerCleanupFunction(() => {
+    MailServices.accounts.removeAccount(account, true);
+  });
+});
 
 /**
  * Bug 1450288
  * Test ExtensionSupport.registerWindowListener and ExtensionSupport.unregisterWindowListener.
  */
-add_task(function test_windowListeners() {
+add_task(async function test_windowListeners() {
   // There may be some pre-existing listeners already set up, e.g. mozmill ones.
-  let originalListenerCount = ExtensionSupport.registeredWindowListenerCount;
+  const originalListenerCount = ExtensionSupport.registeredWindowListenerCount;
 
-  let addonRunCount = [];
+  const addonRunCount = [];
   addonRunCount.load = new Map();
   addonRunCount.unload = new Map();
 
@@ -76,7 +94,7 @@ add_task(function test_windowListeners() {
     })
   );
 
-  let cwc = open_compose_new_mail();
+  let cwc = await open_compose_new_mail();
 
   Assert.equal(addonCount("test-addon1", "load"), 3);
   Assert.equal(addonCount("test-addon2", "load"), 1);
@@ -114,29 +132,29 @@ add_task(function test_windowListeners() {
 
   Assert.equal(addonCount("test-addon4", "load"), 1);
 
-  close_compose_window(cwc);
+  await close_compose_window(cwc);
 
   Assert.equal(addonCount("test-addon1", "unload"), 1);
   Assert.equal(addonCount("test-addon2", "unload"), 1);
   Assert.equal(addonCount("test-addon3", "unload"), 0);
   Assert.equal(addonCount("test-addon4", "unload"), 1);
 
-  cwc = open_compose_new_mail();
+  cwc = await open_compose_new_mail();
 
   Assert.equal(addonCount("test-addon1", "load"), 4);
   // Addon3 didn't listen to the new compose window, addon2 did.
   Assert.equal(addonCount("test-addon2", "load"), 2);
   Assert.equal(addonCount("test-addon3", "load"), 1);
 
-  close_compose_window(cwc);
+  await close_compose_window(cwc);
 
   Assert.equal(addonCount("test-addon1", "unload"), 2);
   Assert.equal(addonCount("test-addon2", "unload"), 2);
   Assert.equal(addonCount("test-addon3", "unload"), 0);
 
-  plan_for_new_window("Activity:Manager");
+  const activityManagerPromise = promise_new_window("Activity:Manager");
   window.openActivityMgr();
-  let amController = wait_for_new_window("Activity:Manager");
+  const amWin = await activityManagerPromise;
 
   // Only Addon1 listens to any window.
   Assert.equal(addonCount("test-addon1", "load"), 5);
@@ -144,9 +162,8 @@ add_task(function test_windowListeners() {
   Assert.equal(addonCount("test-addon3", "load"), 1);
   Assert.equal(addonCount("test-addon4", "load"), 1);
 
-  plan_for_window_close(amController);
-  amController.window.close();
-  wait_for_window_close(amController);
+  await BrowserTestUtils.closeWindow(amWin);
+  await TestUtils.waitForTick();
 
   Assert.equal(addonCount("test-addon1", "unload"), 3);
   Assert.equal(addonCount("test-addon2", "unload"), 2);

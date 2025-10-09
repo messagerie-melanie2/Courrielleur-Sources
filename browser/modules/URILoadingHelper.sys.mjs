@@ -5,16 +5,15 @@
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 import { BrowserUtils } from "resource://gre/modules/BrowserUtils.sys.mjs";
 import { PrivateBrowsingUtils } from "resource://gre/modules/PrivateBrowsingUtils.sys.mjs";
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 const lazy = {};
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  AboutNewTab: "resource:///modules/AboutNewTab.jsm",
-  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
+ChromeUtils.defineESModuleGetters(lazy, {
+  AboutNewTab: "resource:///modules/AboutNewTab.sys.mjs",
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "ReferrerInfo", () =>
+ChromeUtils.defineLazyGetter(lazy, "ReferrerInfo", () =>
   Components.Constructor(
     "@mozilla.org/referrer-info;1",
     "nsIReferrerInfo",
@@ -130,6 +129,9 @@ function openInWindow(url, params, sourceWindow) {
       );
     }
   }
+  if (params.schemelessInput !== undefined) {
+    extraOptions.setPropertyAsUint32("schemelessInput", params.schemelessInput);
+  }
 
   var allowThirdPartyFixupSupports = Cc[
     "@mozilla.org/supports-PRBool;1"
@@ -211,30 +213,30 @@ function openInWindow(url, params, sourceWindow) {
 }
 
 function openInCurrentTab(targetBrowser, url, uriObj, params) {
-  let flags = Ci.nsIWebNavigation.LOAD_FLAGS_NONE;
+  let loadFlags = Ci.nsIWebNavigation.LOAD_FLAGS_NONE;
 
   if (params.allowThirdPartyFixup) {
-    flags |= Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP;
-    flags |= Ci.nsIWebNavigation.LOAD_FLAGS_FIXUP_SCHEME_TYPOS;
+    loadFlags |= Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP;
+    loadFlags |= Ci.nsIWebNavigation.LOAD_FLAGS_FIXUP_SCHEME_TYPOS;
   }
   // LOAD_FLAGS_DISALLOW_INHERIT_PRINCIPAL isn't supported for javascript URIs,
   // i.e. it causes them not to load at all. Callers should strip
   // "javascript:" from pasted strings to prevent blank tabs
   if (!params.allowInheritPrincipal) {
-    flags |= Ci.nsIWebNavigation.LOAD_FLAGS_DISALLOW_INHERIT_PRINCIPAL;
+    loadFlags |= Ci.nsIWebNavigation.LOAD_FLAGS_DISALLOW_INHERIT_PRINCIPAL;
   }
 
   if (params.allowPopups) {
-    flags |= Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_POPUPS;
+    loadFlags |= Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_POPUPS;
   }
   if (params.indicateErrorPageLoad) {
-    flags |= Ci.nsIWebNavigation.LOAD_FLAGS_ERROR_LOAD_CHANGES_RV;
+    loadFlags |= Ci.nsIWebNavigation.LOAD_FLAGS_ERROR_LOAD_CHANGES_RV;
   }
   if (params.forceAllowDataURI) {
-    flags |= Ci.nsIWebNavigation.LOAD_FLAGS_FORCE_ALLOW_DATA_URI;
+    loadFlags |= Ci.nsIWebNavigation.LOAD_FLAGS_FORCE_ALLOW_DATA_URI;
   }
   if (params.fromExternal) {
-    flags |= Ci.nsIWebNavigation.LOAD_FLAGS_FROM_EXTERNAL;
+    loadFlags |= Ci.nsIWebNavigation.LOAD_FLAGS_FROM_EXTERNAL;
   }
 
   let { URI_INHERITS_SECURITY_CONTEXT } = Ci.nsIProtocolHandler;
@@ -246,7 +248,7 @@ function openInCurrentTab(targetBrowser, url, uriObj, params) {
   ) {
     // Unless we know for sure we're not inheriting principals,
     // force the about:blank viewer to have the right principal:
-    targetBrowser.createAboutBlankContentViewer(
+    targetBrowser.createAboutBlankDocumentViewer(
       params.originPrincipal,
       params.originStoragePrincipal
     );
@@ -261,18 +263,20 @@ function openInCurrentTab(targetBrowser, url, uriObj, params) {
     hasValidUserGestureActivation,
     globalHistoryOptions,
     triggeringRemoteType,
+    schemelessInput,
   } = params;
 
   targetBrowser.fixupAndLoadURIString(url, {
     triggeringPrincipal,
     csp,
-    flags,
+    loadFlags,
     referrerInfo,
     postData,
     userContextId,
     hasValidUserGestureActivation,
     globalHistoryOptions,
     triggeringRemoteType,
+    schemelessInput,
   });
   params.resolveOnContentBrowserCreated?.(targetBrowser);
 }
@@ -364,6 +368,8 @@ export const URILoadingHelper = {
    * @param {string}  params.charset
    *                  Character set to use for the load. Only honoured for tabs.
    *                  Legacy argument - do not use.
+   * @param {SchemelessInputType}  params.schemelessInput
+   *                  Whether the search/URL term was without an explicit scheme.
    *
    * Options relating to security, whether the load is allowed to happen,
    * and what cookie container to use for the load:
@@ -436,6 +442,8 @@ export const URILoadingHelper = {
       resolveOnNewTabCreated,
       resolveOnContentBrowserCreated,
       globalHistoryOptions,
+      hasValidUserGestureActivation,
+      textDirectiveUserActivation,
     } = params;
 
     // We want to overwrite some things for convenience when passing it to other
@@ -466,11 +474,17 @@ export const URILoadingHelper = {
     } else {
       w = this.getTargetWindow(window, { forceNonPrivate });
     }
-    // We don't want to open tabs in popups, so try to find a non-popup window in
-    // that case.
-    if ((where == "tab" || where == "tabshifted") && w && !w.toolbar.visible) {
+    // We don't want to open tabs in popups or taskbar tab windows,
+    // so try to find a regular Firefox window in that case.
+    if (
+      (where == "tab" || where == "tabshifted") &&
+      w &&
+      (!w.toolbar.visible ||
+        w.document.documentElement.hasAttribute("taskbartab"))
+    ) {
       w = this.getTargetWindow(window, {
         skipPopups: true,
+        skipTaskbarTabs: true,
         forceNonPrivate,
       });
       relatedToCurrent = false;
@@ -496,9 +510,7 @@ export const URILoadingHelper = {
     if (where == "current") {
       targetBrowser = params.targetBrowser || w.gBrowser.selectedBrowser;
       loadInBackground = false;
-      try {
-        uriObj = Services.io.newURI(url);
-      } catch (e) {}
+      uriObj = URL.parse(url)?.URI;
 
       // In certain tabs, we restrict what if anything may replace the loaded
       // page. If a load request bounces off for the currently selected tab,
@@ -552,7 +564,7 @@ export const URILoadingHelper = {
       case "tabshifted":
         loadInBackground = !loadInBackground;
       // fall through
-      case "tab":
+      case "tab": {
         focusUrlBar =
           !loadInBackground &&
           w.isBlankPageURL(url) &&
@@ -578,6 +590,9 @@ export const URILoadingHelper = {
           openerBrowser: params.openerBrowser,
           fromExternal: params.fromExternal,
           globalHistoryOptions,
+          schemelessInput: params.schemelessInput,
+          hasValidUserGestureActivation,
+          textDirectiveUserActivation,
         });
         targetBrowser = tabUsedForLoad.linkedBrowser;
 
@@ -602,6 +617,7 @@ export const URILoadingHelper = {
           );
         }
         break;
+      }
     }
 
     if (
@@ -623,10 +639,14 @@ export const URILoadingHelper = {
    * @param {Window} window - The current window.
    * @param {Object} params - Parameters for selecting the window.
    * @param {boolean} params.skipPopups - Require a non-popup window.
+   * @param {boolean} params.skipTaskbarTabs - Require a non-taskbartab window.
    * @param {boolean} params.forceNonPrivate - Require a non-private window.
    * @returns {Window | null} A matching browser window or null if none matched.
    */
-  getTargetWindow(window, { skipPopups, forceNonPrivate } = {}) {
+  getTargetWindow(
+    window,
+    { skipPopups, skipTaskbarTabs, forceNonPrivate } = {}
+  ) {
     let { top } = window;
     // If this is called in a browser window, use that window regardless of
     // whether it's the frontmost window, since commands can be executed in
@@ -635,6 +655,8 @@ export const URILoadingHelper = {
       top.document.documentElement.getAttribute("windowtype") ==
         "navigator:browser" &&
       (!skipPopups || top.toolbar.visible) &&
+      (!skipTaskbarTabs ||
+        !top.document.documentElement.hasAttribute("taskbartab")) &&
       (!forceNonPrivate || !PrivateBrowsingUtils.isWindowPrivate(top))
     ) {
       return top;
@@ -643,6 +665,7 @@ export const URILoadingHelper = {
     return lazy.BrowserWindowTracker.getTopWindow({
       private: !forceNonPrivate && PrivateBrowsingUtils.isWindowPrivate(window),
       allowPopups: !skipPopups,
+      allowTaskbarTabs: !skipTaskbarTabs,
     });
   },
 
@@ -735,5 +758,49 @@ export const URILoadingHelper = {
     }
     params.forceForeground ??= true;
     this.openLinkIn(window, url, where, params);
+  },
+
+  /**
+   * Given a URI, guess which container to use to open it. This is used for external
+   * openers as a quality of life improvement (e.g. to open a document into the container
+   * where you are logged in to the service that hosts it).
+   * matches will be returned.
+   * For now this can only use currently-open tabs, until history is tagged with the
+   * container id (https://bugzilla.mozilla.org/show_bug.cgi?id=1283320).
+   *
+   * @param {nsIURI} aURI - The URI being opened.
+   * @returns {number | null} The guessed userContextId, or null if none.
+   */
+  guessUserContextId(aURI) {
+    let host;
+    try {
+      host = aURI.host;
+    } catch (e) {}
+    if (!host) {
+      return null;
+    }
+    const containerScores = new Map();
+    let guessedUserContextId = null;
+    let maxCount = 0;
+    for (let win of lazy.BrowserWindowTracker.orderedWindows) {
+      for (let tab of win.gBrowser.visibleTabs) {
+        let { userContextId } = tab;
+        let currentURIHost = null;
+        try {
+          currentURIHost = tab.linkedBrowser.currentURI.host;
+        } catch (e) {}
+
+        if (currentURIHost == host) {
+          let count = (containerScores.get(userContextId) ?? 0) + 1;
+          containerScores.set(userContextId, count);
+          if (count > maxCount) {
+            guessedUserContextId = userContextId;
+            maxCount = count;
+          }
+        }
+      }
+    }
+
+    return guessedUserContextId;
   },
 };

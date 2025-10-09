@@ -5,16 +5,11 @@
 
 #include "nsICharsetConverterManager.h"
 #include "mozilla/Utf8.h"
-#include "nsIServiceManager.h"
-
-#include "nsISupports.h"
-#include "nsIPrefBranch.h"
 #include "nsIPrefService.h"
 #include "nsIMimeConverter.h"
 #include "nsMsgUtils.h"
 #include "nsMsgI18N.h"
 #include "nsILineInputStream.h"
-#include "nsMimeTypes.h"
 #include "nsString.h"
 #include "prmem.h"
 #include "plstr.h"
@@ -22,7 +17,6 @@
 #include "nsNetUtil.h"
 #include "nsCRTGlue.h"
 #include "nsComponentManagerUtils.h"
-#include "nsUnicharUtils.h"
 #include "nsIFileStreams.h"
 #include "../../intl/nsUTF7ToUnicode.h"
 #include "../../intl/nsMUTF7ToUnicode.h"
@@ -174,19 +168,7 @@ nsresult CopyMUTF7toUTF16(const nsACString& aSrc, nsAString& aDest) {
 // MIME encoder, output string should be freed by PR_FREE
 // XXX : fix callers later to avoid allocation and copy
 char* nsMsgI18NEncodeMimePartIIStr(const char* header, bool structured,
-                                   const char* charset, int32_t fieldnamelen,
-                                   bool usemime) {
-  // No MIME, convert to the outgoing mail charset.
-  if (!usemime) {
-    nsAutoCString convertedStr;
-    if (NS_SUCCEEDED(nsMsgI18NConvertFromUnicode(
-            charset ? nsDependentCString(charset) : EmptyCString(),
-            NS_ConvertUTF8toUTF16(header), convertedStr)))
-      return PL_strdup(convertedStr.get());
-    else
-      return PL_strdup(header);
-  }
-
+                                   const char* charset, int32_t fieldnamelen) {
   nsAutoCString encodedString;
   nsresult res;
   nsCOMPtr<nsIMimeConverter> converter =
@@ -320,7 +302,7 @@ const char* nsMsgI18NParseMetaCharset(nsIFile* file) {
   return charset;
 }
 
-nsresult nsMsgI18NShrinkUTF8Str(const nsCString& inString, uint32_t aMaxLength,
+nsresult nsMsgI18NShrinkUTF8Str(const nsACString& inString, uint32_t aMaxLength,
                                 nsACString& outString) {
   if (inString.IsEmpty()) {
     outString.Truncate();
@@ -331,7 +313,7 @@ nsresult nsMsgI18NShrinkUTF8Str(const nsCString& inString, uint32_t aMaxLength,
     return NS_OK;
   }
   NS_ASSERTION(mozilla::IsUtf8(inString), "Invalid UTF-8 string is inputted");
-  const char* start = inString.get();
+  const char* start = inString.BeginReading();
   const char* end = start + inString.Length();
   const char* last = start + aMaxLength;
   const char* cur = start;
@@ -350,7 +332,7 @@ nsresult nsMsgI18NShrinkUTF8Str(const nsCString& inString, uint32_t aMaxLength,
   return NS_OK;
 }
 
-void nsMsgI18NConvertRawBytesToUTF16(const nsCString& inString,
+void nsMsgI18NConvertRawBytesToUTF16(const nsACString& inString,
                                      const nsACString& charset,
                                      nsAString& outString) {
   if (mozilla::IsUtf8(inString)) {
@@ -373,7 +355,7 @@ void nsMsgI18NConvertRawBytesToUTF16(const nsCString& inString,
   }
 }
 
-void nsMsgI18NConvertRawBytesToUTF8(const nsCString& inString,
+void nsMsgI18NConvertRawBytesToUTF8(const nsACString& inString,
                                     const nsACString& charset,
                                     nsACString& outString) {
   if (mozilla::IsUtf8(inString)) {

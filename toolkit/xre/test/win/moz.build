@@ -5,7 +5,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 BROWSER_CHROME_MANIFESTS += [
-    "mochitest/browser_env_path_long.ini",
+    "mochitest/browser_env_path_long.toml",
 ]
 
 GeckoCppUnitTests(
@@ -28,7 +28,7 @@ LOCAL_INCLUDES += [
 ]
 
 DisableStlWrapping()
-USE_STATIC_LIBS = True
+USE_STATIC_MSVCRT = True
 
 OS_LIBS += [
     "advapi32",

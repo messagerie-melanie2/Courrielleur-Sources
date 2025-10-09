@@ -8,33 +8,57 @@ var { ExtensionTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/ExtensionXPCShellUtils.sys.mjs"
 );
 
+add_setup(async () => {
+  registerCleanupFunction(() => {
+    // Make sure any open database is given a chance to close.
+    Services.startup.advanceShutdownPhase(
+      Services.startup.SHUTDOWN_PHASE_APPSHUTDOWNCONFIRMED
+    );
+  });
+});
+
 add_task(async function test_managers() {
-  let account = createAccount();
-  let folder = await createSubfolder(
+  const account = createAccount();
+  const folder = await createSubfolder(
     account.incomingServer.rootFolder,
     "test1"
   );
   await createMessages(folder, 5);
 
-  let files = {
+  const files = {
     "background.js": async () => {
-      let [testAccount] = await browser.accounts.list();
-      let testFolder = testAccount.folders.find(f => f.name == "test1");
-      let {
+      const [testAccount] = await browser.accounts.list();
+      const testFolder = testAccount.folders.find(f => f.name == "test1");
+      const {
         messages: [testMessage],
-      } = await browser.messages.list(testFolder);
+      } = await browser.messages.list(testFolder.id);
 
-      let messageCount = await browser.testapi.testCanGetFolder(testFolder);
-      browser.test.assertEq(5, messageCount);
+      const testFolderPrettyPath =
+        await browser.testapi.testCanGetFolder(testFolder);
+      browser.test.assertEq("test1", testFolderPrettyPath);
 
-      let convertedFolder = await browser.testapi.testCanConvertFolder();
+      // Check that Foldermanager.get() (used by testapi.testCanGetFolder()) also
+      // works for unified mailbox folders.
+      const [unifiedInbox] = await browser.folders.query({
+        isUnified: true,
+        specialUse: ["inbox"],
+      });
+      browser.test.assertTrue(
+        !!unifiedInbox,
+        "Should find the unified inbox folder"
+      );
+      const inboxFolderPrettyPath =
+        await browser.testapi.testCanGetFolder(unifiedInbox);
+      browser.test.assertEq("Inbox", inboxFolderPrettyPath);
+
+      const convertedFolder = await browser.testapi.testCanConvertFolder();
       browser.test.assertEq(testFolder.accountId, convertedFolder.accountId);
       browser.test.assertEq(testFolder.path, convertedFolder.path);
 
-      let subject = await browser.testapi.testCanGetMessage(testMessage.id);
+      const subject = await browser.testapi.testCanGetMessage(testMessage.id);
       browser.test.assertEq(testMessage.subject, subject);
 
-      let convertedMessage = await browser.testapi.testCanConvertMessage();
+      const convertedMessage = await browser.testapi.testCanConvertMessage();
       browser.test.log(JSON.stringify(convertedMessage));
       browser.test.assertEq(testMessage.id, convertedMessage.id);
       browser.test.assertEq(testMessage.subject, convertedMessage.subject);
@@ -54,8 +78,9 @@ add_task(async function test_managers() {
         testMessage.subject != messageList.messages[0].subject
       );
 
-      let [bookUID, contactUID, listUID] = await window.sendMessage("get UIDs");
-      let [foundBook, foundContact, foundList] =
+      const [bookUID, contactUID, listUID] =
+        await window.sendMessage("get UIDs");
+      const [foundBook, foundContact, foundList] =
         await browser.testapi.testCanFindAddressBookItems(
           bookUID,
           contactUID,
@@ -68,7 +93,7 @@ add_task(async function test_managers() {
       browser.test.notifyPass("finished");
     },
   };
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       ...files,
       "schema.json": [
@@ -132,40 +157,40 @@ add_task(async function test_managers() {
         var { ExtensionCommon } = ChromeUtils.importESModule(
           "resource://gre/modules/ExtensionCommon.sys.mjs"
         );
-        var { MailServices } = ChromeUtils.import(
-          "resource:///modules/MailServices.jsm"
+        var { MailServices } = ChromeUtils.importESModule(
+          "resource:///modules/MailServices.sys.mjs"
         );
         this.testapi = class extends ExtensionCommon.ExtensionAPI {
           getAPI(context) {
             return {
               testapi: {
                 async testCanGetFolder({ accountId, path }) {
-                  let realFolder = context.extension.folderManager.get(
+                  const realFolder = context.extension.folderManager.get(
                     accountId,
                     path
                   );
-                  return realFolder.getTotalMessages(false);
+                  return realFolder.prettyPath;
                 },
                 async testCanConvertFolder() {
-                  let realFolder = MailServices.accounts.allFolders.find(
+                  const realFolder = MailServices.accounts.allFolders.find(
                     f => f.name == "test1"
                   );
                   return context.extension.folderManager.convert(realFolder);
                 },
                 async testCanGetMessage(messageId) {
-                  let realMessage =
+                  const realMessage =
                     context.extension.messageManager.get(messageId);
                   return realMessage.subject;
                 },
                 async testCanConvertMessage() {
-                  let realFolder = MailServices.accounts.allFolders.find(
+                  const realFolder = MailServices.accounts.allFolders.find(
                     f => f.name == "test1"
                   );
-                  let realMessage = [...realFolder.messages][0];
+                  const realMessage = [...realFolder.messages][0];
                   return context.extension.messageManager.convert(realMessage);
                 },
                 async testCanStartMessageList() {
-                  let realFolder = MailServices.accounts.allFolders.find(
+                  const realFolder = MailServices.accounts.allFolders.find(
                     f => f.name == "test1"
                   );
                   return context.extension.messageManager.startMessageList(
@@ -177,15 +202,15 @@ add_task(async function test_managers() {
                   contactUID,
                   listUID
                 ) {
-                  let foundBook =
+                  const foundBook =
                     context.extension.addressBookManager.findAddressBookById(
                       bookUID
                     );
-                  let foundContact =
+                  const foundContact =
                     context.extension.addressBookManager.findContactById(
                       contactUID
                     );
-                  let foundList =
+                  const foundList =
                     context.extension.addressBookManager.findMailingListById(
                       listUID
                     );
@@ -225,12 +250,12 @@ add_task(async function test_managers() {
     },
   });
 
-  let dirPrefId = MailServices.ab.newAddressBook(
+  const dirPrefId = MailServices.ab.newAddressBook(
     "new book",
     "",
     Ci.nsIAbManager.JS_DIRECTORY_TYPE
   );
-  let book = MailServices.ab.getDirectoryFromId(dirPrefId);
+  const book = MailServices.ab.getDirectoryFromId(dirPrefId);
 
   let contact = Cc["@mozilla.org/addressbook/cardproperty;1"].createInstance(
     Ci.nsIAbCard
@@ -260,7 +285,7 @@ add_task(async function test_managers() {
   Services.prefs.clearUserPref("extensions.webextensions.messagesPerPage");
 
   await new Promise(resolve => {
-    let observer = {
+    const observer = {
       observe() {
         Services.obs.removeObserver(observer, "addrbook-directory-deleted");
         resolve();
@@ -269,11 +294,4 @@ add_task(async function test_managers() {
     Services.obs.addObserver(observer, "addrbook-directory-deleted");
     MailServices.ab.deleteAddressBook(book.URI);
   });
-});
-
-registerCleanupFunction(() => {
-  // Make sure any open database is given a chance to close.
-  Services.startup.advanceShutdownPhase(
-    Services.startup.SHUTDOWN_PHASE_APPSHUTDOWNCONFIRMED
-  );
 });

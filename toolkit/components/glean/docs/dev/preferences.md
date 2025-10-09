@@ -36,6 +36,7 @@ This pair of prefs control the length of time of activity before inactivity
 needed before FOG informs the SDK's Client Activity API that the client was (in)active.
 Present to allow testing without figuring out how to mock Rust's clock.
 Their values are integer seconds.
+The value `-1` is treated as no limit (never trigger (in)activity).
 Defaults to 120 (activity), 1200 (inactivity).
 
 ## Internal Preferences
@@ -45,13 +46,21 @@ Defaults to 120 (activity), 1200 (inactivity).
 Read-only. This pref is `true` only if `MOZ_ARTIFACT_BUILDS` was set during configure.
 If true, [JOG](./jog) is enabled so that artifact builds will exhibit changes to their Glean metrics.
 
+`telemetry.fog.init_on_shutdown`
+
+Defaults to `true`.
+Controls whether Glean initializes on shutdown if it hasn't been initialized, in order to capture data from very short sessions.
+In case a policy modal needs to be shown to the user, which will delay Glean initialization,
+it's set to `false` until the user has dealt with the modal. It's turned back to `true` afterwards.
+This ensures we don't capture data until the user had the chance to make an explicit choice.
+
 ## Defines
 
 `MOZ_AUTOMATION`
 
 If set, and `GLEAN_SOURCE_TAGS` isn't set, FOG will set a
 [Glean source tag](https://mozilla.github.io/glean/book/reference/debug/sourceTags.html)
-of `automation`.
+of `automation` and FOG will disable the submission of "metrics" pings.
 
 If `GLEAN_SOURCE_TAGS` is set, the `automation` source tag will not be added automatically.
 

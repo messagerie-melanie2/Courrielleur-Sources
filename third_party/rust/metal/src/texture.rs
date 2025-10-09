@@ -9,6 +9,7 @@ use super::*;
 
 use objc::runtime::{NO, YES};
 
+/// See <https://developer.apple.com/documentation/metal/mtltexturetype>
 #[repr(u64)]
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -21,8 +22,10 @@ pub enum MTLTextureType {
     Cube = 5,
     CubeArray = 6,
     D3 = 7,
+    D2MultisampleArray = 8,
 }
 
+/// See <https://developer.apple.com/documentation/metal/mtltexturecompressiontype>
 #[repr(u64)]
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum MTLTextureCompressionType {
@@ -30,22 +33,25 @@ pub enum MTLTextureCompressionType {
     Lossy = 1,
 }
 
-bitflags! {
+bitflags::bitflags! {
+    /// See <https://developer.apple.com/documentation/metal/mtltextureusage>
+    #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
     pub struct MTLTextureUsage: NSUInteger {
         const Unknown         = 0x0000;
         const ShaderRead      = 0x0001;
         const ShaderWrite     = 0x0002;
         const RenderTarget    = 0x0004;
         const PixelFormatView = 0x0010;
+        const ShaderAtomic    = 0x0020;
     }
 }
 
+/// See <https://developer.apple.com/documentation/metal/mtltexturedescriptor>
 pub enum MTLTextureDescriptor {}
 
 foreign_obj_type! {
     type CType = MTLTextureDescriptor;
     pub struct TextureDescriptor;
-    pub struct TextureDescriptorRef;
 }
 
 impl TextureDescriptor {
@@ -173,13 +179,13 @@ impl TextureDescriptorRef {
     }
 }
 
+/// See <https://developer.apple.com/documentation/metal/mtltexture>
 pub enum MTLTexture {}
 
 foreign_obj_type! {
     type CType = MTLTexture;
     pub struct Texture;
-    pub struct TextureRef;
-    type ParentType = ResourceRef;
+    type ParentType = Resource;
 }
 
 impl TextureRef {
@@ -250,13 +256,7 @@ impl TextureRef {
 
     /// [framebufferOnly Apple Docs](https://developer.apple.com/documentation/metal/mtltexture/1515749-framebufferonly?language=objc)
     pub fn framebuffer_only(&self) -> bool {
-        unsafe {
-            match msg_send![self, isFramebufferOnly] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, isFramebufferOnly] }
     }
 
     pub fn get_bytes(
@@ -344,5 +344,9 @@ impl TextureRef {
                                                      levels:mipmap_levels
                                                      slices:slices]
         }
+    }
+
+    pub fn gpu_resource_id(&self) -> MTLResourceID {
+        unsafe { msg_send![self, gpuResourceID] }
     }
 }

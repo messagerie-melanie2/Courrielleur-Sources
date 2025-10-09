@@ -5,8 +5,8 @@
  *   parseEncodedHeader
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 function equalArrays(arr1, arr2) {
@@ -91,7 +91,7 @@ function run_test() {
     ],
   ];
 
-  for (let check of checks) {
+  for (const check of checks) {
     equalArrays(
       MailServices.headerParser.parseDecodedHeader(check[0]),
       check[1]

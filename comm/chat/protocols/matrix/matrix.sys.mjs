@@ -2,17 +2,17 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-import { l10nHelper } from "resource:///modules/imXPCOMUtils.sys.mjs";
 import { GenericProtocolPrototype } from "resource:///modules/jsProtoHelper.sys.mjs";
 
 const lazy = {};
 
-XPCOMUtils.defineLazyGetter(lazy, "_", () =>
-  l10nHelper("chrome://chat/locale/matrix.properties")
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () => new Localization(["chat/matrix-properties.ftl"], true)
 );
 
-XPCOMUtils.defineLazyGetter(lazy, "brandShortName", () =>
+ChromeUtils.defineLazyGetter(lazy, "brandShortName", () =>
   Services.strings
     .createBundle("chrome://branding/locale/brand.properties")
     .GetStringFromName("brandShortName")
@@ -44,13 +44,13 @@ MatrixProtocol.prototype = {
   },
 
   get usernameEmptyText() {
-    return lazy._("matrix.usernameHint");
+    return lazy.l10n.formatValueSync("matrix-username-hint");
   },
   usernamePrefix: "@",
   usernameSplits: [
     {
       get label() {
-        return lazy._("options.homeserver");
+        return lazy.l10n.formatValueSync("options-homeserver");
       },
       separator: ":",
     },
@@ -59,13 +59,13 @@ MatrixProtocol.prototype = {
   options: {
     saveToken: {
       get label() {
-        return lazy._("options.saveToken");
+        return lazy.l10n.formatValueSync("options-save-token");
       },
       default: true,
     },
     deviceDisplayName: {
       get label() {
-        return lazy._("options.deviceDisplayName");
+        return lazy.l10n.formatValueSync("options-device-display-name");
       },
       get default() {
         return lazy.brandShortName;
@@ -73,7 +73,7 @@ MatrixProtocol.prototype = {
     },
     backupPassphrase: {
       get label() {
-        return lazy._("options.backupPassphrase");
+        return lazy.l10n.formatValueSync("options-backup-passphrase");
       },
       default: "",
       masked: true,

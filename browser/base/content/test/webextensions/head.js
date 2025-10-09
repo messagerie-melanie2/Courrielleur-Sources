@@ -1,5 +1,6 @@
 ChromeUtils.defineESModuleGetters(this, {
   AddonTestUtils: "resource://testing-common/AddonTestUtils.sys.mjs",
+  ExtensionsUI: "resource:///modules/ExtensionsUI.sys.mjs",
 });
 
 const BASE = getRootDirectory(gTestPath).replace(
@@ -7,7 +8,7 @@ const BASE = getRootDirectory(gTestPath).replace(
   "https://example.com/"
 );
 
-XPCOMUtils.defineLazyGetter(this, "Management", () => {
+ChromeUtils.defineLazyGetter(this, "Management", () => {
   // eslint-disable-next-line no-shadow
   const { Management } = ChromeUtils.importESModule(
     "resource://gre/modules/Extension.sys.mjs"
@@ -224,9 +225,9 @@ function isDefaultIcon(icon) {
  */
 function checkNotification(panel, checkIcon, permissions, sideloaded) {
   let icon = panel.getAttribute("icon");
-  let ul = document.getElementById("addon-webext-perm-list");
-  let singleDataEl = document.getElementById("addon-webext-perm-single-entry");
-  let learnMoreLink = document.getElementById("addon-webext-perm-info");
+  let learnMoreLink = panel.querySelector(".popup-notification-learnmore-link");
+  let listRequired = document.getElementById("addon-webext-perm-list-required");
+  let listOptional = document.getElementById("addon-webext-perm-list-optional");
 
   if (checkIcon instanceof RegExp) {
     ok(
@@ -242,10 +243,7 @@ function checkNotification(panel, checkIcon, permissions, sideloaded) {
   let description = panel.querySelector(
     ".popup-notification-description"
   ).textContent;
-  let descL10nId = "webext-perms-header";
-  if (permissions.length) {
-    descL10nId = "webext-perms-header-with-perms";
-  }
+  let descL10nId = "webext-perms-header2";
   if (sideloaded) {
     descL10nId = "webext-perms-sideload-header";
   }
@@ -253,37 +251,80 @@ function checkNotification(panel, checkIcon, permissions, sideloaded) {
   ok(description.startsWith(exp.at(0)), "Description is the expected one");
   ok(description.endsWith(exp.at(-1)), "Description is the expected one");
 
-  is(
-    learnMoreLink.hidden,
-    !permissions.length,
-    "Permissions learn more is hidden if there are no permissions"
+  const hasPBCheckbox = !!listOptional.querySelector(
+    "li.webext-perm-privatebrowsing > moz-checkbox"
   );
 
-  if (!permissions.length) {
-    ok(ul.hidden, "Permissions list is hidden");
-    ok(singleDataEl.hidden, "Single permission data entry is hidden");
-    ok(
-      !(ul.childElementCount || singleDataEl.textContent),
-      "Permission list and single permission element have no entries"
+  is(
+    BrowserTestUtils.isHidden(learnMoreLink),
+    !permissions.length && !hasPBCheckbox,
+    "Permissions learn more is hidden if there are no permissions and no private browsing checkbox"
+  );
+
+  if (!permissions.length && !hasPBCheckbox) {
+    ok(listRequired.hidden, "Required permissions list is hidden");
+    ok(listOptional.hidden, "Optional permissions list is hidden");
+  } else if (!permissions.length) {
+    ok(listRequired.hidden, "Required permissions list is hidden");
+    ok(!listOptional.hidden, "Optional permissions list is visible");
+    ok(hasPBCheckbox, "Expect a checkbox inside the list of permissions");
+    is(
+      listOptional.childElementCount,
+      1,
+      "Optional permissions list should have an entry"
     );
-  } else if (permissions.length === 1) {
-    ok(ul.hidden, "Permissions list is hidden");
-    ok(!ul.childElementCount, "Permission list has no entries");
-    ok(singleDataEl.textContent, "Single permission data label has been set");
+  } else if (permissions.length === 1 && hasPBCheckbox) {
+    ok(!listRequired.hidden, "Required permissions list is visible");
+    is(
+      listRequired.childElementCount,
+      1,
+      "Required permissions list should have an entry"
+    );
+    ok(!listOptional.hidden, "Optional permissions list is visible");
+    is(
+      listOptional.childElementCount,
+      1,
+      "Optional permissions list should have an entry"
+    );
+    is(
+      listRequired.children[0].textContent,
+      formatExtValue(permissions[0]),
+      "First Permission entry is correct"
+    );
+    const entry = listOptional.firstChild;
+    ok(
+      entry.classList.contains("webext-perm-privatebrowsing"),
+      "Expect last permissions list entry to be the private browsing checkbox"
+    );
+    ok(
+      entry.querySelector("moz-checkbox"),
+      "Expect a checkbox inside the last permissions list entry"
+    );
   } else {
-    ok(singleDataEl.hidden, "Single permission data entry is hidden");
-    ok(
-      !singleDataEl.textContent,
-      "Single permission data label has not been set"
-    );
+    ok(!listRequired.hidden, "Required permissions list is visible");
     for (let i in permissions) {
       let [key, param] = permissions[i];
       const expected = formatExtValue(key, param);
-      is(
-        ul.children[i].textContent,
-        expected,
-        `Permission number ${i + 1} is correct`
+      // If the permissions list entry has a label child element then
+      // we expect the permission string to be set as the label element
+      // value (in particular this is the case when the permission dialog
+      // is going to show multiple host permissions as a single permission
+      // entry and a nested ul listing all those domains).
+      const permDescriptionEl = listRequired.children[i].querySelector("label")
+        ? listRequired.children[i].firstElementChild.value
+        : listRequired.children[i].textContent;
+      is(permDescriptionEl, expected, `Permission number ${i + 1} is correct`);
+    }
+
+    if (hasPBCheckbox) {
+      ok(!listOptional.hidden, "Optional permissions list is visible");
+      const entry = listOptional.firstChild;
+      ok(
+        entry.classList.contains("webext-perm-privatebrowsing"),
+        "Expect last permissions list entry to be the private browsing checkbox"
       );
+    } else {
+      ok(listOptional.hidden, "Optional permissions list is hidden");
     }
   }
 }
@@ -302,7 +343,7 @@ function checkNotification(panel, checkIcon, permissions, sideloaded) {
  *
  * @returns {Promise}
  */
-async function testInstallMethod(installFn, telemetryBase) {
+async function testInstallMethod(installFn) {
   const PERMS_XPI = "browser_webext_permissions.xpi";
   const NO_PERMS_XPI = "browser_webext_nopermissions.xpi";
   const ID = "permissions@test.mozilla.org";
@@ -355,18 +396,15 @@ async function testInstallMethod(installFn, telemetryBase) {
 
     let panel = await promisePopupNotificationShown("addon-webext-permissions");
     if (filename == PERMS_XPI) {
+      const hostPermissions = [
+        ["webext-perms-host-description-multiple-domains", { domainCount: 2 }],
+      ];
+
       // The icon should come from the extension, don't bother with the precise
       // path, just make sure we've got a jar url pointing to the right path
       // inside the jar.
       checkNotification(panel, /^jar:file:\/\/.*\/icon\.png$/, [
-        [
-          "webext-perms-host-description-wildcard",
-          { domain: "wildcard.domain" },
-        ],
-        [
-          "webext-perms-host-description-one-site",
-          { domain: "singlehost.domain" },
-        ],
+        ...hostPermissions,
         ["webext-perms-description-nativeMessaging"],
         // The below permissions are deliberately in this order as permissions
         // are sorted alphabetically by the permission string to match AMO.
@@ -431,6 +469,7 @@ async function testInstallMethod(installFn, telemetryBase) {
 // updates applied automatically or not.
 async function interactiveUpdateTest(autoUpdate, checkFn) {
   AddonTestUtils.initMochitest(this);
+  Services.fog.testResetFOG();
 
   const ID = "update2@tests.mozilla.org";
   const FAKE_INSTALL_SOURCE = "fake-install-source";
@@ -494,7 +533,10 @@ async function interactiveUpdateTest(autoUpdate, checkFn) {
 
   // Navigate away from the starting page to force about:addons to load
   // in a new tab during the tests below.
-  BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, "about:mozilla");
+  BrowserTestUtils.startLoadingURIString(
+    gBrowser.selectedBrowser,
+    "about:mozilla"
+  );
   await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
 
   // Install version 1.0 of the test extension
@@ -504,7 +546,7 @@ async function interactiveUpdateTest(autoUpdate, checkFn) {
   ok(addon, "Addon was installed");
   is(addon.version, "1.0", "Version 1 of the addon is installed");
 
-  let win = await BrowserOpenAddonsMgr("addons://list/extension");
+  let win = await BrowserAddonUI.openAddonsMgr("addons://list/extension");
 
   await waitAboutAddonsViewLoaded(win.document);
 
@@ -516,7 +558,8 @@ async function interactiveUpdateTest(autoUpdate, checkFn) {
   // Click the cancel button, wait to see the cancel event
   let cancelPromise = promiseInstallEvent(addon, "onInstallCancelled");
   panel.secondaryButton.click();
-  await cancelPromise;
+  const cancelledByUser = await cancelPromise;
+  is(cancelledByUser, true, "Install cancelled by user");
 
   addon = await AddonManager.getAddonByID(ID);
   is(addon.version, "1.0", "Should still be running the old version");
@@ -548,23 +591,34 @@ async function interactiveUpdateTest(autoUpdate, checkFn) {
     }
   );
 
+  const expectedSteps = [
+    // First update is cancelled on the permission prompt.
+    "started",
+    "download_started",
+    "download_completed",
+    "permissions_prompt",
+    "cancelled",
+    // Second update is expected to be completed.
+    "started",
+    "download_started",
+    "download_completed",
+    "permissions_prompt",
+    "completed",
+  ];
+
   Assert.deepEqual(
+    expectedSteps,
     collectedUpdateEvents.map(evt => evt.extra.step),
-    [
-      // First update is cancelled on the permission prompt.
-      "started",
-      "download_started",
-      "download_completed",
-      "permissions_prompt",
-      "cancelled",
-      // Second update is expected to be completed.
-      "started",
-      "download_started",
-      "download_completed",
-      "permissions_prompt",
-      "completed",
-    ],
     "Got the expected sequence on update telemetry events"
+  );
+
+  let gleanEvents = AddonTestUtils.getAMGleanEvents("update");
+  Services.fog.testResetFOG();
+
+  Assert.deepEqual(
+    expectedSteps,
+    gleanEvents.map(e => e.step),
+    "Got the expected sequence on update Glean events."
   );
 
   ok(
@@ -583,6 +637,19 @@ async function interactiveUpdateTest(autoUpdate, checkFn) {
     collectedUpdateEvents.every(evt => evt.extra.updated_from === "user"),
     "Every update telemetry event should have the update_from extra var 'user'"
   );
+
+  for (let e of gleanEvents) {
+    is(e.addon_id, ID, "Glean event has the expected addon_id.");
+    is(e.source, FAKE_INSTALL_SOURCE, "Glean event has the expected source.");
+    is(e.updated_from, "user", "Glean event has the expected updated_from.");
+
+    if (e.step === "permissions_prompt") {
+      Assert.greater(parseInt(e.num_strings), 0, "Expected num_strings.");
+    }
+    if (e.step === "download_completed") {
+      Assert.greater(parseInt(e.download_time), 0, "Valid download_time.");
+    }
+  }
 
   let hasPermissionsExtras = collectedUpdateEvents
     .filter(evt => {
@@ -633,12 +700,7 @@ add_setup(async function head_setup() {
     }
 
     for (let addon of await AddonManager.getAllAddons()) {
-      // Builtin search extensions may have been installed by SearchService
-      // during the test run, ignore those.
-      if (
-        !existingAddons.has(addon.id) &&
-        !(addon.isBuiltin && addon.id.endsWith("@search.mozilla.org"))
-      ) {
+      if (!existingAddons.has(addon.id)) {
         ok(
           false,
           `Addon ${addon.id} was left installed at the end of the test`

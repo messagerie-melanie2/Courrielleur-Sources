@@ -13,13 +13,13 @@ import tempfile
 import time
 import traceback
 from contextlib import closing
+from urllib.request import urlopen
 
 import mozcrash
 import reftestcommandline
 from mozdevice import ADBDeviceFactory, RemoteProcessMonitor
 from output import OutputHandler
 from runreftest import RefTest, ReftestResolver, build_obj
-from six.moves.urllib_request import urlopen
 
 # We need to know our current directory so that we can serve our test files from it.
 SCRIPT_DIRECTORY = os.path.abspath(os.path.realpath(os.path.dirname(__file__)))
@@ -103,12 +103,12 @@ class ReftestServer:
         args = [
             "-g",
             self.xrePath,
-            "-f",
-            os.path.join(self.httpdPath, "httpd.js"),
             "-e",
             "const _PROFILE_PATH = '%(profile)s';const _SERVER_PORT = "
-            "'%(port)s'; const _SERVER_ADDR ='%(server)s';"
+            "'%(port)s'; const _SERVER_ADDR ='%(server)s'; "
+            "const _HTTPD_PATH = '%(httpdPath)s';"
             % {
+                "httpdPath": self.httpdPath.replace("\\", "\\\\"),
                 "profile": self.profileDir.replace("\\", "\\\\"),
                 "port": self.httpPort,
                 "server": self.webServer,
@@ -336,7 +336,6 @@ class RemoteReftest(RefTest):
         )
         profileDir = profile.profile
         prefs = {}
-        prefs["app.update.url.android"] = ""
         prefs["reftest.remote"] = True
         prefs["datareporting.policy.dataSubmissionPolicyBypassAcceptance"] = True
         # move necko cache to a location that can be cleaned up
@@ -436,7 +435,7 @@ class RemoteReftest(RefTest):
         startTime = datetime.datetime.now()
         status = 0
         profileDirectory = self.remoteProfile + "/"
-        cmdargs.extend(("-no-remote", "-profile", profileDirectory))
+        cmdargs.extend(("-profile", profileDirectory))
 
         pid = rpm.launch(
             binary,

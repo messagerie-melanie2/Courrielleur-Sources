@@ -7,6 +7,7 @@
 #include "mozilla/dom/BrowserHost.h"
 
 #include "mozilla/Unused.h"
+#include "mozilla/dom/BrowsingContextGroup.h"
 #include "mozilla/dom/CancelContentJSOptionsBinding.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/WindowGlobalParent.h"
@@ -90,8 +91,8 @@ bool BrowserHost::Show(const OwnerShowInfo& aShowInfo) {
   return mRoot->Show(aShowInfo);
 }
 
-void BrowserHost::UpdateDimensions(const nsIntRect& aRect,
-                                   const ScreenIntSize& aSize) {
+void BrowserHost::UpdateDimensions(const LayoutDeviceIntRect& aRect,
+                                   const LayoutDeviceIntSize& aSize) {
   mRoot->UpdateDimensions(aRect, aSize);
 }
 
@@ -244,13 +245,21 @@ BrowserHost::TransmitPermissionsForPrincipal(nsIPrincipal* aPrincipal) {
   return GetContentParent()->TransmitPermissionsForPrincipal(aPrincipal);
 }
 
-/* void createAboutBlankContentViewer(in nsIPrincipal aPrincipal, in
+/* void createAboutBlankDocumentViewer(in nsIPrincipal aPrincipal, in
  * nsIPrincipal aPartitionedPrincipal); */
 NS_IMETHODIMP
-BrowserHost::CreateAboutBlankContentViewer(
+BrowserHost::CreateAboutBlankDocumentViewer(
     nsIPrincipal* aPrincipal, nsIPrincipal* aPartitionedPrincipal) {
   if (!mRoot) {
     return NS_OK;
+  }
+
+  // Before creating the viewer in-content, ensure that the process is allowed
+  // to load this principal.
+  if (NS_WARN_IF(!mRoot->Manager()->ValidatePrincipal(aPrincipal))) {
+    ContentParent::LogAndAssertFailedPrincipalValidationInfo(
+        aPrincipal, "BrowserHost::CreateAboutBlankDocumentViewer");
+    return NS_ERROR_DOM_SECURITY_ERR;
   }
 
   // Ensure the content process has permisisons for the new document we're about
@@ -260,8 +269,14 @@ BrowserHost::CreateAboutBlankContentViewer(
     return rv;
   }
 
-  Unused << mRoot->SendCreateAboutBlankContentViewer(aPrincipal,
-                                                     aPartitionedPrincipal);
+  // Ensure that UsesOriginAgentCluster has been initialized for this
+  // BrowsingContextGroup/principal pair before creating the document in
+  // content.
+  mRoot->GetBrowsingContext()->Group()->EnsureUsesOriginAgentClusterInitialized(
+      aPrincipal);
+
+  Unused << mRoot->SendCreateAboutBlankDocumentViewer(aPrincipal,
+                                                      aPartitionedPrincipal);
   return NS_OK;
 }
 
@@ -279,10 +294,8 @@ BrowserHost::MaybeCancelContentJSExecutionFromScript(
   if (!cancelContentJSOptions.Init(aCx, aCancelContentJSOptions)) {
     return NS_ERROR_INVALID_ARG;
   }
-  if (StaticPrefs::dom_ipc_cancel_content_js_when_navigating()) {
-    GetContentParent()->CancelContentJSExecutionIfRunning(
-        mRoot, aNavigationType, cancelContentJSOptions);
-  }
+  GetContentParent()->CancelContentJSExecutionIfRunning(mRoot, aNavigationType,
+                                                        cancelContentJSOptions);
   return NS_OK;
 }
 

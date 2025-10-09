@@ -9,26 +9,25 @@
  * when opened.
  */
 
-var { open_compose_new_mail, setup_msg_contents } = ChromeUtils.import(
-  "resource://testing-common/mozmill/ComposeHelpers.jsm"
+var { open_compose_new_mail, setup_msg_contents } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ComposeHelpers.sys.mjs"
 );
 
 var {
   be_in_folder,
   get_about_3pane,
   get_special_folder,
-  mc,
   right_click_on_row,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-var { OpenPGPTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mozmill/OpenPGPTestUtils.jsm"
+var { OpenPGPTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/OpenPGPTestUtils.sys.mjs"
 );
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 let aliceAcct;
@@ -39,7 +38,7 @@ let templatesFolder;
 /**
  * Helper function to wait for a compose window to get opened.
  *
- * @returns The opened window.
+ * @returns {Window} The opened window.
  */
 async function waitForComposeWindow() {
   return BrowserTestUtils.domWindowOpened(null, async win => {
@@ -53,14 +52,14 @@ async function waitForComposeWindow() {
 
 function clearFolder(folder) {
   return new Promise(resolve => {
-    let msgs = [...folder.msgDatabase.enumerateMessages()];
+    const msgs = [...folder.msgDatabase.enumerateMessages()];
 
     folder.deleteMessages(
       msgs,
       null,
       true,
       false,
-      { OnStopCopy: resolve },
+      { onStopCopy: resolve },
       false
     );
   });
@@ -77,7 +76,7 @@ add_setup(async function () {
   aliceIdentity.email = "alice@openpgp.example";
   aliceAcct.addIdentity(aliceIdentity);
 
-  let [id] = await OpenPGPTestUtils.importPrivateKey(
+  const [id] = await OpenPGPTestUtils.importPrivateKey(
     window,
     new FileUtils.File(
       getTestFilePath(
@@ -90,17 +89,8 @@ add_setup(async function () {
 
   aliceIdentity.setUnicharAttribute("openpgp_key_id", id.split("0x").join(""));
 
-  draftsFolder = await get_special_folder(
-    Ci.nsMsgFolderFlags.Drafts,
-    true,
-    aliceAcct.incomingServer.localFoldersServer
-  );
-
-  templatesFolder = await get_special_folder(
-    Ci.nsMsgFolderFlags.Templates,
-    true,
-    aliceAcct.incomingServer.localFoldersServer
-  );
+  draftsFolder = aliceIdentity.getOrCreateDraftsFolder();
+  templatesFolder = aliceIdentity.getOrCreateTemplatesFolder();
 });
 
 /**
@@ -129,16 +119,16 @@ add_task(async function testTemplSec() {
  */
 async function doTestSecState(isDraft, secure) {
   // Make sure to compose from alice.
-  let inbox = aliceAcct.incomingServer.rootFolder.getFolderWithFlags(
+  const inbox = aliceAcct.incomingServer.rootFolder.getFolderWithFlags(
     Ci.nsMsgFolderFlags.Inbox
   );
   await be_in_folder(inbox);
 
-  let cwc = open_compose_new_mail();
-  let type = isDraft ? "draft" : "template";
-  let theFolder = isDraft ? draftsFolder : templatesFolder;
-  let subject = `test ${type}; 🤐; secure=${secure}`;
-  setup_msg_contents(
+  const cwc = await open_compose_new_mail();
+  const type = isDraft ? "draft" : "template";
+  const theFolder = isDraft ? draftsFolder : templatesFolder;
+  const subject = `test ${type}; 🤐; secure=${secure}`;
+  await setup_msg_contents(
     cwc,
     "test@example.invalid",
     subject,
@@ -149,33 +139,33 @@ async function doTestSecState(isDraft, secure) {
   if (secure) {
     // Tick "Require encryption".
     // Encryption and signing should get turned on.
-    await OpenPGPTestUtils.toggleMessageEncryption(cwc.window);
+    await OpenPGPTestUtils.toggleMessageEncryption(cwc);
   }
 
   if (isDraft) {
-    cwc.window.SaveAsDraft();
+    cwc.SaveAsDraft();
   } else {
-    cwc.window.SaveAsTemplate();
+    cwc.SaveAsTemplate();
   }
 
   await TestUtils.waitForCondition(
-    () => !cwc.window.gSaveOperationInProgress && !cwc.window.gWindowLock,
+    () => !cwc.gSaveOperationInProgress && !cwc.gWindowLock,
     "timeout waiting for saving to finish."
   );
 
   info(`Saved as ${type} with secure=${secure}`);
-  cwc.window.close();
+  cwc.close();
 
   await be_in_folder(theFolder);
-  select_click_row(0);
+  await select_click_row(0);
 
   info(`Will open the ${type}`);
-  let draftWindowPromise = waitForComposeWindow();
-  select_click_row(0);
+  const draftWindowPromise = waitForComposeWindow();
+  await select_click_row(0);
   await right_click_on_row(0);
 
-  let about3Pane = get_about_3pane();
-  let mailContext = about3Pane.document.getElementById("mailContext");
+  const about3Pane = get_about_3pane();
+  const mailContext = about3Pane.document.getElementById("mailContext");
   if (isDraft) {
     mailContext.activateItem(
       about3Pane.document.getElementById("mailContext-editDraftMsg")
@@ -186,7 +176,7 @@ async function doTestSecState(isDraft, secure) {
     );
   }
 
-  let draftWindow = await draftWindowPromise;
+  const draftWindow = await draftWindowPromise;
 
   Assert.equal(
     draftWindow.document.getElementById("msgSubject").value,

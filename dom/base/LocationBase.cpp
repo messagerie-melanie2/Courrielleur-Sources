@@ -13,7 +13,7 @@
 #include "nsCOMPtr.h"
 #include "nsError.h"
 #include "nsContentUtils.h"
-#include "nsGlobalWindow.h"
+#include "nsGlobalWindowInner.h"
 #include "mozilla/NullPrincipal.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/ReferrerInfo.h"
@@ -108,6 +108,12 @@ already_AddRefed<nsDocShellLoadState> LocationBase::CheckURL(
   loadState->SetHasValidUserGestureActivation(
       doc->HasValidTransientUserGestureActivation());
 
+  loadState->SetTextDirectiveUserActivation(
+      doc->ConsumeTextDirectiveUserActivation() ||
+      loadState->HasValidUserGestureActivation());
+  loadState->SetTriggeringWindowId(doc->InnerWindowID());
+  loadState->SetTriggeringStorageAccess(doc->UsingStorageAccess());
+
   return loadState.forget();
 }
 
@@ -122,7 +128,7 @@ void LocationBase::SetURI(nsIURI* aURI, nsIPrincipal& aSubjectPrincipal,
                               ? CallerType::System
                               : CallerType::NonSystem;
 
-  nsresult rv = bc->CheckLocationChangeRateLimit(callerType);
+  nsresult rv = bc->CheckNavigationRateLimit(callerType);
   if (NS_FAILED(rv)) {
     aRv.Throw(rv);
     return;
@@ -156,7 +162,7 @@ void LocationBase::SetURI(nsIURI* aURI, nsIPrincipal& aSubjectPrincipal,
   rv = bc->LoadURI(loadState);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     if (rv == NS_ERROR_DOM_BAD_CROSS_ORIGIN_URI &&
-        net::SchemeIsJavascript(loadState->URI())) {
+        loadState->URI()->SchemeIs("javascript")) {
       // Per spec[1], attempting to load a javascript: URI into a cross-origin
       // BrowsingContext is a no-op, and should not raise an exception.
       // Technically, Location setters run with exceptions enabled should only
@@ -183,12 +189,12 @@ void LocationBase::SetURI(nsIURI* aURI, nsIPrincipal& aSubjectPrincipal,
   }
 }
 
-void LocationBase::SetHref(const nsAString& aHref,
+void LocationBase::SetHref(const nsACString& aHref,
                            nsIPrincipal& aSubjectPrincipal, ErrorResult& aRv) {
   DoSetHref(aHref, aSubjectPrincipal, false, aRv);
 }
 
-void LocationBase::DoSetHref(const nsAString& aHref,
+void LocationBase::DoSetHref(const nsACString& aHref,
                              nsIPrincipal& aSubjectPrincipal, bool aReplace,
                              ErrorResult& aRv) {
   // Get the source of the caller
@@ -196,7 +202,7 @@ void LocationBase::DoSetHref(const nsAString& aHref,
   SetHrefWithBase(aHref, base, aSubjectPrincipal, aReplace, aRv);
 }
 
-void LocationBase::SetHrefWithBase(const nsAString& aHref, nsIURI* aBase,
+void LocationBase::SetHrefWithBase(const nsACString& aHref, nsIURI* aBase,
                                    nsIPrincipal& aSubjectPrincipal,
                                    bool aReplace, ErrorResult& aRv) {
   nsresult result;
@@ -209,43 +215,43 @@ void LocationBase::SetHrefWithBase(const nsAString& aHref, nsIURI* aBase,
     result = NS_NewURI(getter_AddRefs(newUri), aHref, nullptr, aBase);
   }
 
-  if (newUri) {
-    /* Check with the scriptContext if it is currently processing a script tag.
-     * If so, this must be a <script> tag with a location.href in it.
-     * we want to do a replace load, in such a situation.
-     * In other cases, for example if a event handler or a JS timer
-     * had a location.href in it, we want to do a normal load,
-     * so that the new url will be appended to Session History.
-     * This solution is tricky. Hopefully it isn't going to bite
-     * anywhere else. This is part of solution for bug # 39938, 72197
-     */
-    bool inScriptTag = false;
-    nsIScriptContext* scriptContext = nullptr;
-    nsCOMPtr<nsPIDOMWindowInner> win = do_QueryInterface(GetEntryGlobal());
-    if (win) {
-      scriptContext = nsGlobalWindowInner::Cast(win)->GetContextInternal();
-    }
-
-    if (scriptContext) {
-      if (scriptContext->GetProcessingScriptTag()) {
-        // Now check to make sure that the script is running in our window,
-        // since we only want to replace if the location is set by a
-        // <script> tag in the same window.  See bug 178729.
-        nsCOMPtr<nsIDocShell> docShell(GetDocShell());
-        nsCOMPtr<nsIScriptGlobalObject> ourGlobal =
-            docShell ? docShell->GetScriptGlobalObject() : nullptr;
-        inScriptTag = (ourGlobal == scriptContext->GetGlobalObject());
-      }
-    }
-
-    SetURI(newUri, aSubjectPrincipal, aRv, aReplace || inScriptTag);
+  if (NS_FAILED(result) || !newUri) {
+    aRv.ThrowSyntaxError("'"_ns + aHref + "' is not a valid URL."_ns);
     return;
   }
 
-  aRv.Throw(result);
+  /* Check with the scriptContext if it is currently processing a script tag.
+   * If so, this must be a <script> tag with a location.href in it.
+   * we want to do a replace load, in such a situation.
+   * In other cases, for example if a event handler or a JS timer
+   * had a location.href in it, we want to do a normal load,
+   * so that the new url will be appended to Session History.
+   * This solution is tricky. Hopefully it isn't going to bite
+   * anywhere else. This is part of solution for bug # 39938, 72197
+   */
+  bool inScriptTag = false;
+  nsIScriptContext* scriptContext = nullptr;
+  nsCOMPtr<nsPIDOMWindowInner> win = do_QueryInterface(GetEntryGlobal());
+  if (win) {
+    scriptContext = nsGlobalWindowInner::Cast(win)->GetContextInternal();
+  }
+
+  if (scriptContext) {
+    if (scriptContext->GetProcessingScriptTag()) {
+      // Now check to make sure that the script is running in our window,
+      // since we only want to replace if the location is set by a
+      // <script> tag in the same window.  See bug 178729.
+      nsCOMPtr<nsIDocShell> docShell(GetDocShell());
+      nsCOMPtr<nsIScriptGlobalObject> ourGlobal =
+          docShell ? docShell->GetScriptGlobalObject() : nullptr;
+      inScriptTag = (ourGlobal == scriptContext->GetGlobalObject());
+    }
+  }
+
+  SetURI(newUri, aSubjectPrincipal, aRv, aReplace || inScriptTag);
 }
 
-void LocationBase::Replace(const nsAString& aUrl,
+void LocationBase::Replace(const nsACString& aUrl,
                            nsIPrincipal& aSubjectPrincipal, ErrorResult& aRv) {
   DoSetHref(aUrl, aSubjectPrincipal, true, aRv);
 }

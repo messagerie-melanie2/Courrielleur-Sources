@@ -66,9 +66,7 @@ export class SmtpClient {
    */
   constructor(server) {
     this.options = {
-      alwaysSTARTTLS:
-        server.socketType == Ci.nsMsgSocketType.trySTARTTLS ||
-        server.socketType == Ci.nsMsgSocketType.alwaysSTARTTLS,
+      alwaysSTARTTLS: server.socketType == Ci.nsMsgSocketType.alwaysSTARTTLS,
       requireTLS: server.socketType == Ci.nsMsgSocketType.SSL,
     };
 
@@ -241,7 +239,7 @@ export class SmtpClient {
         if (firstInvalid != null) {
           if (!lastAt) {
             // Invalid char found in the localpart, throw error until we implement RFC 6532.
-            this._onNsError(MsgUtils.NS_ERROR_ILLEGAL_LOCALPART, recipient);
+            this._onNsError("errorIllegalLocalPart2", recipient);
             return;
           }
           // Invalid char found in the domainpart, convert it to ACE.
@@ -263,7 +261,7 @@ export class SmtpClient {
     this._envelope.responseQueue = [];
 
     if (!this._envelope.rcptQueue.length) {
-      this._onNsError(MsgUtils.NS_MSG_NO_RECIPIENTS);
+      this._onNsError("noRecipients");
       return;
     }
 
@@ -510,12 +508,12 @@ export class SmtpClient {
   /**
    * Error handler. Emits an nsresult value.
    *
-   * @param {nsresult} nsError - A nsresult.
+   * @param {string} error - An error code for l10n.
    * @param {string} errorParam - Param to form the error message.
    * @param {string} [extra] - Some messages take two arguments to format.
    * @param {number} [statusCode] - Only needed when checking need to retry.
    */
-  _onNsError(nsError, errorParam, extra, statusCode) {
+  _onNsError(error, errorParam, extra, statusCode) {
     // First check if handling an error response that might need a retry.
     if ([this._actionMAIL, this._actionRCPT].includes(this._currentAction)) {
       if (statusCode >= 400 && statusCode < 500) {
@@ -536,35 +534,13 @@ export class SmtpClient {
       }
     }
 
-    const errorName = MsgUtils.getErrorStringName(nsError);
-    let errorMessage = "";
-    if (
-      [
-        MsgUtils.NS_ERROR_SMTP_SERVER_ERROR,
-        MsgUtils.NS_ERROR_SMTP_TEMP_SIZE_EXCEEDED,
-        MsgUtils.NS_ERROR_SMTP_PERM_SIZE_EXCEEDED_2,
-        MsgUtils.NS_ERROR_SENDING_FROM_COMMAND,
-        MsgUtils.NS_ERROR_SENDING_RCPT_COMMAND,
-        MsgUtils.NS_ERROR_SENDING_DATA_COMMAND,
-        MsgUtils.NS_ERROR_SENDING_MESSAGE,
-        MsgUtils.NS_ERROR_ILLEGAL_LOCALPART,
-      ].includes(nsError)
-    ) {
-      const bundle = Services.strings.createBundle(
-        "chrome://messenger/locale/messengercompose/composeMsgs.properties"
-      );
-      if (nsError == MsgUtils.NS_ERROR_ILLEGAL_LOCALPART) {
-        errorMessage = bundle
-          .GetStringFromName(errorName)
-          .replace("%s", errorParam);
-      } else {
-        errorMessage = bundle.formatStringFromName(errorName, [
-          errorParam,
-          extra,
-        ]);
-      }
-    }
-    this.onerror(nsError, errorMessage);
+    const bundle = Services.strings.createBundle(
+      "chrome://messenger/locale/messengercompose/composeMsgs.properties"
+    );
+    this.onerror(
+      Cr.NS_ERROR_FAILURE,
+      bundle.formatStringFromName(error, [errorParam, extra])
+    );
     this.close();
   }
 
@@ -803,17 +779,17 @@ export class SmtpClient {
             Ci.nsMsgSocketType.alwaysSTARTTLS,
             Ci.nsMsgSocketType.SSL,
           ].includes(this._server.socketType)
-            ? MsgUtils.NS_ERROR_SMTP_AUTH_CHANGE_ENCRYPT_TO_PLAIN_SSL
-            : MsgUtils.NS_ERROR_SMTP_AUTH_CHANGE_ENCRYPT_TO_PLAIN_NO_SSL;
+            ? "smtpHintAuthEncryptToPlainSsl"
+            : "smtpHintAuthEncryptToPlainNoSsl";
         } else if (
           this._server.authMethod == Ci.nsMsgAuthMethod.passwordCleartext &&
           this._supportedAuthMethods.includes("CRAM-MD5")
         ) {
           // Pref has plaintext password, server claims to support encrypted
           // password.
-          err = MsgUtils.NS_ERROR_SMTP_AUTH_CHANGE_PLAIN_TO_ENCRYPT;
+          err = "smtpHintAuthPlainToEncrypt";
         } else {
-          err = MsgUtils.NS_ERROR_SMTP_AUTH_MECH_NOT_SUPPORTED;
+          err = "smtpAuthMechNotSupported";
         }
         this._onNsError(err);
         return;
@@ -825,7 +801,7 @@ export class SmtpClient {
     if (action == 1) {
       // Cancel button pressed.
       this.logger.error(`Authentication failed: ${command.data}`);
-      this._onNsError(MsgUtils.NS_ERROR_SMTP_AUTH_FAILURE);
+      this._onNsError("smtpAuthFailure");
       return;
     } else if (action == 2) {
       // 'New password' button pressed. Forget cached password, new password
@@ -875,7 +851,7 @@ export class SmtpClient {
    */
   _actionGreeting(command) {
     if (command.statusCode !== 220) {
-      this._onNsError(MsgUtils.NS_ERROR_SMTP_SERVER_ERROR, command.data);
+      this._onNsError("smtpServerError", command.data);
       return;
     }
 
@@ -895,7 +871,7 @@ export class SmtpClient {
    */
   _actionLHLO(command) {
     if (!command.success) {
-      this._onNsError(MsgUtils.NS_ERROR_SMTP_SERVER_ERROR, command.data);
+      this._onNsError("smtpServerError", command.data);
       return;
     }
 
@@ -913,7 +889,7 @@ export class SmtpClient {
       // EHLO is not implemented by the server.
       if (this.options.alwaysSTARTTLS) {
         // If alwaysSTARTTLS is set by the user, EHLO is required to advertise it.
-        this._onNsError(MsgUtils.NS_ERROR_STARTTLS_FAILED_EHLO_STARTTLS);
+        this._onNsError("startTlsFailed", this._server.hostname);
         return;
       }
 
@@ -926,7 +902,7 @@ export class SmtpClient {
       return;
     } else if (!command.success) {
       // 501 Syntax error or some other error.
-      this._onNsError(MsgUtils.NS_ERROR_SMTP_SERVER_ERROR, command.data);
+      this._onNsError("smtpServerError", command.data);
       return;
     }
 
@@ -950,7 +926,7 @@ export class SmtpClient {
         return;
       }
       // STARTTLS is required but not advertised.
-      this._onNsError(MsgUtils.NS_ERROR_STARTTLS_FAILED_EHLO_STARTTLS);
+      this._onNsError("startTlsFailed", this._server.hostname);
       return;
     }
 
@@ -986,7 +962,7 @@ export class SmtpClient {
    */
   _actionSTARTTLS(command) {
     if (!command.success) {
-      this._onNsError(MsgUtils.NS_ERROR_SMTP_SERVER_ERROR, command.data);
+      this._onNsError("smtpServerError", command.data);
       return;
     }
 
@@ -1005,7 +981,7 @@ export class SmtpClient {
    */
   _actionHELO(command) {
     if (!command.success) {
-      this._onNsError(MsgUtils.NS_ERROR_SMTP_SERVER_ERROR, command.data);
+      this._onNsError("smtpServerError", command.data);
       return;
     }
     this._authenticateUser();
@@ -1019,7 +995,7 @@ export class SmtpClient {
    */
   _actionCLIENTID(command) {
     if (!command.success) {
-      this._onNsError(MsgUtils.NS_ERROR_SMTP_SERVER_ERROR, command.data);
+      this._onNsError("smtpServerError", command.data);
       return;
     }
     this._authenticateUser();
@@ -1052,7 +1028,7 @@ export class SmtpClient {
    */
   _actionAUTH_LOGIN_USER(command) {
     if (command.statusCode !== 334 || command.data !== "VXNlcm5hbWU6") {
-      this._onNsError(MsgUtils.NS_ERROR_SMTP_AUTH_FAILURE, command.data);
+      this._onNsError("smtpAuthFailure", command.data);
       return;
     }
     this.logger.debug("AUTH LOGIN USER");
@@ -1072,7 +1048,7 @@ export class SmtpClient {
       command.statusCode !== 334 ||
       (command.data !== btoa("Password:") && command.data !== btoa("password:"))
     ) {
-      this._onNsError(MsgUtils.NS_ERROR_SMTP_AUTH_FAILURE, command.data);
+      this._onNsError("smtpAuthFailure", command.data);
       return;
     }
     this.logger.debug("AUTH LOGIN PASS");
@@ -1101,7 +1077,7 @@ export class SmtpClient {
    */
   async _actionAUTH_CRAM(command) {
     if (command.statusCode !== 334) {
-      this._onNsError(MsgUtils.NS_ERROR_SMTP_AUTH_FAILURE, command.data);
+      this._onNsError("smtpAuthFailure", command.data);
       return;
     }
     this._currentAction = this._actionAUTHComplete;
@@ -1139,7 +1115,7 @@ export class SmtpClient {
       return;
     }
     if (command.statusCode !== 334) {
-      this._onNsError(MsgUtils.NS_ERROR_SMTP_AUTH_GSSAPI, command.data);
+      this._onNsError("smtpAuthGssapi", command.data);
       return;
     }
     let token;
@@ -1167,7 +1143,7 @@ export class SmtpClient {
       return;
     }
     if (command.statusCode !== 334) {
-      this._onNsError(MsgUtils.NS_ERROR_SMTP_AUTH_FAILURE, command.data);
+      this._onNsError("smtpAuthFailure", command.data);
       return;
     }
     const token = this._authenticator.getNextNtlmToken(command.data);
@@ -1200,7 +1176,7 @@ export class SmtpClient {
    * @param {object} command Parsed command from the server {statusCode, data}
    */
   _actionIdle(command) {
-    this._onNsError(MsgUtils.NS_ERROR_SMTP_SERVER_ERROR, command.data);
+    this._onNsError("smtpServerError", command.data);
   }
 
   /**
@@ -1210,17 +1186,17 @@ export class SmtpClient {
    */
   _actionMAIL(command) {
     if (!command.success) {
-      let errorCode = MsgUtils.NS_ERROR_SENDING_FROM_COMMAND; // default code
+      let error = "errorSendingFromCommand"; // default error message
       if (command.statusCode == 552) {
         // Too much mail data indicated by "size" parameter of MAIL FROM.
         // @see https://datatracker.ietf.org/doc/html/rfc5321#section-4.5.3.1.9
-        errorCode = MsgUtils.NS_ERROR_SMTP_PERM_SIZE_EXCEEDED_2;
+        error = "smtpPermSizeExceeded2";
       }
       if (command.statusCode == 452 || command.statusCode == 451) {
         // @see https://datatracker.ietf.org/doc/html/rfc5321#section-4.5.3.1.10
-        errorCode = MsgUtils.NS_ERROR_SMTP_TEMP_SIZE_EXCEEDED;
+        error = "smtpTooManyRecipients";
       }
-      this._onNsError(errorCode, command.data, null, command.statusCode);
+      this._onNsError(error, command.data, null, command.statusCode);
       return;
     }
     this.logger.debug(
@@ -1272,7 +1248,7 @@ export class SmtpClient {
   _actionRCPT(command) {
     if (!command.success) {
       this._onNsError(
-        MsgUtils.NS_ERROR_SENDING_RCPT_COMMAND,
+        "errorSendingRcptCommand",
         command.data,
         this._envelope.curRecipient,
         command.statusCode
@@ -1308,7 +1284,7 @@ export class SmtpClient {
     // response should be 354 but according to this issue https://github.com/eleith/emailjs/issues/24
     // some servers might use 250 instead
     if (![250, 354].includes(command.statusCode)) {
-      this._onNsError(MsgUtils.NS_ERROR_SENDING_DATA_COMMAND, command.data);
+      this._onNsError("errorSendingDataCommand", command.data);
       return;
     }
 
@@ -1390,7 +1366,7 @@ export class SmtpClient {
       if (command.success) {
         this.ondone();
       } else {
-        this._onNsError(MsgUtils.NS_ERROR_SENDING_MESSAGE, command.data);
+        this._onNsError("errorSendingMessage", command.data);
       }
     }
 

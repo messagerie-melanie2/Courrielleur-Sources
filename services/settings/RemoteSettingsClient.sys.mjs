@@ -2,7 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
 import { Downloader } from "resource://services-settings/Attachments.sys.mjs";
@@ -13,34 +12,32 @@ ChromeUtils.defineESModuleGetters(lazy, {
   ClientEnvironmentBase:
     "resource://gre/modules/components-utils/ClientEnvironment.sys.mjs",
   Database: "resource://services-settings/Database.sys.mjs",
+  IDBHelpers: "resource://services-settings/IDBHelpers.sys.mjs",
+  KintoHttpClient: "resource://services-common/kinto-http-client.sys.mjs",
+  ObjectUtils: "resource://gre/modules/ObjectUtils.sys.mjs",
   RemoteSettingsWorker:
     "resource://services-settings/RemoteSettingsWorker.sys.mjs",
+  RemoteSettings: "resource://services-settings/remote-settings.sys.mjs",
+  SharedUtils: "resource://services-settings/SharedUtils.sys.mjs",
   UptakeTelemetry: "resource://services-common/uptake-telemetry.sys.mjs",
   Utils: "resource://services-settings/Utils.sys.mjs",
 });
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  IDBHelpers: "resource://services-settings/IDBHelpers.jsm",
-  KintoHttpClient: "resource://services-common/kinto-http-client.js",
-  ObjectUtils: "resource://gre/modules/ObjectUtils.jsm",
-  SharedUtils: "resource://services-settings/SharedUtils.jsm",
-});
+const TELEMETRY_COMPONENT = "Remotesettings";
 
-const TELEMETRY_COMPONENT = "remotesettings";
-
-XPCOMUtils.defineLazyGetter(lazy, "console", () => lazy.Utils.log);
+ChromeUtils.defineLazyGetter(lazy, "console", () => lazy.Utils.log);
 
 /**
  * cacheProxy returns an object Proxy that will memoize properties of the target.
- * @param {Object} target the object to wrap.
+ * @param {object} target the object to wrap.
  * @returns {Proxy}
  */
 function cacheProxy(target) {
   const cache = new Map();
   return new Proxy(target, {
-    get(target, prop, receiver) {
+    get(innerTarget, prop) {
       if (!cache.has(prop)) {
-        cache.set(prop, target[prop]);
+        cache.set(prop, innerTarget[prop]);
       }
       return cache.get(prop);
     },
@@ -160,11 +157,11 @@ class StorageError extends Error {
 }
 
 class InvalidSignatureError extends Error {
-  constructor(cid, x5u) {
+  constructor(cid, x5u, signerName) {
     let message = `Invalid content signature (${cid})`;
     if (x5u) {
       const chain = x5u.split("/").pop();
-      message += ` using '${chain}'`;
+      message += ` using '${chain}' and signer ${signerName}`;
     }
     super(message);
     this.name = "InvalidSignatureError";
@@ -208,11 +205,17 @@ class AttachmentDownloader extends Downloader {
       set: async (attachmentId, attachment) => {
         return this._client.db.saveAttachment(attachmentId, attachment);
       },
+      setMultiple: async attachmentsIdsBlobs => {
+        return this._client.db.saveAttachments(attachmentsIdsBlobs);
+      },
       delete: async attachmentId => {
         return this._client.db.saveAttachment(attachmentId, null);
       },
       prune: async excludeIds => {
         return this._client.db.pruneAttachments(excludeIds);
+      },
+      hasData: async () => {
+        return this._client.db.hasAttachments();
       },
     };
     Object.defineProperty(this, "cacheImpl", { value: cacheImpl });
@@ -239,6 +242,7 @@ class AttachmentDownloader extends Downloader {
       // If the file failed to be downloaded, report it as such in Telemetry.
       await lazy.UptakeTelemetry.report(TELEMETRY_COMPONENT, status, {
         source: this._client.identifier,
+        errorName: err.name,
       });
       throw err;
     }
@@ -253,11 +257,7 @@ class AttachmentDownloader extends Downloader {
   async deleteAll() {
     let allRecords = await this._client.db.list();
     return Promise.all(
-      allRecords
-        .filter(r => !!r.attachment)
-        .map(r =>
-          Promise.all([this.deleteDownloaded(r), this.deleteFromDisk(r)])
-        )
+      allRecords.filter(r => !!r.attachment).map(r => this.deleteDownloaded(r))
     );
   }
 }
@@ -343,13 +343,13 @@ export class RemoteSettingsClient extends EventEmitter {
     // or when pulling data from a dev server.
     this.verifySignature = AppConstants.REMOTE_SETTINGS_VERIFY_SIGNATURE;
 
-    XPCOMUtils.defineLazyGetter(
+    ChromeUtils.defineLazyGetter(
       this,
       "db",
       () => new lazy.Database(this.identifier)
     );
 
-    XPCOMUtils.defineLazyGetter(
+    ChromeUtils.defineLazyGetter(
       this,
       "attachments",
       () => new AttachmentDownloader(this)
@@ -390,7 +390,7 @@ export class RemoteSettingsClient extends EventEmitter {
    * This is an opaque and comparable value assigned automatically by
    * the server.
    *
-   * @returns {number}
+   * @returns {Promise<number>}
    *          The timestamp in milliseconds, returns -1 if retrieving
    *          the timestamp from the kinto collection fails.
    */
@@ -411,16 +411,25 @@ export class RemoteSettingsClient extends EventEmitter {
   /**
    * Lists settings.
    *
-   * @param  {Object} options                    The options object.
-   * @param  {Object} options.filters            Filter the results (default: `{}`).
-   * @param  {String} options.order              The order to apply (eg. `"-last_modified"`).
-   * @param  {boolean} options.dumpFallback      Fallback to dump data if read of local DB fails (default: `true`).
-   * @param  {boolean} options.emptyListFallback Fallback to empty list if no dump data and read of local DB fails (default: `true`).
-   * @param  {boolean} options.loadDumpIfNewer   Use dump data if it is newer than local data (default: `true`).
-   * @param  {boolean} options.forceSync         Always synchronize from server before returning results (default: `false`).
-   * @param  {boolean} options.syncIfEmpty       Synchronize from server if local data is empty (default: `true`).
-   * @param  {boolean} options.verifySignature   Verify the signature of the local data (default: `false`).
-   * @return {Promise}
+   * @param  {Object} [options]
+   *   The options object.
+   * @param  {Object} [options.filters]
+   *   Filter the results (default: `{}`).
+   * @param  {String} [options.order]
+   *   The order to apply (eg. `"-last_modified"`).
+   * @param  {boolean} [options.dumpFallback]
+   *   Fallback to dump data if read of local DB fails (default: `true`).
+   * @param  {boolean} [options.emptyListFallback]
+   *   Fallback to empty list if no dump data and read of local DB fails (default: `true`).
+   * @param  {boolean} [options.loadDumpIfNewer]
+   *   Use dump data if it is newer than local data (default: `true`).
+   * @param  {boolean} [options.forceSync]
+   *   Always synchronize from server before returning results (default: `false`).
+   * @param  {boolean} [options.syncIfEmpty]
+   *   Synchronize from server if local data is empty (default: `true`).
+   * @param  {boolean} [options.verifySignature]
+   *   Verify the signature of the local data (default: `false`).
+   * @return {Promise<object[]>}
    */
   async get(options = {}) {
     const {
@@ -463,7 +472,25 @@ export class RemoteSettingsClient extends EventEmitter {
               lazy.console.debug(
                 `${this.identifier} Local DB is empty, pull data from server`
               );
-              await this.sync({ loadDump: false, sendEvents: false });
+              const waitedAt = Cu.now();
+              const pulled = await lazy.RemoteSettings.pullStartupBundle();
+              // If collection is not part of startup bundle, then sync it individually.
+              if (!pulled.includes(this.identifier)) {
+                lazy.console.debug(
+                  `${this.identifier} was not part of startup bundle. Force a sync`
+                );
+                await this.sync({ loadDump: false, sendEvents: false });
+              }
+              ChromeUtils.addProfilerMarker(
+                "remote-settings:get:sync",
+                waitedAt,
+                "get() with syncIfEmpty"
+              );
+
+              const durationMilliseconds = Cu.now() - waitedAt;
+              lazy.console.debug(
+                `${this.identifier} Waited ${durationMilliseconds}ms for 'syncIfEmpty' in 'get()'`
+              );
             }
             // Return `true` to indicate we don't need to `verifySignature`,
             // since a trusted dump was loaded or a signature verification
@@ -473,9 +500,10 @@ export class RemoteSettingsClient extends EventEmitter {
         } else {
           lazy.console.debug(`${this.identifier} Awaiting existing import.`);
         }
-      } else if (hasLocalData && loadDumpIfNewer) {
+      } else if (hasLocalData && loadDumpIfNewer && lazy.Utils.LOAD_DUMPS) {
         // Check whether the local data is older than the packaged dump.
-        // If it is, load the packaged dump (which overwrites the local data).
+        // If it is and we are on production, load the packaged dump (which
+        // overwrites the local data).
         let lastModifiedDump = await lazy.Utils.getLocalDumpLastModified(
           this.bucketName,
           this.collectionName
@@ -514,7 +542,7 @@ export class RemoteSettingsClient extends EventEmitter {
           }
           // Report error, but continue because there could have been data
           // loaded from a parallel call.
-          console.error(e);
+          lazy.console.error(e);
         } finally {
           // then delete this promise again, as now we should have local data:
           delete this._importingPromise;
@@ -529,11 +557,11 @@ export class RemoteSettingsClient extends EventEmitter {
       if (!dumpFallback) {
         throw e;
       }
-      console.error(e);
-      let { data } = await lazy.SharedUtils.loadJSONDump(
+      lazy.console.error(e);
+      ({ data } = await lazy.SharedUtils.loadJSONDump(
         this.bucketName,
         this.collectionName
-      );
+      ));
       if (data !== null) {
         lazy.console.info(`${this.identifier} falling back to JSON dump`);
       } else if (emptyListFallback) {
@@ -558,11 +586,7 @@ export class RemoteSettingsClient extends EventEmitter {
       return this._filterEntries(data);
     }
 
-    lazy.console.debug(
-      `${this.identifier} ${data.length} records before filtering.`
-    );
-
-    if (verifySignature) {
+    if (this.verifySignature && verifySignature) {
       lazy.console.debug(
         `${this.identifier} verify signature of local data on read`
       );
@@ -580,17 +604,13 @@ export class RemoteSettingsClient extends EventEmitter {
         metadata = await this.db.getMetadata();
       }
       // Will throw MissingSignatureError if no metadata and `syncIfEmpty` is false.
-      await this._validateCollectionSignature(
-        localRecords,
-        timestamp,
-        metadata
-      );
+      await this.validateCollectionSignature(localRecords, timestamp, metadata);
     }
 
     // Filter the records based on `this.filterFunc` results.
     const final = await this._filterEntries(data);
     lazy.console.debug(
-      `${this.identifier} ${final.length} records after filtering.`
+      `${this.identifier} ${final.length}/${data.length} records after filtering.`
     );
     return final;
   }
@@ -601,6 +621,10 @@ export class RemoteSettingsClient extends EventEmitter {
    * @param {Object} options See #maybeSync() options.
    */
   async sync(options) {
+    if (lazy.Utils.shouldSkipRemoteActivityDueToTests) {
+      return;
+    }
+
     // We want to know which timestamp we are expected to obtain in order to leverage
     // cache busting. We don't provide ETag because we don't want a 304.
     const { changes } = await lazy.Utils.fetchLatestChanges(
@@ -618,20 +642,26 @@ export class RemoteSettingsClient extends EventEmitter {
     // According to API, there will be one only (fail if not).
     const [{ last_modified: expectedTimestamp }] = changes;
 
-    return this.maybeSync(expectedTimestamp, { ...options, trigger: "forced" });
+    await this.maybeSync(expectedTimestamp, { ...options, trigger: "forced" });
   }
 
   /**
    * Synchronize the local database with the remote server, **only if necessary**.
    *
-   * @param {int}    expectedTimestamp  the lastModified date (on the server) for the remote collection.
-   *                                    This will be compared to the local timestamp, and will be used for
-   *                                    cache busting if local data is out of date.
-   * @param {Object} options            additional advanced options.
-   * @param {bool}   options.loadDump   load initial dump from disk on first sync (default: true if server is prod)
-   * @param {bool}   options.sendEvents send `"sync"` events (default: `true`)
-   * @param {string} options.trigger    label to identify what triggered this sync (eg. ``"timer"``, default: `"manual"`)
-   * @return {Promise}                  which rejects on sync or process failure.
+   * @param {number} expectedTimestamp
+   *   The lastModified date (on the server) for the remote collection. This will
+   *   be compared to the local timestamp, and will be used for cache busting if
+   *   local data is out of date.
+   * @param {object} [options]
+   *   additional advanced options.
+   * @param {boolean} [options.loadDump]
+   *   load initial dump from disk on first sync (default: true if server is prod)
+   * @param {boolean} [options.sendEvents]
+   *   send `"sync"` events (default: `true`)
+   * @param {string} [options.trigger]
+   *   label to identify what triggered this sync (eg. ``"timer"``, default: `"manual"`)
+   * @return {Promise<void>}
+   *   which rejects on sync or process failure.
    */
   async maybeSync(expectedTimestamp, options = {}) {
     // Should the clients try to load JSON dump? (mainly disabled in tests)
@@ -718,7 +748,7 @@ export class RemoteSettingsClient extends EventEmitter {
               lazy.console.debug(
                 `${this.identifier} verify signature of local data`
               );
-              await this._validateCollectionSignature(
+              await this.validateCollectionSignature(
                 localRecords,
                 collectionLastModified,
                 metadata
@@ -804,11 +834,11 @@ export class RemoteSettingsClient extends EventEmitter {
               expectedTimestamp,
               { retry: true }
             );
-          } catch (e) {
+          } catch (ex) {
             // If the signature fails again, or if an error occured during wiping out the
             // local data, then we report it as a *signature retry* error.
             reportStatus = lazy.UptakeTelemetry.STATUS.SIGNATURE_RETRY_ERROR;
-            throw e;
+            throw ex;
           }
         } else {
           // The sync has thrown for other reason than signature verification.
@@ -981,12 +1011,14 @@ export class RemoteSettingsClient extends EventEmitter {
    * Fetch the signature info from the collection metadata and verifies that the
    * local set of records has the same.
    *
-   * @param {Array<Object>} records The list of records to validate.
-   * @param {int} timestamp         The timestamp associated with the list of remote records.
-   * @param {Object} metadata       The collection metadata, that contains the signature payload.
-   * @returns {Promise}
+   * @param {object[]} records
+   *   The list of records to validate.
+   * @param {number} timestamp
+   *   The timestamp associated with the list of remote records.
+   * @param {Object} metadata
+   *   The collection metadata, that contains the signature payload.
    */
-  async _validateCollectionSignature(records, timestamp, metadata) {
+  async validateCollectionSignature(records, timestamp, metadata) {
     if (!metadata?.signature) {
       throw new MissingSignatureError(this.identifier);
     }
@@ -1018,7 +1050,7 @@ export class RemoteSettingsClient extends EventEmitter {
         lazy.Utils.CERT_CHAIN_ROOT_IDENTIFIER
       ))
     ) {
-      throw new InvalidSignatureError(this.identifier, x5u);
+      throw new InvalidSignatureError(this.identifier, x5u, this.signerName);
     }
   }
 
@@ -1027,15 +1059,17 @@ export class RemoteSettingsClient extends EventEmitter {
    * changes to the local DB, validating the signature, and computing a synchronization
    * result with the list of creation, updates, and deletions.
    *
-   * @param {Array<Object>} localRecords      Current list of records in local DB.
-   * @param {int}           localTimestamp    Current timestamp in local DB.
-   * @param {Object}        localMetadata     Current metadata in local DB.
-   * @param {int}           expectedTimestamp Cache busting of collection metadata
-   * @param {Object}        options
-   * @param {bool}          options.retry     Whether this method is called in the
-   *                                          retry situation.
-   *
-   * @returns {Promise<Object>} the computed sync result.
+   * @param {object[]} localRecords
+   *   Current list of records in local DB.
+   * @param {number} localTimestamp
+   *   Current timestamp in local DB.
+   * @param {object} localMetadata
+   *   Current metadata in local DB.
+   * @param {number} expectedTimestamp
+   *   Cache busting of collection metadata
+   * @param {object} [options]
+   * @param {boolean} [options.retry]
+   *   Whether this method is called in the retry situation.
    */
   async _importChanges(
     localRecords,
@@ -1080,7 +1114,7 @@ export class RemoteSettingsClient extends EventEmitter {
     // And verify the signature on what is now stored.
     if (this.verifySignature) {
       try {
-        await this._validateCollectionSignature(
+        await this.validateCollectionSignature(
           newRecords,
           remoteTimestamp,
           metadata
@@ -1101,7 +1135,7 @@ export class RemoteSettingsClient extends EventEmitter {
         let localTrustworthy = false;
         lazy.console.debug(`${this.identifier} verify data before sync`);
         try {
-          await this._validateCollectionSignature(
+          await this.validateCollectionSignature(
             localRecords,
             localTimestamp,
             localMetadata
@@ -1251,15 +1285,17 @@ export class RemoteSettingsClient extends EventEmitter {
   /**
    * Filter entries for which calls to `this.filterFunc` returns null.
    *
-   * @param {Array<Objet>} data
-   * @returns {Array<Object>}
+   * @param {object[]} data
+   * @returns {Promise<object[]>}
    */
   async _filterEntries(data) {
     if (!this.filterFunc) {
       return data;
     }
     const environment = cacheProxy(lazy.ClientEnvironmentBase);
-    const dataPromises = data.map(e => this.filterFunc(e, environment));
+    const dataPromises = data.map(e =>
+      this.filterFunc(e, environment, this.identifier)
+    );
     const results = await Promise.all(dataPromises);
     return results.filter(Boolean);
   }

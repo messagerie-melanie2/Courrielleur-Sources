@@ -13,9 +13,6 @@ const { sinon } = ChromeUtils.importESModule(
   "resource://testing-common/Sinon.sys.mjs"
 );
 
-const { FeatureGate } = ChromeUtils.importESModule(
-  "resource://featuregates/FeatureGate.sys.mjs"
-);
 const { PreferenceExperiments } = ChromeUtils.importESModule(
   "resource://normandy/lib/PreferenceExperiments.sys.mjs"
 );
@@ -38,31 +35,6 @@ add_task(async function snapshotSchema() {
     ok(true, "The snapshot should conform to the schema.");
   } catch (err) {
     ok(false, "Schema mismatch, " + err);
-  }
-});
-
-add_task(async function experimentalFeatures() {
-  let featureGates = await FeatureGate.all();
-  ok(featureGates.length, "Should be at least one FeatureGate");
-
-  let snapshot = await Troubleshoot.snapshot();
-  for (let i = 0; i < snapshot.experimentalFeatures.length; i++) {
-    let experimentalFeature = snapshot.experimentalFeatures[i];
-    is(
-      experimentalFeature[0],
-      featureGates[i].title,
-      "The first item in the array should be the title's l10n-id of the FeatureGate"
-    );
-    is(
-      experimentalFeature[1],
-      featureGates[i].preference,
-      "The second item in the array should be the preference name for the FeatureGate"
-    );
-    is(
-      experimentalFeature[2],
-      Services.prefs.getBoolPref(featureGates[i].preference),
-      "The third item in the array should be the preference value of the FeatureGate"
-    );
   }
 });
 
@@ -274,6 +246,18 @@ add_task(function normandyErrorHandling() {
   )();
 });
 
+add_task(async function themes() {
+  let snapshot = await Troubleshoot.snapshot();
+  let foundTheme = false;
+  for (let addon of snapshot.addons) {
+    if (addon.type == "theme") {
+      foundTheme = true;
+      break;
+    }
+  }
+  ok(foundTheme, "found a theme in the addons list");
+});
+
 // This is inspired by JSON Schema, or by the example on its Wikipedia page
 // anyway.
 const SNAPSHOT_SCHEMA = {
@@ -367,6 +351,10 @@ const SNAPSHOT_SCHEMA = {
         diskAvailableBytes: {
           type: "number",
         },
+        pointingDevices: {
+          required: false,
+          type: "array",
+        },
       },
     },
     crashes: {
@@ -426,6 +414,10 @@ const SNAPSHOT_SCHEMA = {
             required: true,
             type: "boolean",
           },
+          locationName: {
+            required: true,
+            type: "string",
+          },
         },
       },
     },
@@ -447,27 +439,6 @@ const SNAPSHOT_SCHEMA = {
         },
       },
     },
-    features: {
-      required: true,
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          name: {
-            required: true,
-            type: "string",
-          },
-          version: {
-            required: true,
-            type: "string",
-          },
-          id: {
-            required: true,
-            type: "string",
-          },
-        },
-      },
-    },
     processes: {
       required: true,
       type: "object",
@@ -481,10 +452,6 @@ const SNAPSHOT_SCHEMA = {
           type: "object",
         },
       },
-    },
-    experimentalFeatures: {
-      required: true,
-      type: "array",
     },
     environmentVariables: {
       required: true,
@@ -507,6 +474,38 @@ const SNAPSHOT_SCHEMA = {
           type: "boolean",
         },
         "fission.autostart.session": {
+          required: false,
+          type: "boolean",
+        },
+        "media.utility-process.enabled": {
+          required: false,
+          type: "boolean",
+        },
+        "media.utility-ffmpeg.enabled": {
+          required: false,
+          type: "boolean",
+        },
+        "media.utility-ffvpx.enabled": {
+          required: false,
+          type: "boolean",
+        },
+        "media.utility-wmf.enabled": {
+          required: false,
+          type: "boolean",
+        },
+        "media.utility-applemedia.enabled": {
+          required: false,
+          type: "boolean",
+        },
+        "media.utility-vorbis.enabled": {
+          required: false,
+          type: "boolean",
+        },
+        "media.utility-wav.enabled": {
+          required: false,
+          type: "boolean",
+        },
+        "media.utility-opus.enabled": {
           required: false,
           type: "boolean",
         },
@@ -735,6 +734,9 @@ const SNAPSHOT_SCHEMA = {
           type: "string",
         },
         desktopEnvironment: {
+          type: "string",
+        },
+        supportFontDetermination: {
           type: "string",
         },
       },
@@ -1033,11 +1035,11 @@ const SNAPSHOT_SCHEMA = {
           type: "number",
         },
         contentWin32kLockdownState: {
-          required: AppConstants.MOZ_SANDBOX,
+          required: AppConstants.MOZ_SANDBOX && AppConstants.platform == "win",
           type: "string",
         },
         supportSandboxGpuLevel: {
-          required: AppConstants.MOZ_SANDBOX,
+          required: AppConstants.MOZ_SANDBOX && AppConstants.platform == "win",
           type: "number",
         },
         syscallLog: {
@@ -1224,6 +1226,75 @@ const SNAPSHOT_SCHEMA = {
         },
       },
     },
+    remoteSettings: {
+      type: "object",
+      additionalProperties: true,
+      properties: {
+        isSynchronizationBroken: {
+          required: true,
+          type: "boolean",
+        },
+        lastCheck: {
+          required: true,
+          type: "string",
+        },
+        localTimestamp: {
+          required: false,
+          type: ["number", "null"],
+        },
+        history: {
+          required: true,
+          type: "object",
+          properties: {
+            "settings-sync": {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  status: { type: "string", required: true },
+                  datetime: { type: "string", required: true },
+                  infos: { type: "object", required: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    legacyUserStylesheets: {
+      type: "object",
+      properties: {
+        active: {
+          required: true,
+          type: "boolean",
+        },
+        types: {
+          required: true,
+          type: "array",
+        },
+      },
+    },
+    contentAnalysis: {
+      type: "object",
+      properties: {
+        active: {
+          required: true,
+          type: "boolean",
+        },
+        connected: {
+          type: "boolean",
+        },
+        agentPath: {
+          type: "string",
+        },
+        failedSignatureVerification: {
+          type: "boolean",
+        },
+        requestCount: {
+          type: "number",
+        },
+      },
+    },
   },
 };
 
@@ -1240,17 +1311,27 @@ function validateObject(obj, schema) {
   if (obj === undefined && !schema.required) {
     return;
   }
-  if (typeof schema.type != "string") {
-    throw schemaErr("'type' must be a string", schema);
+  let types = Array.isArray(schema.type) ? schema.type : [schema.type];
+  if (!types.every(elt => typeof elt == "string")) {
+    throw schemaErr("'type' must be a string or array of strings", schema);
   }
-  if (objType(obj) != schema.type) {
+  if (!types.includes(objType(obj))) {
     throw validationErr("Object is not of the expected type", obj, schema);
   }
-  let validatorFnName = "validateObject_" + schema.type;
-  if (!(validatorFnName in this)) {
-    throw schemaErr("Validator function not defined for type", schema);
+  let lastError;
+  for (let type of types) {
+    let validatorFnName = "validateObject_" + type;
+    if (!(validatorFnName in this)) {
+      throw schemaErr("Validator function not defined for type", schema);
+    }
+    try {
+      this[validatorFnName](obj, schema);
+      return;
+    } catch (e) {
+      lastError = e;
+    }
   }
-  this[validatorFnName](obj, schema);
+  throw lastError;
 }
 
 function validateObject_object(obj, schema) {
@@ -1263,13 +1344,15 @@ function validateObject_object(obj, schema) {
     validateObject(obj[prop], schema.properties[prop]);
   }
   // Now check that the object doesn't have any properties not in the schema.
-  for (let prop in obj) {
-    if (!(prop in schema.properties)) {
-      throw validationErr(
-        "Object has property " + prop + " not in schema",
-        obj,
-        schema
-      );
+  if (!schema.additionalProperties) {
+    for (let prop in obj) {
+      if (!(prop in schema.properties)) {
+        throw validationErr(
+          "Object has property " + prop + " not in schema",
+          obj,
+          schema
+        );
+      }
     }
   }
 }
@@ -1282,9 +1365,9 @@ function validateObject_array(array, schema) {
   array.forEach(elt => validateObject(elt, schema.items));
 }
 
-function validateObject_string(str, schema) {}
-function validateObject_boolean(bool, schema) {}
-function validateObject_number(num, schema) {}
+function validateObject_string() {}
+function validateObject_boolean() {}
+function validateObject_number() {}
 
 function validationErr(msg, obj, schema) {
   return new Error(

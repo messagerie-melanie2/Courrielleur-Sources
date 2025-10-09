@@ -7,11 +7,13 @@
  */
 
 var { close_compose_window, open_compose_new_mail, FormatHelper } =
-  ChromeUtils.import("resource://testing-common/mozmill/ComposeHelpers.jsm");
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+  );
 
 add_task(async function test_font_family() {
-  let controller = open_compose_new_mail();
-  let formatHelper = new FormatHelper(controller.window);
+  const win = await open_compose_new_mail();
+  const formatHelper = new FormatHelper(win);
 
   // Before focus, disabled.
   Assert.ok(
@@ -25,11 +27,11 @@ add_task(async function test_font_family() {
     "Selector should be enabled with focus"
   );
 
-  let firstText = "no font";
-  let secondText = "with font";
+  const firstText = "no font";
+  const secondText = "with font";
 
   // Only test standard fonts.
-  for (let font of formatHelper.commonFonts) {
+  for (const font of formatHelper.commonFonts) {
     await formatHelper.assertShownFont("", `Variable width at start (${font})`);
 
     await formatHelper.typeInMessage(firstText);
@@ -50,7 +52,7 @@ add_task(async function test_font_family() {
     );
 
     // Test text selections.
-    for (let [start, end, forward, expect] of [
+    for (const [start, end, forward, expect] of [
       // Make sure we expect changes, so the test does not capture the previous
       // state.
       [0, null, true, ""], // At start.
@@ -71,7 +73,7 @@ add_task(async function test_font_family() {
     await formatHelper.selectTextRange(3, firstText.length + 1);
     await formatHelper.assertShownFont(null, `Mixed selection (${font})`);
     // Select through menu.
-    let item = formatHelper.getFontMenuItem(font);
+    const item = formatHelper.getFontMenuItem(font);
     await formatHelper.selectFromFormatSubMenu(item, formatHelper.fontMenu);
     // See Bug 1718225
     // await formatHelper.assertShownFont(font, `"${font}" on more`);
@@ -90,14 +92,14 @@ add_task(async function test_font_family() {
     await formatHelper.emptyParagraph();
   }
 
-  close_compose_window(controller);
+  await close_compose_window(win);
 });
 
 add_task(async function test_fixed_width() {
-  let controller = open_compose_new_mail();
-  let formatHelper = new FormatHelper(controller.window);
+  const win = await open_compose_new_mail();
+  const formatHelper = new FormatHelper(win);
 
-  let ttStyleItem = formatHelper.getStyleMenuItem("tt");
+  const ttStyleItem = formatHelper.getStyleMenuItem("tt");
 
   formatHelper.focusMessage();
 
@@ -112,7 +114,7 @@ add_task(async function test_fixed_width() {
   //   "tt",
   //   "tt style shown after setting to Fixed Width",
   // );
-  let text = "monospace text content";
+  const text = "monospace text content";
   await formatHelper.typeInMessage(text);
   await formatHelper.assertShownFont(
     "monospace",
@@ -142,5 +144,5 @@ add_task(async function test_fixed_width() {
     "still produce monospace text"
   );
 
-  close_compose_window(controller);
+  await close_compose_window(win);
 });

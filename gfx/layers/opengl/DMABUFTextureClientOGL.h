@@ -16,10 +16,6 @@ namespace layers {
 
 class DMABUFTextureData : public TextureData {
  public:
-  static DMABUFTextureData* Create(const gfx::IntSize& aSize,
-                                   gfx::SurfaceFormat aFormat,
-                                   gfx::BackendType aBackend);
-
   static DMABUFTextureData* Create(DMABufSurface* aSurface,
                                    gfx::BackendType aBackend) {
     return new DMABUFTextureData(aSurface, aBackend);
@@ -27,18 +23,13 @@ class DMABUFTextureData : public TextureData {
 
   ~DMABUFTextureData();
 
-  virtual TextureData* CreateSimilar(
-      LayersIPCChannel* aAllocator, LayersBackend aLayersBackend,
-      TextureFlags aFlags = TextureFlags::DEFAULT,
-      TextureAllocationFlags aAllocFlags = ALLOC_DEFAULT) const override;
+  TextureType GetTextureType() const override { return TextureType::DMABUF; }
 
   void FillInfo(TextureData::Info& aInfo) const override;
 
   bool Lock(OpenMode) override;
 
   void Unlock() override;
-
-  already_AddRefed<gfx::DrawTarget> BorrowDrawTarget() override;
 
   bool Serialize(SurfaceDescriptor& aOutDescriptor) override;
 
@@ -48,8 +39,6 @@ class DMABUFTextureData : public TextureData {
   void Deallocate(LayersIPCChannel*) override;
 
   void Forget(LayersIPCChannel*) override;
-
-  bool UpdateFromSurface(gfx::SourceSurface* aSurface) override;
 
   // For debugging purposes only.
   already_AddRefed<gfx::DataSourceSurface> GetAsSurface();

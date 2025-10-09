@@ -58,7 +58,6 @@
 @BINPATH@/uninstall/helper.exe
 #endif
 #ifdef MOZ_UPDATER
-@RESPATH@/update.locale
 @RESPATH@/updater.ini
 #endif
 
@@ -100,10 +99,6 @@
 #endif
 #endif # MOZ_ANGLE_RENDERER
 
-#if defined(XP_WIN) && defined(MOZ_ENABLE_SKIA_PDF)
-@BINPATH@/pdfium.dll
-#endif
-
 #ifdef XP_WIN
 #if MOZ_PACKAGE_MSVC_DLLS
 @BINPATH@/@MSVC_C_RUNTIME_DLL@
@@ -124,39 +119,35 @@
 @RESPATH@/application.ini
 @RESPATH@/platform.ini
 #ifdef MOZ_UPDATER
+# update-settings.ini has been removed on macOS.
+#ifndef XP_MACOSX
 @RESPATH@/update-settings.ini
+#endif
 #endif
 #ifndef MOZ_FOLD_LIBS
 @BINPATH@/@DLL_PREFIX@mozsqlite3@DLL_SUFFIX@
 #endif
 @BINPATH@/@DLL_PREFIX@lgpllibs@DLL_SUFFIX@
+@BINPATH@/@DLL_PREFIX@gkcodecs@DLL_SUFFIX@
 #ifdef MOZ_FFVPX
 @BINPATH@/@DLL_PREFIX@mozavutil@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@mozavcodec@DLL_SUFFIX@
 #endif
 #ifdef MOZ_GTK
+@BINPATH@/glxtest
 @BINPATH@/@DLL_PREFIX@mozgtk@DLL_SUFFIX@
 #ifdef MOZ_WAYLAND
+@BINPATH@/vaapitest
 @BINPATH@/@DLL_PREFIX@mozwayland@DLL_SUFFIX@
 #endif
 #endif
 @RESPATH@/license.txt
 @RESPATH@/blocklist.xml
-#ifdef XP_WIN
-#ifdef _AMD64_
-@BINPATH@/@DLL_PREFIX@qipcap64@DLL_SUFFIX@
-#else
-@BINPATH@/@DLL_PREFIX@qipcap@DLL_SUFFIX@
-#endif
-#endif
 
 ; [Components]
 #ifdef ACCESSIBILITY
 #ifdef XP_WIN
-@BINPATH@/Accessible.tlb
-@BINPATH@/AccessibleHandler.dll
 @BINPATH@/AccessibleMarshal.dll
-@BINPATH@/IA2Marshal.dll
 #endif
 #endif
 @RESPATH@/components/extensions.manifest
@@ -362,7 +353,6 @@
 @BINPATH@/@DLL_PREFIX@freebl3@DLL_SUFFIX@
 #endif
 @BINPATH@/@DLL_PREFIX@nss3@DLL_SUFFIX@
-@BINPATH@/@DLL_PREFIX@nssckbi@DLL_SUFFIX@
 #ifndef MOZ_FOLD_LIBS
 @BINPATH@/@DLL_PREFIX@nssutil3@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@smime3@DLL_SUFFIX@
@@ -409,13 +399,7 @@ man/*
 @BINPATH@/crashreporter.app/
 #else
 @BINPATH@/crashreporter@BIN_SUFFIX@
-@BINPATH@/minidump-analyzer@BIN_SUFFIX@
-@RESPATH@/crashreporter.ini
-#ifdef XP_UNIX
-@RESPATH@/Throbber-small.gif
 #endif
-#endif
-@RESPATH@/crashreporter-override.ini
 #ifdef MOZ_CRASHREPORTER_INJECTOR
 @BINPATH@/breakpadinjector.dll
 #endif
@@ -429,7 +413,6 @@ man/*
 ; MailNews components
 
 ; MailNews JS components
-@RESPATH@/components/msgMime.manifest
 
 ; MailNews chrome
 @RESPATH@/chrome/messenger@JAREXT@
@@ -508,8 +491,3 @@ man/*
 @RESPATH@/chrome/calendar.manifest
 
 @RESPATH@/@PREF_DIR@/calendar.js
-
-# Files added to components directory via `FINAL_TARGET_FILES.components`.
-@RESPATH@/components/calCachedCalendar.js
-@RESPATH@/components/calICSService-worker.js
-@RESPATH@/components/calItemBase.js

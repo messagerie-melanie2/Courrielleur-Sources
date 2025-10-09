@@ -2,14 +2,15 @@
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 // Test that IMAP over a SOCKS proxy works.
 
-var { NetworkTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/NetworkTestUtils.jsm"
+var { NetworkTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/NetworkTestUtils.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
-/* import-globals-from ../../../test/resources/MessageGenerator.jsm */
-load("../../../resources/MessageGenerator.jsm");
+var { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
+);
 
 var server, daemon, incomingServer;
 
@@ -26,34 +27,34 @@ add_setup(async function () {
   server = makeServer(daemon, "");
 
   let messages = [];
-  let messageGenerator = new MessageGenerator();
+  const messageGenerator = new MessageGenerator();
   messages = messages.concat(messageGenerator.makeMessage());
-  let dataUri = Services.io.newURI(
+  const dataUri = Services.io.newURI(
     "data:text/plain;base64," + btoa(messages[0].toMessageString())
   );
-  let imapMsg = new ImapMessage(dataUri.spec, daemon.inbox.uidnext++, []);
+  const imapMsg = new ImapMessage(dataUri.spec, daemon.inbox.uidnext++, []);
   daemon.inbox.addMessage(imapMsg);
 
   NetworkTestUtils.configureProxy("imap.tinderbox.invalid", PORT, server.port);
 
   // Set up the basic accounts and folders
   incomingServer = createLocalIMAPServer(PORT, "imap.tinderbox.invalid");
-  let identity = MailServices.accounts.createIdentity();
-  let imapAccount = MailServices.accounts.createAccount();
+  const identity = MailServices.accounts.createIdentity();
+  const imapAccount = MailServices.accounts.createAccount();
   imapAccount.addIdentity(identity);
   imapAccount.defaultIdentity = identity;
   imapAccount.incomingServer = incomingServer;
 });
 
 add_task(async function downloadEmail() {
-  let inboxFolder = incomingServer.rootFolder.getChildNamed("INBOX");
+  const inboxFolder = incomingServer.rootFolder.getChildNamed("INBOX");
 
   // Check that we haven't got any messages in the folder, if we have its a test
   // setup issue.
   Assert.equal(inboxFolder.getTotalMessages(false), 0);
 
   // Now get the mail
-  let asyncUrlListener = new PromiseTestUtils.PromiseUrlListener();
+  const asyncUrlListener = new PromiseTestUtils.PromiseUrlListener();
   inboxFolder.getNewMessages(null, asyncUrlListener);
   await asyncUrlListener.promise;
 

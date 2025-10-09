@@ -9,6 +9,7 @@ use crate::error::Error;
 #[cfg(feature = "sync-client")]
 use crate::error::ErrorResponse;
 
+use crate::error::warn;
 use std::collections::HashMap;
 use std::time;
 
@@ -16,9 +17,9 @@ use serde::{ser, Serialize, Serializer};
 
 // A test helper, used by the many test modules below.
 #[cfg(test)]
-fn assert_json<T: ?Sized>(v: &T, expected: serde_json::Value)
+fn assert_json<T>(v: &T, expected: serde_json::Value)
 where
-    T: serde::Serialize,
+    T: serde::Serialize + ?Sized,
 {
     assert_eq!(
         serde_json::to_value(v).expect("should get a value"),
@@ -36,6 +37,7 @@ struct WhenTook {
 
 /// What we track while recording 'when' and 'took. It serializes as a WhenTook,
 /// except when .finished() hasn't been called, in which case it panics.
+#[allow(dead_code)]
 #[derive(Debug)]
 enum Stopwatch {
     Started(time::SystemTime, time::Instant),
@@ -338,6 +340,15 @@ impl EngineIncoming {
         self.reconciled += n;
     }
 
+    /// Accumulate values from another EngineIncoming - useful when dealing with
+    /// incoming batches.
+    fn accum(&mut self, other: &EngineIncoming) {
+        self.applied += other.applied;
+        self.failed += other.failed;
+        self.new_failed += other.new_failed;
+        self.reconciled += other.reconciled;
+    }
+
     /// Get the value of `applied`. Mostly useful for testing.
     #[inline]
     pub fn get_applied(&self) -> u32 {
@@ -363,7 +374,7 @@ impl EngineIncoming {
     }
 }
 
-/// Outgoing record for an engine's sync
+/// Outgoing record for an engine's sync.
 #[derive(Debug, Default, Serialize)]
 pub struct EngineOutgoing {
     #[serde(skip_serializing_if = "crate::skip_if_default")]
@@ -426,8 +437,15 @@ impl Engine {
     }
 
     pub fn incoming(&mut self, inc: EngineIncoming) {
-        assert!(self.incoming.is_none());
-        self.incoming = Some(inc);
+        match &mut self.incoming {
+            None => self.incoming = Some(inc),
+            Some(ref mut existing) => existing.accum(&inc),
+        };
+    }
+
+    // A bit hacky as we need this to report telemetry for desktop via the bridged engine.
+    pub fn get_incoming(&self) -> &Option<EngineIncoming> {
+        &self.incoming
     }
 
     pub fn outgoing(&mut self, out: EngineOutgoing) {
@@ -441,10 +459,9 @@ impl Engine {
         if self.failure.is_none() {
             self.failure = Some(failure);
         } else {
-            log::warn!(
+            warn!(
                 "engine already has recorded a failure of {:?} - ignoring {:?}",
-                &self.failure,
-                &failure
+                &self.failure, &failure
             );
         }
     }
@@ -522,6 +539,25 @@ mod engine_tests {
         assert_json(
             &e,
             serde_json::json!({"name": "TestEngine", "when": 0.0, "incoming": {"applied": 1, "failed": 2}}),
+        );
+    }
+
+    #[test]
+    fn test_incoming_accum() {
+        let mut e = Engine::new("TestEngine");
+        let mut i1 = EngineIncoming::new();
+        i1.applied(1);
+        i1.failed(2);
+        e.incoming(i1);
+        let mut i2 = EngineIncoming::new();
+        i2.applied(1);
+        i2.failed(1);
+        i2.reconciled(4);
+        e.incoming(i2);
+        e.finished();
+        assert_json(
+            &e,
+            serde_json::json!({"name": "TestEngine", "when": 0.0, "incoming": {"applied": 2, "failed": 3, "reconciled": 4}}),
         );
     }
 
@@ -730,7 +766,7 @@ impl SyncTelemetryPing {
     pub fn uid(&mut self, uid: String) {
         if let Some(ref existing) = self.uid {
             if *existing != uid {
-                log::warn!("existing uid ${} being replaced by {}", existing, uid);
+                warn!("existing uid ${} being replaced by {}", existing, uid);
             }
         }
         self.uid = Some(uid);
@@ -745,8 +781,6 @@ impl SyncTelemetryPing {
         self.events.push(e);
     }
 }
-
-ffi_support::implement_into_ffi_by_json!(SyncTelemetryPing);
 
 #[cfg(test)]
 mod ping_tests {
@@ -780,7 +814,7 @@ mod ping_tests {
     }
 }
 
-impl<'a> From<&'a Error> for SyncFailure {
+impl From<&Error> for SyncFailure {
     fn from(e: &Error) -> SyncFailure {
         match e {
             #[cfg(feature = "sync-client")]

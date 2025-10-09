@@ -85,10 +85,13 @@ class ReaderProxy {
 
   void SetVideoBlankDecode(bool aIsBlankDecode);
 
-  void SetCanonicalDuration(
-      AbstractCanonical<media::NullableTimeUnit>* aCanonical);
+  void SetCanonicalDuration(Canonical<media::NullableTimeUnit>& aCanonical);
 
   void UpdateMediaEngineId(uint64_t aMediaEngineId);
+
+  void SetEncryptedCustomIdent();
+
+  bool IsEncryptedCustomIdent() const;
 
  private:
   ~ReaderProxy();

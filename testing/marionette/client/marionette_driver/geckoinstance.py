@@ -13,6 +13,7 @@
 # before you make any changes to this file.
 
 import codecs
+import io
 import json
 import os
 import sys
@@ -22,15 +23,17 @@ import traceback
 from copy import deepcopy
 
 import mozversion
-import six
 from mozprofile import Profile
 from mozrunner import FennecEmulatorRunner, Runner
-from six import reraise
 
 from . import errors
 
+if sys.platform.startswith("darwin"):
+    # Marionette's own processhandler is only used on MacOS for now
+    from .processhandler import UNKNOWN_RETURNCODE, ProcessHandler
 
-class GeckoInstance(object):
+
+class GeckoInstance:
     required_prefs = {
         # Make sure Shield doesn't hit the network.
         "app.normandy.api_url": "",
@@ -41,13 +44,20 @@ class GeckoInstance(object):
         # and causing false-positive test failures. See bug 1176798, bug 1177018,
         # bug 1210465.
         "apz.content_response_timeout": 60000,
+        # Make sure error page is not shown for blank pages with 4xx or 5xx response code
+        "browser.http.blank_page_with_error_response.enabled": True,
+        # Don't pull weather data from the network
+        "browser.newtabpage.activity-stream.discoverystream.region-weather-config": "",
+        # Don't pull wallpaper content from the network
+        "browser.newtabpage.activity-stream.newtabWallpapers.enabled": False,
+        # Remove once Firefox 140 is no longer supported (see bug 1902921)
+        "browser.newtabpage.activity-stream.newtabWallpapers.v2.enabled": False,
+        # Don't pull sponsored Top Sites content from the network
+        "browser.newtabpage.activity-stream.showSponsoredTopSites": False,
         # Disable geolocation ping (#1)
         "browser.region.network.url": "",
         # Don't pull Top Sites content from the network
         "browser.topsites.contile.enabled": False,
-        # Disable page translations, causing timeouts for wdspec tests in early
-        # beta. See Bug 1836093.
-        "browser.translations.enable": False,
         # Disable UI tour
         "browser.uitour.enabled": False,
         # Disable captive portal
@@ -61,8 +71,8 @@ class GeckoInstance(object):
         # Do not show datareporting policy notifications which can interfere with tests
         "datareporting.policy.dataSubmissionEnabled": False,
         "datareporting.policy.dataSubmissionPolicyBypassNotification": True,
-        # Automatically unload beforeunload alerts
-        "dom.disable_beforeunload": True,
+        # Disable popup-blocker
+        "dom.disable_open_during_load": False,
         # Enabling the support for File object creation in the content process.
         "dom.file.createInChild": True,
         # Disable delayed user input event handling
@@ -74,8 +84,8 @@ class GeckoInstance(object):
         # No slow script dialogs
         "dom.max_chrome_script_run_time": 0,
         "dom.max_script_run_time": 0,
-        # Disable location change rate limitation
-        "dom.navigation.locationChangeRateLimit.count": 0,
+        # Disable navigation change rate limitation
+        "dom.navigation.navigationRateLimit.count": 0,
         # DOM Push
         "dom.push.connection.enabled": False,
         # Screen Orientation API
@@ -99,7 +109,7 @@ class GeckoInstance(object):
         ),
         "extensions.blocklist.itemURL": "http://%(server)s/extensions-dummy/blocklistItemURL",
         "extensions.hotfix.url": "http://%(server)s/extensions-dummy/hotfixURL",
-        "extensions.systemAddon.update.url": "http://%(server)s/dummy-system-addons.xml",
+        "extensions.systemAddon.update.enabled": False,
         "extensions.update.background.url": (
             "http://%(server)s/extensions-dummy/updateBackgroundURL"
         ),
@@ -141,6 +151,8 @@ class GeckoInstance(object):
         "network.manage-offline-status": False,
         # Make sure SNTP requests don't hit the network
         "network.sntp.pools": "%(server)s",
+        # Disabled for causing marionette crashes on OSX. See bug 1882856
+        "network.dns.native_https_query": False,
         # Privacy and Tracking Protection
         "privacy.trackingprotection.enabled": False,
         # Disable recommended automation prefs in CI
@@ -151,6 +163,8 @@ class GeckoInstance(object):
         "security.notification_enable_delay": 0,
         # Do not download intermediate certificates
         "security.remote_settings.intermediates.enabled": False,
+        # Disable logging for remote settings
+        "services.settings.loglevel": "off",
         # Ensure blocklist updates don't hit the network
         "services.settings.server": "data:,#remote-settings-dummy/v1",
         # Disable password capture, so that tests that include forms aren"t
@@ -219,7 +233,7 @@ class GeckoInstance(object):
             if path is None:
                 path = "gecko.log"
             elif os.path.isdir(path):
-                fname = "gecko-{}.log".format(time.time())
+                fname = f"gecko-{time.time()}.log"
                 path = os.path.join(path, fname)
 
             path = os.path.realpath(path)
@@ -259,12 +273,10 @@ class GeckoInstance(object):
             profile_path = profile
 
             # If a path to a profile is given then clone it
-            if isinstance(profile_path, six.string_types):
+            if isinstance(profile_path, str):
                 profile_args["path_from"] = profile_path
                 profile_args["path_to"] = tempfile.mkdtemp(
-                    suffix=u".{}".format(
-                        profile_name or os.path.basename(profile_path)
-                    ),
+                    suffix=f".{profile_name or os.path.basename(profile_path)}",
                     dir=self.workspace,
                 )
                 # The target must not exist yet
@@ -275,7 +287,7 @@ class GeckoInstance(object):
             # Otherwise create a new profile
             else:
                 profile_args["profile"] = tempfile.mkdtemp(
-                    suffix=u".{}".format(profile_name or "mozrunner"),
+                    suffix=".{}".format(profile_name or "mozrunner"),
                     dir=self.workspace,
                 )
                 profile = Profile(**profile_args)
@@ -341,12 +353,10 @@ class GeckoInstance(object):
                 app = app_ids[app_id]
 
             instance_class = apps[app]
-        except (IOError, KeyError):
+        except (OSError, KeyError):
             exc, val, tb = sys.exc_info()
-            msg = 'Application "{0}" unknown (should be one of {1})'.format(
-                app, list(apps.keys())
-            )
-            reraise(NotImplementedError, NotImplementedError(msg), tb)
+            msg = f'Application "{app}" unknown (should be one of {list(apps.keys())})'
+            raise NotImplementedError(msg).with_traceback(tb)
 
         return instance_class(*args, **kwargs)
 
@@ -362,8 +372,15 @@ class GeckoInstance(object):
         }
 
         if self.gecko_log == "-":
-            if hasattr(sys.stdout, "buffer"):
+            if getattr(sys.stdout, "encoding") == "utf-8":
+                process_args["stream"] = sys.stdout
+            elif hasattr(sys.stdout, "buffer"):
                 process_args["stream"] = codecs.getwriter("utf-8")(sys.stdout.buffer)
+            elif isinstance(sys.stdout, io.TextIOBase):
+                # If sys.stdout expects unicode strings, we can't wrap it because the
+                # wrapper will write byte strings. This can happen when e.g. tests
+                # replace sys.stdout with a io.StringIO().
+                process_args["stream"] = sys.stdout
             else:
                 process_args["stream"] = codecs.getwriter("utf-8")(sys.stdout)
         else:
@@ -389,14 +406,22 @@ class GeckoInstance(object):
             }
         )
 
-        return {
+        extra_args = ["-marionette", "-remote-allow-system-access"]
+        args = {
             "binary": self.binary,
             "profile": self.profile,
-            "cmdargs": ["-no-remote", "-marionette"] + self.app_args,
+            "cmdargs": extra_args + self.app_args,
             "env": env,
             "symbols_path": self.symbols_path,
             "process_args": process_args,
         }
+
+        if sys.platform.startswith("darwin"):
+            # Bug 1887666: The custom process handler class for Marionette is
+            # only supported on MacOS at the moment.
+            args["process_class"] = ProcessHandler
+
+        return args
 
     def close(self, clean=False):
         """
@@ -432,6 +457,19 @@ class GeckoInstance(object):
         self.close(clean=clean)
         self.start()
 
+    def update_process(self, pid, timeout=None):
+        """Update the process to track when the application re-launched itself"""
+        if sys.platform.startswith("darwin"):
+            # The new process handler is only supported on MacOS yet
+            returncode = self.runner.process_handler.update_process(pid, timeout)
+            if returncode not in [0, UNKNOWN_RETURNCODE]:
+                raise OSError(
+                    f"Old process inappropriately quit with exit code: {returncode}"
+                )
+
+        else:
+            returncode = self.runner.process_handler.check_for_detached(pid)
+
 
 class FennecInstance(GeckoInstance):
     fennec_prefs = {
@@ -442,11 +480,6 @@ class FennecInstance(GeckoInstance):
         "browser.safebrowsing.update.enabled": False,
         # Do not restore the last open set of tabs if the browser has crashed
         "browser.sessionstore.resume_from_crash": False,
-        # Disable e10s by default
-        "browser.tabs.remote.autostart": False,
-        # Do not allow background tabs to be zombified, otherwise for tests that
-        # open additional tabs, the test harness tab itself might get unloaded
-        "browser.tabs.disableBackgroundZombification": True,
     }
 
     def __init__(
@@ -460,7 +493,7 @@ class FennecInstance(GeckoInstance):
         package_name=None,
         env=None,
         *args,
-        **kwargs
+        **kwargs,
     ):
         required_prefs = deepcopy(FennecInstance.fennec_prefs)
         required_prefs.update(kwargs.get("prefs", {}))
@@ -502,16 +535,14 @@ class FennecInstance(GeckoInstance):
             self.runner.start()
         except Exception:
             exc_cls, exc, tb = sys.exc_info()
-            reraise(
-                exc_cls,
-                exc_cls("Error possibly due to runner or device args: {}".format(exc)),
-                tb,
-            )
+            raise exc_cls(
+                f"Error possibly due to runner or device args: {exc}"
+            ).with_traceback(tb)
 
         # forward marionette port
         self.runner.device.device.forward(
-            local="tcp:{}".format(self.marionette_port),
-            remote="tcp:{}".format(self.marionette_port),
+            local=f"tcp:{self.marionette_port}",
+            remote=f"tcp:{self.marionette_port}",
         )
 
     def _get_runner_args(self):
@@ -552,9 +583,7 @@ class FennecInstance(GeckoInstance):
         super(FennecInstance, self).close(clean)
         if clean and self.runner and self.runner.device.connected:
             try:
-                self.runner.device.device.remove_forwards(
-                    "tcp:{}".format(self.marionette_port)
-                )
+                self.runner.device.device.remove_forwards(f"tcp:{self.marionette_port}")
                 self.unresponsive_count = 0
             except Exception:
                 self.unresponsive_count += 1
@@ -606,6 +635,8 @@ class DesktopInstance(GeckoInstance):
         "browser.startup.homepage_override.mstone": "ignore",
         # Start with a blank page by default
         "browser.startup.page": 0,
+        # Unload the previously selected tab immediately
+        "browser.tabs.remote.unloadDelayMs": 0,
         # Don't unload tabs when available memory is running low
         "browser.tabs.unloadOnLowMemory": False,
         # Do not warn when closing all open tabs
@@ -627,6 +658,13 @@ class DesktopInstance(GeckoInstance):
         "browser.urlbar.suggest.searches": False,
         # Don't warn when exiting the browser
         "browser.warnOnQuit": False,
+        # Disable the QoS manager on MacOS and the priority manager on all other
+        # platforms to not cause stalled processes in background tabs when the
+        # overall CPU load on the machine is high.
+        #
+        # TODO: Should be considered to get removed once bug 1960741 is fixed.
+        "threads.lower_mainthread_priority_in_background.enabled": False,
+        "dom.ipc.processPriorityManager.enabled": False,
         # Disable first-run welcome page
         "startup.homepage_welcome_url": "about:blank",
         "startup.homepage_welcome_url.additional": "",
@@ -648,14 +686,18 @@ class ThunderbirdInstance(GeckoInstance):
             from .thunderbirdinstance import thunderbird_prefs
         except ImportError:
             try:
-                # Coming from source tree through virtualenv
+                # Directly from the source tree
+                here = os.path.dirname(__file__)
+                sys.path.append(
+                    os.path.join(here, "../../../../comm/testing/marionette")
+                )
                 from thunderbirdinstance import thunderbird_prefs
             except ImportError:
                 thunderbird_prefs = {}
         self.required_prefs.update(thunderbird_prefs)
 
 
-class NullOutput(object):
+class NullOutput:
     def __call__(self, line):
         pass
 

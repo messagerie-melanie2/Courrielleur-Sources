@@ -14,12 +14,12 @@
 
 #define NS_ARRAYBUFFERINPUTSTREAM_CONTRACTID \
   "@mozilla.org/io/arraybuffer-input-stream;1"
-#define NS_ARRAYBUFFERINPUTSTREAM_CID                \
-  { /* 3014dde6-aa1c-41db-87d0-48764a3710f6 */       \
-    0x3014dde6, 0xaa1c, 0x41db, {                    \
-      0x87, 0xd0, 0x48, 0x76, 0x4a, 0x37, 0x10, 0xf6 \
-    }                                                \
-  }
+#define NS_ARRAYBUFFERINPUTSTREAM_CID         \
+  {/* 3014dde6-aa1c-41db-87d0-48764a3710f6 */ \
+   0x3014dde6,                                \
+   0xaa1c,                                    \
+   0x41db,                                    \
+   {0x87, 0xd0, 0x48, 0x76, 0x4a, 0x37, 0x10, 0xf6}}
 
 class ArrayBufferInputStream : public nsIArrayBufferInputStream {
  public:
@@ -31,7 +31,7 @@ class ArrayBufferInputStream : public nsIArrayBufferInputStream {
 
  private:
   virtual ~ArrayBufferInputStream() = default;
-  mozilla::UniquePtr<char[]> mArrayBuffer;
+  mozilla::UniquePtr<uint8_t[]> mArrayBuffer;
   uint32_t mBufferLength{0};
   uint32_t mPos{0};
   bool mClosed{false};

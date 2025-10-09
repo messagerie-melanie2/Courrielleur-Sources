@@ -2,13 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
-  Preferences: "resource://gre/modules/Preferences.sys.mjs",
-
   Deferred: "chrome://remote/content/shared/Sync.sys.mjs",
   EnvironmentPrefs: "chrome://remote/content/marionette/prefs.sys.mjs",
   Log: "chrome://remote/content/shared/Log.sys.mjs",
@@ -18,13 +14,14 @@ ChromeUtils.defineESModuleGetters(lazy, {
   TCPListener: "chrome://remote/content/marionette/server.sys.mjs",
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "logger", () =>
+ChromeUtils.defineLazyGetter(lazy, "logger", () =>
   lazy.Log.get(lazy.Log.TYPES.MARIONETTE)
 );
 
-XPCOMUtils.defineLazyGetter(lazy, "textEncoder", () => new TextEncoder());
+ChromeUtils.defineLazyGetter(lazy, "textEncoder", () => new TextEncoder());
 
 const NOTIFY_LISTENING = "marionette-listening";
+const SHARED_DATA_ACTIVE_KEY = "Marionette:Active";
 
 // Complements -marionette flag for starting the Marionette server.
 // We also set this if Marionette is running in order to start the server
@@ -44,13 +41,6 @@ const ENV_ENABLED = "MOZ_MARIONETTE";
 // pref being set to 4444.
 const ENV_PRESERVE_PREFS = "MOZ_MARIONETTE_PREF_STATE_ACROSS_RESTARTS";
 
-// Map of Marionette-specific preferences that should be set via
-// RecommendedPreferences.
-const RECOMMENDED_PREFS = new Map([
-  // Automatically unload beforeunload alerts
-  ["dom.disable_beforeunload", true],
-]);
-
 const isRemote =
   Services.appinfo.processType == Services.appinfo.PROCESS_TYPE_CONTENT;
 
@@ -61,13 +51,8 @@ class MarionetteParentProcess {
     this.server = null;
     this._activePortPath;
 
-    this.classID = Components.ID("{786a1369-dca5-4adc-8486-33d23c88010a}");
-    this.helpInfo = "  --marionette       Enable remote control server.\n";
-
     // Initially set the enabled state based on the environment variable.
     this.enabled = Services.env.exists(ENV_ENABLED);
-
-    Services.ppmm.addMessageListener("Marionette:IsRunning", this);
 
     this.#browserStartupFinished = lazy.Deferred();
   }
@@ -101,15 +86,14 @@ class MarionetteParentProcess {
     return !!this.server && this.server.alive;
   }
 
-  receiveMessage({ name }) {
-    switch (name) {
-      case "Marionette:IsRunning":
-        return this.running;
-
-      default:
-        lazy.logger.warn("Unknown IPC message to parent process: " + name);
-        return null;
-    }
+  /**
+   * Syncs the Marionette active flag with the web content processes.
+   *
+   * @param {boolean} value - Flag indicating if Marionette is active or not.
+   */
+  updateWebdriverActiveFlag(value) {
+    Services.ppmm.sharedData.set(SHARED_DATA_ACTIVE_KEY, value);
+    Services.ppmm.sharedData.flush();
   }
 
   handle(cmdLine) {
@@ -142,6 +126,10 @@ class MarionetteParentProcess {
         this.enabled = subject.handleFlag("marionette", false);
 
         if (this.enabled) {
+          // Add annotation to crash report to indicate whether
+          // Marionette was active.
+          Services.appinfo.annotateCrashReport("Marionette", true);
+
           // Marionette needs to be initialized before any window is shown.
           Services.obs.addObserver(this, "final-ui-startup");
 
@@ -151,14 +139,26 @@ class MarionetteParentProcess {
             Services.obs.addObserver(this, "domwindowopened");
           }
 
-          lazy.RecommendedPreferences.applyPreferences(RECOMMENDED_PREFS);
+          lazy.RecommendedPreferences.applyPreferences();
 
           // Only set preferences to preserve in a new profile
           // when Marionette is enabled.
           for (let [pref, value] of lazy.EnvironmentPrefs.from(
             ENV_PRESERVE_PREFS
           )) {
-            lazy.Preferences.set(pref, value);
+            switch (typeof value) {
+              case "string":
+                Services.prefs.setStringPref(pref, value);
+                break;
+              case "boolean":
+                Services.prefs.setBoolPref(pref, value);
+                break;
+              case "number":
+                Services.prefs.setIntPref(pref, value);
+                break;
+              default:
+                throw new TypeError(`Invalid preference type: ${typeof value}`);
+            }
           }
         }
         break;
@@ -230,6 +230,8 @@ class MarionetteParentProcess {
       return;
     }
 
+    this.updateWebdriverActiveFlag(true);
+
     Services.env.set(ENV_ENABLED, "1");
     Services.obs.notifyObservers(this, NOTIFY_LISTENING, true);
     lazy.logger.debug("Marionette is listening");
@@ -253,8 +255,9 @@ class MarionetteParentProcess {
   async uninit() {
     if (this.running) {
       await this.server.stop();
+      this.updateWebdriverActiveFlag(false);
+
       Services.obs.notifyObservers(this, NOTIFY_LISTENING);
-      lazy.logger.debug("Marionette stopped listening");
 
       try {
         await IOUtils.remove(this._activePortPath);
@@ -263,35 +266,30 @@ class MarionetteParentProcess {
           `Failed to remove ${this._activePortPath} (${e.message})`
         );
       }
+
+      lazy.logger.debug("Marionette stopped listening");
     }
   }
 
-  get QueryInterface() {
-    return ChromeUtils.generateQI([
-      "nsICommandLineHandler",
-      "nsIMarionette",
-      "nsIObserver",
-    ]);
-  }
+  // XPCOM
+
+  helpInfo = "  --marionette       Enable remote control server.\n";
+
+  QueryInterface = ChromeUtils.generateQI([
+    "nsICommandLineHandler",
+    "nsIMarionette",
+    "nsIObserver",
+  ]);
 }
 
 class MarionetteContentProcess {
-  constructor() {
-    this.classID = Components.ID("{786a1369-dca5-4adc-8486-33d23c88010a}");
-  }
-
   get running() {
-    let reply = Services.cpmm.sendSyncMessage("Marionette:IsRunning");
-    if (!reply.length) {
-      lazy.logger.warn("No reply from parent process");
-      return false;
-    }
-    return reply[0];
+    return Services.cpmm.sharedData.get(SHARED_DATA_ACTIVE_KEY) ?? false;
   }
 
-  get QueryInterface() {
-    return ChromeUtils.generateQI(["nsIMarionette"]);
-  }
+  // XPCOM
+
+  QueryInterface = ChromeUtils.generateQI(["nsIMarionette"]);
 }
 
 export var Marionette;

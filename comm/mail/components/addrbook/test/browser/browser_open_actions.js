@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-let tabmail = document.getElementById("tabmail");
+const tabmail = document.getElementById("tabmail");
 let writableBook, writableCard, readOnlyBook, readOnlyCard;
 
 add_setup(function () {
@@ -20,7 +20,7 @@ add_setup(function () {
 });
 
 async function inEditingMode() {
-  let abWindow = getAddressBookWindow();
+  const abWindow = getAddressBookWindow();
   await TestUtils.waitForCondition(
     () => abWindow.detailsPane.isEditing,
     "entering editing mode"
@@ -28,7 +28,7 @@ async function inEditingMode() {
 }
 
 async function notInEditingMode() {
-  let abWindow = getAddressBookWindow();
+  const abWindow = getAddressBookWindow();
   await TestUtils.waitForCondition(
     () => !abWindow.detailsPane.isEditing,
     "leaving editing mode"
@@ -40,12 +40,12 @@ async function notInEditingMode() {
  * Then call it again with the tab open and check that it doesn't reload.
  */
 add_task(async function testNoAction() {
-  let abWindow1 = await window.toAddressBook();
+  const abWindow1 = await window.toAddressBook();
   Assert.equal(tabmail.tabInfo.length, 2);
   Assert.equal(tabmail.currentTabInfo.mode.name, "addressBookTab");
   await notInEditingMode();
 
-  let abWindow2 = await window.toAddressBook();
+  const abWindow2 = await window.toAddressBook();
   Assert.equal(tabmail.tabInfo.length, 2);
   Assert.equal(tabmail.currentTabInfo.mode.name, "addressBookTab");
   Assert.equal(
@@ -56,7 +56,7 @@ add_task(async function testNoAction() {
   await notInEditingMode();
 
   tabmail.selectTabByIndex(undefined, 1);
-  let abWindow3 = await window.toAddressBook();
+  const abWindow3 = await window.toAddressBook();
   Assert.equal(tabmail.tabInfo.length, 2);
   Assert.equal(tabmail.currentTabInfo.mode.name, "addressBookTab");
   Assert.equal(
@@ -75,7 +75,7 @@ add_task(async function testNoAction() {
  * Address Book. A new blank card should open in edit mode.
  */
 add_task(async function testCreateBlank() {
-  await window.toAddressBook({ action: "create" });
+  await window.toAddressBook(["cmd_newCard"]);
   await inEditingMode();
   // TODO check blank
   await closeAddressBookWindow();
@@ -87,9 +87,14 @@ add_task(async function testCreateBlank() {
  * open in edit mode.
  */
 add_task(async function testCreateWithAddress() {
-  await window.toAddressBook({ action: "create", address: "test@invalid" });
+  await window.toAddressBook(["cmd_newCard", "test@invalid"]);
   await inEditingMode();
-  // TODO check address matches
+  const abWindow = getAddressBookWindow();
+  Assert.equal(
+    abWindow.document.querySelector('input[type="email"]').value,
+    "test@invalid",
+    "Address put into editor"
+  );
   await closeAddressBookWindow();
 });
 
@@ -98,13 +103,32 @@ add_task(async function testCreateWithAddress() {
  * the Address Book. A new card should open in edit mode.
  */
 add_task(async function testCreateWithVCard() {
-  await window.toAddressBook({
-    action: "create",
-    vCard:
-      "BEGIN:VCARD\r\nFN:a test person\r\nN:person;test;;a;\r\nEND:VCARD\r\n",
-  });
+  await window.toAddressBook([
+    "cmd_newCard",
+    undefined,
+    "BEGIN:VCARD\r\nFN:a test person\r\nN:person;test;;a;\r\nEND:VCARD\r\n",
+  ]);
   await inEditingMode();
   // TODO check card matches
+  const abWindow = getAddressBookWindow();
+  Assert.equal(
+    abWindow.document.querySelector('input[type="email"]').value,
+    "",
+    "VCard provided no email address"
+  );
+  await closeAddressBookWindow();
+});
+
+add_task(async function testCreateWithEvent() {
+  const event = new CustomEvent("dummyclick");
+  await window.toAddressBook(["cmd_newCard", event]);
+  await inEditingMode();
+  const abWindow = getAddressBookWindow();
+  Assert.equal(
+    abWindow.document.querySelector('input[type="email"]').value,
+    "",
+    "Event not put in as address"
+  );
   await closeAddressBookWindow();
 });
 
@@ -113,8 +137,8 @@ add_task(async function testCreateWithVCard() {
  * Book. The card should be displayed.
  */
 add_task(async function testDisplayCard() {
-  await window.toAddressBook({ action: "display", card: writableCard });
-  checkDirectoryDisplayed(writableBook);
+  await window.toAddressBook(["cmd_displayContact", writableCard]);
+  await checkDirectoryDisplayed(writableBook);
   await notInEditingMode();
 
   // let abWindow = getAddressBookWindow();
@@ -129,8 +153,8 @@ add_task(async function testDisplayCard() {
  * opens the Address Book. The card should open in edit mode.
  */
 add_task(async function testEditCardWritable() {
-  await window.toAddressBook({ action: "edit", card: writableCard });
-  checkDirectoryDisplayed(writableBook);
+  await window.toAddressBook(["cmd_editContact", writableCard]);
+  await checkDirectoryDisplayed(writableBook);
   await inEditingMode();
 
   // let abWindow = getAddressBookWindow();
@@ -145,8 +169,8 @@ add_task(async function testEditCardWritable() {
  * opens the Address Book. The card should open in display mode.
  */
 add_task(async function testEditCardReadOnly() {
-  await window.toAddressBook({ action: "edit", card: readOnlyCard });
-  checkDirectoryDisplayed(readOnlyBook);
+  await window.toAddressBook(["cmd_editContact", readOnlyCard]);
+  await checkDirectoryDisplayed(readOnlyBook);
   await notInEditingMode();
 
   // let abWindow = getAddressBookWindow();

@@ -6,34 +6,30 @@
  * Test link previews.
  */
 
-var { close_compose_window, open_compose_new_mail } = ChromeUtils.import(
-  "resource://testing-common/mozmill/ComposeHelpers.jsm"
-);
+var { close_compose_window, open_compose_new_mail } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+  );
 
 var url =
   "http://mochi.test:8888/browser/comm/mail/test/browser/composition/html/linkpreview.html";
 
 add_task(async function previewEnabled() {
   Services.prefs.setBoolPref("mail.compose.add_link_preview", true);
-  let controller = open_compose_new_mail();
+  const win = await open_compose_new_mail();
   await navigator.clipboard.writeText(url);
 
-  let messageEditor =
-    controller.window.document.getElementById("messageEditor");
+  const messageEditor = win.document.getElementById("messageEditor");
   messageEditor.focus();
 
   // Ctrl+V = Paste
-  EventUtils.synthesizeKey(
-    "v",
-    { shiftKey: false, accelKey: true },
-    controller.window
-  );
+  EventUtils.synthesizeKey("v", { shiftKey: false, accelKey: true }, win);
 
   await TestUtils.waitForCondition(
     () => messageEditor.contentDocument.body.querySelector(".moz-card"),
     "link preview should have appeared"
   );
 
-  close_compose_window(controller);
+  await close_compose_window(win);
   Services.prefs.clearUserPref("mail.compose.add_link_preview");
 });

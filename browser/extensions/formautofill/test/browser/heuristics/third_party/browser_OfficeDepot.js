@@ -21,10 +21,10 @@ add_heuristic_tests(
             { fieldName: "address-level2" }, // City & State
             { fieldName: "address-level2" }, // City
             { fieldName: "address-level1" }, // State
-            { fieldName: "tel-area-code" },
-            { fieldName: "tel-local-prefix" },
-            { fieldName: "tel-local-suffix" },
-            { fieldName: "tel-extension" },
+            { fieldName: "tel-area-code", reason: "update-heuristic" },
+            { fieldName: "tel-local-prefix", reason: "update-heuristic" },
+            { fieldName: "tel-local-suffix", reason: "update-heuristic" },
+            { fieldName: "tel-extension", reason: "update-heuristic" },
             { fieldName: "email" },
           ],
         },
@@ -42,6 +42,7 @@ add_heuristic_tests(
             { fieldName: "cc-exp-month" },
             { fieldName: "cc-exp-year" },
             { fieldName: "cc-number" },
+            { fieldName: "cc-csc" },
           ],
         },
         {
@@ -50,7 +51,7 @@ add_heuristic_tests(
           },
           fields: [
             { fieldName: "given-name" },
-            { fieldName: "family-name" },
+            { fieldName: "family-name"  },
             { fieldName: "organization" },
             { fieldName: "address-line1" },
             { fieldName: "address-line2" },
@@ -58,10 +59,10 @@ add_heuristic_tests(
             { fieldName: "address-level2" }, // City & State
             { fieldName: "address-level2" }, // City
             { fieldName: "address-level1" }, // state
-            { fieldName: "tel-area-code" },
-            { fieldName: "tel-local-prefix" },
-            { fieldName: "tel-local-suffix" },
-            { fieldName: "tel-extension" },
+            { fieldName: "tel-area-code", reason: "update-heuristic" },
+            { fieldName: "tel-local-prefix", reason: "update-heuristic" },
+            { fieldName: "tel-local-suffix", reason: "update-heuristic" },
+            { fieldName: "tel-extension", reason: "update-heuristic" },
             { fieldName: "email" },
           ],
         },

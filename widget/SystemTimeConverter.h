@@ -30,8 +30,6 @@ class SystemTimeConverter {
  public:
   SystemTimeConverter()
       : mReferenceTime(Time(0)),
-        mReferenceTimeStamp()  // Initializes to the null timestamp
-        ,
         mLastBackwardsSkewCheck(Time(0)),
         kTimeRange(std::numeric_limits<Time>::max()),
         kTimeHalfRange(kTimeRange / 2),
@@ -202,16 +200,25 @@ class SystemTimeConverter {
     TimeDuration timeStampDelta = (aTimeStamp - mReferenceTimeStamp);
     int64_t wholeMillis = static_cast<int64_t>(timeStampDelta.ToMilliseconds());
     Time wrappedTimeStampDelta = wholeMillis;  // truncate to unsigned
+    // Half of the valid range of Time
+    const Time shift = (static_cast<Time>(0) - static_cast<Time>(1)) / 2;
+    // Shift/move origin (0) of the value by UINT32_MAX / 2 and shift
+    // it back later in order to support negative deltas. With this
+    // approach we can support deltas before shifting in the range
+    // [UINT32_MAX / 2 + 1, -UINT32_MAX / 2].
+    Time wrappedTimeStampDeltaShifted = wrappedTimeStampDelta + shift;
 
-    Time timeToTimeStamp = wrappedTimeStampDelta - timeDelta;
+    int64_t timeToTimeStamp = static_cast<int64_t>(wrappedTimeStampDeltaShifted) -
+                              static_cast<int64_t>(timeDelta) -
+                              static_cast<int64_t>(shift);
     bool isNewer = false;
     if (timeToTimeStamp == 0) {
       // wholeMillis needs no adjustment
-    } else if (timeToTimeStamp < kTimeHalfRange) {
-      wholeMillis -= timeToTimeStamp;
-    } else {
+    } else if (timeToTimeStamp < 0) {
       isNewer = true;
       wholeMillis += (-timeToTimeStamp);
+    } else {
+      wholeMillis -= timeToTimeStamp;
     }
     if (aTimeAsTimeStamp) {
       *aTimeAsTimeStamp =

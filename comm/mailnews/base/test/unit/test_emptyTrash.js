@@ -16,8 +16,8 @@
  */
 
 // Globals
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var gMsgFile1;
@@ -28,16 +28,20 @@ var gRootFolder;
 
 var nsIMFNService = Ci.nsIMsgFolderNotificationService;
 
-// nsIMsgCopyServiceListener implementation
+/**
+ * @implements {nsIMsgCopyServiceListener}
+ */
 var copyListener = {
-  OnStartCopy() {},
-  OnProgress(aProgress, aProgressMax) {},
-  SetMessageKey(aKey) {
-    let hdr = localAccountUtils.inboxFolder.GetMessageHeader(aKey);
+  onStartCopy() {},
+  onProgress() {},
+  setMessageKey(aKey) {
+    const hdr = localAccountUtils.inboxFolder.GetMessageHeader(aKey);
     gMsgHdrs.push({ hdr, ID: hdr.messageId });
   },
-  SetMessageId(aMessageId) {},
-  OnStopCopy(aStatus) {
+  getMessageId() {
+    return null;
+  },
+  onStopCopy(aStatus) {
     // Check: message successfully copied.
     Assert.equal(aStatus, 0);
     // Ugly hack: make sure we don't get stuck in a JS->C++->JS->C++... call stack
@@ -51,7 +55,7 @@ var copyListener = {
 };
 
 var urlListener = {
-  OnStartRunningUrl(aUrl) {},
+  OnStartRunningUrl() {},
   OnStopRunningUrl(aUrl, aExitCode) {
     // Check: message successfully copied.
     Assert.equal(aExitCode, 0);
@@ -97,7 +101,7 @@ var gTestArray = [
   function testDeleteMessage() {
     // delete to trash
     // Let's take a moment to re-initialize stuff that got moved
-    let inboxDB = localAccountUtils.inboxFolder.msgDatabase;
+    const inboxDB = localAccountUtils.inboxFolder.msgDatabase;
     gMsgHdrs[0].hdr = inboxDB.getMsgHdrForMessageID(gMsgHdrs[0].ID);
 
     // Now delete the message
@@ -108,7 +112,7 @@ var gTestArray = [
     gLocalTrashFolder = gRootFolder.getChildNamed("Trash");
     // hold onto a db to make sure that empty trash deals with the case
     // of someone holding onto the db, but the trash folder has a null db.
-    let gLocalTrashDB = gLocalTrashFolder.msgDatabase; // eslint-disable-line no-unused-vars
+    const gLocalTrashDB = gLocalTrashFolder.msgDatabase; // eslint-disable-line no-unused-vars
     gLocalTrashFolder.msgDatabase = null;
     // this is synchronous
     gLocalTrashFolder.emptyTrash(null);
@@ -116,7 +120,7 @@ var gTestArray = [
     // and has no messages.
     Assert.equal(0, gLocalTrashFolder.filePath.fileSize);
     Assert.equal(0, gLocalTrashFolder.msgDatabase.dBFolderInfo.numMessages);
-    let msgs = [...gLocalTrashFolder.msgDatabase.enumerateMessages()];
+    const msgs = [...gLocalTrashFolder.msgDatabase.enumerateMessages()];
     Assert.equal(0, msgs.length);
     urlListener.OnStopRunningUrl(null, 0);
   },

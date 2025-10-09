@@ -12,7 +12,9 @@ var gHandlerSvc = Cc["@mozilla.org/uriloader/handler-service;1"].getService(
 
 function createMockedHandlerApp() {
   // Mock the executable
-  let mockedExecutable = FileUtils.getFile("TmpD", ["mockedExecutable"]);
+  let mockedExecutable = new FileUtils.File(
+    PathUtils.join(PathUtils.tempDir, "mockedExecutable")
+  );
   if (!mockedExecutable.exists()) {
     mockedExecutable.create(Ci.nsIFile.NORMAL_FILE_TYPE, 0o755);
   }
@@ -193,6 +195,41 @@ async function waitForProtocolPermissionDialog(browser, state) {
     "chrome://mozapps/content/handling/permissionDialog.xhtml",
     state
   );
+}
+
+/**
+ * Get the dialog element which is a child of the SubDialogs browser frame.
+ * @param {SubDialog} subDialog - Dialog to get the dialog element for.
+ */
+function getDialogElementFromSubDialog(subDialog) {
+  let dialogEl = subDialog._frame.contentDocument.querySelector("dialog");
+  ok(dialogEl, "SubDialog should have dialog element");
+  return dialogEl;
+}
+
+/**
+ * Accept the next protocol permission dialog.
+ * @param {MozBrowser} browser - Browser element the dialog belongs to.
+ * @returns {Promise} - Returns a promise which resolves once the dialog has
+ * been accepted.
+ *
+ * Note: This function will bypass the security delay.
+ *
+ */
+async function acceptNextProtocolPermissionDialog(browser) {
+  let dialog = await waitForProtocolPermissionDialog(browser, true);
+  let dialogWindowClosePromise = waitForProtocolPermissionDialog(
+    browser,
+    false
+  );
+
+  let dialogEl = getDialogElementFromSubDialog(dialog);
+
+  // Bypass the security delay.
+  dialogEl.setAttribute("buttondisabledaccept", "false");
+  dialogEl.acceptDialog();
+
+  await dialogWindowClosePromise;
 }
 
 /**

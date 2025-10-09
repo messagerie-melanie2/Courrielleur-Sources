@@ -9,12 +9,8 @@
 #include "nsIMsgDatabase.h"
 #include "nsMsgSearchCore.h"
 #include "nsMsgLocalSearch.h"
-#include "nsIStreamListener.h"
 #include "nsMsgSearchBoolExpression.h"
-#include "nsMsgSearchTerm.h"
-#include "nsMsgResultElement.h"
 #include "nsIDBFolderInfo.h"
-#include "nsMsgSearchValue.h"
 #include "nsIMsgLocalMailFolder.h"
 #include "nsIMsgWindow.h"
 #include "nsIMsgHdr.h"
@@ -399,14 +395,14 @@ nsresult nsMsgSearchOfflineMail::ProcessSearchTerm(
 
   nsMsgSearchAttribValue attrib;
   aTerm->GetAttrib(&attrib);
-  msgToMatch->GetCharset(getter_Copies(msgCharset));
+  msgToMatch->GetCharset(msgCharset);
   charset = msgCharset.get();
   if (!charset || !*charset) charset = (const char*)defaultCharset;
   msgToMatch->GetFlags(&msgFlags);
 
   switch (attrib) {
     case nsMsgSearchAttrib::Sender:
-      msgToMatch->GetAuthor(getter_Copies(matchString));
+      msgToMatch->GetAuthor(matchString);
       err = aTerm->MatchRfc822String(matchString, charset, &result);
       break;
     case nsMsgSearchAttrib::Subject: {
@@ -427,10 +423,10 @@ nsresult nsMsgSearchOfflineMail::ProcessSearchTerm(
     case nsMsgSearchAttrib::ToOrCC: {
       bool boolKeepGoing;
       aTerm->GetMatchAllBeforeDeciding(&boolKeepGoing);
-      msgToMatch->GetRecipients(getter_Copies(recipients));
+      msgToMatch->GetRecipients(recipients);
       err = aTerm->MatchRfc822String(recipients, charset, &result);
       if (boolKeepGoing == result) {
-        msgToMatch->GetCcList(getter_Copies(ccList));
+        msgToMatch->GetCcList(ccList);
         err = aTerm->MatchRfc822String(ccList, charset, &result);
       }
       break;
@@ -438,30 +434,25 @@ nsresult nsMsgSearchOfflineMail::ProcessSearchTerm(
     case nsMsgSearchAttrib::AllAddresses: {
       bool boolKeepGoing;
       aTerm->GetMatchAllBeforeDeciding(&boolKeepGoing);
-      msgToMatch->GetRecipients(getter_Copies(recipients));
+      msgToMatch->GetRecipients(recipients);
       err = aTerm->MatchRfc822String(recipients, charset, &result);
       if (boolKeepGoing == result) {
-        msgToMatch->GetCcList(getter_Copies(ccList));
+        msgToMatch->GetCcList(ccList);
         err = aTerm->MatchRfc822String(ccList, charset, &result);
       }
       if (boolKeepGoing == result) {
-        msgToMatch->GetAuthor(getter_Copies(matchString));
+        msgToMatch->GetAuthor(matchString);
         err = aTerm->MatchRfc822String(matchString, charset, &result);
       }
       if (boolKeepGoing == result) {
         nsCString bccList;
-        msgToMatch->GetBccList(getter_Copies(bccList));
+        msgToMatch->GetBccList(bccList);
         err = aTerm->MatchRfc822String(bccList, charset, &result);
       }
       break;
     }
     case nsMsgSearchAttrib::Body: {
-      uint64_t messageOffset;
-      uint32_t lineCount;
-      msgToMatch->GetMessageOffset(&messageOffset);
-      msgToMatch->GetLineCount(&lineCount);
-      err = aTerm->MatchBody(scope, messageOffset, lineCount, charset,
-                             msgToMatch, db, &result);
+      err = aTerm->MatchBody(scope, charset, msgToMatch, &result);
       break;
     }
     case nsMsgSearchAttrib::Date: {
@@ -488,11 +479,11 @@ nsresult nsMsgSearchOfflineMail::ProcessSearchTerm(
       break;
     }
     case nsMsgSearchAttrib::To:
-      msgToMatch->GetRecipients(getter_Copies(recipients));
+      msgToMatch->GetRecipients(recipients);
       err = aTerm->MatchRfc822String(recipients, charset, &result);
       break;
     case nsMsgSearchAttrib::CC:
-      msgToMatch->GetCcList(getter_Copies(ccList));
+      msgToMatch->GetCcList(ccList);
       err = aTerm->MatchRfc822String(ccList, charset, &result);
       break;
     case nsMsgSearchAttrib::AgeInDays: {
@@ -576,13 +567,9 @@ nsresult nsMsgSearchOfflineMail::ProcessSearchTerm(
       // for the Content-Type header on all messages.
       if (attrib >= nsMsgSearchAttrib::OtherHeader &&
           attrib < nsMsgSearchAttrib::kNumMsgSearchAttributes) {
-        uint32_t lineCount;
-        msgToMatch->GetLineCount(&lineCount);
-        uint64_t messageOffset;
-        msgToMatch->GetMessageOffset(&messageOffset);
-        err = aTerm->MatchArbitraryHeader(scope, lineCount, charset,
-                                          charsetOverride, msgToMatch, db,
-                                          headers, Filtering, &result);
+        err = aTerm->MatchArbitraryHeader(scope, charset, charsetOverride,
+                                          msgToMatch, headers, Filtering,
+                                          &result);
       } else {
         err = NS_ERROR_INVALID_ARG;  // ### was SearchError_InvalidAttribute
         result = false;
@@ -639,6 +626,9 @@ nsresult nsMsgSearchOfflineMail::Search(bool* aDone) {
       dbErr = m_db->ReverseEnumerateMessages(getter_AddRefs(m_listContext));
     if (NS_SUCCEEDED(dbErr) && m_listContext) {
       PRIntervalTime startTime = PR_IntervalNow();
+      nsAutoString folderCharset;
+      GetSearchCharset(folderCharset);
+      NS_ConvertUTF16toUTF8 charset(folderCharset);
       while (!*aDone)  // we'll break out of the loop after kTimeSliceInMS
                        // milliseconds
       {
@@ -649,9 +639,6 @@ nsresult nsMsgSearchOfflineMail::Search(bool* aDone) {
                           //  that we did have an error so we'll clean up later
         else {
           bool match = false;
-          nsAutoString nullCharset, folderCharset;
-          GetSearchCharsets(nullCharset, folderCharset);
-          NS_ConvertUTF16toUTF8 charset(folderCharset);
           // Is this message a hit?
           err = MatchTermsForSearch(msgDBHdr, m_searchTerms, charset.get(),
                                     m_scope, m_db, &expressionTree, &match);
@@ -702,14 +689,6 @@ NS_IMETHODIMP nsMsgSearchOfflineMail::AddResultElement(nsIMsgDBHdr* pHeaders) {
     searchSession->AddSearchHit(pHeaders, scopeFolder);
   }
   return err;
-}
-
-NS_IMETHODIMP
-nsMsgSearchOfflineMail::Abort() {
-  // Let go of the DB when we're done with it so we don't kill the db cache
-  if (m_db) m_db->Close(true /* commit in case we downloaded new headers */);
-  m_db = nullptr;
-  return nsMsgSearchAdapter::Abort();
 }
 
 /* void OnStartRunningUrl (in nsIURI url); */

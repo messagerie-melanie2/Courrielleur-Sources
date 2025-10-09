@@ -130,7 +130,7 @@ export var FeedUtils = {
   /**
    * Create rss account.
    *
-   * @param {String} aName - Optional account name to override default.
+   * @param {string} aName - Optional account name to override default.
    * @returns {nsIMsgAccount} - The creaged account.
    */
   createRssAccount(aName) {
@@ -187,7 +187,7 @@ export var FeedUtils = {
    *
    * @param {string} aUrl - The url.
    * @param {nsIMsgIncomingServer} aServer - Account server.
-   * @returns {Boolean} - true if exists else false.
+   * @returns {boolean} - true if exists else false.
    */
   feedAlreadyExists(aUrl, aServer) {
     const ds = this.getSubscriptionsDS(aServer);
@@ -211,7 +211,7 @@ export var FeedUtils = {
    *
    * @param {nsIMsgFolder} aFolder - The folder.
    * @param {nsIUrlListener} aUrlListener - Feed url.
-   * @param {Boolean} aIsBiff - true if biff, false if manual get.
+   * @param {boolean} aIsBiff - true if biff, false if manual get.
    * @param {nsIDOMWindow} aMsgWindow - The window.
    *
    * @returns {Promise<void>} When all feeds downloading have been set off.
@@ -426,7 +426,7 @@ export var FeedUtils = {
   /**
    * Subscribe a new feed url.
    *
-   * @param {String} aUrl - Feed url.
+   * @param {string} aUrl - Feed url.
    * @param {nsIMsgFolder} aFolder - Folder.
    *
    * @returns {void}
@@ -488,7 +488,7 @@ export var FeedUtils = {
    *
    * @param {nsIMsgFolder} aFolder - Folder or account folder (server).
    * @param {boolean} aPause - To pause or not to pause.
-   * @param {Boolean} aBiffNow - If aPause is false, and aBiffNow is true
+   * @param {boolean} aBiffNow - If aPause is false, and aBiffNow is true
    *                                     do the biff immediately.
    * @returns {void}
    */
@@ -595,7 +595,7 @@ export var FeedUtils = {
    * @param {Feed} aFeed - The feed object.
    * @param {string} aNewUrl - New url.
    *
-   * @returns {Boolean} - true if successful, else false.
+   * @returns {boolean} - true if successful, else false.
    */
   changeUrlForFeed(aFeed, aNewUrl) {
     if (!aFeed || !aFeed.folder || !aNewUrl) {
@@ -640,7 +640,7 @@ export var FeedUtils = {
    *
    * @param {nsIMsgDBHdr} aMsgHdr - The message.
    *
-   * @returns {Boolean} - true if message is a feed, false if not.
+   * @returns {boolean} - true if message is a feed, false if not.
    */
   isFeedMessage(aMsgHdr) {
     return Boolean(
@@ -656,7 +656,7 @@ export var FeedUtils = {
    *
    * @param {nsIMsgFolder} aFolder - The folder.
    *
-   * @returns {Boolean} - true if folder's server.type is in FEED_ACCOUNT_TYPES,
+   * @returns {boolean} - true if folder's server.type is in FEED_ACCOUNT_TYPES,
    *                      false if not.
    */
   isFeedFolder(aFolder) {
@@ -671,7 +671,7 @@ export var FeedUtils = {
    *
    * @param {nsIMsgFolder} aFolder - The folder.
    *
-   * @returns {String}[]           - Array of urls, or null if none.
+   * @returns {string}[]           - Array of urls, or null if none.
    */
   getFeedUrlsInFolder(aFolder) {
     if (
@@ -718,7 +718,7 @@ export var FeedUtils = {
    * @param {boolean} aReparse - Reparse if true.
    * @param {nsIUrlListener} aUrlListener - Object implementing nsIUrlListener.
    *
-   * @returns {Boolean} - true if msgDb is available, else false
+   * @returns {boolean} - true if msgDb is available, else false
    */
   isMsgDatabaseOpenable(aFolder, aReparse, aUrlListener) {
     let msgDb;
@@ -812,7 +812,7 @@ export var FeedUtils = {
    * @param {nsIMsgFolder} aFolder - Folder.
    * @param {string} aUrl - Url key (feed url or folder URI).
    *
-   * @returns {String} aValue        - The value.
+   * @returns {string} aValue - The value.
    */
   getStatus(aFolder, aUrl) {
     if (!aFolder || !aUrl) {
@@ -918,6 +918,7 @@ export var FeedUtils = {
 
     /**
      * Convert a Blob to data URL.
+     *
      * @param {Blob} blob - Blob to convert.
      * @returns {string} data URL.
      */
@@ -944,22 +945,24 @@ export var FeedUtils = {
 
     /**
      * Try getting favicon from url.
-     * @param {string} url - The favicon url.
+     *
+     * @param {string} faviconUrl - The favicon url.
      * @returns {Blob} - Existing favicon.
      */
-    const fetchFavicon = async url => {
-      const response = await fetch(url);
+    const fetchFavicon = async faviconUrl => {
+      const response = await fetch(faviconUrl);
       if (!response.ok) {
-        throw new Error(`No favicon for url ${url}`);
+        throw new Error(`No favicon for url ${faviconUrl}`);
       }
       if (!/^image\//i.test(response.headers.get("Content-Type"))) {
-        throw new Error(`Non-image favicon for ${url}`);
+        throw new Error(`Non-image favicon for ${faviconUrl}`);
       }
       return response.blob();
     };
 
     /**
      * Try getting favicon from the a html page.
+     *
      * @param {string} page - The page url to check.
      * @returns {Blob} - Found favicon.
      */
@@ -1014,19 +1017,19 @@ export var FeedUtils = {
         },
       ],
     });
-    return new Promise(resolve => {
-      // All good. Now store iconURL for future usage.
-      lazy.PlacesUtils.favicons.setAndFetchFaviconForPage(
-        Services.io.newURI(feedURL),
-        Services.io.newURI(iconURL),
-        true,
-        lazy.PlacesUtils.favicons.FAVICON_LOAD_NON_PRIVATE,
-        faviconURI => {
-          resolve(faviconURI.spec);
-        },
-        Services.scriptSecurityManager.getSystemPrincipal()
-      );
-    });
+
+    // All good. Now store iconURL for future usage.
+    const pageURI = Services.io.newURI(feedURL);
+    const iconURI = Services.io.newURI(iconURL);
+    const dataURL = await lazy.MailUtils.getFaviconDataURLFromNetwork(iconURI);
+    await lazy.PlacesUtils.favicons.setFaviconForPage(
+      pageURI,
+      iconURI,
+      dataURL
+    );
+
+    const favicon = await lazy.PlacesUtils.favicons.getFaviconForPage(pageURI);
+    return favicon?.dataURI.spec;
   },
 
   /**
@@ -1035,7 +1038,7 @@ export var FeedUtils = {
    * @param {nsIMsgFolder} aFolder - The folder, new if rename or target of
    *                                      move/copy folder (new parent).
    * @param {nsIMsgFolder} aOrigFolder - Original folder.
-   * @param {String} aAction - "move" or "copy" or "rename".
+   * @param {string} aAction - "move" or "copy" or "rename".
    *
    * @returns {void}
    */
@@ -1095,7 +1098,7 @@ export var FeedUtils = {
    * @param {nsIMsgFolder} aFolder - New folder.
    * @param {nsIMsgFolder} aOrigFolder - Original folder.
    * @param {string} aNewAncestorURI - For subfolders, ancestor new folder.
-   * @param {String} aOrigAncestorURI - For subfolders, ancestor original folder.
+   * @param {string} aOrigAncestorURI - For subfolders, ancestor original folder.
    *
    * @returns {void}
    */
@@ -1170,12 +1173,12 @@ export var FeedUtils = {
    * is not strictly correct.
    *
    * @param {nsIMsgFolder} aParentFolder - Parent folder.
-   * @param {String}       aProposedName - Proposed name.
-   * @param {String}       aDefaultName  - Default name if proposed sanitizes to
+   * @param {string}       aProposedName - Proposed name.
+   * @param {string}       aDefaultName  - Default name if proposed sanitizes to
    *                                       blank, caller ensures sane value.
-   * @param {Boolean}      aUnique       - If true, return a unique indexed name.
+   * @param {boolean}      aUnique       - If true, return a unique indexed name.
    *
-   * @returns {String} - Sanitized unique name.
+   * @returns {string} - Sanitized unique name.
    */
   getSanitizedFolderName(aParentFolder, aProposedName, aDefaultName, aUnique) {
     // Clean up the name for the strictest fs (fat) and to ensure portability.
@@ -1363,27 +1366,32 @@ export var FeedUtils = {
    */
   Mixins: {
     meld(source, keep, replace) {
-      function meldin(source, target, keep, replace) {
-        for (const attribute in source) {
+      function meldin(meldSource, target, meldKeep, meldReplace) {
+        for (const attribute in meldSource) {
           // Recurse for objects.
           if (
-            typeof source[attribute] == "object" &&
+            typeof meldSource[attribute] == "object" &&
             typeof target[attribute] == "object"
           ) {
-            meldin(source[attribute], target[attribute], keep, replace);
+            meldin(
+              meldSource[attribute],
+              target[attribute],
+              meldKeep,
+              meldReplace
+            );
           } else {
             // Use attribute values from source for the target, unless
             // replace is false.
-            if (attribute in target && !replace) {
+            if (attribute in target && !meldReplace) {
               continue;
             }
             // Don't copy attribute from source to target if it is not in the
             // target, unless keep is true.
-            if (!(attribute in target) && !keep) {
+            if (!(attribute in target) && !meldKeep) {
               continue;
             }
 
-            target[attribute] = source[attribute];
+            target[attribute] = meldSource[attribute];
           }
         }
       }
@@ -1433,7 +1441,7 @@ export var FeedUtils = {
    *
    * @param {string} feedURL - URL of the feed.
    * @param {nsIMsgIncomingServer} server - Server holding the subscription.
-   * @param {String} attrName - Name of attribute to fetch.
+   * @param {string} attrName - Name of attribute to fetch.
    * @param {undefined} defaultValue - Value to return if not found.
    *
    * @returns {undefined} - the fetched value (defaultValue if the
@@ -1455,7 +1463,7 @@ export var FeedUtils = {
    *
    * @param {string} feedURL - URL of the feed.
    * @param {nsIMsgIncomingServer} server - server holding subscription.
-   * @param {String} attrName - Name of attribute to fetch.
+   * @param {string} attrName - Name of attribute to fetch.
    * @param {undefined} value - Value to store.
    *
    * @returns {void}
@@ -1722,7 +1730,7 @@ export var FeedUtils = {
    *
    * @param {nsIMsgFolder} aFolder - The folder.
    *
-   * @returns {Boolean} - true if folder is Trash else false.
+   * @returns {boolean} - true if folder is Trash else false.
    */
   isInTrash(aFolder) {
     const trashFolder = aFolder.rootFolder.getFolderWithFlags(
@@ -1744,7 +1752,7 @@ export var FeedUtils = {
    *
    * @param {nsIMsgFolder} aFolder - The folder.
    *
-   * @returns {String} prettyName or null  - Name or null if not a disk folder.
+   * @returns {string} prettyName or null  - Name or null if not a disk folder.
    */
   getFolderPrettyPath(aFolder) {
     let msgFolder = lazy.MailUtils.getExistingFolder(aFolder.URI);
@@ -1779,7 +1787,7 @@ export var FeedUtils = {
    *
    * @param {string} aDate - Date string.
    *
-   * @returns {Boolean} - true if passes regex test, false if not.
+   * @returns {boolean} - true if passes regex test, false if not.
    */
   isValidRFC822Date(aDate) {
     const FZ_RFC822_RE =
@@ -1797,7 +1805,7 @@ export var FeedUtils = {
    * @param {string} aDateString - Optional date string; if null or invalid
    *                               date, get the current datetime.
    *
-   * @returns {String} - An rfc5322 date string.
+   * @returns {string} - An rfc5322 date string.
    */
   getValidRFC5322Date(aDateString) {
     let d = new Date(aDateString || new Date().getTime());
@@ -1858,7 +1866,7 @@ export var FeedUtils = {
      * @param {Feed} feed - The Feed object, or a synthetic object that must
      *                      contain members {nsIMsgFolder folder, String url}.
      * @param {Integer} aErrorCode - The resolution code, a kNewsBlog* value.
-     * @param {Boolean} aDisable - If true, disable/pause the feed.
+     * @param {boolean} aDisable - If true, disable/pause the feed.
      *
      * @returns {void}
      */

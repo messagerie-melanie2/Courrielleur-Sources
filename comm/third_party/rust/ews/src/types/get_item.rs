@@ -6,15 +6,15 @@ use serde::Deserialize;
 use xml_struct::XmlSerialize;
 
 use crate::{
-    types::sealed::EnvelopeBodyContents, BaseItemId, ItemShape, Operation, OperationResponse,
-    RealItem, ResponseClass, ResponseCode, MESSAGES_NS_URI,
+    types::sealed::EnvelopeBodyContents, BaseItemId, ItemShape, Items, Operation,
+    OperationResponse, ResponseClass, ResponseCode, MESSAGES_NS_URI,
 };
 
 /// A request for the properties of one or more Exchange items, e.g. messages,
 /// calendar events, or contacts.
 ///
 /// See <https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/getitem>
-#[derive(Debug, XmlSerialize)]
+#[derive(Clone, Debug, XmlSerialize)]
 #[xml_struct(default_ns = MESSAGES_NS_URI)]
 pub struct GetItem {
     /// A description of the information to be included in the response for each
@@ -42,7 +42,7 @@ impl EnvelopeBodyContents for GetItem {
 /// A response to a [`GetItem`] request.
 ///
 /// See <https://learn.microsoft.com/en-us/exchange/client-developer/web-service-reference/getitemresponse>
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct GetItemResponse {
     pub response_messages: ResponseMessages,
@@ -56,13 +56,13 @@ impl EnvelopeBodyContents for GetItemResponse {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ResponseMessages {
     pub get_item_response_message: Vec<GetItemResponseMessage>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct GetItemResponseMessage {
     /// The status of the corresponding request, i.e. whether it succeeded or
@@ -75,10 +75,4 @@ pub struct GetItemResponseMessage {
     pub message_text: Option<String>,
 
     pub items: Items,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Items {
-    #[serde(rename = "$value")]
-    pub inner: Vec<RealItem>,
 }

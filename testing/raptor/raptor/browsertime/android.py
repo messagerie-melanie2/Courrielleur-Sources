@@ -5,15 +5,12 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import os
-import shutil
-import tempfile
 
-import mozcrash
+from cmdline import CHROME_ANDROID_APPS, FIREFOX_ANDROID_APPS
 from logger.logger import RaptorLogger
 from mozdevice import ADBDeviceFactory
 from performance_tuning import tune_performance
 from perftest import PerftestAndroid
-from power import disable_charging, enable_charging
 
 from .base import Browsertime
 
@@ -45,7 +42,9 @@ class BrowsertimeAndroid(PerftestAndroid, Browsertime):
 
     def __init__(self, app, binary, activity=None, intent=None, **kwargs):
         super(BrowsertimeAndroid, self).__init__(
-            app, binary, profile_class="firefox", **kwargs
+            app,
+            binary,
+            **kwargs,
         )
 
         self.config.update({"activity": activity, "intent": intent})
@@ -63,14 +62,21 @@ class BrowsertimeAndroid(PerftestAndroid, Browsertime):
             self._initialize_device()
 
             external_storage = self.device.shell_output("echo $EXTERNAL_STORAGE")
-            self._remote_test_root = os.path.join(
-                external_storage,
-                "Android",
-                "data",
-                self.config["binary"],
-                "files",
-                "test_root",
-            )
+            if int(self.device.shell_output("getprop ro.build.version.release")) == 14:
+                # Bug 1910111:
+                # The default external storage path doesn't seem to have the necessary
+                # permissions on the A55/Android 14 when pushing the condprof files.
+                # Instead we can make use of /sdcard/Download.
+                self._remote_test_root = os.path.join(external_storage, "Download")
+            else:
+                self._remote_test_root = os.path.join(
+                    external_storage,
+                    "Android",
+                    "data",
+                    self.config["binary"],
+                    "files",
+                    "test_root",
+                )
 
         return self._remote_test_root
 
@@ -83,16 +89,21 @@ class BrowsertimeAndroid(PerftestAndroid, Browsertime):
             "false",
             "--videoParams.addTimer",
             "false",
+            "--videoParams.androidVideoWaitTime",
+            "20000",
+            "--android.enabled",
+            "true",
         ]
 
-        if self.config["app"] == "chrome-m":
+        if self.config["app"] in CHROME_ANDROID_APPS:
             args_list.extend(
                 [
                     "--browser",
                     "chrome",
-                    "--android",
                 ]
             )
+            if self.config["app"] == "cstm-car-m":
+                args_list.extend(["--chrome.android.package", "org.chromium.chrome"])
         else:
             activity = self.config["activity"]
             if self.config["app"] == "fenix":
@@ -102,11 +113,18 @@ class BrowsertimeAndroid(PerftestAndroid, Browsertime):
                 )
                 activity = "mozilla.telemetry.glean.debug.GleanDebugActivity"
 
+            # all hardware we test on is android 11+
+            args_list.extend(
+                [
+                    '--firefox.geckodriverArgs="--android-storage"',
+                    '--firefox.geckodriverArgs="app"',
+                ]
+            )
+
             args_list.extend(
                 [
                     "--browser",
                     "firefox",
-                    "--android",
                     "--firefox.android.package",
                     self.config["binary"],
                     "--firefox.android.activity",
@@ -114,9 +132,9 @@ class BrowsertimeAndroid(PerftestAndroid, Browsertime):
                 ]
             )
 
-        # Setup power testing
-        if self.config["power_test"]:
-            args_list.extend(["--androidPower", "true"])
+        if self.config["app"] == "geckoview":
+            # This is needed as geckoview is crashing on shutdown and is throwing marionette errors similar to 1768889
+            args_list.extend(["--ignoreShutdownFailures", "true"])
 
         if self.config["app"] == "fenix":
             # See bug 1768889
@@ -146,9 +164,7 @@ class BrowsertimeAndroid(PerftestAndroid, Browsertime):
                 )
 
                 args_list.extend(["--firefox.android.intentArgument=-d"])
-                args_list.extend(
-                    ["--firefox.android.intentArgument", str("about:blank")]
-                )
+                args_list.extend(["--firefox.android.intentArgument", "about:blank"])
 
         return args_list
 
@@ -157,7 +173,12 @@ class BrowsertimeAndroid(PerftestAndroid, Browsertime):
             "--use-mock-keychain",
             "--no-default-browser-check",
             "--no-first-run",
+            "--no-experiments",
+            "--disable-site-isolation-trials",
         ]
+
+        # Disable finch experiments
+        chrome_args += ["--enable-benchmarking"]
 
         if test.get("playback", False):
             pb_args = [
@@ -183,18 +204,16 @@ class BrowsertimeAndroid(PerftestAndroid, Browsertime):
     def build_browser_profile(self):
         super(BrowsertimeAndroid, self).build_browser_profile()
 
-        # Merge in the Android profile.
-        path = os.path.join(self.profile_data_dir, "raptor-android")
-        LOG.info("Merging profile: {}".format(path))
-        self.profile.merge(path)
-        self.profile.set_preferences(
-            {"browser.tabs.remote.autostart": self.config["e10s"]}
-        )
+        if self.config["app"] in FIREFOX_ANDROID_APPS:
+            # Merge in the Android profile.
+            path = os.path.join(self.profile_data_dir, "raptor-android")
+            LOG.info(f"Merging profile: {path}")
+            self.profile.merge(path)
 
-        # There's no great way to have "after" advice in Python, so we do this
-        # in super and then again here since the profile merging re-introduces
-        # the "#MozRunner" delimiters.
-        self.remove_mozprofile_delimiters_from_profile()
+            # There's no great way to have "after" advice in Python, so we do this
+            # in super and then again here since the profile merging re-introduces
+            # the "#MozRunner" delimiters.
+            self.remove_mozprofile_delimiters_from_profile()
 
     def setup_adb_device(self):
         self._initialize_device()
@@ -212,53 +231,24 @@ class BrowsertimeAndroid(PerftestAndroid, Browsertime):
         if self.device.exists(self.geckodriver_profile):
             self.device.rm(self.geckodriver_profile, force=True, recursive=True)
 
-    def check_for_crashes(self):
-        super(BrowsertimeAndroid, self).check_for_crashes()
-
-        try:
-            dump_dir = tempfile.mkdtemp()
-            remote_dir = os.path.join(self.geckodriver_profile, "minidumps")
-            if not self.device.is_dir(remote_dir):
-                return
-            self.device.pull(remote_dir, dump_dir)
-            self.crashes += mozcrash.log_crashes(
-                LOG, dump_dir, self.config["symbols_path"]
-            )
-        except Exception as e:
-            LOG.error(
-                "Could not pull the crash data!",
-                exc_info=True,
-            )
-            raise e
-        finally:
-            try:
-                shutil.rmtree(dump_dir)
-            except Exception:
-                LOG.warning("unable to remove directory: %s" % dump_dir)
-
     def run_test_setup(self, test):
         super(BrowsertimeAndroid, self).run_test_setup(test)
 
         self.set_reverse_ports()
 
-        if self.playback:
-            self.turn_on_android_app_proxy()
-        self.remove_mozprofile_delimiters_from_profile()
+        if self.config["app"] in FIREFOX_ANDROID_APPS:
+            if self.playback:
+                self.turn_on_android_app_proxy()
+            self.remove_mozprofile_delimiters_from_profile()
 
     def run_tests(self, tests, test_names):
         self.setup_adb_device()
 
-        if self.config["app"] == "chrome-m":
+        if self.config["app"] in CHROME_ANDROID_APPS:
             # Make sure that chrome is enabled on the device
             self.device.shell_output("pm enable com.android.chrome")
 
-        try:
-            if self.config["power_test"]:
-                disable_charging(self.device)
-            return super(BrowsertimeAndroid, self).run_tests(tests, test_names)
-        finally:
-            if self.config["power_test"]:
-                enable_charging(self.device)
+        return super(BrowsertimeAndroid, self).run_tests(tests, test_names)
 
     def run_test_teardown(self, test):
         LOG.info("removing reverse socket connections")

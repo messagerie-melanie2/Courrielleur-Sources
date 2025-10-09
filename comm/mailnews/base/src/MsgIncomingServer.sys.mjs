@@ -85,16 +85,16 @@ function migrateIdentities(oldServerUri, newServerUri) {
  */
 function migrateSpamActions(oldServerUri, newServerUri) {
   for (const server of MailServices.accounts.allServers) {
-    const targetAccount = server.getCharValue("spamActionTargetAccount");
-    const targetFolder = server.getUnicharValue("spamActionTargetFolder");
+    const targetAccount = server.getStringValue("spamActionTargetAccount");
+    const targetFolder = server.getStringValue("spamActionTargetFolder");
     if (targetAccount.startsWith(oldServerUri)) {
-      server.setCharValue(
+      server.setStringValue(
         "spamActionTargetAccount",
         targetAccount.replace(oldServerUri, newServerUri)
       );
     }
     if (targetFolder.startsWith(oldServerUri)) {
-      server.setUnicharValue(
+      server.setStringValue(
         "spamActionTargetFolder",
         targetFolder.replace(oldServerUri, newServerUri)
       );
@@ -220,8 +220,8 @@ export class MsgIncomingServer {
   constructor() {
     // nsIMsgIncomingServer attributes that map directly to pref values.
     this._mapAttrsToPrefs([
-      ["Char", "type"],
-      ["Char", "clientid"],
+      ["String", "type"],
+      ["String", "clientid"],
       ["Int", "authMethod"],
       ["Int", "biffMinutes", "check_time"],
       ["Int", "maxMessageSize", "max_size"],
@@ -249,8 +249,6 @@ export class MsgIncomingServer {
     this.canHaveFilters = true;
     this.canBeDefaultServer = false;
     this.supportsDiskSpace = true;
-    this.canUndoDeleteOnServer = true;
-    this.sortOrder = 100000000;
 
     // @type {Map<string, number>} - The key is MsgId+Subject, the value is
     //   this._hdrIndex.
@@ -358,7 +356,7 @@ export class MsgIncomingServer {
   }
 
   get hostName() {
-    const hostname = this.getUnicharValue("hostname");
+    const hostname = this.getStringValue("hostname");
     if (hostname.includes(":")) {
       // Reformat the hostname if it contains a port number.
       this.hostName = hostname;
@@ -381,20 +379,20 @@ export class MsgIncomingServer {
     if (port) {
       this.port = Number(port);
     }
-    this.setUnicharValue(prefName, host);
+    this.setStringValue(prefName, host);
   }
 
   get username() {
-    return this.getUnicharValue("userName");
+    return this.getStringValue("userName");
   }
 
   set username(value) {
     const oldName = this.username;
     if (oldName && oldName != value) {
-      this.setUnicharValue("userName", value);
+      this.setStringValue("userName", value);
       this.onUserOrHostNameChanged(oldName, value, false);
     } else {
-      this.setUnicharValue("userName", value);
+      this.setStringValue("userName", value);
     }
   }
 
@@ -477,11 +475,11 @@ export class MsgIncomingServer {
   }
 
   get prettyName() {
-    return this.getUnicharValue("name") || this.constructedPrettyName;
+    return this.getStringValue("name") || this.constructedPrettyName;
   }
 
   set prettyName(value) {
-    this.setUnicharValue("name", value);
+    this.setStringValue("name", value);
     this.rootFolder.prettyName = value;
   }
 
@@ -527,9 +525,24 @@ export class MsgIncomingServer {
 
   get rootFolder() {
     if (!this._rootFolder) {
-      this._rootFolder = MailServices.folderLookup.getOrCreateFolderForURL(
-        this.serverURI
-      );
+      if (Services.prefs.getBoolPref("mail.panorama.enabled", false)) {
+        const core = Cc["@mozilla.org/mailnews/database-core;1"].getService(
+          Ci.nsIDatabaseCore
+        );
+        const folders = core.folders;
+
+        const root =
+          folders.getFolderByPath(this._key) ?? folders.insertRoot(this._key);
+        this._rootFolder = Cc[
+          "@mozilla.org/mail/folder;1?name=mailbox"
+        ].createInstance(Ci.nsIMsgFolder);
+        this._rootFolder.QueryInterface(Ci.nsIInitableWithFolder);
+        this._rootFolder.initWithFolder(root);
+      } else {
+        this._rootFolder = MailServices.folderLookup.getOrCreateFolderForURL(
+          this.serverURI
+        );
+      }
     }
     return this._rootFolder;
   }
@@ -540,10 +553,10 @@ export class MsgIncomingServer {
 
   get msgStore() {
     if (!this._msgStore) {
-      let contractId = this.getCharValue("storeContractID");
+      let contractId = this.getStringValue("storeContractID");
       if (!contractId) {
         contractId = "@mozilla.org/msgstore/berkeleystore;1";
-        this.setCharValue("storeContractID", contractId);
+        this.setStringValue("storeContractID", contractId);
       }
 
       // After someone starts using the pluggable store, we can no longer
@@ -606,8 +619,8 @@ export class MsgIncomingServer {
   }
 
   get spamSettings() {
-    if (!this.getCharValue("spamActionTargetAccount")) {
-      this.setCharValue("spamActionTargetAccount", this.serverURI);
+    if (!this.getStringValue("spamActionTargetAccount")) {
+      this.setStringValue("spamActionTargetAccount", this.serverURI);
     }
     if (!this._spamSettings) {
       this._spamSettings = Cc[
@@ -637,7 +650,7 @@ export class MsgIncomingServer {
       return false;
     }
     return MailServices.accounts.allServers.some(
-      server => server.getCharValue("deferred_to_account") == account.key
+      server => server.getStringValue("deferred_to_account") == account.key
     );
   }
 
@@ -708,24 +721,7 @@ export class MsgIncomingServer {
     return this.authMethod != Ci.nsMsgAuthMethod.OAuth2;
   }
 
-  getCharValue(prefName) {
-    try {
-      return this._prefs.getCharPref(prefName);
-    } catch (e) {
-      return this._defaultPrefs.getCharPref(prefName, "");
-    }
-  }
-
-  setCharValue(prefName, value) {
-    const defaultValue = this._defaultPrefs.getCharPref(prefName, "");
-    if (!value || value == defaultValue) {
-      this._prefs.clearUserPref(prefName);
-    } else {
-      this._prefs.setCharPref(prefName, value);
-    }
-  }
-
-  getUnicharValue(prefName) {
+  getStringValue(prefName) {
     try {
       return this._prefs.getStringPref(prefName);
     } catch (e) {
@@ -733,7 +729,7 @@ export class MsgIncomingServer {
     }
   }
 
-  setUnicharValue(prefName, value) {
+  setStringValue(prefName, value) {
     const defaultValue = this._defaultPrefs.getStringPref(prefName, "");
     if (!value || value == defaultValue) {
       this._prefs.clearUserPref(prefName);
@@ -793,7 +789,7 @@ export class MsgIncomingServer {
           relativeToKey: "ProfD",
         });
         return file;
-      } catch (e) {
+      } catch (exception) {
         return null;
       }
     }
@@ -1000,7 +996,7 @@ export class MsgIncomingServer {
   }
 
   removeFiles() {
-    if (this.getCharValue("deferred_to_account") || this.isDeferredTo) {
+    if (this.getStringValue("deferred_to_account") || this.isDeferredTo) {
       throw Components.Exception(
         "Should not remove files for a deferred account",
         Cr.NS_ERROR_FAILURE

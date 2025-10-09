@@ -58,13 +58,13 @@ pub struct DisplayItemCache {
 
 impl DisplayItemCache {
     fn add_item(&mut self, key: ItemKey, item: CachedDisplayItem) {
-        let mut entry = &mut self.entries[key as usize];
+        let entry = &mut self.entries[key as usize];
         entry.items.push(item);
         entry.occupied = true;
     }
 
     fn clear_entry(&mut self, key: ItemKey) {
-        let mut entry = &mut self.entries[key as usize];
+        let entry = &mut self.entries[key as usize];
         entry.items.clear();
         entry.occupied = false;
     }
@@ -95,12 +95,7 @@ impl DisplayItemCache {
 
         let mut iter = display_list.cache_data_iter();
         let mut current_key: Option<ItemKey> = None;
-        loop {
-            let item = match iter.next() {
-                Some(item) => item,
-                None => break,
-            };
-
+        while let Some(item) = iter.next() {
             if let DisplayItem::RetainedItems(key) = item.item() {
                 current_key = Some(*key);
                 self.clear_entry(*key);

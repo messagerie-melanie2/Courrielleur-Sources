@@ -76,85 +76,6 @@ function ArraySome(callbackfn /*, thisArg*/) {
 // Inlining this enables inlining of the callback function.
 SetIsInlinableLargeFunction(ArraySome);
 
-// ES2023 draft rev cb4224156c54156f30c18c50784c1b0148ebfae5
-// 23.1.3.30 Array.prototype.sort ( comparefn )
-function ArraySortCompare(comparefn) {
-  return function(x, y) {
-    // Steps 4.a-c.
-    if (x === undefined) {
-      if (y === undefined) {
-        return 0;
-      }
-      return 1;
-    }
-    if (y === undefined) {
-      return -1;
-    }
-
-    // Step 4.d.i.
-    var v = ToNumber(callContentFunction(comparefn, undefined, x, y));
-
-    // Steps 4.d.ii-iii.
-    return v !== v ? 0 : v;
-  };
-}
-
-// ES2023 draft rev cb4224156c54156f30c18c50784c1b0148ebfae5
-// 23.1.3.30 Array.prototype.sort ( comparefn )
-function ArraySort(comparefn) {
-  // Step 1.
-  if (comparefn !== undefined) {
-    if (!IsCallable(comparefn)) {
-      ThrowTypeError(JSMSG_BAD_SORT_ARG);
-    }
-  }
-
-  // Step 2.
-  var O = ToObject(this);
-
-  // First try to sort the array in native code, if that fails, indicated by
-  // returning |false| from ArrayNativeSort, sort it in self-hosted code.
-  if (callFunction(ArrayNativeSort, O, comparefn)) {
-    return O;
-  }
-
-  // Step 3.
-  var len = ToLength(O.length);
-
-  // Arrays with less than two elements remain unchanged when sorted.
-  if (len <= 1) {
-    return O;
-  }
-
-  // Step 4.
-  var wrappedCompareFn = ArraySortCompare(comparefn);
-
-  // Step 5.
-  // To save effort we will do all of our work on a dense list, then create
-  // holes at the end.
-  var denseList = [];
-  var denseLen = 0;
-
-  for (var i = 0; i < len; i++) {
-    if (i in O) {
-      DefineDataProperty(denseList, denseLen++, O[i]);
-    }
-  }
-
-  if (denseLen < 1) {
-    return O;
-  }
-
-  var sorted = MergeSort(denseList, denseLen, wrappedCompareFn);
-
-  assert(IsPackedArray(sorted), "sorted is a packed array");
-  assert(sorted.length === denseLen, "sorted array has the correct length");
-
-  MoveHoles(O, len, sorted, denseLen);
-
-  return O;
-}
-
 /* ES5 15.4.4.18. */
 function ArrayForEach(callbackfn /*, thisArg*/) {
   /* Step 1. */
@@ -210,7 +131,7 @@ function ArrayMap(callbackfn /*, thisArg*/) {
   var T = ArgumentsLength() > 1 ? GetArgument(1) : undefined;
 
   /* Steps 5. */
-  var A = ArraySpeciesCreate(O, len);
+  var A = CanOptimizeArraySpecies(O) ? std_Array(len) : ArraySpeciesCreate(O, len);
 
   /* Steps 6-7. */
   /* Steps 7.a (implicit), and 7.d. */
@@ -249,7 +170,7 @@ function ArrayFilter(callbackfn /*, thisArg*/) {
   var T = ArgumentsLength() > 1 ? GetArgument(1) : undefined;
 
   /* Step 5. */
-  var A = ArraySpeciesCreate(O, 0);
+  var A = CanOptimizeArraySpecies(O) ? [] : ArraySpeciesCreate(O, 0);
 
   /* Steps 6-8. */
   /* Steps 8.a (implicit), and 8.d. */
@@ -270,144 +191,6 @@ function ArrayFilter(callbackfn /*, thisArg*/) {
 }
 // Inlining this enables inlining of the callback function.
 SetIsInlinableLargeFunction(ArrayFilter);
-
-#ifdef NIGHTLY_BUILD
-// Array Grouping proposal
-//
-// Array.prototype.group
-// https://tc39.es/proposal-array-grouping/#sec-array.prototype.group
-function ArrayGroup(callbackfn /*, thisArg*/) {
-  /* Step 1. Let O be ? ToObject(this value). */
-  var O = ToObject(this);
-
-  /* Step 2. Let len be ? LengthOfArrayLike(O). */
-  var len = ToLength(O.length);
-
-  /* Step 3. If IsCallable(callbackfn) is false, throw a TypeError exception. */
-  if (!IsCallable(callbackfn)) {
-    ThrowTypeError(JSMSG_NOT_FUNCTION, DecompileArg(0, callbackfn));
-  }
-
-  /* Step 5. Let groups be a new empty List. */
-  // Not applicable in our implementation.
-
-  /* Step 7. Let obj be ! OrdinaryObjectCreate(null). */
-  var object = std_Object_create(null);
-
-  var thisArg = ArgumentsLength() > 1 ? GetArgument(1) : undefined;
-
-  /* Steps 4, 6. */
-  for (var k = 0; k < len; k++) {
-    /* Skip Step 6.a. Let Pk be ! ToString(𝔽(k)).
-     *
-     * k is coerced into a string through the property access. */
-
-    /* Step 6.b. Let kValue be ? Get(O, Pk). */
-    var kValue = O[k];
-
-    /* Step 6.c.
-     * Let propertyKey be ? ToPropertyKey(
-     *   ? Call(callbackfn, thisArg, « kValue, 𝔽(k), O »)).
-     */
-    var propertyKey = callContentFunction(callbackfn, thisArg, kValue, k, O);
-
-    // Split the step to ensure single evaluation in the TO_PROPERTY_KEY macro.
-    propertyKey = TO_PROPERTY_KEY(propertyKey);
-
-    /* Step 6.d. Perform ! AddValueToKeyedGroup(groups, propertyKey, kValue). */
-    var elements = object[propertyKey];
-    if (elements === undefined) {
-      DefineDataProperty(object, propertyKey, [kValue]);
-    } else {
-      DefineDataProperty(elements, elements.length, kValue);
-    }
-  }
-
-  /* Step 8. For each Record { [[Key]], [[Elements]] } g of groups, do
-   *  a. Let elements be ! CreateArrayFromList(g.[[Elements]]).
-   *  b. Perform ! CreateDataPropertyOrThrow(obj, g.[[Key]], elements).
-   */
-  // Not applicable in our implementation.
-
-  /* Step 9. Return obj. */
-  return object;
-}
-
-// Array Grouping proposal
-//
-// Array.prototype.groupToMap
-// https://tc39.es/proposal-array-grouping/#sec-array.prototype.grouptomap
-function ArrayGroupToMap(callbackfn /*, thisArg*/) {
-  /* Step 1. Let O be ? ToObject(this value). */
-  var O = ToObject(this);
-
-  /* Step 2. Let len be ? LengthOfArrayLike(O). */
-  var len = ToLength(O.length);
-
-  /* Step 3.
-   * If IsCallable(callbackfn) is false, throw a TypeError exception.
-   */
-  if (!IsCallable(callbackfn)) {
-    ThrowTypeError(JSMSG_NOT_FUNCTION, DecompileArg(0, callbackfn));
-  }
-
-  /* Skipping Step 5. Let groups be a new empty List.
-   *
-   * Intermediate object isn't necessary as we have direct access
-   * to the map constructor and set/get methods.
-   */
-
-  /* Step 7. Let map be ! Construct(%Map%). */
-  var C = GetBuiltinConstructor("Map");
-  var map = new C();
-
-  var thisArg = ArgumentsLength() > 1 ? GetArgument(1) : undefined;
-
-  /* Combine Step 6. and Step 8.
-   *
-   * We have direct access to the map constructor and set/get methods.
-   * We can treat these two loops as one, as there isn't a risk that user
-   * polyfilling will impact the implementation.
-   */
-  for (var k = 0; k < len; k++) {
-    /* Skipping Step 6.a. Let Pk be ! ToString(𝔽(k)).
-     *
-     * Value is coerced to String by property access in step 6.b.
-     */
-
-    /* Step 6.b. Let kValue be ? Get(O, Pk). */
-    var kValue = O[k];
-
-    /* Step 6.c.
-     * Let key be ? Call(callbackfn, thisArg, « kValue, 𝔽(k), O »).
-     */
-    var key = callContentFunction(callbackfn, thisArg, kValue, k, O);
-
-    /* Skipping Step 6.d. If key is -0𝔽, set key to +0𝔽.
-     *
-     * This step is performed by std_Map_set.
-     */
-
-    /* Step 8.c. Append entry as the last element of map.[[MapData]].
-     *
-     * We are not using an intermediate object to store the values.
-     * So, this step applies it directly to the map object. Skips steps
-     * 6.e (Perform ! AddValueToKeyedGroup(groups, key, kValue))
-     * and 8.a-b as a result.
-     */
-    var elements = callFunction(std_Map_get, map, key);
-    if (elements === undefined) {
-      callFunction(std_Map_set, map, key, [kValue]);
-    } else {
-      DefineDataProperty(elements, elements.length, kValue);
-    }
-  }
-
-  /* Step 9. Return map. */
-  return map;
-}
-
-#endif
 
 /* ES5 15.4.4.21. */
 function ArrayReduce(callbackfn /*, initialValue*/) {
@@ -737,7 +520,7 @@ function CreateArrayIterator(obj, kind) {
   var iterator = NewArrayIterator();
   UnsafeSetReservedSlot(iterator, ITERATOR_SLOT_TARGET, iteratedObject);
   UnsafeSetReservedSlot(iterator, ITERATOR_SLOT_NEXT_INDEX, 0);
-  UnsafeSetReservedSlot(iterator, ITERATOR_SLOT_ITEM_KIND, kind);
+  UnsafeSetReservedSlot(iterator, ARRAY_ITERATOR_SLOT_ITEM_KIND, kind);
   return iterator;
 }
 
@@ -769,7 +552,7 @@ function ArrayIteratorNext() {
   var index = UnsafeGetReservedSlot(obj, ITERATOR_SLOT_NEXT_INDEX);
 
   // Step 7.
-  var itemKind = UnsafeGetInt32FromReservedSlot(obj, ITERATOR_SLOT_ITEM_KIND);
+  var itemKind = UnsafeGetInt32FromReservedSlot(obj, ARRAY_ITERATOR_SLOT_ITEM_KIND);
 
   // Step 8-9.
   var len;
@@ -841,7 +624,7 @@ function ArrayFromAsync(asyncItems, mapfn = undefined, thisArg = undefined) {
 
   // Step 2. Let promiseCapability be ! NewPromiseCapability(%Promise%).
   // Step 3. Let fromAsyncClosure be a new Abstract Closure with no parameters that captures C, mapfn, and thisArg and performs the following steps when called:
-  let fromAsyncClosure = async () => {
+  var fromAsyncClosure = async () => {
     // Step 3.a. If mapfn is undefined, let mapping be false.
     // Step 3.b. Else,
     //     Step 3.b.i. If IsCallable(mapfn) is false, throw a TypeError exception.
@@ -852,12 +635,12 @@ function ArrayFromAsync(asyncItems, mapfn = undefined, thisArg = undefined) {
     }
 
     // Step 3.c. Let usingAsyncIterator be ? GetMethod(asyncItems, @@asyncIterator).
-    let usingAsyncIterator = asyncItems[GetBuiltinSymbol("asyncIterator")];
+    var usingAsyncIterator = asyncItems[GetBuiltinSymbol("asyncIterator")];
     if (usingAsyncIterator === null) {
       usingAsyncIterator = undefined;
     }
 
-    let usingSyncIterator = undefined;
+    var usingSyncIterator = undefined;
     if (usingAsyncIterator !== undefined) {
       if (!IsCallable(usingAsyncIterator)) {
         ThrowTypeError(JSMSG_NOT_ITERABLE, ToSource(asyncItems));
@@ -898,14 +681,13 @@ function ArrayFromAsync(asyncItems, mapfn = undefined, thisArg = undefined) {
       //     Step 3.e.i. Let A be ? Construct(C).
       // Step 3.f. Else,
       //     Step 3.f.i. Let A be ! ArrayCreate(0).
-      let A = IsConstructor(C) ? constructContentFunction(C, C) : [];
-
+      var A = IsConstructor(C) ? constructContentFunction(C, C) : [];
 
       // Step 3.j.i. Let k be 0.
-      let k = 0;
+      var k = 0;
 
       // Step 3.j.ii. Repeat,
-      for await (let nextValue of allowContentIterWith(
+      for await (var nextValue of allowContentIterWith(
         asyncItems,
         usingAsyncIterator,
         usingSyncIterator
@@ -923,7 +705,7 @@ function ArrayFromAsync(asyncItems, mapfn = undefined, thisArg = undefined) {
         // Step 3.j.ii.5. Let nextValue be ? IteratorValue(next). (Implicit through the for-await loop).
 
         // Step 3.j.ii.7. Else, let mappedValue be nextValue. (Reordered)
-        let mappedValue = nextValue;
+        var mappedValue = nextValue;
 
         // Step 3.j.ii.6. If mapping is true, then
         if (mapping) {
@@ -958,32 +740,32 @@ function ArrayFromAsync(asyncItems, mapfn = undefined, thisArg = undefined) {
 
     // Step 3.k.i. NOTE: asyncItems is neither an AsyncIterable nor an Iterable so assume it is an array-like object.
     // Step 3.k.ii. Let arrayLike be ! ToObject(asyncItems).
-    let arrayLike = ToObject(asyncItems);
+    var arrayLike = ToObject(asyncItems);
 
     // Step 3.k.iii. Let len be ? LengthOfArrayLike(arrayLike).
-    let len = ToLength(arrayLike.length);
+    var len = ToLength(arrayLike.length);
 
     // Step 3.k.iv. If IsConstructor(C) is true, then
     //     Step 3.k.iv.1. Let A be ? Construct(C, « 𝔽(len) »).
     // Step 3.k.v. Else,
     //     Step 3.k.v.1. Let A be ? ArrayCreate(len).
-    let A = IsConstructor(C) ? constructContentFunction(C, C, len) : std_Array(len);
+    var A = IsConstructor(C) ? constructContentFunction(C, C, len) : std_Array(len);
 
     // Step 3.k.vi. Let k be 0.
-    let k = 0;
+    var k = 0;
 
     // Step 3.k.vii. Repeat, while k < len,
     while (k < len) {
       // Step 3.k.vii.1. Let Pk be ! ToString(𝔽(k)).
       // Step 3.k.vii.2. Let kValue be ? Get(arrayLike, Pk).
       // Step 3.k.vii.3. Let kValue be ? Await(kValue).
-      let kValue = await arrayLike[k];
+      var kValue = await arrayLike[k];
 
       // Step 3.k.vii.4. If mapping is true, then
       //     Step 3.k.vii.4.a. Let mappedValue be ? Call(mapfn, thisArg, « kValue, 𝔽(k) »).
       //     Step 3.k.vii.4.b. Let mappedValue be ? Await(mappedValue).
       // Step 3.k.vii.5. Else, let mappedValue be kValue.
-      let mappedValue = mapping
+      var mappedValue = mapping
         ? await callContentFunction(mapfn, thisArg, kValue, k)
         : kValue;
 
@@ -1138,7 +920,7 @@ function ArrayToLocaleString(locales, options) {
   if (IsNullOrUndefined(firstElement)) {
     R = "";
   } else {
-#if JS_HAS_INTL_API
+    #if JS_HAS_INTL_API
     R = ToString(
       callContentFunction(
         firstElement.toLocaleString,
@@ -1147,11 +929,11 @@ function ArrayToLocaleString(locales, options) {
         options
       )
     );
-#else
+    #else
     R = ToString(
       callContentFunction(firstElement.toLocaleString, firstElement)
     );
-#endif
+    #endif
   }
 
   // Step 3 (reordered).
@@ -1166,7 +948,7 @@ function ArrayToLocaleString(locales, options) {
     // Steps 9.a, 9.c-e.
     R += separator;
     if (!IsNullOrUndefined(nextElement)) {
-#if JS_HAS_INTL_API
+      #if JS_HAS_INTL_API
       R += ToString(
         callContentFunction(
           nextElement.toLocaleString,
@@ -1175,11 +957,11 @@ function ArrayToLocaleString(locales, options) {
           options
         )
       );
-#else
+      #else
       R += ToString(
         callContentFunction(nextElement.toLocaleString, nextElement)
       );
-#endif
+      #endif
     }
   }
 
@@ -1212,7 +994,8 @@ function ArraySpeciesCreate(originalArray, length) {
   }
 
   // Step 5.a.
-  var C = originalArray.constructor;
+  var originalConstructor = originalArray.constructor;
+  var C = originalConstructor;
 
   // Step 5.b.
   if (IsConstructor(C) && IsCrossRealmArrayConstructor(C)) {
@@ -1233,6 +1016,7 @@ function ArraySpeciesCreate(originalArray, length) {
     if (C === null) {
       return std_Array(length);
     }
+
   }
 
   // Step 6.
@@ -1267,7 +1051,7 @@ function ArrayFlatMap(mapperFunction /*, thisArg*/) {
   var T = ArgumentsLength() > 1 ? GetArgument(1) : undefined;
 
   // Step 5.
-  var A = ArraySpeciesCreate(O, 0);
+  var A = CanOptimizeArraySpecies(O) ? [] : ArraySpeciesCreate(O, 0);
 
   // Step 6.
   FlattenIntoArray(A, O, sourceLen, 0, 1, mapperFunction, T);
@@ -1294,7 +1078,7 @@ function ArrayFlat(/* depth */) {
   }
 
   // Step 5.
-  var A = ArraySpeciesCreate(O, 0);
+  var A = CanOptimizeArraySpecies(O) ? [] : ArraySpeciesCreate(O, 0);
 
   // Step 6.
   FlattenIntoArray(A, O, sourceLen, 0, depthNum);
@@ -1473,22 +1257,8 @@ function ArrayToSorted(comparefn) {
     return items;
   }
 
-  // First try to sort the array in native code, if that fails, indicated by
-  // returning |false| from ArrayNativeSort, sort it in self-hosted code.
-  if (callFunction(ArrayNativeSort, items, comparefn)) {
-    return items;
-  }
-
-  // Step 5.
-  var wrappedCompareFn = ArraySortCompare(comparefn);
-
-  // Steps 6-9.
-  var sorted = MergeSort(items, len, wrappedCompareFn);
-
-  assert(IsPackedArray(sorted), "sorted is a packed array");
-  assert(sorted.length === len, "sorted array has the correct length");
-
-  return sorted;
+  // Steps 5-9.
+  return callFunction(std_Array_sort, items, comparefn);
 }
 
 // https://github.com/tc39/proposal-array-find-from-last

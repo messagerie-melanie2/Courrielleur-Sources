@@ -7,7 +7,7 @@
 
 #include <limits>
 #include "mozilla/glean/fog_ffi_generated.h"
-#include "mozilla/glean/GleanMetrics.h"
+#include "mozilla/glean/ProcesstoolsMetrics.h"
 #include "mozilla/dom/BrowsingContextGroup.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/ContentParent.h"
@@ -17,6 +17,8 @@
 #include "mozilla/gfx/GPUChild.h"
 #include "mozilla/gfx/GPUParent.h"
 #include "mozilla/gfx/GPUProcessManager.h"
+#include "mozilla/glean/bindings/jog/JOG.h"
+#include "mozilla/glean/GleanMetrics.h"
 #include "mozilla/Hal.h"
 #include "mozilla/MozPromise.h"
 #include "mozilla/net/SocketProcessChild.h"
@@ -36,6 +38,10 @@
 #include "nsIXULRuntime.h"
 #include "nsTArray.h"
 #include "nsThreadUtils.h"
+
+#if defined(__APPLE__) && defined(__aarch64__)
+#  define HAS_PROCESS_ENERGY
+#endif
 
 using mozilla::dom::ContentParent;
 using mozilla::gfx::GPUChild;
@@ -75,6 +81,29 @@ struct ProcessingTimeMarker {
     return schema;
   }
 };
+
+#ifdef HAS_PROCESS_ENERGY
+struct ProcessEnergyMarker {
+  static constexpr Span<const char> MarkerTypeName() {
+    return MakeStringSpan("ProcessEnergy");
+  }
+  static void StreamJSONMarkerData(baseprofiler::SpliceableJSONWriter& aWriter,
+                                   int64_t aUWh,
+                                   const ProfilerString8View& aType) {
+    aWriter.IntProperty("energy", aUWh);
+    aWriter.StringProperty("label", aType);
+  }
+  static MarkerSchema MarkerTypeDisplay() {
+    using MS = MarkerSchema;
+    MS schema{MS::Location::MarkerChart, MS::Location::MarkerTable};
+    schema.AddKeyLabelFormat("energy", "Energy (µWh)", MS::Format::Integer);
+    schema.SetTooltipLabel("{marker.name} - {marker.data.label}");
+    schema.SetTableLabel(
+        "{marker.name} - {marker.data.label}: {marker.data.energy}µWh");
+    return schema;
+  }
+};
+#endif
 
 }  // namespace geckoprofiler::markers
 
@@ -206,23 +235,17 @@ void GetTrackerType(nsAutoCString& aTrackerType) {
        nsIClassifiedChannel::CLASSIFIED_TRACKING_AD |
        nsIClassifiedChannel::CLASSIFIED_TRACKING_ANALYTICS |
        nsIClassifiedChannel::CLASSIFIED_TRACKING_SOCIAL);
-  AutoTArray<RefPtr<BrowsingContextGroup>, 5> bcGroups;
-  BrowsingContextGroup::GetAllGroups(bcGroups);
-  for (auto& bcGroup : bcGroups) {
-    AutoTArray<DocGroup*, 5> docGroups;
-    bcGroup->GetDocGroups(docGroups);
-    for (auto* docGroup : docGroups) {
-      for (Document* doc : *docGroup) {
-        nsCOMPtr<nsIClassifiedChannel> classifiedChannel =
-            do_QueryInterface(doc->GetChannel());
-        if (classifiedChannel) {
-          uint32_t classificationFlags =
-              classifiedChannel->GetThirdPartyClassificationFlags();
-          trackingFlags &= classificationFlags;
-          if (!trackingFlags) {
-            return;
-          }
-        }
+  AutoTArray<RefPtr<Document>, 32> allDocuments;
+  Document::GetAllInProcessDocuments(allDocuments);
+  for (auto& doc : allDocuments) {
+    nsCOMPtr<nsIClassifiedChannel> classifiedChannel =
+        do_QueryInterface(doc->GetChannel());
+    if (classifiedChannel) {
+      uint32_t classificationFlags =
+          classifiedChannel->GetThirdPartyClassificationFlags();
+      trackingFlags &= classificationFlags;
+      if (!trackingFlags) {
+        return;
       }
     }
   }
@@ -248,8 +271,26 @@ void GetTrackerType(nsAutoCString& aTrackerType) {
   }
 }
 
+#ifdef HAS_PROCESS_ENERGY
+static int64_t GetTaskEnergy() {
+  task_power_info_v2_data_t task_power_info;
+  mach_msg_type_number_t count = TASK_POWER_INFO_V2_COUNT;
+  kern_return_t kr = task_info(mach_task_self(), TASK_POWER_INFO_V2,
+                               (task_info_t)&task_power_info, &count);
+  if (kr != KERN_SUCCESS) {
+    return 0;
+  }
+
+  // task_energy is in nanojoules. We want microwatt-hours.
+  return task_power_info.task_energy / 3.6 / 1e6;
+}
+#endif
+
 void RecordPowerMetrics() {
   static uint64_t previousCpuTime = 0, previousGpuTime = 0;
+#ifdef HAS_PROCESS_ENERGY
+  static int64_t previousProcessEnergy = 0;
+#endif
 
   uint64_t cpuTime, newCpuTime = 0;
   if (NS_SUCCEEDED(GetCpuTimeSinceProcessStartInMs(&cpuTime)) &&
@@ -265,7 +306,16 @@ void RecordPowerMetrics() {
     newGpuTime = gpuTime - previousGpuTime;
   }
 
-  if (!newCpuTime && !newGpuTime) {
+#ifdef HAS_PROCESS_ENERGY
+  int64_t processEnergy = GetTaskEnergy();
+  int64_t newProcessEnergy = processEnergy - previousProcessEnergy;
+#endif
+
+  if (!newCpuTime && !newGpuTime
+#ifdef HAS_PROCESS_ENERGY
+      && newProcessEnergy <= 0
+#endif
+  ) {
     // Nothing to record.
     return;
   }
@@ -274,9 +324,9 @@ void RecordPowerMetrics() {
   nsAutoCString type(XRE_GetProcessTypeString());
   nsAutoCString trackerType;
   if (XRE_IsContentProcess()) {
-    auto* cc = dom::ContentChild::GetSingleton();
+    auto* cc = mozilla::dom::ContentChild::GetSingleton();
     if (cc) {
-      type.Assign(dom::RemoteTypePrefix(cc->GetRemoteType()));
+      type.Assign(mozilla::dom::RemoteTypePrefix(cc->GetRemoteType()));
       if (StringBeginsWith(type, WEB_REMOTE_TYPE)) {
         type.AssignLiteral("web");
         switch (cc->GetProcessPriority()) {
@@ -292,8 +342,12 @@ void RecordPowerMetrics() {
             type.AppendLiteral(".background-perceivable");
             gThisProcessType = ProcessType::eUnknown;
             break;
-          default:
+          case hal::PROCESS_PRIORITY_PREALLOC:
+            type.Assign("prealloc");
             gThisProcessType = ProcessType::eUnknown;
+            break;
+          default:
+            MOZ_ASSERT_UNREACHABLE("Unsuppored process type for cpu time");
             break;
         }
       }
@@ -333,12 +387,24 @@ void RecordPowerMetrics() {
     int32_t nNewCpuTime = int32_t(newCpuTime);
     if (newCpuTime < std::numeric_limits<int32_t>::max()) {
       power::total_cpu_time_ms.Add(nNewCpuTime);
+      // GLAM EXPERIMENT
+      // This metric is temporary, disabled by default, and will be enabled only
+      // for the purpose of experimenting with client-side sampling of data for
+      // GLAM use. See Bug 1947604 for more information.
+      glam_experiment::total_cpu_time_ms.Add(nNewCpuTime);
+      // END GLAM EXPERIMENT
       power::cpu_time_per_process_type_ms.Get(type).Add(nNewCpuTime);
       if (!trackerType.IsEmpty()) {
         power::cpu_time_per_tracker_type_ms.Get(trackerType).Add(nNewCpuTime);
       }
     } else {
       power::cpu_time_bogus_values.Add(1);
+      // GLAM EXPERIMENT
+      // This metric is temporary, disabled by default, and will be enabled only
+      // for the purpose of experimenting with client-side sampling of data for
+      // GLAM use. See Bug 1947604 for more information.
+      glam_experiment::cpu_time_bogus_values.Add(1);
+      // END GLAM EXPERIMENT
     }
     PROFILER_MARKER("Process CPU Time", OTHER, {}, ProcessingTimeMarker,
                     nNewCpuTime, type, trackerType);
@@ -357,6 +423,15 @@ void RecordPowerMetrics() {
                     nNewGpuTime, type, trackerType);
     previousGpuTime += newGpuTime;
   }
+
+#ifdef HAS_PROCESS_ENERGY
+  if (newProcessEnergy) {
+    power::energy_per_process_type.Get(type).Add(newProcessEnergy);
+    PROFILER_MARKER("Process Energy", OTHER, {}, ProcessEnergyMarker,
+                    newProcessEnergy, type);
+    previousProcessEnergy += newProcessEnergy;
+  }
+#endif
 
   profiler_record_wakeup_count(type);
 }
@@ -413,7 +488,7 @@ void FlushAllChildData(
     }
   }
 
-  if (net::SocketProcessParent* socketParent =
+  if (RefPtr<net::SocketProcessParent> socketParent =
           net::SocketProcessParent::GetSingleton()) {
     promises.EmplaceBack(socketParent->SendFlushFOGData());
   }
@@ -527,7 +602,7 @@ RefPtr<GenericPromise> FlushAndUseFOGData() {
 }
 
 void TestTriggerMetrics(uint32_t aProcessType,
-                        const RefPtr<dom::Promise>& promise) {
+                        const RefPtr<mozilla::dom::Promise>& promise) {
   switch (aProcessType) {
     case nsIXULRuntime::PROCESS_TYPE_GMPLUGIN: {
       RefPtr<mozilla::gmp::GeckoMediaPluginServiceParent> gmps(
@@ -538,7 +613,7 @@ void TestTriggerMetrics(uint32_t aProcessType,
           [promise]() { promise->MaybeRejectWithUndefined(); });
     } break;
     case nsIXULRuntime::PROCESS_TYPE_GPU:
-      gfx::GPUProcessManager::Get()->TestTriggerMetrics()->Then(
+      mozilla::gfx::GPUProcessManager::Get()->TestTriggerMetrics()->Then(
           GetCurrentSerialEventTarget(), __func__,
           [promise]() { promise->MaybeResolveWithUndefined(); },
           [promise]() { promise->MaybeRejectWithUndefined(); });
@@ -549,14 +624,14 @@ void TestTriggerMetrics(uint32_t aProcessType,
           [promise]() { promise->MaybeResolveWithUndefined(); },
           [promise]() { promise->MaybeRejectWithUndefined(); });
       break;
-    case nsIXULRuntime::PROCESS_TYPE_SOCKET:
-      Unused << net::SocketProcessParent::GetSingleton()
-                    ->SendTestTriggerMetrics()
-                    ->Then(
-                        GetCurrentSerialEventTarget(), __func__,
-                        [promise]() { promise->MaybeResolveWithUndefined(); },
-                        [promise]() { promise->MaybeRejectWithUndefined(); });
-      break;
+    case nsIXULRuntime::PROCESS_TYPE_SOCKET: {
+      RefPtr<net::SocketProcessParent> socketParent(
+          net::SocketProcessParent::GetSingleton());
+      Unused << socketParent->SendTestTriggerMetrics()->Then(
+          GetCurrentSerialEventTarget(), __func__,
+          [promise]() { promise->MaybeResolveWithUndefined(); },
+          [promise]() { promise->MaybeRejectWithUndefined(); });
+    } break;
     case nsIXULRuntime::PROCESS_TYPE_UTILITY:
       Unused << ipc::UtilityProcessManager::GetSingleton()
                     ->GetProcessParent(ipc::SandboxingKind::GENERIC_UTILITY)

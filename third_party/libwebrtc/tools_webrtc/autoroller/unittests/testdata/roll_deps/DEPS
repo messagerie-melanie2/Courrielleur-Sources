@@ -3,6 +3,7 @@
 vars = {
   'chromium_git': 'https://chromium.googlesource.com',
   'chromium_revision': '1b9c098a08e40114e44b6c1ec33ddf95c40b901d',
+  'fuchsia_version': 'version:10.20221201.3.1',
 }
 
 deps = {
@@ -29,6 +30,20 @@ deps = {
   # Script expects to find these markers.
   # === ANDROID_DEPS Generated Code Start ===
   # === ANDROID_DEPS Generated Code End ===
+
+  # Entry that uses GCS
+  'src/third_party/js_code_coverage': {
+    'dep_type': 'gcs',
+    'bucket': 'chromium-nodejs',
+    'objects': [
+      {
+        'object_name': 'js_code_coverage/d538975c93eefc7bafd599b50f867e90c1ef17f3',
+        'sha256sum': '646bb00ced0a930b2eb1e4dbcfac18ebbb8f889bb80599e0254d9d6505427914',
+        'size_bytes': 1469185,
+        'generation': 1657780123604338,
+      },
+    ],
+  },
 }
 
 deps_os = {

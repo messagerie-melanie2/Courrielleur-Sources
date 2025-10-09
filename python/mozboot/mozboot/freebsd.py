@@ -18,7 +18,6 @@ class FreeBSDBootstrapper(BaseBootstrapper):
         self.packages = [
             "gmake",
             "gtar",
-            "m4",
             "npm",
             "pkgconf",
             "py%d%d-sqlite3" % sys.version_info[0:2],
@@ -27,7 +26,6 @@ class FreeBSDBootstrapper(BaseBootstrapper):
         ]
 
         self.browser_packages = [
-            "dbus-glib",
             "libXt",
             "nasm",
             "pulseaudio",

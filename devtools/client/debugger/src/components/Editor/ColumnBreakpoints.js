@@ -2,56 +2,150 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
-import React, { Component } from "react";
-import PropTypes from "prop-types";
+import { Component } from "devtools/client/shared/vendor/react";
+import PropTypes from "devtools/client/shared/vendor/react-prop-types";
 
-import ColumnBreakpoint from "./ColumnBreakpoint";
+const classnames = require("resource://devtools/client/shared/classnames.js");
 
 import {
   getSelectedSource,
   visibleColumnBreakpoints,
-  getContext,
   isSourceBlackBoxed,
-} from "../../selectors";
-import { connect } from "../../utils/connect";
-import { makeBreakpointId } from "../../utils/breakpoint";
-import { breakpointItemActions } from "./menus/breakpoints";
+} from "../../selectors/index";
+import actions from "../../actions/index";
+import { markerTypes } from "../../constants";
+import { connect } from "devtools/client/shared/vendor/react-redux";
 
-// eslint-disable-next-line max-len
+const breakpointButton = document.createElement("button");
+const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+svg.setAttribute("viewBox", "0 0 11 13");
+svg.setAttribute("width", 11);
+svg.setAttribute("height", 13);
+
+const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+path.setAttributeNS(
+  null,
+  "d",
+  "M5.07.5H1.5c-.54 0-1 .46-1 1v10c0 .54.46 1 1 1h3.57c.58 0 1.15-.26 1.53-.7l3.7-5.3-3.7-5.3C6.22.76 5.65.5 5.07.5z"
+);
+
+svg.appendChild(path);
+breakpointButton.appendChild(svg);
 
 class ColumnBreakpoints extends Component {
   static get propTypes() {
     return {
-      breakpointActions: PropTypes.object.isRequired,
-      columnBreakpoints: PropTypes.array.isRequired,
-      cx: PropTypes.object.isRequired,
+      columnBreakpoints: PropTypes.array,
       editor: PropTypes.object.isRequired,
       selectedSource: PropTypes.object,
+      addBreakpoint: PropTypes.func,
+      removeBreakpoint: PropTypes.func,
+      setSkipPausing: PropTypes.func,
+      toggleDisabledBreakpoint: PropTypes.func,
+      showEditorCreateBreakpointContextMenu: PropTypes.func,
+      showEditorEditBreakpointContextMenu: PropTypes.func,
     };
   }
 
-  render() {
-    const { cx, editor, columnBreakpoints, selectedSource, breakpointActions } =
-      this.props;
+  componentDidUpdate() {
+    const { selectedSource, columnBreakpoints, editor } = this.props;
 
-    if (!selectedSource || columnBreakpoints.length === 0) {
-      return null;
+    if (!selectedSource || !editor) {
+      return;
     }
 
-    let breakpoints;
-    editor.codeMirror.operation(() => {
-      breakpoints = columnBreakpoints.map(breakpoint => (
-        <ColumnBreakpoint
-          cx={cx}
-          key={makeBreakpointId(breakpoint.location)}
-          columnBreakpoint={breakpoint}
-          editor={editor}
-          source={selectedSource}
-          breakpointActions={breakpointActions}
-        />
-      ));
+    if (!columnBreakpoints.length) {
+      editor.removePositionContentMarker(markerTypes.COLUMN_BREAKPOINT_MARKER);
+      return;
+    }
+
+    editor.setPositionContentMarker({
+      id: markerTypes.COLUMN_BREAKPOINT_MARKER,
+      positions: columnBreakpoints.map(cbp => {
+        return {
+          line: cbp.location.line,
+          column: cbp.location.column,
+          positionData: cbp,
+        };
+      }),
+      createPositionElementNode: (
+        line,
+        column,
+        isFirstNonSpaceColumn,
+        positionData
+      ) => {
+        const breakpointNode = breakpointButton.cloneNode(true);
+        breakpointNode.className = classnames("column-breakpoint", {
+          "has-condition": positionData.breakpoint?.options.condition,
+          "has-log": positionData.breakpoint?.options.logValue,
+          active: positionData.breakpoint && !positionData.breakpoint.disabled,
+          disabled: positionData.breakpoint?.disabled,
+        });
+        breakpointNode.addEventListener("click", event =>
+          this.onClick(event, positionData)
+        );
+        breakpointNode.addEventListener("contextmenu", event =>
+          this.onContextMenu(event, positionData)
+        );
+        return breakpointNode;
+      },
+      customEq: (positionData, prevPositionData) => {
+        return (
+          positionData?.breakpoint?.id == prevPositionData?.breakpoint?.id &&
+          positionData?.breakpoint?.options.condition ==
+            prevPositionData?.breakpoint?.options.condition &&
+          positionData?.breakpoint?.options.logValue ==
+            prevPositionData?.breakpoint?.options.logValue &&
+          positionData?.breakpoint?.disabled ==
+            prevPositionData?.breakpoint?.disabled
+        );
+      },
     });
-    return <div>{breakpoints}</div>;
+  }
+
+  onClick = (event, columnBreakpoint) => {
+    event.stopPropagation();
+    event.preventDefault();
+    const {
+      toggleDisabledBreakpoint,
+      removeBreakpoint,
+      addBreakpoint,
+      setSkipPausing,
+    } = this.props;
+
+    // disable column breakpoint on shift-click.
+    if (event.shiftKey) {
+      toggleDisabledBreakpoint(columnBreakpoint.breakpoint);
+      return;
+    }
+
+    if (columnBreakpoint.breakpoint) {
+      removeBreakpoint(columnBreakpoint.breakpoint);
+    } else {
+      setSkipPausing(false);
+      addBreakpoint(columnBreakpoint.location);
+    }
+  };
+
+  onContextMenu = (event, columnBreakpoint) => {
+    event.stopPropagation();
+    event.preventDefault();
+
+    if (columnBreakpoint.breakpoint) {
+      this.props.showEditorEditBreakpointContextMenu(
+        event,
+        columnBreakpoint.breakpoint
+      );
+    } else {
+      this.props.showEditorCreateBreakpointContextMenu(
+        event,
+        columnBreakpoint.location
+      );
+    }
+  };
+
+  render() {
+    return null;
   }
 }
 
@@ -64,12 +158,18 @@ const mapStateToProps = state => {
     return {};
   }
   return {
-    cx: getContext(state),
     selectedSource,
     columnBreakpoints: visibleColumnBreakpoints(state),
   };
 };
 
-export default connect(mapStateToProps, dispatch => ({
-  breakpointActions: breakpointItemActions(dispatch),
-}))(ColumnBreakpoints);
+export default connect(mapStateToProps, {
+  showEditorCreateBreakpointContextMenu:
+    actions.showEditorCreateBreakpointContextMenu,
+  showEditorEditBreakpointContextMenu:
+    actions.showEditorEditBreakpointContextMenu,
+  toggleDisabledBreakpoint: actions.toggleDisabledBreakpoint,
+  removeBreakpoint: actions.removeBreakpoint,
+  addBreakpoint: actions.addBreakpoint,
+  setSkipPausing: actions.setSkipPausing,
+})(ColumnBreakpoints);

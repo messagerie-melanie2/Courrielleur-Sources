@@ -1,10 +1,10 @@
 import { runRefTest } from './gpu_ref_test.js';
 
-runRefTest(async t => {
+runRefTest(t => {
   function draw(canvasId: string, format: GPUTextureFormat) {
     const canvas = document.getElementById(canvasId) as HTMLCanvasElement;
 
-    const ctx = (canvas.getContext('webgpu') as unknown) as GPUCanvasContext;
+    const ctx = canvas.getContext('webgpu') as unknown as GPUCanvasContext;
     ctx.configure({
       device: t.device,
       format,
@@ -13,7 +13,7 @@ runRefTest(async t => {
     const colorAttachment = ctx.getCurrentTexture();
     const colorAttachmentView = colorAttachment.createView();
 
-    const encoder = t.device.createCommandEncoder();
+    const encoder = t.device.createCommandEncoder({ label: 'runRefTest' });
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {

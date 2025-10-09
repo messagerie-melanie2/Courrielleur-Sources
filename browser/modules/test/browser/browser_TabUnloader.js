@@ -1,8 +1,8 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-const { TabUnloader } = ChromeUtils.import(
-  "resource:///modules/TabUnloader.jsm"
+const { TabUnloader } = ChromeUtils.importESModule(
+  "moz-src:///browser/components/tabbrowser/TabUnloader.sys.mjs"
 );
 
 const BASE_URL = "https://example.com/browser/browser/modules/test/browser/";

@@ -30,6 +30,13 @@ text-action-copy =
 text-action-copy-shortcut =
     .key = C
 
+# "Copy Clean Link" means that Firefox will remove things from the link you
+# copied, like items that identify you for advertising purposes, and other items
+# sites add into URLs to help them deliver a certain browsing experience.
+text-action-copy-clean-link =
+    .label = Copy Clean Link
+    .accesskey = n
+
 text-action-paste =
     .label = Paste
     .accesskey = P
@@ -44,6 +51,10 @@ text-action-paste-shortcut =
 text-action-delete =
     .label = Delete
     .accesskey = D
+
+text-action-reveal-password =
+    .label = Reveal Password
+    .accesskey = v
 
 text-action-select-all =
     .label = Select All
@@ -77,3 +88,22 @@ text-action-spell-dictionaries =
 
 text-action-search-text-box-clear =
     .title = Clear
+
+text-action-highlight-selection =
+    .label = Highlight Selection
+
+# "Copy Link to Highlight" creates a permanent 'Text Fragment' link
+# to the current selection, and copies it into the user's clipboard.
+text-action-copy-link-to-highlight =
+    .label = Copy Link to Highlight
+
+# This combines "Copy Link to Highlight" with "Copy Clean Link", ie.
+# it creates a link with a text fragment to the current selection
+# and it strips trackers etc.
+text-action-copy-clean-link-to-highlight =
+    .label = Copy Clean Link to Highlight
+
+# If the page has been loaded with a text fragment and text is
+# visibly highlighted, this removes any highlighted sections on the page.
+text-action-remove-all-highlights =
+    .label = Remove All Highlights

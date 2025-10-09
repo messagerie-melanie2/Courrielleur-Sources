@@ -4,28 +4,30 @@ if (typeof gDEPTH == "undefined") {
   var gDEPTH = "../../../../";
 }
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-var { mailTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MailTestUtils.jsm"
+
+var { IMAPPump, setupIMAPPump, teardownIMAPPump } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/IMAPpump.sys.mjs"
 );
-var { localAccountUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/LocalAccountUtils.jsm"
+var { localAccountUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/LocalAccountUtils.sys.mjs"
 );
-var { IMAPPump, setupIMAPPump, teardownIMAPPump } = ChromeUtils.import(
-  "resource://testing-common/mailnews/IMAPpump.jsm"
+var { mailTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MailTestUtils.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
+);
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
-var CC = Components.Constructor;
-
-// WebApps.jsm called by ProxyAutoConfig (PAC) requires a valid nsIXULAppInfo.
+// WebApps.sys.mjs called by ProxyAutoConfig (PAC) requires a valid nsIXULAppInfo.
 var { getAppInfo, newAppInfo, updateAppInfo } = ChromeUtils.importESModule(
   "resource://testing-common/AppInfo.sys.mjs"
 );
@@ -34,15 +36,12 @@ updateAppInfo();
 // Ensure the profile directory is set up
 do_get_profile();
 
+const gMessageGenerator = new MessageGenerator();
+
 // Import fakeserver
-var {
-  nsMailServer,
-  gThreadManager,
-  fsDebugNone,
-  fsDebugAll,
-  fsDebugRecv,
-  fsDebugRecvSend,
-} = ChromeUtils.import("resource://testing-common/mailnews/Maild.jsm");
+var { nsMailServer } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/Maild.sys.mjs"
+);
 
 var {
   ImapDaemon,
@@ -56,12 +55,14 @@ var {
   IMAP_RFC4315_extension,
   IMAP_RFC5258_extension,
   IMAP_RFC2195_extension,
-} = ChromeUtils.import("resource://testing-common/mailnews/Imapd.jsm");
-var { AuthPLAIN, AuthLOGIN, AuthCRAM } = ChromeUtils.import(
-  "resource://testing-common/mailnews/Auth.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/Imapd.sys.mjs"
 );
-var { SmtpDaemon, SMTP_RFC2821_handler } = ChromeUtils.import(
-  "resource://testing-common/mailnews/Smtpd.jsm"
+var { AuthPLAIN, AuthLOGIN, AuthCRAM } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/Auth.sys.mjs"
+);
+var { SmtpDaemon, SMTP_RFC2821_handler } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/Smtpd.sys.mjs"
 );
 
 function makeServer(daemon, infoString, otherProps) {
@@ -117,7 +118,7 @@ function makeServer(daemon, infoString, otherProps) {
 }
 
 function createLocalIMAPServer(port, hostname = "localhost") {
-  let server = localAccountUtils.create_incoming_server(
+  const server = localAccountUtils.create_incoming_server(
     "imap",
     port,
     "user",
@@ -130,13 +131,15 @@ function createLocalIMAPServer(port, hostname = "localhost") {
 
 // <copied from="head_maillocal.js">
 /**
- * @param fromServer server.playTransaction
- * @param expected ["command", "command", ...]
- * @param withParams if false,
- *    everything apart from the IMAP command will the stripped.
- *    E.g. 'lsub "" "*"' will be compared as 'lsub'.
- *    Exception is "authenticate", which also get its first parameter in upper case,
- *    e.g. "authenticate CRAM-MD5".
+ * @param {object} fromServer - Object got from server.playTransaction()
+ * @param {string[]} fromServer.us - Commands from us.
+ * @param {string[]} fromServer.them - Commands from them.
+ * @param {string[]} expected - Expected commands like ["command", "command", ...]
+ * @param {boolean} withParams - if false,
+ *   everything apart from the IMAP command will the stripped.
+ *   E.g. 'lsub "" "*"' will be compared as 'lsub'.
+ *   Exception is "authenticate", which also get its first parameter in upper case,
+ *   e.g. "authenticate CRAM-MD5".
  */
 function do_check_transaction(fromServer, expected, withParams) {
   // If we don't spin the event loop before starting the next test, the readers
@@ -145,7 +148,7 @@ function do_check_transaction(fromServer, expected, withParams) {
     fromServer = fromServer[fromServer.length - 1];
   }
 
-  let realTransaction = [];
+  const realTransaction = [];
   for (let i = 0; i < fromServer.them.length; i++) {
     var line = fromServer.them[i]; // e.g. '1 login "user" "password"'
     var components = line.split(" ");
@@ -168,17 +171,16 @@ function do_check_transaction(fromServer, expected, withParams) {
 }
 
 /**
- * add a simple message to the IMAP pump mailbox
+ * Add a simple message to the IMAP pump mailbox.
  */
 function addImapMessage() {
-  let messages = [];
-  let messageGenerator = new MessageGenerator(); // eslint-disable-line no-undef
-  messages = messages.concat(messageGenerator.makeMessage());
-  let dataUri = Services.io.newURI(
-    "data:text/plain;base64," + btoa(messages[0].toMessageString())
+  const message = gMessageGenerator.makeMessage();
+  const dataUri = Services.io.newURI(
+    "data:text/plain;base64," + btoa(message.toMessageString())
   );
-  let imapMsg = new ImapMessage(dataUri.spec, IMAPPump.mailbox.uidnext++, []);
+  const imapMsg = new ImapMessage(dataUri.spec, IMAPPump.mailbox.uidnext++, []);
   IMAPPump.mailbox.addMessage(imapMsg);
+  return message;
 }
 
 registerCleanupFunction(function () {
@@ -195,7 +197,3 @@ function setupSmtpServerDaemon(handler) {
   var server = new nsMailServer(handler, new SmtpDaemon());
   return server;
 }
-
-// profile-after-change is not triggered in xpcshell tests, manually run the
-// getService to load the correct imap modules.
-Cc["@mozilla.org/messenger/imap-module-loader;1"].getService();

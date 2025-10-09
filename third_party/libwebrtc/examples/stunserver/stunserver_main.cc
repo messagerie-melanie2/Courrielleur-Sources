@@ -9,7 +9,7 @@
  */
 #include <iostream>
 
-#include "p2p/base/stun_server.h"
+#include "p2p/test/stun_server.h"
 #include "rtc_base/async_udp_socket.h"
 #include "rtc_base/socket_address.h"
 #include "rtc_base/socket_server.h"
@@ -29,7 +29,8 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  rtc::Thread* pthMain = rtc::Thread::Current();
+  rtc::Thread* pthMain = rtc::ThreadManager::Instance()->WrapCurrentThread();
+  RTC_DCHECK(pthMain);
 
   rtc::AsyncUDPSocket* server_socket =
       rtc::AsyncUDPSocket::Create(pthMain->socketserver(), server_addr);

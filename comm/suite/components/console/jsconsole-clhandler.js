@@ -3,7 +3,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 var {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 function jsConsoleHandler() {}
@@ -28,7 +27,7 @@ jsConsoleHandler.prototype = {
   helpInfo : "  --suiteconsole        Open the Error console.\n",
 
   classID: Components.ID("{afeee354-8c99-4725-adb1-8502218c5c3c}"),
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsICommandLineHandler]),
+  QueryInterface: ChromeUtils.generateQI([Ci.nsICommandLineHandler]),
 };
 
 this.NSGetFactory = XPCOMUtils.generateNSGetFactory([jsConsoleHandler]);

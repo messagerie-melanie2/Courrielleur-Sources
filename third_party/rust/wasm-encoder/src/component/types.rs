@@ -1,7 +1,7 @@
 use super::CORE_TYPE_SORT;
 use crate::{
     encode_section, Alias, ComponentExportKind, ComponentOuterAliasKind, ComponentSection,
-    ComponentSectionId, ComponentTypeRef, Encode, EntityType, ValType,
+    ComponentSectionId, ComponentTypeRef, CoreTypeEncoder, Encode, EntityType, ValType,
 };
 
 /// Represents the type of a core module.
@@ -36,7 +36,10 @@ impl ModuleType {
         self.bytes.push(0x01);
         self.num_added += 1;
         self.types_added += 1;
-        CoreTypeEncoder(&mut self.bytes)
+        CoreTypeEncoder {
+            push_prefix_if_component_core_type: false,
+            bytes: &mut self.bytes,
+        }
     }
 
     /// Defines an outer core type alias in this module type.
@@ -76,30 +79,21 @@ impl Encode for ModuleType {
 
 /// Used to encode core types.
 #[derive(Debug)]
-pub struct CoreTypeEncoder<'a>(pub(crate) &'a mut Vec<u8>);
+pub struct ComponentCoreTypeEncoder<'a>(pub(crate) &'a mut Vec<u8>);
 
-impl<'a> CoreTypeEncoder<'a> {
-    /// Define a function type.
-    pub fn function<P, R>(self, params: P, results: R)
-    where
-        P: IntoIterator<Item = ValType>,
-        P::IntoIter: ExactSizeIterator,
-        R: IntoIterator<Item = ValType>,
-        R::IntoIter: ExactSizeIterator,
-    {
-        let params = params.into_iter();
-        let results = results.into_iter();
-
-        self.0.push(0x60);
-        params.len().encode(self.0);
-        params.for_each(|p| p.encode(self.0));
-        results.len().encode(self.0);
-        results.for_each(|p| p.encode(self.0));
-    }
-
+impl<'a> ComponentCoreTypeEncoder<'a> {
     /// Define a module type.
     pub fn module(self, ty: &ModuleType) {
         ty.encode(self.0);
+    }
+
+    /// Define any core type other than a module type.
+    #[must_use = "the encoder must be used to encode the type"]
+    pub fn core(self) -> CoreTypeEncoder<'a> {
+        CoreTypeEncoder {
+            bytes: self.0,
+            push_prefix_if_component_core_type: true,
+        }
     }
 }
 
@@ -112,7 +106,7 @@ impl<'a> CoreTypeEncoder<'a> {
 ///
 /// let mut types = CoreTypeSection::new();
 ///
-/// types.module(&ModuleType::new());
+/// types.ty().module(&ModuleType::new());
 ///
 /// let mut component = Component::new();
 /// component.section(&types);
@@ -145,29 +139,9 @@ impl CoreTypeSection {
     ///
     /// The returned encoder must be finished before adding another type.
     #[must_use = "the encoder must be used to encode the type"]
-    pub fn ty(&mut self) -> CoreTypeEncoder<'_> {
+    pub fn ty(&mut self) -> ComponentCoreTypeEncoder<'_> {
         self.num_added += 1;
-        CoreTypeEncoder(&mut self.bytes)
-    }
-
-    /// Define a function type in this type section.
-    pub fn function<P, R>(&mut self, params: P, results: R) -> &mut Self
-    where
-        P: IntoIterator<Item = ValType>,
-        P::IntoIter: ExactSizeIterator,
-        R: IntoIterator<Item = ValType>,
-        R::IntoIter: ExactSizeIterator,
-    {
-        self.ty().function(params, results);
-        self
-    }
-
-    /// Define a module type in this type section.
-    ///
-    /// Currently this is only used for core type sections in components.
-    pub fn module(&mut self, ty: &ModuleType) -> &mut Self {
-        self.ty().module(ty);
-        self
+        ComponentCoreTypeEncoder(&mut self.bytes)
     }
 }
 
@@ -190,6 +164,7 @@ pub struct ComponentType {
     num_added: u32,
     core_types_added: u32,
     types_added: u32,
+    instances_added: u32,
 }
 
 impl ComponentType {
@@ -202,11 +177,11 @@ impl ComponentType {
     ///
     /// The returned encoder must be used before adding another definition.
     #[must_use = "the encoder must be used to encode the type"]
-    pub fn core_type(&mut self) -> CoreTypeEncoder {
+    pub fn core_type(&mut self) -> ComponentCoreTypeEncoder {
         self.bytes.push(0x00);
         self.num_added += 1;
         self.core_types_added += 1;
-        CoreTypeEncoder(&mut self.bytes)
+        ComponentCoreTypeEncoder(&mut self.bytes)
     }
 
     /// Define a type in this component type.
@@ -239,34 +214,38 @@ impl ComponentType {
                 kind: ComponentOuterAliasKind::CoreType,
                 ..
             } => self.core_types_added += 1,
+            Alias::InstanceExport {
+                kind: ComponentExportKind::Instance,
+                ..
+            } => self.instances_added += 1,
             _ => {}
         }
         self
     }
 
     /// Defines an import in this component type.
-    pub fn import(&mut self, name: &str, url: &str, ty: ComponentTypeRef) -> &mut Self {
+    pub fn import(&mut self, name: &str, ty: ComponentTypeRef) -> &mut Self {
         self.bytes.push(0x03);
-        name.encode(&mut self.bytes);
-        url.encode(&mut self.bytes);
+        crate::encode_component_import_name(&mut self.bytes, name);
         ty.encode(&mut self.bytes);
         self.num_added += 1;
         match ty {
             ComponentTypeRef::Type(..) => self.types_added += 1,
+            ComponentTypeRef::Instance(..) => self.instances_added += 1,
             _ => {}
         }
         self
     }
 
     /// Defines an export in this component type.
-    pub fn export(&mut self, name: &str, url: &str, ty: ComponentTypeRef) -> &mut Self {
+    pub fn export(&mut self, name: &str, ty: ComponentTypeRef) -> &mut Self {
         self.bytes.push(0x04);
-        name.encode(&mut self.bytes);
-        url.encode(&mut self.bytes);
+        crate::encode_component_export_name(&mut self.bytes, name);
         ty.encode(&mut self.bytes);
         self.num_added += 1;
         match ty {
             ComponentTypeRef::Type(..) => self.types_added += 1,
+            ComponentTypeRef::Instance(..) => self.instances_added += 1,
             _ => {}
         }
         self
@@ -280,6 +259,12 @@ impl ComponentType {
     /// Gets the number of types that have been added or aliased in this component type.
     pub fn type_count(&self) -> u32 {
         self.types_added
+    }
+
+    /// Gets the number of instances that have been defined in this component
+    /// type through imports, exports, or aliases.
+    pub fn instance_count(&self) -> u32 {
+        self.instances_added
     }
 }
 
@@ -305,7 +290,7 @@ impl InstanceType {
     ///
     /// The returned encoder must be used before adding another definition.
     #[must_use = "the encoder must be used to encode the type"]
-    pub fn core_type(&mut self) -> CoreTypeEncoder {
+    pub fn core_type(&mut self) -> ComponentCoreTypeEncoder {
         self.0.core_type()
     }
 
@@ -324,8 +309,8 @@ impl InstanceType {
     }
 
     /// Defines an export in this instance type.
-    pub fn export(&mut self, name: &str, url: &str, ty: ComponentTypeRef) -> &mut Self {
-        self.0.export(name, url, ty);
+    pub fn export(&mut self, name: &str, ty: ComponentTypeRef) -> &mut Self {
+        self.0.export(name, ty);
         self
     }
 
@@ -337,6 +322,12 @@ impl InstanceType {
     /// Gets the number of types that have been added or aliased in this instance type.
     pub fn type_count(&self) -> u32 {
         self.0.types_added
+    }
+
+    /// Gets the number of instances that have been imported or exported or
+    /// aliased in this instance type.
+    pub fn instance_count(&self) -> u32 {
+        self.0.instances_added
     }
 
     /// Returns whether or not this instance type is empty.
@@ -360,28 +351,43 @@ impl Encode for InstanceType {
 
 /// Used to encode component function types.
 #[derive(Debug)]
-pub struct ComponentFuncTypeEncoder<'a>(&'a mut Vec<u8>);
+pub struct ComponentFuncTypeEncoder<'a> {
+    params_encoded: bool,
+    results_encoded: bool,
+    sink: &'a mut Vec<u8>,
+}
 
 impl<'a> ComponentFuncTypeEncoder<'a> {
     fn new(sink: &'a mut Vec<u8>) -> Self {
         sink.push(0x40);
-        Self(sink)
+        Self {
+            params_encoded: false,
+            results_encoded: false,
+            sink,
+        }
     }
 
     /// Defines named parameters.
     ///
     /// Parameters must be defined before defining results.
+    ///
+    /// # Panics
+    ///
+    /// This method will panic if the function is called twice since parameters
+    /// can only be encoded once.
     pub fn params<'b, P, T>(&mut self, params: P) -> &mut Self
     where
         P: IntoIterator<Item = (&'b str, T)>,
         P::IntoIter: ExactSizeIterator,
         T: Into<ComponentValType>,
     {
+        assert!(!self.params_encoded);
+        self.params_encoded = true;
         let params = params.into_iter();
-        params.len().encode(self.0);
+        params.len().encode(self.sink);
         for (name, ty) in params {
-            name.encode(self.0);
-            ty.into().encode(self.0);
+            name.encode(self.sink);
+            ty.into().encode(self.sink);
         }
         self
     }
@@ -389,27 +395,43 @@ impl<'a> ComponentFuncTypeEncoder<'a> {
     /// Defines a single unnamed result.
     ///
     /// This method cannot be used with `results`.
+    ///
+    /// # Panics
+    ///
+    /// This method will panic if the function is called twice, called before
+    /// the `params` method, or called in addition to the `results` method.
     pub fn result(&mut self, ty: impl Into<ComponentValType>) -> &mut Self {
-        self.0.push(0x00);
-        ty.into().encode(self.0);
+        assert!(self.params_encoded);
+        assert!(!self.results_encoded);
+        self.results_encoded = true;
+        self.sink.push(0x00);
+        ty.into().encode(self.sink);
         self
     }
 
     /// Defines named results.
     ///
     /// This method cannot be used with `result`.
+    ///
+    /// # Panics
+    ///
+    /// This method will panic if the function is called twice, called before
+    /// the `params` method, or called in addition to the `result` method.
     pub fn results<'b, R, T>(&mut self, results: R) -> &mut Self
     where
         R: IntoIterator<Item = (&'b str, T)>,
         R::IntoIter: ExactSizeIterator,
         T: Into<ComponentValType>,
     {
-        self.0.push(0x01);
+        assert!(self.params_encoded);
+        assert!(!self.results_encoded);
+        self.results_encoded = true;
+        self.sink.push(0x01);
         let results = results.into_iter();
-        results.len().encode(self.0);
+        results.len().encode(self.sink);
         for (name, ty) in results {
-            name.encode(self.0);
-            ty.into().encode(self.0);
+            name.encode(self.sink);
+            ty.into().encode(self.sink);
         }
         self
     }
@@ -442,6 +464,19 @@ impl<'a> ComponentTypeEncoder<'a> {
     pub fn defined_type(self) -> ComponentDefinedTypeEncoder<'a> {
         ComponentDefinedTypeEncoder(self.0)
     }
+
+    /// Define a resource type.
+    pub fn resource(self, rep: ValType, dtor: Option<u32>) {
+        self.0.push(0x3f);
+        rep.encode(self.0);
+        match dtor {
+            Some(i) => {
+                self.0.push(0x01);
+                i.encode(self.0);
+            }
+            None => self.0.push(0x00),
+        }
+    }
 }
 
 /// Represents a primitive component value type.
@@ -465,10 +500,10 @@ pub enum PrimitiveValType {
     S64,
     /// The type is an unsigned 64-bit integer.
     U64,
-    /// The type is a 32-bit floating point number.
-    Float32,
-    /// The type is a 64-bit floating point number.
-    Float64,
+    /// The type is a 32-bit floating point number with only one NaN.
+    F32,
+    /// The type is a 64-bit floating point number with only one NaN.
+    F64,
     /// The type is a Unicode character.
     Char,
     /// The type is a string.
@@ -487,8 +522,8 @@ impl Encode for PrimitiveValType {
             Self::U32 => 0x79,
             Self::S64 => 0x78,
             Self::U64 => 0x77,
-            Self::Float32 => 0x76,
-            Self::Float64 => 0x75,
+            Self::F32 => 0x76,
+            Self::F64 => 0x75,
             Self::Char => 0x74,
             Self::String => 0x73,
         });
@@ -612,21 +647,6 @@ impl ComponentDefinedTypeEncoder<'_> {
         }
     }
 
-    /// Define a union type.
-    pub fn union<I, T>(self, types: I)
-    where
-        I: IntoIterator<Item = T>,
-        I::IntoIter: ExactSizeIterator,
-        T: Into<ComponentValType>,
-    {
-        let types = types.into_iter();
-        self.0.push(0x6C);
-        types.len().encode(self.0);
-        for ty in types {
-            ty.into().encode(self.0);
-        }
-    }
-
     /// Define an option type.
     pub fn option(self, ty: impl Into<ComponentValType>) {
         self.0.push(0x6B);
@@ -638,6 +658,18 @@ impl ComponentDefinedTypeEncoder<'_> {
         self.0.push(0x6A);
         ok.encode(self.0);
         err.encode(self.0);
+    }
+
+    /// Define a `own` handle type
+    pub fn own(self, idx: u32) {
+        self.0.push(0x69);
+        idx.encode(self.0);
+    }
+
+    /// Define a `borrow` handle type
+    pub fn borrow(self, idx: u32) {
+        self.0.push(0x68);
+        idx.encode(self.0);
     }
 }
 
@@ -720,6 +752,12 @@ impl ComponentTypeSection {
     #[must_use = "the encoder must be used to encode the type"]
     pub fn defined_type(&mut self) -> ComponentDefinedTypeEncoder<'_> {
         self.ty().defined_type()
+    }
+
+    /// Defines a new resource type.
+    pub fn resource(&mut self, rep: ValType, dtor: Option<u32>) -> &mut Self {
+        self.ty().resource(rep, dtor);
+        self
     }
 }
 

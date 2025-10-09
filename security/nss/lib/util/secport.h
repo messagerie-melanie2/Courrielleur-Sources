@@ -36,6 +36,9 @@
 #include <sys/types.h>
 
 #include <ctype.h>
+/* ask for Annex K for memset_s. will set the appropriate #define
+ * if Annex K is supported */
+#define __STDC_WANT_LIB_EXT1__ 1
 #include <string.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -175,11 +178,7 @@ SEC_END_PROTOS
 
 #define PORT_Memcmp memcmp
 #define PORT_Memcpy memcpy
-#ifndef SUNOS4
 #define PORT_Memmove memmove
-#else /*SUNOS4*/
-#define PORT_Memmove(s, ct, n) bcopy((ct), (s), (n))
-#endif /*SUNOS4*/
 #define PORT_Memset memset
 
 #define PORT_Strcasecmp PL_strcasecmp
@@ -259,9 +258,11 @@ sec_port_iso88591_utf8_conversion_function(
 
 extern int NSS_PutEnv(const char *envVarName, const char *envValue);
 
+extern void PORT_SafeZero(void *p, size_t n);
 extern int NSS_SecureMemcmp(const void *a, const void *b, size_t n);
 extern unsigned int NSS_SecureMemcmpZero(const void *mem, size_t n);
 extern void NSS_SecureSelect(void *dest, const void *src0, const void *src1, size_t n, unsigned char b);
+extern PRBool NSS_GetSystemFIPSEnabled(void);
 
 /*
  * Load a shared library called "newShLibName" in the same directory as
@@ -364,5 +365,14 @@ SEC_END_PROTOS
 #define PORT_CT_LE(a, b) (~PORT_CT_GT(a, b))
 #define PORT_CT_TRUE (~0)
 #define PORT_CT_FALSE 0
+
+#ifdef CT_VERIF
+#include <valgrind/memcheck.h>
+#define NSS_CLASSIFY(buf, length) VALGRIND_MAKE_MEM_UNDEFINED(buf, length);
+#define NSS_DECLASSIFY(buf, length) VALGRIND_MAKE_MEM_DEFINED(buf, length);
+#else
+#define NSS_CLASSIFY(buf, length)
+#define NSS_DECLASSIFY(buf, length)
+#endif
 
 #endif /* _SECPORT_H_ */

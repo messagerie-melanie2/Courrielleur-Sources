@@ -20,9 +20,6 @@ const { TelemetryEnvironment } = ChromeUtils.importESModule(
 const { TelemetryReportingPolicy } = ChromeUtils.importESModule(
   "resource://gre/modules/TelemetryReportingPolicy.sys.mjs"
 );
-const { Preferences } = ChromeUtils.importESModule(
-  "resource://gre/modules/Preferences.sys.mjs"
-);
 
 const PING_FORMAT_VERSION = 4;
 const PING_TYPE_MAIN = "main";
@@ -53,11 +50,12 @@ const DATAREPORTING_DIR = "datareporting";
 const ABORTED_PING_FILE_NAME = "aborted-session-ping";
 const ABORTED_SESSION_UPDATE_INTERVAL_MS = 5 * 60 * 1000;
 
-XPCOMUtils.defineLazyGetter(this, "DATAREPORTING_PATH", function () {
+ChromeUtils.defineLazyGetter(this, "DATAREPORTING_PATH", function () {
   return PathUtils.join(PathUtils.profileDir, DATAREPORTING_DIR);
 });
 
 var gClientID = null;
+var gProfileGroupID = null;
 var gMonotonicNow = 0;
 
 function sendPing() {
@@ -83,14 +81,10 @@ function fakeIdleNotification(topic) {
 }
 
 function setupTestData() {
-  Services.startup.interrupted = true;
-  let h2 = Telemetry.getHistogramById("TELEMETRY_TEST_COUNT");
-  h2.add();
-
-  let k1 = Telemetry.getKeyedHistogramById("TELEMETRY_TEST_KEYED_COUNT");
-  k1.add("a");
-  k1.add("a");
-  k1.add("b");
+  Glean.testOnlyIpc.aCounterForHgram.add();
+  Glean.testOnlyIpc.aLabeledCounterForKeyedCountHgram.a.add(1);
+  Glean.testOnlyIpc.aLabeledCounterForKeyedCountHgram.a.add(1);
+  Glean.testOnlyIpc.aLabeledCounterForKeyedCountHgram.b.add(1);
 }
 
 function checkPingFormat(aPing, aType, aHasClientId, aHasEnvironment) {
@@ -146,6 +140,7 @@ function checkPingFormat(aPing, aType, aHasClientId, aHasEnvironment) {
 
   // Check the clientId and environment fields, as needed.
   Assert.equal("clientId" in aPing, aHasClientId);
+  Assert.equal("profileGroupId" in aPing, aHasClientId);
   Assert.equal("environment" in aPing, aHasEnvironment);
 }
 
@@ -333,7 +328,6 @@ function checkPayload(payload, reason, successfulPings) {
   checkPayloadInfo(payload.info, reason);
 
   Assert.ok(payload.simpleMeasurements.totalTime >= 0);
-  Assert.equal(payload.simpleMeasurements.startupInterrupted, 1);
   Assert.equal(payload.simpleMeasurements.shutdownDuration, SHUTDOWN_TIME);
 
   let activeTicks = payload.simpleMeasurements.activeTicks;
@@ -363,29 +357,15 @@ function checkPayload(payload, reason, successfulPings) {
 
   const TELEMETRY_SEND_SUCCESS = "TELEMETRY_SEND_SUCCESS";
   const TELEMETRY_SUCCESS = "TELEMETRY_SUCCESS";
-  const TELEMETRY_TEST_FLAG = "TELEMETRY_TEST_FLAG";
   const TELEMETRY_TEST_COUNT = "TELEMETRY_TEST_COUNT";
-  const TELEMETRY_TEST_KEYED_FLAG = "TELEMETRY_TEST_KEYED_FLAG";
   const TELEMETRY_TEST_KEYED_COUNT = "TELEMETRY_TEST_KEYED_COUNT";
 
   if (successfulPings > 0) {
     Assert.ok(TELEMETRY_SEND_SUCCESS in payload.histograms);
   }
-  Assert.ok(TELEMETRY_TEST_FLAG in payload.histograms);
   Assert.ok(TELEMETRY_TEST_COUNT in payload.histograms);
 
   Assert.ok(!(IGNORE_CLONED_HISTOGRAM in payload.histograms));
-
-  // Flag histograms should automagically spring to life.
-  const expected_flag = {
-    range: [1, 2],
-    bucket_count: 3,
-    histogram_type: 3,
-    values: { 0: 1, 1: 0 },
-    sum: 0,
-  };
-  let flag = payload.histograms[TELEMETRY_TEST_FLAG];
-  Assert.deepEqual(flag, expected_flag);
 
   // We should have a test count.
   const expected_count = {
@@ -433,7 +413,6 @@ function checkPayload(payload, reason, successfulPings) {
 
   Assert.ok("keyedHistograms" in payload);
   let keyedHistograms = payload.keyedHistograms;
-  Assert.ok(!(TELEMETRY_TEST_KEYED_FLAG in keyedHistograms));
   Assert.ok(TELEMETRY_TEST_KEYED_COUNT in keyedHistograms);
 
   const expected_keyed_count = {
@@ -526,13 +505,12 @@ add_task(async function asyncSetup() {
   await TelemetryController.testSetup();
   // Load the client ID from the client ID provider to check for pings sanity.
   gClientID = await ClientID.getClientID();
+  gProfileGroupID = await ClientID.getProfileGroupID();
 });
 
 // Ensures that expired histograms are not part of the payload.
 add_task(async function test_expiredHistogram() {
-  let dummy = Telemetry.getHistogramById("TELEMETRY_TEST_EXPIRED");
-
-  dummy.add(1);
+  Glean.testOnly.expiredHist.accumulateSingleSample(1);
 
   Assert.equal(
     TelemetrySession.getPayload().histograms.TELEMETRY_TEST_EXPIRED,
@@ -545,7 +523,10 @@ add_task(async function sessionTimeExcludingAndIncludingSuspend() {
     // We don't support this new probe on android at the moment.
     return;
   }
-  Preferences.set("toolkit.telemetry.testing.overrideProductsCheck", true);
+  Services.prefs.setBoolPref(
+    "toolkit.telemetry.testing.overrideProductsCheck",
+    true
+  );
   await TelemetryController.testReset();
   let subsession = TelemetrySession.getPayload("environment-change", true);
   let parentScalars = subsession.processes.parent.scalars;
@@ -580,22 +561,18 @@ add_task(async function sessionTimeExcludingAndIncludingSuspend() {
     "In test condition, the two uptimes should be close to each other"
   );
 
-  // This however should always hold, except on Windows < 10, where the two
-  // clocks are from different system calls, and it can fail in test condition
-  // because the machine has not been suspended.
-  if (
-    AppConstants.platform != "win" ||
-    AppConstants.isPlatformAndVersionAtLeast("win", "10.0")
-  ) {
-    Assert.greaterOrEqual(
-      withSuspend,
-      withoutSuspend,
-      `The uptime with suspend must always been greater or equal to the uptime
-       without suspend`
-    );
-  }
+  // This however should always hold.
+  Assert.greaterOrEqual(
+    withSuspend,
+    withoutSuspend,
+    `The uptime with suspend must always been greater or equal to the uptime
+     without suspend`
+  );
 
-  Preferences.set("toolkit.telemetry.testing.overrideProductsCheck", false);
+  Services.prefs.setBoolPref(
+    "toolkit.telemetry.testing.overrideProductsCheck",
+    false
+  );
 });
 
 // Sends a ping to a non existing server. If we remove this test, we won't get
@@ -614,7 +591,7 @@ add_task(async function test_noServerPing() {
 add_task(async function test_simplePing() {
   await TelemetryStorage.testClearPendingPings();
   PingServer.start();
-  Preferences.set(
+  Services.prefs.setStringPref(
     TelemetryUtils.Preferences.Server,
     "http://localhost:" + PingServer.port
   );
@@ -714,23 +691,33 @@ add_task(async function test_checkSubsessionScalars() {
   await TelemetryController.testReset();
 
   // Set some scalars.
-  const UINT_SCALAR = "telemetry.test.unsigned_int_kind";
+  const UINT_SCALAR = "telemetry.test.mirror_for_quantity";
   const STRING_SCALAR = "telemetry.test.string_kind";
+  const BOOLEAN_SCALAR = "telemetry.test.mirror_for_unordered_bool";
+  const KEYED_UINT_SCALAR = "telemetry.test.mirror_for_labeled_quantity";
   let expectedUint = 37;
-  let expectedString = "Test value. Yay.";
-  Telemetry.scalarSet(UINT_SCALAR, expectedUint);
-  Telemetry.scalarSet(STRING_SCALAR, expectedString);
+  let expectedString = "decafdec-afde-cafd-ecaf-decafdecafde";
+  Glean.testOnly.meaningOfLife.set(expectedUint);
+  Glean.testOnlyIpc.aUuid.set(expectedString);
+  Glean.testOnlyIpc.anUnorderedBool.set(false);
+  Glean.testOnly.buttonJars.some_random_key.set(12);
 
   // Check that scalars are not available in classic pings but are in subsession
   // pings. Also clear the subsession.
   let classic = TelemetrySession.getPayload();
   let subsession = TelemetrySession.getPayload("environment-change", true);
 
-  const TEST_SCALARS = [UINT_SCALAR, STRING_SCALAR];
+  const TEST_SCALARS = [
+    UINT_SCALAR,
+    STRING_SCALAR,
+    BOOLEAN_SCALAR,
+    KEYED_UINT_SCALAR,
+  ];
   for (let name of TEST_SCALARS) {
     // Scalar must be reported in subsession pings (e.g. main).
     Assert.ok(
-      name in subsession.processes.parent.scalars,
+      name in subsession.processes.parent.scalars ||
+        name in subsession.processes.parent.keyedScalars,
       name + " must be reported in a subsession ping."
     );
   }
@@ -752,6 +739,16 @@ add_task(async function test_checkSubsessionScalars() {
     expectedString,
     STRING_SCALAR + " must contain the expected value."
   );
+  Assert.equal(
+    subsession.processes.parent.scalars[BOOLEAN_SCALAR],
+    false,
+    BOOLEAN_SCALAR + " must contain the expected value."
+  );
+  Assert.deepEqual(
+    subsession.processes.parent.keyedScalars[KEYED_UINT_SCALAR],
+    { some_random_key: 12 },
+    KEYED_UINT_SCALAR + " must contain the expected value."
+  );
 
   // Since we cleared the subsession in the last getPayload(), check that
   // breaking subsessions clears the scalars.
@@ -766,8 +763,10 @@ add_task(async function test_checkSubsessionScalars() {
   // Check if setting the scalars again works as expected.
   expectedUint = 85;
   expectedString = "A creative different value";
-  Telemetry.scalarSet(UINT_SCALAR, expectedUint);
-  Telemetry.scalarSet(STRING_SCALAR, expectedString);
+  Glean.testOnly.meaningOfLife.set(expectedUint);
+  Glean.testOnlyIpc.aUuid.set(expectedString);
+  Glean.testOnlyIpc.anUnorderedBool.set(false);
+  Glean.testOnly.buttonJars.some_random_key.set(12);
   subsession = TelemetrySession.getPayload("environment-change");
   Assert.equal(
     subsession.processes.parent.scalars[UINT_SCALAR],
@@ -778,6 +777,16 @@ add_task(async function test_checkSubsessionScalars() {
     subsession.processes.parent.scalars[STRING_SCALAR],
     expectedString,
     STRING_SCALAR + " must contain the expected value."
+  );
+  Assert.equal(
+    subsession.processes.parent.scalars[BOOLEAN_SCALAR],
+    false,
+    BOOLEAN_SCALAR + " must contain the expected value."
+  );
+  Assert.deepEqual(
+    subsession.processes.parent.keyedScalars[KEYED_UINT_SCALAR],
+    { some_random_key: 12 },
+    KEYED_UINT_SCALAR + " must contain the expected value."
   );
 
   await TelemetryController.testShutdown();
@@ -816,10 +825,10 @@ add_task(async function test_dailyCollection() {
 
   count.clear();
   keyed.clear();
-  count.add(1);
-  keyed.add("a", 1);
-  keyed.add("b", 1);
-  keyed.add("b", 1);
+  Glean.testOnlyIpc.aCounterForHgram.add();
+  Glean.testOnlyIpc.aLabeledCounterForKeyedCountHgram.a.add(1);
+  Glean.testOnlyIpc.aLabeledCounterForKeyedCountHgram.b.add(1);
+  Glean.testOnlyIpc.aLabeledCounterForKeyedCountHgram.b.add(1);
 
   // Make sure the daily ping gets triggered.
   let expectedDate = nowHour;
@@ -863,9 +872,9 @@ add_task(async function test_dailyCollection() {
   Assert.ok(!(KEYED_ID in ping.payload.keyedHistograms));
 
   // Trigger and collect another daily ping, with the histograms being set again.
-  count.add(1);
-  keyed.add("a", 1);
-  keyed.add("b", 1);
+  Glean.testOnlyIpc.aCounterForHgram.add();
+  Glean.testOnlyIpc.aLabeledCounterForKeyedCountHgram.a.add(1);
+  Glean.testOnlyIpc.aLabeledCounterForKeyedCountHgram.b.add(1);
 
   // The daily ping is rescheduled for "tomorrow".
   expectedDate = futureDate(expectedDate, MS_IN_ONE_DAY);
@@ -927,7 +936,7 @@ add_task(async function test_dailyDuplication() {
   Assert.equal(ping.payload.info.reason, REASON_DAILY);
 
   // We don't expect to receive any other daily ping in this test, so assert if we do.
-  PingServer.registerPingHandler((req, res) => {
+  PingServer.registerPingHandler(() => {
     Assert.ok(
       false,
       "No more daily pings should be sent/received in this test."
@@ -971,7 +980,7 @@ add_task(async function test_dailyOverdue() {
   fakeNow(now);
 
   // Assert if we receive something!
-  PingServer.registerPingHandler((req, res) => {
+  PingServer.registerPingHandler(() => {
     Assert.ok(false, "No daily ping should be received if not overdue!.");
   });
 
@@ -1018,7 +1027,7 @@ add_task(async function test_environmentChange() {
   );
 
   const PREF_TEST = "toolkit.telemetry.test.pref1";
-  Preferences.reset(PREF_TEST);
+  Services.prefs.clearUserPref(PREF_TEST);
 
   const PREFS_TO_WATCH = new Map([
     [PREF_TEST, { what: TelemetryEnvironment.RECORD_PREF_VALUE }],
@@ -1037,9 +1046,9 @@ add_task(async function test_environmentChange() {
 
   count.clear();
   keyed.clear();
-  count.add(1);
-  keyed.add("a", 1);
-  keyed.add("b", 1);
+  Glean.testOnlyIpc.aCounterForHgram.add();
+  Glean.testOnlyIpc.aLabeledCounterForKeyedCountHgram.a.add(1);
+  Glean.testOnlyIpc.aLabeledCounterForKeyedCountHgram.b.add(1);
 
   // Trigger and collect environment-change ping.
   gMonotonicNow = fakeMonotonicNow(
@@ -1048,7 +1057,7 @@ add_task(async function test_environmentChange() {
   let startHour = TelemetryUtils.truncateToHours(now);
   now = fakeNow(futureDate(now, 10 * MILLISECONDS_PER_MINUTE));
 
-  Preferences.set(PREF_TEST, 1);
+  Services.prefs.setIntPref(PREF_TEST, 1);
   let ping = await PingServer.promiseNextPing();
   Assert.ok(!!ping);
 
@@ -1068,7 +1077,7 @@ add_task(async function test_environmentChange() {
   );
   now = fakeNow(futureDate(now, 10 * MILLISECONDS_PER_MINUTE));
 
-  Preferences.set(PREF_TEST, 2);
+  Services.prefs.setIntPref(PREF_TEST, 2);
   ping = await PingServer.promiseNextPing();
   Assert.ok(!!ping);
 
@@ -1216,6 +1225,7 @@ add_task(async function test_savedPingsOnShutdown() {
   checkPingFormat(ping, expectedType, true, true);
   Assert.equal(ping.payload.info.reason, expectedReason);
   Assert.equal(ping.clientId, gClientID);
+  Assert.equal(ping.profileGroupId, gProfileGroupID);
 });
 
 add_task(async function test_sendShutdownPing() {
@@ -1245,8 +1255,11 @@ add_task(async function test_sendShutdownPing() {
     );
   };
 
-  Preferences.set(TelemetryUtils.Preferences.ShutdownPingSender, true);
-  Preferences.set(TelemetryUtils.Preferences.FirstRun, false);
+  Services.prefs.setBoolPref(
+    TelemetryUtils.Preferences.ShutdownPingSender,
+    true
+  );
+  Services.prefs.setBoolPref(TelemetryUtils.Preferences.FirstRun, false);
   // Make sure the reporting policy picks up the updated pref.
   TelemetryReportingPolicy.testUpdateFirstRun();
   PingServer.clearRequests();
@@ -1261,12 +1274,16 @@ add_task(async function test_sendShutdownPing() {
   checkPingFormat(ping, ping.type, true, true);
   Assert.equal(ping.payload.info.reason, REASON_SHUTDOWN);
   Assert.equal(ping.clientId, gClientID);
+  Assert.equal(ping.profileGroupId, gProfileGroupID);
   // Try again, this time disable ping upload. The PingSender
   // should not be sending any ping!
   PingServer.registerPingHandler(() =>
     Assert.ok(false, "Telemetry must not send pings if not allowed to.")
   );
-  Preferences.set(TelemetryUtils.Preferences.FhrUploadEnabled, false);
+  Services.prefs.setBoolPref(
+    TelemetryUtils.Preferences.FhrUploadEnabled,
+    false
+  );
   await TelemetryController.testReset();
   await TelemetryController.testShutdown();
 
@@ -1275,12 +1292,13 @@ add_task(async function test_sendShutdownPing() {
 
   // Enable ping upload and signal an OS shutdown. The pingsender
   // will not be spawned and no ping will be sent.
-  Preferences.set(TelemetryUtils.Preferences.FhrUploadEnabled, true);
+  Services.prefs.setBoolPref(TelemetryUtils.Preferences.FhrUploadEnabled, true);
   await TelemetryController.testReset();
   Services.obs.notifyObservers(null, "quit-application-forced");
   await TelemetryController.testShutdown();
   // After re-enabling FHR, wait for the new client ID
   gClientID = await ClientID.getClientID();
+  gProfileGroupID = await ClientID.getProfileGroupID();
 
   // Check that the "shutdown" ping was correctly saved to disk.
   await checkPendingShutdownPing();
@@ -1302,7 +1320,10 @@ add_task(async function test_sendShutdownPing() {
   await TelemetryStorage.testClearPendingPings();
 
   // Disable the "submission policy". The shutdown ping must not be sent.
-  Preferences.set(TelemetryUtils.Preferences.BypassNotification, false);
+  Services.prefs.setBoolPref(
+    TelemetryUtils.Preferences.BypassNotification,
+    false
+  );
   await TelemetryController.testReset();
   await TelemetryController.testShutdown();
 
@@ -1311,12 +1332,15 @@ add_task(async function test_sendShutdownPing() {
 
   // We cannot reset the BypassNotification pref, as we need it to be
   // |true| in tests.
-  Preferences.set(TelemetryUtils.Preferences.BypassNotification, true);
+  Services.prefs.setBoolPref(
+    TelemetryUtils.Preferences.BypassNotification,
+    true
+  );
 
   // With both upload enabled and the policy shown, make sure we don't
   // send the shutdown ping using the pingsender on the first
   // subsession.
-  Preferences.set(TelemetryUtils.Preferences.FirstRun, true);
+  Services.prefs.setBoolPref(TelemetryUtils.Preferences.FirstRun, true);
   // Make sure the reporting policy picks up the updated pref.
   TelemetryReportingPolicy.testUpdateFirstRun();
 
@@ -1330,11 +1354,11 @@ add_task(async function test_sendShutdownPing() {
 
   // Check that we're able to send the shutdown ping using the pingsender
   // from the first session if the related pref is on.
-  Preferences.set(
+  Services.prefs.setBoolPref(
     TelemetryUtils.Preferences.ShutdownPingSenderFirstSession,
     true
   );
-  Preferences.set(TelemetryUtils.Preferences.FirstRun, true);
+  Services.prefs.setBoolPref(TelemetryUtils.Preferences.FirstRun, true);
   TelemetryReportingPolicy.testUpdateFirstRun();
 
   // Restart/shutdown telemetry and wait for an incoming ping.
@@ -1346,14 +1370,18 @@ add_task(async function test_sendShutdownPing() {
   checkPingFormat(ping, ping.type, true, true);
   Assert.equal(ping.payload.info.reason, REASON_SHUTDOWN);
   Assert.equal(ping.clientId, gClientID);
+  Assert.equal(ping.profileGroupId, gProfileGroupID);
 
   // Reset the pref and restart Telemetry.
-  Preferences.set(TelemetryUtils.Preferences.ShutdownPingSender, false);
-  Preferences.set(
+  Services.prefs.setBoolPref(
+    TelemetryUtils.Preferences.ShutdownPingSender,
+    false
+  );
+  Services.prefs.setBoolPref(
     TelemetryUtils.Preferences.ShutdownPingSenderFirstSession,
     false
   );
-  Preferences.reset(TelemetryUtils.Preferences.FirstRun);
+  Services.prefs.clearUserPref(TelemetryUtils.Preferences.FirstRun);
   PingServer.resetPingHandler();
 });
 
@@ -1385,7 +1413,7 @@ add_task(async function test_sendFirstShutdownPing() {
     // the appropriate behavior from the preference flags.
 
     // Assert failure if we recive a ping.
-    PingServer.registerPingHandler((req, res) => {
+    PingServer.registerPingHandler(req => {
       const receivedPing = decodeRequestPayload(req);
       Assert.ok(
         false,
@@ -1395,7 +1423,7 @@ add_task(async function test_sendFirstShutdownPing() {
 
     // Assert that pings are sent on first run, forcing a forced application
     // quit. This should be equivalent to the first test in this suite.
-    Preferences.set(TelemetryUtils.Preferences.FirstRun, true);
+    Services.prefs.setBoolPref(TelemetryUtils.Preferences.FirstRun, true);
     TelemetryReportingPolicy.testUpdateFirstRun();
 
     await TelemetryController.testReset();
@@ -1409,7 +1437,7 @@ add_task(async function test_sendFirstShutdownPing() {
     await TelemetryStorage.testClearPendingPings();
 
     // Assert that it's not sent during subsequent runs
-    Preferences.set(TelemetryUtils.Preferences.FirstRun, false);
+    Services.prefs.setBoolPref(TelemetryUtils.Preferences.FirstRun, false);
     TelemetryReportingPolicy.testUpdateFirstRun();
 
     await TelemetryController.testReset();
@@ -1423,8 +1451,11 @@ add_task(async function test_sendFirstShutdownPing() {
     await TelemetryStorage.testClearPendingPings();
 
     // Assert that the the ping is only sent if the flag is enabled.
-    Preferences.set(TelemetryUtils.Preferences.FirstRun, true);
-    Preferences.set(TelemetryUtils.Preferences.FirstShutdownPingEnabled, false);
+    Services.prefs.setBoolPref(TelemetryUtils.Preferences.FirstRun, true);
+    Services.prefs.setBoolPref(
+      TelemetryUtils.Preferences.FirstShutdownPingEnabled,
+      false
+    );
     TelemetryReportingPolicy.testUpdateFirstRun();
 
     await TelemetryController.testReset();
@@ -1438,8 +1469,14 @@ add_task(async function test_sendFirstShutdownPing() {
 
     // Assert that the the ping is not collected when the ping-sender is disabled.
     // The information would be made irrelevant by the main-ping in the second session.
-    Preferences.set(TelemetryUtils.Preferences.FirstShutdownPingEnabled, true);
-    Preferences.set(TelemetryUtils.Preferences.ShutdownPingSender, false);
+    Services.prefs.setBoolPref(
+      TelemetryUtils.Preferences.FirstShutdownPingEnabled,
+      true
+    );
+    Services.prefs.setBoolPref(
+      TelemetryUtils.Preferences.ShutdownPingSender,
+      false
+    );
     TelemetryReportingPolicy.testUpdateFirstRun();
 
     await TelemetryController.testReset();
@@ -1461,15 +1498,21 @@ add_task(async function test_sendFirstShutdownPing() {
   Telemetry.clearScalars();
 
   // Set testing invariants for FirstShutdownPingEnabled
-  Preferences.set(TelemetryUtils.Preferences.ShutdownPingSender, true);
-  Preferences.set(
+  Services.prefs.setBoolPref(
+    TelemetryUtils.Preferences.ShutdownPingSender,
+    true
+  );
+  Services.prefs.setBoolPref(
     TelemetryUtils.Preferences.ShutdownPingSenderFirstSession,
     false
   );
 
   // Set primary conditions of the 'first-shutdown' ping
-  Preferences.set(TelemetryUtils.Preferences.FirstShutdownPingEnabled, true);
-  Preferences.set(TelemetryUtils.Preferences.FirstRun, true);
+  Services.prefs.setBoolPref(
+    TelemetryUtils.Preferences.FirstShutdownPingEnabled,
+    true
+  );
+  Services.prefs.setBoolPref(TelemetryUtils.Preferences.FirstRun, true);
   TelemetryReportingPolicy.testUpdateFirstRun();
 
   // Assert general 'first-shutdown' use-case.
@@ -1479,6 +1522,7 @@ add_task(async function test_sendFirstShutdownPing() {
   checkPingFormat(ping, "first-shutdown", true, true);
   Assert.equal(ping.payload.info.reason, REASON_SHUTDOWN);
   Assert.equal(ping.clientId, gClientID);
+  Assert.equal(ping.profileGroupId, gProfileGroupID);
 
   await TelemetryStorage.testClearPendingPings();
 
@@ -1486,13 +1530,19 @@ add_task(async function test_sendFirstShutdownPing() {
   await checkShutdownNotSent();
 
   // Reset the pref and restart Telemetry.
-  Preferences.set(TelemetryUtils.Preferences.ShutdownPingSender, false);
-  Preferences.set(
+  Services.prefs.setBoolPref(
+    TelemetryUtils.Preferences.ShutdownPingSender,
+    false
+  );
+  Services.prefs.setBoolPref(
     TelemetryUtils.Preferences.ShutdownPingSenderFirstSession,
     false
   );
-  Preferences.set(TelemetryUtils.Preferences.FirstShutdownPingEnabled, false);
-  Preferences.reset(TelemetryUtils.Preferences.FirstRun);
+  Services.prefs.setBoolPref(
+    TelemetryUtils.Preferences.FirstShutdownPingEnabled,
+    false
+  );
+  Services.prefs.clearUserPref(TelemetryUtils.Preferences.FirstRun);
   PingServer.resetPingHandler();
 });
 
@@ -1500,9 +1550,6 @@ add_task(async function test_savedSessionData() {
   // Create the directory which will contain the data file, if it doesn't already
   // exist.
   await IOUtils.makeDirectory(DATAREPORTING_PATH);
-  getHistogram("TELEMETRY_SESSIONDATA_FAILED_LOAD").clear();
-  getHistogram("TELEMETRY_SESSIONDATA_FAILED_PARSE").clear();
-  getHistogram("TELEMETRY_SESSIONDATA_FAILED_VALIDATION").clear();
 
   // Write test data to the session data file.
   const dataFilePath = PathUtils.join(DATAREPORTING_PATH, "session-state.json");
@@ -1514,7 +1561,7 @@ add_task(async function test_savedSessionData() {
   await IOUtils.writeJSON(dataFilePath, sessionState);
 
   const PREF_TEST = "toolkit.telemetry.test.pref1";
-  Preferences.reset(PREF_TEST);
+  Services.prefs.clearUserPref(PREF_TEST);
   const PREFS_TO_WATCH = new Map([
     [PREF_TEST, { what: TelemetryEnvironment.RECORD_PREF_VALUE }],
   ]);
@@ -1536,9 +1583,6 @@ add_task(async function test_savedSessionData() {
 
   // Start TelemetrySession so that it loads the session data file.
   await TelemetryController.testReset();
-  Assert.equal(0, getSnapshot("TELEMETRY_SESSIONDATA_FAILED_LOAD").sum);
-  Assert.equal(0, getSnapshot("TELEMETRY_SESSIONDATA_FAILED_PARSE").sum);
-  Assert.equal(0, getSnapshot("TELEMETRY_SESSIONDATA_FAILED_VALIDATION").sum);
 
   // Watch a test preference, trigger and environment change and wait for it to propagate.
   // _watchPreferences triggers a subsession notification
@@ -1550,7 +1594,7 @@ add_task(async function test_savedSessionData() {
   let changePromise = new Promise(resolve =>
     TelemetryEnvironment.registerChangeListener("test_fake_change", resolve)
   );
-  Preferences.set(PREF_TEST, 1);
+  Services.prefs.setIntPref(PREF_TEST, 1);
   await changePromise;
   TelemetryEnvironment.unregisterChangeListener("test_fake_change");
 
@@ -1581,9 +1625,6 @@ add_task(async function test_sessionData_ShortSession() {
 
   // Remove the session state file.
   await IOUtils.remove(SESSION_STATE_PATH, { ignoreAbsent: true });
-  getHistogram("TELEMETRY_SESSIONDATA_FAILED_LOAD").clear();
-  getHistogram("TELEMETRY_SESSIONDATA_FAILED_PARSE").clear();
-  getHistogram("TELEMETRY_SESSIONDATA_FAILED_VALIDATION").clear();
 
   const expectedSessionUUID = "ff602e52-47a1-b7e8-4c1a-ffffffffc87a";
   const expectedSubsessionUUID = "009fd1ad-b85e-4817-b3e5-000000003785";
@@ -1597,10 +1638,6 @@ add_task(async function test_sessionData_ShortSession() {
   TelemetryController.testReset();
   await TelemetryController.testShutdown();
 
-  Assert.equal(1, getSnapshot("TELEMETRY_SESSIONDATA_FAILED_LOAD").sum);
-  Assert.equal(0, getSnapshot("TELEMETRY_SESSIONDATA_FAILED_PARSE").sum);
-  Assert.equal(0, getSnapshot("TELEMETRY_SESSIONDATA_FAILED_VALIDATION").sum);
-
   // Restore the UUID generation functions.
   fakeGenerateUUID(TelemetryUtils.generateUUID, TelemetryUtils.generateUUID);
 
@@ -1613,9 +1650,6 @@ add_task(async function test_sessionData_ShortSession() {
   Assert.equal(payload.info.profileSubsessionCounter, 2);
   Assert.equal(payload.info.previousSessionId, expectedSessionUUID);
   Assert.equal(payload.info.previousSubsessionId, expectedSubsessionUUID);
-  Assert.equal(1, getSnapshot("TELEMETRY_SESSIONDATA_FAILED_LOAD").sum);
-  Assert.equal(0, getSnapshot("TELEMETRY_SESSIONDATA_FAILED_PARSE").sum);
-  Assert.equal(0, getSnapshot("TELEMETRY_SESSIONDATA_FAILED_VALIDATION").sum);
 
   await TelemetryController.testShutdown();
 });
@@ -1624,9 +1658,6 @@ add_task(async function test_invalidSessionData() {
   // Create the directory which will contain the data file, if it doesn't already
   // exist.
   await IOUtils.makeDirectory(DATAREPORTING_PATH);
-  getHistogram("TELEMETRY_SESSIONDATA_FAILED_LOAD").clear();
-  getHistogram("TELEMETRY_SESSIONDATA_FAILED_PARSE").clear();
-  getHistogram("TELEMETRY_SESSIONDATA_FAILED_VALIDATION").clear();
 
   // Write test data to the session data file. This should fail to parse.
   const dataFilePath = PathUtils.join(DATAREPORTING_PATH, "session-state.json");
@@ -1637,11 +1668,6 @@ add_task(async function test_invalidSessionData() {
 
   // Start TelemetryController so that it loads the session data file.
   await TelemetryController.testReset();
-
-  // The session data file should not load. Only expect the current subsession.
-  Assert.equal(0, getSnapshot("TELEMETRY_SESSIONDATA_FAILED_LOAD").sum);
-  Assert.equal(1, getSnapshot("TELEMETRY_SESSIONDATA_FAILED_PARSE").sum);
-  Assert.equal(0, getSnapshot("TELEMETRY_SESSIONDATA_FAILED_VALIDATION").sum);
 
   // Write test data to the session data file. This should fail validation.
   const sessionState = {
@@ -1665,9 +1691,6 @@ add_task(async function test_invalidSessionData() {
 
   let payload = TelemetrySession.getPayload();
   Assert.equal(payload.info.profileSubsessionCounter, expectedSubsessions);
-  Assert.equal(0, getSnapshot("TELEMETRY_SESSIONDATA_FAILED_LOAD").sum);
-  Assert.equal(1, getSnapshot("TELEMETRY_SESSIONDATA_FAILED_PARSE").sum);
-  Assert.equal(1, getSnapshot("TELEMETRY_SESSIONDATA_FAILED_VALIDATION").sum);
 
   await TelemetryController.testShutdown();
 
@@ -1962,7 +1985,7 @@ add_task(async function test_schedulerEnvironmentReschedules() {
 
   // Reset the test preference.
   const PREF_TEST = "toolkit.telemetry.test.pref1";
-  Preferences.reset(PREF_TEST);
+  Services.prefs.clearUserPref(PREF_TEST);
   const PREFS_TO_WATCH = new Map([
     [PREF_TEST, { what: TelemetryEnvironment.RECORD_PREF_VALUE }],
   ]);
@@ -1994,7 +2017,7 @@ add_task(async function test_schedulerEnvironmentReschedules() {
   );
 
   // Trigger the environment change.
-  Preferences.set(PREF_TEST, 1);
+  Services.prefs.setIntPref(PREF_TEST, 1);
 
   // Wait for the environment-changed ping.
   let ping = await PingServer.promiseNextPing();
@@ -2006,7 +2029,7 @@ add_task(async function test_schedulerEnvironmentReschedules() {
   );
 
   // We don't expect to receive any daily ping in this test, so assert if we do.
-  PingServer.registerPingHandler((req, res) => {
+  PingServer.registerPingHandler(req => {
     const receivedPing = decodeRequestPayload(req);
     Assert.ok(
       false,
@@ -2040,7 +2063,7 @@ add_task(async function test_schedulerNothingDue() {
   await TelemetryController.testReset();
 
   // We don't expect to receive any ping in this test, so assert if we do.
-  PingServer.registerPingHandler((req, res) => {
+  PingServer.registerPingHandler(req => {
     const receivedPing = decodeRequestPayload(req);
     Assert.ok(
       false,

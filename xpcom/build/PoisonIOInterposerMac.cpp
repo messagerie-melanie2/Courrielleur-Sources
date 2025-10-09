@@ -16,7 +16,6 @@
 #include "mozilla/IOInterposer.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/ProcessedStack.h"
-#include "mozilla/Telemetry.h"
 #include "mozilla/UniquePtrExtensions.h"
 #include "nsPrintfCString.h"
 #include "mozilla/StackWalk.h"
@@ -289,7 +288,7 @@ FuncData* Functions[] = {&aio_write_data,
                          &writev_data,          &writev_NOCANCEL_UNIX2003_data,
                          &writev_UNIX2003_data, &writev_NOCANCEL_data};
 
-const int NumFunctions = mozilla::ArrayLength(Functions);
+const int NumFunctions = std::size(Functions);
 
 }  // namespace
 
@@ -328,10 +327,17 @@ void InitPoisonIOInterposer() {
     if (!d->Function) {
       continue;
     }
+
+    // Disable the interposer on arm64 until there's
+    // a mach_override_ptr implementation.
 #ifndef __aarch64__
+    // Temporarily disable the interposer on macOS x64
+    // while dynamic code disablement rides the trains.
+#  ifdef MOZ_INTERPOSER_FORCE_MACOS_X64
     DebugOnly<mach_error_t> t =
         mach_override_ptr(d->Function, d->Wrapper, &d->Buffer);
     MOZ_ASSERT(t == err_none);
+#  endif  // MOZ_INTERPOSER_FORCE_MACOS_X64
 #endif
   }
 }

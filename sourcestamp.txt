@@ -1,3 +1,3 @@
-20240304230937
-https://hg.mozilla.org/releases/comm-esr115/rev/5b8708dc0314dab535d9357b5dfd6b2bef9441c8
-https://hg.mozilla.org/releases/mozilla-esr115/rev/17fcbdf6426663c10da5d0ba21927e71184304c3
+20250929214837
+https://hg.mozilla.org/releases/comm-esr140/rev/92eb5225318ba6425cd177e8ffda37917fbb9444
+https://hg.mozilla.org/releases/mozilla-esr140/rev/0b8c16d258d0c9d9d0379b9f317c77245ec010ff

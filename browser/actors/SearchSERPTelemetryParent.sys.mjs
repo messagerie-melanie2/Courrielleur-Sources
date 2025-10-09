@@ -5,7 +5,8 @@
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
-  SearchSERPTelemetry: "resource:///modules/SearchSERPTelemetry.sys.mjs",
+  SearchSERPTelemetry:
+    "moz-src:///browser/components/search/SearchSERPTelemetry.sys.mjs",
 });
 
 export class SearchSERPTelemetryParent extends JSWindowActorParent {
@@ -27,6 +28,10 @@ export class SearchSERPTelemetryParent extends JSWindowActorParent {
       }
       case "SearchTelemetry:PageImpression": {
         lazy.SearchSERPTelemetry.reportPageImpression(msg.data, browser);
+        break;
+      }
+      case "SearchTelemetry:Domains": {
+        lazy.SearchSERPTelemetry.reportPageDomains(msg.data, browser);
         break;
       }
     }

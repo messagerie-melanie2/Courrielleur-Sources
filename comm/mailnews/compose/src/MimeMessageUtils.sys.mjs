@@ -7,89 +7,10 @@ import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 import { MailUtils } from "resource:///modules/MailUtils.sys.mjs";
 import { jsmime } from "resource:///modules/jsmime.sys.mjs";
 
-// Defined in ErrorList.h.
-const NS_ERROR_MODULE_BASE_OFFSET = 69;
-const NS_ERROR_MODULE_MAILNEWS = 16;
-
-/**
- * Generate an NS_ERROR code from a MAILNEWS error code. See NS_ERROR_GENERATE
- * in nsError.h and NS_MSG_GENERATE_FAILURE in nsComposeStrings.h.
- *
- * @param {number} code - The error code in MAILNEWS module.
- * @returns {number}
- */
-function generateNSError(code) {
-  return (
-    ((1 << 31) |
-      ((NS_ERROR_MODULE_MAILNEWS + NS_ERROR_MODULE_BASE_OFFSET) << 16) |
-      code) >>>
-    0
-  );
-}
-
 /**
  * Collection of helper functions for message sending process.
  */
 export var MsgUtils = {
-  /**
-   * Error codes defined in nsComposeStrings.h
-   */
-  NS_MSG_UNABLE_TO_OPEN_FILE: generateNSError(12500),
-  NS_MSG_UNABLE_TO_OPEN_TMP_FILE: generateNSError(12501),
-  NS_MSG_UNABLE_TO_SAVE_TEMPLATE: generateNSError(12502),
-  NS_MSG_UNABLE_TO_SAVE_DRAFT: generateNSError(12503),
-  NS_MSG_COULDNT_OPEN_FCC_FOLDER: generateNSError(12506),
-  NS_MSG_NO_SENDER: generateNSError(12510),
-  NS_MSG_NO_RECIPIENTS: generateNSError(12511),
-  NS_MSG_ERROR_WRITING_FILE: generateNSError(12512),
-  NS_ERROR_SENDING_FROM_COMMAND: generateNSError(12514),
-  NS_ERROR_SENDING_DATA_COMMAND: generateNSError(12516),
-  NS_ERROR_SENDING_MESSAGE: generateNSError(12517),
-  NS_ERROR_POST_FAILED: generateNSError(12518),
-  NS_ERROR_SMTP_SERVER_ERROR: generateNSError(12524),
-  NS_MSG_UNABLE_TO_SEND_LATER: generateNSError(12525),
-  NS_ERROR_COMMUNICATIONS_ERROR: generateNSError(12526),
-  NS_ERROR_BUT_DONT_SHOW_ALERT: generateNSError(12527),
-  NS_ERROR_COULD_NOT_GET_USERS_MAIL_ADDRESS: generateNSError(12529),
-  NS_ERROR_COULD_NOT_GET_SENDERS_IDENTITY: generateNSError(12530),
-  NS_ERROR_MIME_MPART_ATTACHMENT_ERROR: generateNSError(12531),
-
-  // 12554 is taken by NS_ERROR_NNTP_NO_CROSS_POSTING.  use 12555 as the next one
-
-  // For message sending report
-  NS_MSG_ERROR_READING_FILE: generateNSError(12563),
-
-  NS_MSG_ERROR_ATTACHING_FILE: generateNSError(12570),
-
-  NS_ERROR_SMTP_GREETING: generateNSError(12572),
-
-  NS_ERROR_SENDING_RCPT_COMMAND: generateNSError(12575),
-
-  NS_ERROR_STARTTLS_FAILED_EHLO_STARTTLS: generateNSError(12582),
-
-  NS_ERROR_SMTP_PASSWORD_UNDEFINED: generateNSError(12584),
-  NS_ERROR_SMTP_SEND_NOT_ALLOWED: generateNSError(12585),
-  NS_ERROR_SMTP_TEMP_SIZE_EXCEEDED: generateNSError(12586),
-  NS_ERROR_SMTP_PERM_SIZE_EXCEEDED_2: generateNSError(12588),
-
-  NS_ERROR_SMTP_SEND_FAILED_UNKNOWN_SERVER: generateNSError(12589),
-  NS_ERROR_SMTP_SEND_FAILED_REFUSED: generateNSError(12590),
-  NS_ERROR_SMTP_SEND_FAILED_INTERRUPTED: generateNSError(12591),
-  NS_ERROR_SMTP_SEND_FAILED_TIMEOUT: generateNSError(12592),
-  NS_ERROR_SMTP_SEND_FAILED_UNKNOWN_REASON: generateNSError(12593),
-
-  NS_ERROR_SMTP_AUTH_CHANGE_ENCRYPT_TO_PLAIN_NO_SSL: generateNSError(12594),
-  NS_ERROR_SMTP_AUTH_CHANGE_ENCRYPT_TO_PLAIN_SSL: generateNSError(12595),
-  NS_ERROR_SMTP_AUTH_CHANGE_PLAIN_TO_ENCRYPT: generateNSError(12596),
-  NS_ERROR_SMTP_AUTH_FAILURE: generateNSError(12597),
-  NS_ERROR_SMTP_AUTH_GSSAPI: generateNSError(12598),
-  NS_ERROR_SMTP_AUTH_MECH_NOT_SUPPORTED: generateNSError(12599),
-
-  NS_ERROR_ILLEGAL_LOCALPART: generateNSError(12601),
-
-  NS_ERROR_CLIENTID: generateNSError(12610),
-  NS_ERROR_CLIENTID_PERMISSION: generateNSError(12611),
-
   sendLogger: console.createInstance({
     prefix: "mailnews.send",
     maxLogLevel: "Warn",
@@ -101,19 +22,6 @@ export var MsgUtils = {
     maxLogLevel: "Warn",
     maxLogLevelPref: "mailnews.smtp.loglevel",
   }),
-
-  /**
-   * NS_IS_MSG_ERROR in msgCore.h.
-   *
-   * @param {nsresult} err - The nsresult value.
-   * @returns {boolean}
-   */
-  isMsgError(err) {
-    return (
-      (((err >> 16) - NS_ERROR_MODULE_BASE_OFFSET) & 0x1fff) ==
-      NS_ERROR_MODULE_MAILNEWS
-    );
-  },
 
   /**
    * Convert html to text to form a multipart/alternative message. The output
@@ -229,7 +137,8 @@ export var MsgUtils = {
             ).messageURIToMsgHdr(originalMsgURI);
         } catch (e) {
           console.warn(
-            `messageServiceFromURI failed for ${originalMsgURI}\n${e.stack}`
+            `messageServiceFromURI failed for ${originalMsgURI}`,
+            e.stack
           );
         }
         if (msgHdr) {
@@ -238,7 +147,7 @@ export var MsgUtils = {
             folder &&
             folder.canFileMessages &&
             folder.server &&
-            folder.server.getCharValue("type") != "rss" &&
+            folder.server.getStringValue("type") != "rss" &&
             userIdentity.fccReplyFollowsParent
           ) {
             fcc = folder.URI;
@@ -644,45 +553,6 @@ export var MsgUtils = {
   },
 
   /**
-   * Get the value of Newsgroups and X-Mozilla-News-Host header.
-   *
-   * @param {nsMsgDeliverMode} deliverMode - Message deliver mode.
-   * @param {string} newsgroups - Raw newsgroups header content.
-   * @returns {{newsgroups: string, newshost: string}}
-   */
-  getNewsgroups(deliverMode, newsgroups) {
-    const nntpService = Cc["@mozilla.org/messenger/nntpservice;1"].getService(
-      Ci.nsINntpService
-    );
-    const newsgroupsHeaderVal = {};
-    const newshostHeaderVal = {};
-    nntpService.generateNewsHeaderValsForPosting(
-      newsgroups,
-      newsgroupsHeaderVal,
-      newshostHeaderVal
-    );
-
-    // If we are here, we are NOT going to send this now. (i.e. it is a Draft,
-    // Send Later file, etc...). Because of that, we need to store what the user
-    // typed in on the original composition window for use later when rebuilding
-    // the headers
-    if (
-      deliverMode == Ci.nsIMsgSend.nsMsgDeliverNow ||
-      deliverMode == Ci.nsIMsgSend.nsMsgSendUnsent
-    ) {
-      // This is going to be saved for later, that means we should just store
-      // what the user typed into the "Newsgroup" line in the
-      // HEADER_X_MOZILLA_NEWSHOST header for later use by "Send Unsent
-      // Messages", "Drafts" or "Templates"
-      newshostHeaderVal.value = "";
-    }
-    return {
-      newsgroups: newsgroupsHeaderVal.value,
-      newshost: newshostHeaderVal.value,
-    };
-  },
-
-  /**
    * Get the Content-Location header value.
    *
    * @param {string} baseUrl - The base url of an HTML attachment.
@@ -876,7 +746,7 @@ export var MsgUtils = {
    *
    * @param {nsIMsgIdentity} userIdentity - The user identity.
    * @param {nsMsgDeliverMode} deliverMode - The deliver mode.
-   * @returns {string}
+   * @returns {string} The folder URI.
    */
   getMsgFolderURIFromPrefs(userIdentity, deliverMode) {
     if (
@@ -887,18 +757,21 @@ export var MsgUtils = {
       // check if uri is unescaped, and if so, escape it and reset the pef.
       if (!uri) {
         return "anyfolder://";
-      } else if (uri.includes(" ")) {
+      }
+      if (uri.includes(" ")) {
         uri.replaceAll(" ", "%20");
         Services.prefs.setCharPref("mail.default_sendlater_uri", uri);
       }
       return uri;
-    } else if (deliverMode == Ci.nsIMsgSend.nsMsgSaveAsDraft) {
-      return userIdentity.draftFolder;
-    } else if (deliverMode == Ci.nsIMsgSend.nsMsgSaveAsTemplate) {
-      return userIdentity.stationeryFolder;
+    }
+    if (deliverMode == Ci.nsIMsgSend.nsMsgSaveAsDraft) {
+      return userIdentity.getOrCreateDraftsFolder().URI;
+    }
+    if (deliverMode == Ci.nsIMsgSend.nsMsgSaveAsTemplate) {
+      return userIdentity.getOrCreateTemplatesFolder().URI;
     }
     if (userIdentity.doFcc) {
-      return userIdentity.fccFolder;
+      return userIdentity.getOrCreateFccFolder().URI;
     }
     return "";
   },
@@ -912,56 +785,14 @@ export var MsgUtils = {
    */
   getErrorStringName(exitCode) {
     const codeNameMap = {
-      [this.NS_MSG_UNABLE_TO_OPEN_FILE]: "unableToOpenFile",
-      [this.NS_MSG_UNABLE_TO_OPEN_TMP_FILE]: "unableToOpenTmpFile",
-      [this.NS_MSG_UNABLE_TO_SAVE_TEMPLATE]: "unableToSaveTemplate",
-      [this.NS_MSG_UNABLE_TO_SAVE_DRAFT]: "unableToSaveDraft",
-      [this.NS_MSG_COULDNT_OPEN_FCC_FOLDER]: "couldntOpenFccFolder",
-      [this.NS_MSG_NO_SENDER]: "noSender",
-      [this.NS_MSG_NO_RECIPIENTS]: "noRecipients",
-      [this.NS_MSG_ERROR_WRITING_FILE]: "errorWritingFile",
-      [this.NS_ERROR_SENDING_FROM_COMMAND]: "errorSendingFromCommand",
-      [this.NS_ERROR_SENDING_DATA_COMMAND]: "errorSendingDataCommand",
-      [this.NS_ERROR_SENDING_MESSAGE]: "errorSendingMessage",
-      [this.NS_ERROR_POST_FAILED]: "postFailed",
-      [this.NS_ERROR_SMTP_SERVER_ERROR]: "smtpServerError",
-      [this.NS_MSG_UNABLE_TO_SEND_LATER]: "unableToSendLater",
-      [this.NS_ERROR_COMMUNICATIONS_ERROR]: "communicationsError",
-      [this.NS_ERROR_BUT_DONT_SHOW_ALERT]: "dontShowAlert",
-      [this.NS_ERROR_COULD_NOT_GET_USERS_MAIL_ADDRESS]:
-        "couldNotGetUsersMailAddress2",
-      [this.NS_ERROR_COULD_NOT_GET_SENDERS_IDENTITY]:
-        "couldNotGetSendersIdentity",
-      [this.NS_ERROR_MIME_MPART_ATTACHMENT_ERROR]: "mimeMpartAttachmentError",
-      [this.NS_ERROR_NNTP_NO_CROSS_POSTING]: "nntpNoCrossPosting",
-      [this.NS_MSG_ERROR_READING_FILE]: "errorReadingFile",
-      [this.NS_MSG_ERROR_ATTACHING_FILE]: "errorAttachingFile",
-      [this.NS_ERROR_SMTP_GREETING]: "incorrectSmtpGreeting",
-      [this.NS_ERROR_SENDING_RCPT_COMMAND]: "errorSendingRcptCommand",
-      [this.NS_ERROR_STARTTLS_FAILED_EHLO_STARTTLS]: "startTlsFailed",
-      [this.NS_ERROR_SMTP_PASSWORD_UNDEFINED]: "smtpPasswordUndefined",
-      [this.NS_ERROR_SMTP_SEND_NOT_ALLOWED]: "smtpSendNotAllowed",
-      [this.NS_ERROR_SMTP_TEMP_SIZE_EXCEEDED]: "smtpTooManyRecipients",
-      [this.NS_ERROR_SMTP_PERM_SIZE_EXCEEDED_2]: "smtpPermSizeExceeded2",
-      [this.NS_ERROR_SMTP_SEND_FAILED_UNKNOWN_SERVER]:
-        "smtpSendFailedUnknownServer",
-      [this.NS_ERROR_SMTP_SEND_FAILED_REFUSED]: "smtpSendRequestRefused",
-      [this.NS_ERROR_SMTP_SEND_FAILED_INTERRUPTED]: "smtpSendInterrupted",
-      [this.NS_ERROR_SMTP_SEND_FAILED_TIMEOUT]: "smtpSendTimeout",
-      [this.NS_ERROR_SMTP_SEND_FAILED_UNKNOWN_REASON]:
-        "smtpSendFailedUnknownReason",
-      [this.NS_ERROR_SMTP_AUTH_CHANGE_ENCRYPT_TO_PLAIN_NO_SSL]:
-        "smtpHintAuthEncryptToPlainNoSsl",
-      [this.NS_ERROR_SMTP_AUTH_CHANGE_ENCRYPT_TO_PLAIN_SSL]:
-        "smtpHintAuthEncryptToPlainSsl",
-      [this.NS_ERROR_SMTP_AUTH_CHANGE_PLAIN_TO_ENCRYPT]:
-        "smtpHintAuthPlainToEncrypt",
-      [this.NS_ERROR_SMTP_AUTH_FAILURE]: "smtpAuthFailure",
-      [this.NS_ERROR_SMTP_AUTH_GSSAPI]: "smtpAuthGssapi",
-      [this.NS_ERROR_SMTP_AUTH_MECH_NOT_SUPPORTED]: "smtpAuthMechNotSupported",
-      [this.NS_ERROR_ILLEGAL_LOCALPART]: "errorIllegalLocalPart2",
-      [this.NS_ERROR_CLIENTID]: "smtpClientid",
-      [this.NS_ERROR_CLIENTID_PERMISSION]: "smtpClientidPermission",
+      [Cr.NS_ERROR_FILE_NOT_FOUND]: "errorAttachingFile",
+      [Cr.NS_ERROR_UNKNOWN_HOST]: "smtpSendFailedUnknownServer",
+      [Cr.NS_ERROR_UNKNOWN_PROXY_HOST]: "smtpSendFailedUnknownServer",
+      [Cr.NS_ERROR_CONNECTION_REFUSED]: "smtpSendRequestRefused",
+      [Cr.NS_ERROR_PROXY_CONNECTION_REFUSED]: "smtpSendRequestRefused",
+      [Cr.NS_ERROR_NET_INTERRUPT]: "smtpSendInterrupted",
+      [Cr.NS_ERROR_NET_TIMEOUT]: "smtpSendTimeout",
+      [Cr.NS_ERROR_NET_RESET]: "smtpSendTimeout",
     };
     return codeNameMap[exitCode] || "sendFailed";
   },
@@ -977,7 +808,7 @@ export var MsgUtils = {
   formatStringWithSMTPHostName(userIdentity, composeBundle, errorName) {
     const smtpServer =
       MailServices.outgoingServer.getServerByIdentity(userIdentity);
-    const smtpHostname = smtpServer.hostname;
+    const smtpHostname = smtpServer.serverURI.host;
     return composeBundle.formatStringFromName(errorName, [smtpHostname]);
   },
 

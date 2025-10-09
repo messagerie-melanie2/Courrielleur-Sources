@@ -12,6 +12,7 @@
 #include "mozilla/ScopeExit.h"
 #include "mozilla/dom/ChannelInfo.h"
 #include "mozilla/dom/PerformanceStorage.h"
+#include "mozilla/glean/DomServiceworkersMetrics.h"
 #include "nsHttpChannel.h"
 #include "nsIHttpHeaderVisitor.h"
 #include "nsIRedirectResultListener.h"
@@ -41,8 +42,7 @@ InterceptedHttpChannel::InterceptedHttpChannel(
       mProgressReported(0),
       mSynthesizedStreamLength(-1),
       mResumeStartPos(0),
-      mCallingStatusAndProgress(false),
-      mTimeStamps() {
+      mCallingStatusAndProgress(false) {
   // Pre-set the creation and AsyncOpen times based on the original channel
   // we are intercepting.  We don't want our extra internal redirect to mask
   // any time spent processing the channel.
@@ -81,7 +81,7 @@ nsresult InterceptedHttpChannel::SetupReplacementChannel(
     return rv;
   }
 
-  rv = CheckRedirectLimit(aRedirectFlags);
+  rv = CheckRedirectLimit(aURI, aRedirectFlags);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // While we can't resume an synthetic response, we can still propagate
@@ -111,7 +111,8 @@ void InterceptedHttpChannel::AsyncOpenInternal() {
         mURI, requestMethod, mPriority, mChannelId, NetworkLoadType::LOAD_START,
         mChannelCreationTimestamp, mLastStatusReported, 0, kCacheUnknown,
         mLoadInfo->GetInnerWindowID(),
-        mLoadInfo->GetOriginAttributes().mPrivateBrowsingId > 0);
+        mLoadInfo->GetOriginAttributes().IsPrivateBrowsing(),
+        mClassOfService.Flags(), mStatus);
   }
 
   // If an error occurs in this file we must ensure mListener callbacks are
@@ -125,9 +126,7 @@ void InterceptedHttpChannel::AsyncOpenInternal() {
 
   // We should have pre-set the AsyncOpen time based on the original channel if
   // timings are enabled.
-  if (LoadTimingEnabled()) {
-    MOZ_DIAGNOSTIC_ASSERT(!mAsyncOpenTime.IsNull());
-  }
+  MOZ_DIAGNOSTIC_ASSERT(!mAsyncOpenTime.IsNull());
 
   StoreIsPending(true);
   StoreResponseCouldBeSynthesized(true);
@@ -418,8 +417,7 @@ void InterceptedHttpChannel::MaybeCallStatusAndProgress() {
     nsCOMPtr<nsIRunnable> r = NewRunnableMethod(
         "InterceptedHttpChannel::MaybeCallStatusAndProgress", this,
         &InterceptedHttpChannel::MaybeCallStatusAndProgress);
-    MOZ_ALWAYS_SUCCEEDS(
-        SchedulerGroup::Dispatch(TaskCategory::Other, r.forget()));
+    MOZ_ALWAYS_SUCCEEDS(SchedulerGroup::Dispatch(r.forget()));
 
     return;
   }
@@ -552,8 +550,9 @@ InterceptedHttpChannel::Cancel(nsresult aStatus) {
         mURI, requestMethod, priority, mChannelId, NetworkLoadType::LOAD_CANCEL,
         mLastStatusReported, TimeStamp::Now(), size, kCacheUnknown,
         mLoadInfo->GetInnerWindowID(),
-        mLoadInfo->GetOriginAttributes().mPrivateBrowsingId > 0,
-        &mTransactionTimings, std::move(mSource));
+        mLoadInfo->GetOriginAttributes().IsPrivateBrowsing(),
+        mClassOfService.Flags(), mStatus, &mTransactionTimings,
+        std::move(mSource));
   }
 
   MOZ_DIAGNOSTIC_ASSERT(NS_FAILED(aStatus));
@@ -642,7 +641,7 @@ InterceptedHttpChannel::GetIsAuthChannel(bool* aIsAuthChannel) {
 
 NS_IMETHODIMP
 InterceptedHttpChannel::SetPriority(int32_t aPriority) {
-  mPriority = clamped<int32_t>(aPriority, INT16_MIN, INT16_MAX);
+  mPriority = std::clamp<int32_t>(aPriority, INT16_MIN, INT16_MAX);
   return NS_OK;
 }
 
@@ -707,7 +706,7 @@ class ResetInterceptionHeaderVisitor final : public nsIHttpHeaderVisitor {
   VisitHeader(const nsACString& aHeader, const nsACString& aValue) override {
     // We skip Cookie header here, since it will be added during
     // nsHttpChannel::AsyncOpen.
-    if (aHeader.Equals(nsHttp::Cookie)) {
+    if (aHeader.Equals(nsHttp::Cookie.val())) {
       return NS_OK;
     }
     if (aValue.IsEmpty()) {
@@ -770,8 +769,12 @@ InterceptedHttpChannel::ResetInterception(bool aBypass) {
     GetEncodedBodySize(&size);
 
     nsAutoCString contentType;
+    mozilla::Maybe<mozilla::net::HttpVersion> httpVersion = Nothing();
+    mozilla::Maybe<uint32_t> responseStatus = Nothing();
     if (mResponseHead) {
       mResponseHead->ContentType(contentType);
+      httpVersion = Some(mResponseHead->Version());
+      responseStatus = Some(mResponseHead->Status());
     }
 
     RefPtr<HttpBaseChannel> newBaseChannel = do_QueryObject(newChannel);
@@ -781,8 +784,9 @@ InterceptedHttpChannel::ResetInterception(bool aBypass) {
         mURI, requestMethod, priority, mChannelId,
         NetworkLoadType::LOAD_REDIRECT, mLastStatusReported, TimeStamp::Now(),
         size, kCacheUnknown, mLoadInfo->GetInnerWindowID(),
-        mLoadInfo->GetOriginAttributes().mPrivateBrowsingId > 0,
-        &mTransactionTimings, std::move(mSource),
+        mLoadInfo->GetOriginAttributes().IsPrivateBrowsing(),
+        mClassOfService.Flags(), mStatus, &mTransactionTimings,
+        std::move(mSource), httpVersion, responseStatus,
         Some(nsDependentCString(contentType.get())), mURI, flags,
         newBaseChannel->ChannelId());
   }
@@ -848,7 +852,8 @@ InterceptedHttpChannel::SynthesizeStatus(uint16_t aStatus,
   statusLine.AppendLiteral(" ");
   statusLine.Append(aReason);
 
-  mSynthesizedResponseHead->ParseStatusLine(statusLine);
+  NS_ENSURE_SUCCESS(mSynthesizedResponseHead->ParseStatusLine(statusLine),
+                    NS_ERROR_FAILURE);
   return NS_OK;
 }
 
@@ -1020,6 +1025,76 @@ InterceptedHttpChannel::SetFetchHandlerFinish(TimeStamp aTimeStamp) {
 }
 
 NS_IMETHODIMP
+InterceptedHttpChannel::SetRemoteWorkerLaunchStart(TimeStamp aTimeStamp) {
+  mServiceWorkerLaunchStart = aTimeStamp > mTimeStamps.mInterceptionStart
+                                  ? aTimeStamp
+                                  : mTimeStamps.mInterceptionStart;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+InterceptedHttpChannel::SetRemoteWorkerLaunchEnd(TimeStamp aTimeStamp) {
+  mServiceWorkerLaunchEnd = aTimeStamp > mTimeStamps.mInterceptionStart
+                                ? aTimeStamp
+                                : mTimeStamps.mInterceptionStart;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+InterceptedHttpChannel::SetLaunchServiceWorkerStart(TimeStamp aTimeStamp) {
+  mServiceWorkerLaunchStart = aTimeStamp;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+InterceptedHttpChannel::GetLaunchServiceWorkerStart(TimeStamp* aRetVal) {
+  MOZ_ASSERT(aRetVal);
+  *aRetVal = mServiceWorkerLaunchStart;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+InterceptedHttpChannel::SetLaunchServiceWorkerEnd(TimeStamp aTimeStamp) {
+  mServiceWorkerLaunchEnd = aTimeStamp;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+InterceptedHttpChannel::GetLaunchServiceWorkerEnd(TimeStamp* aRetVal) {
+  MOZ_ASSERT(aRetVal);
+  *aRetVal = mServiceWorkerLaunchEnd;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+InterceptedHttpChannel::GetDispatchFetchEventStart(TimeStamp* aRetVal) {
+  MOZ_ASSERT(aRetVal);
+  *aRetVal = mTimeStamps.mInterceptionStart;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+InterceptedHttpChannel::GetDispatchFetchEventEnd(TimeStamp* aRetVal) {
+  MOZ_ASSERT(aRetVal);
+  *aRetVal = mTimeStamps.mFetchHandlerStart;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+InterceptedHttpChannel::GetHandleFetchEventStart(TimeStamp* aRetVal) {
+  MOZ_ASSERT(aRetVal);
+  *aRetVal = mTimeStamps.mFetchHandlerStart;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+InterceptedHttpChannel::GetHandleFetchEventEnd(TimeStamp* aRetVal) {
+  MOZ_ASSERT(aRetVal);
+  *aRetVal = mTimeStamps.mFetchHandlerFinish;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 InterceptedHttpChannel::GetIsReset(bool* aResult) {
   *aResult = mInterceptionReset;
   return NS_OK;
@@ -1148,15 +1223,20 @@ InterceptedHttpChannel::OnStopRequest(nsIRequest* aRequest, nsresult aStatus) {
     GetEncodedBodySize(&size);
 
     nsAutoCString contentType;
+    mozilla::Maybe<mozilla::net::HttpVersion> httpVersion = Nothing();
+    mozilla::Maybe<uint32_t> responseStatus = Nothing();
     if (mResponseHead) {
       mResponseHead->ContentType(contentType);
+      httpVersion = Some(mResponseHead->Version());
+      responseStatus = Some(mResponseHead->Status());
     }
     profiler_add_network_marker(
         mURI, requestMethod, priority, mChannelId, NetworkLoadType::LOAD_STOP,
         mLastStatusReported, TimeStamp::Now(), size, kCacheUnknown,
         mLoadInfo->GetInnerWindowID(),
-        mLoadInfo->GetOriginAttributes().mPrivateBrowsingId > 0,
-        &mTransactionTimings, std::move(mSource),
+        mLoadInfo->GetOriginAttributes().IsPrivateBrowsing(),
+        mClassOfService.Flags(), mStatus, &mTransactionTimings,
+        std::move(mSource), httpVersion, responseStatus,
         Some(nsDependentCString(contentType.get())));
   }
 
@@ -1193,6 +1273,20 @@ InterceptedHttpChannel::OnDataAvailable(nsIRequest* aRequest,
   }
 
   return mListener->OnDataAvailable(this, aInputStream, aOffset, aCount);
+}
+
+NS_IMETHODIMP
+InterceptedHttpChannel::OnDataFinished(nsresult aStatus) {
+  if (mCanceled || !mListener) {
+    return aStatus;
+  }
+  nsCOMPtr<nsIThreadRetargetableStreamListener> retargetableListener =
+      do_QueryInterface(mListener);
+  if (retargetableListener) {
+    return retargetableListener->OnDataFinished(aStatus);
+  }
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -1579,52 +1673,41 @@ void InterceptedHttpChannel::InterceptionTimeStamps::GenKeysWithStatus(
 void InterceptedHttpChannel::InterceptionTimeStamps::SaveTimeStamps() {
   MOZ_ASSERT(mStatus != Initialized && mStatus != Created);
 
-  if (mStatus == Synthesized || mStatus == Reset) {
-    Telemetry::HistogramID id =
-        Telemetry::SERVICE_WORKER_FETCH_EVENT_FINISH_SYNTHESIZED_RESPONSE_MS_2;
-    if (mStatus == Reset) {
-      id = Telemetry::SERVICE_WORKER_FETCH_EVENT_CHANNEL_RESET_MS_2;
-    }
-
-    Telemetry::Accumulate(
-        id, mKey,
-        static_cast<uint32_t>(
-            (mInterceptionFinish - mFetchHandlerFinish).ToMilliseconds()));
+  if (mStatus == Reset) {
+    glean::service_worker::fetch_event_channel_reset.Get(mKey)
+        .AccumulateRawDuration(mInterceptionFinish - mFetchHandlerFinish);
     if (!mIsNonSubresourceRequest && !mSubresourceKey.IsEmpty()) {
-      Telemetry::Accumulate(
-          id, mSubresourceKey,
-          static_cast<uint32_t>(
-              (mInterceptionFinish - mFetchHandlerFinish).ToMilliseconds()));
+      glean::service_worker::fetch_event_channel_reset.Get(mSubresourceKey)
+          .AccumulateRawDuration(mInterceptionFinish - mFetchHandlerFinish);
+    }
+  } else if (mStatus == Synthesized) {
+    glean::service_worker::fetch_event_finish_synthesized_response.Get(mKey)
+        .AccumulateRawDuration(mInterceptionFinish - mFetchHandlerFinish);
+    if (!mIsNonSubresourceRequest && !mSubresourceKey.IsEmpty()) {
+      glean::service_worker::fetch_event_finish_synthesized_response
+          .Get(mSubresourceKey)
+          .AccumulateRawDuration(mInterceptionFinish - mFetchHandlerFinish);
     }
   }
 
   if (!mFetchHandlerStart.IsNull()) {
-    Telemetry::Accumulate(
-        Telemetry::SERVICE_WORKER_FETCH_EVENT_DISPATCH_MS_2, mKey,
-        static_cast<uint32_t>(
-            (mFetchHandlerStart - mInterceptionStart).ToMilliseconds()));
+    glean::service_worker::fetch_event_dispatch.Get(mKey).AccumulateRawDuration(
+        mFetchHandlerStart - mInterceptionStart);
 
     if (!mIsNonSubresourceRequest && !mSubresourceKey.IsEmpty()) {
-      Telemetry::Accumulate(
-          Telemetry::SERVICE_WORKER_FETCH_EVENT_DISPATCH_MS_2, mSubresourceKey,
-          static_cast<uint32_t>(
-              (mFetchHandlerStart - mInterceptionStart).ToMilliseconds()));
+      glean::service_worker::fetch_event_dispatch.Get(mSubresourceKey)
+          .AccumulateRawDuration(mFetchHandlerStart - mInterceptionStart);
     }
   }
 
   nsAutoCString key, subresourceKey;
   GenKeysWithStatus(key, subresourceKey);
 
-  Telemetry::Accumulate(
-      Telemetry::SERVICE_WORKER_FETCH_INTERCEPTION_DURATION_MS_2, key,
-      static_cast<uint32_t>(
-          (mInterceptionFinish - mInterceptionStart).ToMilliseconds()));
+  glean::service_worker::fetch_interception_duration.Get(key)
+      .AccumulateRawDuration(mInterceptionFinish - mInterceptionStart);
   if (!mIsNonSubresourceRequest && !mSubresourceKey.IsEmpty()) {
-    Telemetry::Accumulate(
-        Telemetry::SERVICE_WORKER_FETCH_INTERCEPTION_DURATION_MS_2,
-        subresourceKey,
-        static_cast<uint32_t>(
-            (mInterceptionFinish - mInterceptionStart).ToMilliseconds()));
+    glean::service_worker::fetch_interception_duration.Get(subresourceKey)
+        .AccumulateRawDuration(mInterceptionFinish - mInterceptionStart);
   }
 }
 

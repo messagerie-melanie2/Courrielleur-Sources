@@ -22,7 +22,8 @@ from mozharness.mozilla.l10n.locales import LocalesMixin
 from mozpack.archive import create_tar_from_files
 from mozpack.copier import FileRegistry
 from mozpack.files import FileFinder
-from tbxchannel.l10n_merge import COMM_STRINGS_PATTERNS, GECKO_STRINGS_PATTERNS
+
+from tb_l10n.l10n_merge import COMM_ENUS_PATTERNS, COMM_STRINGS_PATTERNS, GECKO_STRINGS_PATTERNS
 
 
 class CommMultiLocale(LocalesMixin, AutomationMixin, VCSMixin, BaseScript):
@@ -44,7 +45,7 @@ class CommMultiLocale(LocalesMixin, AutomationMixin, VCSMixin, BaseScript):
             ],
             {
                 "action": "store",
-                "dest": "hg_comm_locales_file",
+                "dest": "comm_locales_file",
                 "type": "string",
                 "help": "File with HG revision of comm-l10n monorepo to use",
             },
@@ -66,7 +67,7 @@ class CommMultiLocale(LocalesMixin, AutomationMixin, VCSMixin, BaseScript):
         buildscript_kwargs = {
             "all_actions": [
                 "clone-gecko-locales",
-                "clone-monorepo",
+                "clone-comm-locales",
                 "merge-repos",
                 "pack-merged",
                 "gen-changesets",
@@ -74,7 +75,7 @@ class CommMultiLocale(LocalesMixin, AutomationMixin, VCSMixin, BaseScript):
             "config": {
                 "ignore_locales": ["en-US"],
                 "log_name": "multi_locale",
-                "hg_merged_dir": "l10n_merged",
+                "merged_dir": "l10n_merged",
                 "objdir": "obj-build",
                 "upload_file": "strings_all.tar.zst",
                 "changesets_file": "l10n-changesets.json",
@@ -157,11 +158,11 @@ class CommMultiLocale(LocalesMixin, AutomationMixin, VCSMixin, BaseScript):
         self.get_gecko_l10n_revisions()
         self.pull_locale_source()
 
-    def clone_monorepo(self):
+    def clone_comm_locales(self):
         c = self.config
         dirs = self.query_abs_dirs()
 
-        locales_file = os.path.join(dirs["abs_src_dir"], c["hg_comm_locales_file"])
+        locales_file = os.path.join(dirs["abs_src_dir"], c["comm_locales_file"])
         locales_data = {}
         if locales_file.endswith(".json"):
             with open(locales_file) as fh:
@@ -169,18 +170,29 @@ class CommMultiLocale(LocalesMixin, AutomationMixin, VCSMixin, BaseScript):
         # would use en-US, but it's not in this file!
         self.comm_l10n_revision = locales_data.get("en-GB", {}).get("revision")
 
+        git_repository = c.get("comm_git_repository")
+        hg_repository = c.get("hg_comm_l10n_repo")
+        if git_repository:
+            checkout_args = {
+                "repo": git_repository,
+                "vcs": "gittool",
+                "revision": self.comm_l10n_revision,
+            }
+            repo_name = "thunderbird-l10n"
+        else:
+            checkout_args = {"repo": hg_repository, "vcs": "hg", "branch": self.comm_l10n_revision}
+            repo_name = "comm-l10n"
+
         if self.comm_l10n_revision:
             self.mkdir_p(dirs["abs_checkout_dir"])
             self.vcs_checkout(
                 dest=dirs["abs_comm_l10n_dir"],
-                repo=c["hg_comm_l10n_repo"],
-                branch=self.comm_l10n_revision,
-                vcs="hg",
+                **checkout_args,
             )
         else:
             raise Exception(
-                f"Unable to find revision from comm-l10n repo using "
-                f"{c['hg_comm_locales_file']}."
+                f"Unable to find revision {self.comm_l10n_revision} in {repo_name} repo using "
+                f"{c['comm_locales_file']}."
             )
 
     def merge_repos(self):
@@ -190,16 +202,34 @@ class CommMultiLocale(LocalesMixin, AutomationMixin, VCSMixin, BaseScript):
 
         file_registry = FileRegistry()
 
-        def add_to_registry(base_path, patterns):
-            finder = FileFinder(base_path)
-            for pattern in patterns:
-                for _lang in self.locales:
-                    for _filepath, _fileobj in finder.find(pattern.format(lang=_lang)):
-                        _filepath = os.path.join("l10n-central", _filepath)
-                        file_registry.add(_filepath, _fileobj)
+        def transform_enus_path(path):
+            """Change a path from en-us source to a l10n repo path.
+            eg: mail/locales/en-US/messenger/about3Pane.ftl ==> en-US/mail/messenger/about3Pane.ftl
+            Strip out "locales/en-US/" and prepend "en-US/" to the result.
+            """
+            return os.path.join("en-US/", path.replace("locales/en-US/", ""))
 
-        add_to_registry(dirs["abs_l10n_central_dir"], GECKO_STRINGS_PATTERNS)
-        add_to_registry(dirs["abs_comm_l10n_dir"], COMM_STRINGS_PATTERNS)
+        def add_locales_to_registry(base_path, patterns):
+            finder = FileFinder(base_path)
+            for _lang in self.locales:
+                add_to_registry(base_path, patterns, _lang, finder=finder)
+
+        def add_to_registry(base_path, patterns, lang=None, finder=None, transform=lambda x: x):
+            if finder is None:
+                finder = FileFinder(base_path)
+            for pattern in patterns:
+                for _filepath, _fileobj in finder.find(pattern.format(lang=lang)):
+                    _filepath = transform(_filepath)
+                    _filepath = os.path.join("l10n-central", _filepath)
+                    file_registry.add(_filepath, _fileobj)
+
+        add_locales_to_registry(dirs["abs_l10n_central_dir"], GECKO_STRINGS_PATTERNS)
+        add_locales_to_registry(dirs["abs_comm_l10n_dir"], COMM_STRINGS_PATTERNS)
+        add_to_registry(
+            os.path.join(dirs["abs_src_dir"], "comm"),
+            COMM_ENUS_PATTERNS,
+            transform=transform_enus_path,
+        )
 
         self.file_registry = file_registry
 
@@ -213,10 +243,20 @@ class CommMultiLocale(LocalesMixin, AutomationMixin, VCSMixin, BaseScript):
                 create_tar_from_files(z, dict(self.file_registry))
 
     def gen_changesets(self):
+        # self.l10n_revisions has the gecko string revs
+        gecko_l10n_revisions = {}
+        repo = self.config["git_repository"] or self.config["hg_l10n_base"]
+        for l in self.locales:
+            gecko_l10n_revisions[l] = {
+                "repo": f"{repo}/{l}",
+                "revision": self.l10n_revisions[l],
+            }
+
+        repo = self.config["comm_git_repository"] or self.config["hg_comm_l10n_repo"]
         changeset_data = {
-            "gecko_strings": self.gecko_locale_revisions,
+            "gecko_strings": gecko_l10n_revisions,
             "comm_strings": {
-                "repo": self.config["hg_comm_l10n_repo"],
+                "repo": repo,
                 "revision": self.comm_l10n_revision,
             },
         }

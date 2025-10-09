@@ -71,6 +71,20 @@ class nsISerialEventTarget;
 class nsAutoOwningEventTarget {
  public:
   nsAutoOwningEventTarget();
+
+  nsAutoOwningEventTarget(const nsAutoOwningEventTarget& aOther);
+
+  // Per https://en.cppreference.com/w/cpp/language/move_constructor
+  // there's no implicitly-declared move constructor if there are user-declared
+  // copy constructors, and we have one, immediately above.
+
+  nsAutoOwningEventTarget& operator=(const nsAutoOwningEventTarget& aRhs);
+
+  // Per https://en.cppreference.com/w/cpp/language/move_assignment
+  // there's no implicitly-declared move assignment operator if there are
+  // user-declared copy assignment operators, and we have one, immediately
+  // above.
+
   ~nsAutoOwningEventTarget();
 
   // We move the actual assertion checks out-of-line to minimize code bloat,
@@ -88,6 +102,7 @@ class nsAutoOwningEventTarget {
  private:
   void AssertCurrentThreadOwnsMe(const char* aMsg) const;
 
+  // A raw pointer to avoid nsCOMPtr.h dependency.
   nsISerialEventTarget* mTarget;
 };
 
@@ -208,7 +223,13 @@ class nsAutoOwningEventTarget {
 
 // Support for ISupports classes which interact with cycle collector.
 
-#define NS_NUMBER_OF_FLAGS_IN_REFCNT 2
+#ifdef HAVE_64BIT_BUILD
+#  define NS_NUMBER_OF_FLAGS_IN_REFCNT 3
+#  define NS_IS_ON_MAINTHREAD (1 << 2)
+#else
+#  define NS_NUMBER_OF_FLAGS_IN_REFCNT 2
+#endif
+
 #define NS_IN_PURPLE_BUFFER (1 << 0)
 #define NS_IS_PURPLE (1 << 1)
 #define NS_REFCOUNT_CHANGE (1 << NS_NUMBER_OF_FLAGS_IN_REFCNT)
@@ -220,20 +241,18 @@ class nsCycleCollectingAutoRefCnt {
                           nsCycleCollectingAutoRefCnt* aRefCnt,
                           bool* aShouldDelete);
 
-  nsCycleCollectingAutoRefCnt() : mRefCntAndFlags(0) {}
+  constexpr nsCycleCollectingAutoRefCnt() : mRefCntAndFlags(0) {}
 
-  explicit nsCycleCollectingAutoRefCnt(uintptr_t aValue)
+  constexpr explicit nsCycleCollectingAutoRefCnt(uintptr_t aValue)
       : mRefCntAndFlags(aValue << NS_NUMBER_OF_FLAGS_IN_REFCNT) {}
 
   nsCycleCollectingAutoRefCnt(const nsCycleCollectingAutoRefCnt&) = delete;
   void operator=(const nsCycleCollectingAutoRefCnt&) = delete;
 
-  template <Suspect suspect = NS_CycleCollectorSuspect3>
   MOZ_ALWAYS_INLINE uintptr_t incr(nsISupports* aOwner) {
-    return incr<suspect>(aOwner, nullptr);
+    return incr(aOwner, nullptr);
   }
 
-  template <Suspect suspect = NS_CycleCollectorSuspect3>
   MOZ_ALWAYS_INLINE uintptr_t incr(void* aOwner,
                                    nsCycleCollectionParticipant* aCp) {
     mRefCntAndFlags += NS_REFCOUNT_CHANGE;
@@ -244,7 +263,7 @@ class nsCycleCollectingAutoRefCnt {
       mRefCntAndFlags |= NS_IN_PURPLE_BUFFER;
       // Refcount isn't zero, so Suspect won't delete anything.
       MOZ_ASSERT(get() > 0);
-      suspect(aOwner, aCp, this, nullptr);
+      NS_CycleCollectorSuspect3(aOwner, aCp, this, nullptr);
     }
     return NS_REFCOUNT_VALUE(mRefCntAndFlags);
   }
@@ -255,13 +274,11 @@ class nsCycleCollectingAutoRefCnt {
     mRefCntAndFlags = NS_REFCOUNT_CHANGE | NS_IN_PURPLE_BUFFER;
   }
 
-  template <Suspect suspect = NS_CycleCollectorSuspect3>
   MOZ_ALWAYS_INLINE uintptr_t decr(nsISupports* aOwner,
                                    bool* aShouldDelete = nullptr) {
-    return decr<suspect>(aOwner, nullptr, aShouldDelete);
+    return decr(aOwner, nullptr, aShouldDelete);
   }
 
-  template <Suspect suspect = NS_CycleCollectorSuspect3>
   MOZ_ALWAYS_INLINE uintptr_t decr(void* aOwner,
                                    nsCycleCollectionParticipant* aCp,
                                    bool* aShouldDelete = nullptr) {
@@ -271,7 +288,7 @@ class nsCycleCollectingAutoRefCnt {
       mRefCntAndFlags |= (NS_IN_PURPLE_BUFFER | NS_IS_PURPLE);
       uintptr_t retval = NS_REFCOUNT_VALUE(mRefCntAndFlags);
       // Suspect may delete 'aOwner' and 'this'!
-      suspect(aOwner, aCp, this, aShouldDelete);
+      NS_CycleCollectorSuspect3(aOwner, aCp, this, aShouldDelete);
       return retval;
     }
     mRefCntAndFlags -= NS_REFCOUNT_CHANGE;
@@ -297,6 +314,24 @@ class nsCycleCollectingAutoRefCnt {
     return !!(mRefCntAndFlags & NS_IN_PURPLE_BUFFER);
   }
 
+  // Cycle collected objects can only be used on a single thread, so if we ever
+  // see an object on the main thread, it will always be on the main thread.
+  // The cycle collector then uses this information to utilize faster nursery
+  // purple buffer on the main thread.
+  // The method works only on 64 bit systems.
+  MOZ_ALWAYS_INLINE void SetIsOnMainThread() {
+#ifdef HAVE_64BIT_BUILD
+    mRefCntAndFlags |= NS_IS_ON_MAINTHREAD;
+#endif
+  }
+
+#ifdef HAVE_64BIT_BUILD
+  // The NS_IS_ON_MAINTHREAD flag only exists on 64-bit builds.
+  MOZ_ALWAYS_INLINE bool IsOnMainThread() {
+    return !!(mRefCntAndFlags & NS_IS_ON_MAINTHREAD);
+  }
+#endif
+
   MOZ_ALWAYS_INLINE nsrefcnt get() const {
     return NS_REFCOUNT_VALUE(mRefCntAndFlags);
   }
@@ -309,8 +344,8 @@ class nsCycleCollectingAutoRefCnt {
 
 class nsAutoRefCnt {
  public:
-  nsAutoRefCnt() : mValue(0) {}
-  explicit nsAutoRefCnt(nsrefcnt aValue) : mValue(aValue) {}
+  constexpr nsAutoRefCnt() : mValue(0) {}
+  constexpr explicit nsAutoRefCnt(nsrefcnt aValue) : mValue(aValue) {}
 
   nsAutoRefCnt(const nsAutoRefCnt&) = delete;
   void operator=(const nsAutoRefCnt&) = delete;
@@ -334,8 +369,8 @@ class nsAutoRefCnt {
 namespace mozilla {
 class ThreadSafeAutoRefCnt {
  public:
-  ThreadSafeAutoRefCnt() : mValue(0) {}
-  explicit ThreadSafeAutoRefCnt(nsrefcnt aValue) : mValue(aValue) {}
+  constexpr ThreadSafeAutoRefCnt() : mValue(0) {}
+  constexpr explicit ThreadSafeAutoRefCnt(nsrefcnt aValue) : mValue(aValue) {}
 
   ThreadSafeAutoRefCnt(const ThreadSafeAutoRefCnt&) = delete;
   void operator=(const ThreadSafeAutoRefCnt&) = delete;
@@ -396,6 +431,16 @@ class ThreadSafeAutoRefCnt {
   std::atomic<nsrefcnt> mValue;
 };
 
+namespace detail {
+
+// Type trait indicating whether a given XPCOM interface class may only be
+// implemented by types with threadsafe refcounts. This is specialized for
+// classes with the `rust_sync` annotation within XPIDL-generated header files,
+// and checked within macro-generated QueryInterface implementations.
+template <typename T>
+class InterfaceNeedsThreadSafeRefCnt : public std::false_type {};
+
+}
 }  // namespace mozilla
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -447,16 +492,10 @@ class ThreadSafeAutoRefCnt {
                                                     \
  public:
 
-#define NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL  \
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_META(final)  \
-  NS_IMETHOD_(void) DeleteCycleCollectable(void); \
-                                                  \
- public:
-
-#define NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL_DELETECYCLECOLLECTABLE \
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_META(override)                     \
-  NS_IMETHOD_(void) DeleteCycleCollectable(void) final;                 \
-                                                                        \
+#define NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL \
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_META(final) \
+  NS_METHOD_(void) DeleteCycleCollectable(void); \
+                                                 \
  public:
 
 #define NS_DECL_CYCLE_COLLECTING_ISUPPORTS_META(...)                         \
@@ -488,32 +527,16 @@ class ThreadSafeAutoRefCnt {
   NS_LOG_ADDREF(this, count, #_class, sizeof(*this));                         \
   return count;
 
-#define NS_IMPL_CC_MAIN_THREAD_ONLY_NATIVE_ADDREF_BODY(_class)         \
-  MOZ_ASSERT_TYPE_OK_FOR_REFCOUNTING(_class)                           \
-  MOZ_ASSERT(int32_t(mRefCnt) >= 0, "illegal refcnt");                 \
-  NS_ASSERT_OWNINGTHREAD(_class);                                      \
-  nsrefcnt count = mRefCnt.incr<NS_CycleCollectorSuspectUsingNursery>( \
-      static_cast<void*>(this),                                        \
-      _class::NS_CYCLE_COLLECTION_INNERCLASS::GetParticipant());       \
-  NS_LOG_ADDREF(this, count, #_class, sizeof(*this));                  \
-  return count;
-
 #define NS_IMPL_CC_NATIVE_RELEASE_BODY(_class)                                \
   MOZ_ASSERT(int32_t(mRefCnt) > 0, "dup release");                            \
   NS_ASSERT_OWNINGTHREAD(_class);                                             \
   nsrefcnt count =                                                            \
       mRefCnt.decr(static_cast<void*>(this),                                  \
                    _class::NS_CYCLE_COLLECTION_INNERCLASS::GetParticipant()); \
+  if (count == 0) {                                                           \
+    NS_CycleCollectableHasRefCntZero();                                       \
+  }                                                                           \
   NS_LOG_RELEASE(this, count, #_class);                                       \
-  return count;
-
-#define NS_IMPL_CC_MAIN_THREAD_ONLY_NATIVE_RELEASE_BODY(_class)        \
-  MOZ_ASSERT(int32_t(mRefCnt) > 0, "dup release");                     \
-  NS_ASSERT_OWNINGTHREAD(_class);                                      \
-  nsrefcnt count = mRefCnt.decr<NS_CycleCollectorSuspectUsingNursery>( \
-      static_cast<void*>(this),                                        \
-      _class::NS_CYCLE_COLLECTION_INNERCLASS::GetParticipant());       \
-  NS_LOG_RELEASE(this, count, #_class);                                \
   return count;
 
 #define NS_IMPL_CYCLE_COLLECTING_NATIVE_ADDREF(_class)       \
@@ -538,6 +561,7 @@ class ThreadSafeAutoRefCnt {
       _last;                                                                   \
       mRefCnt.decr(static_cast<void*>(this),                                   \
                    _class::NS_CYCLE_COLLECTION_INNERCLASS::GetParticipant());  \
+      NS_CycleCollectableHasRefCntZero();                                      \
       if (shouldDelete) {                                                      \
         mRefCnt.stabilizeForDeletion();                                        \
         DeleteCycleCollectable();                                              \
@@ -574,21 +598,6 @@ class ThreadSafeAutoRefCnt {
  protected:                                                                    \
   nsCycleCollectingAutoRefCnt mRefCnt;                                         \
   NS_DECL_OWNINGTHREAD                                                         \
- public:
-
-#define NS_INLINE_DECL_MAIN_THREAD_ONLY_CYCLE_COLLECTING_NATIVE_REFCOUNTING( \
-    _class)                                                                  \
- public:                                                                     \
-  NS_METHOD_(MozExternalRefCountType)                                        \
-  AddRef(void){NS_IMPL_CC_MAIN_THREAD_ONLY_NATIVE_ADDREF_BODY(               \
-      _class)} NS_METHOD_(MozExternalRefCountType) Release(void) {           \
-    NS_IMPL_CC_MAIN_THREAD_ONLY_NATIVE_RELEASE_BODY(_class)                  \
-  }                                                                          \
-  using HasThreadSafeRefCnt = std::false_type;                               \
-                                                                             \
- protected:                                                                  \
-  nsCycleCollectingAutoRefCnt mRefCnt;                                       \
-  NS_DECL_OWNINGTHREAD                                                       \
  public:
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -630,7 +639,7 @@ class ThreadSafeAutoRefCnt {
                                                                                \
  protected:                                                                    \
   nsAutoRefCnt mRefCnt;                                                        \
-  _owning public:
+ _owning public:
 
 /**
  * Use this macro to declare and implement the AddRef & Release methods for a
@@ -946,23 +955,15 @@ void ProxyDeleteVoid(const char* aRunnableName,
     return count;                                                            \
   }
 
-#define NS_IMPL_MAIN_THREAD_ONLY_CYCLE_COLLECTING_ADDREF(_class)               \
-  NS_IMETHODIMP_(MozExternalRefCountType) _class::AddRef(void) {               \
-    MOZ_ASSERT_TYPE_OK_FOR_REFCOUNTING(_class)                                 \
-    MOZ_ASSERT(int32_t(mRefCnt) >= 0, "illegal refcnt");                       \
-    NS_ASSERT_OWNINGTHREAD(_class);                                            \
-    nsISupports* base = NS_CYCLE_COLLECTION_CLASSNAME(_class)::Upcast(this);   \
-    nsrefcnt count = mRefCnt.incr<NS_CycleCollectorSuspectUsingNursery>(base); \
-    NS_LOG_ADDREF(this, count, #_class, sizeof(*this));                        \
-    return count;                                                              \
-  }
-
 #define NS_IMPL_CYCLE_COLLECTING_RELEASE_WITH_DESTROY(_class, _destroy)      \
   NS_IMETHODIMP_(MozExternalRefCountType) _class::Release(void) {            \
     MOZ_ASSERT(int32_t(mRefCnt) > 0, "dup release");                         \
     NS_ASSERT_OWNINGTHREAD(_class);                                          \
     nsISupports* base = NS_CYCLE_COLLECTION_CLASSNAME(_class)::Upcast(this); \
     nsrefcnt count = mRefCnt.decr(base);                                     \
+    if (count == 0) {                                                        \
+      NS_CycleCollectableHasRefCntZero();                                    \
+    }                                                                        \
     NS_LOG_RELEASE(this, count, #_class);                                    \
     return count;                                                            \
   }                                                                          \
@@ -985,6 +986,7 @@ void ProxyDeleteVoid(const char* aRunnableName,
       mRefCnt.incr(base);                                                    \
       _last;                                                                 \
       mRefCnt.decr(base);                                                    \
+      NS_CycleCollectableHasRefCntZero();                                    \
       if (shouldDelete) {                                                    \
         mRefCnt.stabilizeForDeletion();                                      \
         DeleteCycleCollectable();                                            \
@@ -1009,6 +1011,7 @@ void ProxyDeleteVoid(const char* aRunnableName,
       mRefCnt.incr(base);                                                    \
       _last;                                                                 \
       mRefCnt.decr(base);                                                    \
+      NS_CycleCollectableHasRefCntZero();                                    \
       if (shouldDelete) {                                                    \
         mRefCnt.stabilizeForDeletion();                                      \
         DeleteCycleCollectable();                                            \
@@ -1017,42 +1020,6 @@ void ProxyDeleteVoid(const char* aRunnableName,
     return count;                                                            \
   }                                                                          \
   NS_IMETHODIMP_(void) _class::DeleteCycleCollectable(void) { _destroy; }
-
-#define NS_IMPL_MAIN_THREAD_ONLY_CYCLE_COLLECTING_RELEASE(_class)              \
-  NS_IMETHODIMP_(MozExternalRefCountType) _class::Release(void) {              \
-    MOZ_ASSERT(int32_t(mRefCnt) > 0, "dup release");                           \
-    NS_ASSERT_OWNINGTHREAD(_class);                                            \
-    nsISupports* base = NS_CYCLE_COLLECTION_CLASSNAME(_class)::Upcast(this);   \
-    nsrefcnt count = mRefCnt.decr<NS_CycleCollectorSuspectUsingNursery>(base); \
-    NS_LOG_RELEASE(this, count, #_class);                                      \
-    return count;                                                              \
-  }                                                                            \
-  NS_IMETHODIMP_(void) _class::DeleteCycleCollectable(void) { delete this; }
-
-// _LAST_RELEASE can be useful when certain resources should be released
-// as soon as we know the object will be deleted.
-#define NS_IMPL_MAIN_THREAD_ONLY_CYCLE_COLLECTING_RELEASE_WITH_LAST_RELEASE( \
-    _class, _last)                                                           \
-  NS_IMETHODIMP_(MozExternalRefCountType) _class::Release(void) {            \
-    MOZ_ASSERT(int32_t(mRefCnt) > 0, "dup release");                         \
-    NS_ASSERT_OWNINGTHREAD(_class);                                          \
-    bool shouldDelete = false;                                               \
-    nsISupports* base = NS_CYCLE_COLLECTION_CLASSNAME(_class)::Upcast(this); \
-    nsrefcnt count = mRefCnt.decr<NS_CycleCollectorSuspectUsingNursery>(     \
-        base, &shouldDelete);                                                \
-    NS_LOG_RELEASE(this, count, #_class);                                    \
-    if (count == 0) {                                                        \
-      mRefCnt.incr<NS_CycleCollectorSuspectUsingNursery>(base);              \
-      _last;                                                                 \
-      mRefCnt.decr<NS_CycleCollectorSuspectUsingNursery>(base);              \
-      if (shouldDelete) {                                                    \
-        mRefCnt.stabilizeForDeletion();                                      \
-        DeleteCycleCollectable();                                            \
-      }                                                                      \
-    }                                                                        \
-    return count;                                                            \
-  }                                                                          \
-  NS_IMETHODIMP_(void) _class::DeleteCycleCollectable(void) { delete this; }
 
 // _WITH_INTERRUPTABLE_LAST_RELEASE can be useful when certain resources
 // should be released as soon as we know the object will be deleted and the
@@ -1063,59 +1030,58 @@ void ProxyDeleteVoid(const char* aRunnableName,
 // during _last is performed.)
 // Therefore, when _maybeInterrupt returns true, the instance has to be grabbed
 // by nsCOMPtr or RefPtr.
-#define NS_IMPL_MAIN_THREAD_ONLY_CYCLE_COLLECTING_RELEASE_WITH_INTERRUPTABLE_LAST_RELEASE( \
-    _class, _last, _maybeInterrupt)                                                        \
-  NS_IMETHODIMP_(MozExternalRefCountType) _class::Release(void) {                          \
-    MOZ_ASSERT(int32_t(mRefCnt) > 0, "dup release");                                       \
-    NS_ASSERT_OWNINGTHREAD(_class);                                                        \
-    bool shouldDelete = false;                                                             \
-    nsISupports* base = NS_CYCLE_COLLECTION_CLASSNAME(_class)::Upcast(this);               \
-    nsrefcnt count = mRefCnt.decr<NS_CycleCollectorSuspectUsingNursery>(                   \
-        base, &shouldDelete);                                                              \
-    NS_LOG_RELEASE(this, count, #_class);                                                  \
-    if (count == 0) {                                                                      \
-      mRefCnt.incr<NS_CycleCollectorSuspectUsingNursery>(base);                            \
-      _last;                                                                               \
-      mRefCnt.decr<NS_CycleCollectorSuspectUsingNursery>(base);                            \
-      if (_maybeInterrupt) {                                                               \
-        MOZ_ASSERT(mRefCnt.get() > 0);                                                     \
-        return mRefCnt.get();                                                              \
-      }                                                                                    \
-      if (shouldDelete) {                                                                  \
-        mRefCnt.stabilizeForDeletion();                                                    \
-        DeleteCycleCollectable();                                                          \
-      }                                                                                    \
-    }                                                                                      \
-    return count;                                                                          \
-  }                                                                                        \
+#define NS_IMPL_CYCLE_COLLECTING_RELEASE_WITH_INTERRUPTABLE_LAST_RELEASE(    \
+    _class, _last, _maybeInterrupt)                                          \
+  NS_IMETHODIMP_(MozExternalRefCountType) _class::Release(void) {            \
+    MOZ_ASSERT(int32_t(mRefCnt) > 0, "dup release");                         \
+    NS_ASSERT_OWNINGTHREAD(_class);                                          \
+    bool shouldDelete = false;                                               \
+    nsISupports* base = NS_CYCLE_COLLECTION_CLASSNAME(_class)::Upcast(this); \
+    nsrefcnt count = mRefCnt.decr(base, &shouldDelete);                      \
+    NS_LOG_RELEASE(this, count, #_class);                                    \
+    if (count == 0) {                                                        \
+      mRefCnt.incr(base);                                                    \
+      _last;                                                                 \
+      mRefCnt.decr(base);                                                    \
+      if (_maybeInterrupt) {                                                 \
+        MOZ_ASSERT(mRefCnt.get() > 0);                                       \
+        return mRefCnt.get();                                                \
+      }                                                                      \
+      NS_CycleCollectableHasRefCntZero();                                    \
+      if (shouldDelete) {                                                    \
+        mRefCnt.stabilizeForDeletion();                                      \
+        DeleteCycleCollectable();                                            \
+      }                                                                      \
+    }                                                                        \
+    return count;                                                            \
+  }                                                                          \
   NS_IMETHODIMP_(void) _class::DeleteCycleCollectable(void) { delete this; }
 
-// _LAST_RELEASE can be useful when certain resources should be released
-// as soon as we know the object will be deleted.
-#define NS_IMPL_MAIN_THREAD_ONLY_CYCLE_COLLECTING_RELEASE_WITH_LAST_RELEASE_AND_DESTROY( \
-    _class, _last, _destroy)                                                             \
-  NS_IMETHODIMP_(MozExternalRefCountType) _class::Release(void) {                        \
-    MOZ_ASSERT(int32_t(mRefCnt) > 0, "dup release");                                     \
-    NS_ASSERT_OWNINGTHREAD(_class);                                                      \
-    bool shouldDelete = false;                                                           \
-    nsISupports* base = NS_CYCLE_COLLECTION_CLASSNAME(_class)::Upcast(this);             \
-    nsrefcnt count = mRefCnt.decr<NS_CycleCollectorSuspectUsingNursery>(                 \
-        base, &shouldDelete);                                                            \
-    NS_LOG_RELEASE(this, count, #_class);                                                \
-    if (count == 0) {                                                                    \
-      mRefCnt.incr<NS_CycleCollectorSuspectUsingNursery>(base);                          \
-      _last;                                                                             \
-      mRefCnt.decr<NS_CycleCollectorSuspectUsingNursery>(base);                          \
-      if (shouldDelete) {                                                                \
-        mRefCnt.stabilizeForDeletion();                                                  \
-        DeleteCycleCollectable();                                                        \
-      }                                                                                  \
-    }                                                                                    \
-    return count;                                                                        \
-  }                                                                                      \
-  NS_IMETHODIMP_(void) _class::DeleteCycleCollectable(void) { _destroy; }
-
 ///////////////////////////////////////////////////////////////////////////////
+
+namespace mozilla::detail {
+
+// Helper which is roughly equivalent to NS_GET_IID, which also performs static
+// assertions that `Class` is allowed to implement the given XPCOM interface.
+//
+// These assertions are done like this to allow them to be used within the
+// `NS_INTERFACE_TABLE_ENTRY` macro, though they are also used in
+// `NS_IMPL_QUERY_BODY`.
+template <typename Class, typename Interface>
+constexpr const nsIID& GetImplementedIID() {
+  if constexpr (mozilla::detail::InterfaceNeedsThreadSafeRefCnt<
+                    Interface>::value) {
+    static_assert(Class::HasThreadSafeRefCnt::value,
+                  "Cannot implement a threadsafe interface with "
+                  "non-threadsafe refcounting!");
+  }
+  return NS_GET_IID(Interface);
+}
+
+template <typename Class, typename Interface>
+constexpr const nsIID& kImplementedIID = GetImplementedIID<Class, Interface>();
+
+}
 
 /**
  * There are two ways of implementing QueryInterface, and we use both:
@@ -1153,29 +1119,22 @@ nsresult NS_FASTCALL NS_TableDrivenQI(void* aThis, REFNSIID aIID,
 
 #define NS_INTERFACE_TABLE_BEGIN static const QITableEntry table[] = {
 #define NS_INTERFACE_TABLE_ENTRY(_class, _interface)                        \
-  {&NS_GET_IID(_interface),                                                 \
+  {&mozilla::detail::kImplementedIID<_class, _interface>,                   \
    int32_t(                                                                 \
        reinterpret_cast<char*>(static_cast<_interface*>((_class*)0x1000)) - \
        reinterpret_cast<char*>((_class*)0x1000))},
 
 #define NS_INTERFACE_TABLE_ENTRY_AMBIGUOUS(_class, _interface, _implClass) \
-  {&NS_GET_IID(_interface),                                                \
+  {&mozilla::detail::kImplementedIID<_class, _interface>,                  \
    int32_t(reinterpret_cast<char*>(static_cast<_interface*>(               \
                static_cast<_implClass*>((_class*)0x1000))) -               \
            reinterpret_cast<char*>((_class*)0x1000))},
 
-/*
- * XXX: we want to use mozilla::ArrayLength (or equivalent,
- * MOZ_ARRAY_LENGTH) in this condition, but some versions of GCC don't
- * see that the static_assert condition is actually constant in those
- * cases, even with constexpr support (?).
- */
-#define NS_INTERFACE_TABLE_END_WITH_PTR(_ptr)           \
-  { nullptr, 0 }                                        \
-  }                                                     \
-  ;                                                     \
-  static_assert((sizeof(table) / sizeof(table[0])) > 1, \
-                "need at least 1 interface");           \
+#define NS_INTERFACE_TABLE_END_WITH_PTR(_ptr)                       \
+  { nullptr, 0 }                                                    \
+  }                                                                 \
+  ;                                                                 \
+  static_assert(std::size(table) > 1, "need at least 1 interface"); \
   rv = NS_TableDrivenQI(static_cast<void*>(_ptr), aIID, aInstancePtr, table);
 
 #define NS_INTERFACE_TABLE_END    \
@@ -1214,31 +1173,35 @@ nsresult NS_FASTCALL NS_TableDrivenQI(void* aThis, REFNSIID aIID,
                  "QueryInterface requires a non-NULL destination!");         \
     nsISupports* foundInterface;
 
-#define NS_IMPL_QUERY_BODY(_interface)               \
-  if (aIID.Equals(NS_GET_IID(_interface)))           \
-    foundInterface = static_cast<_interface*>(this); \
+#define NS_IMPL_QUERY_BODY_IID(_interface)                                   \
+  mozilla::detail::kImplementedIID<std::remove_reference_t<decltype(*this)>, \
+                                   _interface>
+
+#define NS_IMPL_QUERY_BODY(_interface)                 \
+  if (aIID.Equals(NS_IMPL_QUERY_BODY_IID(_interface))) \
+    foundInterface = static_cast<_interface*>(this);   \
   else
 
-#define NS_IMPL_QUERY_BODY_CONDITIONAL(_interface, condition) \
-  if ((condition) && aIID.Equals(NS_GET_IID(_interface)))     \
-    foundInterface = static_cast<_interface*>(this);          \
+#define NS_IMPL_QUERY_BODY_CONDITIONAL(_interface, condition)         \
+  if ((condition) && aIID.Equals(NS_IMPL_QUERY_BODY_IID(_interface))) \
+    foundInterface = static_cast<_interface*>(this);                  \
   else
 
 #define NS_IMPL_QUERY_BODY_AMBIGUOUS(_interface, _implClass)                   \
-  if (aIID.Equals(NS_GET_IID(_interface)))                                     \
+  if (aIID.Equals(NS_IMPL_QUERY_BODY_IID(_interface)))                         \
     foundInterface = static_cast<_interface*>(static_cast<_implClass*>(this)); \
   else
 
 // Use this for querying to concrete class types which cannot be unambiguously
 // cast to nsISupports. See also nsQueryObject.h.
 #define NS_IMPL_QUERY_BODY_CONCRETE(_class)                       \
-  if (aIID.Equals(NS_GET_IID(_class))) {                          \
+  if (aIID.Equals(NS_IMPL_QUERY_BODY_IID(_class))) {              \
     *aInstancePtr = do_AddRef(static_cast<_class*>(this)).take(); \
     return NS_OK;                                                 \
   } else
 
 #define NS_IMPL_QUERY_BODY_AGGREGATED(_interface, _aggregate) \
-  if (aIID.Equals(NS_GET_IID(_interface)))                    \
+  if (aIID.Equals(NS_IMPL_QUERY_BODY_IID(_interface)))        \
     foundInterface = static_cast<_interface*>(_aggregate);    \
   else
 

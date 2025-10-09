@@ -20,9 +20,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
 });
 
 const kPrefCustomizationDebug = "browser.uiCustomization.debug";
-const kPrefScreenshots = "extensions.screenshots.disabled";
 
-XPCOMUtils.defineLazyGetter(lazy, "log", () => {
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
   let { ConsoleAPI } = ChromeUtils.importESModule(
     "resource://gre/modules/Console.sys.mjs"
   );
@@ -36,18 +35,27 @@ XPCOMUtils.defineLazyGetter(lazy, "log", () => {
 
 XPCOMUtils.defineLazyPreferenceGetter(
   lazy,
-  "screenshotsDisabled",
-  kPrefScreenshots,
+  "sidebarRevampEnabled",
+  "sidebar.revamp",
   false
 );
 
-XPCOMUtils.defineLazyPreferenceGetter(
-  lazy,
-  "SCREENSHOT_BROWSER_COMPONENT",
-  "screenshots.browser.component.enabled",
-  false
-);
-
+/**
+ * A helper method to synchronize aNode's DOM attributes with the properties and
+ * values in aAttrs. If aNode has an attribute that is false-y in aAttrs,
+ * then this attribute is removed.
+ *
+ * If aAttrs includes "shortcutId", the value is never set on aNode, but is
+ * instead used when setting the "label" or "tooltiptext" attributes to include
+ * the shortcut key combo. shortcutId should refer to the ID of the XUL <key>
+ * element that acts as the shortcut.
+ *
+ * @param {Element} aNode
+ *   The element to change the attributes of.
+ * @param {object} aAttrs
+ *   A set of key-value pairs where the key is set as the attribute name, and
+ *   the value is set as the attribute value.
+ */
 function setAttributes(aNode, aAttrs) {
   let doc = aNode.ownerDocument;
   for (let [name, value] of Object.entries(aAttrs)) {
@@ -79,6 +87,12 @@ function setAttributes(aNode, aAttrs) {
   }
 }
 
+/**
+ * The array of built-in CustomizableUICreateWidgetProperties that are
+ * registered as widgets upon browser start.
+ *
+ * @type {CustomizableUICreateWidgetProperties[]}
+ */
 export const CustomizableWidgets = [
   {
     id: "history-panelmenu",
@@ -99,6 +113,21 @@ export const CustomizableWidgets = [
         case "unload":
           this.onWindowUnload(event);
           break;
+        case "command": {
+          let { target } = event;
+          let { PanelUI, PlacesCommandHook } = target.ownerGlobal;
+          if (target.id == "appMenuRecentlyClosedTabs") {
+            PanelUI.showSubView(this.recentlyClosedTabsPanel, target);
+          } else if (target.id == "appMenuRecentlyClosedWindows") {
+            PanelUI.showSubView(this.recentlyClosedWindowsPanel, target);
+          } else if (target.id == "appMenuSearchHistory") {
+            PlacesCommandHook.searchHistory();
+          } else if (target.id == "PanelUI-historyMore") {
+            PlacesCommandHook.showPlacesOrganizer("History");
+            lazy.CustomizableUI.hidePanelForNode(target);
+          }
+          break;
+        }
         default:
           throw new Error(`Unsupported event for '${this.id}'`);
       }
@@ -111,11 +140,12 @@ export const CustomizableWidgets = [
       let panelview = event.target;
       let document = panelview.ownerDocument;
       let window = document.defaultView;
+      const closedTabCount = lazy.SessionStore.getClosedTabCount();
 
       lazy.PanelMultiView.getViewNode(
         document,
         "appMenuRecentlyClosedTabs"
-      ).disabled = lazy.SessionStore.getClosedTabCountForWindow(window) == 0;
+      ).disabled = closedTabCount == 0;
       lazy.PanelMultiView.getViewNode(
         document,
         "appMenuRecentlyClosedWindows"
@@ -152,9 +182,10 @@ export const CustomizableWidgets = [
       // When the popup is hidden (thus the panelmultiview node as well), make
       // sure to stop listening to PlacesDatabase updates.
       panelview.panelMultiView.addEventListener("PanelMultiViewHidden", this);
+      panelview.addEventListener("command", this);
       window.addEventListener("unload", this);
     },
-    onViewHiding(event) {
+    onViewHiding() {
       lazy.log.debug("History view is being hidden!");
     },
     onPanelMultiViewHidden(event) {
@@ -171,10 +202,14 @@ export const CustomizableWidgets = [
           document,
           this.recentlyClosedWindowsPanel
         ).removeEventListener("ViewShowing", this);
+        lazy.PanelMultiView.getViewNode(
+          document,
+          this.viewId
+        ).removeEventListener("command", this);
       }
       panelMultiView.removeEventListener("PanelMultiViewHidden", this);
     },
-    onWindowUnload(event) {
+    onWindowUnload() {
       if (this._panelMenuView) {
         delete this._panelMenuView;
       }
@@ -189,8 +224,8 @@ export const CustomizableWidgets = [
       const utils = lazy.RecentlyClosedTabsAndWindowsMenuUtils;
       const fragment =
         panelview.id == this.recentlyClosedTabsPanel
-          ? utils.getTabsFragment(window, "toolbarbutton", true)
-          : utils.getWindowsFragment(window, "toolbarbutton", true);
+          ? utils.getTabsFragment(window, "toolbarbutton")
+          : utils.getWindowsFragment(window, "toolbarbutton");
       let elementCount = fragment.childElementCount;
       this._panelMenuView._setEmptyPopupStatus(panelview, !elementCount);
       if (!elementCount) {
@@ -204,13 +239,12 @@ export const CustomizableWidgets = [
       let footer;
       while (--elementCount >= 0) {
         let element = body.children[elementCount];
+        if (element.tagName != "toolbarbutton") {
+          continue;
+        }
         lazy.CustomizableUI.addShortcut(element);
-        element.classList.add("subviewbutton");
         if (element.classList.contains("restoreallitem")) {
           footer = element;
-          element.classList.add("panel-subview-footer-button");
-        } else {
-          element.classList.add("subviewbutton-iconic", "bookmark-item");
         }
       }
       panelview.appendChild(body);
@@ -222,9 +256,8 @@ export const CustomizableWidgets = [
     id: "save-page-button",
     l10nId: "toolbar-button-save-page",
     shortcutId: "key_savePage",
-    onCommand(aEvent) {
-      let win = aEvent.target.ownerGlobal;
-      win.saveBrowser(win.gBrowser.selectedBrowser);
+    onCreated(aNode) {
+      aNode.setAttribute("command", "Browser:SavePage");
     },
   },
   {
@@ -251,30 +284,40 @@ export const CustomizableWidgets = [
     id: "open-file-button",
     l10nId: "toolbar-button-open-file",
     shortcutId: "openFileKb",
-    onCommand(aEvent) {
-      let win = aEvent.target.ownerGlobal;
-      win.BrowserOpenFileWindow();
+    onCreated(aNode) {
+      aNode.setAttribute("command", "Browser:OpenFile");
     },
   },
   {
     id: "sidebar-button",
-    tooltiptext: "sidebar-button.tooltiptext2",
+    l10nId: "show-sidebars",
+    defaultArea: "nav-bar",
+    _introducedByPref: "sidebar.revamp",
     onCommand(aEvent) {
-      let win = aEvent.target.ownerGlobal;
-      win.SidebarUI.toggle();
+      const { SidebarController } = aEvent.target.ownerGlobal;
+      if (lazy.sidebarRevampEnabled) {
+        SidebarController.handleToolbarButtonClick();
+      } else {
+        SidebarController.toggle();
+      }
     },
     onCreated(aNode) {
-      // Add an observer so the button is checked while the sidebar is open
-      let doc = aNode.ownerDocument;
-      let obChecked = doc.createXULElement("observes");
-      obChecked.setAttribute("element", "sidebar-box");
-      obChecked.setAttribute("attribute", "checked");
-      let obPosition = doc.createXULElement("observes");
-      obPosition.setAttribute("element", "sidebar-box");
-      obPosition.setAttribute("attribute", "positionend");
-
-      aNode.appendChild(obChecked);
-      aNode.appendChild(obPosition);
+      if (lazy.sidebarRevampEnabled) {
+        const { SidebarController } = aNode.ownerGlobal;
+        SidebarController.updateToolbarButton(aNode);
+        aNode.setAttribute("overflows", "false");
+      } else {
+        // Add an observer so the button is checked while the sidebar is open
+        let doc = aNode.ownerDocument;
+        let obChecked = doc.createXULElement("observes");
+        obChecked.setAttribute("element", "sidebar-box");
+        obChecked.setAttribute("attribute", "checked");
+        let obPosition = doc.createXULElement("observes");
+        obPosition.setAttribute("element", "sidebar-box");
+        obPosition.setAttribute("attribute", "positionend");
+        aNode.appendChild(obChecked);
+        aNode.appendChild(obPosition);
+      }
     },
   },
   {
@@ -420,7 +463,7 @@ export const CustomizableWidgets = [
     id: "characterencoding-button",
     l10nId: "repair-text-encoding-button",
     onCommand(aEvent) {
-      aEvent.view.BrowserForceEncodingDetection();
+      aEvent.view.BrowserCommands.forceEncodingDetection();
     },
   },
   {
@@ -436,7 +479,7 @@ export const CustomizableWidgets = [
     l10nId: "toolbar-button-logins",
     onCommand(aEvent) {
       let window = aEvent.view;
-      lazy.LoginHelper.openPasswordManager(window, { entryPoint: "toolbar" });
+      lazy.LoginHelper.openPasswordManager(window, { entryPoint: "Toolbar" });
     },
   },
 ];
@@ -457,7 +500,7 @@ if (Services.prefs.getBoolPref("identity.fxaccounts.enabled")) {
           ? "syncing-data-l10n-id"
           : "sync-now-data-l10n-id"
       );
-      syncNowBtn.setAttribute("data-l10n-id", l10nId);
+      doc.l10n.setAttributes(syncNowBtn, l10nId);
 
       let SyncedTabsPanelList = doc.defaultView.SyncedTabsPanelList;
       panelview.syncedTabsPanelList = new SyncedTabsPanelList(
@@ -465,52 +508,51 @@ if (Services.prefs.getBoolPref("identity.fxaccounts.enabled")) {
         lazy.PanelMultiView.getViewNode(doc, "PanelUI-remotetabs-deck"),
         lazy.PanelMultiView.getViewNode(doc, "PanelUI-remotetabs-tabslist")
       );
+      panelview.addEventListener("command", this);
+      let syncNowButton = lazy.PanelMultiView.getViewNode(
+        aEvent.target.ownerDocument,
+        "PanelUI-remotetabs-syncnow"
+      );
+      syncNowButton.addEventListener("mouseover", this);
     },
     onViewHiding(aEvent) {
-      aEvent.target.syncedTabsPanelList.destroy();
-      aEvent.target.syncedTabsPanelList = null;
-    },
-  });
-}
-
-if (!lazy.screenshotsDisabled) {
-  CustomizableWidgets.push({
-    id: "screenshot-button",
-    shortcutId: "key_screenshot",
-    l10nId: "screenshot-toolbarbutton",
-    onCommand(aEvent) {
-      if (lazy.SCREENSHOT_BROWSER_COMPONENT) {
-        Services.obs.notifyObservers(
-          aEvent.currentTarget.ownerGlobal,
-          "menuitem-screenshot",
-          "toolbar_button"
-        );
-      } else {
-        Services.obs.notifyObservers(
-          null,
-          "menuitem-screenshot-extension",
-          "toolbar"
-        );
-      }
-    },
-    onCreated(aNode) {
-      aNode.ownerGlobal.MozXULElement.insertFTLIfNeeded(
-        "browser/screenshots.ftl"
+      let panelview = aEvent.target;
+      panelview.syncedTabsPanelList.destroy();
+      panelview.syncedTabsPanelList = null;
+      panelview.removeEventListener("command", this);
+      let syncNowButton = lazy.PanelMultiView.getViewNode(
+        aEvent.target.ownerDocument,
+        "PanelUI-remotetabs-syncnow"
       );
-      Services.obs.addObserver(this, "toggle-screenshot-disable");
+      syncNowButton.removeEventListener("mouseover", this);
     },
-    observe(subj, topic, data) {
-      let document = subj.document;
-      let button = document.getElementById("screenshot-button");
-
-      if (!button) {
-        return;
-      }
-
-      if (data == "true") {
-        button.setAttribute("disabled", "true");
-      } else {
-        button.removeAttribute("disabled");
+    handleEvent(aEvent) {
+      let button = aEvent.target;
+      let { gSync } = button.ownerGlobal;
+      switch (aEvent.type) {
+        case "mouseover":
+          gSync.refreshSyncButtonsTooltip();
+          break;
+        case "command": {
+          switch (button.id) {
+            case "PanelUI-remotetabs-syncnow":
+              gSync.doSync();
+              break;
+            case "PanelUI-remotetabs-view-managedevices":
+              gSync.openDevicesManagementPage("syncedtabs-menupanel");
+              break;
+            case "PanelUI-remotetabs-tabsdisabledpane-button":
+            case "PanelUI-remotetabs-setupsync-button":
+            case "PanelUI-remotetabs-syncdisabled-button":
+            case "PanelUI-remotetabs-reauthsync-button":
+            case "PanelUI-remotetabs-unverified-button":
+              gSync.openPrefs("synced-tabs");
+              break;
+            case "PanelUI-remotetabs-connect-device-button":
+              gSync.openConnectAnotherDevice("synced-tabs");
+              break;
+          }
+        }
       }
     },
   });

@@ -2,15 +2,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { countOccurrences } = ChromeUtils.import(
-  "resource:///modules/calendar/calRecurrenceUtils.jsm"
+var { countOccurrences } = ChromeUtils.importESModule(
+  "resource:///modules/calendar/calRecurrenceUtils.sys.mjs"
 );
 
 function run_test() {
   do_calendar_startup(run_next_test);
 }
 
-// tests for calRecurrenceUtils.jsm
+// tests for calRecurrenceUtils.sys.mjs
 /* Incomplete - still missing test coverage for:
  * recurrenceRule2String
  * splitRecurrenceRules
@@ -47,7 +47,7 @@ function getIcs(aProperties) {
 }
 
 add_task(async function countOccurrences_test() {
-  let data = [
+  const data = [
     {
       input: [
         "BEGIN:VEVENT",
@@ -351,16 +351,16 @@ add_task(async function countOccurrences_test() {
   ];
 
   let i = 0;
-  for (let test of data) {
+  for (const test of data) {
     i++;
 
-    let ics = getIcs(test.input);
-    let parser = Cc["@mozilla.org/calendar/ics-parser;1"].createInstance(Ci.calIIcsParser);
+    const ics = getIcs(test.input);
+    const parser = Cc["@mozilla.org/calendar/ics-parser;1"].createInstance(Ci.calIIcsParser);
     parser.parseString(ics);
-    let items = parser.getItems();
+    const items = parser.getItems();
 
-    ok(items.length > 0, "parsing input succeeded (test #" + i + ")");
-    for (let item of items) {
+    Assert.greater(items.length, 0, "parsing input succeeded (test #" + i + ")");
+    for (const item of items) {
       equal(
         countOccurrences(item),
         test.expected,

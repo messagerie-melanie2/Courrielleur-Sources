@@ -6,8 +6,7 @@
 
 // Wrap in a block to prevent leaking to window scope.
 {
-  const { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
-
+  const { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
   class MozCalendarDayLabel extends MozXULElement {
     static get observedAttributes() {
       return ["selected", "relation"];
@@ -36,6 +35,8 @@
       this.longWeekdayPixels = 0;
 
       this.mDate = null;
+
+      MozXULElement.insertFTLIfNeeded("calendar/calendar.ftl");
 
       this._updateAttributes();
     }
@@ -68,8 +69,8 @@
 
     set weekDay(val) {
       this.mWeekday = val % 7;
-      this.longWeekdayName.value = cal.dtz.formatter.dayName(val);
-      this.shortWeekdayName.value = cal.dtz.formatter.shortDayName(val);
+      this.longWeekdayName.value = cal.dtz.formatter.weekdayNames[val];
+      this.shortWeekdayName.value = cal.dtz.formatter.shortWeekdayNames[val];
     }
 
     get weekDay() {
@@ -78,17 +79,25 @@
 
     set date(val) {
       this.mDate = val;
-      let dateFormatter = cal.dtz.formatter;
-      let label = cal.l10n.getCalString("dayHeaderLabel", [
-        dateFormatter.shortDayName(val.weekday),
-        dateFormatter.formatDateWithoutYear(val),
-      ]);
-      this.shortWeekdayName.setAttribute("value", label);
-      label = cal.l10n.getCalString("dayHeaderLabel", [
-        dateFormatter.dayName(val.weekday),
-        dateFormatter.formatDateWithoutYear(val),
-      ]);
-      this.longWeekdayName.setAttribute("value", label);
+      const dateFormatter = cal.dtz.formatter;
+      document.l10n.setAttributes(this.shortWeekdayName, "day-header-elem", {
+        day: dateFormatter.shortWeekdayNames[val.weekday],
+        date: dateFormatter.formatDateWithoutYear(val),
+      });
+      document.l10n.setAttributes(this.longWeekdayName, "day-header-elem", {
+        day: dateFormatter.dayName(val.weekday),
+        date: dateFormatter.formatDateWithoutYear(val),
+      });
+      const shortLabel = document.l10n.formatValueSync("day-header", {
+        dayName: dateFormatter.shortWeekdayNames[val.weekday],
+        dayIndex: dateFormatter.formatDateWithoutYear(val),
+      });
+      const longLabel = document.l10n.formatValueSync("day-header", {
+        dayName: dateFormatter.dayName(val.weekday),
+        dayIndex: dateFormatter.formatDateWithoutYear(val),
+      });
+      this.shortWeekdayName.setAttribute("value", shortLabel);
+      this.longWeekdayName.setAttribute("value", longLabel);
     }
 
     get date() {
@@ -104,7 +113,7 @@
 
     getLongWeekdayPixels() {
       // Only do this if the long weekdays are visible and we haven't already cached.
-      let longNameWidth = this.longWeekdayName.getBoundingClientRect().width;
+      const longNameWidth = this.longWeekdayName.getBoundingClientRect().width;
 
       if (longNameWidth == 0) {
         // weekdaypixels have not yet been laid out

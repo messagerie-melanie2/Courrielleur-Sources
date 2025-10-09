@@ -1,6 +1,7 @@
 import pytest
 from tests.support.asserts import assert_success
 from tests.support.sync import Poll
+from webdriver.error import NoSuchAlertException
 
 
 def execute_async_script(session, script, args=None):
@@ -19,16 +20,14 @@ def test_no_abort_by_user_prompt_in_other_tab(session, inline, dialog_type):
     original_handles = session.handles
 
     session.url = inline(
-        """
+        f"""
       <a onclick="window.open();">open window</a>
       <script>
         window.addEventListener("message", function (event) {{
-          {}("foo");
+          {dialog_type}("foo");
         }});
       </script>
-    """.format(
-            dialog_type
-        )
+    """
     )
 
     session.find.css("a", all=False).click()
@@ -56,4 +55,15 @@ def test_no_abort_by_user_prompt_in_other_tab(session, inline, dialog_type):
     session.window.close()
 
     session.window_handle = original_handle
+
+    # Opening the alert in a different window is async here and can cause
+    # delays in slow builds like CCOV or TSAN.
+    wait = Poll(
+        session,
+        timeout=15,
+        ignored_exceptions=NoSuchAlertException,
+        message="No user prompt with text 'foo' detected",
+    )
+    wait.until(lambda s: s.alert.text == "foo")
+
     session.alert.accept()

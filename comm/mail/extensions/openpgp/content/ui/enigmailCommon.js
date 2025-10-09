@@ -6,27 +6,13 @@
 
 "use strict";
 
-var { EnigmailCore } = ChromeUtils.import(
-  "chrome://openpgp/content/modules/core.jsm"
+var { RNP } = ChromeUtils.importESModule(
+  "chrome://openpgp/content/modules/RNP.sys.mjs"
 );
-var { RNP } = ChromeUtils.import("chrome://openpgp/content/modules/RNP.jsm");
 
 var l10nCommon = new Localization(["messenger/openpgp/openpgp.ftl"], true);
 
-var gEnigmailSvc;
-function GetEnigmailSvc() {
-  if (!gEnigmailSvc) {
-    gEnigmailSvc = EnigmailCore.getService(window);
-  }
-  return gEnigmailSvc;
-}
-
 async function EnigRevokeKey(keyObj, callbackFunc) {
-  var enigmailSvc = GetEnigmailSvc();
-  if (!enigmailSvc) {
-    return;
-  }
-
   if (keyObj.keyTrust == "r") {
     Services.prompt.alert(
       null,
@@ -36,11 +22,11 @@ async function EnigRevokeKey(keyObj, callbackFunc) {
     return;
   }
 
-  let promptFlags =
+  const promptFlags =
     Services.prompt.BUTTON_POS_0 * Services.prompt.BUTTON_TITLE_IS_STRING +
     Services.prompt.BUTTON_POS_1 * Services.prompt.BUTTON_TITLE_CANCEL;
 
-  let confirm = Services.prompt.confirmEx(
+  const confirm = Services.prompt.confirmEx(
     window,
     l10nCommon.formatValueSync("openpgp-key-revoke-title"),
     l10nCommon.formatValueSync("revoke-key-question", {

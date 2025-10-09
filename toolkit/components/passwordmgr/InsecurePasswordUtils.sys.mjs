@@ -15,7 +15,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   LoginHelper: "resource://gre/modules/LoginHelper.sys.mjs",
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "log", () => {
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
   return lazy.LoginHelper.createLogger("InsecurePasswordUtils");
 });
 
@@ -50,7 +50,6 @@ export const InsecurePasswordUtils = {
     consoleMsg.initWithWindowID(
       message,
       domDoc.location.href,
-      0,
       0,
       0,
       flag,
@@ -200,9 +199,7 @@ export const InsecurePasswordUtils = {
       passwordSafety = 5;
     }
 
-    Services.telemetry
-      .getHistogramById("PWMGR_LOGIN_PAGE_SAFETY")
-      .add(passwordSafety);
+    Glean.pwmgr.loginPageSafety.accumulateSingleSample(passwordSafety);
   },
 };
 

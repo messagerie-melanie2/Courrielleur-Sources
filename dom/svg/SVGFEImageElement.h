@@ -18,7 +18,7 @@ class SVGFEImageFrame;
 
 namespace dom {
 
-using SVGFEImageElementBase = SVGFE;
+using SVGFEImageElementBase = SVGFilterPrimitiveElement;
 
 class SVGFEImageElement final : public SVGFEImageElementBase,
                                 public nsImageLoadingContent {
@@ -70,14 +70,15 @@ class SVGFEImageElement final : public SVGFEImageElementBase,
                     const nsAttrValue* aValue, const nsAttrValue* aOldValue,
                     nsIPrincipal* aSubjectPrincipal, bool aNotify) override;
   nsresult BindToTree(BindContext&, nsINode& aParent) override;
-  void UnbindFromTree(bool aNullParent) override;
-  ElementState IntrinsicState() const override;
+  void UnbindFromTree(UnbindContext&) override;
   void DestroyContent() override;
 
   NS_DECL_IMGINOTIFICATIONOBSERVER
 
   // Override for nsIImageLoadingContent.
   NS_IMETHOD_(void) FrameCreated(nsIFrame* aFrame) override;
+
+  void NodeInfoChanged(Document* aOldDoc) override;
 
   void MaybeLoadSVGImage();
 
@@ -94,7 +95,15 @@ class SVGFEImageElement final : public SVGFEImageElementBase,
     SetOrRemoveNullableStringAttr(nsGkAtoms::crossorigin, aCrossOrigin, aError);
   }
 
+  void GetFetchPriority(nsAString& aFetchPriority) const;
+  void SetFetchPriority(const nsAString& aFetchPriority) {
+    SetAttr(nsGkAtoms::fetchpriority, aFetchPriority, IgnoreErrors());
+  }
+
  private:
+  void DidAnimateAttribute(int32_t aNameSpaceID, nsAtom* aAttribute) override;
+
+  void UpdateSrcURI();
   nsresult LoadSVGImage(bool aForce, bool aNotify);
   bool ShouldLoadImage() const;
 
@@ -106,6 +115,12 @@ class SVGFEImageElement final : public SVGFEImageElementBase,
 
   // Override for nsImageLoadingContent.
   nsIContent* AsContent() override { return this; }
+
+  FetchPriority GetFetchPriorityForImage() const override {
+    return Element::GetFetchPriority();
+  }
+
+  nsCOMPtr<nsIURI> mSrcURI;
 
   enum { RESULT, HREF, XLINK_HREF };
   SVGAnimatedString mStringAttributes[3];

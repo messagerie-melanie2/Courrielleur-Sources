@@ -4,30 +4,20 @@
 
 "use strict";
 
-var utils = ChromeUtils.import("resource://testing-common/mozmill/utils.jsm");
-
 var { click_account_tree_row, get_account_tree_row, open_advanced_settings } =
-  ChromeUtils.import(
-    "resource://testing-common/mozmill/AccountManagerHelpers.jsm"
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/AccountManagerHelpers.sys.mjs"
   );
-var { mc } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-);
-var {
-  plan_for_modal_dialog,
-  plan_for_window_close,
-  wait_for_modal_dialog,
-  wait_for_window_close,
-} = ChromeUtils.import("resource://testing-common/mozmill/WindowHelpers.jsm");
-
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { promise_modal_dialog } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/WindowHelpers.sys.mjs"
 );
 
+var defaultAccount;
 var defaultIdentity;
 
 add_setup(function () {
-  defaultIdentity = MailServices.accounts.defaultAccount.defaultIdentity;
+  defaultAccount = MailServices.accounts.defaultAccount;
+  defaultIdentity = defaultAccount.defaultIdentity;
 });
 
 /**
@@ -37,28 +27,33 @@ add_setup(function () {
  * @param {number} accountKey - Key of the account the check.
  * @param {boolean} isEnabled - True if the button should be enabled, false otherwise.
  */
-function subtest_check_archive_options_enabled(tab, accountKey, isEnabled) {
-  let accountRow = get_account_tree_row(accountKey, "am-copies.xhtml", tab);
-  click_account_tree_row(tab, accountRow);
+async function subtest_check_archive_options_enabled(
+  tab,
+  accountKey,
+  isEnabled
+) {
+  const accountRow = get_account_tree_row(accountKey, "am-copies.xhtml", tab);
+  await click_account_tree_row(tab, accountRow);
 
-  let iframe =
+  const iframe =
     tab.browser.contentWindow.document.getElementById("contentFrame");
-  let button = iframe.contentDocument.getElementById("archiveHierarchyButton");
+  const button = iframe.contentDocument.getElementById(
+    "archiveHierarchyButton"
+  );
 
   Assert.equal(button.disabled, !isEnabled);
 }
 
 add_task(async function test_archive_options_enabled() {
-  let defaultAccount = MailServices.accounts.defaultAccount;
   // First, create an IMAP server
-  let imapServer = MailServices.accounts
+  const imapServer = MailServices.accounts
     .createIncomingServer("nobody", "example.com", "imap")
     .QueryInterface(Ci.nsIImapIncomingServer);
 
-  let identity = MailServices.accounts.createIdentity();
+  const identity = MailServices.accounts.createIdentity();
   identity.email = "tinderbox@example.com";
 
-  let account = MailServices.accounts.createAccount();
+  const account = MailServices.accounts.createAccount();
   account.incomingServer = imapServer;
   account.addIdentity(identity);
 
@@ -68,92 +63,208 @@ add_task(async function test_archive_options_enabled() {
   // archive folder's server is used to determine the enabled/disabled state
   // of the "archive options" button, *not* the incoming server for that
   // identity.
-  defaultIdentity.archiveFolder = imapServer.rootFolder.URI;
+  defaultIdentity.archivesFolderURI = imapServer.rootFolder.URI;
+  identity.archivesFolderURI = imapServer.rootFolder.URI;
 
   imapServer.isGMailServer = false;
-  await open_advanced_settings(function (tab) {
-    subtest_check_archive_options_enabled(tab, account.key, true);
+  await open_advanced_settings(async function (tab) {
+    await subtest_check_archive_options_enabled(tab, account.key, true);
   });
-  await open_advanced_settings(function (tab) {
-    subtest_check_archive_options_enabled(tab, defaultAccount.key, true);
+  await open_advanced_settings(async function (tab) {
+    await subtest_check_archive_options_enabled(tab, defaultAccount.key, true);
   });
 
   imapServer.isGMailServer = true;
-  await open_advanced_settings(function (tab) {
-    subtest_check_archive_options_enabled(tab, account.key, false);
+  await open_advanced_settings(async function (tab) {
+    await subtest_check_archive_options_enabled(tab, account.key, false);
   });
-  await open_advanced_settings(function (tab) {
-    subtest_check_archive_options_enabled(tab, defaultAccount.key, false);
+  await open_advanced_settings(async function (tab) {
+    await subtest_check_archive_options_enabled(tab, defaultAccount.key, false);
   });
 
   MailServices.accounts.removeAccount(account);
 });
 
-async function subtest_initial_state(identity) {
-  plan_for_modal_dialog("archiveOptions", async function (ac) {
-    Assert.equal(
-      ac.window.document.getElementById("archiveGranularity").selectedIndex,
-      identity.archiveGranularity
-    );
-    Assert.equal(
-      ac.window.document.getElementById("archiveKeepFolderStructure").checked,
-      identity.archiveKeepFolderStructure
-    );
-  });
-  mc.window.openDialog(
-    "chrome://messenger/content/am-archiveoptions.xhtml",
-    "",
-    "centerscreen,chrome,modal,titlebar,resizable=yes",
-    { identity }
+async function subtest_initial_state(tab, identity) {
+  const iframe =
+    tab.browser.contentWindow.document.getElementById("contentFrame");
+  const button = iframe.contentDocument.getElementById(
+    "archiveHierarchyButton"
   );
-  wait_for_modal_dialog("archiveOptions");
+
+  const dialogPromise = BrowserTestUtils.promiseAlertDialogOpen(
+    undefined,
+    "chrome://messenger/content/am-archiveoptions.xhtml",
+    {
+      isSubDialog: true,
+      async callback(ac) {
+        if (ac.document.readyState != "complete") {
+          await BrowserTestUtils.waitForEvent(ac, "load");
+        }
+
+        Assert.equal(
+          ac.document.getElementById("archiveGranularity").selectedIndex,
+          identity.archiveGranularity
+        );
+        Assert.equal(
+          ac.document.getElementById("archiveKeepFolderStructure").checked,
+          identity.archiveKeepFolderStructure
+        );
+        Assert.equal(
+          ac.document.getElementById("archiveRecreateInbox").checked,
+          identity.archiveRecreateInbox
+        );
+        ac.close();
+      },
+    }
+  );
+  EventUtils.synthesizeMouseAtCenter(button, {}, button.ownerGlobal);
+  await dialogPromise;
 }
 
 add_task(async function test_open_archive_options() {
-  for (let granularity = 0; granularity < 3; granularity++) {
-    defaultIdentity.archiveGranularity = granularity;
-    for (let kfs = 0; kfs < 2; kfs++) {
-      defaultIdentity.archiveKeepFolderStructure = kfs;
-      await subtest_initial_state(defaultIdentity);
+  await open_advanced_settings(async function (tab) {
+    const accountRow = get_account_tree_row(
+      defaultAccount.key,
+      "am-copies.xhtml",
+      tab
+    );
+    await click_account_tree_row(tab, accountRow);
+
+    for (let granularity = 0; granularity < 3; granularity++) {
+      defaultIdentity.archiveGranularity = granularity;
+      for (let kfs = 0; kfs < 2; kfs++) {
+        defaultIdentity.archiveKeepFolderStructure = kfs;
+        for (let ri = 0; ri < 2; ri++) {
+          defaultIdentity.archiveRecreateInbox = ri;
+          await subtest_initial_state(tab, defaultIdentity);
+        }
+      }
     }
-  }
+  });
 });
 
-function subtest_save_state(identity, granularity, kfs) {
-  plan_for_modal_dialog("archiveOptions", function (ac) {
-    ac.window.document.getElementById("archiveGranularity").selectedIndex =
-      granularity;
-    ac.window.document.getElementById("archiveKeepFolderStructure").checked =
-      kfs;
-    EventUtils.synthesizeKey("VK_RETURN", {}, ac.window);
-    ac.window.document.querySelector("dialog").acceptDialog();
-  });
-  mc.window.openDialog(
+async function subtest_save_state(contentDocument, granularity, kfs, ri) {
+  const button = contentDocument.getElementById("archiveHierarchyButton");
+
+  const dialogPromise = BrowserTestUtils.promiseAlertDialogOpen(
+    undefined,
     "chrome://messenger/content/am-archiveoptions.xhtml",
-    "",
-    "centerscreen,chrome,modal,titlebar,resizable=yes",
-    { identity }
+    {
+      isSubDialog: true,
+      async callback(ac) {
+        if (ac.document.readyState != "complete") {
+          await BrowserTestUtils.waitForEvent(ac, "load");
+        }
+
+        ac.document.getElementById("archiveGranularity").selectedIndex =
+          granularity;
+        ac.document.getElementById("archiveKeepFolderStructure").checked = kfs;
+        ac.document.getElementById("archiveRecreateInbox").checked = ri;
+        EventUtils.synthesizeKey("VK_RETURN", {}, ac);
+        ac.document.querySelector("dialog").acceptDialog();
+      },
+    }
   );
-  wait_for_modal_dialog("archiveOptions");
+  EventUtils.synthesizeMouseAtCenter(button, {}, button.ownerGlobal);
+  await dialogPromise;
 }
 
-add_task(function test_save_archive_options() {
+add_task(async function test_save_archive_options() {
   defaultIdentity.archiveGranularity = 0;
   defaultIdentity.archiveKeepFolderStructure = false;
-  subtest_save_state(defaultIdentity, 1, true);
+  defaultIdentity.archiveRecreateInbox = false;
+
+  await open_advanced_settings(async function (tab) {
+    const accountRow = get_account_tree_row(
+      defaultAccount.key,
+      "am-copies.xhtml",
+      tab
+    );
+    await click_account_tree_row(tab, accountRow);
+    const iframe =
+      tab.browser.contentWindow.document.getElementById("contentFrame");
+    await subtest_save_state(iframe.contentDocument, 1, true, true);
+  });
 
   Assert.equal(defaultIdentity.archiveGranularity, 1);
   Assert.equal(defaultIdentity.archiveKeepFolderStructure, true);
+  Assert.equal(defaultIdentity.archiveRecreateInbox, true);
 });
 
-function subtest_check_archive_enabled(tab, archiveEnabled) {
+/**
+ * Test that changing the archive options for an additional identity works
+ * without affecting the default identity of the account.
+ */
+add_task(async function test_save_archive_options_for_identity() {
+  defaultIdentity.archiveGranularity = 0;
+  defaultIdentity.archiveKeepFolderStructure = false;
+  defaultIdentity.archiveRecreateInbox = true;
+
+  const secondIdentity = MailServices.accounts.createIdentity();
+  secondIdentity.email = "second.id@foo.invalid";
+  defaultAccount.addIdentity(secondIdentity);
+
+  await open_advanced_settings(async function (tab) {
+    const win =
+      tab.browser.contentWindow.document.getElementById(
+        "contentFrame"
+      ).contentWindow;
+
+    // Open the Manage Identities dialog.
+    const manageButton = win.document.getElementById(
+      "identity.manageIdentitiesbutton"
+    );
+    const identitiesDialogLoad = promiseLoadSubDialog(
+      "chrome://messenger/content/am-identities-list.xhtml"
+    );
+    EventUtils.synthesizeMouseAtCenter(manageButton, {}, win);
+    const identitiesDialog = await identitiesDialogLoad;
+
+    // Open the Edit dialog for the second identity.
+    const listItem = [
+      ...identitiesDialog.document.getElementById("identitiesList").children,
+    ].find(e => e.getAttribute("key") == secondIdentity.key);
+    const identityEditDialogLoaded = promiseLoadSubDialog(
+      "chrome://messenger/content/am-identity-edit.xhtml"
+    );
+    EventUtils.synthesizeMouseAtCenter(
+      listItem,
+      { clickCount: 2 },
+      identitiesDialog
+    );
+    const identityEditDialog = await identityEditDialogLoaded;
+
+    // Switch to the Copies & Folders tab.
+    EventUtils.synthesizeMouseAtCenter(
+      identityEditDialog.document.getElementById("identityCopiesFoldersTab"),
+      {},
+      identityEditDialog
+    );
+
+    await subtest_save_state(identityEditDialog.document, 1, true, false);
+
+    identityEditDialog.document.querySelector("dialog").acceptDialog();
+    identitiesDialog.document.querySelector("dialog").acceptDialog();
+  });
+
+  Assert.equal(defaultIdentity.archiveGranularity, 0);
+  Assert.equal(defaultIdentity.archiveKeepFolderStructure, false);
+  Assert.equal(defaultIdentity.archiveRecreateInbox, true);
+
+  Assert.equal(secondIdentity.archiveGranularity, 1);
+  Assert.equal(secondIdentity.archiveKeepFolderStructure, true);
+  Assert.equal(secondIdentity.archiveRecreateInbox, false);
+});
+
+async function subtest_check_archive_enabled(tab, archiveEnabled) {
   defaultIdentity.archiveEnabled = archiveEnabled;
 
-  click_account_tree_row(tab, 2);
+  await click_account_tree_row(tab, 2);
 
-  let iframe =
+  const iframe =
     tab.browser.contentWindow.document.getElementById("contentFrame");
-  let checkbox = iframe.contentDocument.getElementById(
+  const checkbox = iframe.contentDocument.getElementById(
     "identity.archiveEnabled"
   );
 
@@ -161,22 +272,22 @@ function subtest_check_archive_enabled(tab, archiveEnabled) {
 }
 
 add_task(async function test_archive_enabled() {
-  await open_advanced_settings(function (amc) {
-    subtest_check_archive_enabled(amc, true);
+  await open_advanced_settings(async function (amc) {
+    await subtest_check_archive_enabled(amc, true);
   });
 
-  await open_advanced_settings(function (amc) {
-    subtest_check_archive_enabled(amc, false);
+  await open_advanced_settings(async function (amc) {
+    await subtest_check_archive_enabled(amc, false);
   });
 });
 
-function subtest_disable_archive(tab) {
+async function subtest_disable_archive(tab) {
   defaultIdentity.archiveEnabled = true;
-  click_account_tree_row(tab, 2);
+  await click_account_tree_row(tab, 2);
 
-  let iframe =
+  const iframe =
     tab.browser.contentWindow.document.getElementById("contentFrame");
-  let checkbox = iframe.contentDocument.getElementById(
+  const checkbox = iframe.contentDocument.getElementById(
     "identity.archiveEnabled"
   );
 
@@ -187,9 +298,9 @@ function subtest_disable_archive(tab) {
     { clickCount: 1 },
     checkbox.ownerGlobal
   );
-  utils.waitFor(
+  await TestUtils.waitForCondition(
     () => !checkbox.checked,
-    "Archive checkbox didn't toggle to unchecked"
+    "waiting for archive checkbox to be unchecked"
   );
 
   Assert.ok(!defaultIdentity.archiveEnabled);

@@ -6,15 +6,12 @@
 #ifndef nsImapUndoTxn_h__
 #define nsImapUndoTxn_h__
 
-#include "mozilla/Attributes.h"
 #include "nsIMsgFolder.h"
 #include "nsIImapIncomingServer.h"
 #include "nsIUrlListener.h"
 #include "nsMsgTxn.h"
-#include "MailNewsTypes.h"
 #include "nsTArray.h"
 #include "nsIMsgOfflineImapOperation.h"
-#include "nsCOMPtr.h"
 #include "nsIWeakReferenceUtils.h"
 #include "nsCOMArray.h"
 
@@ -53,9 +50,10 @@ class nsImapMoveCopyMsgTxn : public nsMsgTxn, nsIUrlListener {
   nsCString m_srcMsgIdString;
   nsWeakPtr m_dstFolder;
   nsCString m_dstMsgIdString;
+  // Set if message IDs are IMAP UIDs, clear if IMAP sequence numbers.
   bool m_idsAreUids;
   bool m_isMove;
-  bool m_srcIsPop3;
+  bool m_srcIsLocal;
   nsTArray<uint32_t> m_srcSizeArray;
   // this is used when we chain urls for imap undo, since "this" needs
   // to be the listener, but the folder may need to also be notified.

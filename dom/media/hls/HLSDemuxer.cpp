@@ -27,18 +27,18 @@ using media::TimeInterval;
 using media::TimeIntervals;
 using media::TimeUnit;
 
-static VideoInfo::Rotation getVideoInfoRotation(int aRotation) {
+static VideoRotation getVideoInfoRotation(int aRotation) {
   switch (aRotation) {
     case 0:
-      return VideoInfo::Rotation::kDegree_0;
+      return VideoRotation::kDegree_0;
     case 90:
-      return VideoInfo::Rotation::kDegree_90;
+      return VideoRotation::kDegree_90;
     case 180:
-      return VideoInfo::Rotation::kDegree_180;
+      return VideoRotation::kDegree_180;
     case 270:
-      return VideoInfo::Rotation::kDegree_270;
+      return VideoRotation::kDegree_270;
     default:
-      return VideoInfo::Rotation::kDegree_0;
+      return VideoRotation::kDegree_0;
   }
 }
 
@@ -290,8 +290,8 @@ RefPtr<HLSTrackDemuxer::SamplesPromise> HLSTrackDemuxer::DoGetSamples(
                                              __func__);
     }
     MOZ_ASSERT(mQueuedSample->mKeyframe, "mQueuedSample must be a keyframe");
-    samples->AppendSample(mQueuedSample);
-    mQueuedSample = nullptr;
+    samples->AppendSample(std::move(mQueuedSample));
+    MOZ_ASSERT(!mQueuedSample);
     aNumSamples--;
   }
   if (aNumSamples == 0) {
@@ -332,7 +332,7 @@ RefPtr<HLSTrackDemuxer::SamplesPromise> HLSTrackDemuxer::DoGetSamples(
       return SamplesPromise::CreateAndReject(NS_ERROR_DOM_MEDIA_DEMUXER_ERR,
                                              __func__);
     }
-    samples->AppendSample(mrd);
+    samples->AppendSample(std::move(mrd));
   }
   if (mType == TrackInfo::kVideoTrack &&
       (mNextKeyframeTime.isNothing() ||

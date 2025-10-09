@@ -10,11 +10,11 @@ import os
 
 from mozbuild.util import memoize
 from mozpack import path
+from taskgraph.transforms.run.common import support_caches
 from taskgraph.util.schema import Schema
 from taskgraph.util.yaml import load_yaml
-from voluptuous import Any, Extra, Optional, Required
+from voluptuous import Any, Optional, Required
 
-from gecko_taskgraph import GECKO
 from gecko_taskgraph.transforms.job import run_job_using
 from gecko_taskgraph.transforms.job.common import add_tooltool, support_vcs_checkout
 from gecko_taskgraph.transforms.task import taskref_or_string
@@ -22,12 +22,8 @@ from gecko_taskgraph.transforms.task import taskref_or_string
 run_task_schema = Schema(
     {
         Required("using"): "run-task",
-        # if true, add a cache at ~worker/.cache, which is where things like pip
-        # tend to hide their caches.  This cache is never added for level-1 jobs.
-        # TODO Once bug 1526028 is fixed, this and 'use-caches' should be merged.
-        Required("cache-dotcache"): bool,
-        # Whether or not to use caches.
-        Optional("use-caches"): bool,
+        # Use the specified caches.
+        Optional("use-caches"): Any(bool, [str]),
         # if true (the default), perform a checkout of gecko on the worker
         Required("checkout"): bool,
         Optional(
@@ -47,16 +43,6 @@ run_task_schema = Schema(
         # checkout arguments.  If a list, it will be passed directly; otherwise
         # it will be included in a single argument to `bash -cx`.
         Required("command"): Any([taskref_or_string], taskref_or_string),
-        # Context to substitute into the command using format string
-        # substitution (e.g {value}). This is useful if certain aspects of the
-        # command need to be generated in transforms.
-        Optional("command-context"): {
-            # If present, loads a set of context variables from an unnested yaml
-            # file. If a value is present in both the provided file and directly
-            # in command-context, the latter will take priority.
-            Optional("from-file"): str,
-            Extra: object,
-        },
         # Base work directory used to set up the task.
         Optional("workdir"): str,
         # If not false, tooltool downloads will be enabled via relengAPIProxy
@@ -75,10 +61,20 @@ run_task_schema = Schema(
 
 def common_setup(config, job, taskdesc, command):
     run = job["run"]
+    run_cwd = run.get("cwd")
     if run["checkout"]:
-        support_vcs_checkout(config, job, taskdesc, sparse=bool(run["sparse-profile"]))
-        command.append(
-            "--gecko-checkout={}".format(taskdesc["worker"]["env"]["GECKO_PATH"])
+        gecko_path = support_vcs_checkout(config, job, taskdesc)
+        command.append(f"--gecko-checkout={gecko_path}")
+
+        if run_cwd:
+            run_cwd = path.normpath(run_cwd.format(checkout=gecko_path))
+
+    elif run_cwd and "{checkout}" in run_cwd:
+        raise Exception(
+            "Found `{{checkout}}` interpolation in `cwd` for task {name} "
+            "but the task doesn't have a checkout: {cwd}".format(
+                cwd=run_cwd, name=job.get("name", job.get("label"))
+            )
         )
 
     if run["sparse-profile"]:
@@ -88,11 +84,14 @@ def common_setup(config, job, taskdesc, command):
         sparse_profile_path = path.join(sparse_profile_prefix, run["sparse-profile"])
         command.append(f"--gecko-sparse-profile={sparse_profile_path}")
 
+    if run_cwd:
+        command.append(f"--task-cwd={run_cwd}")
+
+    support_caches(config, job, taskdesc)
     taskdesc["worker"].setdefault("env", {})["MOZ_SCM_LEVEL"] = config.params["level"]
 
 
 worker_defaults = {
-    "cache-dotcache": False,
     "checkout": True,
     "comm-checkout": False,
     "sparse-profile": None,
@@ -112,25 +111,6 @@ def script_url(config, script):
     return f"{tc_url}/api/queue/v1/task/{task_id}/artifacts/public/{script}"
 
 
-def substitute_command_context(command_context, command):
-    from_file = command_context.pop("from-file", None)
-    full_context = {}
-    if from_file:
-        full_context = load_yaml(os.path.join(GECKO, from_file))
-    else:
-        full_context = {}
-
-    full_context.update(command_context)
-
-    if isinstance(command, list):
-        for i in range(len(command)):
-            command[i] = command[i].format(**full_context)
-    else:
-        command = command.format(**full_context)
-
-    return command
-
-
 @run_job_using(
     "docker-worker", "run-task", schema=run_task_schema, defaults=worker_defaults
 )
@@ -144,35 +124,7 @@ def docker_worker_run_task(config, job, taskdesc):
         internal = run["tooltool-downloads"] == "internal"
         add_tooltool(config, job, taskdesc, internal=internal)
 
-    if run.get("cache-dotcache"):
-        worker["caches"].append(
-            {
-                "type": "persistent",
-                "name": "{project}-dotcache".format(**config.params),
-                "mount-point": "{workdir}/.cache".format(**run),
-                "skip-untrusted": True,
-            }
-        )
-
-    if run.get("command-context"):
-        run_command = substitute_command_context(
-            run.get("command-context"), run["command"]
-        )
-    else:
-        run_command = run["command"]
-
-    run_cwd = run.get("cwd")
-    if run_cwd and run["checkout"]:
-        run_cwd = path.normpath(
-            run_cwd.format(checkout=taskdesc["worker"]["env"]["GECKO_PATH"])
-        )
-    elif run_cwd and "{checkout}" in run_cwd:
-        raise Exception(
-            "Found `{{checkout}}` interpolation in `cwd` for task {name} "
-            "but the task doesn't have a checkout: {cwd}".format(
-                cwd=run_cwd, name=job.get("name", job.get("label"))
-            )
-        )
+    run_command = run["command"]
 
     # dict is for the case of `{'task-reference': text_type}`.
     if isinstance(run_command, (str, dict)):
@@ -183,8 +135,6 @@ def docker_worker_run_task(config, job, taskdesc):
         )
     if run["run-as-root"]:
         command.extend(("--user", "root", "--group", "root"))
-    if run_cwd:
-        command.extend(("--task-cwd", run_cwd))
     command.append("--")
     command.extend(run_command)
     worker["command"] = command
@@ -199,6 +149,7 @@ def generic_worker_run_task(config, job, taskdesc):
     is_win = worker["os"] == "windows"
     is_mac = worker["os"] == "macosx"
     is_bitbar = worker["os"] == "linux-bitbar"
+    is_lambda = worker["os"] == "linux-lambda"
 
     if run["tooltool-downloads"]:
         internal = run["tooltool-downloads"] == "internal"
@@ -214,13 +165,6 @@ def generic_worker_run_task(config, job, taskdesc):
     common_setup(config, job, taskdesc, command)
 
     worker.setdefault("mounts", [])
-    if run.get("cache-dotcache"):
-        worker["mounts"].append(
-            {
-                "cache-name": "{project}-dotcache".format(**config.params),
-                "directory": "{workdir}/.cache".format(**run),
-            }
-        )
     worker["mounts"].append(
         {
             "content": {
@@ -238,20 +182,17 @@ def generic_worker_run_task(config, job, taskdesc):
                 "file": "./fetch-content",
             }
         )
+    if run.get("checkout"):
+        worker["mounts"].append(
+            {
+                "content": {
+                    "url": script_url(config, "robustcheckout.py"),
+                },
+                "file": "./robustcheckout.py",
+            }
+        )
 
     run_command = run["command"]
-    run_cwd = run.get("cwd")
-    if run_cwd and run["checkout"]:
-        run_cwd = path.normpath(
-            run_cwd.format(checkout=taskdesc["worker"]["env"]["GECKO_PATH"])
-        )
-    elif run_cwd and "{checkout}" in run_cwd:
-        raise Exception(
-            "Found `{{checkout}}` interpolation in `cwd` for task {name} "
-            "but the task doesn't have a checkout: {cwd}".format(
-                cwd=run_cwd, name=job.get("name", job.get("label"))
-            )
-        )
 
     # dict is for the case of `{'task-reference': text_type}`.
     if isinstance(run_command, (str, dict)):
@@ -263,11 +204,6 @@ def generic_worker_run_task(config, job, taskdesc):
                 run_command = f'"{run_command}"'
         run_command = ["bash", "-cx", run_command]
 
-    if run.get("command-context"):
-        run_command = substitute_command_context(
-            run.get("command-context"), run_command
-        )
-
     if run["comm-checkout"]:
         command.append(
             "--comm-checkout={}/comm".format(taskdesc["worker"]["env"]["GECKO_PATH"])
@@ -275,13 +211,13 @@ def generic_worker_run_task(config, job, taskdesc):
 
     if run["run-as-root"]:
         command.extend(("--user", "root", "--group", "root"))
-    if run_cwd:
-        command.extend(("--task-cwd", run_cwd))
     command.append("--")
     if is_bitbar:
         # Use the bitbar wrapper script which sets up the device and adb
         # environment variables
         command.append("/builds/taskcluster/script.py")
+    elif is_lambda:
+        command.append("/home/ltuser/taskcluster/script.py")
     command.extend(run_command)
 
     if is_win:

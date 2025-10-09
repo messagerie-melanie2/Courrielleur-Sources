@@ -10,11 +10,13 @@
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/MediaControlKeySource.h"
 #include "mozilla/dom/BrowsingContextWebProgress.h"
+#include "mozilla/dom/FeaturePolicy.h"
 #include "mozilla/dom/ProcessIsolation.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/SessionHistoryEntry.h"
 #include "mozilla/dom/SessionStoreRestoreData.h"
 #include "mozilla/dom/SessionStoreUtils.h"
+#include "mozilla/dom/UniqueContentParentKeepAlive.h"
 #include "mozilla/dom/ipc/IdType.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/MozPromise.h"
@@ -37,6 +39,7 @@ class nsITimer;
 
 namespace mozilla {
 enum class CallState;
+class BounceTrackingState;
 
 namespace embedding {
 class PrintData;
@@ -93,8 +96,9 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   // Only set for toplevel content BrowsingContexts, and may be from a different
   // BrowsingContextGroup.
   uint64_t GetCrossGroupOpenerId() const { return mCrossGroupOpenerId; }
+  already_AddRefed<CanonicalBrowsingContext> GetCrossGroupOpener() const;
   void SetCrossGroupOpenerId(uint64_t aOpenerId);
-  void SetCrossGroupOpener(CanonicalBrowsingContext& aCrossGroupOpener,
+  void SetCrossGroupOpener(CanonicalBrowsingContext* aCrossGroupOpener,
                            ErrorResult& aRv);
 
   void GetWindowGlobals(nsTArray<RefPtr<WindowGlobalParent>>& aWindows);
@@ -118,14 +122,15 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   // content/chrome boundaries.
   already_AddRefed<WindowGlobalParent> GetEmbedderWindowGlobal() const;
 
-  already_AddRefed<CanonicalBrowsingContext> GetParentCrossChromeBoundary();
-
-  already_AddRefed<CanonicalBrowsingContext> TopCrossChromeBoundary();
+  CanonicalBrowsingContext* GetParentCrossChromeBoundary();
+  CanonicalBrowsingContext* TopCrossChromeBoundary();
   Nullable<WindowProxyHolder> GetTopChromeWindow();
 
   nsISHistory* GetSessionHistory();
   SessionHistoryEntry* GetActiveSessionHistoryEntry();
   void SetActiveSessionHistoryEntry(SessionHistoryEntry* aEntry);
+
+  bool ManuallyManagesActiveness() const;
 
   UniquePtr<LoadingSessionHistoryInfo> CreateLoadingSessionHistoryEntryForLoad(
       nsDocShellLoadState* aLoadState, SessionHistoryEntry* aExistingEntry,
@@ -134,17 +139,33 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   UniquePtr<LoadingSessionHistoryInfo> ReplaceLoadingSessionHistoryEntryForLoad(
       LoadingSessionHistoryInfo* aInfo, nsIChannel* aNewChannel);
 
-  using PrintPromise = MozPromise</* unused */ bool, nsresult, false>;
+  using PrintPromise =
+      MozPromise<MaybeDiscardedBrowsingContext, nsresult, false>;
   MOZ_CAN_RUN_SCRIPT RefPtr<PrintPromise> Print(nsIPrintSettings*);
   MOZ_CAN_RUN_SCRIPT already_AddRefed<Promise> PrintJS(nsIPrintSettings*,
                                                        ErrorResult&);
+  MOZ_CAN_RUN_SCRIPT RefPtr<PrintPromise> PrintWithNoContentAnalysis(
+      nsIPrintSettings* aPrintSettings, bool aForceStaticDocument,
+      const MaybeDiscardedBrowsingContext& aClonedStaticBrowsingContext);
+  MOZ_CAN_RUN_SCRIPT void ReleaseClonedPrint(
+      const MaybeDiscardedBrowsingContext& aClonedStaticBrowsingContext);
 
-  // Call the given callback on all top-level descendant BrowsingContexts.
-  // Return Callstate::Stop from the callback to stop calling
-  // further children.
-  void CallOnAllTopDescendants(
-      const std::function<mozilla::CallState(CanonicalBrowsingContext*)>&
-          aCallback);
+  enum class TopDescendantKind {
+    // All top descendants are included, even those inside a nested top
+    // browser.
+    All,
+    // Top descendants that are either direct children or under a non-nested
+    // descendant are included, but not those nested inside a separate top.
+    NonNested,
+    // Only our direct children are included. This is usually slightly less
+    // efficient than the alternatives, but might be needed in some cases.
+    ChildrenOnly,
+  };
+  // Call the given callback on top-level descendant BrowsingContexts.
+  // Return Callstate::Stop from the callback to stop calling further children.
+  void CallOnTopDescendants(
+      const FunctionRef<CallState(CanonicalBrowsingContext*)>& aCallback,
+      TopDescendantKind aKind);
 
   void SessionHistoryCommit(uint64_t aLoadId, const nsID& aChangeID,
                             uint32_t aLoadType, bool aPersist,
@@ -175,9 +196,9 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   void RemoveFromSessionHistory(const nsID& aChangeID);
 
-  Maybe<int32_t> HistoryGo(int32_t aOffset, uint64_t aHistoryEpoch,
-                           bool aRequireUserInteraction, bool aUserActivation,
-                           Maybe<ContentParentId> aContentId);
+  MOZ_CAN_RUN_SCRIPT Maybe<int32_t> HistoryGo(
+      int32_t aOffset, uint64_t aHistoryEpoch, bool aRequireUserInteraction,
+      bool aUserActivation, Maybe<ContentParentId> aContentId);
 
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;
@@ -217,12 +238,16 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   void LoadURI(nsIURI* aURI, const LoadURIOptions& aOptions,
                ErrorResult& aError);
 
+  MOZ_CAN_RUN_SCRIPT
   void GoBack(const Optional<int32_t>& aCancelContentJSEpoch,
               bool aRequireUserInteraction, bool aUserActivation);
+  MOZ_CAN_RUN_SCRIPT
   void GoForward(const Optional<int32_t>& aCancelContentJSEpoch,
                  bool aRequireUserInteraction, bool aUserActivation);
+  MOZ_CAN_RUN_SCRIPT
   void GoToIndex(int32_t aIndex, const Optional<int32_t>& aCancelContentJSEpoch,
                  bool aUserActivation);
+  MOZ_CAN_RUN_SCRIPT
   void Reload(uint32_t aReloadFlags);
   void Stop(uint32_t aStopFlags);
 
@@ -235,10 +260,15 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   // Internal method to change which process a BrowsingContext is being loaded
   // in. The returned promise will resolve when the process switch is completed.
+  // The returned CanonicalBrowsingContext may be different than |this| if a BCG
+  // switch was performed.
   //
   // A NOT_REMOTE_TYPE aRemoteType argument will perform a process switch into
   // the parent process, and the method will resolve with a null BrowserParent.
-  using RemotenessPromise = MozPromise<RefPtr<BrowserParent>, nsresult, false>;
+  using RemotenessPromise = MozPromise<
+      std::pair<RefPtr<BrowserParent>, RefPtr<CanonicalBrowsingContext>>,
+      nsresult, false>;
+  MOZ_CAN_RUN_SCRIPT
   RefPtr<RemotenessPromise> ChangeRemoteness(
       const NavigationIsolationOptions& aOptions, uint64_t aPendingSwitchId);
 
@@ -299,15 +329,19 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   void GetLoadingSessionHistoryInfoFromParent(
       Maybe<LoadingSessionHistoryInfo>& aLoadingInfo);
 
+  mozilla::Span<const SessionHistoryInfo> GetContiguousSessionHistoryInfos(
+      SessionHistoryInfo& aInfo);
+
   void HistoryCommitIndexAndLength();
 
   void SynchronizeLayoutHistoryState();
 
   void ResetScalingZoom();
 
-  void SetContainerFeaturePolicy(FeaturePolicy* aContainerFeaturePolicy);
-  FeaturePolicy* GetContainerFeaturePolicy() const {
-    return mContainerFeaturePolicy;
+  void SetContainerFeaturePolicy(
+      Maybe<FeaturePolicyInfo>&& aContainerFeaturePolicyInfo);
+  const Maybe<FeaturePolicyInfo>& GetContainerFeaturePolicy() const {
+    return mContainerFeaturePolicyInfo;
   }
 
   void SetRestoreData(SessionStoreRestoreData* aData, ErrorResult& aError);
@@ -344,6 +378,14 @@ class CanonicalBrowsingContext final : public BrowsingContext {
     mPriorityActive = aIsActive;
   }
 
+  void SetIsActive(bool aIsActive, ErrorResult& aRv);
+
+  void SetIsActiveInternal(bool aIsActive, ErrorResult& aRv) {
+    SetExplicitActive(aIsActive ? ExplicitActiveStatus::Active
+                                : ExplicitActiveStatus::Inactive,
+                      aRv);
+  }
+
   void SetTouchEventsOverride(dom::TouchEventsOverride, ErrorResult& aRv);
   void SetTargetTopLevelLinkClicksToBlank(bool aTargetTopLevelLinkClicksToBlank,
                                           ErrorResult& aRv);
@@ -362,6 +404,7 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   void AddPageAwakeRequest();
   void RemovePageAwakeRequest();
 
+  MOZ_CAN_RUN_SCRIPT
   void CloneDocumentTreeInto(CanonicalBrowsingContext* aSource,
                              const nsACString& aRemoteType,
                              embedding::PrintData&& aPrintData);
@@ -383,6 +426,10 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   void RecomputeAppWindowVisibility();
 
   already_AddRefed<nsISHEntry> GetMostRecentLoadingSessionHistoryEntry();
+
+  already_AddRefed<BounceTrackingState> GetBounceTrackingState();
+
+  bool CanOpenModalPicker();
 
  protected:
   // Called when the browsing context is being discarded.
@@ -423,17 +470,21 @@ class CanonicalBrowsingContext final : public BrowsingContext {
     friend class CanonicalBrowsingContext;
 
     ~PendingRemotenessChange();
+    MOZ_CAN_RUN_SCRIPT
     void ProcessLaunched();
+    MOZ_CAN_RUN_SCRIPT
     void ProcessReady();
+    MOZ_CAN_RUN_SCRIPT
     void MaybeFinish();
     void Clear();
 
+    MOZ_CAN_RUN_SCRIPT
     nsresult FinishTopContent();
     nsresult FinishSubframe();
 
     RefPtr<CanonicalBrowsingContext> mTarget;
     RefPtr<RemotenessPromise::Private> mPromise;
-    RefPtr<ContentParent> mContentParent;
+    UniqueContentParentKeepAlive mContentParentKeepAlive;
     RefPtr<BrowsingContextGroup> mSpecificGroup;
 
     bool mProcessReady = false;
@@ -557,7 +608,7 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   nsCOMPtr<nsIWebProgressListener> mDocShellProgressBridge;
   RefPtr<nsBrowserStatusFilter> mStatusFilter;
 
-  RefPtr<FeaturePolicy> mContainerFeaturePolicy;
+  Maybe<FeaturePolicyInfo> mContainerFeaturePolicyInfo;
 
   friend class BrowserSessionStore;
   WeakPtr<SessionStoreFormData>& GetSessionStoreFormDataRef() {
@@ -593,6 +644,8 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   bool mFullyDiscarded = false;
 
   nsTArray<std::function<void(uint64_t)>> mFullyDiscardedListeners;
+
+  nsTArray<SessionHistoryInfo> mActiveContiguousEntries;
 };
 
 }  // namespace dom

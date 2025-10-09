@@ -35,35 +35,38 @@
 //!  - backdrop filters (see add_backdrop_filter)
 //!
 
-use api::{AlphaType, BorderDetails, BorderDisplayItem, BuiltDisplayListIter, BuiltDisplayList, PrimitiveFlags};
+use api::{AlphaType, BorderDetails, BorderDisplayItem, BuiltDisplayList, BuiltDisplayListIter, PrimitiveFlags, SnapshotInfo};
 use api::{ClipId, ColorF, CommonItemProperties, ComplexClipRegion, ComponentTransferFuncType, RasterSpace};
-use api::{DisplayItem, DisplayItemRef, ExtendMode, ExternalScrollId, FilterData};
+use api::{DebugFlags, DisplayItem, DisplayItemRef, ExtendMode, ExternalScrollId, FilterData};
 use api::{FilterOp, FilterPrimitive, FontInstanceKey, FontSize, GlyphInstance, GlyphOptions, GradientStop};
 use api::{IframeDisplayItem, ImageKey, ImageRendering, ItemRange, ColorDepth, QualitySettings};
 use api::{LineOrientation, LineStyle, NinePatchBorderSource, PipelineId, MixBlendMode, StackingContextFlags};
-use api::{PropertyBinding, ReferenceFrameKind, ScrollFrameDescriptor, ReferenceFrameMapper};
+use api::{PropertyBinding, ReferenceFrameKind, ScrollFrameDescriptor};
 use api::{APZScrollGeneration, HasScrollLinkedEffect, Shadow, SpatialId, StickyFrameDescriptor, ImageMask, ItemTag};
 use api::{ClipMode, PrimitiveKeyKind, TransformStyle, YuvColorSpace, ColorRange, YuvData, TempFilterData};
 use api::{ReferenceTransformBinding, Rotation, FillRule, SpatialTreeItem, ReferenceFrameDescriptor};
+use api::{FilterOpGraphPictureBufferId, SVGFE_GRAPH_MAX};
+use api::channel::{unbounded_channel, Receiver, Sender};
 use api::units::*;
 use crate::image_tiling::simplify_repeated_primitive;
-use crate::clip::{ClipItemKey, ClipStore, ClipItemKeyKind};
+use crate::box_shadow::BLUR_SAMPLE_SCALE;
+use crate::clip::{ClipIntern, ClipItemKey, ClipItemKeyKind, ClipStore};
 use crate::clip::{ClipInternData, ClipNodeId, ClipLeafId};
 use crate::clip::{PolygonDataHandle, ClipTreeBuilder};
 use crate::segment::EdgeAaSegmentMask;
 use crate::spatial_tree::{SceneSpatialTree, SpatialNodeContainer, SpatialNodeIndex, get_external_scroll_offset};
-use crate::frame_builder::{FrameBuilderConfig};
+use crate::frame_builder::FrameBuilderConfig;
 use glyph_rasterizer::{FontInstance, SharedFontResources};
 use crate::hit_test::HitTestingScene;
 use crate::intern::Interner;
-use crate::internal_types::{FastHashMap, LayoutPrimitiveInfo, Filter, PlaneSplitterIndex, PipelineInstanceId};
+use crate::internal_types::{FastHashMap, LayoutPrimitiveInfo, Filter, FilterGraphNode, FilterGraphOp, FilterGraphPictureReference, PlaneSplitterIndex, PipelineInstanceId};
 use crate::picture::{Picture3DContext, PictureCompositeMode, PicturePrimitive};
 use crate::picture::{BlitReason, OrderedPictureChild, PrimitiveList, SurfaceInfo, PictureFlags};
 use crate::picture_graph::PictureGraph;
-use crate::prim_store::{PrimitiveInstance};
+use crate::prim_store::{PrimitiveInstance, PrimitiveStoreStats};
 use crate::prim_store::{PrimitiveInstanceKind, NinePatchDescriptor, PrimitiveStore};
-use crate::prim_store::{InternablePrimitive, SegmentInstanceIndex, PictureIndex};
-use crate::prim_store::{PolygonKey};
+use crate::prim_store::{InternablePrimitive, PictureIndex};
+use crate::prim_store::PolygonKey;
 use crate::prim_store::backdrop::{BackdropCapture, BackdropRender};
 use crate::prim_store::borders::{ImageBorder, NormalBorderPrim};
 use crate::prim_store::gradient::{
@@ -77,7 +80,7 @@ use crate::prim_store::picture::{Picture, PictureCompositeKey, PictureKey};
 use crate::prim_store::text_run::TextRun;
 use crate::render_backend::SceneView;
 use crate::resource_cache::ImageRequest;
-use crate::scene::{Scene, ScenePipeline, BuiltScene, SceneStats, StackingContextHelpers};
+use crate::scene::{BuiltScene, Scene, ScenePipeline, SceneStats, StackingContextHelpers};
 use crate::scene_builder_thread::Interners;
 use crate::space::SpaceSnapper;
 use crate::spatial_node::{
@@ -90,6 +93,7 @@ use std::collections::vec_deque::VecDeque;
 use std::sync::Arc;
 use crate::util::{VecHelper, MaxRect};
 use crate::filterdata::{SFilterDataComponent, SFilterData, SFilterDataKey};
+use log::Level;
 
 /// Offsets primitives (and clips) by the external scroll offset
 /// supplied to scroll nodes.
@@ -148,6 +152,7 @@ pub struct CompositeOps {
     pub filters: Vec<Filter>,
     pub filter_datas: Vec<FilterData>,
     pub filter_primitives: Vec<FilterPrimitive>,
+    pub snapshot: Option<SnapshotInfo>,
 
     // Requires two source textures (e.g. mix-blend-mode)
     pub mix_blend_mode: Option<MixBlendMode>,
@@ -158,20 +163,23 @@ impl CompositeOps {
         filters: Vec<Filter>,
         filter_datas: Vec<FilterData>,
         filter_primitives: Vec<FilterPrimitive>,
-        mix_blend_mode: Option<MixBlendMode>
+        mix_blend_mode: Option<MixBlendMode>,
+        snapshot: Option<SnapshotInfo>,
     ) -> Self {
         CompositeOps {
             filters,
             filter_datas,
             filter_primitives,
             mix_blend_mode,
+            snapshot,
         }
     }
 
     pub fn is_empty(&self) -> bool {
         self.filters.is_empty() &&
             self.filter_primitives.is_empty() &&
-            self.mix_blend_mode.is_none()
+            self.mix_blend_mode.is_none() &&
+            self.snapshot.is_none()
     }
 
     /// Returns true if this CompositeOps contains any filters that affect
@@ -192,6 +200,7 @@ impl CompositeOps {
                         return true;
                     }
                 }
+                Filter::SVGGraphNode(..) => {return true;}
                 _ => {
                     if filter.is_noop() {
                         continue;
@@ -327,6 +336,7 @@ impl PictureChainBuilder {
                 self.spatial_node_index,
                 self.raster_space,
                 flags,
+                None,
             ))
         );
 
@@ -359,6 +369,7 @@ impl PictureChainBuilder {
         interners: &mut Interners,
         prim_store: &mut PrimitiveStore,
         clip_tree_builder: &mut ClipTreeBuilder,
+        snapshot: Option<SnapshotInfo>,
     ) -> PrimitiveInstance {
         let mut flags = PictureFlags::empty();
         if self.establishes_sub_graph {
@@ -368,7 +379,9 @@ impl PictureChainBuilder {
         match self.current {
             PictureSource::WrappedPicture { instance } => {
                 let pic_index = instance.kind.as_pic();
-                prim_store.pictures[pic_index.0].flags |= flags;
+                let picture = &mut prim_store.pictures[pic_index.0];
+                picture.flags |= flags;
+                picture.snapshot = snapshot;
 
                 instance
             }
@@ -380,16 +393,22 @@ impl PictureChainBuilder {
                 // If no picture was created for this stacking context, create a
                 // pass-through wrapper now. This is only needed in 1-2 edge cases
                 // now, and will be removed as a follow up.
+
+                // If the picture is snapshotted, it needs to have a surface rather
+                // than being pass-through.
+                let composite_mode = snapshot.map(|_| PictureCompositeMode::Blit(BlitReason::SNAPSHOT));
+
                 let pic_index = PictureIndex(prim_store.pictures
                     .alloc()
                     .init(PicturePrimitive::new_image(
-                        None,
+                        composite_mode,
                         Picture3DContext::Out,
                         self.flags,
                         prim_list,
                         self.spatial_node_index,
                         self.raster_space,
                         flags,
+                        snapshot,
                     ))
                 );
 
@@ -417,6 +436,7 @@ impl PictureChainBuilder {
 
 bitflags! {
     /// Slice flags
+    #[derive(Debug, Copy, PartialEq, Eq, Clone, PartialOrd, Ord, Hash)]
     pub struct SliceFlags : u8 {
         /// Slice created by a prim that has PrimitiveFlags::IS_SCROLLBAR_CONTAINER
         const IS_SCROLLBAR = 1;
@@ -468,10 +488,7 @@ pub struct SceneBuilder<'a> {
     pub config: FrameBuilderConfig,
 
     /// Reference to the set of data that is interned across display lists.
-    interners: &'a mut Interners,
-
-    /// Helper struct to map stacking context coords <-> reference frame coords.
-    rf_mapper: ReferenceFrameMapper,
+    pub interners: &'a mut Interners,
 
     /// Helper struct to map spatial nodes to external scroll offsets.
     external_scroll_mapper: ScrollOffsetMapper,
@@ -502,6 +519,10 @@ pub struct SceneBuilder<'a> {
     /// dependencies, without relying on recursion for those passes.
     picture_graph: PictureGraph,
 
+    /// Keep track of snapshot pictures to ensure that they are rendered even if they
+    /// are off-screen and the visibility traversal does not reach them.
+    snapshot_pictures: Vec<PictureIndex>,
+
     /// Keep track of allocated plane splitters for this scene. A plane
     /// splitter is allocated whenever we encounter a new 3d rendering context.
     /// They are stored outside the picture since it makes it easier for them
@@ -527,6 +548,12 @@ pub struct SceneBuilder<'a> {
 
     /// Used to build a ClipTree from the clip-chains, clips and state during scene building.
     clip_tree_builder: ClipTreeBuilder,
+
+    /// Some primitives need to nest two stacking contexts instead of one
+    /// (see push_stacking_context). We keep track of the extra stacking context info
+    /// here and set a boolean on the inner stacking context info to remember to
+    /// pop from this stack (see StackingContextInfo::needs_extra_stacking_context)
+    extra_stacking_context_stack: Vec<StackingContextInfo>,
 }
 
 impl<'a> SceneBuilder<'a> {
@@ -537,7 +564,9 @@ impl<'a> SceneBuilder<'a> {
         frame_builder_config: &FrameBuilderConfig,
         interners: &mut Interners,
         spatial_tree: &mut SceneSpatialTree,
+        recycler: &mut SceneRecycler,
         stats: &SceneStats,
+        debug_flags: DebugFlags,
     ) -> BuiltScene {
         profile_scope!("build_scene");
 
@@ -557,32 +586,53 @@ impl<'a> SceneBuilder<'a> {
             spatial_tree,
             fonts,
             config: *frame_builder_config,
-            id_to_index_mapper_stack: Vec::new(),
-            hit_testing_scene: HitTestingScene::new(&stats.hit_test_stats),
-            pending_shadow_items: VecDeque::new(),
-            sc_stack: Vec::new(),
-            containing_block_stack: Vec::new(),
-            raster_space_stack: vec![RasterSpace::Screen],
-            prim_store: PrimitiveStore::new(&stats.prim_store_stats),
-            clip_store: ClipStore::new(),
+            id_to_index_mapper_stack: mem::take(&mut recycler.id_to_index_mapper_stack),
+            hit_testing_scene: recycler.hit_testing_scene.take().unwrap_or_else(|| HitTestingScene::new(&stats.hit_test_stats)),
+            pending_shadow_items: mem::take(&mut recycler.pending_shadow_items),
+            sc_stack: mem::take(&mut recycler.sc_stack),
+            containing_block_stack: mem::take(&mut recycler.containing_block_stack),
+            raster_space_stack: mem::take(&mut recycler.raster_space_stack),
+            prim_store: mem::take(&mut recycler.prim_store),
+            clip_store: mem::take(&mut recycler.clip_store),
             interners,
-            rf_mapper: ReferenceFrameMapper::new(),
             external_scroll_mapper: ScrollOffsetMapper::new(),
-            iframe_size: Vec::new(),
+            iframe_size: mem::take(&mut recycler.iframe_size),
             root_iframe_clip: None,
             quality_settings: view.quality_settings,
             tile_cache_builder: TileCacheBuilder::new(
                 root_reference_frame_index,
                 frame_builder_config.background_color,
+                debug_flags,
             ),
             snap_to_device,
-            picture_graph: PictureGraph::new(),
+            picture_graph: mem::take(&mut recycler.picture_graph),
+            // This vector is empty most of the time, don't bother with recycling it for now.
+            snapshot_pictures: Vec::new(),
             next_plane_splitter_index: 0,
-            prim_instances: Vec::new(),
+            prim_instances: mem::take(&mut recycler.prim_instances),
             pipeline_instance_ids: FastHashMap::default(),
-            surfaces: Vec::new(),
-            clip_tree_builder: ClipTreeBuilder::new(),
+            surfaces: mem::take(&mut recycler.surfaces),
+            clip_tree_builder: recycler.clip_tree_builder.take().unwrap_or_else(|| ClipTreeBuilder::new()),
+            extra_stacking_context_stack: Vec::new(),
         };
+
+        // Reset
+        builder.hit_testing_scene.reset();
+        builder.prim_store.reset();
+        builder.clip_store.reset();
+        builder.picture_graph.reset();
+        builder.prim_instances.clear();
+        builder.surfaces.clear();
+        builder.sc_stack.clear();
+        builder.containing_block_stack.clear();
+        builder.id_to_index_mapper_stack.clear();
+        builder.pending_shadow_items.clear();
+        builder.iframe_size.clear();
+
+        builder.raster_space_stack.clear();
+        builder.raster_space_stack.push(RasterSpace::Screen);
+
+        builder.clip_tree_builder.begin();
 
         builder.build_all(
             root_pipeline_id,
@@ -596,19 +646,36 @@ impl<'a> SceneBuilder<'a> {
             &builder.spatial_tree,
             &builder.prim_instances,
             &mut builder.clip_tree_builder,
+            &builder.interners,
         );
+
+        for pic_index in &builder.snapshot_pictures {
+            builder.picture_graph.add_root(*pic_index);
+        }
 
         // Add all the tile cache pictures as roots of the picture graph
         for pic_index in &tile_cache_pictures {
             builder.picture_graph.add_root(*pic_index);
             SceneBuilder::finalize_picture(
                 *pic_index,
+                None,
                 &mut builder.prim_store.pictures,
                 None,
+                &builder.clip_tree_builder,
+                &builder.prim_instances,
+                &builder.interners.clip,
             );
         }
 
         let clip_tree = builder.clip_tree_builder.finalize();
+
+        recycler.clip_tree_builder = Some(builder.clip_tree_builder);
+        recycler.sc_stack = builder.sc_stack;
+        recycler.id_to_index_mapper_stack = builder.id_to_index_mapper_stack;
+        recycler.containing_block_stack = builder.containing_block_stack;
+        recycler.raster_space_stack = builder.raster_space_stack;
+        recycler.pending_shadow_items = builder.pending_shadow_items;
+        recycler.iframe_size = builder.iframe_size;
 
         BuiltScene {
             has_root_pipeline: scene.has_root_pipeline(),
@@ -619,24 +686,32 @@ impl<'a> SceneBuilder<'a> {
             clip_store: builder.clip_store,
             config: builder.config,
             tile_cache_config,
+            snapshot_pictures: builder.snapshot_pictures,
             tile_cache_pictures,
             picture_graph: builder.picture_graph,
             num_plane_splitters: builder.next_plane_splitter_index,
             prim_instances: builder.prim_instances,
             surfaces: builder.surfaces,
             clip_tree,
+            recycler_tx: Some(recycler.tx.clone()),
         }
     }
 
-    /// Traverse the picture prim list and update any late-set spatial nodes
+    /// Traverse the picture prim list and update any late-set spatial nodes.
+    /// Also, for each picture primitive, store the lowest-common-ancestor
+    /// of all of the contained primitives' clips.
     // TODO(gw): This is somewhat hacky - it's unfortunate we need to do this, but it's
     //           because we can't determine the scroll root until we have checked all the
     //           primitives in the slice. Perhaps we could simplify this by doing some
     //           work earlier in the DL builder, so we know what scroll root will be picked?
     fn finalize_picture(
         pic_index: PictureIndex,
+        prim_index: Option<usize>,
         pictures: &mut [PicturePrimitive],
         parent_spatial_node_index: Option<SpatialNodeIndex>,
+        clip_tree_builder: &ClipTreeBuilder,
+        prim_instances: &[PrimitiveInstance],
+        clip_interner: &Interner<ClipIntern>,
     ) {
         // Extract the prim_list (borrow check) and select the spatial node to
         // assign to unknown clusters
@@ -667,23 +742,131 @@ impl<'a> SceneBuilder<'a> {
             }
         }
 
-        // Update the spatial node of any child pictures
-        for child_pic_index in &prim_list.child_pictures {
-            let child_pic = &mut pictures[child_pic_index.0];
+        // Work out the lowest common clip which is shared by all the
+        // primitives in this picture.  If it is the same as the picture clip
+        // then store it as the clip tree root for the picture so that it is
+        // applied later as part of picture compositing.  Gecko gives every
+        // primitive a viewport clip which, if applied within the picture,
+        // will mess up tile caching and mean we have to redraw on every
+        // scroll event (for tile caching to work usefully we specifically
+        // want to draw things even if they are outside the viewport).
+        let mut shared_clip_node_id = None;
 
-            if child_pic.spatial_node_index == SpatialNodeIndex::UNKNOWN {
-                child_pic.spatial_node_index = spatial_node_index;
+        // Snapshot picture are special. All clips belonging to parents
+        // *must* be extracted from the snapshot, so we rely on this optimization
+        // taking out parent clips and it overrides other conditions.
+        // In addition we need to ensure that only parent clips are extracted.
+        let is_snapshot = pictures[pic_index.0].snapshot.is_some();
+
+        if is_snapshot {
+            // In the general case, if all of the children of a picture share the
+            // same clips, then these clips are hoisted up in the parent picture,
+            // however we rely on child clips of snapshotted pictures to be baked
+            // into the snapshot.
+            // Snapshotted pictures use the parent of their clip node (if any)
+            // as the clip root, to ensure that the parent clip hierarchy is
+            // extracted from clip chains inside the snapshot, and to make sure
+            // that child clips of the snapshots are not hoisted out of the
+            // snapshot even when all children of the snapshotted picture share
+            // a clip.
+            if let Some(idx) = prim_index {
+                let clip_node = clip_tree_builder.get_leaf(prim_instances[idx].clip_leaf_id).node_id;
+                shared_clip_node_id = clip_tree_builder.get_parent(clip_node);
             }
+        } else {
+            for cluster in &prim_list.clusters {
+                for prim_instance in &prim_instances[cluster.prim_range()] {
+                    let leaf = clip_tree_builder.get_leaf(prim_instance.clip_leaf_id);
 
-            // Recurse into child pictures which may also have unknown spatial nodes
-            SceneBuilder::finalize_picture(
-                *child_pic_index,
-                pictures,
-                Some(spatial_node_index),
-            );
+                    shared_clip_node_id = match shared_clip_node_id {
+                        Some(current) => {
+                            Some(clip_tree_builder.find_lowest_common_ancestor(
+                                current,
+                                leaf.node_id,
+                            ))
+                        }
+                        None => Some(leaf.node_id)
+                    };
+                }
+            }
+        }
 
-            if pictures[child_pic_index.0].flags.contains(PictureFlags::DISABLE_SNAPPING) {
-                pictures[pic_index.0].flags |= PictureFlags::DISABLE_SNAPPING;
+        let lca_tree_node = shared_clip_node_id
+            .and_then(|node_id| (node_id != ClipNodeId::NONE).then_some(node_id))
+            .map(|node_id| clip_tree_builder.get_node(node_id));
+        let lca_node = lca_tree_node
+            .map(|tree_node| &clip_interner[tree_node.handle]);
+        let pic_node_id = prim_index
+            .map(|prim_index| clip_tree_builder.get_leaf(prim_instances[prim_index].clip_leaf_id).node_id)
+            .and_then(|node_id| (node_id != ClipNodeId::NONE).then_some(node_id));
+        let pic_node = pic_node_id
+            .map(|node_id| clip_tree_builder.get_node(node_id))
+            .map(|tree_node| &clip_interner[tree_node.handle]);
+
+        // The logic behind this optimisation is that there's no need to clip
+        // the contents of a picture when the crop will be applied anyway as
+        // part of compositing the picture.  However, this is not true if the
+        // picture includes a blur filter as the blur result depends on the
+        // offscreen pixels which may or may not be cropped away.
+        let has_blur = match &pictures[pic_index.0].composite_mode {
+            Some(PictureCompositeMode::Filter(Filter::Blur { .. })) => true,
+            Some(PictureCompositeMode::Filter(Filter::DropShadows { .. })) => true,
+            Some(PictureCompositeMode::SvgFilter( .. )) => true,
+            Some(PictureCompositeMode::SVGFEGraph( .. )) => true,
+            _ => false,
+        };
+
+        // It is only safe to apply this optimisation if the old pic clip node
+        // is the direct parent of the new LCA node.  If this is not the case
+        // then there could be other more restrictive clips in between the two
+        // which we would ignore by changing the clip root.  See Bug 1854062
+        // for an example of this.
+        let direct_parent = lca_tree_node
+            .zip(pic_node_id)
+            .map(|(lca_tree_node, pic_node_id)| lca_tree_node.parent == pic_node_id)
+            .unwrap_or(false);
+
+        let should_set_clip_root = is_snapshot || lca_node.zip(pic_node).map_or(false, |(lca_node, pic_node)| {
+            // It is only safe to ignore the LCA clip (by making it the clip
+            // root) if it is equal to or larger than the picture clip. But
+            // this comparison also needs to take into account spatial nodes
+            // as the two clips may in general be on different spatial nodes.
+            // For this specific Gecko optimisation we expect the the two
+            // clips to be identical and have the same spatial node so it's
+            // simplest to just test for ClipItemKey equality (which includes
+            // both spatial node and the actual clip).
+            lca_node.key == pic_node.key && !has_blur && direct_parent
+        });
+
+        if should_set_clip_root {
+            pictures[pic_index.0].clip_root = shared_clip_node_id;
+        }
+
+        // Update the spatial node of any child pictures
+        for cluster in &prim_list.clusters {
+            for prim_instance_index in cluster.prim_range() {
+                if let PrimitiveInstanceKind::Picture { pic_index: child_pic_index, .. } = prim_instances[prim_instance_index].kind {
+                    let child_pic = &mut pictures[child_pic_index.0];
+
+                    if child_pic.spatial_node_index == SpatialNodeIndex::UNKNOWN {
+                        child_pic.spatial_node_index = spatial_node_index;
+                    }
+
+                    // Recurse into child pictures which may also have unknown spatial nodes
+                    SceneBuilder::finalize_picture(
+                        child_pic_index,
+                        Some(prim_instance_index),
+                        pictures,
+                        Some(spatial_node_index),
+                        clip_tree_builder,
+                        prim_instances,
+                        clip_interner,
+                    );
+
+                    if pictures[child_pic_index.0].flags.contains(PictureFlags::DISABLE_SNAPPING) {
+                        pictures[pic_index.0].flags |= PictureFlags::DISABLE_SNAPPING;
+                    }
+                }
             }
         }
 
@@ -691,26 +874,17 @@ impl<'a> SceneBuilder<'a> {
         pictures[pic_index.0].prim_list = prim_list;
     }
 
-    /// Retrieve the current offset to allow converting a stacking context
-    /// relative coordinate to be relative to the owing reference frame,
-    /// also considering any external scroll offset on the provided
-    /// spatial node.
-    fn current_offset(
+    /// Retrieve the current external scroll offset on the provided spatial node.
+    fn current_external_scroll_offset(
         &mut self,
         spatial_node_index: SpatialNodeIndex,
     ) -> LayoutVector2D {
-        // Get the current offset from stacking context <-> reference frame space.
-        let rf_offset = self.rf_mapper.current_offset();
-
         // Get the external scroll offset, if applicable.
-        let scroll_offset = self
-            .external_scroll_mapper
+        self.external_scroll_mapper
             .external_scroll_offset(
                 spatial_node_index,
                 self.spatial_tree,
-            );
-
-        rf_offset + scroll_offset
+            )
     }
 
     fn build_spatial_tree_for_display_list(
@@ -807,17 +981,32 @@ impl<'a> SceneBuilder<'a> {
                         let spatial_node_index = self.get_space(info.spatial_id);
                         let mut subtraversal = item.sub_iter();
                         // Avoid doing unnecessary work for empty stacking contexts.
-                        if subtraversal.current_stacking_context_empty() {
+                        // We still have to process it if it has filters, they
+                        // may be things like SVGFEFlood or various specific
+                        // ways to use ComponentTransfer, ColorMatrix, Composite
+                        // which are still visible on an empty stacking context
+                        if subtraversal.current_stacking_context_empty() && item.filters().is_empty() {
                             subtraversal.skip_current_stacking_context();
                             traversal = subtraversal;
                             continue;
                         }
+
+                        let snapshot = info.snapshot.map(|snapshot| {
+                            // Offset the snapshot area by the stacking context origin
+                            // so that the area is expressed in the same coordinate space
+                            // as the items in the stacking context.
+                            SnapshotInfo {
+                                area: snapshot.area.translate(info.origin.to_vector()),
+                                .. snapshot
+                            }
+                        });
 
                         let composition_operations = CompositeOps::new(
                             filter_ops_for_compositing(item.filters()),
                             filter_datas_for_compositing(item.filter_datas()),
                             filter_primitives_for_compositing(item.filter_primitives()),
                             info.stacking_context.mix_blend_mode_for_compositing(),
+                            snapshot,
                         );
 
                         let sc_info = self.push_stacking_context(
@@ -828,9 +1017,9 @@ impl<'a> SceneBuilder<'a> {
                             info.stacking_context.clip_chain_id,
                             info.stacking_context.raster_space,
                             info.stacking_context.flags,
+                            info.ref_frame_offset + info.origin.to_vector(),
                         );
 
-                        self.rf_mapper.push_offset(info.origin.to_vector());
                         let new_context = BuildContext {
                             pipeline_id: bc.pipeline_id,
                             kind: ContextKind::StackingContext {
@@ -848,7 +1037,6 @@ impl<'a> SceneBuilder<'a> {
                         profile_scope!("build_reference_frame");
                         let mut subtraversal = item.sub_iter();
 
-                        self.rf_mapper.push_scope();
                         let new_context = BuildContext {
                             pipeline_id: bc.pipeline_id,
                             kind: ContextKind::ReferenceFrame,
@@ -890,15 +1078,12 @@ impl<'a> SceneBuilder<'a> {
             match bc.kind {
                 ContextKind::Root => {}
                 ContextKind::StackingContext { sc_info } => {
-                    self.rf_mapper.pop_offset();
                     self.pop_stacking_context(sc_info);
                 }
                 ContextKind::ReferenceFrame => {
-                    self.rf_mapper.pop_scope();
                 }
                 ContextKind::Iframe { parent_traversal } => {
                     self.iframe_size.pop();
-                    self.rf_mapper.pop_scope();
                     self.clip_tree_builder.pop_clip();
                     self.clip_tree_builder.pop_clip();
 
@@ -943,12 +1128,15 @@ impl<'a> SceneBuilder<'a> {
         parent_node_index: SpatialNodeIndex,
         instance_id: PipelineInstanceId,
     ) {
+        let external_scroll_offset = self.current_external_scroll_offset(parent_node_index);
+
         let sticky_frame_info = StickyFrameInfo::new(
-            info.bounds,
+            info.bounds.translate(external_scroll_offset),
             info.margins,
             info.vertical_offset_bounds,
             info.horizontal_offset_bounds,
             info.previously_applied_offset,
+            info.transform,
         );
 
         let index = self.spatial_tree.add_sticky_frame(
@@ -1018,6 +1206,8 @@ impl<'a> SceneBuilder<'a> {
             },
         };
 
+        let external_scroll_offset = self.current_external_scroll_offset(parent_space);
+
         self.push_reference_frame(
             info.reference_frame.id,
             parent_space,
@@ -1025,7 +1215,7 @@ impl<'a> SceneBuilder<'a> {
             info.reference_frame.transform_style,
             transform,
             info.reference_frame.kind,
-            info.origin.to_vector(),
+            (info.origin + external_scroll_offset).to_vector(),
             SpatialNodeUid::external(info.reference_frame.key, pipeline_id, instance_id),
         );
     }
@@ -1041,13 +1231,14 @@ impl<'a> SceneBuilder<'a> {
         // SpatialNode::scroll(..) API as well as for properly setting sticky
         // positioning offsets.
         let content_size = info.content_rect.size();
+        let external_scroll_offset = self.current_external_scroll_offset(parent_node_index);
 
         self.add_scroll_frame(
             info.scroll_frame_id,
             parent_node_index,
             info.external_id,
             pipeline_id,
-            &info.frame_rect,
+            &info.frame_rect.translate(external_scroll_offset),
             &content_size,
             ScrollFrameKind::Explicit,
             info.external_scroll_offset,
@@ -1101,7 +1292,7 @@ impl<'a> SceneBuilder<'a> {
 
         self.id_to_index_mapper_stack.push(NodeIdToIndexMapper::default());
 
-        let bounds = self.snap_rect(
+        let bounds = self.normalize_scroll_offset_and_snap_rect(
             &info.bounds,
             spatial_node_index,
         );
@@ -1147,8 +1338,7 @@ impl<'a> SceneBuilder<'a> {
             self.root_iframe_clip = Some(ClipId::root(iframe_pipeline_id));
             self.add_tile_cache_barrier_if_needed(SliceFlags::empty());
         }
-        self.iframe_size.push(info.bounds.size());
-        self.rf_mapper.push_scope();
+        self.iframe_size.push(bounds.size());
 
         self.build_spatial_tree_for_display_list(
             &pipeline.display_list.display_list,
@@ -1178,52 +1368,51 @@ impl<'a> SceneBuilder<'a> {
     fn process_common_properties(
         &mut self,
         common: &CommonItemProperties,
-        bounds: Option<&LayoutRect>,
+        bounds: Option<LayoutRect>,
     ) -> (LayoutPrimitiveInfo, LayoutRect, SpatialNodeIndex, ClipNodeId) {
         let spatial_node_index = self.get_space(common.spatial_id);
-        let current_offset = self.current_offset(spatial_node_index);
-
-        let unsnapped_clip_rect = common.clip_rect.translate(current_offset);
-        let unsnapped_rect = bounds.map(|bounds| {
-            bounds.translate(current_offset)
-        });
 
         // If no bounds rect is given, default to clip rect.
-        let (rect, clip_rect) = if common.flags.contains(PrimitiveFlags::ANTIALISED) {
-            (unsnapped_rect.unwrap_or(unsnapped_clip_rect), unsnapped_clip_rect)
+        let mut clip_rect = common.clip_rect;
+        let mut prim_rect = bounds.unwrap_or(clip_rect);
+        let unsnapped_rect = self.normalize_rect_scroll_offset(&prim_rect, spatial_node_index);
+
+        // If antialiased, no need to snap but we still need to remove the
+        // external scroll offset (it's applied later during frame building,
+        // so that we don't intern to a different hash and invalidate content
+        // in picture caches unnecessarily).
+        if common.flags.contains(PrimitiveFlags::ANTIALISED) {
+            prim_rect = self.normalize_rect_scroll_offset(&prim_rect, spatial_node_index);
+            clip_rect = self.normalize_rect_scroll_offset(&clip_rect, spatial_node_index);
         } else {
-            let clip_rect = self.snap_rect(
-                &unsnapped_clip_rect,
+            clip_rect = self.normalize_scroll_offset_and_snap_rect(
+                &clip_rect,
                 spatial_node_index,
             );
 
-            let rect = unsnapped_rect.map_or(clip_rect, |bounds| {
-                self.snap_rect(
-                    &bounds,
-                    spatial_node_index,
-                )
-            });
-
-            (rect, clip_rect)
-        };
+            prim_rect = self.normalize_scroll_offset_and_snap_rect(
+                &prim_rect,
+                spatial_node_index,
+            );
+        }
 
         let clip_node_id = self.get_clip_node(
             common.clip_chain_id,
         );
 
         let layout = LayoutPrimitiveInfo {
-            rect,
+            rect: prim_rect,
             clip_rect,
             flags: common.flags,
         };
 
-        (layout, unsnapped_rect.unwrap_or(unsnapped_clip_rect), spatial_node_index, clip_node_id)
+        (layout, unsnapped_rect, spatial_node_index, clip_node_id)
     }
 
     fn process_common_properties_with_bounds(
         &mut self,
         common: &CommonItemProperties,
-        bounds: &LayoutRect,
+        bounds: LayoutRect,
     ) -> (LayoutPrimitiveInfo, LayoutRect, SpatialNodeIndex, ClipNodeId) {
         self.process_common_properties(
             common,
@@ -1231,11 +1420,29 @@ impl<'a> SceneBuilder<'a> {
         )
     }
 
-    pub fn snap_rect(
+    // Remove the effect of the external scroll offset embedded in the display list
+    // coordinates by Gecko. This ensures that we don't necessarily invalidate picture
+    // cache tiles due to the embedded scroll offsets.
+    fn normalize_rect_scroll_offset(
+        &mut self,
+        rect: &LayoutRect,
+        spatial_node_index: SpatialNodeIndex,
+    ) -> LayoutRect {
+        let current_offset = self.current_external_scroll_offset(spatial_node_index);
+
+        rect.translate(current_offset)
+    }
+
+    // Remove external scroll offset and snap a rect. The external scroll offset must
+    // be removed first, as it may be fractional (which we don't want to affect the
+    // snapping behavior during scene building).
+    fn normalize_scroll_offset_and_snap_rect(
         &mut self,
         rect: &LayoutRect,
         target_spatial_node: SpatialNodeIndex,
     ) -> LayoutRect {
+        let rect = self.normalize_rect_scroll_offset(rect, target_spatial_node);
+
         self.snap_to_device.set_target_spatial_node(
             target_spatial_node,
             self.spatial_tree,
@@ -1253,7 +1460,7 @@ impl<'a> SceneBuilder<'a> {
 
                 let (layout, _, spatial_node_index, clip_node_id) = self.process_common_properties_with_bounds(
                     &info.common,
-                    &info.bounds,
+                    info.bounds,
                 );
 
                 self.add_image(
@@ -1273,7 +1480,7 @@ impl<'a> SceneBuilder<'a> {
 
                 let (layout, unsnapped_rect, spatial_node_index, clip_node_id) = self.process_common_properties_with_bounds(
                     &info.common,
-                    &info.bounds,
+                    info.bounds,
                 );
 
                 let stretch_size = process_repeat_size(
@@ -1299,7 +1506,7 @@ impl<'a> SceneBuilder<'a> {
 
                 let (layout, _, spatial_node_index, clip_node_id) = self.process_common_properties_with_bounds(
                     &info.common,
-                    &info.bounds,
+                    info.bounds,
                 );
 
                 self.add_yuv_image(
@@ -1324,7 +1531,7 @@ impl<'a> SceneBuilder<'a> {
                 // error throughout the layers). We should fix this at some point.
                 let (layout, _, spatial_node_index, clip_node_id) = self.process_common_properties_with_bounds(
                     &info.common,
-                    &info.bounds,
+                    info.bounds,
                 );
 
                 self.add_text(
@@ -1335,6 +1542,7 @@ impl<'a> SceneBuilder<'a> {
                     &info.color,
                     item.glyphs(),
                     info.glyph_options,
+                    info.ref_frame_offset,
                 );
             }
             DisplayItem::Rectangle(ref info) => {
@@ -1342,7 +1550,7 @@ impl<'a> SceneBuilder<'a> {
 
                 let (layout, _, spatial_node_index, clip_node_id) = self.process_common_properties_with_bounds(
                     &info.common,
-                    &info.bounds,
+                    info.bounds,
                 );
 
                 self.add_primitive(
@@ -1363,11 +1571,9 @@ impl<'a> SceneBuilder<'a> {
                 profile_scope!("hit_test");
 
                 let spatial_node_index = self.get_space(info.spatial_id);
-                let current_offset = self.current_offset(spatial_node_index);
-                let unsnapped_rect = info.rect.translate(current_offset);
 
-                let rect = self.snap_rect(
-                    &unsnapped_rect,
+                let rect = self.normalize_scroll_offset_and_snap_rect(
+                    &info.rect,
                     spatial_node_index,
                 );
 
@@ -1381,6 +1587,10 @@ impl<'a> SceneBuilder<'a> {
                 let anim_id: u64 =  match spatial_node.node_type {
                     SpatialNodeType::ReferenceFrame(ReferenceFrameInfo {
                         source_transform: PropertyBinding::Binding(key, _),
+                        ..
+                    }) => key.clone().into(),
+                    SpatialNodeType::StickyFrame(StickyFrameInfo {
+                        transform: Some(PropertyBinding::Binding(key, _)),
                         ..
                     }) => key.clone().into(),
                     _ => 0,
@@ -1401,7 +1611,7 @@ impl<'a> SceneBuilder<'a> {
 
                 let (layout, _, spatial_node_index, clip_node_id) = self.process_common_properties_with_bounds(
                     &info.common,
-                    &info.bounds,
+                    info.bounds,
                 );
 
                 self.add_clear_rectangle(
@@ -1415,7 +1625,7 @@ impl<'a> SceneBuilder<'a> {
 
                 let (layout, _, spatial_node_index, clip_node_id) = self.process_common_properties_with_bounds(
                     &info.common,
-                    &info.area,
+                    info.area,
                 );
 
                 self.add_line(
@@ -1437,7 +1647,7 @@ impl<'a> SceneBuilder<'a> {
 
                 let (mut layout, unsnapped_rect, spatial_node_index, clip_node_id) = self.process_common_properties_with_bounds(
                     &info.common,
-                    &info.bounds,
+                    info.bounds,
                 );
 
                 let mut tile_size = process_repeat_size(
@@ -1515,7 +1725,7 @@ impl<'a> SceneBuilder<'a> {
 
                 let (mut layout, unsnapped_rect, spatial_node_index, clip_node_id) = self.process_common_properties_with_bounds(
                     &info.common,
-                    &info.bounds,
+                    info.bounds,
                 );
 
                 let mut center = info.gradient.center;
@@ -1593,7 +1803,7 @@ impl<'a> SceneBuilder<'a> {
 
                 let (mut layout, unsnapped_rect, spatial_node_index, clip_node_id) = self.process_common_properties_with_bounds(
                     &info.common,
-                    &info.bounds,
+                    info.bounds,
                 );
 
                 let tile_size = process_repeat_size(
@@ -1638,7 +1848,7 @@ impl<'a> SceneBuilder<'a> {
 
                 let (layout, _, spatial_node_index, clip_node_id) = self.process_common_properties_with_bounds(
                     &info.common,
-                    &info.box_bounds,
+                    info.box_bounds,
                 );
 
                 self.add_box_shadow(
@@ -1651,6 +1861,7 @@ impl<'a> SceneBuilder<'a> {
                     info.spread_radius,
                     info.border_radius,
                     info.clip_mode,
+                    self.spatial_tree.is_root_coord_system(spatial_node_index),
                 );
             }
             DisplayItem::Border(ref info) => {
@@ -1658,7 +1869,7 @@ impl<'a> SceneBuilder<'a> {
 
                 let (layout, _, spatial_node_index, clip_node_id) = self.process_common_properties_with_bounds(
                     &info.common,
-                    &info.bounds,
+                    info.bounds,
                 );
 
                 self.add_border(
@@ -1767,6 +1978,7 @@ impl<'a> SceneBuilder<'a> {
 
                 self.pop_all_shadows();
             }
+            DisplayItem::DebugMarker(..) => {}
         }
     }
 
@@ -1778,7 +1990,6 @@ impl<'a> SceneBuilder<'a> {
     fn create_primitive<P>(
         &mut self,
         info: &LayoutPrimitiveInfo,
-        spatial_node_index: SpatialNodeIndex,
         clip_leaf_id: ClipLeafId,
         prim: P,
     ) -> PrimitiveInstance
@@ -1789,7 +2000,6 @@ impl<'a> SceneBuilder<'a> {
         // Build a primitive key.
         let prim_key = prim.into_key(info);
 
-        let current_offset = self.current_offset(spatial_node_index);
         let interner = self.interners.as_mut();
         let prim_data_handle = interner
             .intern(&prim_key, || ());
@@ -1798,7 +2008,6 @@ impl<'a> SceneBuilder<'a> {
             prim_key,
             prim_data_handle,
             &mut self.prim_store,
-            current_offset,
         );
 
         PrimitiveInstance::new(
@@ -1868,7 +2077,7 @@ impl<'a> SceneBuilder<'a> {
 
     /// Convenience interface that creates a primitive entry and adds it
     /// to the draw list.
-    fn add_nonshadowable_primitive<P>(
+    pub fn add_nonshadowable_primitive<P>(
         &mut self,
         spatial_node_index: SpatialNodeIndex,
         clip_node_id: ClipNodeId,
@@ -1947,7 +2156,6 @@ impl<'a> SceneBuilder<'a> {
     {
         let prim_instance = self.create_primitive(
             info,
-            spatial_node_index,
             clip_leaf_id,
             prim,
         );
@@ -1996,15 +2204,49 @@ impl<'a> SceneBuilder<'a> {
     /// Push a new stacking context. Returns context that must be passed to pop_stacking_context().
     fn push_stacking_context(
         &mut self,
-        composite_ops: CompositeOps,
+        mut composite_ops: CompositeOps,
         transform_style: TransformStyle,
         prim_flags: PrimitiveFlags,
         spatial_node_index: SpatialNodeIndex,
         clip_chain_id: Option<api::ClipChainId>,
         requested_raster_space: RasterSpace,
         flags: StackingContextFlags,
+        subregion_offset: LayoutVector2D,
     ) -> StackingContextInfo {
         profile_scope!("push_stacking_context");
+
+        // Filters have to be baked into the snapshot. Most filters are applied
+        // when rendering the picture into its parent, so if the stacking context
+        // needs to be snapshotted, we nest it into an extra stacking context and
+        // capture the outer stacking context into which the filter is drawn.
+        // Note: blur filters don't actually need an extra stacking context
+        // since the blur is baked into a render task instead of being applied
+        // when compositing the picture into its parent. This case is fairly rare
+        // so we pay the cost of the extra render pass for now.
+        let needs_extra_stacking_context = composite_ops.snapshot.is_some()
+            && composite_ops.has_valid_filters();
+
+        if needs_extra_stacking_context {
+            let snapshot = mem::take(&mut composite_ops.snapshot);
+            let mut info = self.push_stacking_context(
+                CompositeOps {
+                    filters: Vec::new(),
+                    filter_datas: Vec::new(),
+                    filter_primitives: Vec::new(),
+                    mix_blend_mode: None,
+                    snapshot,
+                },
+                TransformStyle::Flat,
+                prim_flags,
+                spatial_node_index,
+                clip_chain_id,
+                requested_raster_space,
+                flags,
+                LayoutVector2D::zero(),
+            );
+            info.pop_stacking_context = true;
+            self.extra_stacking_context_stack.push(info);
+        }
 
         let clip_node_id = match clip_chain_id {
             Some(id) => {
@@ -2117,6 +2359,11 @@ impl<'a> SceneBuilder<'a> {
         // clip node doesn't affect the stacking context rect.
         let mut blit_reason = BlitReason::empty();
 
+        // Stacking context snapshots are offscreen syrfaces.
+        if composite_ops.snapshot.is_some() {
+            blit_reason = BlitReason::SNAPSHOT;
+        }
+
         // If this stacking context has any complex clips, we need to draw it
         // to an off-screen surface.
         if let Some(clip_chain_id) = clip_chain_id {
@@ -2182,6 +2429,7 @@ impl<'a> SceneBuilder<'a> {
             pop_stacking_context: false,
             pop_containing_block: false,
             set_tile_cache_barrier,
+            needs_extra_stacking_context,
         };
 
         // If this is not 3d, then it establishes an ancestor root for child 3d contexts.
@@ -2207,6 +2455,7 @@ impl<'a> SceneBuilder<'a> {
                 context_3d,
                 flags,
                 raster_space: new_space,
+                subregion_offset,
             });
         }
 
@@ -2264,6 +2513,7 @@ impl<'a> SceneBuilder<'a> {
                         stacking_context.spatial_node_index,
                         stacking_context.raster_space,
                         PictureFlags::empty(),
+                        None,
                     ))
                 );
 
@@ -2308,6 +2558,7 @@ impl<'a> SceneBuilder<'a> {
                             stacking_context.spatial_node_index,
                             stacking_context.raster_space,
                             PictureFlags::empty(),
+                            None,
                         ))
                     );
 
@@ -2339,6 +2590,7 @@ impl<'a> SceneBuilder<'a> {
                 &mut self.interners,
                 &mut self.prim_store,
                 &mut self.clip_tree_builder,
+                None,
             );
 
             prims.push(ExtendedPrimitiveInstance {
@@ -2394,7 +2646,10 @@ impl<'a> SceneBuilder<'a> {
                 // 3d render context.
                 for child_pic_index in &prim_list.child_pictures {
                     let child_pic = &mut self.prim_store.pictures[child_pic_index.0];
-                    child_pic.composite_mode = None;
+                    let needs_surface = child_pic.snapshot.is_some();
+                    if !needs_surface {
+                        child_pic.composite_mode = None;
+                    }
                     child_pic.context_3d = Picture3DContext::Out;
                 }
 
@@ -2412,6 +2667,7 @@ impl<'a> SceneBuilder<'a> {
                     stacking_context.spatial_node_index,
                     stacking_context.raster_space,
                     PictureFlags::empty(),
+                    None,
                 ))
             );
 
@@ -2434,6 +2690,9 @@ impl<'a> SceneBuilder<'a> {
 
         let has_filters = stacking_context.composite_ops.has_valid_filters();
 
+        let spatial_node_context_offset =
+            stacking_context.subregion_offset +
+            self.current_external_scroll_offset(stacking_context.spatial_node_index);
         source = self.wrap_prim_with_filters(
             source,
             stacking_context.clip_node_id,
@@ -2441,6 +2700,7 @@ impl<'a> SceneBuilder<'a> {
             stacking_context.composite_ops.filter_primitives,
             stacking_context.composite_ops.filter_datas,
             None,
+            spatial_node_context_offset,
         );
 
         // Same for mix-blend-mode, except we can skip if this primitive is the first in the parent
@@ -2476,7 +2736,13 @@ impl<'a> SceneBuilder<'a> {
             &mut self.interners,
             &mut self.prim_store,
             &mut self.clip_tree_builder,
+            stacking_context.composite_ops.snapshot,
         );
+
+        if stacking_context.composite_ops.snapshot.is_some() {
+            let pic_index = cur_instance.kind.as_pic();
+            self.snapshot_pictures.push(pic_index);
+        }
 
         // The primitive instance for the remainder of flat children of this SC
         // if it's a part of 3D hierarchy but not the root of it.
@@ -2524,6 +2790,11 @@ impl<'a> SceneBuilder<'a> {
             self.pending_shadow_items.is_empty(),
             "Found unpopped shadows when popping stacking context!"
         );
+
+        if info.needs_extra_stacking_context {
+            let inner_info = self.extra_stacking_context_stack.pop().unwrap();
+            self.pop_stacking_context(inner_info);
+        }
     }
 
     pub fn push_reference_frame(
@@ -2600,10 +2871,11 @@ impl<'a> SceneBuilder<'a> {
     ) {
         let spatial_node_index = self.get_space(spatial_id);
 
-        let snapped_mask_rect = self.snap_rect(
+        let snapped_mask_rect = self.normalize_scroll_offset_and_snap_rect(
             &image_mask.rect,
             spatial_node_index,
         );
+
         let points: Vec<LayoutPoint> = points_range.iter().collect();
 
         // If any points are provided, then intern a polygon with the points and fill rule.
@@ -2647,7 +2919,7 @@ impl<'a> SceneBuilder<'a> {
     ) {
         let spatial_node_index = self.get_space(spatial_id);
 
-        let snapped_clip_rect = self.snap_rect(
+        let snapped_clip_rect = self.normalize_scroll_offset_and_snap_rect(
             clip_rect,
             spatial_node_index,
         );
@@ -2679,10 +2951,11 @@ impl<'a> SceneBuilder<'a> {
     ) {
         let spatial_node_index = self.get_space(spatial_id);
 
-        let snapped_region_rect = self.snap_rect(
+        let snapped_region_rect = self.normalize_scroll_offset_and_snap_rect(
             &clip.rect,
             spatial_node_index,
         );
+
         let item = ClipItemKey {
             kind: ClipItemKeyKind::rounded_rect(
                 snapped_region_rect,
@@ -2877,6 +3150,7 @@ impl<'a> SceneBuilder<'a> {
                                 pending_shadow.spatial_node_index,
                                 raster_space,
                                 PictureFlags::empty(),
+                                None,
                             ))
                         );
 
@@ -2894,7 +3168,6 @@ impl<'a> SceneBuilder<'a> {
                             PrimitiveInstanceKind::Picture {
                                 data_handle: shadow_prim_data_handle,
                                 pic_index: shadow_pic_index,
-                                segment_instance_index: SegmentInstanceIndex::INVALID,
                             },
                             self.clip_tree_builder.build_for_picture(clip_node_id),
                         );
@@ -2972,7 +3245,6 @@ impl<'a> SceneBuilder<'a> {
         // Construct and add a primitive for the given shadow.
         let shadow_prim_instance = self.create_primitive(
             &info,
-            pending_primitive.spatial_node_index,
             clip_set,
             pending_primitive.prim.create_shadow(
                 &pending_shadow.shadow,
@@ -3348,8 +3620,9 @@ impl<'a> SceneBuilder<'a> {
         text_color: &ColorF,
         glyph_range: ItemRange<GlyphInstance>,
         glyph_options: Option<GlyphOptions>,
+        ref_frame_offset: LayoutVector2D,
     ) {
-        let offset = self.current_offset(spatial_node_index);
+        let offset = self.current_external_scroll_offset(spatial_node_index) + ref_frame_offset;
 
         let text_run = {
             let shared_key = self.fonts.instance_keys.map_key(font_instance_key);
@@ -3413,6 +3686,7 @@ impl<'a> SceneBuilder<'a> {
                 font,
                 shadow: false,
                 requested_raster_space,
+                reference_frame_offset: ref_frame_offset,
             }
         };
 
@@ -3475,6 +3749,7 @@ impl<'a> SceneBuilder<'a> {
         let yuv_key = match yuv_data {
             YuvData::NV12(plane_0, plane_1) => [plane_0, plane_1, ImageKey::DUMMY],
             YuvData::P010(plane_0, plane_1) => [plane_0, plane_1, ImageKey::DUMMY],
+            YuvData::NV16(plane_0, plane_1) => [plane_0, plane_1, ImageKey::DUMMY],
             YuvData::PlanarYCbCr(plane_0, plane_1, plane_2) => [plane_0, plane_1, plane_2],
             YuvData::InterleavedYCbCr(plane_0) => [plane_0, ImageKey::DUMMY, ImageKey::DUMMY],
         };
@@ -3543,7 +3818,6 @@ impl<'a> SceneBuilder<'a> {
         // picture that reads from the backdrop root
         let backdrop_capture_instance = self.create_primitive(
             info,
-            spatial_node_index,
             clip_leaf_id,
             BackdropCapture {
             },
@@ -3578,6 +3852,7 @@ impl<'a> SceneBuilder<'a> {
             filter_primitives,
             filter_datas,
             Some(false),
+            LayoutVector2D::zero(),
         );
 
         // If all the filters were no-ops (e.g. opacity(0)) then we don't get a picture here
@@ -3598,6 +3873,7 @@ impl<'a> SceneBuilder<'a> {
                 &mut self.interners,
                 &mut self.prim_store,
                 &mut self.clip_tree_builder,
+                None,
             );
 
             // Extract the pic index for the intermediate surface. We need to
@@ -3642,7 +3918,6 @@ impl<'a> SceneBuilder<'a> {
             // Add the prim that renders the result of the backdrop filter chain
             let mut backdrop_render_instance = self.create_primitive(
                 info,
-                spatial_node_index,
                 clip_leaf_id,
                 BackdropRender {
                 },
@@ -3676,6 +3951,7 @@ impl<'a> SceneBuilder<'a> {
         mut filter_primitives: Vec<FilterPrimitive>,
         filter_datas: Vec<FilterData>,
         should_inflate_override: Option<bool>,
+        context_offset: LayoutVector2D,
     ) -> PictureChainBuilder {
         // TODO(cbrewster): Currently CSS and SVG filters live side by side in WebRender, but unexpected results will
         // happen if they are used simulataneously. Gecko only provides either filter ops or filter primitives.
@@ -3685,6 +3961,492 @@ impl<'a> SceneBuilder<'a> {
 
         // For each filter, create a new image with that composite mode.
         let mut current_filter_data_index = 0;
+        // Check if the filter chain is actually an SVGFE filter graph DAG
+        //
+        // TODO: We technically could translate all CSS filters to SVGFE here if
+        // we want to reduce redundant code.
+        if let Some(Filter::SVGGraphNode(..)) = filter_ops.first() {
+            // The interesting parts of the handling of SVG filters are:
+            // * scene_building.rs : wrap_prim_with_filters (you are here)
+            // * picture.rs : get_coverage_svgfe
+            // * render_task.rs : new_svg_filter_graph
+            // * render_target.rs : add_svg_filter_node_instances
+
+            // The SVG spec allows us to drop the entire filter graph if it is
+            // unreasonable, so we limit the number of filters in a graph
+            const BUFFER_LIMIT: usize = SVGFE_GRAPH_MAX;
+            // Easily tunable for debugging proper handling of inflated rects,
+            // this should normally be 1
+            const SVGFE_INFLATE: i16 = 1;
+
+            // Validate inputs to all filters.
+            //
+            // Several assumptions can be made about the DAG:
+            // * All filters take a specific number of inputs (feMerge is not
+            //   supported, the code that built the display items had to convert
+            //   any feMerge ops to SVGFECompositeOver already).
+            // * All input buffer ids are < the output buffer id of the node.
+            // * If SourceGraphic or SourceAlpha are used, they are standalone
+            //   nodes with no inputs.
+            // * Whenever subregion of a node is smaller than the subregion
+            //   of the inputs, it is a deliberate clip of those inputs to the
+            //   new rect, this can occur before/after blur and dropshadow for
+            //   example, so we must explicitly handle subregion correctly, but
+            //   we do not have to allocate the unused pixels as the transparent
+            //   black has no efect on any of the filters, only certain filters
+            //   like feFlood can generate something from nothing.
+            // * Coordinate basis of the graph has to be adjusted by
+            //   context_offset to put the subregions in the same space that the
+            //   primitives are in, as they do that offset as well.
+            let mut reference_for_buffer_id: [FilterGraphPictureReference; BUFFER_LIMIT] = [
+                FilterGraphPictureReference{
+                    // This value is deliberately invalid, but not a magic
+                    // number, it's just this way to guarantee an assertion
+                    // failure if something goes wrong.
+                    buffer_id: FilterOpGraphPictureBufferId::BufferId(-1),
+                    subregion: LayoutRect::zero(), // Always overridden
+                    offset: LayoutVector2D::zero(),
+                    inflate: 0,
+                    source_padding: LayoutRect::zero(),
+                    target_padding: LayoutRect::zero(),
+                }; BUFFER_LIMIT];
+            let mut filters: Vec<(FilterGraphNode, FilterGraphOp)> = Vec::new();
+            filters.reserve(BUFFER_LIMIT);
+            for (original_id, parsefilter) in filter_ops.iter().enumerate() {
+                if filters.len() >= BUFFER_LIMIT {
+                    // If the DAG is too large to process, the spec requires
+                    // that we drop all filters and display source image as-is.
+                    return source;
+                }
+
+                let newfilter = match parsefilter {
+                    Filter::SVGGraphNode(parsenode, op) => {
+                        // We need to offset the subregion by the stacking context
+                        // offset or we'd be in the wrong coordinate system, prims
+                        // are already offset by this same amount.
+                        let clip_region = parsenode.subregion
+                            .translate(context_offset);
+
+                        let mut newnode = FilterGraphNode {
+                            kept_by_optimizer: false,
+                            linear: parsenode.linear,
+                            inflate: SVGFE_INFLATE,
+                            inputs: Vec::new(),
+                            subregion: clip_region,
+                        };
+
+                        // Initialize remapped versions of the inputs, this is
+                        // done here to share code between the enum variants.
+                        let mut remapped_inputs: Vec<FilterGraphPictureReference> = Vec::new();
+                        remapped_inputs.reserve_exact(parsenode.inputs.len());
+                        for input in &parsenode.inputs {
+                            match input.buffer_id {
+                                FilterOpGraphPictureBufferId::BufferId(buffer_id) => {
+                                    // Reference to earlier node output, if this
+                                    // is None, it's a bug
+                                    let pic = *reference_for_buffer_id
+                                        .get(buffer_id as usize)
+                                        .expect("BufferId not valid?");
+                                    // We have to adjust the subregion and
+                                    // padding based on the input offset for
+                                    // feOffset ops, the padding may be inflated
+                                    // further by other ops such as blurs below.
+                                    let offset = input.offset;
+                                    let subregion = pic.subregion
+                                        .translate(offset);
+                                    let source_padding = LayoutRect::zero()
+                                        .translate(-offset);
+                                    let target_padding = LayoutRect::zero()
+                                        .translate(offset);
+                                    remapped_inputs.push(
+                                        FilterGraphPictureReference {
+                                            buffer_id: pic.buffer_id,
+                                            subregion,
+                                            offset,
+                                            inflate: pic.inflate,
+                                            source_padding,
+                                            target_padding,
+                                        });
+                                }
+                                FilterOpGraphPictureBufferId::None => panic!("Unsupported FilterOpGraphPictureBufferId"),
+                            }
+                        }
+
+                        fn union_unchecked(a: LayoutRect, b: LayoutRect) -> LayoutRect {
+                            let mut r = a;
+                            if r.min.x > b.min.x {r.min.x = b.min.x}
+                            if r.min.y > b.min.y {r.min.y = b.min.y}
+                            if r.max.x < b.max.x {r.max.x = b.max.x}
+                            if r.max.y < b.max.y {r.max.y = b.max.y}
+                            r
+                        }
+
+                        match op {
+                            FilterGraphOp::SVGFEFlood{..} |
+                            FilterGraphOp::SVGFESourceAlpha |
+                            FilterGraphOp::SVGFESourceGraphic |
+                            FilterGraphOp::SVGFETurbulenceWithFractalNoiseWithNoStitching{..} |
+                            FilterGraphOp::SVGFETurbulenceWithFractalNoiseWithStitching{..} |
+                            FilterGraphOp::SVGFETurbulenceWithTurbulenceNoiseWithNoStitching{..} |
+                            FilterGraphOp::SVGFETurbulenceWithTurbulenceNoiseWithStitching{..} => {
+                                assert!(remapped_inputs.len() == 0);
+                                (newnode.clone(), op.clone())
+                            }
+                            FilterGraphOp::SVGFEColorMatrix{..} |
+                            FilterGraphOp::SVGFEIdentity |
+                            FilterGraphOp::SVGFEImage{..} |
+                            FilterGraphOp::SVGFEOpacity{..} |
+                            FilterGraphOp::SVGFEToAlpha => {
+                                assert!(remapped_inputs.len() == 1);
+                                newnode.inputs = remapped_inputs;
+                                (newnode.clone(), op.clone())
+                            }
+                            FilterGraphOp::SVGFEComponentTransfer => {
+                                assert!(remapped_inputs.len() == 1);
+                                // Convert to SVGFEComponentTransferInterned
+                                let filter_data =
+                                    &filter_datas[current_filter_data_index];
+                                let filter_data = filter_data.sanitize();
+                                current_filter_data_index = current_filter_data_index + 1;
+
+                                // filter data is 4KiB of gamma ramps used
+                                // only by SVGFEComponentTransferWithHandle.
+                                //
+                                // The gamma ramps are interleaved as RGBA32F
+                                // pixels (unlike in regular ComponentTransfer,
+                                // where the values are not interleaved), so
+                                // r_values[3] is the alpha of the first color,
+                                // not the 4th red value.  This layout makes the
+                                // shader more compatible with buggy compilers that
+                                // do not like indexing components on a vec4.
+                                let creates_pixels =
+                                    if let Some(a) = filter_data.r_values.get(3) {
+                                        *a != 0.0
+                                    } else {
+                                        false
+                                    };
+                                let filter_data_key = SFilterDataKey {
+                                    data:
+                                        SFilterData {
+                                            r_func: SFilterDataComponent::from_functype_values(
+                                                filter_data.func_r_type, &filter_data.r_values),
+                                            g_func: SFilterDataComponent::from_functype_values(
+                                                filter_data.func_g_type, &filter_data.g_values),
+                                            b_func: SFilterDataComponent::from_functype_values(
+                                                filter_data.func_b_type, &filter_data.b_values),
+                                            a_func: SFilterDataComponent::from_functype_values(
+                                                filter_data.func_a_type, &filter_data.a_values),
+                                        },
+                                };
+
+                                let handle = self.interners
+                                    .filter_data
+                                    .intern(&filter_data_key, || ());
+
+                                newnode.inputs = remapped_inputs;
+                                (newnode.clone(), FilterGraphOp::SVGFEComponentTransferInterned{handle, creates_pixels})
+                            }
+                            FilterGraphOp::SVGFEComponentTransferInterned{..} => unreachable!(),
+                            FilterGraphOp::SVGFETile => {
+                                assert!(remapped_inputs.len() == 1);
+                                // feTile usually uses every pixel of input
+                                remapped_inputs[0].source_padding =
+                                    LayoutRect::max_rect();
+                                remapped_inputs[0].target_padding =
+                                    LayoutRect::max_rect();
+                                newnode.inputs = remapped_inputs;
+                                (newnode.clone(), op.clone())
+                            }
+                            FilterGraphOp::SVGFEConvolveMatrixEdgeModeDuplicate{kernel_unit_length_x, kernel_unit_length_y, ..} |
+                            FilterGraphOp::SVGFEConvolveMatrixEdgeModeNone{kernel_unit_length_x, kernel_unit_length_y, ..} |
+                            FilterGraphOp::SVGFEConvolveMatrixEdgeModeWrap{kernel_unit_length_x, kernel_unit_length_y, ..} |
+                            FilterGraphOp::SVGFEMorphologyDilate{radius_x: kernel_unit_length_x, radius_y: kernel_unit_length_y} => {
+                                assert!(remapped_inputs.len() == 1);
+                                let padding = LayoutSize::new(
+                                    kernel_unit_length_x.ceil(),
+                                    kernel_unit_length_y.ceil(),
+                                );
+                                // Add source padding to represent the kernel pixels
+                                // needed relative to target pixels
+                                remapped_inputs[0].source_padding =
+                                    remapped_inputs[0].source_padding
+                                    .inflate(padding.width, padding.height);
+                                // Add target padding to represent the area affected
+                                // by a source pixel
+                                remapped_inputs[0].target_padding =
+                                    remapped_inputs[0].target_padding
+                                    .inflate(padding.width, padding.height);
+                                newnode.inputs = remapped_inputs;
+                                (newnode.clone(), op.clone())
+                            },
+                            FilterGraphOp::SVGFEDiffuseLightingDistant{kernel_unit_length_x, kernel_unit_length_y, ..} |
+                            FilterGraphOp::SVGFEDiffuseLightingPoint{kernel_unit_length_x, kernel_unit_length_y, ..} |
+                            FilterGraphOp::SVGFEDiffuseLightingSpot{kernel_unit_length_x, kernel_unit_length_y, ..} |
+                            FilterGraphOp::SVGFESpecularLightingDistant{kernel_unit_length_x, kernel_unit_length_y, ..} |
+                            FilterGraphOp::SVGFESpecularLightingPoint{kernel_unit_length_x, kernel_unit_length_y, ..} |
+                            FilterGraphOp::SVGFESpecularLightingSpot{kernel_unit_length_x, kernel_unit_length_y, ..} |
+                            FilterGraphOp::SVGFEMorphologyErode{radius_x: kernel_unit_length_x, radius_y: kernel_unit_length_y} => {
+                                assert!(remapped_inputs.len() == 1);
+                                let padding = LayoutSize::new(
+                                    kernel_unit_length_x.ceil(),
+                                    kernel_unit_length_y.ceil(),
+                                );
+                                // Add source padding to represent the kernel pixels
+                                // needed relative to target pixels
+                                remapped_inputs[0].source_padding =
+                                    remapped_inputs[0].source_padding
+                                    .inflate(padding.width, padding.height);
+                                // Add target padding to represent the area affected
+                                // by a source pixel
+                                remapped_inputs[0].target_padding =
+                                    remapped_inputs[0].target_padding
+                                    .inflate(padding.width, padding.height);
+                                newnode.inputs = remapped_inputs;
+                                (newnode.clone(), op.clone())
+                            },
+                            FilterGraphOp::SVGFEDisplacementMap { scale, .. } => {
+                                assert!(remapped_inputs.len() == 2);
+                                let padding = LayoutSize::new(
+                                    scale.ceil(),
+                                    scale.ceil(),
+                                );
+                                // Add padding to both inputs for source and target
+                                // rects, we might be able to skip some of these,
+                                // but it's not that important to optimize here, a
+                                // loose fit is fine.
+                                remapped_inputs[0].source_padding =
+                                    remapped_inputs[0].source_padding
+                                    .inflate(padding.width, padding.height);
+                                remapped_inputs[1].source_padding =
+                                    remapped_inputs[1].source_padding
+                                    .inflate(padding.width, padding.height);
+                                remapped_inputs[0].target_padding =
+                                    remapped_inputs[0].target_padding
+                                    .inflate(padding.width, padding.height);
+                                remapped_inputs[1].target_padding =
+                                    remapped_inputs[1].target_padding
+                                    .inflate(padding.width, padding.height);
+                                newnode.inputs = remapped_inputs;
+                                (newnode.clone(), op.clone())
+                            },
+                            FilterGraphOp::SVGFEDropShadow{ dx, dy, std_deviation_x, std_deviation_y, .. } => {
+                                assert!(remapped_inputs.len() == 1);
+                                let padding = LayoutSize::new(
+                                    std_deviation_x.ceil() * BLUR_SAMPLE_SCALE,
+                                    std_deviation_y.ceil() * BLUR_SAMPLE_SCALE,
+                                );
+                                // Add source padding to represent the shadow
+                                remapped_inputs[0].source_padding =
+                                    union_unchecked(
+                                        remapped_inputs[0].source_padding,
+                                        remapped_inputs[0].source_padding
+                                            .inflate(padding.width, padding.height)
+                                            .translate(
+                                                LayoutVector2D::new(-dx, -dy)
+                                            )
+                                    );
+                                // Add target padding to represent the area needed
+                                // to calculate pixels of the shadow
+                                remapped_inputs[0].target_padding =
+                                    union_unchecked(
+                                        remapped_inputs[0].target_padding,
+                                        remapped_inputs[0].target_padding
+                                            .inflate(padding.width, padding.height)
+                                            .translate(
+                                                LayoutVector2D::new(*dx, *dy)
+                                            )
+                                    );
+                                newnode.inputs = remapped_inputs;
+                                (newnode.clone(), op.clone())
+                            },
+                            FilterGraphOp::SVGFEGaussianBlur{std_deviation_x, std_deviation_y} => {
+                                assert!(remapped_inputs.len() == 1);
+                                let padding = LayoutSize::new(
+                                    std_deviation_x.ceil() * BLUR_SAMPLE_SCALE,
+                                    std_deviation_y.ceil() * BLUR_SAMPLE_SCALE,
+                                );
+                                // Add source padding to represent the blur
+                                remapped_inputs[0].source_padding =
+                                    remapped_inputs[0].source_padding
+                                    .inflate(padding.width, padding.height);
+                                // Add target padding to represent the blur
+                                remapped_inputs[0].target_padding =
+                                    remapped_inputs[0].target_padding
+                                    .inflate(padding.width, padding.height);
+                                newnode.inputs = remapped_inputs;
+                                (newnode.clone(), op.clone())
+                            }
+                            FilterGraphOp::SVGFEBlendColor |
+                            FilterGraphOp::SVGFEBlendColorBurn |
+                            FilterGraphOp::SVGFEBlendColorDodge |
+                            FilterGraphOp::SVGFEBlendDarken |
+                            FilterGraphOp::SVGFEBlendDifference |
+                            FilterGraphOp::SVGFEBlendExclusion |
+                            FilterGraphOp::SVGFEBlendHardLight |
+                            FilterGraphOp::SVGFEBlendHue |
+                            FilterGraphOp::SVGFEBlendLighten |
+                            FilterGraphOp::SVGFEBlendLuminosity|
+                            FilterGraphOp::SVGFEBlendMultiply |
+                            FilterGraphOp::SVGFEBlendNormal |
+                            FilterGraphOp::SVGFEBlendOverlay |
+                            FilterGraphOp::SVGFEBlendSaturation |
+                            FilterGraphOp::SVGFEBlendScreen |
+                            FilterGraphOp::SVGFEBlendSoftLight |
+                            FilterGraphOp::SVGFECompositeArithmetic{..} |
+                            FilterGraphOp::SVGFECompositeATop |
+                            FilterGraphOp::SVGFECompositeIn |
+                            FilterGraphOp::SVGFECompositeLighter |
+                            FilterGraphOp::SVGFECompositeOut |
+                            FilterGraphOp::SVGFECompositeOver |
+                            FilterGraphOp::SVGFECompositeXOR => {
+                                assert!(remapped_inputs.len() == 2);
+                                newnode.inputs = remapped_inputs;
+                                (newnode, op.clone())
+                            }
+                        }
+                    }
+                    Filter::Opacity(valuebinding, value) => {
+                        // Opacity filter is sometimes appended by
+                        // wr_dp_push_stacking_context before we get here,
+                        // convert to SVGFEOpacity in the graph.  Note that
+                        // linear is set to false because it has no meaning for
+                        // opacity (which scales all of the RGBA uniformly).
+                        let pic = reference_for_buffer_id[original_id as usize - 1];
+                        (
+                            FilterGraphNode {
+                                kept_by_optimizer: false,
+                                linear: false,
+                                inflate: SVGFE_INFLATE,
+                                inputs: [pic].to_vec(),
+                                subregion: pic.subregion,
+                            },
+                            FilterGraphOp::SVGFEOpacity{
+                                valuebinding: *valuebinding,
+                                value: *value,
+                            },
+                        )
+                    }
+                    _ => {
+                        log!(Level::Warn, "wrap_prim_with_filters: unexpected filter after SVG filters filter[{:?}]={:?}", original_id, parsefilter);
+                        // If we can't figure out how to process the graph, spec
+                        // requires that we drop all filters and display source
+                        // image as-is.
+                        return source;
+                    }
+                };
+                let id = filters.len();
+                filters.push(newfilter);
+
+                // Set the reference remapping for the last (or only) node
+                // that we just pushed
+                reference_for_buffer_id[original_id] = FilterGraphPictureReference {
+                    buffer_id: FilterOpGraphPictureBufferId::BufferId(id as i16),
+                    subregion: filters[id].0.subregion,
+                    offset: LayoutVector2D::zero(),
+                    inflate: filters[id].0.inflate,
+                    source_padding: LayoutRect::zero(),
+                    target_padding: LayoutRect::zero(),
+                };
+            }
+
+            if filters.len() >= BUFFER_LIMIT {
+                // If the DAG is too large to process, the spec requires
+                // that we drop all filters and display source image as-is.
+                return source;
+            }
+
+            // Mark used graph nodes, starting at the last graph node, since
+            // this is a DAG in sorted order we can just iterate backwards and
+            // know we will find children before parents in order.
+            //
+            // Per SVG spec the last node (which is the first we encounter this
+            // way) is the final output, so its dependencies are what we want to
+            // mark as kept_by_optimizer
+            let mut kept_node_by_buffer_id = [false; BUFFER_LIMIT];
+            kept_node_by_buffer_id[filters.len() - 1] = true;
+            for (index, (node, _op)) in filters.iter_mut().enumerate().rev() {
+                let mut keep = false;
+                // Check if this node's output was marked to be kept
+                if let Some(k) = kept_node_by_buffer_id.get(index) {
+                    if *k {
+                        keep = true;
+                    }
+                }
+                if keep {
+                    // If this node contributes to the final output we need
+                    // to mark its inputs as also contributing when they are
+                    // encountered later
+                    node.kept_by_optimizer = true;
+                    for input in &node.inputs {
+                        if let FilterOpGraphPictureBufferId::BufferId(id) = input.buffer_id {
+                            if let Some(k) = kept_node_by_buffer_id.get_mut(id as usize) {
+                                *k = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Validate the DAG nature of the graph - if we find anything wrong
+            // here it means the above code is bugged.
+            let mut invalid_dag = false;
+            for (id, (node, _op)) in filters.iter().enumerate() {
+                for input in &node.inputs {
+                    if let FilterOpGraphPictureBufferId::BufferId(buffer_id) = input.buffer_id {
+                        if buffer_id < 0 || buffer_id as usize >= id {
+                            invalid_dag = true;
+                        }
+                    }
+                }
+            }
+
+            if invalid_dag {
+                log!(Level::Warn, "List of FilterOp::SVGGraphNode filter primitives appears to be invalid!");
+                for (id, (node, op)) in filters.iter().enumerate() {
+                    log!(Level::Warn, " node:     buffer=BufferId({}) op={} inflate={} subregion {:?} linear={} kept={}",
+                         id, op.kind(), node.inflate,
+                         node.subregion,
+                         node.linear,
+                         node.kept_by_optimizer,
+                    );
+                    for input in &node.inputs {
+                        log!(Level::Warn, "input: buffer={} inflate={} subregion {:?} offset {:?} target_padding={:?} source_padding={:?}",
+                            match input.buffer_id {
+                                FilterOpGraphPictureBufferId::BufferId(id) => format!("BufferId({})", id),
+                                FilterOpGraphPictureBufferId::None => "None".into(),
+                            },
+                            input.inflate,
+                            input.subregion,
+                            input.offset,
+                            input.target_padding,
+                            input.source_padding,
+                        );
+                    }
+                }
+            }
+            if invalid_dag {
+                // if the DAG is invalid, we can't render it
+                return source;
+            }
+
+            let composite_mode = PictureCompositeMode::SVGFEGraph(
+                filters,
+            );
+
+            source = source.add_picture(
+                composite_mode,
+                clip_node_id,
+                Picture3DContext::Out,
+                &mut self.interners,
+                &mut self.prim_store,
+                &mut self.prim_instances,
+                &mut self.clip_tree_builder,
+            );
+
+            return source;
+        }
+
+        // Handle regular CSS filter chains
         for filter in &mut filter_ops {
             let composite_mode = match filter {
                 Filter::ComponentTransfer => {
@@ -3714,6 +4476,10 @@ impl<'a> SceneBuilder<'a> {
                             .intern(&filter_data_key, || ());
                         PictureCompositeMode::ComponentTransferFilter(handle)
                     }
+                }
+                Filter::SVGGraphNode(_, _) => {
+                    // SVG filter graphs were handled above
+                    panic!("SVGGraphNode encountered in regular CSS filter chain?");
                 }
                 _ => {
                     if filter.is_noop() {
@@ -3820,6 +4586,10 @@ struct StackingContextInfo {
     pop_stacking_context: bool,
     /// If true, set a tile cache barrier when popping the stacking context.
     set_tile_cache_barrier: bool,
+    /// If true, this stacking context was nested into two pushes instead of
+    /// one, and requires an extra pop to compensate. The info to pop is stored
+    /// at the top of `extra_stacking_context_stack`.
+    needs_extra_stacking_context: bool,
 }
 
 /// Properties of a stacking context that are maintained
@@ -3857,6 +4627,9 @@ struct FlattenedStackingContext {
 
     /// Requested raster space for this stacking context
     raster_space: RasterSpace,
+
+    /// Offset to be applied to any filter sub-regions
+    subregion_offset: LayoutVector2D,
 }
 
 impl FlattenedStackingContext {
@@ -3939,6 +4712,7 @@ impl FlattenedStackingContext {
                 self.spatial_node_index,
                 self.raster_space,
                 PictureFlags::empty(),
+                None
             ))
         );
 
@@ -4035,7 +4809,6 @@ fn create_prim_instance(
         PrimitiveInstanceKind::Picture {
             data_handle,
             pic_index,
-            segment_instance_index: SegmentInstanceIndex::INVALID,
         },
         clip_tree_builder.build_for_picture(
             clip_node_id,
@@ -4120,4 +4893,95 @@ fn read_gradient_stops(stops: ItemRange<GradientStop>) -> Vec<GradientStopKey> {
             color: stop.color.into(),
         }
     }).collect()
+}
+
+/// A helper for reusing the scene builder's memory allocations and dropping
+/// scene allocations on the scene builder thread to avoid lock contention in
+/// jemalloc.
+pub struct SceneRecycler {
+    pub tx: Sender<BuiltScene>,
+    rx: Receiver<BuiltScene>,
+
+    // Allocations recycled from BuiltScene:
+
+    pub prim_store: PrimitiveStore,
+    pub clip_store: ClipStore,
+    pub picture_graph: PictureGraph,
+    pub prim_instances: Vec<PrimitiveInstance>,
+    pub surfaces: Vec<SurfaceInfo>,
+    pub hit_testing_scene: Option<HitTestingScene>,
+    pub clip_tree_builder: Option<ClipTreeBuilder>,
+    //Could also attempt to recycle the following:
+    //pub tile_cache_config: TileCacheConfig,
+    //pub pipeline_epochs: FastHashMap<PipelineId, Epoch>,
+    //pub tile_cache_pictures: Vec<PictureIndex>,
+
+
+    // Allocations recycled from SceneBuilder
+
+    id_to_index_mapper_stack: Vec<NodeIdToIndexMapper>,
+    sc_stack: Vec<FlattenedStackingContext>,
+    containing_block_stack: Vec<SpatialNodeIndex>,
+    raster_space_stack: Vec<RasterSpace>,
+    pending_shadow_items: VecDeque<ShadowItem>,
+    iframe_size: Vec<LayoutSize>,
+}
+
+impl SceneRecycler {
+    pub fn new() -> Self {
+        let (tx, rx) = unbounded_channel();
+        SceneRecycler {
+            tx,
+            rx,
+
+            prim_instances: Vec::new(),
+            surfaces: Vec::new(),
+            prim_store: PrimitiveStore::new(&PrimitiveStoreStats::empty()),
+            clip_store: ClipStore::new(),
+            picture_graph: PictureGraph::new(),
+            hit_testing_scene: None,
+            clip_tree_builder: None,
+
+            id_to_index_mapper_stack: Vec::new(),
+            sc_stack: Vec::new(),
+            containing_block_stack: Vec::new(),
+            raster_space_stack: Vec::new(),
+            pending_shadow_items: VecDeque::new(),
+            iframe_size: Vec::new(),
+        }
+    }
+
+    /// Do some bookkeeping of past memory allocations, retaining some of them for
+    /// reuse and dropping the rest.
+    ///
+    /// Should be called once between scene builds, ideally outside of the critical
+    /// path since deallocations can take some time.
+    #[inline(never)]
+    pub fn recycle_built_scene(&mut self) {
+        let Ok(scene) = self.rx.try_recv() else {
+            return;
+        };
+
+        self.prim_store = scene.prim_store;
+        self.clip_store = scene.clip_store;
+        // We currently retain top-level allocations but don't attempt to retain leaf
+        // allocations in the prim store and clip store. We don't have to reset it here
+        // but doing so avoids dropping the leaf allocations in the
+        self.prim_store.reset();
+        self.clip_store.reset();
+        self.hit_testing_scene = Arc::try_unwrap(scene.hit_testing_scene).ok();
+        self.picture_graph = scene.picture_graph;
+        self.prim_instances = scene.prim_instances;
+        self.surfaces = scene.surfaces;
+        if let Some(clip_tree_builder) = &mut self.clip_tree_builder {
+            clip_tree_builder.recycle_tree(scene.clip_tree);
+        }
+
+        while let Ok(_) = self.rx.try_recv() {
+            // If for some reason more than one scene accumulated in the queue, drop
+            // the rest.
+        }
+
+        // Note: fields of the scene we don't recycle get dropped here.
+    }
 }

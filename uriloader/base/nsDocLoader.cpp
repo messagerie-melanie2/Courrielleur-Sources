@@ -18,6 +18,7 @@
 #include "nsLoadGroup.h"
 #include "nsNetUtil.h"
 #include "nsIHttpChannel.h"
+#include "nsIScriptChannel.h"
 #include "nsIWebNavigation.h"
 #include "nsIWebProgressListener2.h"
 
@@ -29,7 +30,6 @@
 #include "nsQueryObject.h"
 
 #include "nsPIDOMWindow.h"
-#include "nsGlobalWindow.h"
 
 #include "nsIStringBundle.h"
 
@@ -39,7 +39,6 @@
 #include "nsPresContext.h"
 #include "nsIAsyncVerifyRedirectCallback.h"
 #include "nsIBrowserDOMWindow.h"
-#include "nsGlobalWindow.h"
 #include "mozilla/ThrottledEventQueue.h"
 using namespace mozilla;
 using mozilla::DebugOnly;
@@ -116,9 +115,6 @@ nsDocLoader::nsDocLoader(bool aNotifyAboutBackgroundRequests)
       mIsRestoringDocument(false),
       mDontFlushLayout(false),
       mIsFlushingLayout(false),
-      mTreatAsBackgroundLoad(false),
-      mHasFakeOnLoadDispatched(false),
-      mIsReadyToHandlePostMessage(false),
       mDocumentOpenedButNotLoaded(false),
       mNotifyAboutBackgroundRequests(aNotifyAboutBackgroundRequests) {
   ClearInternalProgress();
@@ -247,7 +243,7 @@ nsresult nsDocLoader::AddDocLoaderAsChildOfRoot(nsDocLoader* aDocLoader) {
 }
 
 // TODO: Convert this to MOZ_CAN_RUN_SCRIPT (bug 1415230)
-MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP nsDocLoader::Stop(void) {
+MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP nsDocLoader::Stop() {
   nsresult rv = NS_OK;
 
   MOZ_LOG(gDocLoaderLog, LogLevel::Debug,
@@ -296,10 +292,6 @@ MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP nsDocLoader::Stop(void) {
   return rv;
 }
 
-bool nsDocLoader::TreatAsBackgroundLoad() { return mTreatAsBackgroundLoad; }
-
-void nsDocLoader::SetBackgroundLoadIframe() { mTreatAsBackgroundLoad = true; }
-
 bool nsDocLoader::IsBusy() {
   nsresult rv;
 
@@ -339,15 +331,11 @@ bool nsDocLoader::IsBusy() {
   uint32_t count = mChildList.Length();
   for (uint32_t i = 0; i < count; i++) {
     nsIDocumentLoader* loader = ChildAt(i);
-
-    // If 'dom.cross_origin_iframes_loaded_in_background' is set, the parent
-    // document treats cross domain iframes as background loading frame
-    if (loader && static_cast<nsDocLoader*>(loader)->TreatAsBackgroundLoad()) {
-      continue;
-    }
     // This is a safe cast, because we only put nsDocLoader objects into the
     // array
-    if (loader && static_cast<nsDocLoader*>(loader)->IsBusy()) return true;
+    if (loader && static_cast<nsDocLoader*>(loader)->IsBusy()) {
+      return true;
+    }
   }
 
   return false;
@@ -418,26 +406,32 @@ NS_IMETHODIMP
 nsDocLoader::OnStartRequest(nsIRequest* request) {
   // called each time a request is added to the group.
 
-  // Some docloaders deal with background requests in their OnStartRequest
-  // override, but here we don't want to do anything with them, so return early.
   nsLoadFlags loadFlags = 0;
   request->GetLoadFlags(&loadFlags);
-  if (loadFlags & nsIRequest::LOAD_BACKGROUND) {
-    return NS_OK;
-  }
 
   if (MOZ_LOG_TEST(gDocLoaderLog, LogLevel::Debug)) {
     nsAutoCString name;
     request->GetName(name);
 
     uint32_t count = 0;
-    if (mLoadGroup) mLoadGroup->GetActiveCount(&count);
+    if (mLoadGroup) {
+      mLoadGroup->GetActiveCount(&count);
+    }
 
     MOZ_LOG(gDocLoaderLog, LogLevel::Debug,
             ("DocLoader:%p: OnStartRequest[%p](%s) mIsLoadingDocument=%s, %u "
-             "active URLs",
+             "active URLs, loadFlags=%" PRIu32,
              this, request, name.get(), (mIsLoadingDocument ? "true" : "false"),
-             count));
+             count, static_cast<uint32_t>(loadFlags)));
+  }
+
+  // Some docloaders deal with background requests in their OnStartRequest
+  // override, but here we don't want to do anything with them, so return early.
+  if (loadFlags & nsIRequest::LOAD_BACKGROUND) {
+    if (nsCOMPtr<nsIScriptChannel> scriptChannel = do_QueryInterface(request)) {
+      mIsLoadingJavascriptURI = scriptChannel->GetIsDocumentLoad();
+    }
+    return NS_OK;
   }
 
   bool justStartedLoading = false;
@@ -446,6 +440,7 @@ nsDocLoader::OnStartRequest(nsIRequest* request) {
     justStartedLoading = true;
     mIsLoadingDocument = true;
     mDocumentOpenedButNotLoaded = false;
+    mIsLoadingJavascriptURI = false;
     ClearInternalProgress();  // only clear our progress if we are starting a
                               // new load....
   }
@@ -467,9 +462,8 @@ nsDocLoader::OnStartRequest(nsIRequest* request) {
       // Make sure that the document channel is null at this point...
       // (unless its been redirected)
       //
-      NS_ASSERTION(
-          (loadFlags & nsIChannel::LOAD_REPLACE) || !(mDocumentRequest.get()),
-          "Overwriting an existing document channel!");
+      NS_ASSERTION((loadFlags & nsIChannel::LOAD_REPLACE) || !mDocumentRequest,
+                   "Overwriting an existing document channel!");
 
       // This request is associated with the entire document...
       mDocumentRequest = request;
@@ -493,7 +487,7 @@ nsDocLoader::OnStartRequest(nsIRequest* request) {
                "mDocumentRequest MUST be set for the duration of a page load!");
 
   // This is the only way to catch document request start event after a redirect
-  // has occured without changing inherited Firefox behaviour significantly.
+  // has occurred without changing inherited Firefox behaviour significantly.
   // Problem description:
   // The combination of |STATE_START + STATE_IS_DOCUMENT| is only sent for
   // initial request (see |doStartDocumentLoad| call above).
@@ -516,32 +510,70 @@ nsDocLoader::OnStartRequest(nsIRequest* request) {
 // TODO: Convert this to MOZ_CAN_RUN_SCRIPT (bug 1415230)
 MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP
 nsDocLoader::OnStopRequest(nsIRequest* aRequest, nsresult aStatus) {
-  // Some docloaders deal with background requests in their OnStopRequest
-  // override, but here we don't want to do anything with them, so return early.
   nsLoadFlags lf = 0;
   aRequest->GetLoadFlags(&lf);
-  if (lf & nsIRequest::LOAD_BACKGROUND) {
-    return NS_OK;
-  }
-
-  nsresult rv = NS_OK;
 
   if (MOZ_LOG_TEST(gDocLoaderLog, LogLevel::Debug)) {
     nsAutoCString name;
     aRequest->GetName(name);
 
     uint32_t count = 0;
-    if (mLoadGroup) mLoadGroup->GetActiveCount(&count);
+    if (mLoadGroup) {
+      mLoadGroup->GetActiveCount(&count);
+    }
 
     MOZ_LOG(gDocLoaderLog, LogLevel::Debug,
-            ("DocLoader:%p: OnStopRequest[%p](%s) status=%" PRIx32
+            ("DocLoader:%p: OnStopRequest[%p](%s) status=%" PRIu32
              " mIsLoadingDocument=%s, mDocumentOpenedButNotLoaded=%s,"
-             " %u active URLs",
+             " mIsLoadingJavascriptURI=%s, %u active URLs, loadFlags=%" PRIu32,
              this, aRequest, name.get(), static_cast<uint32_t>(aStatus),
              (mIsLoadingDocument ? "true" : "false"),
-             (mDocumentOpenedButNotLoaded ? "true" : "false"), count));
+             (mDocumentOpenedButNotLoaded ? "true" : "false"),
+             (mIsLoadingJavascriptURI ? "true" : "false"), count,
+             static_cast<uint32_t>(lf)));
   }
 
+  // Some docloaders deal with background requests in their OnStopRequest
+  // override, but here we don't want to do anything with them, so return early.
+  if (lf & nsIRequest::LOAD_BACKGROUND) {
+    if (nsCOMPtr<nsIScriptChannel> scriptChannel =
+            do_QueryInterface(aRequest)) {
+      if (mIsLoadingJavascriptURI && scriptChannel->GetIsDocumentLoad()) {
+        // If there is no valid execution result from javascript URL,
+        // nsJSChannel stops further process. However, we might still need to
+        // file a load event per https://github.com/whatwg/html/issues/1895.
+        if (NS_FAILED(aStatus)) {
+          RefPtr<Document> doc = do_GetInterface(GetAsSupports(this));
+          // XXX: There's a difference between browsers — Blink fires the load
+          // event as long as the current document is an initial document,
+          // whereas WebKit seems to fire the load event only during the initial
+          // load and does not fire it for the top-level document.
+          // Our behavior aligns more closely with WebKit's.
+          if (doc && doc->IsInitialDocument()) {
+            nsCOMPtr<nsIChannel> channel = do_QueryInterface(aRequest);
+            MOZ_ASSERT(channel, "How can the request not be a channel?");
+
+            nsCOMPtr<nsILoadInfo> loadInfo;
+            channel->GetLoadInfo(getter_AddRefs(loadInfo));
+            if (loadInfo && loadInfo->GetOriginalFrameSrcLoad()) {
+              DocLoaderIsEmpty(false);
+              return NS_OK;
+            }
+          }
+        }
+
+        // In the case where the execution result is valid, the result will be
+        // placed into nsStringInputStream. nsJSChannel will then open the
+        // nsInputSteamChannel as the "real" document channel to continue
+        // loading process. Since there will be a "real" documeht channel, we no
+        // longer need to track whether we are loading a javascipt URI.
+        mIsLoadingJavascriptURI = false;
+      }
+    }
+    return NS_OK;
+  }
+
+  nsresult rv = NS_OK;
   bool fireTransferring = false;
 
   //
@@ -722,7 +754,8 @@ void nsDocLoader::DocLoaderIsEmpty(bool aFlushLayout,
     NS_ASSERTION(!mIsFlushingLayout, "Someone screwed up");
     // We may not have a document request if we are in a
     // document.open() situation.
-    NS_ASSERTION(mDocumentRequest || mDocumentOpenedButNotLoaded,
+    NS_ASSERTION(mDocumentRequest || mDocumentOpenedButNotLoaded ||
+                     mIsLoadingJavascriptURI,
                  "No Document Request!");
 
     // The load group for this DocumentLoader is idle.  Flush if we need to.
@@ -749,7 +782,8 @@ void nsDocLoader::DocLoaderIsEmpty(bool aFlushLayout,
     //
     // Note, mDocumentRequest can be null while mDocumentOpenedButNotLoaded is
     // false if the flushing above re-entered this method.
-    if (IsBusy() || (!mDocumentRequest && !mDocumentOpenedButNotLoaded)) {
+    if (IsBusy() || (!mDocumentRequest && !mDocumentOpenedButNotLoaded &&
+                     !mIsLoadingJavascriptURI)) {
       return;
     }
 
@@ -799,8 +833,9 @@ void nsDocLoader::DocLoaderIsEmpty(bool aFlushLayout,
         NotifyDoneWithOnload(parent);
       }
     } else {
-      MOZ_ASSERT(mDocumentOpenedButNotLoaded);
+      MOZ_ASSERT(mDocumentOpenedButNotLoaded || mIsLoadingJavascriptURI);
       mDocumentOpenedButNotLoaded = false;
+      mIsLoadingJavascriptURI = false;
 
       // Make sure we do the ChildEnteringOnload/ChildDoneWithOnload even if we
       // plan to skip firing our own load event, because otherwise we might
@@ -815,46 +850,43 @@ void nsDocLoader::DocLoaderIsEmpty(bool aFlushLayout,
             loadGroupStatus == NS_ERROR_PARSED_DATA_CACHED) {
           // Can "doc" or "window" ever come back null here?  Our state machine
           // is complicated enough I wouldn't bet against it...
-          nsCOMPtr<Document> doc = do_GetInterface(GetAsSupports(this));
-          if (doc) {
+          if (nsCOMPtr<Document> doc = do_GetInterface(GetAsSupports(this))) {
             doc->SetReadyStateInternal(Document::READYSTATE_COMPLETE,
                                        /* updateTimingInformation = */ false);
             doc->StopDocumentLoad();
 
             nsCOMPtr<nsPIDOMWindowOuter> window = doc->GetWindow();
             if (window && !doc->SkipLoadEventAfterClose()) {
-              if (!mozilla::dom::DocGroup::TryToLoadIframesInBackground() ||
-                  (mozilla::dom::DocGroup::TryToLoadIframesInBackground() &&
-                   !HasFakeOnLoadDispatched())) {
-                MOZ_LOG(gDocLoaderLog, LogLevel::Debug,
-                        ("DocLoader:%p: Firing load event for document.open\n",
-                         this));
+              MOZ_LOG(gDocLoaderLog, LogLevel::Debug,
+                      ("DocLoader:%p: Firing load event for document.open\n",
+                       this));
 
-                // This is a very cut-down version of
-                // nsDocumentViewer::LoadComplete that doesn't do various things
-                // that are not relevant here because this wasn't an actual
-                // navigation.
-                WidgetEvent event(true, eLoad);
-                event.mFlags.mBubbles = false;
-                event.mFlags.mCancelable = false;
-                // Dispatching to |window|, but using |document| as the target,
-                // per spec.
-                event.mTarget = doc;
-                nsEventStatus unused = nsEventStatus_eIgnore;
-                doc->SetLoadEventFiring(true);
-                EventDispatcher::Dispatch(window, nullptr, &event, nullptr,
-                                          &unused);
-                doc->SetLoadEventFiring(false);
+              // This is a very cut-down version of
+              // nsDocumentViewer::LoadComplete that doesn't do various things
+              // that are not relevant here because this wasn't an actual
+              // navigation.
+              WidgetEvent event(true, eLoad);
+              event.mFlags.mBubbles = false;
+              event.mFlags.mCancelable = false;
+              // Dispatching to |window|, but using |document| as the target,
+              // per spec.
+              event.mTarget = doc;
+              nsEventStatus unused = nsEventStatus_eIgnore;
+              doc->SetLoadEventFiring(true);
+              // MOZ_KnownLive due to bug 1506441
+              EventDispatcher::Dispatch(
+                  MOZ_KnownLive(nsGlobalWindowOuter::Cast(window)), nullptr,
+                  &event, nullptr, &unused);
+              doc->SetLoadEventFiring(false);
 
-                // Now unsuppress painting on the presshell, if we
-                // haven't done that yet.
-                RefPtr<PresShell> presShell = doc->GetPresShell();
-                if (presShell && !presShell->IsDestroying()) {
-                  presShell->UnsuppressPainting();
+              // Now unsuppress painting on the presshell, if we
+              // haven't done that yet.
+              RefPtr<PresShell> presShell = doc->GetPresShell();
+              if (presShell && !presShell->IsDestroying()) {
+                presShell->UnsuppressPainting();
 
-                  if (!presShell->IsDestroying()) {
-                    presShell->LoadComplete();
-                  }
+                if (!presShell->IsDestroying()) {
+                  presShell->LoadComplete();
                 }
               }
             }
@@ -876,7 +908,7 @@ void nsDocLoader::NotifyDoneWithOnload(nsDocLoader* aParent) {
     return;
   }
   BrowsingContext* bc = nsDocShell::Cast(docShell)->GetBrowsingContext();
-  if (bc->IsContentSubframe() && !bc->GetParent()->IsInProcess()) {
+  if (bc->IsContentSubframe() && !bc->GetParentWindowContext()->IsInProcess()) {
     if (BrowserChild* browserChild = BrowserChild::GetFrom(docShell)) {
       mozilla::Unused << browserChild->SendMaybeFireEmbedderLoadEvents(
           dom::EmbedderElementEventType::NoEvent);
@@ -1052,15 +1084,7 @@ nsDocLoader::GetLoadType(uint32_t* aLoadType) {
 
 NS_IMETHODIMP
 nsDocLoader::GetTarget(nsIEventTarget** aTarget) {
-  nsCOMPtr<mozIDOMWindowProxy> window;
-  nsresult rv = GetDOMWindow(getter_AddRefs(window));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(window);
-  NS_ENSURE_STATE(global);
-
-  nsCOMPtr<nsIEventTarget> target =
-      global->EventTargetFor(mozilla::TaskCategory::Other);
+  nsCOMPtr<nsIEventTarget> target = GetMainThreadSerialEventTarget();
   target.forget(aTarget);
   return NS_OK;
 }
@@ -1226,11 +1250,11 @@ NS_IMETHODIMP nsDocLoader::OnStatus(nsIRequest* aRequest, nsresult aStatus,
       }
     }
 
-    nsCOMPtr<nsIStringBundleService> sbs =
-        mozilla::components::StringBundle::Service();
-    if (!sbs) return NS_ERROR_FAILURE;
+    nsAutoString host;
+    host.Append(aStatusArg);
+
     nsAutoString msg;
-    nsresult rv = sbs->FormatStatusMessage(aStatus, aStatusArg, msg);
+    nsresult rv = FormatStatusMessage(aStatus, host, msg);
     if (NS_FAILED(rv)) return rv;
 
     // Keep around the message. In case a request finishes, we need to make sure
@@ -1263,6 +1287,76 @@ void nsDocLoader::ClearInternalProgress() {
   mCompletedTotalProgress = 0;
 
   mProgressStateFlags = nsIWebProgressListener::STATE_STOP;
+}
+
+/* static */
+mozilla::Maybe<nsLiteralCString> nsDocLoader::StatusCodeToL10nId(
+    nsresult aStatus) {
+  switch (aStatus) {
+    case NS_NET_STATUS_WRITING:
+      return mozilla::Some("network-connection-status-wrote"_ns);
+    case NS_NET_STATUS_READING:
+      return mozilla::Some("network-connection-status-read"_ns);
+    case NS_NET_STATUS_RESOLVING_HOST:
+      return mozilla::Some("network-connection-status-looking-up"_ns);
+    case NS_NET_STATUS_RESOLVED_HOST:
+      return mozilla::Some("network-connection-status-looked-up"_ns);
+    case NS_NET_STATUS_CONNECTING_TO:
+      return mozilla::Some("network-connection-status-connecting"_ns);
+    case NS_NET_STATUS_CONNECTED_TO:
+      return mozilla::Some("network-connection-status-connected"_ns);
+    case NS_NET_STATUS_TLS_HANDSHAKE_STARTING:
+      return mozilla::Some("network-connection-status-tls-handshake"_ns);
+    case NS_NET_STATUS_TLS_HANDSHAKE_ENDED:
+      return mozilla::Some(
+          "network-connection-status-tls-handshake-finished"_ns);
+    case NS_NET_STATUS_SENDING_TO:
+      return mozilla::Some("network-connection-status-sending-request"_ns);
+    case NS_NET_STATUS_WAITING_FOR:
+      return mozilla::Some("network-connection-status-waiting"_ns);
+    case NS_NET_STATUS_RECEIVING_FROM:
+      return mozilla::Some("network-connection-status-transferring-data"_ns);
+    default:
+      return mozilla::Nothing();
+  }
+}
+
+nsresult nsDocLoader::FormatStatusMessage(nsresult aStatus,
+                                          const nsAString& aHost,
+                                          nsAString& aRetVal) {
+  auto l10nId = StatusCodeToL10nId(aStatus);
+
+  if (!l10nId) {
+    return NS_ERROR_FAILURE;
+  }
+
+  nsAutoCString RetVal;
+  ErrorResult rv;
+  auto l10nArgs = dom::Optional<intl::L10nArgs>();
+  l10nArgs.Construct();
+
+  auto dirArg = l10nArgs.Value().Entries().AppendElement();
+  dirArg->mKey = "host";
+  dirArg->mValue.SetValue().SetAsUTF8String().Assign(
+      NS_ConvertUTF16toUTF8(aHost));
+
+  // Handle mL10n (necko.ftl) on demand
+  if (!mL10n) {
+    nsTArray<nsCString> resIds = {
+        "netwerk/necko.ftl"_ns,
+    };
+    mL10n = mozilla::intl::Localization::Create(resIds, true);
+  }
+  MOZ_LOG(gDocLoaderLog, LogLevel::Debug,
+          ("DocLoader:%p: FormatStatusMessage, [mL10n=%d]\n", this, !!mL10n));
+  MOZ_RELEASE_ASSERT(mL10n);
+
+  mL10n->FormatValueSync(*l10nId, l10nArgs, RetVal, rv);
+  aRetVal = NS_ConvertUTF8toUTF16(RetVal);
+  if (rv.Failed()) {
+    return rv.StealNSResult();
+  }
+  return NS_OK;
 }
 
 /**

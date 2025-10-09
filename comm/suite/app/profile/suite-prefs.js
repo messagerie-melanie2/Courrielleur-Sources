@@ -19,7 +19,6 @@
 pref("startup.homepage_override_url","chrome://navigator-region/locale/region.properties");
 pref("general.skins.selectedSkin", "classic/1.0");
 
-pref("browser.chromeURL","chrome://navigator/content/navigator.xul");
 pref("browser.hiddenWindowChromeURL", "chrome://navigator/content/hiddenWindow.xul");
 
 // prompt for Master Password on startup
@@ -611,7 +610,7 @@ pref("extensions.getAddons.link.url", "https://addons.thunderbird.net/%LOCALE%/%
 pref("extensions.getAddons.recommended.url", "https://services.addons.thunderbird.net/%LOCALE%/%APP%/api/%API_VERSION%/list/recommended/all/%MAX_RESULTS%/%OS%/%VERSION%?src=seamonkey");
 pref("extensions.getAddons.search.browseURL", "https://addons.thunderbird.net/%LOCALE%/%APP%/search/?q=%TERMS%");
 pref("extensions.getAddons.search.url", "https://services.addons.thunderbird.net/%LOCALE%/%APP%/api/%API_VERSION%/search/%TERMS%/all/%MAX_RESULTS%/%OS%/%VERSION%/%COMPATIBILITY_MODE%?src=seamonkey");
-pref("extensions.getAddons.themes.browseURL", "https://addons.thunderbird.net/%LOCALE%/thunderbird/themes/?src=seamonkey");
+pref("extensions.getAddons.themes.browseURL", "https://addons.thunderbird.net/%LOCALE%/%APP%/complete-themes/");
 pref("extensions.getAddons.siteRegExp", "^https://.*addons\\.thunderbird\\.net");
 
 pref("extensions.webservice.discoverURL", "https://services.addons.thunderbird.net/%LOCALE%/%APP%/discovery/pane/%VERSION%/%OS%");
@@ -666,6 +665,13 @@ pref("permissions.default.camera", 0);
 pref("permissions.default.microphone", 0);
 pref("permissions.default.geo", 0);
 pref("permissions.default.desktop-notification", 0);
+pref("permissions.default.shortcuts", 0);
+pref("permissions.default.allowXULXBL", 2);
+pref("permissions.default.login-saving", 0);
+pref("permissions.default.object", 0);
+pref("permissions.default.script", 0);
+pref("permissions.default.stylesheet", 0);
+pref("permissions.default.trackingprotection", 2);
 
 // Customizable toolbar stuff
 pref("custtoolbar.personal_toolbar_folder", "");
@@ -807,7 +813,7 @@ pref("layout.word_select.stop_at_punctuation", false);
 #endif
 
 // The breakpad report server to link to in about:crashes
-pref("breakpad.reportURL", "https://crash-reports-test.seamonkey-project.org/report/index/");
+pref("breakpad.reportURL", "https://app.bugsplat.com/v2/crash?database=seamonkey_project&id=");
 
 // Name of alternate about: page for certificate errors (when undefined, defaults to about:neterror)
 pref("security.alternate_certificate_error_page", "certerror");
@@ -931,7 +937,6 @@ pref("services.sync.prefs.sync.mailnews.offline_sync_mail", true);
 pref("services.sync.prefs.sync.mailnews.offline_sync_news", true);
 pref("services.sync.prefs.sync.mailnews.offline_sync_send_unsent", true);
 pref("services.sync.prefs.sync.mailnews.offline_sync_work_offline", true);
-pref("services.sync.prefs.sync.mailnews.remember_selected_message", true);
 pref("services.sync.prefs.sync.mailnews.reply_header_authorwrotesingle", true);
 pref("services.sync.prefs.sync.mailnews.reply_header_ondateauthorwrote", true);
 pref("services.sync.prefs.sync.mailnews.reply_header_authorwroteondate", true);

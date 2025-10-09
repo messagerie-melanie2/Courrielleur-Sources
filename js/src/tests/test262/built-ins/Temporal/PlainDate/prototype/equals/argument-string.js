@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| shell-option(--enable-temporal) skip-if(!this.hasOwnProperty('Temporal')||!xulRuntime.shell) -- Temporal is not enabled unconditionally, requires shell-options
 // Copyright (C) 2021 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -11,8 +11,5 @@ features: [Temporal]
 const instance = new Temporal.PlainDate(2000, 5, 2);
 assert.sameValue(instance.equals("2000-05-02"), true, "same date");
 assert.sameValue(instance.equals("2000-05-04"), false, "different date");
-
-const calendar = { toString() { return "a" } };
-assert.sameValue(instance.withCalendar(calendar).equals("2000-05-02"), false, "different calendar");
 
 reportCompare(0, 0);

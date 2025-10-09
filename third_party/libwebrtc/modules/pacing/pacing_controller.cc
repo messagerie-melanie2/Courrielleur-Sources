@@ -11,23 +11,33 @@
 #include "modules/pacing/pacing_controller.h"
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
+#include "absl/cleanup/cleanup.h"
 #include "absl/strings/match.h"
+#include "absl/strings/string_view.h"
+#include "api/array_view.h"
+#include "api/field_trials_view.h"
+#include "api/transport/network_types.h"
+#include "api/units/data_rate.h"
+#include "api/units/data_size.h"
+#include "api/units/time_delta.h"
+#include "api/units/timestamp.h"
 #include "modules/pacing/bitrate_prober.h"
-#include "modules/pacing/interval_budget.h"
+#include "modules/rtp_rtcp/include/rtp_rtcp_defines.h"
 #include "rtc_base/checks.h"
-#include "rtc_base/experiments/field_trial_parser.h"
 #include "rtc_base/logging.h"
-#include "rtc_base/time_utils.h"
+#include "rtc_base/numerics/safe_conversions.h"
 #include "system_wrappers/include/clock.h"
 
 namespace webrtc {
 namespace {
-// Time limit in milliseconds between packet bursts.
-constexpr TimeDelta kDefaultMinPacketLimit = TimeDelta::Millis(5);
 constexpr TimeDelta kCongestedPacketInterval = TimeDelta::Millis(500);
 // TODO(sprang): Consider dropping this limit.
 // The maximum debt level, in terms of time, capped when sending packets.
@@ -44,8 +54,6 @@ bool IsEnabled(const FieldTrialsView& field_trials, absl::string_view key) {
 
 }  // namespace
 
-const TimeDelta PacingController::kMaxExpectedQueueLength =
-    TimeDelta::Millis(2000);
 const TimeDelta PacingController::kPausedProcessInterval =
     kCongestedPacketInterval;
 const TimeDelta PacingController::kMinSleepTime = TimeDelta::Millis(1);
@@ -57,11 +65,13 @@ const TimeDelta PacingController::kMaxEarlyProbeProcessing =
 
 PacingController::PacingController(Clock* clock,
                                    PacketSender* packet_sender,
-                                   const FieldTrialsView& field_trials)
+                                   const FieldTrialsView& field_trials,
+                                   Configuration configuration)
     : clock_(clock),
       packet_sender_(packet_sender),
       field_trials_(field_trials),
       drain_large_queues_(
+          configuration.drain_large_queues &&
           !IsDisabled(field_trials_, "WebRTC-Pacer-DrainQueue")),
       send_padding_if_silent_(
           IsEnabled(field_trials_, "WebRTC-Pacer-PadInSilence")),
@@ -70,9 +80,11 @@ PacingController::PacingController(Clock* clock,
           IsEnabled(field_trials_, "WebRTC-Pacer-IgnoreTransportOverhead")),
       fast_retransmissions_(
           IsEnabled(field_trials_, "WebRTC-Pacer-FastRetransmissions")),
-      min_packet_limit_(kDefaultMinPacketLimit),
+      keyframe_flushing_(
+          configuration.keyframe_flushing ||
+          IsEnabled(field_trials_, "WebRTC-Pacer-KeyframeFlushing")),
       transport_overhead_per_packet_(DataSize::Zero()),
-      send_burst_interval_(TimeDelta::Zero()),
+      send_burst_interval_(configuration.send_burst_interval),
       last_timestamp_(clock_->CurrentTime()),
       paused_(false),
       media_debt_(DataSize::Zero()),
@@ -85,9 +97,11 @@ PacingController::PacingController(Clock* clock,
       last_process_time_(clock->CurrentTime()),
       last_send_time_(last_process_time_),
       seen_first_packet_(false),
-      packet_queue_(/*creation_time=*/last_process_time_),
+      packet_queue_(/*creation_time=*/last_process_time_,
+                    configuration.prioritize_audio_retransmission,
+                    configuration.packet_queue_ttl),
       congested_(false),
-      queue_time_limit_(kMaxExpectedQueueLength),
+      queue_time_limit_(configuration.queue_time_limit),
       account_for_audio_(false),
       include_overhead_(false),
       circuit_breaker_threshold_(1 << 16) {
@@ -95,11 +109,6 @@ PacingController::PacingController(Clock* clock,
     RTC_LOG(LS_WARNING) << "Pacer queues will not be drained,"
                            "pushback experiment must be enabled.";
   }
-  FieldTrialParameter<int> min_packet_limit_ms("", min_packet_limit_.ms());
-  ParseFieldTrial({&min_packet_limit_ms},
-                  field_trials_.Lookup("WebRTC-Pacer-MinPacketLimitMs"));
-  min_packet_limit_ = TimeDelta::Millis(min_packet_limit_ms.Get());
-  UpdateBudgetWithElapsedTime(min_packet_limit_);
 }
 
 PacingController::~PacingController() = default;
@@ -168,7 +177,6 @@ void PacingController::SetProbingEnabled(bool enabled) {
 
 void PacingController::SetPacingRates(DataRate pacing_rate,
                                       DataRate padding_rate) {
-  static constexpr DataRate kMaxRate = DataRate::KilobitsPerSec(100'000);
   RTC_CHECK_GT(pacing_rate, DataRate::Zero());
   RTC_CHECK_GE(padding_rate, DataRate::Zero());
   if (padding_rate > pacing_rate) {
@@ -178,11 +186,12 @@ void PacingController::SetPacingRates(DataRate pacing_rate,
     padding_rate = pacing_rate;
   }
 
-  if (pacing_rate > kMaxRate || padding_rate > kMaxRate) {
-    RTC_LOG(LS_WARNING) << "Very high pacing rates ( > " << kMaxRate.kbps()
+  if (pacing_rate > max_rate || padding_rate > max_rate) {
+    RTC_LOG(LS_WARNING) << "Very high pacing rates ( > " << max_rate.kbps()
                         << " kbps) configured: pacing = " << pacing_rate.kbps()
                         << " kbps, padding = " << padding_rate.kbps()
                         << " kbps.";
+    max_rate = std::max(pacing_rate, padding_rate) * 1.1;
   }
   pacing_rate_ = pacing_rate;
   padding_rate_ = padding_rate;
@@ -196,6 +205,21 @@ void PacingController::EnqueuePacket(std::unique_ptr<RtpPacketToSend> packet) {
   RTC_DCHECK(pacing_rate_ > DataRate::Zero())
       << "SetPacingRate must be called before InsertPacket.";
   RTC_CHECK(packet->packet_type());
+
+  if (keyframe_flushing_ &&
+      packet->packet_type() == RtpPacketMediaType::kVideo &&
+      packet->is_key_frame() && packet->is_first_packet_of_frame() &&
+      !packet_queue_.HasKeyframePackets(packet->Ssrc())) {
+    // First packet of a keyframe (and no keyframe packets currently in the
+    // queue). Flush any pending packets currently in the queue for that stream
+    // in order to get the new keyframe out as quickly as possible.
+    packet_queue_.RemovePacketsForSsrc(packet->Ssrc());
+    std::optional<uint32_t> rtx_ssrc =
+        packet_sender_->GetRtxSsrcForMedia(packet->Ssrc());
+    if (rtx_ssrc) {
+      packet_queue_.RemovePacketsForSsrc(*rtx_ssrc);
+    }
+  }
 
   prober_.OnIncomingPacket(DataSize::Bytes(packet->payload_size()));
 
@@ -238,13 +262,17 @@ void PacingController::SetSendBurstInterval(TimeDelta burst_interval) {
   send_burst_interval_ = burst_interval;
 }
 
+void PacingController::SetAllowProbeWithoutMediaPacket(bool allow) {
+  prober_.SetAllowProbeWithoutMediaPacket(allow);
+}
+
 TimeDelta PacingController::ExpectedQueueTime() const {
   RTC_DCHECK_GT(adjusted_media_rate_, DataRate::Zero());
   return QueueSizeData() / adjusted_media_rate_;
 }
 
 size_t PacingController::QueueSizePackets() const {
-  return rtc::checked_cast<size_t>(packet_queue_.SizeInPackets());
+  return checked_cast<size_t>(packet_queue_.SizeInPackets());
 }
 
 const std::array<int, kNumMediaTypes>&
@@ -265,7 +293,7 @@ DataSize PacingController::CurrentBufferLevel() const {
   return std::max(media_debt_, padding_debt_);
 }
 
-absl::optional<Timestamp> PacingController::FirstSentPacketTime() const {
+std::optional<Timestamp> PacingController::FirstSentPacketTime() const {
   return first_sent_packet_time_;
 }
 
@@ -282,9 +310,9 @@ TimeDelta PacingController::UpdateTimeAndGetElapsed(Timestamp now) {
   TimeDelta elapsed_time = now - last_process_time_;
   last_process_time_ = now;
   if (elapsed_time > kMaxElapsedTime) {
-    RTC_LOG(LS_WARNING) << "Elapsed time (" << elapsed_time.ms()
-                        << " ms) longer than expected, limiting to "
-                        << kMaxElapsedTime.ms();
+    RTC_LOG(LS_WARNING) << "Elapsed time (" << elapsed_time
+                        << ") longer than expected, limiting to "
+                        << kMaxElapsedTime;
     elapsed_time = kMaxElapsedTime;
   }
   return elapsed_time;
@@ -334,9 +362,13 @@ Timestamp PacingController::NextSendTime() const {
     // debt is allowed to grow up to one packet more than what can be sent
     // during 'send_burst_period_'.
     TimeDelta drain_time = media_debt_ / adjusted_media_rate_;
+    // Ensure that a burst of sent packet is not larger than kMaxBurstSize in
+    // order to not risk overfilling socket buffers at high bitrate.
+    TimeDelta send_burst_interval =
+        std::min(send_burst_interval_, kMaxBurstSize / adjusted_media_rate_);
     next_send_time =
         last_process_time_ +
-        ((send_burst_interval_ > drain_time) ? TimeDelta::Zero() : drain_time);
+        ((send_burst_interval > drain_time) ? TimeDelta::Zero() : drain_time);
   } else if (padding_rate_ > DataRate::Zero() && packet_queue_.Empty()) {
     // If we _don't_ have pending packets, check how long until we have
     // bandwidth for padding packets. Both media and padding debts must
@@ -366,6 +398,9 @@ Timestamp PacingController::NextSendTime() const {
 }
 
 void PacingController::ProcessPackets() {
+  absl::Cleanup cleanup = [packet_sender = packet_sender_] {
+    packet_sender->OnBatchComplete();
+  };
   const Timestamp now = CurrentTime();
   Timestamp target_send_time = now;
 
@@ -562,12 +597,6 @@ DataSize PacingController::PaddingToAdd(DataSize recommended_probe_size,
     return DataSize::Zero();
   }
 
-  if (!seen_first_packet_) {
-    // We can not send padding unless a normal packet has first been sent. If
-    // we do, timestamps get messed up.
-    return DataSize::Zero();
-  }
-
   if (!recommended_probe_size.IsZero()) {
     if (recommended_probe_size > data_sent) {
       return recommended_probe_size - data_sent;
@@ -698,8 +727,7 @@ Timestamp PacingController::NextUnpacedSendTime() const {
   }
   if (fast_retransmissions_) {
     Timestamp leading_retransmission_send_time =
-        packet_queue_.LeadingPacketEnqueueTime(
-            RtpPacketMediaType::kRetransmission);
+        packet_queue_.LeadingPacketEnqueueTimeForRetransmission();
     if (leading_retransmission_send_time.IsFinite()) {
       return leading_retransmission_send_time;
     }

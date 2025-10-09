@@ -13,6 +13,7 @@
 
 #include <memory>
 
+#include "api/environment/environment.h"
 #include "api/transport/sctp_transport_factory_interface.h"
 #include "media/sctp/sctp_transport_internal.h"
 #include "rtc_base/thread.h"
@@ -24,7 +25,8 @@ class SctpTransportFactory : public webrtc::SctpTransportFactoryInterface {
   explicit SctpTransportFactory(rtc::Thread* network_thread);
 
   std::unique_ptr<SctpTransportInternal> CreateSctpTransport(
-      rtc::PacketTransportInternal* transport) override;
+      const webrtc::Environment& env,
+      DtlsTransportInternal* transport) override;
 
  private:
   rtc::Thread* network_thread_;

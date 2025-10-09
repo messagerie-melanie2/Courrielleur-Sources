@@ -10,6 +10,7 @@
 
 #include "mozilla/EventQueue.h"
 #include "mozilla/StaticPrefs_privacy.h"
+#include "mozilla/SourceLocation.h"
 #include "mozilla/dom/BrowserChild.h"
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/Document.h"
@@ -20,14 +21,12 @@
 #include "nsIScriptError.h"
 #include "nsIURI.h"
 #include "nsIOService.h"
-#include "nsGlobalWindowInner.h"
-#include "nsJSUtils.h"
+#include "nsGlobalWindowOuter.h"
 #include "mozIThirdPartyUtil.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
 using mozilla::dom::BrowsingContext;
-using mozilla::dom::ContentChild;
 using mozilla::dom::Document;
 
 static const uint32_t kMaxConsoleOutputDelayMs = 100;
@@ -58,20 +57,16 @@ void ReportUnblockingToConsole(
   MOZ_ASSERT(aWindowID);
   MOZ_ASSERT(aPrincipal);
 
-  nsAutoString sourceLine;
-  uint32_t lineNumber = 0, columnNumber = 0;
-  JSContext* cx = nsContentUtils::GetCurrentJSContext();
-  if (cx) {
-    nsJSUtils::GetCallingLocation(cx, sourceLine, &lineNumber, &columnNumber);
-  }
-
+  // Grab the calling location now since the runnable will run without a JS
+  // context on the stack.
+  auto location = JSCallingLocation::Get();
   nsCOMPtr<nsIPrincipal> principal(aPrincipal);
   nsAutoString trackingOrigin(aTrackingOrigin);
 
   RefPtr<Runnable> runnable = NS_NewRunnableFunction(
       "ReportUnblockingToConsoleDelayed",
-      [aWindowID, sourceLine, lineNumber, columnNumber, principal,
-       trackingOrigin, aReason]() {
+      [aWindowID, loc = std::move(location), principal, trackingOrigin,
+       aReason]() {
         const char* messageWithSameOrigin = nullptr;
 
         switch (aReason) {
@@ -87,14 +82,15 @@ void ReportUnblockingToConsole(
             break;
         }
 
-        nsAutoString origin;
-        nsresult rv = nsContentUtils::GetUTFOrigin(principal, origin);
+        nsAutoCString origin;
+        nsresult rv = principal->GetOriginNoSuffix(origin);
         if (NS_WARN_IF(NS_FAILED(rv))) {
           return;
         }
 
         // Not adding grantedOrigin yet because we may not want it later.
-        AutoTArray<nsString, 2> params = {origin, trackingOrigin};
+        AutoTArray<nsString, 2> params = {NS_ConvertUTF8toUTF16(origin),
+                                          trackingOrigin};
 
         nsAutoString errorText;
         rv = nsContentUtils::FormatLocalizedString(
@@ -104,8 +100,7 @@ void ReportUnblockingToConsole(
 
         nsContentUtils::ReportToConsoleByWindowID(
             errorText, nsIScriptError::warningFlag,
-            ANTITRACKING_CONSOLE_CATEGORY, aWindowID, nullptr, sourceLine,
-            lineNumber, columnNumber);
+            ANTITRACKING_CONSOLE_CATEGORY, aWindowID, loc);
       });
 
   RunConsoleReportingRunnable(runnable.forget());
@@ -131,6 +126,9 @@ void ReportBlockingToConsole(uint64_t aWindowID, nsIURI* aURI,
               nsIWebProgressListener::STATE_COOKIES_PARTITIONED_FOREIGN) ||
       aRejectedReason ==
           static_cast<uint32_t>(
+              nsIWebProgressListener::STATE_COOKIES_PARTITIONED_TRACKER) ||
+      aRejectedReason ==
+          static_cast<uint32_t>(
               nsIWebProgressListener::STATE_COOKIES_BLOCKED_ALL) ||
       aRejectedReason ==
           static_cast<uint32_t>(
@@ -147,18 +145,13 @@ void ReportBlockingToConsole(uint64_t aWindowID, nsIURI* aURI,
     return;
   }
 
-  nsAutoString sourceLine;
-  uint32_t lineNumber = 0, columnNumber = 0;
-  JSContext* cx = nsContentUtils::GetCurrentJSContext();
-  if (cx) {
-    nsJSUtils::GetCallingLocation(cx, sourceLine, &lineNumber, &columnNumber);
-  }
+  auto location = JSCallingLocation::Get();
 
   nsCOMPtr<nsIURI> uri(aURI);
 
   RefPtr<Runnable> runnable = NS_NewRunnableFunction(
-      "ReportBlockingToConsoleDelayed", [aWindowID, sourceLine, lineNumber,
-                                         columnNumber, uri, aRejectedReason]() {
+      "ReportBlockingToConsoleDelayed",
+      [aWindowID, loc = std::move(location), uri, aRejectedReason]() {
         const char* message = nullptr;
         nsAutoCString category;
         // When changing this list, please make sure to update the corresponding
@@ -174,7 +167,7 @@ void ReportBlockingToConsole(uint64_t aWindowID, nsIURI* aURI,
             break;
 
           case uint32_t(nsIWebProgressListener::STATE_COOKIES_BLOCKED_TRACKER):
-            message = "CookieBlockedTracker";
+            message = "CookieBlockedTrackerByETP";
             category = "cookieBlockedTracker"_ns;
             break;
 
@@ -184,12 +177,14 @@ void ReportBlockingToConsole(uint64_t aWindowID, nsIURI* aURI,
             break;
 
           case uint32_t(nsIWebProgressListener::STATE_COOKIES_BLOCKED_FOREIGN):
-            message = "CookieBlockedForeign";
+            message = "CookieBlockedForeignByETP";
             category = "cookieBlockedForeign"_ns;
             break;
 
           case uint32_t(
               nsIWebProgressListener::STATE_COOKIES_PARTITIONED_FOREIGN):
+          case uint32_t(
+              nsIWebProgressListener::STATE_COOKIES_PARTITIONED_TRACKER):
             message = "CookiePartitionedForeign2";
             category = "cookiePartitionedForeign"_ns;
             break;
@@ -214,8 +209,7 @@ void ReportBlockingToConsole(uint64_t aWindowID, nsIURI* aURI,
         NS_ENSURE_SUCCESS_VOID(rv);
 
         nsContentUtils::ReportToConsoleByWindowID(
-            errorText, nsIScriptError::warningFlag, category, aWindowID,
-            nullptr, sourceLine, lineNumber, columnNumber);
+            errorText, nsIScriptError::warningFlag, category, aWindowID, loc);
       });
 
   RunConsoleReportingRunnable(runnable.forget());
@@ -285,7 +279,11 @@ void NotifyBlockingDecision(nsIChannel* aTrackingChannel,
 
   nsAutoCString trackingOrigin;
   if (aURI) {
-    Unused << nsContentUtils::GetASCIIOrigin(aURI, trackingOrigin);
+    // Using an empty OriginAttributes is OK here, as we'll only be accessing
+    // OriginNoSuffix.
+    nsCOMPtr<nsIPrincipal> principal =
+        BasePrincipal::CreateContentPrincipal(aURI, OriginAttributes{});
+    principal->GetOriginNoSuffix(trackingOrigin);
   }
 
   if (aDecision == ContentBlockingNotifier::BlockingDecision::eBlock) {
@@ -304,6 +302,16 @@ void NotifyBlockingDecision(nsIChannel* aTrackingChannel,
   nsCOMPtr<nsIClassifiedChannel> classifiedChannel =
       do_QueryInterface(aTrackingChannel);
   if (!classifiedChannel) {
+    return;
+  }
+
+  if (aRejectedReason ==
+      nsIWebProgressListener::STATE_COOKIES_PARTITIONED_TRACKER) {
+    ContentBlockingNotifier::OnEvent(
+        aTrackingChannel, true,
+        nsIWebProgressListener::STATE_COOKIES_PARTITIONED_TRACKER,
+        trackingOrigin);
+    // Stop notifying the tracker cookie loaded events if they are partitioned.
     return;
   }
 
@@ -331,7 +339,10 @@ void NotifyEventInChild(
     nsIChannel* aTrackingChannel, bool aBlocked, uint32_t aRejectedReason,
     const nsACString& aTrackingOrigin,
     const Maybe<ContentBlockingNotifier::StorageAccessPermissionGrantedReason>&
-        aReason) {
+        aReason,
+    const Maybe<ContentBlockingNotifier::CanvasFingerprinter>
+        aCanvasFingerprinter,
+    const Maybe<bool> aCanvasFingerprinterKnownText) {
   MOZ_ASSERT(XRE_IsContentProcess());
 
   // We don't need to find the top-level window here because the
@@ -360,9 +371,10 @@ void NotifyEventInChild(
         trackingFullHashes);
   }
 
-  browserChild->NotifyContentBlockingEvent(aRejectedReason, aTrackingChannel,
-                                           aBlocked, aTrackingOrigin,
-                                           trackingFullHashes, aReason);
+  browserChild->NotifyContentBlockingEvent(
+      aRejectedReason, aTrackingChannel, aBlocked, aTrackingOrigin,
+      trackingFullHashes, aReason, aCanvasFingerprinter,
+      aCanvasFingerprinterKnownText);
 }
 
 // Update the ContentBlockingLog of the top-level WindowGlobalParent of
@@ -371,7 +383,10 @@ void NotifyEventInParent(
     nsIChannel* aTrackingChannel, bool aBlocked, uint32_t aRejectedReason,
     const nsACString& aTrackingOrigin,
     const Maybe<ContentBlockingNotifier::StorageAccessPermissionGrantedReason>&
-        aReason) {
+        aReason,
+    const Maybe<ContentBlockingNotifier::CanvasFingerprinter>
+        aCanvasFingerprinter,
+    const Maybe<bool> aCanvasFingerprinterKnownText) {
   MOZ_ASSERT(XRE_IsParentProcess());
 
   nsCOMPtr<nsILoadInfo> loadInfo = aTrackingChannel->LoadInfo();
@@ -397,7 +412,9 @@ void NotifyEventInParent(
   }
 
   wgp->NotifyContentBlockingEvent(aRejectedReason, aTrackingChannel, aBlocked,
-                                  aTrackingOrigin, trackingFullHashes, aReason);
+                                  aTrackingOrigin, trackingFullHashes, aReason,
+                                  aCanvasFingerprinter,
+                                  aCanvasFingerprinterKnownText);
 }
 
 }  // namespace
@@ -441,6 +458,9 @@ void ContentBlockingNotifier::OnDecision(nsIChannel* aChannel,
               nsIWebProgressListener::STATE_COOKIES_PARTITIONED_FOREIGN) ||
       aRejectedReason ==
           static_cast<uint32_t>(
+              nsIWebProgressListener::STATE_COOKIES_PARTITIONED_TRACKER) ||
+      aRejectedReason ==
+          static_cast<uint32_t>(
               nsIWebProgressListener::STATE_COOKIES_BLOCKED_ALL) ||
       aRejectedReason ==
           static_cast<uint32_t>(
@@ -478,6 +498,9 @@ void ContentBlockingNotifier::OnDecision(nsPIDOMWindowInner* aWindow,
       aRejectedReason ==
           static_cast<uint32_t>(
               nsIWebProgressListener::STATE_COOKIES_PARTITIONED_FOREIGN) ||
+      aRejectedReason ==
+          static_cast<uint32_t>(
+              nsIWebProgressListener::STATE_COOKIES_PARTITIONED_TRACKER) ||
       aRejectedReason ==
           static_cast<uint32_t>(
               nsIWebProgressListener::STATE_COOKIES_BLOCKED_ALL) ||
@@ -545,7 +568,11 @@ void ContentBlockingNotifier::OnEvent(nsIChannel* aTrackingChannel,
 
   nsAutoCString trackingOrigin;
   if (uri) {
-    Unused << nsContentUtils::GetASCIIOrigin(uri, trackingOrigin);
+    // Using empty OriginAttributes is OK here, as we only want to access
+    // OriginNoSuffix.
+    nsCOMPtr<nsIPrincipal> trackingPrincipal =
+        BasePrincipal::CreateContentPrincipal(uri, OriginAttributes{});
+    trackingPrincipal->GetOriginNoSuffix(trackingOrigin);
   }
 
   return ContentBlockingNotifier::OnEvent(aTrackingChannel, aBlocked,
@@ -556,12 +583,16 @@ void ContentBlockingNotifier::OnEvent(nsIChannel* aTrackingChannel,
 void ContentBlockingNotifier::OnEvent(
     nsIChannel* aTrackingChannel, bool aBlocked, uint32_t aRejectedReason,
     const nsACString& aTrackingOrigin,
-    const Maybe<StorageAccessPermissionGrantedReason>& aReason) {
+    const Maybe<StorageAccessPermissionGrantedReason>& aReason,
+    const Maybe<CanvasFingerprinter>& aCanvasFingerprinter,
+    const Maybe<bool> aCanvasFingerprinterKnownText) {
   if (XRE_IsParentProcess()) {
     NotifyEventInParent(aTrackingChannel, aBlocked, aRejectedReason,
-                        aTrackingOrigin, aReason);
+                        aTrackingOrigin, aReason, aCanvasFingerprinter,
+                        aCanvasFingerprinterKnownText);
   } else {
     NotifyEventInChild(aTrackingChannel, aBlocked, aRejectedReason,
-                       aTrackingOrigin, aReason);
+                       aTrackingOrigin, aReason, aCanvasFingerprinter,
+                       aCanvasFingerprinterKnownText);
   }
 }

@@ -3,7 +3,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 var {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 var {NetUtil} = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
 var {AppConstants} = ChromeUtils.import(
@@ -706,7 +705,7 @@ FeedWriter.prototype = {
     }
   },
 
-  // nsIDOMEventListener
+  // EventListener
   handleEvent: function(event) {
     if (event.target != this._document &&
         event.target.ownerDocument != this._document) {
@@ -1202,8 +1201,7 @@ FeedWriter.prototype = {
   },
 
   classID: FEEDWRITER_CID,
-  QueryInterface: XPCOMUtils.generateQI([ Ci.nsIDOMGlobalPropertyInitializer,
-                                          Ci.nsIDOMEventListener,
+  QueryInterface: ChromeUtils.generateQI([Ci.nsIDOMGlobalPropertyInitializer,
                                           Ci.nsIObserver])
 
 };

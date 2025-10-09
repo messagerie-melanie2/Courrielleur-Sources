@@ -9,8 +9,8 @@
 
 // Wrap in a block to prevent leaking to window scope.
 {
-  const { MailServices } = ChromeUtils.import(
-    "resource:///modules/MailServices.jsm"
+  const { MailServices } = ChromeUtils.importESModule(
+    "resource:///modules/MailServices.sys.mjs"
   );
 
   /**
@@ -37,11 +37,9 @@
         "chrome://messenger/locale/messenger.properties"
       );
 
-      ChromeUtils.defineModuleGetter(
-        this,
-        "MailUtils",
-        "resource:///modules/MailUtils.jsm"
-      );
+      ChromeUtils.defineESModuleGetters(this, {
+        MailUtils: "resource:///modules/MailUtils.sys.mjs",
+      });
     }
 
     hasMessages() {
@@ -49,23 +47,23 @@
     }
 
     static createFolderSummaryMessage() {
-      let vbox = document.createXULElement("vbox");
+      const vbox = document.createXULElement("vbox");
       vbox.setAttribute("class", "folderSummaryMessage");
 
-      let hbox = document.createXULElement("hbox");
+      const hbox = document.createXULElement("hbox");
       hbox.setAttribute("class", "folderSummary-message-row");
 
-      let subject = document.createXULElement("label");
+      const subject = document.createXULElement("label");
       subject.setAttribute("class", "folderSummary-subject");
 
-      let sender = document.createXULElement("label");
+      const sender = document.createXULElement("label");
       sender.setAttribute("class", "folderSummary-sender");
       sender.setAttribute("crop", "end");
 
       hbox.appendChild(subject);
       hbox.appendChild(sender);
 
-      let preview = document.createXULElement("description");
+      const preview = document.createXULElement("description");
       preview.setAttribute(
         "class",
         "folderSummary-message-row folderSummary-previewText"
@@ -83,9 +81,9 @@
      * @param {nsIMsgFolder} folder - The folder to examine.
      * @param {nsIUrlListener} urlListener - Listener to notify if we run urls
      *   to fetch msgs.
-     * @param Object outAsync - Object with value property set to true if there
+     * @param {object} outAsync - Object with value property set to true if there
      *   are async fetches pending (a message preview will be available later).
-     * @returns true if the folder knows about messages that should be shown.
+     * @returns {boolean} true if the folder knows about messages that should be shown.
      */
     parseFolder(folder, urlListener, outAsync) {
       // Skip servers, Trash, Junk folders and newsgroups.
@@ -100,7 +98,7 @@
         return false;
       }
 
-      let folderArray = [];
+      const folders = [];
       let msgDatabase;
       try {
         msgDatabase = folder.msgDatabase;
@@ -111,21 +109,22 @@
       }
 
       if (folder.flags & Ci.nsMsgFolderFlags.Virtual) {
-        let srchFolderUri =
+        const srchFolderUri =
           msgDatabase.dBFolderInfo.getCharProperty("searchFolderUri");
-        let folderUris = srchFolderUri.split("|");
-        for (let uri of folderUris) {
-          let realFolder = this.MailUtils.getOrCreateFolder(uri);
+        const folderUris = srchFolderUri.split("|");
+        for (const uri of folderUris) {
+          const realFolder = this.MailUtils.getOrCreateFolder(uri);
           if (!realFolder.isServer) {
-            folderArray.push(realFolder);
+            folders.push(realFolder);
           }
         }
       } else {
-        folderArray.push(folder);
+        folders.push(folder);
       }
 
       let haveMsgsToShow = false;
-      for (let folder of folderArray) {
+      // eslint-disable-next-line no-shadow
+      for (const folder of folders) {
         // now get the database
         try {
           msgDatabase = folder.msgDatabase;
@@ -138,7 +137,7 @@
         folder.msgDatabase = null;
         let msgKeys = msgDatabase.getNewList();
 
-        let numNewMessages = folder.getNumNewMessages(false);
+        const numNewMessages = folder.getNumNewMessages(false);
         if (!numNewMessages) {
           continue;
         }
@@ -177,7 +176,7 @@
 
         // In the case of async fetching for more than one folder, we may
         //  already have got enough to show (added by another urllistener).
-        let curHdrsInPopup = this.children.length;
+        const curHdrsInPopup = this.children.length;
         if (curHdrsInPopup >= this.maxMsgHdrsInPopup) {
           return false;
         }
@@ -187,8 +186,8 @@
           i + curHdrsInPopup < this.maxMsgHdrsInPopup && i < msgKeys.length;
           i++
         ) {
-          let msgBox = MozFolderSummary.createFolderSummaryMessage();
-          let msgHdr = msgDatabase.getMsgHdrForKey(msgKeys[i]);
+          const msgBox = MozFolderSummary.createFolderSummaryMessage();
+          const msgHdr = msgDatabase.getMsgHdrForKey(msgKeys[i]);
           msgBox.addEventListener("click", event => {
             if (event.button !== 0) {
               return;
@@ -207,19 +206,19 @@
           }
 
           if (this.showSender) {
-            let addrs = MailServices.headerParser.parseEncodedHeader(
+            const addrs = MailServices.headerParser.parseEncodedHeader(
               msgHdr.author,
               msgHdr.effectiveCharset,
               false
             );
-            let folderSummarySender = msgBox.querySelector(
+            const folderSummarySender = msgBox.querySelector(
               ".folderSummary-sender"
             );
             // Set the label value instead of textContent to avoid wrapping.
             folderSummarySender.value =
               addrs.length > 0 ? addrs[0].name || addrs[0].email : "";
             if (addrs.length > 1) {
-              let andOthersStr =
+              const andOthersStr =
                 this.messengerBundle.GetStringFromName("andOthers");
               folderSummarySender.value += " " + andOthersStr;
             }
@@ -243,10 +242,10 @@
      * @param {number[]} msgKeys - The keys of new messages.
      */
     render(folder, msgKeys) {
-      let msgDatabase = folder.msgDatabase;
-      for (let msgKey of msgKeys.slice(0, this.maxMsgHdrsInPopup)) {
-        let msgBox = MozFolderSummary.createFolderSummaryMessage();
-        let msgHdr = msgDatabase.getMsgHdrForKey(msgKey);
+      const msgDatabase = folder.msgDatabase;
+      for (const msgKey of msgKeys.slice(0, this.maxMsgHdrsInPopup)) {
+        const msgBox = MozFolderSummary.createFolderSummaryMessage();
+        const msgHdr = msgDatabase.getMsgHdrForKey(msgKey);
         msgBox.addEventListener("click", event => {
           if (event.button !== 0) {
             return;
@@ -265,19 +264,19 @@
         }
 
         if (this.showSender) {
-          let addrs = MailServices.headerParser.parseEncodedHeader(
+          const addrs = MailServices.headerParser.parseEncodedHeader(
             msgHdr.author,
             msgHdr.effectiveCharset,
             false
           );
-          let folderSummarySender = msgBox.querySelector(
+          const folderSummarySender = msgBox.querySelector(
             ".folderSummary-sender"
           );
           // Set the label value instead of textContent to avoid wrapping.
           folderSummarySender.value =
             addrs.length > 0 ? addrs[0].name || addrs[0].email : "";
           if (addrs.length > 1) {
-            let andOthersStr =
+            const andOthersStr =
               this.messengerBundle.GetStringFromName("andOthers");
             folderSummarySender.value += " " + andOthersStr;
           }

@@ -89,7 +89,7 @@
         "moz-landing-system": "lando"
       },
       "files": [
-        "toolkit/components/url-classifier/UrlClassifierListManager.jsm"
+        "toolkit/components/url-classifier/UrlClassifierListManager.sys.mjs"
       ],
       "landingsystem": "lando",
       "node": "80b29d7af43145cdd678d4ea51e770271f0c56ce",
@@ -210,7 +210,7 @@
         "rebase_source": "9fc0fd23fdbaa4c30568ca895af3e1c9e3c08aea"
       },
       "files": [
-        "toolkit/components/url-classifier/UrlClassifierListManager.jsm"
+        "toolkit/components/url-classifier/UrlClassifierListManager.sys.mjs"
       ],
       "node": "ae17e25d0f24bd1b6dee872c77c9770ad0ec7d87",
       "parents": ["6ec708eb48569fcfb9bf708d91a8876383865a65"],

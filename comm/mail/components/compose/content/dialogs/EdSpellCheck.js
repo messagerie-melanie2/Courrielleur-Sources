@@ -3,7 +3,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* import-globals-from ../../../../base/content/utilityOverlay.js */
-/* import-globals-from ../editorUtilities.js */
 /* import-globals-from EdDialogCommon.js */
 
 var { InlineSpellChecker } = ChromeUtils.importESModule(
@@ -17,8 +16,19 @@ var gPreviousReplaceWord = "";
 var gFirstTime = true;
 var gDictCount = 0;
 
-document.addEventListener("dialogaccept", doDefault);
+var prevFocusedElement = null;
+
+window.addEventListener("load", Startup);
+document.addEventListener("keydown", event => {
+  if (event.key == "Enter") {
+    doDefault(event);
+  }
+});
 document.addEventListener("dialogcancel", CancelSpellCheck);
+
+const onOpenerUnload = () => {
+  window.close();
+};
 
 function Startup() {
   var editor = GetCurrentEditor();
@@ -26,6 +36,10 @@ function Startup() {
     window.close();
     return;
   }
+
+  window.opener.addEventListener("unload", onOpenerUnload);
+  prevFocusedElement = window.opener.ownerGlobal.document.activeElement;
+  window.opener.document.documentElement.setAttribute("inert", "true");
 
   // Get the spellChecker shell
   gSpellChecker = Cu.createSpellChecker();
@@ -141,14 +155,14 @@ function InitLanguageMenu(activeDictionaries) {
   var sortedList = inlineSpellChecker.sortDictionaryList(dictList);
 
   // Remove any languages from the list.
-  let list = document.getElementById("dictionary-list");
-  let template = document.getElementById("language-item");
+  const list = document.getElementById("dictionary-list");
+  const template = document.getElementById("language-item");
 
   list.replaceChildren(
     ...sortedList.map(({ displayName, localeCode }) => {
-      let item = template.content.cloneNode(true);
+      const item = template.content.cloneNode(true);
       item.querySelector(".checkbox-label").textContent = displayName;
-      let input = item.querySelector("input");
+      const input = item.querySelector("input");
       input.addEventListener("input", () => {
         SelectLanguage(localeCode);
       });
@@ -347,13 +361,13 @@ function EditDictionary() {
  * @param {string} language
  */
 function SelectLanguage(language) {
-  let activeDictionaries = new Set(gSpellChecker.getCurrentDictionaries());
+  const activeDictionaries = new Set(gSpellChecker.getCurrentDictionaries());
   if (activeDictionaries.has(language)) {
     activeDictionaries.delete(language);
   } else {
     activeDictionaries.add(language);
   }
-  let activeDictionariesArray = Array.from(activeDictionaries);
+  const activeDictionariesArray = Array.from(activeDictionaries);
   gSpellChecker.setCurrentDictionaries(activeDictionariesArray);
   // For compose windows we need to set the "lang" attribute so the
   // core editor uses the correct dictionary for the inline spell check.
@@ -479,6 +493,9 @@ function ExitSpellChecker() {
       gSpellChecker = null;
     }
   }
+  window.opener.document.documentElement.removeAttribute("inert");
+  prevFocusedElement?.focus();
+  window.opener.removeEventListener("unload", onOpenerUnload);
 }
 
 function CancelSpellCheck() {

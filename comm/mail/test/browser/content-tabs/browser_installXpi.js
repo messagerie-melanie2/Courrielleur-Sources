@@ -4,13 +4,8 @@
 
 "use strict";
 
-var utils = ChromeUtils.import("resource://testing-common/mozmill/utils.jsm");
-
-var { open_content_tab_with_url } = ChromeUtils.import(
-  "resource://testing-common/mozmill/ContentTabHelpers.jsm"
-);
-var { mc } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+var { open_content_tab_with_url } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ContentTabHelpers.sys.mjs"
 );
 
 var url =
@@ -19,19 +14,19 @@ var url =
 var gDocument;
 var gNewTab;
 
-add_setup(function () {
-  gDocument = mc.window.document;
-  gNewTab = open_content_tab_with_url(url + "installxpi.html");
+add_setup(async function () {
+  gDocument = document;
+  gNewTab = await open_content_tab_with_url(url + "installxpi.html");
 });
 
 registerCleanupFunction(function () {
-  mc.window.document.getElementById("tabmail").closeTab(gNewTab);
+  document.getElementById("tabmail").closeTab(gNewTab);
 });
 
 async function waitForNotification(id, buttonToClickSelector, callback) {
-  let notificationSelector = `#notification-popup > #${id}-notification`;
+  const notificationSelector = `#notification-popup > #${id}-notification`;
   let notification;
-  utils.waitFor(() => {
+  await TestUtils.waitForCondition(() => {
     notification = gDocument.querySelector(notificationSelector);
     return notification && !notification.hidden;
   });
@@ -41,10 +36,12 @@ async function waitForNotification(id, buttonToClickSelector, callback) {
     callback();
   }
   if (buttonToClickSelector) {
-    let button = notification.querySelector(buttonToClickSelector);
-    EventUtils.synthesizeMouseAtCenter(button, { clickCount: 1 }, mc.window);
+    const button = notification.querySelector(buttonToClickSelector);
+    EventUtils.synthesizeMouseAtCenter(button, { clickCount: 1 }, window);
   }
-  utils.waitFor(() => !gDocument.querySelector(notificationSelector));
+  await TestUtils.waitForCondition(
+    () => !gDocument.querySelector(notificationSelector)
+  );
 }
 
 add_task(async function test_install_corrupt_xpi() {
@@ -128,10 +125,14 @@ add_task(async function test_xpinstall_webext_actually_install() {
     "addon-webext-permissions",
     ".popup-notification-primary-button",
     () => {
-      let permission = gDocument.getElementById(
-        "addon-webext-perm-single-entry"
+      const permissionListEl = gDocument.getElementById(
+        "addon-webext-perm-list"
       );
-      Assert.ok(!permission.hidden);
+      const permissionTitleEl = document.getElementById(
+        "addon-webext-perm-title-required"
+      );
+      Assert.ok(!permissionListEl.hidden);
+      Assert.ok(!permissionTitleEl.hidden);
     }
   );
   await waitForNotification(

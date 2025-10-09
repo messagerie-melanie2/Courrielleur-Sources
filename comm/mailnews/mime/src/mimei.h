@@ -164,8 +164,9 @@
   object will only be initialized once.
 
       static int
-      FoobarClassInitialize(FoobarClass *class)
+      FoobarClassInitialize(MimeObjectClass *oclass)
       {
+        FoobarClass* clazz = (FoobarClass*)oclass;
         clazz->method = FoobarMethod.
         ...etc...
       }
@@ -198,7 +199,7 @@
   3 different objects in a row.
  */
 
-#include "mimehdrs.h"
+#include "modlmime.h"
 #include "nsTArray.h"
 
 typedef struct MimeObject MimeObject;
@@ -214,8 +215,8 @@ typedef struct MimeObjectClass MimeObjectClass;
 
 /* Macro used for setting up class definitions.
  */
-#define MimeDefClass(ITYPE, CTYPE, CVAR, CSUPER)    \
-  static int ITYPE##ClassInitialize(ITYPE##Class*); \
+#define MimeDefClass(ITYPE, CTYPE, CVAR, CSUPER)       \
+  static int ITYPE##ClassInitialize(MimeObjectClass*); \
   ITYPE##Class CVAR = {ITYPE##ClassInitializer(ITYPE, CSUPER)}
 
 /* Creates a new (subclass of) MimeObject of the given class, with the
@@ -234,10 +235,9 @@ extern "C" void mime_free(MimeObject* object);
    then "text/x-unknown" will return MimeInlineTextPlainType, but if it is
    false, it will return NULL.
  */
-extern MimeObjectClass* mime_find_class(const char* content_type,
-                                        MimeHeaders* hdrs,
-                                        MimeDisplayOptions* opts,
-                                        bool exact_match_p);
+extern MimeObjectClass* mime_find_class(
+    const char* content_type, MimeHeaders* hdrs, MimeDisplayOptions* opts,
+    bool exact_match_p, const char* parent_address, const char* parent_type);
 
 /** Given a content-type string, creates and returns an appropriate subclass
  * of MimeObject.  The headers (from which the content-type was presumably
@@ -247,7 +247,9 @@ extern MimeObjectClass* mime_find_class(const char* content_type,
  */
 extern MimeObject* mime_create(const char* content_type, MimeHeaders* hdrs,
                                MimeDisplayOptions* opts,
-                               bool forceInline = false);
+                               bool forceInline = false,
+                               const char* parent_address = nullptr,
+                               const char* parent_type = nullptr);
 
 /* Querying the type hierarchy */
 extern bool mime_subclass_p(MimeObjectClass* child, MimeObjectClass* parent);

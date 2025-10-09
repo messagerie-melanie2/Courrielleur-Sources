@@ -55,7 +55,7 @@ UrlClassifierRemoteSettingsService.prototype = {
     });
   },
 
-  // Parse the update request. See UrlClassifierListManager.jsm makeUpdateRequest
+  // Parse the update request. See UrlClassifierListManager.sys.mjs makeUpdateRequest
   // for more details about how we build the update request.
   //
   // @param aRequest the request payload of the update request
@@ -98,10 +98,17 @@ UrlClassifierRemoteSettingsService.prototype = {
         // files after SafeBrowsing processes the data.
         let buffer = await rs.attachments.downloadAsBytes(entry);
         let bytes = new Uint8Array(buffer);
-        let strData = String.fromCharCode.apply(String, bytes);
+        let strData = "";
+        for (let i = 0; i < bytes.length; i++) {
+          strData += String.fromCharCode(bytes[i]);
+        }
 
         // Construct the payload
         payload += "i:" + reqTableName + "\n";
+        // Add adddel directive to clear the old chunks.
+        if (reqChunkNum) {
+          payload += "ad:" + reqChunkNum.toString() + "\n";
+        }
         payload += strData;
       } catch (e) {
         downloadError = true;
@@ -120,11 +127,13 @@ UrlClassifierRemoteSettingsService.prototype = {
     let stream = Cc["@mozilla.org/io/string-input-stream;1"].createInstance(
       Ci.nsIStringInputStream
     );
-    stream.setData(payload, payload.length);
+    stream.setByteStringData(payload);
 
-    aListener.onStartRequest(null);
-    aListener.onDataAvailable(null, stream, 0, payload.length);
-    aListener.onStopRequest(null, Cr.NS_OK);
+    try {
+      aListener.onStartRequest(null);
+      aListener.onDataAvailable(null, stream, 0, payload.length);
+      aListener.onStopRequest(null, Cr.NS_OK);
+    } catch (e) {}
   },
 
   fetchList(aPayload, aListener) {

@@ -7,9 +7,10 @@
 import copy
 import json
 import os
-import pipes
+import platform
 import random
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -29,6 +30,10 @@ from threading import Event, Thread, Timer, current_thread
 
 import mozdebug
 import six
+from mozgeckoprofiler import (
+    symbolicate_profile_json,
+    view_gecko_profile,
+)
 from mozserve import Http3Server
 
 try:
@@ -68,6 +73,7 @@ if sys.platform == "win32":
 
 EXPECTED_LOG_ACTIONS = set(
     [
+        "crash_reporter_init",
         "test_status",
         "log",
     ]
@@ -91,7 +97,7 @@ from manifestparser.filters import chunk_by_slice, failures, pathprefix, tags
 from manifestparser.util import normsep
 from mozlog import commandline
 from mozprofile import Profile
-from mozprofile.cli import parse_preferences
+from mozprofile.cli import parse_key_value, parse_preferences
 from mozrunner.utils import get_stack_fixer_function
 
 # --------------------------------------------------------------
@@ -104,9 +110,19 @@ from mozrunner.utils import get_stack_fixer_function
 _cleanup_encoding_re = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\\\\]")
 
 
+def get_full_group_name(test):
+    group = test["manifest"]
+    if "ancestor_manifest" in test:
+        ancestor_manifest = normsep(test["ancestor_manifest"])
+        # Only change the group id if ancestor is not the generated root manifest.
+        if "/" in ancestor_manifest:
+            group = f"{ancestor_manifest}:{group}"
+    return group
+
+
 def _cleanup_encoding_repl(m):
     c = m.group(0)
-    return "\\\\" if c == "\\" else "\\x{0:02X}".format(ord(c))
+    return "\\\\" if c == "\\" else f"\\x{ord(c):02X}"
 
 
 def cleanup_encoding(s):
@@ -115,12 +131,12 @@ def cleanup_encoding(s):
     points, etc.  If it is a byte string, it is assumed to be
     UTF-8, but it may not be *correct* UTF-8.  Return a
     sanitized unicode object."""
-    if not isinstance(s, six.string_types):
-        if isinstance(s, six.binary_type):
+    if not isinstance(s, str):
+        if isinstance(s, bytes):
             return six.ensure_str(s)
         else:
-            return six.text_type(s)
-    if isinstance(s, six.binary_type):
+            return str(s)
+    if isinstance(s, bytes):
         s = s.decode("utf-8", "replace")
     # Replace all C0 and C1 control characters with \xNN escapes.
     return _cleanup_encoding_re.sub(_cleanup_encoding_repl, s)
@@ -156,15 +172,26 @@ def markGotSIGINT(signum, stackFrame):
 
 class XPCShellTestThread(Thread):
     def __init__(
-        self, test_object, retry=True, verbose=False, usingTSan=False, **kwargs
+        self,
+        test_object,
+        retry=None,
+        verbose=False,
+        usingTSan=False,
+        usingCrashReporter=False,
+        **kwargs,
     ):
         Thread.__init__(self)
         self.daemon = True
 
         self.test_object = test_object
         self.retry = retry
+        if retry is None:
+            # Retry in CI, but report results without retry when run locally to
+            # avoid confusion and ease local debugging.
+            self.retry = os.environ.get("MOZ_AUTOMATION", 0) != 0
         self.verbose = verbose
         self.usingTSan = usingTSan
+        self.usingCrashReporter = usingCrashReporter
 
         self.appPath = kwargs.get("appPath")
         self.xrePath = kwargs.get("xrePath")
@@ -172,7 +199,6 @@ class XPCShellTestThread(Thread):
         self.testingModulesDir = kwargs.get("testingModulesDir")
         self.debuggerInfo = kwargs.get("debuggerInfo")
         self.jsDebuggerInfo = kwargs.get("jsDebuggerInfo")
-        self.httpdJSPath = kwargs.get("httpdJSPath")
         self.headJSPath = kwargs.get("headJSPath")
         self.testharnessdir = kwargs.get("testharnessdir")
         self.profileName = kwargs.get("profileName")
@@ -202,6 +228,7 @@ class XPCShellTestThread(Thread):
         self.timeoutAsPass = kwargs.get("timeoutAsPass")
         self.crashAsPass = kwargs.get("crashAsPass")
         self.conditionedProfileDir = kwargs.get("conditionedProfileDir")
+        self.profiler = kwargs.get("profiler")
         if self.runFailures:
             self.retry = False
 
@@ -217,6 +244,7 @@ class XPCShellTestThread(Thread):
         # Context for output processing
         self.output_lines = []
         self.has_failure_output = False
+        self.saw_crash_reporter_init = False
         self.saw_proc_start = False
         self.saw_proc_end = False
         self.command = None
@@ -348,16 +376,16 @@ class XPCShellTestThread(Thread):
         self.log.info("%s | current directory: %r" % (name, testdir))
         # Show only those environment variables that are changed from
         # the ambient environment.
-        changedEnv = set("%s=%s" % i for i in six.iteritems(self.env)) - set(
-            "%s=%s" % i for i in six.iteritems(os.environ)
+        changedEnv = set("%s=%s" % i for i in self.env.items()) - set(
+            "%s=%s" % i for i in os.environ.items()
         )
         self.log.info("%s | environment: %s" % (name, list(changedEnv)))
         shell_command_tokens = [
-            pipes.quote(tok) for tok in list(changedEnv) + completeCmd
+            shlex.quote(tok) for tok in list(changedEnv) + completeCmd
         ]
         self.log.info(
             "%s | as shell command: (cd %s; %s)"
-            % (name, pipes.quote(testdir), " ".join(shell_command_tokens))
+            % (name, shlex.quote(testdir), " ".join(shell_command_tokens))
         )
 
     def killTimeout(self, proc):
@@ -442,7 +470,9 @@ class XPCShellTestThread(Thread):
             # _rootTempDir contains a user.js file, generated by buildPrefsFile
             profile.merge(self._rootTempDir, interpolation=interpolation)
 
-            prefs = self.test_object["prefs"].strip().split()
+            prefs = self.test_object["prefs"].strip()
+            if prefs:
+                prefs = [p.strip() for p in prefs.split("\n")]
             name = self.test_object["id"]
             if self.verbose:
                 self.log.info(
@@ -463,6 +493,24 @@ class XPCShellTestThread(Thread):
         # Return the root prefsFile if there is no other prefs to merge.
         # This is the path set by buildPrefsFile.
         return self.rootPrefsFile
+
+    def updateTestEnvironment(self):
+        # Add additional environment variables from the Manifest file
+        extraEnv = {}
+        if "environment" in self.test_object:
+            extraEnv = self.test_object["environment"].strip().split()
+            self.log.info(
+                "The following extra environment variables will be set:\n  {}".format(
+                    "\n  ".join(extraEnv)
+                )
+            )
+            self.env.update(
+                dict(
+                    parse_key_value(
+                        extraEnv, context="environment variables in manifest"
+                    )
+                )
+            )
 
     @property
     def conditioned_profile_copy(self):
@@ -663,7 +711,7 @@ class XPCShellTestThread(Thread):
     def log_line(self, line):
         """Log a line of output (either a parser json object or text output from
         the test process"""
-        if isinstance(line, six.string_types) or isinstance(line, bytes):
+        if isinstance(line, (str, bytes)):
             line = self.fix_text_output(line).rstrip("\r\n")
             self.log.process_output(self.proc_ident, line, command=self.command)
         else:
@@ -722,6 +770,10 @@ class XPCShellTestThread(Thread):
             self.report_message(line_string)
             return
 
+        if line_object["action"] == "crash_reporter_init":
+            self.saw_crash_reporter_init = True
+            return
+
         action = line_object["action"]
 
         self.has_failure_output = (
@@ -744,14 +796,15 @@ class XPCShellTestThread(Thread):
 
         name = self.test_object["id"]
         path = self.test_object["path"]
+        group = get_full_group_name(self.test_object)
 
         # Check for skipped tests
         if "disabled" in self.test_object:
             message = self.test_object["disabled"]
             if not message:
                 message = "disabled from xpcshell manifest"
-            self.log.test_start(name)
-            self.log.test_end(name, "SKIP", message=message)
+            self.log.test_start(name, group=group)
+            self.log.test_end(name, "SKIP", message=message, group=group)
 
             self.retry = False
             self.keep_going = True
@@ -761,7 +814,7 @@ class XPCShellTestThread(Thread):
         expect_pass = self.test_object["expected"] == "pass"
 
         # By default self.appPath will equal the gre dir. If specified in the
-        # xpcshell.ini file, set a different app dir for this test.
+        # xpcshell.toml file, set a different app dir for this test.
         if self.app_dir_key and self.app_dir_key in self.test_object:
             rel_app_dir = self.test_object[self.app_dir_key]
             rel_app_dir = os.path.join(self.xrePath, rel_app_dir)
@@ -779,6 +832,9 @@ class XPCShellTestThread(Thread):
 
         # Setup per-manifest prefs and write them into the tempdir.
         self.prefsFile = self.updateTestPrefsFile()
+
+        # Setup per-manifest env variables
+        self.updateTestEnvironment()
 
         # The order of the command line is important:
         # 1) Arguments for xpcshell itself
@@ -807,12 +863,20 @@ class XPCShellTestThread(Thread):
             self.env["PYTHON"] = sys.executable
             self.env["BREAKPAD_SYMBOLS_PATH"] = self.symbolsPath
 
-        if self.test_object.get("snap") == "true":
-            self.env["SNAP_NAME"] = "firefox"
-            self.env["SNAP_INSTANCE_NAME"] = "firefox"
-
         if self.test_object.get("subprocess") == "true":
             self.env["PYTHON"] = sys.executable
+
+        if self.profiler:
+            if not self.singleFile:
+                self.log.error(
+                    "The --profiler flag is currently only supported when running a single test"
+                )
+            else:
+                self.env["MOZ_PROFILER_STARTUP"] = "1"
+                profile_path = os.path.join(
+                    self.profileDir, "profile_" + os.path.basename(name) + ".json"
+                )
+                self.env["MOZ_PROFILER_SHUTDOWN"] = profile_path
 
         if (
             self.test_object.get("headless", "true" if self.headless else None)
@@ -835,7 +899,7 @@ class XPCShellTestThread(Thread):
         process_output = None
 
         try:
-            self.log.test_start(name)
+            self.log.test_start(name, group=group)
             if self.verbose:
                 self.logCommand(name, self.command, test_dir)
 
@@ -892,7 +956,33 @@ class XPCShellTestThread(Thread):
             return_code_ok = return_code == 0 or (
                 self.usingTSan and return_code == TSAN_EXIT_CODE_WITH_RACES
             )
-            passed = (not self.has_failure_output) and return_code_ok
+
+            # Due to the limitation on the remote xpcshell test, the process
+            # return code does not represent the process crash.
+            # If crash_reporter_init log has not been seen and the return code
+            # is 0, it means the process crashed before setting up the crash
+            # reporter.
+            #
+            # NOTE: Crash reporter is not enabled on some configuration, such
+            #       as ASAN and TSAN. Those configuration shouldn't be using
+            #       remote xpcshell test, and the crash should be caught by
+            #       the process return code.
+            # NOTE: self.saw_crash_reporter_init is False also when adb failed
+            #       to launch process, and in that case the return code is
+            #       not 0.
+            #       (see launchProcess in remotexpcshelltests.py)
+            ended_before_crash_reporter_init = (
+                return_code_ok
+                and self.usingCrashReporter
+                and not self.saw_crash_reporter_init
+                and len(process_output) > 0
+            )
+
+            passed = (
+                (not self.has_failure_output)
+                and not ended_before_crash_reporter_init
+                and return_code_ok
+            )
 
             status = "PASS" if passed else "FAIL"
             expected = "PASS" if expect_pass else "FAIL"
@@ -901,20 +991,31 @@ class XPCShellTestThread(Thread):
             if self.timedout:
                 return
 
-            if status != expected:
-                if self.retry:
+            if status != expected or ended_before_crash_reporter_init:
+                if ended_before_crash_reporter_init:
+                    self.log.test_end(
+                        name,
+                        "CRASH",
+                        expected=expected,
+                        message="Test ended before setting up the crash reporter",
+                        group=group,
+                    )
+                elif self.retry:
                     self.log.test_end(
                         name,
                         status,
                         expected=status,
                         message="Test failed or timed out, will retry",
+                        group=group,
                     )
                     self.clean_temp_dirs(path)
                     if self.verboseIfFails and not self.verbose:
                         self.log_full_output()
                     return
-
-                self.log.test_end(name, status, expected=expected, message=message)
+                else:
+                    self.log.test_end(
+                        name, status, expected=expected, message=message, group=group
+                    )
                 self.log_full_output()
 
                 self.failCount += 1
@@ -932,7 +1033,9 @@ class XPCShellTestThread(Thread):
                 if self.usingTSan and return_code == TSAN_EXIT_CODE_WITH_RACES:
                     self.log_full_output()
 
-                self.log.test_end(name, status, expected=expected, message=message)
+                self.log.test_end(
+                    name, status, expected=expected, message=message, group=group
+                )
                 if self.verbose:
                     self.log_full_output()
 
@@ -958,6 +1061,9 @@ class XPCShellTestThread(Thread):
 
         finally:
             self.postCheck(proc)
+            if self.profiler and self.singleFile:
+                symbolicate_profile_json(profile_path, self.symbolsPath)
+                view_gecko_profile(profile_path)
             self.clean_temp_dirs(path)
 
         if gotSIGINT:
@@ -971,7 +1077,7 @@ class XPCShellTestThread(Thread):
         self.keep_going = True
 
 
-class XPCShellTests(object):
+class XPCShellTests:
     def __init__(self, log=None):
         """Initializes node status and logger."""
         self.log = log
@@ -988,16 +1094,16 @@ class XPCShellTests(object):
             if os.path.isfile(manifest):
                 return TestManifest([manifest], strict=True)
             else:
-                ini_path = os.path.join(manifest, "xpcshell.ini")
+                toml_path = os.path.join(manifest, "xpcshell.toml")
         else:
-            ini_path = os.path.join(SCRIPT_DIR, "tests", "xpcshell.ini")
+            toml_path = os.path.join(SCRIPT_DIR, "tests", "xpcshell.toml")
 
-        if os.path.exists(ini_path):
-            return TestManifest([ini_path], strict=True)
+        if os.path.exists(toml_path):
+            return TestManifest([toml_path], strict=True)
         else:
             self.log.error(
                 "Failed to find manifest at %s; use --manifest "
-                "to set path explicitly." % ini_path
+                "to set path explicitly." % toml_path
             )
             sys.exit(1)
 
@@ -1021,7 +1127,7 @@ class XPCShellTests(object):
         return test_object
 
     def buildTestList(self, test_tags=None, test_paths=None, verify=False):
-        """Reads the xpcshell.ini manifest and set self.alltests to an array.
+        """Reads the xpcshell.toml manifest and set self.alltests to an array.
 
         Given the parameters, this method compiles a list of tests to be run
         that matches the criteria set by parameters.
@@ -1050,7 +1156,7 @@ class XPCShellTests(object):
 
         filters = []
         if test_tags:
-            filters.append(tags(test_tags))
+            filters.extend([tags(x) for x in test_tags])
 
         path_filter = None
         if test_paths:
@@ -1071,6 +1177,7 @@ class XPCShellTests(object):
                     mp.active_tests(
                         filters=filters,
                         noDefaultFilters=noDefaultFilters,
+                        strictExpressions=True,
                         **mozinfo.info,
                     ),
                 )
@@ -1100,7 +1207,7 @@ class XPCShellTests(object):
             else:
                 self.log.error(
                     "no tests to run using specified "
-                    "combination of filters: {}".format(mp.fmt_filters())
+                    f"combination of filters: {mp.fmt_filters()}"
                 )
                 sys.exit(1)
 
@@ -1120,7 +1227,7 @@ class XPCShellTests(object):
 
     def setAbsPath(self):
         """
-        Set the absolute path for xpcshell, httpdjspath and xrepath. These 3 variables
+        Set the absolute path for xpcshell and xrepath. These 3 variables
         depend on input from the command line and we need to allow for absolute paths.
         This function is overloaded for a remote solution as os.path* won't work remotely.
         """
@@ -1146,10 +1253,6 @@ class XPCShellTests(object):
         else:
             self.xrePath = os.path.abspath(self.xrePath)
 
-        # httpd.js belongs in xrePath/components, which is Contents/Resources on mac
-        self.httpdJSPath = os.path.join(self.xrePath, "components", "httpd.js")
-        self.httpdJSPath = self.httpdJSPath.replace("\\", "/")
-
         if self.mozInfo is None:
             self.mozInfo = os.path.join(self.testharnessdir, "mozinfo.json")
 
@@ -1172,7 +1275,7 @@ class XPCShellTests(object):
             if os.path.isdir(path):
                 profile_data_dir = path
 
-        with open(os.path.join(profile_data_dir, "profiles.json"), "r") as fh:
+        with open(os.path.join(profile_data_dir, "profiles.json")) as fh:
             base_profiles = json.load(fh)["xpcshell"]
 
         # values to use when interpolating preferences
@@ -1274,8 +1377,8 @@ class XPCShellTests(object):
                     self.env["ASAN_SYMBOLIZER_PATH"] = llvmsym
                 else:
                     oldTSanOptions = self.env.get("TSAN_OPTIONS", "")
-                    self.env["TSAN_OPTIONS"] = "external_symbolizer_path={} {}".format(
-                        llvmsym, oldTSanOptions
+                    self.env["TSAN_OPTIONS"] = (
+                        f"external_symbolizer_path={llvmsym} {oldTSanOptions}"
                     )
                 self.log.info("runxpcshelltests.py | using symbolizer at %s" % llvmsym)
             else:
@@ -1341,15 +1444,20 @@ class XPCShellTests(object):
         if not os.path.exists(nodeBin) or not os.path.isfile(nodeBin):
             error = "node not found at MOZ_NODE_PATH %s" % (nodeBin)
             self.log.error(error)
-            raise IOError(error)
+            raise OSError(error)
 
         self.log.info("Found node at %s" % (nodeBin,))
+
+        def read_streams(name, proc, pipe):
+            output = "stdout" if pipe == proc.stdout else "stderr"
+            for line in iter(pipe.readline, ""):
+                self.log.info("node %s [%s] %s" % (name, output, line))
 
         def startServer(name, serverJs):
             if not os.path.exists(serverJs):
                 error = "%s not found at %s" % (name, serverJs)
                 self.log.error(error)
-                raise IOError(error)
+                raise OSError(error)
 
             # OK, we found our server, let's try to get it running
             self.log.info("Found %s at %s" % (name, serverJs))
@@ -1365,6 +1473,7 @@ class XPCShellTests(object):
                         env=self.env,
                         cwd=os.getcwd(),
                         universal_newlines=True,
+                        start_new_session=True,
                     )
                 self.nodeProc[name] = process
 
@@ -1378,6 +1487,18 @@ class XPCShellTests(object):
                     if searchObj:
                         self.env["MOZHTTP2_PORT"] = searchObj.group(1)
                         self.env["MOZNODE_EXEC_PORT"] = searchObj.group(2)
+                t1 = Thread(
+                    target=read_streams,
+                    args=(name, process, process.stdout),
+                    daemon=True,
+                )
+                t1.start()
+                t2 = Thread(
+                    target=read_streams,
+                    args=(name, process, process.stderr),
+                    daemon=True,
+                )
+                t2.start()
             except OSError as e:
                 # This occurs if the subprocess couldn't be started
                 self.log.error("Could not run %s server: %s" % (name, str(e)))
@@ -1390,23 +1511,16 @@ class XPCShellTests(object):
         """
         Shut down our node process, if it exists
         """
-        for name, proc in six.iteritems(self.nodeProc):
+        for name, proc in self.nodeProc.items():
             self.log.info("Node %s server shutting down ..." % name)
             if proc.poll() is not None:
                 self.log.info("Node server %s already dead %s" % (name, proc.poll()))
+            elif sys.platform != "win32":
+                # Kill process and all its spawned children.
+                os.killpg(proc.pid, signal.SIGTERM)
             else:
                 proc.terminate()
 
-            def dumpOutput(fd, label):
-                firstTime = True
-                for msg in fd:
-                    if firstTime:
-                        firstTime = False
-                        self.log.info("Process %s" % label)
-                    self.log.info(msg)
-
-            dumpOutput(proc.stdout, "stdout")
-            dumpOutput(proc.stderr, "stderr")
         self.nodeProc = {}
 
     def startHttp3Server(self):
@@ -1417,14 +1531,27 @@ class XPCShellTests(object):
         if sys.platform == "win32":
             binSuffix = ".exe"
         http3ServerPath = self.http3ServerPath
+        serverEnv = self.env.copy()
         if not http3ServerPath:
-            http3ServerPath = os.path.join(
-                SCRIPT_DIR, "http3server", "http3server" + binSuffix
-            )
-            if build:
+            if self.mozInfo["buildapp"] == "mobile/android":
+                # For android, use binary from host utilities.
+                http3ServerPath = os.path.join(self.xrePath, "http3server" + binSuffix)
+                serverEnv["LD_LIBRARY_PATH"] = self.xrePath
+            elif build:
                 http3ServerPath = os.path.join(
                     build.topobjdir, "dist", "bin", "http3server" + binSuffix
                 )
+            else:
+                http3ServerPath = os.path.join(
+                    SCRIPT_DIR, "http3server", "http3server" + binSuffix
+                )
+
+        # Treat missing http3server as a non-fatal error, because tests that do not
+        # depend on http3server may work just fine.
+        if not os.path.exists(http3ServerPath):
+            self.log.error("Cannot find http3server at path %s" % (http3ServerPath))
+            return
+
         dbPath = os.path.join(SCRIPT_DIR, "http3server", "http3serverDB")
         if build:
             dbPath = os.path.join(build.topsrcdir, "netwerk", "test", "http3serverDB")
@@ -1433,11 +1560,16 @@ class XPCShellTests(object):
         options["profilePath"] = dbPath
         options["isMochitest"] = False
         options["isWin"] = sys.platform == "win32"
-        self.http3Server = Http3Server(options, self.env, self.log)
+        serverLog = self.env.get("MOZHTTP3_SERVER_LOG")
+        if serverLog is not None:
+            serverEnv["RUST_LOG"] = serverLog
+        self.http3Server = Http3Server(options, serverEnv, self.log)
         self.http3Server.start()
         for key, value in self.http3Server.ports().items():
             self.env[key] = value
         self.env["MOZHTTP3_ECH"] = self.http3Server.echConfig()
+        self.env["MOZ_HTTP3_SERVER_PATH"] = http3ServerPath
+        self.env["MOZ_HTTP3_CERT_DB_PATH"] = dbPath
 
     def shutdownHttp3Server(self):
         if self.http3Server is None:
@@ -1490,22 +1622,33 @@ class XPCShellTests(object):
             "fission"
         ] or not prefs.get("fission.disableSessionHistoryInParent", False)
 
-        self.mozInfo["serviceworker_e10s"] = True
-
         self.mozInfo["verify"] = options.get("verify", False)
 
         self.mozInfo["socketprocess_networking"] = prefs.get(
             "network.http.network_access_on_socket_process.enabled", False
         )
 
-        self.mozInfo["condprof"] = options.get("conditionedProfile", False)
+        self.mozInfo["inc_origin_init"] = (
+            os.environ.get("MOZ_ENABLE_INC_ORIGIN_INIT") == "1"
+        )
 
-        self.mozInfo["msix"] = options.get(
-            "app_binary"
-        ) is not None and "WindowsApps" in options.get("app_binary", "")
+        self.mozInfo["condprof"] = options.get("conditionedProfile", False)
+        self.mozInfo["msix"] = options.get("variant", "") == "msix"
+
+        self.mozInfo["is_ubuntu"] = "Ubuntu" in platform.version()
+
+        # TODO: remove this when crashreporter is fixed on mac via bug 1910777
+        if self.mozInfo["os"] == "mac":
+            (release, versioninfo, machine) = platform.mac_ver()
+            versionNums = release.split(".")[:2]
+            os_version = "%s.%s" % (versionNums[0], versionNums[1].ljust(2, "0"))
+            if os_version.split(".")[0] in ["14", "15"]:
+                self.mozInfo["crashreporter"] = False
+
+        # we default to false for e10s on xpcshell
+        self.mozInfo["e10s"] = self.mozInfo.get("e10s", False)
 
         mozinfo.update(self.mozInfo)
-
         return True
 
     @property
@@ -1532,9 +1675,7 @@ class XPCShellTests(object):
         # create a temp file to help ensure uniqueness
         temp_download_dir = tempfile.mkdtemp()
         self.log.info(
-            "Making temp_download_dir from inside get_conditioned_profile {}".format(
-                temp_download_dir
-            )
+            f"Making temp_download_dir from inside get_conditioned_profile {temp_download_dir}"
         )
         # call condprof's client API to yield our platform-specific
         # conditioned-profile binary
@@ -1581,17 +1722,13 @@ class XPCShellTests(object):
         )
         if not os.path.exists(cond_prof_target_dir):
             self.log.critical(
-                "Can't find target_dir {}, from get_profile()"
-                "temp_download_dir {}, platform {}, scenario {}".format(
-                    cond_prof_target_dir, temp_download_dir, platform, profile_scenario
-                )
+                f"Can't find target_dir {cond_prof_target_dir}, from get_profile()"
+                f"temp_download_dir {temp_download_dir}, platform {platform}, scenario {profile_scenario}"
             )
             raise OSError
 
         self.log.info(
-            "Original self.conditioned_profile_dir is now set: {}".format(
-                self.conditioned_profile_dir
-            )
+            f"Original self.conditioned_profile_dir is now set: {self.conditioned_profile_dir}"
         )
         return self.conditioned_profile_copy
 
@@ -1646,7 +1783,7 @@ class XPCShellTests(object):
         if options.get("rerun_failures"):
             if os.path.exists(options.get("failure_manifest")):
                 rerun_manifest = os.path.join(
-                    os.path.dirname(options["failure_manifest"]), "rerun.ini"
+                    os.path.dirname(options["failure_manifest"]), "rerun.toml"
                 )
                 shutil.copyfile(options["failure_manifest"], rerun_manifest)
                 os.remove(options["failure_manifest"])
@@ -1710,7 +1847,16 @@ class XPCShellTests(object):
         self.timeoutAsPass = options.get("timeoutAsPass")
         self.crashAsPass = options.get("crashAsPass")
         self.conditionedProfile = options.get("conditionedProfile")
-        self.repeat = options.get("repeat")
+        self.repeat = options.get("repeat", 0)
+        self.variant = options.get("variant", "")
+        self.profiler = options.get("profiler")
+
+        if self.variant == "msix":
+            self.appPath = options.get("msixAppPath")
+            self.xrePath = options.get("msixXrePath")
+            self.app_binary = options.get("msix_app_binary")
+            self.threadCount = 2
+            self.xpcshell = None
 
         self.testCount = 0
         self.passCount = 0
@@ -1722,9 +1868,6 @@ class XPCShellTests(object):
                 "full", self.appPath
             )
             options["self_test"] = False
-            if not options["test_tags"]:
-                options["test_tags"] = []
-            options["test_tags"].append("condprof")
 
         self.setAbsPath()
 
@@ -1749,7 +1892,7 @@ class XPCShellTests(object):
             "can be used to skip tests conditionally:"
         )
         for info in sorted(self.mozInfo.items(), key=lambda item: item[0]):
-            self.log.info("    {key}: {value}".format(key=info[0], value=info[1]))
+            self.log.info(f"    {info[0]}: {info[1]}")
 
         if options.get("self_test"):
             if not self.runSelfTest():
@@ -1773,6 +1916,13 @@ class XPCShellTests(object):
 
         # buildEnvironment() needs mozInfo, so we call it after mozInfo is initialized.
         self.buildEnvironment()
+        extraEnv = parse_key_value(options.get("extraEnv") or [], context="--setenv")
+        for k, v in extraEnv:
+            if k in self.env:
+                self.log.info(
+                    "Using environment variable %s instead of %s." % (v, self.env[k])
+                )
+            self.env[k] = v
 
         # The appDirKey is a optional entry in either the default or individual test
         # sections that defines a relative application directory for test runs. If
@@ -1801,6 +1951,33 @@ class XPCShellTests(object):
 
         self.cleanup_dir_list = []
 
+        # If any of the tests that are about to be run uses npm packages
+        # we should install them now. It would also be possible for tests
+        # to define the location where they want the npm modules to be
+        # installed, but for now only netwerk xpcshell tests use it.
+        installNPM = False
+        for test in self.alltests:
+            if "usesNPM" in test:
+                installNPM = True
+                break
+
+        if installNPM:
+            command = "npm ci"
+            working_directory = os.path.join(SCRIPT_DIR, "moz-http2")
+            result = subprocess.run(
+                command,
+                shell=True,
+                cwd=working_directory,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            # Print the output
+            self.log.info("npm output: " + result.stdout)
+            self.log.info("npm error: " + result.stderr)
+            self.log.info("npm return code: " + str(result.returncode))
+
         kwargs = {
             "appPath": self.appPath,
             "xrePath": self.xrePath,
@@ -1808,7 +1985,6 @@ class XPCShellTests(object):
             "testingModulesDir": self.testingModulesDir,
             "debuggerInfo": self.debuggerInfo,
             "jsDebuggerInfo": self.jsDebuggerInfo,
-            "httpdJSPath": self.httpdJSPath,
             "headJSPath": self.headJSPath,
             "tempDir": self.tempDir,
             "testharnessdir": self.testharnessdir,
@@ -1841,6 +2017,7 @@ class XPCShellTests(object):
             "crashAsPass": self.crashAsPass,
             "conditionedProfileDir": self.conditioned_profile_dir,
             "repeat": self.repeat,
+            "profiler": self.profiler,
         }
 
         if self.sequential:
@@ -1877,13 +2054,17 @@ class XPCShellTests(object):
         # that has an effect on interpretation of the process return value.
         usingTSan = "tsan" in self.mozInfo and self.mozInfo["tsan"]
 
+        usingCrashReporter = (
+            "crashreporter" in self.mozInfo and self.mozInfo["crashreporter"]
+        )
+
         # create a queue of all tests that will run
         tests_queue = deque()
         # also a list for the tests that need to be run sequentially
         sequential_tests = []
         status = None
 
-        if options.get("repeat") > 0:
+        if options.get("repeat", 0) > 0:
             self.sequential = True
 
         if not options.get("verify"):
@@ -1898,13 +2079,14 @@ class XPCShellTests(object):
                     continue
 
                 # if we have --repeat, duplicate the tests as needed
-                for i in range(0, options.get("repeat") + 1):
+                for i in range(0, options.get("repeat", 0) + 1):
                     self.testCount += 1
 
                     test = testClass(
                         test_object,
                         verbose=self.verbose or test_object.get("verbose") == "true",
                         usingTSan=usingTSan,
+                        usingCrashReporter=usingCrashReporter,
                         mobileArgs=mobileArgs,
                         **kwargs,
                     )
@@ -1942,8 +2124,13 @@ class XPCShellTests(object):
                 # Run tests sequentially, with MOZ_CHAOSMODE enabled.
                 sequential_tests = []
                 self.env["MOZ_CHAOSMODE"] = "0xfb"
+
+                # for android, adjust flags to avoid slow down
+                if self.env.get("MOZ_ANDROID_DATA_DIR", ""):
+                    self.env["MOZ_CHAOSMODE"] = "0x3b"
+
                 # chaosmode runs really slow, allow tests extra time to pass
-                self.harness_timeout = self.harness_timeout * 2
+                kwargs["harness_timeout"] = self.harness_timeout * 2
                 for i in range(VERIFY_REPEAT):
                     self.testCount += 1
                     test = testClass(
@@ -1953,7 +2140,7 @@ class XPCShellTests(object):
                 status = self.runTestList(
                     tests_queue, sequential_tests, testClass, mobileArgs, **kwargs
                 )
-                self.harness_timeout = self.harness_timeout / 2
+                kwargs["harness_timeout"] = self.harness_timeout
                 return status
 
             steps = [
@@ -1968,10 +2155,10 @@ class XPCShellTests(object):
             maxTime = timedelta(seconds=options["verifyMaxTime"])
             for test_object in self.alltests:
                 stepResults = {}
-                for (descr, step) in steps:
+                for descr, step in steps:
                     stepResults[descr] = "not run / incomplete"
                 finalResult = "PASSED"
-                for (descr, step) in steps:
+                for descr, step in steps:
                     if (datetime.now() - startTime) > maxTime:
                         self.log.info(
                             "::: Test verification is taking too long: Giving up!"
@@ -2031,12 +2218,7 @@ class XPCShellTests(object):
 
         tests_by_manifest = defaultdict(list)
         for test in self.alltests:
-            group = test["manifest"]
-            if "ancestor_manifest" in test:
-                ancestor_manifest = normsep(test["ancestor_manifest"])
-                # Only change the group id if ancestor is not the generated root manifest.
-                if "/" in ancestor_manifest:
-                    group = "{}:{}".format(ancestor_manifest, group)
+            group = get_full_group_name(test)
             tests_by_manifest[group].append(test["id"])
 
         self.log.suite_start(tests_by_manifest, name="xpcshell")
@@ -2107,9 +2289,7 @@ class XPCShellTests(object):
                 self.start_test(test)
                 test.join()
                 self.test_ended(test)
-                if (test.failCount > 0 or test.passCount <= 0) and os.environ.get(
-                    "MOZ_AUTOMATION", 0
-                ) != 0:
+                if (test.failCount > 0 or test.passCount <= 0) and test.retry:
                     self.try_again_list.append(test.test_object)
                     continue
                 self.addTestResults(test)

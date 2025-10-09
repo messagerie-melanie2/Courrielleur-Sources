@@ -30,9 +30,11 @@ bool Initialize() {
   VTuneMutex = js_new<Mutex>(mutexid::VTuneLock);
   if (!VTuneMutex) return false;
 
-  // Load the VTune shared library, if present.
-  int loaded = loadiJIT_Funcs();
-  if (loaded == 1) VTuneLoaded = true;
+  if (getenv("JS_LOAD_VTUNE_LIB")) {
+    // Load the VTune shared library, if present.
+    int loaded = loadiJIT_Funcs();
+    if (loaded == 1) VTuneLoaded = true;
+  }
 
   return true;
 }
@@ -109,11 +111,9 @@ void MarkScript(const js::jit::JitCode* code, JSScript* script,
   method.method_size = code->instructionsSize();
   method.module_name = const_cast<char*>(module);
 
-  // Line numbers begin at 1, but columns begin at 0.
-  // Text editors start at 1,1 so fixup is performed to match.
   char namebuf[512];
   SprintfLiteral(namebuf, "%s:%u:%u", script->filename(), script->lineno(),
-                 script->column() + 1);
+                 script->column().oneOriginValue());
 
   method.method_name = &namebuf[0];
 

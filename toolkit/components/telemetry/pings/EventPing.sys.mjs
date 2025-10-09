@@ -103,7 +103,7 @@ export var TelemetryEventPing = {
     this._clearTimer();
   },
 
-  observe(aSubject, aTopic, aData) {
+  observe(aSubject, aTopic) {
     switch (aTopic) {
       case EVENT_LIMIT_REACHED_TOPIC:
         this._log.trace("event limit reached");
@@ -213,9 +213,7 @@ export var TelemetryEventPing = {
     };
 
     this._lastSendTime = Utils.monotonicNow();
-    Services.telemetry
-      .getHistogramById("TELEMETRY_EVENT_PING_SENT")
-      .add(reason);
+    Glean.telemetry.eventPingSent[reason].add(1);
     Policy.sendPing(this.EVENT_PING_TYPE, payload, options);
   },
 

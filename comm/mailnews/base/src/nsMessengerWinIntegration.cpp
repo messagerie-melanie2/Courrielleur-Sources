@@ -10,15 +10,17 @@
 #include "mozilla/Components.h"
 #include "mozilla/Services.h"
 #include "mozIDOMWindow.h"
+#include "nsCOMArray.h"
 #include "nsIBaseWindow.h"
-#include "nsIDocShell.h"
+#include "nsIDocShell.h"  // IWYU pragma: keep
+#include "nsIStringBundle.h"
 #include "nsIMsgWindow.h"
 #include "nsIObserverService.h"
 #include "nsIPrefService.h"
 #include "nsIWidget.h"
 #include "nsIWindowMediator.h"
 #include "nsMessengerWinIntegration.h"
-#include "nsMsgDBFolder.h"
+#include "nsServiceManagerUtils.h"
 #include "nsPIDOMWindow.h"
 
 #define IDI_MAILBIFF 32576
@@ -99,7 +101,7 @@ NOTIFYICONDATAW sMailIconData = {
     /* szInfoTitle */ L"",
     /* dwInfoFlags */ NIIF_USER | NIIF_NOSOUND};
 
-static nsCOMArray<nsIBaseWindow> sHiddenWindows;
+MOZ_RUNINIT static nsCOMArray<nsIBaseWindow> sHiddenWindows;
 static HWND sIconWindow;
 static uint32_t sUnreadCount;
 /* static */

@@ -12,16 +12,7 @@ This runner can be executed in two different ways:
 - by executing this module directly
 
 When the module is executed directly, if the --on-try option is used,
-it will fetch arguments from Tascluster's parameters, that were
-populated via a local --push-to-try call.
-
-The --push-to-try flow is:
-
-- a user calls ./mach perftest --push-to-try --option1 --option2
-- a new push to try commit is made and includes all options in its parameters
-- a generic TC job triggers the perftest by calling this module with --on-try
-- run_test() grabs the parameters artifact and converts them into args for
-  perftest
+it will fetch arguments from Tascluster's parameters.
 """
 import json
 import logging
@@ -41,7 +32,7 @@ if "SHELL" not in os.environ:
     os.environ["SHELL"] = "/bin/bash"
 
 
-def _activate_mach_virtualenv():
+def _activate_virtualenvs(flavor):
     """Adds all available dependencies in the path.
 
     This is done so the runner can be used with no prior
@@ -49,23 +40,25 @@ def _activate_mach_virtualenv():
     """
 
     # We need the "mach" module to access the logic to parse virtualenv
-    # requirements. Since that depends on "packaging" (and, transitively,
-    # "pyparsing"), we add those to the path too.
+    # requirements. Since that depends on "packaging", we add that to the path too.
+    # We need filelock for solving a virtualenv race condition
     sys.path[0:0] = [
         os.path.join(SRC_ROOT, module)
         for module in (
             os.path.join("python", "mach"),
             os.path.join("third_party", "python", "packaging"),
-            os.path.join("third_party", "python", "pyparsing"),
+            os.path.join("third_party", "python", "filelock"),
         )
     ]
 
     from mach.site import (
+        CommandSiteManager,
         ExternalPythonSite,
         MachSiteManager,
         SitePackagesSource,
         resolve_requirements,
     )
+    from mach.util import get_state_dir, get_virtualenv_base_dir
 
     mach_site = MachSiteManager(
         str(SRC_ROOT),
@@ -76,10 +69,27 @@ def _activate_mach_virtualenv():
     )
     mach_site.activate()
 
+    command_site_manager = CommandSiteManager.from_environment(
+        str(SRC_ROOT),
+        lambda: os.path.normpath(get_state_dir(True, topsrcdir=str(SRC_ROOT))),
+        "common",
+        get_virtualenv_base_dir(str(SRC_ROOT)),
+    )
+
+    command_site_manager.activate()
+
     if TASKCLUSTER:
         # In CI, the directory structure is different: xpcshell code is in
-        # "$topsrcdir/xpcshell/" rather than "$topsrcdir/testing/xpcshell".
-        sys.path.append("xpcshell")
+        # "$topsrcdir/xpcshell/" rather than "$topsrcdir/testing/xpcshell". The
+        # same is true for mochitest. It also needs additional settings for some
+        # dependencies.
+        if flavor == "xpcshell":
+            print("Setting up xpcshell python paths...")
+            sys.path.append("xpcshell")
+        elif flavor == "mochitest":
+            print("Setting up mochitest python paths...")
+            sys.path.append("mochitest")
+            sys.path.append(str(Path("tools", "geckoprocesstypes_generator")))
 
 
 def _create_artifacts_dir(kwargs, artifacts):
@@ -101,8 +111,7 @@ def run_tests(mach_cmd, kwargs, client_args):
     """This tests runner can be used directly via main or via Mach.
 
     When the --on-try option is used, the test runner looks at the
-    `PERFTEST_OPTIONS` environment variable that contains all options passed by
-    the user via a ./mach perftest --push-to-try call.
+    `PERFTEST_OPTIONS` environment variable.
     """
     on_try = kwargs.pop("on_try", False)
 
@@ -188,10 +197,9 @@ def run_tools(mach_cmd, kwargs):
     from mozperftest.utils import ON_TRY, install_package
 
     mach_cmd.activate_virtualenv()
-    install_package(mach_cmd.virtualenv_manager, "opencv-python==4.5.4.60")
     install_package(
         mach_cmd.virtualenv_manager,
-        "mozperftest-tools==0.2.6",
+        "mozperftest-tools==0.3.2",
     )
 
     log_level = logging.INFO
@@ -221,7 +229,10 @@ def run_tools(mach_cmd, kwargs):
 
 def main(argv=sys.argv[1:]):
     """Used when the runner is directly called from the shell"""
-    _activate_mach_virtualenv()
+    flavor = "desktop-browser"
+    if "--flavor" in argv:
+        flavor = argv[argv.index("--flavor") + 1]
+    _activate_virtualenvs(flavor)
 
     from mach.logging import LoggingManager
     from mach.util import get_state_dir
@@ -229,6 +240,12 @@ def main(argv=sys.argv[1:]):
     from mozbuild.mozconfig import MozconfigLoader
 
     from mozperftest import PerftestArgumentParser, PerftestToolsArgumentParser
+
+    if os.getenv("PERF_FLAGS"):
+        extra_args = []
+        for extra_arg in os.getenv("PERF_FLAGS").split():
+            extra_args.append(f"--{extra_arg}")
+        argv.extend(extra_args)
 
     mozconfig = SRC_ROOT / "browser" / "config" / "mozconfig"
     if mozconfig.exists():

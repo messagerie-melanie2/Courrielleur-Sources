@@ -88,7 +88,7 @@ add_task(async function test_principal_permissions() {
   await new Promise(aResolve => {
     Services.clearData.deleteData(
       Ci.nsIClearDataService.CLEAR_PERMISSIONS,
-      value => aResolve()
+      () => aResolve()
     );
   });
 });
@@ -119,6 +119,11 @@ function addTestPermissions() {
   PermissionTestUtils.add(
     "https://example.com",
     "3rdPartyStorage^https://example.net",
+    Services.perms.ALLOW_ACTION
+  );
+  PermissionTestUtils.add(
+    "https://example.com",
+    "3rdPartyFrameStorage^https://example.net",
     Services.perms.ALLOW_ACTION
   );
 
@@ -170,6 +175,14 @@ function addTestPermissions() {
     ).capability,
     Services.perms.ALLOW_ACTION
   );
+  Assert.equal(
+    PermissionTestUtils.getPermissionObject(
+      "https://example.com",
+      "3rdPartyFrameStorage^https://example.net",
+      true
+    ).capability,
+    Services.perms.ALLOW_ACTION
+  );
 
   Assert.equal(
     PermissionTestUtils.getPermissionObject(
@@ -186,83 +199,163 @@ function addTestPermissions() {
   );
 }
 
-add_task(async function test_basedomain_permissions() {
-  for (let domain of [
-    "example.net",
-    "test.example.net",
-    "foo.bar.example.net",
-  ]) {
-    addTestPermissions();
+add_task(async function test_removeBySite() {
+  addTestPermissions();
 
-    await new Promise(aResolve => {
-      Services.clearData.deleteDataFromBaseDomain(
-        domain,
-        true /* user request */,
-        Ci.nsIClearDataService.CLEAR_PERMISSIONS,
-        value => {
-          Assert.equal(value, 0);
-          aResolve();
-        }
-      );
-    });
+  await new Promise(aResolve => {
+    Services.clearData.deleteDataFromSite(
+      "example.net",
+      {}, // All OriginAttributes
+      true /* user request */,
+      Ci.nsIClearDataService.CLEAR_PERMISSIONS,
+      value => {
+        Assert.equal(value, 0);
+        aResolve();
+      }
+    );
+  });
 
-    // Should have cleared all entries associated with the base domain.
-    Assert.ok(
-      !PermissionTestUtils.getPermissionObject(
-        "https://example.net",
-        "geo",
-        true
-      )
-    );
-    Assert.ok(
-      !PermissionTestUtils.getPermissionObject(
-        "http://example.net",
-        "cookie",
-        true
-      )
-    );
-    Assert.ok(
-      !PermissionTestUtils.getPermissionObject(
-        "https://bar.example.net",
-        "geo",
-        true
-      )
-    );
-    Assert.ok(
-      !PermissionTestUtils.getPermissionObject(
-        "https://foo.bar.example.net",
-        "geo",
-        true
-      )
-    );
-    Assert.ok(
-      !PermissionTestUtils.getPermissionObject(
-        "https://example.com",
-        "3rdPartyStorage^https://example.net",
-        true
-      )
-    );
+  // Should have cleared all entries associated with the site.
+  Assert.ok(
+    !PermissionTestUtils.getPermissionObject("https://example.net", "geo", true)
+  );
+  Assert.ok(
+    !PermissionTestUtils.getPermissionObject(
+      "http://example.net",
+      "cookie",
+      true
+    )
+  );
+  Assert.ok(
+    !PermissionTestUtils.getPermissionObject(
+      "https://bar.example.net",
+      "geo",
+      true
+    )
+  );
+  Assert.ok(
+    !PermissionTestUtils.getPermissionObject(
+      "https://foo.bar.example.net",
+      "geo",
+      true
+    )
+  );
+  Assert.ok(
+    !PermissionTestUtils.getPermissionObject(
+      "https://example.com",
+      "3rdPartyStorage^https://example.net",
+      true
+    )
+  );
+  Assert.ok(
+    !PermissionTestUtils.getPermissionObject(
+      "https://example.com",
+      "3rdPartyFrameStorage^https://example.net",
+      true
+    )
+  );
 
-    // Unrelated entries should still exist.
-    Assert.equal(
-      PermissionTestUtils.getPermissionObject(
-        "https://example.com",
-        "cookie",
-        true
-      ).capability,
-      Services.perms.ALLOW_ACTION
-    );
-    Assert.equal(
-      PermissionTestUtils.getPermissionObject("http://example.com", "geo", true)
-        .capability,
-      Services.perms.ALLOW_ACTION
-    );
-  }
+  // Unrelated entries should still exist.
+  Assert.equal(
+    PermissionTestUtils.getPermissionObject(
+      "https://example.com",
+      "cookie",
+      true
+    ).capability,
+    Services.perms.ALLOW_ACTION
+  );
+  Assert.equal(
+    PermissionTestUtils.getPermissionObject("http://example.com", "geo", true)
+      .capability,
+    Services.perms.ALLOW_ACTION
+  );
 
   Services.perms.removeAll();
 });
 
-add_task(async function test_host_permissions() {
+// Test that passing an OriginAttributesPattern into deleteDataFromSite only
+// clears permissions matching the pattern.
+add_task(async function test_removeBySiteAndOAPattern() {
+  let principalRegular = Services.scriptSecurityManager.createContentPrincipal(
+    Services.io.newURI("https://example.net"),
+    {}
+  );
+  let principalRegularSub =
+    Services.scriptSecurityManager.createContentPrincipal(
+      Services.io.newURI("https://sub.example.net"),
+      {}
+    );
+  let principalPrivateBrowsing =
+    Services.scriptSecurityManager.createContentPrincipal(
+      Services.io.newURI("https://example.net"),
+      { privateBrowsingId: 1 }
+    );
+  let principalPrivateBrowsingSub =
+    Services.scriptSecurityManager.createContentPrincipal(
+      Services.io.newURI("https://sub.example.net"),
+      { privateBrowsingId: 1 }
+    );
+  let principalPrivateBrowsingUnrelated =
+    Services.scriptSecurityManager.createContentPrincipal(
+      Services.io.newURI("https://example.org"),
+      { privateBrowsingId: 1 }
+    );
+
+  [
+    principalRegular,
+    principalRegularSub,
+    principalPrivateBrowsing,
+    principalPrivateBrowsingSub,
+    principalPrivateBrowsingUnrelated,
+  ].forEach(principal => {
+    Services.perms.addFromPrincipal(
+      principal,
+      "geo",
+      Services.perms.ALLOW_ACTION
+    );
+  });
+
+  info("Clear only private browsing mode permissions for example.net");
+  await new Promise(aResolve => {
+    Services.clearData.deleteDataFromSite(
+      "example.net",
+      { privateBrowsingId: 1 },
+      true,
+      Ci.nsIClearDataService.CLEAR_PERMISSIONS,
+      value => {
+        Assert.equal(value, 0);
+        aResolve();
+      }
+    );
+  });
+
+  info(
+    "Test that only the private browsing permissions for 'example.net' have been cleared."
+  );
+  [principalPrivateBrowsing, principalPrivateBrowsingSub].forEach(principal => {
+    Assert.equal(
+      Services.perms.testExactPermissionFromPrincipal(principal, "geo"),
+      Services.perms.UNKNOWN_ACTION,
+      "Permission has been removed for " + principal.origin
+    );
+  });
+
+  [
+    principalRegular,
+    principalRegularSub,
+    principalPrivateBrowsingUnrelated,
+  ].forEach(principal => {
+    Assert.equal(
+      Services.perms.testExactPermissionFromPrincipal(principal, "geo"),
+      Services.perms.ALLOW_ACTION,
+      "Permission still exists for " + principal.origin
+    );
+  });
+
+  Services.perms.removeAll();
+});
+
+add_task(async function removeByHost() {
   addTestPermissions();
 
   await new Promise(aResolve => {
@@ -316,6 +409,14 @@ add_task(async function test_host_permissions() {
     ).capability,
     Services.perms.ALLOW_ACTION
   );
+  Assert.equal(
+    PermissionTestUtils.getPermissionObject(
+      "https://example.com",
+      "3rdPartyFrameStorage^https://example.net",
+      true
+    ).capability,
+    Services.perms.ALLOW_ACTION
+  );
 
   Assert.equal(
     PermissionTestUtils.getPermissionObject(
@@ -359,6 +460,11 @@ add_task(async function test_3rdpartystorage_permissions() {
     "3rdPartyStorage^https://example.net",
     Services.perms.ALLOW_ACTION
   );
+  Services.perms.addFromPrincipal(
+    anotherPrincipal,
+    "3rdPartyFrameStorage^https://example.net",
+    Services.perms.ALLOW_ACTION
+  );
 
   const oneMoreUri = Services.io.newURI("https://example.org");
   const oneMorePrincipal =
@@ -379,6 +485,13 @@ add_task(async function test_3rdpartystorage_permissions() {
     Services.perms.getPermissionObject(
       anotherPrincipal,
       "3rdPartyStorage^https://example.net",
+      true
+    ) != null
+  );
+  Assert.ok(
+    Services.perms.getPermissionObject(
+      anotherPrincipal,
+      "3rdPartyFrameStorage^https://example.net",
       true
     ) != null
   );
@@ -412,13 +525,20 @@ add_task(async function test_3rdpartystorage_permissions() {
     ) == null
   );
   Assert.ok(
+    Services.perms.getPermissionObject(
+      anotherPrincipal,
+      "3rdPartyFrameStorage^https://example.net",
+      true
+    ) == null
+  );
+  Assert.ok(
     Services.perms.getPermissionObject(oneMorePrincipal, "cookie", true) != null
   );
 
   await new Promise(aResolve => {
     Services.clearData.deleteData(
       Ci.nsIClearDataService.CLEAR_PERMISSIONS,
-      value => aResolve()
+      () => aResolve()
     );
   });
 });

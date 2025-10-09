@@ -5,21 +5,21 @@
 /* Test that the message failed to move to a local folder remains on IMAP
  * server. */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
-var { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 function stop_server() {
   IMAPPump.incomingServer.closeCachedConnections();
   IMAPPump.server.stop();
-  let thread = gThreadManager.currentThread;
+  const thread = Services.tm.currentThread;
   while (thread.hasPendingEvents()) {
     thread.processNextEvent(true);
   }
@@ -34,25 +34,25 @@ add_setup(function () {
 });
 
 add_setup(async function () {
-  let messageGenerator = new MessageGenerator();
-  let messageString = messageGenerator.makeMessage().toMessageString();
-  let dataUri = Services.io.newURI(
+  const messageGenerator = new MessageGenerator();
+  const messageString = messageGenerator.makeMessage().toMessageString();
+  const dataUri = Services.io.newURI(
     "data:text/plain;base64," + btoa(messageString)
   );
-  let imapMsg = new ImapMessage(dataUri.spec, IMAPPump.mailbox.uidnext++, []);
+  const imapMsg = new ImapMessage(dataUri.spec, IMAPPump.mailbox.uidnext++, []);
   IMAPPump.mailbox.addMessage(imapMsg);
 
-  let listener = new PromiseTestUtils.PromiseUrlListener();
+  const listener = new PromiseTestUtils.PromiseUrlListener();
   IMAPPump.inbox.updateFolderWithListener(null, listener);
   await listener.promise;
 });
 
 add_task(async function move_messages() {
-  let msg = IMAPPump.inbox.msgDatabase.getMsgHdrForKey(
+  const msg = IMAPPump.inbox.msgDatabase.getMsgHdrForKey(
     IMAPPump.mailbox.uidnext - 1
   );
-  let copyListener = new PromiseTestUtils.PromiseCopyListener({
-    OnProgress(aProgress, aProgressMax) {
+  const copyListener = new PromiseTestUtils.PromiseCopyListener({
+    onProgress() {
       stop_server();
     },
   });
@@ -80,7 +80,7 @@ add_task(function endTest() {
   IMAPPump.server.resetTest();
   try {
     IMAPPump.incomingServer.closeCachedConnections();
-    let serverSink = IMAPPump.incomingServer.QueryInterface(
+    const serverSink = IMAPPump.incomingServer.QueryInterface(
       Ci.nsIImapServerSink
     );
     serverSink.abortQueuedUrls();
@@ -88,7 +88,7 @@ add_task(function endTest() {
     dump(ex);
   }
   IMAPPump.server.stop();
-  let thread = gThreadManager.currentThread;
+  const thread = Services.tm.currentThread;
   while (thread.hasPendingEvents()) {
     thread.processNextEvent(true);
   }

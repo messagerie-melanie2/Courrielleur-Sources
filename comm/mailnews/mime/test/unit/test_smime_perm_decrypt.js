@@ -8,20 +8,17 @@
  * or bad as expected.
  */
 
-var { MessageInjection } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageInjection.jsm"
+var { MessageInjection } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageInjection.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
-var { PromiseUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/PromiseUtils.sys.mjs"
+var { SmimeUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/SmimeUtils.sys.mjs"
 );
-var { SmimeUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/smimeUtils.jsm"
-);
-const { EnigmailPersistentCrypto } = ChromeUtils.import(
-  "chrome://openpgp/content/modules/persistentCrypto.jsm"
+const { EnigmailPersistentCrypto } = ChromeUtils.importESModule(
+  "chrome://openpgp/content/modules/persistentCrypto.sys.mjs"
 );
 var { setTimeout } = ChromeUtils.importESModule(
   "resource://gre/modules/Timer.sys.mjs"
@@ -30,23 +27,27 @@ var { setTimeout } = ChromeUtils.importESModule(
 let gCertValidityResult = 0;
 
 /**
- * @implements nsICertVerificationCallback
+ * @implements {nsICertVerificationCallback}
  */
 class CertVerificationResultCallback {
   constructor(callback) {
     this.callback = callback;
   }
-  verifyCertFinished(prErrorCode, verifiedChain, hasEVPolicy) {
+  verifyCertFinished(prErrorCode) {
     gCertValidityResult = prErrorCode;
     this.callback();
   }
 }
 
+/**
+ * @param {nsIX509Cert} cert
+ * @param {integer} date
+ */
 function testCertValidity(cert, date) {
-  let prom = new Promise((resolve, reject) => {
+  const prom = new Promise(resolve => {
     const certificateUsageEmailRecipient = 0x0020;
-    let result = new CertVerificationResultCallback(resolve);
-    let flags = Ci.nsIX509CertDB.FLAG_LOCAL_ONLY;
+    const result = new CertVerificationResultCallback(resolve);
+    const flags = Ci.nsIX509CertDB.FLAG_LOCAL_ONLY;
     const certdb = Cc["@mozilla.org/security/x509certdb;1"].getService(
       Ci.nsIX509CertDB
     );
@@ -63,7 +64,7 @@ function testCertValidity(cert, date) {
 }
 
 add_setup(async function () {
-  let messageInjection = new MessageInjection({ mode: "local" });
+  const messageInjection = new MessageInjection({ mode: "local" });
   gInbox = messageInjection.getInboxFolder();
   SmimeUtils.ensureNSS();
 
@@ -85,13 +86,14 @@ var gInbox;
 
 var smimeDataDirectory = "../../../data/smime/";
 
-let smimeHeaderSink = {
+const smimeSink = {
   expectResults(maxLen) {
     // dump("Restarting for next test\n");
-    this._deferred = PromiseUtils.defer();
+    this._deferred = Promise.withResolvers();
     this._expectedEvents = maxLen;
     this.countReceived = 0;
     this._results = [];
+    // Ensure checkFinished() only produces results once.
     this._resultsProduced = false;
     this.haveSignedBad = false;
     this.haveEncryptionBad = false;
@@ -165,7 +167,7 @@ let smimeHeaderSink = {
       this._deferred.resolve(this._results);
     }
   },
-  QueryInterface: ChromeUtils.generateQI(["nsIMsgSMIMEHeaderSink"]),
+  QueryInterface: ChromeUtils.generateQI(["nsIMsgSMIMESink"]),
 };
 
 /**
@@ -189,7 +191,7 @@ var gMessages = [
 var gDecFolder;
 
 add_task(async function copy_messages() {
-  for (let msg of gMessages) {
+  for (const msg of gMessages) {
     let promiseCopyListener = new PromiseTestUtils.PromiseCopyListener();
 
     MailServices.copy.copyFileMessage(
@@ -213,7 +215,7 @@ add_task(async function copy_messages() {
 add_task(async function check_smime_message() {
   let hdrIndex = 0;
 
-  for (let msg of gMessages) {
+  for (const msg of gMessages) {
     console.log("checking " + msg.filename);
 
     let eventsExpected = 0;
@@ -226,12 +228,10 @@ add_task(async function check_smime_message() {
 
     let hdr = mailTestUtils.getMsgHdrN(gInbox, hdrIndex);
     let uri = hdr.folder.getUriForMsg(hdr);
-    let sinkPromise = smimeHeaderSink.expectResults(eventsExpected);
+    let sinkPromise = smimeSink.expectResults(eventsExpected);
 
-    let conversion = apply_mime_conversion(uri, smimeHeaderSink);
-    await conversion.promise;
-
-    let contents = conversion._data;
+    let conversion = apply_mime_conversion(uri, smimeSink);
+    let contents = await conversion.promise;
     // dump("contents: " + contents + "\n");
 
     // Check that we're also using the display output.
@@ -239,7 +239,7 @@ add_task(async function check_smime_message() {
 
     await sinkPromise;
 
-    let r = smimeHeaderSink._results;
+    let r = smimeSink._results;
     Assert.equal(r.length, eventsExpected);
 
     if (msg.enc) {
@@ -262,12 +262,10 @@ add_task(async function check_smime_message() {
 
     hdr = mailTestUtils.getMsgHdrN(gDecFolder, hdrIndex);
     uri = hdr.folder.getUriForMsg(hdr);
-    sinkPromise = smimeHeaderSink.expectResults(eventsExpected);
+    sinkPromise = smimeSink.expectResults(eventsExpected);
 
-    conversion = apply_mime_conversion(uri, smimeHeaderSink);
-    await conversion.promise;
-
-    contents = conversion._data;
+    conversion = apply_mime_conversion(uri, smimeSink);
+    contents = await conversion.promise;
     // dump("contents: " + contents + "\n");
 
     // Check that we're also using the display output.
@@ -275,10 +273,10 @@ add_task(async function check_smime_message() {
 
     // A message without S/MIME content didn't produce any events,
     // so we must manually force this check.
-    smimeHeaderSink.checkFinished();
+    smimeSink.checkFinished();
     await sinkPromise;
 
-    r = smimeHeaderSink._results;
+    r = smimeSink._results;
     Assert.equal(r.length, eventsExpected);
 
     if (msg.sig) {

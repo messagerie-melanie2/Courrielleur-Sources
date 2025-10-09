@@ -3,6 +3,9 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+with Files("**"):
+    BUG_COMPONENT = ("Mailnews Core", "MIME")
+
 DIRS += [
     "public",
     "src",
@@ -13,11 +16,11 @@ DIRS += [
 TEST_DIRS += ["test"]
 
 EXTRA_JS_MODULES.jsmime += [
-    "jsmime/jsmime.js",
+    "jsmime/jsmime.mjs",
 ]
 
 TESTING_JS_MODULES.jsmime += [
     "jsmime/test/unit/mock_date.js",
 ]
 
-XPCSHELL_TESTS_MANIFESTS += ["jsmime/test/unit/xpcshell.ini"]
+XPCSHELL_TESTS_MANIFESTS += ["jsmime/test/unit/xpcshell.toml"]

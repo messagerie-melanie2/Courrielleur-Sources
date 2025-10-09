@@ -8,6 +8,7 @@
 #define mozilla_dom_BlobURLProtocolHandler_h
 
 #include "mozilla/Attributes.h"
+#include "mozilla/dom/ipc/IdType.h"
 #include "nsIProtocolHandler.h"
 #include "nsIURI.h"
 #include "nsCOMPtr.h"
@@ -46,35 +47,38 @@ class BlobURLProtocolHandler final : public nsIProtocolHandler,
   // Methods for managing uri->object mapping
   // AddDataEntry creates the URI with the given scheme and returns it in aUri
   static nsresult AddDataEntry(BlobImpl*, nsIPrincipal*,
-                               const Maybe<nsID>& aAgentClusterId,
+                               const nsCString& aPartitionKey,
                                nsACString& aUri);
   static nsresult AddDataEntry(MediaSource*, nsIPrincipal*,
-                               const Maybe<nsID>& aAgentClusterId,
+                               const nsCString& aPartitionKey,
                                nsACString& aUri);
   // IPC only
-  static void AddDataEntry(const nsACString& aURI, nsIPrincipal* aPrincipal,
-                           const Maybe<nsID>& aAgentClusterId,
-                           BlobImpl* aBlobImpl);
+  static void AddDataEntry(
+      const nsACString& aURI, nsIPrincipal* aPrincipal,
+      const nsCString& aPartitionKey, BlobImpl* aBlobImpl,
+      const Maybe<ContentParentId>& aContentParentId = Nothing());
 
-  // These methods revoke a blobURL. Because some operations could still be in
-  // progress, the revoking consists in marking the blobURL as revoked and in
-  // removing it after RELEASING_TIMER milliseconds.
-  static void RemoveDataEntry(const nsACString& aUri,
-                              bool aBroadcastToOTherProcesses = true);
+  // These methods revoke a list of blobURLs. Because some operations could
+  // still be in progress, the revoking consists in marking the blobURL as
+  // revoked and in removing it after RELEASING_TIMER milliseconds.
+  static void RemoveDataEntries(const nsTArray<nsCString>& aUris,
+                                bool aBroadcastToOTherProcesses = true);
+  static void RemoveDataEntriesPerContentParent(
+      const ContentParentId& aContentParentId);
   // Returns true if the entry was allowed to be removed.
   static bool RemoveDataEntry(const nsACString& aUri, nsIPrincipal* aPrincipal,
-                              const Maybe<nsID>& aAgentClusterId);
+                              const nsCString& aPartitionKey);
 
   static void RemoveDataEntries();
 
-  static bool HasDataEntry(const nsACString& aUri);
+  static bool HasDataEntryTypeBlob(const nsACString& aUri);
 
   static bool GetDataEntry(const nsACString& aUri, BlobImpl** aBlobImpl,
                            nsIPrincipal* aLoadingPrincipal,
                            nsIPrincipal* aTriggeringPrincipal,
                            const OriginAttributes& aOriginAttributes,
                            uint64_t aInnerWindowId,
-                           const Maybe<nsID>& aAgentClusterId,
+                           const nsCString& aPartitionKey,
                            bool aAlsoIfRevoked = false);
 
   static void Traverse(const nsACString& aUri,
@@ -86,7 +90,7 @@ class BlobURLProtocolHandler final : public nsIProtocolHandler,
   // of an unexpected XPCOM or IPC error). This method returns false if already
   // shutdown or if the helper method returns false, true otherwise.
   static bool ForEachBlobURL(
-      std::function<bool(BlobImpl*, nsIPrincipal*, const Maybe<nsID>&,
+      std::function<bool(BlobImpl*, nsIPrincipal*, const nsCString&,
                          const nsACString&, bool aRevoked)>&& aCb);
 
   // This method returns false if aURI is not a known BlobURL. Otherwise it
@@ -121,9 +125,6 @@ class BlobURLProtocolHandler final : public nsIProtocolHandler,
 bool IsBlobURI(nsIURI* aUri);
 bool IsMediaSourceURI(nsIURI* aUri);
 
-// Return true if inner scheme of blobURL is http or https, false otherwise.
-bool BlobURLSchemeIsHTTPOrHTTPS(const nsACString& aUri);
-
 }  // namespace dom
 }  // namespace mozilla
 
@@ -133,6 +134,10 @@ extern nsresult NS_GetBlobForBlobURI(nsIURI* aURI,
 extern nsresult NS_GetBlobForBlobURISpec(const nsACString& aSpec,
                                          mozilla::dom::BlobImpl** aBlob,
                                          bool aAlsoIfRevoked = false);
+
+extern nsresult NS_SetChannelContentRangeForBlobURI(nsIChannel* aChannel,
+                                                    nsIURI* aURI,
+                                                    nsACString& aRangeHeader);
 
 extern nsresult NS_GetSourceForMediaSourceURI(
     nsIURI* aURI, mozilla::dom::MediaSource** aSource);

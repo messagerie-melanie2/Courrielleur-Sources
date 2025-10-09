@@ -1,12 +1,12 @@
 // Functions shared by gc/pretenure-*.js tests
 
-const is64bit = getBuildConfiguration()['pointer-byte-size'] === 8;
+const is64bit = getBuildConfiguration("pointer-byte-size") === 8;
 
 // Count of objects that will exceed the size of the nursery.
 const nurseryCount = is64bit ? 25000 : 50000;
 
 // Count of objects that will exceed the tenured heap collection threshold.
-const tenuredCount = is64bit ? 300000 : 600000;
+const tenuredCount = is64bit ? 400000 : 800000;
 
 function setupPretenureTest() {
   // The test requires that baseline is enabled and is not bypassed with
@@ -21,9 +21,15 @@ function setupPretenureTest() {
   // Disable zeal modes that will interfere with this test.
   gczeal(0);
 
+  setJitCompilerOption("offthread-compilation.enable", 0)
+
   // Restrict nursery size so we can fill it quicker, and ensure it is resized.
-  gcparam("minNurseryBytes", 1024 * 1024);
-  gcparam("maxNurseryBytes", 1024 * 1024);
+  let size = 1024 * 1024;
+  if (gcparam("semispaceNurseryEnabled")) {
+    size *= 2;
+  }
+  gcparam("minNurseryBytes", size);
+  gcparam("maxNurseryBytes", size);
 
   // Limit allocation threshold so we trigger major GCs sooner.
   gcparam("allocationThreshold", 1 /* MB */);
@@ -37,7 +43,10 @@ function setupPretenureTest() {
   // Force a nursery collection to apply size parameters.
   let o = {};
 
-  gc();
+  // Run a full (all-zones) shrinking GC. The heap size after this GC is
+  // significant because it affects the number of major GCs triggered by the
+  // tests.
+  gc(undefined, 'shrinking');
 }
 
 function allocateObjects(count, longLived) {
@@ -67,8 +76,14 @@ function allocateArrays(count, longLived) {
 }
 
 function gcCounts() {
-  return { minor: gcparam("minorGCNumber"),
-           major: gcparam("majorGCNumber") };
+  let major = gcparam("majorGCNumber")
+  let minor = gcparam("minorGCNumber");
+
+  // Only report minor collections that didn't happen as part of a major GC.
+  assertEq(minor >= major, true);
+  minor -= major;
+
+  return { minor, major };
 }
 
 function runTestAndCountCollections(thunk) {

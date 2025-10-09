@@ -17,13 +17,8 @@ ChromeUtils.defineESModuleGetters(this, {
   ExtensionPermissions: "resource://gre/modules/ExtensionPermissions.sys.mjs",
   ExtensionSettingsStore:
     "resource://gre/modules/ExtensionSettingsStore.sys.mjs",
+  HomePage: "resource:///modules/HomePage.sys.mjs",
 });
-
-ChromeUtils.defineModuleGetter(
-  this,
-  "HomePage",
-  "resource:///modules/HomePage.jsm"
-);
 
 const DEFAULT_SEARCH_STORE_TYPE = "default_search";
 const DEFAULT_SEARCH_SETTING_NAME = "defaultSearch";
@@ -37,7 +32,7 @@ const HOMEPAGE_CONFIRMED_TYPE = "homepageNotification";
 const HOMEPAGE_SETTING_TYPE = "prefs";
 const HOMEPAGE_SETTING_NAME = "homepage_override";
 
-XPCOMUtils.defineLazyGetter(this, "homepagePopup", () => {
+ChromeUtils.defineLazyGetter(this, "homepagePopup", () => {
   return new ExtensionControlledPopup({
     confirmedType: HOMEPAGE_CONFIRMED_TYPE,
     observerTopic: "browser-open-homepage-start",
@@ -46,7 +41,6 @@ XPCOMUtils.defineLazyGetter(this, "homepagePopup", () => {
     settingKey: HOMEPAGE_SETTING_NAME,
     descriptionId: "extension-homepage-notification-description",
     descriptionMessageId: "homepageControlled.message",
-    learnMoreMessageId: "homepageControlled.learnMore",
     learnMoreLink: "extension-home",
     preferencesLocation: "home-homeOverride",
     preferencesEntrypoint: "addon-manage-home-override",
@@ -62,7 +56,7 @@ XPCOMUtils.defineLazyGetter(this, "homepagePopup", () => {
       Services.prefs.addObserver(HOMEPAGE_PREF, async function prefObserver() {
         Services.prefs.removeObserver(HOMEPAGE_PREF, prefObserver);
         let loaded = waitForTabLoaded(tab);
-        win.BrowserHome();
+        win.BrowserCommands.home();
         await loaded;
         // Manually trigger an event in case this is controlled again.
         popup.open();
@@ -142,9 +136,8 @@ async function handleHomepageUrl(extension, homepageUrl) {
   // eslint-disable-next-line mozilla/balanced-listeners
   extension.on("add-permissions", async (ignoreEvent, permissions) => {
     if (permissions.permissions.includes("internal:privateBrowsingAllowed")) {
-      let item = await ExtensionPreferencesManager.getSetting(
-        "homepage_override"
-      );
+      let item =
+        await ExtensionPreferencesManager.getSetting("homepage_override");
       if (item && item.id == extension.id) {
         Services.prefs.setBoolPref(HOMEPAGE_PRIVATE_ALLOWED, true);
       }
@@ -153,9 +146,8 @@ async function handleHomepageUrl(extension, homepageUrl) {
   // eslint-disable-next-line mozilla/balanced-listeners
   extension.on("remove-permissions", async (ignoreEvent, permissions) => {
     if (permissions.permissions.includes("internal:privateBrowsingAllowed")) {
-      let item = await ExtensionPreferencesManager.getSetting(
-        "homepage_override"
-      );
+      let item =
+        await ExtensionPreferencesManager.getSetting("homepage_override");
       if (item && item.id == extension.id) {
         Services.prefs.setBoolPref(HOMEPAGE_PRIVATE_ALLOWED, false);
       }
@@ -265,7 +257,7 @@ this.chrome_settings_overrides = class extends ExtensionAPI {
     await chrome_settings_overrides.removeEngine(id);
   }
 
-  async onManifestEntry(entryName) {
+  async onManifestEntry() {
     let { extension } = this;
     let { manifest } = extension;
     let homepageUrl = manifest.chrome_settings_overrides.homepage;
@@ -275,23 +267,19 @@ this.chrome_settings_overrides = class extends ExtensionAPI {
       const ignoreHomePageUrl = await HomePage.shouldIgnore(homepageUrl);
 
       if (ignoreHomePageUrl) {
-        Services.telemetry.recordEvent(
-          "homepage",
-          "preference",
-          "ignore",
-          "set_blocked_extension",
-          {
-            webExtensionId: extension.id,
-          }
-        );
+        Glean.homepage.preferenceIgnore.record({
+          value: "set_blocked_extension",
+          webExtensionId: extension.id,
+        });
       } else {
         await handleHomepageUrl(extension, homepageUrl);
       }
     }
     if (manifest.chrome_settings_overrides.search_provider) {
       // Registering a search engine can potentially take a long while,
-      // or not complete at all (when searchInitialized is never resolved),
-      // so we are deliberately not awaiting the returned promise here.
+      // or not complete at all (when Services.search.promiseInitialized is
+      // never resolved), so we are deliberately not awaiting the returned
+      // promise here.
       let searchStartupPromise =
         this.processSearchProviderManifestEntry().finally(() => {
           if (
@@ -411,7 +399,7 @@ this.chrome_settings_overrides = class extends ExtensionAPI {
       return;
     }
 
-    await searchInitialized;
+    await Services.search.promiseInitialized;
     if (!this.extension) {
       Cu.reportError(
         `Extension shut down before search provider was registered`

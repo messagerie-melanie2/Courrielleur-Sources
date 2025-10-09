@@ -35,7 +35,6 @@ const backgroundtaskPhases = {
         "resource://gre/modules/Console.sys.mjs",
         "resource://gre/modules/EnterprisePolicies.sys.mjs",
         "resource://gre/modules/EnterprisePoliciesParent.sys.mjs",
-        "resource://gre/modules/PromiseUtils.sys.mjs",
         "resource://gre/modules/XPCOMUtils.sys.mjs",
         "resource://gre/modules/nsAsyncShutdown.sys.mjs",
       ],
@@ -118,7 +117,9 @@ const backgroundtaskPhases = {
   },
   AfterAwaitRunBackgroundTask: {
     allowlist: {
-      modules: [],
+      modules: [
+        "resource://devtools/shared/security/DevToolsSocketStatus.sys.mjs",
+      ],
       services: [],
     },
   },
@@ -199,7 +200,7 @@ add_task(async function test_xpcom_graph_wait() {
 
   function newMarkers() {
     return {
-      // The equivalent of `Cu.loadedJSModules` + `Cu.loadedESModules`.
+      // The equivalent of `Cu.loadedESModules`.
       modules: [],
       services: [],
     };

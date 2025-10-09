@@ -1,5 +1,8 @@
+BTOA_ConvertItemToAscii
+CERT_CreateName
 CERT_GetCertNicknames
 CERT_VerifyCert
+HASH_GetHashOidTagByHashType_Util
 NSSBase64Decoder_Create_Util
 NSSBase64Decoder_Destroy_Util
 NSSBase64Decoder_Update_Util
@@ -30,6 +33,7 @@ NSS_CMSEnvelopedData_GetContentInfo
 NSS_CMSMessage_ContentLevelCount
 NSS_CMSMessage_GetContent
 NSS_CMSMessage_IsEncrypted
+NSS_CMSRecipient_IsSupported
 NSS_CMSRecipientInfo_Create
 NSS_CMSSignedData_AddCertChain
 NSS_CMSSignedData_AddCertList
@@ -48,6 +52,7 @@ NSS_CMSSignerInfo_AddSigningTime
 NSS_CMSSignerInfo_AddSMIMECaps
 NSS_CMSSignerInfo_AddSMIMEEncKeyPrefs
 NSS_CMSSignerInfo_Create
+NSS_CMSSignerInfo_Destroy
 NSS_CMSSignerInfo_GetDigestAlgTag
 NSS_CMSSignerInfo_GetSignerCommonName
 NSS_CMSSignerInfo_GetSignerEmailAddress

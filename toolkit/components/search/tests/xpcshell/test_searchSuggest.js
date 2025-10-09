@@ -3,22 +3,16 @@
 /* eslint-disable mozilla/no-arbitrary-setTimeout */
 
 /**
- * Testing search suggestions from SearchSuggestionController.jsm.
+ * Testing search suggestions from SearchSuggestionController.sys.mjs.
  */
 
 "use strict";
 
-const { AppConstants } = ChromeUtils.importESModule(
-  "resource://gre/modules/AppConstants.sys.mjs"
-);
 const { FormHistory } = ChromeUtils.importESModule(
   "resource://gre/modules/FormHistory.sys.mjs"
 );
 const { SearchSuggestionController } = ChromeUtils.importESModule(
-  "resource://gre/modules/SearchSuggestionController.sys.mjs"
-);
-const { PromiseUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/PromiseUtils.sys.mjs"
+  "moz-src:///toolkit/components/search/SearchSuggestionController.sys.mjs"
 );
 const { TelemetryTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/TelemetryTestUtils.sys.mjs"
@@ -29,7 +23,7 @@ const SEARCH_TELEMETRY_LATENCY = "SEARCH_SUGGESTIONS_LATENCY_MS";
 
 // We must make sure the FormHistoryStartup component is
 // initialized in order for it to respond to FormHistory
-// requests from nsFormAutoComplete.js.
+// requests from FormHistoryAutoComplete.sys.mjs.
 var formHistoryStartup = Cc[
   "@mozilla.org/satchel/form-history-startup;1"
 ].getService(Ci.nsIObserver);
@@ -37,13 +31,13 @@ formHistoryStartup.observe(null, "profile-after-change", null);
 
 var getEngine, postEngine, unresolvableEngine, alternateJSONEngine;
 
-add_task(async function setup() {
+add_setup(async function () {
   Services.prefs.setBoolPref("browser.search.suggest.enabled", true);
   // These tests intentionally test broken connections.
   consoleAllowList = consoleAllowList.concat([
     "Non-200 status or empty HTTP response: 404",
     "Non-200 status or empty HTTP response: 500",
-    "Unexpected response, searchString does not match remote response",
+    "SearchSuggestionController found an unexpected string value",
     "HTTP request timeout",
     "HTTP error",
   ]);
@@ -51,24 +45,14 @@ add_task(async function setup() {
   let server = useHttpServer();
   server.registerContentType("sjs", "sjs");
 
-  await AddonTestUtils.promiseStartupManager();
-
-  registerCleanupFunction(async () => {
-    // Remove added form history entries
-    await updateSearchHistory("remove", null);
-    Services.prefs.clearUserPref("browser.search.suggest.enabled");
-  });
-});
-
-add_task(async function add_test_engines() {
   let getEngineData = {
-    baseURL: gDataUrl,
+    baseURL: `${gHttpURL}/sjs/`,
     name: "GET suggestion engine",
     method: "GET",
   };
 
   let postEngineData = {
-    baseURL: gDataUrl,
+    baseURL: `${gHttpURL}/sjs/`,
     name: "POST suggestion engine",
     method: "POST",
   };
@@ -80,25 +64,33 @@ add_task(async function add_test_engines() {
   };
 
   let alternateJSONSuggestEngineData = {
-    baseURL: gDataUrl,
+    baseURL: `${gHttpURL}/sjs/`,
     name: "Alternative JSON suggestion type",
     method: "GET",
     alternativeJSONType: true,
   };
 
-  getEngine = await SearchTestUtils.promiseNewSearchEngine({
-    url: `${gDataUrl}engineMaker.sjs?${JSON.stringify(getEngineData)}`,
+  getEngine = await SearchTestUtils.installOpenSearchEngine({
+    url: `${gHttpURL}/sjs/engineMaker.sjs?${JSON.stringify(getEngineData)}`,
   });
-  postEngine = await SearchTestUtils.promiseNewSearchEngine({
-    url: `${gDataUrl}engineMaker.sjs?${JSON.stringify(postEngineData)}`,
+  postEngine = await SearchTestUtils.installOpenSearchEngine({
+    url: `${gHttpURL}/sjs/engineMaker.sjs?${JSON.stringify(postEngineData)}`,
   });
-  unresolvableEngine = await SearchTestUtils.promiseNewSearchEngine({
-    url: `${gDataUrl}engineMaker.sjs?${JSON.stringify(unresolvableEngineData)}`,
+  unresolvableEngine = await SearchTestUtils.installOpenSearchEngine({
+    url: `${gHttpURL}/sjs/engineMaker.sjs?${JSON.stringify(
+      unresolvableEngineData
+    )}`,
   });
-  alternateJSONEngine = await SearchTestUtils.promiseNewSearchEngine({
-    url: `${gDataUrl}engineMaker.sjs?${JSON.stringify(
+  alternateJSONEngine = await SearchTestUtils.installOpenSearchEngine({
+    url: `${gHttpURL}/sjs/engineMaker.sjs?${JSON.stringify(
       alternateJSONSuggestEngineData
     )}`,
+  });
+
+  registerCleanupFunction(async () => {
+    // Remove added form history entries
+    await updateSearchHistory("remove", null);
+    Services.prefs.clearUserPref("browser.search.suggest.enabled");
   });
 });
 
@@ -131,32 +123,6 @@ add_task(async function simple_remote_no_local_result() {
   Assert.equal(result.remote[0].value, "Mozilla");
   Assert.equal(result.remote[1].value, "modern");
   Assert.equal(result.remote[2].value, "mom");
-
-  assertLatencyHistogram(histogram, true);
-});
-
-add_task(async function simple_remote_no_local_result_telemetry() {
-  Services.telemetry.clearScalars();
-
-  let histogram = TelemetryTestUtils.getAndClearKeyedHistogram(
-    SEARCH_TELEMETRY_LATENCY
-  );
-
-  let controller = new SearchSuggestionController();
-  await controller.fetch("mo", false, getEngine);
-
-  let scalars = {};
-  const key = "browser.search.data_transferred";
-
-  await TestUtils.waitForCondition(() => {
-    scalars =
-      Services.telemetry.getSnapshotForKeyedScalars("main", false).parent || {};
-    return key in scalars;
-  }, "should have the expected keyed scalars");
-
-  const scalar = scalars[key];
-  Assert.ok(`sggt-${ENGINE_NAME}` in scalar, "correct telemetry category");
-  Assert.notEqual(scalar[`sggt-${ENGINE_NAME}`], 0, "bandwidth logged");
 
   assertLatencyHistogram(histogram, true);
 });
@@ -589,9 +555,7 @@ add_task(async function stop_search() {
   let histogram = TelemetryTestUtils.getAndClearKeyedHistogram(
     SEARCH_TELEMETRY_LATENCY
   );
-  let controller = new SearchSuggestionController(result => {
-    do_throw("The callback shouldn't be called after stop()");
-  });
+  let controller = new SearchSuggestionController();
   let resultPromise = controller.fetch("mo", false, getEngine);
   controller.stop();
   await resultPromise.then(result => {
@@ -768,6 +732,27 @@ add_task(async function http_500() {
   assertLatencyHistogram(histogram, true);
 });
 
+add_task(async function invalid_response_does_not_throw() {
+  let controller = new SearchSuggestionController();
+  // Although the server will return invalid json, the error is handled by
+  // the suggestion controller, and so we receive no results.
+  let result = await controller.fetch("invalidJSON", false, getEngine);
+  Assert.equal(result.term, "invalidJSON");
+  Assert.equal(result.local.length, 0);
+  Assert.equal(result.remote.length, 0);
+});
+
+add_task(async function invalid_content_type_treated_as_json() {
+  let controller = new SearchSuggestionController();
+  // An invalid content type is overridden as we expect all the responses to
+  // be JSON.
+  let result = await controller.fetch("invalidContentType", false, getEngine);
+  Assert.equal(result.term, "invalidContentType");
+  Assert.equal(result.local.length, 0);
+  Assert.equal(result.remote.length, 1);
+  Assert.equal(result.remote[0].value, "invalidContentType response");
+});
+
 add_task(async function unresolvable_server() {
   await updateSearchHistory("bump", "Unresolvable Server Entry");
 
@@ -786,10 +771,7 @@ add_task(async function unresolvable_server() {
   Assert.equal(result.local[0].value, "Unresolvable Server Entry");
   Assert.equal(result.remote.length, 0);
 
-  // This latency assert fails on Windows 7 (NT version 6.1), so skip it there.
-  if (!AppConstants.isPlatformAndVersionAtMost("win", "6.1")) {
-    assertLatencyHistogram(histogram, true);
-  }
+  assertLatencyHistogram(histogram, true);
 });
 
 // Exception handling
@@ -841,7 +823,7 @@ add_task(async function test_userContextId() {
     userContextId
   ) {
     Assert.equal(userContextId, 1);
-    return PromiseUtils.defer();
+    return Promise.withResolvers();
   };
 
   controller.fetch("test", false, getEngine, 1);

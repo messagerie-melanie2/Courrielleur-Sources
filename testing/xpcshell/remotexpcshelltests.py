@@ -20,7 +20,6 @@ import mozdevice
 import mozfile
 import mozinfo
 import runxpcshelltests as xpcshell
-import six
 from mozdevice import ADBDevice, ADBDeviceFactory, ADBTimeoutError
 from mozlog import commandline
 from xpcshellcommandline import parser_remote
@@ -28,7 +27,7 @@ from xpcshellcommandline import parser_remote
 here = os.path.dirname(os.path.abspath(__file__))
 
 
-class RemoteProcessMonitor(object):
+class RemoteProcessMonitor:
     processStatus = []
 
     def __init__(self, package, device, log, remoteLogFile):
@@ -62,7 +61,6 @@ class RemoteProcessMonitor(object):
                 self.package,
                 intent="org.mozilla.geckoview.test_runner.XPCSHELL_TEST_MAIN",
                 activity_name="TestRunnerActivity",
-                e10s=True,
             )
             # Newer Androids require that background services originate from
             # active apps, so wait here until the test runner is the top
@@ -98,7 +96,6 @@ class RemoteProcessMonitor(object):
         self.device.launch_service(
             self.package,
             activity_name=("XpcshellTestRunnerService$i%d" % selectedProcess),
-            e10s=True,
             moz_env=env,
             grant_runtime_permissions=False,
             extra_args=extra_args,
@@ -125,6 +122,9 @@ class RemoteProcessMonitor(object):
             time.sleep(interval)
             timer += interval
             interval *= 1.5
+            # We're using exponential back-off. To avoid unnecessarily waiting
+            # for too long, cap the maximum sleep interval to 15 seconds.
+            interval = min(15, interval)
             if timeout and timer > timeout:
                 status = False
                 self.log.info(
@@ -273,7 +273,6 @@ class RemoteXPCShellTestThread(xpcshell.XPCShellTestThread):
         # change base class' paths to remote paths and use base class to build command
         self.xpcshell = posixpath.join(self.remoteBinDir, "xpcw")
         self.headJSPath = posixpath.join(self.remoteScriptsDir, "head.js")
-        self.httpdJSPath = posixpath.join(self.remoteComponentsDir, "httpd.js")
         self.testingModulesDir = self.remoteModulesDir
         self.testharnessdir = self.remoteScriptsDir
         xpcsCmd = xpcshell.XPCShellTestThread.buildXpcsCmd(self)
@@ -383,7 +382,7 @@ class RemoteXPCShellTestThread(xpcshell.XPCShellTestThread):
 
 
 # A specialization of XPCShellTests that runs tests on an Android device.
-class XPCShellRemote(xpcshell.XPCShellTests, object):
+class XPCShellRemote(xpcshell.XPCShellTests):
     def __init__(self, options, log):
         xpcshell.XPCShellTests.__init__(self, log)
 
@@ -507,7 +506,7 @@ class XPCShellRemote(xpcshell.XPCShellTests, object):
         localWrapper = tempfile.mktemp()
         with open(localWrapper, "w") as f:
             f.write("#!/system/bin/sh\n")
-            for envkey, envval in six.iteritems(self.env):
+            for envkey, envval in self.env.items():
                 f.write("export %s=%s\n" % (envkey, envval))
             f.writelines(
                 [
@@ -639,8 +638,8 @@ class XPCShellRemote(xpcshell.XPCShellTests, object):
                     file=sys.stderr,
                 )
 
-        local = os.path.join(self.localBin, "components/httpd.js")
-        remoteFile = posixpath.join(self.remoteComponentsDir, "httpd.js")
+        local = os.path.join(self.localBin, "components/httpd.sys.mjs")
+        remoteFile = posixpath.join(self.remoteComponentsDir, "httpd.sys.mjs")
         self.device.push(local, remoteFile)
         self.device.chmod(remoteFile)
 
@@ -653,12 +652,7 @@ class XPCShellRemote(xpcshell.XPCShellTests, object):
 
             self.pushLibs()
         else:
-            localB2G = os.path.join(self.options["objdir"], "dist", "b2g")
-            if os.path.exists(localB2G):
-                self.device.push(localB2G, self.remoteBinDir)
-                self.device.chmod(self.remoteBinDir)
-            else:
-                raise Exception("unable to install gre: no APK and not b2g")
+            raise Exception("unable to install gre: no APK")
 
     def pushLibs(self):
         pushed_libs_count = 0
@@ -693,7 +687,8 @@ class XPCShellRemote(xpcshell.XPCShellTests, object):
         self.device.push(self.xpcDir, self.remoteScriptsDir, timeout=600)
         self.device.chmod(self.remoteScriptsDir, recursive=True)
 
-    def setupSocketConnections(self):
+    def trySetupNode(self):
+        super(XPCShellRemote, self).trySetupNode()
         # make node host ports visible to device
         if "MOZHTTP2_PORT" in self.env:
             port = "tcp:{}".format(self.env["MOZHTTP2_PORT"])
@@ -708,6 +703,22 @@ class XPCShellRemote(xpcshell.XPCShellTests, object):
             )
             self.log.info("reversed MOZNODE_EXEC_PORT connection for port " + port)
 
+    def shutdownNode(self):
+        super(XPCShellRemote, self).shutdownNode()
+
+        if "MOZHTTP2_PORT" in self.env:
+            port = "tcp:{}".format(self.env["MOZHTTP2_PORT"])
+            self.device.remove_socket_connections(
+                ADBDevice.SOCKET_DIRECTION_REVERSE, port
+            )
+            self.log.info("cleared MOZHTTP2_PORT connection for port " + port)
+        if "MOZNODE_EXEC_PORT" in self.env:
+            port = "tcp:{}".format(self.env["MOZNODE_EXEC_PORT"])
+            self.device.remove_socket_connections(
+                ADBDevice.SOCKET_DIRECTION_REVERSE, port
+            )
+            self.log.info("cleared MOZNODE_EXEC_PORT connection for port " + port)
+
     def buildTestList(self, test_tags=None, test_paths=None, verify=False):
         xpcshell.XPCShellTests.buildTestList(
             self, test_tags=test_tags, test_paths=test_paths, verify=verify
@@ -719,11 +730,6 @@ class XPCShellRemote(xpcshell.XPCShellTests, object):
             abbrevTestDir = os.path.relpath(testdir, self.xpcDir)
             remoteScriptDir = posixpath.join(self.remoteScriptsDir, abbrevTestDir)
             self.pathMapping.append(PathMapping(testdir, remoteScriptDir))
-        # This is not related to building the test list, but since this is called late
-        # in the test suite run, this is a convenient place to finalize preparations;
-        # in particular, these operations cannot be executed much earlier because
-        # self.env may not be finalized.
-        self.setupSocketConnections()
         if self.options["setup"]:
             self.pushWrapper()
 
@@ -752,13 +758,6 @@ class PathMapping:
 
 
 def main():
-    if sys.version_info < (2, 7):
-        print(
-            "Error: You must use python version 2.7 or newer but less than 3.0",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
     parser = parser_remote()
     options = parser.parse_args()
 

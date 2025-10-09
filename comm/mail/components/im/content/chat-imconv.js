@@ -86,7 +86,7 @@
 
       this.directedUnreadCount = 0;
 
-      new MutationObserver(mutations => {
+      new MutationObserver(() => {
         if (!this.convView || !this.convView.loaded) {
           return;
         }
@@ -100,7 +100,7 @@
       // @implements {nsIObserver}
       this.observer = {
         QueryInterface: ChromeUtils.generateQI(["nsIObserver"]),
-        observe: function (subject, topic, data) {
+        observe: function (subject, topic) {
           if (
             topic == "target-prpl-conversation-changed" ||
             topic == "unread-message-count-changed" ||
@@ -123,10 +123,10 @@
       };
 
       if (this.hasAttribute("is-search-result")) {
-        let icon = this.querySelector(".protoIcon");
+        const icon = this.querySelector(".protoIcon");
         icon.classList.add("searchProtoIcon");
         icon.setAttribute("src", "chrome://global/skin/icons/search-glass.svg");
-        let statusIcon = this.querySelector(".smallStatusIcon");
+        const statusIcon = this.querySelector(".smallStatusIcon");
         statusIcon.hidden = true;
         this.setAttribute("unreadCount", "0");
         this.setAttribute("unreadTargetedCount", "0");
@@ -166,7 +166,7 @@
      * Set the conversation this item should represent. Updates appearance and
      * adds observers to keep it up to date.
      *
-     * @param {imIConversation} conv - Conversation this item represents.
+     * @param {IMConversation} conv - Conversation this item represents.
      */
     build(conv) {
       this.conv = conv;
@@ -221,7 +221,7 @@
         chatHandler.updateTitle();
       }
 
-      let statusIcon = this.querySelector(".smallStatusIcon");
+      const statusIcon = this.querySelector(".smallStatusIcon");
       let statusName;
       statusIcon.hidden = false;
       if (this.conv.isChat) {
@@ -250,7 +250,7 @@
         }
       } else {
         let statusType = Ci.imIStatusInfo.STATUS_UNKNOWN;
-        let buddy = this.conv.buddy;
+        const buddy = this.conv.buddy;
         if (buddy && buddy.account.connected) {
           statusType = buddy.statusType;
         }
@@ -261,7 +261,7 @@
       }
 
       if (!this.hasAttribute("is-search-result")) {
-        let protoIcon = this.querySelector(".protoIcon");
+        const protoIcon = this.querySelector(".protoIcon");
         protoIcon.setAttribute(
           "src",
           ChatIcons.getProtocolIconURI(this.conv.account.protocol)
@@ -287,7 +287,7 @@
       // we do the actual selection change only after this conversation
       // item is fully destroyed and removed from the list.
       let newSelectedItem;
-      let list = this.parentNode;
+      const list = this.parentNode;
       if (list.selectedItem == this) {
         newSelectedItem = this.previousElementSibling;
       }
@@ -319,7 +319,7 @@
         return;
       }
 
-      let accelKeyPressed =
+      const accelKeyPressed =
         AppConstants.platform == "macosx" ? event.metaKey : event.ctrlKey;
       // If a character was typed or the accel+v copy shortcut was used,
       // focus the input box and resend the key event.
@@ -331,7 +331,7 @@
       ) {
         this.convView.focus();
 
-        let clonedEvent = new KeyboardEvent("keypress", event);
+        const clonedEvent = new KeyboardEvent("keypress", event);
         this.convView.editor.dispatchEvent(clonedEvent);
         event.preventDefault();
       }
@@ -340,7 +340,7 @@
     /**
      * Replace the conversation that this item represents.
      *
-     * @param {imIConversation} conv - Updated conversation this should
+     * @param {IMConversation} conv - Updated conversation this should
      *   represent.
      */
     changeConversation(conv) {

@@ -1,6 +1,6 @@
 import json
-import pipes
 import re
+import shlex
 
 from .progressbar import NullProgressBar, ProgressBar
 from .structuredlog import TestLogger
@@ -9,7 +9,7 @@ from .structuredlog import TestLogger
 
 
 def escape_cmdline(args):
-    return " ".join([pipes.quote(a) for a in args])
+    return " ".join([shlex.quote(a) for a in args])
 
 
 class TestOutput:
@@ -80,7 +80,7 @@ class TestResult:
                 harness_message = "Exit code reported crash"
             tests = []
         else:
-            for (idx, line) in enumerate(stdout):
+            for idx, line in enumerate(stdout):
                 if line.startswith("WPT OUTPUT: "):
                     msg = line[len("WPT OUTPUT: ") :]
                     data = [output.test.wpt.url] + json.loads(msg)
@@ -183,9 +183,7 @@ class TestResult:
             expected_rcs.append(3)
             if test.error not in err:
                 failures += 1
-                results.append(
-                    (cls.FAIL, "Expected uncaught error: {}".format(test.error))
-                )
+                results.append((cls.FAIL, f"Expected uncaught error: {test.error}"))
 
         if rc and rc not in expected_rcs:
             if rc == 3:
@@ -299,9 +297,7 @@ class ResultsSink:
 
                 if show_output:
                     print(
-                        "## {}: rc = {:d}, run time = {}".format(
-                            output.test.path, output.rc, output.dt
-                        ),
+                        f"## {output.test.path}: rc = {output.rc:d}, run time = {output.dt}",
                         file=self.fp,
                     )
 
@@ -316,9 +312,7 @@ class ResultsSink:
                         except UnicodeEncodeError as e:
                             # In case the data contains something not directly
                             # encodable, use \uXXXX.
-                            fp.write(
-                                "WARNING: Falling back from exception: {}\n".format(e)
-                            )
+                            fp.write(f"WARNING: Falling back from exception: {e}\n")
                             fp.write("WARNING: The following output is escaped, ")
                             fp.write("and may be different than original one.\n")
                             fp.write(
@@ -361,7 +355,7 @@ class ResultsSink:
                 def singular(label):
                     return "FIXED" if label == "FIXES" else label[:-1]
 
-                self.pb.message("{} - {}".format(singular(dev_label), output.test.path))
+                self.pb.message(f"{singular(dev_label)} - {output.test.path}")
 
         self.pb.update(self.n, self.counts)
 
@@ -371,6 +365,9 @@ class ResultsSink:
             self.slog.suite_end()
         else:
             self.list(completed)
+
+        if self.n != 0 and self.options.show_slow:
+            self.show_slow_tests()
 
         if self.wptreport is not None:
             self.wptreport.suite_end()
@@ -427,16 +424,26 @@ class ResultsSink:
         else:
             print("FAIL" + suffix)
 
-        if self.options.show_slow:
-            min_duration = self.options.slow_test_threshold
-            print("Slow tests (duration > {}s)".format(min_duration))
-            slow_tests = sorted(self.slow_tests, key=lambda x: x.duration, reverse=True)
-            any = False
-            for test in slow_tests:
-                print("{:>5} {}".format(round(test.duration, 2), test.test))
-                any = True
-            if not any:
-                print("None")
+    def show_slow_tests(self):
+        threshold = self.options.slow_test_threshold
+        fraction_fast = 1 - len(self.slow_tests) / self.n
+        self.log_info(f"{fraction_fast * 100:5.2f}% of tests ran in under {threshold}s")
+
+        self.log_info(f"Slowest tests that took longer than {threshold}s:")
+        slow_tests = sorted(self.slow_tests, key=lambda x: x.duration, reverse=True)
+        any = False
+        for i in range(min(len(slow_tests), 20)):
+            test = slow_tests[i]
+            self.log_info(f"  {test.duration:6.2f} {test.test}")
+            any = True
+        if not any:
+            self.log_info("None")
+
+    def log_info(self, message):
+        if self.options.format == "automation":
+            self.slog.log_info(message)
+        else:
+            print(message)
 
     def all_passed(self):
         return "REGRESSIONS" not in self.groups and "TIMEOUTS" not in self.groups
@@ -457,7 +464,7 @@ class ResultsSink:
             result += " | (SKIP)"
         if time > self.options.timeout:
             result += " | (TIMEOUT)"
-        result += " [{:.1f} s]".format(time)
+        result += f" [{time:.1f} s]"
         print(result)
 
         details = {"extra": extra.copy() if extra else {}}

@@ -51,7 +51,7 @@ class nsSHistory : public mozilla::LinkedListElement<nsSHistory>,
     virtual void NotifyExpired(
         mozilla::dom::SHEntrySharedParentState* aObj) override {
       RemoveObject(aObj);
-      mSHistory->EvictExpiredContentViewerForEntry(aObj);
+      mSHistory->EvictExpiredDocumentViewerForEntry(aObj);
     }
 
    private:
@@ -135,6 +135,9 @@ class nsSHistory : public mozilla::LinkedListElement<nsSHistory>,
   // works for the root entries. It will do nothing for non-root entries.
   static void WalkContiguousEntries(
       nsISHEntry* aEntry, const std::function<void(nsISHEntry*)>& aCallback);
+  // Same as above, but calls aCallback on the entries in their history order.
+  static void WalkContiguousEntriesInOrder(
+      nsISHEntry* aEntry, const std::function<void(nsISHEntry*)>& aCallback);
 
   nsTArray<nsCOMPtr<nsISHEntry>>& Entries() { return mEntries; }
 
@@ -155,7 +158,9 @@ class nsSHistory : public mozilla::LinkedListElement<nsSHistory>,
     RefPtr<nsDocShellLoadState> mLoadState;
   };
 
+  MOZ_CAN_RUN_SCRIPT
   static void LoadURIs(nsTArray<LoadEntryResult>& aLoadResults);
+  MOZ_CAN_RUN_SCRIPT
   static void LoadURIOrBFCache(LoadEntryResult& aLoadEntry);
 
   // If this doesn't return an error then either aLoadResult is set to nothing,
@@ -170,7 +175,7 @@ class nsSHistory : public mozilla::LinkedListElement<nsSHistory>,
 
   void WindowIndices(int32_t aIndex, int32_t* aOutStartIndex,
                      int32_t* aOutEndIndex);
-  void NotifyListenersContentViewerEvicted(uint32_t aNumEvicted);
+  void NotifyListenersDocumentViewerEvicted(uint32_t aNumEvicted);
 
   int32_t Length() { return int32_t(mEntries.Length()); }
   int32_t Index() { return mIndex; }
@@ -184,7 +189,6 @@ class nsSHistory : public mozilla::LinkedListElement<nsSHistory>,
     uint64_t newID = aRootBC ? aRootBC->Id() : 0;
     if (mRootBC != newID) {
       mRootBC = newID;
-      UpdateRootBrowsingContextState(aRootBC);
     }
   }
 
@@ -193,13 +197,6 @@ class nsSHistory : public mozilla::LinkedListElement<nsSHistory>,
     // valid, it indicates the loading was triggered by a history load, and
     // we should replace the entry at requested index instead.
     return mRequestedIndex == -1 ? mIndex : mRequestedIndex;
-  }
-
-  // Update the root browsing context state when adding, removing or
-  // replacing entries.
-  void UpdateRootBrowsingContextState() {
-    RefPtr<mozilla::dom::BrowsingContext> rootBC(GetBrowsingContext());
-    UpdateRootBrowsingContextState(rootBC);
   }
 
   void GetEpoch(uint64_t& aEpoch,
@@ -222,9 +219,6 @@ class nsSHistory : public mozilla::LinkedListElement<nsSHistory>,
 
  private:
   friend class nsSHistoryObserver;
-
-  void UpdateRootBrowsingContextState(
-      mozilla::dom::BrowsingContext* aBrowsingContext);
 
   bool LoadDifferingEntries(nsISHEntry* aPrevEntry, nsISHEntry* aNextEntry,
                             mozilla::dom::BrowsingContext* aParent,
@@ -249,10 +243,10 @@ class nsSHistory : public mozilla::LinkedListElement<nsSHistory>,
 
   // Evict content viewers in this window which don't lie in the "safe" range
   // around aIndex.
-  virtual void EvictOutOfRangeWindowContentViewers(int32_t aIndex);
-  void EvictContentViewerForEntry(nsISHEntry* aEntry);
-  static void GloballyEvictContentViewers();
-  static void GloballyEvictAllContentViewers();
+  virtual void EvictOutOfRangeWindowDocumentViewers(int32_t aIndex);
+  void EvictDocumentViewerForEntry(nsISHEntry* aEntry);
+  static void GloballyEvictDocumentViewers();
+  static void GloballyEvictAllDocumentViewers();
 
   // Calculates a max number of total
   // content viewers to cache, based on amount of total memory

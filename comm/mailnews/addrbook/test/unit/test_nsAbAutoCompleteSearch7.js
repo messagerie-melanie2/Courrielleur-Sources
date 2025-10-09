@@ -35,7 +35,6 @@ var PAB_CARD_DATA = [
     NickName: "tom",
     PrimaryEmail: "tomez.doe@foo.invalid",
     SecondEmail: "tomez.doe@foo2.invalid",
-    PreferDisplayName: true,
     PopularityIndex: 10,
     // Poison the card data with an unparseable birthday. This will cause the
     // vCard parser to throw an exception, but it should be caught and the
@@ -50,7 +49,6 @@ var PAB_CARD_DATA = [
     DisplayName: "Tomas Doe",
     PrimaryEmail: "tomez.doe@b.example.com",
     SecondEmail: "tomez.doe@a.example.com",
-    PreferDisplayName: true,
     PopularityIndex: 200,
   },
   {
@@ -58,24 +56,23 @@ var PAB_CARD_DATA = [
     LastName: "Smith",
     DisplayName: "Tomek Smith",
     PrimaryEmail: "tomek@example.com",
-    PreferDisplayName: true,
     PopularityIndex: 3,
   },
 ];
 
 function setupAddressBookData(aDirURI, aCardData, aMailListData) {
-  let ab = MailServices.ab.getDirectory(aDirURI);
+  const ab = MailServices.ab.getDirectory(aDirURI);
 
   // Getting all directories ensures we create all ABs because mailing
   // lists need help initialising themselves
   MailServices.ab.directories;
 
-  for (let card of ab.childCards) {
+  for (const card of ab.childCards) {
     ab.dropCard(card, false);
   }
 
   aCardData.forEach(function (cd) {
-    let card = Cc["@mozilla.org/addressbook/cardproperty;1"].createInstance(
+    const card = Cc["@mozilla.org/addressbook/cardproperty;1"].createInstance(
       Ci.nsIAbCard
     );
     for (var prop in cd) {
@@ -85,7 +82,7 @@ function setupAddressBookData(aDirURI, aCardData, aMailListData) {
   });
 
   aMailListData.forEach(function (ld) {
-    let list = Cc[
+    const list = Cc[
       "@mozilla.org/addressbook/directoryproperty;1"
     ].createInstance(Ci.nsIAbDirectory);
     list.isMailList = true;
@@ -108,13 +105,13 @@ add_task(async () => {
 
   var obs = new acObserver();
 
-  let param = JSON.stringify({ type: "addr_to" });
+  const param = JSON.stringify({ type: "addr_to" });
 
   // Now check multiple matches
   async function checkInputItem(element, index) {
-    let prevRes = obs._result;
+    const prevRes = obs._result;
     print("Search #" + index + ": search=" + element.search);
-    let resultPromise = obs.waitForResult();
+    const resultPromise = obs.waitForResult();
     acs.startSearch(element.search, param, prevRes, obs);
     await resultPromise;
 
@@ -154,7 +151,7 @@ add_task(async () => {
     }
   }
 
-  for (let inputSet of inputs) {
+  for (const inputSet of inputs) {
     for (let i = 0; i < inputSet.length; i++) {
       await checkInputItem(inputSet[i], i);
     }

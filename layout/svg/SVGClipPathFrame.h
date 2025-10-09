@@ -46,9 +46,6 @@ class SVGClipPathFrame final : public SVGContainerFrame {
   void BuildDisplayList(nsDisplayListBuilder* aBuilder,
                         const nsDisplayListSet& aLists) override {}
 
-  bool IsSVGTransformed(Matrix* aOwnTransforms,
-                        Matrix* aFromParentTransforms) const override;
-
   // SVGClipPathFrame methods:
 
   /**
@@ -108,9 +105,7 @@ class SVGClipPathFrame final : public SVGContainerFrame {
   // Check if this clipPath is made up of more than one geometry object.
   // If so, the clipping API in cairo isn't enough and we need to use
   // mask based clipping.
-  bool IsTrivial(ISVGDisplayableFrame** aSingleChild = nullptr);
-
-  bool IsValid();
+  bool IsTrivial(nsIFrame** aSingleChild = nullptr);
 
   // nsIFrame interface:
   nsresult AttributeChanged(int32_t aNameSpaceID, nsAtom* aAttribute,
@@ -150,6 +145,8 @@ class SVGClipPathFrame final : public SVGContainerFrame {
 
   void PaintChildren(gfxContext& aMaskContext, nsIFrame* aClippedFrame,
                      const gfxMatrix& aMatrix);
+
+  bool IsValid();
 
   // Set, during a GetClipMask() call, to the transform that still needs to be
   // concatenated to the transform of the DrawTarget that was passed to

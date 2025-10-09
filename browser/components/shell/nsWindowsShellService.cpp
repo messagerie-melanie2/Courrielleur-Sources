@@ -6,65 +6,82 @@
 #define UNICODE
 
 #include "nsWindowsShellService.h"
+#include "nsWindowsShellServiceInternal.h"
 
 #include "BinaryPath.h"
+#include "gfxUtils.h"
 #include "imgIContainer.h"
 #include "imgIRequest.h"
-#include "mozilla/RefPtr.h"
-#include "nsComponentManagerUtils.h"
-#include "nsIContent.h"
-#include "nsIImageLoadingContent.h"
-#include "nsIOutputStream.h"
-#include "nsIPrefService.h"
-#include "nsIStringBundle.h"
-#include "nsNetUtil.h"
-#include "nsServiceManagerUtils.h"
-#include "nsShellService.h"
-#include "nsDirectoryServiceUtils.h"
-#include "nsAppDirectoryServiceDefs.h"
-#include "nsDirectoryServiceDefs.h"
-#include "nsIWindowsRegKey.h"
-#include "nsUnicharUtils.h"
-#include "nsIURLFormatter.h"
-#include "nsXULAppAPI.h"
-#include "mozilla/WindowsVersion.h"
+#include "imgITools.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/ErrorResult.h"
+#include "mozilla/FileUtils.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/intl/Localization.h"
+#include "mozilla/RefPtr.h"
+#include "mozilla/UniquePtrExtensions.h"
+#include "mozilla/widget/WinTaskbar.h"
+#include "mozilla/WindowsVersion.h"
+#include "mozilla/WinHeaderOnlyUtils.h"
+#include "nsAppDirectoryServiceDefs.h"
+#include "nsComponentManagerUtils.h"
+#include "nsDirectoryServiceDefs.h"
+#include "nsDirectoryServiceUtils.h"
+#include "nsIContent.h"
+#include "nsIFile.h"
+#include "nsIFileStreams.h"
+#include "nsIImageLoadingContent.h"
+#include "nsIMIMEService.h"
+#include "nsINIParser.h"
+#include "nsIOutputStream.h"
+#include "nsIPrefService.h"
+#include "nsIStringBundle.h"
+#include "nsIWindowsRegKey.h"
+#include "nsIXULAppInfo.h"
+#include "nsLocalFile.h"
+#include "nsNativeAppSupportWin.h"
+#include "nsNetUtil.h"
+#include "nsProxyRelease.h"
+#include "nsServiceManagerUtils.h"
+#include "nsShellService.h"
+#include "nsUnicharUtils.h"
+#include "nsWindowsHelpers.h"
+#include "nsXULAppAPI.h"
+#include "Windows11TaskbarPinning.h"
 #include "WindowsDefaultBrowser.h"
 #include "WindowsUserChoice.h"
-#include "nsLocalFile.h"
-#include "nsIXULAppInfo.h"
-#include "nsINIParser.h"
-#include "nsNativeAppSupportWin.h"
-#include "nsWindowsHelpers.h"
-
-#include <windows.h>
-#include <shellapi.h>
-#include <propvarutil.h>
-#include <propkey.h>
-
-#ifdef __MINGW32__
-// MinGW-w64 headers are missing PropVariantToString.
-#  include <propsys.h>
-PSSTDAPI PropVariantToString(REFPROPVARIANT propvar, PWSTR psz, UINT cch);
-#  define UNLEN 256
-#else
-#  include <Lmcons.h>  // For UNLEN
-#endif
+#include "WinUtils.h"
 
 #include <comutil.h>
-#include <objbase.h>
-#include <shlobj.h>
 #include <knownfolders.h>
-#include "WinUtils.h"
-#include "mozilla/widget/WinTaskbar.h"
-
 #include <mbstring.h>
+#include <objbase.h>
+#include <propkey.h>
+#include <propvarutil.h>
+#include <shellapi.h>
+#include <strsafe.h>
+#include <windows.h>
+#include <windows.foundation.h>
+#include <wrl.h>
+#include <wrl/wrappers/corewrappers.h>
 
-#define PIN_TO_TASKBAR_SHELL_VERB 5386
+using namespace ABI::Windows;
+using namespace ABI::Windows::Foundation;
+using namespace ABI::Windows::Foundation::Collections;
+using namespace Microsoft::WRL;
+using namespace Microsoft::WRL::Wrappers;
+
+#ifndef __MINGW32__
+#  include <windows.applicationmodel.h>
+#  include <windows.applicationmodel.activation.h>
+#  include <windows.applicationmodel.core.h>
+#  include <windows.ui.startscreen.h>
+using namespace ABI::Windows::ApplicationModel;
+using namespace ABI::Windows::ApplicationModel::Core;
+using namespace ABI::Windows::UI::StartScreen;
+#endif
+
 #define PRIVATE_BROWSING_BINARY L"private_browsing.exe"
 
 #undef ACCESS_READ
@@ -95,7 +112,6 @@ PSSTDAPI PropVariantToString(REFPROPVARIANT propvar, PWSTR psz, UINT cch);
     if (MOZ_UNLIKELY(FAILED(hres))) return ret
 #endif
 
-using mozilla::IsWin8OrLater;
 using namespace mozilla;
 using mozilla::intl::Localization;
 
@@ -106,6 +122,18 @@ using BStrPtr = mozilla::UniquePtr<OLECHAR, SysFreeStringDeleter>;
 
 NS_IMPL_ISUPPORTS(nsWindowsShellService, nsIToolkitShellService,
                   nsIShellService, nsIWindowsShellService)
+
+/* Enable logging by setting MOZ_LOG to "nsWindowsShellService:5" for debugging
+ * purposes. */
+static LazyLogModule sLog("nsWindowsShellService");
+
+static bool PollAppsFolderForShortcut(const nsAString& aAppUserModelId,
+                                      const TimeDuration aTimeout);
+static nsresult PinCurrentAppToTaskbarWin10(bool aCheckOnly,
+                                            const nsAString& aAppUserModelId,
+                                            const nsAString& aShortcutPath);
+static nsresult WriteBitmap(nsIFile* aFile, imgIContainer* aImage);
+static nsresult WriteIcon(nsIFile* aIcoFile, gfx::DataSourceSurface* aSurface);
 
 static nsresult OpenKeyForReading(HKEY aKeyRoot, const nsAString& aKeyName,
                                   HKEY* aKey) {
@@ -298,10 +326,6 @@ nsresult nsWindowsShellService::LaunchControlPanelDefaultsSelectionUI() {
   return SUCCEEDED(hr) ? NS_OK : NS_ERROR_FAILURE;
 }
 
-nsresult nsWindowsShellService::LaunchControlPanelDefaultPrograms() {
-  return ::LaunchControlPanelDefaultPrograms() ? NS_OK : NS_ERROR_FAILURE;
-}
-
 NS_IMETHODIMP
 nsWindowsShellService::CheckAllProgIDsExist(bool* aResult) {
   *aResult = false;
@@ -309,16 +333,68 @@ nsWindowsShellService::CheckAllProgIDsExist(bool* aResult) {
   if (!mozilla::widget::WinTaskbar::GetAppUserModelID(aumid)) {
     return NS_OK;
   }
-  *aResult =
-      CheckProgIDExists(FormatProgID(L"FirefoxURL", aumid.get()).get()) &&
-      CheckProgIDExists(FormatProgID(L"FirefoxHTML", aumid.get()).get()) &&
-      CheckProgIDExists(FormatProgID(L"FirefoxPDF", aumid.get()).get());
+
+  if (widget::WinUtils::HasPackageIdentity()) {
+    UniquePtr<wchar_t[]> extraProgID;
+    nsresult rv;
+    bool result = true;
+
+    // "FirefoxURL".
+    rv = GetMsixProgId(L"https", extraProgID);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+    result = result && CheckProgIDExists(extraProgID.get());
+
+    // "FirefoxHTML".
+    rv = GetMsixProgId(L".htm", extraProgID);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+    result = result && CheckProgIDExists(extraProgID.get());
+
+    // "FirefoxPDF".
+    rv = GetMsixProgId(L".pdf", extraProgID);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+    result = result && CheckProgIDExists(extraProgID.get());
+
+    *aResult = result;
+  } else {
+    *aResult =
+        CheckProgIDExists(FormatProgID(L"FirefoxURL", aumid.get()).get()) &&
+        CheckProgIDExists(FormatProgID(L"FirefoxHTML", aumid.get()).get()) &&
+        CheckProgIDExists(FormatProgID(L"FirefoxPDF", aumid.get()).get());
+  }
+
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsWindowsShellService::CheckBrowserUserChoiceHashes(bool* aResult) {
   *aResult = ::CheckBrowserUserChoiceHashes();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsWindowsShellService::CheckCurrentProcessAUMIDForTesting(
+    nsAString& aRetAumid) {
+  PWSTR id;
+  HRESULT hr = GetCurrentProcessExplicitAppUserModelID(&id);
+
+  if (FAILED(hr)) {
+    // Process AUMID may not be set on MSIX builds,
+    // if so we should return a dummy value
+    if (widget::WinUtils::HasPackageIdentity()) {
+      aRetAumid.Assign(u"MSIXAumidTestValue"_ns);
+      return NS_OK;
+    }
+    return NS_ERROR_FAILURE;
+  }
+  aRetAumid.Assign(id);
+  CoTaskMemFree(id);
+
   return NS_OK;
 }
 
@@ -340,50 +416,8 @@ nsresult nsWindowsShellService::LaunchModernSettingsDialogDefaultApps() {
   return ::LaunchModernSettingsDialogDefaultApps() ? NS_OK : NS_ERROR_FAILURE;
 }
 
-nsresult nsWindowsShellService::InvokeHTTPOpenAsVerb() {
-  nsCOMPtr<nsIURLFormatter> formatter(
-      do_GetService("@mozilla.org/toolkit/URLFormatterService;1"));
-  if (!formatter) {
-    return NS_ERROR_UNEXPECTED;
-  }
-
-  nsString urlStr;
-  nsresult rv = formatter->FormatURLPref(u"app.support.baseURL"_ns, urlStr);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
-  if (!StringBeginsWith(urlStr, u"https://"_ns)) {
-    return NS_ERROR_FAILURE;
-  }
-  urlStr.AppendLiteral("win10-default-browser");
-
-  SHELLEXECUTEINFOW seinfo = {sizeof(SHELLEXECUTEINFOW)};
-  seinfo.lpVerb = L"openas";
-  seinfo.lpFile = urlStr.get();
-  seinfo.nShow = SW_SHOWNORMAL;
-  if (!ShellExecuteExW(&seinfo)) {
-    return NS_ERROR_FAILURE;
-  }
-  return NS_OK;
-}
-
-nsresult nsWindowsShellService::LaunchHTTPHandlerPane() {
-  OPENASINFO info;
-  info.pcszFile = L"http";
-  info.pcszClass = nullptr;
-  info.oaifInFlags =
-      OAIF_FORCE_REGISTRATION | OAIF_URL_PROTOCOL | OAIF_REGISTER_EXT;
-
-  HRESULT hr = SHOpenWithDialog(nullptr, &info);
-  if (SUCCEEDED(hr) || (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED))) {
-    return NS_OK;
-  }
-  return NS_ERROR_FAILURE;
-}
-
 NS_IMETHODIMP
-nsWindowsShellService::SetDefaultBrowser(bool aClaimAllTypes,
-                                         bool aForAllUsers) {
+nsWindowsShellService::SetDefaultBrowser(bool aForAllUsers) {
   // If running from within a package, don't attempt to set default with
   // the helper, as it will not work and will only confuse our package's
   // virtualized registry.
@@ -401,36 +435,12 @@ nsWindowsShellService::SetDefaultBrowser(bool aClaimAllTypes,
     rv = LaunchHelper(appHelperPath);
   }
 
-  if (NS_SUCCEEDED(rv) && IsWin8OrLater()) {
-    if (aClaimAllTypes) {
-      if (IsWin10OrLater()) {
-        rv = LaunchModernSettingsDialogDefaultApps();
-      } else {
-        rv = LaunchControlPanelDefaultsSelectionUI();
-      }
-      // The above call should never really fail, but just in case
-      // fall back to showing the HTTP association screen only.
-      if (NS_FAILED(rv)) {
-        if (IsWin10OrLater()) {
-          rv = InvokeHTTPOpenAsVerb();
-        } else {
-          rv = LaunchHTTPHandlerPane();
-        }
-      }
-    } else {
-      // Windows 10 blocks attempts to load the
-      // HTTP Handler association dialog.
-      if (IsWin10OrLater()) {
-        rv = LaunchModernSettingsDialogDefaultApps();
-      } else {
-        rv = LaunchHTTPHandlerPane();
-      }
-
-      // The above call should never really fail, but just in case
-      // fall back to showing control panel for all defaults
-      if (NS_FAILED(rv)) {
-        rv = LaunchControlPanelDefaultsSelectionUI();
-      }
+  if (NS_SUCCEEDED(rv)) {
+    rv = LaunchModernSettingsDialogDefaultApps();
+    // The above call should never really fail, but just in case
+    // fall back to showing control panel for all defaults
+    if (NS_FAILED(rv)) {
+      rv = LaunchControlPanelDefaultsSelectionUI();
     }
   }
 
@@ -443,6 +453,118 @@ nsWindowsShellService::SetDefaultBrowser(bool aClaimAllTypes,
   }
 
   return rv;
+}
+
+/*
+ * Asynchronous function to Write an ico file to the disk / in a nsIFile.
+ * Limitation: Only square images are supported as of now.
+ */
+NS_IMETHODIMP
+nsWindowsShellService::CreateWindowsIcon(nsIFile* aIcoFile,
+                                         imgIContainer* aImage, JSContext* aCx,
+                                         dom::Promise** aPromise) {
+  NS_ENSURE_ARG_POINTER(aIcoFile);
+  NS_ENSURE_ARG_POINTER(aImage);
+  NS_ENSURE_ARG_POINTER(aCx);
+  NS_ENSURE_ARG_POINTER(aPromise);
+
+  if (!NS_IsMainThread()) {
+    return NS_ERROR_NOT_SAME_THREAD;
+  }
+
+  ErrorResult rv;
+  RefPtr<dom::Promise> promise =
+      dom::Promise::Create(xpc::CurrentNativeGlobal(aCx), rv);
+
+  if (MOZ_UNLIKELY(rv.Failed())) {
+    return rv.StealNSResult();
+  }
+
+  auto promiseHolder = MakeRefPtr<nsMainThreadPtrHolder<dom::Promise>>(
+      "CreateWindowsIcon promise", promise);
+
+  MOZ_LOG(sLog, LogLevel::Debug,
+          ("%s:%d - Reading input image...\n", __FILE__, __LINE__));
+
+  RefPtr<gfx::SourceSurface> surface = aImage->GetFrame(
+      imgIContainer::FRAME_FIRST, imgIContainer::FLAG_SYNC_DECODE);
+  NS_ENSURE_TRUE(surface, NS_ERROR_FAILURE);
+
+  // At time of writing only `DataSourceSurface` was guaranteed thread safe. We
+  // need this guarantee to write the icon file off the main thread.
+  RefPtr<gfx::DataSourceSurface> dataSurface = surface->GetDataSurface();
+  NS_ENSURE_TRUE(dataSurface, NS_ERROR_FAILURE);
+
+  MOZ_LOG(sLog, LogLevel::Debug,
+          ("%s:%d - Surface found, writing icon... \n", __FILE__, __LINE__));
+
+  NS_DispatchBackgroundTask(
+      NS_NewRunnableFunction(
+          "CreateWindowsIcon",
+          [icoFile = nsCOMPtr<nsIFile>(aIcoFile), dataSurface, promiseHolder] {
+            nsresult rv = WriteIcon(icoFile, dataSurface);
+
+            NS_DispatchToMainThread(NS_NewRunnableFunction(
+                "CreateWindowsIcon callback", [rv, promiseHolder] {
+                  dom::Promise* promise = promiseHolder.get()->get();
+
+                  if (NS_SUCCEEDED(rv)) {
+                    promise->MaybeResolveWithUndefined();
+                  } else {
+                    promise->MaybeReject(rv);
+                  }
+                }));
+          }),
+      NS_DISPATCH_EVENT_MAY_BLOCK);
+
+  promise.forget(aPromise);
+  return NS_OK;
+}
+
+static nsresult WriteIcon(nsIFile* aIcoFile, gfx::DataSourceSurface* aSurface) {
+  NS_ENSURE_ARG(aIcoFile);
+  NS_ENSURE_ARG(aSurface);
+
+  const gfx::IntSize size = aSurface->GetSize();
+  if (size.IsEmpty()) {
+    MOZ_LOG(sLog, LogLevel::Debug,
+            ("%s:%d - The input image looks empty :(\n", __FILE__, __LINE__));
+    return NS_ERROR_FAILURE;
+  }
+
+  int32_t width = aSurface->GetSize().width;
+  int32_t height = aSurface->GetSize().height;
+
+  MOZ_LOG(sLog, LogLevel::Debug,
+          ("%s:%d - Input image dimensions are: %dx%d pixels\n", __FILE__,
+           __LINE__, width, height));
+
+  NS_ENSURE_TRUE(height > 0, NS_ERROR_FAILURE);
+  NS_ENSURE_TRUE(width > 0, NS_ERROR_FAILURE);
+  NS_ENSURE_TRUE(width == height, NS_ERROR_FAILURE);
+
+  MOZ_LOG(sLog, LogLevel::Debug,
+          ("%s:%d - Opening file for writing...\n", __FILE__, __LINE__));
+
+  ScopedCloseFile file;
+  nsresult rv = aIcoFile->OpenANSIFileDesc("wb", getter_Transfers(file));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  MOZ_LOG(sLog, LogLevel::Debug,
+          ("%s:%d - Writing icon...\n", __FILE__, __LINE__));
+
+  rv = gfxUtils::EncodeSourceSurface(aSurface, ImageType::ICO, u""_ns,
+                                     gfxUtils::eBinaryEncode, file.get());
+
+  if (NS_FAILED(rv)) {
+    MOZ_LOG(sLog, LogLevel::Debug,
+            ("%s:%d - Could not write the icon!\n", __FILE__, __LINE__));
+    return rv;
+  }
+
+  MOZ_LOG(sLog, LogLevel::Debug,
+          ("%s:%d - Icon written!\n", __FILE__, __LINE__));
+  return NS_OK;
 }
 
 static nsresult WriteBitmap(nsIFile* aFile, imgIContainer* aImage) {
@@ -494,39 +616,55 @@ static nsresult WriteBitmap(nsIFile* aFile, imgIContainer* aImage) {
   rv = NS_NewLocalFileOutputStream(getter_AddRefs(stream), aFile);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  gfx::DataSourceSurface::MappedSurface map;
-  if (!dataSurface->Map(gfx::DataSourceSurface::MapType::READ, &map)) {
+  // (redundant) guard clause to assert stream is initialized
+  if (NS_WARN_IF(!stream)) {
+    MOZ_ASSERT(stream, "rv should have failed when stream is not initialized.");
     return NS_ERROR_FAILURE;
   }
 
-  // write the bitmap headers and rgb pixel data to the file
-  rv = NS_ERROR_FAILURE;
-  if (stream) {
+  gfx::DataSourceSurface::MappedSurface map;
+  if (!dataSurface->Map(gfx::DataSourceSurface::MapType::READ, &map)) {
+    // removal of file created handled later
+    rv = NS_ERROR_FAILURE;
+  }
+
+  // enter only if datasurface mapping succeeded
+  if (NS_SUCCEEDED(rv)) {
+    // write the bitmap headers and rgb pixel data to the file
     uint32_t written;
-    stream->Write((const char*)&bf, sizeof(BITMAPFILEHEADER), &written);
-    if (written == sizeof(BITMAPFILEHEADER)) {
-      stream->Write((const char*)&bmi, sizeof(BITMAPINFOHEADER), &written);
-      if (written == sizeof(BITMAPINFOHEADER)) {
+    rv = stream->Write((const char*)&bf, sizeof(BITMAPFILEHEADER), &written);
+    if (NS_SUCCEEDED(rv)) {
+      rv = stream->Write((const char*)&bmi, sizeof(BITMAPINFOHEADER), &written);
+      if (NS_SUCCEEDED(rv)) {
         // write out the image data backwards because the desktop won't
         // show bitmaps with negative heights for top-to-bottom
         uint32_t i = map.mStride * height;
         do {
           i -= map.mStride;
-          stream->Write(((const char*)map.mData) + i, bytesPerRow, &written);
-          if (written == bytesPerRow) {
-            rv = NS_OK;
-          } else {
-            rv = NS_ERROR_FAILURE;
+          rv = stream->Write(((const char*)map.mData) + i, bytesPerRow,
+                             &written);
+          if (NS_FAILED(rv)) {
             break;
           }
         } while (i != 0);
       }
     }
 
-    stream->Close();
+    dataSurface->Unmap();
   }
 
-  dataSurface->Unmap();
+  stream->Close();
+
+  // Obtaining the file output stream results in a newly created file or
+  // truncates the file if it already exists. As such, it is necessary to
+  // remove the file if the write fails for some reason.
+  if (NS_FAILED(rv)) {
+    if (NS_WARN_IF(NS_FAILED(aFile->Remove(PR_FALSE)))) {
+      MOZ_LOG(sLog, LogLevel::Warning,
+              ("Failed to remove empty bitmap file : %s",
+               aFile->HumanReadablePath().get()));
+    }
+  }
 
   return rv;
 }
@@ -555,21 +693,18 @@ nsWindowsShellService::SetDesktopBackground(dom::Element* aElement,
   rv = request->GetImage(getter_AddRefs(container));
   if (!container) return NS_ERROR_FAILURE;
 
-  // get the file name from localized strings
-  nsCOMPtr<nsIStringBundleService> bundleService(
-      do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCOMPtr<nsIStringBundle> shellBundle;
-  rv = bundleService->CreateBundle(SHELLSERVICE_PROPERTIES,
-                                   getter_AddRefs(shellBundle));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // e.g. "Desktop Background.bmp"
-  nsAutoString fileLeafName;
-  rv = shellBundle->GetStringFromName("desktopBackgroundLeafNameWin",
-                                      fileLeafName);
-  NS_ENSURE_SUCCESS(rv, rv);
+  // get the file name from localized strings, e.g. "Desktop Background", then
+  // append the extension (".bmp").
+  nsTArray<nsCString> resIds = {
+      "browser/setDesktopBackground.ftl"_ns,
+  };
+  RefPtr<Localization> l10n = Localization::Create(resIds, true);
+  nsAutoCString fileLeafNameUtf8;
+  IgnoredErrorResult locRv;
+  l10n->FormatValueSync("set-desktop-background-filename"_ns, {},
+                        fileLeafNameUtf8, locRv);
+  nsAutoString fileLeafName = NS_ConvertUTF8toUTF16(fileLeafNameUtf8);
+  fileLeafName.AppendLiteral(".bmp");
 
   // get the profile root directory
   nsCOMPtr<nsIFile> file;
@@ -586,7 +721,7 @@ nsWindowsShellService::SetDesktopBackground(dom::Element* aElement,
   NS_ENSURE_SUCCESS(rv, rv);
 
   // write the bitmap to a file in the profile directory.
-  // We have to write old bitmap format for Windows 7 wallpapar support.
+  // We have to write old bitmap format for Windows 7 wallpaper support.
   rv = WriteBitmap(file, container);
 
   // if the file was written successfully, set it as the system wallpaper
@@ -787,19 +922,12 @@ static nsresult WriteShortcutToLog(nsIFile* aShortcutsLogDir,
   return NS_OK;
 }
 
-static nsresult CreateShortcutImpl(
-    nsIFile* aBinary, const CopyableTArray<nsString>& aArguments,
-    const nsAString& aDescription, nsIFile* aIconFile, uint16_t aIconIndex,
-    const nsAString& aAppUserModelId, KNOWNFOLDERID aShortcutFolder,
-    const nsAString& aShortcutName, const nsString& aShortcutFile,
-    nsIFile* aShortcutsLogDir) {
-  NS_ENSURE_ARG(aBinary);
-  NS_ENSURE_ARG(aIconFile);
-
-  nsresult rv =
-      WriteShortcutToLog(aShortcutsLogDir, aShortcutFolder, aShortcutName);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+nsresult CreateShellLinkObject(nsIFile* aBinary,
+                               const CopyableTArray<nsString>& aArguments,
+                               const nsAString& aDescription,
+                               nsIFile* aIconFile, uint16_t aIconIndex,
+                               const nsAString& aAppUserModelId,
+                               IShellLinkW** aLink) {
   RefPtr<IShellLinkW> link;
   HRESULT hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
                                 IID_IShellLinkW, getter_AddRefs(link));
@@ -819,8 +947,8 @@ static nsresult CreateShortcutImpl(
 
   // TODO: Properly escape quotes in the string, see bug 1604287.
   nsString arguments;
-  for (auto& arg : aArguments) {
-    arguments.AppendPrintf("\"%S\" ", static_cast<const wchar_t*>(arg.get()));
+  for (const auto& arg : aArguments) {
+    arguments += u"\""_ns + arg + u"\" "_ns;
   }
 
   link->SetArguments(arguments.get());
@@ -849,8 +977,30 @@ static nsresult CreateShortcutImpl(
     NS_ENSURE_HRESULT(hr, NS_ERROR_FAILURE);
   }
 
+  link.forget(aLink);
+  return NS_OK;
+}
+
+static nsresult CreateShortcutImpl(
+    nsIFile* aBinary, const CopyableTArray<nsString>& aArguments,
+    const nsAString& aDescription, nsIFile* aIconFile, uint16_t aIconIndex,
+    const nsAString& aAppUserModelId, KNOWNFOLDERID aShortcutFolder,
+    const nsAString& aShortcutName, const nsString& aShortcutFile,
+    nsIFile* aShortcutsLogDir) {
+  NS_ENSURE_ARG(aBinary);
+  NS_ENSURE_ARG(aIconFile);
+
+  nsresult rv =
+      WriteShortcutToLog(aShortcutsLogDir, aShortcutFolder, aShortcutName);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  RefPtr<IShellLinkW> link;
+  rv = CreateShellLinkObject(aBinary, aArguments, aDescription, aIconFile,
+                             aIconIndex, aAppUserModelId, getter_AddRefs(link));
+  NS_ENSURE_SUCCESS(rv, rv);
+
   RefPtr<IPersistFile> persist;
-  hr = link->QueryInterface(IID_IPersistFile, getter_AddRefs(persist));
+  HRESULT hr = link->QueryInterface(IID_IPersistFile, getter_AddRefs(persist));
   NS_ENSURE_HRESULT(hr, NS_ERROR_FAILURE);
 
   hr = persist->Save(aShortcutFile.get(), TRUE);
@@ -926,16 +1076,10 @@ nsWindowsShellService::CreateShortcut(
            aShortcutFolder = nsString{aShortcutFolder},
            aShortcutName = nsString{aShortcutName}, shortcutsLogDir,
            shortcutFile, promiseHolder = std::move(promiseHolder)] {
-            nsresult rv = NS_ERROR_FAILURE;
-            HRESULT hr = CoInitialize(nullptr);
-
-            if (SUCCEEDED(hr)) {
-              rv = CreateShortcutImpl(
-                  binary.get(), aArguments, aDescription, iconFile.get(),
-                  aIconIndex, aAppUserModelId, folderId, aShortcutName,
-                  shortcutFile->NativePath(), shortcutsLogDir.get());
-              CoUninitialize();
-            }
+            nsresult rv = CreateShortcutImpl(
+                binary.get(), aArguments, aDescription, iconFile.get(),
+                aIconIndex, aAppUserModelId, folderId, aShortcutName,
+                shortcutFile->NativePath(), shortcutsLogDir.get());
 
             NS_DispatchToMainThread(NS_NewRunnableFunction(
                 "CreateShortcut callback",
@@ -952,6 +1096,99 @@ nsWindowsShellService::CreateShortcut(
       NS_DISPATCH_EVENT_MAY_BLOCK);
 
   promise.forget(aPromise);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsWindowsShellService::GetLaunchOnLoginShortcuts(
+    nsTArray<nsString>& aShortcutPaths) {
+  aShortcutPaths.Clear();
+
+  // Get AppData\\Roaming folder using a known folder ID
+  RefPtr<IKnownFolderManager> fManager;
+  RefPtr<IKnownFolder> roamingAppData;
+  LPWSTR roamingAppDataW;
+  nsString roamingAppDataNS;
+  HRESULT hr =
+      CoCreateInstance(CLSID_KnownFolderManager, nullptr, CLSCTX_INPROC_SERVER,
+                       IID_IKnownFolderManager, getter_AddRefs(fManager));
+  if (FAILED(hr)) {
+    return NS_ERROR_ABORT;
+  }
+  fManager->GetFolder(FOLDERID_RoamingAppData,
+                      roamingAppData.StartAssignment());
+  hr = roamingAppData->GetPath(0, &roamingAppDataW);
+  if (FAILED(hr)) {
+    return NS_ERROR_FILE_NOT_FOUND;
+  }
+
+  // Append startup folder to AppData\\Roaming
+  roamingAppDataNS.Assign(roamingAppDataW);
+  CoTaskMemFree(roamingAppDataW);
+  nsString startupFolder =
+      roamingAppDataNS +
+      u"\\Microsoft\\Windows\\Start Menu\\Programs\\Startup"_ns;
+  nsString startupFolderWildcard = startupFolder + u"\\*.lnk"_ns;
+
+  // Get known path for binary file for later comparison with shortcuts.
+  // Returns lowercase file path which should be fine for Windows as all
+  // directories and files are case-insensitive by default.
+  RefPtr<nsIFile> binFile;
+  nsString binPath;
+  nsresult rv = XRE_GetBinaryPath(binFile.StartAssignment());
+  if (FAILED(rv)) {
+    return NS_ERROR_FAILURE;
+  }
+  rv = binFile->GetPath(binPath);
+  if (FAILED(rv)) {
+    return NS_ERROR_FILE_UNRECOGNIZED_PATH;
+  }
+
+  // Check for if first file exists with a shortcut extension (.lnk)
+  WIN32_FIND_DATAW ffd;
+  HANDLE fileHandle = INVALID_HANDLE_VALUE;
+  fileHandle = FindFirstFileW(startupFolderWildcard.get(), &ffd);
+  if (fileHandle == INVALID_HANDLE_VALUE) {
+    // This means that no files were found in the folder which
+    // doesn't imply an error. Most of the time the user won't
+    // have any shortcuts here.
+    return NS_OK;
+  }
+
+  do {
+    // Extract shortcut target path from every
+    // shortcut in the startup folder.
+    nsString fileName(ffd.cFileName);
+    RefPtr<IShellLinkW> link;
+    RefPtr<IPersistFile> ppf;
+    nsString target;
+    target.SetLength(MAX_PATH);
+    CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                     IID_IShellLinkW, getter_AddRefs(link));
+    hr = link->QueryInterface(IID_IPersistFile, getter_AddRefs(ppf));
+    if (NS_WARN_IF(FAILED(hr))) {
+      continue;
+    }
+    nsString filePath = startupFolder + u"\\"_ns + fileName;
+    hr = ppf->Load(filePath.get(), STGM_READ);
+    if (NS_WARN_IF(FAILED(hr))) {
+      continue;
+    }
+    hr = link->GetPath(target.get(), MAX_PATH, nullptr, 0);
+    if (NS_WARN_IF(FAILED(hr))) {
+      continue;
+    }
+
+    // If shortcut target matches known binary file value
+    // then add the path to the shortcut as a valid
+    // startup shortcut. This has to be a substring search as
+    // the user could have added unknown command line arguments
+    // to the shortcut.
+    if (_wcsnicmp(target.get(), binPath.get(), binPath.Length()) == 0) {
+      aShortcutPaths.AppendElement(filePath);
+    }
+  } while (FindNextFile(fileHandle, &ffd) != 0);
+  FindClose(fileHandle);
   return NS_OK;
 }
 
@@ -1084,7 +1321,7 @@ static nsresult GetMatchingShortcut(int aCSIDL, const nsAString& aAUMID,
     static_assert(MAXPATHLEN == MAX_PATH);
     wchar_t storedExePath[MAX_PATH] = {};
     // With no flags GetPath gets a long path
-    hr = link->GetPath(storedExePath, ArrayLength(storedExePath), nullptr, 0);
+    hr = link->GetPath(storedExePath, std::size(storedExePath), nullptr, 0);
     if (FAILED(hr) || hr == S_FALSE) {
       continue;
     }
@@ -1101,7 +1338,7 @@ static nsresult GetMatchingShortcut(int aCSIDL, const nsAString& aAUMID,
   return result;
 }
 
-static nsresult FindMatchingShortcut(const nsAString& aAppUserModelId,
+static nsresult FindPinnableShortcut(const nsAString& aAppUserModelId,
                                      const nsAString& aShortcutSubstring,
                                      const bool aPrivateBrowsing,
                                      nsAutoString& aShortcutPath) {
@@ -1119,9 +1356,7 @@ static nsresult FindMatchingShortcut(const nsAString& aAppUserModelId,
     }
   }
 
-  int shortcutCSIDLs[] = {CSIDL_COMMON_PROGRAMS, CSIDL_PROGRAMS,
-                          CSIDL_COMMON_DESKTOPDIRECTORY,
-                          CSIDL_DESKTOPDIRECTORY};
+  int shortcutCSIDLs[] = {CSIDL_COMMON_PROGRAMS, CSIDL_PROGRAMS};
   for (int shortcutCSIDL : shortcutCSIDLs) {
     // GetMatchingShortcut may fail when the exe path doesn't match, even
     // if it refers to the same file. This should be rare, and the worst
@@ -1136,12 +1371,12 @@ static nsresult FindMatchingShortcut(const nsAString& aAppUserModelId,
   return NS_ERROR_FILE_NOT_FOUND;
 }
 
-static bool HasMatchingShortcutImpl(const nsAString& aAppUserModelId,
+static bool HasPinnableShortcutImpl(const nsAString& aAppUserModelId,
                                     const bool aPrivateBrowsing,
                                     const nsAutoString& aShortcutSubstring) {
   // unused by us, but required
   nsAutoString shortcutPath;
-  nsresult rv = FindMatchingShortcut(aAppUserModelId, aShortcutSubstring,
+  nsresult rv = FindPinnableShortcut(aAppUserModelId, aShortcutSubstring,
                                      aPrivateBrowsing, shortcutPath);
   if (SUCCEEDED(rv)) {
     return true;
@@ -1150,7 +1385,7 @@ static bool HasMatchingShortcutImpl(const nsAString& aAppUserModelId,
   return false;
 }
 
-NS_IMETHODIMP nsWindowsShellService::HasMatchingShortcut(
+NS_IMETHODIMP nsWindowsShellService::HasPinnableShortcut(
     const nsAString& aAppUserModelId, const bool aPrivateBrowsing,
     JSContext* aCx, dom::Promise** aPromise) {
   if (!NS_IsMainThread()) {
@@ -1166,11 +1401,11 @@ NS_IMETHODIMP nsWindowsShellService::HasMatchingShortcut(
   }
 
   auto promiseHolder = MakeRefPtr<nsMainThreadPtrHolder<dom::Promise>>(
-      "HasMatchingShortcut promise", promise);
+      "HasPinnableShortcut promise", promise);
 
   NS_DispatchBackgroundTask(
       NS_NewRunnableFunction(
-          "HasMatchingShortcut",
+          "HasPinnableShortcut",
           [aAppUserModelId = nsString{aAppUserModelId}, aPrivateBrowsing,
            promiseHolder = std::move(promiseHolder)] {
             bool rv = false;
@@ -1179,13 +1414,13 @@ NS_IMETHODIMP nsWindowsShellService::HasMatchingShortcut(
             if (SUCCEEDED(hr)) {
               nsAutoString shortcutSubstring;
               shortcutSubstring.AssignLiteral(MOZ_APP_DISPLAYNAME);
-              rv = HasMatchingShortcutImpl(aAppUserModelId, aPrivateBrowsing,
+              rv = HasPinnableShortcutImpl(aAppUserModelId, aPrivateBrowsing,
                                            shortcutSubstring);
               CoUninitialize();
             }
 
             NS_DispatchToMainThread(NS_NewRunnableFunction(
-                "HasMatchingShortcut callback",
+                "HasPinnableShortcut callback",
                 [rv, promiseHolder = std::move(promiseHolder)] {
                   dom::Promise* promise = promiseHolder.get()->get();
 
@@ -1198,135 +1433,159 @@ NS_IMETHODIMP nsWindowsShellService::HasMatchingShortcut(
   return NS_OK;
 }
 
-static nsresult PinCurrentAppToTaskbarWin7(bool aCheckOnly,
-                                           nsAutoString aShortcutPath) {
-  nsModuleHandle shellInst(LoadLibraryW(L"shell32.dll"));
+static bool IsCurrentAppPinnedToTaskbarSync(const nsAString& aumid) {
+  // Use new Windows pinning APIs to determine whether or not we're pinned.
+  // If these fail we can safely fall back to the old method for regular
+  // installs however MSIX will always return false.
 
-  RefPtr<IShellWindows> shellWindows;
-  HRESULT hr =
-      ::CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_LOCAL_SERVER,
-                         IID_IShellWindows, getter_AddRefs(shellWindows));
-  if (FAILED(hr)) return NS_ERROR_FAILURE;
-
-  // 1. Find the shell view for the desktop.
-  _variant_t loc(int(CSIDL_DESKTOP));
-  _variant_t empty;
-  long hwnd;
-  RefPtr<IDispatch> dispDesktop;
-  hr = shellWindows->FindWindowSW(&loc, &empty, SWC_DESKTOP, &hwnd,
-                                  SWFO_NEEDDISPATCH,
-                                  getter_AddRefs(dispDesktop));
-  if (FAILED(hr) || hr == S_FALSE) return NS_ERROR_FAILURE;
-
-  RefPtr<IServiceProvider> servProv;
-  hr = dispDesktop->QueryInterface(IID_IServiceProvider,
-                                   getter_AddRefs(servProv));
-  if (FAILED(hr)) return NS_ERROR_FAILURE;
-
-  RefPtr<IShellBrowser> browser;
-  hr = servProv->QueryService(SID_STopLevelBrowser, IID_IShellBrowser,
-                              getter_AddRefs(browser));
-  if (FAILED(hr)) return NS_ERROR_FAILURE;
-
-  RefPtr<IShellView> activeShellView;
-  hr = browser->QueryActiveShellView(getter_AddRefs(activeShellView));
-  if (FAILED(hr)) return NS_ERROR_FAILURE;
-
-  // 2. Get the automation object for the desktop.
-  RefPtr<IDispatch> dispView;
-  hr = activeShellView->GetItemObject(SVGIO_BACKGROUND, IID_IDispatch,
-                                      getter_AddRefs(dispView));
-  if (FAILED(hr)) return NS_ERROR_FAILURE;
-
-  RefPtr<IShellFolderViewDual> folderView;
-  hr = dispView->QueryInterface(IID_IShellFolderViewDual,
-                                getter_AddRefs(folderView));
-  if (FAILED(hr)) return NS_ERROR_FAILURE;
-
-  // 3. Get the interface to IShellDispatch
-  RefPtr<IDispatch> dispShell;
-  hr = folderView->get_Application(getter_AddRefs(dispShell));
-  if (FAILED(hr)) return NS_ERROR_FAILURE;
-
-  RefPtr<IShellDispatch2> shellDisp;
-  hr =
-      dispShell->QueryInterface(IID_IShellDispatch2, getter_AddRefs(shellDisp));
-  if (FAILED(hr)) return NS_ERROR_FAILURE;
-
-  wchar_t shortcutDir[MAX_PATH + 1];
-  wcscpy_s(shortcutDir, MAX_PATH + 1, aShortcutPath.get());
-  if (!PathRemoveFileSpecW(shortcutDir)) return NS_ERROR_FAILURE;
-
-  VARIANT dir;
-  dir.vt = VT_BSTR;
-  BStrPtr bstrShortcutDir = BStrPtr(SysAllocString(shortcutDir));
-  if (bstrShortcutDir.get() == NULL) return NS_ERROR_FAILURE;
-  dir.bstrVal = bstrShortcutDir.get();
-
-  RefPtr<Folder> folder;
-  hr = shellDisp->NameSpace(dir, getter_AddRefs(folder));
-  if (FAILED(hr)) return NS_ERROR_FAILURE;
-
-  wchar_t linkName[MAX_PATH + 1];
-  wcscpy_s(linkName, MAX_PATH + 1, aShortcutPath.get());
-  PathStripPathW(linkName);
-  BStrPtr bstrLinkName = BStrPtr(SysAllocString(linkName));
-  if (bstrLinkName.get() == NULL) return NS_ERROR_FAILURE;
-
-  RefPtr<FolderItem> folderItem;
-  hr = folder->ParseName(bstrLinkName.get(), getter_AddRefs(folderItem));
-  if (FAILED(hr) || !folderItem) return NS_ERROR_FAILURE;
-
-  RefPtr<FolderItemVerbs> verbs;
-  hr = folderItem->Verbs(getter_AddRefs(verbs));
-  if (FAILED(hr)) return NS_ERROR_FAILURE;
-
-  long count;
-  hr = verbs->get_Count(&count);
-  if (FAILED(hr)) return NS_ERROR_FAILURE;
-
-  WCHAR verbName[100];
-  if (!LoadStringW(shellInst.get(), PIN_TO_TASKBAR_SHELL_VERB, verbName,
-                   ARRAYSIZE(verbName))) {
-    return NS_ERROR_NOT_AVAILABLE;
-  }
-  VARIANT v;
-  v.vt = VT_I4;
-  BStrPtr name;
-  for (long i = 0; i < count; ++i) {
-    RefPtr<FolderItemVerb> fiVerb;
-    v.lVal = i;
-    hr = verbs->Item(v, getter_AddRefs(fiVerb));
-    if (FAILED(hr)) {
-      continue;
-    }
-
-    BSTR tmpName;
-    hr = fiVerb->get_Name(&tmpName);
-    if (FAILED(hr)) {
-      continue;
-    }
-    name = BStrPtr(tmpName);
-    if (!wcscmp((WCHAR*)name.get(), verbName)) {
-      if (aCheckOnly) {
-        // we've done as much as we can without actually
-        // changing anything
-        return NS_OK;
-      }
-
-      hr = fiVerb->DoIt();
-      if (SUCCEEDED(hr)) {
-        return NS_OK;
-      }
+  // Bug 1911343: Add a check for whether we're looking for a regular pin
+  // or PB pin based on the AUMID value once private browser pinning
+  // is supported on MSIX.
+  // Right now only run this check on MSIX to avoid
+  // false positives when only private browsing is pinned.
+  if (widget::WinUtils::HasPackageIdentity()) {
+    auto pinWithWin11TaskbarAPIResults =
+        IsCurrentAppPinnedToTaskbarWin11(false);
+    switch (pinWithWin11TaskbarAPIResults.result) {
+      case Win11PinToTaskBarResultStatus::NotPinned:
+        return false;
+        break;
+      case Win11PinToTaskBarResultStatus::AlreadyPinned:
+        return true;
+        break;
+      default:
+        // Fall through to the old mechanism.
+        // The old mechanism should continue working for non-MSIX
+        // builds.
+        break;
     }
   }
 
-  // if we didn't return in the block above, something failed
-  return NS_ERROR_FAILURE;
+  // There are two shortcut targets that we created. One always matches the
+  // binary we're running as (eg: firefox.exe). The other is the wrapper
+  // for launching in Private Browsing mode. We need to inspect shortcuts
+  // that point at either of these to accurately judge whether or not
+  // the app is pinned with the given AUMID.
+  wchar_t exePath[MAXPATHLEN] = {};
+  wchar_t pbExePath[MAXPATHLEN] = {};
+
+  if (NS_WARN_IF(NS_FAILED(BinaryPath::GetLong(exePath)))) {
+    return false;
+  }
+
+  wcscpy_s(pbExePath, MAXPATHLEN, exePath);
+  if (!PathRemoveFileSpecW(pbExePath)) {
+    return false;
+  }
+  if (!PathAppendW(pbExePath, L"private_browsing.exe")) {
+    return false;
+  }
+
+  wchar_t folderChars[MAX_PATH] = {};
+  HRESULT hr = SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr,
+                                SHGFP_TYPE_CURRENT, folderChars);
+  if (NS_WARN_IF(FAILED(hr))) {
+    return false;
+  }
+
+  nsAutoString folder;
+  folder.Assign(folderChars);
+  if (NS_WARN_IF(folder.IsEmpty())) {
+    return false;
+  }
+  if (folder[folder.Length() - 1] != '\\') {
+    folder.AppendLiteral("\\");
+  }
+  folder.AppendLiteral(
+      "Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar");
+  nsAutoString pattern;
+  pattern.Assign(folder);
+  pattern.AppendLiteral("\\*.lnk");
+
+  WIN32_FIND_DATAW findData = {};
+  HANDLE hFindFile = FindFirstFileW(pattern.get(), &findData);
+  if (hFindFile == INVALID_HANDLE_VALUE) {
+    Unused << NS_WARN_IF(GetLastError() != ERROR_FILE_NOT_FOUND);
+    return false;
+  }
+  // Past this point we don't return until the end of the function,
+  // when FindClose() is called.
+
+  // Check all shortcuts until a match is found
+  bool isPinned = false;
+  do {
+    nsAutoString fileName;
+    fileName.Assign(folder);
+    fileName.AppendLiteral("\\");
+    fileName.Append(findData.cFileName);
+
+    // Create a shell link object for loading the shortcut
+    RefPtr<IShellLinkW> link;
+    HRESULT hr =
+        CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                         IID_IShellLinkW, getter_AddRefs(link));
+    if (NS_WARN_IF(FAILED(hr))) {
+      continue;
+    }
+
+    // Load
+    RefPtr<IPersistFile> persist;
+    hr = link->QueryInterface(IID_IPersistFile, getter_AddRefs(persist));
+    if (NS_WARN_IF(FAILED(hr))) {
+      continue;
+    }
+
+    hr = persist->Load(fileName.get(), STGM_READ);
+    if (NS_WARN_IF(FAILED(hr))) {
+      continue;
+    }
+
+    // Check the exe path
+    static_assert(MAXPATHLEN == MAX_PATH);
+    wchar_t storedExePath[MAX_PATH] = {};
+    // With no flags GetPath gets a long path
+    hr = link->GetPath(storedExePath, std::size(storedExePath), nullptr, 0);
+    if (FAILED(hr) || hr == S_FALSE) {
+      continue;
+    }
+    // Case insensitive path comparison
+    // NOTE: Because this compares the path directly, it is possible to
+    // have a false negative mismatch.
+    if (wcsnicmp(storedExePath, exePath, MAXPATHLEN) == 0 ||
+        wcsnicmp(storedExePath, pbExePath, MAXPATHLEN) == 0) {
+      RefPtr<IPropertyStore> propStore;
+      hr = link->QueryInterface(IID_IPropertyStore, getter_AddRefs(propStore));
+      if (NS_WARN_IF(FAILED(hr))) {
+        continue;
+      }
+
+      PROPVARIANT pv;
+      hr = propStore->GetValue(PKEY_AppUserModel_ID, &pv);
+      if (NS_WARN_IF(FAILED(hr))) {
+        continue;
+      }
+
+      wchar_t storedAUMID[MAX_PATH];
+      hr = PropVariantToString(pv, storedAUMID, MAX_PATH);
+      PropVariantClear(&pv);
+      if (NS_WARN_IF(FAILED(hr))) {
+        continue;
+      }
+
+      if (aumid.Equals(storedAUMID)) {
+        isPinned = true;
+        break;
+      }
+    }
+  } while (FindNextFileW(hFindFile, &findData));
+
+  FindClose(hFindFile);
+
+  return isPinned;
 }
 
-static nsresult PinCurrentAppToTaskbarWin10(bool aCheckOnly,
-                                            nsAutoString aShortcutPath) {
+static nsresult ManageShortcutTaskbarPins(bool aCheckOnly, bool aPinType,
+                                          const nsAString& aShortcutPath) {
   // This enum is likely only used for Windows telemetry, INT_MAX is chosen to
   // avoid confusion with existing uses.
   enum PINNEDLISTMODIFYCALLER { PLMC_INT_MAX = INT_MAX };
@@ -1372,31 +1631,405 @@ static nsresult PinCurrentAppToTaskbarWin10(bool aCheckOnly,
   };
 
   mozilla::UniquePtr<__unaligned ITEMIDLIST, ILFreeDeleter> path(
-      ILCreateFromPathW(aShortcutPath.get()));
+      ILCreateFromPathW(nsString(aShortcutPath).get()));
   if (NS_WARN_IF(!path)) {
-    return NS_ERROR_FAILURE;
+    return NS_ERROR_FILE_NOT_FOUND;
   }
 
   IPinnedList3* pinnedList = nullptr;
-  HRESULT hr =
-      CoCreateInstance(CLSID_TaskbandPin, nullptr, CLSCTX_INPROC_SERVER,
-                       IID_IPinnedList3, (void**)&pinnedList);
+  HRESULT hr = CoCreateInstance(CLSID_TaskbandPin, NULL, CLSCTX_INPROC_SERVER,
+                                IID_IPinnedList3, (void**)&pinnedList);
   if (FAILED(hr) || !pinnedList) {
     return NS_ERROR_NOT_AVAILABLE;
   }
 
   if (!aCheckOnly) {
-    hr =
-        pinnedList->vtbl->Modify(pinnedList, nullptr, path.get(), PLMC_INT_MAX);
+    hr = pinnedList->vtbl->Modify(pinnedList, aPinType ? NULL : path.get(),
+                                  aPinType ? path.get() : NULL, PLMC_INT_MAX);
   }
 
   pinnedList->vtbl->Release(pinnedList);
 
   if (FAILED(hr)) {
+    return NS_ERROR_FILE_ACCESS_DENIED;
+  }
+  return NS_OK;
+}
+
+static nsresult PinShortcutToTaskbarImpl(bool aCheckOnly,
+                                         const nsAString& aAppUserModelId,
+                                         const nsAString& aShortcutPath) {
+  // Verify shortcut is visible to `shell:appsfolder`. Shortcut creation -
+  // during install or runtime - causes a race between it propagating to the
+  // virtual `shell:appsfolder` and attempts to pin via `ITaskbarManager`,
+  // resulting in pin failures when the latter occurs before the former. We can
+  // skip this when we're in a MSIX build or only checking whether we're pinned.
+  if (!widget::WinUtils::HasPackageIdentity() && !aCheckOnly &&
+      !PollAppsFolderForShortcut(aAppUserModelId,
+                                 TimeDuration::FromSeconds(15))) {
+    return NS_ERROR_FILE_NOT_FOUND;
+  }
+
+  auto pinWithWin11TaskbarAPIResults =
+      PinCurrentAppToTaskbarWin11(aCheckOnly, aAppUserModelId);
+  switch (pinWithWin11TaskbarAPIResults.result) {
+    case Win11PinToTaskBarResultStatus::NotSupported:
+      // Fall through to the win 10 mechanism
+      break;
+
+    case Win11PinToTaskBarResultStatus::Success:
+    case Win11PinToTaskBarResultStatus::AlreadyPinned:
+      return NS_OK;
+
+    case Win11PinToTaskBarResultStatus::NotPinned:
+    case Win11PinToTaskBarResultStatus::NotCurrentlyAllowed:
+    case Win11PinToTaskBarResultStatus::Failed:
+      // return NS_ERROR_FAILURE;
+
+      // Fall through to the old mechanism for now
+      // In future, we should be sending telemetry for when
+      // an error occurs or for when pinning is not allowed
+      // with the Win 11 APIs.
+      break;
+  }
+
+  return PinCurrentAppToTaskbarWin10(aCheckOnly, aAppUserModelId,
+                                     aShortcutPath);
+}
+
+/* This function pins a shortcut to the taskbar based on its location. While
+ * Windows 11 only needs the `aAppUserModelId`, `aShortcutPath` is required
+ * for pinning in Windows 10.
+ * @param aAppUserModelId
+ *        The same string used to create an lnk file.
+ * @param aShortcutPaths
+ *        Path for existing shortcuts (e.g., start menu)
+ */
+NS_IMETHODIMP
+nsWindowsShellService::PinShortcutToTaskbar(const nsAString& aAppUserModelId,
+                                            const nsAString& aShortcutPath,
+                                            JSContext* aCx,
+                                            dom::Promise** aPromise) {
+  NS_ENSURE_ARG_POINTER(aCx);
+  NS_ENSURE_ARG_POINTER(aPromise);
+
+  if (!NS_IsMainThread()) {
+    return NS_ERROR_NOT_SAME_THREAD;
+  }
+
+  // First available on 1809
+  if (!IsWin10Sep2018UpdateOrLater()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  ErrorResult rv;
+  RefPtr<dom::Promise> promise =
+      dom::Promise::Create(xpc::CurrentNativeGlobal(aCx), rv);
+
+  if (MOZ_UNLIKELY(rv.Failed())) {
+    return rv.StealNSResult();
+  }
+
+  auto promiseHolder = MakeRefPtr<nsMainThreadPtrHolder<dom::Promise>>(
+      "pinShortcutToTaskbar promise", promise);
+
+  NS_DispatchBackgroundTask(
+      NS_NewRunnableFunction(
+          "pinShortcutToTaskbar",
+          [aumid = nsString{aAppUserModelId},
+           shortcutPath = nsString(aShortcutPath),
+           promiseHolder = std::move(promiseHolder)] {
+            nsresult rv = NS_ERROR_FAILURE;
+            HRESULT hr = CoInitialize(nullptr);
+
+            if (SUCCEEDED(hr)) {
+              rv = PinShortcutToTaskbarImpl(false, aumid, shortcutPath);
+              CoUninitialize();
+            }
+
+            NS_DispatchToMainThread(NS_NewRunnableFunction(
+                "pinShortcutToTaskbar callback",
+                [rv, promiseHolder = std::move(promiseHolder)] {
+                  dom::Promise* promise = promiseHolder.get()->get();
+
+                  if (NS_SUCCEEDED(rv)) {
+                    promise->MaybeResolveWithUndefined();
+                  } else {
+                    promise->MaybeReject(rv);
+                  }
+                }));
+          }),
+      NS_DISPATCH_EVENT_MAY_BLOCK);
+
+  promise.forget(aPromise);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsWindowsShellService::UnpinShortcutFromTaskbar(
+    const nsAString& aShortcutPath) {
+  const bool pinType = false;  // false means unpin
+  const bool runInTestMode = false;
+  return ManageShortcutTaskbarPins(runInTestMode, pinType, aShortcutPath);
+}
+
+// Ensure that the supplied name doesn't have invalid characters.
+static void ValidateFilename(nsAString& aFilename) {
+  nsCOMPtr<nsIMIMEService> mimeService = do_GetService("@mozilla.org/mime;1");
+  if (NS_WARN_IF(!mimeService)) {
+    aFilename.Truncate();
+    return;
+  }
+
+  uint32_t flags = nsIMIMEService::VALIDATE_SANITIZE_ONLY |
+                   nsIMIMEService::VALIDATE_DONT_COLLAPSE_WHITESPACE;
+
+  nsAutoString outFilename;
+  mimeService->ValidateFileNameForSaving(aFilename, EmptyCString(), flags,
+                                         outFilename);
+  aFilename = outFilename;
+}
+
+NS_IMETHODIMP
+nsWindowsShellService::GetTaskbarTabShortcutPath(const nsAString& aShortcutName,
+                                                 nsAString& aRetPath) {
+  nsAutoString sanitizedShortcutName(aShortcutName);
+  ValidateFilename(sanitizedShortcutName);
+  if (sanitizedShortcutName != aShortcutName) {
+    return NS_ERROR_FILE_INVALID_PATH;
+  }
+
+  // The taskbar tab shortcut will always be in
+  // %APPDATA%\Microsoft\Windows\Start Menu\Programs
+  RefPtr<IKnownFolderManager> fManager;
+  RefPtr<IKnownFolder> progFolder;
+  LPWSTR progFolderW;
+  nsString progFolderNS;
+  HRESULT hr =
+      CoCreateInstance(CLSID_KnownFolderManager, nullptr, CLSCTX_INPROC_SERVER,
+                       IID_IKnownFolderManager, getter_AddRefs(fManager));
+  if (NS_WARN_IF(FAILED(hr))) {
+    return NS_ERROR_ABORT;
+  }
+  fManager->GetFolder(FOLDERID_Programs, progFolder.StartAssignment());
+  hr = progFolder->GetPath(0, &progFolderW);
+  if (FAILED(hr)) {
+    return NS_ERROR_FILE_NOT_FOUND;
+  }
+  progFolderNS.Assign(progFolderW);
+  aRetPath = progFolderNS + u"\\"_ns + aShortcutName + u".lnk"_ns;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsWindowsShellService::GetTaskbarTabPins(nsTArray<nsString>& aShortcutPaths) {
+#ifdef __MINGW32__
+  return NS_ERROR_NOT_IMPLEMENTED;
+#else
+  aShortcutPaths.Clear();
+
+  // Get AppData\\Roaming folder using a known folder ID
+  RefPtr<IKnownFolderManager> fManager;
+  RefPtr<IKnownFolder> roamingAppData;
+  LPWSTR roamingAppDataW;
+  nsString roamingAppDataNS;
+  HRESULT hr =
+      CoCreateInstance(CLSID_KnownFolderManager, nullptr, CLSCTX_INPROC_SERVER,
+                       IID_IKnownFolderManager, getter_AddRefs(fManager));
+  if (NS_WARN_IF(FAILED(hr))) {
+    return NS_ERROR_ABORT;
+  }
+  fManager->GetFolder(FOLDERID_RoamingAppData,
+                      roamingAppData.StartAssignment());
+  hr = roamingAppData->GetPath(0, &roamingAppDataW);
+  if (FAILED(hr)) {
+    return NS_ERROR_FILE_NOT_FOUND;
+  }
+
+  // Append taskbar pins folder to AppData\\Roaming
+  roamingAppDataNS.Assign(roamingAppDataW);
+  CoTaskMemFree(roamingAppDataW);
+  nsString taskbarFolder =
+      roamingAppDataNS + u"\\Microsoft\\Windows\\Start Menu\\Programs"_ns;
+  nsString taskbarFolderWildcard = taskbarFolder + u"\\*.lnk"_ns;
+
+  // Get known path for binary file for later comparison with shortcuts.
+  // Returns lowercase file path which should be fine for Windows as all
+  // directories and files are case-insensitive by default.
+  RefPtr<nsIFile> binFile;
+  nsString binPath;
+  nsresult rv = XRE_GetBinaryPath(binFile.StartAssignment());
+  if (NS_WARN_IF(FAILED(rv))) {
     return NS_ERROR_FAILURE;
-  } else {
+  }
+  rv = binFile->GetPath(binPath);
+  if (NS_WARN_IF(FAILED(rv))) {
+    return NS_ERROR_FILE_UNRECOGNIZED_PATH;
+  }
+
+  // Check for if first file exists with a shortcut extension (.lnk)
+  WIN32_FIND_DATAW ffd;
+  HANDLE fileHandle = INVALID_HANDLE_VALUE;
+  fileHandle = FindFirstFileW(taskbarFolderWildcard.get(), &ffd);
+  if (fileHandle == INVALID_HANDLE_VALUE) {
+    // This means that no files were found in the folder which
+    // doesn't imply an error.
     return NS_OK;
   }
+
+  do {
+    // Extract shortcut target path from every
+    // shortcut in the taskbar pins folder.
+    nsString fileName(ffd.cFileName);
+    RefPtr<IShellLinkW> link;
+    RefPtr<IPropertyStore> pps;
+    nsString target;
+    target.SetLength(MAX_PATH);
+    hr = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                          IID_IShellLinkW, getter_AddRefs(link));
+    if (NS_WARN_IF(FAILED(hr))) {
+      continue;
+    }
+    nsString filePath = taskbarFolder + u"\\"_ns + fileName;
+    if (NS_WARN_IF(FAILED(hr))) {
+      continue;
+    }
+
+    // After loading shortcut, search through arguments to find if
+    // it is a taskbar tab shortcut.
+    hr = SHGetPropertyStoreFromParsingName(filePath.get(), nullptr,
+                                           GPS_READWRITE, IID_IPropertyStore,
+                                           getter_AddRefs(pps));
+    if (NS_WARN_IF(FAILED(hr)) || pps == nullptr) {
+      continue;
+    }
+    PROPVARIANT propVar;
+    PropVariantInit(&propVar);
+    auto cleanupPropVariant =
+        MakeScopeExit([&] { PropVariantClear(&propVar); });
+    // Get the PKEY_Link_Arguments property
+    hr = pps->GetValue(PKEY_Link_Arguments, &propVar);
+    if (NS_WARN_IF(FAILED(hr))) {
+      continue;
+    }
+    // Check if the argument matches
+    if (!(propVar.vt == VT_LPWSTR && propVar.pwszVal != nullptr &&
+          wcsstr(propVar.pwszVal, L"-taskbar-tab") != nullptr)) {
+      continue;
+    }
+
+    hr = link->GetPath(target.get(), MAX_PATH, nullptr, 0);
+    if (NS_WARN_IF(FAILED(hr))) {
+      continue;
+    }
+
+    // If shortcut target matches known binary file value
+    // then add the path to the shortcut as a valid
+    // shortcut. This has to be a substring search as
+    // the user could have added unknown command line arguments
+    // to the shortcut.
+    if (_wcsnicmp(target.get(), binPath.get(), binPath.Length()) == 0) {
+      aShortcutPaths.AppendElement(filePath);
+    }
+  } while (FindNextFile(fileHandle, &ffd) != 0);
+  FindClose(fileHandle);
+  return NS_OK;
+#endif
+}
+
+static nsresult PinCurrentAppToTaskbarWin10(bool aCheckOnly,
+                                            const nsAString& aAppUserModelId,
+                                            const nsAString& aShortcutPath) {
+  // The behavior here is identical if we're only checking or if we try to pin
+  // but the app is already pinned so we update the variable accordingly.
+  if (!aCheckOnly) {
+    aCheckOnly = IsCurrentAppPinnedToTaskbarSync(aAppUserModelId);
+  }
+  const bool pinType = true;  // true means pin
+  return ManageShortcutTaskbarPins(aCheckOnly, pinType, aShortcutPath);
+}
+
+// There's a delay between shortcuts being created in locations visible to
+// `shell:appsfolder` and that information being propogated to
+// `shell:appsfolder`. APIs like `ITaskbarManager` pinning rely on said
+// shortcuts being visible to `shell:appsfolder`, so we have to introduce a wait
+// until they're visible when creating these shortcuts at runtime.
+static bool PollAppsFolderForShortcut(const nsAString& aAppUserModelId,
+                                      const TimeDuration aTimeout) {
+  MOZ_DIAGNOSTIC_ASSERT(!NS_IsMainThread(),
+                        "PollAppsFolderForShortcut blocks and should be called "
+                        "off main thread only");
+
+  // Implementation note: it was taken into consideration at the time of writing
+  // to implement this with `SHChangeNotifyRegister` and a `HWND_MESSAGE`
+  // window. This added significant complexity in terms of resource management
+  // and control flow that was deemed excessive for a function that is rarely
+  // run. Absent evidence that we're consuming excessive system resources, this
+  // simple, poll-based approach seemed more appropriate.
+  //
+  // If in the future it seems appropriate to modify this to be event based,
+  // here are some of the lessons learned during the investigation:
+  //   - `shell:appsfolder` is a virtual directory, composed of shortcut files
+  //     with unique AUMIDs from
+  //     `[%PROGRAMDATA%|%APPDATA%]\Microsoft\Windows\Start Menu\Programs`.
+  //   - `shell:appsfolder` does not have a full path in the filesystem,
+  //     therefore does not work with most file watching APIs.
+  //   - `SHChangeNotifyRegister` should listen for `SHCNE_UPDATEDIR` on
+  //     `FOLDERID_AppsFolder`. `SHCNE_CREATE` events are not issued for
+  //     shortcuts added to `FOLDERID_AppsFolder` likely due to it's virtual
+  //     nature.
+  //   - The mechanism for inspecting the `shell:appsfolder` for a shortcut with
+  //     matching AUMID is the same in an event-based implementation due to
+  //     `SHCNE_UPDATEDIR` events include the modified folder, but not the
+  //     modified file.
+
+  TimeStamp start = TimeStamp::Now();
+
+  ComPtr<IShellItem> appsFolder;
+  HRESULT hr = SHGetKnownFolderItem(FOLDERID_AppsFolder, KF_FLAG_DEFAULT,
+                                    nullptr, IID_PPV_ARGS(&appsFolder));
+  if (FAILED(hr)) {
+    return false;
+  }
+
+  do {
+    // It's possible to have identically named files in `shell:appsfolder` as
+    // it's disambiguated by AUMID instead of file name, so we have to iterate
+    // over all items instead of querying the specific shortcut.
+    ComPtr<IEnumShellItems> shortcutIter;
+    hr = appsFolder->BindToHandler(nullptr, BHID_EnumItems,
+                                   IID_PPV_ARGS(&shortcutIter));
+    if (FAILED(hr)) {
+      return false;
+    }
+
+    ComPtr<IShellItem> shortcut;
+    while (shortcutIter->Next(1, &shortcut, nullptr) == S_OK) {
+      ComPtr<IShellItem2> shortcut2;
+      hr = shortcut.As(&shortcut2);
+      if (FAILED(hr)) {
+        return false;
+      }
+
+      mozilla::UniquePtr<WCHAR, mozilla::CoTaskMemFreeDeleter> shortcutAumid;
+      hr = shortcut2->GetString(PKEY_AppUserModel_ID,
+                                getter_Transfers(shortcutAumid));
+      if (FAILED(hr)) {
+        // `shell:appsfolder` is populated by unique shortcut AUMID; if this is
+        // absent something has gone wrong and we should exit.
+        return false;
+      }
+
+      if (aAppUserModelId == nsDependentString(shortcutAumid.get())) {
+        return true;
+      }
+    }
+
+    // Sleep for a quarter of a second to avoid pinning the CPU while waiting.
+    ::Sleep(250);
+  } while ((TimeStamp::Now() - start) < aTimeout);
+
+  return false;
 }
 
 static nsresult PinCurrentAppToTaskbarImpl(
@@ -1408,7 +2041,7 @@ static nsresult PinCurrentAppToTaskbarImpl(
       "PinCurrentAppToTaskbarImpl should be called off main thread only");
 
   nsAutoString shortcutPath;
-  nsresult rv = FindMatchingShortcut(aAppUserModelId, aShortcutSubstring,
+  nsresult rv = FindPinnableShortcut(aAppUserModelId, aShortcutSubstring,
                                      aPrivateBrowsing, shortcutPath);
   if (NS_FAILED(rv)) {
     shortcutPath.Truncate();
@@ -1436,7 +2069,7 @@ static nsresult PinCurrentAppToTaskbarImpl(
         return NS_ERROR_FAILURE;
       }
       nsAutoString exeStr(exePath);
-      nsresult rv = NS_NewLocalFile(exeStr, true, getter_AddRefs(exeFile));
+      nsresult rv = NS_NewLocalFile(exeStr, getter_AddRefs(exeFile));
       if (!NS_SUCCEEDED(rv)) {
         return NS_ERROR_FILE_NOT_FOUND;
       }
@@ -1457,12 +2090,7 @@ static nsresult PinCurrentAppToTaskbarImpl(
       return NS_ERROR_FILE_NOT_FOUND;
     }
   }
-
-  if (IsWin10OrLater()) {
-    return PinCurrentAppToTaskbarWin10(aCheckOnly, shortcutPath);
-  } else {
-    return PinCurrentAppToTaskbarWin7(aCheckOnly, shortcutPath);
-  }
+  return PinShortcutToTaskbarImpl(aCheckOnly, aAppUserModelId, shortcutPath);
 }
 
 static nsresult PinCurrentAppToTaskbarAsyncImpl(bool aCheckOnly,
@@ -1474,7 +2102,7 @@ static nsresult PinCurrentAppToTaskbarAsyncImpl(bool aCheckOnly,
   }
 
   // First available on 1809
-  if (IsWin10OrLater() && !IsWin10Sep2018UpdateOrLater()) {
+  if (!IsWin10Sep2018UpdateOrLater()) {
     return NS_ERROR_NOT_AVAILABLE;
   }
 
@@ -1487,7 +2115,7 @@ static nsresult PinCurrentAppToTaskbarAsyncImpl(bool aCheckOnly,
   }
 
   nsAutoString aumid;
-  if (NS_WARN_IF(!mozilla::widget::WinTaskbar::GenerateAppUserModelID(
+  if (NS_WARN_IF(!mozilla::widget::WinTaskbar::GetAppUserModelID(
           aumid, aPrivateBrowsing))) {
     return NS_ERROR_FAILURE;
   }
@@ -1575,12 +2203,6 @@ NS_IMETHODIMP
 nsWindowsShellService::PinCurrentAppToTaskbarAsync(bool aPrivateBrowsing,
                                                    JSContext* aCx,
                                                    dom::Promise** aPromise) {
-  // https://bugzilla.mozilla.org/show_bug.cgi?id=1712628 tracks implementing
-  // this for MSIX packages.
-  if (widget::WinUtils::HasPackageIdentity()) {
-    return NS_ERROR_NOT_IMPLEMENTED;
-  }
-
   return PinCurrentAppToTaskbarAsyncImpl(
       /* aCheckOnly */ false, aPrivateBrowsing, aCx, aPromise);
 }
@@ -1588,149 +2210,13 @@ nsWindowsShellService::PinCurrentAppToTaskbarAsync(bool aPrivateBrowsing,
 NS_IMETHODIMP
 nsWindowsShellService::CheckPinCurrentAppToTaskbarAsync(
     bool aPrivateBrowsing, JSContext* aCx, dom::Promise** aPromise) {
-  // https://bugzilla.mozilla.org/show_bug.cgi?id=1712628 tracks implementing
-  // this for MSIX packages.
-  if (widget::WinUtils::HasPackageIdentity()) {
-    return NS_ERROR_NOT_IMPLEMENTED;
-  }
-
   return PinCurrentAppToTaskbarAsyncImpl(
       /* aCheckOnly = */ true, aPrivateBrowsing, aCx, aPromise);
-}
-
-static bool IsCurrentAppPinnedToTaskbarSync(const nsAutoString& aumid) {
-  // There are two shortcut targets that we created. One always matches the
-  // binary we're running as (eg: firefox.exe). The other is the wrapper
-  // for launching in Private Browsing mode. We need to inspect shortcuts
-  // that point at either of these to accurately judge whether or not
-  // the app is pinned with the given AUMID.
-  wchar_t exePath[MAXPATHLEN] = {};
-  wchar_t pbExePath[MAXPATHLEN] = {};
-
-  if (NS_WARN_IF(NS_FAILED(BinaryPath::GetLong(exePath)))) {
-    return false;
-  }
-
-  wcscpy_s(pbExePath, MAXPATHLEN, exePath);
-  if (!PathRemoveFileSpecW(pbExePath)) {
-    return false;
-  }
-  if (!PathAppendW(pbExePath, L"private_browsing.exe")) {
-    return false;
-  }
-
-  wchar_t folderChars[MAX_PATH] = {};
-  HRESULT hr = SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr,
-                                SHGFP_TYPE_CURRENT, folderChars);
-  if (NS_WARN_IF(FAILED(hr))) {
-    return false;
-  }
-
-  nsAutoString folder;
-  folder.Assign(folderChars);
-  if (NS_WARN_IF(folder.IsEmpty())) {
-    return false;
-  }
-  if (folder[folder.Length() - 1] != '\\') {
-    folder.AppendLiteral("\\");
-  }
-  folder.AppendLiteral(
-      "Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar");
-  nsAutoString pattern;
-  pattern.Assign(folder);
-  pattern.AppendLiteral("\\*.lnk");
-
-  WIN32_FIND_DATAW findData = {};
-  HANDLE hFindFile = FindFirstFileW(pattern.get(), &findData);
-  if (hFindFile == INVALID_HANDLE_VALUE) {
-    Unused << NS_WARN_IF(GetLastError() != ERROR_FILE_NOT_FOUND);
-    return false;
-  }
-  // Past this point we don't return until the end of the function,
-  // when FindClose() is called.
-
-  // Check all shortcuts until a match is found
-  bool isPinned = false;
-  do {
-    nsAutoString fileName;
-    fileName.Assign(folder);
-    fileName.AppendLiteral("\\");
-    fileName.Append(findData.cFileName);
-
-    // Create a shell link object for loading the shortcut
-    RefPtr<IShellLinkW> link;
-    HRESULT hr =
-        CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
-                         IID_IShellLinkW, getter_AddRefs(link));
-    if (NS_WARN_IF(FAILED(hr))) {
-      continue;
-    }
-
-    // Load
-    RefPtr<IPersistFile> persist;
-    hr = link->QueryInterface(IID_IPersistFile, getter_AddRefs(persist));
-    if (NS_WARN_IF(FAILED(hr))) {
-      continue;
-    }
-
-    hr = persist->Load(fileName.get(), STGM_READ);
-    if (NS_WARN_IF(FAILED(hr))) {
-      continue;
-    }
-
-    // Check the exe path
-    static_assert(MAXPATHLEN == MAX_PATH);
-    wchar_t storedExePath[MAX_PATH] = {};
-    // With no flags GetPath gets a long path
-    hr = link->GetPath(storedExePath, ArrayLength(storedExePath), nullptr, 0);
-    if (FAILED(hr) || hr == S_FALSE) {
-      continue;
-    }
-    // Case insensitive path comparison
-    // NOTE: Because this compares the path directly, it is possible to
-    // have a false negative mismatch.
-    if (wcsnicmp(storedExePath, exePath, MAXPATHLEN) == 0 ||
-        wcsnicmp(storedExePath, pbExePath, MAXPATHLEN) == 0) {
-      RefPtr<IPropertyStore> propStore;
-      hr = link->QueryInterface(IID_IPropertyStore, getter_AddRefs(propStore));
-      if (NS_WARN_IF(FAILED(hr))) {
-        continue;
-      }
-
-      PROPVARIANT pv;
-      hr = propStore->GetValue(PKEY_AppUserModel_ID, &pv);
-      if (NS_WARN_IF(FAILED(hr))) {
-        continue;
-      }
-
-      wchar_t storedAUMID[MAX_PATH];
-      hr = PropVariantToString(pv, storedAUMID, MAX_PATH);
-      PropVariantClear(&pv);
-      if (NS_WARN_IF(FAILED(hr))) {
-        continue;
-      }
-
-      if (aumid.Equals(storedAUMID)) {
-        isPinned = true;
-        break;
-      }
-    }
-  } while (FindNextFileW(hFindFile, &findData));
-
-  FindClose(hFindFile);
-
-  return isPinned;
 }
 
 NS_IMETHODIMP
 nsWindowsShellService::IsCurrentAppPinnedToTaskbarAsync(
     const nsAString& aumid, JSContext* aCx, /* out */ dom::Promise** aPromise) {
-  // https://bugzilla.mozilla.org/show_bug.cgi?id=1712628 tracks implementing
-  // this for MSIX packages.
-  if (widget::WinUtils::HasPackageIdentity()) {
-    return NS_ERROR_NOT_IMPLEMENTED;
-  }
-
   if (!NS_IsMainThread()) {
     return NS_ERROR_NOT_SAME_THREAD;
   }
@@ -1775,6 +2261,612 @@ nsWindowsShellService::IsCurrentAppPinnedToTaskbarAsync(
   return NS_OK;
 }
 
+#ifndef __MINGW32__
+#  define RESOLVE_AND_RETURN(HOLDER, RESOLVE, RETURN)                \
+    NS_DispatchToMainThread(NS_NewRunnableFunction(                  \
+        __func__, [resolveVal = (RESOLVE), promiseHolder = HOLDER] { \
+          promiseHolder.get()->get()->MaybeResolve(resolveVal);      \
+        }));                                                         \
+    return RETURN
+
+#  define REJECT_AND_RETURN(HOLDER, REJECT, RETURN)                 \
+    NS_DispatchToMainThread(                                        \
+        NS_NewRunnableFunction(__func__, [promiseHolder = HOLDER] { \
+          promiseHolder.get()->get()->MaybeReject(REJECT);          \
+        }));                                                        \
+    return RETURN
+
+static void EnableLaunchOnLoginMSIXAsyncImpl(
+    const nsString& capturedTaskId,
+    const RefPtr<nsMainThreadPtrHolder<dom::Promise>> promiseHolder) {
+  ComPtr<IStartupTaskStatics> startupTaskStatics;
+  HRESULT hr = GetActivationFactory(
+      HStringReference(RuntimeClass_Windows_ApplicationModel_StartupTask).Get(),
+      &startupTaskStatics);
+  if (FAILED(hr)) {
+    REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, /* void */);
+  }
+  ComPtr<IAsyncOperation<StartupTask*>> getTaskOperation = nullptr;
+  hr = startupTaskStatics->GetAsync(
+      HStringReference(capturedTaskId.get()).Get(), &getTaskOperation);
+  if (FAILED(hr)) {
+    REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, /* void */);
+  }
+  auto getTaskCallback =
+      Callback<IAsyncOperationCompletedHandler<StartupTask*>>(
+          [promiseHolder](IAsyncOperation<StartupTask*>* operation,
+                          AsyncStatus status) -> HRESULT {
+            if (status != AsyncStatus::Completed) {
+              REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, E_FAIL);
+            }
+            ComPtr<IStartupTask> startupTask;
+            HRESULT hr = operation->GetResults(&startupTask);
+            if (FAILED(hr)) {
+              REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, E_FAIL);
+            }
+            ComPtr<IAsyncOperation<StartupTaskState>> enableOperation;
+            hr = startupTask->RequestEnableAsync(&enableOperation);
+            if (FAILED(hr)) {
+              REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, E_FAIL);
+            }
+            // Set another callback for enabling the startup task
+            auto enableHandler =
+                Callback<IAsyncOperationCompletedHandler<StartupTaskState>>(
+                    [promiseHolder](
+                        IAsyncOperation<StartupTaskState>* operation,
+                        AsyncStatus status) -> HRESULT {
+                      StartupTaskState resultState;
+                      HRESULT hr = operation->GetResults(&resultState);
+                      if (SUCCEEDED(hr) && status == AsyncStatus::Completed) {
+                        RESOLVE_AND_RETURN(promiseHolder, true, S_OK);
+                      }
+                      RESOLVE_AND_RETURN(promiseHolder, false, S_OK);
+                    });
+            hr = enableOperation->put_Completed(enableHandler.Get());
+            if (FAILED(hr)) {
+              REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, hr);
+            }
+            return hr;
+          });
+  hr = getTaskOperation->put_Completed(getTaskCallback.Get());
+  if (FAILED(hr)) {
+    REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, /* void */);
+  }
+}
+
+static void DisableLaunchOnLoginMSIXAsyncImpl(
+    const nsString& capturedTaskId,
+    const RefPtr<nsMainThreadPtrHolder<dom::Promise>> promiseHolder) {
+  ComPtr<IStartupTaskStatics> startupTaskStatics;
+  HRESULT hr = GetActivationFactory(
+      HStringReference(RuntimeClass_Windows_ApplicationModel_StartupTask).Get(),
+      &startupTaskStatics);
+  if (FAILED(hr)) {
+    REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, /* void */);
+  }
+  ComPtr<IAsyncOperation<StartupTask*>> getTaskOperation = nullptr;
+  hr = startupTaskStatics->GetAsync(
+      HStringReference(capturedTaskId.get()).Get(), &getTaskOperation);
+  if (FAILED(hr)) {
+    REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, /* void */);
+  }
+  auto getTaskCallback =
+      Callback<IAsyncOperationCompletedHandler<StartupTask*>>(
+          [promiseHolder](IAsyncOperation<StartupTask*>* operation,
+                          AsyncStatus status) -> HRESULT {
+            if (status != AsyncStatus::Completed) {
+              REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, E_FAIL);
+            }
+            ComPtr<IStartupTask> startupTask;
+            HRESULT hr = operation->GetResults(&startupTask);
+            if (FAILED(hr)) {
+              REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, E_FAIL);
+            }
+            hr = startupTask->Disable();
+            if (FAILED(hr)) {
+              REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, E_FAIL);
+            }
+            RESOLVE_AND_RETURN(promiseHolder, true, S_OK);
+          });
+  hr = getTaskOperation->put_Completed(getTaskCallback.Get());
+  if (FAILED(hr)) {
+    REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, /* void */);
+  }
+}
+
+static void GetLaunchOnLoginEnabledMSIXAsyncImpl(
+    const nsString& capturedTaskId,
+    const RefPtr<nsMainThreadPtrHolder<dom::Promise>> promiseHolder) {
+  ComPtr<IStartupTaskStatics> startupTaskStatics;
+  HRESULT hr = GetActivationFactory(
+      HStringReference(RuntimeClass_Windows_ApplicationModel_StartupTask).Get(),
+      &startupTaskStatics);
+  if (FAILED(hr)) {
+    REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, /* void */);
+  }
+  ComPtr<IAsyncOperation<StartupTask*>> getTaskOperation = nullptr;
+  hr = startupTaskStatics->GetAsync(
+      HStringReference(capturedTaskId.get()).Get(), &getTaskOperation);
+  if (FAILED(hr)) {
+    REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, /* void */);
+  }
+  auto getTaskCallback =
+      Callback<IAsyncOperationCompletedHandler<StartupTask*>>(
+          [promiseHolder](IAsyncOperation<StartupTask*>* operation,
+                          AsyncStatus status) -> HRESULT {
+            if (status != AsyncStatus::Completed) {
+              REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, E_FAIL);
+            }
+            ComPtr<IStartupTask> startupTask;
+            HRESULT hr = operation->GetResults(&startupTask);
+            if (FAILED(hr)) {
+              REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, E_FAIL);
+            }
+            StartupTaskState state;
+            hr = startupTask->get_State(&state);
+            if (FAILED(hr)) {
+              REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, E_FAIL);
+            }
+            switch (state) {
+              case StartupTaskState_EnabledByPolicy:
+                RESOLVE_AND_RETURN(
+                    promiseHolder,
+                    nsIWindowsShellService::LaunchOnLoginEnabledEnumerator::
+                        LAUNCH_ON_LOGIN_ENABLED_BY_POLICY,
+                    S_OK);
+                break;
+              case StartupTaskState_Enabled:
+                RESOLVE_AND_RETURN(
+                    promiseHolder,
+                    nsIWindowsShellService::LaunchOnLoginEnabledEnumerator::
+                        LAUNCH_ON_LOGIN_ENABLED,
+                    S_OK);
+                break;
+              case StartupTaskState_DisabledByUser:
+              case StartupTaskState_DisabledByPolicy:
+                RESOLVE_AND_RETURN(
+                    promiseHolder,
+                    nsIWindowsShellService::LaunchOnLoginEnabledEnumerator::
+                        LAUNCH_ON_LOGIN_DISABLED_BY_SETTINGS,
+                    S_OK);
+                break;
+              default:
+                RESOLVE_AND_RETURN(
+                    promiseHolder,
+                    nsIWindowsShellService::LaunchOnLoginEnabledEnumerator::
+                        LAUNCH_ON_LOGIN_DISABLED,
+                    S_OK);
+            }
+          });
+  hr = getTaskOperation->put_Completed(getTaskCallback.Get());
+  if (FAILED(hr)) {
+    REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, /* void */);
+  }
+}
+
+NS_IMETHODIMP
+nsWindowsShellService::EnableLaunchOnLoginMSIXAsync(
+    const nsAString& aTaskId, JSContext* aCx,
+    /* out */ dom::Promise** aPromise) {
+  if (!widget::WinUtils::HasPackageIdentity()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  if (!NS_IsMainThread()) {
+    return NS_ERROR_NOT_SAME_THREAD;
+  }
+  ErrorResult rv;
+  RefPtr<dom::Promise> promise =
+      dom::Promise::Create(xpc::CurrentNativeGlobal(aCx), rv);
+  if (MOZ_UNLIKELY(rv.Failed())) {
+    return rv.StealNSResult();
+  }
+
+  // A holder to pass the promise through the background task and back to
+  // the main thread when finished.
+  auto promiseHolder = MakeRefPtr<nsMainThreadPtrHolder<dom::Promise>>(
+      "EnableLaunchOnLoginMSIXAsync promise", promise);
+
+  NS_DispatchBackgroundTask(NS_NewRunnableFunction(
+      "EnableLaunchOnLoginMSIXAsync",
+      [taskId = nsString(aTaskId), promiseHolder] {
+        EnableLaunchOnLoginMSIXAsyncImpl(taskId, promiseHolder);
+      }));
+
+  promise.forget(aPromise);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsWindowsShellService::DisableLaunchOnLoginMSIXAsync(
+    const nsAString& aTaskId, JSContext* aCx,
+    /* out */ dom::Promise** aPromise) {
+  if (!widget::WinUtils::HasPackageIdentity()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  if (!NS_IsMainThread()) {
+    return NS_ERROR_NOT_SAME_THREAD;
+  }
+  ErrorResult rv;
+  RefPtr<dom::Promise> promise =
+      dom::Promise::Create(xpc::CurrentNativeGlobal(aCx), rv);
+  if (MOZ_UNLIKELY(rv.Failed())) {
+    return rv.StealNSResult();
+  }
+
+  // A holder to pass the promise through the background task and back to
+  // the main thread when finished.
+  auto promiseHolder = MakeRefPtr<nsMainThreadPtrHolder<dom::Promise>>(
+      "DisableLaunchOnLoginMSIXAsync promise", promise);
+
+  NS_DispatchBackgroundTask(NS_NewRunnableFunction(
+      "DisableLaunchOnLoginMSIXAsync",
+      [taskId = nsString(aTaskId), promiseHolder] {
+        DisableLaunchOnLoginMSIXAsyncImpl(taskId, promiseHolder);
+      }));
+
+  promise.forget(aPromise);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsWindowsShellService::GetLaunchOnLoginEnabledMSIXAsync(
+    const nsAString& aTaskId, JSContext* aCx,
+    /* out */ dom::Promise** aPromise) {
+  if (!widget::WinUtils::HasPackageIdentity()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  if (!NS_IsMainThread()) {
+    return NS_ERROR_NOT_SAME_THREAD;
+  }
+  ErrorResult rv;
+  RefPtr<dom::Promise> promise =
+      dom::Promise::Create(xpc::CurrentNativeGlobal(aCx), rv);
+  if (MOZ_UNLIKELY(rv.Failed())) {
+    return rv.StealNSResult();
+  }
+
+  // A holder to pass the promise through the background task and back to
+  // the main thread when finished.
+  auto promiseHolder = MakeRefPtr<nsMainThreadPtrHolder<dom::Promise>>(
+      "GetLaunchOnLoginEnabledMSIXAsync promise", promise);
+
+  NS_DispatchBackgroundTask(NS_NewRunnableFunction(
+      "GetLaunchOnLoginEnabledMSIXAsync",
+      [taskId = nsString(aTaskId), promiseHolder] {
+        GetLaunchOnLoginEnabledMSIXAsyncImpl(taskId, promiseHolder);
+      }));
+
+  promise.forget(aPromise);
+  return NS_OK;
+}
+
+static HRESULT GetPackage3(ComPtr<IPackage3>& package3) {
+  // Get the current package and cast it to IPackage3 so we can
+  // check for AppListEntries
+  ComPtr<IPackageStatics> packageStatics;
+  HRESULT hr = GetActivationFactory(
+      HStringReference(RuntimeClass_Windows_ApplicationModel_Package).Get(),
+      &packageStatics);
+
+  if (FAILED(hr)) {
+    return hr;
+  }
+  ComPtr<IPackage> package;
+  hr = packageStatics->get_Current(&package);
+  if (FAILED(hr)) {
+    return hr;
+  }
+  hr = package.As(&package3);
+  return hr;
+}
+
+static HRESULT GetStartScreenManager(
+    ComPtr<IVectorView<AppListEntry*>>& appListEntries,
+    ComPtr<IAppListEntry>& entry,
+    ComPtr<IStartScreenManager>& startScreenManager) {
+  unsigned int numEntries = 0;
+  HRESULT hr = appListEntries->get_Size(&numEntries);
+  if (FAILED(hr) || numEntries == 0) {
+    return E_FAIL;
+  }
+  // There's only one AppListEntry in the Firefox package and by
+  // convention our main executable should be the first in the
+  // list.
+  hr = appListEntries->GetAt(0, &entry);
+
+  // Create and init a StartScreenManager and check if we're already
+  // pinned.
+  ComPtr<IStartScreenManagerStatics> startScreenManagerStatics;
+  hr = GetActivationFactory(
+      HStringReference(RuntimeClass_Windows_UI_StartScreen_StartScreenManager)
+          .Get(),
+      &startScreenManagerStatics);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  hr = startScreenManagerStatics->GetDefault(&startScreenManager);
+  return hr;
+}
+
+static void PinCurrentAppToStartMenuAsyncImpl(
+    bool aCheckOnly,
+    const RefPtr<nsMainThreadPtrHolder<dom::Promise>> promiseHolder) {
+  ComPtr<IPackage3> package3;
+  HRESULT hr = GetPackage3(package3);
+  if (FAILED(hr)) {
+    REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, /* void */);
+  }
+
+  // Get the AppList entries
+  ComPtr<IVectorView<AppListEntry*>> appListEntries;
+  ComPtr<IAsyncOperation<IVectorView<AppListEntry*>*>>
+      getAppListEntriesOperation;
+  hr = package3->GetAppListEntriesAsync(&getAppListEntriesOperation);
+  if (FAILED(hr)) {
+    REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, /* void */);
+  }
+  auto getAppListEntriesCallback =
+      Callback<IAsyncOperationCompletedHandler<IVectorView<AppListEntry*>*>>(
+          [promiseHolder, aCheckOnly](
+              IAsyncOperation<IVectorView<AppListEntry*>*>* operation,
+              AsyncStatus status) -> HRESULT {
+            if (status != AsyncStatus::Completed) {
+              REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, E_FAIL);
+            }
+            ComPtr<IVectorView<AppListEntry*>> appListEntries;
+            HRESULT hr = operation->GetResults(&appListEntries);
+            if (FAILED(hr)) {
+              REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, E_FAIL);
+            }
+            ComPtr<IStartScreenManager> startScreenManager;
+            ComPtr<IAppListEntry> entry;
+            hr = GetStartScreenManager(appListEntries, entry,
+                                       startScreenManager);
+            if (FAILED(hr)) {
+              REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, E_FAIL);
+            }
+            ComPtr<IAsyncOperation<bool>> getPinnedOperation;
+            hr = startScreenManager->ContainsAppListEntryAsync(
+                entry.Get(), &getPinnedOperation);
+            if (FAILED(hr)) {
+              REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, E_FAIL);
+            }
+            auto getPinnedCallback =
+                Callback<IAsyncOperationCompletedHandler<bool>>(
+                    [promiseHolder, entry, startScreenManager, aCheckOnly](
+                        IAsyncOperation<bool>* operation,
+                        AsyncStatus status) -> HRESULT {
+                      if (status != AsyncStatus::Completed) {
+                        REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE,
+                                          E_FAIL);
+                      }
+                      boolean isAlreadyPinned;
+                      HRESULT hr = operation->GetResults(&isAlreadyPinned);
+                      if (FAILED(hr)) {
+                        REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE,
+                                          E_FAIL);
+                      }
+                      // If we're already pinned we can return early
+                      // Ditto if we're just checking whether we *can* pin
+                      if (isAlreadyPinned || aCheckOnly) {
+                        RESOLVE_AND_RETURN(promiseHolder, true, S_OK);
+                      }
+                      ComPtr<IAsyncOperation<bool>> pinOperation;
+                      startScreenManager->RequestAddAppListEntryAsync(
+                          entry.Get(), &pinOperation);
+                      // Set another callback for pinning to the start menu
+                      auto pinOperationCallback =
+                          Callback<IAsyncOperationCompletedHandler<bool>>(
+                              [promiseHolder](IAsyncOperation<bool>* operation,
+                                              AsyncStatus status) -> HRESULT {
+                                if (status != AsyncStatus::Completed) {
+                                  REJECT_AND_RETURN(promiseHolder,
+                                                    NS_ERROR_FAILURE, E_FAIL);
+                                };
+                                boolean pinSuccess;
+                                HRESULT hr = operation->GetResults(&pinSuccess);
+                                if (FAILED(hr)) {
+                                  REJECT_AND_RETURN(promiseHolder,
+                                                    NS_ERROR_FAILURE, E_FAIL);
+                                }
+                                RESOLVE_AND_RETURN(promiseHolder,
+                                                   pinSuccess ? true : false,
+                                                   S_OK);
+                              });
+                      hr = pinOperation->put_Completed(
+                          pinOperationCallback.Get());
+                      if (FAILED(hr)) {
+                        REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, hr);
+                      }
+                      return hr;
+                    });
+            hr = getPinnedOperation->put_Completed(getPinnedCallback.Get());
+            if (FAILED(hr)) {
+              REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, hr);
+            }
+            return hr;
+          });
+  hr = getAppListEntriesOperation->put_Completed(
+      getAppListEntriesCallback.Get());
+  if (FAILED(hr)) {
+    REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, /* void */);
+  }
+}
+
+NS_IMETHODIMP
+nsWindowsShellService::PinCurrentAppToStartMenuAsync(bool aCheckOnly,
+                                                     JSContext* aCx,
+                                                     dom::Promise** aPromise) {
+  if (!NS_IsMainThread()) {
+    return NS_ERROR_NOT_SAME_THREAD;
+  }
+  // Unfortunately pinning to the Start Menu requires IAppListEntry
+  // which is only implemented for packaged applications.
+  if (!widget::WinUtils::HasPackageIdentity()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+  ErrorResult rv;
+  RefPtr<dom::Promise> promise =
+      dom::Promise::Create(xpc::CurrentNativeGlobal(aCx), rv);
+  if (MOZ_UNLIKELY(rv.Failed())) {
+    return rv.StealNSResult();
+  }
+
+  // A holder to pass the promise through the background task and back to
+  // the main thread when finished.
+  auto promiseHolder = MakeRefPtr<nsMainThreadPtrHolder<dom::Promise>>(
+      "PinCurrentAppToStartMenuAsync promise", promise);
+  NS_DispatchBackgroundTask(NS_NewRunnableFunction(
+      "PinCurrentAppToStartMenuAsync", [aCheckOnly, promiseHolder] {
+        PinCurrentAppToStartMenuAsyncImpl(aCheckOnly, promiseHolder);
+      }));
+  promise.forget(aPromise);
+  return NS_OK;
+}
+
+static void IsCurrentAppPinnedToStartMenuAsyncImpl(
+    const RefPtr<nsMainThreadPtrHolder<dom::Promise>> promiseHolder) {
+  ComPtr<IPackage3> package3;
+  HRESULT hr = GetPackage3(package3);
+  if (FAILED(hr)) {
+    REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, /* void */);
+  }
+
+  // Get the AppList entries
+  ComPtr<IVectorView<AppListEntry*>> appListEntries;
+  ComPtr<IAsyncOperation<IVectorView<AppListEntry*>*>>
+      getAppListEntriesOperation;
+  hr = package3->GetAppListEntriesAsync(&getAppListEntriesOperation);
+  if (FAILED(hr)) {
+    REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, /* void */);
+  }
+  auto getAppListEntriesCallback =
+      Callback<IAsyncOperationCompletedHandler<IVectorView<AppListEntry*>*>>(
+          [promiseHolder](
+              IAsyncOperation<IVectorView<AppListEntry*>*>* operation,
+              AsyncStatus status) -> HRESULT {
+            if (status != AsyncStatus::Completed) {
+              REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, E_FAIL);
+            }
+            ComPtr<IVectorView<AppListEntry*>> appListEntries;
+            HRESULT hr = operation->GetResults(&appListEntries);
+            if (FAILED(hr)) {
+              REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, E_FAIL);
+            }
+            ComPtr<IStartScreenManager> startScreenManager;
+            ComPtr<IAppListEntry> entry;
+            hr = GetStartScreenManager(appListEntries, entry,
+                                       startScreenManager);
+            if (FAILED(hr)) {
+              REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, E_FAIL);
+            }
+            ComPtr<IAsyncOperation<bool>> getPinnedOperation;
+            hr = startScreenManager->ContainsAppListEntryAsync(
+                entry.Get(), &getPinnedOperation);
+            if (FAILED(hr)) {
+              REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, E_FAIL);
+            }
+            auto getPinnedCallback =
+                Callback<IAsyncOperationCompletedHandler<bool>>(
+                    [promiseHolder, entry, startScreenManager](
+                        IAsyncOperation<bool>* operation,
+                        AsyncStatus status) -> HRESULT {
+                      if (status != AsyncStatus::Completed) {
+                        REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE,
+                                          E_FAIL);
+                      }
+                      boolean isAlreadyPinned;
+                      HRESULT hr = operation->GetResults(&isAlreadyPinned);
+                      if (FAILED(hr)) {
+                        REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE,
+                                          E_FAIL);
+                      }
+                      RESOLVE_AND_RETURN(promiseHolder,
+                                         isAlreadyPinned ? true : false, S_OK);
+                    });
+            hr = getPinnedOperation->put_Completed(getPinnedCallback.Get());
+            if (FAILED(hr)) {
+              REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, hr);
+            }
+            return hr;
+          });
+  hr = getAppListEntriesOperation->put_Completed(
+      getAppListEntriesCallback.Get());
+  if (FAILED(hr)) {
+    REJECT_AND_RETURN(promiseHolder, NS_ERROR_FAILURE, /* void */);
+  }
+}
+
+NS_IMETHODIMP
+nsWindowsShellService::IsCurrentAppPinnedToStartMenuAsync(
+    JSContext* aCx, dom::Promise** aPromise) {
+  if (!NS_IsMainThread()) {
+    return NS_ERROR_NOT_SAME_THREAD;
+  }
+  // Unfortunately pinning to the Start Menu requires IAppListEntry
+  // which is only implemented for packaged applications.
+  if (!widget::WinUtils::HasPackageIdentity()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+  ErrorResult rv;
+  RefPtr<dom::Promise> promise =
+      dom::Promise::Create(xpc::CurrentNativeGlobal(aCx), rv);
+  if (MOZ_UNLIKELY(rv.Failed())) {
+    return rv.StealNSResult();
+  }
+
+  // A holder to pass the promise through the background task and back to
+  // the main thread when finished.
+  auto promiseHolder = MakeRefPtr<nsMainThreadPtrHolder<dom::Promise>>(
+      "IsCurrentAppPinnedToStartMenuAsync promise", promise);
+  NS_DispatchBackgroundTask(NS_NewRunnableFunction(
+      "IsCurrentAppPinnedToStartMenuAsync", [promiseHolder] {
+        IsCurrentAppPinnedToStartMenuAsyncImpl(promiseHolder);
+      }));
+  promise.forget(aPromise);
+  return NS_OK;
+}
+
+#else
+NS_IMETHODIMP
+nsWindowsShellService::EnableLaunchOnLoginMSIXAsync(
+    const nsAString& aTaskId, JSContext* aCx,
+    /* out */ dom::Promise** aPromise) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+nsWindowsShellService::DisableLaunchOnLoginMSIXAsync(
+    const nsAString& aTaskId, JSContext* aCx,
+    /* out */ dom::Promise** aPromise) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+nsWindowsShellService::GetLaunchOnLoginEnabledMSIXAsync(
+    const nsAString& aTaskId, JSContext* aCx,
+    /* out */ dom::Promise** aPromise) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+nsWindowsShellService::PinCurrentAppToStartMenuAsync(bool aCheckOnly,
+                                                     JSContext* aCx,
+                                                     dom::Promise** aPromise) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+nsWindowsShellService::IsCurrentAppPinnedToStartMenuAsync(
+    JSContext* aCx, dom::Promise** aPromise) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+#endif
+
 NS_IMETHODIMP
 nsWindowsShellService::ClassifyShortcut(const nsAString& aPath,
                                         nsAString& aResult) {
@@ -1798,7 +2890,7 @@ nsWindowsShellService::ClassifyShortcut(const nsAString& aPath,
                  {FOLDERID_UserPinned, u"\\TaskBar\\", u"Taskbar"},
                  {FOLDERID_UserPinned, u"\\StartMenu\\", u"StartMenu"}};
 
-  for (size_t i = 0; i < ArrayLength(folders); ++i) {
+  for (size_t i = 0; i < std::size(folders); ++i) {
     nsAutoString knownPath;
 
     // These flags are chosen to avoid I/O, see bug 1363398.

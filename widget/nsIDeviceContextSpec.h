@@ -9,6 +9,7 @@
 #include "gfxPoint.h"
 #include "nsISupports.h"
 #include "mozilla/StaticPrefs_print.h"
+#include "mozilla/gfx/Point.h"
 #include "mozilla/gfx/PrintPromise.h"
 #include "mozilla/MoveOnlyFunction.h"
 
@@ -22,18 +23,15 @@ class PrintTarget;
 }  // namespace gfx
 }  // namespace mozilla
 
-#define NS_IDEVICE_CONTEXT_SPEC_IID                  \
-  {                                                  \
-    0xf407cfba, 0xbe28, 0x46c9, {                    \
-      0x8a, 0xba, 0x04, 0x2d, 0xae, 0xbb, 0x4f, 0x23 \
-    }                                                \
-  }
+#define NS_IDEVICE_CONTEXT_SPEC_IID \
+  {0xf407cfba, 0xbe28, 0x46c9, {0x8a, 0xba, 0x04, 0x2d, 0xae, 0xbb, 0x4f, 0x23}}
 
 class nsIDeviceContextSpec : public nsISupports {
  public:
   typedef mozilla::gfx::PrintTarget PrintTarget;
+  using IntSize = mozilla::gfx::IntSize;
 
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IDEVICE_CONTEXT_SPEC_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_IDEVICE_CONTEXT_SPEC_IID)
 
   /**
    * Initialize the device context spec.
@@ -79,7 +77,12 @@ class nsIDeviceContextSpec : public nsISupports {
                            int32_t aStartPage, int32_t aEndPage) = 0;
 
   virtual RefPtr<mozilla::gfx::PrintEndDocumentPromise> EndDocument() = 0;
-  NS_IMETHOD BeginPage() = 0;
+  /**
+   * Note: not all print devices implement mixed page sizing. Internally,
+   * aSizeInPoints gets handed off to a PrintTarget, and most PrintTarget
+   * subclasses will ignore `aSizeInPoints`.
+   */
+  NS_IMETHOD BeginPage(const IntSize& aSizeInPoints) = 0;
   NS_IMETHOD EndPage() = 0;
 
  protected:
@@ -88,7 +91,7 @@ class nsIDeviceContextSpec : public nsISupports {
       const char* aCallSite, AsyncEndDocumentFunction aFunction);
 
   static RefPtr<mozilla::gfx::PrintEndDocumentPromise>
-  EndDocumentPromiseFromResult(nsresult aResult, const char* aSite);
+  EndDocumentPromiseFromResult(nsresult aResult, mozilla::StaticString aSite);
 
   nsCOMPtr<nsIPrintSettings> mPrintSettings;
 
@@ -100,5 +103,4 @@ class nsIDeviceContextSpec : public nsISupports {
 #endif
 };
 
-NS_DEFINE_STATIC_IID_ACCESSOR(nsIDeviceContextSpec, NS_IDEVICE_CONTEXT_SPEC_IID)
 #endif

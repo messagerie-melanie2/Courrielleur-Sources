@@ -10,7 +10,6 @@
 
 #include "include/core/SkFlattenable.h"
 #include "include/core/SkMaskFilter.h"
-#include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkScalar.h"
 #include "src/core/SkMask.h"
@@ -42,8 +41,9 @@ public:
     //  This method is not exported to java.
     SkMask::Format getFormat() const override;
     //  This method is not exported to java.
-    bool filterMask(SkMask* dst, const SkMask& src, const SkMatrix&,
+    bool filterMask(SkMaskBuilder* dst, const SkMask& src, const SkMatrix&,
                     SkIPoint* margin) const override;
+    SkMaskFilterBase::Type type() const override { return SkMaskFilterBase::Type::kEmboss; }
 
 protected:
     SkEmbossMaskFilter(SkScalar blurSigma, const Light& light);

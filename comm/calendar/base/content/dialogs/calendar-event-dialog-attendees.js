@@ -5,13 +5,22 @@
 /* global MozXULElement */
 /* import-globals-from ../calendar-ui-utils.js */
 
-var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
-var { MailServices } = ChromeUtils.import("resource:///modules/MailServices.jsm");
-var { MailUtils } = ChromeUtils.import("resource:///modules/MailUtils.jsm");
+var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
+var { MailServices } = ChromeUtils.importESModule("resource:///modules/MailServices.sys.mjs");
+var { MailUtils } = ChromeUtils.importESModule("resource:///modules/MailUtils.sys.mjs");
 var { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUtils.sys.mjs");
-
-XPCOMUtils.defineLazyModuleGetters(this, {
-  CalAttendee: "resource:///modules/CalAttendee.jsm",
+var lazy = {};
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () =>
+    new Localization(
+      ["calendar/calendar.ftl", "calendar/calendar-event-dialog-attendees.ftl"],
+      true
+    )
+);
+ChromeUtils.defineESModuleGetters(this, {
+  CalAttendee: "resource:///modules/CalAttendee.sys.mjs",
 });
 
 var readOnly = false;
@@ -134,11 +143,11 @@ var zoom = {
     displayEndTime = displayStartTime.clone();
 
     emptyGrid();
-    for (let attendee of attendeeList.getElementsByTagName("event-attendee")) {
+    for (const attendee of attendeeList.getElementsByTagName("event-attendee")) {
       attendee.clearFreeBusy();
     }
 
-    for (let gridClass of ["twoMinorColumns", "threeMinorColumns"]) {
+    for (const gridClass of ["twoMinorColumns", "threeMinorColumns"]) {
       if (this.levels[newZoomLevel].gridClass == gridClass) {
         dayHeaderInner.classList.add(gridClass);
         freebusyGridInner.classList.add(gridClass);
@@ -177,7 +186,7 @@ var eventBar = {
     this.eventBarBottom = document.getElementById("event-bar-bottom");
     this.eventBarTop = document.getElementById("event-bar-top");
 
-    let outer = document.getElementById("outer");
+    const outer = document.getElementById("outer");
     outer.addEventListener("dragstart", this);
     outer.addEventListener("dragover", this);
     outer.addEventListener("dragend", this);
@@ -186,7 +195,7 @@ var eventBar = {
     switch (event.type) {
       case "dragstart": {
         this.dragStartX = event.clientX + freebusyGrid.scrollLeft;
-        let img = document.createElement("img");
+        const img = document.createElement("img");
         img.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
         event.dataTransfer.setDragImage(img, 0, 0);
         event.dataTransfer.effectAllowed = "move";
@@ -211,7 +220,7 @@ var eventBar = {
       }
       case "dragend": {
         updateByFunction = true;
-        let positionFromStart = this.eventBarBottom.offsetLeft + this.dragDistance;
+        const positionFromStart = this.eventBarBottom.offsetLeft + this.dragDistance;
         this.dragStartX = null;
         this.eventBarTop.style.transform = this.eventBarBottom.style.transform = null;
 
@@ -236,7 +245,7 @@ var eventBar = {
           startValue.addDuration(durationEvent);
           // If you move backwards, you have to check again. Otherwise a move to the last hour of the day will date the previous hour of the start of the day.
           // We will do our tests with the calendar timezone and not the event timezone.
-          let startValueDefaultTimezone = startValue.getInTimezone(cal.dtz.defaultTimezone);
+          const startValueDefaultTimezone = startValue.getInTimezone(cal.dtz.defaultTimezone);
           if (!showCompleteDay) {
             if (
               !(
@@ -246,8 +255,8 @@ var eventBar = {
                 startValueDefaultTimezone.hour < displayEndHour
               )
             ) {
-              let hoursHidden = 24 - displayEndHour + displayStartHour;
-              let reducDayDuration = cal.createDuration("-PT" + hoursHidden + "H");
+              const hoursHidden = 24 - displayEndHour + displayStartHour;
+              const reducDayDuration = cal.createDuration("-PT" + hoursHidden + "H");
               startValue.addDuration(reducDayDuration);
               endValue.addDuration(reducDayDuration);
             }
@@ -304,7 +313,7 @@ var eventBar = {
     }
   },
   update(shouldScroll) {
-    let { startValueForDisplay, endValueForDisplay } = dateTimePickerUI;
+    const { startValueForDisplay, endValueForDisplay } = dateTimePickerUI;
     if (dateTimePickerUI.allDay.checked) {
       endValueForDisplay.day++;
     }
@@ -318,15 +327,15 @@ var eventBar = {
       if (scrollPoint < 0) {
         scrollPoint = 0;
       }
-      dayHeaderOuter.scrollTo(scrollPoint, 0);
       freebusyGrid.scrollTo(scrollPoint, freebusyGrid.scrollTop);
+      dayHeaderOuter.scrollLeft = freebusyGrid.scrollLeft;
     }
   },
   getDateFromPosition(posX, timezone) {
-    let numberOfDays = Math.floor(posX / zoom.dayWidth);
-    let remainingOffset = posX - numberOfDays * zoom.dayWidth;
+    const numberOfDays = Math.floor(posX / zoom.dayWidth);
+    const remainingOffset = posX - numberOfDays * zoom.dayWidth;
 
-    let duration = cal.createDuration();
+    const duration = cal.createDuration();
     duration.inSeconds = numberOfDays * 60 * 60 * 24 + remainingOffset / zoom.secondWidth;
 
     let date = displayStartTime.clone();
@@ -350,7 +359,7 @@ var dateTimePickerUI = {
   endZone: "timezone-endtime",
 
   init() {
-    for (let key of ["allDay", "start", "startZone", "end", "endZone"]) {
+    for (const key of ["allDay", "start", "startZone", "end", "endZone"]) {
       this[key] = document.getElementById(this[key]);
     }
   },
@@ -388,7 +397,7 @@ var dateTimePickerUI = {
 
   changeAllDay() {
     updateByFunction = true;
-    let allDay = this.allDay.checked;
+    const allDay = this.allDay.checked;
     if (allDay) {
       document.getElementById("event-starttime").setAttribute("timepickerdisabled", true);
       document.getElementById("event-endtime").setAttribute("timepickerdisabled", true);
@@ -408,8 +417,8 @@ var dateTimePickerUI = {
       // When events that end at 0:00 become all-day events, we need to
       // subtract a day from the end date because the real end is midnight.
       if (endValue.hour == 0 && endValue.minute == 0) {
-        let tempStartValue = startValue.clone();
-        let tempEndValue = endValue.clone();
+        const tempStartValue = startValue.clone();
+        const tempEndValue = endValue.clone();
         tempStartValue.isDate = true;
         tempEndValue.isDate = true;
         tempStartValue.day++;
@@ -436,14 +445,14 @@ var dateTimePickerUI = {
         this.end._oldValue.getHours() == 0 &&
         this.end._oldValue.getMinutes() == 0
       ) {
-        let saveMinutes = this.end._oldValue.getMinutes();
+        const saveMinutes = this.end._oldValue.getMinutes();
         this.start._oldValue.setHours(
           cal.dtz.getDefaultStartDate(window.arguments[0].startTime).hour
         );
         this.end._oldValue.setHours(
           cal.dtz.getDefaultStartDate(window.arguments[0].startTime).hour
         );
-        let minutes = saveMinutes + defaultEventLength;
+        const minutes = saveMinutes + defaultEventLength;
         this.end._oldValue.setMinutes(minutes);
       }
 
@@ -463,8 +472,8 @@ var dateTimePickerUI = {
     } else {
       // The checkbox has been unchecked for the first time, the event
       // was an "All day" type, so we have to set default values.
-      let startValue = cal.dtz.getDefaultStartDate(window.initialStartDateValue);
-      let endValue = startValue.clone();
+      const startValue = cal.dtz.getDefaultStartDate(window.initialStartDateValue);
+      const endValue = startValue.clone();
       endValue.minute += defaultEventLength;
       this.startValue = startValue;
       this.endValue = endValue;
@@ -474,10 +483,10 @@ var dateTimePickerUI = {
     updateRange();
   },
   editTimezone(target) {
-    let field = target == this.startZone ? "startValue" : "endValue";
-    let originalValue = this[field];
+    const field = target == this.startZone ? "startValue" : "endValue";
+    const originalValue = this[field];
 
-    let args = {
+    const args = {
       calendar: window.arguments[0].calendar,
       time: originalValue,
       onOk: newValue => {
@@ -537,7 +546,7 @@ window.addEventListener(
       if (event.target.popupOpen) {
         return;
       }
-      let row = event.target.closest("event-attendee");
+      const row = event.target.closest("event-attendee");
       if (event.key == "ArrowUp" && row.previousElementSibling) {
         event.preventDefault();
         row.previousElementSibling.focus();
@@ -587,8 +596,8 @@ window.addEventListener(
     // When events that end at 0:00 become all-day events, we need to
     // subtract a day from the end date because the real end is midnight.
     if (startTime.isDate && endTime.hour == 0 && endTime.minute == 0) {
-      let tempStartTime = startTime.clone();
-      let tempEndTime = endTime.clone();
+      const tempStartTime = startTime.clone();
+      const tempEndTime = endTime.clone();
       tempStartTime.isDate = true;
       tempEndTime.isDate = true;
       tempStartTime.day++;
@@ -619,7 +628,7 @@ window.addEventListener(
     // the event as the first day. If it's today, tomorrow, or the next day,
     // use today as the first day, otherwise show two days before the event
     // (and therefore also two days after it).
-    let difference = startTime.subtractDate(displayStartTime);
+    const difference = startTime.subtractDate(displayStartTime);
     if (difference.isNegative) {
       displayStartTime = startTime.clone();
       displayStartTime.isDate = true;
@@ -640,7 +649,7 @@ window.addEventListener(
     dateTimePickerUI.addListeners();
     addEventListener("resize", layout);
 
-    dateTimePickerUI.start.addEventListener("change", function (event) {
+    dateTimePickerUI.start.addEventListener("change", function () {
       if (!updateByFunction) {
         updateEndDate();
         if (dateTimePickerUI.allDay.checked) {
@@ -649,7 +658,7 @@ window.addEventListener(
         updateRange();
       }
     });
-    dateTimePickerUI.end.addEventListener("change", function (event) {
+    dateTimePickerUI.end.addEventListener("change", function () {
       if (!updateByFunction) {
         checkDate();
         dateTimePickerUI.saveOldValues();
@@ -685,8 +694,8 @@ window.addEventListener(
     }
 
     // Add all provided attendees to the attendee list.
-    for (let attendee of attendees) {
-      let attendeeElement = attendeeList.appendChild(document.createXULElement("event-attendee"));
+    for (const attendee of attendees) {
+      const attendeeElement = attendeeList.appendChild(document.createXULElement("event-attendee"));
       attendeeElement.attendee = attendee;
     }
 
@@ -699,7 +708,7 @@ window.addEventListener(
 
 window.addEventListener("dialogaccept", () => {
   // Build the list of attendees which have been filled in.
-  let attendeeElements = attendeeList.getElementsByTagName("event-attendee");
+  const attendeeElements = attendeeList.getElementsByTagName("event-attendee");
   const attendees = Array.from(attendeeElements)
     .map(element => element.attendee)
     .filter(attendee => !!attendee.id);
@@ -730,7 +739,7 @@ window.addEventListener("dialogaccept", () => {
     }
   }
 
-  let { startValue, endValue } = dateTimePickerUI;
+  const { startValue, endValue } = dateTimePickerUI;
   if (dateTimePickerUI.allDay.checked) {
     startValue.isDate = true;
     endValue.isDate = true;
@@ -768,7 +777,7 @@ function updateChange() {
     displayEndTime = displayStartTime.clone();
 
     emptyGrid();
-    for (let attendee of attendeeList.getElementsByTagName("event-attendee")) {
+    for (const attendee of attendeeList.getElementsByTagName("event-attendee")) {
       attendee.clearFreeBusy();
     }
 
@@ -790,8 +799,12 @@ function checkDate() {
       updatePreviousValues();
     } else {
       // Don't allow for negative durations.
-      let callback = function () {
-        Services.prompt.alert(null, document.title, cal.l10n.getCalString("warningEndBeforeStart"));
+      const callback = function () {
+        Services.prompt.alert(
+          null,
+          document.title,
+          lazy.l10n.formatValueSync("warning-end-before-start")
+        );
       };
       setTimeout(callback, 1);
       dateTimePickerUI.endValue = previousEndTime;
@@ -804,9 +817,9 @@ function checkDate() {
  * Update the end date of the event if the user changes the start date via the timepicker.
  */
 function updateEndDate() {
-  let duration = previousEndTime.subtractDate(previousStartTime);
+  const duration = previousEndTime.subtractDate(previousStartTime);
 
-  let endDatePrev = dateTimePickerUI.startValue.clone();
+  const endDatePrev = dateTimePickerUI.startValue.clone();
   endDatePrev.addDuration(duration);
 
   updateByFunction = true;
@@ -833,7 +846,7 @@ function updatePreviousValues() {
  */
 function layout() {
   fillGrid();
-  let spacer = document.getElementById("spacer");
+  const spacer = document.getElementById("spacer");
   spacer.style.height = `${dayHeaderOuter.clientHeight + 1}px`;
   freebusyGridInner.style.minHeight = freebusyGrid.clientHeight + "px";
   updateVerticalScrollbars();
@@ -845,10 +858,8 @@ function layout() {
 function updateVerticalScrollbars() {
   if (freebusyGrid.scrollHeight > freebusyGrid.clientHeight) {
     dayHeaderOuter.style.overflowY = "scroll";
-    dayHeaderInner.style.overflowY = "scroll";
   } else {
     dayHeaderOuter.style.overflowY = null;
-    dayHeaderInner.style.overflowY = null;
   }
 }
 
@@ -885,7 +896,7 @@ function fillGrid() {
     displayStartTime.minute = 0;
   }
 
-  let oldEndTime = displayEndTime.clone();
+  const oldEndTime = displayEndTime.clone();
 
   while (
     dayHeaderInner.childElementCount < numberDaysDisplayed ||
@@ -897,7 +908,7 @@ function fillGrid() {
 
   freebusyGridInner.style.width = dayHeaderInner.childElementCount * zoom.dayWidth + "px";
   if (displayEndTime.compare(oldEndTime) > 0) {
-    for (let attendee of attendeeList.getElementsByTagName("event-attendee")) {
+    for (const attendee of attendeeList.getElementsByTagName("event-attendee")) {
       attendee.updateFreeBusy(oldEndTime, displayEndTime);
     }
   }
@@ -924,11 +935,11 @@ function getOffsetLeft(startTime) {
   let coordinates = 0;
   startTime = startTime.getInTimezone(cal.dtz.defaultTimezone);
 
-  let difference = startTime.subtractDate(displayStartTime);
+  const difference = startTime.subtractDate(displayStartTime);
 
   if (displayStartTime.timezoneOffset != startTime.timezoneOffset) {
     // Time changes.
-    let diffTimezone = cal.createDuration();
+    const diffTimezone = cal.createDuration();
     diffTimezone.inSeconds = startTime.timezoneOffset - displayStartTime.timezoneOffset;
     // We add the difference to the date difference otherwise the following calculations will be incorrect.
     difference.addDuration(diffTimezone);
@@ -936,14 +947,14 @@ function getOffsetLeft(startTime) {
 
   if (!showCompleteDay) {
     // Start date of the day displayed for the date of the object being processed.
-    let currentDateStartHour = startTime.clone();
+    const currentDateStartHour = startTime.clone();
     currentDateStartHour.hour = displayStartHour;
     currentDateStartHour.minute = 0;
 
-    let dayToDayDuration = currentDateStartHour.subtractDate(displayStartTime);
+    const dayToDayDuration = currentDateStartHour.subtractDate(displayStartTime);
     if (currentDateStartHour.timezoneOffset != displayStartTime.timezoneOffset) {
       // Time changes.
-      let diffTimezone = cal.createDuration();
+      const diffTimezone = cal.createDuration();
       diffTimezone.inSeconds =
         currentDateStartHour.timezoneOffset - displayStartTime.timezoneOffset;
       // We add the difference to the date difference otherwise the following calculations will be incorrect.
@@ -974,11 +985,11 @@ function getOffsetLeft(startTime) {
  * to 24 hrs if the event is outside the range from the prefs.
  */
 function setTimeRange() {
-  let dateStart = dateTimePickerUI.startValue;
-  let dateEnd = dateTimePickerUI.endValue;
+  const dateStart = dateTimePickerUI.startValue;
+  const dateEnd = dateTimePickerUI.endValue;
 
-  let dateStartDefaultTimezone = dateStart.getInTimezone(cal.dtz.defaultTimezone);
-  let dateEndDefaultTimezone = dateEnd.getInTimezone(cal.dtz.defaultTimezone);
+  const dateStartDefaultTimezone = dateStart.getInTimezone(cal.dtz.defaultTimezone);
+  const dateEndDefaultTimezone = dateEnd.getInTimezone(cal.dtz.defaultTimezone);
 
   if (
     showOnlyWholeDays ||
@@ -1015,7 +1026,7 @@ function setTimeRange() {
       // To avoid being in zoom level where the interface is not adapted.
       zoom.currentLevel++;
       // Otherwise the class of the grid is not updated.
-      for (let gridClass of ["twoMinorColumns", "threeMinorColumns"]) {
+      for (const gridClass of ["twoMinorColumns", "threeMinorColumns"]) {
         if (zoom.levels[zoom.currentLevel].gridClass == gridClass) {
           dayHeaderInner.classList.add(gridClass);
           freebusyGridInner.classList.add(gridClass);
@@ -1051,13 +1062,13 @@ function setTimeRange() {
  * Function to trigger a change of display type (reduced or full).
  */
 function updateRange() {
-  let dateStart = dateTimePickerUI.startValue;
-  let dateEnd = dateTimePickerUI.endValue;
+  const dateStart = dateTimePickerUI.startValue;
+  const dateEnd = dateTimePickerUI.endValue;
 
-  let dateStartDefaultTimezone = dateStart.getInTimezone(cal.dtz.defaultTimezone);
-  let dateEndDefaultTimezone = dateEnd.getInTimezone(cal.dtz.defaultTimezone);
+  const dateStartDefaultTimezone = dateStart.getInTimezone(cal.dtz.defaultTimezone);
+  const dateEndDefaultTimezone = dateEnd.getInTimezone(cal.dtz.defaultTimezone);
 
-  let durationEvent = dateEnd.subtractDate(dateStart);
+  const durationEvent = dateEnd.subtractDate(dateStart);
 
   if (
     // Reduced -> Full.
@@ -1087,7 +1098,7 @@ function updateRange() {
     displayEndTime = displayStartTime.clone();
 
     emptyGrid();
-    for (let attendee of attendeeList.getElementsByTagName("event-attendee")) {
+    for (const attendee of attendeeList.getElementsByTagName("event-attendee")) {
       attendee.clearFreeBusy();
     }
 
@@ -1164,8 +1175,6 @@ function updateRange() {
       this.#input.setAttribute("minresultsforpopup", "1");
       this.#input.addEventListener("change", this);
       this.#input.addEventListener("keydown", this);
-      this.#input.addEventListener("input", this);
-      this.#input.addEventListener("click", this);
 
       this._freeBusyDiv = freebusyGridInner.appendChild(document.createElement("div"));
       this._freeBusyDiv.classList.add("freebusy-row");
@@ -1226,14 +1235,14 @@ function updateRange() {
      * @param {calIDateTime} to - The end of a time period to query.
      */
     updateFreeBusy(from, to) {
-      let addresses = MailServices.headerParser.makeFromDisplayAddress(this.#input.value);
+      const addresses = MailServices.headerParser.makeFromDisplayAddress(this.#input.value);
       if (addresses.length === 0) {
         return;
       }
 
-      let calendar = cal.email.prependMailTo(addresses[0].email);
+      const calendar = cal.email.prependMailTo(addresses[0].email);
 
-      let pendingDiv = this._freeBusyDiv.appendChild(document.createElement("div"));
+      const pendingDiv = this._freeBusyDiv.appendChild(document.createElement("div"));
       pendingDiv.classList.add("pending");
       setLeftAndWidth(pendingDiv, from, to);
 
@@ -1244,13 +1253,13 @@ function updateRange() {
         Ci.calIFreeBusyInterval.BUSY_ALL,
         {
           onResult: (operation, results) => {
-            for (let result of results) {
-              let freeBusyType = Number(result.freeBusyType); // For some reason this is a string.
+            for (const result of results) {
+              const freeBusyType = Number(result.freeBusyType); // For some reason this is a string.
               if (freeBusyType == Ci.calIFreeBusyInterval.FREE) {
                 continue;
               }
 
-              let block = this._freeBusyDiv.appendChild(document.createElement("div"));
+              const block = this._freeBusyDiv.appendChild(document.createElement("div"));
               switch (freeBusyType) {
                 case Ci.calIFreeBusyInterval.BUSY_TENTATIVE:
                   block.classList.add("tentative");
@@ -1283,17 +1292,7 @@ function updateRange() {
     }
 
     handleEvent(event) {
-      if (
-        // Change, e.g. due to blur.
-        event.type == "change" ||
-        (event.type == "keydown" && event.key == "Enter") ||
-        // A click on the line of the input field.
-        (event.type == "click" && event.target.nodeName == "input") ||
-        // A click on an autocomplete suggestion.
-        (event.type == "input" &&
-          event.inputType == "insertReplacementText" &&
-          event.explicitOriginalTarget != event.originalTarget)
-      ) {
+      if (event.type == "change") {
         const nextElement = this.nextElementSibling;
         if (this.#input.value) {
           /**
@@ -1310,7 +1309,7 @@ function updateRange() {
            *   mailboxes resolved from the provided address.
            */
           function resolveAddressesToMailboxes(accumulatorMap, address) {
-            let list = MailUtils.findListInAddressBooks(address.name);
+            const list = MailUtils.findListInAddressBooks(address.name);
             if (list) {
               // If the address was for a group, collect each mailbox from that
               // group, recursively if necessary.
@@ -1335,8 +1334,6 @@ function updateRange() {
           const attendeeAddresses = MailServices.headerParser.makeFromDisplayAddress(
             this.#input.value
           );
-          // Clear input so possible later events won't try to add again.
-          this.#input.value = "";
           const resolvedMailboxes = attendeeAddresses.reduce(
             resolveAddressesToMailboxes,
             new Map()
@@ -1404,11 +1401,11 @@ function updateRange() {
         }
 
         const cycle = (values, current) => {
-          let nextIndex = (values.indexOf(current) + 1) % values.length;
+          const nextIndex = (values.indexOf(current) + 1) % values.length;
           return values[nextIndex];
         };
 
-        let target = event.target;
+        const target = event.target;
         if (target == this.#roleIcon) {
           this.#attendee.role = cycle(EventAttendee.#roleCycle, this.#attendee.role);
           this.#updateRoleIcon();
@@ -1419,7 +1416,7 @@ function updateRange() {
           }
         }
       } else if (event.type == "keydown" && event.key == "ArrowRight") {
-        let nextElement = this.nextElementSibling;
+        const nextElement = this.nextElementSibling;
         if (this.#input.value) {
           if (!nextElement) {
             attendeeList.appendChild(document.createXULElement("event-attendee"));
@@ -1438,28 +1435,23 @@ function updateRange() {
     #updateRoleIcon() {
       const role = this.#attendee.role ?? EventAttendee.#DEFAULT_ROLE;
       const roleValueToStringKeyMap = {
-        "REQ-PARTICIPANT": "event.attendee.role.required",
-        "OPT-PARTICIPANT": "event.attendee.role.optional",
-        "NON-PARTICIPANT": "event.attendee.role.nonparticipant",
-        CHAIR: "event.attendee.role.chair",
+        "REQ-PARTICIPANT": "event-attendee-role-required",
+        "OPT-PARTICIPANT": "event-attendee-role-optional",
+        "NON-PARTICIPANT": "event-attendee-role-nonparticipant",
+        CHAIR: "event-attendee-role-chair",
       };
 
       let tooltip;
+      let tooltipArgs = undefined;
       if (role in roleValueToStringKeyMap) {
-        tooltip = cal.l10n.getString(
-          "calendar-event-dialog-attendees",
-          roleValueToStringKeyMap[role]
-        );
+        tooltip = roleValueToStringKeyMap[role];
       } else {
-        tooltip = cal.l10n.getString(
-          "calendar-event-dialog-attendees",
-          "event.attendee.role.unknown",
-          [role]
-        );
+        tooltip = "event-attendee-role-unknown";
+        tooltipArgs = { role };
       }
 
       this.#roleIcon.setAttribute("attendeerole", role);
-      this.#roleIcon.setAttribute("title", tooltip);
+      document.l10n.setAttributes(this.#roleIcon, tooltip, tooltipArgs);
     }
 
     /**
@@ -1469,29 +1461,24 @@ function updateRange() {
     #updateUserTypeIcon() {
       const userType = this.#attendee.userType ?? EventAttendee.#DEFAULT_USER_TYPE;
       const userTypeValueToStringKeyMap = {
-        INDIVIDUAL: "event.attendee.usertype.individual",
-        GROUP: "event.attendee.usertype.group",
-        RESOURCE: "event.attendee.usertype.resource",
-        ROOM: "event.attendee.usertype.room",
+        INDIVIDUAL: "event-attendee-usertype-individual",
+        GROUP: "event-attendee-usertype-group",
+        RESOURCE: "event-attendee-usertype-resource",
+        ROOM: "event-attendee-usertype-room",
         // UNKNOWN and any unrecognized user types are handled below.
       };
 
       let tooltip;
+      let tooltipArgs = undefined;
       if (userType in userTypeValueToStringKeyMap) {
-        tooltip = cal.l10n.getString(
-          "calendar-event-dialog-attendees",
-          userTypeValueToStringKeyMap[userType]
-        );
+        tooltip = userTypeValueToStringKeyMap[userType];
       } else {
-        tooltip = cal.l10n.getString(
-          "calendar-event-dialog-attendees",
-          "event.attendee.usertype.unknown",
-          [userType]
-        );
+        tooltip = "event-attendee-usertype-unknown";
+        tooltipArgs = { userType };
       }
 
       this.#userTypeIcon.setAttribute("usertype", userType);
-      this.#userTypeIcon.setAttribute("title", tooltip);
+      document.l10n.setAttributes(this.#userTypeIcon, tooltip, tooltipArgs);
     }
   }
   customElements.define("event-attendee", EventAttendee);
@@ -1503,28 +1490,28 @@ function updateRange() {
    */
   class CalendarDay extends MozXULElement {
     connectedCallback() {
-      let dayLabelContainer = this.appendChild(document.createXULElement("box"));
+      const dayLabelContainer = this.appendChild(document.createXULElement("box"));
       dayLabelContainer.setAttribute("pack", "center");
 
       this.dayLabel = dayLabelContainer.appendChild(document.createXULElement("label"));
       this.dayLabel.classList.add("day-label");
 
-      let columnContainer = this.appendChild(document.createXULElement("box"));
+      const columnContainer = this.appendChild(document.createXULElement("box"));
 
       // A half-column-wide spacer to align labels with the dividing grid lines.
       columnContainer.appendChild(document.createXULElement("box")).style.width =
         zoom.columnWidth / 2 + "px";
 
-      let column = displayEndTime.clone();
+      const column = displayEndTime.clone();
       column.isDate = false;
       for (let i = 1; i < zoom.columnCount; i++) {
         column.addDuration(zoom.columnDuration);
 
-        let columnBox = columnContainer.appendChild(document.createXULElement("box"));
+        const columnBox = columnContainer.appendChild(document.createXULElement("box"));
         columnBox.style.width = zoom.columnWidth + "px";
         columnBox.setAttribute("align", "center");
 
-        let columnLabel = columnBox.appendChild(document.createXULElement("label"));
+        const columnLabel = columnBox.appendChild(document.createXULElement("label"));
         columnLabel.classList.add("hour-label");
         columnLabel.setAttribute("flex", "1");
         columnLabel.setAttribute("value", cal.dtz.formatter.formatTime(column));
@@ -1550,16 +1537,16 @@ function updateRange() {
       this.mDate = value.clone();
       this.dayLabel.value = cal.dtz.formatter.formatDateShort(this.mDate);
 
-      let datePlus1 = value.clone();
+      const datePlus1 = value.clone();
       if (!showCompleteDay) {
         // To avoid making a 24 hour day in reduced display.
-        let hoursToShow = dayEndHour - dayStartHour;
+        const hoursToShow = dayEndHour - dayStartHour;
         datePlus1.addDuration(cal.createDuration("PT" + hoursToShow + "H"));
       } else {
         datePlus1.addDuration(cal.createDuration("P1D"));
       }
 
-      let dayOffPref = [
+      const dayOffPref = [
         "calendar.week.d0sundaysoff",
         "calendar.week.d1mondaysoff",
         "calendar.week.d2tuesdaysoff",
@@ -1577,19 +1564,19 @@ function updateRange() {
       }
 
       if (dayStartHour > 0) {
-        let dayStart = value.clone();
+        const dayStart = value.clone();
         dayStart.isDate = false;
         dayStart.hour = dayStartHour;
-        let beforeStartDiv = this.dayColumn.appendChild(document.createElement("div"));
+        const beforeStartDiv = this.dayColumn.appendChild(document.createElement("div"));
         beforeStartDiv.classList.add("time-off");
         setLeftAndWidth(beforeStartDiv, this.mDate, dayStart);
         beforeStartDiv.style.left = "0";
       }
       if (dayEndHour < 24) {
-        let dayEnd = value.clone();
+        const dayEnd = value.clone();
         dayEnd.isDate = false;
         dayEnd.hour = dayEndHour;
-        let afterEndDiv = this.dayColumn.appendChild(document.createElement("div"));
+        const afterEndDiv = this.dayColumn.appendChild(document.createElement("div"));
         afterEndDiv.classList.add("time-off");
         setLeftAndWidth(afterEndDiv, dayEnd, datePlus1);
         afterEndDiv.style.left = null;

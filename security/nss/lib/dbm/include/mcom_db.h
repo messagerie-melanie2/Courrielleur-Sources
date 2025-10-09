@@ -40,7 +40,7 @@
 #endif
 #include "prtypes.h"
 
-#if !defined(XP_OS2) && !defined(XP_UNIX) || defined(NTO)
+#if !defined(XP_UNIX) || defined(NTO)
 typedef PRUintn uint;
 #endif
 typedef PRUint8 uint8;
@@ -111,9 +111,11 @@ typedef PRUint32 uint32;
 #endif /* __sun */
 
 #if defined(__hpux) || defined(__hppa)
+#ifndef BYTE_ORDER
 #define BYTE_ORDER BIG_ENDIAN
 #define BIG_ENDIAN 4321
 #define LITTLE_ENDIAN 1234 /* LSB first: i386, vax, all NT risc */
+#endif
 #endif
 
 #if defined(AIXV3) || defined(AIX)
@@ -175,20 +177,13 @@ typedef PRUint32 uint32;
 
 #endif /* __DBINTERFACE_PRIVATE */
 
-#ifdef SCO
-#define MAXPATHLEN 1024
-#endif
-
 #include <fcntl.h>
 
-#if defined(_WINDOWS) || defined(XP_OS2)
+#if defined(_WINDOWS)
 #include <stdio.h>
 #include <io.h>
 
-#ifndef XP_OS2
 #define MAXPATHLEN 1024
-#endif
-
 #define EFTYPE EINVAL /* POSIX 1003.1 format errno. */
 
 #ifndef STDERR_FILENO

@@ -9,28 +9,29 @@ import json
 import os
 from contextlib import contextmanager
 
+from mozilla_version.gecko import ThunderbirdVersion
 from taskgraph.transforms.base import TransformSequence
-from taskgraph.util.schema import optionally_keyed_by, resolve_keyed_by, taskref_or_string
+from taskgraph.util.dependencies import get_primary_dependency
+from taskgraph.util.schema import Schema, optionally_keyed_by, resolve_keyed_by, taskref_or_string
 from taskgraph.util.treeherder import inherit_treeherder_from_dep
 from voluptuous import Any, Optional, Required
 
-from gecko_taskgraph.loader.single_dep import schema
 from gecko_taskgraph.transforms.task import task_description_schema
 from gecko_taskgraph.util.attributes import copy_attributes_from_dependent_job, release_level
 from mozbuild.action.langpack_manifest import get_version_maybe_buildid
 
 transforms = TransformSequence()
 
-langpack_push_description_schema = schema.extend(
+
+PUSH_LANGPACK_SCOPE = (
+    "secrets:get:project/comm/thunderbird/releng/build/level-{level}/atn_langpack"
+)
+
+langpack_push_description_schema = Schema(
     {
-        Required("label"): str,
-        Required("description"): str,
-        Required("worker-type"): optionally_keyed_by("release-level", str),
+        Optional("dependencies"): task_description_schema["dependencies"],
+        Optional("task-from"): task_description_schema["task-from"],
         Required("worker"): {
-            Required("docker-image"): {"in-tree": str},
-            Required("implementation"): "docker-worker",
-            Required("os"): "linux",
-            Optional("max-run-time"): int,
             Required("env"): {str: taskref_or_string},
             Required("channel"): optionally_keyed_by(
                 "project", "platform", Any("listed", "unlisted")
@@ -38,7 +39,6 @@ langpack_push_description_schema = schema.extend(
             Required("command"): [taskref_or_string],
         },
         Required("run-on-projects"): [],
-        Required("scopes"): optionally_keyed_by("release-level", [str]),
         Required("shipping-phase"): task_description_schema["shipping-phase"],
         Required("shipping-product"): task_description_schema["shipping-product"],
     }
@@ -46,53 +46,88 @@ langpack_push_description_schema = schema.extend(
 
 
 @transforms.add
-def set_label(config, jobs):
+def remove_name(config, jobs):
     for job in jobs:
-        label = "push-langpacks-{}".format(job["primary-dependency"].label)
-        job["label"] = label
-
+        if "name" in job:
+            del job["name"]
         yield job
 
 
-transforms.add_validate(langpack_push_description_schema)
-
-
 @transforms.add
-def resolve_keys(config, jobs):
-    for job in jobs:
+def drop_task(config, tasks):
+    """Only run push_langpacks under certain conditions.
+
+    - comm-beta: Always run as langpacks are always updated
+    - comm-release: Run on major version bump (eg 130.0 but not 130.0.1)
+    - comm-esrXX: Run on major version bump and minor version bump
+        (128.0esr not 128.0.1esr and 128.1.0esr not 128.1.1esr)
+
+    Makes heavy use of mozilla_version to parse the version number, determine
+    its type (beta, release, esr) and separate out the subvalues,
+    """
+    version = ThunderbirdVersion.parse(config.params.get("version"))
+
+    for task in tasks:
         # Do not attempt to run when staging releases on try-comm-central
         if release_level(config.params["project"]) != "production":
             continue
 
-        resolve_keyed_by(
-            job,
-            "worker-type",
-            item_name=job["label"],
-            **{"release-level": release_level(config.params["project"])},
-        )
-        resolve_keyed_by(
-            job,
-            "scopes",
-            item_name=job["label"],
-            **{"release-level": release_level(config.params["project"])},
-        )
+        if version.is_beta:
+            yield task
+        elif version.is_release and version.is_major:
+            yield task
+        elif version.is_esr:
+            if version.major_number == 0 and version.patch_number in (None, 0):
+                yield task
+            elif version.minor_number > 0 and version.patch_number == 0:
+                yield task
+
+
+@transforms.add
+def make_task_description(config, jobs):
+    for job in jobs:
+        dep_job = get_primary_dependency(config, job)
+        assert dep_job
+
+        label = "push-langpacks-{}".format(dep_job.label)
+        job["label"] = label
+
+        job["attributes"] = copy_attributes_from_dependent_job(dep_job)
+        job["attributes"]["chunk_locales"] = dep_job.attributes.get("chunk_locales", ["en-US"])
+
+        job["description"] = "Sends langpacks to ATN"
+
+        job["scopes"] = [PUSH_LANGPACK_SCOPE.format(level=config.params["level"])]
+
         resolve_keyed_by(
             job,
             "worker.channel",
             item_name=job["label"],
             project=config.params["project"],
-            platform=job["primary-dependency"].attributes["build_platform"],
+            platform=dep_job.attributes["build_platform"],
         )
 
-        yield job
+        job["worker-type"] = "b-linux-gcp"
+        job["worker"].update(
+            {
+                "os": "linux",
+                "implementation": "docker-worker",
+                "docker-image": {"in-tree": "tb-atn"},
+                "max-run-time": 1800,
+            }
+        )
 
+        treeherder = inherit_treeherder_from_dep(job, dep_job)
+        treeherder.setdefault(
+            "symbol", "langpack(P{})".format(job["attributes"].get("l10n_chunk", ""))
+        )
 
-@transforms.add
-def copy_attributes(config, jobs):
-    for job in jobs:
-        dep_job = job["primary-dependency"]
-        job["attributes"] = copy_attributes_from_dependent_job(dep_job)
-        job["attributes"]["chunk_locales"] = dep_job.attributes.get("chunk_locales", ["en-US"])
+        job["description"] = job["description"].format(
+            locales="/".join(job["attributes"]["chunk_locales"]),
+        )
+
+        job["dependencies"] = {dep_job.kind: dep_job.label}
+        job["treeherder"] = treeherder
 
         yield job
 
@@ -100,7 +135,7 @@ def copy_attributes(config, jobs):
 @transforms.add
 def filter_out_macos_jobs_but_mac_only_locales(config, jobs):
     for job in jobs:
-        build_platform = job["primary-dependency"].attributes.get("build_platform")
+        build_platform = job["attributes"].get("build_platform")
 
         if build_platform == "linux64-shippable":
             yield job
@@ -116,26 +151,6 @@ def filter_out_macos_jobs_but_mac_only_locales(config, jobs):
                 "-ja-JP-mac/",
             )
             yield job
-
-
-@transforms.add
-def make_task_description(config, jobs):
-    for job in jobs:
-        dep_job = job["primary-dependency"]
-
-        treeherder = inherit_treeherder_from_dep(job, dep_job)
-        treeherder.setdefault(
-            "symbol", "langpack(P{})".format(job["attributes"].get("l10n_chunk", ""))
-        )
-
-        job["description"] = job["description"].format(
-            locales="/".join(job["attributes"]["chunk_locales"]),
-        )
-
-        job["dependencies"] = {dep_job.kind: dep_job.label}
-        job["treeherder"] = treeherder
-
-        yield job
 
 
 def generate_upstream_artifacts(upstream_task_ref, locales):
@@ -216,17 +231,8 @@ def set_env(config, jobs):
                 "LANGPACK_VERSION": langpack_version,
                 "LOCALES": json.dumps(job["attributes"]["chunk_locales"]),
                 "MOZ_FETCHES_DIR": "fetches",
-                "ATN_CHANNEL": job["worker"].get("channel"),
+                "ATN_CHANNEL": job["worker"].pop("channel"),
             }
         )
-
-        yield job
-
-
-@transforms.add
-def strip_unused_data(config, jobs):
-    for job in jobs:
-        del job["primary-dependency"]
-        del job["worker"]["channel"]
 
         yield job

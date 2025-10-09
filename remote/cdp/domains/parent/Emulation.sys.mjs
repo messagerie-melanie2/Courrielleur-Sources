@@ -2,14 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 import { Domain } from "chrome://remote/content/cdp/domains/Domain.sys.mjs";
 
 const lazy = {};
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  NetUtil: "resource://gre/modules/NetUtil.jsm",
+ChromeUtils.defineESModuleGetters(lazy, {
+  NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
 });
 
 const MAX_WINDOW_SIZE = 10000000;
@@ -86,6 +84,10 @@ export class Emulation extends Domain {
     browser.style.setProperty("max-width", targetWidth + "px");
     browser.style.setProperty("min-height", targetHeight + "px");
     browser.style.setProperty("max-height", targetHeight + "px");
+
+    browser.ownerDocument.synchronouslyUpdateRemoteBrowserDimensions(
+      /* aIncludeInactive = */ true
+    );
 
     // Wait until the viewport has been resized
     await this.executeInChild("_awaitViewportDimensions", {

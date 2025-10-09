@@ -4,12 +4,18 @@
 
 #include "nsCOMPtr.h"
 #include "nsMsgFileHdr.h"
+#include "nsComponentManagerUtils.h"
 #include "nsMsgMessageFlags.h"
+#include "nsMsgUtils.h"
 #include "nsNetUtil.h"
 #include "nsIFileURL.h"
 #include "HeaderReader.h"
 #include "nsIFileStreams.h"
 #include "nsIMimeConverter.h"
+#include "prio.h"
+#include "prtime.h"
+#include "mozilla/Buffer.h"
+#include <algorithm>
 
 static inline uint32_t PRTimeToSeconds(PRTime aTimeUsec) {
   return uint32_t(aTimeUsec / PR_USEC_PER_SEC);
@@ -43,9 +49,19 @@ nsresult nsMsgFileHdr::ReadFile() {
   rv = fileStream->Init(mFile, PR_RDONLY, 0664, 0);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  int64_t fileSize;
+  rv = mFile->GetFileSize(&fileSize);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (fileSize < 0) {
+    return NS_ERROR_FAILURE;
+  }
+
+  // The gmail 500KiB header limit seems like a reasonable one.
+  // https://support.google.com/a/answer/14016360
+  mozilla::Buffer<char> buffer(std::min(fileSize, int64_t(500 * 1024)));
   uint32_t count;
-  char buffer[8192];
-  rv = fileStream->Read(&buffer[0], 8192, &count);
+  rv = fileStream->Read(buffer.Elements(), buffer.Length(), &count);
   NS_ENSURE_SUCCESS(rv, rv);
 
   auto cb = [&](HeaderReader::Hdr const& hdr) {
@@ -201,11 +217,12 @@ NS_IMETHODIMP nsMsgFileHdr::GetLineCount(uint32_t* aLineCount) { return NS_OK; }
 
 NS_IMETHODIMP nsMsgFileHdr::SetLineCount(uint32_t aLineCount) { return NS_OK; }
 
-NS_IMETHODIMP nsMsgFileHdr::GetMessageOffset(uint64_t* aMessageOffset) {
+NS_IMETHODIMP nsMsgFileHdr::GetStoreToken(nsACString& result) {
+  result.Truncate();
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgFileHdr::SetMessageOffset(uint64_t aMessageOffset) {
+NS_IMETHODIMP nsMsgFileHdr::SetStoreToken(const nsACString& token) {
   return NS_OK;
 }
 
@@ -217,6 +234,16 @@ NS_IMETHODIMP nsMsgFileHdr::GetOfflineMessageSize(
 NS_IMETHODIMP nsMsgFileHdr::SetOfflineMessageSize(
     uint32_t aOfflineMessageSize) {
   return NS_OK;
+}
+
+NS_IMETHODIMP nsMsgFileHdr::GetUidOnServer(uint32_t* result) {
+  *result = 0;
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsMsgFileHdr::SetUidOnServer(uint32_t uid) {
+  // Message is not linked to an IMAP server, so we should never get here.
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP nsMsgFileHdr::GetDate(PRTime* aDate) {
@@ -233,47 +260,53 @@ NS_IMETHODIMP nsMsgFileHdr::GetDateInSeconds(uint32_t* aDateInSeconds) {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgFileHdr::GetMessageId(char** aMessageId) {
+NS_IMETHODIMP nsMsgFileHdr::GetMessageId(nsACString& aMessageId) {
   nsresult rv = ReadFile();
   NS_ENSURE_SUCCESS(rv, rv);
 
-  *aMessageId = strdup(mMessageID.get());
+  aMessageId.Assign(mMessageID);
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgFileHdr::SetMessageId(const char* aMessageId) {
+NS_IMETHODIMP nsMsgFileHdr::SetMessageId(const nsACString& aMessageId) {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgFileHdr::GetCcList(char** aCcList) {
+NS_IMETHODIMP nsMsgFileHdr::GetCcList(nsACString& aCcList) {
   nsresult rv = ReadFile();
   NS_ENSURE_SUCCESS(rv, rv);
 
-  *aCcList = strdup(mCcList.get());
+  aCcList.Assign(mCcList);
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgFileHdr::SetCcList(const char* aCcList) { return NS_OK; }
+NS_IMETHODIMP nsMsgFileHdr::SetCcList(const nsACString& aCcList) {
+  return NS_OK;
+}
 
-NS_IMETHODIMP nsMsgFileHdr::GetBccList(char** aBccList) {
+NS_IMETHODIMP nsMsgFileHdr::GetBccList(nsACString& aBccList) {
   nsresult rv = ReadFile();
   NS_ENSURE_SUCCESS(rv, rv);
 
-  *aBccList = strdup(mBccList.get());
+  aBccList.Assign(mBccList);
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgFileHdr::SetBccList(const char* aBccList) { return NS_OK; }
+NS_IMETHODIMP nsMsgFileHdr::SetBccList(const nsACString& aBccList) {
+  return NS_OK;
+}
 
-NS_IMETHODIMP nsMsgFileHdr::GetAuthor(char** aAuthor) {
+NS_IMETHODIMP nsMsgFileHdr::GetAuthor(nsACString& aAuthor) {
   nsresult rv = ReadFile();
   NS_ENSURE_SUCCESS(rv, rv);
 
-  *aAuthor = strdup(mAuthor.get());
+  aAuthor.Assign(mAuthor);
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgFileHdr::SetAuthor(const char* aAuthor) { return NS_OK; }
+NS_IMETHODIMP nsMsgFileHdr::SetAuthor(const nsACString& aAuthor) {
+  return NS_OK;
+}
 
 NS_IMETHODIMP nsMsgFileHdr::GetSubject(nsACString& aSubject) {
   nsresult rv = ReadFile();
@@ -296,15 +329,15 @@ NS_IMETHODIMP nsMsgFileHdr::SetSubject(const nsACString& aSubject) {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgFileHdr::GetRecipients(char** aRecipients) {
+NS_IMETHODIMP nsMsgFileHdr::GetRecipients(nsACString& aRecipients) {
   nsresult rv = ReadFile();
   NS_ENSURE_SUCCESS(rv, rv);
 
-  *aRecipients = strdup(mRecipients.get());
+  aRecipients.Assign(mRecipients);
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgFileHdr::SetRecipients(const char* aRecipients) {
+NS_IMETHODIMP nsMsgFileHdr::SetRecipients(const nsACString& aRecipients) {
   // FIXME: should do assignment (maybe not used but if used, a trap!)
   // Same for all the other unimplemented setters here.
   return NS_ERROR_NOT_IMPLEMENTED;
@@ -366,9 +399,9 @@ NS_IMETHODIMP nsMsgFileHdr::GetRecipientsCollationKey(
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgFileHdr::GetCharset(char** aCharset) { return NS_OK; }
+NS_IMETHODIMP nsMsgFileHdr::GetCharset(nsACString& aCharset) { return NS_OK; }
 
-NS_IMETHODIMP nsMsgFileHdr::SetCharset(const char* aCharset) {
+NS_IMETHODIMP nsMsgFileHdr::SetCharset(const nsACString& aCharset) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
@@ -376,9 +409,11 @@ NS_IMETHODIMP nsMsgFileHdr::GetEffectiveCharset(nsACString& aEffectiveCharset) {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgFileHdr::GetAccountKey(char** aAccountKey) { return NS_OK; }
+NS_IMETHODIMP nsMsgFileHdr::GetAccountKey(nsACString& aAccountKey) {
+  return NS_OK;
+}
 
-NS_IMETHODIMP nsMsgFileHdr::SetAccountKey(const char* aAccountKey) {
+NS_IMETHODIMP nsMsgFileHdr::SetAccountKey(const nsACString& aAccountKey) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 

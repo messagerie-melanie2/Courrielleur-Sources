@@ -2,50 +2,150 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   capture: "chrome://remote/content/shared/Capture.sys.mjs",
   error: "chrome://remote/content/shared/webdriver/Errors.sys.mjs",
+  getSeenNodesForBrowsingContext:
+    "chrome://remote/content/shared/webdriver/Session.sys.mjs",
+  json: "chrome://remote/content/marionette/json.sys.mjs",
   Log: "chrome://remote/content/shared/Log.sys.mjs",
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "logger", () =>
+ChromeUtils.defineLazyGetter(lazy, "logger", () =>
   lazy.Log.get(lazy.Log.TYPES.MARIONETTE)
 );
 
+// Because Marionette supports a single session only we store its id
+// globally so that the parent actor can access it.
+let webDriverSessionId = null;
+
 export class MarionetteCommandsParent extends JSWindowActorParent {
+  #deferredDialogOpened;
+
   actorCreated() {
-    this._resolveDialogOpened = null;
+    this.#deferredDialogOpened = null;
   }
 
-  dialogOpenedPromise() {
-    return new Promise(resolve => {
-      this._resolveDialogOpened = resolve;
+  assertInViewPort(target, _context) {
+    return this.sendQuery("MarionetteCommandsParent:_assertInViewPort", {
+      target,
     });
   }
 
-  async sendQuery(name, data) {
+  dispatchEvent(eventName, details) {
+    return this.sendQuery("MarionetteCommandsParent:_dispatchEvent", {
+      eventName,
+      details,
+    });
+  }
+
+  finalizeAction() {
+    return this.sendQuery("MarionetteCommandsParent:_finalizeAction");
+  }
+
+  getClientRects(webEl, _context) {
+    return this.sendQuery("MarionetteCommandsParent:_getClientRects", {
+      elem: webEl,
+    });
+  }
+
+  getInViewCentrePoint(rect, _context) {
+    return this.sendQuery("MarionetteCommandsParent:_getInViewCentrePoint", {
+      rect,
+    });
+  }
+
+  toBrowserWindowCoordinates(position, _context) {
+    return this.sendQuery(
+      "MarionetteCommandsParent:_toBrowserWindowCoordinates",
+      {
+        position,
+      }
+    );
+  }
+
+  async sendQuery(name, serializedValue) {
+    const seenNodes = lazy.getSeenNodesForBrowsingContext(
+      webDriverSessionId,
+      this.manager.browsingContext
+    );
+
     // return early if a dialog is opened
-    const result = await Promise.race([
-      super.sendQuery(name, data),
-      this.dialogOpenedPromise(),
+    this.#deferredDialogOpened = Promise.withResolvers();
+    let {
+      error,
+      isWebDriverError,
+      seenNodeIds,
+      serializedValue: serializedResult,
+      hasSerializedWindows,
+    } = await Promise.race([
+      super.sendQuery(name, serializedValue),
+      this.#deferredDialogOpened.promise,
     ]).finally(() => {
-      this._resolveDialogOpened = null;
+      this.#deferredDialogOpened = null;
     });
 
-    if ("error" in result) {
-      throw lazy.error.WebDriverError.fromJSON(result.error);
-    } else {
-      return result.data;
+    if (error) {
+      if (isWebDriverError) {
+        // If it's a WebDriver error we need to deserialize it.
+        error = lazy.error.WebDriverError.fromJSON(error);
+      }
+
+      this.#handleError(error, seenNodes);
     }
+
+    // Update seen nodes for serialized element and shadow root nodes.
+    seenNodeIds?.forEach(nodeId => seenNodes.add(nodeId));
+
+    if (hasSerializedWindows) {
+      // The serialized data contains WebWindow references that need to be
+      // converted to unique identifiers.
+      serializedResult = lazy.json.mapToNavigableIds(serializedResult);
+    }
+
+    return serializedResult;
+  }
+
+  /**
+   * Handle an error and replace error type if necessary.
+   *
+   * @param {Error} error
+   *     The error to handle.
+   * @param {Set<string>} seenNodes
+   *     List of node ids already seen in this navigable.
+   *
+   * @throws {Error}
+   *     The original or replaced error.
+   */
+  #handleError(error, seenNodes) {
+    // If an element hasn't been found during deserialization check if it
+    // may be a stale reference.
+    if (
+      error instanceof lazy.error.NoSuchElementError &&
+      error.data.elementId !== undefined &&
+      seenNodes.has(error.data.elementId)
+    ) {
+      throw new lazy.error.StaleElementReferenceError(error);
+    }
+
+    // If a shadow root hasn't been found during deserialization check if it
+    // may be a detached reference.
+    if (
+      error instanceof lazy.error.NoSuchShadowRootError &&
+      error.data.shadowId !== undefined &&
+      seenNodes.has(error.data.shadowId)
+    ) {
+      throw new lazy.error.DetachedShadowRootError(error);
+    }
+
+    throw error;
   }
 
   notifyDialogOpened() {
-    if (this._resolveDialogOpened) {
-      this._resolveDialogOpened({ data: null });
+    if (this.#deferredDialogOpened) {
+      this.#deferredDialogOpened.resolve({ data: null });
     }
   }
 
@@ -67,7 +167,7 @@ export class MarionetteCommandsParent extends JSWindowActorParent {
   async executeScript(script, args, opts) {
     return this.sendQuery("MarionetteCommandsParent:executeScript", {
       script,
-      args,
+      args: lazy.json.mapFromNavigableIds(args),
       opts,
     });
   }
@@ -185,26 +285,6 @@ export class MarionetteCommandsParent extends JSWindowActorParent {
     });
   }
 
-  async performActions(actions, capabilities) {
-    return this.sendQuery("MarionetteCommandsParent:performActions", {
-      actions,
-      capabilities: capabilities.toJSON(),
-    });
-  }
-
-  async releaseActions() {
-    return this.sendQuery("MarionetteCommandsParent:releaseActions");
-  }
-
-  async singleTap(webEl, x, y, capabilities) {
-    return this.sendQuery("MarionetteCommandsParent:singleTap", {
-      capabilities: capabilities.toJSON(),
-      elem: webEl,
-      x,
-      y,
-    });
-  }
-
   async switchToFrame(id) {
     const { browsingContextId } = await this.sendQuery(
       "MarionetteCommandsParent:switchToFrame",
@@ -256,7 +336,7 @@ export class MarionetteCommandsParent extends JSWindowActorParent {
         return lazy.capture.toHash(canvas);
 
       case lazy.capture.Format.Base64:
-        return lazy.capture.toBase64(canvas);
+        return lazy.capture.toBase64(canvas, "image/png");
 
       default:
         throw new TypeError(`Invalid capture format: ${format}`);
@@ -283,10 +363,7 @@ export function getMarionetteCommandsActorProxy(browsingContextFn) {
   const NO_RETRY_METHODS = [
     "clickElement",
     "executeScript",
-    "performActions",
-    "releaseActions",
     "sendKeysToElement",
-    "singleTap",
   ];
 
   return new Proxy(
@@ -295,18 +372,29 @@ export function getMarionetteCommandsActorProxy(browsingContextFn) {
       get(target, methodName) {
         return async (...args) => {
           let attempts = 0;
+          // eslint-disable-next-line no-constant-condition
           while (true) {
-            try {
-              const browsingContext = browsingContextFn();
-              if (!browsingContext) {
-                throw new DOMException(
-                  "No BrowsingContext found",
-                  "NoBrowsingContext"
-                );
-              }
+            let browsingContext = browsingContextFn();
 
-              // TODO: Scenarios where the window/tab got closed and
-              // currentWindowGlobal is null will be handled in Bug 1662808.
+            // If a top-level browsing context was replaced and retrying is allowed,
+            // retrieve the new one for the current browser.
+            if (
+              browsingContext?.isReplaced &&
+              browsingContext.top === browsingContext &&
+              !NO_RETRY_METHODS.includes(methodName)
+            ) {
+              browsingContext = BrowsingContext.getCurrentTopByBrowserId(
+                browsingContext.browserId
+              );
+            }
+
+            if (!browsingContext || browsingContext.isDiscarded) {
+              throw new lazy.error.NoSuchWindowError(
+                `BrowsingContext does no longer exist`
+              );
+            }
+
+            try {
               const actor =
                 browsingContext.currentWindowGlobal.getActor(
                   "MarionetteCommands"
@@ -322,25 +410,27 @@ export function getMarionetteCommandsActorProxy(browsingContextFn) {
               }
 
               if (NO_RETRY_METHODS.includes(methodName)) {
-                const browsingContextId = browsingContextFn()?.id;
                 lazy.logger.trace(
-                  `[${browsingContextId}] Querying "${methodName}" failed with` +
-                    ` ${e.name}, returning "null" as fallback`
+                  `[${browsingContext.id}] Querying "${methodName}"` +
+                    ` failed with ${e.name}, returning "null" as fallback`
                 );
                 return null;
               }
 
               if (++attempts > MAX_ATTEMPTS) {
-                const browsingContextId = browsingContextFn()?.id;
                 lazy.logger.trace(
-                  `[${browsingContextId}] Querying "${methodName} "` +
-                    `reached the limit of retry attempts (${MAX_ATTEMPTS})`
+                  `[${browsingContext.id}] Querying "${methodName}"` +
+                    ` reached the limit of retry attempts (${MAX_ATTEMPTS})`
                 );
                 throw e;
               }
 
               lazy.logger.trace(
-                `Retrying "${methodName}", attempt: ${attempts}`
+                `[${browsingContext.id}] Retrying "${methodName}"` +
+                  `, attempt: ${attempts}`
+              );
+              await new Promise(resolve =>
+                Services.tm.dispatchToMainThread(resolve)
               );
             }
           }
@@ -352,8 +442,11 @@ export function getMarionetteCommandsActorProxy(browsingContextFn) {
 
 /**
  * Register the MarionetteCommands actor that holds all the commands.
+ *
+ * @param {string} sessionId
+ *     The id of the current WebDriver session.
  */
-export function registerCommandsActor() {
+export function registerCommandsActor(sessionId) {
   try {
     ChromeUtils.registerWindowActor("MarionetteCommands", {
       kind: "JSWindowActor",
@@ -376,8 +469,12 @@ export function registerCommandsActor() {
       throw e;
     }
   }
+
+  webDriverSessionId = sessionId;
 }
 
 export function unregisterCommandsActor() {
+  webDriverSessionId = null;
+
   ChromeUtils.unregisterWindowActor("MarionetteCommands");
 }

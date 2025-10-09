@@ -1,7 +1,8 @@
 #[cfg(windows)]
-extern crate winapi;
+extern crate windows_sys;
 
 extern crate libloading;
+use std::os::raw::c_void;
 use libloading::{Library, Symbol};
 
 const TARGET_DIR: Option<&'static str> = option_env!("CARGO_TARGET_DIR");
@@ -41,6 +42,19 @@ fn test_id_u32() {
         let lib = Library::new(lib_path()).unwrap();
         let f: Symbol<unsafe extern "C" fn(u32) -> u32> = lib.get(b"test_identity_u32\0").unwrap();
         assert_eq!(42, f(42));
+    }
+}
+
+#[test]
+fn test_try_into_ptr() {
+    make_helpers();
+    unsafe {
+        let lib = Library::new(lib_path()).unwrap();
+        let f: Symbol<unsafe extern "C" fn(u32) -> u32> = lib.get(b"test_identity_u32\0").unwrap();
+        let ptr: *mut c_void = f.try_as_raw_ptr().unwrap();
+        assert!(!ptr.is_null());
+        let ptr_casted : extern "C" fn(u32) -> u32 = std::mem::transmute(ptr);
+        assert_eq!(42, ptr_casted(42));
     }
 }
 
@@ -237,14 +251,13 @@ fn library_this() {
 #[test]
 fn works_getlasterror() {
     use libloading::os::windows::{Library, Symbol};
-    use winapi::shared::minwindef::DWORD;
-    use winapi::um::errhandlingapi;
+    use windows_sys::Win32::Foundation::{GetLastError, SetLastError};
 
     unsafe {
         let lib = Library::new("kernel32.dll").unwrap();
-        let gle: Symbol<unsafe extern "system" fn() -> DWORD> = lib.get(b"GetLastError").unwrap();
-        errhandlingapi::SetLastError(42);
-        assert_eq!(errhandlingapi::GetLastError(), gle())
+        let gle: Symbol<unsafe extern "system" fn() -> u32> = lib.get(b"GetLastError").unwrap();
+        SetLastError(42);
+        assert_eq!(GetLastError(), gle())
     }
 }
 
@@ -252,14 +265,13 @@ fn works_getlasterror() {
 #[test]
 fn works_getlasterror0() {
     use libloading::os::windows::{Library, Symbol};
-    use winapi::shared::minwindef::DWORD;
-    use winapi::um::errhandlingapi;
+    use windows_sys::Win32::Foundation::{GetLastError, SetLastError};
 
     unsafe {
         let lib = Library::new("kernel32.dll").unwrap();
-        let gle: Symbol<unsafe extern "system" fn() -> DWORD> = lib.get(b"GetLastError\0").unwrap();
-        errhandlingapi::SetLastError(42);
-        assert_eq!(errhandlingapi::GetLastError(), gle())
+        let gle: Symbol<unsafe extern "system" fn() -> u32> = lib.get(b"GetLastError\0").unwrap();
+        SetLastError(42);
+        assert_eq!(GetLastError(), gle())
     }
 }
 

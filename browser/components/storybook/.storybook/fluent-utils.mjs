@@ -11,7 +11,7 @@ import {
   UPDATE_STRATEGY_EVENT,
   STRATEGY_DEFAULT,
   PSEUDO_STRATEGIES,
-} from "./addon-pseudo-localization/constants.mjs";
+} from "./addon-fluent/constants.mjs";
 
 let loadedResources = new Map();
 let currentStrategy;
@@ -24,7 +24,7 @@ let storybookBundle = new FluentBundle("en-US", {
   },
 });
 
-// Listen for update events from addon-pseudo-localization.
+// Listen for update events from addon-fluent.
 const channel = addons.getChannel();
 channel.on(UPDATE_STRATEGY_EVENT, updatePseudoStrategy);
 channel.on(FLUENT_SET_STRINGS, ftlContents => {
@@ -98,6 +98,13 @@ export async function insertFTLIfNeeded(fileName) {
     let imported = await import(
       /* webpackInclude: /\.ftl$/ */
       `browser/branding/nightly/locales/en-US/${rest}`
+    );
+    ftlContents = imported.default;
+  } else if (root == "preview") {
+    // eslint-disable-next-line no-unsanitized/method
+    let imported = await import(
+      /* webpackInclude: /\.ftl$/ */
+      `toolkit/components/satchel/megalist/content/${rest}`
     );
     ftlContents = imported.default;
   }

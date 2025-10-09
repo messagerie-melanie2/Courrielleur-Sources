@@ -13,12 +13,8 @@ import argparse
 import os
 import subprocess
 import sys
+from shlex import quote
 from subprocess import Popen
-
-try:
-    from shlex import quote
-except ImportError:
-    from pipes import quote
 
 
 def execfile(thefile, globals):
@@ -212,7 +208,7 @@ JOBS = {
 #  - item is command[j]
 def out_indexes(command):
     i = 0
-    for (j, fragment) in enumerate(command):
+    for j, fragment in enumerate(command):
         if isinstance(fragment, Output):
             yield (i, j, fragment)
             i += 1
@@ -221,7 +217,7 @@ def out_indexes(command):
 def job_command_with_final_output_names(job):
     outfiles = job.get("outputs", [])
     command = list(job["command"])
-    for (i, j, name) in out_indexes(job["command"]):
+    for i, j, name in out_indexes(job["command"]):
         command[j] = outfiles[i]
     return command
 
@@ -256,7 +252,7 @@ def run_job(name, config):
             info["redirect"].close()
 
         # Rename the temporary files to their final names.
-        for (temp, final) in info["rename_map"].items():
+        for temp, final in info["rename_map"].items():
             try:
                 if config["verbose"] > 1:
                     print("Renaming %s -> %s" % (temp, final))
@@ -266,7 +262,7 @@ def run_job(name, config):
                 raise
 
     if final_status != 0:
-        raise Exception("job {} returned status {}".format(name, final_status))
+        raise Exception(f"job {name} returned status {final_status}")
 
 
 def spawn_command(cmdspec, job, name, config):
@@ -285,7 +281,7 @@ def spawn_command(cmdspec, job, name, config):
         # from those temp names to their actual final names that will be used
         # if the command succeeds.
         command = list(cmdspec)
-        for (i, j, raw_name) in out_indexes(cmdspec):
+        for i, j, raw_name in out_indexes(cmdspec):
             [name] = fill([raw_name], config)
             command[j] = "{}.tmp{}".format(name, config.get("i", ""))
             rename_map[command[j]] = outfiles[i]
@@ -305,7 +301,7 @@ def spawn_command(cmdspec, job, name, config):
 
 
 # Default to conservatively assuming 4GB/job.
-def max_parallel_jobs(job_size=4 * 2 ** 30):
+def max_parallel_jobs(job_size=4 * 2**30):
     """Return the max number of parallel jobs we can run without overfilling
     memory, assuming heavyweight jobs."""
     from_cores = int(subprocess.check_output(["nproc", "--ignore=1"]).strip())
@@ -434,7 +430,7 @@ for step in steps:
     elif "outputs" in job and "command" in job:
         outfiles = job["outputs"]
         num_outputs = 0
-        for (i, j, name) in out_indexes(job["command"]):
+        for i, j, name in out_indexes(job["command"]):
             # Trim the {curly brackets} off of the output keys.
             data[name[1:-1]] = outfiles[i]
             num_outputs += 1

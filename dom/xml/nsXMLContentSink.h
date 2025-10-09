@@ -7,6 +7,7 @@
 #ifndef nsXMLContentSink_h__
 #define nsXMLContentSink_h__
 
+#include "js/ColumnNumber.h"  // JS::ColumnNumberOneOrigin
 #include "mozilla/Attributes.h"
 #include "nsContentSink.h"
 #include "nsIXMLContentSink.h"
@@ -68,7 +69,10 @@ class nsXMLContentSink : public nsContentSink,
   virtual void FlushPendingNotifications(mozilla::FlushType aType) override;
   virtual void SetDocumentCharset(NotNull<const Encoding*> aEncoding) override;
   virtual nsISupports* GetTarget() override;
-  virtual bool IsScriptExecuting() override;
+  bool IsScriptExecuting() override { return IsScriptExecutingImpl(); }
+  void ContinueParsingDocumentAfterCurrentScript() override {
+    ContinueParsingDocumentAfterCurrentScriptImpl();
+  }
   virtual void ContinueInterruptedParsingAsync() override;
   bool IsPrettyPrintXML() const override { return mPrettyPrintXML; }
   bool IsPrettyPrintHasSpecialRoot() const override {
@@ -150,7 +154,8 @@ class nsXMLContentSink : public nsContentSink,
   virtual nsresult ProcessStyleLinkFromHeader(
       const nsAString& aHref, bool aAlternate, const nsAString& aTitle,
       const nsAString& aIntegrity, const nsAString& aType,
-      const nsAString& aMedia, const nsAString& aReferrerPolicy) override;
+      const nsAString& aMedia, const nsAString& aReferrerPolicy,
+      const nsAString& aFetchPriority) override;
 
   // Try to handle an XSLT style link.  If NS_OK is returned and aWasXSLT is not
   // null, *aWasXSLT will be set to whether we processed this link as XSLT.

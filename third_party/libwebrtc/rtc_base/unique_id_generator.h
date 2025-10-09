@@ -21,7 +21,7 @@
 #include "rtc_base/synchronization/mutex.h"
 #include "rtc_base/system/no_unique_address.h"
 
-namespace rtc {
+namespace webrtc {
 
 // This class will generate numbers. A common use case is for identifiers.
 // The generated numbers will be unique, in the local scope of the generator.
@@ -44,14 +44,17 @@ class UniqueNumberGenerator {
   // If there are no available numbers to generate, this method will fail
   // with an `RTC_CHECK`.
   TIntegral GenerateNumber();
-  TIntegral operator()() { return GenerateNumber(); }
+
+  // Alias for GenerateId, used for allowing typed testing
+  TIntegral Generate() { return GenerateNumber(); }
 
   // Adds an id that this generator should no longer generate.
   // Return value indicates whether the ID was hitherto unknown.
   bool AddKnownId(TIntegral value);
 
  private:
-  RTC_NO_UNIQUE_ADDRESS webrtc::SequenceChecker sequence_checker_;
+  RTC_NO_UNIQUE_ADDRESS SequenceChecker sequence_checker_{
+      webrtc::SequenceChecker::kDetached};
   static_assert(std::is_integral<TIntegral>::value, "Must be integral type.");
   TIntegral counter_ RTC_GUARDED_BY(sequence_checker_);
   std::set<TIntegral> known_ids_ RTC_GUARDED_BY(sequence_checker_);
@@ -74,7 +77,9 @@ class UniqueRandomIdGenerator {
   // This method becomes more expensive with each use, as the probability of
   // collision for the randomly generated numbers increases.
   uint32_t GenerateId();
-  uint32_t operator()() { return GenerateId(); }
+
+  // Alias for GenerateId, used for allowing typed testing
+  uint32_t Generate() { return GenerateId(); }
 
   // Adds an id that this generator should no longer generate.
   // Return value indicates whether the ID was hitherto unknown.
@@ -83,7 +88,7 @@ class UniqueRandomIdGenerator {
  private:
   // TODO(bugs.webrtc.org/12666): This lock is needed due to an instance in
   // SdpOfferAnswerHandler being shared between threads.
-  webrtc::Mutex mutex_;
+  Mutex mutex_;
   std::set<uint32_t> known_ids_ RTC_GUARDED_BY(&mutex_);
 };
 
@@ -100,7 +105,8 @@ class UniqueStringGenerator {
   ~UniqueStringGenerator();
 
   std::string GenerateString();
-  std::string operator()() { return GenerateString(); }
+  // Alias for GenerateString, used for allowing typed testing
+  std::string Generate() { return GenerateString(); }
 
   // Adds an id that this generator should no longer generate.
   // Return value indicates whether the ID was hitherto unknown.
@@ -112,16 +118,12 @@ class UniqueStringGenerator {
 };
 
 template <typename TIntegral>
-UniqueNumberGenerator<TIntegral>::UniqueNumberGenerator() : counter_(0) {
-  sequence_checker_.Detach();
-}
+UniqueNumberGenerator<TIntegral>::UniqueNumberGenerator() : counter_(0) {}
 
 template <typename TIntegral>
 UniqueNumberGenerator<TIntegral>::UniqueNumberGenerator(
     ArrayView<TIntegral> known_ids)
-    : counter_(0), known_ids_(known_ids.begin(), known_ids.end()) {
-  sequence_checker_.Detach();
-}
+    : counter_(0), known_ids_(known_ids.begin(), known_ids.end()) {}
 
 template <typename TIntegral>
 UniqueNumberGenerator<TIntegral>::~UniqueNumberGenerator() {}
@@ -143,6 +145,14 @@ bool UniqueNumberGenerator<TIntegral>::AddKnownId(TIntegral value) {
   RTC_DCHECK_RUN_ON(&sequence_checker_);
   return known_ids_.insert(value).second;
 }
+}  //  namespace webrtc
+
+// Re-export symbols from the webrtc namespace for backwards compatibility.
+// TODO(bugs.webrtc.org/4222596): Remove once all references are updated.
+namespace rtc {
+using ::webrtc::UniqueNumberGenerator;
+using ::webrtc::UniqueRandomIdGenerator;
+using ::webrtc::UniqueStringGenerator;
 }  // namespace rtc
 
 #endif  // RTC_BASE_UNIQUE_ID_GENERATOR_H_

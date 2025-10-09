@@ -29,12 +29,8 @@
 #include "gfxMatrix.h"
 
 // {70db954d-e452-4be3-83aa-f54a51cf7890}
-#define MOZILLA_SVGELEMENT_IID                       \
-  {                                                  \
-    0x70db954d, 0xe452, 0x4be3, {                    \
-      0x82, 0xaa, 0xf5, 0x4a, 0x51, 0xcf, 0x78, 0x90 \
-    }                                                \
-  }
+#define MOZILLA_SVGELEMENT_IID \
+  {0x70db954d, 0xe452, 0x4be3, {0x82, 0xaa, 0xf5, 0x4a, 0x51, 0xcf, 0x78, 0x90}}
 
 nsresult NS_NewSVGElement(mozilla::dom::Element** aResult,
                           already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo);
@@ -42,7 +38,6 @@ nsresult NS_NewSVGElement(mozilla::dom::Element** aResult,
 class mozAutoDocUpdate;
 
 namespace mozilla {
-class DeclarationBlock;
 
 class SVGAnimatedBoolean;
 class SVGAnimatedEnumeration;
@@ -90,7 +85,7 @@ class SVGElement : public SVGElementBase  // nsIContent
   // From Element
   nsresult CopyInnerTo(mozilla::dom::Element* aDest);
 
-  NS_DECLARE_STATIC_IID_ACCESSOR(MOZILLA_SVGELEMENT_IID)
+  NS_INLINE_DECL_STATIC_IID(MOZILLA_SVGELEMENT_IID)
   // nsISupports
   NS_INLINE_DECL_REFCOUNTING_INHERITED(SVGElement, SVGElementBase)
 
@@ -126,6 +121,7 @@ class SVGElement : public SVGElementBase  // nsIContent
   void NodeInfoChanged(Document* aOldDoc) override;
 
   NS_IMETHOD_(bool) IsAttributeMapped(const nsAtom* aAttribute) const override;
+  void UpdateMappedDeclarationBlock();
 
   NS_IMPL_FROMNODE(SVGElement, kNameSpaceID_SVG)
 
@@ -135,38 +131,18 @@ class SVGElement : public SVGElementBase  // nsIContent
   mozilla::dom::SVGViewportElement* GetCtx() const;
 
   /**
-   * Returns aMatrix pre-multiplied by (explicit or implicit) transforms that
-   * are introduced by attributes on this element.
-   *
-   * If aWhich is eAllTransforms, then all the transforms from the coordinate
-   * space established by this element for its children to the coordinate
-   * space established by this element's parent element for this element, are
-   * included.
-   *
-   * If aWhich is eUserSpaceToParent, then only the transforms from this
-   * element's userspace to the coordinate space established by its parent is
-   * included. This includes any transforms introduced by the 'transform'
-   * attribute, transform animations and animateMotion, but not any offsets
-   * due to e.g. 'x'/'y' attributes, or any transform due to a 'viewBox'
-   * attribute. (SVG userspace is defined to be the coordinate space in which
-   * coordinates on an element apply.)
-   *
-   * If aWhich is eChildToUserSpace, then only the transforms from the
-   * coordinate space established by this element for its childre to this
-   * elements userspace are included. This includes any offsets due to e.g.
-   * 'x'/'y' attributes, and any transform due to a 'viewBox' attribute, but
-   * does not include any transforms due to the 'transform' attribute.
+   * Returns the transforms from the coordinate space established by this
+   * element for its children to this element's userspace. This includes any
+   * offsets due to e.g. 'x'/'y' attributes, and any transform due to a
+   * 'viewBox' attribute.
    */
-  virtual gfxMatrix PrependLocalTransformsTo(
-      const gfxMatrix& aMatrix,
-      SVGTransformTypes aWhich = eAllTransforms) const;
+  virtual gfxMatrix ChildToUserSpaceTransform() const;
 
   // Setter for to set the current <animateMotion> transformation
   // Only visible for SVGGraphicElement, so it's a no-op here, and that
   // subclass has the useful implementation.
   virtual void SetAnimateMotionTransform(
-      const mozilla::gfx::Matrix* aMatrix) { /*no-op*/
-  }
+      const mozilla::gfx::Matrix* aMatrix) { /*no-op*/ }
   virtual const mozilla::gfx::Matrix* GetAnimateMotionTransform() const {
     return nullptr;
   }
@@ -175,19 +151,23 @@ class SVGElement : public SVGElementBase  // nsIContent
     return GetStringInfo().mInfos[aAttrEnum].mIsAnimatable;
   }
   bool NumberAttrAllowsPercentage(uint8_t aAttrEnum) {
-    return GetNumberInfo().mInfos[aAttrEnum].mPercentagesAllowed;
+    return IsSVGElement(nsGkAtoms::stop) &&
+           GetNumberInfo().mInfos[aAttrEnum].mName == nsGkAtoms::offset;
   }
   virtual bool HasValidDimensions() const { return true; }
   void SetLength(nsAtom* aName, const SVGAnimatedLength& aLength);
 
   enum class ValToUse { Base, Anim };
-  static bool UpdateDeclarationBlockFromLength(DeclarationBlock& aBlock,
-                                               nsCSSPropertyID aPropId,
-                                               const SVGAnimatedLength& aLength,
-                                               ValToUse aValToUse);
-  static bool UpdateDeclarationBlockFromPath(
-      DeclarationBlock& aBlock, const SVGAnimatedPathSegList& aPath,
-      ValToUse aValToUse);
+  static bool UpdateDeclarationBlockFromLength(StyleLockedDeclarationBlock&,
+                                               nsCSSPropertyID,
+                                               const SVGAnimatedLength&,
+                                               ValToUse);
+  static bool UpdateDeclarationBlockFromPath(StyleLockedDeclarationBlock&,
+                                             const SVGAnimatedPathSegList&,
+                                             ValToUse);
+  static bool UpdateDeclarationBlockFromTransform(
+      StyleLockedDeclarationBlock&, const SVGAnimatedTransformList*,
+      const gfx::Matrix* aAnimateMotionTransform, ValToUse);
 
   nsAttrValue WillChangeLength(uint8_t aAttrEnum,
                                const mozAutoDocUpdate& aProofOfUpdate);
@@ -245,21 +225,55 @@ class SVGElement : public SVGElementBase  // nsIContent
                            const mozAutoDocUpdate& aProofOfUpdate);
 
   void DidAnimateLength(uint8_t aAttrEnum);
-  void DidAnimateNumber(uint8_t aAttrEnum);
-  void DidAnimateNumberPair(uint8_t aAttrEnum);
-  void DidAnimateInteger(uint8_t aAttrEnum);
-  void DidAnimateIntegerPair(uint8_t aAttrEnum);
-  void DidAnimateBoolean(uint8_t aAttrEnum);
-  void DidAnimateEnum(uint8_t aAttrEnum);
-  void DidAnimateOrient();
-  void DidAnimateViewBox();
-  void DidAnimatePreserveAspectRatio();
-  void DidAnimateNumberList(uint8_t aAttrEnum);
-  void DidAnimateLengthList(uint8_t aAttrEnum);
+  void DidAnimateNumber(uint8_t aAttrEnum) {
+    auto info = GetNumberInfo();
+    DidAnimateAttribute(kNameSpaceID_None, info.mInfos[aAttrEnum].mName);
+  }
+  void DidAnimateNumberPair(uint8_t aAttrEnum) {
+    auto info = GetNumberPairInfo();
+    DidAnimateAttribute(kNameSpaceID_None, info.mInfos[aAttrEnum].mName);
+  }
+  void DidAnimateInteger(uint8_t aAttrEnum) {
+    auto info = GetIntegerInfo();
+    DidAnimateAttribute(kNameSpaceID_None, info.mInfos[aAttrEnum].mName);
+  }
+  void DidAnimateIntegerPair(uint8_t aAttrEnum) {
+    auto info = GetIntegerPairInfo();
+    DidAnimateAttribute(kNameSpaceID_None, info.mInfos[aAttrEnum].mName);
+  }
+  void DidAnimateBoolean(uint8_t aAttrEnum) {
+    auto info = GetBooleanInfo();
+    DidAnimateAttribute(kNameSpaceID_None, info.mInfos[aAttrEnum].mName);
+  }
+  void DidAnimateEnum(uint8_t aAttrEnum) {
+    auto info = GetEnumInfo();
+    DidAnimateAttribute(kNameSpaceID_None, info.mInfos[aAttrEnum].mName);
+  }
+  void DidAnimateOrient() {
+    DidAnimateAttribute(kNameSpaceID_None, nsGkAtoms::orient);
+  }
+  void DidAnimateViewBox() {
+    DidAnimateAttribute(kNameSpaceID_None, nsGkAtoms::viewBox);
+  }
+  void DidAnimatePreserveAspectRatio() {
+    DidAnimateAttribute(kNameSpaceID_None, nsGkAtoms::preserveAspectRatio);
+  }
+  void DidAnimateNumberList(uint8_t aAttrEnum) {
+    auto info = GetNumberListInfo();
+    DidAnimateAttribute(kNameSpaceID_None, info.mInfos[aAttrEnum].mName);
+  }
+  void DidAnimateLengthList(uint8_t aAttrEnum) {
+    auto info = GetLengthListInfo();
+    DidAnimateAttribute(kNameSpaceID_None, info.mInfos[aAttrEnum].mName);
+  }
   void DidAnimatePointList();
   void DidAnimatePathSegList();
   void DidAnimateTransformList(int32_t aModType);
-  void DidAnimateString(uint8_t aAttrEnum);
+  void DidAnimateString(uint8_t aAttrEnum) {
+    auto info = GetStringInfo();
+    DidAnimateAttribute(info.mInfos[aAttrEnum].mNamespaceID,
+                        info.mInfos[aAttrEnum].mName);
+  }
 
   enum {
     /**
@@ -331,9 +345,6 @@ class SVGElement : public SVGElementBase  // nsIContent
   SVGElement* GetViewportElement();
   already_AddRefed<mozilla::dom::DOMSVGAnimatedString> ClassName();
 
-  void UpdateContentDeclarationBlock();
-  const mozilla::DeclarationBlock* GetContentDeclarationBlock() const;
-
   bool Autofocus() const { return GetBoolAttr(nsGkAtoms::autofocus); }
   void SetAutofocus(bool aAutofocus, ErrorResult& aRv) {
     if (aAutofocus) {
@@ -401,7 +412,6 @@ class SVGElement : public SVGElementBase  // nsIContent
   struct NumberInfo {
     nsStaticAtom* const mName;
     const float mDefaultValue;
-    const bool mPercentagesAllowed;
   };
 
   using NumberAttributesInfo = AttributesInfo<SVGAnimatedNumber, NumberInfo>;
@@ -508,15 +518,14 @@ class SVGElement : public SVGElementBase  // nsIContent
 
   static SVGEnumMapping sSVGUnitTypesMap[];
 
+  virtual void DidAnimateAttribute(int32_t aNameSpaceID, nsAtom* aAttribute);
+
  private:
   void UnsetAttrInternal(int32_t aNameSpaceID, nsAtom* aName, bool aNotify);
 
   SVGAnimatedClass mClassAttribute;
   UniquePtr<nsAttrValue> mClassAnimAttr;
-  RefPtr<mozilla::DeclarationBlock> mContentDeclarationBlock;
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(SVGElement, MOZILLA_SVGELEMENT_IID)
 
 /**
  * A macro to implement the NS_NewSVGXXXElement() functions.

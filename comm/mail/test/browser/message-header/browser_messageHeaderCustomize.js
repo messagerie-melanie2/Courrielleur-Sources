@@ -5,37 +5,15 @@
 /**
  * Test the message header customization features.
  */
-var {
-  add_message_to_folder,
-  assert_selected_and_displayed,
-  be_in_folder,
-  close_popup,
-  create_folder,
-  create_message,
-  gDefaultWindowHeight,
-  get_smart_folder_named,
-  get_about_3pane,
-  get_about_message,
-  inboxFolder,
-  mc,
-  msgGen,
-  restore_default_window_size,
-  select_click_row,
-  select_none,
-  wait_for_message_display_completion,
-  wait_for_popup_to_open,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-);
+var { be_in_folder, get_about_message, select_click_row } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
+  );
 
-let about3Pane = get_about_3pane();
-let aboutMessage = get_about_message();
+const aboutMessage = get_about_message();
 
-var { MailTelemetryForTests } = ChromeUtils.import(
-  "resource:///modules/MailGlue.jsm"
-);
-var { TelemetryTestUtils } = ChromeUtils.importESModule(
-  "resource://testing-common/TelemetryTestUtils.sys.mjs"
+var { MailTelemetryForTests } = ChromeUtils.importESModule(
+  "resource:///modules/MailGlue.sys.mjs"
 );
 
 var gFolder;
@@ -44,9 +22,9 @@ add_setup(async function () {
   Services.xulStore.removeDocument(
     "chrome://messenger/content/messenger.xhtml"
   );
-  Services.telemetry.clearScalars();
+  Services.fog.testResetFOG();
 
-  let account = createAccount();
+  const account = createAccount();
   gFolder = await createSubfolder(account.incomingServer.rootFolder, "test0");
   createMessages(gFolder, 1);
 
@@ -61,32 +39,34 @@ add_setup(async function () {
 
 add_task(async function test_customize_toolbar_buttons() {
   be_in_folder(gFolder);
-  select_click_row(0);
+  await select_click_row(0);
 
-  let moreBtn = aboutMessage.document.getElementById("otherActionsButton");
+  const moreBtn = aboutMessage.document.getElementById("otherActionsButton");
   // Make sure we loaded the expected message.
   await assertVisibility(moreBtn, true, "The more button is visible");
 
   // Confirm we're starting from a clean state.
-  let header = aboutMessage.document.getElementById("messageHeader");
+  const header = aboutMessage.document.getElementById("messageHeader");
   Assert.ok(
     header.classList.contains("message-header-show-recipient-avatar"),
     "The From recipient is showing the avatar"
   );
-  let avatar = aboutMessage.document.querySelector(".recipient-avatar");
+  const avatar = aboutMessage.document.querySelector(".recipient-avatar");
   await assertVisibility(avatar, true, "The recipient avatar is shown");
 
   Assert.ok(
     header.classList.contains("message-header-show-sender-full-address"),
     "The From recipient is showing the full address on two lines"
   );
-  let multiLine = aboutMessage.document.querySelector(".recipient-multi-line");
+  const multiLine = aboutMessage.document.querySelector(
+    ".recipient-multi-line"
+  );
   await assertVisibility(
     multiLine,
     true,
     "The recipient multi line is visible"
   );
-  let singleLine = aboutMessage.document.querySelector(
+  const singleLine = aboutMessage.document.querySelector(
     ".recipient-single-line"
   );
   await assertVisibility(
@@ -100,7 +80,9 @@ add_task(async function test_customize_toolbar_buttons() {
     "The labels column is hidden"
   );
 
-  let firstLabel = aboutMessage.document.querySelector(".message-header-label");
+  const firstLabel = aboutMessage.document.querySelector(
+    ".message-header-label"
+  );
   Assert.equal(
     firstLabel.style.minWidth,
     "0px",
@@ -122,42 +104,40 @@ add_task(async function test_customize_toolbar_buttons() {
   );
 
   MailTelemetryForTests.reportUIConfiguration();
-  let scalarName = "tb.ui.configuration.message_header";
-  let scalars = TelemetryTestUtils.getProcessScalars("parent", true);
-  TelemetryTestUtils.assertScalarUnset(scalars, scalarName);
 
-  let popup = aboutMessage.document.getElementById("otherActionsPopup");
+  const popup = aboutMessage.document.getElementById("otherActionsPopup");
   let popupShown = BrowserTestUtils.waitForEvent(popup, "popupshown");
   EventUtils.synthesizeMouseAtCenter(moreBtn, {}, aboutMessage);
   await popupShown;
 
-  let panel = aboutMessage.document.getElementById(
+  const panel = aboutMessage.document.getElementById(
     "messageHeaderCustomizationPanel"
   );
-  let customizeBtn = aboutMessage.document.getElementById(
+  const customizeBtn = aboutMessage.document.getElementById(
     "messageHeaderMoreMenuCustomize"
   );
   let panelShown = BrowserTestUtils.waitForEvent(panel, "popupshown");
   EventUtils.synthesizeMouseAtCenter(customizeBtn, {}, aboutMessage);
   await panelShown;
 
-  let buttonStyle = aboutMessage.document.getElementById("headerButtonStyle");
+  const buttonStyle = aboutMessage.document.getElementById("headerButtonStyle");
   // Assert the options are in a default state.
   Assert.equal(
     buttonStyle.value,
     "default",
     "The buttons style is in the default state"
   );
-  let subjectLarge = aboutMessage.document.getElementById("headerSubjectLarge");
+  const subjectLarge =
+    aboutMessage.document.getElementById("headerSubjectLarge");
   Assert.ok(subjectLarge.checked, "The subject field is in the default state");
 
-  let showAvatar = aboutMessage.document.getElementById("headerShowAvatar");
+  const showAvatar = aboutMessage.document.getElementById("headerShowAvatar");
   Assert.ok(
     showAvatar.checked,
     "The show avatar field is in the default state"
   );
 
-  let showFullAddress = aboutMessage.document.getElementById(
+  const showFullAddress = aboutMessage.document.getElementById(
     "headerShowFullAddress"
   );
   Assert.ok(
@@ -165,16 +145,16 @@ add_task(async function test_customize_toolbar_buttons() {
     "The show full address field is in the default state"
   );
 
-  let hideLabels = aboutMessage.document.getElementById("headerHideLabels");
+  const hideLabels = aboutMessage.document.getElementById("headerHideLabels");
   Assert.ok(
     hideLabels.checked,
     "The hide labels field is in the default state"
   );
 
-  let openMenuPopup = async function () {
+  const openMenuPopup = async function () {
     aboutMessage.document.getElementById("headerButtonStyle").focus();
 
-    let menuPopupShown = BrowserTestUtils.waitForEvent(
+    const menuPopupShown = BrowserTestUtils.waitForEvent(
       aboutMessage.document.querySelector("#headerButtonStyle menupopup"),
       "popupshown"
     );
@@ -311,16 +291,32 @@ add_task(async function test_customize_toolbar_buttons() {
   );
 
   MailTelemetryForTests.reportUIConfiguration();
-  scalars = TelemetryTestUtils.getProcessScalars("parent", true);
-  TelemetryTestUtils.assertKeyedScalar(scalars, scalarName, "subjectLarge", 0);
-  TelemetryTestUtils.assertKeyedScalar(scalars, scalarName, "buttonStyle", 1);
-  TelemetryTestUtils.assertKeyedScalar(scalars, scalarName, "hideLabels", 0);
-  TelemetryTestUtils.assertKeyedScalar(scalars, scalarName, "showAvatar", 0);
-  TelemetryTestUtils.assertKeyedScalar(
-    scalars,
-    scalarName,
-    "showFullAddress",
-    0
+
+  Assert.equal(
+    Glean.mail.uiConfigurationMessageHeader.subjectLarge.testGetValue(),
+    "false",
+    "should have correct subjectLarge"
+  );
+
+  Assert.equal(
+    Glean.mail.uiConfigurationMessageHeader.buttonStyle.testGetValue(),
+    "only-icons",
+    "should have correct buttonStyle"
+  );
+  Assert.equal(
+    Glean.mail.uiConfigurationMessageHeader.hideLabels.testGetValue(),
+    "false",
+    "should have correct hideLabels"
+  );
+  Assert.equal(
+    Glean.mail.uiConfigurationMessageHeader.showAvatar.testGetValue(),
+    "false",
+    "should have correct showAvatar"
+  );
+  Assert.equal(
+    Glean.mail.uiConfigurationMessageHeader.showFullAddress.testGetValue(),
+    "false",
+    "should have correct showFullAddress"
   );
 
   popupShown = BrowserTestUtils.waitForEvent(popup, "popupshown");
@@ -374,15 +370,30 @@ add_task(async function test_customize_toolbar_buttons() {
   await assertVisibility(firstLabel, false, "The labels column is hidden");
 
   MailTelemetryForTests.reportUIConfiguration();
-  scalars = TelemetryTestUtils.getProcessScalars("parent", true);
-  TelemetryTestUtils.assertKeyedScalar(scalars, scalarName, "subjectLarge", 1);
-  TelemetryTestUtils.assertKeyedScalar(scalars, scalarName, "buttonStyle", 0);
-  TelemetryTestUtils.assertKeyedScalar(scalars, scalarName, "hideLabels", 1);
-  TelemetryTestUtils.assertKeyedScalar(scalars, scalarName, "showAvatar", 1);
-  TelemetryTestUtils.assertKeyedScalar(
-    scalars,
-    scalarName,
-    "showFullAddress",
-    1
+
+  Assert.equal(
+    Glean.mail.uiConfigurationMessageHeader.subjectLarge.testGetValue(),
+    "true",
+    "should have correct subjectLarge"
+  );
+  Assert.equal(
+    Glean.mail.uiConfigurationMessageHeader.buttonStyle.testGetValue(),
+    "default",
+    "should have correct buttonStyle"
+  );
+  Assert.equal(
+    Glean.mail.uiConfigurationMessageHeader.hideLabels.testGetValue(),
+    "true",
+    "should have correct hideLabels"
+  );
+  Assert.equal(
+    Glean.mail.uiConfigurationMessageHeader.showAvatar.testGetValue(),
+    "true",
+    "should have correct showAvatar"
+  );
+  Assert.equal(
+    Glean.mail.uiConfigurationMessageHeader.showFullAddress.testGetValue(),
+    "true",
+    "should have correct showFullAddress"
   );
 });

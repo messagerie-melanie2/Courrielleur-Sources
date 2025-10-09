@@ -8,7 +8,7 @@
 "use strict";
 
 const { SearchSuggestionController } = ChromeUtils.importESModule(
-  "resource://gre/modules/SearchSuggestionController.sys.mjs"
+  "moz-src:///toolkit/components/search/SearchSuggestionController.sys.mjs"
 );
 
 const templateNormal = "https://example.com/?q=";
@@ -72,12 +72,10 @@ async function doSearch(
   templateUrl,
   inputText = "query"
 ) {
-  await searchInSearchbar(inputText, win);
+  let popup = await searchInSearchbar(inputText, win);
 
   Assert.ok(
-    win.BrowserSearch.searchBar.textbox.popup.searchbarEngineName
-      .getAttribute("value")
-      .includes(engineName),
+    popup.searchbarEngineName.getAttribute("value").includes(engineName),
     "Should have the correct engine name displayed in the bar"
   );
 
@@ -170,6 +168,86 @@ add_task(async function test_form_history() {
   BrowserTestUtils.removeTab(tab);
 });
 
+add_task(async function test_form_history_delete() {
+  const tab = await BrowserTestUtils.openNewForegroundTab(
+    gBrowser,
+    "about:blank"
+  );
+  await FormHistoryTestUtils.clear("searchbar-history");
+  await FormHistoryTestUtils.add("searchbar-history", ["first", "second"]);
+
+  let searchBar = document.getElementById("searchbar");
+  searchBar.focus();
+  searchBar.value = "";
+  let popupshown = BrowserTestUtils.waitForEvent(
+    searchBar.textbox.popup,
+    "popupshown"
+  );
+  EventUtils.synthesizeKey("KEY_ArrowDown");
+  await popupshown;
+  EventUtils.synthesizeKey("KEY_ArrowDown");
+
+  let initialEntriesLength = searchPopup.richlistbox.itemChildren.filter(
+    child => !child.getAttribute("collapsed")
+  ).length;
+
+  Assert.equal(initialEntriesLength, 2, "Should have two items in the popup");
+  Assert.equal(
+    searchPopup.selectedIndex,
+    0,
+    "Should have selected the first entry"
+  );
+  Assert.equal(
+    searchPopup.children[2].selectedItems[0].getAttribute("ac-value"),
+    "first",
+    "Should have selected the expected first result"
+  );
+
+  let promiseRemoved = TestUtils.topicObserved(
+    "satchel-storage-changed",
+    (_subject, data) => data == "formhistory-remove"
+  );
+
+  EventUtils.synthesizeKey("KEY_Delete", { shiftKey: true });
+
+  await promiseRemoved;
+
+  // Give the listbox time to update.
+  await TestUtils.waitForCondition(
+    () =>
+      searchPopup.richlistbox.itemChildren.filter(
+        child => !child.getAttribute("collapsed")
+      ).length ==
+      initialEntriesLength - 1,
+    "Should reduced the entries in the listbox"
+  );
+
+  Assert.equal(
+    searchPopup.selectedIndex,
+    0,
+    "Should have the second entry selected; now in the first index"
+  );
+  Assert.equal(
+    searchPopup.children[2].selectedItems[0].getAttribute("ac-value"),
+    "second",
+    "Should have selected the second item in the list"
+  );
+  Assert.equal(
+    searchPopup.richlistbox.itemChildren.filter(
+      child => !child.getAttribute("collapsed")
+    ).length,
+    initialEntriesLength - 1,
+    "Should have reduced the number of autocomplete results by 1"
+  );
+
+  let entries = (await FormHistoryTestUtils.search("searchbar-history")).map(
+    entry => entry.value
+  );
+  Assert.deepEqual(entries, ["second"], "Should have deleted the entry");
+
+  BrowserTestUtils.removeTab(tab);
+});
+
 add_task(async function test_searchbar_revert() {
   const tab = await BrowserTestUtils.openNewForegroundTab(
     gBrowser,
@@ -178,9 +256,9 @@ add_task(async function test_searchbar_revert() {
 
   await doSearch(window, tab, "MozSearch1", templateNormal, "testQuery");
 
-  let searchbar = window.BrowserSearch.searchBar;
+  let searchBar = window.document.getElementById("searchbar");
   is(
-    searchbar.value,
+    searchBar.value,
     "testQuery",
     "Search value should be the the last search"
   );
@@ -188,34 +266,34 @@ add_task(async function test_searchbar_revert() {
   // focus search bar
   let promise = promiseEvent(searchPopup, "popupshown");
   info("Opening search panel");
-  searchbar.focus();
+  searchBar.focus();
   await promise;
 
-  searchbar.value = "aQuery";
-  searchbar.value = "anotherQuery";
+  searchBar.value = "aQuery";
+  searchBar.value = "anotherQuery";
 
   // close the panel using the escape key.
   promise = promiseEvent(searchPopup, "popuphidden");
   EventUtils.synthesizeKey("KEY_Escape");
   await promise;
 
-  is(searchbar.value, "anotherQuery", "The search value should be the same");
+  is(searchBar.value, "anotherQuery", "The search value should be the same");
   // revert the search bar value
   EventUtils.synthesizeKey("KEY_Escape");
   is(
-    searchbar.value,
+    searchBar.value,
     "testQuery",
     "The search value should have been reverted"
   );
 
   EventUtils.synthesizeKey("KEY_Escape");
-  is(searchbar.value, "testQuery", "The search value should be the same");
+  is(searchBar.value, "testQuery", "The search value should be the same");
 
   await doSearch(window, tab, "MozSearch1", templateNormal, "query");
 
-  is(searchbar.value, "query", "The search value should be query");
+  is(searchBar.value, "query", "The search value should be query");
   EventUtils.synthesizeKey("KEY_Escape");
-  is(searchbar.value, "query", "The search value should be the same");
+  is(searchBar.value, "query", "The search value should be the same");
 
   BrowserTestUtils.removeTab(tab);
 });

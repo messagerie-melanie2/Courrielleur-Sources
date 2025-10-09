@@ -10,11 +10,11 @@
 // This test works with code that is not timezone-aware.
 /* eslint-disable no-restricted-syntax */
 
-var { CalExtractParserService } = ChromeUtils.import(
-  "resource:///modules/calendar/extract/CalExtractParserService.jsm"
+var { CalExtractParserService } = ChromeUtils.importESModule(
+  "resource:///modules/calendar/extract/CalExtractParserService.sys.mjs"
 );
 
-let service = new CalExtractParserService();
+const service = new CalExtractParserService();
 
 /**
  * Test the extraction of a start and end time using HOUR am/pm. Note: The
@@ -22,9 +22,9 @@ let service = new CalExtractParserService();
  * event title is not included here for now.
  */
 add_task(function test_event_start_end() {
-  let now = new Date(2012, 9, 1, 9, 0);
-  let content = "We'll meet at 2 pm and discuss until 3 pm.";
-  let result = service.extract(content, {
+  const now = new Date(2012, 9, 1, 9, 0);
+  const content = "We'll meet at 2 pm and discuss until 3 pm.";
+  const result = service.extract(content, {
     now,
   });
 
@@ -62,9 +62,9 @@ add_task(function test_event_start_end() {
  * and a duration for the end.
  */
 add_task(function test_event_start_duration() {
-  let now = new Date(2012, 9, 1, 9, 0);
-  let content = "We'll meet at 2 pm and discuss for 30 minutes.";
-  let result = service.extract(content, {
+  const now = new Date(2012, 9, 1, 9, 0);
+  const content = "We'll meet at 2 pm and discuss for 30 minutes.";
+  const result = service.extract(content, {
     now,
   });
   info(`Comparing extracted result for string "${content}"...`);

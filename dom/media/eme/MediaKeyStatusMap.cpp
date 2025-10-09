@@ -6,6 +6,7 @@
 
 #include "mozilla/dom/MediaKeyStatusMap.h"
 #include "nsPIDOMWindow.h"
+#include "mozilla/dom/BufferSourceBinding.h"
 #include "mozilla/dom/UnionTypes.h"
 #include "mozilla/dom/ToJSValue.h"
 #include "mozilla/EMEUtils.h"
@@ -35,36 +36,36 @@ nsPIDOMWindowInner* MediaKeyStatusMap::GetParentObject() const {
   return mParent;
 }
 
-void MediaKeyStatusMap::Get(const ArrayBufferViewOrArrayBuffer& aKey,
+const MediaKeyStatusMap::KeyStatus* MediaKeyStatusMap::FindKey(
+    const BufferSource& aKey) const {
+  MOZ_ASSERT(aKey.IsArrayBuffer() || aKey.IsArrayBufferView());
+
+  return ProcessTypedArrays(aKey,
+                            [&](const Span<const uint8_t>& aData,
+                                JS::AutoCheckCannotGC&&) -> const KeyStatus* {
+                              for (const KeyStatus& status : mStatuses) {
+                                if (aData == Span(status.mKeyId)) {
+                                  return &status;
+                                }
+                              }
+                              return nullptr;
+                            });
+}
+
+void MediaKeyStatusMap::Get(const BufferSource& aKey,
                             OwningMediaKeyStatusOrUndefined& aOutValue,
                             ErrorResult& aOutRv) const {
-  ArrayData keyId = GetArrayBufferViewOrArrayBufferData(aKey);
-  if (!keyId.IsValid()) {
+  const KeyStatus* status = FindKey(aKey);
+  if (!status) {
     aOutValue.SetUndefined();
     return;
   }
-  for (const KeyStatus& status : mStatuses) {
-    if (keyId == status.mKeyId) {
-      aOutValue.SetAsMediaKeyStatus() = status.mStatus;
-      return;
-    }
-  }
-  aOutValue.SetUndefined();
+
+  aOutValue.SetAsMediaKeyStatus() = status->mStatus;
 }
 
-bool MediaKeyStatusMap::Has(const ArrayBufferViewOrArrayBuffer& aKey) const {
-  ArrayData keyId = GetArrayBufferViewOrArrayBufferData(aKey);
-  if (!keyId.IsValid()) {
-    return false;
-  }
-
-  for (const KeyStatus& status : mStatuses) {
-    if (keyId == status.mKeyId) {
-      return true;
-    }
-  }
-
-  return false;
+bool MediaKeyStatusMap::Has(const BufferSource& aKey) const {
+  return FindKey(aKey);
 }
 
 uint32_t MediaKeyStatusMap::GetIterableLength() const {

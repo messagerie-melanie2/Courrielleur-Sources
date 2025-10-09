@@ -12,13 +12,14 @@
   <meta charset="utf-8" />
   <title data-l10n-id="about-addressbook-title"></title>
   <meta http-equiv="Content-Security-Policy"
-        content="default-src chrome:; script-src chrome: 'unsafe-inline'; img-src blob: chrome: data: http: https:; style-src chrome: 'unsafe-inline'; object-src 'none'" />
+        content="default-src chrome:; script-src chrome: resource: 'unsafe-inline'; img-src blob: chrome: data: http: https:; style-src chrome: 'unsafe-inline'; object-src 'none'" />
   <meta name="color-scheme" content="light dark" />
 
   <link rel="icon" href="chrome://messenger/skin/icons/new/compact/address-book.svg" />
 
   <link rel="stylesheet" href="chrome://messenger/skin/messenger.css" />
   <link rel="stylesheet" href="chrome://global/skin/in-content/common.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/containers.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/primaryToolbar.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/contextMenu.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/shared/tree-listbox.css" />
@@ -34,47 +35,36 @@
   <script src="chrome://messenger/content/globalOverlay.js"></script>
   <script src="chrome://global/content/editMenuOverlay.js"></script>
   <script src="chrome://messenger/content/pane-splitter.js"></script>
-  <script src="chrome://messenger/content/tree-listbox.js"></script>
+  <script type="module" src="chrome://messenger/content/search-bar.mjs"></script>
+  <script type="module" src="chrome://messenger/content/tree-listbox.mjs"></script>
   <script type="module" src="chrome://messenger/content/tree-view.mjs"></script>
-  <script src="chrome://messenger/content/jsTreeView.js"></script>
-  <script src="chrome://messenger/content/addressbook/abView-new.js"></script>
   <script src="chrome://messenger/content/addressbook/aboutAddressBook.js"></script>
+  <script type="module" src="chrome://messenger/content/addressbook/aboutAddressBookCommands.mjs"></script>
 </head>
 <body>
-  <xul:toolbox id="toolbox" class="contentTabToolbox" labelalign="end">
-    <xul:toolbar class="chromeclass-toolbar contentTabToolbar themeable-full" mode="full">
-      <xul:toolbarbutton id="toolbarCreateBook" is="toolbarbutton-menu-button" type="menu-button"
-                         class="toolbarbutton-1"
-                         data-l10n-id="about-addressbook-toolbar-new-address-book"
-                         tabindex="0">
-        <xul:menupopup>
-          <xul:menuitem data-l10n-id="about-addressbook-toolbar-new-address-book"/>
-          <xul:menuitem value="CARDDAV_DIRECTORY_TYPE"
-                        data-l10n-id="about-addressbook-toolbar-add-carddav-address-book"/>
-          <xul:menuitem value="LDAP_DIRECTORY_TYPE"
-                        data-l10n-id="about-addressbook-toolbar-add-ldap-address-book"/>
-        </xul:menupopup>
-      </xul:toolbarbutton>
-      <xul:toolbarbutton id="toolbarCreateContact"
-                         class="toolbarbutton-1"
-                         data-l10n-id="about-addressbook-toolbar-new-contact"
-                         tabindex="0"/>
-      <xul:toolbarbutton id="toolbarCreateList"
-                         class="toolbarbutton-1"
-                         data-l10n-id="about-addressbook-toolbar-new-list"
-                         tabindex="0"/>
-      <xul:toolbarbutton id="toolbarImport"
-                         class="toolbarbutton-1"
-                         data-l10n-id="about-addressbook-toolbar-import"
-                         tabindex="0"/>
-    </xul:toolbar>
-  </xul:toolbox>
-  <div id="booksPane" class="no-overscroll">
-    <ul is="ab-tree-listbox" id="books" role="tree">
+  <div id="booksPane">
+    <div id="booksPaneHeaderBar" class="sidebar-panel-header">
+      <button id="booksPaneCreateBook"
+              class="button button-flat icon-button icon-only"
+              data-l10n-id="books-pane-create-book-button"
+              type="button">
+      </button>
+      <button id="booksPaneCreateContact"
+              class="button button-primary icon-button"
+              data-l10n-id="books-pane-create-contact-button"
+              type="button">
+      </button>
+      <button id="booksPaneCreateList"
+              class="button button-flat icon-button icon-only"
+              data-l10n-id="books-pane-create-list-button"
+              type="button">
+      </button>
+    </div>
+    <ul is="ab-tree-listbox" id="books" role="tree" class="sidebar-panel-scroll">
       <li id="allAddressBooks"
           class="bookRow noDelete readOnly"
           data-l10n-id="all-address-books-row">
-        <div class="bookRow-container">
+        <div class="bookRow-container container">
           <div class="twisty"></div>
           <div class="bookRow-icon"></div>
           <span class="bookRow-name" tabindex="-1" data-l10n-id="all-address-books"></span>
@@ -82,10 +72,17 @@
         </div>
       </li>
     </ul>
+    <div class="books-pane-bottom">
+      <button id="booksPaneImport"
+              class="button button-flat icon-button"
+              data-l10n-id="books-pane-import-button"
+              type="button">
+      </button>
+    </div>
     <div id="cardCount"></div>
     <template id="bookRow">
       <li class="bookRow">
-        <div class="bookRow-container">
+        <div class="bookRow-container container">
           <div class="twisty">
             <img class="twisty-icon" src="chrome://messenger/skin/icons/new/nav-down-sm.svg" alt="" />
           </div>
@@ -98,7 +95,7 @@
     </template>
     <template id="listRow">
       <li class="listRow">
-        <div class="listRow-container">
+        <div class="listRow-container container">
           <div class="listRow-icon"></div>
           <span class="listRow-name" tabindex="-1"></span>
           <div class="listRow-menu"></div>
@@ -111,9 +108,11 @@
       resize-id="booksPane"/>
   <div id="cardsPane">
     <div id="cardsPaneHeader">
-      <input is="ab-card-search-input" id="searchInput"
-             type="search"
-             data-l10n-attrs="placeholder" />
+#include ../../../base/content/widgets/search-bar.inc.xhtml
+      <search-bar id="searchInput" data-l10n-attrs="label, placeholder">
+        <img slot="clear-button" src="" alt="" />
+        <img slot="search-button" src="" alt="" />
+      </search-bar>
       <button id="displayButton"
               class="button icon-button icon-only button-flat"
               data-l10n-id="about-addressbook-sort-button2">
@@ -126,7 +125,7 @@
              hidden="hidden"
              data-l10n-id="about-addressbook-placeholder-empty-book"></div>
         <button id="placeholderCreateContact"
-                class="icon-button"
+                class="button button-flat icon-button"
                 hidden="hidden"
                 data-l10n-id="about-addressbook-placeholder-new-contact"></button>
         <div id="placeholderSearchOnly"
@@ -170,16 +169,16 @@
         <section id="detailsActions" class="button-block">
           <div>
             <button type="button" id="detailsWriteButton"
-                    class="icon-button"
+                    class="button button-flat icon-button"
                     data-l10n-id="about-addressbook-write-action-button"></button>
             <button type="button" id="detailsEventButton"
-                    class="icon-button"
+                    class="button button-flat icon-button"
                     data-l10n-id="about-addressbook-event-action-button"></button>
             <button type="button" id="detailsSearchButton"
-                    class="icon-button"
+                    class="button button-flat icon-button"
                     data-l10n-id="about-addressbook-search-action-button"></button>
             <button type="button" id="detailsNewListButton"
-                    class="icon-button"
+                    class="button button-flat icon-button"
                     data-l10n-id="about-addressbook-new-list-action-button"></button>
           </div>
           <div class="edit-block">
@@ -264,13 +263,14 @@
             </button>
           </div>
         </div>
+        <!-- Styles -->
   #include vcard-edit/vCardTemplates.inc.xhtml
         <vcard-edit />
       </div>
       <div id="detailsFooter" class="button-block">
         <div>
           <button type="button" id="detailsDeleteButton"
-                  class="icon-button"
+                  class="button button-flat icon-button"
                   data-l10n-id="about-addressbook-delete-edit-contact-button"></button>
         </div>
         <div>
@@ -382,7 +382,7 @@
     </div>
   </template>
 </body>
-<xul:menupopup id="bookContext">
+<xul:menupopup id="bookContext" needsgutter="">
   <xul:menuitem id="bookContextProperties"/>
   <xul:menuitem id="bookContextSynchronize"
                 data-l10n-id="about-addressbook-books-context-synchronize"/>
@@ -436,7 +436,8 @@
                 type="checkbox"
                 data-l10n-id="about-addressbook-table-layout"/>
 </xul:menupopup>
-<xul:menupopup id="cardContext">
+<xul:menupopup id="cardContext"
+               class="no-icon-menupopup">
   <xul:menuitem id="cardContextWrite"
                 data-l10n-id="about-addressbook-cards-context-write"/>
   <xul:menu id="cardContextWriteMenu"
@@ -456,5 +457,14 @@
                 data-l10n-id="about-addressbook-books-context-delete"/>
   <xul:menuitem id="cardContextRemove"
                 data-l10n-id="about-addressbook-books-context-remove"/>
+</xul:menupopup>
+<xul:menupopup id="booksPaneCreateBookContext"
+               class="no-icon-menupopup">
+  <xul:menuitem id="booksPaneContextCreateBook"
+                data-l10n-id="about-addressbook-toolbar-add-address-book"/>
+  <xul:menuitem id="booksPaneContextCreateDav"
+                data-l10n-id="about-addressbook-toolbar-add-carddav-address-book"/>
+  <xul:menuitem id="booksPaneContextCreateLdap"
+                data-l10n-id="about-addressbook-toolbar-add-ldap-address-book"/>
 </xul:menupopup>
 </html>

@@ -7,12 +7,13 @@
 
 #include "CrashReporterHost.h"
 #include "mozilla/UniquePtr.h"
+#include "nsIAppStartup.h"
 #include "nsExceptionHandler.h"
 #include "nsICrashService.h"
 #include "nsPrintfCString.h"
+#include "nsServiceManagerUtils.h"
 
-namespace mozilla {
-namespace ipc {
+namespace mozilla::ipc {
 
 /**
  * This class encapsulates the common elements of crash report handling for
@@ -21,30 +22,40 @@ namespace ipc {
  * 1. Declare a method to initialize the crash reporter in your IPDL:
  *    `async InitCrashReporter(NativeThreadId threadId)`
  *
- * 2. Inherit from this class, providing the appropriate `GeckoProcessType`
- *    enum value for the template parameter PT.
+ * 2. Inherit from this class with the name of your derived class as the
+ *    type parameter. Ex: `class MyClass : public CrashReporterHelper<MyClass>`
  *
- * 3. When your protocol actor is destroyed with a reason of `AbnormalShutdown`,
- *    you should call `GenerateCrashReport(OtherPid())`. If you need the crash
+ * 3. Provide a public `PROCESS_TYPE` constant for your class. Ex:
+ *
+ *    ```
+ *    public:
+ *      static constexpr GeckoProcessType PROCESS_TYPE =
+ *          GeckoProcessType_GMPlugin;
+ *    ```
+ *
+ * 4. When your protocol actor is destroyed with a reason of `AbnormalShutdown`,
+ *    you should call `GenerateCrashReport()`. If you need the crash
  *    report ID it will be copied in the second optional parameter upon
  *    successful crash report generation.
  */
-template <GeckoProcessType PT>
+template <class Derived>
 class CrashReporterHelper {
  public:
   CrashReporterHelper() : mCrashReporter(nullptr) {}
-  IPCResult RecvInitCrashReporter(const CrashReporter::ThreadId& aThreadId) {
-    mCrashReporter = MakeUnique<ipc::CrashReporterHost>(PT, aThreadId);
+  IPCResult RecvInitCrashReporter(
+      const CrashReporter::CrashReporterInitArgs& aInitArgs) {
+    base::ProcessId pid = static_cast<Derived*>(this)->OtherPid();
+    mCrashReporter = MakeUnique<ipc::CrashReporterHost>(Derived::PROCESS_TYPE,
+                                                        pid, aInitArgs);
     return IPC_OK();
   }
 
  protected:
-  void GenerateCrashReport(base::ProcessId aPid,
-                           nsString* aMinidumpId = nullptr) {
+  void GenerateCrashReport(nsString* aMinidumpId = nullptr) {
     nsAutoString minidumpId;
     if (!mCrashReporter) {
-      HandleOrphanedMinidump(aPid, minidumpId);
-    } else if (mCrashReporter->GenerateCrashReport(aPid)) {
+      HandleOrphanedMinidump(minidumpId);
+    } else if (mCrashReporter->GenerateCrashReport()) {
       minidumpId = mCrashReporter->MinidumpID();
     }
 
@@ -55,15 +66,32 @@ class CrashReporterHelper {
     mCrashReporter = nullptr;
   }
 
+  void MaybeTerminateProcess() {
+    if (PR_GetEnv("MOZ_CRASHREPORTER_SHUTDOWN")) {
+      NS_WARNING(nsPrintfCString("Shutting down due to %s process crash.",
+                                 XRE_GetProcessTypeString())
+                     .get());
+      nsCOMPtr<nsIAppStartup> appService =
+          do_GetService("@mozilla.org/toolkit/app-startup;1");
+      if (appService) {
+        bool userAllowedQuit = true;
+        appService->Quit(nsIAppStartup::eForceQuit, 1, &userAllowedQuit);
+      }
+    }
+  }
+
  private:
-  void HandleOrphanedMinidump(base::ProcessId aPid, nsString& aMinidumpId) {
-    if (CrashReporter::FinalizeOrphanedMinidump(aPid, PT, &aMinidumpId)) {
-      CrashReporterHost::RecordCrash(PT, nsICrashService::CRASH_TYPE_CRASH,
+  void HandleOrphanedMinidump(nsString& aMinidumpId) {
+    base::ProcessId pid = static_cast<Derived*>(this)->OtherPid();
+    if (CrashReporter::FinalizeOrphanedMinidump(pid, Derived::PROCESS_TYPE,
+                                                &aMinidumpId)) {
+      CrashReporterHost::RecordCrash(Derived::PROCESS_TYPE,
+                                     nsICrashService::CRASH_TYPE_CRASH,
                                      aMinidumpId);
     } else {
       NS_WARNING(nsPrintfCString("child process pid = %" PRIPID
                                  " crashed without leaving a minidump behind",
-                                 aPid)
+                                 pid)
                      .get());
     }
   }
@@ -72,7 +100,6 @@ class CrashReporterHelper {
   UniquePtr<ipc::CrashReporterHost> mCrashReporter;
 };
 
-}  // namespace ipc
-}  // namespace mozilla
+}  // namespace mozilla::ipc
 
 #endif  // mozilla_ipc_CrashReporterHelper_h

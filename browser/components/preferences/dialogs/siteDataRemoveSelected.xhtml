@@ -4,20 +4,24 @@
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
-<?xml-stylesheet href="chrome://global/skin/global.css" type="text/css"?>
-<?xml-stylesheet href="chrome://browser/skin/preferences/siteDataSettings.css" type="text/css"?>
+<?csp default-src chrome:; img-src moz-icon: chrome:; ?>
 
 <window id="SiteDataRemoveSelectedDialog"
         width="500"
         data-l10n-id="site-data-removing-dialog"
         data-l10n-attrs="title"
-        onload="gSiteDataRemoveSelected.init();"
         xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
         xmlns:html="http://www.w3.org/1999/xhtml">
 <dialog data-l10n-id="site-data-removing-dialog"
         data-l10n-attrs="buttonlabelaccept">
 
   <linkset>
+    <html:link rel="stylesheet" href="chrome://global/skin/global.css" />
+    <html:link
+      rel="stylesheet"
+      href="chrome://browser/skin/preferences/siteDataSettings.css"
+    />
+
     <html:link rel="localization" href="browser/preferences/siteDataSettings.ftl"/>
   </linkset>
 

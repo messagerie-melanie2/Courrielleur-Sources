@@ -2,25 +2,24 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { VirtualFolderHelper } = ChromeUtils.import(
-  "resource:///modules/VirtualFolderWrapper.jsm"
+const { VirtualFolderHelper } = ChromeUtils.importESModule(
+  "resource:///modules/VirtualFolderWrapper.sys.mjs"
 );
 
-const { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+const { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
 
 const tabmail = document.getElementById("tabmail");
 const about3Pane = tabmail.currentAbout3Pane;
 
 let rootFolder;
-let inboxFolder;
 
 add_setup(async function () {
-  MailServices.accounts.createLocalMailAccount();
-  const account = MailServices.accounts.accounts[0];
-  rootFolder = account.incomingServer.rootFolder;
-  rootFolder.QueryInterface(Ci.nsIMsgLocalMailFolder);
+  const account = MailServices.accounts.createLocalMailAccount();
+  rootFolder = account.incomingServer.rootFolder.QueryInterface(
+    Ci.nsIMsgLocalMailFolder
+  );
 
   // Set the active modes of the folder pane. In theory we only need the "smart"
   // mode to test with, but in practice we also need the "all" mode to generate
@@ -46,7 +45,7 @@ add_task(async function testDeleteViaDBViewCommand() {
 
   // Add a message to the folder.
   const generator = new MessageGenerator();
-  inboxFolder.addMessage(generator.makeMessage().toMboxString());
+  inboxFolder.addMessage(generator.makeMessage().toMessageString());
 
   // Create a smart folder from the inbox.
   const smartInboxFolder = getSmartServer().rootFolder.getFolderWithFlags(

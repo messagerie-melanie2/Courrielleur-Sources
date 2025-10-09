@@ -3,6 +3,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* eslint-disable mozilla/valid-lazy */
 
 /**
  * @file
@@ -36,14 +37,12 @@
  *     }
  *   }
  * }
- *
  */
 
+import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 import { ExtensionParent } from "resource://gre/modules/ExtensionParent.sys.mjs";
 
-const lazy = {};
-
-ChromeUtils.defineESModuleGetters(lazy, {
+const lazy = XPCOMUtils.declareLazy({
   AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
   JSONFile: "resource://gre/modules/JSONFile.sys.mjs",
 });
@@ -131,7 +130,7 @@ function ensureType(type) {
  *        The type of setting to be retrieved.
  * @param {string} key
  *        A string that uniquely identifies the setting.
- * @param {string} id
+ * @param {string} [id]
  *        The id of the extension for which the item is being retrieved.
  *        If no id is passed, then the highest priority item for the key
  *        is returned.
@@ -361,7 +360,7 @@ export var ExtensionSettingsStore = {
    * @param {Function} settingDataUpdate
    *        A function to be called to modify the initial value if necessary.
    *
-   * @returns {object | null} Either an object with properties for key and
+   * @returns {Promise<object?>} Either an object with properties for key and
    *                          value, which corresponds to the item that was
    *                          just added, or null if the item that was just
    *                          added does not need to be set because it is not
@@ -546,7 +545,7 @@ export var ExtensionSettingsStore = {
    *
    * @param {string} type The type of setting to be returned.
    * @param {string} key A string that uniquely identifies the setting.
-   * @param {string} id
+   * @param {string} [id]
    *        The id of the extension for which the setting is being retrieved.
    *        Defaults to undefined, in which case the top setting is returned.
    *
@@ -605,7 +604,7 @@ export var ExtensionSettingsStore = {
    *        A string that uniquely identifies the setting, for example, a
    *        preference name.
    *
-   * @returns {string}
+   * @returns {Promise<string>}
    *          The level of control of the extension over the key.
    */
   async getLevelOfControl(id, type, key) {

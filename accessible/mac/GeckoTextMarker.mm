@@ -88,6 +88,13 @@ GeckoTextMarker GeckoTextMarker::MarkerFromIndex(Accessible* aRoot,
   // Iterate through all segments until we exhausted the index sum
   // so we can find the segment the index lives in.
   for (TextLeafRange segment : range) {
+    if (segment.Start().mAcc->IsMenuPopup() &&
+        (segment.Start().mAcc->State() & states::COLLAPSED)) {
+      // XXX: Menu collapsed XUL menu popups are in our tree and we need to skip
+      // them.
+      continue;
+    }
+
     if (segment.End().mAcc->Role() == roles::LISTITEM_MARKER) {
       // XXX: MacOS expects bullets to be in the range's text, but not in
       // the calculated length!
@@ -392,6 +399,12 @@ NSString* GeckoTextMarkerRange::Text() const {
 
   for (TextLeafRange segment : range) {
     TextLeafPoint start = segment.Start();
+    if (start.mAcc->IsMenuPopup() &&
+        (start.mAcc->State() & states::COLLAPSED)) {
+      // XXX: Menu collapsed XUL menu popups are in our tree and we need to skip
+      // them.
+      continue;
+    }
     if (start.mAcc->IsTextField() && start.mAcc->ChildCount() == 0) {
       continue;
     }
@@ -412,6 +425,21 @@ static void AppendTextToAttributedString(
                          aAttributes, aAccessible)] autorelease];
 
   [aAttributedString appendAttributedString:substr];
+}
+
+static RefPtr<AccAttributes> GetTextAttributes(TextLeafPoint aPoint) {
+  RefPtr<AccAttributes> attrs = aPoint.GetTextAttributes();
+  // Mac expects some object properties to be exposed as text attributes. We
+  // add these here rather than in utils::StringAttributesFromAccAttributes so
+  // we can use AccAttributes::Equal to determine whether we need to start a new
+  // run, rather than needing additional special case comparisons.
+  for (Accessible* ancestor = aPoint.mAcc->Parent();
+       ancestor && !ancestor->IsDoc(); ancestor = ancestor->Parent()) {
+    if (ancestor->Role() == roles::MARK) {
+      attrs->SetAttribute(nsGkAtoms::mark, true);
+    }
+  }
+  return attrs;
 }
 
 NSAttributedString* GeckoTextMarkerRange::AttributedText() const {
@@ -436,40 +464,39 @@ NSAttributedString* GeckoTextMarkerRange::AttributedText() const {
           : mRange;
 
   nsAutoString text;
-  RefPtr<AccAttributes> currentRun = nullptr;
-  Accessible* runAcc = range.Start().mAcc;
-  for (TextLeafRange segment : range) {
-    TextLeafPoint start = segment.Start();
-    if (start.mAcc->IsTextField() && start.mAcc->ChildCount() == 0) {
+  TextLeafPoint start = range.Start();
+  const TextLeafPoint stop = range.End();
+  RefPtr<AccAttributes> currentRun = GetTextAttributes(start);
+  Accessible* runAcc = start.mAcc;
+  do {
+    TextLeafPoint attributesNext = start.FindTextAttrsStart(eDirNext, false);
+    if (stop < attributesNext) {
+      attributesNext = stop;
+    }
+    if (start.mAcc->IsMenuPopup() &&
+        (start.mAcc->State() & states::COLLAPSED)) {
+      // XXX: Menu collapsed XUL menu popups are in our tree and we need to skip
+      // them.
+      start = attributesNext;
       continue;
     }
-    if (!currentRun) {
-      // This is the first segment that isn't an empty input.
-      currentRun = start.GetTextAttributes();
+    RefPtr<AccAttributes> attributes = GetTextAttributes(start);
+    if (!currentRun || !attributes || !attributes->Equal(currentRun)) {
+      // If currentRun is null this is a non-text control and we will
+      // append a run with no text or attributes, just an AXAttachment
+      // referencing this accessible.
+      AppendTextToAttributedString(str, runAcc, text, currentRun);
+      text.Truncate();
+      currentRun = attributes;
+      runAcc = start.mAcc;
     }
-    TextLeafPoint attributesNext;
-    do {
-      attributesNext = start.FindTextAttrsStart(eDirNext, false);
-      if (attributesNext == start) {
-        // XXX: FindTextAttrsStart should not return the same point.
-        break;
-      }
-      RefPtr<AccAttributes> attributes = start.GetTextAttributes();
-      MOZ_ASSERT(attributes);
-      if (attributes && !attributes->Equal(currentRun)) {
-        AppendTextToAttributedString(str, runAcc, text, currentRun);
-        text.Truncate();
-        currentRun = attributes;
-        runAcc = start.mAcc;
-      }
-      TextLeafPoint end =
-          attributesNext < segment.End() ? attributesNext : segment.End();
-      start.mAcc->AppendTextTo(text, start.mOffset,
-                               end.mOffset - start.mOffset);
-      start = attributesNext;
-
-    } while (attributesNext < segment.End());
-  }
+    for (TextLeafRange segment : TextLeafRange(start, attributesNext)) {
+      TextLeafPoint segStart = segment.Start();
+      segStart.mAcc->AppendTextTo(text, segStart.mOffset,
+                                  segment.End().mOffset - segStart.mOffset);
+    }
+    start = attributesNext;
+  } while (start != stop);
 
   if (!text.IsEmpty()) {
     AppendTextToAttributedString(str, runAcc, text, currentRun);
@@ -509,29 +536,5 @@ NSValue* GeckoTextMarkerRange::Bounds() const {
 
 void GeckoTextMarkerRange::Select() const { mRange.SetSelection(0); }
 
-bool GeckoTextMarkerRange::Crop(Accessible* aContainer) {
-  TextLeafPoint containerStart(aContainer, 0);
-  TextLeafPoint containerEnd(aContainer,
-                             nsIAccessibleText::TEXT_OFFSET_END_OF_TEXT);
-
-  if (mRange.End() < containerStart || containerEnd < mRange.Start()) {
-    // The range ends before the container, or starts after it.
-    return false;
-  }
-
-  if (mRange.Start() < containerStart) {
-    // If range start is before container start, adjust range start to
-    // start of container.
-    mRange.SetStart(containerStart);
-  }
-
-  if (containerEnd < mRange.End()) {
-    // If range end is after container end, adjust range end to end of
-    // container.
-    mRange.SetEnd(containerEnd);
-  }
-
-  return true;
-}
 }  // namespace a11y
 }  // namespace mozilla

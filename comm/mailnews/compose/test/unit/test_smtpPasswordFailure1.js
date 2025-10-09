@@ -10,8 +10,8 @@
  * multiple sends, the rest of this test is in test_smtpPasswordFailure2.js.
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 /* import-globals-from ../../../test/resources/alertTestUtils.js */
@@ -42,17 +42,7 @@ function alert(aDialogText, aText) {
   dump("Alert Title: " + aDialogText + "\nAlert Text: " + aText + "\n");
 }
 
-function confirmExPS(
-  parent,
-  aDialogTitle,
-  aText,
-  aButtonFlags,
-  aButton0Title,
-  aButton1Title,
-  aButton2Title,
-  aCheckMsg,
-  aCheckState
-) {
+function confirmExPS() {
   switch (++attempt) {
     // First attempt, retry.
     case 1:
@@ -91,6 +81,8 @@ add_task(async function () {
   // Ensure we have at least one mail account
   localAccountUtils.loadLocalMailAccount();
 
+  // Start the fake SMTP server. The server's socket type defaults to
+  // Ci.nsMsgSocketType.plain, so no need to set it.
   server.start();
   var smtpServer = getBasicSmtpServer(server.port);
   var identity = getSmtpIdentity(kIdentityMail, smtpServer);
@@ -102,24 +94,25 @@ add_task(async function () {
     test = "Auth sendMailMessage";
 
     smtpServer.authMethod = Ci.nsMsgAuthMethod.passwordCleartext;
-    smtpServer.socketType = Ci.nsMsgSocketType.plain;
     smtpServer.username = kUsername;
 
     dump("Send\n");
 
-    MailServices.smtp.sendMailMessage(
+    const messageId = Cc["@mozilla.org/messengercompose/computils;1"]
+      .createInstance(Ci.nsIMsgCompUtils)
+      .msgGenerateMessageId(identity, null);
+
+    smtpServer.sendMailMessage(
       testFile,
-      kTo,
+      MailServices.headerParser.parseEncodedHeaderW(kTo),
+      [],
       identity,
       kSender,
       null,
       null,
-      null,
-      null,
       false,
-      "",
-      {},
-      {}
+      messageId,
+      null
     );
 
     server.performTest();
@@ -129,7 +122,7 @@ add_task(async function () {
     Assert.equal(attempt, 2);
 
     // Check that we haven't forgetton the login even though we've retried and cancelled.
-    let logins = Services.logins.findLogins(
+    const logins = Services.logins.findLogins(
       "smtp://localhost",
       null,
       "smtp://localhost"
@@ -143,7 +136,7 @@ add_task(async function () {
   } finally {
     server.stop();
 
-    var thread = gThreadManager.currentThread;
+    var thread = Services.tm.currentThread;
     while (thread.hasPendingEvents()) {
       thread.processNextEvent(true);
     }

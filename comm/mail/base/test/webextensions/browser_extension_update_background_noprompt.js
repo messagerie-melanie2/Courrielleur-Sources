@@ -14,7 +14,7 @@ const ID_ORIGINS = "update_origins@tests.mozilla.org";
 const ID_EXPERIMENT = "experiment_test@tests.mozilla.org";
 
 function getBadgeStatus() {
-  let menuButton = document.getElementById("button-appmenu");
+  const menuButton = document.getElementById("button-appmenu");
   return menuButton.getAttribute("badge-status");
 }
 
@@ -59,15 +59,15 @@ async function testNoPrompt(origUrl, id) {
   );
 
   // Trigger an update check and wait for the update to be applied.
-  let updatePromise = waitForUpdate(addon);
+  const updatePromise = waitForUpdate(addon);
   AddonManagerPrivate.backgroundUpdateCheck();
   await updatePromise;
 
   // There should be no notifications about the update
-  is(getBadgeStatus(), "", "Should not have addon alert badge");
+  is(getBadgeStatus(), null, "Should not have addon alert badge");
 
   await gCUITestUtils.openMainMenu();
-  let addons = PanelUI.addonNotificationContainer;
+  const addons = PanelUI.addonNotificationContainer;
   is(addons.children.length, 0, "Have 0 updates in the PanelUI menu");
   await gCUITestUtils.hideMainMenu();
 
@@ -101,16 +101,16 @@ async function testNoPrompt(origUrl, id) {
 // Test that an update that adds new non-promptable permissions is just
 // applied without showing a notification dialog.
 add_task(() =>
-  testNoPrompt(`${BASE}/browser_webext_update_perms1.xpi`, ID_PERMS)
+  testNoPrompt(`${BASE}/addons/browser_webext_update_perms1.xpi`, ID_PERMS)
 );
 
 // Test that an update that narrows origin permissions is just applied without
 // showing a notification prompt
 add_task(() =>
-  testNoPrompt(`${BASE}/browser_webext_update_origins1.xpi`, ID_ORIGINS)
+  testNoPrompt(`${BASE}/addons/browser_webext_update_origins1.xpi`, ID_ORIGINS)
 );
 
 // Test that an Experiment is not prompting for additional permissions.
 add_task(() =>
-  testNoPrompt(`${BASE}/browser_webext_experiment.xpi`, ID_EXPERIMENT)
+  testNoPrompt(`${BASE}/addons/browser_webext_experiment.xpi`, ID_EXPERIMENT)
 );

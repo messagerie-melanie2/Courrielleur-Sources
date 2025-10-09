@@ -1,4 +1,4 @@
-// |jit-test| skip-if: !wasmSimdEnabled() || wasmCompileMode() != "ion" || (!getBuildConfiguration().x86 && !getBuildConfiguration().x64) || getBuildConfiguration().simulator
+// |jit-test| skip-if: !wasmSimdEnabled() || wasmCompileMode() != "ion" || (!getBuildConfiguration("x86") && !getBuildConfiguration("x64")) || getBuildConfiguration("simulator")
 
 const avx = isAvxPresent();
 for (let [n1, n2, numInstr] of [
@@ -59,7 +59,7 @@ for (let [n1, n2, numInstr] of [
         assertEq(ins.exports.run(), 1);
     }
 
-    if (hasDisassembler() && getBuildConfiguration().x64) {
+    if (hasDisassembler() && getBuildConfiguration("x64")) {
         const dis = wasmDis(ins.exports.t, {asString: true,});
         const lines = getFuncBody(dis).trim().split('\n');
         assertEq(lines.length, numInstr);
@@ -68,6 +68,6 @@ for (let [n1, n2, numInstr] of [
 
 // Utils.
 function getFuncBody(dis) {
-    const parts = dis.split(/mov %rsp, %rbp\n|^[0-9A-Fa-f ]+pop %rbp/gm);
+    const parts = dis.split(/mov %rsp, %rbp\n|movq %r14, 0x[13]0\(%rbp\)\n|^[0-9A-Fa-f ]+pop %rbp/gm);
     return parts.at(-2).replace(/[0-9A-F]{8} (?: [0-9a-f]{2})+[\s\n]+/g, "");
 }

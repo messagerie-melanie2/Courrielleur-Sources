@@ -10,13 +10,13 @@ ChromeUtils.defineESModuleGetters(this, {
   SubDialogManager: "resource://gre/modules/SubDialog.sys.mjs",
 });
 
-var { MailE10SUtils } = ChromeUtils.import(
-  "resource:///modules/MailE10SUtils.jsm"
+var { MailE10SUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailE10SUtils.sys.mjs"
 );
 
 // Load PrintUtils lazily and modify it to suit.
-XPCOMUtils.defineLazyGetter(this, "PrintUtils", () => {
-  let scope = {};
+ChromeUtils.defineLazyGetter(this, "PrintUtils", () => {
+  const scope = {};
   Services.scriptloader.loadSubScript(
     "chrome://global/content/printUtils.js",
     scope
@@ -32,9 +32,8 @@ XPCOMUtils.defineLazyGetter(this, "PrintUtils", () => {
     initialBrowsingContextGroupId,
     userContextId,
     skipLoad,
-    initiallyActive,
   } = {}) {
-    let b = document.createXULElement("browser");
+    const b = document.createXULElement("browser");
     // Use the JSM global to create the permanentKey, so that if the
     // permanentKey is held by something after this window closes, it
     // doesn't keep the window alive.
@@ -45,7 +44,7 @@ XPCOMUtils.defineLazyGetter(this, "PrintUtils", () => {
       messagemanagergroup: "browsers",
       type: "content",
     };
-    for (let attribute in defaultBrowserAttributes) {
+    for (const attribute in defaultBrowserAttributes) {
       b.setAttribute(attribute, defaultBrowserAttributes[attribute]);
     }
 
@@ -76,15 +75,15 @@ XPCOMUtils.defineLazyGetter(this, "PrintUtils", () => {
     // flex=0 it can't. When the toolbox is on the bottom it's a sibling of
     // browserStack, and when it's on the side it's a sibling of
     // browserContainer.
-    let stack = document.createXULElement("stack");
+    const stack = document.createXULElement("stack");
     stack.className = "browserStack";
     stack.appendChild(b);
 
-    let browserContainer = document.createXULElement("vbox");
+    const browserContainer = document.createXULElement("vbox");
     browserContainer.className = "browserContainer";
     browserContainer.appendChild(stack);
 
-    let browserSidebarContainer = document.createXULElement("hbox");
+    const browserSidebarContainer = document.createXULElement("hbox");
     browserSidebarContainer.className = "browserSidebarContainer";
     browserSidebarContainer.appendChild(browserContainer);
 
@@ -101,7 +100,7 @@ XPCOMUtils.defineLazyGetter(this, "PrintUtils", () => {
     document.getElementById("hiddenPrintContent")
   );
   scope.PrintUtils.loadPrintBrowser = async function (url) {
-    let printBrowser = this.printBrowser;
+    const printBrowser = this.printBrowser;
     if (printBrowser.currentURI?.spec == url) {
       return;
     }
@@ -116,7 +115,7 @@ XPCOMUtils.defineLazyGetter(this, "PrintUtils", () => {
         ]),
 
         /** nsIWebProgressListener */
-        onStateChange(webProgress, request, stateFlags, status) {
+        onStateChange(webProgress, request, stateFlags) {
           if (
             stateFlags & Ci.nsIWebProgressListener.STATE_STOP &&
             printBrowser.currentURI.spec != "about:blank"
@@ -151,7 +150,7 @@ class TabDialogBox {
     this._weakBrowserRef = Cu.getWeakReference(browser);
 
     // Create parent element for tab dialogs
-    let template = document.getElementById("dialogStackTemplate");
+    const template = document.getElementById("dialogStackTemplate");
     this.dialogStack = template.content.cloneNode(true).firstElementChild;
     this.dialogStack.classList.add("tab-prompt-dialog");
 
@@ -176,7 +175,7 @@ class TabDialogBox {
     }
 
     // Initially the stack only contains the template
-    let dialogTemplate = this.dialogStack.firstElementChild;
+    const dialogTemplate = this.dialogStack.firstElementChild;
 
     // Create dialog manager for prompts at the tab level.
     this._tabDialogManager = new SubDialogManager({
@@ -197,7 +196,7 @@ class TabDialogBox {
    * @param {object} [aOptions]
    * @param {string} [aOptions.features] - Comma separated list of window
    *   features.
-   * @param {boolean} [aOptions.allowDuplicateDialogs] - Whether to allow
+   * @param {boolean} [aOptions.allowDuplicateDialogs=true] - Whether to allow
    *   showing multiple dialogs with aURL at the same time. If false calls for
    *   duplicate dialogs will be dropped.
    * @param {string} [aOptions.sizeTo] - Pass "available" to stretch dialog to
@@ -207,6 +206,7 @@ class TabDialogBox {
    *   Set to true to keep the dialog open for same origin navigation.
    * @param {number} [aOptions.modalType] - The modal type to create the dialog for.
    *   By default, we show the dialog for tab prompts.
+   * @param {boolean} [aOptions.allowFocusCheckbox=false] - Whether to allow
    * @returns {object} [result] Returns an object { closedPromise, dialog }.
    * @returns {Promise} [result.closedPromise] Resolves once the dialog has been closed.
    * @returns {SubDialog} [result.dialog] A reference to the opened SubDialog.
@@ -224,13 +224,13 @@ class TabDialogBox {
     ...aParams
   ) {
     let resolveClosed;
-    let closedPromise = new Promise(resolve => (resolveClosed = resolve));
+    const closedPromise = new Promise(resolve => (resolveClosed = resolve));
     // Get the dialog manager to open the prompt with.
-    let dialogManager =
+    const dialogManager =
       modalType === Ci.nsIPrompt.MODAL_TYPE_CONTENT
         ? this.getContentDialogManager()
         : this._tabDialogManager;
-    let hasDialogs =
+    const hasDialogs =
       this._tabDialogManager.hasDialogs ||
       this._contentDialogManager?.hasDialogs;
 
@@ -238,7 +238,7 @@ class TabDialogBox {
       this._onFirstDialogOpen();
     }
 
-    let closingCallback = event => {
+    const closingCallback = event => {
       if (!hasDialogs) {
         this._onLastDialogClose();
       }
@@ -253,7 +253,7 @@ class TabDialogBox {
     }
 
     // Open dialog and resolve once it has been closed
-    let dialog = dialogManager.open(
+    const dialog = dialogManager.open(
       aURL,
       {
         features,
@@ -275,7 +275,8 @@ class TabDialogBox {
   }
 
   _onFirstDialogOpen() {
-    for (let element of this.printPreviewStack.children) {
+    this.browser?.onFirstPrintDialogOpened?.();
+    for (const element of this.printPreviewStack.children) {
       if (element != this.dialogStack) {
         element.setAttribute("tabDialogShowing", true);
       }
@@ -289,7 +290,8 @@ class TabDialogBox {
   }
 
   _onLastDialogClose() {
-    for (let element of this.printPreviewStack.children) {
+    this.browser?.onLastPrintDialogClosed?.();
+    for (const element of this.printPreviewStack.children) {
       if (element != this.dialogStack) {
         element.removeAttribute("tabDialogShowing");
       }
@@ -303,16 +305,17 @@ class TabDialogBox {
   }
 
   _buildContentPromptDialog() {
-    let template = document.getElementById("dialogStackTemplate");
-    let contentDialogStack = template.content.cloneNode(true).firstElementChild;
+    const template = document.getElementById("dialogStackTemplate");
+    const contentDialogStack =
+      template.content.cloneNode(true).firstElementChild;
     contentDialogStack.classList.add("content-prompt-dialog");
 
     // Create a dialog manager for content prompts.
-    let tabPromptDialog =
+    const tabPromptDialog =
       this.browser.parentNode.querySelector(".tab-prompt-dialog");
     this.browser.parentNode.insertBefore(contentDialogStack, tabPromptDialog);
 
-    let contentDialogTemplate = contentDialogStack.firstElementChild;
+    const contentDialogTemplate = contentDialogStack.firstElementChild;
     this._contentDialogManager = new SubDialogManager({
       dialogStack: contentDialogStack,
       dialogTemplate: contentDialogTemplate,
@@ -381,7 +384,7 @@ class TabDialogBox {
   }
 
   get browser() {
-    let browser = this._weakBrowserRef.get();
+    const browser = this._weakBrowserRef.get();
     if (!browser) {
       throw new Error("Stale dialog box! The associated browser is gone.");
     }
@@ -407,7 +410,7 @@ class TabDialogBox {
    * Sets the "focus-tab-by-prompt" permission for the dialog.
    */
   maybeSetAllowTabSwitchPermission(dialog) {
-    let checkbox = dialog.querySelector("checkbox");
+    const checkbox = dialog.querySelector("checkbox");
 
     if (checkbox.checked) {
       Services.perms.addFromPrincipal(

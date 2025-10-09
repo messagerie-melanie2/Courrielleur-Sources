@@ -5,15 +5,15 @@
 // The tests in this folder frequently take too long. Give them more time.
 requestLongerTimeout(2);
 
-var { CalendarTestUtils } = ChromeUtils.import(
-  "resource://testing-common/calendar/CalendarTestUtils.jsm"
+var { CalendarTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/calendar/CalendarTestUtils.sys.mjs"
 );
 
 /* globals toggleOrientation */
 
-let isRotated =
+const isRotated =
   document.getElementById("calendar_toggle_orientation_command").getAttribute("checked") == "true";
-let shouldBeRotated = Services.prefs.getBoolPref("calendar.test.rotateViews", false);
+const shouldBeRotated = Services.prefs.getBoolPref("calendar.test.rotateViews", false);
 
 if (isRotated != shouldBeRotated) {
   toggleOrientation();

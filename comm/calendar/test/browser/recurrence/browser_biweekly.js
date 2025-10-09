@@ -2,12 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { handleDeleteOccurrencePrompt } = ChromeUtils.import(
-  "resource://testing-common/calendar/CalendarUtils.jsm"
+var { handleDeleteOccurrencePrompt } = ChromeUtils.importESModule(
+  "resource://testing-common/calendar/CalendarUtils.sys.mjs"
 );
 
-var { saveAndCloseItemDialog, setData } = ChromeUtils.import(
-  "resource://testing-common/calendar/ItemEditingHelpers.jsm"
+var { saveAndCloseItemDialog, setData } = ChromeUtils.importESModule(
+  "resource://testing-common/calendar/ItemEditingHelpers.sys.mjs"
 );
 
 var { dayView, weekView, multiweekView, monthView } = CalendarTestUtils;
@@ -15,7 +15,7 @@ var { dayView, weekView, multiweekView, monthView } = CalendarTestUtils;
 const HOUR = 8;
 
 add_task(async function testBiweeklyRecurrence() {
-  let calendar = CalendarTestUtils.createCalendar();
+  const calendar = CalendarTestUtils.createCalendar();
   registerCleanupFunction(() => {
     CalendarTestUtils.removeCalendar(calendar);
   });
@@ -24,8 +24,8 @@ add_task(async function testBiweeklyRecurrence() {
   await CalendarTestUtils.goToDate(window, 2009, 1, 31);
 
   // Create biweekly event.
-  let eventBox = dayView.getHourBoxAt(window, HOUR);
-  let { dialogWindow, iframeWindow } = await CalendarTestUtils.editNewEvent(window, eventBox);
+  const eventBox = dayView.getHourBoxAt(window, HOUR);
+  const { dialogWindow, iframeWindow } = await CalendarTestUtils.editNewEvent(window, eventBox);
   await setData(dialogWindow, iframeWindow, { title: "Event", repeat: "bi.weekly" });
   await saveAndCloseItemDialog(dialogWindow);
 
@@ -72,7 +72,7 @@ add_task(async function testBiweeklyRecurrence() {
   // March
   await monthView.waitForItemAt(window, 2, 7, 1);
 
-  let box = monthView.getItemAt(window, 4, 7, 1);
+  const box = monthView.getItemAt(window, 4, 7, 1);
   Assert.ok(box);
 
   // Delete event.

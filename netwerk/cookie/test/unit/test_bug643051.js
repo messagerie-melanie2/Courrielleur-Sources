@@ -1,4 +1,6 @@
-const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+const { NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
+);
 const { CookieXPCShellUtils } = ChromeUtils.importESModule(
   "resource://testing-common/CookieXPCShellUtils.sys.mjs"
 );
@@ -25,7 +27,9 @@ add_task(async () => {
 
   let set = "foo=bar\nbaz=foo";
   let expected = "foo=bar; baz=foo";
-  Services.cookies.setCookieStringFromHttp(uri, set, channel);
+  set
+    .split("\n")
+    .forEach(s => Services.cookies.setCookieStringFromHttp(uri, s, channel));
 
   let actual = Services.cookies.getCookieStringFromHttp(uri, channel);
   Assert.equal(actual, expected);
@@ -35,7 +39,7 @@ add_task(async () => {
     "http://example.net/"
   );
 
-  expected = "foo=bar";
+  expected = "";
   Assert.equal(actual, expected);
   Services.prefs.clearUserPref("dom.security.https_first");
 });

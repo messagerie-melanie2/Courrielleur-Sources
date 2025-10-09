@@ -1,8 +1,19 @@
-use super::{constants::ConstantSolvingError, token::TokenValue};
-use crate::Span;
+use alloc::{
+    borrow::Cow,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
+
+use codespan_reporting::diagnostic::{Diagnostic, Label};
+use codespan_reporting::files::SimpleFile;
+use codespan_reporting::term;
 use pp_rs::token::PreprocessorError;
-use std::borrow::Cow;
 use thiserror::Error;
+
+use super::token::TokenValue;
+use crate::SourceLocation;
+use crate::{error::ErrorWrite, proc::ConstantEvaluatorError, Span};
 
 fn join_with_comma(list: &[ExpectedToken]) -> String {
     let mut string = "".to_string();
@@ -18,7 +29,7 @@ fn join_with_comma(list: &[ExpectedToken]) -> String {
 }
 
 /// One of the expected tokens returned in [`InvalidToken`](ErrorKind::InvalidToken).
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ExpectedToken {
     /// A specific token was expected.
     Token(TokenValue),
@@ -40,8 +51,8 @@ impl From<TokenValue> for ExpectedToken {
         ExpectedToken::Token(token)
     }
 }
-impl std::fmt::Display for ExpectedToken {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ExpectedToken {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match *self {
             ExpectedToken::Token(ref token) => write!(f, "{token:?}"),
             ExpectedToken::TypeName => write!(f, "a type"),
@@ -55,7 +66,7 @@ impl std::fmt::Display for ExpectedToken {
 }
 
 /// Information about the cause of an error.
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 #[cfg_attr(test, derive(PartialEq))]
 pub enum ErrorKind {
     /// Whilst parsing as encountered an unexpected EOF.
@@ -70,7 +81,7 @@ pub enum ErrorKind {
     /// Whilst parsing an unexpected token was encountered.
     ///
     /// A list of expected tokens is also returned.
-    #[error("Expected {}, found {0:?}", join_with_comma(.1))]
+    #[error("Expected {expected_tokens}, found {found_token:?}", found_token = .0, expected_tokens = join_with_comma(.1))]
     InvalidToken(TokenValue, Vec<ExpectedToken>),
     /// A specific feature is not yet implemented.
     ///
@@ -97,9 +108,15 @@ pub enum ErrorKind {
     /// Unsupported matrix of the form matCx2
     ///
     /// Our IR expects matrices of the form matCx2 to have a stride of 8 however
-    /// matrices in the std140 layout have a stride of at least 16
-    #[error("unsupported matrix of the form matCx2 in std140 block layout")]
-    UnsupportedMatrixTypeInStd140,
+    /// matrices in the std140 layout have a stride of at least 16.
+    #[error("unsupported matrix of the form matCx2 (in this case mat{columns}x2) in std140 block layout. See https://github.com/gfx-rs/wgpu/issues/4375")]
+    UnsupportedMatrixWithTwoRowsInStd140 { columns: u8 },
+    /// Unsupported matrix of the form f16matCxR
+    ///
+    /// Our IR expects matrices of the form f16matCxR to have a stride of 4/8/8 depending on row-count,
+    /// however matrices in the std140 layout have a stride of at least 16.
+    #[error("unsupported matrix of the form f16matCxR (in this case f16mat{columns}x{rows}) in std140 block layout. See https://github.com/gfx-rs/wgpu/issues/4375")]
+    UnsupportedF16MatrixInStd140 { columns: u8, rows: u8 },
     /// A variable with the same name already exists in the current scope.
     #[error("Variable already declared: {0}")]
     VariableAlreadyDeclared(String),
@@ -116,14 +133,14 @@ pub enum ErrorKind {
     InternalError(&'static str),
 }
 
-impl From<ConstantSolvingError> for ErrorKind {
-    fn from(err: ConstantSolvingError) -> Self {
+impl From<ConstantEvaluatorError> for ErrorKind {
+    fn from(err: ConstantEvaluatorError) -> Self {
         ErrorKind::SemanticError(err.to_string().into())
     }
 }
 
 /// Error returned during shader parsing.
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 #[error("{kind}")]
 #[cfg_attr(test, derive(PartialEq))]
 pub struct Error {
@@ -131,4 +148,64 @@ pub struct Error {
     pub kind: ErrorKind,
     /// Holds information about the range of the source code where the error happened.
     pub meta: Span,
+}
+
+impl Error {
+    /// Returns a [`SourceLocation`] for the error message.
+    pub fn location(&self, source: &str) -> Option<SourceLocation> {
+        Some(self.meta.location(source))
+    }
+}
+
+/// A collection of errors returned during shader parsing.
+#[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq))]
+pub struct ParseErrors {
+    pub errors: Vec<Error>,
+}
+
+impl ParseErrors {
+    pub fn emit_to_writer(&self, writer: &mut impl ErrorWrite, source: &str) {
+        self.emit_to_writer_with_path(writer, source, "glsl");
+    }
+
+    pub fn emit_to_writer_with_path(&self, writer: &mut impl ErrorWrite, source: &str, path: &str) {
+        let path = path.to_string();
+        let files = SimpleFile::new(path, source);
+        let config = term::Config::default();
+
+        for err in &self.errors {
+            let mut diagnostic = Diagnostic::error().with_message(err.kind.to_string());
+
+            if let Some(range) = err.meta.to_range() {
+                diagnostic = diagnostic.with_labels(vec![Label::primary((), range)]);
+            }
+
+            term::emit(writer, &config, &files, &diagnostic).expect("cannot write error");
+        }
+    }
+
+    pub fn emit_to_string(&self, source: &str) -> String {
+        let mut writer = crate::error::DiagnosticBuffer::new();
+        self.emit_to_writer(writer.inner_mut(), source);
+        writer.into_string()
+    }
+}
+
+impl core::fmt::Display for ParseErrors {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        self.errors.iter().try_for_each(|e| write!(f, "{e:?}"))
+    }
+}
+
+impl core::error::Error for ParseErrors {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        None
+    }
+}
+
+impl From<Vec<Error>> for ParseErrors {
+    fn from(errors: Vec<Error>) -> Self {
+        Self { errors }
+    }
 }

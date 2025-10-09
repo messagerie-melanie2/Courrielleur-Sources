@@ -8,8 +8,12 @@ config = {
     "mozconfig_variant": "l10n-mozconfig",
     # Used to get toolkit & devtools strings
     "hg_l10n_base": "https://hg.mozilla.org/l10n-central",
+    # If set, takes precedence over `hg_l10n_base`
+    "git_repository": "https://github.com/mozilla-l10n/firefox-l10n",
     # URL of comm-l10n monorepo
     "hg_comm_l10n_repo": "https://hg.mozilla.org/projects/comm-l10n",
+    # If set, takes precedence over `hg_comm_l10n_repo`
+    "comm_git_repository": "https://github.com/thunderbird/thunderbird-l10n",
     "locales_dir": "comm/mail/locales",
     "ignore_locales": ["en-US"],
     "bootstrap_env": {

@@ -30,6 +30,7 @@ namespace mozilla {
 class PresShell;
 namespace dom {
 class Document;
+class Element;
 class XULTreeElement;
 }  // namespace dom
 }  // namespace mozilla
@@ -41,6 +42,7 @@ class nsCoreUtils {
  public:
   typedef mozilla::PresShell PresShell;
   typedef mozilla::dom::Document Document;
+  typedef mozilla::dom::Element Element;
 
   /**
    * Return true if the given node is a label of a control.
@@ -170,11 +172,12 @@ class nsCoreUtils {
    * Scrolls the given frame to the point, used for implememntation of
    * nsIAccessible::scrollToPoint and nsIAccessibleText::scrollSubstringToPoint.
    *
-   * @param aScrollableFrame  the scrollable frame
+   * @param aScrollContainerFrame the scroll container frame
    * @param aFrame            the frame to scroll
    * @param aPoint            the point scroll to (in dev pixels)
    */
-  static void ScrollFrameToPoint(nsIFrame* aScrollableFrame, nsIFrame* aFrame,
+  static void ScrollFrameToPoint(nsIFrame* aScrollContainerFrame,
+                                 nsIFrame* aFrame,
                                  const mozilla::LayoutDeviceIntPoint& aPoint);
 
   /**
@@ -324,6 +327,26 @@ class nsCoreUtils {
    */
   static bool IsDocumentVisibleConsideringInProcessAncestors(
       const Document* aDocument);
+
+  /**
+   * Return true if `aDescendant` is a descendant of any of `aStartAncestor`'s
+   * shadow-including ancestors.
+   */
+  static bool IsDescendantOfAnyShadowIncludingAncestor(nsINode* aDescendant,
+                                                       nsINode* aStartAncestor);
+
+  static Element* GetAriaActiveDescendantElement(Element* aElement);
+
+  /**
+   * Return true if the given text frame is 0 width whitespace before a hard
+   * line break.  This is not visible and is semantically irrelevant. This can
+   * happen if there is whitespace before an invisible element at the end of a
+   * block. For example:
+   * <div><span>a</span> <span hidden>b</span></div>
+   * This results in a text node for "a" and a text node for " ". This function
+   * will return true for the latter node.
+   */
+  static bool IsTrimmedWhitespaceBeforeHardLineBreak(nsIFrame* aFrame);
 };
 
 #endif

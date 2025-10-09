@@ -2,22 +2,23 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-let account;
-let messages;
+"use strict";
+
+let gAccount, gMessages;
 
 add_setup(async () => {
-  account = createAccount();
-  let rootFolder = account.incomingServer.rootFolder;
-  let subFolders = rootFolder.subFolders;
-  createMessages(subFolders[0], 10);
-  messages = subFolders[0].messages;
+  gAccount = createAccount();
+  const rootFolder = gAccount.incomingServer.rootFolder;
+  const subFolders = rootFolder.subFolders;
+  await createMessages(subFolders[0], 10);
+  gMessages = subFolders[0].messages;
 });
 
 // This test clicks on the action button to open the popup.
 add_task(async function test_popup_open_with_click() {
   info("3-pane tab");
   {
-    let testConfig = {
+    const testConfig = {
       actionType: "browser_action",
       testType: "open-with-mouse-click",
       window,
@@ -38,8 +39,8 @@ add_task(async function test_popup_open_with_click() {
 
   info("Message window");
   {
-    let messageWindow = await openMessageInWindow(messages.getNext());
-    let testConfig = {
+    const messageWindow = await openMessageInWindow(gMessages.getNext());
+    const testConfig = {
       actionType: "browser_action",
       testType: "open-with-mouse-click",
       default_windows: ["messageDisplay"],
@@ -64,11 +65,11 @@ add_task(async function test_popup_open_with_click() {
 
 // This test uses openPopup() to open the popup in a normal window.
 add_task(async function test_popup_open_with_openPopup_in_normal_window() {
-  let files = {
+  const files = {
     "background.js": async () => {
-      let windows = await browser.windows.getAll();
-      let mailWindow = windows.find(window => window.type == "normal");
-      let messageWindow = windows.find(
+      const windows = await browser.windows.getAll();
+      const mailWindow = windows.find(window => window.type == "normal");
+      const messageWindow = windows.find(
         window => window.type == "messageDisplay"
       );
       browser.test.assertTrue(!!mailWindow, "should have found a mailWindow");
@@ -90,26 +91,28 @@ add_task(async function test_popup_open_with_openPopup_in_normal_window() {
 
       // Specifically open the browser_action of the mailWindow, should become
       // focused and openPopup() should succeed.
+      const popupClosePromise1 = window.waitForMessage("popup closed");
       browser.test.assertTrue(
         await browser.browserAction.openPopup({ windowId: mailWindow.id }),
         "openPopup() should have succeeded when explicitly requesting the mailWindow"
       );
-      await window.waitForMessage();
+      await popupClosePromise1;
       browser.test.assertTrue(
         (await browser.windows.get(mailWindow.id)).focused,
         "mailWindow should be focused"
       );
 
       // mailWindow is the topmost window now, openPopup() should succeed.
+      const popupClosePromise2 = window.waitForMessage("popup closed");
       browser.test.assertTrue(
         await browser.browserAction.openPopup(),
         "openPopup() should have succeeded after the mailWindow has become active"
       );
-      await window.waitForMessage();
+      await popupClosePromise2;
 
       // Create content tab, the browser_action is not allowed in that space and
       // should not be visible, openPopup() should fail.
-      let contentTab = await browser.tabs.create({
+      const contentTab = await browser.tabs.create({
         url: "https://www.example.com",
       });
       browser.test.assertFalse(
@@ -120,11 +123,12 @@ add_task(async function test_popup_open_with_openPopup_in_normal_window() {
       // Close the content tab and return to the mail space, the browser_action
       // should be visible again, openPopup() should succeed.
       await browser.tabs.remove(contentTab.id);
+      const popupClosePromise3 = window.waitForMessage("popup closed");
       browser.test.assertTrue(
         await browser.browserAction.openPopup(),
         "openPopup() should have succeeded after the content tab was closed"
       );
-      await window.waitForMessage();
+      await popupClosePromise3;
 
       // Disable the browser_action, openPopup() should fail.
       await browser.browserAction.disable();
@@ -135,15 +139,16 @@ add_task(async function test_popup_open_with_openPopup_in_normal_window() {
 
       // Enable the browser_action, openPopup() should succeed.
       await browser.browserAction.enable();
+      const popupClosePromise4 = window.waitForMessage("popup closed");
       browser.test.assertTrue(
         await browser.browserAction.openPopup(),
         "openPopup() should have succeeded after the action_button was enabled again"
       );
-      await window.waitForMessage();
+      await popupClosePromise4;
 
       // Create a popup window, which does not have a browser_action, openPopup()
       // should fail.
-      let popupWindow = await browser.windows.create({
+      const popupWindow = await browser.windows.create({
         type: "popup",
         url: "https://www.example.com",
       });
@@ -158,11 +163,12 @@ add_task(async function test_popup_open_with_openPopup_in_normal_window() {
 
       // Specifically open the browser_action of the mailWindow, should become
       // focused and openPopup() should succeed.
+      const popupClosePromise5 = window.waitForMessage("popup closed");
       browser.test.assertTrue(
         await browser.browserAction.openPopup({ windowId: mailWindow.id }),
         "openPopup() should have succeeded when explicitly requesting the mailWindow"
       );
-      await window.waitForMessage();
+      await popupClosePromise5;
       browser.test.assertTrue(
         (await browser.windows.get(mailWindow.id)).focused,
         "mailWindow should be focused"
@@ -178,18 +184,25 @@ add_task(async function test_popup_open_with_openPopup_in_normal_window() {
       <html>
         <head>
           <title>Popup</title>
+          <meta charset="utf-8">
+          <script defer="defer" src="popup.js"></script>
         </head>
         <body>
           <p>Hello</p>
-          <script src="popup.js"></script>
         </body>
       </html>`,
     "popup.js": async function () {
-      browser.test.sendMessage("popup opened");
-      window.close();
+      const [currentTab] = await browser.tabs.query({
+        currentWindow: true,
+        active: true,
+      });
+      browser.test.log(
+        `windowType: ${currentTab.windowType}, windowId: ${currentTab.windowId}`
+      );
+      browser.test.sendMessage("popup opened", currentTab.windowId);
     },
   };
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files,
     useAddonManager: "temporary",
     manifest: {
@@ -206,14 +219,18 @@ add_task(async function test_popup_open_with_openPopup_in_normal_window() {
     },
   });
 
-  extension.onMessage("popup opened", async () => {
-    // Wait a moment to make sure the popup has closed.
-    // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
-    await new Promise(r => window.setTimeout(r, 150));
-    extension.sendMessage();
+  extension.onMessage("popup opened", async windowId => {
+    const window = Services.wm.getOuterWindowWithId(windowId);
+    console.log(
+      `windowtype of container window: ${window.document.documentElement.getAttribute(
+        "windowtype"
+      )}`
+    );
+    await closeBrowserAction(extension, window);
+    extension.sendMessage("popup closed");
   });
 
-  let messageWindow = await openMessageInWindow(messages.getNext());
+  const messageWindow = await openMessageInWindow(gMessages.getNext());
 
   await extension.startup();
   await extension.awaitFinish("finished");
@@ -226,11 +243,11 @@ add_task(async function test_popup_open_with_openPopup_in_normal_window() {
 // window (the default_windows manifest property is set to ["messageDisplay"].
 // the test then uses openPopup() to open the popup in a message window.
 add_task(async function test_popup_open_with_openPopup_in_message_window() {
-  let files = {
+  const files = {
     "background.js": async () => {
-      let windows = await browser.windows.getAll();
-      let mailWindow = windows.find(window => window.type == "normal");
-      let messageWindow = windows.find(
+      const windows = await browser.windows.getAll();
+      const mailWindow = windows.find(window => window.type == "normal");
+      const messageWindow = windows.find(
         window => window.type == "messageDisplay"
       );
       browser.test.assertTrue(!!mailWindow, "should have found a mailWindow");
@@ -245,11 +262,12 @@ add_task(async function test_popup_open_with_openPopup_in_message_window() {
         (await browser.windows.get(messageWindow.id)).focused,
         "messageWindow should be focused"
       );
+      const popupClosePromise1 = window.waitForMessage("popup closed");
       browser.test.assertTrue(
         await browser.browserAction.openPopup(),
         "openPopup() should have succeeded while the messageWindow is active"
       );
-      await window.waitForMessage();
+      await popupClosePromise1;
 
       // Collapse the toolbar, openPopup() should fail.
       await window.sendMessage("collapseToolbar", true);
@@ -260,11 +278,12 @@ add_task(async function test_popup_open_with_openPopup_in_message_window() {
 
       // Restore the toolbar, openPopup() should succeed.
       await window.sendMessage("collapseToolbar", false);
+      const popupClosePromise2 = window.waitForMessage("popup closed");
       browser.test.assertTrue(
         await browser.browserAction.openPopup(),
         "openPopup() should have succeeded after the toolbar is restored"
       );
-      await window.waitForMessage();
+      await popupClosePromise2;
 
       // Specifically open the browser_action of the mailWindow, it should not be
       // allowed there and openPopup() should fail.
@@ -278,11 +297,12 @@ add_task(async function test_popup_open_with_openPopup_in_message_window() {
         (await browser.windows.get(messageWindow.id)).focused,
         "messageWindow should be focused"
       );
+      const popupClosePromise3 = window.waitForMessage("popup closed");
       browser.test.assertTrue(
         await browser.browserAction.openPopup(),
         "openPopup() should still have succeeded while the messageWindow is active"
       );
-      await window.waitForMessage();
+      await popupClosePromise3;
 
       // Disable the browser_action, openPopup() should fail.
       await browser.browserAction.disable();
@@ -293,15 +313,16 @@ add_task(async function test_popup_open_with_openPopup_in_message_window() {
 
       // Enable the browser_action, openPopup() should succeed.
       await browser.browserAction.enable();
+      const popupClosePromise4 = window.waitForMessage("popup closed");
       browser.test.assertTrue(
         await browser.browserAction.openPopup(),
         "openPopup() should have succeeded after the action_button was enabled again"
       );
-      await window.waitForMessage();
+      await popupClosePromise4;
 
       // Create a popup window, which does not have a browser_action, openPopup()
       // should fail.
-      let popupWindow = await browser.windows.create({
+      const popupWindow = await browser.windows.create({
         type: "popup",
         url: "https://www.example.com",
       });
@@ -316,22 +337,24 @@ add_task(async function test_popup_open_with_openPopup_in_message_window() {
 
       // Specifically open the browser_action of the messageWindow, should become
       // focused and openPopup() should succeed.
+      const popupClosePromise5 = window.waitForMessage("popup closed");
       browser.test.assertTrue(
         await browser.browserAction.openPopup({ windowId: messageWindow.id }),
         "openPopup() should have succeeded when explicitly requesting the messageWindow"
       );
-      await window.waitForMessage();
+      await popupClosePromise5;
       browser.test.assertTrue(
         (await browser.windows.get(messageWindow.id)).focused,
         "messageWindow should be focused"
       );
 
       // The messageWindow is focused now, openPopup() should succeed.
+      const popupClosePromise6 = window.waitForMessage("popup closed");
       browser.test.assertTrue(
         await browser.browserAction.openPopup(),
         "openPopup() should have succeeded while the messageWindow is active"
       );
-      await window.waitForMessage();
+      await popupClosePromise6;
 
       // Close the popup window and finish
       await browser.windows.remove(popupWindow.id);
@@ -342,18 +365,25 @@ add_task(async function test_popup_open_with_openPopup_in_message_window() {
       <html>
         <head>
           <title>Popup</title>
+          <meta charset="utf-8">
+          <script defer="defer" src="popup.js"></script>
         </head>
         <body>
           <p>Hello</p>
-          <script src="popup.js"></script>
         </body>
       </html>`,
     "popup.js": async function () {
-      browser.test.sendMessage("popup opened");
-      window.close();
+      const [currentTab] = await browser.tabs.query({
+        currentWindow: true,
+        active: true,
+      });
+      browser.test.log(
+        `windowType: ${currentTab.windowType}, windowId: ${currentTab.windowId}`
+      );
+      browser.test.sendMessage("popup opened", currentTab.windowId);
     },
   };
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files,
     useAddonManager: "temporary",
     manifest: {
@@ -371,16 +401,20 @@ add_task(async function test_popup_open_with_openPopup_in_message_window() {
     },
   });
 
-  extension.onMessage("popup opened", async () => {
-    // Wait a moment to make sure the popup has closed.
-    // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
-    await new Promise(r => window.setTimeout(r, 150));
-    extension.sendMessage();
+  extension.onMessage("popup opened", async windowId => {
+    const window = Services.wm.getOuterWindowWithId(windowId);
+    console.log(
+      `windowtype of container window: ${window.document.documentElement.getAttribute(
+        "windowtype"
+      )}`
+    );
+    await closeBrowserAction(extension, window);
+    extension.sendMessage("popup closed");
   });
 
   extension.onMessage("collapseToolbar", state => {
-    let window = Services.wm.getMostRecentWindow("mail:messageWindow");
-    let toolbar = window.document.getElementById("mail-bar3");
+    const window = Services.wm.getMostRecentWindow("mail:messageWindow");
+    const toolbar = window.document.getElementById("mail-bar3");
     if (state) {
       toolbar.setAttribute("collapsed", "true");
     } else {
@@ -389,7 +423,7 @@ add_task(async function test_popup_open_with_openPopup_in_message_window() {
     extension.sendMessage();
   });
 
-  let messageWindow = await openMessageInWindow(messages.getNext());
+  const messageWindow = await openMessageInWindow(gMessages.getNext());
 
   await extension.startup();
   await extension.awaitFinish("finished");

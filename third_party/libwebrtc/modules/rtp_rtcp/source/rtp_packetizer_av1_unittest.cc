@@ -20,6 +20,8 @@
 #include "api/array_view.h"
 #include "api/scoped_refptr.h"
 #include "api/video/encoded_image.h"
+#include "api/video/video_frame_type.h"
+#include "modules/rtp_rtcp/source/rtp_format.h"
 #include "modules/rtp_rtcp/source/rtp_packet_to_send.h"
 #include "modules/rtp_rtcp/source/rtp_packetizer_av1_test_helper.h"
 #include "modules/rtp_rtcp/source/video_rtp_depacketizer_av1.h"
@@ -97,6 +99,12 @@ Av1Frame ReassembleFrame(rtc::ArrayView<const RtpPayload> rtp_payloads) {
     payloads[i] = rtp_payloads[i];
   }
   return Av1Frame(VideoRtpDepacketizerAv1().AssembleFrame(payloads));
+}
+
+TEST(RtpPacketizerAv1Test, EmptyPayload) {
+  RtpPacketizer::PayloadSizeLimits limits;
+  RtpPacketizerAv1 packetizer({}, limits, VideoFrameType::kVideoFrameKey, true);
+  EXPECT_EQ(packetizer.NumPackets(), 0u);
 }
 
 TEST(RtpPacketizerAv1Test, PacketizeOneObuWithoutSizeAndExtension) {
@@ -336,6 +344,16 @@ TEST(RtpPacketizerAv1Test,
   EXPECT_THAT(payloads, ElementsAre(SizeIs(Le(10u)), SizeIs(Le(10u))));
 
   EXPECT_THAT(ReassembleFrame(payloads), ElementsAreArray(kFrame));
+}
+
+TEST(RtpPacketizerAv1TestEven, EvenDistribution) {
+  auto kFrame = BuildAv1Frame({
+      Av1Obu(kAv1ObuTypeFrame).WithPayload(std::vector<uint8_t>(1206, 0)),
+      Av1Obu(kAv1ObuTypeFrame).WithPayload(std::vector<uint8_t>(1476, 0)),
+      Av1Obu(kAv1ObuTypeFrame).WithPayload(std::vector<uint8_t>(1431, 0)),
+  });
+  EXPECT_THAT(Packetize(kFrame, {}), ElementsAre(SizeIs(1032), SizeIs(1032),
+                                                 SizeIs(1032), SizeIs(1028)));
 }
 
 }  // namespace

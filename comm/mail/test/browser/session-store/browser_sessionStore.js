@@ -9,42 +9,32 @@
 
 "use strict";
 
-var { mailTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MailTestUtils.jsm"
+var { mailTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MailTestUtils.sys.mjs"
 );
-
-var EventUtils = ChromeUtils.import(
-  "resource://testing-common/mozmill/EventUtils.jsm"
-);
-var utils = ChromeUtils.import("resource://testing-common/mozmill/utils.jsm");
 
 var {
   assert_message_pane_hidden,
   assert_message_pane_visible,
-  assert_pane_layout,
   be_in_folder,
   create_folder,
-  kClassicMailLayout,
-  kVerticalMailLayout,
   make_message_sets_in_folders,
-  mc,
   set_mc,
-  set_pane_layout,
   toggle_message_pane,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-var {
-  close_window,
-  plan_for_new_window,
-  plan_for_window_close,
-  wait_for_new_window,
-  wait_for_window_close,
-} = ChromeUtils.import("resource://testing-common/mozmill/WindowHelpers.jsm");
+var { promise_new_window } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/WindowHelpers.sys.mjs"
+);
 
-var { SessionStoreManager } = ChromeUtils.import(
-  "resource:///modules/SessionStoreManager.jsm"
+var { SessionStoreManager } = ChromeUtils.importESModule(
+  "resource:///modules/SessionStoreManager.sys.mjs"
 );
+
+const kClassicMailLayout = 0;
+const kWideMailLayout = 1;
+const kVerticalMailLayout = 2;
 
 var folderA, folderB;
 
@@ -81,7 +71,7 @@ async function readFile2() {
  * So use the sync file reading for now...
  */
 function readFile() {
-  let data = mailTestUtils.loadFileToString(SessionStoreManager.sessionFile);
+  const data = mailTestUtils.loadFileToString(SessionStoreManager.sessionFile);
   return JSON.parse(data);
 }
 
@@ -96,8 +86,8 @@ async function waitForFileRefresh() {
   await new Promise(resolve => setTimeout(resolve, asyncFileWriteDelayMS));
 }
 
-function open3PaneWindow() {
-  plan_for_new_window("mail:3pane");
+async function open3PaneWindow() {
+  const newWindowPromise = promise_new_window("mail:3pane");
   Services.ww.openWindow(
     null,
     "chrome://messenger/content/messenger.xhtml",
@@ -105,13 +95,13 @@ function open3PaneWindow() {
     "all,chrome,dialog=no,status,toolbar",
     null
   );
-  return wait_for_new_window("mail:3pane");
+  return newWindowPromise;
 }
 
-function openActivityManager() {
-  plan_for_new_window("Activity:Manager");
+async function openActivityManager() {
+  const activityManagerPromise = promise_new_window("Activity:Manager");
   window.openActivityMgr();
-  return wait_for_new_window("Activity:Manager");
+  return activityManagerPromise;
 }
 
 /* :::::::: The Tests ::::::::::::::: */
@@ -139,19 +129,22 @@ registerCleanupFunction(function () {
   Services.focus.focusedWindow = window;
   // Focus an element in the main window, then blur it again to avoid it
   // hijacking keypresses.
-  let mainWindowElement = document.getElementById("button-appmenu");
+  const mainWindowElement = document.getElementById("button-appmenu");
   mainWindowElement.focus();
   mainWindowElement.blur();
 });
 
 add_task(async function test_periodic_session_persistence_simple() {
   // delete the session file if it exists
-  let sessionFile = SessionStoreManager.sessionFile;
+  const sessionFile = SessionStoreManager.sessionFile;
   if (sessionFile.exists()) {
     sessionFile.remove(false);
   }
 
-  utils.waitFor(() => !sessionFile.exists(), "session file should not exist");
+  await TestUtils.waitForCondition(
+    () => !sessionFile.exists(),
+    "session file should not exist"
+  );
 
   // change some state to guarantee the file will be recreated
   // if periodic session persistence works
@@ -171,7 +164,7 @@ add_task(async function test_periodic_nondirty_session_persistence() {
   await waitForFileRefresh();
 
   // delete the session file
-  let sessionFile = SessionStoreManager.sessionFile;
+  const sessionFile = SessionStoreManager.sessionFile;
   sessionFile.remove(false);
 
   // Since the state of the session hasn't changed since last _saveState(),
@@ -183,7 +176,10 @@ add_task(async function test_periodic_nondirty_session_persistence() {
     setTimeout(resolve, kSaveDelayMs + asyncFileWriteDelayMS)
   );
 
-  utils.waitFor(() => !sessionFile.exists(), "session file should not exist");
+  await TestUtils.waitForCondition(
+    () => !sessionFile.exists(),
+    "session file should not exist"
+  );
 });
 
 add_task(async function test_single_3pane_periodic_session_persistence() {
@@ -191,18 +187,18 @@ add_task(async function test_single_3pane_periodic_session_persistence() {
 
   // get the state object. this assumes there is one and only one
   // 3pane window.
-  let mail3PaneWindow = Services.wm.getMostRecentWindow("mail:3pane");
-  let state = mail3PaneWindow.getWindowStateForSessionPersistence();
+  const mail3PaneWindow = Services.wm.getMostRecentWindow("mail:3pane");
+  const state = mail3PaneWindow.getWindowStateForSessionPersistence();
 
   SessionStoreManager._saveState();
   await waitForFileRefresh();
 
   // load the saved state from disk
-  let loadedState = readFile();
+  const loadedState = readFile();
   Assert.ok(loadedState, "previously saved state should be non-null");
 
   // get the state object for the one and only one 3pane window
-  let windowState = loadedState.windows[0];
+  const windowState = loadedState.windows[0];
   Assert.ok(
     JSON.stringify(windowState) == JSON.stringify(state),
     "saved state and loaded state should be equal"
@@ -216,11 +212,11 @@ async function test_restore_single_3pane_persistence() {
 
   // get the state object. this assumes there is one and only one
   // 3pane window.
-  let mail3PaneWindow = Services.wm.getMostRecentWindow("mail:3pane");
+  const mail3PaneWindow = Services.wm.getMostRecentWindow("mail:3pane");
 
   // make sure we have a different window open, so that we don't start shutting
   // down just because the last window was closed
-  let amController = openActivityManager();
+  const amWin = await openActivityManager();
 
   // close the 3pane window
   mail3PaneWindow.close();
@@ -228,17 +224,17 @@ async function test_restore_single_3pane_persistence() {
   // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
   await new Promise(resolve => setTimeout(resolve, asyncFileWriteDelayMS));
 
-  mc = open3PaneWindow();
-  set_mc(mc);
+  const mc2 = await open3PaneWindow();
+  set_mc(mc2);
   await be_in_folder(folderA);
   assert_message_pane_hidden();
   // restore message pane.
   toggle_message_pane();
 
   // We don't need the address book window any more.
-  plan_for_window_close(amController);
-  amController.window.close();
-  wait_for_window_close();
+  const closePromise = BrowserTestUtils.domWindowClosed(amWin);
+  amWin.close();
+  await closePromise;
 }
 add_task(test_restore_single_3pane_persistence).skip(); // Bug 1753963.
 
@@ -251,22 +247,23 @@ add_task(async function test_restore_single_3pane_persistence_again() {
 add_task(async function test_message_pane_height_persistence() {
   await be_in_folder(folderA);
   assert_message_pane_visible();
-  assert_pane_layout(kClassicMailLayout);
+  Assert.equal(
+    Services.prefs.getIntPref("mail.pane_config.dynamic"),
+    kClassicMailLayout
+  );
 
   // Get the state object. This assumes there is one and only one
   // 3pane window.
-  let mail3PaneWindow = Services.wm.getMostRecentWindow("mail:3pane");
+  const mail3PaneWindow = Services.wm.getMostRecentWindow("mail:3pane");
 
-  let oldHeight = mc.window.document.getElementById(
+  const oldHeight = document.getElementById(
     "messagepaneboxwrapper"
   ).clientHeight;
-  let minHeight = Math.floor(
-    mc.window.document
-      .getElementById("messagepaneboxwrapper")
-      .getAttribute("minheight")
+  const minHeight = Math.floor(
+    document.getElementById("messagepaneboxwrapper").getAttribute("minheight")
   );
-  let newHeight = Math.floor((minHeight + oldHeight) / 2);
-  let diffHeight = oldHeight - newHeight;
+  const newHeight = Math.floor((minHeight + oldHeight) / 2);
+  const diffHeight = oldHeight - newHeight;
 
   Assert.notEqual(
     oldHeight,
@@ -276,14 +273,10 @@ add_task(async function test_message_pane_height_persistence() {
       newHeight
   );
 
-  _move_splitter(
-    mc.window.document.getElementById("threadpane-splitter"),
-    0,
-    diffHeight
-  );
+  _move_splitter(document.getElementById("threadpane-splitter"), 0, diffHeight);
 
   // Check that the moving of the threadpane-splitter resulted in the correct height.
-  let actualHeight = mc.window.document.getElementById(
+  let actualHeight = document.getElementById(
     "messagepaneboxwrapper"
   ).clientHeight;
 
@@ -300,7 +293,7 @@ add_task(async function test_message_pane_height_persistence() {
 
   // Make sure we have a different window open, so that we don't start shutting
   // down just because the last window was closed.
-  let amController = openActivityManager();
+  const amWin = await openActivityManager();
 
   // The 3pane window is closed.
   mail3PaneWindow.close();
@@ -308,14 +301,12 @@ add_task(async function test_message_pane_height_persistence() {
   // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
   await new Promise(resolve => setTimeout(resolve, asyncFileWriteDelayMS));
 
-  mc = open3PaneWindow();
-  set_mc(mc);
+  const mc2 = await open3PaneWindow();
+  set_mc(mc2);
   await be_in_folder(folderA);
   assert_message_pane_visible();
 
-  actualHeight = mc.window.document.getElementById(
-    "messagepaneboxwrapper"
-  ).clientHeight;
+  actualHeight = document.getElementById("messagepaneboxwrapper").clientHeight;
 
   Assert.equal(
     newHeight,
@@ -330,25 +321,23 @@ add_task(async function test_message_pane_height_persistence() {
 
   // The old height is restored.
   _move_splitter(
-    mc.window.document.getElementById("threadpane-splitter"),
+    document.getElementById("threadpane-splitter"),
     0,
     -diffHeight
   );
 
   // The 3pane window is closed.
-  close_window(mc);
+  await BrowserTestUtils.closeWindow(window);
   // Wait for window close async session write to finish.
   // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
   await new Promise(resolve => setTimeout(resolve, asyncFileWriteDelayMS));
 
-  mc = open3PaneWindow();
-  set_mc(mc);
+  const mc3 = await open3PaneWindow();
+  set_mc(mc3);
   await be_in_folder(folderA);
   assert_message_pane_visible();
 
-  actualHeight = mc.window.document.getElementById(
-    "messagepaneboxwrapper"
-  ).clientHeight;
+  actualHeight = document.getElementById("messagepaneboxwrapper").clientHeight;
   Assert.equal(
     oldHeight,
     actualHeight,
@@ -359,9 +348,9 @@ add_task(async function test_message_pane_height_persistence() {
   );
 
   // We don't need the address book window any more.
-  plan_for_window_close(amController);
-  amController.window.close();
-  wait_for_window_close();
+  const closePromise = BrowserTestUtils.domWindowClosed(amWin);
+  amWin.close();
+  await closePromise;
 }).skip(); // Bug 1753963.
 
 add_task(async function test_message_pane_width_persistence() {
@@ -370,24 +359,26 @@ add_task(async function test_message_pane_width_persistence() {
 
   // At the beginning we are in classic layout.  We will switch to
   // vertical layout to test the width, and then back to classic layout.
-  assert_pane_layout(kClassicMailLayout);
-  set_pane_layout(kVerticalMailLayout);
-  assert_pane_layout(kVerticalMailLayout);
+  Assert.equal(
+    Services.prefs.getIntPref("mail.pane_config.dynamic"),
+    kClassicMailLayout
+  );
+  Services.prefs.setIntPref("mail.pane_config.dynamic", kVerticalMailLayout);
+  Assert.equal(
+    Services.prefs.getIntPref("mail.pane_config.dynamic"),
+    kVerticalMailLayout
+  );
 
   // Get the state object. This assumes there is one and only one
   // 3pane window.
-  let mail3PaneWindow = Services.wm.getMostRecentWindow("mail:3pane");
+  const mail3PaneWindow = Services.wm.getMostRecentWindow("mail:3pane");
 
-  let oldWidth = mc.window.document.getElementById(
-    "messagepaneboxwrapper"
-  ).clientWidth;
-  let minWidth = Math.floor(
-    mc.window.document
-      .getElementById("messagepaneboxwrapper")
-      .getAttribute("minwidth")
+  let oldWidth = document.getElementById("messagepaneboxwrapper").clientWidth;
+  const minWidth = Math.floor(
+    document.getElementById("messagepaneboxwrapper").getAttribute("minwidth")
   );
   let newWidth = Math.floor((minWidth + oldWidth) / 2);
-  let diffWidth = oldWidth - newWidth;
+  const diffWidth = oldWidth - newWidth;
 
   Assert.notEqual(
     newWidth,
@@ -399,13 +390,9 @@ add_task(async function test_message_pane_width_persistence() {
 
   // We move the threadpane-splitter and not the folderpane_splitter because
   // we are in vertical layout.
-  _move_splitter(
-    mc.window.document.getElementById("threadpane-splitter"),
-    diffWidth,
-    0
-  );
+  _move_splitter(document.getElementById("threadpane-splitter"), diffWidth, 0);
   // Check that the moving of the folderpane_splitter resulted in the correct width.
-  let actualWidth = mc.window.document.getElementById(
+  let actualWidth = document.getElementById(
     "messagepaneboxwrapper"
   ).clientWidth;
 
@@ -428,7 +415,7 @@ add_task(async function test_message_pane_width_persistence() {
 
   // Make sure we have a different window open, so that we don't start shutting
   // down just because the last window was closed
-  let amController = openActivityManager();
+  const amWin = await openActivityManager();
 
   // The 3pane window is closed.
   mail3PaneWindow.close();
@@ -436,15 +423,16 @@ add_task(async function test_message_pane_width_persistence() {
   // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
   await new Promise(resolve => setTimeout(resolve, asyncFileWriteDelayMS));
 
-  mc = open3PaneWindow();
-  set_mc(mc);
+  const mc2 = await open3PaneWindow();
+  set_mc(mc2);
   await be_in_folder(folderA);
   assert_message_pane_visible();
-  assert_pane_layout(kVerticalMailLayout);
+  Assert.equal(
+    Services.prefs.getIntPref("mail.pane_config.dynamic"),
+    kVerticalMailLayout
+  );
 
-  actualWidth = mc.window.document.getElementById(
-    "messagepaneboxwrapper"
-  ).clientWidth;
+  actualWidth = document.getElementById("messagepaneboxwrapper").clientWidth;
   Assert.equal(
     newWidth,
     actualWidth,
@@ -455,14 +443,8 @@ add_task(async function test_message_pane_width_persistence() {
   );
 
   // The old width is restored.
-  _move_splitter(
-    mc.window.document.getElementById("threadpane-splitter"),
-    -diffWidth,
-    0
-  );
-  actualWidth = mc.window.document.getElementById(
-    "messagepaneboxwrapper"
-  ).clientWidth;
+  _move_splitter(document.getElementById("threadpane-splitter"), -diffWidth, 0);
+  actualWidth = document.getElementById("messagepaneboxwrapper").clientWidth;
 
   // FIXME: For whatever reasons the new width is off by two pixels on Mac OSX
   // But this test case is not for testing moving around a splitter but for
@@ -480,20 +462,21 @@ add_task(async function test_message_pane_width_persistence() {
   oldWidth = actualWidth;
 
   // The 3pane window is closed.
-  close_window(mc);
+  await BrowserTestUtils.closeWindow(mc2);
   // Wait for window close async session write to finish.
   // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
   await new Promise(resolve => setTimeout(resolve, asyncFileWriteDelayMS));
 
-  mc = open3PaneWindow();
-  set_mc(mc);
+  const mc3 = await open3PaneWindow();
+  set_mc(mc3);
   await be_in_folder(folderA);
   assert_message_pane_visible();
-  assert_pane_layout(kVerticalMailLayout);
+  Assert.equal(
+    Services.prefs.getIntPref("mail.pane_config.dynamic"),
+    kVerticalMailLayout
+  );
 
-  actualWidth = mc.window.document.getElementById(
-    "messagepaneboxwrapper"
-  ).clientWidth;
+  actualWidth = document.getElementById("messagepaneboxwrapper").clientWidth;
   Assert.equal(
     oldWidth,
     actualWidth,
@@ -504,24 +487,28 @@ add_task(async function test_message_pane_width_persistence() {
   );
 
   // The layout is reset to classical mail layout.
-  set_pane_layout(kClassicMailLayout);
-  assert_pane_layout(kClassicMailLayout);
+  Services.prefs.setIntPref("mail.pane_config.dynamic", kClassicMailLayout);
+
+  Assert.equal(
+    Services.prefs.getIntPref("mail.pane_config.dynamic"),
+    kClassicMailLayout
+  );
 
   // We don't need the address book window any more.
-  plan_for_window_close(amController);
-  amController.window.close();
-  wait_for_window_close();
+  const closePromise = BrowserTestUtils.domWindowClosed(amWin);
+  amWin.close();
+  await closePromise;
 }).skip(); // Bug 1753963.
 
 add_task(async function test_multiple_3pane_periodic_session_persistence() {
   // open a few more 3pane windows
-  for (var i = 0; i < 3; ++i) {
-    open3PaneWindow();
+  for (let i = 0; i < 3; ++i) {
+    await open3PaneWindow();
   }
 
   // then get the state objects for each window
-  let state = [];
-  for (let window of Services.wm.getEnumerator("mail:3pane")) {
+  const state = [];
+  for (const window of Services.wm.getEnumerator("mail:3pane")) {
     state.push(window.getWindowStateForSessionPersistence());
   }
 
@@ -529,7 +516,7 @@ add_task(async function test_multiple_3pane_periodic_session_persistence() {
   await waitForFileRefresh();
 
   // load the saved state from disk
-  let loadedState = readFile();
+  const loadedState = readFile();
 
   Assert.ok(loadedState, "previously saved state should be non-null");
 
@@ -547,16 +534,18 @@ add_task(async function test_multiple_3pane_periodic_session_persistence() {
   }
 
   // close all but one 3pane window
-  let windows = Services.wm.getEnumerator("mail:3pane");
-  for (let win of windows) {
+  const windows = Services.wm.getEnumerator("mail:3pane");
+  for (const win of windows) {
     win.close();
   }
 }).skip(); // Bug 1753963.
 
-async function test_bad_session_file_simple() {
+add_task(async function test_bad_session_file_simple() {
   // forcefully write a bad session file
-  let data = "BAD SESSION FILE";
-  let fos = FileUtils.openSafeFileOutputStream(SessionStoreManager.sessionFile);
+  const data = "BAD SESSION FILE";
+  const fos = FileUtils.openSafeFileOutputStream(
+    SessionStoreManager.sessionFile
+  );
   fos.write(data, data.length);
   FileUtils.closeSafeFileOutputStream(fos);
 
@@ -573,26 +562,26 @@ async function test_bad_session_file_simple() {
   );
 
   // The bad session file should now not exist.
-  utils.waitFor(
+  await TestUtils.waitForCondition(
     () => !SessionStoreManager.sessionFile.exists(),
     "session file should now not exist"
   );
-}
+}).skip(); // Bug 1753963.
 
 add_task(async function test_clean_shutdown_session_persistence_simple() {
   // open a few more 3pane windows
   for (var i = 0; i < 3; ++i) {
-    open3PaneWindow();
+    await open3PaneWindow();
   }
 
   // make sure we have a different window open, so that we don't start shutting
   // down just because the last window was closed
-  let amController = openActivityManager();
+  const amWin = await openActivityManager();
 
   // close all the 3pane windows
   let lastWindowState = null;
-  let enumerator = Services.wm.getEnumerator("mail:3pane");
-  for (let window of enumerator) {
+  const enumerator = Services.wm.getEnumerator("mail:3pane");
+  for (const window of enumerator) {
     if (!enumerator.hasMoreElements()) {
       lastWindowState = window.getWindowStateForSessionPersistence();
     }
@@ -604,7 +593,7 @@ add_task(async function test_clean_shutdown_session_persistence_simple() {
   await waitForFileRefresh();
 
   // load the saved state from disk
-  let loadedState = readFile();
+  const loadedState = readFile();
   Assert.ok(loadedState, "previously saved state should be non-null");
 
   Assert.equal(
@@ -614,18 +603,18 @@ add_task(async function test_clean_shutdown_session_persistence_simple() {
   );
 
   // get the state object for the one and only one 3pane window
-  let windowState = loadedState.windows[0];
+  const windowState = loadedState.windows[0];
   Assert.ok(
     JSON.stringify(windowState) == JSON.stringify(lastWindowState),
     "saved state and loaded state should be equal"
   );
 
-  open3PaneWindow();
+  await open3PaneWindow();
 
   // We don't need the address book window any more.
-  plan_for_window_close(amController);
-  amController.window.close();
-  wait_for_window_close();
+  const closePromise = BrowserTestUtils.domWindowClosed(amWin);
+  amWin.close();
+  await closePromise;
 }).skip(); // Bug 1753963.
 
 /*
@@ -635,35 +624,35 @@ add_task(async function test_clean_shutdown_session_persistence_simple() {
 
 function _move_splitter(aSplitter, aDiffX, aDiffY) {
   // catch the splitter in the middle
-  let rect = aSplitter.getBoundingClientRect();
-  let middleX = Math.round(rect.width / 2);
-  let middleY = Math.round(rect.height / 2);
+  const rect = aSplitter.getBoundingClientRect();
+  const middleX = Math.round(rect.width / 2);
+  const middleY = Math.round(rect.height / 2);
   EventUtils.synthesizeMouse(
     aSplitter,
     middleX,
     middleY,
     { type: "mousedown" },
-    mc.window
+    window
   );
   EventUtils.synthesizeMouse(
     aSplitter,
     aDiffX + middleX,
     aDiffY + middleY,
     { type: "mousemove" },
-    mc.window
+    window
   );
   // release the splitter
-  EventUtils.synthesizeMouse(aSplitter, 0, 0, { type: "mouseup" }, mc.window);
+  EventUtils.synthesizeMouse(aSplitter, 0, 0, { type: "mouseup" }, window);
 }
 
 /**
  * Helper function that checks the fuzzy equivalence of two numeric
  * values against some given tolerance.
  *
- * @param aLeft one value to check equivalence with
- * @param aRight the other value to check equivalence with
- * @param aTolerance how fuzzy can our equivalence be?
- * @param aMessage the message to give off if we're outside of tolerance.
+ * @param {integer} aLeft - One value to check equivalence with.
+ * @param {integer} aRight - The other value to check equivalence with.
+ * @param {integer} aTolerance - how fuzzy can our equivalence be?
+ * @param {string} aMessage - The message to give off if we're outside of tolerance.
  */
 function assert_equals_fuzzy(aLeft, aRight, aTolerance, aMessage) {
   Assert.ok(Math.abs(aLeft - aRight) <= aTolerance, aMessage);

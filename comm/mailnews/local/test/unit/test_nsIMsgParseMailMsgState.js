@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 var MSG_LINEBREAK = "\r\n";
@@ -17,18 +17,18 @@ add_task(async function run_the_test() {
 });
 
 async function test_parse_headers_without_crash(eml) {
-  let file = do_get_file(eml);
+  const file = do_get_file(eml);
 
-  let parser = Cc["@mozilla.org/messenger/messagestateparser;1"].createInstance(
-    Ci.nsIMsgParseMailMsgState
-  );
+  const parser = Cc[
+    "@mozilla.org/messenger/messagestateparser;1"
+  ].createInstance(Ci.nsIMsgParseMailMsgState);
 
   parser.SetMailDB(localAccountUtils.inboxFolder.getDatabaseWOReparse());
   parser.state = Ci.nsIMsgParseMailMsgState.ParseHeadersState;
 
-  let bytes = await IOUtils.read(file.path);
-  let mailData = new TextDecoder().decode(bytes);
-  let lines = mailData.split(MSG_LINEBREAK);
+  const bytes = await IOUtils.read(file.path);
+  const mailData = new TextDecoder().decode(bytes);
+  const lines = mailData.split(MSG_LINEBREAK);
 
   for (let line = 0; line < lines.length; line++) {
     parser.ParseAFolderLine(

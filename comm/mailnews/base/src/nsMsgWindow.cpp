@@ -5,32 +5,22 @@
 
 #include "nsMsgWindow.h"
 #include "nsIURILoader.h"
-#include "nsCURILoader.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeItem.h"
 #include "mozIDOMWindow.h"
 #include "nsTransactionManagerCID.h"
-#include "nsIComponentManager.h"
-#include "nsILoadGroup.h"
 #include "nsIMsgMailNewsUrl.h"
-#include "nsIInterfaceRequestor.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIWebProgress.h"
 #include "nsIWebProgressListener.h"
 #include "nsPIDOMWindow.h"
-#include "nsIPrompt.h"
-#include "nsICharsetConverterManager.h"
 #include "nsIChannel.h"
 #include "nsIRequestObserver.h"
 #include "netCore.h"
 #include "prmem.h"
 #include "plbase64.h"
-#include "nsMsgI18N.h"
 #include "nsIWebNavigation.h"
 #include "nsContentUtils.h"
-#include "nsComponentManagerUtils.h"
-#include "nsServiceManagerUtils.h"
-#include "nsIAuthPrompt.h"
 #include "nsMsgUtils.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/TransactionManager.h"
@@ -42,10 +32,7 @@
 NS_IMPL_ISUPPORTS(nsMsgWindow, nsIMsgWindow, nsIURIContentListener,
                   nsISupportsWeakReference)
 
-nsMsgWindow::nsMsgWindow() {
-  mCharsetOverride = false;
-  m_stopped = false;
-}
+nsMsgWindow::nsMsgWindow() {}
 
 nsMsgWindow::~nsMsgWindow() { CloseWindow(); }
 
@@ -93,7 +80,10 @@ NS_IMETHODIMP nsMsgWindow::GetMessageWindowDocShell(nsIDocShell** aDocShell) {
 NS_IMETHODIMP nsMsgWindow::CloseWindow() {
   mStatusFeedback = nullptr;
 
-  StopUrls();
+  nsCOMPtr<nsIWebNavigation> webnav(do_QueryReferent(mRootDocShellWeak));
+  if (webnav) {
+    webnav->Stop(nsIWebNavigation::STOP_NETWORK);
+  }
 
   nsCOMPtr<nsIDocShell> messagePaneDocShell(
       do_QueryReferent(mMessageWindowDocShellWeak));
@@ -144,17 +134,6 @@ NS_IMETHODIMP nsMsgWindow::GetTransactionManager(
 NS_IMETHODIMP nsMsgWindow::SetTransactionManager(
     nsITransactionManager* aTransactionManager) {
   mTransactionManager = aTransactionManager;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgWindow::GetOpenFolder(nsIMsgFolder** aOpenFolder) {
-  NS_ENSURE_ARG_POINTER(aOpenFolder);
-  NS_IF_ADDREF(*aOpenFolder = mOpenFolder);
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgWindow::SetOpenFolder(nsIMsgFolder* aOpenFolder) {
-  mOpenFolder = aOpenFolder;
   return NS_OK;
 }
 
@@ -214,26 +193,6 @@ NS_IMETHODIMP nsMsgWindow::SetDomWindow(mozIDOMWindowProxy* aWindow) {
   }
 
   return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgWindow::SetNotificationCallbacks(
-    nsIInterfaceRequestor* aNotificationCallbacks) {
-  mNotificationCallbacks = aNotificationCallbacks;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgWindow::GetNotificationCallbacks(
-    nsIInterfaceRequestor** aNotificationCallbacks) {
-  NS_ENSURE_ARG_POINTER(aNotificationCallbacks);
-  NS_IF_ADDREF(*aNotificationCallbacks = mNotificationCallbacks);
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgWindow::StopUrls() {
-  m_stopped = true;
-  nsCOMPtr<nsIWebNavigation> webnav(do_QueryReferent(mRootDocShellWeak));
-  return webnav ? webnav->Stop(nsIWebNavigation::STOP_NETWORK)
-                : NS_ERROR_FAILURE;
 }
 
 // nsIURIContentListener support
@@ -323,5 +282,3 @@ NS_IMETHODIMP nsMsgWindow::GetLoadCookie(nsISupports** aLoadCookie) {
 NS_IMETHODIMP nsMsgWindow::SetLoadCookie(nsISupports* aLoadCookie) {
   return NS_OK;
 }
-
-NS_IMPL_GETSET(nsMsgWindow, Stopped, bool, m_stopped)

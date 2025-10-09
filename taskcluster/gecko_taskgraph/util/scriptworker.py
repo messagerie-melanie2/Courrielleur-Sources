@@ -23,11 +23,10 @@ from datetime import datetime
 
 import jsone
 from mozbuild.util import memoize
+from taskgraph.util.copy import deepcopy
 from taskgraph.util.schema import resolve_keyed_by
 from taskgraph.util.taskcluster import get_artifact_prefix
 from taskgraph.util.yaml import load_yaml
-
-from gecko_taskgraph.util.copy_task import copy_task
 
 # constants {{{1
 """Map signing scope aliases to sets of projects.
@@ -51,6 +50,13 @@ SIGNING_SCOPE_ALIAS_TO_PROJECT = [
         {
             "mozilla-central",
             "comm-central",
+            # bug 1845368: pine is a permanent project branch used for testing
+            # nightly updates
+            "pine",
+            # bug 1877483: larch has similar needs for nightlies
+            "larch",
+            # maple is also an L3 branch: https://phabricator.services.mozilla.com/D184833
+            "maple",
         },
     ],
     [
@@ -58,11 +64,14 @@ SIGNING_SCOPE_ALIAS_TO_PROJECT = [
         {
             "mozilla-beta",
             "mozilla-release",
-            "mozilla-esr102",
             "mozilla-esr115",
+            "mozilla-esr128",
+            "mozilla-esr140",
             "comm-beta",
-            "comm-esr102",
+            "comm-release",
             "comm-esr115",
+            "comm-esr128",
+            "comm-esr140",
         },
     ],
 ]
@@ -97,7 +106,11 @@ BEETMOVER_SCOPE_ALIAS_TO_PROJECT = [
         {
             "mozilla-central",
             "comm-central",
-            "oak",
+            # bug 1845368: pine is a permanent project branch used for testing
+            # nightly updates
+            "pine",
+            # bug 1877483: larch has similar needs for nightlies
+            "larch",
         },
     ],
     [
@@ -105,11 +118,14 @@ BEETMOVER_SCOPE_ALIAS_TO_PROJECT = [
         {
             "mozilla-beta",
             "mozilla-release",
-            "mozilla-esr102",
             "mozilla-esr115",
+            "mozilla-esr128",
+            "mozilla-esr140",
             "comm-beta",
-            "comm-esr102",
+            "comm-release",
             "comm-esr115",
+            "comm-esr128",
+            "comm-esr140",
         },
     ],
 ]
@@ -135,7 +151,11 @@ BEETMOVER_APT_REPO_SCOPES = {
 """
 BEETMOVER_ACTION_SCOPES = {
     "nightly": "beetmover:action:push-to-nightly",
-    "nightly-oak": "beetmover:action:push-to-nightly",
+    # bug 1845368: pine is a permanent project branch used for testing
+    # nightly updates
+    "nightly-pine": "beetmover:action:push-to-nightly",
+    # bug 1877483: larch has similar needs for nightlies
+    "nightly-larch": "beetmover:action:push-to-nightly",
     "default": "beetmover:action:push-to-candidates",
 }
 
@@ -165,7 +185,11 @@ BALROG_SCOPE_ALIAS_TO_PROJECT = [
         {
             "mozilla-central",
             "comm-central",
-            "oak",
+            # bug 1845368: pine is a permanent project branch used for testing
+            # nightly updates
+            "pine",
+            # bug 1877483: larch has similar needs for nightlies
+            "larch",
         },
     ],
     [
@@ -179,20 +203,28 @@ BALROG_SCOPE_ALIAS_TO_PROJECT = [
         "release",
         {
             "mozilla-release",
-            "comm-esr102",
-            "comm-esr115",
-        },
-    ],
-    [
-        "esr102",
-        {
-            "mozilla-esr102",
+            "comm-release",
         },
     ],
     [
         "esr115",
         {
             "mozilla-esr115",
+            "comm-esr115",
+        },
+    ],
+    [
+        "esr128",
+        {
+            "mozilla-esr128",
+            "comm-esr128",
+        },
+    ],
+    [
+        "esr140",
+        {
+            "mozilla-esr140",
+            "comm-esr140",
         },
     ],
 ]
@@ -204,8 +236,9 @@ BALROG_SERVER_SCOPES = {
     "aurora": "balrog:server:aurora",
     "beta": "balrog:server:beta",
     "release": "balrog:server:release",
-    "esr102": "balrog:server:esr",
     "esr115": "balrog:server:esr",
+    "esr128": "balrog:server:esr",
+    "esr140": "balrog:server:esr",
     "default": "balrog:server:dep",
 }
 
@@ -433,7 +466,7 @@ def generate_beetmover_upstream_artifacts(
             "platform": platform,
         },
     )
-    map_config = copy_task(cached_load_yaml(job["attributes"]["artifact_map"]))
+    map_config = deepcopy(cached_load_yaml(job["attributes"]["artifact_map"]))
     upstream_artifacts = list()
 
     if not locale:
@@ -446,8 +479,6 @@ def generate_beetmover_upstream_artifacts(
     if not dependencies:
         if job.get("dependencies"):
             dependencies = job["dependencies"].keys()
-        elif job.get("primary-dependency"):
-            dependencies = [job["primary-dependency"].kind]
         else:
             raise Exception(f"Unsupported type of dependency. Got job: {job}")
 
@@ -479,7 +510,7 @@ def generate_beetmover_upstream_artifacts(
             if "partials_only" in map_config["mapping"][filename]:
                 continue
             # The next time we look at this file it might be a different locale.
-            file_config = copy_task(map_config["mapping"][filename])
+            file_config = deepcopy(map_config["mapping"][filename])
             resolve_keyed_by(
                 file_config,
                 "source_path_modifier",
@@ -571,7 +602,7 @@ def generate_beetmover_artifact_map(config, job, **kwargs):
             "platform": platform,
         },
     )
-    map_config = copy_task(cached_load_yaml(job["attributes"]["artifact_map"]))
+    map_config = deepcopy(cached_load_yaml(job["attributes"]["artifact_map"]))
     base_artifact_prefix = map_config.get(
         "base_artifact_prefix", get_artifact_prefix(job)
     )
@@ -619,8 +650,8 @@ def generate_beetmover_artifact_map(config, job, **kwargs):
             if "partials_only" in map_config["mapping"][filename]:
                 continue
 
-            # copy_task because the next time we look at this file the locale will differ.
-            file_config = copy_task(map_config["mapping"][filename])
+            # deepcopy because the next time we look at this file the locale will differ.
+            file_config = deepcopy(map_config["mapping"][filename])
 
             for field in [
                 "destinations",
@@ -668,12 +699,16 @@ def generate_beetmover_artifact_map(config, job, **kwargs):
                 if file_config.get("balrog_format"):
                     paths[key]["balrog_format"] = file_config["balrog_format"]
 
+            # optional flag: expiry
+            if file_config.get("expiry"):
+                paths[key]["expiry"] = {"relative-datestamp": file_config["expiry"]}
+
         if not paths:
             # No files for this dependency/locale combination.
             continue
 
         # Render all variables for the artifact map
-        platforms = copy_task(map_config.get("platform_names", {}))
+        platforms = deepcopy(map_config.get("platform_names", {}))
         if platform:
             for key in platforms.keys():
                 resolve_keyed_by(platforms, key, job["label"], platform=platform)
@@ -732,7 +767,7 @@ def generate_beetmover_partials_artifact_map(config, job, partials_info, **kwarg
             "platform": platform,
         },
     )
-    map_config = copy_task(cached_load_yaml(job["attributes"]["artifact_map"]))
+    map_config = deepcopy(cached_load_yaml(job["attributes"]["artifact_map"]))
     base_artifact_prefix = map_config.get(
         "base_artifact_prefix", get_artifact_prefix(job)
     )
@@ -749,7 +784,7 @@ def generate_beetmover_partials_artifact_map(config, job, partials_info, **kwarg
         map_config, "s3_bucket_paths", "s3_bucket_paths", platform=platform
     )
 
-    platforms = copy_task(map_config.get("platform_names", {}))
+    platforms = deepcopy(map_config.get("platform_names", {}))
     if platform:
         for key in platforms.keys():
             resolve_keyed_by(platforms, key, key, platform=platform)
@@ -767,8 +802,8 @@ def generate_beetmover_partials_artifact_map(config, job, partials_info, **kwarg
                 continue
             if "partials_only" not in map_config["mapping"][filename]:
                 continue
-            # copy_task because the next time we look at this file the locale will differ.
-            file_config = copy_task(map_config["mapping"][filename])
+            # deepcopy because the next time we look at this file the locale will differ.
+            file_config = deepcopy(map_config["mapping"][filename])
 
             for field in [
                 "destinations",
@@ -824,6 +859,12 @@ def generate_beetmover_partials_artifact_map(config, job, partials_info, **kwarg
                 # optional flag: from_buildid
                 if file_config.get("from_buildid"):
                     partials_paths[key]["from_buildid"] = file_config["from_buildid"]
+
+                # optional flag: expiry
+                if file_config.get("expiry"):
+                    partials_paths[key]["expiry"] = {
+                        "relative-datestamp": file_config["expiry"]
+                    }
 
                 # render buildid
                 kwargs.update(

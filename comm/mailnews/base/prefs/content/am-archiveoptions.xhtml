@@ -3,11 +3,7 @@
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
-<?xml-stylesheet href="chrome://messenger/skin/accountManage.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/folderPane.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/icons.css" type="text/css"?>
-
-<!DOCTYPE html SYSTEM "chrome://messenger/locale/am-archiveoptions.dtd">
+<!DOCTYPE html>
 <html
   id="archiveOptions"
   xmlns="http://www.w3.org/1999/xhtml"
@@ -17,7 +13,18 @@
   scrolling="false"
 >
   <head>
-    <title>&dialogTitle.label;</title>
+    <title data-l10n-id="archive-options-title"></title>
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src chrome:; script-src chrome: 'unsafe-inline'; style-src chrome: 'unsafe-inline'"
+    />
+    <link rel="stylesheet" href="chrome://messenger/skin/accountManage.css" />
+    <link rel="stylesheet" href="chrome://messenger/skin/folderPane.css" />
+    <link rel="stylesheet" href="chrome://messenger/skin/icons.css" />
+    <link
+      rel="localization"
+      href="messenger/preferences/am-archiveoptions.ftl"
+    />
     <script
       defer="defer"
       src="chrome://messenger/content/am-archiveoptions.js"
@@ -28,33 +35,24 @@
   >
     <dialog style="width: 100vw; height: 100vh">
       <vbox flex="1">
-        <label>&archiveGranularityPrefix.label;</label>
+        <label data-l10n-id="archive-granularity-prefix-label"></label>
         <radiogroup id="archiveGranularity">
-          <radio
-            label="&archiveFlat.label;"
-            accesskey="&archiveFlat.accesskey;"
-            class="indent"
-          />
-          <radio
-            label="&archiveYearly.label;"
-            accesskey="&archiveYearly.accesskey;"
-            class="indent"
-          />
-          <radio
-            label="&archiveMonthly.label;"
-            accesskey="&archiveMonthly.accesskey;"
-            class="indent"
-          />
+          <radio data-l10n-id="archive-flat" class="indent" />
+          <radio data-l10n-id="archive-yearly" class="indent" />
+          <radio data-l10n-id="archive-monthly" class="indent" />
         </radiogroup>
         <checkbox
           id="archiveKeepFolderStructure"
-          label="&keepFolderStructure.label;"
-          accesskey="&keepFolderStructure.accesskey;"
+          data-l10n-id="keep-folder-structure"
         />
-
+        <checkbox
+          class="indent"
+          id="archiveRecreateInbox"
+          data-l10n-id="recreate-inbox"
+        />
         <html:div>
           <html:fieldset flex="1" style="margin-block-end: 5px">
-            <html:legend>&archiveExample.label;</html:legend>
+            <html:legend data-l10n-id="archive-example-label"></html:legend>
             <hbox flex="1">
               <tree
                 id="archiveTree"
@@ -76,13 +74,23 @@
                     <treerow>
                       <treecell
                         properties="specialFolder-Archive"
-                        label="&archiveFolderName.label;"
+                        data-l10n-id="archive-folder-name"
                       />
                     </treerow>
                     <treechildren>
-                      <treeitem id="folders">
+                      <treeitem id="inboxFolder">
                         <treerow>
-                          <treecell label="&inboxFolderName.label;" />
+                          <treecell data-l10n-id="inbox-folder-name" />
+                        </treerow>
+                      </treeitem>
+                      <treeitem id="childFolder">
+                        <treerow>
+                          <treecell data-l10n-id="child-folder-name" />
+                        </treerow>
+                      </treeitem>
+                      <treeitem id="siblingFolder">
+                        <treerow>
+                          <treecell data-l10n-id="sibling-folder-name" />
                         </treerow>
                       </treeitem>
                       <treeitem class="year">

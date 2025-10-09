@@ -14,6 +14,7 @@
 #include "mozilla/dom/PromiseNativeHandler.h"
 #include "mozilla/dom/Response.h"
 #include "mozilla/dom/RootedDictionary.h"
+#include "mozilla/dom/ServiceWorkerUtils.h"
 #include "mozilla/dom/WorkerPrivate.h"
 #include "mozilla/dom/CacheBinding.h"
 #include "mozilla/dom/cache/AutoUtils.h"
@@ -34,12 +35,11 @@ namespace {
 
 enum class PutStatusPolicy { Default, RequireOK };
 
-bool IsValidPutRequestURL(const nsAString& aUrl, ErrorResult& aRv) {
+bool IsValidPutRequestURL(const nsACString& aUrl, ErrorResult& aRv) {
   bool validScheme = false;
 
   // make a copy because ProcessURL strips the fragmet
-  NS_ConvertUTF16toUTF8 url(aUrl);
-
+  nsAutoCString url(aUrl);
   TypeUtils::ProcessURL(url, &validScheme, nullptr, nullptr, aRv);
   if (aRv.Failed()) {
     return false;
@@ -47,8 +47,7 @@ bool IsValidPutRequestURL(const nsAString& aUrl, ErrorResult& aRv) {
 
   if (!validScheme) {
     // `url` has been modified, so don't use it here.
-    aRv.ThrowTypeError<MSG_INVALID_URL_SCHEME>("Request",
-                                               NS_ConvertUTF16toUTF8(aUrl));
+    aRv.ThrowTypeError<MSG_INVALID_URL_SCHEME>("Request", aUrl);
     return false;
   }
 
@@ -66,7 +65,7 @@ static bool IsValidPutRequestMethod(const Request& aRequest, ErrorResult& aRv) {
   return true;
 }
 
-static bool IsValidPutRequestMethod(const RequestOrUSVString& aRequest,
+static bool IsValidPutRequestMethod(const RequestOrUTF8String& aRequest,
                                     ErrorResult& aRv) {
   // If the provided request is a string URL, then it will default to
   // a valid http method automatically.
@@ -81,13 +80,10 @@ static bool IsValidPutResponseStatus(Response& aResponse,
                                      ErrorResult& aRv) {
   if ((aPolicy == PutStatusPolicy::RequireOK && !aResponse.Ok()) ||
       aResponse.Status() == 206) {
-    nsCString type(ResponseTypeValues::GetString(aResponse.Type()));
-
-    nsAutoString url;
+    nsAutoCString url;
     aResponse.GetUrl(url);
-
     aRv.ThrowTypeError<MSG_CACHE_ADD_FAILED_RESPONSE>(
-        type, IntToCString(aResponse.Status()), NS_ConvertUTF16toUTF8(url));
+        GetEnumString(aResponse.Type()), IntToCString(aResponse.Status()), url);
     return false;
   }
 
@@ -228,8 +224,17 @@ Cache::Cache(nsIGlobalObject* aGlobal, CacheChild* aActor, Namespace aNamespace)
   mActor->SetListener(this);
 }
 
+// static
+bool Cache::CachesEnabled(JSContext* aCx, JSObject* aObj) {
+  if (!IsSecureContextOrObjectIsFromSecureContext(aCx, aObj)) {
+    return StaticPrefs::dom_caches_testing_enabled() ||
+           ServiceWorkersEnabled(aCx, aObj);
+  }
+  return true;
+}
+
 already_AddRefed<Promise> Cache::Match(JSContext* aCx,
-                                       const RequestOrUSVString& aRequest,
+                                       const RequestOrUTF8String& aRequest,
                                        const CacheQueryOptions& aOptions,
                                        ErrorResult& aRv) {
   if (NS_WARN_IF(!mActor)) {
@@ -260,7 +265,7 @@ already_AddRefed<Promise> Cache::Match(JSContext* aCx,
 }
 
 already_AddRefed<Promise> Cache::MatchAll(
-    JSContext* aCx, const Optional<RequestOrUSVString>& aRequest,
+    JSContext* aCx, const Optional<RequestOrUTF8String>& aRequest,
     const CacheQueryOptions& aOptions, ErrorResult& aRv) {
   if (NS_WARN_IF(!mActor)) {
     aRv.Throw(NS_ERROR_UNEXPECTED);
@@ -292,7 +297,7 @@ already_AddRefed<Promise> Cache::MatchAll(
 }
 
 already_AddRefed<Promise> Cache::Add(JSContext* aContext,
-                                     const RequestOrUSVString& aRequest,
+                                     const RequestOrUTF8String& aRequest,
                                      CallerType aCallerType, ErrorResult& aRv) {
   if (NS_WARN_IF(!mActor)) {
     aRv.Throw(NS_ERROR_UNEXPECTED);
@@ -316,7 +321,7 @@ already_AddRefed<Promise> Cache::Add(JSContext* aContext,
     return nullptr;
   }
 
-  nsAutoString url;
+  nsAutoCString url;
   request->GetUrl(url);
   if (NS_WARN_IF(!IsValidPutRequestURL(url, aRv))) {
     return nullptr;
@@ -327,7 +332,8 @@ already_AddRefed<Promise> Cache::Add(JSContext* aContext,
 }
 
 already_AddRefed<Promise> Cache::AddAll(
-    JSContext* aContext, const Sequence<OwningRequestOrUSVString>& aRequestList,
+    JSContext* aContext,
+    const Sequence<OwningRequestOrUTF8String>& aRequestList,
     CallerType aCallerType, ErrorResult& aRv) {
   if (NS_WARN_IF(!mActor)) {
     aRv.Throw(NS_ERROR_UNEXPECTED);
@@ -341,7 +347,7 @@ already_AddRefed<Promise> Cache::AddAll(
 
   nsTArray<SafeRefPtr<Request>> requestList(aRequestList.Length());
   for (uint32_t i = 0; i < aRequestList.Length(); ++i) {
-    RequestOrUSVString requestOrString;
+    RequestOrUTF8String requestOrString;
 
     if (aRequestList[i].IsRequest()) {
       requestOrString.SetAsRequest() = aRequestList[i].GetAsRequest();
@@ -350,8 +356,8 @@ already_AddRefed<Promise> Cache::AddAll(
         return nullptr;
       }
     } else {
-      requestOrString.SetAsUSVString().ShareOrDependUpon(
-          aRequestList[i].GetAsUSVString());
+      requestOrString.SetAsUTF8String().ShareOrDependUpon(
+          aRequestList[i].GetAsUTF8String());
     }
 
     RootedDictionary<RequestInit> requestInit(aContext);
@@ -361,7 +367,7 @@ already_AddRefed<Promise> Cache::AddAll(
       return nullptr;
     }
 
-    nsAutoString url;
+    nsAutoCString url;
     request->GetUrl(url);
     if (NS_WARN_IF(!IsValidPutRequestURL(url, aRv))) {
       return nullptr;
@@ -374,7 +380,7 @@ already_AddRefed<Promise> Cache::AddAll(
 }
 
 already_AddRefed<Promise> Cache::Put(JSContext* aCx,
-                                     const RequestOrUSVString& aRequest,
+                                     const RequestOrUTF8String& aRequest,
                                      Response& aResponse, ErrorResult& aRv) {
   if (NS_WARN_IF(!mActor)) {
     aRv.Throw(NS_ERROR_UNEXPECTED);
@@ -419,7 +425,7 @@ already_AddRefed<Promise> Cache::Put(JSContext* aCx,
 }
 
 already_AddRefed<Promise> Cache::Delete(JSContext* aCx,
-                                        const RequestOrUSVString& aRequest,
+                                        const RequestOrUTF8String& aRequest,
                                         const CacheQueryOptions& aOptions,
                                         ErrorResult& aRv) {
   if (NS_WARN_IF(!mActor)) {
@@ -449,7 +455,7 @@ already_AddRefed<Promise> Cache::Delete(JSContext* aCx,
 }
 
 already_AddRefed<Promise> Cache::Keys(
-    JSContext* aCx, const Optional<RequestOrUSVString>& aRequest,
+    JSContext* aCx, const Optional<RequestOrUTF8String>& aRequest,
     const CacheQueryOptions& aOptions, ErrorResult& aRv) {
   if (NS_WARN_IF(!mActor)) {
     aRv.Throw(NS_ERROR_UNEXPECTED);
@@ -553,7 +559,7 @@ already_AddRefed<Promise> Cache::AddAll(
   // future once fetch supports it.
 
   for (uint32_t i = 0; i < aRequestList.Length(); ++i) {
-    RequestOrUSVString requestOrString;
+    RequestOrUTF8String requestOrString;
     requestOrString.SetAsRequest() = aRequestList[i].unsafeGetRawPtr();
     RootedDictionary<RequestInit> requestInit(aGlobal.Context());
     RefPtr<Promise> fetch =

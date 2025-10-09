@@ -3,14 +3,12 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-XPCSHELL_TESTS_MANIFESTS += ["test/xpcshell.ini"]
+with Files("**"):
+    BUG_COMPONENT = ("Chat Core", "XMPP")
 
-DIRS += [
-    "lib",
-]
+XPCSHELL_TESTS_MANIFESTS += ["test/xpcshell.toml"]
 
 EXTRA_JS_MODULES += [
-    "sax.sys.mjs",
     "xmpp-authmechs.sys.mjs",
     "xmpp-base.sys.mjs",
     "xmpp-commands.sys.mjs",

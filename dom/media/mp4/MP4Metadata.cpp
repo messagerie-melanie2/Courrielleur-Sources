@@ -7,7 +7,6 @@
 #include "mozilla/EndianUtils.h"
 #include "mozilla/Logging.h"
 #include "mozilla/RefPtr.h"
-#include "mozilla/Telemetry.h"
 #include "mozilla/UniquePtr.h"
 #include "VideoUtils.h"
 #include "MoofParser.h"
@@ -334,6 +333,9 @@ MP4Metadata::ResultAndTrackInfo MP4Metadata::GetTrackInfo(
       case MP4PARSE_CODEC_EC3:
         codecString = "ec-3";
         break;
+      case MP4PARSE_CODEC_HEVC:
+        codecString = "hevc";
+        break;
     }
   }
   MOZ_LOG(gMP4MetadataLog, LogLevel::Debug,
@@ -443,6 +445,8 @@ MP4Metadata::ResultAndTrackInfo MP4Metadata::GetTrackInfo(
   }
 
   if (e && e->IsValid()) {
+    MOZ_LOG(gMP4MetadataLog, LogLevel::Debug,
+            ("parsed a track info (%s)", e->ToString().get()));
     return {NS_OK, std::move(e)};
   }
   MOZ_LOG(gMP4MetadataLog, LogLevel::Debug, ("TrackInfo didn't validate"));

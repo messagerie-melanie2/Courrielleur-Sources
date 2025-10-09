@@ -5,7 +5,6 @@
 #ifndef nsSyncRunnableHelpers_h
 #define nsSyncRunnableHelpers_h
 
-#include "nsThreadUtils.h"
 #include "nsProxyRelease.h"
 
 #include "mozilla/Monitor.h"
@@ -70,6 +69,9 @@ class ImapServerSinkProxy final : public nsIImapServerSink {
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIIMAPSERVERSINK
 
+  // Allow direct (non-proxied) access to the underlying sink.
+  nsIImapServerSink* Receiver() { return mReceiver; }
+
  private:
   ~ImapServerSinkProxy() {
     NS_ReleaseOnMainThread("ImapServerSinkProxy::mReceiver",
@@ -119,8 +121,7 @@ class ImapProtocolSinkProxy final : public nsIImapProtocolSink {
 class msgIOAuth2Module;
 class nsIMsgIncomingServer;
 
-namespace mozilla {
-namespace mailnews {
+namespace mozilla::mailnews {
 
 class OAuth2ThreadHelper final : public msgIOAuth2ModuleListener {
  public:
@@ -143,7 +144,6 @@ class OAuth2ThreadHelper final : public msgIOAuth2ModuleListener {
   nsCString mOAuth2String;
 };
 
-}  // namespace mailnews
-}  // namespace mozilla
+}  // namespace mozilla::mailnews
 
 #endif  // nsSyncRunnableHelpers_h

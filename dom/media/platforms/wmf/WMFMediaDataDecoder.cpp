@@ -12,8 +12,6 @@
 #include "mozilla/ProfilerMarkers.h"
 #include "mozilla/SyncRunnable.h"
 #include "mozilla/TaskQueue.h"
-#include "mozilla/Telemetry.h"
-#include "mozilla/WindowsVersion.h"
 #include "nsTArray.h"
 
 #define LOG(...) MOZ_LOG(sPDMLog, mozilla::LogLevel::Debug, (__VA_ARGS__))
@@ -79,8 +77,9 @@ RefPtr<MediaDataDecoder::DecodePromise> WMFMediaDataDecoder::ProcessDecode(
     MediaRawData* aSample) {
   MOZ_ASSERT(mTaskQueue->IsCurrentThreadIn());
   DecodedData results;
-  LOG("ProcessDecode, type=%s, sample=%" PRId64,
-      TrackTypeToStr(mMFTManager->GetType()), aSample->mTime.ToMicroseconds());
+  LOG("ProcessDecode, type=%s, sample=%" PRId64 ", duration=%" PRId64,
+      TrackTypeToStr(mMFTManager->GetType()), aSample->mTime.ToMicroseconds(),
+      aSample->mDuration.ToMicroseconds());
   HRESULT hr = mMFTManager->Input(aSample);
   if (hr == MF_E_NOTACCEPTING) {
     hr = ProcessOutput(results);
@@ -123,12 +122,6 @@ bool WMFMediaDataDecoder::ShouldGuardAgaintIncorrectFirstSample(
     return false;
   }
 
-  // By observation so far this issue only happens on Windows 10 so we don't
-  // need to enable this on other versions.
-  if (!IsWin10OrLater()) {
-    return false;
-  }
-
   // This is not the first output sample so we don't need to guard it.
   if (mOutputsCount != 0) {
     return false;
@@ -162,6 +155,11 @@ WMFMediaDataDecoder::ProcessOutput(DecodedData& aResults) {
       mInputTimesSet.clear();
     }
     aResults.AppendElement(std::move(output));
+    // If zero-copy video is enabled, multiple WMFVideoMFTManager::Output()
+    // calls must be prevented within WMFMediaDataDecoder::ProcessOutput().
+    if (mMFTManager->UseZeroCopyVideoFrame()) {
+      break;
+    }
     if (mDrainStatus == DrainStatus::DRAINING) {
       break;
     }

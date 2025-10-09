@@ -13,30 +13,24 @@
 
 #include <type_traits>
 
-#include "gc/Allocator.h"
+#include "gc/GCEnum.h"
 #include "gc/GCProbes.h"
 #include "gc/MaybeRooted.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "vm/Compartment.h"
 #include "vm/Iteration.h"
-#include "vm/JSContext.h"
 #include "vm/PlainObject.h"
 #include "vm/PropertyResult.h"
+#include "vm/StringType.h"
 #include "vm/TypedArrayObject.h"
 
-#include "gc/Heap-inl.h"
 #include "gc/Marking-inl.h"
 #include "gc/ObjectKind-inl.h"
 #include "vm/Compartment-inl.h"
+#include "vm/JSContext-inl.h"
 #include "vm/JSObject-inl.h"
 #include "vm/Realm-inl.h"
 #include "vm/Shape-inl.h"
-
-#ifdef ENABLE_RECORD_TUPLE
-// Defined in vm/RecordTupleShared.{h,cpp}. We cannot include that file
-// because it causes circular dependencies.
-extern bool js::IsExtendedPrimitive(const JSObject& obj);
-#endif
 
 namespace js {
 
@@ -168,6 +162,22 @@ inline void NativeObject::initDenseElements(const Value* src, uint32_t count) {
   elementsRangePostWriteBarrier(0, count);
 }
 
+inline void NativeObject::initDenseElements(JSLinearString** src,
+                                            uint32_t count) {
+  MOZ_ASSERT(getDenseInitializedLength() == 0);
+  MOZ_ASSERT(count <= getDenseCapacity());
+  MOZ_ASSERT(src);
+  MOZ_ASSERT(isExtensible());
+
+  setDenseInitializedLength(count);
+  Value* elementsBase = reinterpret_cast<Value*>(elements_);
+  for (size_t i = 0; i < count; i++) {
+    elementsBase[i].setString(src[i]);
+  }
+
+  elementsRangePostWriteBarrier(0, count);
+}
+
 inline void NativeObject::initDenseElementRange(uint32_t destStart,
                                                 NativeObject* src,
                                                 uint32_t count) {
@@ -227,7 +237,7 @@ inline bool NativeObject::initDenseElementsFromRange(JSContext* cx, Iter begin,
   MOZ_ASSERT(slot == count);
 
   getElementsHeader()->initializedLength = count;
-  as<ArrayObject>().setLength(count);
+  as<ArrayObject>().setLengthToInitializedLength();
   return true;
 }
 
@@ -447,17 +457,11 @@ inline DenseElementResult NativeObject::setOrExtendDenseElements(
   }
 
   if (is<ArrayObject>() && start + count >= as<ArrayObject>().length()) {
-    as<ArrayObject>().setLength(start + count);
+    as<ArrayObject>().setLengthToInitializedLength();
   }
 
   copyDenseElements(start, vp, count);
   return DenseElementResult::Success;
-}
-
-inline bool NativeObject::isInWholeCellBuffer() const {
-  const gc::TenuredCell* cell = &asTenured();
-  gc::ArenaCellSet* cells = cell->arena()->bufferedCells();
-  return cells && cells->hasCell(cell);
 }
 
 /* static */
@@ -605,11 +609,8 @@ MOZ_ALWAYS_INLINE bool NativeObject::setShapeAndAddNewSlot(
 inline js::gc::AllocKind NativeObject::allocKindForTenure() const {
   using namespace js::gc;
   AllocKind kind = GetGCObjectFixedSlotsKind(numFixedSlots());
-  MOZ_ASSERT(!IsBackgroundFinalized(kind));
-  if (!CanChangeToBackgroundAllocKind(kind, getClass())) {
-    return kind;
-  }
-  return ForegroundToBackgroundAllocKind(kind);
+  MOZ_ASSERT(!IsFinalizedKind(kind));
+  return GetFinalizedAllocKindForClass(kind, getClass());
 }
 
 inline js::GlobalObject& NativeObject::global() const { return nonCCWGlobal(); }
@@ -651,8 +652,6 @@ static MOZ_ALWAYS_INLINE bool CallResolveOp(JSContext* cx,
                                             Handle<NativeObject*> obj,
                                             HandleId id,
                                             PropertyResult* propp) {
-  MOZ_ASSERT(!cx->isHelperThreadContext());
-
   // Avoid recursion on (obj, id) already being resolved on cx.
   AutoResolving resolving(cx, obj, id);
   if (resolving.alreadyStarted()) {
@@ -713,9 +712,6 @@ static MOZ_ALWAYS_INLINE bool NativeLookupOwnPropertyInline(
   // violate this guidance are the ModuleEnvironmentObject.
   MOZ_ASSERT_IF(obj->getOpsLookupProperty(),
                 obj->template is<ModuleEnvironmentObject>());
-#ifdef ENABLE_RECORD_TUPLE
-  MOZ_ASSERT(!js::IsExtendedPrimitive(*obj));
-#endif
 
   // Check for a native dense element.
   if (id.isInt()) {
@@ -732,7 +728,7 @@ static MOZ_ALWAYS_INLINE bool NativeLookupOwnPropertyInline(
   if (obj->template is<TypedArrayObject>()) {
     if (mozilla::Maybe<uint64_t> index = ToTypedArrayIndex(id)) {
       uint64_t idx = index.value();
-      if (idx < obj->template as<TypedArrayObject>().length()) {
+      if (idx < obj->template as<TypedArrayObject>().length().valueOr(0)) {
         propp->setTypedArrayElement(idx);
       } else {
         propp->setTypedArrayOutOfRange();
@@ -829,7 +825,6 @@ static MOZ_ALWAYS_INLINE bool NativeLookupPropertyInline(
     // we can simply loop within this call frame.
     if (proto->getOpsLookupProperty()) {
       if constexpr (allowGC) {
-        MOZ_ASSERT(!cx->isHelperThreadContext());
         RootedObject protoRoot(cx, proto);
         return LookupProperty(cx, protoRoot, id, objp, propp);
       } else {

@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| shell-option(--enable-temporal) skip-if(!this.hasOwnProperty('Temporal')||!xulRuntime.shell) -- Temporal is not enabled unconditionally, requires shell-options
 // Copyright (C) 2022 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -9,25 +9,17 @@ includes: [temporalHelpers.js]
 features: [Temporal]
 ---*/
 
-const timeZone = new Temporal.TimeZone("UTC");
+const timeZone = "UTC";
 const instance = new Temporal.ZonedDateTime(0n, timeZone);
 
 const calendar = "2016-12-31T23:59:60+00:00[UTC]";
 
-let arg = { year: 1970, monthCode: "M01", day: 1, timeZone, calendar };
-const result1 = instance.since(arg);
+const arg = { year: 1970, monthCode: "M01", day: 1, timeZone, calendar };
+const result = instance.since(arg);
 TemporalHelpers.assertDuration(
-  result1,
+  result,
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
   "leap second is a valid ISO string for calendar"
-);
-
-arg = { year: 1970, monthCode: "M01", day: 1, timeZone, calendar: { calendar } };
-const result2 = instance.since(arg);
-TemporalHelpers.assertDuration(
-  result2,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  "leap second is a valid ISO string for calendar (nested property)"
 );
 
 reportCompare(0, 0);

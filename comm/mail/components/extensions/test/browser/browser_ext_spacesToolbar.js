@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+"use strict";
+
 /**
  * Helper Function, creates a test extension to verify expected button states.
  *
@@ -11,7 +13,7 @@
  * @param {?object} manifestIcons - The icons entry of the extension manifest.
  */
 async function test_spaceToolbar(background, selectedTheme, manifestIcons) {
-  let manifest = {
+  const manifest = {
     manifest_version: 2,
     applications: {
       gecko: {
@@ -26,7 +28,7 @@ async function test_spaceToolbar(background, selectedTheme, manifestIcons) {
     manifest.icons = manifestIcons;
   }
 
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files: {
       "background.js": background,
       "utils.js": await getUtilsJS(),
@@ -35,27 +37,27 @@ async function test_spaceToolbar(background, selectedTheme, manifestIcons) {
   });
 
   extension.onMessage("checkTabs", async test => {
-    let tabmail = document.getElementById("tabmail");
+    const tabmail = document.getElementById("tabmail");
 
     if (test.action && test.buttonId && test.url) {
-      let tabPromise =
+      const tabPromise =
         test.action == "switch"
           ? BrowserTestUtils.waitForEvent(tabmail.tabContainer, "TabSelect")
           : contentTabOpenPromise(tabmail, test.url);
-      let button = window.document.getElementById(
+      const button = window.document.getElementById(
         `spaces_toolbar_mochi_test-spacesButton-${test.buttonId}`
       );
       button.click();
       await tabPromise;
     }
 
-    let tabs = tabmail.tabInfo.filter(tabInfo => !!tabInfo.spaceButtonId);
+    const tabs = tabmail.tabInfo.filter(tabInfo => !!tabInfo.spaceButtonId);
     Assert.equal(
       test.openSpacesUrls.length,
       tabs.length,
       `Should have found the correct number of open add-on spaces tabs.`
     );
-    for (let expectedUrl of test.openSpacesUrls) {
+    for (const expectedUrl of test.openSpacesUrls) {
       Assert.ok(
         tabmail.tabInfo.find(
           tabInfo =>
@@ -69,14 +71,14 @@ async function test_spaceToolbar(background, selectedTheme, manifestIcons) {
   });
 
   extension.onMessage("checkUI", async expected => {
-    let addonButtons = document.querySelectorAll(".spaces-addon-button");
+    const addonButtons = document.querySelectorAll(".spaces-addon-button");
     Assert.equal(
       expected.length,
       addonButtons.length,
       `Should have found the correct number of buttons.`
     );
 
-    for (let {
+    for (const {
       id,
       url,
       title,
@@ -84,8 +86,18 @@ async function test_spaceToolbar(background, selectedTheme, manifestIcons) {
       badgeText,
       badgeBackgroundColor,
     } of expected) {
+      // Fill in the fallback value for the default icon if it's been declared
+      // unset in the fixture only if we're also checking the default theme. We
+      // can't always fall back to it, because the default icon - if it's set -
+      // will be used as 2x icon for all variants because its size gets set as
+      // 19px by the extension icon handling, so it always has the best
+      // resolution for 2x. So we need to be able to differentiate between a
+      // default icon being set and unset to expect the correct 2x icon.
+      if (selectedTheme === "default" && !icons.default) {
+        icons.default = icons.dark;
+      }
       // Check button.
-      let button = window.document.getElementById(
+      const button = window.document.getElementById(
         `spaces_toolbar_mochi_test-spacesButton-${id}`
       );
       Assert.ok(button, `Button for id ${id} should exist.`);
@@ -96,16 +108,19 @@ async function test_spaceToolbar(background, selectedTheme, manifestIcons) {
       );
 
       // Check button icon.
-      let imgStyles = window.getComputedStyle(button.querySelector("img"));
+      const imgStyles = window.getComputedStyle(button.querySelector("img"));
       Assert.equal(
-        icons[selectedTheme],
         imgStyles.content,
+        makeIconSet(
+          icons[selectedTheme],
+          icons.default || icons[selectedTheme]
+        ),
         `Icon of button ${id} with theme ${selectedTheme} should be correct.`
       );
 
       // Check badge.
-      let badge = button.querySelector(".spaces-badge-container");
-      let badgeStyles = window.getComputedStyle(badge);
+      const badge = button.querySelector(".spaces-badge-container");
+      const badgeStyles = window.getComputedStyle(badge);
       if (badgeText) {
         Assert.equal(
           "block",
@@ -132,10 +147,10 @@ async function test_spaceToolbar(background, selectedTheme, manifestIcons) {
         );
       }
 
-      let collapseButton = document.getElementById("collapseButton");
-      let revealButton = document.getElementById("spacesToolbarReveal");
-      let pinnedButton = document.getElementById("spacesPinnedButton");
-      let pinnedPopup = document.getElementById("spacesButtonMenuPopup");
+      const collapseButton = document.getElementById("collapseButton");
+      const revealButton = document.getElementById("spacesToolbarReveal");
+      const pinnedButton = document.getElementById("spacesPinnedButton");
+      const pinnedPopup = document.getElementById("spacesButtonMenuPopup");
 
       Assert.ok(revealButton.hidden, "The status bar toggle button is hidden");
       Assert.ok(pinnedButton.hidden, "The pinned titlebar button is hidden");
@@ -151,7 +166,7 @@ async function test_spaceToolbar(background, selectedTheme, manifestIcons) {
       pinnedPopup.openPopup();
 
       // Check menuitem.
-      let menuitem = window.document.getElementById(
+      const menuitem = window.document.getElementById(
         `spaces_toolbar_mochi_test-spacesButton-${id}-menuitem`
       );
       Assert.ok(menuitem, `Menuitem for id ${id} should exist.`);
@@ -162,26 +177,29 @@ async function test_spaceToolbar(background, selectedTheme, manifestIcons) {
       );
 
       // Check menuitem icon.
-      let menuitemStyles = window.getComputedStyle(menuitem);
+      const menuitemStyles = window.getComputedStyle(menuitem);
       Assert.equal(
-        icons[selectedTheme],
         menuitemStyles.listStyleImage,
+        makeIconSet(
+          icons[selectedTheme],
+          icons.default || icons[selectedTheme]
+        ),
         `Icon of menuitem ${id} with theme ${selectedTheme} should be correct.`
       );
 
-      pinnedPopup.hidePopup();
+      await closeMenuPopup(pinnedPopup);
       revealButton.click();
       Assert.ok(revealButton.hidden, "The status bar toggle button is hidden");
       Assert.ok(pinnedButton.hidden, "The pinned titlebar button is hidden");
 
       //Check space and url.
-      let space = window.gSpacesToolbar.spaces.find(
-        space => space.name == `spaces_toolbar_mochi_test-spacesButton-${id}`
+      const space = window.gSpacesToolbar.spaces.find(
+        s => s.name == `spaces_toolbar_mochi_test-spacesButton-${id}`
       );
       Assert.ok(space, "The space of this button should exists");
       Assert.equal(
         url,
-        space.url,
+        space.tabProperties.url,
         "The stored url of the space should be correct"
       );
     }
@@ -195,8 +213,8 @@ async function test_spaceToolbar(background, selectedTheme, manifestIcons) {
 
 add_task(async function test_add_update_remove() {
   async function background() {
-    let manifest = browser.runtime.getManifest();
-    let extensionIcon = manifest.icons
+    const manifest = browser.runtime.getManifest();
+    const extensionIcon = manifest.icons
       ? browser.runtime.getURL(manifest.icons[16])
       : "chrome://messenger/content/extension.svg";
 
@@ -218,7 +236,7 @@ add_task(async function test_add_update_remove() {
     browser.test.log("addButton(): With empty properties.");
     await browser.test.assertRejects(
       browser.spacesToolbar.addButton("button_1", {}),
-      /Failed to add button to the spaces toolbar: Invalid url./,
+      /Failed to add button to the spaces toolbar: Missing URL/,
       "addButton() without a url should throw."
     );
 
@@ -227,7 +245,7 @@ add_task(async function test_add_update_remove() {
       browser.spacesToolbar.addButton("button_1", {
         url: "invalid://url",
       }),
-      /Failed to add button to the spaces toolbar: Invalid url./,
+      `Failed to add button to the spaces toolbar: Invalid URL: invalid://url`,
       "addButton() with an invalid url should throw."
     );
 
@@ -235,7 +253,7 @@ add_task(async function test_add_update_remove() {
     await browser.spacesToolbar.addButton("button_1", {
       url: "https://test.invalid",
     });
-    let expected_button_1 = {
+    const expected_button_1 = {
       id: "button_1",
       title: "Generated extension",
       url: "https://test.invalid",
@@ -262,7 +280,7 @@ add_task(async function test_add_update_remove() {
       badgeText: "12",
       badgeBackgroundColor: [50, 100, 150, 255],
     });
-    let expected_button_2 = {
+    const expected_button_2 = {
       id: "button_2",
       title: "Google",
       url: browser.runtime.getURL("/local/file.html"),
@@ -336,7 +354,7 @@ add_task(async function test_add_update_remove() {
       browser.spacesToolbar.updateButton("button_2", {
         url: "invalid://url",
       }),
-      /Failed to update button in the spaces toolbar: Invalid url./,
+      `Failed to update button in the spaces toolbar: Invalid URL: invalid://url`,
       "updateButton() with invalid url should throw."
     );
 
@@ -378,11 +396,11 @@ add_task(async function test_open_reload_close() {
     await window.sendMessage("checkTabs", { openSpacesUrls: [] });
 
     // Add buttons.
-    let url1 = `http://mochi.test:8888/browser/comm/mail/components/extensions/test/browser/data/content.html`;
+    const url1 = `http://mochi.test:8888/browser/comm/mail/components/extensions/test/browser/data/content.html`;
     await browser.spacesToolbar.addButton("button_1", {
       url: url1,
     });
-    let url2 = `http://mochi.test:8888/browser/comm/mail/components/extensions/test/browser/data/content_body.html`;
+    const url2 = `http://mochi.test:8888/browser/comm/mail/components/extensions/test/browser/data/content_body.html`;
     await browser.spacesToolbar.addButton("button_2", {
       url: url2,
     });
@@ -430,8 +448,8 @@ add_task(async function test_open_reload_close() {
 
 add_task(async function test_icons() {
   async function background() {
-    let manifest = browser.runtime.getManifest();
-    let extensionIcon = manifest.icons
+    const manifest = browser.runtime.getManifest();
+    const extensionIcon = manifest.icons
       ? browser.runtime.getURL(manifest.icons[16])
       : "chrome://messenger/content/extension.svg";
 
@@ -449,7 +467,7 @@ add_task(async function test_icons() {
         },
       ],
     });
-    let expected_button_1 = {
+    const expected_button_1 = {
       id: "button_1",
       title: "Google",
       url: "https://test.invalid",
@@ -466,7 +484,7 @@ add_task(async function test_icons() {
       defaultIcons: "",
     });
     expected_button_1.icons = {
-      default: `url("${browser.runtime.getURL("dark.png")}")`,
+      default: null,
       dark: `url("${browser.runtime.getURL("dark.png")}")`,
       light: `url("${browser.runtime.getURL("light.png")}")`,
     };
@@ -526,12 +544,12 @@ add_task(async function test_icons() {
     });
     // Not specifying defaultIcons but only themeIcons should always use the
     // theme icons, even for the default theme (and not the extension icon).
-    let expected_button_2 = {
+    const expected_button_2 = {
       id: "button_2",
       title: "Wikipedia",
       url: "https://test.other.invalid",
       icons: {
-        default: `url("${browser.runtime.getURL("dark2.png")}")`,
+        default: null,
         dark: `url("${browser.runtime.getURL("dark2.png")}")`,
         light: `url("${browser.runtime.getURL("light2.png")}")`,
       },
@@ -556,7 +574,7 @@ add_task(async function test_icons() {
       url: "https://test.more.invalid",
       defaultIcons: "default.png",
     });
-    let expected_button_3 = {
+    const expected_button_3 = {
       id: "button_3",
       title: "Bing",
       url: "https://test.more.invalid",
@@ -584,7 +602,7 @@ add_task(async function test_icons() {
       ],
     });
     expected_button_3.icons = {
-      default: `url("${browser.runtime.getURL("dark3.png")}")`,
+      default: null,
       dark: `url("${browser.runtime.getURL("dark3.png")}")`,
       light: `url("${browser.runtime.getURL("light3.png")}")`,
     };
@@ -600,7 +618,7 @@ add_task(async function test_icons() {
       title: "DuckDuckGo",
       url: "https://duckduckgo.com",
     });
-    let expected_button_4 = {
+    const expected_button_4 = {
       id: "button_4",
       title: "DuckDuckGo",
       url: "https://duckduckgo.com",
@@ -651,14 +669,14 @@ add_task(async function test_icons() {
   }
 
   // Test with and without icons defined in the manifest.
-  for (let manifestIcons of [null, { 16: "manifest16.png" }]) {
-    let dark_theme = await AddonManager.getAddonByID(
+  for (const manifestIcons of [null, { 16: "manifest16.png" }]) {
+    const dark_theme = await AddonManager.getAddonByID(
       "thunderbird-compact-dark@mozilla.org"
     );
     await dark_theme.enable();
     await test_spaceToolbar(background, "light", manifestIcons);
 
-    let light_theme = await AddonManager.getAddonByID(
+    const light_theme = await AddonManager.getAddonByID(
       "thunderbird-compact-light@mozilla.org"
     );
     await light_theme.enable();
@@ -675,19 +693,19 @@ add_task(async function test_open_programmatically() {
     await window.sendMessage("checkTabs", { openSpacesUrls: [] });
 
     // Add buttons.
-    let url1 = `http://mochi.test:8888/browser/comm/mail/components/extensions/test/browser/data/content.html`;
+    const url1 = `http://mochi.test:8888/browser/comm/mail/components/extensions/test/browser/data/content.html`;
     await browser.spacesToolbar.addButton("button_1", {
       url: url1,
     });
-    let url2 = `http://mochi.test:8888/browser/comm/mail/components/extensions/test/browser/data/content_body.html`;
+    const url2 = `http://mochi.test:8888/browser/comm/mail/components/extensions/test/browser/data/content_body.html`;
     await browser.spacesToolbar.addButton("button_2", {
       url: url2,
     });
 
     async function clickSpaceButton(buttonId, url) {
-      let loadPromise = new Promise(resolve => {
+      const loadPromise = new Promise(resolve => {
         let urlSeen = false;
-        let listener = (tabId, changeInfo) => {
+        const listener = (tabId, changeInfo) => {
           if (changeInfo.url && changeInfo.url == url) {
             urlSeen = true;
           }
@@ -698,10 +716,10 @@ add_task(async function test_open_programmatically() {
         };
         browser.tabs.onUpdated.addListener(listener);
       });
-      let tab = await browser.spacesToolbar.clickButton(buttonId);
+      const tab = await browser.spacesToolbar.clickButton(buttonId);
       await loadPromise;
 
-      let queriedTabs = await browser.tabs.query({ spaceId: tab.spaceId });
+      const queriedTabs = await browser.tabs.query({ spaceId: tab.spaceId });
       browser.test.assertEq(
         1,
         queriedTabs.length,

@@ -7,14 +7,14 @@
 
 use super::*;
 
-use foreign_types::ForeignType;
-use objc::runtime::{Object, BOOL, NO, YES};
+use objc::runtime::{BOOL, NO, YES};
 
-use std::ffi::CStr;
-use std::os::raw::{c_char, c_void};
+use std::ffi::{c_char, CStr};
 use std::ptr;
 
 /// Only available on (macos(10.12), ios(10.0)
+///
+/// See <https://developer.apple.com/documentation/metal/mtlpatchtype/>
 #[repr(u64)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum MTLPatchType {
@@ -23,12 +23,12 @@ pub enum MTLPatchType {
     Quad = 2,
 }
 
+/// See <https://developer.apple.com/documentation/metal/mtlvertexattribute/>
 pub enum MTLVertexAttribute {}
 
 foreign_obj_type! {
     type CType = MTLVertexAttribute;
     pub struct VertexAttribute;
-    pub struct VertexAttributeRef;
 }
 
 impl VertexAttributeRef {
@@ -48,45 +48,28 @@ impl VertexAttributeRef {
     }
 
     pub fn is_active(&self) -> bool {
-        unsafe {
-            match msg_send![self, isActive] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, isActive] }
     }
 
     /// Only available on (macos(10.12), ios(10.0)
     pub fn is_patch_data(&self) -> bool {
-        unsafe {
-            match msg_send![self, isPatchData] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, isPatchData] }
     }
 
     /// Only available on (macos(10.12), ios(10.0)
     pub fn is_patch_control_point_data(&self) -> bool {
-        unsafe {
-            match msg_send![self, isPatchControlPointData] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, isPatchControlPointData] }
     }
 }
 
 /// Only available on (macos(10.12), ios(10.0))
+///
+/// See <https://developer.apple.com/documentation/metal/mtlattribute/>
 pub enum MTLAttribute {}
 
 foreign_obj_type! {
     type CType = MTLAttribute;
     pub struct Attribute;
-    pub struct AttributeRef;
 }
 
 impl AttributeRef {
@@ -106,38 +89,21 @@ impl AttributeRef {
     }
 
     pub fn is_active(&self) -> bool {
-        unsafe {
-            match msg_send![self, isActive] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, isActive] }
     }
 
     /// Only available on (macos(10.12), ios(10.0))
     pub fn is_patch_data(&self) -> bool {
-        unsafe {
-            match msg_send![self, isPatchData] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, isPatchData] }
     }
 
     /// Only available on (macos(10.12), ios(10.0))
     pub fn is_patch_control_point_data(&self) -> bool {
-        unsafe {
-            match msg_send![self, isPatchControlPointData] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, isPatchControlPointData] }
     }
 }
 
+/// See <https://developer.apple.com/documentation/metal/mtlfunctiontype/>
 #[repr(u64)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum MTLFunctionType {
@@ -151,12 +117,13 @@ pub enum MTLFunctionType {
 }
 
 /// Only available on (macos(10.12), ios(10.0))
+///
+/// See <https://developer.apple.com/documentation/metal/mtlfunctionconstant/>
 pub enum MTLFunctionConstant {}
 
 foreign_obj_type! {
     type CType = MTLFunctionConstant;
     pub struct FunctionConstant;
-    pub struct FunctionConstantRef;
 }
 
 impl FunctionConstantRef {
@@ -176,18 +143,15 @@ impl FunctionConstantRef {
     }
 
     pub fn required(&self) -> bool {
-        unsafe {
-            match msg_send![self, required] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, required] }
     }
 }
 
-bitflags! {
+bitflags::bitflags! {
     /// Only available on (macos(11.0), ios(14.0))
+    ///
+    /// See <https://developer.apple.com/documentation/metal/mtlfunctionoptions/>
+    #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
     pub struct MTLFunctionOptions: NSUInteger {
         const None = 0;
         const CompileToBinary = 1 << 0;
@@ -195,12 +159,13 @@ bitflags! {
 }
 
 /// Only available on (macos(11.0), ios(14.0))
+///
+/// See <https://developer.apple.com/documentation/metal/mtlfunctiondescriptor/>
 pub enum MTLFunctionDescriptor {}
 
 foreign_obj_type! {
     type CType = MTLFunctionDescriptor;
     pub struct FunctionDescriptor;
-    pub struct FunctionDescriptorRef;
 }
 
 impl FunctionDescriptor {
@@ -259,22 +224,24 @@ impl FunctionDescriptorRef {
 }
 
 /// Only available on (macos(11.0), ios(14.0))
+///
+/// See <https://developer.apple.com/documentation/metal/mtlintersectionfunctiondescriptor/>
 pub enum MTLIntersectionFunctionDescriptor {}
 
 foreign_obj_type! {
     type CType = MTLIntersectionFunctionDescriptor;
     pub struct IntersectionFunctionDescriptor;
-    pub struct IntersectionFunctionDescriptorRef;
-    type ParentType = FunctionDescriptorRef;
+    type ParentType = FunctionDescriptor;
 }
 
 /// Only available on (macos(11.0), ios(14.0))
+///
+/// See <https://developer.apple.com/documentation/metal/mtlfunctionhandle/>
 pub enum MTLFunctionHandle {}
 
 foreign_obj_type! {
     type CType = MTLFunctionHandle;
     pub struct FunctionHandle;
-    pub struct FunctionHandleRef;
 }
 
 impl FunctionHandleRef {
@@ -295,18 +262,16 @@ impl FunctionHandleRef {
 }
 
 // TODO:
-// MTLVisibleFunctionTableDescriptor
-// MTLVisibleFunctionTable
 // MTLIntersectionFunctionSignature
 // MTLIntersectionFunctionTableDescriptor
 // MTLIntersectionFunctionTable
 
+/// See <https://developer.apple.com/documentation/metal/mtlfunction/>
 pub enum MTLFunction {}
 
 foreign_obj_type! {
     type CType = MTLFunction;
     pub struct Function;
-    pub struct FunctionRef;
 }
 
 impl FunctionRef {
@@ -378,6 +343,7 @@ impl FunctionRef {
     }
 }
 
+/// See <https://developer.apple.com/documentation/metal/mtllanguageversion/>
 #[repr(u64)]
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub enum MTLLanguageVersion {
@@ -391,14 +357,18 @@ pub enum MTLLanguageVersion {
     V2_3 = 0x20003,
     /// available on macOS 12.0+, iOS 15.0+
     V2_4 = 0x20004,
+    /// available on macOS 13.0+, iOS 16.0+
+    V3_0 = 0x30000,
+    /// available on macOS 14.0+, iOS 17.0+
+    V3_1 = 0x30001,
 }
 
+/// See <https://developer.apple.com/documentation/metal/mtlfunctionconstantvalues/>
 pub enum MTLFunctionConstantValues {}
 
 foreign_obj_type! {
     type CType = MTLFunctionConstantValues;
     pub struct FunctionConstantValues;
-    pub struct FunctionConstantValuesRef;
 }
 
 impl FunctionConstantValues {
@@ -438,6 +408,8 @@ impl FunctionConstantValuesRef {
 }
 
 /// Only available on (macos(11.0), ios(14.0))
+///
+/// See <https://developer.apple.com/documentation/metal/mtllibrarytype/>
 #[repr(u64)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum MTLLibraryType {
@@ -445,12 +417,12 @@ pub enum MTLLibraryType {
     Dynamic = 1,
 }
 
+/// See <https://developer.apple.com/documentation/metal/mtlcompileoptions/>
 pub enum MTLCompileOptions {}
 
 foreign_obj_type! {
     type CType = MTLCompileOptions;
     pub struct CompileOptions;
-    pub struct CompileOptionsRef;
 }
 
 impl CompileOptions {
@@ -472,13 +444,7 @@ impl CompileOptionsRef {
     }
 
     pub fn is_fast_math_enabled(&self) -> bool {
-        unsafe {
-            match msg_send![self, fastMathEnabled] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, fastMathEnabled] }
     }
 
     pub fn set_fast_math_enabled(&self, enabled: bool) {
@@ -528,13 +494,12 @@ impl CompileOptionsRef {
         unsafe {
             let libraries: *mut Object = msg_send![self, libraries];
             let count: NSUInteger = msg_send![libraries, count];
-            let ret = (0..count)
+            (0..count)
                 .map(|i| {
                     let lib = msg_send![libraries, objectAtIndex: i];
                     DynamicLibrary::from_ptr(lib)
                 })
-                .collect();
-            ret
+                .collect()
         }
     }
 
@@ -562,13 +527,7 @@ impl CompileOptionsRef {
 
     /// Only available on (macos(11.0), macCatalyst(14.0), ios(13.0))
     pub fn preserve_invariance(&self) -> bool {
-        unsafe {
-            match msg_send![self, preserveInvariance] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, preserveInvariance] }
     }
 
     /// Only available on (macos(11.0), macCatalyst(14.0), ios(13.0))
@@ -577,6 +536,7 @@ impl CompileOptionsRef {
     }
 }
 
+/// See <https://developer.apple.com/documentation/metal/mtllibraryerror/>
 #[repr(u64)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum MTLLibraryError {
@@ -590,12 +550,12 @@ pub enum MTLLibraryError {
     FileNotFound = 6,
 }
 
+/// See <https://developer.apple.com/documentation/metal/mtllibrary/>
 pub enum MTLLibrary {}
 
 foreign_obj_type! {
     type CType = MTLLibrary;
     pub struct Library;
-    pub struct LibraryRef;
 }
 
 impl LibraryRef {
@@ -649,14 +609,12 @@ impl LibraryRef {
         unsafe {
             let names: *mut Object = msg_send![self, functionNames];
             let count: NSUInteger = msg_send![names, count];
-            let ret = (0..count)
+            (0..count)
                 .map(|i| {
                     let name = msg_send![names, objectAtIndex: i];
                     nsstring_as_str(name).to_string()
                 })
-                .collect();
-            let () = msg_send![names, release];
-            ret
+                .collect()
         }
     }
 
@@ -719,6 +677,8 @@ impl LibraryRef {
 }
 
 /// Only available on (macos(11.0), ios(14.0))
+///
+/// See <https://developer.apple.com/documentation/metal/mtldynamiclibraryerror/>
 #[repr(u64)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum MTLDynamicLibraryError {
@@ -730,12 +690,12 @@ pub enum MTLDynamicLibraryError {
     Unsupported = 5,
 }
 
+/// See <https://developer.apple.com/documentation/metal/mtldynamiclibrary/>
 pub enum MTLDynamicLibrary {}
 
 foreign_obj_type! {
     type CType = MTLDynamicLibrary;
     pub struct DynamicLibrary;
-    pub struct DynamicLibraryRef;
 }
 
 impl DynamicLibraryRef {
@@ -765,34 +725,18 @@ impl DynamicLibraryRef {
     }
 
     pub fn serialize_to_url(&self, url: &URLRef) -> Result<bool, String> {
-        unsafe {
-            let mut err: *mut Object = ptr::null_mut();
-            let result: BOOL = msg_send![self, serializeToURL:url
-                                                        error:&mut err];
-            if !err.is_null() {
-                // FIXME: copy pasta
-                let desc: *mut Object = msg_send![err, localizedDescription];
-                let c_msg: *const c_char = msg_send![desc, UTF8String];
-                let message = CStr::from_ptr(c_msg).to_string_lossy().into_owned();
-                Err(message)
-            } else {
-                match result {
-                    YES => Ok(true),
-                    NO => Ok(false),
-                    _ => unreachable!(),
-                }
-            }
-        }
+        unsafe { msg_send_bool_error_check![self, serializeToURL: url] }
     }
 }
 
 /// macOS 11.0+ iOS 14.0+
+///
+/// See <https://developer.apple.com/documentation/metal/mtlbinaryarchivedescriptor/>
 pub enum MTLBinaryArchiveDescriptor {}
 
 foreign_obj_type! {
     type CType = MTLBinaryArchiveDescriptor;
     pub struct BinaryArchiveDescriptor;
-    pub struct BinaryArchiveDescriptorRef;
 }
 
 impl BinaryArchiveDescriptor {
@@ -814,12 +758,13 @@ impl BinaryArchiveDescriptorRef {
 }
 
 /// macOS 11.0+ iOS 14.0+
+///
+/// See <https://developer.apple.com/documentation/metal/mtlbinaryarchive/>
 pub enum MTLBinaryArchive {}
 
 foreign_obj_type! {
     type CType = MTLBinaryArchive;
     pub struct BinaryArchive;
-    pub struct BinaryArchiveRef;
 }
 
 impl BinaryArchiveRef {
@@ -846,22 +791,7 @@ impl BinaryArchiveRef {
         descriptor: &ComputePipelineDescriptorRef,
     ) -> Result<bool, String> {
         unsafe {
-            let mut err: *mut Object = ptr::null_mut();
-            let result: BOOL = msg_send![self, addComputePipelineFunctionsWithDescriptor:descriptor
-                                                                        error:&mut err];
-            if !err.is_null() {
-                // FIXME: copy pasta
-                let desc: *mut Object = msg_send![err, localizedDescription];
-                let c_msg: *const c_char = msg_send![desc, UTF8String];
-                let message = CStr::from_ptr(c_msg).to_string_lossy().into_owned();
-                Err(message)
-            } else {
-                match result {
-                    YES => Ok(true),
-                    NO => Ok(false),
-                    _ => unreachable!(),
-                }
-            }
+            msg_send_bool_error_check![self, addComputePipelineFunctionsWithDescriptor: descriptor]
         }
     }
 
@@ -870,22 +800,7 @@ impl BinaryArchiveRef {
         descriptor: &RenderPipelineDescriptorRef,
     ) -> Result<bool, String> {
         unsafe {
-            let mut err: *mut Object = ptr::null_mut();
-            let result: BOOL = msg_send![self, addRenderPipelineFunctionsWithDescriptor:descriptor
-                                                                        error:&mut err];
-            if !err.is_null() {
-                // FIXME: copy pasta
-                let desc: *mut Object = msg_send![err, localizedDescription];
-                let c_msg: *const c_char = msg_send![desc, UTF8String];
-                let message = CStr::from_ptr(c_msg).to_string_lossy().into_owned();
-                Err(message)
-            } else {
-                match result {
-                    YES => Ok(true),
-                    NO => Ok(false),
-                    _ => unreachable!(),
-                }
-            }
+            msg_send_bool_error_check![self, addRenderPipelineFunctionsWithDescriptor: descriptor]
         }
     }
 
@@ -908,6 +823,7 @@ impl BinaryArchiveRef {
                 match result {
                     YES => Ok(true),
                     NO => Ok(false),
+                    #[cfg(not(target_arch = "aarch64"))]
                     _ => unreachable!(),
                 }
             }
@@ -916,12 +832,13 @@ impl BinaryArchiveRef {
 }
 
 /// macOS 11.0+ iOS 14.0+
+///
+/// See <https://developer.apple.com/documentation/metal/mtllinkedfunctions/>
 pub enum MTLLinkedFunctions {}
 
 foreign_obj_type! {
     type CType = MTLLinkedFunctions;
     pub struct LinkedFunctions;
-    pub struct LinkedFunctionsRef;
 }
 
 impl LinkedFunctions {
@@ -939,13 +856,12 @@ impl LinkedFunctionsRef {
         unsafe {
             let functions: *mut Object = msg_send![self, functions];
             let count: NSUInteger = msg_send![functions, count];
-            let ret = (0..count)
+            (0..count)
                 .map(|i| {
                     let f = msg_send![functions, objectAtIndex: i];
                     Function::from_ptr(f)
                 })
-                .collect();
-            ret
+                .collect()
         }
     }
 
@@ -960,13 +876,12 @@ impl LinkedFunctionsRef {
         unsafe {
             let functions: *mut Object = msg_send![self, binaryFunctions];
             let count: NSUInteger = msg_send![functions, count];
-            let ret = (0..count)
+            (0..count)
                 .map(|i| {
                     let f = msg_send![functions, objectAtIndex: i];
                     Function::from_ptr(f)
                 })
-                .collect();
-            ret
+                .collect()
         }
     }
 

@@ -9,7 +9,6 @@ import tempfile
 import time
 import uuid
 from abc import ABCMeta, abstractmethod, abstractproperty
-from io import open
 from shutil import copytree
 
 import mozfile
@@ -21,6 +20,8 @@ if six.PY3:
     def unicode(input):
         return input
 
+
+import builtins
 
 from .addons import AddonManager
 from .permissions import Permissions
@@ -38,7 +39,7 @@ __all__ = [
 
 
 @six.add_metaclass(ABCMeta)
-class BaseProfile(object):
+class BaseProfile:
     def __init__(self, profile=None, addons=None, preferences=None, restore=True):
         """Create a new Profile.
 
@@ -196,8 +197,8 @@ class Profile(BaseProfile):
         locations=None,
         proxy=None,
         restore=True,
-        whitelistpaths=None,
-        **kwargs
+        allowlistpaths=None,
+        **kwargs,
     ):
         """
         :param profile: Path to the profile
@@ -206,7 +207,7 @@ class Profile(BaseProfile):
         :param locations: ServerLocations object
         :param proxy: Setup a proxy
         :param restore: Flag for removing all custom settings during cleanup
-        :param whitelistpaths: List of paths to pass to Firefox to allow read
+        :param allowlistpaths: List of paths to pass to Firefox to allow read
             access to from the content process sandbox.
         """
         super(Profile, self).__init__(
@@ -214,12 +215,12 @@ class Profile(BaseProfile):
             addons=addons,
             preferences=preferences,
             restore=restore,
-            **kwargs
+            **kwargs,
         )
 
         self._locations = locations
         self._proxy = proxy
-        self._whitelistpaths = whitelistpaths
+        self._allowlistpaths = allowlistpaths
 
         # Initialize all class members
         self._reset()
@@ -249,30 +250,30 @@ class Profile(BaseProfile):
         self.permissions = Permissions(self._locations)
         prefs_js, user_js = self.permissions.network_prefs(self._proxy)
 
-        if self._whitelistpaths:
+        if self._allowlistpaths:
             # On macOS we don't want to support a generalized read whitelist,
             # and the macOS sandbox policy language doesn't have support for
             # lists, so we handle these specially.
             if platform.system() == "Darwin":
-                assert len(self._whitelistpaths) <= 2
-                if len(self._whitelistpaths) == 2:
+                assert len(self._allowlistpaths) <= 2
+                if len(self._allowlistpaths) == 2:
                     prefs_js.append(
                         (
                             "security.sandbox.content.mac.testing_read_path2",
-                            self._whitelistpaths[1],
+                            self._allowlistpaths[1],
                         )
                     )
                 prefs_js.append(
                     (
                         "security.sandbox.content.mac.testing_read_path1",
-                        self._whitelistpaths[0],
+                        self._allowlistpaths[0],
                     )
                 )
             else:
                 prefs_js.append(
                     (
                         "security.sandbox.content.read_path_whitelist",
-                        ",".join(self._whitelistpaths),
+                        ",".join(self._allowlistpaths),
                     )
                 )
         self.set_preferences(prefs_js, "prefs.js")
@@ -308,7 +309,7 @@ class Profile(BaseProfile):
     def set_preferences(self, preferences, filename="user.js"):
         """Adds preferences dict to profile preferences"""
         prefs_file = os.path.join(self.profile, filename)
-        with open(prefs_file, "a") as f:
+        with builtins.open(prefs_file, "a") as f:
             if not preferences:
                 return
 
@@ -350,7 +351,7 @@ class Profile(BaseProfile):
         """
 
         path = os.path.join(self.profile, filename)
-        with open(path, "r", encoding="utf-8") as f:
+        with builtins.open(path, encoding="utf-8") as f:
             lines = f.read().splitlines()
 
         def last_index(_list, value):
@@ -388,7 +389,7 @@ class Profile(BaseProfile):
 
         # write the prefs
         cleaned_prefs = "\n".join(lines[:s] + lines[e + 1 :])
-        with open(path, "w") as f:
+        with builtins.open(path, "w") as f:
             f.write(cleaned_prefs)
         return True
 
@@ -410,7 +411,6 @@ class Profile(BaseProfile):
         for prefs_file in ("user.js", "prefs.js"):
             path = os.path.join(self.profile, prefs_file)
             if os.path.exists(path):
-
                 # prefs that get their own section
                 # This is currently only 'network.proxy.autoconfig_url'
                 # but could be expanded to include others
@@ -550,11 +550,11 @@ class ChromiumProfile(BaseProfile):
 
         prefs = {}
         if os.path.isfile(pref_file):
-            with open(pref_file, "r") as fh:
+            with builtins.open(pref_file) as fh:
                 prefs.update(json.load(fh))
 
         prefs.update(preferences)
-        with open(pref_file, "w") as fh:
+        with builtins.open(pref_file, "w") as fh:
             prefstr = json.dumps(prefs)
             prefstr % values  # interpolate prefs with values
             if six.PY2:
@@ -588,8 +588,6 @@ def create_profile(app, **kwargs):
     cls = profile_class.get(app)
 
     if not cls:
-        raise NotImplementedError(
-            "Profiles not supported for application '{}'".format(app)
-        )
+        raise NotImplementedError(f"Profiles not supported for application '{app}'")
 
     return cls(**kwargs)

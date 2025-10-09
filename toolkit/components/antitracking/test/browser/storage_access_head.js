@@ -91,6 +91,39 @@ function getExpectPopupAndClick(accept) {
   };
 }
 
+// Click popup after a delay of {timeout} ms
+function getExpectPopupAndClickAfterDelay(accept, timeout) {
+  return function () {
+    let shownPromise = BrowserTestUtils.waitForEvent(
+      PopupNotifications.panel,
+      "popupshown"
+    );
+    shownPromise
+      .then(
+        setTimeout(async _ => {
+          // This occurs when the promise resolves on the test finishing
+          let popupNotifications = PopupNotifications.panel.childNodes;
+          if (!popupNotifications.length) {
+            ok(false, "Prompt did not show up");
+          } else if (accept == "accept") {
+            ok(true, "Prompt shows up, clicking accept.");
+            await clickMainAction();
+          } else if (accept == "reject") {
+            ok(true, "Prompt shows up, clicking reject.");
+            await clickSecondaryAction();
+          } else {
+            ok(false, "Unknown accept value for test: " + accept);
+            info("Clicking accept so that the test can finish.");
+            await clickMainAction();
+          }
+        }, timeout)
+      )
+      .catch(() => {
+        ok(false, "Prompt did not show up");
+      });
+  };
+}
+
 // This function spawns an asynchronous task that fails the test if a popup
 // appears. If that never happens, the catch case is executed on the test
 // cleanup.
@@ -119,22 +152,15 @@ function expectNoPopup() {
 }
 
 async function requestStorageAccessAndExpectSuccess() {
-  const aps = SpecialPowers.Services.prefs.getBoolPref(
-    "privacy.partition.always_partition_third_party_non_cookie_storage"
-  );
-
-  // When always partitioning storage, we do not clear non-cookie storage
-  // after a requestStorageAccess is accepted by the user. So here we test
-  // that indexedDB is cleared when the pref is off, but not when it is on.
+  // We do not clear non-cookie storage after a requestStorageAccess
+  // is accepted by the user because we don't unpartition Storage.
+  // So here we test that indexedDB is not cleared.
   await new Promise((resolve, reject) => {
     const db = window.indexedDB.open("rSATest", 1);
     db.onupgradeneeded = resolve;
     db.success = resolve;
     db.onerror = reject;
   });
-
-  const hadAccessAlready = await document.hasStorageAccess();
-  const shouldClearIDB = !aps && !hadAccessAlready;
 
   SpecialPowers.wrap(document).notifyUserGestureActivation();
   let p = document.requestStorageAccess();
@@ -149,12 +175,12 @@ async function requestStorageAccessAndExpectSuccess() {
     const req = window.indexedDB.open("rSATest", 1);
     req.onerror = reject;
     req.onupgradeneeded = () => {
-      ok(shouldClearIDB, "iDB was cleared");
+      ok(false, "iDB was cleared");
       req.onsuccess = undefined;
       resolve();
     };
     req.onsuccess = () => {
-      ok(!shouldClearIDB, "iDB was not cleared");
+      ok(true, "iDB was not cleared");
       resolve();
     };
   });
@@ -169,9 +195,9 @@ async function requestStorageAccessAndExpectSuccess() {
 }
 
 async function requestStorageAccessAndExpectFailure() {
-  // When always partitioning storage, we do not clear non-cookie storage
-  // after a requestStorageAccess is accepted by the user. So here we test
-  // that indexedDB is cleared when the pref is off, but not when it is on.
+  // We do not clear non-cookie storage after a requestStorageAccess
+  // is accepted by the user because we don't unpartition Storage.
+  // So here we test that indexedDB is not cleared.
   await new Promise((resolve, reject) => {
     const db = window.indexedDB.open("rSATest", 1);
     db.onupgradeneeded = resolve;
@@ -213,14 +239,14 @@ async function requestStorageAccessAndExpectFailure() {
 
 async function cleanUpData() {
   await new Promise(resolve => {
-    Services.clearData.deleteData(Ci.nsIClearDataService.CLEAR_ALL, value =>
+    Services.clearData.deleteData(Ci.nsIClearDataService.CLEAR_ALL, () =>
       resolve()
     );
   });
   ok(true, "Deleted all data.");
 }
 
-async function setPreferences(alwaysPartitionStorage = false) {
+async function setPreferences() {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["dom.storage_access.auto_grants", true],
@@ -238,7 +264,7 @@ async function setPreferences(alwaysPartitionStorage = false) {
       ],
       [
         "privacy.partition.always_partition_third_party_non_cookie_storage",
-        alwaysPartitionStorage,
+        true,
       ],
       ["privacy.trackingprotection.enabled", false],
       ["privacy.trackingprotection.pbmode.enabled", false],

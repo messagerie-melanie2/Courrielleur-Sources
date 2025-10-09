@@ -19,7 +19,7 @@ class ValgrindHandler(BaseHandler):
             self.inner(tmp)
 
 
-class ValgrindFilter(object):
+class ValgrindFilter:
     """
     A class for handling Valgrind output.
 
@@ -120,14 +120,14 @@ class ValgrindFilter(object):
                 # fields from the incoming message, since there's nowhere
                 # else to get them from.
                 output_message = {  # Mandatory fields
-                    u"action": "valgrind_error",
-                    u"time": msg["time"],
-                    u"thread": msg["thread"],
-                    u"pid": msg["pid"],
-                    u"source": msg["source"],
+                    "action": "valgrind_error",
+                    "time": msg["time"],
+                    "thread": msg["thread"],
+                    "pid": msg["pid"],
+                    "source": msg["source"],
                     # valgrind_error specific fields
-                    u"primary": self.curr_failure_msg,
-                    u"secondary": self.buffered_lines,
+                    "primary": self.curr_failure_msg,
+                    "secondary": self.buffered_lines,
                 }
                 self.curr_failure_msg = ""
                 self.buffered_lines = []

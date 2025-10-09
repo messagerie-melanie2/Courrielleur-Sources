@@ -14,22 +14,26 @@
 
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "call/rtp_demuxer.h"
 #include "media/base/fake_rtp.h"
-#include "p2p/base/dtls_transport_internal.h"
-#include "p2p/base/fake_dtls_transport.h"
-#include "p2p/base/fake_ice_transport.h"
 #include "p2p/base/p2p_constants.h"
+#include "p2p/dtls/dtls_transport_internal.h"
+#include "p2p/dtls/fake_dtls_transport.h"
+#include "p2p/test/fake_ice_transport.h"
 #include "pc/rtp_transport.h"
+#include "pc/srtp_transport.h"
 #include "pc/test/rtp_transport_test_util.h"
 #include "rtc_base/async_packet_socket.h"
+#include "rtc_base/buffer.h"
 #include "rtc_base/byte_order.h"
 #include "rtc_base/containers/flat_set.h"
 #include "rtc_base/copy_on_write_buffer.h"
 #include "rtc_base/rtc_certificate.h"
 #include "rtc_base/ssl_identity.h"
 #include "rtc_base/third_party/sigslot/sigslot.h"
+#include "rtc_base/thread.h"
 #include "test/gtest.h"
 #include "test/scoped_key_value_config.h"
 
@@ -77,17 +81,23 @@ class DtlsSrtpTransportTest : public ::testing::Test,
     dtls_srtp_transport2_ =
         MakeDtlsSrtpTransport(rtp_dtls2, rtcp_dtls2, rtcp_mux_enabled);
 
-    dtls_srtp_transport1_->SignalRtcpPacketReceived.connect(
+    dtls_srtp_transport1_->SubscribeRtcpPacketReceived(
         &transport_observer1_,
-        &webrtc::TransportObserver::OnRtcpPacketReceived);
-    dtls_srtp_transport1_->SignalReadyToSend.connect(
-        &transport_observer1_, &webrtc::TransportObserver::OnReadyToSend);
+        [this](rtc::CopyOnWriteBuffer* buffer, int64_t packet_time_ms) {
+          transport_observer1_.OnRtcpPacketReceived(buffer, packet_time_ms);
+        });
+    dtls_srtp_transport1_->SubscribeReadyToSend(
+        &transport_observer1_,
+        [this](bool ready) { transport_observer1_.OnReadyToSend(ready); });
 
-    dtls_srtp_transport2_->SignalRtcpPacketReceived.connect(
+    dtls_srtp_transport2_->SubscribeRtcpPacketReceived(
         &transport_observer2_,
-        &webrtc::TransportObserver::OnRtcpPacketReceived);
-    dtls_srtp_transport2_->SignalReadyToSend.connect(
-        &transport_observer2_, &webrtc::TransportObserver::OnReadyToSend);
+        [this](rtc::CopyOnWriteBuffer* buffer, int64_t packet_time_ms) {
+          transport_observer2_.OnRtcpPacketReceived(buffer, packet_time_ms);
+        });
+    dtls_srtp_transport2_->SubscribeReadyToSend(
+        &transport_observer2_,
+        [this](bool ready) { transport_observer2_.OnReadyToSend(ready); });
     webrtc::RtpDemuxerCriteria demuxer_criteria;
     // 0x00 is the payload type used in kPcmuFrame.
     demuxer_criteria.payload_types() = {0x00};

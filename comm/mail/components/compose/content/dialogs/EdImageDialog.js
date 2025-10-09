@@ -12,8 +12,8 @@
  We trim all spaces at the beginning and end of user's alt text
 */
 
-/* import-globals-from ../editorUtilities.js */
 /* import-globals-from EdDialogCommon.js */
+/* global SetAttachCheckbox */ // From EdImageLinkLoader.js
 
 var gInsertNewImage = true;
 var gDoAltTextError = false;
@@ -81,9 +81,6 @@ function InitImage() {
     // Shorten data URIs for display.
     shortenImageData(src, gDialog.srcInput);
   }
-
-  // Set "Relativize" checkbox according to current URL state
-  SetRelativeCheckbox();
 
   // Force loading of image from its source and show preview image
   LoadPreviewImage();
@@ -201,7 +198,7 @@ function GetImageMap() {
   var usemap = globalElement.getAttribute("usemap");
   if (usemap) {
     gCanRemoveImageMap = true;
-    let mapname = usemap.substr(1);
+    const mapname = usemap.substr(1);
     try {
       return GetCurrentEditor().document.querySelector(
         '[name="' + mapname + '"]'
@@ -223,14 +220,9 @@ function chooseFile() {
   SetTextboxFocus(gDialog.srcInput);
 
   GetLocalFileURL("img").then(fileURL => {
-    // Always try to relativize local file URLs
-    if (gHaveDocumentUrl) {
-      fileURL = MakeRelativeUrl(fileURL);
-    }
-
     gDialog.srcInput.value = fileURL;
 
-    SetRelativeCheckbox();
+    SetAttachCheckbox();
     doOverallEnabling();
     LoadPreviewImage();
   });
@@ -287,13 +279,10 @@ function LoadPreviewImage() {
     //  (if we don't do this, loads after the first will always use image cache
     //   and we won't see image edit changes or be able to get actual width and height)
 
-    // We must have an absolute URL to preview it or remove it from the cache
-    imageSrc = MakeAbsoluteUrl(imageSrc);
-
     if (GetScheme(imageSrc)) {
-      let uri = Services.io.newURI(imageSrc);
+      const uri = Services.io.newURI(imageSrc);
       if (uri) {
-        let imgCache = Cc["@mozilla.org/image/cache;1"].getService(
+        const imgCache = Cc["@mozilla.org/image/cache;1"].getService(
           Ci.imgICache
         );
 
@@ -322,7 +311,7 @@ function ChangeImageSrc() {
 
   gTimerID = setTimeout(LoadPreviewImage, 800);
 
-  SetRelativeCheckbox();
+  SetAttachCheckbox();
   doOverallEnabling();
 }
 
@@ -482,7 +471,7 @@ function ValidateImage() {
     globalElement.setAttribute("src", src);
   }
 
-  let title = gDialog.titleInput.value.trim();
+  const title = gDialog.titleInput.value.trim();
   if (title) {
     globalElement.setAttribute("title", title);
   } else {

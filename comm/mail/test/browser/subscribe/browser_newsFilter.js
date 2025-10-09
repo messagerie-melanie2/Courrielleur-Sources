@@ -6,21 +6,21 @@
 
 "use strict";
 
-var utils = ChromeUtils.import("resource://testing-common/mozmill/utils.jsm");
-
 var {
   NNTP_PORT,
   setupLocalServer,
   setupNNTPDaemon,
   shutdownNNTPServer,
   startupNNTPServer,
-} = ChromeUtils.import("resource://testing-common/mozmill/NNTPHelpers.jsm");
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/NNTPHelpers.sys.mjs"
+);
 var {
   check_newsgroup_displayed,
   enter_text_in_search_box,
   open_subscribe_window_from_context_menu,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/SubscribeWindowHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/SubscribeWindowHelpers.sys.mjs"
 );
 
 /**
@@ -31,8 +31,8 @@ var {
 add_task(async function test_subscribe_newsgroup_filter() {
   var daemon = setupNNTPDaemon();
   var remoteServer = startupNNTPServer(daemon, NNTP_PORT);
-  let server = setupLocalServer(NNTP_PORT);
-  let rootFolder = server.rootFolder;
+  const server = setupLocalServer(NNTP_PORT);
+  const rootFolder = server.rootFolder;
   await new Promise(r => setTimeout(r));
   await open_subscribe_window_from_context_menu(rootFolder, filter_test_helper);
   shutdownNNTPServer(remoteServer);
@@ -48,19 +48,19 @@ add_task(async function test_subscribe_newsgroup_filter() {
 /**
  * Helper function (callback), needed because the subscribe window is modal.
  *
- * @param swc Controller for the subscribe window
+ * @param {Window} swc - The subscribe window.
  */
-function filter_test_helper(swc) {
+async function filter_test_helper(swc) {
   enter_text_in_search_box(swc, "subscribe empty");
-  utils.waitFor(
+  await TestUtils.waitForCondition(
     () => check_newsgroup_displayed(swc, "test.subscribe.empty"),
     "test.subscribe.empty not in the list"
   );
-  utils.waitFor(
+  await TestUtils.waitForCondition(
     () => !check_newsgroup_displayed(swc, "test.empty"),
     "test.empty is in the list, but should not be"
   );
-  utils.waitFor(
+  await TestUtils.waitForCondition(
     () => !check_newsgroup_displayed(swc, "test.subscribe.simple"),
     "test.subscribe.simple is in the list, but should not be"
   );

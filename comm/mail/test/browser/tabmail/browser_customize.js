@@ -2,26 +2,24 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/*
+/**
  * Tests customization features of the tabs toolbar.
  */
 
 "use strict";
 
-const { close_popup, mc, wait_for_popup_to_open } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+const { close_popup } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
-const { drag_n_drop_element } = ChromeUtils.import(
-  "resource://testing-common/mozmill/MouseEventHelpers.jsm"
+const { click_through_appmenu } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/WindowHelpers.sys.mjs"
 );
 
-const { click_through_appmenu } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
-);
-
-const { wait_for_element_visible, wait_for_element_invisible } =
-  ChromeUtils.import("resource://testing-common/mozmill/DOMHelpers.jsm");
+const { promise_element_visible, promise_element_invisible } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/DOMHelpers.sys.mjs"
+  );
 
 add_setup(function () {
   Services.prefs.setBoolPref("mail.tabs.autoHide", false);
@@ -38,7 +36,7 @@ registerCleanupFunction(function () {
  */
 add_task(async function test_open_unified_by_context() {
   // First, ensure that the context menu is closed.
-  let contextPopup = mc.window.document.getElementById("toolbar-context-menu");
+  const contextPopup = document.getElementById("toolbar-context-menu");
   Assert.notEqual(
     contextPopup.state,
     "open",
@@ -47,13 +45,13 @@ add_task(async function test_open_unified_by_context() {
 
   // Right click on the tab bar.
   EventUtils.synthesizeMouseAtCenter(
-    mc.window.document.getElementById("tabmail-tabs"),
+    document.getElementById("tabmail-tabs"),
     { type: "contextmenu" },
     window
   );
 
   // Ensure that the popup opened.
-  await wait_for_popup_to_open(contextPopup);
+  await BrowserTestUtils.waitForPopupEvent(contextPopup, "shown");
   Assert.equal(contextPopup.state, "open", "Context menu was not opened!");
 
   const customizeButton = document.getElementById("CustomizeMailToolbar");
@@ -62,10 +60,7 @@ add_task(async function test_open_unified_by_context() {
 
   // Wait for hidden css attribute on unified toolbar
   // customization to be removed.
-  await wait_for_element_visible(
-    window,
-    "unifiedToolbarCustomizationContainer"
-  );
+  await promise_element_visible(window, "unifiedToolbarCustomizationContainer");
 
   // Ensure messengerWindow (HTML element) has customizingUnifiedToolbar class,
   // which means unified toolbar customization should be open.
@@ -84,12 +79,12 @@ add_task(async function test_open_unified_by_context() {
 
   // Wait for hidden css attribute on Unified Toolbar
   // customization to be added.
-  await wait_for_element_invisible(
+  await promise_element_invisible(
     window,
     "unifiedToolbarCustomizationContainer"
   );
 
-  await close_popup(mc, contextPopup);
+  await close_popup(window, contextPopup);
 });
 
 /**
@@ -98,7 +93,7 @@ add_task(async function test_open_unified_by_context() {
  */
 add_task(async function test_open_unified_by_menu() {
   // First, ensure that the menu is closed.
-  let appMenu = mc.window.document.getElementById("appMenu-popup");
+  const appMenu = document.getElementById("appMenu-popup");
   Assert.notEqual(
     appMenu.getAttribute("panelopen"),
     "true",
@@ -106,7 +101,7 @@ add_task(async function test_open_unified_by_menu() {
   );
 
   // Click through app menu to view unified toolbar.
-  click_through_appmenu(
+  await click_through_appmenu(
     [{ id: "appmenu_View" }, { id: "appmenu_Toolbars" }],
     { id: "appmenu_toolbarLayout" },
     window
@@ -114,10 +109,7 @@ add_task(async function test_open_unified_by_menu() {
 
   // Wait for hidden css attribute on unified toolbar
   // customization to be removed.
-  await wait_for_element_visible(
-    window,
-    "unifiedToolbarCustomizationContainer"
-  );
+  await promise_element_visible(window, "unifiedToolbarCustomizationContainer");
 
   // Ensure messengerWindow (HTML element) has customizingUnifiedToolbar class,
   // which means unified toolbar customization should be open.
@@ -136,10 +128,10 @@ add_task(async function test_open_unified_by_menu() {
 
   // Wait for hidden css attribute on unified toolbar
   // customization to be added.
-  await wait_for_element_invisible(
+  await promise_element_invisible(
     window,
     "unifiedToolbarCustomizationContainer"
   );
 
-  await close_popup(mc, appMenu);
+  await close_popup(window, appMenu);
 });

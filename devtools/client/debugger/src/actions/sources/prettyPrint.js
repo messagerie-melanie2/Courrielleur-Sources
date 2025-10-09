@@ -2,54 +2,61 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
-import {
-  generatedToOriginalId,
-  originalToGeneratedId,
-} from "devtools/client/shared/source-map-loader/index";
+import { generatedToOriginalId } from "devtools/client/shared/source-map-loader/index";
 
 import assert from "../../utils/assert";
 import { recordEvent } from "../../utils/telemetry";
-import { updateBreakpointsForNewPrettyPrintedSource } from "../breakpoints";
-import { createLocation } from "../../utils/location";
-
 import {
-  getPrettySourceURL,
-  isGenerated,
-  isJavaScript,
-} from "../../utils/source";
-import { isFulfilled } from "../../utils/async-value";
+  updateBreakpointPositionsForNewPrettyPrintedSource,
+  updateBreakpointsForNewPrettyPrintedSource,
+} from "../breakpoints/index";
+
+import { getPrettySourceURL, isJavaScript } from "../../utils/source";
+import { isFulfilled, fulfilled } from "../../utils/async-value";
 import { getOriginalLocation } from "../../utils/source-maps";
 import { prefs } from "../../utils/prefs";
 import {
   loadGeneratedSourceText,
   loadOriginalSourceText,
 } from "./loadSourceText";
-import { mapFrames } from "../pause";
-import { selectSpecificLocation } from "../sources";
+import { mapFrames } from "../pause/index";
+import { selectSpecificLocation } from "../sources/index";
 import { createPrettyPrintOriginalSource } from "../../client/firefox/create";
 
 import {
-  getSource,
   getFirstSourceActorForGeneratedSource,
-  getSourceByURL,
+  getSourceFromId,
   getSelectedLocation,
-  getThreadContext,
-} from "../../selectors";
+} from "../../selectors/index";
 
 import { selectSource } from "./select";
+import { memoizeableAction } from "../../utils/memoizableAction";
 
 import DevToolsUtils from "devtools/shared/DevToolsUtils";
 
+/**
+ * Replace all line breaks with standard \n line breaks for easier parsing.
+ */
 const LINE_BREAK_REGEX = /\r\n?|\n|\u2028|\u2029/g;
+function sanitizeLineBreaks(str) {
+  return str.replace(LINE_BREAK_REGEX, "\n");
+}
+
+/**
+ * Retrieve all line breaks in the provided string.
+ * Note: this assumes the line breaks were previously sanitized with
+ * `sanitizeLineBreaks` defined above.
+ */
+const SIMPLE_LINE_BREAK_REGEX = /\n/g;
 function matchAllLineBreaks(str) {
-  return Array.from(str.matchAll(LINE_BREAK_REGEX));
+  return Array.from(str.matchAll(SIMPLE_LINE_BREAK_REGEX));
 }
 
 function getPrettyOriginalSourceURL(generatedSource) {
   return getPrettySourceURL(generatedSource.url || generatedSource.id);
 }
 
-export async function prettyPrintSource(
+export async function prettyPrintSourceTextContent(
   sourceMapLoader,
   prettyPrintWorker,
   generatedSource,
@@ -126,7 +133,11 @@ async function prettyPrintHtmlFile({
 }) {
   const url = getPrettyOriginalSourceURL(generatedSource);
   const contentValue = content.value;
-  const htmlFileText = contentValue.value;
+
+  // Original source may contain unix-style & windows-style breaks.
+  // SpiderMonkey works a sanitized version of the source using only \n (unix).
+  // Sanitize before parsing the source to align with SpiderMonkey.
+  const htmlFileText = sanitizeLineBreaks(contentValue.value);
   const prettyPrintWorkerResult = { code: htmlFileText };
 
   const allLineBreaks = matchAllLineBreaks(htmlFileText);
@@ -216,9 +227,8 @@ async function prettyPrintHtmlFile({
 
   // `getSourceMap` allow us to collect the computed source map resulting of the calls
   // to `prettyPrint` with the same taskId.
-  prettyPrintWorkerResult.sourceMap = await prettyPrintWorker.getSourceMap(
-    prettyPrintTaskId
-  );
+  prettyPrintWorkerResult.sourceMap =
+    await prettyPrintWorker.getSourceMap(prettyPrintTaskId);
 
   // Sort replacement in reverse order so we can replace code in the HTML file more easily
   replacements.sort((a, b) => a.startIndex < b.startIndex);
@@ -232,22 +242,22 @@ async function prettyPrintHtmlFile({
   return prettyPrintWorkerResult;
 }
 
-function createPrettySource(cx, source) {
-  return async ({ dispatch, sourceMapLoader, getState }) => {
+function createPrettySource(source, sourceActor) {
+  return async ({ dispatch }) => {
     const url = getPrettyOriginalSourceURL(source);
     const id = generatedToOriginalId(source.id, url);
     const prettySource = createPrettyPrintOriginalSource(id, url);
 
     dispatch({
       type: "ADD_ORIGINAL_SOURCES",
-      cx,
       originalSources: [prettySource],
+      generatedSourceActor: sourceActor,
     });
     return prettySource;
   };
 }
 
-function selectPrettyLocation(cx, prettySource) {
+function selectPrettyLocation(prettySource) {
   return async thunkArgs => {
     const { dispatch, getState } = thunkArgs;
     let location = getSelectedLocation(getState());
@@ -257,19 +267,20 @@ function selectPrettyLocation(cx, prettySource) {
     if (
       location &&
       location.line >= 1 &&
-      location.sourceId == originalToGeneratedId(prettySource.id)
+      getPrettySourceURL(location.source.url) == prettySource.url
     ) {
+      // Note that it requires to have called `prettyPrintSourceTextContent` and `sourceMapLoader.setSourceMapForGeneratedSources`
+      // to be functional and so to be called after `loadOriginalSourceText` completed.
       location = await getOriginalLocation(location, thunkArgs);
 
-      return dispatch(
-        selectSpecificLocation(
-          cx,
-          createLocation({ ...location, source: prettySource })
-        )
-      );
+      // If the precise line/column correctly mapped to the pretty printed source, select that precise location.
+      // Otherwise fallback to selectSource in order to select the first line instead of the current line within the bundle.
+      if (location.source == prettySource) {
+        return dispatch(selectSpecificLocation(location));
+      }
     }
 
-    return dispatch(selectSource(cx, prettySource));
+    return dispatch(selectSource(prettySource));
   };
 }
 
@@ -277,63 +288,94 @@ function selectPrettyLocation(cx, prettySource) {
  * Toggle the pretty printing of a source's text.
  * Nothing will happen for non-javascript files.
  *
- * @param Object cx
- * @param String sourceId
- *        The source ID for the minified/generated source object.
+ * @param Object source
+ *        The source object for the minified/generated source.
  * @returns Promise
  *          A promise that resolves to the Pretty print/original source object.
  */
-export function togglePrettyPrint(cx, sourceId) {
-  return async ({ dispatch, getState }) => {
-    const source = getSource(getState(), sourceId);
-    if (!source) {
-      return {};
+export async function doPrettyPrintSource(source, thunkArgs) {
+  const { dispatch, getState } = thunkArgs;
+  recordEvent("pretty_print");
+
+  assert(
+    !source.isOriginal,
+    "Pretty-printing only allowed on generated sources"
+  );
+
+  const sourceActor = getFirstSourceActorForGeneratedSource(
+    getState(),
+    source.id
+  );
+
+  await dispatch(loadGeneratedSourceText(sourceActor));
+
+  const newPrettySource = await dispatch(
+    createPrettySource(source, sourceActor)
+  );
+
+  // Force loading the pretty source/original text.
+  // This will end up calling prettyPrintSourceTextContent() of this module, and
+  // more importantly, will populate the sourceMapLoader, which is used by selectPrettyLocation.
+  await dispatch(loadOriginalSourceText(newPrettySource));
+
+  // Update frames to the new pretty/original source (in case we were paused).
+  // Map the frames before selecting the pretty source in order to avoid
+  // having bundle/generated source for frames (we may compute scope things for the bundle).
+  await dispatch(mapFrames(sourceActor.thread));
+
+  // The original locations of any stored breakpoint positions need to be updated
+  // to point to the new pretty source.
+  await dispatch(updateBreakpointPositionsForNewPrettyPrintedSource(source));
+
+  // Update breakpoints locations to the new pretty/original source
+  await dispatch(updateBreakpointsForNewPrettyPrintedSource(source));
+
+  // A mutated flag, only meant to be used within this module
+  // to know when we are done loading the pretty printed source.
+  // This is important for the callsite in `selectLocation`
+  // in order to ensure all action are completed and especially `mapFrames`.
+  // Otherwise we may use generated frames there.
+  newPrettySource._loaded = true;
+
+  return newPrettySource;
+}
+
+// Use memoization in order to allow calling this actions many times
+// while ensuring creating the pretty source only once.
+export const prettyPrintSource = memoizeableAction("prettyPrintSource", {
+  getValue: (source, { getState }) => {
+    // Lookup for an already existing pretty source
+    const url = getPrettyOriginalSourceURL(source);
+    const id = generatedToOriginalId(source.id, url);
+    const s = getSourceFromId(getState(), id);
+    // Avoid returning it if doTogglePrettyPrint isn't completed.
+    if (!s || !s._loaded) {
+      return undefined;
     }
+    return fulfilled(s);
+  },
+  createKey: source => source.id,
+  action: (source, thunkArgs) => doPrettyPrintSource(source, thunkArgs),
+});
 
-    if (!source.isPrettyPrinted) {
-      recordEvent("pretty_print");
-    }
+export function prettyPrintAndSelectSource(source) {
+  return async ({ dispatch }) => {
+    const prettySource = await dispatch(prettyPrintSource(source));
 
-    assert(
-      isGenerated(source),
-      "Pretty-printing only allowed on generated sources"
-    );
-
-    const sourceActor = getFirstSourceActorForGeneratedSource(
-      getState(),
-      source.id
-    );
-
-    await dispatch(loadGeneratedSourceText({ cx, sourceActor }));
-
-    const url = getPrettySourceURL(source.url);
-    const prettySource = getSourceByURL(getState(), url);
-
-    if (prettySource) {
-      return dispatch(selectPrettyLocation(cx, prettySource));
-    }
-
-    const newPrettySource = await dispatch(createPrettySource(cx, source));
-
-    // Force loading the pretty source/original text.
-    // This will end up calling prettyPrintSource() of this module, and
-    // more importantly, will populate the sourceMapLoader, which is used by selectPrettyLocation.
-    await dispatch(loadOriginalSourceText({ cx, source: newPrettySource }));
     // Select the pretty/original source based on the location we may
     // have had against the minified/generated source.
     // This uses source map to map locations.
     // Also note that selecting a location force many things:
     // * opening tabs
-    // * fetching symbols/inline scope
+    // * fetching inline scope
     // * fetching breakable lines
-    await dispatch(selectPrettyLocation(cx, newPrettySource));
+    //
+    // This isn't part of prettyPrintSource/doPrettyPrintSource
+    // because if the source is already pretty printed, the memoization
+    // would avoid trying to update to the mapped location based
+    // on current location on the minified source.
+    await dispatch(selectPrettyLocation(prettySource));
 
-    const threadcx = getThreadContext(getState());
-    // Update frames to the new pretty/original source (in case we were paused)
-    await dispatch(mapFrames(threadcx));
-    // Update breakpoints locations to the new pretty/original source
-    await dispatch(updateBreakpointsForNewPrettyPrintedSource(cx, sourceId));
-
-    return newPrettySource;
+    return prettySource;
   };
 }

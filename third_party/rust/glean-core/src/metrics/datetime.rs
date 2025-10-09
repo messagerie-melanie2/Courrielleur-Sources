@@ -16,6 +16,7 @@ use crate::CommonMetricData;
 use crate::Glean;
 
 use chrono::{DateTime, Datelike, FixedOffset, TimeZone, Timelike};
+use malloc_size_of_derive::MallocSizeOf;
 
 /// A datetime type.
 ///
@@ -23,7 +24,7 @@ use chrono::{DateTime, Datelike, FixedOffset, TimeZone, Timelike};
 pub type ChronoDatetime = DateTime<FixedOffset>;
 
 /// Representation of a date, time and timezone.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, MallocSizeOf)]
 pub struct Datetime {
     /// The year, e.g. 2021.
     pub year: i32,
@@ -207,19 +208,12 @@ impl DatetimeMetric {
                 time.second(),
                 time.nanosecond(),
             ),
-            TimeUnit::Microsecond => {
-                eprintln!(
-                    "microseconds. nanoseconds={}, nanoseconds/1000={}",
-                    time.nanosecond(),
-                    time.nanosecond() / 1000
-                );
-                d.date().and_hms_nano_opt(
-                    time.hour(),
-                    time.minute(),
-                    time.second(),
-                    time.nanosecond() / 1000,
-                )
-            }
+            TimeUnit::Microsecond => d.date().and_hms_nano_opt(
+                time.hour(),
+                time.minute(),
+                time.second(),
+                time.nanosecond() / 1000,
+            ),
             TimeUnit::Millisecond => d.date().and_hms_nano_opt(
                 time.hour(),
                 time.minute(),
@@ -262,8 +256,8 @@ impl DatetimeMetric {
     ///
     /// # Arguments
     ///
-    /// * `glean` - the Glean instance this metric belongs to.
-    /// * `storage_name` - the storage name to look into.
+    /// * `ping_name` - the optional name of the ping to retrieve the metric
+    ///                 for. Defaults to the first value in `send_in_pings`.
     ///
     /// # Returns
     ///
@@ -284,8 +278,8 @@ impl DatetimeMetric {
     ///
     /// # Arguments
     ///
-    /// * `glean` - the Glean instance this metric belongs to.
-    /// * `storage_name` - the storage name to look into.
+    /// * `ping_name` - the optional name of the ping to retrieve the metric
+    ///                 for. Defaults to the first value in `send_in_pings`.
     ///
     /// # Returns
     ///
@@ -311,8 +305,6 @@ impl DatetimeMetric {
     /// # Arguments
     ///
     /// * `error` - The type of error
-    /// * `ping_name` - represents the optional name of the ping to retrieve the
-    ///   metric for. inner to the first value in `send_in_pings`.
     ///
     /// # Returns
     ///

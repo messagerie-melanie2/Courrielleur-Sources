@@ -5,14 +5,21 @@ license:
         - comm/
     exclude:
         # By design
-        - comm/build/macosx/hardenedruntime/developer.entitlements.xml
-        - comm/build/macosx/hardenedruntime/production.entitlements.xml
+        - comm/build/macosx/hardenedruntime/v2/developer/browser.xml
+        - comm/build/macosx/hardenedruntime/v2/developer/media-plugin-helper.xml
+        - comm/build/macosx/hardenedruntime/v2/developer/plugin-container.xml
+        - comm/build/macosx/hardenedruntime/v2/developer/utility.xml
+        - comm/build/macosx/hardenedruntime/v2/production/browser.xml
+        - comm/build/macosx/hardenedruntime/v2/production/media-plugin-helper.xml
+        - comm/build/macosx/hardenedruntime/v2/production/plugin-container.xml
         # License not super clear, Firefox excludes its branding
         - comm/mail/branding/
         # Mostly empty file
         - comm/mail/base/content/overrides/app-license-name.html
         # Need to verify
         - comm/mail/components/im/messages
+        # License file in directory
+        - comm/mail/components/extensions/annotations/includes
         # Public Domain, but do not match pre-approved strings from Mozilla
         - comm/mailnews/db/mork/morkDeque.cpp
         - comm/mailnews/db/mork/morkDeque.h
@@ -20,6 +27,7 @@ license:
         - comm/mailnews/jsaccount/readme.html
         # License file in directory
         - comm/mailnews/mime/jsmime
+        - '**/test*'
     extensions:
         - .c
         - .cc
@@ -32,7 +40,6 @@ license:
         - .idl
         - .java
         - .js
-        - .jsm
         - .jsx
         - .m
         - .mjs
@@ -43,7 +50,6 @@ license:
         - .svg
         - .xhtml
         - .xml
-        - .xul
     support-files:
         - 'tools/lint/license/**'
     type: external

@@ -1,7 +1,6 @@
 # Exclude everything by default, then include all the formats we support.
 *.*
 !*.js
-!*.jsm
 !*.json
 !*.mjs
 !*.jsx
@@ -17,7 +16,9 @@
 calendar/base/calendar.js
 chat/chat-prefs.js
 mail/app/profile/all-thunderbird.js
+mail/branding/include/release-prefs.js
 mail/branding/nightly/pref/thunderbird-branding.js
+mail/branding/tb_beta/pref/thunderbird-branding.js
 mail/branding/thunderbird/pref/thunderbird-branding.js
 mail/components/compose/composer.js
 mail/extensions/am-e2e/prefs/e2e-prefs.js
@@ -45,7 +46,6 @@ mailnews/test/data/alias-9.json
 
 
 # Ignore preprocessed xhtml/html files
-calendar/base/content/dialogs/calendar-event-dialog.xhtml
 calendar/base/content/widgets/*.xhtml
 mail/base/content/about3Pane.xhtml
 mail/base/content/aboutDialog.xhtml
@@ -55,7 +55,6 @@ mail/base/content/buildconfig.html
 mail/base/content/hiddenWindowMac.xhtml
 mail/base/content/messageWindow.xhtml
 mail/base/content/messenger.xhtml
-mail/base/content/newTagDialog.xhtml
 mail/base/content/profileDowngrade.xhtml
 mail/base/content/SearchDialog.xhtml
 mail/base/content/viewSource.xhtml
@@ -66,12 +65,9 @@ mail/components/addrbook/content/abSearchDialog.xhtml
 mail/components/compose/content/messengercompose.xhtml
 mail/components/downloads/content/aboutDownloads.xhtml
 mail/components/extensions/extensionPopup.xhtml
-mail/components/migration/content/migration.xhtml
 mail/components/preferences/colors.xhtml
-mail/components/preferences/cookies.xhtml
 mail/components/preferences/dockoptions.xhtml
 mail/components/preferences/preferences.xhtml
-mail/components/preferences/tagDialog.xhtml
 mail/extensions/am-e2e/am-e2e.xhtml
 mail/extensions/mailviews/content/mailViewSetup.xhtml
 mailnews/base/content/virtualFolderProperties.xhtml
@@ -81,7 +77,6 @@ mailnews/base/prefs/content/am-addressing.xhtml
 mailnews/base/prefs/content/am-copies.xhtml
 mailnews/base/prefs/content/am-identity-edit.xhtml
 mailnews/import/content/aboutImport.xhtml
-mailnews/search/content/CustomHeaders.xhtml
 mailnews/search/content/FilterEditor.xhtml
 
 # Chat template files that are space sensitive
@@ -107,6 +102,7 @@ mailnews/base/prefs/content/removeAccount.xhtml
 
 # Documentation Jinja templates
 docs/_templates/**
+docs/_build/**
 
 ##############################################################################
 # The list below is copied from ThirdPartyPaths.txt. Prettier doesn't currently
@@ -114,9 +110,8 @@ docs/_templates/**
 # When this is implemented, we'll update the configuration below (bug 1825508)
 ##############################################################################
 
-calendar/base/modules/Ical.jsm
+calendar/base/modules/Ical.sys.mjs
 chat/protocols/matrix/lib/**
-chat/protocols/xmpp/lib/**
 mail/base/content/protovis-r2.6-modded.js
 mail/components/compose/texzilla/TeXZilla.js
 mail/components/storybook/storybook-static/**
@@ -132,3 +127,5 @@ third_party/**
 mailnews/extensions/newsblog/test/unit/resources/feeds-missing-timestamp/feeds.json
 mailnews/extensions/newsblog/test/unit/resources/feeds-simple/feeditems.json
 mailnews/extensions/newsblog/test/unit/resources/feeds-simple/feeds.json
+rust/checksums.json
+mail/app/settings/dumps/

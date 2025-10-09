@@ -64,7 +64,7 @@ def _get_interface_list():
             for i in range(0, outbytes, struct_size)
         ]
 
-    except IOError:
+    except OSError:
         raise NetworkError("Unable to call ioctl with SIOCGIFCONF")
 
 
@@ -132,7 +132,10 @@ def _parse_powershell():
             "powershell.exe",
         )
         output = subprocess.check_output(
-            [cmd, "(Get-NetIPAddress | Format-List -Property IPAddress)"]
+            [
+                cmd,
+                "(Get-NetIPAddress -AddressFamily IPv4 -AddressState Preferred | Format-List -Property IPAddress)",
+            ]
         ).decode("ascii")
         ips = re.findall(r"IPAddress : (\d+.\d+.\d+.\d+)", output)
         for ip in ips:

@@ -10,24 +10,17 @@ var gMsgCompose;
 var gExpectedFiles;
 
 var progressListener = {
-  onStateChange(aWebProgress, aRequest, aStateFlags, aStatus) {
+  onStateChange(aWebProgress, aRequest, aStateFlags) {
     if (aStateFlags & Ci.nsIWebProgressListener.STATE_STOP) {
       do_timeout(0, checkResult);
     }
   },
 
-  onProgressChange(
-    aWebProgress,
-    aRequest,
-    aCurSelfProgress,
-    aMaxSelfProgress,
-    aCurTotalProgress,
-    aMaxTotalProgress
-  ) {},
-  onLocationChange(aWebProgress, aRequest, aLocation, aFlags) {},
-  onStatusChange(aWebProgress, aRequest, aStatus, aMessage) {},
-  onSecurityChange(aWebProgress, aRequest, state) {},
-  onContentBlockingEvent(aWebProgress, aRequest, aEvent) {},
+  onProgressChange() {},
+  onLocationChange() {},
+  onStatusChange() {},
+  onSecurityChange() {},
+  onContentBlockingEvent() {},
 
   QueryInterface: ChromeUtils.generateQI([
     "nsIWebProgressListener",
@@ -41,9 +34,9 @@ var progressListener = {
  * patterns.
  */
 async function getTemporaryFilesCount() {
-  let tmpDir = Services.dirsvc.get("TmpD", Ci.nsIFile).path;
-  let entries = await IOUtils.getChildren(tmpDir);
-  let tempFiles = {
+  const tmpDir = Services.dirsvc.get("TmpD", Ci.nsIFile).path;
+  const entries = await IOUtils.getChildren(tmpDir);
+  const tempFiles = {
     "nsmail.tmp": 0,
     "nscopy.tmp": 0,
     "nsemail.eml": 0,
@@ -51,8 +44,8 @@ async function getTemporaryFilesCount() {
     "nsqmail.tmp": 0,
   };
   for (const path of entries) {
-    for (let pattern of Object.keys(tempFiles)) {
-      let [name, extName] = pattern.split(".");
+    for (const pattern of Object.keys(tempFiles)) {
+      const [name, extName] = pattern.split(".");
       if (PathUtils.filename(path).startsWith(name) && path.endsWith(extName)) {
         tempFiles[pattern]++;
       }
@@ -66,8 +59,8 @@ async function getTemporaryFilesCount() {
  * counts should be the same as before.
  */
 async function checkResult() {
-  let filesCount = await getTemporaryFilesCount();
-  for (let [pattern, count] of Object.entries(filesCount)) {
+  const filesCount = await getTemporaryFilesCount();
+  for (const [pattern, count] of Object.entries(filesCount)) {
     Assert.equal(
       count,
       gExpectedFiles[pattern],
@@ -86,10 +79,10 @@ add_task(async function () {
   gMsgCompose = Cc["@mozilla.org/messengercompose/compose;1"].createInstance(
     Ci.nsIMsgCompose
   );
-  let fields = Cc[
+  const fields = Cc[
     "@mozilla.org/messengercompose/composefields;1"
   ].createInstance(Ci.nsIMsgCompFields);
-  let params = Cc[
+  const params = Cc[
     "@mozilla.org/messengercompose/composeparams;1"
   ].createInstance(Ci.nsIMsgComposeParams);
 
@@ -102,11 +95,11 @@ add_task(async function () {
 
   gMsgCompose.initialize(params, null, null);
 
-  let identity = getSmtpIdentity(null, getBasicSmtpServer());
+  const identity = getSmtpIdentity(null, getBasicSmtpServer());
 
   localAccountUtils.rootFolder.createLocalSubfolder("Drafts");
 
-  let progress = Cc["@mozilla.org/messenger/progress;1"].createInstance(
+  const progress = Cc["@mozilla.org/messenger/progress;1"].createInstance(
     Ci.nsIMsgProgress
   );
   progress.registerListener(progressListener);

@@ -5,7 +5,7 @@
 import { IMServices } from "resource:///modules/IMServices.sys.mjs";
 
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
-import { PluralForm } from "resource://gre/modules/PluralForm.sys.mjs";
+import { PluralForm } from "resource:///modules/PluralForm.sys.mjs";
 
 import { clearTimeout, setTimeout } from "resource://gre/modules/Timer.sys.mjs";
 import { ChatIcons } from "resource:///modules/chatIcons.sys.mjs";
@@ -43,7 +43,7 @@ export var Notifications = {
   _showMessageNotification(aMessage, aCounter = 0) {
     // We are about to show the notification, so let's play the notification sound.
     // We play the sound if the user is away from TB window or even away from chat tab.
-    let win = Services.wm.getMostRecentWindow("mail:3pane");
+    const win = Services.wm.getMostRecentWindow("mail:3pane");
     if (
       !Services.focus.activeWindow ||
       win.document.getElementById("tabmail").currentTabInfo.mode.name != "chat"
@@ -58,22 +58,25 @@ export var Notifications = {
       return;
     }
 
-    let bundle = Services.strings.createBundle(
+    const bundle = Services.strings.createBundle(
       "chrome://messenger/locale/chat.properties"
     );
     let messageText, icon, name;
-    let notificationContent = Services.prefs.getIntPref(
+    const notificationContent = Services.prefs.getIntPref(
       "mail.chat.notification_info"
     );
     // 0 - show all the info,
     // 1 - show only the sender not the message,
     // 2 - show no details about the message being notified.
     switch (notificationContent) {
-      case 0:
-        let parser = new DOMParser();
-        let doc = parser.parseFromString(aMessage.displayMessage, "text/html");
-        let body = doc.querySelector("body");
-        let encoder = Cu.createDocumentEncoder("text/plain");
+      case 0: {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(
+          aMessage.displayMessage,
+          "text/html"
+        );
+        const body = doc.querySelector("body");
+        const encoder = Cu.createDocumentEncoder("text/plain");
         encoder.init(doc, "text/plain", 0);
         encoder.setNode(body);
         messageText = encoder.encodeToString().replace(/\s+/g, " ");
@@ -89,7 +92,7 @@ export var Notifications = {
         // If there are more messages being bundled, add the count string.
         // ellipsis is a part of bundledMessagePreview so we don't include it here.
         if (aCounter > 0) {
-          let bundledMessage = bundle.formatStringFromName(
+          const bundledMessage = bundle.formatStringFromName(
             "bundledMessagePreview",
             [messageText]
           );
@@ -98,10 +101,11 @@ export var Notifications = {
             aCounter
           );
         }
+      }
       // Falls through
-      case 1:
+      case 1: {
         // Use the buddy icon if available for the icon of the notification.
-        let conv = aMessage.conversation;
+        const conv = aMessage.conversation;
         icon = conv.convIconFilename;
         if (!icon && !conv.isChat) {
           icon = conv.buddy?.buddyIconFilename;
@@ -112,21 +116,23 @@ export var Notifications = {
         if (messageText && aMessage.action) {
           messageText = name + " " + messageText;
         }
+      }
       // Falls through
-      case 2:
+      case 2: {
         if (!icon) {
           icon = ChatIcons.fallbackUserIconURI;
         }
 
         if (!messageText) {
-          let bundle = Services.strings.createBundle(
+          const chatBundle = Services.strings.createBundle(
             "chrome://messenger/locale/chat.properties"
           );
-          messageText = bundle.GetStringFromName("messagePreview");
+          messageText = chatBundle.GetStringFromName("messagePreview");
         }
+      }
     }
 
-    let alert = Cc["@mozilla.org/alert-notification;1"].createInstance(
+    const alert = Cc["@mozilla.org/alert-notification;1"].createInstance(
       Ci.nsIAlertNotification
     );
     alert.init(
@@ -139,7 +145,7 @@ export var Notifications = {
     // Show the notification!
     Cc["@mozilla.org/alerts-service;1"]
       .getService(Ci.nsIAlertsService)
-      .showAlert(alert, (subject, topic, data) => {
+      .showAlert(alert, (subject, topic) => {
         if (topic != "alertclickcallback") {
           return;
         }
@@ -151,24 +157,29 @@ export var Notifications = {
         this._lastMessageTime = 0;
         this._lastMessageSender = null;
         // Focus the conversation if the notification is clicked.
-        let uiConv = IMServices.conversations.getUIConversation(
+        const uiConv = IMServices.conversations.getUIConversation(
           aMessage.conversation
         );
-        let mainWindow = Services.wm.getMostRecentWindow("mail:3pane");
+        const mainWindow = Services.wm.getMostRecentWindow("mail:3pane");
         if (mainWindow) {
           mainWindow.focus();
           mainWindow.showChatTab();
           mainWindow.chatHandler.focusConversation(uiConv);
         } else {
-          Services.appShell.hiddenDOMWindow.openDialog(
+          const args = Cc["@mozilla.org/array;1"].createInstance(
+            Ci.nsIMutableArray
+          );
+          args.appendElement(null);
+          args.appendElement({
+            tabType: "chat",
+            tabParams: { convType: "focus", conv: uiConv },
+          });
+          Services.ww.openWindow(
+            null,
             "chrome://messenger/content/messenger.xhtml",
             "_blank",
             "chrome,dialog=no,all",
-            null,
-            {
-              tabType: "chat",
-              tabParams: { convType: "focus", conv: uiConv },
-            }
+            args
           );
         }
         if (AppConstants.platform == "macosx") {
@@ -189,16 +200,16 @@ export var Notifications = {
   },
 
   _notificationPrefName: "mail.chat.show_desktop_notifications",
-  observe(aSubject, aTopic, aData) {
+  observe(aSubject, aTopic) {
     if (!Services.prefs.getBoolPref(this._notificationPrefName)) {
       return;
     }
 
     switch (aTopic) {
-      case "new-directed-incoming-message":
+      case "new-directed-incoming-message": {
         // If this is the first message, we show the notification and
         // store the sender's name.
-        let sender = aSubject.who || aSubject.alias;
+        const sender = aSubject.who || aSubject.alias;
         if (this._lastMessageSender == null) {
           this._lastMessageSender = sender;
           this._lastMessageTime = aSubject.time;
@@ -240,11 +251,11 @@ export var Notifications = {
           }, kTimeToWaitForMoreMsgs * 1000);
         }
         break;
-
-      case "new-otr-verification-request":
+      }
+      case "new-otr-verification-request": {
         // If the Chat tab is not focused, play the sounds and update the icon
         // counter, and show the counter in the buddy richlistitem.
-        let win = Services.wm.getMostRecentWindow("mail:3pane");
+        const win = Services.wm.getMostRecentWindow("mail:3pane");
         if (
           !Services.focus.activeWindow ||
           win.document.getElementById("tabmail").currentTabInfo.mode.name !=
@@ -255,8 +266,8 @@ export var Notifications = {
             "play-chat-notification-sound"
           );
         }
-
         break;
+      }
     }
   },
 };

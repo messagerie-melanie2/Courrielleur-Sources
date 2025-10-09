@@ -39,20 +39,14 @@
 }
 
 #task-addition-box {
-  height: 35px;
+  height: 1.5em;
+  min-height: 35px;
 }
 
 @media not (prefers-color-scheme: dark) {
-  @media (-moz-windows-default-theme) {
+  @media not (prefers-contrast) {
     #task-addition-box {
       background-color: #f8f8f8;
     }
-  }
-}
-
-@media (-moz-platform: windows-win7) {
-  #view-task-edit-field,
-  #task-text-filter-field {
-    margin-block: 4px;
   }
 }

@@ -75,6 +75,49 @@ class Linter(visitor.Visitor):
             "variables": [],
         }
 
+        attributes = [
+            "label",
+            "value",
+            "accesskey",
+            "alt",
+            "title",
+            "tooltiptext",
+            "placeholder",
+            "aria-label",
+            "aria-description",
+            "aria-valuetext",
+            "style",
+            # For XUL key/command setup.
+            "key",
+            "keycode",
+            # For download filenames:
+            "download",
+            # Used in the Firefox prefs
+            "searchkeywords",
+            # Used by search-textbox.js
+            "searchbuttonlabel",
+            # Used in toolbar customization.
+            "toolbarname",
+            # Used in moz-message-bar.
+            "message",
+            # Used in dialogs (should be moved to using fluent IDs though)
+            "buttonlabelaccept",
+            "buttonaccesskeyaccept",
+            "buttonlabelcancel",
+            "buttonaccesskeycancel",
+            "buttonlabelextra2",
+            "buttonaccesskeyextra2",
+            # Used in app menu notifications (should be moved to use fluent IDs)
+            "buttonlabel",
+            "buttonaccesskey",
+            "secondarybuttonlabel",
+            "secondarybuttonaccesskey",
+            # Commonly used in Lit-based web components
+            "heading",
+            "description",
+        ]
+        self.known_attribute_list = [a.lower() for a in attributes]
+
         # Set this to true to debug print the root node's json. This is useful for
         # writing new lint rules, or debugging existing ones.
         self.debug_print_json = False
@@ -116,6 +159,21 @@ class Linter(visitor.Visitor):
         self.last_message_id = node.id.name
 
         super().generic_visit(node)
+
+        # Do this here instead as visit_Attribute doesn't have access to the
+        # message's comment.
+        for attr in node.attributes:
+            if not attr.id.name.lower() in self.known_attribute_list:
+                comment = self.state["comment"] + self.state["group_comment"]
+                if not f".{attr.id.name}" in comment:
+                    self.add_error(
+                        attr,
+                        "VA01",
+                        "Use attributes designed for localized content directly."
+                        " If script-based processing is necessary, add a comment"
+                        f" explaining why. The linter didn't recognize: .{attr.id.name}",
+                        "warning",
+                    )
 
         # Check if variables are referenced in comments
         if self.state["variables"]:
@@ -163,7 +221,7 @@ class Linter(visitor.Visitor):
             self.add_error(
                 node,
                 "ID01",
-                "Identifiers may only contain lowercase characters and -",
+                f"Identifiers may only contain lowercase characters and - (ID: {node.name})",
             )
         if (
             len(node.name) < self.minimum_id_length
@@ -173,7 +231,7 @@ class Linter(visitor.Visitor):
             self.add_error(
                 node,
                 "ID02",
-                f"Identifiers must be at least {self.minimum_id_length} characters long",
+                f"Identifiers must be at least {self.minimum_id_length} characters long (ID: {node.name}",
             )
 
     def visit_TextElement(self, node):
@@ -223,7 +281,7 @@ class Linter(visitor.Visitor):
             ):
                 found_brands = []
                 for brand in self.brand_names:
-                    if brand in text:
+                    if re.search(rf"\b{re.escape(brand)}\b", text):
                         found_brands.append(brand)
                 if found_brands:
                     self.add_error(
@@ -277,7 +335,7 @@ class Linter(visitor.Visitor):
         # Store the variable used for the SelectExpression, excluding functions
         # like PLATFORM()
         if (
-            type(node.selector) == ast.VariableReference
+            type(node.selector) is ast.VariableReference
             and node.selector.id.name not in self.state["variables"]
         ):
             self.state["variables"].append(node.selector.id.name)
@@ -349,7 +407,7 @@ class Linter(visitor.Visitor):
         if node.id.name not in self.state["variables"]:
             self.state["variables"].append(node.id.name)
 
-    def add_error(self, node, rule, msg):
+    def add_error(self, node, rule, msg, level=None):
         (col, line) = self.span_to_line_and_col(node.span)
         res = {
             "path": self.path,
@@ -358,6 +416,9 @@ class Linter(visitor.Visitor):
             "rule": rule,
             "message": msg,
         }
+        if level:
+            res["level"] = level
+
         self.results.append(result.from_config(self.config, **res))
 
     def span_to_line_and_col(self, span):
@@ -456,7 +517,7 @@ def lint(paths, config, fix=None, **lintargs):
     brand_names = get_branding_list(root, brand_files)
     results = []
     for path in files:
-        contents = open(path, "r", encoding="utf-8").read()
+        contents = open(path, encoding="utf-8").read()
         linter = Linter(
             path,
             config,

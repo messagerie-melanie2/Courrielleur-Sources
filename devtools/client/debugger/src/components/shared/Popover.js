@@ -2,14 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
-import React, { Component } from "react";
-import PropTypes from "prop-types";
+import React, { Component } from "devtools/client/shared/vendor/react";
+import { div } from "devtools/client/shared/vendor/react-dom-factories";
+import PropTypes from "devtools/client/shared/vendor/react-prop-types";
 import BracketArrow from "./BracketArrow";
-import SmartGap from "./SmartGap";
 
-const classnames = require("devtools/client/shared/classnames.js");
-
-import "./Popover.css";
+const classnames = require("resource://devtools/client/shared/classnames.js");
 
 class Popover extends Component {
   state = {
@@ -51,6 +49,23 @@ class Popover extends Component {
     this.startTimer();
   }
 
+  componentDidUpdate(prevProps) {
+    // We have to update `coords` when the Popover type changes
+    if (
+      prevProps.type != this.props.type ||
+      prevProps.target !== this.props.target
+    ) {
+      const coords =
+        this.props.type == "popover"
+          ? this.getPopoverCoords()
+          : this.getTooltipCoords();
+
+      if (coords) {
+        this.setState({ coords });
+      }
+    }
+  }
+
   componentWillUnmount() {
     if (this.timerId) {
       clearTimeout(this.timerId);
@@ -67,21 +82,18 @@ class Popover extends Component {
     const isHoveredOnTooltip = this.$tooltip && this.$tooltip.matches(":hover");
     const isHoveredOnTarget = this.props.target.matches(":hover");
 
-    if (isHoveredOnGap) {
-      if (!this.wasOnGap) {
-        this.wasOnGap = true;
-        this.timerId = setTimeout(this.onTimeout, 200);
-        return;
-      }
-      this.props.mouseout();
+    // Don't clear the current preview if mouse is hovered on:
+    // - popover or tooltip (depending on the preview type we either have a PopOver or a Tooltip)
+    // - target, which is the highlighted token in CodeMirror
+    if (isHoveredOnPopover || isHoveredOnTooltip || isHoveredOnTarget) {
+      this.timerId = setTimeout(this.onTimeout, 0);
       return;
     }
 
-    // Don't clear the current preview if mouse is hovered on
-    // the current preview's token (target) or the popup element
-    if (isHoveredOnPopover || isHoveredOnTooltip || isHoveredOnTarget) {
-      this.wasOnGap = false;
-      this.timerId = setTimeout(this.onTimeout, 0);
+    // If we are only hovering the "gap", i.e. the extra space where the arrow pointing
+    // to the highlighted token is, hide the popup with an extra timeout
+    if (isHoveredOnGap) {
+      this.timerId = setTimeout(this.onTimeout, 200);
       return;
     }
 
@@ -222,22 +234,11 @@ class Popover extends Component {
   }
 
   getGap() {
-    if (this.firstRender) {
-      return <div className="gap" key="gap" ref={a => (this.$gap = a)} />;
-    }
-
-    return (
-      <div className="gap" key="gap" ref={a => (this.$gap = a)}>
-        <SmartGap
-          token={this.props.target}
-          preview={this.$tooltip || this.$popover}
-          type={this.props.type}
-          gapHeight={this.gapHeight}
-          coords={this.state.coords}
-          offset={this.$gap.getBoundingClientRect().left}
-        />
-      </div>
-    );
+    return div({
+      className: "gap",
+      key: "gap",
+      ref: a => (this.$gap = a),
+    });
   }
 
   getPopoverArrow(orientation, left, top) {
@@ -250,38 +251,40 @@ class Popover extends Component {
     } else {
       arrowProps = { orientation: "left", top, left: -4 };
     }
-
-    return <BracketArrow {...arrowProps} />;
+    return React.createElement(BracketArrow, arrowProps);
   }
 
   renderPopover() {
     const { top, left, orientation, targetMid } = this.state.coords;
     const arrow = this.getPopoverArrow(orientation, targetMid.x, targetMid.y);
-
-    return (
-      <div
-        className={classnames("popover", `orientation-${orientation}`, {
+    return div(
+      {
+        className: classnames("popover", `orientation-${orientation}`, {
           up: orientation === "up",
-        })}
-        style={{ top, left }}
-        ref={c => (this.$popover = c)}
-      >
-        {arrow}
-        {this.getChildren()}
-      </div>
+        }),
+        style: {
+          top,
+          left,
+        },
+        ref: c => (this.$popover = c),
+      },
+      arrow,
+      this.getChildren()
     );
   }
 
   renderTooltip() {
     const { top, left, orientation } = this.state.coords;
-    return (
-      <div
-        className={`tooltip orientation-${orientation}`}
-        style={{ top, left }}
-        ref={c => (this.$tooltip = c)}
-      >
-        {this.getChildren()}
-      </div>
+    return div(
+      {
+        className: `tooltip orientation-${orientation}`,
+        style: {
+          top,
+          left,
+        },
+        ref: c => (this.$tooltip = c),
+      },
+      this.getChildren()
     );
   }
 

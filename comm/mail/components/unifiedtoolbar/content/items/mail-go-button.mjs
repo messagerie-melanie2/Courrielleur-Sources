@@ -4,15 +4,15 @@
 
 import { MailTabButton } from "chrome://messenger/content/unifiedtoolbar/mail-tab-button.mjs";
 
-const { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+const { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 /**
  * Map from the direction attribute value to the command the button executes on
  * click.
  *
- * @type {{[string]: string}}
+ * @type {object} string -> string
  */
 const COMMAND_FOR_DIRECTION = {
   forward: "cmd_goForward",

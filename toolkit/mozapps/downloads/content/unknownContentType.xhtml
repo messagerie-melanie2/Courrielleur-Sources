@@ -4,13 +4,11 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-<?xml-stylesheet href="chrome://global/skin/global.css" type="text/css"?>
-<?xml-stylesheet href="chrome://mozapps/skin/downloads/unknownContentType.css" type="text/css"?>
+<?csp default-src chrome:; img-src moz-icon:; style-src chrome: 'unsafe-inline'; ?>
 
 <window id="unknownContentTypeWindow"
         xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
         xmlns:html="http://www.w3.org/1999/xhtml"
-        onload="dialog.initDialog();" onunload="if (dialog) dialog.onCancel();"
 #ifdef XP_WIN
         style="min-width: 36em;"
 #else
@@ -20,6 +18,12 @@
         persist="screenX screenY"
         aria-describedby="intro location whichIs type from source unknownPrompt">
 <linkset>
+  <html:link rel="stylesheet" href="chrome://global/skin/global.css" />
+  <html:link
+    rel="stylesheet"
+    href="chrome://mozapps/skin/downloads/unknownContentType.css"
+  />
+
   <html:link rel="localization" href="branding/brand.ftl"/>
   <html:link rel="localization" href="toolkit/global/unknownContentType.ftl"/>
 </linkset>
@@ -36,15 +40,15 @@
     <hbox align="start" class="small-indent">
       <image id="contentTypeImage"/>
       <vbox flex="1">
-        <description id="location" class="plain" crop="start" flex="1"/>
+        <description id="location" crop="start" flex="1"/>
         <separator class="thin"/>
         <hbox align="center">
           <label id="whichIs" data-l10n-id="unknowncontenttype-which-is"/>
-          <html:input id="type" class="plain" readonly="readonly" noinitialfocus="true"/>
+          <label id="type" tabindex="0" noinitialfocus="true"/>
         </hbox>
         <hbox align="center">
           <label data-l10n-id="unknowncontenttype-from" id="from"/>
-          <description id="source" class="plain" crop="start" flex="1"/>
+          <description id="source" crop="start" flex="1"/>
         </hbox>
       </vbox>
     </hbox>
@@ -66,7 +70,7 @@
           <deck id="modeDeck" flex="1">
             <hbox id="openHandlerBox" flex="1" align="center">
               <menulist id="openHandler" flex="1" native="true">
-                <menupopup id="openHandlerPopup" oncommand="dialog.openHandlerCommand();">
+                <menupopup id="openHandlerPopup">
                   <menuitem id="defaultHandler" default="true" crop="end"/>
                   <menuitem id="otherHandler" hidden="true" crop="start"/>
                   <menuseparator/>
@@ -75,7 +79,7 @@
               </menulist>
             </hbox>
             <hbox flex="1" align="center">
-              <button id="chooseButton" oncommand="dialog.chooseApp();"
+              <button id="chooseButton"
                       data-l10n-id="unknowncontenttype-choose-handler"/>
             </hbox>
           </deck>
@@ -86,7 +90,6 @@
       <separator class="thin"/>
       <hbox class="small-indent">
         <checkbox id="rememberChoice" data-l10n-id="unknowncontenttype-remember-choice"
-                  oncommand="dialog.toggleRememberChoice(event.target);"
                   native="true"/>
       </hbox>
 

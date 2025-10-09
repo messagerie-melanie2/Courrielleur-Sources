@@ -10,14 +10,10 @@ const { sinon } = ChromeUtils.importESModule(
 ChromeUtils.defineESModuleGetters(this, {
   ScreenshotsUtils: "resource:///modules/ScreenshotsUtils.sys.mjs",
 });
-XPCOMUtils.defineLazyGetter(this, "ExtensionManagement", () => {
-  const { Management } = ChromeUtils.importESModule(
-    "resource://gre/modules/Extension.sys.mjs"
-  );
-  return Management;
-});
 
-add_task(async function test() {
+const COMPONENT_PREF = "screenshots.browser.component.enabled";
+
+add_task(async function test_toggling_screenshots_pref() {
   let observerSpy = sinon.spy();
   let notifierSpy = sinon.spy();
 
@@ -26,32 +22,27 @@ add_task(async function test() {
     .callsFake(observerSpy);
   let notifierStub = sinon
     .stub(ScreenshotsUtils, "notify")
-    .callsFake(function (window, type) {
+    .callsFake(function () {
       notifierSpy();
       ScreenshotsUtils.notify.wrappedMethod.apply(this, arguments);
     });
 
+  // wait for startup idle tasks to complete
+  await new Promise(resolve => ChromeUtils.idleDispatch(resolve));
+  ok(Services.prefs.getBoolPref(COMPONENT_PREF), "Screenshots enabled");
+
   await BrowserTestUtils.withNewTab(
     {
       gBrowser,
-      url: TEST_PAGE,
+      url: SHORT_TEST_PAGE,
     },
     async browser => {
-      function awaitExtensionEvent(eventName, id) {
-        return new Promise(resolve => {
-          let listener = (_eventName, ...args) => {
-            let extension = args[0];
-            if (_eventName === eventName && extension.id == id) {
-              ExtensionManagement.off(eventName, listener);
-              resolve();
-            }
-          };
-          ExtensionManagement.on(eventName, listener);
-        });
-      }
-      const SCREENSHOT_EXTENSION = "screenshots@mozilla.org";
-
       let helper = new ScreenshotsHelper(browser);
+      await BrowserTestUtils.waitForCondition(
+        () => ScreenshotsUtils.initialized,
+        "The component is initialized"
+      );
+      ok(ScreenshotsUtils.initialized, "The component is initialized");
 
       ok(observerSpy.notCalled, "Observer not called");
       helper.triggerUIFromToolbar();
@@ -80,63 +71,29 @@ add_task(async function test() {
 
       Assert.equal(observerSpy.callCount, 3, "Observer function called thrice");
 
-      const COMPONENT_PREF = "screenshots.browser.component.enabled";
-      await SpecialPowers.pushPrefEnv({
-        set: [[COMPONENT_PREF, false]],
-      });
-      ok(!Services.prefs.getBoolPref(COMPONENT_PREF), "Extension enabled");
-      await awaitExtensionEvent("ready", SCREENSHOT_EXTENSION);
-
-      helper.triggerUIFromToolbar();
-      Assert.equal(
-        observerSpy.callCount,
-        3,
-        "Observer function still called thrice"
+      let componentUnitialized = TestUtils.topicObserved(
+        "screenshots-component-uninitialized"
       );
 
-      await SpecialPowers.spawn(
-        browser,
-        ["#firefox-screenshots-preselection-iframe"],
-        async function (iframeSelector) {
-          info(
-            `in waitForUIContent content function, iframeSelector: ${iframeSelector}`
-          );
-          let iframe;
-          await ContentTaskUtils.waitForCondition(() => {
-            iframe = content.document.querySelector(iframeSelector);
-            if (!iframe || !ContentTaskUtils.is_visible(iframe)) {
-              info("in waitForUIContent, no visible iframe yet");
-              return false;
-            }
-            return true;
-          });
-          // wait a frame for the screenshots UI to finish any init
-          await new content.Promise(res => content.requestAnimationFrame(res));
-        }
+      Services.prefs.setBoolPref(COMPONENT_PREF, false);
+      ok(
+        !Services.prefs.getBoolPref(COMPONENT_PREF),
+        "Component should be disabled"
       );
 
-      helper.triggerUIFromToolbar();
-      await SpecialPowers.spawn(
-        browser,
-        ["#firefox-screenshots-preselection-iframe"],
-        async function (iframeSelector) {
-          info(
-            `in waitForUIContent content function, iframeSelector: ${iframeSelector}`
-          );
-          let iframe;
-          await ContentTaskUtils.waitForCondition(() => {
-            iframe = content.document.querySelector(iframeSelector);
-            if (!iframe || !ContentTaskUtils.is_visible(iframe)) {
-              info("in waitForUIContent, no visible iframe yet");
-              return true;
-            }
-            return false;
-          });
-          // wait a frame for the screenshots UI to finish any init
-          await new content.Promise(res => content.requestAnimationFrame(res));
-        }
+      info("Wait for the Screenshot component to be uninitialized");
+      await componentUnitialized;
+      ok(
+        !ScreenshotsUtils.initialized,
+        "Screenshot component should be uninitialized"
       );
 
+      ok(
+        !document.getElementById("screenshot-button"),
+        "Screenshots button shouldn't exist"
+      );
+
+      info("Triggering the screenshot from the contextmenu should be a no-op");
       popupshown = BrowserTestUtils.waitForPopupEvent(menu, "shown");
       EventUtils.synthesizeMouseAtCenter(document.body, {
         type: "contextmenu",
@@ -144,8 +101,13 @@ add_task(async function test() {
       await popupshown;
       Assert.equal(menu.state, "open", "Context menu is open");
 
+      ok(
+        menu.querySelector("#context-take-screenshot").hidden,
+        "Screenshots context menu item is hidden"
+      );
+
       popuphidden = BrowserTestUtils.waitForPopupEvent(menu, "hidden");
-      menu.activateItem(menu.querySelector("#context-take-screenshot"));
+      menu.hidePopup();
       await popuphidden;
 
       Assert.equal(
@@ -154,57 +116,13 @@ add_task(async function test() {
         "Observer function still called thrice"
       );
 
-      await SpecialPowers.spawn(
-        browser,
-        ["#firefox-screenshots-preselection-iframe"],
-        async function (iframeSelector) {
-          info(
-            `in waitForUIContent content function, iframeSelector: ${iframeSelector}`
-          );
-          let iframe;
-          await ContentTaskUtils.waitForCondition(() => {
-            iframe = content.document.querySelector(iframeSelector);
-            if (!iframe || !ContentTaskUtils.is_visible(iframe)) {
-              info("in waitForUIContent, no visible iframe yet");
-              return false;
-            }
-            return true;
-          });
-          // wait a frame for the screenshots UI to finish any init
-          await new content.Promise(res => content.requestAnimationFrame(res));
-        }
-      );
-
-      helper.triggerUIFromToolbar();
-      await SpecialPowers.spawn(
-        browser,
-        ["#firefox-screenshots-preselection-iframe"],
-        async function (iframeSelector) {
-          info(
-            `in waitForUIContent content function, iframeSelector: ${iframeSelector}`
-          );
-          let iframe;
-          await ContentTaskUtils.waitForCondition(() => {
-            iframe = content.document.querySelector(iframeSelector);
-            if (!iframe || !ContentTaskUtils.is_visible(iframe)) {
-              return true;
-            }
-            info("in waitForUIContent, iframe still visible");
-            info(iframe);
-            return false;
-          });
-          // wait a frame for the screenshots UI to finish any init
-          await new content.Promise(res => content.requestAnimationFrame(res));
-        }
-      );
-
       let componentReady = TestUtils.topicObserved(
         "screenshots-component-initialized"
       );
 
-      await SpecialPowers.pushPrefEnv({
-        set: [[COMPONENT_PREF, true]],
-      });
+      info("Re-enabling the Screenshot component should re-initialize it");
+
+      Services.prefs.setBoolPref(COMPONENT_PREF, true);
       ok(Services.prefs.getBoolPref(COMPONENT_PREF), "Component enabled");
       // Needed for component to initialize
       await componentReady;
@@ -215,27 +133,27 @@ add_task(async function test() {
         4,
         "Observer function called four times"
       );
-
-      const SCREENSHOTS_PREF = "extensions.screenshots.disabled";
-      await SpecialPowers.pushPrefEnv({
-        set: [[SCREENSHOTS_PREF, true]],
-      });
-      ok(Services.prefs.getBoolPref(SCREENSHOTS_PREF), "Screenshots disabled");
     }
   );
 
   await BrowserTestUtils.withNewTab(
     {
       gBrowser,
-      url: TEST_PAGE,
+      url: SHORT_TEST_PAGE,
     },
     async browser => {
-      const SCREENSHOTS_PREF = "extensions.screenshots.disabled";
-      ok(Services.prefs.getBoolPref(SCREENSHOTS_PREF), "Screenshots disabled");
+      let componentUnitialized = TestUtils.topicObserved(
+        "screenshots-component-uninitialized"
+      );
+
+      Services.prefs.setBoolPref(COMPONENT_PREF, false);
+
+      info("Wait for the screenshot component to be uninitialized");
+      await componentUnitialized;
 
       ok(
-        document.getElementById("screenshot-button").disabled,
-        "Toolbar button disabled"
+        !document.getElementById("screenshot-button"),
+        "Toolbar button shouldn't exist"
       );
 
       let menu = document.getElementById("contentAreaContextMenu");
@@ -255,21 +173,20 @@ add_task(async function test() {
       menu.hidePopup();
       await popuphidden;
 
-      await SpecialPowers.pushPrefEnv({
-        set: [[SCREENSHOTS_PREF, false]],
-      });
-      ok(!Services.prefs.getBoolPref(SCREENSHOTS_PREF), "Screenshots enabled");
-    }
-  );
+      let componentReady = TestUtils.topicObserved(
+        "screenshots-component-initialized"
+      );
 
-  await BrowserTestUtils.withNewTab(
-    {
-      gBrowser,
-      url: TEST_PAGE,
-    },
-    async browser => {
-      const SCREENSHOTS_PREF = "extensions.screenshots.disabled";
-      ok(!Services.prefs.getBoolPref(SCREENSHOTS_PREF), "Screenshots enabled");
+      Services.prefs.setBoolPref(COMPONENT_PREF, true);
+
+      await componentReady;
+
+      ok(ScreenshotsUtils.initialized, "The component is initialized");
+
+      ok(
+        !document.getElementById("screenshot-button").disabled,
+        "Toolbar button is enabled"
+      );
 
       let helper = new ScreenshotsHelper(browser);
 

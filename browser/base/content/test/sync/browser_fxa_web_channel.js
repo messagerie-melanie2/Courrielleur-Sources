@@ -2,20 +2,17 @@
  * http://creativecommons.org/publicdomain/zero/1.0/
  */
 
-XPCOMUtils.defineLazyGetter(this, "FxAccountsCommon", function () {
-  return ChromeUtils.import("resource://gre/modules/FxAccountsCommon.js");
-});
-
 ChromeUtils.defineESModuleGetters(this, {
   WebChannel: "resource://gre/modules/WebChannel.sys.mjs",
+  ON_PROFILE_CHANGE_NOTIFICATION:
+    "resource://gre/modules/FxAccountsCommon.sys.mjs",
 });
 
 var { FxAccountsWebChannel } = ChromeUtils.importESModule(
   "resource://gre/modules/FxAccountsWebChannel.sys.mjs"
 );
 
-// eslint-disable-next-line @microsoft/sdl/no-insecure-url
-const TEST_HTTP_PATH = "http://example.com";
+const TEST_HTTP_PATH = "https://example.com";
 const TEST_BASE_URL =
   TEST_HTTP_PATH +
   "/browser/browser/base/content/test/sync/browser_fxa_web_channel.html";
@@ -29,9 +26,9 @@ var gTests = [
         content_uri: TEST_HTTP_PATH,
         channel_id: TEST_CHANNEL_ID,
       });
-      let promiseObserver = new Promise((resolve, reject) => {
+      let promiseObserver = new Promise(resolve => {
         makeObserver(
-          FxAccountsCommon.ON_PROFILE_CHANGE_NOTIFICATION,
+          ON_PROFILE_CHANGE_NOTIFICATION,
           function (subject, topic, data) {
             Assert.equal(data, "abc123");
             client.tearDown();
@@ -54,7 +51,7 @@ var gTests = [
   {
     desc: "fxa web channel - login messages should notify the fxAccounts object",
     async run() {
-      let promiseLogin = new Promise((resolve, reject) => {
+      let promiseLogin = new Promise(resolve => {
         let login = accountData => {
           Assert.equal(typeof accountData.authAt, "number");
           Assert.equal(accountData.email, "testuser@testuser.com");
@@ -63,9 +60,6 @@ var gTests = [
           Assert.equal(accountData.uid, "uid");
           Assert.equal(accountData.unwrapBKey, "unwrap_b_key");
           Assert.equal(accountData.verified, true);
-
-          client.tearDown();
-          resolve();
         };
 
         let client = new FxAccountsWebChannel({
@@ -75,6 +69,12 @@ var gTests = [
             login,
           },
         });
+
+        client._channel.send = (message, _context) => {
+          Assert.equal(message.data.ok, true);
+          client.tearDown();
+          resolve();
+        };
       });
 
       await BrowserTestUtils.withNewTab(
@@ -93,7 +93,7 @@ var gTests = [
     async run() {
       let properUrl = TEST_BASE_URL + "?can_link_account";
 
-      let promiseEcho = new Promise((resolve, reject) => {
+      let promiseEcho = new Promise(resolve => {
         let webChannelOrigin = Services.io.newURI(properUrl);
         // responses sent to content are echoed back over the
         // `fxaccounts_webchannel_response_echo` channel. Ensure the
@@ -102,7 +102,7 @@ var gTests = [
           "fxaccounts_webchannel_response_echo",
           webChannelOrigin
         );
-        echoWebChannel.listen((webChannelId, message, target) => {
+        echoWebChannel.listen((webChannelId, message) => {
           Assert.equal(message.command, "fxaccounts:can_link_account");
           Assert.equal(message.messageId, 2);
           Assert.equal(message.data.ok, true);
@@ -119,6 +119,12 @@ var gTests = [
           helpers: {
             shouldAllowRelink(acctName) {
               return acctName === "testuser@testuser.com";
+            },
+            promptProfileSyncWarningIfNeeded(acctName) {
+              if (acctName === "testuser@testuser.com") {
+                return { action: "continue" };
+              }
+              return { action: "cancel" };
             },
           },
         });
@@ -138,12 +144,9 @@ var gTests = [
   {
     desc: "fxa web channel - logout messages should notify the fxAccounts object",
     async run() {
-      let promiseLogout = new Promise((resolve, reject) => {
+      let promiseLogout = new Promise(resolve => {
         let logout = uid => {
           Assert.equal(uid, "uid");
-
-          client.tearDown();
-          resolve();
         };
 
         let client = new FxAccountsWebChannel({
@@ -153,6 +156,12 @@ var gTests = [
             logout,
           },
         });
+
+        client._channel.send = (message, _context) => {
+          Assert.equal(message.data.ok, true);
+          client.tearDown();
+          resolve();
+        };
       });
 
       await BrowserTestUtils.withNewTab(
@@ -169,12 +178,9 @@ var gTests = [
   {
     desc: "fxa web channel - delete messages should notify the fxAccounts object",
     async run() {
-      let promiseDelete = new Promise((resolve, reject) => {
+      let promiseDelete = new Promise(resolve => {
         let logout = uid => {
           Assert.equal(uid, "uid");
-
-          client.tearDown();
-          resolve();
         };
 
         let client = new FxAccountsWebChannel({
@@ -184,6 +190,12 @@ var gTests = [
             logout,
           },
         });
+
+        client._channel.send = (message, _context) => {
+          Assert.equal(message.data.ok, true);
+          client.tearDown();
+          resolve();
+        };
       });
 
       await BrowserTestUtils.withNewTab(
@@ -201,8 +213,8 @@ var gTests = [
     desc: "fxa web channel - firefox_view messages should call the openFirefoxView helper",
     async run() {
       let wasCalled = false;
-      let promiseMessageHandled = new Promise((resolve, reject) => {
-        let openFirefoxView = (browser, entryPoint) => {
+      let promiseMessageHandled = new Promise(resolve => {
+        let openFirefoxView = browser => {
           wasCalled = true;
           Assert.ok(
             !!browser.ownerGlobal,
@@ -213,9 +225,6 @@ var gTests = [
             "function",
             "We can reach the openTab method"
           );
-
-          client.tearDown();
-          resolve();
         };
 
         let client = new FxAccountsWebChannel({
@@ -225,6 +234,12 @@ var gTests = [
             openFirefoxView,
           },
         });
+
+        client._channel.send = (message, _context) => {
+          Assert.equal(message.data.ok, true);
+          client.tearDown();
+          resolve();
+        };
       });
 
       await BrowserTestUtils.withNewTab(

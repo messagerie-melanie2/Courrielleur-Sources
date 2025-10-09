@@ -14,7 +14,7 @@ AddonTestUtils.hookAMTelemetryEvents();
 const kSideloaded = true;
 
 async function createWebExtension(details) {
-  let options = {
+  const options = {
     manifest: {
       applications: { gecko: { id: details.id } },
 
@@ -28,7 +28,7 @@ async function createWebExtension(details) {
     options.manifest.icons = { 64: details.iconURL };
   }
 
-  let xpi = AddonTestUtils.createTempWebExtensionFile(options);
+  const xpi = AddonTestUtils.createTempWebExtensionFile(options);
 
   await AddonTestUtils.manuallyInstall(xpi);
 }
@@ -104,7 +104,7 @@ add_task(async function test_sideloading() {
     ExtensionsUI.emit("change");
   };
 
-  let changePromise = new Promise(resolve => {
+  const changePromise = new Promise(resolve => {
     ExtensionsUI.on("change", function listener() {
       ExtensionsUI.off("change", listener);
       resolve();
@@ -114,7 +114,7 @@ add_task(async function test_sideloading() {
   await changePromise;
 
   // Check for the addons badge on the hamburger menu
-  let menuButton = document.getElementById("button-appmenu");
+  const menuButton = document.getElementById("button-appmenu");
   is(
     menuButton.getAttribute("badge-status"),
     "addon-alert",
@@ -140,7 +140,11 @@ add_task(async function test_sideloading() {
   addons.children[0].click();
 
   // The click should hide the main menu. This is currently synchronous.
-  ok(PanelUI.panel.state != "open", "Main menu is closed or closing.");
+  Assert.notEqual(
+    PanelUI.panel.state,
+    "open",
+    "Main menu is closed or closing."
+  );
 
   let panel = await popupPromise;
 
@@ -218,7 +222,7 @@ add_task(async function test_sideloading() {
   panel = await popupPromise;
   panel.button.click();
 
-  let tabmail = document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   tabmail.closeTab(tabmail.currentTabInfo);
 
   // Should still have 1 entry in the hamburger menu
@@ -269,7 +273,7 @@ add_task(async function test_sideloading() {
 
   await new Promise(resolve => setTimeout(resolve, 100));
 
-  for (let addon of [addon1, addon2, addon3]) {
+  for (const addon of [addon1, addon2, addon3]) {
     await addon.uninstall();
   }
 
@@ -292,6 +296,9 @@ add_task(async function test_sideloading() {
   info("Test telemetry events collected for addon1");
 
   const baseEventAddon1 = createBaseEventAddon(1);
+
+  const blocklist_state = `${Ci.nsIBlocklistService.STATE_NOT_BLOCKED}`;
+
   const collectedEventsAddon1 = getEventsForAddonId(
     amEvents,
     baseEventAddon1.value
@@ -300,13 +307,17 @@ add_task(async function test_sideloading() {
     {
       ...baseEventAddon1,
       method: "sideload_prompt",
-      extra: { ...expectedExtra, num_strings: "2" },
+      extra: { ...expectedExtra, num_strings: "2", blocklist_state },
     },
-    { ...baseEventAddon1, method: "uninstall" },
+    {
+      ...baseEventAddon1,
+      method: "uninstall",
+      extra: { ...expectedExtra, blocklist_state },
+    },
   ];
 
   let i = 0;
-  for (let event of collectedEventsAddon1) {
+  for (const event of collectedEventsAddon1) {
     Assert.deepEqual(
       event,
       expectedEventsAddon1[i++],
@@ -329,14 +340,22 @@ add_task(async function test_sideloading() {
     {
       ...baseEventAddon2,
       method: "sideload_prompt",
-      extra: { ...expectedExtra, num_strings: "1" },
+      extra: { ...expectedExtra, num_strings: "1", blocklist_state },
     },
-    { ...baseEventAddon2, method: "enable" },
-    { ...baseEventAddon2, method: "uninstall" },
+    {
+      ...baseEventAddon2,
+      method: "enable",
+      extra: { ...expectedExtra, blocklist_state },
+    },
+    {
+      ...baseEventAddon2,
+      method: "uninstall",
+      extra: { ...expectedExtra, blocklist_state },
+    },
   ];
 
   i = 0;
-  for (let event of collectedEventsAddon2) {
+  for (const event of collectedEventsAddon2) {
     Assert.deepEqual(
       event,
       expectedEventsAddon2[i++],

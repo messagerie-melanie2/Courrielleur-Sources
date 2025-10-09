@@ -4,6 +4,9 @@
 const { setTimeout, clearTimeout } = ChromeUtils.importESModule(
   "resource://gre/modules/Timer.sys.mjs"
 );
+const { TestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TestUtils.sys.mjs"
+);
 
 loadMatrix();
 
@@ -371,20 +374,24 @@ add_task(function test_setTypingState() {
     },
   });
 
-  roomStub._setTypingState(true);
+  roomStub.setTypingState(Ci.prplIConvIM.TYPING);
   equal(roomStub.typingRoomId, roomStub._roomId);
   ok(roomStub.typing);
 
-  roomStub._setTypingState(false);
+  roomStub.setTypingState(Ci.prplIConvIM.NOT_TYPING);
   equal(roomStub.typingRoomId, roomStub._roomId);
   ok(!roomStub.typing);
 
-  roomStub._setTypingState(true);
+  roomStub.setTypingState(Ci.prplIConvIM.TYPING);
   equal(roomStub.typingRoomId, roomStub._roomId);
   ok(roomStub.typing);
 
-  roomStub._cleanUpTimers();
+  roomStub.setTypingState(Ci.prplIConvIM.TYPED);
+  equal(roomStub.typingRoomId, roomStub._roomId);
+  ok(!roomStub.typing);
+
   roomStub.forget();
+  roomStub.unInit();
 });
 
 add_task(function test_setTypingStateDebounce() {
@@ -396,14 +403,14 @@ add_task(function test_setTypingStateDebounce() {
     },
   });
 
-  roomStub._setTypingState(true);
+  roomStub.setTypingState(Ci.prplIConvIM.TYPING);
   equal(roomStub.typingRoomId, roomStub._roomId);
   ok(roomStub.typing);
   ok(roomStub._typingDebounce);
 
   roomStub.typing = false;
 
-  roomStub._setTypingState(true);
+  roomStub.setTypingState(Ci.prplIConvIM.TYPING);
   equal(roomStub.typingRoomId, roomStub._roomId);
   ok(!roomStub.typing);
   ok(roomStub._typingDebounce);
@@ -411,28 +418,18 @@ add_task(function test_setTypingStateDebounce() {
   clearTimeout(roomStub._typingDebounce);
   roomStub._typingDebounce = null;
 
-  roomStub._setTypingState(true);
+  roomStub.setTypingState(Ci.prplIConvIM.TYPING);
   equal(roomStub.typingRoomId, roomStub._roomId);
   ok(roomStub.typing);
 
-  roomStub._cleanUpTimers();
   roomStub.forget();
-});
-
-add_task(function test_cancelTypingTimer() {
-  const roomStub = {
-    _typingTimer: setTimeout(() => {}, 10000), // eslint-disable-line mozilla/no-arbitrary-setTimeout
-  };
-  MatrixRoom.prototype._cancelTypingTimer.call(roomStub);
-  ok(!roomStub._typingTimer);
+  roomStub.unInit();
 });
 
 add_task(function test_cleanUpTimers() {
   const roomStub = getRoom(true);
-  roomStub._typingTimer = setTimeout(() => {}, 10000); // eslint-disable-line mozilla/no-arbitrary-setTimeout
   roomStub._typingDebounce = setTimeout(() => {}, 1000); // eslint-disable-line mozilla/no-arbitrary-setTimeout
   roomStub._cleanUpTimers();
-  ok(!roomStub._typingTimer);
   ok(!roomStub._typingDebounce);
   roomStub.forget();
 });
@@ -441,7 +438,7 @@ add_task(function test_finishedComposing() {
   let typingState = true;
   const roomStub = {
     __proto__: MatrixRoom.prototype,
-    shouldSendTypingNotifications: false,
+    supportTypingNotifications: false,
     _roomId: "foo",
     _account: {
       _client: {
@@ -456,39 +453,9 @@ add_task(function test_finishedComposing() {
   MatrixRoom.prototype.finishedComposing.call(roomStub);
   ok(typingState);
 
-  roomStub.shouldSendTypingNotifications = true;
+  roomStub.supportTypingNotifications = true;
   MatrixRoom.prototype.finishedComposing.call(roomStub);
   ok(!typingState);
-});
-
-add_task(function test_sendTyping() {
-  let typingState = false;
-  const roomStub = getRoom(true, "foo", {
-    sendTyping(roomId, state) {
-      typingState = state;
-      return Promise.resolve();
-    },
-  });
-  Services.prefs.setBoolPref("purple.conversations.im.send_typing", false);
-
-  let result = roomStub.sendTyping("lorem ipsum");
-  ok(!roomStub._typingTimer);
-  equal(result, Ci.prplIConversation.NO_TYPING_LIMIT);
-  ok(!typingState);
-
-  Services.prefs.setBoolPref("purple.conversations.im.send_typing", true);
-  result = roomStub.sendTyping("lorem ipsum");
-  ok(roomStub._typingTimer);
-  equal(result, Ci.prplIConversation.NO_TYPING_LIMIT);
-  ok(typingState);
-
-  result = roomStub.sendTyping("");
-  ok(!roomStub._typingTimer);
-  equal(result, Ci.prplIConversation.NO_TYPING_LIMIT);
-  ok(!typingState);
-
-  roomStub._cleanUpTimers();
-  roomStub.forget();
 });
 
 add_task(function test_setInitialized() {
@@ -513,7 +480,7 @@ add_task(function test_addEventSticker() {
     type: MatrixSDK.EventType.Sticker,
     content: {
       body: "foo",
-      url: "mxc://example.com/sticker.png",
+      url: "mxc://example.com/sticker",
     },
   });
   const roomStub = {
@@ -536,7 +503,7 @@ add_task(function test_addEventSticker() {
   equal(roomStub.who, "@user:example.com");
   equal(
     roomStub.message,
-    "https://example.com/_matrix/media/r0/download/example.com/sticker.png"
+    "https://example.com/_matrix/media/v3/download/example.com/sticker"
   );
   ok(!roomStub.options.system);
   ok(!roomStub.options.delayed);
@@ -640,7 +607,7 @@ add_task(async function test_addEventWaitingForDecryption() {
 
 add_task(async function test_addEventReplaceDecryptedEvent() {
   //TODO need to emit event on event?
-  let spec = {
+  const spec = {
     sender: "@user:example.com",
     type: MatrixSDK.EventType.RoomMessage,
     isEncrypted: true,
@@ -772,7 +739,7 @@ add_task(async function test_encryptionStateOn() {
     isCryptoEnabled() {
       return true;
     },
-    isRoomEncrypted(roomId) {
+    isRoomEncrypted() {
       return true;
     },
   });
@@ -850,7 +817,7 @@ add_task(async function test_addEventReaction() {
 });
 
 add_task(async function test_removeParticipant() {
-  let roomMembers = [
+  const roomMembers = [
     {
       userId: "@foo:example.com",
     },
@@ -912,9 +879,38 @@ add_task(function test_highlightForNotifications() {
   roomStub.forget();
 });
 
+add_task(async function test_prepareForDisplayingFormattedHTML() {
+  const time = Date.now();
+  const event = makeEvent({
+    type: MatrixSDK.EventType.RoomMessage,
+    time,
+    sender: "@foo:example.com",
+    content: {
+      msgtype: MatrixSDK.MsgType.Text,
+      format: "org.matrix.custom.html",
+      formatted_body: "<foo>bar</foo>",
+      body: "bar",
+    },
+  });
+  const roomStub = getRoom(true, "#test:example.com");
+
+  const newTextNotification = TestUtils.topicObserved("new-text");
+  roomStub.addEvent(event);
+
+  const [message] = await newTextNotification;
+
+  equal(
+    message.displayMessage,
+    event.getContent().formatted_body,
+    "Formatted body used for display"
+  );
+
+  roomStub.forget();
+});
+
 function waitForNotification(target, expectedTopic) {
-  let promise = new Promise(resolve => {
-    let observer = {
+  const promise = new Promise(resolve => {
+    const observer = {
       observe(subject, topic, data) {
         if (topic === expectedTopic) {
           resolve({ subject, data });

@@ -1,43 +1,51 @@
-// Copyright 2017 GFX developers
+// Copyright 2023 GFX developers
 //
 // Licensed under the Apache License, Version 2.0, <LICENSE-APACHE or
 // http://apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
+#![allow(deprecated)]
 #![allow(non_snake_case)]
 #![allow(non_upper_case_globals)]
+#![allow(clippy::new_without_default, clippy::new_ret_no_self)]
 
 #[macro_use]
-extern crate bitflags;
+pub extern crate objc;
 #[macro_use]
-extern crate log;
+pub extern crate foreign_types;
 #[macro_use]
-extern crate objc;
-#[macro_use]
-extern crate foreign_types;
+pub extern crate paste;
 
 use std::{
-    borrow::{Borrow, ToOwned},
+    borrow::Borrow,
+    ffi::{c_char, c_void},
     marker::PhantomData,
     mem,
     ops::Deref,
-    os::raw::c_void,
 };
 
 use core_graphics_types::{base::CGFloat, geometry::CGSize};
 use foreign_types::ForeignType;
 use objc::runtime::{Object, NO, YES};
 
+/// See <https://developer.apple.com/documentation/objectivec/nsinteger>
 #[cfg(target_pointer_width = "64")]
 pub type NSInteger = i64;
+
+/// See <https://developer.apple.com/documentation/objectivec/nsinteger>
 #[cfg(not(target_pointer_width = "64"))]
 pub type NSInteger = i32;
+
+/// See <https://developer.apple.com/documentation/objectivec/nsuinteger>
 #[cfg(target_pointer_width = "64")]
 pub type NSUInteger = u64;
+
+/// See <https://developer.apple.com/documentation/objectivec/nsuinteger>
 #[cfg(target_pointer_width = "32")]
 pub type NSUInteger = u32;
 
+/// See <https://developer.apple.com/documentation/foundation/nsrange>
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct NSRange {
@@ -54,8 +62,8 @@ impl NSRange {
 
 fn nsstring_as_str(nsstr: &objc::runtime::Object) -> &str {
     let bytes = unsafe {
-        let bytes: *const std::os::raw::c_char = msg_send![nsstr, UTF8String];
-        bytes as *const u8
+        let bytes: *const c_char = msg_send![nsstr, UTF8String];
+        bytes.cast()
     };
     let len: NSUInteger = unsafe { msg_send![nsstr, length] };
     unsafe {
@@ -68,7 +76,7 @@ fn nsstring_from_str(string: &str) -> *mut objc::runtime::Object {
     const UTF8_ENCODING: usize = 4;
 
     let cls = class!(NSString);
-    let bytes = string.as_ptr() as *const c_void;
+    let bytes = string.as_ptr().cast::<c_void>();
     unsafe {
         let obj: *mut objc::runtime::Object = msg_send![cls, alloc];
         let obj: *mut objc::runtime::Object = msg_send![
@@ -82,45 +90,93 @@ fn nsstring_from_str(string: &str) -> *mut objc::runtime::Object {
     }
 }
 
+/// Define a Rust wrapper for an Objective-C opaque type.
+///
+/// This macro adapts the `foreign-types` crate's [`foreign_type!`]
+/// macro to Objective-C, defining Rust types that represent owned and
+/// borrowed forms of some underlying Objective-C type, using
+/// Objective-C's reference counting to manage its lifetime.
+///
+/// Given a use of the form:
+///
+/// ```ignore
+/// foreign_obj_type! {
+///     type CType = MTLBuffer;   // underlying Objective-C type
+///     pub struct Buffer;        // owned Rust type
+///     pub struct BufferRef;     // borrowed Rust type
+///     type ParentType = ResourceRef;  // borrowed parent class
+/// }
+/// ```
+///
+/// This defines the types `Buffer` and `BufferRef` as owning and
+/// non-owning types, analogous to `String` and `str`, that manage
+/// some underlying `*mut MTLBuffer`:
+///
+/// - Both `Buffer` and `BufferRef` implement [`obj::Message`], indicating
+///   that they can be sent Objective-C messages.
+///
+/// - Dropping a `Buffer` sends the underlying `MTLBuffer` a `release`
+///   message, and cloning a `BufferRef` sends a `retain` message and
+///   returns a new `Buffer`.
+///
+/// - `Buffer` dereferences to `BufferRef`.
+///
+/// - `BufferRef` dereferences to its parent type `ResourceRef`. The
+///   `ParentType` component is optional; if omitted, the `Ref` type
+///   doesn't implement `Deref` or `DerefMut`.
+///
+/// - Both `Buffer` and `BufferRef` implement `std::fmt::Debug`,
+///   sending an Objective-C `debugDescription` message to the
+///   underlying `MTLBuffer`.
+///
+/// Following the `foreign_types` crate's nomenclature, the `Ref`
+/// suffix indicates that `BufferRef` and `ResourceRef` are non-owning
+/// types, used *by reference*, like `&BufferRef` or `&ResourceRef`.
+/// These types are not, themselves, references.
 macro_rules! foreign_obj_type {
-    {type CType = $raw_ident:ident;
-    pub struct $owned_ident:ident;
-    pub struct $ref_ident:ident;
-    type ParentType = $parent_ref:ident;
+    {
+        type CType = $raw_ident:ident;
+        pub struct $owned_ident:ident;
+        type ParentType = $parent_ident:ident;
     } => {
         foreign_obj_type! {
             type CType = $raw_ident;
             pub struct $owned_ident;
-            pub struct $ref_ident;
         }
 
-        impl ::std::ops::Deref for $ref_ident {
-            type Target = $parent_ref;
+        impl ::std::ops::Deref for paste!{[<$owned_ident Ref>]} {
+            type Target = paste!{[<$parent_ident Ref>]};
 
             #[inline]
-            fn deref(&self) -> &$parent_ref {
-                unsafe { &*(self as *const $ref_ident as *const $parent_ref)  }
+            fn deref(&self) -> &Self::Target {
+                unsafe { std::mem::transmute(self) }
+            }
+        }
+
+        impl ::std::convert::From<$owned_ident> for $parent_ident {
+            fn from(item: $owned_ident) -> Self {
+                unsafe { Self::from_ptr(item.into_ptr().cast()) }
             }
         }
     };
-    {type CType = $raw_ident:ident;
-    pub struct $owned_ident:ident;
-    pub struct $ref_ident:ident;
+    {
+        type CType = $raw_ident:ident;
+        pub struct $owned_ident:ident;
     } => {
         foreign_type! {
-            type CType = $raw_ident;
-            fn drop = crate::obj_drop;
-            fn clone = crate::obj_clone;
-            pub struct $owned_ident;
-            pub struct $ref_ident;
+            pub unsafe type $owned_ident: Sync + Send {
+                type CType = $raw_ident;
+                fn drop = crate::obj_drop;
+                fn clone = crate::obj_clone;
+            }
         }
 
         unsafe impl ::objc::Message for $raw_ident {
         }
-        unsafe impl ::objc::Message for $ref_ident {
+        unsafe impl ::objc::Message for paste!{[<$owned_ident Ref>]} {
         }
 
-        impl ::std::fmt::Debug for $ref_ident {
+        impl ::std::fmt::Debug for paste!{[<$owned_ident Ref>]} {
             fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
                 unsafe {
                     let string: *mut ::objc::runtime::Object = msg_send![self, debugDescription];
@@ -142,13 +198,12 @@ macro_rules! try_objc {
         $err_name: ident => $body:expr
     } => {
         {
-            let mut $err_name: *mut ::objc::runtime::Object = ::std::ptr::null_mut();
+            let mut $err_name: *mut Object = ::std::ptr::null_mut();
             let value = $body;
             if !$err_name.is_null() {
                 let desc: *mut Object = msg_send![$err_name, localizedDescription];
-                let compile_error: *const std::os::raw::c_char = msg_send![desc, UTF8String];
+                let compile_error: *const c_char = msg_send![desc, UTF8String];
                 let message = CStr::from_ptr(compile_error).to_string_lossy().into_owned();
-                let () = msg_send![$err_name, release];
                 return Err(message);
             }
             value
@@ -156,6 +211,47 @@ macro_rules! try_objc {
     };
 }
 
+macro_rules! msg_send_bool {
+    ($obj:expr, $name:ident) => {{
+        match msg_send![$obj, $name] {
+            YES => true,
+            NO => false,
+            #[cfg(not(target_arch = "aarch64"))]
+            _ => unreachable!(),
+        }
+    }};
+    ($obj:expr, $name:ident : $arg:expr) => {{
+        match msg_send![$obj, $name: $arg] {
+            YES => true,
+            NO => false,
+            #[cfg(not(target_arch = "aarch64"))]
+            _ => unreachable!(),
+        }
+    }};
+}
+
+macro_rules! msg_send_bool_error_check {
+    ($obj:expr, $name:ident: $arg:expr) => {{
+        let mut err: *mut Object = ptr::null_mut();
+        let result: BOOL = msg_send![$obj, $name:$arg
+                                                    error:&mut err];
+        if !err.is_null() {
+            let desc: *mut Object = msg_send![err, localizedDescription];
+            let c_msg: *const c_char = msg_send![desc, UTF8String];
+            let message = CStr::from_ptr(c_msg).to_string_lossy().into_owned();
+            Err(message)
+        } else {
+            match result {
+                YES => Ok(true),
+                NO => Ok(false),
+                #[cfg(not(target_arch = "aarch64"))]
+                _ => unreachable!(),
+            }
+        }
+    }};
+}
+
+/// See <https://developer.apple.com/documentation/foundation/nsarray>
 pub struct NSArray<T> {
     _phantom: PhantomData<T>,
 }
@@ -164,6 +260,7 @@ pub struct Array<T>(*mut NSArray<T>)
 where
     T: ForeignType + 'static,
     T::Ref: objc::Message + 'static;
+
 pub struct ArrayRef<T>(foreign_types::Opaque, PhantomData<T>)
 where
     T: ForeignType + 'static,
@@ -197,6 +294,7 @@ where
     T::Ref: objc::Message + 'static,
 {
 }
+
 unsafe impl<T> objc::Message for ArrayRef<T>
 where
     T: ForeignType + 'static,
@@ -224,7 +322,7 @@ where
     }
 }
 
-impl<T> foreign_types::ForeignType for Array<T>
+unsafe impl<T> foreign_types::ForeignType for Array<T>
 where
     T: ForeignType + 'static,
     T::Ref: objc::Message + 'static,
@@ -241,7 +339,7 @@ where
     }
 }
 
-impl<T> foreign_types::ForeignTypeRef for ArrayRef<T>
+unsafe impl<T> foreign_types::ForeignTypeRef for ArrayRef<T>
 where
     T: ForeignType + 'static,
     T::Ref: objc::Message + 'static,
@@ -258,7 +356,7 @@ where
 
     #[inline]
     fn deref(&self) -> &ArrayRef<T> {
-        unsafe { mem::transmute(self.as_ptr()) }
+        unsafe { std::mem::transmute(self) }
     }
 }
 
@@ -268,7 +366,7 @@ where
     T::Ref: objc::Message + 'static,
 {
     fn borrow(&self) -> &ArrayRef<T> {
-        unsafe { mem::transmute(self.as_ptr()) }
+        unsafe { std::mem::transmute(self) }
     }
 }
 
@@ -284,13 +382,13 @@ where
     }
 }
 
+/// See <https://developer.apple.com/documentation/quartzcore/cametaldrawable>
 pub enum CAMetalDrawable {}
 
 foreign_obj_type! {
     type CType = CAMetalDrawable;
     pub struct MetalDrawable;
-    pub struct MetalDrawableRef;
-    type ParentType = DrawableRef;
+    type ParentType = Drawable;
 }
 
 impl MetalDrawableRef {
@@ -299,12 +397,34 @@ impl MetalDrawableRef {
     }
 }
 
+pub enum NSObject {}
+
+foreign_obj_type! {
+    type CType = NSObject;
+    pub struct NsObject;
+}
+
+impl NsObjectRef {
+    pub fn conforms_to_protocol<T>(&self) -> Result<bool, String> {
+        let name = ::std::any::type_name::<T>();
+        if let Some(name) = name.split("::").last() {
+            if let Some(protocol) = objc::runtime::Protocol::get(name) {
+                Ok(unsafe { msg_send![self, conformsToProtocol: protocol] })
+            } else {
+                Err(format!("Can not find the protocol for type: {}.", name))
+            }
+        } else {
+            Err(format!("Unexpected type name: {}.", name))
+        }
+    }
+}
+
+// See <https://developer.apple.com/documentation/quartzcore/cametallayer>
 pub enum CAMetalLayer {}
 
 foreign_obj_type! {
     type CType = CAMetalLayer;
     pub struct MetalLayer;
-    pub struct MetalLayerRef;
 }
 
 impl MetalLayer {
@@ -342,13 +462,7 @@ impl MetalLayerRef {
     }
 
     pub fn presents_with_transaction(&self) -> bool {
-        unsafe {
-            match msg_send![self, presentsWithTransaction] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, presentsWithTransaction] }
     }
 
     pub fn set_presents_with_transaction(&self, transaction: bool) {
@@ -356,13 +470,7 @@ impl MetalLayerRef {
     }
 
     pub fn display_sync_enabled(&self) -> bool {
-        unsafe {
-            match msg_send![self, displaySyncEnabled] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, displaySyncEnabled] }
     }
 
     pub fn set_display_sync_enabled(&self, enabled: bool) {
@@ -403,13 +511,7 @@ impl MetalLayerRef {
 
     /// [framebufferOnly Apple Docs](https://developer.apple.com/documentation/metal/mtltexture/1515749-framebufferonly?language=objc)
     pub fn framebuffer_only(&self) -> bool {
-        unsafe {
-            match msg_send![self, framebufferOnly] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool!(self, framebufferOnly) }
     }
 
     pub fn set_framebuffer_only(&self, framebuffer_only: bool) {
@@ -417,13 +519,7 @@ impl MetalLayerRef {
     }
 
     pub fn is_opaque(&self) -> bool {
-        unsafe {
-            match msg_send![self, isOpaque] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool!(self, isOpaque) }
     }
 
     pub fn set_opaque(&self, opaque: bool) {
@@ -431,13 +527,7 @@ impl MetalLayerRef {
     }
 
     pub fn wants_extended_dynamic_range_content(&self) -> bool {
-        unsafe {
-            match msg_send![self, wantsExtendedDynamicRangeContent] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, wantsExtendedDynamicRangeContent] }
     }
 
     pub fn set_wants_extended_dynamic_range_content(
@@ -453,13 +543,18 @@ impl MetalLayerRef {
     }
 }
 
+mod acceleration_structure;
+mod acceleration_structure_pass;
 mod argument;
+mod blitpass;
 mod buffer;
 mod capturedescriptor;
 mod capturemanager;
 mod commandbuffer;
 mod commandqueue;
+mod computepass;
 mod constants;
+mod counters;
 mod depthstencil;
 mod device;
 mod drawable;
@@ -468,7 +563,7 @@ mod heap;
 mod indirect_encoder;
 mod library;
 #[cfg(feature = "mps")]
-mod mps;
+pub mod mps;
 mod pipeline;
 mod renderpass;
 mod resource;
@@ -480,8 +575,13 @@ mod vertexdescriptor;
 
 #[rustfmt::skip]
 pub use {
+    acceleration_structure::*,
+    acceleration_structure_pass::*,
     argument::*,
+    blitpass::*,
     buffer::*,
+    counters::*,
+    computepass::*,
     capturedescriptor::*,
     capturemanager::*,
     commandbuffer::*,
@@ -504,29 +604,26 @@ pub use {
     sync::*,
 };
 
-#[cfg(feature = "mps")]
-pub use mps::*;
-
 #[inline]
 unsafe fn obj_drop<T>(p: *mut T) {
-    msg_send![(p as *mut Object), release]
+    msg_send![p.cast::<Object>(), release]
 }
 
 #[inline]
 unsafe fn obj_clone<T: 'static>(p: *mut T) -> *mut T {
-    msg_send![(p as *mut Object), retain]
+    msg_send![p.cast::<Object>(), retain]
 }
 
 #[allow(non_camel_case_types)]
 type c_size_t = usize;
 
 // TODO: expand supported interface
+/// See <https://developer.apple.com/documentation/foundation/nsurl>
 pub enum NSURL {}
 
 foreign_obj_type! {
     type CType = NSURL;
     pub struct URL;
-    pub struct URLRef;
 }
 
 impl URL {
@@ -544,6 +641,13 @@ impl URLRef {
         unsafe {
             let absolute_string = msg_send![self, absoluteString];
             crate::nsstring_as_str(absolute_string)
+        }
+    }
+
+    pub fn path(&self) -> &str {
+        unsafe {
+            let path = msg_send![self, path];
+            crate::nsstring_as_str(path)
         }
     }
 }

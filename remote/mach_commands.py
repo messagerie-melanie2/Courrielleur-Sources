@@ -72,19 +72,22 @@ def vendor_puppeteer(command_context, repository, commitish, install):
     # Preserve our custom mocha reporter
     shutil.move(
         os.path.join(puppeteer_dir, "json-mocha-reporter.js"),
-        remotedir(command_context),
+        os.path.join(remotedir(command_context), "json-mocha-reporter.js"),
     )
+
+    print("Removing folders for current Puppeteer version…")
     shutil.rmtree(puppeteer_dir, ignore_errors=True)
     os.makedirs(puppeteer_dir)
+
     with TemporaryDirectory() as tmpdir:
-        git("clone", "-q", repository, tmpdir)
-        git("checkout", commitish, worktree=tmpdir)
+        print(f'Fetching commitish "{commitish}" from {repository}…')
+        git("clone", "--depth", "1", "--branch", commitish, repository, tmpdir)
         git(
             "checkout-index",
             "-a",
             "-f",
             "--prefix",
-            "{}/".format(puppeteer_dir),
+            f"{puppeteer_dir}/",
             worktree=tmpdir,
         )
 
@@ -133,8 +136,22 @@ def vendor_puppeteer(command_context, repository, commitish, install):
         )
 
     if install:
-        env = {"HUSKY": "0", "PUPPETEER_SKIP_DOWNLOAD": "1"}
-        npm(
+        env = {
+            "CI": "1",  # Force the quiet logger of wireit
+            "HUSKY": "0",  # Disable any hook checks
+            "PUPPETEER_SKIP_DOWNLOAD": "1",  # Don't download any build
+        }
+
+        print("Cleaning up and installing new version of Puppeteer…")
+        run_npm(
+            "run",
+            "clean",
+            cwd=puppeteer_dir,
+            env=env,
+            exit_on_fail=False,
+        )
+
+        run_npm(
             "install",
             cwd=os.path.join(command_context.topsrcdir, puppeteer_dir),
             env=env,
@@ -171,43 +188,42 @@ def git(*args, **kwargs):
     return out
 
 
-def npm(*args, **kwargs):
-    from mozprocess import processhandler
+def run_npm(*args, **kwargs):
+    from mozprocess import run_and_wait
 
-    env = None
+    def output_timeout_handler(proc):
+        # In some cases, we wait longer for a mocha timeout
+        print(
+            "Timed out after {} seconds of no output".format(kwargs["output_timeout"])
+        )
+
+    env = os.environ.copy()
     npm, _ = nodeutil.find_npm_executable()
     if kwargs.get("env"):
-        env = os.environ.copy()
         env.update(kwargs["env"])
 
-    proc_kwargs = {}
-    if "processOutputLine" in kwargs:
-        proc_kwargs["processOutputLine"] = kwargs["processOutputLine"]
+    proc_kwargs = {"output_timeout_handler": output_timeout_handler}
+    for kw in ["output_line_handler", "output_timeout"]:
+        if kw in kwargs:
+            proc_kwargs[kw] = kwargs[kw]
 
-    p = processhandler.ProcessHandler(
-        cmd=npm,
-        args=list(args),
+    cmd = [npm]
+    cmd.extend(list(args))
+
+    p = run_and_wait(
+        args=cmd,
         cwd=kwargs.get("cwd"),
         env=env,
-        universal_newlines=True,
+        text=True,
         **proc_kwargs,
     )
-    if not kwargs.get("wait", True):
-        return p
-
-    wait_proc(p, cmd=npm, exit_on_fail=kwargs.get("exit_on_fail", True))
+    post_wait_proc(p, cmd=npm, exit_on_fail=kwargs.get("exit_on_fail", True))
 
     return p.returncode
 
 
-def wait_proc(p, cmd=None, exit_on_fail=True, output_timeout=None):
-    try:
-        p.run(outputTimeout=output_timeout)
-        p.wait()
-        if p.timedOut:
-            # In some cases, we wait longer for a mocha timeout
-            print("Timed out after {} seconds of no output".format(output_timeout))
-    finally:
+def post_wait_proc(p, cmd=None, exit_on_fail=True):
+    if p.poll() is None:
         p.kill()
     if exit_on_fail and p.returncode > 0:
         msg = (
@@ -218,7 +234,7 @@ def wait_proc(p, cmd=None, exit_on_fail=True, output_timeout=None):
         exit(p.returncode, msg)
 
 
-class MochaOutputHandler(object):
+class MochaOutputHandler:
     def __init__(self, logger, expected):
         self.hook_re = re.compile('"before\b?.*" hook|"after\b?.*" hook')
 
@@ -243,7 +259,9 @@ class MochaOutputHandler(object):
     def pid(self):
         return self.proc and self.proc.pid
 
-    def __call__(self, line):
+    def __call__(self, proc, line):
+        self.proc = proc
+        line = line.rstrip("\r\n")
         event = None
         try:
             if line.startswith("[") and line.endswith("]"):
@@ -258,7 +276,7 @@ class MochaOutputHandler(object):
         if testIdPattern.find("*") == -1:
             return expected_name == testIdPattern
         else:
-            return re.compile(re.escape(testIdPattern).replace("\*", ".*")).search(
+            return re.compile(re.escape(testIdPattern).replace(r"\*", ".*")).search(
                 expected_name
             )
 
@@ -278,7 +296,7 @@ class MochaOutputHandler(object):
                 if "timeout" in test_err.lower():
                     status = "TIMEOUT"
             if test_name and test_path:
-                test_name = "{} ({})".format(test_name, os.path.basename(test_path))
+                test_name = f"{test_name} ({os.path.basename(test_path)})"
             # mocha hook failures are not tracked in metadata
             if status != "PASS" and self.hook_re.search(test_name):
                 self.logger.error("TEST-UNEXPECTED-ERROR %s" % (test_name,))
@@ -286,7 +304,7 @@ class MochaOutputHandler(object):
             if test_start:
                 self.logger.test_start(test_name)
                 return
-            expected_name = "[{}] {}".format(test_file_name, test_full_title)
+            expected_name = f"[{test_file_name}] {test_full_title}"
             expected_item = next(
                 (
                     expectation
@@ -314,8 +332,8 @@ class MochaOutputHandler(object):
             result_recorded = self.test_results.get(test_name)
             if result_recorded:
                 self.logger.warning(
-                    "Received a second status for {}: "
-                    "first {}, now {}".format(test_name, result_recorded, status)
+                    f"Received a second status for {test_name}: "
+                    f"first {result_recorded}, now {status}"
                 )
             # mocha intermittently logs an additional test result after the
             # test has already timed out. Avoid recording this second status.
@@ -341,13 +359,13 @@ class MochaOutputHandler(object):
 
 
 # tempfile.TemporaryDirectory missing from Python 2.7
-class TemporaryDirectory(object):
+class TemporaryDirectory:
     def __init__(self):
         self.path = tempfile.mkdtemp()
         self._closed = False
 
     def __repr__(self):
-        return "<{} {!r}>".format(self.__class__.__name__, self.path)
+        return f"<{self.__class__.__name__} {self.path!r}>"
 
     def __enter__(self):
         return self.path
@@ -377,8 +395,6 @@ class PuppeteerRunner(MozbuildObject):
 
         Possible optional test parameters:
 
-        `bidi`:
-          Boolean to indicate whether to test Firefox with BiDi protocol.
         `binary`:
           Path for the browser binary to use.  Defaults to the local
           build.
@@ -392,18 +408,12 @@ class PuppeteerRunner(MozbuildObject):
         """
         setup()
 
-        with_bidi = params.get("bidi", False)
-        binary = params.get("binary") or self.get_binary_path()
+        binary = params.get("binary")
+        headless = params.get("headless", False)
         product = params.get("product", "firefox")
+        this_chunk = params.get("this_chunk", "1")
+        total_chunks = params.get("total_chunks", "1")
 
-        env = {
-            # Print browser process ouptut
-            "DUMPIO": "1",
-            # Checked by Puppeteer's custom mocha config
-            "CI": "1",
-            # Causes some tests to be skipped due to assumptions about install
-            "PUPPETEER_ALT_INSTALL": "1",
-        }
         extra_options = {}
         for k, v in params.get("extra_launcher_options", {}).items():
             extra_options[k] = json.loads(v)
@@ -420,14 +430,25 @@ class PuppeteerRunner(MozbuildObject):
             "--no-parallel",
             "--no-coverage",
         ]
-        env["HEADLESS"] = str(params.get("headless", False))
-        test_command = "test:" + product
+
+        env = {
+            # Checked by Puppeteer's custom mocha config
+            "CI": "1",
+            # Print browser process ouptut
+            "DUMPIO": "1",
+            # Run in headless mode if trueish, otherwise use headful
+            "HEADLESS": str(headless),
+            # Causes some tests to be skipped due to assumptions about install
+            "PUPPETEER_ALT_INSTALL": "1",
+        }
 
         if product == "firefox":
-            env["BINARY"] = binary
+            env["BINARY"] = binary or self.get_binary_path()
             env["PUPPETEER_PRODUCT"] = "firefox"
             env["MOZ_WEBRENDER"] = "%d" % params.get("enable_webrender", False)
         else:
+            if binary:
+                env["BINARY"] = binary
             env["PUPPETEER_CACHE_DIR"] = os.path.join(
                 self.topobjdir,
                 "_tests",
@@ -437,18 +458,33 @@ class PuppeteerRunner(MozbuildObject):
                 ".cache",
             )
 
-        if with_bidi is True:
-            test_command = test_command + ":bidi"
-        elif env["HEADLESS"] == "True":
-            test_command = test_command + ":headless"
+        if product == "chrome":
+            if not headless:
+                raise Exception(
+                    "Chrome doesn't support headful mode with the WebDriver BiDi protocol"
+                )
+            test_command = "chrome-bidi"
+        elif product == "firefox":
+            if headless:
+                test_command = "firefox-headless"
+            else:
+                test_command = "firefox-headful"
         else:
-            test_command = test_command + ":headful"
+            test_command = product
 
-        command = ["run", test_command, "--"] + mocha_options
+        command = [
+            "run",
+            "test",
+            "--",
+            "--shard",
+            f"{this_chunk}-{total_chunks}",
+            "--test-suite",
+            test_command,
+        ] + mocha_options
 
         prefs = {}
         for k, v in params.get("extra_prefs", {}).items():
-            print("Using extra preference: {}={}".format(k, v))
+            print(f"Using extra preference: {k}={v}")
             prefs[k] = mozprofile.Preferences.cast(v)
 
         if prefs:
@@ -481,45 +517,33 @@ class PuppeteerRunner(MozbuildObject):
             expectation
             for expectation in expected_data
             if is_relevant_expectation(
-                expectation, product, with_bidi, env["HEADLESS"], expected_platform
+                expectation, product, env["HEADLESS"], expected_platform
             )
         ]
 
         output_handler = MochaOutputHandler(logger, expectations)
-        proc = npm(
+        run_npm(
             *command,
             cwd=self.puppeteer_dir,
             env=env,
-            processOutputLine=output_handler,
-            wait=False,
+            output_line_handler=output_handler,
+            # Puppeteer unit tests don't always clean-up child processes in case of
+            # failure, so use an output_timeout as a fallback
+            output_timeout=60,
+            exit_on_fail=True,
         )
-        output_handler.proc = proc
-
-        # Puppeteer unit tests don't always clean-up child processes in case of
-        # failure, so use an output_timeout as a fallback
-        wait_proc(proc, "npm", output_timeout=60, exit_on_fail=False)
 
         output_handler.after_end()
 
-        # Non-zero return codes are non-fatal for now since we have some
-        # issues with unresolved promises that shouldn't otherwise block
-        # running the tests
-        if proc.returncode != 0:
-            logger.warning("npm exited with code %s" % proc.returncode)
-
         if output_handler.has_unexpected:
-            exit(1, "Got unexpected results")
+            logger.error("Got unexpected results")
+            exit(1)
 
 
 def create_parser_puppeteer():
     p = argparse.ArgumentParser()
     p.add_argument(
         "--product", type=str, default="firefox", choices=["chrome", "firefox"]
-    )
-    p.add_argument(
-        "--bidi",
-        action="store_true",
-        help="Flag that indicates whether to test Firefox with BiDi protocol.",
     )
     p.add_argument(
         "--binary",
@@ -561,6 +585,18 @@ def create_parser_puppeteer():
         help="Defines additional options for `puppeteer.launch`.",
     )
     p.add_argument(
+        "--this-chunk",
+        type=str,
+        default="1",
+        help="Defines a current chunk to run.",
+    )
+    p.add_argument(
+        "--total-chunks",
+        type=str,
+        default="1",
+        help="Defines a total amount of chunks to run.",
+    )
+    p.add_argument(
         "-v",
         dest="verbosity",
         action="count",
@@ -575,20 +611,18 @@ def create_parser_puppeteer():
 
 
 def is_relevant_expectation(
-    expectation, expected_product, with_bidi, is_headless, expected_platform
+    expectation, expected_product, is_headless, expected_platform
 ):
     parameters = expectation["parameters"]
 
     if expected_product == "firefox":
-        is_expected_product = "chrome" not in parameters
+        is_expected_product = (
+            "chrome" not in parameters and "chrome-headless-shell" not in parameters
+        )
     else:
         is_expected_product = "firefox" not in parameters
 
-    if with_bidi is True:
-        is_expected_protocol = "cdp" not in parameters
-        is_headless = "True"
-    else:
-        is_expected_protocol = "webDriverBiDi" not in parameters
+    is_expected_protocol = "cdp" not in parameters
 
     if is_headless == "True":
         is_expected_mode = "headful" not in parameters
@@ -620,7 +654,6 @@ def is_relevant_expectation(
 )
 def puppeteer_test(
     command_context,
-    bidi=None,
     binary=None,
     ci=False,
     disable_fission=False,
@@ -632,9 +665,10 @@ def puppeteer_test(
     verbosity=0,
     tests=None,
     product="firefox",
+    this_chunk="1",
+    total_chunks="1",
     **kwargs,
 ):
-
     logger = mozlog.commandline.setup_logging(
         "puppeteer-test", kwargs, {"mach": sys.stdout}
     )
@@ -657,7 +691,7 @@ def puppeteer_test(
     for s in extra_prefs or []:
         kv = s.split("=")
         if len(kv) != 2:
-            logger.error("syntax error in --setpref={}".format(s))
+            logger.error(f"syntax error in --setpref={s}")
             exit(EX_USAGE)
         prefs[kv[0]] = kv[1].strip()
 
@@ -665,7 +699,7 @@ def puppeteer_test(
     for s in extra_options or []:
         kv = s.split("=")
         if len(kv) != 2:
-            logger.error("syntax error in --setopt={}".format(s))
+            logger.error(f"syntax error in --setopt={s}")
             exit(EX_USAGE)
         options[kv[0]] = kv[1].strip()
 
@@ -684,13 +718,14 @@ def puppeteer_test(
         install_puppeteer(command_context, product, ci)
 
     params = {
-        "bidi": bidi,
         "binary": binary,
         "headless": headless,
         "enable_webrender": enable_webrender,
         "extra_prefs": prefs,
         "product": product,
         "extra_launcher_options": options,
+        "this_chunk": this_chunk,
+        "total_chunks": total_chunks,
     }
     puppeteer = command_context._spawn(PuppeteerRunner)
     try:
@@ -705,13 +740,18 @@ def puppeteer_test(
 
 def install_puppeteer(command_context, product, ci):
     setup()
-    env = {"HUSKY": "0"}
+
+    env = {
+        "CI": "1",  # Force the quiet logger of wireit
+        "HUSKY": "0",  # Disable any hook checks
+    }
 
     puppeteer_dir = os.path.join("remote", "test", "puppeteer")
     puppeteer_dir_full_path = os.path.join(command_context.topsrcdir, puppeteer_dir)
     puppeteer_test_dir = os.path.join(puppeteer_dir, "test")
 
     if product == "chrome":
+        env["PUPPETEER_PRODUCT"] = "chrome"
         env["PUPPETEER_CACHE_DIR"] = os.path.join(
             command_context.topobjdir, "_tests", puppeteer_dir, ".cache"
         )
@@ -719,7 +759,7 @@ def install_puppeteer(command_context, product, ci):
         env["PUPPETEER_SKIP_DOWNLOAD"] = "1"
 
     if not ci:
-        npm(
+        run_npm(
             "run",
             "clean",
             cwd=puppeteer_dir_full_path,
@@ -727,14 +767,19 @@ def install_puppeteer(command_context, product, ci):
             exit_on_fail=False,
         )
 
-    command = "ci" if ci else "install"
-    npm(command, cwd=puppeteer_dir_full_path, env=env)
-    npm(
+    # Always use the `ci` command to not get updated sub-dependencies installed.
+    run_npm("ci", cwd=puppeteer_dir_full_path, env=env)
+
+    # Build Puppeteer and the code to download browsers.
+    run_npm(
         "run",
         "build",
         cwd=os.path.join(command_context.topsrcdir, puppeteer_test_dir),
         env=env,
     )
+
+    # Run post install steps, including downloading the Chrome browser if requested
+    run_npm("run", "postinstall", cwd=puppeteer_dir_full_path, env=env)
 
 
 def exit(code, error=None):
@@ -745,5 +790,5 @@ def exit(code, error=None):
             traceback.print_exc()
         else:
             message = str(error).split("\n")[0].strip()
-            print("{}: {}".format(sys.argv[0], message), file=sys.stderr)
+            print(f"{sys.argv[0]}: {message}", file=sys.stderr)
     sys.exit(code)

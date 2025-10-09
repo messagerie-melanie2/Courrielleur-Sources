@@ -16,13 +16,18 @@ treeherder:
         'Ub18': 'Packages for Ubuntu 18.04'
         'Ub20': 'Packages for Ubuntu 20.04'
         'Ub22': 'Packages for Ubuntu 22.04'
+        'Ub24': 'Packages for Ubuntu 24.04'
         'I': 'Docker Image Builds'
         'TA': 'Toolchain builds for Android'
         'TL': 'Toolchain builds for Linux 64-bits'
-        'TM': 'Toolchain builds for OSX'
+        'TL32': 'Toolchain builds for Linux 32-bits'
+        'TLA64': 'Toolchain builds for Linux AArch64'
+        'TM': 'Toolchain builds for macOS'
+        'TMA64': 'Toolchain builds for macOS Aarch64'
         'TMW': 'Toolchain builds for Windows MinGW'
         'TW32': 'Toolchain builds for Windows 32-bits'
         'TW64': 'Toolchain builds for Windows 64-bits'
+        'TWA64': 'Toolchain builds for Windows AArch64'
 
         # Release promotion
         'BM': 'Beetmover'
@@ -32,6 +37,7 @@ treeherder:
         'c-Up': 'Balrog submission of complete updates'
         'cs': 'Checksum signing'
         'css': 'Checksum signing for source'
+        'Deb': 'Deb archive generation'
         'Flatpak': 'Flatpak image generation'
         'L10n': 'Localised Repacks'
         'L10n-Rpk': 'Localized Repackaged Repacks'
@@ -119,9 +125,6 @@ merge-automation:
                 - - mail/config/mozconfigs/l10n-common
                   - ac_add_options --with-branding=comm/mail/branding/nightly
                   - ac_add_options --enable-official-branding
-                - - .gecko_rev.yml
-                  - "GECKO_HEAD_REPOSITORY: https://hg.mozilla.org/mozilla-central"
-                  - "GECKO_HEAD_REPOSITORY: https://hg.mozilla.org/releases/mozilla-beta"
                 - - suite/config/version.txt
                   - a1
                   - ''
@@ -140,13 +143,10 @@ merge-automation:
             version-files:
                 - filename: "mail/config/version_display.txt"
                   new-suffix: ''
-            replacements:
+            replacements:  # .gecko_rev.yml handled via transform function
                 - - suite/config/version_display.txt
                   - b1
                   - ''
-                - - .gecko_rev.yml
-                  - "GECKO_HEAD_REPOSITORY: https://hg.mozilla.org/releases/mozilla-beta"
-                  - "GECKO_HEAD_REPOSITORY: https://hg.mozilla.org/releases/mozilla-release"
             merge-old-head: true
             base-tag: 'RELEASE_{major_version}_BASE'
             end-tag: 'RELEASE_{major_version}_END'
@@ -159,14 +159,11 @@ merge-automation:
             version-files:
                 - filename: "mail/config/version_display.txt"
                   new-suffix: 'esr'
-            replacements:
-                - - .gecko_rev.yml
-                  - "GECKO_HEAD_REPOSITORY: https://hg.mozilla.org/releases/mozilla-release"
-                  - "GECKO_HEAD_REPOSITORY: https://hg.mozilla.org/releases/mozilla-esr128"
+            replacements: []
             merge-old-head: false
             end-tag: "ESR_{major_version}_BASE"
-            to-repo: 'https://hg.mozilla.org/releases/comm-esr128'
-            to-branch: 'comm-esr128'
+            to-repo: 'https://hg.mozilla.org/releases/comm-esr140'
+            to-branch: 'comm-esr140'
         comm-bump-central:
             fetch-version-from: "mail/config/version.txt"
             version-files:
@@ -225,6 +222,11 @@ workers:
             provisioner: 'comm-{level}'
             implementation: docker-worker
             os: linux
+            worker-type: '{alias}'
+        b-osx-arm64:
+            provisioner: releng-hardware
+            implementation: generic-worker
+            os: macosx
             worker-type: '{alias}'
         b-win2022:
             provisioner: 'comm-{level}'
@@ -292,15 +294,15 @@ workers:
             provisioner: scriptworker-prov-v1
             implementation: scriptworker-signing
             os: macosx
-            worker-type: tb-depsigning-mac-v1
+            worker-type: dep-comm-signing-mac14m2
         mac-signing:
             provisioner: scriptworker-prov-v1
             implementation: scriptworker-signing
             os: macosx
             worker-type:
                 by-release-level:
-                    production: tb-signing-mac-v1
-                    staging: tb-depsigning-mac-v1
+                    production: comm-signing-mac14m2
+                    staging: dep-comm-signing-mac14m2
         tree:
             provisioner: scriptworker-k8s
             implementation: treescript
@@ -309,6 +311,11 @@ workers:
                 by-release-level:
                     production: comm-3-tree
                     staging: comm-1-tree
+        t-linux-docker(|-noscratch):
+            provisioner: comm-t
+            implementation: docker-worker
+            os: linux
+            worker-type: '{alias}'
         t-linux(-large|-xlarge|-xlarge-source):
             provisioner: comm-t
             implementation: docker-worker
@@ -329,8 +336,13 @@ workers:
             implementation: generic-worker
             os: macosx
             worker-type: 'gecko-{alias}'
-        win11-64-2009(|-ssd):
-            provisioner: comm-t
+        t-osx-1400-r8:
+            provisioner: releng-hardware
+            implementation: generic-worker
+            os: macosx
+            worker-type: 'gecko-{alias}'
+        win11-64-24h2(|-gpu|-source|-large|-ssd):
+            provisioner: 'comm-t'
             implementation: generic-worker
             os: windows
             worker-type: '{alias}'
@@ -373,6 +385,7 @@ mac-signing:
                   force: true
                   # These files are signed without entitlements
                   globs:
+                      - "/Contents/MacOS/crashhelper"
                       - "/Contents/MacOS/crashreporter.app"
                       - "/Contents/MacOS/updater.app/Contents/Frameworks/UpdateSettings.framework"
                       - "/Contents/MacOS/updater.app"
@@ -380,7 +393,6 @@ mac-signing:
                       - "/Contents/Library/Spotlight/thunderbird.mdimporter"
                       - "/Contents/MacOS/XUL"
                       - "/Contents/MacOS/pingsender"
-                      - "/Contents/MacOS/minidump-analyzer"
                       - "/Contents/MacOS/*.dylib"
                       - "/Contents/MacOS/rnp-cli"
                       - "/Contents/MacOS/rnpkeys"
@@ -413,13 +425,13 @@ mac-signing:
                   force: true
                   entitlements: comm/build/macosx/hardenedruntime/v2/developer/utility.xml
                   globs:
+                      - "/Contents/MacOS/crashhelper"
                       - "/Contents/MacOS/crashreporter.app"
                       - "/Contents/MacOS/updater.app/Contents/Frameworks/UpdateSettings.framework"
                       - "/Contents/MacOS/updater.app"
                       - "/Contents/Library/LaunchServices/org.mozilla.updater"
                       - "/Contents/Library/Spotlight/thunderbird.mdimporter"
                       - "/Contents/MacOS/pingsender"
-                      - "/Contents/MacOS/minidump-analyzer"
                       - "/Contents/MacOS/rnp-cli"
                       - "/Contents/MacOS/rnpkeys"
                       - "/Contents/Frameworks/ChannelPrefs.framework"

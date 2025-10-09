@@ -2,14 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { mailTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MailTestUtils.jsm"
+const { mailTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MailTestUtils.sys.mjs"
 );
-const { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+const { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 const tabmail = document.getElementById("tabmail");
@@ -18,8 +18,7 @@ let rootFolder, testFolder, otherFolder;
 add_setup(async function () {
   const generator = new MessageGenerator();
 
-  MailServices.accounts.createLocalMailAccount();
-  const account = MailServices.accounts.accounts[0];
+  const account = MailServices.accounts.createLocalMailAccount();
   account.addIdentity(MailServices.accounts.createIdentity());
   rootFolder = account.incomingServer.rootFolder;
   rootFolder.QueryInterface(Ci.nsIMsgLocalMailFolder);
@@ -27,7 +26,7 @@ add_setup(async function () {
   testFolder.QueryInterface(Ci.nsIMsgLocalMailFolder);
   const messageStrings = generator
     .makeMessages({ count: 20 })
-    .map(message => message.toMboxString());
+    .map(message => message.toMessageString());
   testFolder.addMessageBatch(messageStrings);
   otherFolder = rootFolder.createLocalSubfolder("searchMessagesOtherFolder");
 
@@ -153,6 +152,11 @@ add_task(async function () {
   EventUtils.synthesizeMouseAtCenter(columns.subjectCol.element, {}, win);
   Assert.equal(
     columns.subjectCol.element.getAttribute("sortDirection"),
+    "ascending"
+  );
+  EventUtils.synthesizeMouseAtCenter(columns.flaggedCol.element, {}, win);
+  Assert.equal(
+    columns.flaggedCol.element.getAttribute("sortDirection"),
     "ascending"
   );
   EventUtils.synthesizeMouseAtCenter(columns.dateCol.element, {}, win);
@@ -347,7 +351,9 @@ add_task(async function () {
     testFolder,
     "DeleteOrMoveMsgCompleted"
   );
+  const dialogPromise = BrowserTestUtils.promiseAlertDialog("accept");
   EventUtils.synthesizeKey("VK_DELETE", { shiftKey: true }, win);
+  await dialogPromise;
   await deletePromise;
   await TestUtils.waitForCondition(
     () => threadTree.view.rowCount == 7,

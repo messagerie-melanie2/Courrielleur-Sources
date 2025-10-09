@@ -12,21 +12,18 @@ var {
   assert_folder_visible,
   inboxFolder,
   make_message_sets_in_folders,
-  mc,
   toggle_main_menu,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-var { MailTelemetryForTests } = ChromeUtils.import(
-  "resource:///modules/MailGlue.jsm"
-);
-var { TelemetryTestUtils } = ChromeUtils.importESModule(
-  "resource://testing-common/TelemetryTestUtils.sys.mjs"
+var { MailTelemetryForTests } = ChromeUtils.importESModule(
+  "resource:///modules/MailGlue.sys.mjs"
 );
 var { click_menus_in_sequence, click_through_appmenu, close_popup_sequence } =
-  ChromeUtils.import("resource://testing-common/mozmill/WindowHelpers.jsm");
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/WindowHelpers.sys.mjs"
+  );
 
-var rootFolder;
 var unreadFolder;
 var favoriteFolder;
 var modeList_menu;
@@ -34,14 +31,13 @@ var modeList_appmenu;
 var view_menu;
 var view_menupopup;
 var appmenu_button;
-var appmenu_mainView;
 var appmenu_popup;
 var menu_state;
 var about3Pane;
 
-add_setup(async function () {
-  rootFolder = inboxFolder.server.rootFolder;
+requestLongerTimeout(AppConstants.MOZ_CODE_COVERAGE ? 2 : 1);
 
+add_setup(async function () {
   // Create one folder with unread messages and one favorite folder.
   inboxFolder.createSubfolder("UnreadFolder", null);
   unreadFolder = inboxFolder.getChildNamed("UnreadFolder");
@@ -52,24 +48,23 @@ add_setup(async function () {
   await make_message_sets_in_folders([unreadFolder], [{ count: 1 }]);
   favoriteFolder.setFlag(Ci.nsMsgFolderFlags.Favorite);
 
-  modeList_menu = mc.window.document.getElementById("menu_FolderViewsPopup");
-  modeList_appmenu = mc.window.document.getElementById("appMenu-foldersView");
+  modeList_menu = document.getElementById("menu_FolderViewsPopup");
+  modeList_appmenu = document.getElementById("appMenu-foldersView");
 
-  view_menu = mc.window.document.getElementById("menu_View");
-  view_menupopup = mc.window.document.getElementById("menu_View_Popup");
-  appmenu_button = mc.window.document.getElementById("button-appmenu");
-  appmenu_mainView = mc.window.document.getElementById("appMenu-mainView");
-  appmenu_popup = mc.window.document.getElementById("appMenu-popup");
+  view_menu = document.getElementById("menu_View");
+  view_menupopup = document.getElementById("menu_View_Popup");
+  appmenu_button = document.getElementById("button-appmenu");
+  appmenu_popup = document.getElementById("appMenu-popup");
 
   // Main menu is needed for this whole test file.
-  menu_state = toggle_main_menu(true);
+  menu_state = await toggle_main_menu(true);
 
   about3Pane = document.getElementById("tabmail").currentAbout3Pane;
 
   Services.xulStore.removeDocument(
     "chrome://messenger/content/messenger.xhtml"
   );
-  Services.telemetry.clearScalars();
+  Services.fog.testResetFOG();
 });
 
 /**
@@ -87,13 +82,13 @@ async function assert_mode_selected(aMode) {
   // We need to open the menu because only then the right mode is set in them.
   if (["linux", "win"].includes(AppConstants.platform)) {
     // On OS X the main menu seems not accessible for clicking from tests.
-    EventUtils.synthesizeMouseAtCenter(view_menu, { clickCount: 1 }, mc.window);
-    let popuplist = await click_menus_in_sequence(
+    EventUtils.synthesizeMouseAtCenter(view_menu, { clickCount: 1 }, window);
+    const popuplist = await click_menus_in_sequence(
       view_menupopup,
       [{ id: modeList_menu.parentNode.id }],
       true
     );
-    for (let mode of about3Pane.folderPane.activeModes) {
+    for (const mode of about3Pane.folderPane.activeModes) {
       Assert.ok(
         modeList_menu.querySelector(`[value="${mode}"]`).hasAttribute("checked")
       );
@@ -101,13 +96,13 @@ async function assert_mode_selected(aMode) {
     close_popup_sequence(popuplist);
   }
 
-  EventUtils.synthesizeMouseAtCenter(appmenu_button, {}, mc.window);
-  click_through_appmenu(
+  EventUtils.synthesizeMouseAtCenter(appmenu_button, {}, window);
+  await click_through_appmenu(
     [{ id: "appmenu_View" }, { id: "appmenu_FolderViews" }],
     null,
-    mc.window
+    window
   );
-  for (let mode of about3Pane.folderPane.activeModes) {
+  for (const mode of about3Pane.folderPane.activeModes) {
     Assert.ok(
       modeList_appmenu
         .querySelector(`[value="${mode}"]`)
@@ -128,8 +123,8 @@ async function assert_mode_not_selected(mode) {
   // We need to open the menu because only then the right mode is set in them.
   if (["linux", "win"].includes(AppConstants.platform)) {
     // On OS X the main menu seems not accessible for clicking from tests.
-    EventUtils.synthesizeMouseAtCenter(view_menu, { clickCount: 1 }, mc.window);
-    let popuplist = await click_menus_in_sequence(
+    EventUtils.synthesizeMouseAtCenter(view_menu, { clickCount: 1 }, window);
+    const popuplist = await click_menus_in_sequence(
       view_menupopup,
       [{ id: modeList_menu.parentNode.id }],
       true
@@ -140,11 +135,11 @@ async function assert_mode_not_selected(mode) {
     close_popup_sequence(popuplist);
   }
 
-  EventUtils.synthesizeMouseAtCenter(appmenu_button, {}, mc.window);
-  click_through_appmenu(
+  EventUtils.synthesizeMouseAtCenter(appmenu_button, {}, window);
+  await click_through_appmenu(
     [{ id: "appmenu_View" }, { id: "appmenu_FolderViews" }],
     null,
-    mc.window
+    window
   );
   Assert.ok(
     !modeList_appmenu.querySelector(`[value="${mode}"]`).hasAttribute("checked")
@@ -155,14 +150,14 @@ async function assert_mode_not_selected(mode) {
 /**
  * Toggle the folder mode by clicking in the menu.
  *
- * @param mode  The base name of the mode to select.
+ * @param {string} mode - The base name of the mode to select.
  */
-function select_mode_in_menu(mode) {
-  EventUtils.synthesizeMouseAtCenter(appmenu_button, {}, mc.window);
-  click_through_appmenu(
+async function select_mode_in_menu(mode) {
+  EventUtils.synthesizeMouseAtCenter(appmenu_button, {}, window);
+  await click_through_appmenu(
     [{ id: "appmenu_View" }, { id: "appmenu_FolderViews" }],
     { value: mode },
-    mc.window
+    window
   );
   appmenu_popup.hidePopup();
 }
@@ -171,8 +166,8 @@ function select_mode_in_menu(mode) {
  * Check the all folders mode.
  */
 async function subtest_toggle_all_folders(show) {
-  let mode = "all";
-  select_mode_in_menu(mode);
+  const mode = "all";
+  await select_mode_in_menu(mode);
 
   if (show) {
     await assert_mode_selected(mode);
@@ -185,8 +180,8 @@ async function subtest_toggle_all_folders(show) {
  * Check the unread folders mode.
  */
 async function subtest_toggle_unread_folders(show) {
-  let mode = "unread";
-  select_mode_in_menu(mode);
+  const mode = "unread";
+  await select_mode_in_menu(mode);
 
   if (show) {
     await assert_mode_selected(mode);
@@ -204,8 +199,8 @@ async function subtest_toggle_unread_folders(show) {
  * Check the favorite folders mode.
  */
 async function subtest_toggle_favorite_folders(show) {
-  let mode = "favorite";
-  select_mode_in_menu(mode);
+  const mode = "favorite";
+  await select_mode_in_menu(mode);
 
   if (show) {
     await assert_mode_selected(mode);
@@ -223,8 +218,8 @@ async function subtest_toggle_favorite_folders(show) {
  * Check the recent folders mode.
  */
 async function subtest_toggle_recent_folders(show) {
-  let mode = "recent";
-  select_mode_in_menu(mode);
+  const mode = "recent";
+  await select_mode_in_menu(mode);
 
   if (show) {
     await assert_mode_selected(mode);
@@ -237,8 +232,8 @@ async function subtest_toggle_recent_folders(show) {
  * Check the smart folders mode.
  */
 async function subtest_toggle_smart_folders(show) {
-  let mode = "smart";
-  select_mode_in_menu(mode);
+  const mode = "smart";
+  await select_mode_in_menu(mode);
 
   if (show) {
     await assert_mode_selected(mode);
@@ -251,8 +246,8 @@ async function subtest_toggle_smart_folders(show) {
  * Toggle the compact mode.
  */
 async function subtest_toggle_compact(compact) {
-  let mode = "compact";
-  select_mode_in_menu(mode);
+  const mode = "compact";
+  await select_mode_in_menu(mode);
 
   if (compact) {
     await assert_mode_selected(mode);
@@ -265,8 +260,8 @@ async function subtest_toggle_compact(compact) {
  * Toggle the compact mode.
  */
 async function subtest_toggle_tags(show) {
-  let mode = "tags";
-  select_mode_in_menu(mode);
+  const mode = "tags";
+  await select_mode_in_menu(mode);
 
   if (show) {
     await assert_mode_selected(mode);
@@ -278,15 +273,26 @@ async function subtest_toggle_tags(show) {
 /**
  * Check that the current mode(s) are accurately recorded in telemetry.
  * Note that `reportUIConfiguration` usually only runs at start-up.
+ *
+ * @param {string} expected - Comma separated list of expected modes.
  */
 function check_scalars(expected) {
   MailTelemetryForTests.reportUIConfiguration();
-  let scalarName = "tb.ui.configuration.folder_tree_modes";
-  let scalars = TelemetryTestUtils.getProcessScalars("parent");
-  if (expected) {
-    TelemetryTestUtils.assertScalar(scalars, scalarName, expected);
-  } else {
-    TelemetryTestUtils.assertScalarUnset(scalars, scalarName);
+
+  const modes = Glean.mail.uiConfigurationFolderTreeModes.testGetValue();
+  if (!expected) {
+    Assert.ok(!modes, "Should not have anything recorded");
+    return;
+  }
+  const expectedModes = expected.split(",");
+
+  Assert.equal(
+    modes.length,
+    expectedModes.length,
+    "should have correct number of modes"
+  );
+  for (const m of expectedModes) {
+    Assert.ok(expectedModes.includes(m), `should have mode ${m}`);
   }
 }
 
@@ -331,8 +337,8 @@ add_task(async function test_toggling_modes() {
   check_scalars("all");
 });
 
-registerCleanupFunction(function () {
+registerCleanupFunction(async function () {
   inboxFolder.propagateDelete(unreadFolder, true);
   inboxFolder.propagateDelete(favoriteFolder, true);
-  toggle_main_menu(menu_state);
+  await toggle_main_menu(menu_state);
 });

@@ -40,12 +40,12 @@ import stat
 import subprocess
 import sys
 import time
+from io import StringIO
 
 import mozpack.path as mozpath
 from mach.decorators import Command, CommandArgument
 from mozbuild.base import BinaryNotFoundException, MachCommandBase
-from mozbuild.util import mkdir
-from six import StringIO
+from mozbuild.dirutils import mkdir
 
 AUTOMATION = "MOZ_AUTOMATION" in os.environ
 BROWSERTIME_ROOT = os.path.dirname(__file__)
@@ -58,9 +58,16 @@ OPENCV_VERSION = "4.5.4.60"
 
 py3_minor = sys.version_info.minor
 if py3_minor > 7:
-    SCIPY_VERSION = "1.7.3"
-    NUMPY_VERSION = "1.22.0"
-    PILLOW_VERSION = "9.0.0"
+    SCIPY_VERSION = "1.9.3"
+    NUMPY_VERSION = "1.23.5"
+    PILLOW_VERSION = "9.2.0"
+    OPENCV_VERSION = "4.6.0.66"
+if py3_minor > 11:
+    NUMPY_VERSION = "2.2.3"
+    PILLOW_VERSION = "11.1.0"
+    SCIPY_VERSION = "1.15.2"
+    PYSSIM_VERSION = "0.7"
+    OPENCV_VERSION = "4.11.0.86"
 
 MIN_NODE_VERSION = "16.0.0"
 
@@ -89,9 +96,7 @@ def node_path(command_context):
     cache_path = os.path.join(state_dir, "browsertime", "node-16")
 
     NODE_FAILURE_MSG = (
-        "Could not locate a node binary that is at least version {}. ".format(
-            MIN_NODE_VERSION
-        )
+        f"Could not locate a node binary that is at least version {MIN_NODE_VERSION}. "
         + "Please run `./mach raptor --browsertime -t amazon` to install it "
         + "from the Taskcluster Toolchain artifacts."
     )
@@ -151,11 +156,11 @@ def browsertime_path():
 
 def visualmetrics_path():
     """The path to the `visualmetrics.py` script."""
-    return mozpath.join(package_path(), "browsertime", "visualmetrics-portable.py")
+    return mozpath.join(package_path(), "visualmetrics", "visualmetrics-portable.py")
 
 
 def host_platform():
-    is_64bits = sys.maxsize > 2 ** 32
+    is_64bits = sys.maxsize > 2**32
 
     if sys.platform.startswith("win"):
         if is_64bits:
@@ -166,7 +171,7 @@ def host_platform():
     elif sys.platform.startswith("darwin"):
         return "darwin"
 
-    raise ValueError("sys.platform is not yet supported: {}".format(sys.platform))
+    raise ValueError(f"sys.platform is not yet supported: {sys.platform}")
 
 
 # Map from `host_platform()` to a `fetch`-like syntax.
@@ -308,7 +313,7 @@ def setup_browsertime(
 
         existing_body["devDependencies"]["browsertime"] = new_upstream_url
 
-        updated_body = json.dumps(existing_body)
+        updated_body = json.dumps(existing_body, indent=2)
 
         with open(package_json_path, "w") as f:
             f.write(updated_body)
@@ -388,9 +393,11 @@ def append_env(command_context, append_path=True):
 
     path.insert(
         0,
-        path_to_ffmpeg
-        if host_platform().startswith("linux")
-        else mozpath.join(path_to_ffmpeg, "bin"),
+        (
+            path_to_ffmpeg
+            if host_platform().startswith("linux")
+            else mozpath.join(path_to_ffmpeg, "bin")
+        ),
     )  # noqa
 
     # Ensure that bare `node` and `npm` in scripts, including post-install
@@ -500,7 +507,7 @@ def extra_default_args(command_context, args=[]):
         "Extracts the browser name if any"
         # These are BT arguments, it's BT job to check them
         # here we just want to extract the browser name
-        res = re.findall("(--browser|-b)[= ]([\w]+)", " ".join(args))
+        res = re.findall(r"(--browser|-b)[= ]([\w]+)", " ".join(args))
         if res == []:
             return None
         return res[0][-1]

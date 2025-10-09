@@ -7,11 +7,22 @@
 #ifndef mozilla_dom_HTMLScriptElement_h
 #define mozilla_dom_HTMLScriptElement_h
 
-#include "nsGenericHTMLElement.h"
+#include "mozilla/dom/FetchPriority.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/dom/ScriptElement.h"
+#include "nsGenericHTMLElement.h"
+#include "nsStringFwd.h"
+
+class nsDOMTokenList;
 
 namespace mozilla::dom {
+
+class OwningTrustedScriptOrNullIsEmptyString;
+class OwningTrustedScriptOrString;
+class OwningTrustedScriptURLOrString;
+class TrustedScriptOrNullIsEmptyString;
+class TrustedScriptOrString;
+class TrustedScriptURLOrString;
 
 class HTMLScriptElement final : public nsGenericHTMLElement,
                                 public ScriptElement {
@@ -24,17 +35,23 @@ class HTMLScriptElement final : public nsGenericHTMLElement,
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
 
-  void GetInnerHTML(nsAString& aInnerHTML, OOMReporter& aError) override;
-  virtual void SetInnerHTML(const nsAString& aInnerHTML,
-                            nsIPrincipal* aSubjectPrincipal,
-                            mozilla::ErrorResult& aError) override;
+  // CC
+  NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(HTMLScriptElement,
+                                           nsGenericHTMLElement)
 
+  void GetInnerHTML(nsAString& aInnerHTML, OOMReporter& aError) override;
+
+  void SetInnerHTMLTrusted(const nsAString& aInnerHTML,
+                           nsIPrincipal* aSubjectPrincipal,
+                           mozilla::ErrorResult& aError) override;
+
+ public:
   // nsIScriptElement
-  virtual bool GetScriptType(nsAString& type) override;
   virtual void GetScriptText(nsAString& text) const override;
   virtual void GetScriptCharset(nsAString& charset) override;
-  virtual void FreezeExecutionAttrs(Document* aOwnerDoc) override;
+  virtual void FreezeExecutionAttrs(const Document* aOwnerDoc) override;
   virtual CORSMode GetCORSMode() const override;
+  virtual FetchPriority GetFetchPriority() const override;
   virtual mozilla::dom::ReferrerPolicy GetReferrerPolicy() override;
 
   // nsIContent
@@ -56,7 +73,30 @@ class HTMLScriptElement final : public nsGenericHTMLElement,
   // WebIDL
   void GetText(nsAString& aValue, ErrorResult& aRv) const;
 
-  void SetText(const nsAString& aValue, ErrorResult& aRv);
+  // @param aValue will always be of type `String`.
+  MOZ_CAN_RUN_SCRIPT void GetText(OwningTrustedScriptOrString& aValue,
+                                  ErrorResult& aRv) const;
+
+  MOZ_CAN_RUN_SCRIPT void SetText(const TrustedScriptOrString& aValue,
+                                  nsIPrincipal* aSubjectPrincipal,
+                                  ErrorResult& aRv);
+
+  // @param aValue will always be of type `NullIsEmptyString`.
+  MOZ_CAN_RUN_SCRIPT void GetInnerText(
+      OwningTrustedScriptOrNullIsEmptyString& aValue, ErrorResult& aError);
+
+  MOZ_CAN_RUN_SCRIPT void SetInnerText(
+      const TrustedScriptOrNullIsEmptyString& aValue,
+      nsIPrincipal* aSubjectPrincipal, ErrorResult& aError);
+
+  // @param aTextContent will always be of type `String`.
+  MOZ_CAN_RUN_SCRIPT void GetTrustedScriptOrStringTextContent(
+      Nullable<OwningTrustedScriptOrString>& aTextContent,
+      mozilla::OOMReporter& aError);
+
+  MOZ_CAN_RUN_SCRIPT void SetTrustedScriptOrStringTextContent(
+      const Nullable<TrustedScriptOrString>& aTextContent,
+      nsIPrincipal* aSubjectPrincipal, mozilla::ErrorResult& aError);
 
   void GetCharset(nsAString& aCharset) {
     GetHTMLAttr(nsGkAtoms::charset, aCharset);
@@ -70,11 +110,12 @@ class HTMLScriptElement final : public nsGenericHTMLElement,
     SetHTMLBoolAttr(nsGkAtoms::defer, aDefer, aRv);
   }
 
-  void GetSrc(nsAString& aSrc) { GetURIAttr(nsGkAtoms::src, nullptr, aSrc); }
-  void SetSrc(const nsAString& aSrc, nsIPrincipal* aTriggeringPrincipal,
-              ErrorResult& aRv) {
-    SetHTMLAttr(nsGkAtoms::src, aSrc, aTriggeringPrincipal, aRv);
-  }
+  // @param aSrc will always be of type `String`.
+  void GetSrc(OwningTrustedScriptURLOrString& aSrc);
+
+  MOZ_CAN_RUN_SCRIPT void SetSrc(const TrustedScriptURLOrString& aSrc,
+                                 nsIPrincipal* aSubjectPrincipal,
+                                 ErrorResult& aRv);
 
   void GetType(nsAString& aType) { GetHTMLAttr(nsGkAtoms::type, aType); }
   void SetType(const nsAString& aType, ErrorResult& aRv) {
@@ -129,6 +170,12 @@ class HTMLScriptElement final : public nsGenericHTMLElement,
     GetEnumAttr(nsGkAtoms::referrerpolicy, "", aReferrerPolicy);
   }
 
+  nsDOMTokenList* Blocking();
+  bool IsPotentiallyRenderBlocking() override;
+
+  // Required for the webidl-binding because `GetFetchPriority` is overloaded.
+  using nsGenericHTMLElement::GetFetchPriority;
+
   [[nodiscard]] static bool Supports(const GlobalObject& aGlobal,
                                      const nsAString& aType);
 
@@ -145,6 +192,8 @@ class HTMLScriptElement final : public nsGenericHTMLElement,
 
   // ScriptElement
   virtual bool HasScriptContent() override;
+
+  RefPtr<nsDOMTokenList> mBlocking;
 };
 
 }  // namespace mozilla::dom

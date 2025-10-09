@@ -1,9 +1,7 @@
 #!/usr/bin/env python
-# ***** BEGIN LICENSE BLOCK *****
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
-# ***** END LICENSE BLOCK *****
 
 
 import copy
@@ -91,7 +89,7 @@ class FirefoxUIFunctionalTests(TestingMixin, VCSToolsScript, CodeCoverageMixin):
         all_actions=None,
         default_actions=None,
         *args,
-        **kwargs
+        **kwargs,
     ):
         config_options = config_options or firefox_ui_tests_config_options
         actions = [
@@ -108,7 +106,7 @@ class FirefoxUIFunctionalTests(TestingMixin, VCSToolsScript, CodeCoverageMixin):
             all_actions=all_actions or actions,
             default_actions=default_actions or actions,
             *args,
-            **kwargs
+            **kwargs,
         )
 
         # Code which runs in automation has to include the following properties
@@ -128,7 +126,7 @@ class FirefoxUIFunctionalTests(TestingMixin, VCSToolsScript, CodeCoverageMixin):
         requirements = os.path.join(
             dirs["abs_test_install_dir"], "config", "firefox_ui_requirements.txt"
         )
-        self.register_virtualenv_module(requirements=[requirements], two_pass=True)
+        self.register_virtualenv_module(requirements=[requirements])
 
     def download_and_extract(self):
         """Override method from TestingMixin for more specific behavior."""
@@ -212,7 +210,7 @@ class FirefoxUIFunctionalTests(TestingMixin, VCSToolsScript, CodeCoverageMixin):
             "--binary",
             binary_path,
             "--address",
-            "localhost:{}".format(marionette_port),
+            f"localhost:{marionette_port}",
             # Resource files to serve via local webserver
             "--server-root",
             os.path.join(dirs["abs_fxui_dir"], "resources"),
@@ -235,7 +233,7 @@ class FirefoxUIFunctionalTests(TestingMixin, VCSToolsScript, CodeCoverageMixin):
         if self.config.get("disable_fission"):
             cmd.append("--disable-fission")
 
-        cmd.extend(["--setpref={}".format(p) for p in self.config.get("extra_prefs")])
+        cmd.extend([f"--setpref={p}" for p in self.config.get("extra_prefs")])
 
         if self.symbols_url:
             cmd.extend(["--symbols-path", self.symbols_url])
@@ -246,7 +244,7 @@ class FirefoxUIFunctionalTests(TestingMixin, VCSToolsScript, CodeCoverageMixin):
 
         # Add the tests to run
         cmd.append(
-            os.path.join(dirs["abs_fxui_manifest_dir"], "functional", "manifest.ini")
+            os.path.join(dirs["abs_fxui_manifest_dir"], "functional", "manifest.toml")
         )
 
         # Set further environment settings

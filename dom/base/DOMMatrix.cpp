@@ -127,12 +127,19 @@ static bool ValidateAndFixupMatrixInit(DOMMatrixInit& aMatrixInit,
 void DOMMatrixReadOnly::SetDataFromMatrix2DInit(
     const DOMMatrix2DInit& aMatrixInit) {
   MOZ_ASSERT(Is2D());
-  mMatrix2D->_11 = aMatrixInit.mM11.Value();
-  mMatrix2D->_12 = aMatrixInit.mM12.Value();
-  mMatrix2D->_21 = aMatrixInit.mM21.Value();
-  mMatrix2D->_22 = aMatrixInit.mM22.Value();
-  mMatrix2D->_31 = aMatrixInit.mM41.Value();
-  mMatrix2D->_32 = aMatrixInit.mM42.Value();
+  *mMatrix2D = ToMatrixDouble(aMatrixInit);
+}
+
+gfx::MatrixDouble DOMMatrixReadOnly::ToMatrixDouble(
+    const DOMMatrix2DInit& aMatrixInit) {
+  gfx::MatrixDouble matrix{};
+  matrix._11 = aMatrixInit.mM11.Value();
+  matrix._12 = aMatrixInit.mM12.Value();
+  matrix._21 = aMatrixInit.mM21.Value();
+  matrix._22 = aMatrixInit.mM22.Value();
+  matrix._31 = aMatrixInit.mM41.Value();
+  matrix._32 = aMatrixInit.mM42.Value();
+  return matrix;
 }
 
 void DOMMatrixReadOnly::SetDataFromMatrixInit(
@@ -175,6 +182,16 @@ already_AddRefed<DOMMatrixReadOnly> DOMMatrixReadOnly::FromMatrix(
   return matrix.forget();
 }
 
+gfx::MatrixDouble DOMMatrixReadOnly::ToValidatedMatrixDouble(
+    const DOMMatrix2DInit& aMatrixInit, ErrorResult& aRv) {
+  DOMMatrix2DInit matrixInit(aMatrixInit);
+  if (!ValidateAndFixupMatrix2DInit(matrixInit, aRv)) {
+    return gfx::MatrixDouble{};
+  };
+
+  return ToMatrixDouble(matrixInit);
+}
+
 already_AddRefed<DOMMatrixReadOnly> DOMMatrixReadOnly::FromMatrix(
     nsISupports* aParent, const DOMMatrixInit& aMatrixInit, ErrorResult& aRv) {
   DOMMatrixInit matrixInit(aMatrixInit);
@@ -199,29 +216,39 @@ already_AddRefed<DOMMatrixReadOnly> DOMMatrixReadOnly::FromMatrix(
 already_AddRefed<DOMMatrixReadOnly> DOMMatrixReadOnly::FromFloat32Array(
     const GlobalObject& aGlobal, const Float32Array& aArray32,
     ErrorResult& aRv) {
-  aArray32.ComputeState();
-
-  const int length = aArray32.Length();
-  const bool is2D = length == 6;
-  RefPtr<DOMMatrixReadOnly> obj =
-      new DOMMatrixReadOnly(aGlobal.GetAsSupports(), is2D);
-  SetDataInMatrix(obj, aArray32.Data(), length, aRv);
-
-  return obj.forget();
+  nsCOMPtr<nsISupports> global = aGlobal.GetAsSupports();
+  return aArray32.ProcessData(
+      [&](const Span<float>& aData, JS::AutoCheckCannotGC&& nogc) {
+        const int length = aData.Length();
+        const bool is2D = length == 6;
+        RefPtr<DOMMatrixReadOnly> obj;
+        {
+          JS::AutoSuppressGCAnalysis suppress;
+          obj = new DOMMatrixReadOnly(global.forget(), is2D);
+        }
+        SetDataInMatrix(obj, aData.Elements(), length, aRv);
+        nogc.reset();  // Done with aData
+        return obj.forget();
+      });
 }
 
 already_AddRefed<DOMMatrixReadOnly> DOMMatrixReadOnly::FromFloat64Array(
     const GlobalObject& aGlobal, const Float64Array& aArray64,
     ErrorResult& aRv) {
-  aArray64.ComputeState();
-
-  const int length = aArray64.Length();
-  const bool is2D = length == 6;
-  RefPtr<DOMMatrixReadOnly> obj =
-      new DOMMatrixReadOnly(aGlobal.GetAsSupports(), is2D);
-  SetDataInMatrix(obj, aArray64.Data(), length, aRv);
-
-  return obj.forget();
+  nsCOMPtr<nsISupports> global = aGlobal.GetAsSupports();
+  return aArray64.ProcessData(
+      [&](const Span<double>& aData, JS::AutoCheckCannotGC&& nogc) {
+        const int length = aData.Length();
+        const bool is2D = length == 6;
+        RefPtr<DOMMatrixReadOnly> obj;
+        {
+          JS::AutoSuppressGCAnalysis suppress;
+          obj = new DOMMatrixReadOnly(global.forget(), is2D);
+        }
+        SetDataInMatrix(obj, aData.Elements(), length, aRv);
+        nogc.reset();  // Done with aData
+        return obj.forget();
+      });
 }
 
 already_AddRefed<DOMMatrixReadOnly> DOMMatrixReadOnly::Constructor(
@@ -642,27 +669,39 @@ already_AddRefed<DOMMatrix> DOMMatrix::FromMatrix(
 already_AddRefed<DOMMatrix> DOMMatrix::FromFloat32Array(
     const GlobalObject& aGlobal, const Float32Array& aArray32,
     ErrorResult& aRv) {
-  aArray32.ComputeState();
-
-  const int length = aArray32.Length();
-  const bool is2D = length == 6;
-  RefPtr<DOMMatrix> obj = new DOMMatrix(aGlobal.GetAsSupports(), is2D);
-  SetDataInMatrix(obj, aArray32.Data(), length, aRv);
-
-  return obj.forget();
+  nsCOMPtr<nsISupports> global = aGlobal.GetAsSupports();
+  return aArray32.ProcessData(
+      [&](const Span<float>& aData, JS::AutoCheckCannotGC&& nogc) {
+        const int length = aData.Length();
+        const bool is2D = length == 6;
+        RefPtr<DOMMatrix> obj;
+        {
+          JS::AutoSuppressGCAnalysis suppress;
+          obj = new DOMMatrix(global.forget(), is2D);
+        }
+        SetDataInMatrix(obj, aData.Elements(), length, aRv);
+        nogc.reset();  // Done with aData
+        return obj.forget();
+      });
 }
 
 already_AddRefed<DOMMatrix> DOMMatrix::FromFloat64Array(
     const GlobalObject& aGlobal, const Float64Array& aArray64,
     ErrorResult& aRv) {
-  aArray64.ComputeState();
-
-  const int length = aArray64.Length();
-  const bool is2D = length == 6;
-  RefPtr<DOMMatrix> obj = new DOMMatrix(aGlobal.GetAsSupports(), is2D);
-  SetDataInMatrix(obj, aArray64.Data(), length, aRv);
-
-  return obj.forget();
+  nsCOMPtr<nsISupports> global = aGlobal.GetAsSupports();
+  return aArray64.ProcessData(
+      [&](const Span<double>& aData, JS::AutoCheckCannotGC&& nogc) {
+        const int length = aData.Length();
+        const bool is2D = length == 6;
+        RefPtr<DOMMatrix> obj;
+        {
+          JS::AutoSuppressGCAnalysis suppress;
+          obj = new DOMMatrix(global.forget(), is2D);
+        }
+        SetDataInMatrix(obj, aData.Elements(), length, aRv);
+        nogc.reset();  // Done with aData
+        return obj.forget();
+      });
 }
 
 already_AddRefed<DOMMatrix> DOMMatrix::Constructor(

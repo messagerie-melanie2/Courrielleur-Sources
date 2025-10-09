@@ -38,7 +38,7 @@ const gMockPKCS11ModuleDB = {
     }
   },
 
-  deleteModule(moduleName) {
+  deleteModule() {
     Assert.ok(false, `deleteModule: should not be called`);
   },
 
@@ -102,7 +102,7 @@ var gMockPromptServiceCID = MockRegistrar.register(
 );
 
 var gMockFilePicker = SpecialPowers.MockFilePicker;
-gMockFilePicker.init(window);
+gMockFilePicker.init(window.browsingContext);
 
 var gTempFile = Services.dirsvc.get("TmpD", Ci.nsIFile);
 gTempFile.append("browser_loadPKCS11Module_ui-fakeModule");
@@ -285,12 +285,12 @@ async function testModuleNameHelper(moduleName, acceptButtonShouldBeDisabled) {
   let moduleNameBox = win.document.getElementById("device_name");
   moduleNameBox.value = moduleName;
   // this makes this not a great test, but it's the easiest way to simulate this
-  moduleNameBox.onchange();
+  moduleNameBox.dispatchEvent(new Event("change", { bubbles: true }));
 
   let dialogNode = win.document.querySelector("dialog");
   Assert.equal(
     dialogNode.getAttribute("buttondisabledaccept"),
-    acceptButtonShouldBeDisabled ? "true" : "", // it's a string
+    acceptButtonShouldBeDisabled ? "true" : null,
     `dialog accept button should ${
       acceptButtonShouldBeDisabled ? "" : "not "
     }be disabled`

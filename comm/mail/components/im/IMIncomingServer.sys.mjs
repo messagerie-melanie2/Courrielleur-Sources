@@ -16,7 +16,7 @@ IMIncomingServer.prototype = {
       return this._imAccount;
     }
 
-    let id = this.getCharValue("imAccount");
+    const id = this.getStringValue("imAccount");
     if (!id) {
       return null;
     }
@@ -25,7 +25,7 @@ IMIncomingServer.prototype = {
   },
   set imAccount(aImAccount) {
     this._imAccount = aImAccount;
-    this.setCharValue("imAccount", aImAccount.id);
+    this.setStringValue("imAccount", aImAccount.id);
   },
   _prefBranch: null,
   valid: true,
@@ -50,7 +50,7 @@ IMIncomingServer.prototype = {
 
   clearAllValues() {
     IMServices.accounts.deleteAccount(this.imAccount.id);
-    for (let prefName of this._prefBranch.getChildList("")) {
+    for (const prefName of this._prefBranch.getChildList("")) {
       this._prefBranch.clearUserPref(prefName);
     }
     delete this._prefBranch;
@@ -63,8 +63,8 @@ IMIncomingServer.prototype = {
   // This is used in account removal dialog and should return the same path
   // that the removeFiles() function deletes.
   get localPath() {
-    let logPath = IMServices.logs.getLogFolderPathForAccount(this.imAccount);
-    let file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+    const logPath = IMServices.logs.getLogFolderPathForAccount(this.imAccount);
+    const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
     file.initWithPath(logPath);
     return file;
   },
@@ -85,7 +85,7 @@ IMIncomingServer.prototype = {
 
   // Shown in the "Remove Account" confirm prompt.
   get prettyName() {
-    let protocol = this.imAccount.protocol.name || this.imAccount.protocol.id;
+    const protocol = this.imAccount.protocol.name || this.imAccount.protocol.id;
     return protocol + " - " + this.imAccount.name;
   },
 
@@ -112,42 +112,44 @@ IMIncomingServer.prototype = {
   },
   get autojoin() {
     try {
-      let prefName = "messenger.account." + this.imAccount.id + ".autoJoin";
+      const prefName = "messenger.account." + this.imAccount.id + ".autoJoin";
       return Services.prefs.getStringPref(prefName);
     } catch (e) {
       return "";
     }
   },
   set autojoin(aAutoJoin) {
-    let prefName = "messenger.account." + this.imAccount.id + ".autoJoin";
+    const prefName = "messenger.account." + this.imAccount.id + ".autoJoin";
     Services.prefs.setStringPref(prefName, aAutoJoin);
   },
   get autologin() {
     try {
-      let prefName = "messenger.account." + this.imAccount.id + ".autoLogin";
+      const prefName = "messenger.account." + this.imAccount.id + ".autoLogin";
       return Services.prefs.getBoolPref(prefName);
     } catch (e) {
       return false;
     }
   },
   set autologin(aAutoLogin) {
-    let prefName = "messenger.account." + this.imAccount.id + ".autoLogin";
+    const prefName = "messenger.account." + this.imAccount.id + ".autoLogin";
     Services.prefs.setBoolPref(prefName, aAutoLogin);
   },
 
   // This is used for user-visible advanced preferences.
-  setUnicharValue(aPrefName, aValue) {
+  setStringValue(aPrefName, aValue) {
     if (aPrefName == "autojoin") {
       this.autojoin = aValue;
     } else if (aPrefName == "alias") {
       this.alias = aValue;
     } else if (aPrefName == "password") {
       this.password = aValue;
+    } else if (aPrefName == "imAccount") {
+      this._prefBranch.setStringPref(aPrefName, aValue);
     } else {
       this.imAccount.setString(aPrefName, aValue);
     }
   },
-  getUnicharValue(aPrefName) {
+  getStringValue(aPrefName) {
     if (aPrefName == "autojoin") {
       return this.autojoin;
     }
@@ -157,9 +159,12 @@ IMIncomingServer.prototype = {
     if (aPrefName == "password") {
       return this.password;
     }
+    if (aPrefName == "imAccount") {
+      return this._prefBranch.getStringPref(aPrefName, "");
+    }
 
     try {
-      let prefName =
+      const prefName =
         "messenger.account." + this.imAccount.id + ".options." + aPrefName;
       return Services.prefs.getStringPref(prefName);
     } catch (x) {
@@ -177,7 +182,7 @@ IMIncomingServer.prototype = {
       return this.autologin;
     }
     try {
-      let prefName =
+      const prefName =
         "messenger.account." + this.imAccount.id + ".options." + aPrefName;
       return Services.prefs.getBoolPref(prefName);
     } catch (x) {
@@ -189,7 +194,7 @@ IMIncomingServer.prototype = {
   },
   getIntValue(aPrefName) {
     try {
-      let prefName =
+      const prefName =
         "messenger.account." + this.imAccount.id + ".options." + aPrefName;
       return Services.prefs.getIntPref(prefName);
     } catch (x) {
@@ -212,8 +217,8 @@ IMIncomingServer.prototype = {
     }
 
     this._defaultOptionValues = {};
-    for (let opt of this.imAccount.protocol.getOptions()) {
-      let type = opt.type;
+    for (const opt of this.imAccount.protocol.getOptions()) {
+      const type = opt.type;
       if (type == Ci.prplIPref.typeBool) {
         this._defaultOptionValues[opt.name] = opt.getBool();
       } else if (type == Ci.prplIPref.typeInt) {
@@ -225,18 +230,6 @@ IMIncomingServer.prototype = {
       }
     }
     return this._defaultOptionValues[aPrefName];
-  },
-
-  // the "Char" type will be used only for "imAccount" and internally.
-  setCharValue(aPrefName, aValue) {
-    this._prefBranch.setCharPref(aPrefName, aValue);
-  },
-  getCharValue(aPrefName) {
-    try {
-      return this._prefBranch.getCharPref(aPrefName);
-    } catch (x) {
-      return "";
-    }
   },
 
   get type() {
@@ -291,7 +284,7 @@ IMIncomingServer.prototype = {
   get spamSettings() {
     return {
       level: 0,
-      initialize(aServer) {},
+      initialize() {},
       QueryInterface: ChromeUtils.generateQI(["nsISpamSettings"]),
     };
   },
@@ -333,13 +326,13 @@ IMIncomingServer.prototype = {
       RemoveFolderListener() {},
       descendants: [],
       getFlag: () => false,
-      getFolderWithFlags: aFlags => null,
-      getFoldersWithFlags: aFlags => [],
+      getFolderWithFlags: () => null,
+      getFoldersWithFlags: () => [],
       get subFolders() {
         return [];
       },
-      getStringProperty: aPropertyName => "",
-      getNumUnread: aDeep => 0,
+      getStringProperty: () => "",
+      getNumUnread: () => 0,
       Shutdown() {},
       QueryInterface: ChromeUtils.generateQI(["nsIMsgFolder"]),
     });

@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /*
- * Attempt to test nsMsgDBView and descendents.  Right now this means we:
+ * Attempt to test nsMsgDBView and descendants.  Right now this means we:
  * - Ensure sorting and grouping sorta works, including using custom columns.
  *
  * Things we really should do:
@@ -14,18 +14,17 @@
  */
 
 var { MessageGenerator, MessageScenarioFactory, SyntheticMessageSet } =
-  ChromeUtils.import("resource://testing-common/mailnews/MessageGenerator.jsm");
+  ChromeUtils.importESModule(
+    "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
+  );
 const { TreeSelection } = ChromeUtils.importESModule(
-  "chrome://messenger/content/tree-selection.mjs"
+  "chrome://messenger/content/TreeSelection.mjs"
 );
-var { MessageInjection } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageInjection.jsm"
+var { MessageInjection } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageInjection.sys.mjs"
 );
-var { PromiseUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/PromiseUtils.sys.mjs"
-);
-var { dump_view_contents } = ChromeUtils.import(
-  "resource://testing-common/mozmill/ViewHelpers.jsm"
+var { dump_view_contents } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ViewHelpers.sys.mjs"
 );
 
 // Items used to add messages to the folder
@@ -47,7 +46,7 @@ function setup_messages() {
   messages = gScenarioFactory.directReply(6).concat(messages);
 
   messages = messages.concat(gScenarioFactory.fullPyramid(3, 3));
-  let siblingMessages = gScenarioFactory.siblingsMissingParent();
+  const siblingMessages = gScenarioFactory.siblingsMissingParent();
   // cut off "Re: " part
   gSiblingsMissingParentsSubject = siblingMessages[0].subject.slice(4);
   dump("siblings subect = " + gSiblingsMissingParentsSubject + "\n");
@@ -61,19 +60,19 @@ function setup_messages() {
   //    2
   //     4
   //    3
-  let msg1 = gMessageGenerator.makeMessage();
-  let msg2 = gMessageGenerator.makeMessage({ inReplyTo: msg1 });
-  let msg3 = gMessageGenerator.makeMessage({ inReplyTo: msg1 });
-  let msg4 = gMessageGenerator.makeMessage({ inReplyTo: msg2 });
+  const msg1 = gMessageGenerator.makeMessage();
+  const msg2 = gMessageGenerator.makeMessage({ inReplyTo: msg1 });
+  const msg3 = gMessageGenerator.makeMessage({ inReplyTo: msg1 });
+  const msg4 = gMessageGenerator.makeMessage({ inReplyTo: msg2 });
   messages = messages.concat([msg1, msg2, msg3, msg4]);
 
   // test bug 600140, make a thread that Reply message has smaller MsgKey
-  let msgBiggerKey = gMessageGenerator.makeMessage();
-  let msgSmallerKey = gMessageGenerator.makeMessage({
+  const msgBiggerKey = gMessageGenerator.makeMessage();
+  const msgSmallerKey = gMessageGenerator.makeMessage({
     inReplyTo: msgBiggerKey,
   });
   messages = messages.concat([msgSmallerKey, msgBiggerKey]);
-  let msgSet = new SyntheticMessageSet(messages);
+  const msgSet = new SyntheticMessageSet(messages);
   return msgSet;
 }
 
@@ -94,8 +93,8 @@ async function set_gTestFolder(msgSet) {
  */
 async function make_and_add_message(aMessageArgs) {
   // create the message
-  let synMsg = gMessageGenerator.makeMessage(aMessageArgs);
-  let msgSet = new SyntheticMessageSet([synMsg]);
+  const synMsg = gMessageGenerator.makeMessage(aMessageArgs);
+  const msgSet = new SyntheticMessageSet([synMsg]);
   // this is synchronous for local stuff.
   await messageInjection.addSetsToFolders([gTestFolder], [msgSet]);
 
@@ -140,8 +139,8 @@ function assert_view_row_count(aCount) {
  *  rows in gDBView.
  */
 function assert_view_index_is_dummy(...aArgs) {
-  for (let viewIndex of aArgs) {
-    let flags = gDBView.getFlagsAt(viewIndex);
+  for (const viewIndex of aArgs) {
+    const flags = gDBView.getFlagsAt(viewIndex);
     if (!(flags & MSG_VIEW_FLAG_DUMMY)) {
       view_throw("Expected index " + viewIndex + " to be a dummy!");
     }
@@ -153,8 +152,8 @@ function assert_view_index_is_dummy(...aArgs) {
  *  gDBView.
  */
 function assert_view_index_is_not_dummy(...aArgs) {
-  for (let viewIndex of aArgs) {
-    let flags = gDBView.getFlagsAt(viewIndex);
+  for (const viewIndex of aArgs) {
+    const flags = gDBView.getFlagsAt(viewIndex);
     if (flags & MSG_VIEW_FLAG_DUMMY) {
       view_throw("Expected index " + viewIndex + " to not be a dummy!");
     }
@@ -184,9 +183,9 @@ function assert_view_level_is(index, level) {
  */
 function assert_view_message_at_indices(...aArgs) {
   let curHdr;
-  for (let thing of aArgs) {
+  for (const thing of aArgs) {
     if (typeof thing == "number") {
-      let hdrAt = gDBView.getMsgHdrAt(thing);
+      const hdrAt = gDBView.getMsgHdrAt(thing);
       if (curHdr != hdrAt) {
         view_throw(
           "Expected hdr at " +
@@ -209,8 +208,8 @@ function assert_view_message_at_indices(...aArgs) {
 }
 
 var authorFirstLetterCustomColumn = {
-  getCellText(row, col) {
-    let msgHdr = this.dbView.getMsgHdrAt(row);
+  getCellText(row) {
+    const msgHdr = this.dbView.getMsgHdrAt(row);
     return msgHdr.mime2DecodedAuthor.charAt(0).toUpperCase() || "?";
   },
   getSortStringForRow(msgHdr) {
@@ -221,16 +220,16 @@ var authorFirstLetterCustomColumn = {
     return true;
   },
 
-  getCellProperties(row, col) {
+  getCellProperties() {
     return "";
   },
-  getRowProperties(row) {
+  getRowProperties() {
     return "";
   },
-  getImageSrc(row, col) {
+  getImageSrc() {
     return null;
   },
-  getSortLongForRow(hdr) {
+  getSortLongForRow() {
     return 0;
   },
 };
@@ -243,7 +242,8 @@ var MSG_VIEW_FLAG_DUMMY = 0x20000000;
 var gFakeSelection = new TreeSelection(null);
 
 function setup_view(aViewType, aViewFlags, aTestFolder) {
-  let dbviewContractId = "@mozilla.org/messenger/msgdbview;1?type=" + aViewType;
+  const dbviewContractId =
+    "@mozilla.org/messenger/msgdbview;1?type=" + aViewType;
 
   if (aTestFolder == null) {
     aTestFolder = gTestFolder;
@@ -254,18 +254,14 @@ function setup_view(aViewType, aViewFlags, aTestFolder) {
 
   gDBView = Cc[dbviewContractId].createInstance(Ci.nsIMsgDBView);
   gDBView.init(null, null, null);
-  var outCount = {};
   gDBView.open(
     aViewType != "search" ? aTestFolder : null,
     Ci.nsMsgViewSortType.byDate,
     aViewType != "search"
       ? Ci.nsMsgViewSortOrder.ascending
       : Ci.nsMsgViewSortOrder.descending,
-    aViewFlags,
-    outCount
+    aViewFlags
   );
-  // outCount is 0 if byCustom; view is built by addColumnHandler()
-  dump("  View Out Count: " + outCount.value + "\n");
 
   // we need to cram messages into the search via nsIMsgSearchNotify interface
   if (
@@ -273,9 +269,9 @@ function setup_view(aViewType, aViewFlags, aTestFolder) {
     aViewType == "quicksearch" ||
     aViewType == "xfvf"
   ) {
-    let searchNotify = gDBView.QueryInterface(Ci.nsIMsgSearchNotify);
+    const searchNotify = gDBView.QueryInterface(Ci.nsIMsgSearchNotify);
     searchNotify.onNewSearch();
-    for (let msgHdr of aTestFolder.msgDatabase.enumerateMessages()) {
+    for (const msgHdr of aTestFolder.msgDatabase.enumerateMessages()) {
       searchNotify.onSearchHit(msgHdr, msgHdr.folder);
     }
     searchNotify.onSearchDone(Cr.NS_OK);
@@ -296,14 +292,14 @@ function setup_view(aViewType, aViewFlags, aTestFolder) {
 }
 
 function setup_group_view(aSortType, aSortOrder, aTestFolder) {
-  let dbviewContractId = "@mozilla.org/messenger/msgdbview;1?type=group";
+  const dbviewContractId = "@mozilla.org/messenger/msgdbview;1?type=group";
 
   if (aTestFolder == null) {
     aTestFolder = gTestFolder;
   }
 
   // grouped view uses these flags
-  let viewFlags =
+  const viewFlags =
     Ci.nsMsgViewFlagsType.kGroupBySort |
     Ci.nsMsgViewFlagsType.kExpandAll |
     Ci.nsMsgViewFlagsType.kThreadedDisplay;
@@ -387,28 +383,28 @@ function ensure_view_ordering(
     gDBView.viewType != Ci.nsMsgViewType.eShowSearch
   ) {
     // we must close to re-open (or we could just use a new view)
-    let msgFolder = gDBView.msgFolder;
+    const msgFolder = gDBView.msgFolder;
     gDBView.close();
     gDBView.open(msgFolder, aSortBy, aDirection, gDBView.viewFlags, {});
   } else {
     gDBView.sort(aSortBy, aDirection);
   }
 
-  let comparisonValuesByLevel = [];
-  let expectedLevel0CmpResult =
+  const comparisonValuesByLevel = [];
+  const expectedLevel0CmpResult =
     aDirection == Ci.nsMsgViewSortOrder.ascending ? 1 : -1;
-  let comparator = generalCmp;
+  const comparator = generalCmp;
 
   let dummyCount = 0,
     emptyDummyCount = 0;
 
-  let valueGetter =
+  const valueGetter =
     typeof aKeyOrValueGetter == "string"
       ? function (msgHdr) {
           return msgHdr[aKeyOrValueGetter];
         }
       : aKeyOrValueGetter;
-  let groupValueGetter = aGetGroupValue || valueGetter;
+  const groupValueGetter = aGetGroupValue || valueGetter;
 
   // don't do group testing until we see a dummy header (which we will see
   //  before we see any grouped headers, so it's fine to do this)
@@ -419,11 +415,11 @@ function ensure_view_ordering(
   // the set of group values observed before the current group.  this allows
   //  us to detect improper grouping where there are multiple groups with the
   //  same grouping value.
-  let previouslySeenGroupValues = {};
+  const previouslySeenGroupValues = {};
 
   for (let iViewIndex = 0; iViewIndex < gTreeView.rowCount; iViewIndex++) {
-    let msgHdr = gDBView.getMsgHdrAt(iViewIndex);
-    let msgViewFlags = gDBView.getFlagsAt(iViewIndex);
+    const msgHdr = gDBView.getMsgHdrAt(iViewIndex);
+    const msgViewFlags = gDBView.getFlagsAt(iViewIndex);
 
     // ignore dummy headers; testing grouping logic happens elsewhere
     if (msgViewFlags & MSG_VIEW_FLAG_DUMMY) {
@@ -440,16 +436,16 @@ function ensure_view_ordering(
     }
 
     // level is 0-based
-    let level = gTreeView.getLevel(iViewIndex);
+    const level = gTreeView.getLevel(iViewIndex);
     // nuke existing comparison levels
     if (level < comparisonValuesByLevel.length - 1) {
       comparisonValuesByLevel.splice(level);
     }
 
     // get the value for comparison
-    let curValue = valueGetter(msgHdr);
+    const curValue = valueGetter(msgHdr);
     if (inGroup) {
-      let groupValue = groupValueGetter(msgHdr);
+      const groupValue = groupValueGetter(msgHdr);
       if (groupValue in previouslySeenGroupValues) {
         do_throw(`Group value ${groupValue} observed in more than one group!`);
       }
@@ -471,9 +467,9 @@ function ensure_view_ordering(
       comparisonValuesByLevel.push(curValue);
     } else {
       // otherwise compare it
-      let prevValue = comparisonValuesByLevel[level - 1];
-      let cmpResult = comparator(curValue, prevValue);
-      let expectedCmpResult = level > 0 ? 1 : expectedLevel0CmpResult;
+      const prevValue = comparisonValuesByLevel[level - 1];
+      const cmpResult = comparator(curValue, prevValue);
+      const expectedCmpResult = level > 0 ? 1 : expectedLevel0CmpResult;
       if (cmpResult && cmpResult != expectedCmpResult) {
         do_throw(
           "Ordering failure on key " +
@@ -512,7 +508,7 @@ function test_sort_columns() {
     Ci.nsMsgViewSortType.byDate,
     Ci.nsMsgViewSortOrder.descending,
     "date",
-    function getDateAgeBucket(msgHdr) {
+    function getDateAgeBucket() {
       // so, this is a cop-out, but we know that the date age bucket for our
       //  generated messages is always more than 2-weeks ago!
       return 5;
@@ -522,7 +518,7 @@ function test_sort_columns() {
     Ci.nsMsgViewSortType.byDate,
     Ci.nsMsgViewSortOrder.ascending,
     "date",
-    function getDateAgeBucket(msgHdr) {
+    function getDateAgeBucket() {
       // so, this is a cop-out, but we know that the date age bucket for our
       //  generated messages is always more than 2-weeks ago!
       return 5;
@@ -586,7 +582,7 @@ function test_number_of_messages() {
   let numMsgInTree = gTreeView.rowCount;
   if (gDBView.viewFlags & Ci.nsMsgViewFlagsType.kGroupBySort) {
     for (let iViewIndex = 0; iViewIndex < gTreeView.rowCount; iViewIndex++) {
-      let flags = gDBView.getFlagsAt(iViewIndex);
+      const flags = gDBView.getFlagsAt(iViewIndex);
       if (flags & MSG_VIEW_FLAG_DUMMY) {
         numMsgInTree--;
       }
@@ -618,7 +614,7 @@ function test_selected_messages() {
     );
   }
 
-  let firstSelectedMsg = gDBView.hdrForFirstSelectedMessage;
+  const firstSelectedMsg = gDBView.hdrForFirstSelectedMessage;
   if (selectedMessages[0] != firstSelectedMsg) {
     do_throw(
       "getSelectedMsgHdrs[0] is " +
@@ -631,12 +627,12 @@ function test_selected_messages() {
 
   // Select all messages
   gTreeView.selection.selectAll();
-  if (gDBView.numSelected != gTreeView.rowCount) {
+  if (gDBView.numSelected != gDBView.numMsgsInView) {
     do_throw(
       "numSelected is " +
         gDBView.numSelected +
         " but should be " +
-        gTreeView.rowCount +
+        gDBView.numMsgsInView +
         "\n"
     );
   }
@@ -653,7 +649,7 @@ function test_selected_messages() {
   }
 
   for (let i = 0; i < selectedMessages.length; i++) {
-    let expectedHdr = gDBView.getMsgHdrAt(i);
+    const expectedHdr = gDBView.getMsgHdrAt(i);
     if (!selectedMessages.includes(expectedHdr)) {
       view_throw(
         "Expected " +
@@ -668,60 +664,13 @@ function test_selected_messages() {
   gTreeView.selection.clearSelection();
 }
 
-function test_insert_remove_view_rows() {
-  // Test insertion/removal into m_keys.
-  let startCount = gTreeView.rowCount;
-  let index = 0;
-  let rows = 3;
-  let msgKey = rows * 1000;
-  let flags = 0;
-  let level = 0;
-  let folder = null;
-  let xfview =
-    gDBView.viewType == Ci.nsMsgViewType.eShowSearch ||
-    gDBView.viewType == Ci.nsMsgViewType.eShowVirtualFolderResults;
-  if (xfview) {
-    folder = gDBView.getFolderForViewIndex(index);
-  }
-
-  gDBView.insertTreeRows(index, rows, msgKey, flags, level, folder);
-  assert_view_row_count(startCount + rows);
-  let key = gDBView.getKeyAt(rows - 1);
-  if (key != msgKey) {
-    view_throw("msgKey is " + key + " but should be " + msgKey + "\n");
-  }
-  gDBView.removeTreeRows(index, rows);
-  assert_view_row_count(startCount);
-
-  // These should fail.
-  try {
-    gDBView.insertTreeRows(startCount + 10, rows, msgKey, flags, level, folder);
-    view_throw("expected exception not caught; inserting at illegal index \n");
-  } catch (ex) {}
-  try {
-    gDBView.insertTreeRows(index, rows, msgKey, flags, level, folder);
-    gDBView.removeTreeRows(index, gTreeView.rowCount + 10);
-    view_throw("expected exception not caught; removing illegal rows \n");
-  } catch (ex) {
-    gDBView.removeTreeRows(index, rows);
-  }
-  if (xfview) {
-    try {
-      gDBView.insertTreeRows(index, rows, msgKey, flags, level, null);
-      view_throw(
-        "expected exception not caught; folder required for xfvf view \n"
-      );
-    } catch (ex) {}
-  }
-}
-
 async function test_msg_added_to_search_view() {
   // if the view is a non-grouped search view, test adding a header to
   // the search results, and verify it gets put at top.
   if (!(gDBView.viewFlags & Ci.nsMsgViewFlagsType.kGroupBySort)) {
     gDBView.sort(Ci.nsMsgViewSortType.byDate, Ci.nsMsgViewSortOrder.descending);
-    let [synMsg] = await make_and_add_message();
-    let msgHdr = gTestFolder.msgDatabase.getMsgHdrForMessageID(
+    const [synMsg] = await make_and_add_message();
+    const msgHdr = gTestFolder.msgDatabase.getMsgHdrForMessageID(
       synMsg.messageId
     );
     gDBView
@@ -732,8 +681,8 @@ async function test_msg_added_to_search_view() {
 }
 
 function IsHdrChildOf(possibleParent, possibleChild) {
-  let parentHdrId = possibleParent.messageId;
-  let numRefs = possibleChild.numReferences;
+  const parentHdrId = possibleParent.messageId;
+  const numRefs = possibleChild.numReferences;
   for (let refIndex = 0; refIndex < numRefs; refIndex++) {
     if (parentHdrId == possibleChild.getStringReference(refIndex)) {
       return true;
@@ -759,8 +708,8 @@ function test_threading_levels() {
   let prevLevel = 1;
   let prevMsgHdr;
   for (let iViewIndex = 0; iViewIndex < gTreeView.rowCount; iViewIndex++) {
-    let msgHdr = gDBView.getMsgHdrAt(iViewIndex);
-    let level = gTreeView.getLevel(iViewIndex);
+    const msgHdr = gDBView.getMsgHdrAt(iViewIndex);
+    const level = gTreeView.getLevel(iViewIndex);
     if (level > prevLevel && msgHdr.subject != gSiblingsMissingParentsSubject) {
       if (!IsHdrChildOf(prevMsgHdr, msgHdr)) {
         view_throw("indented message not child of parent");
@@ -773,7 +722,7 @@ function test_threading_levels() {
 
 function test_expand_collapse() {
   let oldRowCount = gDBView.rowCount;
-  let thirdChild = gDBView.getMsgHdrAt(3);
+  const thirdChild = gDBView.getMsgHdrAt(3);
   gDBView.toggleOpenState(0);
   if (gDBView.rowCount != oldRowCount - 9) {
     view_throw("collapsing first item should have removed 9 items");
@@ -781,12 +730,12 @@ function test_expand_collapse() {
 
   // test that expand/collapse works with killed sub-thread.
   oldRowCount = gDBView.rowCount;
-  gTestFolder.msgDatabase.markHeaderKilled(thirdChild, true, null);
+  gTestFolder.msgDatabase.markKilled(thirdChild.messageKey, true, null);
   gDBView.toggleOpenState(0);
   if (gDBView.rowCount != oldRowCount + 2) {
     view_throw("expanding first item should have aded 2 items");
   }
-  gTestFolder.msgDatabase.markHeaderKilled(thirdChild, false, null);
+  gTestFolder.msgDatabase.markKilled(thirdChild.messageKey, false, null);
   oldRowCount = gDBView.rowCount;
   gDBView.toggleOpenState(0);
   if (gDBView.rowCount != oldRowCount - 2) {
@@ -822,9 +771,9 @@ async function test_group_sort_collapseAll_expandAll_threading() {
   // msg1: from A, custom column val A, to be starred
   // msg2: from A, custom column val A
   // msg3: from B, custom column val B
-  let [smsg1] = await make_and_add_message({ from: ["A", "A@a.invalid"] });
+  const [smsg1] = await make_and_add_message({ from: ["A", "A@a.invalid"] });
   await make_and_add_message({ from: ["A", "A@a.invalid"] });
-  let [smsg3] = await make_and_add_message({ from: ["B", "B@b.invalid"] });
+  const [smsg3] = await make_and_add_message({ from: ["B", "B@b.invalid"] });
 
   assert_view_row_count(3);
   gDBView.getMsgHdrAt(0).markFlagged(true);
@@ -934,7 +883,7 @@ async function test_group_dummies_under_mutation_by_date() {
   //  either. bucket 1 is same day, bucket 2 is yesterday, bucket 3 is last
   //  week, so 2 days ago or older is always last week, even if we roll over
   //  and it becomes 3 days ago.)
-  let [smsg, synSet] = await make_and_add_message({
+  const [smsg, synSet] = await make_and_add_message({
     age: { days: 2, hours: 1 },
   });
 
@@ -956,10 +905,10 @@ async function test_group_dummies_under_mutation_by_date() {
   assert_view_empty();
 
   // - add two messages from this week (same date bucket concerns)
-  let [newer, newerSet] = await make_and_add_message({
+  const [newer, newerSet] = await make_and_add_message({
     age: { days: 2, hours: 1 },
   });
-  let [older] = await make_and_add_message({ age: { days: 2, hours: 2 } });
+  const [older] = await make_and_add_message({ age: { days: 2, hours: 2 } });
 
   // - sanity check addition
   assert_view_row_count(3); // 2 messages + 1 dummy
@@ -983,11 +932,11 @@ async function test_group_dummies_under_mutation_by_date() {
 
 async function test_xfvf_threading() {
   // - start with an empty folder
-  let save_gTestFolder = gTestFolder;
+  const save_gTestFolder = gTestFolder;
   gTestFolder = await messageInjection.makeEmptyFolder();
 
   let messages = [];
-  // Add messages such that ancestors arrive after their descendents in
+  // Add messages such that ancestors arrive after their descendants in
   // various interesting ways.
   // build a hierarchy like this (the UID order corresponds to the date order)
   //   3
@@ -995,26 +944,26 @@ async function test_xfvf_threading() {
   //     4
   //      2
   //     5
-  let msg3 = gMessageGenerator.makeMessage({ age: { days: 2, hours: 5 } });
-  let msg1 = gMessageGenerator.makeMessage({
+  const msg3 = gMessageGenerator.makeMessage({ age: { days: 2, hours: 5 } });
+  const msg1 = gMessageGenerator.makeMessage({
     age: { days: 2, hours: 4 },
     inReplyTo: msg3,
   });
-  let msg4 = gMessageGenerator.makeMessage({
+  const msg4 = gMessageGenerator.makeMessage({
     age: { days: 2, hours: 3 },
     inReplyTo: msg1,
   });
-  let msg2 = gMessageGenerator.makeMessage({
+  const msg2 = gMessageGenerator.makeMessage({
     age: { days: 2, hours: 1 },
     inReplyTo: msg4,
   });
-  let msg5 = gMessageGenerator.makeMessage({
+  const msg5 = gMessageGenerator.makeMessage({
     age: { days: 2, hours: 2 },
     inReplyTo: msg1,
   });
   messages = messages.concat([msg1, msg2, msg3, msg4, msg5]);
 
-  let msgSet = new SyntheticMessageSet(messages);
+  const msgSet = new SyntheticMessageSet(messages);
 
   gTestFolder = await messageInjection.makeEmptyFolder();
 
@@ -1044,7 +993,7 @@ async function test_xfvf_threading() {
  * sorting both by thread root and by newest message.
  */
 async function test_thread_sorting() {
-  let save_gTestFolder = gTestFolder;
+  const save_gTestFolder = gTestFolder;
   gTestFolder = await messageInjection.makeEmptyFolder();
   let messages = [];
   // build a hierarchy like this (the UID order corresponds to the date order)
@@ -1053,20 +1002,20 @@ async function test_thread_sorting() {
   //  2
   //   5
   //  3
-  let msg1 = gMessageGenerator.makeMessage({ age: { days: 1, hours: 10 } });
-  let msg2 = gMessageGenerator.makeMessage({ age: { days: 1, hours: 9 } });
-  let msg3 = gMessageGenerator.makeMessage({ age: { days: 1, hours: 8 } });
-  let msg4 = gMessageGenerator.makeMessage({
+  const msg1 = gMessageGenerator.makeMessage({ age: { days: 1, hours: 10 } });
+  const msg2 = gMessageGenerator.makeMessage({ age: { days: 1, hours: 9 } });
+  const msg3 = gMessageGenerator.makeMessage({ age: { days: 1, hours: 8 } });
+  const msg4 = gMessageGenerator.makeMessage({
     age: { days: 1, hours: 7 },
     inReplyTo: msg1,
   });
-  let msg5 = gMessageGenerator.makeMessage({
+  const msg5 = gMessageGenerator.makeMessage({
     age: { days: 1, hours: 6 },
     inReplyTo: msg2,
   });
   messages = messages.concat([msg1, msg2, msg3, msg4, msg5]);
 
-  let msgSet = new SyntheticMessageSet(messages);
+  const msgSet = new SyntheticMessageSet(messages);
 
   await messageInjection.addSetsToFolders([gTestFolder], [msgSet]);
 
@@ -1131,7 +1080,6 @@ function tests_for_all_views() {
   test_sort_columns();
   test_number_of_messages();
   test_selected_messages();
-  test_insert_remove_view_rows();
 }
 
 add_setup(function () {
@@ -1140,7 +1088,7 @@ add_setup(function () {
 
 add_task(async function test_threaded() {
   await set_gTestFolder(gMessages);
-  let [view_type, view_flag] = VIEW_TYPES[0];
+  const [view_type, view_flag] = VIEW_TYPES[0];
   setup_view(view_type, view_flag);
 
   tests_for_all_views();
@@ -1152,7 +1100,7 @@ add_task(async function test_threaded() {
 
 add_task(async function test_quicksearch_threaded() {
   await set_gTestFolder(gMessages);
-  let [view_type, view_flag] = VIEW_TYPES[1];
+  const [view_type, view_flag] = VIEW_TYPES[1];
   setup_view(view_type, view_flag);
 
   tests_for_all_views();
@@ -1163,7 +1111,7 @@ add_task(async function test_quicksearch_threaded() {
 
 add_task(async function test_search_threaded() {
   await set_gTestFolder(gMessages);
-  let [view_type, view_flag] = VIEW_TYPES[2];
+  const [view_type, view_flag] = VIEW_TYPES[2];
   setup_view(view_type, view_flag);
 
   tests_for_all_views();
@@ -1174,7 +1122,7 @@ add_task(async function test_search_threaded() {
 
 add_task(async function test_search_group_by_sort() {
   await set_gTestFolder(gMessages);
-  let [view_type, view_flag] = VIEW_TYPES[3];
+  const [view_type, view_flag] = VIEW_TYPES[3];
   setup_view(view_type, view_flag);
 
   tests_for_all_views();
@@ -1185,7 +1133,7 @@ add_task(async function test_search_group_by_sort() {
 
 add_task(async function test_xfvf() {
   await set_gTestFolder(gMessages);
-  let [view_type, view_flag] = VIEW_TYPES[4];
+  const [view_type, view_flag] = VIEW_TYPES[4];
   setup_view(view_type, view_flag);
 
   tests_for_all_views();
@@ -1196,7 +1144,7 @@ add_task(async function test_xfvf() {
 
 add_task(async function test_group() {
   await set_gTestFolder(gMessages);
-  let [view_type, view_flag] = VIEW_TYPES[5];
+  const [view_type, view_flag] = VIEW_TYPES[5];
   setup_view(view_type, view_flag);
 
   tests_for_all_views();

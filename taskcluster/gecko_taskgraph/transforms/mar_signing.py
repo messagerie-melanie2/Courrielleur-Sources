@@ -9,6 +9,7 @@ import logging
 import os
 
 from taskgraph.transforms.base import TransformSequence
+from taskgraph.util.dependencies import get_primary_dependency
 from taskgraph.util.taskcluster import get_artifact_prefix
 from taskgraph.util.treeherder import inherit_treeherder_from_dep, join_symbol
 
@@ -23,10 +24,10 @@ logger = logging.getLogger(__name__)
 
 SIGNING_FORMATS = {
     "mar-signing-autograph-stage": {
-        "target.complete.mar": ["autograph_stage_mar384"],
+        "target.complete.mar": ["gcp_prod_autograph_stage_mar384"],
     },
     "default": {
-        "target.complete.mar": ["autograph_hash_only_mar384"],
+        "target.complete.mar": ["gcp_prod_autograph_hash_only_mar384"],
     },
 }
 
@@ -47,7 +48,7 @@ def generate_partials_artifacts(job, release_history, platform, locale=None):
             "taskId": {"task-reference": "<partials>"},
             "taskType": "partials",
             "paths": [f"{artifact_prefix}/{path}" for path, version in artifacts],
-            "formats": ["autograph_hash_only_mar384"],
+            "formats": ["gcp_prod_autograph_hash_only_mar384"],
         }
     ]
 
@@ -76,7 +77,9 @@ def generate_complete_artifacts(job, kind):
 @transforms.add
 def make_task_description(config, jobs):
     for job in jobs:
-        dep_job = job["primary-dependency"]
+        dep_job = get_primary_dependency(config, job)
+        assert dep_job
+
         locale = dep_job.attributes.get("locale")
 
         treeherder = inherit_treeherder_from_dep(job, dep_job)

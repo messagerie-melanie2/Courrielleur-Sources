@@ -19,6 +19,9 @@ function PlacesViewBase(aPlace, aOptions = {}) {
   this._viewElt.controllers.appendController(this._controller);
 }
 
+PlacesViewBase.interfaces = [Ci.nsINavHistoryResultObserver,
+                             Ci.nsISupportsWeakReference];
+
 PlacesViewBase.prototype = {
   // The xul element that holds the entire view.
   _viewElt: null,
@@ -41,9 +44,8 @@ PlacesViewBase.prototype = {
   // the native mac menu).
   _nativeView: false,
 
-  QueryInterface: XPCOMUtils.generateQI(
-    [Ci.nsINavHistoryResultObserver,
-     Ci.nsISupportsWeakReference]),
+  QueryInterface: ChromeUtils.generateQI(
+    PlacesViewBase.interfaces),
 
   _place: "",
   get place() {
@@ -1002,13 +1004,8 @@ PlacesToolbar.prototype = {
   _cbEvents: ["dragstart", "dragover", "dragexit", "dragend", "drop",
               "mousemove", "mouseover", "mouseout"],
 
-  QueryInterface: function PT_QueryInterface(aIID) {
-    if (aIID.equals(Ci.nsIDOMEventListener) ||
-        aIID.equals(Ci.nsITimerCallback))
-      return this;
-
-    return PlacesViewBase.prototype.QueryInterface.apply(this, arguments);
-  },
+  QueryInterface: ChromeUtils.generateQI([Ci.nsITimerCallback,
+                                          ...PlacesViewBase.interfaces]),
 
   uninit: function PT_uninit() {
     this._removeEventListeners(this._viewElt, this._cbEvents, false);
@@ -1886,13 +1883,6 @@ function PlacesMenu(aPopupShowingEvent, aPlace, aOptions) {
 PlacesMenu.prototype = {
   __proto__: PlacesViewBase.prototype,
 
-  QueryInterface: function PM_QueryInterface(aIID) {
-    if (aIID.equals(Ci.nsIDOMEventListener))
-      return this;
-
-    return PlacesViewBase.prototype.QueryInterface.apply(this, arguments);
-  },
-
   _removeChild: function PM_removeChild(aChild) {
     PlacesViewBase.prototype._removeChild.apply(this, arguments);
   },
@@ -1953,10 +1943,6 @@ function PlacesPanelMenuView(aPlace, aViewId, aRootId, aOptions) {
 
 PlacesPanelMenuView.prototype = {
   __proto__: PlacesViewBase.prototype,
-
-  QueryInterface: function PAMV_QueryInterface(aIID) {
-    return PlacesViewBase.prototype.QueryInterface.apply(this, arguments);
-  },
 
   uninit: function PAMV_uninit() {
     PlacesViewBase.prototype.uninit.apply(this, arguments);

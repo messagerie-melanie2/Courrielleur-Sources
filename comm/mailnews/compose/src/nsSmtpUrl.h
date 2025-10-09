@@ -13,9 +13,8 @@
 #include "nsCOMPtr.h"
 #include "nsIPrompt.h"
 #include "nsIAuthPrompt.h"
-#include "nsISmtpServer.h"
+#include "nsIMsgOutgoingServer.h"
 #include "nsIInterfaceRequestor.h"
-#include "nsIInterfaceRequestorUtils.h"
 #include "nsIURIMutator.h"
 
 class nsMailtoUrl : public nsIMailtoUrl, public nsIURI {
@@ -133,12 +132,7 @@ class nsSmtpUrl : public nsISmtpUrl, public nsMsgMailNewsUrl {
   nsCOMPtr<nsIPrompt> m_netPrompt;
   nsCOMPtr<nsIAuthPrompt> m_netAuthPrompt;
   nsCOMPtr<nsIInterfaceRequestor> m_callbacks;
-  nsCOMPtr<nsISmtpServer> m_smtpServer;
-
-  // it is possible to encode the message to parse in the form of a url.
-  // This function is used to decompose the search and path part into the bare
-  // message components (to, fcc, bcc, etc.)
-  nsresult ParseMessageToPost(char* searchPart);
+  nsCOMPtr<nsIMsgOutgoingServer> m_smtpServer;
 };
 
 #endif  // nsSmtpUrl_h__

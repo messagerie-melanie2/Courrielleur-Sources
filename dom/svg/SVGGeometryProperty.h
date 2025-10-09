@@ -41,27 +41,31 @@ SVGGEOMETRYPROPERTY_GENERATETAG(R, LengthPercentNoAuto, XY, nsStyleSVGReset);
 
 #undef SVGGEOMETRYPROPERTY_GENERATETAG
 
+using StyleSizeGetter = AnchorResolvedSize (nsStylePosition::*)(
+    mozilla::StylePositionProperty) const;
+
 struct Height;
 struct Width {
   using ResolverType = ResolverTypes::LengthPercentWidthHeight;
   constexpr static auto CtxDirection = SVGContentUtils::X;
-  constexpr static auto Getter = &nsStylePosition::mWidth;
+  constexpr static StyleSizeGetter Getter = &nsStylePosition::GetWidth;
   constexpr static auto SizeGetter = &gfx::Size::width;
   static AspectRatio AspectRatioRelative(AspectRatio aAspectRatio) {
     return aAspectRatio.Inverted();
   }
-  constexpr static uint32_t DefaultObjectSize = 300;
+  constexpr static uint32_t DefaultObjectSize = kFallbackIntrinsicWidthInPixels;
   using CounterPart = Height;
 };
 struct Height {
   using ResolverType = ResolverTypes::LengthPercentWidthHeight;
   constexpr static auto CtxDirection = SVGContentUtils::Y;
-  constexpr static auto Getter = &nsStylePosition::mHeight;
+  constexpr static StyleSizeGetter Getter = &nsStylePosition::GetHeight;
   constexpr static auto SizeGetter = &gfx::Size::height;
   static AspectRatio AspectRatioRelative(AspectRatio aAspectRatio) {
     return aAspectRatio;
   }
-  constexpr static uint32_t DefaultObjectSize = 150;
+  constexpr static uint32_t DefaultObjectSize =
+      kFallbackIntrinsicHeightInPixels;
   using CounterPart = Width;
 };
 
@@ -89,30 +93,31 @@ using dummy = int[];
 using CtxDirectionType = decltype(SVGContentUtils::X);
 
 template <CtxDirectionType CTD>
-float ResolvePureLengthPercentage(SVGElement* aElement,
+float ResolvePureLengthPercentage(const SVGElement* aElement,
                                   const LengthPercentage& aLP) {
   return aLP.ResolveToCSSPixelsWith(
       [&] { return CSSCoord{SVGElementMetrics(aElement).GetAxisLength(CTD)}; });
 }
 
 template <class Tag>
-float ResolveImpl(ComputedStyle const& aStyle, SVGElement* aElement,
+float ResolveImpl(ComputedStyle const& aStyle, const SVGElement* aElement,
                   ResolverTypes::LengthPercentNoAuto) {
   auto const& value = aStyle.StyleSVGReset()->*Tag::Getter;
   return ResolvePureLengthPercentage<Tag::CtxDirection>(aElement, value);
 }
 
 template <class Tag>
-float ResolveImpl(ComputedStyle const& aStyle, SVGElement* aElement,
+float ResolveImpl(ComputedStyle const& aStyle, const SVGElement* aElement,
                   ResolverTypes::LengthPercentWidthHeight) {
   static_assert(
       std::is_same<Tag, Tags::Width>{} || std::is_same<Tag, Tags::Height>{},
       "Wrong tag");
 
-  auto const& value = aStyle.StylePosition()->*Tag::Getter;
-  if (value.IsLengthPercentage()) {
+  auto const value = std::invoke(Tag::Getter, aStyle.StylePosition(),
+                                 aStyle.StyleDisplay()->mPosition);
+  if (value->IsLengthPercentage()) {
     return ResolvePureLengthPercentage<Tag::CtxDirection>(
-        aElement, value.AsLengthPercentage());
+        aElement, value->AsLengthPercentage());
   }
 
   if (aElement->IsSVGElement(nsGkAtoms::image)) {
@@ -129,7 +134,8 @@ float ResolveImpl(ComputedStyle const& aStyle, SVGElement* aElement,
     }
 
     using Other = typename Tag::CounterPart;
-    auto const& valueOther = aStyle.StylePosition()->*Other::Getter;
+    auto const valueOther = std::invoke(Other::Getter, aStyle.StylePosition(),
+                                        aStyle.StyleDisplay()->mPosition);
 
     gfx::Size intrinsicImageSize;
     AspectRatio aspectRatio;
@@ -138,10 +144,10 @@ float ResolveImpl(ComputedStyle const& aStyle, SVGElement* aElement,
       return 0.f;
     }
 
-    if (valueOther.IsLengthPercentage()) {
+    if (valueOther->IsLengthPercentage()) {
       // We are |auto|, but the other side has specifed length.
       float lengthOther = ResolvePureLengthPercentage<Other::CtxDirection>(
-          aElement, valueOther.AsLengthPercentage());
+          aElement, valueOther->AsLengthPercentage());
 
       if (aspectRatio) {
         // Preserve aspect ratio if it's present.
@@ -193,7 +199,7 @@ float ResolveImpl(ComputedStyle const& aStyle, SVGElement* aElement,
 }
 
 template <class Tag>
-float ResolveImpl(ComputedStyle const& aStyle, SVGElement* aElement,
+float ResolveImpl(ComputedStyle const& aStyle, const SVGElement* aElement,
                   ResolverTypes::LengthPercentRXY) {
   static_assert(std::is_same<Tag, Tags::Rx>{} || std::is_same<Tag, Tags::Ry>{},
                 "Wrong tag");
@@ -222,14 +228,15 @@ float ResolveImpl(ComputedStyle const& aStyle, SVGElement* aElement,
 
 template <class Tag>
 float ResolveWith(const ComputedStyle& aStyle, const SVGElement* aElement) {
-  // TODO: There are a lot of utilities lacking const-ness in dom/svg.
-  // We should fix that problem and remove this `const_cast`.
-  return details::ResolveImpl<Tag>(aStyle, const_cast<SVGElement*>(aElement),
+  return details::ResolveImpl<Tag>(aStyle, aElement,
                                    typename Tag::ResolverType{});
 }
 
 template <class Func>
-bool DoForComputedStyle(const SVGElement* aElement, Func aFunc) {
+bool DoForComputedStyle(const Element* aElement, Func aFunc) {
+  if (!aElement) {
+    return false;
+  }
   if (const nsIFrame* f = aElement->GetPrimaryFrame()) {
     aFunc(f->Style());
     return true;

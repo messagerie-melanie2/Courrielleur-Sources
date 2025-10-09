@@ -9,30 +9,21 @@
 
 #include "vm/JSObject.h"
 
+#include "gc/Allocator.h"
+#include "gc/Zone.h"
 #include "js/Object.h"  // JS::GetBuiltinClass
 #include "vm/ArrayObject.h"
 #include "vm/BoundFunctionObject.h"
 #include "vm/EnvironmentObject.h"
 #include "vm/JSFunction.h"
-#include "vm/Probes.h"
 #include "vm/PropertyResult.h"
 #include "vm/TypedArrayObject.h"
-
-#ifdef ENABLE_RECORD_TUPLE
-#  include "vm/TupleType.h"
-#endif
-
+#include "gc/BufferAllocator-inl.h"
 #include "gc/GCContext-inl.h"
 #include "gc/ObjectKind-inl.h"
 #include "vm/ObjectOperations-inl.h"  // js::MaybeHasInterestingSymbolProperty
 
 namespace js {
-
-#ifdef ENABLE_RECORD_TUPLE
-// Defined in vm/RecordTupleShared.{h,cpp}. We cannot include that file
-// because it causes circular dependencies.
-extern bool IsExtendedPrimitiveWrapper(const JSObject& obj);
-#endif
 
 // Get the GC kind to use for scripted 'new', empty object literals ({}), and
 // the |Object| constructor.
@@ -64,11 +55,15 @@ MOZ_ALWAYS_INLINE uint32_t js::NativeObject::calculateDynamicSlots() const {
   // the dynamic slots need to get increased again. ArrayObjects ignore
   // this because slots are uncommon in that case.
   if (clasp != &ArrayObject::class_ && ndynamic <= SLOT_CAPACITY_MIN) {
+#ifdef DEBUG
+    size_t count = SLOT_CAPACITY_MIN + ObjectSlots::VALUES_PER_HEADER;
+    MOZ_ASSERT(count == gc::GetGoodPower2ElementCount(count, sizeof(Value)));
+#endif
     return SLOT_CAPACITY_MIN;
   }
 
-  uint32_t count =
-      mozilla::RoundUpPow2(ndynamic + ObjectSlots::VALUES_PER_HEADER);
+  uint32_t count = gc::GetGoodPower2ElementCount(
+      ndynamic + ObjectSlots::VALUES_PER_HEADER, sizeof(Value));
 
   uint32_t slots = count - ObjectSlots::VALUES_PER_HEADER;
   MOZ_ASSERT(slots >= ndynamic);
@@ -82,40 +77,17 @@ js::NativeObject::calculateDynamicSlots(SharedShape* shape) {
 }
 
 inline void JSObject::finalize(JS::GCContext* gcx) {
-  js::probes::FinalizeObject(this);
-
 #ifdef DEBUG
   MOZ_ASSERT(isTenured());
-  if (!IsBackgroundFinalized(asTenured().getAllocKind())) {
-    /* Assert we're on the main thread. */
-    MOZ_ASSERT(CurrentThreadCanAccessZone(zone()));
-  }
+  js::gc::AllocKind kind = asTenured().getAllocKind();
+  MOZ_ASSERT(IsFinalizedKind(kind));
+  MOZ_ASSERT_IF(IsForegroundFinalized(kind),
+                js::CurrentThreadCanAccessZone(zoneFromAnyThread()));
 #endif
 
-  js::Shape* objShape = shape();
-
-  const JSClass* clasp = objShape->getObjectClass();
-  if (clasp->hasFinalize()) {
-    clasp->doFinalize(gcx, this);
-  }
-
-  if (!objShape->isNative()) {
-    return;
-  }
-
-  js::NativeObject* nobj = &as<js::NativeObject>();
-  if (nobj->hasDynamicSlots()) {
-    js::ObjectSlots* slotsHeader = nobj->getSlotsHeader();
-    size_t size = js::ObjectSlots::allocSize(slotsHeader->capacity());
-    gcx->free_(this, slotsHeader, size, js::MemoryUse::ObjectSlots);
-  }
-
-  if (nobj->hasDynamicElements()) {
-    js::ObjectElements* elements = nobj->getElementsHeader();
-    size_t size = elements->numAllocatedElements() * sizeof(js::HeapSlot);
-    gcx->free_(this, nobj->getUnshiftedElementsHeader(), size,
-               js::MemoryUse::ObjectElements);
-  }
+  const JSClass* clasp = shape()->getObjectClass();
+  MOZ_ASSERT(clasp->hasFinalize());
+  clasp->doFinalize(gcx, this);
 }
 
 inline bool JSObject::isQualifiedVarObj() const {
@@ -139,8 +111,14 @@ inline bool JSObject::isUnqualifiedVarObj() const {
   return is<js::GlobalObject>() || is<js::NonSyntacticVariablesObject>();
 }
 
+inline bool JSObject::setQualifiedVarObj(
+    JSContext* cx, JS::Handle<js::WithEnvironmentObject*> obj) {
+  MOZ_ASSERT(!obj->isSyntactic());
+  return setFlag(cx, obj, js::ObjectFlag::QualifiedVarObj);
+}
+
 inline bool JSObject::canHaveFixedElements() const {
-  return (is<js::ArrayObject>() || IF_RECORD_TUPLE(is<js::TupleType>(), false));
+  return is<js::ArrayObject>();
 }
 
 namespace js {
@@ -148,11 +126,12 @@ namespace js {
 #ifdef DEBUG
 inline bool ClassCanHaveFixedData(const JSClass* clasp) {
   // Normally, the number of fixed slots given an object is the maximum
-  // permitted for its size class. For array buffers and non-shared typed
-  // arrays we only use enough to cover the class reserved slots, so that
-  // the remaining space in the object's allocation is available for the
-  // buffer's data.
-  return !clasp->isNativeObject() || clasp == &js::ArrayBufferObject::class_ ||
+  // permitted for its size class. For array buffers and typed arrays we only
+  // use enough to cover the class reserved slots, so that the remaining space
+  // in the object's allocation is available for the buffer's data.
+  return !clasp->isNativeObject() ||
+         clasp == &js::FixedLengthArrayBufferObject::class_ ||
+         clasp == &js::ResizableArrayBufferObject::class_ ||
          js::IsTypedArrayClass(clasp);
 }
 #endif
@@ -184,13 +163,13 @@ class MOZ_RAII AutoSuppressAllocationMetadataBuilder {
 // passed through. We root nothing unless necessary.
 template <typename T>
 [[nodiscard]] static inline T* SetNewObjectMetadata(JSContext* cx, T* obj) {
-  MOZ_ASSERT(cx->isMainThreadContext());
   MOZ_ASSERT(cx->realm()->hasAllocationMetadataBuilder());
   MOZ_ASSERT(!cx->realm()->hasObjectPendingMetadata());
 
   // The metadata builder is invoked for each object created on the main thread,
-  // except when it's suppressed.
-  if (!cx->zone()->suppressAllocationMetadataBuilder) {
+  // except when it's suppressed or we're throwing over-recursion error.
+  if (!cx->zone()->suppressAllocationMetadataBuilder &&
+      !cx->isThrowingOverRecursed()) {
     // Don't collect metadata on objects that represent metadata, to avoid
     // recursion.
     AutoSuppressAllocationMetadataBuilder suppressMetadata(cx);
@@ -218,17 +197,16 @@ inline js::GlobalObject& JSObject::nonCCWGlobal() const {
 inline bool JSObject::nonProxyIsExtensible() const {
   MOZ_ASSERT(!uninlinedIsProxyObject());
 
-#ifdef ENABLE_RECORD_TUPLE
-  if (js::IsExtendedPrimitiveWrapper(*this)) {
-    return false;
-  }
-#endif
   // [[Extensible]] for ordinary non-proxy objects is an object flag.
   return !hasFlag(js::ObjectFlag::NotExtensible);
 }
 
 inline bool JSObject::hasInvalidatedTeleporting() const {
   return hasFlag(js::ObjectFlag::InvalidatedTeleporting);
+}
+
+inline bool JSObject::needsProxyGetSetResultValidation() const {
+  return hasFlag(js::ObjectFlag::NeedsProxyGetSetResultValidation);
 }
 
 MOZ_ALWAYS_INLINE bool JSObject::maybeHasInterestingSymbolProperty() const {
@@ -354,14 +332,31 @@ inline gc::Heap GetInitialHeap(NewObjectKind newKind, const JSClass* clasp,
 NativeObject* NewObjectWithGivenTaggedProto(JSContext* cx, const JSClass* clasp,
                                             Handle<TaggedProto> proto,
                                             gc::AllocKind allocKind,
-                                            NewObjectKind newKind);
+                                            NewObjectKind newKind,
+                                            ObjectFlags objFlags);
+
+NativeObject* NewObjectWithGivenTaggedProtoAndAllocSite(
+    JSContext* cx, const JSClass* clasp, Handle<TaggedProto> proto,
+    gc::AllocKind allocKind, NewObjectKind newKind, ObjectFlags objFlags,
+    gc::AllocSite* site);
 
 template <NewObjectKind NewKind>
 inline NativeObject* NewObjectWithGivenTaggedProto(JSContext* cx,
                                                    const JSClass* clasp,
-                                                   Handle<TaggedProto> proto) {
+                                                   Handle<TaggedProto> proto,
+                                                   ObjectFlags objFlags) {
   gc::AllocKind allocKind = gc::GetGCObjectKind(clasp);
-  return NewObjectWithGivenTaggedProto(cx, clasp, proto, allocKind, NewKind);
+  return NewObjectWithGivenTaggedProto(cx, clasp, proto, allocKind, NewKind,
+                                       objFlags);
+}
+
+template <NewObjectKind NewKind>
+inline NativeObject* NewObjectWithGivenTaggedProtoAndAllocSite(
+    JSContext* cx, const JSClass* clasp, Handle<TaggedProto> proto,
+    ObjectFlags objFlags, gc::AllocSite* site) {
+  gc::AllocKind allocKind = gc::GetGCObjectKind(clasp);
+  return NewObjectWithGivenTaggedProtoAndAllocSite(cx, clasp, proto, allocKind,
+                                                   NewKind, objFlags, site);
 }
 
 namespace detail {
@@ -369,7 +364,8 @@ namespace detail {
 template <typename T, NewObjectKind NewKind>
 inline T* NewObjectWithGivenTaggedProtoForKind(JSContext* cx,
                                                Handle<TaggedProto> proto) {
-  JSObject* obj = NewObjectWithGivenTaggedProto<NewKind>(cx, &T::class_, proto);
+  JSObject* obj = NewObjectWithGivenTaggedProto<NewKind>(cx, &T::class_, proto,
+                                                         ObjectFlags());
   return obj ? &obj->as<T>() : nullptr;
 }
 
@@ -382,25 +378,25 @@ inline T* NewObjectWithGivenTaggedProto(JSContext* cx,
                                                                         proto);
 }
 
-inline NativeObject* NewObjectWithGivenProto(
-    JSContext* cx, const JSClass* clasp, HandleObject proto,
-    gc::AllocKind allocKind, NewObjectKind newKind = GenericObject) {
-  return NewObjectWithGivenTaggedProto(cx, clasp, AsTaggedProto(proto),
-                                       allocKind, newKind);
-}
-
 inline NativeObject* NewObjectWithGivenProto(JSContext* cx,
                                              const JSClass* clasp,
                                              HandleObject proto) {
-  return NewObjectWithGivenTaggedProto<GenericObject>(cx, clasp,
-                                                      AsTaggedProto(proto));
+  return NewObjectWithGivenTaggedProto<GenericObject>(
+      cx, clasp, AsTaggedProto(proto), ObjectFlags());
 }
 
-inline NativeObject* NewTenuredObjectWithGivenProto(JSContext* cx,
-                                                    const JSClass* clasp,
-                                                    HandleObject proto) {
-  return NewObjectWithGivenTaggedProto<TenuredObject>(cx, clasp,
-                                                      AsTaggedProto(proto));
+inline NativeObject* NewObjectWithGivenProtoAndAllocSite(
+    JSContext* cx, const JSClass* clasp, HandleObject proto,
+    js::gc::AllocSite* site) {
+  return NewObjectWithGivenTaggedProtoAndAllocSite<GenericObject>(
+      cx, clasp, AsTaggedProto(proto), ObjectFlags(), site);
+}
+
+inline NativeObject* NewTenuredObjectWithGivenProto(
+    JSContext* cx, const JSClass* clasp, HandleObject proto,
+    ObjectFlags objFlags = ObjectFlags()) {
+  return NewObjectWithGivenTaggedProto<TenuredObject>(
+      cx, clasp, AsTaggedProto(proto), objFlags);
 }
 
 template <typename T>
@@ -420,7 +416,7 @@ inline T* NewObjectWithGivenProtoAndKinds(JSContext* cx, HandleObject proto,
                                           gc::AllocKind allocKind,
                                           NewObjectKind newKind) {
   JSObject* obj = NewObjectWithGivenTaggedProto(
-      cx, &T::class_, AsTaggedProto(proto), allocKind, newKind);
+      cx, &T::class_, AsTaggedProto(proto), allocKind, newKind, ObjectFlags());
   return obj ? &obj->as<T>() : nullptr;
 }
 
@@ -429,13 +425,16 @@ inline T* NewObjectWithGivenProtoAndKinds(JSContext* cx, HandleObject proto,
 NativeObject* NewObjectWithClassProto(JSContext* cx, const JSClass* clasp,
                                       HandleObject proto,
                                       gc::AllocKind allocKind,
-                                      NewObjectKind newKind = GenericObject);
+                                      NewObjectKind newKind = GenericObject,
+                                      ObjectFlags objFlags = ObjectFlags());
 
 inline NativeObject* NewObjectWithClassProto(
     JSContext* cx, const JSClass* clasp, HandleObject proto,
-    NewObjectKind newKind = GenericObject) {
+    NewObjectKind newKind = GenericObject,
+    ObjectFlags objFlags = ObjectFlags()) {
   gc::AllocKind allocKind = gc::GetGCObjectKind(clasp);
-  return NewObjectWithClassProto(cx, clasp, proto, allocKind, newKind);
+  return NewObjectWithClassProto(cx, clasp, proto, allocKind, newKind,
+                                 objFlags);
 }
 
 template <class T>
@@ -446,8 +445,10 @@ inline T* NewObjectWithClassProto(JSContext* cx, HandleObject proto) {
 
 template <class T>
 inline T* NewObjectWithClassProtoAndKind(JSContext* cx, HandleObject proto,
-                                         NewObjectKind newKind) {
-  JSObject* obj = NewObjectWithClassProto(cx, &T::class_, proto, newKind);
+                                         NewObjectKind newKind,
+                                         ObjectFlags objFlags = ObjectFlags()) {
+  JSObject* obj =
+      NewObjectWithClassProto(cx, &T::class_, proto, newKind, objFlags);
   return obj ? &obj->as<T>() : nullptr;
 }
 
@@ -503,7 +504,7 @@ inline T* NewBuiltinClassInstance(JSContext* cx, gc::AllocKind allocKind,
   return obj ? &obj->as<T>() : nullptr;
 }
 
-static inline gc::AllocKind GuessArrayGCKind(size_t numElements) {
+static constexpr gc::AllocKind GuessArrayGCKind(size_t numElements) {
   if (numElements) {
     return gc::GetGCArrayKind(numElements);
   }

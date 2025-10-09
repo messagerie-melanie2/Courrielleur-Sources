@@ -2,15 +2,26 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
+"use strict";
+
 var { ExtensionTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/ExtensionXPCShellUtils.sys.mjs"
 );
 
+add_setup(async () => {
+  registerCleanupFunction(() => {
+    // Make sure any open database is given a chance to close.
+    Services.startup.advanceShutdownPhase(
+      Services.startup.SHUTDOWN_PHASE_APPSHUTDOWNCONFIRMED
+    );
+  });
+});
+
 add_task(async function () {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     background: async () => {
       let id = "9b9074ff-8fa4-4c58-9c3b-bc9ea2e17db1";
-      let dummy = async (node, searchString, query) => {
+      const dummy = async () => {
         await browser.test.assertTrue(
           false,
           "Should have removed this address book"
@@ -24,7 +35,7 @@ add_task(async function () {
       await browser.addressBooks.provider.onSearchRequest.removeListener(dummy);
       id = "00e1d9af-a846-4ef5-a6ac-15e8926bf6d3";
       await browser.addressBooks.provider.onSearchRequest.addListener(
-        async (node, searchString, query) => {
+        async (node, searchString) => {
           await browser.test.assertEq(
             id,
             node.id,
@@ -47,7 +58,7 @@ add_task(async function () {
         }
       );
       await browser.addressBooks.provider.onSearchRequest.addListener(
-        async (node, searchString, query) => {
+        async () => {
           await browser.test.assertTrue(
             false,
             "Should not have created a duplicate address book"
@@ -59,25 +70,28 @@ add_task(async function () {
           id,
         }
       );
+
+      browser.test.sendMessage("ready");
     },
     manifest: { permissions: ["addressBooks"] },
   });
 
   await extension.startup();
+  await extension.awaitMessage("ready");
 
   const dummyUID = "9b9074ff-8fa4-4c58-9c3b-bc9ea2e17db1";
   let searchBook = MailServices.ab.getDirectoryFromUID(dummyUID);
-  ok(searchBook == null, "Dummy directory was removed by extension");
+  Assert.equal(searchBook, null, "Dummy directory was removed by extension");
 
   const UID = "00e1d9af-a846-4ef5-a6ac-15e8926bf6d3";
   searchBook = MailServices.ab.getDirectoryFromUID(UID);
-  ok(searchBook != null, "Extension registered an async directory");
+  Assert.notEqual(searchBook, null, "Extension registered an async directory");
 
-  let foundCards = 0;
   await new Promise(resolve => {
+    let foundCards = 0;
     searchBook.search(null, "test", {
       onSearchFoundCard(card) {
-        ok(card != null, "A card was found.");
+        Assert.notEqual(card, null, "A card was found.");
         equal(card.directoryUID, UID, "The card comes from the directory.");
         equal(
           card.primaryEmail,
@@ -100,7 +114,7 @@ add_task(async function () {
     });
   });
 
-  let autoCompleteSearch = Cc[
+  const autoCompleteSearch = Cc[
     "@mozilla.org/autocomplete/search;1?name=addrbook"
   ].createInstance(Ci.nsIAutoCompleteSearch);
   await new Promise(resolve => {
@@ -128,12 +142,5 @@ add_task(async function () {
 
   await extension.unload();
   searchBook = MailServices.ab.getDirectoryFromUID(UID);
-  ok(searchBook == null, "Extension directory removed after unload");
-});
-
-registerCleanupFunction(() => {
-  // Make sure any open database is given a chance to close.
-  Services.startup.advanceShutdownPhase(
-    Services.startup.SHUTDOWN_PHASE_APPSHUTDOWNCONFIRMED
-  );
+  Assert.equal(searchBook, null, "Extension directory removed after unload");
 });

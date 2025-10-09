@@ -4,10 +4,13 @@
 
 SOURCES += [
     "EwsFolder.cpp",
+    "EwsFolderCopyHandler.cpp",
     "EwsIncomingServer.cpp",
+    "EwsMessageChannel.cpp",
+    "EwsMessageCopyHandler.cpp",
+    "EwsProtocolHandler.cpp",
     "EwsProtocolInfo.cpp",
     "EwsService.cpp",
-    "EwsUrl.cpp",
 ]
 
 XPCOM_MANIFESTS += [

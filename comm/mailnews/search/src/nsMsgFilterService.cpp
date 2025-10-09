@@ -9,7 +9,6 @@
 #include "nsMsgFilterService.h"
 #include "nsMsgFilterList.h"
 #include "nsMsgSearchScopeTerm.h"
-#include "nsDirectoryServiceDefs.h"
 #include "nsIPrompt.h"
 #include "nsIDocShell.h"
 #include "nsIStringBundle.h"
@@ -132,11 +131,10 @@ NS_IMETHODIMP nsMsgFilterService::OpenFilterList(
     nsCOMPtr<nsIMsgIncomingServer> server;
     rv = rootFolder->GetServer(getter_AddRefs(server));
     NS_ENSURE_SUCCESS(rv, rv);
-    nsString serverName;
+    nsAutoCString serverName;
     server->GetPrettyName(serverName);
     MOZ_LOG(FILTERLOGMODULE, LogLevel::Info,
-            ("Reading filter list for account '%s'",
-             NS_ConvertUTF16toUTF8(serverName).get()));
+            ("Reading filter list for account '%s'", serverName.get()));
   }
 
   nsString fileName;
@@ -179,8 +177,7 @@ NS_IMETHODIMP nsMsgFilterService::OpenFilterList(
       NS_ENSURE_SUCCESS(rv, rv);
       return OpenFilterList(aFilterFile, rootFolder, aMsgWindow,
                             resultFilterList);
-    } else if (rv == NS_MSG_CUSTOM_HEADERS_OVERFLOW && aMsgWindow)
-      ThrowAlertMsg("filterCustomHeaderOverflow", aMsgWindow);
+    }
     else if (rv == NS_MSG_INVALID_CUSTOM_HEADER && aMsgWindow)
       ThrowAlertMsg("invalidCustomHeader", aMsgWindow);
   }
@@ -196,12 +193,6 @@ NS_IMETHODIMP nsMsgFilterService::OpenFilterList(
 
   filterList.forget(resultFilterList);
   return rv;
-}
-
-NS_IMETHODIMP nsMsgFilterService::CloseFilterList(
-    nsIMsgFilterList* filterList) {
-  // NS_ASSERTION(false,"CloseFilterList doesn't do anything yet");
-  return NS_OK;
 }
 
 /* save without deleting */
@@ -232,11 +223,6 @@ NS_IMETHODIMP nsMsgFilterService::SaveFilterList(nsIMsgFilterList* filterList,
     }
   }
   return rv;
-}
-
-NS_IMETHODIMP nsMsgFilterService::CancelFilterList(
-    nsIMsgFilterList* filterList) {
-  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 nsresult nsMsgFilterService::BackUpFilterFile(nsIFile* aFilterFile,
@@ -516,18 +502,15 @@ nsresult nsMsgFilterAfterTheFact::AdvanceToNextFolder() {
     // m_curFolder may be null when the folder is deleted externally.
     CONTINUE_IF_FALSE(m_curFolder, "Next folder returned null");
 
-    nsString folderName;
+    nsAutoCString folderName;
     (void)m_curFolder->GetName(folderName);
-    MOZ_LOG(
-        FILTERLOGMODULE, LogLevel::Info,
-        ("(Post) Folder name: %s", NS_ConvertUTF16toUTF8(folderName).get()));
+    MOZ_LOG(FILTERLOGMODULE, LogLevel::Info,
+            ("(Post) Folder name: %s", folderName.get()));
 
     nsCOMPtr<nsIFile> folderPath;
     (void)m_curFolder->GetFilePath(getter_AddRefs(folderPath));
-    (void)folderPath->GetPath(folderName);
-    MOZ_LOG(
-        FILTERLOGMODULE, LogLevel::Debug,
-        ("(Post) Folder path: %s", NS_ConvertUTF16toUTF8(folderName).get()));
+    MOZ_LOG(FILTERLOGMODULE, LogLevel::Debug,
+            ("(Post) Folder path: %s", folderPath->HumanReadablePath().get()));
 
     rv = m_curFolder->GetMsgDatabase(getter_AddRefs(m_curFolderDB));
     if (rv == NS_MSG_ERROR_FOLDER_SUMMARY_OUT_OF_DATE) {
@@ -575,7 +558,7 @@ NS_IMETHODIMP nsMsgFilterAfterTheFact::OnSearchHit(nsIMsgDBHdr* header,
   header->GetMessageKey(&msgKey);
 
   nsCString msgId;
-  header->GetMessageId(getter_Copies(msgId));
+  header->GetMessageId(msgId);
   // clang-format off
   MOZ_LOG(FILTERLOGMODULE, LogLevel::Info,
           ("(Post) Filter matched message with key %" PRIu32,
@@ -821,7 +804,9 @@ nsresult nsMsgFilterAfterTheFact::ApplyFilter() {
         } break;
         case nsMsgFilterAction::KillSubthread: {
           for (auto msgHdr : m_searchHitHdrs) {
-            rv = m_curFolderDB->MarkHeaderKilled(msgHdr, true, nullptr);
+            nsMsgKey msgKey;
+            msgHdr->GetMessageKey(&msgKey);
+            rv = m_curFolderDB->MarkKilled(msgKey, true, nullptr);
             BREAK_ACTION_IF_FAILURE(rv, "Setting message flags failed");
           }
         } break;
@@ -843,9 +828,8 @@ nsresult nsMsgFilterAfterTheFact::ApplyFilter() {
           nsAutoCString junkScoreStr;
           int32_t junkScore;
           filterAction->GetJunkScore(&junkScore);
-          junkScoreStr.AppendInt(junkScore);
-          rv =
-              curFolder->SetJunkScoreForMessages(m_searchHitHdrs, junkScoreStr);
+          rv = curFolder->SetJunkScoreForMessages(m_searchHitHdrs, junkScore,
+                                                  "filter"_ns, -1);
           BREAK_ACTION_IF_FAILURE(rv, "Setting message flags failed");
         } break;
         case nsMsgFilterAction::Forward: {
@@ -1032,10 +1016,7 @@ nsMsgFilterService::ApplyFiltersToFolders(
 
   RefPtr<nsMsgFilterAfterTheFact> filterExecutor =
       new nsMsgFilterAfterTheFact(aMsgWindow, aFilterList, aFolders, aCallback);
-  if (filterExecutor)
-    return filterExecutor->AdvanceToNextFolder();
-  else
-    return NS_ERROR_OUT_OF_MEMORY;
+  return filterExecutor->AdvanceToNextFolder();
 }
 
 NS_IMETHODIMP nsMsgFilterService::AddCustomAction(
@@ -1271,7 +1252,7 @@ NS_IMETHODIMP nsMsgFilterService::ApplyFilters(
   filterList->GetFilterCount(&filterCount);
   nsCString listId;
   filterList->GetListId(listId);
-  nsString folderName;
+  nsAutoCString folderName;
   aFolder->GetName(folderName);
   nsCString typeName;
   FilterTypeName(aFilterType, typeName);
@@ -1282,17 +1263,14 @@ NS_IMETHODIMP nsMsgFilterService::ApplyFilters(
           ("(Post) Running %" PRIu32 " filters from %s on %" PRIu32
            " message(s) in folder '%s'",
            filterCount, listId.get(), (uint32_t)aMsgHdrList.Length(),
-           NS_ConvertUTF16toUTF8(folderName).get()));
+           folderName.get()));
 
   // Create our nsMsgApplyFiltersToMessages object which will be called when
   // ApplyFiltersToHdr finds one or more filters that hit.
   RefPtr<nsMsgApplyFiltersToMessages> filterExecutor =
       new nsMsgApplyFiltersToMessages(aMsgWindow, filterList, {aFolder},
                                       aMsgHdrList, aFilterType, aCallback);
-
-  if (filterExecutor) return filterExecutor->AdvanceToNextFolder();
-
-  return NS_ERROR_OUT_OF_MEMORY;
+  return filterExecutor->AdvanceToNextFolder();
 }
 
 /* void OnStartCopy (); */

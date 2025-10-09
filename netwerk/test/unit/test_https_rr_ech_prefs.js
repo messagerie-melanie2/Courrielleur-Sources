@@ -54,13 +54,13 @@ function checkResult(inRecord, noHttp2, noHttp3, result) {
 //   There are two records: one has a echConfig and the other doesn't.
 // We want to test if the record with echConfig is preferred.
 add_task(async function testEchConfigEnabled() {
-  let trrServer = new TRRServer();
+  trrServer = new TRRServer();
   await trrServer.start();
 
   Services.prefs.setIntPref("network.trr.mode", 3);
   Services.prefs.setCharPref(
     "network.trr.uri",
-    `https://foo.example.com:${trrServer.port}/dns-query`
+    `https://foo.example.com:${trrServer.port()}/dns-query`
   );
   Services.prefs.setBoolPref("network.dns.echconfig.enabled", false);
 
@@ -74,7 +74,7 @@ add_task(async function testEchConfigEnabled() {
         data: {
           priority: 1,
           name: "test.bar_1.com",
-          values: [{ key: "alpn", value: ["h3-29"] }],
+          values: [{ key: "alpn", value: ["h3"] }, { key: "no-default-alpn" }],
         },
       },
       {
@@ -101,19 +101,23 @@ add_task(async function testEchConfigEnabled() {
   checkResult(inRecord, false, false, {
     expectedPriority: 1,
     expectedName: "test.bar_1.com",
-    expectedAlpn: "h3-29",
+    expectedAlpn: "h3",
   });
   checkResult(inRecord, false, true, {
     expectedPriority: 2,
     expectedName: "test.bar_2.com",
-    expectedAlpn: "h2",
+    expectedAlpn: "",
   });
   checkResult(inRecord, true, false, {
     expectedPriority: 1,
     expectedName: "test.bar_1.com",
-    expectedAlpn: "h3-29",
+    expectedAlpn: "h3",
   });
-  checkResult(inRecord, true, true);
+  checkResult(inRecord, true, true, {
+    expectedPriority: 2,
+    expectedName: "test.bar_2.com",
+    expectedAlpn: "",
+  });
 
   Services.prefs.setBoolPref("network.dns.echconfig.enabled", true);
   Services.dns.clearCache(true);
@@ -125,19 +129,23 @@ add_task(async function testEchConfigEnabled() {
   checkResult(inRecord, false, false, {
     expectedPriority: 2,
     expectedName: "test.bar_2.com",
-    expectedAlpn: "h2",
+    expectedAlpn: "",
   });
   checkResult(inRecord, false, true, {
     expectedPriority: 2,
     expectedName: "test.bar_2.com",
-    expectedAlpn: "h2",
+    expectedAlpn: "",
   });
   checkResult(inRecord, true, false, {
-    expectedPriority: 1,
-    expectedName: "test.bar_1.com",
-    expectedAlpn: "h3-29",
+    expectedPriority: 2,
+    expectedName: "test.bar_2.com",
+    expectedAlpn: "",
   });
-  checkResult(inRecord, true, true);
+  checkResult(inRecord, true, true, {
+    expectedPriority: 2,
+    expectedName: "test.bar_2.com",
+    expectedAlpn: "",
+  });
 
   await trrServer.stop();
   trrServer = null;
@@ -152,7 +160,7 @@ add_task(async function testEchConfigEnabled() {
 add_task(async function testTwoRecordsHaveEchConfig() {
   Services.dns.clearCache(true);
 
-  let trrServer = new TRRServer();
+  trrServer = new TRRServer();
   await trrServer.start();
 
   Services.prefs.setBoolPref("network.dns.echconfig.enabled", true);
@@ -160,7 +168,7 @@ add_task(async function testTwoRecordsHaveEchConfig() {
   Services.prefs.setIntPref("network.trr.mode", 3);
   Services.prefs.setCharPref(
     "network.trr.uri",
-    `https://foo.example.com:${trrServer.port}/dns-query`
+    `https://foo.example.com:${trrServer.port()}/dns-query`
   );
 
   await trrServer.registerDoHAnswers("test.foo.com", "HTTPS", {
@@ -175,6 +183,7 @@ add_task(async function testTwoRecordsHaveEchConfig() {
           name: "test.foo_h3.com",
           values: [
             { key: "alpn", value: ["h3"] },
+            { key: "no-default-alpn" },
             { key: "echconfig", value: "456..." },
           ],
         },
@@ -203,19 +212,23 @@ add_task(async function testTwoRecordsHaveEchConfig() {
   checkResult(inRecord, false, false, {
     expectedPriority: 2,
     expectedName: "test.foo_h2.com",
-    expectedAlpn: "h2",
+    expectedAlpn: "",
   });
   checkResult(inRecord, false, true, {
     expectedPriority: 2,
     expectedName: "test.foo_h2.com",
-    expectedAlpn: "h2",
+    expectedAlpn: "",
   });
   checkResult(inRecord, true, false, {
-    expectedPriority: 1,
-    expectedName: "test.foo_h3.com",
-    expectedAlpn: "h3",
+    expectedPriority: 2,
+    expectedName: "test.foo_h2.com",
+    expectedAlpn: "",
   });
-  checkResult(inRecord, true, true);
+  checkResult(inRecord, true, true, {
+    expectedPriority: 2,
+    expectedName: "test.foo_h2.com",
+    expectedAlpn: "",
+  });
 
   Services.prefs.setBoolPref("network.dns.http3_echconfig.enabled", true);
   Services.dns.clearCache(true);
@@ -231,14 +244,18 @@ add_task(async function testTwoRecordsHaveEchConfig() {
   checkResult(inRecord, false, true, {
     expectedPriority: 2,
     expectedName: "test.foo_h2.com",
-    expectedAlpn: "h2",
+    expectedAlpn: "",
   });
   checkResult(inRecord, true, false, {
     expectedPriority: 1,
     expectedName: "test.foo_h3.com",
     expectedAlpn: "h3",
   });
-  checkResult(inRecord, true, true);
+  checkResult(inRecord, true, true, {
+    expectedPriority: 2,
+    expectedName: "test.foo_h2.com",
+    expectedAlpn: "",
+  });
 
   await trrServer.stop();
   trrServer = null;
@@ -251,7 +268,7 @@ add_task(async function testTwoRecordsHaveEchConfig() {
 add_task(async function testTwoRecordsHaveEchConfig1() {
   Services.dns.clearCache(true);
 
-  let trrServer = new TRRServer();
+  trrServer = new TRRServer();
   await trrServer.start();
 
   Services.prefs.setBoolPref("network.dns.echconfig.enabled", true);
@@ -259,7 +276,7 @@ add_task(async function testTwoRecordsHaveEchConfig1() {
   Services.prefs.setIntPref("network.trr.mode", 3);
   Services.prefs.setCharPref(
     "network.trr.uri",
-    `https://foo.example.com:${trrServer.port}/dns-query`
+    `https://foo.example.com:${trrServer.port()}/dns-query`
   );
 
   await trrServer.registerDoHAnswers("test.foo.com", "HTTPS", {
@@ -274,6 +291,7 @@ add_task(async function testTwoRecordsHaveEchConfig1() {
           name: "test.foo_h3.com",
           values: [
             { key: "alpn", value: ["h3", "h2"] },
+            { key: "no-default-alpn" },
             { key: "echconfig", value: "456..." },
           ],
         },
@@ -357,7 +375,7 @@ add_task(async function testTwoRecordsHaveEchConfig1() {
 add_task(async function testOneRecordsHasEchConfig() {
   Services.dns.clearCache(true);
 
-  let trrServer = new TRRServer();
+  trrServer = new TRRServer();
   await trrServer.start();
 
   Services.prefs.setBoolPref("network.dns.echconfig.enabled", true);
@@ -365,7 +383,7 @@ add_task(async function testOneRecordsHasEchConfig() {
   Services.prefs.setIntPref("network.trr.mode", 3);
   Services.prefs.setCharPref(
     "network.trr.uri",
-    `https://foo.example.com:${trrServer.port}/dns-query`
+    `https://foo.example.com:${trrServer.port()}/dns-query`
   );
 
   await trrServer.registerDoHAnswers("test.foo.com", "HTTPS", {
@@ -380,6 +398,7 @@ add_task(async function testOneRecordsHasEchConfig() {
           name: "test.foo_h3.com",
           values: [
             { key: "alpn", value: ["h3"] },
+            { key: "no-default-alpn" },
             { key: "echconfig", value: "456..." },
           ],
         },
@@ -410,14 +429,18 @@ add_task(async function testOneRecordsHasEchConfig() {
   checkResult(inRecord, false, true, {
     expectedPriority: 2,
     expectedName: "test.foo_h2.com",
-    expectedAlpn: "h2",
+    expectedAlpn: "",
   });
   checkResult(inRecord, true, false, {
     expectedPriority: 1,
     expectedName: "test.foo_h3.com",
     expectedAlpn: "h3",
   });
-  checkResult(inRecord, true, true);
+  checkResult(inRecord, true, true, {
+    expectedPriority: 2,
+    expectedName: "test.foo_h2.com",
+    expectedAlpn: "",
+  });
 
   Services.prefs.setBoolPref("network.dns.http3_echconfig.enabled", true);
   Services.dns.clearCache(true);
@@ -433,14 +456,18 @@ add_task(async function testOneRecordsHasEchConfig() {
   checkResult(inRecord, false, true, {
     expectedPriority: 2,
     expectedName: "test.foo_h2.com",
-    expectedAlpn: "h2",
+    expectedAlpn: "",
   });
   checkResult(inRecord, true, false, {
     expectedPriority: 1,
     expectedName: "test.foo_h3.com",
     expectedAlpn: "h3",
   });
-  checkResult(inRecord, true, true);
+  checkResult(inRecord, true, true, {
+    expectedPriority: 2,
+    expectedName: "test.foo_h2.com",
+    expectedAlpn: "",
+  });
 
   await trrServer.stop();
   trrServer = null;
@@ -451,7 +478,7 @@ add_task(async function testOneRecordsHasEchConfig() {
 add_task(async function testHttp3AndHttp2Pref() {
   Services.dns.clearCache(true);
 
-  let trrServer = new TRRServer();
+  trrServer = new TRRServer();
   await trrServer.start();
 
   Services.prefs.setBoolPref("network.http.http3.enable", false);
@@ -460,7 +487,7 @@ add_task(async function testHttp3AndHttp2Pref() {
   Services.prefs.setIntPref("network.trr.mode", 3);
   Services.prefs.setCharPref(
     "network.trr.uri",
-    `https://foo.example.com:${trrServer.port}/dns-query`
+    `https://foo.example.com:${trrServer.port()}/dns-query`
   );
 
   await trrServer.registerDoHAnswers("test.foo.com", "HTTPS", {
@@ -475,6 +502,7 @@ add_task(async function testHttp3AndHttp2Pref() {
           name: "test.foo_h3.com",
           values: [
             { key: "alpn", value: ["h3", "h2"] },
+            { key: "no-default-alpn" },
             { key: "echconfig", value: "456..." },
           ],
         },
@@ -510,11 +538,23 @@ add_task(async function testHttp3AndHttp2Pref() {
     expectedName: "test.foo_h3.com",
     expectedAlpn: "h2",
   });
-  checkResult(inRecord, true, false);
-  checkResult(inRecord, true, true);
+  checkResult(inRecord, true, false, {
+    expectedPriority: 2,
+    expectedName: "test.foo_h2.com",
+    expectedAlpn: "",
+  });
+  checkResult(inRecord, true, true, {
+    expectedPriority: 2,
+    expectedName: "test.foo_h2.com",
+    expectedAlpn: "",
+  });
 
   Services.prefs.setBoolPref("network.http.http2.enabled", false);
-  checkResult(inRecord, false, false);
+  checkResult(inRecord, false, false, {
+    expectedPriority: 2,
+    expectedName: "test.foo_h2.com",
+    expectedAlpn: "",
+  });
 
   Services.prefs.setBoolPref("network.http.http3.enable", true);
   checkResult(inRecord, false, false, {
@@ -522,13 +562,21 @@ add_task(async function testHttp3AndHttp2Pref() {
     expectedName: "test.foo_h3.com",
     expectedAlpn: "h3",
   });
-  checkResult(inRecord, false, true);
+  checkResult(inRecord, false, true, {
+    expectedPriority: 2,
+    expectedName: "test.foo_h2.com",
+    expectedAlpn: "",
+  });
   checkResult(inRecord, true, false, {
     expectedPriority: 1,
     expectedName: "test.foo_h3.com",
     expectedAlpn: "h3",
   });
-  checkResult(inRecord, true, true);
+  checkResult(inRecord, true, true, {
+    expectedPriority: 2,
+    expectedName: "test.foo_h2.com",
+    expectedAlpn: "",
+  });
 
   await trrServer.stop();
   trrServer = null;

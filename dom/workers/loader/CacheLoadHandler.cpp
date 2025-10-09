@@ -128,13 +128,6 @@ nsresult CacheCreator::CreateCacheStorage(nsIPrincipal* aPrincipal) {
     return NS_ERROR_FAILURE;
   }
 
-  // If we're in private browsing mode, don't even try to create the
-  // CacheStorage.  Instead, just fail immediately to terminate the
-  // ServiceWorker load.
-  if (NS_WARN_IF(mOriginAttributes.mPrivateBrowsingId > 0)) {
-    return NS_ERROR_DOM_SECURITY_ERR;
-  }
-
   // Create a CacheStorage bypassing its trusted origin checks.  The
   // ServiceWorker has already performed its own checks before getting
   // to this point.
@@ -305,18 +298,15 @@ void CacheLoadHandler::Load(Cache* aCache) {
     return;
   }
 
-  nsAutoCString spec;
-  rv = uri->GetSpec(spec);
+  MOZ_ASSERT(loadContext->mFullURL.IsEmpty());
+  rv = uri->GetSpec(loadContext->mFullURL);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     Fail(rv);
     return;
   }
 
-  MOZ_ASSERT(loadContext->mFullURL.IsEmpty());
-  CopyUTF8toUTF16(spec, loadContext->mFullURL);
-
-  mozilla::dom::RequestOrUSVString request;
-  request.SetAsUSVString().ShareOrDependUpon(loadContext->mFullURL);
+  mozilla::dom::RequestOrUTF8String request;
+  request.SetAsUTF8String().ShareOrDependUpon(loadContext->mFullURL);
 
   mozilla::dom::CacheQueryOptions params;
 
@@ -557,7 +547,7 @@ nsresult CacheLoadHandler::DataReceivedFromCache(
   nsresult rv;
 
   // Set the Source type to "text" for decoding.
-  loadContext->mRequest->SetTextSource();
+  loadContext->mRequest->SetTextSource(loadContext);
 
   rv = mDecoder->DecodeRawData(loadContext->mRequest, aString, aStringLen,
                                /* aEndOfStream = */ true);
@@ -620,13 +610,13 @@ nsresult CacheLoadHandler::DataReceivedFromCache(
   }
 
   if (NS_SUCCEEDED(rv)) {
-    DataReceived();
+    return DataReceived();
   }
 
   return rv;
 }
 
-void CacheLoadHandler::DataReceived() {
+nsresult CacheLoadHandler::DataReceived() {
   MOZ_ASSERT(!mRequestHandle->IsEmpty());
   WorkerLoadContext* loadContext = mRequestHandle->GetContext();
 
@@ -637,12 +627,13 @@ void CacheLoadHandler::DataReceived() {
       // XHR Params Allowed
       mWorkerRef->Private()->SetXHRParamsAllowed(parent->XHRParamsAllowed());
 
-      // Set Eval and ContentSecurityPolicy
-      mWorkerRef->Private()->SetCsp(parent->GetCsp());
-      mWorkerRef->Private()->SetEvalAllowed(parent->IsEvalAllowed());
-      mWorkerRef->Private()->SetWasmEvalAllowed(parent->IsWasmEvalAllowed());
+      // Set ContentSecurityPolicy
+      nsresult rv = mWorkerRef->Private()->SetCsp(parent->GetCsp());
+      NS_ENSURE_SUCCESS(rv, rv);
     }
   }
+
+  return NS_OK;
 }
 
 }  // namespace workerinternals::loader

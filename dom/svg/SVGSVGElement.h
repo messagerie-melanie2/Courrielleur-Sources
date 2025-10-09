@@ -9,18 +9,15 @@
 
 #include "SVGAnimatedEnumeration.h"
 #include "SVGViewportElement.h"
+#include "mozilla/SVGImageContext.h"
 
 nsresult NS_NewSVGSVGElement(
     nsIContent** aResult, already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo,
     mozilla::dom::FromParser aFromParser);
 
 // {4b83982c-e5e9-4ca1-abd4-14d27e8b3531}
-#define MOZILLA_SVGSVGELEMENT_IID                    \
-  {                                                  \
-    0x4b83982c, 0xe5e9, 0x4ca1, {                    \
-      0xab, 0xd4, 0x14, 0xd2, 0x7e, 0x8b, 0x35, 0x31 \
-    }                                                \
-  }
+#define MOZILLA_SVGSVGELEMENT_IID \
+  {0x4b83982c, 0xe5e9, 0x4ca1, {0xab, 0xd4, 0x14, 0xd2, 0x7e, 0x8b, 0x35, 0x31}}
 
 namespace mozilla {
 class AutoSVGViewHandler;
@@ -75,7 +72,7 @@ class SVGSVGElement final : public SVGSVGElementBase {
   NS_IMPL_FROMNODE_WITH_TAG(SVGSVGElement, kNameSpaceID_SVG, svg)
 
   // interfaces:
-  NS_DECLARE_STATIC_IID_ACCESSOR(MOZILLA_SVGSVGELEMENT_IID)
+  NS_INLINE_DECL_STATIC_IID(MOZILLA_SVGSVGELEMENT_IID)
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(SVGSVGElement, SVGSVGElementBase)
 
@@ -111,7 +108,7 @@ class SVGSVGElement final : public SVGSVGElementBase {
   bool AnimationsPaused();
   float GetCurrentTimeAsFloat();
   void SetCurrentTime(float seconds);
-  void DeselectAll();
+  MOZ_CAN_RUN_SCRIPT void DeselectAll();
   already_AddRefed<DOMSVGNumber> CreateSVGNumber();
   already_AddRefed<DOMSVGLength> CreateSVGLength();
   already_AddRefed<DOMSVGAngle> CreateSVGAngle();
@@ -128,7 +125,7 @@ class SVGSVGElement final : public SVGSVGElementBase {
   // SVGElement overrides
 
   nsresult BindToTree(BindContext&, nsINode& aParent) override;
-  void UnbindFromTree(bool aNullParent) override;
+  void UnbindFromTree(UnbindContext&) override;
   SVGAnimatedTransformList* GetAnimatedTransformList(
       uint32_t aFlags = 0) override;
 
@@ -149,14 +146,8 @@ class SVGSVGElement final : public SVGSVGElementBase {
     return mCurrentTranslate != SVGPoint() || mCurrentScale != 1.0f;
   }
 
-  /**
-   * Returns -1 if the width/height is a percentage, else returns the user unit
-   * length clamped to fit in a int32_t.
-   * XXX see bug 1112533 comment 3 - we should fix drawImage so that we can
-   * change these methods to make zero the error flag for percentages.
-   */
-  int32_t GetIntrinsicWidth();
-  int32_t GetIntrinsicHeight();
+  LengthPercentage GetIntrinsicWidth();
+  LengthPercentage GetIntrinsicHeight();
 
   // This services any pending notifications for the transform on on this root
   // <svg> node needing to be recalculated.  (Only applicable in
@@ -185,8 +176,11 @@ class SVGSVGElement final : public SVGSVGElementBase {
    */
   bool WillBeOutermostSVG(nsINode& aParent) const;
 
+  LengthPercentage GetIntrinsicWidthOrHeight(int aAttr);
+
   // invalidate viewbox -> viewport xform & inform frames
   void InvalidateTransformNotifyFrame();
+  void DidChangeSVGView();
 
   // Methods for <image> elements to override my "PreserveAspectRatio" value.
   // These are private so that only our friends
@@ -201,7 +195,6 @@ class SVGSVGElement final : public SVGSVGElementBase {
   bool ClearPreserveAspectRatioProperty();
 
   const SVGAnimatedViewBox& GetViewBoxInternal() const override;
-  SVGAnimatedTransformList* GetTransformInternal() const override;
 
   EnumAttributesInfo GetEnumInfo() override;
 
@@ -230,8 +223,6 @@ class SVGSVGElement final : public SVGSVGElementBase {
   UniquePtr<nsString> mCurrentViewID;
   UniquePtr<SVGView> mSVGView;
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(SVGSVGElement, MOZILLA_SVGSVGELEMENT_IID)
 
 }  // namespace dom
 

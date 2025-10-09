@@ -2,22 +2,19 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import datetime
 import json
 import logging
 import os
-import tarfile
 import tempfile
 import zipfile
 from contextlib import nullcontext as does_not_raise
 from io import StringIO
-from unittest.mock import MagicMock, Mock, call
+from unittest.mock import Mock
 
-import mozpack.path as mozpath
 import mozunit
 import pytest
 
-from mozbuild.repackaging import deb
+from mozbuild.repackaging import deb, desktop_file
 
 _APPLICATION_INI_CONTENT = """[App]
 Vendor=Mozilla
@@ -33,201 +30,7 @@ _APPLICATION_INI_CONTENT_DATA = {
     "vendor": "Mozilla",
     "remoting_name": "firefox-nightly-try",
     "build_id": "20230222000000",
-    "timestamp": datetime.datetime(2023, 2, 22),
 }
-
-
-@pytest.mark.parametrize(
-    "number_of_application_ini_files, expectaction, expected_result",
-    (
-        (0, pytest.raises(ValueError), None),
-        (1, does_not_raise(), _APPLICATION_INI_CONTENT_DATA),
-        (2, pytest.raises(ValueError), None),
-    ),
-)
-def test_extract_application_ini_data(
-    number_of_application_ini_files, expectaction, expected_result
-):
-    with tempfile.TemporaryDirectory() as d:
-        tar_path = os.path.join(d, "input.tar")
-        with tarfile.open(tar_path, "w") as tar:
-            application_ini_path = os.path.join(d, "application.ini")
-            with open(application_ini_path, "w") as application_ini_file:
-                application_ini_file.write(_APPLICATION_INI_CONTENT)
-
-            for i in range(number_of_application_ini_files):
-                tar.add(application_ini_path, f"{i}/application.ini")
-
-        with expectaction:
-            assert deb._extract_application_ini_data(tar_path) == expected_result
-
-
-def test_extract_application_ini_data_from_directory():
-    with tempfile.TemporaryDirectory() as d:
-        with open(os.path.join(d, "application.ini"), "w") as f:
-            f.write(_APPLICATION_INI_CONTENT)
-
-        assert (
-            deb._extract_application_ini_data_from_directory(d)
-            == _APPLICATION_INI_CONTENT_DATA
-        )
-
-
-@pytest.mark.parametrize(
-    "version, build_number, package_name_suffix, description_suffix, expected",
-    (
-        (
-            "112.0a1",
-            1,
-            "",
-            "",
-            {
-                "DEB_DESCRIPTION": "Mozilla Firefox",
-                "DEB_PKG_INSTALL_PATH": "usr/lib/firefox-nightly-try",
-                "DEB_PKG_NAME": "firefox-nightly-try",
-                "DEB_PKG_VERSION": "112.0a1~20230222000000",
-            },
-        ),
-        (
-            "112.0a1",
-            1,
-            "-l10n-fr",
-            " - Language pack for Firefox Nightly for fr",
-            {
-                "DEB_DESCRIPTION": "Mozilla Firefox - Language pack for Firefox Nightly for fr",
-                "DEB_PKG_INSTALL_PATH": "usr/lib/firefox-nightly-try",
-                "DEB_PKG_NAME": "firefox-nightly-try-l10n-fr",
-                "DEB_PKG_VERSION": "112.0a1~20230222000000",
-            },
-        ),
-        (
-            "112.0b1",
-            1,
-            "",
-            "",
-            {
-                "DEB_DESCRIPTION": "Mozilla Firefox",
-                "DEB_PKG_INSTALL_PATH": "usr/lib/firefox-nightly-try",
-                "DEB_PKG_NAME": "firefox-nightly-try",
-                "DEB_PKG_VERSION": "112.0b1~build1",
-            },
-        ),
-        (
-            "112.0",
-            2,
-            "",
-            "",
-            {
-                "DEB_DESCRIPTION": "Mozilla Firefox",
-                "DEB_PKG_INSTALL_PATH": "usr/lib/firefox-nightly-try",
-                "DEB_PKG_NAME": "firefox-nightly-try",
-                "DEB_PKG_VERSION": "112.0~build2",
-            },
-        ),
-    ),
-)
-def test_get_build_variables(
-    version, build_number, package_name_suffix, description_suffix, expected
-):
-    application_ini_data = {
-        "name": "Firefox",
-        "display_name": "Firefox",
-        "vendor": "Mozilla",
-        "remoting_name": "firefox-nightly-try",
-        "build_id": "20230222000000",
-        "timestamp": datetime.datetime(2023, 2, 22),
-    }
-    assert deb._get_build_variables(
-        application_ini_data,
-        "x86",
-        version,
-        build_number,
-        depends="${shlibs:Depends},",
-        package_name_suffix=package_name_suffix,
-        description_suffix=description_suffix,
-    ) == {
-        **{
-            "DEB_CHANGELOG_DATE": "Wed, 22 Feb 2023 00:00:00 -0000",
-            "DEB_ARCH_NAME": "i386",
-            "DEB_DEPENDS": "${shlibs:Depends},",
-        },
-        **expected,
-    }
-
-
-def test_copy_plain_deb_config(monkeypatch):
-    def mock_listdir(dir):
-        assert dir == "/template_dir"
-        return [
-            "/template_dir/debian_file1.in",
-            "/template_dir/debian_file2.in",
-            "/template_dir/debian_file3",
-            "/template_dir/debian_file4",
-        ]
-
-    monkeypatch.setattr(deb.os, "listdir", mock_listdir)
-
-    def mock_makedirs(dir, exist_ok):
-        assert dir == "/source_dir/debian"
-        assert exist_ok is True
-
-    monkeypatch.setattr(deb.os, "makedirs", mock_makedirs)
-
-    mock_copy = MagicMock()
-    monkeypatch.setattr(deb.shutil, "copy", mock_copy)
-
-    deb._copy_plain_deb_config("/template_dir", "/source_dir")
-    assert mock_copy.call_args_list == [
-        call("/template_dir/debian_file3", "/source_dir/debian/debian_file3"),
-        call("/template_dir/debian_file4", "/source_dir/debian/debian_file4"),
-    ]
-
-
-def test_render_deb_templates():
-    with tempfile.TemporaryDirectory() as template_dir, tempfile.TemporaryDirectory() as source_dir:
-        with open(os.path.join(template_dir, "debian_file1.in"), "w") as f:
-            f.write("${some_build_variable}")
-
-        with open(os.path.join(template_dir, "debian_file2.in"), "w") as f:
-            f.write("Some hardcoded value")
-
-        with open(os.path.join(template_dir, "ignored_file.in"), "w") as f:
-            f.write("Must not be copied")
-
-        deb._render_deb_templates(
-            template_dir,
-            source_dir,
-            {"some_build_variable": "some_value"},
-            exclude_file_names=["ignored_file.in"],
-        )
-
-        with open(os.path.join(source_dir, "debian", "debian_file1")) as f:
-            assert f.read() == "some_value"
-
-        with open(os.path.join(source_dir, "debian", "debian_file2")) as f:
-            assert f.read() == "Some hardcoded value"
-
-        assert not os.path.exists(os.path.join(source_dir, "debian", "ignored_file"))
-        assert not os.path.exists(os.path.join(source_dir, "debian", "ignored_file.in"))
-
-
-def test_inject_deb_distribution_folder(monkeypatch):
-    def mock_check_call(command):
-        global clone_dir
-        clone_dir = command[-1]
-        os.makedirs(os.path.join(clone_dir, "desktop/deb/distribution"))
-
-    monkeypatch.setattr(deb.subprocess, "check_call", mock_check_call)
-
-    def mock_copytree(source_tree, destination_tree):
-        global clone_dir
-        assert source_tree == mozpath.join(clone_dir, "desktop/deb/distribution")
-        assert destination_tree == "/source_dir/firefox/distribution"
-
-    monkeypatch.setattr(deb.shutil, "copytree", mock_copytree)
-
-    deb._inject_deb_distribution_folder("/source_dir", "Firefox")
-
 
 ZH_TW_FTL = """\
 # This Source Code Form is subject to the terms of the Mozilla Public
@@ -256,7 +59,7 @@ desktop-action-new-window-name = 開新視窗
 desktop-action-new-private-window-name = 開新隱私視窗
 """
 
-DESKTOP_ENTRY_FILE_TEXT = """\
+NIGHTLY_DESKTOP_ENTRY_FILE_TEXT = """\
 [Desktop Entry]
 Version=1.0
 Type=Application
@@ -266,7 +69,7 @@ X-MultipleArgs=false
 Icon=firefox-nightly
 StartupWMClass=firefox-nightly
 Categories=GNOME;GTK;Network;WebBrowser;
-MimeType=application/json;application/pdf;application/rdf+xml;application/rss+xml;application/x-xpinstall;application/xhtml+xml;application/xml;audio/flac;audio/ogg;audio/webm;image/avif;image/gif;image/jpeg;image/png;image/svg+xml;image/webp;text/html;text/xml;video/ogg;video/webm;x-scheme-handler/chrome;x-scheme-handler/http;x-scheme-handler/https;
+MimeType=application/json;application/pdf;application/rdf+xml;application/rss+xml;application/x-xpinstall;application/xhtml+xml;application/xml;audio/flac;audio/ogg;audio/webm;image/avif;image/gif;image/jpeg;image/png;image/svg+xml;image/webp;text/html;text/xml;video/ogg;video/webm;x-scheme-handler/chrome;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/mailto;
 StartupNotify=true
 Actions=new-window;new-private-window;open-profile-manager;
 Name=en-US-desktop-entry-name
@@ -296,19 +99,58 @@ Name=en-US-desktop-action-open-profile-manager
 Name[zh_TW]=zh-TW-desktop-action-open-profile-manager
 """
 
+DEVEDITION_DESKTOP_ENTRY_FILE_TEXT = """\
+[Desktop Entry]
+Version=1.0
+Type=Application
+Exec=firefox-devedition %u
+Terminal=false
+X-MultipleArgs=false
+Icon=firefox-devedition
+StartupWMClass=firefox-aurora
+Categories=GNOME;GTK;Network;WebBrowser;
+MimeType=application/json;application/pdf;application/rdf+xml;application/rss+xml;application/x-xpinstall;application/xhtml+xml;application/xml;audio/flac;audio/ogg;audio/webm;image/avif;image/gif;image/jpeg;image/png;image/svg+xml;image/webp;text/html;text/xml;video/ogg;video/webm;x-scheme-handler/chrome;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/mailto;
+StartupNotify=true
+Actions=new-window;new-private-window;open-profile-manager;
+Name=en-US-desktop-entry-name
+Name[zh_TW]=zh-TW-desktop-entry-name
+Comment=en-US-desktop-entry-comment
+Comment[zh_TW]=zh-TW-desktop-entry-comment
+GenericName=en-US-desktop-entry-generic-name
+GenericName[zh_TW]=zh-TW-desktop-entry-generic-name
+Keywords=en-US-desktop-entry-keywords
+Keywords[zh_TW]=zh-TW-desktop-entry-keywords
+X-GNOME-FullName=en-US-desktop-entry-x-gnome-full-name
+X-GNOME-FullName[zh_TW]=zh-TW-desktop-entry-x-gnome-full-name
+
+[Desktop Action new-window]
+Exec=firefox-devedition --new-window %u
+Name=en-US-desktop-action-new-window-name
+Name[zh_TW]=zh-TW-desktop-action-new-window-name
+
+[Desktop Action new-private-window]
+Exec=firefox-devedition --private-window %u
+Name=en-US-desktop-action-new-private-window-name
+Name[zh_TW]=zh-TW-desktop-action-new-private-window-name
+
+[Desktop Action open-profile-manager]
+Exec=firefox-devedition --ProfileManager
+Name=en-US-desktop-action-open-profile-manager
+Name[zh_TW]=zh-TW-desktop-action-open-profile-manager
+"""
+
 
 def test_generate_deb_desktop_entry_file_text(monkeypatch):
     def responsive(url):
-        if "zh-TW" in url:
-            return Mock(
-                **{
-                    "status_code": 200,
-                    "text": ZH_TW_FTL,
-                }
-            )
-        return Mock(**{"status_code": 404})
+        assert "zh-TW" in url
+        return Mock(
+            **{
+                "status_code": 200,
+                "text": ZH_TW_FTL,
+            }
+        )
 
-    monkeypatch.setattr(deb.requests, "get", responsive)
+    monkeypatch.setattr(desktop_file.requests, "get", responsive)
 
     output_stream = StringIO()
     logger = logging.getLogger("mozbuild:test:repackaging")
@@ -323,12 +165,6 @@ def test_generate_deb_desktop_entry_file_text(monkeypatch):
             extra={"action": action, "params": params},
         )
 
-    build_variables = {
-        "DEB_PKG_NAME": "firefox-nightly",
-    }
-    release_product = "firefox"
-    release_type = "nightly"
-
     def fluent_localization(locales, resources, loader):
         def format_value(resource):
             return f"{locales[0]}-{resource}"
@@ -337,7 +173,20 @@ def test_generate_deb_desktop_entry_file_text(monkeypatch):
 
     fluent_resource_loader = Mock()
 
-    desktop_entry_file_text = deb._generate_browser_desktop_entry_file_text(
+    monkeypatch.setattr(
+        desktop_file.json,
+        "load",
+        lambda f: {"zh-TW": {"platforms": ["linux"], "revision": "default"}},
+    )
+
+    build_variables = {
+        "PKG_NAME": "firefox-nightly",
+        "Icon": "firefox-nightly",
+    }
+    release_product = "firefox"
+    release_type = "nightly"
+
+    desktop_entry_file_text = desktop_file.generate_browser_desktop_entry_file_text(
         log,
         build_variables,
         release_product,
@@ -346,15 +195,33 @@ def test_generate_deb_desktop_entry_file_text(monkeypatch):
         fluent_resource_loader,
     )
 
-    assert desktop_entry_file_text == DESKTOP_ENTRY_FILE_TEXT
+    assert desktop_entry_file_text == NIGHTLY_DESKTOP_ENTRY_FILE_TEXT
+
+    build_variables = {
+        "PKG_NAME": "firefox-devedition",
+        "Icon": "firefox-devedition",
+    }
+    release_product = "devedition"
+    release_type = "beta"
+
+    desktop_entry_file_text = desktop_file.generate_browser_desktop_entry_file_text(
+        log,
+        build_variables,
+        release_product,
+        release_type,
+        fluent_localization,
+        fluent_resource_loader,
+    )
+
+    assert desktop_entry_file_text == DEVEDITION_DESKTOP_ENTRY_FILE_TEXT
 
     def outage(url):
         return Mock(**{"status_code": 500})
 
-    monkeypatch.setattr(deb.requests, "get", outage)
+    monkeypatch.setattr(desktop_file.requests, "get", outage)
 
-    with pytest.raises(deb.HgServerError):
-        desktop_entry_file_text = deb._generate_browser_desktop_entry_file_text(
+    with pytest.raises(desktop_file.RemoteVCSError):
+        desktop_entry_file_text = desktop_file.generate_browser_desktop_entry_file_text(
             log,
             build_variables,
             release_product,
@@ -397,8 +264,8 @@ def test_generate_deb_archive(
             target_dir="/target_dir",
             output_file_path="/output/target.deb",
             build_variables={
-                "DEB_PKG_NAME": "firefox",
-                "DEB_PKG_VERSION": "111.0",
+                "PKG_NAME": "firefox",
+                "PKG_VERSION": "111.0",
             },
             arch="x86_64",
         )
@@ -511,8 +378,6 @@ _MANIFEST_JSON_DATA = {
                 "browser-region": "browser/chrome/fr/locale/browser-region/",
                 "devtools": "browser/chrome/fr/locale/fr/devtools/client/",
                 "devtools-shared": "browser/chrome/fr/locale/fr/devtools/shared/",
-                "formautofill": "browser/features/formautofill@mozilla.org/fr/locale/fr/",
-                "report-site-issue": "browser/features/webcompat-reporter@mozilla.org/fr/locale/fr/",
                 "alerts": "chrome/fr/locale/fr/alerts/",
                 "autoconfig": "chrome/fr/locale/fr/autoconfig/",
                 "global": "chrome/fr/locale/fr/global/",

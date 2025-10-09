@@ -10,14 +10,20 @@
 #include <windows.data.xml.dom.h>
 #include <wrl.h>
 #include "nsCOMPtr.h"
-#include "nsIAlertsService.h"
 #include "nsICancelable.h"
 #include "nsIFile.h"
+#include "nsIWindowsAlertsService.h"
 #include "nsString.h"
 #include "mozilla/Result.h"
 
 namespace mozilla {
 namespace widget {
+
+enum class ImagePlacement {
+  eInline,
+  eHero,
+  eIcon,
+};
 
 class ToastNotification;
 
@@ -27,17 +33,19 @@ class ToastNotificationHandler final
   NS_DECL_ISUPPORTS
   NS_DECL_NSIALERTNOTIFICATIONIMAGELISTENER
 
-  ToastNotificationHandler(ToastNotification* backend, const nsAString& aumid,
-                           nsIObserver* aAlertListener, const nsAString& aName,
-                           const nsAString& aCookie, const nsAString& aTitle,
-                           const nsAString& aMsg, const nsAString& aHostPort,
-                           bool aClickable, bool aRequireInteraction,
-                           const nsTArray<RefPtr<nsIAlertAction>>& aActions,
-                           bool aIsSystemPrincipal, const nsAString& aLaunchUrl,
-                           bool aInPrivateBrowsing, bool aIsSilent)
+  ToastNotificationHandler(
+      ToastNotification* backend, const nsAString& aAumid,
+      nsIAlertNotification* aAlertNotification, nsIObserver* aAlertListener,
+      const nsAString& aName, const nsAString& aCookie, const nsAString& aTitle,
+      const nsAString& aMsg, const nsAString& aHostPort, bool aClickable,
+      bool aRequireInteraction,
+      const nsTArray<RefPtr<nsIAlertAction>>& aActions, bool aIsSystemPrincipal,
+      const nsAString& aOpaqueRelaunchData, bool aInPrivateBrowsing,
+      bool aIsSilent, ImagePlacement aImagePlacement = ImagePlacement::eInline)
       : mBackend(backend),
-        mAumid(aumid),
+        mAumid(aAumid),
         mHasImage(false),
+        mAlertNotification(aAlertNotification),
         mAlertListener(aAlertListener),
         mName(aName),
         mCookie(aCookie),
@@ -49,11 +57,12 @@ class ToastNotificationHandler final
         mInPrivateBrowsing(aInPrivateBrowsing),
         mActions(aActions.Clone()),
         mIsSystemPrincipal(aIsSystemPrincipal),
-        mLaunchUrl(aLaunchUrl),
+        mOpaqueRelaunchData(aOpaqueRelaunchData),
         mIsSilent(aIsSilent),
-        mSentFinished(!aAlertListener) {}
+        mSentFinished(!aAlertListener),
+        mImagePlacement(aImagePlacement) {}
 
-  nsresult InitAlertAsync(nsIAlertNotification* aAlert);
+  nsresult InitAlertAsync();
 
   void OnWriteImageFinished(nsresult rv);
 
@@ -62,15 +71,18 @@ class ToastNotificationHandler final
 
   void UnregisterHandler();
 
+  nsString ActionArgsJSONString(
+      const nsString& aAction,
+      const nsString& aOpaqueRelaunchData /* = u""_ns */);
   nsresult CreateToastXmlString(const nsAString& aImageURL, nsAString& aString);
 
   nsresult GetWindowsTag(nsAString& aWindowsTag);
   nsresult SetWindowsTag(const nsAString& aWindowsTag);
 
   // Exposed for consumption by `ToastNotification.cpp`.
-  static nsresult FindLaunchURLAndPrivilegedNameForWindowsTag(
+  static nsresult FindNotificationDataForWindowsTag(
       const nsAString& aWindowsTag, const nsAString& aAumid, bool& aFoundTag,
-      nsAString& aLaunchUrl, nsAString& aPrivilegedName);
+      nsAString& aNotificationData);
 
  protected:
   virtual ~ToastNotificationHandler();
@@ -102,10 +114,11 @@ class ToastNotificationHandler final
   nsString mImageUri;
   bool mHasImage;
 
-  EventRegistrationToken mActivatedToken;
-  EventRegistrationToken mDismissedToken;
-  EventRegistrationToken mFailedToken;
+  EventRegistrationToken mActivatedToken{};
+  EventRegistrationToken mDismissedToken{};
+  EventRegistrationToken mFailedToken{};
 
+  nsCOMPtr<nsIAlertNotification> mAlertNotification;
   nsCOMPtr<nsIObserver> mAlertListener;
   nsString mName;
   nsString mCookie;
@@ -117,9 +130,10 @@ class ToastNotificationHandler final
   bool mInPrivateBrowsing;
   nsTArray<RefPtr<nsIAlertAction>> mActions;
   bool mIsSystemPrincipal;
-  nsString mLaunchUrl;
+  nsString mOpaqueRelaunchData;
   bool mIsSilent;
   bool mSentFinished;
+  ImagePlacement mImagePlacement;
 
   nsresult TryShowAlert();
   bool ShowAlert();
@@ -127,7 +141,6 @@ class ToastNotificationHandler final
   nsresult OnWriteImageSuccess();
   void SendFinished();
 
-  nsresult InitWindowsTag();
   bool CreateWindowsNotificationFromXml(ComPtr<IXmlDocument>& aToastXml);
   ComPtr<IXmlDocument> CreateToastXmlDocument();
 
@@ -138,9 +151,6 @@ class ToastNotificationHandler final
   HRESULT OnFail(const ComPtr<IToastNotification>& notification,
                  const ComPtr<IToastFailedEventArgs>& aArgs);
 
-  static HRESULT GetLaunchArgumentValueForKey(
-      const ComPtr<IToastNotification> toast, const nsAString& key,
-      nsAString& value);
   static ComPtr<IToastNotification> FindNotificationByTag(
       const nsAString& aWindowsTag, const nsAString& aAumid);
 };

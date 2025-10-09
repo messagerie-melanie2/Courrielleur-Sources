@@ -45,7 +45,7 @@ FILES_CHANGED_MC = [
     "toolkit/components/formautofill/FormAutofillStorageBase.sys.mjs",
     "toolkit/components/normandy/content/AboutPages.sys.mjs",
     "toolkit/components/passwordmgr/FirefoxRelay.sys.mjs",
-    "toolkit/components/url-classifier/UrlClassifierListManager.jsm",
+    "toolkit/components/url-classifier/UrlClassifierListManager.sys.mjs",
     "toolkit/modules/NewTabUtils.sys.mjs",
 ]
 

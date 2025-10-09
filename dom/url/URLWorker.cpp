@@ -18,11 +18,11 @@ namespace mozilla::dom {
 class CreateURLRunnable : public WorkerMainThreadRunnable {
  private:
   BlobImpl* mBlobImpl;
-  nsAString& mURL;
+  nsACString& mURL;
 
  public:
   CreateURLRunnable(WorkerPrivate* aWorkerPrivate, BlobImpl* aBlobImpl,
-                    nsAString& aURL)
+                    nsACString& aURL)
       : WorkerMainThreadRunnable(aWorkerPrivate, "URL :: CreateURL"_ns),
         mBlobImpl(aBlobImpl),
         mURL(aURL) {
@@ -32,21 +32,26 @@ class CreateURLRunnable : public WorkerMainThreadRunnable {
   bool MainThreadRun() override {
     using namespace mozilla::ipc;
 
+    MOZ_ASSERT(mWorkerRef);
+    WorkerPrivate* workerPrivate = mWorkerRef->Private();
+
     AssertIsOnMainThread();
 
-    nsCOMPtr<nsIPrincipal> principal = mWorkerPrivate->GetPrincipal();
+    nsCOMPtr<nsIPrincipal> principal = workerPrivate->GetPrincipal();
 
-    nsAutoCString url;
+    nsCOMPtr<nsICookieJarSettings> cookieJarSettings =
+        workerPrivate->CookieJarSettings();
+
+    nsAutoString partKey;
+    cookieJarSettings->GetPartitionKey(partKey);
+
     nsresult rv = BlobURLProtocolHandler::AddDataEntry(
-        mBlobImpl, principal, Some(mWorkerPrivate->AgentClusterId()), url);
-
+        mBlobImpl, principal, NS_ConvertUTF16toUTF8(partKey), mURL);
     if (NS_FAILED(rv)) {
       NS_WARNING("Failed to add data entry for the blob!");
-      SetDOMStringToNull(mURL);
+      mURL.SetIsVoid(true);
       return false;
     }
-
-    CopyUTF8toUTF16(url, mURL);
     return true;
   }
 };
@@ -54,62 +59,75 @@ class CreateURLRunnable : public WorkerMainThreadRunnable {
 // This class revokes an URL on the main thread.
 class RevokeURLRunnable : public WorkerMainThreadRunnable {
  private:
-  const nsString mURL;
+  const nsCString mURL;
 
  public:
-  RevokeURLRunnable(WorkerPrivate* aWorkerPrivate, const nsAString& aURL)
+  RevokeURLRunnable(WorkerPrivate* aWorkerPrivate, const nsACString& aURL)
       : WorkerMainThreadRunnable(aWorkerPrivate, "URL :: RevokeURL"_ns),
         mURL(aURL) {}
 
   bool MainThreadRun() override {
     AssertIsOnMainThread();
 
-    NS_ConvertUTF16toUTF8 url(mURL);
+    MOZ_ASSERT(mWorkerRef);
+    WorkerPrivate* workerPrivate = mWorkerRef->Private();
 
-    BlobURLProtocolHandler::RemoveDataEntry(
-        url, mWorkerPrivate->GetPrincipal(),
-        Some(mWorkerPrivate->AgentClusterId()));
+    nsCOMPtr<nsICookieJarSettings> cookieJarSettings =
+        workerPrivate->CookieJarSettings();
+
+    nsAutoString partKey;
+    cookieJarSettings->GetPartitionKey(partKey);
+
+    BlobURLProtocolHandler::RemoveDataEntry(mURL, workerPrivate->GetPrincipal(),
+                                            NS_ConvertUTF16toUTF8(partKey));
     return true;
   }
 };
 
-// This class checks if an URL is valid on the main thread.
-class IsValidURLRunnable : public WorkerMainThreadRunnable {
+// This class checks if an URL is valid and belongs to a Blob on the main
+// thread.
+class IsBoundToBlobRunnable : public WorkerMainThreadRunnable {
  private:
-  const nsString mURL;
-  bool mValid;
+  const nsCString mURL;
+  bool mResult;
 
  public:
-  IsValidURLRunnable(WorkerPrivate* aWorkerPrivate, const nsAString& aURL)
+  IsBoundToBlobRunnable(WorkerPrivate* aWorkerPrivate, const nsACString& aURL)
       : WorkerMainThreadRunnable(aWorkerPrivate, "URL :: IsValidURL"_ns),
         mURL(aURL),
-        mValid(false) {}
+        mResult(false) {}
 
   bool MainThreadRun() override {
     AssertIsOnMainThread();
 
-    NS_ConvertUTF16toUTF8 url(mURL);
-    mValid = BlobURLProtocolHandler::HasDataEntry(url);
+    mResult = BlobURLProtocolHandler::HasDataEntryTypeBlob(mURL);
 
     return true;
   }
 
-  bool IsValidURL() const { return mValid; }
+  bool Result() const { return mResult; }
 };
 
 /* static */
-void URLWorker::CreateObjectURL(const GlobalObject& aGlobal, Blob& aBlob,
-                                nsAString& aResult, mozilla::ErrorResult& aRv) {
+void URLWorker::CreateObjectURL(const GlobalObject& aGlobal,
+                                const BlobOrMediaSource& aObj,
+                                nsACString& aResult,
+                                mozilla::ErrorResult& aRv) {
+  if (!aObj.IsBlob()) {
+    MOZ_CRASH("MediaSource is not supported in workers");
+    return;
+  }
+
   JSContext* cx = aGlobal.Context();
   WorkerPrivate* workerPrivate = GetWorkerPrivateFromContext(cx);
 
-  RefPtr<BlobImpl> blobImpl = aBlob.Impl();
+  RefPtr<BlobImpl> blobImpl = aObj.GetAsBlob().Impl();
   MOZ_ASSERT(blobImpl);
 
   RefPtr<CreateURLRunnable> runnable =
       new CreateURLRunnable(workerPrivate, blobImpl, aResult);
 
-  runnable->Dispatch(Canceling, aRv);
+  runnable->Dispatch(workerPrivate, Canceling, aRv);
   if (NS_WARN_IF(aRv.Failed())) {
     return;
   }
@@ -117,19 +135,19 @@ void URLWorker::CreateObjectURL(const GlobalObject& aGlobal, Blob& aBlob,
   WorkerGlobalScope* scope = workerPrivate->GlobalScope();
   MOZ_ASSERT(scope);
 
-  scope->RegisterHostObjectURI(NS_ConvertUTF16toUTF8(aResult));
+  scope->RegisterHostObjectURI(aResult);
 }
 
 /* static */
 void URLWorker::RevokeObjectURL(const GlobalObject& aGlobal,
-                                const nsAString& aUrl, ErrorResult& aRv) {
+                                const nsACString& aUrl, ErrorResult& aRv) {
   JSContext* cx = aGlobal.Context();
   WorkerPrivate* workerPrivate = GetWorkerPrivateFromContext(cx);
 
   RefPtr<RevokeURLRunnable> runnable =
       new RevokeURLRunnable(workerPrivate, aUrl);
 
-  runnable->Dispatch(Canceling, aRv);
+  runnable->Dispatch(workerPrivate, Canceling, aRv);
   if (NS_WARN_IF(aRv.Failed())) {
     return;
   }
@@ -137,24 +155,24 @@ void URLWorker::RevokeObjectURL(const GlobalObject& aGlobal,
   WorkerGlobalScope* scope = workerPrivate->GlobalScope();
   MOZ_ASSERT(scope);
 
-  scope->UnregisterHostObjectURI(NS_ConvertUTF16toUTF8(aUrl));
+  scope->UnregisterHostObjectURI(aUrl);
 }
 
 /* static */
-bool URLWorker::IsValidObjectURL(const GlobalObject& aGlobal,
-                                 const nsAString& aUrl, ErrorResult& aRv) {
+bool URLWorker::IsBoundToBlob(const GlobalObject& aGlobal,
+                              const nsACString& aUrl, ErrorResult& aRv) {
   JSContext* cx = aGlobal.Context();
   WorkerPrivate* workerPrivate = GetWorkerPrivateFromContext(cx);
 
-  RefPtr<IsValidURLRunnable> runnable =
-      new IsValidURLRunnable(workerPrivate, aUrl);
+  RefPtr<IsBoundToBlobRunnable> runnable =
+      new IsBoundToBlobRunnable(workerPrivate, aUrl);
 
-  runnable->Dispatch(Canceling, aRv);
+  runnable->Dispatch(workerPrivate, Canceling, aRv);
   if (NS_WARN_IF(aRv.Failed())) {
     return false;
   }
 
-  return runnable->IsValidURL();
+  return runnable->Result();
 }
 
 }  // namespace mozilla::dom

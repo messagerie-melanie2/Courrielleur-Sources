@@ -236,6 +236,9 @@ class DOMMatrixReadOnly : public nsWrapperCache {
     return nullptr;
   }
 
+  static gfx::MatrixDouble ToValidatedMatrixDouble(
+      const DOMMatrix2DInit& aMatrixInit, ErrorResult& aRv);
+
  protected:
   nsCOMPtr<nsISupports> mParent;
   UniquePtr<gfx::MatrixDouble> mMatrix2D;
@@ -249,12 +252,16 @@ class DOMMatrixReadOnly : public nsWrapperCache {
    * The init dictionary's dimension must match the matrix one.
    */
   void SetDataFromMatrix2DInit(const DOMMatrix2DInit& aMatrixInit);
+  static gfx::MatrixDouble ToMatrixDouble(const DOMMatrix2DInit& aMatrixInit);
   void SetDataFromMatrixInit(const DOMMatrixInit& aMatrixInit);
 
   DOMMatrixReadOnly* SetMatrixValue(const nsACString&, ErrorResult&);
   void Ensure3DMatrix();
 
-  DOMMatrixReadOnly(nsISupports* aParent, bool is2D) : mParent(aParent) {
+  DOMMatrixReadOnly(nsISupports* aParent, bool is2D)
+      : DOMMatrixReadOnly(do_AddRef(aParent), is2D) {}
+  DOMMatrixReadOnly(already_AddRefed<nsISupports>&& aParent, bool is2D)
+      : mParent(std::move(aParent)) {
     if (is2D) {
       mMatrix2D = MakeUnique<gfx::MatrixDouble>();
     } else {
@@ -335,6 +342,8 @@ class DOMMatrix : public DOMMatrixReadOnly {
  private:
   DOMMatrix(nsISupports* aParent, bool is2D)
       : DOMMatrixReadOnly(aParent, is2D) {}
+  DOMMatrix(already_AddRefed<nsISupports>&& aParent, bool is2D)
+      : DOMMatrixReadOnly(std::move(aParent), is2D) {}
 };
 
 }  // namespace dom

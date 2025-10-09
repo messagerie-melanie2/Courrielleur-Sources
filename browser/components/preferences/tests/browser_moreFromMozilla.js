@@ -11,6 +11,8 @@ let { TelemetryTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/TelemetryTestUtils.sys.mjs"
 );
 
+const TOTAL_PROMO_CARDS_COUNT = 5;
+
 async function clearPolicies() {
   // Ensure no active policies are set
   await EnterprisePolicyTesting.setupPolicyEngineWithJson("");
@@ -40,7 +42,11 @@ add_task(async function testDefaultUIWithoutTemplatePref() {
 
   let productCards = doc.querySelectorAll(".mozilla-product-item.simple");
   Assert.ok(productCards, "Default UI uses simple template");
-  Assert.equal(productCards.length, 3, "3 product cards displayed");
+  Assert.equal(
+    productCards.length,
+    TOTAL_PROMO_CARDS_COUNT,
+    "All product cards displayed"
+  );
 
   const expectedUrl = "https://www.mozilla.org/firefox/browsers/mobile/";
   let tabOpened = BrowserTestUtils.waitForNewTab(gBrowser, url =>
@@ -135,7 +141,6 @@ add_task(async function testwhenPrefDisabled() {
 
 add_task(async function test_aboutpreferences_event_telemetry() {
   Services.telemetry.clearEvents();
-  Services.telemetry.setEventRecordingEnabled("aboutpreferences", true);
 
   await SpecialPowers.pushPrefEnv({
     set: [["browser.preferences.moreFromMozilla", true]],
@@ -191,7 +196,11 @@ add_task(async function test_aboutpreferences_simple_template() {
 
   let productCards = doc.querySelectorAll(".mozilla-product-item");
   Assert.ok(productCards, "The product cards from simple template found");
-  Assert.equal(productCards.length, 3, "3 product cards displayed");
+  Assert.equal(
+    productCards.length,
+    TOTAL_PROMO_CARDS_COUNT,
+    "All product cards displayed"
+  );
 
   let qrCodeButtons = doc.querySelectorAll('.qr-code-box[hidden="false"]');
   Assert.equal(qrCodeButtons.length, 1, "1 qr-code box displayed");
@@ -329,11 +338,16 @@ add_task(async function test_aboutpreferences_search() {
   let tab = gBrowser.selectedTab;
 
   let productCards = doc.querySelectorAll(".mozilla-product-item");
-  Assert.equal(productCards.length, 3, "All products in the group are found");
-  let [mobile, vpn, relay] = productCards;
-  Assert.ok(BrowserTestUtils.is_hidden(mobile), "Mobile hidden");
-  Assert.ok(BrowserTestUtils.is_hidden(vpn), "VPN hidden");
-  Assert.ok(BrowserTestUtils.is_visible(relay), "Relay shown");
+  Assert.equal(
+    productCards.length,
+    TOTAL_PROMO_CARDS_COUNT,
+    "All products in the group are found"
+  );
+  let [mobile, monitor, vpn, relay] = productCards;
+  Assert.ok(BrowserTestUtils.isHidden(mobile), "Mobile hidden");
+  Assert.ok(BrowserTestUtils.isHidden(monitor), "Monitor hidden");
+  Assert.ok(BrowserTestUtils.isHidden(vpn), "VPN hidden");
+  Assert.ok(BrowserTestUtils.isVisible(relay), "Relay shown");
 
   BrowserTestUtils.removeTab(tab);
 });
@@ -376,5 +390,32 @@ add_task(async function test_aboutpreferences_clickBtnRelay() {
 
   await tabOpened;
   BrowserTestUtils.removeTab(gBrowser.selectedTab);
+  BrowserTestUtils.removeTab(tab);
+});
+
+add_task(async function show_solo_more_from_mozilla() {
+  await clearPolicies();
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.preferences.moreFromMozilla", true],
+      ["browser.preferences.moreFromMozilla.template", "simple"],
+    ],
+  });
+  await openPreferencesViaOpenPreferencesAPI("paneMoreFromMozilla", {
+    leaveOpen: true,
+  });
+
+  let doc = gBrowser.contentDocument;
+  let tab = gBrowser.selectedTab;
+
+  const soloCard = doc.getElementById("solo-ai");
+  let soloBtn = doc.getElementById("simple-soloAI");
+
+  Assert.ok(BrowserTestUtils.isVisible(soloCard), "Solo card is shown");
+  Assert.ok(
+    BrowserTestUtils.isVisible(soloBtn),
+    "Solo button rendered on page"
+  );
+
   BrowserTestUtils.removeTab(tab);
 });

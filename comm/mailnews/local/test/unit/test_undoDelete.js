@@ -14,14 +14,14 @@ let gCurTestNum;
 let gMsgId1;
 let gTestFolder;
 
-var { MessageGenerator, SyntheticMessageSet } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { MessageGenerator, SyntheticMessageSet } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-var { MessageInjection } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageInjection.jsm"
+var { MessageInjection } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageInjection.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 var messageInjection = new MessageInjection({ mode: "local" });
@@ -33,20 +33,20 @@ add_setup(async function () {
 
   var messageGenerator = new MessageGenerator();
   gMsg1 = messageGenerator.makeMessage();
-  let msg2 = messageGenerator.makeMessage({ inReplyTo: gMsg1 });
+  const msg2 = messageGenerator.makeMessage({ inReplyTo: gMsg1 });
 
   let messages = [];
   messages = messages.concat([gMsg1, msg2]);
-  let msgSet = new SyntheticMessageSet(messages);
+  const msgSet = new SyntheticMessageSet(messages);
   gTestFolder = await messageInjection.makeEmptyFolder();
   await messageInjection.addSetsToFolders([gTestFolder], [msgSet]);
 });
 
 add_task(async function deleteMessage() {
-  let msgToDelete = mailTestUtils.firstMsgHdr(gTestFolder);
+  const msgToDelete = mailTestUtils.firstMsgHdr(gTestFolder);
   gMsgId1 = msgToDelete.messageId;
   gMessages.push(msgToDelete);
-  let copyListener = new PromiseTestUtils.PromiseCopyListener();
+  const copyListener = new PromiseTestUtils.PromiseCopyListener();
   gTestFolder.deleteMessages(
     gMessages,
     gMsgWindow,
@@ -65,9 +65,9 @@ add_task(async function undoDelete() {
 });
 
 add_task(function verifyFolders() {
-  let msgRestored = gTestFolder.msgDatabase.getMsgHdrForMessageID(gMsgId1);
-  let msg = mailTestUtils.loadMessageToString(gTestFolder, msgRestored);
-  Assert.equal(msg, gMsg1.toMboxString());
+  const msgRestored = gTestFolder.msgDatabase.getMsgHdrForMessageID(gMsgId1);
+  const msg = mailTestUtils.loadMessageToString(gTestFolder, msgRestored);
+  Assert.equal(msg, gMsg1.toMessageString());
 });
 
 add_task(function endTest() {

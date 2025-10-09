@@ -9,8 +9,8 @@ origin:
   description: rlbox integration for the wasm2c sandboxed code
   url: https://github.com/PLSysSec/rlbox_wasm2c_sandbox/tree/upstream-wasm2c
 
-  release: 7e4ff0ebca2c7644a297bfe51a53b9904f0999b2 (2023-04-13T05:07:28Z).
-  revision: 7e4ff0ebca2c7644a297bfe51a53b9904f0999b2
+  release: 5f2573e2203169b1a3e728a6d612fb78429e1cb8 (2025-03-19T02:22:06Z).
+  revision: 5f2573e2203169b1a3e728a6d612fb78429e1cb8
 
   license: MIT
   license-file: LICENSE
@@ -24,11 +24,9 @@ vendoring:
     # dirs
     - test
     # files
-    - .clang-format
-    - .clang-tidy
-    - .gitignore
-    - .travis.yml
+    - ".*"
     - AppSandbox.md
     - CMakeLists.txt
     - LibrarySandbox.md
     - README.md
+    - build-wasiclang.sh

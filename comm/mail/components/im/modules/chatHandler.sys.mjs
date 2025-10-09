@@ -4,9 +4,7 @@
 
 import { IMServices } from "resource:///modules/IMServices.sys.mjs";
 
-const { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
-);
+import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 
 export var allContacts = {};
 export var onlineContacts = {};
@@ -33,27 +31,27 @@ export var ChatCore = {
     // not in nsMsgAccountManager. They have probably been lost if
     // the user has used an older version of Thunderbird on a
     // profile with IM accounts. See bug 736035.
-    let accountsById = {};
-    for (let account of IMServices.accounts.getAccounts()) {
+    const accountsById = {};
+    for (const account of IMServices.accounts.getAccounts()) {
       accountsById[account.numericId] = account;
     }
-    for (let account of MailServices.accounts.accounts) {
-      let incomingServer = account.incomingServer;
+    for (const account of MailServices.accounts.accounts) {
+      const incomingServer = account.incomingServer;
       if (!incomingServer || incomingServer.type != "im") {
         continue;
       }
       delete accountsById[incomingServer.wrappedJSObject.imAccount.numericId];
     }
     // Let's recreate each of them...
-    for (let id in accountsById) {
-      let account = accountsById[id];
-      let inServer = MailServices.accounts.createIncomingServer(
+    for (const id in accountsById) {
+      const account = accountsById[id];
+      const inServer = MailServices.accounts.createIncomingServer(
         account.name,
         account.protocol.id, // hostname
         "im"
       );
       inServer.wrappedJSObject.imAccount = account;
-      let acc = MailServices.accounts.createAccount();
+      const acc = MailServices.accounts.createAccount();
       // Avoid new folder notifications.
       inServer.valid = false;
       acc.incomingServer = inServer;
@@ -63,7 +61,7 @@ export var ChatCore = {
 
     IMServices.tags.getTags().forEach(function (aTag) {
       aTag.getContacts().forEach(function (aContact) {
-        let name = aContact.preferredBuddy.normalizedName;
+        const name = aContact.preferredBuddy.normalizedName;
         allContacts[name] = aContact;
       });
     });
@@ -72,7 +70,7 @@ export var ChatCore = {
     Services.obs.notifyObservers(null, "chat-core-initialized");
     ChatCore._initializing = false;
   },
-  observe(aSubject, aTopic, aData) {
+  observe(aSubject, aTopic) {
     if (aTopic == "browser-request") {
       Services.ww.openWindow(
         null,

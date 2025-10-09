@@ -14,6 +14,7 @@
 #include "ScopedGLHelpers.h"
 #include "SharedSurfaceGL.h"
 #include "SharedSurfaceEGL.h"
+#include "mozilla/gfx/gfxVars.h"
 #include "mozilla/gfx/Logging.h"
 #include "mozilla/layers/CompositorTypes.h"
 #include "mozilla/layers/TextureClientSharedSurface.h"
@@ -31,9 +32,10 @@
 #  include "SharedSurfaceIO.h"
 #endif
 
-#ifdef MOZ_WAYLAND
+#ifdef MOZ_WIDGET_GTK
 #  include "gfxPlatformGtk.h"
 #  include "SharedSurfaceDMABUF.h"
+#  include "mozilla/widget/DMABufDevice.h"
 #endif
 
 #ifdef MOZ_WIDGET_ANDROID
@@ -88,29 +90,29 @@ UniquePtr<SurfaceFactory> SurfaceFactory::Create(
         return SurfaceFactory_D3D11Interop::Create(gl);
       }
 #endif
-      return nullptr;
+      break;
 
     case layers::TextureType::MacIOSurface:
 #ifdef XP_MACOSX
       return MakeUnique<SurfaceFactory_IOSurface>(gl);
 #else
-      return nullptr;
+      break;
 #endif
 
     case layers::TextureType::DMABUF:
-#ifdef MOZ_WAYLAND
+#ifdef MOZ_WIDGET_GTK
       if (gl.GetContextType() == GLContextType::EGL &&
           widget::DMABufDevice::IsDMABufWebGLEnabled()) {
         return SurfaceFactory_DMABUF::Create(gl);
       }
 #endif
-      return nullptr;
+      break;
 
     case layers::TextureType::AndroidNativeWindow:
 #ifdef MOZ_WIDGET_ANDROID
       return MakeUnique<SurfaceFactory_SurfaceTexture>(gl);
 #else
-      return nullptr;
+      break;
 #endif
 
     case layers::TextureType::AndroidHardwareBuffer:
@@ -120,25 +122,26 @@ UniquePtr<SurfaceFactory> SurfaceFactory::Create(
         return SurfaceFactory_AndroidHardwareBuffer::Create(gl);
       }
 #endif
-      return nullptr;
+      break;
 
     case layers::TextureType::EGLImage:
 #ifdef MOZ_WIDGET_ANDROID
-      if (XRE_IsParentProcess()) {
+      // EGLImages cannot be shared cross-process, so only create them if we are
+      // in the process that will consume them.
+      if ((XRE_IsParentProcess() && !gfx::gfxVars::GPUProcessEnabled()) ||
+          XRE_IsGPUProcess()) {
         return SurfaceFactory_EGLImage::Create(gl);
       }
 #endif
-      return nullptr;
+      break;
 
     case layers::TextureType::Unknown:
     case layers::TextureType::Last:
       break;
   }
 
-#ifdef MOZ_X11
   // Silence a warning.
   Unused << gl;
-#endif
 
   return nullptr;
 }

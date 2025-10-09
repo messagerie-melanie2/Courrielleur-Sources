@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #
 # MozBase documentation build configuration file, created by
 # sphinx-quickstart on Mon Oct 22 14:02:17 2012.
@@ -54,8 +53,8 @@ source_suffix = ".rst"
 master_doc = "index"
 
 # General information about the project.
-project = u"MozBase"
-copyright = u"2012, Mozilla Automation and Tools team"
+project = "MozBase"
+copyright = "2012, Mozilla Automation and Tools team"
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -208,8 +207,8 @@ latex_documents = [
     (
         "index",
         "MozBase.tex",
-        u"MozBase Documentation",
-        u"Mozilla Automation and Tools team",
+        "MozBase Documentation",
+        "Mozilla Automation and Tools team",
         "manual",
     ),
 ]
@@ -243,8 +242,8 @@ man_pages = [
     (
         "index",
         "mozbase",
-        u"MozBase Documentation",
-        [u"Mozilla Automation and Tools team"],
+        "MozBase Documentation",
+        ["Mozilla Automation and Tools team"],
         1,
     )
 ]
@@ -262,8 +261,8 @@ texinfo_documents = [
     (
         "index",
         "MozBase",
-        u"MozBase Documentation",
-        u"Mozilla Automation and Tools team",
+        "MozBase Documentation",
+        "Mozilla Automation and Tools team",
         "MozBase",
         "One line description of project.",
         "Miscellaneous",

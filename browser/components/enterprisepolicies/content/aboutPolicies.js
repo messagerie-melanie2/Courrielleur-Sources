@@ -249,14 +249,14 @@ function generateErrors() {
   const consoleEvents = storage.getEvents();
   const prefixes = [
     "Enterprise Policies",
-    "JsonSchemaValidator.jsm",
-    "Policies.jsm",
-    "GPOParser.jsm",
+    "JsonSchemaValidator",
+    "Policies",
+    "WindowsGPOParser",
     "Enterprise Policies Child",
-    "BookmarksPolicies.jsm",
-    "ProxyPolicies.jsm",
+    "BookmarksPolicies",
+    "ProxyPolicies",
     "WebsiteFilter Policy",
-    "macOSPoliciesParser.jsm",
+    "macOSPoliciesParser",
   ];
 
   let new_cont = document.getElementById("errorsContent");
@@ -273,7 +273,7 @@ function generateErrors() {
   }
   if (!flag) {
     let errors_tab = document.getElementById("category-errors");
-    errors_tab.style.display = "none";
+    errors_tab.hidden = true;
   }
 }
 
@@ -286,17 +286,22 @@ function generateDocumentation() {
   let string_mapping = {
     BackgroundAppUpdate: "BackgroundAppUpdate2",
     Certificates: "CertificatesDescription",
+    DisableFirefoxAccounts: "DisableFirefoxAccounts1",
     DisableMasterPasswordCreation: "DisablePrimaryPasswordCreation",
-    DisablePocket: "DisablePocket2",
     DisableSetDesktopBackground: "DisableSetAsDesktopBackground",
     FirefoxHome: "FirefoxHome2",
     Permissions: "Permissions2",
     SanitizeOnShutdown: "SanitizeOnShutdown2",
-    WindowsSSO: "Windows10SSO",
     SecurityDevices: "SecurityDevices2",
+    SkipTermsOfUse: "SkipTermsOfUse2",
+    WindowsSSO: "Windows10SSO",
   };
+  let deprecated_policies = ["DisablePocket"];
 
   for (let policyName in schema.properties) {
+    if (deprecated_policies.includes(policyName)) {
+      continue;
+    }
     let main_tbody = document.createElement("tbody");
     main_tbody.classList.add("collapsible");
     main_tbody.addEventListener("click", function () {
@@ -307,7 +312,7 @@ function generateDocumentation() {
     row.appendChild(link(policyName));
     let descriptionColumn = col("");
     let stringID = string_mapping[policyName] || policyName;
-    descriptionColumn.setAttribute("data-l10n-id", `policy-${stringID}`);
+    document.l10n.setAttributes(descriptionColumn, `policy-${stringID}`);
     row.appendChild(descriptionColumn);
     main_tbody.appendChild(row);
     let sec_tbody = document.createElement("tbody");
@@ -364,16 +369,9 @@ window.onload = function () {
   generateErrors();
   generateDocumentation();
 
-  // Event delegation on #categories element
-  let menu = document.getElementById("categories");
-  for (let category of menu.children) {
-    category.addEventListener("click", () => show(category));
-    category.addEventListener("keypress", function (event) {
-      if (event.keyCode == KeyEvent.DOM_VK_RETURN) {
-        show(category);
-      }
-    });
-  }
+  // Event delegation on #categories-nav element
+  let menu = document.getElementById("categories-nav");
+  menu.addEventListener("change-view", e => show(e.target));
 
   if (location.hash) {
     let sectionButton = document.getElementById(
@@ -406,10 +404,6 @@ function show(button) {
   current_tab.hidden = true;
   content.classList.add("active");
   content.hidden = false;
-
-  let current_button = document.querySelector("[selected=true]");
-  current_button.removeAttribute("selected");
-  button.setAttribute("selected", "true");
 
   let title = document.getElementById("sectionTitle");
   title.textContent = button.textContent;

@@ -22,7 +22,6 @@ use style::stylesheets::import_rule::{ImportLayer, ImportSheet, ImportSupportsCo
 use style::stylesheets::AllowImportRules;
 use style::stylesheets::{ImportRule, Origin, StylesheetLoader as StyleStylesheetLoader};
 use style::stylesheets::{StylesheetContents, UrlExtraData};
-use style::use_counters::UseCounters;
 use style::values::CssUrl;
 
 pub struct StylesheetLoader(
@@ -95,8 +94,6 @@ pub struct AsyncStylesheetParser {
     bytes: nsCString,
     origin: Origin,
     quirks_mode: QuirksMode,
-    line_number_offset: u32,
-    should_record_use_counters: bool,
     allow_import_rules: AllowImportRules,
 }
 
@@ -107,8 +104,6 @@ impl AsyncStylesheetParser {
         bytes: nsCString,
         origin: Origin,
         quirks_mode: QuirksMode,
-        line_number_offset: u32,
-        should_record_use_counters: bool,
         allow_import_rules: AllowImportRules,
     ) -> Self {
         AsyncStylesheetParser {
@@ -117,8 +112,6 @@ impl AsyncStylesheetParser {
             bytes,
             origin,
             quirks_mode,
-            line_number_offset,
-            should_record_use_counters,
             allow_import_rules,
         }
     }
@@ -126,12 +119,6 @@ impl AsyncStylesheetParser {
     pub fn parse(self) {
         let global_style_data = &*GLOBAL_STYLE_DATA;
         let input: &str = unsafe { (*self.bytes).as_str_unchecked() };
-
-        let use_counters = if self.should_record_use_counters {
-            Some(Box::new(UseCounters::default()))
-        } else {
-            None
-        };
 
         // Note: Parallel CSS parsing doesn't report CSS errors. When errors are
         // being logged, Gecko prevents the parallel parsing path from running.
@@ -143,8 +130,6 @@ impl AsyncStylesheetParser {
             Some(&self),
             None,
             self.quirks_mode.into(),
-            self.line_number_offset,
-            use_counters.as_deref(),
             self.allow_import_rules,
             /* sanitized_output = */ None,
         );
@@ -153,7 +138,6 @@ impl AsyncStylesheetParser {
             bindings::Gecko_StyleSheet_FinishAsyncParse(
                 self.load_data.get(),
                 sheet.into(),
-                use_counters.map_or(std::ptr::null_mut(), Box::into_raw),
             );
         }
     }

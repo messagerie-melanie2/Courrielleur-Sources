@@ -7,11 +7,11 @@
   a mailnews URL extended for a hypthetical account type "foo".
 */
 
-const { JSAccountUtils } = ChromeUtils.import(
-  "resource:///modules/jsaccount/JSAccountUtils.jsm"
+const { JSAccountUtils } = ChromeUtils.importESModule(
+  "resource:///modules/jsaccount/JSAccountUtils.sys.mjs"
 );
-const { JaBaseUrl, JaBaseUrlProperties } = ChromeUtils.import(
-  "resource:///modules/jsaccount/JaBaseUrl.jsm"
+const { JaBaseUrl, JaBaseUrlProperties } = ChromeUtils.importESModule(
+  "resource:///modules/jsaccount/JaBaseUrl.sys.mjs"
 );
 
 const ATTACHMENT_QUERY = "part=1.";
@@ -59,7 +59,7 @@ FooUrl.prototype = {
   // InterfaceRequestor override, needed if extraInterfaces.
 
   getInterface(iid) {
-    for (let iface of FooUrlProperties.extraInterfaces) {
+    for (const iface of FooUrlProperties.extraInterfaces) {
       if (iid.equals(iface)) {
         return this;
       }
@@ -82,7 +82,7 @@ FooUrl.prototype = {
   // readonly attribute boolean isAttachment;
   get isAttachment() {
     // We look to see if the URL has an attachment query
-    let query = this.QueryInterface(Ci.nsIURL).query;
+    const query = this.QueryInterface(Ci.nsIURL).query;
     return query && query.includes(ATTACHMENT_QUERY);
   },
 };

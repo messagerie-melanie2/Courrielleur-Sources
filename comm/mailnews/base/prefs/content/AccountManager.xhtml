@@ -23,9 +23,15 @@
   <link rel="icon" href="chrome://messenger/skin/icons/new/compact/account-settings.svg" />
 
   <link rel="stylesheet" href="chrome://messenger/skin/inContentDialog.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/containers.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/widgets.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/icons.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/variables.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/contextMenu.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/containers.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/folderPane.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/shared/tree-listbox.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/shared/list-container.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/shared/accountManager.css" />
 
   <link rel="localization" href="branding/brand.ftl" />
@@ -38,7 +44,7 @@
   <script defer="defer" src="chrome://messenger/content/am-prefs.js"></script>
   <script defer="defer" src="chrome://messenger/content/AccountManager.js"></script>
   <script defer="defer" src="chrome://messenger/content/amUtils.js"></script>
-  <script defer="defer" src="chrome://messenger/content/tree-listbox.js"></script>
+  <script type="module" src="chrome://messenger/content/orderable-tree-listbox.mjs"></script>
   <script>
     // FIXME: move to script file.
     window.addEventListener("load", event => { onLoad(event); });
@@ -49,62 +55,53 @@
   <stringbundle id="bundle_brand" src="chrome://branding/locale/brand.properties"/>
   <stringbundle id="bundle_prefs" src="chrome://messenger/locale/prefs.properties"/>
   <html:aside id="accountTreeBox">
-    <html:ol is="orderable-tree-listbox" id="accounttree" class="no-overscroll"
+    <html:div id="accountTreeHeaderBar" class="sidebar-panel-header">
+      <html:button id="accountTreeCreateAccount"
+              class="button button-primary icon-button"
+              data-l10n-id="account-tree-create-account-button"
+              type="button">
+      </html:button>
+    </html:div>
+    <html:ol is="orderable-tree-listbox" id="accounttree" class="sidebar-panel-scroll"
              role="tree"
              flex="1"
              onselect="onAccountTreeSelect(null, null);">
     </html:ol>
     <template id="accountTreeItem" xmlns="http://www.w3.org/1999/xhtml">
       <li>
-        <div draggable="true">
+        <div class="container" draggable="true">
           <div class="twisty">
             <img class="twisty-icon" alt=""
                  src="chrome://global/skin/icons/arrow-down-12.svg" />
           </div>
           <div class="icon"></div>
           <span class="name" tabindex="-1"></span>
+          <img data-l10n-id="account-manager-server-default-icon"
+               class="default-icon" />
         </div>
         <ul></ul>
       </li>
     </template>
 
-    <button id="accountActionsButton" type="menu"
-            label="&accountActionsButton.label;"
-            accesskey="&accountActionsButton.accesskey;">
-      <menupopup id="accountActionsDropdown"
-                 onpopupshowing="initAccountActionsButtons(this);">
-        <menuitem id="accountActionsAddMailAccount"
-                  label="&addMailAccountButton.label;"
-                  accesskey="&addMailAccountButton.accesskey;"
-                  prefstring="mail.disable_new_account_addition"
-                  oncommand="openAccountSetupTab();"/>
-        <menuitem id="accountActionsAddIMAccount"
-                  label="&addIMAccountButton.label;"
-                  accesskey="&addIMAccountButton.accesskey;"
-                  prefstring="mail.disable_new_account_addition"
-                  oncommand="AddIMAccount(event); event.stopPropagation();"/>
-        <menuitem id="accountActionsAddFeedAccount"
-                  label="&addFeedAccountButton.label;"
-                  accesskey="&addFeedAccountButton.accesskey;"
-                  prefstring="mail.disable_new_account_addition"
-                  oncommand="AddFeedAccount(event); event.stopPropagation();"/>
-        <menuitem id="accountActionsAddOtherAccount"
-                  data-l10n-id="account-action-add-newsgroup-account"
-                  prefstring="mail.disable_new_account_addition"
-                  oncommand="openNewsgroupAccountWizard(); event.stopPropagation();"/>
-        <menuseparator id="accountActionsDropdownSep1"/>
-        <menuitem id="accountActionsDropdownSetDefault"
-                  label="&setDefaultButton.label;"
-                  accesskey="&setDefaultButton.accesskey;"
-                  prefstring="mail.disable_button.set_default_account"
-                  oncommand="onSetDefault(event); event.stopPropagation();"/>
-        <menuitem id="accountActionsDropdownRemove"
-                  label="&removeButton.label;"
-                  accesskey="&removeButton.accesskey;"
-                  prefstring="mail.disable_button.delete_account"
-                  oncommand="onRemoveAccount(event); event.stopPropagation();"/>
-      </menupopup>
-    </button>
+    <menupopup id="accountAddPopup"
+               onpopupshowing="updateBlockedItems(this.children, true);">
+      <menuitem id="accountActionsAddMailAccount"
+                data-l10n-id="account-tree-add-mail-account"
+                prefstring="mail.disable_new_account_addition"
+                oncommand="openAccountSetup();"/>
+      <menuitem id="accountActionsAddChatAccount"
+                data-l10n-id="account-tree-add-chat-account"
+                prefstring="mail.disable_new_account_addition"
+                oncommand="AddIMAccount(event); event.stopPropagation();"/>
+      <menuitem id="accountActionsAddFeedAccount"
+                data-l10n-id="account-tree-add-feed-account"
+                prefstring="mail.disable_new_account_addition"
+                oncommand="AddFeedAccount(event); event.stopPropagation();"/>
+      <menuitem id="accountActionsAddOtherAccount"
+                data-l10n-id="account-tree-add-newsgroup-account"
+                prefstring="mail.disable_new_account_addition"
+                oncommand="openNewsgroupAccountWizard(); event.stopPropagation();"/>
+    </menupopup>
 
     <vbox class="sidebar-footer-list">
       <html:a id="prefsButton" class="sidebar-footer-link"
@@ -155,6 +152,8 @@
 
   <dialog xmlns="http://www.w3.org/1999/xhtml" id="editVCardDialog">
     <form autocomplete="off">
+      <!-- Styles -->
+      <link rel="stylesheet" href="chrome://messenger/skin/variables.css" />
 #include ../../../../mail/components/addrbook/content/vcard-edit/vCardTemplates.inc.xhtml
       <vcard-edit class="edit"/>
       <menu class="dialog-menu-container">

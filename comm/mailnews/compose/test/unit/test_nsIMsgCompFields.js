@@ -10,7 +10,7 @@ var nsMsgCompFields = Components.Constructor(
 );
 
 function check_headers(enumerator, container) {
-  let checkValues = new Set(container.map(header => header.toLowerCase()));
+  const checkValues = new Set(container.map(header => header.toLowerCase()));
   for (let value of enumerator) {
     value = value.toLowerCase();
     Assert.ok(checkValues.has(value));
@@ -20,25 +20,25 @@ function check_headers(enumerator, container) {
 }
 
 function run_test() {
-  let fields = new nsMsgCompFields();
+  const fields = new nsMsgCompFields();
   Assert.ok(fields instanceof Ci.nsIMsgCompFields);
   Assert.ok(fields instanceof Ci.msgIStructuredHeaders);
   Assert.ok(fields instanceof Ci.msgIWritableStructuredHeaders);
   check_headers(fields.headerNames, []);
-  Assert.ok(!fields.hasRecipients);
+  Assert.ok(!fields.to);
 
   // Try some basic headers
   fields.setHeader("From", [{ name: "", email: "a@test.invalid" }]);
-  let from = fields.getHeader("from");
+  const from = fields.getHeader("from");
   Assert.equal(from.length, 1);
   Assert.equal(from[0].email, "a@test.invalid");
   check_headers(fields.headerNames, ["From"]);
-  Assert.ok(!fields.hasRecipients);
+  Assert.ok(!fields.to);
 
   // Add a To header
   fields.setHeader("To", [{ name: "", email: "b@test.invalid" }]);
   check_headers(fields.headerNames, ["From", "To"]);
-  Assert.ok(fields.hasRecipients);
+  Assert.ok(fields.to);
 
   // Delete a header...
   fields.deleteHeader("from");

@@ -12,17 +12,25 @@
 #include "CompositableHost.h"
 #include "gfxEnv.h"
 #include "mozilla/gfx/gfxVars.h"
+#include "mozilla/layers/AsyncImagePipelineOp.h"
 #include "mozilla/layers/CompositorThread.h"
+#include "mozilla/layers/Fence.h"
 #include "mozilla/layers/RemoteTextureHostWrapper.h"
 #include "mozilla/layers/SharedSurfacesParent.h"
 #include "mozilla/layers/WebRenderImageHost.h"
 #include "mozilla/layers/WebRenderTextureHost.h"
+#include "mozilla/webrender/RenderTextureHost.h"
 #include "mozilla/webrender/RenderThread.h"
 #include "mozilla/webrender/WebRenderAPI.h"
 #include "mozilla/webrender/WebRenderTypes.h"
 
 #ifdef MOZ_WIDGET_ANDROID
 #  include "mozilla/layers/TextureHostOGL.h"
+#endif
+
+#ifdef XP_WIN
+#  include "mozilla/layers/FenceD3D11.h"
+#  include "mozilla/layers/TextureD3D11.h"
 #endif
 
 namespace mozilla {
@@ -34,13 +42,15 @@ AsyncImagePipelineManager::ForwardingExternalImage::~ForwardingExternalImage() {
 }
 
 AsyncImagePipelineManager::AsyncImagePipeline::AsyncImagePipeline(
-    wr::PipelineId aPipelineId, layers::WebRenderBackend aBackend)
+    wr::PipelineId aPipelineId, layers::WebRenderBackend aBackend,
+    WebRenderImageHost* aImageHost)
     : mInitialised(false),
       mIsChanged(false),
       mUseExternalImage(false),
-      mRotation(VideoInfo::Rotation::kDegree_0),
+      mRotation(wr::WrRotation::Degree0),
       mFilter(wr::ImageRendering::Auto),
       mMixBlendMode(wr::MixBlendMode::Normal),
+      mImageHost(aImageHost),
       mDLBuilder(aPipelineId, aBackend) {}
 
 AsyncImagePipelineManager::AsyncImagePipelineManager(
@@ -54,8 +64,10 @@ AsyncImagePipelineManager::AsyncImagePipelineManager(
       mWillGenerateFrame(false),
       mDestroyed(false),
 #ifdef XP_WIN
-      mUseWebRenderDCompVideoOverlayWin(
-          gfx::gfxVars::UseWebRenderDCompVideoOverlayWin()),
+      mUseWebRenderDCompVideoHwOverlayWin(
+          gfx::gfxVars::UseWebRenderDCompVideoHwOverlayWin()),
+      mUseWebRenderDCompVideoSwOverlayWin(
+          gfx::gfxVars::UseWebRenderDCompVideoSwOverlayWin()),
 #endif
       mRenderSubmittedUpdatesLock("SubmittedUpdatesLock"),
       mLastCompletedFrameId(0) {
@@ -165,16 +177,22 @@ void AsyncImagePipelineManager::AddAsyncImagePipeline(
   uint64_t id = wr::AsUint64(aPipelineId);
 
   MOZ_ASSERT(!mAsyncImagePipelines.Contains(id));
-  auto holder =
-      MakeUnique<AsyncImagePipeline>(aPipelineId, mApi->GetBackendType());
-  holder->mImageHost = aImageHost;
+  auto holder = MakeUnique<AsyncImagePipeline>(
+      aPipelineId, mApi->GetBackendType(), aImageHost);
   mAsyncImagePipelines.InsertOrUpdate(id, std::move(holder));
   AddPipeline(aPipelineId, /* aWrBridge */ nullptr);
 }
 
 void AsyncImagePipelineManager::RemoveAsyncImagePipeline(
-    const wr::PipelineId& aPipelineId, wr::TransactionBuilder& aTxn) {
+    const wr::PipelineId& aPipelineId, AsyncImagePipelineOps* aPendingOps,
+    wr::TransactionBuilder& aTxn) {
   if (mDestroyed) {
+    return;
+  }
+
+  if (aPendingOps) {
+    aPendingOps->mList.emplace(
+        AsyncImagePipelineOp::RemoveAsyncImagePipeline(this, aPipelineId));
     return;
   }
 
@@ -193,7 +211,7 @@ void AsyncImagePipelineManager::RemoveAsyncImagePipeline(
 
 void AsyncImagePipelineManager::UpdateAsyncImagePipeline(
     const wr::PipelineId& aPipelineId, const LayoutDeviceRect& aScBounds,
-    const VideoInfo::Rotation aRotation, const wr::ImageRendering& aFilter,
+    const wr::WrRotation aRotation, const wr::ImageRendering& aFilter,
     const wr::MixBlendMode& aMixBlendMode) {
   if (mDestroyed) {
     return;
@@ -209,39 +227,35 @@ void AsyncImagePipelineManager::UpdateAsyncImagePipeline(
 
 Maybe<TextureHost::ResourceUpdateOp> AsyncImagePipelineManager::UpdateImageKeys(
     const wr::Epoch& aEpoch, const wr::PipelineId& aPipelineId,
-    AsyncImagePipeline* aPipeline, nsTArray<wr::ImageKey>& aKeys,
-    wr::TransactionBuilder& aSceneBuilderTxn,
-    wr::TransactionBuilder& aMaybeFastTxn, RemoteTextureInfoList* aList) {
+    AsyncImagePipeline* aPipeline, TextureHost* aTexture,
+    nsTArray<wr::ImageKey>& aKeys, wr::TransactionBuilder& aSceneBuilderTxn,
+    wr::TransactionBuilder& aMaybeFastTxn) {
   MOZ_ASSERT(aKeys.IsEmpty());
   MOZ_ASSERT(aPipeline);
 
-  TextureHost* texture =
-      aPipeline->mImageHost->GetAsTextureHostForComposite(this);
   TextureHost* previousTexture = aPipeline->mCurrentTexture.get();
 
-  if (texture == previousTexture) {
+  if (aTexture == previousTexture) {
     // The texture has not changed, just reuse previous ImageKeys.
     aKeys = aPipeline->mKeys.Clone();
     return Nothing();
   }
 
-  if (!texture || texture->NumSubTextures() == 0) {
+  auto* wrapper = aTexture ? aTexture->AsRemoteTextureHostWrapper() : nullptr;
+  if (wrapper && !aPipeline->mImageHost->GetAsyncRef()) {
+    RemoteTextureMap::Get()->GetRemoteTexture(wrapper);
+  }
+
+  if (!aTexture || aTexture->NumSubTextures() == 0) {
     // We don't have a new texture or texture does not have SubTextures, there
     // isn't much we can do.
     aKeys = aPipeline->mKeys.Clone();
     return Nothing();
   }
 
-  // Check if pending Remote texture exists.
-  auto* wrapper = texture->AsRemoteTextureHostWrapper();
-  if (aList && wrapper && wrapper->IsReadyForRendering()) {
-    aList->mList.emplace(wrapper->mTextureId, wrapper->mOwnerId,
-                         wrapper->mForPid);
-  }
+  aPipeline->mCurrentTexture = aTexture;
 
-  aPipeline->mCurrentTexture = texture;
-
-  WebRenderTextureHost* wrTexture = texture->AsWebRenderTextureHost();
+  WebRenderTextureHost* wrTexture = aTexture->AsWebRenderTextureHost();
   MOZ_ASSERT(wrTexture);
   if (!wrTexture) {
     gfxCriticalNote << "WebRenderTextureHost is not used";
@@ -252,22 +266,45 @@ Maybe<TextureHost::ResourceUpdateOp> AsyncImagePipelineManager::UpdateImageKeys(
 
   // The non-external image code path falls back to converting the texture into
   // an rgb image.
-  auto numKeys = useExternalImage ? texture->NumSubTextures() : 1;
+  auto numKeys = useExternalImage ? aTexture->NumSubTextures() : 1;
   MOZ_ASSERT(numKeys > 0);
 
   // If we already had a texture and the format hasn't changed, better to reuse
   // the image keys than create new ones.
   auto backend = aSceneBuilderTxn.GetBackendType();
+
+  bool videoOverlayDisabled = false;
+  RefPtr<wr::RenderTextureHostUsageInfo> usageInfo;
+  // video overlay of DXGITextureHostD3D11 may be disabled dynamically
+  const bool checkVideoOverlayDisabled = !!aTexture->AsDXGITextureHostD3D11();
+  if (checkVideoOverlayDisabled) {
+    auto externalImageKey = wrTexture->GetExternalImageKey();
+    usageInfo = wr::RenderThread::Get()->GetOrMergeUsageInfo(
+        externalImageKey,
+        aPipeline->mImageHost->GetRenderTextureHostUsageInfo());
+    if (usageInfo) {
+      videoOverlayDisabled = usageInfo->VideoOverlayDisabled();
+      aPipeline->mImageHost->SetRenderTextureHostUsageInfo(usageInfo);
+    }
+  }
+  MOZ_ASSERT_IF(aPipeline->mVideoOverlayDisabled, videoOverlayDisabled);
+
   bool canUpdate =
       !!previousTexture &&
-      previousTexture->GetTextureHostType() == texture->GetTextureHostType() &&
-      previousTexture->GetSize() == texture->GetSize() &&
-      previousTexture->GetFormat() == texture->GetFormat() &&
-      previousTexture->GetColorDepth() == texture->GetColorDepth() &&
-      previousTexture->NeedsYFlip() == texture->NeedsYFlip() &&
+      previousTexture->GetTextureHostType() == aTexture->GetTextureHostType() &&
+      previousTexture->GetSize() == aTexture->GetSize() &&
+      previousTexture->GetFormat() == aTexture->GetFormat() &&
+      previousTexture->GetColorDepth() == aTexture->GetColorDepth() &&
+      previousTexture->NeedsYFlip() == aTexture->NeedsYFlip() &&
       previousTexture->SupportsExternalCompositing(backend) ==
-          texture->SupportsExternalCompositing(backend) &&
-      aPipeline->mKeys.Length() == numKeys;
+          aTexture->SupportsExternalCompositing(backend) &&
+      aPipeline->mKeys.Length() == numKeys &&
+      aPipeline->mVideoOverlayDisabled == videoOverlayDisabled;
+
+  if (videoOverlayDisabled) {
+    MOZ_ASSERT(usageInfo);
+    aPipeline->mVideoOverlayDisabled = true;
+  }
 
   if (!canUpdate) {
     for (auto key : aPipeline->mKeys) {
@@ -287,7 +324,7 @@ Maybe<TextureHost::ResourceUpdateOp> AsyncImagePipelineManager::UpdateImageKeys(
   auto op = canUpdate ? TextureHost::UPDATE_IMAGE : TextureHost::ADD_IMAGE;
 
   if (!useExternalImage) {
-    return UpdateWithoutExternalImage(texture, aKeys[0], op, aMaybeFastTxn);
+    return UpdateWithoutExternalImage(aTexture, aKeys[0], op, aMaybeFastTxn);
   }
 
   wrTexture->MaybeNotifyForUse(aMaybeFastTxn);
@@ -342,14 +379,20 @@ void AsyncImagePipelineManager::ApplyAsyncImagesOfImageBridge(
   }
 
 #ifdef XP_WIN
-  // UseWebRenderDCompVideoOverlayWin() could be changed from true to false,
+  // UseWebRenderDCompVideoHwOverlayWin() and
+  // UseWebRenderDCompVideoSwOverlayWin() could be changed from true to false,
   // when DCompVideoOverlay task is failed. In this case, DisplayItems need to
   // be re-pushed to WebRender for disabling video overlay.
-  bool isChanged = mUseWebRenderDCompVideoOverlayWin !=
-                   gfx::gfxVars::UseWebRenderDCompVideoOverlayWin();
+  bool isChanged = (mUseWebRenderDCompVideoHwOverlayWin !=
+                    gfx::gfxVars::UseWebRenderDCompVideoHwOverlayWin()) ||
+                   (mUseWebRenderDCompVideoSwOverlayWin !=
+                    gfx::gfxVars::UseWebRenderDCompVideoSwOverlayWin());
+
   if (isChanged) {
-    mUseWebRenderDCompVideoOverlayWin =
-        gfx::gfxVars::UseWebRenderDCompVideoOverlayWin();
+    mUseWebRenderDCompVideoHwOverlayWin =
+        gfx::gfxVars::UseWebRenderDCompVideoHwOverlayWin();
+    mUseWebRenderDCompVideoSwOverlayWin =
+        gfx::gfxVars::UseWebRenderDCompVideoSwOverlayWin();
   }
 #endif
 
@@ -371,32 +414,22 @@ void AsyncImagePipelineManager::ApplyAsyncImagesOfImageBridge(
     if (!pipeline->mImageHost->GetAsyncRef()) {
       continue;
     }
-    ApplyAsyncImageForPipeline(epoch, pipelineId, pipeline, aSceneBuilderTxn,
-                               aFastTxn, /* aList */ nullptr);
-  }
-}
+    TextureHost* texture =
+        pipeline->mImageHost->GetAsTextureHostForComposite(this);
 
-wr::WrRotation ToWrRotation(VideoInfo::Rotation aRotation) {
-  switch (aRotation) {
-    case VideoInfo::Rotation::kDegree_0:
-      return wr::WrRotation::Degree0;
-    case VideoInfo::Rotation::kDegree_90:
-      return wr::WrRotation::Degree90;
-    case VideoInfo::Rotation::kDegree_180:
-      return wr::WrRotation::Degree180;
-    case VideoInfo::Rotation::kDegree_270:
-      return wr::WrRotation::Degree270;
+    ApplyAsyncImageForPipeline(epoch, pipelineId, pipeline, texture,
+                               aSceneBuilderTxn, aFastTxn);
   }
-  return wr::WrRotation::Degree0;
 }
 
 void AsyncImagePipelineManager::ApplyAsyncImageForPipeline(
     const wr::Epoch& aEpoch, const wr::PipelineId& aPipelineId,
-    AsyncImagePipeline* aPipeline, wr::TransactionBuilder& aSceneBuilderTxn,
-    wr::TransactionBuilder& aMaybeFastTxn, RemoteTextureInfoList* aList) {
+    AsyncImagePipeline* aPipeline, TextureHost* aTexture,
+    wr::TransactionBuilder& aSceneBuilderTxn,
+    wr::TransactionBuilder& aMaybeFastTxn) {
   nsTArray<wr::ImageKey> keys;
-  auto op = UpdateImageKeys(aEpoch, aPipelineId, aPipeline, keys,
-                            aSceneBuilderTxn, aMaybeFastTxn, aList);
+  auto op = UpdateImageKeys(aEpoch, aPipelineId, aPipeline, aTexture, keys,
+                            aSceneBuilderTxn, aMaybeFastTxn);
 
   bool updateDisplayList =
       aPipeline->mInitialised &&
@@ -431,7 +464,7 @@ void AsyncImagePipelineManager::ApplyAsyncImageForPipeline(
   computedTransform.scale_from = {
       float(aPipeline->mCurrentTexture->GetSize().width),
       float(aPipeline->mCurrentTexture->GetSize().height)};
-  computedTransform.rotation = ToWrRotation(aPipeline->mRotation);
+  computedTransform.rotation = aPipeline->mRotation;
   // We don't have a frame / per-frame key here, but we can use the pipeline id
   // and the key kind to create a unique stable key.
   computedTransform.key = wr::SpatialKey(
@@ -460,6 +493,12 @@ void AsyncImagePipelineManager::ApplyAsyncImageForPipeline(
       Range<wr::ImageKey> range_keys(&keys[0], keys.Length());
       TextureHost::PushDisplayItemFlagSet flags;
       flags += TextureHost::PushDisplayItemFlag::PREFER_COMPOSITOR_SURFACE;
+      if (aPipeline->mVideoOverlayDisabled &&
+          aPipeline->mDLBuilder.GetBackendType() !=
+              WebRenderBackend::SOFTWARE) {
+        flags +=
+            TextureHost::PushDisplayItemFlag::EXTERNAL_COMPOSITING_DISABLED;
+      }
       if (mApi->SupportsExternalBufferTextures()) {
         flags +=
             TextureHost::PushDisplayItemFlag::SUPPORTS_EXTERNAL_BUFFER_TEXTURES;
@@ -487,7 +526,9 @@ void AsyncImagePipelineManager::ApplyAsyncImageForPipeline(
 
 void AsyncImagePipelineManager::ApplyAsyncImageForPipeline(
     const wr::PipelineId& aPipelineId, wr::TransactionBuilder& aTxn,
-    wr::TransactionBuilder& aTxnForImageBridge, RemoteTextureInfoList* aList) {
+    wr::TransactionBuilder& aTxnForImageBridge,
+    AsyncImagePipelineOps* aPendingOps,
+    RemoteTextureInfoList* aPendingRemoteTextures) {
   AsyncImagePipeline* pipeline =
       mAsyncImagePipelines.Get(wr::AsUint64(aPipelineId));
   if (!pipeline) {
@@ -497,7 +538,7 @@ void AsyncImagePipelineManager::ApplyAsyncImageForPipeline(
   // ready event of RemoteTexture that uses ImageBridge do not need to be
   // checked here.
   if (pipeline->mImageHost->GetAsyncRef()) {
-    aList = nullptr;
+    aPendingRemoteTextures = nullptr;
   }
 
   wr::TransactionBuilder fastTxn(mApi, /* aUseSceneBuilderThread */ false);
@@ -518,9 +559,39 @@ void AsyncImagePipelineManager::ApplyAsyncImageForPipeline(
   auto& maybeFastTxn = pipeline->mImageHost->GetAsyncRef() ? fastTxn : aTxn;
 
   wr::Epoch epoch = GetNextImageEpoch();
+  TextureHost* texture =
+      pipeline->mImageHost->GetAsTextureHostForComposite(this);
+  auto* wrapper = texture ? texture->AsRemoteTextureHostWrapper() : nullptr;
 
-  ApplyAsyncImageForPipeline(epoch, aPipelineId, pipeline, sceneBuilderTxn,
-                             maybeFastTxn, aList);
+  // Store pending remote texture that is used for waiting at WebRenderAPI.
+  if (aPendingRemoteTextures && texture &&
+      texture != pipeline->mCurrentTexture && wrapper) {
+    aPendingRemoteTextures->mList.emplace(wrapper->GetRemoteTextureInfo());
+  }
+
+  if (aPendingOps && !pipeline->mImageHost->GetAsyncRef()) {
+    aPendingOps->mList.emplace(AsyncImagePipelineOp::ApplyAsyncImageForPipeline(
+        this, aPipelineId, texture));
+    return;
+  }
+
+  ApplyAsyncImageForPipeline(epoch, aPipelineId, pipeline, texture,
+                             sceneBuilderTxn, maybeFastTxn);
+}
+
+void AsyncImagePipelineManager::ApplyAsyncImageForPipeline(
+    const wr::PipelineId& aPipelineId, TextureHost* aTexture,
+    wr::TransactionBuilder& aTxn) {
+  AsyncImagePipeline* pipeline =
+      mAsyncImagePipelines.Get(wr::AsUint64(aPipelineId));
+  if (!pipeline) {
+    return;
+  }
+  MOZ_ASSERT(!pipeline->mImageHost->GetAsyncRef());
+
+  wr::Epoch epoch = GetNextImageEpoch();
+  ApplyAsyncImageForPipeline(epoch, aPipelineId, pipeline, aTexture, aTxn,
+                             aTxn);
 }
 
 void AsyncImagePipelineManager::SetEmptyDisplayList(
@@ -593,7 +664,7 @@ void AsyncImagePipelineManager::HoldExternalImage(
 void AsyncImagePipelineManager::NotifyPipelinesUpdated(
     RefPtr<const wr::WebRenderPipelineInfo> aInfo,
     wr::RenderedFrameId aLatestFrameId,
-    wr::RenderedFrameId aLastCompletedFrameId, ipc::FileDescriptor&& aFenceFd) {
+    wr::RenderedFrameId aLastCompletedFrameId, RefPtr<Fence>&& aFence) {
   MOZ_ASSERT(wr::RenderThread::IsInRenderThread());
   MOZ_ASSERT(mLastCompletedFrameId <= aLastCompletedFrameId.mId);
   MOZ_ASSERT(aLatestFrameId.IsValid());
@@ -608,7 +679,7 @@ void AsyncImagePipelineManager::NotifyPipelinesUpdated(
     // Move the pending updates into the submitted ones.
     mRenderSubmittedUpdates.emplace_back(
         aLatestFrameId,
-        WebRenderPipelineInfoHolder(std::move(aInfo), std::move(aFenceFd)));
+        WebRenderPipelineInfoHolder(std::move(aInfo), std::move(aFence)));
   }
 
   // Queue a runnable on the compositor thread to process the updates.
@@ -636,11 +707,11 @@ void AsyncImagePipelineManager::ProcessPipelineUpdates() {
 
   // submittedUpdates is a vector of RenderedFrameIds paired with vectors of
   // WebRenderPipelineInfo.
-  for (auto update : submittedUpdates) {
+  for (auto& update : submittedUpdates) {
     auto& holder = update.second;
     const auto& info = holder.mInfo->Raw();
 
-    mReleaseFenceFd = std::move(holder.mFenceFd);
+    mReleaseFence = std::move(holder.mFence);
 
     for (auto& epoch : info.epochs) {
       ProcessPipelineRendered(epoch.pipeline_id, epoch.epoch, update.first);
@@ -671,10 +742,10 @@ void AsyncImagePipelineManager::ProcessPipelineRendered(
     for (auto it = holder->mTextureHostsUntilRenderSubmitted.begin();
          it != firstSubmittedHostToKeep; ++it) {
       const auto& entry = it;
-      if (entry->mTexture->GetAndroidHardwareBuffer() &&
-          mReleaseFenceFd.IsValid()) {
-        ipc::FileDescriptor fenceFd = mReleaseFenceFd;
-        entry->mTexture->SetReleaseFence(std::move(fenceFd));
+      if (entry->mTexture->GetAndroidHardwareBuffer() && mReleaseFence &&
+          mReleaseFence->AsFenceFileHandle()) {
+        entry->mTexture->SetReleaseFence(
+            mReleaseFence->AsFenceFileHandle()->DuplicateFileHandle());
       }
     }
 #endif
@@ -690,6 +761,18 @@ void AsyncImagePipelineManager::ProcessPipelineRendered(
         holder->mTextureHostsUntilRenderCompleted.begin(),
         holder->mTextureHostsUntilRenderCompleted.end(),
         [&aEpoch](const auto& entry) { return aEpoch <= entry->mEpoch; });
+
+#ifdef XP_WIN
+    for (auto it = holder->mTextureHostsUntilRenderCompleted.begin();
+         it != firstCompletedHostToKeep; ++it) {
+      const auto& entry = *it;
+      auto* host = entry->mTexture->AsDXGIYCbCrTextureHostD3D11();
+      if (host && mReleaseFence && mReleaseFence->AsFenceD3D11()) {
+        host->SetReadFence(mReleaseFence->AsFenceD3D11());
+      }
+    }
+#endif
+
     if (firstCompletedHostToKeep !=
         holder->mTextureHostsUntilRenderCompleted.begin()) {
       std::vector<UniquePtr<ForwardingTextureHost>> hostsUntilCompleted(
@@ -761,8 +844,8 @@ wr::Epoch AsyncImagePipelineManager::GetNextImageEpoch() {
 
 AsyncImagePipelineManager::WebRenderPipelineInfoHolder::
     WebRenderPipelineInfoHolder(RefPtr<const wr::WebRenderPipelineInfo>&& aInfo,
-                                ipc::FileDescriptor&& aFenceFd)
-    : mInfo(aInfo), mFenceFd(aFenceFd) {}
+                                RefPtr<Fence>&& aFence)
+    : mInfo(aInfo), mFence(std::move(aFence)) {}
 
 AsyncImagePipelineManager::WebRenderPipelineInfoHolder::
     ~WebRenderPipelineInfoHolder() = default;

@@ -4,36 +4,36 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.RoomMemberEvent = exports.RoomMember = void 0;
-var _contentRepo = require("../content-repo");
-var _utils = require("../utils");
-var _logger = require("../logger");
-var _typedEventEmitter = require("./typed-event-emitter");
-var _event = require("../@types/event");
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(arg) { var key = _toPrimitive(arg, "string"); return typeof key === "symbol" ? key : String(key); }
-function _toPrimitive(input, hint) { if (typeof input !== "object" || input === null) return input; var prim = input[Symbol.toPrimitive]; if (prim !== undefined) { var res = prim.call(input, hint || "default"); if (typeof res !== "object") return res; throw new TypeError("@@toPrimitive must return a primitive value."); } return (hint === "string" ? String : Number)(input); } /*
-                                                                                                                                                                                                                                                                                                                                                                                          Copyright 2015 - 2021 The Matrix.org Foundation C.I.C.
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Licensed under the Apache License, Version 2.0 (the "License");
-                                                                                                                                                                                                                                                                                                                                                                                          you may not use this file except in compliance with the License.
-                                                                                                                                                                                                                                                                                                                                                                                          You may obtain a copy of the License at
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                              http://www.apache.org/licenses/LICENSE-2.0
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Unless required by applicable law or agreed to in writing, software
-                                                                                                                                                                                                                                                                                                                                                                                          distributed under the License is distributed on an "AS IS" BASIS,
-                                                                                                                                                                                                                                                                                                                                                                                          WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-                                                                                                                                                                                                                                                                                                                                                                                          See the License for the specific language governing permissions and
-                                                                                                                                                                                                                                                                                                                                                                                          limitations under the License.
-                                                                                                                                                                                                                                                                                                                                                                                          */
-let RoomMemberEvent = /*#__PURE__*/function (RoomMemberEvent) {
+var _contentRepo = require("../content-repo.js");
+var _utils = require("../utils.js");
+var _logger = require("../logger.js");
+var _typedEventEmitter = require("./typed-event-emitter.js");
+var _event = require("../@types/event.js");
+var _membership = require("../@types/membership.js");
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
+function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
+Copyright 2015 - 2021 The Matrix.org Foundation C.I.C.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+let RoomMemberEvent = exports.RoomMemberEvent = /*#__PURE__*/function (RoomMemberEvent) {
   RoomMemberEvent["Membership"] = "RoomMember.membership";
   RoomMemberEvent["Name"] = "RoomMember.name";
   RoomMemberEvent["PowerLevel"] = "RoomMember.powerLevel";
   RoomMemberEvent["Typing"] = "RoomMember.typing";
   return RoomMemberEvent;
 }({});
-exports.RoomMemberEvent = RoomMemberEvent;
 class RoomMember extends _typedEventEmitter.TypedEventEmitter {
   /**
    * Construct a new room member.
@@ -239,7 +239,7 @@ class RoomMember extends _typedEventEmitter.TypedEventEmitter {
     return this.modified;
   }
   isKicked() {
-    return this.membership === "leave" && this.events.member !== undefined && this.events.member.getSender() !== this.events.member.getStateKey();
+    return this.membership === _membership.KnownMembership.Leave && this.events.member !== undefined && this.events.member.getSender() !== this.events.member.getStateKey();
   }
 
   /**
@@ -261,11 +261,11 @@ class RoomMember extends _typedEventEmitter.TypedEventEmitter {
       const memberEvent = this.events.member;
       let memberContent = memberEvent.getContent();
       let inviteSender = memberEvent.getSender();
-      if (memberContent.membership === "join") {
+      if (memberContent.membership === _membership.KnownMembership.Join) {
         memberContent = memberEvent.getPrevContent();
         inviteSender = memberEvent.getUnsigned().prev_sender;
       }
-      if (memberContent.membership === "invite" && memberContent.is_direct) {
+      if (memberContent.membership === _membership.KnownMembership.Invite && memberContent.is_direct) {
         return inviteSender;
       }
     }

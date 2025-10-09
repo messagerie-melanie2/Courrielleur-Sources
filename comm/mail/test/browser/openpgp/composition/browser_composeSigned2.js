@@ -15,24 +15,26 @@ const {
   get_about_message,
   get_special_folder,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-const { open_compose_new_mail, get_msg_source, setup_msg_contents } =
-  ChromeUtils.import("resource://testing-common/mozmill/ComposeHelpers.jsm");
-const { OpenPGPTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mozmill/OpenPGPTestUtils.jsm"
+const { open_compose_new_mail, setup_msg_contents } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+  );
+const { OpenPGPTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/OpenPGPTestUtils.sys.mjs"
 );
 
-const { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+const { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 let bobAcct;
 let gOutbox;
 let kylieAcct;
 
-let aboutMessage = get_about_message();
+const aboutMessage = get_about_message();
 
 /**
  * Setup a mail account with a private key and import the public key for the
@@ -45,11 +47,11 @@ add_setup(async function () {
     "openpgp.example",
     "imap"
   );
-  let bobIdentity = MailServices.accounts.createIdentity();
+  const bobIdentity = MailServices.accounts.createIdentity();
   bobIdentity.email = "bob@openpgp.example";
   bobAcct.addIdentity(bobIdentity);
 
-  let [id] = await OpenPGPTestUtils.importPrivateKey(
+  const [id] = await OpenPGPTestUtils.importPrivateKey(
     window,
     new FileUtils.File(
       getTestFilePath(
@@ -63,7 +65,7 @@ add_setup(async function () {
 
   Assert.ok(id, "private key id received");
 
-  let initialKeyIdPref = bobIdentity.getUnicharAttribute("openpgp_key_id");
+  const initialKeyIdPref = bobIdentity.getUnicharAttribute("openpgp_key_id");
   bobIdentity.setUnicharAttribute("openpgp_key_id", id.split("0x").join(""));
 
   await OpenPGPTestUtils.importPublicKey(
@@ -83,11 +85,11 @@ add_setup(async function () {
     "example.com",
     "imap"
   );
-  let kylieIdentity = MailServices.accounts.createIdentity();
+  const kylieIdentity = MailServices.accounts.createIdentity();
   kylieIdentity.email = "kylie@example.com";
   kylieAcct.addIdentity(kylieIdentity);
 
-  let [id2] = await OpenPGPTestUtils.importPrivateKey(
+  const [id2] = await OpenPGPTestUtils.importPrivateKey(
     window,
     new FileUtils.File(
       getTestFilePath(
@@ -119,10 +121,10 @@ add_setup(async function () {
 add_task(async function testSignedMessageComposition2() {
   await be_in_folder(bobAcct.incomingServer.rootFolder);
 
-  let cwc = open_compose_new_mail();
-  let composeWin = cwc.window;
+  const cwc = await open_compose_new_mail();
+  const composeWin = cwc;
 
-  setup_msg_contents(
+  await setup_msg_contents(
     cwc,
     "alice@openpgp.example",
     "Compose Signed Message",
@@ -132,18 +134,18 @@ add_task(async function testSignedMessageComposition2() {
   await OpenPGPTestUtils.toggleMessageSigning(composeWin);
   await OpenPGPTestUtils.toggleMessageKeyAttachment(composeWin);
 
-  let passPromptPromise = BrowserTestUtils.promiseAlertDialogOpen();
-  let sendMessageCompletePromise = sendMessage(composeWin);
+  const passPromptPromise = BrowserTestUtils.promiseAlertDialogOpen();
+  const sendMessageCompletePromise = sendMessage(composeWin);
 
-  let ppWin = await passPromptPromise;
+  const ppWin = await passPromptPromise;
 
   // We'll enter a wrong pp, so we expect another prompt
-  let passPromptPromise2 = BrowserTestUtils.promiseAlertDialogOpen();
+  const passPromptPromise2 = BrowserTestUtils.promiseAlertDialogOpen();
 
   ppWin.document.getElementById("password1Textbox").value = "WRONG-passphrase";
   ppWin.document.querySelector("dialog").getButton("accept").click();
 
-  let ppWin2 = await passPromptPromise2;
+  const ppWin2 = await passPromptPromise2;
 
   ppWin2.document.getElementById("password1Textbox").value = "bob-passphrase";
   ppWin2.document.querySelector("dialog").getButton("accept").click();
@@ -151,8 +153,8 @@ add_task(async function testSignedMessageComposition2() {
   await sendMessageCompletePromise;
 
   await be_in_folder(gOutbox);
-  select_click_row(0);
-  assert_selected_and_displayed(0);
+  await select_click_row(0);
+  await assert_selected_and_displayed(0);
 
   Assert.ok(
     OpenPGPTestUtils.hasSignedIconState(aboutMessage.document, "ok"),
@@ -179,10 +181,10 @@ add_task(async function testSignedMessageComposition2() {
 add_task(async function testSignedMessageComposition3() {
   await be_in_folder(kylieAcct.incomingServer.rootFolder);
 
-  let cwc = open_compose_new_mail();
-  let composeWin = cwc.window;
+  const cwc = await open_compose_new_mail();
+  const composeWin = cwc.window;
 
-  setup_msg_contents(
+  await setup_msg_contents(
     cwc,
     "alice@openpgp.example",
     "Compose Signed Message",
@@ -194,8 +196,8 @@ add_task(async function testSignedMessageComposition3() {
   await sendMessage(composeWin);
 
   await be_in_folder(gOutbox);
-  select_click_row(0);
-  assert_selected_and_displayed(0);
+  await select_click_row(0);
+  await assert_selected_and_displayed(0);
 
   Assert.ok(
     OpenPGPTestUtils.hasSignedIconState(aboutMessage.document, "ok"),

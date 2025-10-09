@@ -22,7 +22,7 @@ var verifySession = {
     document.getElementById("challenge").textContent =
       this.sessionVerification.challenge;
     if (this.sessionVerification.challengeDescription) {
-      let description = document.getElementById("challengeDescription");
+      const description = document.getElementById("challengeDescription");
       description.hidden = false;
       description.textContent = this.sessionVerification.challengeDescription;
     }
@@ -48,6 +48,6 @@ var verifySession = {
   },
 };
 
-window.addEventListener("load", event => {
+window.addEventListener("load", () => {
   verifySession.onload();
 });

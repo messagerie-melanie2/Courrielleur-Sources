@@ -4,6 +4,10 @@
 
 // This verifies that add-on update checks work
 
+// Enable SCOPE_APPLICATION for builtin testing.  Default in tests is only SCOPE_PROFILE.
+let scopes = AddonManager.SCOPE_PROFILE | AddonManager.SCOPE_APPLICATION;
+Services.prefs.setIntPref("extensions.enabledScopes", scopes);
+
 // The test extension uses an insecure update url.
 Services.prefs.setBoolPref(PREF_EM_CHECK_UPDATE_SECURITY, false);
 // This test uses add-on versions that follow the toolkit version but we
@@ -52,7 +56,7 @@ testserver.registerDirectory("/data/", do_get_file("data"));
 
 const XPIS = {};
 
-add_task(async function setup() {
+add_setup(async function setup() {
   createAppInfo("xpcshell@tests.mozilla.org", "XPCShell", "1", "1");
 
   Services.locale.requestedLocales = ["fr-FR"];
@@ -216,7 +220,7 @@ add_task(async function test_apply_update() {
   // Make sure that the extension lastModifiedTime was updated.
   let testFile = getAddonFile(a1);
   let difference = testFile.lastModifiedTime - startupTime;
-  ok(Math.abs(difference) < MAX_TIME_DIFFERENCE);
+  Assert.less(Math.abs(difference), MAX_TIME_DIFFERENCE);
 
   await a1.uninstall();
 });
@@ -595,25 +599,22 @@ add_task(async function test_params() {
   let resultsPromise = new Promise(resolve => {
     let results = new Map();
 
-    testserver.registerPathHandler(
-      "/data/param_test.json",
-      function (request, response) {
-        let params = new URLSearchParams(request.queryString);
-        let itemId = params.get("item_id");
-        ok(
-          !results.has(itemId),
-          `Should not see a duplicate request for item ${itemId}`
-        );
+    testserver.registerPathHandler("/data/param_test.json", function (request) {
+      let params = new URLSearchParams(request.queryString);
+      let itemId = params.get("item_id");
+      ok(
+        !results.has(itemId),
+        `Should not see a duplicate request for item ${itemId}`
+      );
 
-        results.set(itemId, params);
+      results.set(itemId, params);
 
-        if (results.size === PARAM_IDS.length) {
-          resolve(results);
-        }
-
-        request.setStatusLine(null, 500, "Server Error");
+      if (results.size === PARAM_IDS.length) {
+        resolve(results);
       }
-    );
+
+      request.setStatusLine(null, 500, "Server Error");
+    });
   });
 
   let addons = await getAddons(PARAM_IDS);
@@ -746,11 +747,11 @@ add_task(async function test_no_auto_update() {
         equal(aInstall.existingAddon.id, "addon1@tests.mozilla.org");
       },
 
-      onDownloadFailed(aInstall) {
+      onDownloadFailed() {
         ok(false, "Should not have seen onDownloadFailed event");
       },
 
-      onDownloadCancelled(aInstall) {
+      onDownloadCancelled() {
         ok(false, "Should not have seen onDownloadCancelled event");
       },
 
@@ -764,11 +765,11 @@ add_task(async function test_no_auto_update() {
         resolve();
       },
 
-      onInstallFailed(aInstall) {
+      onInstallFailed() {
         ok(false, "Should not have seen onInstallFailed event");
       },
 
-      onInstallCancelled(aInstall) {
+      onInstallCancelled() {
         ok(false, "Should not have seen onInstallCancelled event");
       },
     };
@@ -794,33 +795,43 @@ add_task(async function test_no_auto_update() {
 // Test that the update check returns nothing for addons in locked install
 // locations.
 add_task(async function run_test_locked_install() {
-  const lockedDir = gProfD.clone();
-  lockedDir.append("locked_extensions");
-  registerDirectory("XREAppFeat", lockedDir);
-
-  await promiseShutdownManager();
-
-  let xpi = await createTempWebExtensionFile({
+  const ADDON_ID = "addon13@tests.mozilla.org";
+  const testExtensionProps = {
     manifest: {
       name: "Test Addon 13",
       version: "1.0",
       browser_specific_settings: {
         gecko: {
-          id: "addon13@tests.mozilla.org",
+          id: ADDON_ID,
           update_url: "http://example.com/data/test_update.json",
         },
       },
     },
-  });
-  xpi.copyTo(lockedDir, "addon13@tests.mozilla.org.xpi");
+  };
 
-  let validAddons = { system: ["addon13@tests.mozilla.org"] };
-  await overrideBuiltIns(validAddons);
+  await promiseShutdownManager();
+
+  await setupBuiltinExtension(testExtensionProps, "builtin-addon13-ext");
+  await overrideBuiltIns({
+    builtins: [
+      {
+        addon_id: ADDON_ID,
+        addon_version: "1.0",
+        res_url: "resource://builtin-addon13-ext/",
+      },
+    ],
+  });
 
   await promiseStartupManager();
 
-  let a13 = await AddonManager.getAddonByID("addon13@tests.mozilla.org");
+  let a13 = await AddonManager.getAddonByID(ADDON_ID);
   notEqual(a13, null);
+
+  equal(
+    a13.getResourceURI().spec,
+    "resource://builtin-addon13-ext/",
+    "Expect addon root uri to be a resource:// URI"
+  );
 
   let result = await AddonTestUtils.promiseFindAddonUpdates(a13);
   ok(

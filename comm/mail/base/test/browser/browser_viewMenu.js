@@ -2,11 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+const { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
 
-/** @type MenuData */
+/** @type {MenuData} */
 const viewMenuData = {
   menu_Toolbars: {},
   view_toolbars_popup_quickFilterBar: { checked: true },
@@ -126,29 +126,36 @@ const viewMenuData = {
   viewAttachmentsInlineMenuitem: { checked: true },
   pageSourceMenuItem: { disabled: true },
 };
-let helper = new MenuTestHelper("menu_View", viewMenuData);
+const helper = new MenuTestHelper("menu_View", viewMenuData);
 
-let tabmail = document.getElementById("tabmail");
-let inboxFolder, rootFolder, testMessages;
+const tabmail = document.getElementById("tabmail");
+let inboxFolder, secondFolder, rootFolder, testMessages;
 
 add_setup(async function () {
   document.getElementById("toolbar-menubar").removeAttribute("autohide");
 
-  let generator = new MessageGenerator();
+  const generator = new MessageGenerator();
 
-  MailServices.accounts.createLocalMailAccount();
-  let account = MailServices.accounts.accounts[0];
+  const account = MailServices.accounts.createLocalMailAccount();
   account.addIdentity(MailServices.accounts.createIdentity());
-  rootFolder = account.incomingServer.rootFolder;
+  rootFolder = account.incomingServer.rootFolder.QueryInterface(
+    Ci.nsIMsgLocalMailFolder
+  );
 
-  rootFolder.createSubfolder("view menu", null);
   inboxFolder = rootFolder
-    .getChildNamed("view menu")
+    .createLocalSubfolder("view menu")
+    .QueryInterface(Ci.nsIMsgLocalMailFolder);
+  secondFolder = rootFolder
+    .createLocalSubfolder("multi selection")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   inboxFolder.addMessageBatch(
-    generator.makeMessages({ count: 5 }).map(message => message.toMboxString())
+    generator
+      .makeMessages({ count: 5 })
+      .map(message => message.toMessageString())
   );
   testMessages = [...inboxFolder.messages];
+
+  goDoCommand("cmd_showQuickFilterBar");
 
   registerCleanupFunction(() => {
     tabmail.closeOtherTabs(0);
@@ -176,6 +183,27 @@ add_task(async function test3PaneTab() {
     viewSortMenu: { disabled: false },
     viewMessagesMenu: { disabled: false },
   });
+
+  // Multiselect folders and test.
+  EventUtils.synthesizeMouseAtCenter(
+    tabmail.currentAbout3Pane.folderPane
+      .getRowForFolder(secondFolder)
+      .querySelector(".name"),
+    { accelKey: true },
+    tabmail.currentAbout3Pane
+  );
+  await helper.testItems({
+    viewSortMenu: { disabled: true },
+    viewMessagesMenu: { disabled: true },
+  });
+  EventUtils.synthesizeMouseAtCenter(
+    tabmail.currentAbout3Pane.folderPane
+      .getRowForFolder(inboxFolder)
+      .querySelector(".name"),
+    {},
+    tabmail.currentAbout3Pane
+  );
+  tabmail.currentAbout3Pane.displayFolder(inboxFolder);
 
   goDoCommand("cmd_toggleQuickFilterBar");
   await helper.testItems({
@@ -214,5 +242,23 @@ add_task(async function test3PaneTab() {
     menu_showFolderPane: { checked: true },
     menu_toggleThreadPaneHeader: { checked: true },
     menu_showMessage: { checked: true },
+  });
+
+  // No messages selected.
+  tabmail.currentAbout3Pane.threadTree.selectedIndices = [];
+  await helper.testItems({
+    pageSourceMenuItem: { disabled: true },
+  });
+
+  // Single message selected.
+  tabmail.currentAbout3Pane.threadTree.selectedIndices = [1];
+  await helper.testItems({
+    pageSourceMenuItem: { disabled: false },
+  });
+
+  // Multiselect messages.
+  tabmail.currentAbout3Pane.threadTree.selectedIndices = [2, 4];
+  await helper.testItems({
+    pageSourceMenuItem: { disabled: false },
   });
 });

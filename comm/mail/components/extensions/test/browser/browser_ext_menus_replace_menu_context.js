@@ -1,6 +1,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
 function getVisibleChildrenIds(menuElem) {
@@ -22,7 +23,7 @@ function checkIsDefaultMenuItemVisible(visibleMenuItemIds) {
 // - tab
 add_task(async function overrideContext_with_context() {
   // Background script of the main test extension and the auxiliary other extension.
-  function background() {
+  async function background() {
     const HTTP_URL = "https://example.com/?SomeTab";
     browser.test.onMessage.addListener(async (msg, tabId) => {
       browser.test.assertEq(
@@ -30,14 +31,14 @@ add_task(async function overrideContext_with_context() {
         msg,
         `Expected message in ${browser.runtime.id}`
       );
-      let tab = await browser.tabs.get(tabId);
+      const tab = await browser.tabs.get(tabId);
       if (!tab.url) {
         // tabs or activeTab not active.
         browser.test.sendMessage("testTabAccessDone", "tab_no_url");
         return;
       }
       try {
-        let [url] = await browser.tabs.executeScript(tabId, {
+        const [url] = await browser.tabs.executeScript(tabId, {
           code: "document.URL",
         });
         browser.test.assertEq(
@@ -46,7 +47,6 @@ add_task(async function overrideContext_with_context() {
           "Expected successful executeScript"
         );
         browser.test.sendMessage("testTabAccessDone", "executeScript_ok");
-        return;
       } catch (e) {
         browser.test.assertEq(
           "Missing host permission for the tab",
@@ -107,66 +107,105 @@ add_task(async function overrideContext_with_context() {
     });
 
     // Minimal properties to define menu items for a specific context.
-    browser.menus.create({
-      id: "tab_context",
-      title: "tab_context",
-      contexts: ["tab"],
-    });
+    await new Promise(resolve =>
+      browser.menus.create(
+        {
+          id: "tab_context",
+          title: "tab_context",
+          contexts: ["tab"],
+        },
+        resolve
+      )
+    );
 
     // documentUrlPatterns in the tab context applies to the tab's URL.
-    browser.menus.create({
-      id: "tab_context_http",
-      title: "tab_context_http",
-      contexts: ["tab"],
-      documentUrlPatterns: [HTTP_URL],
-    });
-    browser.menus.create({
-      id: "tab_context_moz_unexpected",
-      title: "tab_context_moz",
-      contexts: ["tab"],
-      documentUrlPatterns: ["moz-extension://*/tab.html"],
-    });
+    await new Promise(resolve =>
+      browser.menus.create(
+        {
+          id: "tab_context_http",
+          title: "tab_context_http",
+          contexts: ["tab"],
+          documentUrlPatterns: [HTTP_URL],
+        },
+        resolve
+      )
+    );
+    await new Promise(resolve =>
+      browser.menus.create(
+        {
+          id: "tab_context_moz_unexpected",
+          title: "tab_context_moz",
+          contexts: ["tab"],
+          documentUrlPatterns: ["moz-extension://*/tab.html"],
+        },
+        resolve
+      )
+    );
     // When viewTypes is present, the document's URL is matched instead.
-    browser.menus.create({
-      id: "tab_context_viewType_http_unexpected",
-      title: "tab_context_viewType_http",
-      contexts: ["tab"],
-      viewTypes: ["tab"],
-      documentUrlPatterns: [HTTP_URL],
-    });
-    browser.menus.create({
-      id: "tab_context_viewType_moz",
-      title: "tab_context_viewType_moz",
-      contexts: ["tab"],
-      viewTypes: ["tab"],
-      documentUrlPatterns: ["moz-extension://*/tab.html"],
-    });
+    await new Promise(resolve =>
+      browser.menus.create(
+        {
+          id: "tab_context_viewType_http_unexpected",
+          title: "tab_context_viewType_http",
+          contexts: ["tab"],
+          viewTypes: ["tab"],
+          documentUrlPatterns: [HTTP_URL],
+        },
+        resolve
+      )
+    );
+    await new Promise(resolve =>
+      browser.menus.create(
+        {
+          id: "tab_context_viewType_moz",
+          title: "tab_context_viewType_moz",
+          contexts: ["tab"],
+          viewTypes: ["tab"],
+          documentUrlPatterns: ["moz-extension://*/tab.html"],
+        },
+        resolve
+      )
+    );
 
-    browser.menus.create({ id: "link_context", title: "link_context" }, () => {
-      browser.test.sendMessage("menu_items_registered");
-    });
+    await new Promise(resolve =>
+      browser.menus.create(
+        {
+          id: "link_context",
+          title: "link_context",
+        },
+        resolve
+      )
+    );
+
+    browser.test.sendMessage("menu_items_registered");
 
     if (browser.runtime.id === "@menu-test-extension") {
       browser.tabs.create({ url: "tab.html" });
     }
   }
 
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     manifest: {
       applications: { gecko: { id: "@menu-test-extension" } },
       permissions: ["menus", "menus.overrideContext", "tabs"],
     },
     files: {
-      "tab.html": `
-        <!DOCTYPE html><meta charset="utf-8">
-        <a href="http://example.com/">Link</a>
-        <script src="tab.js"></script>
-      `,
+      "tab.html": `<!DOCTYPE html>
+        <html>
+          <head>
+            <title>Popup</title>
+            <meta charset="utf-8">
+            <script defer="defer" src="tab.js"></script>
+          </head>
+          <body>
+            <a href="http://example.com/">Link</a>
+          </body>
+        </html>`,
       "tab.js": async () => {
-        let [tab] = await browser.tabs.query({
+        const [tab] = await browser.tabs.query({
           url: "https://example.com/?SomeTab",
         });
-        let testCases = [
+        const testCases = [
           {
             context: "tab",
             tabId: tab.id,
@@ -197,10 +236,10 @@ add_task(async function overrideContext_with_context() {
     background,
   });
 
-  let { browser } = window.openContentTab("https://example.com/?SomeTab");
+  const { browser } = window.openContentTab("https://example.com/?SomeTab");
   await awaitBrowserLoaded(browser);
 
-  let otherExtension = ExtensionTestUtils.loadExtension({
+  const otherExtension = ExtensionTestUtils.loadExtension({
     manifest: {
       applications: { gecko: { id: "@other-test-extension" } },
       permissions: ["menus", "activeTab"],
@@ -213,16 +252,15 @@ add_task(async function overrideContext_with_context() {
   await extension.startup();
   await extension.awaitMessage("menu_items_registered");
 
-  let { tabId, httpUrl, extensionUrl } = await extension.awaitMessage(
-    "setup_ready"
-  );
+  const { tabId, httpUrl, extensionUrl } =
+    await extension.awaitMessage("setup_ready");
   info(`Set up test with tabId=${tabId}.`);
 
   {
     // Test case 1: context=tab
-    let menu = await openContextMenu("a");
+    const menu = await openBrowserContextMenuInTab("a");
     await extension.awaitMessage("oncontextmenu_in_dom");
-    for (let ext of [extension, otherExtension]) {
+    for (const ext of [extension, otherExtension]) {
       info(`Testing menu from ${ext.id} after changing context to tab`);
       Assert.deepEqual(
         await ext.awaitMessage("onShown"),
@@ -241,7 +279,7 @@ add_task(async function overrideContext_with_context() {
         "Expected onShown details after changing context to tab"
       );
     }
-    let topLevels = menu.getElementsByAttribute("ext-type", "top-level-menu");
+    const topLevels = menu.getElementsByAttribute("ext-type", "top-level-menu");
     is(topLevels.length, 1, "Expected top-level menu for otherExtension");
 
     Assert.deepEqual(
@@ -256,7 +294,7 @@ add_task(async function overrideContext_with_context() {
       "Expected menu items after changing context to tab"
     );
 
-    let submenu = await openSubmenu(topLevels[0]);
+    const submenu = await openSubMenuPopup(topLevels[0]);
     is(submenu, topLevels[0].menupopup, "Correct submenu opened");
 
     Assert.deepEqual(
@@ -284,13 +322,13 @@ add_task(async function overrideContext_with_context() {
     );
 
     // Click on the menu item of the other extension to unlock host permissions.
-    let menuItems = menu.getElementsByAttribute("label", "tab_context");
+    const menuItems = menu.getElementsByAttribute("label", "tab_context");
     is(
       menuItems.length,
       2,
       "There are two menu items with label 'tab_context'"
     );
-    await closeExtensionContextMenu(menuItems[1]);
+    await clickItemInMenuPopup(menuItems[1]);
 
     Assert.deepEqual(
       await otherExtension.awaitMessage("onClicked"),
@@ -321,20 +359,20 @@ add_task(async function overrideContext_with_context() {
 
   {
     // Test case 2: context=tab, click on menu item of extension..
-    let menu = await openContextMenu("a");
+    const menu = await openBrowserContextMenuInTab("a");
     await extension.awaitMessage("oncontextmenu_in_dom");
 
     // The previous test has already verified the visible menu items,
     // so we skip checking the onShown result and only test clicking.
     await extension.awaitMessage("onShown");
     await otherExtension.awaitMessage("onShown");
-    let menuItems = menu.getElementsByAttribute("label", "tab_context");
+    const menuItems = menu.getElementsByAttribute("label", "tab_context");
     is(
       menuItems.length,
       2,
       "There are two menu items with label 'tab_context'"
     );
-    await closeExtensionContextMenu(menuItems[0]);
+    await clickItemInMenuPopup(menuItems[0]);
 
     Assert.deepEqual(
       await extension.awaitMessage("onClicked"),
@@ -358,18 +396,18 @@ add_task(async function overrideContext_with_context() {
 
   {
     // Test case 4: context=tab, invalid tabId.
-    let menu = await openContextMenu("a");
+    const menu = await openBrowserContextMenuInTab("a");
     await extension.awaitMessage("oncontextmenu_in_dom");
     // When an invalid tabId is used, all extension menu logic is skipped and
     // the default menu is shown.
     checkIsDefaultMenuItemVisible(getVisibleChildrenIds(menu));
-    await closeContextMenu(menu);
+    await closeMenuPopup(menu);
   }
 
   await extension.unload();
   await otherExtension.unload();
 
-  let tabmail = document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   tabmail.closeTab(tabmail.currentTabInfo);
   tabmail.closeTab(tabmail.currentTabInfo);
 });

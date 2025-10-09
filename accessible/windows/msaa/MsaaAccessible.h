@@ -12,33 +12,31 @@
 #include "ia2AccessibleHyperlink.h"
 #include "ia2AccessibleValue.h"
 #include "IUnknownImpl.h"
-#include "mozilla/a11y/MsaaIdGenerator.h"
-#include "mozilla/dom/ipc/IdType.h"
+#include "MsaaIdGenerator.h"
 #include "nsXULAppAPI.h"
+#include "uiaRawElmProvider.h"
 
 namespace mozilla {
 namespace a11y {
 class Accessible;
 class AccessibleWrap;
 class LocalAccessible;
-class sdnAccessible;
 
 class MsaaAccessible : public ia2Accessible,
                        public ia2AccessibleComponent,
                        public ia2AccessibleHyperlink,
-                       public ia2AccessibleValue {
+                       public ia2AccessibleValue,
+                       public uiaRawElmProvider {
  public:
   static MsaaAccessible* Create(Accessible* aAcc);
 
-  Accessible* Acc() { return mAcc; }
+  Accessible* Acc() const { return mAcc; }
   AccessibleWrap* LocalAcc();
 
   uint32_t GetExistingID() const { return mID; }
   static const uint32_t kNoID = 0;
 
   static int32_t GetChildIDFor(Accessible* aAccessible);
-  static void AssignChildIDTo(NotNull<sdnAccessible*> aSdnAcc);
-  static void ReleaseChildID(NotNull<sdnAccessible*> aSdnAcc);
   static HWND GetHWNDFor(Accessible* aAccessible);
   static void FireWinEvent(Accessible* aTarget, uint32_t aEventType);
 
@@ -58,6 +56,8 @@ class MsaaAccessible : public ia2Accessible,
    * Creates ITypeInfo for LIBID_Accessibility if it's needed and returns it.
    */
   static ITypeInfo* GetTI(LCID lcid);
+
+  static Accessible* GetAccessibleFrom(IUnknown* aUnknown);
 
   DECL_IUNKNOWN
 
@@ -142,6 +142,10 @@ class MsaaAccessible : public ia2Accessible,
                                            VARIANT* pVarResult,
                                            EXCEPINFO* pExcepInfo,
                                            UINT* puArgErr) override;
+
+  // UIA's IInvokeProvider has a method called Invoke too, but it's fine because
+  // it accepts very different parameters.
+  using uiaRawElmProvider::Invoke;
 
  protected:
   explicit MsaaAccessible(Accessible* aAcc);

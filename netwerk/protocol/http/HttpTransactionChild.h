@@ -32,7 +32,6 @@ class nsProxyInfo;
 // manages the real nsHttpTransaction and transaction pump.
 //-----------------------------------------------------------------------------
 class HttpTransactionChild final : public PHttpTransactionChild,
-                                   public nsIStreamListener,
                                    public nsITransportEventSink,
                                    public nsIThrottledInputChannel,
                                    public nsIThreadRetargetableStreamListener,
@@ -58,7 +57,6 @@ class HttpTransactionChild final : public PHttpTransactionChild,
       const ClassOfService& aClassOfService, const uint32_t& aInitialRwin,
       const bool& aResponseTimeoutEnabled, const uint64_t& aChannelId,
       const bool& aHasTransactionObserver,
-      const Maybe<H2PushedStreamArg>& aPushedStreamArg,
       const mozilla::Maybe<PInputChannelThrottleQueueChild*>& aThrottleQueue,
       const bool& aIsDocumentLoad, const TimeStamp& aRedirectStart,
       const TimeStamp& aRedirectEnd);
@@ -89,8 +87,7 @@ class HttpTransactionChild final : public PHttpTransactionChild,
       uint64_t topLevelOuterContentWindowId, uint8_t httpTrafficCategory,
       uint64_t requestContextID, ClassOfService classOfService,
       uint32_t initialRwin, bool responseTimeoutEnabled, uint64_t channelId,
-      bool aHasTransactionObserver,
-      const Maybe<H2PushedStreamArg>& aPushedStreamArg);
+      bool aHasTransactionObserver);
 
   void CancelInternal(nsresult aStatus);
 

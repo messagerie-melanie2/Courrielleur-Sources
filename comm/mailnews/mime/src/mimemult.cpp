@@ -3,11 +3,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mimehdrs.h"
 #include "msgCore.h"
 #include "mimemult.h"
 #include "mimemoz2.h"
 #include "mimeeobj.h"
+#include "mimemsig.h"
 
+#include "nsMailHeaders.h"
 #include "prlog.h"
 #include "prmem.h"
 #include "plstr.h"
@@ -41,7 +44,7 @@ static int MimeMultipart_close_child(MimeObject*);
 
 extern "C" MimeObjectClass mimeMultipartAlternativeClass;
 extern "C" MimeObjectClass mimeMultipartRelatedClass;
-extern "C" MimeObjectClass mimeMultipartSignedClass;
+extern "C" MimeMultipartSignedClass mimeMultipartSignedClass;
 extern "C" MimeObjectClass mimeInlineTextVCardClass;
 extern "C" MimeExternalObjectClass mimeExternalObjectClass;
 extern "C" MimeSuppressedCryptoClass mimeSuppressedCryptoClass;
@@ -50,9 +53,8 @@ extern "C" MimeSuppressedCryptoClass mimeSuppressedCryptoClass;
 static int MimeMultipart_debug_print(MimeObject*, PRFileDesc*, int32_t);
 #endif
 
-static int MimeMultipartClassInitialize(MimeMultipartClass* clazz) {
-  MimeObjectClass* oclass = (MimeObjectClass*)clazz;
-  MimeMultipartClass* mclass = (MimeMultipartClass*)clazz;
+static int MimeMultipartClassInitialize(MimeObjectClass* oclass) {
+  MimeMultipartClass* mclass = (MimeMultipartClass*)oclass;
 
   PR_ASSERT(!oclass->class_initialized);
   oclass->initialize = MimeMultipart_initialize;
@@ -410,8 +412,11 @@ static int MimeMultipart_create_child(MimeObject* obj) {
    auto-uudecode-hack won't ever be done for subparts of a
    multipart, but only for untyped children of message/rfc822.
    */
+
+  const char* my_address = mime_part_address(obj);
   body = mime_create(((ct && *ct) ? ct : (dct ? dct : TEXT_PLAIN)), mult->hdrs,
-                     obj->options);
+                     obj->options, false, my_address, obj->content_type);
+  PR_Free((void*)my_address);
   PR_FREEIF(ct);
   if (!body) return MIME_OUT_OF_MEMORY;
   status = ((MimeContainerClass*)obj->clazz)->add_child(obj, body);
@@ -457,11 +462,14 @@ static int MimeMultipart_create_child(MimeObject* obj) {
     /* if we are saving an apple double attachment, we need to set correctly the
      * content type of the channel */
     if (mime_typep(obj, (MimeObjectClass*)&mimeMultipartAppleDoubleClass)) {
-      mime_stream_data* msd = (mime_stream_data*)body->options->stream_closure;
-      if (!body->options->write_html_p && body->content_type &&
-          !PL_strcasecmp(body->content_type, APPLICATION_APPLEFILE)) {
-        if (msd && msd->channel)
-          msd->channel->SetContentType(nsLiteralCString(APPLICATION_APPLEFILE));
+      mime_stream_data* msd = body->options->stream_closure.AsMimeStreamData();
+      if (msd) {
+        if (!body->options->write_html_p && body->content_type &&
+            !PL_strcasecmp(body->content_type, APPLICATION_APPLEFILE)) {
+          if (msd->channel)
+            msd->channel->SetContentType(
+                nsLiteralCString(APPLICATION_APPLEFILE));
+        }
       }
     }
 #endif
@@ -593,12 +601,14 @@ static int MimeMultipart_parse_child_line(MimeObject* obj, const char* line,
   if (!first_line_p) {
     /* Push out a preceding newline... */
     char nl[] = MSG_LINEBREAK;
-    status = kid->clazz->parse_buffer(nl, MSG_LINEBREAK_LEN, kid);
+    status = kid->clazz->parse_buffer(
+        nl, MSG_LINEBREAK_LEN, MimeClosure(MimeClosure::isMimeObject, kid));
     if (status < 0) return status;
   }
 
   /* Now push out the line sans trailing newline. */
-  return kid->clazz->parse_buffer(line, length, kid);
+  return kid->clazz->parse_buffer(line, length,
+                                  MimeClosure(MimeClosure::isMimeObject, kid));
 }
 
 static int MimeMultipart_parse_eof(MimeObject* obj, bool abort_p) {

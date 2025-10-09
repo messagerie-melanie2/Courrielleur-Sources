@@ -43,7 +43,9 @@ var fs = {
   },
 };
 requireCache.set("fs", fs);
-var { jsmime } = ChromeUtils.import("resource:///modules/jsmime.jsm");
+var { jsmime } = ChromeUtils.importESModule(
+  "resource:///modules/jsmime.sys.mjs"
+);
 requireCache.set("jsmime", jsmime);
 
 function require(path) {
@@ -53,7 +55,7 @@ function require(path) {
 
   let file;
   if (path.startsWith("test/")) {
-    let name = path.substring("test/".length);
+    const name = path.substring("test/".length);
     file = "resource://testing-common/jsmime/" + name + ".js";
   } else {
     file = "resource:///modules/jsmime/" + path + ".js";
@@ -99,17 +101,17 @@ function MochaSuite(name) {
 // The real code for running a suite of tests, written as async function.
 MochaSuite.prototype._runSuite = async function () {
   info("Running suite " + this.name);
-  for (let setup_ of this.setup) {
+  for (const setup_ of this.setup) {
     await runFunction(setup_);
   }
-  for (let test_ of this.tests) {
+  for (const test_ of this.tests) {
     info("Running test " + test_.name);
     await runFunction(test_.test);
   }
-  for (let suite_ of this.suites) {
+  for (const suite_ of this.suites) {
     await suite_.runSuite();
   }
-  for (let fn of this.teardown) {
+  for (const fn of this.teardown) {
     await runFunction(fn);
   }
   info("Finished suite " + this.name);
@@ -122,7 +124,7 @@ MochaSuite.prototype.runSuite = function () {
 
 // Run the given function, returning a promise of when the test will complete.
 function runFunction(fn) {
-  let completed = new Promise(function (resolve, reject) {
+  const completed = new Promise(function (resolve, reject) {
     function onEnd(error) {
       if (error !== undefined) {
         reject(error);
@@ -149,7 +151,7 @@ function suite(name, tests) {
   if (/[\x80-]/.exec(name)) {
     name = "<unprintable name>";
   }
-  let suiteParent = currentSuite;
+  const suiteParent = currentSuite;
   currentSuite = new MochaSuite(name);
   suiteParent.suites.push(currentSuite);
   tests();

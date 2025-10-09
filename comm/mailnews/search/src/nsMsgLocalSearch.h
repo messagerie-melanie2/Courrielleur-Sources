@@ -6,9 +6,7 @@
 #ifndef _nsMsgLocalSearch_H
 #define _nsMsgLocalSearch_H
 
-// inherit interface here
-#include "mozilla/Attributes.h"
-#include "nsIMsgSearchAdapter.h"
+#include "nsIMsgEnumerator.h"
 #include "nsIUrlListener.h"
 
 // inherit base implementation
@@ -31,7 +29,6 @@ class nsMsgSearchOfflineMail : public nsMsgSearchAdapter,
 
   NS_IMETHOD ValidateTerms() override;
   NS_IMETHOD Search(bool* aDone) override;
-  NS_IMETHOD Abort() override;
   NS_IMETHOD AddResultElement(nsIMsgDBHdr*) override;
 
   static nsresult MatchTermsForFilter(

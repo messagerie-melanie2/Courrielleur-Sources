@@ -13,7 +13,6 @@
 
 import argparse
 import datetime
-import io
 import json
 import logging
 import os
@@ -26,13 +25,15 @@ import mozpack.path as mozpath
 import mozversioncontrol
 import requests
 from fluent.syntax.parser import FluentParser
+from hglib.error import ServerError
 from mozpack.chrome.manifest import Manifest, ManifestLocale, parse_manifest
+from redo import retry
 
 from mozbuild.configure.util import Version
 
 
 def write_file(path, content):
-    with io.open(path, "w", encoding="utf-8") as out:
+    with open(path, "w", encoding="utf-8") as out:
         out.write(content + "\n")
 
 
@@ -73,20 +74,22 @@ def get_dt_from_hg(path):
 
     url = pushlog_api_url.format(repo_url, cs)
     session = requests.Session()
-    try:
-        response = session.get(url)
-    except Exception as e:
-        msg = "Failed to retrieve push timestamp using {}\nError: {}".format(url, e)
-        raise Exception(msg)
 
-    data = response.json()
+    def get_pushlog():
+        try:
+            response = session.get(url)
+            response.raise_for_status()
+        except Exception as e:
+            msg = f"Failed to retrieve push timestamp using {url}\nError: {e}"
+            raise Exception(msg)
 
+        return response.json()
+
+    data = retry(get_pushlog)
     try:
         date = data["pushdate"][0]
     except KeyError as exc:
-        msg = "{}\ndata is: {}".format(
-            str(exc), json.dumps(data, indent=2, sort_keys=True)
-        )
+        msg = f"{str(exc)}\ndata is: {json.dumps(data, indent=2, sort_keys=True)}"
         raise KeyError(msg)
 
     return datetime.datetime.utcfromtimestamp(date)
@@ -113,7 +116,16 @@ def get_dt_from_hg(path):
 def get_timestamp_for_locale(path):
     dt = None
     if os.path.isdir(os.path.join(path, ".hg")):
-        dt = get_dt_from_hg(path)
+        dt = None
+        # This can be removed once we're no longer repacking from hg l10n repos.
+        try:
+            dt = get_dt_from_hg(path)
+        except ServerError as se:
+            # This rare condition can happen if we try to repack from a
+            # git l10n repository after having already repacked from an
+            # hg l10n repository on the same machine.
+            if "sharedpath points to nonexistent directory" not in str(se):
+                raise se
 
     if dt is None:
         dt = get_build_date()
@@ -291,7 +303,7 @@ def convert_entry_flags_to_platform_codes(flags):
             elif value[1] == "WINNT":
                 ret.append("win")
             else:
-                raise Exception("Unknown flag value {0}".format(value[1]))
+                raise Exception(f"Unknown flag value {value[1]}")
 
     return ret
 
@@ -352,7 +364,7 @@ def parse_chrome_manifest(path, base_path, chrome_entries):
                 }
             )
         else:
-            raise Exception("Unknown type {0}".format(entry.name))
+            raise Exception(f"Unknown type {entry.name}")
 
 
 ###
@@ -370,7 +382,7 @@ def parse_chrome_manifest(path, base_path, chrome_entries):
 ###
 def get_version_maybe_buildid(app_version):
     def _extract_numeric_part(part):
-        matches = re.compile("[^\d]").search(part)
+        matches = re.compile(r"[^\d]").search(part)
         if matches:
             part = part[0 : matches.start()]
         if len(part) == 0:
@@ -564,10 +576,10 @@ def main(args):
         if args.app_name == "SeaMonkey":
             # SeaMonkey is odd in that <major> hasn't changed for many years.
             # So min is <major>.<minor>.0
-            min_app_version = "{}.{}.0".format(v.major, v.minor)
+            min_app_version = f"{v.major}.{v.minor}.0"
         else:
             # Language packs should be minversion of {major}.0
-            min_app_version = "{}.0".format(v.major)
+            min_app_version = f"{v.major}.0"
 
     res = create_webmanifest(
         args.locales,

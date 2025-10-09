@@ -7,6 +7,9 @@
 with Files("**"):
     BUG_COMPONENT = ("Toolkit", "General")
 
+with Files("uniffi*/**"):
+    BUG_COMPONENT = ("Toolkit", "UniFFI Bindings")
+
 # These component dirs are built for all apps (including suite)
 if CONFIG["MOZ_HAS_REMOTE"]:
     DIRS += ["remote"]
@@ -14,7 +17,6 @@ if CONFIG["MOZ_HAS_REMOTE"]:
 DIRS += [
     "aboutcheckerboard",
     "aboutmemory",
-    "aboutperformance",
     "aboutprocesses",
     "alerts",
     "antitracking",
@@ -23,37 +25,41 @@ DIRS += [
     "backgroundhangmonitor",
     "bitsdownload",
     "browser",
+    "captchadetection",
     "cascade_bloom_filter",
     "certviewer",
     "cleardata",
     "clearsitedata",
     "cookiebanners",
     "commandlines",
+    "contentanalysis",
     "contentprefs",
+    "contentrelevancy",
     "contextualidentity",
     "crashes",
     "crashmonitor",
     "credentialmanagement",
+    "doh",
     "downloads",
     "enterprisepolicies",
     "extensions",
-    "featuregates",
     "formautofill",
     "finalizationwitness",
     "find",
     "forgetaboutsite",
+    "gecko-trace",
     "glean",
     "httpsonlyerror",
     "jsoncpp/src/lib_json",
     "kvstore",
+    "media",
     "mediasniffer",
+    "ml",
     "mozintl",
     "mozprotocol",
     "parentalcontrols",
     "passwordmgr",
     "pdfjs",
-    "perfmonitoring",
-    "pictureinpicture",
     "places",
     "processtools",
     "processsingleton",
@@ -63,6 +69,7 @@ DIRS += [
     "remotebrowserutils",
     "reflect",
     "reputationservice",
+    "reportbrokensite",
     "resistfingerprinting",
     "search",
     "sessionstore",
@@ -70,7 +77,6 @@ DIRS += [
     "startup",
     "statusfilter",
     "telemetry",
-    "translation",
     "translations",
     "thumbnails",
     "timermanager",
@@ -93,6 +99,7 @@ if CONFIG["MOZ_BUILD_APP"] != "mobile/android":
     DIRS += [
         "aboutconfig",
         "narrate",
+        "pictureinpicture",
         "reader",
         "viaduct",
         "uniffi-js",
@@ -115,7 +122,7 @@ DIRS += ["build"]
 if CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":
     DIRS += ["aboutthirdparty", "aboutwindowsmessages", "gfx"]
 
-if CONFIG["MOZ_WIDGET_TOOLKIT"] != "android":
+if CONFIG["TARGET_OS"] not in ("Android", "iOS"):
     EXTRA_JS_MODULES += [
         "DefaultCLH.sys.mjs",
     ]
@@ -124,21 +131,22 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] != "android":
         "components.conf",
     ]
 
+if CONFIG["MOZ_WIDGET_TOOLKIT"] not in ("android", "windows"):
+    DIRS += ["aboutwebauthn"]
+
 if CONFIG["MOZ_BUILD_APP"] == "browser":
-    DIRS += ["normandy", "messaging-system"]
+    DIRS += ["messaging-system", "normandy"]
 
 DIRS += ["nimbus"]
 
 if CONFIG["MOZ_BACKGROUNDTASKS"]:
     DIRS += ["backgroundtasks"]
 
-# This is only packaged for browser since corrupt JAR and XPI files tend to be a desktop-OS problem.
-if CONFIG["MOZ_BUILD_APP"] == "browser":
-    DIRS += ["corroborator"]
-
 if CONFIG["MOZ_UNIFFI_FIXTURES"]:
     DIRS += ["uniffi-bindgen-gecko-js/fixtures"]
 
+if CONFIG["NIGHTLY_BUILD"]:
+    DIRS += ["aboutinference"]
 
 UNIFIED_SOURCES += [
     "/toolkit/components/antitracking/ContentBlockingAllowList.cpp",

@@ -27,15 +27,19 @@ log = logging.getLogger("upload-symbols")
 log.setLevel(logging.INFO)
 
 DEFAULT_URL = "https://symbols.mozilla.org/upload/"
+TASKCLUSTER_PROXY_URL = os.environ.get("TASKCLUSTER_PROXY_URL", "http://taskcluster")
+TASKCLUSTER_ROOT_URL = os.environ.get(
+    "TASKCLUSTER_ROOT_URL", "https://firefox-ci-tc.services.mozilla.com"
+)
 MAX_RETRIES = 7
 MAX_ZIP_SIZE = 500000000  # 500 MB
 
 
 def print_error(r):
     if r.status_code < 400:
-        log.error("Error: bad auth token? ({0}: {1})".format(r.status_code, r.reason))
+        log.error(f"Error: bad auth token? ({r.status_code}: {r.reason})")
     else:
-        log.error("Error: got HTTP response {0}: {1}".format(r.status_code, r.reason))
+        log.error(f"Error: got HTTP response {r.status_code}: {r.reason}")
 
     log.error(
         "Response body:\n{sep}\n{body}\n{sep}\n".format(sep="=" * 20, body=r.text)
@@ -43,10 +47,8 @@ def print_error(r):
 
 
 def get_taskcluster_secret(secret_name):
-    secrets_url = "http://taskcluster/secrets/v1/secret/{}".format(secret_name)
-    log.info(
-        'Using symbol upload token from the secrets service: "{}"'.format(secrets_url)
-    )
+    secrets_url = f"{TASKCLUSTER_PROXY_URL}/secrets/v1/secret/{secret_name}"
+    log.info(f'Using symbol upload token from the secrets service: "{secrets_url}"')
     res = requests.get(secrets_url)
     res.raise_for_status()
     secret = res.json()
@@ -55,17 +57,33 @@ def get_taskcluster_secret(secret_name):
     return auth_token
 
 
+def get_taskcluster_artifact_urls(task_id):
+    artifacts_url = f"{TASKCLUSTER_PROXY_URL}/queue/v1/task/{task_id}/artifacts"
+    res = requests.get(artifacts_url)
+    res.raise_for_status()
+    return [
+        "{}/api/queue/v1/task/{}/artifacts/{}".format(
+            TASKCLUSTER_ROOT_URL, task_id, artifact["name"]
+        )
+        for artifact in res.json()["artifacts"]
+        if artifact["name"].startswith("public/build/target.crashreporter-symbols")
+    ]
+
+
 def main():
     logging.basicConfig()
     parser = argparse.ArgumentParser(
         description="Upload symbols in ZIP using token from Taskcluster secrets service."
     )
     parser.add_argument(
-        "archive", help="Symbols archive file - URL or path to local file"
+        "archive",
+        help="Symbols archive file - URL or path to local file",
+        nargs="*",
     )
     parser.add_argument(
         "--ignore-missing", help="No error on missing files", action="store_true"
     )
+    parser.add_argument("--task-id", help="Taskcluster task id to use symbols from")
     args = parser.parse_args()
 
     def check_file_exists(url):
@@ -74,39 +92,47 @@ def main():
                 resp = requests.head(url, allow_redirects=True)
                 return resp.status_code == requests.codes.ok
             except requests.exceptions.RequestException as e:
-                log.error("Error: {0}".format(e))
+                log.error(f"Error: {e}")
             log.info("Retrying...")
         return False
 
-    if args.archive.startswith("http"):
-        is_existing = check_file_exists(args.archive)
-    else:
-        is_existing = os.path.isfile(args.archive)
+    if args.task_id:
+        args.archive.extend(get_taskcluster_artifact_urls(args.task_id))
 
-    if not is_existing:
-        if args.ignore_missing:
-            log.info('Archive file "{0}" does not exist!'.format(args.archive))
-            return 0
+    for archive in args.archive:
+        error = False
+        if archive.startswith("http"):
+            is_existing = check_file_exists(archive)
         else:
-            log.error('Error: archive file "{0}" does not exist!'.format(args.archive))
+            is_existing = os.path.isfile(archive)
+
+        if not is_existing:
+            if args.ignore_missing:
+                log.info(f'Archive file "{args.archive}" does not exist!')
+            else:
+                log.error(f'Error: archive file "{args.archive}" does not exist!')
+                error = True
+        if error:
             return 1
 
     try:
-        tmpdir = None
-        if args.archive.endswith(".tar.zst"):
-            tmpdir = tempfile.TemporaryDirectory()
-            zip_paths = convert_zst_archive(args.archive, tmpdir)
-        else:
-            zip_paths = [args.archive]
-
+        tmpdir = tempfile.TemporaryDirectory()
+        zip_paths = convert_zst_archives(args.archive, tmpdir)
         for zip_path in zip_paths:
             result = upload_symbols(zip_path)
             if result:
                 return result
         return 0
     finally:
-        if tmpdir:
-            tmpdir.cleanup()
+        tmpdir.cleanup()
+
+
+def convert_zst_archives(archives, tmpdir):
+    for archive in archives:
+        if archive.endswith(".tar.zst"):
+            yield from convert_zst_archive(archive, tmpdir)
+        else:
+            yield archive
 
 
 def convert_zst_archive(zst_archive, tmpdir):
@@ -152,6 +178,11 @@ def convert_zst_archive(zst_archive, tmpdir):
             reader = open(archive, "rb")
 
         def handle_file(data):
+            """
+            For a given pair of (file_name, bytes_data), return a pair
+            of (compressed_file_name, mozpack.files.File-like) or
+            (file_name, None) when the file can't be compressed.
+            """
             name, data = data
             log.info("Compressing %s", name)
             path = os.path.join(tmpdir, name.lstrip("/"))
@@ -170,6 +201,12 @@ def convert_zst_archive(zst_archive, tmpdir):
                 return (name + ".bz2", File(path))
             elif name.endswith((".pdb", ".exe", ".dll")):
                 import subprocess
+
+                # The CAB format doesn't support files larger than 2GB.
+                # Skipping the file is still better than failing the entire
+                # upload.
+                if len(data) >= 0x7FFF8000:
+                    return (name, None)
 
                 makecab = os.environ.get("MAKECAB", "makecab")
                 os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -200,12 +237,15 @@ def convert_zst_archive(zst_archive, tmpdir):
         for i in itertools.count(start=1)
     )
     zip_path = next(zip_paths_iter)
-    log.info('Preparing symbol archive "{0}" from "{1}"'.format(zip_path, zst_archive))
+    log.info(f'Preparing symbol archive "{zip_path}" from "{zst_archive}"')
     for i, _ in enumerate(redo.retrier(attempts=MAX_RETRIES), start=1):
         zip_paths = []
         jar = None
         try:
             for name, data in prepare_from(zst_archive, tmpdir.name):
+                if data is None:
+                    log.info("Skipping %s", name)
+                    continue
                 if not jar:
                     jar = JarWriter(zip_path)
                     zip_paths.append(zip_path)
@@ -217,12 +257,12 @@ def convert_zst_archive(zst_archive, tmpdir):
                     jar.finish()
                     jar = None
                     zip_path = next(zip_paths_iter)
-                    log.info('Continuing with symbol archive "{}"'.format(zip_path))
+                    log.info(f'Continuing with symbol archive "{zip_path}"')
             if jar:
                 jar.finish()
             return zip_paths
         except requests.exceptions.RequestException as e:
-            log.error("Error: {0}".format(e))
+            log.error(f"Error: {e}")
             log.info("Retrying...")
 
     return []
@@ -244,12 +284,10 @@ def upload_symbols(zip_path):
 
         if not os.path.isfile(token_file):
             log.error(
-                'SOCORRO_SYMBOL_UPLOAD_TOKEN_FILE "{0}" does not exist!'.format(
-                    token_file
-                )
+                f'SOCORRO_SYMBOL_UPLOAD_TOKEN_FILE "{token_file}" does not exist!'
             )
             return 1
-        auth_token = open(token_file, "r").read().strip()
+        auth_token = open(token_file).read().strip()
     else:
         log.error(
             "You must set the SYMBOL_SECRET or SOCORRO_SYMBOL_UPLOAD_TOKEN_FILE "
@@ -263,7 +301,7 @@ def upload_symbols(zip_path):
     else:
         url = DEFAULT_URL
 
-    log.info('Uploading symbol file "{0}" to "{1}"'.format(zip_path, url))
+    log.info(f'Uploading symbol file "{zip_path}" to "{url}"')
 
     for i, _ in enumerate(redo.retrier(attempts=MAX_RETRIES), start=1):
         log.info("Attempt %d of %d..." % (i, MAX_RETRIES))
@@ -280,7 +318,7 @@ def upload_symbols(zip_path):
                 # has to fetch the entire zip file, which can take a while. The load balancer
                 # in front of symbols.mozilla.org has a 300 second timeout, so we'll use that.
                 timeout=(300, 300),
-                **zip_arg
+                **zip_arg,
             )
             # 408, 429 or any 5XX is likely to be a transient failure.
             # Break out for success or other error codes.
@@ -288,7 +326,7 @@ def upload_symbols(zip_path):
                 break
             print_error(r)
         except requests.exceptions.RequestException as e:
-            log.error("Error: {0}".format(e))
+            log.error(f"Error: {e}")
         log.info("Retrying...")
     else:
         log.warning("Maximum retries hit, giving up!")

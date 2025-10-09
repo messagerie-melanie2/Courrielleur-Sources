@@ -11,13 +11,11 @@ add_heuristic_tests(
       fixturePath: "heuristics_fr_fields.html",
       expectedResult: [
         {
-          default: {
-            reason: "regex-heuristic",
-          },
           fields: [
             { fieldName: "cc-number", reason: "fathom" },
-            { fieldName: "cc-exp" },
-            { fieldName: "cc-name" },
+            { fieldName: "cc-exp", reason: "update-heuristic" },
+            { fieldName: "cc-csc", reason: "regex-heuristic" },
+            { fieldName: "cc-name", reason: "regex-heuristic" },
           ],
         },
       ],

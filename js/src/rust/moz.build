@@ -12,11 +12,11 @@ if CONFIG["MOZ_RUST_SIMD"]:
 if CONFIG["FUZZING_INTERFACES"]:
     features += ["gluesmith"]
 
-if CONFIG["JS_ENABLE_SMOOSH"]:
-    features += ["smoosh"]
-
 if CONFIG["MOZ_MEMORY"]:
     features += ["moz_memory"]
+
+if CONFIG["MOZ_ICU4X"]:
+    features += ["icu4x"]
 
 RustLibrary("jsrust", features)
 
@@ -34,3 +34,6 @@ elif CONFIG["OS_ARCH"] == "WINNT":
         "userenv",
         "ws2_32",
     ]
+
+COMPILE_FLAGS["BASE_INCLUDES"] = []
+HOST_COMPILE_FLAGS["BASE_INCLUDES"] = []

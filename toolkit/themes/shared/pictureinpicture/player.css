@@ -17,16 +17,28 @@
   overflow: hidden;
 }
 
-button::-moz-focus-inner {
-  border: 0;
-}
-
 body {
   margin: 0;
 }
 
 body:fullscreen {
   -moz-window-dragging: no-drag;
+
+  #fullscreen {
+    background-image: url("chrome://global/skin/media/picture-in-picture-exit-fullscreen-button.svg");
+    background-size: auto;
+  }
+
+  #controls {
+    &[showing]:hover .control-item:not(:hover) {
+      opacity: 0.8;
+    }
+
+    /* Hide cursor when we expect controls to be hidden. */
+    &:not([showing], [keying], [donthide]) {
+      cursor: none;
+    }
+  }
 }
 
 .player-holder {
@@ -34,6 +46,20 @@ body:fullscreen {
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
+}
+
+.seethrough-mode {
+  background: transparent;
+
+  .player-holder {
+    will-change: opacity, filter;
+    transition: opacity 160ms linear, filter 160ms linear;
+
+    body:hover:not(:fullscreen) & {
+      opacity: 0.35;
+      filter: blur(8px);
+    }
+  }
 }
 
 browser {
@@ -104,8 +130,8 @@ browser {
 
 .end-controls {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  grid-template-areas: "audio closedcaption fullscreen";
+  grid-template-columns: 1fr 2fr 1fr 1fr;
+  grid-template-areas: "audio audio-scrubber closedcaption fullscreen";
   justify-self: end;
   gap: 8px;
 }
@@ -236,31 +262,28 @@ body:not(:fullscreen) #controls:hover .control-button:disabled {
   scale: -1 1;
 }
 
-/* Set opacity for buttons and scrubber when controls are visible on the pip window and are not hovered over.
- * For fullscreen mode, only apply opacity if there is a showing attribute. */
+/* Set opacity for buttons and scrubber when controls are visible on the pip
+ * window and are not hovered over. */
 body:not(:fullscreen) #controls:hover .control-item:not(:hover),
-body:fullscreen #controls[showing]:hover .control-item:not(:hover),
 #controls[donthide] .control-item {
   opacity: 0.8;
 }
 
 #controls[keying] .control-item,
 #controls[showing] .control-item,
-#controls:hover .control-item:hover {
+.control-item:hover {
   opacity: 1;
 }
 
 /* Background gradient is the only control item with a fixed opacity value. */
-#controls[keying] .control-item#controls-bottom-gradient,
-#controls[showing] .control-item#controls-bottom-gradient,
-#controls:hover .control-item#controls-bottom-gradient:hover
-#controls[donthide] .control-item#controls-bottom-gradient {
+#controls[keying] #controls-bottom-gradient,
+#controls[showing] #controls-bottom-gradient,
+#controls-bottom-gradient:hover {
   opacity: 0.8;
 }
 
 /* For readability, timestamp should maintain full opacity when visible */
-body:not(:fullscreen) #controls:hover #timestamp,
-body:fullscreen #controls[showing]:hover {
+body:not(:fullscreen) #controls:hover #timestamp {
   opacity: 1;
 }
 
@@ -306,6 +329,38 @@ body:fullscreen #controls[showing]:hover {
   grid-area: audio;
 }
 
+#audio-scrubber {
+  grid-area: audio-scrubber;
+  align-self: center;
+  width: 64px;
+  background-color: transparent;
+  padding: 6px 2px;
+  margin: 0;
+
+  &::-moz-range-thumb {
+    border-radius: 8px;
+    background-color: #FFFFFF;
+    width: 8px;
+    height: 8px;
+    padding: 0;
+  }
+
+  &::-moz-range-track {
+    background-color: #969696;
+  }
+
+  &::-moz-range-progress {
+    background-color: #FFFFFF;
+  }
+
+  &,
+  &::-moz-range-track,
+  &::-moz-range-progress {
+    height: 2px;
+    border-radius: 10px;
+  }
+}
+
 #fullscreen {
   grid-area: fullscreen;
 }
@@ -324,11 +379,6 @@ body:fullscreen #controls[showing]:hover {
 
 #controls:not(.muted) #audio {
   background-image: url("chrome://global/skin/media/audio.svg");
-}
-
-body:fullscreen #fullscreen {
-  background-image: url("chrome://global/skin/media/picture-in-picture-exit-fullscreen-button.svg");
-  background-size: auto;
 }
 
 body:not(:fullscreen) #fullscreen {
@@ -383,10 +433,10 @@ body:not(:fullscreen) #fullscreen {
 }
 
 .bold {
-  font-weight: 590;
+  font-weight: var(--font-weight-bold);
 }
 
-.box > input[type="radio"]{
+.box > input[type="radio"] {
   background-color: red;
   fill: currentColor;
 }
@@ -546,41 +596,40 @@ input:checked + .slider::before {
 #scrubber {
   width: 100%;
   background-color: transparent;
-  padding: 6px;
-}
+  padding: 6px 2px;
 
-#scrubber::-moz-range-thumb {
-  border-radius: 14px;
-  background-color: #BFBFC9;
-  position: relative;
-  width: 8px;
-  height: 8px;
-  border: 3px solid #FFFFFF;
-  bottom: 24px;
-  padding: 0;
-}
+  &::-moz-range-thumb {
+    border-radius: 14px;
+    background-color: #BFBFC9;
+    width: 8px;
+    height: 8px;
+    border: 3px solid #FFFFFF;
+    padding: 0;
+  }
 
-#scrubber::-moz-range-track {
-  background-color: #969696;
-}
+  &::-moz-range-track {
+    background-color: #969696;
+  }
 
-#scrubber::-moz-range-progress {
-  background-color: #FFFFFF;
-}
+  &::-moz-range-progress {
+    background-color: #FFFFFF;
+  }
 
-#scrubber,
-#scrubber::-moz-range-track,
-#scrubber::-moz-range-progress {
-  height: 4px;
-  border-radius: 10px;
+  &,
+  &::-moz-range-track,
+  &::-moz-range-progress {
+    height: 4px;
+    border-radius: 10px;
+  }
 }
 
 #timestamp {
   align-self: center;
   color: #FFFFFF;
   cursor: default;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Ubuntu", "Helvetica Neue", sans-serif;
+  font-family: system-ui;
   font-size: 0.9em;
+  font-variant-numeric: tabular-nums;
   user-select: none;
   width: 16ch;
   grid-area: timestamp;
@@ -591,8 +640,42 @@ input:checked + .slider::before {
   content: unset;
 }
 
-@media (height <= 325px), (width <= 475px) {
+@media (width <= 630px) {
+  #audio-scrubber {
+    display: none;
+  }
+
+  .end-controls {
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-areas: "audio closedcaption fullscreen";
+  }
+}
+
+@media (width <= 475px) {
   #closed-caption {
+    display: none;
+  }
+
+  .end-controls {
+    grid-template-columns: repeat(2, 1fr);
+    grid-template-areas: "audio fullscreen";
+  }
+}
+
+@media (height <= 325px) and (width > 630px) {
+  #closed-caption {
+    display: none;
+  }
+
+  .end-controls {
+    grid-template-columns: 1fr 2fr 1fr;
+    grid-template-areas: "audio audio-scrubber fullscreen";
+  }
+}
+
+@media (height <= 325px) and (width <= 630px) {
+  #closed-caption,
+  #audio-scrubber {
     display: none;
   }
 

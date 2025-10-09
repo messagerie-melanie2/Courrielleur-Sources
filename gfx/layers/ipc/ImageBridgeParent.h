@@ -14,7 +14,6 @@
 #include "mozilla/Attributes.h"  // for override
 #include "mozilla/dom/ipc/IdType.h"
 #include "mozilla/ipc/ProtocolUtils.h"
-#include "mozilla/ipc/SharedMemory.h"  // for SharedMemory, etc
 #include "mozilla/layers/CompositorThread.h"
 #include "mozilla/layers/PImageBridgeParent.h"
 #include "nsISupportsImpl.h"
@@ -28,6 +27,7 @@ class Shmem;
 namespace layers {
 
 struct ImageCompositeNotificationInfo;
+class RemoteTextureTxnScheduler;
 
 /**
  * ImageBridgeParent is the manager Protocol of async Compositables.
@@ -40,7 +40,8 @@ class ImageBridgeParent final : public PImageBridgeParent,
   typedef nsTArray<OpDestroy> OpDestroyArray;
 
  protected:
-  ImageBridgeParent(nsISerialEventTarget* aThread, ProcessId aChildProcessId,
+  ImageBridgeParent(nsISerialEventTarget* aThread,
+                    ipc::EndpointProcInfo aChildProcessInfo,
                     dom::ContentParentId aContentId);
 
  public:
@@ -143,6 +144,8 @@ class ImageBridgeParent final : public PImageBridgeParent,
   static ImageBridgeMap sImageBridges;
 
   RefPtr<CompositorThreadHolder> mCompositorThreadHolder;
+
+  RefPtr<RemoteTextureTxnScheduler> mRemoteTextureTxnScheduler;
 };
 
 }  // namespace layers

@@ -5,11 +5,9 @@
 import { vCardIdGen } from "./id-gen.mjs";
 
 const lazy = {};
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "VCardPropertyEntry",
-  "resource:///modules/VCardUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  VCardPropertyEntry: "resource:///modules/VCardUtils.sys.mjs",
+});
 
 /**
  * @implements {VCardPropertyEntryView}
@@ -37,8 +35,8 @@ export class VCardAdrComponent extends HTMLElement {
     }
     this.hasConnected = true;
 
-    let template = document.getElementById("template-vcard-edit-adr");
-    let clonedTemplate = template.content.cloneNode(true);
+    const template = document.getElementById("template-vcard-edit-adr");
+    const clonedTemplate = template.content.cloneNode(true);
     this.appendChild(clonedTemplate);
 
     this.streetEl = this.querySelector('textarea[name="street"]');
@@ -89,8 +87,8 @@ export class VCardAdrComponent extends HTMLElement {
       this.streetEl.value = this.vCardPropertyEntry.value[2] || "";
     }
     // Per RFC 6350, post office box and extended address SHOULD be empty.
-    let pobox = this.vCardPropertyEntry.value[0] || "";
-    let extendedAddr = this.vCardPropertyEntry.value[1] || "";
+    const pobox = this.vCardPropertyEntry.value[0] || "";
+    const extendedAddr = this.vCardPropertyEntry.value[1] || "";
     if (extendedAddr) {
       this.streetEl.value = this.streetEl.value + "\n" + extendedAddr.trim();
       delete this.vCardPropertyEntry.value[1];
@@ -137,7 +135,7 @@ export class VCardAdrComponent extends HTMLElement {
   }
 
   assignIds(inputEl, labelEl) {
-    let labelInputId = vCardIdGen.next().value;
+    const labelInputId = vCardIdGen.next().value;
     inputEl.id = labelInputId;
     labelEl.htmlFor = labelInputId;
   }

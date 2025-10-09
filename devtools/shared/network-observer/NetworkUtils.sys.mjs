@@ -2,16 +2,20 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
-ChromeUtils.defineESModuleGetters(lazy, {
-  NetworkHelper:
-    "resource://devtools/shared/network-observer/NetworkHelper.sys.mjs",
-});
+ChromeUtils.defineESModuleGetters(
+  lazy,
+  {
+    NetworkHelper:
+      "resource://devtools/shared/network-observer/NetworkHelper.sys.mjs",
+    NetworkTimings:
+      "resource://devtools/shared/network-observer/NetworkTimings.sys.mjs",
+  },
+  { global: "contextual" }
+);
 
-XPCOMUtils.defineLazyGetter(lazy, "tpFlagsMask", () => {
+ChromeUtils.defineLazyGetter(lazy, "tpFlagsMask", () => {
   const trackingProtectionLevel2Enabled = Services.prefs
     .getStringPref("urlclassifier.trackingTable")
     .includes("content-track-digest256");
@@ -37,7 +41,6 @@ const LOAD_CAUSE_STRINGS = {
   [Ci.nsIContentPolicy.TYPE_SUBDOCUMENT]: "subdocument",
   [Ci.nsIContentPolicy.TYPE_PING]: "ping",
   [Ci.nsIContentPolicy.TYPE_XMLHTTPREQUEST]: "xhr",
-  [Ci.nsIContentPolicy.TYPE_OBJECT_SUBREQUEST]: "objectSubdoc",
   [Ci.nsIContentPolicy.TYPE_DTD]: "dtd",
   [Ci.nsIContentPolicy.TYPE_FONT]: "font",
   [Ci.nsIContentPolicy.TYPE_MEDIA]: "media",
@@ -71,27 +74,41 @@ function stringToCauseType(value) {
 }
 
 function isChannelFromSystemPrincipal(channel) {
-  let principal = null;
-  let browsingContext = channel.loadInfo.browsingContext;
-  if (!browsingContext) {
-    const topFrame = lazy.NetworkHelper.getTopFrameForRequest(channel);
-    if (topFrame) {
-      browsingContext = topFrame.browsingContext;
-    } else {
-      // Fallback to the triggering principal when browsingContext and topFrame is null
-      // e.g some chrome requests
-      principal = channel.loadInfo.triggeringPrincipal;
-    }
+  let principal;
+
+  if (channel.isDocument) {
+    // The loadingPrincipal is the principal where the request will be used.
+    principal = channel.loadInfo.loadingPrincipal;
+  } else {
+    // The triggeringPrincipal is the principal of the resource which triggered
+    // the request. Except for document loads, this is normally the best way
+    // to know if a request is done on behalf of a chrome resource.
+    // For instance if a chrome stylesheet loads a resource which is used in a
+    // content page, the loadingPrincipal will be a content principal, but the
+    // triggeringPrincipal will be the system principal.
+    principal = channel.loadInfo.triggeringPrincipal;
   }
 
-  // When in the parent process, we can get the documentPrincipal from the
-  // WindowGlobal which is available on the BrowsingContext
-  if (!principal) {
-    principal = CanonicalBrowsingContext.isInstance(browsingContext)
-      ? browsingContext.currentWindowGlobal.documentPrincipal
-      : browsingContext.window.document.nodePrincipal;
+  return !!principal?.isSystemPrincipal;
+}
+
+function isChromeFileChannel(channel) {
+  if (!(channel instanceof Ci.nsIFileChannel)) {
+    return false;
   }
-  return principal.isSystemPrincipal;
+
+  return (
+    channel.originalURI.spec.startsWith("chrome://") ||
+    channel.originalURI.spec.startsWith("resource://")
+  );
+}
+
+function isPrivilegedChannel(channel) {
+  return (
+    isChannelFromSystemPrincipal(channel) ||
+    isChromeFileChannel(channel) ||
+    channel.loadInfo.isInDevToolsContext
+  );
 }
 
 /**
@@ -101,6 +118,13 @@ function isChannelFromSystemPrincipal(channel) {
  * @returns {number}
  */
 function getChannelBrowsingContextID(channel) {
+  // `frameBrowsingContextID` is non-0 if the channel is loading an iframe.
+  // If available, use it instead of `browsingContextID` which is exceptionally
+  // set to the parent's BrowsingContext id for such channels.
+  if (channel.loadInfo.frameBrowsingContextID) {
+    return channel.loadInfo.frameBrowsingContextID;
+  }
+
   if (channel.loadInfo.browsingContextID) {
     return channel.loadInfo.browsingContextID;
   }
@@ -149,7 +173,8 @@ function isPreloadRequest(channel) {
     type == Ci.nsIContentPolicy.TYPE_INTERNAL_MODULE_PRELOAD ||
     type == Ci.nsIContentPolicy.TYPE_INTERNAL_IMAGE_PRELOAD ||
     type == Ci.nsIContentPolicy.TYPE_INTERNAL_STYLESHEET_PRELOAD ||
-    type == Ci.nsIContentPolicy.TYPE_INTERNAL_FONT_PRELOAD
+    type == Ci.nsIContentPolicy.TYPE_INTERNAL_FONT_PRELOAD ||
+    type == Ci.nsIContentPolicy.TYPE_INTERNAL_JSON_PRELOAD
   );
 }
 
@@ -209,6 +234,10 @@ function getChannelPriority(channel) {
  * @returns {string}
  */
 function getHttpVersion(channel) {
+  if (!(channel instanceof Ci.nsIHttpChannelInternal)) {
+    return null;
+  }
+
   // Determine the HTTP version.
   const httpVersionMaj = {};
   const httpVersionMin = {};
@@ -405,6 +434,12 @@ function fetchRequestHeadersAndCookies(channel) {
   // Copy the request header data.
   channel.visitRequestHeaders({
     visitHeader(name, value) {
+      // The `Proxy-Authorization` header even though it appears on the channel is not
+      // actually sent to the server for non CONNECT requests after the HTTP/HTTPS tunnel
+      // is setup by the proxy.
+      if (name == "Proxy-Authorization") {
+        return;
+      }
       if (name == "Cookie") {
         cookieHeader = value;
       }
@@ -417,6 +452,25 @@ function fetchRequestHeadersAndCookies(channel) {
   }
 
   return { cookies, headers };
+}
+
+/**
+ * Parse the early hint raw headers string to an
+ * array of name/value object header pairs
+ *
+ * @param {String} rawHeaders
+ * @returns {Array}
+ */
+function parseEarlyHintsResponseHeaders(rawHeaders) {
+  const headers = rawHeaders.split("\r\n");
+  // Remove the line with the HTTP version and the status
+  headers.shift();
+  return headers
+    .map(header => {
+      const [name, value] = header.split(":");
+      return { name, value };
+    })
+    .filter(header => header.name.length);
 }
 
 /**
@@ -455,7 +509,7 @@ function fetchResponseHeadersAndCookies(channel) {
  * Check if a given network request should be logged by a network monitor
  * based on the specified filters.
  *
- * @param nsIHttpChannel channel
+ * @param {(nsIHttpChannel|nsIFileChannel)} channel
  *        Request to check.
  * @param filters
  *        NetworkObserver filters to match against. An object with one of the following attributes:
@@ -482,10 +536,15 @@ function matchRequest(channel, filters) {
     // Ignore requests from chrome or add-on code when we don't monitor the whole browser
     if (
       channel.loadInfo?.loadingDocument === null &&
-      (channel.loadInfo.loadingPrincipal ===
-        Services.scriptSecurityManager.getSystemPrincipal() ||
-        channel.loadInfo.isInDevToolsContext)
+      isPrivilegedChannel(channel)
     ) {
+      return false;
+    }
+
+    // When a page fails loading in top level or in iframe, an error page is shown
+    // which will trigger a request to about:neterror (which is translated into a file:// URI request).
+    // Ignore this request in regular toolbox (but not in the browser toolbox).
+    if (channel.loadInfo?.loadErrorPage) {
       return false;
     }
 
@@ -517,6 +576,14 @@ function matchRequest(channel, filters) {
   // NetworkEventContentWatcher and NetworkEventStackTraces pass a target actor instead, from the content processes
   // Because of EFT, we can't use session context as we have to know what exact windows the target actor covers.
   if (filters.targetActor) {
+    // Ignore requests from chrome or add-on code when we don't monitor the whole browser
+    if (
+      filters.targetActor.sessionContext?.type !== "all" &&
+      isPrivilegedChannel(channel)
+    ) {
+      return false;
+    }
+
     // Bug 1769982 the target actor might be destroying and accessing windows will throw.
     // Ignore all further request when this happens.
     let windows;
@@ -546,8 +613,7 @@ function legacyMatchRequest(channel, filters) {
   // content.
   if (
     channel.loadInfo?.loadingDocument === null &&
-    (channel.loadInfo.loadingPrincipal ===
-      Services.scriptSecurityManager.getSystemPrincipal() ||
+    (isChannelFromSystemPrincipal(channel) ||
       channel.loadInfo.isInDevToolsContext)
   ) {
     return false;
@@ -599,7 +665,7 @@ function legacyMatchRequest(channel, filters) {
   return false;
 }
 
-function getBlockedReason(channel) {
+function getBlockedReason(channel, fromCache = false) {
   let blockingExtension, blockedReason;
   const { status } = channel;
 
@@ -621,7 +687,7 @@ function getBlockedReason(channel) {
   // usually the requests (with these errors) might be displayed with various
   // other status codes.
   const ignoreList = [
-    // This is emited when the request is already in the cache.
+    // These are emited when the request is already in the cache.
     "NS_ERROR_PARSED_DATA_CACHED",
     // This is emited when there is some issues around images e.g When the img.src
     // links to a non existent url. This is typically shown as a 404 request.
@@ -630,7 +696,17 @@ function getBlockedReason(channel) {
     "NS_BINDING_REDIRECTED",
     // E.g Emited by send beacon requests.
     "NS_ERROR_ABORT",
+    // This is emmited when browser.http.blank_page_with_error_response.enabled
+    // is set to false, and a 404 or 500 request has no content.
+    // They are shown as 404 or 500 requests.
+    "NS_ERROR_NET_EMPTY_RESPONSE",
   ];
+
+  // NS_BINDING_ABORTED are emmited when request are abruptly halted, these are valid and should not be ignored.
+  // They can also be emmited for requests already cache which have the `cached` status, these should be ignored.
+  if (fromCache) {
+    ignoreList.push("NS_BINDING_ABORTED");
+  }
 
   // If the request has not failed or is not blocked by a web extension, check for
   // any errors not on the ignore list. e.g When a host is not found (NS_ERROR_UNKNOWN_HOST).
@@ -645,18 +721,98 @@ function getBlockedReason(channel) {
   return { blockingExtension, blockedReason };
 }
 
+function getCharset(channel) {
+  const win = lazy.NetworkHelper.getWindowForRequest(channel);
+  return win ? win.document.characterSet : null;
+}
+
+/**
+ * Data channels are either handled in the parent process NetworkObserver for
+ * navigation requests, or in content processes for any other request.
+ *
+ * This function allows to apply the same logic to build the network event actor
+ * in both cases.
+ *
+ * @param {nsIDataChannel} channel
+ *     The data channel for which we are creating a network event actor.
+ * @param {object} networkEventActor
+ *     The network event actor owning this resource.
+ */
+function handleDataChannel(channel, networkEventActor) {
+  networkEventActor.addResponseStart({
+    channel,
+    fromCache: false,
+    // According to the fetch spec for data URLs we can just hardcode
+    // "Content-Type" header.
+    rawHeaders: "content-type: " + channel.contentType,
+  });
+
+  // For data URLs we can not set up a stream listener as for http,
+  // so we have to create a response manually and complete it.
+  const response = {
+    // TODO: Bug 1903807. Re-evaluate if it's correct to just return
+    // zero for `bodySize` and `decodedBodySize`.
+    bodySize: 0,
+    decodedBodySize: 0,
+    contentCharset: channel.contentCharset,
+    contentLength: channel.contentLength,
+    contentType: channel.contentType,
+    mimeType: lazy.NetworkHelper.addCharsetToMimeType(
+      channel.contentType,
+      channel.contentCharset
+    ),
+    transferredSize: 0,
+  };
+
+  // For data URIs all timings can be set to zero.
+  const result = lazy.NetworkTimings.getEmptyHARTimings();
+  networkEventActor.addEventTimings(
+    result.total,
+    result.timings,
+    result.offsets
+  );
+
+  const url = channel.URI.spec;
+  response.text = url.substring(url.indexOf(",") + 1);
+  if (
+    !response.mimeType ||
+    !lazy.NetworkHelper.isTextMimeType(response.mimeType)
+  ) {
+    response.encoding = "base64";
+    try {
+      response.text = btoa(response.text);
+    } catch (err) {
+      // Ignore.
+    }
+  }
+
+  // Note: `size`` is only used by DevTools, WebDriverBiDi relies on
+  // `bodySize` and `decodedBodySize`. Waiting on Bug 1903807 to decide
+  // if those fields should have non-0 values as well.
+  response.size = response.text.length;
+
+  // Security information is not relevant for data channel, but it should
+  // not be considered as insecure either. Set empty string as security
+  // state.
+  networkEventActor.addSecurityInfo({ state: "" });
+  networkEventActor.addResponseContent(response, {});
+}
+
 export const NetworkUtils = {
   causeTypeToString,
   fetchRequestHeadersAndCookies,
   fetchResponseHeadersAndCookies,
+  getBlockedReason,
   getCauseDetails,
   getChannelBrowsingContextID,
   getChannelInnerWindowId,
   getChannelPriority,
+  getCharset,
   getHttpVersion,
   getProtocol,
   getReferrerPolicy,
   getWebSocketChannel,
+  handleDataChannel,
   isChannelFromSystemPrincipal,
   isChannelPrivate,
   isFromCache,
@@ -665,6 +821,6 @@ export const NetworkUtils = {
   isRedirectedChannel,
   isThirdPartyTrackingResource,
   matchRequest,
+  parseEarlyHintsResponseHeaders,
   stringToCauseType,
-  getBlockedReason,
 };

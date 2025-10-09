@@ -80,7 +80,7 @@ struct SsrcGroup {
 
   std::string ToString() const;
 
-  std::string semantics;        // e.g FIX, FEC, SIM.
+  std::string semantics;        // e.g FID, FEC-FR, SIM.
   std::vector<uint32_t> ssrcs;  // SSRCs of this type.
 };
 
@@ -165,6 +165,14 @@ struct StreamParams {
   // Convenience to get all the SIM SSRCs if there are SIM ssrcs, or
   // the first SSRC otherwise.
   void GetPrimarySsrcs(std::vector<uint32_t>* ssrcs) const;
+
+  // Convenience to get all the secondary SSRCs for the given primary ssrcs
+  // of a particular semantic.
+  // If a given primary SSRC does not have a secondary SSRC, the list of
+  // secondary SSRCS will be smaller than the list of primary SSRCs.
+  void GetSecondarySsrcs(const std::string& semantic,
+                         const std::vector<uint32_t>& primary_ssrcs,
+                         std::vector<uint32_t>* fid_ssrcs) const;
 
   // Convenience to get all the FID SSRCs for the given primary ssrcs.
   // If a given primary SSRC does not have a FID SSRC, the list of FID
@@ -303,8 +311,7 @@ inline bool RemoveStreamBySsrc(StreamParamsVec* streams, uint32_t ssrc) {
   return RemoveStream(
       streams, [&ssrc](const StreamParams& sp) { return sp.has_ssrc(ssrc); });
 }
-inline bool RemoveStreamByIds(StreamParamsVec* streams,
-                              const std::string& id) {
+inline bool RemoveStreamByIds(StreamParamsVec* streams, const std::string& id) {
   return RemoveStream(streams,
                       [&id](const StreamParams& sp) { return sp.id == id; });
 }

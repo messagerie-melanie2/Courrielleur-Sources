@@ -8,21 +8,18 @@
 
 "use strict";
 
-var { open_message_from_file } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-);
-var { close_window } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
+var { open_message_from_file } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 async function check_eml_window_title(subject, eml) {
-  let file = new FileUtils.File(getTestFilePath(`data/${eml}`));
-  let msgc = await open_message_from_file(file);
+  const file = new FileUtils.File(getTestFilePath(`data/${eml}`));
+  const msgc = await open_message_from_file(file);
 
-  let brandBundle = Services.strings.createBundle(
+  const brandBundle = Services.strings.createBundle(
     "chrome://branding/locale/brand.properties"
   );
-  let productName = brandBundle.GetStringFromName("brandFullName");
+  const productName = brandBundle.GetStringFromName("brandFullName");
   let expectedTitle = subject;
   if (expectedTitle && AppConstants.platform != "macosx") {
     expectedTitle += " - ";
@@ -32,11 +29,23 @@ async function check_eml_window_title(subject, eml) {
     expectedTitle += productName;
   }
 
-  await TestUtils.waitForCondition(
-    () => msgc.window.document.title == expectedTitle
-  );
-  Assert.equal(msgc.window.document.title, expectedTitle);
-  close_window(msgc);
+  if (AppConstants.platform == "macosx") {
+    await TestUtils.waitForCondition(
+      () =>
+        msgc.document.getElementById("titlebar-title-label").value ==
+        expectedTitle
+    );
+    Assert.equal(
+      msgc.document.getElementById("titlebar-title-label").value,
+      expectedTitle
+    );
+  } else {
+    await TestUtils.waitForCondition(
+      () => msgc.document.title == expectedTitle
+    );
+    Assert.equal(msgc.document.title, expectedTitle);
+  }
+  await BrowserTestUtils.closeWindow(msgc);
 }
 
 add_task(async function test_eml_empty_subject() {

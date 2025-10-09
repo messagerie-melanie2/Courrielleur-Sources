@@ -5,9 +5,13 @@
 
 // This dialog can only be opened if we have a shell service.
 
-var { SearchIntegration } = ChromeUtils.import(
-  "resource:///modules/SearchIntegration.jsm"
+var { SearchIntegration } = ChromeUtils.importESModule(
+  "resource:///modules/SearchIntegration.sys.mjs"
 );
+
+window.addEventListener("load", () => {
+  gSystemIntegrationDialog.onLoad();
+});
 
 var gSystemIntegrationDialog = {
   _shellSvc: Cc["@mozilla.org/mail/shell-service;1"].getService(
@@ -39,7 +43,7 @@ var gSystemIntegrationDialog = {
       this._shellSvc.MAIL
     );
 
-    let calledFromPrefs =
+    const calledFromPrefs =
       "arguments" in window && window.arguments[0] == "calledFromPrefs";
 
     if (!calledFromPrefs) {
@@ -95,8 +99,8 @@ var gSystemIntegrationDialog = {
         // Even if the user wasn't presented the choice,
         // we do not want to ask again automatically.
         SearchIntegration.firstRunDone = true;
-      } else if (!SearchIntegration.osVersionTooLow) {
-        // Hide/disable the options if the OS does not support them.
+      } else {
+        // Hide/disable the options if the OS does not enable integration.
         this._searchCheckbox.hidden = false;
         if (SearchIntegration.osComponentsNotRunning) {
           this._searchCheckbox.checked = false;
@@ -109,8 +113,8 @@ var gSystemIntegrationDialog = {
   /**
    * Called when the dialog is closed by any button.
    *
-   * @param aSetAsDefault  If true, set TB as the default application for the
-   *                       checked actions (mail/news/rss). Otherwise do nothing.
+   * @param {boolean} aSetAsDefault - If true, set TB as the default application
+   *   for the checked actions (mail/news/rss). Otherwise do nothing.
    */
   onDialogClose(aSetAsDefault) {
     // In all cases, save the user's decision for "always check at startup".
@@ -118,7 +122,7 @@ var gSystemIntegrationDialog = {
 
     // If the search checkbox is exposed, the user had the chance to make his choice.
     // So do not ask next time.
-    let searchIntegPossible = !this._searchCheckbox.hidden;
+    const searchIntegPossible = !this._searchCheckbox.hidden;
     if (searchIntegPossible) {
       SearchIntegration.firstRunDone = true;
     }

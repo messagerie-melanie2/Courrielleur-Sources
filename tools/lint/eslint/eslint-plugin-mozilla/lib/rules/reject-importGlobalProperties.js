@@ -14,15 +14,23 @@ const privilegedGlobals = Object.keys(
   require("../environments/privileged.js").globals
 );
 
+function getMessageId(context) {
+  return path.extname(context.filename) == ".sjs"
+    ? "unexpectedCallSjs"
+    : "unexpectedCall";
+}
+
 module.exports = {
   meta: {
     docs: {
-      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/reject-importGlobalProperties.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/rules/reject-importGlobalProperties.html",
     },
     messages: {
       unexpectedCall: "Unexpected call to Cu.importGlobalProperties",
       unexpectedCallCuWebIdl:
         "Unnecessary call to Cu.importGlobalProperties for {{name}} (webidl names are automatically imported)",
+      unexpectedCallSjs:
+        "Do not call Cu.importGlobalProperties in sjs files, expand the global instead (see rule docs).",
       unexpectedCallXPCOMWebIdl:
         "Unnecessary call to XPCOMUtils.defineLazyGlobalGetters for {{name}} (webidl names are automatically imported)",
     },
@@ -37,12 +45,7 @@ module.exports = {
   create(context) {
     return {
       CallExpression(node) {
-        if (
-          node.callee.type !== "MemberExpression" ||
-          // TODO Bug 1501127: sjs files have their own sandbox, and do not inherit
-          // the Window backstage pass directly.
-          path.extname(context.getFilename()) == ".sjs"
-        ) {
+        if (node.callee.type !== "MemberExpression") {
           return;
         }
         let memexp = node.callee;
@@ -51,7 +54,8 @@ module.exports = {
           // Only Cu, not Components.utils as `use-cc-etc` handles this for us.
           memexp.object.name === "Cu" &&
           memexp.property.type === "Identifier" &&
-          memexp.property.name === "importGlobalProperties"
+          memexp.property.name === "importGlobalProperties" &&
+          node.arguments.length >= 1
         ) {
           if (context.options.includes("allownonwebidl")) {
             for (let element of node.arguments[0].elements) {
@@ -64,7 +68,7 @@ module.exports = {
               }
             }
           } else {
-            context.report({ node, messageId: "unexpectedCall" });
+            context.report({ node, messageId: getMessageId(context) });
           }
         }
         if (
@@ -85,7 +89,7 @@ module.exports = {
               }
             }
           } else {
-            context.report({ node, messageId: "unexpectedCall" });
+            context.report({ node, messageId: getMessageId(context) });
           }
         }
       },

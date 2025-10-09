@@ -6,30 +6,10 @@
 #ifndef nsImportService_h__
 #define nsImportService_h__
 
-#include "nsString.h"
-#include "nsMemory.h"
-#include "nsIImportModule.h"
+#include "nsCOMPtr.h"
 #include "nsIImportService.h"
 #include "nsIStringBundle.h"
 #include "nsTArray.h"
-
-class ImportModuleDesc {
- public:
-  explicit ImportModuleDesc(nsIImportModule* importModule);
-
-  const nsAString& GetName(void) { return m_name; }
-  const nsAString& GetDescription(void) { return m_description; }
-
-  nsCOMPtr<nsIImportModule>& GetModule() { return m_pModule; }
-
-  bool SupportsThings(const nsACString& pThings);
-
- private:
-  nsString m_name;
-  nsString m_description;
-  nsCString m_supports;
-  nsCOMPtr<nsIImportModule> m_pModule;
-};
 
 class nsImportService : public nsIImportService {
  public:
@@ -40,14 +20,8 @@ class nsImportService : public nsIImportService {
 
  private:
   virtual ~nsImportService();
-  nsresult LoadModuleInfo(const nsCString& contractId);
-  nsresult DoDiscover(void);
-  ImportModuleDesc* GetImportModule(const char* filter, int32_t index);
 
  private:
-  AutoTArray<ImportModuleDesc, 10> m_importModules;
-  bool m_didDiscovery;
-  nsCString m_sysCharset;
   nsCOMPtr<nsIStringBundle> m_stringBundle;
 };
 

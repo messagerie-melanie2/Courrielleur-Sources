@@ -9,8 +9,8 @@
 /* import-globals-from ../../../test/resources/searchTestUtils.js */
 load("../../../resources/searchTestUtils.js");
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var Isnt = Ci.nsMsgSearchOp.Isnt;
@@ -35,7 +35,7 @@ var Tests = [
   // add a property and test its value
   {
     setup: function setupProperty() {
-      for (let msgHdr of localAccountUtils.inboxFolder.msgDatabase.enumerateMessages()) {
+      for (const msgHdr of localAccountUtils.inboxFolder.msgDatabase.enumerateMessages()) {
         msgHdr.setUint32Property("iam23", 23);
       }
     },
@@ -91,12 +91,15 @@ var Tests = [
 function run_test() {
   localAccountUtils.loadLocalMailAccount();
 
+  /** @implements {nsIMsgCopyServiceListener} */
   var copyListener = {
-    OnStartCopy() {},
-    OnProgress(aProgress, aProgressMax) {},
-    SetMessageKey(aKey) {},
-    SetMessageId(aMessageId) {},
-    OnStopCopy(aStatus) {
+    onStartCopy() {},
+    onProgress() {},
+    setMessageKey() {},
+    getMessageId() {
+      return null;
+    },
+    onStopCopy() {
       testSearch();
     },
   };

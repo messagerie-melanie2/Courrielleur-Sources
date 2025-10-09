@@ -5,7 +5,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "JaIncomingServer.h"
-#include "nsComponentManagerUtils.h"
 
 // This file specifies the implementation of nsIMsgIncomingServer.idl objects
 // in the JsAccount system.
@@ -15,12 +14,6 @@ namespace mailnews {
 
 NS_IMPL_ISUPPORTS_INHERITED(JaBaseCppIncomingServer, nsMsgIncomingServer,
                             nsIInterfaceRequestor)
-
-// nsMsgIncomingServer overrides
-nsresult JaBaseCppIncomingServer::CreateRootFolderFromUri(
-    const nsACString& serverUri, nsIMsgFolder** rootFolder) {
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
 
 // nsIInterfaceRequestor implementation
 NS_IMETHODIMP

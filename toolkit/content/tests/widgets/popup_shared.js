@@ -410,8 +410,8 @@ function convertPosition(anchor, align) {
  * which can shift the bottom/right up to 0.5px from its "ideal" location,
  * and could cause it to round differently. (See bug 622507.)
  */
-function isWithinHalfPixel(a, b, message) {
-  ok(Math.abs(a - b) <= 0.5, `${message}: ${a}, ${b}`);
+function isWithinAPixel(a, b, message) {
+  ok(Math.abs(a - b) < 1, `${message}: ${a}, ${b}`);
 }
 
 function compareEdge(anchor, popup, edge, offsetX, offsetY, testname) {
@@ -477,12 +477,28 @@ function compareEdge(anchor, popup, edge, offsetX, offsetY, testname) {
         cornerX += offsetX;
         cornerY += offsetY;
         break;
+      case "topcenter":
+        cornerX += -popuprect.width / 2 + offsetX;
+        cornerY += offsetY;
+        break;
       case "topright":
         cornerX += -popuprect.width + offsetX;
         cornerY += offsetY;
         break;
+      case "leftcenter":
+        cornerX += offsetX;
+        cornerY += -popuprect.height / 2 + offsetY;
+        break;
+      case "rightcenter":
+        cornerX += -popuprect.width + offsetX;
+        cornerY += -popuprect.height / 2 + offsetY;
+        break;
       case "bottomleft":
         cornerX += offsetX;
+        cornerY += -popuprect.height + offsetY;
+        break;
+      case "bottomcenter":
+        cornerX += -popuprect.width / 2 + offsetX;
         cornerY += -popuprect.height + offsetY;
         break;
       case "bottomright":
@@ -491,93 +507,71 @@ function compareEdge(anchor, popup, edge, offsetX, offsetY, testname) {
         break;
     }
 
-    is(
-      Math.round(popuprect.left),
-      Math.round(cornerX),
-      testname + " x position"
-    );
-    is(
-      Math.round(popuprect.top),
-      Math.round(cornerY),
-      testname + " y position"
-    );
-    return;
-  }
-
-  if (edge == "after_pointer") {
-    is(
-      Math.round(popuprect.left),
-      Math.round(anchorrect.left) + offsetX,
-      testname + " x position"
-    );
-    is(
-      Math.round(popuprect.top),
-      Math.round(anchorrect.top) + offsetY + 21,
-      testname + " y position"
-    );
+    isWithinAPixel(popuprect.left, cornerX, testname + " x position");
+    isWithinAPixel(popuprect.top, cornerY, testname + " y position");
     return;
   }
 
   if (edge == "overlap") {
-    is(
-      Math.round(anchorrect.left) + offsetY,
-      Math.round(popuprect.left),
+    isWithinAPixel(
+      anchorrect.left + offsetY,
+      popuprect.left,
       testname + " position1"
     );
-    is(
-      Math.round(anchorrect.top) + offsetY,
-      Math.round(popuprect.top),
+    isWithinAPixel(
+      anchorrect.top + offsetY,
+      popuprect.top,
       testname + " position2"
     );
     return;
   }
 
   if (edge.indexOf("before") == 0) {
-    isWithinHalfPixel(
+    isWithinAPixel(
       anchorrect.top + offsetY,
       popuprect.bottom,
       testname + " position1"
     );
   } else if (edge.indexOf("after") == 0) {
-    is(
-      Math.round(anchorrect.bottom) + offsetY,
-      Math.round(popuprect.top),
+    isWithinAPixel(
+      anchorrect.bottom + offsetY,
+      popuprect.top,
       testname + " position1"
     );
   } else if (edge.indexOf("start") == 0) {
-    isWithinHalfPixel(
+    isWithinAPixel(
       anchorrect.left + offsetX,
       popuprect.right,
       testname + " position1"
     );
   } else if (edge.indexOf("end") == 0) {
-    is(
-      Math.round(anchorrect.right) + offsetX,
-      Math.round(popuprect.left),
+    isWithinAPixel(
+      anchorrect.right + offsetX,
+      popuprect.left,
       testname + " position1"
     );
   }
 
   if (0 < edge.indexOf("before")) {
-    is(
-      Math.round(anchorrect.top) + offsetY,
-      Math.round(popuprect.top),
+    isWithinAPixel(
+      anchorrect.top + offsetY,
+      popuprect.top,
       testname + " position2"
     );
   } else if (0 < edge.indexOf("after")) {
-    isWithinHalfPixel(
+    isWithinAPixel(
       anchorrect.bottom + offsetY,
       popuprect.bottom,
       testname + " position2"
     );
   } else if (0 < edge.indexOf("start")) {
-    is(
-      Math.round(anchorrect.left) + offsetX,
-      Math.round(popuprect.left),
+    isWithinAPixel(
+      anchorrect.left + offsetX,
+      popuprect.left,
       testname + " position2"
     );
   } else if (0 < edge.indexOf("end")) {
-    isWithinHalfPixel(
+    isWithinAPixel(
       anchorrect.right + offsetX,
       popuprect.right,
       testname + " position2"

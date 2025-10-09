@@ -31,30 +31,34 @@ var {
   assertExpectedMessagesIndexed,
   glodaTestHelperInitialize,
   waitForGlodaIndexer,
-} = ChromeUtils.import("resource://testing-common/gloda/GlodaTestHelper.jsm");
+} = ChromeUtils.importESModule(
+  "resource://testing-common/gloda/GlodaTestHelper.sys.mjs"
+);
 var {
   configureGlodaIndexing,
   resumeFromSimulatedHang,
   waitForGlodaDBFlush,
   waitForIndexingHang,
-} = ChromeUtils.import(
-  "resource://testing-common/gloda/GlodaTestHelperFunctions.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/gloda/GlodaTestHelperFunctions.sys.mjs"
 );
-var { Gloda } = ChromeUtils.import("resource:///modules/gloda/GlodaPublic.jsm");
-var { GlodaIndexer } = ChromeUtils.import(
-  "resource:///modules/gloda/GlodaIndexer.jsm"
+var { Gloda } = ChromeUtils.importESModule(
+  "resource:///modules/gloda/GlodaPublic.sys.mjs"
 );
-var { GlodaMsgIndexer } = ChromeUtils.import(
-  "resource:///modules/gloda/IndexMsg.jsm"
+var { GlodaIndexer } = ChromeUtils.importESModule(
+  "resource:///modules/gloda/GlodaIndexer.sys.mjs"
 );
-var { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { GlodaMsgIndexer } = ChromeUtils.importESModule(
+  "resource:///modules/gloda/IndexMsg.sys.mjs"
 );
-var { MessageInjection } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageInjection.jsm"
+var { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { MessageInjection } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageInjection.sys.mjs"
+);
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 var msgGen;
@@ -95,10 +99,8 @@ add_task(async function compaction_indexing_pass_all_pending_commit() {
  *  (Simulating the user quitting before all compactions have been processed.)
  */
 add_task(async function test_sweep_performs_compaction() {
-  let [[folder], moveSet, staySet] = await messageInjection.makeFoldersWithSets(
-    1,
-    [{ count: 1 }, { count: 1 }]
-  );
+  const [[folder], moveSet, staySet] =
+    await messageInjection.makeFoldersWithSets(1, [{ count: 1 }, { count: 1 }]);
 
   await waitForGlodaIndexer();
   Assert.ok(
@@ -106,7 +108,7 @@ add_task(async function test_sweep_performs_compaction() {
   );
 
   // Move the message to another folder.
-  let otherFolder = await messageInjection.makeEmptyFolder();
+  const otherFolder = await messageInjection.makeEmptyFolder();
   await messageInjection.moveMessages(moveSet, otherFolder);
   await waitForGlodaIndexer();
   Assert.ok(...assertExpectedMessagesIndexed([moveSet]));
@@ -116,7 +118,7 @@ add_task(async function test_sweep_performs_compaction() {
   configureGlodaIndexing({ event: false });
 
   // Compact.
-  let msgFolder = messageInjection.getRealInjectionFolder(folder);
+  const msgFolder = messageInjection.getRealInjectionFolder(folder);
   dump(
     "Triggering compaction " +
       "Folder: " +
@@ -125,7 +127,7 @@ add_task(async function test_sweep_performs_compaction() {
       Gloda.getFolderForFolder(msgFolder) +
       "\n"
   );
-  let urlListener = new PromiseTestUtils.PromiseUrlListener();
+  const urlListener = new PromiseTestUtils.PromiseUrlListener();
   msgFolder.compact(urlListener, null);
   await urlListener.promise;
 
@@ -133,7 +135,7 @@ add_task(async function test_sweep_performs_compaction() {
   GlodaIndexer.purgeJobsUsingFilter(() => true);
 
   // Make sure the folder is marked compacted.
-  let glodaFolder = Gloda.getFolderForFolder(msgFolder);
+  const glodaFolder = Gloda.getFolderForFolder(msgFolder);
   Assert.ok(glodaFolder.compacted);
 
   // Re-enable indexing and fire up an indexing pass.
@@ -153,7 +155,7 @@ add_task(async function test_sweep_performs_compaction() {
  */
 add_task(
   async function test_moves_and_deletions_on_compacted_folder_edge_case() {
-    let [[folder], compactMoveSet, moveSet, delSet, staySet] =
+    const [[folder], compactMoveSet, moveSet, delSet, staySet] =
       await messageInjection.makeFoldersWithSets(1, [
         { count: 1 },
         { count: 1 },
@@ -172,7 +174,7 @@ add_task(
     );
 
     // Move the message to another folder.
-    let otherFolder = await messageInjection.makeEmptyFolder();
+    const otherFolder = await messageInjection.makeEmptyFolder();
     await messageInjection.moveMessages(compactMoveSet, otherFolder);
     await waitForGlodaIndexer();
     Assert.ok(...assertExpectedMessagesIndexed([compactMoveSet]));
@@ -181,7 +183,7 @@ add_task(
     configureGlodaIndexing({ event: false });
 
     // Compact the folder.
-    let msgFolder = messageInjection.getRealInjectionFolder(folder);
+    const msgFolder = messageInjection.getRealInjectionFolder(folder);
     dump(
       "Triggering compaction " +
         "Folder: " +
@@ -190,7 +192,7 @@ add_task(
         Gloda.getFolderForFolder(msgFolder) +
         "\n"
     );
-    let urlListener = new PromiseTestUtils.PromiseUrlListener();
+    const urlListener = new PromiseTestUtils.PromiseUrlListener();
     msgFolder.compact(urlListener, null);
     await urlListener.promise;
 
@@ -243,14 +245,14 @@ add_task(
  */
 add_task(async function test_compaction_interrupting_indexing() {
   // Create a folder with a message inside.
-  let [[folder], compactionFodderSet] =
+  const [[folder], compactionFodderSet] =
     await messageInjection.makeFoldersWithSets(1, [{ count: 1 }]);
 
   await waitForGlodaIndexer();
   Assert.ok(...assertExpectedMessagesIndexed([compactionFodderSet]));
 
   // Move that message to another folder.
-  let otherFolder = await messageInjection.makeEmptyFolder();
+  const otherFolder = await messageInjection.makeEmptyFolder();
   await messageInjection.moveMessages(compactionFodderSet, otherFolder);
   await waitForGlodaIndexer();
   Assert.ok(...assertExpectedMessagesIndexed([compactionFodderSet]));
@@ -259,7 +261,7 @@ add_task(async function test_compaction_interrupting_indexing() {
   configureGlodaIndexing({ hangWhile: "streaming" });
 
   // Create a folder with a message inside.
-  let [msgSet] = await messageInjection.makeNewSetsInFolders(
+  const [msgSet] = await messageInjection.makeNewSetsInFolders(
     [folder],
     [{ count: 1 }]
   );
@@ -268,8 +270,8 @@ add_task(async function test_compaction_interrupting_indexing() {
 
   // Compact! This should kill the job and because of the compaction; no other
   //  reason should be able to do this.
-  let msgFolder = messageInjection.getRealInjectionFolder(folder);
-  let urlListener = new PromiseTestUtils.PromiseUrlListener();
+  const msgFolder = messageInjection.getRealInjectionFolder(folder);
+  const urlListener = new PromiseTestUtils.PromiseUrlListener();
   msgFolder.compact(urlListener, null);
   await urlListener.promise;
 
@@ -294,12 +296,12 @@ add_task(async function test_do_not_enter_compacting_folders() {
   configureGlodaIndexing({ event: false });
 
   // Create a folder with a message inside.
-  let [[folder]] = await messageInjection.makeFoldersWithSets(1, [
+  const [[folder]] = await messageInjection.makeFoldersWithSets(1, [
     { count: 1 },
   ]);
 
   // Lie and claim we are compacting that folder.
-  let glodaFolder = Gloda.getFolderForFolder(
+  const glodaFolder = Gloda.getFolderForFolder(
     messageInjection.getRealInjectionFolder(folder)
   );
   glodaFolder.compacting = true;
@@ -319,8 +321,8 @@ add_task(async function test_do_not_enter_compacting_folders() {
  */
 function verify_message_keys(aSynSet) {
   let iMsg = 0;
-  for (let msgHdr of aSynSet.msgHdrs()) {
-    let glodaMsg = aSynSet.glodaMessages[iMsg++];
+  for (const msgHdr of aSynSet.msgHdrs()) {
+    const glodaMsg = aSynSet.glodaMessages[iMsg++];
     if (msgHdr.messageKey != glodaMsg.messageKey) {
       throw new Error(
         "Message header " +
@@ -348,7 +350,7 @@ async function compaction_indexing_pass(aParam) {
   // Create 5 messages.  We will move just the third message so the first two
   //  message keep their keys and the last two change.  (We want 2 for both
   //  cases to avoid edge cases.)
-  let [[folder], sameSet, moveSet, shiftSet] =
+  const [[folder], sameSet, moveSet, shiftSet] =
     await messageInjection.makeFoldersWithSets(1, [
       { count: 2 },
       { count: 1 },
@@ -363,7 +365,7 @@ async function compaction_indexing_pass(aParam) {
   );
 
   // Move the message to another folder.
-  let otherFolder = await messageInjection.makeEmptyFolder();
+  const otherFolder = await messageInjection.makeEmptyFolder();
   await messageInjection.moveMessages(moveSet, otherFolder);
   await waitForGlodaIndexer();
   Assert.ok(...assertExpectedMessagesIndexed([moveSet]));
@@ -373,7 +375,7 @@ async function compaction_indexing_pass(aParam) {
   }
 
   // Compact the folder.
-  let msgFolder = messageInjection.getRealInjectionFolder(folder);
+  const msgFolder = messageInjection.getRealInjectionFolder(folder);
   dump(
     "Triggering compaction " +
       "Folder: " +
@@ -383,7 +385,7 @@ async function compaction_indexing_pass(aParam) {
       "\n"
   );
 
-  let urlListener = new PromiseTestUtils.PromiseUrlListener();
+  const urlListener = new PromiseTestUtils.PromiseUrlListener();
   msgFolder.compact(urlListener, null);
   await urlListener.promise;
   // Wait for the compaction job to complete.

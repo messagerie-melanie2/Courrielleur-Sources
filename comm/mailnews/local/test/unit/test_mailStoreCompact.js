@@ -40,7 +40,8 @@ class PromiseStoreCompactListener {
     return true;
   }
   onMessageRetained(_oldToken, _newToken, _newSize) {}
-  onCompactionComplete(status, _oldSize, _newSize) {
+  onCompactionComplete(_status) {}
+  onFinalSummary(status, _oldSize, _newSize) {
     if (status == Cr.NS_OK) {
       this.#promise.resolve();
     } else {
@@ -152,8 +153,20 @@ async function test_listenerErrors() {
     Assert.equal(checksumBefore, checksumAfter);
   }
 
-  // Don't bother failing onCompactionComplete() - the compaction is already
-  // complete by then.
+  {
+    // Check that onCompactionComplete() can abort.
+    const l = new PromiseStoreCompactListener();
+    l.onCompactionComplete = function (_status) {
+      throw Components.Exception("", Cr.NS_ERROR_CRYPTOMINING_URI);
+    };
+    inbox.msgStore.asyncCompact(inbox, l, true);
+    await Assert.rejects(l.promise, e => {
+      return e === Cr.NS_ERROR_CRYPTOMINING_URI;
+    });
+    // Unchanged mbox file?
+    const checksumAfter = await fileChecksum(inbox.filePath.path);
+    Assert.equal(checksumBefore, checksumAfter);
+  }
 
   // Clear up so we can run again on different store type.
   localAccountUtils.clearAll();
@@ -209,7 +222,7 @@ async function test_midwayFail() {
 }
 
 /**
- * Test that onCompactionComplete returns sensible before and after sizes.
+ * Test that onFinalSummary returns sensible before and after sizes.
  * See Bug 1900172.
  */
 async function test_sizesAtCompletion() {
@@ -236,11 +249,11 @@ async function test_sizesAtCompletion() {
     ++this.msgCount;
     return this.msgCount % 2 == 0;
   };
-  l._onCompactionComplete = l.onCompactionComplete;
-  l.onCompactionComplete = function (status, oldSize, newSize) {
+  l._onFinalSummary = l.onFinalSummary;
+  l.onFinalSummary = function (status, oldSize, newSize) {
     this.newSize = newSize;
     this.oldSize = oldSize;
-    this._onCompactionComplete(status, oldSize, newSize);
+    this._onFinalSummary(status, oldSize, newSize);
   };
 
   inbox.msgStore.asyncCompact(inbox, l, true);
@@ -253,6 +266,54 @@ async function test_sizesAtCompletion() {
 
   Assert.equal(oldFileSize, l.oldSize, "reported oldSize matches filesize");
   Assert.equal(newFileSize, l.newSize, "reported newSize matches filesize");
+
+  localAccountUtils.clearAll();
+}
+
+/**
+ * Make sure asyncCompact() fails with NS_MSG_ERROR_MBOX_MALFORMED for
+ * malformed mbox files we can't sensibly parse.
+ */
+async function test_malformedMboxes() {
+  localAccountUtils.loadLocalMailAccount();
+  const inbox = localAccountUtils.inboxFolder;
+
+  const badMboxes = [
+    // An mbox which has two messages but no "From " separators (see Bug 1935331):
+    "Message-Id: one\r\n" +
+      "From: alice@invalid.com\r\n" +
+      "To: bob@invalid.com\r\n" +
+      "Subject: hello\r\n" +
+      "\r\n" +
+      "Hi there bob!\r\n" +
+      "\r\n" +
+      "Message-Id: two\r\n" +
+      "From: bob@invalid.com\r\n" +
+      "To: alice@invalid.com\r\n" +
+      "Subject: re: hello\r\n" +
+      "\r\n" +
+      "Hi Alice!\r\n" +
+      "\r\n",
+
+    // An mbox file with some random rubbish:
+    "foo\r\nbar\r\nwibble\r\n",
+  ];
+
+  for (const mbox of badMboxes) {
+    await IOUtils.writeUTF8(inbox.filePath.path, mbox);
+    // Note: we're writing an mbox file to the folder, but there are no
+    // corresponding message entries in the database.
+    // But that's OK - asyncCompact doesn't use the DB at all.
+    const l = new PromiseStoreCompactListener();
+    await Assert.rejects(
+      (async function () {
+        inbox.msgStore.asyncCompact(inbox, l, true);
+        await l.promise;
+      })(),
+      /2153054244/,
+      "Bad mbox should cause msgStore.asyncCompact() to fail with NS_MSG_ERROR_MBOX_MALFORMED"
+    );
+  }
 
   localAccountUtils.clearAll();
 }
@@ -276,3 +337,4 @@ add_task(withStore(mboxStore, test_discardAll));
 add_task(withStore(mboxStore, test_listenerErrors));
 add_task(withStore(mboxStore, test_midwayFail));
 add_task(withStore(mboxStore, test_sizesAtCompletion));
+add_task(withStore(mboxStore, test_malformedMboxes));

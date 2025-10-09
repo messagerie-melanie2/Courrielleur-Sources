@@ -14,7 +14,7 @@ const portToAddon = (function () {
   function connect() {
     port = browser.runtime.connect({ name: "AboutCompatTab" });
     port.onMessage.addListener(onMessageFromAddon);
-    port.onDisconnect.addListener(e => {
+    port.onDisconnect.addListener(() => {
       port = undefined;
     });
   }
@@ -45,10 +45,21 @@ const DOMContentLoadedPromise = new Promise(resolve => {
   );
 });
 
+const ua = navigator.userAgent;
+if (ua.includes("Tablet") || ua.includes("Mobile")) {
+  document.documentElement.classList.add("mobile");
+}
+
 Promise.all([
   browser.runtime.sendMessage("getAllInterventions"),
   DOMContentLoadedPromise,
 ]).then(([info]) => {
+  // alphabetize the interventions and shims
+  info.interventions = info.interventions.sort((a, b) =>
+    a.domain.localeCompare(b.domain)
+  );
+  info.shims = info.shims.sort((a, b) => a.name.localeCompare(b.name));
+
   document.body.addEventListener("click", async evt => {
     const ele = evt.target;
     if (ele.nodeName === "BUTTON") {
@@ -75,15 +86,13 @@ Promise.all([
   redraw();
 });
 
-function onMessageFromAddon(msg) {
+async function onMessageFromAddon(msg) {
   const alsoShowHidden = location.hash === "#all";
+
+  await DOMContentLoadedPromise;
 
   if ("interventionsChanged" in msg) {
     redrawTable($("#interventions"), msg.interventionsChanged, alsoShowHidden);
-  }
-
-  if ("overridesChanged" in msg) {
-    redrawTable($("#overrides"), msg.overridesChanged, alsoShowHidden);
   }
 
   if ("shimsChanged" in msg) {
@@ -107,9 +116,8 @@ function redraw() {
   if (!availablePatches) {
     return;
   }
-  const { overrides, interventions, shims } = availablePatches;
+  const { interventions, shims } = availablePatches;
   const alsoShowHidden = location.hash === "#all";
-  redrawTable($("#overrides"), overrides, alsoShowHidden);
   redrawTable($("#interventions"), interventions, alsoShowHidden);
   updateShimTables(shims, alsoShowHidden);
 }

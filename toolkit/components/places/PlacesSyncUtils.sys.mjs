@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
@@ -13,7 +11,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
 
 /**
  * This module exports functions for Sync to use when applying remote
- * records. The calls are similar to those in `Bookmarks.jsm` and
+ * records. The calls are similar to those in `Bookmarks.sys.mjs` and
  * `nsINavBookmarksService`, with special handling for
  * tags, keywords, synced annotations, and missing parents.
  */
@@ -27,7 +25,7 @@ const MOBILE_BOOKMARKS_PREF = "browser.bookmarks.showMobileBookmarks";
 
 // These are defined as lazy getters to defer initializing the bookmarks
 // service until it's needed.
-XPCOMUtils.defineLazyGetter(lazy, "ROOT_RECORD_ID_TO_GUID", () => ({
+ChromeUtils.defineLazyGetter(lazy, "ROOT_RECORD_ID_TO_GUID", () => ({
   menu: lazy.PlacesUtils.bookmarks.menuGuid,
   places: lazy.PlacesUtils.bookmarks.rootGuid,
   tags: lazy.PlacesUtils.bookmarks.tagsGuid,
@@ -36,7 +34,7 @@ XPCOMUtils.defineLazyGetter(lazy, "ROOT_RECORD_ID_TO_GUID", () => ({
   mobile: lazy.PlacesUtils.bookmarks.mobileGuid,
 }));
 
-XPCOMUtils.defineLazyGetter(lazy, "ROOT_GUID_TO_RECORD_ID", () => ({
+ChromeUtils.defineLazyGetter(lazy, "ROOT_GUID_TO_RECORD_ID", () => ({
   [lazy.PlacesUtils.bookmarks.menuGuid]: "menu",
   [lazy.PlacesUtils.bookmarks.rootGuid]: "places",
   [lazy.PlacesUtils.bookmarks.tagsGuid]: "tags",
@@ -45,14 +43,14 @@ XPCOMUtils.defineLazyGetter(lazy, "ROOT_GUID_TO_RECORD_ID", () => ({
   [lazy.PlacesUtils.bookmarks.mobileGuid]: "mobile",
 }));
 
-XPCOMUtils.defineLazyGetter(lazy, "ROOTS", () =>
+ChromeUtils.defineLazyGetter(lazy, "ROOTS", () =>
   Object.keys(lazy.ROOT_RECORD_ID_TO_GUID)
 );
 
 // Gets the history transition values we ignore and do not sync, as a
 // string, which is a comma-separated set of values - ie, something which can
 // be used with sqlite's IN operator. Does *not* includes the parens.
-XPCOMUtils.defineLazyGetter(lazy, "IGNORED_TRANSITIONS_AS_SQL_LIST", () =>
+ChromeUtils.defineLazyGetter(lazy, "IGNORED_TRANSITIONS_AS_SQL_LIST", () =>
   // * We don't sync `TRANSITION_FRAMED_LINK` visits - these are excluded when
   //   rendering the history menu, so we use the same constraints for Sync.
   // * We don't sync `TRANSITION_DOWNLOAD` because it makes no sense to see
@@ -83,7 +81,7 @@ const HistorySyncUtils = (PlacesSyncUtils.history = Object.freeze({
    * Assigns a new sync ID. This is called when we sync for the first time with
    * a new account, and when we're the first to sync after a node reassignment.
    *
-   * @return {Promise} resolved once the ID has been updated.
+   * @returns {Promise} resolved once the ID has been updated.
    * @resolves to the new sync ID.
    */
   resetSyncId() {
@@ -105,7 +103,7 @@ const HistorySyncUtils = (PlacesSyncUtils.history = Object.freeze({
    *
    * @param newSyncId
    *        The server's sync ID.
-   * @return {Promise} resolved once the ID has been updated.
+   * @returns {Promise} resolved once the ID has been updated.
    */
   async ensureCurrentSyncId(newSyncId) {
     if (!newSyncId || typeof newSyncId != "string") {
@@ -175,7 +173,7 @@ const HistorySyncUtils = (PlacesSyncUtils.history = Object.freeze({
    * method when it receives a command from a remote client to wipe all stored
    * data.
    *
-   * @return {Promise} resolved once all pages and visits have been removed.
+   * @returns {Promise} resolved once all pages and visits have been removed.
    */
   async wipe() {
     await lazy.PlacesUtils.history.clear();
@@ -186,7 +184,7 @@ const HistorySyncUtils = (PlacesSyncUtils.history = Object.freeze({
    * Removes the sync ID and last sync time for the history collection. Unlike
    * `wipe`, this keeps all existing history pages and visits.
    *
-   * @return {Promise} resolved once the metadata have been removed.
+   * @returns {Promise} resolved once the metadata have been removed.
    */
   reset() {
     return lazy.PlacesUtils.metadata.delete(
@@ -201,14 +199,14 @@ const HistorySyncUtils = (PlacesSyncUtils.history = Object.freeze({
    *
    * @param {Date} visitDate
    *        The visit date.
-   * @return {Date} The clamped visit date.
+   * @returns {Date} The clamped visit date.
    */
   clampVisitDate(visitDate) {
     let currentDate = new Date();
     if (visitDate > currentDate) {
       return currentDate;
     }
-    if (visitDate < BookmarkSyncUtils.EARLIEST_BOOKMARK_TIMESTAMP) {
+    if (visitDate.getTime() < BookmarkSyncUtils.EARLIEST_BOOKMARK_TIMESTAMP) {
       return new Date(BookmarkSyncUtils.EARLIEST_BOOKMARK_TIMESTAMP);
     }
     return visitDate;
@@ -218,7 +216,7 @@ const HistorySyncUtils = (PlacesSyncUtils.history = Object.freeze({
    * Fetches the frecency for the URL provided
    *
    * @param url
-   * @returns {Number} The frecency of the given url
+   * @returns {Promise<number>} The frecency of the given url
    */
   async fetchURLFrecency(url) {
     let canonicalURL = lazy.PlacesUtils.SYNC_BOOKMARK_VALIDATORS.url(url);
@@ -241,7 +239,8 @@ const HistorySyncUtils = (PlacesSyncUtils.history = Object.freeze({
    *
    * @param guids
    *
-   * @returns {Array} new Array with the guids that aren't syncable
+   * @returns {Promise<string[]>}
+   *   A new array with the guids that aren't syncable.
    */
   async determineNonSyncableGuids(guids) {
     // Filter out hidden pages and transitions that we don't sync.
@@ -293,16 +292,19 @@ const HistorySyncUtils = (PlacesSyncUtils.history = Object.freeze({
    * Fetch the last 20 visits (date and type of it) corresponding to a given url
    *
    * @param url
-   * @returns {Array} Each element of the Array is an object with members: date and type
+   * @returns {Promise<{date: Date, type: number}[]>}
+   *   Each element of the Array is an object with members: date and type
    */
   async fetchVisitsForURL(url) {
     let canonicalURL = lazy.PlacesUtils.SYNC_BOOKMARK_VALIDATORS.url(url);
     let db = await lazy.PlacesUtils.promiseDBConnection();
     let rows = await db.executeCached(
       `
-      SELECT visit_type type, visit_date date
-      FROM moz_historyvisits
-      JOIN moz_places h ON h.id = place_id
+      SELECT visit_type type, visit_date date,
+      json_extract(e.sync_json, '$.unknown_sync_fields') as unknownSyncFields
+      FROM moz_historyvisits v
+      JOIN moz_places h ON h.id = v.place_id
+      LEFT OUTER JOIN moz_historyvisits_extra e ON e.visit_id = v.id
       WHERE url_hash = hash(:url) AND url = :url
       ORDER BY date DESC LIMIT 20`,
       { url: canonicalURL.href }
@@ -310,7 +312,20 @@ const HistorySyncUtils = (PlacesSyncUtils.history = Object.freeze({
     return rows.map(row => {
       let visitDate = row.getResultByName("date");
       let visitType = row.getResultByName("type");
-      return { date: visitDate, type: visitType };
+      let visit = { date: visitDate, type: visitType };
+
+      // We should grab unknown fields to roundtrip them
+      // back to the server
+      let unknownFields = row.getResultByName("unknownSyncFields");
+      if (unknownFields) {
+        let unknownFieldsObj = JSON.parse(unknownFields);
+        for (const key in unknownFieldsObj) {
+          // We have to manually add it to the cleartext since that's
+          // what gets processed during upload
+          visit[key] = unknownFieldsObj[key];
+        }
+      }
+      return visit;
     });
   },
 
@@ -318,7 +333,7 @@ const HistorySyncUtils = (PlacesSyncUtils.history = Object.freeze({
    * Fetches the guid of a uri
    *
    * @param uri
-   * @returns {String} The guid of the given uri
+   * @returns {Promise<string>} The guid of the given uri.
    */
   async fetchGuidForURL(url) {
     let canonicalURL = lazy.PlacesUtils.SYNC_BOOKMARK_VALIDATORS.url(url);
@@ -340,36 +355,50 @@ const HistorySyncUtils = (PlacesSyncUtils.history = Object.freeze({
    * Fetch information about a guid (url, title and frecency)
    *
    * @param guid
-   * @returns {Object} Object with three members: url, title and frecency of the given guid
+   * @returns {Promise<{url: string, title: string, frecency: number}>}
+   *   An object with three members: url, title and frecency of the given guid.
    */
   async fetchURLInfoForGuid(guid) {
     let db = await lazy.PlacesUtils.promiseDBConnection();
     let rows = await db.executeCached(
       `
-      SELECT url, IFNULL(title, '') AS title, frecency
-      FROM moz_places
+      SELECT url, IFNULL(title, '') AS title, frecency,
+      json_extract(e.sync_json, '$.unknown_sync_fields') as unknownSyncFields
+      FROM moz_places h
+      LEFT OUTER JOIN moz_places_extra e ON e.place_id = h.id
       WHERE guid = :guid`,
       { guid }
     );
     if (rows.length === 0) {
       return null;
     }
-    return {
+
+    let info = {
       url: rows[0].getResultByName("url"),
       title: rows[0].getResultByName("title"),
       frecency: rows[0].getResultByName("frecency"),
     };
+    let unknownFields = rows[0].getResultByName("unknownSyncFields");
+    if (unknownFields) {
+      // This will be unfurled at the caller since the
+      // cleartext process will drop this
+      info.unknownFields = unknownFields;
+    }
+    return info;
   },
 
   /**
-   * Get all URLs filtered by the limit and since members of the options object.
+   * Get all URLs filtered by the specified limit and minimum visit date.
    *
-   * @param options
-   *        Options object with two members, since and limit. Both of them must be provided
-   * @returns {Array} - Up to limit number of URLs starting from the date provided by since
-   *
-   * Note that some visit types are explicitly excluded - downloads and framed
-   * links.
+   * @param {object} options
+   * @param {number} options.limit
+   *   Maximum number of URLs to return.
+   * @param {Date} options.since
+   *   Only include URLs visited after this date.
+   * @returns {Promise<string[]>}
+   *   A list of URLs, up to the given limit, that were visited after the date
+   *   provided. Note that some visit types are explicitly excluded - downloads
+   *   and framed links.
    */
   async getAllURLs(options) {
     // Check that the limit property is finite number.
@@ -401,6 +430,55 @@ const HistorySyncUtils = (PlacesSyncUtils.history = Object.freeze({
     );
     return rows.map(row => row.getResultByName("url"));
   },
+  /**
+   * Insert or update the unknownFields that this client doesn't understand (yet)
+   * but stores & roundtrips them to prevent other clients from losing that data
+   *
+   * @param {object[]} updates array of objects
+   *  an update object needs to have either a:
+   *  placeId: if we're putting unknownFields for a moz_places item
+   *  visitId: if we're putting unknownFields for a moz_historyvisits item
+   *  Note: Supplying none or both will result in that record being ignored
+   *  unknownFields: the stringified json to insert
+   */
+  async updateUnknownFieldsBatch(updates) {
+    return lazy.PlacesUtils.withConnectionWrapper(
+      "HistorySyncUtils: updateUnknownFieldsBatch",
+      async function (db) {
+        await db.executeTransaction(async () => {
+          for await (const update of updates) {
+            // Validate we only have one of these props
+            if (
+              (update.placeId && update.visitId) ||
+              (!update.placeId && !update.visitId)
+            ) {
+              continue;
+            }
+            let tableName = update.placeId
+              ? "moz_places_extra"
+              : "moz_historyvisits_extra";
+            let keyName = update.placeId ? "place_id" : "visit_id";
+            await db.executeCached(
+              `
+            INSERT INTO ${tableName} (${keyName}, sync_json)
+            VALUES (
+              :keyValue,
+              json_object('unknown_sync_fields', :unknownFields)
+            )
+            ON CONFLICT(${keyName}) DO UPDATE SET
+            sync_json=json_patch(${tableName}.sync_json, json_object('unknown_sync_fields',:unknownFields))
+            `,
+              {
+                keyValue: update.placeId ?? update.visitId,
+                unknownFields: update.unknownFields,
+              }
+            );
+          }
+        });
+      }
+    );
+  },
+  // End of history freeze
 }));
 
 const BookmarkSyncUtils = (PlacesSyncUtils.bookmarks = Object.freeze({
@@ -454,7 +532,7 @@ const BookmarkSyncUtils = (PlacesSyncUtils.bookmarks = Object.freeze({
    * new account, when we're the first to sync after a node reassignment, and
    * on the first sync after a manual restore.
    *
-   * @return {Promise} resolved once the ID and all items have been updated.
+   * @returns {Promise} resolved once the ID and all items have been updated.
    * @resolves to the new sync ID.
    */
   resetSyncId() {
@@ -486,7 +564,7 @@ const BookmarkSyncUtils = (PlacesSyncUtils.bookmarks = Object.freeze({
    *
    * @param newSyncId
    *        The server's sync ID.
-   * @return {Promise} resolved once the ID and all items have been updated.
+   * @returns {Promise} resolved once the ID and all items have been updated.
    */
   async ensureCurrentSyncId(newSyncId) {
     if (!newSyncId || typeof newSyncId != "string") {
@@ -618,8 +696,12 @@ const BookmarkSyncUtils = (PlacesSyncUtils.bookmarks = Object.freeze({
     // wipe; we want to merge the restored tree with the one on the server.
     await lazy.PlacesUtils.metadata.setWithConnection(
       db,
-      BookmarkSyncUtils.WIPE_REMOTE_META_KEY,
-      source == lazy.PlacesUtils.bookmarks.SOURCES.RESTORE
+      new Map([
+        [
+          BookmarkSyncUtils.WIPE_REMOTE_META_KEY,
+          source == lazy.PlacesUtils.bookmarks.SOURCES.RESTORE,
+        ],
+      ])
     );
 
     // Reset change counters and sync statuses for roots and remaining
@@ -771,7 +853,7 @@ const BookmarkSyncUtils = (PlacesSyncUtils.bookmarks = Object.freeze({
    * Sync uses this method to reorder all synced children after applying all
    * incoming records.
    *
-   * @return {Promise} resolved when reordering is complete.
+   * @returns {Promise} resolved when reordering is complete.
    * @rejects if an error happens while reordering.
    * @throws if the arguments are invalid.
    */
@@ -832,7 +914,7 @@ const BookmarkSyncUtils = (PlacesSyncUtils.bookmarks = Object.freeze({
   /**
    * Returns a changeset containing local bookmark changes since the last sync.
    *
-   * @return {Promise} resolved once all items have been fetched.
+   * @returns {Promise} resolved once all items have been fetched.
    * @resolves to an object containing records for changed bookmarks, keyed by
    *           the record ID.
    * @see pullSyncChanges for the implementation, and markChangesAsSyncing for
@@ -852,7 +934,7 @@ const BookmarkSyncUtils = (PlacesSyncUtils.bookmarks = Object.freeze({
    * @param changeRecords
    *        A changeset containing sync change records, as returned by
    *        `pullChanges`.
-   * @return {Promise} resolved once all records have been updated.
+   * @returns {Promise} resolved once all records have been updated.
    */
   markChangesAsSyncing(changeRecords) {
     return lazy.PlacesUtils.withConnectionWrapper(
@@ -869,7 +951,7 @@ const BookmarkSyncUtils = (PlacesSyncUtils.bookmarks = Object.freeze({
    * @param changeRecords
    *        A changeset containing sync change records, as returned by
    *        `pullChanges`.
-   * @return {Promise} resolved once all records have been updated.
+   * @returns {Promise} resolved once all records have been updated.
    */
   pushChanges(changeRecords) {
     return lazy.PlacesUtils.withConnectionWrapper(
@@ -1035,7 +1117,7 @@ const BookmarkSyncUtils = (PlacesSyncUtils.bookmarks = Object.freeze({
    * method when it receives a command from a remote client to wipe all stored
    * data.
    *
-   * @return {Promise} resolved once all items have been removed.
+   * @returns {Promise} resolved once all items have been removed.
    */
   wipe() {
     return lazy.PlacesUtils.bookmarks.eraseEverything({
@@ -1048,7 +1130,7 @@ const BookmarkSyncUtils = (PlacesSyncUtils.bookmarks = Object.freeze({
    * this keeps all existing bookmarks, and only clears their sync change
    * tracking info.
    *
-   * @return {Promise} resolved once all items have been updated.
+   * @returns {Promise} resolved once all items have been updated.
    */
   reset() {
     return lazy.PlacesUtils.withConnectionWrapper(
@@ -1178,7 +1260,7 @@ const BookmarkSyncUtils = (PlacesSyncUtils.bookmarks = Object.freeze({
    *        the bookmark URL object.
    * @param syncChangeDelta
    *        the sync change counter increment.
-   * @return {Promise} resolved when the counters have been updated.
+   * @returns {Promise} resolved when the counters have been updated.
    */
   addSyncChangesForBookmarksWithURL(db, url, syncChangeDelta) {
     if (!url || !syncChangeDelta) {
@@ -1265,7 +1347,7 @@ PlacesSyncUtils.test.bookmarks = Object.freeze({
    * @param info
    *        object representing a synced bookmark.
    *
-   * @return {Promise} resolved when the creation is complete.
+   * @returns {Promise} resolved when the creation is complete.
    * @resolves to an object representing the created bookmark.
    * @rejects if it's not possible to create the requested bookmark.
    * @throws if the arguments are invalid.
@@ -1281,9 +1363,8 @@ PlacesSyncUtils.test.bookmarks = Object.freeze({
         insertInfo = await updateTagQueryFolder(db, insertInfo);
 
         let bookmarkInfo = syncBookmarkToPlacesBookmark(insertInfo);
-        let bookmarkItem = await lazy.PlacesUtils.bookmarks.insert(
-          bookmarkInfo
-        );
+        let bookmarkItem =
+          await lazy.PlacesUtils.bookmarks.insert(bookmarkInfo);
         let newItem = await insertBookmarkMetadata(
           db,
           bookmarkItem,
@@ -1296,11 +1377,11 @@ PlacesSyncUtils.test.bookmarks = Object.freeze({
   },
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "HistorySyncLog", () => {
+ChromeUtils.defineLazyGetter(lazy, "HistorySyncLog", () => {
   return lazy.Log.repository.getLogger("Sync.Engine.History.HistorySyncUtils");
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "BookmarkSyncLog", () => {
+ChromeUtils.defineLazyGetter(lazy, "BookmarkSyncLog", () => {
   // Use a sub-log of the bookmarks engine, so setting the level for that
   // engine also adjust the level of this log.
   return lazy.Log.repository.getLogger(
@@ -1329,7 +1410,7 @@ function validateChangeRecord(name, changeRecord, behavior) {
 }
 
 // Similar to the private `fetchBookmarksByParent` implementation in
-// `Bookmarks.jsm`.
+// `Bookmarks.sys.mjs`.
 var fetchChildGuids = async function (db, parentGuid) {
   let rows = await db.executeCached(
     `
@@ -1749,7 +1830,7 @@ function addRowToChangeRecords(row, changeRecords) {
  *        The Sqlite.sys.mjs connection handle.
  * @param forGuids
  *        Fetch Sync tracking information for only the requested GUIDs.
- * @return {Promise} resolved once all items have been fetched.
+ * @returns {Promise} resolved once all items have been fetched.
  * @resolves to an object containing records for changed bookmarks, keyed by
  *           the record ID.
  */
@@ -1923,7 +2004,7 @@ function markChangesAsSyncing(db, changeRecords) {
 /**
  * Removes tombstones for successfully synced items.
  *
- * @return {Promise}
+ * @returns {Promise}
  */
 var removeTombstones = function (db, guids) {
   if (!guids.length) {
@@ -1938,7 +2019,7 @@ var removeTombstones = function (db, guids) {
  * Removes tombstones for successfully synced items where the specified GUID
  * exists in *both* the bookmarks and tombstones tables.
  *
- * @return {Promise}
+ * @returns {Promise}
  */
 var removeUndeletedTombstones = function (db, guids) {
   if (!guids.length) {
@@ -1955,8 +2036,7 @@ var removeUndeletedTombstones = function (db, guids) {
 async function setHistorySyncId(db, newSyncId) {
   await lazy.PlacesUtils.metadata.setWithConnection(
     db,
-    HistorySyncUtils.SYNC_ID_META_KEY,
-    newSyncId
+    new Map([[HistorySyncUtils.SYNC_ID_META_KEY, newSyncId]])
   );
 
   await lazy.PlacesUtils.metadata.deleteWithConnection(
@@ -1969,8 +2049,7 @@ async function setHistorySyncId(db, newSyncId) {
 async function setBookmarksSyncId(db, newSyncId) {
   await lazy.PlacesUtils.metadata.setWithConnection(
     db,
-    BookmarkSyncUtils.SYNC_ID_META_KEY,
-    newSyncId
+    new Map([[BookmarkSyncUtils.SYNC_ID_META_KEY, newSyncId]])
   );
 
   await lazy.PlacesUtils.metadata.deleteWithConnection(
@@ -1994,3 +2073,32 @@ async function resetAllSyncStatuses(db, syncStatus) {
   // Drop stale tombstones.
   await db.execute("DELETE FROM moz_bookmarks_deleted");
 }
+
+/**
+ * Other clients might have new fields we don't quite understand yet,
+ * so we add it to a "unknownFields" field to roundtrip back to the server
+ * so other clients don't experience data loss
+ *
+ * @param record: an object, usually from the server, and will iterate through the
+ *  the keys and extract any fields that are unknown to this client
+ * @param validFields: an array of keys we know are valid and should ignore
+ * @returns {string} json object containing unknownfields, null if none found
+ */
+PlacesSyncUtils.extractUnknownFields = (record, validFields) => {
+  let result = Object.keys(record).reduce(
+    ({ unknownFields, hasUnknownFields }, key) => {
+      if (validFields.includes(key)) {
+        return { unknownFields, hasUnknownFields };
+      }
+      unknownFields[key] = record[key];
+      return { unknownFields, hasUnknownFields: true };
+    },
+    { unknownFields: {}, hasUnknownFields: false }
+  );
+  if (result.hasUnknownFields) {
+    // For simplicity, we store the unknown fields as a string
+    // since we never operate on it and just need it for roundtripping
+    return JSON.stringify(result.unknownFields);
+  }
+  return null;
+};

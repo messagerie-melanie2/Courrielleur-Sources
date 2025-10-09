@@ -155,8 +155,8 @@ public:
                                                                                \
     auto raw = impl().get_raw_value();                                         \
     auto raw_rhs = detail::unwrap_value(rhs);                                  \
-    static_assert(std::is_integral_v<decltype(raw_rhs)>                        \
-                  || std::is_floating_point_v<decltype(raw_rhs)>,              \
+    static_assert(std::is_integral_v<decltype(raw_rhs)> ||                     \
+                    std::is_floating_point_v<decltype(raw_rhs)>,               \
                   "Can only operate on numeric types");                        \
                                                                                \
     auto ret = raw opSymbol raw_rhs;                                           \
@@ -788,12 +788,20 @@ BinaryOpWrappedRhs(&);
 BinaryOpWrappedRhs(|);
 BinaryOpWrappedRhs(<<);
 BinaryOpWrappedRhs(>>);
+
+// GCC10.1 to GCC13 has a bug where it selects the wrong overload of operator==
+// https://gcc.gnu.org/bugzilla/show_bug.cgi?id=114549 . However C++ 20 also
+// provides reverse comparisons by default, and so we no longer need to define
+// them. Thus, from C++ 20, we do not define the reverse operators.
+#if __cplusplus < 202002L
 BinaryOpWrappedRhs(==);
 BinaryOpWrappedRhs(!=);
 BinaryOpWrappedRhs(<);
 BinaryOpWrappedRhs(<=);
 BinaryOpWrappedRhs(>);
 BinaryOpWrappedRhs(>=);
+#endif
+
 #undef BinaryOpWrappedRhs
 
 #define BooleanBinaryOpWrappedRhs(opSymbol)                                    \

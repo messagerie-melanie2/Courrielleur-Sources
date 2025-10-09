@@ -11,14 +11,17 @@
 #ifndef CALL_FLEXFEC_RECEIVE_STREAM_IMPL_H_
 #define CALL_FLEXFEC_RECEIVE_STREAM_IMPL_H_
 
+#include <cstdint>
 #include <memory>
-#include <vector>
 
+#include "api/environment/environment.h"
+#include "api/rtp_headers.h"
+#include "api/sequence_checker.h"
 #include "call/flexfec_receive_stream.h"
 #include "call/rtp_packet_sink_interface.h"
 #include "modules/rtp_rtcp/source/rtp_rtcp_impl2.h"
 #include "rtc_base/system/no_unique_address.h"
-#include "system_wrappers/include/clock.h"
+#include "rtc_base/thread_annotations.h"
 
 namespace webrtc {
 
@@ -27,13 +30,12 @@ class ReceiveStatistics;
 class RecoveredPacketReceiver;
 class RtcpRttStats;
 class RtpPacketReceived;
-class RtpRtcp;
 class RtpStreamReceiverControllerInterface;
 class RtpStreamReceiverInterface;
 
 class FlexfecReceiveStreamImpl : public FlexfecReceiveStream {
  public:
-  FlexfecReceiveStreamImpl(Clock* clock,
+  FlexfecReceiveStreamImpl(const Environment& env,
                            Config config,
                            RecoveredPacketReceiver* recovered_packet_receiver,
                            RtcpRttStats* rtt_stats);
@@ -59,10 +61,6 @@ class FlexfecReceiveStreamImpl : public FlexfecReceiveStream {
   void SetPayloadType(int payload_type) override;
   int payload_type() const override;
 
-  // ReceiveStreamInterface impl.
-  void SetRtpExtensions(std::vector<RtpExtension> extensions) override;
-  RtpHeaderExtensionMap GetRtpExtensionMap() const override;
-
   // Updates the `rtp_video_stream_receiver_`'s `local_ssrc` when the default
   // sender has been created, changed or removed.
   void SetLocalSsrc(uint32_t local_ssrc);
@@ -71,13 +69,15 @@ class FlexfecReceiveStreamImpl : public FlexfecReceiveStream {
 
   void SetRtcpMode(RtcpMode mode) override {
     RTC_DCHECK_RUN_ON(&packet_sequence_checker_);
-    rtp_rtcp_->SetRTCPStatus(mode);
+    rtp_rtcp_.SetRTCPStatus(mode);
+  }
+
+  const ReceiveStatistics* GetStats() const override {
+    return rtp_receive_statistics_.get();
   }
 
  private:
   RTC_NO_UNIQUE_ADDRESS SequenceChecker packet_sequence_checker_;
-
-  RtpHeaderExtensionMap extension_map_;
 
   const uint32_t remote_ssrc_;
 
@@ -90,7 +90,7 @@ class FlexfecReceiveStreamImpl : public FlexfecReceiveStream {
 
   // RTCP reporting.
   const std::unique_ptr<ReceiveStatistics> rtp_receive_statistics_;
-  const std::unique_ptr<ModuleRtpRtcpImpl2> rtp_rtcp_;
+  ModuleRtpRtcpImpl2 rtp_rtcp_;
 
   std::unique_ptr<RtpStreamReceiverInterface> rtp_stream_receiver_
       RTC_GUARDED_BY(packet_sequence_checker_);

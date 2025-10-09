@@ -13,7 +13,7 @@
 #include "mozilla/dom/ReadableStream.h"
 #include "mozilla/dom/ReadableStreamBYOBRequestBinding.h"
 #include "js/experimental/TypedData.h"
-#include "mozilla/dom/ReadableStreamController.h"
+#include "mozilla/dom/ReadableStreamControllerBase.h"
 #include "nsCOMPtr.h"
 #include "nsIGlobalObject.h"
 #include "nsWrapperCache.h"
@@ -111,7 +111,7 @@ void ReadableStreamBYOBRequest::RespondWithNewView(JSContext* aCx,
   }
 
   if (JS::IsDetachedArrayBufferObject(viewedArrayBuffer)) {
-    aRv.ThrowTypeError("View of Detatched Array Buffer");
+    aRv.ThrowTypeError("View of Detached Array Buffer");
     return;
   }
 

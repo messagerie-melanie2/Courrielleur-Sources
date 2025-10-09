@@ -2,13 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-import { l10nHelper } from "resource:///modules/imXPCOMUtils.sys.mjs";
+import { IMServices } from "resource:///modules/IMServices.sys.mjs";
 
 const lazy = {};
 
-XPCOMUtils.defineLazyGetter(lazy, "_", () =>
-  l10nHelper("chrome://chat/locale/xmpp.properties")
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () => new Localization(["chat/xmpp.ftl"], true)
 );
 
 // Get conversation object.
@@ -22,11 +23,13 @@ function getAccount(aConv) {
 }
 
 function getMUC(aConv) {
-  let conv = getConv(aConv);
+  const conv = getConv(aConv);
   if (conv.left) {
     conv.writeMessage(
       conv.name,
-      lazy._("conversation.error.commandFailedNotInRoom"),
+      lazy.l10n.formatValueSync(
+        "conversation-error-command-failed-not-in-room"
+      ),
       { system: true }
     );
     return null;
@@ -37,13 +40,13 @@ function getMUC(aConv) {
 // Trims the string and splits it in two parts on the first space
 // if there is one. Returns the non-empty parts in an array.
 function splitInput(aString) {
-  let params = aString.trim();
+  const params = aString.trim();
   if (!params) {
     return [];
   }
 
-  let splitParams = [];
-  let offset = params.indexOf(" ");
+  const splitParams = [];
+  const offset = params.indexOf(" ");
   if (offset != -1) {
     splitParams.push(params.slice(0, offset));
     splitParams.push(params.slice(offset + 1).trimLeft());
@@ -57,14 +60,14 @@ function splitInput(aString) {
 // and the second part is the rest of string) based on nicknames of current
 // participants. Returns the non-empty parts in an array.
 function splitByNick(aString, aConv) {
-  let params = aString.trim();
+  const params = aString.trim();
   if (!params) {
     return [];
   }
 
   // Match trimmed-string with the longest prefix of participant's nickname.
   let nickName = "";
-  for (let participant of aConv._participants.keys()) {
+  for (const participant of aConv._participants.keys()) {
     if (
       params.startsWith(participant + " ") &&
       participant.length > nickName.length
@@ -73,20 +76,22 @@ function splitByNick(aString, aConv) {
     }
   }
   if (!nickName) {
-    let offset = params.indexOf(" ");
-    let expectedNickName = offset != -1 ? params.slice(0, offset) : params;
+    const offset = params.indexOf(" ");
+    const expectedNickName = offset != -1 ? params.slice(0, offset) : params;
     aConv.writeMessage(
       aConv.name,
-      lazy._("conversation.error.nickNotInRoom", expectedNickName),
+      lazy.l10n.formatValueSync("conversation-error-nick-not-in-room", {
+        nick: expectedNickName,
+      }),
       { system: true }
     );
     return [];
   }
 
-  let splitParams = [];
+  const splitParams = [];
   splitParams.push(nickName);
 
-  let msg = params.substring(nickName.length);
+  const msg = params.substring(nickName.length);
   if (msg) {
     splitParams.push(msg.trimLeft());
   }
@@ -97,18 +102,20 @@ function splitByNick(aString, aConv) {
 // passes it to aConv.invite().
 // Returns false if aMsg is empty, otherwise returns true.
 function invite(aMsg, aConv) {
-  let params = splitInput(aMsg);
+  const params = splitInput(aMsg);
   if (!params.length) {
     return false;
   }
 
   // Check user's jid is valid.
-  let account = getAccount(aConv);
-  let jid = account._parseJID(params[0]);
+  const account = getAccount(aConv);
+  const jid = account._parseJID(params[0]);
   if (!jid) {
     aConv.writeMessage(
       aConv.name,
-      lazy._("conversation.error.invalidJID", params[0]),
+      lazy.l10n.formatValueSync("conversation-error-invalid-jid", {
+        jabberIdentifier: params[0],
+      }),
       { system: true }
     );
     return true;
@@ -122,10 +129,12 @@ export var commands = [
   {
     name: "join",
     get helpString() {
-      return lazy._("command.join3", "join");
+      return lazy.l10n.formatValueSync("command-join3", {
+        commandName: "join",
+      });
     },
     run(aMsg, aConv, aReturnedConv) {
-      let account = getAccount(aConv);
+      const account = getAccount(aConv);
       let params = aMsg.trim();
       let conv;
 
@@ -148,7 +157,7 @@ export var commands = [
 
         params = conv.name;
       }
-      let chatRoomFields = account.getChatRoomDefaultFieldValues(params);
+      const chatRoomFields = account.getChatRoomFieldValuesFromString(params);
       conv = account.joinChat(chatRoomFields);
 
       if (aReturnedConv) {
@@ -160,11 +169,13 @@ export var commands = [
   {
     name: "part",
     get helpString() {
-      return lazy._("command.part2", "part");
+      return lazy.l10n.formatValueSync("command-part2", {
+        commandName: "part",
+      });
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_CHAT,
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.CHAT,
     run(aMsg, aConv) {
-      let conv = getConv(aConv);
+      const conv = getConv(aConv);
       if (!conv.left) {
         conv.part(aMsg);
       }
@@ -174,11 +185,13 @@ export var commands = [
   {
     name: "topic",
     get helpString() {
-      return lazy._("command.topic", "topic");
+      return lazy.l10n.formatValueSync("command-topic", {
+        commandName: "topic",
+      });
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_CHAT,
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.CHAT,
     run(aMsg, aConv) {
-      let conv = getMUC(aConv);
+      const conv = getMUC(aConv);
       if (!conv) {
         return true;
       }
@@ -189,16 +202,16 @@ export var commands = [
   {
     name: "ban",
     get helpString() {
-      return lazy._("command.ban", "ban");
+      return lazy.l10n.formatValueSync("command-ban", { commandName: "ban" });
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_CHAT,
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.CHAT,
     run(aMsg, aConv) {
-      let params = splitInput(aMsg);
+      const params = splitInput(aMsg);
       if (!params.length) {
         return false;
       }
 
-      let conv = getMUC(aConv);
+      const conv = getMUC(aConv);
       if (conv) {
         conv.ban(...params);
       }
@@ -208,16 +221,16 @@ export var commands = [
   {
     name: "kick",
     get helpString() {
-      return lazy._("command.kick", "kick");
+      return lazy.l10n.formatValueSync("command-kick", { commandName: "kick" });
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_CHAT,
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.CHAT,
     run(aMsg, aConv) {
-      let conv = getMUC(aConv);
+      const conv = getMUC(aConv);
       if (!conv) {
         return true;
       }
 
-      let params = splitByNick(aMsg, conv);
+      const params = splitByNick(aMsg, conv);
       if (!params.length) {
         return false;
       }
@@ -228,11 +241,13 @@ export var commands = [
   {
     name: "invite",
     get helpString() {
-      return lazy._("command.invite", "invite");
+      return lazy.l10n.formatValueSync("command-invite", {
+        commandName: "invite",
+      });
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_CHAT,
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.CHAT,
     run(aMsg, aConv) {
-      let conv = getMUC(aConv);
+      const conv = getMUC(aConv);
       if (!conv) {
         return true;
       }
@@ -243,24 +258,26 @@ export var commands = [
   {
     name: "inviteto",
     get helpString() {
-      return lazy._("command.inviteto", "inviteto");
+      return lazy.l10n.formatValueSync("command-inviteto", {
+        commandName: "inviteto",
+      });
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_IM,
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.IM,
     run: (aMsg, aConv) => invite(aMsg, getConv(aConv)),
   },
   {
     name: "me",
     get helpString() {
-      return lazy._("command.me", "me");
+      return lazy.l10n.formatValueSync("command-me", { commandName: "me" });
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_CHAT,
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.CHAT,
     run(aMsg, aConv) {
-      let params = aMsg.trim();
+      const params = aMsg.trim();
       if (!params) {
         return false;
       }
 
-      let conv = getConv(aConv);
+      const conv = getConv(aConv);
       conv.sendMsg(params, true);
 
       return true;
@@ -269,16 +286,16 @@ export var commands = [
   {
     name: "nick",
     get helpString() {
-      return lazy._("command.nick", "nick");
+      return lazy.l10n.formatValueSync("command-nick", { commandName: "nick" });
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_CHAT,
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.CHAT,
     run(aMsg, aConv) {
-      let params = aMsg.trim().split(/\s+/);
+      const params = aMsg.trim().split(/\s+/);
       if (!params[0]) {
         return false;
       }
 
-      let conv = getMUC(aConv);
+      const conv = getMUC(aConv);
       if (conv) {
         conv.setNick(params[0]);
       }
@@ -288,23 +305,25 @@ export var commands = [
   {
     name: "msg",
     get helpString() {
-      return lazy._("command.msg", "msg");
+      return lazy.l10n.formatValueSync("command-msg", { commandName: "msg" });
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_CHAT,
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.CHAT,
     run(aMsg, aConv, aReturnedConv) {
-      let conv = getMUC(aConv);
+      const conv = getMUC(aConv);
       if (!conv) {
         return true;
       }
 
-      let params = splitByNick(aMsg, conv);
+      const params = splitByNick(aMsg, conv);
       if (params.length != 2) {
         return false;
       }
-      let [nickName, msg] = params;
+      const [nickName, msg] = params;
 
-      let account = getAccount(aConv);
-      let privateConv = account.createConversation(conv.name + "/" + nickName);
+      const account = getAccount(aConv);
+      const privateConv = account.createConversation(
+        conv.name + "/" + nickName
+      );
       if (!privateConv) {
         return true;
       }
@@ -319,11 +338,13 @@ export var commands = [
   {
     name: "version",
     get helpString() {
-      return lazy._("command.version", "version");
+      return lazy.l10n.formatValueSync("command-version", {
+        commandName: "version",
+      });
     },
-    usageContext: Ci.imICommand.CMD_CONTEXT_IM,
-    run(aMsg, aConv, aReturnedConv) {
-      let conv = getConv(aConv);
+    usageContext: IMServices.cmd.COMMAND_CONTEXT.IM,
+    run(aMsg, aConv) {
+      const conv = getConv(aConv);
       if (conv.left) {
         return true;
       }
@@ -332,7 +353,10 @@ export var commands = [
       if (!conv._targetResource) {
         conv.writeMessage(
           conv.name,
-          lazy._("conversation.error.resourceNotAvailable", conv.shortName),
+          lazy.l10n.formatValueSync(
+            "conversation-error-resource-not-available",
+            { recipient: conv.shortName }
+          ),
           {
             system: true,
           }

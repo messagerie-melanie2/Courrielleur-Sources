@@ -12,8 +12,6 @@ export const MigrationWizardConstants = Object.freeze({
    * A mapping of a page identification string to the IDs used by the
    * various wizard pages. These are used by MigrationWizard.setState
    * to set the current page.
-   *
-   * @type {Object<string, string>}
    */
   PAGES: Object.freeze({
     LOADING: "loading",
@@ -22,7 +20,19 @@ export const MigrationWizardConstants = Object.freeze({
     FILE_IMPORT_PROGRESS: "file-import-progress",
     SAFARI_PERMISSION: "safari-permission",
     SAFARI_PASSWORD_PERMISSION: "safari-password-permission",
+    CHROME_WINDOWS_PASSWORD_PERMISSION: "chrome-windows-password-permission",
     NO_BROWSERS_FOUND: "no-browsers-found",
+  }),
+
+  /**
+   * A mapping of a progress value string. These are used by
+   * MigrationWizard.#onShowingProgress to update the UI accordingly.
+   */
+  PROGRESS_VALUE: Object.freeze({
+    LOADING: 1,
+    SUCCESS: 2,
+    WARNING: 3,
+    INFO: 4,
   }),
 
   /**
@@ -30,8 +40,6 @@ export const MigrationWizardConstants = Object.freeze({
    * the associated resource group in the wizard via a data-resource-type
    * attribute. The keys are used to set which items should be shown and
    * in what state in #onShowingProgress.
-   *
-   * @type {Object<string, string>}
    */
   DISPLAYED_RESOURCE_TYPES: Object.freeze({
     // The DISPLAYED_RESOURCE_TYPES should have their keys match those
@@ -47,8 +55,11 @@ export const MigrationWizardConstants = Object.freeze({
     PASSWORDS: "PASSWORDS",
     BOOKMARKS: "BOOKMARKS",
     PAYMENT_METHODS: "PAYMENT_METHODS",
+    EXTENSIONS: "EXTENSIONS",
 
-    // We don't yet show OTHERDATA or SESSION resources.
+    COOKIES: "COOKIES",
+    SESSION: "SESSION",
+    OTHERDATA: "OTHERDATA",
   }),
 
   DISPLAYED_FILE_RESOURCE_TYPES: Object.freeze({
@@ -64,6 +75,18 @@ export const MigrationWizardConstants = Object.freeze({
   }),
 
   /**
+   * Returns a mapping of a resource type to a string used to identify
+   * the associated resource group in the wizard via a data-resource-type
+   * attribute. The keys are for resource types that are only ever shown
+   * for profile resets.
+   */
+  PROFILE_RESET_ONLY_RESOURCE_TYPES: Object.freeze({
+    COOKIES: "COOKIES",
+    SESSION: "SESSION",
+    OTHERDATA: "OTHERDATA",
+  }),
+
+  /**
    * The set of keys that maps to migrators that use the term "favorites"
    * in the place of "bookmarks". This tends to be browsers from Microsoft.
    */
@@ -73,4 +96,20 @@ export const MigrationWizardConstants = Object.freeze({
     "edge",
     "ie",
   ]),
+
+  /**
+   * The values that are set on the extension extra key for the
+   * migration_finished telemetry event. The definition of that event
+   * defines it as:
+   *
+   * "3" if all extensions were matched after import. "2" if only some
+   * extensions were matched. "1" if none were matched, and "0" if extensions
+   * weren't selected for import.
+   */
+  EXTENSIONS_IMPORT_RESULT: Object.freeze({
+    NOT_IMPORTED: "0",
+    NONE_MATCHED: "1",
+    PARTIAL_MATCH: "2",
+    ALL_MATCHED: "3",
+  }),
 });

@@ -5,10 +5,11 @@
 @import url(chrome://calendar/skin/shared/today-pane.css);
 
 #today-pane-panel > .sidebar-header {
-  height: 32px;
+  height: 1.5em;
+  min-height: 32px;
 }
 
-#today-pane-panel:-moz-lwtheme > .sidebar-header {
+:root[lwtheme] #today-pane-panel > .sidebar-header {
   text-shadow: none;
 }
 
@@ -18,20 +19,6 @@
 
 .monthlabel {
   margin-bottom: 1px;
-}
-
-#today-pane-panel:not(:-moz-lwtheme):-moz-window-inactive {
-  background-color: hsl(0, 0%, 97%);
-}
-
-@media not (prefers-color-scheme: dark) {
-  #mini-day-image:-moz-window-inactive {
-    background-color: -moz-mac-chrome-inactive;
-  }
-}
-
-:root[lwt-tree] #mini-day-image:-moz-window-inactive {
-  background-color: transparent;
 }
 
 #todaypane-new-event-button[disabled="true"] > .toolbarbutton-icon {

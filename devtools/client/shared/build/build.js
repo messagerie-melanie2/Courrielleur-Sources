@@ -10,16 +10,18 @@
 
 "use strict";
 
+// eslint-disable-next-line mozilla/reject-relative-requires
 const Babel = require("./babel");
 const fs = require("fs");
 const _path = require("path");
 
-const defaultPlugins = ["proposal-class-properties", "transform-react-jsx"];
+const defaultPlugins = ["proposal-class-properties"];
 
 function transform(filePath) {
   // Use the extra plugins only for the debugger
   const plugins = filePath.includes("devtools/client/debugger")
-    ? require("./build-debugger")(filePath)
+    ? // eslint-disable-next-line mozilla/reject-relative-requires
+      require("./build-debugger")(filePath)
     : defaultPlugins;
 
   const doc = fs.readFileSync(filePath, "utf8");

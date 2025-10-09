@@ -11,6 +11,7 @@
 #include "nsError.h"
 #include "SVGAnimatedPointList.h"
 #include "SVGAttrTearoffTable.h"
+#include "SVGPolyElement.h"
 #include "mozilla/dom/SVGElement.h"
 #include "mozilla/dom/SVGPointListBinding.h"
 #include <algorithm>
@@ -68,11 +69,12 @@ NS_INTERFACE_MAP_END
 
 /* static */
 already_AddRefed<DOMSVGPointList> DOMSVGPointList::GetDOMWrapper(
-    void* aList, SVGElement* aElement, bool aIsAnimValList) {
+    void* aList, SVGPolyElement* aElement) {
   RefPtr<DOMSVGPointList> wrapper =
       SVGPointListTearoffTable().GetTearoff(aList);
   if (!wrapper) {
-    wrapper = new DOMSVGPointList(aElement, aIsAnimValList);
+    wrapper = new DOMSVGPointList(
+        aElement, aElement->GetAnimatedPointList()->GetAnimValKey() == aList);
     SVGPointListTearoffTable().AddTearoff(aList, wrapper);
   }
   return wrapper.forget();
@@ -88,9 +90,12 @@ void DOMSVGPointList::RemoveFromTearoffTable() {
   //
   // There are now no longer any references to us held by script or list items.
   // Note we must use GetAnimValKey/GetBaseValKey here, NOT InternalList()!
-  void* key = mIsAnimValList ? InternalAList().GetAnimValKey()
-                             : InternalAList().GetBaseValKey();
-  SVGPointListTearoffTable().RemoveTearoff(key);
+  if (mIsInTearoffTable) {
+    void* key = mIsAnimValList ? InternalAList().GetAnimValKey()
+                               : InternalAList().GetBaseValKey();
+    SVGPointListTearoffTable().RemoveTearoff(key);
+    mIsInTearoffTable = false;
+  }
 }
 
 DOMSVGPointList::~DOMSVGPointList() { RemoveFromTearoffTable(); }
@@ -164,9 +169,9 @@ SVGAnimatedPointList& DOMSVGPointList::InternalAList() const {
 // ----------------------------------------------------------------------------
 // nsIDOMSVGPointList implementation:
 
-void DOMSVGPointList::Clear(ErrorResult& aError) {
+void DOMSVGPointList::Clear(ErrorResult& aRv) {
   if (IsAnimValList()) {
-    aError.Throw(NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR);
+    aRv.ThrowNoModificationAllowedError("Animated values cannot be set");
     return;
   }
 
@@ -193,9 +198,9 @@ void DOMSVGPointList::Clear(ErrorResult& aError) {
 }
 
 already_AddRefed<DOMSVGPoint> DOMSVGPointList::Initialize(DOMSVGPoint& aNewItem,
-                                                          ErrorResult& aError) {
+                                                          ErrorResult& aRv) {
   if (IsAnimValList()) {
-    aError.Throw(NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR);
+    aRv.ThrowNoModificationAllowedError("Animated values cannot be set");
     return nullptr;
   }
 
@@ -215,21 +220,22 @@ already_AddRefed<DOMSVGPoint> DOMSVGPointList::Initialize(DOMSVGPoint& aNewItem,
   ErrorResult rv;
   Clear(rv);
   MOZ_ASSERT(!rv.Failed());
-  return InsertItemBefore(*domItem, 0, aError);
+  return InsertItemBefore(*domItem, 0, aRv);
 }
 
 already_AddRefed<DOMSVGPoint> DOMSVGPointList::GetItem(uint32_t index,
-                                                       ErrorResult& error) {
+                                                       ErrorResult& aRv) {
   bool found;
-  RefPtr<DOMSVGPoint> item = IndexedGetter(index, found, error);
+  RefPtr<DOMSVGPoint> item = IndexedGetter(index, found, aRv);
   if (!found) {
-    error.Throw(NS_ERROR_DOM_INDEX_SIZE_ERR);
+    aRv.ThrowIndexSizeError("Index out of range");
   }
   return item.forget();
 }
 
-already_AddRefed<DOMSVGPoint> DOMSVGPointList::IndexedGetter(
-    uint32_t aIndex, bool& aFound, ErrorResult& aError) {
+already_AddRefed<DOMSVGPoint> DOMSVGPointList::IndexedGetter(uint32_t aIndex,
+                                                             bool& aFound,
+                                                             ErrorResult& aRv) {
   if (IsAnimValList()) {
     Element()->FlushAnimations();
   }
@@ -241,15 +247,15 @@ already_AddRefed<DOMSVGPoint> DOMSVGPointList::IndexedGetter(
 }
 
 already_AddRefed<DOMSVGPoint> DOMSVGPointList::InsertItemBefore(
-    DOMSVGPoint& aNewItem, uint32_t aIndex, ErrorResult& aError) {
+    DOMSVGPoint& aNewItem, uint32_t aIndex, ErrorResult& aRv) {
   if (IsAnimValList()) {
-    aError.Throw(NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR);
+    aRv.ThrowNoModificationAllowedError("Animated values cannot be set");
     return nullptr;
   }
 
   aIndex = std::min(aIndex, LengthNoFlush());
   if (aIndex >= DOMSVGPoint::MaxListIndex()) {
-    aError.Throw(NS_ERROR_DOM_INDEX_SIZE_ERR);
+    aRv.ThrowIndexSizeError("Index out of range");
     return nullptr;
   }
 
@@ -261,7 +267,7 @@ already_AddRefed<DOMSVGPoint> DOMSVGPointList::InsertItemBefore(
   // Ensure we have enough memory so we can avoid complex error handling below:
   if (!mItems.SetCapacity(mItems.Length() + 1, fallible) ||
       !InternalList().SetCapacity(InternalList().Length() + 1)) {
-    aError.Throw(NS_ERROR_OUT_OF_MEMORY);
+    aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
     return nullptr;
   }
   if (AnimListMirrorsBaseList()) {
@@ -269,7 +275,7 @@ already_AddRefed<DOMSVGPoint> DOMSVGPointList::InsertItemBefore(
         GetDOMWrapperIfExists(InternalAList().GetAnimValKey());
     MOZ_ASSERT(animVal, "animVal must be a valid pointer");
     if (!animVal->mItems.SetCapacity(animVal->mItems.Length() + 1, fallible)) {
-      aError.Throw(NS_ERROR_OUT_OF_MEMORY);
+      aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
       return nullptr;
     }
   }
@@ -292,14 +298,14 @@ already_AddRefed<DOMSVGPoint> DOMSVGPointList::InsertItemBefore(
 }
 
 already_AddRefed<DOMSVGPoint> DOMSVGPointList::ReplaceItem(
-    DOMSVGPoint& aNewItem, uint32_t aIndex, ErrorResult& aError) {
+    DOMSVGPoint& aNewItem, uint32_t aIndex, ErrorResult& aRv) {
   if (IsAnimValList()) {
-    aError.Throw(NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR);
+    aRv.ThrowNoModificationAllowedError("Animated values cannot be set");
     return nullptr;
   }
 
   if (aIndex >= LengthNoFlush()) {
-    aError.Throw(NS_ERROR_DOM_INDEX_SIZE_ERR);
+    aRv.ThrowIndexSizeError("Index out of range");
     return nullptr;
   }
 
@@ -326,14 +332,14 @@ already_AddRefed<DOMSVGPoint> DOMSVGPointList::ReplaceItem(
 }
 
 already_AddRefed<DOMSVGPoint> DOMSVGPointList::RemoveItem(uint32_t aIndex,
-                                                          ErrorResult& aError) {
+                                                          ErrorResult& aRv) {
   if (IsAnimValList()) {
-    aError.Throw(NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR);
+    aRv.ThrowNoModificationAllowedError("Animated values cannot be set");
     return nullptr;
   }
 
   if (aIndex >= LengthNoFlush()) {
-    aError.Throw(NS_ERROR_DOM_INDEX_SIZE_ERR);
+    aRv.ThrowIndexSizeError("Index out of range");
     return nullptr;
   }
 

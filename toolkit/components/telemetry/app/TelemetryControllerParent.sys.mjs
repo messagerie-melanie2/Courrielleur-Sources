@@ -5,7 +5,6 @@
 
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 import { AsyncShutdown } from "resource://gre/modules/AsyncShutdown.sys.mjs";
-import { PromiseUtils } from "resource://gre/modules/PromiseUtils.sys.mjs";
 import { DeferredTask } from "resource://gre/modules/DeferredTask.sys.mjs";
 
 import { TelemetryUtils } from "resource://gre/modules/TelemetryUtils.sys.mjs";
@@ -39,12 +38,10 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   ClientID: "resource://gre/modules/ClientID.sys.mjs",
   CoveragePing: "resource://gre/modules/CoveragePing.sys.mjs",
-  ProvenanceData: "resource:///modules/ProvenanceData.sys.mjs",
   TelemetryArchive: "resource://gre/modules/TelemetryArchive.sys.mjs",
   TelemetryEnvironment: "resource://gre/modules/TelemetryEnvironment.sys.mjs",
   TelemetryEventPing: "resource://gre/modules/EventPing.sys.mjs",
   TelemetryHealthPing: "resource://gre/modules/HealthPing.sys.mjs",
-  TelemetryModules: "resource://gre/modules/ModulesPing.sys.mjs",
   TelemetryReportingPolicy:
     "resource://gre/modules/TelemetryReportingPolicy.sys.mjs",
   TelemetrySend: "resource://gre/modules/TelemetrySend.sys.mjs",
@@ -54,8 +51,18 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "resource://gre/modules/UntrustedModulesPing.sys.mjs",
   UninstallPing: "resource://gre/modules/UninstallPing.sys.mjs",
   UpdatePing: "resource://gre/modules/UpdatePing.sys.mjs",
-  jwcrypto: "resource://services-crypto/jwcrypto.sys.mjs",
+  UsageReporting: "resource://gre/modules/UsageReporting.sys.mjs",
 });
+
+if (
+  AppConstants.platform === "win" &&
+  AppConstants.MOZ_APP_NAME !== "thunderbird"
+) {
+  ChromeUtils.defineESModuleGetters(lazy, {
+    // eslint-disable-next-line mozilla/no-browser-refs-in-toolkit
+    BrowserUsageTelemetry: "resource:///modules/BrowserUsageTelemetry.sys.mjs",
+  });
+}
 
 /**
  * This is a policy object used to override behavior for testing.
@@ -149,6 +156,8 @@ export var TelemetryController = Object.freeze({
    * @param {Boolean} [aOptions.usePingSender=false] if true, send the ping using the PingSender.
    * @param {String} [aOptions.overrideClientId=undefined] if set, override the
    *                 client id to the provided value. Implies aOptions.addClientId=true.
+   * @param {String} [aOptions.overrideProfileGroupId=undefined] if set, override the
+   *                 profile group id to the provided value. Implies aOptions.addClientId=true.
    * @returns {Promise} Test-only - a promise that resolves with the ping id once the ping is stored or sent.
    */
   submitExternalPing(aType, aPayload, aOptions = {}) {
@@ -184,6 +193,8 @@ export var TelemetryController = Object.freeze({
    * @param {Object}  [aOptions.overrideEnvironment=null] set to override the environment data.
    * @param {String} [aOptions.overrideClientId=undefined] if set, override the
    *                 client id to the provided value. Implies aOptions.addClientId=true.
+   * @param {String} [aOptions.overrideProfileGroupId=undefined] if set, override the
+   *                 profile group id to the provided value. Implies aOptions.addClientId=true.
    *
    * @returns {Promise} A promise that resolves with the ping id when the ping is saved to
    *                    disk.
@@ -258,6 +269,15 @@ export var TelemetryController = Object.freeze({
   promiseInitialized() {
     return Impl.promiseInitialized();
   },
+
+  /**
+   * Allows to trigger TelemetryControllers delayed initialization now and waiting for its completion.
+   * The returned promise is guaranteed to resolve before TelemetryController is shutting down.
+   * @return {Promise} Resolved when delayed TelemetryController initialization completed.
+   */
+  ensureInitialized() {
+    return Impl.ensureInitialized();
+  },
 });
 
 var Impl = {
@@ -271,6 +291,7 @@ var Impl = {
   // Undefined if this is not the first run, or the previous build ID is unknown.
   _previousBuildID: undefined,
   _clientID: null,
+  _profileGroupID: null,
   // A task performing delayed initialization
   _delayedInitTask: null,
   // The deferred promise resolved when the initialization task completes.
@@ -356,16 +377,8 @@ var Impl = {
    * @param {Object}  [aOptions.overrideEnvironment=null] set to override the environment data.
    * @param {String} [aOptions.overrideClientId=undefined] if set, override the
    *                 client id to the provided value. Implies aOptions.addClientId=true.
-   * @param {Boolean} [aOptions.useEncryption=false] if true, encrypt data client-side before sending.
-   * @param {Object}  [aOptions.publicKey=null] the public key to use if encryption is enabled (JSON Web Key).
-   * @param {String}  [aOptions.encryptionKeyId=null] the public key ID to use if encryption is enabled.
-   * @param {String}  [aOptions.studyName=null] the study name to use.
-   * @param {String}  [aOptions.schemaName=null] the schema name to use if encryption is enabled.
-   * @param {String}  [aOptions.schemaNamespace=null] the schema namespace to use if encryption is enabled.
-   * @param {String}  [aOptions.schemaVersion=null] the schema version to use if encryption is enabled.
-   * @param {Boolean} [aOptions.addPioneerId=false] true if the ping should contain the Pioneer id, false otherwise.
-   * @param {Boolean} [aOptions.overridePioneerId=undefined] if set, override the
-   *                  pioneer id to the provided value. Only works if aOptions.addPioneerId=true.
+   * @param {String} [aOptions.overrideProfileGroupId=undefined] if set, override the
+   *                 profile group id to the provided value. Implies aOptions.addClientId=true.
    * @returns {Object} An object that contains the assembled ping data.
    */
   assemblePing: function assemblePing(aType, aPayload, aOptions = {}) {
@@ -388,8 +401,14 @@ var Impl = {
       payload,
     };
 
-    if (aOptions.addClientId || aOptions.overrideClientId) {
-      pingData.clientId = aOptions.overrideClientId || this._clientID;
+    if (
+      aOptions.addClientId ||
+      aOptions.overrideClientId ||
+      aOptions.overrideProfileGroupId
+    ) {
+      pingData.clientId = aOptions.overrideClientId ?? this._clientID;
+      pingData.profileGroupId =
+        aOptions.overrideProfileGroupId ?? this._profileGroupID;
     }
 
     if (aOptions.addEnvironment) {
@@ -429,88 +448,37 @@ var Impl = {
    *                  environment data.
    * @param {Object}  [aOptions.overrideEnvironment=null] set to override the environment data.
    * @param {Boolean} [aOptions.usePingSender=false] if true, send the ping using the PingSender.
-   * @param {Boolean} [aOptions.useEncryption=false] if true, encrypt data client-side before sending.
-   * @param {Object}  [aOptions.publicKey=null] the public key to use if encryption is enabled (JSON Web Key).
-   * @param {String}  [aOptions.encryptionKeyId=null] the public key ID to use if encryption is enabled.
-   * @param {String}  [aOptions.studyName=null] the study name to use.
-   * @param {String}  [aOptions.schemaName=null] the schema name to use if encryption is enabled.
-   * @param {String}  [aOptions.schemaNamespace=null] the schema namespace to use if encryption is enabled.
-   * @param {String}  [aOptions.schemaVersion=null] the schema version to use if encryption is enabled.
-   * @param {Boolean} [aOptions.addPioneerId=false] true if the ping should contain the Pioneer id, false otherwise.
-   * @param {Boolean} [aOptions.overridePioneerId=undefined] if set, override the
-   *                  pioneer id to the provided value. Only works if aOptions.addPioneerId=true.
    * @param {String} [aOptions.overrideClientId=undefined] if set, override the
    *                 client id to the provided value. Implies aOptions.addClientId=true.
+   * @param {String} [aOptions.overrideProfileGroupId=undefined] if set, override the
+   *                 profile group id to the provided value. Implies aOptions.addClientId=true.
    * @returns {Promise} Test-only - a promise that is resolved with the ping id once the ping is stored or sent.
    */
   async _submitPingLogic(aType, aPayload, aOptions) {
     // Make sure to have a clientId if we need one. This cover the case of submitting
     // a ping early during startup, before Telemetry is initialized, if no client id was
     // cached.
-    if (!this._clientID && aOptions.addClientId && !aOptions.overrideClientId) {
-      this._log.trace("_submitPingLogic - Waiting on client id");
-      Services.telemetry
-        .getHistogramById("TELEMETRY_PING_SUBMISSION_WAITING_CLIENTID")
-        .add();
+    let needsIdentifiers =
+      aOptions.addClientId ||
+      aOptions.overrideClientId ||
+      aOptions.overrideProfileGroupId;
+    let hasClientId = aOptions.overrideClientId ?? this._clientID;
+    let hasProfileGroupId =
+      aOptions.overrideProfileGroupId ?? this._profileGroupID;
+
+    if (needsIdentifiers && !(hasClientId && hasProfileGroupId)) {
+      this._log.trace(
+        "_submitPingLogic - Waiting on client id or profile group id"
+      );
+      Glean.telemetry.pingSubmissionWaitingClientid.add(1);
       // We can safely call |getClientID| here and during initialization: we would still
       // spawn and return one single loading task.
       this._clientID = await lazy.ClientID.getClientID();
+      this._profileGroupID = await lazy.ClientID.getProfileGroupID();
     }
 
     let pingData = this.assemblePing(aType, aPayload, aOptions);
     this._log.trace("submitExternalPing - ping assembled, id: " + pingData.id);
-
-    if (aOptions.useEncryption === true) {
-      try {
-        if (!aOptions.publicKey) {
-          throw new Error("Public key is required when using encryption.");
-        }
-
-        if (
-          !(
-            aOptions.schemaName &&
-            aOptions.schemaNamespace &&
-            aOptions.schemaVersion
-          )
-        ) {
-          throw new Error(
-            "Schema name, namespace, and version are required when using encryption."
-          );
-        }
-
-        const payload = {};
-        payload.encryptedData = await lazy.jwcrypto.generateJWE(
-          aOptions.publicKey,
-          new TextEncoder().encode(JSON.stringify(aPayload))
-        );
-
-        payload.schemaVersion = aOptions.schemaVersion;
-        payload.schemaName = aOptions.schemaName;
-        payload.schemaNamespace = aOptions.schemaNamespace;
-
-        payload.encryptionKeyId = aOptions.encryptionKeyId;
-
-        if (aOptions.addPioneerId === true) {
-          if (aOptions.overridePioneerId) {
-            // The caller provided a substitute id, let's use that
-            // instead of querying the pref.
-            payload.pioneerId = aOptions.overridePioneerId;
-          } else {
-            // This will throw if there is no pioneer ID set.
-            payload.pioneerId = Services.prefs.getStringPref(
-              "toolkit.telemetry.pioneerId"
-            );
-          }
-          payload.studyName = aOptions.studyName;
-        }
-
-        pingData.payload = payload;
-      } catch (e) {
-        this._log.error("_submitPingLogic - Unable to encrypt ping", e);
-        // Do not attempt to continue
-        throw e;
-      }
-    }
 
     // Always persist the pings if we are allowed to. We should not yield on any of the
     // following operations to keep this function synchronous for the majority of the calls.
@@ -545,18 +513,10 @@ var Impl = {
    *                  environment data.
    * @param {Object}  [aOptions.overrideEnvironment=null] set to override the environment data.
    * @param {Boolean} [aOptions.usePingSender=false] if true, send the ping using the PingSender.
-   * @param {Boolean} [aOptions.useEncryption=false] if true, encrypt data client-side before sending.
-   * @param {Object}  [aOptions.publicKey=null] the public key to use if encryption is enabled (JSON Web Key).
-   * @param {String}  [aOptions.encryptionKeyId=null] the public key ID to use if encryption is enabled.
-   * @param {String}  [aOptions.studyName=null] the study name to use.
-   * @param {String}  [aOptions.schemaName=null] the schema name to use if encryption is enabled.
-   * @param {String}  [aOptions.schemaNamespace=null] the schema namespace to use if encryption is enabled.
-   * @param {String}  [aOptions.schemaVersion=null] the schema version to use if encryption is enabled.
-   * @param {Boolean} [aOptions.addPioneerId=false] true if the ping should contain the Pioneer id, false otherwise.
-   * @param {Boolean} [aOptions.overridePioneerId=undefined] if set, override the
-   *                  pioneer id to the provided value. Only works if aOptions.addPioneerId=true.
    * @param {String} [aOptions.overrideClientId=undefined] if set, override the
    *                 client id to the provided value. Implies aOptions.addClientId=true.
+   * @param {String} [aOptions.overrideProfileGroupId=undefined] if set, override the
+   *                 profile group id to the provided value. Implies aOptions.addClientId=true.
    * @returns {Promise} Test-only - a promise that is resolved with the ping id once the ping is stored or sent.
    */
   submitExternalPing: function send(aType, aPayload, aOptions) {
@@ -580,10 +540,7 @@ var Impl = {
     const typeUuid = /^[a-z0-9][a-z0-9-]+[a-z0-9]$/i;
     if (!typeUuid.test(aType)) {
       this._log.error("submitExternalPing - invalid ping type: " + aType);
-      let histogram = Services.telemetry.getKeyedHistogramById(
-        "TELEMETRY_INVALID_PING_TYPE_SUBMITTED"
-      );
-      histogram.add(aType, 1);
+      Glean.telemetry.invalidPingTypeSubmitted[aType].add(1);
       return Promise.reject(new Error("Invalid type string submitted."));
     }
     // Enforce that the payload is an object.
@@ -595,10 +552,7 @@ var Impl = {
       this._log.error(
         "submitExternalPing - invalid payload type: " + typeof aPayload
       );
-      let histogram = Services.telemetry.getHistogramById(
-        "TELEMETRY_INVALID_PAYLOAD_SUBMITTED"
-      );
-      histogram.add(1);
+      Glean.telemetry.invalidPayloadSubmitted.add(1);
       return Promise.reject(new Error("Invalid payload type submitted."));
     }
 
@@ -621,6 +575,8 @@ var Impl = {
    * @param {Object}  [aOptions.overrideEnvironment=null] set to override the environment data.
    * @param {String} [aOptions.overrideClientId=undefined] if set, override the
    *                 client id to the provided value. Implies aOptions.addClientId=true.
+   * @param {String} [aOptions.overrideProfileGroupId=undefined] if set, override the
+   *                 profile group id to the provided value. Implies aOptions.addClientId=true.
    *
    * @returns {Promise} A promise that resolves with the ping id when the ping is saved to
    *                    disk.
@@ -668,7 +624,7 @@ var Impl = {
       // Previous aborted-session might have been with a canary client ID.
       // Don't send it.
       if (ping.clientId != Utils.knownClientID) {
-        await lazy.TelemetryStorage.addPendingPing(ping);
+        await lazy.TelemetryStorage.savePendingPing(ping);
         await lazy.TelemetryArchive.promiseArchivePing(ping);
       }
     } catch (e) {
@@ -783,6 +739,7 @@ var Impl = {
     // We try to cache it in prefs to avoid this, even though this may
     // lead to some stale client ids.
     this._clientID = lazy.ClientID.getCachedClientID();
+    this._profileGroupID = lazy.ClientID.getCachedProfileGroupID();
 
     // Init the update ping telemetry as early as possible. This won't have
     // an impact on startup.
@@ -791,7 +748,7 @@ var Impl = {
     // Delay full telemetry initialization to give the browser time to
     // run various late initializers. Otherwise our gathered memory
     // footprint and other numbers would be too optimistic.
-    this._delayedInitTaskDeferred = PromiseUtils.defer();
+    this._delayedInitTaskDeferred = Promise.withResolvers();
     this._delayedInitTask = new DeferredTask(
       async () => {
         try {
@@ -801,24 +758,35 @@ var Impl = {
 
           // Load the ClientID.
           this._clientID = await lazy.ClientID.getClientID();
+          this._profileGroupID = await lazy.ClientID.getProfileGroupID();
 
           // Fix-up a canary client ID if detected.
           const uploadEnabled = Services.prefs.getBoolPref(
             TelemetryUtils.Preferences.FhrUploadEnabled,
             false
           );
-          if (uploadEnabled && this._clientID == Utils.knownClientID) {
+          if (
+            uploadEnabled &&
+            (this._clientID == Utils.knownClientID ||
+              this._profileGroupID == Utils.knownProfileGroupID)
+          ) {
             this._log.trace(
-              "Upload enabled, but got canary client ID. Resetting."
+              "Upload enabled, but got canary identifiers. Resetting."
             );
-            await lazy.ClientID.removeClientID();
+            await lazy.ClientID.resetIdentifiers();
             this._clientID = await lazy.ClientID.getClientID();
-          } else if (!uploadEnabled && this._clientID != Utils.knownClientID) {
+            this._profileGroupID = await lazy.ClientID.getProfileGroupID();
+          } else if (
+            !uploadEnabled &&
+            (this._clientID != Utils.knownClientID ||
+              this._profileGroupID != Utils.knownProfileGroupID)
+          ) {
             this._log.trace(
               "Upload disabled, but got a valid client ID. Setting canary client ID."
             );
-            await lazy.ClientID.setCanaryClientID();
+            await lazy.ClientID.setCanaryIdentifiers();
             this._clientID = await lazy.ClientID.getClientID();
+            this._profileGroupID = await lazy.ClientID.getProfileGroupID();
           }
 
           await lazy.TelemetrySend.setup(this._testMode);
@@ -849,11 +817,8 @@ var Impl = {
           lazy.TelemetryStorage.removeFHRDatabase();
 
           // The init sequence is forced to run on shutdown for short sessions and
-          // we don't want to start TelemetryModules as the timer registration will fail.
+          // we don't want to start everything.
           if (!this._shuttingDown) {
-            // Report the modules loaded in the Firefox process.
-            lazy.TelemetryModules.start();
-
             // Send coverage ping.
             await lazy.CoveragePing.startup();
 
@@ -1006,6 +971,9 @@ var Impl = {
         if (aData == TelemetryUtils.Preferences.FhrUploadEnabled) {
           return this._onUploadPrefChange();
         }
+        if (aData == "datareporting.usage.uploadEnabled") {
+          return lazy.UsageReporting._onUsagePrefChange();
+        }
     }
     return undefined;
   },
@@ -1046,18 +1014,21 @@ var Impl = {
     );
     if (uploadEnabled) {
       this._log.trace(
-        "_onUploadPrefChange - upload was enabled again. Resetting client ID"
+        "_onUploadPrefChange - upload was enabled again. Resetting identifiers"
       );
 
-      // Delete cached client ID immediately, so other usage is forced to refetch it.
+      // Delete cached identifiers immediately, so other usage is forced to refetch it.
       this._clientID = null;
+      this._profileGroupID = null;
 
       // Generate a new client ID and make sure this module uses the new version
       let p = (async () => {
-        await lazy.ClientID.removeClientID();
-        let id = await lazy.ClientID.getClientID();
-        this._clientID = id;
-        Services.telemetry.scalarSet("telemetry.data_upload_optin", true);
+        await lazy.ClientID.resetIdentifiers();
+        // For the time being this is tied to the telemetry upload preference.
+        await lazy.ClientID.resetUsageProfileIdentifiers();
+        this._clientID = await lazy.ClientID.getClientID();
+        this._profileGroupID = await lazy.ClientID.getProfileGroupID();
+        Glean.telemetry.dataUploadOptin.set(true);
 
         await this.saveUninstallPing().catch(e =>
           this._log.warn("_onUploadPrefChange - saveUninstallPing failed", e)
@@ -1098,17 +1069,22 @@ var Impl = {
           /* clear */ true
         );
 
-        // 6. Set ClientID to a known value
+        // 6. Set identifiers to a known values
         let oldClientId = await lazy.ClientID.getClientID();
-        await lazy.ClientID.setCanaryClientID();
+        let oldProfileGroupId = await lazy.ClientID.getProfileGroupID();
+        await lazy.ClientID.setCanaryIdentifiers();
         this._clientID = await lazy.ClientID.getClientID();
+        this._profileGroupID = await lazy.ClientID.getProfileGroupID();
 
         // 7. Send the deletion-request ping.
         this._log.trace("_onUploadPrefChange - Sending deletion-request ping.");
         this.submitExternalPing(
           PING_TYPE_DELETION_REQUEST,
           { scalars },
-          { overrideClientId: oldClientId }
+          {
+            overrideClientId: oldClientId,
+            overrideProfileGroupId: oldProfileGroupId,
+          }
         );
         this._deletionRequestPingSubmittedPromise = null;
       }
@@ -1126,16 +1102,20 @@ var Impl = {
     );
   },
 
-  QueryInterface: ChromeUtils.generateQI(["nsISupportsWeakReference"]),
+  QueryInterface: ChromeUtils.generateQI(["nsIObserver"]),
 
   _attachObservers() {
     if (TelemetryControllerBase.IS_UNIFIED_TELEMETRY) {
       // Watch the FHR upload setting to trigger "deletion-request" pings.
       Services.prefs.addObserver(
         TelemetryUtils.Preferences.FhrUploadEnabled,
-        this,
-        true
+        this
       );
+    }
+    if (AppConstants.MOZ_APP_NAME == "firefox") {
+      // Firefox-only: watch the usage reporting setting to enable, disable, and
+      // trigger "usage-deletion-request" pings.
+      Services.prefs.addObserver("datareporting.usage.uploadEnabled", this);
     }
   },
 
@@ -1149,6 +1129,9 @@ var Impl = {
         this
       );
     }
+    if (AppConstants.MOZ_APP_NAME == "firefox") {
+      Services.prefs.removeObserver("datareporting.usage.uploadEnabled", this);
+    }
   },
 
   /**
@@ -1158,6 +1141,18 @@ var Impl = {
    */
   promiseInitialized() {
     return this._delayedInitTaskDeferred.promise;
+  },
+
+  /**
+   * Allows to trigger TelemetryControllers delayed initialization now and waiting for its completion.
+   * This will complete before TelemetryController is shutting down.
+   * @return {Promise} Resolved when delayed TelemetryController initialization completed.
+   */
+  ensureInitialized() {
+    if (this._delayedInitTask) {
+      return this._delayedInitTask.finalize();
+    }
+    return Promise.resolve();
   },
 
   getCurrentPingData(aSubsession) {
@@ -1181,6 +1176,7 @@ var Impl = {
 
   async reset() {
     this._clientID = null;
+    this._profileGroupID = null;
     this._fnSyncPingShutdown = null;
     this._detachObservers();
 
@@ -1216,15 +1212,20 @@ var Impl = {
       NEWPROFILE_PING_DEFAULT_DELAY
     );
 
-    try {
-      // This is asynchronous, but we aren't going to await on it now. Just
-      // kick it off.
-      lazy.ProvenanceData.submitProvenanceTelemetry();
-    } catch (ex) {
-      this._log.warn(
-        "scheduleNewProfilePing - submitProvenanceTelemetry failed",
-        ex
-      );
+    if (
+      AppConstants.platform == "win" &&
+      AppConstants.MOZ_APP_NAME !== "thunderbird"
+    ) {
+      try {
+        // This is asynchronous, but we aren't going to await on it now. Just
+        // kick it off.
+        lazy.BrowserUsageTelemetry.reportInstallationTelemetry();
+      } catch (ex) {
+        this._log.warn(
+          "scheduleNewProfilePing - reportInstallationTelemetry failed",
+          ex
+        );
+      }
     }
 
     this._delayedNewPingTask = new DeferredTask(async () => {
@@ -1246,13 +1247,32 @@ var Impl = {
       "sendNewProfilePing - shutting down: " + this._shuttingDown
     );
 
-    try {
-      await lazy.ProvenanceData.submitProvenanceTelemetry();
-    } catch (ex) {
-      this._log.warn(
-        "sendNewProfilePing - submitProvenanceTelemetry failed",
-        ex
-      );
+    if (
+      AppConstants.platform == "win" &&
+      AppConstants.MOZ_APP_NAME !== "thunderbird"
+    ) {
+      let failureReason = "UnknownError";
+      try {
+        await lazy.BrowserUsageTelemetry.reportInstallationTelemetry();
+        failureReason = "NoError";
+      } catch (ex) {
+        this._log.warn(
+          "sendNewProfilePing - reportInstallationTelemetry failed",
+          ex
+        );
+        // Overwrite with a more specific error if possible.
+        failureReason = ex.name;
+      } finally {
+        // No dataPathOverride here so we can check the default location
+        // for installation_telemetry.json
+        let dataPath = Services.dirsvc.get("GreD", Ci.nsIFile);
+        dataPath.append("installation_telemetry.json");
+        let fileExists = await IOUtils.exists(dataPath.path);
+        if (!fileExists) {
+          failureReason = "NotFoundError";
+        }
+        Glean.installationFirstSeen.failureReason.set(failureReason);
+      }
     }
 
     const scalars = Services.telemetry.getSnapshotForScalars(

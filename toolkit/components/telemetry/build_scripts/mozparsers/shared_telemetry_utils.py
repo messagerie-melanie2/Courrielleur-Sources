@@ -26,15 +26,13 @@ KNOWN_PROCESS_FLAGS = {
     "all_childs": "AllChildren",  # Supporting files from before bug 1363725
 }
 
-GECKOVIEW_STREAMING_PRODUCT = "geckoview_streaming"
-
 SUPPORTED_PRODUCTS = {
     "firefox": "Firefox",
     "fennec": "Fennec",
-    GECKOVIEW_STREAMING_PRODUCT: "GeckoviewStreaming",
     "thunderbird": "Thunderbird",
     # Historical, deprecated values:
     # 'geckoview': 'Geckoview',
+    # "geckoview_streaming": "GeckoviewStreaming",
 }
 
 SUPPORTED_OPERATING_SYSTEMS = [
@@ -114,10 +112,6 @@ def is_valid_product(name):
     return name in SUPPORTED_PRODUCTS
 
 
-def is_geckoview_streaming_product(name):
-    return name == GECKOVIEW_STREAMING_PRODUCT
-
-
 def is_valid_os(name):
     return name in SUPPORTED_OPERATING_SYSTEMS
 
@@ -130,7 +124,7 @@ def canonical_os(os):
 
 def product_name_to_enum(product):
     if not is_valid_product(product):
-        raise ParserError("Invalid product {}".format(product))
+        raise ParserError(f"Invalid product {product}")
     return PRODUCT_ENUM_PREFIX + SUPPORTED_PRODUCTS.get(product)
 
 
@@ -177,9 +171,9 @@ def add_expiration_postfix(expiration):
 def load_yaml_file(filename):
     """Load a YAML file from disk, throw a ParserError on failure."""
     try:
-        with open(filename, "r") as f:
+        with open(filename) as f:
             return yaml.safe_load(f)
-    except IOError as e:
+    except OSError as e:
         raise ParserError("Error opening " + filename + ": " + str(e))
     except ValueError as e:
-        raise ParserError("Error parsing processes in {}: {}".format(filename, e))
+        raise ParserError(f"Error parsing processes in {filename}: {e}")

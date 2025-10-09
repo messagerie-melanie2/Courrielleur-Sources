@@ -31,10 +31,9 @@ var {
   get_smart_folder_named,
   inboxFolder,
   make_message_sets_in_folders,
-  mc,
   select_none,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 var folder;
@@ -69,7 +68,7 @@ add_setup(async function () {
   inbox2Folder = inboxFolder.server.rootFolder.getChildNamed("Inbox2");
 
   await be_in_folder(folder);
-  msgHdr = mc.window.gFolderDisplay.view.dbView.getMsgHdrAt(0);
+  msgHdr = window.gFolderDisplay.view.dbView.getMsgHdrAt(0);
 });
 
 /**
@@ -84,21 +83,21 @@ add_task(
 
     // Enable the favorite folders view. This folder isn't currently a favorite
     // folder.
-    mc.folderTreeView.activeModes = "favorite";
+    window.folderTreeView.activeModes = "favorite";
     // Hide the all folders view. The activeModes setter takes care of removing
     // the mode is is already visible.
-    mc.folderTreeView.activeModes = "all";
+    window.folderTreeView.activeModes = "all";
 
     assert_folder_not_visible(folder);
     assert_folder_not_visible(inboxFolder);
     assert_folder_not_visible(inbox2Folder);
 
     // Try displaying a message
-    display_message_in_folder_tab(msgHdr);
+    await display_message_in_folder_tab(msgHdr);
 
     assert_folder_mode("favorite");
     assert_folder_selected_and_displayed(folder);
-    assert_selected_and_displayed(msgHdr);
+    await assert_selected_and_displayed(msgHdr);
   }
 );
 
@@ -120,7 +119,7 @@ add_task(
 
     // Hide the all folders view. The activeModes setter takes care of removing
     // the mode if is already visible.
-    mc.folderTreeView.activeModes = "all";
+    window.folderTreeView.activeModes = "all";
 
     // Select the folder to open the parent row.
     await be_in_folder(folder);
@@ -133,11 +132,11 @@ add_task(
     assert_folder_not_visible(inbox2Folder);
 
     // Try displaying a message
-    display_message_in_folder_tab(msgHdr);
+    await display_message_in_folder_tab(msgHdr);
 
     assert_folder_mode("favorite");
     assert_folder_selected_and_displayed(folder);
-    assert_selected_and_displayed(msgHdr);
+    await assert_selected_and_displayed(msgHdr);
 
     // Now unset the flags so that we don't affect later tests.
     folder.clearFlag(Ci.nsMsgFolderFlags.Favorite);
@@ -152,19 +151,19 @@ add_task(
 add_task(async function test_display_message_in_smart_folder_mode_works() {
   // Clear the message selection, otherwise msgHdr will still be displayed and
   // display_message_in_folder_tab(msgHdr) will be a no-op.
-  select_none();
+  await select_none();
   // Show the smart folder view before removing the favorite view.
-  mc.folderTreeView.activeModes = "smart";
+  window.folderTreeView.activeModes = "smart";
   // Hide the favorite view. The activeModes setter takes care of removing a
   // view if is currently active.
-  mc.folderTreeView.activeModes = "favorite";
+  window.folderTreeView.activeModes = "favorite";
 
   // Switch to the dummy folder, otherwise msgHdr will be in the view and the
   // display message in folder tab logic will simply select the message without
   // bothering to expand any folders.
   await be_in_folder(dummyFolder);
 
-  let rootFolder = folder.server.rootFolder;
+  const rootFolder = folder.server.rootFolder;
   // Check that the folder is actually the child of the account root
   assert_folder_child_in_view(folder, rootFolder);
 
@@ -177,14 +176,14 @@ add_task(async function test_display_message_in_smart_folder_mode_works() {
   assert_folder_not_visible(folder);
 
   // Try displaying the message
-  display_message_in_folder_tab(msgHdr);
+  await display_message_in_folder_tab(msgHdr);
 
   // Check that the right folders have expanded
   assert_folder_mode("smart");
   assert_folder_collapsed(smartInboxFolder);
   assert_folder_expanded(rootFolder);
   assert_folder_selected_and_displayed(folder);
-  assert_selected_and_displayed(msgHdr);
+  await assert_selected_and_displayed(msgHdr);
 });
 
 /**
@@ -194,13 +193,13 @@ add_task(async function test_display_message_in_smart_folder_mode_works() {
 add_task(
   async function test_display_inbox_message_in_smart_folder_mode_works() {
     await be_in_folder(inboxFolder);
-    let inboxMsgHdr = mc.window.gFolderDisplay.view.dbView.getMsgHdrAt(0);
+    const inboxMsgHdr = window.gFolderDisplay.view.dbView.getMsgHdrAt(0);
 
     // Collapse everything
     collapse_folder(smartInboxFolder);
     assert_folder_collapsed(smartInboxFolder);
     assert_folder_not_visible(inboxFolder);
-    let rootFolder = folder.server.rootFolder;
+    const rootFolder = folder.server.rootFolder;
     collapse_folder(rootFolder);
     assert_folder_collapsed(rootFolder);
 
@@ -209,14 +208,14 @@ add_task(
     assert_message_not_in_view(inboxMsgHdr);
 
     // Try displaying the message
-    display_message_in_folder_tab(inboxMsgHdr);
+    await display_message_in_folder_tab(inboxMsgHdr);
 
     // Check that nothing has expanded, and that the right folder is selected
     assert_folder_mode("smart");
     assert_folder_collapsed(smartInboxFolder);
     assert_folder_collapsed(rootFolder);
     assert_folder_selected_and_displayed(smartInboxFolder);
-    assert_selected_and_displayed(inboxMsgHdr);
+    await assert_selected_and_displayed(inboxMsgHdr);
   }
 );
 
@@ -227,7 +226,7 @@ add_task(function test_switch_to_all_folders() {
   // Hide the smart folders view enabled in the previous test. The activeModes
   // setter should take care of restoring the "all" view and prevent and empty
   // Folder pane.
-  mc.folderTreeView.activeModes = "smart";
+  window.folderTreeView.activeModes = "smart";
   assert_folder_mode("all");
   assert_folder_tree_view_row_count(10);
 });

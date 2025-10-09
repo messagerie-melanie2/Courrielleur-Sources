@@ -8,7 +8,7 @@
 #include "nsIMailChannel.h"
 #include "nsIWritablePropertyBag2.h"
 #include "nsTArray.h"
-#include "nsTString.h"
+#include "nsString.h"
 #include "calIItipItem.h"
 #include "nsIWeakReferenceUtils.h"
 
@@ -23,7 +23,8 @@ class nsMailChannel : public nsIMailChannel {
   nsCString mMailCharacterSet;
   nsCString mImipMethod;
   nsCOMPtr<calIItipItem> mImipItem;
-  nsCOMPtr<nsIMsgSMIMEHeaderSink> mSmimeHeaderSink;
+  nsCOMPtr<nsIMsgOpenPGPSink> mOpenPGPSink;
+  nsCOMPtr<nsIMsgSMIMESink> mSmimeSink;
   nsWeakPtr mListener;
 };
 

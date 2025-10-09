@@ -102,11 +102,18 @@ bool CheckTag(uint32_t tag_value) {
 
 namespace {
 
-#define OTS_MSG_TAG_(level,otf_,msg_,tag_) \
-  (OTS_MESSAGE_(level,otf_,"%c%c%c%c: %s", OTS_UNTAG(tag_), msg_), false)
+// ots_msg_tag emits the tag as hex if it is not valid, to avoid putting NUL or
+// other non-printables into the message string.
+static inline void ots_msg_tag(int level, const ots::FontFile* otf, const char* msg, uint32_t tag) {
+  if (ots::CheckTag(tag)) {
+    OTS_MESSAGE_(level, otf, "%c%c%c%c: %s", OTS_UNTAG(tag), msg);
+  } else {
+    OTS_MESSAGE_(level, otf, "<%08X>: %s", tag, msg);
+  }
+}
 
 // Generate a message with or without a table tag, when 'header' is the FontFile pointer
-#define OTS_FAILURE_MSG_TAG(msg_,tag_) OTS_MSG_TAG_(0, header, msg_, tag_)
+#define OTS_FAILURE_MSG_TAG(msg_,tag_) (ots_msg_tag(0, header, msg_, tag_), false)
 #define OTS_FAILURE_MSG_HDR(...)       OTS_FAILURE_MSG_(header, __VA_ARGS__)
 #define OTS_WARNING_MSG_HDR(...)       OTS_WARNING_MSG_(header, __VA_ARGS__)
 
@@ -728,11 +735,17 @@ bool ProcessGeneric(ots::FontFile *header,
   ots::Table *loca = font->GetTable(OTS_TAG_LOCA);
   ots::Table *cff  = font->GetTable(OTS_TAG_CFF);
   ots::Table *cff2 = font->GetTable(OTS_TAG_CFF2);
+  ots::OpenTypeMAXP *maxp = static_cast<ots::OpenTypeMAXP*>(
+    font->GetTypedTable(OTS_TAG_MAXP));
 
   if (glyf && loca) {
     if (font->version != 0x000010000) {
       OTS_WARNING_MSG_HDR("wrong sfntVersion for glyph data");
       font->version = 0x000010000;
+    }
+    if (!maxp->version_1) {
+      return OTS_FAILURE_MSG_TAG("wrong maxp version for glyph data",
+                                 OTS_TAG_MAXP);
     }
     if (cff)
        cff->Drop("font contains both CFF and glyf/loca tables");
@@ -747,6 +760,10 @@ bool ProcessGeneric(ots::FontFile *header,
        glyf->Drop("font contains both CFF and glyf tables");
     if (loca)
        loca->Drop("font contains both CFF and loca tables");
+    if (maxp->version_1) {
+      OTS_WARNING_MSG_HDR("fixing incorrect maxp version for CFF font");
+      maxp->version_1 = false;
+    }
   } else if (font->GetTable(OTS_TAG('C','B','D','T')) &&
              font->GetTable(OTS_TAG('C','B','L','C'))) {
       // We don't sanitize bitmap tables, but don’t reject bitmap-only fonts if

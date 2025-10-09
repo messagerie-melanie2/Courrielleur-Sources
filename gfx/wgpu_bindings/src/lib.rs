@@ -2,12 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+use crate::error::ErrorBufferType;
 use wgc::id;
 
-pub use wgc::command::{compute_ffi::*, render_ffi::*};
-
 pub mod client;
-pub mod identity;
+pub mod command;
+pub mod error;
 pub mod server;
 
 pub use wgc::device::trace::Command as CommandEncoderAction;
@@ -19,9 +19,7 @@ use nsstring::nsACString;
 
 type RawString = *const std::os::raw::c_char;
 
-//TODO: figure out why 'a and 'b have to be different here
-//TODO: remove this
-fn cow_label<'a, 'b>(raw: &'a RawString) -> Option<Cow<'b, str>> {
+fn cow_label(raw: &RawString) -> Option<Cow<'_, str>> {
     if raw.is_null() {
         None
     } else {
@@ -31,7 +29,7 @@ fn cow_label<'a, 'b>(raw: &'a RawString) -> Option<Cow<'b, str>> {
 }
 
 // Hides the repeated boilerplate of turning a `Option<&nsACString>` into a `Option<Cow<str>`.
-pub fn wgpu_string(gecko_string: Option<&nsACString>) -> Option<Cow<str>> {
+pub fn wgpu_string(gecko_string: Option<&nsACString>) -> Option<Cow<'_, str>> {
     gecko_string.map(|s| s.to_utf8())
 }
 
@@ -98,7 +96,7 @@ impl ByteBuf {
 pub struct AdapterInformation<S> {
     id: id::AdapterId,
     limits: wgt::Limits,
-    features: wgt::Features,
+    features: wgt::FeaturesWebGPU,
     name: S,
     vendor: u32,
     device: u32,
@@ -106,6 +104,7 @@ pub struct AdapterInformation<S> {
     driver: S,
     driver_info: S,
     backend: wgt::Backend,
+    support_use_external_texture_in_swap_chain: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -116,12 +115,18 @@ struct ImplicitLayout<'a> {
 
 #[derive(serde::Serialize, serde::Deserialize)]
 enum DeviceAction<'a> {
-    CreateTexture(id::TextureId, wgc::resource::TextureDescriptor<'a>),
+    CreateTexture(
+        id::TextureId,
+        wgc::resource::TextureDescriptor<'a>,
+        Option<SwapChainId>,
+    ),
     CreateSampler(id::SamplerId, wgc::resource::SamplerDescriptor<'a>),
     CreateBindGroupLayout(
         id::BindGroupLayoutId,
         wgc::binding_model::BindGroupLayoutDescriptor<'a>,
     ),
+    RenderPipelineGetBindGroupLayout(id::RenderPipelineId, u32, id::BindGroupLayoutId),
+    ComputePipelineGetBindGroupLayout(id::ComputePipelineId, u32, id::BindGroupLayoutId),
     CreatePipelineLayout(
         id::PipelineLayoutId,
         wgc::binding_model::PipelineLayoutDescriptor<'a>,
@@ -147,11 +152,16 @@ enum DeviceAction<'a> {
         wgc::command::RenderBundleEncoder,
         wgc::command::RenderBundleDescriptor<'a>,
     ),
+    CreateRenderBundleError(id::RenderBundleId, wgc::Label<'a>),
+    CreateQuerySet(id::QuerySetId, wgc::resource::QuerySetDescriptor<'a>),
     CreateCommandEncoder(
         id::CommandEncoderId,
         wgt::CommandEncoderDescriptor<wgc::Label<'a>>,
     ),
-    Error(String),
+    Error {
+        message: String,
+        r#type: ErrorBufferType,
+    },
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -161,8 +171,8 @@ enum QueueWriteAction {
         offset: wgt::BufferAddress,
     },
     Texture {
-        dst: wgt::ImageCopyTexture<id::TextureId>,
-        layout: wgt::ImageDataLayout,
+        dst: wgt::TexelCopyTextureInfo<id::TextureId>,
+        layout: wgt::TexelCopyBufferLayout,
         size: wgt::Extent3d,
     },
 }
@@ -201,18 +211,22 @@ impl DropAction {
 }
 
 #[repr(C)]
-pub struct ImageDataLayout<'a> {
+pub struct TexelCopyBufferLayout<'a> {
     pub offset: wgt::BufferAddress,
     pub bytes_per_row: Option<&'a u32>,
     pub rows_per_image: Option<&'a u32>,
 }
 
-impl<'a> ImageDataLayout<'a> {
-    fn into_wgt(&self) -> wgt::ImageDataLayout {
-        wgt::ImageDataLayout {
+impl<'a> TexelCopyBufferLayout<'a> {
+    fn into_wgt(&self) -> wgt::TexelCopyBufferLayout {
+        wgt::TexelCopyBufferLayout {
             offset: self.offset,
             bytes_per_row: self.bytes_per_row.map(|bpr| *bpr),
             rows_per_image: self.rows_per_image.map(|rpi| *rpi),
         }
     }
 }
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SwapChainId(pub u64);

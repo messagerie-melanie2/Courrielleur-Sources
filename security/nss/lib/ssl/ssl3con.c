@@ -37,6 +37,7 @@
 #include "secmod.h"
 #include "blapi.h"
 
+#include <limits.h>
 #include <stdio.h>
 
 static PK11SymKey *ssl3_GenerateRSAPMS(sslSocket *ss, ssl3CipherSpec *spec,
@@ -375,6 +376,8 @@ static const CK_MECHANISM_TYPE kea_alg_defs[] = {
     CKM_ECDH1_DERIVE,      /* ssl_kea_ecdh_psk */
     CKM_DH_PKCS_DERIVE,    /* ssl_kea_dh_psk */
     CKM_INVALID_MECHANISM, /* ssl_kea_tls13_any */
+    CKM_INVALID_MECHANISM, /* ssl_kea_ecdh_hybrid */
+    CKM_INVALID_MECHANISM, /* ssl_kea_ecdh_hybrid_psk */
 };
 PR_STATIC_ASSERT(PR_ARRAY_SIZE(kea_alg_defs) == ssl_kea_size);
 
@@ -495,6 +498,9 @@ ssl3_DecodeHandshakeType(int msgType)
             break;
         case ssl_hs_key_update:
             rv = "key_update   (24)";
+            break;
+        case ssl_hs_compressed_certificate:
+            rv = "compressed certificate (25)";
             break;
         default:
             snprintf(line, sizeof(line), "*UNKNOWN* handshake type! (%d)", msgType);
@@ -732,6 +738,13 @@ ssl_KEAEnabled(const sslSocket *ss, SSLKEAType keaType)
         case ssl_kea_ecdh:
         case ssl_kea_ecdh_psk:
             return ssl_NamedGroupTypeEnabled(ss, ssl_kea_ecdh);
+
+        case ssl_kea_ecdh_hybrid:
+        case ssl_kea_ecdh_hybrid_psk:
+            if (ss->version < SSL_LIBRARY_VERSION_TLS_1_3) {
+                return PR_FALSE;
+            }
+            return ssl_NamedGroupTypeEnabled(ss, ssl_kea_ecdh_hybrid);
 
         case ssl_kea_tls13_any:
             return PR_TRUE;
@@ -1100,6 +1113,22 @@ Null_Cipher(void *ctx, unsigned char *output, unsigned int *outputLen, unsigned 
     return SECSuccess;
 }
 
+/* Wrapper around PK11_CipherOp to avoid undefined behavior due to incompatible
+ * function pointer type cast
+ */
+static SECStatus
+SSLCipher_PK11_CipherOp(void *ctx, unsigned char *output, unsigned int *outputLen, unsigned int maxOutputLen,
+                        const unsigned char *input, unsigned int inputLen)
+{
+    PK11Context *pctx = ctx;
+    PORT_Assert(maxOutputLen <= INT_MAX);
+    int signedOutputLen = maxOutputLen;
+    SECStatus rv = PK11_CipherOp(pctx, output, &signedOutputLen, maxOutputLen, input, inputLen);
+    PORT_Assert(signedOutputLen >= 0);
+    *outputLen = signedOutputLen;
+    return rv;
+}
+
 /*
  * SSL3 Utility functions
  */
@@ -1253,6 +1282,7 @@ ssl3_SignHashesWithPrivKey(SSL3Hashes *hash, SECKEYPrivateKey *key,
     if (useRsaPss || hash->hashAlg == ssl_hash_none) {
         CK_MECHANISM_TYPE mech = PK11_MapSignKeyType(key->keyType);
         int signatureLen = PK11_SignatureLen(key);
+        PRInt32 optval;
 
         SECItem *params = NULL;
         CK_RSA_PKCS_PSS_PARAMS pssParams;
@@ -1263,6 +1293,17 @@ ssl3_SignHashesWithPrivKey(SSL3Hashes *hash, SECKEYPrivateKey *key,
         if (signatureLen <= 0) {
             PORT_SetError(SEC_ERROR_INVALID_KEY);
             goto done;
+        }
+        /* since we are calling PK11_SignWithMechanism directly, we need to check the
+         * key policy ourselves (which is already checked in SGN_Digest */
+        rv = NSS_OptionGet(NSS_KEY_SIZE_POLICY_FLAGS, &optval);
+        if ((rv == SECSuccess) &&
+            ((optval & NSS_KEY_SIZE_POLICY_SIGN_FLAG) == NSS_KEY_SIZE_POLICY_SIGN_FLAG)) {
+            rv = SECKEY_EnforceKeySize(key->keyType, SECKEY_PrivateKeyStrengthInBits(key),
+                                       SEC_ERROR_SIGNATURE_ALGORITHM_DISABLED);
+            if (rv != SECSuccess) {
+                goto done; /* error code already set */
+            }
         }
 
         buf->len = (unsigned)signatureLen;
@@ -1731,10 +1772,10 @@ ssl3_BuildRecordPseudoHeader(DTLSEpoch epoch,
                              SSL3ProtocolVersion version,
                              PRBool isDTLS,
                              int length,
-                             sslBuffer *buf)
+                             sslBuffer *buf, SSL3ProtocolVersion v)
 {
     SECStatus rv;
-    if (isDTLS) {
+    if (isDTLS && v < SSL_LIBRARY_VERSION_TLS_1_3) {
         rv = sslBuffer_AppendNumber(buf, epoch, 2);
         if (rv != SECSuccess) {
             return SECFailure;
@@ -1821,7 +1862,7 @@ ssl3_InitPendingContexts(sslSocket *ss, ssl3CipherSpec *spec)
         iv.data = NULL;
         iv.len = 0;
     } else {
-        spec->cipher = (SSLCipher)PK11_CipherOp;
+        spec->cipher = SSLCipher_PK11_CipherOp;
         iv.data = spec->keyMaterial.iv;
         iv.len = spec->cipherDef->iv_size;
     }
@@ -1991,7 +2032,7 @@ ssl3_ComputeRecordMAC(
  *
  * On entry:
  *   originalLen >= inputLen >= MAC size
-*/
+ */
 static SECStatus
 ssl3_ComputeRecordMACConstantTime(
     ssl3CipherSpec *spec,
@@ -2140,11 +2181,10 @@ ssl3_MACEncryptRecord(ssl3CipherSpec *cwSpec,
         rv = sslBuffer_Skip(wrBuf, len, NULL);
         PORT_Assert(rv == SECSuccess); /* Can't fail. */
     }
-
     rv = ssl3_BuildRecordPseudoHeader(
         cwSpec->epoch, cwSpec->nextSeqNum, ct,
         cwSpec->version >= SSL_LIBRARY_VERSION_TLS_1_0, cwSpec->recordVersion,
-        isDTLS, contentLen, &pseudoHeader);
+        isDTLS, contentLen, &pseudoHeader, cwSpec->version);
     PORT_Assert(rv == SECSuccess);
     if (cwSpec->cipherDef->type == type_aead) {
         const unsigned int nonceLen = cwSpec->cipherDef->explicit_nonce_size;
@@ -2171,7 +2211,7 @@ ssl3_MACEncryptRecord(ssl3CipherSpec *cwSpec,
             ivOffset = ivLen;
             gen = CKG_GENERATE_COUNTER;
         }
-        ivOffset = tls13_SetupAeadIv(isDTLS, ivOut, cwSpec->keyMaterial.iv,
+        ivOffset = tls13_SetupAeadIv(isDTLS, cwSpec->version, ivOut, cwSpec->keyMaterial.iv,
                                      ivOffset, ivLen, cwSpec->epoch);
         rv = tls13_AEAD(cwSpec->cipherContext,
                         PR_FALSE,
@@ -2344,7 +2384,6 @@ ssl_ProtectRecord(sslSocket *ss, ssl3CipherSpec *cwSpec, SSLContentType ct,
     PORT_Assert(cwSpec->cipherDef->max_records <= RECORD_SEQ_MAX);
 
     if (cwSpec->nextSeqNum >= cwSpec->cipherDef->max_records) {
-        PORT_Assert(cwSpec->version < SSL_LIBRARY_VERSION_TLS_1_3);
         SSL_TRC(3, ("%d: SSL[-]: write sequence number at limit 0x%0llx",
                     SSL_GETPID(), cwSpec->nextSeqNum));
         PORT_SetError(SSL_ERROR_TOO_MANY_RECORDS);
@@ -3255,9 +3294,9 @@ ssl3_SendChangeCipherSpecs(sslSocket *ss)
 
 /* Called from ssl3_HandleRecord.
 ** Caller must hold both RecvBuf and Handshake locks.
- *
- * Acquires and releases spec write lock, to protect switching the current
- * and pending write spec pointers.
+*
+* Acquires and releases spec write lock, to protect switching the current
+* and pending write spec pointers.
 */
 static SECStatus
 ssl3_HandleChangeCipherSpecs(sslSocket *ss, sslBuffer *buf)
@@ -3469,7 +3508,8 @@ ssl3_ComputeMasterSecretInt(sslSocket *ss, PK11SymKey *pms,
      * data into a 48-byte value, and does not expect to return the version.
      */
     PRBool isDH = (PRBool)((ss->ssl3.hs.kea_def->exchKeyType == ssl_kea_dh) ||
-                           (ss->ssl3.hs.kea_def->exchKeyType == ssl_kea_ecdh));
+                           (ss->ssl3.hs.kea_def->exchKeyType == ssl_kea_ecdh) ||
+                           (ss->ssl3.hs.kea_def->exchKeyType == ssl_kea_ecdh_hybrid));
     CK_MECHANISM_TYPE master_derive;
     CK_MECHANISM_TYPE key_derive;
     SECItem params;
@@ -3479,6 +3519,27 @@ ssl3_ComputeMasterSecretInt(sslSocket *ss, PK11SymKey *pms,
     /* master_params may be used as a CK_SSL3_MASTER_KEY_DERIVE_PARAMS */
     CK_TLS12_MASTER_KEY_DERIVE_PARAMS master_params;
     unsigned int master_params_len;
+
+    /* if we are using TLS and we aren't using the extended master secret,
+     * and SEC_OID_TLS_REQUIRE_EMS policy is true, fail. The caller will
+     * send an alert (eventually). In the RSA Server case, the alert
+     * won't happen until Finish time because the upper level code
+     * can't tell a difference between this failure and an RSA decrypt
+     * failure, so it will proceed with a faux key */
+    if (isTLS) {
+        PRUint32 policy;
+        SECStatus rv;
+
+        /* first fetch the policy for this algorithm */
+        rv = NSS_GetAlgorithmPolicy(SEC_OID_TLS_REQUIRE_EMS, &policy);
+        /* we only look at the policy if we can fetch it. */
+        if ((rv == SECSuccess) && (policy & NSS_USE_ALG_IN_SSL_KX)) {
+            /* just set the error, we don't want to map any errors
+             * set by NSS_GetAlgorithmPolicy here */
+            PORT_SetError(SSL_ERROR_MISSING_EXTENDED_MASTER_SECRET);
+            return SECFailure;
+        }
+    }
 
     if (isTLS12) {
         if (isDH)
@@ -3540,6 +3601,7 @@ tls_ComputeExtendedMasterSecretInt(sslSocket *ss, PK11SymKey *pms,
     ssl3CipherSpec *pwSpec = ss->ssl3.pwSpec;
     CK_NSS_TLS_EXTENDED_MASTER_KEY_DERIVE_PARAMS extended_master_params;
     SSL3Hashes hashes;
+
     /*
      * Determine whether to use the DH/ECDH or RSA derivation modes.
      */
@@ -3547,7 +3609,8 @@ tls_ComputeExtendedMasterSecretInt(sslSocket *ss, PK11SymKey *pms,
      * TODO(ekr@rtfm.com): Verify that the slot can handle this key expansion
      * mode. Bug 1198298 */
     PRBool isDH = (PRBool)((ss->ssl3.hs.kea_def->exchKeyType == ssl_kea_dh) ||
-                           (ss->ssl3.hs.kea_def->exchKeyType == ssl_kea_ecdh));
+                           (ss->ssl3.hs.kea_def->exchKeyType == ssl_kea_ecdh) ||
+                           (ss->ssl3.hs.kea_def->exchKeyType == ssl_kea_ecdh_hybrid));
     CK_MECHANISM_TYPE master_derive;
     CK_MECHANISM_TYPE key_derive;
     SECItem params;
@@ -4062,9 +4125,15 @@ ssl3_UpdatePostHandshakeHashes(sslSocket *ss, const unsigned char *b, unsigned i
     return rv;
 }
 
+/* The next two functions serve to append the handshake header.
+   The first one additionally writes to seqNumberBuffer
+   the sequence number of the message we are generating.
+   This function is used when generating the keyUpdate message in dtls13_enqueueKeyUpdateMessage.
+*/
 SECStatus
-ssl3_AppendHandshakeHeader(sslSocket *ss, SSLHandshakeType t, PRUint32 length)
+ssl3_AppendHandshakeHeaderAndStashSeqNum(sslSocket *ss, SSLHandshakeType t, PRUint32 length, PRUint64 *sendMessageSeqOut)
 {
+    PORT_Assert(t != ssl_hs_client_hello);
     SECStatus rv;
 
     /* If we already have a message in place, we need to enqueue it.
@@ -4091,28 +4160,49 @@ ssl3_AppendHandshakeHeader(sslSocket *ss, SSLHandshakeType t, PRUint32 length)
     }
 
     if (IS_DTLS(ss)) {
+        /* RFC 9147. 5.2.  DTLS Handshake Message Format.
+         * In DTLS 1.3, the message transcript is computed over the original TLS
+         * 1.3-style Handshake messages without the message_seq,
+         * fragment_offset, and fragment_length values.  Note that this is a
+         * change from DTLS 1.2 where those values were included in the transcript. */
+        PRBool suppressHash = ss->version == SSL_LIBRARY_VERSION_TLS_1_3 ? PR_TRUE : PR_FALSE;
+
         /* Note that we make an unfragmented message here. We fragment in the
          * transmission code, if necessary */
-        rv = ssl3_AppendHandshakeNumber(ss, ss->ssl3.hs.sendMessageSeq, 2);
+        rv = ssl3_AppendHandshakeNumberSuppressHash(ss, ss->ssl3.hs.sendMessageSeq, 2, suppressHash);
         if (rv != SECSuccess) {
             return rv; /* error code set by AppendHandshake, if applicable. */
+        }
+        /* In case if we provide a buffer for the sequence message,
+        we write down sendMessageSeq to the buffer. */
+        if (sendMessageSeqOut != NULL) {
+            *sendMessageSeqOut = ss->ssl3.hs.sendMessageSeq;
         }
         ss->ssl3.hs.sendMessageSeq++;
 
         /* 0 is the fragment offset, because it's not fragmented yet */
-        rv = ssl3_AppendHandshakeNumber(ss, 0, 3);
+        rv = ssl3_AppendHandshakeNumberSuppressHash(ss, 0, 3, suppressHash);
         if (rv != SECSuccess) {
             return rv; /* error code set by AppendHandshake, if applicable. */
         }
 
         /* Fragment length -- set to the packet length because not fragmented */
-        rv = ssl3_AppendHandshakeNumber(ss, length, 3);
+        rv = ssl3_AppendHandshakeNumberSuppressHash(ss, length, 3, suppressHash);
         if (rv != SECSuccess) {
             return rv; /* error code set by AppendHandshake, if applicable. */
         }
     }
 
     return rv; /* error code set by AppendHandshake, if applicable. */
+}
+
+/* The function calls the ssl3_AppendHandshakeHeaderAndStashSeqNum implemented above.
+   As in the majority of the cases we do not need the last parameter,
+   we separate out this function. */
+SECStatus
+ssl3_AppendHandshakeHeader(sslSocket *ss, SSLHandshakeType t, PRUint32 length)
+{
+    return ssl3_AppendHandshakeHeaderAndStashSeqNum(ss, t, length, NULL);
 }
 
 /**************************************************************************
@@ -5204,7 +5294,7 @@ ssl3_CreateClientHelloPreamble(sslSocket *ss, const sslSessionID *sid,
 
     if (IS_DTLS(ss)) {
         /* This cookieLen applies to the cookie that appears in the DTLS
-        * ClientHello, which isn't used in DTLS 1.3. */
+         * ClientHello, which isn't used in DTLS 1.3. */
         rv = sslBuffer_AppendVariable(&constructed, ss->ssl3.hs.cookie.data,
                                       ss->ssl3.hs.helloRetry ? 0 : ss->ssl3.hs.cookie.len,
                                       1);
@@ -5599,8 +5689,28 @@ ssl3_SendClientHello(sslSocket *ss, sslClientHelloType type)
                 goto loser;
             }
         }
-        rv = ssl3_AppendHandshake(ss, chBuf.buf, chBuf.len);
+
+        /* As here the function takes the full message and hashes it in one go,
+         * For DTLS1.3, we skip hashing the unnecessary header fields.
+         * See ssl3_AppendHandshakeHeader. */
+        if (IS_DTLS(ss) && ss->vrange.max >= SSL_LIBRARY_VERSION_TLS_1_3) {
+            rv = ssl3_AppendHandshakeSuppressHash(ss, chBuf.buf, chBuf.len);
+            if (rv != SECSuccess) {
+                goto loser; /* code set */
+            }
+            if (!ss->firstHsDone) {
+                PORT_Assert(type == client_hello_retransmit ||
+                            ss->ssl3.hs.dtls13ClientMessageBuffer.len == 0);
+                sslBuffer_Clear(&ss->ssl3.hs.dtls13ClientMessageBuffer);
+                /* Here instead of computing the hash, we copy the data to a buffer.*/
+                rv = sslBuffer_Append(&ss->ssl3.hs.dtls13ClientMessageBuffer, chBuf.buf, chBuf.len);
+            }
+        } else {
+            rv = ssl3_AppendHandshake(ss, chBuf.buf, chBuf.len);
+        }
+
     } else {
+        PORT_Assert(!IS_DTLS(ss));
         rv = tls13_ConstructClientHelloWithEch(ss, sid, !requestingResume, &chBuf, &extensionBuf);
         if (rv != SECSuccess) {
             goto loser; /* code set */
@@ -7062,6 +7172,17 @@ ssl3_HandleServerHello(sslSocket *ss, PRUint8 *b, PRUint32 length)
         goto loser;
     }
 
+    /* RFC 9147. 5.2.
+     * DTLS Handshake Message Format states the difference between the computation
+     * of the transcript if the version is DTLS1.2 or DTLS1.3.
+     *
+     * At this moment we are sure which version
+     * we are planning to use during the connection, so we can compute the hash. */
+    rv = ssl3_MaybeUpdateHashWithSavedRecord(ss);
+    if (rv != SECSuccess) {
+        goto loser;
+    }
+
     PORT_Assert(!SSL_ALL_VERSIONS_DISABLED(&ss->vrange));
     /* Check that the version is within the configured range. */
     if (ss->vrange.min > ss->version || ss->vrange.max < ss->version) {
@@ -7116,12 +7237,7 @@ ssl3_HandleServerHello(sslSocket *ss, PRUint8 *b, PRUint32 length)
         goto alert_loser;
     }
 
-    if (ss->opt.enableHelloDowngradeCheck
-#ifdef DTLS_1_3_DRAFT_VERSION
-        /* Disable this check while we are on draft DTLS 1.3 versions. */
-        && !IS_DTLS(ss)
-#endif
-    ) {
+    if (ss->opt.enableHelloDowngradeCheck) {
         rv = ssl_CheckServerRandom(ss);
         if (rv != SECSuccess) {
             desc = illegal_parameter;
@@ -7974,6 +8090,7 @@ ssl3_BeginHandleCertificateRequest(sslSocket *ss,
         PORT_Assert(ssl3_ExtensionAdvertised(ss, ssl_tls13_encrypted_client_hello_xtn));
         rv = SECFailure;
     } else if (ss->getClientAuthData != NULL) {
+        PORT_Assert(signatureSchemes || !signatureSchemeCount);
         PORT_Assert((ss->ssl3.hs.preliminaryInfo & ssl_preinfo_all) ==
                     ssl_preinfo_all);
         PORT_Assert(ss->ssl3.clientPrivateKey == NULL);
@@ -7991,7 +8108,9 @@ ssl3_BeginHandleCertificateRequest(sslSocket *ss,
          * callback will result in no filtering.*/
 
         ss->ssl3.hs.clientAuthSignatureSchemes = PORT_ZNewArray(SSLSignatureScheme, signatureSchemeCount);
-        PORT_Memcpy(ss->ssl3.hs.clientAuthSignatureSchemes, signatureSchemes, signatureSchemeCount * sizeof(SSLSignatureScheme));
+        if (signatureSchemes) {
+            PORT_Memcpy(ss->ssl3.hs.clientAuthSignatureSchemes, signatureSchemes, signatureSchemeCount * sizeof(SSLSignatureScheme));
+        }
         ss->ssl3.hs.clientAuthSignatureSchemesLen = signatureSchemeCount;
 
         rv = (SECStatus)(*ss->getClientAuthData)(ss->getClientAuthDataArg,
@@ -8803,11 +8922,6 @@ ssl_GenerateServerRandom(sslSocket *ss)
     if (ss->version == ss->vrange.max) {
         return SECSuccess;
     }
-#ifdef DTLS_1_3_DRAFT_VERSION
-    if (IS_DTLS(ss)) {
-        return SECSuccess;
-    }
-#endif
 
     /*
      * [RFC 8446 Section 4.1.3].
@@ -9404,7 +9518,7 @@ ssl3_HandleClientHelloPart2(sslSocket *ss,
                 if (suite->cipher_suite == sid->u.ssl3.cipherSuite)
                     break;
             }
-            PORT_Assert(j > 0);
+
             if (j == 0)
                 break;
 
@@ -11262,11 +11376,7 @@ void
 ssl3_CleanupPeerCerts(sslSocket *ss)
 {
     PLArenaPool *arena = ss->ssl3.peerCertArena;
-    ssl3CertNode *certs = (ssl3CertNode *)ss->ssl3.peerCertChain;
 
-    for (; certs; certs = certs->next) {
-        CERT_DestroyCertificate(certs->cert);
-    }
     if (arena)
         PORT_FreeArena(arena, PR_FALSE);
     ss->ssl3.peerCertArena = NULL;
@@ -11481,10 +11591,10 @@ ssl3_CompleteHandleCertificate(sslSocket *ss, PRUint8 *b, PRUint32 length)
             goto loser; /* don't send alerts on memory errors */
         }
 
-        c->cert = CERT_NewTempCertificate(ss->dbHandle, &certItem, NULL,
-                                          PR_FALSE, PR_TRUE);
-        if (c->cert == NULL) {
-            goto ambiguous_err;
+        c->derCert = SECITEM_ArenaDupItem(ss->ssl3.peerCertArena,
+                                          &certItem);
+        if (c->derCert == NULL) {
+            goto loser;
         }
 
         c->next = NULL;
@@ -11657,6 +11767,7 @@ ssl3_AuthCertificate(sslSocket *ss)
     SECStatus rv;
     PRBool isServer = ss->sec.isServer;
     int errCode;
+    CERTCertList *peerChain = NULL;
 
     ss->ssl3.hs.authCertificatePending = PR_FALSE;
 
@@ -11685,8 +11796,24 @@ ssl3_AuthCertificate(sslSocket *ss)
     /*
      * Ask caller-supplied callback function to validate cert chain.
      */
+    if (ss->opt.dbLoadCertChain) {
+        /* Imports the certificate chain into the db. Indirectly used by the
+         * authCertificate callback below. */
+        peerChain = SSL_PeerCertificateChain(ss->fd);
+        if (!peerChain) {
+            errCode = PORT_GetError();
+            goto loser;
+        }
+    }
+
     rv = (SECStatus)(*ss->authCertificate)(ss->authCertificateArg, ss->fd,
                                            PR_TRUE, isServer);
+
+    if (ss->opt.dbLoadCertChain && peerChain) {
+        CERT_DestroyCertList(peerChain);
+        peerChain = NULL;
+    }
+
     if (rv != SECSuccess) {
         errCode = PORT_GetError();
         if (errCode == 0) {
@@ -11771,7 +11898,7 @@ ssl3_AlwaysFail(sslSocket *ss)
 }
 
 /* Caller must hold 1stHandshakeLock.
-*/
+ */
 SECStatus
 ssl3_AuthCertificateComplete(sslSocket *ss, PRErrorCode error)
 {
@@ -12152,10 +12279,10 @@ ssl3_CacheWrappedSecret(sslSocket *ss, sslSessionID *sid,
                                       keyLength, pwArg);
             if (wrappingKey) {
                 /* The thread safety characteristics of PK11_[SG]etWrapKey is
-                * abominable.  This protects against races in calling
-                * PK11_SetWrapKey by dropping and re-acquiring the canonical
-                * value once it is set.  The mutex in PK11_[SG]etWrapKey will
-                * ensure that races produce the same value in the end. */
+                 * abominable.  This protects against races in calling
+                 * PK11_SetWrapKey by dropping and re-acquiring the canonical
+                 * value once it is set.  The mutex in PK11_[SG]etWrapKey will
+                 * ensure that races produce the same value in the end. */
                 PK11_SetWrapKey(symKeySlot, wrapKeyIndex, wrappingKey);
                 PK11_FreeSymKey(wrappingKey);
                 wrappingKey = PK11_GetWrapKey(symKeySlot, wrapKeyIndex,
@@ -12382,6 +12509,9 @@ ssl3_FillInCachedSID(sslSocket *ss, sslSessionID *sid, PK11SymKey *secret)
     sid->sigScheme = ss->sec.signatureScheme;
     sid->lastAccessTime = sid->creationTime = ssl_Time(ss);
     sid->expirationTime = sid->creationTime + (ssl_ticket_lifetime * PR_USEC_PER_SEC);
+    if (sid->localCert) {
+        CERT_DestroyCertificate(sid->localCert);
+    }
     sid->localCert = CERT_DupCertificate(ss->sec.localCert);
     if (ss->sec.isServer) {
         sid->namedCurve = ss->sec.serverCert->namedCurve;
@@ -12422,15 +12552,15 @@ ssl3_FinishHandshake(sslSocket *ss)
     }
 
     /* RFC 5077 Section 3.3: "The client MUST NOT treat the ticket as valid
-    * until it has verified the server's Finished message." When the server
-    * sends a NewSessionTicket in a resumption handshake, we must wait until
-    * the handshake is finished (we have verified the server's Finished
-    * AND the server's certificate) before we update the ticket in the sid.
-    *
-    * This must be done before we call ssl_CacheSessionID(ss)
-    * because CacheSID requires the session ticket to already be set, and also
-    * because of the lazy lock creation scheme used by CacheSID and
-    * ssl3_SetSIDSessionTicket. */
+     * until it has verified the server's Finished message." When the server
+     * sends a NewSessionTicket in a resumption handshake, we must wait until
+     * the handshake is finished (we have verified the server's Finished
+     * AND the server's certificate) before we update the ticket in the sid.
+     *
+     * This must be done before we call ssl_CacheSessionID(ss)
+     * because CacheSID requires the session ticket to already be set, and also
+     * because of the lazy lock creation scheme used by CacheSID and
+     * ssl3_SetSIDSessionTicket. */
     if (ss->ssl3.hs.receivedNewSessionTicket) {
         PORT_Assert(!ss->sec.isServer);
         if (sidRv == SECSuccess) {
@@ -12478,7 +12608,7 @@ ssl_HashHandshakeMessageInt(sslSocket *ss, SSLHandshakeType ct,
         return rv; /* err code already set. */
 
     /* Extra data to simulate a complete DTLS handshake fragment */
-    if (IS_DTLS(ss)) {
+    if (IS_DTLS_1_OR_12(ss)) {
         /* Sequence number */
         dtlsData[0] = MSB(dtlsSeq);
         dtlsData[1] = LSB(dtlsSeq);
@@ -13187,7 +13317,7 @@ ssl3_UnprotectRecord(sslSocket *ss,
 
         rv = ssl3_BuildRecordPseudoHeader(
             spec->epoch, cText->seqNum,
-            rType, isTLS, rVersion, IS_DTLS(ss), decryptedLen, &header);
+            rType, isTLS, rVersion, IS_DTLS(ss), decryptedLen, &header, spec->version);
         PORT_Assert(rv == SECSuccess);
 
         /* build the iv */
@@ -13204,7 +13334,7 @@ ssl3_UnprotectRecord(sslSocket *ss,
         }
         rv = tls13_AEAD(spec->cipherContext, PR_TRUE,
                         CKG_NO_GENERATE, 0,       /* iv generator params
-                                                        * (not used in decrypt)*/
+                                                   * (not used in decrypt)*/
                         iv,                       /* iv in */
                         NULL,                     /* iv out */
                         ivLen + explicitNonceLen, /* full iv length */
@@ -13256,7 +13386,7 @@ ssl3_UnprotectRecord(sslSocket *ss,
         rv = ssl3_BuildRecordPseudoHeader(
             spec->epoch, cText->seqNum,
             rType, isTLS, rVersion, IS_DTLS(ss),
-            plaintext->len - spec->macDef->mac_size, &header);
+            plaintext->len - spec->macDef->mac_size, &header, spec->version);
         PORT_Assert(rv == SECSuccess);
         if (cipher_def->type == type_block) {
             rv = ssl3_ComputeRecordMACConstantTime(
@@ -13387,7 +13517,7 @@ ssl3_GetCipherSpec(sslSocket *ss, SSL3Ciphertext *cText)
     if (!IS_DTLS(ss)) {
         return crSpec;
     }
-    epoch = dtls_ReadEpoch(crSpec, cText->hdr);
+    epoch = dtls_ReadEpoch(crSpec->version, crSpec->epoch, cText->hdr);
     if (crSpec->epoch == epoch) {
         return crSpec;
     }
@@ -13399,8 +13529,8 @@ ssl3_GetCipherSpec(sslSocket *ss, SSL3Ciphertext *cText)
             return newSpec;
         }
     }
-    SSL_TRC(10, ("%d: DTLS[%d]: Couldn't find cipherspec from epoch %d",
-                 SSL_GETPID(), ss->fd, epoch));
+    SSL_TRC(10, ("%d: DTLS[%d]: %s couldn't find cipherspec from epoch %d",
+                 SSL_GETPID(), ss->fd, SSL_ROLE(ss), epoch));
     return NULL;
 }
 
@@ -13601,8 +13731,9 @@ ssl3_HandleRecord(sslSocket *ss, SSL3Ciphertext *cText)
         /* All errors/alerts that might occur during unprotection are related
          * to invalid records (e.g. invalid formatting, length, MAC, ...).
          * Following the DTLS specification such errors/alerts SHOULD be
-         * dropped silently [RFC6347, Section 4.1.2.7].
+         * dropped silently [RFC9147, Section 4.5.2].
          * This is done below. */
+
         if ((IS_DTLS(ss) && !dtls13_AeadLimitReached(spec)) ||
             (!IS_DTLS(ss) && ss->sec.isServer &&
              ss->ssl3.hs.zeroRttIgnore == ssl_0rtt_ignore_trial)) {
@@ -13643,9 +13774,27 @@ ssl3_HandleRecord(sslSocket *ss, SSL3Ciphertext *cText)
     /* IMPORTANT: We are in DTLS 1.3 mode and we have processed something
      * from the wrong epoch. Divert to a divert processing function to make
      * sure we don't accidentally use the data unsafely. */
+
+    /* We temporary allowed reading the records from the previous epoch n-1
+    until the moment we get a message from the new epoch n. */
+
     if (outOfOrderSpec) {
         PORT_Assert(IS_DTLS(ss) && ss->version >= SSL_LIBRARY_VERSION_TLS_1_3);
-        return dtls13_HandleOutOfEpochRecord(ss, spec, rType, plaintext);
+        ssl_GetSSL3HandshakeLock(ss);
+        if (ss->ssl3.hs.allowPreviousEpoch && spec->epoch == ss->ssl3.crSpec->epoch - 1) {
+            SSL_TRC(30, ("%d: DTLS13[%d]: Out of order message %d is accepted",
+                         SSL_GETPID(), ss->fd, spec->epoch));
+            ssl_ReleaseSSL3HandshakeLock(ss);
+        } else {
+            ssl_ReleaseSSL3HandshakeLock(ss);
+            return dtls13_HandleOutOfEpochRecord(ss, spec, rType, plaintext);
+        }
+    } else {
+        ssl_GetSSL3HandshakeLock(ss);
+        /* Forbid (application) messages from the previous epoch.
+           From now, messages that arrive out of order will be discarded. */
+        ss->ssl3.hs.allowPreviousEpoch = PR_FALSE;
+        ssl_ReleaseSSL3HandshakeLock(ss);
     }
 
     /* Check the length of the plaintext. */
@@ -13768,7 +13917,6 @@ ssl3_InitState(sslSocket *ss)
                 sizeof(ss->ssl3.hs.newSessionTicket));
 
     ss->ssl3.hs.zeroRttState = ssl_0rtt_none;
-
     return SECSuccess;
 }
 
@@ -14107,6 +14255,9 @@ ssl3_DestroySSL3Info(sslSocket *ss)
     }
     if (ss->ssl3.hs.echInnerMessages.buf) {
         sslBuffer_Clear(&ss->ssl3.hs.echInnerMessages);
+    }
+    if (ss->ssl3.hs.dtls13ClientMessageBuffer.buf) {
+        sslBuffer_Clear(&ss->ssl3.hs.dtls13ClientMessageBuffer);
     }
 
     /* free the SSL3Buffer (msg_body) */

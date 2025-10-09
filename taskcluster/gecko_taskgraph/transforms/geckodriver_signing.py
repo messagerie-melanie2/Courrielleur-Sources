@@ -6,29 +6,44 @@ Transform the repackage signing task into an actual task description.
 """
 
 from taskgraph.transforms.base import TransformSequence
+from taskgraph.util.dependencies import get_primary_dependency
+from taskgraph.util.schema import Schema
 from voluptuous import Optional
 
-from gecko_taskgraph.loader.single_dep import schema
 from gecko_taskgraph.transforms.task import task_description_schema
 from gecko_taskgraph.util.attributes import copy_attributes_from_dependent_job
 from gecko_taskgraph.util.scriptworker import get_signing_cert_scope_per_platform
 
-repackage_signing_description_schema = schema.extend(
+repackage_signing_description_schema = Schema(
     {
         Optional("label"): str,
+        Optional("attributes"): task_description_schema["attributes"],
+        Optional("dependencies"): task_description_schema["dependencies"],
         Optional("treeherder"): task_description_schema["treeherder"],
         Optional("shipping-phase"): task_description_schema["shipping-phase"],
+        Optional("task-from"): task_description_schema["task-from"],
     }
 )
 
 transforms = TransformSequence()
+
+
+@transforms.add
+def remove_name(config, jobs):
+    for job in jobs:
+        if "name" in job:
+            del job["name"]
+        yield job
+
+
 transforms.add_validate(repackage_signing_description_schema)
 
 
 @transforms.add
 def make_signing_description(config, jobs):
     for job in jobs:
-        dep_job = job["primary-dependency"]
+        dep_job = get_primary_dependency(config, job)
+        assert dep_job
 
         attributes = copy_attributes_from_dependent_job(dep_job)
         attributes["repackage_type"] = "repackage-signing"
@@ -94,7 +109,7 @@ def make_signing_description(config, jobs):
             assert worker_type in worker_type_alias_map, (
                 "Make sure to adjust the below worker_type_alias logic for "
                 "mac if you change the signing workerType aliases!"
-                " ({} not found in mapping)".format(worker_type)
+                f" ({worker_type} not found in mapping)"
             )
             worker_type = worker_type_alias_map[worker_type]
 
@@ -106,9 +121,9 @@ def make_signing_description(config, jobs):
 
 def _craft_upstream_artifacts(dep_job, dependency_kind, build_platform):
     if build_platform.startswith("win"):
-        signing_format = "autograph_authenticode_sha2"
+        signing_format = "gcp_prod_autograph_authenticode_202412"
     elif build_platform.startswith("linux"):
-        signing_format = "autograph_gpg"
+        signing_format = "gcp_prod_autograph_gpg"
     elif build_platform.startswith("macosx"):
         signing_format = "mac_geckodriver"
     else:

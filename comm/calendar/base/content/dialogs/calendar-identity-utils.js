@@ -3,16 +3,15 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* exported initMailIdentitiesRow, saveMailIdentitySelection,
-            notifyOnIdentitySelection, initForceEmailScheduling,
-            saveForceEmailScheduling, updateForceEmailSchedulingControl */
+            notifyOnIdentitySelection, */
 
-/* global MozElements, addMenuItem, gCalendar */
+/* global MozElements, addMenuItem */
 
-var { MailServices } = ChromeUtils.import("resource:///modules/MailServices.jsm");
-var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
+var { MailServices } = ChromeUtils.importESModule("resource:///modules/MailServices.sys.mjs");
+var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
 var { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUtils.sys.mjs");
 
-XPCOMUtils.defineLazyGetter(this, "gIdentityNotification", () => {
+ChromeUtils.defineLazyGetter(this, "gIdentityNotification", () => {
   return new MozElements.NotificationBox(element => {
     document.getElementById("no-identity-notification").append(element);
   });
@@ -29,7 +28,7 @@ function initMailIdentitiesRow(aCalendar) {
     document.getElementById("calendar-email-identity-row").toggleAttribute("hidden", true);
   }
 
-  let imipIdentityDisabled = aCalendar.getProperty("imip.identity.disabled");
+  const imipIdentityDisabled = aCalendar.getProperty("imip.identity.disabled");
   document
     .getElementById("calendar-email-identity-row")
     .toggleAttribute("hidden", imipIdentityDisabled);
@@ -43,7 +42,7 @@ function initMailIdentitiesRow(aCalendar) {
   // If there is no transport but also no organizer id, then the
   // provider has not statically configured an organizer id. This is
   // basically what happens when "None" is selected.
-  let menuPopup = document.getElementById("email-identity-menupopup");
+  const menuPopup = document.getElementById("email-identity-menupopup");
 
   // Remove all children from the email list to avoid duplicates if the list
   // has already been populated during a previous step in the calendar
@@ -59,7 +58,7 @@ function initMailIdentitiesRow(aCalendar) {
   } else {
     identities = MailServices.accounts.allIdentities;
   }
-  for (let identity of identities) {
+  for (const identity of identities) {
     addMenuItem(menuPopup, identity.identityName, identity.key);
   }
   let sel = aCalendar.getProperty("imip.identity");
@@ -79,8 +78,8 @@ function initMailIdentitiesRow(aCalendar) {
 function getMailIdentitySelection(aCalendar) {
   let sel = "none";
   if (aCalendar) {
-    let imipIdentityDisabled = aCalendar.getProperty("imip.identity.disabled");
-    let selItem = document.getElementById("email-identity-menulist").selectedItem;
+    const imipIdentityDisabled = aCalendar.getProperty("imip.identity.disabled");
+    const selItem = document.getElementById("email-identity-menulist").selectedItem;
     if (!imipIdentityDisabled && selItem) {
       sel = selItem.getAttribute("value");
     }
@@ -96,7 +95,7 @@ function getMailIdentitySelection(aCalendar) {
  */
 function saveMailIdentitySelection(aCalendar) {
   if (aCalendar) {
-    let sel = getMailIdentitySelection(aCalendar);
+    const sel = getMailIdentitySelection(aCalendar);
     // no imip.identity.key will default to the default account/identity, whereas
     // an empty key indicates no imip; that identity will not be found
     aCalendar.setProperty("imip.identity.key", sel == "none" ? "" : sel);
@@ -110,14 +109,14 @@ function saveMailIdentitySelection(aCalendar) {
  *
  * @param {calICalendar} aCalendar - The calendar for the identity selection.
  */
-function notifyOnIdentitySelection(aCalendar) {
+async function notifyOnIdentitySelection(aCalendar) {
   gIdentityNotification.removeAllNotifications();
 
-  let msg = cal.l10n.getLtnString("noIdentitySelectedNotification");
-  let sel = getMailIdentitySelection(aCalendar);
+  const msg = cal.l10n.getLtnString("noIdentitySelectedNotification");
+  const sel = getMailIdentitySelection(aCalendar);
 
   if (sel == "none") {
-    gIdentityNotification.appendNotification(
+    await gIdentityNotification.appendNotification(
       "noIdentitySelected",
       {
         label: msg,
@@ -127,61 +126,5 @@ function notifyOnIdentitySelection(aCalendar) {
     );
   } else {
     gIdentityNotification.removeAllNotifications();
-  }
-}
-
-/**
- * Initializing calendar creation wizard and properties dialog to display the
- * option to enforce email scheduling for outgoing scheduling operations.
- * Used in the calendar properties dialog.
- */
-function initForceEmailScheduling() {
-  if (gCalendar && gCalendar.type == "caldav") {
-    let checkbox = document.getElementById("force-email-scheduling");
-    let curStatus = checkbox.getAttribute("checked") == "true";
-    let newStatus = gCalendar.getProperty("forceEmailScheduling") || curStatus;
-    if (curStatus != newStatus) {
-      if (newStatus) {
-        checkbox.setAttribute("checked", "true");
-      } else {
-        checkbox.removeAttribute("checked");
-      }
-    }
-    updateForceEmailSchedulingControl();
-  } else {
-    document.getElementById("calendar-force-email-scheduling-row").toggleAttribute("hidden", true);
-  }
-}
-
-/**
- * Persisting the calendar property to enforce email scheduling. Used in the
- * calendar properties dialog.
- */
-function saveForceEmailScheduling() {
-  if (gCalendar && gCalendar.type == "caldav") {
-    let checkbox = document.getElementById("force-email-scheduling");
-    if (checkbox && checkbox.getAttribute("disable-capability") != "true") {
-      let status = checkbox.getAttribute("checked") == "true";
-      gCalendar.setProperty("forceEmailScheduling", status);
-    }
-  }
-}
-
-/**
- * Updates the forceEmailScheduling control based on the currently assigned
- * email identity to this calendar. Used in the calendar properties dialog.
- */
-function updateForceEmailSchedulingControl() {
-  let checkbox = document.getElementById("force-email-scheduling");
-  if (
-    gCalendar &&
-    gCalendar.getProperty("capabilities.autoschedule.supported") &&
-    getMailIdentitySelection(gCalendar) != "none"
-  ) {
-    checkbox.removeAttribute("disable-capability");
-    checkbox.removeAttribute("disabled");
-  } else {
-    checkbox.setAttribute("disable-capability", "true");
-    checkbox.setAttribute("disabled", "true");
   }
 }

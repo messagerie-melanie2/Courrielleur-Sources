@@ -16,17 +16,19 @@ var {
 
 const lazy = {};
 
-ChromeUtils.defineESModuleGetters(lazy, {
-  FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
-  NetworkHelper:
-    "resource://devtools/shared/network-observer/NetworkHelper.sys.mjs",
-});
-
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "ObjectUtils",
-  "resource://gre/modules/ObjectUtils.jsm"
-);
+if (!isWorker) {
+  ChromeUtils.defineESModuleGetters(
+    lazy,
+    {
+      DownloadPaths: "resource://gre/modules/DownloadPaths.sys.mjs",
+      FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
+      NetworkHelper:
+        "resource://devtools/shared/network-observer/NetworkHelper.sys.mjs",
+      ObjectUtils: "resource://gre/modules/ObjectUtils.sys.mjs",
+    },
+    { global: "contextual" }
+  );
+}
 
 // Native getters which are considered to be side effect free.
 ChromeUtils.defineLazyGetter(lazy, "sideEffectFreeGetters", () => {
@@ -133,7 +135,7 @@ exports.waitForTime = function (delay) {
 };
 
 /**
- * Like XPCOMUtils.defineLazyGetter, but with a |this| sensitive getter that
+ * Like ChromeUtils.defineLazyGetter, but with a |this| sensitive getter that
  * allows the lazy getter to be defined on a prototype and work correctly with
  * instances.
  *
@@ -464,7 +466,8 @@ DevToolsUtils.defineLazyGetter(this, "AppConstants", () => {
     return {};
   }
   return ChromeUtils.importESModule(
-    "resource://gre/modules/AppConstants.sys.mjs"
+    "resource://gre/modules/AppConstants.sys.mjs",
+    { global: "contextual" }
   ).AppConstants;
 });
 
@@ -513,7 +516,9 @@ Object.defineProperty(exports, "assert", {
 });
 
 DevToolsUtils.defineLazyGetter(this, "NetUtil", () => {
-  return ChromeUtils.import("resource://gre/modules/NetUtil.jsm").NetUtil;
+  return ChromeUtils.importESModule("resource://gre/modules/NetUtil.sys.mjs", {
+    global: "contextual",
+  }).NetUtil;
 });
 
 /**
@@ -532,6 +537,7 @@ DevToolsUtils.defineLazyGetter(this, "NetUtil", () => {
  *        - principal: the principal to use, if omitted, the request is loaded
  *                     with a content principal corresponding to the url being
  *                     loaded, using the origin attributes of the window, if any.
+ *        - headers: extra headers
  *        - cacheKey: when loading from cache, use this key to retrieve a cache
  *                    specific to a given SHEntry. (Allows loading POST
  *                    requests from cache)
@@ -554,6 +560,7 @@ function mainThreadFetch(
     window: null,
     charset: null,
     principal: null,
+    headers: null,
     cacheKey: 0,
   }
 ) {
@@ -584,6 +591,12 @@ function mainThreadFetch(
       // SHEntry and offer ways to restore POST requests from cache.
       if (aOptions.cacheKey != 0) {
         channel.cacheKey = aOptions.cacheKey;
+      }
+    }
+
+    if (aOptions.headers && channel instanceof Ci.nsIHttpChannel) {
+      for (const h in aOptions.headers) {
+        channel.setRequestHeader(h, aOptions.headers[h], /* aMerge = */ false);
       }
     }
 
@@ -618,7 +631,7 @@ function mainThreadFetch(
             // If there was a real stream error, we would have already rejected above.
             resolve({
               content: "",
-              contentType: "text/plan",
+              contentType: "text/plain",
             });
             return;
           }
@@ -718,11 +731,7 @@ function mainThreadFetch(
  * @param {Object} options - The options object passed to @method fetch.
  * @return {nsIChannel} - The newly created channel. Throws on failure.
  */
-function newChannelForURL(
-  url,
-  { policy, window, principal },
-  recursing = false
-) {
+function newChannelForURL(url, { policy, window, principal }) {
   const securityFlags =
     Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL;
 
@@ -735,6 +744,19 @@ function newChannelForURL(
     // scheme to see if it helps.
     uri = Services.io.newURI("file://" + url);
   }
+
+  // In xpcshell tests on Windows, opening the channel
+  // can throw NS_ERROR_UNKNOWN_PROTOCOL if the external protocol isn't
+  // supported by Windows, so we also need to handle that case here if
+  // parsing the URL above doesn't throw.
+  const handler = Services.io.getProtocolHandler(uri.scheme);
+  if (
+    handler instanceof Ci.nsIExternalProtocolHandler &&
+    !handler.externalAppExistsForScheme(uri.scheme)
+  ) {
+    uri = Services.io.newURI("file://" + url);
+  }
+
   const channelOptions = {
     contentPolicyType: policy,
     securityFlags,
@@ -766,24 +788,7 @@ function newChannelForURL(
     channelOptions.loadingPrincipal = prin;
   }
 
-  try {
-    return NetUtil.newChannel(channelOptions);
-  } catch (e) {
-    // Don't infinitely recurse if newChannel keeps throwing.
-    if (recursing) {
-      throw e;
-    }
-
-    // In xpcshell tests on Windows, nsExternalProtocolHandler::NewChannel()
-    // can throw NS_ERROR_UNKNOWN_PROTOCOL if the external protocol isn't
-    // supported by Windows, so we also need to handle the exception here if
-    // parsing the URL above doesn't throw.
-    return newChannelForURL(
-      "file://" + url,
-      { policy, window, principal },
-      /* recursing */ true
-    );
-  }
+  return NetUtil.newChannel(channelOptions);
 }
 
 // Fetch is defined differently depending on whether we are on the main thread
@@ -849,12 +854,16 @@ exports.saveAs = async function (
   try {
     returnFile = await exports.showSaveFileDialog(
       parentWindow,
-      fileName,
+      lazy.DownloadPaths.sanitize(fileName),
       filters
     );
   } catch (ex) {
     return null;
   }
+
+  // Sanitize the filename again in case the user renamed the file to use a
+  // vulnerable extension.
+  returnFile.leafName = lazy.DownloadPaths.sanitize(returnFile.leafName);
 
   await IOUtils.write(returnFile.path, dataArray, {
     tmpPath: returnFile.path + ".tmp",
@@ -889,7 +898,7 @@ exports.showSaveFileDialog = function (
     fp.defaultString = suggestedFilename;
   }
 
-  fp.init(parentWindow, null, fp.modeSave);
+  fp.init(parentWindow.browsingContext, null, fp.modeSave);
   if (Array.isArray(filters) && filters.length) {
     for (const { pattern, label } of filters) {
       fp.appendFilter(label, pattern);
@@ -961,6 +970,12 @@ function callPropertyOnObject(object, name, ...args) {
   const value = descriptor.value;
   if (typeof value !== "object" || value === null || !("callable" in value)) {
     throw new Error("Not a callable object.");
+  }
+
+  if (value.script !== undefined) {
+    throw new Error(
+      "The property isn't a native function and will execute code in the debuggee"
+    );
   }
 
   // Call the property.

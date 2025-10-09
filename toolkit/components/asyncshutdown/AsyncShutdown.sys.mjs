@@ -40,9 +40,6 @@ import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 const lazy = {};
 
-ChromeUtils.defineESModuleGetters(lazy, {
-  PromiseUtils: "resource://gre/modules/PromiseUtils.sys.mjs",
-});
 XPCOMUtils.defineLazyServiceGetter(
   lazy,
   "gDebug",
@@ -145,7 +142,7 @@ PromiseSet.prototype = {
       throw new Error("Wait is complete, cannot add further promises.");
     }
     this._ensurePromise(key);
-    let indirection = lazy.PromiseUtils.defer();
+    let indirection = Promise.withResolvers();
     key
       .then(
         x => {
@@ -291,7 +288,7 @@ function looseTimer(delay) {
   let DELAY_BEAT = 1000;
   let timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
   let beats = Math.ceil(delay / DELAY_BEAT);
-  let deferred = lazy.PromiseUtils.defer();
+  let deferred = Promise.withResolvers();
   timer.initWithCallback(
     function () {
       if (beats <= 0) {
@@ -338,8 +335,7 @@ function getOrigin(topFrame, filename = null, lineNumber = null, stack = null) {
       lineNumber = frame ? frame.lineNumber : 0;
     }
     if (stack == null) {
-      // Now build the rest of the stack as a string, using Task.jsm's rewriting
-      // to ensure that we do not lose information at each call to `Task.spawn`.
+      // Now build the rest of the stack as a string.
       stack = [];
       while (frame != null) {
         stack.push(frame.filename + ":" + frame.name + ":" + frame.lineNumber);
@@ -553,21 +549,19 @@ Spinner.prototype = {
 
     // Setup the promise that will signal our phase's end.
     let isPhaseEnd = false;
-    let promise;
     try {
-      promise = this._barrier
+      this._barrier
         .wait({
           warnAfterMS: DELAY_WARNING_MS,
           crashAfterMS: DELAY_CRASH_MS,
         })
-        .catch
-        // Additional precaution to be entirely sure that we cannot reject.
-        ();
+        .finally(() => {
+          isPhaseEnd = true;
+        });
     } catch (ex) {
       debug("Error waiting for notification");
       throw ex;
     }
-    promise.then(() => (isPhaseEnd = true)); // This promise cannot reject
 
     // Now, spin the event loop. In case of a hang we will just crash without
     // ever leaving this loop.
@@ -783,10 +777,9 @@ function Barrier(name) {
           // still causes tests to fail.
           Promise.reject(error);
         })
-        .catch
         // Added as a last line of defense, in case `warn`, `this._name` or
         // `safeGetState` somehow throws an error.
-        ();
+        .catch(() => {});
 
       let topFrame = null;
       if (filename == null || lineNumber == null || stack == null) {
@@ -1099,28 +1092,40 @@ Barrier.prototype = Object.freeze({
 });
 
 // List of well-known phases
-// Ideally, phases should be registered from the component that decides
-// when they start/stop. For compatibility with existing startup/shutdown
-// mechanisms, we register a few phases here.
+// This list must match the pre-defined barriers from nsAsyncShutdownService
+// ctor in order to avoid surprises!
+// While in theory you could add barriers for arbitrary notifications, in
+// practice we use this only during shutdown and there we should use it only
+// for phases that match with phases in ShutdownPhase.h / nsIAppStartup.idl.
+// Not all those phases have a predefined barrier here.
 
-// Parent process
+// Parent process only
 if (!isContent) {
-  AsyncShutdown.profileChangeTeardown = getPhase("profile-change-teardown");
-  AsyncShutdown.profileBeforeChange = getPhase("profile-before-change");
-  AsyncShutdown.sendTelemetry = getPhase("profile-before-change-telemetry");
-}
-
-// Notifications that fire in the parent and content process, but should
-// only have phases in the parent process.
-if (!isContent) {
+  // TODO: No mapping to ShutdownPhase, this barrier should go away.
   AsyncShutdown.quitApplicationGranted = getPhase("quit-application-granted");
+
+  // ShutdownPhase::AppShutdownConfirmed
+  AsyncShutdown.appShutdownConfirmed = getPhase("quit-application");
+
+  // ShutdownPhase::AppShutdownTeardown
+  AsyncShutdown.profileChangeTeardown = getPhase("profile-change-teardown");
+
+  // ShutdownPhase::AppShutdown
+  AsyncShutdown.profileBeforeChange = getPhase("profile-before-change");
+
+  // ShutdownPhase::AppShutdownTelemetry
+  AsyncShutdown.sendTelemetry = getPhase("profile-before-change-telemetry");
 }
 
 // Don't add a barrier for content-child-shutdown because this
 // makes it easier to cause shutdown hangs.
 
 // All processes
+
+// TODO: No mapping to ShutdownPhase, this might go away.
 AsyncShutdown.webWorkersShutdown = getPhase("web-workers-shutdown");
+
+// ShutdownPhase::XPCOMWillShutdown
 AsyncShutdown.xpcomWillShutdown = getPhase("xpcom-will-shutdown");
 
 AsyncShutdown.Barrier = Barrier;

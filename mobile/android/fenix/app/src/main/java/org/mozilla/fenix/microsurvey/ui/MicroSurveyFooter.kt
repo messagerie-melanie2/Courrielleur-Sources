@@ -16,37 +16,38 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
+import mozilla.components.compose.base.button.PrimaryButton
 import org.mozilla.fenix.R
 import org.mozilla.fenix.compose.LinkText
 import org.mozilla.fenix.compose.LinkTextState
-import org.mozilla.fenix.compose.annotation.LightDarkPreview
-import org.mozilla.fenix.compose.button.PrimaryButton
 import org.mozilla.fenix.theme.FirefoxTheme
 
 /**
- * The footer UI used for micro-survey.
+ * The footer UI used for microsurvey.
  *
  * @param isSubmitted Whether the user has "Submitted" the survey or not.
  * @param isContentAnswerSelected Whether the user clicked on one of the answers or not.
- * @param onLinkClick Invoked when the link is clicked.
+ * @param onPrivacyPolicyLinkClick Invoked when the privacy policy link is clicked.
  * @param onButtonClick Invoked when the "Submit"/"Close" button is clicked.
  */
 @Composable
-fun MicroSurveyFooter(
+fun MicrosurveyFooter(
     isSubmitted: Boolean,
     isContentAnswerSelected: Boolean,
-    onLinkClick: () -> Unit,
+    onPrivacyPolicyLinkClick: () -> Unit,
     onButtonClick: () -> Unit,
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
     ) {
         if (!isSubmitted) {
             PrimaryButton(
                 text = stringResource(id = R.string.micro_survey_submit_button_label),
+                modifier = Modifier.fillMaxWidth(),
                 enabled = isContentAnswerSelected,
                 onClick = { onButtonClick() },
             )
@@ -55,14 +56,12 @@ fun MicroSurveyFooter(
         Spacer(modifier = Modifier.height(12.dp))
 
         LinkText(
-            text = stringResource(id = R.string.about_privacy_notice),
+            text = stringResource(id = R.string.micro_survey_privacy_notice_2),
             linkTextStates = listOf(
                 LinkTextState(
                     text = stringResource(id = R.string.micro_survey_privacy_notice_2),
                     url = "",
-                    onClick = {
-                        onLinkClick()
-                    },
+                    onClick = { onPrivacyPolicyLinkClick() },
                 ),
             ),
             style = FirefoxTheme.typography.caption,
@@ -72,7 +71,7 @@ fun MicroSurveyFooter(
 }
 
 @PreviewScreenSizes
-@LightDarkPreview
+@PreviewLightDark
 @Composable
 private fun ReviewQualityCheckFooterPreview() {
     FirefoxTheme {
@@ -82,24 +81,24 @@ private fun ReviewQualityCheckFooterPreview() {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            MicroSurveyFooter(
+            MicrosurveyFooter(
                 isSubmitted = false,
                 isContentAnswerSelected = false,
-                onLinkClick = {},
+                onPrivacyPolicyLinkClick = {},
                 onButtonClick = {},
             )
 
-            MicroSurveyFooter(
+            MicrosurveyFooter(
                 isSubmitted = false,
                 isContentAnswerSelected = true,
-                onLinkClick = {},
+                onPrivacyPolicyLinkClick = {},
                 onButtonClick = {},
             )
 
-            MicroSurveyFooter(
+            MicrosurveyFooter(
                 isSubmitted = true,
                 isContentAnswerSelected = true,
-                onLinkClick = {},
+                onPrivacyPolicyLinkClick = {},
                 onButtonClick = {},
             )
         }

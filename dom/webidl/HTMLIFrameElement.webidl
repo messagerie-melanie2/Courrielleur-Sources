@@ -19,8 +19,8 @@ interface HTMLIFrameElement : HTMLElement {
 
   [CEReactions, SetterNeedsSubjectPrincipal=NonSystem, SetterThrows, Pure]
            attribute DOMString src;
-  [CEReactions, SetterThrows, Pure]
-           attribute DOMString srcdoc;
+  [CEReactions, SetterNeedsSubjectPrincipal=NonSystem, SetterThrows, Pure]
+           attribute (TrustedHTML or DOMString) srcdoc;
   [CEReactions, SetterThrows, Pure]
            attribute DOMString name;
   [PutForwards=value] readonly attribute DOMTokenList sandbox;
@@ -33,6 +33,8 @@ interface HTMLIFrameElement : HTMLElement {
            attribute DOMString height;
   [CEReactions, SetterThrows, Pure]
            attribute DOMString referrerPolicy;
+  [CEReactions, SetterThrows, Pure]
+           attribute DOMString loading;
   [NeedsSubjectPrincipal]
   readonly attribute Document? contentDocument;
   readonly attribute WindowProxy? contentWindow;

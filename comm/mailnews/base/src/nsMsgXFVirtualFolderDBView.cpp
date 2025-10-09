@@ -7,7 +7,6 @@
 #include "nsMsgXFVirtualFolderDBView.h"
 #include "nsIMsgHdr.h"
 #include "nsIMsgThread.h"
-#include "nsQuickSort.h"
 #include "nsIDBFolderInfo.h"
 #include "nsIMsgCopyService.h"
 #include "nsMsgUtils.h"
@@ -17,10 +16,10 @@
 #include "nsServiceManagerUtils.h"
 
 nsMsgXFVirtualFolderDBView::nsMsgXFVirtualFolderDBView() {
-  mSuppressMsgDisplay = false;
   m_doingSearch = false;
   m_doingQuickSearch = false;
   m_totalMessagesInView = 0;
+  m_curFolderStartKeyIndex = -1;
   m_curFolderHasCachedHits = false;
 }
 
@@ -30,11 +29,9 @@ NS_IMETHODIMP
 nsMsgXFVirtualFolderDBView::Open(nsIMsgFolder* folder,
                                  nsMsgViewSortTypeValue sortType,
                                  nsMsgViewSortOrderValue sortOrder,
-                                 nsMsgViewFlagsTypeValue viewFlags,
-                                 int32_t* pCount) {
+                                 nsMsgViewFlagsTypeValue viewFlags) {
   m_viewFolder = folder;
-  return nsMsgSearchDBView::Open(folder, sortType, sortOrder, viewFlags,
-                                 pCount);
+  return nsMsgSearchDBView::Open(folder, sortType, sortOrder, viewFlags);
 }
 
 void nsMsgXFVirtualFolderDBView::RemovePendingDBListeners() {
@@ -286,8 +283,11 @@ nsMsgXFVirtualFolderDBView::OnSearchDone(nsresult status) {
 
   // Handle any non verified hits we haven't handled yet.
   if (NS_SUCCEEDED(status) && !m_doingQuickSearch &&
-      status != NS_MSG_SEARCH_INTERRUPTED)
+      status != NS_MSG_SEARCH_INTERRUPTED) {
+    if (mJSTree) mJSTree->BeginUpdateBatch();
     UpdateCacheAndViewForPrevSearchedFolders(nullptr);
+    if (mJSTree) mJSTree->EndUpdateBatch();
+  }
 
   m_doingSearch = false;
   // We want to set imap delete model once the search is over because setting
@@ -389,7 +389,7 @@ nsMsgXFVirtualFolderDBView::OnNewSearch() {
 
   rv = MsgTermListToString(searchTerms, curSearchAsString);
   // Trim off the initial AND/OR, which is irrelevant and inconsistent between
-  // what SearchSpec.jsm generates, and what's in virtualFolders.dat.
+  // what SearchSpec.sys.mjs generates, and what's in virtualFolders.dat.
   curSearchAsString.Cut(0,
                         StringBeginsWith(curSearchAsString, "AND"_ns) ? 3 : 2);
   terms.Cut(0, StringBeginsWith(terms, "AND"_ns) ? 3 : 2);
@@ -491,21 +491,6 @@ nsMsgXFVirtualFolderDBView::GetMsgFolder(nsIMsgFolder** aMsgFolder) {
   NS_ENSURE_ARG_POINTER(aMsgFolder);
   NS_IF_ADDREF(*aMsgFolder = m_viewFolder);
   return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMsgXFVirtualFolderDBView::SetViewFlags(nsMsgViewFlagsTypeValue aViewFlags) {
-  nsresult rv = NS_OK;
-  // If the grouping/threading has changed, rebuild the view.
-  if ((m_viewFlags & (nsMsgViewFlagsType::kGroupBySort |
-                      nsMsgViewFlagsType::kThreadedDisplay)) !=
-      (aViewFlags & (nsMsgViewFlagsType::kGroupBySort |
-                     nsMsgViewFlagsType::kThreadedDisplay))) {
-    rv = RebuildView(aViewFlags);
-  }
-
-  nsMsgDBView::SetViewFlags(aViewFlags);
-  return rv;
 }
 
 nsresult nsMsgXFVirtualFolderDBView::GetMessageEnumerator(

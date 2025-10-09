@@ -27,9 +27,8 @@ nsMsgThreadedDBView::~nsMsgThreadedDBView() {} /* destructor code */
 NS_IMETHODIMP
 nsMsgThreadedDBView::Open(nsIMsgFolder* folder, nsMsgViewSortTypeValue sortType,
                           nsMsgViewSortOrderValue sortOrder,
-                          nsMsgViewFlagsTypeValue viewFlags, int32_t* pCount) {
-  nsresult rv =
-      nsMsgDBView::Open(folder, sortType, sortOrder, viewFlags, pCount);
+                          nsMsgViewFlagsTypeValue viewFlags) {
+  nsresult rv = nsMsgDBView::Open(folder, sortType, sortOrder, viewFlags);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (!m_db) return NS_ERROR_NULL_POINTER;
@@ -61,7 +60,6 @@ nsMsgThreadedDBView::Open(nsIMsgFolder* folder, nsMsgViewSortTypeValue sortType,
 
   int32_t count;
   rv = InitThreadedView(count);
-  if (pCount) *pCount = count;
 
   // This is a hack, but we're trying to find a way to correct
   // incorrect total and unread msg counts w/o paying a big
@@ -519,7 +517,6 @@ nsresult nsMsgThreadedDBView::OnNewHeader(nsIMsgDBHdr* newHdr,
   bool moveThread = false;
   nsMsgViewIndex threadIndex =
       ThreadIndexOfMsg(newKey, nsMsgViewIndex_None, &threadCount, &threadFlags);
-  bool threadRootIsDisplayed = false;
 
   nsCOMPtr<nsIMsgThread> threadHdr;
   m_db->GetThreadContainingMsgHdr(newHdr, getter_AddRefs(threadHdr));
@@ -531,7 +528,6 @@ nsresult nsMsgThreadedDBView::OnNewHeader(nsIMsgDBHdr* newHdr,
   }
 
   if (threadIndex != nsMsgViewIndex_None) {
-    threadRootIsDisplayed = (m_currentlyDisplayedViewIndex == threadIndex);
     uint32_t flags = m_flags[threadIndex];
     if (!(flags & MSG_VIEW_FLAG_HASCHILDREN)) {
       flags |= MSG_VIEW_FLAG_HASCHILDREN | MSG_VIEW_FLAG_ISTHREAD;
@@ -576,14 +572,6 @@ nsresult nsMsgThreadedDBView::OnNewHeader(nsIMsgDBHdr* newHdr,
       // top of thread, change the keys array.
       m_keys[threadIndex] = newKey;
     }
-
-    // If this message is new, the thread is collapsed, it is the
-    // root and it was displayed, expand it so that the user does
-    // not find that their message has magically turned into a summary.
-    if (msgFlags & nsMsgMessageFlags::New &&
-        m_flags[threadIndex] & nsMsgMessageFlags::Elided &&
-        threadRootIsDisplayed)
-      ExpandByIndex(threadIndex, nullptr);
 
     if (moveThread)
       MoveThreadAt(threadIndex);
@@ -746,16 +734,14 @@ void nsMsgThreadedDBView::MoveThreadAt(nsMsgViewIndex threadIndex) {
 nsresult nsMsgThreadedDBView::AddMsgToThreadNotInView(nsIMsgThread* threadHdr,
                                                       nsIMsgDBHdr* msgHdr,
                                                       bool ensureListed) {
-  nsresult rv = NS_OK;
-  uint32_t threadFlags;
-  threadHdr->GetFlags(&threadFlags);
-  if (!(threadFlags & nsMsgMessageFlags::Ignored)) {
-    bool msgKilled;
-    msgHdr->GetIsKilled(&msgKilled);
-    if (!msgKilled) rv = nsMsgDBView::AddHdr(msgHdr);
+  if (!(m_viewFlags & nsMsgViewFlagsType::kShowIgnored)) {
+    uint32_t threadFlags;
+    threadHdr->GetFlags(&threadFlags);
+    if (threadFlags & nsMsgMessageFlags::Ignored) {
+      return NS_OK;
+    }
   }
-
-  return rv;
+  return nsMsgDBView::AddHdr(msgHdr);
 }
 
 // This method just removes the specified line from the view. It does
@@ -788,7 +774,6 @@ nsresult nsMsgThreadedDBView::RemoveByIndex(nsMsgViewIndex index) {
     // flags set correctly.
     if (threadHdr) {
       nsMsgDBView::RemoveByIndex(index);
-      nsCOMPtr<nsIMsgThread> nextThreadHdr;
       // Above RemoveByIndex may now make index out of bounds.
       if (IsValidIndex(index) && numThreadChildren > 0) {
         // unreadOnly
@@ -802,6 +787,7 @@ nsresult nsMsgThreadedDBView::RemoveByIndex(nsMsgViewIndex index) {
 
           m_flags[index] = flag;
           m_levels[index] = 0;
+          NoteChange(index, 1, nsMsgViewNotificationCode::changed);
         }
       }
     }
@@ -810,16 +796,20 @@ nsresult nsMsgThreadedDBView::RemoveByIndex(nsMsgViewIndex index) {
   } else if (!(flags & MSG_VIEW_FLAG_ISTHREAD)) {
     // We're not deleting the top level msg, but top level msg might be the
     // only msg in thread now.
-    if (threadHdr && numThreadChildren == 1) {
+    if (threadHdr) {
       nsMsgKey msgKey;
       rv = threadHdr->GetChildKeyAt(0, &msgKey);
       if (NS_SUCCEEDED(rv)) {
         nsMsgViewIndex threadIndex = FindViewIndex(msgKey);
         if (IsValidIndex(threadIndex)) {
-          uint32_t flags = m_flags[threadIndex];
-          flags &= ~(MSG_VIEW_FLAG_ISTHREAD | nsMsgMessageFlags::Elided |
-                     MSG_VIEW_FLAG_HASCHILDREN);
-          m_flags[threadIndex] = flags;
+          if (numThreadChildren == 1) {
+            uint32_t flags = m_flags[threadIndex];
+            flags &= ~(MSG_VIEW_FLAG_ISTHREAD | nsMsgMessageFlags::Elided |
+                       MSG_VIEW_FLAG_HASCHILDREN);
+            m_flags[threadIndex] = flags;
+          }
+          // Notify about change in top level message in any case to have the
+          // count of total messages updated if shown.
           NoteChange(threadIndex, 1, nsMsgViewNotificationCode::changed);
         }
       }

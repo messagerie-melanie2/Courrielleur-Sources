@@ -242,7 +242,14 @@ txStylesheetSink::OnStartRequest(nsIRequest* aRequest) {
   // Time to sniff! Note: this should go away once file channels do
   // sniffing themselves.
   nsCOMPtr<nsIURI> uri;
-  channel->GetURI(getter_AddRefs(uri));
+  nsresult rv = NS_GetFinalChannelURI(channel, getter_AddRefs(uri));
+  NS_ENSURE_SUCCESS(rv, rv);
+  nsAutoCString spec;
+  uri->GetSpec(spec);
+  NS_ConvertUTF8toUTF16 baseURI(spec);
+  mCompiler->setBaseURI(
+      baseURI);  // Redirections potentially impact the Base URI, always update
+                 // the base URI with the final URL.
   if (uri->SchemeIs("file") &&
       contentType.EqualsLiteral(UNKNOWN_CONTENT_TYPE)) {
     nsresult rv;
@@ -479,7 +486,7 @@ static nsresult handleNode(nsINode* aNode, txStylesheetCompiler* aCompiler) {
     // explicitly destroy the attrs here since we no longer need it
     atts = nullptr;
 
-    for (nsIContent* child = element->GetFirstChild(); child;
+    for (nsCOMPtr<nsIContent> child = element->GetFirstChild(); child;
          child = child->GetNextSibling()) {
       rv = handleNode(child, aCompiler);
       NS_ENSURE_SUCCESS(rv, rv);
@@ -493,7 +500,7 @@ static nsresult handleNode(nsINode* aNode, txStylesheetCompiler* aCompiler) {
     rv = aCompiler->characters(chars);
     NS_ENSURE_SUCCESS(rv, rv);
   } else if (aNode->IsDocument()) {
-    for (nsIContent* child = aNode->GetFirstChild(); child;
+    for (nsCOMPtr<nsIContent> child = aNode->GetFirstChild(); child;
          child = child->GetNextSibling()) {
       rv = handleNode(child, aCompiler);
       NS_ENSURE_SUCCESS(rv, rv);
@@ -532,29 +539,24 @@ nsresult txSyncCompileObserver::loadURI(const nsAString& aUri,
   nsresult rv = NS_NewURI(getter_AddRefs(uri), aUri);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIURI> referrerUri;
-  rv = NS_NewURI(getter_AddRefs(referrerUri), aReferrerUri);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  nsCOMPtr<nsIPrincipal> referrerPrincipal =
-      BasePrincipal::CreateContentPrincipal(referrerUri, OriginAttributes());
-  NS_ENSURE_TRUE(referrerPrincipal, NS_ERROR_FAILURE);
+  nsCOMPtr<nsPIDOMWindowInner> window =
+      do_QueryInterface(mProcessor->GetParentObject());
+  NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
+  nsCOMPtr<Document> loaderDoc = window->GetExtantDoc();
+  NS_ENSURE_TRUE(loaderDoc, NS_ERROR_FAILURE);
 
   // This is probably called by js, a loadGroup for the channel doesn't
   // make sense.
-  nsCOMPtr<nsINode> source;
-  if (mProcessor) {
-    source = mProcessor->GetSourceContentModel();
-  }
+  nsCOMPtr<nsINode> source = mProcessor->GetSourceContentModel();
   dom::nsAutoSyncOperation sync(source ? source->OwnerDoc() : nullptr,
                                 dom::SyncOperationBehavior::eSuspendInput);
   nsCOMPtr<Document> document;
 
   rv = nsSyncLoadService::LoadDocument(
-      uri, nsIContentPolicy::TYPE_XSLT, referrerPrincipal,
-      nsILoadInfo::SEC_REQUIRE_CORS_INHERITS_SEC_CONTEXT, nullptr,
-      source ? source->OwnerDoc()->CookieJarSettings() : nullptr, false,
-      aReferrerPolicy, getter_AddRefs(document));
+      uri, nsIContentPolicy::TYPE_XSLT, loaderDoc,
+      /* aLoaderPrincipal */ nullptr,
+      nsILoadInfo::SEC_REQUIRE_CORS_INHERITS_SEC_CONTEXT, nullptr, nullptr,
+      false, aReferrerPolicy, getter_AddRefs(document));
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = handleNode(document, aCompiler);

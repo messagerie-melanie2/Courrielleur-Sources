@@ -18,7 +18,7 @@ const FAKE_INSTALL_TELEMETRY_SOURCE = "fake-install-source";
 requestLongerTimeout(2);
 
 function promiseViewLoaded(tab, viewid) {
-  let win = tab.linkedBrowser.contentWindow;
+  const win = tab.linkedBrowser.contentWindow;
   if (
     win.gViewController &&
     !win.gViewController.isLoading &&
@@ -31,15 +31,15 @@ function promiseViewLoaded(tab, viewid) {
 }
 
 function getBadgeStatus() {
-  let menuButton = document.getElementById("button-appmenu");
+  const menuButton = document.getElementById("button-appmenu");
   return menuButton.getAttribute("badge-status");
 }
 
 function promiseBadgeChange() {
   return new Promise(resolve => {
-    let menuButton = document.getElementById("button-appmenu");
+    const menuButton = document.getElementById("button-appmenu");
     new MutationObserver((mutationsList, observer) => {
-      for (let mutation of mutationsList) {
+      for (const mutation of mutationsList) {
         if (mutation.attributeName == "badge-status") {
           observer.disconnect();
           resolve();
@@ -64,7 +64,12 @@ add_setup(async function () {
 });
 
 // Helper function to test background updates.
-async function backgroundUpdateTest(url, id, checkIconFn) {
+async function backgroundUpdateTest(
+  url,
+  id,
+  checkIconFn,
+  expectedPermissionStrings
+) {
   await SpecialPowers.pushPrefEnv({
     set: [
       // Turn on background updates
@@ -82,10 +87,10 @@ async function backgroundUpdateTest(url, id, checkIconFn) {
   let addon = await promiseInstallAddon(url, {
     source: FAKE_INSTALL_TELEMETRY_SOURCE,
   });
-  let addonId = addon.id;
+  const addonId = addon.id;
 
   ok(addon, "Addon was installed");
-  is(getBadgeStatus(), "", "Should not start out with an addon alert badge");
+  is(getBadgeStatus(), null, "Should not start out with an addon alert badge");
 
   // Trigger an update check and wait for the update for this addon
   // to be downloaded.
@@ -108,7 +113,11 @@ async function backgroundUpdateTest(url, id, checkIconFn) {
   addons.children[0].click();
 
   // The click should hide the main menu. This is currently synchronous.
-  ok(PanelUI.panel.state != "open", "Main menu is closed or closing.");
+  Assert.notEqual(
+    PanelUI.panel.state,
+    "open",
+    "Main menu is closed or closing."
+  );
 
   // Wait for the permission prompt, check the contents
   let panel = await popupPromise;
@@ -116,12 +125,32 @@ async function backgroundUpdateTest(url, id, checkIconFn) {
 
   // The original extension has 1 promptable permission and the new one
   // has 2 (history and <all_urls>) plus 1 non-promptable permission (cookies).
-  // So we should only see the 1 new promptable permission in the notification.
-  let singlePermissionEl = document.getElementById(
-    "addon-webext-perm-single-entry"
+  // So we should see the permission list with at least one entry.
+  const permissionListEl = document.getElementById("addon-webext-perm-list");
+  ok(!permissionListEl.hidden, "Permission list is not hidden");
+  is(
+    expectedPermissionStrings.length,
+    permissionListEl.children.length,
+    "Permission list has the correct number of entries"
   );
-  ok(!singlePermissionEl.hidden, "Single permission entry is not hidden");
-  ok(singlePermissionEl.textContent, "Single permission entry text is set");
+  for (let i = 0; i < permissionListEl.children.length; i++) {
+    const child = permissionListEl.children[i];
+    is(
+      expectedPermissionStrings[i],
+      child.textContent,
+      "Permission list is correct"
+    );
+  }
+
+  const permissionTitleEl = document.getElementById(
+    "addon-webext-perm-title-required"
+  );
+  ok(!permissionTitleEl.hidden, "Permission list title is not hidden");
+  is(
+    "New required permissions:",
+    permissionTitleEl.textContent,
+    "Permission list title is correct"
+  );
 
   // Cancel the update.
   panel.secondaryButton.click();
@@ -130,7 +159,7 @@ async function backgroundUpdateTest(url, id, checkIconFn) {
   is(addon.version, "1.0", "Should still be running the old version");
 
   // Alert badge and hamburger menu items should be gone
-  is(getBadgeStatus(), "", "Addon alert badge should be gone");
+  is(getBadgeStatus(), null, "Addon alert badge should be gone");
 
   await gCUITestUtils.openMainMenu();
   addons = PanelUI.addonNotificationContainer;
@@ -163,7 +192,7 @@ async function backgroundUpdateTest(url, id, checkIconFn) {
   addon = await updatePromise;
   is(addon.version, "2.0", "Should have upgraded to the new version");
 
-  is(getBadgeStatus(), "", "Addon alert badge should be gone");
+  is(getBadgeStatus(), null, "Addon alert badge should be gone");
 
   await addon.uninstall();
   await SpecialPowers.popPrefEnv();
@@ -230,9 +259,10 @@ function checkDefaultIcon(icon) {
 
 add_task(() =>
   backgroundUpdateTest(
-    `${BASE}/browser_webext_update1.xpi`,
+    `${BASE}/addons/browser_webext_update1.xpi`,
     ID,
-    checkDefaultIcon
+    checkDefaultIcon,
+    ["Access your data for all websites"]
   )
 );
 
@@ -246,9 +276,10 @@ function checkNonDefaultIcon(icon) {
 
 add_task(() =>
   backgroundUpdateTest(
-    `${BASE}/browser_webext_update_icon1.xpi`,
+    `${BASE}/addons/browser_webext_update_icon1.xpi`,
     ID_ICON,
-    checkNonDefaultIcon
+    checkNonDefaultIcon,
+    ["Access your data for all websites"]
   )
 );
 
@@ -256,8 +287,9 @@ add_task(() =>
 // upgraded to an Experiment prompts for the permission update.
 add_task(() =>
   backgroundUpdateTest(
-    `${BASE}/browser_webext_experiment_update1.xpi`,
+    `${BASE}/addons/browser_webext_experiment_update1.xpi`,
     ID_EXPERIMENT,
-    checkDefaultIcon
+    checkDefaultIcon,
+    ["See your mail accounts, their identities and their folders"]
   )
 );

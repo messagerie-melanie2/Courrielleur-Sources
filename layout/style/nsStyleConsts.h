@@ -20,86 +20,6 @@
 
 namespace mozilla {
 
-static constexpr uint16_t STYLE_DISPLAY_LIST_ITEM_BIT = 0x8000;
-static constexpr uint8_t STYLE_DISPLAY_OUTSIDE_BITS = 7;
-static constexpr uint8_t STYLE_DISPLAY_INSIDE_BITS = 8;
-
-// The `display` longhand.
-uint16_t constexpr StyleDisplayFrom(StyleDisplayOutside aOuter,
-                                    StyleDisplayInside aInner) {
-  return uint16_t(uint16_t(aOuter) << STYLE_DISPLAY_INSIDE_BITS) |
-         uint16_t(aInner);
-}
-
-enum class StyleDisplay : uint16_t {
-  // These MUST be in sync with the Rust enum values in
-  // servo/components/style/values/specified/box.rs
-  /// https://drafts.csswg.org/css-display/#the-display-properties
-  None = StyleDisplayFrom(StyleDisplayOutside::None, StyleDisplayInside::None),
-  Contents =
-      StyleDisplayFrom(StyleDisplayOutside::None, StyleDisplayInside::Contents),
-  Inline =
-      StyleDisplayFrom(StyleDisplayOutside::Inline, StyleDisplayInside::Flow),
-  Block =
-      StyleDisplayFrom(StyleDisplayOutside::Block, StyleDisplayInside::Flow),
-  FlowRoot = StyleDisplayFrom(StyleDisplayOutside::Block,
-                              StyleDisplayInside::FlowRoot),
-  Flex = StyleDisplayFrom(StyleDisplayOutside::Block, StyleDisplayInside::Flex),
-  Grid = StyleDisplayFrom(StyleDisplayOutside::Block, StyleDisplayInside::Grid),
-  Table =
-      StyleDisplayFrom(StyleDisplayOutside::Block, StyleDisplayInside::Table),
-  InlineTable =
-      StyleDisplayFrom(StyleDisplayOutside::Inline, StyleDisplayInside::Table),
-  TableCaption = StyleDisplayFrom(StyleDisplayOutside::TableCaption,
-                                  StyleDisplayInside::Flow),
-  Ruby =
-      StyleDisplayFrom(StyleDisplayOutside::Inline, StyleDisplayInside::Ruby),
-  WebkitBox = StyleDisplayFrom(StyleDisplayOutside::Block,
-                               StyleDisplayInside::WebkitBox),
-  WebkitInlineBox = StyleDisplayFrom(StyleDisplayOutside::Inline,
-                                     StyleDisplayInside::WebkitBox),
-  ListItem = Block | STYLE_DISPLAY_LIST_ITEM_BIT,
-
-  /// Internal table boxes.
-  TableRowGroup = StyleDisplayFrom(StyleDisplayOutside::InternalTable,
-                                   StyleDisplayInside::TableRowGroup),
-  TableHeaderGroup = StyleDisplayFrom(StyleDisplayOutside::InternalTable,
-                                      StyleDisplayInside::TableHeaderGroup),
-  TableFooterGroup = StyleDisplayFrom(StyleDisplayOutside::InternalTable,
-                                      StyleDisplayInside::TableFooterGroup),
-  TableColumn = StyleDisplayFrom(StyleDisplayOutside::InternalTable,
-                                 StyleDisplayInside::TableColumn),
-  TableColumnGroup = StyleDisplayFrom(StyleDisplayOutside::InternalTable,
-                                      StyleDisplayInside::TableColumnGroup),
-  TableRow = StyleDisplayFrom(StyleDisplayOutside::InternalTable,
-                              StyleDisplayInside::TableRow),
-  TableCell = StyleDisplayFrom(StyleDisplayOutside::InternalTable,
-                               StyleDisplayInside::TableCell),
-
-  /// Internal ruby boxes.
-  RubyBase = StyleDisplayFrom(StyleDisplayOutside::InternalRuby,
-                              StyleDisplayInside::RubyBase),
-  RubyBaseContainer = StyleDisplayFrom(StyleDisplayOutside::InternalRuby,
-                                       StyleDisplayInside::RubyBaseContainer),
-  RubyText = StyleDisplayFrom(StyleDisplayOutside::InternalRuby,
-                              StyleDisplayInside::RubyText),
-  RubyTextContainer = StyleDisplayFrom(StyleDisplayOutside::InternalRuby,
-                                       StyleDisplayInside::RubyTextContainer),
-};
-// The order of the StyleDisplay values isn't meaningful.
-bool operator<(const StyleDisplay&, const StyleDisplay&) = delete;
-bool operator<=(const StyleDisplay&, const StyleDisplay&) = delete;
-bool operator>(const StyleDisplay&, const StyleDisplay&) = delete;
-bool operator>=(const StyleDisplay&, const StyleDisplay&) = delete;
-
-// Basic shapes
-enum class StyleBasicShapeType : uint8_t {
-  Polygon,
-  Circle,
-  Ellipse,
-  Inset,
-};
-
 // box-align
 enum class StyleBoxAlign : uint8_t {
   Stretch,
@@ -210,6 +130,12 @@ enum class StyleScrollbarWidth : uint8_t {
   None,
 };
 
+// field-sizing
+enum class StyleFieldSizing : bool {
+  Fixed,
+  Content,
+};
+
 // Shape source type
 enum class StyleShapeSourceType : uint8_t {
   None,
@@ -218,37 +144,6 @@ enum class StyleShapeSourceType : uint8_t {
   Shape,
   Box,
   Path,  // SVG path function
-};
-
-// user-focus
-enum class StyleUserFocus : uint8_t {
-  None,
-  Ignore,
-  Normal,
-  SelectAll,
-  SelectBefore,
-  SelectAfter,
-  SelectSame,
-  SelectMenu,
-};
-
-// user-input
-enum class StyleUserInput : uint8_t {
-  None,
-  Auto,
-};
-
-// user-modify
-enum class StyleUserModify : uint8_t {
-  ReadOnly,
-  ReadWrite,
-  WriteOnly,
-};
-
-// -moz-inert
-enum class StyleInert : uint8_t {
-  None,
-  Inert,
 };
 
 // -moz-window-dragging
@@ -265,16 +160,6 @@ enum class StyleOrient : uint8_t {
   Horizontal,
   Vertical,
 };
-
-// See AnimationEffect.webidl
-// and mozilla/dom/AnimationEffectBinding.h
-namespace dom {
-enum class PlaybackDirection : uint8_t;
-enum class FillMode : uint8_t;
-}  // namespace dom
-
-// Animation play state
-enum class StyleAnimationPlayState : uint8_t { Running, Paused };
 
 // See nsStyleImageLayers
 enum class StyleImageLayerAttachment : uint8_t { Scroll, Fixed, Local };
@@ -295,9 +180,6 @@ enum class StyleMaskMode : uint8_t { Alpha = 0, Luminance, MatchSource };
 // See nsStyleTable
 enum class StyleBorderCollapse : uint8_t { Collapse, Separate };
 
-// border-image-repeat
-enum class StyleBorderImageRepeat : uint8_t { Stretch, Repeat, Round, Space };
-
 // See nsStyleVisibility
 enum class StyleDirection : uint8_t { Ltr, Rtl };
 
@@ -309,15 +191,6 @@ enum class StyleDirection : uint8_t { Ltr, Rtl };
 // (To avoid ambiguity, this bit must be high enough such that no other
 // values here accidentally use it in their binary representation.)
 static constexpr uint8_t kWritingModeSidewaysMask = 4;
-
-enum class StyleWritingModeProperty : uint8_t {
-  HorizontalTb = 0,
-  VerticalRl = 1,
-  // HorizontalBT = 2,    // hypothetical
-  VerticalLr = 3,
-  SidewaysRl = VerticalRl | kWritingModeSidewaysMask,
-  SidewaysLr = VerticalLr | kWritingModeSidewaysMask,
-};
 
 // See nsStylePosition
 enum class StyleFlexDirection : uint8_t {
@@ -370,15 +243,6 @@ enum class StyleMathVariant : uint8_t {
 // See nsStyleFont::mMathStyle
 enum class StyleMathStyle : uint8_t { Compact = 0, Normal = 1 };
 
-// See nsStyleDisplay.mPosition
-enum class StylePositionProperty : uint8_t {
-  Static,
-  Relative,
-  Absolute,
-  Fixed,
-  Sticky,
-};
-
 enum class FrameBorderProperty : uint8_t { Yes, No, One, Zero };
 
 enum class ScrollingAttribute : uint8_t {
@@ -423,20 +287,6 @@ enum class ListStyle : uint8_t {
 // See nsStyleList
 enum class StyleListStylePosition : uint8_t { Inside, Outside };
 
-// See nsStyleVisibility
-enum class StylePointerEvents : uint8_t {
-  None,
-  Visiblepainted,
-  Visiblefill,
-  Visiblestroke,
-  Visible,
-  Painted,
-  Fill,
-  Stroke,
-  All,
-  Auto,
-};
-
 enum class StyleIsolation : uint8_t {
   Auto,
   Isolate,
@@ -473,7 +323,7 @@ enum class StyleTextSecurity : uint8_t {
 // See nsStyleDisplay
 enum class StyleTopLayer : uint8_t {
   None,
-  Top,
+  Auto,
 };
 
 // See nsStyleVisibility
@@ -484,14 +334,30 @@ enum class StyleVisibility : uint8_t {
 };
 
 // See nsStyleText
-enum class StyleWhiteSpace : uint8_t {
-  Normal = 0,
-  Pre,
-  Nowrap,
-  PreWrap,
-  PreLine,
-  PreSpace,
+enum class StyleWhiteSpaceCollapse : uint8_t {
+  Collapse = 0,
+  // TODO: Discard not yet supported
+  Preserve,
+  PreserveBreaks,
+  PreserveSpaces,
   BreakSpaces,
+};
+
+// See nsStyleText
+enum class StyleTextWrapMode : uint8_t {
+  Wrap = 0,
+  Nowrap,
+};
+
+// See nsStyleText
+// TODO: this will become StyleTextWrapStyle when we turn text-wrap
+// (see https://bugzilla.mozilla.org/show_bug.cgi?id=1758391) and
+// white-space (https://bugzilla.mozilla.org/show_bug.cgi?id=1852478)
+// into shorthands.
+enum class StyleTextWrapStyle : uint8_t {
+  Auto = 0,
+  Stable,
+  Balance,
 };
 
 // ruby-align, see nsStyleText
@@ -559,18 +425,10 @@ enum class StyleImeMode : uint8_t {
 
 // See nsStyleSVG
 
-/*
- * -moz-window-shadow
- * Also used in widget code
- */
+// -moz-window-shadow
 enum class StyleWindowShadow : uint8_t {
+  Auto,
   None,
-  Default,
-
-  // These can't be specified in CSS, they get computed from the "default"
-  // value.
-  Menu,
-  Tooltip,
 };
 
 // dominant-baseline
@@ -635,9 +493,6 @@ enum class StyleColorInterpolation : uint8_t {
   Srgb = 1,
   Linearrgb = 2,
 };
-
-// vector-effect
-enum class StyleVectorEffect : uint8_t { None = 0, NonScalingStroke = 1 };
 
 // 3d Transforms - Backface visibility
 enum class StyleBackfaceVisibility : uint8_t { Hidden = 0, Visible = 1 };

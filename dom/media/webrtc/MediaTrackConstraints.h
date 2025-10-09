@@ -20,24 +20,13 @@ namespace mozilla {
 class LocalMediaDevice;
 class MediaDevice;
 
-template <class EnumValuesStrings, class Enum>
-static Enum StringToEnum(const EnumValuesStrings& aStrings,
-                         const nsAString& aValue, Enum aDefaultValue) {
-  for (size_t i = 0; aStrings[i].value; i++) {
-    if (aValue.EqualsASCII(aStrings[i].value)) {
-      return Enum(i);
-    }
-  }
-  return aDefaultValue;
-}
-
 // Helper classes for orthogonal constraints without interdependencies.
 // Instead of constraining values, constrain the constraints themselves.
 class NormalizedConstraintSet {
  protected:
   class BaseRange {
    protected:
-    typedef BaseRange NormalizedConstraintSet::*MemberPtrType;
+    typedef BaseRange NormalizedConstraintSet::* MemberPtrType;
 
     BaseRange(MemberPtrType aMemberPtr, const char* aName,
               nsTArray<MemberPtrType>* aList)
@@ -55,7 +44,7 @@ class NormalizedConstraintSet {
     const char* mName;
   };
 
-  typedef BaseRange NormalizedConstraintSet::*MemberPtrType;
+  typedef BaseRange NormalizedConstraintSet::* MemberPtrType;
 
  public:
   template <class ValueType>
@@ -74,6 +63,8 @@ class NormalizedConstraintSet {
 
     template <class ConstrainRange>
     void SetFrom(const ConstrainRange& aOther);
+
+    /// Clamp n based on Range. If the Range is empty, mMin is returned.
     ValueType Clamp(ValueType n) const {
       return std::max(mMin, std::min(n, mMax));
     }
@@ -142,7 +133,7 @@ class NormalizedConstraintSet {
   };
 
   struct LongRange : public Range<int32_t> {
-    typedef LongRange NormalizedConstraintSet::*LongPtrType;
+    typedef LongRange NormalizedConstraintSet::* LongPtrType;
 
     LongRange(LongPtrType aMemberPtr, const char* aName,
               const dom::Optional<dom::OwningLongOrConstrainLongRange>& aOther,
@@ -150,14 +141,14 @@ class NormalizedConstraintSet {
   };
 
   struct LongLongRange : public Range<int64_t> {
-    typedef LongLongRange NormalizedConstraintSet::*LongLongPtrType;
+    typedef LongLongRange NormalizedConstraintSet::* LongLongPtrType;
 
     LongLongRange(LongLongPtrType aMemberPtr, const char* aName,
                   const long long& aOther, nsTArray<MemberPtrType>* aList);
   };
 
   struct DoubleRange : public Range<double> {
-    typedef DoubleRange NormalizedConstraintSet::*DoublePtrType;
+    typedef DoubleRange NormalizedConstraintSet::* DoublePtrType;
 
     DoubleRange(
         DoublePtrType aMemberPtr, const char* aName,
@@ -166,7 +157,7 @@ class NormalizedConstraintSet {
   };
 
   struct BooleanRange : public Range<bool> {
-    typedef BooleanRange NormalizedConstraintSet::*BooleanPtrType;
+    typedef BooleanRange NormalizedConstraintSet::* BooleanPtrType;
 
     BooleanRange(
         BooleanPtrType aMemberPtr, const char* aName,
@@ -185,7 +176,7 @@ class NormalizedConstraintSet {
     typedef std::set<nsString> ValueType;
     ValueType mExact, mIdeal;
 
-    typedef StringRange NormalizedConstraintSet::*StringPtrType;
+    typedef StringRange NormalizedConstraintSet::* StringPtrType;
 
     StringRange(
         StringPtrType aMemberPtr, const char* aName,

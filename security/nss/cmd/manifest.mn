@@ -22,6 +22,7 @@ endif
 ifndef NSS_BUILD_UTIL_ONLY
 SOFTOKEN_SRCDIRS = \
  $(BLTEST_SRCDIR) \
+ $(DBTOOL_SRCDIR) \
  $(ECPERF_SRCDIR) \
  $(FREEBL_ECTEST_SRCDIR) \
  $(FIPSTEST_SRCDIR)  \
@@ -48,6 +49,7 @@ NSS_SRCDIRS = \
  makepqg  \
  multinit \
  nss-policy-check \
+ nssdefaults \
  ocspclnt  \
  ocspresp \
  oidcalc  \

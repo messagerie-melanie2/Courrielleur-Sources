@@ -2,15 +2,17 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
+var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
 
-var { CalReadableStreamFactory } = ChromeUtils.import(
-  "resource:///modules/CalReadableStreamFactory.jsm"
+var { CalReadableStreamFactory } = ChromeUtils.importESModule(
+  "resource:///modules/CalReadableStreamFactory.sys.mjs"
 );
 
 /* exported openInvitationsDialog, setUpInvitationsManager,
  *          tearDownInvitationsManager
  */
+
+/* eslint-enable valid-jsdoc */
 
 var gInvitationsManager = null;
 
@@ -39,15 +41,15 @@ var gInvitationsCalendarManagerObserver = {
   mStoredThis: this,
   QueryInterface: ChromeUtils.generateQI(["calICalendarManagerObserver"]),
 
-  onCalendarRegistered(aCalendar) {
+  onCalendarRegistered() {
     this.mStoredThis.rescheduleInvitationsUpdate(FIRST_DELAY_REGISTER);
   },
 
-  onCalendarUnregistering(aCalendar) {
+  onCalendarUnregistering() {
     this.mStoredThis.rescheduleInvitationsUpdate(FIRST_DELAY_UNREGISTER);
   },
 
-  onCalendarDeleting(aCalendar) {},
+  onCalendarDeleting() {},
 };
 
 function scheduleInvitationsUpdate(firstDelay) {
@@ -100,7 +102,7 @@ InvitationsManager.prototype = {
   /**
    * Schedule an update for the invitations manager asynchronously.
    *
-   * @param firstDelay          The timeout before the operation should start.
+   * @param {integer} firstDelay - The timeout before the operation should start.
    */
   scheduleInvitationsUpdate(firstDelay) {
     this.cancelInvitationsUpdate();
@@ -130,14 +132,14 @@ InvitationsManager.prototype = {
    * Toggles the display of the invitations panel in the status bar depending
    * on the number of invitation items found.
    *
-   * @param {calIItemBase[]?} items - The invitations found, if empty or not
+   * @param {?calIItemBase[]} items - The invitations found, if empty or not
    *   provided, the panel will not be displayed.
    */
   toggleInvitationsPanel(items) {
-    let invitationsBox = document.getElementById("calendar-invitations-panel");
+    const invitationsBox = document.getElementById("calendar-invitations-panel");
     if (items) {
-      let count = items.length;
-      let value = cal.l10n.getLtnString("invitationsLink.label", [count]);
+      const count = items.length;
+      const value = cal.l10n.getLtnString("invitationsLink.label", [count]);
       document.getElementById("calendar-invitations-label").value = value;
       if (count) {
         invitationsBox.removeAttribute("hidden");
@@ -172,7 +174,7 @@ InvitationsManager.prototype = {
     this.updateStartDate();
     this.deleteAllItems();
 
-    let streams = [];
+    const streams = [];
     for (let calendar of cal.manager.getCalendars()) {
       if (!cal.acl.isCalendarWritable(calendar) || calendar.getProperty("disabled")) {
         continue;
@@ -184,7 +186,7 @@ InvitationsManager.prototype = {
         continue;
       }
 
-      let endDate = this.mStartDate.clone();
+      const endDate = this.mStartDate.clone();
       endDate.year += 1;
       streams.push(
         calendar.getItems(
@@ -200,8 +202,8 @@ InvitationsManager.prototype = {
       );
     }
 
-    let self = this;
-    let mHandledItems = {};
+    const self = this;
+    const mHandledItems = {};
     return CalReadableStreamFactory.createReadableStream({
       async start(controller) {
         await self.cancelPendingRequests();
@@ -210,12 +212,12 @@ InvitationsManager.prototype = {
           CalReadableStreamFactory.createCombinedReadableStream(streams)
         );
 
-        for await (let items of self.mPendingRequests) {
+        for await (const items of self.mPendingRequests) {
           for (let item of items) {
             // we need to retrieve by occurrence to properly filter exceptions,
             // should be fixed with bug 416975
             item = item.parentItem;
-            let hid = item.hashId;
+            const hid = item.hashId;
             if (!mHandledItems[hid]) {
               mHandledItems[hid] = true;
               self.addItem(item);
@@ -243,7 +245,7 @@ InvitationsManager.prototype = {
    * sounds fishy to me. Maybe there is a more encapsulated solution.
    */
   openInvitationsDialog() {
-    let args = {};
+    const args = {};
     args.queue = [];
     args.finishedCallBack = () => this.scheduleInvitationsUpdate(FIRST_DELAY_RESCHEDULE);
     args.invitationsManager = this;
@@ -263,21 +265,22 @@ InvitationsManager.prototype = {
    * action, a newItem and and oldItem. This processor only takes "modify"
    * operations into account.
    *
-   * @param queue                         The array of objects to process.
+   * @param {calIItemBase[]} queue - The array of objects to process.
    */
   async processJobQueue(queue) {
     // TODO: undo/redo
     for (let i = 0; i < queue.length; i++) {
-      let job = queue[i];
-      let oldItem = job.oldItem;
-      let newItem = job.newItem;
+      const job = queue[i];
+      const oldItem = job.oldItem;
+      const newItem = job.newItem;
       switch (job.action) {
-        case "modify":
-          let item = await newItem.calendar.modifyItem(newItem, oldItem);
+        case "modify": {
+          const item = await newItem.calendar.modifyItem(newItem, oldItem);
           cal.itip.checkAndSend(Ci.calIOperationListener.MODIFY, item, oldItem);
           this.deleteItem(item);
           this.addItem(item);
           break;
+        }
         default:
           break;
       }
@@ -286,29 +289,27 @@ InvitationsManager.prototype = {
 
   /**
    * Checks if the internal item list contains the given item
-   * XXXdbo       Please document these correctly.
    *
-   * @param item      The item to look for.
-   * @returns A boolean value indicating if the item was found.
+   * @param {calIItemBase} item - The item to look for.
+   * @returns {boolean} A boolean value indicating if the item was found.
    */
   hasItem(item) {
-    let hid = item.hashId;
+    const hid = item.hashId;
     return this.mItemList.some(item_ => hid == item_.hashId);
   },
 
   /**
    * Adds an item to the internal item list.
-   * XXXdbo       Please document these correctly.
    *
-   * @param item      The item to add.
+   * @param {calIItemBase} item - The item to add.
    */
   addItem(item) {
-    let recInfo = item.recurrenceInfo;
+    const recInfo = item.recurrenceInfo;
     if (recInfo && !cal.itip.isOpenInvitation(item)) {
       // scan exceptions:
-      let ids = recInfo.getExceptionIds();
-      for (let id of ids) {
-        let ex = recInfo.getExceptionFor(id);
+      const ids = recInfo.getExceptionIds();
+      for (const id of ids) {
+        const ex = recInfo.getExceptionFor(id);
         if (ex && this.validateItem(ex) && !this.hasItem(ex)) {
           this.mItemList.push(ex);
         }
@@ -319,19 +320,17 @@ InvitationsManager.prototype = {
   },
 
   /**
-   * Removes an item from the internal item list
-   * XXXdbo       Please document these correctly.
+   * Removes an item from the internal item list.
    *
-   * @param item      The item to remove.
+   * @param {calIItemBase} item - The item to remove.
    */
   deleteItem(item) {
-    let id = item.id;
+    const id = item.id;
     this.mItemList.filter(item_ => id != item_.id);
   },
 
   /**
-   * Remove all items from the internal item list
-   * XXXdbo       Please document these correctly.
+   * Remove all items from the internal item list.
    */
   deleteAllItems() {
     this.mItemList = [];
@@ -341,10 +340,10 @@ InvitationsManager.prototype = {
    * Helper function to create a start date to search from. This date is the
    * current time with hour/minute/second set to zero.
    *
-   * @returns Potential start date.
+   * @returns {calIDateTime} The potential start date.
    */
   getStartDate() {
-    let date = cal.dtz.now();
+    const date = cal.dtz.now();
     date.second = 0;
     date.minute = 0;
     date.hour = 0;
@@ -358,7 +357,7 @@ InvitationsManager.prototype = {
    */
   updateStartDate() {
     if (this.mStartDate) {
-      let startDate = this.getStartDate();
+      const startDate = this.getStartDate();
       if (startDate.compare(this.mStartDate) > 0) {
         this.mStartDate = startDate;
       }
@@ -372,14 +371,14 @@ InvitationsManager.prototype = {
    * item is in the range of the invitation manager and if the item is a valid
    * invitation.
    *
-   * @param item      The item to check
-   * @returns A boolean indicating if the item is a valid invitation.
+   * @param {calIItemBase} item - The item to check
+   * @returns {boolean} A boolean indicating if the item is a valid invitation.
    */
   validateItem(item) {
     if (item.calendar instanceof Ci.calISchedulingSupport && !item.calendar.isInvitation(item)) {
       return false; // exclude if organizer has invited himself
     }
-    let start = item[cal.dtz.startDateProp(item)] || item[cal.dtz.endDateProp(item)];
+    const start = item[cal.dtz.startDateProp(item)] || item[cal.dtz.endDateProp(item)];
     return cal.itip.isOpenInvitation(item) && start.compare(this.mStartDate) >= 0;
   },
 };

@@ -2,22 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-function rightClickOnIndex(index) {
-  let abWindow = getAddressBookWindow();
-  let booksList = abWindow.booksList;
-  let menu = abWindow.document.getElementById("bookContext");
-
-  let shownPromise = BrowserTestUtils.waitForEvent(menu, "popupshown");
-  EventUtils.synthesizeMouseAtCenter(
-    booksList
-      .getRowAtIndex(index)
-      .querySelector(".bookRow-name, .listRow-name"),
-    { type: "contextmenu" },
-    abWindow
-  );
-  return shownPromise;
-}
-
 /**
  * Tests that additions and removals are accurately displayed.
  */
@@ -25,7 +9,7 @@ add_task(async function test_additions_and_removals() {
   function checkBooksOrder(...expected) {
     function checkRow(index, { level, open, isList, text, uid }) {
       info(`Row ${index}`);
-      let row = rows[index];
+      const row = rows[index];
 
       let containingList = row.closest("ul");
       if (level == 1) {
@@ -36,7 +20,7 @@ add_task(async function test_additions_and_removals() {
         Assert.equal(containingList.getAttribute("is"), "ab-tree-listbox");
       }
 
-      let childList = row.querySelector("ul");
+      const childList = row.querySelector("ul");
       // NOTE: We're not explicitly handling open === false because no test
       // needed it.
       if (open) {
@@ -62,10 +46,10 @@ add_task(async function test_additions_and_removals() {
       Assert.equal(row.dataset.uid, uid);
     }
 
-    let rows = abWindow.booksList.rows;
+    const rows = abWindow.booksList.rows;
     Assert.equal(rows.length, expected.length + 1);
     for (let i = 0; i < expected.length; i++) {
-      let dir = expected[i].directory;
+      const dir = expected[i].directory;
       checkRow(i + 1, {
         ...expected[i],
         isList: dir.isMailList,
@@ -79,7 +63,7 @@ add_task(async function test_additions_and_removals() {
 
   // Check the initial order.
 
-  checkDirectoryDisplayed(null);
+  await checkDirectoryDisplayed(null);
   checkBooksOrder(
     { level: 1, directory: personalBook },
     { level: 1, directory: historyBook }
@@ -87,8 +71,8 @@ add_task(async function test_additions_and_removals() {
 
   // Add one book, *not* using the UI, and check that we don't move to it.
 
-  let newBook1 = createAddressBook("New Book 1");
-  checkDirectoryDisplayed(null);
+  const newBook1 = createAddressBook("New Book 1");
+  await checkDirectoryDisplayed(null);
   checkBooksOrder(
     { level: 1, directory: personalBook },
     { level: 1, directory: newBook1 },
@@ -97,8 +81,8 @@ add_task(async function test_additions_and_removals() {
 
   // Add another book, using the UI, and check that we move to the new book.
 
-  let newBook2 = await createAddressBookWithUI("New Book 2");
-  checkDirectoryDisplayed(newBook2);
+  const newBook2 = await createAddressBookWithUI("New Book 2");
+  await checkDirectoryDisplayed(newBook2);
   checkBooksOrder(
     { level: 1, directory: personalBook },
     { level: 1, directory: newBook1 },
@@ -108,9 +92,9 @@ add_task(async function test_additions_and_removals() {
 
   // Add some lists, *not* using the UI, and check that we don't move to them.
 
-  let list1 = newBook1.addMailList(createMailingList("New Book 1 - List 1"));
+  const list1 = newBook1.addMailList(createMailingList("New Book 1 - List 1"));
   await new Promise(r => abWindow.setTimeout(r));
-  checkDirectoryDisplayed(newBook2);
+  await checkDirectoryDisplayed(newBook2);
   checkBooksOrder(
     { level: 1, directory: personalBook },
     { level: 1, directory: newBook1, open: true },
@@ -119,9 +103,9 @@ add_task(async function test_additions_and_removals() {
     { level: 1, directory: historyBook }
   );
 
-  let list3 = newBook1.addMailList(createMailingList("New Book 1 - List 3"));
+  const list3 = newBook1.addMailList(createMailingList("New Book 1 - List 3"));
   await new Promise(r => abWindow.setTimeout(r));
-  checkDirectoryDisplayed(newBook2);
+  await checkDirectoryDisplayed(newBook2);
   checkBooksOrder(
     { level: 1, directory: personalBook },
     { level: 1, directory: newBook1, open: true },
@@ -131,9 +115,9 @@ add_task(async function test_additions_and_removals() {
     { level: 1, directory: historyBook }
   );
 
-  let list0 = newBook1.addMailList(createMailingList("New Book 1 - List 0"));
+  const list0 = newBook1.addMailList(createMailingList("New Book 1 - List 0"));
   await new Promise(r => abWindow.setTimeout(r));
-  checkDirectoryDisplayed(newBook2);
+  await checkDirectoryDisplayed(newBook2);
   checkBooksOrder(
     { level: 1, directory: personalBook },
     { level: 1, directory: newBook1, open: true },
@@ -144,9 +128,9 @@ add_task(async function test_additions_and_removals() {
     { level: 1, directory: historyBook }
   );
 
-  let list2 = newBook1.addMailList(createMailingList("New Book 1 - List 2"));
+  const list2 = newBook1.addMailList(createMailingList("New Book 1 - List 2"));
   await new Promise(r => abWindow.setTimeout(r));
-  checkDirectoryDisplayed(newBook2);
+  await checkDirectoryDisplayed(newBook2);
   checkBooksOrder(
     { level: 1, directory: personalBook },
     { level: 1, directory: newBook1, open: true },
@@ -163,7 +147,7 @@ add_task(async function test_additions_and_removals() {
   await closeAddressBookWindow();
   abWindow = await openAddressBookWindow();
 
-  checkDirectoryDisplayed(null);
+  await checkDirectoryDisplayed(null);
   checkBooksOrder(
     { level: 1, directory: personalBook },
     { level: 1, directory: newBook1, open: true },
@@ -175,10 +159,10 @@ add_task(async function test_additions_and_removals() {
     { level: 1, directory: historyBook }
   );
 
-  openDirectory(newBook2);
+  await openDirectory(newBook2);
 
-  let list4 = newBook2.addMailList(createMailingList("New Book 2 - List 4"));
-  checkDirectoryDisplayed(newBook2);
+  const list4 = newBook2.addMailList(createMailingList("New Book 2 - List 4"));
+  await checkDirectoryDisplayed(newBook2);
   checkBooksOrder(
     { level: 1, directory: personalBook },
     { level: 1, directory: newBook1, open: true },
@@ -193,8 +177,8 @@ add_task(async function test_additions_and_removals() {
 
   // Add a new list, using the UI, and check that we move to it.
 
-  let list5 = await createMailingListWithUI(newBook2, "New Book 2 - List 5");
-  checkDirectoryDisplayed(list5);
+  const list5 = await createMailingListWithUI(newBook2, "New Book 2 - List 5");
+  await checkDirectoryDisplayed(list5);
   checkBooksOrder(
     { level: 1, directory: personalBook },
     { level: 1, directory: newBook1, open: true },
@@ -208,8 +192,8 @@ add_task(async function test_additions_and_removals() {
     { level: 1, directory: historyBook }
   );
 
-  let list6 = await createMailingListWithUI(newBook2, "New Book 2 - List 6");
-  checkDirectoryDisplayed(list6);
+  const list6 = await createMailingListWithUI(newBook2, "New Book 2 - List 6");
+  await checkDirectoryDisplayed(list6);
   checkBooksOrder(
     { level: 1, directory: personalBook },
     { level: 1, directory: newBook1, open: true },
@@ -227,7 +211,7 @@ add_task(async function test_additions_and_removals() {
 
   newBook1.deleteDirectory(list3);
   await new Promise(r => abWindow.setTimeout(r));
-  checkDirectoryDisplayed(list6);
+  await checkDirectoryDisplayed(list6);
   checkBooksOrder(
     { level: 1, directory: personalBook },
     { level: 1, directory: newBook1, open: true },
@@ -242,20 +226,20 @@ add_task(async function test_additions_and_removals() {
   );
 
   // Select list5
-  let list5Row = abWindow.booksList.getRowForUID(list5.UID);
+  const list5Row = abWindow.booksList.getRowForUID(list5.UID);
   EventUtils.synthesizeMouseAtCenter(
     list5Row.querySelector("span"),
     {},
     abWindow
   );
-  checkDirectoryDisplayed(list5);
+  await checkDirectoryDisplayed(list5);
 
   // Delete the displayed list, and check that we move to the next list under
   // the same book.
 
   newBook2.deleteDirectory(list5);
   await new Promise(r => abWindow.setTimeout(r));
-  checkDirectoryDisplayed(list6);
+  await checkDirectoryDisplayed(list6);
   checkBooksOrder(
     { level: 1, directory: personalBook },
     { level: 1, directory: newBook1, open: true },
@@ -272,7 +256,7 @@ add_task(async function test_additions_and_removals() {
   // book.
   newBook2.deleteDirectory(list6);
   await new Promise(r => abWindow.setTimeout(r));
-  checkDirectoryDisplayed(list4);
+  await checkDirectoryDisplayed(list4);
   checkBooksOrder(
     { level: 1, directory: personalBook },
     { level: 1, directory: newBook1, open: true },
@@ -288,7 +272,7 @@ add_task(async function test_additions_and_removals() {
 
   await promiseDirectoryRemoved(newBook2.URI);
   await new Promise(r => abWindow.setTimeout(r));
-  checkDirectoryDisplayed(historyBook);
+  await checkDirectoryDisplayed(historyBook);
   checkBooksOrder(
     { level: 1, directory: personalBook },
     { level: 1, directory: newBook1, open: true },
@@ -301,10 +285,10 @@ add_task(async function test_additions_and_removals() {
   // Select a list in the first book, then delete the book. Check that we
   // move to the next book.
 
-  openDirectory(list1);
+  await openDirectory(list1);
   await promiseDirectoryRemoved(newBook1.URI);
   await new Promise(r => abWindow.setTimeout(r));
-  checkDirectoryDisplayed(historyBook);
+  await checkDirectoryDisplayed(historyBook);
   checkBooksOrder(
     { level: 1, directory: personalBook },
     { level: 1, directory: historyBook }
@@ -317,17 +301,17 @@ add_task(async function test_additions_and_removals() {
  * Tests that renaming or deleting books or lists is reflected in the UI.
  */
 add_task(async function test_rename_and_delete() {
-  let abWindow = await openAddressBookWindow();
+  const abWindow = await openAddressBookWindow();
 
-  let abDocument = abWindow.document;
-  let booksList = abWindow.booksList;
-  let searchInput = abWindow.searchInput;
+  const abDocument = abWindow.document;
+  const booksList = abWindow.booksList;
+  const searchInput = abWindow.searchInput;
   Assert.equal(booksList.rowCount, 3);
 
   // Create a book.
 
   EventUtils.synthesizeMouseAtCenter(booksList, {}, abWindow);
-  let newBook = await createAddressBookWithUI("New Book");
+  const newBook = await createAddressBookWithUI("New Book");
   Assert.equal(booksList.rowCount, 4);
   Assert.equal(booksList.getIndexForUID(newBook.UID), 2);
   Assert.equal(booksList.selectedIndex, 2);
@@ -338,18 +322,20 @@ add_task(async function test_rename_and_delete() {
   Assert.equal(bookRow.getAttribute("aria-label"), "New Book");
 
   await TestUtils.waitForCondition(
-    () => searchInput.placeholder == "Search New Book",
+    () =>
+      searchInput.shadowRoot.querySelector("slot").textContent ==
+      "Search New Book…",
     "search placeholder updated"
   );
 
   // Rename the book.
 
-  let menu = abDocument.getElementById("bookContext");
-  let propertiesMenuItem = abDocument.getElementById("bookContextProperties");
+  const menu = abDocument.getElementById("bookContext");
+  const propertiesMenuItem = abDocument.getElementById("bookContextProperties");
 
-  await rightClickOnIndex(2);
+  await showBooksContext(2);
 
-  Assert.ok(BrowserTestUtils.is_visible(propertiesMenuItem));
+  Assert.ok(BrowserTestUtils.isVisible(propertiesMenuItem));
   Assert.ok(!propertiesMenuItem.disabled);
   Assert.deepEqual(document.l10n.getAttributes(propertiesMenuItem), {
     id: "about-addressbook-books-context-properties",
@@ -359,9 +345,9 @@ add_task(async function test_rename_and_delete() {
   let dialogPromise = promiseLoadSubDialog(
     "chrome://messenger/content/addressbook/abAddressBookNameDialog.xhtml"
   ).then(async function (dialogWindow) {
-    let dialogDocument = dialogWindow.document;
+    const dialogDocument = dialogWindow.document;
 
-    let nameInput = dialogDocument.getElementById("name");
+    const nameInput = dialogDocument.getElementById("name");
     Assert.equal(nameInput.value, "New Book");
     nameInput.value = "Old Book";
 
@@ -380,13 +366,15 @@ add_task(async function test_rename_and_delete() {
   Assert.equal(bookRow.getAttribute("aria-label"), "Old Book");
 
   await TestUtils.waitForCondition(
-    () => searchInput.placeholder == "Search Old Book",
+    () =>
+      searchInput.shadowRoot.querySelector("slot").textContent ==
+      "Search Old Book…",
     "search placeholder updated"
   );
 
   // Create a list.
 
-  let newList = await createMailingListWithUI(newBook, "New List");
+  const newList = await createMailingListWithUI(newBook, "New List");
   Assert.equal(booksList.rowCount, 5);
   Assert.equal(booksList.getIndexForUID(newList.UID), 3);
   Assert.equal(booksList.selectedIndex, 3);
@@ -401,26 +389,28 @@ add_task(async function test_rename_and_delete() {
   Assert.equal(listRow.getAttribute("aria-label"), "New List");
 
   await TestUtils.waitForCondition(
-    () => searchInput.placeholder == "Search New List",
+    () =>
+      searchInput.shadowRoot.querySelector("slot").textContent ==
+      "Search New List…",
     "search placeholder updated"
   );
 
   // Rename the list.
 
-  await rightClickOnIndex(3);
+  await showBooksContext(3);
 
-  Assert.ok(BrowserTestUtils.is_visible(propertiesMenuItem));
+  Assert.ok(BrowserTestUtils.isVisible(propertiesMenuItem));
   Assert.deepEqual(document.l10n.getAttributes(propertiesMenuItem), {
     id: "about-addressbook-books-context-edit-list",
     args: null,
   });
 
   dialogPromise = promiseLoadSubDialog(
-    "chrome://messenger/content/addressbook/abEditListDialog.xhtml"
+    "chrome://messenger/content/addressbook/abMailListDialog.xhtml"
   ).then(async function (dialogWindow) {
-    let dialogDocument = dialogWindow.document;
+    const dialogDocument = dialogWindow.document;
 
-    let nameInput = dialogDocument.getElementById("ListName");
+    const nameInput = dialogDocument.getElementById("ListName");
     Assert.equal(nameInput.value, "New List");
     nameInput.value = "Old List";
 
@@ -439,7 +429,9 @@ add_task(async function test_rename_and_delete() {
   Assert.equal(listRow.getAttribute("aria-label"), "Old List");
 
   await TestUtils.waitForCondition(
-    () => searchInput.placeholder == "Search Old List",
+    () =>
+      searchInput.shadowRoot.querySelector("slot").textContent ==
+      "Search Old List…",
     "search placeholder updated"
   );
 
@@ -519,21 +511,23 @@ add_task(async function test_rename_and_delete() {
  * Tests the context menu of the list.
  */
 add_task(async function test_context_menu() {
-  let book = createAddressBook("Ordinary Book");
+  const book = createAddressBook("Ordinary Book");
   book.addMailList(createMailingList("Ordinary List"));
   createAddressBook("CardDAV Book", Ci.nsIAbManager.CARDDAV_DIRECTORY_TYPE);
 
-  let abWindow = await openAddressBookWindow();
-  let abDocument = abWindow.document;
-  let booksList = abWindow.booksList;
+  const abWindow = await openAddressBookWindow();
+  const abDocument = abWindow.document;
+  const booksList = abWindow.booksList;
 
-  let menu = abWindow.document.getElementById("bookContext");
-  let propertiesMenuItem = abDocument.getElementById("bookContextProperties");
-  let synchronizeMenuItem = abDocument.getElementById("bookContextSynchronize");
-  let printMenuItem = abDocument.getElementById("bookContextPrint");
-  let deleteMenuItem = abDocument.getElementById("bookContextDelete");
-  let removeMenuItem = abDocument.getElementById("bookContextRemove");
-  let startupDefaultItem = abDocument.getElementById(
+  const menu = abWindow.document.getElementById("bookContext");
+  const propertiesMenuItem = abDocument.getElementById("bookContextProperties");
+  const synchronizeMenuItem = abDocument.getElementById(
+    "bookContextSynchronize"
+  );
+  const printMenuItem = abDocument.getElementById("bookContextPrint");
+  const deleteMenuItem = abDocument.getElementById("bookContextDelete");
+  const removeMenuItem = abDocument.getElementById("bookContextRemove");
+  const startupDefaultItem = abDocument.getElementById(
     "bookContextStartupDefault"
   );
 
@@ -541,11 +535,11 @@ add_task(async function test_context_menu() {
 
   // Test that the menu does not show for All Address Books.
 
-  await rightClickOnIndex(0);
+  await showBooksContext(0);
   Assert.equal(booksList.selectedIndex, 0);
   Assert.equal(abDocument.activeElement, booksList);
 
-  let visibleItems = [...menu.children].filter(BrowserTestUtils.is_visible);
+  const visibleItems = [...menu.children].filter(BrowserTestUtils.isVisible);
   Assert.equal(visibleItems.length, 1);
   Assert.equal(
     visibleItems[0],
@@ -557,17 +551,17 @@ add_task(async function test_context_menu() {
 
   // Test directories that can't be deleted.
 
-  for (let index of [1, booksList.rowCount - 1]) {
-    await rightClickOnIndex(index);
+  for (const index of [1, booksList.rowCount - 1]) {
+    await showBooksContext(index);
     Assert.equal(booksList.selectedIndex, index);
-    Assert.ok(BrowserTestUtils.is_visible(propertiesMenuItem));
+    Assert.ok(BrowserTestUtils.isVisible(propertiesMenuItem));
     Assert.ok(!propertiesMenuItem.disabled);
-    Assert.ok(!BrowserTestUtils.is_visible(synchronizeMenuItem));
-    Assert.ok(BrowserTestUtils.is_visible(printMenuItem));
+    Assert.ok(!BrowserTestUtils.isVisible(synchronizeMenuItem));
+    Assert.ok(BrowserTestUtils.isVisible(printMenuItem));
     Assert.ok(!printMenuItem.disabled);
-    Assert.ok(BrowserTestUtils.is_visible(deleteMenuItem));
+    Assert.ok(BrowserTestUtils.isVisible(deleteMenuItem));
     Assert.ok(deleteMenuItem.disabled);
-    Assert.ok(!BrowserTestUtils.is_visible(removeMenuItem));
+    Assert.ok(!BrowserTestUtils.isVisible(removeMenuItem));
     hiddenPromise = BrowserTestUtils.waitForEvent(menu, "popuphidden");
     menu.hidePopup();
     await hiddenPromise;
@@ -576,16 +570,16 @@ add_task(async function test_context_menu() {
 
   // Test and delete CardDAV directory at index 4.
 
-  await rightClickOnIndex(4);
+  await showBooksContext(4);
   Assert.equal(booksList.selectedIndex, 4);
-  Assert.ok(BrowserTestUtils.is_visible(propertiesMenuItem));
+  Assert.ok(BrowserTestUtils.isVisible(propertiesMenuItem));
   Assert.ok(!propertiesMenuItem.disabled);
-  Assert.ok(BrowserTestUtils.is_visible(synchronizeMenuItem));
+  Assert.ok(BrowserTestUtils.isVisible(synchronizeMenuItem));
   Assert.ok(!synchronizeMenuItem.disabled);
-  Assert.ok(BrowserTestUtils.is_visible(printMenuItem));
+  Assert.ok(BrowserTestUtils.isVisible(printMenuItem));
   Assert.ok(!printMenuItem.disabled);
-  Assert.ok(!BrowserTestUtils.is_visible(deleteMenuItem));
-  Assert.ok(BrowserTestUtils.is_visible(removeMenuItem));
+  Assert.ok(!BrowserTestUtils.isVisible(deleteMenuItem));
+  Assert.ok(BrowserTestUtils.isVisible(removeMenuItem));
   Assert.ok(!removeMenuItem.disabled);
   let promptPromise = BrowserTestUtils.promiseAlertDialog("accept");
   let selectPromise = BrowserTestUtils.waitForEvent(booksList, "select");
@@ -602,18 +596,18 @@ add_task(async function test_context_menu() {
 
   // Test and delete list at index 3, then directory at index 2.
 
-  for (let index of [3, 2]) {
+  for (const index of [3, 2]) {
     await new Promise(r => abWindow.setTimeout(r, 250));
-    await rightClickOnIndex(index);
+    await showBooksContext(index);
     Assert.equal(booksList.selectedIndex, index);
-    Assert.ok(BrowserTestUtils.is_visible(propertiesMenuItem));
+    Assert.ok(BrowserTestUtils.isVisible(propertiesMenuItem));
     Assert.ok(!propertiesMenuItem.disabled);
-    Assert.ok(!BrowserTestUtils.is_visible(synchronizeMenuItem));
-    Assert.ok(BrowserTestUtils.is_visible(printMenuItem));
+    Assert.ok(!BrowserTestUtils.isVisible(synchronizeMenuItem));
+    Assert.ok(BrowserTestUtils.isVisible(printMenuItem));
     Assert.ok(!printMenuItem.disabled);
-    Assert.ok(BrowserTestUtils.is_visible(deleteMenuItem));
+    Assert.ok(BrowserTestUtils.isVisible(deleteMenuItem));
     Assert.ok(!deleteMenuItem.disabled);
-    Assert.ok(!BrowserTestUtils.is_visible(removeMenuItem));
+    Assert.ok(!BrowserTestUtils.isVisible(removeMenuItem));
     promptPromise = BrowserTestUtils.promiseAlertDialog("accept");
     selectPromise = BrowserTestUtils.waitForEvent(booksList, "select");
     hiddenPromise = BrowserTestUtils.waitForEvent(menu, "popuphidden");
@@ -655,27 +649,27 @@ add_task(async function test_context_menu() {
  * Tests the menu button on each item.
  */
 add_task(async function test_context_menu_button() {
-  let book = createAddressBook("Ordinary Book");
+  const book = createAddressBook("Ordinary Book");
   book.addMailList(createMailingList("Ordinary List"));
 
-  let abWindow = await openAddressBookWindow();
-  let booksList = abWindow.booksList;
-  let menu = abWindow.document.getElementById("bookContext");
+  const abWindow = await openAddressBookWindow();
+  const booksList = abWindow.booksList;
+  const menu = abWindow.document.getElementById("bookContext");
 
-  for (let row of booksList.rows) {
+  for (const row of booksList.rows) {
     info(row.querySelector(".bookRow-name, .listRow-name").textContent);
-    let button = row.querySelector(".bookRow-menu, .listRow-menu");
-    Assert.ok(BrowserTestUtils.is_hidden(button), "menu button is hidden");
+    const button = row.querySelector(".bookRow-menu, .listRow-menu");
+    Assert.ok(BrowserTestUtils.isHidden(button), "menu button is hidden");
 
     EventUtils.synthesizeMouse(row, 100, 5, { type: "mousemove" }, abWindow);
-    Assert.ok(BrowserTestUtils.is_visible(button), "menu button is visible");
+    Assert.ok(BrowserTestUtils.isVisible(button), "menu button is visible");
 
-    let shownPromise = BrowserTestUtils.waitForEvent(menu, "popupshown");
+    const shownPromise = BrowserTestUtils.waitForEvent(menu, "popupshown");
     EventUtils.synthesizeMouseAtCenter(button, {}, abWindow);
     await shownPromise;
 
-    let buttonRect = button.getBoundingClientRect();
-    let menuRect = menu.getBoundingClientRect();
+    const buttonRect = button.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
     Assert.less(
       Math.abs(menuRect.top - buttonRect.bottom),
       13,
@@ -687,7 +681,7 @@ add_task(async function test_context_menu_button() {
       "menu appeared near the button horizontally"
     );
 
-    let hiddenPromise = BrowserTestUtils.waitForEvent(menu, "popuphidden");
+    const hiddenPromise = BrowserTestUtils.waitForEvent(menu, "popuphidden");
     menu.hidePopup();
     await hiddenPromise;
   }
@@ -708,11 +702,11 @@ add_task(async function test_collapse_expand() {
 
   historyBook.addMailList(createMailingList("History List 1"));
 
-  let book1 = createAddressBook("Book 1");
+  const book1 = createAddressBook("Book 1");
   book1.addMailList(createMailingList("Book 1 List 1"));
   book1.addMailList(createMailingList("Book 1 List 2"));
 
-  let book2 = createAddressBook("Book 2");
+  const book2 = createAddressBook("Book 2");
   book2.addMailList(createMailingList("Book 2 List 1"));
   book2.addMailList(createMailingList("Book 2 List 2"));
   book2.addMailList(createMailingList("Book 2 List 3"));
@@ -730,9 +724,9 @@ add_task(async function test_collapse_expand() {
   }
 
   function toggleCollapsedState(book) {
-    let twisty = getRowForBook(book).querySelector(".twisty");
+    const twisty = getRowForBook(book).querySelector(".twisty");
     Assert.ok(
-      BrowserTestUtils.is_visible(twisty),
+      BrowserTestUtils.isVisible(twisty),
       `twisty for ${book.dirName} is visible`
     );
     EventUtils.synthesizeMouseAtCenter(twisty, {}, abWindow);
@@ -805,17 +799,17 @@ add_task(async function test_startup_directory() {
   Services.prefs.clearUserPref(DEFAULT_PREF);
 
   async function checkMenuItem(index, expectChecked, toggle = false) {
-    await rightClickOnIndex(index);
+    await showBooksContext(index);
 
-    let menu = abWindow.document.getElementById("bookContext");
-    let item = abWindow.document.getElementById("bookContextStartupDefault");
+    const menu = abWindow.document.getElementById("bookContext");
+    const item = abWindow.document.getElementById("bookContextStartupDefault");
     Assert.equal(
       item.hasAttribute("checked"),
       expectChecked,
       `directory at index ${index} is the default?`
     );
 
-    let hiddenPromise = BrowserTestUtils.waitForEvent(menu, "popuphidden");
+    const hiddenPromise = BrowserTestUtils.waitForEvent(menu, "popuphidden");
     if (toggle) {
       menu.activateItem(item);
     } else {
@@ -828,11 +822,11 @@ add_task(async function test_startup_directory() {
   // No changes should be made to the prefs.
 
   let abWindow = await openAddressBookWindow();
-  checkDirectoryDisplayed();
+  await checkDirectoryDisplayed();
   await checkMenuItem(0, true);
   await checkMenuItem(1, false);
   await checkMenuItem(2, false);
-  openDirectory(personalBook);
+  await openDirectory(personalBook);
   await closeAddressBookWindow();
   Assert.ok(!Services.prefs.prefHasUserValue(URI_PREF));
 
@@ -840,23 +834,23 @@ add_task(async function test_startup_directory() {
   // The last-used book should be saved.
 
   abWindow = await openAddressBookWindow();
-  checkDirectoryDisplayed();
+  await checkDirectoryDisplayed();
   await checkMenuItem(0, true);
   await checkMenuItem(1, false);
   await checkMenuItem(2, false);
   Services.prefs.setBoolPref(DEFAULT_PREF, false);
-  openDirectory(personalBook);
+  await openDirectory(personalBook);
   await closeAddressBookWindow();
   Assert.equal(Services.prefs.getStringPref(URI_PREF), personalBook.URI);
 
   // The last-used book should open.
 
   abWindow = await openAddressBookWindow();
-  checkDirectoryDisplayed(personalBook);
+  await checkDirectoryDisplayed(personalBook);
   await checkMenuItem(0, false);
   await checkMenuItem(1, false);
   await checkMenuItem(2, false);
-  openDirectory(historyBook);
+  await openDirectory(historyBook);
   await closeAddressBookWindow();
   Assert.equal(Services.prefs.getStringPref(URI_PREF), historyBook.URI);
 
@@ -864,11 +858,11 @@ add_task(async function test_startup_directory() {
   // We'll set a default directory again.
 
   abWindow = await openAddressBookWindow();
-  checkDirectoryDisplayed(historyBook);
+  await checkDirectoryDisplayed(historyBook);
   await checkMenuItem(0, false);
   await checkMenuItem(1, false);
   await checkMenuItem(2, false, true);
-  openDirectory(personalBook);
+  await openDirectory(personalBook);
   await closeAddressBookWindow();
   Assert.ok(Services.prefs.getBoolPref(DEFAULT_PREF));
   Assert.equal(Services.prefs.getStringPref(URI_PREF), historyBook.URI);
@@ -876,7 +870,7 @@ add_task(async function test_startup_directory() {
   // Check that the saved default opens. Change the default.
 
   abWindow = await openAddressBookWindow();
-  checkDirectoryDisplayed(historyBook);
+  await checkDirectoryDisplayed(historyBook);
   await checkMenuItem(0, false);
   await checkMenuItem(2, true);
   await checkMenuItem(1, false, true);
@@ -887,7 +881,7 @@ add_task(async function test_startup_directory() {
   // Check that the saved default opens. Change the default to All Address Books.
 
   abWindow = await openAddressBookWindow();
-  checkDirectoryDisplayed(personalBook);
+  await checkDirectoryDisplayed(personalBook);
   await checkMenuItem(1, true);
   await checkMenuItem(2, false);
   await checkMenuItem(0, false, true);
@@ -898,7 +892,7 @@ add_task(async function test_startup_directory() {
   // Check that the saved default opens. Clear the default.
 
   abWindow = await openAddressBookWindow();
-  checkDirectoryDisplayed();
+  await checkDirectoryDisplayed();
   await checkMenuItem(1, false);
   await checkMenuItem(2, false);
   await checkMenuItem(0, true, true);
@@ -908,8 +902,8 @@ add_task(async function test_startup_directory() {
 });
 
 add_task(async function test_total_address_book_count() {
-  let book1 = createAddressBook("First Book");
-  let book2 = createAddressBook("Second Book");
+  const book1 = createAddressBook("First Book");
+  const book2 = createAddressBook("Second Book");
   book1.addMailList(createMailingList("Ordinary List"));
 
   book1.addCard(createContact("contact1", "book 1"));
@@ -918,10 +912,10 @@ add_task(async function test_total_address_book_count() {
 
   book2.addCard(createContact("contact1", "book 2"));
 
-  let abWindow = await openAddressBookWindow();
-  let abDocument = abWindow.document;
-  let booksList = abWindow.booksList;
-  let cardCount = abDocument.getElementById("cardCount");
+  const abWindow = await openAddressBookWindow();
+  const abDocument = abWindow.document;
+  const booksList = abWindow.booksList;
+  const cardCount = abDocument.getElementById("cardCount");
 
   await openAllAddressBooks();
   Assert.deepEqual(abDocument.l10n.getAttributes(cardCount), {
@@ -931,7 +925,7 @@ add_task(async function test_total_address_book_count() {
     },
   });
 
-  for (let [index, [name, count]] of [
+  for (const [index, [name, count]] of [
     ["Personal Address Book", 0],
     ["First Book", 4],
     ["Ordinary List", 0],
@@ -947,7 +941,7 @@ add_task(async function test_total_address_book_count() {
   // Create a contact and check that the count updates.
   // Select second book.
   booksList.getRowAtIndex(4).click();
-  let createdPromise = TestUtils.topicObserved("addrbook-contact-created");
+  const createdPromise = TestUtils.topicObserved("addrbook-contact-created");
   book2.addCard(createContact("contact2", "book 2"));
   await createdPromise;
   Assert.deepEqual(
@@ -960,9 +954,9 @@ add_task(async function test_total_address_book_count() {
   );
 
   // Delete a contact an check that the count updates.
-  let promptPromise = BrowserTestUtils.promiseAlertDialog("accept");
-  let deletedPromise = TestUtils.topicObserved("addrbook-contact-deleted");
-  let cards = abWindow.cardsPane.cardsList;
+  const promptPromise = BrowserTestUtils.promiseAlertDialog("accept");
+  const deletedPromise = TestUtils.topicObserved("addrbook-contact-deleted");
+  const cards = abWindow.cardsPane.cardsList;
   EventUtils.synthesizeMouseAtCenter(cards.getRowAtIndex(0), {}, abWindow);
   EventUtils.synthesizeKey("VK_DELETE", {}, abWindow);
   await promptPromise;

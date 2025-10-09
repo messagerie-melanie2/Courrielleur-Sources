@@ -407,7 +407,7 @@ FeedHandlerInfo.prototype = {
       _inner: [],
       _removed: [],
 
-      QueryInterface: XPCOMUtils.generateQI([Ci.nsIMutableArray, Ci.nsIArray]),
+      QueryInterface: ChromeUtils.generateQI([Ci.nsIMutableArray, Ci.nsIArray]),
 
       get length() {
         return this._inner.length;
@@ -764,8 +764,7 @@ var gApplicationsPane = {
   //**************************************************************************//
   // nsISupports
 
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver,
-                                         Ci.nsIDOMEventListener]),
+  QueryInterface: ChromeUtils.generateQI([Ci.nsIObserver]),
 
   //**************************************************************************//
   // nsIObserver
@@ -782,7 +781,7 @@ var gApplicationsPane = {
 
 
   //**************************************************************************//
-  // nsIDOMEventListener
+  // EventListener
 
   handleEvent(aEvent) {
     switch (aEvent.type) {

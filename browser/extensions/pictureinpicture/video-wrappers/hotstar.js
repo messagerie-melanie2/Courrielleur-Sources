@@ -6,14 +6,12 @@
 
 class PictureInPictureVideoWrapper {
   setCaptionContainerObserver(video, updateCaptionsFunction) {
-    let container = document.querySelector(".subtitle-container");
+    let container = document.querySelector(".shaka-text-container");
 
     if (container) {
       updateCaptionsFunction("");
-      const callback = function (mutationsList, observer) {
-        let textNodeList = container
-          .querySelector(".shaka-text-container")
-          ?.querySelectorAll("span");
+      const callback = function () {
+        let textNodeList = container?.querySelectorAll("span");
         if (!textNodeList) {
           updateCaptionsFunction("");
           return;
@@ -27,14 +25,18 @@ class PictureInPictureVideoWrapper {
       // immediately invoke the callback function to add subtitles to the PiP window
       callback([1], null);
 
-      let captionsObserver = new MutationObserver(callback);
+      this.captionsObserver = new MutationObserver(callback);
 
-      captionsObserver.observe(container, {
+      this.captionsObserver.observe(container, {
         attributes: false,
         childList: true,
         subtree: true,
       });
     }
+  }
+
+  removeCaptionContainerObserver() {
+    this.captionsObserver?.disconnect();
   }
 }
 

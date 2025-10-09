@@ -6,14 +6,13 @@
  */
 "use strict";
 
-const parser = require("@babel/eslint-parser");
+const parser = require("espree");
 const { analyze } = require("eslint-scope");
 const { KEYS: defaultVisitorKeys } = require("eslint-visitor-keys");
 const estraverse = require("estraverse");
 const path = require("path");
 const fs = require("fs");
-const ini = require("multi-ini");
-const recommendedConfig = require("./configs/recommended");
+const toml = require("toml-eslint-parser");
 
 var gRootDir = null;
 var directoryManifests = new Map();
@@ -21,11 +20,29 @@ var directoryManifests = new Map();
 let xpidlData;
 
 module.exports = {
-  get iniParser() {
-    if (!this._iniParser) {
-      this._iniParser = new ini.Parser();
+  /**
+   * The list of file extensions that we support when linting. This should be
+   * kept in sync with the list in tools/lint/eslint.yml.
+   *
+   * TypeScript (ts) is not listed here, as we currently only format that with
+   * Prettier.
+   */
+  allFileExtensions: ["mjs", "js", "json", "jsx", "html", "sjs", "xhtml"],
+
+  /**
+   * Can be used to change a group of rules or globals, so that all the items
+   * are turned off.
+   *
+   * @param {{[key: string]: string}} items
+   */
+  turnOff(items) {
+    /** @type {{[key: string]: string}} */
+    let result = {};
+
+    for (let key of Object.keys(items)) {
+      result[key] = "off";
     }
-    return this._iniParser;
+    return result;
   },
 
   get servicesData() {
@@ -103,18 +120,19 @@ module.exports = {
     // can parse.
     let config = { ...this.getPermissiveConfig(configOptions), ...astOptions };
 
-    let parseResult =
-      "parseForESLint" in parser
-        ? parser.parseForESLint(sourceText, config)
-        : { ast: parser.parse(sourceText, config) };
+    let parseResult = parser.parse(sourceText, config);
 
     let visitorKeys = parseResult.visitorKeys || defaultVisitorKeys;
-    visitorKeys.ExperimentalRestProperty = visitorKeys.RestElement;
-    visitorKeys.ExperimentalSpreadProperty = visitorKeys.SpreadElement;
+
+    // eslint-scope doesn't support "latest" as a version, so we pass a really
+    // big number to ensure this always reads as the latest.
+    // xref https://github.com/eslint/eslint-scope/issues/74
+    config.ecmaVersion =
+      config.ecmaVersion == "latest" ? 1e8 : config.ecmaVersion;
 
     return {
-      ast: parseResult.ast,
-      scopeManager: parseResult.scopeManager || analyze(parseResult.ast),
+      ast: parseResult,
+      scopeManager: parseResult.scopeManager || analyze(parseResult, config),
       visitorKeys,
     };
   },
@@ -197,13 +215,13 @@ module.exports = {
     let parents = [];
 
     estraverse.traverse(ast, {
-      enter(node, parent) {
+      enter(node) {
         listener(node.type, node, parents);
 
         parents.push(node);
       },
 
-      leave(node, parent) {
+      leave() {
         if (!parents.length) {
           throw new Error("Left more nodes than entered.");
         }
@@ -291,43 +309,25 @@ module.exports = {
    * @return {Object}
    *         Espree compatible permissive config.
    */
-  getPermissiveConfig({ useBabel = true } = {}) {
-    const config = {
+  getPermissiveConfig() {
+    return {
       range: true,
-      requireConfigFile: false,
-      babelOptions: {
-        // configFile: path.join(gRootDir, ".babel-eslint.rc.js"),
-        // parserOpts: {
-        //   plugins: [
-        //     "@babel/plugin-proposal-class-static-block",
-        //     "@babel/plugin-syntax-class-properties",
-        //     "@babel/plugin-syntax-jsx",
-        //   ],
-        // },
-      },
       loc: true,
       comment: true,
       attachComment: true,
       ecmaVersion: this.getECMAVersion(),
       sourceType: "script",
     };
-
-    if (useBabel && this.isMozillaCentralBased()) {
-      config.babelOptions.configFile = path.join(
-        gRootDir,
-        ".babel-eslint.rc.js"
-      );
-    }
-    return config;
   },
 
   /**
-   * Returns the ECMA version of the recommended config.
+   * Returns the ECMA version as the latest. It is generally assumed that we will
+   * always use the latest version in the configuration.
    *
-   * @return {Number} The ECMA version of the recommended config.
+   * @return {string} The ECMA version to use.
    */
   getECMAVersion() {
-    return recommendedConfig.parserOptions.ecmaVersion;
+    return "latest";
   },
 
   /**
@@ -516,19 +516,36 @@ module.exports = {
     }
 
     for (let name of names) {
-      if (!name.endsWith(".ini")) {
-        continue;
+      if (name.endsWith(".toml")) {
+        try {
+          const ast = toml.parseTOML(
+            fs.readFileSync(path.join(dir, name), "utf8")
+          );
+          var manifest = {};
+          ast.body.forEach(top => {
+            if (top.type == "TOMLTopLevelTable") {
+              top.body.forEach(obj => {
+                if (obj.type == "TOMLTable") {
+                  manifest[obj.resolvedKey] = {};
+                }
+              });
+            }
+          });
+          manifests.push({
+            file: path.join(dir, name),
+            manifest,
+          });
+        } catch (e) {
+          console.error(
+            "TOML ERROR: " +
+              e.message +
+              " @line: " +
+              e.lineNumber +
+              ", column: " +
+              e.column
+          );
+        }
       }
-
-      try {
-        let manifest = this.iniParser.parse(
-          fs.readFileSync(path.join(dir, name), "utf8").split("\n")
-        );
-        manifests.push({
-          file: path.join(dir, name),
-          manifest,
-        });
-      } catch (e) {}
     }
 
     directoryManifests.set(dir, manifests);
@@ -642,17 +659,23 @@ module.exports = {
 
   /**
    * Gets the root directory of the repository by walking up directories from
-   * this file until a .eslintignore file is found. If this fails, the same
-   * procedure will be attempted from the current working dir.
+   * this file until the top-level mozilla-central package.json file is found.
+   * If this fails, the same procedure will be attempted from the current
+   * working dir.
+   *
    * @return {String} The absolute path of the repository directory
    */
   get rootDir() {
     if (!gRootDir) {
-      function searchUpForIgnore(dirName, filename) {
+      function searchUpForPackage(dirName) {
         let parsed = path.parse(dirName);
         while (parsed.root !== dirName) {
-          if (fs.existsSync(path.join(dirName, filename))) {
-            return dirName;
+          let possibleFile = path.join(dirName, "package.json");
+          if (fs.existsSync(possibleFile)) {
+            let packageData = require(possibleFile);
+            if (packageData.nonPublishedName == "mozilla-central") {
+              return dirName;
+            }
           }
           // Move up a level
           dirName = parsed.dir;
@@ -661,15 +684,9 @@ module.exports = {
         return null;
       }
 
-      let possibleRoot = searchUpForIgnore(
-        path.dirname(module.filename),
-        ".eslintignore"
-      );
+      let possibleRoot = searchUpForPackage(path.dirname(module.filename));
       if (!possibleRoot) {
-        possibleRoot = searchUpForIgnore(path.resolve(), ".eslintignore");
-      }
-      if (!possibleRoot) {
-        possibleRoot = searchUpForIgnore(path.resolve(), "package.json");
+        possibleRoot = searchUpForPackage(path.resolve());
       }
       if (!possibleRoot) {
         // We've couldn't find a root from the module or CWD, so lets just go
@@ -726,13 +743,13 @@ module.exports = {
 
   get globalScriptPaths() {
     return [
-      path.join(this.rootDir, "browser", "base", "content", "browser.xhtml"),
+      path.join(this.rootDir, "browser", "base", "content", "browser-main.js"),
       path.join(
         this.rootDir,
         "browser",
         "base",
         "content",
-        "global-scripts.inc"
+        "global-scripts.js"
       ),
     ];
   },

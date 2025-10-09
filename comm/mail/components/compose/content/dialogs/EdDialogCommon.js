@@ -358,13 +358,21 @@ function GetLocalFileURL(filterType) {
   var fileType = "html";
 
   if (filterType == "img") {
-    fp.init(window, GetString("SelectImageFile"), Ci.nsIFilePicker.modeOpen);
+    fp.init(
+      window.browsingContext,
+      GetString("SelectImageFile"),
+      Ci.nsIFilePicker.modeOpen
+    );
     fp.appendFilters(Ci.nsIFilePicker.filterImages);
     fileType = "image";
   } else if (filterType.startsWith("html")) {
     // Current usage of this is in Link dialog,
     //  where we always want HTML first
-    fp.init(window, GetString("OpenHTMLFile"), Ci.nsIFilePicker.modeOpen);
+    fp.init(
+      window.browsingContext,
+      GetString("OpenHTMLFile"),
+      Ci.nsIFilePicker.modeOpen
+    );
 
     // When loading into Composer, direct user to prefer HTML files and text files,
     //   so we call separately to control the order of the filter list
@@ -424,89 +432,6 @@ function SaveWindowLocation() {
 
 function onCancel() {
   SaveWindowLocation();
-}
-
-function SetRelativeCheckbox(checkbox) {
-  if (!checkbox) {
-    checkbox = document.getElementById("MakeRelativeCheckbox");
-    if (!checkbox) {
-      return;
-    }
-  }
-
-  var editor = GetCurrentEditor();
-  // Mail never allows relative URLs, so hide the checkbox
-  if (editor && editor.flags & Ci.nsIEditor.eEditorMailMask) {
-    checkbox.collapsed = true;
-    return;
-  }
-
-  var input = document.getElementById(checkbox.getAttribute("for"));
-  if (!input) {
-    return;
-  }
-
-  var url = TrimString(input.value);
-  var urlScheme = GetScheme(url);
-
-  // Check it if url is relative (no scheme).
-  checkbox.checked = url.length > 0 && !urlScheme;
-
-  // Now do checkbox enabling:
-  var enable = false;
-
-  var docUrl = GetDocumentBaseUrl();
-  var docScheme = GetScheme(docUrl);
-
-  if (url && docUrl && docScheme) {
-    if (urlScheme) {
-      // Url is absolute
-      // If we can make a relative URL, then enable must be true!
-      // (this lets the smarts of MakeRelativeUrl do all the hard work)
-      enable = GetScheme(MakeRelativeUrl(url)).length == 0;
-    } else if (url[0] == "#") {
-      // Url is relative
-      // Check if url is a named anchor
-      //  but document doesn't have a filename
-      // (it's probably "index.html" or "index.htm",
-      //  but we don't want to allow a malformed URL)
-      var docFilename = GetFilename(docUrl);
-      enable = docFilename.length > 0;
-    } else {
-      // Any other url is assumed
-      //  to be ok to try to make absolute
-      enable = true;
-    }
-  }
-
-  SetElementEnabled(checkbox, enable);
-}
-
-// oncommand handler for the Relativize checkbox in EditorOverlay.xhtml
-function MakeInputValueRelativeOrAbsolute(checkbox) {
-  var input = document.getElementById(checkbox.getAttribute("for"));
-  if (!input) {
-    return;
-  }
-
-  var docUrl = GetDocumentBaseUrl();
-  if (!docUrl) {
-    // Checkbox should be disabled if not saved,
-    //  but keep this error message in case we change that
-    Services.prompt.alert(window, "", GetString("SaveToUseRelativeUrl"));
-    window.focus();
-  } else {
-    // Note that "checked" is opposite of its last state,
-    //  which determines what we want to do here
-    if (checkbox.checked) {
-      input.value = MakeRelativeUrl(input.value);
-    } else {
-      input.value = MakeAbsoluteUrl(input.value);
-    }
-
-    // Reset checkbox to reflect url state
-    SetRelativeCheckbox(checkbox);
-  }
 }
 
 var IsBlockParent = [
@@ -613,7 +538,7 @@ function FillLinkMenulist(linkMenulist, headingsArray) {
       // Save nodes in an array so we can create anchor node under it later
       headingsArray[anchor] = heading;
     }
-    let menuItems = [];
+    const menuItems = [];
     if (anchorList.length) {
       // case insensitive sort
       anchorList.sort((a, b) => {
@@ -634,18 +559,18 @@ function FillLinkMenulist(linkMenulist, headingsArray) {
         linkMenulist.removeAttribute("enablehistory");
         return;
       }
-      let item = createMenuItem(GetString("NoNamedAnchorsOrHeadings"));
+      const item = createMenuItem(GetString("NoNamedAnchorsOrHeadings"));
       item.setAttribute("disabled", "true");
       menuItems.push(item);
     }
-    window.addEventListener("contextmenu", event => {
+    window.addEventListener("contextmenu", () => {
       if (document.getElementById("datalist-menuseparator")) {
         return;
       }
-      let menuseparator = document.createXULElement("menuseparator");
+      const menuseparator = document.createXULElement("menuseparator");
       menuseparator.setAttribute("id", "datalist-menuseparator");
       document.getElementById("textbox-contextmenu").appendChild(menuseparator);
-      for (let menuitem of menuItems) {
+      for (const menuitem of menuItems) {
         document.getElementById("textbox-contextmenu").appendChild(menuitem);
       }
     });
@@ -655,7 +580,7 @@ function FillLinkMenulist(linkMenulist, headingsArray) {
 function createMenuItem(label) {
   var menuitem = document.createXULElement("menuitem");
   menuitem.setAttribute("label", label);
-  menuitem.addEventListener("click", event => {
+  menuitem.addEventListener("click", () => {
     gDialog.hrefInput.value = label;
     ChangeLinkLocation();
   });
@@ -665,11 +590,6 @@ function createMenuItem(label) {
 // Shared by Image and Link dialogs for the "Choose" button for links
 function chooseLinkFile() {
   GetLocalFileURL("html, img").then(fileURL => {
-    // Always try to relativize local file URLs
-    if (gHaveDocumentUrl) {
-      fileURL = MakeRelativeUrl(fileURL);
-    }
-
     gDialog.hrefInput.value = fileURL;
 
     // Do stuff specific to a particular dialog

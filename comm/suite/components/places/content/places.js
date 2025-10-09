@@ -6,7 +6,6 @@
 /* import-globals-from editBookmarkOverlay.js */
 /* import-globals-from ../../../../../toolkit/content/contentAreaUtils.js */
 
-var { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 var { AppConstants } =
   ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
 
@@ -162,13 +161,7 @@ var PlacesOrganizer = {
     ContentArea.focus();
   },
 
-  QueryInterface: function PO_QueryInterface(aIID) {
-    if (aIID.equals(Ci.nsIDOMEventListener) ||
-        aIID.equals(Ci.nsISupports))
-      return this;
-
-    throw Cr.NS_NOINTERFACE;
-  },
+  QueryInterface: ChromeUtils.generateQI([]),
 
   handleEvent: function PO_handleEvent(aEvent) {
     if (aEvent.type != "AppCommand")

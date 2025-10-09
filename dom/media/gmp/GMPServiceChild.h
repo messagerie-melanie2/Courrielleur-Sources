@@ -11,17 +11,17 @@
 #include "base/process.h"
 #include "mozilla/dom/PContent.h"
 #include "mozilla/gmp/PGMPServiceChild.h"
+#include "mozilla/media/MediaUtils.h"
 #include "mozilla/MozPromise.h"
-#include "nsIAsyncShutdown.h"
 #include "nsRefPtrHashtable.h"
 
 namespace mozilla::gmp {
 
 class GMPContentParent;
+class GMPContentParentCloseBlocker;
 class GMPServiceChild;
 
-class GeckoMediaPluginServiceChild : public GeckoMediaPluginService,
-                                     public nsIAsyncShutdownBlocker {
+class GeckoMediaPluginServiceChild : public GeckoMediaPluginService {
   friend class GMPServiceChild;
 
  public:
@@ -29,11 +29,13 @@ class GeckoMediaPluginServiceChild : public GeckoMediaPluginService,
   nsresult Init() override;
 
   NS_DECL_ISUPPORTS_INHERITED
-  NS_DECL_NSIASYNCSHUTDOWNBLOCKER
 
   NS_IMETHOD HasPluginForAPI(const nsACString& aAPI,
                              const nsTArray<nsCString>& aTags,
                              bool* aRetVal) override;
+  NS_IMETHOD FindPluginDirectoryForAPI(const nsACString& aAPI,
+                                       const nsTArray<nsCString>& aTags,
+                                       nsIFile** aDirectory) override;
   NS_IMETHOD GetNodeId(const nsAString& aOrigin,
                        const nsAString& aTopLevelOrigin,
                        const nsAString& aGMPName,
@@ -120,11 +122,8 @@ class GeckoMediaPluginServiceChild : public GeckoMediaPluginService,
   // - mShutdownBlockerHasBeenAdded.
   void RemoveShutdownBlockerIfNeeded();
 
-#ifdef DEBUG
-  // Track if we've added a shutdown blocker for sanity checking. Main thread
-  // only.
-  bool mShutdownBlockerAdded = false;
-#endif  // DEBUG
+  // Ticket that controls the shutdown blocker.
+  UniquePtr<media::ShutdownBlockingTicket> mShutdownBlocker;
   // The number of GetContentParent calls that have not yet been resolved or
   // rejected. We use this value to help determine if we need to block
   // shutdown. Should only be used on GMP thread to avoid races.
@@ -132,6 +131,10 @@ class GeckoMediaPluginServiceChild : public GeckoMediaPluginService,
   // End shutdown blocker management.
 };
 
+/**
+ * This class runs in the content process, and allows the content process to
+ * request an IPC connection to the desired GMP process.
+ */
 class GMPServiceChild : public PGMPServiceChild {
  public:
   // Mark AddRef and Release as `final`, as they overload pure virtual
@@ -145,7 +148,11 @@ class GMPServiceChild : public PGMPServiceChild {
 
   void RemoveGMPContentParent(GMPContentParent* aGMPContentParent);
 
-  void GetAlreadyBridgedTo(nsTArray<ProcessId>& aAlreadyBridgedTo);
+  bool HasAlreadyBridgedTo(base::ProcessId aPid) const;
+
+  void GetAndBlockAlreadyBridgedTo(
+      nsTArray<ProcessId>& aAlreadyBridgedTo,
+      nsTArray<RefPtr<GMPContentParentCloseBlocker>>& aBlockers);
 
   static bool Create(Endpoint<PGMPServiceChild>&& aGMPService);
 

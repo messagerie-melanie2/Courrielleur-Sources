@@ -15,7 +15,7 @@
 #include "xpcprivate.h"
 #include "WorkerPrivate.h"
 #include "nsContentUtils.h"
-#include "nsGlobalWindow.h"
+#include "nsGlobalWindowInner.h"
 #include "WorkerScope.h"
 #include "jsapi.h"
 #include "js/ContextOptions.h"
@@ -29,7 +29,7 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(CallbackObject)
 NS_INTERFACE_MAP_END
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(CallbackObject)
-NS_IMPL_CYCLE_COLLECTING_RELEASE(CallbackObject)
+NS_IMPL_CYCLE_COLLECTING_RELEASE_WITH_LAST_RELEASE(CallbackObject, Reset())
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(CallbackObject)
 
@@ -87,7 +87,7 @@ NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(CallbackObject)
   // If a new member is added here, don't forget to update IsBlackForCC.
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
-void CallbackObject::Trace(JSTracer* aTracer) {
+void CallbackObjectBase::Trace(JSTracer* aTracer) {
   JS::TraceEdge(aTracer, &mCallback, "CallbackObject.mCallback");
   JS::TraceEdge(aTracer, &mCallbackGlobal, "CallbackObject.mCallbackGlobal");
   JS::TraceEdge(aTracer, &mCreationStack, "CallbackObject.mCreationStack");
@@ -98,7 +98,7 @@ void CallbackObject::Trace(JSTracer* aTracer) {
 void CallbackObject::FinishSlowJSInitIfMoreThanOneOwner(JSContext* aCx) {
   MOZ_ASSERT(mRefCnt.get() > 0);
   if (mRefCnt.get() > 1) {
-    mozilla::HoldJSObjects(this);
+    mozilla::HoldJSObjectsWithKey(this);
     if (JS::IsAsyncStackCaptureEnabledForRealm(aCx)) {
       JS::Rooted<JSObject*> stack(aCx);
       if (!JS::CaptureCurrentStack(aCx, &stack)) {
@@ -119,7 +119,7 @@ void CallbackObject::FinishSlowJSInitIfMoreThanOneOwner(JSContext* aCx) {
   }
 }
 
-JSObject* CallbackObject::Callback(JSContext* aCx) {
+JSObject* CallbackObjectBase::Callback(JSContext* aCx) {
   JSObject* callback = CallbackOrNull();
   if (!callback) {
     callback = JS_NewDeadWrapper(aCx);
@@ -129,7 +129,7 @@ JSObject* CallbackObject::Callback(JSContext* aCx) {
   return callback;
 }
 
-void CallbackObject::GetDescription(nsACString& aOutString) {
+void CallbackObjectBase::GetDescription(nsACString& aOutString) {
   JSObject* wrappedCallback = CallbackOrNull();
   if (!wrappedCallback) {
     aOutString.Append("<callback from a nuked compartment>");
@@ -157,7 +157,8 @@ void CallbackObject::GetDescription(nsACString& aOutString) {
     return;
   }
 
-  JS::Rooted<JSString*> displayId(cx, JS_GetFunctionDisplayId(rootedFunction));
+  JS::Rooted<JSString*> displayId(
+      cx, JS_GetMaybePartialFunctionDisplayId(rootedFunction));
   if (displayId) {
     nsAutoJSString funcNameStr;
     if (funcNameStr.init(cx, displayId)) {
@@ -187,12 +188,12 @@ void CallbackObject::GetDescription(nsACString& aOutString) {
   aOutString.Append(")");
 }
 
-CallbackObject::CallSetup::CallSetup(CallbackObject* aCallback,
-                                     ErrorResult& aRv,
-                                     const char* aExecutionReason,
-                                     ExceptionHandling aExceptionHandling,
-                                     JS::Realm* aRealm,
-                                     bool aIsJSImplementedWebIDL)
+CallbackObjectBase::CallSetup::CallSetup(CallbackObjectBase* aCallback,
+                                         ErrorResult& aRv,
+                                         const char* aExecutionReason,
+                                         ExceptionHandling aExceptionHandling,
+                                         JS::Realm* aRealm,
+                                         bool aIsJSImplementedWebIDL)
     : mCx(nullptr),
       mRealm(aRealm),
       mErrorResult(aRv),
@@ -318,7 +319,7 @@ CallbackObject::CallSetup::CallSetup(CallbackObject* aCallback,
   mCallContext.emplace(cx, nullptr);
 }
 
-bool CallbackObject::CallSetup::ShouldRethrowException(
+bool CallbackObjectBase::CallSetup::ShouldRethrowException(
     JS::Handle<JS::Value> aException) {
   if (mExceptionHandling == eRethrowExceptions) {
     MOZ_ASSERT(!mRealm);
@@ -339,7 +340,7 @@ bool CallbackObject::CallSetup::ShouldRethrowException(
   return js::GetNonCCWObjectRealm(obj) == mRealm;
 }
 
-CallbackObject::CallSetup::~CallSetup() {
+CallbackObjectBase::CallSetup::~CallSetup() {
   // To get our nesting right we have to destroy our JSAutoRealm first.
   // In particular, we want to do this before we try reporting any exceptions,
   // so we end up reporting them while in the realm of our entry point,

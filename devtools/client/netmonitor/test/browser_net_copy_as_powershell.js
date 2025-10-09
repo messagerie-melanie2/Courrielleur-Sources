@@ -19,7 +19,7 @@ add_task(async function () {
 -Headers @{
 "Accept" = "*/*"
   "Accept-Language" = "en-US"
-  "Accept-Encoding" = "gzip, deflate, br"
+  "Accept-Encoding" = "gzip, deflate, br, zstd"
   "X-Custom-Header-1" = "Custom value"
   "X-Custom-Header-2" = "8.8.8.8"
   "X-Custom-Header-3" = "Mon, 3 Mar 2014 11:11:11 GMT"
@@ -42,7 +42,7 @@ Invoke-WebRequest -UseBasicParsing -Uri "https://example.com/browser/devtools/cl
 -Headers @{
 "Accept" = "*/*"
   "Accept-Language" = "en-US"
-  "Accept-Encoding" = "gzip, deflate, br"
+  "Accept-Encoding" = "gzip, deflate, br, zstd"
   "X-Custom-Header-1" = "Custom value"
   "X-Custom-Header-2" = "8.8.8.8"
   "X-Custom-Header-3" = "Mon, 3 Mar 2014 11:11:11 GMT"
@@ -54,19 +54,21 @@ Invoke-WebRequest -UseBasicParsing -Uri "https://example.com/browser/devtools/cl
   "Cache-Control" = "no-cache"
 }`);
 
+  // disable sending idempotency header for POST request
+  Services.prefs.setBoolPref("network.http.idempotencyKey.enabled", false);
   info("Test powershell command for POST request with post body");
   await performRequest("POST", "Plaintext value as a payload");
   await testClipboardContentForRecentRequest(`$session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 $session.Cookies.Add((New-Object System.Net.Cookie("bob", "true", "/", "example.com")))
 $session.Cookies.Add((New-Object System.Net.Cookie("tom", "cool", "/", "example.com")))
 Invoke-WebRequest -UseBasicParsing -Uri "https://example.com/browser/devtools/client/netmonitor/test/sjs_simple-test-server.sjs" \`
--Method POST \`
+-Method "POST" \`
 -WebSession $session \`
 -UserAgent "${navigator.userAgent}" \`
 -Headers @{
 "Accept" = "*/*"
   "Accept-Language" = "en-US"
-  "Accept-Encoding" = "gzip, deflate, br"
+  "Accept-Encoding" = "gzip, deflate, br, zstd"
   "X-Custom-Header-1" = "Custom value"
   "X-Custom-Header-2" = "8.8.8.8"
   "X-Custom-Header-3" = "Mon, 3 Mar 2014 11:11:11 GMT"
@@ -89,13 +91,13 @@ Invoke-WebRequest -UseBasicParsing -Uri "https://example.com/browser/devtools/cl
 $session.Cookies.Add((New-Object System.Net.Cookie("bob", "true", "/", "example.com")))
 $session.Cookies.Add((New-Object System.Net.Cookie("tom", "cool", "/", "example.com")))
 Invoke-WebRequest -UseBasicParsing -Uri "https://example.com/browser/devtools/client/netmonitor/test/sjs_simple-test-server.sjs" \`
--Method POST \`
+-Method "POST" \`
 -WebSession $session \`
 -UserAgent "${navigator.userAgent}" \`
 -Headers @{
 "Accept" = "*/*"
   "Accept-Language" = "en-US"
-  "Accept-Encoding" = "gzip, deflate, br"
+  "Accept-Encoding" = "gzip, deflate, br, zstd"
   "X-Custom-Header-1" = "Custom value"
   "X-Custom-Header-2" = "8.8.8.8"
   "X-Custom-Header-3" = "Mon, 3 Mar 2014 11:11:11 GMT"

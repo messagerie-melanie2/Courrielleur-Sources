@@ -17,29 +17,35 @@
   }
 }
 
-:root {
-  background-color: -moz-Dialog;
-  color: -moz-DialogText;
-  font: message-box;
-}
-
 /* ::::: Alert icons :::::*/
 
 .message-icon {
-  list-style-image: url("moz-icon://stock/gtk-dialog-info?size=dialog");
+  list-style-image: image-set(
+    "moz-icon://stock/dialog-information?size=48" 1x,
+    "moz-icon://stock/dialog-information?size=48&scale=2" 2x
+  );
 }
 
 .alert-dialog #infoIcon,
 .alert-icon {
-  list-style-image: url("moz-icon://stock/gtk-dialog-warning?size=dialog");
+  list-style-image: image-set(
+    "moz-icon://stock/dialog-warning?size=48" 1x,
+    "moz-icon://stock/dialog-warning?size=48&scale=2" 2x
+  );
 }
 
 .error-icon {
-  list-style-image: url("moz-icon://stock/gtk-dialog-error?size=dialog");
+  list-style-image: image-set(
+    "moz-icon://stock/dialog-error?size=48" 1x,
+    "moz-icon://stock/dialog-error?size=48&scale=2" 2x
+  );
 }
 
 .question-icon {
-  list-style-image: url("moz-icon://stock/gtk-dialog-question?size=dialog");
+  list-style-image: image-set(
+    "moz-icon://stock/dialog-question?size=48" 1x,
+    "moz-icon://stock/dialog-question?size=48&scale=2" 2x
+  );
 }
 
 .authentication-icon {
@@ -83,10 +89,6 @@ xul|separator.groove[orient="vertical"] {
 }
 
 /* Other margins */
-
-html|input {
-  margin: 2px 4px;
-}
 
 xul|notification > xul|hbox > xul|button {
   margin-block: 0;

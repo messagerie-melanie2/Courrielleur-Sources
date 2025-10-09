@@ -9,19 +9,19 @@ use crate::{Connection, Result};
 /// Database Connection Configuration Options
 /// See [Database Connection Configuration Options](https://sqlite.org/c3ref/c_dbconfig_enable_fkey.html) for details.
 #[repr(i32)]
-#[allow(non_snake_case, non_camel_case_types)]
+#[derive(Copy, Clone, Debug)]
+#[expect(non_camel_case_types)]
 #[non_exhaustive]
-#[allow(clippy::upper_case_acronyms)]
 pub enum DbConfig {
     //SQLITE_DBCONFIG_MAINDBNAME = 1000, /* const char* */
     //SQLITE_DBCONFIG_LOOKASIDE = 1001,  /* void* int int */
     /// Enable or disable the enforcement of foreign key constraints.
-    SQLITE_DBCONFIG_ENABLE_FKEY = 1002,
+    SQLITE_DBCONFIG_ENABLE_FKEY = ffi::SQLITE_DBCONFIG_ENABLE_FKEY,
     /// Enable or disable triggers.
-    SQLITE_DBCONFIG_ENABLE_TRIGGER = 1003,
-    /// Enable or disable the fts3_tokenizer() function which is part of the
+    SQLITE_DBCONFIG_ENABLE_TRIGGER = ffi::SQLITE_DBCONFIG_ENABLE_TRIGGER,
+    /// Enable or disable the `fts3_tokenizer()` function which is part of the
     /// FTS3 full-text search engine extension.
-    SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER = 1004, // 3.12.0
+    SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER = ffi::SQLITE_DBCONFIG_ENABLE_FTS3_TOKENIZER, // 3.12.0
     //SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION = 1005,
     /// In WAL mode, enable or disable the checkpoint operation before closing
     /// the connection.
@@ -36,7 +36,7 @@ pub enum DbConfig {
     SQLITE_DBCONFIG_RESET_DATABASE = 1009, // 3.24.0
     /// Activates or deactivates the "defensive" flag for a database connection.
     SQLITE_DBCONFIG_DEFENSIVE = 1010, // 3.26.0
-    /// Activates or deactivates the "writable_schema" flag.
+    /// Activates or deactivates the `writable_schema` flag.
     #[cfg(feature = "modern_sqlite")]
     SQLITE_DBCONFIG_WRITABLE_SCHEMA = 1011, // 3.28.0
     /// Activates or deactivates the legacy behavior of the ALTER TABLE RENAME
@@ -58,9 +58,16 @@ pub enum DbConfig {
     #[cfg(feature = "modern_sqlite")]
     SQLITE_DBCONFIG_LEGACY_FILE_FORMAT = 1016, // 3.31.0
     /// Tells SQLite to assume that database schemas (the contents of the
-    /// sqlite_master tables) are untainted by malicious content.
+    /// `sqlite_master` tables) are untainted by malicious content.
     #[cfg(feature = "modern_sqlite")]
     SQLITE_DBCONFIG_TRUSTED_SCHEMA = 1017, // 3.31.0
+    /// Sets or clears a flag that enables collection of the
+    /// `sqlite3_stmt_scanstatus_v2()` statistics
+    #[cfg(feature = "modern_sqlite")]
+    SQLITE_DBCONFIG_STMT_SCANSTATUS = 1018, // 3.42.0
+    /// Changes the default order in which tables and indexes are scanned
+    #[cfg(feature = "modern_sqlite")]
+    SQLITE_DBCONFIG_REVERSE_SCANORDER = 1019, // 3.42.0
 }
 
 impl Connection {
@@ -115,7 +122,7 @@ impl Connection {
             check(ffi::sqlite3_db_config(
                 c.db(),
                 config as c_int,
-                if new_val { 1 } else { 0 },
+                new_val as c_int,
                 &mut val,
             ))?;
             Ok(val != 0)

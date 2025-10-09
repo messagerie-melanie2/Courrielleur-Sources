@@ -20,6 +20,7 @@
 #include "mozilla/Components.h"
 #include "mozilla/ErrorNames.h"
 #include "mozilla/ResultExtensions.h"
+#include "mozilla/Try.h"
 #include "mozilla/Unused.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/Event.h"
@@ -65,6 +66,7 @@ static const ClassificationStruct classificationArray[] = {
     {CF::CLASSIFIED_CRYPTOMINING_CONTENT, MUC::Cryptomining_content},
     {CF::CLASSIFIED_EMAILTRACKING, MUC::Emailtracking},
     {CF::CLASSIFIED_EMAILTRACKING_CONTENT, MUC::Emailtracking_content},
+    {CF::CLASSIFIED_CONSENTMANAGER, MUC::Consentmanager},
     {CF::CLASSIFIED_TRACKING, MUC::Tracking},
     {CF::CLASSIFIED_TRACKING_AD, MUC::Tracking_ad},
     {CF::CLASSIFIED_TRACKING_ANALYTICS, MUC::Tracking_analytics},
@@ -85,7 +87,7 @@ static const ClassificationStruct classificationArray[] = {
 namespace {
 class ChannelListHolder : public LinkedList<ChannelWrapper> {
  public:
-  ChannelListHolder() : LinkedList<ChannelWrapper>() {}
+  ChannelListHolder() = default;
 
   ~ChannelListHolder();
 };
@@ -179,7 +181,7 @@ already_AddRefed<ChannelWrapper> ChannelWrapper::GetRegisteredChannel(
   auto& webreq = WebRequestService::GetSingleton();
 
   nsCOMPtr<nsITraceableChannel> channel =
-      webreq.GetTraceableChannel(aChannelId, aAddon.Id(), contentParent);
+      webreq.GetTraceableChannel(aChannelId, aAddon, contentParent);
   if (!channel) {
     return nullptr;
   }
@@ -188,12 +190,20 @@ already_AddRefed<ChannelWrapper> ChannelWrapper::GetRegisteredChannel(
 }
 
 void ChannelWrapper::SetChannel(nsIChannel* aChannel) {
+  // SetChannel is called when the channel changes, e.g. by redirects.
+  // NOTE: Redirect tracking depends on a webRequest listener (bug 1799118).
   detail::ChannelHolder::SetChannel(aChannel);
   ClearCachedAttributes();
+  // Method may change when the request is redirected with HTTP 301, 302, 303.
+  ChannelWrapper_Binding::ClearCachedMethodValue(this);
+
+  // Clear all fields whose state is derived from the channel's URL.
   ChannelWrapper_Binding::ClearCachedFinalURIValue(this);
   ChannelWrapper_Binding::ClearCachedFinalURLValue(this);
   mFinalURLInfo.reset();
   ChannelWrapper_Binding::ClearCachedProxyInfoValue(this);
+  ChannelWrapper_Binding::ClearCachedThirdPartyValue(this);
+  ChannelWrapper_Binding::ClearCachedCanModifyValue(this);
 }
 
 void ChannelWrapper::ClearCachedAttributes() {
@@ -510,39 +520,17 @@ bool ChannelWrapper::IsServiceWorkerScript(const nsCOMPtr<nsIChannel>& chan) {
   return false;
 }
 
-static inline bool IsSystemPrincipal(nsIPrincipal* aPrincipal) {
-  return BasePrincipal::Cast(aPrincipal)->Is<SystemPrincipal>();
-}
-
-bool ChannelWrapper::IsSystemLoad() const {
-  if (nsCOMPtr<nsILoadInfo> loadInfo = GetLoadInfo()) {
-    if (nsIPrincipal* prin = loadInfo->GetLoadingPrincipal()) {
-      return IsSystemPrincipal(prin);
-    }
-
-    if (RefPtr<BrowsingContext> bc = loadInfo->GetBrowsingContext();
-        !bc || bc->IsTop()) {
-      return false;
-    }
-
-    if (nsIPrincipal* prin = loadInfo->PrincipalToInherit()) {
-      return IsSystemPrincipal(prin);
-    }
-    if (nsIPrincipal* prin = loadInfo->TriggeringPrincipal()) {
-      return IsSystemPrincipal(prin);
-    }
-  }
-  return false;
-}
-
 bool ChannelWrapper::CanModify() const {
+  if (!HaveChannel()) {
+    return false;
+  }
   if (WebExtensionPolicy::IsRestrictedURI(FinalURLInfo())) {
     return false;
   }
 
   if (nsCOMPtr<nsILoadInfo> loadInfo = GetLoadInfo()) {
     if (nsIPrincipal* prin = loadInfo->GetLoadingPrincipal()) {
-      if (IsSystemPrincipal(prin)) {
+      if (prin->IsSystemPrincipal()) {
         return false;
       }
 
@@ -594,9 +582,10 @@ void ChannelWrapper::GetDocumentURL(nsCString& aRetVal) const {
 }
 
 const URLInfo& ChannelWrapper::FinalURLInfo() const {
+  MOZ_ASSERT(HaveChannel());
   if (mFinalURLInfo.isNothing()) {
     ErrorResult rv;
-    nsCOMPtr<nsIURI> uri = FinalURI();
+    nsCOMPtr<nsIURI> uri = GetFinalURI();
     MOZ_ASSERT(uri);
 
     // If this is a view-source scheme, get the nested uri.
@@ -655,7 +644,7 @@ bool ChannelWrapper::Matches(
 
   nsCOMPtr<nsILoadInfo> loadInfo = GetLoadInfo();
   bool isPrivate =
-      loadInfo && loadInfo->GetOriginAttributes().mPrivateBrowsingId > 0;
+      loadInfo && loadInfo->GetOriginAttributes().IsPrivateBrowsing();
   if (!aFilter.mIncognito.IsNull() && aFilter.mIncognito.Value() != isPrivate) {
     return false;
   }
@@ -666,17 +655,17 @@ bool ChannelWrapper::Matches(
       return false;
     }
 
-    bool isProxy =
-        aOptions.mIsProxy && aExtension->HasPermission(nsGkAtoms::proxy);
-    // Proxies are allowed access to all urls, including restricted urls.
-    if (!aExtension->CanAccessURI(urlInfo, false, !isProxy, true)) {
+    // The third parameter (aCheckRestricted) is false because we already check
+    // restricted URLs below as part of CanModify().
+    if (!aExtension->CanAccessURI(urlInfo, false, false, true)) {
       return false;
     }
 
+    // Proxies are allowed access to all urls, including restricted urls.
     // If this isn't the proxy phase of the request, check that the extension
     // has origin permissions for origin that originated the request.
-    if (!isProxy) {
-      if (IsSystemLoad()) {
+    if (!aOptions.mIsProxy || !aExtension->HasPermission(nsGkAtoms::proxy)) {
+      if (!CanModify()) {
         return false;
       }
 
@@ -684,11 +673,14 @@ bool ChannelWrapper::Matches(
       // Extensions with the file:-permission may observe requests from file:
       // origins, because such documents can already be modified by content
       // scripts anyway.
-      if (origin && !aExtension->CanAccessURI(*origin, false, true, true)) {
+      if (origin && !aExtension->CanAccessURI(*origin, false, false, true)) {
         return false;
       }
     }
   }
+  // In theory, we could still be checking CanModify() even if !aExtension
+  // because the check is independent of extensions. However, we do not because
+  // there is no way for unprivileged code to end up with !aExtension.
 
   return true;
 }
@@ -808,6 +800,8 @@ void ChannelWrapper::RegisterTraceableChannel(const WebExtensionPolicy& aAddon,
                                               nsIRemoteTab* aBrowserParent) {
   // We can't attach new listeners after the response has started, so don't
   // bother registering anything.
+  // NOTE: It is possible for mResponseStarted to be false despite the response
+  // having been started, when ChannelWrapper is instantiated after that point.
   if (mResponseStarted || !CanModify()) {
     return;
   }
@@ -820,9 +814,22 @@ void ChannelWrapper::RegisterTraceableChannel(const WebExtensionPolicy& aAddon,
 }
 
 already_AddRefed<nsITraceableChannel> ChannelWrapper::GetTraceableChannel(
-    nsAtom* aAddonId, dom::ContentParent* aContentParent) const {
+    const WebExtensionPolicy& aAddon,
+    dom::ContentParent* aContentParent) const {
   nsCOMPtr<nsIRemoteTab> remoteTab;
-  if (mAddonEntries.Get(aAddonId, getter_AddRefs(remoteTab))) {
+  if (mAddonEntries.Get(aAddon.Id(), getter_AddRefs(remoteTab))) {
+    // aAddon existing in mAddonEntries implies that RegisterTraceableChannel
+    // was called before (in WebRequest.sys.mjs), which implies that
+    // ChannelWrapper::Matches() returned true before. That implies that
+    // CanAccessURI() was also true for the request origin (DocumentURLInfo()),
+    // so we do not need to check that again here because it is constant for
+    // the duration of the request. We need to revalidate FinalURLInfo() in
+    // case it changed, e.g. due to a redirect or permission change.
+    if (!HaveChannel() ||
+        !aAddon.CanAccessURI(FinalURLInfo(), false, true, true)) {
+      return nullptr;
+    }
+
     ContentParent* contentParent = nullptr;
     if (remoteTab) {
       contentParent =
@@ -857,8 +864,6 @@ MozContentPolicyType GetContentPolicyType(ExtContentPolicyType aType) {
       return MozContentPolicyType::Image;
     case ExtContentPolicy::TYPE_OBJECT:
       return MozContentPolicyType::Object;
-    case ExtContentPolicy::TYPE_OBJECT_SUBREQUEST:
-      return MozContentPolicyType::Object_subrequest;
     case ExtContentPolicy::TYPE_XMLHTTPREQUEST:
       return MozContentPolicyType::Xmlhttprequest;
     // TYPE_FETCH returns xmlhttprequest for cross-browser compatibility.
@@ -887,10 +892,14 @@ MozContentPolicyType GetContentPolicyType(ExtContentPolicyType aType) {
       return MozContentPolicyType::Web_manifest;
     case ExtContentPolicy::TYPE_SPECULATIVE:
       return MozContentPolicyType::Speculative;
+    case ExtContentPolicy::TYPE_JSON:
+      return MozContentPolicyType::Json;
     case ExtContentPolicy::TYPE_PROXIED_WEBRTC_MEDIA:
     case ExtContentPolicy::TYPE_INVALID:
     case ExtContentPolicy::TYPE_OTHER:
     case ExtContentPolicy::TYPE_SAVEAS_DOWNLOAD:
+    case ExtContentPolicy::TYPE_WEB_TRANSPORT:
+    case ExtContentPolicy::TYPE_WEB_IDENTITY:
       break;
       // Do not add default: so that compilers can catch the missing case.
   }
@@ -960,7 +969,7 @@ uint64_t ChannelWrapper::RequestSize() const {
  * ...
  *****************************************************************************/
 
-already_AddRefed<nsIURI> ChannelWrapper::FinalURI() const {
+already_AddRefed<nsIURI> ChannelWrapper::GetFinalURI() const {
   nsCOMPtr<nsIURI> uri;
   if (nsCOMPtr<nsIChannel> chan = MaybeChannel()) {
     NS_GetFinalChannelURI(chan, getter_AddRefs(uri));
@@ -1201,6 +1210,18 @@ ChannelWrapper::RequestListener::CheckListenerChain() {
     return retargetableListener->CheckListenerChain();
   }
   return rv;
+}
+
+NS_IMETHODIMP
+ChannelWrapper::RequestListener::OnDataFinished(nsresult aStatus) {
+  MOZ_ASSERT(mOrigStreamListener, "Should have mOrigStreamListener");
+  nsCOMPtr<nsIThreadRetargetableStreamListener> retargetableListener =
+      do_QueryInterface(mOrigStreamListener);
+  if (retargetableListener) {
+    return retargetableListener->OnDataFinished(aStatus);
+  }
+
+  return NS_OK;
 }
 
 /*****************************************************************************

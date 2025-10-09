@@ -1,6 +1,6 @@
-/* - This Source Code Form is subject to the terms of the Mozilla Public
-   - License, v. 2.0. If a copy of the MPL was not distributed with this file,
-   - You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 @import url("chrome://messenger/skin/shared/preferences/subdialog.css");
 @import url("chrome://messenger/skin/colors.css");
@@ -25,15 +25,18 @@ search-textbox {
 
 button {
   padding: 0 12px;
+
+  &[open="true"] {
+    color: var(--in-content-button-text-color-hover);
+  }
 }
 
 menulist {
   padding: 0 6px;
-}
 
-button[open="true"],
-menulist[open="true"] {
-  color: var(--in-content-button-text-color-hover);
+  &[open="true"] {
+    color: var(--in-content-button-text-color-hover);
+  }
 }
 
 button,
@@ -99,12 +102,10 @@ fieldset {
   margin: 0 0 32px;
   padding: 0;
   border-style: none !important;
-}
 
-fieldset > hbox,
-fieldset > vbox,
-fieldset > radiogroup {
-  width: -moz-available;
+  & > :where(hbox, vbox, radiogroup) {
+    width: -moz-available;
+  }
 }
 
 html|h1 {
@@ -119,6 +120,7 @@ html|legend {
   font-size: 1.1em;
   font-weight: 600;
   line-height: 1.4em;
+  padding: 0;
 }
 
 html|th {
@@ -138,7 +140,7 @@ menulist::part(label-box) {
 }
 
 menulist::part(icon),
-.abMenuItem > .menu-iconic-left > .menu-iconic-icon {
+.abMenuItem > .menu-icon {
   -moz-context-properties: fill, stroke;
   fill: color-mix(in srgb, currentColor 20%, transparent);
   stroke: currentColor;
@@ -157,7 +159,7 @@ menulist::part(dropmarker-icon) {
   stroke: currentColor;
 }
 
-.abMenuItem > .menu-iconic-left {
+.abMenuItem > .menu-icon {
   display: block;
 }
 
@@ -201,51 +203,51 @@ menulist::part(dropmarker-icon) {
   border: 1px solid #d7b600;
   bottom: 36px;
   opacity: 0.85;
-}
 
-.search-tooltip:hover {
-  opacity: 0.1;
-}
-
-.search-tooltip::before {
-  position: absolute;
-  content: "";
-  border: 7px solid transparent;
-  border-top-color: #d7b600;
-  top: 100%;
-  inset-inline-start: calc(50% - 7px);
-  forced-color-adjust: none;
-}
-
-.search-tooltip::after {
-  position: absolute;
-  content: "";
-  border: 6px solid transparent;
-  border-top-color: #ffe900;
-  top: 100%;
-  inset-inline-start: calc(50% - 6px);
-  forced-color-adjust: none;
-}
-
-@media (forced-colors: active) {
-  .search-tooltip::before {
-    border-top-color: CanvasText;
+  &:hover {
+    opacity: 0.1;
   }
 
-  .search-tooltip::after {
-    border-top-color: Canvas;
+  &::before {
+    position: absolute;
+    content: "";
+    border: 7px solid transparent;
+    border-top-color: #d7b600;
+    top: 100%;
+    inset-inline-start: calc(50% - 7px);
+    forced-color-adjust: none;
+  }
+
+  &::after {
+    position: absolute;
+    content: "";
+    border: 6px solid transparent;
+    border-top-color: #ffe900;
+    top: 100%;
+    inset-inline-start: calc(50% - 6px);
+    forced-color-adjust: none;
+  }
+
+  @media (forced-colors: active) {
+    &::before {
+      border-top-color: CanvasText;
+    }
+
+    &::after {
+      border-top-color: Canvas;
+    }
+  }
+
+  & > span {
+    user-select: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }
 
 .search-tooltip-parent {
   position: relative;
-}
-
-.search-tooltip > span {
-  user-select: none;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .tip-caption {
@@ -311,54 +313,57 @@ html|input[type="number"] {
   margin-inline-start: 4px;
   padding: 1px;
   min-height: calc(var(--in-content-button-height) - 4px);
-}
-/* sizes: chars + 8px padding + 1px borders + spin buttons 25+2+10px  */
-html|input[type="number"].size2 {
-  width: calc(2ch + 55px);
-}
-html|input[type="number"].size3 {
-  width: calc(3ch + 55px);
-}
-html|input[type="number"].size4 {
-  width: calc(4ch + 55px);
-}
-html|input[type="number"].size5 {
-  width: calc(5ch + 55px);
-}
 
-html|input[type="number"]::-moz-number-spin-box {
-  padding-inline-start: 10px;
-}
+  /* sizes: chars + 8px padding + 1px borders + spin buttons 25+2+10px  */
+  &.size2 {
+    width: calc(2ch + 55px);
+  }
+  &.size3 {
+    width: calc(3ch + 55px);
+  }
+  &.size4 {
+    width: calc(4ch + 55px);
+  }
+  &.size5 {
+    width: calc(5ch + 55px);
+  }
 
-html|input[type="number"]::-moz-number-spin-up,
-html|input[type="number"]::-moz-number-spin-down {
-  appearance: none;
-  min-width: 25px;
-  border: 1px solid var(--in-content-box-border-color);
-  background-color: var(--in-content-button-background);
-  background-position: center;
-  background-repeat: no-repeat;
-  -moz-context-properties: stroke;
-  stroke: currentColor;
-}
+  &::-moz-number-spin-box {
+    padding-inline-start: 10px;
+  }
 
-html|input[type="number"]::-moz-number-spin-up:hover,
-html|input[type="number"]::-moz-number-spin-down:hover {
-  background-color: var(--in-content-button-background-hover);
-}
+  &::-moz-number-spin-up,
+  &::-moz-number-spin-down {
+    appearance: none;
+    min-width: 25px;
+    border: 1px solid var(--in-content-box-border-color);
+    background-color: var(--in-content-button-background);
+    background-position: center;
+    background-repeat: no-repeat;
+    color: var(--in-content-button-text-color);
+    -moz-context-properties: stroke;
+    stroke: currentColor;
+  }
 
-html|input[type="number"]::-moz-number-spin-up {
-  min-height: calc(var(--in-content-button-height) * 0.5 - 3px);
-  border-bottom-width: 1px;
-  border-bottom-style: solid;
-  border-radius: 1px 1px 0 0;
-  background-image: url("chrome://messenger/skin/icons/new/nav-up-sm.svg");
-}
+  &::-moz-number-spin-up:hover,
+  &::-moz-number-spin-down:hover {
+    background-color: var(--in-content-button-background-hover);
+    color: var(--in-content-button-text-color-hover);
+  }
 
-html|input[type="number"]::-moz-number-spin-down {
-  min-height: calc(var(--in-content-button-height) * 0.5 - 4px);
-  border-radius: 0 0 1px 1px;
-  background-image: url("chrome://messenger/skin/icons/new/nav-down-sm.svg");
+  &::-moz-number-spin-up {
+    min-height: calc(var(--in-content-button-height) * 0.5 - 3px);
+    border-bottom-width: 1px;
+    border-bottom-style: solid;
+    border-radius: 1px 1px 0 0;
+    background-image: url("chrome://messenger/skin/icons/new/nav-up-sm.svg");
+  }
+
+  &::-moz-number-spin-down {
+    min-height: calc(var(--in-content-button-height) * 0.5 - 4px);
+    border-radius: 0 0 1px 1px;
+    background-image: url("chrome://messenger/skin/icons/new/nav-down-sm.svg");
+  }
 }
 
 separator.groove:not([orient="vertical"]) {
@@ -366,23 +371,25 @@ separator.groove:not([orient="vertical"]) {
   border-bottom-width: 0;
 }
 
-tab:not([selected="true"]):hover {
-  border-bottom-color: transparent;
+tab {
+  &:not([selected="true"]):hover {
+    border-bottom-color: transparent;
+  }
+
+  &:focus-visible {
+    background-color: var(--in-content-button-background);
+
+    & > .tab-middle {
+      outline: none;
+
+      & > .tab-text {
+        outline: none;
+      }
+    }
+  }
 }
 
-tab:-moz-focusring > .tab-middle {
-  outline: none;
-}
-
-tab:focus-visible {
-  background-color: var(--in-content-button-background);
-}
-
-tab:focus-visible > .tab-middle > .tab-text {
-  outline: none;
-}
-
-#defaultWebSearchPopup > menuitem > .menu-iconic-left {
+#defaultWebSearchPopup > menuitem > .menu-icon {
   display: flex;
 }
 
@@ -397,6 +404,7 @@ tab:focus-visible > .tab-middle > .tab-text {
 description > html|a {
   cursor: pointer;
 }
+
 #previewBox {
   height: 220px;
 }
@@ -413,6 +421,16 @@ checkbox {
   margin-inline: 0;
 }
 
+treechildren::-moz-tree-row(selected) {
+  background-color: var(--in-content-item-selected) !important;
+  border-color: transparent;
+  outline-color: transparent;
+}
+
+treechildren::-moz-tree-cell-text(selected) {
+  color: var(--in-content-item-selected-text);
+}
+
 .align-no-label {
   margin-inline-start: 4px;
 }
@@ -425,6 +443,10 @@ checkbox {
   margin-inline-start: 0;
   font-weight: normal;
   white-space: nowrap;
+}
+
+.accessory-button {
+  min-width: 150px;
 }
 
 #tagList {
@@ -442,33 +464,34 @@ checkbox {
 .update-deck-container {
   display: flex;
   align-items: center;
-}
 
-.update-deck-container > * {
-  flex: 0 0 auto;
-}
+  & > * {
+    flex: 0 0 auto;
+  }
 
-.update-deck-container.deck-selected {
-  visibility: visible;
-}
+  &.deck-selected {
+    visibility: visible;
+  }
 
-.update-deck-container > button {
-  /* Align the button at the end. */
-  margin-inline-start: auto;
+  & > button {
+    /* Align the button at the end. */
+    margin-inline-start: auto;
+  }
 }
 
 .update-throbber {
-  width: 16px;
-  height: 16px;
-  margin-inline: 6px 4px;
-  content: image-set(url("chrome://global/skin/icons/loading.png"),
-                     url("chrome://global/skin/icons/loading@2x.png") 2x);
-}
+  width: 1.3em;
+  min-height: 1.3em;
+  margin-inline-end: 8px;
+  content: url("chrome://messenger/skin/icons/spinning.svg");
+  -moz-context-properties: fill;
+  fill: var(--in-content-accent-color);
 
-/* Work around bug 560067 - animated images in visibility: hidden
- * still eat CPU. */
-#updateDeck > *:not(.deck-selected) > .update-throbber {
-  display: none;
+  /* Work around bug 560067 - animated images in visibility: hidden
+   * still eat CPU. */
+  #updateDeck > *:not(.deck-selected) > & {
+    display: none;
+  }
 }
 
 .updateSettingCrossUserWarningContainer {
@@ -490,10 +513,10 @@ checkbox {
   background-repeat: no-repeat;
   -moz-context-properties: fill;
   fill: currentColor;
-}
 
-#updateSettingCrossUserWarning:-moz-locale-dir(rtl) {
-  background-position-x: right 2px;
+  &:-moz-locale-dir(rtl) {
+    background-position-x: right 2px;
+  }
 }
 
 #releasenotes {
@@ -508,10 +531,10 @@ checkbox {
   margin-block: 4px;
   width: 100%;
   display: flex;
-}
 
-#telemetry-container[hidden] {
-  display: none;
+  &[hidden] {
+    display: none;
+  }
 }
 
 #telemetryInfoIcon {
@@ -550,11 +573,11 @@ checkbox {
   list-style-type: none;
   padding: 0;
   margin-block: 0.5em;
-}
 
-#dictionaryList label {
-  display: flex;
-  align-items: center;
+  & label {
+    display: flex;
+    align-items: center;
+  }
 }
 
 /**
@@ -583,36 +606,38 @@ checkbox {
 
 #preferencesContainer richlistbox {
   appearance: none;
-  background-color: var(--in-content-box-background);
+  background-color: var(--background-color-box);
   color: var(--in-content-text-color);
+
+  & richlistitem {
+    padding: 0.3em;
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    background-image: none;
+  }
 }
 
-#preferencesContainer richlistbox richlistitem {
-  padding: 0.3em;
-  margin: 0;
-  border: none;
-  border-radius: 0;
-  background-image: none;
-}
+#containerBox richlistbox,
+#identitiesList richlistbox,
+#preferencesContainer richlistbox {
+  & richlistitem {
+    &:hover {
+      background-color: var(--in-content-item-hover);
+    }
 
-#containerBox richlistbox richlistitem:hover,
-#identitiesList richlistbox richlistitem:hover,
-#preferencesContainer richlistbox richlistitem:hover {
-  background-color: var(--in-content-item-hover);
-}
+    &[selected="true"] {
+      background-color: var(--in-content-item-selected-unfocused);
+      color: inherit;
+    }
+  }
 
-#containerBox richlistitem[selected="true"],
-#identitiesList richlistitem[selected="true"],
-#preferencesContainer richlistitem[selected="true"] {
-  background-color: var(--in-content-item-selected-unfocused);
-  color: inherit;
-}
-
-#containerBox richlistbox:focus > richlistitem[selected="true"],
-#identitiesList:focus > richlistitem[selected="true"],
-#preferencesContainer richlistbox:focus > richlistitem[selected="true"] {
-  background-color: var(--in-content-item-selected);
-  color: var(--in-content-item-selected-text) !important;
+  &:focus {
+    & > richlistitem[selected="true"] {
+      background-color: var(--in-content-item-selected);
+      color: var(--in-content-item-selected-text) !important;
+    }
+  }
 }
 
 #defaultWebSearch {
@@ -637,14 +662,19 @@ checkbox {
 
 #availableLocales {
   margin-inline: 0;
+
+  & > image {
+    -moz-context-properties: fill;
+    fill: var(--selected-item-color);
+  }
 }
 
 #warning-message {
   margin-top: 8px;
-}
 
-#warning-message > .message-bar-description {
-  width: 32em;
+  & > .message-bar-description {
+    width: 32em;
+  }
 }
 
 .action-button {
@@ -659,6 +689,15 @@ checkbox {
 #new-tag-button,
 #newCButton {
   margin-top: 0;
+}
+
+#PermissionsDialog > body {
+  min-height: 100vh;
+  display: flex;
+}
+
+#permissionsTree {
+  flex: 1 1 0;
 }
 
 /* Menulist styles */
@@ -677,6 +716,12 @@ checkbox {
   border-radius: unset;
 }
 
+#synchronizeTree treechildren::-moz-tree-twisty(selected, focus),
+#synchronizeTree treechildren::-moz-tree-image(folderNameCol, selected, focus) {
+  fill: color-mix(in srgb, currentColor 20%, transparent) !important;
+  stroke: currentColor !important;
+}
+
 /**
  * Connection dialog
  */
@@ -689,14 +734,14 @@ checkbox {
 #proxyExtensionDescription {
   margin-block: 0;
   flex: 1 1 auto;
-}
 
-#proxyExtensionDescription > img {
-  height: 20px;
-  width: 20px;
-  vertical-align: text-bottom;
-  -moz-context-properties: fill;
-  fill: currentColor;
+  & > img {
+    height: 20px;
+    width: 20px;
+    vertical-align: text-bottom;
+    -moz-context-properties: fill;
+    fill: currentColor;
+  }
 }
 
 #proxyExtensionDisable {
@@ -724,28 +769,28 @@ calendar-notifications-setting {
   display: flex;
   flex-direction: column;
   margin-bottom: 9px;
-}
 
-calendar-notifications-setting .add-button {
-  list-style-image: var(--icon-add);
-  -moz-context-properties: stroke;
-  stroke: currentColor;
-}
+  & .add-button {
+    list-style-image: var(--icon-add);
+    -moz-context-properties: stroke;
+    stroke: currentColor;
 
-calendar-notifications-setting .add-button .button-icon {
-  margin-inline-end: 6px;
-}
+    & .button-icon {
+      margin-inline-end: 6px;
+    }
+  }
 
-calendar-notifications-setting .remove-button {
-  width: 32px;
-  min-width: 0;
-  padding: 0;
-  list-style-image: var(--icon-trash);
-  -moz-context-properties: fill, stroke;
-  fill: color-mix(in srgb, currentColor 20%, transparent);
-  stroke: currentColor;
-  background: none;
-  --in-content-button-horizontal-padding: 0;
+  & .remove-button {
+    width: 32px;
+    min-width: 0;
+    padding: 0;
+    list-style-image: var(--icon-trash);
+    -moz-context-properties: fill, stroke;
+    fill: color-mix(in srgb, currentColor 20%, transparent);
+    stroke: currentColor;
+    background: none;
+    --in-content-button-horizontal-padding: 0;
+  }
 }
 
 /**
@@ -819,16 +864,16 @@ calendar-notifications-setting .remove-button {
   object-fit: cover;
   object-position: center;
   border: 1px solid var(--in-content-button-background);
-}
 
-.contact-photo[src=""] {
-  background-color: var(--in-content-button-background);
-  background-image: var(--icon-user);
-  background-size: 48px;
-  background-position: calc(50% - 1px) calc(50% - 1px);
-  background-repeat: no-repeat;
-  -moz-context-properties: stroke;
-  stroke: color-mix(in srgb, currentColor 30%, transparent);
+  &[src=""] {
+    background-color: var(--in-content-button-background);
+    background-image: var(--icon-user);
+    background-size: 48px;
+    background-position: calc(50% - 1px) calc(50% - 1px);
+    background-repeat: no-repeat;
+    -moz-context-properties: stroke;
+    stroke: color-mix(in srgb, currentColor 30%, transparent);
+  }
 }
 
 #photoButton {
@@ -839,37 +884,35 @@ calendar-notifications-setting .remove-button {
   overflow: hidden;
   background-color: transparent;
   border: none;
-}
 
-#photoButton:hover {
-  background: none;
-}
+  &:hover {
+    background: none;
+  }
 
-#photoOverlay {
-  position: absolute;
-  inset: 0;
-  border-radius: 100%;
-}
+  &:focus-visible {
+    outline: 2px solid var(--in-content-focus-outline-color);
+    outline-offset: 2px;
+  }
 
-#photoButton:focus-visible {
-  outline: 2px solid var(--in-content-focus-outline-color);
-  outline-offset: 2px;
-}
+  & #photoOverlay {
+    position: absolute;
+    inset: 0;
+    border-radius: 100%;
+    }
 
-#photoButton:is(:focus-visible, :hover) #photoOverlay {
-  background-color: color-mix(in srgb, var(--color-gray-90) 75%, transparent);
-  background-image: var(--icon-more);
-  background-position: center center;
-  background-repeat: no-repeat;
-  background-size: 48px;
-  -moz-context-properties: stroke;
-  stroke: var(--color-white);
-  cursor: pointer;
-}
+  &:is(:focus-visible, :hover) #photoOverlay {
+    background-color: color-mix(in srgb, var(--color-gray-90) 75%, transparent);
+    background-image: var(--icon-more);
+    background-position: center center;
+    background-repeat: no-repeat;
+    background-size: 48px;
+    -moz-context-properties: stroke;
+    stroke: var(--color-white);
+    cursor: pointer;
 
-@media (prefers-contrast) {
-  #photoButton:is(:focus-visible, :hover) #photoOverlay {
-    background-color: var(--color-black);
+    @media (prefers-contrast) {
+      background-color: var(--color-black);
+    }
   }
 }
 
@@ -942,13 +985,15 @@ calendar-notifications-setting .remove-button {
   border-radius: 6px;
 }
 
-#syncDisconnected .sync-panel {
-  grid-template-columns: 1fr auto;
-  align-items: center;
-}
+#syncDisconnected {
+  & .sync-panel {
+    grid-template-columns: 1fr auto;
+    align-items: center;
+  }
 
-#syncDisconnected p {
-  margin: 0;
+  & p {
+    margin: 0;
+  }
 }
 
 #showSyncedListHeading {
@@ -1072,10 +1117,10 @@ calendar-notifications-setting .remove-button {
   -moz-context-properties: fill, stroke;
   fill: color-mix(in srgb, currentColor 20%, transparent);
   stroke: currentColor;
-}
 
-.config-list li {
-  list-style: none;
+  & li {
+    list-style: none;
+  }
 }
 
 .synced-account .config-list {
@@ -1087,12 +1132,357 @@ calendar-notifications-setting .remove-button {
   display: inline-flex;
   align-items: center;
   line-height: 1;
+
+  & label::before {
+    display: inline-block;
+    height: 16px;
+    width: 16px;
+    margin-inline-end: 6px;
+    vertical-align: sub;
+  }
 }
 
-.config-item label::before {
+/* Feature labels */
+
+.align-baseline {
+  align-items: baseline;
+}
+
+.label-experiment {
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
   display: inline-block;
-  height: 16px;
-  width: 16px;
-  margin-inline-end: 6px;
-  vertical-align: sub;
+  padding: 3px;
+  background-color: var(--color-warning-default);
+  color: var(--color-yellow-90);
+  border-radius: 3px;
+  margin-inline-start: 12px;
+}
+
+/* QR Export for Mobile */
+
+
+#qrExportContent {
+  --qr-legend-icon-gap: 6px;
+  --qr-gap: 12px;
+  --qr-inset-margin: calc(16px + var(--qr-legend-icon-gap));
+
+  h2 {
+    font-weight: 500;
+    font-size: 1.2rem;
+  }
+
+  h3 {
+    font-weight: 600;
+    font-size: 1.2rem;
+    margin: 0;
+  }
+
+  h4 {
+    font-weight: normal;
+    font-size: 1.2rem;
+    margin: 0;
+    margin-bottom: var(--qr-gap);
+  }
+
+  .qr-panel {
+    background: var(--color-neutral-subtle);
+    border: 1px solid var(--color-neutral-border);
+    border-radius: 6px;
+    padding-inline: 32px;
+    padding-block: 24px 15px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+
+    section {
+      padding-inline: var(--qr-gap);
+    }
+  }
+
+  .qr-small {
+    font-size: 0.85rem;
+    line-height: 1.5rem;
+  }
+
+  .qr-subpanel {
+    background: var(--color-neutral-base);
+    border-radius: 3px;
+    padding: var(--qr-gap);
+
+    header {
+      display: flex;
+      justify-content: space-between;
+    }
+  }
+
+  .qr-warn {
+    font-weight: bold;
+  }
+
+  .qr-nav {
+    display: flex;
+    justify-content: space-between;
+
+    .end {
+      margin-inline-start: auto;
+    }
+  }
+
+  .inset {
+    margin-inline-start: var(--qr-inset-margin);
+  }
+
+  .inset-icon::before {
+    margin-inline-start: calc(-1 * var(--qr-inset-margin));
+    margin-inline-end: var(--qr-legend-icon-gap);
+    -moz-context-properties: fill, stroke;
+    fill: color-mix(in srgb, currentColor 20%, transparent);
+    stroke: currentColor;
+    vertical-align: middle;
+  }
+}
+
+#qrExportAccountsLegend::before {
+  content: var(--icon-mail);
+}
+
+#qrExportSecurityLegend::before {
+  content: var(--icon-lock);
+}
+
+#qrExportOauthWarning::before {
+  content: var(--icon-warning);
+}
+
+#qrExportSecurityHint::before {
+  content: var(--icon-info);
+  margin-inline-end: var(--qr-legend-icon-gap);
+  -moz-context-properties: fill, stroke;
+  fill: color-mix(in srgb, currentColor 20%, transparent);
+  stroke: currentColor;
+  vertical-align: middle;
+  margin-inline-start: calc(-1 * (16px + var(--qr-legend-icon-gap)));
+}
+
+#qrExportAccountsList {
+  list-style-type: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid: auto-flow / repeat(2, 1fr);
+  column-gap: var(--qr-gap);
+
+  & li {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block ruby;
+  }
+}
+
+#qrExportSelectAll {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  border-radius: 3px;
+  background: var(--color-primary-default);
+  color: var(--color-neutral-base);
+  padding: 4px 9px;
+  border: 1px solid var(--color-primary-hover);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+  font-weight: 700;
+
+  &:hover {
+    background: var(--color-primary-hover);
+  }
+}
+
+qr-code-wizard {
+  text-align: center;
+
+  figure {
+    margin: 0;
+  }
+
+  figcaption {
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    margin-block-end: var(--qr-gap);
+  }
+
+  img {
+    max-width: 420px;
+    image-rendering: pixelated;
+  }
+}
+
+#qrExportSummaryList {
+  padding: 0;
+  margin: 0;
+  list-style-position: inside;
+  line-height: 2rem;
+
+  & > li > ul {
+    list-style-type: disc;
+    display: grid;
+
+    & li {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  }
+}
+
+#qrExportSummary h2 {
+  font-size: 1em;
+  font-weight: normal;
+  margin: 0;
+}
+
+#qrExportRestart {
+  margin-block-start: 24px;
+}
+
+/* Appearance Tab */
+
+.pane-appearance-sorting-options {
+  display: grid;
+  grid-template-columns: max-content 1fr 1fr;
+  align-items: center;
+  margin-block: 18px;
+
+  & label {
+    text-align: end;
+  }
+}
+
+.pane-appearance-sorting-buttons {
+  text-align: end;
+  display: flex;
+  justify-content: end;
+  align-items: center;
+}
+
+.folder-chooser-popup-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  padding-inline-start: 6px;
+
+  -moz-context-properties: fill, stroke;
+  --icon-color: currentColor;
+  fill: color-mix(in srgb, var(--icon-color) 20%, transparent);
+  stroke: var(--icon-color);
+
+  &::before {
+    position: relative;
+    content: var(--icon-folder);
+  }
+
+  &::after {
+    position: relative;
+    content: var(--icon-nav-down-sm);
+  }
+}
+
+#defaultSortOrder {
+  & .radio-icon {
+    margin-inline-end: 3px;
+    -moz-context-properties: stroke;
+    stroke: currentColor;
+  }
+
+  & [selected="true"] .radio-icon {
+    stroke: AccentColor;
+  }
+}
+
+#defaultSortOrderAscending .radio-icon {
+  list-style-image: var(--icon-ascending-xs);
+}
+
+#defaultSortOrderDescending .radio-icon {
+  list-style-image: var(--icon-descending-xs);
+}
+
+.appearance-options {
+  display: flex;
+  flex-direction: row;
+  gap: 15px;
+  margin-block-start: 9px;
+
+  & .radio-icon {
+    -moz-context-properties: fill, stroke;
+    fill: var(--color-text-base);
+    stroke: var(--color-text-secondary);
+    margin-inline-start: -22px;
+    background-color: var(--color-neutral-base);
+    border-radius: 6px;
+  }
+
+  & radio {
+    display: flex;
+    align-items: end;
+    background-color: var(--color-neutral-subtle);
+    border: 1px solid var(--color-neutral-border);
+    border-radius: 10px;
+    padding: 3px;
+    margin: 0;
+
+    & .radio-check {
+      margin-block: 0;
+    }
+
+    & .radio-label-box {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      margin: 0;
+      padding: 0;
+    }
+
+    & .radio-label {
+      align-self: start;
+      margin: 0;
+      padding: 0;
+      line-height: 1.3;
+    }
+
+    &:hover {
+      background-color: var(--color-neutral-border);
+    }
+
+    &[selected="true"] {
+      border-color: AccentColor;
+      outline: 1px solid AccentColor;
+
+      .radio-icon {
+        fill: AccentColor;
+        stroke: AccentColor;
+      }
+    }
+  }
+}
+
+#defaultFlagThreaded .radio-icon {
+  list-style-image: var(--threaded-illustration);
+}
+
+#defaultFlagUnthreaded .radio-icon {
+  list-style-image: var(--unthreaded-illustration);
+}
+
+#defaultFlagGrouped .radio-icon {
+  list-style-image: var(--grouped-illustration);
+}
+
+#appearanceStyleTable .radio-icon {
+  list-style-image: var(--table-view-illustration);
+}
+
+#appearanceStyleCards .radio-icon {
+  list-style-image: var(--cards-view-illustration);
 }

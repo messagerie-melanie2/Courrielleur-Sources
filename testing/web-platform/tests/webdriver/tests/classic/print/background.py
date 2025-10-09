@@ -2,9 +2,8 @@ import base64
 
 import pytest
 
-from tests.support.asserts import assert_success
-from tests.support.image import px_to_cm
-from tests.support.pdf import assert_pdf
+from tests.support.asserts import assert_pdf, assert_success
+from tests.support.image import pt_to_cm
 
 from . import do_print
 
@@ -44,7 +43,7 @@ def test_background(
         {
             "background": print_with_background,
             "margin": {"top": 0, "bottom": 0, "right": 0, "left": 0},
-            "page": {"width": px_to_cm(1), "height": px_to_cm(1)},
+            "page": {"width": pt_to_cm(1), "height": pt_to_cm(1)},
         },
     )
     print_value = assert_success(print_result)

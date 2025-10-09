@@ -95,7 +95,7 @@ function makeMockPermissionRequest(browser) {
     allow() {
       this._allowed = true;
     },
-    getDelegatePrincipal(aType) {
+    getDelegatePrincipal() {
       return principal;
     },
     QueryInterface: ChromeUtils.generateQI(["nsIContentPermissionRequest"]),
@@ -317,10 +317,6 @@ async function promisePageActionViewChildrenVisible(panelViewNode) {
 
 async function initPageActionsTest() {
   await disableNonReleaseActions();
-
-  // Ensure screenshots is really disabled (bug 1498738)
-  const addon = await AddonManager.getAddonByID("screenshots@mozilla.org");
-  await addon.disable({ allowSystemAddons: true });
 
   // Make the main button visible. It's not unless the window is narrow. This
   // test isn't concerned with that behavior. We have other tests for that.

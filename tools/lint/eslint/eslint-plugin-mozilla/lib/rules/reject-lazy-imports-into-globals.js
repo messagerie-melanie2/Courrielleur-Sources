@@ -12,16 +12,11 @@ const callExpressionDefinitions = [
   /^loader\.lazyGetter\((?:globalThis|window), "(\w+)"/,
   /^loader\.lazyServiceGetter\((?:globalThis|window), "(\w+)"/,
   /^loader\.lazyRequireGetter\((?:globalThis|window), "(\w+)"/,
-  /^XPCOMUtils\.defineLazyGetter\((?:globalThis|window), "(\w+)"/,
-  /^XPCOMUtils\.defineLazyModuleGetter\((?:globalThis|window), "(\w+)"/,
   /^ChromeUtils\.defineLazyGetter\((?:globalThis|window), "(\w+)"/,
-  /^ChromeUtils\.defineModuleGetter\((?:globalThis|window), "(\w+)"/,
   /^XPCOMUtils\.defineLazyPreferenceGetter\((?:globalThis|window), "(\w+)"/,
-  /^XPCOMUtils\.defineLazyProxy\((?:globalThis|window), "(\w+)"/,
   /^XPCOMUtils\.defineLazyScriptGetter\((?:globalThis|window), "(\w+)"/,
   /^XPCOMUtils\.defineLazyServiceGetter\((?:globalThis|window), "(\w+)"/,
   /^XPCOMUtils\.defineConstant\((?:globalThis|window), "(\w+)"/,
-  /^DevToolsUtils\.defineLazyModuleGetter\((?:globalThis|window), "(\w+)"/,
   /^DevToolsUtils\.defineLazyGetter\((?:globalThis|window), "(\w+)"/,
   /^Object\.defineProperty\((?:globalThis|window), "(\w+)"/,
   /^Reflect\.defineProperty\((?:globalThis|window), "(\w+)"/,
@@ -31,8 +26,6 @@ const callExpressionDefinitions = [
 const callExpressionMultiDefinitions = [
   "XPCOMUtils.defineLazyGlobalGetters(window,",
   "XPCOMUtils.defineLazyGlobalGetters(globalThis,",
-  "XPCOMUtils.defineLazyModuleGetters(window,",
-  "XPCOMUtils.defineLazyModuleGetters(globalThis,",
   "XPCOMUtils.defineLazyServiceGetters(window,",
   "XPCOMUtils.defineLazyServiceGetters(globalThis,",
   "ChromeUtils.defineESModuleGetters(window,",
@@ -44,7 +37,7 @@ const callExpressionMultiDefinitions = [
 module.exports = {
   meta: {
     docs: {
-      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/reject-lazy-imports-into-globals.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/rules/reject-lazy-imports-into-globals.html",
     },
     messages: {
       rejectLazyImportsIntoGlobals:

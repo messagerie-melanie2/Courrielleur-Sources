@@ -6,7 +6,8 @@ package org.mozilla.geckoview.test
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.MediumTest
-import org.hamcrest.Matchers.* // ktlint-disable no-wildcard-imports
+import org.hamcrest.Matchers.equalTo
+import org.hamcrest.Matchers.notNullValue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mozilla.gecko.util.ImageResource
@@ -66,6 +67,14 @@ class ImageResourceTest : BaseSessionTest() {
 
         val kValidTestImage6 = TestImage(
             "path.svg",
+            null,
+            null,
+            null,
+            null,
+        )
+
+        val kValidTestImage7 = TestImage(
+            "RaNdoMCasE.PnG",
             null,
             null,
             null,
@@ -137,6 +146,7 @@ class ImageResourceTest : BaseSessionTest() {
         testValidImage(kValidTestImage4)
         testValidImage(kValidTestImage5)
         testValidImage(kValidTestImage6)
+        testValidImage(kValidTestImage7)
     }
 
     @Test

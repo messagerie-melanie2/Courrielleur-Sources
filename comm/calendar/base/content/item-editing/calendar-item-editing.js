@@ -7,16 +7,18 @@
 
 /* globals goUpdateCommand */
 
-var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
+var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
 var { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUtils.sys.mjs");
-var { CalTransactionManager } = ChromeUtils.import("resource:///modules/CalTransactionManager.jsm");
+var { CalTransactionManager } = ChromeUtils.importESModule(
+  "resource:///modules/CalTransactionManager.sys.mjs"
+);
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  CalAddTransaction: "resource:///modules/CalTransactionManager.jsm",
-  CalDeleteTransaction: "resource:///modules/CalTransactionManager.jsm",
-  CalEvent: "resource:///modules/CalEvent.jsm",
-  CalModifyTransaction: "resource:///modules/CalTransactionManager.jsm",
-  CalTodo: "resource:///modules/CalTodo.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  CalAddTransaction: "resource:///modules/CalTransactionManager.sys.mjs",
+  CalDeleteTransaction: "resource:///modules/CalTransactionManager.sys.mjs",
+  CalEvent: "resource:///modules/CalEvent.sys.mjs",
+  CalModifyTransaction: "resource:///modules/CalTransactionManager.sys.mjs",
+  CalTodo: "resource:///modules/CalTodo.sys.mjs",
 });
 
 /* exported modifyEventWithDialog, undo, redo, setContextPartstat */
@@ -57,21 +59,21 @@ function setDefaultItemValues(
   aAttendees = []
 ) {
   function endOfDay(aDate) {
-    let eod = aDate ? aDate.clone() : cal.dtz.now();
+    const eod = aDate ? aDate.clone() : cal.dtz.now();
     eod.hour = Services.prefs.getIntPref("calendar.view.dayendhour", 19);
     eod.minute = 0;
     eod.second = 0;
     return eod;
   }
   function startOfDay(aDate) {
-    let sod = aDate ? aDate.clone() : cal.dtz.now();
+    const sod = aDate ? aDate.clone() : cal.dtz.now();
     sod.hour = Services.prefs.getIntPref("calendar.view.daystarthour", 8);
     sod.minute = 0;
     sod.second = 0;
     return sod;
   }
 
-  let initialDate = aInitialDate ? aInitialDate.clone() : cal.dtz.now();
+  const initialDate = aInitialDate ? aInitialDate.clone() : cal.dtz.now();
   initialDate.isDate = true;
 
   if (aItem.isEvent()) {
@@ -118,12 +120,12 @@ function setDefaultItemValues(
     // Free/busy status is only valid for events, must not be set for tasks.
     aItem.setProperty("TRANSP", cal.item.getEventDefaultTransparency(aForceAllday));
 
-    for (let attendee of aAttendees) {
+    for (const attendee of aAttendees) {
       aItem.addAttendee(attendee);
     }
   } else if (aItem.isTodo()) {
-    let now = cal.dtz.now();
-    let initDate = initialDate ? initialDate.clone() : now;
+    const now = cal.dtz.now();
+    const initDate = initialDate ? initialDate.clone() : now;
     initDate.isDate = false;
     initDate.hour = now.hour;
     initDate.minute = now.minute;
@@ -145,7 +147,7 @@ function setDefaultItemValues(
       if (!["days", "hours", "minutes"].includes(units)) {
         units = "minutes";
       }
-      let startOffset = cal.createDuration();
+      const startOffset = cal.createDuration();
       startOffset[units] = Services.prefs.getIntPref("calendar.task.defaultstartoffset", 0);
       let start;
 
@@ -184,16 +186,16 @@ function setDefaultItemValues(
     if (aEndDate) {
       aItem.dueDate = aEndDate.clone();
     } else {
-      let defaultDue = Services.prefs.getStringPref("calendar.task.defaultdue", "none");
+      const defaultDue = Services.prefs.getStringPref("calendar.task.defaultdue", "none");
 
       let units = Services.prefs.getStringPref("calendar.task.defaultdueoffsetunits", "minutes");
       if (!["days", "hours", "minutes"].includes(units)) {
         units = "minutes";
       }
-      let dueOffset = cal.createDuration();
+      const dueOffset = cal.createDuration();
       dueOffset[units] = Services.prefs.getIntPref("calendar.task.defaultdueoffset", 0);
 
-      let start = aItem.entryDate ? aItem.entryDate.clone() : initDate.clone();
+      const start = aItem.entryDate ? aItem.entryDate.clone() : initDate.clone();
       let due;
 
       switch (defaultDue) {
@@ -265,7 +267,7 @@ function createEventWithDialog(
   forceAllDay,
   attendees
 ) {
-  let onNewEvent = function (item, opcalendar, originalItem, listener, extresponse = null) {
+  const onNewEvent = function (item, opcalendar, originalItem, listener, extresponse = null) {
     if (item.id) {
       // If the item already has an id, then this is the result of
       // saving the item without closing, and then saving again.
@@ -301,7 +303,7 @@ function createEventWithDialog(
   } else {
     event = new CalEvent();
 
-    let refDate = currentView().selectedDay?.clone();
+    const refDate = currentView().selectedDay?.clone();
     setDefaultItemValues(event, calendar, startDate, endDate, refDate, forceAllDay, attendees);
     if (summary) {
       event.title = summary;
@@ -313,14 +315,15 @@ function createEventWithDialog(
 /**
  * Creates a task with the calendar event dialog.
  *
- * @param calendar      (optional) The calendar to create the task in
- * @param dueDate       (optional) The task's due date.
- * @param summary       (optional) The task's title.
- * @param todo          (optional) A template task to show in the dialog.
- * @param initialDate   (optional) The initial date for new task datepickers
+ * @param {?calICalendar} calendar - The calendar to create the task in.
+ * @param {?calIDateTime} dueDate - The task's due date.
+ * @param {?string} summary - The task's title.
+ * @param {?calITodo} todo - A template task to show in the dialog.
+ * @param {?calIDateTime} initialDate - The initial date for new task
+ *   datepickers
  */
 function createTodoWithDialog(calendar, dueDate, summary, todo, initialDate) {
-  let onNewItem = function (item, opcalendar, originalItem, listener, extresponse = null) {
+  const onNewItem = function (item, opcalendar, originalItem, listener, extresponse = null) {
     if (item.id) {
       // If the item already has an id, then this is the result of
       // saving the item without closing, and then saving again.
@@ -360,43 +363,46 @@ function createTodoWithDialog(calendar, dueDate, summary, todo, initialDate) {
  * openEventDialog so invitation responses can be edited.
  *
  * @param {calIItemBase} item - The calendar item to view.
+ * @param {Event} event - The triggering event.
  */
-function openEventDialogForViewing(item) {
+function openEventDialogForViewing(item, event) {
   function onDialogComplete(newItem, calendar, originalItem, listener, extresponse) {
     doTransaction("modify", newItem, calendar, originalItem, listener, extresponse);
   }
-  openEventDialog(item, item.calendar, "view", onDialogComplete);
+  openEventDialog(item, item.calendar, "view", onDialogComplete, undefined, undefined, event);
 }
 
 /**
  * Modifies the passed event in the event dialog.
  *
- * @param aItem                 The item to modify.
- * @param aPromptOccurrence     If the user should be prompted to select if the
- *                                parent item or occurrence should be modified.
- * @param initialDate           (optional) The initial date for new task datepickers
- * @param aCounterProposal      (optional) An object representing the counterproposal
- *        {
- *            {JsObject} result: {
- *                type: {String} "OK"|"OUTDATED"|"NOTLATESTUPDATE"|"ERROR"|"NODIFF"
- *                descr: {String} a technical description of the problem if type is ERROR or NODIFF,
- *                                otherwise an empty string
- *            },
- *            (empty if result.type = "ERROR"|"NODIFF"){Array} differences: [{
- *                property: {String} a property that is subject to the proposal
- *                proposed: {String} the proposed value
- *                original: {String} the original value
- *            }]
- *        }
+ * @param {calIItemBase} aItem - The item to modify.
+ * @param {boolean} aPromptOccurrence - If the user should be prompted to select
+ *   if the parent item or occurrence should be modified.
+ * @param {?calIDateTime} [initialDate] - The initial date for new task
+ *   datepickers.
+ * @param {object} [aCounterProposal] - An object representing the
+ *   counterproposal.
+ * @param {object} aCounterProposal.result - Result.
+ * @param {"OK"|"OUTDATED"|"NOTLATESTUPDATE"|"ERROR"|"NODIFF"} aCounterProposal.result.type -
+ *   Type of proposal.
+ * @param {string} aCounterProposal.result.desc - Technical description of the
+ *   problem if type is ERROR or NODIFF, otherwise an empty string.
+ * @param {object[]} aCounterProposal.differences - Array of counterproposal
+ *   differences. Should be empty if aCounterproposal.result.type is "ERROR" or
+ *   "NODIFF".
+ * @param {string} aCounterProposal.differences[].property - A property that is
+ *   subject to the proposal.
+ * @param {string} aCounterProposal.differences[].proposed - The proposed value.
+ * @param {string} aCounterProposal.differences[].original - The original value.
  */
 function modifyEventWithDialog(aItem, aPromptOccurrence, initialDate = null, aCounterProposal) {
-  let dlg = cal.item.findWindow(aItem);
+  const dlg = cal.item.findWindow(aItem);
   if (dlg) {
     dlg.focus();
     return;
   }
 
-  let onModifyItem = function (item, calendar, originalItem, listener, extresponse = null) {
+  const onModifyItem = function (item, calendar, originalItem, listener, extresponse = null) {
     doTransaction("modify", item, calendar, originalItem, listener, extresponse);
   };
 
@@ -426,15 +432,15 @@ function modifyEventWithDialog(aItem, aPromptOccurrence, initialDate = null, aCo
  *
  * @param {calIItemBase} calendarItem - The item to open the dialog with.
  * @param {calICalendar} calendar - The calendar to open the dialog with.
- * @param {string} mode - The operation the dialog should do
- *                                       ("new", "view", "modify").
- * @param {onDialogComplete} callback - The callback to call when the dialog
- *                                       has completed.
+ * @param {"new"|"view"|"modify"} mode - The operation the dialog should do.
+ *   "modify").
+ * @param {onDialogComplete} callback - The callback to call when the dialog has
+ *   completed.
  * @param {?calIDateTime} initialDate - The initial date for new task
- *                                       datepickers.
+ *   datepickers.
  * @param {?object} counterProposal - An object representing the
- *                                       counterproposal - see description
- *                                       for modifyEventWithDialog().
+ *   counterproposal - see description for modifyEventWithDialog().
+ * @param {Event} event - The triggering event.
  */
 function openEventDialog(
   calendarItem,
@@ -442,9 +448,10 @@ function openEventDialog(
   mode,
   callback,
   initialDate = null,
-  counterProposal
+  counterProposal,
+  event
 ) {
-  let dlg = cal.item.findWindow(calendarItem);
+  const dlg = cal.item.findWindow(calendarItem);
   if (dlg) {
     dlg.focus();
     return;
@@ -480,9 +487,9 @@ function openEventDialog(
        * check that the user can remove items from that calendar and
        * add items to the current one.
        */
-      let isSameCalendar = calendarItem.calendar == aCalendar;
-      let canModify = cal.acl.userCanModifyItem(calendarItem);
-      let canMoveItems =
+      const isSameCalendar = calendarItem.calendar == aCalendar;
+      const canModify = cal.acl.userCanModifyItem(calendarItem);
+      const canMoveItems =
         cal.acl.userCanDeleteItemsFromCalendar(calendarItem.calendar) &&
         cal.acl.userCanAddItemsToCalendar(aCalendar);
 
@@ -512,7 +519,7 @@ function openEventDialog(
   }
 
   // Setup the window arguments
-  let args = {};
+  const args = {};
   args.calendarEvent = calendarItem;
   args.calendar = calendar;
   args.mode = mode;
@@ -528,18 +535,15 @@ function openEventDialog(
     createTodoWithDialog(opcalendar);
   };
 
-  // the dialog will reset this to auto when it is done loading.
-  window.setCursor("wait");
-
   // Ask the provider if this item is an invitation. If this is the case,
   // we'll open the summary dialog since the user is not allowed to change
   // the details of the item.
-  let isInvitation =
+  const isInvitation =
     calendar.supportsScheduling && calendar.getSchedulingSupport().isInvitation(calendarItem);
 
   // open the dialog modeless
   let url;
-  let isEditable = mode == "modify" && !isInvitation && cal.acl.userCanModifyItem(calendarItem);
+  const isEditable = mode == "modify" && !isInvitation && cal.acl.userCanModifyItem(calendarItem);
 
   if (cal.acl.isCalendarWritable(calendar) && (mode == "new" || isEditable)) {
     // Currently the read-only summary dialog is never opened in a tab.
@@ -556,12 +560,39 @@ function openEventDialog(
 
   if (args.inTab) {
     args.url = url;
-    let tabmail = document.getElementById("tabmail");
-    let tabtype = args.calendarEvent.isEvent() ? "calendarEvent" : "calendarTask";
+    const tabmail = document.getElementById("tabmail");
+    const tabtype = args.calendarEvent.isEvent() ? "calendarEvent" : "calendarTask";
     tabmail.openTab(tabtype, args);
+
+    // the dialog will reset this to auto when it is done loading.
+    window.setCursor("wait");
+  } else if (
+    Services.prefs.getBoolPref("calendar.dialogs.new.enabled") &&
+    calendarItem.isEvent() &&
+    mode === "view"
+  ) {
+    const showDialog = () => {
+      const dialog = document.getElementById("calendarDialog");
+      dialog.setCalendarEvent(calendarItem);
+      dialog.show(event);
+    };
+    if (!document.getElementById("calendarDialog")) {
+      import("chrome://messenger/content/calendar-dialog.mjs").then(() => {
+        const dialog = document.createElement("dialog", {
+          is: "calendar-dialog",
+        });
+        dialog.id = "calendarDialog";
+        document.querySelector(".calendar-dialog-root").replaceChildren(dialog);
+        showDialog();
+      });
+    } else {
+      showDialog();
+    }
   } else {
+    // the dialog will reset this to auto when it is done loading.
+    window.setCursor("wait");
     // open in a window
-    openDialog(url, "_blank", "chrome,titlebar,toolbar,resizable", args);
+    openDialog(url, "_blank", "centerscreen,chrome,titlebar,toolbar,resizable", args);
   }
 }
 
@@ -579,30 +610,25 @@ function openEventDialog(
  * the modified item or the future item only consist of a single occurrence,
  * they are changed to be single items.
  *
- * @param aItem                         The item or array of items to check.
- * @param aNeedsFuture                  If true, the future item is parsed.
- *                                        This parameter can for example be
- *                                        false if a deletion is being made.
- * @param aAction                       Either "edit" or "delete". Sets up
- *                                          the labels in the occurrence prompt
- * @returns [modifiedItem, futureItem, promptResponse]
- *                                      modifiedItem is a single item or array
- *                                        of items depending on the past aItem
+ * @param {calIItemBase} aItem - The item or array of items to check.
+ * @param {boolean} aNeedsFuture - If true, the future item is parsed. This
+ *   parameter can for example be false if a deletion is being made.
+ * @param {string} aAction - Either "edit" or "delete". Sets up the labels in
+ *   the occurrence prompt.
+ * @returns {calIItemBase[]} [modifiedItem, futureItem, promptResponse] - The
+ *   first element, modifiedItem, is a single item or array of items depending
+ *   on the past aItem.
  *
- *                                        If "this and all following" was chosen,
- *                                        an array containing the item *until*
- *                                        the given occurrence (modifiedItem),
- *                                        and the item *after* the given
- *                                        occurrence (futureItem).
+ *   If "this and all following" was chosen, an array containing the item
+ *   until the given occurrence (modifiedItem), and the item after the given
+ *   occurrence (futureItem).
  *
- *                                        If any other option was chosen,
- *                                        futureItem is null  and the
- *                                        modifiedItem is either the parent item
- *                                        or the passed occurrence, or null if
- *                                        the dialog was canceled.
+ *   If any other option was chosen, futureItem is null  and the modifiedItem is
+ *   either the parent item or the passed occurrence, or null if the dialog was
+ *   canceled.
  *
- *                                        The promptResponse parameter gives the
- *                                        response of the dialog as a constant.
+ *   The promptResponse parameter gives the response of the dialog as a
+ *   constant.
  */
 function promptOccurrenceModification(aItem, aNeedsFuture, aAction) {
   const CANCEL = 0;
@@ -610,11 +636,11 @@ function promptOccurrenceModification(aItem, aNeedsFuture, aAction) {
   const MODIFY_FOLLOWING = 2;
   const MODIFY_PARENT = 3;
 
-  let futureItems = false;
+  const futureItems = false;
   let pastItems = [];
   let returnItem = null;
   let type = CANCEL;
-  let items = Array.isArray(aItem) ? aItem : [aItem];
+  const items = Array.isArray(aItem) ? aItem : [aItem];
 
   // Check if this actually is an instance of a recurring event
   if (items.every(item => item == item.parentItem)) {
@@ -622,7 +648,7 @@ function promptOccurrenceModification(aItem, aNeedsFuture, aAction) {
   } else if (aItem && items.length) {
     // Prompt the user. Setting modal blocks the dialog until it is closed. We
     // use rv to pass our return value.
-    let rv = { value: CANCEL, items, action: aAction };
+    const rv = { value: CANCEL, items, action: aAction };
     window.openDialog(
       "chrome://calendar/content/calendar-occurrence-prompt.xhtml",
       "PromptOccurrenceModification",
@@ -659,20 +685,21 @@ function promptOccurrenceModification(aItem, aNeedsFuture, aAction) {
  * Create and commit a transaction with the given arguments to the transaction
  * manager. Also updates the undo/redo menu.
  *
- * @param action       The action to do.
- * @param item         The new item to add/modify/delete
- * @param calendar     The calendar to do the transaction on
- * @param oldItem      (optional) some actions require an old item
- * @param observer     (optional) the observer to call when complete.
- * @param extResponse  (optional) JS object with additional parameters for sending itip messages
- *                                (see also description of checkAndSend in calItipUtils.jsm)
+ * @param {string} action - The action to do.
+ * @param {calIItemBase} item - The new item to add/modify/delete
+ * @param {calICalendar} calendar - The calendar to do the transaction on
+ * @param {?calIItemBase} [oldItem] - some actions require an old item
+ * @param {?Function} [observer] - The observer to call when complete.
+ * @param {?object} [extResponse] - JS object with additional
+ *   parameters for sending itip messages (see also description of checkAndSend
+ *   in calItipUtils.sys.mjs).
  */
 async function doTransaction(action, item, calendar, oldItem, observer, extResponse = null) {
   // This is usually a user-initiated transaction, so make sure the calendar
   // this transaction is happening on is visible.
   top.ensureCalendarVisible(calendar);
 
-  let manager = gCalBatchTransaction || gCalTransactionMgr;
+  const manager = gCalBatchTransaction || gCalTransactionMgr;
   let trn;
   switch (action) {
     case "add":
@@ -771,23 +798,23 @@ function updateUndoRedoMenu() {
  * dealing with context menu partstat actions, see also setupAttendanceMenu(...)
  * in calendar-ui-utils.js
  *
- * @param {EventTarget}  aTarget   the target of the triggering event
- * @param {Array}        aItems    an array of calEvent or calIToDo items
+ * @param {EventTarget} aTarget - The target of the triggering event.
+ * @param {calIItemBase[]} aItems - An array of calIEvent or calIToDo items.
  */
 function setContextPartstat(aTarget, aItems) {
   /**
    * Provides the participation representing the user for a provided item
    *
-   * @param   {calEvent|calTodo}  aItem  The calendar item to inspect
-   * @returns {?calIAttendee} An calIAttendee object or null if no
-   *                                       participant was detected
+   * @param {calIEvent|calIToDo} aItem - The calendar item to inspect.
+   * @returns {?calIAttendee} An calIAttendee object or null if no participant
+   *   was detected.
    */
   function getParticipant(aItem) {
     let party = null;
     if (cal.itip.isInvitation(aItem)) {
       party = cal.itip.getInvitedAttendee(aItem);
     } else if (aItem.organizer && aItem.getAttendees().length) {
-      let calOrgId = aItem.calendar.getProperty("organizerId");
+      const calOrgId = aItem.calendar.getProperty("organizerId");
       if (calOrgId.toLowerCase() == aItem.organizer.id.toLowerCase()) {
         party = aItem.organizer;
       }
@@ -810,19 +837,19 @@ function setContextPartstat(aTarget, aItems) {
       if (aTarget.getAttribute("scope") == "all-occurrences") {
         oldItem = oldItem.parentItem;
       }
-      let attendee = getParticipant(oldItem);
+      const attendee = getParticipant(oldItem);
       if (attendee) {
         // skip this item if the partstat for the participant hasn't
         // changed. otherwise we would always perform update operations
         // for recurring events on both, the master and the occurrence
         // item
-        let partStat = aTarget.getAttribute("respvalue");
+        const partStat = aTarget.getAttribute("respvalue");
         if (attendee.participationStatus == partStat) {
           continue;
         }
 
-        let newItem = oldItem.clone();
-        let newAttendee = attendee.clone();
+        const newItem = oldItem.clone();
+        const newAttendee = attendee.clone();
         newAttendee.participationStatus = partStat;
         if (newAttendee.isOrganizer) {
           newItem.organizer = newAttendee;
@@ -833,8 +860,8 @@ function setContextPartstat(aTarget, aItems) {
 
         let extResponse = null;
         if (aTarget.hasAttribute("respmode")) {
-          let mode = aTarget.getAttribute("respmode");
-          let itipMode = Ci.calIItipItem[mode];
+          const mode = aTarget.getAttribute("respmode");
+          const itipMode = Ci.calIItipItem[mode];
           extResponse = { responseMode: itipMode };
         }
 

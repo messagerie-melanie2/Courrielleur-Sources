@@ -6,8 +6,8 @@
  * Demonstrates and tests the use of grouped boolean expressions in search terms
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var gSearchSession = Cc[
@@ -133,10 +133,10 @@ var Tests = [
 
 var gHitCount = 0;
 var searchListener = {
-  onSearchHit(dbHdr, folder) {
+  onSearchHit() {
     gHitCount++;
   },
-  onSearchDone(status) {
+  onSearchDone() {
     testSearch();
   },
   onNewSearch() {
@@ -158,10 +158,10 @@ function run_test() {
 
   // add a search term HdrProperty (some string) Is "T", with grouping
   function addSearchTerm(aHdrProperty, aBeginGrouping, aEndGrouping, aBoolAnd) {
-    let searchTerm = gSearchSession.createTerm();
+    const searchTerm = gSearchSession.createTerm();
     searchTerm.attrib = Ci.nsMsgSearchAttrib.HdrProperty;
 
-    let value = searchTerm.value;
+    const value = searchTerm.value;
     // This is tricky - value.attrib must be set before actual values
     value.attrib = Ci.nsMsgSearchAttrib.HdrProperty;
     value.str = "T";
@@ -186,14 +186,17 @@ function run_test() {
   addSearchTerm("c", true, false, true); // " && (C"
   addSearchTerm("d", false, true, false); // " || D)"
 
+  /** @implements {nsIMsgCopyServiceListener} */
   var copyListener = {
-    OnStartCopy() {},
-    OnProgress(aProgress, aProgressMax) {},
-    SetMessageKey(aKey) {
+    onStartCopy() {},
+    onProgress() {},
+    setMessageKey(aKey) {
       gHdr = localAccountUtils.inboxFolder.GetMessageHeader(aKey);
     },
-    SetMessageId(aMessageId) {},
-    OnStopCopy(aStatus) {
+    getMessageId() {
+      return null;
+    },
+    onStopCopy() {
       testSearch();
     },
   };

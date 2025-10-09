@@ -1,10 +1,9 @@
-import io
 import os
 
 import manifestparser
 
 
-class Creator(object):
+class Creator:
     def __init__(self, topsrcdir, test, suite, doc, **kwargs):
         self.topsrcdir = topsrcdir
         self.test = test
@@ -31,7 +30,7 @@ class Creator(object):
 
 class XpcshellCreator(Creator):
     template_body = """/* Any copyright is dedicated to the Public Domain.
-http://creativecommons.org/publicdomain/zero/1.0/ */
+https://creativecommons.org/publicdomain/zero/1.0/ */
 
 "use strict";
 
@@ -44,13 +43,7 @@ add_task(async function test_TODO() {
         return self.template_body
 
     def update_manifest(self):
-        manifest_file = os.path.join(os.path.dirname(self.test), "xpcshell.ini")
-        filename = os.path.basename(self.test)
-
-        if not os.path.isfile(manifest_file):
-            print("Could not open manifest file {}".format(manifest_file))
-            return
-        write_to_ini_file(manifest_file, filename)
+        update_toml_or_ini("xpcshell", self.test)
 
 
 class MochitestCreator(Creator):
@@ -69,11 +62,7 @@ class MochitestCreator(Creator):
         template_file_name = self.templates.get(self.suite)
 
         if template_file_name is None:
-            print(
-                "Sorry, `addtest` doesn't currently know how to add {}".format(
-                    self.suite
-                )
-            )
+            print(f"Sorry, `addtest` doesn't currently know how to add {self.suite}")
             return None
 
         template_file_name = template_file_name % {"doc": self.doc}
@@ -81,9 +70,7 @@ class MochitestCreator(Creator):
         template_file = os.path.join(mochitest_templates, template_file_name)
         if not os.path.isfile(template_file):
             print(
-                "Sorry, `addtest` doesn't currently know how to add {} with document type {}".format(  # NOQA: E501
-                    self.suite, self.doc
-                )
+                f"Sorry, `addtest` doesn't currently know how to add {self.suite} with document type {self.doc}"
             )
             return None
 
@@ -92,19 +79,13 @@ class MochitestCreator(Creator):
 
     def update_manifest(self):
         # attempt to insert into the appropriate manifest
-        guessed_ini = {
-            "mochitest-plain": "mochitest.ini",
-            "mochitest-chrome": "chrome.ini",
-            "mochitest-browser-chrome": "browser.ini",
+        guessed_prefix = {
+            "mochitest-plain": "mochitest",
+            "mochitest-chrome": "chrome",
+            "mochitest-browser-chrome": "browser",
         }[self.suite]
-        manifest_file = os.path.join(os.path.dirname(self.test), guessed_ini)
-        filename = os.path.basename(self.test)
 
-        if not os.path.isfile(manifest_file):
-            print("Could not open manifest file {}".format(manifest_file))
-            return
-
-        write_to_ini_file(manifest_file, filename)
+        update_toml_or_ini(guessed_prefix, self.test)
 
 
 class WebPlatformTestsCreator(Creator):
@@ -196,9 +177,9 @@ testing/web-platform/mozilla/tests for Gecko-only tests"""
 
     def _get_template_contents(self, reference=False):
         args = {
-            "documentElement": "<html class=reftest-wait>\n"
-            if self.kwargs["wait"]
-            else ""
+            "documentElement": (
+                "<html class=reftest-wait>\n" if self.kwargs["wait"] else ""
+            )
         }
 
         if self.test.rsplit(".", 1)[1] == "js":
@@ -308,14 +289,27 @@ testing/web-platform/mozilla/tests for Gecko-only tests"""
         return url_base + rel_path.replace(os.path.sep, "/")
 
 
+# Insert a new test in the right place
+def update_toml_or_ini(manifest_prefix, testpath):
+    basedir = os.path.dirname(testpath)
+    manifest_file = os.path.join(basedir, manifest_prefix + ".toml")
+    if not os.path.isfile(manifest_file):
+        manifest_file = os.path.join(basedir, manifest_prefix + ".ini")
+        if not os.path.isfile(manifest_file):
+            print(f"Could not open manifest file {manifest_file}")
+            return
+    filename = os.path.basename(testpath)
+    write_to_manifest_file(manifest_file, filename)
+
+
 # Insert a new test in the right place within a given manifest file
-def write_to_ini_file(manifest_file, filename):
-    # Insert a new test in the right place within a given manifest file
-    manifest = manifestparser.TestManifest(manifests=[manifest_file])
+def write_to_manifest_file(manifest_file, filename):
+    use_toml = manifest_file.endswith(".toml")
+    manifest = manifestparser.TestManifest(manifests=[manifest_file], use_toml=use_toml)
     insert_before = None
 
     if any(t["name"] == filename for t in manifest.tests):
-        print("{} is already in the manifest.".format(filename))
+        print(f"{filename} is already in the manifest.")
         return
 
     for test in manifest.tests:
@@ -323,21 +317,22 @@ def write_to_ini_file(manifest_file, filename):
             insert_before = test.get("name")
             break
 
-    with open(manifest_file, "r") as f:
+    with open(manifest_file) as f:
         contents = f.readlines()
 
-    filename = "[{}]\n".format(filename)
+    entry_line = '["{}"]\n' if use_toml else "[{}]"
+    filename = (entry_line + "\n").format(filename)
 
     if not insert_before:
         contents.append(filename)
     else:
-        insert_before = "[{}]".format(insert_before)
+        insert_before = entry_line.format(insert_before)
         for i in range(len(contents)):
             if contents[i].startswith(insert_before):
                 contents.insert(i, filename)
                 break
 
-    with io.open(manifest_file, "w", newline="\n") as f:
+    with open(manifest_file, "w", newline="\n") as f:
         f.write("".join(contents))
 
 
@@ -349,8 +344,7 @@ TEST_CREATORS = {
 
 
 def creator_for_suite(suite):
-    if suite.split("-")[0] == "mochitest":
-        base_suite = "mochitest"
-    else:
-        base_suite = suite.rsplit("-", 1)[0]
-    return TEST_CREATORS.get(base_suite)
+    for key, creator in TEST_CREATORS.items():
+        if suite.startswith(key):
+            return creator
+    return None

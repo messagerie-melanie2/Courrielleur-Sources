@@ -198,6 +198,13 @@ static bool WindowCannotReceiveSensorEvent(nsPIDOMWindowInner* aWindow) {
   nsPIDOMWindowOuter* windowOuter = aWindow->GetOuterWindow();
   BrowsingContext* topBC = aWindow->GetBrowsingContext()->Top();
   if (windowOuter->IsBackground() || !topBC->GetIsActiveBrowserWindow()) {
+    nsGlobalWindowInner* win = nsGlobalWindowInner::Cast(aWindow);
+    nsIPrincipal* principal = win->GetPrincipal();
+    if (principal &&
+        principal->Equals(
+            nsContentUtils::GetFingerprintingProtectionPrincipal())) {
+      return false;
+    }
     return true;
   }
 
@@ -552,5 +559,6 @@ bool nsDeviceSensors::IsSensorAllowedByPref(uint32_t aType,
   if (!window) {
     return true;
   }
-  return !nsGlobalWindowInner::Cast(window)->ShouldResistFingerprinting();
+  return !nsGlobalWindowInner::Cast(window)->ShouldResistFingerprinting(
+      RFPTarget::DeviceSensors);
 }

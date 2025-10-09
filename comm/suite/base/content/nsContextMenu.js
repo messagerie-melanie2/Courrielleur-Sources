@@ -16,7 +16,6 @@
 var {BrowserUtils} =
   ChromeUtils.import("resource://gre/modules/BrowserUtils.jsm");
 var {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
-var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm"
 var {LoginManagerContextMenu} =
   ChromeUtils.import("resource://gre/modules/LoginManagerContextMenu.jsm");
 
@@ -1087,6 +1086,7 @@ nsContextMenu.prototype = {
                        Ci.nsIScriptSecurityManager.DISALLOW_SCRIPT);
       openUILinkIn(this.mediaURL, where,
                    { referrerURI: doc.documentURIObject,
+                     forceAllowDataURI: true,
                      triggeringPrincipal: this.target.nodePrincipal,
                    });
     }
@@ -1248,7 +1248,8 @@ nsContextMenu.prototype = {
     // set up a channel to do the saving
     var channel = NetUtil.newChannel({
                     uri: makeURI(linkURL),
-                    loadUsingSystemPrincipal: true,
+                    loadingPrincipal: this.principal,
+                    contentPolicyType: Ci.nsIContentPolicy.TYPE_SAVEAS_DOWNLOAD,
                     securityFlags: Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL
                   });
 
@@ -1511,16 +1512,7 @@ nsContextMenu.prototype = {
     if (searchSelectText.length > 15)
       searchSelectText = searchSelectText.substr(0, 15) + this.ellipsis;
 
-    // Use the current engine if it's a browser window and the search bar is
-    // visible, the default engine otherwise.
-    var engineName = "";
-    if (window.BrowserSearch &&
-        (isElementVisible(BrowserSearch.searchBar) ||
-         BrowserSearch.searchSidebar))
-      engineName = Services.search.currentEngine.name;
-    else
-      engineName = Services.search.defaultEngine.name;
-
+    let engineName = this.searchEngine().name;
     // format "Search <engine> for <selection>" string to show in menu
     const bundle = document.getElementById("contentAreaCommandsBundle");
     var menuLabel = bundle.getFormattedString("searchSelected",
@@ -1530,6 +1522,17 @@ nsContextMenu.prototype = {
                      bundle.getString("searchSelected.accesskey"));
 
     return true;
+  },
+
+  searchEngine: function() {
+    // Use the current engine if it's a browser window and the search bar is
+    // visible, the default engine otherwise.
+    if (window.BrowserSearch && (isElementVisible(BrowserSearch.searchBar) ||
+                                 BrowserSearch.searchSidebar)) {
+      return Services.search.currentEngine;
+    }
+
+    return Services.search.defaultEngine;
   },
 
   searchSelected: function(aCharlen) {
@@ -1667,7 +1670,20 @@ nsContextMenu.prototype = {
     if (this.onImage)
       return this.mediaURL;
     return "";
-  }
+  },
+
+  openSearch: function(aEvent) {
+    let submission = this.searchEngine().getSubmission(this.searchSelected());
+    // If you change /suite/navigator/navigator.js->BrowserSearch::loadSearch()
+    // make sure you make corresponding changes here.
+    if (!submission) {
+      return;
+    }
+
+    let newTabPref = Services.prefs.getBoolPref("browser.search.opentabforcontextsearch");
+    let where = newTabPref ? aEvent && aEvent.shiftKey ? "tabshifted" : "tab" : "window";
+    openUILinkIn(submission.uri.spec, where, null, submission.postData);
+  },
 };
 
 XPCOMUtils.defineLazyGetter(nsContextMenu.prototype, "ellipsis", function() {

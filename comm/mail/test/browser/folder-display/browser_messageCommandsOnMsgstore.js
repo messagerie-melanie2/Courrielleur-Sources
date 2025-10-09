@@ -11,33 +11,27 @@
 
 "use strict";
 
-var utils = ChromeUtils.import("resource://testing-common/mozmill/utils.jsm");
 const {
   open_compose_with_forward,
   open_compose_with_reply,
   setup_msg_contents,
-} = ChromeUtils.import("resource://testing-common/mozmill/ComposeHelpers.jsm");
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+);
 const {
   be_in_folder,
   create_folder,
   empty_folder,
   get_special_folder,
   make_message_sets_in_folders,
-  mc,
   press_delete,
   right_click_on_row,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-const {
-  click_menus_in_sequence,
-  plan_for_window_close,
-  wait_for_window_close,
-} = ChromeUtils.import("resource://testing-common/mozmill/WindowHelpers.jsm");
-
-const { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+const { click_menus_in_sequence } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/WindowHelpers.sys.mjs"
 );
 
 let gInbox;
@@ -54,14 +48,14 @@ add_setup(async function () {
 
   // We delete the first message so that we have to compact anything.
   await be_in_folder(gInbox);
-  let curMessage = select_click_row(0);
-  press_delete(mc);
-  Assert.notEqual(curMessage, select_click_row(0));
+  const curMessage = await select_click_row(0);
+  await press_delete(window);
+  Assert.notEqual(curMessage, await select_click_row(0));
 
-  let urlListener = {
+  const urlListener = {
     compactDone: false,
 
-    OnStartRunningUrl(aUrl) {},
+    OnStartRunningUrl() {},
     OnStopRunningUrl(aUrl, aExitCode) {
       Assert.equal(aExitCode, 0);
       Assert.ok(gInbox.msgDatabase.summaryValid);
@@ -74,7 +68,7 @@ add_setup(async function () {
   Assert.ok(gInbox.msgStore.supportsCompaction);
   gInbox.compact(urlListener, null);
 
-  utils.waitFor(
+  await TestUtils.waitForCondition(
     function () {
       return urlListener.compactDone;
     },
@@ -88,24 +82,28 @@ add_setup(async function () {
  * Checks that a message has particular status stored in the mbox file,
  * in the X-Mozilla-Status header.
  *
- * @param folder         The folder containing the message to check.
- * @param offset         Offset to the start of the message within mbox file.
- * @param expectedStatus The required status of the message.
+ * @param {nsIMsgFolder} folder - The folder containing the message to check.
+ * @param {string} storeToken - Offset to the start of the message within mbox
+ *    file (as a string).
+ * @param {integer} expectedStatus - The required status of the message.
  */
-async function check_status(folder, offset, expectedStatus) {
-  let mboxstring = await IOUtils.readUTF8(folder.filePath.path);
+async function check_status(folder, storeToken, expectedStatus) {
+  const mboxstring = await IOUtils.readUTF8(folder.filePath.path);
+
+  const offset = parseInt(storeToken, 10);
+  Assert.ok(!isNaN(offset), "storeToken should be an integer as a string");
 
   // Ah-hoc header parsing. Only check the first 1KB because the X-Mozilla-*
   // headers should be near the start.
-  let msg = mboxstring.slice(offset, offset + 1024);
+  let msg = mboxstring.slice(storeToken, offset + 1024);
   msg = msg.replace(/\r/g, ""); // Simplify by using LFs only.
-  for (let line of msg.split("\n")) {
+  for (const line of msg.split("\n")) {
     if (line == "") {
       break; // end of header block.
     }
     if (line.startsWith("X-Mozilla-Status:")) {
-      let hexValue = /:\s*([0-9a-f]+)/i.exec(line)[1];
-      let gotStatus = parseInt(hexValue, 16);
+      const hexValue = /:\s*([0-9a-f]+)/i.exec(line)[1];
+      const gotStatus = parseInt(hexValue, 16);
       Assert.equal(
         gotStatus,
         expectedStatus,
@@ -125,13 +123,13 @@ add_task(async function test_mark_messages_read() {
   be_in_folder(gOutbox); // TODO shouldn't have to swap folders
   // 5 messages in the folder
   await be_in_folder(gInbox);
-  let curMessage = select_click_row(0);
+  let curMessage = await select_click_row(0);
   // Store the offset because it will be unavailable via the hdr
   // after the message is deleted.
-  let offset = curMessage.messageOffset;
+  const offset = curMessage.storeToken;
   await check_status(gInbox, offset, 0); // status = unread
-  press_delete(mc);
-  Assert.notEqual(curMessage, select_click_row(0));
+  await press_delete(window);
+  Assert.notEqual(curMessage, await select_click_row(0));
   await check_status(
     gInbox,
     offset,
@@ -139,8 +137,8 @@ add_task(async function test_mark_messages_read() {
   );
 
   // 4 messages in the folder.
-  curMessage = select_click_row(0);
-  await check_status(gInbox, curMessage.messageOffset, 0); // status = unread
+  curMessage = await select_click_row(0);
+  await check_status(gInbox, curMessage.storeToken, 0); // status = unread
 
   // Make sure we can mark all read with >0 messages unread.
   await right_click_on_row(0);
@@ -157,32 +155,16 @@ add_task(async function test_mark_messages_read() {
 
   // All the 4 messages should now be read.
   Assert.ok(curMessage.isRead, "Message should have been marked Read!");
-  await check_status(
-    gInbox,
-    curMessage.messageOffset,
-    Ci.nsMsgMessageFlags.Read
-  );
-  curMessage = select_click_row(1);
+  await check_status(gInbox, curMessage.storeToken, Ci.nsMsgMessageFlags.Read);
+  curMessage = await select_click_row(1);
   Assert.ok(curMessage.isRead, "Message should have been marked Read!");
-  await check_status(
-    gInbox,
-    curMessage.messageOffset,
-    Ci.nsMsgMessageFlags.Read
-  );
-  curMessage = select_click_row(2);
+  await check_status(gInbox, curMessage.storeToken, Ci.nsMsgMessageFlags.Read);
+  curMessage = await select_click_row(2);
   Assert.ok(curMessage.isRead, "Message should have been marked Read!");
-  await check_status(
-    gInbox,
-    curMessage.messageOffset,
-    Ci.nsMsgMessageFlags.Read
-  );
-  curMessage = select_click_row(3);
+  await check_status(gInbox, curMessage.storeToken, Ci.nsMsgMessageFlags.Read);
+  curMessage = await select_click_row(3);
   Assert.ok(curMessage.isRead, "Message should have been marked Read!");
-  await check_status(
-    gInbox,
-    curMessage.messageOffset,
-    Ci.nsMsgMessageFlags.Read
-  );
+  await check_status(gInbox, curMessage.storeToken, Ci.nsMsgMessageFlags.Read);
 
   // Let's have the last message unread.
   await right_click_on_row(3);
@@ -198,14 +180,14 @@ add_task(async function test_mark_messages_read() {
   await new Promise(resolve => requestAnimationFrame(resolve));
 
   Assert.ok(!curMessage.isRead, "Message should have not been marked Read!");
-  await check_status(gInbox, curMessage.messageOffset, 0);
+  await check_status(gInbox, curMessage.storeToken, 0);
 });
 
 add_task(async function test_mark_messages_flagged() {
   // Mark a message with the star.
-  let curMessage = select_click_row(1);
+  const curMessage = await select_click_row(1);
   await right_click_on_row(1);
-  let hiddenPromise = BrowserTestUtils.waitForEvent(
+  const hiddenPromise = BrowserTestUtils.waitForEvent(
     getMailContext(),
     "popuphidden"
   );
@@ -219,7 +201,7 @@ add_task(async function test_mark_messages_flagged() {
   Assert.ok(curMessage.isFlagged, "Message should have been marked Flagged!");
   await check_status(
     gInbox,
-    curMessage.messageOffset,
+    curMessage.storeToken,
     Ci.nsMsgMessageFlags.Read + Ci.nsMsgMessageFlags.Marked
   );
 });
@@ -227,47 +209,43 @@ add_task(async function test_mark_messages_flagged() {
 async function subtest_check_queued_message() {
   // Always check the last message in the Outbox for the correct flag.
   await be_in_folder(gOutbox);
-  let lastMsg = [...gOutbox.messages].pop();
-  await check_status(
-    gOutbox,
-    lastMsg.messageOffset,
-    Ci.nsMsgMessageFlags.Queued
-  );
+  const lastMsg = [...gOutbox.messages].pop();
+  await check_status(gOutbox, lastMsg.storeToken, Ci.nsMsgMessageFlags.Queued);
 }
 
 /**
  * Create a reply or forward of a message and queue it for sending later.
  *
- * @param aMsgRow  Row index of message in Inbox that is to be replied/forwarded.
- * @param aReply   true = reply, false = forward.
+ * @param {integer} aMsgRow - Row index of message in Inbox that is to be replied/forwarded.
+ * @param {boolean} aReply - true = reply, false = forward.
  */
 async function reply_forward_message(aMsgRow, aReply) {
   await be_in_folder(gInbox);
-  select_click_row(aMsgRow);
+  await select_click_row(aMsgRow);
   let cwc;
   if (aReply) {
     // Reply to the message.
-    cwc = open_compose_with_reply();
+    cwc = await open_compose_with_reply();
   } else {
     // Forward the message.
-    cwc = open_compose_with_forward();
+    cwc = await open_compose_with_forward();
     // Type in some recipient.
-    setup_msg_contents(cwc, "somewhere@host.invalid", "", "");
+    await setup_msg_contents(cwc, "somewhere@host.invalid", "", "");
   }
 
   // Send it later.
-  plan_for_window_close(cwc);
+  const closePromise = BrowserTestUtils.domWindowClosed(cwc);
   // Ctrl+Shift+Return = Send Later
-  cwc.window.document.getElementById("messageEditor").focus();
+  cwc.document.getElementById("messageEditor").focus();
   EventUtils.synthesizeKey(
     "VK_RETURN",
     {
       shiftKey: true,
       accelKey: true,
     },
-    cwc.window
+    cwc
   );
-  wait_for_window_close(cwc);
+  await closePromise;
 
   await subtest_check_queued_message();
 
@@ -278,8 +256,8 @@ async function reply_forward_message(aMsgRow, aReply) {
   // flags were set. This is risky as the real code could change and call
   // a different function and the purpose of this test would be lost.
   await be_in_folder(gInbox);
-  let curMessage = select_click_row(aMsgRow);
-  let disposition = aReply
+  const curMessage = await select_click_row(aMsgRow);
+  const disposition = aReply
     ? gInbox.nsMsgDispositionState_Replied
     : gInbox.nsMsgDispositionState_Forwarded;
   gInbox.addMessageDispositionState(curMessage, disposition);
@@ -287,10 +265,10 @@ async function reply_forward_message(aMsgRow, aReply) {
 
 add_task(async function test_mark_messages_replied() {
   await reply_forward_message(2, true);
-  let curMessage = select_click_row(2);
+  const curMessage = await select_click_row(2);
   await check_status(
     gInbox,
-    curMessage.messageOffset,
+    curMessage.storeToken,
     Ci.nsMsgMessageFlags.Replied + Ci.nsMsgMessageFlags.Read
   );
 });
@@ -299,24 +277,24 @@ add_task(async function test_mark_messages_forwarded() {
   await be_in_folder(gInbox);
   // Forward a clean message.
   await reply_forward_message(3, false);
-  let curMessage = select_click_row(3);
+  let curMessage = await select_click_row(3);
   await check_status(
     gInbox,
-    curMessage.messageOffset,
+    curMessage.storeToken,
     Ci.nsMsgMessageFlags.Forwarded
   );
 
   // Forward a message that is read and already replied to.
-  curMessage = select_click_row(2);
+  curMessage = await select_click_row(2);
   await check_status(
     gInbox,
-    curMessage.messageOffset,
+    curMessage.storeToken,
     Ci.nsMsgMessageFlags.Replied + Ci.nsMsgMessageFlags.Read
   );
   await reply_forward_message(2, false);
   await check_status(
     gInbox,
-    curMessage.messageOffset,
+    curMessage.storeToken,
     Ci.nsMsgMessageFlags.Forwarded +
       Ci.nsMsgMessageFlags.Replied +
       Ci.nsMsgMessageFlags.Read

@@ -7,19 +7,24 @@
 #ifndef mozilla_css_SheetLoadData_h
 #define mozilla_css_SheetLoadData_h
 
+#include "mozilla/AlreadyAddRefed.h"
+#include "mozilla/RefPtr.h"
 #include "mozilla/css/Loader.h"
 #include "mozilla/css/SheetParsingMode.h"
 #include "mozilla/Encoding.h"
 #include "mozilla/PreloaderBase.h"
 #include "mozilla/SharedSubResourceCache.h"
 #include "mozilla/NotNull.h"
-#include "mozilla/UniquePtr.h"
-#include "nsIThreadInternal.h"
+#include "mozilla/dom/CacheExpirationTime.h"
 #include "nsProxyRelease.h"
 
 namespace mozilla {
+namespace dom {
+enum class FetchPriority : uint8_t;
+}  // namespace dom
+class AsyncEventDispatcher;
 class StyleSheet;
-}
+}  // namespace mozilla
 class nsICSSLoaderObserver;
 class nsINode;
 class nsIPrincipal;
@@ -37,11 +42,11 @@ static_assert(eAuthorSheetFeatures == 0 && eUserSheetFeatures == 1 &&
               "sheet parsing mode constants won't fit "
               "in SheetLoadData::mParsingMode");
 
+enum class SyncLoad : bool { No, Yes };
+
 class SheetLoadData final
     : public PreloaderBase,
-      public SharedSubResourceCacheLoadingValueBase<SheetLoadData>,
-      public nsIRunnable,
-      public nsIThreadObserver {
+      public SharedSubResourceCacheLoadingValueBase<SheetLoadData> {
   using MediaMatched = dom::LinkStyle::MediaMatched;
   using IsAlternate = dom::LinkStyle::IsAlternate;
   using UseSystemPrincipal = css::Loader::UseSystemPrincipal;
@@ -50,53 +55,56 @@ class SheetLoadData final
   virtual ~SheetLoadData();
 
  public:
-  // PreloaderBase
   static void PrioritizeAsPreload(nsIChannel* aChannel);
-  void PrioritizeAsPreload() final;
 
   // If this is a deferred load, start it now.
   void StartPendingLoad();
 
   // Data for loading a sheet linked from a document
-  SheetLoadData(css::Loader* aLoader, const nsAString& aTitle, nsIURI* aURI,
-                StyleSheet* aSheet, bool aSyncLoad, nsINode* aOwningNode,
-                IsAlternate aIsAlternate, MediaMatched aMediaMatched,
-                StylePreloadKind aPreloadKind, nsICSSLoaderObserver* aObserver,
-                nsIPrincipal* aTriggeringPrincipal,
-                nsIReferrerInfo* aReferrerInfo);
+  SheetLoadData(
+      css::Loader*, const nsAString& aTitle, nsIURI*, StyleSheet*, SyncLoad,
+      nsINode* aOwningNode, IsAlternate, MediaMatched, StylePreloadKind,
+      nsICSSLoaderObserver* aObserver, nsIPrincipal* aTriggeringPrincipal,
+      nsIReferrerInfo*, const nsAString& aNonce,
+      dom::FetchPriority aFetchPriority,
+      already_AddRefed<SubResourceNetworkMetadataHolder>&& aNetworkMetadata);
 
   // Data for loading a sheet linked from an @import rule
-  SheetLoadData(css::Loader* aLoader, nsIURI* aURI, StyleSheet* aSheet,
-                SheetLoadData* aParentData, nsICSSLoaderObserver* aObserver,
-                nsIPrincipal* aTriggeringPrincipal,
-                nsIReferrerInfo* aReferrerInfo);
+  SheetLoadData(
+      css::Loader*, nsIURI*, StyleSheet*, SheetLoadData* aParentData,
+      nsICSSLoaderObserver* aObserver, nsIPrincipal* aTriggeringPrincipal,
+      nsIReferrerInfo*,
+      already_AddRefed<SubResourceNetworkMetadataHolder>&& aNetworkMetadata);
 
   // Data for loading a non-document sheet
-  SheetLoadData(css::Loader* aLoader, nsIURI* aURI, StyleSheet* aSheet,
-                bool aSyncLoad, UseSystemPrincipal, StylePreloadKind,
-                const Encoding* aPreloadEncoding,
-                nsICSSLoaderObserver* aObserver,
-                nsIPrincipal* aTriggeringPrincipal,
-                nsIReferrerInfo* aReferrerInfo);
+  SheetLoadData(
+      css::Loader*, nsIURI*, StyleSheet*, SyncLoad, UseSystemPrincipal,
+      StylePreloadKind, const Encoding* aPreloadEncoding,
+      nsICSSLoaderObserver* aObserver, nsIPrincipal* aTriggeringPrincipal,
+      nsIReferrerInfo*, const nsAString& aNonce,
+      dom::FetchPriority aFetchPriority,
+      already_AddRefed<SubResourceNetworkMetadataHolder>&& aNetworkMetadata);
 
   nsIReferrerInfo* ReferrerInfo() const { return mReferrerInfo; }
 
-  void ScheduleLoadEventIfNeeded();
+  const nsString& Nonce() const { return mNonce; }
+
+  already_AddRefed<AsyncEventDispatcher> PrepareLoadEventIfNeeded();
 
   NotNull<const Encoding*> DetermineNonBOMEncoding(const nsACString& aSegment,
                                                    nsIChannel*) const;
 
+  void OnStartRequest(nsIRequest*);
+
   // The caller may have the bytes for the stylesheet split across two strings,
   // so aBytes1 and aBytes2 refer to those pieces.
   nsresult VerifySheetReadyToParse(nsresult aStatus, const nsACString& aBytes1,
-                                   const nsACString& aBytes2,
-                                   nsIChannel* aChannel);
+                                   const nsACString& aBytes2, nsIChannel*);
 
   NS_DECL_ISUPPORTS
-  NS_DECL_NSIRUNNABLE
-  NS_DECL_NSITHREADOBSERVER
 
   css::Loader& Loader() { return *mLoader; }
+  const css::Loader& Loader() const { return *mLoader; }
 
   void DidCancelLoad() { mIsCancelled = true; }
 
@@ -114,9 +122,6 @@ class SheetLoadData final
   // URI we're loading.  Null for inline or constructable sheets.
   nsCOMPtr<nsIURI> mURI;
 
-  // Should be 1 for non-inline sheets.
-  uint32_t mLineNumber;
-
   // The sheet we're loading data for
   const RefPtr<StyleSheet> mSheet;
 
@@ -126,7 +131,11 @@ class SheetLoadData final
 
   // The expiration time of the channel that has loaded this data, if
   // applicable.
-  uint32_t mExpirationTime = 0;
+  CacheExpirationTime mExpirationTime = CacheExpirationTime::Never();
+
+  // The load tainting of the request. Needed to be able to pass it around off
+  // the main thread for SRI checks.
+  LoadTainting mTainting{LoadTainting::Basic};
 
   // Number of sheets we @import-ed that are still loading
   uint32_t mPendingChildren;
@@ -159,14 +168,21 @@ class SheetLoadData final
   // sheets that have been cancelled and such.
   bool mIsCancelled : 1;
 
-  // mMustNotify is true if the load data is being loaded async and
-  // the original function call that started the load has returned.
-  // This applies only to observer notifications; load/error events
-  // are fired for any SheetLoadData that has a non-null
-  // mOwningNodeBeforeLoadEvent.
+  // mMustNotify is true if the load data is being loaded async and the original
+  // function call that started the load has returned.
+  //
+  // This applies only to observer notifications; load/error events are fired
+  // for any SheetLoadData that has a non-null owner node (though mMustNotify is
+  // used to avoid an event loop round-trip in that case).
   bool mMustNotify : 1;
 
-  // mWasAlternate is true if the sheet was an alternate when the load data was
+  // Whether we had an owner node at the point of creation. This allows
+  // differentiating between "Link" header stylesheets and LinkStyle-owned
+  // stylesheets.
+  const bool mHadOwnerNode : 1;
+
+  // mWasAlternate is true if the sheet was an alternate
+  // (https://html.spec.whatwg.org/#rel-alternate) when the load data was
   // created.
   const bool mWasAlternate : 1;
 
@@ -199,20 +215,23 @@ class SheetLoadData final
   // to true if this load, or the load of any descendant import, fails.
   bool mLoadFailed : 1;
 
+  // If this flag is true, this load uses a cached load, where the corresponding
+  // notifications from the necko channel doesn't happen for the current
+  // document.  The loader should emulate the equivalent once the load finishes.
+  // See Loader::NotifyObservers.
+  //
+  // This becomes true in the following cases:
+  //   * This load is coalesced to a pending or loading cache, where the load
+  //     is performed by a different loader for the different document
+  //   * This load uses a complete cache and no necko activity happens
+  bool mShouldEmulateNotificationsForCachedLoad : 1;
+
   // Whether this is a preload, and which kind of preload it is.
   //
   // TODO(emilio): This can become a bitfield once we build with a GCC version
   // that has the fix for https://gcc.gnu.org/bugzilla/show_bug.cgi?id=61414,
   // which causes a false positive warning here.
   const StylePreloadKind mPreloadKind;
-
-  // This is the node that imported the sheet. Cleared after the load/error
-  // event fires, as we don't need it anymore. Needed to get the charset on it,
-  // and to fire load/error events. Must implement LinkStyle.
-  //
-  // This is only set for top-level sheets (e.g., for an @import-ed sheet it'll
-  // be null).
-  nsCOMPtr<nsINode> mOwningNodeBeforeLoadEvent;
 
   nsINode* GetRequestingNode() const;
 
@@ -225,6 +244,11 @@ class SheetLoadData final
   // Referrer info of the load.
   const nsCOMPtr<nsIReferrerInfo> mReferrerInfo;
 
+  // The cryptographic nonce of the load used for CSP checks.
+  const nsString mNonce;
+
+  const dom::FetchPriority mFetchPriority;
+
   // The encoding guessed from attributes and the document character set.
   const NotNull<const Encoding*> mGuessedEncoding;
 
@@ -233,14 +257,23 @@ class SheetLoadData final
 
   // Whether SheetComplete was called.
   bool mSheetCompleteCalled = false;
+
   // Whether we intentionally are not calling SheetComplete because nobody is
   // listening for the load.
   bool mIntentionallyDropped = false;
 
+  // The start timestamp for the load, or the timestamp where this load is
+  // coalesced into an existing load.
+  TimeStamp mLoadStart;
+
+  const bool mRecordErrors;
+
+  RefPtr<SubResourceNetworkMetadataHolder> mNetworkMetadata;
+
   bool ShouldDefer() const { return mWasAlternate || !mMediaMatched; }
 
   RefPtr<StyleSheet> ValueForCache() const;
-  uint32_t ExpirationTime() const { return mExpirationTime; }
+  CacheExpirationTime ExpirationTime() const { return mExpirationTime; }
 
   // If there are no child sheets outstanding, mark us as complete.
   // Otherwise, the children are holding strong refs to the data
@@ -254,40 +287,47 @@ class SheetLoadData final
   }
 
   bool IsPreload() const { return mPreloadKind != StylePreloadKind::None; }
-  bool IsLinkRelPreload() const { return css::IsLinkRelPreload(mPreloadKind); }
+  bool IsLinkRelPreloadOrEarlyHint() const {
+    return css::IsLinkRelPreloadOrEarlyHint(mPreloadKind);
+  }
 
-  bool BlocksLoadEvent() const { return !RootLoadData().IsLinkRelPreload(); }
+  bool BlocksLoadEvent() const {
+    const auto& root = RootLoadData();
+    return !root.IsLinkRelPreloadOrEarlyHint() && !root.IsSyncLoad();
+  }
 
   bool IsSyncLoad() const override { return mSyncLoad; }
   bool IsLoading() const override { return mIsLoading; }
   bool IsCancelled() const override { return mIsCancelled; }
 
-  void StartLoading() override { mIsLoading = true; }
-  void SetLoadCompleted() override { mIsLoading = false; }
+  SubResourceNetworkMetadataHolder* GetNetworkMetadata() const override {
+    return mNetworkMetadata.get();
+  }
+
+  void StartLoading() override;
+  void SetLoadCompleted() override;
+  void OnCoalescedTo(const SheetLoadData& aExistingLoad) override;
+
   void Cancel() override { mIsCancelled = true; }
+
+  void SetMinimumExpirationTime(const CacheExpirationTime& aExpirationTime) {
+    mExpirationTime.SetMinimum(aExpirationTime);
+  }
+
+  nsLiteralString InitiatorTypeString();
 
  private:
   const SheetLoadData& RootLoadData() const {
-    auto* top = this;
+    const auto* top = this;
     while (top->mParentData) {
       top = top->mParentData;
     }
     return *top;
   }
-
-  void FireLoadEvent(nsIThreadInternal* aThread);
 };
 
 using SheetLoadDataHolder = nsMainThreadPtrHolder<SheetLoadData>;
 
 }  // namespace mozilla::css
-
-/**
- * Casting SheetLoadData to nsISupports is ambiguous.
- * This method handles that.
- */
-inline nsISupports* ToSupports(mozilla::css::SheetLoadData* p) {
-  return NS_ISUPPORTS_CAST(nsIRunnable*, p);
-}
 
 #endif  // mozilla_css_SheetLoadData_h

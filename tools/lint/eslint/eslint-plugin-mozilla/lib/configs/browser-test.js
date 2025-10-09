@@ -6,7 +6,6 @@ module.exports = {
     browser: true,
     "mozilla/browser-window": true,
     "mozilla/simpletest": true,
-    // "node": true
   },
 
   // All globals made available in the test environment.
@@ -16,7 +15,6 @@ module.exports = {
     Assert: false,
     BrowserTestUtils: false,
     ContentTask: false,
-    ContentTaskUtils: false,
     EventUtils: false,
     IOUtils: false,
     PathUtils: false,
@@ -26,7 +24,10 @@ module.exports = {
     addLoadEvent: false,
     add_setup: false,
     add_task: false,
+    afterEach: false,
+    beforeEach: false,
     content: false,
+    describe: false,
     executeSoon: false,
     expectUncaughtException: false,
     export_assertions: false,
@@ -42,6 +43,7 @@ module.exports = {
     info: false,
     is: false,
     isnot: false,
+    it: false,
     ok: false,
     record: false,
     registerCleanupFunction: false,
@@ -57,32 +59,12 @@ module.exports = {
     waitForFocus: false,
   },
 
-  plugins: ["mozilla", "@microsoft/sdl"],
+  name: "mozilla/browser-test",
+  plugins: ["mozilla"],
 
   rules: {
-    // No using of insecure url, so no http urls
-    "@microsoft/sdl/no-insecure-url": [
-      "error",
-      {
-        exceptions: [
-          "^http:\\/\\/mochi\\.test?.*",
-          "^http:\\/\\/localhost?.*",
-          "^http:\\/\\/127\\.0\\.0\\.1?.*",
-          // Exempt xmlns urls
-          "^http:\\/\\/www\\.w3\\.org?.*",
-          "^http:\\/\\/www\\.mozilla\\.org\\/keymaster\\/gatekeeper?.*",
-          // Exempt urls that start with ftp or ws.
-          "^ws:?.*",
-          "^ftp:?.*",
-        ],
-        varExceptions: ["insecure?.*"],
-      },
-    ],
-    "mozilla/import-content-task-globals": "error",
-    "mozilla/import-headjs-globals": "error",
-    "mozilla/mark-test-function-used": "error",
     "mozilla/no-addtask-setup": "error",
-    "mozilla/no-arbitrary-setTimeout": "error",
+    "mozilla/no-comparison-or-assignment-inside-ok": "error",
     "mozilla/no-redeclare-with-import-autofix": [
       "error",
       { errorForNonImports: false },

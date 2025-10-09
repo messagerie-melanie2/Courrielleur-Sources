@@ -57,7 +57,7 @@ class nsNestedAboutURI final : public nsSimpleNestedURI {
  private:
   nsNestedAboutURI(nsIURI* aInnerURI, nsIURI* aBaseURI)
       : nsSimpleNestedURI(aInnerURI), mBaseURI(aBaseURI) {}
-  nsNestedAboutURI() : nsSimpleNestedURI() {}
+  nsNestedAboutURI() {}
   virtual ~nsNestedAboutURI() = default;
 
  public:
@@ -65,8 +65,7 @@ class nsNestedAboutURI final : public nsSimpleNestedURI {
   NS_IMETHOD QueryInterface(REFNSIID aIID, void** aInstancePtr) override;
 
   // Override StartClone(), the nsISerializable methods, and
-  virtual nsSimpleURI* StartClone(RefHandlingEnum aRefHandlingMode,
-                                  const nsACString& newRef) override;
+  virtual already_AddRefed<nsSimpleURI> StartClone() override;
   NS_IMETHOD Mutate(nsIURIMutator** _retval) override;
   NS_IMETHOD_(void) Serialize(ipc::URIParams& aParams) override;
 

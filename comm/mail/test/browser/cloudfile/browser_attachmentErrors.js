@@ -8,42 +8,46 @@
 
 "use strict";
 
-XPCOMUtils.defineLazyGetter(this, "brandShortName", () =>
+ChromeUtils.defineLazyGetter(this, "brandShortName", () =>
   Services.strings
     .createBundle("chrome://branding/locale/brand.properties")
     .GetStringFromName("brandShortName")
 );
 
-var { gMockFilePicker, gMockFilePickReg, select_attachments } =
-  ChromeUtils.import("resource://testing-common/mozmill/AttachmentHelpers.jsm");
-var { gMockCloudfileManager, MockCloudfileAccount } = ChromeUtils.import(
-  "resource://testing-common/mozmill/CloudfileHelpers.jsm"
+var { select_attachments } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/AttachmentHelpers.sys.mjs"
 );
+var { gMockCloudfileManager, MockCloudfileAccount } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/CloudfileHelpers.sys.mjs"
+  );
 var {
   add_cloud_attachments,
   rename_selected_cloud_attachment,
   close_compose_window,
   open_compose_new_mail,
-} = ChromeUtils.import("resource://testing-common/mozmill/ComposeHelpers.jsm");
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+);
 var {
   add_message_to_folder,
   create_message,
   FAKE_SERVER_HOSTNAME,
   get_special_folder,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
+var { MockFilePicker } = SpecialPowers;
 
-var { cloudFileAccounts } = ChromeUtils.import(
-  "resource:///modules/cloudFileAccounts.jsm"
+var { cloudFileAccounts } = ChromeUtils.importESModule(
+  "resource:///modules/cloudFileAccounts.sys.mjs"
 );
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var kHtmlPrefKey = "mail.identity.default.compose_html";
 var kDefaultSigKey = "mail.identity.id1.htmlSigText";
-var kDefaultSig = "This is my signature.\n\nCheck out my website sometime!";
 var kFiles = ["./data/testFile1", "./data/testFile2"];
 
 var gInbox;
@@ -55,7 +59,7 @@ function test_expected_included(actual, expected, description) {
     `${description}: correct length`
   );
   for (let i = 0; i < expected.length; i++) {
-    for (let item of Object.keys(expected[i])) {
+    for (const item of Object.keys(expected[i])) {
       Assert.equal(
         actual[i][item],
         expected[i][item],
@@ -80,7 +84,7 @@ add_setup(async function () {
 
   // For replies and forwards, we'll work off a message in the Inbox folder
   // of the fake "tinderbox" account.
-  let server = MailServices.accounts.findServer(
+  const server = MailServices.accounts.findServer(
     "tinderbox",
     FAKE_SERVER_HOSTNAME,
     "pop3"
@@ -88,7 +92,7 @@ add_setup(async function () {
   gInbox = await get_special_folder(Ci.nsMsgFolderFlags.Inbox, false, server);
   await add_message_to_folder([gInbox], create_message());
 
-  gMockFilePickReg.register();
+  MockFilePicker.init(window.browsingContext);
   gMockCloudfileManager.register();
 
   Services.prefs.setBoolPref(kHtmlPrefKey, true);
@@ -100,7 +104,7 @@ add_setup(async function () {
 
 registerCleanupFunction(function () {
   gMockCloudfileManager.unregister();
-  gMockFilePickReg.unregister();
+  MockFilePicker.cleanup();
   Services.prefs.clearUserPref(kDefaultSigKey);
   Services.prefs.clearUserPref(kHtmlPrefKey);
   Services.prefs.clearUserPref("mail.compose.default_to_paragraph");
@@ -110,8 +114,8 @@ registerCleanupFunction(function () {
  * Test that we get the correct alert message when the provider reports a custom
  * error during upload operation.
  */
-add_task(function test_custom_error_during_upload() {
-  subtest_errors_during_upload({
+add_task(async function test_custom_error_during_upload() {
+  await subtest_errors_during_upload({
     exception: {
       message: "This is a custom error.",
       result: cloudFileAccounts.constants.uploadErrWithCustomMessage,
@@ -133,8 +137,8 @@ add_task(function test_custom_error_during_upload() {
  * Test that we get the correct alert message when the provider reports a standard
  * error during upload operation.
  */
-add_task(function test_standard_error_during_upload() {
-  subtest_errors_during_upload({
+add_task(async function test_standard_error_during_upload() {
+  await subtest_errors_during_upload({
     exception: {
       message: "This is a standard error.",
       result: cloudFileAccounts.constants.uploadErr,
@@ -156,8 +160,8 @@ add_task(function test_standard_error_during_upload() {
  * Test that we get the correct alert message when the provider reports a quota
  * error.
  */
-add_task(function test_quota_error_during_upload() {
-  subtest_errors_during_upload({
+add_task(async function test_quota_error_during_upload() {
+  await subtest_errors_during_upload({
     exception: {
       message: "Quota Error.",
       result: cloudFileAccounts.constants.uploadWouldExceedQuota,
@@ -181,8 +185,8 @@ add_task(function test_quota_error_during_upload() {
  * Test that we get the correct alert message when the provider reports a file
  * size exceeded error.
  */
-add_task(function test_file_size_error_during_upload() {
-  subtest_errors_during_upload({
+add_task(async function test_file_size_error_during_upload() {
+  await subtest_errors_during_upload({
     exception: {
       message: "File Size Error.",
       result: cloudFileAccounts.constants.uploadExceedsFileLimit,
@@ -203,8 +207,8 @@ add_task(function test_file_size_error_during_upload() {
 /**
  * Test that we get the connection error in offline mode.
  */
-add_task(function test_offline_error_during_upload() {
-  subtest_errors_during_upload({
+add_task(async function test_offline_error_during_upload() {
+  await subtest_errors_during_upload({
     toggleOffline: true,
     expectedAlerts: [
       {
@@ -222,15 +226,15 @@ add_task(function test_offline_error_during_upload() {
 /**
  * Subtest for testing error messages during upload operation.
  *
- * @param error - defines the the thrown exception and the expected alert messages
- * @param error.exception - the exception to be thrown by uploadFile()
- * @param error.expectedAlerts - array with { title, message } objects for expected
- *   alerts for each uploaded file
+ * @param {Error} error - The thrown exception and the expected alert messages.
+ * @param {Error} error.exception - The exception to be thrown by uploadFile()
+ * @param {object[]} error.expectedAlerts - Array with { title, message }
+ *   objects for expected alerts for each uploaded file.
  */
-function subtest_errors_during_upload(error) {
-  gMockFilePicker.returnFiles = collectFiles(kFiles);
-  let provider = new MockCloudfileAccount();
-  let config = {
+async function subtest_errors_during_upload(error) {
+  MockFilePicker.setFiles(collectFiles(kFiles));
+  const provider = new MockCloudfileAccount();
+  const config = {
     serviceName: "MochiTest A",
     serviceUrl: "https://www.provider-A.org",
     serviceIcon: "chrome://messenger/skin/icons/globe.svg",
@@ -240,12 +244,12 @@ function subtest_errors_during_upload(error) {
   }
   provider.init("providerA", config);
 
-  let cw = open_compose_new_mail();
+  const cw = await open_compose_new_mail();
 
   if (error.toggleOffline) {
     Services.io.offline = true;
   }
-  let seenAlerts = add_cloud_attachments(
+  const seenAlerts = await add_cloud_attachments(
     cw,
     provider,
     false,
@@ -272,15 +276,15 @@ function subtest_errors_during_upload(error) {
       "Alert should have the correct message."
     );
   }
-  close_compose_window(cw);
+  await close_compose_window(cw);
 }
 
 /**
  * Test that we get the correct alert message when the provider does not support
  * renaming.
  */
-add_task(function test_nosupport_error_during_rename() {
-  subtest_errors_during_rename({
+add_task(async function test_nosupport_error_during_rename() {
+  await subtest_errors_during_rename({
     exception: {
       message: "Rename not supported.",
       result: cloudFileAccounts.constants.renameNotSupported,
@@ -302,8 +306,8 @@ add_task(function test_nosupport_error_during_rename() {
  * Test that we get the correct alert message when the provider reports a standard
  * error during rename operation.
  */
-add_task(function test_standard_error_during_rename() {
-  subtest_errors_during_rename({
+add_task(async function test_standard_error_during_rename() {
+  await subtest_errors_during_rename({
     exception: {
       message: "Rename error.",
       result: cloudFileAccounts.constants.renameErr,
@@ -325,8 +329,8 @@ add_task(function test_standard_error_during_rename() {
  * Test that we get the correct alert message when the provider reports a custom
  * error during rename operation.
  */
-add_task(function test_custom_error_during_rename() {
-  subtest_errors_during_rename({
+add_task(async function test_custom_error_during_rename() {
+  await subtest_errors_during_rename({
     exception: {
       message: "This is a custom error.",
       result: cloudFileAccounts.constants.renameErrWithCustomMessage,
@@ -347,8 +351,8 @@ add_task(function test_custom_error_during_rename() {
 /**
  * Test that we get the connection error in offline mode.
  */
-add_task(function test_offline_error_during_rename() {
-  subtest_errors_during_rename({
+add_task(async function test_offline_error_during_rename() {
+  await subtest_errors_during_rename({
     toggleOffline: true,
     expectedAlerts: [
       {
@@ -366,14 +370,15 @@ add_task(function test_offline_error_during_rename() {
 /**
  * Subtest for testing error messages during rename operation.
  *
- * @param error - defines the the thrown exception and the expected alert messagees
- * @param error.exception - the exception to be thrown by renameFile()
- * @param error.expectedAlerts - array with { title, message } objects for each renamed file
+ * @param {Error} error - The thrown exception and the expected alert messages.
+ * @param {Error} error.exception - the exception to be thrown by renameFile()
+ * @param {object[]} error.expectedAlerts - Array with { title, message }
+ *   objects for each renamed file.
  */
-function subtest_errors_during_rename(error) {
-  gMockFilePicker.returnFiles = collectFiles(kFiles);
-  let provider = new MockCloudfileAccount();
-  let config = {
+async function subtest_errors_during_rename(error) {
+  MockFilePicker.setFiles(collectFiles(kFiles));
+  const provider = new MockCloudfileAccount();
+  const config = {
     serviceName: "MochiTest A",
     serviceUrl: "https://www.provider-A.org",
     serviceIcon: "chrome://messenger/skin/icons/globe.svg",
@@ -383,8 +388,8 @@ function subtest_errors_during_rename(error) {
   }
   provider.init("providerA", config);
 
-  let cw = open_compose_new_mail();
-  let uploads = add_cloud_attachments(cw, provider);
+  const cw = await open_compose_new_mail();
+  const uploads = await add_cloud_attachments(cw, provider);
   test_expected_included(
     uploads,
     [
@@ -410,10 +415,12 @@ function subtest_errors_during_rename(error) {
   if (error.toggleOffline) {
     Services.io.offline = true;
   }
-  let seenAlerts = [];
+  const seenAlerts = [];
   for (let i = 0; i < kFiles.length; ++i) {
     select_attachments(cw, i);
-    seenAlerts.push(rename_selected_cloud_attachment(cw, "IgnoredNewName"));
+    seenAlerts.push(
+      await rename_selected_cloud_attachment(cw, "IgnoredNewName")
+    );
   }
   if (error.toggleOffline) {
     Services.io.offline = false;
@@ -436,5 +443,5 @@ function subtest_errors_during_rename(error) {
       "Alert should have the correct message."
     );
   }
-  close_compose_window(cw);
+  await close_compose_window(cw);
 }

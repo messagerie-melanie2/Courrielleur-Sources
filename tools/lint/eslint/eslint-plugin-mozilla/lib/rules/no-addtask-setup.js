@@ -16,7 +16,7 @@ function isNamedLikeSetup(name) {
 module.exports = {
   meta: {
     docs: {
-      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/no-addtask-setup.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/rules/no-addtask-setup.html",
     },
     fixable: "code",
     messages: {
@@ -32,6 +32,7 @@ module.exports = {
         if (callee.type === "Identifier" && callee.name === "add_task") {
           let arg = node.arguments[0];
           if (
+            !arg ||
             arg.type !== "FunctionExpression" ||
             !arg.id ||
             !isNamedLikeSetup(arg.id.name)

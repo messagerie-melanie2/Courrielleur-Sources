@@ -3,15 +3,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "nsCOMPtr.h"
 #include "mimeeobj.h"
 #include "prmem.h"
 #include "plstr.h"
 #include "prlog.h"
 #include "nsMimeStringResources.h"
 #include "mimemoz2.h"
-#include "mimemapl.h"
-#include "nsMimeTypes.h"
 
 #define MIME_SUPERCLASS mimeLeafClass
 MimeDefClass(MimeExternalObject, MimeExternalObjectClass,
@@ -20,16 +17,15 @@ MimeDefClass(MimeExternalObject, MimeExternalObjectClass,
 static int MimeExternalObject_initialize(MimeObject*);
 static void MimeExternalObject_finalize(MimeObject*);
 static int MimeExternalObject_parse_begin(MimeObject*);
-static int MimeExternalObject_parse_buffer(const char*, int32_t, MimeObject*);
+static int MimeExternalObject_parse_buffer(const char*, int32_t, MimeClosure);
 static int MimeExternalObject_parse_line(const char*, int32_t, MimeObject*);
 static int MimeExternalObject_parse_decoded_buffer(const char*, int32_t,
-                                                   MimeObject*);
+                                                   MimeClosure);
 static bool MimeExternalObject_displayable_inline_p(MimeObjectClass* clazz,
                                                     MimeHeaders* hdrs);
 
-static int MimeExternalObjectClassInitialize(MimeExternalObjectClass* clazz) {
-  MimeObjectClass* oclass = (MimeObjectClass*)clazz;
-  MimeLeafClass* lclass = (MimeLeafClass*)clazz;
+static int MimeExternalObjectClassInitialize(MimeObjectClass* oclass) {
+  MimeLeafClass* lclass = (MimeLeafClass*)oclass;
 
   NS_ASSERTION(!oclass->class_initialized,
                "1.1 <rhp@netscape.com> 19 Mar 1999 12:00");
@@ -145,14 +141,18 @@ static int MimeExternalObject_parse_begin(MimeObject* obj) {
     PR_FREEIF(id);
     PR_FREEIF(id_url);
     PR_FREEIF(id_name);
-    if (status < 0) return status;
   }
 
   return 0;
 }
 
 static int MimeExternalObject_parse_buffer(const char* buffer, int32_t size,
-                                           MimeObject* obj) {
+                                           MimeClosure closure) {
+  MimeObject* obj = closure.AsMimeObject();
+  if (!obj) {
+    return -1;
+  }
+
   NS_ASSERTION(!obj->closed_p, "1.1 <rhp@netscape.com> 19 Mar 1999 12:00");
   if (obj->closed_p) return -1;
 
@@ -161,12 +161,13 @@ static int MimeExternalObject_parse_buffer(const char* buffer, int32_t size,
 
   /* The data will be base64-decoded and passed to
      MimeExternalObject_parse_decoded_buffer. */
-  return ((MimeObjectClass*)&MIME_SUPERCLASS)->parse_buffer(buffer, size, obj);
+  return ((MimeObjectClass*)&MIME_SUPERCLASS)
+      ->parse_buffer(buffer, size, closure);
 }
 
 static int MimeExternalObject_parse_decoded_buffer(const char* buf,
                                                    int32_t size,
-                                                   MimeObject* obj) {
+                                                   MimeClosure closure) {
   /* This is called (by MimeLeafClass->parse_buffer) with blocks of data
    that have already been base64-decoded.  This will only be called in
    the case where we're not emitting HTML, and want access to the raw
@@ -184,6 +185,11 @@ static int MimeExternalObject_parse_decoded_buffer(const char* buf,
    * reading them) and the JS emitter (which doesn't care about attachment data
    * at all). 0 means ok, the caller just checks for negative return value.
    */
+  MimeObject* obj = closure.AsMimeObject();
+  if (!obj) {
+    return -1;
+  }
+
   if (obj->options &&
       (obj->options->metadata_only || obj->options->write_html_p))
     return 0;
@@ -208,8 +214,6 @@ static bool MimeExternalObject_displayable_inline_p(MimeObjectClass* clazz,
 MimeDefClass(MimeSuppressedCrypto, MimeSuppressedCryptoClass,
              mimeSuppressedCryptoClass, &MIME_SUPERCLASS);
 
-static int MimeSuppressedCryptoClassInitialize(
-    MimeSuppressedCryptoClass* clazz) {
-  MimeExternalObjectClass* lclass = (MimeExternalObjectClass*)clazz;
-  return MimeExternalObjectClassInitialize(lclass);
+static int MimeSuppressedCryptoClassInitialize(MimeObjectClass* oclass) {
+  return MimeExternalObjectClassInitialize(oclass);
 }

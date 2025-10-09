@@ -5,9 +5,10 @@ import argparse
 import os
 import re
 import shutil
+import sys
 
 from fetch_github_repo import fetch_repo
-from run_operations import run_git, run_shell
+from run_operations import get_last_line, run_git, run_hg, run_shell
 
 # This script restores the mozilla patch stack and no-op commit tracking
 # files.  In the case of repo corruption or a mistake made during
@@ -16,40 +17,48 @@ from run_operations import run_git, run_shell
 # process from the beginning.
 
 
-def get_last_line(file_path):
-    # technique from https://stackoverflow.com/questions/46258499/how-to-read-the-last-line-of-a-file-in-python
-    with open(file_path, "rb") as f:
-        try:  # catch OSError in case of a one line file
-            f.seek(-2, os.SEEK_END)
-            while f.read(1) != b"\n":
-                f.seek(-2, os.SEEK_CUR)
-        except OSError:
-            f.seek(0)
-        return f.readline().decode().strip()
-
-
 def restore_patch_stack(
-    github_path, github_branch, patch_directory, state_directory, tar_name
+    github_path,
+    github_branch,
+    patch_directory,
+    state_directory,
+    tar_name,
 ):
+    # make sure the repo is clean before beginning
+    stdout_lines = run_hg("hg status third_party/libwebrtc")
+    if len(stdout_lines) != 0:
+        print("There are modified or untracked files under third_party/libwebrtc")
+        print("Please cleanup the repo under third_party/libwebrtc before running")
+        print(os.path.basename(__file__))
+        sys.exit(1)
+
     # first, refetch the repo (hopefully utilizing the tarfile for speed) so
     # the patches apply cleanly
+    print("fetch repo")
     fetch_repo(github_path, True, os.path.join(state_directory, tar_name))
 
     # remove any stale no-op-cherry-pick-msg files in state_directory
-    run_shell("rm {}/*.no-op-cherry-pick-msg || true".format(state_directory))
+    print("clear no-op-cherry-pick-msg files")
+    run_shell(f"rm {state_directory}/*.no-op-cherry-pick-msg || true")
 
-    # lookup latest vendored commit from third_party/libwebrtc/README.moz-ff-commit
-    file = os.path.abspath("third_party/libwebrtc/README.moz-ff-commit")
+    # lookup latest vendored commit from third_party/libwebrtc/README.mozilla.last-vendor
+    print(
+        "lookup latest vendored commit from third_party/libwebrtc/README.mozilla.last-vendor"
+    )
+    file = os.path.abspath("third_party/libwebrtc/README.mozilla.last-vendor")
     last_vendored_commit = get_last_line(file)
 
     # checkout the previous vendored commit with proper branch name
-    cmd = "git checkout -b {} {}".format(github_branch, last_vendored_commit)
+    print(
+        f"checkout the previous vendored commit ({last_vendored_commit}) with proper branch name"
+    )
+    cmd = f"git checkout -b {github_branch} {last_vendored_commit}"
     run_git(cmd, github_path)
 
     # restore the patches to moz-libwebrtc repo, use run_shell instead of
     # run_hg to allow filepath wildcard
     print("Restoring patch stack")
-    run_shell("cd {} && git am {}/*.patch".format(github_path, patch_directory))
+    run_shell(f"cd {github_path} && git am {patch_directory}/*.patch")
 
     # it is also helpful to restore the no-op-cherry-pick-msg files to
     # the state directory so that if we're restoring a patch-stack we
@@ -61,6 +70,9 @@ def restore_patch_stack(
     ]
     for file in no_op_files:
         shutil.copy(os.path.join(patch_directory, file), state_directory)
+
+    print("Please run the following command to verify the state of the patch-stack:")
+    print("  bash dom/media/webrtc/third_party_build/verify_vendoring.sh")
 
 
 if __name__ == "__main__":
@@ -84,17 +96,17 @@ if __name__ == "__main__":
     parser.add_argument(
         "--patch-path",
         default=default_patch_dir,
-        help="path to save patches (defaults to {})".format(default_patch_dir),
+        help=f"path to save patches (defaults to {default_patch_dir})",
     )
     parser.add_argument(
         "--tar-name",
         default=default_tar_name,
-        help="name of tar file (defaults to {})".format(default_tar_name),
+        help=f"name of tar file (defaults to {default_tar_name})",
     )
     parser.add_argument(
         "--state-path",
         default=default_state_dir,
-        help="path to state directory (defaults to {})".format(default_state_dir),
+        help=f"path to state directory (defaults to {default_state_dir})",
     )
     args = parser.parse_args()
 

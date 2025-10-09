@@ -107,6 +107,27 @@
       expected: 'denied',
     },
     {
+      id: 'query storage-access unknown',
+      top: UNKNOWN_ACTION,
+      name: 'storage-access',
+      type: '3rdPartyFrameStorage^https://example.org',
+      expected: 'prompt',
+    },
+    {
+      id: 'query camera top unknown',
+      top: UNKNOWN_ACTION,
+      name: 'camera',
+      type: 'camera',
+      expected: 'denied',
+    },
+    {
+      id: 'query microphone top unknown',
+      top: UNKNOWN_ACTION,
+      name: 'microphone',
+      type: 'microphone',
+      expected: 'denied',
+    },
+    {
       id: 'query navigation top prompt',
       top: PROMPT_ACTION,
       name: 'geolocation',
@@ -132,6 +153,27 @@
       top: PROMPT_ACTION,
       name: 'persistent-storage',
       type: 'persistent-storage',
+      expected: 'denied',
+    },
+    {
+      id: 'query storage-access top prompt',
+      top: PROMPT_ACTION,
+      name: 'storage-access',
+      type: '3rdPartyFrameStorage^https://example.org',
+      expected: 'prompt',
+    },
+    {
+      id: 'query camera top prompt',
+      top: PROMPT_ACTION,
+      name: 'camera',
+      type: 'camera',
+      expected: 'denied',
+    },
+    {
+      id: 'query microphone top prompt',
+      top: PROMPT_ACTION,
+      name: 'microphone',
+      type: 'microphone',
       expected: 'denied',
     },
     {
@@ -163,6 +205,27 @@
       expected: 'denied',
     },
     {
+      id: 'query storage-access top denied',
+      top: DENY_ACTION,
+      name: 'storage-access',
+      type: '3rdPartyFrameStorage^https://example.org',
+      expected: 'prompt',
+    },
+    {
+      id: 'query camera top denied',
+      top: DENY_ACTION,
+      name: 'camera',
+      type: 'camera',
+      expected: 'denied',
+    },
+    {
+      id: 'query micrphone top denied',
+      top: DENY_ACTION,
+      name: 'microphone',
+      type: 'microphone',
+      expected: 'denied',
+    },
+    {
       id: 'query navigation top granted',
       top: ALLOW_ACTION,
       name: 'geolocation',
@@ -188,6 +251,27 @@
       top: ALLOW_ACTION,
       name: 'persistent-storage',
       type: 'persistent-storage',
+      expected: 'denied',
+    },
+    {
+      id: 'query storage-access top granted',
+      top: ALLOW_ACTION,
+      name: 'storage-access',
+      type: '3rdPartyFrameStorage^https://example.org',
+      expected: 'granted',
+    },
+    {
+      id: 'query camera top granted',
+      top: ALLOW_ACTION,
+      name: 'camera',
+      type: 'camera',
+      expected: 'denied',
+    },
+    {
+      id: 'query microphone top granted',
+      top: ALLOW_ACTION,
+      name: 'microphone',
+      type: 'microphone',
       expected: 'denied',
     },
     {
@@ -222,7 +306,102 @@
       type: 'geo',
       expected: 'prompt',
     },
-
+    {
+      id: 'query storage-access top denied, iframe has allow none attribute',
+      top: DENY_ACTION,
+      allow: "storage-access 'none'",
+      name: 'storage-access',
+      type: '3rdPartyFrameStorage^https://example.org',
+      expected: 'prompt',
+    },
+    {
+      id: 'query storage-access top granted, iframe has allow none attribute',
+      top: ALLOW_ACTION,
+      allow: "storage-access 'none'",
+      name: 'storage-access',
+      type: '3rdPartyFrameStorage^https://example.org',
+      expected: 'prompt',
+    },
+    {
+      id: 'query storage-access top prompt, iframe has allow none attribute',
+      top: PROMPT_ACTION,
+      allow: "storage-access 'none'",
+      name: 'storage-access',
+      type: '3rdPartyFrameStorage^https://example.org',
+      expected: 'prompt',
+    },
+    {
+      id: 'query storage-access top unknown, iframe has allow none attribute',
+      top: UNKNOWN_ACTION,
+      allow: "storage-access 'none'",
+      name: 'storage-access',
+      type: '3rdPartyFrameStorage^https://example.org',
+      expected: 'prompt',
+    },
+    {
+      id: 'query camera top denied, iframe has allow attribute',
+      top: DENY_ACTION,
+      allow: 'camera',
+      name: 'camera',
+      type: 'camera',
+      expected: 'denied',
+    },
+    {
+      id: 'query camera top granted, iframe has allow attribute',
+      top: ALLOW_ACTION,
+      allow: 'camera',
+      name: 'camera',
+      type: 'camera',
+      expected: 'granted',
+    },
+    {
+      id: 'query camera top prompt, iframe has allow attribute',
+      top: PROMPT_ACTION,
+      allow: 'camera',
+      name: 'camera',
+      type: 'camera',
+      expected: 'granted', // "Always Ask" mitigation (bug 1609427)
+    },
+    {
+      id: 'query camera top unknown, iframe has allow attribute',
+      top: UNKNOWN_ACTION,
+      allow: 'camera',
+      name: 'camera',
+      type: 'camera',
+      expected: 'prompt',
+    },
+    {
+      id: 'query microphone top denied, iframe has allow attribute',
+      top: DENY_ACTION,
+      allow: 'microphone',
+      name: 'microphone',
+      type: 'microphone',
+      expected: 'denied',
+    },
+    {
+      id: 'query microphone top granted, iframe has allow attribute',
+      top: ALLOW_ACTION,
+      allow: 'microphone',
+      name: 'microphone',
+      type: 'microphone',
+      expected: 'granted',
+    },
+    {
+      id: 'query microphone top prompt, iframe has allow attribute',
+      top: PROMPT_ACTION,
+      allow: 'microphone',
+      name: 'microphone',
+      type: 'microphone',
+      expected: 'granted', // "Always Ask" mitigation (bug 1609427)
+    },
+    {
+      id: 'query microphone top unknown, iframe has allow attribute',
+      top: UNKNOWN_ACTION,
+      allow: 'microphone',
+      name: 'microphone',
+      type: 'microphone',
+      expected: 'prompt',
+    },
   ];
 
   SimpleTest.waitForExplicitFinish();
@@ -242,9 +421,7 @@
     SimpleTest.executeSoon(nextTest);
   }
 
-  SpecialPowers.pushPrefEnv({"set": [
-    ["permissions.delegation.enabled", true],
-  ]}).then(nextTest);
+  nextTest()
   </script>
 </body>
 

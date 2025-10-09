@@ -14,7 +14,6 @@ const URL =
   URL_ROOT_SSL + "browser_toolbox_window_title_frame_select_page.html";
 const IFRAME_URL =
   URL_ROOT_SSL + "browser_toolbox_window_title_changes_page.html";
-const { LocalizationHelper } = require("resource://devtools/shared/l10n.js");
 const L10N = new LocalizationHelper(
   "devtools/client/locales/toolbox.properties"
 );
@@ -124,8 +123,8 @@ add_task(async function () {
   info("Navigation to the iframe is done, the inspector should be back up");
   is(
     getTitle(),
-    `Developer Tools — Page title — ${URL}`,
-    "Devtools title was not updated after changing inspected frame"
+    `Developer Tools — Toolbox test for title update — ${IFRAME_URL}`,
+    "Devtools title is updated to match the selected iframe document"
   );
 
   info("Cleanup toolbox and test preferences.");

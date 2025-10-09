@@ -36,7 +36,8 @@ WebTransportIncomingStreamsAlgorithms::
 
 already_AddRefed<Promise>
 WebTransportIncomingStreamsAlgorithms::PullCallbackImpl(
-    JSContext* aCx, ReadableStreamController& aController, ErrorResult& aRv) {
+    JSContext* aCx, ReadableStreamControllerBase& aController,
+    ErrorResult& aRv) {
   // https://w3c.github.io/webtransport/#pullbidirectionalstream and
   // https://w3c.github.io/webtransport/#pullunidirectionalstream
 
@@ -140,7 +141,7 @@ void WebTransportIncomingStreamsAlgorithms::BuildStream(JSContext* aCx,
     RefPtr<WebTransportBidirectionalStream> stream =
         WebTransportBidirectionalStream::Create(mTransport, mTransport->mGlobal,
                                                 std::get<0>(tuple), input,
-                                                output, aRv);
+                                                output, Nothing(), aRv);
 
     // Step 7.2 Enqueue stream to transport.[[IncomingBidirectionalStreams]].
     JS::Rooted<JS::Value> jsStream(aCx);

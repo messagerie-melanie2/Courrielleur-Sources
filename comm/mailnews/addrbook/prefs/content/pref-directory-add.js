@@ -3,11 +3,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-var { isLegalHostNameOrIP, cleanUpHostName } = ChromeUtils.import(
-  "resource:///modules/hostnameUtils.jsm"
+var { isLegalHostNameOrIP, cleanUpHostName } = ChromeUtils.importESModule(
+  "resource:///modules/hostnameUtils.sys.mjs"
 );
 
 var gCurrentDirectory = null;
@@ -63,7 +63,7 @@ function Startup() {
       );
     }
 
-    let oldListName = gCurrentDirectory.dirName;
+    const oldListName = gCurrentDirectory.dirName;
     document.title = gReplicationBundle.getFormattedString(
       "directoryTitleEdit",
       [oldListName]
@@ -129,23 +129,16 @@ var progressListener = {
       EndDownload(aStatus);
     }
   },
-  onProgressChange(
-    aWebProgress,
-    aRequest,
-    aCurSelfProgress,
-    aMaxSelfProgress,
-    aCurTotalProgress,
-    aMaxTotalProgress
-  ) {
+  onProgressChange(aWebProgress, aRequest, aCurSelfProgress) {
     gProgressText.value = gReplicationBundle.getFormattedString(
       "currentCount",
       [aCurSelfProgress]
     );
   },
-  onLocationChange(aWebProgress, aRequest, aLocation, aFlags) {},
-  onStatusChange(aWebProgress, aRequest, aStatus, aMessage) {},
-  onSecurityChange(aWebProgress, aRequest, state) {},
-  onContentBlockingEvent(aWebProgress, aRequest, aEvent) {},
+  onLocationChange() {},
+  onStatusChange() {},
+  onSecurityChange() {},
+  onContentBlockingEvent() {},
   QueryInterface: ChromeUtils.generateQI([
     "nsIWebProgressListener",
     "nsISupportsWeakReference",
@@ -284,7 +277,9 @@ function DisableElementIfPrefIsLocked(aPrefName, aElementId) {
 // disables all the text fields corresponding to the .uri pref.
 function DisableUriFields(aPrefName) {
   if (Services.prefs.prefIsLocked(aPrefName)) {
-    let lockedElements = document.querySelectorAll('[disableiflocked="true"]');
+    const lockedElements = document.querySelectorAll(
+      '[disableiflocked="true"]'
+    );
     for (let i = 0; i < lockedElements.length; i++) {
       lockedElements[i].setAttribute("disabled", "true");
     }
@@ -321,118 +316,109 @@ function hasCharacters(number) {
 }
 
 function onAccept(event) {
-  try {
-    let description = document.getElementById("description").value.trim();
-    let hostname = cleanUpHostName(document.getElementById("hostname").value);
-    let port = document.getElementById("port").value;
-    let secure = document.getElementById("secure");
-    let results = document.getElementById("results").value;
-    let errorValue = null;
-    let errorArg = null;
-    let saslMechanism = "";
+  const description = document.getElementById("description").value.trim();
+  let hostname = cleanUpHostName(document.getElementById("hostname").value);
+  let port = document.getElementById("port").value;
+  const secure = document.getElementById("secure");
+  const results = document.getElementById("results").value;
+  let errorValue = null;
+  let errorArg = null;
+  let saslMechanism = "";
 
-    let findDupeName = function (newName) {
-      // Do not allow an already existing name.
-      for (let ab of MailServices.ab.directories) {
-        if (
-          ab.dirName.toLowerCase() == newName.toLowerCase() &&
-          (!gCurrentDirectory || ab.URI != gCurrentDirectory.URI)
-        ) {
-          return ab.dirName;
-        }
+  const findDupeName = function (newName) {
+    // Do not allow an already existing name.
+    for (const ab of MailServices.ab.directories) {
+      if (
+        ab.dirName.toLowerCase() == newName.toLowerCase() &&
+        (!gCurrentDirectory || ab.URI != gCurrentDirectory.URI)
+      ) {
+        return ab.dirName;
       }
-      return null;
-    };
+    }
+    return null;
+  };
 
-    if (!description) {
-      errorValue = "invalidName";
-    } else if ((errorArg = findDupeName(description))) {
-      errorValue = "duplicateNameText";
-    } else if (!isLegalHostNameOrIP(hostname)) {
-      errorValue = "invalidHostname";
-    } else if (port && hasCharacters(port)) {
-      // XXX write isValidDn and call it on the dn string here?
-      errorValue = "invalidPortNumber";
-    } else if (results && hasCharacters(results)) {
-      errorValue = "invalidResults";
+  if (!description) {
+    errorValue = "invalidName";
+  } else if ((errorArg = findDupeName(description))) {
+    errorValue = "duplicateNameText";
+  } else if (!isLegalHostNameOrIP(hostname)) {
+    errorValue = "invalidHostname";
+  } else if (port && hasCharacters(port)) {
+    // XXX write isValidDn and call it on the dn string here?
+    errorValue = "invalidPortNumber";
+  } else if (results && hasCharacters(results)) {
+    errorValue = "invalidResults";
+  }
+
+  if (!errorValue) {
+    if (!port) {
+      port = secure.checked ? kDefaultSecureLDAPPort : kDefaultLDAPPort;
+    }
+    if (hostname.includes(":")) {
+      // Wrap IPv6 address in [].
+      hostname = `[${hostname}]`;
+    }
+    const ldapUrl = Services.io
+      .newURI(`${secure.checked ? "ldaps" : "ldap"}://${hostname}:${port}`)
+      .QueryInterface(Ci.nsILDAPURL);
+
+    ldapUrl.dn = document.getElementById("basedn").value;
+    ldapUrl.scope = document.getElementById("one").selected
+      ? Ci.nsILDAPURL.SCOPE_ONELEVEL
+      : Ci.nsILDAPURL.SCOPE_SUBTREE;
+
+    ldapUrl.filter = document.getElementById("search").value;
+    if (document.getElementById("GSSAPI").selected) {
+      saslMechanism = "GSSAPI";
     }
 
-    if (!errorValue) {
-      if (!port) {
-        port = secure.checked ? kDefaultSecureLDAPPort : kDefaultLDAPPort;
-      }
-      if (hostname.includes(":")) {
-        // Wrap IPv6 address in [].
-        hostname = `[${hostname}]`;
-      }
-      let ldapUrl = Services.io
-        .newURI(`${secure.checked ? "ldaps" : "ldap"}://${hostname}:${port}`)
-        .QueryInterface(Ci.nsILDAPURL);
-
-      ldapUrl.dn = document.getElementById("basedn").value;
-      ldapUrl.scope = document.getElementById("one").selected
-        ? Ci.nsILDAPURL.SCOPE_ONELEVEL
-        : Ci.nsILDAPURL.SCOPE_SUBTREE;
-
-      ldapUrl.filter = document.getElementById("search").value;
-      if (document.getElementById("GSSAPI").selected) {
-        saslMechanism = "GSSAPI";
-      }
-
-      // check if we are modifying an existing directory or adding a new directory
-      if (gCurrentDirectory) {
-        gCurrentDirectory.dirName = description;
-        gCurrentDirectory.lDAPURL = ldapUrl;
-        window.opener.gNewServerString = gCurrentDirectory.dirPrefId;
-      } else {
-        // adding a new directory
-        window.opener.gNewServerString = MailServices.ab.newAddressBook(
-          description,
-          ldapUrl.spec,
-          Ci.nsIAbManager.LDAP_DIRECTORY_TYPE
-        );
-      }
-
-      // XXX This is really annoying - both new/modify Address Book don't
-      // give us back the new directory we just created - so go find it from
-      // rdf so we can set a few final things up on it.
-      var targetURI = "moz-abldapdirectory://" + window.opener.gNewServerString;
-      var theDirectory = MailServices.ab
-        .getDirectory(targetURI)
-        .QueryInterface(Ci.nsIAbLDAPDirectory);
-
-      theDirectory.maxHits = results;
-      theDirectory.authDn = document.getElementById("login").value;
-      theDirectory.saslMechanism = saslMechanism;
-
-      window.opener.gNewServer = description;
-      // set window.opener.gUpdate to true so that LDAP Directory Servers
-      // dialog gets updated
-      window.opener.gUpdate = true;
-      window.arguments[0].newDirectoryUID = theDirectory.UID;
-      if ("onNewDirectory" in window.arguments[0]) {
-        window.arguments[0].onNewDirectory(theDirectory);
-      }
+    // check if we are modifying an existing directory or adding a new directory
+    if (gCurrentDirectory) {
+      gCurrentDirectory.dirName = description;
+      gCurrentDirectory.lDAPURL = ldapUrl;
+      window.opener.gNewServerString = gCurrentDirectory.dirPrefId;
     } else {
-      let addressBookBundle = document.getElementById("bundle_addressBook");
-
-      let errorText;
-      if (errorArg) {
-        errorText = addressBookBundle.getFormattedString(errorValue, [
-          errorArg,
-        ]);
-      } else {
-        errorText = addressBookBundle.getString(errorValue);
-      }
-
-      Services.prompt.alert(window, document.title, errorText);
-      event.preventDefault();
-      return;
+      // adding a new directory
+      window.opener.gNewServerString = MailServices.ab.newAddressBook(
+        description,
+        ldapUrl.spec,
+        Ci.nsIAbManager.LDAP_DIRECTORY_TYPE
+      );
     }
-  } catch (outer) {
-    console.error(
-      "Internal error in pref-directory-add.js:onAccept() " + outer
-    );
+
+    // XXX This is really annoying - both new/modify Address Book don't
+    // give us back the new directory we just created - so go find it from
+    // rdf so we can set a few final things up on it.
+    var targetURI = "moz-abldapdirectory://" + window.opener.gNewServerString;
+    var theDirectory = MailServices.ab
+      .getDirectory(targetURI)
+      .QueryInterface(Ci.nsIAbLDAPDirectory);
+
+    theDirectory.maxHits = results;
+    theDirectory.authDn = document.getElementById("login").value;
+    theDirectory.saslMechanism = saslMechanism;
+
+    window.opener.gNewServer = description;
+    // set window.opener.gUpdate to true so that LDAP Directory Servers
+    // dialog gets updated
+    window.opener.gUpdate = true;
+    window.arguments[0].newDirectoryUID = theDirectory.UID;
+    if ("onNewDirectory" in window.arguments[0]) {
+      window.arguments[0].onNewDirectory(theDirectory);
+    }
+  } else {
+    const addressBookBundle = document.getElementById("bundle_addressBook");
+
+    let errorText;
+    if (errorArg) {
+      errorText = addressBookBundle.getFormattedString(errorValue, [errorArg]);
+    } else {
+      errorText = addressBookBundle.getString(errorValue);
+    }
+
+    Services.prompt.alert(window, document.title, errorText);
+    event.preventDefault();
   }
 }
 

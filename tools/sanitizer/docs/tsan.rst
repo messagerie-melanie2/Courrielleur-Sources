@@ -26,7 +26,7 @@ The easiest way to get Firefox builds with Thread Sanitizer is to download a
 continuous integration TSan build of mozilla-central (updated at least daily):
 
 -  mozilla-central optimized builds:
-   `linux <https://firefox-ci-tc.services.mozilla.com/api/index/v1/task/gecko.v2.mozilla-central.latest.firefox.linux64-tsan-opt/artifacts/public/build/target.tar.bz2>`__
+   `linux <https://firefox-ci-tc.services.mozilla.com/api/index/v1/task/gecko.v2.mozilla-central.latest.firefox.linux64-tsan-opt/artifacts/public/build/target.tar.xz>`__
 
 The fuzzing team also offers a tool called ``fuzzfetch`` to download this and many
 other CI builds. It makes downloading and unpacking these builds much easier and
@@ -102,7 +102,7 @@ Getting the source
 ^^^^^^^^^^^^^^^^^^
 
 Using that or any later revision, all you need to do is to :ref:`get yourself
-a clone of mozilla-central <Mercurial overview>`.
+a clone of mozilla-central <Firefox Contributors' Quick Reference>`.
 
 Adjusting the build configuration
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -139,18 +139,13 @@ content in your mozilla-central directory:
    ac_add_options --disable-sandbox
 
    # Keep symbols to symbolize TSan traces later
-   export MOZ_DEBUG_SYMBOLS=1
-   ac_add_options --enable-debug-symbols
    ac_add_options --disable-install-strip
 
-   # Settings for an opt build (preferred)
    # The -gline-tables-only ensures that all the necessary debug information for ASan
    # is present, but the rest is stripped so the resulting binaries are smaller.
-   ac_add_options --enable-optimize="-O2 -gline-tables-only"
-   ac_add_options --disable-debug
+   ac_add_options --enable-debug-symbols=-gline-tables-only
 
    # Settings for a debug+opt build
-   #ac_add_options --enable-optimize
    #ac_add_options --enable-debug
 
 
@@ -166,6 +161,23 @@ Starting Firefox
 After the build has completed, ``./mach run`` with the usual options for
 running in a debugger (``gdb``, ``lldb``, ``rr``, etc.) work fine, as do
 the ``--disable-e10s`` and other options.
+
+While running Firefox, ensure that it's not in safe mode since it might cause
+some tsan failures during startup. You can use a different profile or add
+``--temp-profile`` to use a temporary one.
+
+Firefox might crash on startup if you have an NVIDIA GPU with proprietary
+drivers. To fix this, disable the graphics acceleration by changing the following
+prefs:
+
+- ``gfx.x11-egl.force-disabled=true``
+- ``gfx.webrender.software.opengl=true``
+- ``layers.acceleration.disabled=true``
+
+You can either do this by passing these prefs to your ``./mach run`` command
+like this: ``./mach run --setpref "gfx.x11-egl.force-disabled=true" --setpref "gfx.webrender.software.opengl=true" --setpref "layers.acceleration.disabled=true"``
+or you can add them to your ``machrc`` file. Learn more about mach settings
+:ref:`here<mach_settings>`.
 
 Building only the JavaScript shell
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -190,7 +202,7 @@ subdirectory with that name.
         cd $1
         CC="/path/to/mozbuild/clang" \
         CXX="/path/to/mozbuild/clang++" \
-        ../configure --disable-debug --enable-optimize="-O2 -gline-tables-only" --enable-thread-sanitizer --disable-jemalloc
+        ../configure --enable-debug-symbols=-gline-tables-only --enable-thread-sanitizer --disable-jemalloc
    fi
 
 Thread Sanitizer and Symbols
@@ -219,7 +231,7 @@ silence a race while a fix is developed as well as to permanently silence a
        and think twice before attempting to suppress a race.
 
 The runtime Suppression list is directly baked into Firefox at compile-time and
-located at `mozglue/build/TsanOptions.cpp <https://searchfox.org/mozilla-central/source/mozglue/build/TsanOptions.cpp>`__.
+located at `build/sanitizers/TsanOptions.cpp <https://searchfox.org/mozilla-central/source/build/sanitizers/TsanOptions.cpp>`__.
 
 .. warning::
        **Important**: When adding a suppression, always make sure to include

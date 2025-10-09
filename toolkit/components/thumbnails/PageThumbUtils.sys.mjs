@@ -140,7 +140,7 @@ export var PageThumbUtils = {
     backgroundColor = this.THUMBNAIL_BG_COLOR
   ) {
     // 224px is the width of cards in ActivityStream; capture thumbnails at 2x
-    const doc = (window || Services.appShell.hiddenDOMWindow).document;
+    const doc = window.document;
 
     let image = doc.querySelector("img");
     if (!image) {
@@ -174,10 +174,12 @@ export var PageThumbUtils = {
     context.fillRect(0, 0, width, canvasHeight);
     context.drawImage(image, 0, 0, width, height);
 
+    let imgData = context.getImageData(0, 0, width, canvasHeight);
+
     return {
       width,
       height: canvasHeight,
-      imageData: canvas.toDataURL(),
+      imageData: imgData.data,
     };
   },
 
@@ -223,6 +225,17 @@ export var PageThumbUtils = {
         aDestCanvas.width = contentWidth;
         aDestCanvas.height = contentHeight;
       }
+    } else if (contentHeight && aArgs.preserveAspectRatio) {
+      // Calculate the thumbnail height based on thumbnail width
+      // and content aspect ratio
+      if (aArgs.targetWidth) {
+        thumbnailWidth = aArgs.targetWidth;
+      }
+      thumbnailHeight = thumbnailWidth / (contentWidth / contentHeight);
+      if (aDestCanvas) {
+        aDestCanvas.width = thumbnailWidth;
+        aDestCanvas.height = thumbnailHeight;
+      }
     }
 
     let intermediateWidth = thumbnailWidth * 2;
@@ -254,13 +267,17 @@ export var PageThumbUtils = {
     // content dims.
     // Also by default, canvas does not draw the scrollbars, so no need to
     // remove the scrollbar sizes.
-    let scale = Math.min(
-      Math.max(
+    let targetScale;
+    if (aArgs.preserveAspectRatio) {
+      // always scale based on width, as we resize height to accommodate
+      targetScale = intermediateWidth / contentWidth;
+    } else {
+      targetScale = Math.max(
         intermediateWidth / contentWidth,
         intermediateHeight / contentHeight
-      ),
-      1
-    );
+      );
+    }
+    let scale = Math.min(targetScale, 1);
 
     let snapshotCtx = snapshotCanvas.getContext("2d");
     snapshotCtx.save();

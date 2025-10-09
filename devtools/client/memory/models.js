@@ -10,7 +10,7 @@
 const { assert } = require("resource://devtools/shared/DevToolsUtils.js");
 const { MemoryFront } = require("resource://devtools/client/fronts/memory.js");
 const HeapAnalysesClient = require("resource://devtools/shared/heapsnapshot/HeapAnalysesClient.js");
-const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.js");
+const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.mjs");
 const {
   snapshotState: states,
   diffingState,
@@ -136,7 +136,7 @@ const censusModel = (exports.censusModel = PropTypes.shape({
   // If present, the currently cached report's filter string used for pruning
   // the tree items.
   filter: PropTypes.string,
-  // The Immutable.Set<CensusTreeNode.id> of expanded node ids in the report
+  // The Set<CensusTreeNode.id> of expanded node ids in the report
   // tree.
   expanded: catchAndIgnore(function (census) {
     if (census.report) {
@@ -289,7 +289,7 @@ const snapshotModel = (exports.snapshot = PropTypes.shape({
   creationTime: PropTypes.number,
   // The current state the snapshot is in.
   // @see ./constants.js
-  state: catchAndIgnore(function (snapshot, propName) {
+  state: catchAndIgnore(function (snapshot) {
     const current = snapshot.state;
     const shouldHavePath = [states.IMPORTING, states.SAVED, states.READ];
     const shouldHaveCreationTime = [states.READ];

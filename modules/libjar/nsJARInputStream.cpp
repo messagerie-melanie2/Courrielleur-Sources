@@ -76,9 +76,7 @@ nsresult nsJARInputStream::InitFile(nsZipHandle* aFd, const uint8_t* aData,
   return NS_OK;
 }
 
-nsresult nsJARInputStream::InitDirectory(nsJAR* aJar,
-                                         const nsACString& aJarDirSpec,
-                                         const char* aDir) {
+nsresult nsJARInputStream::InitDirectory(nsJAR* aJar, const char* aDir) {
   MOZ_ASSERT(aJar, "Argument may not be null");
   MOZ_ASSERT(aDir, "Argument may not be null");
 
@@ -141,10 +139,8 @@ nsresult nsJARInputStream::InitDirectory(nsJAR* aJar,
   // Sort it
   mArray.Sort();
 
-  mBuffer.AssignLiteral("300: ");
-  mBuffer.Append(aJarDirSpec);
   mBuffer.AppendLiteral(
-      "\n200: filename content-length last-modified file-type\n");
+      "200: filename content-length last-modified file-type\n");
 
   // Open for reading
   mMode = MODE_DIRECTORY;
@@ -288,7 +284,9 @@ nsresult nsJARInputStream::ContinueInflate(char* aBuffer, uint32_t aCount,
     if ((zerr != Z_OK) && (zerr != Z_STREAM_END)) {
       return NS_ERROR_FILE_CORRUPTED;
     }
-    finished = (zerr == Z_STREAM_END);
+    // If inflating did not read anything more, then the stream is finished.
+    finished = (zerr == Z_STREAM_END) ||
+               (mZs.avail_out && mZs.total_out == oldTotalOut);
   }
 
   *aBytesRead = (mZs.total_out - oldTotalOut);
@@ -307,8 +305,7 @@ nsresult nsJARInputStream::ContinueInflate(char* aBuffer, uint32_t aCount,
 
       // Stream is finished but has a different size from what
       // we expected.
-      if (mozilla::StaticPrefs::network_jar_require_size_match() &&
-          mZs.total_out != mOutSize) {
+      if (mZs.total_out != mOutSize) {
         return NS_ERROR_FILE_CORRUPTED;
       }
     }
@@ -344,7 +341,8 @@ nsresult nsJARInputStream::ReadDirectory(char* aBuffer, uint32_t aCount,
 
       const char* entryName = mArray[mArrPos].get();
       uint32_t entryNameLen = mArray[mArrPos].Length();
-      nsZipItem* ze = mJar->mZip->GetItem(entryName);
+      nsZipItem* ze = mJar->mZip->GetItem(
+          nsDependentCString(mArray[mArrPos].get(), mArray[mArrPos].Length()));
       NS_ENSURE_TRUE(ze, NS_ERROR_FILE_NOT_FOUND);
 
       // Last Modified Time

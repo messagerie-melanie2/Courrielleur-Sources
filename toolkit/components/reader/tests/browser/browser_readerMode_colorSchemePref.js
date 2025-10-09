@@ -66,16 +66,12 @@ add_task(async function () {
   await testColorScheme(1, "sepia");
 });
 
-async function testCustomColors(aPref, color) {
-  // Set the theme selection to custom.
-  Services.prefs.setBoolPref("reader.colors_menu.enabled", true);
-  Services.prefs.setCharPref("reader.color_scheme", "custom");
+async function testColorsFocus() {
+  // Set the theme selection to auto.
+  Services.prefs.setCharPref("reader.color_scheme", "auto");
 
-  // Set the custom pref to the color value.
-  Services.prefs.setCharPref(`reader.custom_colors.${aPref}`, color);
-
-  // Open a browser tab, enter reader mode, and test if the page colors
-  // reflect the pref selection.
+  // Open a browser tab, enter reader mode, and test if focus stays
+  // within the menu for the Default tab.
   await BrowserTestUtils.withNewTab(
     TEST_PATH + "readerModeArticle.html",
     async function (browser) {
@@ -88,34 +84,89 @@ async function testCustomColors(aPref, color) {
       readerButton.click();
       await pageShownPromise;
 
-      let colorScheme = Services.prefs.getCharPref("reader.color_scheme");
-      Assert.equal(colorScheme, "custom");
-      let prefValue = Services.prefs.getStringPref(
-        `reader.custom_colors.${aPref}`
-      );
-      let cssProp = `--custom-theme-${aPref}`;
+      await SpecialPowers.spawn(browser, [], () => {
+        let doc = content.document;
+        doc.querySelector(".colors-button").click();
 
-      await SpecialPowers.spawn(
+        let defaultTab = doc.querySelector("#tabs-deck-button-fxtheme");
+        let themeButton = doc.querySelector(".auto-button");
+        themeButton.focus();
+
+        EventUtils.synthesizeKey("KEY_Tab", {}, content);
+        is(
+          doc.activeElement,
+          defaultTab,
+          "Focus moves back to the Default tab"
+        );
+
+        let themeInput = doc.querySelector("#radio-itemauto-button");
+        defaultTab.focus();
+        EventUtils.synthesizeKey("KEY_Tab", { shiftKey: true }, content);
+        is(doc.activeElement, themeInput, "Focus moves to selected theme");
+      });
+    }
+  );
+
+  // Set the theme selection to custom.
+  Services.prefs.setCharPref("reader.color_scheme", "custom");
+
+  // Open a browser tab, enter reader mode, and test if focus stays
+  // within the menu for the Custom tab.
+  await BrowserTestUtils.withNewTab(
+    TEST_PATH + "readerModeArticle.html",
+    async function (browser) {
+      let pageShownPromise = BrowserTestUtils.waitForContentEvent(
         browser,
-        [prefValue, cssProp],
-        (customColor, prop) => {
-          let style = content.window.getComputedStyle(content.document.body);
-          let actualColor = style.getPropertyValue(prop);
-          Assert.equal(customColor, actualColor);
-        }
+        "AboutReaderContentReady"
       );
+
+      let readerButton = document.getElementById("reader-mode-button");
+      readerButton.click();
+      await pageShownPromise;
+
+      await SpecialPowers.spawn(browser, [], async () => {
+        let doc = content.document;
+        const Event = content.Event;
+        doc.querySelector(".colors-button").click();
+
+        let customTab = doc.querySelector("#tabs-deck-button-customtheme");
+        let resetButton = doc.querySelector(".custom-colors-reset-button");
+
+        ok(
+          ContentTaskUtils.isHidden(resetButton),
+          "Reset button should be hidden to start with"
+        );
+
+        // Simulate changing a color to make the reset button visible.
+        let colorInput = doc.querySelector("moz-input-color");
+        let shadowRoot = colorInput.shadowRoot;
+        let input = shadowRoot.querySelector("input");
+        input.value = "#123456";
+        input.dispatchEvent(
+          new Event("input", { bubbles: true, composed: true })
+        );
+
+        // Wait for the reset button to become visible.
+        await ContentTaskUtils.waitForCondition(() => {
+          return resetButton.hidden === false;
+        }, "Reset Defaults button should be visible after a color change.");
+
+        resetButton.focus();
+
+        EventUtils.synthesizeKey("KEY_Tab", {}, content);
+        is(doc.activeElement, customTab, "Focus moves back to the Custom tab");
+
+        customTab.focus();
+        EventUtils.synthesizeKey("KEY_Tab", { shiftKey: true }, content);
+        is(doc.activeElement, resetButton, "Focus moves to Reset theme button");
+      });
     }
   );
 }
 
 /**
- * Test that the custom color scheme selection updates the document colors correctly.
+ * Test that the focus stays within the colors menu.
  */
 add_task(async function () {
-  await testCustomColors("foreground", "#ffffff");
-  await testCustomColors("background", "#000000");
-  await testCustomColors("unvisited-links", "#ffffff");
-  await testCustomColors("visited-links", "#ffffff");
-  await testCustomColors("visited-links", "#ffffff");
-  await testCustomColors("selection-highlight", "#ffffff");
+  await testColorsFocus();
 });

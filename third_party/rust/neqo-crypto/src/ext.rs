@@ -4,21 +4,29 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::agentio::as_c_void;
-use crate::constants::{
-    Extension, HandshakeMessage, TLS_HS_CLIENT_HELLO, TLS_HS_ENCRYPTED_EXTENSIONS,
-};
-use crate::err::Res;
-use crate::ssl::{
-    PRBool, PRFileDesc, SECFailure, SECStatus, SECSuccess, SSLAlertDescription,
-    SSLExtensionHandler, SSLExtensionWriter, SSLHandshakeType,
+#![expect(
+    clippy::unwrap_used,
+    reason = "Let's assume the use of `unwrap` was checked when the use of `unsafe` was reviewed."
+)]
+
+use std::{
+    cell::RefCell,
+    fmt::{self, Debug, Formatter},
+    os::raw::{c_uint, c_void},
+    pin::Pin,
+    rc::Rc,
 };
 
-use std::cell::RefCell;
-use std::convert::TryFrom;
-use std::os::raw::{c_uint, c_void};
-use std::pin::Pin;
-use std::rc::Rc;
+use crate::{
+    agentio::as_c_void,
+    constants::{Extension, HandshakeMessage, TLS_HS_CLIENT_HELLO, TLS_HS_ENCRYPTED_EXTENSIONS},
+    err::Res,
+    null_safe_slice,
+    ssl::{
+        PRBool, PRFileDesc, SECFailure, SECStatus, SECSuccess, SSLAlertDescription,
+        SSLExtensionHandler, SSLExtensionWriter, SSLHandshakeType,
+    },
+};
 
 experimental_api!(SSL_InstallExtensionHooks(
     fd: *mut PRFileDesc,
@@ -73,7 +81,6 @@ impl ExtensionTracker {
         f(&mut *rc.borrow_mut())
     }
 
-    #[allow(clippy::cast_possible_truncation)]
     unsafe extern "C" fn extension_writer(
         _fd: *mut PRFileDesc,
         message: SSLHandshakeType::Type,
@@ -84,7 +91,12 @@ impl ExtensionTracker {
     ) -> PRBool {
         let d = std::slice::from_raw_parts_mut(data, max_len as usize);
         Self::wrap_handler_call(arg, |handler| {
-            // Cast is safe here because the message type is always part of the enum
+            #[allow(
+                clippy::allow_attributes,
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "Cast is safe here because the message type is always part of the enum."
+            )]
             match handler.write(message as HandshakeMessage, d) {
                 ExtensionWriterResult::Write(sz) => {
                     *len = c_uint::try_from(sz).expect("integer overflow from extension writer");
@@ -103,10 +115,15 @@ impl ExtensionTracker {
         alert: *mut SSLAlertDescription,
         arg: *mut c_void,
     ) -> SECStatus {
-        let d = std::slice::from_raw_parts(data, len as usize);
-        #[allow(clippy::cast_possible_truncation)]
+        let d = null_safe_slice(data, len);
         Self::wrap_handler_call(arg, |handler| {
             // Cast is safe here because the message type is always part of the enum
+            #[allow(
+                clippy::allow_attributes,
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "Cast is safe here because the message type is always part of the enum."
+            )]
             match handler.handle(message as HandshakeMessage, d) {
                 ExtensionHandlerResult::Ok => SECSuccess,
                 ExtensionHandlerResult::Alert(a) => {
@@ -120,11 +137,13 @@ impl ExtensionTracker {
     /// Use the provided handler to manage an extension.  This is quite unsafe.
     ///
     /// # Safety
+    ///
     /// The holder of this `ExtensionTracker` needs to ensure that it lives at
     /// least as long as the file descriptor, as NSS provides no way to remove
     /// an extension handler once it is configured.
     ///
     /// # Errors
+    ///
     /// If the underlying NSS API fails to register a handler.
     pub unsafe fn new(
         fd: *mut PRFileDesc,
@@ -158,8 +177,8 @@ impl ExtensionTracker {
     }
 }
 
-impl std::fmt::Debug for ExtensionTracker {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl Debug for ExtensionTracker {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "ExtensionTracker: {:?}", self.extension)
     }
 }

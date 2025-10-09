@@ -12,7 +12,6 @@ sys.path.insert(0, raptor_dir)
 
 from browsertime import Browsertime
 from perftest import Perftest
-from webextension import WebExtensionFirefox
 
 
 @pytest.fixture
@@ -43,11 +42,6 @@ def browsertime_options(options):
 
 
 @pytest.fixture
-def raptor(options):
-    return WebExtensionFirefox(**options)
-
-
-@pytest.fixture
 def mock_test():
     return {
         "name": "raptor-firefox-tp6",
@@ -62,7 +56,7 @@ def get_prefs():
         import raptor
 
         prefs_dir = os.path.join(raptor.__file__, "preferences")
-        with open(os.path.join(prefs_dir, "{}.json".format(browser)), "r") as fh:
+        with open(os.path.join(prefs_dir, f"{browser}.json")) as fh:
             return json.load(fh)
 
 
@@ -77,11 +71,11 @@ def get_binary():
 
     def inner(app):
         if app != "firefox":
-            pytest.xfail(reason="{} support not implemented".format(app))
+            pytest.xfail(reason=f"{app} support not implemented")
 
         binary = fixtures.binary()
         if not binary:
-            pytest.skip("could not find a {} binary".format(app))
+            pytest.skip(f"could not find a {app} binary")
         return binary
 
     return inner
@@ -107,6 +101,9 @@ def create_args():
         enable_marionette_trace=False,
         collect_perfstats=False,
         chimera=False,
+        browsertime_visualmetrics=False,
+        extra_summary_methods=[],
+        power_test=False,
     )
 
     def inner(**kwargs):

@@ -44,8 +44,8 @@ var log = console.createInstance({
  *
  *  Generic factory to create XPCOM components under JsAccount.
  *
- *  @param aProperties   This a a const JS object that describes the specific
- *                       details of a particular JsAccount XPCOM object:
+ *  @param {object} aProperties - This a a const JS object that describes the
+ *     specific details of a particular JsAccount XPCOM object:
  *     {
  *       baseContractID: string contractID used to create the base generic C++
  *                       object. This object must implement the interfaces in
@@ -64,9 +64,8 @@ var log = console.createInstance({
  *                       created by the factory, where CID is a string uuid.
  *      }
  *
- *   @param aJsDelegateConstructor: a JS constructor class, called using new,
- *                                  that will create the JS object to which
- *                                  XPCOM methods calls will be delegated.
+ *   @param {class} aJsDelegateConstructor - a JS constructor class, called using new,
+ *     that will create the JS object to which XPCOM methods calls will be delegated.
  */
 
 JSAccountUtils.jaFactory = function (aProperties, aJsDelegateConstructor) {
@@ -103,7 +102,7 @@ JSAccountUtils.jaFactory = function (aProperties, aJsDelegateConstructor) {
       log.info(
         "creating delegate list for contractID " + aProperties.contractID
       );
-      const delegateList = delegator.methodsToDelegate;
+      const delegatedMethodsList = delegator.methodsToDelegate;
       Object.keys(delegator).forEach(name => {
         log.debug("delegator has key " + name);
       });
@@ -147,21 +146,21 @@ JSAccountUtils.jaFactory = function (aProperties, aJsDelegateConstructor) {
         const upperCaseName = name[0].toUpperCase() + name.substr(1);
         if ("value" in jsDescriptor) {
           log.info("delegating " + upperCaseName);
-          delegateList.add(upperCaseName);
+          delegatedMethodsList.add(upperCaseName);
         } else {
           if (jsDescriptor.set) {
             log.info("delegating Set" + upperCaseName);
-            delegateList.add("Set" + upperCaseName);
+            delegatedMethodsList.add("Set" + upperCaseName);
           }
           if (jsDescriptor.get) {
             log.info("delegating Get" + upperCaseName);
-            delegateList.add("Get" + upperCaseName);
+            delegatedMethodsList.add("Get" + upperCaseName);
           }
         }
       }
 
       // Save the delegate list for reuse, statically for all instances.
-      Object.getPrototypeOf(jsDelegate).delegateList = delegateList;
+      Object.getPrototypeOf(jsDelegate).delegateList = delegatedMethodsList;
     }
 
     for (const iface of aProperties.baseInterfaces) {
@@ -182,9 +181,9 @@ JSAccountUtils.jaFactory = function (aProperties, aJsDelegateConstructor) {
  * instance of the object. This is intended to be the last item in the
  * prototype chain for a JsAccount implementation.
  *
- * @param aProperties see definition in jsFactory above
+ * @param {object} aProperties - See definition in jsFactory above.
  *
- * @returns a JS object suitable as the prototype of a JsAccount implementation.
+ * @returns {object} a JS object suitable as the prototype of a JsAccount implementation.
  */
 JSAccountUtils.makeCppDelegator = function (aProperties) {
   log.info("Making cppDelegator for contractID " + aProperties.contractID);

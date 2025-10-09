@@ -6,37 +6,19 @@
 
 /* This file is a much-modified copy of browser/components/extensions/ExtensionPopups.sys.mjs. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   ExtensionParent: "resource://gre/modules/ExtensionParent.sys.mjs",
-  setTimeout: "resource://gre/modules/Timer.sys.mjs",
 });
-
-import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
 import { ExtensionUtils } from "resource://gre/modules/ExtensionUtils.sys.mjs";
 
 var { DefaultWeakMap, ExtensionError, promiseEvent } = ExtensionUtils;
 
-const POPUP_LOAD_TIMEOUT_MS = 200;
-
-XPCOMUtils.defineLazyGetter(lazy, "standaloneStylesheets", () => {
-  let stylesheets = [];
-
-  if (AppConstants.platform === "macosx") {
-    stylesheets.push("chrome://browser/content/extension-mac-panel.css");
-  } else if (AppConstants.platform === "win") {
-    stylesheets.push("chrome://browser/content/extension-win-panel.css");
-  } else if (AppConstants.platform === "linux") {
-    stylesheets.push("chrome://browser/content/extension-linux-panel.css");
-  }
-  return stylesheets;
-});
-
 const REMOTE_PANEL_ID = "webextension-remote-preload-panel";
+const POPUP_PANEL_CLASS_NAME = "webextension-popup-panel";
+const POPUP_BROWSER_CLASS_NAME = "webextension-popup-browser";
 
 export class BasePopup {
   constructor(
@@ -61,6 +43,7 @@ export class BasePopup {
     this.contentReady = new Promise(resolve => {
       this._resolveContentReady = resolve;
     });
+    this.contentReadyAndResized = Promise.withResolvers();
 
     this.window.addEventListener("unload", this);
     this.viewNode.addEventListener("popuphiding", this);
@@ -112,7 +95,7 @@ export class BasePopup {
         delete this.viewNode.customRectGetter;
       }
 
-      let { panel } = this;
+      const { panel } = this;
       if (panel) {
         panel.removeEventListener("popuppositioned", this, { capture: true });
       }
@@ -129,7 +112,7 @@ export class BasePopup {
   }
 
   destroyBrowser(browser, finalize = false) {
-    let mm = browser.messageManager;
+    const mm = browser.messageManager;
     // If the browser has already been removed from the document, because the
     // popup was closed externally, there will be no message manager here, so
     // just replace our receiveMessage method with a stub.
@@ -145,13 +128,13 @@ export class BasePopup {
   }
 
   get STYLESHEETS() {
-    let sheets = [];
+    const sheets = [];
 
     if (this.browserStyle) {
-      sheets.push(...lazy.ExtensionParent.extensionStylesheets);
+      sheets.push("chrome://browser/content/extension.css");
     }
     if (!this.fixedWidth) {
-      sheets.push(...lazy.standaloneStylesheets);
+      sheets.push("chrome://browser/content/extension-popup-panel.css");
     }
 
     return sheets;
@@ -177,6 +160,10 @@ export class BasePopup {
 
       case "Extension:BrowserResized":
         this._resolveContentReady();
+        // The final resize is marked as delayed, which is the one we have to wait for.
+        if (data.detail == "delayed") {
+          this.contentReadyAndResized.resolve();
+        }
         if (this.ignoreResizes) {
           this.dimensions = data;
         } else {
@@ -234,16 +221,16 @@ export class BasePopup {
   }
 
   createBrowser(viewNode, popupURL = null) {
-    let document = viewNode.ownerDocument;
+    const document = viewNode.ownerDocument;
 
-    let stack = document.createXULElement("stack");
+    const stack = document.createXULElement("stack");
     stack.setAttribute("class", "webextension-popup-stack");
 
-    let browser = document.createXULElement("browser");
+    const browser = document.createXULElement("browser");
     browser.setAttribute("type", "content");
     browser.setAttribute("disableglobalhistory", "true");
     browser.setAttribute("messagemanagergroup", "webext-browsers");
-    browser.setAttribute("class", "webextension-popup-browser");
+    browser.setAttribute("class", POPUP_BROWSER_CLASS_NAME);
     browser.setAttribute("webextension-view-type", "popup");
     browser.setAttribute("tooltip", "aHTMLTooltip");
     browser.setAttribute("context", "browserContext");
@@ -251,6 +238,8 @@ export class BasePopup {
     browser.setAttribute("selectmenulist", "ContentSelectDropdown");
     browser.setAttribute("constrainpopups", "false");
     browser.setAttribute("datetimepicker", "DateTimePickerPanel");
+    browser.setAttribute("nodefaultsrc", "true");
+    browser.setAttribute("maychangeremoteness", "true");
 
     // Ensure the browser will initially load in the same group as other
     // browsers from the same extension.
@@ -262,7 +251,6 @@ export class BasePopup {
     if (this.extension.remote) {
       browser.setAttribute("remote", "true");
       browser.setAttribute("remoteType", this.extension.remoteType);
-      browser.setAttribute("maychangeremoteness", "true");
     }
 
     // We only need flex sizing for the sake of the slide-in sub-views of the
@@ -296,8 +284,9 @@ export class BasePopup {
       browser.contentWindow; // eslint-disable-line no-unused-expressions
     }
 
-    let setupBrowser = browser => {
-      let mm = browser.messageManager;
+    // eslint-disable-next-line no-shadow
+    const setupBrowser = browser => {
+      const mm = browser.messageManager;
       mm.addMessageListener("Extension:BrowserBackgroundChanged", this);
       mm.addMessageListener("Extension:BrowserContentLoaded", this);
       mm.addMessageListener("Extension:BrowserResized", this);
@@ -313,7 +302,7 @@ export class BasePopup {
 
     const initBrowser = () => {
       setupBrowser(browser);
-      let mm = browser.messageManager;
+      const mm = browser.messageManager;
 
       mm.loadFrameScript(
         "chrome://extensions/content/ext-browser-content.js",
@@ -352,7 +341,7 @@ export class BasePopup {
   }
 
   unblockParser() {
-    this.browserReady.then(browser => {
+    this.browserReady.then(() => {
       if (this.destroyed) {
         return;
       }
@@ -364,8 +353,8 @@ export class BasePopup {
     if (this.fixedWidth) {
       // Figure out how much extra space we have on the side of the panel
       // opposite the arrow.
-      let side = this.panel.getAttribute("side") == "top" ? "bottom" : "top";
-      let maxHeight = this.viewHeight + this.extraHeight[side];
+      const side = this.panel.getAttribute("side") == "top" ? "bottom" : "top";
+      const maxHeight = this.viewHeight + this.extraHeight[side];
 
       height = Math.min(height, maxHeight);
       this.browser.style.height = `${height}px`;
@@ -380,7 +369,7 @@ export class BasePopup {
       this.browser.style.minHeight = `${height}px`;
     }
 
-    let event = new this.window.CustomEvent("WebExtPopupResized", { detail });
+    const event = new this.window.CustomEvent("WebExtPopupResized", { detail });
     this.browser.dispatchEvent(event);
   }
 
@@ -416,14 +405,15 @@ export class ViewPopup extends BasePopup {
     fixedWidth,
     blockParser
   ) {
-    let document = window.document;
+    const document = window.document;
 
-    let createPanel = remote => {
-      let panel = document.createXULElement("panel");
+    const createPanel = remote => {
+      const panel = document.createXULElement("panel");
       panel.setAttribute("type", "arrow");
-      panel.setAttribute("class", "panel-no-padding");
+      panel.setAttribute("class", `panel-no-padding ${POPUP_PANEL_CLASS_NAME}`);
       if (remote) {
         panel.setAttribute("remote", "true");
+        panel.id = REMOTE_PANEL_ID;
       }
       panel.setAttribute("neverhidden", "true");
 
@@ -432,193 +422,38 @@ export class ViewPopup extends BasePopup {
     };
 
     // Firefox creates a temporary panel to hold the browser while it pre-loads
-    // its content (starting on mouseover already). This panel will never be shown,
+    // its content (starting on mouseover already). That panel will never be shown,
     // but the browser's docShell will be swapped with the browser in the real
-    // panel when it's ready (in ViewPopup.attach()).
-    // For remote extensions, Firefox shares this temporary panel between all
-    // extensions.
+    // panel when it's ready.
+    // See https://searchfox.org/mozilla-central/rev/dbef1a2f75798fb0136b7428d959c8feb09ad5d1/browser/components/extensions/ExtensionPopups.sys.mjs#572)
 
-    // NOTE: Thunderbird currently does not pre-load the popup and really uses
-    //       the "temporary" panel when displaying the popup to the user.
-    let panel;
-    if (extension.remote) {
-      panel = document.getElementById(REMOTE_PANEL_ID);
-      if (!panel) {
-        panel = createPanel(true);
-        panel.id = REMOTE_PANEL_ID;
-      }
-    } else {
-      panel = createPanel();
-    }
+    // NOTE: Thunderbird does not pre-load the popup and really uses the created
+    //       panel/browser when displaying the popup to the user.
 
+    // Remove any existing panel, to prevent content from a previously shown panel
+    // to bleed into the new panel.
+    document
+      .querySelectorAll(`.${POPUP_PANEL_CLASS_NAME}`)
+      .forEach(panel => panel.remove());
+
+    // Remove any leftover webextension popup browser/stack.
+    document
+      .querySelectorAll(`.${POPUP_BROWSER_CLASS_NAME}`)
+      .forEach(browser => browser.parentNode.remove());
+
+    const panel = createPanel(extension.remote);
     super(extension, panel, popupURL, browserStyle, fixedWidth, blockParser);
 
     this.ignoreResizes = true;
-
-    this.attached = false;
-    this.shown = false;
-    this.tempPanel = panel;
-    this.tempBrowser = this.browser;
-
-    this.browser.classList.add("webextension-preload-browser");
-  }
-
-  /**
-   * Attaches the pre-loaded browser to the given view node, and reserves a
-   * promise which resolves when the browser is ready.
-   *
-   * NOTE: Not used by Thunderbird.
-   *
-   * @param {Element} viewNode
-   *        The node to attach the browser to.
-   * @returns {Promise<boolean>}
-   *        Resolves when the browser is ready. Resolves to `false` if the
-   *        browser was destroyed before it was fully loaded, and the popup
-   *        should be closed, or `true` otherwise.
-   */
-  async attach(viewNode) {
-    if (this.destroyed) {
-      return false;
-    }
-    this.viewNode.removeEventListener(this.DESTROY_EVENT, this);
-    this.panel.removeEventListener("popuppositioned", this, {
-      once: true,
-      capture: true,
-    });
-
-    this.viewNode = viewNode;
-    this.viewNode.addEventListener(this.DESTROY_EVENT, this);
-    this.viewNode.setAttribute("closemenu", "none");
-
-    this.panel.addEventListener("popuppositioned", this, {
-      once: true,
-      capture: true,
-    });
-    if (this.extension.remote) {
-      this.panel.setAttribute("remote", "true");
-    }
-
-    // Wait until the browser element is fully initialized, and give it at least
-    // a short grace period to finish loading its initial content, if necessary.
-    //
-    // In practice, the browser that was created by the mousdown handler should
-    // nearly always be ready by this point.
-    await Promise.all([
-      this.browserReady,
-      Promise.race([
-        // This promise may be rejected if the popup calls window.close()
-        // before it has fully loaded.
-        this.browserLoaded.catch(() => {}),
-        new Promise(resolve => lazy.setTimeout(resolve, POPUP_LOAD_TIMEOUT_MS)),
-      ]),
-    ]);
-
-    const { panel } = this;
-
-    if (!this.destroyed && !panel) {
-      this.destroy();
-    }
-
-    if (this.destroyed) {
-      this.viewNode.hidePopup();
-      return false;
-    }
-
-    this.attached = true;
-
-    this.setBackground(this.background);
-
-    let flushPromise = this.window.promiseDocumentFlushed(() => {
-      let win = this.window;
-
-      // Calculate the extra height available on the screen above and below the
-      // menu panel. Use that to calculate the how much the sub-view may grow.
-      let popupRect = panel.getBoundingClientRect();
-      let screenBottom = win.screen.availTop + win.screen.availHeight;
-      let popupBottom = win.mozInnerScreenY + popupRect.bottom;
-      let popupTop = win.mozInnerScreenY + popupRect.top;
-
-      // Store the initial height of the view, so that we never resize menu panel
-      // sub-views smaller than the initial height of the menu.
-      this.viewHeight = viewNode.getBoundingClientRect().height;
-
-      this.extraHeight = {
-        bottom: Math.max(0, screenBottom - popupBottom),
-        top: Math.max(0, popupTop - win.screen.availTop),
-      };
-    });
-
-    // Create a new browser in the real popup.
-    let browser = this.browser;
-    await this.createBrowser(this.viewNode);
-
-    this.browser.swapDocShells(browser);
-    this.destroyBrowser(browser);
-
-    await flushPromise;
-
-    // Check if the popup has been destroyed while we were waiting for the
-    // document flush promise to be resolve.
-    if (this.destroyed) {
-      this.closePopup();
-      this.destroy();
-      return false;
-    }
-
-    if (this.dimensions) {
-      if (this.fixedWidth) {
-        delete this.dimensions.width;
-      }
-      this.resizeBrowser(this.dimensions);
-    }
-
-    this.ignoreResizes = false;
-
-    this.viewNode.customRectGetter = () => {
-      return { height: this.lastCalculatedInViewHeight || this.viewHeight };
-    };
-
-    this.removeTempPanel();
-
-    this.shown = true;
-
-    if (this.destroyed) {
-      this.closePopup();
-      this.destroy();
-      return false;
-    }
-
-    let event = new this.window.CustomEvent("WebExtPopupLoaded", {
-      bubbles: true,
-      detail: { extension: this.extension },
-    });
-    this.browser.dispatchEvent(event);
-
-    return true;
-  }
-
-  removeTempPanel() {
-    if (this.tempPanel) {
-      // NOTE: Thunderbird currently does not pre-load the popup into a temporary
-      //       panel as Firefox is doing it. We therefore do not have to "save"
-      //       the temporary panel for later re-use, but really have to remove it.
-      //       See Bug 1451058 for why Firefox uses the following conditional
-      //       remove().
-
-      // if (this.tempPanel.id !== REMOTE_PANEL_ID) {
-      this.tempPanel.remove();
-      // }
-      this.tempPanel = null;
-    }
-    if (this.tempBrowser) {
-      this.tempBrowser.parentNode.remove();
-      this.tempBrowser = null;
-    }
   }
 
   destroy() {
     return super.destroy().then(() => {
-      this.removeTempPanel();
+      // Remove the browser/stack.
+      if (this.browser) {
+        this.browser.parentNode.remove();
+        this.browser = null;
+      }
     });
   }
 

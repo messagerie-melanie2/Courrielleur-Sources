@@ -1,3 +1,48 @@
+# 2.4.0 (July 22nd, 2024)
+
+- msrv: increase MSRV to 1.70 ([#6645])
+- macros: allow `unhandled_panic` behavior for `#[tokio::main]` and `#[tokio::test]` ([#6593])
+
+[#6593]: https://github.com/tokio-rs/tokio/pull/6593
+[#6645]: https://github.com/tokio-rs/tokio/pull/6645
+
+# 2.3.0 (May 30th, 2024)
+
+- macros: make `#[tokio::test]` append `#[test]` at the end of the attribute list ([#6497])
+
+[#6497]: https://github.com/tokio-rs/tokio/pull/6497
+
+# 2.2.0 (November 19th, 2023)
+
+### Changed
+
+- use `::core` qualified imports instead of `::std` inside `tokio::test` macro ([#5973])
+
+[#5973]: https://github.com/tokio-rs/tokio/pull/5973
+
+# 2.1.0 (April 25th, 2023)
+
+- macros: fix typo in `#[tokio::test]` docs ([#5636])
+- macros: make entrypoints more efficient ([#5621])
+
+[#5621]: https://github.com/tokio-rs/tokio/pull/5621
+[#5636]: https://github.com/tokio-rs/tokio/pull/5636
+
+# 2.0.0 (March 24th, 2023)
+
+This major release updates the dependency on the syn crate to 2.0.0, and
+increases the MSRV to 1.56.
+
+As part of this release, we are adopting a policy of depending on a specific minor
+release of tokio-macros. This prevents Tokio from being able to pull in many different
+versions of tokio-macros.
+
+- macros: update `syn` ([#5572])
+- macros: accept path as crate rename ([#5557])
+
+[#5572]: https://github.com/tokio-rs/tokio/pull/5572
+[#5557]: https://github.com/tokio-rs/tokio/pull/5557
+
 # 1.8.2 (November 30th, 2022)
 
 - fix a regression introduced in 1.8.1 ([#5244])

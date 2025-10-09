@@ -6,9 +6,11 @@ use quick_xml::{
     events::{BytesDecl, BytesEnd, BytesStart, Event},
     Reader, Writer,
 };
+use serde::Deserialize;
 
 use crate::{
-    Error, MessageXml, Operation, OperationResponse, ResponseCode, SOAP_NS_URI, TYPES_NS_URI,
+    types::sealed, Error, MessageXml, Operation, OperationResponse, ResponseCode, SOAP_NS_URI,
+    TYPES_NS_URI,
 };
 
 mod de;
@@ -17,7 +19,7 @@ use self::de::DeserializeEnvelope;
 /// A SOAP envelope containing the body of an EWS operation or response.
 ///
 /// See <https://www.w3.org/TR/2000/NOTE-SOAP-20000508/#_Toc478383494>
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Envelope<B> {
     pub body: B,
 }
@@ -48,7 +50,8 @@ where
         writer.write_event(Event::Start(BytesStart::new(SOAP_BODY)))?;
 
         // Write the operation itself.
-        self.body.serialize_as_element(&mut writer, B::name())?;
+        self.body
+            .serialize_as_element(&mut writer, <B as sealed::EnvelopeBodyContents>::name())?;
 
         writer.write_event(Event::End(BytesEnd::new(SOAP_BODY)))?;
         writer.write_event(Event::End(BytesEnd::new(SOAP_ENVELOPE)))?;
@@ -174,7 +177,24 @@ fn parse_detail(mut reader: ScopedReader) -> Result<FaultDetail, Error> {
     while let Some((name, subreader)) = reader.maybe_get_next_subreader()? {
         match name.as_slice() {
             b"ResponseCode" => {
-                detail.response_code.replace(subreader.to_string()?.into());
+                // This is a hack to avoid an explicit `TryFrom` impl for
+                // `ResponseCode` and to reuse existing machinery/error types.
+                #[derive(Deserialize)]
+                struct ResponseCodeFrame {
+                    #[serde(rename = "ResponseCode")]
+                    response_code: ResponseCode,
+                }
+
+                // `quick_xml` requires us to have some sort of element around
+                // the text to be deserialized or it fails.
+                let frame_text = format!(
+                    "<root><ResponseCode>{}</ResponseCode></root>",
+                    subreader.to_string()?
+                );
+                let de = &mut quick_xml::de::Deserializer::from_reader(frame_text.as_bytes());
+                let frame: ResponseCodeFrame = serde_path_to_error::deserialize(de)?;
+
+                detail.response_code.replace(frame.response_code);
             }
 
             b"Message" => {
@@ -325,7 +345,7 @@ impl<'content> ScopedReader<'content> {
         // send all responses as UTF-8. We'll encounter bigger problems
         // elsewhere if we run into a non-UTF-8 document, most notably that we
         // currently don't enable the `encoding` feature for quick-xml.
-        return Ok(Self::from_bytes(content));
+        Ok(Self::from_bytes(content))
     }
 
     /// Gets a string representation of the contents of the current reader.
@@ -338,7 +358,7 @@ impl<'content> ScopedReader<'content> {
 /// request.
 ///
 /// See <https://www.w3.org/TR/2000/NOTE-SOAP-20000508/#_Toc478383507>
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Fault {
     /// An error code indicating the fault in the original request.
     // While `faultcode` is defined in the SOAP spec as a `QName`, we avoid
@@ -362,7 +382,7 @@ pub struct Fault {
 /// EWS-specific details regarding a SOAP fault.
 ///
 /// This element is not documented in the EWS reference.
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 #[non_exhaustive]
 pub struct FaultDetail {
     /// An error code indicating the nature of the issue.
@@ -394,13 +414,13 @@ pub struct FaultDetail {
 mod tests {
     use serde::Deserialize;
 
-    use crate::{types::sealed::EnvelopeBodyContents, Error, OperationResponse};
+    use crate::{types::sealed::EnvelopeBodyContents, Error, OperationResponse, ResponseCode};
 
     use super::Envelope;
 
     #[test]
     fn deserialize_envelope_with_content() {
-        #[derive(Deserialize)]
+        #[derive(Clone, Debug, Deserialize)]
         struct SomeStruct {
             text: String,
 
@@ -432,7 +452,7 @@ mod tests {
 
     #[test]
     fn deserialize_envelope_with_schema_fault() {
-        #[derive(Debug, Deserialize)]
+        #[derive(Clone, Debug, Deserialize)]
         struct Foo;
 
         impl OperationResponse for Foo {}
@@ -463,7 +483,7 @@ mod tests {
             let detail = fault.detail.expect("fault detail should be present");
             assert_eq!(
                 detail.response_code,
-                Some("ErrorSchemaValidation".into()),
+                Some(ResponseCode::ErrorSchemaValidation),
                 "response code should match original document"
             );
             assert_eq!(
@@ -479,13 +499,13 @@ mod tests {
                 "back off milliseconds should not be present"
             );
         } else {
-            panic!("error should be request fault");
+            panic!("error should be request fault, got: {err:?}");
         }
     }
 
     #[test]
     fn deserialize_envelope_with_server_busy_fault() {
-        #[derive(Debug, Deserialize)]
+        #[derive(Clone, Debug, Deserialize)]
         struct Foo;
 
         impl OperationResponse for Foo {}
@@ -520,14 +540,14 @@ mod tests {
             let detail = fault.detail.expect("fault detail should be present");
             assert_eq!(
                 detail.response_code,
-                Some("ErrorServerBusy".into()),
+                Some(ResponseCode::ErrorServerBusy),
                 "response code should match original document"
             );
 
             let message_xml = detail.message_xml.expect("message XML should be present");
             assert_eq!(message_xml.back_off_milliseconds, Some(25));
         } else {
-            panic!("error should be request fault");
+            panic!("error should be request fault, got: {err:?}");
         }
     }
 }

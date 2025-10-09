@@ -13,17 +13,17 @@
 #include <string.h>  // for strlen, size_t
 #include <utility>   // for move
 
-#include "debugger/Debugger.h"          // for Env, Debugger, ValueToIdentifier
-#include "debugger/Object.h"            // for DebuggerObject
-#include "debugger/Script.h"            // for DebuggerScript
-#include "frontend/BytecodeCompiler.h"  // for IsIdentifier
+#include "debugger/Debugger.h"  // for Env, Debugger, ValueToIdentifier
+#include "debugger/Object.h"    // for DebuggerObject
+#include "debugger/Script.h"    // for DebuggerScript
 #include "gc/Tracer.h"    // for TraceManuallyBarrieredCrossCompartmentEdge
 #include "js/CallArgs.h"  // for CallArgs
 #include "js/friend/ErrorMessages.h"  // for GetErrorMessage, JSMSG_*
 #include "js/HeapAPI.h"               // for IsInsideNursery
 #include "js/RootingAPI.h"            // for Rooted, MutableHandle
+#include "util/Identifier.h"          // for IsIdentifier
 #include "vm/Compartment.h"           // for Compartment
-#include "vm/JSAtom.h"                // for Atomize
+#include "vm/JSAtomUtils.h"           // for Atomize
 #include "vm/JSContext.h"             // for JSContext
 #include "vm/JSFunction.h"            // for JSFunction
 #include "vm/JSObject.h"              // for JSObject, RequireObject,
@@ -45,7 +45,6 @@ class GlobalObject;
 
 using namespace js;
 
-using js::frontend::IsIdentifier;
 using mozilla::Maybe;
 using mozilla::Nothing;
 using mozilla::Some;
@@ -66,7 +65,8 @@ const JSClassOps DebuggerEnvironment::classOps_ = {
 const JSClass DebuggerEnvironment::class_ = {
     "Environment",
     JSCLASS_HAS_RESERVED_SLOTS(DebuggerEnvironment::RESERVED_SLOTS),
-    &classOps_};
+    &classOps_,
+};
 
 void DebuggerEnvironment::trace(JSTracer* trc) {
   // There is a barrier on private pointers, so the Unbarriered marking
@@ -290,12 +290,12 @@ bool DebuggerEnvironment::CallData::findMethod() {
     return false;
   }
 
-  if (!environment->requireDebuggee(cx)) {
+  RootedId id(cx);
+  if (!ValueToIdentifier(cx, args[0], &id)) {
     return false;
   }
 
-  RootedId id(cx);
-  if (!ValueToIdentifier(cx, args[0], &id)) {
+  if (!environment->requireDebuggee(cx)) {
     return false;
   }
 
@@ -313,12 +313,12 @@ bool DebuggerEnvironment::CallData::getVariableMethod() {
     return false;
   }
 
-  if (!environment->requireDebuggee(cx)) {
+  RootedId id(cx);
+  if (!ValueToIdentifier(cx, args[0], &id)) {
     return false;
   }
 
-  RootedId id(cx);
-  if (!ValueToIdentifier(cx, args[0], &id)) {
+  if (!environment->requireDebuggee(cx)) {
     return false;
   }
 
@@ -330,12 +330,12 @@ bool DebuggerEnvironment::CallData::setVariableMethod() {
     return false;
   }
 
-  if (!environment->requireDebuggee(cx)) {
+  RootedId id(cx);
+  if (!ValueToIdentifier(cx, args[0], &id)) {
     return false;
   }
 
-  RootedId id(cx);
-  if (!ValueToIdentifier(cx, args[0], &id)) {
+  if (!environment->requireDebuggee(cx)) {
     return false;
   }
 
@@ -367,12 +367,16 @@ const JSPropertySpec DebuggerEnvironment::properties_[] = {
     JS_DEBUG_PSG("calleeScript", calleeScriptGetter),
     JS_DEBUG_PSG("inspectable", inspectableGetter),
     JS_DEBUG_PSG("optimizedOut", optimizedOutGetter),
-    JS_PS_END};
+    JS_PS_END,
+};
 
 const JSFunctionSpec DebuggerEnvironment::methods_[] = {
-    JS_DEBUG_FN("names", namesMethod, 0), JS_DEBUG_FN("find", findMethod, 1),
+    JS_DEBUG_FN("names", namesMethod, 0),
+    JS_DEBUG_FN("find", findMethod, 1),
     JS_DEBUG_FN("getVariable", getVariableMethod, 1),
-    JS_DEBUG_FN("setVariable", setVariableMethod, 2), JS_FS_END};
+    JS_DEBUG_FN("setVariable", setVariableMethod, 2),
+    JS_FS_END,
+};
 
 /* static */
 NativeObject* DebuggerEnvironment::initClass(JSContext* cx,

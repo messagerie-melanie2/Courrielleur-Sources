@@ -157,16 +157,17 @@ function submitPendingReport(reportId, row, button, buttonText, dateFormatter) {
         );
         addReportRow(false, remoteCrashID, report.date, dateFormatter);
         showAppropriateSections();
-        dispatchEvent("CrashSubmitSucceeded");
+        dispatchCustomEvent("CrashSubmitSucceeded");
       },
-      () => {
+      error => {
+        console.error(error);
         button.classList.remove("submitting");
         button.classList.add("failed-to-submit");
         document.l10n.setAttributes(
           buttonText,
           "submit-crash-button-failure-label"
         );
-        dispatchEvent("CrashSubmitFailed");
+        dispatchCustomEvent("CrashSubmitFailed");
       }
     )
     .finally(() => {
@@ -286,10 +287,10 @@ async function cleanupFolder(path, filter) {
  *
  * @param {String} name the name of the event
  */
-function dispatchEvent(name) {
-  const event = document.createEvent("Events");
-  event.initEvent(name, true, false);
-  document.dispatchEvent(event);
+function dispatchCustomEvent(name) {
+  document.dispatchEvent(
+    new CustomEvent(name, { bubbles: true, cancelable: false })
+  );
 }
 
 let cleanupQueue = Promise.resolve();

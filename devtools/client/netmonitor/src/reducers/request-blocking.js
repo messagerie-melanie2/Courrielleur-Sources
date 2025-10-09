@@ -53,6 +53,9 @@ function requestBlockingReducer(state = RequestBlocking(), action) {
 }
 
 function syncedBlockedUrls(state, action) {
+  if (state.blockingSynced == action.synced) {
+    return state;
+  }
   // Indicates whether the blocked url has been synced
   // with the server once. We don't need to do it once netmonitor is open.
   return {
@@ -99,14 +102,14 @@ function removeBlockedUrl(state, action) {
   };
 }
 
-function removeAllBlockedUrls(state, action) {
+function removeAllBlockedUrls(state) {
   return {
     ...state,
     blockedUrls: [],
   };
 }
 
-function enableAllBlockedUrls(state, action) {
+function enableAllBlockedUrls(state) {
   const blockedUrls = state.blockedUrls.map(item => ({
     ...item,
     enabled: true,
@@ -117,7 +120,7 @@ function enableAllBlockedUrls(state, action) {
   };
 }
 
-function disableAllBlockedUrls(state, action) {
+function disableAllBlockedUrls(state) {
   const blockedUrls = state.blockedUrls.map(item => ({
     ...item,
     enabled: false,

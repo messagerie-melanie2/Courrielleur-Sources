@@ -10,6 +10,9 @@
 const { PromiseTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
+const { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
+);
 
 // Force mbox mailstore.
 Services.prefs.setCharPref(
@@ -56,6 +59,124 @@ add_task(async function test_unescapedMbox() {
 
   // NOTE: asyncScan doesn't guarantee ordering.
   Assert.deepEqual(listener.messages.toSorted(), messages.toSorted());
+
+  // Clear up.
+  localAccountUtils.clearAll();
+});
+
+/**
+ * Test that reading from bad offset fails.
+ */
+add_task(async function test_badStoreTokens() {
+  Services.fog.testResetFOG();
+
+  localAccountUtils.loadLocalMailAccount();
+  const inbox = localAccountUtils.inboxFolder;
+
+  // Add some messages to inbox.
+  const generator = new MessageGenerator();
+  inbox.addMessageBatch(
+    generator.makeMessages({ count: 10 }).map(m => m.toMessageString())
+  );
+
+  // Corrupt the storeTokens in a couple of different ways.
+  let even = true;
+  for (const msg of inbox.messages) {
+    if (even) {
+      const offset = Number(msg.storeToken) + 3;
+      msg.storeToken = offset.toString();
+    } else {
+      msg.storeToken = "12345678"; // Past end of mbox file.
+    }
+    even = !even;
+  }
+
+  // Check that message reads fail.
+  const NS_MSG_ERROR_MBOX_MALFORMED = 0x80550024;
+  for (const msg of inbox.messages) {
+    const streamListener = new PromiseTestUtils.PromiseStreamListener();
+    const uri = inbox.getUriForMsg(msg);
+    const service = MailServices.messageServiceFromURI(uri);
+
+    try {
+      service.streamMessage(uri, streamListener, null, null, false, "", true);
+      await streamListener.promise;
+    } catch (e) {
+      Assert.equal(
+        e,
+        NS_MSG_ERROR_MBOX_MALFORMED,
+        "Bad read causes NS_MSG_ERROR_MBOX_MALFORMED"
+      );
+    }
+  }
+
+  // Make sure telemetry counted them
+
+  Assert.equal(
+    Glean.mail.mboxReadErrors.missing_from.testGetValue(),
+    inbox.getTotalMessages(false),
+    "Mbox missing-from-line failures should be counted in Glean"
+  );
+
+  // Clear up.
+  localAccountUtils.clearAll();
+});
+
+/**
+ * Test that mbox reading that goes too far beyond the database .messageSize
+ * causes unexpected-size errors in the mbox code.
+ */
+add_task(async function test_badMessageSizes() {
+  Services.fog.testResetFOG();
+
+  localAccountUtils.loadLocalMailAccount();
+  const inbox = localAccountUtils.inboxFolder;
+
+  // Add some messages to inbox.
+  // The size sanity check is approximate. There's a threshold of 10% beyond
+  // expected size, and a minimum of 512 bytes.
+  // So make sure our test messages are way larger than 512 bytes.
+  const msgText = "I will not waste chars.\r\n".repeat(500);
+  const generator = new MessageGenerator();
+  inbox.addMessageBatch(
+    generator
+      .makeMessages({
+        count: 10,
+        body: { body: msgText },
+      })
+      .map(m => m.toMessageString())
+  );
+
+  // Sabotage .messageSize to simulate corrupted message.
+  for (const msg of inbox.messages) {
+    msg.messageSize = msg.messageSize / 2;
+  }
+
+  // Check that the size check triggers and the read fails.
+  const NS_MSG_ERROR_UNEXPECTED_SIZE = 0x80550023;
+  for (const msg of inbox.messages) {
+    const streamListener = new PromiseTestUtils.PromiseStreamListener();
+    const uri = inbox.getUriForMsg(msg);
+    const service = MailServices.messageServiceFromURI(uri);
+
+    try {
+      service.streamMessage(uri, streamListener, null, null, false, "", true);
+      await streamListener.promise;
+    } catch (e) {
+      Assert.equal(
+        e,
+        NS_MSG_ERROR_UNEXPECTED_SIZE,
+        "Messages that don't end at expected place should cause NS_MSG_ERROR_UNEXPECTED_SIZE"
+      );
+    }
+  }
+
+  // Make sure telemetry counted them.
+  Assert.equal(
+    Glean.mail.mboxReadErrors.unexpected_size.testGetValue(),
+    inbox.getTotalMessages(false),
+    "Mbox size-overrun failures should be counted in Glean"
+  );
 
   // Clear up.
   localAccountUtils.clearAll();

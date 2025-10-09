@@ -8,8 +8,9 @@ DIRS += [
     "content",
 ]
 
-BROWSER_CHROME_MANIFESTS += ["test/browser.ini"]
-XPCSHELL_TESTS_MANIFESTS += ["test/unit/xpcshell.ini"]
+MARIONETTE_MANIFESTS += ["test/marionette/manifest.toml"]
+BROWSER_CHROME_MANIFESTS += ["test/browser.toml", "test/browserSidebarRevamp.toml"]
+XPCSHELL_TESTS_MANIFESTS += ["test/unit/xpcshell.toml"]
 
 TESTING_JS_MODULES += [
     "test/CustomizableUITestUtils.sys.mjs",
@@ -22,7 +23,11 @@ EXTRA_JS_MODULES += [
     "DragPositionManager.sys.mjs",
     "PanelMultiView.sys.mjs",
     "SearchWidgetTracker.sys.mjs",
+    "ToolbarContextMenu.sys.mjs",
+    "ToolbarDropHandler.sys.mjs",
 ]
+
+SPHINX_TREES["docs"] = "docs"
 
 with Files("**"):
     BUG_COMPONENT = ("Firefox", "Toolbars and Customization")

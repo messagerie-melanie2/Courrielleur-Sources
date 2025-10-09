@@ -7,14 +7,13 @@
 
 /* import-globals-from ../../../mailnews/extensions/newsblog/newsblogOverlay.js */
 /* import-globals-from contentAreaClick.js */
-/* import-globals-from mail3PaneWindowCommands.js */
+/* import-globals-from globalOverlay.js */
 /* import-globals-from mailCommands.js */
 /* import-globals-from mailCore.js */
-
 /* import-globals-from utilityOverlay.js */
 
 /* globals messenger */ // From messageWindow.js
-/* globals GetSelectedMsgFolders */ // From messenger.js
+/* globals GetSelectedMsgFolders */ // From messenger.js or messageWindow.js
 /* globals MailOfflineMgr */ // From mail-offline.js
 
 /* globals OnTagsChange, currentHeaderData */ // TODO: these aren't real.
@@ -28,17 +27,18 @@ ChromeUtils.defineESModuleGetters(this, {
 
   BrowserToolboxLauncher:
     "resource://devtools/client/framework/browser-toolbox/Launcher.sys.mjs",
-});
-XPCOMUtils.defineLazyModuleGetters(this, {
-  MailUtils: "resource:///modules/MailUtils.jsm",
-  MimeParser: "resource:///modules/mimeParser.jsm",
-  UIDensity: "resource:///modules/UIDensity.jsm",
-  UIFontSize: "resource:///modules/UIFontSize.jsm",
+
+  MailUtils: "resource:///modules/MailUtils.sys.mjs",
+  MimeParser: "resource:///modules/mimeParser.sys.mjs",
+  PluralForm: "resource:///modules/PluralForm.sys.mjs",
+  UIDensity: "resource:///modules/UIDensity.sys.mjs",
+  UIFontSize: "resource:///modules/UIFontSize.sys.mjs",
+  XULStoreUtils: "resource:///modules/XULStoreUtils.sys.mjs",
 });
 
 Object.defineProperty(this, "BrowserConsoleManager", {
   get() {
-    let { loader } = ChromeUtils.importESModule(
+    const { loader } = ChromeUtils.importESModule(
       "resource://devtools/shared/loader/Loader.sys.mjs"
     );
     return loader.require("devtools/client/webconsole/browser-console-manager")
@@ -55,20 +55,11 @@ Object.defineProperty(this, "BrowserConsoleManager", {
 var gDisallow_classes_no_html = 1;
 
 /**
- * Disable the new account menu item if the account preference is locked.
- * The other affected areas are the account central, the account manager
- * dialog, and the account provisioner window.
+ * Init the New menu.
  */
 function menu_new_init() {
-  // If the account provisioner is pref'd off, we shouldn't display the menu
-  // item.
-  ShowMenuItem(
-    "newCreateEmailAccountMenuItem",
-    Services.prefs.getBoolPref("mail.provider.enabled")
-  );
-
   // If we don't have a folder, just get out of here and leave the menu as it is.
-  let folder = document.getElementById("tabmail")?.currentTabInfo.folder;
+  const folder = document.getElementById("tabmail")?.currentTabInfo.folder;
   if (!folder) {
     return;
   }
@@ -129,26 +120,26 @@ function goUpdateMailMenuItems(commandset) {
 function updateCheckedStateForIgnoreAndWatchThreadCmds() {
   let message;
 
-  let tab = document.getElementById("tabmail")?.currentTabInfo;
+  const tab = document.getElementById("tabmail")?.currentTabInfo;
   if (["mail3PaneTab", "mailMessageTab"].includes(tab?.mode.name)) {
     message = tab.message;
   }
 
-  let folder = message?.folder;
+  const folder = message?.folder;
 
-  let killThreadItem = document.getElementById("cmd_killThread");
+  const killThreadItem = document.getElementById("cmd_killThread");
   if (folder?.msgDatabase.isIgnored(message.messageKey)) {
     killThreadItem.setAttribute("checked", "true");
   } else {
     killThreadItem.removeAttribute("checked");
   }
-  let killSubthreadItem = document.getElementById("cmd_killSubthread");
+  const killSubthreadItem = document.getElementById("cmd_killSubthread");
   if (folder && message.flags & Ci.nsMsgMessageFlags.Ignored) {
     killSubthreadItem.setAttribute("checked", "true");
   } else {
     killSubthreadItem.removeAttribute("checked");
   }
-  let watchThreadItem = document.getElementById("cmd_watchThread");
+  const watchThreadItem = document.getElementById("cmd_watchThread");
   if (folder?.msgDatabase.isWatched(message.messageKey)) {
     watchThreadItem.setAttribute("checked", "true");
   } else {
@@ -160,6 +151,13 @@ function file_init() {
   document.commandDispatcher.updateCommands("create-menu-file");
 }
 
+const deleteMenuItemCommandHandler = event =>
+  goDoCommand(
+    event.shiftKey && event.target.dataset.imapDeleted == "false"
+      ? "cmd_shiftDeleteMessage"
+      : "cmd_deleteMessage"
+  );
+
 /**
  * Update the menu items visibility in the Edit submenu.
  */
@@ -167,7 +165,7 @@ function InitEditMessagesMenu() {
   document.commandDispatcher.updateCommands("create-menu-edit");
 
   let chromeBrowser, folderTreeActive, folder, folderIsNewsgroup;
-  let tab = document.getElementById("tabmail")?.currentTabInfo;
+  const tab = document.getElementById("tabmail")?.currentTabInfo;
   if (tab?.mode.name == "mail3PaneTab") {
     chromeBrowser = tab.chromeBrowser;
     folderTreeActive =
@@ -180,44 +178,52 @@ function InitEditMessagesMenu() {
     chromeBrowser = document.getElementById("messageBrowser");
   }
 
-  let deleteController = getEnabledControllerForCommand("cmd_delete");
+  const deleteController = getEnabledControllerForCommand("cmd_delete");
   // If the controller is a JS object, it must be one we've implemented,
   // not the built-in controller for textboxes.
 
-  let dbView = chromeBrowser?.contentWindow.gDBView;
-  let numSelected = dbView?.numSelected;
+  const dbView = chromeBrowser?.contentWindow.gDBView;
+  const numSelected = dbView?.numSelected;
 
-  let deleteMenuItem = document.getElementById("menu_delete");
+  const deleteMenuItem = document.getElementById("menu_delete");
   if (deleteController?.wrappedJSObject && folderTreeActive) {
-    let value = folderIsNewsgroup
+    const value = folderIsNewsgroup
       ? "menu-edit-unsubscribe-newsgroup"
       : "menu-edit-delete-folder";
     document.l10n.setAttributes(deleteMenuItem, value);
+    deleteMenuItem.setAttribute("command", "cmd_deleteFolder");
   } else if (deleteController?.wrappedJSObject && numSelected) {
-    let message = dbView?.hdrForFirstSelectedMessage;
-    let value;
-    if (message && message.flags & Ci.nsMsgMessageFlags.IMAPDeleted) {
-      value = "menu-edit-undelete-messages";
-    } else {
-      value = "menu-edit-delete-messages";
-    }
-    document.l10n.setAttributes(deleteMenuItem, value, { count: numSelected });
+    const areIMAPDeleted = dbView
+      ?.getSelectedMsgHdrs()
+      .every(msg => msg.flags & Ci.nsMsgMessageFlags.IMAPDeleted);
+    document.l10n.setAttributes(
+      deleteMenuItem,
+      areIMAPDeleted
+        ? "menu-edit-undelete-messages"
+        : "menu-edit-delete-messages",
+      { count: numSelected }
+    );
+    deleteMenuItem.dataset.imapDeleted = !!areIMAPDeleted;
+    deleteMenuItem.removeAttribute("command");
+    deleteMenuItem.addEventListener("command", deleteMenuItemCommandHandler);
+    deleteMenuItem.disabled = false;
   } else {
     document.l10n.setAttributes(deleteMenuItem, "text-action-delete");
+    deleteMenuItem.setAttribute("command", "cmd_delete");
   }
 
   // Initialize the Favorite Folder checkbox in the Edit menu.
-  let favoriteFolderMenu = document.getElementById("menu_favoriteFolder");
+  const favoriteFolderMenu = document.getElementById("menu_favoriteFolder");
   if (folder?.getFlag(Ci.nsMsgFolderFlags.Favorite)) {
     favoriteFolderMenu.setAttribute("checked", "true");
   } else {
     favoriteFolderMenu.removeAttribute("checked");
   }
 
-  let propertiesController = getEnabledControllerForCommand("cmd_properties");
-  let propertiesMenuItem = document.getElementById("menu_properties");
+  const propertiesController = getEnabledControllerForCommand("cmd_properties");
+  const propertiesMenuItem = document.getElementById("menu_properties");
   if (tab?.mode.name == "mail3PaneTab" && propertiesController) {
-    let value = folderIsNewsgroup
+    const value = folderIsNewsgroup
       ? "menu-edit-newsgroup-properties"
       : "menu-edit-folder-properties";
     document.l10n.setAttributes(propertiesMenuItem, value);
@@ -231,7 +237,7 @@ function InitEditMessagesMenu() {
  */
 function initSearchMessagesMenu() {
   // Show 'Global Search' menu item only when global search is enabled.
-  let glodaEnabled = Services.prefs.getBoolPref(
+  const glodaEnabled = Services.prefs.getBoolPref(
     "mailnews.database.global.indexer.enabled"
   );
   document.getElementById("glodaSearchCmd").hidden = !glodaEnabled;
@@ -257,32 +263,35 @@ function view_init(event) {
   let messagePaneVisible;
   let quickFilterBarVisible;
   let threadPaneHeaderVisible;
+  let isMultiSelection;
 
-  let tab = document.getElementById("tabmail")?.currentTabInfo;
+  const tab = document.getElementById("tabmail")?.currentTabInfo;
   if (tab?.mode.name == "mail3PaneTab") {
     let chromeBrowser;
     ({ chromeBrowser, message } = tab);
-    let { paneLayout, quickFilterBar } = chromeBrowser.contentWindow;
+    const { paneLayout, quickFilterBar, folderPane } =
+      chromeBrowser.contentWindow;
     ({ accountCentralVisible, folderPaneVisible, messagePaneVisible } =
       paneLayout);
     quickFilterBarVisible = quickFilterBar.filterer.visible;
     threadPaneHeaderVisible = true;
+    isMultiSelection = folderPane.isMultiSelection;
   } else if (tab?.mode.name == "mailMessageTab") {
     message = tab.message;
     messagePaneVisible = true;
     threadPaneHeaderVisible = false;
   }
 
-  let isFeed = FeedUtils.isFeedMessage(message);
+  const isFeed = FeedUtils.isFeedMessage(message);
 
-  let qfbMenuItem = document.getElementById(
+  const qfbMenuItem = document.getElementById(
     "view_toolbars_popup_quickFilterBar"
   );
   if (qfbMenuItem) {
     qfbMenuItem.setAttribute("checked", quickFilterBarVisible);
   }
 
-  let qfbAppMenuItem = document.getElementById("appmenu_quickFilterBar");
+  const qfbAppMenuItem = document.getElementById("appmenu_quickFilterBar");
   if (qfbAppMenuItem) {
     if (quickFilterBarVisible) {
       qfbAppMenuItem.setAttribute("checked", "true");
@@ -291,55 +300,59 @@ function view_init(event) {
     }
   }
 
-  let messagePaneMenuItem = document.getElementById("menu_showMessage");
+  const messagePaneMenuItem = document.getElementById("menu_showMessage");
   if (!messagePaneMenuItem.hidden) {
     // Hidden in the standalone msg window.
     messagePaneMenuItem.setAttribute(
       "checked",
       accountCentralVisible ? false : messagePaneVisible
     );
-    messagePaneMenuItem.disabled = accountCentralVisible;
+    messagePaneMenuItem.disabled = isMultiSelection || accountCentralVisible;
   }
 
-  let messagePaneAppMenuItem = document.getElementById("appmenu_showMessage");
+  const messagePaneAppMenuItem = document.getElementById("appmenu_showMessage");
   if (messagePaneAppMenuItem && !messagePaneAppMenuItem.hidden) {
     // Hidden in the standalone msg window.
     messagePaneAppMenuItem.setAttribute(
       "checked",
       accountCentralVisible ? false : messagePaneVisible
     );
-    messagePaneAppMenuItem.disabled = accountCentralVisible;
+    messagePaneAppMenuItem.disabled = isMultiSelection || accountCentralVisible;
   }
 
-  let folderPaneMenuItem = document.getElementById("menu_showFolderPane");
+  const folderPaneMenuItem = document.getElementById("menu_showFolderPane");
   if (!folderPaneMenuItem.hidden) {
     // Hidden in the standalone msg window.
     folderPaneMenuItem.setAttribute("checked", folderPaneVisible);
   }
 
-  let folderPaneAppMenuItem = document.getElementById("appmenu_showFolderPane");
-  if (!folderPaneAppMenuItem.hidden) {
+  const folderPaneAppMenuItem = document.getElementById(
+    "appmenu_showFolderPane"
+  );
+  if (folderPaneAppMenuItem && !folderPaneAppMenuItem.hidden) {
     // Hidden in the standalone msg window.
     folderPaneAppMenuItem.setAttribute("checked", folderPaneVisible);
   }
 
-  let threadPaneMenuItem = document.getElementById(
+  const threadPaneMenuItem = document.getElementById(
     "menu_toggleThreadPaneHeader"
   );
   threadPaneMenuItem.setAttribute("disabled", !threadPaneHeaderVisible);
 
-  let threadPaneAppMenuItem = document.getElementById(
+  const threadPaneAppMenuItem = document.getElementById(
     "appmenu_toggleThreadPaneHeader"
   );
-  threadPaneAppMenuItem.toggleAttribute("disabled", !threadPaneHeaderVisible);
+  threadPaneAppMenuItem?.toggleAttribute("disabled", !threadPaneHeaderVisible);
 
   // Disable some menus if account manager is showing
-  document.getElementById("viewSortMenu").disabled = accountCentralVisible;
+  document.getElementById("viewSortMenu").disabled =
+    isMultiSelection || accountCentralVisible;
 
   document.getElementById("viewMessageViewMenu").disabled =
-    accountCentralVisible;
+    isMultiSelection || accountCentralVisible;
 
-  document.getElementById("viewMessagesMenu").disabled = accountCentralVisible;
+  document.getElementById("viewMessagesMenu").disabled =
+    isMultiSelection || accountCentralVisible;
 
   // Hide the "View > Messages" menu item if the user doesn't have the "Views"
   // (aka "Mail Views") toolbar button in the main toolbar. (See bug 1563789.)
@@ -350,18 +363,8 @@ function view_init(event) {
   document.getElementById("viewBodyMenu").hidden = isFeed;
 
   // Initialize the Show Feed Summary menu
-  let viewFeedSummary = document.getElementById("viewFeedSummary");
+  const viewFeedSummary = document.getElementById("viewFeedSummary");
   viewFeedSummary.hidden = !isFeed;
-
-  let viewRssMenuItemIds = [
-    "bodyFeedGlobalWebPage",
-    "bodyFeedGlobalSummary",
-    "bodyFeedPerFolderPref",
-  ];
-  let checked = FeedMessageHandler.onSelectPref;
-  for (let [index, id] of viewRssMenuItemIds.entries()) {
-    document.getElementById(id).setAttribute("checked", index == checked);
-  }
 
   // Initialize the View Attachment Inline menu
   var viewAttachmentInline = Services.prefs.getBoolPref(
@@ -375,10 +378,10 @@ function view_init(event) {
 
   // No need to do anything if we don't have a spaces toolbar like in standalone
   // windows or another non tabmail window.
-  let spacesToolbarMenu = document.getElementById("appmenu_spacesToolbar");
+  const spacesToolbarMenu = document.getElementById("appmenu_spacesToolbar");
   if (spacesToolbarMenu) {
     // Update the spaces toolbar menu items.
-    let isSpacesVisible = !gSpacesToolbar.isHidden;
+    const isSpacesVisible = !gSpacesToolbar.isHidden;
     spacesToolbarMenu.checked = isSpacesVisible;
     document
       .getElementById("viewToolbarsPopupSpacesToolbar")
@@ -397,9 +400,9 @@ function initUiDensityMenu(event) {
   document.getElementById("uiDensityTouch").mode = UIDensity.MODE_TOUCH;
 
   // Fetch the currently active identity.
-  let currentDensity = UIDensity.prefValue;
+  const currentDensity = UIDensity.prefValue;
 
-  for (let item of event.target.querySelectorAll("menuitem")) {
+  for (const item of event.target.querySelectorAll("menuitem")) {
     if (item.mode == currentDensity) {
       item.setAttribute("checked", "true");
       break;
@@ -420,9 +423,9 @@ function initUiDensityAppMenu() {
   document.getElementById("appmenu_uiDensityTouch").mode = UIDensity.MODE_TOUCH;
 
   // Fetch the currently active identity.
-  let currentDensity = UIDensity.prefValue;
+  const currentDensity = UIDensity.prefValue;
 
-  for (let item of document.querySelectorAll(
+  for (const item of document.querySelectorAll(
     "#appMenu-uiDensity-controls > toolbarbutton"
   )) {
     if (item.mode == currentDensity) {
@@ -437,29 +440,23 @@ function InitViewLayoutStyleMenu(event, appmenu) {
   // Prevent submenus from unnecessarily triggering onViewToolbarsPopupShowing
   // via bubbling of events.
   event.stopImmediatePropagation();
-  let paneConfig = Services.prefs.getIntPref("mail.pane_config.dynamic");
+  const paneConfig = Services.prefs.getIntPref("mail.pane_config.dynamic");
 
-  let parent = appmenu
+  const parent = appmenu
     ? event.target.querySelector(".panel-subview-body")
     : event.target;
 
-  let layoutStyleMenuitem = parent.children[paneConfig];
+  const layoutStyleMenuitem = parent.children[paneConfig];
   if (layoutStyleMenuitem) {
     layoutStyleMenuitem.setAttribute("checked", "true");
   }
 
-  if (
-    Services.xulStore.getValue(
-      "chrome://messenger/content/messenger.xhtml",
-      "threadPaneHeader",
-      "hidden"
-    ) !== "true"
-  ) {
+  if (XULStoreUtils.isItemHidden("messenger", "threadPaneHeader")) {
+    parent.querySelector(`[name="threadheader"]`).removeAttribute("checked");
+  } else {
     parent
       .querySelector(`[name="threadheader"]`)
       .setAttribute("checked", "true");
-  } else {
-    parent.querySelector(`[name="threadheader"]`).removeAttribute("checked");
   }
 }
 
@@ -468,23 +465,20 @@ function InitViewLayoutStyleMenu(event, appmenu) {
  * be up-to-date.
  */
 function InitViewSortByMenu() {
-  let tab = document.getElementById("tabmail")?.currentTabInfo;
+  const tab = document.getElementById("tabmail")?.currentTabInfo;
   if (tab?.mode.name != "mail3PaneTab") {
     return;
   }
 
-  let { gViewWrapper, threadPane } = tab.chromeBrowser.contentWindow;
+  const { gViewWrapper } = tab.chromeBrowser.contentWindow;
   if (!gViewWrapper?.dbView) {
     return;
   }
 
-  let { primarySortType, primarySortOrder, showGroupedBySort, showThreaded } =
+  const { primarySortType, primarySortOrder, showGroupedBySort, showThreaded } =
     gViewWrapper;
-  let hiddenColumns = threadPane.columns
-    .filter(c => c.hidden)
-    .map(c => c.sortKey);
 
-  let isSortTypeValidForGrouping = [
+  const isSortTypeValidForGrouping = [
     Ci.nsMsgViewSortType.byAccount,
     Ci.nsMsgViewSortType.byAttachments,
     Ci.nsMsgViewSortType.byAuthor,
@@ -501,17 +495,12 @@ function InitViewSortByMenu() {
     Ci.nsMsgViewSortType.byCustom,
   ].includes(primarySortType);
 
-  let setSortItemAttrs = function (id, sortKey) {
-    let menuItem = document.getElementById(id);
+  const setSortItemAttrs = function (id, sortKey) {
+    const menuItem = document.getElementById(id);
     menuItem.setAttribute(
       "checked",
       primarySortType == Ci.nsMsgViewSortType[sortKey]
     );
-    if (hiddenColumns.includes(sortKey)) {
-      menuItem.setAttribute("disabled", "true");
-    } else {
-      menuItem.removeAttribute("disabled");
-    }
   };
 
   setSortItemAttrs("sortByDateMenuitem", "byDate");
@@ -548,7 +537,7 @@ function InitViewSortByMenu() {
     .getElementById("sortUnthreaded")
     .setAttribute("checked", !showThreaded && !showGroupedBySort);
 
-  let groupBySortOrderMenuItem = document.getElementById("groupBySort");
+  const groupBySortOrderMenuItem = document.getElementById("groupBySort");
   groupBySortOrderMenuItem.setAttribute(
     "disabled",
     !isSortTypeValidForGrouping
@@ -557,12 +546,12 @@ function InitViewSortByMenu() {
 }
 
 function InitViewMessagesMenu() {
-  let tab = document.getElementById("tabmail")?.currentTabInfo;
+  const tab = document.getElementById("tabmail")?.currentTabInfo;
   if (!["mail3PaneTab", "mailMessageTab"].includes(tab?.mode.name)) {
     return;
   }
 
-  let viewWrapper = tab.chromeBrowser.contentWindow.gViewWrapper;
+  const viewWrapper = tab.chromeBrowser.contentWindow.gViewWrapper;
 
   document
     .getElementById("viewAllMessagesMenuItem")
@@ -592,7 +581,7 @@ function InitViewMessagesMenu() {
 }
 
 function InitMessageMenu() {
-  let tab = document.getElementById("tabmail")?.currentTabInfo;
+  const tab = document.getElementById("tabmail")?.currentTabInfo;
   let message, folder;
   let isDummy;
   if (["mail3PaneTab", "mailMessageTab"].includes(tab?.mode.name)) {
@@ -602,9 +591,14 @@ function InitMessageMenu() {
     message = document.getElementById("messageBrowser")?.contentWindow.gMessage;
     isDummy = !message?.folder;
   }
+  const aboutMessage =
+    document.getElementById("tabmail")?.currentAboutMessage ||
+    document.getElementById("messageBrowser")?.contentWindow;
 
-  let isNews = message?.folder?.flags & Ci.nsMsgFolderFlags.Newsgroup;
-  let isFeed = message && FeedUtils.isFeedMessage(message);
+  const isNews =
+    message?.folder?.flags & Ci.nsMsgFolderFlags.Newsgroup ||
+    aboutMessage?.currentHeaderData?.newsgroups;
+  const isFeed = message && FeedUtils.isFeedMessage(message);
 
   // We show reply to Newsgroups only for news messages.
   document.getElementById("replyNewsgroupMainMenu").hidden = !isNews;
@@ -618,9 +612,9 @@ function InitMessageMenu() {
 
   // Disable the move menu if there are no messages selected or if
   // the message is a dummy - e.g. opening a message in the standalone window.
-  let messageStoredInternally = message && !isDummy;
+  const messageStoredInternally = message && !isDummy;
   // Disable the move menu if we can't delete msgs from the folder.
-  let canMove =
+  const canMove =
     messageStoredInternally && !isNews && message.folder.canDeleteMessages;
 
   document.getElementById("moveMenu").disabled = !canMove;
@@ -634,9 +628,6 @@ function InitMessageMenu() {
 
   // Disable the Attachments menu if no message is selected and we don't have
   // any attachment.
-  let aboutMessage =
-    document.getElementById("tabmail")?.currentAboutMessage ||
-    document.getElementById("messageBrowser")?.contentWindow;
   document.getElementById("msgAttachmentMenu").disabled =
     !message || !aboutMessage?.currentAttachments.length;
 
@@ -660,12 +651,12 @@ function InitMessageMenu() {
   }
 
   // Initialize the Open Feed Message handler menu
-  let index = FeedMessageHandler.onOpenPref;
+  const index = FeedMessageHandler.onOpenPref;
   document
     .getElementById("menu_openFeedMessage")
     .children[index].setAttribute("checked", true);
 
-  let openRssMenu = document.getElementById("openFeedMessage");
+  const openRssMenu = document.getElementById("openFeedMessage");
   openRssMenu.hidden = !isFeed;
   if (winType != "mail:3pane") {
     openRssMenu.hidden = true;
@@ -676,9 +667,9 @@ function InitMessageMenu() {
 
   document.commandDispatcher.updateCommands("create-menu-message");
 
-  for (let id of ["killThread", "killSubthread", "watchThread"]) {
-    let item = document.getElementById(id);
-    let command = document.getElementById(item.getAttribute("command"));
+  for (const id of ["killThread", "killSubthread", "watchThread"]) {
+    const item = document.getElementById(id);
+    const command = document.getElementById(item.getAttribute("command"));
     if (command.hasAttribute("checked")) {
       item.setAttribute("checked", command.getAttribute("checked"));
     } else {
@@ -699,14 +690,14 @@ function InitMessageMenu() {
 function showCommandInSpecialFolder(aCommandIds, aFolderFlag) {
   let folder, message;
 
-  let tab = document.getElementById("tabmail")?.currentTabInfo;
+  const tab = document.getElementById("tabmail")?.currentTabInfo;
   if (["mail3PaneTab", "mailMessageTab"].includes(tab?.mode.name)) {
     ({ message, folder } = tab);
   } else if (tab?.mode.tabType.name == "mail") {
     ({ displayedFolder: folder, selectedMessage: message } = tab.folderDisplay);
   }
 
-  let inSpecialFolder =
+  const inSpecialFolder =
     message?.folder?.isSpecialFolder(aFolderFlag, true) ||
     (folder && folder.getFlag(aFolderFlag));
   if (typeof aCommandIds === "string") {
@@ -723,23 +714,23 @@ function showCommandInSpecialFolder(aCommandIds, aFolderFlag) {
  * folder again, based on the value of mail.last_msg_movecopy_target_uri.
  * The menu item label and accesskey are adjusted to include the folder name.
  *
- * @param aMenuItem the menu item to adjust
+ * @param {Element} aMenuItem - The menu item to adjust.
  */
 function initMoveToFolderAgainMenu(aMenuItem) {
-  let lastFolderURI = Services.prefs.getStringPref(
+  const lastFolderURI = Services.prefs.getStringPref(
     "mail.last_msg_movecopy_target_uri"
   );
 
   if (!lastFolderURI) {
     return;
   }
-  let destMsgFolder = MailUtils.getExistingFolder(lastFolderURI);
+  const destMsgFolder = MailUtils.getExistingFolder(lastFolderURI);
   if (!destMsgFolder) {
     return;
   }
-  let bundle = document.getElementById("bundle_messenger");
-  let isMove = Services.prefs.getBoolPref("mail.last_msg_movecopy_was_move");
-  let stringName = isMove ? "moveToFolderAgain" : "copyToFolderAgain";
+  const bundle = document.getElementById("bundle_messenger");
+  const isMove = Services.prefs.getBoolPref("mail.last_msg_movecopy_was_move");
+  const stringName = isMove ? "moveToFolderAgain" : "copyToFolderAgain";
   aMenuItem.label = bundle.getFormattedString(
     stringName,
     [destMsgFolder.prettyName],
@@ -753,38 +744,37 @@ function initMoveToFolderAgainMenu(aMenuItem) {
  * Update the "Show Header" menu items to reflect the current pref.
  */
 function InitViewHeadersMenu() {
-  let dt = Ci.nsMimeHeaderDisplayTypes;
-  let headerchoice = Services.prefs.getIntPref("mail.show_headers");
+  const headerchoice = Services.prefs.getIntPref("mail.show_headers");
   document
     .getElementById("cmd_viewAllHeader")
-    .setAttribute("checked", headerchoice == dt.AllHeaders);
+    .setAttribute(
+      "checked",
+      headerchoice == Ci.nsMimeHeaderDisplayTypes.AllHeaders
+    );
   document
     .getElementById("cmd_viewNormalHeader")
-    .setAttribute("checked", headerchoice == dt.NormalHeaders);
+    .setAttribute(
+      "checked",
+      headerchoice == Ci.nsMimeHeaderDisplayTypes.NormalHeaders
+    );
   document.commandDispatcher.updateCommands("create-menu-mark");
 }
 
 function InitViewBodyMenu() {
   let message;
 
-  let tab = document.getElementById("tabmail")?.currentTabInfo;
+  const tab = document.getElementById("tabmail")?.currentTabInfo;
   if (["mail3PaneTab", "mailMessageTab"].includes(tab?.mode.name)) {
     message = tab.message;
   }
-
-  // Separate render prefs not implemented for feeds, bug 458606.  Show the
-  // checked item for feeds as for the regular pref.
-  //  let html_as = Services.prefs.getIntPref("rss.display.html_as");
-  //  let prefer_plaintext = Services.prefs.getBoolPref("rss.display.prefer_plaintext");
-  //  let disallow_classes = Services.prefs.getIntPref("rss.display.disallow_mime_handlers");
-  let html_as = Services.prefs.getIntPref("mailnews.display.html_as");
-  let prefer_plaintext = Services.prefs.getBoolPref(
+  const html_as = Services.prefs.getIntPref("mailnews.display.html_as");
+  const prefer_plaintext = Services.prefs.getBoolPref(
     "mailnews.display.prefer_plaintext"
   );
-  let disallow_classes = Services.prefs.getIntPref(
+  const disallow_classes = Services.prefs.getIntPref(
     "mailnews.display.disallow_mime_handlers"
   );
-  let isFeed = FeedUtils.isFeedMessage(message);
+  const isFeed = FeedUtils.isFeedMessage(message);
   const defaultIDs = [
     "bodyAllowHTML",
     "bodySanitized",
@@ -796,17 +786,17 @@ function InitViewBodyMenu() {
     "bodyFeedSummarySanitized",
     "bodyFeedSummaryAsPlaintext",
   ];
-  let menuIDs = isFeed ? rssIDs : defaultIDs;
+  const menuIDs = isFeed ? rssIDs : defaultIDs;
 
   if (disallow_classes > 0) {
     gDisallow_classes_no_html = disallow_classes;
   }
   // else gDisallow_classes_no_html keeps its initial value (see top)
 
-  let AllowHTML_menuitem = document.getElementById(menuIDs[0]);
-  let Sanitized_menuitem = document.getElementById(menuIDs[1]);
-  let AsPlaintext_menuitem = document.getElementById(menuIDs[2]);
-  let AllBodyParts_menuitem = menuIDs[3]
+  const AllowHTML_menuitem = document.getElementById(menuIDs[0]);
+  const Sanitized_menuitem = document.getElementById(menuIDs[1]);
+  const AsPlaintext_menuitem = document.getElementById(menuIDs[2]);
+  const AllBodyParts_menuitem = menuIDs[3]
     ? document.getElementById(menuIDs[3])
     : null;
 
@@ -846,11 +836,20 @@ function InitViewBodyMenu() {
   // else (the user edited prefs/user.js) check none of the radio menu items
 
   if (isFeed) {
-    AllowHTML_menuitem.hidden = !FeedMessageHandler.gShowSummary;
-    Sanitized_menuitem.hidden = !FeedMessageHandler.gShowSummary;
-    AsPlaintext_menuitem.hidden = !FeedMessageHandler.gShowSummary;
-    document.getElementById("viewFeedSummarySeparator").hidden =
-      !gShowFeedSummary;
+    const viewRssMenuItemIds = [
+      "bodyFeedGlobalWebPage",
+      "bodyFeedGlobalSummary",
+      "bodyFeedPerFolderPref",
+    ];
+    const checked = FeedMessageHandler.onSelectPref;
+    for (const [index, id] of viewRssMenuItemIds.entries()) {
+      document.getElementById(id).setAttribute("checked", index == checked);
+    }
+    const hideOptions = checked == FeedMessageHandler.kSelectOverrideWebPage;
+    AllowHTML_menuitem.hidden = hideOptions;
+    Sanitized_menuitem.hidden = hideOptions;
+    AsPlaintext_menuitem.hidden = hideOptions;
+    document.getElementById("viewFeedSummarySeparator").hidden = hideOptions;
   }
 }
 
@@ -881,13 +880,13 @@ function InitMessageTags(parent, elementName = "menuitem", classes) {
   function SetMessageTagLabel(menuitem, index, name) {
     // if a <key> is defined for this tag, use its key as the accesskey
     // (the key for the tag at index n needs to have the id key_tag<n>)
-    let shortcutkey = document.getElementById("key_tag" + index);
-    let accesskey = shortcutkey ? shortcutkey.getAttribute("key") : "  ";
-    if (accesskey != "  ") {
+    const shortcutkey = document.getElementById("key_tag" + index);
+    const accesskey = shortcutkey ? shortcutkey.getAttribute("key") : "  ";
+    if (accesskey != "  " && accesskey !== null) {
       menuitem.setAttribute("accesskey", accesskey);
       menuitem.setAttribute("acceltext", accesskey);
     }
-    let label = document
+    const label = document
       .getElementById("bundle_messenger")
       .getFormattedString("mailnews.tags.format", [accesskey, name]);
     menuitem.setAttribute("label", label);
@@ -895,7 +894,7 @@ function InitMessageTags(parent, elementName = "menuitem", classes) {
 
   let message;
 
-  let tab = document.getElementById("tabmail")?.currentTabInfo;
+  const tab = document.getElementById("tabmail")?.currentTabInfo;
   if (["mail3PaneTab", "mailMessageTab"].includes(tab?.mode.name)) {
     message = tab.message;
   } else {
@@ -934,7 +933,7 @@ function InitMessageTags(parent, elementName = "menuitem", classes) {
       return;
     }
     // TODO We want to either remove or "check" the tags that already exist.
-    let item = parent.ownerDocument.createXULElement(elementName);
+    const item = parent.ownerDocument.createXULElement(elementName);
     SetMessageTagLabel(item, index + 1, tagInfo.tag);
 
     if (removeKey) {
@@ -961,8 +960,8 @@ function getMsgToolbarMenu_init() {
 }
 
 function InitMessageMark() {
-  let tab = document.getElementById("tabmail")?.currentTabInfo;
-  let flaggedItem = document.getElementById("markFlaggedMenuItem");
+  const tab = document.getElementById("tabmail")?.currentTabInfo;
+  const flaggedItem = document.getElementById("markFlaggedMenuItem");
   if (tab?.message?.isFlagged) {
     flaggedItem.setAttribute("checked", "true");
   } else {
@@ -1004,7 +1003,7 @@ function MsgGetMessage(folders) {
 function MsgPauseUpdates(selectedFolders = GetSelectedMsgFolders(), pause) {
   // Pause single feed folder subscription updates, or all account updates if
   // folder is the account folder.
-  let folder = selectedFolders.length ? selectedFolders[0] : null;
+  const folder = selectedFolders.length ? selectedFolders[0] : null;
   if (!FeedUtils.isFeedFolder(folder)) {
     return;
   }
@@ -1021,7 +1020,7 @@ function MsgGetMessagesForAllServers(defaultServer) {
     // Parallel array of folders to download to...
     var localFoldersToDownloadTo = [];
     var pop3Server;
-    for (let server of MailServices.accounts.allServers) {
+    for (const server of MailServices.accounts.allServers) {
       if (server.protocolInfo.canLoginAtStartUp && server.loginAtStartUp) {
         if (
           defaultServer &&
@@ -1074,8 +1073,8 @@ function MsgGetMessagesForAllAuthenticatedAccounts() {
  * Get messages for the account selected from Menu dropdowns.
  * if offline, prompt for getting messages.
  *
- * @param aFolder (optional) a folder in the account for which messages should
- *                           be retrieved.  If null, all accounts will be used.
+ * @param {nsIMsgFolder} [aFolder] - A folder in the account for which messages
+ *   should be retrieved. If null, all accounts will be used.
  */
 function MsgGetMessagesForAccount(aFolder) {
   if (!aFolder) {
@@ -1097,7 +1096,7 @@ function MsgGetNextNMessages() {
 }
 
 function MsgNewMessage(event) {
-  let msgFolder = document.getElementById("tabmail")?.currentTabInfo.folder;
+  const msgFolder = document.getElementById("tabmail")?.currentTabInfo.folder;
 
   if (event?.shiftKey) {
     ComposeMessage(
@@ -1133,8 +1132,8 @@ function MsgSubscribe(folder) {
  * Show a confirmation dialog - check if the user really want to unsubscribe
  * from the given newsgroup/s.
  *
- * @folders an array of newsgroup folders to unsubscribe from
- * @returns true if the user said it's ok to unsubscribe
+ * @param {nsIMsgFolder[]} folders - Newsgroup folders to unsubscribe from.
+ * @returns {boolean} true if the user said it's ok to unsubscribe
  */
 function ConfirmUnsubscribe(folders) {
   var bundle = document.getElementById("bundle_messenger");
@@ -1153,7 +1152,8 @@ function ConfirmUnsubscribe(folders) {
 
 /**
  * Unsubscribe from selected or passed in newsgroup/s.
- * @param {nsIMsgFolder[]} selectedFolders - The folders to unsubscribe.
+ *
+ * @param {nsIMsgFolder[]} folders - The folders to unsubscribe.
  */
 function MsgUnsubscribe(folders) {
   if (!ConfirmUnsubscribe(folders)) {
@@ -1161,7 +1161,7 @@ function MsgUnsubscribe(folders) {
   }
 
   for (let i = 0; i < folders.length; i++) {
-    let subscribableServer = folders[i].server.QueryInterface(
+    const subscribableServer = folders[i].server.QueryInterface(
       Ci.nsISubscribableServer
     );
     subscribableServer.unsubscribe(folders[i].name);
@@ -1195,7 +1195,7 @@ function MsgOpenNewTabForFolders(folders, tabParams = {}) {
     }
   }
 
-  let tabmail = document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   for (let i = 0; i < folders.length; i++) {
     tabmail.openTab("mail3PaneTab", {
       ...tabParams,
@@ -1211,7 +1211,7 @@ function MsgOpenFromFile() {
   var filterLabel = bundle.getString("EMLFiles");
   var windowTitle = bundle.getString("OpenEMLFiles");
 
-  fp.init(window, windowTitle, Ci.nsIFilePicker.modeOpen);
+  fp.init(window.browsingContext, windowTitle, Ci.nsIFilePicker.modeOpen);
   fp.appendFilter(filterLabel, "*.eml");
 
   // Default or last filter is "All Files".
@@ -1240,10 +1240,10 @@ function MsgOpenNewWindowForMessage(aMsgHdr, aView) {
 /**
  * Display the given message in an existing folder tab.
  *
- * @param aMsgHdr The message header to display.
+ * @param {nsIMsgDBHdr} aMsgHdr - The message header to display.
  */
 function MsgDisplayMessageInFolderTab(aMsgHdr) {
-  let tabmail = document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   tabmail.switchToTab(0);
   tabmail.currentAbout3Pane.selectMessage(aMsgHdr);
 }
@@ -1261,12 +1261,12 @@ function MsgMarkAllRead(folders) {
  *   marked as read.
  */
 function MsgMarkAllFoldersRead(selectedFolders) {
-  let selectedServers = selectedFolders.filter(folder => folder.isServer);
+  const selectedServers = selectedFolders.filter(folder => folder.isServer);
   if (!selectedServers.length) {
     return;
   }
 
-  let bundle = document.getElementById("bundle_messenger");
+  const bundle = document.getElementById("bundle_messenger");
   if (
     !Services.prompt.confirm(
       window,
@@ -1278,7 +1278,7 @@ function MsgMarkAllFoldersRead(selectedFolders) {
   }
 
   selectedServers.forEach(function (server) {
-    for (let folder of server.rootFolder.descendants) {
+    for (const folder of server.rootFolder.descendants) {
       folder.markAllMessagesRead(msgWindow);
     }
   });
@@ -1304,10 +1304,10 @@ function MsgFilters(emailAddress, folder, fieldName) {
   }
 
   if (!folder) {
-    let chromeBrowser =
+    const chromeBrowser =
       document.getElementById("tabmail")?.currentTabInfo.chromeBrowser ||
       document.getElementById("messageBrowser");
-    let dbView = chromeBrowser?.contentWindow?.gDBView;
+    const dbView = chromeBrowser?.contentWindow?.gDBView;
     // Try to determine the folder from the selected message.
     if (dbView?.numSelected) {
       // Here we face a decision. If the message has been moved to a different
@@ -1401,18 +1401,6 @@ function MsgBodyAllParts() {
   Services.prefs.setIntPref("mailnews.display.disallow_mime_handlers", 0);
 }
 
-function MsgFeedBodyRenderPrefs(plaintext, html, mime) {
-  // Separate render prefs not implemented for feeds, bug 458606.
-  //  Services.prefs.setBoolPref("rss.display.prefer_plaintext", plaintext);
-  //  Services.prefs.setIntPref("rss.display.html_as", html);
-  //  Services.prefs.setIntPref("rss.display.disallow_mime_handlers", mime);
-
-  Services.prefs.setBoolPref("mailnews.display.prefer_plaintext", plaintext);
-  Services.prefs.setIntPref("mailnews.display.html_as", html);
-  Services.prefs.setIntPref("mailnews.display.disallow_mime_handlers", mime);
-  // Reload only if showing rss summary; menuitem hidden if web page..
-}
-
 function ToggleInlineAttachment(target) {
   var viewAttachmentInline = !Services.prefs.getBoolPref(
     "mail.inline_attachments"
@@ -1422,7 +1410,7 @@ function ToggleInlineAttachment(target) {
 }
 
 function IsGetNewMessagesEnabled() {
-  for (let server of MailServices.accounts.allServers) {
+  for (const server of MailServices.accounts.allServers) {
     if (server.type == "none") {
       continue;
     }
@@ -1432,10 +1420,10 @@ function IsGetNewMessagesEnabled() {
 }
 
 function IsGetNextNMessagesEnabled() {
-  let selectedFolders = GetSelectedMsgFolders();
-  let folder = selectedFolders.length ? selectedFolders[0] : null;
+  const selectedFolders = GetSelectedMsgFolders();
+  const folder = selectedFolders.length ? selectedFolders[0] : null;
 
-  let menuItem = document.getElementById("menu_getnextnmsg");
+  const menuItem = document.getElementById("menu_getnextnmsg");
   if (
     folder &&
     !folder.isServer &&
@@ -1530,8 +1518,8 @@ function GetFolderMessages(selectedFolders = GetSelectedMsgFolders()) {
 /**
  * Gets new messages for the given server, for the given folder.
  *
- * @param server which nsIMsgIncomingServer to check for new messages
- * @param folder which nsIMsgFolder folder to check for new messages
+ * @param {nsIMsgIncomingServer} server - Server which to check for new messages.
+ * @param {nsIMsgFolder} folder - Folder to check for new messages.
  */
 function GetNewMsgs(server, folder) {
   // Note that for Global Inbox folder.server != server when we want to get
@@ -1543,64 +1531,47 @@ function GetNewMsgs(server, folder) {
   server.getNewMessages(folder, msgWindow, new TransportErrorUrlListener());
 }
 
-function InformUserOfCertError(secInfo, targetSite) {
-  let params = {
-    exceptionAdded: false,
-    securityInfo: secInfo,
-    prefetchCert: true,
-    location: targetSite,
-  };
-  window.openDialog(
-    "chrome://pippki/content/exceptionDialog.xhtml",
-    "",
-    "chrome,centerscreen,modal",
-    params
-  );
-}
-
 /**
  * A listener to be passed to the url object of the server request being issued
  * to detect the bad server certificates.
  *
  * @implements {nsIUrlListener}
  */
-function TransportErrorUrlListener() {}
-
-TransportErrorUrlListener.prototype = {
-  OnStartRunningUrl(url) {},
+class TransportErrorUrlListener {
+  OnStartRunningUrl() {}
 
   OnStopRunningUrl(url, exitCode) {
     if (Components.isSuccessCode(exitCode)) {
       return;
     }
-    let nssErrorsService = Cc["@mozilla.org/nss_errors_service;1"].getService(
+    const nssErrorsService = Cc["@mozilla.org/nss_errors_service;1"].getService(
       Ci.nsINSSErrorsService
     );
     try {
-      let errorClass = nssErrorsService.getErrorClass(exitCode);
+      const errorClass = nssErrorsService.getErrorClass(exitCode);
       if (errorClass == Ci.nsINSSErrorsService.ERROR_CLASS_BAD_CERT) {
-        let mailNewsUrl = url.QueryInterface(Ci.nsIMsgMailNewsUrl);
-        let secInfo = mailNewsUrl.failedSecInfo;
-        InformUserOfCertError(secInfo, url.asciiHostPort);
+        const mailNewsUrl = url.QueryInterface(Ci.nsIMsgMailNewsUrl);
+        const secInfo = mailNewsUrl.failedSecInfo;
+        MailServices.mailSession.alertCertError(secInfo, mailNewsUrl);
       }
     } catch (e) {
       // It's not an NSS error.
     }
-  },
+  }
 
   // nsISupports
-  QueryInterface: ChromeUtils.generateQI(["nsIUrlListener"]),
-};
+  QueryInterface = ChromeUtils.generateQI(["nsIUrlListener"]);
+}
 
 function SendUnsentMessages() {
-  let msgSendlater = Cc["@mozilla.org/messengercompose/sendlater;1"].getService(
-    Ci.nsIMsgSendLater
-  );
+  const msgSendlater = Cc[
+    "@mozilla.org/messengercompose/sendlater;1"
+  ].getService(Ci.nsIMsgSendLater);
 
-  for (let identity of MailServices.accounts.allIdentities) {
-    let msgFolder = msgSendlater.getUnsentMessagesFolder(identity);
+  for (const identity of MailServices.accounts.allIdentities) {
+    const msgFolder = msgSendlater.getUnsentMessagesFolder(identity);
     if (msgFolder) {
-      let numMessages = msgFolder.getTotalMessages(
+      const numMessages = msgFolder.getTotalMessages(
         false /* include subfolders */
       );
       if (numMessages > 0) {
@@ -1646,7 +1617,7 @@ function GetMessagesForAllAuthenticatedAccounts() {
     var localFoldersToDownloadTo = [];
     var pop3Server;
 
-    for (let server of MailServices.accounts.allServers) {
+    for (const server of MailServices.accounts.allServers) {
       if (
         server.protocolInfo.canGetMessages &&
         !server.passwordPromptRequired
@@ -1683,21 +1654,31 @@ function CommandUpdate_UndoRedo() {
   EnableMenuItem("menu_redo", SetupUndoRedoCommand("cmd_redo"));
 }
 
+/**
+ * @param {string} command - A command, usually "cmd_<something>".
+ */
 function SetupUndoRedoCommand(command) {
-  let folder = document.getElementById("tabmail")?.currentTabInfo.folder;
-  if (!folder?.server.canUndoDeleteOnServer) {
-    return false;
+  let mainWindow;
+  const tabmail = document.getElementById("tabmail");
+  if (tabmail) {
+    mainWindow = window;
+  } else {
+    mainWindow = Services.wm.getMostRecentWindow("mail:3pane");
+    // There may not be a "main" window if an .eml file was double-clicked.
+    if (!mainWindow) {
+      return false;
+    }
   }
 
   let canUndoOrRedo = false;
   let txnType;
   try {
     if (command == "cmd_undo") {
-      canUndoOrRedo = messenger.canUndo();
-      txnType = messenger.getUndoTransactionType();
+      canUndoOrRedo = mainWindow.messenger.canUndo();
+      txnType = mainWindow.messenger.getUndoTransactionType();
     } else {
-      canUndoOrRedo = messenger.canRedo();
-      txnType = messenger.getRedoTransactionType();
+      canUndoOrRedo = mainWindow.messenger.canRedo();
+      txnType = mainWindow.messenger.getRedoTransactionType();
     }
   } catch (ex) {
     // If this fails, assume we can't undo or redo.
@@ -1705,7 +1686,7 @@ function SetupUndoRedoCommand(command) {
   }
 
   if (canUndoOrRedo) {
-    let commands = {
+    const commands = {
       [Ci.nsIMessenger.eUnknown]: "valueDefault",
       [Ci.nsIMessenger.eDeleteMsg]: "valueDeleteMsg",
       [Ci.nsIMessenger.eMoveMsg]: "valueMoveMsg",
@@ -1729,7 +1710,7 @@ function QuickSearchFocus() {
   // Default to focusing the search box on the current tab
   let newTab = false;
   let searchInput;
-  let tabmail = document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   // Tabmail should never be undefined.
   if (!tabmail || tabmail.globalOverlay) {
     return;
@@ -1840,101 +1821,26 @@ function initAppMenuPopup() {
     "mail3PaneTab";
 }
 
-/**
- * Generate menu items that open a preferences dialog/tab for an installed addon,
- * and add them to a menu popup. E.g. in the appmenu or Tools menu > addon prefs.
- *
- * @param {Element} parent - The element (e.g. menupopup) to populate.
- * @param {string} [elementName] - The kind of menu item elements to create (e.g. "toolbarbutton").
- * @param {string} [classes] - Classes for menu item elements with no icon.
- * @param {string} [iconClasses] - Classes for menu item elements with an icon.
- */
-async function initAddonPrefsMenu(
-  parent,
-  elementName = "menuitem",
-  classes,
-  iconClasses = "menuitem-iconic"
-) {
-  // Starting at the bottom, clear all menu items until we hit
-  // "no add-on prefs", which is the only disabled element. Above this element
-  // there may be further items that we want to preserve.
-  let noPrefsElem = parent.querySelector('[disabled="true"]');
-  while (parent.lastChild != noPrefsElem) {
-    parent.lastChild.remove();
-  }
-
-  // Enumerate all enabled addons with URL to XUL document with prefs.
-  let addonsFound = [];
-  for (let addon of await AddonManager.getAddonsByTypes(["extension"])) {
-    if (addon.userDisabled || addon.appDisabled || addon.softDisabled) {
-      continue;
-    }
-    if (addon.optionsURL) {
-      if (addon.optionsType == 5) {
-        addonsFound.push({
-          addon,
-          optionsURL: `addons://detail/${encodeURIComponent(
-            addon.id
-          )}/preferences`,
-          optionsOpenInAddons: true,
-        });
-      } else if (addon.optionsType === null || addon.optionsType == 3) {
-        addonsFound.push({
-          addon,
-          optionsURL: addon.optionsURL,
-          optionsOpenInTab: addon.optionsType == 3,
-        });
-      }
-    }
-  }
-
-  // Populate the menu with addon names and icons.
-  // Note: Having the following code in the getAddonsByTypes() async callback
-  // above works on Windows and Linux but doesn't work on Mac, see bug 1419145.
-  if (addonsFound.length > 0) {
-    addonsFound.sort((a, b) => a.addon.name.localeCompare(b.addon.name));
-    for (let {
-      addon,
-      optionsURL,
-      optionsOpenInTab,
-      optionsOpenInAddons,
-    } of addonsFound) {
-      let newItem = document.createXULElement(elementName);
-      newItem.setAttribute("label", addon.name);
-      newItem.setAttribute("value", optionsURL);
-      if (optionsOpenInTab) {
-        newItem.setAttribute("optionsType", "tab");
-      } else if (optionsOpenInAddons) {
-        newItem.setAttribute("optionsType", "addons");
-      }
-      let iconURL = addon.iconURL || addon.icon64URL;
-      if (iconURL) {
-        newItem.setAttribute("class", iconClasses);
-        newItem.setAttribute("image", iconURL);
-      } else if (classes) {
-        newItem.setAttribute("class", classes);
-      }
-      parent.appendChild(newItem);
-    }
-    noPrefsElem.setAttribute("collapsed", "true");
-  } else {
-    // Only show message that there are no addons with prefs.
-    noPrefsElem.setAttribute("collapsed", "false");
-  }
-}
-
 function openNewCardDialog() {
-  toAddressBook({ action: "create" });
+  toAddressBook(["cmd_newCard"]);
 }
 
 /**
  * Opens Address Book tab and triggers address book creation dialog defined
  * type.
  *
- * @param {?string}[type = "JS"] type - The address book type needing creation.
+ * @param {?string}[type = ""] type - The address book type needing creation.
+ *   Empty string creates a "JS" type address book.
  */
-function openNewABDialog(type = "JS") {
-  toAddressBook({ action: `create_ab_${type}` });
+function openNewABDialog(type = "") {
+  toAddressBook([`cmd_createAddressBook${type}`]);
+}
+
+/**
+ * Opens Account Hub Address Book setup dialog.
+ */
+function openAccountHubABDialog() {
+  window.openAccountHub("ADDRESS_BOOK");
 }
 
 /**
@@ -1955,15 +1861,15 @@ function fillAttachmentListPopup(event) {
     popup.firstElementChild?.remove();
   }
 
-  let aboutMessage =
+  const aboutMessage =
     document.getElementById("tabmail")?.currentAboutMessage ||
     document.getElementById("messageBrowser")?.contentWindow;
   if (!aboutMessage) {
     return;
   }
 
-  let attachments = aboutMessage.currentAttachments;
-  for (let [index, attachment] of attachments.entries()) {
+  const attachments = aboutMessage.currentAttachments;
+  for (const [index, attachment] of attachments.entries()) {
     addAttachmentToPopup(aboutMessage, popup, attachment, index);
   }
   aboutMessage.goUpdateAttachmentCommands();
@@ -2002,8 +1908,8 @@ function addAttachmentToPopup(
   // attachments list in the menu to be 1-indexed.
   attachmentIndex++;
 
-  let displayName = SanitizeAttachmentDisplayName(attachment);
-  let label = document
+  const displayName = SanitizeAttachmentDisplayName(attachment);
+  const label = document
     .getElementById("bundle_messenger")
     .getFormattedString("attachmentDisplayNameFormat", [
       attachmentIndex,
@@ -2027,8 +1933,7 @@ function addAttachmentToPopup(
       // The text-link class must be added to the <label> and have a <menu>
       // hover rule. Adding to <menu> makes hover overflow the underline to
       // the popup items.
-      let label = item.children[1];
-      label.classList.add("text-link");
+      item.children[1].classList.add("text-link");
     }
   }
 
@@ -2036,9 +1941,10 @@ function addAttachmentToPopup(
     item.classList.add("notfound");
   }
 
-  let detached = attachment.isExternalAttachment;
-  let deleted = !attachment.hasFile;
-  let canDetach = aboutMessage?.CanDetachAttachments() && !deleted && !detached;
+  const detached = attachment.isExternalAttachment;
+  const deleted = !attachment.hasFile;
+  const canDetach =
+    aboutMessage?.CanDetachAttachments() && !deleted && !detached;
 
   if (deleted) {
     // We can't do anything with a deleted attachment, so just return.
@@ -2060,7 +1966,9 @@ function addAttachmentToPopup(
   // Create the "save" menu item
   menuitem = document.createXULElement("menuitem");
   menuitem.attachment = attachment;
-  menuitem.addEventListener("command", () => attachment.save(messenger));
+  menuitem.addEventListener("command", () =>
+    attachment.save(aboutMessage.browsingContext)
+  );
   menuitem.setAttribute("label", getString("saveLabel"));
   menuitem.setAttribute("accesskey", getString("saveLabelAccesskey"));
   menuitem.setAttribute("disabled", deleted);
@@ -2089,8 +1997,8 @@ function addAttachmentToPopup(
   menuitem = menupopup.appendChild(menuitem);
 
   // Create the "open containing folder" menu item, for existing detached only.
-  if (attachment.isFileAttachment) {
-    let menuseparator = document.createXULElement("menuseparator");
+  if (attachment.isFileAttachment && attachment.isAllowedURL) {
+    const menuseparator = document.createXULElement("menuseparator");
     menupopup.appendChild(menuseparator);
     menuitem = document.createXULElement("menuitem");
     menuitem.attachment = attachment;
@@ -2120,11 +2028,8 @@ function getIconForAttachment(attachment) {
  * @param {string} url
  */
 function addEmail(url) {
-  let addresses = getEmail(url);
-  toAddressBook({
-    action: "create",
-    address: addresses,
-  });
+  const addresses = getEmail(url);
+  toAddressBook(["cmd_newCard", addresses]);
 }
 
 /**
@@ -2134,8 +2039,8 @@ function addEmail(url) {
  * @returns {string}
  */
 function getEmail(url) {
-  let mailtolength = 7;
-  let qmark = url.indexOf("?");
+  const mailtolength = 7;
+  const qmark = url.indexOf("?");
   let addresses;
 
   if (qmark > mailtolength) {
@@ -2155,23 +2060,14 @@ function getEmail(url) {
 /**
  * Begins composing an email to the address from the given mailto: URL.
  *
- * @param {string} linkURL
+ * @param {string} linkURL - mailto: link to use.
  * @param {nsIMsgIdentity} [identity] - The identity to use, otherwise the
  *   default identity is used.
  */
 function composeEmailTo(linkURL, identity) {
-  let fields = Cc[
-    "@mozilla.org/messengercompose/composefields;1"
-  ].createInstance(Ci.nsIMsgCompFields);
-  let params = Cc[
-    "@mozilla.org/messengercompose/composeparams;1"
-  ].createInstance(Ci.nsIMsgComposeParams);
-  fields.to = getEmail(linkURL);
-  params.type = Ci.nsIMsgCompType.New;
-  params.format = Ci.nsIMsgCompFormat.Default;
-  if (identity) {
-    params.identity = identity;
-  }
-  params.composeFields = fields;
-  MailServices.compose.OpenComposeWindowWithParams(null, params);
+  MailServices.compose.OpenComposeWindowWithURI(
+    null,
+    Services.io.newURI(linkURL),
+    identity
+  );
 }

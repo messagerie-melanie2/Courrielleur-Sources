@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /**
- * Test functionality in the message header,
+ * Test functionality in the message header.
  */
 
 "use strict";
@@ -14,11 +14,11 @@ var {
   ensure_no_card_exists,
   get_cards_in_all_address_books_for_email,
   get_mailing_list_from_address_book,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/AddressBookHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/AddressBookHelpers.sys.mjs"
 );
-var { wait_for_content_tab_load } = ChromeUtils.import(
-  "resource://testing-common/mozmill/ContentTabHelpers.jsm"
+var { promise_content_tab_load } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ContentTabHelpers.sys.mjs"
 );
 var {
   add_message_to_folder,
@@ -27,34 +27,21 @@ var {
   close_popup,
   create_folder,
   create_message,
-  gDefaultWindowHeight,
-  get_smart_folder_named,
   get_about_3pane,
   get_about_message,
-  inboxFolder,
-  mc,
   msgGen,
-  restore_default_window_size,
   select_click_row,
   select_none,
   wait_for_message_display_completion,
-  wait_for_popup_to_open,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-var { element_visible_recursive } = ChromeUtils.import(
-  "resource://testing-common/mozmill/DOMHelpers.jsm"
-);
-var { resize_to } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
+const { ensure_cards_view, ensure_table_view } = ChromeUtils.importESModule(
+  "resource://testing-common/MailViewHelpers.sys.mjs"
 );
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
-);
-
-let about3Pane = get_about_3pane();
-let aboutMessage = get_about_message();
+const about3Pane = get_about_3pane();
+const aboutMessage = get_about_message();
 
 const LINES_PREF = "mailnews.headers.show_n_lines_before_more";
 
@@ -88,37 +75,39 @@ add_setup(async function () {
   await add_message_to_folder([folder], gInterestingMessage);
 
   // Create a message that has multiple to and cc addresses.
-  let msgMore1 = create_message({
+  const msgMore1 = create_message({
     to: msgGen.makeNamesAndAddresses(40),
     cc: msgGen.makeNamesAndAddresses(40),
   });
   await add_message_to_folder([folderMore], msgMore1);
 
   // Create a message that has multiple to and cc addresses.
-  let msgMore2 = create_message({
+  const msgMore2 = create_message({
     to: msgGen.makeNamesAndAddresses(20),
     cc: msgGen.makeNamesAndAddresses(20),
   });
   await add_message_to_folder([folderMore], msgMore2);
 
   // Create a regular message with one recipient.
-  let msg = create_message();
+  const msg = create_message();
   await add_message_to_folder([folder], msg);
+
+  // Create an additional message that will be deleted.
+  const msg2 = create_message();
+  await add_message_to_folder([folder], msg2);
 
   // Some of these tests critically depends on the window width, collapse
   // everything that might be in the way.
-  mc.window.document.getElementById(
-    "tabmail"
-  ).currentTabInfo.folderPaneVisible = false;
+  document.getElementById("tabmail").currentTabInfo.folderPaneVisible = false;
 
   // Disable animations on the panel, so that we don't have to deal with
   // async openings. The panel is lazy-loaded, so it needs to be referenced
   // this way rather than finding it in the DOM.
   aboutMessage.editContactInlineUI.panel.setAttribute("animate", false);
-  await ensure_table_view();
+  await ensure_table_view(document);
 
   registerCleanupFunction(async () => {
-    await ensure_cards_view();
+    await ensure_cards_view(document);
     // Delete created folder.
     folder.deleteSelf(null);
     folderMore.deleteSelf(null);
@@ -139,7 +128,7 @@ add_setup(async function () {
  *   recipient addresses.
  */
 function get_last_visible_address(recipientsList) {
-  let last = recipientsList.childNodes[recipientsList.childNodes.length - 1];
+  const last = recipientsList.childNodes[recipientsList.childNodes.length - 1];
   // Avoid returning the "more" button.
   if (last.classList.contains("show-more-recipients")) {
     return recipientsList.childNodes[recipientsList.childNodes.length - 2];
@@ -149,15 +138,15 @@ function get_last_visible_address(recipientsList) {
 
 add_task(async function test_add_tag_with_really_long_label() {
   await be_in_folder(folder);
-  await ensure_table_view();
+  await ensure_table_view(document);
 
   // Select the first message, which will display it.
-  let curMessage = select_click_row(0);
+  const curMessage = await select_click_row(-1);
 
-  assert_selected_and_displayed(mc, curMessage);
+  await assert_selected_and_displayed(window, curMessage);
 
-  let topLabel = aboutMessage.document.getElementById("expandedfromLabel");
-  let bottomLabel = aboutMessage.document.getElementById(
+  const topLabel = aboutMessage.document.getElementById("expandedfromLabel");
+  const bottomLabel = aboutMessage.document.getElementById(
     "expandedsubjectLabel"
   );
   if (topLabel.clientWidth != bottomLabel.clientWidth) {
@@ -165,11 +154,11 @@ add_task(async function test_add_tag_with_really_long_label() {
       `Header columns have different widths! ${topLabel.clientWidth} != ${bottomLabel.clientWidth}`
     );
   }
-  let defaultWidth = topLabel.clientWidth;
+  const defaultWidth = topLabel.clientWidth;
 
   // Make the tags label really long.
-  let tagsLabel = aboutMessage.document.getElementById("expandedtagsLabel");
-  let oldTagsValue = tagsLabel.value;
+  const tagsLabel = aboutMessage.document.getElementById("expandedtagsLabel");
+  const oldTagsValue = tagsLabel.value;
   tagsLabel.value = "taaaaaaaaaaaaaaaaaags";
   if (topLabel.clientWidth != bottomLabel.clientWidth) {
     tagsLabel.value = oldTagsValue;
@@ -185,7 +174,7 @@ add_task(async function test_add_tag_with_really_long_label() {
     );
   }
 
-  let fromRow = aboutMessage.document.getElementById("expandedfromRow");
+  const fromRow = aboutMessage.document.getElementById("expandedfromRow");
   // Add the first tag, and make sure that the label are the same length.
   fromRow.focus();
   EventUtils.synthesizeKey("1", {}, aboutMessage);
@@ -259,7 +248,7 @@ const headersToTest = [
  * @param {HeaderInfo} header - The HeaderInfo data type object.
  */
 async function verify_header_a11y(header) {
-  let element = header.element();
+  const element = header.element();
   Assert.notEqual(
     element,
     null,
@@ -272,7 +261,7 @@ async function verify_header_a11y(header) {
     `didn't find accessible element for header '${header.name}'`
   );
 
-  let expectedName = header.expectedName(element);
+  const expectedName = header.expectedName(element);
   Assert.equal(
     headerAccessible.name,
     expectedName,
@@ -291,15 +280,15 @@ add_task(async function test_a11y_attrs() {
   await be_in_folder(folder);
   // Convert the SyntheticMessage gInterestingMessage into an actual nsIMsgDBHdr
   // XPCOM message.
-  let hdr = folder.msgDatabase.getMsgHdrForMessageID(
+  const hdr = folder.msgDatabase.getMsgHdrForMessageID(
     gInterestingMessage.messageId
   );
   // Select and open the interesting message.
-  let curMessage = select_click_row(
+  const curMessage = await select_click_row(
     about3Pane.gDBView.findIndexOfMsgHdr(hdr, false)
   );
   // Make sure it loads.
-  assert_selected_and_displayed(mc, curMessage);
+  await assert_selected_and_displayed(window, curMessage);
   // Test all the headers with this message.
   headersToTest.forEach(verify_header_a11y);
 });
@@ -311,24 +300,29 @@ add_task(async function enter_msg_hdr_toolbar() {
   await be_in_folder(folder);
   // Convert the SyntheticMessage gInterestingMessage into an actual nsIMsgDBHdr
   // XPCOM message.
-  let hdr = folder.msgDatabase.getMsgHdrForMessageID(
+  const hdr = folder.msgDatabase.getMsgHdrForMessageID(
     gInterestingMessage.messageId
   );
   // Select and open the interesting message.
-  let curMessage = select_click_row(
+  const curMessage = await select_click_row(
     about3Pane.gDBView.findIndexOfMsgHdr(hdr, false)
   );
   // Make sure it loads.
-  assert_selected_and_displayed(mc, curMessage);
+  await assert_selected_and_displayed(window, curMessage);
 
-  const BUTTONS_SELECTOR = `toolbarbutton:not([hidden="true"],[is="toolbarbutton-menu-button"]), toolbaritem[id="hdrSmartReplyButton"]>toolbarbutton:not([hidden="true"])>dropmarker, button:not([hidden])`;
-  let headerToolbar = aboutMessage.document.getElementById(
+  // Some buttons may be disabled, for example for feed messages.
+  const archiveButton =
+    aboutMessage.document.getElementById("hdrArchiveButton");
+  archiveButton.disabled = true;
+
+  const BUTTONS_SELECTOR = `toolbarbutton:not([hidden="true"],[disabled="true"],[is="toolbarbutton-menu-button"]), toolbaritem[id="hdrSmartReplyButton"]>toolbarbutton:not([hidden="true"])>dropmarker, button:not([hidden])`;
+  const headerToolbar = aboutMessage.document.getElementById(
     "header-view-toolbar"
   );
-  let headerButtons = headerToolbar.querySelectorAll(BUTTONS_SELECTOR);
+  const headerButtons = headerToolbar.querySelectorAll(BUTTONS_SELECTOR);
 
   // Create an array of all the menu popups on message header.
-  let msgHdrMenupopups = headerToolbar.querySelectorAll(".no-icon-menupopup");
+  const msgHdrMenupopups = headerToolbar.querySelectorAll(".no-icon-menupopup");
   let menupopupToOpen, msgHdrActiveElement;
 
   // Press tab while on the message selected.
@@ -342,7 +336,7 @@ add_task(async function enter_msg_hdr_toolbar() {
   // Simulate the Arrow Right keypress to make sure the correct button gets the
   // focus.
   for (let i = 1; i < headerButtons.length; i++) {
-    let previousElement = document.activeElement;
+    const previousElement = document.activeElement;
     EventUtils.synthesizeKey("KEY_ArrowRight", {}, about3Pane);
     Assert.equal(
       aboutMessage.document.activeElement.id,
@@ -362,8 +356,8 @@ add_task(async function enter_msg_hdr_toolbar() {
       msgHdrActiveElement.hasAttribute("type") &&
       msgHdrActiveElement.getAttribute("type") == "menu"
     ) {
-      let parentID = msgHdrActiveElement.parentElement.id;
-      for (let menupopup of msgHdrMenupopups) {
+      const parentID = msgHdrActiveElement.parentElement.id;
+      for (const menupopup of msgHdrMenupopups) {
         if (
           menupopup.id.replace("Dropdown", "") ==
             parentID.replace("Button", "") ||
@@ -374,14 +368,14 @@ add_task(async function enter_msg_hdr_toolbar() {
         }
       }
 
-      let menupopupOpenEnterPromise = BrowserTestUtils.waitForEvent(
+      const menupopupOpenEnterPromise = BrowserTestUtils.waitForEvent(
         menupopupToOpen,
         "popupshown"
       );
       EventUtils.synthesizeKey("KEY_Enter", {}, about3Pane);
       await menupopupOpenEnterPromise;
 
-      let menupopupClosePromise = BrowserTestUtils.waitForEvent(
+      const menupopupClosePromise = BrowserTestUtils.waitForEvent(
         menupopupToOpen,
         "popuphidden"
       );
@@ -394,7 +388,7 @@ add_task(async function enter_msg_hdr_toolbar() {
         "The correct button is focused"
       );
 
-      let menupopupOpenSpacePromise = BrowserTestUtils.waitForEvent(
+      const menupopupOpenSpacePromise = BrowserTestUtils.waitForEvent(
         menupopupToOpen,
         "popupshown"
       );
@@ -416,7 +410,7 @@ add_task(async function enter_msg_hdr_toolbar() {
   // Simulate the Arrow Left keypress to make sure the correct button gets the
   // focus.
   for (let i = headerButtons.length - 2; i > -1; i--) {
-    let previousElement = document.activeElement;
+    const previousElement = document.activeElement;
     EventUtils.synthesizeKey("KEY_ArrowLeft", {}, about3Pane);
     Assert.equal(
       aboutMessage.document.activeElement.id,
@@ -435,20 +429,76 @@ add_task(async function enter_msg_hdr_toolbar() {
     "fromRecipient0",
     "The sender is now focused"
   );
-}).__skipMe = AppConstants.platform == "macosx";
+
+  archiveButton.disabled = false;
+}).skip(AppConstants.platform == "macosx");
+
+/**
+ * Test that various header toolbar buttons don't change focus when being
+ * clicked.
+ */
+add_task(async function test_focus_after_button_click() {
+  // Start on the additional message that will be deleted.
+  const message = await select_click_row(-3);
+
+  // Make sure it loads.
+  await wait_for_message_display_completion(window);
+  await assert_selected_and_displayed(window, message);
+
+  const clickButtonAndCheckFocus = async (id, messageChanges) => {
+    const focusedBefore = Services.focus.focusedElement;
+    EventUtils.synthesizeMouseAtCenter(
+      aboutMessage.document.getElementById(id),
+      {},
+      aboutMessage
+    );
+    if (messageChanges) {
+      await wait_for_message_display_completion(window);
+    }
+    Assert.equal(
+      focusedBefore,
+      Services.focus.focusedElement,
+      "The focus should not have changed"
+    );
+  };
+
+  const tree = about3Pane.document.getElementById("threadTree");
+  const rowCount = tree.view.rowCount;
+  await clickButtonAndCheckFocus("hdrTrashButton", true);
+  await TestUtils.waitForTick();
+  Assert.equal(
+    tree.view.rowCount,
+    rowCount - 1,
+    "trashing should have removed one msg"
+  );
+  await clickButtonAndCheckFocus("starMessageButton", false);
+  await TestUtils.waitForTick();
+  Assert.equal(
+    tree.view.rowCount,
+    rowCount - 1,
+    "starring should not have removed any msg"
+  );
+});
 
 // Full keyboard navigation on OSX only works if Full Keyboard Access setting is
 // set to All Control in System Keyboard Preferences. This also works with the
 // setting, Keyboard > Keyboard navigation, in addition to
 // Accessibility > Keyboard > Full Keyboard Access.
 
-add_task(function test_more_button_with_many_recipients() {
+add_task(async function test_more_button_with_many_recipients() {
+  const tree = about3Pane.document.getElementById("threadTree");
+  Assert.greaterOrEqual(
+    tree.view.rowCount,
+    2,
+    "should have the 2 messages we need for the test"
+  );
+
   // Start on the interesting message.
-  let curMessage = select_click_row(0);
+  let curMessage = await select_click_row(-1);
 
   // Make sure it loads.
-  wait_for_message_display_completion(mc);
-  assert_selected_and_displayed(mc, curMessage);
+  await wait_for_message_display_completion(window);
+  await assert_selected_and_displayed(window, curMessage);
 
   // Click on the "more" button.
   EventUtils.synthesizeMouseAtCenter(
@@ -457,7 +507,7 @@ add_task(function test_more_button_with_many_recipients() {
     aboutMessage
   );
 
-  let msgHeader = aboutMessage.document.getElementById("messageHeader");
+  const msgHeader = aboutMessage.document.getElementById("messageHeader");
   // Check that the message header can scroll to fit all recipients.
   Assert.ok(
     msgHeader.classList.contains("scrollable"),
@@ -465,11 +515,11 @@ add_task(function test_more_button_with_many_recipients() {
   );
 
   // Switch to the boring message, to force the more button to collapse.
-  curMessage = select_click_row(1);
+  curMessage = await select_click_row(-2);
 
   // Make sure it loads.
-  wait_for_message_display_completion(mc);
-  assert_selected_and_displayed(mc, curMessage);
+  await wait_for_message_display_completion(window);
+  await assert_selected_and_displayed(window, curMessage);
 
   // Check that the message header is not scrollable anymore
   Assert.notEqual(
@@ -484,11 +534,11 @@ add_task(function test_more_button_with_many_recipients() {
  * @param {HTMLOListElement} recipientsList
  */
 function subtest_more_widget_ab_button_click(recipientsList) {
-  let recipient = get_last_visible_address(recipientsList);
+  const recipient = get_last_visible_address(recipientsList);
   ensure_no_card_exists(recipient.emailAddress);
 
   // Scroll to the bottom first so the address is in view.
-  let view = aboutMessage.document.getElementById("messageHeader");
+  const view = aboutMessage.document.getElementById("messageHeader");
   view.scrollTop = view.scrollHeight - view.clientHeight;
 
   EventUtils.synthesizeMouseAtCenter(recipient.abIndicator, {}, aboutMessage);
@@ -507,25 +557,25 @@ add_task(async function test_clicking_ab_button_opens_inline_contact_editor() {
   // Make sure we're in the right folder.
   await be_in_folder(folder);
   // Add a new message.
-  let msg = create_message();
+  const msg = create_message();
   await add_message_to_folder([folder], msg);
   // Open the latest message.
-  select_click_row(-1);
-  wait_for_message_display_completion(mc);
+  await select_click_row(0);
+  await wait_for_message_display_completion(window);
 
   // Ensure that the inline contact editing panel is not open
-  let contactPanel = aboutMessage.document.getElementById("editContactPanel");
+  const contactPanel = aboutMessage.document.getElementById("editContactPanel");
   Assert.notEqual(contactPanel.state, "open");
 
-  let recipientsList =
+  const recipientsList =
     aboutMessage.document.getElementById("expandedtoBox").recipientsList;
   subtest_more_widget_ab_button_click(recipientsList);
 
   // Ok, if we're here, then the star has been clicked, and
   // the contact has been added to our AB.
-  let recipient = get_last_visible_address(recipientsList);
+  const recipient = get_last_visible_address(recipientsList);
 
-  let panelOpened = TestUtils.waitForCondition(
+  const panelOpened = TestUtils.waitForCondition(
     () => contactPanel.state == "open",
     "The contactPanel was opened"
   );
@@ -538,9 +588,9 @@ add_task(async function test_clicking_ab_button_opens_inline_contact_editor() {
     {},
     aboutMessage
   );
-  wait_for_content_tab_load(undefined, "about:addressbook");
+  await promise_content_tab_load(undefined, "about:addressbook");
   // TODO check the card.
-  mc.window.document.getElementById("tabmail").closeTab();
+  document.getElementById("tabmail").closeTab();
 });
 
 /**
@@ -550,7 +600,7 @@ add_task(async function test_msg_id_context_menu() {
   Services.prefs.setBoolPref("mailnews.headers.showReferences", true);
 
   // Add a new message.
-  let msg = create_message({
+  const msg = create_message({
     clobberHeaders: {
       References:
         "<4880C986@example.com> <4880CAB2@example.com> <4880CC76@example.com>",
@@ -560,7 +610,7 @@ add_task(async function test_msg_id_context_menu() {
   await be_in_folder(folder);
 
   // Open the latest message.
-  select_click_row(-1);
+  await select_click_row(0);
 
   // Right click to show the context menu.
   EventUtils.synthesizeMouseAtCenter(
@@ -570,8 +620,9 @@ add_task(async function test_msg_id_context_menu() {
     { type: "contextmenu" },
     aboutMessage
   );
-  await wait_for_popup_to_open(
-    aboutMessage.document.getElementById("messageIdContext")
+  await BrowserTestUtils.waitForPopupEvent(
+    aboutMessage.document.getElementById("messageIdContext"),
+    "shown"
   );
 
   // Ensure Open Message For ID is shown and that Open Browser With Message-ID
@@ -590,7 +641,7 @@ add_task(async function test_msg_id_context_menu() {
   );
 
   await close_popup(
-    mc,
+    window,
     aboutMessage.document.getElementById("messageIdContext")
   );
 
@@ -609,28 +660,29 @@ add_task(
     const MAILING_LIST_DIRNAME = "Some Mailing List";
     const ADDRESS_BOOK_NAME = "Some Address Book";
     // Add a new message.
-    let msg = create_message();
+    const msg = create_message();
     await add_message_to_folder([folder], msg);
 
     // Make sure we're in the right folder.
     await be_in_folder(folder);
 
     // Open the latest message.
-    select_click_row(-1);
+    await select_click_row(0);
 
     // Ensure that the inline contact editing panel is not open
-    let contactPanel = aboutMessage.document.getElementById("editContactPanel");
+    const contactPanel =
+      aboutMessage.document.getElementById("editContactPanel");
     Assert.notEqual(contactPanel.state, "open");
 
-    let recipientsList =
+    const recipientsList =
       aboutMessage.document.getElementById("expandedtoBox").recipientsList;
     subtest_more_widget_ab_button_click(recipientsList);
 
     // Ok, if we're here, then the star has been clicked, and
     // the contact has been added to our AB.
-    let recipient = get_last_visible_address(recipientsList);
+    const recipient = get_last_visible_address(recipientsList);
 
-    let panelOpened = TestUtils.waitForCondition(
+    const panelOpened = TestUtils.waitForCondition(
       () => contactPanel.state == "open",
       "The contactPanel was opened"
     );
@@ -639,13 +691,13 @@ add_task(
     EventUtils.synthesizeMouseAtCenter(recipient.abIndicator, {}, aboutMessage);
     await panelOpened;
 
-    let abDrop = aboutMessage.document.getElementById(
+    const abDrop = aboutMessage.document.getElementById(
       "editContactAddressBookList"
     );
     // Ensure that the address book dropdown is not disabled
     Assert.ok(!abDrop.disabled);
 
-    let warningMsg = aboutMessage.document.getElementById(
+    const warningMsg = aboutMessage.document.getElementById(
       "contactMoveDisabledText"
     );
     // We should not be displaying any warning
@@ -656,7 +708,7 @@ add_task(
 
     // For the contact that was added, create a mailing list in the address book
     // it resides in, and then add that contact to the mailing list.
-    let cards = get_cards_in_all_address_books_for_email(
+    const cards = get_cards_in_all_address_books_for_email(
       recipient.emailAddress
     );
 
@@ -668,7 +720,7 @@ add_task(
 
     // Add the card to a new address book, and insert it into a mailing list
     // under that address book.
-    let ab = create_address_book(ADDRESS_BOOK_NAME);
+    const ab = create_address_book(ADDRESS_BOOK_NAME);
     ab.dropCard(cards[0], false);
     let ml = create_mailing_list(MAILING_LIST_DIRNAME);
     ab.addMailList(ml);
@@ -712,25 +764,24 @@ add_task(
  * Test that clicking the adding an address node adds it to the address book.
  */
 add_task(async function test_add_contact_from_context_menu() {
-  let popup = aboutMessage.document.getElementById("emailAddressPopup");
-  let popupShown = BrowserTestUtils.waitForEvent(popup, "popupshown");
+  const popup = aboutMessage.document.getElementById("emailAddressPopup");
   // Click the contact to show the emailAddressPopup popup menu.
-  let recipient = aboutMessage.document.querySelector(
+  const recipient = aboutMessage.document.querySelector(
     "#expandedfromBox .header-recipient"
   );
   EventUtils.synthesizeMouseAtCenter(recipient, {}, aboutMessage);
-  await popupShown;
+  await BrowserTestUtils.waitForPopupEvent(popup, "shown");
 
   const addToAddressBookItem = aboutMessage.document.getElementById(
     "addToAddressBookItem"
   );
-  Assert.ok(!addToAddressBookItem.hidden, "addToAddressBookItem is not hidden");
+  Assert.ok(!addToAddressBookItem.hidden, "#addToAddressBookItem should show");
 
   const editContactItem =
     aboutMessage.document.getElementById("editContactItem");
-  Assert.ok(editContactItem.hidden, "editContactItem is hidden");
+  Assert.ok(editContactItem.hidden, "#editContactItem should be hidden");
 
-  let recipientAdded = TestUtils.waitForCondition(
+  const recipientAdded = TestUtils.waitForCondition(
     () => recipient.abIndicator.classList.contains("in-address-book"),
     "The recipient was added to the address book"
   );
@@ -738,31 +789,186 @@ add_task(async function test_add_contact_from_context_menu() {
   // Click the Add to Address Book context menu entry.
   // NOTE: Use activateItem because macOS uses native context menus.
   popup.activateItem(addToAddressBookItem);
-  // (for reasons unknown, the pop-up does not close itself)
-  await close_popup(mc, popup);
+  await BrowserTestUtils.waitForPopupEvent(popup, "hidden");
   await recipientAdded;
-
-  // NOTE: We need to redefine these selectors otherwise the popup will not
-  // properly close for some reason.
-  let popup2 = aboutMessage.document.getElementById("emailAddressPopup");
-  let popupShown2 = BrowserTestUtils.waitForEvent(popup, "popupshown");
 
   // Now click the contact again, the context menu should now show the Edit
   // Contact menu instead.
   EventUtils.synthesizeMouseAtCenter(recipient, {}, aboutMessage);
-  await popupShown2;
-  // (for reasons unknown, the pop-up does not close itself)
-  await close_popup(mc, popup2);
 
-  Assert.ok(addToAddressBookItem.hidden, "addToAddressBookItem is hidden");
-  Assert.ok(!editContactItem.hidden, "editContactItem is not hidden");
+  await BrowserTestUtils.waitForPopupEvent(popup, "shown");
+
+  Assert.ok(
+    addToAddressBookItem.hidden,
+    "#addToAddressBookItem should be hidden"
+  );
+  Assert.ok(!editContactItem.hidden, "#editContactItem should be show");
+
+  await close_popup(window, popup);
+
+  // Delete the added conctact, and try adding by double clicking the
+  // abIndicator button.
+  MailServices.ab
+    .getDirectory(recipient.cardDetails.book.URI)
+    .deleteCards([recipient.cardDetails.card]);
+
+  Assert.equal(
+    MailServices.ab.cardForEmailAddress(recipient.emailAddress),
+    null,
+    "card should be gone"
+  );
+
+  // Double click (to ignore).
+  EventUtils.synthesizeMouseAtCenter(
+    recipient.abIndicator,
+    { clickCount: 2 },
+    aboutMessage
+  );
+  // ... need to simulate the regular click too.
+  // During normal usage dblclick will trigger click event as well.
+  EventUtils.synthesizeMouseAtCenter(recipient.abIndicator, {}, aboutMessage);
+
+  await TestUtils.waitForTick();
+
+  const addedCard = MailServices.ab.cardForEmailAddress(recipient.emailAddress);
+  Assert.ok(addedCard, "card should have been added");
+
+  // ... but only once. Delete this and make sure there wasn't another one added.
+  MailServices.ab
+    .getDirectoryFromUID(addedCard.directoryUID)
+    .deleteCards([addedCard]);
+
+  Assert.equal(
+    MailServices.ab.cardForEmailAddress(recipient.emailAddress),
+    null,
+    "should not find a (second) card as we deleted it already"
+  );
+});
+
+/**
+ * Test that clicking the <List-ID> header works as it should.
+ */
+add_task(async function test_context_menu_list_id() {
+  // Add a new message.
+  const msg = create_message({
+    clobberHeaders: {
+      "List-ID": "Cats <gocats.example.test>",
+      "List-Help": "<https://example.test/lists/gocats/help>",
+      "List-Unsubscribe":
+        "<https://example.test/lists/gocats/unssubscribe>, <mailto:gocats+unsubscribe@example.test?subject=test%20x-tx-unsubscribe:2:thunderbird:fb10d204-8f3f-11eb-aa0e-32e0282d11b0:76d38cd0-e766-11e8-8e55-99e8122d11b0:Mc33789033c0aab1c5028308e:1:RAHZjXgrMOtgzIOraQB0jR5Cg58VHiMb2gSuzCZBy_s>",
+      "List-Subscribe": "<https://example.test/lists/gocats/subscribe>",
+      "List-Post": "<https://example.test/lists/gocats/post>",
+      "List-Owner":
+        "<mailto:gocats+owner@example.test?subject=gocats-list>, <https://example.test/lists/gocats/owner>",
+      "List-Archive": "<https://example.test/lists/gocats/archive ",
+      "Archived-At": "<https://example.test/mid/123@example.org>",
+    },
+  });
+  await add_message_to_folder([folder], msg);
+  await be_in_folder(folder);
+
+  // Open the latest message.
+  await select_click_row(0);
+
+  // Right click to show the context menu.
+  EventUtils.synthesizeMouseAtCenter(
+    aboutMessage.document.querySelector("#expandedlist-idBox"),
+    { type: "contextmenu" },
+    aboutMessage
+  );
+  const listIdPopup = aboutMessage.document.getElementById("listIdPopup");
+  await BrowserTestUtils.waitForPopupEvent(
+    aboutMessage.document.getElementById("listIdPopup"),
+    "shown"
+  );
+
+  const listIdCopy = aboutMessage.document.getElementById("listIdCopy");
+  Assert.equal(listIdCopy.hidden, false, "copy should show");
+
+  const listIdPlaceHolder =
+    aboutMessage.document.getElementById("listIdPlaceHolder");
+  Assert.equal(listIdPlaceHolder.hidden, false, "list-id should show");
+  Assert.equal(
+    listIdPlaceHolder.label,
+    "gocats.example.test",
+    "list-id ctx label should be correct"
+  );
+
+  const listIdListHelp = aboutMessage.document.getElementById("listIdListHelp");
+  Assert.equal(listIdListHelp.hidden, false, "list-help should show");
+  Assert.equal(
+    listIdListHelp.value,
+    "https://example.test/lists/gocats/help",
+    "list-help ctx value should be correct"
+  );
+
+  const listIdListUnsubscribe = aboutMessage.document.getElementById(
+    "listIdListUnsubscribe"
+  );
+  Assert.equal(
+    listIdListUnsubscribe.hidden,
+    false,
+    "list-unsubscribe should show"
+  );
+  Assert.equal(
+    listIdListUnsubscribe.value,
+    "mailto:gocats+unsubscribe@example.test?subject=test%20x-tx-unsubscribe:2:thunderbird:fb10d204-8f3f-11eb-aa0e-32e0282d11b0:76d38cd0-e766-11e8-8e55-99e8122d11b0:Mc33789033c0aab1c5028308e:1:RAHZjXgrMOtgzIOraQB0jR5Cg58VHiMb2gSuzCZBy_s",
+    "list-unsubscribe ctx value should be correct"
+  );
+
+  const listIdListSubscribe = aboutMessage.document.getElementById(
+    "listIdListSubscribe"
+  );
+  Assert.equal(listIdListSubscribe.hidden, false, "list-subscribe should show");
+  Assert.equal(
+    listIdListSubscribe.value,
+    "https://example.test/lists/gocats/subscribe",
+    "list-subscribe ctx value should be correct"
+  );
+
+  const listIdListPost = aboutMessage.document.getElementById("listIdListPost");
+  Assert.equal(listIdListPost.hidden, false, "list-post should show");
+  Assert.equal(
+    listIdListPost.value,
+    "https://example.test/lists/gocats/post",
+    "list-post ctx value should be correct"
+  );
+
+  const listIdListOwner =
+    aboutMessage.document.getElementById("listIdListOwner");
+  Assert.equal(listIdListOwner.hidden, false, "list-owner should show");
+  Assert.equal(
+    listIdListOwner.value,
+    "mailto:gocats+owner@example.test?subject=gocats-list",
+    "list-owner ctx value should be correct"
+  );
+
+  const listIdListArchive =
+    aboutMessage.document.getElementById("listIdListArchive");
+  Assert.equal(listIdListArchive.hidden, false, "list-archive should show");
+  Assert.equal(
+    listIdListArchive.value,
+    "https://example.test/lists/gocats/archive",
+    "list-archive ctx value should be correct"
+  );
+
+  const listIdArchivedAt =
+    aboutMessage.document.getElementById("listIdArchivedAt");
+  Assert.equal(listIdArchivedAt.hidden, false, "archived-at should show");
+  Assert.equal(
+    listIdArchivedAt.value,
+    "https://example.test/mid/123@example.org",
+    "archived-at ctx value should be correct"
+  );
+
+  await close_popup(window, listIdPopup);
 });
 
 add_task(async function test_that_msg_without_date_clears_previous_headers() {
   await be_in_folder(folder);
 
   // Create a message with a descriptive subject.
-  let msg = create_message({ subject: "this is without date" });
+  const msg = create_message({ subject: "this is without date" });
 
   // Ensure that this message doesn't have a Date header.
   delete msg.headers.Date;
@@ -772,11 +978,11 @@ add_task(async function test_that_msg_without_date_clears_previous_headers() {
 
   // Not the first anymore. The timestamp is that of "NOW".
   // Select and open the LAST message.
-  let curMessage = select_click_row(-1);
+  const curMessage = await select_click_row(0);
 
   // Make sure it loads.
-  wait_for_message_display_completion(mc);
-  assert_selected_and_displayed(mc, curMessage);
+  await wait_for_message_display_completion(window);
+  await assert_selected_and_displayed(window, curMessage);
 
   // Since we didn't give create_message an argument that would create a
   // Newsgroups header, the newsgroups <row> element should be collapsed.
@@ -796,7 +1002,7 @@ add_task(async function test_that_msg_without_date_clears_previous_headers() {
  * @returns {int} - The number of rows.
  */
 function help_get_num_lines(node) {
-  let style = getComputedStyle(node.firstElementChild);
+  const style = getComputedStyle(node.firstElementChild);
   return Math.round(
     parseFloat(getComputedStyle(node).height) /
       parseFloat(style.height + style.paddingTop + style.paddingBottom)
@@ -812,9 +1018,9 @@ function help_get_num_lines(node) {
  */
 async function subtest_more_widget_display(node, showAll = false) {
   // Test that the `To` element doesn't have more than max lines.
-  let numLines = help_get_num_lines(node);
+  const numLines = help_get_num_lines(node);
   // Get the max line pref.
-  let maxLines = Services.prefs.getIntPref(LINES_PREF);
+  const maxLines = Services.prefs.getIntPref(LINES_PREF);
 
   if (showAll) {
     await BrowserTestUtils.waitForCondition(
@@ -849,9 +1055,9 @@ async function subtest_more_widget_display(node, showAll = false) {
  * @param {HTMLOListElement} node - The recipients container of a header row.
  */
 function subtest_more_widget_activate(node) {
-  let oldNumLines = help_get_num_lines(node);
+  const oldNumLines = help_get_num_lines(node);
 
-  let moreButton = node.querySelector(".show-more-recipients");
+  const moreButton = node.querySelector(".show-more-recipients");
   Assert.ok(moreButton, "The more button should exist");
   moreButton.focus();
   // Activate the "more" button.
@@ -864,7 +1070,7 @@ function subtest_more_widget_activate(node) {
   );
 
   // Test that we actually have more lines than we did before!
-  let newNumLines = help_get_num_lines(node);
+  const newNumLines = help_get_num_lines(node);
   Assert.greater(
     newNumLines,
     oldNumLines,
@@ -878,7 +1084,7 @@ function subtest_more_widget_activate(node) {
 add_task(async function test_view_more_button() {
   // Generate message with 35 recipients to guarantee overflow.
   await be_in_folder(folder);
-  let msg = create_message({
+  const msg = create_message({
     toCount: 35,
     subject: "Many To addresses to test_more_widget",
   });
@@ -888,23 +1094,23 @@ add_task(async function test_view_more_button() {
 
   // Select and open the injected message.
   // It is at the second last message in the display list.
-  let curMessage = select_click_row(-2);
+  let curMessage = await select_click_row(1);
   // FIXME: Switch between a couple of messages to allow the UI to properly
   // refresh and fetch the proper recipients row width in order to avoid an
   // unexpected recipients wrapping. This happens because the width calculation
   // happens before the message header layout is fully generated.
-  let prevMessage = select_click_row(-3);
-  wait_for_message_display_completion(mc);
-  assert_selected_and_displayed(mc, prevMessage);
+  const prevMessage = await select_click_row(2);
+  await wait_for_message_display_completion(window);
+  await assert_selected_and_displayed(window, prevMessage);
 
-  curMessage = select_click_row(-2);
+  curMessage = await select_click_row(1);
 
   // Make sure it loads.
-  wait_for_message_display_completion(mc);
-  assert_selected_and_displayed(mc, curMessage);
+  await wait_for_message_display_completion(window);
+  await assert_selected_and_displayed(window, curMessage);
 
   // Get the sender address.
-  let node =
+  const node =
     aboutMessage.document.getElementById("expandedtoBox").recipientsList;
   await subtest_more_widget_display(node);
   subtest_more_widget_activate(node);
@@ -916,7 +1122,7 @@ add_task(async function test_view_more_button() {
 add_task(async function test_view_more_button_focus() {
   // Generate message with 35 recipients to guarantee overflow.
   await be_in_folder(folder);
-  let msg = create_message({
+  const msg = create_message({
     toCount: 35,
     subject: "Test more button focus",
   });
@@ -924,19 +1130,19 @@ add_task(async function test_view_more_button_focus() {
   // Add the message to the end of the folder.
   await add_message_to_folder([folder], msg);
 
-  for (let { focusMore, useKeyboard } of [
+  for (const { focusMore, useKeyboard } of [
     { focusMore: true, useKeyboard: false },
     { focusMore: true, useKeyboard: true },
     { focusMore: false, useKeyboard: false },
   ]) {
     // Reload the message.
-    let prevMessage = select_click_row(-1);
-    wait_for_message_display_completion(mc);
-    assert_selected_and_displayed(mc, prevMessage);
+    const prevMessage = await select_click_row(0);
+    await wait_for_message_display_completion(window);
+    await assert_selected_and_displayed(window, prevMessage);
 
-    let curMessage = select_click_row(-2);
-    wait_for_message_display_completion(mc);
-    assert_selected_and_displayed(mc, curMessage);
+    const curMessage = await select_click_row(1);
+    await wait_for_message_display_completion(window);
+    await assert_selected_and_displayed(window, curMessage);
 
     let items = [
       ...aboutMessage.document.querySelectorAll(
@@ -944,7 +1150,7 @@ add_task(async function test_view_more_button_focus() {
       ),
     ];
     Assert.greater(items.length, 2, "Should have enough items for the test");
-    let moreButton = aboutMessage.document.querySelector(
+    const moreButton = aboutMessage.document.querySelector(
       "#expandedtoBox .show-more-recipients"
     );
     Assert.ok(moreButton, "The more button should exist");
@@ -997,26 +1203,26 @@ add_task(async function test_view_more_button_focus() {
  */
 add_task(async function test_show_all_header_mode() {
   async function toggle_header_mode(show) {
-    let popup = document.getElementById("otherActionsPopup");
-    let popupShown = BrowserTestUtils.waitForEvent(popup, "popupshown");
+    const popup = document.getElementById("otherActionsPopup");
+    const popupShown = BrowserTestUtils.waitForEvent(popup, "popupshown");
     EventUtils.synthesizeMouseAtCenter(
       document.getElementById("otherActionsButton"),
       {},
-      mc.window
+      window
     );
     await popupShown;
 
-    let panel = document.getElementById("messageHeaderCustomizationPanel");
-    let customizeBtn = document.getElementById(
+    const panel = document.getElementById("messageHeaderCustomizationPanel");
+    const customizeBtn = document.getElementById(
       "messageHeaderMoreMenuCustomize"
     );
-    let panelShown = BrowserTestUtils.waitForEvent(panel, "popupshown");
-    EventUtils.synthesizeMouseAtCenter(customizeBtn, {}, mc.window);
+    const panelShown = BrowserTestUtils.waitForEvent(panel, "popupshown");
+    EventUtils.synthesizeMouseAtCenter(customizeBtn, {}, window);
     await panelShown;
 
-    let viewAllHeaders = document.getElementById("headerViewAllHeaders");
+    const viewAllHeaders = document.getElementById("headerViewAllHeaders");
 
-    let modeChanged = await TestUtils.waitForCondition(
+    const modeChanged = await TestUtils.waitForCondition(
       () =>
         document
           .getElementById("messageHeader")
@@ -1025,7 +1231,7 @@ add_task(async function test_show_all_header_mode() {
           : "normal",
       "Message header updated correctly"
     );
-    EventUtils.synthesizeMouseAtCenter(viewAllHeaders, {}, mc.window);
+    EventUtils.synthesizeMouseAtCenter(viewAllHeaders, {}, window);
     await modeChanged;
 
     Assert.ok(
@@ -1040,14 +1246,14 @@ add_task(async function test_show_all_header_mode() {
       "The message was loaded"
     );
 
-    let panelHidden = BrowserTestUtils.waitForEvent(panel, "popuphidden");
+    const panelHidden = BrowserTestUtils.waitForEvent(panel, "popuphidden");
     EventUtils.synthesizeKey("VK_ESCAPE", {});
     await panelHidden;
   }
 
   // Generate message with 35 recipients.
   await be_in_folder(folder);
-  let msg = create_message({
+  const msg = create_message({
     toCount: 35,
     subject: "many To addresses for test_show_all_header_mode",
   });
@@ -1057,22 +1263,22 @@ add_task(async function test_show_all_header_mode() {
 
   // Select and open the added message.
   // It is at the second last position in the display list.
-  let curMessage = select_click_row(-2);
+  const curMessage = await select_click_row(1);
 
   // Make sure it loads.
-  wait_for_message_display_completion(mc);
-  assert_selected_and_displayed(mc, curMessage);
+  await wait_for_message_display_completion(window);
+  await assert_selected_and_displayed(window, curMessage);
 
   await toggle_header_mode(true);
-  wait_for_message_display_completion(mc);
-  assert_selected_and_displayed(mc, curMessage);
-  let node =
+  await wait_for_message_display_completion(window);
+  await assert_selected_and_displayed(window, curMessage);
+  const node =
     aboutMessage.document.getElementById("expandedtoBox").recipientsList;
   await subtest_more_widget_display(node, true);
 
   await toggle_header_mode(false);
-  wait_for_message_display_completion(mc);
-  assert_selected_and_displayed(mc, curMessage);
+  await wait_for_message_display_completion(window);
+  await assert_selected_and_displayed(window, curMessage);
   await subtest_more_widget_display(node);
   subtest_more_widget_activate(node);
   await subtest_more_widget_display(node, true);
@@ -1082,11 +1288,11 @@ async function help_test_starred_messages() {
   await be_in_folder(folder);
 
   // Select the last message, which will display it.
-  let curMessage = select_click_row(-1);
-  wait_for_message_display_completion(mc);
-  assert_selected_and_displayed(mc, curMessage);
+  let curMessage = await select_click_row(0);
+  await wait_for_message_display_completion(window);
+  await assert_selected_and_displayed(window, curMessage);
 
-  let starButton = aboutMessage.document.getElementById("starMessageButton");
+  const starButton = aboutMessage.document.getElementById("starMessageButton");
   // The message shouldn't be starred.
   Assert.ok(
     !starButton.classList.contains("flagged"),
@@ -1112,9 +1318,9 @@ async function help_test_starred_messages() {
   Assert.ok(starButton.classList.contains("flagged"), "The message is starred");
 
   // Select the first message.
-  curMessage = select_click_row(0);
-  wait_for_message_display_completion(mc);
-  assert_selected_and_displayed(mc, curMessage);
+  curMessage = await select_click_row(-1);
+  await wait_for_message_display_completion(window);
+  await assert_selected_and_displayed(window, curMessage);
 
   // The newly selected message shouldn't be starred.
   Assert.ok(
@@ -1123,14 +1329,14 @@ async function help_test_starred_messages() {
   );
 
   // Select again the last message.
-  curMessage = select_click_row(-1);
-  wait_for_message_display_completion(mc);
-  assert_selected_and_displayed(mc, curMessage);
+  curMessage = await select_click_row(0);
+  await wait_for_message_display_completion(window);
+  await assert_selected_and_displayed(window, curMessage);
 
   // The message should still be starred.
   Assert.ok(starButton.classList.contains("flagged"), "The message is starred");
 
-  let hdr = folder.msgDatabase.getMsgHdrForMessageID(curMessage.messageId);
+  const hdr = folder.msgDatabase.getMsgHdrForMessageID(curMessage.messageId);
   // Update the starred state not through a click on the star button, to make
   // sure the method works.
   hdr.markFlagged(false);
@@ -1150,27 +1356,23 @@ add_task(async function test_starred_message() {
 });
 
 add_task(async function test_starred_message_unified_mode() {
-  mc.window.document.getElementById(
-    "tabmail"
-  ).currentTabInfo.folderPaneVisible = true;
-  select_none();
+  document.getElementById("tabmail").currentTabInfo.folderPaneVisible = true;
+  await select_none();
   // Show the "Unified" folders view.
-  mc.folderTreeView.activeModes = "smart";
+  window.folderTreeView.activeModes = "smart";
   // Hide the all folders view. The activeModes setter takes care of removing
   // the mode is is already visible.
-  mc.folderTreeView.activeModes = "all";
+  window.folderTreeView.activeModes = "all";
 
   await help_test_starred_messages();
 
-  mc.window.document.getElementById(
-    "tabmail"
-  ).currentTabInfo.folderPaneVisible = false;
-  select_none();
+  document.getElementById("tabmail").currentTabInfo.folderPaneVisible = false;
+  await select_none();
   // Show the "All" folders view.
-  mc.folderTreeView.activeModes = "all";
+  window.folderTreeView.activeModes = "all";
   // Hide the "Unified" folders view. The activeModes setter takes care of
   // removing the mode is is already visible.
-  mc.folderTreeView.activeModes = "smart";
+  window.folderTreeView.activeModes = "smart";
 }).skip();
 /**
  * Test the DBListener to be sure is initialized and cleared when needed, and it
@@ -1179,9 +1381,9 @@ add_task(async function test_starred_message_unified_mode() {
 add_task(async function test_folder_db_listener() {
   await be_in_folder(folderMore);
   // Select the last message, which will display it.
-  let curMessage = select_click_row(-1);
-  wait_for_message_display_completion(mc);
-  assert_selected_and_displayed(mc, curMessage);
+  let curMessage = await select_click_row(0);
+  await wait_for_message_display_completion(window);
+  await assert_selected_and_displayed(window, curMessage);
 
   Assert.ok(
     aboutMessage.gFolderDBListener.isRegistered,
@@ -1194,7 +1396,7 @@ add_task(async function test_folder_db_listener() {
   );
 
   // Keep a reference before it gets cleared.
-  let gFolderDBRef = aboutMessage.gFolderDBListener;
+  const gFolderDBRef = aboutMessage.gFolderDBListener;
 
   // Collapse the message pane.
   aboutMessage.HideMessageHeaderPane();
@@ -1210,9 +1412,9 @@ add_task(async function test_folder_db_listener() {
   await be_in_folder(folder);
 
   // Select the last message, which will display it.
-  curMessage = select_click_row(-1);
-  wait_for_message_display_completion(mc);
-  assert_selected_and_displayed(mc, curMessage);
+  curMessage = await select_click_row(0);
+  await wait_for_message_display_completion(window);
+  await assert_selected_and_displayed(window, curMessage);
 
   Assert.ok(
     aboutMessage.gFolderDBListener?.isRegistered,

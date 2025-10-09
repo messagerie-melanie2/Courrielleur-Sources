@@ -22,16 +22,10 @@ import { VCardTZComponent } from "./tz.mjs";
 import { VCardURLComponent } from "./url.mjs";
 
 const lazy = {};
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "VCardProperties",
-  "resource:///modules/VCardUtils.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "VCardPropertyEntry",
-  "resource:///modules/VCardUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  VCardProperties: "resource:///modules/VCardUtils.sys.mjs",
+  VCardPropertyEntry: "resource:///modules/VCardUtils.sys.mjs",
+});
 
 class VCardEdit extends HTMLElement {
   constructor() {
@@ -52,7 +46,7 @@ class VCardEdit extends HTMLElement {
 
       this.addEventListener("vcard-remove-property", e => {
         if (e.target.vCardPropertyEntries) {
-          for (let entry of e.target.vCardPropertyEntries) {
+          for (const entry of e.target.vCardPropertyEntries) {
             this.vCardProperties.removeEntry(entry);
           }
         } else {
@@ -60,7 +54,7 @@ class VCardEdit extends HTMLElement {
         }
 
         // Move the focus to the first available valid element of the fieldset.
-        let sibling =
+        const sibling =
           e.target.nextElementSibling || e.target.previousElementSibling;
         // If we got a button, focus it since it's the "add row" button.
         if (sibling?.type == "button") {
@@ -125,15 +119,15 @@ class VCardEdit extends HTMLElement {
     }
     // If no email property is present set one.
     if (!this._vCardProperties.getFirstEntry("email")) {
-      let emailEntry = VCardEmailComponent.newVCardPropertyEntry();
+      const emailEntry = VCardEmailComponent.newVCardPropertyEntry();
       emailEntry.params.pref = "1"; // Set as default email.
       this._vCardProperties.addEntry(emailEntry);
     }
     // If one of the organizational properties is present,
     // make sure they all are.
-    let title = this._vCardProperties.getFirstEntry("title");
-    let role = this._vCardProperties.getFirstEntry("role");
-    let org = this._vCardProperties.getFirstEntry("org");
+    const title = this._vCardProperties.getFirstEntry("title");
+    const role = this._vCardProperties.getFirstEntry("role");
+    const org = this._vCardProperties.getFirstEntry("org");
     if (title || role || org) {
       if (!title) {
         this._vCardProperties.addEntry(
@@ -165,8 +159,8 @@ class VCardEdit extends HTMLElement {
 
   updateView() {
     // Create new DOM and replacing other vCardProperties.
-    let template = document.getElementById("template-addr-book-edit");
-    let clonedTemplate = template.content.cloneNode(true);
+    const template = document.getElementById("template-addr-book-edit");
+    const clonedTemplate = template.content.cloneNode(true);
     // Making the next two calls in one go causes a console error to be logged.
     this.replaceChildren();
     this.append(clonedTemplate);
@@ -178,26 +172,31 @@ class VCardEdit extends HTMLElement {
     this.addFieldsetActions();
 
     // Insert the vCard property entries.
-    for (let vCardPropertyEntry of this.vCardProperties.entries) {
+    for (const vCardPropertyEntry of this.vCardProperties.entries) {
       this.insertVCardElement(vCardPropertyEntry, false);
     }
 
-    let customProperties = ["x-custom1", "x-custom2", "x-custom3", "x-custom4"];
+    const customProperties = [
+      "x-custom1",
+      "x-custom2",
+      "x-custom3",
+      "x-custom4",
+    ];
     if (customProperties.some(key => this.vCardProperties.getFirstValue(key))) {
       // If one of these properties has a value, display all of them.
-      let customFieldset = this.querySelector("#addr-book-edit-custom");
-      let customEl =
+      const customFieldset = this.querySelector("#addr-book-edit-custom");
+      const customEl =
         customFieldset.querySelector("vcard-custom") ||
         new VCardCustomComponent();
       customEl.vCardPropertyEntries = customProperties.map(key =>
         this._vCardProperties.getFirstEntry(key)
       );
-      let addCustom = document.getElementById("vcard-add-custom");
+      const addCustom = document.getElementById("vcard-add-custom");
       customFieldset.insertBefore(customEl, addCustom);
       addCustom.hidden = true;
     }
 
-    let nameEl = this.querySelector("vcard-n");
+    const nameEl = this.querySelector("vcard-n");
     this.firstName = nameEl.firstNameEl.querySelector("input");
     this.lastName = nameEl.lastNameEl.querySelector("input");
     this.prefixName = nameEl.prefixEl.querySelector("input");
@@ -217,16 +216,6 @@ class VCardEdit extends HTMLElement {
         this.generateContactName(event)
       );
     });
-
-    // Only set the strings and define this selector if we're inside the
-    // address book edit panel.
-    if (document.getElementById("detailsPane")) {
-      this.preferDisplayName = this.querySelector("vcard-fn").preferDisplayEl;
-      document.l10n.setAttributes(
-        this.preferDisplayName.closest(".vcard-checkbox").querySelector("span"),
-        "about-addressbook-prefer-display-name"
-      );
-    }
 
     this.nickName = this.querySelector("vcard-nickname").nickNameEl;
     this.nickName.addEventListener("input", () => this.updateNickName());
@@ -254,11 +243,11 @@ class VCardEdit extends HTMLElement {
       return;
     }
 
-    let bundle = Services.strings.createBundle(
+    const bundle = Services.strings.createBundle(
       "chrome://messenger/locale/addressbook/addressBook.properties"
     );
     let result = "";
-    let pref = Services.prefs.getIntPref("mail.addr_book.lastnamefirst");
+    const pref = Services.prefs.getIntPref("mail.addr_book.lastnamefirst");
     switch (pref) {
       case Ci.nsIAbCard.GENERATE_DISPLAY_NAME:
         result = this.buildDefaultName();
@@ -299,7 +288,7 @@ class VCardEdit extends HTMLElement {
       // We don't have anything to show as a contact name, so let's find the
       // default email and show that, if we have it, otherwise pass an empty
       // string to remove any leftover data.
-      let email = this.getDefaultEmail();
+      const email = this.getDefaultEmail();
       result = email ? email.split("@", 1)[0] : "";
     }
 
@@ -338,7 +327,7 @@ class VCardEdit extends HTMLElement {
       return;
     }
 
-    let value = this.nickName.value.trim();
+    const value = this.nickName.value.trim();
     this.contactNickNameHeading.hidden = !value;
     this.contactNickNameHeading.textContent = value;
   }
@@ -359,7 +348,7 @@ class VCardEdit extends HTMLElement {
     // If no email string was passed, it means this method was called when the
     // view or edit pane refreshes, therefore we need to fetch the correct
     // default email address.
-    let value = email ?? this.getDefaultEmail();
+    const value = email ?? this.getDefaultEmail();
     this.contactEmailHeading.hidden = !value;
     this.contactEmailHeading.textContent = value;
   }
@@ -370,7 +359,7 @@ class VCardEdit extends HTMLElement {
    * @returns {VCardEmailComponent}
    */
   getDefaultEmail() {
-    let emails = document.getElementById("vcard-email").children;
+    const emails = document.getElementById("vcard-email").children;
     if (emails.length == 1) {
       return emails[0].emailEl.value;
     }
@@ -426,25 +415,27 @@ class VCardEdit extends HTMLElement {
     let fieldset;
     let addButton;
     switch (entry.name) {
-      case "n":
-        let n = new VCardNComponent();
+      case "n": {
+        const n = new VCardNComponent();
         n.vCardPropertyEntry = entry;
         fieldset = document.getElementById("addr-book-edit-n");
-        let displayNicknameContainer = this.querySelector(
+        const displayNicknameContainer = this.querySelector(
           "#addr-book-edit-n .addr-book-edit-display-nickname"
         );
         fieldset.insertBefore(n, displayNicknameContainer);
         return n;
-      case "fn":
-        let fn = new VCardFNComponent();
+      }
+      case "fn": {
+        const fn = new VCardFNComponent();
         fn.vCardPropertyEntry = entry;
         fieldset = this.querySelector(
           "#addr-book-edit-n .addr-book-edit-display-nickname"
         );
         fieldset.insertBefore(fn, fieldset.firstElementChild);
         return fn;
-      case "nickname":
-        let nickname = new VCardNickNameComponent();
+      }
+      case "nickname": {
+        const nickname = new VCardNickNameComponent();
         nickname.vCardPropertyEntry = entry;
         fieldset = this.querySelector(
           "#addr-book-edit-n .addr-book-edit-display-nickname"
@@ -454,63 +445,72 @@ class VCardEdit extends HTMLElement {
           fieldset.firstElementChild?.nextElementSibling
         );
         return nickname;
-      case "email":
-        let email = document.createElement("tr", { is: "vcard-email" });
+      }
+      case "email": {
+        const email = document.createElement("tr", { is: "vcard-email" });
         email.vCardPropertyEntry = entry;
         document.getElementById("vcard-email").appendChild(email);
         return email;
-      case "url":
-        let url = new VCardURLComponent();
+      }
+      case "url": {
+        const url = new VCardURLComponent();
         url.vCardPropertyEntry = entry;
         fieldset = this.querySelector("#addr-book-edit-url");
         addButton = document.getElementById("vcard-add-url");
         fieldset.insertBefore(url, addButton);
         return url;
-      case "tel":
-        let tel = new VCardTelComponent();
+      }
+      case "tel": {
+        const tel = new VCardTelComponent();
         tel.vCardPropertyEntry = entry;
         fieldset = this.querySelector("#addr-book-edit-tel");
         addButton = document.getElementById("vcard-add-tel");
         fieldset.insertBefore(tel, addButton);
         return tel;
-      case "tz":
-        let tz = new VCardTZComponent();
+      }
+      case "tz": {
+        const tz = new VCardTZComponent();
         tz.vCardPropertyEntry = entry;
         fieldset = this.querySelector("#addr-book-edit-tz");
         addButton = document.getElementById("vcard-add-tz");
         fieldset.insertBefore(tz, addButton);
         addButton.hidden = true;
         return tz;
-      case "impp":
-        let impp = new VCardIMPPComponent();
+      }
+      case "impp": {
+        const impp = new VCardIMPPComponent();
         impp.vCardPropertyEntry = entry;
         fieldset = this.querySelector("#addr-book-edit-impp");
         addButton = document.getElementById("vcard-add-impp");
         fieldset.insertBefore(impp, addButton);
         return impp;
-      case "anniversary":
-        let anniversary = new VCardSpecialDateComponent();
+      }
+      case "anniversary": {
+        const anniversary = new VCardSpecialDateComponent();
         anniversary.vCardPropertyEntry = entry;
         fieldset = this.querySelector("#addr-book-edit-bday-anniversary");
         addButton = document.getElementById("vcard-add-bday-anniversary");
         fieldset.insertBefore(anniversary, addButton);
         return anniversary;
-      case "bday":
-        let bday = new VCardSpecialDateComponent();
+      }
+      case "bday": {
+        const bday = new VCardSpecialDateComponent();
         bday.vCardPropertyEntry = entry;
         fieldset = this.querySelector("#addr-book-edit-bday-anniversary");
         addButton = document.getElementById("vcard-add-bday-anniversary");
         fieldset.insertBefore(bday, addButton);
         return bday;
-      case "adr":
-        let address = new VCardAdrComponent();
+      }
+      case "adr": {
+        const address = new VCardAdrComponent();
         address.vCardPropertyEntry = entry;
         fieldset = this.querySelector("#addr-book-edit-address");
         addButton = document.getElementById("vcard-add-adr");
         fieldset.insertBefore(address, addButton);
         return address;
-      case "note":
-        let note = new VCardNoteComponent();
+      }
+      case "note": {
+        const note = new VCardNoteComponent();
         note.vCardPropertyEntry = entry;
         fieldset = this.querySelector("#addr-book-edit-note");
         addButton = document.getElementById("vcard-add-note");
@@ -518,8 +518,9 @@ class VCardEdit extends HTMLElement {
         // Only one note is allowed via UI.
         addButton.hidden = true;
         return note;
-      case "title":
-        let title = new VCardTitleComponent();
+      }
+      case "title": {
+        const title = new VCardTitleComponent();
         title.vCardPropertyEntry = entry;
         fieldset = this.querySelector("#addr-book-edit-org");
         addButton = document.getElementById("vcard-add-org");
@@ -533,8 +534,9 @@ class VCardEdit extends HTMLElement {
         // Only one title is allowed via UI.
         addButton.hidden = true;
         return title;
-      case "role":
-        let role = new VCardRoleComponent();
+      }
+      case "role": {
+        const role = new VCardRoleComponent();
         role.vCardPropertyEntry = entry;
         fieldset = this.querySelector("#addr-book-edit-org");
         addButton = document.getElementById("vcard-add-org");
@@ -548,8 +550,9 @@ class VCardEdit extends HTMLElement {
         // Only one role is allowed via UI.
         addButton.hidden = true;
         return role;
-      case "org":
-        let org = new VCardOrgComponent();
+      }
+      case "org": {
+        const org = new VCardOrgComponent();
         org.vCardPropertyEntry = entry;
         fieldset = this.querySelector("#addr-book-edit-org");
         addButton = document.getElementById("vcard-add-org");
@@ -560,8 +563,10 @@ class VCardEdit extends HTMLElement {
         // Only one org is allowed via UI.
         addButton.hidden = true;
         return org;
-      default:
+      }
+      default: {
         return undefined;
+      }
     }
   }
 
@@ -615,7 +620,7 @@ class VCardEdit extends HTMLElement {
    * removed from the vCardProperty.
    */
   saveVCard() {
-    for (let node of [
+    for (const node of [
       ...this.querySelectorAll("vcard-adr"),
       ...this.querySelectorAll("vcard-custom"),
       ...document.getElementById("vcard-email").children,
@@ -643,7 +648,7 @@ class VCardEdit extends HTMLElement {
     }
 
     // If no email has a pref value of 1, set it to the first email.
-    let emailEntries = this.vCardProperties.getAllEntries("email");
+    const emailEntries = this.vCardProperties.getAllEntries("email");
     if (
       emailEntries.length >= 1 &&
       emailEntries.every(entry => entry.params.pref !== "1")
@@ -652,7 +657,7 @@ class VCardEdit extends HTMLElement {
     }
 
     for (let i = 1; i <= 4; i++) {
-      let entry = this._vCardProperties.getFirstEntry(`x-custom${i}`);
+      const entry = this._vCardProperties.getFirstEntry(`x-custom${i}`);
       if (entry && !entry.value) {
         this._vCardProperties.removeEntry(entry);
       }
@@ -673,7 +678,7 @@ class VCardEdit extends HTMLElement {
    * @returns {boolean} - If the focus was moved into the element.
    */
   moveFocusIntoElement(element) {
-    for (let child of element.querySelectorAll(
+    for (const child of element.querySelectorAll(
       "select,input,textarea,button"
     )) {
       // Make sure it is visible.
@@ -691,7 +696,7 @@ class VCardEdit extends HTMLElement {
    */
   addFieldsetActions() {
     // Add email button.
-    let addEmail = document.getElementById("vcard-add-email");
+    const addEmail = document.getElementById("vcard-add-email");
     this.registerAddButton(addEmail, "email", () => {
       this.toggleDefaultEmailView();
     });
@@ -709,7 +714,7 @@ class VCardEdit extends HTMLElement {
       this.updateEmailHeading(
         event.target.querySelector('input[type="email"]').value
       );
-      for (let vCardEmailComponent of document.getElementById("vcard-email")
+      for (const vCardEmailComponent of document.getElementById("vcard-email")
         .children) {
         if (event.target !== vCardEmailComponent) {
           vCardEmailComponent.checkboxEl.checked = false;
@@ -718,13 +723,13 @@ class VCardEdit extends HTMLElement {
     });
 
     // Handling the VCardPropertyEntry change with the select.
-    let specialDatesFieldset = document.getElementById(
+    const specialDatesFieldset = document.getElementById(
       "addr-book-edit-bday-anniversary"
     );
     specialDatesFieldset.addEventListener(
       "vcard-bday-anniversary-change",
       event => {
-        let newVCardPropertyEntry = new lazy.VCardPropertyEntry(
+        const newVCardPropertyEntry = new lazy.VCardPropertyEntry(
           event.detail.name,
           event.target.vCardPropertyEntry.params,
           event.target.vCardPropertyEntry.type,
@@ -738,27 +743,29 @@ class VCardEdit extends HTMLElement {
     );
 
     // Add special date button.
-    let addSpecialDate = document.getElementById("vcard-add-bday-anniversary");
-    addSpecialDate.addEventListener("click", e => {
+    const addSpecialDate = document.getElementById(
+      "vcard-add-bday-anniversary"
+    );
+    addSpecialDate.addEventListener("click", () => {
       let newVCardProperty;
       if (!this.vCardProperties.getFirstEntry("bday")) {
         newVCardProperty = VCardEdit.createVCardProperty("bday");
       } else {
         newVCardProperty = VCardEdit.createVCardProperty("anniversary");
       }
-      let el = this.insertVCardElement(newVCardProperty, true);
+      const el = this.insertVCardElement(newVCardProperty, true);
       this.checkForBdayOccurrences();
       this.moveFocusIntoElement(el);
     });
 
     // Organizational Properties.
-    let addOrg = document.getElementById("vcard-add-org");
-    addOrg.addEventListener("click", event => {
-      let title = VCardEdit.createVCardProperty("title");
-      let role = VCardEdit.createVCardProperty("role");
-      let org = VCardEdit.createVCardProperty("org");
+    const addOrg = document.getElementById("vcard-add-org");
+    addOrg.addEventListener("click", () => {
+      const title = VCardEdit.createVCardProperty("title");
+      const role = VCardEdit.createVCardProperty("role");
+      const org = VCardEdit.createVCardProperty("org");
 
-      let titleEl = this.insertVCardElement(title, true);
+      const titleEl = this.insertVCardElement(title, true);
       this.insertVCardElement(role, true);
       this.insertVCardElement(org, true);
 
@@ -766,31 +773,31 @@ class VCardEdit extends HTMLElement {
       addOrg.hidden = true;
     });
 
-    let addAddress = document.getElementById("vcard-add-adr");
+    const addAddress = document.getElementById("vcard-add-adr");
     this.registerAddButton(addAddress, "adr");
 
-    let addURL = document.getElementById("vcard-add-url");
+    const addURL = document.getElementById("vcard-add-url");
     this.registerAddButton(addURL, "url");
 
-    let addTel = document.getElementById("vcard-add-tel");
+    const addTel = document.getElementById("vcard-add-tel");
     this.registerAddButton(addTel, "tel");
 
-    let addTZ = document.getElementById("vcard-add-tz");
+    const addTZ = document.getElementById("vcard-add-tz");
     this.registerAddButton(addTZ, "tz", () => {
       addTZ.hidden = true;
     });
 
-    let addIMPP = document.getElementById("vcard-add-impp");
+    const addIMPP = document.getElementById("vcard-add-impp");
     this.registerAddButton(addIMPP, "impp");
 
-    let addNote = document.getElementById("vcard-add-note");
+    const addNote = document.getElementById("vcard-add-note");
     this.registerAddButton(addNote, "note", () => {
       addNote.hidden = true;
     });
 
-    let addCustom = document.getElementById("vcard-add-custom");
-    addCustom.addEventListener("click", event => {
-      let el = new VCardCustomComponent();
+    const addCustom = document.getElementById("vcard-add-custom");
+    addCustom.addEventListener("click", () => {
+      const el = new VCardCustomComponent();
 
       // When the custom properties are deleted and added again ensure that
       // the properties are set.
@@ -820,9 +827,17 @@ class VCardEdit extends HTMLElement {
     this.querySelector(
       "#addr-book-edit-org .remove-property-button"
     ).addEventListener("click", event => {
-      this.querySelector("vcard-title").remove();
-      this.querySelector("vcard-role").remove();
-      let org = this.querySelector("vcard-org");
+      const title = this.querySelector("vcard-title");
+      title.dispatchEvent(
+        new CustomEvent("vcard-remove-property", { bubbles: true })
+      );
+      title.remove();
+      const role = this.querySelector("vcard-role");
+      role.dispatchEvent(
+        new CustomEvent("vcard-remove-property", { bubbles: true })
+      );
+      role.remove();
+      const org = this.querySelector("vcard-org");
       // Reveal the "Add" button so we can focus it.
       document.getElementById("vcard-add-org").hidden = false;
       // Dispatch the event before removing the element so we can handle focus.
@@ -844,9 +859,9 @@ class VCardEdit extends HTMLElement {
    * Like different focus instead of an input field.
    */
   registerAddButton(addButton, VCardPropertyName, callback) {
-    addButton.addEventListener("click", event => {
-      let newVCardProperty = VCardEdit.createVCardProperty(VCardPropertyName);
-      let el = this.insertVCardElement(newVCardProperty, true);
+    addButton.addEventListener("click", () => {
+      const newVCardProperty = VCardEdit.createVCardProperty(VCardPropertyName);
+      const el = this.insertVCardElement(newVCardProperty, true);
 
       this.moveFocusIntoElement(el);
       if (callback) {
@@ -862,7 +877,7 @@ class VCardEdit extends HTMLElement {
    * @see VCardSpecialDateComponent
    */
   checkForBdayOccurrences() {
-    let bdayOccurrence = this.vCardProperties.getFirstEntry("bday");
+    const bdayOccurrence = this.vCardProperties.getFirstEntry("bday");
     this.querySelectorAll("vcard-special-date").forEach(specialDate => {
       specialDate.birthdayAvailability({ hasBday: !!bdayOccurrence });
     });
@@ -872,9 +887,9 @@ class VCardEdit extends HTMLElement {
    * Hide the default checkbox if we only have one email field.
    */
   toggleDefaultEmailView() {
-    let hideDefault =
+    const hideDefault =
       document.getElementById("vcard-email").children.length <= 1;
-    let defaultColumn = this.querySelector(".default-column");
+    const defaultColumn = this.querySelector(".default-column");
     if (defaultColumn) {
       defaultColumn.hidden = hideDefault;
     }
@@ -895,13 +910,13 @@ class VCardEdit extends HTMLElement {
    * @returns {boolean} - If the form is valid or not.
    */
   checkMinimumRequirements() {
-    let hasEmail = [...document.getElementById("vcard-email").children].find(
+    const hasEmail = [...document.getElementById("vcard-email").children].find(
       s => {
-        let field = s.querySelector(`input[type="email"]`);
+        const field = s.querySelector(`input[type="email"]`);
         return field.value.trim() && field.checkValidity();
       }
     );
-    let hasOrg = [...this.querySelectorAll("vcard-org")].find(n =>
+    const hasOrg = [...this.querySelectorAll("vcard-org")].find(n =>
       n.orgEl.value.trim()
     );
 
@@ -924,10 +939,10 @@ class VCardEdit extends HTMLElement {
    * @see https://datatracker.ietf.org/doc/html/rfc6350#section-4.3.4
    */
   validateDates() {
-    for (let field of document.querySelectorAll("vcard-special-date")) {
-      let y = field.querySelector(`input[type="number"][name="year"]`);
-      let m = field.querySelector(`select[name="month"]`);
-      let d = field.querySelector(`select[name="day"]`);
+    for (const field of document.querySelectorAll("vcard-special-date")) {
+      const y = field.querySelector(`input[type="number"][name="year"]`);
+      const m = field.querySelector(`select[name="month"]`);
+      const d = field.querySelector(`select[name="day"]`);
       if (!y.checkValidity()) {
         y.focus();
         return false;
@@ -966,6 +981,7 @@ class VCardTypeSelectionComponent extends HTMLElement {
    *
    * @param {VCardPropertyEntry} vCardPropertyEntry - The VCardPropertyEntry
    *   this element should control.
+   * @param {object} options - The options.
    * @param {boolean} [options.createLabel] - Whether a Type label should be
    *   created for the selectEl element. If this is not `true`, then the label
    *   for the selectEl should be provided through some other means, such as the
@@ -992,28 +1008,28 @@ class VCardTypeSelectionComponent extends HTMLElement {
         break;
     }
 
-    let clonedTemplate = template.content.cloneNode(true);
+    const clonedTemplate = template.content.cloneNode(true);
     this.replaceChildren(clonedTemplate);
 
     this.selectEl = this.querySelector("select");
-    let selectId = vCardIdGen.next().value;
+    const selectId = vCardIdGen.next().value;
     this.selectEl.id = selectId;
     this.selectEl.dataset.telemetryId = `vcard-type-selection-${options.propertyType}`;
 
     // Just abandon any values we don't have UI for. We don't have any way to
     // know whether to keep them or not, and they're very rarely used.
-    let paramsType = vCardPropertyEntry.params.type;
+    const paramsType = vCardPropertyEntry.params.type;
     // toLowerCase is called because other vCard sources are saving the type
     // in upper case. E.g. from Google.
     if (Array.isArray(paramsType)) {
-      let lowerCaseTypes = paramsType.map(type => type.toLowerCase());
+      const lowerCaseTypes = paramsType.map(type => type.toLowerCase());
       this.selectEl.value = lowerCaseTypes.find(t => types.includes(t)) || "";
     } else if (paramsType && types.includes(paramsType.toLowerCase())) {
       this.selectEl.value = paramsType.toLowerCase();
     }
 
     // Change the value on the vCardPropertyEntry.
-    this.selectEl.addEventListener("change", e => {
+    this.selectEl.addEventListener("change", () => {
       if (this.selectEl.value) {
         vCardPropertyEntry.params.type = this.selectEl.value;
       } else {
@@ -1034,7 +1050,7 @@ class VCardTypeSelectionComponent extends HTMLElement {
 
     // Create a label element for the select.
     if (options.createLabel) {
-      let labelEl = document.createElement("label");
+      const labelEl = document.createElement("label");
       labelEl.htmlFor = selectId;
       labelEl.setAttribute("data-l10n-id", "vcard-entry-type-label");
       labelEl.classList.add("screen-reader-only");

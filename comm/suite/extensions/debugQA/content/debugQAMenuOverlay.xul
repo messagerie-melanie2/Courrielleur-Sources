@@ -122,7 +122,7 @@
                   oncommand="openQAUrl('https://treestatus.mozilla-releng.net/static/ui/treestatus/');"/>
         <menuseparator/>
         <menuitem label="Recent SeaMonkey website Checkins"
-                  oncommand="openQAUrl('https://hg.mozilla.org/SeaMonkey/seamonkey-project-org/pushloghtml?startdate=2+weeks+ago&amp;enddate=now');"/>
+                  oncommand="openQAUrl('https://foss.heptapod.net/seamonkey/website/activity/');"/>
         <menuitem label="Recent gitlab SeaMonkey website Checkins"
                   oncommand="openQAUrl('https://gitlab.com/seamonkey-project/website/activity/');"/>
         <menuseparator/>
@@ -130,10 +130,14 @@
                   oncommand="openQAUrl('https://hg.mozilla.org/comm-central/pushloghtml?startdate=24+hours+ago&amp;enddate=now');"/>
         <menuitem label="Recent mozilla-central Checkins"
                   oncommand="openQAUrl('https://hg.mozilla.org/mozilla-central/pushloghtml?startdate=24+hours+ago&amp;enddate=now');"/>
-        <menuitem label="Recent comm-esr102 Checkins"
-                  oncommand="openQAUrl('https://hg.mozilla.org/releases/comm-esr102/pushloghtml?startdate=2+weeks+ago&amp;enddate=now');"/>
-        <menuitem label="Recent mozilla-esr102 Checkins"
-                  oncommand="openQAUrl('https://hg.mozilla.org/releases/mozilla-esr102/pushloghtml?startdate=2+weeks+ago&amp;enddate=now');"/>
+        <menuitem label="Recent comm-esr128 Checkins"
+                  oncommand="openQAUrl('https://hg.mozilla.org/releases/comm-esr128/pushloghtml?startdate=2+weeks+ago&amp;enddate=now');"/>
+        <menuitem label="Recent mozilla-esr128 Checkins"
+                  oncommand="openQAUrl('https://hg.mozilla.org/releases/mozilla-esr128/pushloghtml?startdate=2+weeks+ago&amp;enddate=now');"/>
+        <menuitem label="Recent comm-esr115 Checkins"
+                  oncommand="openQAUrl('https://hg.mozilla.org/releases/comm-esr115/pushloghtml?startdate=2+weeks+ago&amp;enddate=now');"/>
+        <menuitem label="Recent mozilla-esr115 Checkins"
+                  oncommand="openQAUrl('https://hg.mozilla.org/releases/mozilla-esr115/pushloghtml?startdate=2+weeks+ago&amp;enddate=now');"/>
         <menuitem label="Recent gitlab 2.53 comm Activity"
                   oncommand="openQAUrl('https://gitlab.com/seamonkey-project/seamonkey-2.53-comm/activity/');"/>
         <menuitem label="Recent gitlab 2.53 mozilla Activity"
@@ -141,8 +145,8 @@
         <menuitem label="Recent gitlab 2.53 l10n Activity"
                   oncommand="openQAUrl('https://gitlab.com/seamonkey-project/seamonkey-2.53-l10n/activity/');"/>
         <menuseparator/>
-        <menuitem label="Daily unofficial 2.53 Builds"
-                  oncommand="openQAUrl('https://www.wg9s.com/comm-253/');"/>
+        <menuitem label="We miss you Bill!"
+                  oncommand="goAbout('credits');"/>
       </menupopup>
     </menu>
   </menubar>

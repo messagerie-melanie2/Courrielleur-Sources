@@ -2,12 +2,6 @@
 
 "use strict";
 
-// This test tends to trigger a race in the fullscreen time telemetry,
-// where the fullscreen enter and fullscreen exit events (which use the
-// same histogram ID) overlap. That causes TelemetryStopwatch to log an
-// error.
-SimpleTest.ignoreAllUncaughtExceptions(true);
-
 function listenOneEvent(aEvent, aListener) {
   function listener(evt) {
     removeEventListener(aEvent, listener);
@@ -149,7 +143,7 @@ add_task(async function () {
         gBrowser.selectedBrowser,
         FS_CHANGE_SIZE
       );
-      executeSoon(() => BrowserFullScreen());
+      executeSoon(() => BrowserCommands.fullScreen());
       await fullscreenPromise;
     }
   });
@@ -195,7 +189,7 @@ add_task(async function () {
     // dispatched synchronously, which would cause the event listener
     // miss that event and wait infinitely.
     fullscreenPromise = waitForFullscreenChanges(browser, FS_CHANGE_SIZE);
-    executeSoon(() => BrowserFullScreen());
+    executeSoon(() => BrowserCommands.fullScreen());
     contentStates = await fullscreenPromise;
     checkState({ inDOMFullscreen: false, inFullscreen: true }, contentStates);
 
@@ -228,7 +222,7 @@ add_task(async function () {
     if (window.fullScreen) {
       info("> Cleanup");
       fullscreenPromise = waitForFullscreenChanges(browser, FS_CHANGE_SIZE);
-      executeSoon(() => BrowserFullScreen());
+      executeSoon(() => BrowserCommands.fullScreen());
       await fullscreenPromise;
     }
   }

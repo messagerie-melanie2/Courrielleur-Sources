@@ -5,10 +5,6 @@
 
 /* import-globals-from /toolkit/content/preferencesBindings.js */
 
-document
-  .getElementById("LanguagesDialog")
-  .addEventListener("dialoghelp", window.top.openPrefsHelp);
-
 Preferences.addAll([
   { id: "intl.accept_languages", type: "wstring" },
   { id: "pref.browser.language.disable_button.up", type: "bool" },
@@ -35,6 +31,13 @@ var gLanguagesDialog = {
     Preferences.get("intl.accept_languages").on("change", () =>
       this._readAcceptLanguages().catch(console.error)
     );
+
+    let addListener = (id, cmd) => {
+      document.getElementById(id).addEventListener(cmd, this);
+    };
+    addListener("LanguagesDialog", "command");
+    addListener("availableLanguages", "command");
+    addListener("activeLanguages", "select");
 
     if (!this._availableLanguagesList.length) {
       document.mozSubdialogReady = this._loadAvailableLanguages();
@@ -155,6 +158,8 @@ var gLanguagesDialog = {
     var selectedIndex = 0;
     var preference = Preferences.get("intl.accept_languages");
     if (preference.value == "") {
+      this._activeLanguages.selectedIndex = -1;
+      this.onLanguageSelect();
       return;
     }
     var languages = preference.value.toLowerCase().split(/\s*,\s*/);
@@ -193,6 +198,45 @@ var gLanguagesDialog = {
     this.readSpoofEnglish();
   },
 
+  handleEvent(event) {
+    switch (event.type) {
+      case "command":
+        if (event.currentTarget.id == "availableLanguages") {
+          this.onAvailableLanguageSelect();
+          break;
+        }
+
+        switch (event.target.id) {
+          case "key_close":
+            Preferences.close(event);
+            break;
+
+          case "up":
+            this.moveUp();
+            break;
+          case "down":
+            this.moveDown();
+            break;
+          case "remove":
+            this.removeLanguage();
+            break;
+          case "addButton":
+            this.addLanguage();
+            break;
+        }
+        break;
+      case "dialoghelp":
+        window.top.openPrefsHelp();
+        break;
+      case "load":
+        this.onLoad();
+        break;
+      case "select":
+        this.onLanguageSelect();
+        break;
+    }
+  },
+
   onAvailableLanguageSelect() {
     var availableLanguages = this._availableLanguages;
     var addButton = document.getElementById("addButton");
@@ -223,6 +267,7 @@ var gLanguagesDialog = {
 
     this._acceptLanguages[selectedID] = true;
     this._availableLanguages.selectedItem = null;
+    this.onAvailableLanguageSelect();
 
     // Rebuild the available list with the added item removed...
     this._buildAvailableLanguageList().catch(console.error);
@@ -382,3 +427,5 @@ var gLanguagesDialog = {
     return document.getElementById("spoofEnglish").checked ? 2 : 1;
   },
 };
+
+window.addEventListener("load", gLanguagesDialog);

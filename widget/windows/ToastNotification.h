@@ -13,26 +13,35 @@
 #include "nsIThread.h"
 #include "nsIWindowsAlertsService.h"
 #include "nsRefPtrHashtable.h"
+#include "mozilla/AlertNotification.h"
 
 namespace mozilla {
 namespace widget {
 
-struct ToastHandledResolve {
-  const nsString launchUrl;
-  const nsString privilegedName;
-};
-using ToastHandledPromise = MozPromise<ToastHandledResolve, bool, true>;
+using ToastHandledPromise = MozPromise<bool, bool, true>;
 
 class ToastNotificationHandler;
 
+class WindowsAlertNotification final : public AlertNotification,
+                                       public nsIWindowsAlertNotification {
+ public:
+  NS_DECL_NSIWINDOWSALERTNOTIFICATION
+  NS_FORWARD_NSIALERTNOTIFICATION(AlertNotification::)
+  NS_DECL_ISUPPORTS_INHERITED
+
+  WindowsAlertNotification() = default;
+
+ protected:
+  virtual ~WindowsAlertNotification() = default;
+  nsIWindowsAlertNotification::ImagePlacement mImagePlacement = eInline;
+};
+
 class ToastNotification final : public nsIWindowsAlertsService,
-                                public nsIAlertsDoNotDisturb,
-                                public nsIObserver {
+                                public nsIAlertsDoNotDisturb {
  public:
   NS_DECL_NSIALERTSSERVICE
   NS_DECL_NSIWINDOWSALERTSSERVICE
   NS_DECL_NSIALERTSDONOTDISTURB
-  NS_DECL_NSIOBSERVER
   NS_DECL_ISUPPORTS
 
   ToastNotification();

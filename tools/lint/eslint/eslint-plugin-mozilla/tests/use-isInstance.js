@@ -18,9 +18,7 @@ const ruleTester = new RuleTester({ parserOptions: { ecmaVersion: "latest" } });
 
 const errors = [
   {
-    message:
-      "Please prefer .isInstance() in chrome scripts over the standard instanceof operator for DOM interfaces, " +
-      "since the latter will return false when the object is created from a different context.",
+    messageId: "preferIsInstance",
     type: "BinaryExpression",
   },
 ];
@@ -70,7 +68,7 @@ ruleTester.run("use-isInstance", rule, {
     mockContentScript("node instanceof Node;"),
     mockContentScript("file instanceof File;"),
     mockContentScript(
-      "SpecialPowers.ChromeUtils.import(''); file instanceof File;"
+      "SpecialPowers.ChromeUtils.importESModule(''); file instanceof File;"
     ),
   ],
   invalid: [
@@ -113,15 +111,15 @@ ruleTester.run("use-isInstance", rule, {
       filename: "foo.sys.mjs",
     },
     {
-      code: "ChromeUtils.import(''); node instanceof Node",
-      output: "ChromeUtils.import(''); Node.isInstance(node)",
+      code: "ChromeUtils.importESModule(''); node instanceof Node",
+      output: "ChromeUtils.importESModule(''); Node.isInstance(node)",
       env,
       errors,
       filename: "foo.js",
     },
     {
-      code: "ChromeUtils.import(''); file instanceof File",
-      output: "ChromeUtils.import(''); File.isInstance(file)",
+      code: "ChromeUtils.importESModule(''); file instanceof File",
+      output: "ChromeUtils.importESModule(''); File.isInstance(file)",
       env,
       errors,
       filename: "foo.js",

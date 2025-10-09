@@ -45,7 +45,7 @@ add_task(async function test_fatal_error() {
   // Set AltSvc to point to not existing HTTP3 server on port 443
   Services.prefs.setCharPref(
     "network.http.http3.alt-svc-mapping-for-testing",
-    "foo.example.com;h3-29=:443"
+    "foo.example.com;h3=:443"
   );
   Services.prefs.setIntPref("network.http.http3.backup_timer_delay", 0);
 
@@ -77,7 +77,7 @@ add_task(async function test_fatal_stream_error() {
 let CheckOnlyHttp2Listener = function () {};
 
 CheckOnlyHttp2Listener.prototype = {
-  onStartRequest: function testOnStartRequest(request) {},
+  onStartRequest: function testOnStartRequest() {},
 
   onDataAvailable: function testOnDataAvailable(request, stream, off, cnt) {
     read_stream(stream, cnt);

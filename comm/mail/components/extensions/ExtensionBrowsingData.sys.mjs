@@ -2,11 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
+// See browser/components/extensions/ExtensionBrowsingData.sys.mjs
 
 const lazy = {};
-
-XPCOMUtils.defineLazyGetter(lazy, "makeRange", () => {
+ChromeUtils.defineLazyGetter(lazy, "makeRange", () => {
   const { ExtensionParent } = ChromeUtils.importESModule(
     "resource://gre/modules/ExtensionParent.sys.mjs"
   );
@@ -15,16 +14,14 @@ XPCOMUtils.defineLazyGetter(lazy, "makeRange", () => {
 });
 
 ChromeUtils.defineESModuleGetters(lazy, {
-  Preferences: "resource://gre/modules/Preferences.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  Sanitizer: "resource:///modules/Sanitizer.jsm",
+  // TODO: Sanitizer.sys.mjs doesn't exist for Thunderbird.
+  // If we start using BrowsingDataDelegate we need this too.
+  Sanitizer: "resource:///modules/Sanitizer.sys.mjs",
 });
 
 export class BrowsingDataDelegate {
   // Unused for now
-  constructor(extension) {}
+  constructor() {}
 
   // This method returns undefined for all data types that are _not_ handled by
   // this delegate.
@@ -52,18 +49,18 @@ export class BrowsingDataDelegate {
     // divided by 1000 to convert to ms.
     // If Sanitizer.getClearRange returns undefined that means the range is
     // currently "Everything", so we should set since to 0.
-    let clearRange = lazy.Sanitizer.getClearRange();
-    let since = clearRange ? clearRange[0] / 1000 : 0;
-    let options = { since };
+    const clearRange = lazy.Sanitizer.getClearRange();
+    const since = clearRange ? clearRange[0] / 1000 : 0;
+    const options = { since };
 
-    let dataToRemove = {};
-    let dataRemovalPermitted = {};
+    const dataToRemove = {};
+    const dataRemovalPermitted = {};
 
-    for (let item of PREF_LIST) {
+    for (const item of PREF_LIST) {
       // The property formData needs a different case than the
       // formdata preference.
       const name = item === "formdata" ? "formData" : item;
-      dataToRemove[name] = lazy.Preferences.get(`${PREF_DOMAIN}${item}`);
+      dataToRemove[name] = Services.prefs.getBoolPref(`${PREF_DOMAIN}${item}`);
       // Firefox doesn't have the same concept of dataRemovalPermitted
       // as Chrome, so it will always be true.
       dataRemovalPermitted[name] = true;

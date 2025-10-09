@@ -15,8 +15,6 @@ WORKER_TYPES = {
     "invalid/invalid": ("invalid", None),
     "invalid/always-optimized": ("always-optimized", None),
     "scriptworker-prov-v1/signing-linux-v1": ("scriptworker-signing", None),
-    "scriptworker-k8s/gecko-3-shipit": ("shipit", None),
-    "scriptworker-k8s/gecko-1-shipit": ("shipit", None),
 }
 
 
@@ -87,7 +85,7 @@ def worker_type_implementation(graph_config, parameters, worker_type):
     worker_config = _get(
         graph_config, worker_type, "1", "staging", parameters["project"]
     )
-    return worker_config["implementation"], worker_config.get("os")
+    return worker_config.get("implementation"), worker_config.get("os")
 
 
 def get_worker_type(graph_config, parameters, worker_type):

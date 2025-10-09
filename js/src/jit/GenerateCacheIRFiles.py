@@ -4,10 +4,11 @@
 
 # This script generates jit/CacheIROpsGenerated.h from CacheIROps.yaml
 
-from collections import OrderedDict
+import io
+import os
+import os.path
 
 import buildconfig
-import six
 import yaml
 from mozbuild.preprocessor import Preprocessor
 
@@ -42,24 +43,11 @@ def load_yaml(yaml_path):
     # the YAML file.
     pp = Preprocessor()
     pp.context.update(buildconfig.defines["ALLDEFINES"])
-    pp.out = six.StringIO()
+    pp.out = io.StringIO()
     pp.do_filter("substitution")
     pp.do_include(yaml_path)
     contents = pp.out.getvalue()
-
-    # Load into an OrderedDict to ensure order is preserved. Note: Python 3.7+
-    # also preserves ordering for normal dictionaries.
-    # Code based on https://stackoverflow.com/a/21912744.
-    class OrderedLoader(yaml.Loader):
-        pass
-
-    def construct_mapping(loader, node):
-        loader.flatten_mapping(node)
-        return OrderedDict(loader.construct_pairs(node))
-
-    tag = yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG
-    OrderedLoader.add_constructor(tag, construct_mapping)
-    return yaml.load(contents, OrderedLoader)
+    return yaml.safe_load(contents)
 
 
 # Information for generating CacheIRWriter code for a single argument. Tuple
@@ -77,12 +65,14 @@ arg_writer_info = {
     "IntPtrId": ("IntPtrOperandId", "writeOperandId"),
     "RawId": ("OperandId", "writeOperandId"),
     "ShapeField": ("Shape*", "writeShapeField"),
-    "GetterSetterField": ("GetterSetter*", "writeGetterSetterField"),
+    "WeakShapeField": ("Shape*", "writeWeakShapeField"),
+    "WeakGetterSetterField": ("GetterSetter*", "writeWeakGetterSetterField"),
     "ObjectField": ("JSObject*", "writeObjectField"),
+    "WeakObjectField": ("JSObject*", "writeWeakObjectField"),
     "StringField": ("JSString*", "writeStringField"),
     "AtomField": ("JSAtom*", "writeStringField"),
     "SymbolField": ("JS::Symbol*", "writeSymbolField"),
-    "BaseScriptField": ("BaseScript*", "writeBaseScriptField"),
+    "WeakBaseScriptField": ("BaseScript*", "writeWeakBaseScriptField"),
     "JitCodeField": ("JitCode*", "writeJitCodeField"),
     "RawInt32Field": ("uint32_t", "writeRawInt32Field"),
     "RawPointerField": ("const void*", "writeRawPointerField"),
@@ -92,9 +82,12 @@ arg_writer_info = {
     "DoubleField": ("double", "writeDoubleField"),
     "AllocSiteField": ("gc::AllocSite*", "writeAllocSiteField"),
     "JSOpImm": ("JSOp", "writeJSOpImm"),
+    "JSTypeImm": ("JSType", "writeJSTypeImm"),
+    "TypeofEqOperandImm": ("TypeofEqOperand", "writeTypeofEqOperandImm"),
     "BoolImm": ("bool", "writeBoolImm"),
     "ByteImm": ("uint32_t", "writeByteImm"),  # uint32_t to enable fits-in-byte asserts.
     "GuardClassKindImm": ("GuardClassKind", "writeGuardClassKindImm"),
+    "ArrayBufferViewKindImm": ("ArrayBufferViewKind", "writeArrayBufferViewKindImm"),
     "ValueTypeImm": ("ValueType", "writeValueTypeImm"),
     "JSWhyMagicImm": ("JSWhyMagic", "writeJSWhyMagicImm"),
     "CallFlagsImm": ("CallFlags", "writeCallFlagsImm"),
@@ -107,6 +100,7 @@ arg_writer_info = {
     "StaticStringImm": ("const char*", "writeStaticStringImm"),
     "AllocKindImm": ("gc::AllocKind", "writeAllocKindImm"),
     "CompletionKindImm": ("CompletionKind", "writeCompletionKindImm"),
+    "RealmFuseIndexImm": ("RealmFuses::FuseIndex", "writeRealmFuseIndexImm"),
 }
 
 
@@ -135,21 +129,21 @@ def gen_writer_method(name, args, custom_writer):
     ret_type = "void"
     args_code = ""
     if args:
-        for arg_name, arg_type in six.iteritems(args):
+        for arg_name, arg_type in args.items():
             cpp_type, write_method = arg_writer_info[arg_type]
             if arg_name == "result":
                 ret_type = cpp_type
-                args_code += "  {} result(newOperandId());\\\n".format(cpp_type)
+                args_code += f"  {cpp_type} result(newOperandId());\\\n"
                 args_code += "  writeOperandId(result);\\\n"
             else:
-                method_args.append("{} {}".format(cpp_type, arg_name))
-                args_code += "  {}({});\\\n".format(write_method, arg_name)
+                method_args.append(f"{cpp_type} {arg_name}")
+                args_code += f"  {write_method}({arg_name});\\\n"
 
     code = ""
     if custom_writer:
         code += "private:\\\n"
     code += "{} {}({}) {{\\\n".format(ret_type, method_name, ", ".join(method_args))
-    code += "  writeOp(CacheOp::{});\\\n".format(name)
+    code += f"  writeOp(CacheOp::{name});\\\n"
     code += args_code
     code += "  assertLengthMatches();\\\n"
     if ret_type != "void":
@@ -176,12 +170,14 @@ arg_reader_info = {
     "IntPtrId": ("IntPtrOperandId", "Id", "reader.intPtrOperandId()"),
     "RawId": ("uint32_t", "Id", "reader.rawOperandId()"),
     "ShapeField": ("uint32_t", "Offset", "reader.stubOffset()"),
-    "GetterSetterField": ("uint32_t", "Offset", "reader.stubOffset()"),
+    "WeakShapeField": ("uint32_t", "Offset", "reader.stubOffset()"),
+    "WeakGetterSetterField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "ObjectField": ("uint32_t", "Offset", "reader.stubOffset()"),
+    "WeakObjectField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "StringField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "AtomField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "SymbolField": ("uint32_t", "Offset", "reader.stubOffset()"),
-    "BaseScriptField": ("uint32_t", "Offset", "reader.stubOffset()"),
+    "WeakBaseScriptField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "JitCodeField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "RawInt32Field": ("uint32_t", "Offset", "reader.stubOffset()"),
     "RawPointerField": ("uint32_t", "Offset", "reader.stubOffset()"),
@@ -191,9 +187,16 @@ arg_reader_info = {
     "DoubleField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "AllocSiteField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "JSOpImm": ("JSOp", "", "reader.jsop()"),
+    "JSTypeImm": ("JSType", "", "reader.jstype()"),
+    "TypeofEqOperandImm": ("TypeofEqOperand", "", "reader.typeofEqOperand()"),
     "BoolImm": ("bool", "", "reader.readBool()"),
     "ByteImm": ("uint8_t", "", "reader.readByte()"),
     "GuardClassKindImm": ("GuardClassKind", "", "reader.guardClassKind()"),
+    "ArrayBufferViewKindImm": (
+        "ArrayBufferViewKind",
+        "",
+        "reader.arrayBufferViewKind()",
+    ),
     "ValueTypeImm": ("ValueType", "", "reader.valueType()"),
     "JSWhyMagicImm": ("JSWhyMagic", "", "reader.whyMagic()"),
     "CallFlagsImm": ("CallFlags", "", "reader.callFlags()"),
@@ -206,6 +209,7 @@ arg_reader_info = {
     "StaticStringImm": ("const char*", "", "reinterpret_cast<char*>(reader.pointer())"),
     "AllocKindImm": ("gc::AllocKind", "", "reader.allocKind()"),
     "CompletionKindImm": ("CompletionKind", "", "reader.completionKind()"),
+    "RealmFuseIndexImm": ("RealmFuses::FuseIndex", "", "reader.realmFuseIndex()"),
 }
 
 
@@ -228,18 +232,18 @@ def gen_compiler_method(name, args):
     method_args = []
     args_code = ""
     if args:
-        for arg_name, arg_type in six.iteritems(args):
+        for arg_name, arg_type in args.items():
             cpp_type, suffix, readexpr = arg_reader_info[arg_type]
             cpp_name = arg_name + suffix
             cpp_args.append(cpp_name)
-            method_args.append("{} {}".format(cpp_type, cpp_name))
-            args_code += "  {} {} = {};\\\n".format(cpp_type, cpp_name, readexpr)
+            method_args.append(f"{cpp_type} {cpp_name}")
+            args_code += f"  {cpp_type} {cpp_name} = {readexpr};\\\n"
 
     # Generate signature.
     code = "[[nodiscard]] bool {}({});\\\n".format(method_name, ", ".join(method_args))
 
     # Generate the method forwarding to it.
-    code += "[[nodiscard]] bool {}(CacheIRReader& reader) {{\\\n".format(method_name)
+    code += f"[[nodiscard]] bool {method_name}(CacheIRReader& reader) {{\\\n"
     code += args_code
     code += "  return {}({});\\\n".format(method_name, ", ".join(cpp_args))
     code += "}\\\n"
@@ -261,12 +265,14 @@ arg_spewer_method = {
     "IntPtrId": "spewOperandId",
     "RawId": "spewRawOperandId",
     "ShapeField": "spewField",
-    "GetterSetterField": "spewField",
+    "WeakShapeField": "spewField",
+    "WeakGetterSetterField": "spewField",
     "ObjectField": "spewField",
+    "WeakObjectField": "spewField",
     "StringField": "spewField",
     "AtomField": "spewField",
     "SymbolField": "spewField",
-    "BaseScriptField": "spewField",
+    "WeakBaseScriptField": "spewField",
     "JitCodeField": "spewField",
     "RawInt32Field": "spewField",
     "RawPointerField": "spewField",
@@ -276,9 +282,12 @@ arg_spewer_method = {
     "DoubleField": "spewField",
     "AllocSiteField": "spewField",
     "JSOpImm": "spewJSOpImm",
+    "JSTypeImm": "spewJSTypeImm",
+    "TypeofEqOperandImm": "spewTypeofEqOperandImm",
     "BoolImm": "spewBoolImm",
     "ByteImm": "spewByteImm",
     "GuardClassKindImm": "spewGuardClassKindImm",
+    "ArrayBufferViewKindImm": "spewArrayBufferViewKindImm",
     "ValueTypeImm": "spewValueTypeImm",
     "JSWhyMagicImm": "spewJSWhyMagicImm",
     "CallFlagsImm": "spewCallFlagsImm",
@@ -291,6 +300,7 @@ arg_spewer_method = {
     "StaticStringImm": "spewStaticStringImm",
     "AllocKindImm": "spewAllocKindImm",
     "CompletionKindImm": "spewCompletionKindImm",
+    "RealmFuseIndexImm": "spewRealmFuseIndexImm",
 }
 
 
@@ -311,17 +321,17 @@ def gen_spewer_method(name, args):
     args_code = ""
     if args:
         is_first = True
-        for arg_name, arg_type in six.iteritems(args):
+        for arg_name, arg_type in args.items():
             _, suffix, readexpr = arg_reader_info[arg_type]
             arg_name += suffix
             spew_method = arg_spewer_method[arg_type]
             if not is_first:
                 args_code += "  spewArgSeparator();\\\n"
-            args_code += '  {}("{}", {});\\\n'.format(spew_method, arg_name, readexpr)
+            args_code += f'  {spew_method}("{arg_name}", {readexpr});\\\n'
             is_first = False
 
-    code = "void {}(CacheIRReader& reader) {{\\\n".format(method_name)
-    code += "  spewOp(CacheOp::{});\\\n".format(name)
+    code = f"void {method_name}(CacheIRReader& reader) {{\\\n"
+    code += f"  spewOp(CacheOp::{name});\\\n"
     code += args_code
     code += "  spewOpEnd();\\\n"
     code += "}\\\n"
@@ -348,14 +358,14 @@ def gen_clone_method(name, args):
 
     args_code = ""
     if args:
-        for arg_name, arg_type in six.iteritems(args):
+        for arg_name, arg_type in args.items():
             if arg_type == "RawId":
                 arg_type = "ValId"
 
             read_type, suffix, readexpr = arg_reader_info[arg_type]
             read_name = arg_name + suffix
             value_name = read_name
-            args_code += "  {} {} = {};\\\n".format(read_type, read_name, readexpr)
+            args_code += f"  {read_type} {read_name} = {readexpr};\\\n"
 
             write_type, write_method = arg_writer_info[arg_type]
             if arg_name == "result":
@@ -366,14 +376,14 @@ def gen_clone_method(name, args):
                 if write_type.endswith("&"):
                     write_type = write_type[:-1]
                 value_name = arg_name
-                args_code += "  {} {} = get{}({});\\\n".format(
-                    write_type, value_name, arg_type, read_name
+                args_code += (
+                    f"  {write_type} {value_name} = get{arg_type}({read_name});\\\n"
                 )
-            args_code += "  writer.{}({});\\\n".format(write_method, value_name)
+            args_code += f"  writer.{write_method}({value_name});\\\n"
 
-    code = "void {}".format(method_name)
+    code = f"void {method_name}"
     code += "(CacheIRReader& reader, CacheIRWriter& writer) {{\\\n"
-    code += "  writer.writeOp(CacheOp::{});\\\n".format(name)
+    code += f"  writer.writeOp(CacheOp::{name});\\\n"
     code += args_code
     code += "  writer.assertLengthMatches();\\\n"
     code += "}}\\\n"
@@ -397,12 +407,14 @@ arg_length = {
     "IntPtrId": 1,
     "RawId": 1,
     "ShapeField": 1,
-    "GetterSetterField": 1,
+    "WeakShapeField": 1,
+    "WeakGetterSetterField": 1,
     "ObjectField": 1,
+    "WeakObjectField": 1,
     "StringField": 1,
     "AtomField": 1,
     "SymbolField": 1,
-    "BaseScriptField": 1,
+    "WeakBaseScriptField": 1,
     "JitCodeField": 1,
     "RawInt32Field": 1,
     "RawPointerField": 1,
@@ -417,8 +429,11 @@ arg_length = {
     "ScalarTypeImm": 1,
     "UnaryMathFunctionImm": 1,
     "JSOpImm": 1,
+    "JSTypeImm": 1,
+    "TypeofEqOperandImm": 1,
     "ValueTypeImm": 1,
     "GuardClassKindImm": 1,
+    "ArrayBufferViewKindImm": 1,
     "JSWhyMagicImm": 1,
     "WasmValTypeImm": 1,
     "Int32Imm": 4,
@@ -427,6 +442,7 @@ arg_length = {
     "StaticStringImm": "sizeof(uintptr_t)",
     "AllocKindImm": 1,
     "CompletionKindImm": 1,
+    "RealmFuseIndexImm": 1,
 }
 
 
@@ -464,7 +480,7 @@ def generate_cacheirops_header(c_out, yaml_path):
         name = op["name"]
 
         args = op["args"]
-        assert args is None or isinstance(args, OrderedDict)
+        assert args is None or isinstance(args, dict)
 
         shared = op["shared"]
         assert isinstance(shared, bool)
@@ -473,7 +489,7 @@ def generate_cacheirops_header(c_out, yaml_path):
         assert isinstance(transpile, bool)
 
         # Unscored Ops default to UINT32_MAX
-        cost_estimate = op.get("cost_estimate", int(0xFFFFFFFF))
+        cost_estimate = op.get("cost_estimate", 0xFFFFFFFF)
         assert isinstance(cost_estimate, int)
 
         custom_writer = op.get("custom_writer", False)
@@ -485,9 +501,7 @@ def generate_cacheirops_header(c_out, yaml_path):
             args_length = "0"
 
         transpile_str = "true" if transpile else "false"
-        ops_items.append(
-            "_({}, {}, {}, {})".format(name, args_length, transpile_str, cost_estimate)
-        )
+        ops_items.append(f"_({name}, {args_length}, {transpile_str}, {cost_estimate})")
 
         writer_methods.append(gen_writer_method(name, args, custom_writer))
 
@@ -498,7 +512,7 @@ def generate_cacheirops_header(c_out, yaml_path):
 
         if transpile:
             transpiler_methods.append(gen_compiler_method(name, args))
-            transpiler_ops.append("_({})".format(name))
+            transpiler_ops.append(f"_({name})")
 
         spewer_methods.append(gen_spewer_method(name, args))
 
@@ -537,3 +551,28 @@ def generate_cacheirops_header(c_out, yaml_path):
     contents += "\n\n"
 
     generate_header(c_out, "jit_CacheIROpsGenerated_h", contents)
+
+
+def read_aot_ics(ic_path):
+    ics = ""
+    idx = 0
+    for entry in os.scandir(ic_path):
+        if entry.is_file() and os.path.basename(entry.path).startswith("IC-"):
+            with open(entry.path) as f:
+                content = f.read().strip()
+                ics += "  _(%d, %s) \\\n" % (idx, content)
+                idx += 1
+    return ics
+
+
+def generate_aot_ics_header(c_out, ic_path):
+    """Generate CacheIROpsGenerated.h from AOT IC corpus."""
+
+    # Read in all ICs from js/src/ics/IC-*.
+    ics = read_aot_ics(ic_path)
+
+    contents = "#define JS_AOT_IC_DATA(_) \\\n"
+    contents += ics
+    contents += "\n"
+
+    generate_header(c_out, "jit_CacheIRAOTGenerated_h", contents)

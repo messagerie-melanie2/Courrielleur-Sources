@@ -13,7 +13,7 @@ add_task(async function test() {
 
   // This test assumes that the Web Developer preset is set by default, which is
   // not the case on Nightly and custom builds.
-  BackgroundJSM.changePreset(
+  PrefsPresets.changePreset(
     "aboutprofiling",
     "web-developer",
     supportedFeatures
@@ -33,7 +33,7 @@ add_task(async function test() {
     );
 
     // Enable the profiler menu button with web channel.
-    await withWebChannelTestDocument(async browser => {
+    await withWebChannelTestDocument(async _browser => {
       await waitForTabTitle("WebChannel Page Ready");
       await waitForProfilerMenuButton();
       ok(true, "The profiler menu button was enabled by the WebChannel.");

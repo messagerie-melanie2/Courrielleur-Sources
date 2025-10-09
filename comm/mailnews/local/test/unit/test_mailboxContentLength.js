@@ -6,35 +6,63 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
+);
+
 /*
  * Test content length for the mailbox protocol. This focuses on necko URLs
  * that are run externally.
  */
 
-// Take a multipart message as we're testing attachment URLs as well
-var gFile = do_get_file("../../../data/multipart-complex2");
-
-function run_test() {
-  do_test_pending();
-  copyFileMessageInLocalFolder(gFile, 0, "", null, verifyContentLength);
+// Strip the extra X-Mozilla-* headers which are slipped in to messages
+// as they are written to local folders. Not exactly robust RFC5322 parsing,
+// but enough to handle this test.
+function strip_x_moz_headers(s) {
+  // List to make sure headers show up when grepping codebase.
+  for (const hdr of [
+    "X-Mozilla-Status",
+    "X-Mozilla-Status2",
+    "X-Mozilla-Keys",
+  ]) {
+    s = s.replace(new RegExp("^" + hdr + ":.*?\r?\n", "gm"), "");
+  }
+  return s;
 }
 
-function verifyContentLength(aMessageHeaderKeys, aStatus) {
-  Assert.notEqual(aMessageHeaderKeys, null);
-  // First get the message URI
-  let msgHdr = localAccountUtils.inboxFolder.GetMessageHeader(
-    aMessageHeaderKeys[0]
+add_task(async function check_contentlength() {
+  localAccountUtils.loadLocalMailAccount();
+
+  // Take a multipart message as we're testing attachment URLs as well.
+  const testFile = do_get_file("../../../data/multipart-complex2");
+
+  // Load a message into the local folder.
+  const copyListener = new PromiseTestUtils.PromiseCopyListener();
+  MailServices.copy.copyFileMessage(
+    testFile,
+    localAccountUtils.inboxFolder, // dstFolder
+    null, // msgToReplace
+    false, // isDraftOrTemplate
+    0, // aMsgFlags,
+    "", // aMsgKeywords
+    copyListener,
+    null // msgWindow
   );
-  let messageUri = localAccountUtils.inboxFolder.getUriForMsg(msgHdr);
+  const copyResult = await copyListener.promise;
+  const msgKey = copyResult.messageKeys[0];
+
+  // First get the message URI
+  const msgHdr = localAccountUtils.inboxFolder.GetMessageHeader(msgKey);
+  const msgUri = localAccountUtils.inboxFolder.getUriForMsg(msgHdr);
   // Convert this to a URI that necko can run
-  let messageService = MailServices.messageServiceFromURI(messageUri);
-  let neckoURL = messageService.getUrlForUri(messageUri);
+  const messageService = MailServices.messageServiceFromURI(msgUri);
+  const neckoURL = messageService.getUrlForUri(msgUri);
   // Don't use the necko URL directly. Instead, get the spec and create a new
   // URL using the IO service
-  let urlToRun = Services.io.newURI(neckoURL.spec);
+  const urlToRun = Services.io.newURI(neckoURL.spec);
 
   // Get a channel from this URI, and check its content length
-  let channel = Services.io.newChannelFromURI(
+  const channel = Services.io.newChannelFromURI(
     urlToRun,
     null,
     Services.scriptSecurityManager.getSystemPrincipal(),
@@ -42,10 +70,25 @@ function verifyContentLength(aMessageHeaderKeys, aStatus) {
     Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
     Ci.nsIContentPolicy.TYPE_OTHER
   );
-  Assert.equal(channel.contentLength, gFile.fileSize);
+
+  const contentLength = channel.contentLength;
+  // Read the full msg from the channel.
+  const instream = channel.open();
+  const sstream = Cc["@mozilla.org/scriptableinputstream;1"].createInstance(
+    Ci.nsIScriptableInputStream
+  );
+  sstream.init(instream);
+  const raw = sstream.read(8192);
+
+  // Sanity check - we read out contentLength bytes?
+  Assert.equal(contentLength, raw.length);
+
+  // Original file had no X-Mozilla- headers.
+  const stripped = strip_x_moz_headers(raw);
+  Assert.equal(testFile.fileSize, stripped.length);
 
   // Now try an attachment. &part=1.2
-  let attachmentURL = Services.io.newURI(neckoURL.spec + "&part=1.2");
+  const attachmentURL = Services.io.newURI(neckoURL.spec + "&part=1.2");
   Services.io.newChannelFromURI(
     attachmentURL,
     null,
@@ -56,7 +99,5 @@ function verifyContentLength(aMessageHeaderKeys, aStatus) {
   );
   // Currently attachments have their content length set to the length of the
   // entire message
-  Assert.equal(channel.contentLength, gFile.fileSize);
-
-  do_test_finished();
-}
+  Assert.equal(channel.contentLength, raw.length);
+});

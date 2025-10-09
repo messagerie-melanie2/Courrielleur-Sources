@@ -26,10 +26,13 @@ class CalendarFilteredTreeView extends CalendarFilteredViewMixin(PROTO_TREE_VIEW
 
   /**
    * Set the function used to filter displayed rows and update the current view.
+   * This function operates purely on the rows and doesn't reach into the
+   * actual calendars to filter.
    *
-   * @param {filterFunction} filterFunction The function to use as a filter
+   * @param {filterFunction} filterFunction - The function to use as a filter.
+   * @see {calFilter.filterItems()} for the base filtering directly on calendar data.
    */
-  setFilterFunction(filterFunction) {
+  applyFiltering(filterFunction) {
     this.#filterFunction = filterFunction;
 
     this._tree?.beginUpdateBatch();
@@ -50,8 +53,40 @@ class CalendarFilteredTreeView extends CalendarFilteredViewMixin(PROTO_TREE_VIEW
   /**
    * Clear the filter on the current view.
    */
-  clearFilter() {
-    this.setFilterFunction(null);
+  clearFiltering() {
+    this.applyFiltering(null);
+  }
+
+  /**
+   * Retrieve the calendar item for the specified row.
+   *
+   * @param {number} row - The row index containing the item to retrieve.
+   * @returns {calIItemBase} - A calendar item corresponding to the row index.
+   */
+  getItemAt(row) {
+    if (row < 0 || row >= this._rowMap.length) {
+      console.error(`Attempted to get row ${row} from tree view with ${this._rowMap.length} rows`);
+      return null;
+    }
+
+    return this._rowMap[row].item;
+  }
+
+  /**
+   * Retrieve the calendar item for the row at the specified coordinates.
+   *
+   * @param {number} x - The X coordinate at which to look.
+   * @param {number} y - The Y coordinate at which to look.
+   * @returns {calIItemBase} - A calendar item corresponding to the coordinates.
+   */
+  getItemAtCoordinates(x, y) {
+    const row = this._tree.getRowAt(x, y);
+    if (row == -1) {
+      // No row was found at the given coordinates.
+      return null;
+    }
+
+    return this.getItemAt(row);
   }
 
   /**
@@ -63,6 +98,48 @@ class CalendarFilteredTreeView extends CalendarFilteredViewMixin(PROTO_TREE_VIEW
    */
   #itemMatchesFilterIfAny(item) {
     return !this.#filterFunction || this.#filterFunction(item);
+  }
+
+  /**
+   * Set the selection in the tree to all rows containing one of the provided
+   * items.
+   *
+   * @param {calIItemBase[]} items
+   */
+  setSelectionFromItems(items) {
+    const selection = this.selection;
+    if (!selection) {
+      return;
+    }
+
+    selection.selectEventsSuppressed = true;
+
+    // Build a set of item hash IDs for the selection. Time complexity for set
+    // lookup is specified to be better than linear, so we can avoid quadratic
+    // time in finding which rows need to be selected.
+
+    // Building a map from hash ID to row number at insertion time is
+    // problematic because the rows array is a member of the parent tree view
+    // class and we can't guarantee it won't be modified outside of this class,
+    // meaning it could fall out of sync with the hash ID map.
+    const hashIdsToSelect = new Set(items.map(item => item.hashId));
+
+    // Build the selection.
+    for (let i = 0; i < this._rowMap.length; i++) {
+      // Instead of clearing the selection, we simply toggle when there's a
+      // mismatch. This avoids a visible flashing of rows which don't change.
+      if (hashIdsToSelect.has(this._rowMap[i].item.hashId) != selection.isSelected(i)) {
+        selection.toggleSelect(i);
+
+        if (hashIdsToSelect.length == 1) {
+          // If there's only one item selected, we want to scroll it into view.
+          this.tree.ensureRowIsVisible(i);
+          break;
+        }
+      }
+    }
+
+    selection.selectEventsSuppressed = false;
   }
 
   /**
@@ -86,25 +163,27 @@ class CalendarFilteredTreeView extends CalendarFilteredViewMixin(PROTO_TREE_VIEW
    */
   #restoreSelection() {
     const selection = this.selection;
-    if (selection) {
-      selection.selectEventsSuppressed = true;
+    if (!selection) {
+      return;
+    }
 
-      let newCurrent;
-      for (let i = 0; i < this._rowMap.length; i++) {
-        if (this._rowMap[i].wasSelected != selection.isSelected(i)) {
-          selection.toggleSelect(i);
-        }
+    selection.selectEventsSuppressed = true;
 
-        if (this._rowMap[i].wasCurrent) {
-          newCurrent = i;
-        }
+    let newCurrent;
+    for (let i = 0; i < this._rowMap.length; i++) {
+      if (this._rowMap[i].wasSelected != selection.isSelected(i)) {
+        selection.toggleSelect(i);
       }
 
-      selection.currentIndex = newCurrent;
-
-      this.selectionChanged();
-      selection.selectEventsSuppressed = false;
+      if (this._rowMap[i].wasCurrent) {
+        newCurrent = i;
+      }
     }
+
+    selection.currentIndex = newCurrent;
+
+    this.selectionChanged();
+    selection.selectEventsSuppressed = false;
   }
 
   // CalendarFilteredViewMixin implementation
@@ -115,70 +194,63 @@ class CalendarFilteredTreeView extends CalendarFilteredViewMixin(PROTO_TREE_VIEW
     this._tree?.beginUpdateBatch();
     this._rowMap.length = 0;
     this._tree?.endUpdateBatch();
+
+    this.selection?.clearSelection();
   }
 
   addItems(items) {
+    this._tree?.beginUpdateBatch();
+    this.#saveSelection();
+
     let anyItemsMatchedFilter = false;
 
     for (const item of items) {
-      const row = new CalendarFilteredTreeViewRow(item);
-
-      const sortValue = row.getValue(this.#sortColumn);
-
-      let addIndex = null;
-      for (let i = 0; addIndex === null && i < this.#allRows.length; i++) {
-        const comparison = this.#collator.compare(
-          sortValue,
-          this.#allRows[i].getValue(this.#sortColumn)
-        );
-        if (
-          (comparison < 0 && this.#sortDirection == "ascending") ||
-          (comparison >= 0 && this.#sortDirection == "descending")
-        ) {
-          addIndex = i;
-        }
-      }
-
-      if (addIndex === null) {
-        addIndex = this.#allRows.length;
-      }
-      this.#allRows.splice(addIndex, 0, row);
+      this.#allRows.push(new CalendarFilteredTreeViewRow(item));
 
       if (this.#itemMatchesFilterIfAny(item)) {
         anyItemsMatchedFilter = true;
       }
     }
 
+    this.#sortBy(this.#sortColumn, this.#sortDirection, true);
+
     if (anyItemsMatchedFilter) {
-      this.#saveSelection();
-
-      this._tree?.beginUpdateBatch();
       this._rowMap = this.#allRows.filter(row => this.#itemMatchesFilterIfAny(row.item));
-      this._tree?.endUpdateBatch();
-
-      this.#restoreSelection();
     }
+
+    this.#restoreSelection();
+    this._tree?.endUpdateBatch();
   }
 
   removeItems(items) {
-    const hashIDsToRemove = items.map(i => i.hashId);
+    this._tree?.beginUpdateBatch();
+    this.#saveSelection();
+
+    const hashIdsToRemove = items.map(i => i.hashId);
     for (let i = this.#allRows.length - 1; i >= 0; i--) {
-      if (hashIDsToRemove.includes(this.#allRows[i].item.hashId)) {
+      if (hashIdsToRemove.includes(this.#allRows[i].item.hashId)) {
         this.#allRows.splice(i, 1);
       }
     }
 
-    this.#saveSelection();
-
-    this._tree?.beginUpdateBatch();
     for (let i = this._rowMap.length - 1; i >= 0; i--) {
-      if (hashIDsToRemove.includes(this._rowMap[i].item.hashId)) {
+      if (hashIdsToRemove.includes(this._rowMap[i].item.hashId)) {
         this._rowMap.splice(i, 1);
       }
     }
-    this._tree?.endUpdateBatch();
+
+    if (this.selection) {
+      // Don't leave behind bogus rows in the selection. Restoring the selection
+      // doesn't touch items beyond the end of the row map, but we've just
+      // reduced the row map's length, so we need to clear out any rows beyond
+      // the new map's end.
+      this.selection.selectEventsSuppressed = true;
+      this.selection.clearSelection();
+      this.selection.selectEventsSuppressed = false;
+    }
 
     this.#restoreSelection();
+    this._tree?.endUpdateBatch();
   }
 
   removeItemsFromCalendar(calendarId) {
@@ -201,11 +273,19 @@ class CalendarFilteredTreeView extends CalendarFilteredViewMixin(PROTO_TREE_VIEW
     }
 
     this.#sortBy(column.id, direction);
+    this._tree?.dispatchEvent(
+      new CustomEvent("sort-changed", {
+        detail: {
+          column: this.#sortColumn,
+          direction: this.#sortDirection,
+        },
+      })
+    );
   }
 
-  #sortBy(sortColumn, sortDirection) {
+  #sortBy(sortColumn, sortDirection, force) {
     // Sort underlying array of rows first.
-    if (sortColumn == this.#sortColumn) {
+    if (sortColumn == this.#sortColumn && !force) {
       if (sortDirection == this.#sortDirection) {
         // Sort order hasn't changed; do nothing.
         return;

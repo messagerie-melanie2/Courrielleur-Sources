@@ -103,7 +103,6 @@ function DevTools() {
 
   EventEmitter.decorate(this);
   this._telemetry = new Telemetry();
-  this._telemetry.setEventRecordingEnabled(true);
 
   // List of all commands of debugged local Web Extension.
   this._commandsPromiseByWebExtId = new Map(); // Map<extensionId, commands>
@@ -195,29 +194,13 @@ DevTools.prototype = {
    * Removes all tools that match the given |toolId|
    * Needed so that add-ons can remove themselves when they are deactivated
    *
-   * @param {string|object} tool
-   *        Definition or the id of the tool to unregister. Passing the
-   *        tool id should be avoided as it is a temporary measure.
+   * @param {string} toolId
+   *        The id of the tool to unregister.
    * @param {boolean} isQuitApplication
    *        true to indicate that the call is due to app quit, so we should not
    *        cause a cascade of costly events
    */
-  unregisterTool(tool, isQuitApplication) {
-    let toolId = null;
-    if (typeof tool == "string") {
-      toolId = tool;
-      tool = this._tools.get(tool);
-    } else {
-      const { Deprecated } = ChromeUtils.importESModule(
-        "resource://gre/modules/Deprecated.sys.mjs"
-      );
-      Deprecated.warning(
-        "Deprecation WARNING: gDevTools.unregisterTool(tool) is " +
-          "deprecated. You should unregister a tool using its toolId: " +
-          "gDevTools.unregisterTool(toolId)."
-      );
-      toolId = tool.id;
-    }
+  unregisterTool(toolId, isQuitApplication) {
     this._tools.delete(toolId);
 
     if (!isQuitApplication) {
@@ -515,20 +498,22 @@ DevTools.prototype = {
    *
    * @param {Commands Object} commands
    *         The commands object which designates which context the toolbox will debug
-   * @param {Object}
-   *        - {String} toolId
-   *          The id of the tool to show
-   *        - {Toolbox.HostType} hostType
-   *          The type of host (bottom, window, left, right)
-   *        - {object} hostOptions
-   *          Options for host specifically
-   *        - {Number} startTime
-   *          Indicates the time at which the user event related to
-   *          this toolbox opening started. This is a `Cu.now()` timing.
-   *        - {string} reason
-   *          Reason the tool was opened
-   *        - {boolean} raise
-   *          Whether we need to raise the toolbox or not.
+   * @param {Object} options
+   * @param {String} options.toolId
+   *        The id of the tool to show
+   * @param {Object} options.toolOptions
+   *        Options that will be passed to the tool init function
+   * @param {Toolbox.HostType}options. hostType
+   *        The type of host (bottom, window, left, right)
+   * @param {object} options.hostOptions
+   *        Options for host specifically
+   * @param {Number} options.startTime
+   *        Indicates the time at which the user event related to
+   *        this toolbox opening started. This is a `Cu.now()` timing.
+   * @param {string} options.reason
+   *        Reason the tool was opened
+   * @param {boolean} options.raise
+   *        Whether we need to raise the toolbox or not.
    *
    * @return {Toolbox} toolbox
    *        The toolbox that was opened
@@ -537,6 +522,7 @@ DevTools.prototype = {
     commands,
     {
       toolId,
+      toolOptions,
       hostType,
       startTime,
       raise = true,
@@ -554,7 +540,7 @@ DevTools.prototype = {
       if (toolId != null) {
         // selectTool will either select the tool if not currently selected, or wait for
         // the tool to be loaded if needed.
-        await toolbox.selectTool(toolId, reason);
+        await toolbox.selectTool(toolId, reason, toolOptions);
       }
 
       if (raise) {
@@ -568,12 +554,12 @@ DevTools.prototype = {
       if (promise) {
         return promise;
       }
-      const toolboxPromise = this._createToolbox(
-        commands,
+      const toolboxPromise = this._createToolbox(commands, {
         toolId,
+        toolOptions,
         hostType,
-        hostOptions
-      );
+        hostOptions,
+      });
       this._creatingToolboxes.set(commands, toolboxPromise);
       toolbox = await toolboxPromise;
       this._creatingToolboxes.delete(commands);
@@ -620,7 +606,15 @@ DevTools.prototype = {
    */
   async showToolboxForTab(
     tab,
-    { toolId, hostType, startTime, raise, reason, hostOptions } = {}
+    {
+      toolId,
+      toolOptions,
+      hostType,
+      startTime,
+      raise,
+      reason,
+      hostOptions,
+    } = {}
   ) {
     // Popups are debugged via the toolbox of their opener document/tab.
     // So avoid opening dedicated toolbox for them.
@@ -631,9 +625,8 @@ DevTools.prototype = {
       const openerTab = tab.ownerGlobal.gBrowser.getTabForBrowser(
         tab.linkedBrowser.browsingContext.opener.embedderElement
       );
-      const openerCommands = await LocalTabCommandsFactory.getCommandsForTab(
-        openerTab
-      );
+      const openerCommands =
+        await LocalTabCommandsFactory.getCommandsForTab(openerTab);
       if (this.getToolboxForCommands(openerCommands)) {
         console.log(
           "Can't open a toolbox for this document as this is debugged from its opener tab"
@@ -644,6 +637,7 @@ DevTools.prototype = {
     const commands = await LocalTabCommandsFactory.createCommandsForTab(tab);
     return this.showToolbox(commands, {
       toolId,
+      toolOptions,
       hostType,
       startTime,
       raise,
@@ -707,11 +701,11 @@ DevTools.prototype = {
     const delay = Cu.now() - startTime;
     const panelName = this.makeToolIdHumanReadable(toolId);
 
-    const telemetryKey = this._firstShowToolbox
-      ? "DEVTOOLS_COLD_TOOLBOX_OPEN_DELAY_MS"
-      : "DEVTOOLS_WARM_TOOLBOX_OPEN_DELAY_MS";
-    this._telemetry.getKeyedHistogramById(telemetryKey).add(toolId, delay);
-
+    if (this._firstShowToolbox) {
+      Glean.devtools.coldToolboxOpenDelay[toolId].accumulateSingleSample(delay);
+    } else {
+      Glean.devtools.warmToolboxOpenDelay[toolId].accumulateSingleSample(delay);
+    }
     const browserWin = toolbox.topWindow;
     this._telemetry.addEventProperty(
       browserWin,
@@ -747,10 +741,13 @@ DevTools.prototype = {
    * Unconditionally create a new Toolbox instance for the provided commands.
    * See `showToolbox` for the arguments' jsdoc.
    */
-  async _createToolbox(commands, toolId, hostType, hostOptions) {
+  async _createToolbox(
+    commands,
+    { toolId, toolOptions, hostType, hostOptions } = {}
+  ) {
     const manager = new ToolboxHostManager(commands, hostType, hostOptions);
 
-    const toolbox = await manager.create(toolId);
+    const toolbox = await manager.create(toolId, toolOptions);
 
     this._toolboxesPerCommands.set(commands, toolbox);
 
@@ -798,10 +795,16 @@ DevTools.prototype = {
   /**
    * Retrieve an existing toolbox for the provided tab if it was created before.
    * Returns null otherwise.
+   *
+   * @param {XULTab} tab
+   *        The browser tab.
+   * @return {Toolbox}
+   *        Returns tab's toolbox object.
    */
-  async getToolboxForTab(tab) {
-    const commands = await LocalTabCommandsFactory.getCommandsForTab(tab);
-    return this.getToolboxForCommands(commands);
+  getToolboxForTab(tab) {
+    return this.getToolboxes().find(
+      t => t.commands.descriptorFront.localTab === tab
+    );
   },
 
   /**
@@ -863,11 +866,24 @@ DevTools.prototype = {
    *         markup view.
    */
   async inspectNode(tab, domReference, startTime) {
+    const toolboxWasOpened = !!gDevTools.getToolboxForTab(tab);
     const toolbox = await gDevTools.showToolboxForTab(tab, {
       toolId: "inspector",
+      toolOptions: {
+        defaultStartupNodeDomReference: domReference,
+        defaultStartupNodeSelectionReason: "browser-context-menu",
+      },
       startTime,
       reason: "inspect_dom",
     });
+
+    // If the toolbox wasn't opened yet, the selection of the node will be handled by
+    // the defaultStartupNodeDomReference option, so we can stop here.
+    if (!toolboxWasOpened) {
+      return;
+    }
+
+    // But if the toolbox was already opened, we need to explicitely select the node.
     const inspector = toolbox.getCurrentPanel();
 
     const nodeFront =
@@ -912,9 +928,8 @@ DevTools.prototype = {
       startTime,
     });
     const inspectorFront = await toolbox.target.getFront("inspector");
-    const nodeFront = await inspectorFront.getNodeActorFromContentDomReference(
-      domReference
-    );
+    const nodeFront =
+      await inspectorFront.getNodeActorFromContentDomReference(domReference);
     if (!nodeFront) {
       return;
     }
@@ -925,49 +940,6 @@ DevTools.prototype = {
     const onSelected = a11yPanel.once("new-accessible-front-selected");
     a11yPanel.selectAccessibleForNode(nodeFront, "browser-context-menu");
     await onSelected;
-  },
-
-  /**
-   * If DevTools and the debugger are opened, try to open the source
-   * at specified location in the debugger.
-   * Otherwise fallback by opening this location via view-source.
-   *
-   * @param {Window} window
-   *        The top level browser window into which we should open the URL.
-   * @param {String} url
-   * @param {Number} line
-   * @param {Number} column
-   */
-  async openSourceInDebugger(window, { url, line, column }) {
-    const toolbox = await gDevTools.getToolboxForTab(
-      window.gBrowser.selectedTab
-    );
-    if (toolbox) {
-      // Note that it will fallback to view-source when the source url isn't found in the debugger
-      await toolbox.viewSourceInDebugger(
-        url,
-        line,
-        column,
-        null,
-        "CommandLine"
-      );
-      // Nothing would try to focus the browser window and we might still focus the terminal
-      //
-      // When running tests, the toolbox may already be destroyed.
-      if (toolbox.win) {
-        toolbox.win.focus();
-      }
-      return;
-    }
-
-    // Otherwise, fallback to view-source
-    window.gViewSourceUtils.viewSource({
-      URL: url,
-      lineNumber: parseInt(line, 10),
-      columnNumber: parseInt(column, 10),
-    });
-    // Nothing would try to focus the browser window and we might still focus the terminal
-    window.focus();
   },
 
   /**

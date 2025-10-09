@@ -1,5 +1,5 @@
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 /* import-globals-from resources/mock_windows_reg_factory.js */
@@ -92,7 +92,7 @@ var expectedPop3Account = {
   smtpServer: {
     hostname: "smtp.host.invalid",
     username: "smtpuser",
-    port: 0, // default port
+    port: -1, // default port
     authMethod: Ci.nsMsgAuthMethod.passwordCleartext,
     socketType: Ci.nsMsgSocketType.plain,
   },
@@ -124,15 +124,15 @@ var expectedImapAccount = {
   smtpServer: {
     hostname: "smtp.host.invalid",
     username: "smtpuser",
-    port: 0, // default port
+    port: -1, // default port
     authMethod: Ci.nsMsgAuthMethod.passwordCleartext,
     socketType: Ci.nsMsgSocketType.plain,
   },
 };
 
 function teardown() {
-  for (let server of MailServices.smtp.servers) {
-    MailServices.smtp.deleteServer(server);
+  for (const server of MailServices.outgoingServer.servers) {
+    MailServices.outgoingServer.deleteServer(server);
   }
 
   teardown_mock_registry();
@@ -141,7 +141,9 @@ function teardown() {
 function _test(registry, expectedAccount) {
   try {
     setup_mock_registry(registry);
-    new SettingsImportHelper(null, "Outlook", [expectedAccount]).beginImport();
+    new SettingsImportHelper(null, "@mozilla.org/import/import-outlook;1", [
+      expectedAccount,
+    ]).beginImport();
   } catch (e) {
     teardown();
     do_throw(e);

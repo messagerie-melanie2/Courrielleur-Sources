@@ -4,9 +4,10 @@
 
 "use strict";
 
-const { save_compose_message } = ChromeUtils.import(
-  "resource://testing-common/mozmill/ComposeHelpers.jsm"
-);
+const { open_compose_new_mail, save_compose_message } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+  );
 const {
   open_message_from_file,
   be_in_folder,
@@ -14,18 +15,15 @@ const {
   get_special_folder,
   select_click_row,
   open_selected_message,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-const { close_window } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
-);
-const { OpenPGPTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mozmill/OpenPGPTestUtils.jsm"
+const { OpenPGPTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/OpenPGPTestUtils.sys.mjs"
 );
 
-const { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+const { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 function waitForComposeWindow() {
@@ -44,6 +42,25 @@ let aliceIdentity;
 let initialKeyIdPref = "";
 
 /**
+ * Delete all messages in the given folder.
+ *
+ * @param {nsIMsgFolder} folder - The folder to empty.
+ */
+async function cleanUpFolder(folder) {
+  return new Promise(resolve => {
+    const msgs = [...folder.msgDatabase.enumerateMessages()];
+    folder.deleteMessages(
+      msgs,
+      null,
+      true,
+      false,
+      { onStopCopy: resolve },
+      false
+    );
+  });
+}
+
+/**
  * Setup a mail account with a private key and an imported public key for an
  * address we can send messages to.
  */
@@ -58,7 +75,7 @@ add_setup(async function () {
   aliceIdentity.email = "alice@openpgp.example";
   aliceAcct.addIdentity(aliceIdentity);
 
-  let [id] = await OpenPGPTestUtils.importPrivateKey(
+  const [id] = await OpenPGPTestUtils.importPrivateKey(
     window,
     new FileUtils.File(
       getTestFilePath(
@@ -83,11 +100,53 @@ add_setup(async function () {
 });
 
 /**
+ * Test that drafts are encrypted.
+ */
+add_task(async function testDraftEncryption() {
+  const draftsFolder = await get_special_folder(
+    Ci.nsMsgFolderFlags.Drafts,
+    true,
+    aliceAcct.incomingServer.localFoldersServer
+  );
+
+  await be_in_folder(aliceAcct.incomingServer.rootFolder);
+  const composeWindow = await open_compose_new_mail();
+
+  composeWindow.document.getElementById("messageEditor").focus();
+  EventUtils.sendString("Hush, little baby don't say a word", composeWindow);
+
+  // Without the delay, the saving attempt that follows sometimes
+  // fails. The code to save the encrypted draft fails, because
+  // it finds no recipients. Maybe after opening the window,
+  // some time is needed to correctly populate the compose window.
+  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+  await new Promise(resolve => setTimeout(resolve, 100));
+
+  await be_in_folder(draftsFolder);
+  await save_compose_message(composeWindow);
+
+  await TestUtils.waitForCondition(
+    () => draftsFolder.getTotalMessages(true) > 0,
+    "message saved to drafts folder"
+  );
+  composeWindow.close();
+
+  await select_click_row(0);
+  const aboutMessage = get_about_message();
+  Assert.ok(
+    OpenPGPTestUtils.hasEncryptedIconState(aboutMessage.document, "ok"),
+    "draft should be encrypted"
+  );
+
+  await cleanUpFolder(draftsFolder);
+});
+
+/**
  * Test the "Re:" prefix remains in the compose window when opening a draft
  * reply for an encrypted message. See bug 1661510.
  */
 add_task(async function testDraftReplyToEncryptedMessageKeepsRePrefix() {
-  let draftsFolder = await get_special_folder(
+  const draftsFolder = await get_special_folder(
     Ci.nsMsgFolderFlags.Drafts,
     true,
     aliceAcct.incomingServer.localFoldersServer
@@ -95,42 +154,31 @@ add_task(async function testDraftReplyToEncryptedMessageKeepsRePrefix() {
 
   await be_in_folder(draftsFolder);
 
-  // Delete the messages we saved to drafts.
-  registerCleanupFunction(
-    async () =>
-      new Promise(resolve => {
-        let msgs = [...draftsFolder.msgDatabase.enumerateMessages()];
-
-        draftsFolder.deleteMessages(
-          msgs,
-          null,
-          true,
-          false,
-          { OnStopCopy: resolve },
-          false
-        );
-      })
-  );
-
   // Test signed-encrypted and unsigned-encrypted messages.
-  let msgFiles = [
+  const msgFiles = [
     "data/eml/signed-by-0xfbfcc82a015e7330-encrypted-to-0xf231550c4f47e38e.eml",
     "data/eml/unsigned-encrypted-to-0xf231550c4f47e38e-from-0xfbfcc82a015e7330.eml",
   ];
   let wantedRow = 0;
 
-  for (let msg of msgFiles) {
-    let mc = await open_message_from_file(
+  for (const msg of msgFiles) {
+    const msgc = await open_message_from_file(
       new FileUtils.File(getTestFilePath(msg))
     );
 
-    let replyWindowPromise = waitForComposeWindow();
-    get_about_message(mc.window)
-      .document.querySelector("#hdrReplyButton")
-      .click();
-    close_window(mc);
+    const replyWindowPromise = waitForComposeWindow();
+    get_about_message(msgc).document.querySelector("#hdrReplyButton").click();
+    await BrowserTestUtils.closeWindow(msgc);
 
-    let replyWindow = await replyWindowPromise;
+    const replyWindow = await replyWindowPromise;
+
+    // Without the delay, the saving attempt that follows sometimes
+    // fails. The code to save the encrypted draft fails, because
+    // it finds no recipients. Maybe after opening the window,
+    // some time is needed to correctly populate the reply window.
+    // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+    await new Promise(resolve => setTimeout(resolve, 100));
+
     await save_compose_message(replyWindow);
     replyWindow.close();
 
@@ -139,12 +187,12 @@ add_task(async function testDraftReplyToEncryptedMessageKeepsRePrefix() {
       "message saved to drafts folder"
     );
 
-    let draftWindowPromise = waitForComposeWindow();
-    select_click_row(wantedRow);
+    const draftWindowPromise = waitForComposeWindow();
+    await select_click_row(wantedRow);
     ++wantedRow;
     open_selected_message();
 
-    let draftWindow = await draftWindowPromise;
+    const draftWindow = await draftWindowPromise;
 
     Assert.ok(
       draftWindow.document.querySelector("#msgSubject").value.startsWith("Re:"),
@@ -153,6 +201,8 @@ add_task(async function testDraftReplyToEncryptedMessageKeepsRePrefix() {
 
     draftWindow.close();
   }
+  // Delete the messages we saved to drafts.
+  await cleanUpFolder(draftsFolder);
 });
 
 registerCleanupFunction(function tearDown() {

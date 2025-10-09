@@ -6,8 +6,6 @@ import functools
 from collections import deque
 from functools import reduce
 
-import six
-
 from ..handlers import SummaryHandler
 from .base import BaseFormatter
 from .process import strstatus
@@ -101,6 +99,10 @@ class TbplFormatter(BaseFormatter):
         return "TEST-INFO | %s: %s\n" % (data["process"], strstatus(data["exitcode"]))
 
     @output_subtests
+    def shutdown_failure(self, data):
+        return "TEST-UNEXPECTED-FAIL | %s | %s\n" % (data["group"], data["message"])
+
+    @output_subtests
     def crash(self, data):
         id = data["test"] if "test" in data else "pid: %s" % data["process"]
 
@@ -120,6 +122,11 @@ class TbplFormatter(BaseFormatter):
             signature = data["signature"] if data["signature"] else "unknown top frame"
             reason = data.get("reason", "application crashed")
             rv = ["PROCESS-CRASH | %s [%s] | %s " % (reason, signature, id)]
+
+            if data.get("process_type"):
+                rv.append("Process type: {}".format(data["process_type"]))
+
+            rv.append("Process pid: {}".format(data.get("pid", "unknown")))
 
             if data.get("reason"):
                 rv.append("Mozilla crash reason: %s" % data["reason"])
@@ -150,7 +157,7 @@ class TbplFormatter(BaseFormatter):
 
     def suite_start(self, data):
         self.suite_start_time = data["time"]
-        num_tests = reduce(lambda x, y: x + len(y), six.itervalues(data["tests"]), 0)
+        num_tests = reduce(lambda x, y: x + len(y), data["tests"].values(), 0)
         return "SUITE-START | Running %i tests\n" % num_tests
 
     def test_start(self, data):
@@ -308,12 +315,15 @@ class TbplFormatter(BaseFormatter):
     def suite_end(self, data):
         start_time = self.suite_start_time
         # pylint --py3k W1619
+        # in wpt --repeat mode sometimes we miss suite_start()
+        if start_time is None:
+            start_time = data["time"]
         time = int((data["time"] - start_time) / 1000)
 
         return "SUITE-END | took %is\n" % time
 
     def test_id(self, test_id):
-        if isinstance(test_id, (str, six.text_type)):
+        if isinstance(test_id, str):
             return test_id
         else:
             return tuple(test_id)
@@ -383,19 +393,34 @@ class TbplFormatter(BaseFormatter):
         if data["bytes"] == 0:
             return "TEST-PASS | leakcheck | %s no leaks detected!\n" % data["process"]
 
+        message = ""
+        bigLeakers = [
+            "nsGlobalWindowInner",
+            "nsGlobalWindowOuter",
+            "Document",
+            "nsDocShell",
+            "BrowsingContext",
+            "SystemGlobal",
+        ]
+        for bigLeakName in bigLeakers:
+            if bigLeakName in data["objects"]:
+                message = "leakcheck large %s | %s" % (bigLeakName, data["scope"])
+                break
+
         # Create a comma delimited string of the first N leaked objects found,
         # to aid with bug summary matching in TBPL. Note: The order of the objects
         # had no significance (they're sorted alphabetically).
-        max_objects = 5
-        object_summary = ", ".join(data["objects"][:max_objects])
-        if len(data["objects"]) > max_objects:
-            object_summary += ", ..."
+        if message == "":
+            max_objects = 5
+            object_summary = ", ".join(data["objects"][:max_objects])
+            if len(data["objects"]) > max_objects:
+                object_summary += ", ..."
 
-        message = "leakcheck | %s %d bytes leaked (%s)\n" % (
-            data["process"],
-            data["bytes"],
-            object_summary,
-        )
+            message = "leakcheck | %s %d bytes leaked (%s)\n" % (
+                data["process"],
+                data["bytes"],
+                object_summary,
+            )
 
         # data["bytes"] will include any expected leaks, so it can be off
         # by a few thousand bytes.
@@ -414,24 +439,20 @@ class TbplFormatter(BaseFormatter):
         intermittents = sum(
             self.summary.aggregate("known_intermittent", counts).values()
         )
-        known = (
-            " ({} known intermittent tests)".format(intermittents)
-            if intermittents
-            else ""
-        )
-        status_str = "{}/{}{}".format(expected, total, known)
-        rv = ["{}: {}".format(suite, status_str)]
+        known = f" ({intermittents} known intermittent tests)" if intermittents else ""
+        status_str = f"{expected}/{total}{known}"
+        rv = [f"{suite}: {status_str}"]
 
         for results in logs.values():
             for data in results:
-                rv.append("  {}".format(self._format_status(data)))
+                rv.append(f"  {self._format_status(data)}")
 
         if intermittent_logs:
             rv.append("Known Intermittent tests:")
             for results in intermittent_logs.values():
                 for data in results:
                     data["subtest"] = data.get("subtest", "")
-                    rv.append("  {}".format(self._format_status(data)))
+                    rv.append(f"  {self._format_status(data)}")
 
         return "\n".join(rv)
 

@@ -8,8 +8,8 @@
 
 /* import-globals-from ../../../test/resources/POP3pump.js */
 load("../../../resources/POP3pump.js");
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 Services.prefs.setCharPref(
@@ -25,8 +25,18 @@ var gTestSubjects = [
   "Hello, did you receive my bugmail?",
 ];
 
+function dumpFolder(f) {
+  dump(`====FOLDER '${f.name} (${f.filePath.path}) on '${f.server.key}':\n`);
+  for (const hdr of f.msgDatabase.enumerateMessages()) {
+    dump(
+      `MSG: '${hdr.subject}' size=${hdr.messageSize} tok='${hdr.storeToken}'\n`
+    );
+  }
+  dump(`====\n`);
+}
+
 add_setup(async function () {
-  let storeID = "@mozilla.org/msgstore/maildirstore;1";
+  const storeID = "@mozilla.org/msgstore/maildirstore;1";
   resetPluggableStoreLocal(storeID);
 
   // We want to test cross-server copy, so don't defer.
@@ -36,28 +46,28 @@ add_setup(async function () {
   gTestFolder = localAccountUtils.rootFolder
     .QueryInterface(Ci.nsIMsgLocalMailFolder)
     .createLocalSubfolder("test");
-  dump("testFolder is at " + gTestFolder.filePath.path + "\n");
+  //dump("testFolder is at " + gTestFolder.filePath.path + "\n");
   await gPOP3Pump.run();
-});
-
-add_task(async function maildirToMbox() {
-  // Test for multiple message copy for maildir->mbox.
 
   // get message headers for the inbox folder
   gInboxFolder = gPOP3Pump.fakeServer.rootMsgFolder.getFolderWithFlags(
     Ci.nsMsgFolderFlags.Inbox
   );
-  dump("inbox is at " + gInboxFolder.filePath.path + "\n");
+});
 
+// Test for multiple message copy for maildir->mbox.
+// Moves a couple of messages from the pop3 inbox (maildir)
+// to a test folder (mbox).
+add_task(async function maildirToMbox() {
   // Accumulate messages to copy.
   let messages = [];
-  for (let hdr of gInboxFolder.msgDatabase.enumerateMessages()) {
+  for (const hdr of gInboxFolder.msgDatabase.enumerateMessages()) {
     messages.push(hdr);
   }
   Assert.equal(messages.length, 2);
 
   // Move messages to mbox test folder.
-  let promiseCopyListener = new PromiseTestUtils.PromiseCopyListener();
+  const promiseCopyListener = new PromiseTestUtils.PromiseCopyListener();
   MailServices.copy.copyMessages(
     gInboxFolder,
     messages,
@@ -71,10 +81,9 @@ add_task(async function maildirToMbox() {
 
   // Check the destination headers.
   messages = [];
-  let subjects = [];
-  for (let hdr of gTestFolder.msgDatabase.enumerateMessages()) {
+  const subjects = [];
+  for (const hdr of gTestFolder.msgDatabase.enumerateMessages()) {
     messages.push(hdr);
-    dump("Subject: " + hdr.subject + "\n");
     subjects.push(hdr.subject);
   }
   Assert.equal(messages.length, 2);
@@ -84,13 +93,13 @@ add_task(async function maildirToMbox() {
 
   // Check for subjects. maildir order for messages may not match
   // order for creation, hence the array.includes.
-  for (let subject of gTestSubjects) {
+  for (const subject of gTestSubjects) {
     Assert.ok(subjects.includes(subject));
   }
 
   // Make sure the body matches the message.
-  for (let hdr of gTestFolder.msgDatabase.enumerateMessages()) {
-    let body = mailTestUtils.loadMessageToString(gTestFolder, hdr);
+  for (const hdr of gTestFolder.msgDatabase.enumerateMessages()) {
+    const body = mailTestUtils.loadMessageToString(gTestFolder, hdr);
     Assert.ok(body.includes(hdr.subject));
   }
 });
@@ -100,18 +109,18 @@ add_task(async function mboxToMaildir() {
 
   // Accumulate messages to copy.
   let messages = [];
-  for (let hdr of gTestFolder.msgDatabase.enumerateMessages()) {
+  for (const hdr of gTestFolder.msgDatabase.enumerateMessages()) {
     messages.push(hdr);
   }
   Assert.equal(messages.length, 2);
 
   // Move messages to inbox folder.
-  let promiseCopyListener = new PromiseTestUtils.PromiseCopyListener();
+  const promiseCopyListener = new PromiseTestUtils.PromiseCopyListener();
   MailServices.copy.copyMessages(
     gTestFolder,
     messages,
     gInboxFolder,
-    true,
+    true, // isMove
     promiseCopyListener,
     null,
     false
@@ -120,10 +129,9 @@ add_task(async function mboxToMaildir() {
 
   // Check the destination headers.
   messages = [];
-  let subjects = [];
-  for (let hdr of gInboxFolder.msgDatabase.enumerateMessages()) {
+  const subjects = [];
+  for (const hdr of gInboxFolder.msgDatabase.enumerateMessages()) {
     messages.push(hdr);
-    dump("Subject: " + hdr.subject + "\n");
     subjects.push(hdr.subject);
   }
   Assert.equal(messages.length, 2);
@@ -133,13 +141,16 @@ add_task(async function mboxToMaildir() {
 
   // Check for subjects. maildir order for messages may not match
   // order for creation, hence the array.includes.
-  for (let subject of gTestSubjects) {
+  for (const subject of gTestSubjects) {
     Assert.ok(subjects.includes(subject));
   }
 
   // Make sure the body matches the message.
-  for (let hdr of gInboxFolder.msgDatabase.enumerateMessages()) {
-    let body = mailTestUtils.loadMessageToString(gInboxFolder, hdr);
+  for (const hdr of gInboxFolder.msgDatabase.enumerateMessages()) {
+    //dump(`body:\n`);
+    const body = mailTestUtils.loadMessageToString(gInboxFolder, hdr);
+    //dump(`===============\n${body}\n======================\n`);
+    //dump(`looking for '${hdr.subject}'\n`);
     Assert.ok(body.includes(hdr.subject));
   }
 });

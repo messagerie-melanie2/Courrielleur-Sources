@@ -8,7 +8,7 @@
 
 #include <string_view>
 
-#include "util/StringBuffer.h"
+#include "util/StringBuilder.h"
 #include "vm/Interpreter.h"
 #include "vm/Shape.h"
 #include "vm/Stack.h"
@@ -214,7 +214,7 @@ static MOZ_ALWAYS_INLINE JSAtom* AppendBoundFunctionPrefix(JSContext* cx,
     }
   }
 
-  StringBuffer sb(cx);
+  StringBuilder sb(cx);
   if (!sb.append("bound ") || !sb.append(str)) {
     return nullptr;
   }
@@ -236,7 +236,10 @@ static MOZ_ALWAYS_INLINE JSAtom* ComputeNameValue(
   JSString* name = nullptr;
   if (target->is<JSFunction>() && !target->as<JSFunction>().hasResolvedName()) {
     JSFunction* targetFn = &target->as<JSFunction>();
-    name = targetFn->infallibleGetUnresolvedName(cx);
+    name = targetFn->getUnresolvedName(cx);
+    if (!name) {
+      return nullptr;
+    }
   } else {
     // Use a fast path for getting the .name value if the target is a bound
     // function with its initial shape.
@@ -253,7 +256,7 @@ static MOZ_ALWAYS_INLINE JSAtom* ComputeNameValue(
       targetName = targetNameRoot;
     }
     if (!targetName.isString()) {
-      return cx->names().boundWithSpace;
+      return cx->names().boundWithSpace_;
     }
     name = targetName.toString();
   }
@@ -318,6 +321,7 @@ BoundFunctionObject* BoundFunctionObject::functionBindImpl(
   // If this assertion fails, make sure we use the correct AllocKind and that we
   // use all of its slots (consider increasing MaxInlineBoundArgs).
   static_assert(gc::GetGCKindSlots(allocKind) == SlotCount);
+  static_assert(gc::GetFinalizeKind(allocKind) == gc::FinalizeKind::None);
 
   // ES2023 10.4.1.3 BoundFunctionCreate
   // Steps 1-5.
@@ -345,12 +349,11 @@ BoundFunctionObject* BoundFunctionObject::functionBindImpl(
         cx->global()->maybeBoundFunctionShapeWithDefaultProto()) {
       Rooted<SharedShape*> shape(
           cx, cx->global()->maybeBoundFunctionShapeWithDefaultProto());
-      JSObject* obj =
-          NativeObject::create(cx, allocKind, gc::Heap::Default, shape);
-      if (!obj) {
+      bound = NativeObject::create<BoundFunctionObject>(
+          cx, allocKind, gc::Heap::Default, shape);
+      if (!bound) {
         return nullptr;
       }
-      bound = &obj->as<BoundFunctionObject>();
     } else {
       bound = NewObjectWithGivenProto<BoundFunctionObject>(cx, proto);
       if (!bound) {
@@ -418,11 +421,11 @@ BoundFunctionObject* BoundFunctionObject::functionBindImpl(
 BoundFunctionObject* BoundFunctionObject::createWithTemplate(
     JSContext* cx, Handle<BoundFunctionObject*> templateObj) {
   Rooted<SharedShape*> shape(cx, templateObj->sharedShape());
-  JSObject* obj = NativeObject::create(cx, allocKind, gc::Heap::Default, shape);
-  if (!obj) {
+  auto* bound = NativeObject::create<BoundFunctionObject>(
+      cx, allocKind, gc::Heap::Default, shape);
+  if (!bound) {
     return nullptr;
   }
-  BoundFunctionObject* bound = &obj->as<BoundFunctionObject>();
   bound->initFlags(templateObj->numBoundArgs(), templateObj->isConstructor());
   bound->initLength(templateObj->getLengthForInitialShape().toInt32());
   bound->initName(&templateObj->getNameForInitialShape().toString()->asAtom());

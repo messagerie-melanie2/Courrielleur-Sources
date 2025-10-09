@@ -87,6 +87,7 @@
 */
 
 #include "mimemalt.h"
+#include "nsMailHeaders.h"
 #include "prmem.h"
 #include "plstr.h"
 #include "prlog.h"
@@ -122,10 +123,8 @@ static int MimeMultipartAlternative_display_cached_part(MimeObject*,
                                                         MimePartBufferData*,
                                                         bool);
 
-static int MimeMultipartAlternativeClassInitialize(
-    MimeMultipartAlternativeClass* clazz) {
-  MimeObjectClass* oclass = (MimeObjectClass*)clazz;
-  MimeMultipartClass* mclass = (MimeMultipartClass*)clazz;
+static int MimeMultipartAlternativeClassInitialize(MimeObjectClass* oclass) {
+  MimeMultipartClass* mclass = (MimeMultipartClass*)oclass;
   PR_ASSERT(!oclass->class_initialized);
   oclass->initialize = MimeMultipartAlternative_initialize;
   oclass->finalize = MimeMultipartAlternative_finalize;
@@ -239,6 +238,7 @@ static int MimeMultipartAlternative_flush_children(MimeObject* obj,
                                                    do_display && display_part);
       MimeHeaders_free(malt->buffered_hdrs[i]);
       MimePartBufferDestroy(malt->part_buffers[i]);
+      PR_FREEIF(ct);
     }
     malt->pending_parts = 0;
   }
@@ -359,7 +359,8 @@ static priority_t MimeMultipartAlternative_display_part_p(
 
   // We must pass 'true' as last parameter so that text/calendar is
   // only displayable when Lightning is installed.
-  MimeObjectClass* clazz = mime_find_class(ct, sub_hdrs, self->options, true);
+  MimeObjectClass* clazz =
+      mime_find_class(ct, sub_hdrs, self->options, true, nullptr, nullptr);
   if (clazz && clazz->displayable_inline_p(clazz, sub_hdrs)) {
     // prefer_plaintext pref
     bool prefer_plaintext = false;
@@ -520,11 +521,8 @@ static int MimeMultipartAlternative_display_cached_part(
   else
 #endif /* MIME_DRAFTS */
 
-    status = MimePartBufferRead(
-        buffer,
-        /* The MimeConverterOutputCallback cast is to turn the
-         `void' argument into `MimeObject'. */
-        ((MimeConverterOutputCallback)body->clazz->parse_buffer), body);
+    status = MimePartBufferRead(buffer, body->clazz->parse_buffer,
+                                MimeClosure(MimeClosure::isMimeObject, body));
 
   if (status < 0) return status;
 

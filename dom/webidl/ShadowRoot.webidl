@@ -24,18 +24,18 @@ interface ShadowRoot : DocumentFragment
 {
   // Shadow DOM v1
   readonly attribute ShadowRootMode mode;
-  [Pref="dom.shadowdom.delegatesFocus.enabled"]
   readonly attribute boolean delegatesFocus;
-  [Pref="dom.shadowdom.slot.assign.enabled"]
   readonly attribute SlotAssignmentMode slotAssignment;
+  readonly attribute boolean clonable;
+  readonly attribute boolean serializable;
   readonly attribute Element host;
   attribute EventHandler onslotchange;
 
   Element? getElementById(DOMString elementId);
 
   // https://w3c.github.io/DOM-Parsing/#the-innerhtml-mixin
-  [CEReactions, SetterThrows]
-  attribute [LegacyNullToEmptyString] DOMString innerHTML;
+  [CEReactions, SetterThrows, SetterNeedsSubjectPrincipal=NonSystem]
+  attribute (TrustedHTML or [LegacyNullToEmptyString] DOMString) innerHTML;
 
   // When JS invokes importNode or createElement, the binding code needs to
   // create a reflector, and so invoking those methods directly on the content
@@ -55,6 +55,19 @@ interface ShadowRoot : DocumentFragment
   undefined setIsUAWidget();
   [ChromeOnly]
   boolean isUAWidget();
+};
+
+// Sanitizer API, https://wicg.github.io/sanitizer-api/
+partial interface ShadowRoot {
+  [Throws, Pref="dom.security.sanitizer.enabled"]
+  undefined setHTML(DOMString aInnerHTML, optional SetHTMLOptions options = {});
+};
+
+partial interface ShadowRoot {
+  // https://html.spec.whatwg.org/#dom-shadowroot-sethtmlunsafe
+  [NeedsSubjectPrincipal=NonSystem, Throws]
+  undefined setHTMLUnsafe((TrustedHTML or DOMString) html, optional SetHTMLUnsafeOptions options = {});
+  DOMString getHTML(optional GetHTMLOptions options = {});
 };
 
 ShadowRoot includes DocumentOrShadowRoot;

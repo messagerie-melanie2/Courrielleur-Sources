@@ -31,18 +31,10 @@
   visibility: collapse;
 }
 
-/* TODO: investigate unifying these two root selectors
- * https://bugzilla.mozilla.org/show_bug.cgi?id=1592344
- */
-*|*:root {
-  --animation-easing-function: cubic-bezier(.07, .95, 0, 1);
-  flex: 1;
-  -moz-box-collapse: legacy;
-}
-
 :root {
   text-rendering: optimizeLegibility;
   -moz-control-character-visibility: visible;
+  -moz-box-collapse: legacy;
   width: 100%;
   height: 100%;
   user-select: none;
@@ -64,21 +56,6 @@
 popupgroup:-moz-native-anonymous:-moz-locale-dir(rtl),
 tooltip:-moz-native-anonymous:-moz-locale-dir(rtl) {
   direction: rtl;
-}
-
-/* ::::::::::
-   :: Rules for 'hiding' portions of the chrome for special
-   :: kinds of windows (not JUST browser windows) with toolbars
-   ::::: */
-
-*|*:root[chromehidden~="menubar"] .chromeclass-menubar,
-*|*:root[chromehidden~="directories"] .chromeclass-directories,
-*|*:root[chromehidden~="status"] .chromeclass-status,
-*|*:root[chromehidden~="extrachrome"] .chromeclass-extrachrome,
-*|*:root[chromehidden~="location"] .chromeclass-location,
-*|*:root[chromehidden~="location"][chromehidden~="toolbar"] .chromeclass-toolbar,
-*|*:root[chromehidden~="toolbar"] .chromeclass-toolbar-additional {
-  display: none;
 }
 
 /* ::::::::::
@@ -240,14 +217,6 @@ html|label.toolbarbutton-badge:empty {
 .toolbarbutton-menu-dropmarker,
 .treecol-text,
 .treecol-sortdirection,
-.menubar-left,
-.menubar-text,
-.menu-text,
-.menu-iconic-text,
-.menu-iconic-highlightable-text,
-.menu-iconic-left,
-.menu-right,
-.menu-accel-container,
 .button-box {
   /* Preserves legacy behavior */
   pointer-events: none;
@@ -257,6 +226,11 @@ html|label.toolbarbutton-badge:empty {
 
 button {
   -moz-default-appearance: button;
+  appearance: auto;
+}
+
+dropmarker {
+  -moz-default-appearance: -moz-menulist-arrow-button;
   appearance: auto;
 }
 
@@ -276,6 +250,12 @@ browser {
   min-height: 0;
   min-width: 0;
   contain: size;
+}
+
+/* Double :fullscreen to have more specificity than the fullscreen spec's rule */
+browser:fullscreen:fullscreen {
+  -moz-top-layer: none !important;
+  position: static !important;
 }
 
 /*********** popup notification ************/
@@ -301,7 +281,7 @@ groupbox {
 
 /******** draggable elements *********/
 
-toolbar:not([nowindowdrag="true"], [customizing="true"]) {
+toolbar:not([nowindowdrag], [customizing]) {
   -moz-window-dragging: drag;
 }
 
@@ -354,17 +334,15 @@ menubar > menu:empty {
 /********* menupopup, panel, & tooltip ***********/
 
 menupopup,
-panel {
-  flex-direction: column;
-}
-
-menupopup,
 panel,
 tooltip {
   position: fixed;
-  -moz-top-layer: top;
+  -moz-top-layer: auto;
   width: fit-content;
   height: fit-content;
+  /* Make sure that popups are interactable when shown, since they escape the
+   * usual layering rules */
+  -moz-inert: none;
   /* Popups can't have overflow */
   contain: paint;
   z-index: 2147483647;
@@ -374,7 +352,6 @@ tooltip {
 tooltip {
   appearance: auto;
   -moz-default-appearance: tooltip;
-  -moz-font-smoothing-background-color: -moz-mac-tooltip;
 
   white-space: pre-wrap;
 
@@ -385,126 +362,35 @@ tooltip {
   max-width: 40em;
   overflow: clip;
   pointer-events: none;
-}
 
-tooltip:not([position]) {
-  margin-top: 21px;
-}
-
-/**
- * It's important that these styles are in a UA sheet, because the default
- * tooltip is native anonymous content
- */
-@media (-moz-platform: linux) {
-  tooltip {
+  /**
+   * It's important that these styles are in a UA sheet, because the default
+   * tooltip is native anonymous content
+   */
+  @media (-moz-platform: linux) {
     padding: 6px 10px; /* Matches Adwaita. */
-    line-height: 1.2;
+    line-height: 1.4;  /* For Noto Sans; note that 1.2 may clip descenders. */
+    border: .5px solid color-mix(in srgb, currentColor 60%, transparent);
+    @media (-moz-gtk-csd-transparency-available) {
+      border-radius: env(-moz-gtk-csd-tooltip-radius);
+    }
   }
-}
-
-@media (-moz-platform: windows) {
-  tooltip {
+  @media (-moz-platform: macos) {
+    padding: 2px 6px; /* Matches native metrics. */
+  }
+  @media (-moz-platform: windows) {
     appearance: none;
     border: 1px solid;
-  }
 
-  @media (-moz-windows-default-theme) {
-    tooltip {
-      background-color: #f9f9fb;
-      color: black;
-      border-color: #67676c;
+    /* TODO(emilio): Probably make InfoText/InfoBackground do the right thing and
+     * remove this? */
+    @media not (prefers-contrast) {
+      background-color: light-dark(#f9f9fb, #2b2a33);
+      color: light-dark(black, white);
+      border-color: light-dark(#67676c, #f9f9fb);
       border-radius: 4px;
     }
-
-    @media (prefers-color-scheme: dark) {
-      tooltip {
-        background-color: #2b2a33;
-        color: white;
-        border-color: #f9f9fb;
-      }
-    }
   }
-}
-
-@media (-moz-panel-animations) and (prefers-reduced-motion: no-preference) {
-@media (-moz-platform: macos) {
-  /* On Mac, use the properties "-moz-window-transform" and "-moz-window-opacity"
-     instead of "transform" and "opacity" for these animations.
-     The -moz-window* properties apply to the whole window including the window's
-     shadow, and they don't affect the window's "shape", so the system doesn't
-     have to recompute the shadow shape during the animation. This makes them a
-     lot faster. In fact, Gecko no longer triggers shadow shape recomputations
-     for repaints.
-     These properties are not implemented on other platforms. */
-  panel[type="arrow"]:not([animate="false"]) {
-    transition-property: -moz-window-transform, -moz-window-opacity;
-    transition-duration: 0.18s, 0.18s;
-    transition-timing-function:
-      var(--animation-easing-function), ease-out;
-  }
-
-  /* Only do the fade-in animation on pre-Big Sur to avoid missing shadows on
-   * Big Sur, see bug 1672091. */
-  @media (-moz-mac-big-sur-theme: 0) {
-    panel[type="arrow"]:not([animate="false"]) {
-      -moz-window-opacity: 0;
-      -moz-window-transform: translateY(-70px);
-    }
-
-    panel[type="arrow"][side="bottom"]:not([animate="false"]) {
-      -moz-window-transform: translateY(70px);
-    }
-  }
-
-  /* [animate] is here only so that this rule has greater specificity than the
-   * rule right above */
-  panel[type="arrow"][animate][animate="open"] {
-    -moz-window-opacity: 1.0;
-    transition-duration: 0.18s, 0.18s;
-    -moz-window-transform: none;
-    transition-timing-function:
-      var(--animation-easing-function), ease-in-out;
-  }
-
-  panel[type="arrow"][animate][animate="cancel"] {
-    -moz-window-opacity: 0;
-    -moz-window-transform: none;
-  }
-} /* end of macOS rules */
-
-@media not (-moz-platform: macos) {
-  panel[type="arrow"]:not([animate="false"]) {
-    opacity: 0;
-    transform: translateY(-70px);
-    transition-property: transform, opacity;
-    transition-duration: 0.18s, 0.18s;
-    transition-timing-function:
-      var(--animation-easing-function), ease-out;
-    will-change: transform, opacity;
-  }
-
-  panel[type="arrow"][side="bottom"]:not([animate="false"]) {
-    transform: translateY(70px);
-  }
-
-  /* [animate] is here only so that this rule has greater specificity than the
-   * rule right above */
-  panel[type="arrow"][animate][animate="open"] {
-    opacity: 1.0;
-    transition-duration: 0.18s, 0.18s;
-    transform: none;
-    transition-timing-function:
-      var(--animation-easing-function), ease-in-out;
-  }
-
-  panel[type="arrow"][animate][animate="cancel"] {
-    transform: none;
-  }
-} /* end of non-macOS rules */
-}
-
-panel[type="arrow"][animating] {
-  pointer-events: none;
 }
 
 /******** tree ******/
@@ -652,18 +538,6 @@ search-textbox {
   overflow: clip;
 }
 
-/* The following rule is here to fix bug 96899 (and now 117952).
-   Somehow trees create a situation
-   in which a popupset flows itself as if its popup child is directly within it
-   instead of the placeholder child that should actually be inside the popupset.
-   This is a stopgap measure, and it does not address the real bug.  */
-.autocomplete-result-popupset {
-  max-width: 0px;
-  width: 0 !important;
-  min-width: 0%;
-  min-height: 0%;
-}
-
 /********** menulist **********/
 
 menulist[popuponly] {
@@ -673,20 +547,6 @@ menulist[popuponly] {
   min-height: 0 !important;
   border: 0 !important;
   padding: 0 !important;
-}
-
-/********** splitter **********/
-
-.tree-splitter {
-  margin-inline: -4px;
-  width: 8px;
-  max-width: 8px;
-  min-width: 8px;
-  appearance: none !important;
-  border: none !important;
-  background: none !important;
-  order: 2147483646;
-  z-index: 2147483646;
 }
 
 /******** scrollbar ********/
@@ -770,11 +630,6 @@ findbar {
 /* Some elements that in HTML blocks should be inline-level by default */
 button, image {
   display: inline-flex;
-}
-
-.menu-iconic-highlightable-text:not([highlightable="true"]),
-.menu-iconic-text[highlightable="true"] {
-  display: none;
 }
 
 [orient="vertical"] { flex-direction: column !important; }

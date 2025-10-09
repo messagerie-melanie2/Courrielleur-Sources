@@ -14,23 +14,23 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "absl/types/optional.h"
 #include "api/numerics/samples_stats_counter.h"
+#include "api/units/time_delta.h"
 #include "api/units/timestamp.h"
 #include "rtc_base/strings/string_builder.h"
 
 namespace webrtc {
 
 // WebRTC will request a key frame after 3 seconds if no frames were received.
-// We assume max frame rate ~60 fps, so 270 frames will cover max freeze without
-// key frame request.
-constexpr size_t kDefaultMaxFramesInFlightPerStream = 270;
+// Uses 3x time to account for possible freezes which we still want to account.
+constexpr TimeDelta kDefaultMaxFramesStorageDuration = TimeDelta::Seconds(9);
 
 class SamplesRateCounter {
  public:
@@ -88,8 +88,7 @@ struct StreamCodecInfo {
 };
 
 std::ostream& operator<<(std::ostream& os, const StreamCodecInfo& state);
-rtc::StringBuilder& operator<<(rtc::StringBuilder& sb,
-                               const StreamCodecInfo& state);
+StringBuilder& operator<<(StringBuilder& sb, const StreamCodecInfo& state);
 bool operator==(const StreamCodecInfo& a, const StreamCodecInfo& b);
 
 // Represents phases where video frame can be dropped and such drop will be
@@ -106,7 +105,7 @@ enum class FrameDropPhase : int {
 
 std::string ToString(FrameDropPhase phase);
 std::ostream& operator<<(std::ostream& os, FrameDropPhase phase);
-rtc::StringBuilder& operator<<(rtc::StringBuilder& sb, FrameDropPhase phase);
+StringBuilder& operator<<(StringBuilder& sb, FrameDropPhase phase);
 
 struct StreamStats {
   explicit StreamStats(Timestamp stream_started_time);
@@ -126,6 +125,9 @@ struct StreamStats {
   SamplesStatsCounter total_delay_incl_transport_ms;
   // Time between frames out from renderer.
   SamplesStatsCounter time_between_rendered_frames_ms;
+  SamplesStatsCounter time_between_captured_frames_ms;
+  // Time between frames out from encoder.
+  SamplesStatsCounter time_between_encoded_frames_ms;
   SamplesRateCounter capture_frame_rate;
   SamplesRateCounter encode_frame_rate;
   SamplesStatsCounter encode_time_ms;
@@ -148,6 +150,11 @@ struct StreamStats {
   // Sender side qp values per spatial layer. In case when spatial layer is not
   // set for `webrtc::EncodedImage`, 0 is used as default.
   std::map<int, SamplesStatsCounter> spatial_layers_qp;
+  // QP values of the rendered frames. In SVC or simulcast coding scenarios, the
+  // receiver will only render one of the spatial layers at a time. Hence, this
+  // value corresponds to the rendered frames' QP values, which should ideally
+  // correspond to one of the QP values in `spatial_layers_qp`.
+  SamplesStatsCounter rendered_frame_qp;
 
   int64_t total_encoded_images_payload = 0;
   // Counters on which phase how many frames were dropped.
@@ -165,6 +172,8 @@ struct StreamStats {
   std::vector<StreamCodecInfo> encoders;
   // Vectors of decoders used for this stream by receiving client.
   std::vector<StreamCodecInfo> decoders;
+
+  double harmonic_framerate_fps = 0;
 };
 
 struct AnalyzerStats {
@@ -228,9 +237,9 @@ class VideoStreamsInfo {
   // empty set will be returned.
   std::set<std::string> GetStreams(absl::string_view sender_name) const;
 
-  // Returns sender name for specified `stream_label`. Returns `absl::nullopt`
+  // Returns sender name for specified `stream_label`. Returns `std::nullopt`
   // if provided `stream_label` isn't known to the video analyzer.
-  absl::optional<std::string> GetSender(absl::string_view stream_label) const;
+  std::optional<std::string> GetSender(absl::string_view stream_label) const;
 
   // Returns set of the receivers for specified `stream_label`. If stream wasn't
   // received by any peer or `stream_label` isn't known to the video analyzer
@@ -270,11 +279,9 @@ struct DefaultVideoQualityAnalyzerOptions {
   // significantly slows down the comparison, so turn it on only when it is
   // needed.
   bool adjust_cropping_before_comparing_frames = false;
-  // Amount of frames that are queued in the DefaultVideoQualityAnalyzer from
-  // the point they were captured to the point they were rendered on all
-  // receivers per stream.
-  size_t max_frames_in_flight_per_stream_count =
-      kDefaultMaxFramesInFlightPerStream;
+  // Amount of time for which DefaultVideoQualityAnalyzer will store frames
+  // which were captured but not yet rendered on all receivers per stream.
+  TimeDelta max_frames_storage_duration = kDefaultMaxFramesStorageDuration;
   // If true, the analyzer will expect peers to receive their own video streams.
   bool enable_receive_own_stream = false;
 };

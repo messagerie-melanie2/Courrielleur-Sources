@@ -12,8 +12,8 @@ from comm_taskgraph.parameters import register_parameters
 
 
 class TestCommParameters(unittest.TestCase):
-
     vals = {
+        "android_perftest_backstop": True,
         "app_version": "app_version",
         "backstop": False,
         "base_repository": "base_repository",
@@ -31,6 +31,7 @@ class TestCommParameters(unittest.TestCase):
         "do_not_optimize": [],
         "enable_always_target": False,
         "existing_tasks": {},
+        "files_changed": [],
         "filters": [],
         "head_ref": "head_ref",
         "head_repository": "head_repository",

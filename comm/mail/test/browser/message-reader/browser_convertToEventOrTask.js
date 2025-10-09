@@ -13,24 +13,21 @@ var {
   be_in_folder,
   create_folder,
   get_about_message,
-  mc,
   open_message_from_file,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-var { click_menus_in_sequence, close_window } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
-);
-
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { click_menus_in_sequence } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/WindowHelpers.sys.mjs"
 );
 
-var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
+var { cal } = ChromeUtils.importESModule(
+  "resource:///modules/calendar/calUtils.sys.mjs"
+);
 
-var { CalendarTestUtils } = ChromeUtils.import(
-  "resource://testing-common/calendar/CalendarTestUtils.jsm"
+var { CalendarTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/calendar/CalendarTestUtils.sys.mjs"
 );
 
 var folder;
@@ -43,20 +40,20 @@ add_setup(async function () {
   registerCleanupFunction(() => {
     folder.deleteSelf(null);
     cal.manager.getCalendars()[0].setProperty("disabled", true);
-    mc.window.document.documentElement.focus();
+    document.documentElement.focus();
   });
 });
 
 add_task(async function test_convertToEvent() {
-  let file = new FileUtils.File(getTestFilePath("data/multiparty.eml"));
-  let msgc = await open_message_from_file(file);
+  const file = new FileUtils.File(getTestFilePath("data/multiparty.eml"));
+  const msgc = await open_message_from_file(file);
 
   await be_in_folder(folder);
 
   // Copy the message to a folder.
-  let aboutMessage =
-    msgc.window.document.getElementById("messageBrowser").contentWindow;
-  let documentChild = aboutMessage.document
+  const aboutMessage =
+    msgc.document.getElementById("messageBrowser").contentWindow;
+  const documentChild = aboutMessage.document
     .getElementById("messagepane")
     .contentDocument.querySelector("div.moz-text-flowed");
   EventUtils.synthesizeMouseAtCenter(
@@ -72,15 +69,19 @@ add_task(async function test_convertToEvent() {
       { label: "ConvertToEvent" },
     ]
   );
-  close_window(msgc);
+  await TestUtils.waitForCondition(
+    () => folder.getTotalMessages(false) == 1,
+    "waiting for copy to folder to complete"
+  );
+  await BrowserTestUtils.closeWindow(msgc);
 
-  let msg = select_click_row(0);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
   // Open Other Actions, and check the event dialog popping up seems alright.
-  let dialogWindowPromise = CalendarTestUtils.waitForEventDialog("edit");
-  let win = get_about_message();
-  let otherActionsButton = win.document.getElementById("otherActionsButton");
+  const dialogWindowPromise = CalendarTestUtils.waitForEventDialog("edit");
+  const win = get_about_message();
+  const otherActionsButton = win.document.getElementById("otherActionsButton");
   EventUtils.synthesizeMouseAtCenter(
     otherActionsButton,
     {},
@@ -95,12 +96,12 @@ add_task(async function test_convertToEvent() {
   );
 
   await dialogWindowPromise.then(async dialogWindow => {
-    let document = dialogWindow.document.querySelector(
+    const document = dialogWindow.document.querySelector(
       "#calendar-item-panel-iframe"
     ).contentDocument;
 
-    let startDate = document.getElementById("event-starttime");
-    let dt = cal.dtz.now();
+    const startDate = document.getElementById("event-starttime");
+    const dt = cal.dtz.now();
     dt.month = 5;
     dt.day = 30;
     dt.year = 2023; // message.date is used...

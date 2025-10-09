@@ -66,8 +66,8 @@ places-history =
 places-bookmarks-search =
   .placeholder = Search bookmarks
 
-places-delete-domain-data =
-  .label = Forget About This Site
+places-forget-domain-data =
+  .label = Forget About This Site…
   .accesskey = F
 places-sortby-name =
   .label = Sort By Name
@@ -101,7 +101,7 @@ places-delete-page =
       }
   .accesskey = D
 
-# Managed bookmarks are created by an administrator and cannot be changed by the user.
+# Managed bookmarks are created by enterprise policy and cannot be changed by the user.
 managed-bookmarks =
   .label = Managed bookmarks
 # This label is used when a managed bookmarks folder doesn't have a name.
@@ -143,16 +143,6 @@ places-untag-bookmark =
 places-manage-bookmarks =
   .label = Manage Bookmarks
   .accesskey = M
-
-places-forget-about-this-site-confirmation-title =
-  Forgetting about this site
-
-# Variables:
-# $hostOrBaseDomain (string) - The base domain (or host in case there is no base domain) for which data is being removed
-places-forget-about-this-site-confirmation-msg =
-  This action will remove data related to { $hostOrBaseDomain } including history, cookies, cache and content preferences. Related bookmarks and passwords will not be removed. Are you sure you want to proceed?
-
-places-forget-about-this-site-forget = Forget
 
 places-library3 =
   .title = Library

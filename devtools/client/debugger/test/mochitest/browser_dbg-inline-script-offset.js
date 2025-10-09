@@ -28,7 +28,7 @@ add_task(async function () {
     15,
   ]);
 
-  await addBreakpoint(dbg, "doc-inline-script-offset.html", 15, 66);
+  await addBreakpoint(dbg, "doc-inline-script-offset.html", 15, 67);
 
   const onReloaded = reload(dbg);
   await waitForPaused(dbg);
@@ -37,4 +37,6 @@ add_task(async function () {
   await resume(dbg);
   info("Wait for reload to complete after resume");
   await onReloaded;
+
+  await dbg.toolbox.closeToolbox();
 });

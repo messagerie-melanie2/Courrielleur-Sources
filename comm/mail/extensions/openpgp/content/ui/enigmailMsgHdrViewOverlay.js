@@ -8,29 +8,30 @@
 /* import-globals-from ../../../../base/content/msgHdrView.js */
 /* import-globals-from ../../../smime/content/msgHdrViewSMIMEOverlay.js */
 
+// mailCommon.js
+/* globals gEncryptedURIService */
+
+/* eslint-enable valid-jsdoc */
+
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  EnigmailConstants: "chrome://openpgp/content/modules/constants.jsm",
-  EnigmailCore: "chrome://openpgp/content/modules/core.jsm",
-  EnigmailDialog: "chrome://openpgp/content/modules/dialog.jsm",
-  EnigmailFuncs: "chrome://openpgp/content/modules/funcs.jsm",
-  EnigmailKey: "chrome://openpgp/content/modules/key.jsm",
-  EnigmailKeyRing: "chrome://openpgp/content/modules/keyRing.jsm",
-  EnigmailLog: "chrome://openpgp/content/modules/log.jsm",
-  EnigmailMime: "chrome://openpgp/content/modules/mime.jsm",
-  EnigmailMsgRead: "chrome://openpgp/content/modules/msgRead.jsm",
-  EnigmailSingletons: "chrome://openpgp/content/modules/singletons.jsm",
-  EnigmailURIs: "chrome://openpgp/content/modules/uris.jsm",
-  EnigmailVerify: "chrome://openpgp/content/modules/mimeVerify.jsm",
-  EnigmailWindows: "chrome://openpgp/content/modules/windows.jsm",
-  // EnigmailWks: "chrome://openpgp/content/modules/webKey.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  EnigmailConstants: "chrome://openpgp/content/modules/constants.sys.mjs",
+  EnigmailCore: "chrome://openpgp/content/modules/core.sys.mjs",
+  EnigmailDialog: "chrome://openpgp/content/modules/dialog.sys.mjs",
+  EnigmailFuncs: "chrome://openpgp/content/modules/funcs.sys.mjs",
+  EnigmailKey: "chrome://openpgp/content/modules/key.sys.mjs",
+  EnigmailKeyRing: "chrome://openpgp/content/modules/keyRing.sys.mjs",
+  EnigmailMime: "chrome://openpgp/content/modules/mime.sys.mjs",
+  EnigmailMsgRead: "chrome://openpgp/content/modules/msgRead.sys.mjs",
+  EnigmailSingletons: "chrome://openpgp/content/modules/singletons.sys.mjs",
+  EnigmailVerify: "chrome://openpgp/content/modules/mimeVerify.sys.mjs",
+  EnigmailWindows: "chrome://openpgp/content/modules/windows.sys.mjs",
 });
 
 Enigmail.hdrView = {
-  lastEncryptedMsgKey: null,
   lastEncryptedUri: null,
   flexbuttonAction: null,
 
@@ -58,7 +59,7 @@ Enigmail.hdrView = {
     this.msgEncryptionKeyId = null;
     this.msgEncryptionAllKeyIds = null;
     this.msgHasKeyAttached = false;
-    for (let value of ["decryptionFailed", "brokenExchange"]) {
+    for (const value of ["decryptionFailed", "brokenExchange"]) {
       Enigmail.msg.removeNotification(value);
     }
     this.ignoreStatusFromMimePart = "";
@@ -67,20 +68,8 @@ Enigmail.hdrView = {
   },
 
   hdrViewLoad() {
-    EnigmailLog.DEBUG("enigmailMsgHdrViewOverlay.js: this.hdrViewLoad\n");
-
     this.msgHdrViewLoad();
-
-    let addrPopup = document.getElementById("emailAddressPopup");
-    if (addrPopup) {
-      addrPopup.addEventListener(
-        "popupshowing",
-        Enigmail.hdrView.displayAddressPopup.bind(addrPopup)
-      );
-    }
-
-    // Thunderbird
-    let attCtx = document.getElementById("attachmentItemContext");
+    const attCtx = document.getElementById("attachmentItemContext");
     if (attCtx) {
       attCtx.addEventListener(
         "popupshowing",
@@ -89,25 +78,18 @@ Enigmail.hdrView = {
     }
   },
 
-  displayAddressPopup(event) {
-    let target = event.target;
-    EnigmailFuncs.collapseAdvanced(target, "hidden");
-  },
-
   statusBarHide() {
     /* elements might not have been set yet, so we try and ignore */
     try {
       this.reset();
-
-      Enigmail.msg.setAttachmentReveal(null);
       if (Enigmail.msg.securityInfo) {
         Enigmail.msg.securityInfo.statusFlags = 0;
       }
 
-      let bodyElement = document.getElementById("messagepane");
+      const bodyElement = document.getElementById("messagepane");
       bodyElement.removeAttribute("collapsed");
     } catch (ex) {
-      console.debug(ex);
+      console.warn(ex);
     }
   },
 
@@ -123,81 +105,16 @@ Enigmail.hdrView = {
     extraDetails,
     mimePartNumber
   ) {
-    EnigmailLog.DEBUG(
-      "enigmailMsgHdrViewOverlay.js: this.updatePgpStatus: exitCode=" +
-        exitCode +
-        ", statusFlags=" +
-        statusFlags +
-        ", extStatusFlags=" +
-        extStatusFlags +
-        ", keyId=" +
-        keyId +
-        ", userId=" +
-        userId +
-        ", " +
-        errorMsg +
-        "\n"
-    );
+    if (errorMsg) {
+      console.warn(`OpenPGP status: ${errorMsg}`);
+    }
 
     if (gMessageURI) {
-      this.lastEncryptedMsgKey = gMessageURI;
+      this.lastEncryptedUri = gMessageURI;
     }
-
-    if (!errorMsg) {
-      errorMsg = "";
-    } else {
-      console.debug("OpenPGP error status: " + errorMsg);
-    }
-
-    var replaceUid = null;
-    if (keyId && gMessage) {
-      replaceUid = EnigmailMsgRead.matchUidToSender(keyId, gMessage.author);
-    }
-
-    if (!replaceUid && userId) {
-      replaceUid = userId.replace(/\n.*$/gm, "");
-    }
-
-    if (
-      Enigmail.msg.savedHeaders &&
-      "x-pgp-encoding-format" in Enigmail.msg.savedHeaders &&
-      Enigmail.msg.savedHeaders["x-pgp-encoding-format"].search(
-        /partitioned/i
-      ) === 0
-    ) {
-      if (currentAttachments && currentAttachments.length) {
-        Enigmail.msg.setAttachmentReveal(currentAttachments);
-      }
-    }
-
-    if (userId && replaceUid) {
-      // no EnigmailData.convertGpgToUnicode here; strings are already UTF-8
-      replaceUid = replaceUid.replace(/\\[xe]3a/gi, ":");
-      errorMsg = errorMsg.replace(userId, replaceUid);
-    }
-
-    var errorLines = "";
 
     if (exitCode == EnigmailConstants.POSSIBLE_PGPMIME) {
       exitCode = 0;
-    } else if (errorMsg) {
-      // no EnigmailData.convertGpgToUnicode here; strings are already UTF-8
-      errorLines = errorMsg.split(/\r?\n/);
-    }
-
-    if (errorLines && errorLines.length > 22) {
-      // Retain only first twenty lines and last two lines of error message
-      var lastLines =
-        errorLines[errorLines.length - 2] +
-        "\n" +
-        errorLines[errorLines.length - 1] +
-        "\n";
-
-      while (errorLines.length > 20) {
-        errorLines.pop();
-      }
-
-      errorMsg = errorLines.join("\n") + "\n...\n" + lastLines;
     }
 
     let encryptedMimePart = "";
@@ -217,7 +134,7 @@ Enigmail.hdrView = {
         EnigmailConstants.EXPIRED_SIGNATURE);
 
     if (msgSigned && statusFlags & EnigmailConstants.IMPORTED_KEY) {
-      console.debug("unhandled status IMPORTED_KEY");
+      // unhandled status IMPORTED_KEY
       statusFlags &= ~EnigmailConstants.IMPORTED_KEY;
     }
 
@@ -230,24 +147,20 @@ Enigmail.hdrView = {
 
     this.msgSignatureKeyId = keyId;
 
-    if (extraDetails && extraDetails.length > 0) {
-      try {
-        let o = JSON.parse(extraDetails);
-        if ("encryptedTo" in o) {
-          this.msgEncryptionKeyId = o.encryptedTo.myRecipKey;
-          this.msgEncryptionAllKeyIds = o.encryptedTo.allRecipKeys;
-        }
-        if ("packetDump" in o && o.packetDump) {
-          this.packetDump = o.packetDump;
-        }
-      } catch (x) {
-        console.debug(x);
+    if (extraDetails) {
+      const o = JSON.parse(extraDetails);
+      if ("encryptedTo" in o) {
+        this.msgEncryptionKeyId = o.encryptedTo.myRecipKey;
+        this.msgEncryptionAllKeyIds = o.encryptedTo.allRecipKeys;
+      }
+      if ("packetDump" in o && o.packetDump) {
+        this.packetDump = o.packetDump;
       }
     }
 
     this.msgSignatureDate = sigDetails?.sigDate;
 
-    let tmp = {
+    Enigmail.msg.securityInfo = {
       statusFlags,
       extStatusFlags,
       keyId,
@@ -257,7 +170,6 @@ Enigmail.hdrView = {
       extraDetails,
       encryptedMimePart,
     };
-    Enigmail.msg.securityInfo = tmp;
 
     //Enigmail.msg.createArtificialAutocryptHeader();
 
@@ -272,63 +184,6 @@ Enigmail.hdrView = {
   },
 
   /**
-   * Check whether we got a WKS request
-   */
-  /*
-  checkWksConfirmRequest(jsonStr) {
-    let requestObj;
-    try {
-      requestObj = JSON.parse(jsonStr);
-    } catch (ex) {
-      EnigmailLog.DEBUG(
-        "enigmailMsgHdrViewOverlay.js: checkWksConfirmRequest parsing JSON failed\n"
-      );
-      return;
-    }
-
-    if (
-      "type" in requestObj &&
-      requestObj.type.toLowerCase() === "confirmation-request"
-    ) {
-      EnigmailWks.getWksClientPathAsync(window, function(wksClientPath) {
-        if (!wksClientPath) {
-          return;
-        }
-
-        Enigmail.hdrView.displayFlexAction(
-          "Web Key Directory Confirmation Request",
-          "Confirm Request",
-          "wks-request"
-        );
-        Enigmail.hdrView.displayWksMessage();
-      });
-    } else {
-      EnigmailLog.DEBUG(
-        "enigmailMsgHdrViewOverlay.js: checkWksConfirmRequest failed condition\n"
-      );
-    }
-  },
-  */
-
-  /**
-   * Display a localized message in lieu of the original message text
-   */
-  /*
-  displayWksMessage() {
-    EnigmailLog.DEBUG("enigmailMsgHdrViewOverlay.js: displayWksMessage()\n");
-
-    if (Enigmail.msg.securityInfo.xtraStatus === "wks-request") {
-      let enigMsgPane = document.getElementById("enigmailMsgDisplay");
-      let bodyElement = document.getElementById("messagepane");
-      bodyElement.setAttribute("collapsed", true);
-      enigMsgPane.removeAttribute("collapsed");
-      enigMsgPane.textContent = "This message has been sent by your email provider to confirm deployment of your OpenPGP public key\nin their Web Key Directory.\nProviding your public key helps others to discover your key and thus being able to encrypt messages to you.\n\nIf you want to deploy your key in the Web Key Directory now, please click on the button "Confirm Request" in the status bar.\nOtherwise, simply ignore this message."
-      );
-    }
-  },
-  */
-
-  /**
    * Update the various variables that track the OpenPGP status of
    * the current message.
    *
@@ -336,9 +191,9 @@ Enigmail.hdrView = {
    *   was processed and has triggered this status update request.
    */
   async updateStatusFlags(triggeredByMimePartNumber) {
-    let secInfo = Enigmail.msg.securityInfo;
-    let statusFlags = secInfo.statusFlags;
-    let extStatusFlags =
+    const secInfo = Enigmail.msg.securityInfo;
+    const statusFlags = secInfo.statusFlags;
+    const extStatusFlags =
       "extStatusFlags" in secInfo ? secInfo.extStatusFlags : 0;
 
     let signed;
@@ -366,7 +221,7 @@ Enigmail.hdrView = {
       }
 
       if (unhideBar) {
-        Enigmail.msg.notificationBox.appendNotification(
+        await Enigmail.msg.notificationBox.appendNotification(
           "decryptionFailed",
           {
             label: await document.l10n.formatValue(infoId),
@@ -379,7 +234,10 @@ Enigmail.hdrView = {
 
       this.msgSignatureState = EnigmailConstants.MSG_SIG_NONE;
     } else if (statusFlags & EnigmailConstants.DECRYPTION_OKAY) {
-      EnigmailURIs.rememberEncryptedUri(this.lastEncryptedMsgKey);
+      gEncryptedURIService.rememberEncrypted(this.lastEncryptedUri);
+      gEncryptedURIService.rememberEncrypted(
+        MailServices.neckoURLForMessageURI(this.lastEncryptedUri)
+      );
       encrypted = "ok";
       this.msgEncryptionState = EnigmailConstants.MSG_ENC_OK;
     }
@@ -393,6 +251,9 @@ Enigmail.hdrView = {
     ) {
       if (statusFlags & EnigmailConstants.INVALID_RECIPIENT) {
         this.msgSignatureState = EnigmailConstants.MSG_SIG_INVALID_KEY_REJECTED;
+      } else if (extStatusFlags & EnigmailConstants.EXT_SIGNING_TIME_MISMATCH) {
+        this.msgSignatureState =
+          EnigmailConstants.MSG_SIG_INVALID_DATE_MISMATCH;
       } else {
         this.msgSignatureState = EnigmailConstants.MSG_SIG_INVALID;
       }
@@ -470,7 +331,7 @@ Enigmail.hdrView = {
    * message state became available, such as encryption or signature
    * status, or the availability of an attached key.
    *
-   * @param {string} triggeredByMimePartNumber - optional number of the
+   * @param {string} [triggeredByMimePartNumber] - Number of the
    *   MIME part that was processed and has triggered this status update
    *   request.
    */
@@ -484,86 +345,35 @@ Enigmail.hdrView = {
     );
   },
 
-  editKeyExpiry() {
-    EnigmailWindows.editKeyExpiry(
-      window,
-      [Enigmail.msg.securityInfo.userId],
-      [Enigmail.msg.securityInfo.keyId]
-    );
-    ReloadMessage();
-  },
-
-  editKeyTrust() {
-    let key = EnigmailKeyRing.getKeyById(Enigmail.msg.securityInfo.keyId);
-
-    EnigmailWindows.editKeyTrust(
-      window,
-      [Enigmail.msg.securityInfo.userId],
-      [key.keyId]
-    );
-    ReloadMessage();
-  },
-
-  signKey() {
-    let key = EnigmailKeyRing.getKeyById(Enigmail.msg.securityInfo.keyId);
-
-    EnigmailWindows.signKey(
-      window,
-      Enigmail.msg.securityInfo.userId,
-      key.keyId,
-      null
-    );
-    ReloadMessage();
-  },
-
   msgHdrViewLoad() {
-    EnigmailLog.DEBUG("enigmailMsgHdrViewOverlay.js: this.msgHdrViewLoad\n");
-
     this.messageListener = {
       onStartHeaders() {
-        EnigmailLog.DEBUG(
-          "enigmailMsgHdrViewOverlay.js: _listener_onStartHeaders\n"
-        );
+        Enigmail.hdrView.statusBarHide();
+        EnigmailVerify.setLastMsgUri(Enigmail.msg.getCurrentMsgUriSpec());
 
-        try {
-          Enigmail.hdrView.statusBarHide();
-          EnigmailVerify.setWindow(window, Enigmail.msg.getCurrentMsgUriSpec());
+        const msgFrame = document.getElementById("messagepane").contentDocument;
 
-          let msgFrame = document.getElementById("messagepane").contentDocument;
-
-          if (msgFrame) {
-            msgFrame.addEventListener(
-              "unload",
-              Enigmail.hdrView.messageUnload.bind(Enigmail.hdrView),
-              true
-            );
-            msgFrame.addEventListener(
-              "load",
-              Enigmail.hdrView.messageLoad.bind(Enigmail.hdrView),
-              true
-            );
-          }
-
-          Enigmail.hdrView.forgetEncryptedMsgKey();
-          Enigmail.hdrView.setWindowCallback();
-        } catch (ex) {
-          console.debug(ex);
+        if (msgFrame) {
+          msgFrame.addEventListener(
+            "unload",
+            Enigmail.hdrView.messageUnload.bind(Enigmail.hdrView),
+            true
+          );
+          msgFrame.addEventListener(
+            "load",
+            Enigmail.hdrView.messageLoad.bind(Enigmail.hdrView),
+            true
+          );
         }
+
+        Enigmail.hdrView.forgetEncryptedMsgKey();
       },
 
-      onEndHeaders() {
-        EnigmailLog.DEBUG(
-          "enigmailMsgHdrViewOverlay.js: _listener_onEndHeaders\n"
-        );
-      },
+      onEndHeaders() {},
 
       onEndAttachments() {
-        EnigmailLog.DEBUG(
-          "enigmailMsgHdrViewOverlay.js: _listener_onEndAttachments\n"
-        );
-
         try {
-          EnigmailVerify.setWindow(null, null);
+          EnigmailVerify.setLastMsgUri(null);
         } catch (ex) {}
 
         Enigmail.hdrView.messageLoad();
@@ -581,17 +391,14 @@ Enigmail.hdrView = {
     this.messageListener.onEndAttachments();
   },
 
-  messageUnload(event) {
-    EnigmailLog.DEBUG("enigmailMsgHdrViewOverlay.js: this.messageUnload\n");
+  messageUnload() {
     if (Enigmail.hdrView.flexbuttonAction === null) {
       this.forgetEncryptedMsgKey();
     }
   },
 
-  async messageLoad(event) {
-    EnigmailLog.DEBUG("enigmailMsgHdrViewOverlay.js: this.messageLoad\n");
-
-    await Enigmail.msg.messageAutoDecrypt();
+  async messageLoad() {
+    await Enigmail.msg.messageDecrypt(null, true);
     Enigmail.msg.handleAttachmentEvent();
   },
 
@@ -600,33 +407,31 @@ Enigmail.hdrView = {
       return;
     }
 
-    let key = EnigmailKeyRing.getKeyById(Enigmail.msg.securityInfo.keyId);
+    const key = EnigmailKeyRing.getKeyById(Enigmail.msg.securityInfo.keyId);
 
     EnigmailWindows.openKeyDetails(window, key.keyId, false);
   },
 
   forgetEncryptedMsgKey() {
-    if (Enigmail.hdrView.lastEncryptedMsgKey) {
-      EnigmailURIs.forgetEncryptedUri(Enigmail.hdrView.lastEncryptedMsgKey);
-      Enigmail.hdrView.lastEncryptedMsgKey = null;
-    }
-
-    if (Enigmail.hdrView.lastEncryptedUri && gEncryptedURIService) {
+    if (Enigmail.hdrView.lastEncryptedUri) {
       gEncryptedURIService.forgetEncrypted(Enigmail.hdrView.lastEncryptedUri);
+      gEncryptedURIService.forgetEncrypted(
+        MailServices.neckoURLForMessageURI(Enigmail.hdrView.lastEncryptedUri)
+      );
       Enigmail.hdrView.lastEncryptedUri = null;
     }
   },
 
-  onShowAttachmentContextMenu(event) {
-    let contextMenu = document.getElementById("attachmentItemContext");
-    let separator = document.getElementById("openpgpCtxItemsSeparator");
-    let decryptOpenMenu = document.getElementById("enigmail_ctxDecryptOpen");
-    let decryptSaveMenu = document.getElementById("enigmail_ctxDecryptSave");
-    let importMenu = document.getElementById("enigmail_ctxImportKey");
-    let verifyMenu = document.getElementById("enigmail_ctxVerifyAtt");
+  onShowAttachmentContextMenu() {
+    const contextMenu = document.getElementById("attachmentItemContext");
+    const separator = document.getElementById("openpgpCtxItemsSeparator");
+    const decryptOpenMenu = document.getElementById("enigmail_ctxDecryptOpen");
+    const decryptSaveMenu = document.getElementById("enigmail_ctxDecryptSave");
+    const importMenu = document.getElementById("enigmail_ctxImportKey");
+    const verifyMenu = document.getElementById("enigmail_ctxVerifyAtt");
 
     if (contextMenu.attachments.length == 1) {
-      let attachment = contextMenu.attachments[0];
+      const attachment = contextMenu.attachments[0];
 
       if (/^application\/pgp-keys/i.test(attachment.contentType)) {
         importMenu.hidden = false;
@@ -647,11 +452,7 @@ Enigmail.hdrView = {
         decryptOpenMenu.hidden = false;
         decryptSaveMenu.hidden = false;
         if (
-          EnigmailMsgRead.checkSignedAttachment(
-            attachment,
-            null,
-            currentAttachments
-          )
+          EnigmailMsgRead.checkSignedAttachment(attachment, currentAttachments)
         ) {
           verifyMenu.hidden = false;
         } else {
@@ -665,11 +466,7 @@ Enigmail.hdrView = {
           attachment.displayName = "message.pgp";
         }
       } else if (
-        EnigmailMsgRead.checkSignedAttachment(
-          attachment,
-          null,
-          currentAttachments
-        )
+        EnigmailMsgRead.checkSignedAttachment(attachment, currentAttachments)
       ) {
         importMenu.hidden = true;
         decryptOpenMenu.hidden = true;
@@ -698,7 +495,6 @@ Enigmail.hdrView = {
   },
 
   updateMsgDb() {
-    EnigmailLog.DEBUG("enigmailMsgHdrViewOverlay.js: this.updateMsgDb\n");
     var msg = gMessage;
     if (!msg || !msg.folder) {
       return;
@@ -714,11 +510,7 @@ Enigmail.hdrView = {
   },
 
   enigCanDetachAttachments() {
-    EnigmailLog.DEBUG(
-      "enigmailMsgHdrViewOverlay.js: this.enigCanDetachAttachments\n"
-    );
-
-    var canDetach = true;
+    let canDetach = true;
     if (
       Enigmail.msg.securityInfo &&
       typeof Enigmail.msg.securityInfo.statusFlags != "undefined"
@@ -732,9 +524,15 @@ Enigmail.hdrView = {
     return canDetach;
   },
 
+  /**
+   * Modify the subject (got from encrypted headers).
+   *
+   * @param {string} subject - Subject.
+   * @param {nsIMsgDBHdr} hdr - The message we're setting subject for.
+   */
   setSubject(subject, hdr) {
     // Strip multiple localized Re: prefixes. This emulates NS_MsgStripRE().
-    let prefixes = Services.prefs
+    const prefixes = Services.prefs
       .getComplexValue("mailnews.localizedRe", Ci.nsIPrefLocalizedString)
       .data.split(",")
       .filter(Boolean);
@@ -746,212 +544,120 @@ Enigmail.hdrView = {
       new RegExp(`^(${prefixes.join(": |")}: )+`, "i"),
       ""
     );
-    let hadRe = newSubject != subject;
+    const hadRe = newSubject != subject;
 
     // Update the message.
     hdr.subject = newSubject;
-    let oldFlags = gMessage.flags;
+    const oldFlags = gMessage.flags;
     if (hadRe) {
       hdr.flags |= Ci.nsMsgMessageFlags.HasRe;
       newSubject = "Re: " + newSubject;
     }
+
     if (hdr == gMessage) {
       document.title = newSubject;
-      if ("subject" in currentHeaderData) {
-        currentHeaderData.subject.headerValue = newSubject;
-      }
+      currentHeaderData.subject.headerValue = newSubject;
       document.getElementById("expandedsubjectBox").headerValue = newSubject;
     }
+
     // This even works if the flags haven't changed. Causes repaint in all thread trees.
     hdr.folder?.msgDatabase.notifyHdrChangeAll(hdr, oldFlags, hdr.flags, {});
   },
 
   updateHdrBox(header, value) {
-    let e = document.getElementById("expanded" + header + "Box");
+    const e = document.getElementById("expanded" + header + "Box");
     if (e) {
       e.headerValue = value;
     }
   },
+};
 
-  setWindowCallback() {
-    EnigmailLog.DEBUG("enigmailMsgHdrViewOverlay.js: setWindowCallback\n");
+/** @implements {nsIMsgOpenPGPSink} */
+var openpgpSink = {
+  QueryInterface: ChromeUtils.generateQI(["nsIMsgOpenPGPSink"]),
 
-    EnigmailSingletons.messageReader = this.headerPane;
-  },
-
-  clearWindowCallback() {
-    if (EnigmailSingletons.messageReader == this.headerPane) {
-      EnigmailSingletons.messageReader = null;
+  /**
+   * Request that OpenPGP security status from the given MIME part
+   * shall be ignored (not shown in the UI). If status for that
+   * MIME part was already received, then reset the status.
+   *
+   * @param {string} originMimePartNumber - Ignore security status
+   *   of this MIME part.
+   */
+  ignoreStatusFrom(originMimePartNumber) {
+    Enigmail.hdrView.ignoreStatusFromMimePart = originMimePartNumber;
+    if (Enigmail.hdrView.receivedStatusFromParts.has(originMimePartNumber)) {
+      Enigmail.hdrView.reset();
+      Enigmail.hdrView.ignoreStatusFromMimePart = originMimePartNumber;
     }
   },
 
-  headerPane: {
-    isCurrentMessage(uriParam) {
-      // FIXME: it would be nicer to just be able to compare the URI specs.
-      // That does currently not work for all cases, e.g.
-      // mailbox:///...data/eml/signed-encrypted-autocrypt-gossip.eml?type=application/x-message-display&number=0 vs.
-      // file:///...data/eml/signed-encrypted-autocrypt-gossip.eml?type=application/x-message-display
+  /**
+   * Modify message headers.
+   *
+   * @param {string} uri - URI spec for the message (part).
+   * @param {string} headerData - Header data in JSON format.
+   * @param {string} mimePartNumber - MIME part number.
+   */
+  modifyMessageHeaders(uri, headerData, mimePartNumber) {
+    const msgURI = Services.io.newURI(uri).QueryInterface(Ci.nsIMsgMessageUrl);
+    if (!this.displaySubPart(mimePartNumber, msgURI.spec)) {
+      return;
+    }
 
-      const uri = Services.io
-        .newURI(uriParam.spec)
-        .QueryInterface(Ci.nsIMsgMessageUrl);
-      const uri2 = EnigmailFuncs.getUrlFromUriSpec(gMessageURI);
-      if (uri.host != uri2.host) {
-        return false;
-      }
+    let msg = msgURI.messageHeader;
+    if (!msg && EnigmailFuncs.isCurrentMessage(gMessageURI, uri)) {
+      // .eml messages opened from file://
+      msg = gMessage;
+    }
+    if (!msg) {
+      return;
+    }
 
-      const id = EnigmailURIs.msgIdentificationFromUrl(uri);
-      const id2 = EnigmailURIs.msgIdentificationFromUrl(uri2);
-      return id.folder === id2.folder && id.msgNum === id2.msgNum;
-    },
+    const hdr = JSON.parse(headerData);
+    if ("subject" in hdr) {
+      Enigmail.hdrView.setSubject(hdr.subject, msg);
+    }
 
-    /**
-     * Determine if a given MIME part number is a multipart/related message or a child thereof
-     *
-     * @param mimePart:      Object - The MIME Part object to evaluate from the MIME tree
-     * @param searchPartNum: String - The part number to determine
-     */
-    isMultipartRelated(mimePart, searchPartNum) {
-      if (
-        searchPartNum.indexOf(mimePart.partNum) == 0 &&
-        mimePart.partNum.length <= searchPartNum.length
-      ) {
-        if (mimePart.fullContentType.search(/^multipart\/related/i) === 0) {
-          return true;
-        }
+    if ("date" in hdr) {
+      // FIXME: more work needed to update the UI. See setSubject.
+      msg.date = Date.parse(hdr.date) * 1000;
+    }
+  },
 
-        for (let i in mimePart.subParts) {
-          if (this.isMultipartRelated(mimePart.subParts[i], searchPartNum)) {
-            return true;
-          }
-        }
-      }
-      return false;
-    },
+  async updateSecurityStatus(
+    exitCode,
+    statusFlags,
+    extStatusFlags,
+    keyId,
+    userId,
+    sigDetails,
+    errorMsg,
+    blockSeparation,
+    uri,
+    extraDetails,
+    mimePartNumber
+  ) {
+    if (
+      Enigmail.hdrView.ignoreStatusFromMimePart != "" &&
+      mimePartNumber == Enigmail.hdrView.ignoreStatusFromMimePart
+    ) {
+      return;
+    }
 
-    /**
-     * Determine if a given mime part number should be displayed.
-     * Returns true if one of these conditions is true:
-     *  - this is the 1st displayed block of the message
-     *  - the message part displayed corresponds to the decrypted part
-     *
-     * @param mimePartNumber: String - the MIME part number that was decrypted/verified
-     * @param uriSpec:        String - the URI spec that is being displayed
-     */
-    displaySubPart(mimePartNumber, uriSpec) {
-      if (!mimePartNumber || !uriSpec) {
-        return true;
-      }
-      let part = EnigmailMime.getMimePartNumber(uriSpec);
+    Enigmail.hdrView.receivedStatusFromParts.add(mimePartNumber);
 
-      if (part.length === 0) {
-        // only display header if 1st message part
-        if (mimePartNumber.search(/^1(\.1)*$/) < 0) {
-          return false;
-        }
-      } else {
-        let r = EnigmailFuncs.compareMimePartLevel(mimePartNumber, part);
+    if (!EnigmailFuncs.isCurrentMessage(gMessageURI, uri)) {
+      return;
+    }
+    if (!this.displaySubPart(mimePartNumber, uri)) {
+      return;
+    }
+    if (this.hasUnauthenticatedParts(mimePartNumber)) {
+      statusFlags |= EnigmailConstants.PARTIALLY_PGP;
+    }
 
-        // analyzed mime part is contained in viewed message part
-        if (r === 2) {
-          if (mimePartNumber.substr(part.length).search(/^\.1(\.1)*$/) < 0) {
-            return false;
-          }
-        } else if (r !== 0) {
-          return false;
-        }
-
-        if (Enigmail.msg.mimeParts) {
-          if (this.isMultipartRelated(Enigmail.msg.mimeParts, mimePartNumber)) {
-            return false;
-          }
-        }
-      }
-      return true;
-    },
-
-    /**
-     * Determine if there are message parts that are not encrypted
-     *
-     * @param mimePartNumber String - the MIME part number that was authenticated
-     *
-     * @returns Boolean: true: there are siblings / false: no siblings
-     */
-    hasUnauthenticatedParts(mimePartNumber) {
-      function hasUnauthenticatedSiblings(
-        mimeSubTree,
-        mimePartToCheck,
-        parentOfMimePartToCheck
-      ) {
-        if (mimeSubTree.partNum === parentOfMimePartToCheck) {
-          // If this is an encrypted message that is the parent of mimePartToCheck,
-          // then we know that all its childs (including mimePartToCheck) are authenticated.
-          if (
-            mimeSubTree.fullContentType.search(
-              /^multipart\/encrypted.{1,255}protocol="?application\/pgp-encrypted"?/i
-            ) === 0
-          ) {
-            return false;
-          }
-        }
-        if (
-          mimeSubTree.partNum.indexOf(parentOfMimePartToCheck) == 0 &&
-          mimeSubTree.partNum !== mimePartToCheck
-        ) {
-          // This is a sibling (same parent, different part number).
-          return true;
-        }
-
-        for (let i in mimeSubTree.subParts) {
-          if (
-            hasUnauthenticatedSiblings(
-              mimeSubTree.subParts[i],
-              mimePartToCheck,
-              parentOfMimePartToCheck
-            )
-          ) {
-            return true;
-          }
-        }
-
-        return false;
-      }
-
-      if (!mimePartNumber || !Enigmail.msg.mimeParts) {
-        return false;
-      }
-
-      let parentNum = "";
-      if (mimePartNumber.includes(".")) {
-        parentNum = mimePartNumber.replace(/\.\d+$/, "");
-      }
-
-      return hasUnauthenticatedSiblings(
-        Enigmail.msg.mimeParts,
-        mimePartNumber,
-        parentNum
-      );
-    },
-
-    /**
-     * Request that OpenPGP security status from the given MIME part
-     * shall be ignored (not shown in the UI). If status for that
-     * MIME part was already received, then reset the status.
-     *
-     * @param {string} originMimePartNumber - Ignore security status
-     *   of this MIME part.
-     */
-    ignoreStatusFrom(originMimePartNumber) {
-      Enigmail.hdrView.ignoreStatusFromMimePart = originMimePartNumber;
-      setIgnoreStatusFromMimePart(originMimePartNumber);
-      if (Enigmail.hdrView.receivedStatusFromParts.has(originMimePartNumber)) {
-        Enigmail.hdrView.reset();
-        Enigmail.hdrView.ignoreStatusFromMimePart = originMimePartNumber;
-      }
-    },
-
-    async updateSecurityStatus(
-      unusedUriSpec,
+    Enigmail.hdrView.updatePgpStatus(
       exitCode,
       statusFlags,
       extStatusFlags,
@@ -960,240 +666,154 @@ Enigmail.hdrView = {
       sigDetails,
       errorMsg,
       blockSeparation,
-      uri,
       extraDetails,
       mimePartNumber
+    );
+  },
+
+  /**
+   * @param {string} uri - URI to handle.
+   */
+  handleSMimeMessage(uri) {
+    if (
+      Enigmail.hdrView.msgSignedStateString != null ||
+      Enigmail.hdrView.msgEncryptedStateString != null
     ) {
-      if (
-        Enigmail.hdrView.ignoreStatusFromMimePart != "" &&
-        mimePartNumber == Enigmail.hdrView.ignoreStatusFromMimePart
-      ) {
-        return;
-      }
-
-      Enigmail.hdrView.receivedStatusFromParts.add(mimePartNumber);
-
-      // uriSpec is not used for Enigmail anymore. It is here because other addons and pEp rely on it
-
-      EnigmailLog.DEBUG(
-        "enigmailMsgHdrViewOverlay.js: updateSecurityStatus: mimePart=" +
-          mimePartNumber +
-          "\n"
-      );
-
-      let uriSpec = uri ? uri.spec : null;
-
-      if (this.isCurrentMessage(uri)) {
-        if (statusFlags & EnigmailConstants.DECRYPTION_OKAY) {
-          if (gEncryptedURIService) {
-            // remember encrypted message URI to enable TB prevention against EFAIL attack
-            Enigmail.hdrView.lastEncryptedUri = gMessageURI;
-            gEncryptedURIService.rememberEncrypted(
-              Enigmail.hdrView.lastEncryptedUri
-            );
-          }
-        }
-
-        if (!this.displaySubPart(mimePartNumber, uriSpec)) {
-          return;
-        }
-        if (this.hasUnauthenticatedParts(mimePartNumber)) {
-          EnigmailLog.DEBUG(
-            "enigmailMsgHdrViewOverlay.js: updateSecurityStatus: found unauthenticated part\n"
-          );
-          statusFlags |= EnigmailConstants.PARTIALLY_PGP;
-        }
-
-        Enigmail.hdrView.updatePgpStatus(
-          exitCode,
-          statusFlags,
-          extStatusFlags,
-          keyId,
-          userId,
-          sigDetails,
-          errorMsg,
-          blockSeparation,
-          extraDetails,
-          mimePartNumber
-        );
-      }
-    },
-
-    processDecryptionResult(uri, actionType, processData, mimePartNumber) {
-      EnigmailLog.DEBUG(
-        "enigmailMsgHdrViewOverlay.js: EnigMimeHeaderSink.processDecryptionResult:\n"
-      );
-      EnigmailLog.DEBUG(
-        "enigmailMsgHdrViewOverlay.js: actionType= " +
-          actionType +
-          ", mimePart=" +
-          mimePartNumber +
-          "\n"
-      );
-
-      let msg = gMessage;
-      if (!msg) {
-        return;
-      }
-      if (!this.isCurrentMessage(uri)) {
-        return;
-      }
-
-      switch (actionType) {
-        case "modifyMessageHeaders":
-          this.modifyMessageHeaders(uri, processData, mimePartNumber);
-          break;
-        /*
-        case "wksConfirmRequest":
-          Enigmail.hdrView.checkWksConfirmRequest(processData);
-        */
-      }
-    },
-
-    modifyMessageHeaders(uri, headerData, mimePartNumber) {
-      EnigmailLog.DEBUG(
-        "enigmailMsgHdrViewOverlay.js: EnigMimeHeaderSink.modifyMessageHeaders:\n"
-      );
-
-      let hdr;
-
-      try {
-        hdr = JSON.parse(headerData);
-      } catch (ex) {
-        EnigmailLog.DEBUG(
-          "enigmailMsgHdrViewOverlay.js: modifyMessageHeaders: - no headers to display\n"
-        );
-        return;
-      }
-
-      if (typeof hdr !== "object") {
-        return;
-      }
-      if (!this.displaySubPart(mimePartNumber, uri?.spec)) {
-        return;
-      }
-
-      let msg = uri.messageHeader;
-      if (!msg && this.isCurrentMessage(uri)) {
-        // .eml messages opened from file://
-        msg = gMessage;
-      }
-      if (!msg) {
-        return;
-      }
-
-      if ("subject" in hdr) {
-        Enigmail.hdrView.setSubject(hdr.subject, msg);
-      }
-
-      if ("date" in hdr) {
-        msg.date = Date.parse(hdr.date) * 1000;
-      }
-      /*
-            if ("newsgroups" in hdr) {
-              updateHdrBox("newsgroups", hdr.newsgroups);
-            }
-
-            if ("followup-to" in hdr) {
-              updateHdrBox("followup-to", hdr["followup-to"]);
-            }
-
-            if ("from" in hdr) {
-              gExpandedHeaderView.from.outputFunction(gExpandedHeaderView.from, hdr.from);
-              msg.setStringProperty("Enigmail-From", hdr.from);
-            }
-
-            if ("to" in hdr) {
-              gExpandedHeaderView.to.outputFunction(gExpandedHeaderView.to, hdr.to);
-              msg.setStringProperty("Enigmail-To", hdr.to);
-            }
-
-            if ("cc" in hdr) {
-              gExpandedHeaderView.cc.outputFunction(gExpandedHeaderView.cc, hdr.cc);
-              msg.setStringProperty("Enigmail-Cc", hdr.cc);
-            }
-
-            if ("reply-to" in hdr) {
-              gExpandedHeaderView["reply-to"].outputFunction(gExpandedHeaderView["reply-to"], hdr["reply-to"]);
-              msg.setStringProperty("Enigmail-ReplyTo", hdr["reply-to"]);
-            }
-      */
-    },
-
-    handleSMimeMessage(uri) {
-      if (
-        Enigmail.hdrView.msgSignedStateString != null ||
-        Enigmail.hdrView.msgEncryptedStateString != null
-      ) {
-        // If we already processed an OpenPGP part, then we are handling
-        // a message with an inner S/MIME part. We must not reload
-        // the message here, because we'd run into an endless loop.
-        return;
-      }
-      if (this.isCurrentMessage(uri)) {
-        EnigmailVerify.unregisterPGPMimeHandler();
-        Enigmail.msg.messageReload(false);
-      }
-    },
-  },
-
-  /*
-  onUnloadEnigmail() {
-    window.removeEventListener("load-enigmail", Enigmail.hdrView.hdrViewLoad);
-    for (let i = 0; i < gMessageListeners.length; i++) {
-      if (gMessageListeners[i] === Enigmail.hdrView.messageListener) {
-        gMessageListeners.splice(i, 1);
-        break;
-      }
+      // If we already processed an OpenPGP part, then we are handling
+      // a message with an inner S/MIME part. We must not reload
+      // the message here, because we'd run into an endless loop.
+      return;
     }
-
-    let signedHdrElement = document.getElementById("signedHdrIcon");
-    if (signedHdrElement) {
-      signedHdrElement.setAttribute(
-        "onclick",
-        "showMessageReadSecurityInfo();"
-      );
-    }
-
-    let encryptedHdrElement = document.getElementById("encryptedHdrIcon");
-    if (encryptedHdrElement) {
-      encryptedHdrElement.setAttribute(
-        "onclick",
-        "showMessageReadSecurityInfo();"
-      );
-    }
-
-    let addrPopup = document.getElementById("emailAddressPopup");
-    if (addrPopup) {
-      addrPopup.removeEventListener(
-        "popupshowing",
-        Enigmail.hdrView.displayAddressPopup
-      );
-    }
-
-    let attCtx = document.getElementById("attachmentItemContext");
-    if (attCtx) {
-      attCtx.removeEventListener(
-        "popupshowing",
-        this.onShowAttachmentContextMenu
-      );
-    }
-
-    let msgFrame = EnigmailWindows.getFrame(window, "messagepane");
-    if (msgFrame) {
-      msgFrame.removeEventListener(
-        "unload",
-        Enigmail.hdrView.messageUnload,
-        true
-      );
-      msgFrame.removeEventListener("load", Enigmail.hdrView.messageLoad);
+    if (EnigmailFuncs.isCurrentMessage(gMessageURI, uri)) {
+      EnigmailVerify.unregisterPGPMimeHandler();
+      Enigmail.msg.messageReload(false);
     }
   },
-  */
+
+  /**
+   * Determine if a given mime part number should be displayed.
+   * Returns true if one of these conditions is true:
+   *  - this is the 1st displayed block of the message
+   *  - the message part displayed corresponds to the decrypted part
+   *
+   * @param {string} mimePartNumber - The MIME part number that was
+   *   decrypted/verified
+   * @param {string} uriSpec - The URI spec that is being displayed.
+   */
+  displaySubPart(mimePartNumber, uriSpec) {
+    if (!mimePartNumber || !uriSpec) {
+      return true;
+    }
+    const part = EnigmailMime.getMimePartNumber(uriSpec);
+
+    if (part.length === 0) {
+      // only display header if 1st message part
+      if (mimePartNumber.search(/^1(\.1)*$/) < 0) {
+        return false;
+      }
+    } else {
+      const r = EnigmailFuncs.compareMimePartLevel(mimePartNumber, part);
+
+      // analyzed mime part is contained in viewed message part
+      if (r === 2) {
+        if (mimePartNumber.substr(part.length).search(/^\.1(\.1)*$/) < 0) {
+          return false;
+        }
+      } else if (r !== 0) {
+        return false;
+      }
+
+      if (Enigmail.msg.mimeParts) {
+        if (this.isMultipartRelated(Enigmail.msg.mimeParts, mimePartNumber)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  },
+
+  /**
+   * Determine if there are message parts that are not encrypted
+   *
+   * @param {string} mimePartNumber - The MIME part number that was authenticated.
+   * @returns {boolean} true if there are siblings.
+   */
+  hasUnauthenticatedParts(mimePartNumber) {
+    function hasUnauthenticatedSiblings(
+      mimeSubTree,
+      mimePartToCheck,
+      parentOfMimePartToCheck
+    ) {
+      if (mimeSubTree.partNum === parentOfMimePartToCheck) {
+        // If this is an encrypted message that is the parent of mimePartToCheck,
+        // then we know that all its childs (including mimePartToCheck) are authenticated.
+        if (
+          mimeSubTree.fullContentType.search(
+            /^multipart\/encrypted.{1,255}protocol="?application\/pgp-encrypted"?/i
+          ) === 0
+        ) {
+          return false;
+        }
+      }
+      if (
+        mimeSubTree.partNum.indexOf(parentOfMimePartToCheck) == 0 &&
+        mimeSubTree.partNum !== mimePartToCheck
+      ) {
+        // This is a sibling (same parent, different part number).
+        return true;
+      }
+
+      for (const i in mimeSubTree.subParts) {
+        if (
+          hasUnauthenticatedSiblings(
+            mimeSubTree.subParts[i],
+            mimePartToCheck,
+            parentOfMimePartToCheck
+          )
+        ) {
+          return true;
+        }
+      }
+      return false;
+    }
+    if (!mimePartNumber || !Enigmail.msg.mimeParts) {
+      return false;
+    }
+
+    let parentNum = "";
+    if (mimePartNumber.includes(".")) {
+      parentNum = mimePartNumber.replace(/\.\d+$/, "");
+    }
+
+    return hasUnauthenticatedSiblings(
+      Enigmail.msg.mimeParts,
+      mimePartNumber,
+      parentNum
+    );
+  },
+
+  /**
+   * Determine if a given MIME part number is a multipart/related message or a child thereof
+   *
+   * @param {MimeTreePart} mimePart - The MIME Part object to evaluate from
+   *   the MIME tree.
+   * @param {string} searchPartNum - The part number to determine.
+   */
+  isMultipartRelated(mimePart, searchPartNum) {
+    if (
+      searchPartNum.indexOf(mimePart.partNum) == 0 &&
+      mimePart.partNum.length <= searchPartNum.length
+    ) {
+      if (mimePart.fullContentType.search(/^multipart\/related/i) === 0) {
+        return true;
+      }
+
+      for (const i in mimePart.subParts) {
+        if (this.isMultipartRelated(mimePart.subParts[i], searchPartNum)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  },
 };
-
-window.addEventListener(
-  "load-enigmail",
-  Enigmail.hdrView.hdrViewLoad.bind(Enigmail.hdrView)
-);
-window.addEventListener("unload", () => Enigmail.hdrView.clearWindowCallback());

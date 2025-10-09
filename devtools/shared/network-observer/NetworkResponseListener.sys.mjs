@@ -2,22 +2,23 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
-ChromeUtils.defineESModuleGetters(lazy, {
-  getResponseCacheObject:
-    "resource://devtools/shared/platform/CacheEntry.sys.mjs",
-  NetworkHelper:
-    "resource://devtools/shared/network-observer/NetworkHelper.sys.mjs",
-  NetworkUtils:
-    "resource://devtools/shared/network-observer/NetworkUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  NetUtil: "resource://gre/modules/NetUtil.jsm",
-});
+ChromeUtils.defineESModuleGetters(
+  lazy,
+  {
+    NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
+    NetworkHelper:
+      "resource://devtools/shared/network-observer/NetworkHelper.sys.mjs",
+    NetworkTimings:
+      "resource://devtools/shared/network-observer/NetworkTimings.sys.mjs",
+    NetworkUtils:
+      "resource://devtools/shared/network-observer/NetworkUtils.sys.mjs",
+    getResponseCacheObject:
+      "resource://devtools/shared/platform/CacheEntry.sys.mjs",
+  },
+  { global: "contextual" }
+);
 
 // Network logging
 
@@ -82,13 +83,8 @@ export class NetworkResponseListener {
    *
    * @type {nsIInputStream}
    */
+  // eslint-disable-next-line no-unused-private-class-members
   #inputStream = null;
-  /**
-   * Explicit flag to check if this listener was already destroyed.
-   *
-   * @type {boolean}
-   */
-  #isDestroyed = false;
   /**
    * Internal promise used to hold the completion of #getSecurityInfo.
    *
@@ -308,7 +304,8 @@ export class NetworkResponseListener {
       !this.#fromServiceWorker &&
       channel instanceof Ci.nsIEncodedChannel &&
       channel.contentEncodings &&
-      !channel.applyConversion
+      !channel.applyConversion &&
+      !channel.hasContentDecompressed
     ) {
       const encodingHeader = channel.getResponseHeader("Content-Encoding");
       const scs = Cc["@mozilla.org/streamConverters;1"].getService(
@@ -322,6 +319,7 @@ export class NetworkResponseListener {
         "br",
         "x-gzip",
         "x-deflate",
+        "zstd",
       ];
       for (const i in encodings) {
         // There can be multiple conversions applied
@@ -416,7 +414,7 @@ export class NetworkResponseListener {
    * Handle progress event as data is transferred.  This is used to record the
    * size on the wire, which may be compressed / encoded.
    */
-  onProgress(request, progress, progressMax) {
+  onProgress(request, progress) {
     this.#bodySize = progress;
 
     // Need to forward as well to keep things like Download Manager's progress
@@ -510,8 +508,11 @@ export class NetworkResponseListener {
     response.headersSize = this.#httpActivity.headersSize;
     response.transferredSize = this.#bodySize + this.#httpActivity.headersSize;
 
+    let charset = "";
+
     try {
       response.mimeType = this.#request.contentType;
+      charset = this.#request.contentCharset;
     } catch (ex) {
       // Ignore.
     }
@@ -528,16 +529,37 @@ export class NetworkResponseListener {
       }
     }
 
-    if (response.mimeType && this.#request.contentCharset) {
-      response.mimeType += "; charset=" + this.#request.contentCharset;
-    }
+    response.mimeType = lazy.NetworkHelper.addCharsetToMimeType(
+      response.mimeType,
+      charset
+    );
 
     this.#receivedData = "";
 
     // Check any errors or blocking scenarios which happen late in the cycle
     // e.g If a host is not found (NS_ERROR_UNKNOWN_HOST) or CORS blocking.
     const { blockingExtension, blockedReason } =
-      lazy.NetworkUtils.getBlockedReason(this.#httpActivity.channel);
+      lazy.NetworkUtils.getBlockedReason(
+        this.#httpActivity.channel,
+        this.#httpActivity.fromCache
+      );
+
+    if (this.#httpActivity.isOverridden) {
+      // For overridden scripts, we will not get the usual start notification
+      // for the request, so we add event timings and response start here.
+      const timings = lazy.NetworkTimings.extractHarTimings(this.#httpActivity);
+      this.#httpActivity.owner.addEventTimings(
+        timings.total,
+        timings.timings,
+        timings.offsets
+      );
+
+      this.#httpActivity.owner.addResponseStart({
+        channel: this.#httpActivity.channel,
+        fromCache: this.#httpActivity.fromCache,
+        rawHeaders: "",
+      });
+    }
 
     this.#httpActivity.owner.addResponseContent(response, {
       discardResponseBody: this.#httpActivity.discardResponseBody,
@@ -554,8 +576,6 @@ export class NetworkResponseListener {
     this.#inputStream = null;
     this.#converter = null;
     this.#request = null;
-
-    this.#isDestroyed = true;
   }
 
   /**

@@ -71,7 +71,7 @@ function replaceConcatWithComma(fixer, node) {
 module.exports = {
   meta: {
     docs: {
-      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/no-cu-reportError.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/rules/no-cu-reportError.html",
     },
     fixable: "code",
     messages: {
@@ -111,6 +111,7 @@ module.exports = {
               // into multiple arguments instead:
               if (
                 checkNode == node.callee &&
+                node.arguments.length >= 1 &&
                 isConcatenation(node.arguments[0])
               ) {
                 let { fixes: recursiveFixes } = replaceConcatWithComma(

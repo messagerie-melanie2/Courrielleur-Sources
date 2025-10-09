@@ -6,8 +6,9 @@
 
 "use strict";
 
-add_task(async function () {
+add_task(async function testInlinePreviews() {
   await pushPref("devtools.debugger.features.inline-preview", true);
+  await pushPref("javascript.options.experimental.import_attributes", true);
 
   const dbg = await initDebugger(
     "doc-inline-preview.html",
@@ -22,6 +23,7 @@ add_task(async function () {
     { identifier: "d:", value: "null" },
     { identifier: "e:", value: "Array []" },
     { identifier: "f:", value: "Object { }" },
+    { identifier: "reg:", value: "/^\\p{RGI_Emoji}$/v" },
     { identifier: "obj:", value: "Object { foo: 1 }" },
     {
       identifier: "bs:",
@@ -48,6 +50,12 @@ add_task(async function () {
     { identifier: "self:", value: `Object { x: 1, #privateVar: 2 }` },
   ]);
 
+  // Check inline previews for values within a module script
+  await checkInlinePreview(dbg, "runInModule", [
+    { identifier: "val:", value: "4" },
+    { identifier: "ids:", value: "Array [ 1, 2 ]" },
+  ]);
+
   // Checks that open in inspector button works in inline preview
   invokeInTab("btnClick");
   await checkInspectorIcon(dbg);
@@ -55,11 +63,48 @@ add_task(async function () {
   const { toolbox } = dbg;
   await toolbox.selectTool("jsdebugger");
 
-  await waitForPaused(dbg);
+  await waitForSelectedSource(dbg);
 
   // Check preview of event ( event.target should be clickable )
   // onBtnClick function in inline-preview.js
   await checkInspectorIcon(dbg);
+
+  await dbg.toolbox.closeToolbox();
+});
+
+add_task(async function testInlinePreviewsWithExplicitResourceManagement() {
+  await pushPref("devtools.debugger.features.inline-preview", true);
+  // javascript.options.experimental.explicit_resource_management is set to true, but it's
+  // only supported on Nightly at the moment, so only check for SuppressedError if
+  // they're supported.
+  if (!AppConstants.ENABLE_EXPLICIT_RESOURCE_MANAGEMENT) {
+    return;
+  }
+  const dbg = await initDebugger("doc-inline-preview.html");
+
+  const onPaused = waitForPaused(dbg);
+  dbg.commands.scriptCommand.execute(
+    `
+    function explicitResourceManagement() {
+      using erm = {
+        [Symbol.dispose]() {},
+        foo: 42
+      };
+      console.log(erm.foo);
+      debugger;
+    }; explicitResourceManagement();`,
+    {}
+  );
+  await onPaused;
+
+  await checkInlinePreview(dbg, "explicitResourceManagement", [
+    {
+      identifier: "erm:",
+      value: `Object { foo: 42, Symbol("Symbol.dispose"): Symbol.dispose() }`,
+    },
+  ]);
+
+  await dbg.toolbox.closeToolbox();
 });
 
 async function checkInlinePreview(dbg, fnName, inlinePreviews) {
@@ -88,17 +133,16 @@ async function checkInlinePreview(dbg, fnName, inlinePreviews) {
 }
 
 async function checkInspectorIcon(dbg) {
-  await waitForElement(dbg, "inlinePreviewOpenInspector");
-
-  const { toolbox } = dbg;
-  const node = findElement(dbg, "inlinePreviewOpenInspector");
+  const node = await waitForElement(dbg, "inlinePreviewOpenInspector");
 
   // Ensure hovering over button highlights the node in content pane
   const view = node.ownerDocument.defaultView;
+  const { toolbox } = dbg;
   const onNodeHighlight = toolbox.getHighlighter().waitForHighlighterShown();
 
   EventUtils.synthesizeMouseAtCenter(node, { type: "mousemove" }, view);
 
+  info("Wait for node to be highlighted");
   const { nodeFront } = await onNodeHighlight;
   is(nodeFront.displayName, "button", "The correct node was highlighted");
 

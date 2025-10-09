@@ -6,11 +6,11 @@
  * Tests CardDAV properties dialog.
  */
 
-const { CardDAVDirectory } = ChromeUtils.import(
-  "resource:///modules/CardDAVDirectory.jsm"
+const { CardDAVDirectory } = ChromeUtils.importESModule(
+  "resource:///modules/CardDAVDirectory.sys.mjs"
 );
-const { CardDAVServer } = ChromeUtils.import(
-  "resource://testing-common/CardDAVServer.jsm"
+const { CardDAVServer } = ChromeUtils.importESModule(
+  "resource://testing-common/CardDAVServer.sys.mjs"
 );
 
 add_task(async () => {
@@ -20,7 +20,7 @@ add_task(async () => {
   const URL_PREF = "ldap_2.servers.props.carddav.url";
   const URL_VALUE = "https://mochi.test/carddav/test";
 
-  let dirPrefId = MailServices.ab.newAddressBook(
+  const dirPrefId = MailServices.ab.newAddressBook(
     "props",
     undefined,
     Ci.nsIAbManager.CARDDAV_DIRECTORY_TYPE
@@ -28,8 +28,8 @@ add_task(async () => {
   Assert.equal(dirPrefId, "ldap_2.servers.props");
   Assert.equal([...MailServices.ab.directories].length, 3);
 
-  let directory = MailServices.ab.getDirectoryFromId(dirPrefId);
-  let davDirectory = CardDAVDirectory.forFile(directory.fileName);
+  const directory = MailServices.ab.getDirectoryFromId(dirPrefId);
+  const davDirectory = CardDAVDirectory.forFile(directory.fileName);
   registerCleanupFunction(async () => {
     Assert.equal(davDirectory._syncTimer, null, "sync timer cleaned up");
   });
@@ -45,23 +45,23 @@ add_task(async () => {
   Assert.equal(davDirectory._syncTimer, null, "no sync scheduled");
   Assert.equal(davDirectory.readOnly, false);
 
-  let abWindow = await openAddressBookWindow();
-  let abDocument = abWindow.document;
-  let booksList = abWindow.booksList;
+  const abWindow = await openAddressBookWindow();
+  const abDocument = abWindow.document;
+  const booksList = abWindow.booksList;
 
-  openDirectory(directory);
+  await openDirectory(directory);
 
   Assert.equal(booksList.rowCount, 4);
   Assert.equal(booksList.getIndexForUID(directory.UID), 2);
   Assert.equal(booksList.selectedIndex, 2);
 
-  let menu = abDocument.getElementById("bookContext");
-  let menuItem = abDocument.getElementById("bookContextProperties");
+  const menu = abDocument.getElementById("bookContext");
+  const menuItem = abDocument.getElementById("bookContextProperties");
 
-  let subtest = async function (expectedValues, newValues, buttonAction) {
+  const subtest = async function (expectedValues, newValues, buttonAction) {
     Assert.equal(booksList.selectedIndex, 2);
 
-    let shownPromise = BrowserTestUtils.waitForEvent(menu, "popupshown");
+    const shownPromise = BrowserTestUtils.waitForEvent(menu, "popupshown");
     EventUtils.synthesizeMouseAtCenter(
       booksList.getRowAtIndex(2),
       { type: "contextmenu" },
@@ -69,29 +69,29 @@ add_task(async () => {
     );
     await shownPromise;
 
-    Assert.ok(BrowserTestUtils.is_visible(menuItem));
+    Assert.ok(BrowserTestUtils.isVisible(menuItem));
 
-    let dialogPromise = promiseLoadSubDialog(
+    const dialogPromise = promiseLoadSubDialog(
       "chrome://messenger/content/addressbook/abCardDAVProperties.xhtml"
     ).then(async function (dialogWindow) {
-      let dialogDocument = dialogWindow.document;
+      const dialogDocument = dialogWindow.document;
 
-      let nameInput = dialogDocument.getElementById("carddav-name");
+      const nameInput = dialogDocument.getElementById("carddav-name");
       Assert.equal(nameInput.value, expectedValues.name);
       if ("name" in newValues) {
         nameInput.value = newValues.name;
       }
 
-      let urlInput = dialogDocument.getElementById("carddav-url");
+      const urlInput = dialogDocument.getElementById("carddav-url");
       Assert.equal(urlInput.value, expectedValues.url);
       if ("url" in newValues) {
         urlInput.value = newValues.url;
       }
 
-      let refreshActiveInput = dialogDocument.getElementById(
+      const refreshActiveInput = dialogDocument.getElementById(
         "carddav-refreshActive"
       );
-      let refreshIntervalInput = dialogDocument.getElementById(
+      const refreshIntervalInput = dialogDocument.getElementById(
         "carddav-refreshInterval"
       );
 
@@ -117,7 +117,7 @@ add_task(async () => {
         refreshIntervalInput.value = newValues.refreshInterval;
       }
 
-      let readOnlyInput = dialogDocument.getElementById("carddav-readOnly");
+      const readOnlyInput = dialogDocument.getElementById("carddav-readOnly");
 
       Assert.equal(readOnlyInput.checked, expectedValues.readOnly);
       if ("readOnly" in newValues) {
@@ -192,7 +192,7 @@ add_task(async () => {
   Assert.equal(davDirectory._serverURL, URL_VALUE);
   Assert.equal(davDirectory.getIntValue("carddav.syncinterval", -1), 30);
   Assert.notEqual(davDirectory._syncTimer, null, "sync scheduled");
-  let currentSyncTimer = davDirectory._syncTimer;
+  const currentSyncTimer = davDirectory._syncTimer;
   Assert.equal(davDirectory.readOnly, true);
 
   info("Open the dialog and accept it. Nothing should change.");

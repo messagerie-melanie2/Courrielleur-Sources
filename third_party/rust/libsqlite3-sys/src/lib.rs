@@ -1,16 +1,11 @@
-#![allow(non_snake_case, non_camel_case_types)]
-#![cfg_attr(test, allow(deref_nullptr))] // https://github.com/rust-lang/rust-bindgen/issues/2066
+#![expect(non_snake_case, non_camel_case_types)]
 
 // force linking to openssl
 #[cfg(feature = "bundled-sqlcipher-vendored-openssl")]
 extern crate openssl_sys;
 
-#[cfg(all(windows, feature = "winsqlite3", target_pointer_width = "32"))]
-compile_error!("The `libsqlite3-sys/winsqlite3` feature is not supported on 32 bit targets.");
-
 pub use self::error::*;
 
-use std::default::Default;
 use std::mem;
 
 mod error;
@@ -22,17 +17,14 @@ pub fn SQLITE_STATIC() -> sqlite3_destructor_type {
 
 #[must_use]
 pub fn SQLITE_TRANSIENT() -> sqlite3_destructor_type {
-    Some(unsafe { mem::transmute(-1_isize) })
+    Some(unsafe { mem::transmute::<isize, unsafe extern "C" fn(*mut std::ffi::c_void)>(-1_isize) })
 }
 
-#[allow(clippy::all)]
+#[allow(dead_code, clippy::all)]
 mod bindings {
     include!(concat!(env!("OUT_DIR"), "/bindgen.rs"));
 }
 pub use bindings::*;
-
-pub type sqlite3_index_constraint = sqlite3_index_info_sqlite3_index_constraint;
-pub type sqlite3_index_constraint_usage = sqlite3_index_info_sqlite3_index_constraint_usage;
 
 impl Default for sqlite3_vtab {
     fn default() -> Self {

@@ -8,13 +8,13 @@
 
 #include "PublicKeyPinningService.h"
 #include "SharedCertVerifier.h"
-#include "SharedSSLState.h"
 #include "mozilla/ErrorResult.h"
 #include "mozilla/StaticPrefs_network.h"
 #include "mozilla/dom/Promise.h"
 #include "nsICertOverrideService.h"
 #include "nsISocketProvider.h"
 #include "nsITlsHandshakeListener.h"
+#include "nsNSSCertificate.h"
 #include "nsNSSComponent.h"
 #include "nsNSSHelper.h"
 #include "secerr.h"
@@ -31,9 +31,7 @@ CommonSocketControl::CommonSocketControl(const nsCString& aHostName,
                                          int32_t aPort, uint32_t aProviderFlags)
     : mHostName(aHostName),
       mPort(aPort),
-      mOriginAttributes(),
       mCanceled(false),
-      mSessionCacheInfo(),
       mHandshakeCompleted(false),
       mJoined(false),
       mSentClientCert(false),
@@ -42,36 +40,22 @@ CommonSocketControl::CommonSocketControl(const nsCString& aHostName,
       mProviderFlags(aProviderFlags),
       mSecurityState(0),
       mErrorCode(0),
-      mFailedCertChain(),
       mServerCert(nullptr),
-      mSucceededCertChain(),
-      mCipherSuite(),
-      mKeaGroupName(),
-      mSignatureSchemeName(),
-      mProtocolVersion(),
       mCertificateTransparencyStatus(0),
-      mIsAcceptedEch(),
-      mIsDelegatedCredential(),
-      mOverridableErrorCategory(),
       mMadeOCSPRequests(false),
       mUsedPrivateDNS(false),
-      mIsEV(),
       mNPNCompleted(false),
-      mNegotiatedNPN(),
       mResumed(false),
-      mIsBuiltCertChainRootBuiltInRoot(false),
-      mPeerId() {
-#ifdef DEBUG
+      mIsBuiltCertChainRootBuiltInRoot(false) {
+#if defined(MOZ_DIAGNOSTIC_ASSERT_ENABLED)
   mOwningThread = PR_GetCurrentThread();
 #endif
 }
 
 void CommonSocketControl::SetStatusErrorBits(
-    const nsCOMPtr<nsIX509Cert>& cert,
     nsITransportSecurityInfo::OverridableErrorCategory
         overridableErrorCategory) {
   COMMON_SOCKET_CONTROL_ASSERT_ON_OWNING_THREAD();
-  SetServerCert(cert, mozilla::psm::EVStatus::NotEV);
   mOverridableErrorCategory = Some(overridableErrorCategory);
 }
 
@@ -137,6 +121,12 @@ CommonSocketControl::ProxyStartSSL(void) { return NS_ERROR_NOT_IMPLEMENTED; }
 
 NS_IMETHODIMP
 CommonSocketControl::StartTLS(void) { return NS_ERROR_NOT_IMPLEMENTED; }
+
+NS_IMETHODIMP
+CommonSocketControl::AsyncStartTLS(JSContext* aCx,
+                                   mozilla::dom::Promise** aPromise) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
 
 NS_IMETHODIMP
 CommonSocketControl::SetNPNList(nsTArray<nsCString>& aNPNList) {
@@ -315,11 +305,10 @@ void CommonSocketControl::RebuildCertificateInfoFromSSLTokenCache() {
   mozilla::net::SessionCacheInfo& info = *mSessionCacheInfo;
   nsCOMPtr<nsIX509Cert> cert(
       new nsNSSCertificate(std::move(info.mServerCertBytes)));
-  if (info.mOverridableErrorCategory ==
+  SetServerCert(cert, info.mEVStatus);
+  if (info.mOverridableErrorCategory !=
       nsITransportSecurityInfo::OverridableErrorCategory::ERROR_UNSET) {
-    SetServerCert(cert, info.mEVStatus);
-  } else {
-    SetStatusErrorBits(cert, info.mOverridableErrorCategory);
+    SetStatusErrorBits(info.mOverridableErrorCategory);
   }
   SetCertificateTransparencyStatus(info.mCertificateTransparencyStatus);
   if (info.mSucceededCertChainBytes) {
@@ -523,3 +512,11 @@ CommonSocketControl::AsyncGetSecurityInfo(JSContext* aCx,
 }
 
 NS_IMETHODIMP CommonSocketControl::Claim() { return NS_ERROR_NOT_IMPLEMENTED; }
+
+NS_IMETHODIMP CommonSocketControl::SetBrowserId(uint64_t) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP CommonSocketControl::GetBrowserId(uint64_t*) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}

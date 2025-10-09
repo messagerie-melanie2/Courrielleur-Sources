@@ -17,10 +17,6 @@ import sys
 from time import localtime
 
 import mozpack.path as mozpath
-import six
-from mozpack.files import FileFinder
-from MozZipFile import ZipFile
-from six import BytesIO
 
 from mozbuild.action.buildlist import addEntriesToListFile
 from mozbuild.preprocessor import Preprocessor
@@ -34,7 +30,7 @@ if sys.platform == "win32":
 __all__ = ["JarMaker"]
 
 
-class ZipEntry(object):
+class ZipEntry:
     """Helper class for jar output.
 
     This class defines a simple file-like object for a zipfile.ZipEntry
@@ -45,7 +41,7 @@ class ZipEntry(object):
     def __init__(self, name, zipfile):
         self._zipfile = zipfile
         self._name = name
-        self._inner = BytesIO()
+        self._inner = io.BytesIO()
 
     def write(self, content):
         """Append the given content to this zip entry"""
@@ -66,7 +62,7 @@ def getModTime(aPath):
     return localtime(mtime)
 
 
-class JarManifestEntry(object):
+class JarManifestEntry:
     def __init__(self, output, source, is_locale=False, preprocess=False):
         self.output = output
         self.source = source
@@ -74,7 +70,7 @@ class JarManifestEntry(object):
         self.preprocess = preprocess
 
 
-class JarInfo(object):
+class JarInfo:
     def __init__(self, base_or_jarinfo, name=None):
         if name is None:
             assert isinstance(base_or_jarinfo, JarInfo)
@@ -97,28 +93,27 @@ class DeprecatedJarManifest(Exception):
     pass
 
 
-class JarManifestParser(object):
-
-    ignore = re.compile("\s*(\#.*)?$")
+class JarManifestParser:
+    ignore = re.compile(r"\s*(#.*)?$")
     jarline = re.compile(
-        """
+        r"""
         (?:
-            (?:\[(?P<base>[\w\d.\-\_\\\/{}@]+)\]\s*)? # optional [base/path]
-            (?P<jarfile>[\w\d.\-\_\\\/{}]+).jar\:    # filename.jar:
+            (?:\[(?P<base>[\w\d.\-_\/{}@]+)\]\s*)? # optional [base/path]
+            (?P<jarfile>[\w\d.\-_\/{}]+)\.jar:     # filename.jar:
         |
-            (?:\s*(\#.*)?)                           # comment
-        )\s*$                                        # whitespaces
+            (?:\s*(\#.*)?)                         # comment
+        )\s*$                                      # whitespaces
         """,
         re.VERBOSE,
     )
-    relsrcline = re.compile("relativesrcdir\s+(?P<relativesrcdir>.+?):")
-    regline = re.compile("\%\s+(.*)$")
-    entryre = "(?P<optPreprocess>\*)?(?P<optOverwrite>\+?)\s+"
+    relsrcline = re.compile(r"relativesrcdir\s+(?P<relativesrcdir>.+?):")
+    regline = re.compile(r"%\s+(.*)$")
+    entryre = r"(?P<optPreprocess>\*)?(?P<optOverwrite>\+?)\s+"
     entryline = re.compile(
         entryre
         + (
-            "(?P<output>[\w\d.\-\_\\\/\+\@]+)\s*"
-            "(\((?P<locale>\%?)(?P<source>[\w\d.\-\_\\\/\@\*]+)\))?\s*$"
+            r"(?P<output>[\w\d.\-\_\/+@]+)\s*"
+            r"(\((?P<locale>%?)(?P<source>[\w\d.\-\_\/@*]+)\))?\s*$"
         )
     )
 
@@ -202,7 +197,7 @@ class JarManifestParser(object):
         return iter(self._jars)
 
 
-class JarMaker(object):
+class JarMaker:
     """JarMaker reads jar.mn files and process those into jar files or
     flat directories, along with chrome.manifest files.
     """
@@ -210,7 +205,6 @@ class JarMaker(object):
     def __init__(
         self, outputFormat="flat", useJarfileManifest=True, useChromeManifest=False
     ):
-
         self.outputFormat = outputFormat
         self.useJarfileManifest = useJarfileManifest
         self.useChromeManifest = useChromeManifest
@@ -301,9 +295,7 @@ class JarMaker(object):
                 register,
             )
             if jarname != "chrome":
-                addEntriesToListFile(
-                    chromeManifest, ["manifest {0}.manifest".format(jarname)]
-                )
+                addEntriesToListFile(chromeManifest, [f"manifest {jarname}.manifest"])
         if self.useChromeManifest:
             chromebase = os.path.dirname(jarname) + "/"
             self.updateManifest(
@@ -343,7 +335,7 @@ class JarMaker(object):
         myregister = dict.fromkeys(
             map(lambda s: s.replace("%", chromebasepath), register)
         )
-        addEntriesToListFile(manifestPath, six.iterkeys(myregister))
+        addEntriesToListFile(manifestPath, myregister.keys())
 
     def makeJar(self, infile, jardir):
         """makeJar is the main entry point to JarMaker.
@@ -362,7 +354,7 @@ class JarMaker(object):
             self.localedirs = [_normpath(p) for p in self.localedirs]
         elif self.relativesrcdir:
             self.localedirs = self.generateLocaleDirs(self.relativesrcdir)
-        if isinstance(infile, six.text_type):
+        if isinstance(infile, str):
             logging.info("processing " + infile)
             self.sourcedirs.append(_normpath(os.path.dirname(infile)))
         pp = self.pp.clone()
@@ -407,11 +399,9 @@ class JarMaker(object):
         if self.outputFormat == "jar":
             # jar
             jarfilepath = jarfile + ".jar"
-            try:
-                os.makedirs(os.path.dirname(jarfilepath))
-            except OSError as error:
-                if error.errno != errno.EEXIST:
-                    raise
+            os.makedirs(os.path.dirname(jarfilepath), exist_ok=True)
+            from MozZipFile import ZipFile
+
             jf = ZipFile(jarfilepath, "a", lock=True)
             outHelper = self.OutputHelper_jar(jf)
         else:
@@ -469,6 +459,8 @@ class JarMaker(object):
 
             prefix = "".join(_prefix(src))
             emitted = set()
+            from mozpack.files import FileFinder
+
             for _srcdir in src_base:
                 finder = FileFinder(_srcdir)
                 for path, _ in finder.find(src):
@@ -507,7 +499,7 @@ class JarMaker(object):
 
         if e.preprocess:
             outf = outHelper.getOutput(out, mode="w")
-            inf = io.open(realsrc, encoding="utf-8")
+            inf = open(realsrc, encoding="utf-8")
             pp = self.pp.clone()
             if src[-4:] == ".css":
                 pp.setMarker("%")
@@ -520,7 +512,9 @@ class JarMaker(object):
 
         # copy or symlink if newer
 
-        if getModTime(realsrc) > outHelper.getDestModTime(e.output):
+        # if the output doesn't exist, we can skip an os.stat call
+        out_mod_time = outHelper.getDestModTime(e.output)
+        if out_mod_time == localtime(0) or getModTime(realsrc) > out_mod_time:
             if self.outputFormat == "symlink":
                 outHelper.symlink(realsrc, out)
                 return
@@ -533,7 +527,7 @@ class JarMaker(object):
             outf.close()
             inf.close()
 
-    class OutputHelper_jar(object):
+    class OutputHelper_jar:
         """Provide getDestModTime and getOutput for a given jarfile."""
 
         def __init__(self, jarfile):
@@ -549,7 +543,7 @@ class JarMaker(object):
         def getOutput(self, name, mode="wb"):
             return ZipEntry(name, self.jarfile)
 
-    class OutputHelper_flat(object):
+    class OutputHelper_flat:
         """Provide getDestModTime and getOutput for a given flat
         output directory. The helper method ensureDirFor is used by
         the symlink subclass.
@@ -571,19 +565,16 @@ class JarMaker(object):
                 if e.errno != errno.ENOENT:
                     raise
             if "b" in mode:
-                return io.open(out, mode)
+                return open(out, mode)
             else:
-                return io.open(out, mode, encoding="utf-8", newline="\n")
+                return open(out, mode, encoding="utf-8", newline="\n")
 
         def ensureDirFor(self, name):
             out = os.path.join(self.basepath, name)
             outdir = os.path.dirname(out)
             if not os.path.isdir(outdir):
-                try:
-                    os.makedirs(outdir)
-                except OSError as error:
-                    if error.errno != errno.EEXIST:
-                        raise
+                os.makedirs(outdir, exist_ok=True)
+
             return out
 
     class OutputHelper_symlink(OutputHelper_flat):
@@ -633,10 +624,7 @@ def main(args=None):
     noise = logging.INFO
     if options.verbose is not None:
         noise = options.verbose and logging.DEBUG or logging.WARN
-    if sys.version_info[:2] > (2, 3):
-        logging.basicConfig(format="%(message)s")
-    else:
-        logging.basicConfig()
+    logging.basicConfig(format="%(message)s")
     logging.getLogger().setLevel(noise)
     topsrc = options.t
     topsrc = os.path.normpath(os.path.abspath(topsrc))
@@ -644,5 +632,6 @@ def main(args=None):
         infile = sys.stdin
     else:
         (infile,) = args
-        infile = six.ensure_text(infile)
+        if isinstance(infile, bytes):
+            infile = infile.decode()
     jm.makeJar(infile, options.d)

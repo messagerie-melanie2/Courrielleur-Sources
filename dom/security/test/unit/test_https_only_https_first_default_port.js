@@ -1,5 +1,9 @@
-const { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js");
-const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+const { HttpServer } = ChromeUtils.importESModule(
+  "resource://testing-common/httpd.sys.mjs"
+);
+const { NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
+);
 
 const TEST_PATH = "/https_only_https_first_port";
 var httpserver = null;
@@ -20,14 +24,22 @@ const TESTS = [
     expectedPort: -1, // -1 == default
   },
   {
-    description: "Test 3 - Explicit Custom Port (scheme: http, port: 8888)",
+    description: "Test 3 - Explicit Custom Port without upgrading",
     url: "http://test1.example.com:8888",
     expectedScheme: "http",
     expectedPort: 8888,
+    upgradeCustomPort: false,
+  },
+  {
+    description: "Test 4 - Explicit Custom Port with upgrading",
+    url: "http://test1.example.com:8888",
+    expectedScheme: "https",
+    expectedPort: 8888,
+    upgradeCustomPort: true,
   },
   {
     description:
-      "Test 4 - Explicit Default Port for https (scheme: https, port: 443)",
+      "Test 5 - Explicit Default Port for https (scheme: https, port: 443)",
     url: "https://test1.example.com:443",
     expectedScheme: "https",
     expectedPort: -1, // -1 == default
@@ -37,13 +49,13 @@ const TESTS = [
 function ChannelListener() {}
 
 ChannelListener.prototype = {
-  onStartRequest(request) {
+  onStartRequest() {
     // dummy implementation
   },
-  onDataAvailable(request, stream, offset, count) {
+  onDataAvailable() {
     do_throw("Should not get any data!");
   },
-  onStopRequest(request, status) {
+  onStopRequest(request) {
     var chan = request.QueryInterface(Ci.nsIChannel);
     let requestURL = chan.URI;
     Assert.equal(
@@ -75,7 +87,7 @@ function setUpChannel() {
   return chan;
 }
 
-function serverHandler(metadata, response) {
+function serverHandler() {
   // dummy implementation
 }
 
@@ -83,7 +95,17 @@ function run_next_test() {
   curTest = TESTS.shift();
   if (!curTest) {
     httpserver.stop(do_test_finished);
+    Services.prefs.clearUserPref("dom.security.https_first_for_custom_ports");
     return;
+  }
+
+  if (typeof curTest.upgradeCustomPort === "boolean") {
+    Services.prefs.setBoolPref(
+      "dom.security.https_first_for_custom_ports",
+      curTest.upgradeCustomPort
+    );
+  } else {
+    Services.prefs.clearUserPref("dom.security.https_first_for_custom_ports");
   }
 
   channel = setUpChannel();

@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* import-globals-from ../editorUtilities.js */
 /* import-globals-from EdDialogCommon.js */
+/* global SetAttachCheckbox */ // From EdImageLinkLoader.js
 
 var gActiveEditor;
 var anchorElement = null;
@@ -26,22 +26,19 @@ var tagName = "href";
 
 // dialog initialization code
 
+window.addEventListener("load", Startup);
+
 document.addEventListener("dialogaccept", onAccept);
 document.addEventListener("dialogcancel", onCancel);
 
 function Startup() {
   gActiveEditor = GetCurrentEditor();
-  if (!gActiveEditor) {
-    dump("Failed to get active editor!\n");
-    window.close();
-    return;
-  }
+
   // Message was wrapped in a <label> or <div>, so actual text is a child text node
   gDialog.linkTextCaption = document.getElementById("linkTextCaption");
   gDialog.linkTextMessage = document.getElementById("linkTextMessage");
   gDialog.linkTextInput = document.getElementById("linkTextInput");
   gDialog.hrefInput = document.getElementById("hrefInput");
-  gDialog.makeRelativeLink = document.getElementById("MakeRelativeLink");
   gDialog.AdvancedEditSection = document.getElementById("AdvancedEdit");
 
   // See if we have a single selected image
@@ -104,8 +101,6 @@ function Startup() {
     // No existing link -- create a new one
     anchorElement = gActiveEditor.createElementWithDefaults(tagName);
     insertNew = true;
-    // Hide message about removing existing link
-    // document.getElementById("RemoveLinkMsg").hidden = true;
   }
   if (!anchorElement) {
     dump("Failed to get selected element or create a new one!\n");
@@ -209,9 +204,7 @@ function InitDialog() {
   // Must use getAttribute, not "globalElement.href",
   //  or foreign chars aren't converted correctly!
   gDialog.hrefInput.value = globalElement.getAttribute("href");
-
-  // Set "Relativize" checkbox according to current URL state
-  SetRelativeCheckbox(gDialog.makeRelativeLink);
+  SetAttachCheckbox();
 }
 
 function doEnabling() {
@@ -228,7 +221,7 @@ function doEnabling() {
 }
 
 function ChangeLinkLocation() {
-  SetRelativeCheckbox(gDialog.makeRelativeLink);
+  SetAttachCheckbox();
   // Set OK button enable state
   doEnabling();
 }
@@ -267,9 +260,10 @@ function ValidateData() {
 function onAccept(event) {
   if (ValidateData()) {
     if (href.length > 0) {
-      // Copy attributes to element we are changing or inserting
-      gActiveEditor.cloneAttributes(anchorElement, globalElement);
-
+      if (insertLinkAtCaret || !(insertNew || replaceExistingLink)) {
+        // Copy attributes to element we are changing or inserting
+        gActiveEditor.cloneAttributes(anchorElement, globalElement);
+      }
       // Coalesce into one undo transaction
       gActiveEditor.beginTransaction();
 
@@ -292,7 +286,15 @@ function onAccept(event) {
         //  so insert a link node as parent of this
         //  (may be text, image, or other inline content)
         try {
+          // For some reason (maybe caused by bug 1803044),
+          // insertLinkAroundSelection doesn't work as expected for anchor
+          // elements containing multiple attributes.
+          gActiveEditor.setAttribute(anchorElement, "href", href);
           gActiveEditor.insertLinkAroundSelection(anchorElement);
+          gActiveEditor.cloneAttributes(
+            gActiveEditor.selection.anchorNode.parentNode,
+            globalElement
+          );
         } catch (e) {
           dump("Exception occurred in InsertElementAtSelection\n");
           return;
@@ -306,9 +308,12 @@ function onAccept(event) {
 
           // Insert the anchor into the document,
           //  but don't let the transaction change the selection
-          gActiveEditor.setShouldTxnSetSelection(false);
-          gActiveEditor.insertNode(anchorNode, gHNodeArray[href], 0);
-          gActiveEditor.setShouldTxnSetSelection(true);
+          gActiveEditor.insertNode(
+            anchorNode,
+            gHNodeArray[href],
+            0,
+            true /* preserve selection */
+          );
         }
       }
       gActiveEditor.endTransaction();

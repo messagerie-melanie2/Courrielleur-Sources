@@ -12,8 +12,8 @@
 #include "nsCRT.h"
 #include "nsString.h"
 #include "mozilla/ArrayUtils.h"
-#include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/StaticPrefs_accessibility.h"
 
 #include "nsControllerCommandTable.h"
 
@@ -21,8 +21,8 @@
 #include "nsIDocShell.h"
 #include "nsISelectionController.h"
 #include "nsIWebNavigation.h"
-#include "nsIContentViewerEdit.h"
-#include "nsIContentViewer.h"
+#include "nsIDocumentViewerEdit.h"
+#include "nsIDocumentViewer.h"
 #include "nsFocusManager.h"
 #include "nsCopySupport.h"
 #include "nsIClipboard.h"
@@ -122,10 +122,9 @@ class nsSelectionCommandsBase : public nsIControllerCommand {
   NS_IMETHOD GetCommandStateParams(const char* aCommandName,
                                    nsICommandParams* aParams,
                                    nsISupports* aCommandContext) override;
-  MOZ_CAN_RUN_SCRIPT
-  NS_IMETHOD DoCommandParams(const char* aCommandName,
-                             nsICommandParams* aParams,
-                             nsISupports* aCommandContext) override;
+  MOZ_CAN_RUN_SCRIPT NS_IMETHOD
+  DoCommandParams(const char* aCommandName, nsICommandParams* aParams,
+                  nsISupports* aCommandContext) override;
 
  protected:
   virtual ~nsSelectionCommandsBase() = default;
@@ -142,8 +141,8 @@ class nsSelectionCommandsBase : public nsIControllerCommand {
 // caret' setting
 class nsSelectMoveScrollCommand : public nsSelectionCommandsBase {
  public:
-  NS_IMETHOD DoCommand(const char* aCommandName,
-                       nsISupports* aCommandContext) override;
+  MOZ_CAN_RUN_SCRIPT NS_IMETHOD
+  DoCommand(const char* aCommandName, nsISupports* aCommandContext) override;
 
   // no member variables, please, we're stateless!
 };
@@ -151,8 +150,8 @@ class nsSelectMoveScrollCommand : public nsSelectionCommandsBase {
 // this class implements physical-movement versions of the above
 class nsPhysicalSelectMoveScrollCommand : public nsSelectionCommandsBase {
  public:
-  NS_IMETHOD DoCommand(const char* aCommandName,
-                       nsISupports* aCommandContext) override;
+  MOZ_CAN_RUN_SCRIPT NS_IMETHOD
+  DoCommand(const char* aCommandName, nsISupports* aCommandContext) override;
 
   // no member variables, please, we're stateless!
 };
@@ -160,8 +159,8 @@ class nsPhysicalSelectMoveScrollCommand : public nsSelectionCommandsBase {
 // this class implements other selection commands
 class nsSelectCommand : public nsSelectionCommandsBase {
  public:
-  NS_IMETHOD DoCommand(const char* aCommandName,
-                       nsISupports* aCommandContext) override;
+  MOZ_CAN_RUN_SCRIPT NS_IMETHOD
+  DoCommand(const char* aCommandName, nsISupports* aCommandContext) override;
 
   // no member variables, please, we're stateless!
 };
@@ -169,8 +168,8 @@ class nsSelectCommand : public nsSelectionCommandsBase {
 // this class implements physical-movement versions of selection commands
 class nsPhysicalSelectCommand : public nsSelectionCommandsBase {
  public:
-  NS_IMETHOD DoCommand(const char* aCommandName,
-                       nsISupports* aCommandContext) override;
+  MOZ_CAN_RUN_SCRIPT NS_IMETHOD
+  DoCommand(const char* aCommandName, nsISupports* aCommandContext) override;
 
   // no member variables, please, we're stateless!
 };
@@ -255,7 +254,7 @@ static bool IsCaretOnInWindow(nsPIDOMWindowOuter* aWindow,
   bool caretOn = false;
   aSelCont->GetCaretEnabled(&caretOn);
   if (!caretOn) {
-    caretOn = Preferences::GetBool("accessibility.browsewithcaret");
+    caretOn = StaticPrefs::accessibility_browsewithcaret();
     if (caretOn) {
       nsCOMPtr<nsIDocShell> docShell = aWindow->GetDocShell();
       if (docShell && docShell->ItemType() == nsIDocShellTreeItem::typeChrome) {
@@ -577,8 +576,8 @@ nsresult nsClipboardCommand::DoCommand(const char* aCommandName,
 
   bool actionTaken = false;
   nsCopySupport::FireClipboardEvent(eventMessage,
-                                    nsIClipboard::kGlobalClipboard, presShell,
-                                    nullptr, &actionTaken);
+                                    Some(nsIClipboard::kGlobalClipboard),
+                                    presShell, nullptr, nullptr, &actionTaken);
 
   return actionTaken ? NS_OK : NS_SUCCESS_DOM_NO_OPERATION;
 }
@@ -609,14 +608,14 @@ class nsSelectionCommand : public nsIControllerCommand {
   virtual ~nsSelectionCommand() = default;
 
   virtual nsresult IsClipboardCommandEnabled(const char* aCommandName,
-                                             nsIContentViewerEdit* aEdit,
+                                             nsIDocumentViewerEdit* aEdit,
                                              bool* outCmdEnabled) = 0;
   virtual nsresult DoClipboardCommand(const char* aCommandName,
-                                      nsIContentViewerEdit* aEdit,
+                                      nsIDocumentViewerEdit* aEdit,
                                       nsICommandParams* aParams) = 0;
 
-  static nsresult GetContentViewerEditFromContext(
-      nsISupports* aContext, nsIContentViewerEdit** aEditInterface);
+  static nsresult GetDocumentViewerEditFromContext(
+      nsISupports* aContext, nsIDocumentViewerEdit** aEditInterface);
 
   // no member variables, please, we're stateless!
 };
@@ -636,21 +635,23 @@ nsSelectionCommand::IsCommandEnabled(const char* aCommandName,
   NS_ENSURE_ARG_POINTER(outCmdEnabled);
   *outCmdEnabled = false;
 
-  nsCOMPtr<nsIContentViewerEdit> contentEdit;
-  GetContentViewerEditFromContext(aCommandContext, getter_AddRefs(contentEdit));
-  NS_ENSURE_TRUE(contentEdit, NS_ERROR_NOT_INITIALIZED);
+  nsCOMPtr<nsIDocumentViewerEdit> documentEdit;
+  GetDocumentViewerEditFromContext(aCommandContext,
+                                   getter_AddRefs(documentEdit));
+  NS_ENSURE_TRUE(documentEdit, NS_ERROR_NOT_INITIALIZED);
 
-  return IsClipboardCommandEnabled(aCommandName, contentEdit, outCmdEnabled);
+  return IsClipboardCommandEnabled(aCommandName, documentEdit, outCmdEnabled);
 }
 
 NS_IMETHODIMP
 nsSelectionCommand::DoCommand(const char* aCommandName,
                               nsISupports* aCommandContext) {
-  nsCOMPtr<nsIContentViewerEdit> contentEdit;
-  GetContentViewerEditFromContext(aCommandContext, getter_AddRefs(contentEdit));
-  NS_ENSURE_TRUE(contentEdit, NS_ERROR_NOT_INITIALIZED);
+  nsCOMPtr<nsIDocumentViewerEdit> documentEdit;
+  GetDocumentViewerEditFromContext(aCommandContext,
+                                   getter_AddRefs(documentEdit));
+  NS_ENSURE_TRUE(documentEdit, NS_ERROR_NOT_INITIALIZED);
 
-  return DoClipboardCommand(aCommandName, contentEdit, nullptr);
+  return DoClipboardCommand(aCommandName, documentEdit, nullptr);
 }
 
 NS_IMETHODIMP
@@ -664,15 +665,16 @@ NS_IMETHODIMP
 nsSelectionCommand::DoCommandParams(const char* aCommandName,
                                     nsICommandParams* aParams,
                                     nsISupports* aCommandContext) {
-  nsCOMPtr<nsIContentViewerEdit> contentEdit;
-  GetContentViewerEditFromContext(aCommandContext, getter_AddRefs(contentEdit));
-  NS_ENSURE_TRUE(contentEdit, NS_ERROR_NOT_INITIALIZED);
+  nsCOMPtr<nsIDocumentViewerEdit> documentEdit;
+  GetDocumentViewerEditFromContext(aCommandContext,
+                                   getter_AddRefs(documentEdit));
+  NS_ENSURE_TRUE(documentEdit, NS_ERROR_NOT_INITIALIZED);
 
-  return DoClipboardCommand(aCommandName, contentEdit, aParams);
+  return DoClipboardCommand(aCommandName, documentEdit, aParams);
 }
 
-nsresult nsSelectionCommand::GetContentViewerEditFromContext(
-    nsISupports* aContext, nsIContentViewerEdit** aEditInterface) {
+nsresult nsSelectionCommand::GetDocumentViewerEditFromContext(
+    nsISupports* aContext, nsIDocumentViewerEdit** aEditInterface) {
   NS_ENSURE_ARG(aEditInterface);
   *aEditInterface = nullptr;
 
@@ -682,9 +684,9 @@ nsresult nsSelectionCommand::GetContentViewerEditFromContext(
   nsIDocShell* docShell = window->GetDocShell();
   NS_ENSURE_TRUE(docShell, NS_ERROR_FAILURE);
 
-  nsCOMPtr<nsIContentViewer> viewer;
-  docShell->GetContentViewer(getter_AddRefs(viewer));
-  nsCOMPtr<nsIContentViewerEdit> edit(do_QueryInterface(viewer));
+  nsCOMPtr<nsIDocumentViewer> viewer;
+  docShell->GetDocViewer(getter_AddRefs(viewer));
+  nsCOMPtr<nsIDocumentViewerEdit> edit(do_QueryInterface(viewer));
   NS_ENSURE_TRUE(edit, NS_ERROR_FAILURE);
 
   edit.forget(aEditInterface);
@@ -699,10 +701,10 @@ nsresult nsSelectionCommand::GetContentViewerEditFromContext(
   class _cmd : public nsSelectionCommand {                                    \
    protected:                                                                 \
     virtual nsresult IsClipboardCommandEnabled(const char* aCommandName,      \
-                                               nsIContentViewerEdit* aEdit,   \
+                                               nsIDocumentViewerEdit* aEdit,  \
                                                bool* outCmdEnabled) override; \
     virtual nsresult DoClipboardCommand(const char* aCommandName,             \
-                                        nsIContentViewerEdit* aEdit,          \
+                                        nsIDocumentViewerEdit* aEdit,         \
                                         nsICommandParams* aParams) override;  \
     /* no member variables, please, we're stateless! */                       \
   };
@@ -712,13 +714,13 @@ NS_DECL_CLIPBOARD_COMMAND(nsClipboardImageCommands)
 NS_DECL_CLIPBOARD_COMMAND(nsClipboardSelectAllNoneCommands)
 
 nsresult nsClipboardCopyLinkCommand::IsClipboardCommandEnabled(
-    const char* aCommandName, nsIContentViewerEdit* aEdit,
+    const char* aCommandName, nsIDocumentViewerEdit* aEdit,
     bool* outCmdEnabled) {
   return aEdit->GetInLink(outCmdEnabled);
 }
 
 nsresult nsClipboardCopyLinkCommand::DoClipboardCommand(
-    const char* aCommandName, nsIContentViewerEdit* aEdit,
+    const char* aCommandName, nsIDocumentViewerEdit* aEdit,
     nsICommandParams* aParams) {
   return aEdit->CopyLinkLocation();
 }
@@ -728,20 +730,20 @@ nsresult nsClipboardCopyLinkCommand::DoClipboardCommand(
 #endif
 
 nsresult nsClipboardImageCommands::IsClipboardCommandEnabled(
-    const char* aCommandName, nsIContentViewerEdit* aEdit,
+    const char* aCommandName, nsIDocumentViewerEdit* aEdit,
     bool* outCmdEnabled) {
   return aEdit->GetInImage(outCmdEnabled);
 }
 
 nsresult nsClipboardImageCommands::DoClipboardCommand(
-    const char* aCommandName, nsIContentViewerEdit* aEdit,
+    const char* aCommandName, nsIDocumentViewerEdit* aEdit,
     nsICommandParams* aParams) {
   if (!nsCRT::strcmp(sCopyImageLocationString, aCommandName))
-    return aEdit->CopyImage(nsIContentViewerEdit::COPY_IMAGE_TEXT);
+    return aEdit->CopyImage(nsIDocumentViewerEdit::COPY_IMAGE_TEXT);
   if (!nsCRT::strcmp(sCopyImageContentsString, aCommandName))
-    return aEdit->CopyImage(nsIContentViewerEdit::COPY_IMAGE_DATA);
-  int32_t copyFlags = nsIContentViewerEdit::COPY_IMAGE_DATA |
-                      nsIContentViewerEdit::COPY_IMAGE_HTML;
+    return aEdit->CopyImage(nsIDocumentViewerEdit::COPY_IMAGE_DATA);
+  int32_t copyFlags = nsIDocumentViewerEdit::COPY_IMAGE_DATA |
+                      nsIDocumentViewerEdit::COPY_IMAGE_HTML;
   if (aParams) {
     copyFlags = aParams->AsCommandParams()->GetInt("imageCopy");
   }
@@ -753,14 +755,14 @@ nsresult nsClipboardImageCommands::DoClipboardCommand(
 #endif
 
 nsresult nsClipboardSelectAllNoneCommands::IsClipboardCommandEnabled(
-    const char* aCommandName, nsIContentViewerEdit* aEdit,
+    const char* aCommandName, nsIDocumentViewerEdit* aEdit,
     bool* outCmdEnabled) {
   *outCmdEnabled = true;
   return NS_OK;
 }
 
 nsresult nsClipboardSelectAllNoneCommands::DoClipboardCommand(
-    const char* aCommandName, nsIContentViewerEdit* aEdit,
+    const char* aCommandName, nsIDocumentViewerEdit* aEdit,
     nsICommandParams* aParams) {
   if (!nsCRT::strcmp(sSelectAllString, aCommandName)) return aEdit->SelectAll();
 
@@ -1015,8 +1017,7 @@ nsLookUpDictionaryCommand::DoCommandParams(const char* aCommandName,
     }
 
     intl::WordRange range = intl::WordBreaker::FindWord(
-        queryTextContentEvent.mReply->DataRef().get(),
-        queryTextContentEvent.mReply->DataLength(),
+        queryTextContentEvent.mReply->DataRef(),
         queryCharAtPointEvent.mReply->StartOffset() - offset);
     if (range.mEnd == range.mBegin) {
       return NS_ERROR_FAILURE;

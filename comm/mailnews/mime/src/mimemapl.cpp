@@ -3,12 +3,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "nsCOMPtr.h"
 #include "mimemapl.h"
 #include "prmem.h"
 #include "plstr.h"
 #include "nsMimeStringResources.h"
-#include "mimemoz2.h"
 #include "nsMimeTypes.h"
 
 #define MIME_SUPERCLASS mimeMultipartClass
@@ -18,10 +16,8 @@ MimeDefClass(MimeMultipartAppleDouble, MimeMultipartAppleDoubleClass,
 static int MimeMultipartAppleDouble_parse_begin(MimeObject*);
 static bool MimeMultipartAppleDouble_output_child_p(MimeObject*, MimeObject*);
 
-static int MimeMultipartAppleDoubleClassInitialize(
-    MimeMultipartAppleDoubleClass* clazz) {
-  MimeObjectClass* oclass = (MimeObjectClass*)clazz;
-  MimeMultipartClass* mclass = (MimeMultipartClass*)clazz;
+static int MimeMultipartAppleDoubleClassInitialize(MimeObjectClass* oclass) {
+  MimeMultipartClass* mclass = (MimeMultipartClass*)oclass;
 
   NS_ASSERTION(!oclass->class_initialized, "mime class not initialized");
   oclass->parse_begin = MimeMultipartAppleDouble_parse_begin;
@@ -90,54 +86,10 @@ static int MimeMultipartAppleDouble_parse_begin(MimeObject* obj) {
       }
     }
 
-    /**********************
-        if (!strcmp (id, "0"))
-        {
-          PR_Free(id);
-          id = MimeGetStringByID(MIME_MSG_ATTACHMENT);
-        }
-        else
-        {
-          const char *p = "Part ";
-          char *s = (char *)PR_MALLOC(strlen(p) + strlen(id) + 1);
-          if (!s)
-          {
-            PR_Free(id);
-            PR_Free(id_url);
-            return MIME_OUT_OF_MEMORY;
-          }
-          PL_strcpy(s, p);
-          PL_strcat(s, id);
-          PR_Free(id);
-          id = s;
-        }
-
-        if (all_headers_p &&
-          // Don't bother showing all headers on this part if it's the only
-          // part in the message: in that case, we've already shown these
-          // headers.
-          obj->options->state &&
-          obj->options->state->root == obj->parent)
-        all_headers_p = false;
-
-        newopt.fancy_headers_p = true;
-        newopt.headers = (all_headers_p ? MimeHeadersAll : MimeHeadersSome);
-
-    //
-    RICHIE SHERRY
-    GOTTA STILL DO THIS FOR QUOTING!
-    status = MimeHeaders_write_attachment_box(obj->headers, &newopt,
-                                              obj->content_type,
-                                              obj->encoding,
-                                              id_name? id_name : id, id_url, 0)
-    //
-    *********************************************************************************/
-
     //  FAIL:
     PR_FREEIF(id);
     PR_FREEIF(id_url);
     PR_FREEIF(id_imap);
-    if (status < 0) return status;
   }
 
 #ifdef XP_MACOSX

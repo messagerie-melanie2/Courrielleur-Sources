@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { CalendarTestUtils } = ChromeUtils.import(
-  "resource://testing-common/calendar/CalendarTestUtils.jsm"
+var { CalendarTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/calendar/CalendarTestUtils.sys.mjs"
 );
 
 // If the "do you want to save the event?" prompt appears, the test failed.
@@ -14,7 +14,7 @@ var savePromptObserver = {
       await BrowserTestUtils.waitForEvent(win, "load");
       // Make sure this is a prompt window.
       if (win.location.href == "chrome://global/content/commonDialog.xhtml") {
-        let doc = win.document;
+        const doc = win.document;
         // Adding attachments also shows a prompt, but we can tell which one
         // this is by checking whether the textbox is visible.
         if (doc.querySelector("#loginContainer").hasAttribute("hidden")) {
@@ -35,7 +35,7 @@ registerCleanupFunction(async () => {
 });
 
 function openAttendeesWindow(eventWindowOrArgs) {
-  let attendeesWindowPromise = BrowserTestUtils.promiseAlertDialogOpen(
+  const attendeesWindowPromise = BrowserTestUtils.promiseAlertDialogOpen(
     null,
     "chrome://calendar/content/calendar-event-dialog-attendees.xhtml",
     {
@@ -63,8 +63,8 @@ function openAttendeesWindow(eventWindowOrArgs) {
 }
 
 async function closeAttendeesWindow(attendeesWindow, buttonAction = "accept") {
-  let closedPromise = BrowserTestUtils.domWindowClosed(attendeesWindow);
-  let dialog = attendeesWindow.document.querySelector("dialog");
+  const closedPromise = BrowserTestUtils.domWindowClosed(attendeesWindow);
+  const dialog = attendeesWindow.document.querySelector("dialog");
   dialog.getButton(buttonAction).click();
   await closedPromise;
 
@@ -93,5 +93,5 @@ function findAndEditMatchingRow(attendeesWindow, newValue, message, matchFunctio
   // Set the new value of the row. We set the input value directly due to issues
   // experienced trying to use simulated keystrokes.
   attendeeInput.value = newValue;
-  EventUtils.synthesizeKey("VK_RETURN", {}, attendeesWindow);
+  attendeeInput.dispatchEvent(new Event("change"));
 }

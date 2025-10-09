@@ -2,7 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
+);
 
 const nsISupports             = Ci.nsISupports;
 const nsIBrowserDOMWindow     = Ci.nsIBrowserDOMWindow;
@@ -169,11 +171,7 @@ function openPreferences()
 
 function getBrowserURL()
 {
-  try {
-    return Services.prefs.getCharPref("browser.chromeURL");
-  } catch (e) {
-  }
-  return "chrome://navigator/content/navigator.xul";
+  return AppConstants.BROWSER_CHROME_URL;
 }
 
 function handURIToExistingBrowser(aUri, aLocation, aFeatures, aTriggeringPrincipal)
@@ -221,17 +219,11 @@ var nsBrowserContentHandler = {
   },
 
   /* nsISupports */
-  QueryInterface: function QueryInterface(iid) {
-    if (iid.equals(nsISupports) ||
-        iid.equals(nsICommandLineHandler) ||
-        iid.equals(nsICommandLine) ||
-        iid.equals(nsICommandLineValidator) ||
-        iid.equals(nsIContentHandler) ||
-        iid.equals(nsIFactory))
-      return this;
-
-    throw Cr.NS_ERROR_NO_INTERFACE;
-  },
+  QueryInterface: ChromeUtils.generateQI([Ci.nsICommandLineHandler,
+                                          Ci.nsICommandLine,
+                                          Ci.nsICommandLineValidator,
+                                          Ci.nsIContentHandler,
+                                          Ci.nsIFactory]),
 
   _handledURI: null,
 

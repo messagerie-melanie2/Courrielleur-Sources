@@ -4,35 +4,52 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-pub use crate::agentio::{as_c_void, Record, RecordList};
-use crate::agentio::{AgentIo, METHODS};
-use crate::assert_initialized;
-use crate::auth::AuthenticationStatus;
-pub use crate::cert::CertificateInfo;
-use crate::constants::{
-    Alert, Cipher, Epoch, Extension, Group, SignatureScheme, Version, TLS_VERSION_1_3,
-};
-use crate::ech;
-use crate::err::{is_blocked, secstatus_to_res, Error, PRErrorCode, Res};
-use crate::ext::{ExtensionHandler, ExtensionTracker};
-use crate::p11::{self, PrivateKey, PublicKey};
-use crate::prio;
-use crate::replay::AntiReplay;
-use crate::secrets::SecretHolder;
-use crate::ssl::{self, PRBool};
-use crate::time::{Time, TimeHolder};
+#![allow(
+    clippy::module_name_repetitions,
+    reason = "<https://github.com/mozilla/neqo/issues/2284#issuecomment-2782711813>"
+)]
+#![expect(
+    clippy::unwrap_used,
+    reason = "Let's assume the use of `unwrap` was checked when the use of `unsafe` was reviewed."
+)]
 
-use neqo_common::{hex_snip_middle, hex_with_len, qdebug, qinfo, qtrace, qwarn};
-use std::cell::RefCell;
-use std::convert::TryFrom;
-use std::ffi::{CStr, CString};
-use std::mem::{self, MaybeUninit};
-use std::ops::{Deref, DerefMut};
-use std::os::raw::{c_uint, c_void};
-use std::pin::Pin;
-use std::ptr::{null, null_mut};
-use std::rc::Rc;
-use std::time::Instant;
+use std::{
+    cell::RefCell,
+    ffi::{CStr, CString},
+    fmt::{self, Debug, Display, Formatter},
+    mem::MaybeUninit,
+    ops::{Deref, DerefMut},
+    os::raw::{c_uint, c_void},
+    pin::Pin,
+    ptr::{null, null_mut},
+    rc::Rc,
+    time::Instant,
+};
+
+use neqo_common::{hex_snip_middle, hex_with_len, qdebug, qtrace, qwarn};
+
+pub use crate::{
+    agentio::{as_c_void, Record, RecordList},
+    cert::CertificateInfo,
+};
+use crate::{
+    agentio::{AgentIo, METHODS},
+    assert_initialized,
+    auth::AuthenticationStatus,
+    constants::{
+        Alert, Cipher, Epoch, Extension, Group, SignatureScheme, Version, TLS_VERSION_1_3,
+    },
+    ech,
+    err::{is_blocked, secstatus_to_res, Error, PRErrorCode, Res},
+    ext::{ExtensionHandler, ExtensionTracker},
+    null_safe_slice,
+    p11::{self, PrivateKey, PublicKey},
+    prio,
+    replay::AntiReplay,
+    secrets::SecretHolder,
+    ssl::{self, PRBool},
+    time::{Time, TimeHolder},
+};
 
 /// The maximum number of tickets to remember for a given connection.
 const MAX_TICKETS: usize = 4;
@@ -53,17 +70,17 @@ pub enum HandshakeState {
 
 impl HandshakeState {
     #[must_use]
-    pub fn is_connected(&self) -> bool {
+    pub const fn is_connected(&self) -> bool {
         matches!(self, Self::Complete(_))
     }
 
     #[must_use]
-    pub fn is_final(&self) -> bool {
+    pub const fn is_final(&self) -> bool {
         matches!(self, Self::Complete(_) | Self::Failed(_))
     }
 
     #[must_use]
-    pub fn authentication_needed(&self) -> bool {
+    pub const fn authentication_needed(&self) -> bool {
         matches!(
             self,
             Self::AuthenticationPending | Self::EchFallbackAuthenticationPending(_)
@@ -100,7 +117,7 @@ fn get_alpn(fd: *mut ssl::PRFileDesc, pre: bool) -> Res<Option<String>> {
         }
         _ => None,
     };
-    qtrace!([format!("{:p}", fd)], "got ALPN {:?}", alpn);
+    qtrace!("[{fd:p}] got ALPN {alpn:?}");
     Ok(alpn)
 }
 
@@ -110,12 +127,16 @@ pub struct SecretAgentPreInfo {
 }
 
 macro_rules! preinfo_arg {
-    ($v:ident, $m:ident, $f:ident: $t:ident $(,)?) => {
+    ($v:ident, $m:ident, $f:ident: $t:ty $(,)?) => {
         #[must_use]
         pub fn $v(&self) -> Option<$t> {
             match self.info.valuesSet & ssl::$m {
                 0 => None,
-                _ => Some($t::try_from(self.info.$f).unwrap()),
+                _ => Some(
+                    <$t>::try_from(self.info.$f)
+                        .inspect_err(|e| qdebug!("Invalid value in preinfo: {e:?}"))
+                        .ok()?,
+                ),
             }
         }
     };
@@ -128,7 +149,7 @@ impl SecretAgentPreInfo {
             ssl::SSL_GetPreliminaryChannelInfo(
                 fd,
                 info.as_mut_ptr(),
-                c_uint::try_from(mem::size_of::<ssl::SSLPreliminaryChannelInfo>())?,
+                c_uint::try_from(size_of::<ssl::SSLPreliminaryChannelInfo>())?,
             )
         })?;
 
@@ -147,20 +168,20 @@ impl SecretAgentPreInfo {
     );
 
     #[must_use]
-    pub fn early_data(&self) -> bool {
+    pub const fn early_data(&self) -> bool {
         self.info.canSendEarlyData != 0
     }
 
-    /// # Panics
+    /// # Errors
+    ///
     /// If `usize` is less than 32 bits and the value is too large.
-    #[must_use]
-    pub fn max_early_data(&self) -> usize {
-        usize::try_from(self.info.maxEarlyDataSize).unwrap()
+    pub fn max_early_data(&self) -> Res<usize> {
+        Ok(usize::try_from(self.info.maxEarlyDataSize)?)
     }
 
     /// Was ECH accepted.
     #[must_use]
-    pub fn ech_accepted(&self) -> Option<bool> {
+    pub const fn ech_accepted(&self) -> Option<bool> {
         if self.info.valuesSet & ssl::ssl_preinfo_ech == 0 {
             None
         } else {
@@ -178,6 +199,7 @@ impl SecretAgentPreInfo {
     /// which contains a valid ECH configuration.
     ///
     /// # Errors
+    ///
     /// When the public name is not valid UTF-8.  (Note: names should be ASCII.)
     pub fn ech_public_name(&self) -> Res<Option<&str>> {
         if self.info.valuesSet & ssl::ssl_preinfo_ech == 0 || self.info.echPublicName.is_null() {
@@ -189,7 +211,7 @@ impl SecretAgentPreInfo {
     }
 
     #[must_use]
-    pub fn alpn(&self) -> Option<&String> {
+    pub const fn alpn(&self) -> Option<&String> {
         self.alpn.as_ref()
     }
 }
@@ -213,7 +235,7 @@ impl SecretAgentInfo {
             ssl::SSL_GetChannelInfo(
                 fd,
                 info.as_mut_ptr(),
-                c_uint::try_from(mem::size_of::<ssl::SSLChannelInfo>())?,
+                c_uint::try_from(size_of::<ssl::SSLChannelInfo>())?,
             )
         })?;
         let info = unsafe { info.assume_init() };
@@ -229,42 +251,41 @@ impl SecretAgentInfo {
         })
     }
     #[must_use]
-    pub fn version(&self) -> Version {
+    pub const fn version(&self) -> Version {
         self.version
     }
     #[must_use]
-    pub fn cipher_suite(&self) -> Cipher {
+    pub const fn cipher_suite(&self) -> Cipher {
         self.cipher
     }
     #[must_use]
-    pub fn key_exchange(&self) -> Group {
+    pub const fn key_exchange(&self) -> Group {
         self.group
     }
     #[must_use]
-    pub fn resumed(&self) -> bool {
+    pub const fn resumed(&self) -> bool {
         self.resumed
     }
     #[must_use]
-    pub fn early_data_accepted(&self) -> bool {
+    pub const fn early_data_accepted(&self) -> bool {
         self.early_data
     }
     #[must_use]
-    pub fn ech_accepted(&self) -> bool {
+    pub const fn ech_accepted(&self) -> bool {
         self.ech_accepted
     }
     #[must_use]
-    pub fn alpn(&self) -> Option<&String> {
+    pub const fn alpn(&self) -> Option<&String> {
         self.alpn.as_ref()
     }
     #[must_use]
-    pub fn signature_scheme(&self) -> SignatureScheme {
+    pub const fn signature_scheme(&self) -> SignatureScheme {
         self.signature_scheme
     }
 }
 
 /// `SecretAgent` holds the common parts of client and server.
 #[derive(Debug)]
-#[allow(clippy::module_name_repetitions)]
 pub struct SecretAgent {
     fd: *mut ssl::PRFileDesc,
     secrets: SecretHolder,
@@ -328,7 +349,9 @@ impl SecretAgent {
             ssl::SSL_ImportFD(null_mut(), base_fd.cast())
         };
         if fd.is_null() {
-            unsafe { prio::PR_Close(base_fd) };
+            unsafe {
+                prio::PR_Close(base_fd);
+            }
             return Err(Error::CreateSslSocket);
         }
         Ok(fd)
@@ -337,8 +360,8 @@ impl SecretAgent {
     unsafe extern "C" fn auth_complete_hook(
         arg: *mut c_void,
         _fd: *mut ssl::PRFileDesc,
-        _check_sig: ssl::PRBool,
-        _is_server: ssl::PRBool,
+        _check_sig: PRBool,
+        _is_server: PRBool,
     ) -> ssl::SECStatus {
         let auth_required_ptr = arg.cast::<bool>();
         *auth_required_ptr = true;
@@ -359,17 +382,13 @@ impl SecretAgent {
             if st.is_none() {
                 *st = Some(alert.description);
             } else {
-                qwarn!(
-                    [format!("{:p}", fd)],
-                    "duplicate alert {}",
-                    alert.description
-                );
+                qwarn!("[{fd:p}] duplicate alert {}", alert.description);
             }
         }
     }
 
     // Ready this for connecting.
-    fn ready(&mut self, is_server: bool) -> Res<()> {
+    fn ready(&mut self, is_server: bool, grease: bool) -> Res<()> {
         secstatus_to_res(unsafe {
             ssl::SSL_AuthCertificateHook(
                 self.fd,
@@ -387,25 +406,29 @@ impl SecretAgent {
         })?;
 
         self.now.bind(self.fd)?;
-        self.configure()?;
-        secstatus_to_res(unsafe { ssl::SSL_ResetHandshake(self.fd, ssl::PRBool::from(is_server)) })
+        self.configure(grease)?;
+        secstatus_to_res(unsafe { ssl::SSL_ResetHandshake(self.fd, PRBool::from(is_server)) })
     }
 
     /// Default configuration.
     ///
     /// # Errors
+    ///
     /// If `set_version_range` fails.
-    fn configure(&mut self) -> Res<()> {
+    fn configure(&mut self, grease: bool) -> Res<()> {
         self.set_version_range(TLS_VERSION_1_3, TLS_VERSION_1_3)?;
         self.set_option(ssl::Opt::Locking, false)?;
         self.set_option(ssl::Opt::Tickets, false)?;
         self.set_option(ssl::Opt::OcspStapling, true)?;
+        self.set_option(ssl::Opt::Grease, grease)?;
+        self.set_option(ssl::Opt::EnableChExtensionPermutation, true)?;
         Ok(())
     }
 
     /// Set the versions that are supported.
     ///
     /// # Errors
+    ///
     /// If the range of versions isn't supported.
     pub fn set_version_range(&mut self, min: Version, max: Version) -> Res<()> {
         let range = ssl::SSLVersionRange { min, max };
@@ -415,10 +438,11 @@ impl SecretAgent {
     /// Enable a set of ciphers.  Note that the order of these is not respected.
     ///
     /// # Errors
+    ///
     /// If NSS can't enable or disable ciphers.
     pub fn set_ciphers(&mut self, ciphers: &[Cipher]) -> Res<()> {
         if self.state != HandshakeState::New {
-            qwarn!([self], "Cannot enable ciphers in state {:?}", self.state);
+            qwarn!("[{self}] Cannot enable ciphers in state {:?}", self.state);
             return Err(Error::InternalError);
         }
 
@@ -427,13 +451,13 @@ impl SecretAgent {
         for i in 0..cipher_count {
             let p = all_ciphers.wrapping_add(i);
             secstatus_to_res(unsafe {
-                ssl::SSL_CipherPrefSet(self.fd, i32::from(*p), ssl::PRBool::from(false))
+                ssl::SSL_CipherPrefSet(self.fd, i32::from(*p), PRBool::from(false))
             })?;
         }
 
         for c in ciphers {
             secstatus_to_res(unsafe {
-                ssl::SSL_CipherPrefSet(self.fd, i32::from(*c), ssl::PRBool::from(true))
+                ssl::SSL_CipherPrefSet(self.fd, i32::from(*c), PRBool::from(true))
             })?;
         }
         Ok(())
@@ -442,6 +466,7 @@ impl SecretAgent {
     /// Set key exchange groups.
     ///
     /// # Errors
+    ///
     /// If the underlying API fails (which shouldn't happen).
     pub fn set_groups(&mut self, groups: &[Group]) -> Res<()> {
         // SSLNamedGroup is a different size to Group, so copy one by one.
@@ -456,27 +481,41 @@ impl SecretAgent {
         })
     }
 
+    /// Set the number of additional key shares that will be sent in the client hello
+    ///
+    /// # Errors
+    ///
+    /// If the underlying API fails (which shouldn't happen).
+    pub fn send_additional_key_shares(&mut self, count: usize) -> Res<()> {
+        secstatus_to_res(unsafe {
+            ssl::SSL_SendAdditionalKeyShares(self.fd, c_uint::try_from(count)?)
+        })
+    }
+
     /// Set TLS options.
     ///
     /// # Errors
+    ///
     /// Returns an error if the option or option value is invalid; i.e., never.
-    pub fn set_option(&mut self, opt: ssl::Opt, value: bool) -> Res<()> {
+    pub fn set_option(&self, opt: ssl::Opt, value: bool) -> Res<()> {
         opt.set(self.fd, value)
     }
 
     /// Enable 0-RTT.
     ///
     /// # Errors
+    ///
     /// See `set_option`.
-    pub fn enable_0rtt(&mut self) -> Res<()> {
+    pub fn enable_0rtt(&self) -> Res<()> {
         self.set_option(ssl::Opt::EarlyData, true)
     }
 
     /// Disable the `EndOfEarlyData` message.
     ///
     /// # Errors
+    ///
     /// See `set_option`.
-    pub fn disable_end_of_early_data(&mut self) -> Res<()> {
+    pub fn disable_end_of_early_data(&self) -> Res<()> {
         self.set_option(ssl::Opt::SuppressEndOfEarlyData, true)
     }
 
@@ -488,8 +527,11 @@ impl SecretAgent {
     /// 255 octets in length.
     ///
     /// # Errors
+    ///
     /// This should always panic rather than return an error.
+    ///
     /// # Panics
+    ///
     /// If any of the provided `protocols` are more than 255 bytes long.
     ///
     /// [RFC7301]: https://datatracker.ietf.org/doc/html/rfc7301
@@ -513,9 +555,7 @@ impl SecretAgent {
 
         // NSS inherited an idiosyncratic API as a result of having implemented NPN
         // before ALPN.  For that reason, we need to put the "best" option last.
-        let (first, rest) = protocols
-            .split_first()
-            .expect("at least one ALPN value needed");
+        let (first, rest) = protocols.split_first().ok_or(Error::InternalError)?;
         for v in rest {
             add(v.as_ref());
         }
@@ -534,11 +574,12 @@ impl SecretAgent {
 
     /// Install an extension handler.
     ///
-    /// This can be called multiple times with different values for `ext`.  The handler is provided as
-    /// Rc<RefCell<>> so that the caller is able to hold a reference to the handler and later access any
-    /// state that it accumulates.
+    /// This can be called multiple times with different values for `ext`.  The handler is provided
+    /// as `Rc<RefCell<dyn T>>` so that the caller is able to hold a reference to the handler
+    /// and later access any state that it accumulates.
     ///
     /// # Errors
+    ///
     /// When the extension handler can't be successfully installed.
     pub fn extension_handler(
         &mut self,
@@ -553,14 +594,16 @@ impl SecretAgent {
     // This function tracks whether handshake() or handshake_raw() was used
     // and prevents the other from being used.
     fn set_raw(&mut self, r: bool) -> Res<()> {
-        if self.raw.is_none() {
+        if let Some(raw) = self.raw {
+            if raw == r {
+                Ok(())
+            } else {
+                Err(Error::MixedHandshakeMethod)
+            }
+        } else {
             self.secrets.register(self.fd)?;
             self.raw = Some(r);
             Ok(())
-        } else if self.raw.unwrap() == r {
-            Ok(())
-        } else {
-            Err(Error::MixedHandshakeMethod)
         }
     }
 
@@ -569,9 +612,9 @@ impl SecretAgent {
     ///
     /// Calling this function returns None until the connection is complete.
     #[must_use]
-    pub fn info(&self) -> Option<&SecretAgentInfo> {
-        match self.state {
-            HandshakeState::Complete(ref info) => Some(info),
+    pub const fn info(&self) -> Option<&SecretAgentInfo> {
+        match &self.state {
+            HandshakeState::Complete(info) => Some(info),
             _ => None,
         }
     }
@@ -582,6 +625,7 @@ impl SecretAgent {
     /// Calling this function collects all the relevant information.
     ///
     /// # Errors
+    ///
     /// When the underlying socket functions fail.
     pub fn preinfo(&self) -> Res<SecretAgentPreInfo> {
         SecretAgentPreInfo::new(self.fd)
@@ -600,7 +644,9 @@ impl SecretAgent {
     }
 
     /// Call this function to mark the peer as authenticated.
+    ///
     /// # Panics
+    ///
     /// If the handshake doesn't need to be authenticated.
     pub fn authenticated(&mut self, status: AuthenticationStatus) {
         assert!(self.state.authentication_needed());
@@ -611,7 +657,7 @@ impl SecretAgent {
     fn capture_error<T>(&mut self, res: Res<T>) -> Res<T> {
         if let Err(e) = res {
             let e = ech::convert_ech_error(self.fd, e);
-            qwarn!([self], "error: {:?}", e);
+            qwarn!("[{self}] error: {e:?}");
             self.state = HandshakeState::Failed(e.clone());
             Err(e)
         } else {
@@ -636,7 +682,7 @@ impl SecretAgent {
             let info = self.capture_error(SecretAgentInfo::new(self.fd))?;
             HandshakeState::Complete(info)
         };
-        qinfo!([self], "state -> {:?}", self.state);
+        qdebug!("[{self}] state -> {:?}", self.state);
         Ok(())
     }
 
@@ -649,6 +695,7 @@ impl SecretAgent {
     /// function if you want to proceed, because this will mark the certificate as OK.
     ///
     /// # Errors
+    ///
     /// When the handshake fails this returns an error.
     pub fn handshake(&mut self, now: Instant, input: &[u8]) -> Res<Vec<u8>> {
         self.now.set(now)?;
@@ -658,8 +705,8 @@ impl SecretAgent {
             // Within this scope, _h maintains a mutable reference to self.io.
             let _h = self.io.wrap(input);
             match self.state {
-                HandshakeState::Authenticated(ref err) => unsafe {
-                    ssl::SSL_AuthCertificateComplete(self.fd, *err)
+                HandshakeState::Authenticated(err) => unsafe {
+                    ssl::SSL_AuthCertificateComplete(self.fd, err)
                 },
                 _ => unsafe { ssl::SSL_ForceHandshake(self.fd) },
             }
@@ -685,16 +732,17 @@ impl SecretAgent {
     /// If you send data from multiple epochs, you might end up being sad.
     ///
     /// # Errors
+    ///
     /// When the handshake fails this returns an error.
     pub fn handshake_raw(&mut self, now: Instant, input: Option<Record>) -> Res<RecordList> {
         self.now.set(now)?;
         let records = self.setup_raw()?;
 
         // Fire off any authentication we might need to complete.
-        if let HandshakeState::Authenticated(ref err) = self.state {
+        if let HandshakeState::Authenticated(err) = self.state {
             let result =
-                secstatus_to_res(unsafe { ssl::SSL_AuthCertificateComplete(self.fd, *err) });
-            qdebug!([self], "SSL_AuthCertificateComplete: {:?}", result);
+                secstatus_to_res(unsafe { ssl::SSL_AuthCertificateComplete(self.fd, err) });
+            qdebug!("[{self}] SSL_AuthCertificateComplete: {result:?}");
             // This should return SECSuccess, so don't use update_state().
             self.capture_error(result)?;
         }
@@ -711,28 +759,38 @@ impl SecretAgent {
         Ok(*Pin::into_inner(records))
     }
 
-    #[allow(unknown_lints, clippy::branches_sharing_code)]
+    /// # Panics
+    ///
+    /// If setup fails.
     pub fn close(&mut self) {
         // It should be safe to close multiple times.
         if self.fd.is_null() {
             return;
         }
-        if let Some(true) = self.raw {
+        #[expect(
+            clippy::branches_sharing_code,
+            reason = "Moving the PR_Close call after the conditional crashes things?!"
+        )]
+        if self.raw == Some(true) {
             // Need to hold the record list in scope until the close is done.
             let _records = self.setup_raw().expect("Can only close");
-            unsafe { prio::PR_Close(self.fd.cast()) };
+            unsafe {
+                prio::PR_Close(self.fd.cast());
+            }
         } else {
             // Need to hold the IO wrapper in scope until the close is done.
             let _io = self.io.wrap(&[]);
-            unsafe { prio::PR_Close(self.fd.cast()) };
-        };
+            unsafe {
+                prio::PR_Close(self.fd.cast());
+            }
+        }
         let _output = self.io.take_output();
         self.fd = null_mut();
     }
 
     /// State returns the status of the handshake.
     #[must_use]
-    pub fn state(&self) -> &HandshakeState {
+    pub const fn state(&self) -> &HandshakeState {
         &self.state
     }
 
@@ -761,8 +819,8 @@ impl Drop for SecretAgent {
     }
 }
 
-impl ::std::fmt::Display for SecretAgent {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+impl Display for SecretAgent {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "Agent {:p}", self.fd)
     }
 }
@@ -781,7 +839,7 @@ impl AsRef<[u8]> for ResumptionToken {
 
 impl ResumptionToken {
     #[must_use]
-    pub fn new(token: Vec<u8>, expiration_time: Instant) -> Self {
+    pub const fn new(token: Vec<u8>, expiration_time: Instant) -> Self {
         Self {
             token,
             expiration_time,
@@ -789,25 +847,20 @@ impl ResumptionToken {
     }
 
     #[must_use]
-    pub fn expiration_time(&self) -> Instant {
+    pub const fn expiration_time(&self) -> Instant {
         self.expiration_time
     }
 }
 
 /// A TLS Client.
 #[derive(Debug)]
-#[allow(
-    renamed_and_removed_lints,
-    clippy::box_vec,
-    unknown_lints,
-    clippy::box_collection
-)] // We need the Box.
 pub struct Client {
     agent: SecretAgent,
 
     /// The name of the server we're attempting a connection to.
     server_name: String,
     /// Records the resumption tokens we've received.
+    #[expect(clippy::box_collection, reason = "We need the Box.")]
     resumption: Pin<Box<Vec<ResumptionToken>>>,
 }
 
@@ -815,13 +868,14 @@ impl Client {
     /// Create a new client agent.
     ///
     /// # Errors
+    ///
     /// Errors returned if the socket can't be created or configured.
-    pub fn new(server_name: impl Into<String>) -> Res<Self> {
+    pub fn new(server_name: impl Into<String>, grease: bool) -> Res<Self> {
         let server_name = server_name.into();
         let mut agent = SecretAgent::new()?;
         let url = CString::new(server_name.as_bytes())?;
         secstatus_to_res(unsafe { ssl::SSL_SetURL(agent.fd, url.as_ptr()) })?;
-        agent.ready(false)?;
+        agent.ready(false, grease)?;
         let mut client = Self {
             agent,
             server_name,
@@ -838,14 +892,11 @@ impl Client {
         arg: *mut c_void,
     ) -> ssl::SECStatus {
         let mut info: MaybeUninit<ssl::SSLResumptionTokenInfo> = MaybeUninit::uninit();
-        if ssl::SSL_GetResumptionTokenInfo(
-            token,
-            len,
-            info.as_mut_ptr(),
-            c_uint::try_from(mem::size_of::<ssl::SSLResumptionTokenInfo>()).unwrap(),
-        )
-        .is_err()
-        {
+        let Ok(info_len) = c_uint::try_from(size_of::<ssl::SSLResumptionTokenInfo>()) else {
+            return ssl::SECFailure;
+        };
+        let info_res = &ssl::SSL_GetResumptionTokenInfo(token, len, info.as_mut_ptr(), info_len);
+        if info_res.is_err() {
             // Ignore the token.
             return ssl::SECSuccess;
         }
@@ -854,15 +905,15 @@ impl Client {
             // Ignore the token.
             return ssl::SECSuccess;
         }
-        let resumption = arg.cast::<Vec<ResumptionToken>>().as_mut().unwrap();
-        let len = usize::try_from(len).unwrap();
+        let Some(resumption) = arg.cast::<Vec<ResumptionToken>>().as_mut() else {
+            return ssl::SECFailure;
+        };
+        let Ok(len) = usize::try_from(len) else {
+            return ssl::SECFailure;
+        };
         let mut v = Vec::with_capacity(len);
-        v.extend_from_slice(std::slice::from_raw_parts(token, len));
-        qinfo!(
-            [format!("{:p}", fd)],
-            "Got resumption token {}",
-            hex_snip_middle(&v)
-        );
+        v.extend_from_slice(null_safe_slice(token, len));
+        qdebug!("[{fd:p}] Got resumption token {}", hex_snip_middle(&v));
 
         if resumption.len() >= MAX_TICKETS {
             resumption.remove(0);
@@ -904,6 +955,7 @@ impl Client {
     /// Enable resumption, using a token previously provided.
     ///
     /// # Errors
+    ///
     /// Error returned when the resumption token is invalid or
     /// the socket is not able to use the value.
     pub fn enable_resumption(&mut self, token: impl AsRef<[u8]>) -> Res<()> {
@@ -927,10 +979,11 @@ impl Client {
     /// ECH greasing.  When that is done, there is no need to look for `EchRetry`
     ///
     /// # Errors
+    ///
     /// Error returned when the configuration is invalid.
     pub fn enable_ech(&mut self, ech_config_list: impl AsRef<[u8]>) -> Res<()> {
         let config = ech_config_list.as_ref();
-        qdebug!([self], "Enable ECH for a server: {}", hex_with_len(config));
+        qdebug!("[{self}] Enable ECH for a server: {}", hex_with_len(config));
         self.ech_config = Vec::from(config);
         if config.is_empty() {
             unsafe { ech::SSL_EnableTls13GreaseEch(self.agent.fd, PRBool::from(true)) }
@@ -948,7 +1001,6 @@ impl Client {
 
 impl Deref for Client {
     type Target = SecretAgent;
-    #[must_use]
     fn deref(&self) -> &SecretAgent {
         &self.agent
     }
@@ -960,8 +1012,8 @@ impl DerefMut for Client {
     }
 }
 
-impl ::std::fmt::Display for Client {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+impl Display for Client {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "Client {:p}", self.agent.fd)
     }
 }
@@ -973,14 +1025,15 @@ pub enum ZeroRttCheckResult {
     Accept,
     /// Reject 0-RTT, but continue the handshake normally.
     Reject,
-    /// Send HelloRetryRequest (probably not needed for QUIC).
+    /// Send `HelloRetryRequest` (probably not needed for QUIC).
     HelloRetryRequest(Vec<u8>),
     /// Fail the handshake.
     Fail,
 }
 
-/// A `ZeroRttChecker` is used by the agent to validate the application token (as provided by `send_ticket`)
-pub trait ZeroRttChecker: std::fmt::Debug + std::marker::Unpin {
+/// A `ZeroRttChecker` is used by the agent to validate the application token (as provided by
+/// `send_ticket`)
+pub trait ZeroRttChecker: Debug + Unpin {
     fn check(&self, token: &[u8]) -> ZeroRttCheckResult;
 }
 
@@ -1020,6 +1073,7 @@ impl Server {
     /// Create a new server agent.
     ///
     /// # Errors
+    ///
     /// Errors returned when NSS fails.
     pub fn new(certificates: &[impl AsRef<str>]) -> Res<Self> {
         let mut agent = SecretAgent::new()?;
@@ -1027,23 +1081,19 @@ impl Server {
         for n in certificates {
             let c = CString::new(n.as_ref())?;
             let cert_ptr = unsafe { p11::PK11_FindCertFromNickname(c.as_ptr(), null_mut()) };
-            let cert = if let Ok(c) = p11::Certificate::from_ptr(cert_ptr) {
-                c
-            } else {
+            let Ok(cert) = p11::Certificate::from_ptr(cert_ptr) else {
                 return Err(Error::CertificateLoading);
             };
-            let key_ptr = unsafe { p11::PK11_FindKeyByAnyCert(*cert.deref(), null_mut()) };
-            let key = if let Ok(k) = p11::PrivateKey::from_ptr(key_ptr) {
-                k
-            } else {
+            let key_ptr = unsafe { p11::PK11_FindKeyByAnyCert(*cert, null_mut()) };
+            let Ok(key) = PrivateKey::from_ptr(key_ptr) else {
                 return Err(Error::CertificateLoading);
             };
             secstatus_to_res(unsafe {
-                ssl::SSL_ConfigServerCert(agent.fd, *cert.deref(), *key.deref(), null(), 0)
+                ssl::SSL_ConfigServerCert(agent.fd, *cert, *key, null(), 0)
             })?;
         }
 
-        agent.ready(true)?;
+        agent.ready(true, true)?;
         Ok(Self {
             agent,
             zero_rtt_check: None,
@@ -1065,11 +1115,7 @@ impl Server {
         }
 
         let check_state = arg.cast::<ZeroRttCheckState>().as_mut().unwrap();
-        let token = if client_token.is_null() {
-            &[]
-        } else {
-            std::slice::from_raw_parts(client_token, usize::try_from(client_token_len).unwrap())
-        };
+        let token = null_safe_slice(client_token, usize::try_from(client_token_len).unwrap());
         match check_state.checker.check(token) {
             ZeroRttCheckResult::Accept => ssl::SSLHelloRetryRequestAction::ssl_hello_retry_accept,
             ZeroRttCheckResult::Fail => ssl::SSLHelloRetryRequestAction::ssl_hello_retry_fail,
@@ -1077,7 +1123,8 @@ impl Server {
                 ssl::SSLHelloRetryRequestAction::ssl_hello_retry_reject_0rtt
             }
             ZeroRttCheckResult::HelloRetryRequest(tok) => {
-                // Don't bother propagating errors from this, because it should be caught in testing.
+                // Don't bother propagating errors from this, because it should be caught in
+                // testing.
                 assert!(tok.len() <= usize::try_from(retry_token_max).unwrap());
                 let slc = std::slice::from_raw_parts_mut(retry_token, tok.len());
                 slc.copy_from_slice(&tok);
@@ -1091,6 +1138,7 @@ impl Server {
     /// via the Deref implementation on Server.
     ///
     /// # Errors
+    ///
     /// Returns an error if the underlying NSS functions fail.
     pub fn enable_0rtt(
         &mut self,
@@ -1118,6 +1166,7 @@ impl Server {
     /// The records that are sent are captured and returned.
     ///
     /// # Errors
+    ///
     /// If NSS is unable to send a ticket, or if this agent is incorrectly configured.
     pub fn send_ticket(&mut self, now: Instant, extra: &[u8]) -> Res<RecordList> {
         self.agent.now.set(now)?;
@@ -1133,6 +1182,7 @@ impl Server {
     /// Enable encrypted client hello (ECH).
     ///
     /// # Errors
+    ///
     /// Fails when NSS cannot create a key pair.
     pub fn enable_ech(
         &mut self,
@@ -1142,7 +1192,7 @@ impl Server {
         pk: &PublicKey,
     ) -> Res<()> {
         let cfg = ech::encode_config(config, public_name, pk)?;
-        qdebug!([self], "Enable ECH for a server: {}", hex_with_len(&cfg));
+        qdebug!("[{self}] Enable ECH for a server: {}", hex_with_len(&cfg));
         unsafe {
             ech::SSL_SetServerEchConfigs(
                 self.agent.fd,
@@ -1159,7 +1209,6 @@ impl Server {
 
 impl Deref for Server {
     type Target = SecretAgent;
-    #[must_use]
     fn deref(&self) -> &SecretAgent {
         &self.agent
     }
@@ -1171,8 +1220,8 @@ impl DerefMut for Server {
     }
 }
 
-impl ::std::fmt::Display for Server {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+impl Display for Server {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "Server {:p}", self.agent.fd)
     }
 }
@@ -1180,13 +1229,12 @@ impl ::std::fmt::Display for Server {
 /// A generic container for Client or Server.
 #[derive(Debug)]
 pub enum Agent {
-    Client(crate::agent::Client),
-    Server(crate::agent::Server),
+    Client(Client),
+    Server(Server),
 }
 
 impl Deref for Agent {
     type Target = SecretAgent;
-    #[must_use]
     fn deref(&self) -> &SecretAgent {
         match self {
             Self::Client(c) => c,
@@ -1205,14 +1253,12 @@ impl DerefMut for Agent {
 }
 
 impl From<Client> for Agent {
-    #[must_use]
     fn from(c: Client) -> Self {
         Self::Client(c)
     }
 }
 
 impl From<Server> for Agent {
-    #[must_use]
     fn from(s: Server) -> Self {
         Self::Server(s)
     }

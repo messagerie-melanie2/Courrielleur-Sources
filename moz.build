@@ -13,9 +13,6 @@ with Files("LICENSE"):
 with Files("mots.yaml"):
     BUG_COMPONENT = ("Conduit", "mots")
 
-with Files("aclocal.m4"):
-    BUG_COMPONENT = ("Firefox Build System", "General")
-
 with Files("Cargo.*"):
     BUG_COMPONENT = ("Firefox Build System", "General")
 
@@ -29,13 +26,16 @@ with Files("*configure*"):
     BUG_COMPONENT = ("Firefox Build System", "General")
 
 with Files("docs/**"):
-    BUG_COMPONENT = ("Firefox Build System", "Generated Documentation")
+    BUG_COMPONENT = ("Developer Infrastructure", "Source Documentation")
     SCHEDULES.exclusive = ["docs"]
+
+with Files("eslint*"):
+    BUG_COMPONENT = ("Developer Infrastructure", "Lint and Formatting")
 
 with Files("mach*"):
     BUG_COMPONENT = ("Firefox Build System", "Mach Core")
 
-with Files("pyproject.toml"):
+with Files("pyproject.toml", "srcdir-resolver.js"):
     BUG_COMPONENT = ("Developer Infrastructure", "Lint and Formatting")
 
 with Files("*moz*"):
@@ -55,8 +55,14 @@ with Files("**/l10n.toml"):
     BUG_COMPONENT = ("Core", "Localization")
     FINAL = True
 
-with Files("README.txt"):
+with Files("README.md"):
     BUG_COMPONENT = ("Core", "General")
+
+with Files("CODE_OF_CONDUCT.md"):
+    BUG_COMPONENT = ("Core", "General")
+
+with Files("SECURITY.md"):
+    BUG_COMPONENT = ("Core", "DOM: Security")
 
 with Files("nsprpub/**"):
     BUG_COMPONENT = ("NSPR", "NSPR")
@@ -86,26 +92,26 @@ with Files("**/crashtest*.list"):
     SCHEDULES.inclusive += ["test-verify", "test-verify-gpu"]
     SCHEDULES.exclusive = ["crashtest"]
 
-with Files("**/a11y.ini"):
+with Files("**/a11y.toml"):
     SCHEDULES.inclusive += ["test-verify", "test-verify-gpu"]
     SCHEDULES.exclusive = ["mochitest-a11y"]
 
-with Files("**/mochitest.ini"):
+with Files("**/mochitest.toml"):
     SCHEDULES.inclusive += ["test-verify", "test-verify-gpu"]
     SCHEDULES.exclusive = ["mochitest-plain"]
 
-with Files("**/browser.ini"):
+with Files("**/browser.toml"):
     SCHEDULES.inclusive += ["test-verify", "test-verify-gpu"]
     SCHEDULES.exclusive = ["mochitest-browser-chrome"]
 
 with Files("**/test*/**browser_*"):
     SCHEDULES.exclusive = ["mochitest-browser-chrome"]
 
-with Files("**/chrome.ini"):
+with Files("**/chrome.toml"):
     SCHEDULES.inclusive += ["test-verify", "test-verify-gpu"]
     SCHEDULES.exclusive = ["mochitest-chrome"]
 
-with Files("**/xpcshell.ini"):
+with Files("**/xpcshell.toml"):
     SCHEDULES.inclusive += ["test-verify", "test-verify-gpu"]
     SCHEDULES.exclusive = ["xpcshell"]
 
@@ -183,7 +189,9 @@ if CONFIG["MOZ_BUILD_APP"]:
 else:
     include("/toolkit/toolkit.mozbuild")
 
-OBJDIR_PP_FILES[".cargo"] += [".cargo/config.in"]
+OBJDIR_PP_FILES[".cargo"] += [
+    CONFIG["MOZ_OVERRIDE_CARGO_CONFIG"] or ".cargo/config.toml.in"
+]
 
 DEFINES["top_srcdir"] = TOPSRCDIR
 
@@ -195,7 +203,13 @@ SPHINX_TREES["testing-rust-code"] = "docs/testing-rust-code"
 
 SPHINX_TREES["writing-rust-code"] = "docs/writing-rust-code"
 
+SPHINX_TREES["rust-components"] = "docs/rust-components"
+
 SPHINX_TREES["bug-mgmt"] = "docs/bug-mgmt"
+
+SPHINX_TREES["glossary"] = "docs/glossary"
+
+SPHINX_TREES["overview"] = "docs/overview"
 
 SPHINX_TREES["setup"] = "docs/setup"
 
@@ -212,5 +226,9 @@ SPHINX_TREES["nspr"] = "docs/nspr"
 SPHINX_TREES["mots"] = "docs/mots"
 
 SPHINX_TREES["update-infrastructure"] = "docs/update-infrastructure"
+
+SPHINX_TREES["content-security"] = "docs/content-security"
+
+SPHINX_TREES["jsloader"] = "docs/jsloader"
 
 include("build/templates.mozbuild")

@@ -11,7 +11,6 @@
 "use strict";
 
 var {
-  add_to_toolbar,
   assert_message_pane_focused,
   assert_messages_not_in_view,
   assert_number_of_tabs_open,
@@ -19,29 +18,27 @@ var {
   assert_tab_mode_name,
   assert_tab_titled_from,
   be_in_folder,
-  close_message_window,
   close_tab,
   create_folder,
   get_about_3pane,
   make_message_sets_in_folders,
-  mc,
-  plan_for_message_display,
-  remove_from_toolbar,
   reset_open_message_behavior,
   set_mail_view,
   set_open_message_behavior,
   switch_tab,
   wait_for_message_display_completion,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
-var { async_plan_for_new_window, wait_for_new_window } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
+var { promise_new_window } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/WindowHelpers.sys.mjs"
 );
 
-var { MailUtils } = ChromeUtils.import("resource:///modules/MailUtils.jsm");
-var { MailViewConstants } = ChromeUtils.import(
-  "resource:///modules/MailViewManager.jsm"
+var { MailUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailUtils.sys.mjs"
+);
+var { MailViewConstants } = ChromeUtils.importESModule(
+  "resource:///modules/MailViewManager.sys.mjs"
 );
 
 // One folder's enough
@@ -63,12 +60,12 @@ add_setup(async function () {
  */
 async function test_open_single_message_without_backing_view_in_tab() {
   set_open_message_behavior("NEW_TAB");
-  let folderTab = mc.window.document.getElementById("tabmail").currentTabInfo;
-  let preCount =
-    mc.window.document.getElementById("tabmail").tabContainer.allTabs.length;
+  const folderTab = document.getElementById("tabmail").currentTabInfo;
+  const preCount =
+    document.getElementById("tabmail").tabContainer.allTabs.length;
   await be_in_folder(folder);
 
-  let win = get_about_3pane();
+  const win = get_about_3pane();
 
   if (!msgHdrsInFolder) {
     msgHdrsInFolder = [];
@@ -78,24 +75,22 @@ async function test_open_single_message_without_backing_view_in_tab() {
     }
   }
   // Get a reference to a header
-  let msgHdr = msgHdrsInFolder[4];
+  const msgHdr = msgHdrsInFolder[4];
   // Open it
   MailUtils.displayMessage(msgHdr);
-  // This is going to trigger a message display in the main 3pane window. Since
-  // the message will open in a new tab, we shouldn't
-  // plan_for_message_display().
-  wait_for_message_display_completion(mc, true);
+  // This is going to trigger a message display in the main 3pane window.
+  await wait_for_message_display_completion(window, true);
   // Check that the tab count has increased by 1
   assert_number_of_tabs_open(preCount + 1);
   // Check that the currently displayed tab is a message tab (i.e. our newly
   // opened tab is in the foreground)
   assert_tab_mode_name(null, "mailMessageTab");
   // Check that the message header displayed is the right one
-  assert_selected_and_displayed(msgHdr);
+  await assert_selected_and_displayed(msgHdr);
   // Check that the message pane is focused
   assert_message_pane_focused();
   // Clean up, close the tab
-  close_tab(mc.window.document.getElementById("tabmail").currentTabInfo);
+  close_tab(document.getElementById("tabmail").currentTabInfo);
   await switch_tab(folderTab);
   reset_open_message_behavior();
 }
@@ -106,20 +101,18 @@ add_task(test_open_single_message_without_backing_view_in_tab);
  */
 async function test_open_multiple_messages_without_backing_views_in_tabs() {
   set_open_message_behavior("NEW_TAB");
-  let folderTab = mc.window.document.getElementById("tabmail").currentTabInfo;
-  let preCount =
-    mc.window.document.getElementById("tabmail").tabContainer.allTabs.length;
+  const folderTab = document.getElementById("tabmail").currentTabInfo;
+  const preCount =
+    document.getElementById("tabmail").tabContainer.allTabs.length;
   await be_in_folder(folder);
 
   // Get a reference to a bunch of headers
-  let msgHdrs = msgHdrsInFolder.slice(0, NUM_MESSAGES_TO_OPEN);
+  const msgHdrs = msgHdrsInFolder.slice(0, NUM_MESSAGES_TO_OPEN);
 
   // Open them
   MailUtils.displayMessages(msgHdrs);
-  // This is going to trigger a message display in the main 3pane window. Since
-  // the message will open in a new tab, we shouldn't
-  // plan_for_message_display().
-  wait_for_message_display_completion(mc, true);
+  // This is going to trigger a message display in the main 3pane window.
+  await wait_for_message_display_completion(window, true);
   // Check that the tab count has increased by the correct number
   assert_number_of_tabs_open(preCount + NUM_MESSAGES_TO_OPEN);
   // Check that the currently displayed tab is a message tab (i.e. one of our
@@ -129,8 +122,8 @@ async function test_open_multiple_messages_without_backing_views_in_tabs() {
   // Now check whether each of the NUM_MESSAGES_TO_OPEN tabs has the correct
   // title
   for (let i = 0; i < NUM_MESSAGES_TO_OPEN; i++) {
-    assert_tab_titled_from(
-      mc.window.document.getElementById("tabmail").tabInfo[preCount + i],
+    await assert_tab_titled_from(
+      document.getElementById("tabmail").tabInfo[preCount + i],
       msgHdrs[i]
     );
   }
@@ -138,9 +131,9 @@ async function test_open_multiple_messages_without_backing_views_in_tabs() {
   // Check whether each tab has the correct message and whether the message pane
   // is focused in each case, then close it to load the previous tab.
   for (let i = 0; i < NUM_MESSAGES_TO_OPEN; i++) {
-    assert_selected_and_displayed(msgHdrs.pop());
+    await assert_selected_and_displayed(msgHdrs.pop());
     assert_message_pane_focused();
-    close_tab(mc.window.document.getElementById("tabmail").currentTabInfo);
+    close_tab(document.getElementById("tabmail").currentTabInfo);
   }
   await switch_tab(folderTab);
   reset_open_message_behavior();
@@ -155,17 +148,17 @@ async function test_open_message_without_backing_view_in_new_window() {
   await be_in_folder(folder);
 
   // Select a message
-  let msgHdr = msgHdrsInFolder[6];
+  const msgHdr = msgHdrsInFolder[6];
 
-  let newWindowPromise = async_plan_for_new_window("mail:messageWindow");
+  const newWindowPromise = promise_new_window("mail:messageWindow");
   // Open it
   MailUtils.displayMessage(msgHdr);
-  let msgc = await newWindowPromise;
-  wait_for_message_display_completion(msgc, true);
+  const msgc = await newWindowPromise;
+  await wait_for_message_display_completion(msgc, true);
 
-  assert_selected_and_displayed(msgc, msgHdr);
+  await assert_selected_and_displayed(msgc, msgHdr);
   // Clean up, close the window
-  close_message_window(msgc);
+  await BrowserTestUtils.closeWindow(msgc);
   reset_open_message_behavior();
 }
 add_task(test_open_message_without_backing_view_in_new_window).skip(); // TODO
@@ -178,22 +171,21 @@ async function test_open_message_without_backing_view_in_existing_window() {
   await be_in_folder(folder);
 
   // Open up a window
-  let firstMsgHdr = msgHdrsInFolder[3];
-  let newWindowPromise = async_plan_for_new_window("mail:messageWindow");
+  const firstMsgHdr = msgHdrsInFolder[3];
+  const newWindowPromise = promise_new_window("mail:messageWindow");
   MailUtils.displayMessage(firstMsgHdr);
-  let msgc = await newWindowPromise;
-  wait_for_message_display_completion(msgc, true);
+  const msgc = await newWindowPromise;
+  await wait_for_message_display_completion(msgc, true);
 
   // Open another message
-  let msgHdr = msgHdrsInFolder[7];
-  plan_for_message_display(msgc);
+  const msgHdr = msgHdrsInFolder[7];
   MailUtils.displayMessage(msgHdr);
-  wait_for_message_display_completion(msgc, true);
+  await wait_for_message_display_completion(msgc, true);
 
   // Check if our old window displays the message
-  assert_selected_and_displayed(msgc, msgHdr);
+  await assert_selected_and_displayed(msgc, msgHdr);
   // Clean up, close the window
-  close_message_window(msgc);
+  await BrowserTestUtils.closeWindow(msgc);
   reset_open_message_behavior();
 }
 add_task(test_open_message_without_backing_view_in_existing_window).skip(); // TODO
@@ -202,8 +194,8 @@ add_task(test_open_message_without_backing_view_in_existing_window).skip(); // T
  * Time to throw a spanner in the works. Set a mail view for the folder that
  * excludes every message.
  */
-add_task(function test_filter_out_all_messages() {
-  set_mail_view(MailViewConstants.kViewItemTags, "$label1");
+add_task(async function test_filter_out_all_messages() {
+  await set_mail_view(MailViewConstants.kViewItemTags, "$label1");
   // Make sure all the messages have actually disappeared
   assert_messages_not_in_view(msgHdrsInFolder);
 });

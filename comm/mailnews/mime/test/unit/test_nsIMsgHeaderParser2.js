@@ -6,8 +6,8 @@
  *   parseDecodedHeader
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 function run_test() {
@@ -57,8 +57,15 @@ function run_test() {
       "Undisclosed recipients:;",
       "", // Mailboxes
       "", // Address Names
-      "",
-    ], // Address Name
+      "", // First address Name
+    ],
+    // Bug 1940570
+    [
+      "<else@example.com>:<actual@example.com>;",
+      "actual@example.com", // Mailboxes
+      "actual@example.com", // Address Names
+      "actual@example.com", // First address Name
+    ],
   ];
 
   // Test - empty strings
@@ -73,7 +80,7 @@ function run_test() {
       MailServices.headerParser.extractHeaderAddressMailboxes(checks[i][0]),
       checks[i][1]
     );
-    let _names = MailServices.headerParser
+    const _names = MailServices.headerParser
       .parseDecodedHeader(checks[i][0])
       .map(addr => addr.name || addr.email)
       .join(", ");

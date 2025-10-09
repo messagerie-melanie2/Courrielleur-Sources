@@ -34,8 +34,6 @@ class FrameChildList;
 enum class FrameChildListID {
   // The individual concrete child lists.
   Principal,
-  Popup,
-  Caption,
   ColGroup,
   Absolute,
   Fixed,
@@ -82,7 +80,7 @@ class nsFrameList {
   using reverse_iterator = Iterator<BackwardFrameTraversal>;
   using const_reverse_iterator = Iterator<BackwardFrameTraversal>;
 
-  nsFrameList() : mFirstChild(nullptr), mLastChild(nullptr) {}
+  constexpr nsFrameList() : mFirstChild(nullptr), mLastChild(nullptr) {}
 
   nsFrameList(nsIFrame* aFirstFrame, nsIFrame* aLastFrame)
       : mFirstChild(aFirstFrame), mLastChild(aLastFrame) {
@@ -176,10 +174,11 @@ class nsFrameList {
   [[nodiscard]] nsFrameList TakeFramesAfter(nsIFrame* aFrame);
 
   /**
-   * Take the first frame (if any) out of the frame list.
-   * @return the first child, or nullptr if the list is empty
+   * Take the first (or last) child (if any) out of the frame list.
+   * @return the first (or last) child, or nullptr if the list is empty
    */
   nsIFrame* RemoveFirstChild();
+  nsIFrame* RemoveLastChild();
 
   /**
    * The following two functions are intended to be used in concert for
@@ -336,7 +335,7 @@ class nsFrameList {
   void List(FILE* out) const;
 #endif
 
-  static inline const nsFrameList& EmptyList();
+  static inline const nsFrameList& EmptyList() { return sEmptyList; };
 
   /**
    * A class representing a slice of a frame list.
@@ -425,6 +424,8 @@ class nsFrameList {
  private:
   void operator delete(void*) = delete;
 
+  static const nsFrameList sEmptyList;
+
 #ifdef DEBUG_FRAME_LIST
   void VerifyList() const;
 #else
@@ -478,19 +479,6 @@ class MOZ_RAII AutoFrameListPtr final {
   nsFrameList* mFrameList;
 };
 
-namespace detail {
-union AlignedFrameListBytes {
-  void* ptr;
-  char bytes[sizeof(nsFrameList)];
-};
-extern const AlignedFrameListBytes gEmptyFrameListBytes;
-}  // namespace detail
-
 }  // namespace mozilla
-
-/* static */ inline const nsFrameList& nsFrameList::EmptyList() {
-  return *reinterpret_cast<const nsFrameList*>(
-      &mozilla::detail::gEmptyFrameListBytes);
-}
 
 #endif /* nsFrameList_h___ */

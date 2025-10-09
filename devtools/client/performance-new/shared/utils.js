@@ -377,17 +377,6 @@ function getWinDrive(path) {
   return path.slice(0, index + 1);
 }
 
-class UnhandledCaseError extends Error {
-  /**
-   * @param {never} value - Check that
-   * @param {string} typeName - A friendly type name.
-   */
-  constructor(value, typeName) {
-    super(`There was an unhandled case for "${typeName}": ${value}`);
-    this.name = "UnhandledCaseError";
-  }
-}
-
 /**
  * @type {FeatureDescription[]}
  */
@@ -412,6 +401,13 @@ const featureDescriptions = [
     value: "cpu",
     title:
       "Record how much CPU has been used between samples by each profiled thread.",
+    recommended: true,
+  },
+  {
+    name: "Memory Tracking",
+    value: "memory",
+    title:
+      "Track the memory allocations and deallocations per process over time.",
     recommended: true,
   },
   {
@@ -457,14 +453,6 @@ const featureDescriptions = [
     title: "Record screenshots of all browser windows.",
   },
   {
-    name: "JSTracer",
-    value: "jstracer",
-    title: "Trace JS engine",
-    experimental: true,
-    disabledReason:
-      "JS Tracer is currently disabled due to crashes. See Bug 1565788.",
-  },
-  {
     name: "IPC Messages",
     value: "ipcmessages",
     title: "Track IPC messages.",
@@ -497,7 +485,7 @@ const featureDescriptions = [
     name: "CPU Utilization - All Threads",
     value: "cpuallthreads",
     title:
-      "Record how much CPU has been used between samples by ALL registered thread.",
+      "Record CPU usage of all known threads, even threads which are not being profiled.",
     experimental: true,
   },
   {
@@ -552,6 +540,39 @@ const featureDescriptions = [
     })(),
     experimental: true,
   },
+  {
+    name: "CPU Frequency",
+    value: "cpufreq",
+    title:
+      "Record the clock frequency of every CPU core for every profiler sample.",
+    experimental: true,
+    disabledReason:
+      "This feature is only available on Windows, Linux and Android.",
+  },
+  {
+    name: "Network Bandwidth",
+    value: "bandwidth",
+    title: "Record the network bandwidth used between every profiler sample.",
+  },
+  {
+    name: "JS Execution Tracing",
+    value: "tracing",
+    title:
+      "Disable periodic stack sampling, and capture information about every JS function executed.",
+    experimental: true,
+  },
+  {
+    name: "Sandbox profiling",
+    value: "sandbox",
+    title: "Report sandbox syscalls and logs in the profiler.",
+  },
+  {
+    name: "Flows",
+    value: "flows",
+    title:
+      "Include all flow-related markers. These markers show the program flow better but " +
+      "can cause more overhead in some places than normal.",
+  },
 ];
 
 module.exports = {
@@ -561,6 +582,5 @@ module.exports = {
   scaleRangeWithClamping,
   calculateOverhead,
   withCommonPathPrefixRemoved,
-  UnhandledCaseError,
   featureDescriptions,
 };

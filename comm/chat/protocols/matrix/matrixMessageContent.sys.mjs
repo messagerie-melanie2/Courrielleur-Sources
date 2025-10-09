@@ -2,21 +2,23 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-import { l10nHelper } from "resource:///modules/imXPCOMUtils.sys.mjs";
 import { MatrixSDK } from "resource:///modules/matrix-sdk.sys.mjs";
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   getMatrixTextForEvent: "resource:///modules/matrixTextForEvent.sys.mjs",
 });
-XPCOMUtils.defineLazyGetter(lazy, "domParser", () => new DOMParser());
-XPCOMUtils.defineLazyGetter(lazy, "TXTToHTML", function () {
-  let cs = Cc["@mozilla.org/txttohtmlconv;1"].getService(Ci.mozITXTToHTMLConv);
+ChromeUtils.defineLazyGetter(lazy, "domParser", () => new DOMParser());
+ChromeUtils.defineLazyGetter(lazy, "TXTToHTML", function () {
+  const cs = Cc["@mozilla.org/txttohtmlconv;1"].getService(
+    Ci.mozITXTToHTMLConv
+  );
   return aTxt => cs.scanTXT(aTxt, cs.kEntities);
 });
-XPCOMUtils.defineLazyGetter(lazy, "_", () =>
-  l10nHelper("chrome://chat/locale/matrix.properties")
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () => new Localization(["chat/matrix-properties.ftl"], true)
 );
 
 const kRichBodiedTypes = [
@@ -86,7 +88,7 @@ function formatMention(userId, doc) {
  *
  * @param {MatrixEvent} replyEvent - Event to quote.
  * @param {string} homeserverUrl - The base URL of the homeserver.
- * @param {string => MatrixEvent} getEvent - Get the event with the given ID.
+ * @param {function(string):MatrixEvent} getEvent - Get the event with the given ID.
  *  Used to fetch the replied to event.
  * @param {boolean} rich - When true prefers the HTML representation of the
  *  event body.
@@ -118,7 +120,7 @@ function getReplyContent(replyEvent, homeserverUrl, getEvent, rich) {
  *
  * @param {MatrixEvent} event - The event to format the body of.
  * @param {string} homeserverUrl - The base URL of the homeserver.
- * @param {(string) => MatrixEvent} getEvent - Get the event with the given ID.
+ * @param {function(string):MatrixEvent} getEvent - Get the event with the given ID.
  * @param {boolean} [includeReply=true] - If the message should contain the message it's replying to.
  * @returns {string} Plain text message for the event.
  */
@@ -229,7 +231,7 @@ function formatHTMLBody(event, homeserverUrl, getEvent, includeReply = true) {
       const eventId = event.replyEventId;
       const replyEvent = getEvent(eventId);
       if (replyEvent) {
-        let replyContent = getReplyContent(
+        const replyContent = getReplyContent(
           replyEvent,
           homeserverUrl,
           getEvent,
@@ -267,7 +269,7 @@ export var MatrixMessageContent = {
    * @param {MatrixEvent} event - Event to format the body of.
    * @param {string} homeserverUrl - The base URL of the homserver used to
    *  resolve mxc URIs.
-   * @param {string => MatrixEvent} getEvent - Get the event with the given ID.
+   * @param {function(string):MatrixEvent} getEvent - Get the event with the given ID.
    *  Used to fetch the replied to event.
    * @param {boolean} [includeReply=true] - If the message should contain the
    *  message it's replying to.
@@ -284,7 +286,7 @@ export var MatrixMessageContent = {
     const type = event.getType();
     const content = event.getContent();
     if (event.isRedacted()) {
-      return lazy._("message.redacted");
+      return lazy.l10n.formatValueSync("message-redacted");
     }
     const textForEvent = lazy.getMatrixTextForEvent(event);
     if (textForEvent) {
@@ -301,7 +303,7 @@ export var MatrixMessageContent = {
           return attachmentUrl;
         }
       } else if (event.isBeingDecrypted() || event.shouldAttemptDecryption()) {
-        return lazy._("message.decrypting");
+        return lazy.l10n.formatValueSync("message-decrypting");
       }
     } else if (type == MatrixSDK.EventType.Sticker) {
       const attachmentUrl = getAttachmentUrl(content, homeserverUrl);
@@ -309,14 +311,13 @@ export var MatrixMessageContent = {
         return attachmentUrl;
       }
     } else if (type == MatrixSDK.EventType.Reaction) {
-      let annotatedEvent = getEvent(content["m.relates_to"]?.event_id);
+      const annotatedEvent = getEvent(content["m.relates_to"]?.event_id);
       if (annotatedEvent && content["m.relates_to"]?.key) {
-        return lazy._(
-          "message.reaction",
-          event.getSender(),
-          annotatedEvent.getSender(),
-          lazy.TXTToHTML(content["m.relates_to"].key)
-        );
+        return lazy.l10n.formatValueSync("message-reaction", {
+          userThatReacted: event.getSender(),
+          userThatSentMessage: annotatedEvent.getSender(),
+          reaction: lazy.TXTToHTML(content["m.relates_to"].key),
+        });
       }
     }
     return lazy.TXTToHTML(content.body ?? "");
@@ -327,7 +328,7 @@ export var MatrixMessageContent = {
    * @param {MatrixEvent} event - Event to format the body of.
    * @param {string} homeserverUrl - The base URL of the homserver used to
    *  resolve mxc URIs.
-   * @param {string => MatrixEvent} getEvent - Get the event with the given ID.
+   * @param {function(string):MatrixEvent} getEvent - Get the event with the given ID.
    * @param {boolean} [includeReply=true] - If the message should contain the
    *  message it's replying to.
    * @returns {string} Returns a formatted body ready for display or an empty
@@ -343,7 +344,7 @@ export var MatrixMessageContent = {
     const type = event.getType();
     const content = event.getContent();
     if (event.isRedacted()) {
-      return lazy._("message.redacted");
+      return lazy.l10n.formatValueSync("message-redacted");
     }
     if (type == MatrixSDK.EventType.RoomMessage) {
       if (
@@ -358,14 +359,13 @@ export var MatrixMessageContent = {
     } else if (type == MatrixSDK.EventType.Sticker) {
       return formatMediaAttachment(content, homeserverUrl);
     } else if (type == MatrixSDK.EventType.Reaction) {
-      let annotatedEvent = getEvent(content["m.relates_to"]?.event_id);
+      const annotatedEvent = getEvent(content["m.relates_to"]?.event_id);
       if (annotatedEvent && content["m.relates_to"]?.key) {
-        return lazy._(
-          "message.reaction",
-          `<span class="ib-person">${event.getSender()}</span>`,
-          `<span class="ib-person">${annotatedEvent.getSender()}</span>`,
-          lazy.TXTToHTML(content["m.relates_to"].key)
-        );
+        return lazy.l10n.formatValueSync("message-reaction", {
+          userThatReacted: `<span class="ib-person">${event.getSender()}</span>`,
+          userThatSentMessage: `<span class="ib-person">${annotatedEvent.getSender()}</span>`,
+          reaction: lazy.TXTToHTML(content["m.relates_to"].key),
+        });
       }
     }
     return MatrixMessageContent.getIncomingPlain(

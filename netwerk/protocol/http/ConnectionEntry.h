@@ -48,7 +48,8 @@ class ConnectionEntry {
   nsresult CloseIdleConnection(nsHttpConnection* conn);
   void CloseIdleConnections();
   void CloseIdleConnections(uint32_t maxToClose);
-  void CloseH2WebsocketConnections();
+  void CloseExtendedCONNECTConnections();
+  void ClosePendingConnections();
   nsresult RemoveIdleConnection(nsHttpConnection* conn);
   bool IsInIdleConnections(HttpConnectionBase* conn);
   size_t IdleConnectionsLength() const { return mIdleConns.Length(); }
@@ -61,14 +62,15 @@ class ConnectionEntry {
   void InsertIntoActiveConns(HttpConnectionBase* conn);
   bool IsInActiveConns(HttpConnectionBase* conn);
   nsresult RemoveActiveConnection(HttpConnectionBase* conn);
+  nsresult RemovePendingConnection(HttpConnectionBase* conn);
   void MakeAllDontReuseExcept(HttpConnectionBase* conn);
   bool FindConnToClaim(PendingTransactionInfo* pendingTransInfo);
   void CloseActiveConnections();
   void CloseAllActiveConnsWithNullTransactcion(nsresult aCloseCode);
 
-  bool IsInH2WebsocketConns(HttpConnectionBase* conn);
-  void InsertIntoH2WebsocketConns(HttpConnectionBase* conn);
-  void RemoveH2WebsocketConns(HttpConnectionBase* conn);
+  bool IsInExtendedCONNECTConns(HttpConnectionBase* conn);
+  void InsertIntoExtendedCONNECTConns(HttpConnectionBase* conn);
+  void RemoveExtendedCONNECTConns(HttpConnectionBase* conn);
 
   HttpConnectionBase* GetH2orH3ActiveConn();
   // Make an active spdy connection DontReuse.
@@ -78,6 +80,7 @@ class ConnectionEntry {
   void ClosePersistentConnections();
 
   uint32_t PruneDeadConnections();
+  void MakeConnectionPendingAndDontReuse(HttpConnectionBase* conn);
   void VerifyTraffic();
   void PruneNoTraffic();
   uint32_t TimeoutTick();
@@ -93,6 +96,7 @@ class ConnectionEntry {
   void CloseAllDnsAndConnectSockets();
 
   HttpRetParams GetConnectionData();
+  Http3ConnectionStatsParams GetHttp3ConnectionStatsData();
   void LogConnections();
 
   const RefPtr<nsHttpConnectionInfo> mConnInfo;
@@ -119,7 +123,13 @@ class ConnectionEntry {
   // combined with the Anonymous flag and OA from the connection information
   // to build the hash key for hosts in the same ip pool.
   //
+
   nsTArray<nsCString> mCoalescingKeys;
+
+  // This is a list of addresses matching the coalescing keys.
+  // This is necessary to check if the origin's DNS entries
+  // contain the IP address of the active connection.
+  nsTArray<NetAddr> mAddresses;
 
   // To have the UsingSpdy flag means some host with the same connection
   // entry has done NPN=spdy/* at some point. It does not mean every
@@ -198,6 +208,12 @@ class ConnectionEntry {
   bool AllowToRetryDifferentIPFamilyForHttp3(nsresult aError);
   void SetRetryDifferentIPFamilyForHttp3(uint16_t aIPFamily);
 
+  void SetServerCertHashes(nsTArray<RefPtr<nsIWebTransportHash>>&& aHashes);
+
+  const nsTArray<RefPtr<nsIWebTransportHash>>& GetServerCertHashes();
+
+  const nsCString& OriginFrameHashKey();
+
  private:
   void InsertIntoIdleConnections_internal(nsHttpConnection* conn);
   void RemoveFromIdleConnectionsIndex(size_t inx);
@@ -205,15 +221,26 @@ class ConnectionEntry {
 
   nsTArray<RefPtr<nsHttpConnection>> mIdleConns;  // idle persistent connections
   nsTArray<RefPtr<HttpConnectionBase>> mActiveConns;  // active connections
-
-  // "fake" http2 websocket connections that needs to be cleaned up on shutdown
-  nsTArray<RefPtr<HttpConnectionBase>> mH2WebsocketConns;
+  // When a connection is added to this mPendingConns list, it is primarily
+  // to keep the connection alive and to continue serving its ongoing
+  // transaction. While in this list, the connection will not be available to
+  // serve any new transactions and will remain here until its current
+  // transaction is complete.
+  nsTArray<RefPtr<HttpConnectionBase>> mPendingConns;
+  // Tunneled connections used for extended CONNECT that needs to be cleaned up
+  // on shutdown
+  nsTArray<RefPtr<HttpConnectionBase>> mExtendedCONNECTConns;
 
   nsTArray<RefPtr<DnsAndConnectSocket>>
       mDnsAndConnectSockets;  // dns resolution and half open connections
 
+  // If serverCertificateHashes are used, these are stored here
+  nsTArray<RefPtr<nsIWebTransportHash>> mServerCertHashes;
+
   PendingTransactionQueue mPendingQ;
   ~ConnectionEntry();
+
+  nsCString mOriginFrameHashKey;
 
   bool mRetriedDifferentIPFamilyForHttp3 = false;
 };

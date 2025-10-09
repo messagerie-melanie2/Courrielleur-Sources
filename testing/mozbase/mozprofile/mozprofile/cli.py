@@ -76,7 +76,7 @@ def parse_preferences(prefs, context="--setpref="):
     return {k: Preferences.cast(v) for k, v in prefs.items()}
 
 
-class MozProfileCLI(object):
+class MozProfileCLI:
     """The Command Line Interface for ``mozprofile``."""
 
     module = "mozprofile"
@@ -90,7 +90,6 @@ class MozProfileCLI(object):
         (self.options, self.args) = self.parser.parse_args(args)
 
     def add_options(self, parser):
-
         parser.add_option(
             "-p",
             "--profile",

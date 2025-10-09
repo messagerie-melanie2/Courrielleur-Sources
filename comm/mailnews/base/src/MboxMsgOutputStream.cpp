@@ -5,6 +5,7 @@
 
 #include "MboxMsgOutputStream.h"
 #include "nsMsgUtils.h"  // For CEscapeString().
+#include "nsPrintfCString.h"
 #include "nsString.h"
 #include "mozilla/Logging.h"
 #include <algorithm>
@@ -16,17 +17,19 @@ NS_IMPL_ISUPPORTS(MboxMsgOutputStream, nsIOutputStream, nsISafeOutputStream);
 
 MboxMsgOutputStream::MboxMsgOutputStream(nsIOutputStream* mboxStream,
                                          bool closeInnerWhenDone)
-    : mInner(mboxStream), mCloseInnerWhenDone(closeInnerWhenDone) {
-  nsresult rv;
-
+    : mLock("MboxMsgOutputStream::mLock"),
+      mInner(mboxStream),
+      mCloseInnerWhenDone(closeInnerWhenDone) {
   // Record the starting position of the underlying mbox file.
   // If this fails, the stream will be kept in error state.
+  nsresult rv;
   mSeekable = do_QueryInterface(mInner, &rv);
-  if (NS_SUCCEEDED(rv)) {
-    rv = mSeekable->Tell(&mStartPos);
-  }
-
   if (NS_FAILED(rv)) {
+    MOZ_CRASH("Using MboxMsgOutputStream on non-seekable mboxStream");
+  }
+  rv = mSeekable->Tell(&mStartPos);
+  if (NS_FAILED(rv)) {
+    NS_WARNING("MboxMsgOutputStream couldn't determine start.");
     mState = eError;
     mStatus = rv;
     mStartPos = -1;
@@ -38,12 +41,75 @@ MboxMsgOutputStream::MboxMsgOutputStream(nsIOutputStream* mboxStream,
 
 MboxMsgOutputStream::~MboxMsgOutputStream() { Close(); }
 
+int64_t MboxMsgOutputStream::StartPos() {
+  mozilla::MutexAutoLock lock(mLock);
+  MOZ_ASSERT(mState != eError);
+  MOZ_ASSERT(mStartPos != -1);
+  return mStartPos;
+}
+
+void MboxMsgOutputStream::SetEnvelopeDetails(nsACString const& sender,
+                                             PRTime received) {
+  mozilla::MutexAutoLock lock(mLock);
+  // If MboxMsgOutputStream was badly constructed (with a non-seekable
+  // underlying mboxStream), just quietly bail out.
+  if (mState == eError) {
+    return;
+  }
+  // But trying to set details after we've started writing? Definitely not.
+  MOZ_ASSERT(mState == eInitial);
+
+  mEnvelopeSender = sender;
+  mEnvelopeReceivedTime = received;
+}
+
+// Helper to build up a From line. For example,
+// "From bob@example.com Sat Jan 03 01:05:34 1996\r\n"
+// If envSender is empty string, then "-" will be used as a placeholder
+// (as per earlier versions of TB).
+// If envReceived is 0, then the current time will be used.
+static nsCString buildFromLine(nsACString const& envSender,
+                               PRTime envReceived) {
+  nsAutoCString sender(envSender);
+  // From http://qmail.org./man/man5/mbox.html:
+  // "If the envelope sender is empty (i.e., if this is a bounce message),
+  // the program uses MAILER-DAEMON instead."
+  // But it's almost certainly not a bounce message. And we don't have
+  // an envelope sender from SMTP, say. But we need something.
+  // Earlier versions of TB used "-", so we'll go with that.
+  if (sender.IsEmpty()) {
+    sender = "-"_ns;
+  }
+
+  // "If the envelope sender contains spaces, tabs, or newlines, the program
+  // replaces them with hyphens."
+  sender.ReplaceChar(" \t\r\n"_ns, '-');
+
+  // If received time not explicitly set, we'll use current time.
+  if (envReceived == 0) {
+    envReceived = PR_Now();
+  }
+
+  // Format the time (no timezone - mbox assumes UTC).
+  // eg "Sat Jan 03 01:05:34 1996"
+  char dateBuf[64];
+  PRExplodedTime exploded;
+  PR_ExplodeTime(envReceived, PR_GMTParameters, &exploded);
+  PR_FormatTimeUSEnglish(dateBuf, sizeof(dateBuf), "%a %b %d %H:%M:%S %Y",
+                         &exploded);
+
+  return nsPrintfCString("From %s %s\r\n", sender.get(), dateBuf);
+}
+
+// Internal helper.
 nsresult MboxMsgOutputStream::Emit(nsACString const& data) {
   return Emit(data.Data(), data.Length());
 }
 
-// Internal output helper to write to underlying target output stream.
+// Helper to write to underlying target output stream.
 // Makes sure the error state is checked and kept updated.
+// Internal function, so assumes we're already in a thread-safe state
+// i.e. caller is responsible for acquiring mLock, if needed.
 nsresult MboxMsgOutputStream::Emit(const char* data, uint32_t numBytes) {
   if (mState == eError) {
     MOZ_ASSERT(NS_FAILED(mStatus));
@@ -96,6 +162,7 @@ static EscapingDecision DecideEscaping(const char* begin, const char* end) {
 
 // Implementation for nsIOutputStream.streamStatus().
 NS_IMETHODIMP MboxMsgOutputStream::StreamStatus() {
+  mozilla::MutexAutoLock lock(mLock);
   switch (mState) {
     case eClosed:
       return NS_BASE_STREAM_CLOSED;
@@ -109,9 +176,17 @@ NS_IMETHODIMP MboxMsgOutputStream::StreamStatus() {
 // Implementation for nsIOutputStream.write().
 NS_IMETHODIMP MboxMsgOutputStream::Write(const char* buf, uint32_t count,
                                          uint32_t* bytesWritten) {
+  mozilla::MutexAutoLock lock(mLock);
   MOZ_LOG(gMboxLog, LogLevel::Verbose,
           ("MboxMsgOutputStream::Write() %" PRIu32 " bytes: `%s`", count,
            CEscapeString(nsDependentCSubstring(buf, count), 80).get()));
+  if (mState == eClosed) {
+    return NS_BASE_STREAM_CLOSED;
+  }
+  if (mState == eError) {
+    return NS_ERROR_FAILURE;
+  }
+
   nsresult rv;
   *bytesWritten = 0;
   if (count == 0) {
@@ -121,10 +196,7 @@ NS_IMETHODIMP MboxMsgOutputStream::Write(const char* buf, uint32_t count,
   // First write?
   if (mState == eInitial) {
     // As per RFC 4155, this _should_ be "From <SENDER> <TIMESTAMP>\r\n".
-    // But we don't really have that info here, so we'll just use "From \r\n".
-    // Other msgStore implementations won't store it either, so seems silly
-    // to jump through hoops for it.
-    rv = Emit("From \r\n"_ns);
+    rv = Emit(buildFromLine(mEnvelopeSender, mEnvelopeReceivedTime));
     NS_ENSURE_SUCCESS(rv, rv);
     mState = eStartOfLine;
   }
@@ -239,6 +311,7 @@ NS_IMETHODIMP MboxMsgOutputStream::IsNonBlocking(bool* nonBlocking) {
 
 // Implementation for nsIOutputStream.flush().
 NS_IMETHODIMP MboxMsgOutputStream::Flush() {
+  mozilla::MutexAutoLock lock(mLock);
   if (mState == eClosed) {
     return NS_OK;
   }
@@ -258,6 +331,12 @@ NS_IMETHODIMP MboxMsgOutputStream::Flush() {
 // If Finish() has not already been called, this will attempt to truncate
 // the mbox file back to where it started.
 NS_IMETHODIMP MboxMsgOutputStream::Close() {
+  mozilla::MutexAutoLock lock(mLock);
+  return InternalClose();
+}
+
+// Internal helper for closing - mLock should already be held by caller.
+nsresult MboxMsgOutputStream::InternalClose() {
   if (mState == eClosed) {
     return NS_OK;
   }
@@ -273,9 +352,13 @@ NS_IMETHODIMP MboxMsgOutputStream::Close() {
     rv = NS_ERROR_UNEXPECTED;
   }
 
+  // Make sure everything is flushed out before we truncate (Bug 1960252).
+  if (NS_SUCCEEDED(rv)) {
+    rv = mInner->Flush();
+  }
+
   if (NS_SUCCEEDED(rv)) {
     // Attempt to truncate the target file back to our start position.
-    nsresult rv;
     rv = mSeekable->Seek(nsISeekableStream::NS_SEEK_SET, mStartPos);
     if (NS_SUCCEEDED(rv)) {
       rv = mSeekable->SetEOF();
@@ -286,8 +369,8 @@ NS_IMETHODIMP MboxMsgOutputStream::Close() {
   }
 
   if (mCloseInnerWhenDone) {
-    // Don't want to obscure a previous error
     nsresult rv2 = mInner->Close();
+    // Don't want to obscure a previous error
     if (NS_SUCCEEDED(rv)) {
       rv = rv2;
     }
@@ -297,7 +380,8 @@ NS_IMETHODIMP MboxMsgOutputStream::Close() {
   // not too much we can do to, other than complain loudly, close anyway
   // and return the failure.
   if (NS_FAILED(rv)) {
-    MOZ_LOG(gMboxLog, LogLevel::Error, ("MboxMsgOutputStream::Close() failed"));
+    MOZ_LOG(gMboxLog, LogLevel::Error,
+            ("MboxMsgOutputStream::Close() failed: rv=0x%x", rv));
     NS_WARNING("Failed to roll back mbox file");
   }
 
@@ -307,13 +391,14 @@ NS_IMETHODIMP MboxMsgOutputStream::Close() {
 
 // Implementation for nsISafeOutputStream.finish().
 NS_IMETHODIMP MboxMsgOutputStream::Finish() {
+  mozilla::MutexAutoLock lock(mLock);
   MOZ_LOG(gMboxLog, LogLevel::Debug,
           ("MboxMsgOutputStream::Finish() startPos=%" PRIi64 "", mStartPos));
   if (mState == eClosed) {
     return NS_OK;
   }
   if (mState == eError) {
-    Close();  // Roll back
+    InternalClose();  // Roll back
     return mStatus;
   }
 
@@ -346,7 +431,7 @@ NS_IMETHODIMP MboxMsgOutputStream::Finish() {
 
   if (NS_FAILED(rv)) {
     // If any of the final writes failed, roll back!
-    Close();
+    InternalClose();
     return rv;
   }
 

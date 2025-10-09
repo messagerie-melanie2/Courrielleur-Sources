@@ -12,6 +12,7 @@
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/glean/bindings/jog/jog_ffi_generated.h"
 #include "mozilla/Logging.h"
+#include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/StaticPrefs_telemetry.h"
 #include "mozilla/AppShutdown.h"
 #include "nsDirectoryServiceDefs.h"
@@ -22,8 +23,7 @@
 
 namespace mozilla::glean {
 
-using mozilla::LogLevel;
-static mozilla::LazyLogModule sLog("jog");
+static LazyLogModule sLog("jog");
 
 // Storage
 // Thread Safety: Only used on the main thread.
@@ -256,9 +256,34 @@ extern "C" NS_EXPORT void JOG_RegisterMetric(
   gMetricNames->InsertOrUpdate(aMetricId, categoryCamel + "."_ns + nameCamel);
 }
 
+extern "C" void jog_test_clear_registered_metrics_and_pings();
+
+extern "C" NS_EXPORT void JOG_MaybeReload() {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  // Don't clear JOG's registries if there's no jogfile.
+  // There might be registered pings and metrics in here that won't know they
+  // need to re-register.
+  if (!mozilla::glean::sFoundAndLoadedJogfile.valueOr(false)) {
+    return;
+  }
+
+  gCategories = nullptr;
+  gMetricNames = nullptr;
+  gMetrics = nullptr;
+  gPings = nullptr;
+  jog_test_clear_registered_metrics_and_pings();
+  mozilla::glean::sFoundAndLoadedJogfile = mozilla::Nothing();
+  mozilla::glean::JOG::EnsureRuntimeMetricsRegistered();
+}
+
 extern "C" NS_EXPORT void JOG_RegisterPing(const nsACString& aPingName,
                                            uint32_t aPingId) {
   MOZ_ASSERT(NS_IsMainThread());
+
+  MOZ_LOG(mozilla::glean::sLog, mozilla::LogLevel::Verbose,
+          ("Registering ping %s id %" PRIu32 "",
+           PromiseFlatCString(aPingName).get(), aPingId));
 
   if (AppShutdown::IsInOrBeyond(ShutdownPhase::XPCOMWillShutdown)) {
     return;

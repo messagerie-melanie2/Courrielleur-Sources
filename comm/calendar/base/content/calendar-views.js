@@ -18,8 +18,7 @@
 
 // Wrap in a block to prevent leaking to window scope.
 {
-  var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
-
+  var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
   /**
    * The calendar view for viewing a single day.
    *
@@ -43,6 +42,15 @@
       const timezoneDate = date.getInTimezone(this.timezone);
       this.setDateRange(timezoneDate, timezoneDate);
       this.selectedDay = timezoneDate;
+    }
+
+    /**
+     * Gets the description of the range displayed by the view.
+     *
+     * @returns {string}
+     */
+    getRangeDescription() {
+      return cal.dtz.formatter.formatDateLong(this.rangeStartDate);
     }
 
     moveView(number) {
@@ -231,14 +239,13 @@
       }
     }
 
+    /**
+     * Gets the description of the range displayed by the view.
+     *
+     * @returns {string}
+     */
     getRangeDescription() {
-      const monthName = cal.l10n.formatMonth(
-        this.rangeStartDate.month + 1,
-        "calendar",
-        "monthInYear"
-      );
-
-      return cal.l10n.getCalString("monthInYear", [monthName, this.rangeStartDate.year]);
+      return cal.dtz.formatter.formatMonthLong(this.rangeStartDate.year, this.rangeStartDate.month);
     }
 
     moveView(number) {

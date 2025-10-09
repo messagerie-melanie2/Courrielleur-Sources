@@ -8,34 +8,34 @@
 
 // main test
 
-/* import-globals-from ../../../test/resources/MessageGenerator.jsm */
-load("../../../resources/MessageGenerator.jsm");
-
-var { IMAPPump, setupIMAPPump, teardownIMAPPump } = ChromeUtils.import(
-  "resource://testing-common/mailnews/IMAPpump.jsm"
+var { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-var { ImapMessage } = ChromeUtils.import(
-  "resource://testing-common/mailnews/Imapd.jsm"
+var { IMAPPump, setupIMAPPump, teardownIMAPPump } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/IMAPpump.sys.mjs"
 );
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { ImapMessage } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/Imapd.sys.mjs"
+);
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 async function setupFolder() {
   // add a single message to the imap inbox.
   let messages = [];
-  let messageGenerator = new MessageGenerator();
+  const messageGenerator = new MessageGenerator();
   messages = messages.concat(messageGenerator.makeMessage());
-  let synthMessage = messages[0];
+  const synthMessage = messages[0];
 
-  let msgURI = Services.io.newURI(
+  const msgURI = Services.io.newURI(
     "data:text/plain;base64," + btoa(synthMessage.toMessageString())
   );
-  let message = new ImapMessage(msgURI.spec, IMAPPump.mailbox.uidnext++, []);
+  const message = new ImapMessage(msgURI.spec, IMAPPump.mailbox.uidnext++, []);
   IMAPPump.mailbox.addMessage(message);
 
   // update folder to download header.
-  let listener = new PromiseTestUtils.PromiseUrlListener();
+  const listener = new PromiseTestUtils.PromiseUrlListener();
   IMAPPump.inbox.updateFolderWithListener(null, listener);
   await listener.promise;
 }
@@ -45,16 +45,16 @@ async function searchTest() {
   var emptyLocal1 =
     localAccountUtils.rootFolder.createLocalSubfolder("empty 1");
 
-  let searchSession = Cc[
+  const searchSession = Cc[
     "@mozilla.org/messenger/searchSession;1"
   ].createInstance(Ci.nsIMsgSearchSession);
 
-  let searchTerm = searchSession.createTerm();
+  const searchTerm = searchSession.createTerm();
   searchTerm.matchAll = true;
   searchSession.appendTerm(searchTerm);
   searchSession.addScopeTerm(Ci.nsMsgSearchScope.offlineMail, emptyLocal1);
   searchSession.addScopeTerm(Ci.nsMsgSearchScope.onlineMail, IMAPPump.inbox);
-  let listener = new PromiseTestUtils.PromiseSearchNotify(
+  const listener = new PromiseTestUtils.PromiseSearchNotify(
     searchSession,
     searchListener
   );
@@ -73,10 +73,10 @@ var searchListener = {
   onNewSearch() {
     this.numTotalMessages = 0;
   },
-  onSearchHit(dbHdr, folder) {
+  onSearchHit() {
     this.numTotalMessages++;
   },
-  onSearchDone(status) {
+  onSearchDone() {
     Assert.equal(this.numTotalMessages, 1);
     return true;
   },

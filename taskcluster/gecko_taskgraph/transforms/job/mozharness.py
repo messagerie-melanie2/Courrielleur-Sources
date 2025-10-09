@@ -23,7 +23,6 @@ from gecko_taskgraph.transforms.job.common import (
     get_expiration,
     setup_secrets,
 )
-from gecko_taskgraph.transforms.task import get_branch_repo, get_branch_rev
 from gecko_taskgraph.util.attributes import is_try
 
 mozharness_run_schema = Schema(
@@ -77,7 +76,7 @@ mozharness_run_schema = Schema(
         Optional("job-script"): str,
         Required("requires-signed-builds"): bool,
         # Whether or not to use caches.
-        Optional("use-caches"): bool,
+        Optional("use-caches"): Any(bool, [str]),
         # If false, don't set MOZ_SIMPLE_PACKAGE_NAME
         # Only disableable on windows
         Required("use-simple-package"): bool,
@@ -130,9 +129,9 @@ def mozharness_on_docker_worker_setup(config, job, taskdesc):
         )
 
     # Running via mozharness assumes an image that contains build.sh:
-    # by default, debian11-amd64-build, but it could be another image (like
+    # by default, debian12-amd64-build, but it could be another image (like
     # android-build).
-    worker.setdefault("docker-image", {"in-tree": "debian11-amd64-build"})
+    worker.setdefault("docker-image", {"in-tree": "debian12-amd64-build"})
 
     worker.setdefault("artifacts", []).append(
         {
@@ -152,11 +151,6 @@ def mozharness_on_docker_worker_setup(config, job, taskdesc):
             "MOZHARNESS_CONFIG": " ".join(run.pop("config")),
             "MOZHARNESS_SCRIPT": run.pop("script"),
             "MH_BRANCH": config.params["project"],
-            "MOZ_SOURCE_CHANGESET": get_branch_rev(config),
-            "MOZ_SOURCE_REPO": get_branch_repo(config),
-            "MH_BUILD_POOL": "taskcluster",
-            "MOZ_BUILD_DATE": config.params["moz_build_date"],
-            "MOZ_SCM_LEVEL": config.params["level"],
             "PYTHONUNBUFFERED": "1",
         }
     )
@@ -254,11 +248,7 @@ def mozharness_on_generic_worker(config, job, taskdesc):
     env = worker.setdefault("env", {})
     env.update(
         {
-            "MOZ_BUILD_DATE": config.params["moz_build_date"],
-            "MOZ_SCM_LEVEL": config.params["level"],
             "MH_BRANCH": config.params["project"],
-            "MOZ_SOURCE_CHANGESET": get_branch_rev(config),
-            "MOZ_SOURCE_REPO": get_branch_repo(config),
         }
     )
     if run.pop("use-simple-package"):
@@ -289,7 +279,7 @@ def mozharness_on_generic_worker(config, job, taskdesc):
         system_python_dir = ""
         gecko_path = "$GECKO_PATH"
 
-    if run.get("use-system-python", True):
+    if run.get("use-python", "system") == "system":
         python_bindir = system_python_dir
     else:
         # $MOZ_PYTHON_HOME is going to be substituted in run-task, when we
@@ -300,7 +290,7 @@ def mozharness_on_generic_worker(config, job, taskdesc):
         else:
             python_bindir = "${MOZ_PYTHON_HOME}/bin/"
 
-    mh_command = ["{}python3".format(python_bindir)]
+    mh_command = [f"{python_bindir}python3"]
 
     mh_command += [
         f"{gecko_path}/mach",

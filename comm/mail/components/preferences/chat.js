@@ -17,7 +17,6 @@ Preferences.addAll([
   { id: "messenger.status.defaultIdleAwayMessage", type: "wstring" },
   { id: "purple.logging.log_chats", type: "bool" },
   { id: "purple.logging.log_ims", type: "bool" },
-  { id: "purple.logging.log_system", type: "bool" },
   { id: "mail.chat.show_desktop_notifications", type: "bool" },
   { id: "mail.chat.notification_info", type: "int" },
   { id: "mail.chat.play_sound", type: "bool" },
@@ -35,14 +34,14 @@ var gChatPane = {
     this.updatePlaySound();
     this.initPreview();
 
-    let element = document.getElementById("timeBeforeAway");
+    const element = document.getElementById("timeBeforeAway");
     Preferences.addSyncFromPrefListener(
       element,
       () =>
         Preferences.get("messenger.status.timeBeforeIdle")
           .valueFromPreferences / 60
     );
-    Preferences.addSyncToPrefListener(element, element => element.value * 60);
+    Preferences.addSyncToPrefListener(element, e => e.value * 60);
     Preferences.addSyncFromPrefListener(
       document.getElementById("chatSoundUrlLocation"),
       () => this.readSoundLocation()
@@ -51,13 +50,13 @@ var gChatPane = {
 
   initPreview() {
     // We add this browser only when really necessary.
-    let previewBox = document.getElementById("previewBox");
+    const previewBox = document.getElementById("previewBox");
     if (previewBox.querySelector("browser")) {
       return;
     }
 
     document.getElementById("noPreviewScreen").hidden = true;
-    let browser = document.createXULElement("browser", {
+    const browser = document.createXULElement("browser", {
       is: "conversation-browser",
     });
     browser.setAttribute("id", "previewbrowser");
@@ -69,14 +68,14 @@ var gChatPane = {
   },
 
   updateDisabledState() {
-    let checked = Preferences.get("messenger.status.reportIdle").value;
+    const checked = Preferences.get("messenger.status.reportIdle").value;
     document.querySelectorAll(".idle-reporting-enabled").forEach(e => {
       e.disabled = !checked;
     });
   },
 
   updateMessageDisabledState() {
-    let textbox = document.getElementById("defaultIdleAwayMessage");
+    const textbox = document.getElementById("defaultIdleAwayMessage");
     textbox.toggleAttribute(
       "disabled",
       !Preferences.get("messenger.status.awayWhenIdle").value
@@ -95,7 +94,9 @@ var gChatPane = {
   },
 
   readSoundLocation() {
-    let chatSoundUrlLocation = document.getElementById("chatSoundUrlLocation");
+    const chatSoundUrlLocation = document.getElementById(
+      "chatSoundUrlLocation"
+    );
     chatSoundUrlLocation.value = Preferences.get(
       "mail.chat.play_sound.url"
     ).value;
@@ -109,9 +110,9 @@ var gChatPane = {
   },
 
   previewSound() {
-    let sound = Cc["@mozilla.org/sound;1"].createInstance(Ci.nsISound);
+    const sound = Cc["@mozilla.org/sound;1"].createInstance(Ci.nsISound);
 
-    let soundLocation =
+    const soundLocation =
       document.getElementById("chatSoundType").value == 1
         ? document.getElementById("chatSoundUrlLocation").value
         : "";
@@ -130,11 +131,11 @@ var gChatPane = {
   },
 
   browseForSoundFile() {
-    let fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
+    const fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
 
     // If we already have a sound file, then use the path for that sound file
     // as the initial path in the dialog.
-    let localFile = this.convertURLToLocalFile(
+    const localFile = this.convertURLToLocalFile(
       document.getElementById("chatSoundUrlLocation").value
     );
     if (localFile) {
@@ -143,7 +144,7 @@ var gChatPane = {
 
     // XXX todo, persist the last sound directory and pass it in
     fp.init(
-      window,
+      window.browsingContext,
       document
         .getElementById("bundlePreferences")
         .getString("soundFilePickerTitle"),
@@ -165,10 +166,10 @@ var gChatPane = {
   },
 
   updatePlaySound() {
-    let soundsEnabled = Preferences.get("mail.chat.play_sound").value;
-    let soundTypeValue = Preferences.get("mail.chat.play_sound.type").value;
-    let soundUrlLocation = Preferences.get("mail.chat.play_sound.url").value;
-    let soundDisabled = !soundsEnabled || soundTypeValue != 1;
+    const soundsEnabled = Preferences.get("mail.chat.play_sound").value;
+    const soundTypeValue = Preferences.get("mail.chat.play_sound.type").value;
+    const soundUrlLocation = Preferences.get("mail.chat.play_sound.url").value;
+    const soundDisabled = !soundsEnabled || soundTypeValue != 1;
 
     document.getElementById("chatSoundType").disabled = !soundsEnabled;
     document.getElementById("chatSoundUrlLocation").disabled = soundDisabled;

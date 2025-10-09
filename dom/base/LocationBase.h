@@ -28,24 +28,24 @@ class BrowsingContext;
 class LocationBase {
  public:
   // WebIDL API:
-  void Replace(const nsAString& aUrl, nsIPrincipal& aSubjectPrincipal,
+  void Replace(const nsACString& aUrl, nsIPrincipal& aSubjectPrincipal,
                ErrorResult& aError);
 
-  void SetHref(const nsAString& aHref, nsIPrincipal& aSubjectPrincipal,
+  void SetHref(const nsACString& aHref, nsIPrincipal& aSubjectPrincipal,
                ErrorResult& aError);
 
  protected:
   virtual BrowsingContext* GetBrowsingContext() = 0;
-  virtual already_AddRefed<nsIDocShell> GetDocShell() = 0;
+  virtual nsIDocShell* GetDocShell() = 0;
 
   void SetURI(nsIURI* aURL, nsIPrincipal& aSubjectPrincipal, ErrorResult& aRv,
               bool aReplace = false);
-  void SetHrefWithBase(const nsAString& aHref, nsIURI* aBase,
+  void SetHrefWithBase(const nsACString& aHref, nsIURI* aBase,
                        nsIPrincipal& aSubjectPrincipal, bool aReplace,
                        ErrorResult& aRv);
 
   // Helper for Assign/SetHref/Replace
-  void DoSetHref(const nsAString& aHref, nsIPrincipal& aSubjectPrincipal,
+  void DoSetHref(const nsACString& aHref, nsIPrincipal& aSubjectPrincipal,
                  bool aReplace, ErrorResult& aRv);
 
   // Get the base URL we should be using for our relative URL

@@ -304,8 +304,8 @@ class TestUrlFinder(unittest.TestCase):
 
         dummy_chrome_info = [
             {
-                "resource://activity-stream/": [
-                    "dist/bin/browser/chrome/browser/res/activity-stream",
+                "resource://newtab/": [
+                    "dist/bin/browser/chrome/browser/res/newtab",
                 ],
                 "chrome://browser/content/": [
                     "dist/bin/browser/chrome/browser/content/browser",
@@ -324,7 +324,7 @@ class TestUrlFinder(unittest.TestCase):
                     "toolkit/components/osfile/modules/osfile_async_worker.js",
                     None,
                 ],
-                "dist/bin/browser/chrome/browser/res/activity-stream/lib/": [
+                "dist/bin/browser/chrome/browser/res/newtab/lib/": [
                     "browser/components/newtab/lib/*",
                     None,
                 ],
@@ -395,8 +395,8 @@ class TestUrlFinder(unittest.TestCase):
             ),
             # Path with url prefix that is in chrome map
             (
-                "resource://activity-stream/lib/PrefsFeed.jsm",
-                ("browser/components/newtab/lib/PrefsFeed.jsm", None),
+                "resource://newtab/lib/PrefsFeed.sys.mjs",
+                ("browser/components/newtab/lib/PrefsFeed.sys.mjs", None),
             ),
             # Path which is in url overrides
             (
@@ -415,7 +415,7 @@ class TestUrlFinder(unittest.TestCase):
             ),
             # Path which contains "->"
             (
-                "resource://gre/modules/addons/XPIProvider.jsm -> resource://gre/modules/osfile/osfile_async_worker.js",  # noqa
+                "resource://gre/modules/addons/XPIProvider.sys.mjs -> resource://gre/modules/osfile/osfile_async_worker.js",  # noqa
                 ("toolkit/components/osfile/modules/osfile_async_worker.js", None),
             ),
             # Path with pp_info
@@ -430,7 +430,7 @@ class TestUrlFinder(unittest.TestCase):
             ),
             # Path with query
             (
-                "resource://activity-stream/lib/PrefsFeed.jsm?q=0.9098419174803978",
+                "resource://newtab/lib/PrefsFeed.jsm?q=0.9098419174803978",
                 ("browser/components/newtab/lib/PrefsFeed.jsm", None),
             ),
         ]

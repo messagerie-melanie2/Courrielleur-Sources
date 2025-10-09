@@ -2,8 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
+"use strict";
+
 add_task(async () => {
-  let files = {
+  const files = {
     "background.js": async () => {
       // Message compose window.
 
@@ -53,7 +55,7 @@ add_task(async () => {
     },
     "utils.js": await getUtilsJS(),
   };
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files,
     manifest: {
       background: { scripts: ["utils.js", "background.js"] },
@@ -61,20 +63,22 @@ add_task(async () => {
     },
   });
 
-  let account = createAccount();
+  const account = createAccount();
   addIdentity(account);
-  let rootFolder = account.incomingServer.rootFolder;
-  rootFolder.createSubfolder("test1", null);
-  let subFolders = {};
-  for (let folder of rootFolder.subFolders) {
+  const rootFolder = account.incomingServer.rootFolder;
+  await createSubfolder(rootFolder, "test1");
+  const subFolders = {};
+  for (const folder of rootFolder.subFolders) {
     subFolders[folder.name] = folder;
   }
-  createMessages(subFolders.test1, 1);
+  await createMessages(subFolders.test1, 1);
 
   await extension.startup();
 
   await extension.awaitMessage("openMessage");
-  let newWindow = await openMessageInWindow([...subFolders.test1.messages][0]);
+  const newWindow = await openMessageInWindow(
+    [...subFolders.test1.messages][0]
+  );
 
   await extension.awaitMessage("closeMessage");
   newWindow.close();
@@ -84,12 +88,12 @@ add_task(async () => {
 });
 
 add_task(async function test_tabs_of_second_tabmail() {
-  let files = {
+  const files = {
     "background.js": async () => {
-      let testWindow = await browser.windows.create({ type: "normal" });
+      const testWindow = await browser.windows.create({ type: "normal" });
       browser.test.assertEq("normal", testWindow.type);
 
-      let tabs = await await browser.tabs.query({ windowId: testWindow.id });
+      const tabs = await browser.tabs.query({ windowId: testWindow.id });
       browser.test.assertEq(1, tabs.length);
       browser.test.assertEq("mail", tabs[0].type);
 
@@ -98,22 +102,22 @@ add_task(async function test_tabs_of_second_tabmail() {
       browser.test.notifyPass();
     },
   };
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files,
     manifest: {
       background: { scripts: ["background.js"] },
     },
   });
 
-  let account = createAccount();
+  const account = createAccount();
   addIdentity(account);
-  let rootFolder = account.incomingServer.rootFolder;
-  rootFolder.createSubfolder("test1", null);
-  let subFolders = {};
-  for (let folder of rootFolder.subFolders) {
+  const rootFolder = account.incomingServer.rootFolder;
+  await createSubfolder(rootFolder, "test1");
+  const subFolders = {};
+  for (const folder of rootFolder.subFolders) {
     subFolders[folder.name] = folder;
   }
-  createMessages(subFolders.test1, 1);
+  await createMessages(subFolders.test1, 1);
 
   await extension.startup();
   await extension.awaitFinish();

@@ -11,16 +11,12 @@ var { XPCOMUtils } = ChromeUtils.importESModule(
 
 ChromeUtils.defineESModuleGetters(this, {
   BrowserUtils: "resource://gre/modules/BrowserUtils.sys.mjs",
-  Deprecated: "resource://gre/modules/Deprecated.sys.mjs",
   DownloadLastDir: "resource://gre/modules/DownloadLastDir.sys.mjs",
   DownloadPaths: "resource://gre/modules/DownloadPaths.sys.mjs",
   Downloads: "resource://gre/modules/Downloads.sys.mjs",
   FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
+  NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(this, {
-  NetUtil: "resource://gre/modules/NetUtil.jsm",
 });
 
 var ContentAreaUtils = {
@@ -81,7 +77,8 @@ function saveURL(
   aCookieJarSettings,
   aSourceDocument,
   aIsContentWindowPrivate,
-  aPrincipal
+  aPrincipal,
+  aSaveCompleteCallback
 ) {
   internalSave(
     aURL,
@@ -99,7 +96,8 @@ function saveURL(
     aSkipPrompt,
     null,
     aIsContentWindowPrivate,
-    aPrincipal
+    aPrincipal,
+    aSaveCompleteCallback
   );
 }
 
@@ -123,6 +121,19 @@ function saveBrowser(aBrowser, aSkipPrompt, aBrowsingContext = null) {
         throw new Error("Must have an nsIWebBrowserPersistDocument!");
       }
 
+      // If we are downloading a document that is saving as a URL, we should use
+      // a principal constructed from the document URL. This is important for
+      // documents whose URL is different that their principal, e.g files in the
+      // JSON viewer.
+      let principal = null;
+      if (document.principal?.spec == "resource://devtools/client/jsonview/") {
+        let ssm = Services.scriptSecurityManager;
+        principal = ssm.createContentPrincipal(
+          makeURI(document.documentURI),
+          document.principal.originAttributes
+        );
+      }
+
       internalSave(
         document.documentURI,
         null, // originalURL
@@ -137,7 +148,9 @@ function saveBrowser(aBrowser, aSkipPrompt, aBrowsingContext = null) {
         document.cookieJarSettings,
         document,
         aSkipPrompt,
-        document.cacheKey
+        document.cacheKey,
+        undefined,
+        principal
       );
     },
     onError(status) {
@@ -260,6 +273,8 @@ XPCOMUtils.defineConstant(this, "kSaveAsType_Text", kSaveAsType_Text);
  *        This parameter is provided when neither aDocument nor
  *        aInitiatingDocument is provided. Used to determine what level of
  *        privilege to load the URI with.
+ * @param aSaveCompleteCallback [optional]
+ *        A callback function to call when the save is complete.
  */
 function internalSave(
   aURL,
@@ -277,7 +292,8 @@ function internalSave(
   aSkipPrompt,
   aCacheKey,
   aIsContentWindowPrivate,
-  aPrincipal
+  aPrincipal,
+  aSaveCompleteCallback
 ) {
   if (aSkipPrompt == undefined) {
     aSkipPrompt = false;
@@ -329,11 +345,13 @@ function internalSave(
     };
 
     // Find a URI to use for determining last-downloaded-to directory
-    let relatedURI = aReferrerInfo?.originalReferrer || sourceURI;
+    let relatedURI =
+      aOriginalURL || aReferrerInfo?.originalReferrer || sourceURI;
 
     promiseTargetFile(fpParams, aSkipPrompt, relatedURI)
       .then(aDialogAccepted => {
         if (!aDialogAccepted) {
+          aSaveCompleteCallback?.();
           return;
         }
 
@@ -392,6 +410,7 @@ function internalSave(
       contentPolicyType,
       cookieJarSettings: aCookieJarSettings,
       isPrivate,
+      saveCompleteCallback: aSaveCompleteCallback,
     };
 
     // Start the actual save process
@@ -435,6 +454,8 @@ function internalSave(
  *        If true, the document will always be refetched from the server
  * @param persistArgs.isPrivate
  *        Indicates whether this is taking place in a private browsing context.
+ * @param persistArgs.saveCompleteCallback [optional]
+ *        A callback function to call when the save is complete.
  */
 function internalPersist(persistArgs) {
   var persist = makeWebBrowserPersist();
@@ -470,6 +491,13 @@ function internalPersist(persistArgs) {
     persistArgs.sourceReferrerInfo
   );
   persist.progressListener = new DownloadListener(window, tr);
+  const { saveCompleteCallback } = persistArgs;
+  if (saveCompleteCallback) {
+    tr.downloadPromise
+      .then(aDownload => aDownload.whenSucceeded())
+      .catch(console.error)
+      .finally(saveCompleteCallback);
+  }
 
   if (persistArgs.sourceDocument) {
     // Saving a Document, not a URI:
@@ -691,7 +719,7 @@ function promiseTargetFile(
     let fp = makeFilePicker();
     let titleKey = aFpP.fpTitleKey || "SaveLinkTitle";
     fp.init(
-      window,
+      window.browsingContext,
       ContentAreaUtils.stringBundle.GetStringFromName(titleKey),
       Ci.nsIFilePicker.modeSave
     );
@@ -731,11 +759,9 @@ function promiseTargetFile(
     // Do not store the last save directory as a pref inside the private browsing mode
     downloadLastDir.setFile(aRelatedURI, fp.file.parent);
 
-    fp.file.leafName = validateFileName(fp.file.leafName);
-
     aFpP.saveAsType = fp.filterIndex;
     aFpP.file = fp.file;
-    aFpP.fileURL = fp.fileURL;
+    aFpP.file.leafName = validateFileName(aFpP.file.leafName);
 
     return true;
   })();
@@ -1185,10 +1211,10 @@ function openURL(aURL) {
     var appstartup = Services.startup;
 
     var loadListener = {
-      onStartRequest: function ll_start(aRequest) {
+      onStartRequest: function ll_start() {
         appstartup.enterLastWindowClosingSurvivalArea();
       },
-      onStopRequest: function ll_stop(aRequest, aStatusCode) {
+      onStopRequest: function ll_stop() {
         appstartup.exitLastWindowClosingSurvivalArea();
       },
       QueryInterface: ChromeUtils.generateQI([
@@ -1199,13 +1225,13 @@ function openURL(aURL) {
     loadgroup.groupObserver = loadListener;
 
     var uriListener = {
-      doContent(ctype, preferred, request, handler) {
+      doContent() {
         return false;
       },
-      isPreferred(ctype, desired) {
+      isPreferred() {
         return false;
       },
-      canHandleContent(ctype, preferred, desired) {
+      canHandleContent() {
         return false;
       },
       loadCookie: null,

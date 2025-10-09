@@ -4,16 +4,18 @@
 
 "use strict";
 
-const { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js");
+const { HttpServer } = ChromeUtils.importESModule(
+  "resource://testing-common/httpd.sys.mjs"
+);
 
 /**
  * Waits for an observer notification to fire.
  *
- * @param {String} topic The notification topic.
+ * @param {String} topicName The notification topic.
  * @returns {Promise} A promise that fulfills when the notification is fired.
  */
-function promiseObserverNotification(topic, matchFunc) {
-  return new Promise((resolve, reject) => {
+function promiseObserverNotification(topicName, matchFunc) {
+  return new Promise(resolve => {
     Services.obs.addObserver(function observe(subject, topic, data) {
       let matches = typeof matchFunc != "function" || matchFunc(subject, data);
       if (!matches) {
@@ -21,10 +23,14 @@ function promiseObserverNotification(topic, matchFunc) {
       }
       Services.obs.removeObserver(observe, topic);
       resolve({ subject, data });
-    }, topic);
+    }, topicName);
   });
 }
 
+Services.prefs.setBoolPref(
+  "network.connectivity-service.wait_for_idle_startup",
+  false
+);
 registerCleanupFunction(() => {
   Services.prefs.clearUserPref("network.connectivity-service.DNSv4.domain");
   Services.prefs.clearUserPref("network.connectivity-service.DNSv6.domain");
@@ -35,11 +41,11 @@ registerCleanupFunction(() => {
 
 let httpserver = null;
 let httpserverv6 = null;
-XPCOMUtils.defineLazyGetter(this, "URL", function () {
+ChromeUtils.defineLazyGetter(this, "URL", function () {
   return "http://localhost:" + httpserver.identity.primaryPort + "/content";
 });
 
-XPCOMUtils.defineLazyGetter(this, "URLv6", function () {
+ChromeUtils.defineLazyGetter(this, "URLv6", function () {
   return "http://[::1]:" + httpserverv6.identity.primaryPort + "/content";
 });
 

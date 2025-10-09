@@ -1,4 +1,3 @@
-# coding=utf8
 """Migration Transforms.
 
 Transforms are AST nodes which describe how legacy translations should be
@@ -62,8 +61,6 @@ TextElement by PLURALS and then run through the REPLACE_IN_TEXT transform.
     )
 """
 
-from __future__ import unicode_literals
-from __future__ import absolute_import
 import re
 
 from fluent.syntax import ast as FTL
@@ -72,33 +69,30 @@ from .errors import NotSupportedError
 
 
 def chain_elements(elements):
-    '''Flatten a list of FTL nodes into an iterator over PatternElements.'''
+    """Flatten a list of FTL nodes into an iterator over PatternElements."""
     for element in elements:
         if isinstance(element, FTL.Pattern):
             # PY3 yield from element.elements
-            for child in element.elements:
-                yield child
+            yield from element.elements
         elif isinstance(element, FTL.PatternElement):
             yield element
         elif isinstance(element, FTL.Expression):
             yield FTL.Placeable(element)
         else:
-            raise RuntimeError(
-                'Expected Pattern, PatternElement or Expression')
+            raise RuntimeError("Expected Pattern, PatternElement or Expression")
 
 
 re_leading_ws = re.compile(
-    r'\A(?:(?P<whitespace> +)(?P<text>.*?)|(?P<block_text>\n.*?))\Z',
+    r"\A(?:(?P<whitespace> +)(?P<text>.*?)|(?P<block_text>\n.*?))\Z",
     re.S,
 )
 re_trailing_ws = re.compile(
-    r'\A(?:(?P<text>.*?)(?P<whitespace> +)|(?P<block_text>.*\n))\Z',
-    re.S
+    r"\A(?:(?P<text>.*?)(?P<whitespace> +)|(?P<block_text>.*\n))\Z", re.S
 )
 
 
 def extract_whitespace(regex, element):
-    '''Extract leading or trailing whitespace from a TextElement.
+    """Extract leading or trailing whitespace from a TextElement.
 
     Return a tuple of (Placeable, TextElement) in which the Placeable
     encodes the extracted whitespace as a StringLiteral and the
@@ -106,18 +100,18 @@ def extract_whitespace(regex, element):
     Placeable with the extracted whitespace is always returned first.
     If the element starts or ends with a newline, add an empty
     StringLiteral.
-    '''
+    """
     match = re.search(regex, element.value)
     if match:
         # If white-space is None, we're a newline. Add an
         # empty { "" }
-        whitespace = match.group('whitespace') or ''
+        whitespace = match.group("whitespace") or ""
         placeable = FTL.Placeable(FTL.StringLiteral(whitespace))
         if whitespace == element.value:
             return placeable, None
         else:
             # Either text or block_text matched the rest.
-            text = match.group('text') or match.group('block_text')
+            text = match.group("text") or match.group("block_text")
             return placeable, FTL.TextElement(text)
     else:
         return None, element
@@ -141,9 +135,11 @@ class Transform(FTL.BaseNode):
         for element in chain_elements(elements):
             if isinstance(element, FTL.TextElement):
                 text_content = element.value
-            elif isinstance(element, FTL.Placeable) \
-                    and isinstance(element.expression, FTL.StringLiteral) \
-                    and re.match(r'^ *$', element.expression.value):
+            elif (
+                isinstance(element, FTL.Placeable)
+                and isinstance(element.expression, FTL.StringLiteral)
+                and re.match(r"^ *$", element.expression.value)
+            ):
                 text_content = element.expression.value
             else:
                 # The element does not contain text content which should be
@@ -165,7 +161,7 @@ class Transform(FTL.BaseNode):
 
         # Store empty values explicitly as {""}.
         if len(normalized) == 0:
-            empty = FTL.Placeable(FTL.StringLiteral(''))
+            empty = FTL.Placeable(FTL.StringLiteral(""))
             return FTL.Pattern([empty])
 
         # Extract explicit leading whitespace into a StringLiteral.
@@ -178,11 +174,7 @@ class Transform(FTL.BaseNode):
             ws, text = extract_whitespace(re_trailing_ws, normalized[-1])
             normalized[-1:] = [text, ws]
 
-        return FTL.Pattern([
-            element
-            for element in normalized
-            if element is not None
-        ])
+        return FTL.Pattern([element for element in normalized if element is not None])
 
 
 class Source(Transform):
@@ -191,6 +183,7 @@ class Source(Transform):
     The contract is that the first argument is the source path, and the
     second is a key representing legacy string IDs, or Fluent id.attr.
     """
+
     def __init__(self, path, key):
         self.path = path
         self.key = key
@@ -201,18 +194,18 @@ class FluentSource(Source):
 
     When evaluated, it clones the Pattern of the parsed source.
     """
+
     def __init__(self, path, key):
-        if not path.endswith('.ftl'):
+        if not path.endswith(".ftl"):
             raise NotSupportedError(
-                'Please use COPY to migrate from legacy files '
-                '({})'.format(path)
+                "Please use COPY to migrate from legacy files " "({})".format(path)
             )
-        if key[0] == '-' and '.' in key:
+        if key[0] == "-" and "." in key:
             raise NotSupportedError(
-                'Cannot migrate from Term Attributes, as they are'
-                'locale-dependent ({})'.format(path)
+                "Cannot migrate from Term Attributes, as they are"
+                "locale-dependent ({})".format(path)
             )
-        super(FluentSource, self).__init__(path, key)
+        super().__init__(path, key)
 
     def __call__(self, ctx):
         pattern = ctx.get_fluent_source_pattern(self.path, self.key)
@@ -226,6 +219,7 @@ class COPY_PATTERN(FluentSource):
     Term ID. Accessing Term attributes is not supported, as they're internal
     to the localization.
     """
+
     pass
 
 
@@ -235,8 +229,9 @@ class TransformPattern(FluentSource, Transformer):
     Implement visit_* methods of the Transformer pattern to do the
     actual modifications.
     """
+
     def __call__(self, ctx):
-        pattern = super(TransformPattern, self).__call__(ctx)
+        pattern = super().__call__(ctx)
         return self.visit(pattern)
 
     def visit_Pattern(self, node):
@@ -279,12 +274,13 @@ class LegacySource(Source):
     """
 
     def __init__(self, path, key, trim=None):
-        if path.endswith('.ftl'):
+        if path.endswith(".ftl"):
             raise NotSupportedError(
-                'Please use COPY_PATTERN to migrate from Fluent files '
-                '({})'.format(path))
+                "Please use COPY_PATTERN to migrate from Fluent files "
+                "({})".format(path)
+            )
 
-        super(LegacySource, self).__init__(path, key)
+        super().__init__(path, key)
         self.trim = trim
 
     def get_text(self, ctx):
@@ -293,11 +289,11 @@ class LegacySource(Source):
     @staticmethod
     def trim_text(text):
         # strip leading white-space from each line
-        text = re.sub('^[ \t]+', '', text, flags=re.M)
+        text = re.sub("^[ \t]+", "", text, flags=re.M)
         # strip trailing white-space from each line
-        text = re.sub('[ \t]+$', '', text, flags=re.M)
+        text = re.sub("[ \t]+$", "", text, flags=re.M)
         # strip leading and trailing empty lines
-        text = text.strip('\r\n')
+        text = text.strip("\r\n")
         return text
 
     def __call__(self, ctx):
@@ -311,16 +307,16 @@ class COPY(LegacySource):
     """Create a Pattern with the translation value from the given source."""
 
     def __call__(self, ctx):
-        element = super(COPY, self).__call__(ctx)
+        element = super().__call__(ctx)
         return Transform.pattern_of(element)
 
 
 PRINTF = re.compile(
-    r'%(?P<good>%|'
-    r'(?:(?P<number>[1-9][0-9]*)\$)?'
-    r'(?P<width>\*|[0-9]+)?'
-    r'(?P<prec>\.(?:\*|[0-9]+)?)?'
-    r'(?P<spec>[duxXosScpfg]))'
+    r"%(?P<good>%|"
+    r"(?:(?P<number>[1-9][0-9]*)\$)?"
+    r"(?P<width>\*|[0-9]+)?"
+    r"(?P<prec>\.(?:\*|[0-9]+)?)?"
+    r"(?P<spec>[duxXosScpfg]))"
 )
 
 
@@ -341,13 +337,13 @@ def normalize_printf(text):
     next_number = number()
 
     def normalized(match):
-        if match.group('good') == '%':
-            return '%'
-        hidden = match.group('width') == '0'
-        if match.group('number'):
-            return '' if hidden else match.group()
+        if match.group("good") == "%":
+            return "%"
+        hidden = match.group("width") == "0"
+        if match.group("number"):
+            return "" if hidden else match.group()
         num = next(next_number)
-        return '' if hidden else '%{}${}'.format(num, match.group('spec'))
+        return "" if hidden else "%{}${}".format(num, match.group("spec"))
 
     return PRINTF.sub(normalized, text)
 
@@ -387,8 +383,7 @@ class REPLACE_IN_TEXT(Transform):
         # the translation.
         replacements = (
             (key, ctx.evaluate(self.replacements[key]))
-            for index, key
-            in sorted(keys_indexed.items(), key=lambda x: x[0])
+            for index, key in sorted(keys_indexed.items(), key=lambda x: x[0])
         )
 
         # A list of PatternElements built from the legacy translation and the
@@ -417,27 +412,24 @@ class REPLACE(LegacySource):
     replaced with FTL placeables using the `REPLACE_IN_TEXT` transform.
     """
 
-    def __init__(
-        self, path, key, replacements, **kwargs
-    ):
+    def __init__(self, path, key, replacements, **kwargs):
         # We default normalize_printf to False except for .properties files.
         # We still allow the caller to override the default value.
         normalize_printf = False
-        if 'normalize_printf' in kwargs:
-            normalize_printf = kwargs['normalize_printf']
-            del kwargs['normalize_printf']
-        elif path.endswith('.properties'):
+        if "normalize_printf" in kwargs:
+            normalize_printf = kwargs["normalize_printf"]
+            del kwargs["normalize_printf"]
+        elif path.endswith(".properties"):
             normalize_printf = True
 
-        super(REPLACE, self).__init__(path, key, **kwargs)
+        super().__init__(path, key, **kwargs)
         self.replacements = replacements
         self.normalize_printf = normalize_printf
 
     def __call__(self, ctx):
-        element = super(REPLACE, self).__call__(ctx)
+        element = super().__call__(ctx)
         return REPLACE_IN_TEXT(
-            element, self.replacements,
-            normalize_printf=self.normalize_printf
+            element, self.replacements, normalize_printf=self.normalize_printf
         )(ctx)
 
 
@@ -451,39 +443,30 @@ class PLURALS(LegacySource):
     return an `FTL.Node` or a `Transform`. By default, the `foreach` function
     creates a valid Pattern from the TextElement passed into it.
     """
-    DEFAULT_ORDER = ('zero', 'one', 'two', 'few', 'many', 'other')
 
-    def __init__(self, path, key, selector, foreach=Transform.pattern_of,
-                 **kwargs):
-        super(PLURALS, self).__init__(path, key, **kwargs)
+    DEFAULT_ORDER = ("zero", "one", "two", "few", "many", "other")
+
+    def __init__(self, path, key, selector, foreach=Transform.pattern_of, **kwargs):
+        super().__init__(path, key, **kwargs)
         self.selector = selector
         self.foreach = foreach
 
     def __call__(self, ctx):
-        element = super(PLURALS, self).__call__(ctx)
+        element = super().__call__(ctx)
         selector = ctx.evaluate(self.selector)
         keys = ctx.plural_categories
-        forms = [
-            FTL.TextElement(part.strip())
-            for part in element.value.split(';')
-        ]
+        forms = [FTL.TextElement(part.strip()) for part in element.value.split(";")]
 
         # The default CLDR form should be the last we have in DEFAULT_ORDER,
         # usually `other`, but in some cases `many`. If we don't have a variant
         # for that, we'll append one, using the, in CLDR order, last existing
         # variant in the legacy translation. That may or may not be the last
         # variant.
-        default_key = [
-            key for key in reversed(self.DEFAULT_ORDER) if key in keys
-        ][0]
+        default_key = [key for key in reversed(self.DEFAULT_ORDER) if key in keys][0]
 
-        # Match keys to legacy forms in the order they are defined in Gecko's
-        # PluralForm.jsm. Filter out empty forms.
-        pairs = [
-            (key, var)
-            for key, var in zip(keys, forms)
-            if var.value
-        ]
+        # Match keys to legacy forms in the order they are defined in Comm's
+        # PluralForm.sys.mjs. Filter out empty forms.
+        pairs = [(key, var) for key, var in zip(keys, forms) if var.value]
 
         # A special case for legacy translations which don't define any
         # plural forms.
@@ -510,17 +493,12 @@ class PLURALS(LegacySource):
             # variant. Then evaluate it to a migrated FTL node.
             value = ctx.evaluate(self.foreach(form))
             return FTL.Variant(
-                key=FTL.Identifier(key),
-                value=value,
-                default=key == default_key
+                key=FTL.Identifier(key), value=value, default=key == default_key
             )
 
         select = FTL.SelectExpression(
             selector=selector,
-            variants=[
-                createVariant(key, form)
-                for key, form in pairs
-            ]
+            variants=[createVariant(key, form) for key, form in pairs],
         )
 
         return Transform.pattern_of(select)
@@ -565,7 +543,7 @@ class CONCAT(Transform):
         # migration specs and as elements=[]. The latter is used by
         # FTL.BaseNode.traverse when it recreates the traversed node using its
         # attributes as kwargs.
-        self.elements = list(kwargs.get('elements', elements))
+        self.elements = list(kwargs.get("elements", elements))
 
         # We want to make CONCAT(COPY()) equivalent to COPY() so that it's
         # always safe (no-op) to wrap transforms in a CONCAT. This is used by

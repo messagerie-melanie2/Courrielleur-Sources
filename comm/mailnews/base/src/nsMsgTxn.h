@@ -6,70 +6,52 @@
 #ifndef nsMsgTxn_h__
 #define nsMsgTxn_h__
 
-#include "mozilla/Attributes.h"
-#include "nsITransaction.h"
+#include "nsIMsgTxn.h"
 #include "msgCore.h"
 #include "nsCOMPtr.h"
 #include "nsIMsgWindow.h"
-#include "nsInterfaceHashtable.h"
 #include "MailNewsTypes2.h"
-#include "nsIVariant.h"
-#include "nsIWritablePropertyBag.h"
-#include "nsIWritablePropertyBag2.h"
 
 #include "mozilla/EditTransactionBase.h"
 
 using mozilla::EditTransactionBase;
 
-#define NS_MESSAGETRANSACTION_IID                    \
-  { /* da621b30-1efc-11d3-abe4-00805f8ac968 */       \
-    0xda621b30, 0x1efc, 0x11d3, {                    \
-      0xab, 0xe4, 0x00, 0x80, 0x5f, 0x8a, 0xc9, 0x68 \
-    }                                                \
-  }
+#define NS_MESSAGETRANSACTION_IID             \
+  {/* da621b30-1efc-11d3-abe4-00805f8ac968 */ \
+   0xda621b30,                                \
+   0x1efc,                                    \
+   0x11d3,                                    \
+   {0xab, 0xe4, 0x00, 0x80, 0x5f, 0x8a, 0xc9, 0x68}}
 /**
- * base class for all message undo/redo transactions.
+ * Base class to support undo/redo for moving/copying/deleting/marking
+ * messages.
+ * Just a thin layer on top of nsITransaction which adds fields for runtime
+ * type and for msgWindow. The UI needs the transaction type to describe the
+ * undo/redo action in the GUI (eg "Undo deletion"), but there's no provision
+ * for this in the base nsITransaction interface.
  */
-
-class nsMsgTxn : public nsITransaction,
-                 public nsIWritablePropertyBag,
-                 public nsIWritablePropertyBag2 {
+class nsMsgTxn : public nsIMsgTxn {
  public:
   nsMsgTxn();
 
-  nsresult Init();
-
-  NS_IMETHOD DoTransaction(void) override;
-
-  NS_IMETHOD UndoTransaction(void) override = 0;
-
-  NS_IMETHOD RedoTransaction(void) override = 0;
-
-  NS_IMETHOD GetIsTransient(bool* aIsTransient) override;
-
-  NS_IMETHOD Merge(nsITransaction* aTransaction, bool* aDidMerge) override;
-
-  nsresult GetMsgWindow(nsIMsgWindow** msgWindow);
+  // These should only be called once, to set up the object initially.
   nsresult SetMsgWindow(nsIMsgWindow* msgWindow);
   nsresult SetTransactionType(uint32_t txnType);
 
-  NS_DECL_THREADSAFE_ISUPPORTS
-  NS_DECL_NSIPROPERTYBAG
-  NS_DECL_NSIPROPERTYBAG2
-  NS_DECL_NSIWRITABLEPROPERTYBAG
-  NS_DECL_NSIWRITABLEPROPERTYBAG2
-
-  NS_IMETHOD GetAsEditTransactionBase(EditTransactionBase**) final {
-    return NS_ERROR_NOT_IMPLEMENTED;
-  }
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSITRANSACTION
+  NS_DECL_NSIMSGTXN
 
  protected:
   virtual ~nsMsgTxn();
 
-  // a hash table of string -> nsIVariant
-  nsInterfaceHashtable<nsStringHashKey, nsIVariant> mPropertyHash;
   nsCOMPtr<nsIMsgWindow> m_msgWindow;
   uint32_t m_txnType;
+
+  // Helper function which returns true if the specified message has the
+  // nsMsgMessageFlags::IMAPDeleted flag set.
+  // NOTE: This doesn't rely on nsMsgTxn state, and should probably be moved
+  // out to somewhere more sensible.
   nsresult CheckForToggleDelete(nsIMsgFolder* aFolder, const nsMsgKey& aMsgKey,
                                 bool* aResult);
 };

@@ -7,14 +7,17 @@
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-var { ObjectUtils } = ChromeUtils.import(
-  "resource://gre/modules/ObjectUtils.jsm"
+var { ObjectUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/ObjectUtils.sys.mjs"
 );
 var { FormLikeFactory } = ChromeUtils.importESModule(
   "resource://gre/modules/FormLikeFactory.sys.mjs"
 );
 var { FormAutofillHandler } = ChromeUtils.importESModule(
   "resource://gre/modules/shared/FormAutofillHandler.sys.mjs"
+);
+var { FormAutofillHeuristics } = ChromeUtils.importESModule(
+  "resource://gre/modules/shared/FormAutofillHeuristics.sys.mjs"
 );
 var { AddonTestUtils, MockAsyncShutdown } = ChromeUtils.importESModule(
   "resource://testing-common/AddonTestUtils.sys.mjs"
@@ -97,40 +100,6 @@ function SetPref(name, value) {
 // Return the current date rounded in the manner that sync does.
 function getDateForSync() {
   return Math.round(Date.now() / 10) / 100;
-}
-
-async function loadExtension() {
-  AddonTestUtils.createAppInfo(
-    "xpcshell@tests.mozilla.org",
-    "XPCShell",
-    "1",
-    "1.9.2"
-  );
-  await AddonTestUtils.promiseStartupManager();
-
-  let extensionPath = Services.dirsvc.get("GreD", Ci.nsIFile);
-  extensionPath.append("browser");
-  extensionPath.append("features");
-  extensionPath.append(EXTENSION_ID);
-
-  if (!extensionPath.exists()) {
-    extensionPath.leafName = `${EXTENSION_ID}.xpi`;
-  }
-
-  let startupPromise = new Promise(resolve => {
-    const { apiManager } = ExtensionParent;
-    function onReady(event, extension) {
-      if (extension.id == EXTENSION_ID) {
-        apiManager.off("ready", onReady);
-        resolve();
-      }
-    }
-
-    apiManager.on("ready", onReady);
-  });
-
-  await AddonManager.installTemporaryAddon(extensionPath);
-  await startupPromise;
 }
 
 // Returns a reference to a temporary file that is guaranteed not to exist and
@@ -256,8 +225,8 @@ function verifySectionFieldDetails(sections, expectedSectionsInfo) {
   });
 }
 
-var FormAutofillHeuristics, LabelUtils;
-var AddressDataLoader, FormAutofillUtils;
+var LabelUtils;
+var AddressMetaDataLoader, FormAutofillUtils;
 
 function autofillFieldSelector(doc) {
   return doc.querySelectorAll("input, select");
@@ -290,7 +259,8 @@ function getSyncChangeCounter(records, guid) {
 
 /**
  * Performs a partial deep equality check to determine if an object contains
- * the given fields.
+ * the given fields. To ensure the object doesn't contain a property, set the
+ * property of the `fields` object to `undefined`
  *
  * @param   {object} object
  *          The object to check. Unlike `ObjectUtils.deepEqual`, properties in
@@ -302,9 +272,11 @@ function getSyncChangeCounter(records, guid) {
  */
 function objectMatches(object, fields) {
   let actual = {};
-  for (let key in fields) {
+  for (const key in fields) {
     if (!object.hasOwnProperty(key)) {
-      return false;
+      if (fields[key] != undefined) {
+        return false;
+      }
     }
     actual[key] = object[key];
   }
@@ -329,6 +301,10 @@ add_setup(async function head_initialize() {
     true
   );
 
+  // Enable SCOPE_APPLICATION for builtin testing.  Default in tests is only SCOPE_PROFILE.
+  const scopes = AddonManager.SCOPE_PROFILE | AddonManager.SCOPE_APPLICATION;
+  Services.prefs.setIntPref("extensions.enabledScopes", scopes);
+
   // Clean up after every test.
   registerCleanupFunction(function head_cleanup() {
     Services.prefs.clearUserPref("extensions.experiments.enabled");
@@ -340,9 +316,32 @@ add_setup(async function head_initialize() {
     Services.prefs.clearUserPref("dom.forms.autocomplete.formautofill");
     Services.prefs.clearUserPref("extensions.formautofill.addresses.enabled");
     Services.prefs.clearUserPref("extensions.formautofill.creditCards.enabled");
+    Services.prefs.clearUserPref("extensions.enabledScopes");
   });
 
-  await loadExtension();
+  AddonTestUtils.createAppInfo(
+    "xpcshell@tests.mozilla.org",
+    "XPCShell",
+    "1",
+    "1.9.2"
+  );
+
+  // Ensure formautofill builtin is installed.
+  const builtinsConfig = await fetch(
+    "chrome://browser/content/built_in_addons.json"
+  ).then(res => res.json());
+
+  await AddonTestUtils.overrideBuiltIns({
+    system: [],
+    builtins: builtinsConfig.builtins.filter(
+      entry => entry.addon_id === EXTENSION_ID
+    ),
+  });
+
+  await AddonTestUtils.promiseRestartManager();
+
+  const addon = await AddonManager.getAddonByID(EXTENSION_ID);
+  ok(addon, "Expect formautofill addon to be found");
 });
 
 let OSKeyStoreTestUtils;

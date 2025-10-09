@@ -2,22 +2,24 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+const { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
+);
+const { ensure_cards_view, ensure_table_view } = ChromeUtils.importESModule(
+  "resource://testing-common/MailViewHelpers.sys.mjs"
 );
 
-let tabmail = document.getElementById("tabmail");
-let about3Pane = tabmail.currentAbout3Pane;
-let { sortController, threadTree } = about3Pane;
+const tabmail = document.getElementById("tabmail");
+const about3Pane = tabmail.currentAbout3Pane;
+const { sortController, threadTree } = about3Pane;
 let rootFolder, testFolder, sourceMessageIDs;
-let menuHelper = new MenuTestHelper("menu_View");
+const menuHelper = new MenuTestHelper("menu_View");
 
 add_setup(async function () {
   Services.prefs.setBoolPref("mailnews.scroll_to_new_message", false);
-  let generator = new MessageGenerator();
+  const generator = new MessageGenerator();
 
-  MailServices.accounts.createLocalMailAccount();
-  let account = MailServices.accounts.accounts[0];
+  const account = MailServices.accounts.createLocalMailAccount();
   account.addIdentity(MailServices.accounts.createIdentity());
   rootFolder = account.incomingServer.rootFolder.QueryInterface(
     Ci.nsIMsgLocalMailFolder
@@ -29,25 +31,29 @@ add_setup(async function () {
   testFolder.addMessageBatch(
     generator
       .makeMessages({ count: 320 })
-      .map(message => message.toMboxString())
+      .map(message => message.toMessageString())
   );
 
   about3Pane.restoreState({
     messagePaneVisible: false,
     folderURI: testFolder.URI,
   });
-  await new Promise(resolve => requestAnimationFrame(resolve));
+  await new Promise(resolve => about3Pane.requestAnimationFrame(resolve));
 
   document.getElementById("toolbar-menubar").removeAttribute("autohide");
 
   registerCleanupFunction(async () => {
-    await ensure_cards_view();
+    await ensure_cards_view(document);
     MailServices.accounts.removeAccount(account, false);
     Services.prefs.setBoolPref("mailnews.scroll_to_new_message", true);
   });
 });
 
-add_task(async function () {
+/**
+ * Tests selection and scroll position when sorting the tree by clicking on a
+ * column header.
+ */
+add_task(async function testColumnHeaderClick() {
   const messagesByDate = [...testFolder.messages];
   const messagesBySubject = messagesByDate
     .slice()
@@ -88,7 +94,7 @@ add_task(async function () {
 
   // Switch to horizontal layout and table view so we can interact with the
   // table header and sort rows properly.
-  await ensure_table_view();
+  await ensure_table_view(document);
 
   // Check sorting with no message selected.
 
@@ -129,7 +135,10 @@ add_task(async function () {
   const targetMessage = messagesByDate[49];
   info(`selecting message "${targetMessage.subject}"`);
   threadTree.scrollToIndex(49, true);
-  await new Promise(resolve => requestAnimationFrame(resolve));
+  // Wait once for the scroll...
+  await new Promise(resolve => about3Pane.requestAnimationFrame(resolve));
+  // ... and once for the row to be filled.
+  await new Promise(resolve => about3Pane.requestAnimationFrame(resolve));
   threadTree.selectedIndex = 49;
   verifySelection([49], [targetMessage.subject]);
 
@@ -171,7 +180,10 @@ add_task(async function () {
     `selecting messages "${targetMessages.map(m => m.subject).join('", "')}"`
   );
   threadTree.scrollToIndex(83, true);
-  await new Promise(resolve => requestAnimationFrame(resolve));
+  // Wait once for the scroll...
+  await new Promise(resolve => about3Pane.requestAnimationFrame(resolve));
+  // ... and once for the rows to be filled.
+  await new Promise(resolve => about3Pane.requestAnimationFrame(resolve));
   threadTree.selectedIndices = [80, 81, 83];
   verifySelection(
     [80, 81, 83],
@@ -208,12 +220,119 @@ add_task(async function () {
   );
 });
 
+async function subtestMenu(menuButton, menuPopup, sortMenu, sortMenuPopup) {
+  async function doMenu(itemName, itemValue) {
+    EventUtils.synthesizeMouseAtCenter(menuButton, {}, menuButton.ownerGlobal);
+    await BrowserTestUtils.waitForPopupEvent(menuPopup, "shown");
+    sortMenu.openMenu(true);
+    await BrowserTestUtils.waitForPopupEvent(sortMenuPopup, "shown");
+
+    sortMenuPopup.activateItem(
+      sortMenuPopup.querySelector(
+        `menuitem[name="${itemName}"][value="${itemValue}"]`
+      )
+    );
+
+    await BrowserTestUtils.waitForPopupEvent(sortMenuPopup, "hidden");
+    await BrowserTestUtils.waitForPopupEvent(menuPopup, "hidden");
+  }
+
+  async function checkSort(type, order, grouping) {
+    const {
+      primarySortType,
+      primarySortOrder,
+      showThreaded,
+      showUnthreaded,
+      showGroupedBySort,
+    } = about3Pane.gViewWrapper;
+    Assert.equal(
+      primarySortType,
+      Ci.nsMsgViewSortType[`by${type[0].toUpperCase()}${type.substring(1)}`],
+      "sort type"
+    );
+    Assert.equal(primarySortOrder, Ci.nsMsgViewSortOrder[order], "sort order");
+    Assert.equal(showThreaded, grouping == "threaded", "grouping is threaded");
+    Assert.equal(
+      showUnthreaded,
+      grouping == "unthreaded",
+      "grouping is unthreaded"
+    );
+    Assert.equal(showGroupedBySort, grouping == "group", "grouping is grouped");
+
+    EventUtils.synthesizeMouseAtCenter(menuButton, {}, menuButton.ownerGlobal);
+    await BrowserTestUtils.waitForPopupEvent(menuPopup, "shown");
+    sortMenu.openMenu(true);
+    await BrowserTestUtils.waitForPopupEvent(sortMenuPopup, "shown");
+
+    const items = sortMenuPopup.querySelectorAll(`menuitem[checked="true"]`);
+    Assert.equal(items.length, 3, "only one sort type checked");
+    Assert.equal(items[0].value, `${type}Col`, `sort type ${type} is checked`);
+    Assert.equal(items[1].value, order, `sort order ${order} is checked`);
+    Assert.equal(items[2].value, grouping, `${grouping} is checked`);
+
+    sortMenuPopup.hidePopup();
+    await BrowserTestUtils.waitForPopupEvent(sortMenuPopup, "hidden");
+    menuPopup.hidePopup();
+    await BrowserTestUtils.waitForPopupEvent(menuPopup, "hidden");
+  }
+
+  await doMenu("sortby", "subjectCol");
+  await checkSort("subject", "ascending", "threaded");
+
+  await doMenu("sortdirection", "descending");
+  await checkSort("subject", "descending", "threaded");
+
+  await doMenu("sortdirection", "ascending");
+  await checkSort("subject", "ascending", "threaded");
+
+  await doMenu("sortby", "flaggedCol");
+  await checkSort("flagged", "ascending", "threaded");
+
+  await doMenu("sortby", "junkStatusCol");
+  await checkSort("junkStatus", "ascending", "threaded");
+
+  await doMenu("sortby", "dateCol");
+  await checkSort("date", "ascending", "threaded");
+
+  await doMenu("threaded", "unthreaded");
+  await checkSort("date", "ascending", "unthreaded");
+
+  await doMenu("group", "group");
+  await checkSort("date", "ascending", "group");
+
+  await doMenu("threaded", "threaded");
+  await checkSort("date", "ascending", "threaded");
+}
+
+/**
+ * Tests the sort is applied when using the View menu.
+ */
+add_task(async function testViewMenu() {
+  const viewMenu = document.getElementById("menu_View");
+  const sortMenu = document.getElementById("viewSortMenu");
+  await subtestMenu(viewMenu, viewMenu.menupopup, sortMenu, sortMenu.menupopup);
+}).skip(AppConstants.platform == "macosx");
+
+/**
+ * Tests the sort is applied when using the Message List Header menu.
+ */
+add_task(async function testMessageListHeaderMenu() {
+  const headerButton = about3Pane.document.getElementById(
+    "threadPaneDisplayButton"
+  );
+  const headerPopup = about3Pane.document.getElementById(
+    "threadPaneDisplayContext"
+  );
+  const sortMenu = about3Pane.document.getElementById("threadPaneSortMenu");
+  await subtestMenu(headerButton, headerPopup, sortMenu, sortMenu.menupopup);
+});
+
 async function clickHeader(header, type, order) {
   info(`sorting ${type} ${order}`);
   const button = header.querySelector("button");
 
   let scrollEvents = 0;
-  let listener = () => scrollEvents++;
+  const listener = () => scrollEvents++;
 
   threadTree.addEventListener("scroll", listener);
   EventUtils.synthesizeMouseAtCenter(button, {}, about3Pane);
@@ -326,13 +445,13 @@ function verifySelection(
 }
 
 function getCardActualSubject(index) {
-  let row = threadTree.getRowAtIndex(index);
+  const row = threadTree.getRowAtIndex(index);
   return row.querySelector(".thread-card-subject-container > .subject")
     .textContent;
 }
 
 function getActualSubject(index) {
-  let row = threadTree.getRowAtIndex(index);
+  const row = threadTree.getRowAtIndex(index);
   return row.querySelector(".subject-line > span").textContent;
 }
 

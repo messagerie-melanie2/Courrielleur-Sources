@@ -21,7 +21,26 @@ else:
     DEFINES["_GNU_SOURCE"] = True
     DEFINES["CC"] = CONFIG["_CC"]
 
-    CONFIGURE_DEFINE_FILES += ["config.h", "json_config.h"]
+    GeneratedFile(
+        "config.h",
+        script="/comm/python/thirdroc/thirdroc/cmake_define_files.py",
+        inputs=["cmake/config.h.in"],
+        flags=[
+            "-DPACKAGE_URL=\"\""
+        ]
+    )
+
+    have_inttypes_h = CONFIG["HAVE_INTTYPES_H"]
+    have_stdint_h = CONFIG["HAVE_STDINT_H"]
+    GeneratedFile(
+        "json_config.h",
+        script="/comm/python/thirdroc/thirdroc/cmake_define_files.py",
+        inputs=["cmake/json_config.h.in"],
+        flags=[
+            f"-DJSON_C_HAVE_INTTYPES_H={have_inttypes_h}",
+            f"-DJSON_C_HAVE_STDINT_H={have_stdint_h}",
+        ]
+    )
 
     GeneratedFile(
         "json.h",
@@ -31,7 +50,8 @@ else:
         flags=[
             "--marker", "%",
             "-F", "substitution",
-            "-DJSON_H_JSON_POINTER=#include \"json_pointer.h\""
+            "-DJSON_H_JSON_POINTER=#include \"json_pointer.h\"",
+            "-DJSON_H_JSON_PATCH=#include \"json_patch.h\"",
         ]
     )
 

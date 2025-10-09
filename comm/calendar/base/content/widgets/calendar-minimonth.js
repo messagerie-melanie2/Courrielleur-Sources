@@ -9,12 +9,13 @@
 // Wrap in a block to prevent leaking to window scope.
 {
   const { XPCOMUtils } = ChromeUtils.importESModule("resource://gre/modules/XPCOMUtils.sys.mjs");
-
   const lazy = {};
-  ChromeUtils.defineModuleGetter(lazy, "CalDateTime", "resource:///modules/CalDateTime.jsm");
+  ChromeUtils.defineESModuleGetters(lazy, {
+    CalDateTime: "resource:///modules/CalDateTime.sys.mjs",
+  });
 
-  let dayFormatter = new Services.intl.DateTimeFormat(undefined, { day: "numeric" });
-  let dateFormatter = new Services.intl.DateTimeFormat(undefined, { dateStyle: "long" });
+  const dayFormatter = new Services.intl.DateTimeFormat(undefined, { day: "numeric" });
+  const dateFormatter = new Services.intl.DateTimeFormat(undefined, { dateStyle: "long" });
 
   /**
    * MiniMonth Calendar: day-of-month grid component.
@@ -37,7 +38,7 @@
       this.calIObserver = this.getCustomInterfaceCallback(Ci.calIObserver);
       this.calICompositeObserver = this.getCustomInterfaceCallback(Ci.calICompositeObserver);
 
-      let onPreferenceChanged = () => {
+      const onPreferenceChanged = () => {
         this.dayBoxes.clear(); // Days have moved, force a refresh of the grid.
         this.refreshDisplay();
       };
@@ -61,7 +62,6 @@
     static get inheritedAttributes() {
       return {
         ".minimonth-header": "readonly,month,year",
-        ".minimonth-year-name": "value=year",
       };
     }
 
@@ -71,6 +71,7 @@
       }
 
       MozXULElement.insertFTLIfNeeded("calendar/calendar-widgets.ftl");
+      MozXULElement.insertFTLIfNeeded("calendar/calendar.ftl");
 
       const minimonthHeader = `
         <html:div class="minimonth-header minimonth-month-box"
@@ -176,7 +177,6 @@
       });
 
       this.dayBoxes = new Map();
-      this.mValue = null;
       this.mEditorDate = null;
       this.mExtraDate = null;
       this.mPixelScrollDelta = 0;
@@ -185,15 +185,10 @@
       this.mSelected = null;
       this.mExtra = null;
       this.mValue = new Date(); // Default to "today".
+      this.mShowsToday = true;
       this.mFocused = null;
 
-      let width = 0;
-      // Start loop from 1 as it is needed to get the first month name string
-      // and avoid extra computation of adding one.
-      for (let i = 1; i <= 12; i++) {
-        let dateString = cal.l10n.getDateFmtString(`month.${i}.name`);
-        width = Math.max(dateString.length, width);
-      }
+      const width = Math.max(...cal.dtz.formatter.monthNames.map(n => n.length));
       this.querySelector(".minimonth-month-name").style.width = `${width + 1}ch`;
 
       this.refreshDisplay();
@@ -321,7 +316,7 @@
      * Returns the first (inclusive) date of the minimonth as a calIDateTime object.
      */
     get firstDate() {
-      let date = this._getCalBoxNode(1, 1).date;
+      const date = this._getCalBoxNode(1, 1).date;
       return cal.dtz.jsDateToDateTime(date);
     }
 
@@ -329,8 +324,8 @@
      * Returns the last (exclusive) date of the minimonth as a calIDateTime object.
      */
     get lastDate() {
-      let date = this._getCalBoxNode(6, 7).date;
-      let lastDateTime = cal.dtz.jsDateToDateTime(date);
+      const date = this._getCalBoxNode(6, 7).date;
+      const lastDateTime = cal.dtz.jsDateToDateTime(date);
       lastDateTime.day = lastDateTime.day + 1;
       return lastDateTime;
     }
@@ -340,20 +335,20 @@
     }
 
     setBusyDaysForItem(aItem, aState) {
-      let items = aItem.recurrenceInfo
+      const items = aItem.recurrenceInfo
         ? aItem.getOccurrencesBetween(this.firstDate, this.lastDate)
         : [aItem];
       items.forEach(item => this.setBusyDaysForOccurrence(item, aState));
     }
 
     parseBoxBusy(aBox) {
-      let boxBusy = {};
+      const boxBusy = {};
 
-      let busyStr = aBox.getAttribute("busy");
+      const busyStr = aBox.getAttribute("busy");
       if (busyStr && busyStr.length > 0) {
-        let calChunks = busyStr.split("\u001A");
-        for (let chunk of calChunks) {
-          let expr = chunk.split("=");
+        const calChunks = busyStr.split("\u001A");
+        for (const chunk of calChunks) {
+          const expr = chunk.split("=");
           boxBusy[expr[0]] = parseInt(expr[1], 10);
         }
       }
@@ -362,16 +357,16 @@
     }
 
     updateBoxBusy(aBox, aBoxBusy) {
-      let calChunks = [];
+      const calChunks = [];
 
-      for (let calId in aBoxBusy) {
+      for (const calId in aBoxBusy) {
         if (aBoxBusy[calId]) {
           calChunks.push(calId + "=" + aBoxBusy[calId]);
         }
       }
 
       if (calChunks.length > 0) {
-        let busyStr = calChunks.join("\u001A");
+        const busyStr = calChunks.join("\u001A");
         aBox.setAttribute("busy", busyStr);
       } else {
         aBox.removeAttribute("busy");
@@ -379,7 +374,7 @@
     }
 
     removeCalendarFromBoxBusy(aBox, aCalendar) {
-      let boxBusy = this.parseBoxBusy(aBox);
+      const boxBusy = this.parseBoxBusy(aBox);
       if (boxBusy[aCalendar.id]) {
         delete boxBusy[aCalendar.id];
       }
@@ -408,19 +403,19 @@
 
       // We need to compare with midnight of the current day, so reset the
       // time here.
-      let current = start.clone().getInTimezone(cal.dtz.defaultTimezone);
+      const current = start.clone().getInTimezone(cal.dtz.defaultTimezone);
       current.hour = 0;
       current.minute = 0;
       current.second = 0;
 
       // Cache the result so the compare isn't called in each iteration.
-      let compareResult = start.compare(end) == 0 ? 1 : 0;
+      const compareResult = start.compare(end) == 0 ? 1 : 0;
 
       // Setup the busy days.
       while (current.compare(end) < compareResult) {
-        let box = this.getBoxForDate(current);
+        const box = this.getBoxForDate(current);
         if (box) {
-          let busyCalendars = this.parseBoxBusy(box);
+          const busyCalendars = this.parseBoxBusy(box);
           if (!busyCalendars[aOccurrence.calendar.id]) {
             busyCalendars[aOccurrence.calendar.id] = 0;
           }
@@ -467,9 +462,9 @@
       this.setBusyDaysForItem(aNewItem, true);
     }
 
-    onError(aCalendar, aErrNo, aMessage) {}
+    onError() {}
 
-    onPropertyChanged(aCalendar, aName, aValue, aOldValue) {
+    onPropertyChanged(aCalendar, aName) {
       switch (aName) {
         case "disabled":
           this.resetAttributesForDate();
@@ -493,19 +488,20 @@
 
     onCalendarRemoved(aCalendar) {
       if (!aCalendar.getProperty("disabled")) {
-        for (let box of this.dayBoxes.values()) {
+        for (const box of this.dayBoxes.values()) {
           this.removeCalendarFromBoxBusy(box, aCalendar);
         }
       }
     }
 
-    onDefaultCalendarChanged(aCalendar) {}
+    onDefaultCalendarChanged() {}
 
     // End calICompositeObserver methods.
 
     refreshDisplay() {
       if (!this.mValue) {
         this.mValue = new Date();
+        this.mShowsToday = true;
       }
       this.setHeader();
       this.showMonth(this.mValue);
@@ -521,69 +517,12 @@
 
     setHeader() {
       // Reset the headers.
-      let dayList = new Array(7);
-      let longDayList = new Array(7);
-      let tempDate = new Date();
-      let i, j;
-      let useOSFormat;
-      tempDate.setDate(tempDate.getDate() - (tempDate.getDay() - this.weekStart));
-      for (i = 0; i < 7; i++) {
-        // If available, use UILocale days, else operating system format.
-        try {
-          dayList[i] = cal.l10n.getDateFmtString(`day.${tempDate.getDay() + 1}.short`);
-        } catch (e) {
-          dayList[i] = tempDate.toLocaleDateString(undefined, { weekday: "short" });
-          useOSFormat = true;
-        }
-        longDayList[i] = tempDate.toLocaleDateString(undefined, { weekday: "long" });
-        tempDate.setDate(tempDate.getDate() + 1);
-      }
-
-      if (useOSFormat) {
-        // To keep datepicker popup compact, shrink localized weekday
-        // abbreviations down to 1 or 2 chars so each column of week can
-        // be as narrow as 2 digits.
-        //
-        // 1. Compute the minLength of the day name abbreviations.
-        let minLength = dayList.map(name => name.length).reduce((min, len) => Math.min(min, len));
-
-        // 2. If some day name abbrev. is longer than 2 chars (not Catalan),
-        //    and ALL localized day names share same prefix (as in Chinese),
-        //    then trim shared "day-" prefix.
-        if (dayList.some(dayAbbr => dayAbbr.length > 2)) {
-          for (let endPrefix = 0; endPrefix < minLength; endPrefix++) {
-            let suffix = dayList[0][endPrefix];
-            if (dayList.some(dayAbbr => dayAbbr[endPrefix] != suffix)) {
-              if (endPrefix > 0) {
-                for (i = 0; i < dayList.length; i++) {
-                  // trim prefix chars.
-                  dayList[i] = dayList[i].substring(endPrefix);
-                }
-              }
-              break;
-            }
-          }
-        }
-        // 3. Trim each day abbreviation to 1 char if unique, else 2 chars.
-        for (i = 0; i < dayList.length; i++) {
-          let foundMatch = 1;
-          for (j = 0; j < dayList.length; j++) {
-            if (i != j) {
-              if (dayList[i].substring(0, 1) == dayList[j].substring(0, 1)) {
-                foundMatch = 2;
-                break;
-              }
-            }
-          }
-          dayList[i] = dayList[i].substring(0, foundMatch);
-        }
-      }
-
       this._getCalBoxNode(0, 0).hidden = !this.showWeekNumber;
       for (let column = 1; column < 8; column++) {
-        let node = this._getCalBoxNode(0, column);
-        node.textContent = dayList[column - 1];
-        node.setAttribute("aria-label", longDayList[column - 1]);
+        const node = this._getCalBoxNode(0, column);
+        const day = (column + 6 + this.weekStart) % 7;
+        node.textContent = cal.dtz.formatter.narrowWeekdayNames[day];
+        node.setAttribute("aria-label", cal.dtz.formatter.weekdayNames[day]);
       }
     }
 
@@ -600,7 +539,7 @@
       aDate.setSeconds(0);
       aDate.setMilliseconds(0);
       // Don't fire onmonthchange event upon initialization
-      let monthChanged = this.mEditorDate && this.mEditorDate.valueOf() != aDate.valueOf();
+      const monthChanged = this.mEditorDate && this.mEditorDate.valueOf() != aDate.valueOf();
       this.mEditorDate = aDate; // Only place mEditorDate is set.
 
       if (this.mSelected) {
@@ -609,7 +548,7 @@
       }
 
       // Get today's date.
-      let today = new Date();
+      const today = new Date();
 
       if (!monthChanged && this.dayBoxes.size > 0) {
         this.mSelected = this.getBoxForDate(this.value);
@@ -617,7 +556,7 @@
           this.mSelected.setAttribute("selected", "true");
         }
 
-        let todayBox = this.getBoxForDate(today);
+        const todayBox = this.getBoxForDate(today);
         if (this.mToday != todayBox) {
           if (this.mToday) {
             this.mToday.removeAttribute("today");
@@ -644,41 +583,43 @@
       this.setAttribute("year", aDate.getFullYear());
       this.setAttribute("month", aDate.getMonth());
 
-      let miniMonthName = this.querySelector(".minimonth-month-name");
-      let dateString = cal.l10n.getDateFmtString(`month.${aDate.getMonth() + 1}.name`);
-      miniMonthName.setAttribute("value", dateString);
+      const miniMonthName = this.querySelector(".minimonth-month-name");
+      const miniYearName = this.querySelector(".minimonth-year-name");
+      const monthString = cal.dtz.formatter.monthNames[aDate.getMonth()];
+      miniMonthName.setAttribute("value", monthString);
       miniMonthName.setAttribute("monthIndex", aDate.getMonth());
-      this.mReadOnlyHeader.textContent = dateString + " " + aDate.getFullYear();
+      miniYearName.setAttribute("value", cal.dtz.formatter.formatYear(aDate.getFullYear()));
+      this.mReadOnlyHeader.textContent = cal.dtz.formatter.formatMonthLong(
+        aDate.getFullYear(),
+        aDate.getMonth()
+      );
 
       // Update the calendar.
-      let calbox = this.querySelector(".minimonth-calendar");
-      let date = this._getStartDate(aDate);
+      const calbox = this.querySelector(".minimonth-calendar");
+      const date = this._getStartDate(aDate);
 
       if (aDate.getFullYear() == (this.mValue || this.mExtraDate).getFullYear()) {
-        calbox.setAttribute("aria-label", dateString);
+        calbox.ariaLabel = monthString;
       } else {
-        let monthName = cal.l10n.formatMonth(aDate.getMonth() + 1, "calendar", "monthInYear");
-        let label = cal.l10n.getCalString("monthInYear", [monthName, aDate.getFullYear()]);
-        calbox.setAttribute("aria-label", label);
+        calbox.ariaLabel = cal.dtz.formatter.formatMonthLong(aDate.getFullYear(), aDate.getMonth());
       }
 
       this.dayBoxes.clear();
-      let defaultTz = cal.dtz.defaultTimezone;
+      const defaultTz = cal.dtz.defaultTimezone;
       for (let k = 1; k < 7; k++) {
         // Set the week number.
-        let firstElement = this._getCalBoxNode(k, 0);
+        const firstElement = this._getCalBoxNode(k, 0);
         firstElement.hidden = !this.showWeekNumber;
         if (this.showWeekNumber) {
-          let weekNumber = cal.weekInfoService.getWeekTitle(
+          const weekNumber = cal.weekInfoService.getWeekTitle(
             cal.dtz.jsDateToDateTime(date, defaultTz)
           );
-          let weekTitle = cal.l10n.getCalString("WeekTitle", [weekNumber]);
           firstElement.textContent = weekNumber;
-          firstElement.setAttribute("aria-label", weekTitle);
+          document.l10n.setAttributes(firstElement, "week-title-label", { title: weekNumber });
         }
 
         for (let i = 1; i < 8; i++) {
-          let day = this._getCalBoxNode(k, i);
+          const day = this._getCalBoxNode(k, i);
           this.setBoxForDate(date, day);
 
           if (this.getAttribute("readonly") != "true") {
@@ -698,7 +639,7 @@
           }
 
           // Highlight the current date.
-          let val = this.value;
+          const val = this.value;
           if (this._sameDay(val, date)) {
             this.mSelected = day;
             day.setAttribute("selected", "true");
@@ -810,7 +751,7 @@
      */
     resetAttributesForDate(aDate) {
       if (aDate) {
-        let box = this.getBoxForDate(aDate);
+        const box = this.getBoxForDate(aDate);
         if (box) {
           this.resetAttributesForBox(box);
         }
@@ -854,14 +795,14 @@
       // The minimonth automatically clears extra styles on a month change.
       // Therefore we only need to fill the minimonth with new info.
 
-      let calendar = aCalendar || cal.view.getCompositeCalendar(window);
-      let filter =
+      const calendar = aCalendar || cal.view.getCompositeCalendar(window);
+      const filter =
         calendar.ITEM_FILTER_COMPLETED_ALL |
         calendar.ITEM_FILTER_CLASS_OCCURRENCES |
         calendar.ITEM_FILTER_ALL_ITEMS;
 
       // Get new info.
-      for await (let items of cal.iterate.streamValues(
+      for await (const items of cal.iterate.streamValues(
         calendar.getItems(filter, 0, this.firstDate, this.lastDate)
       )) {
         items.forEach(item => this.setBusyDaysForOccurrence(item, true));
@@ -869,17 +810,16 @@
     }
 
     updateAccessibleLabel() {
-      let label;
       if (this.mValue) {
-        label = dateFormatter.format(this.mValue);
+        this.removeAttribute("data-l10n-id");
+        this.setAttribute("aria-label", dateFormatter.format(this.mValue));
       } else {
-        label = cal.l10n.getCalString("minimonthNoSelectedDate");
+        document.l10n.setAttributes(this, "minimonth-no-selected-date");
       }
-      this.setAttribute("aria-label", label);
     }
 
     update(aValue) {
-      let changed =
+      const changed =
         this.mValue &&
         aValue &&
         (this.mValue.getFullYear() != aValue.getFullYear() ||
@@ -887,6 +827,11 @@
           this.mValue.getDate() != aValue.getDate());
 
       this.mValue = aValue;
+      const today = new Date();
+      this.mShowsToday =
+        this.mValue.getFullYear() == today.getFullYear() &&
+        this.mValue.getMonth() == today.getMonth() &&
+        this.mValue.getDate() == today.getDate();
       if (changed) {
         this.fireEvent("change");
       }
@@ -898,7 +843,7 @@
     }
 
     setFocusedDate(aDate, aForceFocus) {
-      let newFocused = this.getBoxForDate(aDate);
+      const newFocused = this.getBoxForDate(aDate);
       if (!newFocused) {
         return;
       }
@@ -909,7 +854,7 @@
       this.mFocused.setAttribute("tabindex", "0");
       // Only actually move the focus if it is already in the calendar box.
       if (!aForceFocus) {
-        let calbox = this.querySelector(".minimonth-calendar");
+        const calbox = this.querySelector(".minimonth-calendar");
         aForceFocus = calbox.contains(document.commandDispatcher.focusedElement);
       }
       if (aForceFocus) {
@@ -923,13 +868,13 @@
     }
 
     switchMonth(aMonth) {
-      let newMonth = new Date(this.mEditorDate);
+      const newMonth = new Date(this.mEditorDate);
       newMonth.setMonth(aMonth);
       this.showMonth(newMonth);
     }
 
     switchYear(aYear) {
-      let newMonth = new Date(this.mEditorDate);
+      const newMonth = new Date(this.mEditorDate);
       newMonth.setFullYear(aYear);
       this.showMonth(newMonth);
     }
@@ -945,39 +890,49 @@
       }
       // Note that aMainDate and this.mEditorDate refer to the first day
       // of the corresponding month.
-      let sameMonth = this._sameDay(aMainDate, this.mEditorDate);
-      let sameDate = this._sameDay(aDate, this.mValue);
+      const sameMonth = this._sameDay(aMainDate, this.mEditorDate);
+      const sameDate = this._sameDay(aDate, this.mValue);
       if (!sameMonth && !sameDate) {
         // Change month and select day.
         this.mValue = aDate;
+        const today = new Date();
+        this.mShowsToday =
+          this.mValue.getFullYear() == today.getFullYear() &&
+          this.mValue.getMonth() == today.getMonth() &&
+          this.mValue.getDate() == today.getDate();
         this.showMonth(aMainDate);
       } else if (!sameMonth) {
         // Change month only.
         this.showMonth(aMainDate);
       } else if (!sameDate) {
         // Select day only.
-        let day = this.getBoxForDate(aDate);
+        const day = this.getBoxForDate(aDate);
         if (this.mSelected) {
           this.mSelected.removeAttribute("selected");
         }
         this.mSelected = day;
         day.setAttribute("selected", "true");
         this.mValue = aDate;
+        const today = new Date();
+        this.mShowsToday =
+          this.mValue.getFullYear() == today.getFullYear() &&
+          this.mValue.getMonth() == today.getMonth() &&
+          this.mValue.getDate() == today.getDate();
         this.setFocusedDate(aDate);
       }
     }
 
     _getStartDate(aMainDate) {
-      let date = new Date(aMainDate);
-      let firstWeekday = (7 + aMainDate.getDay() - this.weekStart) % 7;
+      const date = new Date(aMainDate);
+      const firstWeekday = (7 + aMainDate.getDay() - this.weekStart) % 7;
       date.setDate(date.getDate() - firstWeekday);
       return date;
     }
 
     _getEndDate(aMainDate) {
-      let date = this._getStartDate(aMainDate);
-      let calbox = this.querySelector(".minimonth-calendar");
-      let days = (calbox.children.length - 1) * 7;
+      const date = this._getStartDate(aMainDate);
+      const calbox = this.querySelector(".minimonth-calendar");
+      const days = (calbox.children.length - 1) * 7;
       date.setDate(date.getDate() + days - 1);
       return date;
     }
@@ -996,15 +951,15 @@
     }
 
     advanceMonth(aDir) {
-      let advEditorDate = new Date(this.mEditorDate); // At 1st of month.
-      let advMonth = this.mEditorDate.getMonth() + aDir;
+      const advEditorDate = new Date(this.mEditorDate); // At 1st of month.
+      const advMonth = this.mEditorDate.getMonth() + aDir;
       advEditorDate.setMonth(advMonth);
       this.showMonth(advEditorDate);
     }
 
     advanceYear(aDir) {
-      let advEditorDate = new Date(this.mEditorDate); // At 1st of month.
-      let advYear = this.mEditorDate.getFullYear() + aDir;
+      const advEditorDate = new Date(this.mEditorDate); // At 1st of month.
+      const advYear = this.mEditorDate.getFullYear() + aDir;
       advEditorDate.setFullYear(advYear);
       this.showMonth(advEditorDate);
     }
@@ -1038,6 +993,14 @@
       this.moveDateByOffset(years, months, days);
       event.stopPropagation();
       event.preventDefault();
+    }
+
+    /**
+     * If last selected date was the current date at the time. This will remain
+     * true (or false) until a different date is selected, even after midnight.
+     */
+    get showsToday() {
+      return this.mShowsToday;
     }
 
     disconnectedCallback() {

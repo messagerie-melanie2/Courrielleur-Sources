@@ -6,7 +6,6 @@ const kSpace = " ".charCodeAt(0);
 const kSlash = "/".charCodeAt(0);
 const kApostrophe = "'".charCodeAt(0);
 
-var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 var {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 function findTypeController(aTypeAheadFind, aWindow)
@@ -66,11 +65,10 @@ typeAheadFind.prototype = {
   mXULBrowserWindow: null,
 
   /* nsISupports */
-  QueryInterface: XPCOMUtils.generateQI([
+  QueryInterface: ChromeUtils.generateQI([
       Ci.nsISupportsWeakReference,
       Ci.nsIObserver,
       Ci.nsITimerCallback,
-      Ci.nsIDOMEventListener,
       Ci.nsISelectionListener]),
 
   /* nsIObserver */
@@ -117,7 +115,7 @@ typeAheadFind.prototype = {
     this.stopFind(false);
   },
 
-  /* nsIDOMEventListener */
+  /* EventListener */
   handleEvent: function(aEvent) {
     if (!aEvent.type.startsWith("key")) {
       this.stopFind(false);

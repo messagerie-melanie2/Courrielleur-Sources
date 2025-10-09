@@ -4,6 +4,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mimeunty.h"
+#include "mimehdrs.h"
+#include "nsMailHeaders.h"
 #include "prmem.h"
 #include "plstr.h"
 #include "prlog.h"
@@ -42,8 +44,7 @@ static bool MimeUntypedText_binhex_begin_line_p(const char* line,
                                                 MimeDisplayOptions* opt);
 static bool MimeUntypedText_binhex_end_line_p(const char* line, int32_t length);
 
-static int MimeUntypedTextClassInitialize(MimeUntypedTextClass* clazz) {
-  MimeObjectClass* oclass = (MimeObjectClass*)clazz;
+static int MimeUntypedTextClassInitialize(MimeObjectClass* oclass) {
   PR_ASSERT(!oclass->class_initialized);
   oclass->initialize = MimeUntypedText_initialize;
   oclass->finalize = MimeUntypedText_finalize;
@@ -145,8 +146,8 @@ static int MimeUntypedText_parse_line(const char* line, int32_t length,
 
   /* Hand this line to the currently-open sub-part.
    */
-  status =
-      uty->open_subpart->clazz->parse_buffer(line, length, uty->open_subpart);
+  status = uty->open_subpart->clazz->parse_buffer(
+      line, length, MimeClosure(MimeClosure::isMimeObject, uty->open_subpart));
   if (status < 0) return status;
 
   /* Close this sub-part if this line demands it.

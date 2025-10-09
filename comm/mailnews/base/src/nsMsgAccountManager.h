@@ -15,19 +15,19 @@
 #include "nscore.h"
 #include "nsIMsgAccountManager.h"
 #include "nsCOMPtr.h"
-#include "nsISmtpServer.h"
+#include "nsIMsgOutgoingServer.h"
 #include "nsIPrefBranch.h"
 #include "nsIMsgFolderCache.h"
 #include "nsIMsgFolder.h"
 #include "nsIObserver.h"
 #include "nsWeakReference.h"
-#include "nsIUrlListener.h"
 #include "nsCOMArray.h"
 #include "nsIMsgSearchSession.h"
 #include "nsInterfaceHashtable.h"
 #include "nsIMsgDatabase.h"
 #include "nsIDBChangeListener.h"
 #include "nsTObserverArray.h"
+#include "nsIAsyncShutdown.h"
 
 class VirtualFolderChangeListener final : public nsIDBChangeListener {
  public:
@@ -63,7 +63,8 @@ class VirtualFolderChangeListener final : public nsIDBChangeListener {
 class nsMsgAccountManager : public nsIMsgAccountManager,
                             public nsIObserver,
                             public nsSupportsWeakReference,
-                            public nsIFolderListener {
+                            public nsIFolderListener,
+                            public nsIAsyncShutdownBlocker {
  public:
   nsMsgAccountManager();
 
@@ -74,9 +75,9 @@ class nsMsgAccountManager : public nsIMsgAccountManager,
   NS_DECL_NSIMSGACCOUNTMANAGER
   NS_DECL_NSIOBSERVER
   NS_DECL_NSIFOLDERLISTENER
+  NS_DECL_NSIASYNCSHUTDOWNBLOCKER
 
   nsresult Init();
-  nsresult Shutdown();
   void LogoutOfServer(nsIMsgIncomingServer* aServer);
 
  private:
@@ -116,10 +117,17 @@ class nsMsgAccountManager : public nsIMsgAccountManager,
   int32_t m_lastFindServerPort;
   nsCString m_lastFindServerType;
 
+  nsresult Shutdown();
+  nsresult CleanupOnExit();
+
   void SetLastServerFound(nsIMsgIncomingServer* server,
                           const nsACString& hostname,
                           const nsACString& username, const int32_t port,
                           const nsACString& type);
+
+  // Where to start looking for an empty server key. This should only increase
+  // as servers are created to ensure keys are unique within a session.
+  uint32_t m_lastUniqueServerKey;
 
   /* internal creation routines - updates m_identities and m_incomingServers */
   nsresult createKeyedAccount(const nsCString& key, bool forcePositionToEnd,
@@ -136,11 +144,6 @@ class nsMsgAccountManager : public nsIMsgAccountManager,
    * Check if the given account can be the set as the default account.
    */
   nsresult CheckDefaultAccount(nsIMsgAccount* aAccount, bool& aCanBeDefault);
-
-  /**
-   * Find a new account that can serve as default.
-   */
-  nsresult AutosetDefaultAccount();
 
   // sets the pref for the default server
   nsresult setDefaultAccountPref(nsIMsgAccount* aDefaultAccount);
@@ -191,17 +194,11 @@ class nsMsgAccountManager : public nsIMsgAccountManager,
   nsCOMPtr<nsIPrefBranch> m_prefs;
   nsCOMPtr<nsIMsgDBService> m_dbService;
 
-  //
-  // root folder listener stuff
-  //
+  // account deletion handling
 
-  // this array is for folder listeners that are supposed to be listening
-  // on the root folders.
-  // When a new server is created, all of the the folder listeners
-  //    should be added to the new server
-  // When a new listener is added, it should be added to all root folders.
-  // similar for when servers are deleted or listeners removed
-  nsTObserverArray<nsCOMPtr<nsIFolderListener>> mFolderListeners;
-
-  void removeListenersFromFolder(nsIMsgFolder* aFolder);
+  /**
+   * Removes the given folder from the folder cache, along with all its cached
+   * properties.
+   */
+  nsresult RemoveFolderFromCache(nsIMsgFolder* aFolder);
 };

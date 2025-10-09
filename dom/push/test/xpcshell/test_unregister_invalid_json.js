@@ -46,12 +46,12 @@ add_task(async function test_unregister_invalid_json() {
   let unregisterPromise = new Promise(
     resolve => (unregisterDone = after(2, resolve))
   );
-  PushService.init({
+  await PushService.init({
     serverURI: "wss://push.example.org/",
     db,
     makeWebSocket(uri) {
       return new MockWebSocket(uri, {
-        onHello(request) {
+        onHello() {
           this.serverSendMsg(
             JSON.stringify({
               messageType: "hello",
@@ -61,7 +61,7 @@ add_task(async function test_unregister_invalid_json() {
             })
           );
         },
-        onUnregister(request) {
+        onUnregister() {
           this.serverSendMsg(");alert(1);(");
           unregisterDone();
         },

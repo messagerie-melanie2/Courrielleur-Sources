@@ -819,7 +819,7 @@ class MOZ_STACK_CLASS ClassEmitter : public PropertyEmitter {
   //        If true the name is on the stack (only for anonymous classes)
   [[nodiscard]] bool emitClass(TaggedParserAtomIndex name,
                                TaggedParserAtomIndex nameForAnonymousClass,
-                               bool hasNameOnStack);
+                               bool hasNameOnStack, uint8_t membersCount);
   [[nodiscard]] bool emitDerivedClass(
       TaggedParserAtomIndex name, TaggedParserAtomIndex nameForAnonymousClass,
       bool hasNameOnStack);
@@ -835,12 +835,27 @@ class MOZ_STACK_CLASS ClassEmitter : public PropertyEmitter {
   [[nodiscard]] bool emitStoreMemberInitializer();
   [[nodiscard]] bool emitMemberInitializersEnd();
 
+#ifdef ENABLE_DECORATORS
+  // TODO!: When we've enabled decorators, update the states and transition
+  //        diagram to reflect this new state.
+  [[nodiscard]] bool prepareForExtraInitializers(
+      TaggedParserAtomIndex initializers);
+#endif
+
   [[nodiscard]] bool emitBinding();
+
+#ifdef ENABLE_DECORATORS
+  // TODO!: When we've enabled decorators, update the states and transition
+  //        diagram to reflect this new state.
+  [[nodiscard]] bool prepareForDecorators();
+#endif
 
   [[nodiscard]] bool emitEnd(Kind kind);
 
  private:
   [[nodiscard]] bool initProtoAndCtor();
+
+  [[nodiscard]] bool leaveBodyAndInnerScope();
 };
 
 } /* namespace frontend */

@@ -7,8 +7,11 @@
 #include "ChromeUtils.h"
 
 #include "JSOracleParent.h"
+#include "ThirdPartyUtil.h"
 #include "js/CallAndConstruct.h"  // JS::Call
+#include "js/ColumnNumber.h"  // JS::TaggedColumnNumberOneOrigin, JS::ColumnNumberOneOrigin
 #include "js/CharacterEncoding.h"
+#include "js/Date.h"                // JS::IsISOStyleDate
 #include "js/Object.h"              // JS::GetClass
 #include "js/PropertyAndElement.h"  // JS_DefineProperty, JS_DefinePropertyById, JS_Enumerate, JS_GetProperty, JS_GetPropertyById, JS_SetProperty, JS_SetPropertyById, JS::IdVector
 #include "js/PropertyDescriptor.h"  // JS::PropertyDescriptor, JS_GetOwnPropertyDescriptorById
@@ -23,7 +26,6 @@
 #include "mozilla/EventStateManager.h"
 #include "mozilla/FormAutofillNative.h"
 #include "mozilla/IntentionalCrash.h"
-#include "mozilla/PerformanceMetricsCollector.h"
 #include "mozilla/PerfStats.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ProcInfo.h"
@@ -31,6 +33,8 @@
 #include "mozilla/ScopeExit.h"
 #include "mozilla/ScrollingMetrics.h"
 #include "mozilla/SharedStyleSheetCache.h"
+#include "mozilla/dom/SharedScriptCache.h"
+#include "mozilla/SpinEventLoopUntil.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/IdleDeadline.h"
@@ -41,6 +45,7 @@
 #include "mozilla/dom/Performance.h"
 #include "mozilla/dom/PopupBlocker.h"
 #include "mozilla/dom/Promise.h"
+#include "mozilla/dom/quota/QuotaManager.h"
 #include "mozilla/dom/Record.h"
 #include "mozilla/dom/ReportingHeader.h"
 #include "mozilla/dom/UnionTypes.h"
@@ -52,17 +57,45 @@
 #include "mozilla/ipc/UtilityProcessManager.h"
 #include "mozilla/ipc/UtilityProcessHost.h"
 #include "mozilla/net/UrlClassifierFeatureFactory.h"
+#include "mozilla/RemoteDecoderManagerChild.h"
+#include "mozilla/KeySystemConfig.h"
 #include "mozilla/WheelHandlingHelper.h"
-#include "IOActivityMonitor.h"
+#include "nsIRFPTargetSetIDL.h"
+#include "nsString.h"
 #include "nsNativeTheme.h"
 #include "nsThreadUtils.h"
 #include "mozJSModuleLoader.h"
 #include "mozilla/ProfilerLabels.h"
 #include "mozilla/ProfilerMarkers.h"
+#include "nsDocShell.h"
 #include "nsIException.h"
 #include "VsyncSource.h"
+#include "imgLoader.h"
+
+#ifdef XP_UNIX
+#  include <errno.h>
+#  include <unistd.h>
+#  include <fcntl.h>
+#  include <poll.h>
+#  include <sys/wait.h>
+
+#  ifdef XP_LINUX
+#    include <sys/prctl.h>
+#  endif
+#endif
+
+#ifdef MOZ_WMF_CDM
+#  include "mozilla/MFCDMParent.h"
+#endif
+
+#ifdef MOZ_WIDGET_ANDROID
+#  include "mozilla/java/GeckoAppShellWrappers.h"
+#endif
 
 namespace mozilla::dom {
+
+// Setup logging
+extern mozilla::LazyLogModule gMlsLog;
 
 /* static */
 void ChromeUtils::NondeterministicGetWeakMapKeys(
@@ -105,29 +138,17 @@ void ChromeUtils::Base64URLEncode(GlobalObject& aGlobal,
                                   const ArrayBufferViewOrArrayBuffer& aSource,
                                   const Base64URLEncodeOptions& aOptions,
                                   nsACString& aResult, ErrorResult& aRv) {
-  size_t length = 0;
-  uint8_t* data = nullptr;
-  if (aSource.IsArrayBuffer()) {
-    const ArrayBuffer& buffer = aSource.GetAsArrayBuffer();
-    buffer.ComputeState();
-    length = buffer.Length();
-    data = buffer.Data();
-  } else if (aSource.IsArrayBufferView()) {
-    const ArrayBufferView& view = aSource.GetAsArrayBufferView();
-    view.ComputeState();
-    length = view.Length();
-    data = view.Data();
-  } else {
-    MOZ_CRASH("Uninitialized union: expected buffer or view");
-  }
-
   auto paddingPolicy = aOptions.mPad ? Base64URLEncodePaddingPolicy::Include
                                      : Base64URLEncodePaddingPolicy::Omit;
-  nsresult rv = mozilla::Base64URLEncode(length, data, paddingPolicy, aResult);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    aResult.Truncate();
-    aRv.Throw(rv);
-  }
+  ProcessTypedArrays(
+      aSource, [&](const Span<uint8_t>& aData, JS::AutoCheckCannotGC&&) {
+        nsresult rv = mozilla::Base64URLEncode(aData.Length(), aData.Elements(),
+                                               paddingPolicy, aResult);
+        if (NS_WARN_IF(NS_FAILED(rv))) {
+          aResult.Truncate();
+          aRv.Throw(rv);
+        }
+      });
 }
 
 /* static */
@@ -162,10 +183,8 @@ void ChromeUtils::Base64URLDecode(GlobalObject& aGlobal,
   }
 
   JS::Rooted<JSObject*> buffer(
-      aGlobal.Context(),
-      ArrayBuffer::Create(aGlobal.Context(), data.Length(), data.Elements()));
-  if (NS_WARN_IF(!buffer)) {
-    aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
+      aGlobal.Context(), ArrayBuffer::Create(aGlobal.Context(), data, aRv));
+  if (aRv.Failed()) {
     return;
   }
   aRetval.set(buffer);
@@ -180,23 +199,22 @@ void ChromeUtils::ReleaseAssert(GlobalObject& aGlobal, bool aCondition,
   }
 
   // Extract the current stack from the JS runtime to embed in the crash reason.
-  nsAutoString filename;
+  nsAutoCString filename;
   uint32_t lineNo = 0;
 
   if (nsCOMPtr<nsIStackFrame> location = GetCurrentJSStack(1)) {
     location->GetFilename(aGlobal.Context(), filename);
     lineNo = location->GetLineNumber(aGlobal.Context());
   } else {
-    filename.Assign(u"<unknown>"_ns);
+    filename.Assign("<unknown>"_ns);
   }
 
   // Convert to utf-8 for adding as the MozCrashReason.
-  NS_ConvertUTF16toUTF8 filenameUtf8(filename);
   NS_ConvertUTF16toUTF8 messageUtf8(aMessage);
 
   // Actually crash.
   MOZ_CRASH_UNSAFE_PRINTF("Failed ChromeUtils.releaseAssert(\"%s\") @ %s:%u",
-                          messageUtf8.get(), filenameUtf8.get(), lineNo);
+                          messageUtf8.get(), filename.get(), lineNo);
 }
 
 /* static */
@@ -359,6 +377,15 @@ bool ChromeUtils::IsDOMObject(GlobalObject& aGlobal, JS::Handle<JSObject*> aObj,
   }
 
   return mozilla::dom::IsDOMObject(obj);
+}
+
+/* static */
+bool ChromeUtils::IsISOStyleDate(GlobalObject& aGlobal,
+                                 const nsACString& aStr) {
+  // aStr is a UTF-8 string, however we can cast to JS::Latin1Chars
+  // because JS::IsISOStyleDate handles ASCII only
+  return JS::IsISOStyleDate(aGlobal.Context(),
+                            JS::Latin1Chars(aStr.Data(), aStr.Length()));
 }
 
 /* static */
@@ -543,64 +570,129 @@ void ChromeUtils::IdleDispatch(const GlobalObject& aGlobal,
   }
 }
 
-/* static */
-void ChromeUtils::Import(const GlobalObject& aGlobal,
-                         const nsACString& aResourceURI,
-                         const Optional<JS::Handle<JSObject*>>& aTargetObj,
-                         JS::MutableHandle<JSObject*> aRetval,
-                         ErrorResult& aRv) {
-  RefPtr moduleloader = mozJSModuleLoader::Get();
-  MOZ_ASSERT(moduleloader);
+static mozJSModuleLoader* GetModuleLoaderForCurrentGlobal(
+    JSContext* aCx, const GlobalObject& aGlobal,
+    Maybe<loader::NonSharedGlobalSyncModuleLoaderScope>&
+        aMaybeSyncLoaderScope) {
+  nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aGlobal.GetAsSupports());
 
-  AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING_NONSENSITIVE("ChromeUtils::Import",
-                                                     OTHER, aResourceURI);
-
-  JSContext* cx = aGlobal.Context();
-
-  JS::Rooted<JSObject*> global(cx);
-  JS::Rooted<JSObject*> exports(cx);
-  nsresult rv = moduleloader->Import(cx, aResourceURI, &global, &exports);
-  if (NS_FAILED(rv)) {
-    aRv.Throw(rv);
-    return;
+  if (mozJSModuleLoader::IsSharedSystemGlobal(global)) {
+    return mozJSModuleLoader::Get();
+  }
+  if (mozJSModuleLoader::IsDevToolsLoaderGlobal(global)) {
+    return mozJSModuleLoader::GetOrCreateDevToolsLoader(aCx);
   }
 
-  // Import() on the component loader can return NS_OK while leaving an
-  // exception on the JSContext.  Check for that case.
-  if (JS_IsExceptionPending(cx)) {
-    aRv.NoteJSContextException(cx);
-    return;
+  if (loader::NonSharedGlobalSyncModuleLoaderScope::IsActive()) {
+    mozJSModuleLoader* moduleloader =
+        loader::NonSharedGlobalSyncModuleLoaderScope::ActiveLoader();
+
+    if (!moduleloader->IsLoaderGlobal(global->GetGlobalJSObject())) {
+      JS_ReportErrorASCII(aCx,
+                          "global: \"current\" option cannot be used for "
+                          "different global while other importESModule "
+                          "with global: \"current\" is on the stack");
+      return nullptr;
+    }
+
+    return moduleloader;
   }
 
-  if (aTargetObj.WasPassed()) {
-    if (!JS_AssignObject(cx, aTargetObj.Value(), exports)) {
-      aRv.Throw(NS_ERROR_FAILURE);
-      return;
+  RefPtr targetModuleLoader = global->GetModuleLoader(aCx);
+  if (!targetModuleLoader) {
+    // Sandbox without associated window returns nullptr for GetModuleLoader.
+    JS_ReportErrorASCII(aCx, "No ModuleLoader found for the current context");
+    return nullptr;
+  }
+
+  if (targetModuleLoader->HasFetchingModules()) {
+    if (!NS_IsMainThread()) {
+      JS_ReportErrorASCII(aCx,
+                          "ChromeUtils.importESModule cannot be used in worker "
+                          "when there is ongoing dynamic import");
+      return nullptr;
+    }
+
+    if (!mozilla::SpinEventLoopUntil(
+            "importESModule for current global"_ns, [&]() -> bool {
+              return !targetModuleLoader->HasFetchingModules();
+            })) {
+      JS_ReportErrorASCII(aCx, "Failed to wait for ongoing module requests");
+      return nullptr;
     }
   }
 
-  if (!JS_WrapObject(cx, &exports)) {
-    aRv.Throw(NS_ERROR_FAILURE);
-    return;
-  }
-  aRetval.set(exports);
+  aMaybeSyncLoaderScope.emplace(aCx, global);
+  return aMaybeSyncLoaderScope->ActiveLoader();
 }
 
-static mozJSModuleLoader* GetContextualESLoader(
-    const Optional<bool>& aLoadInDevToolsLoader, JSObject* aGlobal) {
-  RefPtr devToolsModuleloader = mozJSModuleLoader::GetDevToolsLoader();
-  // We should load the module in the DevTools loader if:
-  // - ChromeUtils.importESModule's `loadInDevToolsLoader` option is true, or,
-  // - if the callsite is from a module loaded in the DevTools loader and
-  // `loadInDevToolsLoader` isn't an explicit false.
-  bool shouldUseDevToolsLoader =
-      (aLoadInDevToolsLoader.WasPassed() && aLoadInDevToolsLoader.Value()) ||
-      (devToolsModuleloader && !aLoadInDevToolsLoader.WasPassed() &&
-       devToolsModuleloader->IsLoaderGlobal(aGlobal));
-  if (shouldUseDevToolsLoader) {
-    return mozJSModuleLoader::GetOrCreateDevToolsLoader();
+static mozJSModuleLoader* GetModuleLoaderForOptions(
+    JSContext* aCx, const GlobalObject& aGlobal,
+    const ImportESModuleOptionsDictionary& aOptions,
+    Maybe<loader::NonSharedGlobalSyncModuleLoaderScope>&
+        aMaybeSyncLoaderScope) {
+  if (!aOptions.mGlobal.WasPassed()) {
+    return mozJSModuleLoader::Get();
   }
-  return mozJSModuleLoader::Get();
+
+  switch (aOptions.mGlobal.Value()) {
+    case ImportESModuleTargetGlobal::Shared:
+      return mozJSModuleLoader::Get();
+
+    case ImportESModuleTargetGlobal::Devtools:
+      return mozJSModuleLoader::GetOrCreateDevToolsLoader(aCx);
+
+    case ImportESModuleTargetGlobal::Contextual: {
+      if (!NS_IsMainThread()) {
+        return GetModuleLoaderForCurrentGlobal(aCx, aGlobal,
+                                               aMaybeSyncLoaderScope);
+      }
+
+      RefPtr devToolsModuleloader = mozJSModuleLoader::GetDevToolsLoader();
+      if (devToolsModuleloader &&
+          devToolsModuleloader->IsLoaderGlobal(aGlobal.Get())) {
+        return mozJSModuleLoader::GetOrCreateDevToolsLoader(aCx);
+      }
+      return mozJSModuleLoader::Get();
+    }
+
+    case ImportESModuleTargetGlobal::Current:
+      return GetModuleLoaderForCurrentGlobal(aCx, aGlobal,
+                                             aMaybeSyncLoaderScope);
+
+    default:
+      MOZ_CRASH("Unknown ImportESModuleTargetGlobal");
+  }
+}
+
+static bool ValidateImportOptions(
+    JSContext* aCx, const GlobalObject& aGlobal,
+    const ImportESModuleOptionsDictionary& aOptions) {
+  if (!NS_IsMainThread() &&
+      (!aOptions.mGlobal.WasPassed() ||
+       (aOptions.mGlobal.Value() != ImportESModuleTargetGlobal::Current &&
+        aOptions.mGlobal.Value() != ImportESModuleTargetGlobal::Contextual))) {
+    JS_ReportErrorASCII(aCx,
+                        "ChromeUtils.importESModule: Only { global: "
+                        "\"current\" } and { global: \"contextual\" } options "
+                        "are supported on worker");
+    return false;
+  }
+
+  if (NS_IsMainThread()) {
+    nsCOMPtr<nsIGlobalObject> global =
+        do_QueryInterface(aGlobal.GetAsSupports());
+
+    if (mozJSModuleLoader::IsDevToolsLoaderGlobal(global) &&
+        !aOptions.mGlobal.WasPassed()) {
+      JS_ReportErrorASCII(aCx,
+                          "ChromeUtils.importESModule: global option is "
+                          "required in DevTools distinct global");
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /* static */
@@ -608,16 +700,25 @@ void ChromeUtils::ImportESModule(
     const GlobalObject& aGlobal, const nsAString& aResourceURI,
     const ImportESModuleOptionsDictionary& aOptions,
     JS::MutableHandle<JSObject*> aRetval, ErrorResult& aRv) {
-  RefPtr moduleloader =
-      GetContextualESLoader(aOptions.mLoadInDevToolsLoader, aGlobal.Get());
-  MOZ_ASSERT(moduleloader);
+  JSContext* cx = aGlobal.Context();
+
+  if (!ValidateImportOptions(cx, aGlobal, aOptions)) {
+    aRv.Throw(NS_ERROR_FAILURE);
+    return;
+  }
+
+  Maybe<loader::NonSharedGlobalSyncModuleLoaderScope> maybeSyncLoaderScope;
+  RefPtr<mozJSModuleLoader> moduleloader =
+      GetModuleLoaderForOptions(cx, aGlobal, aOptions, maybeSyncLoaderScope);
+  if (!moduleloader) {
+    aRv.Throw(NS_ERROR_FAILURE);
+    return;
+  }
 
   NS_ConvertUTF16toUTF8 registryLocation(aResourceURI);
 
   AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING_NONSENSITIVE(
       "ChromeUtils::ImportESModule", OTHER, registryLocation);
-
-  JSContext* cx = aGlobal.Context();
 
   JS::Rooted<JSObject*> moduleNamespace(cx);
   nsresult rv =
@@ -634,13 +735,58 @@ void ChromeUtils::ImportESModule(
     return;
   }
   aRetval.set(moduleNamespace);
+
+  if (maybeSyncLoaderScope) {
+    maybeSyncLoaderScope->Finish();
+  }
 }
+
+// An integer encoding for ImportESModuleOptionsDictionary, to pass the value
+// to the lazy getters.
+class EncodedOptions {
+ public:
+  explicit EncodedOptions(const ImportESModuleOptionsDictionary& aOptions) {
+    if (aOptions.mGlobal.WasPassed()) {
+      mValue = uint32_t(aOptions.mGlobal.Value()) + 1;
+    } else {
+      mValue = 0;
+    }
+  }
+
+  explicit EncodedOptions(uint32_t aValue) : mValue(aValue) {}
+
+  int32_t toInt32() const { return int32_t(mValue); }
+
+  void DecodeInto(ImportESModuleOptionsDictionary& aOptions) {
+    if (mValue == 0) {
+      aOptions.mGlobal.Reset();
+    } else {
+      aOptions.mGlobal.Construct(ImportESModuleTargetGlobal(mValue - 1));
+    }
+  }
+
+ private:
+  uint32_t mValue = 0;
+};
 
 namespace lazy_getter {
 
+// The property id of the getter.
+// Used by all lazy getters.
 static const size_t SLOT_ID = 0;
+
+// The URI of the module to import.
+// Used by ChromeUtils.defineESModuleGetters.
 static const size_t SLOT_URI = 1;
+
+// An array object that contians values for PARAM_INDEX_TARGET and
+// PARAM_INDEX_LAMBDA.
+// Used by ChromeUtils.defineLazyGetter.
 static const size_t SLOT_PARAMS = 1;
+
+// The EncodedOptions value.
+// Used by ChromeUtils.defineESModuleGetters.
+static const size_t SLOT_OPTIONS = 2;
 
 static const size_t PARAM_INDEX_TARGET = 0;
 static const size_t PARAM_INDEX_LAMBDA = 1;
@@ -718,14 +864,22 @@ static bool JSLazyGetter(JSContext* aCx, unsigned aArgc, JS::Value* aVp) {
 static bool DefineLazyGetter(JSContext* aCx, JS::Handle<JSObject*> aTarget,
                              JS::Handle<JS::Value> aName,
                              JS::Handle<JSObject*> aLambda) {
-  JS::Rooted<jsid> id(aCx);
+  JS::Rooted<JS::PropertyKey> id(aCx);
   if (!JS_ValueToId(aCx, aName, &id)) {
     return false;
   }
 
+  JS::Rooted<JS::PropertyKey> funId(aCx);
+  if (id.isAtom()) {
+    funId = id;
+  } else {
+    // Don't care int and symbol cases.
+    funId = JS::PropertyKey::NonIntAtom(JS_GetEmptyString(aCx));
+  }
+
   JS::Rooted<JSObject*> getter(
-      aCx, JS_GetFunctionObject(
-               js::NewFunctionByIdWithReserved(aCx, JSLazyGetter, 0, 0, id)));
+      aCx, JS_GetFunctionObject(js::NewFunctionByIdWithReserved(
+               aCx, JSLazyGetter, 0, 0, funId)));
   if (!getter) {
     JS_ReportOutOfMemory(aCx);
     return false;
@@ -750,10 +904,7 @@ static bool DefineLazyGetter(JSContext* aCx, JS::Handle<JSObject*> aTarget,
                                JSPROP_ENUMERATE);
 }
 
-enum class ModuleType { JSM, ESM };
-
-static bool ModuleGetterImpl(JSContext* aCx, unsigned aArgc, JS::Value* aVp,
-                             ModuleType aType) {
+static bool ESModuleGetter(JSContext* aCx, unsigned aArgc, JS::Value* aVp) {
   JS::CallArgs args = JS::CallArgsFromVp(aArgc, aVp);
 
   JS::Rooted<JSObject*> callee(aCx);
@@ -771,46 +922,42 @@ static bool ModuleGetterImpl(JSContext* aCx, unsigned aArgc, JS::Value* aVp,
   }
   nsDependentCString uri(bytes.get());
 
-  RefPtr moduleloader =
-      aType == ModuleType::JSM
-          ? mozJSModuleLoader::Get()
-          : GetContextualESLoader(
-                Optional<bool>(),
-                JS::GetNonCCWObjectGlobal(js::UncheckedUnwrap(thisObj)));
-  MOZ_ASSERT(moduleloader);
-
   JS::Rooted<JS::Value> value(aCx);
-  if (aType == ModuleType::JSM) {
-    JS::Rooted<JSObject*> moduleGlobal(aCx);
-    JS::Rooted<JSObject*> moduleExports(aCx);
-    nsresult rv = moduleloader->Import(aCx, uri, &moduleGlobal, &moduleExports);
-    if (NS_FAILED(rv)) {
-      Throw(aCx, rv);
-      return false;
-    }
+  EncodedOptions encodedOptions(
+      js::GetFunctionNativeReserved(callee, SLOT_OPTIONS).toInt32());
 
-    // JSM's exports is from the same realm.
-    if (!JS_GetPropertyById(aCx, moduleExports, id, &value)) {
-      return false;
-    }
-  } else {
-    JS::Rooted<JSObject*> moduleNamespace(aCx);
-    nsresult rv = moduleloader->ImportESModule(aCx, uri, &moduleNamespace);
-    if (NS_FAILED(rv)) {
-      Throw(aCx, rv);
-      return false;
-    }
+  ImportESModuleOptionsDictionary options;
+  encodedOptions.DecodeInto(options);
 
-    // ESM's namespace is from the module's realm.
-    {
-      JSAutoRealm ar(aCx, moduleNamespace);
-      if (!JS_GetPropertyById(aCx, moduleNamespace, id, &value)) {
-        return false;
-      }
-    }
-    if (!JS_WrapValue(aCx, &value)) {
+  GlobalObject global(aCx, callee);
+
+  Maybe<loader::NonSharedGlobalSyncModuleLoaderScope> maybeSyncLoaderScope;
+  RefPtr<mozJSModuleLoader> moduleloader =
+      GetModuleLoaderForOptions(aCx, global, options, maybeSyncLoaderScope);
+  if (!moduleloader) {
+    return false;
+  }
+
+  JS::Rooted<JSObject*> moduleNamespace(aCx);
+  nsresult rv = moduleloader->ImportESModule(aCx, uri, &moduleNamespace);
+  if (NS_FAILED(rv)) {
+    Throw(aCx, rv);
+    return false;
+  }
+
+  // ESM's namespace is from the module's realm.
+  {
+    JSAutoRealm ar(aCx, moduleNamespace);
+    if (!JS_GetPropertyById(aCx, moduleNamespace, id, &value)) {
       return false;
     }
+  }
+  if (!JS_WrapValue(aCx, &value)) {
+    return false;
+  }
+
+  if (maybeSyncLoaderScope) {
+    maybeSyncLoaderScope->Finish();
   }
 
   if (!JS_DefinePropertyById(aCx, thisObj, id, value, JSPROP_ENUMERATE)) {
@@ -821,15 +968,7 @@ static bool ModuleGetterImpl(JSContext* aCx, unsigned aArgc, JS::Value* aVp,
   return true;
 }
 
-static bool JSModuleGetter(JSContext* aCx, unsigned aArgc, JS::Value* aVp) {
-  return ModuleGetterImpl(aCx, aArgc, aVp, ModuleType::JSM);
-}
-
-static bool ESModuleGetter(JSContext* aCx, unsigned aArgc, JS::Value* aVp) {
-  return ModuleGetterImpl(aCx, aArgc, aVp, ModuleType::ESM);
-}
-
-static bool ModuleSetterImpl(JSContext* aCx, unsigned aArgc, JS::Value* aVp) {
+static bool ESModuleSetter(JSContext* aCx, unsigned aArgc, JS::Value* aVp) {
   JS::CallArgs args = JS::CallArgsFromVp(aArgc, aVp);
 
   JS::Rooted<JSObject*> callee(aCx);
@@ -842,53 +981,14 @@ static bool ModuleSetterImpl(JSContext* aCx, unsigned aArgc, JS::Value* aVp) {
   return JS_DefinePropertyById(aCx, thisObj, id, args.get(0), JSPROP_ENUMERATE);
 }
 
-static bool JSModuleSetter(JSContext* aCx, unsigned aArgc, JS::Value* aVp) {
-  return ModuleSetterImpl(aCx, aArgc, aVp);
-}
-
-static bool ESModuleSetter(JSContext* aCx, unsigned aArgc, JS::Value* aVp) {
-  return ModuleSetterImpl(aCx, aArgc, aVp);
-}
-
-static bool DefineJSModuleGetter(JSContext* aCx, JS::Handle<JSObject*> aTarget,
-                                 const nsAString& aId,
-                                 const nsAString& aResourceURI) {
-  JS::Rooted<JS::Value> uri(aCx);
-  JS::Rooted<JS::Value> idValue(aCx);
-  JS::Rooted<jsid> id(aCx);
-  if (!xpc::NonVoidStringToJsval(aCx, aResourceURI, &uri) ||
-      !xpc::NonVoidStringToJsval(aCx, aId, &idValue) ||
-      !JS_ValueToId(aCx, idValue, &id)) {
-    return false;
-  }
-  idValue = js::IdToValue(id);
-
-  JS::Rooted<JSObject*> getter(
-      aCx, JS_GetFunctionObject(
-               js::NewFunctionByIdWithReserved(aCx, JSModuleGetter, 0, 0, id)));
-
-  JS::Rooted<JSObject*> setter(
-      aCx, JS_GetFunctionObject(
-               js::NewFunctionByIdWithReserved(aCx, JSModuleSetter, 0, 0, id)));
-
-  if (!getter || !setter) {
-    JS_ReportOutOfMemory(aCx);
-    return false;
-  }
-
-  js::SetFunctionNativeReserved(getter, SLOT_ID, idValue);
-  js::SetFunctionNativeReserved(setter, SLOT_ID, idValue);
-
-  js::SetFunctionNativeReserved(getter, SLOT_URI, uri);
-
-  return JS_DefinePropertyById(aCx, aTarget, id, getter, setter,
-                               JSPROP_ENUMERATE);
-}
-
 static bool DefineESModuleGetter(JSContext* aCx, JS::Handle<JSObject*> aTarget,
                                  JS::Handle<JS::PropertyKey> aId,
-                                 JS::Handle<JS::Value> aResourceURI) {
+                                 JS::Handle<JS::Value> aResourceURI,
+                                 const EncodedOptions& encodedOptions) {
   JS::Rooted<JS::Value> idVal(aCx, JS::StringValue(aId.toString()));
+
+  JS::Rooted<JS::Value> optionsVal(aCx,
+                                   JS::Int32Value(encodedOptions.toInt32()));
 
   JS::Rooted<JSObject*> getter(
       aCx, JS_GetFunctionObject(js::NewFunctionByIdWithReserved(
@@ -907,6 +1007,8 @@ static bool DefineESModuleGetter(JSContext* aCx, JS::Handle<JSObject*> aTarget,
   js::SetFunctionNativeReserved(setter, SLOT_ID, idVal);
 
   js::SetFunctionNativeReserved(getter, SLOT_URI, aResourceURI);
+
+  js::SetFunctionNativeReserved(getter, SLOT_OPTIONS, optionsVal);
 
   return JS_DefinePropertyById(aCx, aTarget, aId, getter, setter,
                                JSPROP_ENUMERATE);
@@ -928,22 +1030,10 @@ void ChromeUtils::DefineLazyGetter(const GlobalObject& aGlobal,
 }
 
 /* static */
-void ChromeUtils::DefineModuleGetter(const GlobalObject& global,
-                                     JS::Handle<JSObject*> target,
-                                     const nsAString& id,
-                                     const nsAString& resourceURI,
-                                     ErrorResult& aRv) {
-  if (!lazy_getter::DefineJSModuleGetter(global.Context(), target, id,
-                                         resourceURI)) {
-    aRv.NoteJSContextException(global.Context());
-  }
-}
-
-/* static */
-void ChromeUtils::DefineESModuleGetters(const GlobalObject& global,
-                                        JS::Handle<JSObject*> target,
-                                        JS::Handle<JSObject*> modules,
-                                        ErrorResult& aRv) {
+void ChromeUtils::DefineESModuleGetters(
+    const GlobalObject& global, JS::Handle<JSObject*> target,
+    JS::Handle<JSObject*> modules,
+    const ImportESModuleOptionsDictionary& aOptions, ErrorResult& aRv) {
   JSContext* cx = global.Context();
 
   JS::Rooted<JS::IdVector> props(cx, JS::IdVector(cx));
@@ -951,6 +1041,13 @@ void ChromeUtils::DefineESModuleGetters(const GlobalObject& global,
     aRv.NoteJSContextException(cx);
     return;
   }
+
+  if (!ValidateImportOptions(cx, global, aOptions)) {
+    aRv.Throw(NS_ERROR_FAILURE);
+    return;
+  }
+
+  EncodedOptions encodedOptions(aOptions);
 
   JS::Rooted<JS::PropertyKey> prop(cx);
   JS::Rooted<JS::Value> resourceURIVal(cx);
@@ -967,12 +1064,49 @@ void ChromeUtils::DefineESModuleGetters(const GlobalObject& global,
       return;
     }
 
-    if (!lazy_getter::DefineESModuleGetter(cx, target, prop, resourceURIVal)) {
+    if (!lazy_getter::DefineESModuleGetter(cx, target, prop, resourceURIVal,
+                                           encodedOptions)) {
       aRv.NoteJSContextException(cx);
       return;
     }
   }
 }
+
+#ifdef XP_UNIX
+/* static */
+void ChromeUtils::GetLibcConstants(const GlobalObject&,
+                                   LibcConstants& aConsts) {
+  aConsts.mEPERM.Construct(EPERM);
+  aConsts.mEINTR.Construct(EINTR);
+  aConsts.mEACCES.Construct(EACCES);
+  aConsts.mEAGAIN.Construct(EAGAIN);
+  aConsts.mEINVAL.Construct(EINVAL);
+  aConsts.mENOSYS.Construct(ENOSYS);
+
+  aConsts.mF_SETFD.Construct(F_SETFD);
+  aConsts.mF_SETFL.Construct(F_SETFL);
+
+  aConsts.mFD_CLOEXEC.Construct(FD_CLOEXEC);
+
+  aConsts.mAT_EACCESS.Construct(AT_EACCESS);
+
+  aConsts.mO_CREAT.Construct(O_CREAT);
+  aConsts.mO_NONBLOCK.Construct(O_NONBLOCK);
+  aConsts.mO_WRONLY.Construct(O_WRONLY);
+
+  aConsts.mPOLLERR.Construct(POLLERR);
+  aConsts.mPOLLHUP.Construct(POLLHUP);
+  aConsts.mPOLLIN.Construct(POLLIN);
+  aConsts.mPOLLNVAL.Construct(POLLNVAL);
+  aConsts.mPOLLOUT.Construct(POLLOUT);
+
+  aConsts.mWNOHANG.Construct(WNOHANG);
+
+#  ifdef XP_LINUX
+  aConsts.mPR_CAPBSET_READ.Construct(PR_CAPBSET_READ);
+#  endif
+}
+#endif
 
 /* static */
 void ChromeUtils::OriginAttributesToSuffix(
@@ -1048,9 +1182,10 @@ void ChromeUtils::GetBaseDomainFromPartitionKey(dom::GlobalObject& aGlobal,
   nsString scheme;
   nsString pkBaseDomain;
   int32_t port;
+  bool ancestor;
 
-  if (!mozilla::OriginAttributes::ParsePartitionKey(aPartitionKey, scheme,
-                                                    pkBaseDomain, port)) {
+  if (!mozilla::OriginAttributes::ParsePartitionKey(
+          aPartitionKey, scheme, pkBaseDomain, port, ancestor)) {
     aRv.Throw(NS_ERROR_FAILURE);
     return;
   }
@@ -1060,24 +1195,68 @@ void ChromeUtils::GetBaseDomainFromPartitionKey(dom::GlobalObject& aGlobal,
 
 /* static */
 void ChromeUtils::GetPartitionKeyFromURL(dom::GlobalObject& aGlobal,
-                                         const nsAString& aURL,
+                                         const nsAString& aTopLevelUrl,
+                                         const nsAString& aSubresourceUrl,
+                                         const Optional<bool>& aForeignContext,
                                          nsAString& aPartitionKey,
                                          ErrorResult& aRv) {
-  nsCOMPtr<nsIURI> uri;
-  nsresult rv = NS_NewURI(getter_AddRefs(uri), aURL);
-  if (NS_SUCCEEDED(rv) && uri->SchemeIs("chrome")) {
+  nsCOMPtr<nsIURI> topLevelURI;
+  nsresult rv = NS_NewURI(getter_AddRefs(topLevelURI), aTopLevelUrl);
+  if (NS_SUCCEEDED(rv) && topLevelURI->SchemeIs("chrome")) {
     rv = NS_ERROR_FAILURE;
   }
-
   if (NS_WARN_IF(NS_FAILED(rv))) {
     aPartitionKey.Truncate();
     aRv.Throw(rv);
     return;
   }
 
-  mozilla::OriginAttributes attrs;
-  attrs.SetPartitionKey(uri);
+  bool foreignResource;
+  bool fallback = false;
+  if (!aSubresourceUrl.IsEmpty()) {
+    nsCOMPtr<nsIURI> resourceURI;
+    rv = NS_NewURI(getter_AddRefs(resourceURI), aSubresourceUrl);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      aPartitionKey.Truncate();
+      aRv.Throw(rv);
+      return;
+    }
 
+    ThirdPartyUtil* thirdPartyUtil = ThirdPartyUtil::GetInstance();
+    if (!thirdPartyUtil) {
+      aPartitionKey.Truncate();
+      aRv.Throw(NS_ERROR_SERVICE_NOT_AVAILABLE);
+      return;
+    }
+
+    rv = thirdPartyUtil->IsThirdPartyURI(topLevelURI, resourceURI,
+                                         &foreignResource);
+    if (NS_FAILED(rv)) {
+      // we fallback to assuming the resource is foreign if there is an error
+      foreignResource = true;
+      fallback = true;
+    }
+  } else {
+    // Assume we have a foreign resource if the resource was not provided
+    foreignResource = true;
+    fallback = true;
+  }
+
+  // aForeignContext is whether or not this is a foreign context.
+  // foreignResource is whether or not the resource is cross-site to the top
+  // level. So we need to validate that a false foreign context doesn't have a
+  // same-site resource. That is impossible!
+  if (aForeignContext.WasPassed() && !aForeignContext.Value() &&
+      foreignResource && !fallback) {
+    aPartitionKey.Truncate();
+    aRv.Throw(nsresult::NS_ERROR_INVALID_ARG);
+    return;
+  }
+
+  bool foreignByAncestorContext = aForeignContext.WasPassed() &&
+                                  aForeignContext.Value() && !foreignResource;
+  mozilla::OriginAttributes attrs;
+  attrs.SetPartitionKey(topLevelURI, foreignByAncestorContext);
   aPartitionKey = attrs.mPartitionKey;
 }
 
@@ -1106,18 +1285,431 @@ void ChromeUtils::ClearRecentJSDevError(GlobalObject&) {
 }
 #endif  // NIGHTLY_BUILD
 
-void ChromeUtils::ClearStyleSheetCacheByPrincipal(GlobalObject&,
-                                                  nsIPrincipal* aForPrincipal) {
-  SharedStyleSheetCache::Clear(aForPrincipal);
+void ChromeUtils::ClearMessagingLayerSecurityStateByPrincipal(
+    GlobalObject&, nsIPrincipal* aPrincipal, ErrorResult& aRv) {
+  MOZ_LOG(gMlsLog, LogLevel::Debug,
+          ("ClearMessagingLayerSecurityStateByPrincipal"));
+
+  if (NS_WARN_IF(!aPrincipal)) {
+    MOZ_LOG(gMlsLog, LogLevel::Error, ("Principal is null"));
+    aRv.Throw(NS_ERROR_FAILURE);
+    return;
+  }
+
+  // Get the profile directory
+  nsCOMPtr<nsIFile> file;
+  aRv = NS_GetSpecialDirectory("ProfD", getter_AddRefs(file));
+  if (NS_WARN_IF(aRv.Failed())) {
+    MOZ_LOG(gMlsLog, LogLevel::Error, ("Failed to get profile directory"));
+    aRv.Throw(NS_ERROR_FAILURE);
+    return;
+  }
+
+  // Append the 'mls' directory
+  aRv = file->AppendNative("mls"_ns);
+  if (NS_WARN_IF(aRv.Failed())) {
+    MOZ_LOG(gMlsLog, LogLevel::Error,
+            ("Failed to append 'mls' to directory path"));
+    aRv.Throw(NS_ERROR_FAILURE);
+    return;
+  }
+
+  bool exists;
+  aRv = file->Exists(&exists);
+  if (NS_WARN_IF(aRv.Failed())) {
+    MOZ_LOG(gMlsLog, LogLevel::Error,
+            ("Failed to check if 'mls' directory exists"));
+    aRv.Throw(NS_ERROR_FAILURE);
+    return;
+  }
+
+  // If the 'mls' directory does not exist, we exit early
+  if (!exists) {
+    MOZ_LOG(gMlsLog, LogLevel::Error, ("'mls' directory does not exist"));
+    return;
+  }
+
+  // Get the storage origin key
+  nsAutoCString originKey;
+  aRv = aPrincipal->GetStorageOriginKey(originKey);
+  if (NS_WARN_IF(aRv.Failed())) {
+    MOZ_LOG(gMlsLog, LogLevel::Error, ("Failed to get storage origin key"));
+    aRv.Throw(NS_ERROR_FAILURE);
+    return;
+  }
+
+  // Get the origin attributes suffix
+  nsAutoCString originAttrSuffix;
+  aRv = aPrincipal->GetOriginSuffix(originAttrSuffix);
+  if (NS_WARN_IF(aRv.Failed())) {
+    MOZ_LOG(gMlsLog, LogLevel::Error,
+            ("Failed to get origin attributes suffix"));
+    aRv.Throw(NS_ERROR_FAILURE);
+    return;
+  }
+
+  // Construct the full origin key
+  nsAutoCString fullOriginKey = originKey + originAttrSuffix;
+
+  // We append the full origin key to the file path
+  aRv = file->AppendNative(fullOriginKey);
+  if (NS_WARN_IF(aRv.Failed())) {
+    MOZ_LOG(gMlsLog, LogLevel::Error,
+            ("Failed to append full origin key to the file path"));
+    aRv.Throw(NS_ERROR_FAILURE);
+    return;
+  }
+
+  // Remove the directory recursively
+  aRv = file->Remove(/* recursive */ true);
+  if (NS_WARN_IF(aRv.Failed())) {
+    MOZ_LOG(gMlsLog, LogLevel::Error,
+            ("Failed to remove : %s", file->HumanReadablePath().get()));
+    aRv.Throw(NS_ERROR_FAILURE);
+    return;
+  }
+
+  MOZ_LOG(gMlsLog, LogLevel::Debug,
+          ("Successfully cleared MLS state for principal"));
 }
 
-void ChromeUtils::ClearStyleSheetCacheByBaseDomain(
-    GlobalObject&, const nsACString& aBaseDomain) {
-  SharedStyleSheetCache::Clear(nullptr, &aBaseDomain);
+void ChromeUtils::ClearMessagingLayerSecurityStateBySite(
+    GlobalObject&, const nsACString& aSchemelessSite,
+    const dom::OriginAttributesPatternDictionary& aPattern, ErrorResult& aRv) {
+  MOZ_LOG(gMlsLog, LogLevel::Debug, ("ClearMessagingLayerSecurityStateBySite"));
+
+  // Get the profile directory
+  nsCOMPtr<nsIFile> file;
+  aRv = NS_GetSpecialDirectory("ProfD", getter_AddRefs(file));
+  if (NS_WARN_IF(aRv.Failed())) {
+    MOZ_LOG(gMlsLog, LogLevel::Error, ("Failed to get profile directory"));
+    aRv.Throw(NS_ERROR_FAILURE);
+    return;
+  }
+
+  // Append the 'mls' directory
+  aRv = file->AppendNative("mls"_ns);
+  if (NS_WARN_IF(aRv.Failed())) {
+    MOZ_LOG(gMlsLog, LogLevel::Error,
+            ("Failed to append 'mls' to directory path"));
+    aRv.Throw(NS_ERROR_FAILURE);
+    return;
+  }
+
+  bool exists;
+  aRv = file->Exists(&exists);
+  if (NS_WARN_IF(aRv.Failed())) {
+    MOZ_LOG(gMlsLog, LogLevel::Error,
+            ("Failed to check if 'mls' directory exists"));
+    aRv.Throw(NS_ERROR_FAILURE);
+    return;
+  }
+
+  // If the 'mls' directory does not exist, we exit early
+  if (!exists) {
+    MOZ_LOG(gMlsLog, LogLevel::Error, ("'mls' directory does not exist"));
+    return;
+  }
+
+  // Check if the schemeless site is empty
+  if (NS_WARN_IF(aSchemelessSite.IsEmpty())) {
+    MOZ_LOG(gMlsLog, LogLevel::Error, ("Schemeless site is empty"));
+    aRv.Throw(NS_ERROR_INVALID_ARG);
+    return;
+  }
+
+  // Site pattern
+  OriginAttributesPattern pattern(aPattern);
+
+  // Partition pattern
+  // This pattern is used to (additionally) clear state partitioned under
+  // aSchemelessSite.
+  OriginAttributesPattern partitionPattern = pattern;
+  partitionPattern.mPartitionKeyPattern.Construct();
+  partitionPattern.mPartitionKeyPattern.Value().mBaseDomain.Construct(
+      NS_ConvertUTF8toUTF16(aSchemelessSite));
+
+  // Reverse the base domain using the existing function
+  nsAutoCString targetReversedBaseDomain(aSchemelessSite);
+  std::reverse(targetReversedBaseDomain.BeginWriting(),
+               targetReversedBaseDomain.EndWriting());
+
+  MOZ_LOG(gMlsLog, LogLevel::Debug,
+          ("Reversed base domain: %s", targetReversedBaseDomain.get()));
+
+  // Enumerate files in the 'mls' directory
+  nsCOMPtr<nsIDirectoryEnumerator> dirEnum;
+  aRv = file->GetDirectoryEntries(getter_AddRefs(dirEnum));
+  if (NS_WARN_IF(aRv.Failed())) {
+    MOZ_LOG(gMlsLog, LogLevel::Error,
+            ("Failed to get directory entries in 'mls' directory"));
+    aRv.Throw(NS_ERROR_FAILURE);
+    return;
+  }
+
+  // Iterate through all entries in the directory
+  nsCOMPtr<nsIFile> entry;
+  while (NS_SUCCEEDED(dirEnum->GetNextFile(getter_AddRefs(entry))) && entry) {
+    nsAutoCString entryName;
+    aRv = entry->GetNativeLeafName(entryName);
+    if (NS_WARN_IF(aRv.Failed())) {
+      MOZ_LOG(gMlsLog, LogLevel::Error,
+              ("Failed to get native leaf name for entry"));
+      continue;
+    }
+
+    // Find the position of .sqlite.enc or .key in the entry name
+    int32_t sqliteEncPos = entryName.RFind(".sqlite.enc");
+    int32_t keyPos = entryName.RFind(".key");
+
+    // Remove the .sqlite.enc or .key suffix from the entryName
+    if (sqliteEncPos != kNotFound) {
+      entryName.SetLength(sqliteEncPos);
+    } else if (keyPos != kNotFound) {
+      entryName.SetLength(keyPos);
+    }
+
+    // Decode the entry name
+    nsAutoCString decodedEntryName;
+    aRv = mozilla::Base64Decode(entryName, decodedEntryName);
+    if (NS_WARN_IF(aRv.Failed())) {
+      MOZ_LOG(gMlsLog, LogLevel::Debug,
+              ("Failed to decode entry name: %s", entryName.get()));
+      continue;
+    }
+
+    // Find the origin attributes suffix in the entry name by taking the
+    // value of the entry name after the ^ separator
+    int32_t separatorPos = decodedEntryName.FindChar('^');
+
+    // We extract the origin attributes suffix from the entry name
+    nsAutoCString originSuffix;
+    originSuffix.Assign(Substring(decodedEntryName, separatorPos));
+
+    // Populate the origin attributes from the suffix
+    OriginAttributes originAttrs;
+    if (NS_WARN_IF(!originAttrs.PopulateFromSuffix(originSuffix))) {
+      MOZ_LOG(gMlsLog, LogLevel::Error,
+              ("Failed to populate origin attributes from suffix"));
+      continue;
+    }
+
+    // Check if the entry name starts with the reversed base domain
+    if (StringBeginsWith(decodedEntryName, targetReversedBaseDomain)) {
+      MOZ_LOG(gMlsLog, LogLevel::Debug,
+              ("Entry file: %s", entry->HumanReadablePath().get()));
+
+      // If there is a valid origin attributes suffix, we remove the entry
+      // only if it matches.
+      if (pattern.Matches(originAttrs)) {
+        aRv = entry->Remove(/* recursive */ false);
+        if (NS_WARN_IF(aRv.Failed())) {
+          MOZ_LOG(gMlsLog, LogLevel::Error,
+                  ("Failed to remove file: %s", decodedEntryName.get()));
+        }
+        MOZ_LOG(gMlsLog, LogLevel::Debug,
+                ("Removed file: %s", decodedEntryName.get()));
+      }
+    }
+
+    // If there is a valid origin attributes suffix, we remove the entry
+    // only if it matches. We are checking for state partitioned under
+    // aSchemelessSite.
+    if (partitionPattern.Matches(originAttrs)) {
+      aRv = entry->Remove(/* recursive */ false);
+      if (NS_WARN_IF(aRv.Failed())) {
+        MOZ_LOG(gMlsLog, LogLevel::Error,
+                ("Failed to remove file: %s", decodedEntryName.get()));
+      }
+      MOZ_LOG(gMlsLog, LogLevel::Debug,
+              ("Removed file: %s", decodedEntryName.get()));
+    }
+  }
+
+  // Close the directory enumerator
+  dirEnum->Close();
 }
 
-void ChromeUtils::ClearStyleSheetCache(GlobalObject&) {
-  SharedStyleSheetCache::Clear();
+void ChromeUtils::ClearMessagingLayerSecurityState(GlobalObject&,
+                                                   ErrorResult& aRv) {
+  MOZ_LOG(gMlsLog, LogLevel::Debug, ("ClearMessagingLayerSecurityState"));
+
+  // Get the profile directory
+  nsCOMPtr<nsIFile> file;
+  aRv = NS_GetSpecialDirectory("ProfD", getter_AddRefs(file));
+  if (NS_WARN_IF(aRv.Failed())) {
+    MOZ_LOG(gMlsLog, LogLevel::Error, ("Failed to get profile directory"));
+    return;
+  }
+
+  // Append the 'mls' directory
+  aRv = file->AppendNative("mls"_ns);
+  if (NS_WARN_IF(aRv.Failed())) {
+    MOZ_LOG(gMlsLog, LogLevel::Error,
+            ("Failed to append 'mls' to directory path"));
+    return;
+  }
+
+  // Check if the directory exists
+  bool exists;
+  aRv = file->Exists(&exists);
+  if (NS_WARN_IF(aRv.Failed() || !exists)) {
+    MOZ_LOG(gMlsLog, LogLevel::Debug, ("'mls' directory does not exist"));
+    return;
+  }
+
+  // Remove the MLS directory recursively
+  aRv = file->Remove(/* recursive */ true);
+  if (NS_WARN_IF(aRv.Failed())) {
+    MOZ_LOG(gMlsLog, LogLevel::Error, ("Failed to remove MLS directory"));
+    return;
+  }
+
+  // Log the directory path
+  MOZ_LOG(gMlsLog, LogLevel::Debug,
+          ("Deleted MLS directory: %s", file->HumanReadablePath().get()));
+
+  // Recreate the MLS directory
+  aRv = file->Create(nsIFile::DIRECTORY_TYPE, 0755);
+  if (NS_WARN_IF(aRv.Failed())) {
+    MOZ_LOG(gMlsLog, LogLevel::Error, ("Failed to recreate MLS directory"));
+    return;
+  }
+
+  MOZ_LOG(gMlsLog, LogLevel::Debug, ("Successfully cleared all MLS state"));
+}
+
+void ChromeUtils::ClearResourceCache(
+    GlobalObject& aGlobal, const dom::ClearResourceCacheOptions& aOptions,
+    ErrorResult& aRv) {
+  bool clearStyleSheet = false;
+  bool clearScript = false;
+  bool clearImage = false;
+
+  if (aOptions.mTypes.WasPassed()) {
+    for (const auto& type : aOptions.mTypes.Value()) {
+      switch (type) {
+        case ResourceCacheType::Stylesheet:
+          clearStyleSheet = true;
+          break;
+        case ResourceCacheType::Script:
+          clearScript = true;
+          break;
+        case ResourceCacheType::Image:
+          clearImage = true;
+          break;
+      }
+    }
+  } else {
+    clearStyleSheet = true;
+    clearScript = true;
+    clearImage = true;
+  }
+
+  int filterCount = 0;
+  if (aOptions.mTarget.WasPassed()) {
+    filterCount++;
+  }
+  if (aOptions.mPrincipal.WasPassed()) {
+    filterCount++;
+  }
+  if (aOptions.mSchemelessSite.WasPassed()) {
+    filterCount++;
+  }
+  if (aOptions.mUrl.WasPassed()) {
+    filterCount++;
+  }
+  if (filterCount > 1) {
+    aRv.ThrowInvalidStateError(
+        "target, principal, schemelessSite, and url properties are mutually "
+        "exclusive");
+    return;
+  }
+
+  if (aOptions.mTarget.WasPassed()) {
+    Maybe<bool> chrome;
+    switch (aOptions.mTarget.Value()) {
+      case ResourceCacheTarget::Chrome:
+        chrome.emplace(true);
+        break;
+      case ResourceCacheTarget::Content:
+        chrome.emplace(false);
+        break;
+    }
+
+    if (clearStyleSheet) {
+      SharedStyleSheetCache::Clear(chrome);
+    }
+    if (clearScript) {
+      SharedScriptCache::Clear(chrome);
+    }
+    if (clearImage) {
+      imgLoader::ClearCache(Nothing(), chrome);
+    }
+    return;
+  }
+
+  if (aOptions.mPrincipal.WasPassed()) {
+    nsCOMPtr<nsIPrincipal> principal = aOptions.mPrincipal.Value().get();
+
+    if (clearStyleSheet) {
+      SharedStyleSheetCache::Clear(Nothing(), Some(principal));
+    }
+    if (clearScript) {
+      SharedScriptCache::Clear(Nothing(), Some(principal));
+    }
+    if (clearImage) {
+      imgLoader::ClearCache(Nothing(), Nothing(), Some(principal));
+    }
+    return;
+  }
+
+  if (aOptions.mSchemelessSite.WasPassed()) {
+    nsCString schemelessSite(aOptions.mSchemelessSite.Value());
+    mozilla::OriginAttributesPattern pattern(aOptions.mPattern);
+
+    if (clearStyleSheet) {
+      SharedStyleSheetCache::Clear(Nothing(), Nothing(), Some(schemelessSite),
+                                   Some(pattern));
+    }
+    if (clearScript) {
+      SharedScriptCache::Clear(Nothing(), Nothing(), Some(schemelessSite),
+                               Some(pattern));
+    }
+    if (clearImage) {
+      imgLoader::ClearCache(Nothing(), Nothing(), Nothing(),
+                            Some(schemelessSite), Some(pattern));
+    }
+    return;
+  }
+
+  if (aOptions.mUrl.WasPassed()) {
+    nsCString url(aOptions.mUrl.Value());
+
+    if (clearStyleSheet) {
+      SharedStyleSheetCache::Clear(Nothing(), Nothing(), Nothing(), Nothing(),
+                                   Some(url));
+    }
+    if (clearScript) {
+      SharedScriptCache::Clear(Nothing(), Nothing(), Nothing(), Nothing(),
+                               Some(url));
+    }
+    if (clearImage) {
+      imgLoader::ClearCache(Nothing(), Nothing(), Nothing(), Nothing(),
+                            Nothing(), Some(url));
+    }
+    return;
+  }
+
+  if (clearStyleSheet) {
+    SharedStyleSheetCache::Clear();
+  }
+  if (clearScript) {
+    SharedScriptCache::Clear();
+  }
+  if (clearImage) {
+    imgLoader::ClearCache();
+  }
 }
 
 #define PROCTYPE_TO_WEBIDL_CASE(_procType, _webidl) \
@@ -1127,7 +1719,8 @@ void ChromeUtils::ClearStyleSheetCache(GlobalObject&) {
 static WebIDLProcType ProcTypeToWebIDL(mozilla::ProcType aType) {
   // Max is the value of the last enum, not the length, so add one.
   static_assert(
-      WebIDLProcTypeValues::Count == static_cast<size_t>(ProcType::Max) + 1,
+      static_cast<size_t>(MaxContiguousEnumValue<WebIDLProcType>::value) ==
+          static_cast<size_t>(ProcType::Max),
       "In order for this static cast to be okay, "
       "WebIDLProcType must match ProcType exactly");
 
@@ -1142,6 +1735,7 @@ static WebIDLProcType ProcTypeToWebIDL(mozilla::ProcType aType) {
     PROCTYPE_TO_WEBIDL_CASE(PrivilegedMozilla, Privilegedmozilla);
     PROCTYPE_TO_WEBIDL_CASE(WebCOOPCOEP, WithCoopCoep);
     PROCTYPE_TO_WEBIDL_CASE(WebServiceWorker, WebServiceWorker);
+    PROCTYPE_TO_WEBIDL_CASE(Inference, Inference);
 
 #define GECKO_PROCESS_TYPE(enum_value, enum_name, string_name, proc_typename, \
                            process_bin_type, procinfo_typename,               \
@@ -1273,10 +1867,10 @@ already_AddRefed<Promise> ChromeUtils::RequestProcInfo(GlobalObject& aGlobal,
                                                          // DOM windows.
             /* aUtilityInfo = */ std::move(utilityActors),
             /* aChild = */ 0  // Without a ContentProcess, no ChildId.
-#ifdef XP_MACOSX
+#ifdef XP_DARWIN
             ,
             /* aChildTask = */ aGeckoProcess->GetChildTask()
-#endif  // XP_MACOSX
+#endif  // XP_DARWIN
         );
       });
 
@@ -1326,6 +1920,8 @@ already_AddRefed<Promise> ChromeUtils::RequestProcInfo(GlobalObject& aGlobal,
       type = mozilla::ProcType::PrivilegedMozilla;
     } else if (remoteType == PREALLOC_REMOTE_TYPE) {
       type = mozilla::ProcType::Preallocated;
+    } else if (remoteType == INFERENCE_REMOTE_TYPE) {
+      type = mozilla::ProcType::Inference;
     } else if (StringBeginsWith(remoteType, DEFAULT_REMOTE_TYPE)) {
       type = mozilla::ProcType::Web;
     } else {
@@ -1375,16 +1971,15 @@ already_AddRefed<Promise> ChromeUtils::RequestProcInfo(GlobalObject& aGlobal,
         /* aWindowInfo = */ std::move(windows),
         /* aUtilityInfo = */ nsTArray<UtilityInfo>(),
         /* aChild = */ contentParent->ChildID()
-#ifdef XP_MACOSX
+#ifdef XP_DARWIN
             ,
         /* aChildTask = */ contentParent->Process()->GetChildTask()
-#endif  // XP_MACOSX
+#endif  // XP_DARWIN
     );
   }
 
   // Now place background request.
-  RefPtr<nsISerialEventTarget> target =
-      global->EventTargetFor(TaskCategory::Performance);
+  RefPtr<nsISerialEventTarget> target = global->SerialEventTarget();
   mozilla::GetProcInfo(std::move(requests))
       ->Then(
           target, __func__,
@@ -1475,35 +2070,6 @@ bool ChromeUtils::VsyncEnabled(GlobalObject& aGlobal) {
   return mozilla::gfx::VsyncSource::GetFastestVsyncRate().isSome();
 }
 
-/* static */
-already_AddRefed<Promise> ChromeUtils::RequestPerformanceMetrics(
-    GlobalObject& aGlobal, ErrorResult& aRv) {
-  MOZ_ASSERT(XRE_IsParentProcess());
-
-  // Creating a JS promise
-  nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aGlobal.GetAsSupports());
-  MOZ_ASSERT(global);
-  RefPtr<Promise> domPromise = Promise::Create(global, aRv);
-  if (NS_WARN_IF(aRv.Failed())) {
-    return nullptr;
-  }
-  MOZ_ASSERT(domPromise);
-  RefPtr<nsISerialEventTarget> target =
-      global->EventTargetFor(TaskCategory::Performance);
-
-  // requesting metrics, that will be returned into the promise
-  PerformanceMetricsCollector::RequestMetrics()->Then(
-      target, __func__,
-      [domPromise,
-       target](nsTArray<dom::PerformanceInfoDictionary>&& aResults) {
-        domPromise->MaybeResolve(std::move(aResults));
-      },
-      [domPromise](const nsresult& aRv) { domPromise->MaybeReject(aRv); });
-
-  // sending back the promise instance
-  return domPromise.forget();
-}
-
 void ChromeUtils::SetPerfStatsCollectionMask(GlobalObject& aGlobal,
                                              uint64_t aMask) {
   PerfStats::SetCollectionMask(static_cast<PerfStats::MetricMask>(aMask));
@@ -1579,7 +2145,7 @@ void ChromeUtils::CreateError(const GlobalObject& aGlobal,
   {
     JS::Rooted<JSString*> fileName(cx, JS_GetEmptyString(cx));
     uint32_t line = 0;
-    uint32_t column = 0;
+    JS::TaggedColumnNumberOneOrigin column;
 
     Maybe<JSAutoRealm> ar;
     JS::Rooted<JSObject*> stack(cx);
@@ -1609,8 +2175,9 @@ void ChromeUtils::CreateError(const GlobalObject& aGlobal,
     }
 
     JS::Rooted<JS::Value> err(cx);
-    if (!JS::CreateError(cx, JSEXN_ERR, stack, fileName, line, column, nullptr,
-                         message, JS::NothingHandleValue, &err)) {
+    if (!JS::CreateError(cx, JSEXN_ERR, stack, fileName, line,
+                         JS::ColumnNumberOneOrigin(column.oneOriginValue()),
+                         nullptr, message, JS::NothingHandleValue, &err)) {
       return;
     }
 
@@ -1624,22 +2191,6 @@ void ChromeUtils::CreateError(const GlobalObject& aGlobal,
 
   cleanup.release();
   aRetVal.set(retVal);
-}
-
-/* static */
-already_AddRefed<Promise> ChromeUtils::RequestIOActivity(GlobalObject& aGlobal,
-                                                         ErrorResult& aRv) {
-  MOZ_ASSERT(XRE_IsParentProcess());
-  MOZ_ASSERT(Preferences::GetBool(IO_ACTIVITY_ENABLED_PREF, false));
-  nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aGlobal.GetAsSupports());
-  MOZ_ASSERT(global);
-  RefPtr<Promise> domPromise = Promise::Create(global, aRv);
-  if (NS_WARN_IF(aRv.Failed())) {
-    return nullptr;
-  }
-  MOZ_ASSERT(domPromise);
-  mozilla::net::IOActivityMonitor::RequestActivities(domPromise);
-  return domPromise.forget();
 }
 
 /* static */
@@ -1711,7 +2262,11 @@ void ChromeUtils::RegisterWindowActor(const GlobalObject& aGlobal,
                                       const nsACString& aName,
                                       const WindowActorOptions& aOptions,
                                       ErrorResult& aRv) {
-  MOZ_ASSERT(XRE_IsParentProcess());
+  if (!XRE_IsParentProcess()) {
+    aRv.ThrowNotAllowedError(
+        "registerWindowActor() may only be called in the parent process");
+    return;
+  }
 
   RefPtr<JSActorService> service = JSActorService::GetSingleton();
   service->RegisterWindowActor(aName, aOptions, aRv);
@@ -1719,8 +2274,13 @@ void ChromeUtils::RegisterWindowActor(const GlobalObject& aGlobal,
 
 /* static */
 void ChromeUtils::UnregisterWindowActor(const GlobalObject& aGlobal,
-                                        const nsACString& aName) {
-  MOZ_ASSERT(XRE_IsParentProcess());
+                                        const nsACString& aName,
+                                        ErrorResult& aRv) {
+  if (!XRE_IsParentProcess()) {
+    aRv.ThrowNotAllowedError(
+        "unregisterWindowActor() may only be called in the parent process");
+    return;
+  }
 
   RefPtr<JSActorService> service = JSActorService::GetSingleton();
   service->UnregisterWindowActor(aName);
@@ -1731,7 +2291,11 @@ void ChromeUtils::RegisterProcessActor(const GlobalObject& aGlobal,
                                        const nsACString& aName,
                                        const ProcessActorOptions& aOptions,
                                        ErrorResult& aRv) {
-  MOZ_ASSERT(XRE_IsParentProcess());
+  if (!XRE_IsParentProcess()) {
+    aRv.ThrowNotAllowedError(
+        "registerProcessActor() may only be called in the parent process");
+    return;
+  }
 
   RefPtr<JSActorService> service = JSActorService::GetSingleton();
   service->RegisterProcessActor(aName, aOptions, aRv);
@@ -1739,11 +2303,45 @@ void ChromeUtils::RegisterProcessActor(const GlobalObject& aGlobal,
 
 /* static */
 void ChromeUtils::UnregisterProcessActor(const GlobalObject& aGlobal,
-                                         const nsACString& aName) {
-  MOZ_ASSERT(XRE_IsParentProcess());
+                                         const nsACString& aName,
+                                         ErrorResult& aRv) {
+  if (!XRE_IsParentProcess()) {
+    aRv.ThrowNotAllowedError(
+        "unregisterProcessActor() may only be called in the parent process");
+    return;
+  }
 
   RefPtr<JSActorService> service = JSActorService::GetSingleton();
   service->UnregisterProcessActor(aName);
+}
+
+/* static */
+already_AddRefed<Promise> ChromeUtils::EnsureHeadlessContentProcess(
+    const GlobalObject& aGlobal, const nsACString& aRemoteType,
+    ErrorResult& aRv) {
+  if (!XRE_IsParentProcess()) {
+    aRv.ThrowNotAllowedError(
+        "ensureHeadlessContentProcess() may only be called in the parent "
+        "process");
+    return nullptr;
+  }
+
+  nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aGlobal.GetAsSupports());
+  RefPtr<Promise> promise = Promise::Create(global, aRv);
+  if (aRv.Failed()) {
+    return nullptr;
+  }
+
+  ContentParent::GetNewOrUsedBrowserProcessAsync(aRemoteType)
+      ->Then(
+          GetCurrentSerialEventTarget(), __func__,
+          [promise](UniqueContentParentKeepAlive&& aKeepAlive) {
+            nsCOMPtr<nsIContentParentKeepAlive> jsKeepAlive =
+                WrapContentParentKeepAliveForJS(std::move(aKeepAlive));
+            promise->MaybeResolve(jsKeepAlive);
+          },
+          [promise](nsresult aError) { promise->MaybeReject(aError); });
+  return promise.forget();
 }
 
 /* static */
@@ -1863,9 +2461,127 @@ unsigned ChromeUtils::AliveUtilityProcesses(const GlobalObject&) {
 void ChromeUtils::GetAllPossibleUtilityActorNames(GlobalObject& aGlobal,
                                                   nsTArray<nsCString>& aNames) {
   aNames.Clear();
-  for (size_t i = 0; i < WebIDLUtilityActorNameValues::Count; ++i) {
-    auto idlName = static_cast<UtilityActorName>(i);
-    aNames.AppendElement(WebIDLUtilityActorNameValues::GetString(idlName));
+  for (UtilityActorName idlName :
+       MakeWebIDLEnumeratedRange<WebIDLUtilityActorName>()) {
+    aNames.AppendElement(GetEnumString(idlName));
+  }
+}
+
+/* static */
+bool ChromeUtils::ShouldResistFingerprinting(
+    GlobalObject& aGlobal, JSRFPTarget aTarget,
+    nsIRFPTargetSetIDL* aOverriddenFingerprintingSettings,
+    const Optional<bool>& aIsPBM) {
+  RFPTarget target;
+#define JSRFP_TARGET_TO_RFP_TARGET(rfptarget) \
+  case JSRFPTarget::rfptarget:                \
+    target = RFPTarget::rfptarget;            \
+    break;
+  switch (aTarget) {
+    JSRFP_TARGET_TO_RFP_TARGET(RoundWindowSize);
+    JSRFP_TARGET_TO_RFP_TARGET(SiteSpecificZoom);
+    JSRFP_TARGET_TO_RFP_TARGET(CSSPrefersColorScheme);
+    JSRFP_TARGET_TO_RFP_TARGET(JSLocalePrompt);
+    JSRFP_TARGET_TO_RFP_TARGET(HttpUserAgent);
+    default:
+      MOZ_CRASH("Unhandled JSRFPTarget enum value");
+  }
+#undef JSRFP_TARGET_TO_RFP_TARGET
+
+  bool isPBM = false;
+  if (aIsPBM.WasPassed()) {
+    isPBM = aIsPBM.Value();
+  } else {
+    nsCOMPtr<nsIGlobalObject> global =
+        do_QueryInterface(aGlobal.GetAsSupports());
+    if (global) {
+      nsPIDOMWindowInner* win = global->GetAsInnerWindow();
+      if (win) {
+        nsIDocShell* docshell = win->GetDocShell();
+        if (docshell) {
+          nsDocShell::Cast(docshell)->GetUsePrivateBrowsing(&isPBM);
+        }
+      }
+    }
+  }
+
+  Maybe<RFPTargetSet> overriddenFingerprintingSettings;
+  if (aOverriddenFingerprintingSettings) {
+    uint64_t low, hi;
+    aOverriddenFingerprintingSettings->GetLow(&low);
+    aOverriddenFingerprintingSettings->GetHigh(&hi);
+    std::bitset<128> bitset;
+    bitset |= hi;
+    bitset <<= 64;
+    bitset |= low;
+    overriddenFingerprintingSettings.emplace(RFPTargetSet(bitset));
+  }
+
+  // This global object appears to be the global window, not for individual
+  // sites so to exempt individual sites (instead of just PBM/Not-PBM windows)
+  // more work would be needed to get the correct context.
+  return nsRFPService::IsRFPEnabledFor(isPBM, target,
+                                       overriddenFingerprintingSettings);
+}
+
+/* static */
+void ChromeUtils::CallFunctionAndLogException(
+    GlobalObject& aGlobal, JS::Handle<JS::Value> aTargetGlobal,
+    JS::Handle<JS::Value> aFunction, JS::MutableHandle<JS::Value> aRetVal,
+    ErrorResult& aRv) {
+  JSContext* cx = aGlobal.Context();
+  if (!aTargetGlobal.isObject() || !aFunction.isObject()) {
+    aRv.Throw(NS_ERROR_INVALID_ARG);
+    return;
+  }
+
+  JS::Rooted<JS::Realm*> contextRealm(cx, JS::GetCurrentRealmOrNull(cx));
+  if (!contextRealm) {
+    aRv.Throw(NS_ERROR_INVALID_ARG);
+    return;
+  }
+
+  JS::Rooted<JSObject*> global(
+      cx, js::CheckedUnwrapDynamic(&aTargetGlobal.toObject(), cx));
+  if (!global) {
+    aRv.Throw(NS_ERROR_INVALID_ARG);
+    return;
+  }
+
+  // Use AutoJSAPI in order to trigger AutoJSAPI::ReportException
+  // which will do most of the work required for this function.
+  //
+  // We only have to pick the right global for which we want to flag
+  // the exception against.
+  dom::AutoJSAPI jsapi;
+  if (!jsapi.Init(global)) {
+    aRv.Throw(NS_ERROR_UNEXPECTED);
+    return;
+  }
+  JSContext* ccx = jsapi.cx();
+
+  // AutoJSAPI picks `aTargetGlobal` as execution compartment
+  // whereas we expect to run `aFunction` from the callsites compartment.
+  JSAutoRealm ar(ccx, JS::GetRealmGlobalOrNull(contextRealm));
+
+  JS::Rooted<JS::Value> funVal(ccx, aFunction);
+  if (!JS_WrapValue(ccx, &funVal)) {
+    aRv.Throw(NS_ERROR_FAILURE);
+    return;
+  }
+  if (!JS_CallFunctionValue(ccx, nullptr, funVal, JS::HandleValueArray::empty(),
+                            aRetVal)) {
+    // Ensure re-throwing the exception which may have been thrown by
+    // `aFunction`
+    if (JS_IsExceptionPending(ccx)) {
+      JS::Rooted<JS::Value> exception(cx);
+      if (JS_GetPendingException(ccx, &exception)) {
+        if (JS_WrapValue(cx, &exception)) {
+          aRv.MightThrowJSException();
+          aRv.ThrowJSException(cx, exception);
+        }
+      }
+    }
   }
 }
 
@@ -1890,6 +2606,53 @@ void ChromeUtils::NotifyDevToolsOpened(GlobalObject& aGlobal) {
 void ChromeUtils::NotifyDevToolsClosed(GlobalObject& aGlobal) {
   MOZ_ASSERT(ChromeUtils::sDevToolsOpenedCount >= 1);
   ChromeUtils::sDevToolsOpenedCount--;
+}
+
+/* static */
+bool ChromeUtils::IsJSIdentifier(GlobalObject& aGlobal, const nsAString& aStr) {
+  return JS_IsIdentifier(aStr.BeginReading(), aStr.Length());
+}
+
+#ifdef MOZ_WMF_CDM
+/* static */
+already_AddRefed<Promise> ChromeUtils::GetWMFContentDecryptionModuleInformation(
+    GlobalObject& aGlobal, ErrorResult& aRv) {
+  nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aGlobal.GetAsSupports());
+  MOZ_ASSERT(global);
+  RefPtr<Promise> domPromise = Promise::Create(global, aRv);
+  if (NS_WARN_IF(aRv.Failed())) {
+    return nullptr;
+  }
+  MOZ_ASSERT(domPromise);
+  MFCDMService::GetAllKeySystemsCapabilities(domPromise);
+  return domPromise.forget();
+}
+#endif
+
+already_AddRefed<Promise> ChromeUtils::GetGMPContentDecryptionModuleInformation(
+    GlobalObject& aGlobal, ErrorResult& aRv) {
+  nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aGlobal.GetAsSupports());
+  MOZ_ASSERT(global);
+  RefPtr<Promise> domPromise = Promise::Create(global, aRv);
+  if (NS_WARN_IF(aRv.Failed())) {
+    return nullptr;
+  }
+  MOZ_ASSERT(domPromise);
+  KeySystemConfig::GetGMPKeySystemConfigs(domPromise);
+  return domPromise.forget();
+}
+
+void ChromeUtils::AndroidMoveTaskToBack(GlobalObject& aGlobal) {
+#ifdef MOZ_WIDGET_ANDROID
+  MOZ_RELEASE_ASSERT(XRE_IsParentProcess());
+  java::GeckoAppShell::MoveTaskToBack();
+#endif
+}
+
+already_AddRefed<nsIContentSecurityPolicy> ChromeUtils::CreateCSPFromHeader(
+    GlobalObject& aGlobal, const nsAString& aHeader, nsIURI* aSelfURI,
+    nsIPrincipal* aLoadingPrincipal, ErrorResult& aRv) {
+  return CSP_CreateFromHeader(aHeader, aSelfURI, aLoadingPrincipal, aRv);
 }
 
 }  // namespace mozilla::dom

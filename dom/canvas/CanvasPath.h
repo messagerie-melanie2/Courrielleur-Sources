@@ -35,8 +35,8 @@ class CanvasPath final : public nsWrapperCache {
   static already_AddRefed<CanvasPath> Constructor(const GlobalObject& aGlobal);
   static already_AddRefed<CanvasPath> Constructor(const GlobalObject& aGlobal,
                                                   CanvasPath& aCanvasPath);
-  static already_AddRefed<CanvasPath> Constructor(const GlobalObject& aGlobal,
-                                                  const nsAString& aPathString);
+  static already_AddRefed<CanvasPath> Constructor(
+      const GlobalObject& aGlobal, const nsACString& aPathString);
 
   void ClosePath();
   void MoveTo(double x, double y);
@@ -63,7 +63,11 @@ class CanvasPath final : public nsWrapperCache {
                 const gfx::Point& aCP3);
 
   already_AddRefed<gfx::Path> GetPath(const CanvasWindingRule& aWinding,
-                                      const gfx::DrawTarget* aTarget) const;
+                                      gfx::BackendType aBackendType) const;
+  already_AddRefed<gfx::Path> GetPath(const CanvasWindingRule& aWinding,
+                                      const gfx::DrawTarget* aTarget) const {
+    return GetPath(aWinding, aTarget->GetPathType());
+  }
 
   explicit CanvasPath(nsISupports* aParent);
   // already_AddRefed arg because the return value from Path::CopyToBuilder()
@@ -83,7 +87,12 @@ class CanvasPath final : public nsWrapperCache {
   mutable RefPtr<gfx::Path> mPath;
   mutable RefPtr<gfx::PathBuilder> mPathBuilder;
 
+  // Whether an internal segment was zero-length.
+  mutable bool mPruned = false;
+
   void EnsurePathBuilder() const;
+  void EnsureCapped() const;
+  void EnsureActive() const;
 };
 
 }  // namespace dom

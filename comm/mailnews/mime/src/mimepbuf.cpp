@@ -2,19 +2,17 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #include "nsCOMPtr.h"
 #include "mimepbuf.h"
-#include "mimemoz2.h"
 #include "prmem.h"
 #include "prio.h"
 #include "plstr.h"
 #include "nsMimeStringResources.h"
 #include "nsNetUtil.h"
 #include "nsMsgUtils.h"
-//
-// External Defines...
-//
-extern nsresult nsMsgCreateTempFile(const char* tFileName, nsIFile** tFile);
+#include "nsMsgCompUtils.h"
+#include "nsIInputStream.h"
 
 /* See mimepbuf.h for a description of the mission of this file.
 
@@ -199,7 +197,8 @@ int MimePartBufferWrite(MimePartBufferData* data, const char* buf,
 }
 
 int MimePartBufferRead(MimePartBufferData* data,
-                       MimeConverterOutputCallback read_fn, void* closure) {
+                       MimeConverterOutputCallback read_fn,
+                       MimeClosure closure) {
   int status = 0;
   NS_ASSERTION(data, "no data");
   if (!data) return -1;

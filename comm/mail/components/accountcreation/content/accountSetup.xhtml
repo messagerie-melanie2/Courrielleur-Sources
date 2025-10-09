@@ -29,6 +29,8 @@
       rel="localization"
       href="messenger/accountcreation/accountSetup.ftl"
     />
+    <!-- Untranslated -->
+    <link rel="localization" href="preview/accountSetup-preview.ftl" />
 
     <script
       defer="defer"
@@ -435,17 +437,6 @@
             />
           </div>
 
-          <div class="provisioner-button-container">
-            <button
-              id="provisionerButton"
-              type="button"
-              data-l10n-id="account-provisioner-button"
-              data-l10n-attrs="accesskey"
-              class="btn-link btn-link-new-email"
-              onclick="openAccountProvisionerTab();"
-            ></button>
-          </div>
-
           <label
             for="password"
             data-l10n-id="account-setup-password-label"
@@ -633,6 +624,53 @@
                   <h4 data-l10n-id="account-setup-username-title"></h4>
                 </div>
                 <div id="usernameInfo-pop3" class="result-host-info"></div>
+              </section>
+            </aside>
+          </div>
+
+          <!-- EWS -->
+          <div
+            id="resultsOption-ews"
+            class="content-blocking-category results-option"
+          >
+            <label class="toggle-container-with-text">
+              <input
+                id="resultSelect-ews"
+                type="radio"
+                value="ews"
+                name="resultsServerType"
+                onchange="gAccountSetup.onResultServerTypeChanged();"
+              />
+              <span
+                class="strong"
+                data-l10n-id="account-setup-result-ews-name"
+              ></span>
+              <p
+                class="result-indent"
+                data-l10n-id="account-setup-result-ews-description"
+              ></p>
+            </label>
+            <aside class="result-details">
+              <section class="result-details-row">
+                <img
+                  src="chrome://messenger/skin/icons/new/compact/inbox.svg"
+                  alt=""
+                />
+                <div id="incomingTitle-ews" class="result-details-title">
+                  <h4 data-l10n-id="account-setup-exchange-title"></h4>
+                </div>
+                <div id="incomingInfo-ews" class="result-host-info"></div>
+              </section>
+
+              <section class="result-details-row">
+                <img
+                  src="chrome://messenger/skin/icons/new/compact/contact.svg"
+                  alt=""
+                />
+                <div class="result-details-title">
+                  <h4 data-l10n-id="account-setup-username-title"></h4>
+                </div>
+                <div id="usernameInfo-ews" class="result-host-info"></div>
               </section>
             </aside>
           </div>
@@ -1273,7 +1311,7 @@
           />
           <p data-l10n-id="account-setup-selection-help"></p>
           <a
-            href="https://support.mozilla.org/products/thunderbird/emails-thunderbird/set-up-email-thunderbird"
+            href="https://support.mozilla.org/products/thunderbird/email-and-messaging"
             data-l10n-id="account-setup-documentation-help"
           ></a>
           -
@@ -1295,7 +1333,7 @@
           />
           <p data-l10n-id="account-setup-selection-error"></p>
           <a
-            href="https://support.mozilla.org/products/thunderbird/emails-thunderbird/set-up-email-thunderbird"
+            href="https://support.mozilla.org/products/thunderbird/email-and-messaging"
             data-l10n-id="account-setup-documentation-help"
           ></a>
           -

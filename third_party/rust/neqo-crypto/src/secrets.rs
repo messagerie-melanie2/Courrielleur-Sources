@@ -4,15 +4,19 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::agentio::as_c_void;
-use crate::constants::Epoch;
-use crate::err::Res;
-use crate::p11::{PK11SymKey, PK11_ReferenceSymKey, SymKey};
-use crate::ssl::{PRFileDesc, SSLSecretCallback, SSLSecretDirection};
+use std::{mem, os::raw::c_void, pin::Pin};
 
+use enum_map::EnumMap;
 use neqo_common::qdebug;
-use std::os::raw::c_void;
-use std::pin::Pin;
+use strum::FromRepr;
+
+use crate::{
+    agentio::as_c_void,
+    constants::Epoch,
+    err::Res,
+    p11::{PK11SymKey, PK11_ReferenceSymKey, SymKey},
+    ssl::{PRFileDesc, SSLSecretCallback, SSLSecretDirection},
+};
 
 experimental_api!(SSL_SecretCallback(
     fd: *mut PRFileDesc,
@@ -20,44 +24,40 @@ experimental_api!(SSL_SecretCallback(
     arg: *mut c_void,
 ));
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, FromRepr)]
+// Use i32 for Windows MSVC, unless it is MinGW (see
+// https://bugzilla.mozilla.org/show_bug.cgi?id=1960482). All other platforms
+// use u32.
+#[cfg_attr(all(windows, not(target_env = "gnu")), repr(i32))]
+#[cfg_attr(not(all(windows, not(target_env = "gnu"))), repr(u32))]
 pub enum SecretDirection {
-    Read,
-    Write,
+    Read = SSLSecretDirection::ssl_secret_read,
+    Write = SSLSecretDirection::ssl_secret_write,
 }
 
 impl From<SSLSecretDirection::Type> for SecretDirection {
-    #[must_use]
     fn from(dir: SSLSecretDirection::Type) -> Self {
-        match dir {
-            SSLSecretDirection::ssl_secret_read => Self::Read,
-            SSLSecretDirection::ssl_secret_write => Self::Write,
-            _ => unreachable!(),
-        }
+        Self::from_repr(dir).expect("Invalid secret direction")
     }
 }
 
 #[derive(Debug, Default)]
-#[allow(clippy::module_name_repetitions)]
 pub struct DirectionalSecrets {
-    // We only need to maintain 3 secrets for the epochs used during the handshake.
-    secrets: [Option<SymKey>; 3],
+    secrets: EnumMap<Epoch, SymKey>,
 }
 
 impl DirectionalSecrets {
     fn put(&mut self, epoch: Epoch, key: SymKey) {
-        assert!(epoch > 0);
-        let i = (epoch - 1) as usize;
-        assert!(i < self.secrets.len());
-        // assert!(self.secrets[i].is_none());
-        self.secrets[i] = Some(key);
+        debug_assert!(epoch != Epoch::Initial);
+        self.secrets[epoch] = key;
     }
 
     pub fn take(&mut self, epoch: Epoch) -> Option<SymKey> {
-        assert!(epoch > 0);
-        let i = (epoch - 1) as usize;
-        assert!(i < self.secrets.len());
-        self.secrets[i].take()
+        if self.secrets[epoch].is_null() {
+            None
+        } else {
+            Some(mem::take(&mut self.secrets[epoch]))
+        }
     }
 }
 
@@ -68,7 +68,6 @@ pub struct Secrets {
 }
 
 impl Secrets {
-    #[allow(clippy::unused_self)]
     unsafe extern "C" fn secret_available(
         _fd: *mut PRFileDesc,
         epoch: u16,
@@ -76,7 +75,15 @@ impl Secrets {
         secret: *mut PK11SymKey,
         arg: *mut c_void,
     ) {
-        let secrets = arg.cast::<Self>().as_mut().unwrap();
+        let Ok(epoch) = Epoch::try_from(epoch) else {
+            debug_assert!(false, "Invalid epoch");
+            // Don't touch secrets.
+            return;
+        };
+        let Some(secrets) = arg.cast::<Self>().as_mut() else {
+            debug_assert!(false, "No secrets");
+            return;
+        };
         secrets.put_raw(epoch, dir, secret);
     }
 
@@ -87,7 +94,7 @@ impl Secrets {
     }
 
     fn put(&mut self, dir: SecretDirection, epoch: Epoch, key: SymKey) {
-        qdebug!("{:?} secret available for {:?}: {:?}", dir, epoch, key);
+        qdebug!("{dir:?} secret available for {epoch:?}: {key:?}");
         let keys = match dir {
             SecretDirection::Read => &mut self.r,
             SecretDirection::Write => &mut self.w,

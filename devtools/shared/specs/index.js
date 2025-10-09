@@ -103,11 +103,10 @@ const Types = (exports.__TypesForTests = [
     spec: "devtools/shared/specs/frame",
     front: "devtools/client/fronts/frame",
   },
-  /* heap snapshot has old fashion client and no front */
   {
     types: ["heapSnapshotFile"],
     spec: "devtools/shared/specs/heap-snapshot-file",
-    front: null,
+    front: "devtools/client/fronts/heap-snapshot-file",
   },
   {
     types: ["customhighlighter"],
@@ -164,6 +163,11 @@ const Types = (exports.__TypesForTests = [
     types: ["obj", "object.descriptor"],
     spec: "devtools/shared/specs/object",
     front: null,
+  },
+  {
+    types: ["objects-manager"],
+    spec: "devtools/shared/specs/objects-manager",
+    front: "devtools/client/fronts/objects-manager",
   },
   {
     types: ["pagestyle"],
@@ -274,13 +278,13 @@ const Types = (exports.__TypesForTests = [
     front: null,
   },
   {
-    types: ["parentProcessTarget"],
-    spec: "devtools/shared/specs/targets/parent-process",
+    types: ["contentScriptTarget"],
+    spec: "devtools/shared/specs/targets/content-script",
     front: null,
   },
   {
-    types: ["webExtensionTarget"],
-    spec: "devtools/shared/specs/targets/webextension",
+    types: ["parentProcessTarget"],
+    spec: "devtools/shared/specs/targets/parent-process",
     front: null,
   },
   {

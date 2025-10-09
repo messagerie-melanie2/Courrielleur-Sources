@@ -8,12 +8,12 @@ import posixpath
 import shutil
 import tempfile
 import time
+from configparser import ConfigParser, RawConfigParser
 
 from mozdevice import ADBError, ADBHost
-from six.moves.configparser import ConfigParser, RawConfigParser
 
 
-class Device(object):
+class Device:
     connected = False
 
     def __init__(self, app_ctx, logdir=None, serial=None, restore=True):
@@ -32,7 +32,7 @@ class Device(object):
         """
         remote_ini = self.app_ctx.remote_profiles_ini
         if not self.device.is_file(remote_ini):
-            raise IOError("Remote file '%s' not found" % remote_ini)
+            raise OSError("Remote file '%s' not found" % remote_ini)
 
         local_ini = tempfile.NamedTemporaryFile()
         self.device.pull(remote_ini, local_ini.name)
@@ -74,7 +74,7 @@ class Device(object):
                 finally:
                     raise e
             else:
-                print("WARNING: {}".format(e))
+                print(f"WARNING: {e}")
         if os.listdir(local_dump_dir):
             self.device.rm(remote_dump_dir, recursive=True)
             self.device.mkdir(remote_dump_dir, parents=True)
@@ -114,11 +114,14 @@ class Device(object):
                 config.set(section, "IsRelative", 0)
                 config.set(section, "Path", self.app_ctx.remote_profile)
 
-        new_profiles_ini = tempfile.NamedTemporaryFile()
-        config.write(open(new_profiles_ini.name, "w"))
-
-        self.backup_file(self.app_ctx.remote_profiles_ini)
-        self.device.push(new_profiles_ini.name, self.app_ctx.remote_profiles_ini)
+        # delete=False to allow opening the same file from ADB on Windows.
+        # The file will still be deleted at the end of the `with` block.
+        # See the "Opening the temporary file again" paragraph in:
+        # https://docs.python.org/3/library/tempfile.html#tempfile.NamedTemporaryFile
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as new_profiles_ini:
+            config.write(new_profiles_ini)
+            self.backup_file(self.app_ctx.remote_profiles_ini)
+            self.device.push(new_profiles_ini.name, self.app_ctx.remote_profiles_ini)
 
         # Ideally all applications would read the profile the same way, but in practice
         # this isn't true. Perform application specific profile-related setup if necessary.
@@ -147,7 +150,7 @@ class Device(object):
 
         online_devices = self._get_online_devices()
         if not online_devices:
-            raise IOError(
+            raise OSError(
                 "No devices connected. Ensure the device is on and "
                 "remote debugging via adb is enabled in the settings."
             )
@@ -242,12 +245,12 @@ class ProfileConfigParser(RawConfigParser):
     def write(self, fp):
         if self._defaults:
             fp.write("[%s]\n" % ConfigParser.DEFAULTSECT)
-            for (key, value) in self._defaults.items():
+            for key, value in self._defaults.items():
                 fp.write("%s=%s\n" % (key, str(value).replace("\n", "\n\t")))
             fp.write("\n")
         for section in self._sections:
             fp.write("[%s]\n" % section)
-            for (key, value) in self._sections[section].items():
+            for key, value in self._sections[section].items():
                 if key == "__name__":
                     continue
                 if (value is not None) or (self._optcre == self.OPTCRE):

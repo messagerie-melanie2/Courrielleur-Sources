@@ -23,13 +23,11 @@ namespace mozilla {
 class OSXNotificationInfo;
 
 class OSXNotificationCenter : public nsIAlertsService,
-                              public nsIAlertsIconData,
                               public nsIAlertsDoNotDisturb,
                               public nsIAlertNotificationImageListener {
  public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSIALERTSSERVICE
-  NS_DECL_NSIALERTSICONDATA
   NS_DECL_NSIALERTSDONOTDISTURB
   NS_DECL_NSIALERTNOTIFICATIONIMAGELISTENER
 
@@ -37,8 +35,10 @@ class OSXNotificationCenter : public nsIAlertsService,
 
   nsresult Init();
   void CloseAlertCocoaString(NSString* aAlertName);
-  void OnActivate(NSString* aAlertName, NSUserNotificationActivationType aActivationType,
-                  unsigned long long aAdditionalActionIndex);
+  void OnActivate(NSString* aAlertName,
+                  NSUserNotificationActivationType aActivationType,
+                  unsigned long long aAdditionalActionIndex,
+                  NSUserNotificationAction* aAdditionalActivationAction);
   void ShowPendingNotification(OSXNotificationInfo* osxni);
 
  protected:

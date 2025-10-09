@@ -2,11 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 import {
   ClassInfo,
   executeSoon,
-  l10nHelper,
   nsSimpleEnumerator,
 } from "resource:///modules/imXPCOMUtils.sys.mjs";
 import { clearTimeout, setTimeout } from "resource://gre/modules/Timer.sys.mjs";
@@ -16,6 +14,7 @@ import {
   kListRefreshInterval,
 } from "resource:///modules/ircUtils.sys.mjs";
 import {
+  ChatRoomFieldValues,
   GenericAccountPrototype,
   GenericAccountBuddyPrototype,
   GenericConvIMPrototype,
@@ -31,15 +30,13 @@ const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   DownloadUtils: "resource://gre/modules/DownloadUtils.sys.mjs",
-  PluralForm: "resource://gre/modules/PluralForm.sys.mjs",
   ircHandlers: "resource:///modules/ircHandlers.sys.mjs",
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "_conv", () =>
-  l10nHelper("chrome://chat/locale/conversations.properties")
-);
-XPCOMUtils.defineLazyGetter(lazy, "_", () =>
-  l10nHelper("chrome://chat/locale/irc.properties")
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () => new Localization(["chat/conversations.ftl", "chat/irc.ftl"], true)
 );
 
 /*
@@ -69,7 +66,7 @@ XPCOMUtils.defineLazyGetter(lazy, "_", () =>
  *  aOrigin     The default origin to use for unprefixed messages.
  */
 export function ircMessage(aData, aOrigin) {
-  let message = { rawMessage: aData };
+  const message = { rawMessage: aData };
   let temp;
 
   // Splits the raw string into five parts. The third part, the command, is
@@ -119,7 +116,7 @@ export function ircMessage(aData, aOrigin) {
   message.tags = new Map();
 
   if (temp[1]) {
-    let tags = temp[1].split(";");
+    const tags = temp[1].split(";");
     tags.forEach(tag => {
       let [key, value] = tag.split("=");
 
@@ -175,8 +172,8 @@ export function ircMessage(aData, aOrigin) {
 //   aNewModes is an array of mode characters.
 function _setMode(aAddNewMode, aNewModes) {
   // Check each mode being added/removed.
-  for (let newMode of aNewModes) {
-    let hasMode = this._modes.has(newMode);
+  for (const newMode of aNewModes) {
+    const hasMode = this._modes.has(newMode);
     // If the mode is in the list of modes and we want to remove it.
     if (hasMode && !aAddNewMode) {
       this._modes.delete(newMode);
@@ -210,7 +207,7 @@ export var GenericIRCConversation = {
   // the IRC messaging.
   getMaxMessageLength() {
     // Build the shortest possible message that could be sent to other users.
-    let baseMessage =
+    const baseMessage =
       ":" +
       this._account._nickname +
       this._account.prefix +
@@ -240,7 +237,7 @@ export var GenericIRCConversation = {
         },
         messageProps
       );
-      for (let tag of aObject.tags.keys()) {
+      for (const tag of aObject.tags.keys()) {
         // Unhandled tags may be common, since a tag does not have to be handled
         // with a tag handler, it may also be handled by a message command handler.
         lazy.ircHandlers.handleTag(
@@ -265,22 +262,22 @@ export var GenericIRCConversation = {
   },
   prepareForSending(aOutgoingMessage) {
     // Split the message by line breaks and send each one individually.
-    let messages = aOutgoingMessage.message.split(/[\r\n]+/);
+    const messages = aOutgoingMessage.message.split(/[\r\n]+/);
 
-    let maxLength = this.getMaxMessageLength();
+    const maxLength = this.getMaxMessageLength();
 
     // Attempt to smartly split a string into multiple lines (based on the
     // maximum number of characters the message can contain).
     for (let i = 0; i < messages.length; ++i) {
-      let message = messages[i];
-      let length = this._account.countBytes(message);
+      const message = messages[i];
+      const length = this._account.countBytes(message);
       // The message is short enough.
       if (length <= maxLength) {
         continue;
       }
 
       // Find the location of a space before the maximum length.
-      let index = message.lastIndexOf(" ", maxLength);
+      const index = message.lastIndexOf(" ", maxLength);
 
       // Remove the current message and insert the two new ones. If no space was
       // found, cut the first message to the maximum length and start the second
@@ -304,7 +301,7 @@ export var GenericIRCConversation = {
       if (!this._account.sendCTCPMessage(this.name, false, "ACTION", message)) {
         this.writeMessage(
           this._account._currentServerName,
-          lazy._("error.sendMessageFailed"),
+          lazy.l10n.formatValueSync("error-send-message-failed"),
           {
             error: true,
             system: true,
@@ -320,7 +317,7 @@ export var GenericIRCConversation = {
     ) {
       this.writeMessage(
         this._account._currentServerName,
-        lazy._("error.sendMessageFailed"),
+        lazy.l10n.formatValueSync("error-send-message-failed"),
         {
           error: true,
           system: true,
@@ -348,12 +345,18 @@ export var GenericIRCConversation = {
 
     this._pendingMessage = true;
   },
-  // IRC doesn't support typing notifications, but it does have a maximum
-  // message length.
-  sendTyping(aString) {
-    let longestLineLength = Math.max.apply(
+
+  /**
+   * IRC doesn't support typing notifications, but it does have a maximum
+   * message length.
+   *
+   * @param {string} string - The currently typed message.
+   * @returns {number} The number of characters that can still be typed
+   */
+  getRemainingCharacters(string) {
+    const longestLineLength = Math.max.apply(
       null,
-      aString.split("\n").map(this._account.countBytes, this._account)
+      string.split("\n").map(this._account.countBytes, this._account)
     );
     return this.getMaxMessageLength() - longestLineLength;
   },
@@ -371,8 +374,8 @@ export var GenericIRCConversation = {
       return;
     }
 
-    let nick = this.normalizeNick(aData);
-    let nickIndex = this._observedNicks.indexOf(nick);
+    const nick = this.normalizeNick(aData);
+    const nickIndex = this._observedNicks.indexOf(nick);
     if (nickIndex == -1) {
       return;
     }
@@ -386,7 +389,7 @@ export var GenericIRCConversation = {
     }
 
     // If we are waiting for the conversation name, set it.
-    let account = this._account;
+    const account = this._account;
     if (this._waitingForNick && nick == this.normalizedName) {
       if (account.whoisInformation.has(nick)) {
         this.updateNick(account.whoisInformation.get(nick).nick);
@@ -396,25 +399,36 @@ export var GenericIRCConversation = {
     }
 
     // Otherwise, print the requested whois information.
-    let type = { system: true, noLog: true };
+    const type = { system: true, noLog: true };
     // RFC 2812 errors 401 and 406 result in there being no entry for the nick.
     if (!account.whoisInformation.has(nick)) {
-      this.writeMessage(null, lazy._("message.unknownNick", nick), type);
+      this.writeMessage(
+        null,
+        lazy.l10n.formatValueSync("message-unknown-nick", { nick }),
+        type
+      );
       return;
     }
     // If the nick is offline, tell the user. In that case, it's WHOWAS info.
-    let msgType = "message.whois";
+    let msgType = "message-whois";
     if ("offline" in account.whoisInformation.get(nick)) {
-      msgType = "message.whowas";
+      msgType = "message-whowas";
     }
-    let msg = lazy._(msgType, account.whoisInformation.get(nick).nick);
+    let msg = lazy.l10n.formatValueSync(msgType, {
+      nick: account.whoisInformation.get(nick).nick,
+    });
 
     // Iterate over each field.
-    for (let elt of aSubject.QueryInterface(Ci.nsISimpleEnumerator)) {
+    for (const elt of aSubject.QueryInterface(Ci.nsISimpleEnumerator)) {
       switch (elt.type) {
         case Ci.prplITooltipInfo.pair:
         case Ci.prplITooltipInfo.sectionHeader:
-          msg += "\n" + lazy._("message.whoisEntry", elt.label, elt.value);
+          msg +=
+            "\n" +
+            lazy.l10n.formatValueSync("message-whois-entry", {
+              description: elt.label,
+              value: elt.value,
+            });
           break;
         case Ci.prplITooltipInfo.sectionBreak:
           break;
@@ -425,7 +439,10 @@ export var GenericIRCConversation = {
           // The away message has no tooltipInfo.pair entry.
           msg +=
             "\n" +
-            lazy._("message.whoisEntry", lazy._("tooltip.away"), elt.value);
+            lazy.l10n.formatValueSync("message-whois-entry", {
+              description: lazy.l10n.formatValueSync("tooltip-away"),
+              value: elt.value,
+            });
           break;
       }
     }
@@ -461,11 +478,11 @@ ircChannel.prototype = {
 
   // Section 3.2.2 of RFC 2812.
   part(aMessage) {
-    let params = [this.name];
+    const params = [this.name];
 
     // If a valid message was given, use it as the part message.
     // Otherwise, fall back to the default part message, if it exists.
-    let msg = aMessage || this._account.getString("partmsg");
+    const msg = aMessage || this._account.getString("partmsg");
     if (msg) {
       params.push(msg);
     }
@@ -499,7 +516,7 @@ ircChannel.prototype = {
       return this._participants.get(aNick);
     }
 
-    let participant = new ircParticipant(aNick, this);
+    const participant = new ircParticipant(aNick, this);
     this._participants.set(aNick, participant);
 
     // Add the participant to the whois table if it is not already there.
@@ -514,16 +531,17 @@ ircChannel.prototype = {
     return participant;
   },
 
-  /*
+  /**
    * Add/remove modes from this channel.
    *
-   * aNewMode is the new mode string, it MUST begin with + or -.
-   * aModeParams is a list of ordered string parameters for the mode string.
-   * aSetter is the nick of the person (or service) that set the mode.
+   * @param {string} aNewMode - The new mode string, it MUST begin with + or -.
+   * @param {string[]} aModeParams - A list of ordered string parameters for the
+   *   mode string.
+   * @param {string} aSetter - The nick of the person (or service) that set the mode.
    */
   setMode(aNewMode, aModeParams, aSetter) {
     // Save this for a comparison after the new modes have been set.
-    let previousTopicSettable = this.topicSettable;
+    const previousTopicSettable = this.topicSettable;
 
     const hostMaskExp = /^.+!.+@.+$/;
     function getNextParam() {
@@ -547,11 +565,11 @@ ircChannel.prototype = {
       this.WARN("Invalid mode string: " + aNewMode);
       return;
     }
-    let addNewMode = aNewMode[0] == "+";
+    const addNewMode = aNewMode[0] == "+";
 
     // Check each mode being added and update the user.
-    let channelModes = [];
-    let userModes = new NormalizedMap(this.normalizeNick.bind(this));
+    const channelModes = [];
+    const userModes = new NormalizedMap(this.normalizeNick.bind(this));
     let msg;
 
     for (let i = aNewMode.length - 1; i > 0; --i) {
@@ -565,7 +583,7 @@ ircChannel.prototype = {
       ) {
         // Store the new modes for this nick (so each participant's mode is only
         // updated once).
-        let nick = getNextParam();
+        const nick = getNextParam();
         if (!userModes.has(nick)) {
           userModes.set(nick, []);
         }
@@ -575,9 +593,8 @@ ircChannel.prototype = {
         continue;
       } else if (aNewMode[i] == "k") {
         // Channel key.
-        let newFields = this.name;
         if (addNewMode) {
-          let key = getNextParam();
+          const key = getNextParam();
           // A new channel key was set, display a message if this key is not
           // already known.
           if (
@@ -586,30 +603,40 @@ ircChannel.prototype = {
           ) {
             continue;
           }
-          msg = lazy._("message.channelKeyAdded", aSetter, key);
-          newFields += " " + key;
+          msg = lazy.l10n.formatValueSync("message-channel-key-added", {
+            nick: aSetter,
+            newPassword: key,
+          });
+          this.chatRoomFields.setValue("password", key);
         } else {
-          msg = lazy._("message.channelKeyRemoved", aSetter);
+          msg = lazy.l10n.formatValueSync("message-channel-key-removed", {
+            nick: aSetter,
+          });
+          this.chatRoomFields.setValue("password", undefined);
         }
 
         this.writeMessage(aSetter, msg, { system: true });
-        // Store the new fields for reconnect.
-        this.chatRoomFields =
-          this._account.getChatRoomDefaultFieldValues(newFields);
       } else if (aNewMode[i] == "b") {
         // A banmask was added or removed.
-        let banMask = getNextParam();
-        let msgKey = "message.banMask";
+        const banMask = getNextParam();
+        let msgKey = "message-ban-mask";
         if (addNewMode) {
           this.banMasks.push(banMask);
-          msgKey += "Added";
+          msgKey += "-added";
         } else {
           this.banMasks = this.banMasks.filter(aBanMask => banMask != aBanMask);
-          msgKey += "Removed";
+          msgKey += "-removed";
         }
-        this.writeMessage(aSetter, lazy._(msgKey, banMask, aSetter), {
-          system: true,
-        });
+        this.writeMessage(
+          aSetter,
+          lazy.l10n.formatValueSync(msgKey, {
+            locationMatches: banMask,
+            nick: aSetter,
+          }),
+          {
+            system: true,
+          }
+        );
       } else if (["e", "I", "l"].includes(aNewMode[i])) {
         // TODO The following have parameters that must be accounted for.
         getNextParam();
@@ -634,7 +661,7 @@ ircChannel.prototype = {
     }
 
     // Update the mode of each participant.
-    for (let [nick, mode] of userModes.entries()) {
+    for (const [nick, mode] of userModes.entries()) {
       this.getParticipant(nick).setMode(addNewMode, mode, aSetter);
     }
 
@@ -654,11 +681,10 @@ ircChannel.prototype = {
     _setMode.call(this, addNewMode, channelModes);
 
     // Notify the UI of changes.
-    msg = lazy._(
-      "message.channelmode",
-      aNewMode[0] + channelModes.join(""),
-      aSetter
-    );
+    msg = lazy.l10n.formatValueSync("message-channelmode", {
+      mode: aNewMode[0] + channelModes.join(""),
+      user: aSetter,
+    });
     this.writeMessage(aSetter, msg, { system: true });
 
     this._receivedInitialMode = true;
@@ -666,14 +692,14 @@ ircChannel.prototype = {
 
   setModesFromRestriction(aRestriction) {
     // First remove all types from the list of modes.
-    for (let key in this._account.channelRestrictionToModeMap) {
-      let mode = this._account.channelRestrictionToModeMap[key];
+    for (const key in this._account.channelRestrictionToModeMap) {
+      const mode = this._account.channelRestrictionToModeMap[key];
       this._modes.delete(mode);
     }
 
     // Add the new mode onto the list.
     if (aRestriction in this._account.channelRestrictionToModeMap) {
-      let mode = this._account.channelRestrictionToModeMap[aRestriction];
+      const mode = this._account.channelRestrictionToModeMap[aRestriction];
       if (mode) {
         this._modes.add(mode);
       }
@@ -690,7 +716,7 @@ ircChannel.prototype = {
   },
   get topicSettable() {
     // Don't use getParticipant since we don't want to lazily create it!
-    let participant = this._participants.get(this.nick);
+    const participant = this._participants.get(this.nick);
 
     // We must be in the room to set the topic.
     if (!participant) {
@@ -721,7 +747,7 @@ function ircParticipant(aName, aConv) {
     i < this._name.length && this._name[i] in this._account.userPrefixToModeMap;
     ++i
   ) {
-    let mode = this._account.userPrefixToModeMap[this._name[i]];
+    const mode = this._account.userPrefixToModeMap[this._name[i]];
     if (mode) {
       this._modes.add(mode);
     }
@@ -735,12 +761,11 @@ ircParticipant.prototype = {
     _setMode.call(this, aAddNewMode, aNewModes);
 
     // Notify the UI of changes.
-    let msg = lazy._(
-      "message.usermode",
-      (aAddNewMode ? "+" : "-") + aNewModes.join(""),
-      this.name,
-      aSetter
-    );
+    const msg = lazy.l10n.formatValueSync("message-usermode", {
+      mode: (aAddNewMode ? "+" : "-") + aNewModes.join(""),
+      targetUser: this.name,
+      sourceUser: aSetter,
+    });
     this._conv.writeMessage(aSetter, msg, { system: true });
     this._conv.notifyObservers(this, "chat-buddy-update");
   },
@@ -763,7 +788,7 @@ ircParticipant.prototype = {
 };
 
 export function ircConversation(aAccount, aName) {
-  let nick = aAccount.normalize(aName);
+  const nick = aAccount.normalize(aName);
   if (aAccount.whoisInformation.has(nick)) {
     aName = aAccount.whoisInformation.get(nick).nick;
   }
@@ -839,7 +864,7 @@ ircSocket.prototype = {
     let conversionWarning = "";
     if (this._converter) {
       try {
-        let buffer = Uint8Array.from(aRawMessage, c => c.charCodeAt(0));
+        const buffer = Uint8Array.from(aRawMessage, c => c.charCodeAt(0));
         aRawMessage = this._converter.decode(buffer);
       } catch (e) {
         conversionWarning =
@@ -861,14 +886,14 @@ ircSocket.prototype = {
     // \020 with a \0, \n, \r or \020, respectively. Any other character is
     // replaced with itself.
     const lowDequote = { 0: "\0", n: "\n", r: "\r", "\x10": "\x10" };
-    let dequotedMessage = aRawMessage.replace(
+    const dequotedMessage = aRawMessage.replace(
       // eslint-disable-next-line no-control-regex
       /\x10./g,
       aStr => lowDequote[aStr[1]] || aStr[1]
     );
 
     try {
-      let message = new ircMessage(
+      const message = new ircMessage(
         dequotedMessage,
         this._account._currentServerName
       );
@@ -914,7 +939,7 @@ ircSocket.prototype = {
       this.WARN(msg);
       this._account.gotDisconnected(
         Ci.prplIAccount.ERROR_NETWORK_ERROR,
-        lazy._("connection.error.lost")
+        lazy.l10n.formatValueSync("connection-error-lost")
       );
     }
   },
@@ -922,14 +947,14 @@ ircSocket.prototype = {
     this.WARN("Connection reset.");
     this._account.gotDisconnected(
       Ci.prplIAccount.ERROR_NETWORK_ERROR,
-      lazy._("connection.error.lost")
+      lazy.l10n.formatValueSync("connection-error-lost")
     );
   },
   onConnectionTimedOut() {
     this.WARN("Connection timed out.");
     this._account.gotDisconnected(
       Ci.prplIAccount.ERROR_NETWORK_ERROR,
-      lazy._("connection.error.timeOut")
+      lazy.l10n.formatValueSync("connection-error-time-out")
     );
   },
   onConnectionSecurityError(aTLSError, aNSSErrorMessage) {
@@ -939,7 +964,7 @@ ircSocket.prototype = {
         ":\n" +
         aNSSErrorMessage
     );
-    let error = this._account.handleConnectionSecurityError(this);
+    const error = this._account.handleConnectionSecurityError(this);
     this._account.gotDisconnected(error, aNSSErrorMessage);
   },
 
@@ -1000,7 +1025,7 @@ ircRoomInfo.prototype = {
     return this._account._channelList.get(this.name).participantCount;
   },
   get chatRoomFieldValues() {
-    return this._account.getChatRoomDefaultFieldValues(this.name);
+    return this._account.getChatRoomFieldValuesFromString(this.name);
   },
 };
 
@@ -1124,7 +1149,7 @@ ircAccount.prototype = {
   // Tell the server about status changes. IRC is only away or not away;
   // consider the away, idle and unavailable status type to be away.
   isAway: false,
-  observe(aSubject, aTopic, aData) {
+  observe(aSubject, aTopic) {
     if (aTopic != "status-changed") {
       return;
     }
@@ -1172,7 +1197,7 @@ ircAccount.prototype = {
     }
 
     // Are modes being added or removed?
-    let addNewMode = aNewModes[0] == "+";
+    const addNewMode = aNewModes[0] == "+";
     if (!addNewMode && aNewModes[0] != "-") {
       this.WARN("Invalid mode string: " + aNewModes);
       return false;
@@ -1188,14 +1213,15 @@ ircAccount.prototype = {
     if (this._showServerTab) {
       let msg;
       if (aDisplayFullMode) {
-        msg = lazy._("message.yourmode", Array.from(this._modes).join(""));
+        msg = lazy.l10n.formatValueSync("message-yourmode", {
+          mode: Array.from(this._modes).join(""),
+        });
       } else {
-        msg = lazy._(
-          "message.usermode",
-          aNewModes,
-          aNick,
-          aSetter || this._currentServerName
-        );
+        msg = lazy.l10n.formatValueSync("message-usermode", {
+          mode: aNewModes,
+          targetUser: aNick,
+          sourceUser: aSetter || this._currentServerName,
+        });
       }
       this.getConversation(this._currentServerName).writeMessage(
         this._currentServerName,
@@ -1243,7 +1269,7 @@ ircAccount.prototype = {
       this.sendMessage("LIST");
     } else {
       // Otherwise, pass channels that have already been received to the callback.
-      let rooms = [...this._channelList.keys()];
+      const rooms = [...this._channelList.keys()];
       aCallback.onRoomInfoAvailable(rooms, !this._pendingList);
     }
 
@@ -1254,7 +1280,7 @@ ircAccount.prototype = {
   // Pass room info for any remaining channels to callbacks and clean up.
   _sendRemainingRoomInfo() {
     if (this._currentBatch.length) {
-      for (let callback of this._roomInfoCallbacks) {
+      for (const callback of this._roomInfoCallbacks) {
         callback.onRoomInfoAvailable(this._currentBatch, true);
       }
     }
@@ -1273,7 +1299,7 @@ ircAccount.prototype = {
   // second parameter, to ensure automatic deduplication.
   _commandBuffers: new Map(),
   _handleCommandBuffer(aCommand) {
-    let buffer = this._commandBuffers.get(aCommand);
+    const buffer = this._commandBuffers.get(aCommand);
     if (!buffer || !buffer.size) {
       return;
     }
@@ -1282,19 +1308,19 @@ ircAccount.prototype = {
     // by the prpl on connection (e.g. WHOIS sent in response to incoming
     // WATCH results).
     const kInterval = 1000;
-    let delay = kInterval - (Date.now() - this._lastCommandSendTime);
+    const delay = kInterval - (Date.now() - this._lastCommandSendTime);
     if (delay > 0) {
       setTimeout(() => this._handleCommandBuffer(aCommand), delay);
       return;
     }
     this._lastCommandSendTime = Date.now();
 
-    let getParams = aItems => {
+    const getParams = aItems => {
       // Taking the JOIN use case as an example, aItems is an array
       // of [channel, key] pairs.
       // To work around an inspircd bug (bug 1108596), we reorder
       // the list so that entries with keys appear first.
-      let items = aItems.slice().sort(([c1, k1], [c2, k2]) => {
+      const items = aItems.slice().sort(([, k1], [, k2]) => {
         if (!k1 && k2) {
           return 1;
         }
@@ -1306,21 +1332,21 @@ ircAccount.prototype = {
       // To send the command, we have to group all the channels and keys
       // together, i.e. grab the columns of this matrix, and build the two
       // parameters of the command from that.
-      let channels = items.map(([channel, key]) => channel);
-      let keys = items.map(([channel, key]) => key).filter(key => !!key);
-      let params = [channels.join(",")];
+      const channels = items.map(([channel]) => channel);
+      const keys = items.map(([, key]) => key).filter(key => !!key);
+      const params = [channels.join(",")];
       if (keys.length) {
         params.push(keys.join(","));
       }
       return params;
     };
-    let tooMany = aItems => {
-      let params = getParams(aItems);
-      let length = this.countBytes(this.buildMessage(aCommand, params)) + 2;
+    const tooMany = aItems => {
+      const params = getParams(aItems);
+      const length = this.countBytes(this.buildMessage(aCommand, params)) + 2;
       return this.maxMessageLength < length;
     };
-    let send = aItems => {
-      let params = getParams(aItems);
+    const send = aItems => {
+      const params = getParams(aItems);
       // Send the command, but don't log the keys.
       this.sendMessage(
         aCommand,
@@ -1333,7 +1359,7 @@ ircAccount.prototype = {
     };
 
     let items = [];
-    for (let item of buffer) {
+    for (const item of buffer) {
       items.push(item);
       if (tooMany(items)) {
         items.pop();
@@ -1356,7 +1382,7 @@ ircAccount.prototype = {
     if (!this._commandBuffers.has(aCommand)) {
       this._commandBuffers.set(aCommand, new Map());
     }
-    let buffer = this._commandBuffers.get(aCommand);
+    const buffer = this._commandBuffers.get(aCommand);
     // If the buffer is empty, schedule sending the command, otherwise
     // we just need to add the parameter to the buffer.
     // We use executeSoon so as to not delay the sending of these
@@ -1418,18 +1444,20 @@ ircAccount.prototype = {
       return [];
     }
 
-    let whoisInformation = this.whoisInformation.get(aNick);
+    const whoisInformation = this.whoisInformation.get(aNick);
     if (whoisInformation.serverName && whoisInformation.serverInfo) {
-      whoisInformation.server = lazy._(
-        "tooltip.serverValue",
-        whoisInformation.serverName,
-        whoisInformation.serverInfo
+      whoisInformation.server = lazy.l10n.formatValueSync(
+        "tooltip-server-value",
+        {
+          serverName: whoisInformation.serverName,
+          serverInformation: whoisInformation.serverInfo,
+        }
       );
     }
 
     // Sort the list of channels, ignoring the prefixes of channel and user.
-    let prefixes = this.userPrefixes.concat(this.channelPrefixes);
-    let sortWithoutPrefix = function (a, b) {
+    const prefixes = this.userPrefixes.concat(this.channelPrefixes);
+    const sortWithoutPrefix = function (a, b) {
       a = this.normalize(a, prefixes);
       b = this.normalize(b, prefixes);
       if (a < b) {
@@ -1437,21 +1465,24 @@ ircAccount.prototype = {
       }
       return a > b ? 1 : 0;
     }.bind(this);
-    let sortChannels = channels =>
+    const sortChannels = channels =>
       channels.trim().split(/\s+/).sort(sortWithoutPrefix).join(" ");
 
     // Convert booleans into a human-readable form.
-    let normalizeBool = aBool => lazy._(aBool ? "yes" : "no");
+    const normalizeBool = aBool =>
+      lazy.l10n.formatValueSync(aBool ? "yes-key-key" : "no-key-key");
 
     // Convert timespan in seconds into a human-readable form.
-    let normalizeTime = function (aTime) {
-      let valuesAndUnits = lazy.DownloadUtils.convertTimeUnits(aTime);
+    const normalizeTime = function (aTime) {
+      const valuesAndUnits = lazy.DownloadUtils.convertTimeUnits(aTime);
       // If the time is exact to the first set of units, trim off
       // the subsequent zeroes.
       if (!valuesAndUnits[2]) {
         valuesAndUnits.splice(2, 2);
       }
-      return lazy._("tooltip.timespan", valuesAndUnits.join(" "));
+      return lazy.l10n.formatValueSync("tooltip-timespan", {
+        timespan: valuesAndUnits.join(" "),
+      });
     };
 
     // List of the names of the info to actually show in the tooltip and
@@ -1470,15 +1501,32 @@ ircAccount.prototype = {
       lastActivity: normalizeTime,
       channels: sortChannels,
     };
+    const tooltipMessages = {
+      realname: "tooltip-realname",
+      server: "tooltip-server",
+      connectedFrom: "tooltip-connected-from",
+      registered: "tooltip-registered",
+      registeredAs: "tooltip-registered-as",
+      secure: "tooltip-secure",
+      ircOp: "tooltip-irc-op",
+      bot: "tooltip-bot",
+      lastActivity: "tooltip-last-activity",
+      channels: "tooltip-channels",
+    };
 
-    let tooltipInfo = [];
-    for (let field in kFields) {
+    const tooltipInfo = [];
+    for (const field in kFields) {
       if (whoisInformation.hasOwnProperty(field) && whoisInformation[field]) {
         let value = whoisInformation[field];
         if (kFields[field]) {
           value = kFields[field](value);
         }
-        tooltipInfo.push(new TooltipInfo(lazy._("tooltip." + field), value));
+        tooltipInfo.push(
+          new TooltipInfo(
+            lazy.l10n.formatValueSync(tooltipMessages[field]),
+            value
+          )
+        );
       }
     }
 
@@ -1518,11 +1566,11 @@ ircAccount.prototype = {
     }
 
     // Set non-normalized nickname field.
-    let whoisInfo = this.whoisInformation.get(aNick);
+    const whoisInfo = this.whoisInformation.get(aNick);
     whoisInfo.nick = aNick;
 
     // Set the WHOIS fields, but only the first time a field is set.
-    for (let field in aFields) {
+    for (const field in aFields) {
       if (!whoisInfo.hasOwnProperty(field)) {
         whoisInfo[field] = aFields[field];
       }
@@ -1536,7 +1584,7 @@ ircAccount.prototype = {
     this.trackQueue.unshift(aNick);
   },
   untrackBuddy(aNick) {
-    let index = this.trackQueue.indexOf(aNick);
+    const index = this.trackQueue.indexOf(aNick);
     if (index < 0) {
       this.ERROR(
         "Trying to untrack a nick that was not being tracked: " + aNick
@@ -1546,7 +1594,7 @@ ircAccount.prototype = {
     this.trackQueue.splice(index, 1);
   },
   addBuddy(aTag, aName) {
-    let buddy = new ircAccountBuddy(this, null, aTag, aName);
+    const buddy = new ircAccountBuddy(this, null, aTag, aName);
     this.buddies.set(buddy.normalizedName, buddy);
     this.trackBuddy(buddy.userName);
 
@@ -1559,7 +1607,7 @@ ircAccount.prototype = {
   // Loads a buddy from the local storage. Called for each buddy locally stored
   // before connecting to the server.
   loadBuddy(aBuddy, aTag) {
-    let buddy = new ircAccountBuddy(this, aBuddy, aTag);
+    const buddy = new ircAccountBuddy(this, aBuddy, aTag);
     this.buddies.set(buddy.normalizedName, buddy);
     this.trackBuddy(buddy.userName);
 
@@ -1576,7 +1624,7 @@ ircAccount.prototype = {
         } else {
           conversation.writeMessage(
             aOldNick,
-            lazy._conv("nickSet.you", aNewNick),
+            lazy.l10n.formatValueSync("nick-set-you", { newNick: aNewNick }),
             {
               system: true,
             }
@@ -1599,7 +1647,7 @@ ircAccount.prototype = {
     // If a private conversation is open with that user, change its title.
     if (this.conversations.has(aOldNick)) {
       // Get the current conversation and rename it.
-      let conversation = this.getConversation(aOldNick);
+      const conversation = this.getConversation(aOldNick);
 
       // Remove the old reference to the conversation and create a new one.
       this.removeConversation(aOldNick);
@@ -1608,7 +1656,10 @@ ircAccount.prototype = {
       conversation.updateNick(aNewNick);
       conversation.writeMessage(
         aOldNick,
-        lazy._conv("nickSet", aOldNick, aNewNick),
+        lazy.l10n.formatValueSync("nick-set-key", {
+          oldNick: aOldNick,
+          newNick: aNewNick,
+        }),
         { system: true }
       );
     }
@@ -1635,7 +1686,7 @@ ircAccount.prototype = {
   tryNewNick(aOldNick) {
     // Split the string on commas, remove whitespace around the nicks and
     // remove empty nicks.
-    let allNicks = this.getString("alternateNicks")
+    const allNicks = this.getString("alternateNicks")
       .split(",")
       .map(n => n.trim())
       .filter(n => !!n);
@@ -1643,17 +1694,17 @@ ircAccount.prototype = {
 
     // If the previously tried nick is in the array and not the last
     // element, try the next nick in the array.
-    let oldIndex = allNicks.indexOf(aOldNick);
+    const oldIndex = allNicks.indexOf(aOldNick);
     if (oldIndex != -1 && oldIndex < allNicks.length - 1) {
-      let newNick = allNicks[oldIndex + 1];
+      const newNick = allNicks[oldIndex + 1];
       this.LOG(aOldNick + " is already in use, trying " + newNick);
       this.changeNick(newNick);
       return true;
     }
 
     // Separate the nick into the text and digits part.
-    let kNickPattern = /^(.+?)(\d*)$/;
-    let nickParts = kNickPattern.exec(aOldNick);
+    const kNickPattern = /^(.+?)(\d*)$/;
+    const nickParts = kNickPattern.exec(aOldNick);
     let newNick = nickParts[1];
 
     // No nick found from the user's preferences, so just generating one.
@@ -1664,7 +1715,7 @@ ircAccount.prototype = {
       newDigits = (parseInt(nickParts[2], 10) + 1).toString();
       // If there are leading 0s, add them back on, after we've incremented (e.g.
       // 009 --> 010).
-      let numLeadingZeros = nickParts[2].length - newDigits.length;
+      const numLeadingZeros = nickParts[2].length - newDigits.length;
       if (numLeadingZeros > 0) {
         newDigits = "0".repeat(numLeadingZeros) + newDigits;
       }
@@ -1675,9 +1726,9 @@ ircAccount.prototype = {
     if (aOldNick.length < this._sentNickname.length) {
       // The nick will be too long, overwrite the end of the nick instead of
       // appending.
-      let maxLength = aOldNick.length;
+      const maxLength = aOldNick.length;
 
-      let sentNickParts = kNickPattern.exec(this._sentNickname);
+      const sentNickParts = kNickPattern.exec(this._sentNickname);
       // Resend the same digits as last time, but overwrite part of the nick
       // this time.
       if (nickParts[2] && sentNickParts[2]) {
@@ -1697,7 +1748,9 @@ ircAccount.prototype = {
       // The nick we were about to try next is our current nick. This means
       // the user attempted to change to a version of the nick with a lower or
       // absent number suffix, and this failed.
-      let msg = lazy._("message.nick.fail", this._nickname);
+      const msg = lazy.l10n.formatValueSync("message-nick-fail", {
+        nick: this._nickname,
+      });
       this.conversations.forEach(conversation =>
         conversation.writeMessage(this._nickname, msg, { system: true })
       );
@@ -1711,7 +1764,7 @@ ircAccount.prototype = {
 
   handlePingReply(aSource, aPongTime) {
     // Received PING response, display to the user.
-    let sentTime = new Date(parseInt(aPongTime, 10));
+    const sentTime = new Date(parseInt(aPongTime, 10));
 
     // The received timestamp is invalid.
     if (isNaN(sentTime)) {
@@ -1722,7 +1775,7 @@ ircAccount.prototype = {
     }
 
     // Find the delay in milliseconds.
-    let delay = Date.now() - sentTime;
+    const delay = Date.now() - sentTime;
 
     // If the delay is negative or greater than 1 minute, something is
     // feeding us a crazy value. Don't display this to the user.
@@ -1730,11 +1783,11 @@ ircAccount.prototype = {
       this.WARN(aSource + " returned an invalid delay from a PING: " + delay);
       return false;
     }
-
-    let msg = lazy.PluralForm.get(
+    const msg = lazy.l10n.formatValueSync("message-ping", {
+      source: aSource,
       delay,
-      lazy._("message.ping", aSource)
-    ).replace("#2", delay);
+    });
+
     this.getConversation(aSource).writeMessage(aSource, msg, { system: true });
     return true;
   },
@@ -1787,7 +1840,7 @@ ircAccount.prototype = {
     if (this.trackQueue.length) {
       // Calculate the possible length of names we can send.
       if (!this._isOnLength) {
-        let length = this.countBytes(this.buildMessage("ISON", " ")) + 2;
+        const length = this.countBytes(this.buildMessage("ISON", " ")) + 2;
         this._isOnLength = this.maxMessageLength - length + 1;
       }
 
@@ -1806,7 +1859,7 @@ ircAccount.prototype = {
           this._isOnLength
         ) {
           // Remove the name from the list and add it to the pending queue.
-          let nick = this.trackQueue.splice(i--, 1)[0];
+          const nick = this.trackQueue.splice(i--, 1)[0];
           this.pendingIsOnQueue.push(nick);
 
           // Keep track of the length of the string, the + 1 is for the spaces.
@@ -1957,7 +2010,7 @@ ircAccount.prototype = {
     }
 
     if (this.conversations.has(channel)) {
-      let conv = this.getConversation(channel);
+      const conv = this.getConversation(channel);
       if (!conv.left) {
         // No need to join a channel we are already in.
         return conv;
@@ -1967,16 +2020,15 @@ ircAccount.prototype = {
       }
     }
 
-    let key = aComponents.getValue("password");
-    this.sendBufferedCommand("JOIN", channel, key);
-
     // Open conversation early for better responsiveness.
-    let conv = this.getConversation(channel);
+    const conv = this.getConversation(channel);
     conv.joining = true;
 
     // Store the prplIChatRoomFieldValues to enable later reconnections.
-    let defaultName = key ? channel + " " + key : channel;
-    conv.chatRoomFields = this.getChatRoomDefaultFieldValues(defaultName);
+    conv.chatRoomFields = aComponents;
+
+    const key = aComponents.getValue("password");
+    this.sendBufferedCommand("JOIN", channel, key);
 
     return conv;
   },
@@ -1984,25 +2036,25 @@ ircAccount.prototype = {
   chatRoomFields: {
     channel: {
       get label() {
-        return lazy._("joinChat.channel");
+        return lazy.l10n.formatValueSync("join-chat-channel");
       },
       required: true,
     },
     password: {
       get label() {
-        return lazy._("joinChat.password");
+        return lazy.l10n.formatValueSync("join-chat-password");
       },
       isPassword: true,
     },
   },
 
-  parseDefaultChatName(aDefaultName) {
-    let params = aDefaultName.trim().split(/\s+/);
-    let chatFields = { channel: params[0] };
+  getChatRoomFieldValuesFromString(aString) {
+    const params = aString.trim().split(/\s+/);
+    const chatFields = { channel: params[0] };
     if (params.length > 1) {
       chatFields.password = params[1];
     }
-    return chatFields;
+    return new ChatRoomFieldValues(chatFields);
   },
 
   // Attributes
@@ -2018,7 +2070,7 @@ ircAccount.prototype = {
       if (this.whoisInformation.has(aName)) {
         aName = this.whoisInformation.get(aName).nick;
       }
-      let convClass = this.isMUCName(aName) ? ircChannel : ircConversation;
+      const convClass = this.isMUCName(aName) ? ircChannel : ircConversation;
       this.conversations.set(aName, new convClass(this, aName, this._nickname));
     }
     return this.conversations.get(aName);
@@ -2046,7 +2098,7 @@ ircAccount.prototype = {
     let message = aCommand;
     // If aParams is not an array, consider it to be a single parameter and put
     // it into an array.
-    let params = Array.isArray(aParams) ? aParams : [aParams];
+    const params = Array.isArray(aParams) ? aParams : [aParams];
     if (params.length) {
       if (params.slice(0, -1).some(p => p.includes(" "))) {
         this.ERROR("IRC parameters cannot have spaces: " + params.slice(0, -1));
@@ -2057,7 +2109,7 @@ ircAccount.prototype = {
       //  1. If the last parameter contains a space.
       //  2. If the first character of the last parameter is a colon.
       //  3. If the last parameter is an empty string.
-      let trailing = params.slice(-1)[0];
+      const trailing = params.slice(-1)[0];
       if (
         !trailing.length ||
         trailing.includes(" ") ||
@@ -2097,11 +2149,11 @@ ircAccount.prototype = {
     if (!this._socket || this._socket.disconnected) {
       this.gotDisconnected(
         Ci.prplIAccount.ERROR_NETWORK_ERROR,
-        lazy._("connection.error.lost")
+        lazy.l10n.formatValueSync("connection-error-lost")
       );
     }
 
-    let length = this.countBytes(aMessage) + 2;
+    const length = this.countBytes(aMessage) + 2;
     if (length > this.maxMessageLength) {
       // Log if the message is too long, but try to send it anyway.
       this.WARN(
@@ -2130,11 +2182,11 @@ ircAccount.prototype = {
             "."
         );
         return true;
-      } catch (e) {
-        this.ERROR("Socket error:", e);
+      } catch (ex) {
+        this.ERROR("Socket error:", ex);
         this.gotDisconnected(
           Ci.prplIAccount.ERROR_NETWORK_ERROR,
-          lazy._("connection.error.lost")
+          lazy.l10n.formatValueSync("connection-error-lost")
         );
         return false;
       }
@@ -2148,7 +2200,7 @@ ircAccount.prototype = {
     let ircParam = aCtcpCommand;
     // If aParams is not an array, consider it to be a single parameter and put
     // it into an array.
-    let params = Array.isArray(aParams) ? aParams : [aParams];
+    const params = Array.isArray(aParams) ? aParams : [aParams];
     if (params.length) {
       ircParam += " " + params.join(" ");
     }

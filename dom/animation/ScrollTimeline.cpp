@@ -12,8 +12,8 @@
 #include "mozilla/DisplayPortUtils.h"
 #include "mozilla/ElementAnimationData.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/ScrollContainerFrame.h"
 #include "nsIFrame.h"
-#include "nsIScrollableFrame.h"
 #include "nsLayoutUtils.h"
 
 namespace mozilla::dom {
@@ -49,13 +49,11 @@ ScrollTimeline::ScrollTimeline(Document* aDocument, const Scroller& aScroller,
   RegisterWithScrollSource();
 }
 
-/* static */ std::pair<const Element*, PseudoStyleType>
+/* static */ std::pair<const Element*, PseudoStyleRequest>
 ScrollTimeline::FindNearestScroller(Element* aSubject,
-                                    PseudoStyleType aPseudoType) {
+                                    const PseudoStyleRequest& aPseudoRequest) {
   MOZ_ASSERT(aSubject);
-  Element* subject =
-      AnimationUtils::GetElementForRestyle(aSubject, aPseudoType);
-
+  Element* subject = aSubject->GetPseudoElement(aPseudoRequest);
   Element* curr = subject->GetFlattenedTreeParentElement();
   Element* root = subject->OwnerDoc()->GetDocumentElement();
   while (curr && curr != root) {
@@ -68,7 +66,7 @@ ScrollTimeline::FindNearestScroller(Element* aSubject,
   }
   // If there is no scroll container, we use root.
   if (!curr) {
-    return {root, PseudoStyleType::NotPseudo};
+    return {root, PseudoStyleRequest::NotPseudo()};
   }
   return AnimationUtils::GetElementPseudoPair(curr);
 }
@@ -86,12 +84,12 @@ already_AddRefed<ScrollTimeline> ScrollTimeline::MakeAnonymous(
 
     case StyleScroller::Nearest: {
       auto [element, pseudo] =
-          FindNearestScroller(aTarget.mElement, aTarget.mPseudoType);
-      scroller = Scroller::Nearest(const_cast<Element*>(element), pseudo);
+          FindNearestScroller(aTarget.mElement, aTarget.mPseudoRequest);
+      scroller = Scroller::Nearest(const_cast<Element*>(element), pseudo.mType);
       break;
     }
     case StyleScroller::SelfElement:
-      scroller = Scroller::Self(aTarget.mElement, aTarget.mPseudoType);
+      scroller = Scroller::Self(aTarget.mElement, aTarget.mPseudoRequest.mType);
       break;
   }
 
@@ -102,12 +100,14 @@ already_AddRefed<ScrollTimeline> ScrollTimeline::MakeAnonymous(
   return MakeAndAddRef<ScrollTimeline>(aDocument, scroller, aAxis);
 }
 
-/* static*/ already_AddRefed<ScrollTimeline> ScrollTimeline::MakeNamed(
+/* static*/
+already_AddRefed<ScrollTimeline> ScrollTimeline::MakeNamed(
     Document* aDocument, Element* aReferenceElement,
-    PseudoStyleType aPseudoType, const StyleScrollTimeline& aStyleTimeline) {
+    const PseudoStyleRequest& aPseudoRequest,
+    const StyleScrollTimeline& aStyleTimeline) {
   MOZ_ASSERT(NS_IsMainThread());
 
-  Scroller scroller = Scroller::Named(aReferenceElement, aPseudoType);
+  Scroller scroller = Scroller::Named(aReferenceElement, aPseudoRequest.mType);
   return MakeAndAddRef<ScrollTimeline>(aDocument, std::move(scroller),
                                        aStyleTimeline.GetAxis());
 }
@@ -119,8 +119,8 @@ Nullable<TimeDuration> ScrollTimeline::GetCurrentTimeAsDuration() const {
   }
 
   // if this is not a scroller container, this timeline is inactive.
-  const nsIScrollableFrame* scrollFrame = GetScrollFrame();
-  if (!scrollFrame) {
+  const ScrollContainerFrame* scrollContainerFrame = GetScrollContainerFrame();
+  if (!scrollContainerFrame) {
     return nullptr;
   }
 
@@ -128,14 +128,15 @@ Nullable<TimeDuration> ScrollTimeline::GetCurrentTimeAsDuration() const {
 
   // If there is no scrollable overflow, then the ScrollTimeline is inactive.
   // https://drafts.csswg.org/scroll-animations-1/#scrolltimeline-interface
-  if (!scrollFrame->GetAvailableScrollingDirections().contains(orientation)) {
+  if (!scrollContainerFrame->GetAvailableScrollingDirections().contains(
+          orientation)) {
     return nullptr;
   }
 
   const bool isHorizontal = orientation == layers::ScrollDirection::eHorizontal;
-  const nsPoint& scrollPosition = scrollFrame->GetScrollPosition();
+  const nsPoint& scrollPosition = scrollContainerFrame->GetScrollPosition();
   const Maybe<ScrollOffsets>& offsets =
-      ComputeOffsets(scrollFrame, orientation);
+      ComputeOffsets(scrollContainerFrame, orientation);
   if (!offsets) {
     return nullptr;
   }
@@ -155,7 +156,7 @@ layers::ScrollDirection ScrollTimeline::Axis() const {
   MOZ_ASSERT(mSource && mSource.mElement->GetPrimaryFrame());
 
   const WritingMode wm = mSource.mElement->GetPrimaryFrame()->GetWritingMode();
-  return mAxis == StyleScrollAxis::Horizontal ||
+  return mAxis == StyleScrollAxis::X ||
                  (!wm.IsVertical() && mAxis == StyleScrollAxis::Inline) ||
                  (wm.IsVertical() && mAxis == StyleScrollAxis::Block)
              ? layers::ScrollDirection::eHorizontal
@@ -165,10 +166,10 @@ layers::ScrollDirection ScrollTimeline::Axis() const {
 StyleOverflow ScrollTimeline::SourceScrollStyle() const {
   MOZ_ASSERT(mSource && mSource.mElement->GetPrimaryFrame());
 
-  const nsIScrollableFrame* scrollFrame = GetScrollFrame();
-  MOZ_ASSERT(scrollFrame);
+  const ScrollContainerFrame* scrollContainerFrame = GetScrollContainerFrame();
+  MOZ_ASSERT(scrollContainerFrame);
 
-  const ScrollStyles scrollStyles = scrollFrame->GetScrollStyles();
+  const ScrollStyles scrollStyles = scrollContainerFrame->GetScrollStyles();
 
   return Axis() == layers::ScrollDirection::eHorizontal
              ? scrollStyles.mHorizontal
@@ -183,16 +184,17 @@ bool ScrollTimeline::APZIsActiveForSource() const {
 }
 
 bool ScrollTimeline::ScrollingDirectionIsAvailable() const {
-  const nsIScrollableFrame* scrollFrame = GetScrollFrame();
-  MOZ_ASSERT(scrollFrame);
-  return scrollFrame->GetAvailableScrollingDirections().contains(Axis());
+  const ScrollContainerFrame* scrollContainerFrame = GetScrollContainerFrame();
+  MOZ_ASSERT(scrollContainerFrame);
+  return scrollContainerFrame->GetAvailableScrollingDirections().contains(
+      Axis());
 }
 
-void ScrollTimeline::ReplacePropertiesWith(const Element* aReferenceElement,
-                                           PseudoStyleType aPseudoType,
-                                           const StyleScrollTimeline& aNew) {
+void ScrollTimeline::ReplacePropertiesWith(
+    const Element* aReferenceElement, const PseudoStyleRequest& aPseudoRequest,
+    const StyleScrollTimeline& aNew) {
   MOZ_ASSERT(aReferenceElement == mSource.mElement &&
-             aPseudoType == mSource.mPseudoType);
+             aPseudoRequest.mType == mSource.mPseudoType);
   mAxis = aNew.GetAxis();
 
   for (auto* anim = mAnimationOrder.getFirst(); anim;
@@ -204,9 +206,9 @@ void ScrollTimeline::ReplacePropertiesWith(const Element* aReferenceElement,
 }
 
 Maybe<ScrollTimeline::ScrollOffsets> ScrollTimeline::ComputeOffsets(
-    const nsIScrollableFrame* aScrollFrame,
+    const ScrollContainerFrame* aScrollContainerFrame,
     layers::ScrollDirection aOrientation) const {
-  const nsRect& scrollRange = aScrollFrame->GetScrollRange();
+  const nsRect& scrollRange = aScrollContainerFrame->GetScrollRange();
   nscoord range = aOrientation == layers::ScrollDirection::eHorizontal
                       ? scrollRange.width
                       : scrollRange.height;
@@ -219,8 +221,8 @@ void ScrollTimeline::RegisterWithScrollSource() {
     return;
   }
 
-  auto& scheduler =
-      ProgressTimelineScheduler::Ensure(mSource.mElement, mSource.mPseudoType);
+  auto& scheduler = ProgressTimelineScheduler::Ensure(
+      mSource.mElement, PseudoStyleRequest(mSource.mPseudoType));
   scheduler.AddTimeline(this);
 }
 
@@ -229,19 +231,29 @@ void ScrollTimeline::UnregisterFromScrollSource() {
     return;
   }
 
-  auto* scheduler =
-      ProgressTimelineScheduler::Get(mSource.mElement, mSource.mPseudoType);
+  auto* scheduler = ProgressTimelineScheduler::Get(
+      mSource.mElement, PseudoStyleRequest(mSource.mPseudoType));
   if (!scheduler) {
+    return;
+  }
+
+  // If we are trying to unregister this timeline from the scheduler in
+  // ProgressTimelineScheduler::ScheduleAnimations(), we have to unregister this
+  // after we finish the scheduling, to avoid mutating the hashtset
+  // and destroying the scheduler here.
+  if (scheduler->IsInScheduling()) {
+    mState = TimelineState::PendingRemove;
     return;
   }
 
   scheduler->RemoveTimeline(this);
   if (scheduler->IsEmpty()) {
-    ProgressTimelineScheduler::Destroy(mSource.mElement, mSource.mPseudoType);
+    ProgressTimelineScheduler::Destroy(mSource.mElement,
+                                       PseudoStyleRequest(mSource.mPseudoType));
   }
 }
 
-const nsIScrollableFrame* ScrollTimeline::GetScrollFrame() const {
+const ScrollContainerFrame* ScrollTimeline::GetScrollContainerFrame() const {
   if (!mSource) {
     return nullptr;
   }
@@ -250,46 +262,92 @@ const nsIScrollableFrame* ScrollTimeline::GetScrollFrame() const {
     case Scroller::Type::Root:
       if (const PresShell* presShell =
               mSource.mElement->OwnerDoc()->GetPresShell()) {
-        return presShell->GetRootScrollFrameAsScrollable();
+        return presShell->GetRootScrollContainerFrame();
       }
       return nullptr;
     case Scroller::Type::Nearest:
     case Scroller::Type::Name:
     case Scroller::Type::Self:
-      return nsLayoutUtils::FindScrollableFrameFor(mSource.mElement);
+      return nsLayoutUtils::FindScrollContainerFrameFor(mSource.mElement);
   }
 
   MOZ_ASSERT_UNREACHABLE("Unsupported scroller type");
   return nullptr;
 }
 
+void ScrollTimeline::NotifyAnimationContentVisibilityChanged(
+    Animation* aAnimation, bool aIsVisible) {
+  AnimationTimeline::NotifyAnimationContentVisibilityChanged(aAnimation,
+                                                             aIsVisible);
+  if (mAnimationOrder.isEmpty()) {
+    UnregisterFromScrollSource();
+  } else {
+    RegisterWithScrollSource();
+  }
+}
+
 // ------------------------------------
 // Methods of ProgressTimelineScheduler
 // ------------------------------------
 /* static */ ProgressTimelineScheduler* ProgressTimelineScheduler::Get(
-    const Element* aElement, PseudoStyleType aPseudoType) {
+    const Element* aElement, const PseudoStyleRequest& aPseudoRequest) {
   MOZ_ASSERT(aElement);
   auto* data = aElement->GetAnimationData();
   if (!data) {
     return nullptr;
   }
 
-  return data->GetProgressTimelineScheduler(aPseudoType);
+  return data->GetProgressTimelineScheduler(aPseudoRequest);
 }
 
 /* static */ ProgressTimelineScheduler& ProgressTimelineScheduler::Ensure(
-    Element* aElement, PseudoStyleType aPseudoType) {
+    Element* aElement, const PseudoStyleRequest& aPseudoRequest) {
   MOZ_ASSERT(aElement);
   return aElement->EnsureAnimationData().EnsureProgressTimelineScheduler(
-      *aElement, aPseudoType);
+      aPseudoRequest);
 }
 
 /* static */
-void ProgressTimelineScheduler::Destroy(const Element* aElement,
-                                        PseudoStyleType aPseudoType) {
+void ProgressTimelineScheduler::Destroy(
+    const Element* aElement, const PseudoStyleRequest& aPseudoRequest) {
   auto* data = aElement->GetAnimationData();
   MOZ_ASSERT(data);
-  data->ClearProgressTimelineScheduler(aPseudoType);
+  data->ClearProgressTimelineScheduler(aPseudoRequest);
+}
+
+/* static */
+void ProgressTimelineScheduler::ScheduleAnimations(
+    const Element* aElement, const PseudoStyleRequest& aRequest) {
+  auto* scheduler = Get(aElement, aRequest);
+  if (!scheduler) {
+    return;
+  }
+
+  // Note: We only need to handle the removal. It's impossible to iterate the
+  // non-existing timelines and add them into the hashset.
+  nsTArray<ScrollTimeline*> timelinesToBeRemoved;
+
+  scheduler->mIsInScheduling = true;
+  for (auto iter = scheduler->mTimelines.iter(); !iter.done(); iter.next()) {
+    auto* timeline = iter.get();
+    const auto state = timeline->ScheduleAnimations();
+    if (state == ScrollTimeline::TimelineState::PendingRemove) {
+      timelinesToBeRemoved.AppendElement(timeline);
+    }
+  }
+  MOZ_ASSERT(Get(aElement, aRequest), "Make sure the scheduler still exists");
+  scheduler->mIsInScheduling = false;
+
+  // In the common case, this array is empty. It could be non-empty only when
+  // we change the content-visibility in their Tick()s.
+  for (auto* timeline : timelinesToBeRemoved) {
+    timeline->ResetState();
+    scheduler->RemoveTimeline(timeline);
+  }
+
+  if (scheduler->IsEmpty()) {
+    ProgressTimelineScheduler::Destroy(aElement, aRequest);
+  }
 }
 
 }  // namespace mozilla::dom

@@ -12,8 +12,8 @@ GECKO_PATH=${GECKO_PATH:-"/builds/worker/workspace/build/src"}
 MOZ_FETCHES_DIR=${MOZ_FETCHES_DIR:-"/builds/worker/fetches"}
 UPLOAD_DIR=${UPLOAD_DIR:-"/builds/worker/artifacts"}
 WORKSPACE=${WORKSPACE:-"${HOME}/workspace"}
-MACOS_SDK_DIR=${MACOS_SDK_DIR:-"MacOSX11.3.sdk"}
-MACOS_TARGET_SDK=${MACOS_TARGET_SDK:-"10.12"}
+MACOS_SDK_DIR=${MACOS_SDK_DIR:-"MacOSX14.4.sdk"}
+MACOS_TARGET_SDK=${MACOS_TARGET_SDK:-"10.15"}
 
 
 # Set $DEVEL_TESTING during script development on a local machine
@@ -141,7 +141,8 @@ function build_libotr() {
     case "${_TARGET_OS}" in
         win*)
             cd src
-            "${CC}" -static-libgcc -s -shared -Wl,-no-undefined "${LDFLAGS[@]}" -o libotr.dll \
+            # shellcheck disable=SC2086
+            "${CC}" -static-libgcc -s -shared -Wl,-no-undefined ${LDFLAGS} -o libotr.dll \
                 ./*.o \
                 -L"${_PREFIX}/lib" "${_PREFIX}/lib/libgcrypt.a" "${_PREFIX}/lib/libgpg-error.a" \
                 -L"${_LIBDIR}" -lws2_32 -lssp
@@ -149,7 +150,8 @@ function build_libotr() {
             ;;
         linux*)
             cd src
-            "${CC}" -shared "${LDFLAGS[@]}" -Wl,-soname -Wl,libotr.so \
+            # shellcheck disable=SC2086
+            "${CC}" -shared ${LDFLAGS} -Wl,-soname -Wl,libotr.so \
               .libs/*.o \
               -L"${_PREFIX}/lib" "${_PREFIX}/lib/libgcrypt.a" "${_PREFIX}/lib/libgpg-error.a" \
               --sysroot="${MOZ_FETCHES_DIR}/${SYSROOT}" \
@@ -200,7 +202,7 @@ case "${_TARGET_OS}" in
         export PATH="${MOZ_FETCHES_DIR}/mingw32/bin:$PATH"
         export _TARGET_TRIPLE="i686-w64-mingw32"
         export CC="${_TARGET_TRIPLE}-gcc"
-        _LIBDIR="/usr/lib/gcc/${_TARGET_TRIPLE}/10-win32"
+        _LIBDIR="/usr/lib/gcc/${_TARGET_TRIPLE}/12-win32"
         export LDFLAGS="-L${_LIBDIR}"
         _OS_CONFIGURE_FLAGS=(--host="${_TARGET_TRIPLE}" --target="${_TARGET_TRIPLE}")
         _CONF_STATIC=(--enable-static --enable-shared)
@@ -211,7 +213,7 @@ case "${_TARGET_OS}" in
         export PATH="${MOZ_FETCHES_DIR}/mingw32/bin:$PATH"
         export _TARGET_TRIPLE="x86_64-w64-mingw32"
         export CC="${_TARGET_TRIPLE}-gcc"
-        _LIBDIR="/usr/lib/gcc/${_TARGET_TRIPLE}/10-win32"
+        _LIBDIR="/usr/lib/gcc/${_TARGET_TRIPLE}/12-win32"
         export LDFLAGS="-L${_LIBDIR}"
         _OS_CONFIGURE_FLAGS=(--host="${_TARGET_TRIPLE}" --target="${_TARGET_TRIPLE}")
         _CONF_STATIC=(--enable-static --enable-shared)

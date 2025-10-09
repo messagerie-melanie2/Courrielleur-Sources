@@ -7,14 +7,15 @@
 #include "nsString.h"
 #include "nsAbOSXCard.h"
 #include "nsMemory.h"
-#include "mozilla/ArrayUtils.h"
 using namespace mozilla;
 
 #include <AddressBook/AddressBook.h>
-#define kABDepartmentProperty (kABDepartmentProperty ? kABDepartmentProperty : @"ABDepartment")
+#define kABDepartmentProperty \
+  (kABDepartmentProperty ? kABDepartmentProperty : @"ABDepartment")
 
 NSString* WrapString(const nsString& aString) {
-  unichar* chars = reinterpret_cast<unichar*>(const_cast<char16_t*>(aString.get()));
+  unichar* chars =
+      reinterpret_cast<unichar*>(const_cast<char16_t*>(aString.get()));
 
   return [NSString stringWithCharacters:chars length:aString.Length()];
 }
@@ -51,12 +52,10 @@ void AppendToCString(const NSString* aString, nsCString& aResult) {
   {osx_property, osx_label, osx_key, #moz_name},
 
 // clang-format off
-const nsAbOSXPropertyMap nsAbOSXUtils::kPropertyMap[] = {
+MOZ_RUNINIT const nsAbOSXPropertyMap nsAbOSXUtils::kPropertyMap[] = {
     DEFINE_PROPERTY(FirstName, kABFirstNameProperty, nil, nil)
     DEFINE_PROPERTY(LastName, kABLastNameProperty, nil, nil)
     DONT_MAP("DisplayName", nil, nil, nil)
-    DEFINE_PROPERTY(PhoneticFirstName, kABFirstNamePhoneticProperty, nil, nil)
-    DEFINE_PROPERTY(PhoneticLastName, kABLastNamePhoneticProperty, nil, nil)
     DEFINE_PROPERTY(NickName, kABNicknameProperty, nil, nil)
     DONT_MAP(PrimaryEmail, kABEmailProperty, nil, nil)
     DONT_MAP(SecondEmail, kABEmailProperty, nil, nil)
@@ -104,4 +103,5 @@ const nsAbOSXPropertyMap nsAbOSXUtils::kPropertyMap[] = {
 };
 // clang-format on
 
-const uint32_t nsAbOSXUtils::kPropertyMapSize = ArrayLength(nsAbOSXUtils::kPropertyMap);
+const uint32_t nsAbOSXUtils::kPropertyMapSize =
+    std::size(nsAbOSXUtils::kPropertyMap);

@@ -21,12 +21,14 @@
 
 #include "intgemm/IntegerGemmIntrinsic.h"
 #include "jit/IonTypes.h"
-#include "wasm/WasmIntrinsicGenerated.h"
+#include "wasm/WasmBuiltinModuleGenerated.h"
 
 namespace js {
+class JitFrameIter;
 namespace jit {
+class AutoMarkJitCodeWritableForThread;
 struct ResumeFromException;
-}
+}  // namespace jit
 namespace wasm {
 
 class WasmFrameIter;
@@ -68,7 +70,10 @@ enum class SymbolicAddress {
   LogD,
   PowD,
   ATan2D,
+  ArrayMemMove,
+  ArrayRefsMove,
   HandleDebugTrap,
+  HandleRequestTierUp,
   HandleThrow,
   HandleTrap,
   ReportV128JSCall,
@@ -105,6 +110,7 @@ enum class SymbolicAddress {
   MemCopySharedM32,
   MemCopyM64,
   MemCopySharedM64,
+  MemCopyAny,
   DataDrop,
   MemFillM32,
   MemFillSharedM32,
@@ -125,23 +131,31 @@ enum class SymbolicAddress {
   TableSet,
   TableSize,
   RefFunc,
-  PostBarrier,
-  PostBarrierPrecise,
-  PostBarrierPreciseWithOffset,
+  PostBarrierEdge,
+  PostBarrierEdgePrecise,
+  PostBarrierWholeCell,
   ExceptionNew,
   ThrowException,
-  StructNew,
-  StructNewUninit,
-  ArrayNew,
-  ArrayNewUninit,
+  StructNewIL_true,
+  StructNewIL_false,
+  StructNewOOL_true,
+  StructNewOOL_false,
+  ArrayNew_true,
+  ArrayNew_false,
   ArrayNewData,
   ArrayNewElem,
+  ArrayInitData,
+  ArrayInitElem,
   ArrayCopy,
-#define DECL_INTRINSIC_SA(op, export, sa_name, abitype, entry, idx) sa_name,
-  FOR_EACH_INTRINSIC(DECL_INTRINSIC_SA)
-#undef DECL_INTRINSIC_SA
+  SlotsToAllocKindBytesTable,
+#define VISIT_BUILTIN_FUNC(op, export, sa_name, ...) sa_name,
+  FOR_EACH_BUILTIN_MODULE_FUNC(VISIT_BUILTIN_FUNC)
+#undef VISIT_BUILTIN_FUNC
+#ifdef ENABLE_WASM_JSPI
+      UpdateSuspenderState,
+#endif
 #ifdef WASM_CODEGEN_DEBUG
-      PrintI32,
+  PrintI32,
   PrintPtr,
   PrintF32,
   PrintF64,
@@ -158,6 +172,7 @@ enum class SymbolicAddress {
 enum class FailureMode : uint8_t {
   Infallible,
   FailOnNegI32,
+  FailOnMaxI32,
   FailOnNullPtr,
   FailOnInvalidRef
 };
@@ -222,6 +237,8 @@ extern const SymbolicAddressSignature SASigExpD;
 extern const SymbolicAddressSignature SASigLogD;
 extern const SymbolicAddressSignature SASigPowD;
 extern const SymbolicAddressSignature SASigATan2D;
+extern const SymbolicAddressSignature SASigArrayMemMove;
+extern const SymbolicAddressSignature SASigArrayRefsMove;
 extern const SymbolicAddressSignature SASigMemoryGrowM32;
 extern const SymbolicAddressSignature SASigMemoryGrowM64;
 extern const SymbolicAddressSignature SASigMemorySizeM32;
@@ -236,6 +253,7 @@ extern const SymbolicAddressSignature SASigMemCopyM32;
 extern const SymbolicAddressSignature SASigMemCopySharedM32;
 extern const SymbolicAddressSignature SASigMemCopyM64;
 extern const SymbolicAddressSignature SASigMemCopySharedM64;
+extern const SymbolicAddressSignature SASigMemCopyAny;
 extern const SymbolicAddressSignature SASigDataDrop;
 extern const SymbolicAddressSignature SASigMemFillM32;
 extern const SymbolicAddressSignature SASigMemFillSharedM32;
@@ -256,22 +274,27 @@ extern const SymbolicAddressSignature SASigTableInit;
 extern const SymbolicAddressSignature SASigTableSet;
 extern const SymbolicAddressSignature SASigTableSize;
 extern const SymbolicAddressSignature SASigRefFunc;
-extern const SymbolicAddressSignature SASigPostBarrier;
-extern const SymbolicAddressSignature SASigPostBarrierPrecise;
-extern const SymbolicAddressSignature SASigPostBarrierPreciseWithOffset;
+extern const SymbolicAddressSignature SASigPostBarrierEdge;
+extern const SymbolicAddressSignature SASigPostBarrierEdgePrecise;
+extern const SymbolicAddressSignature SASigPostBarrierWholeCell;
 extern const SymbolicAddressSignature SASigExceptionNew;
 extern const SymbolicAddressSignature SASigThrowException;
-extern const SymbolicAddressSignature SASigStructNew;
-extern const SymbolicAddressSignature SASigStructNewUninit;
-extern const SymbolicAddressSignature SASigArrayNew;
-extern const SymbolicAddressSignature SASigArrayNewUninit;
+extern const SymbolicAddressSignature SASigStructNewIL_true;
+extern const SymbolicAddressSignature SASigStructNewIL_false;
+extern const SymbolicAddressSignature SASigStructNewOOL_true;
+extern const SymbolicAddressSignature SASigStructNewOOL_false;
+extern const SymbolicAddressSignature SASigArrayNew_true;
+extern const SymbolicAddressSignature SASigArrayNew_false;
 extern const SymbolicAddressSignature SASigArrayNewData;
 extern const SymbolicAddressSignature SASigArrayNewElem;
+extern const SymbolicAddressSignature SASigArrayInitData;
+extern const SymbolicAddressSignature SASigArrayInitElem;
 extern const SymbolicAddressSignature SASigArrayCopy;
-#define EXT_INTR_SA_DECL(op, export, sa_name, abitype, entry, idx) \
+extern const SymbolicAddressSignature SASigUpdateSuspenderState;
+#define VISIT_BUILTIN_FUNC(op, export, sa_name, ...) \
   extern const SymbolicAddressSignature SASig##sa_name;
-FOR_EACH_INTRINSIC(EXT_INTR_SA_DECL)
-#undef EXT_INTR_SA_DECL
+FOR_EACH_BUILTIN_MODULE_FUNC(VISIT_BUILTIN_FUNC)
+#undef VISIT_BUILTIN_FUNC
 
 bool IsRoundingFunction(SymbolicAddress callee, jit::RoundingMode* mode);
 
@@ -287,7 +310,7 @@ bool NeedsBuiltinThunk(SymbolicAddress sym);
 // CodeRange is relative to.
 
 bool LookupBuiltinThunk(void* pc, const CodeRange** codeRange,
-                        uint8_t** codeBase);
+                        const uint8_t** codeBase);
 
 // EnsureBuiltinThunksInitialized() must be called, and must succeed, before
 // SymbolicAddressTarget() or MaybeGetBuiltinThunk(). This function creates all
@@ -296,9 +319,11 @@ bool LookupBuiltinThunk(void* pc, const CodeRange** codeRange,
 // executable code has been released.
 
 bool EnsureBuiltinThunksInitialized();
+bool EnsureBuiltinThunksInitialized(
+    jit::AutoMarkJitCodeWritableForThread& writable);
 
-bool HandleThrow(JSContext* cx, WasmFrameIter& iter,
-                 jit::ResumeFromException* rfe);
+void HandleExceptionWasm(JSContext* cx, JitFrameIter& iter,
+                         jit::ResumeFromException* rfe);
 
 void* SymbolicAddressTarget(SymbolicAddress sym);
 

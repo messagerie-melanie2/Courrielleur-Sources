@@ -10,7 +10,7 @@
 
 #include "api/peer_connection_interface.h"
 
-#include <utility>
+#include "pc/media_factory.h"
 
 namespace webrtc {
 
@@ -45,64 +45,28 @@ PeerConnectionDependencies::PeerConnectionDependencies(
     PeerConnectionObserver* observer_in)
     : observer(observer_in) {}
 
+// TODO(bugs.webrtc.org/12598: remove pragma once async_resolver_factory
+// is removed from PeerConnectionDependencies
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 PeerConnectionDependencies::PeerConnectionDependencies(
     PeerConnectionDependencies&&) = default;
+#pragma clang diagnostic pop
 
 PeerConnectionDependencies::~PeerConnectionDependencies() = default;
 
 PeerConnectionFactoryDependencies::PeerConnectionFactoryDependencies() =
     default;
 
+// TODO: bugs.webrtc.org/369904700 - remove pragma once `audio_processing`
+// is removed from PeerConnectionFactoryDependencies.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 PeerConnectionFactoryDependencies::PeerConnectionFactoryDependencies(
     PeerConnectionFactoryDependencies&&) = default;
+#pragma clang diagnostic pop
 
 PeerConnectionFactoryDependencies::~PeerConnectionFactoryDependencies() =
     default;
-
-rtc::scoped_refptr<PeerConnectionInterface>
-PeerConnectionFactoryInterface::CreatePeerConnection(
-    const PeerConnectionInterface::RTCConfiguration& configuration,
-    std::unique_ptr<cricket::PortAllocator> allocator,
-    std::unique_ptr<rtc::RTCCertificateGeneratorInterface> cert_generator,
-    PeerConnectionObserver* observer) {
-  PeerConnectionDependencies dependencies(observer);
-  dependencies.allocator = std::move(allocator);
-  dependencies.cert_generator = std::move(cert_generator);
-  auto result =
-      CreatePeerConnectionOrError(configuration, std::move(dependencies));
-  if (!result.ok()) {
-    return nullptr;
-  }
-  return result.MoveValue();
-}
-
-rtc::scoped_refptr<PeerConnectionInterface>
-PeerConnectionFactoryInterface::CreatePeerConnection(
-    const PeerConnectionInterface::RTCConfiguration& configuration,
-    PeerConnectionDependencies dependencies) {
-  auto result =
-      CreatePeerConnectionOrError(configuration, std::move(dependencies));
-  if (!result.ok()) {
-    return nullptr;
-  }
-  return result.MoveValue();
-}
-
-RTCErrorOr<rtc::scoped_refptr<PeerConnectionInterface>>
-PeerConnectionFactoryInterface::CreatePeerConnectionOrError(
-    const PeerConnectionInterface::RTCConfiguration& configuration,
-    PeerConnectionDependencies dependencies) {
-  return RTCError(RTCErrorType::INTERNAL_ERROR);
-}
-
-RtpCapabilities PeerConnectionFactoryInterface::GetRtpSenderCapabilities(
-    cricket::MediaType kind) const {
-  return {};
-}
-
-RtpCapabilities PeerConnectionFactoryInterface::GetRtpReceiverCapabilities(
-    cricket::MediaType kind) const {
-  return {};
-}
 
 }  // namespace webrtc

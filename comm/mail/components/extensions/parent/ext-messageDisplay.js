@@ -2,20 +2,30 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { MailConsts } = ChromeUtils.import("resource:///modules/MailConsts.jsm");
-var { MailUtils } = ChromeUtils.import("resource:///modules/MailUtils.jsm");
+var { MailConsts } = ChromeUtils.importESModule(
+  "resource:///modules/MailConsts.sys.mjs"
+);
+var { MailUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailUtils.sys.mjs"
+);
+var { getMsgStreamUrl } = ChromeUtils.importESModule(
+  "resource:///modules/ExtensionMessages.sys.mjs"
+);
+var { getActualSelectedMessages } = ChromeUtils.importESModule(
+  "resource:///modules/ExtensionMailTabs.sys.mjs"
+);
 
 /**
  * Returns the currently displayed messages in the given tab.
  *
  * @param {Tab} tab
- * @returns {nsIMsgHdr[]} Array of nsIMsgHdr
+ * @returns {nsIMsgDBHdr[]} Array of nsIMsgDBHdr
  */
 function getDisplayedMessages(tab) {
-  let nativeTab = tab.nativeTab;
+  const nativeTab = tab.nativeTab;
   if (tab instanceof TabmailTab) {
     if (nativeTab.mode.name == "mail3PaneTab") {
-      return nativeTab.chromeBrowser.contentWindow.gDBView.getSelectedMsgHdrs();
+      return getActualSelectedMessages(nativeTab.chromeBrowser.contentWindow);
     } else if (nativeTab.mode.name == "mailMessageTab") {
       return [nativeTab.chromeBrowser.contentWindow.gMessage];
     }
@@ -26,18 +36,18 @@ function getDisplayedMessages(tab) {
 }
 
 /**
- * Wrapper to convert multiple nsIMsgHdr to MessageHeader objects.
+ * Wrapper to convert multiple nsIMsgDBHdr to MessageHeader objects.
  *
- * @param {nsIMsgHdr[]} Array of nsIMsgHdr
+ * @param {nsIMsgDBHdr[]} messages - Array of nsIMsgDBHdr
  * @param {ExtensionData} extension
  * @returns {MessageHeader[]} Array of MessageHeader objects
  *
  * @see /mail/components/extensions/schemas/messages.json
  */
 function convertMessages(messages, extension) {
-  let result = [];
-  for (let msg of messages) {
-    let hdr = convertMessage(msg, extension);
+  const result = [];
+  for (const msg of messages) {
+    const hdr = extension.messageManager.convert(msg);
     if (hdr) {
       result.push(hdr);
     }
@@ -48,10 +58,10 @@ function convertMessages(messages, extension) {
 /**
  * Check the users preference on opening new messages in tabs or windows.
  *
- * @returns {string} - either "tab" or "window"
+ * @returns {"tab"|"window"} - Either "tab" or "window".
  */
 function getDefaultMessageOpenLocation() {
-  let pref = Services.prefs.getIntPref("mail.openMessageBehavior");
+  const pref = Services.prefs.getIntPref("mail.openMessageBehavior");
   return pref == MailConsts.OpenMessageBehavior.NEW_TAB ? "tab" : "window";
 }
 
@@ -60,12 +70,13 @@ function getDefaultMessageOpenLocation() {
  * can be specified via properties.headerMessageId or properties.messageId.
  *
  * @param {object} properties - @see mail/components/extensions/schemas/messageDisplay.json
+ * @param {ExtensionData} extension
  * @throws ExtensionError if an unknown message has been specified
- * @returns {nsIMsgHdr} the requested msgHdr
+ * @returns {nsIMsgDBHdr} the requested msgHdr
  */
-function getMsgHdr(properties) {
+function getMsgHdr(properties, extension) {
   if (properties.headerMessageId) {
-    let msgHdr = MailUtils.getMsgHdrForMsgId(properties.headerMessageId);
+    const msgHdr = MailUtils.getMsgHdrForMsgId(properties.headerMessageId);
     if (!msgHdr) {
       throw new ExtensionError(
         `Unknown or invalid headerMessageId: ${properties.headerMessageId}.`
@@ -73,7 +84,7 @@ function getMsgHdr(properties) {
     }
     return msgHdr;
   }
-  let msgHdr = messageTracker.getMessage(properties.messageId);
+  const msgHdr = extension.messageManager.get(properties.messageId);
   if (!msgHdr) {
     throw new ExtensionError(
       `Unknown or invalid messageId: ${properties.messageId}.`
@@ -88,18 +99,21 @@ this.messageDisplay = class extends ExtensionAPIPersistent {
     // available after fire.wakeup() has fulfilled (ensuring the convert() function
     // has been called).
 
-    onMessageDisplayed({ context, fire }) {
+    onMessageDisplayed({ fire }) {
       const { extension } = this;
-      const { tabManager } = extension;
-      let listener = {
+      const { tabManager, messageManager } = extension;
+      const listener = {
         async handleEvent(event) {
           if (fire.wakeup) {
             await fire.wakeup();
           }
           // `event.target` is an about:message window.
-          let nativeTab = event.target.tabOrWindow;
-          let tab = tabManager.wrapTab(nativeTab);
-          let msg = convertMessage(event.detail, extension);
+          const nativeTab = event.target.tabOrWindow;
+          const tab = tabManager.wrapTab(nativeTab);
+          const msg = messageManager.convert(event.detail);
+          if (!msg) {
+            return;
+          }
           fire.async(tab.convert(), msg);
         },
       };
@@ -108,25 +122,30 @@ this.messageDisplay = class extends ExtensionAPIPersistent {
         unregister: () => {
           windowTracker.removeListener("MsgLoaded", listener);
         },
-        convert(newFire, extContext) {
+        convert(newFire) {
           fire = newFire;
-          context = extContext;
         },
       };
     },
-    onMessagesDisplayed({ context, fire }) {
+    onMessagesDisplayed({ fire }) {
       const { extension } = this;
       const { tabManager } = extension;
-      let listener = {
+      const listener = {
         async handleEvent(event) {
           if (fire.wakeup) {
             await fire.wakeup();
           }
-          // `event.target` is an about:message or about:3pane window.
-          let nativeTab = event.target.tabOrWindow;
-          let tab = tabManager.wrapTab(nativeTab);
-          let msgs = getDisplayedMessages(tab);
-          fire.async(tab.convert(), convertMessages(msgs, extension));
+          // `event.target` is an about:message window or a MessagePane.
+          const nativeTab =
+            event.target.tabOrWindow || event.target.ownerGlobal.tabOrWindow;
+          const tab = tabManager.wrapTab(nativeTab);
+          const msgs = getDisplayedMessages(tab);
+          if (extension.manifestVersion < 3) {
+            fire.async(tab.convert(), convertMessages(msgs, extension));
+          } else {
+            const page = await messageListTracker.startList(msgs, extension);
+            fire.async(tab.convert(), page);
+          }
         },
       };
       windowTracker.addListener("MsgsLoaded", listener);
@@ -134,9 +153,8 @@ this.messageDisplay = class extends ExtensionAPIPersistent {
         unregister: () => {
           windowTracker.removeListener("MsgsLoaded", listener);
         },
-        convert(newFire, extContext) {
+        convert(newFire) {
           fire = newFire;
-          context = extContext;
         },
       };
     },
@@ -153,28 +171,34 @@ this.messageDisplay = class extends ExtensionAPIPersistent {
      */
     async function getMessageDisplayTab(tabId) {
       let msgContentWindow;
-      let tab = tabManager.get(tabId);
+      const tab = tabId
+        ? tabManager.get(tabId)
+        : tabManager.wrapTab(tabTracker.activeTab);
       if (tab?.type == "mail") {
+        const contentWindow = tab.nativeTab.chromeBrowser.contentWindow;
+        if (!contentWindow) {
+          return null;
+        }
+        await contentWindow.hasDOMContentLoaded.promise;
+
         // In about:3pane only the messageBrowser needs to be checked for its
         // load state. The webBrowser is invalid, the multiMessageBrowser can
         // bypass.
-        if (!tab.nativeTab.chromeBrowser.contentWindow.webBrowser.hidden) {
+        if (!contentWindow.webBrowser.hidden) {
           return null;
         }
-        if (
-          !tab.nativeTab.chromeBrowser.contentWindow.multiMessageBrowser.hidden
-        ) {
+        if (contentWindow.messagePane.isMultiMessageBrowserVisible()) {
           return tab;
         }
-        msgContentWindow =
-          tab.nativeTab.chromeBrowser.contentWindow.messageBrowser
-            .contentWindow;
+        msgContentWindow = contentWindow.messageBrowser.contentWindow;
       } else if (tab?.type == "messageDisplay") {
         msgContentWindow =
           tab instanceof TabmailTab
             ? tab.nativeTab.chromeBrowser.contentWindow
             : tab.nativeTab.messageBrowser.contentWindow;
-      } else {
+      }
+
+      if (!msgContentWindow) {
         return null;
       }
 
@@ -227,8 +251,8 @@ this.messageDisplay = class extends ExtensionAPIPersistent {
       return msgContentWindow.gMessage ? tab : null;
     }
 
-    let { extension } = context;
-    let { tabManager } = extension;
+    const { extension } = context;
+    const { tabManager } = extension;
     return {
       messageDisplay: {
         onMessageDisplayed: new EventManager({
@@ -244,23 +268,22 @@ this.messageDisplay = class extends ExtensionAPIPersistent {
           extensionApi: this,
         }).api(),
         async getDisplayedMessage(tabId) {
-          let tab = await getMessageDisplayTab(tabId);
+          const tab = await getMessageDisplayTab(tabId);
           if (!tab) {
             return null;
           }
-          let messages = getDisplayedMessages(tab);
+          const messages = getDisplayedMessages(tab);
           if (messages.length != 1) {
             return null;
           }
-          return convertMessage(messages[0], extension);
+          return extension.messageManager.convert(messages[0]);
         },
         async getDisplayedMessages(tabId) {
-          let tab = await getMessageDisplayTab(tabId);
-          if (!tab) {
-            return [];
-          }
-          let messages = getDisplayedMessages(tab);
-          return convertMessages(messages, extension);
+          const tab = await getMessageDisplayTab(tabId);
+          const messages = tab ? getDisplayedMessages(tab) : [];
+          return extension.manifestVersion < 3
+            ? convertMessages(messages, extension)
+            : messageListTracker.startList(messages, extension);
         },
         async open(properties) {
           if (
@@ -276,40 +299,29 @@ this.messageDisplay = class extends ExtensionAPIPersistent {
 
           let messageURI;
           if (properties.file) {
-            let realFile = await getRealFileForFile(properties.file);
+            const realFile = await getRealFileForFile(properties.file);
             messageURI = Services.io
               .newFileURI(realFile)
               .mutate()
               .setQuery("type=application/x-message-display")
               .finalize().spec;
           } else {
-            let msgHdr = getMsgHdr(properties);
-            if (msgHdr.folder) {
-              messageURI = msgHdr.folder.getUriForMsg(msgHdr);
-            } else {
-              // Add the application/x-message-display type to the url, if missing.
-              // The slash is escaped when setting the type via searchParams, but
-              // core code needs it unescaped.
-              let url = new URL(msgHdr.getStringProperty("dummyMsgUrl"));
-              url.searchParams.delete("type");
-              messageURI = `${url.href}${
-                url.searchParams.toString() ? "&" : "?"
-              }type=application/x-message-display`;
-            }
+            const msgHdr = getMsgHdr(properties, extension);
+            messageURI = getMsgStreamUrl(msgHdr);
           }
 
           let tab;
           switch (properties.location || getDefaultMessageOpenLocation()) {
             case "tab":
               {
-                let normalWindow = await getNormalWindowReady(
+                const normalWindow = await getNormalWindowReady(
                   context,
                   properties.windowId
                 );
-                let active = properties.active ?? true;
-                let tabmail = normalWindow.document.getElementById("tabmail");
-                let currentTab = tabmail.selectedTab;
-                let nativeTabInfo = tabmail.openTab("mailMessageTab", {
+                const active = properties.active ?? true;
+                const tabmail = normalWindow.document.getElementById("tabmail");
+                const currentTab = tabmail.selectedTab;
+                const nativeTabInfo = tabmail.openTab("mailMessageTab", {
                   messageURI,
                   background: !active,
                 });
@@ -327,10 +339,11 @@ this.messageDisplay = class extends ExtensionAPIPersistent {
             case "window":
               {
                 // Handle window location.
-                let topNormalWindow = await getNormalWindowReady();
-                let messageWindow = topNormalWindow.MsgOpenNewWindowForMessage(
-                  Services.io.newURI(messageURI)
-                );
+                const topNormalWindow = await getNormalWindowReady();
+                const messageWindow =
+                  topNormalWindow.MsgOpenNewWindowForMessage(
+                    Services.io.newURI(messageURI)
+                  );
                 await new Promise(resolve =>
                   messageWindow.addEventListener("MsgLoaded", resolve, {
                     once: true,

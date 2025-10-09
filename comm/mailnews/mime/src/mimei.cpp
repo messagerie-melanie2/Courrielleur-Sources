@@ -13,10 +13,11 @@
  */
 
 // clang-format off
+#include "mimehdrs.h"
 #include "nsCOMPtr.h"
 #include "mimeobj.h"   /*  MimeObject (abstract) */
 #include "mimecont.h"  /*   |--- MimeContainer (abstract) */
-#include "mimemult.h"  /*   |     |--- MimeMultipart (abstract) */
+/*                          |     |--- MimeMultipart (abstract) */
 #include "mimemmix.h"  /*   |     |     |--- MimeMultipartMixed */
 #include "mimemdig.h"  /*   |     |     |--- MimeMultipartDigest */
 #include "mimempar.h"  /*   |     |     |--- MimeMultipartParallel */
@@ -24,17 +25,18 @@
 #include "mimemrel.h"  /*   |     |     |--- MimeMultipartRelated */
 #include "mimemapl.h"  /*   |     |     |--- MimeMultipartAppleDouble */
 #include "mimesun.h"   /*   |     |     |--- MimeSunAttachment */
-#include "mimemsig.h"  /*   |     |     |--- MimeMultipartSigned (abstract)*/
+/*                          |     |     |--- MimeMultipartSigned (abstract)*/
+#include "nsMailHeaders.h"
 #ifdef ENABLE_SMIME
 #include "mimemcms.h"  /*   |     |           |---MimeMultipartSignedCMS */
 #endif
-#include "mimecryp.h"  /*   |     |--- MimeEncrypted (abstract) */
+/*                          |     |--- MimeEncrypted (abstract) */
 #ifdef ENABLE_SMIME
 #include "mimecms.h"   /*   |     |     |--- MimeEncryptedPKCS7 */
 #endif
 #include "mimemsg.h"   /*   |     |--- MimeMessage */
 #include "mimeunty.h"  /*   |     |--- MimeUntypedText */
-#include "mimeleaf.h"  /*   |--- MimeLeaf (abstract) */
+/*                          |--- MimeLeaf (abstract) */
 #include "mimetext.h"  /*   |     |--- MimeInlineText (abstract) */
 #include "mimetpla.h"  /*   |     |     |--- MimeInlineTextPlain */
 #include "mimethpl.h"  /*   |     |     |     |--- M.I.TextHTMLAsPlaintext */
@@ -58,11 +60,9 @@
 #include "prlink.h"
 #include "prprf.h"
 #include "mimecth.h"
-#include "mimebuf.h"
 #include "mimemoz2.h"
 #include "nsIMimeContentTypeHandler.h"
 #include "nsICategoryManager.h"
-#include "nsCategoryManagerUtils.h"
 #include "nsXPCOMCID.h"
 #include "nsISimpleMimeConverter.h"
 #include "nsSimpleMimeConverterStub.h"
@@ -71,7 +71,6 @@
 #include "nsMimeTypes.h"
 #include "nsMsgUtils.h"
 #include "nsIPrefBranch.h"
-#include "mozilla/Preferences.h"
 #include "imgLoader.h"
 
 #include "nsIMsgMailNewsUrl.h"
@@ -228,7 +227,10 @@ MimeObject* mime_new(MimeObjectClass* clazz, MimeHeaders* hdrs,
   }
 
   object = (MimeObject*)PR_MALLOC(size);
-  if (!object) return 0;
+  if (!object) {
+    PR_Free(hdrs);
+    return 0;
+  }
 
   memset(object, 0, size);
   object->clazz = clazz;
@@ -249,17 +251,7 @@ MimeObject* mime_new(MimeObjectClass* clazz, MimeHeaders* hdrs,
 }
 
 void mime_free(MimeObject* object) {
-#ifdef DEBUG__
-  int i, size = object->clazz->instance_size;
-  uint32_t* array = (uint32_t*)object;
-#endif /* DEBUG */
-
   object->clazz->finalize(object);
-
-#ifdef DEBUG__
-  for (i = 0; i < (size / sizeof(*array)); i++) array[i] = (uint32_t)0xDEADBEEF;
-#endif /* DEBUG */
-
   PR_Free(object);
 }
 
@@ -294,7 +286,7 @@ bool mime_is_allowed_class(const MimeObjectClass* clazz,
             clazz == (MimeObjectClass*)&mimeMultipartAppleDoubleClass ||
             clazz == (MimeObjectClass*)&mimeMessageClass ||
             clazz == (MimeObjectClass*)&mimeExternalObjectClass ||
-    /*    mimeUntypedTextClass? -- does uuencode */
+  /*    mimeUntypedTextClass? -- does uuencode */
 #ifdef ENABLE_SMIME
             clazz == (MimeObjectClass*)&mimeMultipartSignedCMSClass ||
             clazz == (MimeObjectClass*)&mimeEncryptedCMSClass ||
@@ -321,8 +313,14 @@ void getMsgHdrForCurrentURL(MimeDisplayOptions* opts, nsIMsgDBHdr** aMsgHdr) {
 
   if (!opts) return;
 
-  mime_stream_data* msd = (mime_stream_data*)(opts->stream_closure);
-  if (!msd) return;
+  if (!opts->stream_closure) return;
+
+  mime_stream_data* msd = opts->stream_closure.IsMimeDraftData()
+                              ? nullptr
+                              : opts->stream_closure.AsMimeStreamData();
+  if (!msd) {
+    return;
+  }
 
   nsCOMPtr<nsIChannel> channel =
       msd->channel;  // note the lack of ref counting...
@@ -350,7 +348,9 @@ void getMsgHdrForCurrentURL(MimeDisplayOptions* opts, nsIMsgDBHdr** aMsgHdr) {
 }
 
 MimeObjectClass* mime_find_class(const char* content_type, MimeHeaders* hdrs,
-                                 MimeDisplayOptions* opts, bool exact_match_p) {
+                                 MimeDisplayOptions* opts, bool exact_match_p,
+                                 const char* parent_address,
+                                 const char* parent_type) {
   MimeObjectClass* clazz = 0;
   MimeObjectClass* tempClass = 0;
   contentTypeHandlerInitStruct ctHandlerInfo;
@@ -407,8 +407,8 @@ MimeObjectClass* mime_find_class(const char* content_type, MimeHeaders* hdrs,
       (void)msgHdr->GetStringProperty("junkscore", junkScoreStr);
       if (html_as == 0 && junkScoreStr.get() && atoi(junkScoreStr.get()) > 50)
         html_as = 3;  // 3 == Simple HTML
-    }                 // if msgHdr
-  }                   // if we are supposed to sanitize junk mail
+    }  // if msgHdr
+  }  // if we are supposed to sanitize junk mail
 
   /*
    * What we do first is check for an external content handler plugin.
@@ -430,11 +430,14 @@ MimeObjectClass* mime_find_class(const char* content_type, MimeHeaders* hdrs,
         char* imip_method = MimeHeaders_get_parameter(
             full_content_type, "method", nullptr, nullptr);
 
-        mime_stream_data* msd = (mime_stream_data*)(opts->stream_closure);
-        nsCOMPtr<nsIMailChannel> mailChannel = do_QueryInterface(msd->channel);
-        if (mailChannel) {
-          mailChannel->SetImipMethod(
-              nsCString(imip_method ? imip_method : "nomethod"));
+        mime_stream_data* msd = opts->stream_closure.AsMimeStreamData();
+        if (msd) {
+          nsCOMPtr<nsIMailChannel> mailChannel =
+              do_QueryInterface(msd->channel);
+          if (mailChannel) {
+            mailChannel->SetImipMethod(
+                nsDependentCString(imip_method ? imip_method : "nomethod"));
+          }
         }
 
         // PR_Free checks for null
@@ -672,20 +675,27 @@ MimeObjectClass* mime_find_class(const char* content_type, MimeHeaders* hdrs,
     else if (!PL_strcasecmp(content_type, APPLICATION_XPKCS7_MIME) ||
              !PL_strcasecmp(content_type, APPLICATION_PKCS7_MIME)) {
 
-      if (opts->is_child) {
-        // We do not allow encrypted parts except as top level.
+      char* ct = hdrs ? MimeHeaders_get(hdrs, HEADER_CONTENT_TYPE, false, false)
+                      : nullptr;
+      char* st =
+          ct ? MimeHeaders_get_parameter(ct, "smime-type", nullptr, nullptr)
+             : nullptr;
+
+      bool ignoreTopSignedPart =
+          parent_address && parent_type && st &&
+          !PL_strcasecmp(parent_address, "1") &&
+          !PL_strcasecmp(parent_type, "multipart/signed") &&
+          !PL_strcasecmp(st, "enveloped-data");
+
+      if (opts->is_child && !ignoreTopSignedPart) {
+        // We usually require that encrypted parts are at the top level
+        // (except when the encryption layer is the second layer,
+        // and the top layer is a signature).
         // Allowing them would leak the plain text in case the part is
         // cleverly hidden and the decrypted content gets included in
         // replies and forwards.
         clazz = (MimeObjectClass*)&mimeSuppressedCryptoClass;
       } else {
-        char* ct =
-            hdrs ? MimeHeaders_get(hdrs, HEADER_CONTENT_TYPE, false, false)
-                 : nullptr;
-        char* st =
-            ct ? MimeHeaders_get_parameter(ct, "smime-type", nullptr, nullptr)
-               : nullptr;
-
         /* by default, assume that it is an encrypted message */
         clazz = (MimeObjectClass*)&mimeEncryptedCMSClass;
 
@@ -712,9 +722,9 @@ MimeObjectClass* mime_find_class(const char* content_type, MimeHeaders* hdrs,
           }
           PR_Free(name);
         }
-        PR_Free(st);
-        PR_Free(ct);
       }
+      PR_Free(st);
+      PR_Free(ct);
     }
 #endif
     /* A few types which occur in the real world and which we would otherwise
@@ -766,7 +776,9 @@ MimeObjectClass* mime_find_class(const char* content_type, MimeHeaders* hdrs,
 
 MimeObject* mime_create(const char* content_type, MimeHeaders* hdrs,
                         MimeDisplayOptions* opts,
-                        bool forceInline /* = false */) {
+                        bool forceInline /* = false */,
+                        const char* parent_address /* = nullptr */,
+                        const char* parent_type /* = nullptr */) {
   /* If there is no Content-Disposition header, or if the Content-Disposition
    is ``inline'', then we display the part inline (and let mime_find_class()
    decide how.)
@@ -840,7 +852,8 @@ MimeObject* mime_create(const char* content_type, MimeHeaders* hdrs,
     }
   }
 
-  clazz = mime_find_class(content_type, hdrs, opts, false);
+  clazz = mime_find_class(content_type, hdrs, opts, false, parent_address,
+                          parent_type);
 
   NS_ASSERTION(clazz, "1.1 <rhp@netscape.com> 19 Mar 1999 12:00");
   if (!clazz) goto FAIL;
@@ -1101,7 +1114,7 @@ bool mime_crypto_object_p(MimeHeaders* hdrs, bool clearsigned_counts,
   }
 
   /* It's a candidate for being a crypto object.  Let's find out for sure... */
-  clazz = mime_find_class(ct, hdrs, opts, true);
+  clazz = mime_find_class(ct, hdrs, opts, true, nullptr, nullptr);
   PR_Free(ct);
 
   if (clazz == ((MimeObjectClass*)&mimeEncryptedCMSClass)) return true;
@@ -1400,9 +1413,6 @@ int mime_parse_url_options(const char* url, MimeDisplayOptions* options) {
         memcpy(options->part_to_load, value, end - value);
         options->part_to_load[end - value] = 0;
       }
-    } else if (!PL_strncasecmp("rot13", q, name_end - q)) {
-      options->rot13_p =
-          end <= value || !PL_strncasecmp("true", value, end - value);
     } else if (!PL_strncasecmp("emitter", q, name_end - q)) {
       if ((end > value) && !PL_strncasecmp("js", value, end - value)) {
         // the js emitter needs to hear about nested message bodies
@@ -1519,11 +1529,11 @@ int mime_parse_url_options(const char* url, MimeDisplayOptions* options) {
 int MimeOptions_write(MimeHeaders* hdrs, MimeDisplayOptions* opt,
                       const char* data, int32_t length, bool user_visible_p) {
   int status = 0;
-  void* closure = 0;
+  MimeClosure closure;
   if (!opt || !opt->output_fn || !opt->state) return 0;
 
   closure = opt->output_closure;
-  if (!closure) closure = opt->stream_closure;
+  if (!closure.mClosure) closure = opt->stream_closure;
 
   //  PR_ASSERT(opt->state->first_data_written_p);
 

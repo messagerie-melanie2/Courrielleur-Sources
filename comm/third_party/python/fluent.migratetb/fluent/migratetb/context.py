@@ -1,6 +1,5 @@
-# coding=utf8
-from __future__ import unicode_literals
-from __future__ import absolute_import
+from __future__ import annotations
+from typing import List, Set, Tuple, cast
 
 import logging
 
@@ -17,9 +16,9 @@ from ._context import InternalContext
 
 
 __all__ = [
-    'EmptyLocalizationError',
-    'UnreadableReferenceError',
-    'MigrationContext',
+    "EmptyLocalizationError",
+    "UnreadableReferenceError",
+    "MigrationContext",
 ]
 
 
@@ -52,23 +51,31 @@ class MigrationContext(InternalContext):
     """
 
     def __init__(
-        self, locale, reference_dir, localization_dir, enforce_translated=False
+        self,
+        locale: str,
+        reference_dir: str,
+        localization_dir: str,
+        enforce_translated=False,
     ):
-        super(MigrationContext, self).__init__(
-            locale, reference_dir, localization_dir,
-            enforce_translated=enforce_translated
+        super().__init__(
+            locale,
+            enforce_translated=enforce_translated,
         )
         self.locale = locale
         # Paths to directories with input data, relative to CWD.
         self.reference_dir = reference_dir
         self.localization_dir = localization_dir
 
-        # A dict whose keys are `(path, key)` tuples corresponding to target
-        # FTL translations, and values are sets of `(path, key)` tuples
-        # corresponding to localized entities which will be migrated.
         self.dependencies = {}
+        """
+        A dict whose keys are `(path, key)` tuples corresponding to target
+        FTL translations, and values are sets of `(path, key)` tuples
+        corresponding to localized entities which will be migrated.
+        """
 
-    def add_transforms(self, target, reference, transforms):
+    def add_transforms(
+        self, target: str, reference: str, transforms: List[FTL.Message | FTL.Term]
+    ):
         """Define transforms for target using reference as template.
 
         `target` is a path of the destination FTL file relative to the
@@ -86,6 +93,7 @@ class MigrationContext(InternalContext):
         For transforms that merely copy legacy messages or Fluent patterns,
         using `fluent.migratetb.helpers.transforms_from` is recommended.
         """
+
         def get_sources(acc, cur):
             if isinstance(cur, Source):
                 acc.add((cur.path, cur.key))
@@ -97,18 +105,16 @@ class MigrationContext(InternalContext):
             reference_ast = self.reference_resources.get(target)
             if reference_ast is None:
                 reference_ast = FTL.Resource()
-            reference_ast.body.extend(
-                skeleton(transform) for transform in transforms
-            )
+            reference_ast.body.extend(skeleton(transform) for transform in transforms)
         else:
             reference_ast = self.read_reference_ftl(reference)
         self.reference_resources[target] = reference_ast
 
         for node in transforms:
-            ident = node.id.name
+            ident = cast(str, node.id.name)
             # Scan `node` for `Source` nodes and collect the information they
             # store into a set of dependencies.
-            dependencies = fold(get_sources, node, set())
+            dependencies = cast(Set[Tuple[str, Source]], fold(get_sources, node, set()))
             # Set these sources as dependencies for the current transform.
             self.dependencies[(target, ident)] = dependencies
 
@@ -118,10 +124,12 @@ class MigrationContext(InternalContext):
             if self.reference_dir is None:
                 continue
             if get_message(reference_ast.body, ident) is None:
-                logger = logging.getLogger('migrate')
+                logger = logging.getLogger("migrate")
                 logger.warning(
                     '{} "{}" was not found in {}'.format(
-                        type(node).__name__, ident, reference))
+                        type(node).__name__, ident, reference
+                    )
+                )
 
         # Keep track of localization resource paths which were defined as
         # sources in the transforms.
@@ -131,15 +139,15 @@ class MigrationContext(InternalContext):
         # may fail but a single missing legacy resource doesn't mean that the
         # migration can't succeed.
         for dependencies in self.dependencies.values():
-            for path in set(path for path, _ in dependencies):
+            for path in {path for path, _ in dependencies}:
                 expected_paths.add(path)
                 self.maybe_add_localization(path)
 
         # However, if all legacy resources are missing, bail out early. There
         # are no translations to migrate. We'd also get errors in hg annotate.
         if len(expected_paths) > 0 and len(self.localization_resources) == 0:
-            error_message = 'No localization files were found'
-            logging.getLogger('migrate').error(error_message)
+            error_message = "No localization files were found"
+            logging.getLogger("migrate").error(error_message)
             raise EmptyLocalizationError(error_message)
 
         # Add the current transforms to any other transforms added earlier for

@@ -7,32 +7,61 @@
 // Test that shapes are updated correctly on mouse events.
 
 const TEST_URL = URL_ROOT + "doc_inspector_highlighter_cssshapes.html";
-const HIGHLIGHTER_TYPE = "ShapesHighlighter";
+const { TYPES } = ChromeUtils.importESModule(
+  "resource://devtools/shared/highlighters.mjs"
+);
+const HIGHLIGHTER_TYPE = TYPES.SHAPES;
 
-add_task(async function () {
+add_task(async function testPolygon() {
+  const config = await taskSetup();
+
+  await testPolygonMovePoint(config);
+  await testPolygonAddPoint(config);
+  await testPolygonRemovePoint(config);
+
+  config.helper.finalize();
+});
+
+add_task(async function testCircle() {
+  const config = await taskSetup();
+
+  await testCircleMoveCenter(config);
+  await testCircleWithoutPosition(config);
+
+  config.helper.finalize();
+});
+
+add_task(async function testEllipse() {
+  const config = await taskSetup();
+
+  await testEllipseMoveRadius(config);
+
+  config.helper.finalize();
+});
+
+add_task(async function testInset() {
+  const config = await taskSetup();
+
+  await testInsetMoveEdges(config);
+
+  config.helper.finalize();
+});
+
+async function taskSetup() {
   const env = await openInspectorForURL(TEST_URL);
   const helper = await getHighlighterHelperFor(HIGHLIGHTER_TYPE)(env);
   const { highlighterTestFront, inspector } = env;
   const view = selectRuleView(inspector);
   const highlighters = view.highlighters;
 
-  const config = {
+  return {
     inspector,
     view,
     highlighters,
     highlighterTestFront,
     helper,
   };
-
-  await testPolygonMovePoint(config);
-  await testPolygonAddPoint(config);
-  await testPolygonRemovePoint(config);
-  await testCircleMoveCenter(config);
-  await testEllipseMoveRadius(config);
-  await testInsetMoveEdges(config);
-
-  helper.finalize();
-});
+}
 
 async function getComputedPropertyValue(selector, property, inspector) {
   const highlightedNode = await getNodeFront(selector, inspector);
@@ -266,6 +295,91 @@ async function testCircleMoveCenter(config) {
   ok(
     definition.includes(`at ${cx + 10}% ${cy + 10}%`),
     "Circle center successfully moved"
+  );
+
+  await teardown({ selector, property, ...config });
+}
+
+async function testCircleWithoutPosition(config) {
+  const { inspector, highlighters, highlighterTestFront, helper } = config;
+  const selector = "#circle-without-position";
+  const property = "clip-path";
+
+  await setup({ selector, property, ...config });
+
+  const rx = parseFloat(
+    await highlighterTestFront.getHighlighterNodeAttribute(
+      "shapes-ellipse",
+      "rx",
+      inspector.inspectorFront.getKnownHighlighter(HIGHLIGHTER_TYPE)
+    )
+  );
+
+  const cx = parseFloat(
+    await highlighterTestFront.getHighlighterNodeAttribute(
+      "shapes-ellipse",
+      "cx",
+      inspector.inspectorFront.getKnownHighlighter(HIGHLIGHTER_TYPE)
+    )
+  );
+  const cy = parseFloat(
+    await highlighterTestFront.getHighlighterNodeAttribute(
+      "shapes-ellipse",
+      "cy",
+      inspector.inspectorFront.getKnownHighlighter(HIGHLIGHTER_TYPE)
+    )
+  );
+  const quads = await getAllAdjustedQuadsForContentPageElement(selector);
+  const { width, height } = quads.content[0].bounds;
+  const highlightedNode = await getNodeFront(selector, inspector);
+  const computedStyle =
+    await highlightedNode.inspectorFront.pageStyle.getComputed(highlightedNode);
+  const paddingTop = parseFloat(computedStyle["padding-top"].value);
+  const paddingLeft = parseFloat(computedStyle["padding-left"].value);
+  const cxPixel = paddingLeft + (width * cx) / 100;
+  const cyPixel = paddingTop + (height * cy) / 100;
+  const rxPixel = cxPixel + (width * rx) / 100;
+  const dx = width / 10;
+  const dy = height / 10;
+
+  const { mouse } = helper;
+  info("Moving circle rx");
+  let onShapeChangeApplied = highlighters.once(
+    "shapes-highlighter-changes-applied"
+  );
+  await mouse.down(rxPixel, cyPixel, selector);
+  await mouse.move(rxPixel + dx, cyPixel, selector);
+  await mouse.up(rxPixel + dx, cyPixel, selector);
+  await reflowContentPage();
+  await onShapeChangeApplied;
+
+  let definition = await getComputedPropertyValue(
+    selector,
+    property,
+    inspector
+  );
+  is(
+    definition,
+    `circle(${rx + 10}%)`,
+    "Circle without position radiuses successfully changed"
+  );
+
+  info("Moving circle center");
+  onShapeChangeApplied = highlighters.once(
+    "shapes-highlighter-changes-applied"
+  );
+  await mouse.down(cxPixel, cyPixel, selector);
+  await mouse.move(cxPixel + dx, cyPixel, selector);
+  await mouse.up(cxPixel + dx, cyPixel, selector);
+  await reflowContentPage();
+  info("Waiting for shape changes to apply");
+  await onShapeChangeApplied;
+
+  definition = await getComputedPropertyValue(selector, property, inspector);
+  is(
+    definition,
+    `circle(${rx + 10}% at ${cxPixel + dx}px ${cyPixel}px)`,
+    `Circle without position center (${cxPixel},${cyPixel}) successfully moved (${dx},${dy})`
   );
 
   await teardown({ selector, property, ...config });

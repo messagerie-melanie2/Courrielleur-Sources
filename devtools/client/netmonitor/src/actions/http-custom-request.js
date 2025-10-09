@@ -34,7 +34,7 @@ const {
  * @returns {Function}
  */
 function openHTTPCustomRequest(isOpen) {
-  return ({ dispatch, getState }) => {
+  return ({ dispatch }) => {
     dispatch({ type: OPEN_ACTION_BAR, open: isOpen });
 
     dispatch({
@@ -94,6 +94,7 @@ function sendHTTPCustomRequest(request) {
       url: request.url,
       method: request.method,
       httpVersion: request.httpVersion,
+      securityFlags: request.securityFlags,
     };
 
     if (request.requestHeaders) {

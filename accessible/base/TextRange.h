@@ -41,6 +41,20 @@ struct TextPoint final {
     return mContainer == aPoint.mContainer && mOffset == aPoint.mOffset;
   }
   bool operator<(const TextPoint& aPoint) const;
+
+  /**
+   * Return 0 if the two points are equal, -1 if this is before aOther, 1 if
+   * this is after aOther.
+   */
+  int Compare(const TextPoint& aOther) const {
+    if (*this == aOther) {
+      return 0;
+    }
+    if (*this < aOther) {
+      return -1;
+    }
+    return 1;
+  }
 };
 
 /**
@@ -95,17 +109,6 @@ class TextRange final {
   Accessible* Container() const;
 
   /**
-   * Return a list of embedded objects enclosed by the text range (includes
-   * partially overlapped objects).
-   */
-  void EmbeddedChildren(nsTArray<Accessible*>* aChildren) const;
-
-  /**
-   * Return text enclosed by the range.
-   */
-  void Text(nsAString& aText) const;
-
-  /**
    * Crops the range if it overlaps the given accessible element boundaries,
    * returns true if the range was cropped successfully.
    */
@@ -152,16 +155,6 @@ class TextRange final {
 
   void Set(Accessible* aRoot, Accessible* aStartContainer, int32_t aStartOffset,
            Accessible* aEndContainer, int32_t aEndOffset);
-
-  /**
-   * Text() method helper.
-   * @param  aText            [in,out] calculated text
-   * @param  aCurrent         [in] currently traversed node
-   * @param  aStartIntlOffset [in] start offset if current node is a text node
-   * @return                   true if calculation is not finished yet
-   */
-  bool TextInternal(nsAString& aText, Accessible* aCurrent,
-                    uint32_t aStartIntlOffset) const;
 
   /**
    * A helper method returning a common parent for two given accessible

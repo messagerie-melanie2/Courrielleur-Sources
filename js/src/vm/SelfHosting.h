@@ -78,6 +78,7 @@
 //   * `constructContentFunction`
 //   * `allowContentIter`
 //   * `allowContentIterWith`
+//   * `allowContentIterWithNext`
 //
 // # XDR cache
 //
@@ -141,6 +142,15 @@
 //     `iterable[Symbol.iterator]` again inside for-of bytecode.
 //
 //     for (var item of allowContentIterWith(iterable, iteratorFunc)) { ... }
+//
+//   allowContentIterWith(iterator, nextFunc)
+//     Special form of `allowContentIter`, where `iterable[Symbol.iterator]()`
+//     is already called and the iterator's `next` property retrieved.
+//
+//     This form doesn't call `iterable[Symbol.iterator]` and directly uses
+//     `nextFunc` instead of retrieving it inside for-of bytecode.
+//
+//     for (var item of allowContentIterWithNext(iterator, nextFunc)) { ... }
 //
 //   DefineDataProperty(obj, key, value)
 //     Initialize `obj`'s `key` property with `value`, like
@@ -276,12 +286,6 @@ bool intrinsic_NewStringIterator(JSContext* cx, unsigned argc, JS::Value* vp);
 
 bool intrinsic_NewRegExpStringIterator(JSContext* cx, unsigned argc,
                                        JS::Value* vp);
-
-#ifdef ENABLE_RECORD_TUPLE
-bool IsTupleUnchecked(JSContext* cx, const CallArgs& args);
-bool intrinsic_IsTuple(JSContext* cx, unsigned argc, JS::Value* vp);
-#endif
-
 } /* namespace js */
 
 #endif /* vm_SelfHosting_h_ */

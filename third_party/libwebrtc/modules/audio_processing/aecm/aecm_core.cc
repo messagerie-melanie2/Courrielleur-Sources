@@ -123,7 +123,6 @@ const int16_t WebRtcAecm_kSinTable[] = {
     -2667, -2531, -2395, -2258, -2120, -1981, -1842, -1703, -1563, -1422, -1281,
     -1140, -998,  -856,  -713,  -571,  -428,  -285,  -142};
 
-
 // Moves the pointer to the next entry and inserts `far_spectrum` and
 // corresponding Q-domain in its buffer.
 //
@@ -855,7 +854,7 @@ void WebRtcAecm_UpdateChannel(AecmCore* aecm,
         // right shift of 32 is undefined. To avoid that, we
         // do this check.
         tmpU32no1 =
-            rtc::dchecked_cast<uint32_t>(
+            dchecked_cast<uint32_t>(
                 shiftChFar >= 32 ? 0 : aecm->channelAdapt32[i] >> shiftChFar) *
             far_spectrum[i];
       }

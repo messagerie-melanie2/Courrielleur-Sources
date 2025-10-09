@@ -83,7 +83,7 @@ var progressListener = {
     }
   },
 
-  onLocationChange(aWebProgress, aRequest, aLocation, aFlags) {
+  onLocationChange() {
     // we can ignore this notification
   },
 
@@ -93,11 +93,11 @@ var progressListener = {
     }
   },
 
-  onSecurityChange(aWebProgress, aRequest, state) {
+  onSecurityChange() {
     // we can ignore this notification
   },
 
-  onContentBlockingEvent(aWebProgress, aRequest, aEvent) {
+  onContentBlockingEvent() {
     // we can ignore this notification
   },
 
@@ -122,7 +122,7 @@ function onLoad() {
 
   let subject = "";
   if (window.arguments[1]) {
-    let progressParams = window.arguments[1].QueryInterface(
+    const progressParams = window.arguments[1].QueryInterface(
       Ci.nsIMsgComposeProgressParams
     );
     if (progressParams) {
@@ -133,12 +133,12 @@ function onLoad() {
   }
 
   if (subject) {
-    let title = itsASaveOperation
+    const title = itsASaveOperation
       ? "titleSaveMsgSubject"
       : "titleSendMsgSubject";
     document.title = gBundle.formatStringFromName(title, [subject]);
   } else {
-    let title = itsASaveOperation ? "titleSaveMsg" : "titleSendMsg";
+    const title = itsASaveOperation ? "titleSaveMsg" : "titleSendMsg";
     document.title = gBundle.GetStringFromName(title);
   }
 

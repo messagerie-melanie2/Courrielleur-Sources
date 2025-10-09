@@ -80,7 +80,7 @@ PlacesController.prototype = {
    */
   _view: null,
 
-  QueryInterface: XPCOMUtils.generateQI([
+  QueryInterface: ChromeUtils.generateQI([
     Ci.nsIClipboardOwner
   ]),
 
@@ -309,7 +309,7 @@ PlacesController.prototype = {
    */
   _canInsert: function PC__canInsert(isPaste) {
     var ip = this._view.insertionPoint;
-    return ip != null && (isPaste || ip.isTag != true);
+    return ip != null && (isPaste || !ip.isTag);
   },
 
   /**

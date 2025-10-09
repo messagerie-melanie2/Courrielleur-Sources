@@ -8,9 +8,9 @@ const {
   createFactory,
   createRef,
   PureComponent,
-} = require("resource://devtools/client/shared/vendor/react.js");
+} = require("resource://devtools/client/shared/vendor/react.mjs");
 const dom = require("resource://devtools/client/shared/vendor/react-dom-factories.js");
-const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.js");
+const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.mjs");
 
 const FluentReact = require("resource://devtools/client/shared/vendor/fluent-react.js");
 
@@ -106,7 +106,7 @@ class DebugTargetPane extends PureComponent {
             "undecorated-link debug-target-pane__title " +
             "qa-debug-target-pane-title",
           title,
-          onClick: e => this.toggleCollapsibility(),
+          onClick: () => this.toggleCollapsibility(),
         },
         dom.h2(
           { className: "main-subheading debug-target-pane__heading" },

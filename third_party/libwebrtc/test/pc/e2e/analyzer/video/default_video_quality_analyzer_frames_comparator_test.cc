@@ -36,14 +36,11 @@ using ::testing::SizeIs;
 
 using StatsSample = ::webrtc::SamplesStatsCounter::StatsSample;
 
-constexpr int kMaxFramesInFlightPerStream = 10;
-
 DefaultVideoQualityAnalyzerOptions AnalyzerOptionsForTest() {
   DefaultVideoQualityAnalyzerOptions options;
   options.compute_psnr = false;
   options.compute_ssim = false;
   options.adjust_cropping_before_comparing_frames = false;
-  options.max_frames_in_flight_per_stream_count = kMaxFramesInFlightPerStream;
   return options;
 }
 
@@ -53,8 +50,8 @@ VideoFrame CreateFrame(uint16_t frame_id,
                        Timestamp timestamp) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(width, height,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
   test::FrameGeneratorInterface::VideoFrameData frame_data =
       frame_generator->NextFrame();
   return VideoFrame::Builder()
@@ -135,7 +132,7 @@ void AssertFirstMetadataHasField(const SamplesStatsCounter& counter,
 }
 
 std::string ToString(const SamplesStatsCounter& counter) {
-  rtc::StringBuilder out;
+  StringBuilder out;
   for (const StatsSample& s : counter.GetTimedSamples()) {
     out << "{ time_ms=" << s.time.ms() << "; value=" << s.value << "}, ";
   }
@@ -180,8 +177,8 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   comparator.EnsureStatsForStream(stream, sender, peers_count,
                                   stream_start_time, stream_start_time);
   comparator.AddComparison(stats_key,
-                           /*captured=*/absl::nullopt,
-                           /*rendered=*/absl::nullopt,
+                           /*captured=*/std::nullopt,
+                           /*rendered=*/std::nullopt,
                            FrameComparisonType::kRegular, frame_stats);
   comparator.Stop(/*last_rendered_frame_times=*/{});
 
@@ -219,17 +216,19 @@ TEST(
   FrameStats frame_stats2 = FrameStatsWith10msDeltaBetweenPhasesAnd10x10Frame(
       /*frame_id=*/2, stream_start_time + TimeDelta::Millis(15));
   frame_stats2.prev_frame_rendered_time = frame_stats1.rendered_time;
+  frame_stats2.time_between_rendered_frames =
+      frame_stats2.rendered_time - frame_stats1.rendered_time;
 
   comparator.Start(/*max_threads_count=*/1);
   comparator.EnsureStatsForStream(stream, sender, peers_count,
                                   stream_start_time, stream_start_time);
   comparator.AddComparison(stats_key,
-                           /*captured=*/absl::nullopt,
-                           /*rendered=*/absl::nullopt,
+                           /*captured=*/std::nullopt,
+                           /*rendered=*/std::nullopt,
                            FrameComparisonType::kRegular, frame_stats1);
   comparator.AddComparison(stats_key,
-                           /*captured=*/absl::nullopt,
-                           /*rendered=*/absl::nullopt,
+                           /*captured=*/std::nullopt,
+                           /*rendered=*/std::nullopt,
                            FrameComparisonType::kRegular, frame_stats2);
   comparator.Stop(/*last_rendered_frame_times=*/{});
 
@@ -312,13 +311,13 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
                                   stream_start_time, stream_start_time);
   for (size_t i = 0; i < stats.size() - 1; ++i) {
     comparator.AddComparison(stats_key,
-                             /*captured=*/absl::nullopt,
-                             /*rendered=*/absl::nullopt,
+                             /*captured=*/std::nullopt,
+                             /*rendered=*/std::nullopt,
                              FrameComparisonType::kFrameInFlight, stats[i]);
   }
   comparator.AddComparison(stats_key,
-                           /*captured=*/absl::nullopt,
-                           /*rendered=*/absl::nullopt,
+                           /*captured=*/std::nullopt,
+                           /*rendered=*/std::nullopt,
                            FrameComparisonType::kRegular,
                            stats[stats.size() - 1]);
   comparator.Stop(/*last_rendered_frame_times=*/{});
@@ -379,8 +378,8 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   comparator.EnsureStatsForStream(stream, sender, /*peers_count=*/2,
                                   captured_time, captured_time);
   comparator.AddComparison(stats_key,
-                           /*captured=*/absl::nullopt,
-                           /*rendered=*/absl::nullopt,
+                           /*captured=*/std::nullopt,
+                           /*rendered=*/std::nullopt,
                            FrameComparisonType::kFrameInFlight, frame_stats);
   comparator.Stop(/*last_rendered_frame_times=*/{});
 
@@ -402,6 +401,7 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   ExpectEmpty(stats.resolution_of_decoded_frame);
   ExpectEmpty(stats.target_encode_bitrate);
   EXPECT_THAT(stats.spatial_layers_qp, IsEmpty());
+  ExpectEmpty(stats.rendered_frame_qp);
   ExpectEmpty(stats.recv_key_frame_size_bytes);
   ExpectEmpty(stats.recv_delta_frame_size_bytes);
   EXPECT_EQ(stats.total_encoded_images_payload, 0);
@@ -439,8 +439,8 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   comparator.EnsureStatsForStream(stream, sender, /*peers_count=*/2,
                                   captured_time, captured_time);
   comparator.AddComparison(stats_key,
-                           /*captured=*/absl::nullopt,
-                           /*rendered=*/absl::nullopt,
+                           /*captured=*/std::nullopt,
+                           /*rendered=*/std::nullopt,
                            FrameComparisonType::kFrameInFlight, frame_stats);
   comparator.Stop(/*last_rendered_frame_times=*/{});
 
@@ -462,6 +462,7 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   ExpectEmpty(stats.resolution_of_decoded_frame);
   ExpectEmpty(stats.target_encode_bitrate);
   EXPECT_THAT(stats.spatial_layers_qp, IsEmpty());
+  ExpectEmpty(stats.rendered_frame_qp);
   ExpectEmpty(stats.recv_key_frame_size_bytes);
   ExpectEmpty(stats.recv_delta_frame_size_bytes);
   EXPECT_EQ(stats.total_encoded_images_payload, 0);
@@ -511,8 +512,8 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   comparator.EnsureStatsForStream(stream, sender, /*peers_count=*/2,
                                   captured_time, captured_time);
   comparator.AddComparison(stats_key,
-                           /*captured=*/absl::nullopt,
-                           /*rendered=*/absl::nullopt,
+                           /*captured=*/std::nullopt,
+                           /*rendered=*/std::nullopt,
                            FrameComparisonType::kFrameInFlight, frame_stats);
   comparator.Stop(/*last_rendered_frame_times=*/{});
 
@@ -537,6 +538,7 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   EXPECT_THAT(stats.spatial_layers_qp, SizeIs(1));
   ExpectSizeAndAllElementsAre(stats.spatial_layers_qp[0], /*size=*/2,
                               /*value=*/5.0);
+  ExpectEmpty(stats.rendered_frame_qp);
   ExpectEmpty(stats.recv_key_frame_size_bytes);
   ExpectEmpty(stats.recv_delta_frame_size_bytes);
   EXPECT_EQ(stats.total_encoded_images_payload, 1000);
@@ -587,8 +589,8 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   comparator.EnsureStatsForStream(stream, sender, /*peers_count=*/2,
                                   captured_time, captured_time);
   comparator.AddComparison(stats_key,
-                           /*captured=*/absl::nullopt,
-                           /*rendered=*/absl::nullopt,
+                           /*captured=*/std::nullopt,
+                           /*rendered=*/std::nullopt,
                            FrameComparisonType::kFrameInFlight, frame_stats);
   comparator.Stop(/*last_rendered_frame_times=*/{});
 
@@ -613,6 +615,7 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   EXPECT_THAT(stats.spatial_layers_qp, SizeIs(1));
   ExpectSizeAndAllElementsAre(stats.spatial_layers_qp[0], /*size=*/2,
                               /*value=*/5.0);
+  ExpectEmpty(stats.rendered_frame_qp);
   ExpectEmpty(stats.recv_key_frame_size_bytes);
   ExpectEmpty(stats.recv_delta_frame_size_bytes);
   EXPECT_EQ(stats.total_encoded_images_payload, 1000);
@@ -668,8 +671,8 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   comparator.EnsureStatsForStream(stream, sender, /*peers_count=*/2,
                                   captured_time, captured_time);
   comparator.AddComparison(stats_key,
-                           /*captured=*/absl::nullopt,
-                           /*rendered=*/absl::nullopt,
+                           /*captured=*/std::nullopt,
+                           /*rendered=*/std::nullopt,
                            FrameComparisonType::kFrameInFlight, frame_stats);
   comparator.Stop(/*last_rendered_frame_times=*/{});
 
@@ -695,6 +698,7 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   EXPECT_THAT(stats.spatial_layers_qp, SizeIs(1));
   ExpectSizeAndAllElementsAre(stats.spatial_layers_qp[0], /*size=*/2,
                               /*value=*/5.0);
+  ExpectEmpty(stats.rendered_frame_qp);
   ExpectSizeAndAllElementsAre(stats.recv_key_frame_size_bytes, /*size=*/1,
                               /*value=*/500.0);
   ExpectEmpty(stats.recv_delta_frame_size_bytes);
@@ -750,6 +754,7 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   frame_stats.decode_end_time = captured_time + TimeDelta::Millis(50);
   frame_stats.decoded_frame_width = 200;
   frame_stats.decoded_frame_height = 100;
+  frame_stats.decoded_frame_qp = 10;
 
   frame_stats.used_decoder =
       Vp8CodecForOneFrame(frame_id, frame_stats.decode_end_time);
@@ -758,8 +763,8 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   comparator.EnsureStatsForStream(stream, sender, /*peers_count=*/2,
                                   captured_time, captured_time);
   comparator.AddComparison(stats_key,
-                           /*captured=*/absl::nullopt,
-                           /*rendered=*/absl::nullopt,
+                           /*captured=*/std::nullopt,
+                           /*rendered=*/std::nullopt,
                            FrameComparisonType::kFrameInFlight, frame_stats);
   comparator.Stop(/*last_rendered_frame_times=*/{});
 
@@ -785,6 +790,8 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   EXPECT_THAT(stats.spatial_layers_qp, SizeIs(1));
   ExpectSizeAndAllElementsAre(stats.spatial_layers_qp[0], /*size=*/2,
                               /*value=*/5.0);
+  ExpectSizeAndAllElementsAre(stats.rendered_frame_qp, /*size=*/1,
+                              /*value=*/10.0);
   ExpectSizeAndAllElementsAre(stats.recv_key_frame_size_bytes, /*size=*/1,
                               /*value=*/500.0);
   ExpectEmpty(stats.recv_delta_frame_size_bytes);
@@ -841,13 +848,14 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   frame_stats.decoder_failed = true;
   frame_stats.used_decoder =
       Vp8CodecForOneFrame(frame_id, frame_stats.decode_end_time);
+  frame_stats.decoded_frame_qp = 10;
 
   comparator.Start(/*max_threads_count=*/1);
   comparator.EnsureStatsForStream(stream, sender, /*peers_count=*/2,
                                   captured_time, captured_time);
   comparator.AddComparison(stats_key,
-                           /*captured=*/absl::nullopt,
-                           /*rendered=*/absl::nullopt,
+                           /*captured=*/std::nullopt,
+                           /*rendered=*/std::nullopt,
                            FrameComparisonType::kFrameInFlight, frame_stats);
   comparator.Stop(/*last_rendered_frame_times=*/{});
 
@@ -873,6 +881,7 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   EXPECT_THAT(stats.spatial_layers_qp, SizeIs(1));
   ExpectSizeAndAllElementsAre(stats.spatial_layers_qp[0], /*size=*/2,
                               /*value=*/5.0);
+  ExpectEmpty(stats.rendered_frame_qp);
   ExpectSizeAndAllElementsAre(stats.recv_key_frame_size_bytes, /*size=*/1,
                               /*value=*/500.0);
   ExpectEmpty(stats.recv_delta_frame_size_bytes);
@@ -914,8 +923,8 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   comparator.EnsureStatsForStream(stream, sender, /*peers_count=*/2,
                                   captured_time, captured_time);
   comparator.AddComparison(stats_key,
-                           /*captured=*/absl::nullopt,
-                           /*rendered=*/absl::nullopt,
+                           /*captured=*/std::nullopt,
+                           /*rendered=*/std::nullopt,
                            FrameComparisonType::kDroppedFrame, frame_stats);
   comparator.Stop(/*last_rendered_frame_times=*/{});
 
@@ -937,6 +946,7 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   ExpectEmpty(stats.resolution_of_decoded_frame);
   ExpectEmpty(stats.target_encode_bitrate);
   EXPECT_THAT(stats.spatial_layers_qp, IsEmpty());
+  ExpectEmpty(stats.rendered_frame_qp);
   ExpectEmpty(stats.recv_key_frame_size_bytes);
   ExpectEmpty(stats.recv_delta_frame_size_bytes);
   EXPECT_EQ(stats.total_encoded_images_payload, 0);
@@ -974,8 +984,8 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   comparator.EnsureStatsForStream(stream, sender, /*peers_count=*/2,
                                   captured_time, captured_time);
   comparator.AddComparison(stats_key,
-                           /*captured=*/absl::nullopt,
-                           /*rendered=*/absl::nullopt,
+                           /*captured=*/std::nullopt,
+                           /*rendered=*/std::nullopt,
                            FrameComparisonType::kDroppedFrame, frame_stats);
   comparator.Stop(/*last_rendered_frame_times=*/{});
 
@@ -997,6 +1007,7 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   ExpectEmpty(stats.resolution_of_decoded_frame);
   ExpectEmpty(stats.target_encode_bitrate);
   EXPECT_THAT(stats.spatial_layers_qp, IsEmpty());
+  ExpectEmpty(stats.rendered_frame_qp);
   ExpectEmpty(stats.recv_key_frame_size_bytes);
   ExpectEmpty(stats.recv_delta_frame_size_bytes);
   EXPECT_EQ(stats.total_encoded_images_payload, 0);
@@ -1046,8 +1057,8 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   comparator.EnsureStatsForStream(stream, sender, /*peers_count=*/2,
                                   captured_time, captured_time);
   comparator.AddComparison(stats_key,
-                           /*captured=*/absl::nullopt,
-                           /*rendered=*/absl::nullopt,
+                           /*captured=*/std::nullopt,
+                           /*rendered=*/std::nullopt,
                            FrameComparisonType::kDroppedFrame, frame_stats);
   comparator.Stop(/*last_rendered_frame_times=*/{});
 
@@ -1072,6 +1083,7 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   EXPECT_THAT(stats.spatial_layers_qp, SizeIs(1));
   ExpectSizeAndAllElementsAre(stats.spatial_layers_qp[0], /*size=*/2,
                               /*value=*/5.0);
+  ExpectEmpty(stats.rendered_frame_qp);
   ExpectEmpty(stats.recv_key_frame_size_bytes);
   ExpectEmpty(stats.recv_delta_frame_size_bytes);
   EXPECT_EQ(stats.total_encoded_images_payload, 1000);
@@ -1122,8 +1134,8 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   comparator.EnsureStatsForStream(stream, sender, /*peers_count=*/2,
                                   captured_time, captured_time);
   comparator.AddComparison(stats_key,
-                           /*captured=*/absl::nullopt,
-                           /*rendered=*/absl::nullopt,
+                           /*captured=*/std::nullopt,
+                           /*rendered=*/std::nullopt,
                            FrameComparisonType::kDroppedFrame, frame_stats);
   comparator.Stop(/*last_rendered_frame_times=*/{});
 
@@ -1148,6 +1160,7 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   EXPECT_THAT(stats.spatial_layers_qp, SizeIs(1));
   ExpectSizeAndAllElementsAre(stats.spatial_layers_qp[0], /*size=*/2,
                               /*value=*/5.0);
+  ExpectEmpty(stats.rendered_frame_qp);
   ExpectEmpty(stats.recv_key_frame_size_bytes);
   ExpectEmpty(stats.recv_delta_frame_size_bytes);
   EXPECT_EQ(stats.total_encoded_images_payload, 1000);
@@ -1199,8 +1212,8 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   comparator.EnsureStatsForStream(stream, sender, /*peers_count=*/2,
                                   captured_time, captured_time);
   comparator.AddComparison(stats_key,
-                           /*captured=*/absl::nullopt,
-                           /*rendered=*/absl::nullopt,
+                           /*captured=*/std::nullopt,
+                           /*rendered=*/std::nullopt,
                            FrameComparisonType::kDroppedFrame, frame_stats);
   comparator.Stop(/*last_rendered_frame_times=*/{});
 
@@ -1236,6 +1249,7 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   EXPECT_EQ(stats.encoders,
             std::vector<StreamCodecInfo>{*frame_stats.used_encoder});
   EXPECT_THAT(stats.decoders, IsEmpty());
+  ExpectEmpty(stats.rendered_frame_qp);
 }
 
 TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
@@ -1281,13 +1295,14 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
       Vp8CodecForOneFrame(frame_id, frame_stats.decode_end_time);
   frame_stats.decoded_frame_width = 200;
   frame_stats.decoded_frame_height = 100;
+  frame_stats.decoded_frame_qp = 10;
 
   comparator.Start(/*max_threads_count=*/1);
   comparator.EnsureStatsForStream(stream, sender, /*peers_count=*/2,
                                   captured_time, captured_time);
   comparator.AddComparison(stats_key,
-                           /*captured=*/absl::nullopt,
-                           /*rendered=*/absl::nullopt,
+                           /*captured=*/std::nullopt,
+                           /*rendered=*/std::nullopt,
                            FrameComparisonType::kDroppedFrame, frame_stats);
   comparator.Stop(/*last_rendered_frame_times=*/{});
 
@@ -1312,6 +1327,7 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   EXPECT_THAT(stats.spatial_layers_qp, SizeIs(1));
   ExpectSizeAndAllElementsAre(stats.spatial_layers_qp[0], /*size=*/2,
                               /*value=*/5.0);
+  ExpectEmpty(stats.rendered_frame_qp);
   ExpectEmpty(stats.recv_key_frame_size_bytes);
   ExpectEmpty(stats.recv_delta_frame_size_bytes);
   EXPECT_EQ(stats.total_encoded_images_payload, 1000);
@@ -1367,13 +1383,14 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   frame_stats.decoder_failed = true;
   frame_stats.used_decoder =
       Vp8CodecForOneFrame(frame_id, frame_stats.decode_end_time);
+  frame_stats.decoded_frame_qp = 10;
 
   comparator.Start(/*max_threads_count=*/1);
   comparator.EnsureStatsForStream(stream, sender, /*peers_count=*/2,
                                   captured_time, captured_time);
   comparator.AddComparison(stats_key,
-                           /*captured=*/absl::nullopt,
-                           /*rendered=*/absl::nullopt,
+                           /*captured=*/std::nullopt,
+                           /*rendered=*/std::nullopt,
                            FrameComparisonType::kDroppedFrame, frame_stats);
   comparator.Stop(/*last_rendered_frame_times=*/{});
 
@@ -1399,6 +1416,7 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   EXPECT_THAT(stats.spatial_layers_qp, SizeIs(1));
   ExpectSizeAndAllElementsAre(stats.spatial_layers_qp[0], /*size=*/2,
                               /*value=*/5.0);
+  ExpectEmpty(stats.rendered_frame_qp);
   ExpectSizeAndAllElementsAre(stats.recv_key_frame_size_bytes, /*size=*/1,
                               /*value=*/500.0);
   ExpectEmpty(stats.recv_delta_frame_size_bytes);
@@ -1461,6 +1479,7 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
       Vp8CodecForOneFrame(frame_id, frame_stats.decode_end_time);
   frame_stats.decoded_frame_width = 200;
   frame_stats.decoded_frame_height = 100;
+  frame_stats.decoded_frame_qp = 10;
   // Frame rendered
   frame_stats.rendered_time = captured_time + TimeDelta::Millis(60);
 
@@ -1495,6 +1514,8 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
   EXPECT_THAT(stats.spatial_layers_qp, SizeIs(1));
   ExpectSizeAndAllElementsAre(stats.spatial_layers_qp[0], /*size=*/2,
                               /*value=*/5.0);
+  ExpectSizeAndAllElementsAre(stats.rendered_frame_qp, /*size=*/1,
+                              /*value=*/10.0);
   ExpectSizeAndAllElementsAre(stats.recv_key_frame_size_bytes, /*size=*/1,
                               /*value=*/500.0);
   ExpectEmpty(stats.recv_delta_frame_size_bytes);
@@ -1556,6 +1577,7 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest, AllStatsHaveMetadataSet) {
   frame_stats.rendered_time = captured_time + TimeDelta::Millis(60);
   frame_stats.decoded_frame_width = 200;
   frame_stats.decoded_frame_height = 100;
+  frame_stats.decoded_frame_qp = 10;
 
   comparator.Start(/*max_threads_count=*/1);
   comparator.EnsureStatsForStream(stream, sender, /*peers_count=*/2,
@@ -1581,6 +1603,7 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest, AllStatsHaveMetadataSet) {
   AssertFirstMetadataHasField(stats.target_encode_bitrate, "frame_id", "1");
   AssertFirstMetadataHasField(stats.spatial_layers_qp[0], "frame_id", "1");
   AssertFirstMetadataHasField(stats.recv_key_frame_size_bytes, "frame_id", "1");
+  AssertFirstMetadataHasField(stats.rendered_frame_qp, "frame_id", "1");
 
   ExpectEmpty(stats.recv_delta_frame_size_bytes);
 }
@@ -1605,16 +1628,21 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
 
   // Add 5 frames which were rendered with 30 fps (~30ms between frames)
   // Frame ids are in [1..5] and last frame is with 120ms offset from first.
-  Timestamp prev_frame_rendered_time = Timestamp::MinusInfinity();
+  std::optional<Timestamp> prev_frame_rendered_time = std::nullopt;
   for (int i = 0; i < 5; ++i) {
     FrameStats frame_stats = FrameStatsWith10msDeltaBetweenPhasesAnd10x10Frame(
         /*frame_id=*/i + 1, stream_start_time + TimeDelta::Millis(30 * i));
     frame_stats.prev_frame_rendered_time = prev_frame_rendered_time;
+    frame_stats.time_between_rendered_frames =
+        prev_frame_rendered_time.has_value()
+            ? std::optional<TimeDelta>(frame_stats.rendered_time -
+                                       *prev_frame_rendered_time)
+            : std::nullopt;
     prev_frame_rendered_time = frame_stats.rendered_time;
 
     comparator.AddComparison(stats_key,
-                             /*captured=*/absl::nullopt,
-                             /*rendered=*/absl::nullopt,
+                             /*captured=*/std::nullopt,
+                             /*rendered=*/std::nullopt,
                              FrameComparisonType::kRegular, frame_stats);
   }
 
@@ -1624,11 +1652,13 @@ TEST(DefaultVideoQualityAnalyzerFramesComparatorTest,
       FrameStatsWith10msDeltaBetweenPhasesAnd10x10Frame(
           /*frame_id=*/10, stream_start_time + TimeDelta::Millis(120 + 300));
   freeze_frame_stats.prev_frame_rendered_time = prev_frame_rendered_time;
+  freeze_frame_stats.time_between_rendered_frames =
+      freeze_frame_stats.rendered_time - *prev_frame_rendered_time;
 
   comparator.AddComparison(stats_key,
                            /*skipped_between_rendered=*/4,
-                           /*captured=*/absl::nullopt,
-                           /*rendered=*/absl::nullopt,
+                           /*captured=*/std::nullopt,
+                           /*rendered=*/std::nullopt,
                            FrameComparisonType::kRegular, freeze_frame_stats);
   comparator.Stop(/*last_rendered_frame_times=*/{});
 

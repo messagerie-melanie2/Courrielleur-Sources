@@ -17,7 +17,6 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   UrlbarResult: "resource:///modules/UrlbarResult.sys.mjs",
   UrlbarSearchUtils: "resource:///modules/UrlbarSearchUtils.sys.mjs",
-  UrlbarTokenizer: "resource:///modules/UrlbarTokenizer.sys.mjs",
 });
 
 /**
@@ -34,9 +33,7 @@ class ProviderAliasEngines extends UrlbarProvider {
   }
 
   /**
-   * Returns the type of this provider.
-   *
-   * @returns {integer} one of the types from UrlbarUtils.PROVIDER_TYPE.*
+   * @returns {Values<typeof UrlbarUtils.PROVIDER_TYPE>}
    */
   get type() {
     return UrlbarUtils.PROVIDER_TYPE.HEURISTIC;
@@ -48,14 +45,13 @@ class ProviderAliasEngines extends UrlbarProvider {
    * with this provider, to save on resources.
    *
    * @param {UrlbarQueryContext} queryContext The query context object
-   * @returns {boolean} Whether this provider should be invoked for the search.
    */
-  isActive(queryContext) {
+  async isActive(queryContext) {
     return (
       (!queryContext.restrictSource ||
-        queryContext.restrictSource == lazy.UrlbarTokenizer.RESTRICT.SEARCH) &&
+        queryContext.restrictSource == UrlbarUtils.RESULT_SOURCE.SEARCH) &&
       !queryContext.searchMode &&
-      queryContext.tokens.length
+      !!queryContext.tokens.length
     );
   }
 
@@ -73,6 +69,7 @@ class ProviderAliasEngines extends UrlbarProvider {
       alias,
       queryContext.searchString
     );
+    let icon = await engine?.getIconURL();
     if (!engine || instance != this.queryInstance) {
       return;
     }
@@ -84,7 +81,7 @@ class ProviderAliasEngines extends UrlbarProvider {
         engine: engine.name,
         keyword: alias,
         query: query.trimStart(),
-        icon: engine.iconURI?.spec,
+        icon,
       })
     );
     result.heuristic = true;

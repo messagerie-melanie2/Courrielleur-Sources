@@ -2,41 +2,49 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+const { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
-let tabmail = document.getElementById("tabmail");
-let about3Pane = tabmail.currentAbout3Pane;
-let threadTree = about3Pane.threadTree;
+const tabmail = document.getElementById("tabmail");
+const about3Pane = tabmail.currentAbout3Pane;
+const threadTree = about3Pane.threadTree;
 // Not `currentAboutMessage` as (a) that's null right now, and (b) we'll be
 // testing things that happen when about:message is hidden.
-let aboutMessage = about3Pane.messageBrowser.contentWindow;
-let messagePaneBrowser = aboutMessage.getMessagePaneBrowser();
-let rootFolder, folderA, folderB, trashFolder, sourceMessages, sourceMessageIDs;
+const aboutMessage = about3Pane.messageBrowser.contentWindow;
+const messagePaneBrowser = aboutMessage.getMessagePaneBrowser();
+let rootFolder,
+  folderA,
+  folderB,
+  folderC,
+  trashFolder,
+  sourceMessages,
+  sourceMessageIDs;
 
 add_setup(async function () {
-  let generator = new MessageGenerator();
+  const generator = new MessageGenerator();
 
-  MailServices.accounts.createLocalMailAccount();
-  let account = MailServices.accounts.accounts[0];
+  const account = MailServices.accounts.createLocalMailAccount();
   account.addIdentity(MailServices.accounts.createIdentity());
-  rootFolder = account.incomingServer.rootFolder;
+  rootFolder = account.incomingServer.rootFolder.QueryInterface(
+    Ci.nsIMsgLocalMailFolder
+  );
 
-  rootFolder.createSubfolder("threadTreeQuirksA", null);
   folderA = rootFolder
-    .getChildNamed("threadTreeQuirksA")
+    .createLocalSubfolder("threadTreeQuirksA")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
 
-  rootFolder.createSubfolder("threadTreeQuirksB", null);
-  folderB = rootFolder.getChildNamed("threadTreeQuirksB");
+  folderB = rootFolder.createLocalSubfolder("threadTreeQuirksB");
+  folderC = rootFolder
+    .createLocalSubfolder("threadTreeQuirksC")
+    .QueryInterface(Ci.nsIMsgLocalMailFolder);
   trashFolder = rootFolder.getFolderWithFlags(Ci.nsMsgFolderFlags.Trash);
 
   // Make some messages, then change their dates to simulate a different order.
-  let syntheticMessages = generator.makeMessages({
+  const syntheticMessages = generator.makeMessages({
     count: 15,
     msgsPerThread: 5,
   });
@@ -46,7 +54,10 @@ add_setup(async function () {
   syntheticMessages[4].date = generator.makeDate();
 
   folderA.addMessageBatch(
-    syntheticMessages.map(message => message.toMboxString())
+    syntheticMessages.map(message => message.toMessageString())
+  );
+  folderC.addMessageBatch(
+    syntheticMessages.map(message => message.toMessageString())
   );
   sourceMessages = [...folderA.messages];
   sourceMessageIDs = sourceMessages.map(m => m.messageId);
@@ -77,11 +88,11 @@ add_task(async function testExpandCollapseUpdates() {
   // Thread root still selected.
   await validateTree(11, [5], 5);
   Assert.ok(
-    BrowserTestUtils.is_hidden(about3Pane.messageBrowser),
+    BrowserTestUtils.isHidden(about3Pane.messageBrowser),
     "messageBrowser became hidden"
   );
   Assert.ok(
-    BrowserTestUtils.is_visible(about3Pane.multiMessageBrowser),
+    BrowserTestUtils.isVisible(about3Pane.multiMessageBrowser),
     "multiMessageBrowser became visible"
   );
 
@@ -96,11 +107,11 @@ add_task(async function testExpandCollapseUpdates() {
   await messageLoaded(10);
   await validateTree(15, [5], 5);
   Assert.ok(
-    BrowserTestUtils.is_hidden(about3Pane.multiMessageBrowser),
+    BrowserTestUtils.isHidden(about3Pane.multiMessageBrowser),
     "multiMessageBrowser became hidden"
   );
   Assert.ok(
-    BrowserTestUtils.is_visible(about3Pane.messageBrowser),
+    BrowserTestUtils.isVisible(about3Pane.messageBrowser),
     "messageBrowser became visible"
   );
 
@@ -112,11 +123,11 @@ add_task(async function testExpandCollapseUpdates() {
   // Thread root still selected.
   await validateTree(3, [1], 1);
   Assert.ok(
-    BrowserTestUtils.is_hidden(about3Pane.messageBrowser),
+    BrowserTestUtils.isHidden(about3Pane.messageBrowser),
     "messageBrowser became hidden"
   );
   Assert.ok(
-    BrowserTestUtils.is_visible(about3Pane.multiMessageBrowser),
+    BrowserTestUtils.isVisible(about3Pane.multiMessageBrowser),
     "multiMessageBrowser became visible"
   );
 
@@ -128,11 +139,11 @@ add_task(async function testExpandCollapseUpdates() {
   await messageLoaded(10);
   await validateTree(15, [5], 5);
   Assert.ok(
-    BrowserTestUtils.is_hidden(about3Pane.multiMessageBrowser),
+    BrowserTestUtils.isHidden(about3Pane.multiMessageBrowser),
     "multiMessageBrowser became hidden"
   );
   Assert.ok(
-    BrowserTestUtils.is_visible(about3Pane.messageBrowser),
+    BrowserTestUtils.isVisible(about3Pane.messageBrowser),
     "messageBrowser became visible"
   );
 
@@ -147,11 +158,11 @@ add_task(async function testExpandCollapseUpdates() {
   // Thread root became selected.
   await validateTree(3, [0], 0);
   Assert.ok(
-    BrowserTestUtils.is_hidden(about3Pane.messageBrowser),
+    BrowserTestUtils.isHidden(about3Pane.messageBrowser),
     "messageBrowser became hidden"
   );
   Assert.ok(
-    BrowserTestUtils.is_visible(about3Pane.multiMessageBrowser),
+    BrowserTestUtils.isVisible(about3Pane.multiMessageBrowser),
     "multiMessageBrowser became visible"
   );
 
@@ -163,11 +174,11 @@ add_task(async function testExpandCollapseUpdates() {
   await messageLoaded(5);
   await validateTree(15, [0], 0);
   Assert.ok(
-    BrowserTestUtils.is_hidden(about3Pane.multiMessageBrowser),
+    BrowserTestUtils.isHidden(about3Pane.multiMessageBrowser),
     "multiMessageBrowser became hidden"
   );
   Assert.ok(
-    BrowserTestUtils.is_visible(about3Pane.messageBrowser),
+    BrowserTestUtils.isVisible(about3Pane.messageBrowser),
     "messageBrowser became visible"
   );
 
@@ -176,11 +187,11 @@ add_task(async function testExpandCollapseUpdates() {
   threadTree.selectedIndices = [2, 3, 5];
   await selectPromise;
   Assert.ok(
-    BrowserTestUtils.is_hidden(about3Pane.messageBrowser),
+    BrowserTestUtils.isHidden(about3Pane.messageBrowser),
     "messageBrowser became hidden"
   );
   Assert.ok(
-    BrowserTestUtils.is_visible(about3Pane.multiMessageBrowser),
+    BrowserTestUtils.isVisible(about3Pane.multiMessageBrowser),
     "multiMessageBrowser became visible"
   );
 
@@ -190,11 +201,11 @@ add_task(async function testExpandCollapseUpdates() {
   // Thread roots became selected.
   await validateTree(3, [0, 1], 1);
   Assert.ok(
-    BrowserTestUtils.is_hidden(about3Pane.messageBrowser),
+    BrowserTestUtils.isHidden(about3Pane.messageBrowser),
     "messageBrowser stayed hidden"
   );
   Assert.ok(
-    BrowserTestUtils.is_visible(about3Pane.multiMessageBrowser),
+    BrowserTestUtils.isVisible(about3Pane.multiMessageBrowser),
     "multiMessageBrowser stayed visible"
   );
 });
@@ -246,7 +257,7 @@ add_task(async function testArchiveDeleteUpdates() {
   await messageLoaded(7);
 
   let selectCount = 0;
-  let onSelect = () => selectCount++;
+  const onSelect = () => selectCount++;
   threadTree.addEventListener("select", onSelect);
 
   let selectPromise = BrowserTestUtils.waitForEvent(threadTree, "select");
@@ -296,7 +307,7 @@ add_task(async function testMessagePaneSelection() {
     folderURI: folderB.URI,
   });
   about3Pane.sortController.sortUnthreaded();
-  about3Pane.sortController.sortThreadPane("byDate");
+  about3Pane.sortController.sortThreadPane("dateCol");
   about3Pane.sortController.sortDescending();
 
   threadTree.table.body.focus();
@@ -306,7 +317,7 @@ add_task(async function testMessagePaneSelection() {
 
   // Check the initial selection in about:message.
   Assert.equal(aboutMessage.gDBView.selection.getRangeCount(), 1);
-  let min = {},
+  const min = {},
     max = {};
   aboutMessage.gDBView.selection.getRangeAt(0, min, max);
   Assert.equal(min.value, 1);
@@ -337,11 +348,11 @@ add_task(async function testMessagePaneSelection() {
   messagePaneBrowser.removeEventListener("load", reportBadLoad, true);
 
   // Now click the delete button in about:message.
-  let deletePromise = PromiseTestUtils.promiseFolderEvent(
+  const deletePromise = PromiseTestUtils.promiseFolderEvent(
     folderB,
     "DeleteOrMoveMsgCompleted"
   );
-  let loadPromise = messageLoaded(6);
+  const loadPromise = messageLoaded(6);
   EventUtils.synthesizeMouseAtCenter(
     aboutMessage.document.getElementById("hdrTrashButton"),
     {},
@@ -373,11 +384,15 @@ add_task(async function testMessagePaneSelection() {
 });
 
 add_task(async function testNonSelectionContextMenu() {
-  let mailContext = about3Pane.document.getElementById("mailContext");
-  let openNewTabItem = about3Pane.document.getElementById(
+  const mailContext = about3Pane.document.getElementById("mailContext");
+  const openNewTabItem = about3Pane.document.getElementById(
     "mailContext-openNewTab"
   );
-  let replyItem = about3Pane.document.getElementById("mailContext-replySender");
+  const openMenu = about3Pane.document.getElementById("mailContext-open");
+  const openMenuPopup = about3Pane.document.getElementById(
+    "mailContext-openPopup"
+  );
+  const replyItem = about3Pane.document.getElementById("navContext-reply");
 
   about3Pane.restoreState({
     messagePaneVisible: true,
@@ -398,15 +413,17 @@ add_task(async function testNonSelectionContextMenu() {
     false,
     "about:blank"
   );
+
+  // TODO: We need to test opening tabs in the foreground as well, as shift
+  // + open tab allows for this.
   await subtestOpenTab(0, sourceMessageIDs[0]);
 
   async function doContextMenu(testIndex, messageId, itemToActivate) {
-    let originalSelection = threadTree.selectedIndices;
+    const originalSelection = threadTree.selectedIndices;
 
     threadTree.addEventListener("select", reportBadSelectEvent);
     messagePaneBrowser.addEventListener("load", reportBadLoad, true);
 
-    let shownPromise = BrowserTestUtils.waitForEvent(mailContext, "popupshown");
     EventUtils.synthesizeMouseAtCenter(
       threadTree
         .getRowAtIndex(testIndex)
@@ -414,7 +431,7 @@ add_task(async function testNonSelectionContextMenu() {
       { type: "contextmenu" },
       about3Pane
     );
-    await shownPromise;
+    await BrowserTestUtils.waitForPopupEvent(mailContext, "shown");
 
     Assert.ok(about3Pane.mailContextMenu.selectionIsOverridden);
     Assert.deepEqual(
@@ -422,7 +439,9 @@ add_task(async function testNonSelectionContextMenu() {
       [testIndex],
       "selection should be only the right-clicked-on row"
     );
-    let contextTargetRows = threadTree.querySelectorAll(".context-menu-target");
+    const contextTargetRows = threadTree.querySelectorAll(
+      ".context-menu-target"
+    );
     Assert.equal(
       contextTargetRows.length,
       1,
@@ -434,14 +453,18 @@ add_task(async function testNonSelectionContextMenu() {
       "correct row has .context-menu-target"
     );
 
-    let hiddenPromise = BrowserTestUtils.waitForEvent(
-      mailContext,
-      "popuphidden"
-    );
-    mailContext.activateItem(itemToActivate);
-    await hiddenPromise;
+    if (itemToActivate === openNewTabItem) {
+      openMenu.openMenu(true);
+      await BrowserTestUtils.waitForPopupEvent(openMenuPopup, "shown");
+      openMenuPopup.activateItem(openNewTabItem);
+      await BrowserTestUtils.waitForPopupEvent(openMenuPopup, "hidden");
+    } else {
+      mailContext.activateItem(itemToActivate);
+    }
+    await BrowserTestUtils.waitForPopupEvent(mailContext, "hidden");
 
     Assert.ok(!about3Pane.mailContextMenu.selectionIsOverridden);
+
     Assert.equal(
       document.activeElement,
       tabmail.tabInfo[0].chromeBrowser,
@@ -470,7 +493,7 @@ add_task(async function testNonSelectionContextMenu() {
 
   // Opening a new tab should open the clicked-on message, not the selected.
   async function subtestOpenTab(testIndex, messageId) {
-    let newAboutMessagePromise = BrowserTestUtils.waitForEvent(
+    const newAboutMessagePromise = BrowserTestUtils.waitForEvent(
       tabmail,
       "aboutMessageLoaded"
     ).then(async function (event) {
@@ -481,7 +504,7 @@ add_task(async function testNonSelectionContextMenu() {
     });
     await doContextMenu(testIndex, messageId, openNewTabItem);
 
-    let newAboutMessage = await newAboutMessagePromise;
+    const newAboutMessage = await newAboutMessagePromise;
     Assert.equal(
       newAboutMessage.gMessage.messageId,
       messageId,
@@ -506,12 +529,12 @@ add_task(async function testNonSelectionContextMenu() {
       .getSelection()
       .selectAllChildren(messagePaneBrowser.contentDocument.body);
 
-    let composeWindowPromise = BrowserTestUtils.domWindowOpenedAndLoaded();
+    const composeWindowPromise = BrowserTestUtils.domWindowOpenedAndLoaded();
     await doContextMenu(testIndex, messageId, replyItem);
-    let composeWindow = await composeWindowPromise;
-    let composeEditor = composeWindow.GetCurrentEditorElement();
-    let composeBody = await TestUtils.waitForCondition(
-      () => composeEditor.contentDocument.body.textContent
+    const composeWindow = await composeWindowPromise;
+    const composeEditor = composeWindow.GetCurrentEditorElement();
+    const composeBody = await TestUtils.waitForCondition(
+      () => composeEditor.contentDocument.body?.textContent
     );
 
     Assert.stringContains(
@@ -526,6 +549,166 @@ add_task(async function testNonSelectionContextMenu() {
 
     await BrowserTestUtils.closeWindow(composeWindow);
   }
+});
+
+add_task(async function testThreadTreeA11yRoles() {
+  Assert.equal(
+    threadTree.table.body.getAttribute("role"),
+    "listbox",
+    "The tree view should be presented as ListBox"
+  );
+  await BrowserTestUtils.waitForCondition(
+    () => threadTree.getRowAtIndex(0),
+    "row0 should become available"
+  );
+  Assert.equal(
+    threadTree.getRowAtIndex(0).getAttribute("role"),
+    "option",
+    "The message row should be presented as Option"
+  );
+
+  about3Pane.sortController.sortThreaded();
+  await BrowserTestUtils.waitForCondition(
+    () => threadTree.dataset.showGroupedBySort == "false",
+    "The tree view should not be grouped by sort"
+  );
+
+  await BrowserTestUtils.waitForCondition(
+    () => threadTree.table.body.getAttribute("role") == "treegrid",
+    "The tree view should switch to a Tree Grid View role"
+  );
+  await BrowserTestUtils.waitForCondition(
+    () => threadTree.getRowAtIndex(0),
+    "row0 should become available"
+  );
+  await new Promise(resolve => about3Pane.requestAnimationFrame(resolve));
+  Assert.equal(
+    threadTree.getRowAtIndex(0).getAttribute("role"),
+    "row",
+    "The message row should be presented as Row"
+  );
+
+  about3Pane.sortController.groupBySort();
+  await BrowserTestUtils.waitForCondition(
+    () => threadTree.dataset.showGroupedBySort == "true",
+    "The tree view should be grouped by sort"
+  );
+  threadTree.scrollToIndex(0, true);
+
+  await BrowserTestUtils.waitForCondition(
+    () => threadTree.table.body.getAttribute("role") == "treegrid",
+    "The message list table should remain presented as Tree Grid View"
+  );
+  await BrowserTestUtils.waitForCondition(
+    () => threadTree.getRowAtIndex(0),
+    "row0 should become available"
+  );
+  await new Promise(resolve => about3Pane.requestAnimationFrame(resolve));
+  Assert.equal(
+    threadTree.getRowAtIndex(0).getAttribute("role"),
+    "row",
+    "The first dummy message row should be presented as Row"
+  );
+
+  about3Pane.sortController.sortUnthreaded();
+  await BrowserTestUtils.waitForCondition(
+    () => threadTree.dataset.showGroupedBySort == "false",
+    "The tree view should not be grouped by sort"
+  );
+});
+
+add_task(async function test_read_new_properties() {
+  about3Pane.restoreState({
+    messagePaneVisible: true,
+    folderURI: folderC.URI,
+  });
+
+  /**
+   * Select a message which is currently new and unread, and wait for the message
+   * being fully loaded, the folder status updates and the UI updates.
+   *
+   * @param {object} info
+   * @param {integer} info.rowIndex - index of the row in the tree to be selected
+   * @param {integer} info.messageIndex - index of the message in the sourceMessageIDs
+   *    array which is expected to be loaded
+   */
+  async function selectNewMessage(info) {
+    // Ensure the message is new and unread.
+    const row = threadTree.getRowAtIndex(info.rowIndex);
+    Assert.ok(row.dataset.properties.includes("new"), "Message should be new");
+    Assert.ok(
+      row.dataset.properties.includes("unread"),
+      "Message should be unread"
+    );
+
+    // Select the message and wait for the Folder Status update.
+    const folderPropertyEvent = Promise.withResolvers();
+    const listener = {
+      QueryInterface: ChromeUtils.generateQI(["nsIFolderListener"]),
+      onFolderPropertyFlagChanged(_msgHdr, property, oldFlag, newFlag) {
+        if (
+          property == "Status" &&
+          oldFlag & Ci.nsMsgMessageFlags.New &&
+          !(newFlag & Ci.nsMsgMessageFlags.New)
+        ) {
+          folderPropertyEvent.resolve();
+        }
+      },
+    };
+    MailServices.mailSession.AddFolderListener(
+      listener,
+      Ci.nsIFolderListener.propertyFlagChanged
+    );
+    const loadPromise = messageLoaded(info.messageIndex);
+    threadTree.selectedIndex = info.rowIndex;
+    await loadPromise;
+    await folderPropertyEvent.promise;
+    MailServices.mailSession.RemoveFolderListener(listener);
+
+    // The tree does not issue an event when it updates a card, but we know that
+    // the selected message must update its UI representation from new to read.
+    await TestUtils.waitForCondition(
+      () =>
+        !row.dataset.properties.includes("new") &&
+        !row.dataset.properties.includes("unread"),
+      "waiting for card to remove unread and new properties"
+    );
+  }
+
+  // Clicking the twisty to collapse a row should update the message display.
+  goDoCommand("cmd_expandAllThreads");
+  await new Promise(resolve => about3Pane.requestAnimationFrame(resolve));
+
+  await selectNewMessage({ rowIndex: 5, messageIndex: 10 });
+
+  // Ensure that a new message thread that is selected and expanded only
+  // marks its root entry as read, but keeps the children as new and unread.
+  let row = threadTree.getRowAtIndex(5);
+  Assert.ok(!row.dataset.properties.includes("new"));
+  Assert.stringContains(row.dataset.properties, "hasNew");
+  Assert.ok(!row.dataset.properties.includes("unread"));
+  Assert.stringContains(row.dataset.properties, "hasUnread");
+
+  // Ensure that a new message thread that hasn't been selected marks both root
+  // message and its children as new and unread.
+  row = threadTree.getRowAtIndex(0);
+  Assert.stringContains(row.dataset.properties, "new");
+  Assert.stringContains(row.dataset.properties, "hasNew");
+  Assert.stringContains(row.dataset.properties, "unread");
+  Assert.stringContains(row.dataset.properties, "hasUnread");
+
+  await selectNewMessage({ rowIndex: 4, messageIndex: 9 });
+  await selectNewMessage({ rowIndex: 3, messageIndex: 8 });
+  await selectNewMessage({ rowIndex: 2, messageIndex: 7 });
+  await selectNewMessage({ rowIndex: 1, messageIndex: 6 });
+
+  // Ensure that if all the child messages of a thread have been read, only the
+  // root message is marked as new and unread.
+  row = threadTree.getRowAtIndex(0);
+  Assert.stringContains(row.dataset.properties, "new");
+  Assert.ok(!row.dataset.properties.includes("hasNew"));
+  Assert.stringContains(row.dataset.properties, "unread");
+  Assert.ok(!row.dataset.properties.includes("hasUnread"));
 });
 
 async function messageLoaded(index) {
@@ -549,14 +732,14 @@ async function validateTree(rowCount, selectedIndices, currentIndex) {
     selectedIndices,
     "table's selected indices"
   );
-  let selectedRows = Array.from(threadTree.querySelectorAll(".selected"));
+  const selectedRows = Array.from(threadTree.querySelectorAll(".selected"));
   Assert.equal(
     selectedRows.length,
     selectedIndices.length,
     "number of rows with .selected class"
   );
-  for (let index of selectedIndices) {
-    let row = threadTree.getRowAtIndex(index);
+  for (const index of selectedIndices) {
+    const row = threadTree.getRowAtIndex(index);
     Assert.ok(
       selectedRows.includes(row),
       `.selected row at ${index} is expected`
@@ -564,7 +747,7 @@ async function validateTree(rowCount, selectedIndices, currentIndex) {
   }
 
   Assert.equal(threadTree.currentIndex, currentIndex, "table's current index");
-  let currentRows = threadTree.querySelectorAll(".current");
+  const currentRows = threadTree.querySelectorAll(".current");
   Assert.equal(currentRows.length, 1, "one row should have .current");
   Assert.equal(
     currentRows[0],
@@ -572,7 +755,7 @@ async function validateTree(rowCount, selectedIndices, currentIndex) {
     ".current row is expected"
   );
 
-  let contextTargetRows = threadTree.querySelectorAll(".context-menu-target");
+  const contextTargetRows = threadTree.querySelectorAll(".context-menu-target");
   Assert.equal(
     contextTargetRows.length,
     0,
@@ -581,7 +764,7 @@ async function validateTree(rowCount, selectedIndices, currentIndex) {
 }
 
 async function move(messages, source, dest) {
-  let copyListener = new PromiseTestUtils.PromiseCopyListener();
+  const copyListener = new PromiseTestUtils.PromiseCopyListener();
   MailServices.copy.copyMessages(
     source,
     messages,
@@ -610,11 +793,11 @@ function reportBadLoad() {
 async function restoreMessages() {
   // Move all of the messages back to folder A.
   await move([...folderB.messages], folderB, folderA);
-  let archiveFolder = rootFolder.getFolderWithFlags(
+  const archiveFolder = rootFolder.getFolderWithFlags(
     Ci.nsMsgFolderFlags.Archive
   );
   if (archiveFolder) {
-    for (let folder of archiveFolder.subFolders) {
+    for (const folder of archiveFolder.subFolders) {
       await move([...folder.messages], folder, folderA);
     }
   }
@@ -627,43 +810,3 @@ async function restoreMessages() {
       sourceMessageIDs.indexOf(b.messageId)
   );
 }
-
-add_task(async function testThreadTreeA11yRoles() {
-  Assert.equal(
-    threadTree.table.body.getAttribute("role"),
-    "listbox",
-    "The tree view should be presented as ListBox"
-  );
-  Assert.equal(
-    threadTree.getRowAtIndex(0).getAttribute("role"),
-    "option",
-    "The message row should be presented as Option"
-  );
-
-  about3Pane.sortController.sortThreaded();
-
-  await BrowserTestUtils.waitForCondition(
-    () => threadTree.table.body.getAttribute("role") == "tree",
-    "The tree view should switch to a Tree View role"
-  );
-  Assert.equal(
-    threadTree.getRowAtIndex(0).getAttribute("role"),
-    "treeitem",
-    "The message row should be presented as Tree Item"
-  );
-
-  about3Pane.sortController.groupBySort();
-  threadTree.scrollToIndex(0, true);
-
-  await BrowserTestUtils.waitForCondition(
-    () => threadTree.table.body.getAttribute("role") == "tree",
-    "The message list table should remain presented as Tree View"
-  );
-  Assert.equal(
-    threadTree.getRowAtIndex(0).getAttribute("role"),
-    "treeitem",
-    "The first dummy message row should be presented as Tree Item"
-  );
-
-  about3Pane.sortController.sortUnthreaded();
-});

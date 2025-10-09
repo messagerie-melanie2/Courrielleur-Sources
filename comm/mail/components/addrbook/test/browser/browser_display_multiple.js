@@ -2,34 +2,44 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { CalendarTestUtils } = ChromeUtils.import(
-  "resource://testing-common/calendar/CalendarTestUtils.jsm"
+var { CalendarTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/calendar/CalendarTestUtils.sys.mjs"
 );
 
-var { VCardUtils } = ChromeUtils.import("resource:///modules/VCardUtils.jsm");
+var { VCardUtils } = ChromeUtils.importESModule(
+  "resource:///modules/VCardUtils.sys.mjs"
+);
 
 add_setup(async function () {
-  let card1 = personalBook.addCard(createContact("victor", "test"));
+  const card1 = personalBook.addCard(createContact("victor", "test"));
   personalBook.addCard(createContact("romeo", "test", undefined, ""));
-  let card3 = personalBook.addCard(createContact("oscar", "test"));
+  const card3 = personalBook.addCard(createContact("oscar", "test"));
   personalBook.addCard(createContact("mike", "test", undefined, ""));
   const card5 = personalBook.addCard(createContact("xray", "test"));
   const card6 = personalBook.addCard(createContact("yankee", "test"));
   const card7 = personalBook.addCard(createContact("zulu", "test"));
-  let list1 = personalBook.addMailList(createMailingList("list 1"));
+  const list1 = personalBook.addMailList(createMailingList("list 1"));
   list1.addCard(card1);
   list1.addCard(card3);
   list1.addCard(card5);
   list1.addCard(card6);
   list1.addCard(card7);
-  let list2 = personalBook.addMailList(createMailingList("list 2"));
+  const list2 = personalBook.addMailList(createMailingList("list 2"));
   list2.addCard(card3);
 
-  MailServices.accounts.createLocalMailAccount();
-  let account = MailServices.accounts.accounts[0];
-  account.addIdentity(MailServices.accounts.createIdentity());
+  // We'll try composing, so need an account.
+  const account = MailServices.accounts.createAccount();
+  const identity = MailServices.accounts.createIdentity();
+  identity.email = "mochitest@localhost";
+  account.addIdentity(identity);
+  account.incomingServer = MailServices.accounts.createIncomingServer(
+    "user",
+    "test",
+    "pop3"
+  );
+  MailServices.accounts.defaultAccount = account;
 
-  let calendar = CalendarTestUtils.createCalendar();
+  const calendar = CalendarTestUtils.createCalendar();
 
   registerCleanupFunction(async () => {
     MailServices.accounts.removeAccount(account, true);
@@ -38,12 +48,12 @@ add_setup(async function () {
 });
 
 add_task(async function testSelectMultiple() {
-  let abWindow = await openAddressBookWindow();
-  openDirectory(personalBook);
+  const abWindow = await openAddressBookWindow();
+  await openDirectory(personalBook);
 
-  let abDocument = abWindow.document;
-  let cardsList = abDocument.getElementById("cards");
-  let detailsPane = abDocument.getElementById("detailsPane");
+  const abDocument = abWindow.document;
+  const cardsList = abDocument.getElementById("cards");
+  const detailsPane = abDocument.getElementById("detailsPane");
 
   // In order; list 1, list 2, mike, oscar, romeo, victor, xray, yankee, zulu.
   Assert.equal(cardsList.view.rowCount, 9);
@@ -286,25 +296,25 @@ add_task(async function testDeleteMultiple() {
 });
 
 function checkHeader({ listName, selectionCount, selectionType } = {}) {
-  let abWindow = getAddressBookWindow();
-  let abDocument = abWindow.document;
+  const abWindow = getAddressBookWindow();
+  const abDocument = abWindow.document;
 
-  let contactPhoto = abDocument.getElementById("viewContactPhoto");
-  let contactName = abDocument.getElementById("viewContactName");
-  let listHeader = abDocument.getElementById("viewListName");
-  let selectionHeader = abDocument.getElementById("viewSelectionCount");
+  const contactPhoto = abDocument.getElementById("viewContactPhoto");
+  const contactName = abDocument.getElementById("viewContactName");
+  const listHeader = abDocument.getElementById("viewListName");
+  const selectionHeader = abDocument.getElementById("viewSelectionCount");
 
   Assert.ok(
-    BrowserTestUtils.is_hidden(contactPhoto),
+    BrowserTestUtils.isHidden(contactPhoto),
     "contact photo should be hidden"
   );
   Assert.ok(
-    BrowserTestUtils.is_hidden(contactName),
+    BrowserTestUtils.isHidden(contactName),
     "contact name should be hidden"
   );
   if (listName) {
     Assert.ok(
-      BrowserTestUtils.is_visible(listHeader),
+      BrowserTestUtils.isVisible(listHeader),
       "list header should be visible"
     );
     Assert.equal(
@@ -313,16 +323,16 @@ function checkHeader({ listName, selectionCount, selectionType } = {}) {
       "list header text is correct"
     );
     Assert.ok(
-      BrowserTestUtils.is_hidden(selectionHeader),
+      BrowserTestUtils.isHidden(selectionHeader),
       "selection header should be hidden"
     );
   } else {
     Assert.ok(
-      BrowserTestUtils.is_hidden(listHeader),
+      BrowserTestUtils.isHidden(listHeader),
       "list header should be hidden"
     );
     Assert.ok(
-      BrowserTestUtils.is_visible(selectionHeader),
+      BrowserTestUtils.isVisible(selectionHeader),
       "selection header should be visible"
     );
     Assert.deepEqual(abDocument.l10n.getAttributes(selectionHeader), {
@@ -339,48 +349,47 @@ async function checkActionButtons(
   cardAddresses = [],
   eventAddresses = cardAddresses
 ) {
-  let abWindow = getAddressBookWindow();
-  let abDocument = abWindow.document;
+  const abWindow = getAddressBookWindow();
+  const abDocument = abWindow.document;
 
-  let writeButton = abDocument.getElementById("detailsWriteButton");
-  let eventButton = abDocument.getElementById("detailsEventButton");
-  let searchButton = abDocument.getElementById("detailsSearchButton");
-  let newListButton = abDocument.getElementById("detailsNewListButton");
+  const writeButton = abDocument.getElementById("detailsWriteButton");
+  const eventButton = abDocument.getElementById("detailsEventButton");
+  const searchButton = abDocument.getElementById("detailsSearchButton");
+  const newListButton = abDocument.getElementById("detailsNewListButton");
 
   if (cardAddresses.length || listAddresses.length) {
     // Write.
     Assert.ok(
-      BrowserTestUtils.is_visible(writeButton),
+      BrowserTestUtils.isVisible(writeButton),
       "write button is visible"
     );
 
-    let composeWindowPromise = BrowserTestUtils.domWindowOpened();
+    const composeWindowPromise = BrowserTestUtils.domWindowOpened();
     EventUtils.synthesizeMouseAtCenter(writeButton, {}, abWindow);
-    await checkComposeWindow(
-      await composeWindowPromise,
+    await checkComposeWindow(await composeWindowPromise, [
       ...listAddresses,
-      ...cardAddresses
-    );
+      ...cardAddresses,
+    ]);
   }
 
   if (eventAddresses.length) {
     // Event.
     Assert.ok(
-      BrowserTestUtils.is_visible(eventButton),
+      BrowserTestUtils.isVisible(eventButton),
       "event button is visible"
     );
 
     let eventWindowPromise = CalendarTestUtils.waitForEventDialog("edit");
     EventUtils.synthesizeMouseAtCenter(eventButton, {}, abWindow);
-    let eventWindow = await eventWindowPromise;
+    const eventWindow = await eventWindowPromise;
 
-    let iframe = eventWindow.document.getElementById(
+    const iframe = eventWindow.document.getElementById(
       "calendar-item-panel-iframe"
     );
-    let tabPanels = iframe.contentDocument.getElementById(
+    const tabPanels = iframe.contentDocument.getElementById(
       "event-grid-tabpanels"
     );
-    let attendeesTabPanel = iframe.contentDocument.getElementById(
+    const attendeesTabPanel = iframe.contentDocument.getElementById(
       "event-grid-tabpanel-attendees"
     );
     Assert.equal(
@@ -388,7 +397,7 @@ async function checkActionButtons(
       attendeesTabPanel,
       "attendees are displayed"
     );
-    let attendeeNames = attendeesTabPanel.querySelectorAll(
+    const attendeeNames = attendeesTabPanel.querySelectorAll(
       ".attendee-list .attendee-name"
     );
     Assert.deepEqual(
@@ -404,24 +413,21 @@ async function checkActionButtons(
     await new Promise(resolve => abWindow.setTimeout(resolve));
     Assert.report(false, undefined, undefined, "Item dialog closed");
   } else {
-    Assert.ok(
-      BrowserTestUtils.is_hidden(eventButton),
-      "event button is hidden"
-    );
+    Assert.ok(BrowserTestUtils.isHidden(eventButton), "event button is hidden");
   }
 
   if (cardAddresses.length) {
     // New List.
     Assert.ok(
-      BrowserTestUtils.is_visible(newListButton),
+      BrowserTestUtils.isVisible(newListButton),
       "new list button is visible"
     );
-    let listWindowPromise = promiseLoadSubDialog(
+    const listWindowPromise = promiseLoadSubDialog(
       "chrome://messenger/content/addressbook/abMailListDialog.xhtml"
     );
     EventUtils.synthesizeMouseAtCenter(newListButton, {}, abWindow);
-    let listWindow = await listWindowPromise;
-    let memberNames = listWindow.document.querySelectorAll(
+    const listWindow = await listWindowPromise;
+    const memberNames = listWindow.document.querySelectorAll(
       ".textbox-addressingWidget"
     );
     Assert.deepEqual(
@@ -433,29 +439,26 @@ async function checkActionButtons(
     EventUtils.synthesizeKey("VK_ESCAPE", {}, listWindow);
   } else {
     Assert.ok(
-      BrowserTestUtils.is_hidden(newListButton),
+      BrowserTestUtils.isHidden(newListButton),
       "new list button is hidden"
     );
   }
 
-  Assert.ok(
-    BrowserTestUtils.is_hidden(searchButton),
-    "search button is hidden"
-  );
+  Assert.ok(BrowserTestUtils.isHidden(searchButton), "search button is hidden");
 }
 
 function checkList(names) {
-  let abWindow = getAddressBookWindow();
-  let abDocument = abWindow.document;
+  const abWindow = getAddressBookWindow();
+  const abDocument = abWindow.document;
 
-  let selectedCardsSection = abDocument.getElementById("selectedCards");
-  let otherSections = abDocument.querySelectorAll(
+  const selectedCardsSection = abDocument.getElementById("selectedCards");
+  const otherSections = abDocument.querySelectorAll(
     "#detailsBody > section:not(#detailsActions, #selectedCards)"
   );
 
-  Assert.ok(BrowserTestUtils.is_visible(selectedCardsSection));
-  for (let section of otherSections) {
-    Assert.ok(BrowserTestUtils.is_hidden(section), `${section.id} is hidden`);
+  Assert.ok(BrowserTestUtils.isVisible(selectedCardsSection));
+  for (const section of otherSections) {
+    Assert.ok(BrowserTestUtils.isHidden(section), `${section.id} is hidden`);
   }
 
   Assert.deepEqual(

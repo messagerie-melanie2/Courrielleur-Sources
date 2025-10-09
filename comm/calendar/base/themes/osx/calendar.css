@@ -4,7 +4,7 @@
 
 @import url(chrome://calendar/skin/shared/calendar.css);
 
-#calendarContent:-moz-lwtheme {
+:root[lwtheme] #calendarContent {
   text-shadow: none;
 }
 
@@ -26,7 +26,7 @@
 
 /* Calendar sidebar background in calendar and task mode. */
 #calSidebar {
-  border-inline-end: 1px solid #8B8B8B;
+  border-inline-end: 1px solid #8b8b8b;
   margin-inline-end: -3px !important;
 }
 

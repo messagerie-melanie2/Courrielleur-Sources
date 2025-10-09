@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/Literals.h"
 #include "mozilla/mozalloc.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Unused.h"
@@ -16,7 +17,7 @@
 #include "gtest/gtest.h"
 
 #ifdef MOZ_PHC
-#  include "replace_malloc_bridge.h"
+#  include "PHC.h"
 #endif
 
 using namespace mozilla;
@@ -25,13 +26,13 @@ class AutoDisablePHCOnCurrentThread {
  public:
   AutoDisablePHCOnCurrentThread() {
 #ifdef MOZ_PHC
-    ReplaceMalloc::DisablePHCOnCurrentThread();
+    mozilla::phc::DisablePHCOnCurrentThread();
 #endif
   }
 
   ~AutoDisablePHCOnCurrentThread() {
 #ifdef MOZ_PHC
-    ReplaceMalloc::ReenablePHCOnCurrentThread();
+    mozilla::phc::ReenablePHCOnCurrentThread();
 #endif
   }
 };
@@ -348,9 +349,9 @@ class SizeClassesBetween {
 };
 
 #define ALIGNMENT_CEILING(s, alignment) \
-  (((s) + ((alignment)-1)) & (~((alignment)-1)))
+  (((s) + ((alignment) - 1)) & (~((alignment) - 1)))
 
-#define ALIGNMENT_FLOOR(s, alignment) ((s) & (~((alignment)-1)))
+#define ALIGNMENT_FLOOR(s, alignment) ((s) & (~((alignment) - 1)))
 
 static bool IsSameRoundedHugeClass(size_t aSize1, size_t aSize2,
                                    jemalloc_stats_t& aStats) {
@@ -364,7 +365,7 @@ static bool CanReallocInPlace(size_t aFromSize, size_t aToSize,
   // PHC allocations must be disabled because PHC reallocs differently to
   // mozjemalloc.
 #ifdef MOZ_PHC
-  MOZ_RELEASE_ASSERT(!ReplaceMalloc::IsPHCEnabledOnCurrentThread());
+  MOZ_RELEASE_ASSERT(!mozilla::phc::IsPHCEnabledOnCurrentThread());
 #endif
 
   if (aFromSize == malloc_good_size(aToSize)) {
@@ -459,6 +460,9 @@ TEST(Jemalloc, JunkPoison)
   params.mMaxDirty = size_t(-1);
   arena_id_t arena = moz_create_arena_with_params(&params);
 
+  // Mozjemalloc is configured to only poison the first four cache lines.
+  const size_t poison_check_len = 256;
+
   // Allocating should junk the buffer, and freeing should poison the buffer.
   for (size_t size : sSizes) {
     if (size <= stats.large_max) {
@@ -473,7 +477,8 @@ TEST(Jemalloc, JunkPoison)
       // We purposefully do a use-after-free here, to check that the data was
       // poisoned.
       ASSERT_NO_FATAL_FAILURE(
-          bulk_compare(buf, 0, allocated, poison_buf, stats.page_size));
+          bulk_compare(buf, 0, std::min(allocated, poison_check_len),
+                       poison_buf, stats.page_size));
     }
   }
 
@@ -489,8 +494,9 @@ TEST(Jemalloc, JunkPoison)
     ASSERT_EQ(ptr, ptr2);
     ASSERT_NO_FATAL_FAILURE(
         bulk_compare(ptr, 0, prev + 1, fill_buf, stats.page_size));
-    ASSERT_NO_FATAL_FAILURE(
-        bulk_compare(ptr, prev + 1, size, poison_buf, stats.page_size));
+    ASSERT_NO_FATAL_FAILURE(bulk_compare(ptr, prev + 1,
+                                         std::min(size, poison_check_len),
+                                         poison_buf, stats.page_size));
     moz_arena_free(arena, ptr);
     prev = size;
   }
@@ -514,12 +520,14 @@ TEST(Jemalloc, JunkPoison)
           // beyond the valid range.
           if (to_size > stats.large_max) {
             size_t page_limit = ALIGNMENT_CEILING(to_size, stats.page_size);
-            ASSERT_NO_FATAL_FAILURE(bulk_compare(ptr, to_size, page_limit,
-                                                 poison_buf, stats.page_size));
+            ASSERT_NO_FATAL_FAILURE(bulk_compare(
+                ptr, to_size, std::min(page_limit, poison_check_len),
+                poison_buf, stats.page_size));
             ASSERT_DEATH_WRAP(ptr[page_limit] = 0, "");
           } else {
-            ASSERT_NO_FATAL_FAILURE(bulk_compare(ptr, to_size, from_size,
-                                                 poison_buf, stats.page_size));
+            ASSERT_NO_FATAL_FAILURE(bulk_compare(
+                ptr, to_size, std::min(from_size, poison_check_len), poison_buf,
+                stats.page_size));
           }
         } else {
           // Enlarging allocation
@@ -563,7 +571,8 @@ TEST(Jemalloc, JunkPoison)
         ASSERT_NE(ptr, ptr2);
         if (from_size <= stats.large_max) {
           ASSERT_NO_FATAL_FAILURE(
-              bulk_compare(ptr, 0, from_size, poison_buf, stats.page_size));
+              bulk_compare(ptr, 0, std::min(from_size, poison_check_len),
+                           poison_buf, stats.page_size));
         }
         ASSERT_NO_FATAL_FAILURE(
             bulk_compare(ptr2, 0, from_size, fill_buf, stats.page_size));
@@ -594,7 +603,8 @@ TEST(Jemalloc, JunkPoison)
         ASSERT_NE(ptr, ptr2);
         if (from_size <= stats.large_max) {
           ASSERT_NO_FATAL_FAILURE(
-              bulk_compare(ptr, 0, from_size, poison_buf, stats.page_size));
+              bulk_compare(ptr, 0, std::min(from_size, poison_check_len),
+                           poison_buf, stats.page_size));
         }
         ASSERT_NO_FATAL_FAILURE(
             bulk_compare(ptr2, 0, to_size, fill_buf, stats.page_size));
@@ -753,4 +763,106 @@ TEST(Jemalloc, DisposeArena)
   ASSERT_DEATH_WRAP(moz_arena_malloc(arena, 42), "");
 
   RESTORE_GDB_SLEEP_LOCAL();
+}
+
+static void CheckPtr(void* ptr, size_t size) {
+  EXPECT_TRUE(ptr);
+  jemalloc_ptr_info_t info;
+  jemalloc_ptr_info(ptr, &info);
+  EXPECT_EQ(info.tag, TagLiveAlloc);
+  EXPECT_EQ(info.size, malloc_good_size(size));
+}
+
+static void CheckStats(const char* operation, unsigned iteration,
+                       jemalloc_stats_lite_t& baseline,
+                       jemalloc_stats_lite_t& stats, size_t num_ops,
+                       ptrdiff_t bytes_diff) {
+  if ((baseline.allocated_bytes + bytes_diff != stats.allocated_bytes
+
+       || baseline.num_operations + num_ops != stats.num_operations)) {
+    // All the tests that check stats, perform some operation, then check stats
+    // again can race with other threads.  But the test can't be made thread
+    // safe without a sagnificant amount of work.  However this IS a problem
+    // when stepping through the test using a debugger, since other threads are
+    // likely to run while the current thread is paused.  Instead of neading a
+    // debugger our printf here can help understand a failing test.
+    fprintf(stderr, "Check stats failed after iteration %u operation %s\n",
+            iteration, operation);
+
+    EXPECT_EQ(baseline.allocated_bytes + bytes_diff, stats.allocated_bytes);
+    EXPECT_EQ(baseline.num_operations + num_ops, stats.num_operations);
+  }
+}
+
+TEST(Jemalloc, StatsLite)
+{
+  // Disable PHC allocations for this test, because even a single PHC
+  // allocation occurring can throw it off.
+  AutoDisablePHCOnCurrentThread disable;
+
+  // Use this data to make an allocation, resize it twice, then free it.  Some
+  // The data uses a few size classes and does a combination of in-place and
+  // moving reallocations.
+  struct {
+    // The initial allocation size.
+    size_t initial;
+    // The first reallocation size and number of operations of the reallocation.
+    size_t next;
+    size_t next_ops;
+    // The final reallocation size and number of operations of the reallocation.
+    size_t last;
+    size_t last_ops;
+  } TestData[] = {
+      /* clang-format off */
+      { 16,      15,     0, 256,     2},
+      {128_KiB,  64_KiB, 1,  68_KiB, 1},
+      {  4_MiB,  16_MiB, 2,   3_MiB, 2},
+      { 16_KiB, 512,     2,  32_MiB, 2},
+      /* clang-format on */
+  };
+
+  arena_id_t my_arena = moz_create_arena();
+
+  unsigned i = 0;
+  for (auto data : TestData) {
+    // Assert that the API returns /something/ a bit sensible.
+    jemalloc_stats_lite_t baseline;
+    jemalloc_stats_lite(&baseline);
+
+    // Allocate an object.
+    void* ptr = moz_arena_malloc(my_arena, data.initial);
+    CheckPtr(ptr, data.initial);
+
+    jemalloc_stats_lite_t stats1;
+    jemalloc_stats_lite(&stats1);
+    CheckStats("malloc()", i, baseline, stats1, 1,
+               malloc_good_size(data.initial));
+
+    // realloc the item in-place.
+    ptr = moz_arena_realloc(my_arena, ptr, data.next);
+    CheckPtr(ptr, data.next);
+
+    jemalloc_stats_lite_t stats2;
+    jemalloc_stats_lite(&stats2);
+    CheckStats("realloc() 1", i, stats1, stats2, data.next_ops,
+               malloc_good_size(data.next) - malloc_good_size(data.initial));
+
+    // realloc so it has to move to a different location
+    ptr = moz_arena_realloc(my_arena, ptr, data.last);
+    CheckPtr(ptr, data.last);
+
+    jemalloc_stats_lite_t stats3;
+    jemalloc_stats_lite(&stats3);
+    CheckStats("realloc() 2", i, stats2, stats3, data.last_ops,
+               malloc_good_size(data.last) - malloc_good_size(data.next));
+
+    moz_arena_free(my_arena, ptr);
+    jemalloc_stats_lite_t stats4;
+    jemalloc_stats_lite(&stats4);
+    CheckStats("free()", i, stats3, stats4, 1, -malloc_good_size(data.last));
+
+    i++;
+  }
+
+  moz_dispose_arena(my_arena);
 }

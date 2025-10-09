@@ -5,7 +5,6 @@
 const CRYPTO_COLLECTION = "crypto";
 const KEYS_WBO = "keys";
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 import { Log } from "resource://gre/modules/Log.sys.mjs";
 
@@ -68,30 +67,33 @@ const fxAccounts = getFxAccountsSingleton();
 
 function getEngineModules() {
   let result = {
-    Addons: { module: "addons.js", symbol: "AddonsEngine" },
-    Password: { module: "passwords.js", symbol: "PasswordEngine" },
-    Prefs: { module: "prefs.js", symbol: "PrefsEngine" },
+    Addons: { module: "addons.sys.mjs", symbol: "AddonsEngine" },
+    Password: { module: "passwords.sys.mjs", symbol: "PasswordEngine" },
+    Prefs: { module: "prefs.sys.mjs", symbol: "PrefsEngine" },
   };
   if (AppConstants.MOZ_APP_NAME != "thunderbird") {
-    result.Bookmarks = { module: "bookmarks.js", symbol: "BookmarksEngine" };
-    result.Form = { module: "forms.js", symbol: "FormEngine" };
-    result.History = { module: "history.js", symbol: "HistoryEngine" };
-    result.Tab = { module: "tabs.js", symbol: "TabEngine" };
+    result.Bookmarks = {
+      module: "bookmarks.sys.mjs",
+      symbol: "BookmarksEngine",
+    };
+    result.Form = { module: "forms.sys.mjs", symbol: "FormEngine" };
+    result.History = { module: "history.sys.mjs", symbol: "HistoryEngine" };
+    result.Tab = { module: "tabs.sys.mjs", symbol: "TabEngine" };
   }
-  if (Svc.Prefs.get("engine.addresses.available", false)) {
+  if (Svc.PrefBranch.getBoolPref("engine.addresses.available", false)) {
     result.Addresses = {
-      module: "resource://autofill/FormAutofillSync.jsm",
+      module: "resource://autofill/FormAutofillSync.sys.mjs",
       symbol: "AddressesEngine",
     };
   }
-  if (Svc.Prefs.get("engine.creditcards.available", false)) {
+  if (Svc.PrefBranch.getBoolPref("engine.creditcards.available", false)) {
     result.CreditCards = {
-      module: "resource://autofill/FormAutofillSync.jsm",
+      module: "resource://autofill/FormAutofillSync.sys.mjs",
       symbol: "CreditCardsEngine",
     };
   }
   result["Extension-Storage"] = {
-    module: "extension-storage.js",
+    module: "extension-storage.sys.mjs",
     controllingPref: "webextensions.storage.sync.kinto",
     whenTrue: "ExtensionStorageEngineKinto",
     whenFalse: "ExtensionStorageEngineBridge",
@@ -104,7 +106,7 @@ const lazy = {};
 // A unique identifier for this browser session. Used for logging so
 // we can easily see whether 2 logs are in the same browser session or
 // after the browser restarted.
-XPCOMUtils.defineLazyGetter(lazy, "browserSessionID", Utils.makeGUID);
+ChromeUtils.defineLazyGetter(lazy, "browserSessionID", Utils.makeGUID);
 
 function Sync11Service() {
   this._notify = Utils.notify("weave:service:");
@@ -114,6 +116,9 @@ Sync11Service.prototype = {
   _lock: Utils.lock,
   _locked: false,
   _loggedIn: false,
+  // There are some scenarios where we want to kick off another sync immediately
+  // after the current sync
+  _queuedSyncReason: null,
 
   infoURL: null,
   storageURL: null,
@@ -373,6 +378,7 @@ Sync11Service.prototype = {
     }
 
     Svc.Obs.add("weave:service:setup-complete", this);
+    Svc.Obs.add("weave:service:sync:finish", this);
     Svc.Obs.add("sync:collection_changed", this); // Pulled from FxAccountsCommon
     Svc.Obs.add("fxaccounts:device_disconnected", this);
     Services.prefs.addObserver(PREFS_BRANCH + "engine.", this);
@@ -423,8 +429,11 @@ Sync11Service.prototype = {
     let engines = [];
     // We allow a pref, which has no default value, to limit the engines
     // which are registered. We expect only tests will use this.
-    if (Svc.Prefs.has("registerEngines")) {
-      engines = Svc.Prefs.get("registerEngines").split(",");
+    if (
+      Svc.PrefBranch.getPrefType("registerEngines") !=
+      Ci.nsIPrefBranch.PREF_INVALID
+    ) {
+      engines = Svc.PrefBranch.getStringPref("registerEngines").split(",");
       this._log.info("Registering custom set of engines", engines);
     } else {
       // default is all engines.
@@ -432,7 +441,7 @@ Sync11Service.prototype = {
     }
 
     let declined = [];
-    let pref = Svc.Prefs.get("declinedEngines");
+    let pref = Svc.PrefBranch.getStringPref("declinedEngines", null);
     if (pref) {
       declined = pref.split(",");
     }
@@ -453,7 +462,7 @@ Sync11Service.prototype = {
         modInfo.module = "resource://services-sync/engines/" + modInfo.module;
       }
       try {
-        let ns = ChromeUtils.import(modInfo.module);
+        let ns = ChromeUtils.importESModule(modInfo.module);
         if (modInfo.symbol) {
           let symbol = modInfo.symbol;
           if (!(symbol in ns)) {
@@ -497,7 +506,7 @@ Sync11Service.prototype = {
     await this.promiseInitialized;
 
     // Sanity check, this method is not meant to be run if Sync is enabled!
-    if (Svc.Prefs.get("username", "")) {
+    if (Svc.PrefBranch.getStringPref("username", "")) {
       throw new Error("Sync is enabled!");
     }
 
@@ -524,7 +533,10 @@ Sync11Service.prototype = {
     this._ignorePrefObserver = true;
     try {
       for (const engine of allEngines) {
-        Svc.Prefs.set(`engine.${engine}`, !declinedEngines.includes(engine));
+        Svc.PrefBranch.setBoolPref(
+          `engine.${engine}`,
+          !declinedEngines.includes(engine)
+        );
       }
     } finally {
       this._ignorePrefObserver = false;
@@ -544,7 +556,10 @@ Sync11Service.prototype = {
         // We check if we're running TPS here to avoid TPS failing because it
         // couldn't get to get the sync lock, due to us currently syncing the
         // clients engine.
-        if (data.includes("clients") && !Svc.Prefs.get("testing.tps", false)) {
+        if (
+          data.includes("clients") &&
+          !Svc.PrefBranch.getBoolPref("testing.tps", false)
+        ) {
           // Sync in the background (it's fine not to wait on the returned promise
           // because sync() has a lock).
           // [] = clients collection only
@@ -580,17 +595,23 @@ Sync11Service.prototype = {
         }
         this._handleEngineStatusChanged(engine);
         break;
+      case "weave:service:sync:finish":
+        if (this._queuedSyncReason) {
+          this.sync({ why: this._queuedSyncReason });
+          this._queuedSyncReason = null;
+        }
+        break;
     }
   },
 
   _handleEngineStatusChanged(engine) {
     this._log.trace("Status for " + engine + " engine changed.");
-    if (Svc.Prefs.get("engineStatusChanged." + engine, false)) {
+    if (Svc.PrefBranch.getBoolPref("engineStatusChanged." + engine, false)) {
       // The enabled status being changed back to what it was before.
-      Svc.Prefs.reset("engineStatusChanged." + engine);
+      Svc.PrefBranch.clearUserPref("engineStatusChanged." + engine);
     } else {
       // Remember that the engine status changed locally until the next sync.
-      Svc.Prefs.set("engineStatusChanged." + engine, true);
+      Svc.PrefBranch.setBoolPref("engineStatusChanged." + engine, true);
     }
   },
 
@@ -954,7 +975,7 @@ Sync11Service.prototype = {
       throw new Error("No FxA user is signed in");
     }
     this._log.info("Configuring sync with current FxA user");
-    Svc.Prefs.set("username", user.email);
+    Svc.PrefBranch.setStringPref("username", user.email);
     Svc.Obs.notify("weave:connected");
   },
 
@@ -992,11 +1013,13 @@ Sync11Service.prototype = {
 
     // Reset Weave prefs.
     this._ignorePrefObserver = true;
-    Svc.Prefs.resetBranch("");
+    for (const pref of Svc.PrefBranch.getChildList("")) {
+      Svc.PrefBranch.clearUserPref(pref);
+    }
     this._ignorePrefObserver = false;
     this.clusterURL = null;
 
-    Svc.Prefs.set("lastversion", WEAVE_VERSION);
+    Svc.PrefBranch.setStringPref("lastversion", WEAVE_VERSION);
 
     try {
       this.identity.finalize();
@@ -1290,7 +1313,7 @@ Sync11Service.prototype = {
       Utils.mpLocked()
     ) {
       reason = kSyncMasterPasswordLocked;
-    } else if (Svc.Prefs.get("firstSync") == "notReady") {
+    } else if (Svc.PrefBranch.getStringPref("firstSync", null) == "notReady") {
       reason = kFirstSyncChoiceNotMade;
     } else if (!Async.isAppReady()) {
       reason = kFirefoxShuttingDown;
@@ -1303,6 +1326,15 @@ Sync11Service.prototype = {
     return reason;
   },
 
+  /**
+   * Perform a full sync (or of the given engines). While a sync is in progress,
+   * this call is ignored; to guarantee a follow-up you must call queueSync().
+   *
+   * @param {Object} options
+   * @param {Array<String>} [options.engines] — names of engines to sync
+   * @param {String} [options.why] — reason for the sync
+   * @returns {Promise<void>}
+   */
   async sync({ engines, why } = {}) {
     let dateStr = Utils.formatTimestamp(new Date());
     this._log.debug("User-Agent: " + Utils.userAgent);
@@ -1332,17 +1364,8 @@ Sync11Service.prototype = {
     return this._lock(
       "service.js: sync",
       this._notify("sync", JSON.stringify({ why }), async function onNotify() {
-        let histogram =
-          Services.telemetry.getHistogramById("WEAVE_START_COUNT");
-        histogram.add(1);
-
         let synchronizer = new EngineSynchronizer(this);
         await synchronizer.sync(engineNamesToSync, why); // Might throw!
-
-        histogram = Services.telemetry.getHistogramById(
-          "WEAVE_COMPLETE_SUCCESS_COUNT"
-        );
-        histogram.add(1);
 
         // We successfully synchronized.
         // Check if the identity wants to pre-fetch a migration sentinel from
@@ -1357,6 +1380,21 @@ Sync11Service.prototype = {
         await this._maybeUpdateDeclined();
       })
     )();
+  },
+
+  /**
+   * Kick off a sync after the current one finishes, or immediately if idle.
+   *
+   * @param {String} why — reason for calling the sync
+   */
+  queueSync(why) {
+    if (this._locked) {
+      // A sync is already in flight; queue a follow-up.
+      this._queuedSyncReason = why;
+    } else {
+      // No sync right now, go ahead immediately.
+      this.sync({ why });
+    }
   },
 
   /**
@@ -1467,9 +1505,6 @@ Sync11Service.prototype = {
    */
   async wipeServer(collections) {
     let response;
-    let histogram = Services.telemetry.getHistogramById(
-      "WEAVE_WIPE_SERVER_SUCCEEDED"
-    );
     if (!collections) {
       // Strip the trailing slash.
       let res = this.resource(this.storageURL.slice(0, -1));
@@ -1478,7 +1513,6 @@ Sync11Service.prototype = {
         response = await res.delete();
       } catch (ex) {
         this._log.debug("Failed to wipe server", ex);
-        histogram.add(false);
         throw ex;
       }
       if (response.status != 200 && response.status != 404) {
@@ -1488,10 +1522,8 @@ Sync11Service.prototype = {
             " response for " +
             this.storageURL
         );
-        histogram.add(false);
         throw response;
       }
-      histogram.add(true);
       return response.headers["x-weave-timestamp"];
     }
 
@@ -1502,7 +1534,6 @@ Sync11Service.prototype = {
         response = await this.resource(url).delete();
       } catch (ex) {
         this._log.debug("Failed to wipe '" + name + "' collection", ex);
-        histogram.add(false);
         throw ex;
       }
 
@@ -1513,7 +1544,6 @@ Sync11Service.prototype = {
             " response for " +
             url
         );
-        histogram.add(false);
         throw response;
       }
 
@@ -1521,7 +1551,6 @@ Sync11Service.prototype = {
         timestamp = response.headers["x-weave-timestamp"];
       }
     }
-    histogram.add(true);
     return timestamp;
   },
 

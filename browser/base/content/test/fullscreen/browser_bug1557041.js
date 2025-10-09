@@ -3,18 +3,12 @@
 
 "use strict";
 
-// This test tends to trigger a race in the fullscreen time telemetry,
-// where the fullscreen enter and fullscreen exit events (which use the
-// same histogram ID) overlap. That causes TelemetryStopwatch to log an
-// error.
-SimpleTest.ignoreAllUncaughtExceptions(true);
-
 add_task(async function test_identityPopupCausesFSExit() {
   let url = "https://example.com/";
 
   await BrowserTestUtils.withNewTab("about:blank", async browser => {
     let loaded = BrowserTestUtils.browserLoaded(browser, false, url);
-    BrowserTestUtils.loadURIString(browser, url);
+    BrowserTestUtils.startLoadingURIString(browser, url);
     await loaded;
 
     let identityPermissionBox = document.getElementById(
@@ -22,7 +16,7 @@ add_task(async function test_identityPopupCausesFSExit() {
     );
 
     info("Entering DOM fullscreen");
-    await changeFullscreen(browser, true);
+    await DOMFullscreenTestUtils.changeFullscreen(browser, true);
 
     let popupShown = BrowserTestUtils.waitForEvent(
       window,
@@ -30,7 +24,7 @@ add_task(async function test_identityPopupCausesFSExit() {
       true,
       event => event.target == document.getElementById("permission-popup")
     );
-    let fsExit = waitForFullScreenState(browser, false);
+    let fsExit = DOMFullscreenTestUtils.waitForFullScreenState(browser, false);
 
     identityPermissionBox.click();
 

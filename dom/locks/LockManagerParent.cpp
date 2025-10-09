@@ -7,7 +7,6 @@
 #include "LockManagerParent.h"
 #include "LockRequestParent.h"
 
-#include "mozilla/ContentPrincipalInfoHashKey.h"
 #include "mozilla/PrincipalHashKey.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/StaticPtr.h"
@@ -18,27 +17,30 @@
 
 namespace mozilla::dom::locks {
 
-static StaticAutoPtr<
-    nsTHashMap<ContentPrincipalInfoHashKey, WeakPtr<ManagedLocks>>>
+static StaticAutoPtr<nsTHashMap<PrincipalHashKey, WeakPtr<ManagedLocks>>>
     sManagedLocksMap;
 
 using IPCResult = mozilla::ipc::IPCResult;
 
-LockManagerParent::LockManagerParent(
-    const mozilla::ipc::ContentPrincipalInfo& aPrincipalInfo,
-    const nsID& aClientId)
-    : mClientId(NSID_TrimBracketsUTF16(aClientId)),
-      mPrincipalInfo(aPrincipalInfo) {
+LockManagerParent::LockManagerParent(NotNull<nsIPrincipal*> aPrincipal,
+                                     const Maybe<nsID>& aClientId)
+    : mPrincipal(aPrincipal) {
+  if (aClientId.isSome()) {
+    mClientId = NSID_TrimBracketsUTF16(aClientId.value());
+  } else {
+    mClientId = EmptyString();
+  }
+
   if (!sManagedLocksMap) {
     sManagedLocksMap =
-        new nsTHashMap<ContentPrincipalInfoHashKey, WeakPtr<ManagedLocks>>();
+        new nsTHashMap<PrincipalHashKey, WeakPtr<ManagedLocks>>();
   } else {
-    mManagedLocks = sManagedLocksMap->Get(aPrincipalInfo);
+    mManagedLocks = sManagedLocksMap->Get(aPrincipal);
   }
 
   if (!mManagedLocks) {
     mManagedLocks = new ManagedLocks();
-    sManagedLocksMap->LookupOrInsert(aPrincipalInfo, mManagedLocks);
+    sManagedLocksMap->LookupOrInsert(aPrincipal, mManagedLocks);
   }
 }
 
@@ -79,8 +81,8 @@ void LockManagerParent::ActorDestroy(ActorDestroyReason aWhy) {
   mManagedLocks = nullptr;
   // We just decreased the refcount and potentially deleted it, so check whether
   // the weak pointer still points to anything and remove the entry if not.
-  if (!sManagedLocksMap->Get(mPrincipalInfo)) {
-    sManagedLocksMap->Remove(mPrincipalInfo);
+  if (!sManagedLocksMap->Get(mPrincipal)) {
+    sManagedLocksMap->Remove(mPrincipal);
   }
 }
 
@@ -93,7 +95,7 @@ void LockManagerParent::ProcessRequestQueue(
     }
     aQueue.RemoveElementAt(0);
     mManagedLocks->mHeldLocks.AppendElement(first);
-    Unused << NS_WARN_IF(!first->SendResolve(first->Data().lockMode(), true));
+    (void)NS_WARN_IF(!first->SendResolve(first->Data().lockMode(), true));
   }
 }
 
@@ -156,8 +158,7 @@ IPCResult LockManagerParent::RecvPLockRequestConstructor(
     mManagedLocks->mHeldLocks.RemoveElementsBy(
         [&aRequest](const RefPtr<LockRequestParent>& aHeld) {
           if (aHeld->Data().name() == aRequest.name()) {
-            Unused << NS_WARN_IF(
-                !PLockRequestParent::Send__delete__(aHeld, true));
+            (void)NS_WARN_IF(!PLockRequestParent::Send__delete__(aHeld, true));
             return true;
           }
           return false;
@@ -165,7 +166,7 @@ IPCResult LockManagerParent::RecvPLockRequestConstructor(
     queue.InsertElementAt(0, actor);
   } else if (aRequest.ifAvailable() &&
              (!queue.IsEmpty() || !IsGrantableRequest(actor->Data()))) {
-    Unused << NS_WARN_IF(!aActor->SendResolve(aRequest.lockMode(), false));
+    (void)NS_WARN_IF(!aActor->SendResolve(aRequest.lockMode(), false));
     return IPC_OK();
   } else {
     queue.AppendElement(actor);

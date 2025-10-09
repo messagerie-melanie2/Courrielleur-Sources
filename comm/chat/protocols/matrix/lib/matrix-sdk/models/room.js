@@ -5,53 +5,59 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.RoomNameType = exports.RoomEvent = exports.Room = exports.NotificationCountType = exports.KNOWN_SAFE_ROOM_VERSION = void 0;
 var _matrixEventsSdk = require("matrix-events-sdk");
-var _eventTimelineSet = require("./event-timeline-set");
-var _eventTimeline = require("./event-timeline");
-var _contentRepo = require("../content-repo");
-var _utils = require("../utils");
-var _event = require("./event");
-var _eventStatus = require("./event-status");
-var _roomMember = require("./room-member");
-var _roomSummary = require("./room-summary");
-var _logger = require("../logger");
-var _ReEmitter = require("../ReEmitter");
-var _event2 = require("../@types/event");
-var _client = require("../client");
-var _filter = require("../filter");
-var _roomState = require("./room-state");
-var _beacon = require("./beacon");
-var _thread = require("./thread");
-var _read_receipts = require("../@types/read_receipts");
-var _relationsContainer = require("./relations-container");
-var _readReceipt = require("./read-receipt");
-var _poll = require("./poll");
-function ownKeys(object, enumerableOnly) { var keys = Object.keys(object); if (Object.getOwnPropertySymbols) { var symbols = Object.getOwnPropertySymbols(object); enumerableOnly && (symbols = symbols.filter(function (sym) { return Object.getOwnPropertyDescriptor(object, sym).enumerable; })), keys.push.apply(keys, symbols); } return keys; }
-function _objectSpread(target) { for (var i = 1; i < arguments.length; i++) { var source = null != arguments[i] ? arguments[i] : {}; i % 2 ? ownKeys(Object(source), !0).forEach(function (key) { _defineProperty(target, key, source[key]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) : ownKeys(Object(source)).forEach(function (key) { Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key)); }); } return target; }
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(arg) { var key = _toPrimitive(arg, "string"); return typeof key === "symbol" ? key : String(key); }
-function _toPrimitive(input, hint) { if (typeof input !== "object" || input === null) return input; var prim = input[Symbol.toPrimitive]; if (prim !== undefined) { var res = prim.call(input, hint || "default"); if (typeof res !== "object") return res; throw new TypeError("@@toPrimitive must return a primitive value."); } return (hint === "string" ? String : Number)(input); } /*
-                                                                                                                                                                                                                                                                                                                                                                                          Copyright 2015 - 2023 The Matrix.org Foundation C.I.C.
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Licensed under the Apache License, Version 2.0 (the "License");
-                                                                                                                                                                                                                                                                                                                                                                                          you may not use this file except in compliance with the License.
-                                                                                                                                                                                                                                                                                                                                                                                          You may obtain a copy of the License at
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                              http://www.apache.org/licenses/LICENSE-2.0
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Unless required by applicable law or agreed to in writing, software
-                                                                                                                                                                                                                                                                                                                                                                                          distributed under the License is distributed on an "AS IS" BASIS,
-                                                                                                                                                                                                                                                                                                                                                                                          WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-                                                                                                                                                                                                                                                                                                                                                                                          See the License for the specific language governing permissions and
-                                                                                                                                                                                                                                                                                                                                                                                          limitations under the License.
-                                                                                                                                                                                                                                                                                                                                                                                          */
+var _eventTimelineSet = require("./event-timeline-set.js");
+var _eventTimeline = require("./event-timeline.js");
+var _contentRepo = require("../content-repo.js");
+var _utils = _interopRequireWildcard(require("../utils.js"));
+var utils = _utils;
+var _event = require("./event.js");
+var _eventStatus = require("./event-status.js");
+var _roomMember = require("./room-member.js");
+var _roomSummary = require("./room-summary.js");
+var _logger = require("../logger.js");
+var _ReEmitter = require("../ReEmitter.js");
+var _event2 = require("../@types/event.js");
+var _client = require("../client.js");
+var _filter = require("../filter.js");
+var _roomState = require("./room-state.js");
+var _beacon = require("./beacon.js");
+var _thread = require("./thread.js");
+var _read_receipts = require("../@types/read_receipts.js");
+var _relationsContainer = require("./relations-container.js");
+var _readReceipt = require("./read-receipt.js");
+var _poll = require("./poll.js");
+var _roomReceipts = require("./room-receipts.js");
+var _compareEventOrdering = require("./compare-event-ordering.js");
+var _membership = require("../@types/membership.js");
+var _serverCapabilities = require("../serverCapabilities.js");
+function _getRequireWildcardCache(e) { if ("function" != typeof WeakMap) return null; var r = new WeakMap(), t = new WeakMap(); return (_getRequireWildcardCache = function (e) { return e ? t : r; })(e); }
+function _interopRequireWildcard(e, r) { if (!r && e && e.__esModule) return e; if (null === e || "object" != typeof e && "function" != typeof e) return { default: e }; var t = _getRequireWildcardCache(r); if (t && t.has(e)) return t.get(e); var n = { __proto__: null }, a = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var u in e) if ("default" !== u && {}.hasOwnProperty.call(e, u)) { var i = a ? Object.getOwnPropertyDescriptor(e, u) : null; i && (i.get || i.set) ? Object.defineProperty(n, u, i) : n[u] = e[u]; } return n.default = e, t && t.set(e, n), n; }
+function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
+function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
+function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
+Copyright 2015 - 2023 The Matrix.org Foundation C.I.C.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 // These constants are used as sane defaults when the homeserver doesn't support
 // the m.room_versions capability. In practice, KNOWN_SAFE_ROOM_VERSION should be
 // the same as the common default room version whereas SAFE_ROOM_VERSIONS are the
 // room versions which are considered okay for people to run without being asked
 // to upgrade (ie: "stable"). Eventually, we should remove these when all homeservers
 // return an m.room_versions capability.
-const KNOWN_SAFE_ROOM_VERSION = "10";
-exports.KNOWN_SAFE_ROOM_VERSION = KNOWN_SAFE_ROOM_VERSION;
+const KNOWN_SAFE_ROOM_VERSION = exports.KNOWN_SAFE_ROOM_VERSION = "10";
 const SAFE_ROOM_VERSIONS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
 // When inserting a visibility event affecting event `eventId`, we
 // need to scan through existing visibility events for `eventId`.
@@ -68,13 +74,12 @@ const SAFE_ROOM_VERSIONS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
 // an extremely uncommon case (possibly a DoS) is a small
 // price to pay to keep matrix-js-sdk responsive.
 const MAX_NUMBER_OF_VISIBILITY_EVENTS_TO_SCAN_THROUGH = 30;
-let NotificationCountType = /*#__PURE__*/function (NotificationCountType) {
+let NotificationCountType = exports.NotificationCountType = /*#__PURE__*/function (NotificationCountType) {
   NotificationCountType["Highlight"] = "highlight";
   NotificationCountType["Total"] = "total";
   return NotificationCountType;
 }({});
-exports.NotificationCountType = NotificationCountType;
-let RoomEvent = /*#__PURE__*/function (RoomEvent) {
+let RoomEvent = exports.RoomEvent = /*#__PURE__*/function (RoomEvent) {
   RoomEvent["MyMembership"] = "Room.myMembership";
   RoomEvent["Tags"] = "Room.tags";
   RoomEvent["AccountData"] = "Room.accountData";
@@ -90,9 +95,9 @@ let RoomEvent = /*#__PURE__*/function (RoomEvent) {
   RoomEvent["CurrentStateUpdated"] = "Room.CurrentStateUpdated";
   RoomEvent["HistoryImportedWithinTimeline"] = "Room.historyImportedWithinTimeline";
   RoomEvent["UnreadNotifications"] = "Room.UnreadNotifications";
+  RoomEvent["Summary"] = "Room.Summary";
   return RoomEvent;
 }({});
-exports.RoomEvent = RoomEvent;
 class Room extends _readReceipt.ReadReceipt {
   /**
    * Construct a new Room.
@@ -119,6 +124,7 @@ class Room extends _readReceipt.ReadReceipt {
    */
   constructor(roomId, client, myUserId, opts = {}) {
     super();
+
     // In some cases, we add listeners for every displayed Matrix event, so it's
     // common to have quite a few more than the default limit.
     this.roomId = roomId;
@@ -185,13 +191,6 @@ class Room extends _readReceipt.ReadReceipt {
      */
     _defineProperty(this, "summary", null);
     /**
-     * The live event timeline for this room, with the oldest event at index 0.
-     *
-     * @deprecated Present for backwards compatibility.
-     *             Use getLiveTimeline().getEvents() instead
-     */
-    _defineProperty(this, "timeline", void 0);
-    /**
      * oldState The state of the room at the time of the oldest event in the live timeline.
      *
      * @deprecated Present for backwards compatibility.
@@ -205,17 +204,12 @@ class Room extends _readReceipt.ReadReceipt {
      *             Use getLiveTimeline().getState(EventTimeline.FORWARDS) instead.
      */
     _defineProperty(this, "currentState", void 0);
-    _defineProperty(this, "relations", new _relationsContainer.RelationsContainer(this.client, this));
+    _defineProperty(this, "relations", void 0);
     /**
      * A collection of events known by the client
      * This is not a comprehensive list of the threads that exist in this room
      */
     _defineProperty(this, "threads", new Map());
-    /**
-     * @deprecated This value is unreliable. It may not contain the last thread.
-     *             Use {@link Room.getLastThread} instead.
-     */
-    _defineProperty(this, "lastThread", void 0);
     /**
      * A mapping of eventId to all visibility changes to apply
      * to the event, by chronological order, as per
@@ -233,6 +227,11 @@ class Room extends _readReceipt.ReadReceipt {
      * @experimental
      */
     _defineProperty(this, "visibilityEvents", new Map());
+    /**
+     * The latest receipts (synthetic and real) for each user in each thread
+     * (and unthreaded).
+     */
+    _defineProperty(this, "roomReceipts", new _roomReceipts.RoomReceipts(this));
     _defineProperty(this, "threadTimelineSetsPromise", null);
     _defineProperty(this, "threadsReady", false);
     _defineProperty(this, "updateThreadRootEvents", (thread, toStartOfTimeline, recreateEvent) => {
@@ -268,7 +267,8 @@ class Room extends _readReceipt.ReadReceipt {
         // if we know about this event, redact its contents now.
         const redactedEvent = redactId ? this.findEventById(redactId) : undefined;
         if (redactedEvent) {
-          redactedEvent.makeRedacted(event);
+          const threadRootId = redactedEvent.threadRootId;
+          redactedEvent.makeRedacted(event, this);
 
           // If this is in the current state, replace it with the redacted version
           if (redactedEvent.isState()) {
@@ -277,7 +277,7 @@ class Room extends _readReceipt.ReadReceipt {
               this.currentState.setStateEvents([redactedEvent]);
             }
           }
-          this.emit(RoomEvent.Redaction, event, this);
+          this.emit(RoomEvent.Redaction, event, this, threadRootId);
 
           // TODO: we stash user displaynames (among other things) in
           // RoomMember objects which are then attached to other events
@@ -307,6 +307,11 @@ class Room extends _readReceipt.ReadReceipt {
     opts.pendingEventOrdering = opts.pendingEventOrdering || _client.PendingEventOrdering.Chronological;
     this.name = roomId;
     this.normalizedName = roomId;
+    this.relations = new _relationsContainer.RelationsContainer(this.client, this);
+
+    // Listen to our own receipt event as a more modular way of processing our own
+    // receipts. No need to remove the listener: it's on ourself anyway.
+    this.on(RoomEvent.Receipt, this.onReceipt);
 
     // all our per-room timeline sets. the first one is the unfiltered ones;
     // the subsequent ones are the filtered ones in no particular order.
@@ -347,7 +352,7 @@ class Room extends _readReceipt.ReadReceipt {
         this.threadsTimelineSets[0] = timelineSets[0];
         this.threadsTimelineSets[1] = timelineSets[1];
         return timelineSets;
-      } catch (e) {
+      } catch {
         this.threadTimelineSetsPromise = null;
         return null;
       }
@@ -373,9 +378,7 @@ class Room extends _readReceipt.ReadReceipt {
     const readReceiptTimelineIndex = events.findIndex(matrixEvent => {
       return matrixEvent.event.event_id === readReceiptEventId;
     });
-    const decryptionPromises = events.slice(readReceiptTimelineIndex).reverse().map(event => this.client.decryptEventIfNeeded(event, {
-      isRetry: true
-    }));
+    const decryptionPromises = events.slice(readReceiptTimelineIndex).reverse().map(event => this.client.decryptEventIfNeeded(event));
     await Promise.allSettled(decryptionPromises);
   }
 
@@ -387,9 +390,7 @@ class Room extends _readReceipt.ReadReceipt {
   async decryptAllEvents() {
     if (!this.client.isCryptoEnabled()) return;
     const decryptionPromises = this.getUnfilteredTimelineSet().getLiveTimeline().getEvents().slice(0) // copy before reversing
-    .reverse().map(event => this.client.decryptEventIfNeeded(event, {
-      isRetry: true
-    }));
+    .reverse().map(event => this.client.decryptEventIfNeeded(event));
     await Promise.allSettled(decryptionPromises);
   }
 
@@ -399,7 +400,7 @@ class Room extends _readReceipt.ReadReceipt {
    */
   getCreator() {
     const createEvent = this.currentState.getStateEvents(_event2.EventType.RoomCreate, "");
-    return createEvent?.getContent()["creator"] ?? null;
+    return createEvent?.getSender() ?? null;
   }
 
   /**
@@ -419,26 +420,6 @@ class Room extends _readReceipt.ReadReceipt {
   }
 
   /**
-   * Determines whether this room needs to be upgraded to a new version
-   * @returns What version the room should be upgraded to, or null if
-   *     the room does not require upgrading at this time.
-   * @deprecated Use #getRecommendedVersion() instead
-   */
-  shouldUpgradeToVersion() {
-    // TODO: Remove this function.
-    // This makes assumptions about which versions are safe, and can easily
-    // be wrong. Instead, people are encouraged to use getRecommendedVersion
-    // which determines a safer value. This function doesn't use that function
-    // because this is not async-capable, and to avoid breaking the contract
-    // we're deprecating this.
-
-    if (!SAFE_ROOM_VERSIONS.includes(this.getVersion())) {
-      return KNOWN_SAFE_ROOM_VERSION;
-    }
-    return null;
-  }
-
-  /**
    * Determines the recommended room version for the room. This returns an
    * object with 3 properties: `version` as the new version the
    * room should be upgraded to (may be the same as the current version);
@@ -450,7 +431,10 @@ class Room extends _readReceipt.ReadReceipt {
    * Resolves to the version the room should be upgraded to.
    */
   async getRecommendedVersion() {
-    const capabilities = await this.client.getCapabilities();
+    let capabilities = {};
+    try {
+      capabilities = await this.client.getCapabilities();
+    } catch {}
     let versionCap = capabilities["m.room_versions"];
     if (!versionCap) {
       versionCap = {
@@ -458,7 +442,7 @@ class Room extends _readReceipt.ReadReceipt {
         available: {}
       };
       for (const safeVer of SAFE_ROOM_VERSIONS) {
-        versionCap.available[safeVer] = _client.RoomVersionStability.Stable;
+        versionCap.available[safeVer] = _serverCapabilities.RoomVersionStability.Stable;
       }
     }
     let result = this.checkVersionAgainstCapability(versionCap);
@@ -470,8 +454,12 @@ class Room extends _readReceipt.ReadReceipt {
       // room version is not stable. As a solution, we'll refresh
       // the capability we're using to determine this.
       _logger.logger.warn("Refreshing room version capability because the server looks " + "to be supporting a newer room version we don't know about.");
-      const caps = await this.client.getCapabilities(true);
-      versionCap = caps["m.room_versions"];
+      try {
+        capabilities = await this.client.fetchCapabilities();
+      } catch (e) {
+        _logger.logger.warn("Failed to refresh room version capabilities", e);
+      }
+      versionCap = capabilities["m.room_versions"];
       if (!versionCap) {
         _logger.logger.warn("No room version capability - assuming upgrade required.");
         return result;
@@ -584,6 +572,16 @@ class Room extends _readReceipt.ReadReceipt {
   }
 
   /**
+   * The live event timeline for this room, with the oldest event at index 0.
+   *
+   * @deprecated Present for backwards compatibility.
+   *             Use getLiveTimeline().getEvents() instead
+   */
+  get timeline() {
+    return this.getLiveTimeline().getEvents();
+  }
+
+  /**
    * Get the timestamp of the last message in the room
    *
    * @returns the timestamp of the last message in the room
@@ -642,10 +640,10 @@ class Room extends _readReceipt.ReadReceipt {
   }
 
   /**
-   * @returns the membership type (join | leave | invite) for the logged in user
+   * @returns the membership type (join | leave | invite | knock) for the logged in user
    */
   getMyMembership() {
-    return this.selfMembership ?? "leave";
+    return this.selfMembership ?? _membership.KnownMembership.Leave;
   }
 
   /**
@@ -658,7 +656,7 @@ class Room extends _readReceipt.ReadReceipt {
     if (me) {
       return me.getDMInviter();
     }
-    if (this.selfMembership === "invite") {
+    if (this.selfMembership === _membership.KnownMembership.Invite) {
       // fall back to summary information
       const memberCount = this.getInvitedAndJoinedMemberCount();
       if (memberCount === 2) {
@@ -693,35 +691,63 @@ class Room extends _readReceipt.ReadReceipt {
     // and marked it as a DM. Ok then
     return this.myUserId;
   }
-  getAvatarFallbackMember() {
-    const memberCount = this.getInvitedAndJoinedMemberCount();
-    if (memberCount > 2) {
-      return;
+
+  /**
+   * Gets the "functional members" in this room.
+   *
+   * Returns the list of userIDs from the `io.element.functional_members` event. Does not consider the
+   * current membership states of those users.
+   *
+   * @see https://github.com/element-hq/element-meta/blob/develop/spec/functional_members.md.
+   */
+  getFunctionalMembers() {
+    const mFunctionalMembers = this.currentState.getStateEvents(_event2.UNSTABLE_ELEMENT_FUNCTIONAL_USERS.name, "");
+    if (Array.isArray(mFunctionalMembers?.getContent().service_members)) {
+      return mFunctionalMembers.getContent().service_members;
     }
-    const hasHeroes = Array.isArray(this.summaryHeroes) && this.summaryHeroes.length;
+    return [];
+  }
+  getAvatarFallbackMember() {
+    const functionalMembers = this.getFunctionalMembers();
+
+    // Only generate a fallback avatar if the conversation is with a single specific other user (a "DM").
+    let nonFunctionalMemberCount = 0;
+    this.getMembers().forEach(m => {
+      if (m.membership !== "join" && m.membership !== "invite") return;
+      if (functionalMembers.includes(m.userId)) return;
+      nonFunctionalMemberCount++;
+    });
+    if (nonFunctionalMemberCount > 2) return;
+
+    // Prefer the list of heroes, if present. It should only include the single other user in the DM.
+    const nonFunctionalHeroes = this.summaryHeroes?.filter(h => !functionalMembers.includes(h));
+    const hasHeroes = Array.isArray(nonFunctionalHeroes) && nonFunctionalHeroes.length;
     if (hasHeroes) {
-      const availableMember = this.summaryHeroes.map(userId => {
+      const availableMember = nonFunctionalHeroes.map(userId => {
         return this.getMember(userId);
       }).find(member => !!member);
       if (availableMember) {
         return availableMember;
       }
     }
-    const members = this.currentState.getMembers();
-    // could be different than memberCount
-    // as this includes left members
-    if (members.length <= 2) {
-      const availableMember = members.find(m => {
+
+    // Consider *all*, including previous, members, to generate the avatar for DMs where the other user left.
+    // Needed to generate a matching avatar for rooms named "Empty Room (was Alice)".
+    const members = this.getMembers();
+    const nonFunctionalMembers = members?.filter(m => !functionalMembers.includes(m.userId));
+    if (nonFunctionalMembers.length <= 2) {
+      const availableMember = nonFunctionalMembers.find(m => {
         return m.userId !== this.myUserId;
       });
       if (availableMember) {
         return availableMember;
       }
     }
-    // if all else fails, try falling back to a user,
-    // and create a one-off member for it
+
+    // If all else failed, but the homeserver gave us heroes that previously could not be found in the room members,
+    // trust and try falling back to a hero, creating a one-off member for it
     if (hasHeroes) {
-      const availableUser = this.summaryHeroes.map(userId => {
+      const availableUser = nonFunctionalHeroes.map(userId => {
         return this.client.getUser(userId);
       }).find(user => !!user);
       if (availableUser) {
@@ -740,7 +766,7 @@ class Room extends _readReceipt.ReadReceipt {
     const prevMembership = this.selfMembership;
     this.selfMembership = membership;
     if (prevMembership !== membership) {
-      if (membership === "leave") {
+      if (membership === _membership.KnownMembership.Leave) {
         this.cleanupAfterLeaving();
       }
       this.emit(RoomEvent.MyMembership, this, membership, prevMembership);
@@ -748,7 +774,7 @@ class Room extends _readReceipt.ReadReceipt {
   }
   async loadMembersFromServer() {
     const lastSyncToken = this.client.store.getSyncToken();
-    const response = await this.client.members(this.roomId, undefined, "leave", lastSyncToken ?? undefined);
+    const response = await this.client.members(this.roomId, undefined, _membership.KnownMembership.Leave, lastSyncToken ?? undefined);
     return response.chunk;
   }
   async loadMembers() {
@@ -760,7 +786,7 @@ class Room extends _readReceipt.ReadReceipt {
     // that this function is only called once (unless loading the members
     // fails), since loadMembersIfNeeded always returns this.membersPromise
     // if set, which will be the result of the first (successful) call.
-    if (rawMembersEvents === null || this.client.isCryptoEnabled() && this.client.isRoomEncrypted(this.roomId)) {
+    if (rawMembersEvents === null || this.hasEncryptionStateEvent()) {
       fromServer = true;
       rawMembersEvents = await this.loadMembersFromServer();
       _logger.logger.log(`LL: got ${rawMembersEvents.length} ` + `members from server for room ${this.roomId}`);
@@ -973,11 +999,9 @@ class Room extends _readReceipt.ReadReceipt {
     const previousOldState = this.oldState;
     const previousCurrentState = this.currentState;
 
-    // maintain this.timeline as a reference to the live timeline,
-    // and this.oldState and this.currentState as references to the
+    // maintain this.oldState and this.currentState as references to the
     // state at the start and end of that timeline. These are more
     // for backwards-compatibility than anything else.
-    this.timeline = this.getLiveTimeline().getEvents();
     this.oldState = this.getLiveTimeline().getState(_eventTimeline.EventTimeline.BACKWARDS);
     this.currentState = this.getLiveTimeline().getState(_eventTimeline.EventTimeline.FORWARDS);
 
@@ -997,28 +1021,78 @@ class Room extends _readReceipt.ReadReceipt {
       this.reEmitter.reEmit(this.currentState, [_roomState.RoomStateEvent.Events, _roomState.RoomStateEvent.Members, _roomState.RoomStateEvent.NewMember, _roomState.RoomStateEvent.Update, _roomState.RoomStateEvent.Marker, _beacon.BeaconEvent.New, _beacon.BeaconEvent.Update, _beacon.BeaconEvent.Destroy, _beacon.BeaconEvent.LivenessChange]);
     }
   }
-
-  /**
-   * Returns whether there are any devices in the room that are unverified
-   *
-   * Note: Callers should first check if crypto is enabled on this device. If it is
-   * disabled, then we aren't tracking room devices at all, so we can't answer this, and an
-   * error will be thrown.
-   *
-   * @returns the result
-   */
-  async hasUnverifiedDevices() {
-    if (!this.client.isRoomEncrypted(this.roomId)) {
-      return false;
+  onReceipt(event) {
+    if (this.hasEncryptionStateEvent()) {
+      this.clearNotificationsOnReceipt(event);
     }
-    const e2eMembers = await this.getEncryptionTargetMembers();
-    for (const member of e2eMembers) {
-      const devices = this.client.getStoredDevicesForUser(member.userId);
-      if (devices.some(device => device.isUnverified())) {
-        return true;
+  }
+  clearNotificationsOnReceipt(event) {
+    // Like above, we have to listen for read receipts from ourselves in order to
+    // correctly handle notification counts on encrypted rooms.
+    // This fixes https://github.com/vector-im/element-web/issues/9421
+
+    // Figure out if we've read something or if it's just informational
+    // We need to work out what threads we've just recieved receipts for, so we
+    // know which ones to update. If we've received an unthreaded receipt, we'll
+    // need to update all threads.
+    let threadIds = [];
+    let hasUnthreadedReceipt = false;
+    const content = event.getContent();
+    for (const receiptGroup of Object.values(content)) {
+      for (const [receiptType, userReceipt] of Object.entries(receiptGroup)) {
+        if (!utils.isSupportedReceiptType(receiptType)) continue;
+        if (!userReceipt) continue;
+        for (const [userId, singleReceipt] of Object.entries(userReceipt)) {
+          if (!singleReceipt || typeof singleReceipt !== "object") continue;
+          const typedSingleReceipt = singleReceipt;
+          if (userId !== this.client.getUserId()) continue;
+          if (typedSingleReceipt.thread_id === undefined) {
+            hasUnthreadedReceipt = true;
+          } else if (typeof typedSingleReceipt.thread_id === "string") {
+            threadIds.push(typedSingleReceipt.thread_id);
+          }
+        }
       }
     }
-    return false;
+    if (hasUnthreadedReceipt) {
+      // If we have an unthreaded receipt, we need to update any threads that have a notification
+      // in them (because we know the receipt can't go backwards so we don't need to check any with
+      // no notifications: the number can only decrease from a receipt).
+      threadIds = this.getThreads().filter(thread => this.getThreadUnreadNotificationCount(thread.id, NotificationCountType.Total) > 0 || this.getThreadUnreadNotificationCount(thread.id, NotificationCountType.Highlight) > 0).map(thread => thread.id);
+      threadIds.push("main");
+    }
+    for (const threadId of threadIds) {
+      // Work backwards to determine how many events are unread. We also set
+      // a limit for how back we'll look to avoid spinning CPU for too long.
+      // If we hit the limit, we assume the count is unchanged.
+      const maxHistory = 20;
+      const timeline = threadId === "main" ? this.getLiveTimeline() : this.getThread(threadId)?.liveTimeline;
+      if (!timeline) {
+        _logger.logger.warn(`Couldn't find timeline for thread ID ${threadId} in room ${this.roomId}`);
+        continue;
+      }
+      const events = timeline.getEvents();
+      let highlightCount = 0;
+      for (let i = events.length - 1; i >= 0; i--) {
+        if (i === events.length - maxHistory) return; // limit reached
+
+        const event = events[i];
+        if (this.hasUserReadEvent(this.client.getUserId(), event.getId())) {
+          // If the user has read the event, then the counting is done.
+          break;
+        }
+        const pushActions = this.client.getPushActionsForEvent(event);
+        highlightCount += pushActions?.tweaks?.highlight ? 1 : 0;
+      }
+
+      // Note: we don't need to handle 'total' notifications because the counts
+      // will come from the server.
+      if (threadId === "main") {
+        this.setUnreadNotificationCount(NotificationCountType.Highlight, highlightCount);
+      } else {
+        this.setThreadUnreadNotificationCount(threadId, NotificationCountType.Highlight, highlightCount);
+      }
+    }
   }
 
   /**
@@ -1191,17 +1265,28 @@ class Room extends _readReceipt.ReadReceipt {
   }
 
   /**
-   * Resets the thread notifications for this room
+   * Resets the total thread notifications for all threads in this room to zero,
+   * excluding any threads whose IDs are given in `exceptThreadIds`.
+   *
+   * If the room is not encrypted, also resets the highlight notification count to zero
+   * for the same set of threads.
+   *
+   * This is intended for use from the sync code since we calculate highlight notification
+   * counts locally from decrypted messages. We want to partially trust the total from the
+   * server such that we clear notifications when read receipts arrive. The weird name is
+   * intended to reflect this. You probably do not want to use this.
+   *
+   * @param exceptThreadIds - The thread IDs to exclude from the reset.
    */
-  resetThreadUnreadNotificationCount(notificationsToKeep) {
-    if (notificationsToKeep) {
-      for (const [threadId] of this.threadNotifications) {
-        if (!notificationsToKeep.includes(threadId)) {
-          this.threadNotifications.delete(threadId);
+  resetThreadUnreadNotificationCountFromSync(exceptThreadIds = []) {
+    const isEncrypted = this.hasEncryptionStateEvent();
+    for (const [threadId, notifs] of this.threadNotifications) {
+      if (!exceptThreadIds.includes(threadId)) {
+        notifs.total = 0;
+        if (!isEncrypted) {
+          notifs.highlight = 0;
         }
       }
-    } else {
-      this.threadNotifications.clear();
     }
     this.emit(RoomEvent.UnreadNotifications);
   }
@@ -1236,6 +1321,7 @@ class Room extends _readReceipt.ReadReceipt {
         return userId !== this.myUserId;
       });
     }
+    this.emit(RoomEvent.Summary, summary);
   }
 
   /**
@@ -1377,7 +1463,7 @@ class Room extends _readReceipt.ReadReceipt {
    * @returns A list of currently joined members.
    */
   getJoinedMembers() {
-    return this.getMembersWithMembership("join");
+    return this.getMembersWithMembership(_membership.KnownMembership.Join);
   }
 
   /**
@@ -1425,9 +1511,9 @@ class Room extends _readReceipt.ReadReceipt {
    */
   async getEncryptionTargetMembers() {
     await this.loadMembersIfNeeded();
-    let members = this.getMembersWithMembership("join");
+    let members = this.getMembersWithMembership(_membership.KnownMembership.Join);
     if (this.shouldEncryptForInvitedMembers()) {
-      members = members.concat(this.getMembersWithMembership("invite"));
+      members = members.concat(this.getMembersWithMembership(_membership.KnownMembership.Invite));
     }
     return members;
   }
@@ -1581,6 +1667,7 @@ class Room extends _readReceipt.ReadReceipt {
    * Takes the given thread root events and creates threads for them.
    */
   processThreadRoots(events, toStartOfTimeline) {
+    if (!this.client.supportsThreads()) return;
     for (const rootEvent of events) {
       _eventTimeline.EventTimeline.setEventMetadata(rootEvent, this.currentState, toStartOfTimeline);
       if (!this.getThread(rootEvent.getId())) {
@@ -1640,13 +1727,14 @@ class Room extends _readReceipt.ReadReceipt {
         this.client.decryptEventIfNeeded(latestMyThreadsRootEvent);
       }
     }
-    this.on(_thread.ThreadEvent.NewReply, this.onThreadNewReply);
+    this.on(_thread.ThreadEvent.NewReply, this.onThreadReply);
+    this.on(_thread.ThreadEvent.Update, this.onThreadUpdate);
     this.on(_thread.ThreadEvent.Delete, this.onThreadDelete);
     this.threadsReady = true;
   }
 
   /**
-   * Calls {@link processPollEvent} for a list of events.
+   * Process a list of poll events.
    *
    * @param events - List of events
    */
@@ -1690,6 +1778,11 @@ class Room extends _readReceipt.ReadReceipt {
         const poll = new _poll.Poll(event, this.client, this);
         this.polls.set(event.getId(), poll);
         this.emit(_poll.PollEvent.New, poll);
+
+        // remove the poll when redacted
+        event.once(_event.MatrixEventEvent.BeforeRedaction, redactedEvent => {
+          this.polls.delete(redactedEvent.getId());
+        });
       } catch {}
       // poll creation can fail for malformed poll start events
       return;
@@ -1706,6 +1799,7 @@ class Room extends _readReceipt.ReadReceipt {
    * @internal
    */
   async fetchRoomThreadList(filter) {
+    if (!this.client.supportsThreads()) return;
     if (this.threadsTimelineSets.length === 0) return;
     const timelineSet = filter === _thread.ThreadFilterType.My ? this.threadsTimelineSets[1] : this.threadsTimelineSets[0];
     const {
@@ -1725,7 +1819,10 @@ class Room extends _readReceipt.ReadReceipt {
       });
     }
   }
-  onThreadNewReply(thread) {
+  onThreadUpdate(thread) {
+    this.updateThreadRootEvents(thread, false, false);
+  }
+  onThreadReply(thread) {
     this.updateThreadRootEvents(thread, false, true);
   }
   onThreadDelete(thread) {
@@ -1755,6 +1852,21 @@ class Room extends _readReceipt.ReadReceipt {
       this.timelineSets.splice(i, 1);
     }
   }
+
+  /**
+   * Determine which timeline(s) a given event should live in
+   * Thread roots live in both the main timeline and their corresponding thread timeline
+   * Relations, redactions, replies to thread relation events live only in the thread timeline
+   * Relations (other than m.thread), redactions, replies to a thread root live only in the main timeline
+   * Relations, redactions, replies where the parent cannot be found live in no timelines but should be aggregated regardless.
+   * Otherwise, the event lives in the main timeline only.
+   *
+   * Note: when a redaction is applied, the redacted event, events relating
+   * to it, and the redaction event itself, will all move to the main thread.
+   * This method classifies them as inside the thread of the redacted event.
+   * They are moved later as part of makeRedacted.
+   * This will change if MSC3389 is merged.
+   */
   eventShouldLiveIn(event, events, roots) {
     if (!this.client?.supportsThreads()) {
       return {
@@ -1763,7 +1875,7 @@ class Room extends _readReceipt.ReadReceipt {
       };
     }
 
-    // A thread root is always shown in both timelines
+    // A thread root is the only event shown in both timelines
     if (event.isThreadRoot || roots?.has(event.getId())) {
       return {
         shouldLiveInRoom: true,
@@ -1771,46 +1883,43 @@ class Room extends _readReceipt.ReadReceipt {
         threadId: event.getId()
       };
     }
-
-    // A thread relation is always only shown in a thread
-    if (event.isRelation(_thread.THREAD_RELATION_TYPE.name)) {
-      return {
-        shouldLiveInRoom: false,
-        shouldLiveInThread: true,
-        threadId: event.threadRootId
-      };
-    }
+    const isThreadRelation = event.isRelation(_thread.THREAD_RELATION_TYPE.name);
     const parentEventId = event.getAssociatedId();
-    let parentEvent;
-    if (parentEventId) {
-      parentEvent = this.findEventById(parentEventId) ?? events?.find(e => e.getId() === parentEventId);
-    }
+    const threadRootId = event.threadRootId;
 
-    // Treat relations and redactions as extensions of their parents so evaluate parentEvent instead
-    if (parentEvent && (event.isRelation() || event.isRedaction())) {
-      return this.eventShouldLiveIn(parentEvent, events, roots);
-    }
-    if (!event.isRelation()) {
+    // Where the parent is the thread root and this is a non-thread relation this should live only in the main timeline
+    if (!!parentEventId && !isThreadRelation && (threadRootId === parentEventId || roots?.has(parentEventId))) {
       return {
         shouldLiveInRoom: true,
         shouldLiveInThread: false
       };
     }
-
-    // Edge case where we know the event is a relation but don't have the parentEvent
-    if (roots?.has(event.relationEventId)) {
-      return {
-        shouldLiveInRoom: true,
-        shouldLiveInThread: true,
-        threadId: event.relationEventId
-      };
+    let parentEvent;
+    if (parentEventId) {
+      parentEvent = this.findEventById(parentEventId) ?? events?.find(e => e.getId() === parentEventId);
     }
-    const unsigned = event.getUnsigned();
-    if (typeof unsigned[_event2.UNSIGNED_THREAD_ID_FIELD.name] === "string") {
+
+    // Treat non-thread-relations, redactions, and replies as extensions of their parents so evaluate parentEvent instead
+    if (parentEvent && !isThreadRelation) {
+      return this.eventShouldLiveIn(parentEvent, events, roots);
+    }
+
+    // A thread relation (1st and 2nd order) is always only shown in a thread
+    if (threadRootId != undefined) {
       return {
         shouldLiveInRoom: false,
         shouldLiveInThread: true,
-        threadId: unsigned[_event2.UNSIGNED_THREAD_ID_FIELD.name]
+        threadId: threadRootId
+      };
+    }
+
+    // Due to replies not being typical relations and being used as fallbacks for threads relations
+    // If we bypass the if case above then we know we are not a thread, so if we are still a reply
+    // then we know that we must be in the main timeline. Same goes if we have no associated parent event.
+    if (!parentEventId || !!event.replyEventId) {
+      return {
+        shouldLiveInRoom: true,
+        shouldLiveInThread: false
       };
     }
 
@@ -1876,6 +1985,9 @@ class Room extends _readReceipt.ReadReceipt {
       receipts: this.cachedThreadReadReceipts.get(threadId) ?? []
     });
 
+    // Add the re-emitter before we start adding events to the thread so we don't miss events
+    this.reEmitter.reEmit(thread, [_thread.ThreadEvent.Delete, _thread.ThreadEvent.Update, _thread.ThreadEvent.NewReply, RoomEvent.Timeline, RoomEvent.TimelineReset]);
+
     // All read receipts should now come down from sync, we do not need to keep
     // a reference to the cached receipts anymore.
     this.cachedThreadReadReceipts.delete(threadId);
@@ -1890,12 +2002,10 @@ class Room extends _readReceipt.ReadReceipt {
     // nor any thread event are loaded yet, we'll load the event as well as the thread root, create the thread,
     // and pass the event through this.
     thread.addEvents(events, false);
-    this.reEmitter.reEmit(thread, [_thread.ThreadEvent.Delete, _thread.ThreadEvent.Update, _thread.ThreadEvent.NewReply, RoomEvent.Timeline, RoomEvent.TimelineReset]);
-    const isNewer = this.lastThread?.rootEvent && rootEvent?.localTimestamp && this.lastThread.rootEvent?.localTimestamp < rootEvent?.localTimestamp;
-    if (!this.lastThread || isNewer) {
-      this.lastThread = thread;
-    }
-    if (this.threadsReady) {
+
+    // We need to update the thread root events, but the thread may not be ready yet.
+    // If it isn't, it will fire ThreadEvent.Update when it is and we'll call updateThreadRootEvents then.
+    if (this.threadsReady && thread.initialEventsFetched) {
       this.updateThreadRootEvents(thread, toStartOfTimeline, false);
     }
     this.emit(_thread.ThreadEvent.New, thread, toStartOfTimeline);
@@ -2029,7 +2139,7 @@ class Room extends _readReceipt.ReadReceipt {
         }
         if (redactedEvent) {
           redactedEvent.markLocallyRedacted(event);
-          this.emit(RoomEvent.Redaction, event, this);
+          this.emit(RoomEvent.Redaction, event, this, redactedEvent.threadRootId);
         }
       }
     } else {
@@ -2072,7 +2182,7 @@ class Room extends _readReceipt.ReadReceipt {
       }).filter(event => {
         // Filter out the unencrypted messages if the room is encrypted
         const isEventEncrypted = event.type === _event2.EventType.RoomMessageEncrypted;
-        const isRoomEncrypted = this.client.isRoomEncrypted(this.roomId);
+        const isRoomEncrypted = this.hasEncryptionStateEvent();
         return isEventEncrypted || !isRoomEncrypted;
       });
       this.client.store.setPendingEvents(this.roomId, pendingEvents);
@@ -2258,26 +2368,12 @@ class Room extends _readReceipt.ReadReceipt {
    * @param addLiveEventOptions - addLiveEvent options
    * @throws If `duplicateStrategy` is not falsey, 'replace' or 'ignore'.
    */
-
-  /**
-   * @deprecated In favor of the overload with `IAddLiveEventOptions`
-   */
-
-  async addLiveEvents(events, duplicateStrategyOrOpts, fromCache = false) {
-    let duplicateStrategy = duplicateStrategyOrOpts;
-    let timelineWasEmpty = false;
-    if (typeof duplicateStrategyOrOpts === "object") {
-      ({
-        duplicateStrategy,
-        fromCache = false,
-        /* roomState, (not used here) */
-        timelineWasEmpty
-      } = duplicateStrategyOrOpts);
-    } else if (duplicateStrategyOrOpts !== undefined) {
-      // Deprecation warning
-      // FIXME: Remove after 2023-06-01 (technical debt)
-      _logger.logger.warn("Overload deprecated: " + "`Room.addLiveEvents(events, duplicateStrategy?, fromCache?)` " + "is deprecated in favor of the overload with `Room.addLiveEvents(events, IAddLiveEventOptions)`");
-    }
+  async addLiveEvents(events, addLiveEventOptions) {
+    const {
+      duplicateStrategy,
+      fromCache,
+      timelineWasEmpty = false
+    } = addLiveEventOptions ?? {};
     if (duplicateStrategy && ["replace", "ignore"].indexOf(duplicateStrategy) === -1) {
       throw new Error("duplicateStrategy MUST be either 'replace' or 'ignore'");
     }
@@ -2313,7 +2409,6 @@ class Room extends _readReceipt.ReadReceipt {
           continue; // we can skip adding the event to the timeline sets, it is already there
         }
       }
-
       let {
         shouldLiveInRoom,
         shouldLiveInThread,
@@ -2378,7 +2473,7 @@ class Room extends _readReceipt.ReadReceipt {
         return memo;
       }, [[], [], []]);
     } else {
-      // When `experimentalThreadSupport` is disabled treat all events as timelineEvents
+      // When `threadSupport` is disabled treat all events as timelineEvents
       return [events, [], []];
     }
   }
@@ -2389,12 +2484,9 @@ class Room extends _readReceipt.ReadReceipt {
   findThreadRoots(events) {
     const threadRoots = new Set();
     for (const event of events) {
-      if (event.isRelation(_thread.THREAD_RELATION_TYPE.name)) {
-        threadRoots.add(event.relationEventId ?? "");
-      }
-      const unsigned = event.getUnsigned();
-      if (typeof unsigned[_event2.UNSIGNED_THREAD_ID_FIELD.name] === "string") {
-        threadRoots.add(unsigned[_event2.UNSIGNED_THREAD_ID_FIELD.name]);
+      const threadRootId = event.threadRootId;
+      if (threadRootId != undefined) {
+        threadRoots.add(threadRootId);
       }
     }
     return threadRoots;
@@ -2407,6 +2499,9 @@ class Room extends _readReceipt.ReadReceipt {
    */
   addReceipt(event, synthetic = false) {
     const content = event.getContent();
+    this.roomReceipts.add(content, synthetic);
+
+    // TODO: delete the following code when it has been replaced by RoomReceipts
     Object.keys(content).forEach(eventId => {
       Object.keys(content[eventId]).forEach(receiptType => {
         Object.keys(content[eventId][receiptType]).forEach(userId => {
@@ -2418,12 +2513,18 @@ class Room extends _readReceipt.ReadReceipt {
 
             // If the read receipt sent for the logged in user matches
             // the last event of the live timeline, then we know for a fact
-            // that the user has read that message.
-            // We can mark the room as read and not wait for the local echo
-            // from synapse
+            // that the user has read that message, so we can mark the room
+            // as read and not wait for the remote echo from synapse.
+            //
             // This needs to be done after the initial sync as we do not want this
             // logic to run whilst the room is being initialised
-            if (this.client.isInitialSyncComplete() && userId === this.client.getUserId()) {
+            //
+            // We only do this for non-synthetic receipts, because
+            // our intention is to do this when the user really did
+            // just read a message, not when we are e.g. receiving
+            // an event during the sync. More explanation at:
+            // https://github.com/matrix-org/matrix-js-sdk/issues/3684
+            if (!synthetic && this.client.isInitialSyncComplete() && userId === this.client.getUserId()) {
               const lastEvent = receiptDestination.timeline[receiptDestination.timeline.length - 1];
               if (lastEvent && eventId === lastEvent.getId() && userId === lastEvent.getSender()) {
                 receiptDestination.setUnread(NotificationCountType.Total, 0);
@@ -2455,6 +2556,7 @@ class Room extends _readReceipt.ReadReceipt {
         });
       });
     });
+    // End of code to delete when replaced by RoomReceipts
 
     // send events after we've regenerated the structure & cache, otherwise things that
     // listened for the event would read stale data.
@@ -2521,7 +2623,7 @@ class Room extends _readReceipt.ReadReceipt {
     if (membershipEvent) {
       const membership = membershipEvent.getContent().membership;
       this.updateMyMembership(membership);
-      if (membership === "invite") {
+      if (membership === _membership.KnownMembership.Invite) {
         const strippedStateEvents = membershipEvent.getUnsigned().invite_room_state || [];
         strippedStateEvents.forEach(strippedEvent => {
           const existingEvent = this.currentState.getStateEvents(strippedEvent.type, strippedEvent.state_key);
@@ -2533,13 +2635,12 @@ class Room extends _readReceipt.ReadReceipt {
               content: strippedEvent.content,
               event_id: "$fake" + Date.now(),
               room_id: this.roomId,
-              user_id: this.myUserId // technically a lie
+              sender: this.myUserId // technically a lie
             })]);
           }
         });
       }
     }
-
     const oldName = this.name;
     this.name = this.calculateRoomName(this.myUserId);
     this.normalizedName = (0, _utils.normalize)(this.name);
@@ -2603,7 +2704,7 @@ class Room extends _readReceipt.ReadReceipt {
    *                   message events into the room.
    */
   maySendMessage() {
-    return this.getMyMembership() === "join" && (this.client.isRoomEncrypted(this.roomId) ? this.currentState.maySendEvent(_event2.EventType.RoomMessageEncrypted, this.myUserId) : this.currentState.maySendEvent(_event2.EventType.RoomMessage, this.myUserId));
+    return this.getMyMembership() === _membership.KnownMembership.Join && (this.hasEncryptionStateEvent() ? this.currentState.maySendEvent(_event2.EventType.RoomMessageEncrypted, this.myUserId) : this.currentState.maySendEvent(_event2.EventType.RoomMessage, this.myUserId));
   }
 
   /**
@@ -2612,7 +2713,7 @@ class Room extends _readReceipt.ReadReceipt {
    * @returns true if the user should be permitted to issue invites for this room.
    */
   canInvite(userId) {
-    let canInvite = this.getMyMembership() === "join";
+    let canInvite = this.getMyMembership() === _membership.KnownMembership.Join;
     const powerLevelsEvent = this.currentState.getStateEvents(_event2.EventType.RoomPowerLevels, "");
     const powerLevels = powerLevelsEvent && powerLevelsEvent.getContent();
     const me = this.getMember(userId);
@@ -2771,11 +2872,7 @@ class Room extends _readReceipt.ReadReceipt {
     let inviteJoinCount = joinedMemberCount + invitedMemberCount - 1;
 
     // get service members (e.g. helper bots) for exclusion
-    let excludedUserIds = [];
-    const mFunctionalMembers = this.currentState.getStateEvents(_event2.UNSTABLE_ELEMENT_FUNCTIONAL_USERS.name, "");
-    if (Array.isArray(mFunctionalMembers?.getContent().service_members)) {
-      excludedUserIds = mFunctionalMembers.getContent().service_members;
-    }
+    const excludedUserIds = this.getFunctionalMembers();
 
     // get members that are NOT ourselves and are actually in the room.
     let otherNames = [];
@@ -2792,7 +2889,7 @@ class Room extends _readReceipt.ReadReceipt {
       });
     } else {
       let otherMembers = this.currentState.getMembers().filter(m => {
-        return m.userId !== userId && (m.membership === "invite" || m.membership === "join");
+        return m.userId !== userId && (m.membership === _membership.KnownMembership.Invite || m.membership === _membership.KnownMembership.Join);
       });
       otherMembers = otherMembers.filter(({
         userId
@@ -2805,7 +2902,8 @@ class Room extends _readReceipt.ReadReceipt {
         return true;
       });
       // make sure members have stable order
-      otherMembers.sort((a, b) => (0, _utils.compare)(a.userId, b.userId));
+      const collator = new Intl.Collator();
+      otherMembers.sort((a, b) => collator.compare(a.userId, b.userId));
       // only 5 first members, immitate summaryHeroes
       otherMembers = otherMembers.slice(0, 5);
       otherNames = otherMembers.map(m => m.name);
@@ -2820,7 +2918,7 @@ class Room extends _readReceipt.ReadReceipt {
     const myMembership = this.getMyMembership();
     // if I have created a room and invited people through
     // 3rd party invites
-    if (myMembership == "join") {
+    if (myMembership == _membership.KnownMembership.Join) {
       const thirdPartyInvites = this.currentState.getStateEvents(_event2.EventType.RoomThirdPartyInvite);
       if (thirdPartyInvites?.length) {
         const thirdPartyNames = thirdPartyInvites.map(i => {
@@ -2840,7 +2938,7 @@ class Room extends _readReceipt.ReadReceipt {
     // if we didn't have heroes, try finding them in the room state
     if (!leftNames.length) {
       leftNames = this.currentState.getMembers().filter(m => {
-        return m.userId !== userId && m.membership !== "invite" && m.membership !== "join";
+        return m.userId !== userId && m.membership !== _membership.KnownMembership.Invite && m.membership !== _membership.KnownMembership.Join;
       }).map(m => m.name);
     }
     let oldName;
@@ -3012,6 +3110,19 @@ class Room extends _readReceipt.ReadReceipt {
   }
 
   /**
+   * Determines if the given user has read a particular event ID with the known
+   * history of the room. This is not a definitive check as it relies only on
+   * what is available to the room at the time of execution.
+   *
+   * @param userId - The user ID to check the read state of.
+   * @param eventId - The event ID to check if the user read.
+   * @returns true if the user has read the event, false otherwise.
+   */
+  hasUserReadEvent(userId, eventId) {
+    return this.roomReceipts.hasUserReadEvent(userId, eventId);
+  }
+
+  /**
    * Returns the most recent unthreaded receipt for a given user
    * @param userId - the MxID of the User
    * @returns an unthreaded Receipt. Can be undefined if receipts have been disabled
@@ -3040,6 +3151,39 @@ class Room extends _readReceipt.ReadReceipt {
       thread.fixupNotifications(userId);
     }
   }
+
+  /**
+   * Determine the order of two events in this room.
+   *
+   * In principle this should use the same order as the server, but in practice
+   * this is difficult for events that were not received over the Sync API. See
+   * MSC4033 for details.
+   *
+   * This implementation leans on the order of events within their timelines, and
+   * falls back to comparing event timestamps when they are in different
+   * timelines.
+   *
+   * See https://github.com/matrix-org/matrix-js-sdk/issues/3325 for where we are
+   * tracking the work to fix this.
+   *
+   * @param leftEventId - the id of the first event
+   * @param rightEventId - the id of the second event
+    * @returns -1 if left \< right, 1 if left \> right, 0 if left == right, null if
+   *          we can't tell (because we can't find the events).
+   */
+  compareEventOrdering(leftEventId, rightEventId) {
+    return (0, _compareEventOrdering.compareEventOrdering)(this, leftEventId, rightEventId);
+  }
+
+  /**
+   * Return true if this room has an `m.room.encryption` state event.
+   *
+   * If this returns `true`, events sent to this room should be encrypted (and `MatrixClient.sendEvent` and friends
+   * will encrypt outgoing events).
+   */
+  hasEncryptionStateEvent() {
+    return Boolean(this.getLiveTimeline().getState(_eventTimeline.EventTimeline.FORWARDS)?.getStateEvents(_event2.EventType.RoomEncryption, ""));
+  }
 }
 
 // a map from current event status to a list of allowed next statuses
@@ -3052,13 +3196,12 @@ const ALLOWED_TRANSITIONS = {
   [_eventStatus.EventStatus.NOT_SENT]: [_eventStatus.EventStatus.SENDING, _eventStatus.EventStatus.QUEUED, _eventStatus.EventStatus.CANCELLED],
   [_eventStatus.EventStatus.CANCELLED]: []
 };
-let RoomNameType = /*#__PURE__*/function (RoomNameType) {
+let RoomNameType = exports.RoomNameType = /*#__PURE__*/function (RoomNameType) {
   RoomNameType[RoomNameType["EmptyRoom"] = 0] = "EmptyRoom";
   RoomNameType[RoomNameType["Generated"] = 1] = "Generated";
   RoomNameType[RoomNameType["Actual"] = 2] = "Actual";
   return RoomNameType;
 }({});
-exports.RoomNameType = RoomNameType;
 // Can be overriden by IMatrixClientCreateOpts::memberNamesToRoomNameFn
 function memberNamesToRoomName(names, count) {
   const countWithoutMe = count - 1;

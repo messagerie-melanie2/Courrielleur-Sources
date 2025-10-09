@@ -2,10 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* import-globals-from ../editorUtilities.js */
 /* import-globals-from EdDialogCommon.js */
-
-// Cancel() is in EdDialogCommon.js
 
 var insertNew = true;
 var tagname = "TAG NAME";
@@ -21,15 +18,11 @@ var gColorObj;
 
 // dialog initialization code
 
+window.addEventListener("load", Startup);
 document.addEventListener("dialogaccept", onAccept);
 document.addEventListener("dialogcancel", onCancelColor);
 
 function Startup() {
-  if (!window.arguments[1]) {
-    dump("EdColorPicker: Missing color object param\n");
-    return;
-  }
-
   // window.arguments[1] is object to get initial values and return color data
   gColorObj = window.arguments[1];
   gColorObj.Cancel = false;
@@ -51,7 +44,7 @@ function Startup() {
     ColorType = gColorObj.Type;
     // Get string for dialog title from passed-in type
     //   (note constraint on editor.properties string name)
-    let IsCSSPrefChecked = Services.prefs.getBoolPref("editor.use_css");
+    const IsCSSPrefChecked = Services.prefs.getBoolPref("editor.use_css");
 
     if (GetCurrentEditor()) {
       if (ColorType == "Page" && IsCSSPrefChecked && IsHTMLEditor()) {

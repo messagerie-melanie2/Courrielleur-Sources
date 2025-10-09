@@ -25,8 +25,7 @@ class FrontendContext;
 
 enum class AllocFunction { Malloc, Calloc, Realloc };
 
-/* Base class allocation policies providing allocation methods. */
-class AllocPolicyBase {
+class ArenaAllocPolicyBase {
  public:
   template <typename T>
   T* maybe_pod_arena_malloc(arena_id_t arenaId, size_t numElems) {
@@ -54,7 +53,11 @@ class AllocPolicyBase {
                        size_t newSize) {
     return maybe_pod_arena_realloc<T>(arenaId, p, oldSize, newSize);
   }
+};
 
+/* Base class allocation policies providing allocation methods. */
+class AllocPolicyBase : public ArenaAllocPolicyBase {
+ public:
   template <typename T>
   T* maybe_pod_malloc(size_t numElems) {
     return maybe_pod_arena_malloc<T>(js::MallocArena, numElems);
@@ -86,6 +89,44 @@ class AllocPolicyBase {
   }
 };
 
+/*
+ * Base class allocation policies providing allocation methods for allocations
+ * off the main thread.
+ */
+class BackgroundAllocPolicyBase : ArenaAllocPolicyBase {
+ public:
+  template <typename T>
+  T* maybe_pod_malloc(size_t numElems) {
+    return maybe_pod_arena_malloc<T>(js::BackgroundMallocArena, numElems);
+  }
+  template <typename T>
+  T* maybe_pod_calloc(size_t numElems) {
+    return maybe_pod_arena_calloc<T>(js::BackgroundMallocArena, numElems);
+  }
+  template <typename T>
+  T* maybe_pod_realloc(T* p, size_t oldSize, size_t newSize) {
+    return maybe_pod_arena_realloc<T>(js::BackgroundMallocArena, p, oldSize,
+                                      newSize);
+  }
+  template <typename T>
+  T* pod_malloc(size_t numElems) {
+    return pod_arena_malloc<T>(js::BackgroundMallocArena, numElems);
+  }
+  template <typename T>
+  T* pod_calloc(size_t numElems) {
+    return pod_arena_calloc<T>(js::BackgroundMallocArena, numElems);
+  }
+  template <typename T>
+  T* pod_realloc(T* p, size_t oldSize, size_t newSize) {
+    return pod_arena_realloc<T>(js::BackgroundMallocArena, p, oldSize, newSize);
+  }
+
+  template <typename T>
+  void free_(T* p, size_t numElems = 0) {
+    js_free(p);
+  }
+};
+
 /* Policy for using system memory functions and doing no error reporting. */
 class SystemAllocPolicy : public AllocPolicyBase {
  public:
@@ -93,8 +134,18 @@ class SystemAllocPolicy : public AllocPolicyBase {
   bool checkSimulatedOOM() const { return !js::oom::ShouldFailWithOOM(); }
 };
 
+class BackgroundSystemAllocPolicy : public BackgroundAllocPolicyBase {
+ public:
+  void reportAllocOverflow() const {}
+  bool checkSimulatedOOM() const { return !js::oom::ShouldFailWithOOM(); }
+};
+
 MOZ_COLD JS_PUBLIC_API void ReportOutOfMemory(JSContext* cx);
 MOZ_COLD JS_PUBLIC_API void ReportOutOfMemory(FrontendContext* fc);
+
+// An out of memory condition which is easily user generatable and should
+// be specially handled to try and avoid a tab crash.
+MOZ_COLD JS_PUBLIC_API void ReportLargeOutOfMemory(JSContext* cx);
 
 /*
  * Allocation policy that calls the system memory functions and reports errors
@@ -144,12 +195,6 @@ class JS_PUBLIC_API TempAllocPolicy : public AllocPolicyBase {
         onOutOfMemory(arenaId, allocFunc, bytes, reallocPtr));
   }
 
-#ifdef DEBUG
-  void assertNotJSContextOnHelperThread() const;
-#else
-  MOZ_ALWAYS_INLINE void assertNotJSContextOnHelperThread() const {}
-#endif /* DEBUG */
-
  public:
   MOZ_IMPLICIT TempAllocPolicy(JSContext* cx)
       : context_bits_(uintptr_t(cx) | JsContextTag) {
@@ -162,7 +207,6 @@ class JS_PUBLIC_API TempAllocPolicy : public AllocPolicyBase {
 
   template <typename T>
   T* pod_arena_malloc(arena_id_t arenaId, size_t numElems) {
-    assertNotJSContextOnHelperThread();
     T* p = this->maybe_pod_arena_malloc<T>(arenaId, numElems);
     if (MOZ_UNLIKELY(!p)) {
       p = onOutOfMemoryTyped<T>(arenaId, AllocFunction::Malloc, numElems);
@@ -172,7 +216,6 @@ class JS_PUBLIC_API TempAllocPolicy : public AllocPolicyBase {
 
   template <typename T>
   T* pod_arena_calloc(arena_id_t arenaId, size_t numElems) {
-    assertNotJSContextOnHelperThread();
     T* p = this->maybe_pod_arena_calloc<T>(arenaId, numElems);
     if (MOZ_UNLIKELY(!p)) {
       p = onOutOfMemoryTyped<T>(arenaId, AllocFunction::Calloc, numElems);
@@ -183,7 +226,6 @@ class JS_PUBLIC_API TempAllocPolicy : public AllocPolicyBase {
   template <typename T>
   T* pod_arena_realloc(arena_id_t arenaId, T* prior, size_t oldSize,
                        size_t newSize) {
-    assertNotJSContextOnHelperThread();
     T* p2 = this->maybe_pod_arena_realloc<T>(arenaId, prior, oldSize, newSize);
     if (MOZ_UNLIKELY(!p2)) {
       p2 = onOutOfMemoryTyped<T>(arenaId, AllocFunction::Realloc, newSize,

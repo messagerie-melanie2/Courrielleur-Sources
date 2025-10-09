@@ -13,6 +13,7 @@
 
 #include "nsCOMPtr.h"
 #include "nsCycleCollectionParticipant.h"
+#include "nsIClipboard.h"
 #include "nsINamed.h"
 #include "nsISupportsImpl.h"
 #include "nsITimer.h"
@@ -134,7 +135,7 @@ class TextEditor final : public EditorBase,
   // Overrides of EditorBase
   bool IsEmpty() const final;
 
-  bool CanPaste(int32_t aClipboardType) const final;
+  bool CanPaste(nsIClipboard::ClipboardType aClipboardType) const final;
 
   bool CanPasteTransferable(nsITransferable* aTransferable) final;
 
@@ -154,6 +155,12 @@ class TextEditor final : public EditorBase,
    */
   int32_t MaxTextLength() const { return mMaxTextLength; }
   void SetMaxTextLength(int32_t aLength) { mMaxTextLength = aLength; }
+
+  /**
+   * This updates the wrap width used for initializing a document encoder within
+   * a call of EditorBase::GetAndInitDocEncoder().
+   */
+  void SetWrapColumn(int32_t aWrapColumn) { mWrapColumn = aWrapColumn; }
 
   /**
    * Replace existed string with a string.
@@ -252,6 +259,10 @@ class TextEditor final : public EditorBase,
     }
   }
 
+  /**
+   * Return the `Text` node in the anonymous <div>.  Note that the anonymous
+   * <div> can have only one `Text` for the storage of the value of this editor.
+   */
   dom::Text* GetTextNode() {
     MOZ_DIAGNOSTIC_ASSERT(GetRoot());
     MOZ_DIAGNOSTIC_ASSERT(GetRoot()->GetFirstChild());
@@ -281,6 +292,18 @@ class TextEditor final : public EditorBase,
       bool aSuppressTransaction) final;
   using EditorBase::RemoveAttributeOrEquivalent;
   using EditorBase::SetAttributeOrEquivalent;
+
+  /**
+   * FindBetterInsertionPoint() tries to look for better insertion point which
+   * is typically the nearest text node and offset in it.
+   *
+   * @param aPoint      Insertion point which the callers found.
+   * @return            Better insertion point if there is.  If not returns
+   *                    same point as aPoint.
+   */
+  template <typename EditorDOMPointType>
+  EditorDOMPointType FindBetterInsertionPoint(
+      const EditorDOMPointType& aPoint) const;
 
   /**
    * InsertLineBreakAsSubAction() inserts a line break.
@@ -441,14 +464,12 @@ class TextEditor final : public EditorBase,
   void HandleNewLinesInStringForSingleLineEditor(nsString& aString) const;
 
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<EditActionResult, nsresult>
-  HandleInsertText(EditSubAction aEditSubAction,
-                   const nsAString& aInsertionString,
-                   SelectionHandling aSelectionHandling) final;
+  HandleInsertText(const nsAString& aInsertionString,
+                   InsertTextFor aPurpose) final;
 
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult InsertDroppedDataTransferAsAction(
-      AutoEditActionDataSetter& aEditActionData,
-      dom::DataTransfer& aDataTransfer, const EditorDOMPoint& aDroppedAt,
-      nsIPrincipal* aSourcePrincipal) final;
+      AutoEditActionDataSetter& aEditActionData, DataTransfer& aDataTransfer,
+      const EditorDOMPoint& aDroppedAt, nsIPrincipal* aSourcePrincipal) final;
 
   /**
    * HandleDeleteSelectionInternal() is a helper method of
@@ -547,10 +568,14 @@ class TextEditor final : public EditorBase,
    */
   MOZ_CAN_RUN_SCRIPT nsresult SelectEntireDocument() final;
 
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult HandlePaste(
-      AutoEditActionDataSetter& aEditActionData, int32_t aClipboardType) final;
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult HandlePasteAsQuotation(
-      AutoEditActionDataSetter& aEditActionData, int32_t aClipboardType) final;
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
+  HandlePaste(AutoEditActionDataSetter& aEditActionData,
+              nsIClipboard::ClipboardType aClipboardType,
+              DataTransfer* aDataTransfer) final;
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
+  HandlePasteAsQuotation(AutoEditActionDataSetter& aEditActionData,
+                         nsIClipboard::ClipboardType aClipboardType,
+                         DataTransfer* aDataTransfer) final;
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
   HandlePasteTransferable(AutoEditActionDataSetter& aEditActionData,
                           nsITransferable& aTransferable) final;
@@ -586,6 +611,7 @@ class TextEditor final : public EditorBase,
 
   int32_t mMaxTextLength = -1;
 
+  friend class AutoClonedSelectionRangeArray;  // FindBetterInsertionPoint
   friend class DeleteNodeTransaction;
   friend class EditorBase;
   friend class InsertNodeTransaction;

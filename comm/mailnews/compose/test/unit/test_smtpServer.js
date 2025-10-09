@@ -2,17 +2,37 @@
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
 /**
- * Tests for nsISmtpServer implementation.
+ * Tests for the SMTP implementation of nsIMsgOutgoingServer.
  */
+
+/**
+ * Test that, if the outgoing server service does not have a type for the
+ * server, it defaults to instantiating the SMTP implementation.
+ */
+add_task(async function test_default_server_type() {
+  // Add a new server to the outgoing server service's list. Note that we don't
+  // set any property - including a type - on this new server.
+  Services.prefs.setCharPref("mail.smtpservers", "smtp1");
+
+  // Get the new server from the service (and make sure the operation doesn't
+  // throw, which would happen if we don't have a default value).
+  const server = MailServices.outgoingServer.getServerByKey("smtp1");
+
+  // Check that the service correctly defaulted to the SMTP implementation.
+  Assert.equal(server.type, "smtp");
+
+  // Remove the server from the service to avoid any side-effect.
+  MailServices.outgoingServer.deleteServer(server);
+});
 
 /**
  * Test that cached server password is cleared when password storage changed.
  */
 add_task(async function test_passwordmgr_change() {
-  // Create an nsISmtpServer instance and set a password.
-  let server = Cc["@mozilla.org/messenger/smtp/server;1"].createInstance(
-    Ci.nsISmtpServer
-  );
+  // Create an nsIMsgOutgoingServer instance for SMTP and set a password.
+  const server = Cc[
+    "@mozilla.org/messenger/outgoing/server;1?type=smtp"
+  ].createInstance(Ci.nsIMsgOutgoingServer);
   server.password = "smtp-pass";
   equal(server.password, "smtp-pass", "Password should be cached.");
 
@@ -25,16 +45,22 @@ add_task(async function test_passwordmgr_change() {
  * Test getter/setter of attributes.
  */
 add_task(async function test_attributes() {
-  // Create an nsISmtpServer instance and set a password.
-  let server = Cc["@mozilla.org/messenger/smtp/server;1"].createInstance(
-    Ci.nsISmtpServer
-  );
+  // Create an nsIMsgOutgoingServer instance for SMTP and set a password.
+  const server = Cc[
+    "@mozilla.org/messenger/outgoing/server;1?type=smtp"
+  ].createInstance(Ci.nsIMsgOutgoingServer);
 
   server.description = "アイウ";
   equal(server.description, "アイウ", "Description should be correctly set.");
 
-  server.hostname = "サービス.jp";
-  equal(server.hostname, "サービス.jp", "Hostname should be correctly set.");
+  const smtpServer = server.QueryInterface(Ci.nsISmtpServer);
+  smtpServer.hostname = "サービス.jp";
+
+  equal(
+    smtpServer.hostname,
+    "サービス.jp",
+    "Hostname should be correctly set."
+  );
 });
 
 /**
@@ -46,7 +72,7 @@ add_task(async function testUID() {
 
   // Create a server and check it the UID is set when accessed.
 
-  let serverA = MailServices.smtp.createServer();
+  const serverA = MailServices.outgoingServer.createServer("smtp");
   Assert.stringMatches(
     serverA.UID,
     UUID_REGEXP,
@@ -65,7 +91,7 @@ add_task(async function testUID() {
 
   // Create a second server and check the two UIDs don't match.
 
-  let serverB = MailServices.smtp.createServer();
+  const serverB = MailServices.outgoingServer.createServer("smtp");
   Assert.stringMatches(
     serverB.UID,
     UUID_REGEXP,
@@ -84,7 +110,7 @@ add_task(async function testUID() {
 
   // Create a third server and set the UID before it is accessed.
 
-  let serverC = MailServices.smtp.createServer();
+  const serverC = MailServices.outgoingServer.createServer("smtp");
   serverC.UID = "11112222-3333-4444-5555-666677778888";
   Assert.equal(
     serverC.UID,

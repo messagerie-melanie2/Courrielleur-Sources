@@ -1,24 +1,17 @@
 //! Internal Helper types
 
+// Serialization of large numbers can result in overflows
+// The time calculations are prone to this, so lint here extra
+// https://github.com/jonasbb/serde_with/issues/771
+#![warn(clippy::as_conversions)]
+
 use crate::{
     formats::{Flexible, Format, Strict, Strictness},
-    utils, DeserializeAs, DurationMicroSeconds, DurationMicroSecondsWithFrac, DurationMilliSeconds,
-    DurationMilliSecondsWithFrac, DurationNanoSeconds, DurationNanoSecondsWithFrac,
-    DurationSeconds, DurationSecondsWithFrac, SerializeAs,
+    prelude::*,
 };
-use alloc::{
-    format,
-    string::{String, ToString},
-    vec::Vec,
-};
-use core::{fmt, ops::Neg, time::Duration};
-use serde::{
-    de::{self, Unexpected, Visitor},
-    ser, Deserialize, Deserializer, Serialize, Serializer,
-};
-use std::time::SystemTime;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(test, derive(Debug))]
 pub(crate) enum Sign {
     Positive,
     Negative,
@@ -35,18 +28,22 @@ impl Sign {
         *self == Sign::Negative
     }
 
-    pub(crate) fn apply<T>(&self, value: T) -> T
-    where
-        T: Neg<Output = T>,
-    {
+    pub(crate) fn apply_f64(&self, value: f64) -> f64 {
         match *self {
             Sign::Positive => value,
-            Sign::Negative => value.neg(),
+            Sign::Negative => -value,
+        }
+    }
+
+    pub(crate) fn apply_i64(&self, value: i64) -> Option<i64> {
+        match *self {
+            Sign::Positive => Some(value),
+            Sign::Negative => value.checked_neg(),
         }
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone)]
 pub(crate) struct DurationSigned {
     pub(crate) sign: Sign,
     pub(crate) duration: Duration,
@@ -60,11 +57,22 @@ impl DurationSigned {
         }
     }
 
-    #[cfg(any(feature = "chrono", feature = "time_0_3"))]
+    pub(crate) fn checked_mul(mut self, rhs: u32) -> Option<Self> {
+        self.duration = self.duration.checked_mul(rhs)?;
+        Some(self)
+    }
+
+    pub(crate) fn checked_div(mut self, rhs: u32) -> Option<Self> {
+        self.duration = self.duration.checked_div(rhs)?;
+        Some(self)
+    }
+
+    #[cfg(any(feature = "chrono_0_4", feature = "time_0_3"))]
     pub(crate) fn with_duration(sign: Sign, duration: Duration) -> Self {
         Self { sign, duration }
     }
 
+    #[cfg(feature = "std")]
     pub(crate) fn to_system_time<'de, D>(self) -> Result<SystemTime, D::Error>
     where
         D: Deserializer<'de>,
@@ -73,18 +81,17 @@ impl DurationSigned {
             Sign::Positive => SystemTime::UNIX_EPOCH.checked_add(self.duration),
             Sign::Negative => SystemTime::UNIX_EPOCH.checked_sub(self.duration),
         }
-        .ok_or_else(|| {
-            de::Error::custom("timestamp is outside the range for std::time::SystemTime")
-        })
+        .ok_or_else(|| DeError::custom("timestamp is outside the range for std::time::SystemTime"))
     }
 
+    #[cfg(feature = "std")]
     pub(crate) fn to_std_duration<'de, D>(self) -> Result<Duration, D::Error>
     where
         D: Deserializer<'de>,
     {
         match self.sign {
             Sign::Positive => Ok(self.duration),
-            Sign::Negative => Err(de::Error::custom("std::time::Duration cannot be negative")),
+            Sign::Negative => Err(DeError::custom("std::time::Duration cannot be negative")),
         }
     }
 }
@@ -98,6 +105,7 @@ impl From<&Duration> for DurationSigned {
     }
 }
 
+#[cfg(feature = "std")]
 impl From<&SystemTime> for DurationSigned {
     fn from(time: &SystemTime) -> Self {
         match time.duration_since(SystemTime::UNIX_EPOCH) {
@@ -113,24 +121,6 @@ impl From<&SystemTime> for DurationSigned {
     }
 }
 
-impl core::ops::Mul<u32> for DurationSigned {
-    type Output = DurationSigned;
-
-    fn mul(mut self, rhs: u32) -> Self::Output {
-        self.duration *= rhs;
-        self
-    }
-}
-
-impl core::ops::Div<u32> for DurationSigned {
-    type Output = DurationSigned;
-
-    fn div(mut self, rhs: u32) -> Self::Output {
-        self.duration /= rhs;
-        self
-    }
-}
-
 impl<STRICTNESS> SerializeAs<DurationSigned> for DurationSeconds<u64, STRICTNESS>
 where
     STRICTNESS: Strictness,
@@ -140,7 +130,7 @@ where
         S: Serializer,
     {
         if source.sign.is_negative() {
-            return Err(ser::Error::custom(
+            return Err(SerError::custom(
                 "cannot serialize a negative Duration as u64",
             ));
         }
@@ -167,9 +157,17 @@ where
     where
         S: Serializer,
     {
-        let mut secs = source.sign.apply(source.duration.as_secs() as i64);
+        let mut secs = source
+            .sign
+            .apply_i64(i64::try_from(source.duration.as_secs()).map_err(|_| {
+                SerError::custom("The Duration of Timestamp is outside the supported range.")
+            })?)
+            .ok_or_else(|| {
+                S::Error::custom("The Duration of Timestamp is outside the supported range.")
+            })?;
 
         // Properly round the value
+        // TODO check for overflows BUG771
         if source.duration.subsec_millis() >= 500 {
             if source.sign.is_positive() {
                 secs += 1;
@@ -189,7 +187,9 @@ where
     where
         S: Serializer,
     {
-        let mut secs = source.sign.apply(source.duration.as_secs() as f64);
+        // as conversions are necessary for floats
+        #[allow(clippy::as_conversions)]
+        let mut secs = source.sign.apply_f64(source.duration.as_secs() as f64);
 
         // Properly round the value
         if source.duration.subsec_millis() >= 500 {
@@ -203,6 +203,7 @@ where
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<STRICTNESS> SerializeAs<DurationSigned> for DurationSeconds<String, STRICTNESS>
 where
     STRICTNESS: Strictness,
@@ -211,7 +212,14 @@ where
     where
         S: Serializer,
     {
-        let mut secs = source.sign.apply(source.duration.as_secs() as i64);
+        let mut secs = source
+            .sign
+            .apply_i64(i64::try_from(source.duration.as_secs()).map_err(|_| {
+                SerError::custom("The Duration of Timestamp is outside the supported range.")
+            })?)
+            .ok_or_else(|| {
+                S::Error::custom("The Duration of Timestamp is outside the supported range.")
+            })?;
 
         // Properly round the value
         if source.duration.subsec_millis() >= 500 {
@@ -235,11 +243,12 @@ where
     {
         source
             .sign
-            .apply(utils::duration_as_secs_f64(&source.duration))
+            .apply_f64(source.duration.as_secs_f64())
             .serialize(serializer)
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<STRICTNESS> SerializeAs<DurationSigned> for DurationSecondsWithFrac<String, STRICTNESS>
 where
     STRICTNESS: Strictness,
@@ -250,7 +259,7 @@ where
     {
         source
             .sign
-            .apply(utils::duration_as_secs_f64(&source.duration))
+            .apply_f64(source.duration.as_secs_f64())
             .to_string()
             .serialize(serializer)
     }
@@ -270,7 +279,8 @@ macro_rules! duration_impls {
             where
                 S: Serializer,
             {
-                $inner::<FORMAT, STRICTNESS>::serialize_as(&(*source * $factor), serializer)
+                let value = source.checked_mul($factor).ok_or_else(|| S::Error::custom("Failed to serialize value as the value cannot be represented."))?;
+                $inner::<FORMAT, STRICTNESS>::serialize_as(&value, serializer)
             }
         }
 
@@ -285,7 +295,8 @@ macro_rules! duration_impls {
                 D: Deserializer<'de>,
             {
                 let dur = $inner::<FORMAT, STRICTNESS>::deserialize_as(deserializer)?;
-                Ok(dur / $factor)
+                let dur = dur.checked_div($factor).ok_or_else(|| D::Error::custom("Failed to deserialize value as the value cannot be represented."))?;
+                Ok(dur)
             }
         }
 
@@ -305,7 +316,7 @@ duration_impls!(
 );
 
 struct DurationVisitorFlexible;
-impl<'de> Visitor<'de> for DurationVisitorFlexible {
+impl Visitor<'_> for DurationVisitorFlexible {
     type Value = DurationSigned;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -314,39 +325,40 @@ impl<'de> Visitor<'de> for DurationVisitorFlexible {
 
     fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
     where
-        E: de::Error,
+        E: DeError,
     {
-        if value >= 0 {
-            Ok(DurationSigned::new(Sign::Positive, value as u64, 0))
+        let sign = if value >= 0 {
+            Sign::Positive
         } else {
-            Ok(DurationSigned::new(Sign::Negative, (-value) as u64, 0))
-        }
+            Sign::Negative
+        };
+        Ok(DurationSigned::new(sign, value.unsigned_abs(), 0))
     }
 
     fn visit_u64<E>(self, secs: u64) -> Result<Self::Value, E>
     where
-        E: de::Error,
+        E: DeError,
     {
         Ok(DurationSigned::new(Sign::Positive, secs, 0))
     }
 
     fn visit_f64<E>(self, secs: f64) -> Result<Self::Value, E>
     where
-        E: de::Error,
+        E: DeError,
     {
-        utils::duration_signed_from_secs_f64(secs).map_err(de::Error::custom)
+        utils::duration_signed_from_secs_f64(secs).map_err(DeError::custom)
     }
 
     fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
     where
-        E: de::Error,
+        E: DeError,
     {
         match parse_float_into_time_parts(value) {
             Ok((sign, seconds, subseconds)) => Ok(DurationSigned::new(sign, seconds, subseconds)),
             Err(ParseFloatError::InvalidValue) => {
-                Err(de::Error::invalid_value(Unexpected::Str(value), &self))
+                Err(DeError::invalid_value(Unexpected::Str(value), &self))
             }
-            Err(ParseFloatError::Custom(msg)) => Err(de::Error::custom(msg)),
+            Err(ParseFloatError::Custom(msg)) => Err(DeError::custom(msg)),
         }
     }
 }
@@ -365,27 +377,29 @@ impl<'de> DeserializeAs<'de, DurationSigned> for DurationSeconds<i64, Strict> {
     where
         D: Deserializer<'de>,
     {
-        i64::deserialize(deserializer).map(|mut secs: i64| {
-            let mut sign = Sign::Positive;
-            if secs.is_negative() {
-                secs = -secs;
-                sign = Sign::Negative;
-            }
-            DurationSigned::new(sign, secs as u64, 0)
+        i64::deserialize(deserializer).map(|secs: i64| {
+            let sign = match secs.is_negative() {
+                true => Sign::Negative,
+                false => Sign::Positive,
+            };
+            DurationSigned::new(sign, secs.abs_diff(0), 0)
         })
     }
 }
 
+// round() only works on std
+#[cfg(feature = "std")]
 impl<'de> DeserializeAs<'de, DurationSigned> for DurationSeconds<f64, Strict> {
     fn deserialize_as<D>(deserializer: D) -> Result<DurationSigned, D::Error>
     where
         D: Deserializer<'de>,
     {
         let val = f64::deserialize(deserializer)?.round();
-        utils::duration_signed_from_secs_f64(val).map_err(de::Error::custom)
+        utils::duration_signed_from_secs_f64(val).map_err(DeError::custom)
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<'de> DeserializeAs<'de, DurationSigned> for DurationSeconds<String, Strict> {
     fn deserialize_as<D>(deserializer: D) -> Result<DurationSigned, D::Error>
     where
@@ -393,24 +407,23 @@ impl<'de> DeserializeAs<'de, DurationSigned> for DurationSeconds<String, Strict>
     {
         struct DurationDeserializationVisitor;
 
-        impl<'de> Visitor<'de> for DurationDeserializationVisitor {
+        impl Visitor<'_> for DurationDeserializationVisitor {
             type Value = DurationSigned;
 
             fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(formatter, "a string containing a number")
+                formatter.write_str("a string containing a number")
             }
 
             fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
             where
-                E: de::Error,
+                E: DeError,
             {
-                let mut secs: i64 = value.parse().map_err(de::Error::custom)?;
-                let mut sign = Sign::Positive;
-                if secs.is_negative() {
-                    secs = -secs;
-                    sign = Sign::Negative;
-                }
-                Ok(DurationSigned::new(sign, secs as u64, 0))
+                let secs: i64 = value.parse().map_err(DeError::custom)?;
+                let sign = match secs.is_negative() {
+                    true => Sign::Negative,
+                    false => Sign::Positive,
+                };
+                Ok(DurationSigned::new(sign, secs.abs_diff(0), 0))
             }
         }
 
@@ -436,10 +449,11 @@ impl<'de> DeserializeAs<'de, DurationSigned> for DurationSecondsWithFrac<f64, St
         D: Deserializer<'de>,
     {
         let val = f64::deserialize(deserializer)?;
-        utils::duration_signed_from_secs_f64(val).map_err(de::Error::custom)
+        utils::duration_signed_from_secs_f64(val).map_err(DeError::custom)
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<'de> DeserializeAs<'de, DurationSigned> for DurationSecondsWithFrac<String, Strict> {
     fn deserialize_as<D>(deserializer: D) -> Result<DurationSigned, D::Error>
     where
@@ -451,11 +465,11 @@ impl<'de> DeserializeAs<'de, DurationSigned> for DurationSecondsWithFrac<String,
                 sign,
                 duration: Duration::new(seconds, subseconds),
             }),
-            Err(ParseFloatError::InvalidValue) => Err(de::Error::invalid_value(
+            Err(ParseFloatError::InvalidValue) => Err(DeError::invalid_value(
                 Unexpected::Str(&value),
                 &"a string containing an integer or float",
             )),
-            Err(ParseFloatError::Custom(msg)) => Err(de::Error::custom(msg)),
+            Err(ParseFloatError::Custom(msg)) => Err(DeError::custom(msg)),
         }
     }
 }
@@ -472,9 +486,12 @@ where
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub(crate) enum ParseFloatError {
     InvalidValue,
+    #[cfg(not(feature = "alloc"))]
+    Custom(&'static str),
+    #[cfg(feature = "alloc")]
     Custom(String),
 }
 
@@ -492,23 +509,40 @@ fn parse_float_into_time_parts(mut value: &str) -> Result<(Sign, u64, u32), Pars
         _ => Sign::Positive,
     };
 
-    let parts: Vec<_> = value.split('.').collect();
-    match *parts.as_slice() {
-        [seconds] => {
+    let partslen = value.split('.').count();
+    let mut parts = value.split('.');
+    match partslen {
+        1 => {
+            let seconds = parts.next().expect("Float contains exactly one part");
             if let Ok(seconds) = seconds.parse() {
                 Ok((sign, seconds, 0))
             } else {
                 Err(ParseFloatError::InvalidValue)
             }
         }
-        [seconds, subseconds] => {
+        2 => {
+            let seconds = parts.next().expect("Float contains exactly one part");
             if let Ok(seconds) = seconds.parse() {
-                let subseclen = subseconds.chars().count() as u32;
+                let subseconds = parts.next().expect("Float contains exactly one part");
+                let subseclen = u32::try_from(subseconds.chars().count()).map_err(|_| {
+                    #[cfg(feature = "alloc")]
+                    return ParseFloatError::Custom(alloc::format!(
+                        "Duration and Timestamps with no more than 9 digits precision, but '{value}' has more"
+                    ));
+                    #[cfg(not(feature = "alloc"))]
+                    return ParseFloatError::Custom(
+                        "Duration and Timestamps with no more than 9 digits precision",
+                    );
+                })?;
                 if subseclen > 9 {
-                    return Err(ParseFloatError::Custom(format!(
-                        "Duration and Timestamps with no more than 9 digits precision, but '{}' has more",
-                        value
+                    #[cfg(feature = "alloc")]
+                    return Err(ParseFloatError::Custom(alloc::format!(
+                        "Duration and Timestamps with no more than 9 digits precision, but '{value}' has more"
                     )));
+                    #[cfg(not(feature = "alloc"))]
+                    return Err(ParseFloatError::Custom(
+                        "Duration and Timestamps with no more than 9 digits precision",
+                    ));
                 }
 
                 if let Ok(mut subseconds) = subseconds.parse() {

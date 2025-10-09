@@ -13,7 +13,7 @@ add_task(async function prepare() {
     ],
   });
 
-  await SearchTestUtils.promiseNewSearchEngine({
+  await SearchTestUtils.installOpenSearchEngine({
     url: getRootDirectory(gTestPath) + TEST_ENGINE_BASENAME,
     setAsDefault: true,
   });
@@ -190,14 +190,16 @@ async function compareCounts(clickCallback) {
 
   let engine = await Services.search.getDefault();
 
-  let histogramKey = `other-${engine.name}.urlbar`;
-  let histogram = Services.telemetry.getKeyedHistogramById("SEARCH_COUNTS");
-  histogram.clear();
+  clearSAPTelemetry();
 
   gURLBar.focus();
   await clickCallback();
 
-  TelemetryTestUtils.assertKeyedHistogramSum(histogram, histogramKey, 1);
+  await SearchUITestUtils.assertSAPTelemetry({
+    engineName: engine.name,
+    source: "urlbar",
+    count: 1,
+  });
 }
 
 /**

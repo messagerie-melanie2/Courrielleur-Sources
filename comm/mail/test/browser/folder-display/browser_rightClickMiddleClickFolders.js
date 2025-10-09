@@ -9,18 +9,18 @@
 
 "use strict";
 
+requestLongerTimeout(2);
+
 var {
   assert_folder_displayed,
   assert_folder_selected,
   assert_folder_selected_and_displayed,
   assert_folders_selected_and_displayed,
   assert_selected_tab,
-  be_in_folder,
   close_popup,
   close_tab,
   create_folder,
   make_message_sets_in_folders,
-  mc,
   middle_click_on_folder,
   reset_context_menu_background_tabs,
   right_click_on_folder,
@@ -28,8 +28,8 @@ var {
   select_shift_click_folder,
   set_context_menu_background_tabs,
   switch_tab,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 var folderA, folderB, folderC;
@@ -58,7 +58,7 @@ add_task(async function test_right_click_folder_with_one_thing_selected() {
   assert_folder_selected(folderA);
   assert_folder_displayed(folderB);
 
-  await close_popup(mc, getFoldersContext());
+  await close_popup(window, getFoldersContext());
   assert_folder_selected_and_displayed(folderB);
 }).skip();
 
@@ -67,14 +67,14 @@ add_task(async function test_right_click_folder_with_one_thing_selected() {
  */
 add_task(async function test_right_click_folder_with_many_things_selected() {
   select_click_folder(folderA);
-  select_shift_click_folder(folderB);
+  await select_shift_click_folder(folderB);
   assert_folders_selected_and_displayed(folderA, folderB);
 
   await right_click_on_folder(folderC);
   assert_folder_selected(folderC);
   assert_folder_displayed(folderA);
 
-  await close_popup(mc, getFoldersContext());
+  await close_popup(window, getFoldersContext());
   assert_folders_selected_and_displayed(folderA, folderB);
 }).skip();
 
@@ -88,7 +88,7 @@ add_task(async function test_right_click_folder_on_existing_single_selection() {
   await right_click_on_folder(folderA);
   assert_folders_selected_and_displayed(folderA);
 
-  await close_popup(mc, getFoldersContext());
+  await close_popup(window, getFoldersContext());
   assert_folders_selected_and_displayed(folderA);
 });
 
@@ -97,13 +97,13 @@ add_task(async function test_right_click_folder_on_existing_single_selection() {
  */
 add_task(async function test_right_click_folder_on_existing_multi_selection() {
   select_click_folder(folderB);
-  select_shift_click_folder(folderC);
+  await select_shift_click_folder(folderC);
   assert_folders_selected_and_displayed(folderB, folderC);
 
   await right_click_on_folder(folderC);
   assert_folders_selected_and_displayed(folderB, folderC);
 
-  await close_popup(mc, getFoldersContext());
+  await close_popup(window, getFoldersContext());
   assert_folders_selected_and_displayed(folderB, folderC);
 }).skip();
 
@@ -116,8 +116,8 @@ async function _middle_click_folder_with_one_thing_selected_helper(
   select_click_folder(folderB);
   assert_folder_selected_and_displayed(folderB);
 
-  let originalTab = mc.window.document.getElementById("tabmail").currentTabInfo;
-  let [newTab] = middle_click_on_folder(folderA);
+  const originalTab = document.getElementById("tabmail").currentTabInfo;
+  const [newTab] = middle_click_on_folder(folderA);
   if (aBackground) {
     // Make sure we haven't switched to the new tab.
     assert_selected_tab(originalTab);
@@ -134,11 +134,11 @@ async function _middle_click_folder_with_many_things_selected_helper(
   aBackground
 ) {
   select_click_folder(folderB);
-  select_shift_click_folder(folderC);
+  await select_shift_click_folder(folderC);
   assert_folders_selected_and_displayed(folderB, folderC);
 
-  let originalTab = mc.window.document.getElementById("tabmail").currentTabInfo;
-  let [newTab] = middle_click_on_folder(folderA);
+  const originalTab = document.getElementById("tabmail").currentTabInfo;
+  const [newTab] = middle_click_on_folder(folderA);
   if (aBackground) {
     // Make sure we haven't switched to the new tab.
     assert_selected_tab(originalTab);
@@ -162,8 +162,8 @@ async function _middle_click_folder_on_existing_single_selection_helper(
   select_click_folder(folderC);
   assert_folder_selected_and_displayed(folderC);
 
-  let originalTab = mc.window.document.getElementById("tabmail").currentTabInfo;
-  let [newTab] = middle_click_on_folder(folderC);
+  const originalTab = document.getElementById("tabmail").currentTabInfo;
+  const [newTab] = middle_click_on_folder(folderC);
   if (aBackground) {
     // Make sure we haven't switched to the new tab.
     assert_selected_tab(originalTab);
@@ -181,11 +181,11 @@ async function _middle_click_folder_on_existing_single_selection_helper(
  */
 async function _middle_click_on_existing_multi_selection_helper(aBackground) {
   select_click_folder(folderA);
-  select_shift_click_folder(folderC);
+  await select_shift_click_folder(folderC);
   assert_folders_selected_and_displayed(folderA, folderB, folderC);
 
-  let originalTab = mc.window.document.getElementById("tabmail").currentTabInfo;
-  let [newTab] = middle_click_on_folder(folderB);
+  const originalTab = document.getElementById("tabmail").currentTabInfo;
+  const [newTab] = middle_click_on_folder(folderB);
   if (aBackground) {
     // Make sure we haven't switched to the new tab.
     assert_selected_tab(originalTab);
@@ -206,9 +206,9 @@ async function _middle_click_on_existing_multi_selection_helper(aBackground) {
 async function middle_click_helper(selectedFolder, targetFolder, shiftPressed) {
   select_click_folder(selectedFolder);
   assert_folders_selected_and_displayed(selectedFolder);
-  let originalTab = mc.window.document.getElementById("tabmail").currentTabInfo;
+  const originalTab = document.getElementById("tabmail").currentTabInfo;
 
-  let [newTab] = middle_click_on_folder(targetFolder, shiftPressed);
+  const [newTab] = middle_click_on_folder(targetFolder, shiftPressed);
 
   if (shiftPressed) {
     assert_selected_tab(newTab);
@@ -223,6 +223,10 @@ async function middle_click_helper(selectedFolder, targetFolder, shiftPressed) {
 }
 
 add_task(async function middle_click_tests() {
+  // Set loadInBackground preference to true so that new tabs open without
+  // changing focus unless shift is pressed.
+  set_context_menu_background_tabs(true);
+
   select_click_folder(folderA);
   assert_folders_selected_and_displayed(folderA);
 
@@ -242,8 +246,8 @@ add_task(async function middle_click_tests() {
  */
 var global = this;
 function _generate_background_foreground_tests(aTests) {
-  for (let test of aTests) {
-    let helperFunc = global["_" + test + "_helper"];
+  for (const test of aTests) {
+    const helperFunc = global["_" + test + "_helper"];
     global["test_" + test + "_background"] = async function () {
       set_context_menu_background_tabs(true);
       await helperFunc(true);

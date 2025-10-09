@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
-const { PrefsHelper } = require("devtools/client/shared/prefs");
+const { PrefsHelper } = require("resource://devtools/client/shared/prefs.js");
 
 import { isNode } from "./environment";
 
@@ -17,6 +17,7 @@ if (isNode()) {
   pref("devtools.debugger.auto-pretty-print", false);
   pref("devtools.source-map.client-service.enabled", true);
   pref("devtools.chrome.enabled", false);
+  pref("devtools.debugger.pause-on-debugger-statement", true);
   pref("devtools.debugger.pause-on-exceptions", false);
   pref("devtools.debugger.pause-on-caught-exceptions", false);
   pref("devtools.debugger.ignore-caught-exceptions", true);
@@ -43,14 +44,16 @@ if (isNode()) {
   pref("devtools.debugger.skip-pausing", false);
   pref("devtools.debugger.log-actions", true);
   pref("devtools.debugger.log-event-breakpoints", false);
-  pref("devtools.debugger.javascript-tracing-log-method", "console");
+  pref("devtools.debugger.javascript-tracing-log-method", "debugger-sidebar");
+  pref("devtools.debugger.javascript-tracing-values", false);
+  pref("devtools.debugger.javascript-tracing-on-next-interaction", false);
+  pref("devtools.debugger.javascript-tracing-on-next-load", false);
+  pref("devtools.debugger.javascript-tracing-function-return", false);
+  pref("devtools.debugger.show-content-scripts", false);
   pref("devtools.debugger.hide-ignored-sources", false);
   pref("devtools.debugger.source-map-ignore-list-enabled", true);
   pref("devtools.debugger.features.wasm", true);
-  pref("devtools.debugger.features.map-scopes", true);
   pref("devtools.debugger.features.code-folding", false);
-  pref("devtools.debugger.features.command-click", false);
-  pref("devtools.debugger.features.component-pane", false);
   pref("devtools.debugger.features.autocomplete-expressions", false);
   pref("devtools.debugger.features.map-expression-bindings", true);
   pref("devtools.debugger.features.map-await-expression", true);
@@ -58,6 +61,8 @@ if (isNode()) {
   pref("devtools.debugger.features.inline-preview", true);
   pref("devtools.debugger.features.javascript-tracing", false);
   pref("devtools.editor.tabsize", 2);
+  pref("devtools.editor.expandtab", false);
+  pref("devtools.editor.autoclosebrackets", false);
 }
 
 export const prefs = new PrefsHelper("devtools", {
@@ -67,6 +72,7 @@ export const prefs = new PrefsHelper("devtools", {
   autoPrettyPrint: ["Bool", "debugger.auto-pretty-print"],
   clientSourceMapsEnabled: ["Bool", "source-map.client-service.enabled"],
   chromeAndExtensionsEnabled: ["Bool", "chrome.enabled"],
+  pauseOnDebuggerStatement: ["Bool", "debugger.pause-on-debugger-statement"],
   pauseOnExceptions: ["Bool", "debugger.pause-on-exceptions"],
   pauseOnCaughtExceptions: ["Bool", "debugger.pause-on-caught-exceptions"],
   ignoreCaughtExceptions: ["Bool", "debugger.ignore-caught-exceptions"],
@@ -90,12 +96,6 @@ export const prefs = new PrefsHelper("devtools", {
   expressions: ["Json", "debugger.expressions", []],
   searchOptions: ["Json", "debugger.search-options"],
   debuggerPrefsSchemaVersion: ["Int", "debugger.prefs-schema-version"],
-  projectDirectoryRoot: ["Char", "debugger.project-directory-root", ""],
-  projectDirectoryRootName: [
-    "Char",
-    "debugger.project-directory-root-name",
-    "",
-  ],
   skipPausing: ["Bool", "debugger.skip-pausing"],
   mapScopes: ["Bool", "debugger.map-scopes-enabled"],
   logActions: ["Bool", "debugger.log-actions"],
@@ -105,6 +105,20 @@ export const prefs = new PrefsHelper("devtools", {
     "String",
     "debugger.javascript-tracing-log-method",
   ],
+  javascriptTracingValues: ["Bool", "debugger.javascript-tracing-values"],
+  javascriptTracingOnNextInteraction: [
+    "Bool",
+    "debugger.javascript-tracing-on-next-interaction",
+  ],
+  javascriptTracingOnNextLoad: [
+    "Bool",
+    "debugger.javascript-tracing-on-next-load",
+  ],
+  javascriptTracingFunctionReturn: [
+    "Bool",
+    "debugger.javascript-tracing-function-return",
+  ],
+  showContentScripts: ["Bool", "debugger.show-content-scripts"],
   hideIgnoredSources: ["Bool", "debugger.hide-ignored-sources"],
   sourceMapIgnoreListEnabled: [
     "Bool",
@@ -119,22 +133,19 @@ prefs.cursorBlinkRate = Services.prefs.getIntPref("ui.caretBlinkTime", 530);
 
 export const features = new PrefsHelper("devtools.debugger.features", {
   wasm: ["Bool", "wasm"],
-  mapScopes: ["Bool", "map-scopes"],
   outline: ["Bool", "outline"],
   codeFolding: ["Bool", "code-folding"],
   autocompleteExpression: ["Bool", "autocomplete-expressions"],
   mapExpressionBindings: ["Bool", "map-expression-bindings"],
   mapAwaitExpression: ["Bool", "map-await-expression"],
-  componentPane: ["Bool", "component-pane"],
   logPoints: ["Bool", "log-points"],
-  commandClick: ["Bool", "command-click"],
   inlinePreview: ["Bool", "inline-preview"],
   windowlessServiceWorkers: ["Bool", "windowless-service-workers"],
   javascriptTracing: ["Bool", "javascript-tracing"],
 });
 
 // Import the asyncStore already spawned by the TargetMixin class
-const ThreadUtils = require("devtools/client/shared/thread-utils");
+const ThreadUtils = require("resource://devtools/client/shared/thread-utils.js");
 export const asyncStore = ThreadUtils.asyncStore;
 
 export function resetSchemaVersion() {

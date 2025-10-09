@@ -16,10 +16,10 @@ function run_test() {
   copyFileMessageInLocalFolder(bugmail11, 0, tag1, null, test_keywords);
 }
 
-function test_keywords(aMessageHeaderKeys, aStatus) {
-  let headerKeys = aMessageHeaderKeys;
+function test_keywords(aMessageHeaderKeys) {
+  const headerKeys = aMessageHeaderKeys;
   Assert.notEqual(headerKeys, null);
-  let copiedMessage = localAccountUtils.inboxFolder.GetMessageHeader(
+  const copiedMessage = localAccountUtils.inboxFolder.GetMessageHeader(
     headerKeys[0]
   );
   Assert.equal(copiedMessage.getStringProperty("keywords"), tag1);

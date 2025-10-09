@@ -8,7 +8,6 @@
 
 use num_traits::ToPrimitive;
 use std::borrow::Cow;
-use std::convert::AsRef;
 use std::iter::{Filter, Peekable};
 use std::str::Split;
 
@@ -179,3 +178,11 @@ pub type CssStringWriter = ::nsstring::nsACString;
 /// needs to allocate a temporary string.
 #[cfg(feature = "gecko")]
 pub type CssString = ::nsstring::nsCString;
+
+/// String. The comments for the Gecko types explain the need for this abstraction.
+#[cfg(feature = "servo")]
+pub type CssStringWriter = String;
+
+/// String. The comments for the Gecko types explain the need for this abstraction.
+#[cfg(feature = "servo")]
+pub type CssString = String;

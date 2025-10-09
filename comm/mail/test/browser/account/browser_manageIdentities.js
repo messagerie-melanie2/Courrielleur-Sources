@@ -8,34 +8,17 @@
 
 "use strict";
 
-var {
-  click_account_tree_row,
-  get_account_tree_row,
-  open_advanced_settings,
-  openAccountSettings,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/AccountManagerHelpers.jsm"
-);
-const { wait_for_frame_load } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
-);
-var { gMockPromptService } = ChromeUtils.import(
-  "resource://testing-common/mozmill/PromptHelpers.jsm"
-);
-var { plan_for_modal_dialog, wait_for_modal_dialog } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
+var { click_account_tree_row, get_account_tree_row, openAccountSettings } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/AccountManagerHelpers.sys.mjs"
+  );
+
+const { OpenPGPTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/OpenPGPTestUtils.sys.mjs"
 );
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
-);
-
-var { mc } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-);
-
-const { OpenPGPTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mozmill/OpenPGPTestUtils.jsm"
+const { MockFilePicker } = ChromeUtils.importESModule(
+  "resource://testing-common/MockFilePicker.sys.mjs"
 );
 
 var gPopAccount, gOriginalAccountCount, gIdentitiesWin;
@@ -46,10 +29,10 @@ var gPopAccount, gOriginalAccountCount, gIdentitiesWin;
  * @returns {Window} The loaded window of the identities dialog.
  */
 async function identitiesListDialogLoaded(win) {
-  let manageButton = win.document.getElementById(
+  const manageButton = win.document.getElementById(
     "identity.manageIdentitiesbutton"
   );
-  let identitiesDialogLoad = promiseLoadSubDialog(
+  const identitiesDialogLoad = promiseLoadSubDialog(
     "chrome://messenger/content/am-identities-list.xhtml"
   );
   EventUtils.synthesizeMouseAtCenter(manageButton, {}, win);
@@ -63,10 +46,11 @@ async function identitiesListDialogLoaded(win) {
  * @returns {Window} The loaded window of the identities dialog.
  */
 async function identityDialogLoaded(identityIdx) {
-  let identitiesList = gIdentitiesWin.document.getElementById("identitiesList");
+  const identitiesList =
+    gIdentitiesWin.document.getElementById("identitiesList");
 
   // Let's dbl click to open the identity.
-  let identityDialogLoaded = promiseLoadSubDialog(
+  const identityEditDialogLoaded = promiseLoadSubDialog(
     "chrome://messenger/content/am-identity-edit.xhtml"
   );
   EventUtils.synthesizeMouseAtCenter(
@@ -74,13 +58,13 @@ async function identityDialogLoaded(identityIdx) {
     { clickCount: 2 },
     gIdentitiesWin
   );
-  return identityDialogLoaded;
+  return identityEditDialogLoaded;
 }
 
 /** Close the open dialog. */
 async function dialogClosed(win) {
-  let dialogElement = win.document.querySelector("dialog");
-  let dialogClosing = BrowserTestUtils.waitForEvent(
+  const dialogElement = win.document.querySelector("dialog");
+  const dialogClosing = BrowserTestUtils.waitForEvent(
     dialogElement,
     "dialogclosing"
   );
@@ -93,11 +77,11 @@ add_setup(async function () {
   gOriginalAccountCount = MailServices.accounts.allServers.length;
 
   // Create a POP server
-  let popServer = MailServices.accounts
+  const popServer = MailServices.accounts
     .createIncomingServer("nobody", "exampleX.invalid", "pop3")
     .QueryInterface(Ci.nsIPop3IncomingServer);
 
-  let identity = MailServices.accounts.createIdentity();
+  const identity = MailServices.accounts.createIdentity();
   identity.email = "tinderbox@example.invalid";
 
   gPopAccount = MailServices.accounts.createAccount();
@@ -110,7 +94,7 @@ add_setup(async function () {
     gOriginalAccountCount + 1
   );
 
-  let firstIdentity = gPopAccount.identities[0];
+  const firstIdentity = gPopAccount.identities[0];
 
   Assert.equal(
     firstIdentity.autoEncryptDrafts,
@@ -141,21 +125,21 @@ add_setup(async function () {
   });
 
   // Go to the account settings.
-  let tab = await openAccountSettings();
+  const tab = await openAccountSettings();
   registerCleanupFunction(function closeTab() {
-    mc.window.document.getElementById("tabmail").closeTab(tab);
+    document.getElementById("tabmail").closeTab(tab);
   });
 
   // To the account main page.
-  let accountRow = get_account_tree_row(
+  const accountRow = get_account_tree_row(
     gPopAccount.key,
     null, // "am-main.xhtml",
     tab
   );
-  click_account_tree_row(tab, accountRow);
+  await click_account_tree_row(tab, accountRow);
 
   // Click "Manage Identities" to show the list of identities.
-  let iframe =
+  const iframe =
     tab.browser.contentWindow.document.getElementById("contentFrame");
   gIdentitiesWin = await identitiesListDialogLoaded(iframe.contentWindow);
 });
@@ -165,7 +149,8 @@ add_setup(async function () {
  * once the dialog to add new identity closes.
  */
 add_task(async function test_add_identity() {
-  let identitiesList = gIdentitiesWin.document.getElementById("identitiesList");
+  const identitiesList =
+    gIdentitiesWin.document.getElementById("identitiesList");
 
   Assert.equal(
     identitiesList.childElementCount,
@@ -174,12 +159,12 @@ add_task(async function test_add_identity() {
   );
 
   // Open the dialog to add a new identity.
-  let identityDialogLoaded = promiseLoadSubDialog(
+  const identityEditDialogLoaded = promiseLoadSubDialog(
     "chrome://messenger/content/am-identity-edit.xhtml"
   );
-  let addButton = gIdentitiesWin.document.getElementById("addButton");
+  const addButton = gIdentitiesWin.document.getElementById("addButton");
   EventUtils.synthesizeMouseAtCenter(addButton, {}, gIdentitiesWin);
-  let identityWin = await identityDialogLoaded;
+  const identityWin = await identityEditDialogLoaded;
 
   // Fill in some values, and close. The new identity should now be listed.
   identityWin.document.getElementById("identity.fullName").focus();
@@ -202,11 +187,11 @@ add_task(async function test_add_identity() {
 
 async function test_identity_idx(idx) {
   info(`Checking identity #${idx}`);
-  let identityWin = await identityDialogLoaded(idx);
+  const identityWin = await identityDialogLoaded(idx);
 
-  let identity = gPopAccount.identities[idx];
+  const identity = gPopAccount.identities[idx];
   Assert.ok(!!identity, "identity #1 should be set");
-  let keyId = identity.getCharAttribute("openpgp_key_id");
+  const keyId = identity.getCharAttribute("openpgp_key_id");
 
   // The e2e tab should now be shown.
   Assert.ok(
@@ -237,24 +222,78 @@ async function test_identity_idx(idx) {
   if (keyId) {
     // Click "More information", then "Key Properties" to see that the key
     // properties dialog opens.
-    let keyDetailsDialogLoaded = promiseLoadSubDialog(
+    const keyDetailsDialogLoaded = promiseLoadSubDialog(
       "chrome://openpgp/content/ui/keyDetailsDlg.xhtml"
     );
     info(`Will open key details dialog for key 0x${keyId}`);
-    let arrowHead = identityWin.document.querySelector(
+    const arrowHead = identityWin.document.querySelector(
       `#openPgpOption${keyId} button.arrowhead`
     );
-    arrowHead.scrollIntoView(); // Test window is small on CI...
+    arrowHead.scrollIntoView({ block: "start", behavior: "instant" }); // Test window is small on CI...
     EventUtils.synthesizeMouseAtCenter(arrowHead, {}, identityWin);
-    let propsButton = identityWin.document.querySelector(
+    const propsButton = identityWin.document.querySelector(
       `#openPgpOption${keyId} button.openpgp-props-btn`
     );
-    Assert.ok(BrowserTestUtils.is_visible(propsButton));
-    propsButton.scrollIntoView(); // Test window is small on CI...
+    Assert.ok(BrowserTestUtils.isVisible(propsButton));
+    propsButton.scrollIntoView({ block: "start", behavior: "instant" }); // Test window is small on CI...
     EventUtils.synthesizeMouseAtCenter(propsButton, {}, identityWin);
-    let keyDetailsDialog = await keyDetailsDialogLoaded;
+    const keyDetailsDialog = await keyDetailsDialogLoaded;
     info(`Key details dialog for key 0x${keyId} loaded`);
     keyDetailsDialog.close();
+
+    // Now click the "More" button and try out some actions.
+    const moreButton = identityWin.document.querySelector(
+      `#openPgpOption${keyId} button.openpgp-more-btn`
+    );
+    EventUtils.synthesizeMouseAtCenter(moreButton, {}, identityWin);
+    const moreButtonMenupopup = moreButton.querySelector(
+      ".more-button-menupopup"
+    );
+    await BrowserTestUtils.waitForPopupEvent(moreButtonMenupopup, "shown");
+
+    const saveFile = await IOUtils.getFile(PathUtils.tempDir, `0x${keyId}`);
+    MockFilePicker.init(identityWin.browsingContext);
+    MockFilePicker.setFiles([saveFile]);
+    MockFilePicker.returnValue = MockFilePicker.returnOK;
+
+    const backupSecretKey = moreButtonMenupopup.querySelector(
+      `[data-l10n-id="openpgp-key-backup-key"]`
+    );
+    EventUtils.synthesizeMouseAtCenter(backupSecretKey, {}, identityWin);
+
+    // The picker opens to select files.
+    // Then the "Choose a password to backup your OpenPGP key" dialog opens.
+    const backupKeyPasswordDialog =
+      await BrowserTestUtils.domWindowOpenedAndLoaded();
+
+    EventUtils.synthesizeMouseAtCenter(
+      backupKeyPasswordDialog.document.getElementById("pw1"),
+      {},
+      backupKeyPasswordDialog
+    );
+    EventUtils.sendString("SECR1", backupKeyPasswordDialog);
+    EventUtils.synthesizeMouseAtCenter(
+      backupKeyPasswordDialog.document.getElementById("pw2"),
+      {},
+      backupKeyPasswordDialog
+    );
+    EventUtils.sendString("SECR1", backupKeyPasswordDialog);
+
+    backupKeyPasswordDialog.document.querySelector("dialog").acceptDialog();
+
+    /* eslint-disable mozilla/no-arbitrary-setTimeout */
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    const fileContent = await IOUtils.readUTF8(saveFile.path);
+    Assert.ok(
+      fileContent.startsWith("-----BEGIN PGP PRIVATE KEY BLOCK-----"),
+      "secret key file should start ok"
+    );
+    Assert.ok(
+      fileContent.endsWith("-----END PGP PRIVATE KEY BLOCK-----\r\n"),
+      "secret key file should end ok"
+    );
+
+    await IOUtils.remove(saveFile.path);
   }
 
   Assert.equal(
@@ -282,7 +321,7 @@ add_task(async function test_identity_idx_1() {
 });
 
 add_task(async function test_identity_changes() {
-  let identity = gPopAccount.identities[1];
+  const identity = gPopAccount.identities[1];
 
   // Check that prefs were copied from identity 0 to identity 1
   Assert.equal(
@@ -304,7 +343,7 @@ add_task(async function test_identity_changes() {
   // Let's poke identity 1 and check the changes got applied
   // Note: can't set the prefs to encrypt/sign unless there's also a key.
 
-  let [id] = await OpenPGPTestUtils.importPrivateKey(
+  const [id] = await OpenPGPTestUtils.importPrivateKey(
     window,
     new FileUtils.File(
       getTestFilePath(

@@ -6,13 +6,15 @@ var {
   assertExpectedMessagesIndexed,
   glodaTestHelperInitialize,
   waitForGlodaIndexer,
-} = ChromeUtils.import("resource://testing-common/gloda/GlodaTestHelper.jsm");
-
-var { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/gloda/GlodaTestHelper.sys.mjs"
 );
-var { MessageInjection } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageInjection.jsm"
+
+var { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
+);
+var { MessageInjection } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageInjection.sys.mjs"
 );
 
 /*
@@ -26,7 +28,7 @@ add_setup(async function () {
   // picking up the necessary initialisation.
   Services.io.manageOfflineStatus = false;
   Services.io.offline = true;
-  let msgGen = new MessageGenerator();
+  const msgGen = new MessageGenerator();
   messageInjection = new MessageInjection({ mode: "local" }, msgGen);
   glodaTestHelperInitialize(messageInjection);
 });
@@ -37,7 +39,7 @@ add_setup(async function () {
  */
 add_task(async function test_gloda_offline_startup() {
   // Set up a folder for indexing and check the message doesn't get indexed.
-  let [, msgSet] = await messageInjection.makeFoldersWithSets(1, [
+  const [, msgSet] = await messageInjection.makeFoldersWithSets(1, [
     { count: 1 },
   ]);
 

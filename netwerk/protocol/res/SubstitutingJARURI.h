@@ -15,12 +15,12 @@
 namespace mozilla {
 namespace net {
 
-#define NS_SUBSTITUTINGJARURI_IMPL_CID               \
-  { /* 8f8c54ed-aba7-4ebf-ba6f-e58aec0aba4c */       \
-    0x8f8c54ed, 0xaba7, 0x4ebf, {                    \
-      0xba, 0x6f, 0xe5, 0x8a, 0xec, 0x0a, 0xba, 0x4c \
-    }                                                \
-  }
+#define NS_SUBSTITUTINGJARURI_IMPL_CID        \
+  {/* 8f8c54ed-aba7-4ebf-ba6f-e58aec0aba4c */ \
+   0x8f8c54ed,                                \
+   0xaba7,                                    \
+   0x4ebf,                                    \
+   {0xba, 0x6f, 0xe5, 0x8a, 0xec, 0x0a, 0xba, 0x4c}}
 
 // Provides a Substituting URI for resource://-like substitutions which
 // allows consumers to access the underlying jar resource.
@@ -44,7 +44,7 @@ class SubstitutingJARURI : public nsIJARURI,
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSISERIALIZABLE
 
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_SUBSTITUTINGJARURI_IMPL_CID)
+  NS_INLINE_DECL_STATIC_IID(NS_SUBSTITUTINGJARURI_IMPL_CID)
 
   NS_FORWARD_SAFE_NSIURL(mSource)
   NS_FORWARD_SAFE_NSIJARURI(mResolved)
@@ -121,6 +121,13 @@ class SubstitutingJARURI : public nsIJARURI,
   }
   NS_IMETHOD GetHasRef(bool* aHasRef) override {
     return !mSource ? NS_ERROR_NULL_POINTER : mSource->GetHasRef(aHasRef);
+  }
+  NS_IMETHOD GetHasUserPass(bool* aHasUserPass) override {
+    return !mSource ? NS_ERROR_NULL_POINTER
+                    : mSource->GetHasUserPass(aHasUserPass);
+  }
+  NS_IMETHOD GetHasQuery(bool* aHasQuery) override {
+    return !mSource ? NS_ERROR_NULL_POINTER : mSource->GetHasQuery(aHasQuery);
   }
   NS_IMETHOD GetFilePath(nsACString& aFilePath) override {
     return !mSource ? NS_ERROR_NULL_POINTER : mSource->GetFilePath(aFilePath);
@@ -212,9 +219,6 @@ class SubstitutingJARURI : public nsIJARURI,
 
   friend BaseURIMutator<SubstitutingJARURI>;
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(SubstitutingJARURI,
-                              NS_SUBSTITUTINGJARURI_IMPL_CID)
 
 }  // namespace net
 }  // namespace mozilla

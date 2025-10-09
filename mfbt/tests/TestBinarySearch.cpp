@@ -10,7 +10,6 @@
 
 #include <cstdlib>
 
-using mozilla::ArrayLength;
 using mozilla::BinarySearch;
 using mozilla::BinarySearchIf;
 using mozilla::Vector;
@@ -91,7 +90,7 @@ static void TestBinarySearch() {
 
 static void TestBinarySearchIf() {
   const int v1[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
-  const size_t len = ArrayLength(v1);
+  const size_t len = std::size(v1);
   size_t m;
 
   A(BinarySearchIf(v1, 0, len, RangeFinder(2, 3), &m) && m == 2);
@@ -126,26 +125,26 @@ static void TestEqualRange() {
   for (int i = -1; i < kMaxNumber + 1; ++i) {
     auto bounds = EqualRange(sortedArray, 0, sortedArray.length(), CompareN(i));
 
-    MOZ_RELEASE_ASSERT(bounds.first() <= sortedArray.length());
-    MOZ_RELEASE_ASSERT(bounds.second() <= sortedArray.length());
-    MOZ_RELEASE_ASSERT(bounds.first() <= bounds.second());
+    MOZ_RELEASE_ASSERT(bounds.first <= sortedArray.length());
+    MOZ_RELEASE_ASSERT(bounds.second <= sortedArray.length());
+    MOZ_RELEASE_ASSERT(bounds.first <= bounds.second);
 
-    if (bounds.first() == 0) {
+    if (bounds.first == 0) {
       MOZ_RELEASE_ASSERT(sortedArray[0] >= i);
-    } else if (bounds.first() == sortedArray.length()) {
+    } else if (bounds.first == sortedArray.length()) {
       MOZ_RELEASE_ASSERT(sortedArray[sortedArray.length() - 1] < i);
     } else {
-      MOZ_RELEASE_ASSERT(sortedArray[bounds.first() - 1] < i);
-      MOZ_RELEASE_ASSERT(sortedArray[bounds.first()] >= i);
+      MOZ_RELEASE_ASSERT(sortedArray[bounds.first - 1] < i);
+      MOZ_RELEASE_ASSERT(sortedArray[bounds.first] >= i);
     }
 
-    if (bounds.second() == 0) {
+    if (bounds.second == 0) {
       MOZ_RELEASE_ASSERT(sortedArray[0] > i);
-    } else if (bounds.second() == sortedArray.length()) {
+    } else if (bounds.second == sortedArray.length()) {
       MOZ_RELEASE_ASSERT(sortedArray[sortedArray.length() - 1] <= i);
     } else {
-      MOZ_RELEASE_ASSERT(sortedArray[bounds.second() - 1] <= i);
-      MOZ_RELEASE_ASSERT(sortedArray[bounds.second()] > i);
+      MOZ_RELEASE_ASSERT(sortedArray[bounds.second - 1] <= i);
+      MOZ_RELEASE_ASSERT(sortedArray[bounds.second] > i);
     }
   }
 }

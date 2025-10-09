@@ -20,8 +20,9 @@
 #include <unordered_map>
 #endif
 
+#include <optional>
+
 #include "absl/strings/string_view.h"
-#include "absl/types/optional.h"
 #include "api/array_view.h"
 #if WEBRTC_APM_DEBUG_DUMP == 1
 #include "common_audio/wav_file.h"
@@ -41,7 +42,7 @@ namespace webrtc {
 // Functor used to use as a custom deleter in the map of file pointers to raw
 // files.
 struct RawFileCloseFunctor {
-  void operator()(FILE* f) const { if (f) fclose(f); }
+  void operator()(FILE* f) const { fclose(f); }
 };
 #endif
 
@@ -60,7 +61,7 @@ class ApmDataDumper {
   ~ApmDataDumper();
 
   // Activates or deactivate the dumping functionality.
-  static void SetActivated(bool activated) {
+  static void SetActivated([[maybe_unused]] bool activated) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     recording_activated_ = activated;
 #endif
@@ -81,17 +82,18 @@ class ApmDataDumper {
   // Specifies what dump set to use. All dump commands with a different dump set
   // than the one specified will be discarded. If not specificed, all dump sets
   // will be used.
-  static void SetDumpSetToUse(int dump_set_to_use) {
+  static void SetDumpSetToUse([[maybe_unused]] int dump_set_to_use) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     dump_set_to_use_ = dump_set_to_use;
 #endif
   }
 
   // Set an optional output directory.
-  static void SetOutputDirectory(absl::string_view output_dir) {
+  static void SetOutputDirectory(
+      [[maybe_unused]] absl::string_view output_dir) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     RTC_CHECK_LT(output_dir.size(), kOutputDirMaxLength);
-    rtc::strcpyn(output_dir_, output_dir.size(), output_dir);
+    rtc::strcpyn(output_dir_, kOutputDirMaxLength, output_dir);
 #endif
   }
 
@@ -100,48 +102,43 @@ class ApmDataDumper {
   void InitiateNewSetOfRecordings() {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     ++recording_set_index_;
-    debug_written_ = 0;
 #endif
   }
 
   // Methods for performing dumping of data of various types into
   // various formats.
-  void DumpRaw(absl::string_view name,
-               double v,
-               int dump_set = kDefaultDumpSet) {
+  void DumpRaw([[maybe_unused]] absl::string_view name,
+               [[maybe_unused]] double v,
+               [[maybe_unused]] int dump_set = kDefaultDumpSet) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     if (dump_set_to_use_ && *dump_set_to_use_ != dump_set)
       return;
 
     if (recording_activated_) {
       FILE* file = GetRawFile(name);
-      if (file) {
-        fwrite(&v, sizeof(v), 1, file);
-      }
+      fwrite(&v, sizeof(v), 1, file);
     }
 #endif
   }
 
-  void DumpRaw(absl::string_view name,
-               size_t v_length,
-               const double* v,
-               int dump_set = kDefaultDumpSet) {
+  void DumpRaw([[maybe_unused]] absl::string_view name,
+               [[maybe_unused]] size_t v_length,
+               [[maybe_unused]] const double* v,
+               [[maybe_unused]] int dump_set = kDefaultDumpSet) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     if (dump_set_to_use_ && *dump_set_to_use_ != dump_set)
       return;
 
     if (recording_activated_) {
       FILE* file = GetRawFile(name);
-      if (file) {
-        fwrite(v, sizeof(v[0]), v_length, file);
-      }
+      fwrite(v, sizeof(v[0]), v_length, file);
     }
 #endif
   }
 
-  void DumpRaw(absl::string_view name,
-               rtc::ArrayView<const double> v,
-               int dump_set = kDefaultDumpSet) {
+  void DumpRaw([[maybe_unused]] absl::string_view name,
+               [[maybe_unused]] rtc::ArrayView<const double> v,
+               [[maybe_unused]] int dump_set = kDefaultDumpSet) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     if (dump_set_to_use_ && *dump_set_to_use_ != dump_set)
       return;
@@ -152,42 +149,38 @@ class ApmDataDumper {
 #endif
   }
 
-  void DumpRaw(absl::string_view name,
-               float v,
-               int dump_set = kDefaultDumpSet) {
+  void DumpRaw([[maybe_unused]] absl::string_view name,
+               [[maybe_unused]] float v,
+               [[maybe_unused]] int dump_set = kDefaultDumpSet) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     if (dump_set_to_use_ && *dump_set_to_use_ != dump_set)
       return;
 
     if (recording_activated_) {
       FILE* file = GetRawFile(name);
-      if (file) {
-        fwrite(&v, sizeof(v), 1, file);
-      }
+      fwrite(&v, sizeof(v), 1, file);
     }
 #endif
   }
 
-  void DumpRaw(absl::string_view name,
-               size_t v_length,
-               const float* v,
-               int dump_set = kDefaultDumpSet) {
+  void DumpRaw([[maybe_unused]] absl::string_view name,
+               [[maybe_unused]] size_t v_length,
+               [[maybe_unused]] const float* v,
+               [[maybe_unused]] int dump_set = kDefaultDumpSet) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     if (dump_set_to_use_ && *dump_set_to_use_ != dump_set)
       return;
 
     if (recording_activated_) {
       FILE* file = GetRawFile(name);
-      if (file) {
-        fwrite(v, sizeof(v[0]), v_length, file);
-      }
+      fwrite(v, sizeof(v[0]), v_length, file);
     }
 #endif
   }
 
-  void DumpRaw(absl::string_view name,
-               rtc::ArrayView<const float> v,
-               int dump_set = kDefaultDumpSet) {
+  void DumpRaw([[maybe_unused]] absl::string_view name,
+               [[maybe_unused]] rtc::ArrayView<const float> v,
+               [[maybe_unused]] int dump_set = kDefaultDumpSet) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     if (dump_set_to_use_ && *dump_set_to_use_ != dump_set)
       return;
@@ -198,7 +191,9 @@ class ApmDataDumper {
 #endif
   }
 
-  void DumpRaw(absl::string_view name, bool v, int dump_set = kDefaultDumpSet) {
+  void DumpRaw([[maybe_unused]] absl::string_view name,
+               [[maybe_unused]] bool v,
+               [[maybe_unused]] int dump_set = kDefaultDumpSet) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     if (dump_set_to_use_ && *dump_set_to_use_ != dump_set)
       return;
@@ -209,29 +204,27 @@ class ApmDataDumper {
 #endif
   }
 
-  void DumpRaw(absl::string_view name,
-               size_t v_length,
-               const bool* v,
-               int dump_set = kDefaultDumpSet) {
+  void DumpRaw([[maybe_unused]] absl::string_view name,
+               [[maybe_unused]] size_t v_length,
+               [[maybe_unused]] const bool* v,
+               [[maybe_unused]] int dump_set = kDefaultDumpSet) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     if (dump_set_to_use_ && *dump_set_to_use_ != dump_set)
       return;
 
     if (recording_activated_) {
       FILE* file = GetRawFile(name);
-      if (file) {
-        for (size_t k = 0; k < v_length; ++k) {
-          int16_t value = static_cast<int16_t>(v[k]);
-          fwrite(&value, sizeof(value), 1, file);
-        }
+      for (size_t k = 0; k < v_length; ++k) {
+        int16_t value = static_cast<int16_t>(v[k]);
+        fwrite(&value, sizeof(value), 1, file);
       }
     }
 #endif
   }
 
-  void DumpRaw(absl::string_view name,
-               rtc::ArrayView<const bool> v,
-               int dump_set = kDefaultDumpSet) {
+  void DumpRaw([[maybe_unused]] absl::string_view name,
+               [[maybe_unused]] rtc::ArrayView<const bool> v,
+               [[maybe_unused]] int dump_set = kDefaultDumpSet) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     if (dump_set_to_use_ && *dump_set_to_use_ != dump_set)
       return;
@@ -242,42 +235,38 @@ class ApmDataDumper {
 #endif
   }
 
-  void DumpRaw(absl::string_view name,
-               int16_t v,
-               int dump_set = kDefaultDumpSet) {
+  void DumpRaw([[maybe_unused]] absl::string_view name,
+               [[maybe_unused]] int16_t v,
+               [[maybe_unused]] int dump_set = kDefaultDumpSet) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     if (dump_set_to_use_ && *dump_set_to_use_ != dump_set)
       return;
 
     if (recording_activated_) {
       FILE* file = GetRawFile(name);
-      if (file) {
-        fwrite(&v, sizeof(v), 1, file);
-      }
+      fwrite(&v, sizeof(v), 1, file);
     }
 #endif
   }
 
-  void DumpRaw(absl::string_view name,
-               size_t v_length,
-               const int16_t* v,
-               int dump_set = kDefaultDumpSet) {
+  void DumpRaw([[maybe_unused]] absl::string_view name,
+               [[maybe_unused]] size_t v_length,
+               [[maybe_unused]] const int16_t* v,
+               [[maybe_unused]] int dump_set = kDefaultDumpSet) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     if (dump_set_to_use_ && *dump_set_to_use_ != dump_set)
       return;
 
     if (recording_activated_) {
       FILE* file = GetRawFile(name);
-      if (file) {
-        fwrite(v, sizeof(v[0]), v_length, file);
-      }
+      fwrite(v, sizeof(v[0]), v_length, file);
     }
 #endif
   }
 
-  void DumpRaw(absl::string_view name,
-               rtc::ArrayView<const int16_t> v,
-               int dump_set = kDefaultDumpSet) {
+  void DumpRaw([[maybe_unused]] absl::string_view name,
+               [[maybe_unused]] rtc::ArrayView<const int16_t> v,
+               [[maybe_unused]] int dump_set = kDefaultDumpSet) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     if (dump_set_to_use_ && *dump_set_to_use_ != dump_set)
       return;
@@ -288,75 +277,67 @@ class ApmDataDumper {
 #endif
   }
 
-  void DumpRaw(absl::string_view name,
-               int32_t v,
-               int dump_set = kDefaultDumpSet) {
+  void DumpRaw([[maybe_unused]] absl::string_view name,
+               [[maybe_unused]] int32_t v,
+               [[maybe_unused]] int dump_set = kDefaultDumpSet) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     if (dump_set_to_use_ && *dump_set_to_use_ != dump_set)
       return;
 
     if (recording_activated_) {
       FILE* file = GetRawFile(name);
-      if (file) {
-        fwrite(&v, sizeof(v), 1, file);
-      }
+      fwrite(&v, sizeof(v), 1, file);
     }
 #endif
   }
 
-  void DumpRaw(absl::string_view name,
-               size_t v_length,
-               const int32_t* v,
-               int dump_set = kDefaultDumpSet) {
+  void DumpRaw([[maybe_unused]] absl::string_view name,
+               [[maybe_unused]] size_t v_length,
+               [[maybe_unused]] const int32_t* v,
+               [[maybe_unused]] int dump_set = kDefaultDumpSet) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     if (dump_set_to_use_ && *dump_set_to_use_ != dump_set)
       return;
 
     if (recording_activated_) {
       FILE* file = GetRawFile(name);
-      if (file) {
-        fwrite(v, sizeof(v[0]), v_length, file);
-      }
+      fwrite(v, sizeof(v[0]), v_length, file);
     }
 #endif
   }
 
-  void DumpRaw(absl::string_view name,
-               size_t v,
-               int dump_set = kDefaultDumpSet) {
+  void DumpRaw([[maybe_unused]] absl::string_view name,
+               [[maybe_unused]] size_t v,
+               [[maybe_unused]] int dump_set = kDefaultDumpSet) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     if (dump_set_to_use_ && *dump_set_to_use_ != dump_set)
       return;
 
     if (recording_activated_) {
       FILE* file = GetRawFile(name);
-      if (file) {
-        fwrite(&v, sizeof(v), 1, file);
-      }
+      fwrite(&v, sizeof(v), 1, file);
     }
 #endif
   }
 
-  void DumpRaw(absl::string_view name,
-               size_t v_length,
-               const size_t* v,
-               int dump_set = kDefaultDumpSet) {
+  void DumpRaw([[maybe_unused]] absl::string_view name,
+               [[maybe_unused]] size_t v_length,
+               [[maybe_unused]] const size_t* v,
+               [[maybe_unused]] int dump_set = kDefaultDumpSet) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     if (dump_set_to_use_ && *dump_set_to_use_ != dump_set)
       return;
 
     if (recording_activated_) {
       FILE* file = GetRawFile(name);
-      if (file) {
-        fwrite(v, sizeof(v[0]), v_length, file);
-      }
+      fwrite(v, sizeof(v[0]), v_length, file);
     }
 #endif
   }
 
-  void DumpRaw(absl::string_view name,
-               rtc::ArrayView<const int32_t> v,
-               int dump_set = kDefaultDumpSet) {
+  void DumpRaw([[maybe_unused]] absl::string_view name,
+               [[maybe_unused]] rtc::ArrayView<const int32_t> v,
+               [[maybe_unused]] int dump_set = kDefaultDumpSet) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     if (dump_set_to_use_ && *dump_set_to_use_ != dump_set)
       return;
@@ -367,9 +348,9 @@ class ApmDataDumper {
 #endif
   }
 
-  void DumpRaw(absl::string_view name,
-               rtc::ArrayView<const size_t> v,
-               int dump_set = kDefaultDumpSet) {
+  void DumpRaw([[maybe_unused]] absl::string_view name,
+               [[maybe_unused]] rtc::ArrayView<const size_t> v,
+               [[maybe_unused]] int dump_set = kDefaultDumpSet) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     if (dump_set_to_use_ && *dump_set_to_use_ != dump_set)
       return;
@@ -378,12 +359,12 @@ class ApmDataDumper {
 #endif
   }
 
-  void DumpWav(absl::string_view name,
-               size_t v_length,
-               const float* v,
-               int sample_rate_hz,
-               int num_channels,
-               int dump_set = kDefaultDumpSet) {
+  void DumpWav([[maybe_unused]] absl::string_view name,
+               [[maybe_unused]] size_t v_length,
+               [[maybe_unused]] const float* v,
+               [[maybe_unused]] int sample_rate_hz,
+               [[maybe_unused]] int num_channels,
+               [[maybe_unused]] int dump_set = kDefaultDumpSet) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     if (dump_set_to_use_ && *dump_set_to_use_ != dump_set)
       return;
@@ -392,21 +373,15 @@ class ApmDataDumper {
       WavWriter* file = GetWavFile(name, sample_rate_hz, num_channels,
                                    WavFile::SampleFormat::kFloat);
       file->WriteSamples(v, v_length);
-      // Cheat and use aec_near as a stand-in for "size of the largest file"
-      // in the dump.  We're looking to limit the total time, and that's a
-      // reasonable stand-in.
-      if (strcmp(name, "aec_near") == 0) {
-       updateDebugWritten(v_length * sizeof(float));
-      }
     }
 #endif
   }
 
-  void DumpWav(absl::string_view name,
-               rtc::ArrayView<const float> v,
-               int sample_rate_hz,
-               int num_channels,
-               int dump_set = kDefaultDumpSet) {
+  void DumpWav([[maybe_unused]] absl::string_view name,
+               [[maybe_unused]] rtc::ArrayView<const float> v,
+               [[maybe_unused]] int sample_rate_hz,
+               [[maybe_unused]] int num_channels,
+               [[maybe_unused]] int dump_set = kDefaultDumpSet) {
 #if WEBRTC_APM_DEBUG_DUMP == 1
     if (dump_set_to_use_ && *dump_set_to_use_ != dump_set)
       return;
@@ -420,7 +395,7 @@ class ApmDataDumper {
  private:
 #if WEBRTC_APM_DEBUG_DUMP == 1
   static bool recording_activated_;
-  static absl::optional<int> dump_set_to_use_;
+  static std::optional<int> dump_set_to_use_;
   static constexpr size_t kOutputDirMaxLength = 1024;
   static char output_dir_[kOutputDirMaxLength];
   const int instance_index_;
@@ -434,16 +409,6 @@ class ApmDataDumper {
                         int sample_rate_hz,
                         int num_channels,
                         WavFile::SampleFormat format);
-
-  uint32_t debug_written_ = 0;
-
-  void updateDebugWritten(uint32_t amount) {
-    debug_written_ += amount;
-    if (debug_written_ >= webrtc::Trace::aec_debug_size()) {
-      SetActivated(false);
-    }
-  }
-
 #endif
 };
 

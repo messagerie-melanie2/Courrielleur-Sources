@@ -15,7 +15,9 @@ from mozlint import result
 from mozlint.pathutils import get_ancestors_by_name
 from mozlint.util.implementation import LintProcess
 
-YAMLLINT_FORMAT_REGEX = re.compile("(.*):(.*):(.*): \[(error|warning)\] (.*) \((.*)\)$")
+YAMLLINT_FORMAT_REGEX = re.compile(
+    r"(.*):(.*):(.*): \[(error|warning)\] (.*) \((.*)\)$"
+)
 
 results = []
 
@@ -26,7 +28,7 @@ class YAMLLintProcess(LintProcess):
             match = YAMLLINT_FORMAT_REGEX.match(line)
             abspath, line, col, level, message, code = match.groups()
         except AttributeError:
-            print("Unable to match yaml regex against output: {}".format(line))
+            print(f"Unable to match yaml regex against output: {line}")
             return
 
         res = {
@@ -68,7 +70,7 @@ def gen_yamllint_args(cmdargs, paths=None, conf_file=None):
 def lint(files, config, **lintargs):
     log = lintargs["log"]
 
-    log.debug("Version: {}".format(get_yamllint_version()))
+    log.debug(f"Version: {get_yamllint_version()}")
 
     cmdargs = [
         sys.executable,

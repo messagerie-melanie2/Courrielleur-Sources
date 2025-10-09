@@ -88,6 +88,12 @@ WINBASEAPI BOOL WINAPI QueryPerformanceFrequency(LARGE_INTEGER* lpFrequency);
 #  define IMPLICIT
 #endif
 
+#if defined(_MSC_VER)
+#  define ALIGNED_DECL(_align, _type) __declspec(align(_align)) _type
+#else
+#  define ALIGNED_DECL(_align, _type) _type __attribute__((aligned(_align)))
+#endif
+
 #include "gl_defs.h"
 #include "glsl.h"
 #include "program.h"
@@ -236,10 +242,12 @@ static int bytes_for_internal_format(GLenum internal_format) {
     case GL_RGBA32F:
       return 4 * 4;
     case GL_RGBA32I:
+    case GL_RGBA_INTEGER:
       return 4 * 4;
     case GL_RGBA8:
     case GL_BGRA8:
     case GL_RGBA:
+    case GL_BGRA:
       return 4;
     case GL_R8:
     case GL_RED:
@@ -284,7 +292,7 @@ static TextureFormat gl_format_to_texture_format(int type) {
     case GL_RG16:
       return TextureFormat::RG16;
     case GL_RGB_RAW_422_APPLE:
-      return TextureFormat::YUV422;
+      return TextureFormat::YUY2;
     default:
       assert(0);
       return TextureFormat::RGBA8;
@@ -398,10 +406,14 @@ struct Texture {
     // utilized by depth buffers which need to know when depth runs have reset
     // to a valid row state. When unset, the depth runs may contain garbage.
     CLEARED = 1 << 2,
+    // The texture was deleted while still locked and must stay alive until all
+    // locks are released.
+    ZOMBIE = 1 << 3,
   };
   int flags = SHOULD_FREE;
   bool should_free() const { return bool(flags & SHOULD_FREE); }
   bool cleared() const { return bool(flags & CLEARED); }
+  bool zombie() const { return bool(flags & ZOMBIE); }
 
   void set_flag(int flag, bool val) {
     if (val) {
@@ -418,6 +430,7 @@ struct Texture {
     set_flag(SHOULD_FREE, val);
   }
   void set_cleared(bool val) { set_flag(CLEARED, val); }
+  void set_zombie(bool val) { set_flag(ZOMBIE, val); }
 
   // Delayed-clearing state. When a clear of an FB is requested, we don't
   // immediately clear each row, as the rows may be subsequently overwritten
@@ -560,6 +573,11 @@ struct Texture {
   // Get a pointer for sampling at the given offset
   char* sample_ptr(int x, int y) const {
     return buf + y * stride() + x * bpp();
+  }
+
+  // Get a pointer to the end of the current buffer
+  char* end_ptr() const {
+    return buf + (height - 1) * stride() + width * bpp();
   }
 
   // Get a pointer for sampling the requested region and limit to the provided
@@ -729,10 +747,12 @@ struct ObjectStore {
     o->on_erase();
   }
 
-  bool erase(size_t i) {
+  bool erase(size_t i, bool should_delete = true) {
     if (i < size && objects[i]) {
       on_erase(objects[i], nullptr);
-      delete objects[i];
+      if (should_delete) {
+        delete objects[i];
+      }
       objects[i] = nullptr;
       if (i < first_free) first_free = i;
       return true;
@@ -1641,6 +1661,10 @@ static bool format_requires_conversion(GLenum external_format,
   switch (external_format) {
     case GL_RGBA:
       return internal_format == GL_RGBA8;
+    case GL_RED:
+      return internal_format != GL_R8 && internal_format != GL_R16;
+    case GL_RG:
+      return internal_format != GL_RG8 && internal_format != GL_RG16;
     default:
       return false;
   }
@@ -1660,20 +1684,153 @@ static inline void copy_bgra8_to_rgba8(uint32_t* dest, const uint32_t* src,
   }
 }
 
+static inline void copy_red_to_rgba32f(float* dest, const float* src,
+                                       int width) {
+  for (; width > 0; width--, dest += 4, src++) {
+    dest[0] = *src;
+    dest[1] = 0.0f;
+    dest[2] = 0.0f;
+    dest[3] = 1.0f;
+  }
+}
+
+static inline void copy_red_to_bgra8(uint8_t* dest, const uint8_t* src,
+                                     int width) {
+  for (; width > 0; width--, dest += 4, src++) {
+    dest[0] = 0;
+    dest[1] = 0;
+    dest[2] = *src;
+    dest[3] = 255;
+  }
+}
+
+template <typename T, size_t N = 1>
+static int clip_ptrs_against_bounds(T*& dst_buf, T* dst_bound0, T* dst_bound1,
+                                    const T*& src_buf, const T* src_bound0,
+                                    const T* src_bound1, size_t& len) {
+  if (dst_bound0) {
+    if (dst_buf < dst_bound0) {
+      if (dst_buf + len * N <= dst_bound0) {
+        // dst entirely before bounds
+        len = 0;
+        return -1;
+      }
+      // dst overlaps bound0
+      size_t offset = (dst_bound0 - dst_buf) / N;
+      src_buf += offset;
+      dst_buf += offset * N;
+      len -= offset;
+    }
+    if (dst_buf + len * N > dst_bound1) {
+      if (dst_buf >= dst_bound1) {
+        // dst entirely after bounds
+        len = 0;
+        return 1;
+      }
+      // dst overlaps bound1
+      size_t offset = (dst_buf + len * N - dst_bound1) / N;
+      len -= offset;
+    }
+  }
+  if (src_bound0) {
+    if (src_buf < src_bound0) {
+      if (src_buf + len <= src_bound0) {
+        // src entirely before bounds
+        len = 0;
+        return -1;
+      }
+      // src overlaps bound0
+      size_t offset = src_bound0 - src_buf;
+      src_buf += offset;
+      dst_buf += offset * N;
+      len -= offset;
+    }
+    if (src_buf + len > src_bound1) {
+      if (src_buf >= src_bound1) {
+        // src entirely after bounds
+        len = 0;
+        return 1;
+      }
+      // src overlaps bound1
+      size_t offset = src_buf + len - src_bound1;
+      len -= offset;
+    }
+  }
+  return 0;
+}
+
 static void convert_copy(GLenum external_format, GLenum internal_format,
                          uint8_t* dst_buf, size_t dst_stride,
+                         uint8_t* dst_bound0, uint8_t* dst_bound1,
                          const uint8_t* src_buf, size_t src_stride,
+                         const uint8_t* src_bound0, const uint8_t* src_bound1,
                          size_t width, size_t height) {
   switch (external_format) {
     case GL_RGBA:
       if (internal_format == GL_RGBA8) {
         for (; height; height--) {
-          copy_bgra8_to_rgba8((uint32_t*)dst_buf, (const uint32_t*)src_buf,
-                              width);
+          size_t len = width;
+          uint32_t* dst_ptr = (uint32_t*)dst_buf;
+          const uint32_t* src_ptr = (const uint32_t*)src_buf;
+          if (clip_ptrs_against_bounds(dst_ptr, (uint32_t*)dst_bound0,
+                                       (uint32_t*)dst_bound1, src_ptr,
+                                       (const uint32_t*)src_bound0,
+                                       (const uint32_t*)src_bound1, len) > 0) {
+            return;
+          }
+          if (len) {
+            copy_bgra8_to_rgba8(dst_ptr, src_ptr, len);
+          }
           dst_buf += dst_stride;
           src_buf += src_stride;
         }
         return;
+      }
+      break;
+    case GL_RED:
+      switch (internal_format) {
+        case GL_RGBA8:
+          for (; height; height--) {
+            size_t len = width;
+            uint8_t* dst_ptr = dst_buf;
+            const uint8_t* src_ptr = src_buf;
+            if (clip_ptrs_against_bounds<uint8_t, 4>(
+                    dst_ptr, dst_bound0, dst_bound1, src_ptr, src_bound0,
+                    src_bound1, len) > 0) {
+              return;
+            }
+            if (len) {
+              copy_red_to_bgra8(dst_ptr, src_ptr, len);
+            }
+            dst_buf += dst_stride;
+            src_buf += src_stride;
+          }
+          return;
+        case GL_RGBA32F:
+          for (; height; height--) {
+            size_t len = width;
+            float* dst_ptr = (float*)dst_buf;
+            const float* src_ptr = (const float*)src_buf;
+            if (clip_ptrs_against_bounds<float, 4>(
+                    dst_ptr, (float*)dst_bound0, (float*)dst_bound1, src_ptr,
+                    (const float*)src_bound0, (const float*)src_bound1,
+                    len) > 0) {
+              return;
+            }
+            if (len) {
+              copy_red_to_rgba32f(dst_ptr, src_ptr, len);
+            }
+            dst_buf += dst_stride;
+            src_buf += src_stride;
+          }
+          return;
+        case GL_R8:
+          break;
+        default:
+          debugf("unsupported format conversion from %x to %x\n",
+                 external_format, internal_format);
+          assert(false);
+          return;
       }
       break;
     default:
@@ -1681,7 +1838,16 @@ static void convert_copy(GLenum external_format, GLenum internal_format,
   }
   size_t row_bytes = width * bytes_for_internal_format(internal_format);
   for (; height; height--) {
-    memcpy(dst_buf, src_buf, row_bytes);
+    size_t len = row_bytes;
+    uint8_t* dst_ptr = dst_buf;
+    const uint8_t* src_ptr = src_buf;
+    if (clip_ptrs_against_bounds(dst_ptr, dst_bound0, dst_bound1, src_ptr,
+                                 src_bound0, src_bound1, len) > 0) {
+      return;
+    }
+    if (len) {
+      memcpy(dst_ptr, src_ptr, len);
+    }
     dst_buf += dst_stride;
     src_buf += src_stride;
   }
@@ -1723,7 +1889,8 @@ static void set_tex_storage(Texture& t, GLenum external_format, GLsizei width,
   // If we have a buffer that needs format conversion, then do that now.
   if (buf && should_free) {
     convert_copy(external_format, internal_format, (uint8_t*)t.buf, t.stride(),
-                 (const uint8_t*)buf, stride, width, height);
+                 (uint8_t*)t.buf, (uint8_t*)t.end_ptr(), (const uint8_t*)buf,
+                 stride, nullptr, nullptr, width, height);
   }
 }
 
@@ -1812,7 +1979,8 @@ void TexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset,
   if (!src_bpp || !t.buf) return;
   convert_copy(format, t.internal_format,
                (uint8_t*)t.sample_ptr(xoffset, yoffset), t.stride(),
-               (const uint8_t*)data, row_length * src_bpp, width, height);
+               (uint8_t*)t.buf, (uint8_t*)t.end_ptr(), (const uint8_t*)data,
+               row_length * src_bpp, nullptr, nullptr, width, height);
 }
 
 void TexImage2D(GLenum target, GLint level, GLint internal_format,
@@ -1855,6 +2023,58 @@ void TexParameteri(GLenum target, GLenum pname, GLint param) {
   SetTextureParameter(ctx->get_binding(target), pname, param);
 }
 
+typedef Texture LockedTexture;
+
+// Lock the given texture to prevent modification.
+LockedTexture* LockTexture(GLuint texId) {
+  Texture& tex = ctx->textures[texId];
+  if (!tex.buf) {
+    assert(tex.buf != nullptr);
+    return nullptr;
+  }
+  if (__sync_fetch_and_add(&tex.locked, 1) == 0) {
+    // If this is the first time locking the texture, flush any delayed clears.
+    prepare_texture(tex);
+  }
+  return (LockedTexture*)&tex;
+}
+
+// Lock the given framebuffer's color attachment to prevent modification.
+LockedTexture* LockFramebuffer(GLuint fboId) {
+  Framebuffer& fb = ctx->framebuffers[fboId];
+  // Only allow locking a framebuffer if it has a valid color attachment.
+  if (!fb.color_attachment) {
+    assert(fb.color_attachment != 0);
+    return nullptr;
+  }
+  return LockTexture(fb.color_attachment);
+}
+
+// Reference an already locked resource
+void LockResource(LockedTexture* resource) {
+  if (!resource) {
+    return;
+  }
+  __sync_fetch_and_add(&resource->locked, 1);
+}
+
+// Remove a lock on a texture that has been previously locked
+int32_t UnlockResource(LockedTexture* resource) {
+  if (!resource) {
+    return -1;
+  }
+  int32_t locked = __sync_fetch_and_add(&resource->locked, -1);
+  if (locked <= 0) {
+    // The lock should always be non-zero before unlocking.
+    assert(0);
+  } else if (locked == 1 && resource->zombie()) {
+    // If the resource is being kept alive by locks and this is the last lock,
+    // then delete the resource now.
+    delete resource;
+  }
+  return locked - 1;
+}
+
 void GenTextures(int n, GLuint* result) {
   for (int i = 0; i < n; i++) {
     Texture t;
@@ -1863,10 +2083,27 @@ void GenTextures(int n, GLuint* result) {
 }
 
 void DeleteTexture(GLuint n) {
-  if (n && ctx->textures.erase(n)) {
+  if (!n) {
+    return;
+  }
+  LockedTexture* tex = (LockedTexture*)ctx->textures.find(n);
+  if (!tex) {
+    return;
+  }
+  // Lock the texture so that it can't be deleted by another thread yet.
+  LockResource(tex);
+  // Forget the existing binding to the texture but keep it alive in case there
+  // are any other locks on it.
+  if (ctx->textures.erase(n, false)) {
     for (size_t i = 0; i < MAX_TEXTURE_UNITS; i++) {
       ctx->texture_units[i].unlink(n);
     }
+  }
+  // Mark the texture as a zombie so that it will be freed if there are no other
+  // existing locks on it.
+  tex->set_zombie(true);
+  if (int32_t locked = UnlockResource(tex)) {
+    debugf("DeleteTexture(%u) with %d locks\n", n, locked);
   }
 }
 
@@ -2601,8 +2838,10 @@ void ReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format,
   if (width <= 0 || height <= 0) {
     return;
   }
-  convert_copy(format, t.internal_format, dest, destStride,
-               (const uint8_t*)t.sample_ptr(x, y), t.stride(), width, height);
+  convert_copy(format, t.internal_format, dest, destStride, nullptr, nullptr,
+               (const uint8_t*)t.sample_ptr(x, y), t.stride(),
+               (const uint8_t*)t.buf, (const uint8_t*)t.end_ptr(), width,
+               height);
 }
 
 void CopyImageSubData(GLuint srcName, GLenum srcTarget, UNUSED GLint srcLevel,

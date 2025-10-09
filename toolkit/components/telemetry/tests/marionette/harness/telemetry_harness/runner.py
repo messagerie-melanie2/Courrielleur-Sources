@@ -35,7 +35,7 @@ class TelemetryTestRunner(BaseMarionetteTestRunner):
                 "browser.region.network.url": "",
                 # Disable smart sizing because it changes prefs at startup. (bug 1547750)
                 "browser.cache.disk.smart_size.enabled": False,
-                "toolkit.telemetry.server": "{}/pings".format(SERVER_URL),
+                "toolkit.telemetry.server": f"{SERVER_URL}/pings",
                 "telemetry.fog.test.localhost_port": -1,
                 "toolkit.telemetry.initDelay": 1,
                 "toolkit.telemetry.minSubsessionLength": 0,
@@ -52,6 +52,9 @@ class TelemetryTestRunner(BaseMarionetteTestRunner):
                 # Disable Normandy a little harder (bug 1608807).
                 # This should also disable Nimbus.
                 "app.shield.optoutstudies.enabled": False,
+                # Bug 1789727: Keep the screenshots extension disabled to avoid
+                # disabling the addon resulting in extra subsessions
+                "screenshots.browser.component.enabled": False,
             }
         )
 

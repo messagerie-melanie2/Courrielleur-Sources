@@ -7,10 +7,7 @@
 
 import json
 import os
-import platform
 import re
-
-import six
 
 
 def build_dict(config, env=os.environ):
@@ -30,6 +27,7 @@ def build_dict(config, env=os.environ):
 
     d = {}
     d["topsrcdir"] = config.topsrcdir
+    d["topobjdir"] = config.topobjdir
 
     if config.mozconfig:
         d["mozconfig"] = config.mozconfig
@@ -96,10 +94,14 @@ def build_dict(config, env=os.environ):
     d["artifact"] = substs.get("MOZ_ARTIFACT_BUILDS") == "1"
     d["ccov"] = substs.get("MOZ_CODE_COVERAGE") == "1"
     d["cc_type"] = substs.get("CC_TYPE")
-    d["domstreams"] = substs.get("MOZ_DOM_STREAMS") == "1"
     d["isolated_process"] = (
         substs.get("MOZ_ANDROID_CONTENT_SERVICE_ISOLATED_PROCESS") == "1"
     )
+    d["automation"] = substs.get("MOZ_AUTOMATION") == "1"
+    d["gecko_profiler"] = bool(substs.get("MOZ_GECKO_PROFILER"))
+    d["dbus_enabled"] = bool(substs.get("MOZ_ENABLE_DBUS"))
+
+    d["opt"] = not d["debug"] and not d["asan"] and not d["tsan"] and not d["ccov"]
 
     def guess_platform():
         if d["buildapp"] == "browser":
@@ -107,12 +109,12 @@ def build_dict(config, env=os.environ):
             if p == "mac":
                 p = "macosx64"
             elif d["bits"] == 64:
-                p = "{}64".format(p)
+                p = f"{p}64"
             elif p in ("win",):
-                p = "{}32".format(p)
+                p = f"{p}32"
 
             if d["asan"]:
-                p = "{}-asan".format(p)
+                p = f"{p}-asan"
 
             return p
 
@@ -126,6 +128,12 @@ def build_dict(config, env=os.environ):
             return "android-arm"
 
     def guess_buildtype():
+        if d["asan"]:
+            return "asan"
+        if d["tsan"]:
+            return "tsan"
+        if d["ccov"]:
+            return "ccov"
         if d["debug"]:
             return "debug"
         if d["pgo"]:
@@ -137,14 +145,13 @@ def build_dict(config, env=os.environ):
     if "buildapp" in d and (d["os"] == "mac" or "bits" in d):
         d["platform_guess"] = guess_platform()
         d["buildtype_guess"] = guess_buildtype()
+    d["buildtype"] = guess_buildtype()
 
     if (
         d.get("buildapp", "") == "mobile/android"
         and "MOZ_ANDROID_MIN_SDK_VERSION" in substs
     ):
         d["android_min_sdk"] = substs["MOZ_ANDROID_MIN_SDK_VERSION"]
-
-    d["is_ubuntu"] = "Ubuntu" in platform.version()
 
     return d
 
@@ -157,7 +164,7 @@ def write_mozinfo(file, config, env=os.environ):
     and what keys are produced.
     """
     build_conf = build_dict(config, env)
-    if isinstance(file, six.text_type):
-        file = open(file, "wt")
+    if isinstance(file, str):
+        file = open(file, "w")
 
     json.dump(build_conf, file, sort_keys=True, indent=4)

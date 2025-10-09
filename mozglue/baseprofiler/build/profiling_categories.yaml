@@ -37,12 +37,17 @@
 # The list of available color names for categories is:
 # - transparent
 # - blue
+# - brown
+# - darkgrey
 # - green
 # - grey
 # - lightblue
+# - lightgreen
+# - lightred
 # - magenta
 # - orange
 # - purple
+# - red
 # - yellow
 #
 # subcategories [required]
@@ -114,6 +119,8 @@
       label: Style computation
     - name: LAYOUT_Destroy
       label: Layout cleanup
+    - name: LAYOUT_Printing
+      label: Printing
 
 - name: JS
   label: JavaScript
@@ -137,8 +144,12 @@
       label: JIT (ion)
     - name: JS_Builtin
       label: Builtin API
-    - name: JS_Wasm
-      label: Wasm
+    - name: JS_WasmIon
+      label: Wasm (ion)
+    - name: JS_WasmBaseline
+      label: Wasm (baseline)
+    - name: JS_WasmOther
+      label: Wasm (other)
 
 - name: GCCC
   label: GC / CC
@@ -250,6 +261,13 @@
     - name: JAVA_BLOCKED
       label: Other
 
+- name: MAILNEWS
+  label: Mailnews
+  color: brown
+  subcategories:
+    - name: MAILNEWS
+      label: Other
+
 - name: IPC
   label: IPC
   color: lightgreen
@@ -298,4 +316,18 @@
   color: grey
   subcategories:
     - name: REMOTE_PROTOCOL
+      label: Other
+
+- name: SANDBOX
+  label: Sandbox
+  color: grey
+  subcategories:
+    - name: SANDBOX
+      label: Other
+
+- name: TELEMETRY
+  label: Telemetry
+  color: grey
+  subcategories:
+    - name: TELEMETRY
       label: Other

@@ -1,12 +1,13 @@
 use crate::capabilities::AndroidOptions;
-use mozdevice::{AndroidStorage, Device, Host, UnixPathBuf};
+use mozdevice::{AndroidStorage, Device, Host, RemoteMetadata, UnixPathBuf};
 use mozprofile::profile::Profile;
-use serde::Serialize;
-use serde_yaml::{Mapping, Value};
-use std::fmt;
+use std::fs::File;
 use std::io;
+use std::path::PathBuf;
 use std::time;
+use thiserror::Error;
 use webdriver::error::{ErrorStatus, WebDriverError};
+use yaml_rust::yaml::{Hash, Yaml};
 
 // TODO: avoid port clashes across GeckoView-vehicles.
 // For now, we always use target port 2829, leading to issues like bug 1533704.
@@ -20,47 +21,22 @@ const CONFIG_FILE_HEADING: &str = r#"## GeckoView configuration YAML
 
 pub type Result<T> = std::result::Result<T, AndroidError>;
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum AndroidError {
+    #[error("Activity for package '{0}' not found")]
     ActivityNotFound(String),
-    Device(mozdevice::DeviceError),
-    IO(io::Error),
+
+    #[error(transparent)]
+    Device(#[from] mozdevice::DeviceError),
+
+    #[error(transparent)]
+    IO(#[from] io::Error),
+
+    #[error("Package '{0}' not found")]
     PackageNotFound(String),
-    Serde(serde_yaml::Error),
-}
 
-impl fmt::Display for AndroidError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            AndroidError::ActivityNotFound(ref package) => {
-                write!(f, "Activity for package '{}' not found", package)
-            }
-            AndroidError::Device(ref message) => message.fmt(f),
-            AndroidError::IO(ref message) => message.fmt(f),
-            AndroidError::PackageNotFound(ref package) => {
-                write!(f, "Package '{}' not found", package)
-            }
-            AndroidError::Serde(ref message) => message.fmt(f),
-        }
-    }
-}
-
-impl From<io::Error> for AndroidError {
-    fn from(value: io::Error) -> AndroidError {
-        AndroidError::IO(value)
-    }
-}
-
-impl From<mozdevice::DeviceError> for AndroidError {
-    fn from(value: mozdevice::DeviceError) -> AndroidError {
-        AndroidError::Device(value)
-    }
-}
-
-impl From<serde_yaml::Error> for AndroidError {
-    fn from(value: serde_yaml::Error) -> AndroidError {
-        AndroidError::Serde(value)
-    }
+    #[error(transparent)]
+    Serde(#[from] yaml_rust::EmitError),
 }
 
 impl From<AndroidError> for WebDriverError {
@@ -106,6 +82,8 @@ pub struct AndroidHandler {
     pub marionette_host_port: u16,
     pub marionette_target_port: u16,
 
+    pub system_access: bool,
+
     // Port forwarding for WebSocket connections (WebDriver BiDi and CDP)
     pub websocket_port: Option<u16>,
 }
@@ -133,26 +111,31 @@ impl Drop for AndroidHandler {
             Err(e) => error!("Failed deleting test root folder: {}", e),
         }
 
+        debug!(
+            "Stop forwarding Marionette port ({} -> {})",
+            &self.marionette_host_port, &self.marionette_target_port
+        );
         match self
             .process
             .device
             .kill_forward_port(self.marionette_host_port)
         {
-            Ok(_) => debug!(
-                "Marionette port forward ({} -> {}) stopped",
-                &self.marionette_host_port, &self.marionette_target_port
-            ),
+            Ok(_) => {}
             Err(e) => error!(
-                "Marionette port forward ({} -> {}) failed to stop: {}",
+                "Failed to stop forwarding Marionette port ({} -> {}): {}",
                 &self.marionette_host_port, &self.marionette_target_port, e
             ),
         }
 
         if let Some(port) = self.websocket_port {
+            debug!(
+                "Stop forwarding WebSocket port ({} -> {})",
+                &self.marionette_host_port, &self.marionette_target_port
+            );
             match self.process.device.kill_forward_port(port) {
-                Ok(_) => debug!("WebSocket port forward ({0} -> {0}) stopped", &port),
+                Ok(_) => {}
                 Err(e) => error!(
-                    "WebSocket port forward ({0} -> {0}) failed to stop: {1}",
+                    "Failed to stop forwarding WebSocket port ({0} -> {0}): {1}",
                     &port, e
                 ),
             }
@@ -164,6 +147,7 @@ impl AndroidHandler {
     pub fn new(
         options: &AndroidOptions,
         marionette_host_port: u16,
+        system_access: bool,
         websocket_port: Option<u16>,
     ) -> Result<AndroidHandler> {
         // We need to push profile.pathbuf to a safe space on the device.
@@ -181,16 +165,16 @@ impl AndroidHandler {
         let mut device = host.device_or_default(options.device_serial.as_ref(), options.storage)?;
 
         // Set up port forwarding for Marionette.
-        device.forward_port(marionette_host_port, MARIONETTE_TARGET_PORT)?;
         debug!(
-            "Marionette port forward ({} -> {}) started",
+            "Start forwarding Marionette port ({} -> {})",
             marionette_host_port, MARIONETTE_TARGET_PORT
         );
+        device.forward_port(marionette_host_port, MARIONETTE_TARGET_PORT)?;
 
         if let Some(port) = websocket_port {
             // Set up port forwarding for WebSocket connections (WebDriver BiDi, and CDP).
+            debug!("Start forwarding WebSocket port ({} -> {})", port, port);
             device.forward_port(port, port)?;
-            debug!("WebSocket port forward ({} -> {}) started", port, port);
         }
 
         let test_root = match device.storage {
@@ -275,8 +259,53 @@ impl AndroidHandler {
             marionette_host_port,
             marionette_target_port: MARIONETTE_TARGET_PORT,
             options: options.clone(),
+            system_access,
             websocket_port,
         })
+    }
+
+    pub fn copy_minidumps_files(&self, save_path: &str) -> Result<()> {
+        let minidumps_path = self.profile.join("minidumps");
+
+        match self.process.device.list_dir(&minidumps_path) {
+            Ok(entries) => {
+                for entry in entries {
+                    if let RemoteMetadata::RemoteFile(_) = entry.metadata {
+                        let file_path = minidumps_path.join(&entry.name);
+
+                        let extension = file_path
+                            .extension()
+                            .and_then(|ext| ext.to_str())
+                            .map(|ext| ext.to_lowercase())
+                            .unwrap_or(String::from(""));
+
+                        if extension == "dmp" || extension == "extra" {
+                            let mut dest_path = PathBuf::from(save_path);
+                            dest_path.push(&entry.name);
+
+                            self.process
+                                .device
+                                .pull(&file_path, &mut File::create(dest_path.as_path())?)?;
+
+                            debug!(
+                                "Copied minidump file {:?} from the device to the local path {:?}.",
+                                entry.name, save_path
+                            );
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                warn!(
+                    "Couldn't read files from minidumps folder '{}'",
+                    minidumps_path.display(),
+                );
+
+                return Ok(());
+            }
+        }
+
+        Ok(())
     }
 
     pub fn generate_config_file<I, K, V>(
@@ -291,47 +320,55 @@ impl AndroidHandler {
     {
         // To configure GeckoView, we use the automation techniques documented at
         // https://mozilla.github.io/geckoview/consumer/docs/automation.
-        #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
-        pub struct Config {
-            pub env: Mapping,
-            pub args: Vec<String>,
-        }
 
-        let mut config = Config {
-            args: vec![
+        let args = {
+            let mut args_yaml = Vec::from([
                 "--marionette".into(),
                 "--profile".into(),
                 self.profile.display().to_string(),
-            ],
-            env: Mapping::new(),
+            ]);
+
+            if self.system_access {
+                args_yaml.push("--remote-allow-system-access".into());
+            }
+            args_yaml.append(&mut args.unwrap_or_default());
+            args_yaml.into_iter().map(Yaml::String).collect()
         };
 
-        config.args.append(&mut args.unwrap_or_default());
+        let mut env = Hash::new();
 
         for (key, value) in envs {
-            config.env.insert(
-                Value::String(key.to_string()),
-                Value::String(value.to_string()),
+            env.insert(
+                Yaml::String(key.to_string()),
+                Yaml::String(value.to_string()),
             );
         }
 
-        config.env.insert(
-            Value::String("MOZ_CRASHREPORTER".to_owned()),
-            Value::String("1".to_owned()),
+        env.insert(
+            Yaml::String("MOZ_CRASHREPORTER".to_owned()),
+            Yaml::String("1".to_owned()),
         );
-        config.env.insert(
-            Value::String("MOZ_CRASHREPORTER_NO_REPORT".to_owned()),
-            Value::String("1".to_owned()),
+        env.insert(
+            Yaml::String("MOZ_CRASHREPORTER_NO_REPORT".to_owned()),
+            Yaml::String("1".to_owned()),
         );
-        config.env.insert(
-            Value::String("MOZ_CRASHREPORTER_SHUTDOWN".to_owned()),
-            Value::String("1".to_owned()),
+        env.insert(
+            Yaml::String("MOZ_CRASHREPORTER_SHUTDOWN".to_owned()),
+            Yaml::String("1".to_owned()),
         );
 
-        let mut contents: Vec<String> = vec![CONFIG_FILE_HEADING.to_owned()];
-        contents.push(serde_yaml::to_string(&config)?);
+        let config_yaml = {
+            let mut config = Hash::new();
+            config.insert(Yaml::String("env".into()), Yaml::Hash(env));
+            config.insert(Yaml::String("args".into()), Yaml::Array(args));
 
-        Ok(contents.concat())
+            let mut yaml = String::new();
+            let mut emitter = yaml_rust::YamlEmitter::new(&mut yaml);
+            emitter.dump(&Yaml::Hash(config))?;
+            yaml
+        };
+
+        Ok([CONFIG_FILE_HEADING, &*config_yaml].concat())
     }
 
     pub fn prepare<I, K, V>(
@@ -419,6 +456,16 @@ impl AndroidHandler {
         Ok(())
     }
 
+    pub fn push_as_file(&self, content: &[u8], path: &str) -> Result<String> {
+        let mut dest = self.test_root.clone();
+        dest.push(path);
+
+        let buffer = &mut io::Cursor::new(content);
+        self.process.device.push(buffer, &dest, 0o777)?;
+
+        Ok(dest.display().to_string())
+    }
+
     pub fn force_stop(&self) -> Result<()> {
         debug!(
             "Force stopping the Android package: {}",
@@ -454,10 +501,14 @@ mod test {
 
     fn run_handler_storage_test(package: &str, storage: AndroidStorageInput) {
         let options = AndroidOptions::new(package.to_owned(), storage);
-        let handler = AndroidHandler::new(&options, 4242, None).expect("has valid Android handler");
+        let handler =
+            AndroidHandler::new(&options, 4242, true, None).expect("has valid Android handler");
 
         assert_eq!(handler.options, options);
+        assert_eq!(handler.marionette_host_port, 4242);
         assert_eq!(handler.process.package, package);
+        assert_eq!(handler.system_access, true);
+        assert_eq!(handler.websocket_port, None);
 
         let expected_config_path = UnixPathBuf::from(format!(
             "/data/local/tmp/{}-geckoview-config.yaml",
@@ -477,7 +528,7 @@ mod test {
         let test_root = match handler.process.device.storage {
             AndroidStorage::App => {
                 let mut buf = UnixPathBuf::from("/data/data");
-                buf.push(&package);
+                buf.push(package);
                 buf.push("test_root");
                 buf
             }
@@ -491,7 +542,7 @@ mod test {
 
                 let mut buf = UnixPathBuf::from(response.trim_end_matches('\n'));
                 buf.push("Android/data/");
-                buf.push(&package);
+                buf.push(package);
                 buf.push("files/test_root");
                 buf
             }

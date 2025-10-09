@@ -9,9 +9,10 @@
 #include "xpcAccessibleTable.h"
 #include "xpcAccessibleTableCell.h"
 
-#include "mozilla/a11y/DocAccessibleParent.h"
 #include "nsAccUtils.h"
 #include "DocAccessible-inl.h"
+#include "mozilla/a11y/DocAccessibleParent.h"
+#include "mozilla/dom/CanonicalBrowsingContext.h"
 
 using namespace mozilla;
 using namespace mozilla::a11y;
@@ -133,13 +134,20 @@ xpcAccessibleDocument::GetChildDocumentAt(uint32_t aIndex,
 }
 
 NS_IMETHODIMP
-xpcAccessibleDocument::GetVirtualCursor(nsIAccessiblePivot** aVirtualCursor) {
-  NS_ENSURE_ARG_POINTER(aVirtualCursor);
-  *aVirtualCursor = nullptr;
-
-  if (!Intl()) return NS_ERROR_FAILURE;
-
-  NS_ADDREF(*aVirtualCursor = Intl()->VirtualCursor());
+xpcAccessibleDocument::GetBrowsingContext(
+    dom::BrowsingContext** aBrowsingContext) {
+  NS_ENSURE_ARG_POINTER(aBrowsingContext);
+  *aBrowsingContext = nullptr;
+  if (!mIntl) {
+    return NS_ERROR_FAILURE;
+  }
+  if (LocalAccessible* local = mIntl->AsLocal()) {
+    NS_IF_ADDREF(*aBrowsingContext =
+                     local->AsDoc()->DocumentNode()->GetBrowsingContext());
+  } else {
+    NS_IF_ADDREF(*aBrowsingContext =
+                     mIntl->AsRemote()->AsDoc()->GetBrowsingContext());
+  }
   return NS_OK;
 }
 

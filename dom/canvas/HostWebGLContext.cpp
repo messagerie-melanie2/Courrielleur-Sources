@@ -51,11 +51,12 @@ LockedOutstandingContexts::~LockedOutstandingContexts() {
 // -
 
 /*static*/
-UniquePtr<HostWebGLContext> HostWebGLContext::Create(
+std::unique_ptr<HostWebGLContext> HostWebGLContext::Create(
     const OwnerData& ownerData, const webgl::InitContextDesc& desc,
     webgl::InitContextResult* const out) {
-  auto host = WrapUnique(new HostWebGLContext(ownerData));
-  auto webgl = WebGLContext::Create(*host, desc, out);
+  auto host =
+      std::unique_ptr<HostWebGLContext>(new HostWebGLContext(ownerData));
+  auto webgl = WebGLContext::Create(host.get(), desc, out);
   if (!webgl) return nullptr;
   return host;
 }
@@ -180,6 +181,17 @@ void HostWebGLContext::CreateSync(const ObjectId id) {
     return;
   }
   slot = GetWebGL2Context()->FenceSync(LOCAL_GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+
+  if (!slot) return;
+
+  slot->OnCompleteTaskAdd([host = WeakPtr{this}, id]() {
+    if (!host) return;
+    if (host->mOwnerData.inProcess) {
+      host->mOwnerData.inProcess->OnSyncComplete(id);
+    } else if (host->mOwnerData.outOfProcess) {
+      (void)host->mOwnerData.outOfProcess->SendOnSyncComplete(id);
+    }
+  });
 }
 
 void HostWebGLContext::CreateTexture(const ObjectId id) {

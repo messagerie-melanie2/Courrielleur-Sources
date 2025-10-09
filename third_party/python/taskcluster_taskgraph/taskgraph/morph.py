@@ -17,7 +17,6 @@ the graph.
 # `{'relative-datestamp': '..'}` is handled at the last possible moment during
 # task creation.
 
-
 import logging
 import os
 import re
@@ -31,13 +30,14 @@ from .util.workertypes import get_worker_type
 
 here = os.path.abspath(os.path.dirname(__file__))
 logger = logging.getLogger(__name__)
-MAX_ROUTES = 10
+MAX_ROUTES = 64
 
 registered_morphs = []
 
 
 def register_morph(func):
     registered_morphs.append(func)
+    return func
 
 
 def amend_taskgraph(taskgraph, label_to_taskid, to_add):
@@ -51,7 +51,7 @@ def amend_taskgraph(taskgraph, label_to_taskid, to_add):
         for depname, dep in task.dependencies.items():
             new_edges.add((task.task_id, dep, depname))
 
-    taskgraph = TaskGraph(new_tasks, Graph(set(new_tasks), new_edges))
+    taskgraph = TaskGraph(new_tasks, Graph(set(new_tasks), new_edges))  # type: ignore
     return taskgraph, label_to_taskid
 
 
@@ -106,20 +106,8 @@ def derive_index_task(task, taskgraph, label_to_taskid, parameters, graph_config
         task=task_def,
         dependencies=dependencies,
     )
-    task.task_id = slugid()
+    task.task_id = slugid()  # type: ignore
     return task, taskgraph, label_to_taskid
-
-
-# these regular expressions capture route prefixes for which we have a star
-# scope, allowing them to be summarized.  Each should correspond to a star scope
-# in each Gecko `assume:repo:hg.mozilla.org/...` role.
-_SCOPE_SUMMARY_REGEXPS = [
-    # TODO Bug 1631839 - Remove these scopes once the migration is done
-    re.compile(r"(index:insert-task:project\.mobile\.fenix\.v2\.[^.]*\.).*"),
-    re.compile(
-        r"(index:insert-task:project\.mobile\.reference-browser\.v3\.[^.]*\.).*"
-    ),
-]
 
 
 def make_index_task(parent_task, taskgraph, label_to_taskid, parameters, graph_config):
@@ -138,19 +126,21 @@ def make_index_task(parent_task, taskgraph, label_to_taskid, parameters, graph_c
     # namespace-heavy index task might have more scopes than can fit in a
     # temporary credential.
     scopes = set()
-    domain_scope_regex = re.compile(
-        r"(index:insert-task:{trust_domain}\.v2\.[^.]*\.).*".format(
+    domain_index_regex = re.compile(
+        r"({trust_domain}\.v2\.[^.]*\.).*".format(
             trust_domain=re.escape(graph_config["trust-domain"])
         )
     )
-    all_scopes_summary_regexps = _SCOPE_SUMMARY_REGEXPS + [domain_scope_regex]
+    index_path_res = [domain_index_regex]
+    for path in graph_config["taskgraph"].get("index-path-regexes", ()):
+        index_path_res.append(re.compile(path))
     for path in index_paths:
-        scope = f"index:insert-task:{path}"
-        for summ_re in all_scopes_summary_regexps:
-            match = summ_re.match(scope)
+        for index_path_re in index_path_res:
+            match = index_path_re.match(path)
             if match:
-                scope = match.group(1) + "*"
+                path = match.group(1) + "*"
                 break
+        scope = f"index:insert-task:{path}"
         scopes.add(scope)
     task.task["scopes"] = sorted(scopes)
 
@@ -165,10 +155,9 @@ def make_index_task(parent_task, taskgraph, label_to_taskid, parameters, graph_c
 @register_morph
 def add_index_tasks(taskgraph, label_to_taskid, parameters, graph_config):
     """
-    The TaskCluster queue only allows 10 routes on a task, but we have tasks
-    with many more routes, for purposes of indexing. This graph morph adds
-    "index tasks" that depend on such tasks and do the index insertions
-    directly, avoiding the limits on task.routes.
+    The TaskCluster queue only allows 64 routes on a task. In the event a task
+    exceeds this limit, this graph morph adds "index tasks" that depend on it
+    and do the index insertions directly, avoiding the limit on task.routes.
     """
     logger.debug("Morphing: adding index tasks")
 
@@ -255,7 +244,7 @@ def add_code_review_task(taskgraph, label_to_taskid, parameters, graph_config):
             task=code_review_task_def,
             dependencies=code_review_tasks,
         )
-        task.task_id = slugid()
+        task.task_id = slugid()  # type: ignore
         taskgraph, label_to_taskid = amend_taskgraph(taskgraph, label_to_taskid, [task])
         logger.info("Added code review task.")
 

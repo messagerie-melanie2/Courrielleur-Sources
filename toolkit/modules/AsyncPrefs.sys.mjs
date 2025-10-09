@@ -18,45 +18,22 @@ const kAllowedPrefs = new Set([
   "narrate.rate",
   "narrate.voice",
 
-  "pdfjs.cursorToolOnLoad",
-  "pdfjs.database",
-  "pdfjs.defaultZoomValue",
-  "pdfjs.disablePageLabels",
-  "pdfjs.enabledCache.state",
-  "pdfjs.enablePermissions",
-  "pdfjs.enablePrintAutoRotate",
-  "pdfjs.enableWebGL",
-  "pdfjs.externalLinkTarget",
-  "pdfjs.historyUpdateUrl",
-  "pdfjs.ignoreDestinationZoom",
-  "pdfjs..migrationVersion",
-  "pdfjs.pdfBugEnabled",
-  "pdfjs.previousHandler.alwaysAskBeforeHandling",
-  "pdfjs.previousHandler.preferredAction",
-  "pdfjs.renderer",
-  "pdfjs.annotationMode",
-  "pdfjs.sidebarViewOnLoad",
-  "pdfjs.scrollModeOnLoad",
-  "pdfjs.spreadModeOnLoad",
-  "pdfjs.textLayerMode",
-  "pdfjs.useOnlyCssZoom",
-  "pdfjs.viewOnLoad",
-  "pdfjs.disableAutoFetch",
-  "pdfjs.disableFontFace",
-  "pdfjs.disableRange",
-  "pdfjs.disableStream",
-  "pdfjs.enableScripting",
-
   "reader.font_size",
   "reader.font_type",
+  "reader.font_weight",
   "reader.color_scheme",
   "reader.content_width",
   "reader.line_height",
+  "reader.text_alignment",
+  "reader.character_spacing",
+  "reader.word_spacing",
+  "reader.custom_colors.foreground",
+  "reader.custom_colors.background",
+  "reader.custom_colors.unvisited-links",
+  "reader.custom_colors.visited-links",
+  "reader.custom_colors.selection-highlight",
 
   "security.tls.version.enable-deprecated",
-  "security.xfocsp.errorReporting.automatic",
-
-  "network.trr.display_fallback_warning",
 ]);
 
 const kPrefTypeMap = new Map([
@@ -124,7 +101,7 @@ export var AsyncPrefs = {
     return AsyncPrefsParent.set(pref, value);
   },
 
-  reset(pref, value) {
+  reset(pref) {
     if (kInChildProcess) {
       return ChromeUtils.domProcessChild.getActor("AsyncPrefs").reset(pref);
     }

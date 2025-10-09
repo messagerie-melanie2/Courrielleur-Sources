@@ -7,28 +7,29 @@
 var { ExtensionTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/ExtensionXPCShellUtils.sys.mjs"
 );
-var subFolders;
+
+let gSubFolders;
 
 add_task(
   {
     skip_if: () => IS_NNTP,
   },
   async function setup() {
-    let account = createAccount();
-    let rootFolder = account.incomingServer.rootFolder;
-    subFolders = {
+    const account = createAccount();
+    const rootFolder = account.incomingServer.rootFolder;
+    gSubFolders = {
       test1: await createSubfolder(rootFolder, "test1"),
       test2: await createSubfolder(rootFolder, "test2"),
       test3: await createSubfolder(rootFolder, "test3"),
       attachment: await createSubfolder(rootFolder, "attachment"),
     };
-    await createMessages(subFolders.test1, 5);
-    let textAttachment = {
+    await createMessages(gSubFolders.test1, 5);
+    const textAttachment = {
       body: "textAttachment",
       filename: "test.txt",
       contentType: "text/plain",
     };
-    await createMessages(subFolders.attachment, {
+    await createMessages(gSubFolders.attachment, {
       count: 1,
       subject: "Msg with text attachment",
       attachments: [textAttachment],
@@ -44,15 +45,29 @@ add_task(
     skip_if: () => IS_NNTP,
   },
   async function test_identifiers() {
-    let extension = ExtensionTestUtils.loadExtension({
+    const extension = ExtensionTestUtils.loadExtension({
       files: {
         "background.js": async () => {
-          let [{ folders }] = await browser.accounts.list();
-          let testFolder1 = folders.find(f => f.name == "test1");
-          let testFolder2 = folders.find(f => f.name == "test2");
-          let testFolder3 = folders.find(f => f.name == "test3");
+          const [{ folders }] = await browser.accounts.list();
+          const testFolder1 = folders.find(f => f.name == "test1");
+          const testFolder2 = folders.find(f => f.name == "test2");
+          const testFolder3 = folders.find(f => f.name == "test3");
 
-          let { messages } = await browser.messages.list(testFolder1);
+          class OneTimeListener {
+            constructor(type) {
+              this.task = Promise.withResolvers();
+              this.listener = (...args) => {
+                browser.messages[type].removeListener(this.listener);
+                this.task.resolve([...args]);
+              };
+              browser.messages[type].addListener(this.listener);
+            }
+            seen() {
+              return this.task.promise;
+            }
+          }
+
+          let { messages } = await browser.messages.list(testFolder1.id);
           browser.test.assertEq(
             5,
             messages.length,
@@ -64,15 +79,18 @@ add_task(
           browser.test.assertEq(4, messages[3].id);
           browser.test.assertEq(5, messages[4].id);
 
-          let subjects = messages.map(m => m.subject);
+          const subjects = messages.map(m => m.subject);
 
           // Move two messages. We could do this in one operation, but to be
           // sure of the order, do it in separate operations.
+          const onMovedPart1 = new OneTimeListener("onMoved");
+          await browser.messages.move([1], testFolder2.id);
+          await onMovedPart1.seen();
+          const onMovedPart2 = new OneTimeListener("onMoved");
+          await browser.messages.move([3], testFolder2.id);
+          await onMovedPart2.seen();
 
-          await browser.messages.move([1], testFolder2);
-          await browser.messages.move([3], testFolder2);
-
-          ({ messages } = await browser.messages.list(testFolder1));
+          ({ messages } = await browser.messages.list(testFolder1.id));
           browser.test.assertEq(
             3,
             messages.length,
@@ -85,7 +103,28 @@ add_task(
           browser.test.assertEq(subjects[3], messages[1].subject);
           browser.test.assertEq(subjects[4], messages[2].subject);
 
-          ({ messages } = await browser.messages.list(testFolder2));
+          // It should not be possible to update the moved message.
+          await browser.test.assertRejects(
+            browser.messages.update(3, { flagged: true }),
+            /Message not found: 3/,
+            "Should not be able to update a no longer existing message"
+          );
+
+          // It should not be possible to get the moved message.
+          await browser.test.assertRejects(
+            browser.messages.get(1),
+            /Message not found: 1/,
+            "Should not be able to get a no longer existing message"
+          );
+
+          // It should not be possible to get the moved message.
+          await browser.test.assertRejects(
+            browser.messages.get(3),
+            /Message not found: 3/,
+            "Should not be able to get a no longer existing message"
+          );
+
+          ({ messages } = await browser.messages.list(testFolder2.id));
           browser.test.assertEq(
             2,
             messages.length,
@@ -98,9 +137,11 @@ add_task(
 
           // Copy one message.
 
-          await browser.messages.copy([6], testFolder3);
+          const onCopied = new OneTimeListener("onCopied");
+          await browser.messages.copy([6], testFolder3.id);
+          await onCopied.seen();
 
-          ({ messages } = await browser.messages.list(testFolder2));
+          ({ messages } = await browser.messages.list(testFolder2.id));
           browser.test.assertEq(
             2,
             messages.length,
@@ -111,7 +152,7 @@ add_task(
           browser.test.assertEq(subjects[0], messages[0].subject);
           browser.test.assertEq(subjects[2], messages[1].subject);
 
-          ({ messages } = await browser.messages.list(testFolder3));
+          ({ messages } = await browser.messages.list(testFolder3.id));
           browser.test.assertEq(
             1,
             messages.length,
@@ -123,9 +164,11 @@ add_task(
           // Move the copied message back to the previous folder. There should
           // now be two copies there, each with their own ID.
 
-          await browser.messages.move([8], testFolder2);
+          const onMoved = new OneTimeListener("onMoved");
+          await browser.messages.move([8], testFolder2.id);
+          await onMoved.seen();
 
-          ({ messages } = await browser.messages.list(testFolder2));
+          ({ messages } = await browser.messages.list(testFolder2.id));
           browser.test.assertEq(
             3,
             messages.length,
@@ -146,13 +189,32 @@ add_task(
             "same message as another in this folder"
           );
 
+          // It should not be possible to update the moved message.
+          await browser.test.assertRejects(
+            browser.messages.update(8, { flagged: true }),
+            /Message not found: 8/,
+            "Should not be able to update a no longer existing message"
+          );
+
+          // It should not be possible to get the moved message.
+          await browser.test.assertRejects(
+            browser.messages.get(8),
+            /Message not found: 8/,
+            "Should not be able to get a no longer existing message"
+          );
+
           browser.test.notifyPass("finished");
         },
         "utils.js": await getUtilsJS(),
       },
       manifest: {
         background: { scripts: ["utils.js", "background.js"] },
-        permissions: ["accountsRead", "messagesMove", "messagesRead"],
+        permissions: [
+          "accountsRead",
+          "messagesMove",
+          "messagesRead",
+          "messagesUpdate",
+        ],
       },
     });
 
@@ -170,16 +232,14 @@ add_task(
     skip_if: () => IS_NNTP || IS_IMAP,
   },
   async function test_attachments() {
-    let extension = ExtensionTestUtils.loadExtension({
+    const extension = ExtensionTestUtils.loadExtension({
       files: {
         "background.js": async () => {
-          let id;
-
           browser.test.onMessage.addListener(async () => {
             // This listener gets called once the attachment has been removed.
             // Make sure we still get the message and it no longer has the
             // attachment.
-            let modifiedMessage = await browser.messages.getFull(id);
+            const modifiedMessage = await browser.messages.getFull(id);
             browser.test.assertEq(
               "Msg with text attachment",
               modifiedMessage.headers.subject[0]
@@ -195,13 +255,13 @@ add_task(
             browser.test.notifyPass("finished");
           });
 
-          let [{ folders }] = await browser.accounts.list();
-          let testFolder = folders.find(f => f.name == "attachment");
-          let { messages } = await browser.messages.list(testFolder);
+          const [{ folders }] = await browser.accounts.list();
+          const testFolder = folders.find(f => f.name == "attachment");
+          const { messages } = await browser.messages.list(testFolder.id);
           browser.test.assertEq(1, messages.length);
-          id = messages[0].id;
+          const id = messages[0].id;
 
-          let originalMessage = await browser.messages.getFull(id);
+          const originalMessage = await browser.messages.getFull(id);
           browser.test.assertEq(
             "Msg with text attachment",
             originalMessage.headers.subject[0]
@@ -224,8 +284,8 @@ add_task(
       },
     });
 
-    let observer = {
-      observe(aSubject, aTopic, aData) {
+    const observer = {
+      observe(aSubject, aTopic) {
         if (aTopic == "attachment-delete-msgkey-changed") {
           extension.sendMessage();
         }
@@ -234,9 +294,9 @@ add_task(
     Services.obs.addObserver(observer, "attachment-delete-msgkey-changed");
 
     extension.onMessage("removeAttachment", () => {
-      let msgHdr = subFolders.attachment.messages.getNext();
-      let msgUri = msgHdr.folder.getUriForMsg(msgHdr);
-      let messenger = Cc["@mozilla.org/messenger;1"].createInstance(
+      const msgHdr = gSubFolders.attachment.messages.getNext();
+      const msgUri = msgHdr.folder.getUriForMsg(msgHdr);
+      const messenger = Cc["@mozilla.org/messenger;1"].createInstance(
         Ci.nsIMessenger
       );
       messenger.detachAttachment(

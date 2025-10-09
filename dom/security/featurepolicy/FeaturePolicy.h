@@ -56,17 +56,29 @@ class nsINode;
 
 namespace mozilla::dom {
 class Document;
+class BrowsingContext;
 class Feature;
 template <typename T>
 class Optional;
 
 class FeaturePolicyUtils;
 
+struct FeaturePolicyInfo final {
+  CopyableTArray<nsString> mInheritedDeniedFeatureNames;
+  CopyableTArray<nsString> mAttributeEnabledFeatureNames;
+  nsString mDeclaredString;
+  nsCOMPtr<nsIPrincipal> mDefaultOrigin;
+  nsCOMPtr<nsIPrincipal> mSelfOrigin;
+  nsCOMPtr<nsIPrincipal> mSrcOrigin;
+};
+
+using MaybeFeaturePolicyInfo = Maybe<FeaturePolicyInfo>;
+
 class FeaturePolicy final : public nsISupports, public nsWrapperCache {
   friend class FeaturePolicyUtils;
 
  public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(FeaturePolicy)
 
   explicit FeaturePolicy(nsINode* aNode);
@@ -84,6 +96,9 @@ class FeaturePolicy final : public nsISupports, public nsWrapperCache {
 
   // Inherits the policy from the 'parent' context if it exists.
   void InheritPolicy(FeaturePolicy* aParentFeaturePolicy);
+
+  // Inherits the policy from the 'parent' context if it exists.
+  void InheritPolicy(const FeaturePolicyInfo& aContainerFeaturePolicyInfo);
 
   // Sets the declarative part of the policy. This can be from the HTTP header
   // or for the 'allow' HTML attribute.
@@ -153,6 +168,8 @@ class FeaturePolicy final : public nsISupports, public nsWrapperCache {
 
   nsIPrincipal* GetSelfOrigin() const { return mSelfOrigin; }
   nsIPrincipal* GetSrcOrigin() const { return mSrcOrigin; }
+
+  FeaturePolicyInfo ToFeaturePolicyInfo() const;
 
  private:
   ~FeaturePolicy() = default;

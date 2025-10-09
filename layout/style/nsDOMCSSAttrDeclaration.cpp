@@ -97,7 +97,9 @@ DeclarationBlock* nsDOMCSSAttributeDeclaration::GetOrCreateCSSDeclaration(
     Operation aOperation, DeclarationBlock** aCreated) {
   MOZ_ASSERT(aOperation != Operation::Modify || aCreated);
 
-  if (!mElement) return nullptr;
+  if (!mElement) {
+    return nullptr;
+  }
 
   DeclarationBlock* declaration;
   if (mIsSMILOverride) {
@@ -115,7 +117,7 @@ DeclarationBlock* nsDOMCSSAttributeDeclaration::GetOrCreateCSSDeclaration(
   }
 
   // cannot fail
-  RefPtr<DeclarationBlock> decl = new DeclarationBlock();
+  auto decl = MakeRefPtr<DeclarationBlock>();
   // Mark the declaration dirty so that it can be reused by the caller.
   // Normally SetDirty is called later in SetCSSDeclaration.
   decl->SetDirty();
@@ -164,28 +166,44 @@ nsresult nsDOMCSSAttributeDeclaration::SetSMILValueHelper(SetterFunc aFunc) {
 }
 
 nsresult nsDOMCSSAttributeDeclaration::SetSMILValue(
-    const nsCSSPropertyID /*aPropID*/, const SMILValue& aValue) {
+    const nsCSSPropertyID aPropID, const SMILValue& aValue) {
   MOZ_ASSERT(aValue.mType == &SMILCSSValueType::sSingleton,
              "We should only try setting a CSS value type");
-  return SetSMILValueHelper([&aValue](DeclarationBlock& aDecl) {
-    return SMILCSSValueType::SetPropertyValues(aValue, aDecl);
+  return SetSMILValueHelper([&](DeclarationBlock& aDecl) {
+    return SMILCSSValueType::SetPropertyValues(aPropID, aValue, aDecl);
   });
 }
 
 nsresult nsDOMCSSAttributeDeclaration::SetSMILValue(
     const nsCSSPropertyID aPropID, const SVGAnimatedLength& aLength) {
   return SetSMILValueHelper([aPropID, &aLength](DeclarationBlock& aDecl) {
+    MOZ_ASSERT(aDecl.IsMutable());
     return SVGElement::UpdateDeclarationBlockFromLength(
-        aDecl, aPropID, aLength, SVGElement::ValToUse::Anim);
+        *aDecl.Raw(), aPropID, aLength, SVGElement::ValToUse::Anim);
   });
 }
 
 nsresult nsDOMCSSAttributeDeclaration::SetSMILValue(
-    const nsCSSPropertyID /*aPropID*/, const SVGAnimatedPathSegList& aPath) {
+    const nsCSSPropertyID aPropID, const SVGAnimatedPathSegList& aPath) {
+  MOZ_ASSERT(aPropID == eCSSProperty_d);
   return SetSMILValueHelper([&aPath](DeclarationBlock& aDecl) {
+    MOZ_ASSERT(aDecl.IsMutable());
     return SVGElement::UpdateDeclarationBlockFromPath(
-        aDecl, aPath, SVGElement::ValToUse::Anim);
+        *aDecl.Raw(), aPath, SVGElement::ValToUse::Anim);
   });
+}
+
+nsresult nsDOMCSSAttributeDeclaration::SetSMILValue(
+    const nsCSSPropertyID aPropID, const SVGAnimatedTransformList* aTransform,
+    const gfx::Matrix* aAnimateMotionTransform) {
+  MOZ_ASSERT(aPropID == eCSSProperty_transform);
+  return SetSMILValueHelper(
+      [aTransform, aAnimateMotionTransform](DeclarationBlock& aDecl) {
+        MOZ_ASSERT(aDecl.IsMutable());
+        return SVGElement::UpdateDeclarationBlockFromTransform(
+            *aDecl.Raw(), aTransform, aAnimateMotionTransform,
+            SVGElement::ValToUse::Anim);
+      });
 }
 
 // Scripted modifications to style.opacity or style.transform (or other
@@ -206,6 +224,7 @@ static bool IsActiveLayerProperty(nsCSSPropertyID aPropID) {
     case eCSSProperty_offset_distance:
     case eCSSProperty_offset_rotate:
     case eCSSProperty_offset_anchor:
+    case eCSSProperty_offset_position:
       return true;
     default:
       return false;
@@ -228,6 +247,11 @@ static bool IsScrollLinkedEffectiveProperty(const nsCSSPropertyID aPropID) {
     case eCSSProperty_translate:
     case eCSSProperty_rotate:
     case eCSSProperty_scale:
+    case eCSSProperty_offset_path:
+    case eCSSProperty_offset_distance:
+    case eCSSProperty_offset_rotate:
+    case eCSSProperty_offset_anchor:
+    case eCSSProperty_offset_position:
     case eCSSProperty_top:
     case eCSSProperty_left:
     case eCSSProperty_bottom:

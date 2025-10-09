@@ -29,7 +29,12 @@
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/ProfilerLabels.h"
 #include "mozilla/StaticPrefs_gfx.h"
-#include "mozilla/Telemetry.h"
+#include "mozilla/glean/GfxMetrics.h"
+
+#include "mozilla/dom/Document.h"
+#include "nsContentUtils.h"
+
+#include "StandardFonts-win10.inc"
 
 #include <usp10.h>
 
@@ -47,6 +52,10 @@ using namespace mozilla::gfx;
   MOZ_LOG_TEST(gfxPlatform::GetLog(eGfxLog_cmapdata), LogLevel::Debug)
 
 static __inline void BuildKeyNameFromFontName(nsAString& aName) {
+  if (aName.Length() >= LF_FACESIZE) aName.Truncate(LF_FACESIZE - 1);
+  ToLowerCase(aName);
+}
+static __inline void BuildKeyNameFromFontName(nsACString& aName) {
   if (aName.Length() >= LF_FACESIZE) aName.Truncate(LF_FACESIZE - 1);
   ToLowerCase(aName);
 }
@@ -411,7 +420,7 @@ int CALLBACK GDIFontFamily::FamilyAddStylesProc(
   }
 
   // Some fonts claim to support things > 900, but we don't so clamp the sizes
-  logFont.lfWeight = clamped(logFont.lfWeight, LONG(100), LONG(900));
+  logFont.lfWeight = std::clamp(logFont.lfWeight, LONG(100), LONG(900));
 
   gfxWindowsFontType feType =
       GDIFontEntry::DetermineFontType(metrics, fontType);
@@ -508,14 +517,12 @@ void GDIFontFamily::FindStyleVariationsLocked(FontInfoData* aFontInfoData) {
  *
  */
 
-gfxGDIFontList::gfxGDIFontList() : mFontSubstitutes(32) {
+gfxGDIFontList::gfxGDIFontList()
+    : mFontSubstitutes(32), mHardcodedSubstitutes(std::size(kFontSubstitutes)) {
 #ifdef MOZ_BUNDLED_FONTS
   if (StaticPrefs::gfx_bundled_fonts_activate_AtStartup() != 0) {
-    TimeStamp start = TimeStamp::Now();
+    auto timer = glean::fontlist::bundledfonts_activate.Measure();
     ActivateBundledFonts();
-    TimeStamp end = TimeStamp::Now();
-    Telemetry::Accumulate(Telemetry::FONTLIST_BUNDLEDFONTS_ACTIVATE,
-                          (end - start).ToMilliseconds());
   }
 #endif
 }
@@ -534,6 +541,20 @@ nsresult gfxGDIFontList::GetFontSubstitutes() {
   WCHAR aliasName[MAX_VALUE_NAME];
   WCHAR actualName[MAX_VALUE_DATA];
 
+  for (const FontSubstitute& fs : kFontSubstitutes) {
+    nsAutoCString substituteName(fs.substituteName);
+    nsAutoCString actualFontName(fs.actualFontName);
+    BuildKeyNameFromFontName(substituteName);
+    BuildKeyNameFromFontName(actualFontName);
+    gfxFontFamily* ff;
+    if (!actualFontName.IsEmpty() &&
+        (ff = mFontFamilies.GetWeak(actualFontName))) {
+      mHardcodedSubstitutes.InsertOrUpdate(substituteName, RefPtr{ff});
+    } else {
+      mNonExistingFonts.AppendElement(substituteName);
+    }
+  }
+
   if (RegOpenKeyExW(
           HKEY_LOCAL_MACHINE,
           L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes",
@@ -543,7 +564,7 @@ nsresult gfxGDIFontList::GetFontSubstitutes() {
 
   for (i = 0, rv = ERROR_SUCCESS; rv != ERROR_NO_MORE_ITEMS; i++) {
     aliasName[0] = 0;
-    lenAlias = ArrayLength(aliasName);
+    lenAlias = std::size(aliasName);
     actualName[0] = 0;
     lenActual = sizeof(actualName);
     rv = RegEnumValueW(hKey, i, aliasName, &lenAlias, nullptr, &valueType,
@@ -595,9 +616,10 @@ nsresult gfxGDIFontList::GetFontSubstitutes() {
 }
 
 nsresult gfxGDIFontList::InitFontListForPlatform() {
-  Telemetry::AutoTimer<Telemetry::GDI_INITFONTLIST_TOTAL> timer;
+  auto timer = glean::fontlist::gdi_init_total.Measure();
 
   mFontSubstitutes.Clear();
+  mHardcodedSubstitutes.Clear();
   mNonExistingFonts.Clear();
 
   // iterate over available families
@@ -836,7 +858,14 @@ bool gfxGDIFontList::FindAndAddFamiliesLocked(
   BuildKeyNameFromFontName(key16);
   NS_ConvertUTF16toUTF8 keyName(key16);
 
-  gfxFontFamily* ff = mFontSubstitutes.GetWeak(keyName);
+  const bool useHardcodedList =
+      aPresContext ? aPresContext->Document()->ShouldResistFingerprinting(
+                         RFPTarget::UseHardcodedFontSubstitutes)
+                   : nsContentUtils::ShouldResistFingerprinting(
+                         "aPresContext is not available",
+                         RFPTarget::UseHardcodedFontSubstitutes);
+  gfxFontFamily* ff = useHardcodedList ? mHardcodedSubstitutes.GetWeak(keyName)
+                                       : mFontSubstitutes.GetWeak(keyName);
   FontVisibility level =
       aPresContext ? aPresContext->GetFontVisibility() : FontVisibility::User;
   if (ff && IsVisibleToCSS(*ff, level)) {
@@ -851,6 +880,13 @@ bool gfxGDIFontList::FindAndAddFamiliesLocked(
   return gfxPlatformFontList::FindAndAddFamiliesLocked(
       aPresContext, aGeneric, aFamily, aOutput, aFlags, aStyle, aLanguage,
       aDevToCssSize);
+}
+
+nsTArray<std::pair<const char**, uint32_t>>
+gfxGDIFontList::GetFilteredPlatformFontLists() {
+  nsTArray<std::pair<const char**, uint32_t>> fontLists;
+
+  return fontLists;
 }
 
 FontFamily gfxGDIFontList::GetDefaultFontForPlatform(
@@ -889,6 +925,8 @@ void gfxGDIFontList::AddSizeOfExcludingThis(MallocSizeOf aMallocSizeOf,
 
   aSizes->mFontListSize +=
       SizeOfFontFamilyTableExcludingThis(mFontSubstitutes, aMallocSizeOf);
+  aSizes->mFontListSize +=
+      SizeOfFontFamilyTableExcludingThis(mHardcodedSubstitutes, aMallocSizeOf);
   aSizes->mFontListSize +=
       mNonExistingFonts.ShallowSizeOfExcludingThis(aMallocSizeOf);
   for (uint32_t i = 0; i < mNonExistingFonts.Length(); ++i) {

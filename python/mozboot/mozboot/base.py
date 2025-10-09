@@ -16,7 +16,6 @@ from packaging.version import Version
 from mozboot import rust
 from mozboot.util import (
     MINIMUM_RUST_VERSION,
-    get_mach_virtualenv_binary,
     http_download_and_save,
 )
 
@@ -153,7 +152,7 @@ MODERN_MERCURIAL_VERSION = Version("4.9")
 MODERN_RUST_VERSION = Version(MINIMUM_RUST_VERSION)
 
 
-class BaseBootstrapper(object):
+class BaseBootstrapper:
     """Base class for system bootstrappers."""
 
     def __init__(self, no_interactive=False, no_system_changes=False):
@@ -332,45 +331,8 @@ class BaseBootstrapper(object):
         """
         pass
 
-    def install_toolchain_artifact(self, toolchain_job, no_unpack=False):
-        if no_unpack:
-            return self.install_toolchain_artifact_impl(
-                self.state_dir, toolchain_job, no_unpack
-            )
+    def install_toolchain_artifact(self, toolchain_job):
         bootstrap_toolchain(toolchain_job)
-
-    def install_toolchain_artifact_impl(
-        self, install_dir: Path, toolchain_job, no_unpack=False
-    ):
-        if type(self.srcdir) is str:
-            mach_binary = Path(self.srcdir) / "mach"
-        else:
-            mach_binary = (self.srcdir / "mach").resolve()
-        if not mach_binary.exists():
-            raise ValueError(f"mach not found at {mach_binary}")
-
-        if not self.state_dir:
-            raise ValueError(
-                "Need a state directory (e.g. ~/.mozbuild) to download " "artifacts"
-            )
-        python_location = get_mach_virtualenv_binary()
-        if not python_location.exists():
-            raise ValueError(f"python not found at {python_location}")
-
-        cmd = [
-            str(python_location),
-            str(mach_binary),
-            "artifact",
-            "toolchain",
-            "--bootstrap",
-            "--from-build",
-            toolchain_job,
-        ]
-
-        if no_unpack:
-            cmd += ["--no-unpack"]
-
-        subprocess.check_call(cmd, cwd=str(install_dir))
 
     def auto_bootstrap(self, application, exclude=[]):
         args = ["--with-ccache=sccache"]
@@ -410,7 +372,7 @@ class BaseBootstrapper(object):
 
         if self.no_interactive:
             print(prompt)
-            print('Selecting "{}" because context is not interactive.'.format(default))
+            print(f'Selecting "{default}" because context is not interactive.')
             return default
 
         while True:
@@ -477,7 +439,7 @@ class BaseBootstrapper(object):
         process = subprocess.run(
             [str(path), version_param],
             env=env,
-            universal_newlines=True,
+            text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
@@ -487,7 +449,7 @@ class BaseBootstrapper(object):
             # path and move on.
             return None
 
-        match = re.search(name + " ([a-z0-9\.]+)", process.stdout)
+        match = re.search(name + r" ([a-z0-9\.]+)", process.stdout)
         if not match:
             print("ERROR! Unable to identify %s version." % name)
             return None

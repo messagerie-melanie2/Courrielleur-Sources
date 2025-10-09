@@ -10,7 +10,6 @@ const AUTH_TYPE = {
   SCHEME_DIGEST: 2,
 };
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 import { MigrationUtils } from "resource:///modules/MigrationUtils.sys.mjs";
 import { MigratorBase } from "resource:///modules/MigratorBase.sys.mjs";
@@ -20,12 +19,11 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   ChromeMigrationUtils: "resource:///modules/ChromeMigrationUtils.sys.mjs",
   FormHistory: "resource://gre/modules/FormHistory.sys.mjs",
+  NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
   Qihoo360seMigrationUtils: "resource:///modules/360seMigrationUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  NetUtil: "resource://gre/modules/NetUtil.jsm",
+  MigrationWizardConstants:
+    "chrome://browser/content/migration/migration-wizard-constants.mjs",
 });
 
 /**
@@ -80,6 +78,23 @@ function convertBookmarks(items, bookmarkURLAccumulator, errorAccumulator) {
  * migrators for browsers that are variants of Chrome.
  */
 export class ChromeProfileMigrator extends MigratorBase {
+  /**
+   * On Ubuntu Linux, when the browser is installed as a Snap package,
+   * we must request permission to read data from other browsers. We
+   * make that request by opening up a native file picker in folder
+   * selection mode and instructing the user to navigate to the folder
+   * that the other browser's user data resides in.
+   *
+   * For Snap packages, this gives the browser read access - but it does
+   * so through a temporary symlink that does not match the original user
+   * data path. Effectively, the user data directory is remapped to a
+   * temporary location on the file system. We record these remaps here,
+   * keyed on the original data directory.
+   *
+   * @type {Map<string, string>}
+   */
+  #dataPathRemappings = new Map();
+
   static get key() {
     return "chrome";
   }
@@ -96,13 +111,112 @@ export class ChromeProfileMigrator extends MigratorBase {
     return "Chrome";
   }
 
+  async hasPermissions() {
+    let dataPath = await this._getChromeUserDataPathIfExists();
+    if (!dataPath) {
+      return true;
+    }
+
+    let localStatePath = PathUtils.join(dataPath, "Local State");
+    try {
+      // Read one byte since on snap we can check existence even without being able
+      // to read the file.
+      await IOUtils.read(localStatePath, { maxBytes: 1 });
+      return true;
+    } catch (ex) {
+      console.error("No permissions for local state folder.");
+    }
+    return false;
+  }
+
+  async getPermissions(win) {
+    // Get the original path to the user data and ignore any existing remapping.
+    // This allows us to set a new remapping if the user navigates the platforms
+    // filepicker to a different directory on a second permission request attempt.
+    let originalDataPath = await this._getChromeUserDataPathIfExists(
+      true /* noRemapping */
+    );
+    // Keep prompting the user until they pick something that grants us access
+    // to Chrome's local state directory.
+    while (!(await this.hasPermissions())) {
+      let fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
+      fp.init(win?.browsingContext, "", Ci.nsIFilePicker.modeGetFolder);
+      fp.filterIndex = 1;
+      // Now wait for the filepicker to open and close. If the user picks
+      // the local state folder, the OS should grant us read access to everything
+      // inside, so we don't need to check or do anything else with what's
+      // returned by the filepicker.
+      let result = await new Promise(resolve => fp.open(resolve));
+      // Bail if the user cancels the dialog:
+      if (result == Ci.nsIFilePicker.returnCancel) {
+        return false;
+      }
+
+      let file = fp.file;
+      if (file && file.path != originalDataPath) {
+        this.#dataPathRemappings.set(originalDataPath, file.path);
+      }
+    }
+    return true;
+  }
+
+  async canGetPermissions() {
+    if (
+      !Services.prefs.getBoolPref(
+        "browser.migrate.chrome.get_permissions.enabled"
+      )
+    ) {
+      return false;
+    }
+
+    if (await MigrationUtils.canGetPermissionsOnPlatform()) {
+      let dataPath = await this._getChromeUserDataPathIfExists();
+      if (dataPath) {
+        let localStatePath = PathUtils.join(dataPath, "Local State");
+        if (await IOUtils.exists(localStatePath)) {
+          return dataPath;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * For Chrome on Windows, we show a specialized flow for importing passwords
+   * from a CSV file.
+   *
+   * @returns {boolean}
+   */
+  get showsManualPasswordImport() {
+    return AppConstants.platform == "win" && this.constructor.key == "chrome";
+  }
+
   _keychainServiceName = "Chrome Safe Storage";
 
   _keychainAccountName = "Chrome";
 
-  async _getChromeUserDataPathIfExists() {
+  /**
+   * Returns a Promise that resolves to the data path containing the
+   * Local State and profile directories for this browser.
+   *
+   * @param {boolean} [noRemapping=false]
+   *   Set to true to bypass any remapping that might have occurred on
+   *   platforms where the data path changes once permission has been
+   *   granted.
+   * @returns {Promise<string>}
+   */
+  async _getChromeUserDataPathIfExists(noRemapping = false) {
     if (this._chromeUserDataPath) {
-      return this._chromeUserDataPath;
+      // Skip looking up any remapping if `noRemapping` was passed. This is
+      // helpful if the caller needs create a new remapping and overwrite
+      // an old remapping, as "real" user data path is used as a key for
+      // the remapping.
+      if (noRemapping) {
+        return this._chromeUserDataPath;
+      }
+
+      let remappedPath = this.#dataPathRemappings.get(this._chromeUserDataPath);
+      return remappedPath || this._chromeUserDataPath;
     }
     let path = await lazy.ChromeMigrationUtils.getDataPath(
       this._chromeUserDataPathSuffix
@@ -117,6 +231,10 @@ export class ChromeProfileMigrator extends MigratorBase {
   }
 
   async getResources(aProfile) {
+    if (!(await this.hasPermissions())) {
+      return [];
+    }
+
     let chromeUserDataPath = await this._getChromeUserDataPathIfExists();
     if (chromeUserDataPath) {
       let profileFolder = chromeUserDataPath;
@@ -128,11 +246,12 @@ export class ChromeProfileMigrator extends MigratorBase {
           GetBookmarksResource(profileFolder, this.constructor.key),
           GetHistoryResource(profileFolder),
           GetFormdataResource(profileFolder),
+          GetExtensionsResource(aProfile.id, this.constructor.key),
         ];
         if (lazy.ChromeMigrationUtils.supportsLoginsForPlatform) {
           possibleResourcePromises.push(
             this._GetPasswordsResource(profileFolder),
-            this._GetPaymentMethodsResource(profileFolder)
+            this._GetPaymentMethodsResource(profileFolder, this.constructor.key)
           );
         }
 
@@ -193,7 +312,8 @@ export class ChromeProfileMigrator extends MigratorBase {
     let profiles = [];
     try {
       localState = await lazy.ChromeMigrationUtils.getLocalState(
-        this._chromeUserDataPathSuffix
+        this._chromeUserDataPathSuffix,
+        chromeUserDataPath
       );
       let info_cache = localState.profile.info_cache;
       for (let profileFolderName in info_cache) {
@@ -207,6 +327,14 @@ export class ChromeProfileMigrator extends MigratorBase {
       if (localState || e.name != "NotFoundError") {
         console.error("Error detecting Chrome profiles: ", e);
       }
+
+      // If we didn't have permission to read the local state, return the
+      // empty array. The user might have the opportunity to request
+      // permission using `hasPermission` and `getPermission`.
+      if (e.name == "NotAllowedError") {
+        return [];
+      }
+
       // If we weren't able to detect any profiles above, fallback to the Default profile.
       let defaultProfilePath = PathUtils.join(chromeUserDataPath, "Default");
       if (await IOUtils.exists(defaultProfilePath)) {
@@ -241,6 +369,16 @@ export class ChromeProfileMigrator extends MigratorBase {
       return null;
     }
 
+    let tempFilePath = null;
+    if (MigrationUtils.IS_LINUX_SNAP_PACKAGE) {
+      tempFilePath = await IOUtils.createUniqueFile(
+        PathUtils.tempDir,
+        "Login Data"
+      );
+      await IOUtils.copy(loginPath, tempFilePath);
+      loginPath = tempFilePath;
+    }
+
     let {
       _chromeUserDataPathSuffix,
       _keychainServiceName,
@@ -270,10 +408,15 @@ export class ChromeProfileMigrator extends MigratorBase {
           `SELECT origin_url, action_url, username_element, username_value,
           password_element, password_value, signon_realm, scheme, date_created,
           times_used FROM logins WHERE blacklisted_by_user = 0`
-        ).catch(ex => {
-          console.error(ex);
-          aCallback(false);
-        });
+        )
+          .catch(ex => {
+            console.error(ex);
+            aCallback(false);
+          })
+          .finally(() => {
+            return tempFilePath && IOUtils.remove(tempFilePath);
+          });
+
         // If the promise was rejected we will have already called aCallback,
         // so we can just return here.
         if (!rows) {
@@ -287,18 +430,20 @@ export class ChromeProfileMigrator extends MigratorBase {
           return;
         }
 
-        let crypto;
+        let loginCrypto;
         try {
           if (AppConstants.platform == "win") {
             let { ChromeWindowsLoginCrypto } = ChromeUtils.importESModule(
               "resource:///modules/ChromeWindowsLoginCrypto.sys.mjs"
             );
-            crypto = new ChromeWindowsLoginCrypto(_chromeUserDataPathSuffix);
+            loginCrypto = new ChromeWindowsLoginCrypto(
+              _chromeUserDataPathSuffix
+            );
           } else if (AppConstants.platform == "macosx") {
             let { ChromeMacOSLoginCrypto } = ChromeUtils.importESModule(
               "resource:///modules/ChromeMacOSLoginCrypto.sys.mjs"
             );
-            crypto = new ChromeMacOSLoginCrypto(
+            loginCrypto = new ChromeMacOSLoginCrypto(
               _keychainServiceName,
               _keychainAccountName,
               _keychainMockPassphrase
@@ -316,6 +461,7 @@ export class ChromeProfileMigrator extends MigratorBase {
 
         let logins = [];
         let fallbackCreationDate = new Date();
+        const kValidSchemes = new Set(["https", "http", "ftp"]);
         for (let row of rows) {
           try {
             let origin_url = lazy.NetUtil.newURI(
@@ -323,13 +469,12 @@ export class ChromeProfileMigrator extends MigratorBase {
             );
             // Ignore entries for non-http(s)/ftp URLs because we likely can't
             // use them anyway.
-            const kValidSchemes = new Set(["https", "http", "ftp"]);
             if (!kValidSchemes.has(origin_url.scheme)) {
               continue;
             }
             let loginInfo = {
               username: row.getResultByName("username_value"),
-              password: await crypto.decryptData(
+              password: await loginCrypto.decryptData(
                 row.getResultByName("password_value"),
                 null
               ),
@@ -392,12 +537,21 @@ export class ChromeProfileMigrator extends MigratorBase {
       },
     };
   }
-  async _GetPaymentMethodsResource(aProfileFolder) {
+  async _GetPaymentMethodsResource(aProfileFolder, aBrowserKey = "chrome") {
     if (
       !Services.prefs.getBoolPref(
         "browser.migrate.chrome.payment_methods.enabled",
         false
       )
+    ) {
+      return null;
+    }
+
+    // We no longer support importing payment methods from Chrome or Edge on
+    // Windows.
+    if (
+      AppConstants.platform == "win" &&
+      (aBrowserKey == "chrome" || aBrowserKey == "chromium-edge")
     ) {
       return null;
     }
@@ -408,13 +562,27 @@ export class ChromeProfileMigrator extends MigratorBase {
       return null;
     }
 
+    let tempFilePath = null;
+    if (MigrationUtils.IS_LINUX_SNAP_PACKAGE) {
+      tempFilePath = await IOUtils.createUniqueFile(
+        PathUtils.tempDir,
+        "Web Data"
+      );
+      await IOUtils.copy(paymentMethodsPath, tempFilePath);
+      paymentMethodsPath = tempFilePath;
+    }
+
     let rows = await MigrationUtils.getRowsFromDBWithoutLocks(
       paymentMethodsPath,
       "Chrome Credit Cards",
       "SELECT name_on_card, card_number_encrypted, expiration_month, expiration_year FROM credit_cards"
-    ).catch(ex => {
-      console.error(ex);
-    });
+    )
+      .catch(ex => {
+        console.error(ex);
+      })
+      .finally(() => {
+        return tempFilePath && IOUtils.remove(tempFilePath);
+      });
 
     if (!rows?.length) {
       return null;
@@ -431,18 +599,20 @@ export class ChromeProfileMigrator extends MigratorBase {
       type: MigrationUtils.resourceTypes.PAYMENT_METHODS,
 
       async migrate(aCallback) {
-        let crypto;
+        let loginCrypto;
         try {
           if (AppConstants.platform == "win") {
             let { ChromeWindowsLoginCrypto } = ChromeUtils.importESModule(
               "resource:///modules/ChromeWindowsLoginCrypto.sys.mjs"
             );
-            crypto = new ChromeWindowsLoginCrypto(_chromeUserDataPathSuffix);
+            loginCrypto = new ChromeWindowsLoginCrypto(
+              _chromeUserDataPathSuffix
+            );
           } else if (AppConstants.platform == "macosx") {
             let { ChromeMacOSLoginCrypto } = ChromeUtils.importESModule(
               "resource:///modules/ChromeMacOSLoginCrypto.sys.mjs"
             );
-            crypto = new ChromeMacOSLoginCrypto(
+            loginCrypto = new ChromeMacOSLoginCrypto(
               _keychainServiceName,
               _keychainAccountName,
               _keychainMockPassphrase
@@ -460,18 +630,25 @@ export class ChromeProfileMigrator extends MigratorBase {
 
         let cards = [];
         for (let row of rows) {
-          cards.push({
-            "cc-name": row.getResultByName("name_on_card"),
-            "cc-number": await crypto.decryptData(
-              row.getResultByName("card_number_encrypted"),
-              null
-            ),
-            "cc-exp-month": parseInt(
-              row.getResultByName("expiration_month"),
-              10
-            ),
-            "cc-exp-year": parseInt(row.getResultByName("expiration_year"), 10),
-          });
+          try {
+            cards.push({
+              "cc-name": row.getResultByName("name_on_card"),
+              "cc-number": await loginCrypto.decryptData(
+                row.getResultByName("card_number_encrypted"),
+                null
+              ),
+              "cc-exp-month": parseInt(
+                row.getResultByName("expiration_month"),
+                10
+              ),
+              "cc-exp-year": parseInt(
+                row.getResultByName("expiration_year"),
+                10
+              ),
+            });
+          } catch (e) {
+            console.error(e);
+          }
         }
 
         await MigrationUtils.insertCreditCardsWrapper(cards);
@@ -508,6 +685,17 @@ async function GetBookmarksResource(aProfileFolder, aBrowserKey) {
   if (!(await IOUtils.exists(bookmarksPath))) {
     return null;
   }
+
+  let tempFilePath = null;
+  if (MigrationUtils.IS_LINUX_SNAP_PACKAGE) {
+    tempFilePath = await IOUtils.createUniqueFile(
+      PathUtils.tempDir,
+      "Favicons"
+    );
+    await IOUtils.copy(faviconsPath, tempFilePath);
+    faviconsPath = tempFilePath;
+  }
+
   // check to read JSON bookmarks structure and see if any bookmarks exist else return null
   // Parse Chrome bookmark file that is JSON format
   let bookmarkJSON = await IOUtils.readJSON(bookmarksPath);
@@ -533,13 +721,18 @@ async function GetBookmarksResource(aProfileFolder, aBrowserKey) {
           faviconRows = await MigrationUtils.getRowsFromDBWithoutLocks(
             faviconsPath,
             "Chrome Bookmark Favicons",
-            `select fav.id, fav.url, map.page_url, bit.image_data FROM favicons as fav 
-              INNER JOIN favicon_bitmaps bit ON (fav.id = bit.icon_id) 
+            `select fav.id, fav.url, map.page_url, bit.image_data FROM favicons as fav
+              INNER JOIN favicon_bitmaps bit ON (fav.id = bit.icon_id)
               INNER JOIN icon_mapping map ON (map.icon_id = bit.icon_id)`
           );
         } catch (ex) {
           console.error(ex);
+        } finally {
+          if (tempFilePath) {
+            await IOUtils.remove(tempFilePath);
+          }
         }
+
         // Create Hashmap for favicons
         let faviconMap = new Map();
         for (let faviconRow of faviconRows) {
@@ -622,7 +815,8 @@ async function GetBookmarksResource(aProfileFolder, aBrowserKey) {
         }
 
         // Import Bookmark Favicons
-        MigrationUtils.insertManyFavicons(favicons);
+        MigrationUtils.insertManyFavicons(favicons).catch(console.error);
+
         if (gotErrors) {
           throw new Error("The migration included errors.");
         }
@@ -639,6 +833,14 @@ async function GetHistoryResource(aProfileFolder) {
   if (!(await IOUtils.exists(historyPath))) {
     return null;
   }
+
+  let tempFilePath = null;
+  if (MigrationUtils.IS_LINUX_SNAP_PACKAGE) {
+    tempFilePath = await IOUtils.createUniqueFile(PathUtils.tempDir, "History");
+    await IOUtils.copy(historyPath, tempFilePath);
+    historyPath = tempFilePath;
+  }
+
   let countQuery = "SELECT COUNT(*) FROM urls WHERE hidden = 0";
 
   let countRows = await MigrationUtils.getRowsFromDBWithoutLocks(
@@ -669,11 +871,19 @@ async function GetHistoryResource(aProfileFolder) {
           query += " ORDER BY last_visit_time DESC LIMIT " + LIMIT;
         }
 
-        let rows = await MigrationUtils.getRowsFromDBWithoutLocks(
-          historyPath,
-          "Chrome history",
-          query
-        );
+        let rows;
+        try {
+          rows = await MigrationUtils.getRowsFromDBWithoutLocks(
+            historyPath,
+            "Chrome history",
+            query
+          );
+        } finally {
+          if (tempFilePath) {
+            await IOUtils.remove(tempFilePath);
+          }
+        }
+
         let pageInfos = [];
         let fallbackVisitDate = new Date();
         for (let row of rows) {
@@ -725,6 +935,16 @@ async function GetFormdataResource(aProfileFolder) {
   }
   let countQuery = "SELECT COUNT(*) FROM autofill";
 
+  let tempFilePath = null;
+  if (MigrationUtils.IS_LINUX_SNAP_PACKAGE) {
+    tempFilePath = await IOUtils.createUniqueFile(
+      PathUtils.tempDir,
+      "Web Data"
+    );
+    await IOUtils.copy(formdataPath, tempFilePath);
+    formdataPath = tempFilePath;
+  }
+
   let countRows = await MigrationUtils.getRowsFromDBWithoutLocks(
     formdataPath,
     "Chrome formdata",
@@ -739,11 +959,20 @@ async function GetFormdataResource(aProfileFolder) {
     async migrate(aCallback) {
       let query =
         "SELECT name, value, count, date_created, date_last_used FROM autofill";
-      let rows = await MigrationUtils.getRowsFromDBWithoutLocks(
-        formdataPath,
-        "Chrome formdata",
-        query
-      );
+      let rows;
+
+      try {
+        rows = await MigrationUtils.getRowsFromDBWithoutLocks(
+          formdataPath,
+          "Chrome formdata",
+          query
+        );
+      } finally {
+        if (tempFilePath) {
+          await IOUtils.remove(tempFilePath);
+        }
+      }
+
       let addOps = [];
       for (let row of rows) {
         try {
@@ -773,6 +1002,43 @@ async function GetFormdataResource(aProfileFolder) {
       }
 
       aCallback(true);
+    },
+  };
+}
+
+async function GetExtensionsResource(aProfileId, aBrowserKey = "chrome") {
+  if (
+    !Services.prefs.getBoolPref(
+      "browser.migrate.chrome.extensions.enabled",
+      false
+    )
+  ) {
+    return null;
+  }
+  let extensions = await lazy.ChromeMigrationUtils.getExtensionList(aProfileId);
+  if (!extensions.length || aBrowserKey !== "chrome") {
+    return null;
+  }
+
+  return {
+    type: MigrationUtils.resourceTypes.EXTENSIONS,
+    async migrate(callback) {
+      let ids = extensions.map(extension => extension.id);
+      let [progressValue, importedExtensions] =
+        await MigrationUtils.installExtensionsWrapper(aBrowserKey, ids);
+      let details = {
+        progressValue,
+        totalExtensions: extensions,
+        importedExtensions,
+      };
+      if (
+        progressValue == lazy.MigrationWizardConstants.PROGRESS_VALUE.INFO ||
+        progressValue == lazy.MigrationWizardConstants.PROGRESS_VALUE.SUCCESS
+      ) {
+        callback(true, details);
+      } else {
+        callback(false);
+      }
     },
   };
 }
@@ -966,8 +1232,15 @@ export class OperaProfileMigrator extends ChromeProfileMigrator {
   _keychainServiceName = "Opera Safe Storage";
   _keychainAccountName = "Opera";
 
-  getSourceProfiles() {
-    return null;
+  async getSourceProfiles() {
+    let detectedProfiles = await super.getSourceProfiles();
+    if (Array.isArray(detectedProfiles) && !detectedProfiles.length) {
+      // We might be attempting from a version of Opera that doesn't support
+      // profiles yet, so try returning null to see if the profile data
+      // exists in the data directory.
+      return null;
+    }
+    return detectedProfiles;
   }
 }
 

@@ -2,6 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+"use strict";
+
+const { ensure_table_view } = ChromeUtils.importESModule(
+  "resource://testing-common/MailViewHelpers.sys.mjs"
+);
+
 // Load subscript shared with all menu tests.
 Services.scriptloader.loadSubScript(
   new URL("head_menus.js", gTestPath).href,
@@ -9,17 +15,18 @@ Services.scriptloader.loadSubScript(
 );
 
 let gAccount, gFolders, gMessage;
+
 add_setup(async () => {
   await Services.search.init();
 
   gAccount = createAccount();
   addIdentity(gAccount);
   gFolders = gAccount.incomingServer.rootFolder.subFolders;
-  createMessages(gFolders[0], {
+  await createMessages(gFolders[0], {
     count: 1,
     body: {
       contentType: "text/html",
-      body: await fetch(`${URL_BASE}/content.html`).then(r => r.text()),
+      body: await IOUtils.readUTF8(getTestFilePath(`data/content.html`)),
     },
   });
   gMessage = [...gFolders[0].messages][0];
@@ -28,30 +35,32 @@ add_setup(async () => {
     folderPaneVisible: true,
     folderURI: gAccount.incomingServer.rootFolder.URI,
   });
-  await ensure_table_view();
+  await ensure_table_view(document);
 });
 
 async function subtest_message_panes(manifest) {
-  let tabmail = document.getElementById("tabmail");
-  let about3Pane = tabmail.currentAbout3Pane;
+  const tabmail = document.getElementById("tabmail");
+  const about3Pane = tabmail.currentAbout3Pane;
   about3Pane.restoreState({
     messagePaneVisible: true,
     folderURI: gFolders[0].URI,
   });
 
-  let extension = await getMenuExtension(manifest);
+  const extension = await getMenuExtension(manifest);
 
   await extension.startup();
   await extension.awaitMessage("menus-created");
 
   info("Test the thread pane in the 3-pane tab.");
 
-  let threadTree = about3Pane.document.getElementById("threadTree");
+  const threadTree = about3Pane.document.getElementById("threadTree");
   let menu = about3Pane.document.getElementById("mailContext");
   threadTree.selectedIndex = 0;
-  await rightClick(menu, threadTree.getRowAtIndex(0));
+  await openMenuPopup(menu, threadTree.getRowAtIndex(0), {
+    type: "contextmenu",
+  });
   Assert.ok(menu.querySelector("#menus_mochi_test-menuitem-_message_list"));
-  menu.hidePopup();
+  await closeMenuPopup(menu);
 
   await checkShownEvent(
     extension,
@@ -65,7 +74,7 @@ async function subtest_message_panes(manifest) {
         ? { id: null, messages: [{ subject: gMessage.subject }] }
         : undefined,
     },
-    { active: true, index: 0, mailTab: true }
+    { active: true, index: 0, type: "mail" }
   );
 
   info("Test the message pane in the 3-pane tab.");
@@ -81,7 +90,7 @@ async function subtest_message_panes(manifest) {
     {
       active: true,
       index: 0,
-      mailTab: true,
+      type: "mail",
     }
   );
 
@@ -101,7 +110,7 @@ async function subtest_message_panes(manifest) {
     {
       active: true,
       index: 1,
-      mailTab: false,
+      type: "messageDisplay",
     }
   );
 
@@ -109,8 +118,8 @@ async function subtest_message_panes(manifest) {
 
   info("Test the message pane in a separate window.");
 
-  let displayWindow = await openMessageInWindow(gMessage);
-  let displayDocument = displayWindow.document;
+  const displayWindow = await openMessageInWindow(gMessage);
+  const displayDocument = displayWindow.document;
   menu = displayDocument.getElementById("mailContext");
   messagePane = displayDocument
     .getElementById("messageBrowser")
@@ -124,7 +133,7 @@ async function subtest_message_panes(manifest) {
     {
       active: true,
       index: 0,
-      mailTab: false,
+      type: "messageDisplay",
     }
   );
 

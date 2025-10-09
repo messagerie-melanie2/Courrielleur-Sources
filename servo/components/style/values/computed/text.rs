@@ -4,15 +4,12 @@
 
 //! Computed types for text properties.
 
-#[cfg(feature = "servo")]
-use crate::properties::StyleBuilder;
-use crate::values::computed::length::{Length, LengthPercentage};
-use crate::values::computed::{Context, NonNegativeLength, NonNegativeNumber, ToComputedValue};
-use crate::values::generics::text::InitialLetter as GenericInitialLetter;
-use crate::values::generics::text::LineHeight as GenericLineHeight;
-use crate::values::generics::text::{GenericTextDecorationLength, Spacing};
-use crate::values::resolved::{Context as ResolvedContext, ToResolvedValue};
-use crate::values::specified::text::{self as specified, TextOverflowSide};
+use crate::values::computed::length::LengthPercentage;
+use crate::values::generics::NumberOrAuto;
+use crate::values::generics::text::{
+    GenericHyphenateLimitChars, GenericInitialLetter, GenericTextDecorationLength, GenericTextIndent,
+};
+use crate::values::specified::text as specified;
 use crate::values::specified::text::{TextEmphasisFillMode, TextEmphasisShapeKeyword};
 use crate::values::{CSSFloat, CSSInteger};
 use crate::Zero;
@@ -20,12 +17,10 @@ use std::fmt::{self, Write};
 use style_traits::{CssWriter, ToCss};
 
 pub use crate::values::specified::text::{
-    MozControlCharacterVisibility, TextAlignLast, TextUnderlinePosition,
+    HyphenateCharacter, LineBreak, MozControlCharacterVisibility, OverflowWrap, RubyPosition,
+    TextAlignLast, TextDecorationLine, TextDecorationSkipInk, TextEmphasisPosition, TextJustify,
+    TextOverflow, TextTransform, TextUnderlinePosition, WordBreak,
 };
-pub use crate::values::specified::HyphenateCharacter;
-pub use crate::values::specified::{LineBreak, OverflowWrap, RubyPosition, WordBreak};
-pub use crate::values::specified::{TextDecorationLine, TextEmphasisPosition};
-pub use crate::values::specified::{TextDecorationSkipInk, TextJustify, TextTransform};
 
 /// A computed value for the `initial-letter` property.
 pub type InitialLetter = GenericInitialLetter<CSSFloat, CSSInteger>;
@@ -35,6 +30,24 @@ pub type TextDecorationLength = GenericTextDecorationLength<LengthPercentage>;
 
 /// The computed value of `text-align`.
 pub type TextAlign = specified::TextAlignKeyword;
+
+/// The computed value of `text-indent`.
+pub type TextIndent = GenericTextIndent<LengthPercentage>;
+
+/// A computed value for the `hyphenate-character` property.
+pub type HyphenateLimitChars = GenericHyphenateLimitChars<CSSInteger>;
+
+impl HyphenateLimitChars {
+    /// Return the `auto` value, which has all three component values as `auto`.
+    #[inline]
+    pub fn auto() -> Self {
+        Self {
+            total_word_length: NumberOrAuto::Auto,
+            pre_hyphen_length: NumberOrAuto::Auto,
+            post_hyphen_length: NumberOrAuto::Auto,
+        }
+    }
+}
 
 /// A computed value for the `letter-spacing` property.
 #[repr(transparent)]
@@ -50,13 +63,15 @@ pub type TextAlign = specified::TextAlignKeyword;
     ToAnimatedZero,
     ToResolvedValue,
 )]
-pub struct LetterSpacing(pub Length);
+pub struct GenericLetterSpacing<L>(pub L);
+/// This is generic just to make the #[derive()] code do the right thing for lengths.
+pub type LetterSpacing = GenericLetterSpacing<LengthPercentage>;
 
 impl LetterSpacing {
     /// Return the `normal` computed value, which is just zero.
     #[inline]
     pub fn normal() -> Self {
-        LetterSpacing(Length::zero())
+        Self(LengthPercentage::zero())
     }
 }
 
@@ -76,163 +91,14 @@ impl ToCss for LetterSpacing {
     }
 }
 
-impl ToComputedValue for specified::LetterSpacing {
-    type ComputedValue = LetterSpacing;
-    fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
-        match *self {
-            Spacing::Normal => LetterSpacing(Length::zero()),
-            Spacing::Value(ref v) => LetterSpacing(v.to_computed_value(context)),
-        }
-    }
-
-    fn from_computed_value(computed: &Self::ComputedValue) -> Self {
-        if computed.0.is_zero() {
-            return Spacing::Normal;
-        }
-        Spacing::Value(ToComputedValue::from_computed_value(&computed.0))
-    }
-}
-
 /// A computed value for the `word-spacing` property.
 pub type WordSpacing = LengthPercentage;
-
-impl ToComputedValue for specified::WordSpacing {
-    type ComputedValue = WordSpacing;
-
-    fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
-        match *self {
-            Spacing::Normal => LengthPercentage::zero(),
-            Spacing::Value(ref v) => v.to_computed_value(context),
-        }
-    }
-
-    fn from_computed_value(computed: &Self::ComputedValue) -> Self {
-        Spacing::Value(ToComputedValue::from_computed_value(computed))
-    }
-}
-
-/// A computed value for the `line-height` property.
-pub type LineHeight = GenericLineHeight<NonNegativeNumber, NonNegativeLength>;
-
-impl ToResolvedValue for LineHeight {
-    type ResolvedValue = Self;
-
-    fn to_resolved_value(self, context: &ResolvedContext) -> Self::ResolvedValue {
-        // Resolve <number> to an absolute <length> based on font size.
-        if matches!(self, Self::Normal | Self::MozBlockHeight) {
-            return self;
-        }
-        let wm = context.style.writing_mode;
-        let vertical = wm.is_vertical() && !wm.is_sideways();
-        Self::Length(context.device.calc_line_height(
-            &self,
-            vertical,
-            context.style.get_font(),
-            Some(context.element_info.element),
-        ))
-    }
-
-    #[inline]
-    fn from_resolved_value(value: Self::ResolvedValue) -> Self {
-        value
-    }
-}
 
 impl WordSpacing {
     /// Return the `normal` computed value, which is just zero.
     #[inline]
     pub fn normal() -> Self {
         LengthPercentage::zero()
-    }
-}
-
-#[derive(Clone, Debug, MallocSizeOf, PartialEq, ToResolvedValue)]
-#[repr(C)]
-/// text-overflow.
-/// When the specified value only has one side, that's the "second"
-/// side, and the sides are logical, so "second" means "end".  The
-/// start side is Clip in that case.
-///
-/// When the specified value has two sides, those are our "first"
-/// and "second" sides, and they are physical sides ("left" and
-/// "right").
-pub struct TextOverflow {
-    /// First side
-    pub first: TextOverflowSide,
-    /// Second side
-    pub second: TextOverflowSide,
-    /// True if the specified value only has one side.
-    pub sides_are_logical: bool,
-}
-
-impl TextOverflow {
-    /// Returns the initial `text-overflow` value
-    pub fn get_initial_value() -> TextOverflow {
-        TextOverflow {
-            first: TextOverflowSide::Clip,
-            second: TextOverflowSide::Clip,
-            sides_are_logical: true,
-        }
-    }
-}
-
-impl ToCss for TextOverflow {
-    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
-    where
-        W: Write,
-    {
-        if self.sides_are_logical {
-            debug_assert_eq!(self.first, TextOverflowSide::Clip);
-            self.second.to_css(dest)?;
-        } else {
-            self.first.to_css(dest)?;
-            dest.write_char(' ')?;
-            self.second.to_css(dest)?;
-        }
-        Ok(())
-    }
-}
-
-/// A struct that represents the _used_ value of the text-decoration property.
-///
-/// FIXME(emilio): This is done at style resolution time, though probably should
-/// be done at layout time, otherwise we need to account for display: contents
-/// and similar stuff when we implement it.
-///
-/// FIXME(emilio): Also, should be just a bitfield instead of three bytes.
-#[derive(Clone, Copy, Debug, Default, MallocSizeOf, PartialEq, ToResolvedValue)]
-pub struct TextDecorationsInEffect {
-    /// Whether an underline is in effect.
-    pub underline: bool,
-    /// Whether an overline decoration is in effect.
-    pub overline: bool,
-    /// Whether a line-through style is in effect.
-    pub line_through: bool,
-}
-
-impl TextDecorationsInEffect {
-    /// Computes the text-decorations in effect for a given style.
-    #[cfg(feature = "servo")]
-    pub fn from_style(style: &StyleBuilder) -> Self {
-        // Start with no declarations if this is an atomic inline-level box;
-        // otherwise, start with the declarations in effect and add in the text
-        // decorations that this block specifies.
-        let mut result = if style.get_box().clone_display().is_atomic_inline_level() {
-            Self::default()
-        } else {
-            style
-                .get_parent_inherited_text()
-                .text_decorations_in_effect
-                .clone()
-        };
-
-        let line = style.get_text().clone_text_decoration_line();
-
-        result.underline |= line.contains(TextDecorationLine::UNDERLINE);
-        result.overline |= line.contains(TextDecorationLine::OVERLINE);
-        result.line_through |= line.contains(TextDecorationLine::LINE_THROUGH);
-
-        result
     }
 }
 

@@ -2,21 +2,19 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   EventEmitter: "resource://gre/modules/EventEmitter.sys.mjs",
 
   BulkPacket: "chrome://remote/content/marionette/packets.sys.mjs",
-  executeSoon: "chrome://remote/content/marionette/sync.sys.mjs",
+  executeSoon: "chrome://remote/content/shared/Sync.sys.mjs",
   JSONPacket: "chrome://remote/content/marionette/packets.sys.mjs",
   Packet: "chrome://remote/content/marionette/packets.sys.mjs",
   StreamUtils: "chrome://remote/content/marionette/stream-utils.sys.mjs",
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "ScriptableInputStream", () => {
+ChromeUtils.defineLazyGetter(lazy, "ScriptableInputStream", () => {
   return Components.Constructor(
     "@mozilla.org/scriptableinputstream;1",
     "nsIScriptableInputStream",

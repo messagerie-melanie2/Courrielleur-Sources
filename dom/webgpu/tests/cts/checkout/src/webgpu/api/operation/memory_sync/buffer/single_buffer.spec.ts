@@ -2,7 +2,7 @@ export const description = `
 Memory Synchronization Tests for Buffer: read before write, read after write, and write after write.
 
 - Create a src buffer and initialize it to 0, wait on the fence to ensure the data is initialized.
-Write Op: write a value (say 1) into the src buffer via render pass, copmute pass, copy, write buffer, etc.
+Write Op: write a value (say 1) into the src buffer via render pass, compute pass, copy, write buffer, etc.
 Read Op: read the value from the src buffer and write it to dst buffer via render pass (vertex, index, indirect input, uniform, storage), compute pass, copy etc.
 Wait on another fence, then call expectContents to verify the dst buffer value.
   - x= write op: {storage buffer in {compute, render, render-via-bundle}, t2b copy dst, b2b copy dst, writeBuffer}
@@ -65,6 +65,11 @@ g.test('rw')
     const { readContext, readOp, writeContext, writeOp, boundary } = t.params;
     const helper = new OperationContextHelper(t);
 
+    t.skipIfReadOpsOrWriteOpsUsesStorageBufferInFragmentStageAndNoSupportStorageBuffersInFragmentShaders(
+      readOp,
+      writeOp
+    );
+
     const { srcBuffer, dstBuffer } = await t.createBuffersForReadOp(readOp, kSrcValue, kOpValue);
     await t.createIntermediateBuffersAndTexturesForWriteOp(writeOp, 0, kOpValue);
 
@@ -108,6 +113,12 @@ g.test('wr')
   )
   .fn(async t => {
     const { readContext, readOp, writeContext, writeOp, boundary } = t.params;
+
+    t.skipIfReadOpsOrWriteOpsUsesStorageBufferInFragmentStageAndNoSupportStorageBuffersInFragmentShaders(
+      readOp,
+      writeOp
+    );
+
     const helper = new OperationContextHelper(t);
 
     const { srcBuffer, dstBuffer } = await t.createBuffersForReadOp(readOp, kSrcValue, kOpValue);
@@ -151,6 +162,12 @@ g.test('ww')
   )
   .fn(async t => {
     const { writeOps, contexts, boundary } = t.params;
+
+    t.skipIfReadOpsOrWriteOpsUsesStorageBufferInFragmentStageAndNoSupportStorageBuffersInFragmentShaders(
+      [],
+      writeOps
+    );
+
     const helper = new OperationContextHelper(t);
 
     const buffer = await t.createBufferWithValue(0);
@@ -164,7 +181,7 @@ g.test('ww')
     t.verifyData(buffer, 2);
   });
 
-// Cases with loose render result guarentees.
+// Cases with loose render result guarantees.
 
 g.test('two_draws_in_the_same_render_pass')
   .desc(
@@ -178,7 +195,10 @@ g.test('two_draws_in_the_same_render_pass')
       .combine('secondDrawUseBundle', [false, true])
   )
   .fn(async t => {
+    t.skipIfNoSupportForStorageBuffersInFragmentStage();
+
     const { firstDrawUseBundle, secondDrawUseBundle } = t.params;
+
     const buffer = await t.createBufferWithValue(0);
     const encoder = t.device.createCommandEncoder();
     const passEncoder = t.beginSimpleRenderPass(encoder);
@@ -211,6 +231,8 @@ g.test('two_draws_in_the_same_render_bundle')
     data in buffer is either 1 or 2.`
   )
   .fn(async t => {
+    t.skipIfNoSupportForStorageBuffersInFragmentStage();
+
     const buffer = await t.createBufferWithValue(0);
     const encoder = t.device.createCommandEncoder();
     const passEncoder = t.beginSimpleRenderPass(encoder);
@@ -239,6 +261,8 @@ g.test('two_dispatches_in_the_same_compute_pass')
     data in buffer is 2.`
   )
   .fn(async t => {
+    t.skipIfNoSupportForStorageBuffersInFragmentStage();
+
     const buffer = await t.createBufferWithValue(0);
     const encoder = t.device.createCommandEncoder();
     const pass = encoder.beginComputePass();

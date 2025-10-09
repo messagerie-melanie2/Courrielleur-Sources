@@ -4,8 +4,8 @@
 
 "use strict";
 
-const { BrowserLoader } = ChromeUtils.import(
-  "resource://devtools/shared/loader/browser-loader.js"
+const { BrowserLoader } = ChromeUtils.importESModule(
+  "resource://devtools/shared/loader/browser-loader.sys.mjs"
 );
 
 loader.lazyRequireGetter(
@@ -58,8 +58,8 @@ class CssCompatibilityTooltipHelper {
     const {
       createFactory,
       createElement,
-    } = require("resource://devtools/client/shared/vendor/react.js");
-    const ReactDOM = require("resource://devtools/client/shared/vendor/react-dom.js");
+    } = require("resource://devtools/client/shared/vendor/react.mjs");
+    const ReactDOM = require("resource://devtools/client/shared/vendor/react-dom.mjs");
     const UnsupportedBrowserList = createFactory(
       require("resource://devtools/client/inspector/compatibility/components/UnsupportedBrowserList.js")
     );

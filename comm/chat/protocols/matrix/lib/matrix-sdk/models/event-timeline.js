@@ -4,32 +4,30 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.EventTimeline = exports.Direction = void 0;
-var _logger = require("../logger");
-var _roomState = require("./room-state");
-var _event = require("../@types/event");
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(arg) { var key = _toPrimitive(arg, "string"); return typeof key === "symbol" ? key : String(key); }
-function _toPrimitive(input, hint) { if (typeof input !== "object" || input === null) return input; var prim = input[Symbol.toPrimitive]; if (prim !== undefined) { var res = prim.call(input, hint || "default"); if (typeof res !== "object") return res; throw new TypeError("@@toPrimitive must return a primitive value."); } return (hint === "string" ? String : Number)(input); } /*
-                                                                                                                                                                                                                                                                                                                                                                                          Copyright 2016 - 2021 The Matrix.org Foundation C.I.C.
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Licensed under the Apache License, Version 2.0 (the "License");
-                                                                                                                                                                                                                                                                                                                                                                                          you may not use this file except in compliance with the License.
-                                                                                                                                                                                                                                                                                                                                                                                          You may obtain a copy of the License at
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                              http://www.apache.org/licenses/LICENSE-2.0
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Unless required by applicable law or agreed to in writing, software
-                                                                                                                                                                                                                                                                                                                                                                                          distributed under the License is distributed on an "AS IS" BASIS,
-                                                                                                                                                                                                                                                                                                                                                                                          WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-                                                                                                                                                                                                                                                                                                                                                                                          See the License for the specific language governing permissions and
-                                                                                                                                                                                                                                                                                                                                                                                          limitations under the License.
-                                                                                                                                                                                                                                                                                                                                                                                          */
-let Direction = /*#__PURE__*/function (Direction) {
+var _roomState = require("./room-state.js");
+var _event = require("../@types/event.js");
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
+function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
+Copyright 2016 - 2021 The Matrix.org Foundation C.I.C.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+let Direction = exports.Direction = /*#__PURE__*/function (Direction) {
   Direction["Backward"] = "b";
   Direction["Forward"] = "f";
   return Direction;
 }({});
-exports.Direction = Direction;
 class EventTimeline {
   /**
    * Static helper method to set sender and target properties
@@ -99,7 +97,7 @@ class EventTimeline {
     });
     this.roomId = eventTimelineSet.room?.roomId ?? null;
     if (this.roomId) {
-      this.startState = new _roomState.RoomState(this.roomId);
+      this.startState = new _roomState.RoomState(this.roomId, undefined, true);
       this.endState = new _roomState.RoomState(this.roomId);
     }
 
@@ -245,7 +243,7 @@ class EventTimeline {
   /**
    * Get a pagination token
    *
-   * @param direction -   EventTimeline.BACKWARDS to get the pagination
+   * @param direction - EventTimeline.BACKWARDS to get the pagination
    *   token for going backwards in time; EventTimeline.FORWARDS to get the
    *   pagination token for going forwards in time.
    *
@@ -332,25 +330,13 @@ class EventTimeline {
    * @param event - new event
    * @param options - addEvent options
    */
-
-  /**
-   * @deprecated In favor of the overload with `IAddEventOptions`
-   */
-
-  addEvent(event, toStartOfTimelineOrOpts, roomState) {
-    let toStartOfTimeline = !!toStartOfTimelineOrOpts;
-    let timelineWasEmpty;
-    if (typeof toStartOfTimelineOrOpts === "object") {
-      ({
-        toStartOfTimeline,
-        roomState,
-        timelineWasEmpty
-      } = toStartOfTimelineOrOpts);
-    } else if (toStartOfTimelineOrOpts !== undefined) {
-      // Deprecation warning
-      // FIXME: Remove after 2023-06-01 (technical debt)
-      _logger.logger.warn("Overload deprecated: " + "`EventTimeline.addEvent(event, toStartOfTimeline, roomState?)` " + "is deprecated in favor of the overload with `EventTimeline.addEvent(event, IAddEventOptions)`");
-    }
+  addEvent(event, {
+    toStartOfTimeline,
+    roomState,
+    timelineWasEmpty
+  } = {
+    toStartOfTimeline: false
+  }) {
     if (!roomState) {
       roomState = toStartOfTimeline ? this.startState : this.endState;
     }

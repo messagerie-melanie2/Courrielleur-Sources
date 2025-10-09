@@ -5,30 +5,45 @@
 "use strict";
 
 class PictureInPictureVideoWrapper {
-  isLive(video) {
+  constructor(video) {
+    // Use shorts player only if video is from YouTube Shorts.
+    let shortsPlayer = video.closest("#shorts-player")?.wrappedJSObject;
+    let isYTShorts = !!(video.baseURI.includes("shorts") && shortsPlayer);
+
+    this.player = isYTShorts
+      ? shortsPlayer
+      : video.closest("#movie_player")?.wrappedJSObject;
+  }
+
+  isLive() {
     return !!document.querySelector(".ytp-live");
   }
-  setMuted(video, shouldMute) {
-    let muteButton = document.querySelector("#player .ytp-mute-button");
 
-    if (video.muted !== shouldMute && muteButton) {
-      muteButton.click();
+  setMuted(video, shouldMute) {
+    if (this.player) {
+      if (shouldMute) {
+        this.player.mute();
+      } else {
+        this.player.unMute();
+      }
     } else {
       video.muted = shouldMute;
     }
   }
+
   getDuration(video) {
     if (this.isLive(video)) {
       return Infinity;
     }
     return video.duration;
   }
+
   setCaptionContainerObserver(video, updateCaptionsFunction) {
     let container = document.getElementById("ytp-caption-window-container");
 
     if (container) {
       updateCaptionsFunction("");
-      const callback = function (mutationsList, observer) {
+      const callback = function (mutationsList) {
         // eslint-disable-next-line no-unused-vars
         for (const mutation of mutationsList) {
           let textNodeList = container
@@ -48,17 +63,37 @@ class PictureInPictureVideoWrapper {
       // immediately invoke the callback function to add subtitles to the PiP window
       callback([1], null);
 
-      let captionsObserver = new MutationObserver(callback);
+      this.captionsObserver = new MutationObserver(callback);
 
-      captionsObserver.observe(container, {
+      this.captionsObserver.observe(container, {
         attributes: false,
         childList: true,
         subtree: true,
       });
     }
   }
+
+  removeCaptionContainerObserver() {
+    this.captionsObserver?.disconnect();
+  }
+
   shouldHideToggle(video) {
     return !!video.closest(".ytd-video-preview");
+  }
+
+  setVolume(video, volume) {
+    if (this.player) {
+      this.player.setVolume(volume * 100);
+    } else {
+      video.volume = volume;
+    }
+  }
+
+  getVolume(video) {
+    if (this.player) {
+      return this.player.getVolume() / 100;
+    }
+    return video.volume;
   }
 }
 

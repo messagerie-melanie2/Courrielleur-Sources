@@ -23,9 +23,10 @@ https://tools.ietf.org/html/draft-ietf-httpbis-alt-svc-06
 #ifndef mozilla_net_AlternateServices_h
 #define mozilla_net_AlternateServices_h
 
-#include "mozilla/DataStorage.h"
+#include "nsHttp.h"
 #include "nsRefPtrHashtable.h"
 #include "nsString.h"
+#include "nsIDataStorage.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIStreamListener.h"
 #include "nsISpeculativeConnect.h"
@@ -47,16 +48,17 @@ class AltSvcMapping {
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(AltSvcMapping)
 
  private:  // ctor from ProcessHeader
-  AltSvcMapping(DataStorage* storage, int32_t storageEpoch,
+  AltSvcMapping(nsIDataStorage* storage, int32_t storageEpoch,
                 const nsACString& originScheme, const nsACString& originHost,
                 int32_t originPort, const nsACString& username,
                 bool privateBrowsing, uint32_t expiresAt,
                 const nsACString& alternateHost, int32_t alternatePort,
                 const nsACString& npnToken,
-                const OriginAttributes& originAttributes, bool aIsHttp3);
+                const OriginAttributes& originAttributes, bool aIsHttp3,
+                SupportedAlpnRank aRank);
 
  public:
-  AltSvcMapping(DataStorage* storage, int32_t storageEpoch,
+  AltSvcMapping(nsIDataStorage* storage, int32_t storageEpoch,
                 const nsCString& str);
 
   static void ProcessHeader(
@@ -65,6 +67,7 @@ class AltSvcMapping {
       const nsACString& username, bool privateBrowsing,
       nsIInterfaceRequestor* callbacks, nsProxyInfo* proxyInfo, uint32_t caps,
       const OriginAttributes& originAttributes,
+      nsHttpConnectionInfo* aTransConnInfo,
       bool aDontValidate = false);  // aDontValidate is only used for testing!
 
   // AcceptableProxy() decides whether a particular proxy configuration (pi) is
@@ -103,11 +106,12 @@ class AltSvcMapping {
 
   bool IsHttp3() { return mIsHttp3; }
   const nsCString& NPNToken() const { return mNPNToken; }
+  SupportedAlpnRank AlpnRank() const { return mAlpnRank; }
 
  private:
   virtual ~AltSvcMapping() = default;
   void SyncString(const nsCString& str);
-  RefPtr<DataStorage> mStorage;
+  nsCOMPtr<nsIDataStorage> mStorage;
   int32_t mStorageEpoch;
   void Serialize(nsCString& out);
 
@@ -138,6 +142,7 @@ class AltSvcMapping {
 
   bool mSyncOnlyOnSuccess{false};
   bool mIsHttp3{false};
+  SupportedAlpnRank mAlpnRank{SupportedAlpnRank::NOT_SUPPORTED};
 };
 
 class AltSvcOverride : public nsIInterfaceRequestor,
@@ -200,7 +205,7 @@ class AltSvcCache {
   void ClearHostMapping(const nsACString& host, int32_t port,
                         const OriginAttributes& originAttributes);
   void ClearHostMapping(nsHttpConnectionInfo* ci);
-  DataStorage* GetStoragePtr() { return mStorage.get(); }
+  nsIDataStorage* GetStoragePtr() { return mStorage.get(); }
   int32_t StorageEpoch() { return mStorageEpoch; }
   nsresult GetAltSvcCacheKeys(nsTArray<nsCString>& value);
 
@@ -208,7 +213,7 @@ class AltSvcCache {
   void EnsureStorageInited();
   already_AddRefed<AltSvcMapping> LookupMapping(const nsCString& key,
                                                 bool privateBrowsing);
-  RefPtr<DataStorage> mStorage;
+  nsCOMPtr<nsIDataStorage> mStorage;
   int32_t mStorageEpoch{0};
 };
 

@@ -19,15 +19,16 @@ add_heuristic_tests(
         },
         {
           fields: [
+            { fieldName: "cc-csc", reason: "regex-heuristic"},
             { fieldName: "cc-type", reason: "regex-heuristic" },
             { fieldName: "cc-number", reason: "fathom" },
-            { fieldName: "cc-exp", reason: "regex-heuristic" },
-            // { fieldName: "cc-csc"},
+            { fieldName: "cc-exp", reason: "update-heuristic" },
           ],
         },
         {
           invalid: true,
           fields: [
+            { fieldName: "cc-csc", reason: "regex-heuristic" },
             { fieldName: "cc-number", reason: "regex-heuristic" }, // txtQvcGiftCardNumber
           ],
         },
@@ -58,15 +59,16 @@ add_heuristic_tests(
             reason: "fathom",
           },
           fields: [
+            { fieldName: "cc-csc", reason: "regex-heuristic"},
             { fieldName: "cc-type", reason: "regex-heuristic" }, // ac-off
             { fieldName: "cc-number" }, // ac-off
-            { fieldName: "cc-exp", reason: "regex-heuristic" },
-            // { fieldName: "cc-csc"},
+            { fieldName: "cc-exp", reason: "update-heuristic" },
           ],
         },
         {
           invalid: true,
           fields: [
+            { fieldName: "cc-csc", reason: "regex-heuristic" },
             { fieldName: "cc-number", reason: "regex-heuristic" }, // txtQvcGiftCardNumbe, ac-off
           ],
         },

@@ -9,13 +9,11 @@
 #include "mozilla/Attributes.h"
 #include "msgCore.h"
 #include "nsIMsgFolder.h"
-#include "nsIDBFolderInfo.h"
 #include "nsIMsgDatabase.h"
 #include "nsIMsgIncomingServer.h"
 #include "nsCOMPtr.h"
 #include "nsIDBChangeListener.h"
 #include "nsIMsgPluggableStore.h"
-#include "nsIURL.h"
 #include "nsIFile.h"
 #include "nsWeakReference.h"
 #include "nsIWeakReferenceUtils.h"
@@ -31,6 +29,9 @@
 #include "nsMsgMessageFlags.h"
 #include "nsIMsgFilterPlugin.h"
 #include "mozilla/intl/Collator.h"
+#ifdef MOZ_PANORAMA
+#  include "nsIFolder.h"
+#endif
 
 // We declare strings for folder properties and events.
 // Properties:
@@ -45,6 +46,7 @@ extern const nsLiteralCString kIsSecure;
 extern const nsLiteralCString kJunkStatusChanged;
 extern const nsLiteralCString kKeywords;
 extern const nsLiteralCString kMRMTimeChanged;
+extern const nsLiteralCString kMRUTimeChanged;
 extern const nsLiteralCString kMsgLoaded;
 extern const nsLiteralCString kName;
 extern const nsLiteralCString kNewMailReceived;
@@ -78,18 +80,21 @@ class nsMsgFolderService final : public nsIMsgFolderService {
   NS_DECL_ISUPPORTS
   NS_DECL_NSIMSGFOLDERSERVICE
 
-  nsMsgFolderService(){};
+  nsMsgFolderService() {};
 
  protected:
-  ~nsMsgFolderService(){};
+  ~nsMsgFolderService() {};
 };
 
 /*
  * nsMsgDBFolder
- * class derived from nsMsgFolder for those folders that use an nsIMsgDatabase
+ * Class derived from nsIMsgFolder for those folders that use an nsIMsgDatabase.
  */
 class nsMsgDBFolder : public nsSupportsWeakReference,
                       public nsIMsgFolder,
+#ifdef MOZ_PANORAMA
+                      public nsIInitableWithFolder,
+#endif  // MOZ_PANORAMA
                       public nsIDBChangeListener,
                       public nsIUrlListener,
                       public nsIJunkMailClassificationListener,
@@ -100,10 +105,15 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
   nsMsgDBFolder(void);
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIMSGFOLDER
+#ifdef MOZ_PANORAMA
+  NS_DECL_NSIINITABLEWITHFOLDER
+#endif  // MOZ_PANORAMA
   NS_DECL_NSIDBCHANGELISTENER
   NS_DECL_NSIURLLISTENER
   NS_DECL_NSIJUNKMAILCLASSIFICATIONLISTENER
   NS_DECL_NSIMSGTRAITCLASSIFICATIONLISTENER
+
+  nsCString URI() { return mURI; }  // C++ Shortcut.
 
   NS_IMETHOD WriteToFolderCacheElem(nsIMsgFolderCacheElement* element);
   NS_IMETHOD ReadFromFolderCacheElem(nsIMsgFolderCacheElement* element);
@@ -135,39 +145,29 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
                                    bool* confirmed);
   nsresult GetWarnFilterChanged(bool* aVal);
   nsresult SetWarnFilterChanged(bool aVal);
-  nsresult CreateCollationKey(const nsString& aSource, uint8_t** aKey,
+  nsresult CreateCollationKey(const nsCString& aSource, uint8_t** aKey,
                               uint32_t* aLength);
 
-  // All children will override this to create the right class of object.
-  virtual nsresult CreateChildFromURI(const nsACString& uri,
-                                      nsIMsgFolder** folder) = 0;
   virtual nsresult ReadDBFolderInfo(bool force);
   virtual nsresult FlushToFolderCache();
   virtual nsresult GetDatabase() = 0;
   virtual nsresult SendFlagNotifications(nsIMsgDBHdr* item, uint32_t oldFlags,
                                          uint32_t newFlags);
 
-  // Overriden by IMAP to handle gmail hack.
-  virtual nsresult GetOfflineFileStream(nsMsgKey msgKey, uint64_t* offset,
-                                        uint32_t* size,
-                                        nsIInputStream** aFileStream);
-
   nsresult CheckWithNewMessagesStatus(bool messageAdded);
   void UpdateNewMessages();
   nsresult OnHdrAddedOrDeleted(nsIMsgDBHdr* hdrChanged, bool added);
-  nsresult CreateFileForDB(const nsAString& userLeafName, nsIFile* baseDir,
-                           nsIFile** dbFile);
 
   nsresult GetFolderCacheKey(nsIFile** aFile);
   nsresult GetFolderCacheElemFromFile(nsIFile* file,
                                       nsIMsgFolderCacheElement** cacheElement);
   nsresult AddDirectorySeparator(nsIFile* path);
-  nsresult CheckIfFolderExists(const nsAString& newFolderName,
+  nsresult CheckIfFolderExists(const nsACString& newFolderName,
                                nsIMsgFolder* parentFolder,
                                nsIMsgWindow* msgWindow);
   bool ConfirmAutoFolderRename(nsIMsgWindow* aMsgWindow,
-                               const nsString& aOldName,
-                               const nsString& aNewName);
+                               const nsCString& aOldName,
+                               const nsCString& aNewName);
 
   // Returns true if: a) there is no need to prompt or b) the user is already
   // logged in or c) the user logged in successfully.
@@ -176,7 +176,6 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
   // Offline support methods. Used by IMAP and News folders, but not local
   // folders.
   nsresult StartNewOfflineMessage();
-  nsresult WriteStartOfNewLocalMessage();
   nsresult EndNewOfflineMessage(nsresult status);
 
   nsresult AutoCompact(nsIMsgWindow* aWindow);
@@ -191,6 +190,7 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
 
   nsresult PerformBiffNotifications(
       void);  // if there are new, non spam messages, do biff
+  nsresult CloseDB();
 
   // Helper function for Move code to call to update the MRU and MRM time.
   void UpdateTimestamps(bool allowUndo);
@@ -212,13 +212,15 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
                               nsIMsgFolder* srcFolder,
                               nsTArray<RefPtr<nsIMsgDBHdr>>& messages);
   nsCString mURI;
+#ifdef MOZ_PANORAMA
+  nsCOMPtr<nsIFolder> mDBFolder;
+#endif  // MOZ_PANORAMA
 
   nsCOMPtr<nsIMsgDatabase> mDatabase;
   nsCOMPtr<nsIMsgDatabase> mBackupDatabase;
   bool mAddListener;
   bool mNewMessages;
   bool mGettingNewMessages;
-  nsMsgKey mLastMessageLoaded;
 
   /*
    * Start of offline-message-writing vars.
@@ -249,6 +251,7 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
   static nsrefcnt mInstanceCount;
 
   uint32_t mFlags;
+  uint32_t mUserSortOrder;    // Sort order among sibling folders.
   nsWeakPtr mParent;          // This won't be refcounted for ownership reasons.
   int32_t mNumUnreadMessages; /* count of unread messages (-1 means unknown; -2
                                  means unknown but we already tried to find
@@ -263,6 +266,7 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
   nsISupports* mSemaphoreHolder;  // set when the folder is being written to
                                   // Due to ownership issues, this won't be
                                   // AddRef'd.
+  nsAutoCString mSemaphoreLogText;
 
   nsWeakPtr mServer;
 
@@ -293,8 +297,8 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
   bool mHaveParsedURI;  // is the URI completely parsed?
   bool mIsServerIsValid;
   bool mIsServer;
-  nsString mName;
-  nsString mOriginalName;
+  nsCString mName;
+  nsCString mOriginalName;
   nsCOMPtr<nsIFile> mPath;
   nsCString mBaseMessageURI;  // The uri with the message scheme
 
@@ -339,6 +343,14 @@ class nsMsgDBFolder : public nsSupportsWeakReference,
   bool mBayesJunkClassifying;
   // Is the current bayes filtering doing trait classification?
   bool mBayesTraitClassifying;
+
+  nsresult SetJunkScoreForMessage(nsIMsgDBHdr* message,
+                                  nsMsgJunkScore junkScore,
+                                  const nsACString& junkScoreOrigin,
+                                  int32_t junkPercent);
+  nsresult DetermineActionsForJunkChange(bool msgsAreJunk, bool& moveMessages,
+                                         bool& changeReadState,
+                                         nsIMsgFolder** targetFolder);
 };
 
 // This class is a kludge to allow nsMsgKeySet to be used with uint32_t keys

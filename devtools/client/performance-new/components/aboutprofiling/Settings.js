@@ -56,8 +56,9 @@
 const {
   PureComponent,
   createFactory,
-} = require("resource://devtools/client/shared/vendor/react.js");
+} = require("resource://devtools/client/shared/vendor/react.mjs");
 const {
+  code,
   div,
   label,
   input,
@@ -228,7 +229,7 @@ class Settings extends PureComponent {
       temporaryThreadText: null,
     };
 
-    this._intervalExponentialScale = makeLinear10Scale(0.01, 100);
+    this._intervalExponentialScale = makeLinear10Scale(0.01, 1000);
     this._entriesExponentialScale = makePowerOf2Scale(
       128 * 1024,
       256 * 1024 * 1024
@@ -463,7 +464,13 @@ class Settings extends PureComponent {
             !isSupported && featureDescription.experimental
               ? // Note when unsupported features are experimental.
                 `${name} (Experimental)`
-              : name
+              : name,
+            span(
+              { className: "perf-toggle-feature-value" },
+              "(",
+              code(null, value),
+              ")"
+            )
           ),
           div(
             { className: "perf-toggle-description" },

@@ -2,18 +2,19 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-let account;
-let messages;
-let tabmail = document.getElementById("tabmail");
+"use strict";
+
+let gAccount, gMessages, gDefaultTabmail;
 
 add_setup(async () => {
-  account = createAccount();
-  let rootFolder = account.incomingServer.rootFolder;
-  let subFolders = rootFolder.subFolders;
-  createMessages(subFolders[0], 10);
-  messages = subFolders[0].messages;
+  gAccount = createAccount();
+  const rootFolder = gAccount.incomingServer.rootFolder;
+  const subFolders = rootFolder.subFolders;
+  await createMessages(subFolders[0], 10);
+  gMessages = subFolders[0].messages;
 
-  let about3Pane = tabmail.currentAbout3Pane;
+  gDefaultTabmail = document.getElementById("tabmail");
+  const about3Pane = gDefaultTabmail.currentAbout3Pane;
   about3Pane.restoreState({
     folderPaneVisible: true,
     folderURI: subFolders[0],
@@ -29,10 +30,10 @@ add_setup(async () => {
 add_task(async function test_popup_open_with_menu_command() {
   info("3-pane tab");
   {
-    let testConfig = {
+    const testConfig = {
       actionType: "message_display_action",
       testType: "open-with-menu-command",
-      window: tabmail.currentAboutMessage,
+      window: gDefaultTabmail.currentAboutMessage,
     };
 
     await run_popup_test({
@@ -50,11 +51,11 @@ add_task(async function test_popup_open_with_menu_command() {
 
   info("Message tab");
   {
-    await openMessageInTab(messages.getNext());
-    let testConfig = {
+    await openMessageInTab(gMessages.getNext());
+    const testConfig = {
       actionType: "message_display_action",
       testType: "open-with-menu-command",
-      window: tabmail.currentAboutMessage,
+      window: gDefaultTabmail.currentAboutMessage,
     };
 
     await run_popup_test({
@@ -74,8 +75,8 @@ add_task(async function test_popup_open_with_menu_command() {
 
   info("Message window");
   {
-    let messageWindow = await openMessageInWindow(messages.getNext());
-    let testConfig = {
+    const messageWindow = await openMessageInWindow(gMessages.getNext());
+    const testConfig = {
       actionType: "message_display_action",
       testType: "open-with-menu-command",
       window: messageWindow.messageBrowser.contentWindow,
@@ -98,7 +99,7 @@ add_task(async function test_popup_open_with_menu_command() {
 });
 
 add_task(async function test_theme_icons() {
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     manifest: {
       applications: {
         gecko: {
@@ -114,6 +115,11 @@ add_task(async function test_theme_icons() {
             light: "light.png",
             size: 16,
           },
+          {
+            dark: "dark.png",
+            light: "light.png",
+            size: 32,
+          },
         ],
       },
     },
@@ -121,44 +127,54 @@ add_task(async function test_theme_icons() {
 
   await extension.startup();
 
-  let aboutMessage = tabmail.currentAboutMessage;
-  let uuid = extension.uuid;
-  let button = aboutMessage.document.getElementById(
+  const aboutMessage = gDefaultTabmail.currentAboutMessage;
+  const uuid = extension.uuid;
+  const button = aboutMessage.document.getElementById(
     "message_display_action_mochi_test-messageDisplayAction-toolbarbutton"
   );
 
-  let dark_theme = await AddonManager.getAddonByID(
+  const dark_theme = await AddonManager.getAddonByID(
     "thunderbird-compact-dark@mozilla.org"
   );
-  await dark_theme.enable();
+  await Promise.all([
+    BrowserTestUtils.waitForEvent(window, "windowlwthemeupdate"),
+    dark_theme.enable(),
+  ]);
   await new Promise(resolve => requestAnimationFrame(resolve));
   Assert.equal(
     aboutMessage.getComputedStyle(button).listStyleImage,
-    `url("moz-extension://${uuid}/light.png")`,
+    `image-set(url("moz-extension://${uuid}/light.png") 1dppx, url("moz-extension://${uuid}/light.png") 2dppx)`,
     `Dark theme should use light icon.`
   );
 
-  let light_theme = await AddonManager.getAddonByID(
+  const light_theme = await AddonManager.getAddonByID(
     "thunderbird-compact-light@mozilla.org"
   );
-  await light_theme.enable();
+  await Promise.all([
+    BrowserTestUtils.waitForEvent(window, "windowlwthemeupdate"),
+    light_theme.enable(),
+  ]);
   await new Promise(resolve => requestAnimationFrame(resolve));
   Assert.equal(
     aboutMessage.getComputedStyle(button).listStyleImage,
-    `url("moz-extension://${uuid}/dark.png")`,
+    `image-set(url("moz-extension://${uuid}/dark.png") 1dppx, url("moz-extension://${uuid}/dark.png") 2dppx)`,
     `Light theme should use dark icon.`
   );
 
   // Disabling a theme will enable the default theme.
-  await light_theme.disable();
+  await Promise.all([
+    BrowserTestUtils.waitForEvent(window, "windowlwthemeupdate"),
+    light_theme.disable(),
+  ]);
+  await new Promise(resolve => requestAnimationFrame(resolve));
   Assert.equal(
     aboutMessage.getComputedStyle(button).listStyleImage,
-    `url("moz-extension://${uuid}/default.png")`,
+    `image-set(url("moz-extension://${uuid}/default.png") 1dppx, url("moz-extension://${uuid}/default.png") 2dppx)`,
     `Default theme should use default icon.`
   );
 
   await extension.unload();
-}).skip(); // TODO (Bug 1828322)
+});
 
 add_task(async function test_button_order() {
   info("3-pane tab");
@@ -173,12 +189,12 @@ add_task(async function test_button_order() {
         toolbar: "header-view-toolbar",
       },
     ],
-    tabmail.currentAboutMessage,
+    gDefaultTabmail.currentAboutMessage,
     "message_display_action"
   );
 
   info("Message tab");
-  await openMessageInTab(messages.getNext());
+  await openMessageInTab(gMessages.getNext());
   await run_action_button_order_test(
     [
       {
@@ -190,13 +206,13 @@ add_task(async function test_button_order() {
         toolbar: "header-view-toolbar",
       },
     ],
-    tabmail.currentAboutMessage,
+    gDefaultTabmail.currentAboutMessage,
     "message_display_action"
   );
-  tabmail.closeTab();
+  gDefaultTabmail.closeTab();
 
   info("Message window");
-  let messageWindow = await openMessageInWindow(messages.getNext());
+  const messageWindow = await openMessageInWindow(gMessages.getNext());
   await run_action_button_order_test(
     [
       {
@@ -216,7 +232,7 @@ add_task(async function test_button_order() {
 
 add_task(async function test_upgrade() {
   // Add a message_display_action, to make sure the currentSet has been initialized.
-  let extension1 = ExtensionTestUtils.loadExtension({
+  const extension1 = ExtensionTestUtils.loadExtension({
     useAddonManager: "permanent",
     manifest: {
       manifest_version: 2,
@@ -235,7 +251,7 @@ add_task(async function test_upgrade() {
   await extension1.awaitMessage("Extension1 ready");
 
   // Add extension without a message_display_action.
-  let extension2 = ExtensionTestUtils.loadExtension({
+  const extension2 = ExtensionTestUtils.loadExtension({
     useAddonManager: "permanent",
     manifest: {
       manifest_version: 2,
@@ -251,7 +267,7 @@ add_task(async function test_upgrade() {
   await extension2.awaitMessage("Extension2 ready");
 
   // Update the extension, now including a message_display_action.
-  let updatedExtension2 = ExtensionTestUtils.loadExtension({
+  const updatedExtension2 = ExtensionTestUtils.loadExtension({
     useAddonManager: "permanent",
     manifest: {
       manifest_version: 2,
@@ -269,8 +285,8 @@ add_task(async function test_upgrade() {
   await updatedExtension2.startup();
   await updatedExtension2.awaitMessage("Extension2 updated");
 
-  let aboutMessage = tabmail.currentAboutMessage;
-  let button = aboutMessage.document.getElementById(
+  const aboutMessage = gDefaultTabmail.currentAboutMessage;
+  const button = aboutMessage.document.getElementById(
     "extension2_mochi_test-messageDisplayAction-toolbarbutton"
   );
 
@@ -284,7 +300,7 @@ add_task(async function test_iconPath() {
   // String values for the default_icon manifest entry have been tested in the
   // theme_icons test already. Here we test imagePath objects for the manifest key
   // and string values as well as objects for the setIcons() function.
-  let files = {
+  const files = {
     "background.js": async () => {
       await window.sendMessage("checkState", "icon1.png");
 
@@ -300,7 +316,7 @@ add_task(async function test_iconPath() {
     "utils.js": await getUtilsJS(),
   };
 
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files,
     manifest: {
       applications: {
@@ -316,16 +332,16 @@ add_task(async function test_iconPath() {
     },
   });
 
-  let aboutMessage = tabmail.currentAboutMessage;
+  const aboutMessage = gDefaultTabmail.currentAboutMessage;
   extension.onMessage("checkState", async expected => {
-    let uuid = extension.uuid;
-    let button = aboutMessage.document.getElementById(
+    const uuid = extension.uuid;
+    const button = aboutMessage.document.getElementById(
       "message_display_action_mochi_test-messageDisplayAction-toolbarbutton"
     );
 
     Assert.equal(
       aboutMessage.getComputedStyle(button).listStyleImage,
-      `url("moz-extension://${uuid}/${expected}")`,
+      makeIconSet(`url("moz-extension://${uuid}/${expected}")`),
       `Icon path should be correct.`
     );
     extension.sendMessage();

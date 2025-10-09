@@ -15,14 +15,11 @@
  * messages option.
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
-);
-var { PromiseUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/PromiseUtils.sys.mjs"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 var server = null;
@@ -47,7 +44,7 @@ var msgSendLater = Cc["@mozilla.org/messengercompose/sendlater;1"].getService(
 );
 
 var messageListener;
-var onStopCopyPromise = PromiseUtils.defer();
+var onStopCopyPromise = Promise.withResolvers();
 
 /* exported OnStopCopy */
 // for head_compose.js
@@ -86,8 +83,8 @@ add_setup(async function () {
 
   MailServices.accounts.setSpecialFolders();
 
-  let account = MailServices.accounts.createAccount();
-  let incomingServer = MailServices.accounts.createIncomingServer(
+  const account = MailServices.accounts.createAccount();
+  const incomingServer = MailServices.accounts.createIncomingServer(
     "test",
     "localhost",
     "pop3"
@@ -115,7 +112,7 @@ add_setup(async function () {
 
   // Set up the server.
   server = setupServerDaemon();
-  server.setDebugLevel(fsDebugRecv);
+  server.setDebugLevel(nsMailServer.debugRecv);
 });
 
 add_task(async function test_sendMessageLater2_message1() {
@@ -158,8 +155,6 @@ async function sendMessageLater(aTestFileIndex) {
     "@mozilla.org/messengercompose/composefields;1"
   ].createInstance(Ci.nsIMsgCompFields);
 
-  // Setting the compFields sender and recipient to any value is required to
-  // survive mime_sanity_check_fields in nsMsgCompUtils.cpp.
   // Sender and recipient are required for sendMessageFile but SMTP
   // transaction values will be used directly from mail body.
   compFields.from = "irrelevant@foo.invalid";
@@ -184,7 +179,7 @@ async function sendMessageLater(aTestFileIndex) {
   );
   await onStopCopyPromise.promise;
   // Reset onStopCopyPromise.
-  onStopCopyPromise = PromiseUtils.defer();
+  onStopCopyPromise = Promise.withResolvers();
 }
 
 function resetCounts() {
@@ -199,7 +194,7 @@ async function sendUnsentMessages() {
   try {
     // Start the fake SMTP server.
     server.start();
-    smtpServer.port = server.port;
+    smtpServer.QueryInterface(Ci.nsISmtpServer).port = server.port;
 
     // Send the unsent message.
     msgSendLater.sendUnsentMessages(identity);
@@ -214,7 +209,7 @@ async function sendUnsentMessages() {
 // sequence and ensures the data is correct.
 class MsgSendLaterListener {
   constructor() {
-    this._deferredPromise = PromiseUtils.defer();
+    this._deferredPromise = Promise.withResolvers();
   }
 
   checkMessageSend(aCurrentMessage) {
@@ -240,29 +235,19 @@ class MsgSendLaterListener {
     Assert.equal(aTotalMessageCount, gMsgOrder.length);
     Assert.equal(msgSendLater.sendingMessages, true);
   }
-  onMessageStartSending(
-    aCurrentMessage,
-    aTotalMessageCount,
-    aMessageHeader,
-    aIdentity
-  ) {
+  onMessageStartSending(aCurrentMessage) {
     if (gLastSentMessage > 0) {
       this.checkMessageSend(aCurrentMessage);
     }
     Assert.equal(gLastSentMessage + 1, aCurrentMessage);
     gLastSentMessage = aCurrentMessage;
   }
-  onMessageSendProgress(
-    aCurrentMessage,
-    aTotalMessageCount,
-    aMessageSendPercent,
-    aMessageCopyPercent
-  ) {
+  onMessageSendProgress(aCurrentMessage, aTotalMessageCount) {
     Assert.equal(aTotalMessageCount, gMsgOrder.length);
     Assert.equal(gLastSentMessage, aCurrentMessage);
     Assert.equal(msgSendLater.sendingMessages, true);
   }
-  onMessageSendError(aCurrentMessage, aMessageHeader, aStatus, aMsg) {
+  onMessageSendError(aCurrentMessage, aMessageHeader, aStatus) {
     throw new Error(
       "onMessageSendError should not have been called, status: " + aStatus
     );
@@ -286,13 +271,13 @@ class MsgSendLaterListener {
     // and sometimes it isn't. This protects us for the synchronous case to
     // allow the sendUnsentMessages function to complete and exit before we
     // resolve the promise.
-    PromiseTestUtils.promiseDelay(0).then(resolve => {
+    PromiseTestUtils.promiseDelay(0).then(() => {
       this._deferredPromise.resolve(true);
     });
   }
 
   deferPromise() {
-    this._deferredPromise = PromiseUtils.defer();
+    this._deferredPromise = Promise.withResolvers();
   }
 
   get promise() {

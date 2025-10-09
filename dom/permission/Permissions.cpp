@@ -6,15 +6,15 @@
 
 #include "mozilla/dom/Permissions.h"
 
-#include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/MidiPermissionStatus.h"
-#include "mozilla/dom/PermissionMessageUtils.h"
+#include "mozilla/dom/PermissionSetParametersBinding.h"
 #include "mozilla/dom/PermissionStatus.h"
 #include "mozilla/dom/PermissionsBinding.h"
 #include "mozilla/dom/Promise.h"
-#include "mozilla/Components.h"
-#include "nsIPermissionManager.h"
+#include "mozilla/dom/RootedDictionary.h"
+#include "mozilla/dom/StorageAccessPermissionStatus.h"
+#include "mozilla/StaticPrefs_permissions.h"
 #include "PermissionUtils.h"
 
 namespace mozilla::dom {
@@ -27,9 +27,10 @@ NS_INTERFACE_MAP_END
 NS_IMPL_CYCLE_COLLECTING_ADDREF(Permissions)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(Permissions)
 
-NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(Permissions, mWindow)
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_0(Permissions)
 
-Permissions::Permissions(nsPIDOMWindowInner* aWindow) : mWindow(aWindow) {}
+Permissions::Permissions(nsIGlobalObject* aGlobal)
+    : GlobalTeardownObserver(aGlobal) {}
 
 Permissions::~Permissions() = default;
 
@@ -40,33 +41,68 @@ JSObject* Permissions::WrapObject(JSContext* aCx,
 
 namespace {
 
-already_AddRefed<PermissionStatus> CreatePermissionStatus(
-    JSContext* aCx, JS::Handle<JSObject*> aPermission,
-    nsPIDOMWindowInner* aWindow, ErrorResult& aRv) {
-  PermissionDescriptor permission;
-  JS::Rooted<JS::Value> value(aCx, JS::ObjectOrNullValue(aPermission));
-  if (NS_WARN_IF(!permission.Init(aCx, value))) {
+// Steps to parse PermissionDescriptor in
+// https://w3c.github.io/permissions/#query-method and relevant WebDriver
+// commands
+RefPtr<PermissionStatus> CreatePermissionStatus(
+    JSContext* aCx, JS::Handle<JSObject*> aPermissionDesc,
+    nsIGlobalObject* aGlobal, ErrorResult& aRv) {
+  // Step 2: Let rootDesc be the object permissionDesc refers to, converted to
+  // an IDL value of type PermissionDescriptor.
+  PermissionDescriptor rootDesc;
+  JS::Rooted<JS::Value> permissionDescValue(
+      aCx, JS::ObjectOrNullValue(aPermissionDesc));
+  if (NS_WARN_IF(!rootDesc.Init(aCx, permissionDescValue))) {
+    // Step 3: If the conversion throws an exception, return a promise rejected
+    // with that exception.
+    // Step 4: If rootDesc["name"] is not supported, return a promise rejected
+    // with a TypeError. (This is done by `enum PermissionName`, as the spec
+    // note says: "implementers are encouraged to use their own custom enum
+    // here")
     aRv.NoteJSContextException(aCx);
     return nullptr;
   }
 
-  switch (permission.mName) {
+  // Step 5: Let typedDescriptor be the object permissionDesc refers to,
+  // converted to an IDL value of rootDesc's name's permission descriptor type.
+  // Step 6: If the conversion throws an exception, return a promise rejected
+  // with that exception.
+  // Step 8.1: Let status be create a PermissionStatus with typedDescriptor.
+  // (The rest is done by the caller)
+  switch (rootDesc.mName) {
     case PermissionName::Midi: {
       MidiPermissionDescriptor midiPerm;
-      if (NS_WARN_IF(!midiPerm.Init(aCx, value))) {
+      if (NS_WARN_IF(!midiPerm.Init(aCx, permissionDescValue))) {
         aRv.NoteJSContextException(aCx);
         return nullptr;
       }
 
-      bool sysex = midiPerm.mSysex.WasPassed() && midiPerm.mSysex.Value();
-      return MidiPermissionStatus::Create(aWindow, sysex, aRv);
+      return new MidiPermissionStatus(aGlobal, midiPerm.mSysex);
     }
+    case PermissionName::Storage_access:
+      return new StorageAccessPermissionStatus(aGlobal);
     case PermissionName::Geolocation:
     case PermissionName::Notifications:
     case PermissionName::Push:
     case PermissionName::Persistent_storage:
-      return PermissionStatus::Create(aWindow, permission.mName, aRv);
-
+    case PermissionName::Screen_wake_lock:
+      return new PermissionStatus(aGlobal, rootDesc.mName);
+    case PermissionName::Camera:
+      if (!StaticPrefs::permissions_media_query_enabled()) {
+        aRv.ThrowTypeError(
+            "'camera' (value of 'name' member of PermissionDescriptor) is not "
+            "a valid value for enumeration PermissionName.");
+        return nullptr;
+      }
+      return new PermissionStatus(aGlobal, rootDesc.mName);
+    case PermissionName::Microphone:
+      if (!StaticPrefs::permissions_media_query_enabled()) {
+        aRv.ThrowTypeError(
+            "'microphone' (value of 'name' member of PermissionDescriptor) is "
+            "not a valid value for enumeration PermissionName.");
+        return nullptr;
+      }
+      return new PermissionStatus(aGlobal, rootDesc.mName);
     default:
       MOZ_ASSERT_UNREACHABLE("Unhandled type");
       aRv.Throw(NS_ERROR_NOT_IMPLEMENTED);
@@ -76,107 +112,90 @@ already_AddRefed<PermissionStatus> CreatePermissionStatus(
 
 }  // namespace
 
+// https://w3c.github.io/permissions/#query-method
 already_AddRefed<Promise> Permissions::Query(JSContext* aCx,
                                              JS::Handle<JSObject*> aPermission,
                                              ErrorResult& aRv) {
-  if (!mWindow || !mWindow->IsFullyActive()) {
-    aRv.ThrowInvalidStateError("The document is not fully active.");
+  // Step 1: If this's relevant global object is a Window object, then:
+  // Step 1.1: If the current settings object's associated Document is not fully
+  // active, return a promise rejected with an "InvalidStateError" DOMException.
+
+  nsCOMPtr<nsIGlobalObject> global = GetOwnerGlobal();
+  if (NS_WARN_IF(!global)) {
+    aRv.ThrowInvalidStateError("The context is not fully active.");
     return nullptr;
   }
 
+  if (NS_IsMainThread()) {
+    nsCOMPtr<nsPIDOMWindowInner> window = do_QueryInterface(global);
+    if (!window || !window->IsFullyActive()) {
+      aRv.ThrowInvalidStateError("The document is not fully active.");
+      return nullptr;
+    }
+  }
+
+  // Step 2 - 6 and 8.1:
   RefPtr<PermissionStatus> status =
-      CreatePermissionStatus(aCx, aPermission, mWindow, aRv);
-  if (NS_WARN_IF(aRv.Failed())) {
-    MOZ_ASSERT(!status);
+      CreatePermissionStatus(aCx, aPermission, global, aRv);
+  if (!status) {
     return nullptr;
   }
 
-  MOZ_ASSERT(status);
-  RefPtr<Promise> promise = Promise::Create(mWindow->AsGlobal(), aRv);
+  // Step 7: Let promise be a new promise.
+  RefPtr<Promise> promise = Promise::Create(global, aRv);
   if (NS_WARN_IF(aRv.Failed())) {
     return nullptr;
   }
 
-  promise->MaybeResolve(status);
+  // Step 8.2 - 8.3: (Done by the Init method)
+  // Step 8.4: Queue a global task on the permissions task source with this's
+  // relevant global object to resolve promise with status.
+  status->Init()->Then(
+      GetCurrentSerialEventTarget(), __func__,
+      [status, promise]() {
+        promise->MaybeResolve(status);
+        return;
+      },
+      [promise](nsresult aError) {
+        MOZ_ASSERT(NS_FAILED(aError));
+        NS_WARNING("Failed PermissionStatus creation");
+        promise->MaybeReject(aError);
+        return;
+      });
+
   return promise.forget();
 }
 
-/* static */
-nsresult Permissions::RemovePermission(nsIPrincipal* aPrincipal,
-                                       const nsACString& aPermissionType) {
-  MOZ_ASSERT(XRE_IsParentProcess());
+already_AddRefed<PermissionStatus> Permissions::ParseSetParameters(
+    JSContext* aCx, const PermissionSetParameters& aParameters,
+    ErrorResult& aRv) {
+  // Step 1: Let parametersDict be the parameters argument, converted to an IDL
+  // value of type PermissionSetParameters. If this throws an exception,
+  // return an invalid argument error.
+  // (Done by IDL layer, and the error type should be handled by the caller)
 
-  nsCOMPtr<nsIPermissionManager> permMgr =
-      components::PermissionManager::Service();
-  if (NS_WARN_IF(!permMgr)) {
-    return NS_ERROR_FAILURE;
-  }
+  // Step 2: If parametersDict.state is an inappropriate permission state for
+  // any implementation-defined reason, return a invalid argument error.
+  // (We don't do this)
 
-  return permMgr->RemoveFromPrincipal(aPrincipal, aPermissionType);
-}
+  // Step 3: Let rootDesc be parametersDict.descriptor.
+  JS::Rooted<JSObject*> rootDesc(aCx, aParameters.mDescriptor);
 
-already_AddRefed<Promise> Permissions::Revoke(JSContext* aCx,
-                                              JS::Handle<JSObject*> aPermission,
-                                              ErrorResult& aRv) {
-  if (!mWindow) {
-    aRv.Throw(NS_ERROR_UNEXPECTED);
-    return nullptr;
-  }
-
-  PermissionDescriptor permission;
-  JS::Rooted<JS::Value> value(aCx, JS::ObjectOrNullValue(aPermission));
-  if (NS_WARN_IF(!permission.Init(aCx, value))) {
-    aRv.NoteJSContextException(aCx);
-    return nullptr;
-  }
-
-  RefPtr<Promise> promise = Promise::Create(mWindow->AsGlobal(), aRv);
-  if (NS_WARN_IF(aRv.Failed())) {
-    return nullptr;
-  }
-
-  nsCOMPtr<Document> document = mWindow->GetExtantDoc();
-  if (!document) {
-    promise->MaybeReject(NS_ERROR_UNEXPECTED);
-    return promise.forget();
-  }
-
-  nsCOMPtr<nsIPermissionManager> permMgr =
-      components::PermissionManager::Service();
-  if (NS_WARN_IF(!permMgr)) {
-    promise->MaybeReject(NS_ERROR_FAILURE);
-    return promise.forget();
-  }
-
-  const nsLiteralCString& permissionType =
-      PermissionNameToType(permission.mName);
-
-  nsresult rv;
-  if (XRE_IsParentProcess()) {
-    rv = RemovePermission(document->NodePrincipal(), permissionType);
-  } else {
-    // Permissions can't be removed from the content process. Send a message
-    // to the parent; `ContentParent::RecvRemovePermission` will call
-    // `RemovePermission`.
-    ContentChild::GetSingleton()->SendRemovePermission(
-        document->NodePrincipal(), permissionType, &rv);
-  }
-
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    promise->MaybeReject(rv);
-    return promise.forget();
-  }
-
+  // Step 4: Let typedDescriptor be the object rootDesc refers to, converted
+  // to an IDL value of rootDesc.name's permission descriptor type. If this
+  // throws an exception, return a invalid argument error.
+  //
+  // We use PermissionStatus as the typed object.
   RefPtr<PermissionStatus> status =
-      CreatePermissionStatus(aCx, aPermission, mWindow, aRv);
-  if (NS_WARN_IF(aRv.Failed())) {
-    MOZ_ASSERT(!status);
+      CreatePermissionStatus(aCx, rootDesc, nullptr, aRv);
+  if (aRv.Failed()) {
     return nullptr;
   }
 
-  MOZ_ASSERT(status);
-  promise->MaybeResolve(status);
-  return promise.forget();
+  // Set the state too so that the caller can use it for step 5.
+  status->SetState(aParameters.mState);
+
+  return status.forget();
 }
 
 }  // namespace mozilla::dom

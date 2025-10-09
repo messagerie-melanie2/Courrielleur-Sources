@@ -71,8 +71,8 @@ function pumpReadStream(inputStream, goon) {
     pump.init(inputStream, 0, 0, true);
     let data = "";
     pump.asyncRead({
-      onStartRequest(aRequest) {},
-      onDataAvailable(aRequest, aInputStream, aOffset, aCount) {
+      onStartRequest() {},
+      onDataAvailable(aRequest, aInputStream) {
         var wrapper = Cc["@mozilla.org/scriptableinputstream;1"].createInstance(
           Ci.nsIScriptableInputStream
         );
@@ -198,7 +198,6 @@ OpenCallback.prototype = {
             entry.setValid();
           }
 
-          entry.close();
           if (self.behavior & WAITFORWRITE) {
             self.goon(entry);
           }
@@ -234,8 +233,6 @@ OpenCallback.prototype = {
           if (self.behavior & WAITFORWRITE) {
             self.goon(entry);
           }
-
-          entry.close();
         });
       });
     } else {
@@ -255,7 +252,6 @@ OpenCallback.prototype = {
         self.onDataCheckPassed = true;
         LOG_C2(self, "entry read done");
         self.goon(entry);
-        entry.close();
       });
     }
   },
@@ -333,28 +329,35 @@ VisitCallback.prototype = {
       return false;
     }
 
-    Assert.ok(!!this.entries);
+    Assert.ok(
+      !!this.entries,
+      "Ensure that the fact that we found cache entries matches expectations."
+    );
 
     var index = this.entries.findIndex(findCacheIndex);
-    Assert.ok(index > -1);
+    Assert.ok(index > -1, "Cache entry should exist");
 
     this.entries.splice(index, 1);
   },
   onCacheEntryVisitCompleted() {
     LOG_C2(this, "onCacheEntryVisitCompleted");
     if (this.entries) {
-      Assert.equal(this.entries.length, 0);
+      Assert.equal(
+        this.entries.length,
+        0,
+        "Visited all expected cache entries."
+      );
     }
     this.notify();
   },
   notify() {
-    Assert.ok(!!this.goon);
+    Assert.ok(!!this.goon, "goon should not be null");
     var goon = this.goon;
     this.goon = null;
     executeSoon(goon);
   },
   selfCheck() {
-    Assert.ok(!this.entries || !this.entries.length);
+    Assert.ok(!this.entries || !this.entries.length, "entries should be empty");
   },
 };
 
@@ -422,7 +425,7 @@ function wait_for_cache_index(continue_func) {
 }
 
 function finish_cache2_test() {
-  callbacks.forEach(function (callback, index) {
+  callbacks.forEach(function (callback) {
     callback.selfCheck();
   });
   do_test_finished();

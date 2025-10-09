@@ -13,7 +13,7 @@ transforms:
 task-defaults:
     name: update-verify-config-next
     run-on-projects: []  # to make sure this never runs as part of CI
-    run-on-releases: [esr128]
+    run-on-releases: [esr140]
     shipping-phase: promote
     worker-type: b-linux-gcp
     worker:
@@ -33,6 +33,7 @@ task-defaults:
     extra:
         app-name: browser
         branch-prefix: mozilla
+        last-linux-bz2-version: "134.99.0"  # Bug 1710599: Last version to use bz2 compression on Linux builds
         archive-prefix:
             by-release-level:
                 staging: "http://ftp.stage.mozaws.net/pub"
@@ -52,7 +53,7 @@ task-defaults:
         updater-platform: linux-x86_64
         product: firefox
         channel: "esr-localtest-next"
-        include-version: esr128-next
+        include-version: esr140-next
         last-watershed: "68.0esr"
 
 tasks:
@@ -96,3 +97,11 @@ tasks:
             build_platform: win64-shippable
         extra:
             platform: win64
+    firefox-next-win64-aarch64:
+        shipping-product: firefox
+        treeherder:
+            platform: windows2012-aarch64-shippable/opt
+        attributes:
+            build_platform: win64-aarch64-shippable
+        extra:
+            platform: win64-aarch64

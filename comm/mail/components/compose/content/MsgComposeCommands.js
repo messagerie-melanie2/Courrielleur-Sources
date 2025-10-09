@@ -24,19 +24,20 @@
  */
 
 // Ensure the activity modules are loaded for this window.
-ChromeUtils.import("resource:///modules/activity/activityModules.jsm");
-var { AttachmentChecker } = ChromeUtils.import(
-  "resource:///modules/AttachmentChecker.jsm"
+ChromeUtils.importESModule(
+  "resource:///modules/activity/activityModules.sys.mjs"
 );
-var { cloudFileAccounts } = ChromeUtils.import(
-  "resource:///modules/cloudFileAccounts.jsm"
+var { cloudFileAccounts } = ChromeUtils.importESModule(
+  "resource:///modules/cloudFileAccounts.sys.mjs"
 );
-var { MimeParser } = ChromeUtils.import("resource:///modules/mimeParser.jsm");
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MimeParser } = ChromeUtils.importESModule(
+  "resource:///modules/mimeParser.sys.mjs"
+);
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 var { PluralForm } = ChromeUtils.importESModule(
-  "resource://gre/modules/PluralForm.sys.mjs"
+  "resource:///modules/PluralForm.sys.mjs"
 );
 var { AppConstants } = ChromeUtils.importESModule(
   "resource://gre/modules/AppConstants.sys.mjs"
@@ -46,20 +47,19 @@ var { ExtensionParent } = ChromeUtils.importESModule(
 );
 
 ChromeUtils.defineESModuleGetters(this, {
+  AttachmentInfo: "resource:///modules/AttachmentInfo.sys.mjs",
+  BondOpenPGP: "chrome://openpgp/content/BondOpenPGP.sys.mjs",
+  EnigmailKeyRing: "chrome://openpgp/content/modules/keyRing.sys.mjs",
+  FolderTreeProperties: "resource:///modules/FolderTreeProperties.sys.mjs",
+  FolderUtils: "resource:///modules/FolderUtils.sys.mjs",
+  MailUtils: "resource:///modules/MailUtils.sys.mjs",
   SelectionUtils: "resource://gre/modules/SelectionUtils.sys.mjs",
   ShortcutUtils: "resource://gre/modules/ShortcutUtils.sys.mjs",
+  UIDensity: "resource:///modules/UIDensity.sys.mjs",
+  UIFontSize: "resource:///modules/UIFontSize.sys.mjs",
 });
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  FolderUtils: "resource:///modules/FolderUtils.jsm",
-  MailUtils: "resource:///modules/MailUtils.jsm",
-  EnigmailKeyRing: "chrome://openpgp/content/modules/keyRing.jsm",
-  BondOpenPGP: "chrome://openpgp/content/BondOpenPGP.jsm",
-  UIFontSize: "resource:///modules/UIFontSize.jsm",
-  UIDensity: "resource:///modules/UIDensity.jsm",
-});
-
-XPCOMUtils.defineLazyGetter(
+ChromeUtils.defineLazyGetter(
   this,
   "l10nCompose",
   () =>
@@ -69,7 +69,7 @@ XPCOMUtils.defineLazyGetter(
     ])
 );
 
-XPCOMUtils.defineLazyGetter(
+ChromeUtils.defineLazyGetter(
   this,
   "l10nComposeSync",
   () =>
@@ -94,8 +94,8 @@ XPCOMUtils.defineLazyScriptGetter(
 
 const lazy = {};
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  MailStringUtils: "resource:///modules/MailStringUtils.jsm",
+ChromeUtils.defineESModuleGetters(lazy, {
+  MailStringUtils: "resource:///modules/MailStringUtils.sys.mjs",
 });
 
 /**
@@ -131,6 +131,7 @@ var gLoadingComplete = false;
 
 var gAttachmentBucket;
 var gAttachmentCounter;
+var gTempDirsToDelete = [];
 /**
  * typedef {Object} FocusArea
  *
@@ -267,10 +268,10 @@ var gSpellCheckingEnabled;
 
 var kComposeAttachDirPrefName = "mail.compose.attach.dir";
 
-window.addEventListener("unload", event => {
+window.addEventListener("unload", () => {
   ComposeUnload();
 });
-window.addEventListener("load", event => {
+window.addEventListener("load", () => {
   ComposeLoad();
 });
 window.addEventListener("close", event => {
@@ -278,7 +279,7 @@ window.addEventListener("close", event => {
     event.preventDefault();
   }
 });
-window.addEventListener("focus", event => {
+window.addEventListener("focus", () => {
   EditorOnFocus();
 });
 window.addEventListener("click", event => {
@@ -299,15 +300,15 @@ this.__defineGetter__("browser", GetCurrentEditorElement);
  */
 var XULBrowserWindow = {
   // Used to show the link-being-hovered-over in the status bar. Do nothing here.
-  setOverLink(url, anchorElt) {},
+  setOverLink() {},
 
   // Called before links are navigated to to allow us to retarget them if needed.
-  onBeforeLinkTraversal(originalTarget, linkURI, linkNode, isAppTab) {
+  onBeforeLinkTraversal(originalTarget) {
     return originalTarget;
   },
 
   // Called by BrowserParent::RecvShowTooltip.
-  showTooltip(xDevPix, yDevPix, tooltip, direction, browser) {
+  showTooltip(xDevPix, yDevPix, tooltip, direction) {
     if (
       Cc["@mozilla.org/widget/dragservice;1"]
         .getService(Ci.nsIDragService)
@@ -316,7 +317,7 @@ var XULBrowserWindow = {
       return;
     }
 
-    let elt = document.getElementById("remoteBrowserTooltip");
+    const elt = document.getElementById("remoteBrowserTooltip");
     elt.label = tooltip;
     elt.style.direction = direction;
     elt.openPopupAtScreen(
@@ -329,7 +330,7 @@ var XULBrowserWindow = {
 
   // Called by BrowserParent::RecvHideTooltip.
   hideTooltip() {
-    let elt = document.getElementById("remoteBrowserTooltip");
+    const elt = document.getElementById("remoteBrowserTooltip");
     elt.hidePopup();
   },
 
@@ -345,9 +346,9 @@ window
 
 // Observer for the autocomplete input.
 const inputObserver = {
-  observe: (subject, topic, data) => {
+  observe: (subject, topic) => {
     if (topic == "autocomplete-did-enter-text") {
-      let input = subject.QueryInterface(
+      const input = subject.QueryInterface(
         Ci.nsIAutoCompleteInput
       ).wrappedJSObject;
 
@@ -365,7 +366,7 @@ const inputObserver = {
 };
 
 const keyObserver = {
-  observe: async (subject, topic, data) => {
+  observe: async (subject, topic) => {
     switch (topic) {
       case "openpgp-key-change":
         EnigmailKeyRing.clearCache();
@@ -376,6 +377,25 @@ const keyObserver = {
         break;
       default:
         break;
+    }
+  },
+};
+
+const accountObserver = {
+  observe(subject, topic) {
+    if (topic == "server-color-changed") {
+      // Refresh the full list to make sure we're not dealing with stale data.
+      const identityList = document.getElementById("msgIdentity");
+      if (identityList) {
+        const currentKey = identityList.getAttribute("identitykey");
+        identityList.menupopup.replaceChildren();
+        FillIdentityList(identityList);
+        identityList.selectedItem = identityList.getElementsByAttribute(
+          "identitykey",
+          currentKey
+        )[0];
+        LoadIdentity(true);
+      }
     }
   },
 };
@@ -445,7 +465,7 @@ function ReleaseGlobalVariables() {
 }
 
 // Notification box shown at the bottom of the window.
-XPCOMUtils.defineLazyGetter(this, "gComposeNotification", () => {
+ChromeUtils.defineLazyGetter(this, "gComposeNotification", () => {
   return new MozElements.NotificationBox(element => {
     element.setAttribute("notificationside", "bottom");
     document.getElementById("compose-notification-bottom").append(element);
@@ -455,8 +475,8 @@ XPCOMUtils.defineLazyGetter(this, "gComposeNotification", () => {
 /**
  *  Get the first next sibling element matching the selector (if specified).
  *
- *  @param {HTMLElement} element - The source element whose sibling to look for.
- *  @param {string} [selector] - The CSS query selector to match.
+ * @param {HTMLElement} element - The source element whose sibling to look for.
+ * @param {string} [selector] - The CSS query selector to match.
  *
  *  @returns {(HTMLElement|null)} - The first matching sibling element, or null.
  */
@@ -480,8 +500,8 @@ function getNextSibling(element, selector) {
 /**
  *  Get the first previous sibling element matching the selector (if specified).
  *
- *  @param {HTMLElement} element - The source element whose sibling to look for.
- *  @param {string} [selector] - The CSS query selector to match.
+ * @param {HTMLElement} element - The source element whose sibling to look for.
+ * @param {string} [selector] - The CSS query selector to match.
  *
  *  @returns {(HTMLElement|null)} - The first matching sibling element, or null.
  */
@@ -505,8 +525,8 @@ function getPreviousSibling(element, selector) {
 /**
  * Get a pretty, human-readable shortcut key string from a given <key> id.
  *
- * @param aKeyId   the ID of a <key> element
- * @returns string  pretty, human-readable shortcut key string from the <key>
+ * @param {string} aKeyId - The ID of a <key> element.
+ * @returns {string} pretty, human-readable shortcut key string from the <key>.
  */
 function getPrettyKey(aKeyId) {
   return ShortcutUtils.prettifyShortcut(document.getElementById(aKeyId));
@@ -518,7 +538,7 @@ function getPrettyKey(aKeyId) {
  * This includes elements like the address list, attachment list, subject
  * and message body.
  *
- * @param aDisable  true = disable items. false = enable items.
+ * @param {boolean} aDisable - true = disable items. false = enable items.
  */
 function updateEditableFields(aDisable) {
   if (!gMsgCompose) {
@@ -531,7 +551,7 @@ function updateEditableFields(aDisable) {
     gMsgCompose.editor.flags &= ~Ci.nsIEditor.eEditorReadonlyMask;
 
     try {
-      let checker = GetCurrentEditor().getInlineSpellChecker(true);
+      const checker = GetCurrentEditor().getInlineSpellChecker(true);
       checker.enableRealTimeSpell = gSpellCheckingEnabled;
     } catch (ex) {
       // An error will be thrown if there are no dictionaries. Just ignore it.
@@ -539,17 +559,17 @@ function updateEditableFields(aDisable) {
   }
 
   // Disable all the input fields and labels.
-  for (let element of document.querySelectorAll('[disableonsend="true"]')) {
+  for (const element of document.querySelectorAll('[disableonsend="true"]')) {
     element.disabled = aDisable;
   }
 
   // Update the UI of the addressing rows.
-  for (let row of document.querySelectorAll(".address-container")) {
+  for (const row of document.querySelectorAll(".address-container")) {
     row.classList.toggle("disable-container", aDisable);
   }
 
   // Prevent any interaction with the addressing pills.
-  for (let pill of document.querySelectorAll("mail-address-pill")) {
+  for (const pill of document.querySelectorAll("mail-address-pill")) {
     pill.toggleAttribute("disabled", aDisable);
   }
 }
@@ -618,7 +638,7 @@ var stateListener = {
     // identity/signature switch. This can only be done once the message
     // body has already been assembled with the signature we need to switch.
     if (gMsgCompose.identity != gCurrentIdentity) {
-      let identityList = document.getElementById("msgIdentity");
+      const identityList = document.getElementById("msgIdentity");
       identityList.selectedItem = identityList.getElementsByAttribute(
         "identitykey",
         gMsgCompose.identity.key
@@ -632,12 +652,12 @@ var stateListener = {
   },
 
   NotifyComposeBodyReadyNew() {
-    let useParagraph = Services.prefs.getBoolPref(
+    const useParagraph = Services.prefs.getBoolPref(
       "mail.compose.default_to_paragraph"
     );
     let insertParagraph = gMsgCompose.composeHTML && useParagraph;
 
-    let mailBody = getBrowser().contentDocument.querySelector("body");
+    const mailBody = getBrowser().contentDocument.querySelector("body");
     if (insertParagraph && gBodyFromArgs) {
       // Check for "empty" body before allowing paragraph to be inserted.
       // Non-empty bodies in a new message can occur when clicking on a
@@ -648,8 +668,8 @@ var stateListener = {
       // 3) No elements, just text
       // Note that <br><div/pre class="moz-signature"> doesn't happen in
       // paragraph mode.
-      let firstChild = mailBody.firstChild;
-      let firstElementChild = mailBody.firstElementChild;
+      const firstChild = mailBody.firstChild;
+      const firstElementChild = mailBody.firstElementChild;
       if (firstElementChild) {
         if (
           (firstElementChild.nodeName != "BR" ||
@@ -665,11 +685,11 @@ var stateListener = {
 
     // Control insertion of line breaks.
     if (insertParagraph) {
-      let editor = GetCurrentEditor();
+      const editor = GetCurrentEditor();
       editor.enableUndo(false);
 
       editor.selection.collapse(mailBody, 0);
-      let pElement = editor.createElementWithDefaults("p");
+      const pElement = editor.createElementWithDefaults("p");
       pElement.appendChild(editor.createElementWithDefaults("br"));
       editor.insertElementAtSelection(pElement, false);
 
@@ -686,21 +706,21 @@ var stateListener = {
 
   NotifyComposeBodyReadyReply() {
     // Control insertion of line breaks.
-    let useParagraph = Services.prefs.getBoolPref(
+    const useParagraph = Services.prefs.getBoolPref(
       "mail.compose.default_to_paragraph"
     );
     if (gMsgCompose.composeHTML && useParagraph) {
-      let mailBody = getBrowser().contentDocument.querySelector("body");
-      let editor = GetCurrentEditor();
-      let selection = editor.selection;
+      const mailBody = getBrowser().contentDocument.querySelector("body");
+      const editor = GetCurrentEditor();
+      const selection = editor.selection;
 
       // Make sure the selection isn't inside the signature.
       if (isSignature(mailBody.firstElementChild)) {
         selection.collapse(mailBody, 0);
       }
 
-      let range = selection.getRangeAt(0);
-      let start = range.startOffset;
+      const range = selection.getRangeAt(0);
+      const start = range.startOffset;
 
       if (start != range.endOffset) {
         // The selection is not collapsed, most likely due to the
@@ -715,7 +735,7 @@ var stateListener = {
 
       editor.enableUndo(false);
 
-      let pElement = editor.createElementWithDefaults("p");
+      const pElement = editor.createElementWithDefaults("p");
       pElement.appendChild(editor.createElementWithDefaults("br"));
       editor.insertElementAtSelection(pElement, false);
 
@@ -733,27 +753,27 @@ var stateListener = {
   },
 
   NotifyComposeBodyReadyForwardInline() {
-    let mailBody = getBrowser().contentDocument.querySelector("body");
-    let editor = GetCurrentEditor();
-    let selection = editor.selection;
+    const mailBody = getBrowser().contentDocument.querySelector("body");
+    const editor = GetCurrentEditor();
+    const selection = editor.selection;
 
     editor.enableUndo(false);
 
     // Control insertion of line breaks.
     selection.collapse(mailBody, 0);
-    let useParagraph = Services.prefs.getBoolPref(
+    const useParagraph = Services.prefs.getBoolPref(
       "mail.compose.default_to_paragraph"
     );
     if (gMsgCompose.composeHTML && useParagraph) {
-      let pElement = editor.createElementWithDefaults("p");
-      let brElement = editor.createElementWithDefaults("br");
+      const pElement = editor.createElementWithDefaults("p");
+      const brElement = editor.createElementWithDefaults("br");
       pElement.appendChild(brElement);
       editor.insertElementAtSelection(pElement, false);
       document.getElementById("cmd_paragraphState").setAttribute("state", "p");
     } else {
       // insertLineBreak() has been observed to insert two <br> elements
       // instead of one before a <div>, so we'll do it ourselves here.
-      let brElement = editor.createElementWithDefaults("br");
+      const brElement = editor.createElementWithDefaults("br");
       editor.insertElementAtSelection(brElement, false);
       document.getElementById("cmd_paragraphState").setAttribute("state", "");
     }
@@ -795,30 +815,31 @@ var stateListener = {
   },
 };
 
+/** @implements {nsIMsgSendListener} */
 var gSendListener = {
   // nsIMsgSendListener
-  onStartSending(aMsgID, aMsgSize) {},
-  onProgress(aMsgID, aProgress, aProgressMax) {},
-  onStatus(aMsgID, aMsg) {},
-  onStopSending(aMsgID, aStatus, aMsg, aReturnFile) {
+  onStartSending() {},
+  onSendProgress() {},
+  onStatus() {},
+  onStopSending(aMsgID, aStatus) {
     if (Components.isSuccessCode(aStatus)) {
       Services.obs.notifyObservers(null, "mail:composeSendSucceeded", aMsgID);
     }
   },
-  onGetDraftFolderURI(aMsgID, aFolderURI) {},
-  onSendNotPerformed(aMsgID, aStatus) {},
+  onGetDraftFolderURI() {},
+  onSendNotPerformed() {},
   onTransportSecurityError(msgID, status, secInfo, location) {
     // We're only interested in Bad Cert errors here.
-    let nssErrorsService = Cc["@mozilla.org/nss_errors_service;1"].getService(
+    const nssErrorsService = Cc["@mozilla.org/nss_errors_service;1"].getService(
       Ci.nsINSSErrorsService
     );
-    let errorClass = nssErrorsService.getErrorClass(status);
+    const errorClass = nssErrorsService.getErrorClass(status);
     if (errorClass != Ci.nsINSSErrorsService.ERROR_CLASS_BAD_CERT) {
       return;
     }
 
     // Give the user the option of adding an exception for the bad cert.
-    let params = {
+    const params = {
       exceptionAdded: false,
       securityInfo: secInfo,
       prefetchCert: true,
@@ -827,17 +848,21 @@ var gSendListener = {
     window.openDialog(
       "chrome://pippki/content/exceptionDialog.xhtml",
       "",
-      "chrome,centerscreen,modal",
+      "chrome,centerscreen,dependent",
       params
     );
     // params.exceptionAdded will be set if the user added an exception.
   },
 };
 
-// all progress notifications are done through the nsIWebProgressListener implementation...
+/**
+ * All progress notifications are done through progressListener.
+ *
+ * @implements {nsIWebProgressListener}
+ */
 var progressListener = {
-  onStateChange(aWebProgress, aRequest, aStateFlags, aStatus) {
-    let progressMeter = document.getElementById("compose-progressmeter");
+  onStateChange(aWebProgress, aRequest, aStateFlags) {
+    const progressMeter = document.getElementById("compose-progressmeter");
     if (aStateFlags & Ci.nsIWebProgressListener.STATE_START) {
       progressMeter.hidden = false;
       progressMeter.removeAttribute("value");
@@ -880,7 +905,7 @@ var progressListener = {
     }
   },
 
-  onLocationChange(aWebProgress, aRequest, aLocation, aFlags) {
+  onLocationChange() {
     // we can ignore this notification
   },
 
@@ -888,18 +913,18 @@ var progressListener = {
     // Looks like it's possible that we get call while the document has been already delete!
     // therefore we need to protect ourself by using try/catch
     try {
-      let statusText = document.getElementById("statusText");
+      const statusText = document.getElementById("statusText");
       if (statusText) {
         statusText.textContent = aMessage;
       }
     } catch (ex) {}
   },
 
-  onSecurityChange(aWebProgress, aRequest, state) {
+  onSecurityChange() {
     // we can ignore this notification
   },
 
-  onContentBlockingEvent(aWebProgress, aRequest, aEvent) {
+  onContentBlockingEvent() {
     // we can ignore this notification
   },
 
@@ -924,7 +949,7 @@ var defaultController = {
       isEnabled() {
         // Hide the command entirely if there are no cloud accounts or
         // the feature is disabled.
-        let cmd = document.getElementById("cmd_attachCloud");
+        const cmd = document.getElementById("cmd_attachCloud");
         cmd.hidden =
           !Services.prefs.getBoolPref("mail.cloud_files.enabled") ||
           cloudFileAccounts.configuredAccounts.length == 0 ||
@@ -949,7 +974,7 @@ var defaultController = {
 
     cmd_attachVCard: {
       isEnabled() {
-        let cmd = document.getElementById("cmd_attachVCard");
+        const cmd = document.getElementById("cmd_attachVCard");
         cmd.setAttribute("checked", gMsgCompose.compFields.attachVCard);
         return !!gCurrentIdentity?.escapedVCard;
       },
@@ -958,7 +983,7 @@ var defaultController = {
 
     cmd_attachPublicKey: {
       isEnabled() {
-        let cmd = document.getElementById("cmd_attachPublicKey");
+        const cmd = document.getElementById("cmd_attachPublicKey");
         cmd.setAttribute("checked", gAttachMyPublicPGPKey);
         return isPgpConfigured();
       },
@@ -977,7 +1002,7 @@ var defaultController = {
     cmd_reorderAttachments: {
       isEnabled() {
         if (!gAttachmentBucket.itemCount) {
-          let reorderAttachmentsPanel = document.getElementById(
+          const reorderAttachmentsPanel = document.getElementById(
             "reorderAttachmentsPanel"
           );
           if (reorderAttachmentsPanel.state == "open") {
@@ -1105,9 +1130,9 @@ var defaultController = {
 
     cmd_delete: {
       isEnabled() {
-        let cmdDelete = document.getElementById("cmd_delete");
-        let textValue = cmdDelete.getAttribute("valueDefault");
-        let accesskeyValue = cmdDelete.getAttribute("valueDefaultAccessKey");
+        const cmdDelete = document.getElementById("cmd_delete");
+        const textValue = cmdDelete.getAttribute("valueDefault");
+        const accesskeyValue = cmdDelete.getAttribute("valueDefaultAccessKey");
 
         cmdDelete.setAttribute("label", textValue);
         cmdDelete.setAttribute("accesskey", accesskeyValue);
@@ -1122,8 +1147,8 @@ var defaultController = {
         return true;
       },
       doCommand() {
-        let currentAccountKey = getCurrentAccountKey();
-        let account = MailServices.accounts.getAccount(currentAccountKey);
+        const currentAccountKey = getCurrentAccountKey();
+        const account = MailServices.accounts.getAccount(currentAccountKey);
         MsgAccountManager(null, account.incomingServer);
       },
     },
@@ -1139,7 +1164,7 @@ var defaultController = {
 
     cmd_quoteMessage: {
       isEnabled() {
-        let selectedURIs = GetSelectedMessages();
+        const selectedURIs = GetSelectedMessages();
         return selectedURIs && selectedURIs.length > 0;
       },
       doCommand() {
@@ -1188,7 +1213,7 @@ var defaultController = {
 
     cmd_spelling: {
       isEnabled() {
-        return true;
+        return !gWindowLocked;
       },
       doCommand() {
         window.cancelSendMessage = false;
@@ -1198,7 +1223,7 @@ var defaultController = {
         window.openDialog(
           "chrome://messenger/content/messengercompose/EdSpellCheck.xhtml",
           "_blank",
-          "dialog,close,titlebar,modal,resizable",
+          "dialog,close,titlebar,dependent,resizable",
           false,
           skipBlockQuotes,
           true
@@ -1238,7 +1263,7 @@ var defaultController = {
     cmd.doCommand();
   },
 
-  onEvent(event) {},
+  onEvent() {},
 };
 
 var attachmentBucketController = {
@@ -1254,10 +1279,10 @@ var attachmentBucketController = {
 
     cmd_delete: {
       isEnabled() {
-        let cmdDelete = document.getElementById("cmd_delete");
+        const cmdDelete = document.getElementById("cmd_delete");
         let textValue = getComposeBundle().getString("removeAttachmentMsgs");
         textValue = PluralForm.get(gAttachmentBucket.selectedCount, textValue);
-        let accesskeyValue = cmdDelete.getAttribute(
+        const accesskeyValue = cmdDelete.getAttribute(
           "valueRemoveAttachmentAccessKey"
         );
         cmdDelete.setAttribute("label", textValue);
@@ -1365,8 +1390,8 @@ var attachmentBucketController = {
         let currSortOrder;
         let isBlock;
         let btnAscending;
-        let toggleCmd = document.getElementById("cmd_sortAttachmentsToggle");
-        let toggleBtn = document.getElementById("btn_sortAttachmentsToggle");
+        const toggleCmd = document.getElementById("cmd_sortAttachmentsToggle");
+        const toggleBtn = document.getElementById("btn_sortAttachmentsToggle");
         let sortDirection;
         let btnLabelAttr;
 
@@ -1430,7 +1455,7 @@ var attachmentBucketController = {
       isEnabled() {
         // Hide the command entirely if Filelink is disabled, or if there are
         // no cloud accounts.
-        let cmd = document.getElementById("cmd_convertCloud");
+        const cmd = document.getElementById("cmd_convertCloud");
 
         cmd.hidden =
           !Services.prefs.getBoolPref("mail.cloud_files.enabled") ||
@@ -1440,7 +1465,7 @@ var attachmentBucketController = {
           return false;
         }
 
-        for (let item of gAttachmentBucket.selectedItems) {
+        for (const item of gAttachmentBucket.selectedItems) {
           if (item.uploading) {
             return false;
           }
@@ -1459,7 +1484,7 @@ var attachmentBucketController = {
           return false;
         }
 
-        for (let item of gAttachmentBucket.selectedItems) {
+        for (const item of gAttachmentBucket.selectedItems) {
           if (item.uploading) {
             return false;
           }
@@ -1473,7 +1498,7 @@ var attachmentBucketController = {
 
     cmd_cancelUpload: {
       isEnabled() {
-        let cmd = document.getElementById(
+        const cmd = document.getElementById(
           "composeAttachmentContext_cancelUploadItem"
         );
 
@@ -1483,7 +1508,7 @@ var attachmentBucketController = {
           return false;
         }
 
-        for (let item of gAttachmentBucket.selectedItems) {
+        for (const item of gAttachmentBucket.selectedItems) {
           if (item && item.uploading) {
             cmd.hidden = false;
             return true;
@@ -1498,13 +1523,13 @@ var attachmentBucketController = {
         return false;
       },
       doCommand() {
-        let fileHandler = Services.io
+        const fileHandler = Services.io
           .getProtocolHandler("file")
           .QueryInterface(Ci.nsIFileProtocolHandler);
 
-        for (let item of gAttachmentBucket.selectedItems) {
+        for (const item of gAttachmentBucket.selectedItems) {
           if (item && item.uploading) {
-            let file = fileHandler.getFileFromURLSpec(item.attachment.url);
+            const file = fileHandler.getFileFromURLSpec(item.attachment.url);
             item.uploading.cancelFileUpload(window, file);
           }
         }
@@ -1534,16 +1559,18 @@ var attachmentBucketController = {
     cmd.doCommand();
   },
 
-  onEvent(event) {},
+  onEvent() {},
 };
 
 /**
  * Start composing a new message.
+ *
+ * @param {?Event} aEvent
  */
 function goOpenNewMessage(aEvent) {
   // If aEvent is passed, check if Shift key was pressed for composition in
   // non-default format (HTML vs. plaintext).
-  let msgCompFormat =
+  const msgCompFormat =
     aEvent && aEvent.shiftKey
       ? Ci.nsIMsgCompFormat.OppositeOfDefault
       : Ci.nsIMsgCompFormat.Default;
@@ -1571,11 +1598,11 @@ function QuoteSelectedMessage() {
 }
 
 function GetSelectedMessages() {
-  let mailWindow = Services.wm.getMostRecentWindow("mail:3pane");
+  const mailWindow = Services.wm.getMostRecentWindow("mail:3pane");
   if (!mailWindow) {
     return null;
   }
-  let tab = mailWindow.document.getElementById("tabmail").currentTabInfo;
+  const tab = mailWindow.document.getElementById("tabmail").currentTabInfo;
   if (tab.mode.name == "mail3PaneTab" && tab.message) {
     return tab.chromeBrowser.contentWindow?.gDBView?.getURIsForSelection();
   } else if (tab.mode.name == "mailMessageTab") {
@@ -1616,7 +1643,7 @@ function CommandUpdate_MsgCompose() {
 
 function findbarFindReplace() {
   focusMsgBody();
-  let findbar = document.getElementById("FindToolbar");
+  const findbar = document.getElementById("FindToolbar");
   findbar.close();
   goDoCommand("cmd_findReplace");
   findbar.open();
@@ -1662,22 +1689,48 @@ function updateComposeItems() {
  *   items to the state stored before disabling them.
  */
 function updateAllItems(disable) {
-  for (let item of document.querySelectorAll(
+  function isDisabled(i) {
+    return i.hasAttribute("disabled") && i.getAttribute("disabled") !== "false";
+  }
+
+  for (const item of document.querySelectorAll(
     "menu, toolbarbutton, [command], [oncommand]"
   )) {
     if (disable) {
-      // Disable all items
-      item.setAttribute("stateBeforeSend", item.getAttribute("disabled"));
-      item.setAttribute("disabled", "disabled");
-    } else {
-      // Restore initial state
-      let stateBeforeSend = item.getAttribute("stateBeforeSend");
-      if (stateBeforeSend == "disabled" || stateBeforeSend == "true") {
-        item.setAttribute("disabled", stateBeforeSend);
-      } else {
-        item.removeAttribute("disabled");
+      if (item.hasAttribute("disabledForSend")) {
+        // The disabledForSend attribute is already set. This may be caused by:
+        // * multiple calls of updateAllItems(true)
+        // * a command item which is linked to *this* item was already updated
+        //   and implicitly updated *this* item already.
+        // In both cases we should not touch this item.
+        continue;
       }
-      item.removeAttribute("stateBeforeSend");
+
+      if (isDisabled(item)) {
+        // This item is already disabled, do not touch it.
+        continue;
+      }
+
+      if (AppConstants.platform === "macosx" && item.id == "helpMenu") {
+        // For some unknown reason, the help menu on macOS cannot be enabled anymore
+        // and also affects the help menu in the messenger window. Since all its
+        // menuitems still get disabled, the help menu itself is temporarily
+        // excluded (see Bug 1883647).
+        continue;
+      }
+
+      // Disable.
+      item.setAttribute("disabled", "true");
+      item.setAttribute("disabledForSend", "true");
+    } else {
+      if (!item.hasAttribute("disabledForSend")) {
+        // This item was not disabled by us, do not touch it.
+        continue;
+      }
+
+      // Restore initial state.
+      item.removeAttribute("disabled");
+      item.removeAttribute("disabledForSend");
     }
   }
 }
@@ -1725,7 +1778,7 @@ function updateAttachMyPubKey() {
 }
 
 function removeAutoDisableNotification() {
-  let notification = gComposeNotification.getNotificationWithValue(
+  const notification = gComposeNotification.getNotificationWithValue(
     "e2eeDisableNotification"
   );
   if (notification) {
@@ -1751,7 +1804,7 @@ function toggleAttachMyPublicKey(target) {
 }
 
 function updateEncryptedSubject() {
-  let warnSubjectUnencrypted =
+  const warnSubjectUnencrypted =
     (!gSelectedTechnologyIsPGP && gSendEncrypted) ||
     (isPgpConfigured() &&
       gSelectedTechnologyIsPGP &&
@@ -1777,7 +1830,7 @@ function toggleEncryptedSubject() {
  * @param {string} menu_id - suffix of the menu ID of the menu to update
  */
 function setSecuritySettings(menu_id) {
-  let encItem = document.getElementById("menu_securityEncrypt" + menu_id);
+  const encItem = document.getElementById("menu_securityEncrypt" + menu_id);
   encItem.setAttribute("checked", gSendEncrypted);
 
   let disableSig = false;
@@ -1797,7 +1850,7 @@ function setSecuritySettings(menu_id) {
     }
   }
 
-  let sigItem = document.getElementById("menu_securitySign" + menu_id);
+  const sigItem = document.getElementById("menu_securitySign" + menu_id);
   sigItem.setAttribute("checked", gSendSigned && !disableSig);
 
   // The radio button to disable encryption is always active.
@@ -1809,13 +1862,13 @@ function setSecuritySettings(menu_id) {
 
   sigItem.disabled = disableSig;
 
-  let pgpItem = document.getElementById("encTech_OpenPGP" + menu_id);
-  let smimeItem = document.getElementById("encTech_SMIME" + menu_id);
+  const pgpItem = document.getElementById("encTech_OpenPGP" + menu_id);
+  const smimeItem = document.getElementById("encTech_SMIME" + menu_id);
 
   smimeItem.disabled =
     !isSmimeSigningConfigured() && !isSmimeEncryptionConfigured();
 
-  let encryptSubjectItem = document.getElementById(
+  const encryptSubjectItem = document.getElementById(
     `menu_securityEncryptSubject${menu_id}`
   );
 
@@ -1832,7 +1885,7 @@ function setSecuritySettings(menu_id) {
 
   document.getElementById("menu_recipientStatus" + menu_id).disabled =
     disableEnc;
-  let manager = document.getElementById("menu_openManager" + menu_id);
+  const manager = document.getElementById("menu_openManager" + menu_id);
   manager.disabled = disableEnc;
   manager.hidden = !gSelectedTechnologyIsPGP;
 }
@@ -1845,23 +1898,7 @@ function setSecuritySettings(menu_id) {
  */
 function showMessageComposeSecurityStatus(isSending = false) {
   if (gSelectedTechnologyIsPGP) {
-    if (
-      Services.prefs.getBoolPref("mail.openpgp.key_assistant.enable", false)
-    ) {
-      gKeyAssistant.show(getEncryptionCompatibleRecipients(), isSending);
-    } else {
-      Recipients2CompFields(gMsgCompose.compFields);
-      window.openDialog(
-        "chrome://openpgp/content/ui/composeKeyStatus.xhtml",
-        "",
-        "chrome,modal,resizable,centerscreen",
-        {
-          compFields: gMsgCompose.compFields,
-          currentIdentity: gCurrentIdentity,
-        }
-      );
-      checkEncryptionState();
-    }
+    gKeyAssistant.show(getEncryptionCompatibleRecipients(), isSending);
   } else {
     Recipients2CompFields(gMsgCompose.compFields);
     // Copy current flags to S/MIME composeSecure object.
@@ -1898,10 +1935,10 @@ function msgComposeContextOnShowing(event) {
     nsContextMenu.contentData.actor.manager
   );
 
-  let canSpell = gSpellChecker.canSpellCheck;
-  let showDictionaries = canSpell && gSpellChecker.enabled;
-  let onMisspelling = gSpellChecker.overMisspelling;
-  let showUndo = canSpell && gSpellChecker.canUndo();
+  const canSpell = gSpellChecker.canSpellCheck;
+  const showDictionaries = canSpell && gSpellChecker.enabled;
+  const onMisspelling = gSpellChecker.overMisspelling;
+  const showUndo = canSpell && gSpellChecker.canUndo();
 
   document.getElementById("spellCheckSeparator").hidden = !canSpell;
   document.getElementById("spellCheckEnable").hidden = !canSpell;
@@ -1916,11 +1953,11 @@ function msgComposeContextOnShowing(event) {
   // Suggestion list.
   document.getElementById("spellCheckSuggestionsSeparator").hidden =
     !onMisspelling && !showUndo;
-  let separator = document.getElementById("spellCheckAddSep");
+  const separator = document.getElementById("spellCheckAddSep");
   separator.hidden = !onMisspelling;
   if (onMisspelling) {
-    let addMenuItem = document.getElementById("spellCheckAddToDictionary");
-    let suggestionCount = gSpellChecker.addSuggestionsToMenu(
+    const addMenuItem = document.getElementById("spellCheckAddToDictionary");
+    const suggestionCount = gSpellChecker.addSuggestionsToMenu(
       addMenuItem.parentNode,
       separator,
       nsContextMenu.contentData.spellInfo.spellSuggestions
@@ -1934,9 +1971,9 @@ function msgComposeContextOnShowing(event) {
   // Dictionary list.
   document.getElementById("spellCheckDictionaries").hidden = !showDictionaries;
   if (canSpell) {
-    let dictMenu = document.getElementById("spellCheckDictionariesMenu");
-    let dictSep = document.getElementById("spellCheckLanguageSeparator");
-    let count = gSpellChecker.addDictionaryListToMenu(dictMenu, dictSep);
+    const dictMenu = document.getElementById("spellCheckDictionariesMenu");
+    const dictSep = document.getElementById("spellCheckLanguageSeparator");
+    const count = gSpellChecker.addDictionaryListToMenu(dictMenu, dictSep);
     dictSep.hidden = count == 0;
     document.getElementById("spellCheckAddDictionariesMain").hidden = !false;
   } else if (this.onSpellcheckable) {
@@ -1955,21 +1992,21 @@ function msgComposeContextOnShowing(event) {
 
   // The rest of this block sends menu information to WebExtensions.
 
-  let editor = GetCurrentEditorElement();
-  let target = editor.contentDocument.elementFromPoint(
-    editor._contextX,
-    editor._contextY
+  const editor = GetCurrentEditorElement();
+  const target = editor.contentDocument.elementFromPoint(
+    editor._clientX,
+    editor._clientY
   );
 
-  let selectionInfo = SelectionUtils.getSelectionDetails(window);
-  let isContentSelected = !selectionInfo.docSelectionIsCollapsed;
-  let textSelected = selectionInfo.text;
-  let isTextSelected = !!textSelected.length;
+  const selectionInfo = SelectionUtils.getSelectionDetails(window);
+  const isContentSelected = !selectionInfo.docSelectionIsCollapsed;
+  const textSelected = selectionInfo.text;
+  const isTextSelected = !!textSelected.length;
 
   // Set up early the right flags for editable / not editable.
-  let editFlags = SpellCheckHelper.isEditable(target, window);
-  let onTextInput = (editFlags & SpellCheckHelper.TEXTINPUT) !== 0;
-  let onEditable =
+  const editFlags = SpellCheckHelper.isEditable(target, window);
+  const onTextInput = (editFlags & SpellCheckHelper.TEXTINPUT) !== 0;
+  const onEditable =
     (editFlags &
       (SpellCheckHelper.EDITABLE | SpellCheckHelper.CONTENTEDITABLE)) !==
     0;
@@ -1988,7 +2025,7 @@ function msgComposeContextOnShowing(event) {
   let linkText = undefined;
   let linkUrl = undefined;
 
-  let link = target.closest("a");
+  const link = target.closest("a");
   if (link) {
     onLink = true;
     linkText =
@@ -2000,7 +2037,7 @@ function msgComposeContextOnShowing(event) {
     linkUrl = link.href;
   }
 
-  let subject = {
+  const subject = {
     menu: event.target,
     tab: window,
     isContentSelected,
@@ -2119,9 +2156,9 @@ function updateSendCommands(aHaveController) {
   }
 
   let changed = false;
-  let currentStates = {};
-  let changedStates = {};
-  for (let state of ["cmd_sendNow", "cmd_sendLater"]) {
+  const currentStates = {};
+  const changedStates = {};
+  for (const state of ["cmd_sendNow", "cmd_sendLater"]) {
     currentStates[state] = defaultController.isCommandEnabled(state);
     if (
       !gLastKnownComposeStates.hasOwnProperty(state) ||
@@ -2144,7 +2181,7 @@ function addAttachCloudMenuItems(aParentMenu) {
     aParentMenu.lastChild.remove();
   }
 
-  for (let account of cloudFileAccounts.configuredAccounts) {
+  for (const account of cloudFileAccounts.configuredAccounts) {
     if (
       aParentMenu.lastElementChild &&
       aParentMenu.lastElementChild.cloudFileUpload
@@ -2152,8 +2189,8 @@ function addAttachCloudMenuItems(aParentMenu) {
       aParentMenu.appendChild(document.createXULElement("menuseparator"));
     }
 
-    let item = document.createXULElement("menuitem");
-    let iconURL = account.iconURL;
+    const item = document.createXULElement("menuitem");
+    const iconURL = account.iconURL;
     item.cloudFileAccount = account;
     item.setAttribute(
       "label",
@@ -2165,10 +2202,10 @@ function addAttachCloudMenuItems(aParentMenu) {
     }
     aParentMenu.appendChild(item);
 
-    let previousUploads = account.getPreviousUploads();
-    let addedFiles = [];
-    for (let upload of previousUploads) {
-      let file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+    const previousUploads = account.getPreviousUploads();
+    const addedFiles = [];
+    for (const upload of previousUploads) {
+      const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
       file.initWithPath(upload.path);
 
       // TODO: Figure out how to handle files that no longer exist on the filesystem.
@@ -2176,7 +2213,7 @@ function addAttachCloudMenuItems(aParentMenu) {
         continue;
       }
       if (!addedFiles.find(f => f.name == upload.name || f.url == upload.url)) {
-        let fileItem = document.createXULElement("menuitem");
+        const fileItem = document.createXULElement("menuitem");
         fileItem.cloudFileUpload = upload;
         fileItem.cloudFileAccount = account;
         fileItem.setAttribute("label", upload.name);
@@ -2190,21 +2227,21 @@ function addAttachCloudMenuItems(aParentMenu) {
 }
 
 function addConvertCloudMenuItems(aParentMenu, aAfterNodeId, aRadioGroup) {
-  let afterNode = document.getElementById(aAfterNodeId);
+  const afterNode = document.getElementById(aAfterNodeId);
   while (afterNode.nextElementSibling) {
     afterNode.nextElementSibling.remove();
   }
 
   if (!gAttachmentBucket.selectedItem.sendViaCloud) {
-    let item = document.getElementById(
+    const item = document.getElementById(
       "convertCloudMenuItems_popup_convertAttachment"
     );
     item.setAttribute("checked", "true");
   }
 
-  for (let account of cloudFileAccounts.configuredAccounts) {
-    let item = document.createXULElement("menuitem");
-    let iconURL = account.iconURL;
+  for (const account of cloudFileAccounts.configuredAccounts) {
+    const item = document.createXULElement("menuitem");
+    const iconURL = account.iconURL;
     item.cloudFileAccount = account;
     item.setAttribute("label", cloudFileAccounts.getDisplayName(account));
     item.setAttribute("type", "radio");
@@ -2230,7 +2267,7 @@ function addConvertCloudMenuItems(aParentMenu, aAfterNodeId, aRadioGroup) {
     gAttachmentBucket.selectedItem.attachment.sendViaCloud &&
     !gAttachmentBucket.selectedItem.cloudFileAccount
   ) {
-    let regularItem = document.getElementById(
+    const regularItem = document.getElementById(
       "convertCloudMenuItems_popup_convertAttachment"
     );
     regularItem.removeAttribute("checked");
@@ -2250,7 +2287,7 @@ async function updateAttachmentItemProperties(attachmentItem) {
     );
     gAttachmentBucket.setCloudIcon(attachmentItem, "");
   } else if (attachmentItem.attachment.sendViaCloud) {
-    let [tooltipUnknownAccountText, introText, titleText] =
+    const [tooltipUnknownAccountText, introText, titleText] =
       await document.l10n.formatValues([
         "cloud-file-unknown-account-tooltip",
         {
@@ -2286,7 +2323,7 @@ async function updateAttachmentItemProperties(attachmentItem) {
 
     // Update the CloudPartHeaderData, if there is a valid cloudFileUpload.
     if (attachmentItem.cloudFileUpload) {
-      let json = JSON.stringify(attachmentItem.cloudFileUpload);
+      const json = JSON.stringify(attachmentItem.cloudFileUpload);
       // Convert 16bit JavaScript string to a byteString, to make it work with
       // btoa().
       attachmentItem.attachment.cloudPartHeaderData = btoa(
@@ -2302,8 +2339,8 @@ async function updateAttachmentItemProperties(attachmentItem) {
   <meta charset="utf-8" />
  </head>
  <body>
-  <div style="padding: 15px; font-family: Calibri, sans-serif;">
-   <div style="margin-bottom: 15px;" id="cloudAttachmentListHeader">${introText}</div>
+  <div id="cloudAttachmentListRoot">
+   <div id="cloudAttachmentListHeader">${introText}</div>
    <ul>${
      (
        await gCloudAttachmentLinkManager._createNode(
@@ -2341,7 +2378,7 @@ async function showLocalizedCloudFileAlert(
   provider = ex.cloudProvider,
   filename = ex.cloudFileName
 ) {
-  let bundle = getComposeBundle();
+  const bundle = getComposeBundle();
   let localizedTitle, localizedMessage;
 
   switch (ex.result) {
@@ -2494,13 +2531,13 @@ async function UpdateAttachment(attachmentItem, updateSettings = {}) {
     throw new Error("Unexpected: Invalid attachment item.");
   }
 
-  let originalAttachment = Object.assign({}, attachmentItem.attachment);
+  const originalAttachment = Object.assign({}, attachmentItem.attachment);
   let eventOnDone = false;
 
   // Ignore empty or falsy names.
-  let name = updateSettings.name || attachmentItem.attachment.name;
+  const name = updateSettings.name || attachmentItem.attachment.name;
 
-  let destCloudFileAccount = updateSettings.hasOwnProperty("cloudFileAccount")
+  const destCloudFileAccount = updateSettings.hasOwnProperty("cloudFileAccount")
     ? updateSettings.cloudFileAccount
     : attachmentItem.cloudFileAccount;
 
@@ -2585,7 +2622,7 @@ async function UpdateAttachment(attachmentItem, updateSettings = {}) {
       );
     } else {
       // Handle a cloud -> cloud move/rename or a local -> cloud upload.
-      let fileHandler = Services.io
+      const fileHandler = Services.io
         .getProtocolHandler("file")
         .QueryInterface(Ci.nsIFileProtocolHandler);
 
@@ -2667,7 +2704,7 @@ async function UpdateAttachment(attachmentItem, updateSettings = {}) {
             name
           );
         } else {
-          let file =
+          const file =
             updateSettings.file ||
             fileHandler.getFileFromURLSpec(attachmentItem.attachment.url);
 
@@ -2683,9 +2720,7 @@ async function UpdateAttachment(attachmentItem, updateSettings = {}) {
           attachmentItem.attachment.cloudFileAccountKey =
             destCloudFileAccount.accountKey;
 
-          Services.telemetry.keyedScalarAdd(
-            "tb.filelink.uploaded_size",
-            destCloudFileAccount.type,
+          Glean.filelink.uploadedSize[destCloudFileAccount.type].add(
             file.fileSize
           );
         }
@@ -2727,7 +2762,7 @@ async function UpdateAttachment(attachmentItem, updateSettings = {}) {
 
     // Update the local attachment.
     if (updateSettings.file) {
-      let attachment = FileToAttachment(updateSettings.file);
+      const attachment = FileToAttachment(updateSettings.file);
       attachmentItem.attachment.size = attachment.size;
       attachmentItem.attachment.url = attachment.url;
     }
@@ -2774,11 +2809,11 @@ function attachToCloud(event) {
  */
 async function attachToCloudRepeat(upload, account) {
   gMsgCompose.allowRemoteContent = true;
-  let file = FileUtils.File(upload.path);
-  let attachment = FileToAttachment(file);
+  const file = FileUtils.File(upload.path);
+  const attachment = FileToAttachment(file);
   attachment.name = upload.name;
 
-  let addedAttachmentItems = await AddAttachments([attachment]);
+  const addedAttachmentItems = await AddAttachments([attachment]);
   if (addedAttachmentItems.length > 0) {
     try {
       await UpdateAttachment(addedAttachmentItems[0], {
@@ -2794,14 +2829,14 @@ async function attachToCloudRepeat(upload, account) {
 /**
  * Prompt the user for a list of files to attach via a cloud provider.
  *
- * @param aAccount the cloud provider to upload the files to
+ * @param {object} aAccount - The cloud provider to upload the files to.
  */
 async function attachToCloudNew(aAccount) {
   // We need to let the user pick local file(s) to upload to the cloud and
   // gather url(s) to those files.
   var fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
   fp.init(
-    window,
+    window.browsingContext,
     getComposeBundle().getFormattedString("chooseFileToAttachViaCloud", [
       cloudFileAccounts.getDisplayName(aAccount),
     ]),
@@ -2815,18 +2850,18 @@ async function attachToCloudNew(aAccount) {
 
   fp.appendFilters(Ci.nsIFilePicker.filterAll);
 
-  let rv = await new Promise(resolve => fp.open(resolve));
+  const rv = await new Promise(resolve => fp.open(resolve));
   if (rv != Ci.nsIFilePicker.returnOK || !fp.files) {
     return;
   }
 
-  let files = [...fp.files];
-  let attachments = files.map(f => FileToAttachment(f));
-  let addedAttachmentItems = await AddAttachments(attachments);
+  const files = [...fp.files];
+  const attachments = files.map(f => FileToAttachment(f));
+  const addedAttachmentItems = await AddAttachments(attachments);
   SetLastAttachDirectory(files[files.length - 1]);
 
-  let promises = [];
-  for (let attachmentItem of addedAttachmentItems) {
+  const promises = [];
+  for (const attachmentItem of addedAttachmentItems) {
     promises.push(
       UpdateAttachment(attachmentItem, { cloudFileAccount: aAccount }).catch(
         ex => {
@@ -2843,14 +2878,14 @@ async function attachToCloudNew(aAccount) {
 /**
  * Convert an array of attachments to cloud attachments.
  *
- * @param aItems an array of <attachmentitem>s containing the attachments in
- *        question
- * @param aAccount the cloud account to upload the files to
+ * @param {Element[]} aItems - An array of <richlistitem.attachmentItem>s
+ *   containing the attachments in question.
+ * @param {CloudFileAccount} aAccount - The account to upload the files to.
  */
 async function convertListItemsToCloudAttachment(aItems, aAccount) {
   gMsgCompose.allowRemoteContent = true;
-  let promises = [];
-  for (let item of aItems) {
+  const promises = [];
+  for (const item of aItems) {
     // Bail out, if we would convert to the current account.
     if (
       item.attachment.sendViaCloud &&
@@ -2871,7 +2906,7 @@ async function convertListItemsToCloudAttachment(aItems, aAccount) {
 /**
  * Convert the selected attachments to cloud attachments.
  *
- * @param aAccount the cloud account to upload the files to
+ * @param {CloudFileAccount} aAccount - The account to upload the files to.
  */
 function convertSelectedToCloudAttachment(aAccount) {
   convertListItemsToCloudAttachment(
@@ -2883,13 +2918,13 @@ function convertSelectedToCloudAttachment(aAccount) {
 /**
  * Convert an array of nsIMsgAttachments to cloud attachments.
  *
- * @param aAttachments an array of nsIMsgAttachments
- * @param aAccount the cloud account to upload the files to
+ * @param {nsIMsgAttachments[]} aAttachments - Attachments to convert.
+ * @param {CloudFileAccount} aAccount - The account to upload the files to.
  */
 function convertToCloudAttachment(aAttachments, aAccount) {
-  let items = [];
-  for (let attachment of aAttachments) {
-    let item = gAttachmentBucket.findItemForAttachment(attachment);
+  const items = [];
+  for (const attachment of aAttachments) {
+    const item = gAttachmentBucket.findItemForAttachment(attachment);
     if (item) {
       items.push(item);
     }
@@ -2901,12 +2936,12 @@ function convertToCloudAttachment(aAttachments, aAccount) {
 /**
  * Convert an array of attachments to regular (non-cloud) attachments.
  *
- * @param aItems an array of <attachmentitem>s containing the attachments in
- *        question
+ * @param {Element[]} aItems - An array of <richlistitem.attachmentItem>s
+ *   containing the attachments in question.
  */
 async function convertListItemsToRegularAttachment(aItems) {
-  let promises = [];
-  for (let item of aItems) {
+  const promises = [];
+  for (const item of aItems) {
     if (!item.attachment.sendViaCloud) {
       continue;
     }
@@ -2929,28 +2964,12 @@ function convertSelectedToRegularAttachment() {
 }
 
 /**
- * Convert an array of nsIMsgAttachments to regular (non-cloud) attachments.
- *
- * @param aAttachments an array of nsIMsgAttachments
- */
-function convertToRegularAttachment(aAttachments) {
-  let items = [];
-  for (let attachment of aAttachments) {
-    let item = gAttachmentBucket.findItemForAttachment(attachment);
-    if (item) {
-      items.push(item);
-    }
-  }
-
-  return convertListItemsToRegularAttachment(items);
-}
-
-/* messageComposeOfflineQuitObserver is notified whenever the network
+ * messageComposeOfflineQuitObserver is notified whenever the network
  * connection status has switched to offline, or when the application
  * has received a request to quit.
  */
 var messageComposeOfflineQuitObserver = {
-  observe(aSubject, aTopic, aData) {
+  observe(aSubject, aTopic) {
     // sanity checks
     if (aTopic == "network:offline-status-changed") {
       MessageComposeOfflineStateChanged(Services.io.offline);
@@ -3024,11 +3043,14 @@ function MessageComposeOfflineStateChanged(goingOffline) {
 }
 
 function DoCommandPrint() {
-  let browser = GetCurrentEditorElement();
-  browser.contentDocument.title =
+  const editorBrowser = GetCurrentEditorElement();
+  editorBrowser.onFirstPrintDialogOpened = () => ToggleWindowLock(true);
+  editorBrowser.onLastPrintDialogClosed = () => ToggleWindowLock(false);
+
+  editorBrowser.contentDocument.title =
     document.getElementById("msgSubject").value.trim() ||
     getComposeBundle().getString("defaultSubject");
-  PrintUtils.startPrintWindow(browser.browsingContext, {});
+  PrintUtils.startPrintWindow(editorBrowser.browsingContext, {});
 }
 
 /**
@@ -3036,7 +3058,7 @@ function DoCommandPrint() {
  * Locking means to disable all possible items in the window so that
  * the user can't click/activate anything.
  *
- * @param aDisable  true = lock the window. false = unlock the window.
+ * @param {boolean} aDisable - true = lock the window. false = unlock the window.
  */
 function ToggleWindowLock(aDisable) {
   if (aDisable) {
@@ -3124,7 +3146,8 @@ function ComposeFieldsReady() {
   // If we are in plain text, we need to set the wrap column
   if (!gMsgCompose.composeHTML) {
     try {
-      gMsgCompose.editor.wrapWidth = gMsgCompose.wrapLength;
+      gMsgCompose.editor.QueryInterface(Ci.nsIEditorMailSupport).wrapWidth =
+        gMsgCompose.wrapLength;
     } catch (e) {
       dump("### textEditor.wrapWidth exception text: " + e + " - failed\n");
     }
@@ -3179,33 +3202,17 @@ function observeRecipientsChange() {
   });
 }
 
-// checks if the passed in string is a mailto url, if it is, generates nsIMsgComposeParams
-// for the url and returns them.
-function handleMailtoArgs(mailtoUrl) {
-  // see if the string is a mailto url....do this by checking the first 7 characters of the string
-  if (mailtoUrl.toLowerCase().startsWith("mailto:")) {
-    // if it is a mailto url, turn the mailto url into a MsgComposeParams object....
-    let uri = Services.io.newURI(mailtoUrl);
-
-    if (uri) {
-      return MailServices.compose.getParamsForMailto(uri);
-    }
-  }
-
-  return null;
-}
-
 /**
  * Handle ESC keypress from composition window for
  * notifications with close button in the
  * attachmentNotificationBox.
  */
 function handleEsc() {
-  let activeElement = document.activeElement;
+  const activeElement = document.activeElement;
 
   if (activeElement.id == "messageEditor") {
     // Focus within the message body.
-    let findbar = document.getElementById("FindToolbar");
+    const findbar = document.getElementById("FindToolbar");
     if (!findbar.hidden) {
       // If findbar is visible hide it.
       // Focus on the findbar is handled by findbar itself.
@@ -3218,7 +3225,7 @@ function handleEsc() {
   }
 
   // If focus is within a notification, close the corresponding notification.
-  for (let notification of gComposeNotification.allNotifications) {
+  for (const notification of gComposeNotification.allNotifications) {
     if (notification.contains(activeElement)) {
       notification.close();
       return;
@@ -3243,11 +3250,11 @@ function handleEsc() {
  * manual reminder was just turned off). We always show the notification
  * again if keywords change (if no attachments and no manual reminder).
  *
- * @param aForce  If set to true, notification will be shown immediately if
- *                there are any keywords. If set to false, it is shown only when
- *                they have changed.
+ * @param {boolean} [force=false] - If set to true, notification will be shown
+ *   immediately if there are any keywords. If set to false, it is shown only
+ *   when they have changed.
  */
-function manageAttachmentNotification(aForce = false) {
+function manageAttachmentNotification(force = false) {
   let keywords;
   let keywordsCount = 0;
 
@@ -3255,7 +3262,7 @@ function manageAttachmentNotification(aForce = false) {
   // not having keywords.
   let removeNotification = attachmentNotificationSupressed();
 
-  // If that is not true, we need to look at the state of keywords.
+  // If not supressed, we need to look at the state of keywords.
   if (!removeNotification) {
     if (attachmentWorker.lastMessage) {
       // We know the state of keywords, so process them.
@@ -3265,15 +3272,14 @@ function manageAttachmentNotification(aForce = false) {
       }
       removeNotification = keywordsCount == 0;
     } else {
-      // We don't know keywords, so get them first.
-      // If aForce was true, and some keywords are found, we get to run again from
-      // attachmentWorker.onmessage().
-      gAttachmentNotifier.redetectKeywords(aForce);
+      // We don't know keywords, so get them first. Redetect.
+      // We get to run again from attachmentWorker.onmessage handler.
+      gAttachmentNotifier.checkForAttachmentKeywords();
       return;
     }
   }
 
-  let notification =
+  const notification =
     gComposeNotification.getNotificationWithValue("attachmentReminder");
   if (removeNotification) {
     if (notification) {
@@ -3284,7 +3290,7 @@ function manageAttachmentNotification(aForce = false) {
 
   // We have some keywords, however only pop up the notification if requested
   // to do so.
-  if (!aForce) {
+  if (!force) {
     return;
   }
 
@@ -3299,11 +3305,11 @@ function manageAttachmentNotification(aForce = false) {
   // specific keywords to the existing notification instead of creating it
   // from scratch.
   if (notification) {
-    let msgContainer = notification.messageText.querySelector(
+    const msgContainer = notification.messageText.querySelector(
       "#attachmentReminderText"
     );
     msgContainer.textContent = textValue;
-    let keywordsContainer = notification.messageText.querySelector(
+    const keywordsContainer = notification.messageText.querySelector(
       "#attachmentKeywords"
     );
     keywordsContainer.textContent = keywords;
@@ -3311,32 +3317,32 @@ function manageAttachmentNotification(aForce = false) {
   }
 
   // Construct the notification as we don't have one.
-  let msg = document.createElement("div");
-  msg.onclick = function (event) {
+  const msg = document.createElement("div");
+  msg.onclick = function () {
     openOptionsDialog("paneCompose", "compositionAttachmentsCategory", {
       subdialog: "attachment_reminder_button",
     });
   };
 
-  let msgText = document.createElement("span");
+  const msgText = document.createElement("span");
   msg.appendChild(msgText);
   msgText.id = "attachmentReminderText";
   msgText.textContent = textValue;
-  let msgKeywords = document.createElement("span");
+  const msgKeywords = document.createElement("span");
   msg.appendChild(msgKeywords);
   msgKeywords.id = "attachmentKeywords";
   msgKeywords.textContent = keywords;
-  let addButton = {
+  const addButton = {
     "l10n-id": "add-attachment-notification-reminder2",
-    callback(aNotificationBar, aButton) {
+    callback() {
       goDoCommand("cmd_attachFile");
       return true; // keep notification open (the state machine will decide on it later)
     },
   };
 
-  let remindLaterMenuPopup = document.createXULElement("menupopup");
+  const remindLaterMenuPopup = document.createXULElement("menupopup");
   remindLaterMenuPopup.id = "reminderBarPopup";
-  let disableAttachmentReminder = document.createXULElement("menuitem");
+  const disableAttachmentReminder = document.createXULElement("menuitem");
   disableAttachmentReminder.id = "disableReminder";
   disableAttachmentReminder.setAttribute(
     "label",
@@ -3351,7 +3357,7 @@ function manageAttachmentNotification(aForce = false) {
 
   // The notification code only deals with buttons but we need a toolbarbutton,
   // so we construct it and add it ourselves.
-  let remindButton = document.createXULElement("toolbarbutton", {
+  const remindButton = document.createXULElement("toolbarbutton", {
     is: "toolbarbutton-menu-button",
   });
   remindButton.classList.add("notification-button", "small-button");
@@ -3363,27 +3369,29 @@ function manageAttachmentNotification(aForce = false) {
     "label",
     getComposeBundle().getString("remindLaterButton")
   );
-  remindButton.addEventListener("command", function (event) {
+  remindButton.addEventListener("command", function () {
     toggleAttachmentReminder(true);
   });
   remindButton.appendChild(remindLaterMenuPopup);
 
-  notification = gComposeNotification.appendNotification(
-    "attachmentReminder",
-    {
-      label: "",
-      priority: gComposeNotification.PRIORITY_WARNING_MEDIUM,
-    },
-    [addButton]
-  );
-  notification.setAttribute("id", "attachmentNotificationBox");
-
-  notification.messageText.appendChild(msg);
-  notification.buttonContainer.appendChild(remindButton);
+  gComposeNotification
+    .appendNotification(
+      "attachmentReminder",
+      {
+        label: "",
+        priority: gComposeNotification.PRIORITY_WARNING_MEDIUM,
+      },
+      [addButton]
+    )
+    .then(notification2 => {
+      notification2.setAttribute("id", "attachmentNotificationBox");
+      notification2.messageText.appendChild(msg);
+      notification2.buttonContainer.appendChild(remindButton);
+    }, console.warn);
 }
 
 function clearRecipPillKeyIssues() {
-  for (let pill of document.querySelectorAll("mail-address-pill.key-issue")) {
+  for (const pill of document.querySelectorAll("mail-address-pill.key-issue")) {
     pill.classList.remove("key-issue");
   }
 }
@@ -3392,12 +3400,12 @@ function clearRecipPillKeyIssues() {
  * @returns {string[]} - All current recipient email addresses, lowercase.
  */
 function getEncryptionCompatibleRecipients() {
-  let recipientPills = [
+  const recipientPills = [
     ...document.querySelectorAll(
       "#toAddrContainer > mail-address-pill, #ccAddrContainer > mail-address-pill, #bccAddrContainer > mail-address-pill"
     ),
   ];
-  let recipients = [
+  const recipients = [
     ...new Set(recipientPills.map(pill => pill.emailAddress.toLowerCase())),
   ];
   return recipients;
@@ -3406,18 +3414,18 @@ function getEncryptionCompatibleRecipients() {
 const PRErrorCodeSuccess = 0;
 const certificateUsageEmailRecipient = 0x0020;
 
-var gEmailsWithMissingKeys = null;
-var gEmailsWithMissingCerts = null;
+var gEmailsWithMissingKeys = [];
+var gEmailsWithMissingCerts = [];
 
 /**
  * @returns {boolean} true if checking openpgp keys is necessary
  */
 function mustCheckRecipientKeys() {
-  let remindOpenPGP = Services.prefs.getBoolPref(
+  const remindOpenPGP = Services.prefs.getBoolPref(
     "mail.openpgp.remind_encryption_possible"
   );
 
-  let autoEnablePref = Services.prefs.getBoolPref(
+  const autoEnablePref = Services.prefs.getBoolPref(
     "mail.e2ee.auto_enable",
     false
   );
@@ -3441,8 +3449,8 @@ function mustCheckRecipientKeys() {
 async function checkRecipientKeys(recipients) {
   gEmailsWithMissingKeys = [];
 
-  for (let addr of recipients) {
-    let keyMetas = await EnigmailKeyRing.getEncryptionKeyMeta(addr);
+  for (const addr of recipients) {
+    const keyMetas = await EnigmailKeyRing.getEncryptionKeyMeta(addr);
 
     if (keyMetas.length == 1 && keyMetas[0].readiness == "alias") {
       // Skip if this is an alias email.
@@ -3460,11 +3468,11 @@ async function checkRecipientKeys(recipients) {
  * @returns {boolean} true if checking s/mime certificates is necessary
  */
 function mustCheckRecipientCerts() {
-  let remindSMime = Services.prefs.getBoolPref(
+  const remindSMime = Services.prefs.getBoolPref(
     "mail.smime.remind_encryption_possible"
   );
 
-  let autoEnablePref = Services.prefs.getBoolPref(
+  const autoEnablePref = Services.prefs.getBoolPref(
     "mail.e2ee.auto_enable",
     false
   );
@@ -3509,13 +3517,13 @@ function checkRecipientCerts(recipients) {
     }
 
     /** @implements {nsIDoneFindCertForEmailCallback} */
-    let doneFindCertForEmailCallback = {
+    const doneFindCertForEmailCallback = {
       QueryInterface: ChromeUtils.generateQI([
         "nsIDoneFindCertForEmailCallback",
       ]),
 
       findCertDone(email, cert) {
-        let isStaleResult = !gSMPendingCertLookupSet.has(email);
+        const isStaleResult = !gSMPendingCertLookupSet.has(email);
         // isStaleResult true means, this recipient was removed by the
         // user while we were looking for the cert in the background.
         // Let's remember the result, but don't trigger any actions
@@ -3529,7 +3537,7 @@ function checkRecipientCerts(recipients) {
         }
         gSMPendingCertLookupSet.delete(email);
         if (!cert && !gSMCertsAlreadyLookedUpInLDAP.has(email)) {
-          let autocompleteLdap = Services.prefs.getBoolPref(
+          const autocompleteLdap = Services.prefs.getBoolPref(
             "ldap_2.autoComplete.useDirectory"
           );
 
@@ -3573,7 +3581,7 @@ function checkRecipientCerts(recipients) {
       },
     };
 
-    for (let email of recipients) {
+    for (const email of recipients) {
       if (gSMFields.haveValidCertForEmail(email)) {
         continue;
       }
@@ -3675,13 +3683,13 @@ async function checkEncryptionState(trigger) {
     return;
   }
 
-  let remindSMime = Services.prefs.getBoolPref(
+  const remindSMime = Services.prefs.getBoolPref(
     "mail.smime.remind_encryption_possible"
   );
-  let remindOpenPGP = Services.prefs.getBoolPref(
+  const remindOpenPGP = Services.prefs.getBoolPref(
     "mail.openpgp.remind_encryption_possible"
   );
-  let autoEnablePref = Services.prefs.getBoolPref(
+  const autoEnablePref = Services.prefs.getBoolPref(
     "mail.e2ee.auto_enable",
     false
   );
@@ -3698,14 +3706,14 @@ async function checkEncryptionState(trigger) {
     return;
   }
 
-  let recipients = getEncryptionCompatibleRecipients();
-  let checkingCerts = mustCheckRecipientCerts();
-  let checkingKeys = mustCheckRecipientKeys();
+  const recipients = getEncryptionCompatibleRecipients();
+  const checkingCerts = mustCheckRecipientCerts();
+  const checkingKeys = mustCheckRecipientKeys();
 
   async function continueCheckEncryptionStateSub() {
-    let canEncryptSMIME =
+    const canEncryptSMIME =
       recipients.length && checkingCerts && !gEmailsWithMissingCerts.length;
-    let canEncryptOpenPGP =
+    const canEncryptOpenPGP =
       recipients.length && checkingKeys && !gEmailsWithMissingKeys.length;
 
     let autoEnabledJustNow = false;
@@ -3747,13 +3755,13 @@ async function checkEncryptionState(trigger) {
       !canEncryptOpenPGP
     ) {
       // The auto_disable pref is ignored if auto_enable is false
-      let autoDisablePref = Services.prefs.getBoolPref(
+      const autoDisablePref = Services.prefs.getBoolPref(
         "mail.e2ee.auto_disable",
         false
       );
       if (autoEnablePref && autoDisablePref && !gUserTouchedSendEncrypted) {
         gSendEncrypted = false;
-        let notifyPref = Services.prefs.getBoolPref(
+        const notifyPref = Services.prefs.getBoolPref(
           "mail.e2ee.notify_on_auto_disable",
           true
         );
@@ -3763,10 +3771,10 @@ async function checkEncryptionState(trigger) {
           // notification at the time encryption was enabled.)
           // However, double check to avoid that we'll show it twice.
           const NOTIFICATION_NAME = "e2eeDisableNotification";
-          let notification =
+          const notification =
             gComposeNotification.getNotificationWithValue(NOTIFICATION_NAME);
           if (!notification) {
-            gComposeNotification.appendNotification(
+            await gComposeNotification.appendNotification(
               NOTIFICATION_NAME,
               {
                 label: { "l10n-id": "auto-disable-e2ee-warning" },
@@ -3779,7 +3787,7 @@ async function checkEncryptionState(trigger) {
       }
     }
 
-    let techPref = gCurrentIdentity.getIntAttribute("e2etechpref");
+    const techPref = gCurrentIdentity.getIntAttribute("e2etechpref");
 
     if (gSendEncrypted && canEncryptSMIME && canEncryptOpenPGP) {
       // No change if 0
@@ -3849,7 +3857,7 @@ async function checkEncryptionState(trigger) {
     }
   }
 
-  let pendingPromises = [];
+  const pendingPromises = [];
 
   if (checkingCerts) {
     pendingPromises.push(checkRecipientCerts(recipients));
@@ -3872,8 +3880,8 @@ async function checkEncryptionState(trigger) {
  * @param {string} technology - The technology that is possible,
  *   ("OpenPGP" or "SMIME"), or null if none is possible.
  */
-function updateEncryptionTechReminder(technology) {
-  let enableNotification =
+async function updateEncryptionTechReminder(technology) {
+  const enableNotification =
     gComposeNotification.getNotificationWithValue("enableNotification");
   if (enableNotification) {
     gComposeNotification.removeNotification(enableNotification);
@@ -3883,12 +3891,12 @@ function updateEncryptionTechReminder(technology) {
     return;
   }
 
-  let labelId =
+  const labelId =
     technology == "OpenPGP"
       ? "can-encrypt-openpgp-notification"
       : "can-encrypt-smime-notification";
 
-  gComposeNotification.appendNotification(
+  await gComposeNotification.appendNotification(
     "enableNotification",
     {
       label: { "l10n-id": labelId },
@@ -3920,12 +3928,12 @@ function updateEncryptionTechReminder(technology) {
 async function notifyIdentityCannotEncrypt(show, addr) {
   const NOTIFICATION_NAME = "IdentityCannotEncrypt";
 
-  let notification =
+  const notification =
     gComposeNotification.getNotificationWithValue(NOTIFICATION_NAME);
 
   if (show) {
     if (!notification) {
-      gComposeNotification.appendNotification(
+      await gComposeNotification.appendNotification(
         NOTIFICATION_NAME,
         {
           label: await document.l10n.formatValue(
@@ -3954,10 +3962,10 @@ async function notifyIdentityCannotEncrypt(show, addr) {
  * @param {string[]} emailsWithMissing - The email addresses that prevent
  *   using encryption, because certs/keys are missing.
  */
-function updateKeyCertNotifications(emailsWithMissing) {
+async function updateKeyCertNotifications(emailsWithMissing) {
   const NOTIFICATION_NAME = "keyNotification";
 
-  let notification =
+  const notification =
     gComposeNotification.getNotificationWithValue(NOTIFICATION_NAME);
   if (notification) {
     gComposeNotification.removeNotification(notification);
@@ -3972,7 +3980,7 @@ function updateKeyCertNotifications(emailsWithMissing) {
   }
 
   // Update recipient pills.
-  for (let pill of document.querySelectorAll("mail-address-pill")) {
+  for (const pill of document.querySelectorAll("mail-address-pill")) {
     if (
       emailsWithMissing.includes(pill.emailAddress.toLowerCase()) &&
       !pill.classList.contains("invalid-address")
@@ -3984,7 +3992,7 @@ function updateKeyCertNotifications(emailsWithMissing) {
   /**
    * Display the new key notification.
    */
-  let buttons = [];
+  const buttons = [];
   buttons.push({
     "l10n-id": "key-notification-disable-encryption",
     callback() {
@@ -4008,7 +4016,7 @@ function updateKeyCertNotifications(emailsWithMissing) {
   let label;
 
   if (emailsWithMissing.length == 1) {
-    let id = gSelectedTechnologyIsPGP
+    const id = gSelectedTechnologyIsPGP
       ? "openpgp-key-issue-notification-single"
       : "smime-cert-issue-notification-single";
     label = {
@@ -4016,7 +4024,7 @@ function updateKeyCertNotifications(emailsWithMissing) {
       "l10n-args": { addr: emailsWithMissing[0] },
     };
   } else {
-    let id = gSelectedTechnologyIsPGP
+    const id = gSelectedTechnologyIsPGP
       ? "openpgp-key-issue-notification-multi"
       : "smime-cert-issue-notification-multi";
 
@@ -4026,76 +4034,91 @@ function updateKeyCertNotifications(emailsWithMissing) {
     };
   }
 
-  gComposeNotification.appendNotification(
-    NOTIFICATION_NAME,
-    {
-      label,
-      priority: gComposeNotification.PRIORITY_WARNING_MEDIUM,
-    },
-    buttons
-  );
+  await gComposeNotification
+    .appendNotification(
+      NOTIFICATION_NAME,
+      {
+        label,
+        priority: gComposeNotification.PRIORITY_WARNING_MEDIUM,
+      },
+      buttons
+    )
+    .catch(console.warn);
 }
 
 /**
  * Returns whether the attachment notification should be suppressed regardless
  * of the state of keywords.
+ *
+ * @returns {boolean} true if notification should not be shown.
  */
 function attachmentNotificationSupressed() {
-  return (
+  return !!(
     gDisableAttachmentReminder ||
     gManualAttachmentReminder ||
     gAttachmentBucket.getRowCount()
   );
 }
 
-var attachmentWorker = new Worker("resource:///modules/AttachmentChecker.jsm");
+var attachmentWorker = new Worker(
+  "resource:///modules/AttachmentChecker.worker.js"
+);
 
 // The array of currently found keywords. Or null if keyword detection wasn't
 // run yet so we don't know.
 attachmentWorker.lastMessage = null;
 
-attachmentWorker.onerror = function (error) {
-  console.error("Attachment Notification Worker error!!! " + error.message);
-  throw error;
+attachmentWorker.onerror = function (event) {
+  console.error(`Attachment Worker error: ${event.message}`, event);
 };
 
 /**
  * Called when attachmentWorker finishes checking of the message for keywords.
  *
- * @param event    If defined, event.data contains an array of found keywords.
- * @param aManage  If set to true and we determine keywords have changed,
- *                 manage the notification.
- *                 If set to false, just store the new keyword list but do not
- *                 touch the notification. That effectively eats the
- *                 "keywords changed" event which usually shows the notification
- *                 if it was hidden. See manageAttachmentNotification().
+ * @param {Event} event - "message" event from the worker. event.data contains
+ *   an array of found keywords.
  */
-attachmentWorker.onmessage = function (event, aManage = true) {
+attachmentWorker.onmessage = function (event) {
   // Exit if keywords haven't changed.
   if (
-    !event ||
-    (attachmentWorker.lastMessage &&
-      event.data.toString() == attachmentWorker.lastMessage.toString())
+    attachmentWorker.lastMessage &&
+    event.data.toString() == attachmentWorker.lastMessage.toString()
   ) {
     return;
   }
-
-  let data = event ? event.data : [];
-  attachmentWorker.lastMessage = data.slice(0);
-  if (aManage) {
-    manageAttachmentNotification(true);
-  }
+  attachmentWorker.lastMessage = event.data.slice(0);
+  manageAttachmentNotification(true);
 };
+
+/**
+ * Find keywords.
+ *
+ * @param {string} data - Data to look in.
+ * @param {string} keywordsInCsv - Comma separated keywords to find.
+ * @returns {Promise<string[]>} a list of keywords.
+ */
+attachmentWorker.findAttachmentKeywords = (data, keywordsInCsv) =>
+  new Promise(resolve => {
+    attachmentWorker.addEventListener(
+      "message",
+      event => {
+        resolve(event.data);
+      },
+      { once: true }
+    );
+    attachmentWorker.postMessage([data, keywordsInCsv]);
+  });
 
 /**
  * Update attachment-related internal flags, UI, and commands.
  * Called when number of attachments changes.
  *
- * @param aShowPane {string} "show":  show the attachment pane
- *                           "hide":  hide the attachment pane
- *                           omitted: just update without changing pane visibility
- * @param aContentChanged {Boolean} optional value to assign to gContentChanged;
- *                                  defaults to true.
+ * @param {?string} aShowPane - Command.
+ *  - "show":  show the attachment pane
+ *  - "hide":  hide the attachment pane
+ *  - omitted: just update without changing pane visibility
+ * @param {boolean} [aContentChanged=true] - Optional value to assign to
+ *   gContentChanged; defaults to true.
  */
 function AttachmentsChanged(aShowPane, aContentChanged = true) {
   gContentChanged = aContentChanged;
@@ -4122,17 +4145,17 @@ function AttachmentsChanged(aShowPane, aContentChanged = true) {
  *
  * @param {string[]|null} [draftLanguages] - Languages that the message was
  *  composed in.
- * @returns {string[]}
+ * @returns {string[]} valid dictionaries
  */
 function getValidSpellcheckerDictionaries(draftLanguages) {
-  let prefValue = Services.prefs.getCharPref("spellchecker.dictionary");
-  let spellChecker = Cc["@mozilla.org/spellchecker/engine;1"].getService(
+  const prefValue = Services.prefs.getCharPref("spellchecker.dictionary");
+  const spellChecker = Cc["@mozilla.org/spellchecker/engine;1"].getService(
     Ci.mozISpellCheckingEngine
   );
-  let dictionaries = Array.from(new Set(prefValue?.split(",")));
+  const dictionaries = Array.from(new Set(prefValue?.split(",")));
 
-  let dictList = spellChecker.getDictionaryList();
-  let count = dictList.length;
+  const dictList = spellChecker.getDictionaryList();
+  const count = dictList.length;
 
   if (count == 0) {
     // If there are no dictionaries, we can't check the value, so return it.
@@ -4158,21 +4181,21 @@ function getValidSpellcheckerDictionaries(draftLanguages) {
 }
 
 var dictionaryRemovalObserver = {
-  observe(aSubject, aTopic, aData) {
+  observe(aSubject, aTopic) {
     if (aTopic != "spellcheck-dictionary-remove") {
       return;
     }
-    let spellChecker = Cc["@mozilla.org/spellchecker/engine;1"].getService(
+    const spellChecker = Cc["@mozilla.org/spellchecker/engine;1"].getService(
       Ci.mozISpellCheckingEngine
     );
 
-    let dictList = spellChecker.getDictionaryList();
+    const dictList = spellChecker.getDictionaryList();
     let languages = Array.from(gActiveDictionaries);
     languages = languages.filter(lang => dictList.includes(lang));
     if (languages.length === 0) {
       // Set a valid language from the preference.
-      let prefValue = Services.prefs.getCharPref("spellchecker.dictionary");
-      let prefLanguages = prefValue?.split(",") ?? [];
+      const prefValue = Services.prefs.getCharPref("spellchecker.dictionary");
+      const prefLanguages = prefValue?.split(",") ?? [];
       languages = prefLanguages.filter(lang => dictList.includes(lang));
       if (prefLanguages.length != languages.length && languages.length > 0) {
         // Fix the preference while we're here. We know it's invalid.
@@ -4205,40 +4228,40 @@ var dictionaryRemovalObserver = {
 
 function EditorClick(event) {
   if (event.target.matches(".remove-card")) {
-    let card = event.target.closest(".moz-card");
-    let url = card.querySelector(".url").href;
+    const card = event.target.closest(".moz-card");
+    const url = card.querySelector(".url").href;
     if (card.matches(".url-replaced")) {
       card.replaceWith(url);
     } else {
       card.remove();
     }
   } else if (event.target.matches(`.add-card[data-opened='${gOpened}']`)) {
-    let url = event.target.getAttribute("data-url");
-    let meRect = document.getElementById("messageEditor").getClientRects()[0];
-    let settings = document.getElementById("linkPreviewSettings");
-    let settingsW = 500;
+    const url = event.target.getAttribute("data-url");
+    const meRect = document.getElementById("messageEditor").getClientRects()[0];
+    const settings = document.getElementById("linkPreviewSettings");
+    const settingsW = 500;
     settings.style.position = "fixed";
     settings.style.left =
       Math.max(settingsW + 20, event.clientX) - settingsW + "px";
     settings.style.top = meRect.top + event.clientY + 20 + "px";
     settings.hidden = false;
     event.target.remove();
-    settings.querySelector(".close").onclick = event => {
+    settings.querySelector(".close").onclick = () => {
       settings.hidden = true;
     };
-    settings.querySelector(".preview-replace").onclick = event => {
+    settings.querySelector(".preview-replace").onclick = () => {
       addLinkPreview(url, true);
       settings.hidden = true;
     };
-    settings.querySelector(".preview-autoadd").onclick = event => {
+    settings.querySelector(".preview-autoadd").onclick = clickEvent => {
       Services.prefs.setBoolPref(
         "mail.compose.add_link_preview",
-        event.target.checked
+        clickEvent.target.checked
       );
     };
     settings.querySelector(".preview-replace").focus();
-    settings.onkeydown = event => {
-      if (event.key == "Escape") {
+    settings.onkeydown = keyEvent => {
+      if (keyEvent.key == "Escape") {
         settings.hidden = true;
       }
     };
@@ -4255,7 +4278,7 @@ async function addLinkPreview(url) {
   return fetch(url)
     .then(response => response.text())
     .then(text => {
-      let doc = new DOMParser().parseFromString(text, "text/html");
+      const doc = new DOMParser().parseFromString(text, "text/html");
 
       // If the url has an Open Graph or Twitter card, create a nicer
       // representation and use that instead.
@@ -4263,12 +4286,12 @@ async function addLinkPreview(url) {
       // @see https://developer.twitter.com/en/docs/twitter-for-websites/cards/
       // Also look for standard meta information as a fallback.
 
-      let title =
+      const title =
         doc
           .querySelector("meta[property='og:title'],meta[name='twitter:title']")
           ?.getAttribute("content") ||
         doc.querySelector("title")?.textContent.trim();
-      let description = doc
+      const description = doc
         .querySelector(
           "meta[property='og:description'],meta[name='twitter:description'],meta[name='description']"
         )
@@ -4276,7 +4299,7 @@ async function addLinkPreview(url) {
 
       // Handle the case where we didn't get proper data.
       if (!title && !description) {
-        console.debug(`No link preview data for url=${url}`);
+        console.warn(`No link preview data for url=${url}`);
         return;
       }
 
@@ -4314,7 +4337,7 @@ async function addLinkPreview(url) {
       }
 
       // Grab our template and fill in the variables.
-      let card = document
+      const card = document
         .getElementById("dataCardTemplate")
         .content.cloneNode(true).firstElementChild;
       card.id = "card-" + Date.now();
@@ -4347,7 +4370,7 @@ async function addLinkPreview(url) {
       }
 
       // If subject is empty, set that as well.
-      let subject = document.getElementById("msgSubject");
+      const subject = document.getElementById("msgSubject");
       if (!subject.value && title) {
         subject.value = title;
       }
@@ -4355,15 +4378,15 @@ async function addLinkPreview(url) {
       // Select the inserted URL so that if the preview is found one can
       // use undo to remove it and only use the URL instead.
       // Only do it if there was no typing after the url.
-      let selection = getBrowser().contentDocument.getSelection();
-      let n = selection.focusNode;
+      const selection = getBrowser().contentDocument.getSelection();
+      const n = selection.focusNode;
       if (n.textContent.endsWith(url)) {
         selection.extend(n, n.textContent.lastIndexOf(url));
         card.classList.add("url-replaced");
       }
 
       // Add a line after the card. Otherwise it's hard to continue writing.
-      let line = GetCurrentEditor().returnInParagraphCreatesNewParagraph
+      const line = GetCurrentEditor().returnInParagraphCreatesNewParagraph
         ? "<p>&#160;</p>"
         : "<br />";
       card.classList.add("loading"); // Used for fade-in effect.
@@ -4372,7 +4395,7 @@ async function addLinkPreview(url) {
         false,
         card.outerHTML + line
       );
-      let cardInDoc = getBrowser().contentDocument.getElementById(card.id);
+      const cardInDoc = getBrowser().contentDocument.getElementById(card.id);
       cardInDoc.classList.remove("loading");
     });
 }
@@ -4389,17 +4412,17 @@ function onPasteOrDrop(e) {
   gMsgCompose.allowRemoteContent = true;
 
   // For paste use e.clipboardData, for drop use e.dataTransfer.
-  let dataTransfer = "clipboardData" in e ? e.clipboardData : e.dataTransfer;
+  const dataTransfer = "clipboardData" in e ? e.clipboardData : e.dataTransfer;
   if (
     Services.prefs.getBoolPref("mail.compose.add_link_preview", false) &&
     !Services.io.offline &&
     !dataTransfer.types.includes("text/html")
   ) {
-    let type = dataTransfer.types.find(t =>
+    const type = dataTransfer.types.find(t =>
       ["text/uri-list", "text/x-moz-url", "text/plain"].includes(t)
     );
     if (type) {
-      let url = dataTransfer.getData(type).split("\n")[0].trim();
+      const url = dataTransfer.getData(type).split("\n")[0].trim();
       if (/^https?:\/\/\S+$/.test(url)) {
         e.preventDefault(); // We'll handle the pasting manually.
         getBrowser().contentDocument.execCommand("insertHTML", false, url);
@@ -4414,12 +4437,12 @@ function onPasteOrDrop(e) {
   }
 
   // Ok, we have html content to paste.
-  let html = dataTransfer.getData("text/html");
-  let doc = new DOMParser().parseFromString(html, "text/html");
-  let tmpD = Services.dirsvc.get("TmpD", Ci.nsIFile);
+  const html = dataTransfer.getData("text/html");
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const tmpD = Services.dirsvc.get("TmpD", Ci.nsIFile);
   let pendingConversions = 0;
   let needToPreventDefault = true;
-  for (let img of doc.images) {
+  for (const img of doc.images) {
     if (!/^file:/i.test(img.src)) {
       // Doesn't start with file:. Nothing to do here.
       continue;
@@ -4445,7 +4468,7 @@ function onPasteOrDrop(e) {
       continue;
     }
 
-    let contentType = Cc["@mozilla.org/mime;1"]
+    const contentType = Cc["@mozilla.org/mime;1"]
       .getService(Ci.nsIMIMEService)
       .getTypeFromFile(nsFile);
     if (!contentType.startsWith("image/")) {
@@ -4466,13 +4489,13 @@ function onPasteOrDrop(e) {
         return;
       }
 
-      let doTheInsert = function () {
+      const doTheInsert = function () {
         // Now run it through sanitation to make sure there wasn't any
         // unwanted things in the content.
-        let ParserUtils = Cc["@mozilla.org/parserutils;1"].getService(
+        const ParserUtils = Cc["@mozilla.org/parserutils;1"].getService(
           Ci.nsIParserUtils
         );
-        let html2 = ParserUtils.sanitize(
+        const html2 = ParserUtils.sanitize(
           doc.documentElement.innerHTML,
           ParserUtils.SanitizerAllowStyle
         );
@@ -4480,9 +4503,9 @@ function onPasteOrDrop(e) {
       };
 
       // Everything checks out. Convert file to data URL.
-      let reader = new FileReader();
+      const reader = new FileReader();
       reader.addEventListener("load", function () {
-        let dataURL = reader.result;
+        const dataURL = reader.result;
         pendingConversions--;
         img.src = dataURL;
         if (pendingConversions == 0) {
@@ -4506,7 +4529,7 @@ function onPasteOrDrop(e) {
 async function ComposeStartup() {
   // Findbar overlay
   if (!document.getElementById("findbar-replaceButton")) {
-    let replaceButton = document.createXULElement("toolbarbutton");
+    const replaceButton = document.createXULElement("toolbarbutton");
     replaceButton.setAttribute("id", "findbar-replaceButton");
     replaceButton.setAttribute("class", "toolbarbutton-1 tabbable");
     replaceButton.setAttribute(
@@ -4523,9 +4546,9 @@ async function ComposeStartup() {
     );
     replaceButton.setAttribute("oncommand", "findbarFindReplace();");
 
-    let findbar = document.getElementById("FindToolbar");
-    let lastButton = findbar.getElement("find-entire-word");
-    let tSeparator = document.createXULElement("toolbarseparator");
+    const findbar = document.getElementById("FindToolbar");
+    const lastButton = findbar.getElement("find-entire-word");
+    const tSeparator = document.createXULElement("toolbarseparator");
     tSeparator.setAttribute("id", "findbar-beforeReplaceSeparator");
     lastButton.parentNode.insertBefore(
       replaceButton,
@@ -4546,8 +4569,10 @@ async function ComposeStartup() {
       if (window.arguments[0] instanceof Ci.nsIMsgComposeParams) {
         params = window.arguments[0];
         gBodyFromArgs = params.composeFields && params.composeFields.body;
-      } else {
-        params = handleMailtoArgs(window.arguments[0]);
+      } else if (window.arguments[0].toLowerCase().startsWith("mailto:")) {
+        params = MailServices.compose.getParamsForMailto(
+          Services.io.newURI(window.arguments[0])
+        );
       }
     } catch (ex) {
       dump("ERROR with parameters: " + ex + "\n");
@@ -4564,8 +4589,8 @@ async function ComposeStartup() {
   // Do this before the window loads.
   if (!document.documentElement.hasAttribute("width")) {
     // Prefer 860x800.
-    let defaultHeight = Math.min(screen.availHeight, 800);
-    let defaultWidth = Math.min(screen.availWidth, 860);
+    const defaultHeight = Math.min(screen.availHeight, 800);
+    const defaultWidth = Math.min(screen.availWidth, 860);
 
     // On small screens, default to maximized state.
     if (defaultHeight <= 600) {
@@ -4582,13 +4607,16 @@ async function ComposeStartup() {
   // Observe dictionary removals.
   dictionaryRemovalObserver.addObserver();
 
-  let messageEditor = document.getElementById("messageEditor");
+  const messageEditor = document.getElementById("messageEditor");
   messageEditor.addEventListener("paste", onPasteOrDrop);
   messageEditor.addEventListener("drop", onPasteOrDrop);
 
-  let identityList = document.getElementById("msgIdentity");
+  await FolderTreeProperties.ready;
+
+  const identityList = document.getElementById("msgIdentity");
   if (identityList) {
     FillIdentityList(identityList);
+    Services.obs.addObserver(accountObserver, "server-color-changed");
   }
 
   if (!params) {
@@ -4649,11 +4677,11 @@ async function ComposeStartup() {
         composeFields.subject = args.subject;
       }
       if (args.attachment && window.arguments[1] instanceof Ci.nsICommandLine) {
-        let attachmentList = args.attachment.split(",");
-        for (let attachmentName of attachmentList) {
+        const attachmentList = args.attachment.split(",");
+        for (const attachmentName of attachmentList) {
           // resolveURI does all the magic around working out what the
           // attachment is, including web pages, and generating the correct uri.
-          let uri = window.arguments[1].resolveURI(attachmentName);
+          const uri = window.arguments[1].resolveURI(attachmentName);
           let attachment = Cc[
             "@mozilla.org/messengercompose/attachment;1"
           ].createInstance(Ci.nsIMsgAttachment);
@@ -4671,8 +4699,8 @@ async function ComposeStartup() {
             attachment.url = uri.spec;
             composeFields.addAttachment(attachment);
           } else {
-            let title = getComposeBundle().getString("errorFileAttachTitle");
-            let msg = getComposeBundle().getFormattedString(
+            const title = getComposeBundle().getString("errorFileAttachTitle");
+            const msg = getComposeBundle().getFormattedString(
               "errorFileAttachMessage",
               [attachmentName]
             );
@@ -4680,15 +4708,12 @@ async function ComposeStartup() {
           }
         }
       }
-      if (args.newshost) {
-        composeFields.newshost = args.newshost;
-      }
       if (args.message) {
-        let msgFile = Cc["@mozilla.org/file/local;1"].createInstance(
+        const msgFile = Cc["@mozilla.org/file/local;1"].createInstance(
           Ci.nsIFile
         );
         if (PathUtils.parent(args.message) == ".") {
-          let workingDir = Services.dirsvc.get("CurWorkD", Ci.nsIFile);
+          const workingDir = Services.dirsvc.get("CurWorkD", Ci.nsIFile);
           args.message = PathUtils.join(
             workingDir.path,
             PathUtils.filename(args.message)
@@ -4697,8 +4722,8 @@ async function ComposeStartup() {
         msgFile.initWithPath(args.message);
 
         if (!msgFile.exists()) {
-          let title = getComposeBundle().getString("errorFileMessageTitle");
-          let msg = getComposeBundle().getFormattedString(
+          const title = getComposeBundle().getString("errorFileMessageTitle");
+          const msg = getComposeBundle().getFormattedString(
             "errorFileMessageMessage",
             [args.message]
           );
@@ -4718,7 +4743,7 @@ async function ComposeStartup() {
             fstream.init(msgFile, -1, 0, 0); // Open file in default/read-only mode.
             cstream.init(fstream, "UTF-8", 0, 0);
 
-            let str = {};
+            const str = {};
             let read = 0;
 
             do {
@@ -4727,8 +4752,8 @@ async function ComposeStartup() {
               data += str.value;
             } while (read != 0);
           } catch (e) {
-            let title = getComposeBundle().getString("errorFileMessageTitle");
-            let msg = getComposeBundle().getFormattedString(
+            const title = getComposeBundle().getString("errorFileMessageTitle");
+            const msg = getComposeBundle().getFormattedString(
               "errorLoadFileMessageMessage",
               [args.message]
             );
@@ -4743,7 +4768,7 @@ async function ComposeStartup() {
           }
 
           if (data) {
-            let pos = data.search(/\S/); // Find first non-whitespace character.
+            const pos = data.search(/\S/); // Find first non-whitespace character.
 
             if (
               params.format != Ci.nsIMsgCompFormat.PlainText &&
@@ -4783,7 +4808,7 @@ async function ComposeStartup() {
     gComposeType == Ci.nsIMsgCompType.Draft ||
     gComposeType == Ci.nsIMsgCompType.Template
   ) {
-    let creatorKey = params.composeFields.creatorIdentityKey;
+    const creatorKey = params.composeFields.creatorIdentityKey;
     params.identity = creatorKey
       ? MailServices.accounts.getIdentity(creatorKey)
       : null;
@@ -4793,7 +4818,7 @@ async function ComposeStartup() {
   // Get the from address from the headers. For Redirect, from is set to
   // the original author, so don't look at it here.
   if (params.composeFields.from && gComposeType != Ci.nsIMsgCompType.Redirect) {
-    let fromAddrs = MailServices.headerParser.parseEncodedHeader(
+    const fromAddrs = MailServices.headerParser.parseEncodedHeader(
       params.composeFields.from,
       null
     );
@@ -4807,12 +4832,12 @@ async function ComposeStartup() {
     !params.identity.email ||
     (from && !emailSimilar(from, params.identity.email))
   ) {
-    let identities = MailServices.accounts.allIdentities;
+    const identities = MailServices.accounts.allIdentities;
     let suitableCount = 0;
 
     // Search for a matching identity.
     if (from) {
-      for (let ident of identities) {
+      for (const ident of identities) {
         if (ident.email && from == ident.email.toLowerCase()) {
           if (suitableCount == 0) {
             params.identity = ident;
@@ -4829,13 +4854,13 @@ async function ComposeStartup() {
     if (!params.identity || !params.identity.email) {
       let identity = null;
       // No preset identity and no match, so use the default account.
-      let defaultAccount = MailServices.accounts.defaultAccount;
+      const defaultAccount = MailServices.accounts.defaultAccount;
       if (defaultAccount) {
         identity = defaultAccount.defaultIdentity;
       }
       if (!identity) {
         // Get the first identity we have in the list.
-        let identitykey = identityList
+        const identitykey = identityList
           .getItemAtIndex(0)
           .getAttribute("identitykey");
         identity = MailServices.accounts.getIdentity(identitykey);
@@ -4874,12 +4899,12 @@ async function ComposeStartup() {
       gComposeType == Ci.nsIMsgCompType.ReplyToSenderAndGroup ||
       gComposeType == Ci.nsIMsgCompType.ReplyToList)
   ) {
-    let from = MailServices.headerParser
+    const authors = MailServices.headerParser
       .parseEncodedHeader(params.composeFields.from, null)
       .join(", ");
-    if (from != identityList.value) {
+    if (authors != identityList.value) {
       MakeFromFieldEditable(true);
-      identityList.value = from;
+      identityList.value = authors;
     }
   }
   LoadIdentity(true);
@@ -4909,7 +4934,6 @@ async function ComposeStartup() {
   if (
     gComposeType != Ci.nsIMsgCompType.Draft &&
     gComposeType != Ci.nsIMsgCompType.Template &&
-    gEncryptedURIService &&
     gEncryptedURIService.isEncrypted(gMsgCompose.originalMsgURI)
   ) {
     gIsRelatedToEncryptedOriginal = true;
@@ -4929,7 +4953,7 @@ async function ComposeStartup() {
   toggleAttachmentReminder(gMsgCompose.compFields.attachmentReminder);
   initSendFormatMenu();
 
-  let editortype = gMsgCompose.composeHTML ? "htmlmail" : "textmail";
+  const editortype = gMsgCompose.composeHTML ? "htmlmail" : "textmail";
   editorElement.makeEditable(editortype, true);
 
   // setEditorType MUST be called before setContentWindow
@@ -4973,29 +4997,29 @@ async function ComposeStartup() {
   // will miss states.
   gMsgCompose.RegisterStateListener(stateListener);
 
-  let addedAttachmentItems = await AddAttachments(
+  const addedAttachmentItems = await AddAttachments(
     gMsgCompose.compFields.attachments,
     false
   );
   // If any of the pre-loaded attachments is a cloudFile, this is most probably a
   // re-opened draft. Restore the cloudFile information.
-  for (let attachmentItem of addedAttachmentItems) {
+  for (const attachmentItem of addedAttachmentItems) {
     if (
       attachmentItem.attachment.sendViaCloud &&
       attachmentItem.attachment.contentLocation &&
       attachmentItem.attachment.cloudFileAccountKey &&
       attachmentItem.attachment.cloudPartHeaderData
     ) {
-      let byteString = atob(attachmentItem.attachment.cloudPartHeaderData);
-      let uploadFromDraft = JSON.parse(
+      const byteString = atob(attachmentItem.attachment.cloudPartHeaderData);
+      const uploadFromDraft = JSON.parse(
         MailStringUtils.byteStringToString(byteString)
       );
       if (uploadFromDraft && uploadFromDraft.path && uploadFromDraft.name) {
         let cloudFileUpload;
-        let cloudFileAccount = cloudFileAccounts.getAccount(
+        const cloudFileAccount = cloudFileAccounts.getAccount(
           attachmentItem.attachment.cloudFileAccountKey
         );
-        let bigFile = Cc["@mozilla.org/file/local;1"].createInstance(
+        const bigFile = Cc["@mozilla.org/file/local;1"].createInstance(
           Ci.nsIFile
         );
         bigFile.initWithPath(uploadFromDraft.path);
@@ -5048,7 +5072,7 @@ async function ComposeStartup() {
         }
         if (bigAttachment && bigAttachment.size == uploadFromDraft.size) {
           // Remove the temporary html placeholder file.
-          let uri = Services.io
+          const uri = Services.io
             .newURI(attachmentItem.attachment.url)
             .QueryInterface(Ci.nsIFileURL);
           await IOUtils.remove(uri.file.path);
@@ -5072,17 +5096,30 @@ async function ComposeStartup() {
   }
 
   // Fill custom headers.
-  let otherHeaders = Services.prefs
+  const otherHeaders = Services.prefs
     .getCharPref("mail.compose.other.header", "")
     .split(",")
     .map(h => h.trim())
     .filter(Boolean);
   for (let i = 0; i < otherHeaders.length; i++) {
-    if (gMsgCompose.compFields.otherHeaders[i]) {
-      let row = document.getElementById(`addressRow${otherHeaders[i]}`);
+    const headerName = otherHeaders[i];
+    let headerValue = gMsgCompose.compFields.otherHeaders[i];
+    if (!headerValue) {
+      // In case other header was really one of the standard headers,
+      // set the real value now, letting the header show up during compose
+      // with the value prefilled.
+      if (headerName.toLowerCase() == "references") {
+        headerValue = gMsgCompose.compFields.references;
+      } else if (headerName.toLowerCase() == "in-reply-to") {
+        headerValue = gMsgCompose.compFields.inReplyTo;
+      }
+    }
+
+    if (headerValue) {
+      const row = document.getElementById(`addressRow${headerName}`);
       addressRowSetVisibility(row, true);
-      let input = document.getElementById(`${otherHeaders[i]}AddrInput`);
-      input.value = gMsgCompose.compFields.otherHeaders[i];
+      const input = document.getElementById(`${headerName}AddrInput`);
+      input.value = headerValue;
     }
   }
 
@@ -5092,9 +5129,12 @@ async function ComposeStartup() {
       new Event("compose-window-init", { bubbles: false, cancelable: true })
     );
 
-  dispatchAttachmentBucketEvent(
-    "attachments-added",
-    gMsgCompose.compFields.attachments
+  gAttachmentBucket.dispatchEvent(
+    new CustomEvent("attachments-added", {
+      bubbles: true,
+      cancelable: true,
+      detail: gMsgCompose.compFields.attachments,
+    })
   );
 
   // Add an observer to be called when document is done loading,
@@ -5109,7 +5149,7 @@ async function ComposeStartup() {
     // URL does not exactly match "about:blank", which has some drawbacks. In
     // particular it prevents WebExtension content scripts from running in
     // this document.
-    let loadURIOptions = {
+    const loadURIOptions = {
       triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
     };
     editorElement.webNavigation.loadURI(
@@ -5123,14 +5163,14 @@ async function ComposeStartup() {
   gEditingDraft = gMsgCompose.compFields.draftId;
 
   // Set up contacts sidebar.
-  let pageURL = document.URL;
-  let contactsSplitter = document.getElementById("contactsSplitter");
-  let contactsShown = Services.xulStore.getValue(
+  const pageURL = document.URL;
+  const contactsSplitter = document.getElementById("contactsSplitter");
+  const contactsShown = Services.xulStore.getValue(
     pageURL,
     "contactsSplitter",
     "shown"
   );
-  let contactsWidth = Services.xulStore.getValue(
+  const contactsWidth = Services.xulStore.getValue(
     pageURL,
     "contactsSplitter",
     "width"
@@ -5139,7 +5179,7 @@ async function ComposeStartup() {
     contactsWidth == "" ? null : parseFloat(contactsWidth);
   setContactsSidebarVisibility(contactsShown == "true", false);
   contactsSplitter.addEventListener("splitter-resized", () => {
-    let width = contactsSplitter.width;
+    const width = contactsSplitter.width;
     Services.xulStore.setValue(
       pageURL,
       "contactsSplitter",
@@ -5168,11 +5208,13 @@ async function ComposeStartup() {
   }
 
   gAutoSaveKickedIn = false;
+
+  window.dispatchEvent(new CustomEvent("compose-startup-done"));
 }
 /* eslint-enable complexity */
 
 function splitEmailAddress(aEmail) {
-  let at = aEmail.lastIndexOf("@");
+  const at = aEmail.lastIndexOf("@");
   return at != -1 ? [aEmail.slice(0, at), aEmail.slice(at + 1)] : [aEmail, ""];
 }
 
@@ -5188,7 +5230,7 @@ function emailSimilar(a, b) {
 
 // The new, nice, simple way of getting notified when a new editor has been created
 var gMsgEditorCreationObserver = {
-  observe(aSubject, aTopic, aData) {
+  observe(aSubject, aTopic) {
     if (aTopic == "obs_documentCreated") {
       var editor = GetCurrentEditor();
       if (editor && GetCurrentCommandManager() == aSubject) {
@@ -5214,19 +5256,19 @@ var gMsgEditorCreationObserver = {
  *   Null on initial identity setup.
  */
 async function adjustEncryptAfterIdentityChange(prevIdentity) {
-  let identityHasConfiguredSMIME =
+  const identityHasConfiguredSMIME =
     isSmimeSigningConfigured() || isSmimeEncryptionConfigured();
 
-  let identityHasConfiguredOpenPGP = isPgpConfigured();
+  const identityHasConfiguredOpenPGP = isPgpConfigured();
 
   // Show widgets based on the technologies available across all identities.
-  let allEmailIdentities = MailServices.accounts.allIdentities.filter(
+  const allEmailIdentities = MailServices.accounts.allIdentities.filter(
     i => i.email
   );
-  let anyIdentityHasConfiguredOpenPGP = allEmailIdentities.some(i =>
+  const anyIdentityHasConfiguredOpenPGP = allEmailIdentities.some(i =>
     i.getUnicharAttribute("openpgp_key_id")
   );
-  let anyIdentityHasConfiguredSMIMEEncryption = allEmailIdentities.some(i =>
+  const anyIdentityHasConfiguredSMIMEEncryption = allEmailIdentities.some(i =>
     i.getUnicharAttribute("encryption_cert_name")
   );
 
@@ -5235,17 +5277,17 @@ async function adjustEncryptAfterIdentityChange(prevIdentity) {
   // to allow the user to manually disable encryption (we don't disable
   // encryption automatically, as the user might have seen that it is
   // enabled and might rely on it).
-  let e2eeConfigured =
+  const e2eeConfigured =
     identityHasConfiguredOpenPGP || identityHasConfiguredSMIME;
 
-  let autoEnablePref = Services.prefs.getBoolPref(
+  const autoEnablePref = Services.prefs.getBoolPref(
     "mail.e2ee.auto_enable",
     false
   );
 
   // If neither OpenPGP nor SMIME are configured for any identity,
   // then hide the entire menu.
-  let encOpt = document.getElementById("button-encryption-options");
+  const encOpt = document.getElementById("button-encryption-options");
   if (encOpt) {
     encOpt.hidden =
       !anyIdentityHasConfiguredOpenPGP &&
@@ -5271,11 +5313,11 @@ async function adjustEncryptAfterIdentityChange(prevIdentity) {
     !anyIdentityHasConfiguredOpenPGP ||
     !anyIdentityHasConfiguredSMIMEEncryption;
 
-  let encToggle = document.getElementById("button-encryption");
+  const encToggle = document.getElementById("button-encryption");
   if (encToggle) {
     encToggle.disabled = !e2eeConfigured && !gSendEncrypted;
   }
-  let sigToggle = document.getElementById("button-signing");
+  const sigToggle = document.getElementById("button-signing");
   if (sigToggle) {
     sigToggle.disabled = !e2eeConfigured;
   }
@@ -5309,7 +5351,7 @@ async function adjustEncryptAfterIdentityChange(prevIdentity) {
         gSelectedTechnologyIsPGP = true;
       } else {
         // both are configured
-        let techPref = gCurrentIdentity.getIntAttribute("e2etechpref");
+        const techPref = gCurrentIdentity.getIntAttribute("e2etechpref");
         gSelectedTechnologyIsPGP = techPref != 1;
       }
     }
@@ -5367,7 +5409,7 @@ async function adjustEncryptAfterIdentityChange(prevIdentity) {
 
 async function ComposeLoad() {
   updateTroubleshootMenuItem();
-  let otherHeaders = Services.prefs
+  const otherHeaders = Services.prefs
     .getCharPref("mail.compose.other.header", "")
     .split(",")
     .map(h => h.trim())
@@ -5383,11 +5425,11 @@ async function ComposeLoad() {
   // #headersSplitter.
   // NOTE: At this stage, we only expect the "To" row to be visible within the
   // recipients container.
-  let messageHeader = document.getElementById("MsgHeadersToolbar");
-  let recipientsContainer = document.getElementById("recipientsContainer");
+  const messageHeader = document.getElementById("MsgHeadersToolbar");
+  const recipientsContainer = document.getElementById("recipientsContainer");
   // In the unlikely situation where the recipients container is already
   // overflowing, we make sure to increase the minHeight by the overflow.
-  let headerHeight =
+  const headerHeight =
     messageHeader.clientHeight +
     recipientsContainer.scrollHeight -
     recipientsContainer.clientHeight;
@@ -5396,7 +5438,7 @@ async function ComposeLoad() {
   // Setup the attachment bucket.
   gAttachmentBucket = document.getElementById("attachmentBucket");
 
-  let attachmentArea = document.getElementById("attachmentArea");
+  const attachmentArea = document.getElementById("attachmentArea");
   attachmentArea.addEventListener("toggle", attachmentAreaOnToggle);
 
   // Setup the attachment animation counter.
@@ -5407,7 +5449,7 @@ async function ComposeLoad() {
   );
 
   // Set up the drag & drop event listeners.
-  let messageArea = document.getElementById("messageArea");
+  const messageArea = document.getElementById("messageArea");
   messageArea.addEventListener("dragover", event =>
     envelopeDragObserver.onDragOver(event)
   );
@@ -5419,7 +5461,7 @@ async function ComposeLoad() {
   );
 
   // Setup the attachment overlay animation listeners.
-  let overlay = document.getElementById("dropAttachmentOverlay");
+  const overlay = document.getElementById("dropAttachmentOverlay");
   overlay.addEventListener("animationend", e => {
     // Make the overlay constantly visible If the user is dragging a file over
     // the compose windown.
@@ -5440,9 +5482,11 @@ async function ComposeLoad() {
   });
 
   if (otherHeaders) {
-    let extraAddressRowsMenu = document.getElementById("extraAddressRowsMenu");
+    const extraAddressRowsMenu = document.getElementById(
+      "extraAddressRowsMenu"
+    );
 
-    let existingTypes = Array.from(
+    const existingTypes = Array.from(
       document.querySelectorAll(".address-row"),
       row => row.dataset.recipienttype
     );
@@ -5454,7 +5498,7 @@ async function ComposeLoad() {
       existingTypes.push(header);
 
       header = header.trim();
-      let recipient = {
+      const recipient = {
         rowId: `addressRow${header}`,
         labelId: `${header}AddrLabel`,
         containerId: `${header}AddrContainer`,
@@ -5463,7 +5507,7 @@ async function ComposeLoad() {
         type: header,
       };
 
-      let newEls = recipientsContainer.buildRecipientRow(recipient, true);
+      const newEls = recipientsContainer.buildRecipientRow(recipient, true);
 
       recipientsContainer.appendChild(newEls.row);
       extraAddressRowsMenu.appendChild(newEls.showRowMenuItem);
@@ -5496,7 +5540,7 @@ async function ComposeLoad() {
   updateAttachmentPane();
   updateAriaLabelsAndTooltipsOfAllAddressRows();
 
-  for (let input of document.querySelectorAll(".address-row-input")) {
+  for (const input of document.querySelectorAll(".address-row-input")) {
     input.onBeforeHandleKeyDown = event =>
       addressInputOnBeforeHandleKeyDown(event);
   }
@@ -5635,7 +5679,7 @@ function setComposeLabelsAndMenuItems() {
  * Add a keydown document event listener for international keyboard shortcuts.
  */
 async function setKeyboardShortcuts() {
-  let [filePickerKey, toggleBucketKey] = await l10nCompose.formatValues([
+  const [filePickerKey, toggleBucketKey] = await l10nCompose.formatValues([
     { id: "trigger-attachment-picker-key" },
     { id: "toggle-attachment-pane-key" },
   ]);
@@ -5732,6 +5776,8 @@ function ComposeUnload() {
   // Stop observing dictionary removals.
   dictionaryRemovalObserver.removeObserver();
 
+  Services.obs.removeObserver(accountObserver, "server-color-changed");
+
   if (gMsgCompose) {
     // Notify the SendListener that Send has been aborted and Stopped
     gMsgCompose.onSendNotPerformed(null, Cr.NS_ERROR_ABORT);
@@ -5747,6 +5793,12 @@ function ComposeUnload() {
   ReleaseGlobalVariables();
 
   top.controllers.removeController(SecurityController);
+
+  for (const dir of gTempDirsToDelete) {
+    if (dir.exists()) {
+      dir.remove(true);
+    }
+  }
 
   // This destroys the window for us.
   MsgComposeCloseWindow();
@@ -5773,9 +5825,7 @@ function onEncryptionChoice(value) {
       break;
 
     case "encsub":
-      gEncryptSubject = !gEncryptSubject;
-      gUserTouchedEncryptSubject = true;
-      updateEncryptedSubject();
+      toggleEncryptedSubject();
       break;
 
     case "sig":
@@ -5815,7 +5865,7 @@ var SecurityController = {
 };
 
 function updateEncryptOptionsMenuElements() {
-  let encOpt = document.getElementById("button-encryption-options");
+  const encOpt = document.getElementById("button-encryption-options");
   if (encOpt) {
     document.l10n.setAttributes(
       encOpt,
@@ -5844,7 +5894,7 @@ function updateEncryptOptionsMenuElements() {
  * rows, including custom header fields.
  */
 async function updateAriaLabelsAndTooltipsOfAllAddressRows() {
-  for (let row of document
+  for (const row of document
     .getElementById("recipientsContainer")
     .querySelectorAll(".address-row")) {
     updateAriaLabelsOfAddressRow(row);
@@ -5864,10 +5914,10 @@ async function updateAriaLabelsOfAddressRow(row) {
   if (row.classList.contains("address-row-raw")) {
     return;
   }
-  let input = row.querySelector(".address-row-input");
+  const input = row.querySelector(".address-row-input");
 
-  let type = row.querySelector(".address-label-container > label").value;
-  let pills = row.querySelectorAll("mail-address-pill");
+  const type = row.querySelector(".address-label-container > label").value;
+  const pills = row.querySelectorAll("mail-address-pill");
 
   input.setAttribute(
     "aria-label",
@@ -5877,7 +5927,7 @@ async function updateAriaLabelsOfAddressRow(row) {
     })
   );
 
-  for (let pill of pills) {
+  for (const pill of pills) {
     pill.setAttribute(
       "aria-label",
       await l10nCompose.formatValue("pill-aria-label", {
@@ -5894,20 +5944,29 @@ async function updateAriaLabelsOfAddressRow(row) {
  * @param {Element} row - The address row.
  */
 function updateTooltipsOfAddressRow(row) {
-  let type = row.querySelector(".address-label-container > label").value;
-  let el = row.querySelector(".remove-field-button");
+  const type = row.querySelector(".address-label-container > label").value;
+  const el = row.querySelector(".remove-field-button");
   document.l10n.setAttributes(el, "remove-address-row-button", { type });
 }
 
 function onSendSMIME() {
-  let emailAddresses = [];
+  const emailAddresses = [];
+
+  // For signed only messages, use transfer encoding if needed, making it less
+  // likely for servers to turn the signature invalid.
+  if (
+    gMsgCompose.compFields.composeSecure?.signMessage &&
+    !gMsgCompose.compFields.composeSecure?.requireEncryptMessage
+  ) {
+    gMsgCompose.compFields.forceMsgEncoding = true;
+  }
 
   try {
     if (!gMsgCompose.compFields.composeSecure.requireEncryptMessage) {
       return;
     }
 
-    for (let email of getEncryptionCompatibleRecipients()) {
+    for (const email of getEncryptionCompatibleRecipients()) {
       if (!gSMFields.haveValidCertForEmail(email)) {
         emailAddresses.push(email);
       }
@@ -5957,15 +6016,17 @@ function DoSpellCheckBeforeSend() {
  * @returns {nsIMsgCompFields}
  */
 function GetComposeDetails() {
-  let msgCompFields = gMsgCompose.compFields;
+  const msgCompFields = gMsgCompose.compFields;
 
   Recipients2CompFields(msgCompFields);
-  let addresses = MailServices.headerParser.makeFromDisplayAddress(
+  const addresses = MailServices.headerParser.makeFromDisplayAddress(
     document.getElementById("msgIdentity").value
   );
   msgCompFields.from = MailServices.headerParser.makeMimeHeader(addresses);
   msgCompFields.subject = document.getElementById("msgSubject").value;
   Attachments2CompFields(msgCompFields);
+  msgCompFields.composeSecure.requireEncryptMessage = gSendEncrypted;
+  msgCompFields.composeSecure.signMessage = gSendSigned;
 
   return msgCompFields;
 }
@@ -5987,9 +6048,9 @@ function GetComposeDetails() {
  */
 function SetComposeDetails(newValues) {
   if (newValues.identityKey !== null) {
-    let identityList = document.getElementById("msgIdentity");
-    for (let menuItem of identityList.menupopup.children) {
-      if (menuItem.getAttribute("identitykey") == newValues.identityKey) {
+    const identityList = document.getElementById("msgIdentity");
+    for (const menuItem of identityList.menupopup.children) {
+      if (menuItem.getAttribute("identitykey") === newValues.identityKey) {
         identityList.selectedItem = menuItem;
         LoadIdentity(false);
         break;
@@ -6010,7 +6071,7 @@ function SetComposeDetails(newValues) {
     throw Components.Exception("", Cr.NS_ERROR_UNEXPECTED);
   }
 
-  let editor = GetCurrentEditor();
+  const editor = GetCurrentEditor();
   if (typeof newValues.body == "string") {
     if (!IsHTMLEditor()) {
       throw Components.Exception("", Cr.NS_ERROR_UNEXPECTED);
@@ -6021,7 +6082,7 @@ function SetComposeDetails(newValues) {
   if (typeof newValues.plainTextBody == "string") {
     editor.selectAll();
     // Remove \r from line endings, which cause extra newlines (bug 1672407).
-    let mailEditor = editor.QueryInterface(Ci.nsIEditorMailSupport);
+    const mailEditor = editor.QueryInterface(Ci.nsIEditorMailSupport);
     if (newValues.plainTextBody === "") {
       editor.deleteSelection(editor.eNone, editor.eStrip);
     } else {
@@ -6037,16 +6098,16 @@ function SetComposeDetails(newValues) {
 /**
  * Handles message sending operations.
  *
- * @param {nsIMsgCompDeliverMode} mode - The delivery mode of the operation.
+ * @param {nsIMsgCompDeliverMode} msgType - The delivery mode of the operation.
  */
 async function GenericSendMessage(msgType) {
-  let msgCompFields = GetComposeDetails();
+  const msgCompFields = GetComposeDetails();
 
   // Some other msgCompFields have already been updated instantly in their
   // respective toggle functions, e.g. ToggleReturnReceipt(), ToggleDSN(),
   // ToggleAttachVCard(), and toggleAttachmentReminder().
 
-  let sending =
+  const sending =
     msgType == Ci.nsIMsgCompDeliverMode.Now ||
     msgType == Ci.nsIMsgCompDeliverMode.Later ||
     msgType == Ci.nsIMsgCompDeliverMode.Background;
@@ -6064,7 +6125,7 @@ async function GenericSendMessage(msgType) {
       // before the final sanity checks.
       try {
         await new Promise((resolve, reject) => {
-          let beforeSendEvent = new CustomEvent("beforesend", {
+          const beforeSendEvent = new CustomEvent("beforesend", {
             cancelable: true,
             detail: {
               resolve,
@@ -6094,14 +6155,26 @@ async function GenericSendMessage(msgType) {
         // focus on the mail body when we have to do a spellcheck.
         focusMsgBody();
         window.cancelSendMessage = false;
-        window.openDialog(
+        const spellCheckDialog = window.openDialog(
           "chrome://messenger/content/messengercompose/EdSpellCheck.xhtml",
           "_blank",
-          "dialog,close,titlebar,modal,resizable",
+          "dialog,close,titlebar,dependent,resizable",
           true,
           true,
           false
         );
+        // Opening a dialog as dependent doesn't wait until it's closed again,
+        // so we have to do that explicitily.
+        if (spellCheckDialog.document.readyState != "complete") {
+          await new Promise(resolve =>
+            spellCheckDialog.addEventListener("load", resolve, { once: true })
+          );
+        }
+        await new Promise(resolve => {
+          spellCheckDialog.addEventListener("unload", resolve, {
+            once: true,
+          });
+        });
 
         if (window.cancelSendMessage) {
           throw new Error(`Send aborted by the user: spelling errors found`);
@@ -6111,7 +6184,7 @@ async function GenericSendMessage(msgType) {
       // Strip trailing spaces and long consecutive WSP sequences from the
       // subject line to prevent getting only WSP chars on a folded line.
       let subject = msgCompFields.subject;
-      let fixedSubject = subject.replace(/\s{74,}/g, "    ").trimRight();
+      const fixedSubject = subject.replace(/\s{74,}/g, "    ").trimRight();
       if (fixedSubject != subject) {
         subject = fixedSubject;
         msgCompFields.subject = fixedSubject;
@@ -6155,11 +6228,11 @@ async function GenericSendMessage(msgType) {
         ) &&
           gComposeNotification.getNotificationWithValue("attachmentReminder"))
       ) {
-        let flags =
+        const flags =
           Services.prompt.BUTTON_POS_0 *
             Services.prompt.BUTTON_TITLE_IS_STRING +
           Services.prompt.BUTTON_POS_1 * Services.prompt.BUTTON_TITLE_IS_STRING;
-        let hadForgotten = Services.prompt.confirmEx(
+        const hadForgotten = Services.prompt.confirmEx(
           window,
           getComposeBundle().getString("attachmentReminderTitle"),
           getComposeBundle().getString("attachmentReminderMsg"),
@@ -6182,7 +6255,7 @@ async function GenericSendMessage(msgType) {
       }
 
       // Aggressive many public recipients prompt.
-      let publicRecipientCount = getPublicAddressPillsCount();
+      const publicRecipientCount = getPublicAddressPillsCount();
       if (
         Services.prefs.getBoolPref(
           "mail.compose.warn_public_recipients.aggressive"
@@ -6192,11 +6265,11 @@ async function GenericSendMessage(msgType) {
             "mail.compose.warn_public_recipients.threshold"
           )
       ) {
-        let flags =
+        const flags =
           Services.prompt.BUTTON_POS_0 *
             Services.prompt.BUTTON_TITLE_IS_STRING +
           Services.prompt.BUTTON_POS_1 * Services.prompt.BUTTON_TITLE_IS_STRING;
-        let [title, msg, cancel, send] = l10nComposeSync.formatValuesSync([
+        const [title, msg, cancel, send] = l10nComposeSync.formatValuesSync([
           "many-public-recipients-prompt-title",
           {
             id: "many-public-recipients-prompt-msg",
@@ -6205,7 +6278,7 @@ async function GenericSendMessage(msgType) {
           "many-public-recipients-prompt-cancel",
           "many-public-recipients-prompt-send",
         ]);
-        let willCancel = Services.prompt.confirmEx(
+        const willCancel = Services.prompt.confirmEx(
           window,
           title,
           msg,
@@ -6237,17 +6310,17 @@ async function GenericSendMessage(msgType) {
       // Check if the user tries to send a message to a newsgroup through a mail
       // account.
       var currentAccountKey = getCurrentAccountKey();
-      let account = MailServices.accounts.getAccount(currentAccountKey);
+      const account = MailServices.accounts.getAccount(currentAccountKey);
       if (
         account.incomingServer.type != "nntp" &&
         msgCompFields.newsgroups != ""
       ) {
         const kDontAskAgainPref = "mail.compose.dontWarnMail2Newsgroup";
         // default to ask user if the pref is not set
-        let dontAskAgain = Services.prefs.getBoolPref(kDontAskAgainPref);
+        const dontAskAgain = Services.prefs.getBoolPref(kDontAskAgainPref);
         if (!dontAskAgain) {
-          let checkbox = { value: false };
-          let okToProceed = Services.prompt.confirmCheck(
+          const checkbox = { value: false };
+          const okToProceed = Services.prompt.confirmCheck(
             window,
             getComposeBundle().getString("noNewsgroupSupportTitle"),
             getComposeBundle().getString("recipientDlogMessage"),
@@ -6270,14 +6343,14 @@ async function GenericSendMessage(msgType) {
 
       if (Services.prefs.getBoolPref("mail.compose.add_link_preview", true)) {
         // Remove any card "close" button from content before sending.
-        for (let close of getBrowser().contentDocument.querySelectorAll(
+        for (const close of getBrowser().contentDocument.querySelectorAll(
           ".moz-card .remove-card"
         )) {
           close.remove();
         }
       }
 
-      let sendFormat = determineSendFormat();
+      const sendFormat = determineSendFormat();
       switch (sendFormat) {
         case Ci.nsIMsgCompSendFormat.PlainText:
           msgCompFields.forcePlainText = true;
@@ -6313,7 +6386,7 @@ async function GenericSendMessage(msgType) {
  * GenericSendMessage. This is a separate function so that it can be easily mocked
  * in tests.
  *
- * @param msgType nsIMsgCompDeliverMode of the operation.
+ * @param {nsIMsgCompDeliverMode} msgType - The delivery mode of the operation.
  */
 async function CompleteGenericSendMessage(msgType) {
   // hook for extra compose pre-processing
@@ -6330,11 +6403,11 @@ async function CompleteGenericSendMessage(msgType) {
     // Just before we try to send the message, fire off the
     // compose-send-message event for listeners, so they can do
     // any pre-security work before sending.
-    var event = document.createEvent("UIEvents");
-    event.initEvent("compose-send-message", false, true);
-    var msgcomposeWindow = document.getElementById("msgcomposeWindow");
-    msgcomposeWindow.setAttribute("msgtype", msgType);
-    msgcomposeWindow.dispatchEvent(event);
+    const event = new CustomEvent("compose-send-message", {
+      cancelable: true,
+      detail: { msgType },
+    });
+    window.dispatchEvent(event);
     if (event.defaultPrevented) {
       throw Components.Exception(
         "compose-send-message prevented",
@@ -6355,8 +6428,8 @@ async function CompleteGenericSendMessage(msgType) {
     }
 
     // Keep track of send/saved cloudFiles and mark them as immutable.
-    let items = [...gAttachmentBucket.itemChildren];
-    for (let item of items) {
+    const items = [...gAttachmentBucket.itemChildren];
+    for (const item of items) {
       if (item.attachment.sendViaCloud && item.cloudFileAccount) {
         item.cloudFileAccount.markAsImmutable(item.cloudFileUpload.id);
       }
@@ -6388,7 +6461,7 @@ async function CompleteGenericSendMessage(msgType) {
       progress
     );
   } catch (ex) {
-    console.error("GenericSendMessage FAILED: " + ex);
+    console.warn("GenericSendMessage FAILED: " + ex);
     ToggleWindowLock(false);
     sendError = ex;
   }
@@ -6400,19 +6473,19 @@ async function CompleteGenericSendMessage(msgType) {
   ) {
     window.dispatchEvent(new CustomEvent("aftersend"));
 
-    let maxSize =
+    const maxSize =
       Services.prefs.getIntPref("mail.compose.big_attachments.threshold_kb") *
       1024;
-    let items = [...gAttachmentBucket.itemChildren];
+    const items = [...gAttachmentBucket.itemChildren];
 
     // When any big attachment is not sent via filelink, increment
-    // `tb.filelink.ignored`.
+    // `filelink_ignored`.
     if (
       items.some(
         item => item.attachment.size >= maxSize && !item.attachment.sendViaCloud
       )
     ) {
-      Services.telemetry.scalarAdd("tb.filelink.ignored", 1);
+      Glean.filelink.filelinkIgnored.add(1);
     }
   } else if (
     msgType == Ci.nsIMsgCompDeliverMode.Save ||
@@ -6453,7 +6526,7 @@ function isValidNewsAddress(address) {
  * @param {Event} event - the event triggered by the click.
  */
 function focusAddressInputOnClick(event) {
-  let container = event.target;
+  const container = event.target;
   if (container.classList.contains("address-container")) {
     container.querySelector(".address-row-input").focus();
   }
@@ -6475,23 +6548,23 @@ function updateSendLock() {
     "newsgroupsAddrContainer",
   ];
 
-  for (let parentID of addressRows) {
+  for (const parentID of addressRows) {
     if (!gSendLocked) {
       break;
     }
 
-    let parent = document.getElementById(parentID);
+    const parent = document.getElementById(parentID);
 
     if (!parent) {
       continue;
     }
 
-    for (let address of parent.querySelectorAll(".address-pill")) {
-      let listNames = MimeParser.parseHeaderField(
+    for (const address of parent.querySelectorAll(".address-pill")) {
+      const listNames = MimeParser.parseHeaderField(
         address.fullAddress,
         MimeParser.HEADER_ADDRESS
       );
-      let isMailingList =
+      const isMailingList =
         listNames.length > 0 &&
         MailServices.ab.mailListNameExists(listNames[0].name);
 
@@ -6507,10 +6580,10 @@ function updateSendLock() {
   }
 
   // Check the non pillified input text inside the autocomplete input fields.
-  for (let input of document.querySelectorAll(
+  for (const input of document.querySelectorAll(
     ".address-row:not(.hidden):not(.address-row-raw) .address-row-input"
   )) {
-    let inputValueTrim = input.value.trim();
+    const inputValueTrim = input.value.trim();
     // If there's no text in the input, proceed with next input.
     if (!inputValueTrim) {
       continue;
@@ -6539,20 +6612,20 @@ function updateSendLock() {
 /**
  * Check if the entered addresses are valid and alert the user if they are not.
  *
- * @param aMsgCompFields  A nsIMsgCompFields object containing the fields to check.
+ * @param {nsIMsgCompFields} aMsgCompFields - Fields containing the fields to check.
  */
 function CheckValidEmailAddress(aMsgCompFields) {
   let invalidStr;
   let recipientCount = 0;
   // Check that each of the To, CC, and BCC recipients contains a '@'.
-  for (let type of ["to", "cc", "bcc"]) {
-    let recipients = aMsgCompFields.splitRecipients(
+  for (const type of ["to", "cc", "bcc"]) {
+    const recipients = aMsgCompFields.splitRecipients(
       aMsgCompFields[type],
       false
     );
     // MsgCompFields contains only non-empty recipients.
     recipientCount += recipients.length;
-    for (let recipient of recipients) {
+    for (const recipient of recipients) {
       if (!isValidAddress(recipient)) {
         invalidStr = recipient;
         break;
@@ -6593,7 +6666,7 @@ function CheckValidEmailAddress(aMsgCompFields) {
  * happens on the window's menu bar.
  */
 async function pillifyRecipients() {
-  for (let input of document.querySelectorAll(
+  for (const input of document.querySelectorAll(
     ".address-row:not(.hidden):not(.address-row-raw) .address-row-input"
   )) {
     // If we find a leftover string in the input field, create a pill. If the
@@ -6609,9 +6682,9 @@ async function pillifyRecipients() {
 }
 
 /**
- *  Handle the dragover event on a recipient disclosure label.
+ * Handle the dragover event on a recipient disclosure label.
  *
- *  @param {Event} - The DOM dragover event on a recipient disclosure label.
+ * @param {Event} event - The DOM dragover event on a recipient disclosure label.
  */
 function showAddressRowButtonOnDragover(event) {
   // Prevent dragover event's default action (which resets the current drag
@@ -6622,7 +6695,7 @@ function showAddressRowButtonOnDragover(event) {
 /**
  *  Handle the drop event on a recipient disclosure label.
  *
- *  @param {Event} - The DOM drop event on a recipient disclosure label.
+ * @param {Event} event - The DOM drop event on a recipient disclosure label.
  */
 function showAddressRowButtonOnDrop(event) {
   if (event.dataTransfer.types.includes("text/pills")) {
@@ -6632,7 +6705,7 @@ function showAddressRowButtonOnDrop(event) {
     // etc.), which will also show the row if needed. If there are no selected
     // pills (so "text/pills" was generated elsewhere), moveSelectedPills() will
     // bail out and we'll do nothing.
-    let row = document.getElementById(event.target.dataset.addressRow);
+    const row = document.getElementById(event.target.dataset.addressRow);
     document.getElementById("recipientsContainer").moveSelectedPills(row);
   }
 }
@@ -6658,7 +6731,7 @@ function copySelectedPillsOnCommand() {
  * @param {Element} focusPill - The focused <mail-address-pill> element.
  */
 function selectAllSiblingPillsOnCommand(focusPill) {
-  let recipientsContainer = document.getElementById("recipientsContainer");
+  const recipientsContainer = document.getElementById("recipientsContainer");
   // First deselect all pills to ensure that no pills outside the current
   // address row are selected, e.g. when this action was triggered from
   // context menu on already selected pill(s).
@@ -6696,15 +6769,15 @@ function moveSelectedPillsOnCommand(rowId) {
  * Check if there are too many public recipients and offer to send them as BCC.
  */
 function checkPublicRecipientsLimit() {
-  let notification = gComposeNotification.getNotificationWithValue(
+  const notification = gComposeNotification.getNotificationWithValue(
     "warnPublicRecipientsNotification"
   );
 
-  let recipLimit = Services.prefs.getIntPref(
+  const recipLimit = Services.prefs.getIntPref(
     "mail.compose.warn_public_recipients.threshold"
   );
 
-  let publicAddressPillsCount = getPublicAddressPillsCount();
+  const publicAddressPillsCount = getPublicAddressPillsCount();
 
   if (publicAddressPillsCount < recipLimit) {
     if (notification) {
@@ -6733,18 +6806,18 @@ function checkPublicRecipientsLimit() {
   }
 
   // Construct the notification as we don't have one.
-  let bccButton = {
+  const bccButton = {
     "l10n-id": "many-public-recipients-bcc",
     callback() {
       // Get public addresses before we remove the pills.
-      let publicAddresses = getPublicAddressPills().map(
+      const publicAddresses = getPublicAddressPills().map(
         pill => pill.fullAddress
       );
 
       addressRowClearPills(document.getElementById("addressRowTo"));
       addressRowClearPills(document.getElementById("addressRowCc"));
       // Add previously public address pills to Bcc address row and select them.
-      let bccRow = document.getElementById("addressRowBcc");
+      const bccRow = document.getElementById("addressRowBcc");
       addressRowAddRecipientsArray(bccRow, publicAddresses, true);
       // Focus last added pill to prevent sticky selection with focus elsewhere.
       bccRow.querySelector("mail-address-pill:last-of-type").focus();
@@ -6752,7 +6825,7 @@ function checkPublicRecipientsLimit() {
     },
   };
 
-  let ignoreButton = {
+  const ignoreButton = {
     "l10n-id": "many-public-recipients-ignore",
     callback() {
       gRecipientObserver.disconnect();
@@ -6767,7 +6840,7 @@ function checkPublicRecipientsLimit() {
       }
 
       // Otherwise if there's no subject yet, focus that (ux-error-prevention).
-      let msgSubject = document.getElementById("msgSubject");
+      const msgSubject = document.getElementById("msgSubject");
       if (!msgSubject.value) {
         msgSubject.focus();
         return false;
@@ -6782,36 +6855,36 @@ function checkPublicRecipientsLimit() {
   // NOTE: setting "public-recipients-notice-single" below, after the notification
   // has been appended, so that the notification can be found and no further
   // notifications are appended.
-  notification = gComposeNotification.appendNotification(
-    "warnPublicRecipientsNotification",
-    {
-      label: "", // "public-recipients-notice-single"
-      priority: gComposeNotification.PRIORITY_WARNING_MEDIUM,
-      eventCallback(state) {
-        if (state == "dismissed") {
-          ignoreButton.callback();
-        }
+  gComposeNotification
+    .appendNotification(
+      "warnPublicRecipientsNotification",
+      {
+        label: "", // "public-recipients-notice-single"
+        priority: gComposeNotification.PRIORITY_WARNING_MEDIUM,
+        eventCallback(state) {
+          if (state == "dismissed") {
+            ignoreButton.callback();
+          }
+        },
       },
-    },
-    [bccButton, ignoreButton]
-  );
-
-  if (notification) {
-    if (publicAddressPillsCount > 1) {
-      document.l10n.setAttributes(
-        notification.messageText,
-        "public-recipients-notice-multi",
-        {
-          count: publicAddressPillsCount,
-        }
-      );
-    } else {
-      document.l10n.setAttributes(
-        notification.messageText,
-        "public-recipients-notice-single"
-      );
-    }
-  }
+      [bccButton, ignoreButton]
+    )
+    .then(notification2 => {
+      if (publicAddressPillsCount > 1) {
+        document.l10n.setAttributes(
+          notification2.messageText,
+          "public-recipients-notice-multi",
+          {
+            count: publicAddressPillsCount,
+          }
+        );
+      } else {
+        document.l10n.setAttributes(
+          notification2.messageText,
+          "public-recipients-notice-single"
+        );
+      }
+    }, console.warn);
 }
 
 /**
@@ -6831,7 +6904,7 @@ function getPublicAddressPills() {
  * takes mailing lists into consideration as well.
  */
 function getPublicAddressPillsCount() {
-  let pills = getPublicAddressPills();
+  const pills = getPublicAddressPills();
   return pills.reduce(
     (total, pill) =>
       pill.isMailList ? total + pill.listAddressCount : total + 1,
@@ -6844,7 +6917,7 @@ function getPublicAddressPillsCount() {
  * The warning is not shown if the only Bcc recipient is the sender.
  */
 async function checkEncryptedBccRecipients() {
-  let notification = gComposeNotification.getNotificationWithValue(
+  const notification = gComposeNotification.getNotificationWithValue(
     "warnEncryptedBccRecipients"
   );
 
@@ -6855,10 +6928,10 @@ async function checkEncryptedBccRecipients() {
     return;
   }
 
-  let bccRecipients = [
+  const bccRecipients = [
     ...document.querySelectorAll("#bccAddrContainer > mail-address-pill"),
   ];
-  let bccIsSender = bccRecipients.every(
+  const bccIsSender = bccRecipients.every(
     pill => pill.emailAddress == gCurrentIdentity.email
   );
 
@@ -6873,7 +6946,7 @@ async function checkEncryptedBccRecipients() {
     return;
   }
 
-  let ignoreButton = {
+  const ignoreButton = {
     "l10n-id": "encrypted-bcc-ignore-button",
     callback() {
       gWantCannotEncryptBCCNotification = false;
@@ -6881,7 +6954,7 @@ async function checkEncryptedBccRecipients() {
     },
   };
 
-  gComposeNotification.appendNotification(
+  await gComposeNotification.appendNotification(
     "warnEncryptedBccRecipients",
     {
       label: await document.l10n.formatValue("encrypted-bcc-warning"),
@@ -6902,7 +6975,7 @@ async function SendMessage() {
     "mailnews.sendInBackground"
   );
   if (sendInBackground && AppConstants.platform != "macosx") {
-    let count = [...Services.wm.getEnumerator(null)].length;
+    const count = [...Services.wm.getEnumerator(null)].length;
     if (count == 1) {
       sendInBackground = false;
     }
@@ -6921,9 +6994,9 @@ async function SendMessageWithCheck() {
   var warn = Services.prefs.getBoolPref("mail.warn_on_send_accel_key");
 
   if (warn) {
-    let bundle = getComposeBundle();
-    let checkValue = { value: false };
-    let buttonPressed = Services.prompt.confirmEx(
+    const bundle = getComposeBundle();
+    const checkValue = { value: false };
+    const buttonPressed = Services.prompt.confirmEx(
       window,
       bundle.getString("sendMessageCheckWindowTitle"),
       bundle.getString("sendMessageCheckLabel"),
@@ -6943,7 +7016,7 @@ async function SendMessageWithCheck() {
     }
   }
 
-  let sendInBackground = Services.prefs.getBoolPref(
+  const sendInBackground = Services.prefs.getBoolPref(
     "mailnews.sendInBackground"
   );
 
@@ -7050,7 +7123,7 @@ function MessageFcc(aFolder) {
 function updateOptionsMenu() {
   setSecuritySettings("_Menubar");
 
-  let menuItem = document.getElementById("menu_inlineSpellCheck");
+  const menuItem = document.getElementById("menu_inlineSpellCheck");
   if (gSpellCheckingEnabled) {
     menuItem.setAttribute("checked", "true");
   } else {
@@ -7094,7 +7167,7 @@ function PriorityMenuSelect(target) {
  * Initialise the send format menu using the current gMsgCompose.compFields.
  */
 function initSendFormatMenu() {
-  let formatToId = new Map([
+  const formatToId = new Map([
     [Ci.nsIMsgCompSendFormat.PlainText, "format_plain"],
     [Ci.nsIMsgCompSendFormat.HTML, "format_html"],
     [Ci.nsIMsgCompSendFormat.Both, "format_both"],
@@ -7119,8 +7192,8 @@ function initSendFormatMenu() {
   // if the deliveryFormat was Unset, we now set it to a specific value.
   gMsgCompose.compFields.deliveryFormat = sendFormat;
 
-  for (let [format, id] of formatToId.entries()) {
-    let menuitem = document.getElementById(id);
+  for (const [format, id] of formatToId.entries()) {
+    const menuitem = document.getElementById(id);
     menuitem.value = String(format);
     if (format == sendFormat) {
       menuitem.setAttribute("checked", "true");
@@ -7132,8 +7205,8 @@ function initSendFormatMenu() {
   document
     .getElementById("outputFormatMenu")
     .addEventListener("command", event => {
-      let prevSendFormat = gMsgCompose.compFields.deliveryFormat;
-      let newSendFormat = parseInt(event.target.value, 10);
+      const prevSendFormat = gMsgCompose.compFields.deliveryFormat;
+      const newSendFormat = parseInt(event.target.value, 10);
       gMsgCompose.compFields.deliveryFormat = newSendFormat;
       gContentChanged = prevSendFormat != newSendFormat;
     });
@@ -7149,20 +7222,20 @@ function initSendFormatMenu() {
 function addRecipientsToIgnoreList(aAddressesToAdd) {
   if (gSpellCheckingEnabled) {
     // break the list of potentially many recipients back into individual names
-    let addresses =
+    const addresses =
       MailServices.headerParser.parseEncodedHeader(aAddressesToAdd);
-    let tokenizedNames = [];
+    const tokenizedNames = [];
 
     // Each name could consist of multiple word delimited by either commas or spaces, i.e. Green Lantern
     // or Lantern,Green. Tokenize on comma first, then tokenize again on spaces.
-    for (let addr of addresses) {
+    for (const addr of addresses) {
       if (!addr.name) {
         continue;
       }
-      let splitNames = addr.name.split(",");
+      const splitNames = addr.name.split(",");
       for (let i = 0; i < splitNames.length; i++) {
         // now tokenize off of white space
-        let splitNamesFromWhiteSpaceArray = splitNames[i].split(" ");
+        const splitNamesFromWhiteSpaceArray = splitNames[i].split(" ");
         for (
           let whiteSpaceIndex = 0;
           whiteSpaceIndex < splitNamesFromWhiteSpaceArray.length;
@@ -7187,7 +7260,7 @@ var spellCheckReadyObserver = {
 
   _ignoreWords: [],
 
-  observe(aSubject, aTopic, aData) {
+  observe(aSubject, aTopic) {
     if (aTopic != this._topic) {
       return;
     }
@@ -7219,7 +7292,7 @@ var spellCheckReadyObserver = {
 
   addWordsToIgnore(aIgnoreWords) {
     this._ignoreWords.push(...aIgnoreWords);
-    let checker = GetCurrentEditorSpellChecker();
+    const checker = GetCurrentEditorSpellChecker();
     if (!checker || checker.spellCheckPending) {
       // spellchecker is enabled, but we must wait for its init to complete
       this.addObserver();
@@ -7232,7 +7305,7 @@ var spellCheckReadyObserver = {
     // At the time the speller finally got initialized, we may already be closing
     // the compose together with the speller, so we need to check if they
     // are still valid.
-    let checker = GetCurrentEditorSpellChecker();
+    const checker = GetCurrentEditorSpellChecker();
     if (gMsgCompose && checker?.enableRealTimeSpell) {
       checker.ignoreWords(this._ignoreWords);
     }
@@ -7267,16 +7340,18 @@ function onRecipientsChanged(automatic) {
  * Except aPopupID, all parameters are optional.
  * Example: showPopupById("aPopupID", "aAnchorID");
  *
- * @param aPopupID   the ID of the popup element to be shown
- * @param aAnchorID  the ID of an element to which the popup should be anchored
- * @param aPosition  a single-word alignment value for the position parameter
- *                   of openPopup() method; defaults to "after_start" if omitted.
- * @param x          x offset from default position
- * @param y          y offset from default position
- * @param isContextMenu {boolean} For details, see documentation.
- * @param attributesOverride {boolean} whether the position attribute on the
- *                                     popup node overrides the position parameter
- * @param triggerEvent the event that triggered the popup
+ * @param {string} aPopupID - The ID of the popup element to be shown.
+ * @param {string} aAnchorID - The ID of an element to which the popup should
+ *   be anchored.
+ * @param {string} [aPosition="after_start"] - A single-word alignment value
+ *   for the position parameter of openPopup() method;
+ *   Defaults to "after_start" if omitted.
+ * @param {integer} x - x offset from default position
+ * @param {integer} y - y offset from default position
+ * @param {boolean} isContextMenu - For details, see documentation.
+ * @param {boolean} attributesOverride - Whether the position attribute on the
+ *   popup node overrides the position parameter.
+ * @param {Event} triggerEvent - The event that triggered the popup
  */
 function showPopupById(
   aPopupID,
@@ -7288,8 +7363,8 @@ function showPopupById(
   attributesOverride,
   triggerEvent
 ) {
-  let popup = document.getElementById(aPopupID);
-  let anchor = document.getElementById(aAnchorID);
+  const popup = document.getElementById(aPopupID);
+  const anchor = document.getElementById(aAnchorID);
   popup.openPopup(
     anchor,
     aPosition,
@@ -7316,7 +7391,7 @@ function InitLanguageMenu() {
 
   var dictList = spellChecker.getDictionaryList();
 
-  let extraItemCount = dictList.length === 0 ? 1 : 2;
+  const extraItemCount = dictList.length === 0 ? 1 : 2;
 
   // If dictionary count hasn't changed then no need to update the menu.
   if (dictList.length + extraItemCount == languageMenuList.childElementCount) {
@@ -7325,13 +7400,13 @@ function InitLanguageMenu() {
 
   var sortedList = gSpellChecker.sortDictionaryList(dictList);
 
-  let getMoreItem = document.createXULElement("menuitem");
+  const getMoreItem = document.createXULElement("menuitem");
   document.l10n.setAttributes(getMoreItem, "spell-add-dictionaries");
   getMoreItem.addEventListener("command", event => {
     event.stopPropagation();
     openDictionaryList();
   });
-  let getMoreArray = [getMoreItem];
+  const getMoreArray = [getMoreItem];
 
   if (extraItemCount > 1) {
     getMoreArray.unshift(document.createXULElement("menuseparator"));
@@ -7340,7 +7415,7 @@ function InitLanguageMenu() {
   // Remove any languages from the list.
   languageMenuList.replaceChildren(
     ...sortedList.map(dict => {
-      let item = document.createXULElement("menuitem");
+      const item = document.createXULElement("menuitem");
       item.setAttribute("label", dict.displayName);
       item.setAttribute("value", dict.localeCode);
       item.setAttribute("type", "checkbox");
@@ -7357,7 +7432,7 @@ function InitLanguageMenu() {
 function OnShowDictionaryMenu(aTarget) {
   InitLanguageMenu();
 
-  for (let item of aTarget.children) {
+  for (const item of aTarget.children) {
     item.setAttribute(
       "checked",
       gActiveDictionaries.has(item.getAttribute("value"))
@@ -7394,7 +7469,7 @@ var gActiveDictionaries = new Set();
  * @param {string[]} languages - New languages to set.
  */
 async function ComposeChangeLanguage(languages) {
-  let currentLanguage = document.documentElement.getAttribute("lang");
+  const currentLanguage = document.documentElement.getAttribute("lang");
   if (
     (languages.length === 1 && currentLanguage != languages[0]) ||
     languages.length !== 1
@@ -7407,15 +7482,28 @@ async function ComposeChangeLanguage(languages) {
     document.documentElement.setAttribute("lang", languageToSet);
   }
 
+  const checker = GetCurrentEditorSpellChecker();
+
+  // Spell checker needs to be ready before we can select new dictionaries.
+  if (gSpellCheckingEnabled && checker?.spellCheckPending) {
+    await new Promise(resolve => {
+      Services.obs.addObserver(function observe(subject, topic) {
+        if (!gMsgCompose || subject == gMsgCompose.editor) {
+          Services.obs.removeObserver(observe, topic);
+          resolve();
+        }
+      }, "inlineSpellChecker-spellCheck-ended");
+    });
+  }
+
   await gSpellChecker?.selectDictionaries(languages);
 
-  let checker = GetCurrentEditorSpellChecker();
   if (checker?.spellChecker) {
     await checker.spellChecker.setCurrentDictionaries(languages);
   }
   // Update subject spell checker languages. If for some reason the spell
   // checker isn't ready yet, don't auto-create it, hence pass 'false'.
-  let subjectSpellChecker = checker?.spellChecker
+  const subjectSpellChecker = checker?.spellChecker
     ? document.getElementById("msgSubject").editor.getInlineSpellChecker(false)
     : null;
   if (subjectSpellChecker?.spellChecker) {
@@ -7464,7 +7552,7 @@ async function ComposeChangeLanguage(languages) {
  *  menulist popup.
  */
 function ChangeLanguage(event) {
-  let curLangs = new Set(gActiveDictionaries);
+  const curLangs = new Set(gActiveDictionaries);
   if (curLangs.has(event.target.value)) {
     curLangs.delete(event.target.value);
   } else {
@@ -7489,8 +7577,8 @@ async function updateLanguageInStatusBar(dictionaries) {
   ]).formatValue("language-name-en");
 
   InitLanguageMenu();
-  let languageMenuList = document.getElementById("languageMenuList");
-  let languageStatusButton = document.getElementById("languageStatusButton");
+  const languageMenuList = document.getElementById("languageMenuList");
+  const languageStatusButton = document.getElementById("languageStatusButton");
   if (!languageMenuList || !languageStatusButton) {
     return;
   }
@@ -7498,12 +7586,6 @@ async function updateLanguageInStatusBar(dictionaries) {
   if (!dictionaries) {
     dictionaries = Array.from(gActiveDictionaries);
   }
-  let listFormat = new Intl.ListFormat(undefined, {
-    type: "conjunction",
-    style: "short",
-  });
-  let languages = [];
-  let item = languageMenuList.firstElementChild;
 
   // No status display, if there is only one or no spelling dictionary available.
   if (languageMenuList.childElementCount <= 3) {
@@ -7513,6 +7595,12 @@ async function updateLanguageInStatusBar(dictionaries) {
   }
 
   languageStatusButton.hidden = false;
+  const listFormat = new Intl.ListFormat(Services.locale.appLocalesAsBCP47, {
+    type: "conjunction",
+    style: "short",
+  });
+  const languages = [];
+  let item = languageMenuList.firstElementChild;
   while (item) {
     if (item.tagName.toLowerCase() === "menuseparator") {
       break;
@@ -7536,7 +7624,7 @@ async function updateLanguageInStatusBar(dictionaries) {
  *  If not set, the current state will be toggled.
  */
 function ToggleReturnReceipt(forcedState) {
-  let msgCompFields = gMsgCompose.compFields;
+  const msgCompFields = gMsgCompose.compFields;
   if (!msgCompFields) {
     return;
   }
@@ -7549,14 +7637,14 @@ function ToggleReturnReceipt(forcedState) {
     }
     msgCompFields.returnReceipt = forcedState;
   }
-  for (let item of document.querySelectorAll(`menuitem[command="cmd_toggleReturnReceipt"],
+  for (const item of document.querySelectorAll(`menuitem[command="cmd_toggleReturnReceipt"],
                                               toolbarbutton[command="cmd_toggleReturnReceipt"]`)) {
     item.setAttribute("checked", msgCompFields.returnReceipt);
   }
 }
 
 function ToggleDSN(target) {
-  let msgCompFields = gMsgCompose.compFields;
+  const msgCompFields = gMsgCompose.compFields;
   if (msgCompFields) {
     msgCompFields.DSN = !msgCompFields.DSN;
     target.setAttribute("checked", msgCompFields.DSN);
@@ -7579,9 +7667,10 @@ function ToggleAttachVCard(target) {
  * Toggles checkmark on "Remind me later" menuitem and internal
  * gManualAttachmentReminder flag accordingly.
  *
- * @param aState (optional) true = activate reminder.
- *                          false = deactivate reminder.
- *                          (default) = toggle reminder state.
+ * @param {boolean} [aState] - Reminder state.
+ *   - true = activate reminder.
+ *   - false = deactivate reminder.
+ *   - (default) = toggle reminder state.
  */
 function toggleAttachmentReminder(aState = !gManualAttachmentReminder) {
   gManualAttachmentReminder = aState;
@@ -7605,25 +7694,26 @@ function toggleAttachmentAnimation() {
 }
 
 function FillIdentityList(menulist) {
-  let accounts = FolderUtils.allAccountsSorted(true);
+  const accounts = FolderUtils.allAccountsSorted(true);
 
+  let hasCustomColor = false;
   let accountHadSeparator = false;
   let firstAccountWithIdentities = true;
-  for (let account of accounts) {
-    let identities = account.identities;
+  for (const account of accounts) {
+    const identities = account.identities;
 
     if (identities.length == 0) {
       continue;
     }
 
-    let needSeparator = identities.length > 1;
+    const needSeparator = identities.length > 1;
     if (needSeparator || accountHadSeparator) {
       // Separate identities from this account from the previous
       // account's identities if there is more than 1 in the current
       // or previous account.
       if (!firstAccountWithIdentities) {
         // only if this is not the first account shown
-        let separator = document.createXULElement("menuseparator");
+        const separator = document.createXULElement("menuseparator");
         menulist.menupopup.appendChild(separator);
       }
       accountHadSeparator = needSeparator;
@@ -7631,12 +7721,19 @@ function FillIdentityList(menulist) {
     firstAccountWithIdentities = false;
 
     for (let i = 0; i < identities.length; i++) {
-      let identity = identities[i];
-      let item = menulist.appendItem(
+      const identity = identities[i];
+      const item = menulist.appendItem(
         identity.identityName,
         identity.fullAddress,
         account.incomingServer.prettyName
       );
+      const color = FolderTreeProperties.getColor(
+        account.incomingServer.rootFolder.URI
+      );
+      if (color) {
+        hasCustomColor = true;
+      }
+      item.style.setProperty("--icon-color", color ?? "");
       item.setAttribute("identitykey", identity.key);
       item.setAttribute("accountkey", account.key);
       if (i == 0) {
@@ -7645,13 +7742,15 @@ function FillIdentityList(menulist) {
       }
       // Create the menuitem description and add it after the last label in the
       // menuitem internals.
-      let desc = document.createXULElement("label");
+      const desc = document.createXULElement("label");
       desc.value = item.getAttribute("description");
       desc.classList.add("menu-description");
       desc.setAttribute("crop", "end");
       item.querySelector("label:last-child").after(desc);
     }
   }
+
+  menulist.classList.toggle("has-custom-color", hasCustomColor);
 
   menulist.menupopup.appendChild(document.createXULElement("menuseparator"));
   menulist.menupopup
@@ -7661,7 +7760,7 @@ function FillIdentityList(menulist) {
 
 function getCurrentAccountKey() {
   // Get the account's key.
-  let identityList = document.getElementById("msgIdentity");
+  const identityList = document.getElementById("msgIdentity");
   return identityList.getAttribute("accountkey");
 }
 
@@ -7672,8 +7771,8 @@ function getCurrentIdentityKey() {
 
 function AdjustFocus() {
   // If is NNTP account, check the newsgroup field.
-  let account = MailServices.accounts.getAccount(getCurrentAccountKey());
-  let accountType = account.incomingServer.type;
+  const account = MailServices.accounts.getAccount(getCurrentAccountKey());
+  const accountType = account.incomingServer.type;
 
   let element =
     accountType == "nntp"
@@ -7699,20 +7798,14 @@ function AdjustFocus() {
 
 /**
  * Set the compose window title with flavors (Write | Print Preview).
- *
- * @param isPrintPreview (optional) true:  Set title for 'Print Preview' window.
- *                                  false: Set title for 'Write' window (default).
  */
-function SetComposeWindowTitle(isPrintPreview = false) {
-  let aStringName = isPrintPreview
-    ? "windowTitlePrintPreview"
-    : "windowTitleWrite";
-  let subject =
+function SetComposeWindowTitle() {
+  const subject =
     document.getElementById("msgSubject").value.trim() ||
     getComposeBundle().getString("defaultSubject");
-  let brandBundle = document.getElementById("brandBundle");
-  let brandShortName = brandBundle.getString("brandShortName");
-  let newTitle = getComposeBundle().getFormattedString(aStringName, [
+  const brandBundle = document.getElementById("brandBundle");
+  const brandShortName = brandBundle.getString("brandShortName");
+  const newTitle = getComposeBundle().getFormattedString("windowTitleWrite", [
     subject,
     brandShortName,
   ]);
@@ -7722,8 +7815,12 @@ function SetComposeWindowTitle(isPrintPreview = false) {
   }
 }
 
-// Check for changes to document and allow saving before closing
-// This is hooked up to the OS's window close widget (e.g., "X" for Windows)
+/**
+ * Check for changes to document and allow saving before closing
+ * This is hooked up to the OS's window close widget (e.g., "X" for Windows).
+ *
+ * @returns {boolean} true if the window can go ahead and close.
+ */
 function ComposeCanClose() {
   // No open compose window?
   if (!gMsgCompose) {
@@ -7733,14 +7830,12 @@ function ComposeCanClose() {
   // Do this early, so ldap sessions have a better chance to
   // cleanup after themselves.
   if (gSendOperationInProgress || gSaveOperationInProgress) {
-    let result;
-
-    let brandBundle = document.getElementById("brandBundle");
-    let brandShortName = brandBundle.getString("brandShortName");
-    let promptTitle = gSendOperationInProgress
+    const brandBundle = document.getElementById("brandBundle");
+    const brandShortName = brandBundle.getString("brandShortName");
+    const promptTitle = gSendOperationInProgress
       ? getComposeBundle().getString("quitComposeWindowTitle")
       : getComposeBundle().getString("quitComposeWindowSaveTitle");
-    let promptMsg = gSendOperationInProgress
+    const promptMsg = gSendOperationInProgress
       ? getComposeBundle().getFormattedString(
           "quitComposeWindowMessage2",
           [brandShortName],
@@ -7751,14 +7846,14 @@ function ComposeCanClose() {
           [brandShortName],
           1
         );
-    let quitButtonLabel = getComposeBundle().getString(
+    const quitButtonLabel = getComposeBundle().getString(
       "quitComposeWindowQuitButtonLabel2"
     );
-    let waitButtonLabel = getComposeBundle().getString(
+    const waitButtonLabel = getComposeBundle().getString(
       "quitComposeWindowWaitButtonLabel2"
     );
 
-    result = Services.prompt.confirmEx(
+    const result = Services.prompt.confirmEx(
       window,
       promptTitle,
       promptMsg,
@@ -7789,14 +7884,12 @@ function ComposeCanClose() {
     // call window.focus, since we need to pop up a dialog
     // and therefore need to be visible (to prevent user confusion)
     window.focus();
-    let draftFolderURI = gCurrentIdentity.draftFolder;
-    let draftFolderName =
-      MailUtils.getOrCreateFolder(draftFolderURI).prettyName;
-    let result = Services.prompt.confirmEx(
+    const draftsFolder = gCurrentIdentity.getOrCreateDraftsFolder();
+    const result = Services.prompt.confirmEx(
       window,
       getComposeBundle().getString("saveDlogTitle"),
       getComposeBundle().getFormattedString("saveDlogMessages3", [
-        draftFolderName,
+        draftsFolder.name,
       ]),
       Services.prompt.BUTTON_TITLE_SAVE * Services.prompt.BUTTON_POS_0 +
         Services.prompt.BUTTON_TITLE_CANCEL * Services.prompt.BUTTON_POS_1 +
@@ -7846,13 +7939,13 @@ function RemoveDraft() {
   try {
     var draftUri = gMsgCompose.compFields.draftId;
     var msgKey = draftUri.substr(draftUri.indexOf("#") + 1);
-    let folder = MailUtils.getExistingFolder(gMsgCompose.savedFolderURI);
+    const folder = MailUtils.getExistingFolder(gMsgCompose.savedFolderURI);
     if (!folder) {
       return;
     }
     try {
       if (folder.getFlag(Ci.nsMsgFolderFlags.Drafts)) {
-        let msgHdr = folder.GetMessageHeader(msgKey);
+        const msgHdr = folder.GetMessageHeader(msgKey);
         folder.deleteMessages([msgHdr], null, true, false, null, false);
       }
     } catch (ex) {
@@ -7900,11 +7993,13 @@ function GetLastAttachDirectory() {
   return lastDirectory;
 }
 
-// attachedLocalFile must be a nsIFile
+/**
+ * @param {nsIFile} attachedLocalFile
+ */
 function SetLastAttachDirectory(attachedLocalFile) {
   try {
-    let file = attachedLocalFile.QueryInterface(Ci.nsIFile);
-    let parent = file.parent.QueryInterface(Ci.nsIFile);
+    const file = attachedLocalFile.QueryInterface(Ci.nsIFile);
+    const parent = file.parent.QueryInterface(Ci.nsIFile);
 
     Services.prefs.setComplexValue(
       kComposeAttachDirPrefName,
@@ -7924,14 +8019,14 @@ function AttachFile() {
   }
 
   // Get file using nsIFilePicker and convert to URL
-  let fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
+  const fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
   fp.init(
-    window,
+    window.browsingContext,
     getComposeBundle().getString("chooseFileToAttach"),
     Ci.nsIFilePicker.modeOpenMultiple
   );
 
-  let lastDirectory = GetLastAttachDirectory();
+  const lastDirectory = GetLastAttachDirectory();
   if (lastDirectory) {
     fp.displayDirectory = lastDirectory;
   }
@@ -7943,7 +8038,7 @@ function AttachFile() {
     }
 
     let file;
-    let attachments = [];
+    const attachments = [];
 
     for (file of [...fp.files]) {
       attachments.push(FileToAttachment(file));
@@ -7957,14 +8052,14 @@ function AttachFile() {
 /**
  * Convert an nsIFile instance into an nsIMsgAttachment.
  *
- * @param file the nsIFile
- * @returns an attachment pointing to the file
+ * @param {nsIFile} file - The file to convert.
+ * @returns {nsIMsgAttachment} an attachment pointing to the file.
  */
 function FileToAttachment(file) {
-  let fileHandler = Services.io
+  const fileHandler = Services.io
     .getProtocolHandler("file")
     .QueryInterface(Ci.nsIFileProtocolHandler);
-  let attachment = Cc[
+  const attachment = Cc[
     "@mozilla.org/messengercompose/attachment;1"
   ].createInstance(Ci.nsIMsgAttachment);
 
@@ -7974,26 +8069,25 @@ function FileToAttachment(file) {
 }
 
 async function messageAttachmentToFile(attachment) {
-  let pathTempDir = PathUtils.join(
+  const pathTempDir = PathUtils.join(
     PathUtils.tempDir,
     "pid-" + Services.appinfo.processID
   );
   await IOUtils.makeDirectory(pathTempDir, { permissions: 0o700 });
-  let pathTempFile = await IOUtils.createUniqueFile(
+  const tempDir = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+  tempDir.initWithPath(pathTempDir);
+  const pathTempFile = await IOUtils.createUniqueFile(
     pathTempDir,
     attachment.name.replaceAll(/[/:*?\"<>|]/g, "_"),
     0o600
   );
-  let tempFile = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+  const tempFile = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
   tempFile.initWithPath(pathTempFile);
-  let extAppLauncher = Cc[
-    "@mozilla.org/uriloader/external-helper-app-service;1"
-  ].getService(Ci.nsPIExternalAppLauncher);
-  extAppLauncher.deleteTemporaryFileOnExit(tempFile);
+  gTempDirsToDelete.push(tempDir);
 
-  let service = MailServices.messageServiceFromURI(attachment.url);
-  let bytes = await new Promise((resolve, reject) => {
-    let streamlistener = {
+  const service = MailServices.messageServiceFromURI(attachment.url);
+  const bytes = await new Promise((resolve, reject) => {
+    const streamlistener = {
       _data: [],
       _stream: null,
       onDataAvailable(aRequest, aInputStream, aOffset, aCount) {
@@ -8045,10 +8139,10 @@ async function messageAttachmentToFile(attachment) {
  *   after adding attachments.
  */
 async function AddAttachments(aAttachments, aContentChanged = true) {
-  let addedAttachments = [];
-  let items = [];
+  const addedAttachments = [];
+  const items = [];
 
-  for (let attachment of aAttachments) {
+  for (const attachment of aAttachments) {
     if (!attachment?.url || DuplicateFileAlreadyAttached(attachment)) {
       continue;
     }
@@ -8068,7 +8162,13 @@ async function AddAttachments(aAttachments, aContentChanged = true) {
         "messageAttachmentSafeName"
       );
     } else if (/^file:|^mailbox:|^imap:|^s?news:/i.test(attachment.name)) {
+      const ext = attachment.name.includes(".")
+        ? attachment.name.split(".").pop()
+        : null;
       attachment.name = getComposeBundle().getString("partAttachmentSafeName");
+      if (ext && !ext.includes(" ")) {
+        attachment.name += `.${ext}`;
+      }
     }
 
     // Create temporary files for message attachments.
@@ -8076,7 +8176,7 @@ async function AddAttachments(aAttachments, aContentChanged = true) {
       /^mailbox-message:|^imap-message:|^news-message:/i.test(attachment.url)
     ) {
       try {
-        let messageFile = await messageAttachmentToFile(attachment);
+        const messageFile = await messageAttachmentToFile(attachment);
         // Store the original mailbox:// url in contentLocation.
         attachment.contentLocation = attachment.url;
         attachment.url = Services.io.newFileURI(messageFile).spec;
@@ -8097,36 +8197,37 @@ async function AddAttachments(aAttachments, aContentChanged = true) {
     ) {
       // This is an attachment of another message, create a temporary file and
       // update the url.
-      let pathTempDir = PathUtils.join(
+      const pathTempDir = PathUtils.join(
         PathUtils.tempDir,
         "pid-" + Services.appinfo.processID
       );
       await IOUtils.makeDirectory(pathTempDir, { permissions: 0o700 });
-      let tempDir = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+      const tempDir = Cc["@mozilla.org/file/local;1"].createInstance(
+        Ci.nsIFile
+      );
       tempDir.initWithPath(pathTempDir);
-      // Ensure we don't mess with an existing file in saveAttachmentToFolder.
+      attachment.name = attachment.name.replaceAll(/[/:*?\"<>|]/g, "_");
+      // Ensure we don't mess with an existing file.
       const uniquePath = await IOUtils.createUniqueFile(
         pathTempDir,
-        attachment.name.replaceAll(/[/:*?\"<>|]/g, "_")
+        attachment.name
       );
-      const uniqueTmpFile = await IOUtils.getFile(uniquePath);
-      let tempFile = gMessenger.saveAttachmentToFolder(
-        attachment.contentType,
-        attachment.url,
-        encodeURIComponent(uniqueTmpFile.leafName),
-        attachment.msgUri,
-        tempDir
-      );
-      let extAppLauncher = Cc[
-        "@mozilla.org/uriloader/external-helper-app-service;1"
-      ].getService(Ci.nsPIExternalAppLauncher);
-      extAppLauncher.deleteTemporaryFileOnExit(tempFile);
+      // attachment is an nsIMsgAttachment. Convert to AttachmentInfo and save.
+      const attachmentInfo = new AttachmentInfo({
+        contentType: attachment.contentType,
+        url: attachment.url,
+        name: attachment.name,
+        uri: attachment.msgUri,
+      });
+      await attachmentInfo.saveToFile(uniquePath);
+
+      gTempDirsToDelete.push(tempDir);
       // Store the original mailbox:// url in contentLocation.
       attachment.contentLocation = attachment.url;
-      attachment.url = Services.io.newFileURI(tempFile).spec;
+      attachment.url = PathUtils.toFileURI(uniquePath);
     }
 
-    let item = gAttachmentBucket.appendItem(attachment);
+    const item = gAttachmentBucket.appendItem(attachment);
     addedAttachments.push(attachment);
 
     let tooltiptext;
@@ -8156,15 +8257,21 @@ async function AddAttachments(aAttachments, aContentChanged = true) {
     gAttachmentBucket.ensureIndexIsVisible(gAttachmentBucket.selectedIndex);
 
     AttachmentsChanged("show", aContentChanged);
-    dispatchAttachmentBucketEvent("attachments-added", addedAttachments);
+    gAttachmentBucket.dispatchEvent(
+      new CustomEvent("attachments-added", {
+        bubbles: true,
+        cancelable: true,
+        detail: addedAttachments,
+      })
+    );
 
     // Set min height for the attachment bucket.
     if (!gAttachmentBucket.style.minHeight) {
       // Min height is the height of the first child plus padding and border.
       // Note: we assume the computed styles have px values.
-      let bucketStyle = getComputedStyle(gAttachmentBucket);
-      let childStyle = getComputedStyle(gAttachmentBucket.firstChild);
-      let minHeight =
+      const bucketStyle = getComputedStyle(gAttachmentBucket);
+      const childStyle = getComputedStyle(gAttachmentBucket.firstChild);
+      const minHeight =
         gAttachmentBucket.firstChild.getBoundingClientRect().height +
         parseFloat(childStyle.marginBlockStart) +
         parseFloat(childStyle.marginBlockEnd) +
@@ -8189,14 +8296,13 @@ async function AddAttachments(aAttachments, aContentChanged = true) {
 /**
  * Returns a sorted-by-index, "non-live" array of attachment list items.
  *
- * @param aAscending {boolean}: true (default): sort return array ascending
- *                              false         : sort return array descending
- * @param aSelectedOnly {boolean}: true: return array of selected items only.
- *                                 false (default): return array of all items.
+ * @param {boolean} [aAscending=true] - If true, sort return array ascending.
+ * @param {boolean} [aSelectedOnly=false] - If true, return array of selected
+ *   items only. If false (default): return array of all items.
  *
- * @returns {Array} an array of (all | selected) listItem elements in
- *                 attachmentBucket listbox, "non-live" and sorted by their index
- *                 in the list; [] if there are (no | no selected) attachments.
+ * @returns {Element[]} an array of (all | selected) listItem elements in
+ *   attachmentBucket listbox, "non-live" and sorted by their index
+ *   in the list; [] if there are (no | no selected) attachments.
  */
 function attachmentsGetSortedArray(aAscending = true, aSelectedOnly = false) {
   let listItems;
@@ -8241,11 +8347,10 @@ function attachmentsGetSortedArray(aAscending = true, aSelectedOnly = false) {
 /**
  * Returns a sorted-by-index, "non-live" array of selected attachment list items.
  *
- * @param aAscending {boolean}: true (default): sort return array ascending
- *                              false         : sort return array descending
- * @returns {Array} an array of selected listitem elements in attachmentBucket
- *                 listbox, "non-live" and sorted by their index in the list;
- *                 [] if no attachments selected
+ * @param {boolean} [aAscending=true] - If true, sort return array ascending.
+ * @returns {Element[]} an array of selected listitem elements in attachmentBucket
+ *  listbox, "non-live" and sorted by their index in the list;
+ *  [] if no attachments selected.
  */
 function attachmentsSelectionGetSortedArray(aAscending = true) {
   return attachmentsGetSortedArray(aAscending, true);
@@ -8255,17 +8360,16 @@ function attachmentsSelectionGetSortedArray(aAscending = true) {
  * Return true if the selected attachment items are a coherent block in the list,
  * otherwise false.
  *
- * @param aListPosition (optional) - "top"   : Return true only if the block is
- *                                            at the top of the list.
- *                                  "bottom": Return true only if the block is
- *                                            at the bottom of the list.
- * @returns {boolean} true : The selected attachment items are a coherent block
- *                          (at the list edge if/as specified by 'aListPosition'),
- *                          or only 1 item selected.
- *                   false: The selected attachment items are NOT a coherent block
- *                          (at the list edge if/as specified by 'aListPosition'),
- *                          or no attachments selected, or no attachments,
- *                          or no attachmentBucket.
+ * @param {string} [aListPosition] Position. For
+ *   - "top": return true only if the block is at the top of the list.
+ *   - "bottom": return true only if the block is at the bottom of the list.
+ * @returns {boolean} true when the selected attachment items are a coherent
+ *   block (at the list edge if/as specified by 'aListPosition'), or only 1
+ *   item selected.
+ *   false when selected attachment items are NOT a coherent block
+ *   (at the list edge if/as specified by 'aListPosition'),
+ *   or no attachments selected, or no attachments,
+ *   or no attachmentBucket.
  */
 function attachmentsSelectionIsBlock(aListPosition) {
   if (!gAttachmentBucket.selectedCount) {
@@ -8273,12 +8377,12 @@ function attachmentsSelectionIsBlock(aListPosition) {
     return false;
   }
 
-  let selItems = attachmentsSelectionGetSortedArray();
-  let indexFirstSelAttachment = gAttachmentBucket.getIndexOfItem(selItems[0]);
-  let indexLastSelAttachment = gAttachmentBucket.getIndexOfItem(
+  const selItems = attachmentsSelectionGetSortedArray();
+  const indexFirstSelAttachment = gAttachmentBucket.getIndexOfItem(selItems[0]);
+  const indexLastSelAttachment = gAttachmentBucket.getIndexOfItem(
     selItems[gAttachmentBucket.selectedCount - 1]
   );
-  let isBlock =
+  const isBlock =
     indexFirstSelAttachment ==
     indexLastSelAttachment + 1 - gAttachmentBucket.selectedCount;
 
@@ -8298,7 +8402,7 @@ function attachmentsSelectionIsBlock(aListPosition) {
 }
 
 function AttachPage() {
-  let result = { value: "http://" };
+  const result = { value: "http://" };
   if (
     Services.prompt.prompt(
       window,
@@ -8315,7 +8419,7 @@ function AttachPage() {
       return;
     }
 
-    let attachment = Cc[
+    const attachment = Cc[
       "@mozilla.org/messengercompose/attachment;1"
     ].createInstance(Ci.nsIMsgAttachment);
     attachment.url = result.value;
@@ -8326,11 +8430,11 @@ function AttachPage() {
 /**
  * Check if the given attachment already exists in the attachment bucket.
  *
- * @param nsIMsgAttachment - the attachment to check
- * @returns true if the attachment is already attached
+ * @param {nsIMsgAttachment} attachment - The attachment to check.
+ * @returns {boolean} true if the attachment is already attached.
  */
 function DuplicateFileAlreadyAttached(attachment) {
-  for (let item of gAttachmentBucket.itemChildren) {
+  for (const item of gAttachmentBucket.itemChildren) {
     if (item.attachment && item.attachment.url) {
       if (item.attachment.url == attachment.url) {
         return true;
@@ -8353,7 +8457,7 @@ function Attachments2CompFields(compFields) {
   // First, we need to clear all attachment in the compose fields.
   compFields.removeAttachments();
 
-  for (let item of gAttachmentBucket.itemChildren) {
+  for (const item of gAttachmentBucket.itemChildren) {
     if (item.attachment) {
       compFields.addAttachment(item.attachment);
     }
@@ -8364,10 +8468,7 @@ async function RemoveAllAttachments() {
   // Ensure that attachment pane is shown before removing all attachments.
   toggleAttachmentPane("show");
 
-  if (!gAttachmentBucket.itemCount) {
-    return;
-  }
-
+  attachmentWorker.lastMessage = null;
   await RemoveAttachments(gAttachmentBucket.itemChildren);
 }
 
@@ -8375,8 +8476,9 @@ async function RemoveAllAttachments() {
  * Show or hide the attachment pane after updating its header bar information
  * (number and total file size of attachments) and tooltip.
  *
- * @param aShowBucket {Boolean} true: show the attachment pane
- *                              false (or omitted): hide the attachment pane
+ * @param {boolean} aShowBucket - Show bucket or not:
+ *   - true: show the attachment pane
+ *   - false (or omitted): hide the attachment pane
  */
 function UpdateAttachmentBucket(aShowBucket) {
   updateAttachmentPane(aShowBucket ? "show" : "hide");
@@ -8386,12 +8488,13 @@ function UpdateAttachmentBucket(aShowBucket) {
  * Update the header bar information (number and total file size of attachments)
  * and tooltip of attachment pane, then (optionally) show or hide the pane.
  *
- * @param aShowPane {string} "show":  show the attachment pane
- *                           "hide":  hide the attachment pane
- *                           omitted: just update without changing pane visibility
+ * @param {"show"|"hide"} [aShowPane] Command:
+ *   - "show": show the attachment pane
+ *   - "hide":  hide the attachment pane
+ *   - omitted: just update without changing pane visibility
  */
 function updateAttachmentPane(aShowPane) {
-  let count = gAttachmentBucket.itemCount;
+  const count = gAttachmentBucket.itemCount;
 
   document.l10n.setAttributes(
     document.getElementById("attachmentBucketCount"),
@@ -8402,7 +8505,7 @@ function updateAttachmentPane(aShowPane) {
   );
 
   let attachmentsSize = 0;
-  for (let item of gAttachmentBucket.itemChildren) {
+  for (const item of gAttachmentBucket.itemChildren) {
     gAttachmentBucket.invalidateItem(item);
     attachmentsSize += item.cloudHtmlFileSize
       ? item.cloudHtmlFileSize
@@ -8428,10 +8531,6 @@ function updateAttachmentPane(aShowPane) {
 }
 
 async function RemoveSelectedAttachment() {
-  if (!gAttachmentBucket.selectedCount) {
-    return;
-  }
-
   await RemoveAttachments(gAttachmentBucket.selectedItems);
 }
 
@@ -8443,24 +8542,27 @@ async function RemoveSelectedAttachment() {
  *       not prevent the attachments from being removed from the composer. Such
  *       errors are caught and logged to the console.
  *
- * @param {DOMNode[]} items - AttachmentItems to be removed
+ * @param {DOMNode[]} items - AttachmentItems to be removed.
  */
 async function RemoveAttachments(items) {
+  if (!items.length) {
+    return; // Nothing to remove.
+  }
   // Remember the current focus index so we can try to restore it when done.
-  let focusIndex = gAttachmentBucket.currentIndex;
+  const focusIndex = gAttachmentBucket.currentIndex;
 
-  let fileHandler = Services.io
+  const fileHandler = Services.io
     .getProtocolHandler("file")
     .QueryInterface(Ci.nsIFileProtocolHandler);
-  let removedAttachments = [];
+  const removedAttachments = [];
 
-  let promises = [];
+  const promises = [];
   for (let i = items.length - 1; i >= 0; i--) {
-    let item = items[i];
+    const item = items[i];
 
     if (item.attachment.sendViaCloud && item.cloudFileAccount) {
       if (item.uploading) {
-        let file = fileHandler.getFileFromURLSpec(item.attachment.url);
+        const file = fileHandler.getFileFromURLSpec(item.attachment.url);
         promises.push(
           item.uploading
             .cancelFileUpload(window, file)
@@ -8489,7 +8591,13 @@ async function RemoveAttachments(items) {
     gAttachmentBucket.clearSelection();
 
     AttachmentsChanged();
-    dispatchAttachmentBucketEvent("attachments-removed", removedAttachments);
+    gAttachmentBucket.dispatchEvent(
+      new CustomEvent("attachments-removed", {
+        bubbles: true,
+        cancelable: true,
+        detail: removedAttachments,
+      })
+    );
   }
 
   // Collapse the attachment container if all the items have been deleted.
@@ -8512,9 +8620,9 @@ async function RenameSelectedAttachment() {
     return;
   }
 
-  let item = gAttachmentBucket.getSelectedItem(0);
-  let originalName = item.attachment.name;
-  let attachmentName = { value: originalName };
+  const item = gAttachmentBucket.getSelectedItem(0);
+  const originalName = item.attachment.name;
+  const attachmentName = { value: originalName };
   if (
     Services.prompt.prompt(
       window,
@@ -8566,33 +8674,33 @@ function moveSelectedAttachments(aDirection) {
   gAttachmentBucket.focus();
 
   // Get a sorted and "non-live" array of gAttachmentBucket.selectedItems.
-  let selItems = attachmentsSelectionGetSortedArray();
+  const selItems = attachmentsSelectionGetSortedArray();
 
   // In case of misspelled aDirection.
   let visibleIndex = gAttachmentBucket.currentIndex;
   // Keep track of the item we had focused originally. Deselect it though,
   // since listbox gets confused if you move its focused item around.
-  let focusItem = gAttachmentBucket.currentItem;
+  const focusItem = gAttachmentBucket.currentItem;
   gAttachmentBucket.currentItem = null;
   let upwards;
   let targetItem;
 
   switch (aDirection) {
     case "left":
-    case "right":
+    case "right": {
       // Move selected attachments upwards/downwards.
       upwards = aDirection == "left";
-      let blockItems = [];
+      const blockItems = [];
 
-      for (let item of selItems) {
+      for (const item of selItems) {
         // Handle adjacent selected items en block, via blockItems array.
         blockItems.push(item); // Add current selItem to blockItems.
-        let nextItem = item.nextElementSibling;
+        const nextItem = item.nextElementSibling;
         if (!nextItem || !nextItem.selected) {
           // If current selItem is the last blockItem, check out its adjacent
           // item in the intended direction to see if there's room for moving.
           // Note that the block might contain one or more items.
-          let checkItem = upwards
+          const checkItem = upwards
             ? blockItems[0].previousElementSibling
             : nextItem;
           // If block-adjacent checkItem exists (and is not selected because
@@ -8608,7 +8716,7 @@ function moveSelectedAttachments(aDirection) {
                 // which works according to spec even if that's null.
                 checkItem.nextElementSibling;
             // Move current blockItems.
-            for (let blockItem of blockItems) {
+            for (const blockItem of blockItems) {
               gAttachmentBucket.insertBefore(blockItem, targetItem);
             }
           }
@@ -8642,11 +8750,11 @@ function moveSelectedAttachments(aDirection) {
         );
       }
       break;
-
+    }
     case "top":
     case "bottom":
     case "bundleUp":
-    case "bundleDown":
+    case "bundleDown": {
       // Bundle selected attachments to top/bottom of the list or upwards/downwards.
 
       upwards = ["top", "bundleUp"].includes(aDirection);
@@ -8656,10 +8764,10 @@ function moveSelectedAttachments(aDirection) {
       }
 
       if (["top", "bottom"].includes(aDirection)) {
-        let listEdgeItem = gAttachmentBucket.getItemAtIndex(
+        const listEdgeItem = gAttachmentBucket.getItemAtIndex(
           upwards ? 0 : gAttachmentBucket.itemCount - 1
         );
-        let selEdgeItem = selItems[0];
+        const selEdgeItem = selItems[0];
         if (selEdgeItem != listEdgeItem) {
           // Top/Bottom: Move the first/last selected item to the edge of the list
           // so that we always have an initial anchor target block in the right
@@ -8679,7 +8787,7 @@ function moveSelectedAttachments(aDirection) {
       // Let's find the end (inner edge) of that block and move only the
       // remaining selected items to avoid unnecessary moves.
       targetItem = null;
-      for (let item of selItems) {
+      for (const item of selItems) {
         if (targetItem) {
           // We know where to move it, so move it!
           gAttachmentBucket.insertBefore(item, targetItem);
@@ -8692,7 +8800,7 @@ function moveSelectedAttachments(aDirection) {
           }
         } else {
           // If there's no targetItem yet, find the inner edge of the target block.
-          let nextItem = upwards
+          const nextItem = upwards
             ? item.nextElementSibling
             : item.previousElementSibling;
           if (!nextItem.selected) {
@@ -8712,14 +8820,14 @@ function moveSelectedAttachments(aDirection) {
       // Ensure visibility of first/last selected item after the move.
       visibleIndex = gAttachmentBucket.getIndexOfItem(selItems[0]);
       break;
-
-    case "toggleSort":
+    }
+    case "toggleSort": {
       // Sort the selected attachments alphabetically after moving them together.
       // The command updater of cmd_sortAttachmentsToggle toggles the sorting
       // direction based on the current sorting and block status of the selection.
 
-      let toggleCmd = document.getElementById("cmd_sortAttachmentsToggle");
-      let sortDirection =
+      const toggleCmd = document.getElementById("cmd_sortAttachmentsToggle");
+      const sortDirection =
         toggleCmd.getAttribute("sortdirection") || "ascending";
       let sortItems;
       let sortSelection;
@@ -8732,8 +8840,8 @@ function moveSelectedAttachments(aDirection) {
         goDoCommand("cmd_moveAttachmentBundleUp");
 
         // Find the end of the selected block to find our targetItem.
-        for (let item of selItems) {
-          let nextItem = item.nextElementSibling;
+        for (const item of selItems) {
+          const nextItem = item.nextElementSibling;
           if (!nextItem || !nextItem.selected) {
             // If there's no nextItem (block at list bottom), or nextItem is
             // not selected, we've reached the end of the block.
@@ -8764,7 +8872,7 @@ function moveSelectedAttachments(aDirection) {
       }
 
       // Insert sortItems in new order before the nextElementSibling of the block.
-      for (let item of sortItems) {
+      for (const item of sortItems) {
         gAttachmentBucket.insertBefore(item, targetItem);
       }
 
@@ -8778,6 +8886,7 @@ function moveSelectedAttachments(aDirection) {
           selItems.length == 1 ? gAttachmentBucket.selectedIndex : 0;
       }
       break;
+    }
   } // end switch (aDirection)
 
   // Restore original focus.
@@ -8793,14 +8902,14 @@ function moveSelectedAttachments(aDirection) {
 
 /**
  * Toggle attachment pane view state: show or hide it.
- * If aAction parameter is omitted, toggle current view state.
  *
- * @param {string} [aAction = "toggle"] - "show":   show attachment pane
- *                                        "hide":   hide attachment pane
- *                                        "toggle": toggle attachment pane
+ * @param {string} [aAction="toggle"] - Action.
+ *  - "show":   show attachment pane
+ *  - "hide":   hide attachment pane
+ *  - "toggle": toggle attachment pane
  */
 function toggleAttachmentPane(aAction = "toggle") {
-  let attachmentArea = document.getElementById("attachmentArea");
+  const attachmentArea = document.getElementById("attachmentArea");
 
   if (aAction == "toggle") {
     // Interrupt if we don't have any attachment as we don't want nor need to
@@ -8827,8 +8936,8 @@ function toggleAttachmentPane(aAction = "toggle") {
  * Update the #attachmentArea according to its open state.
  */
 function attachmentAreaOnToggle() {
-  let attachmentArea = document.getElementById("attachmentArea");
-  let bucketHasFocus = document.activeElement == gAttachmentBucket;
+  const attachmentArea = document.getElementById("attachmentArea");
+  const bucketHasFocus = document.activeElement == gAttachmentBucket;
   if (attachmentArea.open && !bucketHasFocus) {
     moveFocusToAttachmentPane();
   } else if (!attachmentArea.open && bucketHasFocus) {
@@ -8843,7 +8952,7 @@ function attachmentAreaOnToggle() {
 
   // Update the checkmark on menuitems hooked up with cmd_toggleAttachmentPane.
   // Menuitem does not have .checked property nor .toggleAttribute(), sigh.
-  for (let menuitem of document.querySelectorAll(
+  for (const menuitem of document.querySelectorAll(
     'menuitem[command="cmd_toggleAttachmentPane"]'
   )) {
     if (attachmentArea.open) {
@@ -8912,8 +9021,9 @@ function attachmentsSelectionGetSortOrder() {
  * Returns a string representing the current sort order of attachment items
  * by their names.
  *
- * @param aSelectedOnly {boolean}: true: return sort order of selected items only.
- *                                 false (default): return sort order of all items.
+ * @param {boolean} aSelectedOnly - Whether to use selected items only.
+ *  - true: return sort order of selected items only.
+ *  - false (default): return sort order of all items.
  *
  * @returns {string} "ascending" : Sort order is ascending.
  *                  "descending": Sort order is descending.
@@ -8940,19 +9050,17 @@ function attachmentsGetSortOrder(aSelectedOnly = false) {
   }
 
   // We're comparing each item to the next item, so exclude the last item.
-  let listItems1 = listItems.slice(0, -1);
-  let someAscending;
-  let someDescending;
+  const listItems1 = listItems.slice(0, -1);
 
   // Check if some adjacent items are sorted ascending.
-  someAscending = listItems1.some(
+  const someAscending = listItems1.some(
     (item, index) =>
       item.attachment.name.localeCompare(listItems[index + 1].attachment.name) <
       0
   );
 
   // Check if some adjacent items are sorted descending.
-  someDescending = listItems1.some(
+  const someDescending = listItems1.some(
     (item, index) =>
       item.attachment.name.localeCompare(listItems[index + 1].attachment.name) >
       0
@@ -8977,9 +9085,9 @@ function attachmentsGetSortOrder(aSelectedOnly = false) {
 }
 
 function reorderAttachmentsPanelOnPopupShowing() {
-  let panel = document.getElementById("reorderAttachmentsPanel");
-  let buttonsNodeList = panel.querySelectorAll(".panelButton");
-  let buttons = [...buttonsNodeList]; // convert NodeList to Array
+  const panel = document.getElementById("reorderAttachmentsPanel");
+  const buttonsNodeList = panel.querySelectorAll(".panelButton");
+  const buttons = [...buttonsNodeList]; // convert NodeList to Array
   // Let's add some pretty keyboard shortcuts to the buttons.
   buttons.forEach(btn => {
     if (btn.hasAttribute("key")) {
@@ -8996,7 +9104,7 @@ function reorderAttachmentsPanelOnPopupShowing() {
 }
 
 function attachmentHeaderContextOnPopupShowing() {
-  let initiallyShowItem = document.getElementById(
+  const initiallyShowItem = document.getElementById(
     "attachmentHeaderContext_initiallyShowItem"
   );
 
@@ -9018,7 +9126,7 @@ function toggleInitiallyShowAttachmentPane(aMenuItem) {
  * reorderAttachmentsPanel.
  */
 function attachmentBucketOnBlur() {
-  let reorderAttachmentsPanel = document.getElementById(
+  const reorderAttachmentsPanel = document.getElementById(
     "reorderAttachmentsPanel"
   );
   // If attachment pane has really lost focus, and if reorderAttachmentsPanel is
@@ -9046,8 +9154,8 @@ function attachmentBucketOnKeyPress(event) {
   }
 
   switch (event.key) {
-    case "Escape":
-      let reorderAttachmentsPanel = document.getElementById(
+    case "Escape": {
+      const reorderAttachmentsPanel = document.getElementById(
         "reorderAttachmentsPanel"
       );
 
@@ -9072,26 +9180,26 @@ function attachmentBucketOnKeyPress(event) {
       // Close an empty bucket.
       toggleAttachmentPane("hide");
       break;
-
-    case "Enter":
+    }
+    case "Enter": {
       // Enter on empty bucket to add file attachments, convenience
       // keyboard equivalent of single-click on bucket whitespace.
       if (!gAttachmentBucket.itemCount) {
         goDoCommand("cmd_attachFile");
       }
       break;
-
-    case "ArrowLeft":
+    }
+    case "ArrowLeft": {
       gAttachmentBucket.moveByOffset(-1, !event.ctrlKey, event.shiftKey);
       event.preventDefault();
       break;
-
-    case "ArrowRight":
+    }
+    case "ArrowRight": {
       gAttachmentBucket.moveByOffset(1, !event.ctrlKey, event.shiftKey);
       event.preventDefault();
       break;
-
-    case "ArrowDown":
+    }
+    case "ArrowDown": {
       gAttachmentBucket.moveByOffset(
         gAttachmentBucket._itemsPerRow(),
         !event.ctrlKey,
@@ -9099,8 +9207,8 @@ function attachmentBucketOnKeyPress(event) {
       );
       event.preventDefault();
       break;
-
-    case "ArrowUp":
+    }
+    case "ArrowUp": {
       gAttachmentBucket.moveByOffset(
         -gAttachmentBucket._itemsPerRow(),
         !event.ctrlKey,
@@ -9109,6 +9217,7 @@ function attachmentBucketOnKeyPress(event) {
 
       event.preventDefault();
       break;
+    }
   }
 }
 
@@ -9146,13 +9255,13 @@ function OpenSelectedAttachment() {
   if (gAttachmentBucket.selectedItems.length != 1) {
     return;
   }
-  let attachment = gAttachmentBucket.getSelectedItem(0).attachment;
-  let attachmentUrl = attachment.url;
+  const attachment = gAttachmentBucket.getSelectedItem(0).attachment;
+  const attachmentUrl = attachment.url;
 
-  let messagePrefix = /^mailbox-message:|^imap-message:|^news-message:/i;
+  const messagePrefix = /^mailbox-message:|^imap-message:|^news-message:/i;
   if (messagePrefix.test(attachmentUrl)) {
     // we must be dealing with a forwarded attachment, treat this special
-    let msgHdr =
+    const msgHdr =
       MailServices.messageServiceFromURI(attachmentUrl).messageURIToMsgHdr(
         attachmentUrl
       );
@@ -9166,7 +9275,7 @@ function OpenSelectedAttachment() {
     /\.pdf$/i.test(attachment.name)
   ) {
     // @see msgHdrView.js which has simililar opening functionality
-    let handlerInfo = gMIMEService.getFromTypeAndExtension(
+    const handlerInfo = gMIMEService.getFromTypeAndExtension(
       attachment.contentType,
       attachment.name.split(".").pop()
     );
@@ -9182,7 +9291,7 @@ function OpenSelectedAttachment() {
         url += url.includes("?") ? "&" : "?";
         url += "type=application/pdf";
       }
-      let tabmail = Services.wm
+      const tabmail = Services.wm
         .getMostRecentWindow("mail:3pane")
         ?.document.getElementById("tabmail");
       if (tabmail) {
@@ -9197,8 +9306,8 @@ function OpenSelectedAttachment() {
       // If no tabmail, open PDF same as other attachments.
     }
   }
-  let uri = Services.io.newURI(attachmentUrl);
-  let channel = Services.io.newChannelFromURI(
+  const uri = Services.io.newURI(attachmentUrl);
+  const channel = Services.io.newChannelFromURI(
     uri,
     null,
     Services.scriptSecurityManager.getSystemPrincipal(),
@@ -9206,39 +9315,40 @@ function OpenSelectedAttachment() {
     Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
     Ci.nsIContentPolicy.TYPE_OTHER
   );
-  let uriLoader = Cc["@mozilla.org/uriloader;1"].getService(Ci.nsIURILoader);
+  const uriLoader = Cc["@mozilla.org/uriloader;1"].getService(Ci.nsIURILoader);
   uriLoader.openURI(channel, true, new nsAttachmentOpener());
 }
 
 function nsAttachmentOpener() {}
 
+/** @implements {nsIURIContentListener} */
 nsAttachmentOpener.prototype = {
   QueryInterface: ChromeUtils.generateQI([
     "nsIURIContentListener",
     "nsIInterfaceRequestor",
   ]),
 
-  doContent(contentType, isContentPreferred, request, contentHandler) {
+  doContent(contentType, isContentPreferred, request) {
     // If we came here to display an attached message, make sure we provide a type.
     if (/[?&]part=/i.test(request.URI.query)) {
-      let newQuery = request.URI.query + "&type=message/rfc822";
+      const newQuery = request.URI.query + "&type=message/rfc822";
       request.URI = request.URI.mutate().setQuery(newQuery).finalize();
     }
-    let newHandler = Cc[
+    const newHandler = Cc[
       "@mozilla.org/uriloader/content-handler;1?type=application/x-message-display"
     ].createInstance(Ci.nsIContentHandler);
     newHandler.handleContent("application/x-message-display", this, request);
     return true;
   },
 
-  isPreferred(contentType, desiredContentType) {
+  isPreferred(contentType) {
     if (contentType == "message/rfc822") {
       return true;
     }
     return false;
   },
 
-  canHandleContent(contentType, isContentPreferred, desiredContentType) {
+  canHandleContent() {
     return false;
   },
 
@@ -9268,7 +9378,7 @@ function determineSendFormat() {
     return Ci.nsIMsgCompSendFormat.PlainText;
   }
 
-  let sendFormat = gMsgCompose.compFields.deliveryFormat;
+  const sendFormat = gMsgCompose.compFields.deliveryFormat;
   if (sendFormat != Ci.nsIMsgCompSendFormat.Auto) {
     return sendFormat;
   }
@@ -9298,24 +9408,24 @@ function expandRecipients() {
  *
  * @param {string} accountKey - Key of the account that is currently selected
  *   as the sending account.
- * @param {string} prevKey - Key of the account that was previously selected
+ * @param {?string} prevKey - Key of the account that was previously selected
  *   as the sending account.
  */
 function hideIrrelevantAddressingOptions(accountKey, prevKey) {
   let showNews = false;
-  for (let account of MailServices.accounts.accounts) {
+  for (const account of MailServices.accounts.accounts) {
     if (account.incomingServer.type == "nntp") {
       showNews = true;
     }
   }
   // If there is no News (NNTP) account existing then
   // hide the Newsgroup and Followup-To recipient type menuitems.
-  for (let item of document.querySelectorAll(".news-show-row-menuitem")) {
+  for (const item of document.querySelectorAll(".news-show-row-menuitem")) {
     showAddressRowMenuItemSetVisibility(item, showNews);
   }
 
-  let account = MailServices.accounts.getAccount(accountKey);
-  let accountType = account.incomingServer.type;
+  const account = MailServices.accounts.getAccount(accountKey);
+  const accountType = account.incomingServer.type;
 
   // If the new account is a News (NNTP) account.
   if (accountType == "nntp") {
@@ -9324,18 +9434,18 @@ function hideIrrelevantAddressingOptions(accountKey, prevKey) {
   }
 
   // If the new account is a Mail account and a previous account was selected.
-  if (accountType != "nntp" && prevKey != "") {
+  if (accountType != "nntp" && prevKey != null) {
     updateUIforMailAccount();
   }
 }
 
 function LoadIdentity(startup) {
-  let identityElement = document.getElementById("msgIdentity");
-  let prevIdentity = gCurrentIdentity;
+  const identityElement = document.getElementById("msgIdentity");
+  const prevIdentity = gCurrentIdentity;
 
   let idKey = null;
   let accountKey = null;
-  let prevKey = getCurrentAccountKey();
+  const prevKey = getCurrentAccountKey();
   if (identityElement.selectedItem) {
     // Set the identity key value on the menu list.
     idKey = identityElement.selectedItem.getAttribute("identitykey");
@@ -9346,13 +9456,18 @@ function LoadIdentity(startup) {
     accountKey = identityElement.selectedItem.getAttribute("accountkey");
     identityElement.setAttribute("accountkey", accountKey);
 
+    identityElement.style.setProperty(
+      "--icon-color",
+      identityElement.selectedItem.style.getPropertyValue("--icon-color") ?? ""
+    );
+
     // Update the addressing options only if a new account was selected.
     if (prevKey != getCurrentAccountKey()) {
       hideIrrelevantAddressingOptions(accountKey, prevKey);
     }
   }
-  for (let input of document.querySelectorAll(".mail-input,.news-input")) {
-    let params = JSON.parse(input.searchParam);
+  for (const input of document.querySelectorAll(".mail-input,.news-input")) {
+    const params = JSON.parse(input.searchParam);
     params.idKey = idKey;
     params.accountKey = accountKey;
     input.searchParam = JSON.stringify(params);
@@ -9365,23 +9480,23 @@ function LoadIdentity(startup) {
 
   // Since switching the signature loses the caret position, we record it
   // and restore it later.
-  let editor = GetCurrentEditor();
-  let selection = editor.selection;
-  let range = selection.getRangeAt(0);
-  let start = range.startOffset;
-  let startNode = range.startContainer;
+  const editor = GetCurrentEditor();
+  const selection = editor.selection;
+  const range = selection.getRangeAt(0);
+  const start = range.startOffset;
+  const startNode = range.startContainer;
 
   editor.enableUndo(false);
 
   // Handle non-startup changing of identity.
   if (prevIdentity && idKey != prevIdentity.key) {
     let changedRecipients = false;
-    let prevReplyTo = prevIdentity.replyTo;
+    const prevReplyTo = prevIdentity.replyTo;
     let prevCc = "";
     let prevBcc = "";
-    let prevReceipt = prevIdentity.requestReturnReceipt;
-    let prevDSN = prevIdentity.DSN;
-    let prevAttachVCard = prevIdentity.attachVCard;
+    const prevReceipt = prevIdentity.requestReturnReceipt;
+    const prevDSN = prevIdentity.DSN;
+    const prevAttachVCard = prevIdentity.attachVCard;
 
     if (prevIdentity.doCc && prevIdentity.doCcList) {
       prevCc += prevIdentity.doCcList;
@@ -9391,12 +9506,12 @@ function LoadIdentity(startup) {
       prevBcc += prevIdentity.doBccList;
     }
 
-    let newReplyTo = gCurrentIdentity.replyTo;
+    const newReplyTo = gCurrentIdentity.replyTo;
     let newCc = "";
     let newBcc = "";
-    let newReceipt = gCurrentIdentity.requestReturnReceipt;
-    let newDSN = gCurrentIdentity.DSN;
-    let newAttachVCard = gCurrentIdentity.attachVCard;
+    const newReceipt = gCurrentIdentity.requestReturnReceipt;
+    const newDSN = gCurrentIdentity.DSN;
+    const newAttachVCard = gCurrentIdentity.attachVCard;
 
     if (gCurrentIdentity.doCc && gCurrentIdentity.doCcList) {
       newCc += gCurrentIdentity.doCcList;
@@ -9406,7 +9521,7 @@ function LoadIdentity(startup) {
       newBcc += gCurrentIdentity.doBccList;
     }
 
-    let msgCompFields = gMsgCompose.compFields;
+    const msgCompFields = gMsgCompose.compFields;
     // Update recipients in msgCompFields to match pills currently in the UI.
     Recipients2CompFields(msgCompFields);
 
@@ -9450,7 +9565,7 @@ function LoadIdentity(startup) {
       }
     }
 
-    let toCcAddrs = new Set([
+    const toCcAddrs = new Set([
       ...msgCompFields.splitRecipients(msgCompFields.to, true),
       ...msgCompFields.splitRecipients(msgCompFields.cc, true),
     ]);
@@ -9473,7 +9588,7 @@ function LoadIdentity(startup) {
     }
 
     if (newBcc != prevBcc) {
-      let toCcBccAddrs = new Set([
+      const toCcBccAddrs = new Set([
         ...toCcAddrs,
         ...msgCompFields.splitRecipients(newCc, true),
         ...msgCompFields.splitRecipients(msgCompFields.bcc, true),
@@ -9500,7 +9615,7 @@ function LoadIdentity(startup) {
     // Whenever "Cc/Bcc these email addresses" aka mail.identity.id#.doCc/doBcc
     // is checked in Account Settings, show the address row, even if empty.
     // This is a feature especially for ux-efficiency of enterprise workflows.
-    let addressRowCc = document.getElementById("addressRowCc");
+    const addressRowCc = document.getElementById("addressRowCc");
     if (gCurrentIdentity.doCc) {
       // Per identity's doCc pref, show CC row, even if empty.
       showAndFocusAddressRow("addressRowCc");
@@ -9513,7 +9628,7 @@ function LoadIdentity(startup) {
       addressRowSetVisibility(addressRowCc, false);
     }
 
-    let addressRowBcc = document.getElementById("addressRowBcc");
+    const addressRowBcc = document.getElementById("addressRowBcc");
     if (gCurrentIdentity.doBcc) {
       // Per identity's doBcc pref, show BCC row, even if empty.
       showAndFocusAddressRow("addressRowBcc");
@@ -9535,6 +9650,7 @@ function LoadIdentity(startup) {
       dump("### Cannot change the identity: " + ex + "\n");
     }
 
+    gContentChanged = true;
     window.dispatchEvent(new CustomEvent("compose-from-changed"));
 
     gComposeNotificationBar.clearIdentityWarning();
@@ -9565,7 +9681,7 @@ function LoadIdentity(startup) {
 
   // Try to focus the first available address row. If there are none, focus the
   // Subject which is always available.
-  for (let row of document.querySelectorAll(".address-row")) {
+  for (const row of document.querySelectorAll(".address-row")) {
     if (focusAddressRowInput(row)) {
       return;
     }
@@ -9574,7 +9690,7 @@ function LoadIdentity(startup) {
 }
 
 function MakeFromFieldEditable(ignoreWarning) {
-  let bundle = getComposeBundle();
+  const bundle = getComposeBundle();
   if (
     !ignoreWarning &&
     !Services.prefs.getBoolPref("mail.compose.warned_about_customize_from")
@@ -9603,10 +9719,10 @@ function MakeFromFieldEditable(ignoreWarning) {
     );
   }
 
-  let customizeMenuitem = document.getElementById("cmd_customizeFromAddress");
+  const customizeMenuitem = document.getElementById("cmd_customizeFromAddress");
   customizeMenuitem.setAttribute("disabled", "true");
-  let identityElement = document.getElementById("msgIdentity");
-  let identityElementWidth = `${
+  const identityElement = document.getElementById("msgIdentity");
+  const identityElementWidth = `${
     identityElement.getBoundingClientRect().width
   }px`;
   identityElement.style.width = identityElementWidth;
@@ -9619,30 +9735,6 @@ function MakeFromFieldEditable(ignoreWarning) {
     "msgIdentityPlaceholder",
     [identityElement.selectedItem.value]
   );
-}
-
-/**
- * Set up autocomplete search parameters for address inputs of inbuilt headers.
- *
- * @param {Element} input - The address input of an inbuilt header field.
- */
-function setupAutocompleteInput(input) {
-  let params = JSON.parse(input.getAttribute("autocompletesearchparam"));
-  params.type = input.closest(".address-row").dataset.recipienttype;
-  input.setAttribute("autocompletesearchparam", JSON.stringify(params));
-
-  // This method overrides the autocomplete binding's openPopup (essentially
-  // duplicating the logic from the autocomplete popup binding's
-  // openAutocompletePopup method), modifying it so that the popup is aligned
-  // and sized based on the parentNode of the input field.
-  input.openPopup = () => {
-    if (input.focused) {
-      input.popup.openAutocompletePopup(
-        input.nsIAutocompleteInput,
-        input.closest(".address-container")
-      );
-    }
-  };
 }
 
 /**
@@ -9684,11 +9776,20 @@ function subjectKeyPress(event) {
 }
 
 /**
+ * Handle the input event of the editable from field..
+ *
+ * @param {Event} _event - A DOM input event on #msgIdentity.
+ */
+function msgIdentityOnInput(_event) {
+  gContentChanged = true;
+}
+
+/**
  * Handle the input event of the subject input element.
  *
- * @param {Event} event - A DOM input event on #msgSubject.
+ * @param {Event} _event - A DOM input event on #msgSubject.
  */
-function msgSubjectOnInput(event) {
+function msgSubjectOnInput(_event) {
   gSubjectChanged = true;
   gContentChanged = true;
   SetComposeWindowTitle();
@@ -9772,11 +9873,11 @@ var envelopeDragObserver = {
         }
       }
       // Check if the adjusted target attachmentitem is a valid target.
-      let isBlock = attachmentsSelectionIsBlock();
-      let prevItem = target.previousElementSibling;
+      const isBlock = attachmentsSelectionIsBlock();
+      const prevItem = target.previousElementSibling;
       // If target is first list item, there's no previous sibling;
       // treat like unselected previous sibling.
-      let prevSelected = prevItem ? prevItem.selected : false;
+      const prevSelected = prevItem ? prevItem.selected : false;
       if (
         (target.selected && (isBlock || prevSelected)) ||
         // target at end of block selection
@@ -9815,22 +9916,20 @@ var envelopeDragObserver = {
    * attachments to handle the various drag&drop actions.
    *
    * @param {Event} event - The drag-and-drop event being performed.
-   * @param {boolean} isDropping - If the action was performed from the onDrop
-   *   method and it needs to handle pills creation.
    *
    * @returns {nsIMsgAttachment[]} - The array of valid attachments.
    */
-  getValidAttachments(event, isDropping) {
-    let attachments = [];
-    let dt = event.dataTransfer;
-    let dataList = [];
+  getValidAttachments(event) {
+    const attachments = [];
+    const dt = event.dataTransfer;
+    const dataList = [];
 
     // Extract all the flavors matching the data type of the dragged elements.
     for (let i = 0; i < dt.mozItemCount; i++) {
-      let types = Array.from(dt.mozTypesAt(i));
-      for (let flavor of DROP_FLAVORS) {
+      const types = Array.from(dt.mozTypesAt(i));
+      for (const flavor of DROP_FLAVORS) {
         if (types.includes(flavor)) {
-          let data = dt.mozGetDataAt(flavor, i);
+          const data = dt.mozGetDataAt(flavor, i);
           if (data) {
             dataList.push({ data, flavor });
             break;
@@ -9853,26 +9952,27 @@ var envelopeDragObserver = {
       // check and do the right thing.
       switch (flavor) {
         // Process attachments.
-        case "application/x-moz-file":
-          if (data instanceof Ci.nsIFile) {
+        case "application/x-moz-file": {
+          // Exclude directories.
+          if (data instanceof Ci.nsIFile && data.isFile()) {
             size = data.fileSize;
-          }
-          try {
-            data = Services.io
-              .getProtocolHandler("file")
-              .QueryInterface(Ci.nsIFileProtocolHandler)
-              .getURLSpecFromActualFile(data);
-            isValidAttachment = true;
-          } catch (e) {
-            console.error(
-              "Couldn't process the dragged file " + data.leafName + ":" + e
-            );
+            try {
+              data = Services.io
+                .getProtocolHandler("file")
+                .QueryInterface(Ci.nsIFileProtocolHandler)
+                .getURLSpecFromActualFile(data);
+              isValidAttachment = true;
+            } catch (e) {
+              console.error(
+                "Couldn't process the dragged file " + data.leafName + ":" + e
+              );
+            }
           }
           break;
-
-        case "text/x-moz-message":
+        }
+        case "text/x-moz-message": {
           isValidAttachment = true;
-          let msgHdr =
+          const msgHdr =
             MailServices.messageServiceFromURI(data).messageURIToMsgHdr(data);
           prettyName = msgHdr.mime2DecodedSubject;
           if (Services.prefs.getBoolPref("mail.forward_add_extension")) {
@@ -9882,15 +9982,15 @@ var envelopeDragObserver = {
           size = msgHdr.messageSize;
           contentType = "message/rfc822";
           break;
-
+        }
         // Data type representing:
         //  - URL strings dragged from a URL bar (Allow both attach and append).
         //    NOTE: This only works for macOS and Windows.
         //  - Attachments dragged from another message (Only attach).
         //  - Images dragged from the body of another message (Only append).
         case "text/uri-list":
-        case "text/x-moz-url":
-          let pieces = data.split("\n");
+        case "text/x-moz-url": {
+          const pieces = data.split("\n");
           data = pieces[0];
           if (pieces.length > 1) {
             prettyName = pieces[1];
@@ -9924,23 +10024,12 @@ var envelopeDragObserver = {
             "application/x-moz-file-promise"
           );
           break;
-
-        // Process address: Drop it into recipient field.
-        case "text/x-moz-address":
-          // Process the drop only if the message body wasn't the target and we
-          // called this method from the onDrop() method.
-          if (event.target.baseURI != "about:blank?compose" && isDropping) {
-            DropRecipient(event.target, data);
-            // Prevent the default behaviour which drops the address text into
-            // the widget.
-            event.preventDefault();
-          }
-          break;
+        }
       }
 
       // Create the attachment and add it to attachments array.
       if (isValidAttachment) {
-        let attachment = Cc[
+        const attachment = Cc[
           "@mozilla.org/messengercompose/attachment;1"
         ].createInstance(Ci.nsIMsgAttachment);
         attachment.url = data;
@@ -9971,12 +10060,12 @@ var envelopeDragObserver = {
    */
   _reorderDraggedAttachments(event) {
     // Adjust the drop target according to mouse position on list (items).
-    let target = this._adjustDropTarget(event);
+    const target = this._adjustDropTarget(event);
     // Get a non-live, sorted list of selected attachment list items.
-    let selItems = attachmentsSelectionGetSortedArray();
+    const selItems = attachmentsSelectionGetSortedArray();
     // Keep track of the item we had focused originally. Deselect it though,
     // since listbox gets confused if you move its focused item around.
-    let focus = gAttachmentBucket.currentItem;
+    const focus = gAttachmentBucket.currentItem;
     gAttachmentBucket.currentItem = null;
     // Moving possibly non-coherent multiple selections around correctly
     // is much more complex than one might think...
@@ -9985,9 +10074,9 @@ var envelopeDragObserver = {
       target == "afterLastItem"
     ) {
       // Drop before targetItem in the list, or after last item.
-      let blockItems = [];
+      const blockItems = [];
       let targetItem;
-      for (let item of selItems) {
+      for (const item of selItems) {
         blockItems.push(item);
         if (target == "afterLastItem") {
           // Original target is the end of the list; append all items there.
@@ -9996,7 +10085,7 @@ var envelopeDragObserver = {
           // Original target is first item of first selected block.
           if (blockItems.includes(target)) {
             // Item is in first block: do nothing, find the end of the block.
-            let nextItem = item.nextElementSibling;
+            const nextItem = item.nextElementSibling;
             if (!nextItem || !nextItem.selected) {
               // We've reached the end of the first block.
               blockItems.length = 0;
@@ -10019,7 +10108,7 @@ var envelopeDragObserver = {
           } else if (blockItems.includes(target)) {
             // target is included in any selected block except first:
             // do nothing for that block, find its end.
-            let nextItem = item.nextElementSibling;
+            const nextItem = item.nextElementSibling;
             if (!nextItem || !nextItem.selected) {
               // end of block containing target
               blockItems.length = 0;
@@ -10048,15 +10137,15 @@ var envelopeDragObserver = {
     // We can later explore adding some UI choice to allow controlling the
     // outcome of this drop action, but users can still copy and paste the image
     // in the editor to cirumvent this potential issue.
-    let editor = GetCurrentEditor();
-    let attachments = this.getValidAttachments(event, true);
+    const editor = GetCurrentEditor();
+    const attachments = this.getValidAttachments(event);
 
-    for (let attachment of attachments) {
+    for (const attachment of attachments) {
       if (!attachment?.url) {
         continue;
       }
 
-      let link = editor.createElementWithDefaults("a");
+      const link = editor.createElementWithDefaults("a");
       link.setAttribute("href", attachment.url);
       link.textContent =
         attachment.name ||
@@ -10068,7 +10157,7 @@ var envelopeDragObserver = {
   async onDrop(event) {
     this._hideDropOverlay();
 
-    let dragSession = gDragService.getCurrentSession();
+    const dragSession = gDragService.getCurrentSession();
     if (dragSession.sourceNode?.parentNode == gAttachmentBucket) {
       // We dragged from the attachment pane onto itself, so instead of
       // attaching a new object, we're just reordering them.
@@ -10108,16 +10197,32 @@ var envelopeDragObserver = {
       return;
     }
 
-    let attachments = this.getValidAttachments(event, true);
+    // Handle address book entries directly, as they may also contain flavors
+    // that qualify as attachments.
+    if (event.dataTransfer.mozTypesAt(0).contains("text/x-moz-address")) {
+      if (event.target.baseURI != "about:blank?compose") {
+        // Process address: Drop it into recipient field.
+        DropRecipient(
+          event.target,
+          event.dataTransfer.mozGetDataAt("text/x-moz-address", 0)
+        );
+        // Prevent the default behaviour which drops the address text into
+        // the widget.
+        event.preventDefault();
+      }
+      return;
+    }
+
+    const attachments = this.getValidAttachments(event);
 
     // Interrupt if we don't have anything to attach.
     if (!attachments.length) {
       return;
     }
 
-    let addedAttachmentItems = await AddAttachments(attachments);
+    const addedAttachmentItems = await AddAttachments(attachments);
     // Convert attachments back to cloudFiles, if any.
-    for (let attachmentItem of addedAttachmentItems) {
+    for (const attachmentItem of addedAttachmentItems) {
       if (
         !attachmentItem.attachment.cloudFileAccountKey ||
         !attachmentItem.attachment.cloudPartHeaderData
@@ -10125,10 +10230,10 @@ var envelopeDragObserver = {
         continue;
       }
       try {
-        let account = cloudFileAccounts.getAccount(
+        const account = cloudFileAccounts.getAccount(
           attachmentItem.attachment.cloudFileAccountKey
         );
-        let upload = JSON.parse(
+        const upload = JSON.parse(
           atob(attachmentItem.attachment.cloudPartHeaderData)
         );
         await UpdateAttachment(attachmentItem, {
@@ -10146,7 +10251,7 @@ var envelopeDragObserver = {
   },
 
   onDragOver(event) {
-    let dragSession = gDragService.getCurrentSession();
+    const dragSession = gDragService.getCurrentSession();
 
     // Check if we're dragging from the attachment bucket onto itself.
     if (dragSession.sourceNode?.parentNode == gAttachmentBucket) {
@@ -10154,7 +10259,7 @@ var envelopeDragObserver = {
       event.preventDefault();
 
       // Show a drop marker.
-      let target = this._adjustDropTarget(event);
+      const target = this._adjustDropTarget(event);
 
       if (
         (target.matches && target.matches("richlistitem.attachmentItem")) ||
@@ -10186,10 +10291,13 @@ var envelopeDragObserver = {
       this.detectHoveredOverlay(event.target.id);
       return;
     }
-
-    if (DROP_FLAVORS.some(f => event.dataTransfer.types.includes(f))) {
+    // Excluding dragged address book entries, check for valid attachments.
+    if (
+      !event.dataTransfer.mozTypesAt(0).contains("text/x-moz-address") &&
+      DROP_FLAVORS.some(f => event.dataTransfer.types.includes(f))
+    ) {
       // Show the drop overlay only if we dragged files or supported types.
-      let attachments = this.getValidAttachments(event);
+      const attachments = this.getValidAttachments(event);
       if (attachments.length) {
         // We're dragging files that can potentially be attached or added
         // inline, so update the variable.
@@ -10234,15 +10342,13 @@ var envelopeDragObserver = {
                 this.isNotDraggingOnlyImages(event.dataTransfer) ||
                 !gMsgCompose.composeHTML)
           );
-      } else {
-        DragAddressOverTargetControl(event);
       }
     }
 
     this.detectHoveredOverlay(event.target.id);
   },
 
-  onDragLeave(event) {
+  onDragLeave() {
     // Set the variable to false as a drag leave event was triggered.
     gIsDraggingAttachments = false;
 
@@ -10271,7 +10377,7 @@ var envelopeDragObserver = {
   _hideDropOverlay() {
     gIsDraggingAttachments = false;
 
-    let overlay = document.getElementById("dropAttachmentOverlay");
+    const overlay = document.getElementById("dropAttachmentOverlay");
     overlay.classList.remove("showing");
     overlay.classList.add("hiding");
   },
@@ -10285,7 +10391,7 @@ var envelopeDragObserver = {
    * @returns {boolean} True if at least one file is not an image.
    */
   isNotDraggingOnlyImages(dataTransfer) {
-    for (let file of dataTransfer.files) {
+    for (const file of dataTransfer.files) {
       if (!file.type.includes("image/")) {
         return true;
       }
@@ -10317,15 +10423,17 @@ var envelopeDragObserver = {
    */
   appendImagesInline(dataTransfer) {
     focusMsgBody();
-    let editor = GetCurrentEditor();
+    const editor = GetCurrentEditor();
     editor.beginTransaction();
 
-    for (let file of dataTransfer.files) {
+    for (const file of dataTransfer.files) {
       if (!file.mozFullPath) {
         continue;
       }
 
-      let realFile = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+      const realFile = Cc["@mozilla.org/file/local;1"].createInstance(
+        Ci.nsIFile
+      );
       realFile.initWithPath(file.mozFullPath);
 
       let imageElement;
@@ -10337,7 +10445,7 @@ var envelopeDragObserver = {
         continue;
       }
 
-      let src = Services.io.newFileURI(realFile).spec;
+      const src = Services.io.newFileURI(realFile).spec;
       imageElement.setAttribute("src", src);
       imageElement.setAttribute("moz-do-not-send", "false");
 
@@ -10357,7 +10465,7 @@ var envelopeDragObserver = {
 };
 
 // See attachmentListDNDObserver, which should have the same logic.
-let attachmentBucketDNDObserver = {
+const attachmentBucketDNDObserver = {
   onDragStart(event) {
     // NOTE: Starting a drag on an attachment item will normally also select
     // the attachment item before this method is called. But this is not
@@ -10365,7 +10473,7 @@ let attachmentBucketDNDObserver = {
     // operation. When it isn't selected, we just don't transfer.
     if (event.target.matches(".attachmentItem[selected]")) {
       // Also transfer other selected attachment items.
-      let attachments = Array.from(
+      const attachments = Array.from(
         gAttachmentBucket.querySelectorAll(".attachmentItem[selected]"),
         item => item.attachment
       );
@@ -10383,14 +10491,14 @@ function DisplaySaveFolderDlg(folderURI) {
   }
 
   if (showDialog) {
-    let msgfolder = MailUtils.getExistingFolder(folderURI);
+    const msgfolder = MailUtils.getExistingFolder(folderURI);
     if (!msgfolder) {
       return;
     }
-    let checkbox = { value: 0 };
-    let bundle = getComposeBundle();
-    let SaveDlgTitle = bundle.getString("SaveDialogTitle");
-    let dlgMsg = bundle.getFormattedString("SaveDialogMsg", [
+    const checkbox = { value: 0 };
+    const bundle = getComposeBundle();
+    const SaveDlgTitle = bundle.getString("SaveDialogTitle");
+    const dlgMsg = bundle.getFormattedString("SaveDialogMsg", [
       msgfolder.name,
       msgfolder.server.prettyName,
     ]);
@@ -10419,7 +10527,7 @@ function focusContactsSidebarSearchInput() {
   if (document.getElementById("contactsSplitter").isCollapsed) {
     return false;
   }
-  let input = document
+  const input = document
     .getElementById("contactsBrowser")
     .contentDocument.getElementById("peopleSearchInput");
   if (!input) {
@@ -10492,7 +10600,7 @@ function focusMsgBody() {
  *
  * @param {Element} attachmentArea - The attachment container.
  *
- * @returns {boolean} - Whether the attachment bucket was focused.
+ * @returns {boolean} whether the attachment bucket was focused.
  */
 function focusAttachmentBucket(attachmentArea) {
   if (
@@ -10516,12 +10624,12 @@ function focusAttachmentBucket(attachmentArea) {
  *
  * Note, this is used as a {@link moveFocusWithin} method.
  *
- * @returns {boolean} - Whether a notification received focused.
+ * @returns {boolean} whether a notification received focused.
  */
 function focusNotification() {
-  let notification = gComposeNotification.allNotifications[0];
+  const notification = gComposeNotification.allNotifications[0];
   if (notification) {
-    let button = notification.buttonContainer.querySelector("button");
+    const button = notification.buttonContainer.querySelector("button");
     if (button) {
       button.focus();
     } else {
@@ -10536,14 +10644,13 @@ function focusNotification() {
 /**
  * Focus the first focusable descendant of the status bar.
  *
- * Note, this is used as a {@link moveFocusWithin} method.
+ * NOTE: this is used as a {@link moveFocusWithin} method.
  *
- * @param {Element} attachmentArea - The status bar.
- *
- * @returns {boolean} - Whether a status bar descendant received focused.
+ * @param {Element} statusBar - The status bar.
+ * @returns {boolean} whether a status bar descendant received focused.
  */
 function focusStatusBar(statusBar) {
-  let button = statusBar.querySelector("button:not([hidden])");
+  const button = statusBar.querySelector("button:not([hidden])");
   if (!button) {
     return false;
   }
@@ -10555,11 +10662,11 @@ function focusStatusBar(statusBar) {
  * Fast-track focus ring: Switch focus between important (not all) elements
  * in the message compose window in response to Ctrl+[Shift+]Tab or [Shift+]F6.
  *
- * @param {Event} event - A DOM keyboard event of a fast focus ring shortcut key
+ * @param {Event} event - A DOM keyboard event of a fast focus ring shortcut key.
  */
 function moveFocusToNeighbouringArea(event) {
   event.preventDefault();
-  let currentElement = document.activeElement;
+  const currentElement = document.activeElement;
 
   for (let i = 0; i < gFocusAreas.length; i++) {
     // Go through each area and check if focus is within.
@@ -10568,7 +10675,9 @@ function moveFocusToNeighbouringArea(event) {
       continue;
     }
     // Focus is within, so we find the neighbouring area to move focus to.
-    let end = i;
+    const end = i;
+    // @see https://github.com/eslint/eslint/issues/17807
+    // eslint-disable-next-line no-constant-condition
     while (true) {
       // Get the next neighbour.
       // NOTE: The focus will loop around.
@@ -10617,9 +10726,9 @@ function toggleContactsSidebar() {
  *   shown.
  */
 function setContactsSidebarVisibility(show, focus) {
-  let contactsSplitter = document.getElementById("contactsSplitter");
-  let sidebarAddrMenu = document.getElementById("menu_AddressSidebar");
-  let contactsButton = document.getElementById("button-contacts");
+  const contactsSplitter = document.getElementById("contactsSplitter");
+  const sidebarAddrMenu = document.getElementById("menu_AddressSidebar");
+  const contactsButton = document.getElementById("button-contacts");
 
   if (show) {
     contactsSplitter.expand();
@@ -10628,11 +10737,11 @@ function setContactsSidebarVisibility(show, focus) {
       contactsButton.setAttribute("checked", "true");
     }
 
-    let contactsBrowser = document.getElementById("contactsBrowser");
+    const contactsBrowser = document.getElementById("contactsBrowser");
     if (contactsBrowser.getAttribute("src") == "") {
       // Url not yet set, load contacts side bar and focus the search
       // input if applicable: We pass "?focus" as a URL querystring, then via
-      // onload event of <window id="abContactsPanel">, in AbPanelLoad() of
+      // onload event of id="abContactsPanel", in AbPanelLoad() of
       // abContactsPanel.js, we do the focusing first thing to avoid timing
       // issues when trying to focus from here while contacts side bar is still
       // loading.
@@ -10646,9 +10755,9 @@ function setContactsSidebarVisibility(show, focus) {
       focusContactsSidebarSearchInput();
     }
   } else {
-    let contactsSidebar = document.getElementById("contactsSidebar");
+    const contactsSidebar = document.getElementById("contactsSidebar");
     // Before closing, check if the focus was within the contacts sidebar.
-    let sidebarFocussed = contactsSidebar.contains(document.activeElement);
+    const sidebarFocussed = contactsSidebar.contains(document.activeElement);
 
     contactsSplitter.collapse();
     sidebarAddrMenu.removeAttribute("checked");
@@ -10671,19 +10780,19 @@ function setContactsSidebarVisibility(show, focus) {
 }
 
 function loadHTMLMsgPrefs() {
-  let fontFace = Services.prefs.getStringPref("msgcompose.font_face", "");
+  const fontFace = Services.prefs.getStringPref("msgcompose.font_face", "");
   if (fontFace) {
     doStatefulCommand("cmd_fontFace", fontFace, true);
   }
 
-  let fontSize = Services.prefs.getCharPref("msgcompose.font_size", "3");
+  const fontSize = Services.prefs.getCharPref("msgcompose.font_size", "3");
   EditorSetFontSize(fontSize);
 
-  let bodyElement = GetBodyElement();
+  const bodyElement = GetBodyElement();
 
-  let useDefault = Services.prefs.getBoolPref("msgcompose.default_colors");
+  const useDefault = Services.prefs.getBoolPref("msgcompose.default_colors");
 
-  let textColor = useDefault
+  const textColor = useDefault
     ? ""
     : Services.prefs.getCharPref("msgcompose.text_color", "");
   if (!bodyElement.getAttribute("text") && textColor) {
@@ -10693,7 +10802,7 @@ function loadHTMLMsgPrefs() {
     onFontColorChange();
   }
 
-  let bgColor = useDefault
+  const bgColor = useDefault
     ? ""
     : Services.prefs.getCharPref("msgcompose.background_color", "");
   if (!bodyElement.getAttribute("bgcolor") && bgColor) {
@@ -10744,7 +10853,7 @@ var gAttachmentNotifier = {
       return;
     }
 
-    this._obs = new MutationObserver(function (aMutations) {
+    this._obs = new MutationObserver(function () {
       gAttachmentNotifier.timer.cancel();
       gAttachmentNotifier.timer.initWithCallback(
         gAttachmentNotifier.event,
@@ -10783,81 +10892,57 @@ var gAttachmentNotifier = {
   },
 
   /**
-   * Checks for new keywords synchronously and run the usual handler.
-   *
-   * @param aManage  Determines whether to manage the notification according to keywords found.
-   */
-  redetectKeywords(aManage) {
-    if (!this.enabled) {
-      return;
-    }
-
-    attachmentWorker.onmessage(
-      { data: this._checkForAttachmentKeywords(false) },
-      aManage
-    );
-  },
-
-  /**
    * Check if there are any keywords in the message.
    *
-   * @param async  Whether we should run the regex checker asynchronously or not.
-   *
-   * @returns If async is true, attachmentWorker.message is called with the array
-   *          of found keywords and this function returns null.
-   *          If it is false, the array is returned from this function immediately.
+   * @returns {Promise<string[]>} the matching keywords.
    */
-  _checkForAttachmentKeywords(async) {
+  async checkForAttachmentKeywords() {
     if (!this.enabled) {
-      return async ? null : [];
+      return [];
     }
 
     if (attachmentNotificationSupressed()) {
-      // If we know we don't need to show the notification,
-      // we can skip the expensive checking of keywords in the message.
-      // but mark it in the .lastMessage that the keywords are unknown.
-      attachmentWorker.lastMessage = null;
-      return async ? null : [];
+      return [];
     }
 
-    let keywordsInCsv = Services.prefs.getComplexValue(
+    const keywordsInCsv = Services.prefs.getComplexValue(
       "mail.compose.attachment_reminder_keywords",
       Ci.nsIPrefLocalizedString
     ).data;
-    let mailBody = getBrowser().contentDocument.querySelector("body");
+    const mailBody = getBrowser().contentDocument.querySelector("body");
 
     // We use a new document and import the body into it. We do that to avoid
     // loading images that were previously blocked. Content policy of the newly
     // created data document will block the loads. Details: Bug 1409458 comment #22.
-    let newDoc = getBrowser().contentDocument.implementation.createDocument(
+    const newDoc = getBrowser().contentDocument.implementation.createDocument(
       "",
       "",
       null
     );
-    let mailBodyNode = newDoc.importNode(mailBody, true);
+    const mailBodyNode = newDoc.importNode(mailBody, true);
 
     // Don't check quoted text from reply.
-    let blockquotes = mailBodyNode.getElementsByTagName("blockquote");
+    const blockquotes = mailBodyNode.getElementsByTagName("blockquote");
     for (let i = blockquotes.length - 1; i >= 0; i--) {
       blockquotes[i].remove();
     }
 
     // For plaintext composition the quotes we need to find and exclude are
     // <span _moz_quote="true">.
-    let spans = mailBodyNode.querySelectorAll("span[_moz_quote]");
+    const spans = mailBodyNode.querySelectorAll("span[_moz_quote]");
     for (let i = spans.length - 1; i >= 0; i--) {
       spans[i].remove();
     }
 
     // Ignore signature (html compose mode).
-    let sigs = mailBodyNode.getElementsByClassName("moz-signature");
+    const sigs = mailBodyNode.getElementsByClassName("moz-signature");
     for (let i = sigs.length - 1; i >= 0; i--) {
       sigs[i].remove();
     }
 
     // Replace brs with line breaks so node.textContent won't pull foo<br>bar
     // together to foobar.
-    let brs = mailBodyNode.getElementsByTagName("br");
+    const brs = mailBodyNode.getElementsByTagName("br");
     for (let i = brs.length - 1; i >= 0; i--) {
       brs[i].parentNode.replaceChild(
         mailBodyNode.ownerDocument.createTextNode("\n"),
@@ -10867,25 +10952,25 @@ var gAttachmentNotifier = {
 
     // Ignore signature (plain text compose mode).
     let mailData = mailBodyNode.textContent;
-    let sigIndex = mailData.indexOf("-- \n");
+    const sigIndex = mailData.indexOf("-- \n");
     if (sigIndex > 0) {
       mailData = mailData.substring(0, sigIndex);
     }
 
     // Ignore replied messages (plain text and html compose mode).
-    let repText = getComposeBundle().getString(
+    const repText = getComposeBundle().getString(
       "mailnews.reply_header_originalmessage"
     );
-    let repIndex = mailData.indexOf(repText);
+    const repIndex = mailData.indexOf(repText);
     if (repIndex > 0) {
       mailData = mailData.substring(0, repIndex);
     }
 
     // Ignore forwarded messages (plain text and html compose mode).
-    let fwdText = getComposeBundle().getString(
+    const fwdText = getComposeBundle().getString(
       "mailnews.forward_header_originalmessage"
     );
-    let fwdIndex = mailData.indexOf(fwdText);
+    const fwdIndex = mailData.indexOf(fwdText);
     if (fwdIndex > 0) {
       mailData = mailData.substring(0, fwdIndex);
     }
@@ -10894,7 +10979,7 @@ var gAttachmentNotifier = {
     // keywords too, after making sure that the subject has changed
     // or after reopening a draft. For reply, redirect and forward,
     // only check when the input was changed by the user.
-    let subject = document.getElementById("msgSubject").value;
+    const subject = document.getElementById("msgSubject").value;
     if (
       subject &&
       (gSubjectChanged ||
@@ -10909,13 +10994,10 @@ var gAttachmentNotifier = {
     ) {
       mailData = subject + " " + mailData;
     }
-
-    if (!async) {
-      return AttachmentChecker.getAttachmentKeywords(mailData, keywordsInCsv);
-    }
-
-    attachmentWorker.postMessage([mailData, keywordsInCsv]);
-    return null;
+    return await attachmentWorker.findAttachmentKeywords(
+      mailData,
+      keywordsInCsv
+    );
   },
 
   shutdown() {
@@ -10928,14 +11010,13 @@ var gAttachmentNotifier = {
   },
 
   event: {
-    notify(timer) {
-      // Only run the checker if the compose window is initialized
-      // and not shutting down.
-      if (gMsgCompose) {
-        // This runs the attachmentWorker asynchronously so if keywords are found
-        // manageAttachmentNotification is run from attachmentWorker.onmessage.
-        gAttachmentNotifier._checkForAttachmentKeywords(true);
+    async notify() {
+      if (!gMsgCompose) {
+        return;
       }
+      // This runs the attachmentWorker asynchronously so if keywords are found
+      // manageAttachmentNotification is run from attachmentWorker.onmessage.
+      await gAttachmentNotifier.checkForAttachmentKeywords();
     },
   },
 
@@ -10946,9 +11027,9 @@ var gAttachmentNotifier = {
  * Helper function to remove a query part from a URL, so for example:
  * ...?remove=xx&other=yy becomes ...?other=yy.
  *
- * @param aURL    the URL from which to remove the query part
- * @param aQuery  the query part to remove
- * @returns the URL with the query part removed
+ * @param {string} aURL - The URL from which to remove the query part.
+ * @param {string} aQuery - The query part to remove.
+ * @returns {string} the URL with the query part removed.
  */
 function removeQueryPart(aURL, aQuery) {
   // Quick pre-check.
@@ -10956,13 +11037,13 @@ function removeQueryPart(aURL, aQuery) {
     return aURL;
   }
 
-  let indexQM = aURL.indexOf("?");
+  const indexQM = aURL.indexOf("?");
   if (indexQM < 0) {
     return aURL;
   }
 
-  let queryParts = aURL.substr(indexQM + 1).split("&");
-  let indexPart = queryParts.indexOf(aQuery);
+  const queryParts = aURL.substr(indexQM + 1).split("&");
+  const indexPart = queryParts.indexOf(aQuery);
   if (indexPart < 0) {
     return aURL;
   }
@@ -10976,9 +11057,9 @@ function InitEditor() {
   // Set eEditorMailMask flag to avoid using content prefs for spell checker,
   // otherwise dictionary setting in preferences is ignored and dictionary is
   // inconsistent in subject and message body.
-  let eEditorMailMask = Ci.nsIEditor.eEditorMailMask;
-  editor.flags |= eEditorMailMask;
-  document.getElementById("msgSubject").editor.flags |= eEditorMailMask;
+  editor.flags |= Ci.nsIEditor.eEditorMailMask;
+  document.getElementById("msgSubject").editor.flags |=
+    Ci.nsIEditor.eEditorMailMask;
 
   // Control insertion of line breaks.
   editor.returnInParagraphCreatesNewParagraph = Services.prefs.getBoolPref(
@@ -10994,9 +11075,8 @@ function InitEditor() {
   );
   if (gMsgCompose.composeHTML) {
     // Re-enable table/image resizers.
-    editor.QueryInterface(
-      Ci.nsIHTMLAbsPosEditor
-    ).absolutePositioningEnabled = true;
+    editor.QueryInterface(Ci.nsIHTMLAbsPosEditor).absolutePositioningEnabled =
+      true;
     editor.QueryInterface(
       Ci.nsIHTMLInlineTableEditor
     ).inlineTableEditingEnabled = true;
@@ -11007,7 +11087,7 @@ function InitEditor() {
   // than having a late-finishing async load mark our editor as modified when
   // the user hasn't typed anything yet, but that means the sheet must not
   // @import slow things, especially not over the network.
-  let domWindowUtils = GetCurrentEditorElement().contentWindow.windowUtils;
+  const domWindowUtils = GetCurrentEditorElement().contentWindow.windowUtils;
   domWindowUtils.loadSheetUsingURIString(
     "chrome://messenger/skin/messageQuotes.css",
     domWindowUtils.AGENT_SHEET
@@ -11049,13 +11129,13 @@ function InitEditor() {
         return;
       }
 
-      let src = event.target.src;
+      const src = event.target.src;
       if (!src) {
         return;
       }
       if (!/^file:/i.test(src)) {
         // Check if this is a protocol that can fetch parts.
-        let protocol = src.substr(0, src.indexOf(":")).toLowerCase();
+        const protocol = src.substr(0, src.indexOf(":")).toLowerCase();
         if (
           !(
             Services.io.getProtocolHandler(protocol) instanceof
@@ -11072,8 +11152,8 @@ function InitEditor() {
         return;
       }
       if (gOriginalMsgURI) {
-        let msgSvc = MailServices.messageServiceFromURI(gOriginalMsgURI);
-        let originalMsgNeckoURI = msgSvc.getUrlForUri(gOriginalMsgURI);
+        const msgSvc = MailServices.messageServiceFromURI(gOriginalMsgURI);
+        const originalMsgNeckoURI = msgSvc.getUrlForUri(gOriginalMsgURI);
         if (
           src.startsWith(
             removeQueryPart(
@@ -11115,11 +11195,11 @@ function InitEditor() {
   );
 
   // Convert mailnews URL back to data: URL.
-  let background = editor.document.body.background;
+  const background = editor.document.body.background;
   if (background && gOriginalMsgURI) {
     // Check that background has the same URL as the message itself.
-    let msgSvc = MailServices.messageServiceFromURI(gOriginalMsgURI);
-    let originalMsgNeckoURI = msgSvc.getUrlForUri(gOriginalMsgURI);
+    const msgSvc = MailServices.messageServiceFromURI(gOriginalMsgURI);
+    const originalMsgNeckoURI = msgSvc.getUrlForUri(gOriginalMsgURI);
     if (
       background.startsWith(
         removeQueryPart(
@@ -11137,7 +11217,7 @@ function InitEditor() {
     }
   }
 
-  // Run menubar initialization first, to avoid TabsInTitlebar code picking
+  // Run menubar initialization first, to avoid CustomTitlebar code picking
   // up mutations from it and causing a reflow.
   if (AppConstants.platform != "macosx") {
     AutoHideMenubar.init();
@@ -11146,7 +11226,7 @@ function InitEditor() {
   // For plain text compose, set the styles for quoted text according to
   // preferences.
   if (!gMsgCompose.composeHTML) {
-    let style = editor.document.createElement("style");
+    const style = editor.document.createElement("style");
     editor.document.head.appendChild(style);
     let fontStyle = "";
     let fontSize = "";
@@ -11171,7 +11251,7 @@ function InitEditor() {
         break;
     }
 
-    let citationColor =
+    const citationColor =
       "color: " + Services.prefs.getCharPref("mail.citation_color") + ";";
 
     style.sheet.insertRule(
@@ -11196,7 +11276,7 @@ function InitEditor() {
       .map(lang => lang.trim());
   }
 
-  let dictionaries = getValidSpellcheckerDictionaries(draftLanguages);
+  const dictionaries = getValidSpellcheckerDictionaries(draftLanguages);
   ComposeChangeLanguage(dictionaries).catch(console.error);
 }
 
@@ -11204,7 +11284,7 @@ function setFontSize(event) {
   // Increase Font Menuitem and Decrease Font Menuitem from the main menu
   // will call this function because of oncommand attribute on the menupopup
   // and fontSize will be null for such function calls.
-  let fontSize = event.target.value;
+  const fontSize = event.target.value;
   if (fontSize) {
     EditorSetFontSize(fontSize);
   }
@@ -11228,7 +11308,7 @@ function toggleSpellCheckingEnabled() {
 // the user clicks on one of the two menu items that allow them to toggle the
 // spellcheck feature (either context menu or Options menu).
 function enableInlineSpellCheck(aEnableInlineSpellCheck) {
-  let checker = GetCurrentEditorSpellChecker();
+  const checker = GetCurrentEditorSpellChecker();
   if (!checker) {
     return;
   }
@@ -11243,29 +11323,9 @@ function enableInlineSpellCheck(aEnableInlineSpellCheck) {
     .setAttribute("spellcheck", aEnableInlineSpellCheck);
 }
 
-function getMailToolbox() {
-  return document.getElementById("compose-toolbox");
-}
-
-/**
- * Helper function to dispatch a CustomEvent to the attachmentbucket.
- *
- * @param aEventType the name of the event to fire.
- * @param aData any detail data to pass to the CustomEvent.
- */
-function dispatchAttachmentBucketEvent(aEventType, aData) {
-  gAttachmentBucket.dispatchEvent(
-    new CustomEvent(aEventType, {
-      bubbles: true,
-      cancelable: true,
-      detail: aData,
-    })
-  );
-}
-
 /** Update state of zoom type (text vs. full) menu item. */
 function UpdateFullZoomMenu() {
-  let menuItem = document.getElementById("menu_fullZoomToggle");
+  const menuItem = document.getElementById("menu_fullZoomToggle");
   menuItem.setAttribute("checked", !ZoomManager.useFullZoom);
 }
 
@@ -11280,7 +11340,7 @@ function getBrowser() {
 
 function goUpdateMailMenuItems(commandset) {
   for (let i = 0; i < commandset.children.length; i++) {
-    let commandID = commandset.children[i].getAttribute("id");
+    const commandID = commandset.children[i].getAttribute("id");
     if (commandID) {
       goUpdateCommand(commandID);
     }
@@ -11297,33 +11357,33 @@ var gComposeNotificationBar = {
     return (this.brandBundle = document.getElementById("brandBundle"));
   },
 
-  setBlockedContent(aBlockedURI) {
-    let brandName = this.brandBundle.getString("brandShortName");
-    let buttonLabel = getComposeBundle().getString(
+  async setBlockedContent(aBlockedURI) {
+    const brandName = this.brandBundle.getString("brandShortName");
+    const buttonLabel = getComposeBundle().getString(
       AppConstants.platform == "win"
         ? "blockedContentPrefLabel"
         : "blockedContentPrefLabelUnix"
     );
-    let buttonAccesskey = getComposeBundle().getString(
+    const buttonAccesskey = getComposeBundle().getString(
       AppConstants.platform == "win"
         ? "blockedContentPrefAccesskey"
         : "blockedContentPrefAccesskeyUnix"
     );
 
-    let buttons = [
+    const buttons = [
       {
         label: buttonLabel,
         accessKey: buttonAccesskey,
         popup: "blockedContentOptions",
-        callback(aNotification, aButton) {
+        callback() {
           return true; // keep notification open
         },
       },
     ];
 
     // The popup value is a space separated list of all the blocked urls.
-    let popup = document.getElementById("blockedContentOptions");
-    let urls = popup.value ? popup.value.split(" ") : [];
+    const popup = document.getElementById("blockedContentOptions");
+    const urls = popup.value ? popup.value.split(" ") : [];
     if (!urls.includes(aBlockedURI)) {
       urls.push(aBlockedURI);
     }
@@ -11336,7 +11396,7 @@ var gComposeNotificationBar = {
     msg = PluralForm.get(urls.length, msg);
 
     if (!this.isShowingBlockedContentNotification()) {
-      gComposeNotification.appendNotification(
+      await gComposeNotification.appendNotification(
         "blockedContent",
         {
           label: msg,
@@ -11361,7 +11421,7 @@ var gComposeNotificationBar = {
     );
   },
 
-  clearNotifications(aValue) {
+  clearNotifications() {
     gComposeNotification.removeAllNotifications(true);
   },
 
@@ -11378,23 +11438,25 @@ var gComposeNotificationBar = {
       return;
     }
 
-    gComposeNotification.appendNotification(
-      "identityWarning",
-      {
-        label: await document.l10n.formatValue(
-          "compose-missing-identity-warning",
-          {
-            identity,
-          }
-        ),
-        priority: gComposeNotification.PRIORITY_WARNING_HIGH,
-      },
-      null
-    );
+    await gComposeNotification
+      .appendNotification(
+        "identityWarning",
+        {
+          label: await document.l10n.formatValue(
+            "compose-missing-identity-warning",
+            {
+              identity,
+            }
+          ),
+          priority: gComposeNotification.PRIORITY_WARNING_HIGH,
+        },
+        null
+      )
+      .catch(console.warn);
   },
 
   clearIdentityWarning() {
-    let idWarning =
+    const idWarning =
       gComposeNotification.getNotificationWithValue("identityWarning");
     if (idWarning) {
       gComposeNotification.removeNotification(idWarning);
@@ -11406,7 +11468,7 @@ var gComposeNotificationBar = {
  * Populate the menuitems of what blocked content to unblock.
  */
 function onBlockedContentOptionsShowing(aEvent) {
-  let urls = aEvent.target.value ? aEvent.target.value.split(" ") : [];
+  const urls = aEvent.target.value ? aEvent.target.value.split(" ") : [];
 
   // Out with the old...
   while (aEvent.target.lastChild) {
@@ -11414,8 +11476,8 @@ function onBlockedContentOptionsShowing(aEvent) {
   }
 
   // ... and in with the new.
-  for (let url of urls) {
-    let menuitem = document.createXULElement("menuitem");
+  for (const url of urls) {
+    const menuitem = document.createXULElement("menuitem");
     menuitem.setAttribute(
       "label",
       getComposeBundle().getFormattedString("blockedAllowResource", [url])
@@ -11445,7 +11507,7 @@ function onUnblockResource(aURL, aNode) {
     console.error(e);
   } finally {
     // Remove it from the list on success and failure.
-    let urls = aNode.value.split(" ");
+    const urls = aNode.value.split(" ");
     for (let i = 0; i < urls.length; i++) {
       if (urls[i] == aURL) {
         urls.splice(i, 1);
@@ -11463,21 +11525,21 @@ function onUnblockResource(aURL, aNode) {
  * Convert the blocked content to a data URL and swap the src to that for the
  * elements that were using it.
  *
- * @param {string}  aURL - (necko) URL to unblock
- * @param {Bool}    aReturnDataURL - return data: URL instead of processing image
+ * @param {string} aURL - (necko) URL to unblock.
+ * @param {boolean} aReturnDataURL - Return data: URL instead of processing image.
  * @returns {string} the image as data: URL.
- * @throw Error()   if reading the data failed
+ * @throws Error() if reading the data failed.
  */
 function loadBlockedImage(aURL, aReturnDataURL = false) {
   let filename;
   if (/^(file|chrome|moz-extension):/i.test(aURL)) {
     filename = aURL.substr(aURL.lastIndexOf("/") + 1);
   } else {
-    let fnMatch = /[?&;]filename=([^?&]+)/.exec(aURL);
+    const fnMatch = /[?&;]filename=([^?&]+)/.exec(aURL);
     filename = (fnMatch && fnMatch[1]) || "";
   }
   filename = decodeURIComponent(filename);
-  let uri = Services.io.newURI(aURL);
+  const uri = Services.io.newURI(aURL);
   let contentType;
   if (filename) {
     try {
@@ -11498,7 +11560,7 @@ function loadBlockedImage(aURL, aReturnDataURL = false) {
     // Assuming image/png is the best we can do.
     contentType = "image/png";
   }
-  let channel = Services.io.newChannelFromURI(
+  const channel = Services.io.newChannelFromURI(
     uri,
     null,
     Services.scriptSecurityManager.getSystemPrincipal(),
@@ -11506,8 +11568,8 @@ function loadBlockedImage(aURL, aReturnDataURL = false) {
     Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
     Ci.nsIContentPolicy.TYPE_OTHER
   );
-  let inputStream = channel.open();
-  let stream = Cc["@mozilla.org/binaryinputstream;1"].createInstance(
+  const inputStream = channel.open();
+  const stream = Cc["@mozilla.org/binaryinputstream;1"].createInstance(
     Ci.nsIBinaryInputStream
   );
   stream.setInputStream(inputStream);
@@ -11521,8 +11583,8 @@ function loadBlockedImage(aURL, aReturnDataURL = false) {
     throw new Error("Couldn't read all data from URL=" + aURL + " (" + e + ")");
   }
   stream.close();
-  let encoded = btoa(streamData);
-  let dataURL =
+  const encoded = btoa(streamData);
+  const dataURL =
     "data:" +
     contentType +
     (filename ? ";filename=" + encodeURIComponent(filename) : "") +
@@ -11533,8 +11595,8 @@ function loadBlockedImage(aURL, aReturnDataURL = false) {
     return dataURL;
   }
 
-  let editor = GetCurrentEditor();
-  for (let img of editor.document.images) {
+  const editor = GetCurrentEditor();
+  for (const img of editor.document.images) {
     if (img.src == aURL) {
       img.src = dataURL; // Swap to data URL.
       img.classList.remove("loading-internal");
@@ -11548,7 +11610,7 @@ function loadBlockedImage(aURL, aReturnDataURL = false) {
  * Update state of encrypted/signed toolbar buttons
  */
 function showSendEncryptedAndSigned() {
-  let encToggle = document.getElementById("button-encryption");
+  const encToggle = document.getElementById("button-encryption");
   if (encToggle) {
     if (gSendEncrypted) {
       encToggle.setAttribute("checked", "true");
@@ -11557,7 +11619,7 @@ function showSendEncryptedAndSigned() {
     }
   }
 
-  let sigToggle = document.getElementById("button-signing");
+  const sigToggle = document.getElementById("button-signing");
   if (sigToggle) {
     if (gSendSigned) {
       sigToggle.setAttribute("checked", "true");
@@ -11568,10 +11630,10 @@ function showSendEncryptedAndSigned() {
 
   // Should button remain enabled? Identity might be unable to
   // encrypt, but we might have kept button enabled after identity change.
-  let identityHasConfiguredSMIME =
+  const identityHasConfiguredSMIME =
     isSmimeSigningConfigured() || isSmimeEncryptionConfigured();
-  let identityHasConfiguredOpenPGP = isPgpConfigured();
-  let e2eeNotConfigured =
+  const identityHasConfiguredOpenPGP = isPgpConfigured();
+  const e2eeNotConfigured =
     !identityHasConfiguredOpenPGP && !identityHasConfiguredSMIME;
 
   if (encToggle) {
@@ -11587,7 +11649,7 @@ function showSendEncryptedAndSigned() {
  * automatic adjustments to related settings.
  */
 function updateEncryptionDependencies() {
-  let canSign = gSelectedTechnologyIsPGP
+  const canSign = gSelectedTechnologyIsPGP
     ? isPgpConfigured()
     : isSmimeSigningConfigured();
 
@@ -11642,6 +11704,13 @@ function updateEncryptionDependencies() {
  * @param {Event} event - The DOM Event
  */
 function composeWindowOnClick(event) {
+  if (event.button == 2) {
+    // Ignore context menu clicks.
+    // contextmenu event on a pill is causing a spurious click event on <body>,
+    // on linux. We must not clear selection for that, as then context menu
+    // pill actions won't have a selection to work with.
+    return;
+  }
   // Don't deselect pills if the click happened on another pill as the selection
   // and focus change is handled by the pill itself. We also ignore clicks on
   // toolbarbuttons, menus, and menu items. This will also prevent the unwanted

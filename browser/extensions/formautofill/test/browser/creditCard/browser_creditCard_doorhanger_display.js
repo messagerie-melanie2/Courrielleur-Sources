@@ -1,4 +1,11 @@
+/* Any copyright is dedicated to the Public Domain.
+http://creativecommons.org/publicdomain/zero/1.0/ */
+
 "use strict";
+
+const { FormAutofill } = ChromeUtils.importESModule(
+  "resource://autofill/FormAutofill.sys.mjs"
+);
 
 add_task(async function test_save_doorhanger_shown_no_profile() {
   await BrowserTestUtils.withNewTab(
@@ -103,20 +110,28 @@ add_task(async function test_doorhanger_not_shown_when_autofill_untouched() {
     return;
   }
 
+  await Services.fog.testFlushAllChildren();
+  Services.fog.testResetFOG();
+  Services.telemetry.clearEvents();
+
   await setStorage(TEST_CREDIT_CARD_1);
   let creditCards = await getCreditCards();
   is(creditCards.length, 1, "1 credit card in storage");
 
+  let osKeyStoreLoginShown = null;
   let onUsed = waitForStorageChangedEvents("notifyUsed");
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: CREDITCARD_FORM_URL },
     async function (browser) {
-      let osKeyStoreLoginShown =
-        OSKeyStoreTestUtils.waitForOSKeyStoreLogin(true);
+      if (OSKeyStore.canReauth()) {
+        osKeyStoreLoginShown = OSKeyStoreTestUtils.waitForOSKeyStoreLogin(true);
+      }
       await openPopupOn(browser, "form #cc-name");
       await BrowserTestUtils.synthesizeKey("VK_DOWN", {}, browser);
       await BrowserTestUtils.synthesizeKey("VK_RETURN", {}, browser);
-      await osKeyStoreLoginShown;
+      if (osKeyStoreLoginShown) {
+        await osKeyStoreLoginShown;
+      }
       await waitForAutofill(browser, "#cc-name", "John Doe");
 
       await SpecialPowers.spawn(browser, [], async function () {
@@ -134,6 +149,17 @@ add_task(async function test_doorhanger_not_shown_when_autofill_untouched() {
   is(creditCards.length, 1, "Still 1 credit card");
   is(creditCards[0].timesUsed, 1, "timesUsed field set to 1");
   await removeAllRecords();
+
+  await Services.fog.testFlushAllChildren();
+  let testEvents = Glean.creditcard.osKeystoreDecrypt.testGetValue();
+  is(testEvents.length, 1, "Event was recorded");
+  is(testEvents[0].extra.trigger, "autofill", "Trigger was correct");
+  is(
+    testEvents[0].extra.isDecryptSuccess,
+    "true",
+    "Decryption was recorded as success"
+  );
+  is(testEvents[0].extra.errorResult, "0", "Result was no error");
 });
 
 add_task(async function test_doorhanger_not_shown_when_fill_duplicate() {
@@ -186,12 +212,15 @@ add_task(
     await setStorage(TEST_CREDIT_CARD_1, TEST_CREDIT_CARD_2);
     let creditCards = await getCreditCards();
     is(creditCards.length, 2, "2 credit card in storage");
+    let osKeyStoreLoginShown = null;
     let onUsed = waitForStorageChangedEvents("notifyUsed");
     await BrowserTestUtils.withNewTab(
       { gBrowser, url: CREDITCARD_FORM_URL },
       async function (browser) {
-        let osKeyStoreLoginShown =
-          OSKeyStoreTestUtils.waitForOSKeyStoreLogin(true);
+        if (OSKeyStore.canReauth()) {
+          osKeyStoreLoginShown =
+            OSKeyStoreTestUtils.waitForOSKeyStoreLogin(true);
+        }
         await openPopupOn(browser, "form #cc-number");
         await BrowserTestUtils.synthesizeKey("VK_DOWN", {}, browser);
         await BrowserTestUtils.synthesizeKey("VK_RETURN", {}, browser);
@@ -200,6 +229,11 @@ add_task(
           "#cc-number",
           TEST_CREDIT_CARD_1["cc-number"]
         );
+
+        /* eslint-disable mozilla/no-arbitrary-setTimeout */
+        await new Promise(resolve => {
+          setTimeout(resolve, FormAutofill.fillOnDynamicFormChangeTimeout);
+        });
 
         await focusUpdateSubmitForm(browser, {
           focusSelector: "#cc-name",
@@ -214,7 +248,9 @@ add_task(
 
         await sleep(1000);
         is(PopupNotifications.panel.state, "closed", "Doorhanger is hidden");
-        await osKeyStoreLoginShown;
+        if (osKeyStoreLoginShown) {
+          await osKeyStoreLoginShown;
+        }
       }
     );
     await onUsed;
@@ -242,12 +278,15 @@ add_task(
 
     let creditCards = await getCreditCards();
     is(creditCards.length, 2, "2 credit card in storage");
+    let osKeyStoreLoginShown = null;
     let onUsed = waitForStorageChangedEvents("notifyUsed");
     await BrowserTestUtils.withNewTab(
       { gBrowser, url: CREDITCARD_FORM_URL },
       async function (browser) {
-        let osKeyStoreLoginShown =
-          OSKeyStoreTestUtils.waitForOSKeyStoreLogin(true);
+        if (OSKeyStore.canReauth()) {
+          osKeyStoreLoginShown =
+            OSKeyStoreTestUtils.waitForOSKeyStoreLogin(true);
+        }
         await openPopupOn(browser, "form #cc-number");
         await BrowserTestUtils.synthesizeKey("VK_DOWN", {}, browser);
         await BrowserTestUtils.synthesizeKey("VK_RETURN", {}, browser);
@@ -256,6 +295,11 @@ add_task(
           "#cc-number",
           TEST_CREDIT_CARD_1["cc-number"]
         );
+
+        /* eslint-disable mozilla/no-arbitrary-setTimeout */
+        await new Promise(resolve => {
+          setTimeout(resolve, FormAutofill.fillOnDynamicFormChangeTimeout);
+        });
 
         await focusUpdateSubmitForm(browser, {
           focusSelector: "#cc-name",
@@ -267,7 +311,9 @@ add_task(
 
         await sleep(1000);
         is(PopupNotifications.panel.state, "closed", "Doorhanger is hidden");
-        await osKeyStoreLoginShown;
+        if (osKeyStoreLoginShown) {
+          await osKeyStoreLoginShown;
+        }
       }
     );
     await onUsed;

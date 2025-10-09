@@ -7,7 +7,6 @@ import { prefs } from "../../../utils/prefs";
 
 const ignoreList = [
   "ADD_BREAKPOINT_POSITIONS",
-  "SET_SYMBOLS",
   "OUT_OF_SCOPE_LOCATIONS",
   "MAP_SCOPES",
   "MAP_FRAMES",
@@ -92,7 +91,7 @@ function serializeAction(action) {
  * A middleware that logs all actions coming through the system
  * to the console.
  */
-export function log({ dispatch, getState }) {
+export function log() {
   return next => action => {
     const asyncMsg = !action.status ? "" : `[${action.status}]`;
 

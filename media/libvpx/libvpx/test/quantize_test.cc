@@ -11,7 +11,7 @@
 #include <string.h>
 #include <tuple>
 
-#include "third_party/googletest/src/include/gtest/gtest.h"
+#include "gtest/gtest.h"
 
 #include "./vp8_rtcd.h"
 #include "./vpx_config.h"
@@ -71,7 +71,7 @@ class QuantizeTestBase {
     // Copy macroblockd from the reference to get pre-set-up dequant values.
     macroblockd_dst_ = reinterpret_cast<MACROBLOCKD *>(
         vpx_memalign(32, sizeof(*macroblockd_dst_)));
-    memcpy(macroblockd_dst_, &vp8_comp_->mb.e_mbd, sizeof(*macroblockd_dst_));
+    *macroblockd_dst_ = vp8_comp_->mb.e_mbd;
     // Fix block pointers - currently they point to the blocks in the reference
     // structure.
     vp8_setup_block_dptrs(macroblockd_dst_);
@@ -80,7 +80,7 @@ class QuantizeTestBase {
   void UpdateQuantizer(int q) {
     vp8_set_quantizer(vp8_comp_, q);
 
-    memcpy(macroblockd_dst_, &vp8_comp_->mb.e_mbd, sizeof(*macroblockd_dst_));
+    *macroblockd_dst_ = vp8_comp_->mb.e_mbd;
     vp8_setup_block_dptrs(macroblockd_dst_);
   }
 
@@ -121,13 +121,13 @@ class QuantizeTest : public QuantizeTestBase,
                      public ::testing::TestWithParam<VP8QuantizeParam>,
                      public AbstractBench {
  protected:
-  virtual void SetUp() {
+  void SetUp() override {
     SetupCompressor();
     asm_quant_ = GET_PARAM(0);
     c_quant_ = GET_PARAM(1);
   }
 
-  virtual void Run() {
+  void Run() override {
     asm_quant_(&vp8_comp_->mb.block[0], &macroblockd_dst_->block[0]);
   }
 

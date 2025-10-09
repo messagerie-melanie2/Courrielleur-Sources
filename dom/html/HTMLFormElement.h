@@ -10,19 +10,13 @@
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/UniquePtr.h"
-#include "mozilla/dom/AnchorAreaFormRelValues.h"
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/PopupBlocker.h"
-#include "mozilla/dom/RadioGroupManager.h"
-#include "nsCOMPtr.h"
+#include "mozilla/dom/RadioGroupContainer.h"
 #include "nsIFormControl.h"
 #include "nsGenericHTMLElement.h"
-#include "nsIRadioGroupContainer.h"
-#include "nsIWeakReferenceUtils.h"
 #include "nsThreadUtils.h"
 #include "nsInterfaceHashtable.h"
-#include "nsRefPtrHashtable.h"
-#include "nsTHashMap.h"
 #include "js/friend/DOMProxy.h"  // JS::ExpandoAndGeneration
 
 class nsIMutableArray;
@@ -38,10 +32,7 @@ class HTMLFormSubmission;
 class HTMLImageElement;
 class FormData;
 
-class HTMLFormElement final : public nsGenericHTMLElement,
-                              public nsIRadioGroupContainer,
-                              public AnchorAreaFormRelValues,
-                              RadioGroupManager {
+class HTMLFormElement final : public nsGenericHTMLElement {
   friend class HTMLFormControlsCollection;
 
  public:
@@ -57,34 +48,17 @@ class HTMLFormElement final : public nsGenericHTMLElement,
 
   int32_t IndexOfContent(nsIContent* aContent);
   nsGenericHTMLFormElement* GetDefaultSubmitElement() const;
-
-  // nsIRadioGroupContainer
-  void SetCurrentRadioButton(const nsAString& aName,
-                             HTMLInputElement* aRadio) override;
-  HTMLInputElement* GetCurrentRadioButton(const nsAString& aName) override;
-  NS_IMETHOD GetNextRadioButton(const nsAString& aName, const bool aPrevious,
-                                HTMLInputElement* aFocusedRadio,
-                                HTMLInputElement** aRadioOut) override;
-  NS_IMETHOD WalkRadioGroup(const nsAString& aName,
-                            nsIRadioVisitor* aVisitor) override;
-  void AddToRadioGroup(const nsAString& aName,
-                       HTMLInputElement* aRadio) override;
-  void RemoveFromRadioGroup(const nsAString& aName,
-                            HTMLInputElement* aRadio) override;
-  uint32_t GetRequiredRadioCount(const nsAString& aName) const override;
-  void RadioRequiredWillChange(const nsAString& aName,
-                               bool aRequiredAdded) override;
-  bool GetValueMissingState(const nsAString& aName) const override;
-  void SetValueMissingState(const nsAString& aName, bool aValue) override;
-
-  ElementState IntrinsicState() const override;
+  bool IsDefaultSubmitElement(nsGenericHTMLFormElement* aElement) const {
+    return aElement == mDefaultSubmitElement;
+  }
 
   // EventTarget
   void AsyncEventRunning(AsyncEventDispatcher* aEvent) override;
 
   /** Whether we already dispatched a DOMFormHasPassword event or not */
   bool mHasPendingPasswordEvent = false;
-  /** Whether we already dispatched a DOMFormHasPossibleUsername event or not */
+  /** Whether we already dispatched a DOMPossibleUsernameInputAdded event or not
+   */
   bool mHasPendingPossibleUsernameEvent = false;
 
   // nsIContent
@@ -97,7 +71,7 @@ class HTMLFormElement final : public nsGenericHTMLElement,
   nsresult PostHandleEvent(EventChainPostVisitor& aVisitor) override;
 
   nsresult BindToTree(BindContext&, nsINode& aParent) override;
-  void UnbindFromTree(bool aNullParent = true) override;
+  void UnbindFromTree(UnbindContext&) override;
   void BeforeSetAttr(int32_t aNamespaceID, nsAtom* aName,
                      const nsAttrValue* aValue, bool aNotify) override;
 
@@ -212,20 +186,11 @@ class HTMLFormElement final : public nsGenericHTMLElement,
   bool IsLastActiveElement(const nsGenericHTMLFormElement* aElement) const;
 
   /**
-   * Check whether a given nsGenericHTMLFormElement is the default submit
-   * element.  This is different from just comparing to
-   * GetDefaultSubmitElement() in certain situations inside an update
-   * when GetDefaultSubmitElement() might not be up to date. aElement
-   * is expected to not be null.
-   */
-  bool IsDefaultSubmitElement(const nsGenericHTMLFormElement* aElement) const;
-
-  /**
    * Flag the form to know that a button or image triggered scripted form
    * submission. In that case the form will defer the submission until the
    * script handler returns and the return value is known.
    */
-  void OnSubmitClickBegin(Element* aOriginatingElement);
+  void OnSubmitClickBegin();
   void OnSubmitClickEnd();
 
   /**
@@ -248,11 +213,11 @@ class HTMLFormElement final : public nsGenericHTMLElement,
    *
    * @return Whether the form is valid.
    *
-   * @note Do not call this method if novalidate/formnovalidate is used.
    * @note This method might disappear with bug 592124, hopefuly.
    * @see
    * https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#interactively-validate-the-constraints
    */
+  MOZ_CAN_RUN_SCRIPT
   bool CheckValidFormSubmission();
 
   /**
@@ -263,16 +228,7 @@ class HTMLFormElement final : public nsGenericHTMLElement,
    * @param aFormData the form data object
    */
   // TODO: Convert this to MOZ_CAN_RUN_SCRIPT (bug 1415230)
-  MOZ_CAN_RUN_SCRIPT_BOUNDARY nsresult ConstructEntryList(FormData* aFormData);
-
-  /**
-   * Whether the submission of this form has been ever prevented because of
-   * being invalid.
-   *
-   * @return Whether the submission of this form has been prevented because of
-   * being invalid.
-   */
-  bool HasEverTriedInvalidSubmit() const { return mEverTriedInvalidSubmit; }
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY nsresult ConstructEntryList(FormData*);
 
   /**
    * Implements form[name]. Returns form controls in this form with the correct
@@ -342,7 +298,7 @@ class HTMLFormElement final : public nsGenericHTMLElement,
 
   // it's only out-of-line because the class definition is not available in the
   // header
-  nsIHTMLCollection* Elements();
+  HTMLFormControlsCollection* Elements();
 
   int32_t Length();
 
@@ -375,6 +331,7 @@ class HTMLFormElement final : public nsGenericHTMLElement,
 
   bool CheckValidity() { return CheckFormValidity(nullptr); }
 
+  MOZ_CAN_RUN_SCRIPT
   bool ReportValidity() { return CheckValidFormSubmission(); }
 
   Element* IndexedGetter(uint32_t aIndex, bool& aFound);
@@ -384,9 +341,6 @@ class HTMLFormElement final : public nsGenericHTMLElement,
 
   void GetSupportedNames(nsTArray<nsString>& aRetval);
 
-  static int32_t CompareFormControlPosition(Element* aElement1,
-                                            Element* aElement2,
-                                            const nsIContent* aForm);
 #ifdef DEBUG
   static void AssertDocumentOrder(
       const nsTArray<nsGenericHTMLFormElement*>& aControls, nsIContent* aForm);
@@ -456,14 +410,12 @@ class HTMLFormElement final : public nsGenericHTMLElement,
   nsresult SubmitDialog(DialogFormSubmission* aFormSubmission);
 
   /**
-   * Notify any submit observers of the submit.
+   * Dispatch a DOMFormBeforeSubmit chrome-only event.
    *
-   * @param aActionURL the URL being submitted to
    * @param aCancelSubmit out param where submit observers can specify that the
    *        submit should be cancelled.
    */
-  nsresult NotifySubmitObservers(nsIURI* aActionURL, bool* aCancelSubmit,
-                                 bool aEarlyNotify);
+  nsresult DispatchBeforeSubmitChromeOnlyEvent(bool* aCancelSubmit);
 
   /**
    * If this form submission is secure -> insecure, ask the user if they want
@@ -528,6 +480,11 @@ class HTMLFormElement final : public nsGenericHTMLElement,
    */
   nsresult GetActionURL(nsIURI** aActionURL, Element* aOriginatingElement);
 
+  // Get the target to submit to. This is either the submitter's |formtarget| or
+  // the form's |target| (Including <base>).
+  void GetSubmissionTarget(nsGenericHTMLElement* aSubmitter,
+                           nsAString& aTarget);
+
   // Returns a number for this form that is unique within its owner document.
   // This is used by nsContentUtils::GenerateStateKey to identify form controls
   // that are inserted into the document by the parser.
@@ -568,7 +525,8 @@ class HTMLFormElement final : public nsGenericHTMLElement,
   // This is needed to properly clean up the bi-directional references
   // (both weak and strong) between the form and its HTMLImageElements.
 
-  nsTArray<HTMLImageElement*> mImageElements;  // Holds WEAK references
+  // Holds WEAK references
+  TreeOrderedArray<HTMLImageElement*> mImageElements;
 
   // A map from an ID or NAME attribute to the HTMLImageElement(s), this
   // hash holds strong references either to the named HTMLImageElement, or
@@ -620,13 +578,19 @@ class HTMLFormElement final : public nsGenericHTMLElement,
  private:
   bool IsSubmitting() const;
 
+  void SetDefaultSubmitElement(nsGenericHTMLFormElement*);
+
   NotNull<const Encoding*> GetSubmitEncoding();
 
   /**
    * Fire an event when the form is removed from the DOM tree. This is now only
-   * used by the password manager.
+   * used by the password manager and formautofill.
    */
   void MaybeFireFormRemoved();
+
+  MOZ_CAN_RUN_SCRIPT
+  void ReportInvalidUnfocusableElements(
+      const nsTArray<RefPtr<Element>>&& aInvalidElements);
 
   ~HTMLFormElement();
 };

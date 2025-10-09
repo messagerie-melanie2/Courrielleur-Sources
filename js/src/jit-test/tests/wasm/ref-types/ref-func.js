@@ -6,7 +6,7 @@ const v2vSigSection = sigSection([v2vSig]);
 // 'ref.func' parses, validates and returns a non-null value
 wasmFullPass(`
 	(module
-		(elem declare $run)
+		(elem declare func $run)
 		(func $run (result i32)
 			ref.func $run
 			ref.is_null
@@ -19,7 +19,7 @@ wasmFullPass(`
 {
 	let {f1} = wasmEvalText(`
 		(module
-			(elem declare $f1)
+			(elem declare func $f1)
 			(func $f1 (result funcref) ref.func $f1)
 			(export "f1" (func $f1))
 		)
@@ -31,7 +31,7 @@ wasmFullPass(`
 {
 	let {f1, f2} = wasmEvalText(`
 		(module
-			(elem declare $f1)
+			(elem declare func $f1)
 			(func $f1)
 			(func $f2 (result funcref) ref.func $f1)
 			(export "f1" (func $f1))
@@ -45,7 +45,7 @@ wasmFullPass(`
 {
 	let i1 = wasmEvalText(`
 		(module
-			(elem declare $f1)
+			(elem declare func $f1)
 			(func $f1)
 			(export "f1" (func $f1))
 		)
@@ -53,7 +53,7 @@ wasmFullPass(`
 	let i2 = wasmEvalText(`
 		(module
 			(import "" "f1" (func $f1))
-			(elem declare $f1)
+			(elem declare func $f1)
 			(func $f2 (result funcref) ref.func $f1)
 			(export "f1" (func $f1))
 			(export "f2" (func $f2))
@@ -91,7 +91,7 @@ assertErrorMessage(() => validFuncRefText('', 'funcref'), WebAssembly.CompileErr
 // referenced function can be forward declared via segments
 assertEq(validFuncRefText('(elem 0 (i32.const 0) func $referenced)', 'funcref') instanceof WebAssembly.Instance, true);
 assertEq(validFuncRefText('(elem func $referenced)', 'funcref') instanceof WebAssembly.Instance, true);
-assertEq(validFuncRefText('(elem declare $referenced)', 'funcref') instanceof WebAssembly.Instance, true);
+assertEq(validFuncRefText('(elem declare func $referenced)', 'funcref') instanceof WebAssembly.Instance, true);
 
 // also when the segment is passive or active 'funcref'
 assertEq(validFuncRefText('(elem 0 (i32.const 0) funcref (ref.func $referenced))', 'funcref') instanceof WebAssembly.Instance, true);
@@ -125,7 +125,7 @@ assertErrorMessage(() => new WebAssembly.Module(
 var ins = new WebAssembly.Instance(new WebAssembly.Module(wasmTextToBinary(`
   (module
     (import "m" "f" (func $f (param i32) (result i32)))
-    (elem declare $f)
+    (elem declare func $f)
     (table 1 funcref)
     (func (export "f")
       (table.set 0 (i32.const 0) (ref.func $f))))`)),
@@ -138,15 +138,15 @@ ins.exports.f();
 function checkPassiveElemSegment(mangle, err) {
     let bin = moduleWithSections(
         [v2vSigSection, declSection([0]), // One function
-         tableSection(1),                 // One table
+         defaultTableSection(1),          // One table
          { name: elemId,                  // One passive segment
            body: (function () {
                let body = [];
                body.push(1);           // 1 element segment
                body.push(0x1 | 0x4);   // Flags: Passive and uses element expression
-               body.push(AnyFuncCode + (mangle == "type" ? 1 : 0)); // always anyfunc
+               body.push(mangle == "type" ? BadType : FuncRefCode); // always funcref
                body.push(1);           // Element count
-               body.push(RefFuncCode + (mangle == "ref.func" ? 1 : 0)); // always ref.func
+               body.push(mangle == "ref.func" ? BadType : RefFuncCode); // always ref.func
                body.push(0);           // func index
                body.push(EndCode + (mangle == "end" ? 1 : 0));
                return body;
@@ -167,8 +167,8 @@ function checkPassiveElemSegment(mangle, err) {
 
 checkPassiveElemSegment("");
 checkPassiveElemSegment("type", /bad type/);
-checkPassiveElemSegment("ref.func", /failed to read initializer operation/);
-checkPassiveElemSegment("end", /failed to read end of initializer expression/);
+checkPassiveElemSegment("ref.func", /unrecognized opcode/);
+checkPassiveElemSegment("end", /unrecognized opcode/);
 
 // Passive element segments can contain literal null values.
 
@@ -273,7 +273,7 @@ function testGlobalRefFuncIndex(index) {
         [v2vSigSection,
           globalSection([
            {
-             valType: AnyFuncCode,
+             valType: FuncRefCode,
              flags: 0,
              initExpr: [RefFuncCode, ...varU32(index), EndCode],
            }

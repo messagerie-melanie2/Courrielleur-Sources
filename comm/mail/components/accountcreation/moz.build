@@ -3,21 +3,29 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+with Files("**"):
+    BUG_COMPONENT = ("Thunderbird", "Account Manager")
+
 JAR_MANIFESTS += ["jar.mn"]
 
 EXTRA_JS_MODULES.accountcreation += [
-    "AccountConfig.jsm",
-    "AccountCreationUtils.jsm",
-    "ConfigVerifier.jsm",
-    "CreateInBackend.jsm",
-    "ExchangeAutoDiscover.jsm",
-    "FetchConfig.jsm",
-    "FetchHTTP.jsm",
-    "GuessConfig.jsm",
-    "readFromXML.jsm",
-    "Sanitizer.jsm",
+    "modules/AccountConfig.sys.mjs",
+    "modules/AccountCreationUtils.sys.mjs",
+    "modules/ConfigVerifier.sys.mjs",
+    "modules/CreateInBackend.sys.mjs",
+    "modules/ExchangeAutoDiscover.sys.mjs",
+    "modules/FetchConfig.sys.mjs",
+    "modules/FetchHTTP.sys.mjs",
+    "modules/FindConfig.sys.mjs",
+    "modules/GuessConfig.sys.mjs",
+    "modules/readFromXML.sys.mjs",
+    "modules/Sanitizer.sys.mjs",
+]
+
+BROWSER_CHROME_MANIFESTS += [
+    "test/browser/browser.toml",
 ]
 
 XPCSHELL_TESTS_MANIFESTS += [
-    "test/xpcshell/xpcshell.ini",
+    "test/xpcshell/xpcshell.toml",
 ]

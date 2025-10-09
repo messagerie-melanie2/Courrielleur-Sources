@@ -3,7 +3,7 @@
 
 "use strict";
 
-const TEST_URL = "http://example.com/";
+const TEST_URL = "https://example.com/";
 const TEST_URL1 = "https://example.com/otherbrowser/";
 
 var PlacesOrganizer;
@@ -20,16 +20,25 @@ add_setup(async function () {
 
   PlacesOrganizer = organizer.PlacesOrganizer;
   ContentTree = organizer.ContentTree;
+
+  // Show date added column.
+  await showLibraryColumn(organizer, "placesContentDateAdded");
 });
 
 add_task(async function paste() {
   info("Selecting BookmarksToolbar in the left pane");
   PlacesOrganizer.selectLeftPaneBuiltIn("BookmarksToolbar");
 
+  let dateAdded = new Date();
+  dateAdded.setHours(10);
+  dateAdded.setMinutes(10);
+  dateAdded.setSeconds(0);
+
   let bookmark = await PlacesUtils.bookmarks.insert({
     parentGuid: PlacesUtils.bookmarks.toolbarGuid,
     url: TEST_URL,
     title: "0",
+    dateAdded,
   });
 
   ContentTree.view.selectItems([bookmark.guid]);
@@ -56,6 +65,18 @@ add_task(async function paste() {
   );
   Assert.equal(tree.children[0].title, "0", "Should have the correct title");
   Assert.equal(tree.children[0].uri, TEST_URL, "Should have the correct URL");
+  Assert.equal(
+    tree.children[0].dateAdded,
+    PlacesUtils.toPRTime(dateAdded),
+    "Should have the correct date"
+  );
+
+  Assert.ok(
+    ContentTree.view.view
+      .getCellText(0, ContentTree.view.columns.placesContentDateAdded)
+      .startsWith(`${dateAdded.getHours()}:${dateAdded.getMinutes()}`),
+    "Should reflect the data added"
+  );
 
   await PlacesUtils.bookmarks.remove(tree.children[0].guid);
 });
@@ -413,6 +434,79 @@ add_task(async function paste_copy_check_indexes() {
       );
     }
   }
+
+  await PlacesUtils.bookmarks.eraseEverything();
+});
+
+add_task(async function paste_invalid_uri() {
+  let xferable = Cc["@mozilla.org/widget/transferable;1"].createInstance(
+    Ci.nsITransferable
+  );
+  xferable.init(null);
+
+  let invalidURL = "https://exa:mple.com/";
+
+  let data = `${TEST_URL}
+  ${invalidURL}
+  ${TEST_URL1}`;
+
+  xferable.addDataFlavor(PlacesUtils.TYPE_PLAINTEXT);
+  xferable.setTransferData(
+    PlacesUtils.TYPE_PLAINTEXT,
+    PlacesUtils.toISupportsString(data)
+  );
+
+  Services.clipboard.setData(xferable, null, Ci.nsIClipboard.kGlobalClipboard);
+
+  info("Selecting UnfiledBookmarks in the left pane");
+  PlacesOrganizer.selectLeftPaneBuiltIn("UnfiledBookmarks");
+
+  const deferred = Promise.withResolvers();
+  const { prompt } = Services;
+
+  registerCleanupFunction(function () {
+    Services.prompt = prompt;
+  });
+
+  const promptService = {
+    QueryInterface: ChromeUtils.generateQI(["nsIPromptService"]),
+    alert: (_window, title, message) => {
+      deferred.resolve({ message, title });
+    },
+  };
+  Services.prompt = promptService;
+  info("Pasting clipboard");
+  await ContentTree.view.controller.paste();
+
+  let { message, title } = await deferred.promise;
+
+  let [errorTitle, errorMessageHeader] =
+    PlacesUIUtils.promptLocalization.formatValuesSync([
+      "places-bookmarks-paste-error-title",
+      "places-bookmarks-paste-error-message-header",
+    ]);
+
+  Assert.equal(title, errorTitle, "Should have correct alert title");
+  Assert.ok(
+    message.includes(errorMessageHeader),
+    "Should have correct alert message"
+  );
+  Assert.ok(
+    message.includes(invalidURL),
+    "Should include invalid URL in alert message"
+  );
+
+  let tree = await PlacesUtils.promiseBookmarksTree(
+    PlacesUtils.bookmarks.unfiledGuid
+  );
+
+  Assert.equal(
+    tree.children.length,
+    2,
+    "Should be two bookmarks in the unfiled folder."
+  );
+  Assert.equal(tree.children[0].uri, TEST_URL, "Should have the correct URL");
+  Assert.equal(tree.children[1].uri, TEST_URL1, "Should have the correct URL");
 
   await PlacesUtils.bookmarks.eraseEverything();
 });

@@ -40,9 +40,7 @@ class ProviderPrivateSearch extends UrlbarProvider {
   }
 
   /**
-   * Returns the type of this provider.
-   *
-   * @returns {integer} one of the types from UrlbarUtils.PROVIDER_TYPE.*
+   * @returns {Values<typeof UrlbarUtils.PROVIDER_TYPE>}
    */
   get type() {
     return UrlbarUtils.PROVIDER_TYPE.PROFILE;
@@ -54,13 +52,12 @@ class ProviderPrivateSearch extends UrlbarProvider {
    * with this provider, to save on resources.
    *
    * @param {UrlbarQueryContext} queryContext The query context object
-   * @returns {boolean} Whether this provider should be invoked for the search.
    */
-  isActive(queryContext) {
+  async isActive(queryContext) {
     return (
       lazy.UrlbarSearchUtils.separatePrivateDefaultUIEnabled &&
       !queryContext.isPrivate &&
-      queryContext.tokens.length
+      !!queryContext.tokens.length
     );
   }
 
@@ -110,6 +107,7 @@ class ProviderPrivateSearch extends UrlbarProvider {
       logger: this.logger,
     }).promise;
 
+    let icon = await engine.getIconURL();
     if (instance != this.queryInstance) {
       return;
     }
@@ -120,7 +118,7 @@ class ProviderPrivateSearch extends UrlbarProvider {
       ...lazy.UrlbarResult.payloadAndSimpleHighlights(queryContext.tokens, {
         engine: [engine.name, UrlbarUtils.HIGHLIGHT.TYPED],
         query: [searchString, UrlbarUtils.HIGHLIGHT.NONE],
-        icon: engine.iconURI?.spec,
+        icon,
         inPrivateWindow: true,
         isPrivateEngine,
       })

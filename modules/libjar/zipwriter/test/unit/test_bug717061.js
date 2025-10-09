@@ -2,6 +2,10 @@
  * http://creativecommons.org/publicdomain/zero/1.0
  */
 
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
+);
+
 function BinaryComparer(file, callback) {
   var fstream = Cc["@mozilla.org/network/file-input-stream;1"].createInstance(
     Ci.nsIFileInputStream
@@ -22,7 +26,7 @@ BinaryComparer.prototype = {
   length: null,
   callback: null,
 
-  onStartRequest(aRequest) {},
+  onStartRequest() {},
 
   onStopRequest(aRequest, aStatusCode) {
     this.fileStream.close();
@@ -80,7 +84,11 @@ function comparer_callback() {
 function run_test() {
   var source = do_get_file(DATA_DIR + "test_bug717061.html");
   var comparer = new BinaryComparer(
-    do_get_file(DATA_DIR + "test_bug717061.gz"),
+    do_get_file(
+      DATA_DIR +
+        "test_bug717061" +
+        (AppConstants.USE_LIBZ_RS ? ".libz-rs.gz" : ".gz")
+    ),
     comparer_callback
   );
 

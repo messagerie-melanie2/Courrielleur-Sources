@@ -8,12 +8,11 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from io import StringIO
 
-import six
 from buildconfig import topsrcdir
 from mozpack import path as mozpath
 from mozunit import main
-from six import StringIO
 
 from common import ConfigureTestSandbox
 from mozbuild.configure import ConfigureSandbox
@@ -23,7 +22,6 @@ from mozbuild.configure.util import (
     Version,
     getpreferredencoding,
 )
-from mozbuild.util import exec_
 
 
 class TestConfigureOutputHandler(unittest.TestCase):
@@ -409,7 +407,7 @@ class TestLogSubprocessOutput(unittest.TestCase):
         quote_char = "'"
         if getpreferredencoding().lower() == "utf-8":
             quote_char = "\u00B4"
-        self.assertEqual(six.ensure_text(out.getvalue().strip()), quote_char)
+        self.assertEqual(out.getvalue().strip(), quote_char)
 
 
 class TestVersion(unittest.TestCase):
@@ -457,7 +455,7 @@ class TestCheckCmdOutput(unittest.TestCase):
         )
         status = 0
         try:
-            exec_(command, sandbox)
+            exec(command, sandbox)
             sandbox.run()
         except SystemExit as e:
             status = e.code

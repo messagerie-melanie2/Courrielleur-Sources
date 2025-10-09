@@ -42,11 +42,13 @@ const performanceMarker = require("resource://devtools/client/webconsole/middlew
 const {
   thunk,
 } = require("resource://devtools/client/shared/redux/middleware/thunk.js");
+const {
+  visibilityHandlerStore,
+} = require("resource://devtools/client/shared/redux/visibilityHandlerStore.js");
 
 // Enhancers
 const enableBatching = require("resource://devtools/client/webconsole/enhancers/batching.js");
 const enableActorReleaser = require("resource://devtools/client/webconsole/enhancers/actor-releaser.js");
-const ensureCSSErrorReportingEnabled = require("resource://devtools/client/webconsole/enhancers/css-error-reporting.js");
 const enableMessagesCacheClearing = require("resource://devtools/client/webconsole/enhancers/message-cache-clearing.js");
 
 /**
@@ -91,7 +93,6 @@ function configureStore(webConsoleUI, options = {}) {
       editorWidth: getIntPref(PREFS.UI.EDITOR_WIDTH),
       showEditorOnboarding: getBoolPref(PREFS.UI.EDITOR_ONBOARDING),
       timestampsVisible: getBoolPref(PREFS.UI.MESSAGE_TIMESTAMP),
-      showEvaluationContextSelector: getBoolPref(PREFS.UI.CONTEXT_SELECTOR),
       enableNetworkMonitoring:
         webConsoleUI.isBrowserConsole || webConsoleUI.isBrowserToolboxConsole
           ? getBoolPref(PREFS.UI.ENABLE_NETWORK_MONITORING)
@@ -112,19 +113,21 @@ function configureStore(webConsoleUI, options = {}) {
     eventTelemetry.bind(null, options.telemetry)
   );
 
-  return createStore(
+  const store = createStore(
     createRootReducer(),
     initialState,
     compose(
       middleware,
       enableActorReleaser(webConsoleUI),
       enableMessagesCacheClearing(webConsoleUI),
-      ensureCSSErrorReportingEnabled(webConsoleUI),
       // ⚠️ Keep this one last so it will be executed before all the other ones. This is
       // needed so batched actions can be "unbatched" and handled in the other enhancers.
       enableBatching()
     )
   );
+
+  // Also wrap the store in order to pause store update notifications while the panel is hidden.
+  return visibilityHandlerStore(store);
 }
 
 function createRootReducer() {

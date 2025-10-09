@@ -23,9 +23,6 @@ var preferencesTabType = {
   bundle: Services.strings.createBundle(
     "chrome://messenger/locale/messenger.properties"
   ),
-  protoSvc: Cc["@mozilla.org/uriloader/external-protocol-service;1"].getService(
-    Ci.nsIExternalProtocolService
-  ),
 
   get loadingTabString() {
     delete this.loadingTabString;
@@ -52,7 +49,7 @@ var preferencesTabType = {
     return document.getElementById("tabmail").tabInfo.indexOf(this.tab);
   },
 
-  closeTab(aTab) {
+  closeTab() {
     this.tab = null;
   },
 
@@ -62,7 +59,7 @@ var preferencesTabType = {
     );
 
     // First clone the page and set up the basics.
-    let clone = document
+    const clone = document
       .getElementById("preferencesTab")
       .firstElementChild.cloneNode(true);
 
@@ -130,7 +127,7 @@ var preferencesTabType = {
     aTab.title = this.loadingTabString;
 
     ExtensionParent.apiManager.emit("extension-browser-inserted", aTab.browser);
-    let params = {
+    const params = {
       triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
       postData: aArgs.postData || null,
     };

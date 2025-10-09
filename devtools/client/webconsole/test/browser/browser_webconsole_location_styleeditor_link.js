@@ -11,7 +11,7 @@ const TEST_URI =
 add_task(async function () {
   await pushPref("devtools.webconsole.filter.css", true);
   const hud = await openNewTabAndConsole(TEST_URI);
-  const toolbox = await gDevTools.getToolboxForTab(gBrowser.selectedTab);
+  const toolbox = gDevTools.getToolboxForTab(gBrowser.selectedTab);
 
   await testViewSource(hud, toolbox, "\u2018font-weight\u2019");
 
@@ -60,7 +60,8 @@ async function testViewSource(hud, toolbox, text) {
   info("style editor window focused");
   const href = messageLocationNode.getAttribute("data-url");
   const line = messageLocationNode.getAttribute("data-line");
-  const column = messageLocationNode.getAttribute("data-column");
+  // The displayed column is 1-based, while editor cursor is 0-based.
+  const column = messageLocationNode.getAttribute("data-column") - 1;
   ok(line, "found source line");
 
   const editor = panel.UI.editors.find(e => e.styleSheet.href == href);

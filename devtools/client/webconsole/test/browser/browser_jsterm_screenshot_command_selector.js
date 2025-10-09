@@ -14,8 +14,6 @@ const TEST_URI =
 const dpr = "--dpr 1";
 
 add_task(async function () {
-  await pushPref("devtools.webconsole.input.context", true);
-
   const hud = await openNewTabAndConsole(TEST_URI);
 
   info("wait for the iframes to be loaded");
@@ -26,9 +24,12 @@ add_task(async function () {
   });
 
   info("Test :screenshot --selector iframe");
-  const sameOriginIframeScreenshotFile = FileUtils.getFile("TmpD", [
-    "TestScreenshotFile-same-origin-iframe.png",
-  ]);
+  const sameOriginIframeScreenshotFile = new FileUtils.File(
+    PathUtils.join(
+      PathUtils.tempDir,
+      "TestScreenshotFile-same-origin-iframe.png"
+    )
+  );
   await executeAndWaitForMessageByType(
     hud,
     `:screenshot --selector #same-origin-iframe ${sameOriginIframeScreenshotFile.path} ${dpr}`,
@@ -91,9 +92,9 @@ add_task(async function () {
     evaluationContextSelectorButton.innerText.includes("example.org")
   );
 
-  const remoteIframeSpanScreenshot = FileUtils.getFile("TmpD", [
-    "TestScreenshotFile-remote-iframe.png",
-  ]);
+  const remoteIframeSpanScreenshot = new FileUtils.File(
+    PathUtils.join(PathUtils.tempDir, "TestScreenshotFile-remote-iframe.png")
+  );
   await executeAndWaitForMessageByType(
     hud,
     `:screenshot --selector span ${remoteIframeSpanScreenshot.path} ${dpr}`,

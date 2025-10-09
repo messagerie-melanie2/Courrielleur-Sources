@@ -64,7 +64,7 @@ var tests = [
 ];
 
 var urlListener = {
-  OnStartRunningUrl(url) {},
+  OnStartRunningUrl() {},
   OnStopRunningUrl(url, result) {
     try {
       if (thisTest.expectSuccess) {
@@ -79,7 +79,7 @@ var urlListener = {
       do_timeout(0, checkBusy);
     } catch (e) {
       server.stop();
-      var thread = gThreadManager.currentThread;
+      var thread = Services.tm.currentThread;
       while (thread.hasPendingEvents()) {
         thread.processNextEvent(true);
       }
@@ -96,7 +96,7 @@ function checkBusy() {
     // No more tests, let everything finish
     server.stop();
 
-    var thread = gThreadManager.currentThread;
+    var thread = Services.tm.currentThread;
     while (thread.hasPendingEvents()) {
       thread.processNextEvent(true);
     }
@@ -131,7 +131,7 @@ function testNext() {
     deletePop3Server();
     incomingServer = createPop3Server();
 
-    let msgServer = incomingServer;
+    const msgServer = incomingServer;
     msgServer.QueryInterface(Ci.nsIMsgIncomingServer);
     msgServer.authMethod = thisTest.clientAuthMethod;
 
@@ -150,7 +150,7 @@ function testNext() {
 
 // <copied from="head_maillocal.js::createPop3ServerAndLocalFolders()">
 function createPop3Server() {
-  let incoming = MailServices.accounts.createIncomingServer(
+  const incoming = MailServices.accounts.createIncomingServer(
     "fred",
     "localhost",
     "pop3"

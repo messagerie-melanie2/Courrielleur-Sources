@@ -5,6 +5,7 @@
  */
 
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
+import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
 const lazy = {};
 
@@ -22,6 +23,10 @@ XPCOMUtils.defineLazyPreferenceGetter(
   false
 );
 
+ChromeUtils.defineESModuleGetters(lazy, {
+  GeckoViewIdentityCredential:
+    "resource://gre/modules/GeckoViewIdentityCredential.sys.mjs",
+});
 const BEST_HEADER_ICON_SIZE = 16;
 const BEST_ICON_SIZE = 32;
 
@@ -122,12 +127,16 @@ export class IdentityCredentialPromptService {
 
     // Map each identity manifest to a promise that would resolve to its icon
     let promises = identityManifests.map(async providerManifest => {
-      // we don't need to set default icon because default icon is already set on popup-notifications.inc
+      // we don't need to set default icon because default icon is already set on popup-notifications.inc.xhtml
       const iconResult = await this.loadIconFromManifest(providerManifest);
       // If we didn't have a manifest with an icon, push a rejection.
       // This will be replaced with the default icon.
       return iconResult ? iconResult : Promise.reject();
     });
+
+    const providerNames = identityManifests.map(
+      providerManifest => providerManifest?.branding?.name
+    );
 
     // Sanity check that we made one promise per IDP.
     if (promises.length != identityManifests.length) {
@@ -135,11 +144,38 @@ export class IdentityCredentialPromptService {
     }
 
     let iconResults = await Promise.allSettled(promises);
+    if (AppConstants.platform === "android") {
+      const providers = [];
+      for (const [providerIndex, provider] of identityProviders.entries()) {
+        let providerURL = new URL(provider.configURL);
+        let displayDomain = lazy.IDNService.convertToDisplayIDN(
+          providerURL.host
+        );
+
+        let iconResult = iconResults[providerIndex];
+        const data = {
+          id: providerIndex,
+          icon: iconResult.value,
+          name: providerNames[providerIndex],
+          domain: displayDomain,
+        };
+        providers.push(data);
+      }
+
+      return new Promise((resolve, reject) => {
+        lazy.GeckoViewIdentityCredential.onShowProviderPrompt(
+          browsingContext,
+          providers,
+          resolve,
+          reject
+        );
+      });
+    }
 
     // Localize all strings to be used
     // Bug 1797154 - Convert localization calls to use the async formatValues.
     let localization = new Localization(
-      ["preview/identityCredentialNotification.ftl"],
+      ["browser/identityCredentialNotification.ftl"],
       true
     );
     let headerMessage = localization.formatValueSync(
@@ -167,10 +203,7 @@ export class IdentityCredentialPromptService {
     );
     for (const [providerIndex, provider] of identityProviders.entries()) {
       let providerURL = new URL(provider.configURL);
-      let displayDomain = lazy.IDNService.convertToDisplayIDN(
-        providerURL.host,
-        {}
-      );
+      let displayDomain = lazy.IDNService.convertToDisplayIDN(providerURL.host);
       let newItem = itemTemplate.content.firstElementChild.cloneNode(true);
 
       // Create the radio button,
@@ -203,8 +236,20 @@ export class IdentityCredentialPromptService {
 
       // Set the words that the user sees in the selection
       newItem.getElementsByClassName(
-        "identity-credential-list-item-label"
-      )[0].textContent = displayDomain;
+        "identity-credential-list-item-label-primary"
+      )[0].textContent = providerNames[providerIndex] || displayDomain;
+      newItem.getElementsByClassName(
+        "identity-credential-list-item-label-secondary"
+      )[0].hidden = true;
+
+      if (providerNames[providerIndex] && displayDomain) {
+        newItem.getElementsByClassName(
+          "identity-credential-list-item-label-secondary"
+        )[0].hidden = false;
+        newItem.getElementsByClassName(
+          "identity-credential-list-item-label-secondary"
+        )[0].textContent = displayDomain;
+      }
 
       // Add the new item to the DOM!
       listBox.append(newItem);
@@ -224,7 +269,7 @@ export class IdentityCredentialPromptService {
       let mainAction = {
         label: acceptLabel,
         accessKey: acceptKey,
-        callback(event) {
+        callback(_event) {
           let result = listBox.querySelector(
             ".identity-credential-list-item-radio:checked"
           ).value;
@@ -235,7 +280,7 @@ export class IdentityCredentialPromptService {
         {
           label: cancelLabel,
           accessKey: cancelKey,
-          callback(event) {
+          callback(_event) {
             reject();
           },
         },
@@ -258,157 +303,6 @@ export class IdentityCredentialPromptService {
         browser,
         "identity-credential",
         headerMessage,
-        "identity-credential-notification-icon",
-        mainAction,
-        secondaryActions,
-        options
-      );
-    });
-  }
-
-  /**
-   * Ask the user, using a PopupNotification, to approve or disapprove of the policies of the Identity Provider.
-   * @param {BrowsingContext} browsingContext - The BrowsingContext of the document requesting an identity credential via navigator.credentials.get()
-   * @param {IdentityProviderConfig} identityProvider - The Identity Provider that the user has selected to use
-   * @param {IdentityProviderAPIConfig} identityManifest - The Identity Provider that the user has selected to use's manifest
-   * @param {IdentityCredentialMetadata} identityCredentialMetadata - The metadata displayed to the user
-   * @returns {Promise<bool>} A boolean representing the user's acceptance of the metadata.
-   */
-  async showPolicyPrompt(
-    browsingContext,
-    identityProvider,
-    identityManifest,
-    identityCredentialMetadata
-  ) {
-    // For testing only.
-    if (lazy.SELECT_FIRST_IN_UI_LISTS) {
-      return Promise.resolve(true);
-    }
-    if (
-      !identityCredentialMetadata ||
-      !identityCredentialMetadata.privacy_policy_url ||
-      !identityCredentialMetadata.terms_of_service_url
-    ) {
-      return Promise.resolve(true);
-    }
-
-    let iconResult = await this.loadIconFromManifest(
-      identityManifest,
-      BEST_HEADER_ICON_SIZE,
-      "chrome://global/skin/icons/defaultFavicon.svg"
-    );
-
-    return new Promise(function (resolve, reject) {
-      let browser = browsingContext.top.embedderElement;
-      if (!browser) {
-        reject();
-        return;
-      }
-
-      let providerURL = new URL(identityProvider.configURL);
-      let providerDisplayDomain = lazy.IDNService.convertToDisplayIDN(
-        providerURL.host,
-        {}
-      );
-      let currentBaseDomain =
-        browsingContext.currentWindowContext.documentPrincipal.baseDomain;
-
-      // Localize the description
-      // Bug 1797154 - Convert localization calls to use the async formatValues.
-      let localization = new Localization(
-        ["preview/identityCredentialNotification.ftl"],
-        true
-      );
-      let [accept, cancel] = localization.formatMessagesSync([
-        { id: "identity-credential-accept-button" },
-        { id: "identity-credential-cancel-button" },
-      ]);
-
-      let cancelLabel = cancel.attributes.find(x => x.name == "label").value;
-      let cancelKey = cancel.attributes.find(x => x.name == "accesskey").value;
-      let acceptLabel = accept.attributes.find(x => x.name == "label").value;
-      let acceptKey = accept.attributes.find(x => x.name == "accesskey").value;
-
-      let title = localization.formatValueSync(
-        "identity-credential-policy-title",
-        {
-          provider: providerDisplayDomain,
-        }
-      );
-
-      if (iconResult) {
-        let headerIcon = browser.ownerDocument.getElementsByClassName(
-          "identity-credential-header-icon"
-        )[0];
-        headerIcon.setAttribute("src", iconResult);
-      }
-
-      const headerText = browser.ownerDocument.getElementById(
-        "identity-credential-header-text"
-      );
-      headerText.textContent = title;
-
-      let privacyPolicyAnchor = browser.ownerDocument.getElementById(
-        "identity-credential-privacy-policy"
-      );
-      privacyPolicyAnchor.href = identityCredentialMetadata.privacy_policy_url;
-      let termsOfServiceAnchor = browser.ownerDocument.getElementById(
-        "identity-credential-terms-of-service"
-      );
-      termsOfServiceAnchor.href =
-        identityCredentialMetadata.terms_of_service_url;
-
-      // Populate the content of the policy panel
-      let description = browser.ownerDocument.getElementById(
-        "identity-credential-policy-explanation"
-      );
-      browser.ownerDocument.l10n.setAttributes(
-        description,
-        "identity-credential-policy-description",
-        {
-          host: currentBaseDomain,
-          provider: providerDisplayDomain,
-        }
-      );
-
-      // Construct the necessary arguments for notification behavior
-      let options = {
-        hideClose: true,
-        eventCallback: (topic, nextRemovalReason, isCancel) => {
-          if (topic == "removed" && isCancel) {
-            reject();
-          }
-        },
-      };
-      let mainAction = {
-        label: acceptLabel,
-        accessKey: acceptKey,
-        callback(event) {
-          resolve(true);
-        },
-      };
-      let secondaryActions = [
-        {
-          label: cancelLabel,
-          accessKey: cancelKey,
-          callback(event) {
-            resolve(false);
-          },
-        },
-      ];
-
-      // Show the popup
-      let ownerDocument = browser.ownerDocument;
-      ownerDocument.getElementById(
-        "identity-credential-provider"
-      ).hidden = true;
-      ownerDocument.getElementById("identity-credential-policy").hidden = false;
-      ownerDocument.getElementById("identity-credential-account").hidden = true;
-      ownerDocument.getElementById("identity-credential-header").hidden = false;
-      browser.ownerGlobal.PopupNotifications.show(
-        browser,
-        "identity-credential",
-        "",
         "identity-credential-notification-icon",
         mainAction,
         secondaryActions,
@@ -460,20 +354,68 @@ export class IdentityCredentialPromptService {
     // Localize all strings to be used
     // Bug 1797154 - Convert localization calls to use the async formatValues.
     let localization = new Localization(
-      ["preview/identityCredentialNotification.ftl"],
+      ["browser/identityCredentialNotification.ftl"],
       true
     );
+    const providerName = providerManifest?.branding?.name;
     let providerURL = new URL(provider.configURL);
-    let displayDomain = lazy.IDNService.convertToDisplayIDN(
-      providerURL.host,
-      {}
+    let displayDomain = lazy.IDNService.convertToDisplayIDN(providerURL.host);
+
+    let headerIconResult = await this.loadIconFromManifest(
+      providerManifest,
+      BEST_HEADER_ICON_SIZE,
+      "chrome://global/skin/icons/defaultFavicon.svg"
     );
+
+    if (AppConstants.platform === "android") {
+      const accounts = [];
+
+      for (const [accountIndex, account] of accountList.accounts.entries()) {
+        var picture = "";
+        let pictureResult = pictureResults[accountIndex];
+        if (pictureResult.status == "fulfilled") {
+          picture = pictureResult.value;
+        }
+        account.name;
+        account.email;
+        const data = {
+          id: accountIndex,
+          icon: picture,
+          name: account.name,
+          email: account.email,
+        };
+        accounts.push(data);
+        console.log(data);
+      }
+
+      const provider = {
+        name: providerName || displayDomain,
+        domain: displayDomain,
+        icon: headerIconResult,
+      };
+
+      const result = {
+        provider,
+        accounts,
+      };
+
+      return new Promise((resolve, reject) => {
+        lazy.GeckoViewIdentityCredential.onShowAccountsPrompt(
+          browsingContext,
+          result,
+          resolve,
+          reject
+        );
+      });
+    }
+
     let headerMessage = localization.formatValueSync(
       "identity-credential-header-accounts",
       {
-        provider: displayDomain,
+        provider: providerName || displayDomain,
       }
     );
+
     let [accept, cancel] = localization.formatMessagesSync([
       { id: "identity-credential-sign-in-button" },
       { id: "identity-credential-cancel-button" },
@@ -526,21 +468,15 @@ export class IdentityCredentialPromptService {
 
       // Add information to the label
       newItem.getElementsByClassName(
-        "identity-credential-list-item-label-name"
+        "identity-credential-list-item-label-primary"
       )[0].textContent = account.name;
       newItem.getElementsByClassName(
-        "identity-credential-list-item-label-email"
+        "identity-credential-list-item-label-secondary"
       )[0].textContent = account.email;
 
       // Add the item to the DOM!
       listBox.append(newItem);
     }
-
-    let headerIconResult = await this.loadIconFromManifest(
-      providerManifest,
-      BEST_HEADER_ICON_SIZE,
-      "chrome://global/skin/icons/defaultFavicon.svg"
-    );
 
     // Create a new promise to wrap the callbacks of the popup buttons
     return new Promise(function (resolve, reject) {
@@ -556,7 +492,7 @@ export class IdentityCredentialPromptService {
       let mainAction = {
         label: acceptLabel,
         accessKey: acceptKey,
-        callback(event) {
+        callback(_event) {
           let result = listBox.querySelector(
             ".identity-credential-list-item-radio:checked"
           ).value;
@@ -567,7 +503,7 @@ export class IdentityCredentialPromptService {
         {
           label: cancelLabel,
           accessKey: cancelKey,
-          callback(event) {
+          callback(_event) {
             reject();
           },
         },
@@ -617,7 +553,7 @@ export class IdentityCredentialPromptService {
    */
   close(browsingContext) {
     let browser = browsingContext.top.embedderElement;
-    if (!browser) {
+    if (!browser || AppConstants.platform === "android") {
       return;
     }
     let notification = browser.ownerGlobal.PopupNotifications.getNotification(

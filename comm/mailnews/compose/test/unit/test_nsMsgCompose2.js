@@ -4,53 +4,54 @@
  */
 
 let gMsgCompose = null;
-let numSendListenerFunctions = 7;
+const numSendListenerFunctions = 7;
 
-let gSLAll = new Array(numSendListenerFunctions + 1);
+const gSLAll = new Array(numSendListenerFunctions + 1);
 
 function sendListener() {}
 
+/** @implements {nsIMsgSendListener} */
 sendListener.prototype = {
   mReceived: 0,
   mAutoRemoveItem: 0,
 
-  onStartSending(aMsgID, aMsgSize) {
+  onStartSending() {
     this.mReceived |= 0x01;
     if (this.mAutoRemoveItem == 0x01) {
       gMsgCompose.removeMsgSendListener(this);
     }
   },
-  onProgress(aMsgID, aProgress, aProgressMax) {
+  onSendProgress() {
     this.mReceived |= 0x02;
     if (this.mAutoRemoveItem == 0x02) {
       gMsgCompose.removeMsgSendListener(this);
     }
   },
-  onStatus(aMsgID, aMsg) {
+  onStatus() {
     this.mReceived |= 0x04;
     if (this.mAutoRemoveItem == 0x04) {
       gMsgCompose.removeMsgSendListener(this);
     }
   },
-  onStopSending(aMsgID, aStatus, aMsg, aReturnFile) {
+  onStopSending() {
     this.mReceived |= 0x08;
     if (this.mAutoRemoveItem == 0x08) {
       gMsgCompose.removeMsgSendListener(this);
     }
   },
-  onGetDraftFolderURI(aMsgID, aFolderURI) {
+  onGetDraftFolderURI() {
     this.mReceived |= 0x10;
     if (this.mAutoRemoveItem == 0x10) {
       gMsgCompose.removeMsgSendListener(this);
     }
   },
-  onSendNotPerformed(aMsgID, aStatus) {
+  onSendNotPerformed() {
     this.mReceived |= 0x20;
     if (this.mAutoRemoveItem == 0x20) {
       gMsgCompose.removeMsgSendListener(this);
     }
   },
-  onTransportSecurityError(msgID, status, secInfo, location) {
+  onTransportSecurityError() {
     this.mReceived |= 0x40;
     if (this.mAutoRemoveItem == 0x40) {
       gMsgCompose.removeMsgSendListener(this);
@@ -60,7 +61,7 @@ sendListener.prototype = {
 
 function NotifySendListeners() {
   gMsgCompose.onStartSending(null, null);
-  gMsgCompose.onProgress(null, null, null);
+  gMsgCompose.onSendProgress(null, null, null);
   gMsgCompose.onStatus(null, null);
   gMsgCompose.onStopSending(null, null, null, null);
   gMsgCompose.onGetDraftFolderURI(null, null);
@@ -72,7 +73,7 @@ function run_test() {
   gMsgCompose = Cc["@mozilla.org/messengercompose/compose;1"].createInstance(
     Ci.nsIMsgCompose
   );
-  let params = Cc[
+  const params = Cc[
     "@mozilla.org/messengercompose/composeparams;1"
   ].createInstance(Ci.nsIMsgComposeParams);
   gMsgCompose.initialize(params);

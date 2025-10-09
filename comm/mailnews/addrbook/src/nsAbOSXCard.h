@@ -6,28 +6,21 @@
 #ifndef nsAbOSXCard_h___
 #define nsAbOSXCard_h___
 
-#include "mozilla/Attributes.h"
 #include "nsAbCardProperty.h"
 
 #define NS_ABOSXCARD_URI_PREFIX "moz-abosxcard://"
 
-#define NS_IABOSXCARD_IID                            \
-  {                                                  \
-    0xa7e5b697, 0x772d, 0x4fb5, {                    \
-      0x81, 0x16, 0x23, 0xb7, 0x5a, 0xac, 0x94, 0x56 \
-    }                                                \
-  }
+#define NS_IABOSXCARD_IID \
+  {0xa7e5b697, 0x772d, 0x4fb5, {0x81, 0x16, 0x23, 0xb7, 0x5a, 0xac, 0x94, 0x56}}
 
 class nsIAbOSXCard : public nsISupports {
  public:
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_IABOSXCARD_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_IABOSXCARD_IID)
 
   virtual nsresult Init(const char* aUri) = 0;
   virtual nsresult Update(bool aNotify) = 0;
   virtual nsresult GetURI(nsACString& aURI) = 0;
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(nsIAbOSXCard, NS_IABOSXCARD_IID)
 
 class nsAbOSXCard : public nsAbCardProperty, public nsIAbOSXCard {
  public:

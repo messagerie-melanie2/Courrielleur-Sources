@@ -20,7 +20,8 @@
   display: block grid;
 }
 
-.grid-two-column-fr, .grid-block-two-column-fr {
+.grid-two-column-fr,
+.grid-block-two-column-fr {
   grid-template-columns: auto 1fr;
 }
 
@@ -73,6 +74,11 @@
 .flex-content-column {
   display: flex;
   flex-direction: column;
+}
+
+.flex-content-row {
+  display: flex;
+  flex-direction: row;
 }
 
 .grid-item-span-row {

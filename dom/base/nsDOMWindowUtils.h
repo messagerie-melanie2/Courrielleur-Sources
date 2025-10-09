@@ -77,7 +77,8 @@ class nsDOMWindowUtils final : public nsIDOMWindowUtils,
   // Add this offset to any event offset we're given to make it relative to the
   // widget returned by GetWidget.
   nsIWidget* GetWidget(nsPoint* aOffset = nullptr);
-  nsIWidget* GetWidgetForElement(mozilla::dom::Element* aElement);
+  nsIWidget* GetWidgetForElement(mozilla::dom::Element* aElement,
+                                 nsPoint* aOffset = nullptr);
 
   nsIDocShell* GetDocShell();
   mozilla::PresShell* GetPresShell();
@@ -103,15 +104,20 @@ class nsDOMWindowUtils final : public nsIDOMWindowUtils,
       const nsTArray<float>& aRotationAngles, const nsTArray<float>& aForces,
       const nsTArray<int32_t>& aTiltXs, const nsTArray<int32_t>& aTiltYs,
       const nsTArray<int32_t>& aTwists, int32_t aModifiers,
-      bool aIgnoreRootScrollFrame, bool aToWindow, bool* aPreventDefault);
+      bool aIgnoreRootScrollFrame, bool aIsPen, bool aToWindow,
+      bool* aPreventDefault);
 
   void ReportErrorMessageForWindow(const nsAString& aErrorMessage,
                                    const char* aClassification,
                                    bool aFromChrome);
 
  private:
-  mozilla::Result<mozilla::ScreenRect, nsresult> ConvertToScreenRect(
-      float aX, float aY, float aWidth, float aHeight);
+  enum class CoordsType {
+    Screen,
+    TopLevelWidget,
+  };
+  mozilla::Result<mozilla::LayoutDeviceRect, nsresult> ConvertTo(
+      float aX, float aY, float aWidth, float aHeight, CoordsType);
 };
 
 #endif

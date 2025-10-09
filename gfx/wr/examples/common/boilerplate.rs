@@ -38,13 +38,13 @@ impl RenderNotifier for Notifier {
 
     fn new_frame_ready(&self,
                        _: DocumentId,
-                       _scrolled: bool,
-                       composite_needed: bool,
-                       _: FramePublishId) {
-        self.wake_up(composite_needed);
+                       _: FramePublishId,
+                       params: &FrameReadyParams) {
+        self.wake_up(params.render);
     }
 }
 
+#[allow(dead_code)]
 pub trait HandyDandyRectBuilder {
     fn to(&self, x2: i32, y2: i32) -> LayoutRect;
     fn by(&self, w: i32, h: i32) -> LayoutRect;
@@ -210,7 +210,7 @@ pub fn main_wrapper<E: Example>(
         builder.end(),
     );
     txn.set_root_pipeline(pipeline_id);
-    txn.generate_frame(0, RenderReasons::empty());
+    txn.generate_frame(0, true, RenderReasons::empty());
     api.send_transaction(document_id, txn);
 
     println!("Entering event loop");
@@ -306,7 +306,7 @@ pub fn main_wrapper<E: Example>(
                 epoch,
                 builder.end(),
             );
-            txn.generate_frame(0, RenderReasons::empty());
+            txn.generate_frame(0, true, RenderReasons::empty());
         }
         api.send_transaction(document_id, txn);
 

@@ -68,8 +68,15 @@ class PDMFactory final {
 
   static bool AllDecodersAreRemote();
 
+  // For GTests
+  class MOZ_RAII AutoForcePDM {
+   public:
+    explicit AutoForcePDM(PlatformDecoderModule* aPDM) { ForcePDM(aPDM); }
+    ~AutoForcePDM() { ForcePDM(nullptr); }
+  };
+
  private:
-  virtual ~PDMFactory();
+  ~PDMFactory();
 
   void CreatePDMs();
   void CreateNullPDM();
@@ -78,11 +85,6 @@ class PDMFactory final {
   void CreateUtilityPDMs();
   void CreateContentPDMs();
   void CreateDefaultPDMs();
-
-  template <typename DECODER_MODULE, typename... ARGS>
-  bool CreateAndStartupPDM(ARGS&&... aArgs) {
-    return StartupPDM(DECODER_MODULE::Create(std::forward<ARGS>(aArgs)...));
-  }
 
   // Startup the provided PDM and add it to our list if successful.
   bool StartupPDM(already_AddRefed<PlatformDecoderModule> aPDM,
@@ -106,6 +108,7 @@ class PDMFactory final {
 
   friend class RemoteVideoDecoderParent;
   static void EnsureInit();
+  static void ForcePDM(PlatformDecoderModule* aPDM);
 };
 
 }  // namespace mozilla

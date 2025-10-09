@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* For deactivating calendar, see calCalendarDeactivator.jsm. */
+/* For deactivating calendar, see calCalendarDeactivator.sys.mjs. */
 :root[calendar-deactivated] .hide-when-calendar-deactivated {
   display: none;
 }
@@ -49,82 +49,83 @@
 }
 
 /* Today pane button in status bar */
-#calendar-status-todaypane-button,
-#calendar-status-todaypane-button[checked="true"] {
+#calendar-status-todaypane-button {
   min-width: 0;
   min-height: 0;
   margin: 1px 0 0;
   appearance: none;
   border-radius: var(--button-border-radius);
   border: 1px solid transparent;
-}
+  -moz-user-focus: normal;
 
-#calendar-status-todaypane-button:hover {
-  background: var(--toolbarbutton-hover-background);
-  border-color: var(--toolbarbutton-hover-bordercolor);
-  box-shadow: var(--toolbarbutton-hover-boxshadow);
-}
+  &:hover {
+    background: var(--toolbarbutton-hover-background);
+    border-color: var(--toolbarbutton-hover-bordercolor);
+    box-shadow: var(--toolbarbutton-hover-boxshadow);
+  }
 
-#calendar-status-todaypane-button:hover:active {
-  background: var(--toolbarbutton-active-background);
-  border-color: var(--toolbarbutton-active-bordercolor);
-  box-shadow: var(--toolbarbutton-active-boxshadow);
-  transition-duration: 10ms;
-}
+  &:hover:active {
+    background: var(--toolbarbutton-active-background);
+    border-color: var(--toolbarbutton-active-bordercolor);
+    box-shadow: var(--toolbarbutton-active-boxshadow);
+    transition-duration: 10ms;
+  }
 
-#calendar-status-todaypane-button > stack > .toolbarbutton-icon-begin {
-  width: 16px;
-  height: 16px;
-  -moz-context-properties: fill, stroke, fill-opacity;
-  fill: color-mix(in srgb, currentColor 20%, transparent);
-  stroke: currentColor;
-  fill-opacity: var(--toolbarbutton-icon-fill-opacity);
-}
+  &:focus-visible {
+    outline: 2px solid var(--focus-outline-color);
+    outline-offset: -2px;
+  }
 
-#calendar-status-todaypane-button > stack > .toolbarbutton-day-text {
-  text-align: center;
-  margin-inline-start: 0;
-  margin-bottom: 0;
-  font-size: 7pt;
-  font-family: Arial, Helvetica, sans-serif;
-  font-weight: bold;
-  text-shadow: none;
-  background-color: transparent;
-}
+  & > stack > .toolbarbutton-icon-begin {
+    width: 16px;
+    height: 16px;
+    -moz-context-properties: fill, stroke, fill-opacity;
+    fill: color-mix(in srgb, currentColor 20%, transparent);
+    stroke: currentColor;
+    fill-opacity: var(--toolbarbutton-icon-fill-opacity);
+  }
 
-#calendar-status-todaypane-button[hideLabel] > .toolbarbutton-text,
-#calendar-status-todaypane-button[hideLabel] > .toolbarbutton-icon-end {
-  display: none;
-}
+  & > stack > .toolbarbutton-day-text {
+    text-align: center;
+    margin-inline-start: 0;
+    margin-bottom: 0;
+    font-size: 7pt;
+    font-family: Arial, Helvetica, sans-serif;
+    font-weight: bold;
+    text-shadow: none;
+    background-color: transparent;
+  }
 
-#calendar-status-todaypane-button > .toolbarbutton-icon-end {
-  -moz-context-properties: stroke;
-  stroke: currentColor;
-}
+  &[hideLabel] > .toolbarbutton-text,
+  &[hideLabel] > .toolbarbutton-icon-end {
+    display: none;
+  }
 
-#calendar-status-todaypane-button[checked="true"] > .toolbarbutton-icon-end {
-  transform: scaleY(-1);
+  & > .toolbarbutton-icon-end {
+    -moz-context-properties: stroke;
+    stroke: currentColor;
+  }
+
+  &[checked="true"] > .toolbarbutton-icon-end {
+    transform: scaleY(-1);
+  }
 }
 
 /* iMIP notification bar */
 .calendar-notification-bar {
-  background-color: var(--color-blue-10);
+  background-color: light-dark(var(--color-blue-10), var(--color-purple-40));
   padding: 3px;
 }
 
-@media (prefers-color-scheme: dark) {
-  .calendar-notification-bar {
-    background-color: var(--color-purple-40);
-  }
-}
-
 @media (prefers-contrast) {
-  .calendar-notification-bar:not(:-moz-lwtheme) {
-    background-color: var(--selected-item-color);
-  }
+  :root:not([lwtheme]) {
+    .calendar-notification-bar {
+      background-color: var(--selected-item-color);
 
-  .calendar-notification-bar:not(:-moz-lwtheme) > *:not(#imip-view-toolbox) {
-    color: var(--selected-item-text-color);
+      & > *:not(#imip-view-toolbox) {
+        color: var(--selected-item-text-color);
+      }
+    }
   }
 }
 
@@ -156,28 +157,26 @@
   margin-inline-start: 6px;
 }
 
-#imip-view-toolbar > .toolbarbutton-1.message-header-view-button,
-#imip-view-toolbar > .toolbarbutton-1.message-header-view-button > .toolbarbutton-menubutton-button,
-#imip-view-toolbar > .toolbarbutton-1.message-header-view-button > .toolbarbutton-menubutton-dropmarker {
-  border-color: var(--toolbarbutton-header-bordercolor);
+#imip-view-toolbar > .toolbarbutton-1.message-header-view-button {
   background-image: linear-gradient(var(--imip-button-background), var(--imip-button-background));
+  border-color: var(--toolbarbutton-header-bordercolor);
 }
 
-#imip-view-toolbar > .toolbarbutton-1.message-header-view-button:not(:active):hover,
-#imip-view-toolbar > .toolbarbutton-1.message-header-view-button:is(:hover,[open="true"]) >
-  .toolbarbutton-menubutton-button,
-#imip-view-toolbar > .toolbarbutton-1.message-header-view-button:hover >
-  .toolbarbutton-menubutton-dropmarker {
+#imip-view-toolbar >
+  .toolbarbutton-1.message-header-view-button > .toolbarbutton-menubutton-button,
+#imip-view-toolbar >
+  .toolbarbutton-1.message-header-view-button > .toolbarbutton-menubutton-dropmarker {
+  border-color: var(--toolbarbutton-header-bordercolor);
+}
+
+#imip-view-toolbar > .toolbarbutton-1.message-header-view-button:not(:active):hover {
   background-image: linear-gradient(var(--toolbarbutton-hover-background),
                                     var(--toolbarbutton-hover-background)),
                     linear-gradient(var(--imip-button-background), var(--imip-button-background));
 }
 
-#imip-view-toolbar > .toolbarbutton-1.message-header-view-button:not([is="toolbarbutton-menu-button"]):hover:active,
-#imip-view-toolbar > .toolbarbutton-1.message-header-view-button[is="toolbarbutton-menu-button"] >
-  .toolbarbutton-menubutton-button:hover:active,
-#imip-view-toolbar > .toolbarbutton-1.message-header-view-button[open="true"] >
-  .toolbarbutton-menubutton-dropmarker {
+#imip-view-toolbar >
+  .toolbarbutton-1.message-header-view-button:not([is="toolbarbutton-menu-button"]):hover:active {
   background-image: linear-gradient(var(--toolbarbutton-active-background),
                                     var(--toolbarbutton-active-background)),
                     linear-gradient(var(--imip-button-background), var(--imip-button-background));
@@ -252,4 +251,22 @@
 
 #calsidebar_splitter[state="collapsed"]:hover {
   border-inline-start: 4px solid var(--selected-item-color);
+}
+
+@media not (-moz-platform: macos) {
+  #calsidebar_splitter,
+  #today-splitter {
+    min-width: 0;
+    background-color: transparent;
+  }
+
+  #today-splitter {
+    border-inline-end: 1px solid var(--splitter-color);
+    margin-inline-start: -5px;
+    position: relative;
+  }
+
+  :root[lwtheme] #today-splitter.calendar-sidebar-splitter {
+    background-image: none;
+  }
 }

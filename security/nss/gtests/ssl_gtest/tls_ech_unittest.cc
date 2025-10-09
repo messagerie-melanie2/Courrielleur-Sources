@@ -16,7 +16,7 @@
 
 namespace nss_test {
 
-class TlsAgentEchTest : public TlsAgentTestClient13 {
+class TlsAgentEchTest : public TlsAgentStreamTestClient13 {
  protected:
   void InstallEchConfig(const DataBuffer& echconfig, PRErrorCode err = 0) {
     SECStatus rv = SSL_SetClientEchConfigs(agent_->ssl_fd(), echconfig.data(),
@@ -264,9 +264,6 @@ static DataBuffer MakeEchConfigList(DataBuffer config1, DataBuffer config2) {
 }
 
 TEST_P(TlsAgentEchTest, EchConfigsSupportedYesNo) {
-  if (variant_ == ssl_variant_datagram) {
-    GTEST_SKIP();
-  }
   ScopedSECKEYPublicKey pub;
   ScopedSECKEYPrivateKey priv;
   // ECHConfig 2 cipher_suites are unsupported.
@@ -290,9 +287,6 @@ TEST_P(TlsAgentEchTest, EchConfigsSupportedYesNo) {
 }
 
 TEST_P(TlsAgentEchTest, EchConfigsSupportedNoYes) {
-  if (variant_ == ssl_variant_datagram) {
-    GTEST_SKIP();
-  }
   ScopedSECKEYPublicKey pub;
   ScopedSECKEYPrivateKey priv;
   DataBuffer config2;
@@ -315,10 +309,6 @@ TEST_P(TlsAgentEchTest, EchConfigsSupportedNoYes) {
 }
 
 TEST_P(TlsAgentEchTest, EchConfigsSupportedNoNo) {
-  if (variant_ == ssl_variant_datagram) {
-    GTEST_SKIP();
-  }
-
   ScopedSECKEYPublicKey pub;
   ScopedSECKEYPrivateKey priv;
   DataBuffer config2;
@@ -640,6 +630,27 @@ TEST_F(TlsConnectStreamTls13Ech, EchFixedConfig) {
   client_->ExpectEch();
   server_->ExpectEch();
   Connect();
+}
+
+TEST_F(TlsConnectTest, RenegotiateClientECHGrease) {
+  EnsureTlsSetup();
+
+  // Client speaks 1.2 or 1.3, with ECH GREASE enabled.
+  client_->SetVersionRange(SSL_LIBRARY_VERSION_TLS_1_2,
+                           SSL_LIBRARY_VERSION_TLS_1_3);
+  EXPECT_EQ(SECSuccess, SSL_EnableTls13GreaseEch(client_->ssl_fd(), PR_TRUE));
+
+  // Server speaks 1.2
+  server_->SetVersionRange(SSL_LIBRARY_VERSION_TLS_1_2,
+                           SSL_LIBRARY_VERSION_TLS_1_2);
+
+  Connect();
+
+  // Renegotiation
+  client_->PrepareForRenegotiate();
+  server_->StartRenegotiate();
+  Handshake();
+  CheckConnected();
 }
 
 // The next set of tests all use a fixed server key and a pre-built ClientHello.
@@ -2489,6 +2500,26 @@ TEST_F(TlsConnectStreamTls13Ech, EchCustomExtensionWriter) {
   Connect();
 }
 
+TEST_F(TlsConnectStreamTls13, EchCustomExtensionWriterZeroRtt) {
+  EnsureTlsSetup();
+  SetupEch(client_, server_);
+  SetupForZeroRtt();
+
+  client_->Set0RttEnabled(true);
+  server_->Set0RttEnabled(true);
+  ASSERT_EQ(SECSuccess, SSL_InstallExtensionHooks(
+                            client_->ssl_fd(), 62028, EmptyExtensionWriter,
+                            nullptr, NoopExtensionHandler, nullptr));
+  SetupEch(client_, server_);
+  ExpectResumption(RESUME_TICKET);
+
+  ZeroRttSendReceive(true, true);
+  Handshake();
+  ExpectEarlyDataAccepted(true);
+  CheckConnected();
+  SendReceive();
+}
+
 TEST_F(TlsConnectStreamTls13Ech, EchCustomExtensionWriterOuterOnly) {
   EnsureTlsSetup();
   SetupEch(client_, server_);
@@ -2886,9 +2917,9 @@ TEST_F(TlsConnectStreamTls13Ech, EchPublicNameNotLdh) {
 
 TEST_F(TlsConnectStreamTls13, EchClientHelloExtensionPermutation) {
   EnsureTlsSetup();
-  PR_ASSERT(SSL_OptionSet(client_->ssl_fd(),
-                          SSL_ENABLE_CH_EXTENSION_PERMUTATION,
-                          PR_TRUE) == SECSuccess);
+  ASSERT_TRUE(SSL_OptionSet(client_->ssl_fd(),
+                            SSL_ENABLE_CH_EXTENSION_PERMUTATION,
+                            PR_TRUE) == SECSuccess);
   SetupEch(client_, server_);
 
   client_->ExpectEch();
@@ -2898,11 +2929,31 @@ TEST_F(TlsConnectStreamTls13, EchClientHelloExtensionPermutation) {
 
 TEST_F(TlsConnectStreamTls13, EchGreaseClientHelloExtensionPermutation) {
   EnsureTlsSetup();
-  PR_ASSERT(SSL_OptionSet(client_->ssl_fd(),
-                          SSL_ENABLE_CH_EXTENSION_PERMUTATION,
-                          PR_TRUE) == SECSuccess);
-  PR_ASSERT(SSL_EnableTls13GreaseEch(client_->ssl_fd(), PR_FALSE) ==
-            SECSuccess);
+  ASSERT_TRUE(SSL_OptionSet(client_->ssl_fd(),
+                            SSL_ENABLE_CH_EXTENSION_PERMUTATION,
+                            PR_TRUE) == SECSuccess);
+  ASSERT_TRUE(SSL_EnableTls13GreaseEch(client_->ssl_fd(), PR_FALSE) ==
+              SECSuccess);
+  Connect();
+}
+
+TEST_F(TlsConnectDatagram13, EchNoSupportDTLS) {
+  EnsureTlsSetup();
+  DataBuffer echconfig;
+  ScopedSECKEYPublicKey pub;
+  ScopedSECKEYPrivateKey priv;
+  TlsConnectTestBase::GenerateEchConfig(HpkeDhKemX25519Sha256,
+                                        kUnknownFirstSuite, kPublicName, 100,
+                                        echconfig, pub, priv);
+  ASSERT_EQ(SECFailure,
+            SSL_SetClientEchConfigs(client_->ssl_fd(), echconfig.data(),
+                                    echconfig.len()));
+  ASSERT_EQ(SECFailure,
+            SSL_SetServerEchConfigs(server_->ssl_fd(), pub.get(), priv.get(),
+                                    echconfig.data(), echconfig.len()));
+
+  client_->ExpectEch(false);
+  server_->ExpectEch(false);
   Connect();
 }
 

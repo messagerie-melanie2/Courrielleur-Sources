@@ -8,12 +8,11 @@
 
 #include "nsIDocShell.h"
 #include "nsPIDOMWindow.h"
-#include "nsIContentViewer.h"
+#include "nsIDocumentViewer.h"
 #include "nsIPrintSettings.h"
 #include "nsIPrintSettingsService.h"
 
 #include "nsAtom.h"
-#include "nsQuickSort.h"
 
 #include "nsIContent.h"
 
@@ -22,27 +21,31 @@
 #include "nsViewManager.h"
 #include "nsIFrame.h"
 
-#include "nsLayoutCID.h"
-
+#include "mozilla/dom/ChildIterator.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/dom/TreeIterator.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
 
 using namespace mozilla;
 using mozilla::dom::Document;
 
-static already_AddRefed<nsIContentViewer> doc_viewer(nsIDocShell* aDocShell) {
-  if (!aDocShell) return nullptr;
-  nsCOMPtr<nsIContentViewer> result;
-  aDocShell->GetContentViewer(getter_AddRefs(result));
-  return result.forget();
+static already_AddRefed<nsIDocumentViewer> doc_viewer(nsIDocShell* aDocShell) {
+  if (!aDocShell) {
+    return nullptr;
+  }
+  nsCOMPtr<nsIDocumentViewer> viewer;
+  aDocShell->GetDocViewer(getter_AddRefs(viewer));
+  return viewer.forget();
 }
 
 static PresShell* GetPresShell(nsIDocShell* aDocShell) {
-  nsCOMPtr<nsIContentViewer> cv = doc_viewer(aDocShell);
-  if (!cv) return nullptr;
-  return cv->GetPresShell();
+  nsCOMPtr<nsIDocumentViewer> viewer = doc_viewer(aDocShell);
+  if (!viewer) {
+    return nullptr;
+  }
+  return viewer->GetPresShell();
 }
 
 static nsViewManager* view_manager(nsIDocShell* aDocShell) {
@@ -55,10 +58,11 @@ static nsViewManager* view_manager(nsIDocShell* aDocShell) {
 
 #ifdef DEBUG
 static already_AddRefed<Document> document(nsIDocShell* aDocShell) {
-  nsCOMPtr<nsIContentViewer> cv(doc_viewer(aDocShell));
-  if (!cv) return nullptr;
-  RefPtr<Document> result = cv->GetDocument();
-  return result.forget();
+  nsCOMPtr<nsIDocumentViewer> viewer(doc_viewer(aDocShell));
+  if (!viewer) {
+    return nullptr;
+  }
+  return do_AddRef(viewer->GetDocument());
 }
 #endif
 
@@ -75,7 +79,9 @@ nsLayoutDebuggingTools::Init(mozIDOMWindow* aWin) {
   }
 
   {
-    if (!aWin) return NS_ERROR_UNEXPECTED;
+    if (!aWin) {
+      return NS_ERROR_UNEXPECTED;
+    }
     auto* window = nsPIDOMWindowInner::From(aWin);
     mDocShell = window->GetDocShell();
   }
@@ -87,15 +93,15 @@ nsLayoutDebuggingTools::Init(mozIDOMWindow* aWin) {
 NS_IMETHODIMP
 nsLayoutDebuggingTools::SetReflowCounts(bool aShow) {
   NS_ENSURE_TRUE(mDocShell, NS_ERROR_NOT_INITIALIZED);
-  if (PresShell* presShell = GetPresShell(mDocShell)) {
 #ifdef MOZ_REFLOW_PERF
+  if (PresShell* presShell = GetPresShell(mDocShell)) {
     presShell->SetPaintFrameCount(aShow);
-#else
-    printf("************************************************\n");
-    printf("Sorry, you have not built with MOZ_REFLOW_PERF=1\n");
-    printf("************************************************\n");
-#endif
   }
+#else
+  printf("************************************************\n");
+  printf("Sorry, you have not built with MOZ_REFLOW_PERF=1\n");
+  printf("************************************************\n");
+#endif
   return NS_OK;
 }
 
@@ -125,34 +131,67 @@ nsLayoutDebuggingTools::SetPagedMode(bool aPagedMode) {
   printSettings->SetPrintBGColors(true);
   printSettings->SetPrintBGImages(true);
 
-  nsCOMPtr<nsIContentViewer> contentViewer(doc_viewer(mDocShell));
-  contentViewer->SetPageModeForTesting(aPagedMode, printSettings);
+  nsCOMPtr<nsIDocumentViewer> docViewer(doc_viewer(mDocShell));
+  docViewer->SetPageModeForTesting(aPagedMode, printSettings);
 
   ForceRefresh();
   return NS_OK;
 }
 
-static void DumpContentRecur(nsIDocShell* aDocShell, FILE* out) {
+static void DumpContentRecur(nsIDocShell* aDocShell, FILE* out,
+                             bool aAnonymousSubtrees) {
 #ifdef DEBUG
-  if (nullptr != aDocShell) {
-    fprintf(out, "docshell=%p \n", static_cast<void*>(aDocShell));
-    RefPtr<Document> doc(document(aDocShell));
-    if (doc) {
-      dom::Element* root = doc->GetRootElement();
-      if (root) {
-        root->List(out);
+  if (!aDocShell) {
+    return;
+  }
+
+  fprintf(out, "docshell=%p \n", static_cast<void*>(aDocShell));
+  RefPtr<Document> doc(document(aDocShell));
+  if (!doc) {
+    fputs("no document\n", out);
+    return;
+  }
+
+  dom::Element* root = doc->GetRootElement();
+  if (!root) {
+    fputs("no root element\n", out);
+    return;
+  }
+
+  // The content tree (without anonymous subtrees).
+  root->List(out);
+
+  // The anonymous subtrees.
+  if (aAnonymousSubtrees) {
+    dom::TreeIterator<dom::StyleChildrenIterator> iter(*root);
+    while (nsIContent* current = iter.GetNext()) {
+      if (!current->IsRootOfNativeAnonymousSubtree()) {
+        continue;
       }
-    } else {
-      fputs("no document\n", out);
+
+      fputs("--\n", out);
+      if (current->IsElement() &&
+          current->AsElement()->GetPseudoElementType() ==
+              PseudoStyleType::mozSnapshotContainingBlock) {
+        fprintf(out,
+                "View Transition Tree "
+                "[parent=%p][active-view-transition=%p]:\n",
+                (void*)current->GetParent(),
+                (void*)doc->GetActiveViewTransition());
+      } else {
+        fprintf(out, "Anonymous Subtree [parent=%p]:\n",
+                (void*)current->GetParent());
+      }
+      current->List(out);
     }
   }
 #endif
 }
 
 NS_IMETHODIMP
-nsLayoutDebuggingTools::DumpContent() {
+nsLayoutDebuggingTools::DumpContent(bool aAnonymousSubtrees) {
   NS_ENSURE_TRUE(mDocShell, NS_ERROR_NOT_INITIALIZED);
-  DumpContentRecur(mDocShell, stdout);
+  DumpContentRecur(mDocShell, stdout, aAnonymousSubtrees);
   return NS_OK;
 }
 
@@ -191,16 +230,16 @@ static void DumpTextRunsRecur(nsIDocShell* aDocShell, FILE* out) {
 }
 
 NS_IMETHODIMP
-nsLayoutDebuggingTools::DumpFrames() {
+nsLayoutDebuggingTools::DumpFrames(uint8_t aFlags) {
   NS_ENSURE_TRUE(mDocShell, NS_ERROR_NOT_INITIALIZED);
-  DumpFramesRecur(mDocShell, stdout);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsLayoutDebuggingTools::DumpFramesInCSSPixels() {
-  NS_ENSURE_TRUE(mDocShell, NS_ERROR_NOT_INITIALIZED);
-  DumpFramesRecur(mDocShell, stdout, nsIFrame::ListFlag::DisplayInCSSPixels);
+  nsIFrame::ListFlags flags{};
+  if (aFlags & nsILayoutDebuggingTools::DUMP_FRAME_FLAGS_CSS_PIXELS) {
+    flags += nsIFrame::ListFlag::DisplayInCSSPixels;
+  }
+  if (aFlags & nsILayoutDebuggingTools::DUMP_FRAME_FLAGS_DETERMINISTIC) {
+    flags += nsIFrame::ListFlag::OnlyListDeterministicInfo;
+  }
+  DumpFramesRecur(mDocShell, stdout, flags);
   return NS_OK;
 }
 
@@ -303,7 +342,9 @@ nsLayoutDebuggingTools::DumpReflowStats() {
 
 nsresult nsLayoutDebuggingTools::ForceRefresh() {
   RefPtr<nsViewManager> vm(view_manager(mDocShell));
-  if (!vm) return NS_OK;
+  if (!vm) {
+    return NS_OK;
+  }
   nsView* root = vm->GetRootView();
   if (root) {
     vm->InvalidateView(root);

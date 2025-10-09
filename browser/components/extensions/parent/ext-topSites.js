@@ -7,13 +7,10 @@
 "use strict";
 
 ChromeUtils.defineESModuleGetters(this, {
+  AboutNewTab: "resource:///modules/AboutNewTab.sys.mjs",
   NewTabUtils: "resource://gre/modules/NewTabUtils.sys.mjs",
-  getSearchProvider: "resource://activity-stream/lib/SearchShortcuts.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(this, {
-  AboutNewTab: "resource:///modules/AboutNewTab.jsm",
-  shortURL: "resource://activity-stream/lib/ShortURL.jsm",
+  getSearchProvider:
+    "moz-src:///toolkit/components/search/SearchShortcuts.sys.mjs",
 });
 
 const SHORTCUTS_PREF =
@@ -22,7 +19,7 @@ const TOPSITES_FEED_PREF =
   "browser.newtabpage.activity-stream.feeds.system.topsites";
 
 this.topSites = class extends ExtensionAPI {
-  getAPI(context) {
+  getAPI() {
     return {
       topSites: {
         get: async function (options) {
@@ -78,7 +75,9 @@ this.topSites = class extends ExtensionAPI {
             // with a proper label and url. But certain non-pinned links may
             // also be promoted to search shortcuts; here we convert them.
             links = links.map(link => {
-              let searchProvider = getSearchProvider(shortURL(link));
+              let searchProvider = getSearchProvider(
+                NewTabUtils.shortURL(link)
+              );
               if (searchProvider) {
                 link.searchTopSite = true;
                 link.label = searchProvider.keyword;

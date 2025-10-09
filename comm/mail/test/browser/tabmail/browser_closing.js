@@ -15,13 +15,12 @@ var {
   create_folder,
   make_display_threaded,
   make_message_sets_in_folders,
-  mc,
   open_selected_message_in_new_tab,
   open_selected_messages,
   select_click_row,
   switch_tab,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 var gFolder;
@@ -42,26 +41,26 @@ add_setup(async function () {
  */
 add_task(async function test_closed_single_message_tab_returns_to_inbox() {
   await be_in_folder(gFolder);
-  make_display_threaded();
-  let inboxTab = mc.window.document.getElementById("tabmail").currentTabInfo;
+  await make_display_threaded();
+  const inboxTab = document.getElementById("tabmail").currentTabInfo;
 
-  select_click_row(0);
+  await select_click_row(0);
   // Open a message in a new tab...
   await open_selected_message_in_new_tab(false);
 
   // Open a second message in a new tab...
   await switch_tab(0);
-  select_click_row(1);
+  await select_click_row(1);
   await open_selected_message_in_new_tab(false);
 
   // Close the second tab
-  mc.window.document.getElementById("tabmail").closeTab(2);
+  document.getElementById("tabmail").closeTab(2);
 
   // We should have gone back to the inbox tab
   assert_selected_tab(inboxTab);
 
   // Close the first tab
-  mc.window.document.getElementById("tabmail").closeTab(1);
+  document.getElementById("tabmail").closeTab(1);
 });
 
 /**
@@ -71,32 +70,32 @@ add_task(async function test_closed_single_message_tab_returns_to_inbox() {
  */
 add_task(async function test_does_not_go_to_opener_if_switched() {
   await be_in_folder(gFolder);
-  make_display_threaded();
+  await make_display_threaded();
 
-  select_click_row(0);
+  await select_click_row(0);
   // Open a message in a new tab...
   await open_selected_message_in_new_tab(false);
 
   // Open a second message in a new tab...
   await switch_tab(0);
-  select_click_row(1);
+  await select_click_row(1);
   await open_selected_message_in_new_tab(false);
 
   // Switch to the first tab
   await switch_tab(1);
-  let firstTab = mc.window.document.getElementById("tabmail").currentTabInfo;
+  const firstTab = document.getElementById("tabmail").currentTabInfo;
 
   // Switch back to the second tab
   await switch_tab(2);
 
   // Close the second tab
-  mc.window.document.getElementById("tabmail").closeTab(2);
+  document.getElementById("tabmail").closeTab(2);
 
   // We should have gone back to the second tab
   assert_selected_tab(firstTab);
 
   // Close the first tab
-  mc.window.document.getElementById("tabmail").closeTab(1);
+  document.getElementById("tabmail").closeTab(1);
 });
 
 /**
@@ -106,25 +105,25 @@ add_task(async function test_does_not_go_to_opener_if_switched() {
  */
 add_task(async function test_opening_thread_in_tabs_closing_behaviour() {
   await be_in_folder(gFolder);
-  make_display_threaded();
-  collapse_all_threads();
+  await make_display_threaded();
+  await collapse_all_threads();
 
   // Open a thread as a series of message tabs.
-  select_click_row(0);
-  open_selected_messages(mc);
+  await select_click_row(0);
+  open_selected_messages(window);
 
   // At this point, the last message tab should be selected already.  We
   // close that tab, and the second last message tab should be selected.
   // We should close that tab, and the third last tab should be selected,
   // etc.
   for (let i = MSGS_PER_THREAD; i > 0; --i) {
-    let previousTab = mc.window.document
+    const previousTab = document
       .getElementById("tabmail")
       .tabContainer.getItemAtIndex(i - 1);
-    mc.window.document.getElementById("tabmail").closeTab(i);
+    document.getElementById("tabmail").closeTab(i);
     Assert.equal(
       previousTab,
-      mc.window.document.getElementById("tabmail").tabContainer.selectedItem,
+      document.getElementById("tabmail").tabContainer.selectedItem,
       "Expected tab at index " + (i - 1) + " to be selected."
     );
   }
@@ -141,25 +140,22 @@ add_task(async function test_opening_thread_in_tabs_closing_behaviour() {
  * Open some message tabs in the background from the folder tab.
  *
  * @param {number} numAdd - The number of tabs to add.
- *
- * @param {TestTab[]} An array of tab objects corresponding to all the open
+ * @returns {TestTab[]} An array of tab objects corresponding to all the open
  *   tabs.
  */
 async function openTabs(numAdd) {
   await be_in_folder(gFolder);
-  select_click_row(0);
+  await select_click_row(0);
   for (let i = 0; i < numAdd; i++) {
     await open_selected_message_in_new_tab(true);
   }
-  let tabs = mc.window.document
-    .getElementById("tabmail")
-    .tabInfo.map((info, index) => {
-      return {
-        info,
-        index,
-        node: info.tabNode,
-      };
-    });
+  const tabs = document.getElementById("tabmail").tabInfo.map((info, index) => {
+    return {
+      info,
+      index,
+      node: info.tabNode,
+    };
+  });
   Assert.equal(tabs.length, numAdd + 1, "Have expected number of tabs");
   return tabs;
 }
@@ -178,30 +174,29 @@ async function openTabs(numAdd) {
 async function assertClose(fromTab, closeMethod, switchToTab, closingTabs) {
   let desc;
   if (closingTabs) {
-    let closingIndices = closingTabs.map(t => t.index).join(",");
+    const closingIndices = closingTabs.map(t => t.index).join(",");
     desc = `closing tab #${closingIndices} using tab #${fromTab.index}`;
   } else {
     closingTabs = [fromTab];
     desc = `closing tab #${fromTab.index}`;
   }
-  let numTabsBefore =
-    mc.window.document.getElementById("tabmail").tabInfo.length;
-  for (let tab of closingTabs) {
+  const numTabsBefore = document.getElementById("tabmail").tabInfo.length;
+  for (const tab of closingTabs) {
     Assert.ok(
       tab.node.parentNode,
       `tab #${tab.index} should be in the DOM tree before ${desc}`
     );
   }
-  fromTab.node.scrollIntoView();
+  fromTab.node.scrollIntoView({ block: "start", behavior: "instant" });
   await closeMethod(fromTab.node);
-  for (let tab of closingTabs) {
+  for (const tab of closingTabs) {
     Assert.ok(
       !tab.node.parentNode,
       `tab #${tab.index} should be removed from the DOM tree after ${desc}`
     );
   }
   Assert.equal(
-    mc.window.document.getElementById("tabmail").tabInfo.length,
+    document.getElementById("tabmail").tabInfo.length,
     numTabsBefore - closingTabs.length,
     `Number of tabs after ${desc}`
   );
@@ -252,9 +247,9 @@ function closeWithKeyboard(tab) {
  * @param {Element} tab - The tab to open the context menu of.
  */
 async function openContextMenu(tab) {
-  let win = tab.ownerGlobal;
-  let contextMenu = win.document.getElementById("tabContextMenu");
-  let shownPromise = BrowserTestUtils.waitForEvent(contextMenu, "popupshown");
+  const win = tab.ownerGlobal;
+  const contextMenu = win.document.getElementById("tabContextMenu");
+  const shownPromise = BrowserTestUtils.waitForEvent(contextMenu, "popupshown");
   EventUtils.synthesizeMouseAtCenter(
     tab,
     { type: "contextmenu", button: 2 },
@@ -269,9 +264,12 @@ async function openContextMenu(tab) {
  * @param {Element} tab - The tab to close the context menu of.
  */
 async function closeContextMenu(tab) {
-  let win = tab.ownerGlobal;
-  let contextMenu = win.document.getElementById("tabContextMenu");
-  let hiddenPromise = BrowserTestUtils.waitForEvent(contextMenu, "popuphidden");
+  const win = tab.ownerGlobal;
+  const contextMenu = win.document.getElementById("tabContextMenu");
+  const hiddenPromise = BrowserTestUtils.waitForEvent(
+    contextMenu,
+    "popuphidden"
+  );
   contextMenu.hidePopup();
   await hiddenPromise;
 }
@@ -283,11 +281,14 @@ async function closeContextMenu(tab) {
  * @param {string} itemId - The id of the menu item to select.
  */
 async function selectFromContextMenu(tab, itemId) {
-  let doc = tab.ownerDocument;
-  let contextMenu = doc.getElementById("tabContextMenu");
-  let item = doc.getElementById(itemId);
+  const doc = tab.ownerDocument;
+  const contextMenu = doc.getElementById("tabContextMenu");
+  const item = doc.getElementById(itemId);
   await openContextMenu(tab);
-  let hiddenPromise = BrowserTestUtils.waitForEvent(contextMenu, "popuphidden");
+  const hiddenPromise = BrowserTestUtils.waitForEvent(
+    contextMenu,
+    "popuphidden"
+  );
   contextMenu.activateItem(item);
   await hiddenPromise;
 }
@@ -314,11 +315,11 @@ async function closeOtherTabsWithContextMenu(tab) {
  * Test closing unselected tabs with the mouse or keyboard.
  */
 add_task(async function test_close_unselected_tab_methods() {
-  let tabs = await openTabs(3);
+  const tabs = await openTabs(3);
 
   // Can't close the first tab.
   Assert.ok(
-    BrowserTestUtils.is_hidden(tabs[0].node.querySelector(".tab-close-button")),
+    BrowserTestUtils.isHidden(tabs[0].node.querySelector(".tab-close-button")),
     "Close button should be hidden for the first tab"
   );
   // Middle click does nothing.
@@ -330,7 +331,7 @@ add_task(async function test_close_unselected_tab_methods() {
   // Context close item is disabled.
   await openContextMenu(tabs[0].node);
   Assert.ok(
-    mc.window.document.getElementById("tabContextMenuClose").disabled,
+    document.getElementById("tabContextMenuClose").disabled,
     "Close context menu item should be disabled for the first tab"
   );
   await closeContextMenu(tabs[0].node);
@@ -346,30 +347,26 @@ add_task(async function test_close_unselected_tab_methods() {
  * Test closing selected tabs with the mouse or keyboard.
  */
 add_task(async function test_close_selected_tab_methods() {
-  let tabs = await openTabs(4);
+  const tabs = await openTabs(4);
 
   // Select tab by clicking it.
-  EventUtils.synthesizeMouseAtCenter(tabs[4].node, {}, mc.window);
+  EventUtils.synthesizeMouseAtCenter(tabs[4].node, {}, window);
   assert_selected_tab(tabs[4].info);
   await assertClose(tabs[4], closeWithButton, tabs[3]);
 
   // Select tab #2 by clicking tab #3 and using the shortcut to go back.
-  EventUtils.synthesizeMouseAtCenter(tabs[3].node, {}, mc.window);
+  EventUtils.synthesizeMouseAtCenter(tabs[3].node, {}, window);
   assert_selected_tab(tabs[3].info);
-  EventUtils.synthesizeKey(
-    "VK_TAB",
-    { ctrlKey: true, shiftKey: true },
-    mc.window
-  );
+  EventUtils.synthesizeKey("VK_TAB", { ctrlKey: true, shiftKey: true }, window);
   assert_selected_tab(tabs[2].info);
   await assertClose(tabs[2], closeWithKeyboard, tabs[3]);
 
   // Note: Current open tabs is: #0, #1, #2, #3.
 
   // Select tab #1 by using the shortcut to go forward from tab #0.
-  EventUtils.synthesizeMouseAtCenter(tabs[0].node, {}, mc.window);
+  EventUtils.synthesizeMouseAtCenter(tabs[0].node, {}, window);
   assert_selected_tab(tabs[0].info);
-  EventUtils.synthesizeKey("VK_TAB", { ctrlKey: true }, mc.window);
+  EventUtils.synthesizeKey("VK_TAB", { ctrlKey: true }, window);
   assert_selected_tab(tabs[1].info);
   await assertClose(tabs[1], closeWithMiddleClick, tabs[3]);
 
@@ -382,9 +379,9 @@ add_task(async function test_close_selected_tab_methods() {
  * Test closing other tabs with the context menu.
  */
 add_task(async function test_close_other_tabs() {
-  let tabs = await openTabs(3);
+  const tabs = await openTabs(3);
 
-  EventUtils.synthesizeMouseAtCenter(tabs[3].node, {}, mc.window);
+  EventUtils.synthesizeMouseAtCenter(tabs[3].node, {}, window);
   assert_selected_tab(tabs[3].info);
   // Close tabs #1 and #2 using the context menu of #3.
   await assertClose(tabs[3], closeOtherTabsWithContextMenu, tabs[3], [
@@ -397,7 +394,7 @@ add_task(async function test_close_other_tabs() {
   // cannot be closed.
   await openContextMenu(tabs[3].node);
   Assert.ok(
-    mc.window.document.getElementById("tabContextMenuCloseOtherTabs").disabled,
+    document.getElementById("tabContextMenuCloseOtherTabs").disabled,
     "Close context menu item should be disabled for the first tab"
   );
   await closeContextMenu(tabs[3].node);

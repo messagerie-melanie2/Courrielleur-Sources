@@ -1,4 +1,4 @@
-// |reftest| skip -- Atomics.waitAsync is not supported
+// |reftest| shell-option(--setpref=atomics_wait_async) skip-if(!this.hasOwnProperty('SharedArrayBuffer')||!this.hasOwnProperty('Atomics')||(this.hasOwnProperty('getBuildConfiguration')&&getBuildConfiguration('arm64-simulator'))||!xulRuntime.shell) -- SharedArrayBuffer,Atomics is not enabled unconditionally, ARM64 Simulator cannot emulate atomics, requires shell-options
 // Copyright (C) 2020 Rick Waldron. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -42,6 +42,15 @@ assert.throws(TypeError, () => {
   );
   Atomics.waitAsync(view, poisoned, poisoned, poisoned);
 }, '`const view = new Float32Array( new SharedArrayBuffer(Float32Array.BYTES_PER_ELEMENT * 4) ); Atomics.waitAsync(view, poisoned, poisoned, poisoned)` throws a TypeError exception');
+
+if (typeof Float16Array !== 'undefined') {
+  assert.throws(TypeError, function() {
+    const view = new Float16Array(
+      new SharedArrayBuffer(Float16Array.BYTES_PER_ELEMENT * 2)
+    );
+    Atomics.waitAsync(view, poisoned, poisoned, poisoned);
+  }, '`const view = new Float16Array( new SharedArrayBuffer(Float16Array.BYTES_PER_ELEMENT * 2) ); Atomics.waitAsync(view, poisoned, poisoned, poisoned)` throws a TypeError exception');
+}
 
 assert.throws(TypeError, () => {
   const view = new Int16Array(

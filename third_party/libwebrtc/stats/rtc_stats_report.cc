@@ -10,9 +10,13 @@
 
 #include "api/stats/rtc_stats_report.h"
 
-#include <type_traits>
+#include <memory>
+#include <string>
 #include <utility>
 
+#include "api/scoped_refptr.h"
+#include "api/stats/rtc_stats.h"
+#include "api/units/timestamp.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/strings/string_builder.h"
 
@@ -54,17 +58,9 @@ bool RTCStatsReport::ConstIterator::operator!=(
   return !(*this == other);
 }
 
-rtc::scoped_refptr<RTCStatsReport> RTCStatsReport::Create(
-    int64_t timestamp_us) {
-  return rtc::scoped_refptr<RTCStatsReport>(new RTCStatsReport(timestamp_us));
-}
-
 rtc::scoped_refptr<RTCStatsReport> RTCStatsReport::Create(Timestamp timestamp) {
   return rtc::scoped_refptr<RTCStatsReport>(new RTCStatsReport(timestamp));
 }
-
-RTCStatsReport::RTCStatsReport(int64_t timestamp_us)
-    : RTCStatsReport(Timestamp::Micros(timestamp_us)) {}
 
 RTCStatsReport::RTCStatsReport(Timestamp timestamp) : timestamp_(timestamp) {}
 
@@ -126,7 +122,7 @@ std::string RTCStatsReport::ToJson() const {
   if (begin() == end()) {
     return "";
   }
-  rtc::StringBuilder sb;
+  StringBuilder sb;
   sb << "[";
   const char* separator = "";
   for (ConstIterator it = begin(); it != end(); ++it) {

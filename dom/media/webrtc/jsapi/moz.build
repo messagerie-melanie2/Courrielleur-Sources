@@ -13,12 +13,13 @@ LOCAL_INCLUDES += [
     "/ipc/chromium/src",
     "/media/webrtc",
     "/netwerk/dns",  # For nsDNSService2.h
+    "/third_party/abseil-cpp",
     "/third_party/libsrtp/src/include",
     "/third_party/libwebrtc",
-    "/third_party/libwebrtc/third_party/abseil-cpp",
 ]
 
 UNIFIED_SOURCES += [
+    "DefaultCodecPreferences.cpp",
     "MediaTransportHandler.cpp",
     "MediaTransportHandlerIPC.cpp",
     "MediaTransportParent.cpp",
@@ -28,12 +29,19 @@ UNIFIED_SOURCES += [
     "RemoteTrackSource.cpp",
     "RTCDtlsTransport.cpp",
     "RTCDTMFSender.cpp",
+    "RTCEncodedAudioFrame.cpp",
+    "RTCEncodedFrameBase.cpp",
+    "RTCEncodedVideoFrame.cpp",
+    "RTCIceTransport.cpp",
     "RTCRtpReceiver.cpp",
+    "RTCRtpScriptTransform.cpp",
+    "RTCRtpScriptTransformer.cpp",
     "RTCRtpSender.cpp",
     "RTCRtpTransceiver.cpp",
     "RTCSctpTransport.cpp",
     "RTCStatsIdGenerator.cpp",
     "RTCStatsReport.cpp",
+    "RTCTransformEventRunnable.cpp",
     "WebrtcGlobalInformation.cpp",
     "WebrtcGlobalStatsHistory.cpp",
 ]
@@ -41,7 +49,13 @@ UNIFIED_SOURCES += [
 EXPORTS.mozilla.dom += [
     "RTCDtlsTransport.h",
     "RTCDTMFSender.h",
+    "RTCEncodedAudioFrame.h",
+    "RTCEncodedFrameBase.h",
+    "RTCEncodedVideoFrame.h",
+    "RTCIceTransport.h",
     "RTCRtpReceiver.h",
+    "RTCRtpScriptTransform.h",
+    "RTCRtpScriptTransformer.h",
     "RTCRtpSender.h",
     "RTCRtpTransceiver.h",
     "RTCSctpTransport.h",

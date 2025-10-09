@@ -81,7 +81,7 @@ add_task(async function () {
   await selectSource(dbg, "pretty.js");
 
   info("Add breakpoint to pretty.js (generated source)");
-  await addBreakpoint(dbg, "pretty.js", 4, 7);
+  await addBreakpoint(dbg, "pretty.js", 4, 8);
 
   await prettyPrint(dbg);
 
@@ -109,6 +109,27 @@ add_task(async function () {
   );
 });
 
+// Bug 1954109 - Breakpoint not shown in the gutter of a pretty-printed file
+add_task(async function () {
+  const dbg = await initDebugger("doc-pretty.html", "pretty.js");
+
+  await selectSource(dbg, "pretty.js");
+  await addBreakpoint(dbg, "pretty.js", 9);
+
+  await prettyPrint(dbg);
+  await assertBreakpoint(dbg, 11);
+
+  await selectSource(dbg, "pretty.js");
+  ok(
+    findAllElements(dbg, "columnBreakpoints").length,
+    "Column breakpoints are still shown in the minified file after pretty-printing"
+  );
+  await addBreakpoint(dbg, "pretty.js", 9, 55);
+
+  await selectSource(dbg, "pretty.js:formatted");
+  await assertBreakpoint(dbg, 16);
+});
+
 async function assertBreakpointsInNonPrettyAndPrettySources(dbg) {
   info(
     "Asserts breakpoint pause and display on the correct line in the pretty printed source"
@@ -121,6 +142,6 @@ async function assertBreakpointsInNonPrettyAndPrettySources(dbg) {
 
   info("Assert pause and display on the correct line in the minified source");
   const minifiedSource = findSource(dbg, "pretty.js");
-  await assertPausedAtSourceAndLine(dbg, minifiedSource.id, 4, 7);
+  await assertPausedAtSourceAndLine(dbg, minifiedSource.id, 4, 8);
   await assertBreakpoint(dbg, 4);
 }

@@ -18,7 +18,6 @@ structures.
 from collections import OrderedDict, defaultdict
 
 import mozpack.path as mozpath
-import six
 from mozpack.chrome.manifest import ManifestEntry
 
 from mozbuild.frontend.context import ObjDirPath, SourcePath
@@ -28,7 +27,7 @@ from ..util import group_unified_files
 from .context import FinalTargetValue
 
 
-class TreeMetadata(object):
+class TreeMetadata:
     """Base class for all data being captured."""
 
     __slots__ = ()
@@ -93,7 +92,7 @@ class ContextDerived(TreeMetadata):
         return mozpath.relpath(self.objdir, self.topobjdir)
 
 
-class HostMixin(object):
+class HostMixin:
     @property
     def defines(self):
         defines = self._context["HOST_DEFINES"]
@@ -148,7 +147,7 @@ class VariablePassthru(ContextDerived):
     in our build backends since we will continue to be tied to our rules.mk.
     """
 
-    __slots__ = "variables"
+    __slots__ = ("variables",)
 
     def __init__(self, context):
         ContextDerived.__init__(self, context)
@@ -197,14 +196,14 @@ class BaseDefines(ContextDerived):
     which are OrderedDicts.
     """
 
-    __slots__ = "defines"
+    __slots__ = ("defines",)
 
     def __init__(self, context, defines):
         ContextDerived.__init__(self, context)
         self.defines = defines
 
     def get_defines(self):
-        for define, value in six.iteritems(self.defines):
+        for define, value in self.defines.items():
             if value is True:
                 yield ("-D%s" % define)
             elif value is False:
@@ -391,6 +390,15 @@ class Linkable(ContextDerived):
         self.lib_defines = Defines(context, OrderedDict())
         self.sources = defaultdict(list)
 
+    @property
+    def output_path(self):
+        if self.installed:
+            return ObjDirPath(
+                self._context, "!/" + mozpath.join(self.install_target, self.name)
+            )
+        else:
+            return ObjDirPath(self._context, "!" + self.name)
+
     def link_library(self, obj):
         assert isinstance(obj, BaseLibrary)
         if obj.KIND != self.KIND:
@@ -468,7 +476,7 @@ class BaseProgram(Linkable):
     Otherwise, the suffix is appended to the program name.
     """
 
-    __slots__ = "program"
+    __slots__ = ("program",)
 
     DICT_ATTRS = {"install_target", "KIND", "program", "relobjdir"}
 
@@ -480,15 +488,6 @@ class BaseProgram(Linkable):
             program += bin_suffix
         self.program = program
         self.is_unit_test = is_unit_test
-
-    @property
-    def output_path(self):
-        if self.installed:
-            return ObjDirPath(
-                self._context, "!/" + mozpath.join(self.install_target, self.program)
-            )
-        else:
-            return ObjDirPath(self._context, "!" + self.program)
 
     def __repr__(self):
         return "<%s: %s/%s>" % (type(self).__name__, self.relobjdir, self.program)
@@ -561,9 +560,9 @@ def cargo_output_directory(context, target_var):
     return mozpath.join(context.config.substs[target_var], rust_build_kind)
 
 
-# Rust programs aren't really Linkable, since Cargo handles all the details
-# of linking things.
-class BaseRustProgram(ContextDerived):
+# We pretend Rust programs are Linkable, despite Cargo handling all the details
+# of linking things. This is used to declare in-tree dependencies.
+class BaseRustProgram(Linkable):
     __slots__ = (
         "name",
         "cargo_file",
@@ -574,7 +573,7 @@ class BaseRustProgram(ContextDerived):
     )
 
     def __init__(self, context, name, cargo_file):
-        ContextDerived.__init__(self, context)
+        Linkable.__init__(self, context)
         self.name = name
         self.cargo_file = cargo_file
         # Skip setting properties below which depend on cargo
@@ -637,6 +636,10 @@ class BaseLibrary(Linkable):
     def name(self):
         return self.lib_name
 
+    @property
+    def import_path(self):
+        return ObjDirPath(self._context, "!" + self.import_name)
+
 
 class Library(BaseLibrary):
     """Context derived container object for a library"""
@@ -687,12 +690,11 @@ class SandboxedWasmLibrary(Library):
         return self.config.substs.get("WASM_OBJ_SUFFIX", "")
 
 
-class BaseRustLibrary(object):
+class BaseRustLibrary:
     slots = (
         "cargo_file",
         "crate_type",
         "dependencies",
-        "deps_path",
         "features",
         "output_category",
         "is_gkrust",
@@ -731,15 +733,21 @@ class BaseRustLibrary(object):
         # build in that case.
         if not context.config.substs.get("COMPILE_ENVIRONMENT"):
             return
-        build_dir = mozpath.join(
-            context.config.topobjdir,
-            cargo_output_directory(context, self.TARGET_SUBST_VAR),
+        self.import_name = self.lib_name
+
+    @property
+    def import_path(self):
+        return ObjDirPath(
+            self._context,
+            "!/"
+            + mozpath.join(
+                cargo_output_directory(self._context, self.TARGET_SUBST_VAR),
+                self.import_name,
+            ),
         )
-        self.import_name = mozpath.join(build_dir, self.lib_name)
-        self.deps_path = mozpath.join(build_dir, "deps")
 
 
-class RustLibrary(StaticLibrary, BaseRustLibrary):
+class RustLibrary(BaseRustLibrary, StaticLibrary):
     """Context derived container object for a rust static library"""
 
     KIND = "target"
@@ -866,12 +874,21 @@ class SharedLibrary(Library):
                     + self.symbols_file
                 )
             elif os_target == "WINNT":
-                if context.config.substs.get("GNU_CC"):
-                    self.symbols_link_arg = self.symbols_file
-                else:
+                if context.config.substs.get("CC_TYPE") == "clang-cl":
                     self.symbols_link_arg = "-DEF:" + self.symbols_file
+                else:
+                    self.symbols_link_arg = self.symbols_file
             elif context.config.substs.get("GCC_USE_GNU_LD"):
                 self.symbols_link_arg = "-Wl,--version-script," + self.symbols_file
+
+    @property
+    def import_path(self):
+        if self.config.substs.get("OS_ARCH") == "WINNT":
+            # We build import libs on windows in a library's objdir
+            # to avoid cluttering up dist/bin.
+            return ObjDirPath(self._context, "!" + self.import_name)
+        assert self.import_name == self.name
+        return self.output_path
 
 
 class HostSharedLibrary(HostMixin, Library):
@@ -892,7 +909,7 @@ class HostSharedLibrary(HostMixin, Library):
         )
 
 
-class ExternalLibrary(object):
+class ExternalLibrary:
     """Empty mixin for libraries built by an external build system."""
 
 
@@ -913,7 +930,7 @@ class HostLibrary(HostMixin, BaseLibrary):
     no_expand_lib = False
 
 
-class HostRustLibrary(HostLibrary, BaseRustLibrary):
+class HostRustLibrary(BaseRustLibrary, HostLibrary):
     """Context derived container object for a host rust library"""
 
     KIND = "host"
@@ -1183,7 +1200,7 @@ class FinalTargetFiles(ContextDerived):
     HierarchicalStringList, which is created when parsing FINAL_TARGET_FILES.
     """
 
-    __slots__ = "files"
+    __slots__ = ("files",)
 
     def __init__(self, sandbox, files):
         ContextDerived.__init__(self, sandbox)
@@ -1200,11 +1217,19 @@ class FinalTargetPreprocessedFiles(ContextDerived):
     FINAL_TARGET_PP_FILES.
     """
 
-    __slots__ = "files"
+    __slots__ = ("files",)
 
     def __init__(self, sandbox, files):
         ContextDerived.__init__(self, sandbox)
         self.files = files
+
+    @staticmethod
+    def get_obj_basename(f):
+        # This matches what PP_TARGETS do in config/rules.
+        basename = f.target_basename
+        if basename.endswith(".in"):
+            basename = basename[:-3]
+        return basename
 
 
 class LocalizedFiles(FinalTargetFiles):
@@ -1221,6 +1246,24 @@ class LocalizedPreprocessedFiles(FinalTargetPreprocessedFiles):
     """
 
     pass
+
+
+class MozSrcFiles(FinalTargetFiles):
+    """Sandbox container object for MOZ_SRC_FILES, which is a
+    ContextDerivedTypedList.
+
+    This is similar to FinalTargetFiles, but always installs into
+    dist/bin/moz-src . Contents are derived from MOZ_SRC_FILES in the emitter.
+    """
+
+    __slots__ = ("files",)
+
+    @property
+    def install_target(self):
+        # We don't use FINAL_TARGET here because it can include DIST_SUBDIR
+        # and/or XPI_NAME, whereas we want all moz-src content packaged in
+        # the same place.
+        return mozpath.join("dist/bin/moz-src", self._context.relsrcdir)
 
 
 class ObjdirFiles(FinalTargetFiles):
@@ -1351,6 +1394,9 @@ class GeneratedFile(ContextDerived):
             ]
         else:
             self.required_during_compile = required_during_compile
+        if self.required_during_compile and self.required_before_compile:
+            self.required_before_compile += self.required_during_compile
+            self.required_during_compile = []
 
 
 class ChromeManifestEntry(ContextDerived):

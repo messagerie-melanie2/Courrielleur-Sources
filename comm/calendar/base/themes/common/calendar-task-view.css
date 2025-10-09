@@ -22,7 +22,6 @@
   background-color: var(--layout-background-2);
   display: flex;
   flex-direction: column;
-  min-height: 6ex;
 }
 
 #calendar-task-details-attachment-row > hbox {
@@ -63,16 +62,16 @@
 
 #task-addition-box {
   border-bottom: 1px solid ThreeDShadow;
-}
 
-:root[lwt-tree] #task-addition-box {
-  background-color: var(--toolbar-bgcolor);
-  background-image: none;
-  color: var(--toolbar-color);
-}
+  :root[lwt-tree] & {
+    background-color: var(--toolbar-bgcolor);
+    background-image: none;
+    color: var(--toolbar-color);
+  }
 
-#task-addition-box:-moz-lwtheme {
-  border-color: var(--splitter-color);
+  :root[lwtheme] & {
+    border-color: var(--splitter-color);
+  }
 }
 
 :root[lwt-tree] #calendar-task-details-container {
@@ -148,10 +147,10 @@
 #calendar-task-tree-detail {
   border-top: 1px solid ThreeDShadow;
   margin: 3px 0;
-}
 
-#calendar-task-tree-detail:-moz-lwtheme {
-  border-top-color: var(--splitter-color);
+  :root[lwtheme] & {
+    border-top-color: var(--splitter-color);
+  }
 }
 
 #view-task-edit-field {
@@ -233,4 +232,31 @@
 
 .input-container html|input {
   flex-grow: 1;
+}
+
+#task-actions-category-popup > menuitem,
+#calendar-context-calendar-menupopup > menuitem {
+  padding-inline-start: 4px;
+
+  & .menu-icon {
+    display: inline;
+    margin-inline-end: 3px;
+  }
+
+  & .menu-text {
+    padding-inline-start: 15px;
+    background-image: var(--icon-circle-small);
+    background-position: left center;
+    background-repeat: no-repeat;
+    -moz-context-properties: fill;
+    fill: var(--item-color);
+
+    &:dir(rtl) {
+      background-position-x: right;
+    }
+  }
+}
+
+#task-actions-category-textbox {
+  margin-inline: 4px;
 }

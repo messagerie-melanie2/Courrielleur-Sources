@@ -1,0 +1,95 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+#include "nsISupports.idl"
+
+interface nsIFolder;
+interface nsIMsgFolder;
+
+[scriptable, uuid(2842d879-e52f-4812-926c-dfde62b77881)]
+interface nsIFolderDatabase : nsISupports {
+  /**
+   * Get a folder identified by its database row ID.
+   */
+  nsIFolder getFolderById(in unsigned long long id);
+
+  /**
+   * Get a folder identified by its path.
+   */
+  nsIFolder getFolderByPath(in AUTF8String path);
+
+  /**
+   * For a given nsIMsgFolder, get the corresponding nsIFolder, or null if it
+   * can't be found.
+   */
+  nsIFolder getFolderForMsgFolder(in nsIMsgFolder msgFolder);
+
+  /**
+   * For a given nsIFolder, get the corresponding nsIMsgFolder, or null if it
+   * can't be found.
+   */
+  nsIMsgFolder getMsgFolderForFolder(in nsIFolder folder);
+
+  /**
+   * Add and return a new root folder representing a server to the database.
+   * If the folder already exists, it will be returned, no new folder will be
+   * added.
+   *
+   * This function will be called on initial database creation and when a new
+   * incoming server is created.
+   */
+  nsIFolder insertRoot(in AUTF8String aServerKey);
+
+  /**
+   * Add a folder named `name` to the database as a child of `parent`.
+   *
+   * This function should be called by the protocol code after the folder is
+   * created on the server. The parent folder is not optional.
+   */
+  nsIFolder insertFolder(in nsIFolder parent, in AUTF8String name);
+
+  /**
+   * Delete `folder` and all of its descendants from the database.
+   *
+   * This function should be called by the protocol code after the folder is
+   * deleted on the server. Deleting a root folder with this function is not
+   * permitted.
+   */
+  void deleteFolder(in nsIFolder folder);
+
+  /**
+   * Update the children of `parent` to match the child names expected. If a
+   * name is in `childNames` but no child exists, it will be created. If a
+   * child exists but its name is not in `childNames`, it and all of its
+   * descendants are removed from the database.
+   *
+   * This function should be called by the protocol code after collecting the
+   * child names from the server.
+   */
+  void reconcile(in nsIFolder parent, in Array<AUTF8String> childNames);
+
+  /**
+   * Move a folder to a different position among its siblings. Yes, passing in
+   * the parent folder is redundant here, but it makes reading the code easier.
+   *
+   * This function should be called by the UI, nothing else is affected.
+   */
+  void moveFolderWithin(in nsIFolder parent,
+                        in nsIFolder child,
+                        [optional] in nsIFolder before);
+
+  /**
+   * Move a folder from one parent to another. Folders cannot be moved from
+   * one folder to another, or be made descendants of themselves.
+   *
+   * This function should be called by the protocol code after the folder is
+   * moved on the server.
+   */
+  void moveFolderTo(in nsIFolder newParent, in nsIFolder child);
+
+  /**
+   * Update a folder's flags to match `newFlags`.
+   */
+  void updateFlags(in nsIFolder folder, in unsigned long long newFlags);
+};

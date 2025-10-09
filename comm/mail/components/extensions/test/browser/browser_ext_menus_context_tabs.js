@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+"use strict";
+
 // Load subscript shared with all menu tests.
 Services.scriptloader.loadSubScript(
   new URL("head_menus.js", gTestPath).href,
@@ -9,17 +11,18 @@ Services.scriptloader.loadSubScript(
 );
 
 let gAccount, gFolders, gMessage;
+
 add_setup(async () => {
   await Services.search.init();
 
   gAccount = createAccount();
   addIdentity(gAccount);
   gFolders = gAccount.incomingServer.rootFolder.subFolders;
-  createMessages(gFolders[0], {
+  await createMessages(gFolders[0], {
     count: 1,
     body: {
       contentType: "text/html",
-      body: await fetch(`${URL_BASE}/content.html`).then(r => r.text()),
+      body: await IOUtils.readUTF8(getTestFilePath(`data/content.html`)),
     },
   });
   gMessage = [...gFolders[0].messages][0];
@@ -31,35 +34,39 @@ add_setup(async () => {
 });
 
 async function subtest_tab(manifest) {
-  async function checkTabEvent(index, active, mailTab) {
-    await rightClick(menu, tabs[index]);
+  async function checkTabEvent(index, active, type) {
+    await openMenuPopup(menu, tabs[index], {
+      type: "contextmenu",
+    });
     Assert.ok(menu.querySelector("#menus_mochi_test-menuitem-_tab"));
-    menu.hidePopup();
+    await closeMenuPopup(menu);
 
     await checkShownEvent(
       extension,
       { menuIds: ["tab"], contexts: ["tab"] },
-      { active, index, mailTab }
+      { active, index, type }
     );
   }
 
-  let extension = await getMenuExtension(manifest);
+  const extension = await getMenuExtension(manifest);
 
   await extension.startup();
   await extension.awaitMessage("menus-created");
 
-  let tabmail = document.getElementById("tabmail");
-  window.openContentTab("about:config");
-  window.openContentTab("about:mozilla");
+  const tabmail = document.getElementById("tabmail");
+  const configTab = window.openContentTab("about:config");
+  await awaitBrowserLoaded(configTab.browser, "about:config");
+  const mozillaTab = window.openContentTab("about:mozilla");
+  await awaitBrowserLoaded(mozillaTab.browser, "about:mozilla");
   tabmail.openTab("mail3PaneTab", { folderURI: gFolders[0].URI });
 
-  let tabs = document.getElementById("tabmail-tabs").allTabs;
-  let menu = document.getElementById("tabContextMenu");
+  const tabs = document.getElementById("tabmail-tabs").allTabs;
+  const menu = document.getElementById("tabContextMenu");
 
-  await checkTabEvent(0, false, true);
-  await checkTabEvent(1, false, false);
-  await checkTabEvent(2, false, false);
-  await checkTabEvent(3, true, true);
+  await checkTabEvent(0, false, "mail");
+  await checkTabEvent(1, false, "special");
+  await checkTabEvent(2, false, "special");
+  await checkTabEvent(3, true, "mail");
 
   await extension.unload();
 

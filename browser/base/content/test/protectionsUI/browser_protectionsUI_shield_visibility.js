@@ -19,7 +19,7 @@ const TEST_CASES = [
   },
   {
     type: "chrome page",
-    testURL: "chrome://global/skin/in-content/info-pages.css",
+    testURL: "chrome://global/content/mozilla.html",
     hidden: true,
   },
   {
@@ -112,7 +112,7 @@ add_task(async function () {
     await pageLoaded;
 
     is(
-      BrowserTestUtils.is_hidden(
+      BrowserTestUtils.isHidden(
         gProtectionsHandler._trackingProtectionIconContainer
       ),
       testData.hidden,

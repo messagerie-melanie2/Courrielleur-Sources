@@ -89,9 +89,7 @@ class ProviderUnitConversion extends UrlbarProvider {
   }
 
   /**
-   * Returns the type of this provider.
-   *
-   * @returns {integer} one of the types from UrlbarUtils.PROVIDER_TYPE.*
+   * @returns {Values<typeof UrlbarUtils.PROVIDER_TYPE>}
    */
   get type() {
     return UrlbarUtils.PROVIDER_TYPE.PROFILE;
@@ -104,10 +102,8 @@ class ProviderUnitConversion extends UrlbarProvider {
    *
    * @param {UrlbarQueryContext} queryContext
    *   The query context object.
-   * @returns {boolean}
-   *   Whether this provider should be invoked for the search.
    */
-  isActive({ searchString }) {
+  async isActive({ searchString }) {
     if (!lazy.UrlbarPrefs.get("unitConversion.enabled")) {
       return false;
     }
@@ -169,14 +165,12 @@ class ProviderUnitConversion extends UrlbarProvider {
     addCallback(this, result);
   }
 
-  onEngagement(isPrivate, state, queryContext, details) {
-    let { result, element } = details;
-    if (result?.providerName == this.name) {
-      const { textContent } = element.querySelector(
-        ".urlbarView-dynamic-unitConversion-output"
-      );
-      lazy.ClipboardHelper.copyString(textContent);
-    }
+  onEngagement(queryContext, controller, details) {
+    let { element } = details;
+    const { textContent } = element.querySelector(
+      ".urlbarView-dynamic-unitConversion-output"
+    );
+    lazy.ClipboardHelper.copyString(textContent);
   }
 }
 

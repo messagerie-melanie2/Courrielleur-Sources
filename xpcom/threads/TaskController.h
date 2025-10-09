@@ -12,17 +12,16 @@
 #include "mozilla/IdlePeriodState.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/Mutex.h"
-#include "mozilla/StaticMutex.h"
+#include "mozilla/StaticPtr.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/EventQueue.h"
+#include "mozilla/UniquePtr.h"
 #include "nsISupportsImpl.h"
-#include "nsIEventTarget.h"
+#include "nsThreadUtils.h"  // for MOZ_COLLECTING_RUNNABLE_TELEMETRY
 
 #include <atomic>
-#include <memory>
 #include <vector>
 #include <set>
-#include <list>
 #include <stack>
 
 class nsIRunnable;
@@ -34,6 +33,7 @@ class Task;
 class TaskController;
 class PerformanceCounter;
 class PerformanceCounterState;
+struct PoolThread;
 
 const EventQueuePriority kDefaultPriorityValue = EventQueuePriority::Normal;
 
@@ -111,16 +111,31 @@ class TaskManager {
 };
 
 // A Task is the the base class for any unit of work that may be scheduled.
+//
 // Subclasses may specify their priority and whether they should be bound to
-// the Gecko Main thread. When not bound to the main thread tasks may be
-// executed on any available thread (including the main thread), but they may
-// also be executed in parallel to any other task they do not have a dependency
-// relationship with. Tasks will be run in order of object creation.
+// either the Gecko Main thread or off main thread. When not bound to the main
+// thread tasks may be executed on any available thread excluding the main
+// thread, but they may also be executed in parallel to any other task they do
+// not have a dependency relationship with.
+//
+// Tasks will be run in order of object creation.
 class Task {
  public:
+  enum class Kind : uint8_t {
+    // This task should be executed on any available thread excluding the Gecko
+    // Main thread.
+    OffMainThreadOnly,
+
+    // This task should be executed on the Gecko Main thread.
+    MainThreadOnly
+
+    // NOTE: "any available thread including the main thread" option is not
+    //       supported (See bug 1839102).
+  };
+
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(Task)
 
-  bool IsMainThreadOnly() { return mMainThreadOnly; }
+  Kind GetKind() { return mKind; }
 
   // This returns the current task priority with its modifier applied.
   uint32_t GetPriority() { return mPriority + mPriorityModifier; }
@@ -148,7 +163,7 @@ class Task {
   // This sets the TaskManager for the current task. Calling this after the
   // task has been added to the TaskController results in undefined behavior.
   void SetManager(TaskManager* aManager) {
-    MOZ_ASSERT(mMainThreadOnly);
+    MOZ_ASSERT(mKind == Kind::MainThreadOnly);
     MOZ_ASSERT(!mIsInGraph);
     mTaskManager = aManager;
   }
@@ -178,15 +193,12 @@ class Task {
 #endif
 
  protected:
-  Task(bool aMainThreadOnly,
+  Task(Kind aKind,
        uint32_t aPriority = static_cast<uint32_t>(kDefaultPriorityValue))
-      : mMainThreadOnly(aMainThreadOnly),
-        mSeqNo(sCurrentTaskSeqNo++),
-        mPriority(aPriority) {}
+      : mKind(aKind), mSeqNo(sCurrentTaskSeqNo++), mPriority(aPriority) {}
 
-  Task(bool aMainThreadOnly,
-       EventQueuePriority aPriority = kDefaultPriorityValue)
-      : mMainThreadOnly(aMainThreadOnly),
+  Task(Kind aKind, EventQueuePriority aPriority = kDefaultPriorityValue)
+      : mKind(aKind),
         mSeqNo(sCurrentTaskSeqNo++),
         mPriority(static_cast<uint32_t>(aPriority)) {}
 
@@ -194,9 +206,14 @@ class Task {
 
   friend class TaskController;
 
-  // When this returns false, the task is considered incomplete and will be
-  // rescheduled at the current 'mPriority' level.
-  virtual bool Run() = 0;
+  enum class TaskResult {
+    Complete,
+    Incomplete,
+  };
+
+  // When this returns TaskResult::Incomplete, it will be rescheduled at the
+  // current 'mPriority' level.
+  virtual TaskResult Run() = 0;
 
  private:
   Task* GetHighestPriorityDependency();
@@ -220,7 +237,7 @@ class Task {
   RefPtr<TaskManager> mTaskManager;
 
   // Access to these variables is protected by the GraphMutex.
-  bool mMainThreadOnly;
+  Kind mKind;
   bool mCompleted = false;
   bool mInProgress = false;
 #ifdef DEBUG
@@ -235,14 +252,6 @@ class Task {
   // Time this task was inserted into the task graph, this is used by the
   // profiler.
   mozilla::TimeStamp mInsertionTime;
-};
-
-struct PoolThread {
-  PRThread* mThread;
-  RefPtr<Task> mCurrentTask;
-  // This may be higher than mCurrentTask's priority due to priority
-  // propagation. This is -only- valid when mCurrentTask != nullptr.
-  uint32_t mEffectiveTaskPriority;
 };
 
 // A task manager implementation for priority levels that should only
@@ -279,9 +288,12 @@ class IdleTaskManager : public TaskManager {
 // ReprioritizeTask.
 class TaskController {
  public:
-  TaskController();
+  explicit TaskController();
 
-  static TaskController* Get();
+  static TaskController* Get() {
+    MOZ_ASSERT(sSingleton.get());
+    return sSingleton.get();
+  }
 
   static void Initialize();
 
@@ -306,6 +318,8 @@ class TaskController {
       PerformanceCounterState* aPerformanceCounterState);
 
   static void Shutdown();
+
+  static Task::TaskResult RunTask(Task*);
 
   // This adds a task to the TaskController graph.
   // This may be called on any thread.
@@ -344,8 +358,21 @@ class TaskController {
   static int32_t GetPoolThreadCount();
   static size_t GetThreadStackSize();
 
+#ifdef MOZ_MEMORY
+  // To be called once during startup.
+  static void SetupIdleMemoryCleanup();
+
+  // Used internally to update prefs (can't be private, though).
+  void UpdateIdleMemoryCleanupPrefs();
+
+  // If needed, schedule a round of idle processing for moz_jemalloc's
+  // idle purge.
+  void MayScheduleIdleMemoryCleanup();
+#endif
+
  private:
   friend void ThreadFuncPoolThread(void* aIndex);
+  static StaticAutoPtr<TaskController> sSingleton;
 
   void InitializeThreadPool();
 
@@ -360,20 +387,27 @@ class TaskController {
       const MutexAutoLock& aProofOfLock);
 
   Task* GetFinalDependency(Task* aTask);
-  void MaybeInterruptTask(Task* aTask);
+  void MaybeInterruptTask(Task* aTask, const MutexAutoLock& aProofOfLock);
   Task* GetHighestPriorityMTTask();
+
+  void DispatchThreadableTasks(const MutexAutoLock& aProofOfLock);
+  bool MaybeDispatchOneThreadableTask(const MutexAutoLock& aProofOfLock);
+  PoolThread* SelectThread(const MutexAutoLock& aProofOfLock);
+
+  struct TaskToRun {
+    RefPtr<Task> mTask;
+    uint32_t mEffectiveTaskPriority = 0;
+  };
+  TaskToRun TakeThreadableTaskToRun(const MutexAutoLock& aProofOfLock);
 
   void EnsureMainThreadTasksScheduled();
 
   void ProcessUpdatedPriorityModifier(TaskManager* aManager);
 
   void ShutdownThreadPoolInternal();
-  void ShutdownInternal();
 
-  void RunPoolThread();
-
-  static std::unique_ptr<TaskController> sSingleton;
-  static StaticMutex sSingletonMutex MOZ_UNANNOTATED;
+  void RunPoolThread(PoolThread* aThread);
+  friend struct PoolThread;
 
   // This protects access to the task graph.
   Mutex mGraphMutex MOZ_UNANNOTATED;
@@ -383,13 +417,13 @@ class TaskController {
   // the main thread that need to be handled.
   Mutex mPoolInitializationMutex =
       Mutex("TaskController::mPoolInitializationMutex");
+
   // Created under the PoolInitialization mutex, then never extended, and
-  // only freed when the object is freed.  mThread is set at creation time;
+  // only freed when the object is freed. mThread is set at creation time;
   // mCurrentTask and mEffectiveTaskPriority are only accessed from the
   // thread, so no locking is needed to access this.
-  std::vector<PoolThread> mPoolThreads;
+  std::vector<UniquePtr<PoolThread>> mPoolThreads;
 
-  CondVar mThreadPoolCV;
   CondVar mMainThreadCV;
 
   // Variables below are protected by mGraphMutex.
@@ -404,9 +438,17 @@ class TaskController {
   // We can use a raw pointer since tasks always hold on to their TaskManager.
   std::set<TaskManager*> mTaskManagers;
 
+  // Number of pool threads that are currently idle.
+  size_t mIdleThreadCount = 0;
+
   // This ensures we keep running the main thread if we processed a task there.
   bool mMayHaveMainThreadTask = true;
   bool mShuttingDown = false;
+
+#ifdef MOZ_MEMORY
+  // Flag if we should trigger deferred idle purging in mozjemalloc.
+  bool mIsLazyPurgeEnabled;
+#endif
 
   // This stores whether the last main thread task runnable did work.
   // Accessed only on MainThread

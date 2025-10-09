@@ -2,13 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
-var { CalendarTestUtils } = ChromeUtils.import(
-  "resource://testing-common/calendar/CalendarTestUtils.jsm"
+var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
+var { CalendarTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/calendar/CalendarTestUtils.sys.mjs"
 );
-var { CalEvent } = ChromeUtils.import("resource:///modules/CalEvent.jsm");
-var { PromiseUtils } = ChromeUtils.importESModule("resource://gre/modules/PromiseUtils.sys.mjs");
-
+var { CalEvent } = ChromeUtils.importESModule("resource:///modules/CalEvent.sys.mjs");
 var { updateAppInfo } = ChromeUtils.importESModule("resource://testing-common/AppInfo.sys.mjs");
 updateAppInfo();
 
@@ -22,7 +20,7 @@ add_setup(async () => {
   cal.manager.addCalendarObserver(calendarObserver);
 });
 
-let calendarObserver = {
+const calendarObserver = {
   QueryInterface: ChromeUtils.generateQI(["calIObserver"]),
 
   /* calIObserver */
@@ -56,7 +54,7 @@ let calendarObserver = {
       this._onAddItemPromise.resolve();
     }
   },
-  onModifyItem(newItem, oldItem) {
+  onModifyItem(newItem) {
     info(`onModifyItem ${newItem.calendar.id} ${newItem.id}`);
     if (this._batchRequired) {
       Assert.equal(this._batchCount, 1, "onModifyItem must occur in a batch");
@@ -71,9 +69,9 @@ let calendarObserver = {
       this._onDeleteItemPromise.resolve();
     }
   },
-  onError(calendar, errNo, message) {},
-  onPropertyChanged(calendar, name, value, oldValue) {},
-  onPropertyDeleting(calendar, name) {},
+  onError() {},
+  onPropertyChanged() {},
+  onPropertyDeleting() {},
 };
 
 /**
@@ -89,6 +87,7 @@ function createCalendar(type, url, useCache) {
   calendar.name = type + (useCache ? " with cache" : " without cache");
   calendar.id = cal.getUUID();
   calendar.setProperty("cache.enabled", useCache);
+  calendar.setProperty("username", "alice");
 
   cal.manager.registerCalendar(calendar);
   calendar = cal.manager.getCalendarById(calendar.id);
@@ -105,14 +104,14 @@ function createCalendar(type, url, useCache) {
  * @returns {calIEvent}
  */
 async function runAddItem(calendar) {
-  let event = new CalEvent();
+  const event = new CalEvent();
   event.id = "6b7dd6f6-d6f0-4e93-a953-bb5473c4c47a";
   event.title = "New event";
   event.startDate = cal.createDateTime("20200303T205500Z");
   event.endDate = cal.createDateTime("20200303T210200Z");
 
-  calendarObserver._onAddItemPromise = PromiseUtils.defer();
-  calendarObserver._onModifyItemPromise = PromiseUtils.defer();
+  calendarObserver._onAddItemPromise = Promise.withResolvers();
+  calendarObserver._onModifyItemPromise = Promise.withResolvers();
   await calendar.addItem(event);
   await Promise.any([
     calendarObserver._onAddItemPromise.promise,
@@ -128,12 +127,12 @@ async function runAddItem(calendar) {
  * @param {calICalendar} calendar
  */
 async function runModifyItem(calendar) {
-  let event = await calendar.getItem("6b7dd6f6-d6f0-4e93-a953-bb5473c4c47a");
+  const event = await calendar.getItem("6b7dd6f6-d6f0-4e93-a953-bb5473c4c47a");
 
-  let clone = event.clone();
+  const clone = event.clone();
   clone.title = "Modified event";
 
-  calendarObserver._onModifyItemPromise = PromiseUtils.defer();
+  calendarObserver._onModifyItemPromise = Promise.withResolvers();
   await calendar.modifyItem(clone, event);
   await calendarObserver._onModifyItemPromise.promise;
 }
@@ -144,9 +143,9 @@ async function runModifyItem(calendar) {
  * @param {calICalendar} calendar
  */
 async function runDeleteItem(calendar) {
-  let event = await calendar.getItem("6b7dd6f6-d6f0-4e93-a953-bb5473c4c47a");
+  const event = await calendar.getItem("6b7dd6f6-d6f0-4e93-a953-bb5473c4c47a");
 
-  calendarObserver._onDeleteItemPromise = PromiseUtils.defer();
+  calendarObserver._onDeleteItemPromise = Promise.withResolvers();
   await calendar.deleteItem(event);
   await calendarObserver._onDeleteItemPromise.promise;
 }

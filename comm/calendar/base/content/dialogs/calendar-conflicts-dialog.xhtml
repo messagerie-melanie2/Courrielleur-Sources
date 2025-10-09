@@ -3,11 +3,7 @@
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
-<?xml-stylesheet type="text/css" href="chrome://messenger/skin/messenger.css"?>
-<?xml-stylesheet type="text/css" href="chrome://calendar/skin/calendar-views.css"?>
-<?xml-stylesheet type="text/css" href="chrome://messenger/skin/colors.css"?>
-<?xml-stylesheet type="text/css" href="chrome://messenger/skin/themeableDialog.css"?>
-
+<!DOCTYPE html>
 <html
   id="calendar-conflicts-dialog"
   xmlns="http://www.w3.org/1999/xhtml"
@@ -19,17 +15,27 @@
   scrolling="false"
 >
   <head>
+    <link rel="stylesheet" href="chrome://messenger/skin/messenger.css" />
+    <link rel="stylesheet" href="chrome://calendar/skin/calendar-views.css" />
+    <link rel="stylesheet" href="chrome://messenger/skin/colors.css" />
+    <link rel="stylesheet" href="chrome://messenger/skin/themeableDialog.css" />
     <link rel="localization" href="branding/brand.ftl" />
+    <link rel="localization" href="calendar/calendar.ftl" />
     <script defer="defer" src="chrome://calendar/content/widgets/mouseoverPreviews.js"></script>
     <script defer="defer" src="chrome://messenger/content/dialogShadowDom.js"></script>
     <script defer="defer" src="chrome://calendar/content/calendar-conflicts-dialog.js"></script>
+    <title data-l10n-id="item-modified-on-server-title"></title>
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src chrome:; script-src chrome: 'unsafe-inline'; style-src chrome: 'unsafe-inline'"
+    />
   </head>
-  <html:body xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
-    <dialog>
-      <vbox id="conflicts-vbox" flex="1">
-        <vbox id="item-box" flex="1" />
-        <description id="conflicts-description" style="max-width: 40em; margin-top: 1ex" />
-      </vbox>
-    </dialog>
-  </html:body>
+  <body>
+    <xul:dialog data-l10n-attrs="buttonlabelcancel" data-l10n-id="calendar-conflicts-dialog">
+      <div id="conflicts-vbox">
+        <div id="item-box"></div>
+      </div>
+      <p id="conflicts-description"></p>
+    </xul:dialog>
+  </body>
 </html>

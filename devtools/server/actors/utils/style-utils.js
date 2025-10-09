@@ -4,16 +4,16 @@
 
 "use strict";
 
-const { getCSSLexer } = require("resource://devtools/shared/css/lexer.js");
-
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
 const FONT_PREVIEW_TEXT = "Abc";
 const FONT_PREVIEW_FONT_SIZE = 40;
 const FONT_PREVIEW_FILLSTYLE = "black";
+const FONT_PREVIEW_FONT_FALLBACK = "serif";
 // Offset (in px) to avoid cutting off text edges of italic fonts.
 const FONT_PREVIEW_OFFSET = 4;
 // Factor used to resize the canvas in order to get better text quality.
 const FONT_PREVIEW_OVERSAMPLING_FACTOR = 2;
+const FONT_NEED_WRAPPING_QUOTES_REGEX = /^[^'"].* /;
 
 /**
  * Helper function for getting an image preview of the given font.
@@ -25,8 +25,10 @@ const FONT_PREVIEW_OVERSAMPLING_FACTOR = 2;
  * @param options {object}
  *        Object with options 'previewText' and 'previewFontSize'
  *
- * @return dataUrl
- *         The data URI of the font preview image
+ * @return {Object} An object with the following properties:
+ *         - dataUrl {string}: The data URI of the font preview image
+ *         - size {Number}: The optimal width of preview image
+ *         - ctx {CanvasRenderingContext2D}: The canvas context (returned for tests)
  */
 function getFontPreviewData(font, doc, options) {
   options = options || {};
@@ -35,11 +37,48 @@ function getFontPreviewData(font, doc, options) {
   const previewFontSize = options.previewFontSize || FONT_PREVIEW_FONT_SIZE;
   const fillStyle = options.fillStyle || FONT_PREVIEW_FILLSTYLE;
   const fontStyle = options.fontStyle || "";
+  const fontWeight = options.fontWeight || "";
 
   const canvas = doc.createElementNS(XHTML_NS, "canvas");
   const ctx = canvas.getContext("2d");
-  const fontValue =
-    fontStyle + " " + previewFontSize + "px " + font + ", serif";
+
+  // We want to wrap some font in quotes so font family like `Font Awesome 5 Brands` are
+  // properly applied, but we don't want to wrap all fonts, otherwise generic family names
+  // (e.g. `monospace`) wouldn't work.
+  // It should be safe to only add the quotes when the font has some spaces (generic family
+  // names don't have spaces, https://developer.mozilla.org/en-US/docs/Web/CSS/font-family#generic-name)
+  // We also don't want to add quotes if there are already some
+  // `font` is the declaration value, so it can have multiple parts,
+  // e.g: `"Menlo", MonoLisa, monospace`
+  const fontParts = [];
+  // We could use the parser to properly handle complex values, for example css variable,
+  // but ideally this function would only receive computed values (see Bug 1952821).
+  // If we'd get `var(--x)` here, we'd have to resolve it somehow, so it'd be simpler to
+  // get the computed value directly.
+  for (let f of font.split(",")) {
+    if (FONT_NEED_WRAPPING_QUOTES_REGEX.test(f.trim())) {
+      f = `"${f}"`;
+    }
+    fontParts.push(f);
+  }
+  // Add a fallback value
+  fontParts.push(FONT_PREVIEW_FONT_FALLBACK);
+
+  // Apply individual font properties to the canvas element so we can easily compute the
+  // canvas context font
+  // First, we need to start with a default shorthand to make it work
+  canvas.style.font = `${FONT_PREVIEW_FONT_SIZE}px ${FONT_PREVIEW_FONT_FALLBACK}`;
+  // Then we can set the different properties
+  canvas.style.fontFamily = fontParts.join(", ");
+  canvas.style.fontSize = `${previewFontSize}px`;
+  if (fontWeight) {
+    canvas.style.fontWeight = fontWeight;
+  }
+  if (fontStyle) {
+    canvas.style.fontStyle = fontStyle;
+  }
+
+  const fontValue = canvas.style.font;
 
   // Get the correct preview text measurements and set the canvas dimensions
   ctx.font = fontValue;
@@ -90,6 +129,7 @@ function getFontPreviewData(font, doc, options) {
   return {
     dataURL,
     size: textWidth + FONT_PREVIEW_OFFSET * 2,
+    ctx,
   };
 }
 
@@ -120,66 +160,12 @@ function getRuleText(initialText, line, column) {
     throw new Error("Location information is missing");
   }
 
-  const { offset: textOffset, text } = getTextAtLineColumn(
-    initialText,
-    line,
-    column
-  );
-  const lexer = getCSSLexer(text);
-
-  // Search forward for the opening brace.
-  while (true) {
-    const token = lexer.nextToken();
-    if (!token) {
-      throw new Error("couldn't find start of the rule");
-    }
-    if (token.tokenType === "symbol" && token.text === "{") {
-      break;
-    }
+  const { text } = getTextAtLineColumn(initialText, line, column);
+  const res = InspectorUtils.getRuleBodyText(text);
+  if (res === null || typeof res === "undefined") {
+    throw new Error("Couldn't find rule");
   }
-
-  // Now collect text until we see the matching close brace.
-  let braceDepth = 1;
-  let startOffset, endOffset;
-  while (true) {
-    const token = lexer.nextToken();
-    if (!token) {
-      break;
-    }
-    if (startOffset === undefined) {
-      startOffset = token.startOffset;
-    }
-    if (token.tokenType === "symbol") {
-      if (token.text === "{") {
-        ++braceDepth;
-      } else if (token.text === "}") {
-        --braceDepth;
-        if (braceDepth == 0) {
-          break;
-        }
-      }
-    }
-    endOffset = token.endOffset;
-  }
-
-  // If the rule was of the form "selector {" with no closing brace
-  // and no properties, just return an empty string.
-  if (startOffset === undefined) {
-    return { offset: 0, text: "" };
-  }
-  // If the input didn't have any tokens between the braces (e.g.,
-  // "div {}"), then the endOffset won't have been set yet; so account
-  // for that here.
-  if (endOffset === undefined) {
-    endOffset = startOffset;
-  }
-
-  // Note that this approach will preserve comments, despite the fact
-  // that cssTokenizer skips them.
-  return {
-    offset: textOffset + startOffset,
-    text: text.substring(startOffset, endOffset),
-  };
+  return res;
 }
 
 exports.getRuleText = getRuleText;

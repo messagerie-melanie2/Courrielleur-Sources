@@ -1,12 +1,14 @@
-/* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
-/* vim: set sts=2 sw=2 et tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
 add_task(async function test_multiple_messages_selected() {
-  let account = createAccount();
-  let rootFolder = account.incomingServer.rootFolder;
-  let subFolders = rootFolder.subFolders;
-  createMessages(subFolders[0], 2);
+  const account = createAccount();
+  const rootFolder = account.incomingServer.rootFolder;
+  const subFolders = rootFolder.subFolders;
+  await createMessages(subFolders[0], 2);
   await TestUtils.waitForCondition(
     () => subFolders[0].messages.hasMoreElements(),
     "Messages should be added to folder"
@@ -20,9 +22,11 @@ add_task(async function test_multiple_messages_selected() {
       });
     });
 
-    let { messages } = await browser.messages.query({});
+    const { messages } = await browser.messages.query({
+      autoPaginationTimeout: 0,
+    });
     await browser.mailTabs.setSelectedMessages(messages.map(m => m.id));
-    let { messages: selectedMessages } =
+    const { messages: selectedMessages } =
       await browser.mailTabs.getSelectedMessages();
     browser.test.assertEq(
       selectedMessages.length,
@@ -33,7 +37,7 @@ add_task(async function test_multiple_messages_selected() {
     browser.test.sendMessage("ready");
   }
 
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     manifest: {
       permissions: ["accountsRead", "messagesRead"],
       commands: {
@@ -58,7 +62,7 @@ add_task(async function test_multiple_messages_selected() {
     },
     window.browsingContext
   );
-  let message = await extension.awaitMessage("oncommand event received");
+  const message = await extension.awaitMessage("oncommand event received");
   is(
     message.commandName,
     "test-multi-message",

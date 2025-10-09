@@ -1,59 +1,81 @@
 /**
- * AUTO-GENERATED - DO NOT EDIT. Source: https://github.com/gpuweb/cts
- **/ import { kTextureFormatInfo } from '../../../capability_info.js';
-import {
+* AUTO-GENERATED - DO NOT EDIT. Source: https://github.com/gpuweb/cts
+**/import { getTextureFormatType } from '../../../format_info.js';import { AllFeaturesMaxLimitsGPUTest } from '../../../gpu_test.js';import {
   getFragmentShaderCodeWithOutput,
   getPlainTypeInfo,
-  kDefaultVertexShaderCode,
-} from '../../../util/shader.js';
-import { ValidationTest } from '../validation_test.js';
+  kDefaultVertexShaderCode } from
+'../../../util/shader.js';
+
+
 
 const values = [0, 1, 0, 1];
-export class CreateRenderPipelineValidationTest extends ValidationTest {
-  getDescriptor(options = {}) {
-    const defaultTargets = [{ format: 'rgba8unorm' }];
-    const {
-      primitive = {},
-      targets = defaultTargets,
-      multisample = {},
-      depthStencil,
-      fragmentShaderCode = getFragmentShaderCodeWithOutput([
-        {
-          values,
-          plainType: getPlainTypeInfo(
-            kTextureFormatInfo[targets[0] ? targets[0].format : 'rgba8unorm'].sampleType
-          ),
+export function getDescriptorForCreateRenderPipelineValidationTest(
+device,
+options =
 
-          componentCount: 4,
-        },
-      ]),
 
-      noFragment = false,
-      fragmentConstants = {},
-    } = options;
 
-    return {
-      vertex: {
-        module: this.device.createShaderModule({
-          code: kDefaultVertexShaderCode,
-        }),
-        entryPoint: 'main',
-      },
-      fragment: noFragment
-        ? undefined
-        : {
-            module: this.device.createShaderModule({
-              code: fragmentShaderCode,
-            }),
-            entryPoint: 'main',
-            targets,
-            constants: fragmentConstants,
-          },
-      layout: this.getPipelineLayout(),
-      primitive,
-      multisample,
-      depthStencil,
-    };
+
+
+
+
+{})
+{
+  const {
+    primitive = {},
+    targets = [{ format: 'rgba8unorm' }],
+    multisample = {},
+    depthStencil,
+    fragmentShaderCode = getFragmentShaderCodeWithOutput([
+    {
+      values,
+      plainType: getPlainTypeInfo(
+        getTextureFormatType(targets[0] ? targets[0].format : 'rgba8unorm')
+      ),
+      componentCount: 4
+    }]
+    ),
+    noFragment = false,
+    fragmentConstants = {}
+  } = options;
+
+  return {
+    vertex: {
+      module: device.createShaderModule({
+        code: kDefaultVertexShaderCode
+      }),
+      entryPoint: 'main'
+    },
+    fragment: noFragment ?
+    undefined :
+    {
+      module: device.createShaderModule({
+        code: fragmentShaderCode
+      }),
+      entryPoint: 'main',
+      targets,
+      constants: fragmentConstants
+    },
+    layout: device.createPipelineLayout({ bindGroupLayouts: [] }),
+    primitive,
+    multisample,
+    depthStencil
+  };
+}
+
+export class CreateRenderPipelineValidationTest extends AllFeaturesMaxLimitsGPUTest {
+  getDescriptor(
+  options =
+
+
+
+
+
+
+
+  {})
+  {
+    return getDescriptorForCreateRenderPipelineValidationTest(this.device, options);
   }
 
   getPipelineLayout() {

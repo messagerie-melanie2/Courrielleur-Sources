@@ -18,13 +18,10 @@ class nsCocoaFeatures {
   static int32_t macOSVersionMajor();
   static int32_t macOSVersionMinor();
   static int32_t macOSVersionBugFix();
-  static bool OnSierraExactly();
-  static bool OnHighSierraOrLater();
-  static bool OnMojaveOrLater();
-  static bool OnCatalinaOrLater();
   static bool OnBigSurOrLater();
   static bool OnMontereyOrLater();
   static bool OnVenturaOrLater();
+  static bool OnSonomaOrLater();
 
   static bool IsAtLeastVersion(int32_t aMajor, int32_t aMinor,
                                int32_t aBugFix = 0);
@@ -48,10 +45,5 @@ class nsCocoaFeatures {
 
   static int32_t mOSVersion;
 };
-
-// C-callable helper for cairo-quartz-font.c and SkFontHost_mac.cpp
-extern "C" {
-bool Gecko_OnSierraExactly();
-}
 
 #endif  // nsCocoaFeatures_h_

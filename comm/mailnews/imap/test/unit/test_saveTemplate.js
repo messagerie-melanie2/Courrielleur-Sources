@@ -7,15 +7,17 @@
  * creation of folder.
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-var { MailUtils } = ChromeUtils.import("resource:///modules/MailUtils.jsm");
-var { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { MailUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailUtils.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
+);
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 add_setup(function () {
@@ -28,17 +30,17 @@ add_setup(function () {
 
 // load and update a message in the imap fake server
 add_task(async function loadImapMessage() {
-  let gMessageGenerator = new MessageGenerator();
+  const gMessageGenerator = new MessageGenerator();
   // create a synthetic message with attachment
-  let smsg = gMessageGenerator.makeMessage();
+  const smsg = gMessageGenerator.makeMessage();
 
-  let msgURI = Services.io.newURI(
+  const msgURI = Services.io.newURI(
     "data:text/plain;base64," + btoa(smsg.toMessageString())
   );
-  let imapInbox = IMAPPump.daemon.getMailbox("INBOX");
-  let message = new ImapMessage(msgURI.spec, imapInbox.uidnext++, []);
+  const imapInbox = IMAPPump.daemon.getMailbox("INBOX");
+  const message = new ImapMessage(msgURI.spec, imapInbox.uidnext++, []);
   IMAPPump.mailbox.addMessage(message);
-  let listener = new PromiseTestUtils.PromiseUrlListener();
+  const listener = new PromiseTestUtils.PromiseUrlListener();
   IMAPPump.inbox.updateFolderWithListener(null, listener);
   await listener.promise;
 });
@@ -47,23 +49,23 @@ add_task(async function loadImapMessage() {
 // it creates a new templates folder before saving the message as a template.
 add_task(async function saveAsTemplate() {
   // Prepare msgAddedListener for this test.
-  let msgAddedListener = new MsgAddedListener();
+  const msgAddedListener = new MsgAddedListener();
   MailServices.mfn.addListener(msgAddedListener, MailServices.mfn.msgAdded);
 
-  let hdr = mailTestUtils.firstMsgHdr(IMAPPump.inbox);
-  let uri = IMAPPump.inbox.getUriForMsg(hdr);
-  let identity = MailServices.accounts.getFirstIdentityForServer(
+  const hdr = mailTestUtils.firstMsgHdr(IMAPPump.inbox);
+  const uri = IMAPPump.inbox.getUriForMsg(hdr);
+  const identity = MailServices.accounts.getFirstIdentityForServer(
     IMAPPump.incomingServer
   );
-  identity.stationeryFolder =
+  identity.templatesFolderURI =
     IMAPPump.incomingServer.rootFolder.URI + "/Templates";
-  let templates = MailUtils.getOrCreateFolder(identity.stationeryFolder);
+  const templates = MailUtils.getOrCreateFolder(identity.templatesFolderURI);
   // Verify that Templates folder doesn't exist, and then create it.
   Assert.equal(templates.parent, null);
   templates.setFlag(Ci.nsMsgFolderFlags.Templates);
-  let listener = new PromiseTestUtils.PromiseUrlListener({
+  const listener = new PromiseTestUtils.PromiseUrlListener({
     OnStopRunningUrl() {
-      let messenger = Cc["@mozilla.org/messenger;1"].createInstance(
+      const messenger = Cc["@mozilla.org/messenger;1"].createInstance(
         Ci.nsIMessenger
       );
       messenger.saveAs(uri, false, identity, null);

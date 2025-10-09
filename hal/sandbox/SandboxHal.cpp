@@ -7,11 +7,13 @@
 #include "Hal.h"
 #include "HalLog.h"
 #include "mozilla/dom/ContentChild.h"
+#include "mozilla/dom/ContentParent.h"
 #include "mozilla/hal_sandbox/PHalChild.h"
 #include "mozilla/hal_sandbox/PHalParent.h"
 #include "mozilla/dom/BrowserParent.h"
 #include "mozilla/dom/BrowserChild.h"
 #include "mozilla/EnumeratedRange.h"
+#include "mozilla/HalWakeLock.h"
 #include "mozilla/Observer.h"
 #include "mozilla/Unused.h"
 #include "WindowIdentifier.h"
@@ -108,9 +110,8 @@ void DisableWakeLockNotifications() {
 }
 
 void ModifyWakeLock(const nsAString& aTopic, WakeLockControl aLockAdjust,
-                    WakeLockControl aHiddenAdjust, uint64_t aProcessID) {
-  MOZ_ASSERT(aProcessID != CONTENT_PROCESS_ID_UNKNOWN);
-  Hal()->SendModifyWakeLock(aTopic, aLockAdjust, aHiddenAdjust, aProcessID);
+                    WakeLockControl aHiddenAdjust) {
+  Hal()->SendModifyWakeLock(aTopic, aLockAdjust, aHiddenAdjust);
 }
 
 void GetWakeLockInfo(const nsAString& aTopic,
@@ -132,6 +133,10 @@ bool SetAlarm(int32_t aSeconds, int32_t aNanoseconds) {
 
 void SetProcessPriority(int aPid, ProcessPriority aPriority) {
   MOZ_CRASH("Only the main process may set processes' priorities.");
+}
+
+void PerformHapticFeedback(int32_t aType) {
+  Hal()->SendPerformHapticFeedback(aType);
 }
 
 class HalParent : public PHalParent,
@@ -267,12 +272,10 @@ class HalParent : public PHalParent,
 
   virtual mozilla::ipc::IPCResult RecvModifyWakeLock(
       const nsAString& aTopic, const WakeLockControl& aLockAdjust,
-      const WakeLockControl& aHiddenAdjust,
-      const uint64_t& aProcessID) override {
-    MOZ_ASSERT(aProcessID != CONTENT_PROCESS_ID_UNKNOWN);
-
+      const WakeLockControl& aHiddenAdjust) override {
     // We allow arbitrary content to use wake locks.
-    hal::ModifyWakeLock(aTopic, aLockAdjust, aHiddenAdjust, aProcessID);
+    uint64_t id = static_cast<ContentParent*>(Manager())->ChildID();
+    hal_impl::ModifyWakeLockWithChildID(aTopic, aLockAdjust, aHiddenAdjust, id);
     return IPC_OK();
   }
 
@@ -295,6 +298,12 @@ class HalParent : public PHalParent,
 
   void Notify(const WakeLockInformation& aWakeLockInfo) override {
     Unused << SendNotifyWakeLockChange(aWakeLockInfo);
+  }
+
+  virtual mozilla::ipc::IPCResult RecvPerformHapticFeedback(
+      const int32_t& aType) override {
+    hal::PerformHapticFeedback(aType);
+    return IPC_OK();
   }
 };
 

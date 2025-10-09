@@ -136,7 +136,7 @@ class nsSocketTransportService final : public nsPISocketTransportService,
   bool UpdatePortRemapPreference(nsACString const& aPortMappingPref);
 
  protected:
-  virtual ~nsSocketTransportService();
+  ~nsSocketTransportService();
 
  private:
   //-------------------------------------------------------------------------
@@ -321,12 +321,6 @@ class nsSocketTransportService final : public nsPISocketTransportService,
 
   void OnKeepaliveEnabledPrefChange();
   void NotifyKeepaliveEnabledPrefChange(SocketContext* sock);
-
-  // Socket thread only for dynamically adjusting max socket size
-#if defined(XP_WIN)
-  void ProbeMaxCount();
-#endif
-  bool mProbedMaxCount{false};
 
   // Report socket status to about:networking
   void AnalyzeConnection(nsTArray<SocketInfo>* data, SocketContext* context,

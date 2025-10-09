@@ -2,16 +2,286 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { FormAutoCompleteResult } from "resource://gre/modules/nsFormAutoCompleteResult.sys.mjs";
-
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
-  FormAutoCompleteResult: "resource://gre/modules/FormAutoComplete.sys.mjs",
-  FormHistoryClient: "resource://gre/modules/FormAutoComplete.sys.mjs",
-
+  FormHistory: "resource://gre/modules/FormHistory.sys.mjs",
   SearchSuggestionController:
-    "resource://gre/modules/SearchSuggestionController.sys.mjs",
+    "moz-src:///toolkit/components/search/SearchSuggestionController.sys.mjs",
 });
+
+/**
+ * A search history autocomplete result that implements nsIAutoCompleteResult.
+ * Based on FormHistoryAutoCompleteResult.
+ *
+ * @implements {nsIAutoCompleteResult}
+ */
+class SearchHistoryResult {
+  /**
+   * The name of the associated field in form history.
+   *
+   * @type {string}
+   */
+  #formFieldName = null;
+
+  /**
+   * An array of entries from form history.
+   *
+   * @type {object[]|null}
+   */
+  #formHistoryEntries = null;
+
+  //
+  // An array of entries that have come from a remote source and cannot
+  // be deleted. These are listed after the form history entries.
+  //
+  // @type {object[]}
+  // (using proper JSDoc comment here causes sphinx-js failures:
+  //  https://github.com/mozilla/sphinx-js/issues/242).
+  //
+  #remoteEntries = [];
+
+  QueryInterface = ChromeUtils.generateQI([
+    "nsIAutoCompleteResult",
+    "nsISupportsWeakReference",
+  ]);
+
+  /**
+   * Constructor
+   *
+   * @param {string} formFieldName
+   *   The name of the associated field in form history.
+   * @param {string} searchString
+   *   The search string used for the search.
+   * @param {object[]} formHistoryEntries
+   *   The entries received from form history.
+   */
+  constructor(formFieldName, searchString, formHistoryEntries) {
+    this.#formFieldName = formFieldName;
+    this.searchString = searchString;
+    this.#formHistoryEntries = formHistoryEntries;
+  }
+
+  /**
+   * Sets the remote entries and de-dupes them against the form history entries.
+   *
+   * @param {object[]} remoteEntries
+   *   The fixed entries to save.
+   */
+  set remoteEntries(remoteEntries) {
+    this.#remoteEntries = remoteEntries;
+    this.#removeDuplicateHistoryEntries();
+  }
+
+  /**
+   * The search string associated with this result.
+   *
+   * @type {string}
+   */
+  searchString = "";
+
+  /**
+   * An error description, always blank for these results.
+   *
+   * @type {string}
+   */
+  errorDescription = "";
+
+  /**
+   * Index of the default item that should be entered if none is selected.
+   *
+   * @returns {number}
+   */
+  get defaultIndex() {
+    return this.matchCount ? 0 : -1;
+  }
+
+  /**
+   * The result of the search.
+   *
+   * @returns {number}
+   */
+  get searchResult() {
+    return this.matchCount
+      ? Ci.nsIAutoCompleteResult.RESULT_SUCCESS
+      : Ci.nsIAutoCompleteResult.RESULT_NOMATCH;
+  }
+
+  /**
+   * The number of matches.
+   *
+   * @returns {number}
+   */
+  get matchCount() {
+    return this.#formHistoryEntries.length + this.#remoteEntries.length;
+  }
+
+  /**
+   * Gets the value of the result at the given index. This is the value that
+   * will be filled into the text field.
+   *
+   * @param {number} index
+   *   The index of the result.
+   * @returns {string}
+   */
+  getValueAt(index) {
+    const item = this.#getAt(index);
+    return item.text || item.value;
+  }
+
+  /**
+   * Gets the label at the given index. This is the string that is displayed
+   * in the autocomplete dropdown row. If there is additional text to be
+   * displayed, it should be stored within a field in the comment.
+   *
+   * @param {number} index
+   *   The index of the result.
+   * @returns {string}
+   */
+  getLabelAt(index) {
+    const item = this.#getAt(index);
+    return item.text || item.label || item.value;
+  }
+
+  /**
+   * Get the comment of the result at the given index. This is a serialized
+   * JSON object containing additional properties related to the index.
+   *
+   * @param {number} index
+   *   The index of the result.
+   * @returns {string}
+   */
+  getCommentAt(index) {
+    return this.#getAt(index).comment ?? "";
+  }
+
+  /**
+   * Gets the style hint for the result at the given index.
+   *
+   * @param {number} index
+   *   The index of the result.
+   * @returns {string}
+   */
+  getStyleAt(index) {
+    const itemStyle = this.#getAt(index).style;
+    if (itemStyle) {
+      return itemStyle;
+    }
+
+    if (index >= 0) {
+      if (index < this.#formHistoryEntries.length) {
+        return "fromhistory";
+      }
+
+      if (index > 0 && index == this.#formHistoryEntries.length) {
+        return "datalist-first";
+      }
+    }
+    return "";
+  }
+
+  /**
+   * Gets the image of the result at the given index.
+   *
+   * @param {number} _index
+   *   The index of the result.
+   * @returns {string}
+   */
+  getImageAt(_index) {
+    return "";
+  }
+
+  /**
+   * Gets the final value that should be completed when the user confirms
+   * the match at the given index.
+   *
+   * @param {number} index
+   *   The index of the result.
+   * @returns {string}
+   */
+  getFinalCompleteValueAt(index) {
+    return this.getValueAt(index);
+  }
+
+  /**
+   * True if the value at the given index is removable.
+   *
+   * @param {number} index
+   *   The index of the result.
+   * @returns {boolean}
+   */
+  isRemovableAt(index) {
+    return this.#isFormHistoryEntry(index);
+  }
+
+  /**
+   * Remove the value at the given index from the autocomplete results.
+   *
+   * @param {number} index
+   *   The index of the result.
+   */
+  removeValueAt(index) {
+    if (this.isRemovableAt(index)) {
+      const [removedEntry] = this.#formHistoryEntries.splice(index, 1);
+      lazy.FormHistory.update({
+        op: "remove",
+        fieldname: this.#formFieldName,
+        value: removedEntry.text,
+        guid: removedEntry.guid,
+      });
+    }
+  }
+
+  /**
+   * Returns the entry at the given index taking into account both the
+   * form history entries and the remote entries.
+   *
+   * @param {number} index
+   *   The index of the entry to find.
+   * @returns {object}
+   *   The object at the given index.
+   * @throws {Components.Exception}
+   *   Throws if the index is out of range.
+   */
+  #getAt(index) {
+    for (const group of [this.#formHistoryEntries, this.#remoteEntries]) {
+      if (index < group.length) {
+        return group[index];
+      }
+      index -= group.length;
+    }
+
+    throw Components.Exception(
+      "Index out of range.",
+      Cr.NS_ERROR_ILLEGAL_VALUE
+    );
+  }
+
+  /**
+   * Returns true if the value at the given index is one of the form history
+   * entries.
+   *
+   * @param {number} index
+   *   The index of the result.
+   * @returns {boolean}
+   */
+
+  #isFormHistoryEntry(index) {
+    return index >= 0 && index < this.#formHistoryEntries.length;
+  }
+
+  /**
+   * Remove items from history list that are already present in fixed list.
+   * We do this rather than the opposite ( i.e. remove items from fixed list)
+   * to reflect the order that is specified in the fixed list.
+   */
+  #removeDuplicateHistoryEntries() {
+    this.#formHistoryEntries = this.#formHistoryEntries.filter(entry =>
+      this.#remoteEntries.every(
+        fixed => entry.text != (fixed.label || fixed.value)
+      )
+    );
+  }
+}
 
 /**
  * SuggestAutoComplete is a base class that implements nsIAutoCompleteSearch
@@ -20,7 +290,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
  * unique XPCOM Service for every search provider, even if the logic for two
  * providers is identical.
  *
- * @class
+ * @implements {nsIAutoCompleteSearch}
  */
 class SuggestAutoComplete {
   constructor() {
@@ -31,33 +301,12 @@ class SuggestAutoComplete {
   /**
    * Notifies the front end of new results.
    *
-   * @param {string} searchString
-   *   The user's query string.
-   * @param {Array} results
-   *   An array of results to the search.
-   * @param {object} formHistoryResult
+   * @param {nsIAutoCompleteResult} result
    *   Any previous form history result.
    * @private
    */
-  onResultsReady(searchString, results, formHistoryResult) {
+  onResultsReady(result) {
     if (this.#listener) {
-      let result = new FormAutoCompleteResult(
-        searchString,
-        Ci.nsIAutoCompleteResult.RESULT_SUCCESS,
-        0,
-        "",
-        results.map(result => ({
-          value: result,
-          label: result,
-          // We supply the comments field so that autocomplete does not kick
-          // in the unescaping of the results for display which it uses for
-          // urls.
-          comment: result,
-          removable: true,
-        })),
-        formHistoryResult
-      );
-
       this.#listener.onSearchResult(this, result);
 
       // Null out listener to make sure we don't notify it twice
@@ -78,7 +327,7 @@ class SuggestAutoComplete {
    * @param {object} previousResult
    *   unused, a client-cached store of the previous generated resultset
    *   for faster searching.
-   * @param {object} listener
+   * @param {nsIAutoCompleteObserver} listener
    *   object implementing nsIAutoCompleteObserver which we notify when
    *   results are ready.
    */
@@ -118,7 +367,8 @@ class SuggestAutoComplete {
       })
       .catch(result =>
         console.error(
-          "Could not initialize search service, bailing out: " + result
+          "Could not initialize search service, bailing out:",
+          result
         )
       );
   }
@@ -128,6 +378,8 @@ class SuggestAutoComplete {
    * implementation.
    */
   stopSearch() {
+    // Prevent reporting results of stopped search
+    this.#listener = null;
     this.#suggestionController.stop();
   }
 
@@ -147,7 +399,7 @@ class SuggestAutoComplete {
    * The object implementing nsIAutoCompleteObserver that we notify when
    * we have found results.
    *
-   *  @type {object|null}
+   *  @type {nsIAutoCompleteObserver|null}
    */
   #listener = null;
 
@@ -158,7 +410,7 @@ class SuggestAutoComplete {
    *   The user's query string.
    * @param {string} searchParam
    *   unused
-   * @param {object} listener
+   * @param {nsIAutoCompleteObserver} listener
    *   object implementing nsIAutoCompleteObserver which we notify when
    *   results are ready.
    * @param {boolean} privacyMode
@@ -172,35 +424,42 @@ class SuggestAutoComplete {
       Services.search.defaultEngine
     );
 
-    // If form history has results, add them to the list.
-    let finalResults = results.local.map(r => r.value);
-
-    // If there are remote matches, add them.
-    if (results.remote.length) {
-      // now put the history results above the suggestions
-      // We shouldn't show tail suggestions in their full-text form.
-      let nonTailEntries = results.remote.filter(
-        e => !e.matchPrefix && !e.tail
-      );
-      finalResults = finalResults.concat(nonTailEntries.map(e => e.value));
-    }
-
-    // Bug 1822297: This re-uses the wrappers from Satchel, to avoid re-writing
-    // our own nsIAutoCompleteSimpleResult implementation for now. However,
-    // we should do that at some stage to remove the dependency on satchel.
-    let client = new lazy.FormHistoryClient({
-      formField: null,
-      inputName: this.#suggestionController.formHistoryParam,
-    });
-    let formHistoryResult = new lazy.FormAutoCompleteResult(
-      client,
-      results.formHistoryResults,
+    let formHistoryEntries = (results?.formHistoryResults ?? []).map(
+      historyEntry => ({
+        // We supply the comments field so that autocomplete does not kick
+        // in the unescaping of the results for display which it uses for
+        // urls.
+        comment: historyEntry.text,
+        ...historyEntry,
+      })
+    );
+    let autoCompleteResult = new SearchHistoryResult(
       this.#suggestionController.formHistoryParam,
-      searchString
+      searchString,
+      formHistoryEntries
     );
 
+    if (results?.remote?.length) {
+      // We shouldn't show tail suggestions in their full-text form.
+      // Suggestions are shown after form history results.
+      autoCompleteResult.remoteEntries = results.remote.reduce((acc, item) => {
+        if (!item.matchPrefix && !item.tail) {
+          acc.push({
+            value: item.value,
+            label: item.value,
+            // We supply the comments field so that autocomplete does not kick
+            // in the unescaping of the results for display which it uses for
+            // urls.
+            comment: item.value,
+          });
+        }
+
+        return acc;
+      }, []);
+    }
+
     // Notify the FE of our new results
-    this.onResultsReady(results.term, finalResults, formHistoryResult);
+    this.onResultsReady(autoCompleteResult);
   }
 
   QueryInterface = ChromeUtils.generateQI([

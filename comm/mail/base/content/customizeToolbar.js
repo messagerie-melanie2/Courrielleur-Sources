@@ -13,6 +13,13 @@ var { AppConstants } = ChromeUtils.importESModule(
   "resource://gre/modules/AppConstants.sys.mjs"
 );
 
+window.addEventListener("load", () => {
+  overlayOnLoad();
+});
+window.addEventListener("unload", () => {
+  onUnload();
+});
+
 function onLoad() {
   if ("arguments" in window && window.arguments[0]) {
     InitWithToolbox(window.arguments[0]);
@@ -43,6 +50,72 @@ function InitWithToolbox(aToolbox) {
   }
 
   initDialog();
+}
+
+function overlayOnLoad() {
+  const restoreButton = document
+    .getElementById("main-box")
+    .querySelector("[oncommand*='restore']");
+  restoreButton.setAttribute("oncommand", "overlayRestoreDefaultSet();");
+
+  // Add the textBesideIcon menu item if it's not already there.
+  let menuitem = document.getElementById("textbesideiconItem");
+  if (!menuitem) {
+    const menulist = document.getElementById("modelist");
+    const label = document
+      .getElementById("iconsBesideText.label")
+      .getAttribute("value");
+    menuitem = menulist.appendItem(label, "textbesideicon");
+    menuitem.id = "textbesideiconItem";
+  }
+
+  // If they have a mode of full and a labelalign of true,
+  // then pretend the mode is textbesideicon when populating the popup.
+  let toolbox = null;
+  if ("arguments" in window && window.arguments[0]) {
+    toolbox = window.arguments[0];
+  } else if (window.frameElement && "toolbox" in window.frameElement) {
+    toolbox = window.frameElement.toolbox;
+  }
+
+  const toolbarWindow = document.getElementById("CustomizeToolbarWindow");
+  toolbarWindow.setAttribute("toolboxId", toolbox.id);
+  toolbox.setAttribute("doCustomization", "true");
+
+  const mode = toolbox.getAttribute("mode");
+  const align = toolbox.getAttribute("labelalign");
+  if (mode == "full" && align == "end") {
+    toolbox.setAttribute("mode", "textbesideicon");
+  }
+
+  onLoad();
+  overlayRepositionDialog();
+
+  // Re-set and re-persist the mode, if we changed it above.
+  if (mode == "full" && align == "end") {
+    toolbox.setAttribute("mode", mode);
+    Services.xulStore.persist(toolbox, "mode");
+  }
+}
+
+function overlayRepositionDialog() {
+  // Position the dialog so it is fully visible on the screen
+  // (if possible)
+
+  // Seems to be necessary to get the correct dialog height/width
+  window.sizeToContent();
+  var wH = window.outerHeight;
+  var wW = window.outerWidth;
+  var sH = window.screen.height;
+  var sW = window.screen.width;
+  var sX = window.screenX;
+  var sY = window.screenY;
+  var sAL = window.screen.availLeft;
+  var sAT = window.screen.availTop;
+
+  var nX = Math.max(Math.min(sX, sW - wW), sAL);
+  var nY = Math.max(Math.min(sY, sH - wH), sAT);
+  window.moveTo(nX, nY);
 }
 
 function onClose() {
@@ -178,7 +251,7 @@ function persistCurrentSets() {
  */
 function wrapToolbarItems() {
   forEachCustomizableToolbar(function (toolbar) {
-    for (let item of toolbar.children) {
+    for (const item of toolbar.children) {
       if (AppConstants.platform == "macosx") {
         if (
           item.firstElementChild &&
@@ -188,7 +261,7 @@ function wrapToolbarItems() {
         }
       }
       if (isToolbarItem(item)) {
-        let wrapper = wrapToolbarItem(item);
+        const wrapper = wrapToolbarItem(item);
         cleanupItemForToolbar(item, wrapper);
       }
     }
@@ -209,12 +282,12 @@ function getRootElements() {
  * Unwraps all items in all customizable toolbars in a toolbox.
  */
 function unwrapToolbarItems() {
-  let elts = getRootElements();
+  const elts = getRootElements();
   for (let i = 0; i < elts.length; i++) {
-    let paletteItems = elts[i].getElementsByTagName("toolbarpaletteitem");
+    const paletteItems = elts[i].getElementsByTagName("toolbarpaletteitem");
     let paletteItem;
     while ((paletteItem = paletteItems.item(0)) != null) {
-      let toolbarItem = paletteItem.firstElementChild;
+      const toolbarItem = paletteItem.firstElementChild;
       restoreItemForToolbar(toolbarItem, paletteItem);
       paletteItem.parentNode.replaceChild(toolbarItem, paletteItem);
     }
@@ -226,7 +299,7 @@ function unwrapToolbarItems() {
  * it from receiving UI events.
  */
 function createWrapper(aId, aDocument) {
-  let wrapper = aDocument.createXULElement("toolbarpaletteitem");
+  const wrapper = aDocument.createXULElement("toolbarpaletteitem");
 
   wrapper.id = "wrapper-" + aId;
   return wrapper;
@@ -402,16 +475,16 @@ function restoreItemForToolbar(aItem, aWrapper) {
   }
 
   if (aWrapper.hasAttribute("itemcollapsed")) {
-    let collapsed = aWrapper.getAttribute("itemcollapsed");
+    const collapsed = aWrapper.getAttribute("itemcollapsed");
     aItem.setAttribute("collapsed", collapsed);
   }
 
   if (aWrapper.hasAttribute("itemcommand")) {
-    let commandID = aWrapper.getAttribute("itemcommand");
+    const commandID = aWrapper.getAttribute("itemcommand");
     aItem.setAttribute("command", commandID);
 
     // XXX Bug 309953 - toolbarbuttons aren't in sync with their commands after customizing
-    let command = gToolboxDocument.getElementById(commandID);
+    const command = gToolboxDocument.getElementById(commandID);
     if (command && command.hasAttribute("disabled")) {
       aItem.setAttribute("disabled", command.getAttribute("disabled"));
     }
@@ -499,7 +572,7 @@ function updateIconSize(aSize) {
 }
 
 function updateTitlebar() {
-  let titlebarCheckbox = document.getElementById("showTitlebar");
+  const titlebarCheckbox = document.getElementById("showTitlebar");
   Services.prefs.setBoolPref(
     "mail.tabs.drawInTitlebar",
     !titlebarCheckbox.checked
@@ -706,7 +779,7 @@ function onToolbarDrop(aEvent) {
     // The wrapper has been dragged from the toolbar.
     // Get the wrapper from the toolbar document and make sure that
     // it isn't being dropped on itself.
-    let wrapper = gToolboxDocument.getElementById("wrapper-" + draggedItemId);
+    const wrapper = gToolboxDocument.getElementById("wrapper-" + draggedItemId);
     if (wrapper == gCurrentDragOverItem) {
       return;
     }
@@ -737,7 +810,7 @@ function onToolbarDrop(aEvent) {
     // The item has been dragged from the palette
 
     // Create a new wrapper for the item. We don't know the id yet.
-    let wrapper = createWrapper("", gToolboxDocument);
+    const wrapper = createWrapper("", gToolboxDocument);
 
     // Ask the toolbar to clone the item's template, place it inside the wrapper, and insert it in the toolbar.
     var newItem = toolbar.insertItem(
@@ -825,12 +898,12 @@ function isUnwantedDragEvent(aEvent) {
 
   // Discard drag events that originated from a separate window to
   // prevent content->chrome privilege escalations.
-  let mozSourceNode = aEvent.dataTransfer.mozSourceNode;
+  const mozSourceNode = aEvent.dataTransfer.mozSourceNode;
   // mozSourceNode is null in the dragStart event handler or if
   // the drag event originated in an external application.
   if (!mozSourceNode) {
     return true;
   }
-  let sourceWindow = mozSourceNode.ownerGlobal;
+  const sourceWindow = mozSourceNode.ownerGlobal;
   return sourceWindow != window && sourceWindow != gToolboxDocument.defaultView;
 }

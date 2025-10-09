@@ -2,25 +2,40 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-add_task(async () => {
-  let account = createAccount();
-  addIdentity(account);
-  let rootFolder = account.incomingServer.rootFolder;
+"use strict";
 
-  let files = {
+add_task(async () => {
+  const account = createAccount();
+  addIdentity(account);
+  const rootFolder = account.incomingServer.rootFolder;
+
+  const files = {
     "background.js": async () => {
+      const WHITE = [255, 255, 255, 255];
+      const GREY = [127, 127, 127, 255];
+      const GREEN = [0, 128, 0, 255];
+      const BLUE = [0, 0, 255, 255];
+      const RED = [217, 0, 0, 255];
+
+      function compare(expected, actual, description) {
+        if (Array.isArray(expected)) {
+          window.assertDeepEqual(expected, actual, description);
+        } else {
+          browser.test.assertEq(expected, actual, description);
+        }
+      }
+
       async function checkProperty(property, expectedDefault, ...expected) {
         browser.test.log(
           `${property}: ${expectedDefault}, ${expected.join(", ")}`
         );
-
-        browser.test.assertEq(
+        compare(
           expectedDefault,
           await browser.browserAction[property]({}),
           `Default value for ${property} should be correct`
         );
         for (let i = 0; i < 3; i++) {
-          browser.test.assertEq(
+          compare(
             expected[i],
             await browser.browserAction[property]({ tabId: tabIDs[i] }),
             `Specific value for ${property} of tab #${i} should be correct`
@@ -32,9 +47,9 @@ add_task(async () => {
         await window.sendMessage(whichTest, property, expected);
       }
 
-      let tabs = await browser.mailTabs.query({});
+      const tabs = await browser.mailTabs.query({});
       browser.test.assertEq(3, tabs.length);
-      let tabIDs = tabs.map(t => t.id);
+      const tabIDs = tabs.map(t => t.id);
 
       let whichTest = "checkProperty";
 
@@ -59,6 +74,135 @@ add_task(async () => {
       await browser.browserAction.enable();
       await checkProperty("isEnabled", true, false, true, true);
       await checkRealState("enabled", false, true, true);
+
+      // Test badge text.
+      await checkProperty("getBadgeText", "", "", "", "");
+      await checkRealState("badgeText", null, null, null);
+      await browser.browserAction.setBadgeText({ text: "default" });
+      await checkProperty(
+        "getBadgeText",
+        "default",
+        "default",
+        "default",
+        "default"
+      );
+      await checkRealState("badgeText", "default", "default", "default");
+      await browser.browserAction.setBadgeText({
+        text: "tab0",
+        tabId: tabIDs[0],
+      });
+      await checkProperty(
+        "getBadgeText",
+        "default",
+        "tab0",
+        "default",
+        "default"
+      );
+      await checkRealState("badgeText", "tab0", "default", "default");
+      await browser.browserAction.setBadgeText({ text: null });
+      await checkProperty("getBadgeText", "", "tab0", "", "");
+      await checkRealState("badgeText", "tab0", null, null);
+      await browser.browserAction.setBadgeText({
+        text: "tab1",
+        tabId: tabIDs[1],
+      });
+      await checkProperty("getBadgeText", "", "tab0", "tab1", "");
+      await checkRealState("badgeText", "tab0", "tab1", null);
+      await browser.browserAction.setBadgeText({ text: "new" });
+      await checkProperty("getBadgeText", "new", "tab0", "tab1", "new");
+      await checkRealState("badgeText", "tab0", "tab1", "new");
+      await browser.browserAction.setBadgeText({
+        text: null,
+        tabId: tabIDs[0],
+      });
+      await checkProperty("getBadgeText", "new", "new", "tab1", "new");
+      await checkRealState("badgeText", "new", "tab1", "new");
+      await browser.browserAction.setBadgeText({
+        text: null,
+        tabId: tabIDs[1],
+      });
+      await checkProperty("getBadgeText", "new", "new", "new", "new");
+      await checkRealState("badgeText", "new", "new", "new");
+
+      // Test badge text color.
+      await checkProperty("getBadgeTextColor", WHITE, WHITE, WHITE, WHITE);
+      await checkRealState("badgeTextColor", null, null, null);
+      await browser.browserAction.setBadgeTextColor({ color: GREY });
+      await checkProperty("getBadgeTextColor", GREY, GREY, GREY, GREY);
+      await checkRealState("badgeTextColor", GREY, GREY, GREY);
+      await browser.browserAction.setBadgeTextColor({
+        color: GREEN,
+        tabId: tabIDs[0],
+      });
+      await checkProperty("getBadgeTextColor", GREY, GREEN, GREY, GREY);
+      await checkRealState("badgeTextColor", GREEN, GREY, GREY);
+      await browser.browserAction.setBadgeTextColor({ color: null });
+      await checkProperty("getBadgeTextColor", WHITE, GREEN, WHITE, WHITE);
+      await checkRealState("badgeTextColor", GREEN, null, null);
+      await browser.browserAction.setBadgeTextColor({
+        color: BLUE,
+        tabId: tabIDs[1],
+      });
+      await checkProperty("getBadgeTextColor", WHITE, GREEN, BLUE, WHITE);
+      await checkRealState("badgeTextColor", GREEN, BLUE, null);
+      await browser.browserAction.setBadgeTextColor({ color: GREY });
+      await checkProperty("getBadgeTextColor", GREY, GREEN, BLUE, GREY);
+      await checkRealState("badgeTextColor", GREEN, BLUE, GREY);
+      await browser.browserAction.setBadgeTextColor({
+        color: null,
+        tabId: tabIDs[0],
+      });
+      await checkProperty("getBadgeTextColor", GREY, GREY, BLUE, GREY);
+      await checkRealState("badgeTextColor", GREY, BLUE, GREY);
+      await browser.browserAction.setBadgeTextColor({
+        color: null,
+        tabId: tabIDs[1],
+      });
+      await checkProperty("getBadgeTextColor", GREY, GREY, GREY, GREY);
+      await checkRealState("badgeTextColor", GREY, GREY, GREY);
+      await browser.browserAction.setBadgeTextColor({ color: null });
+      await checkProperty("getBadgeTextColor", WHITE, WHITE, WHITE, WHITE);
+      await checkRealState("badgeTextColor", null, null, null);
+
+      // Test badge background color.
+      await checkProperty("getBadgeBackgroundColor", RED, RED, RED, RED);
+      await checkRealState("badgeBackgroundColor", null, null, null);
+      await browser.browserAction.setBadgeBackgroundColor({ color: GREY });
+      await checkProperty("getBadgeBackgroundColor", GREY, GREY, GREY, GREY);
+      await checkRealState("badgeBackgroundColor", GREY, GREY, GREY);
+      await browser.browserAction.setBadgeBackgroundColor({
+        color: GREEN,
+        tabId: tabIDs[0],
+      });
+      await checkProperty("getBadgeBackgroundColor", GREY, GREEN, GREY, GREY);
+      await checkRealState("badgeBackgroundColor", GREEN, GREY, GREY);
+      await browser.browserAction.setBadgeBackgroundColor({ color: null });
+      await checkProperty("getBadgeBackgroundColor", RED, GREEN, RED, RED);
+      await checkRealState("badgeBackgroundColor", GREEN, null, null);
+      await browser.browserAction.setBadgeBackgroundColor({
+        color: BLUE,
+        tabId: tabIDs[1],
+      });
+      await checkProperty("getBadgeBackgroundColor", RED, GREEN, BLUE, RED);
+      await checkRealState("badgeBackgroundColor", GREEN, BLUE, null);
+      await browser.browserAction.setBadgeBackgroundColor({ color: GREY });
+      await checkProperty("getBadgeBackgroundColor", GREY, GREEN, BLUE, GREY);
+      await checkRealState("badgeBackgroundColor", GREEN, BLUE, GREY);
+      await browser.browserAction.setBadgeBackgroundColor({
+        color: null,
+        tabId: tabIDs[0],
+      });
+      await checkProperty("getBadgeBackgroundColor", GREY, GREY, BLUE, GREY);
+      await checkRealState("badgeBackgroundColor", GREY, BLUE, GREY);
+      await browser.browserAction.setBadgeBackgroundColor({
+        color: null,
+        tabId: tabIDs[1],
+      });
+      await checkProperty("getBadgeBackgroundColor", GREY, GREY, GREY, GREY);
+      await checkRealState("badgeBackgroundColor", GREY, GREY, GREY);
+      await browser.browserAction.setBadgeBackgroundColor({ color: null });
+      await checkProperty("getBadgeBackgroundColor", RED, RED, RED, RED);
+      await checkRealState("badgeBackgroundColor", null, null, null);
 
       // Test title property (since a label has not been set, this sets the
       // tooltip and the actual label of the button).
@@ -166,6 +310,135 @@ add_task(async () => {
       await checkProperty("isEnabled", true, false, true, true);
       await checkRealState("enabled", false, true, true);
 
+      // Test badge text.
+      await checkProperty("getBadgeText", "new", "new", "new", "new");
+      await checkRealState("badgeText", "new", "new", "new");
+      await browser.browserAction.setBadgeText({ text: "default" });
+      await checkProperty(
+        "getBadgeText",
+        "default",
+        "default",
+        "default",
+        "default"
+      );
+      await checkRealState("badgeText", "default", "default", "default");
+      await browser.browserAction.setBadgeText({
+        text: "tab0",
+        tabId: tabIDs[0],
+      });
+      await checkProperty(
+        "getBadgeText",
+        "default",
+        "tab0",
+        "default",
+        "default"
+      );
+      await checkRealState("badgeText", "tab0", "default", "default");
+      await browser.browserAction.setBadgeText({ text: null });
+      await checkProperty("getBadgeText", "", "tab0", "", "");
+      await checkRealState("badgeText", "tab0", null, null);
+      await browser.browserAction.setBadgeText({
+        text: "tab1",
+        tabId: tabIDs[1],
+      });
+      await checkProperty("getBadgeText", "", "tab0", "tab1", "");
+      await checkRealState("badgeText", "tab0", "tab1", null);
+      await browser.browserAction.setBadgeText({ text: "new" });
+      await checkProperty("getBadgeText", "new", "tab0", "tab1", "new");
+      await checkRealState("badgeText", "tab0", "tab1", "new");
+      await browser.browserAction.setBadgeText({
+        text: null,
+        tabId: tabIDs[0],
+      });
+      await checkProperty("getBadgeText", "new", "new", "tab1", "new");
+      await checkRealState("badgeText", "new", "tab1", "new");
+      await browser.browserAction.setBadgeText({
+        text: null,
+        tabId: tabIDs[1],
+      });
+      await checkProperty("getBadgeText", "new", "new", "new", "new");
+      await checkRealState("badgeText", "new", "new", "new");
+
+      // Test badge text color.
+      await checkProperty("getBadgeTextColor", WHITE, WHITE, WHITE, WHITE);
+      await checkRealState("badgeTextColor", null, null, null);
+      await browser.browserAction.setBadgeTextColor({ color: GREY });
+      await checkProperty("getBadgeTextColor", GREY, GREY, GREY, GREY);
+      await checkRealState("badgeTextColor", GREY, GREY, GREY);
+      await browser.browserAction.setBadgeTextColor({
+        color: GREEN,
+        tabId: tabIDs[0],
+      });
+      await checkProperty("getBadgeTextColor", GREY, GREEN, GREY, GREY);
+      await checkRealState("badgeTextColor", GREEN, GREY, GREY);
+      await browser.browserAction.setBadgeTextColor({ color: null });
+      await checkProperty("getBadgeTextColor", WHITE, GREEN, WHITE, WHITE);
+      await checkRealState("badgeTextColor", GREEN, null, null);
+      await browser.browserAction.setBadgeTextColor({
+        color: BLUE,
+        tabId: tabIDs[1],
+      });
+      await checkProperty("getBadgeTextColor", WHITE, GREEN, BLUE, WHITE);
+      await checkRealState("badgeTextColor", GREEN, BLUE, null);
+      await browser.browserAction.setBadgeTextColor({ color: GREY });
+      await checkProperty("getBadgeTextColor", GREY, GREEN, BLUE, GREY);
+      await checkRealState("badgeTextColor", GREEN, BLUE, GREY);
+      await browser.browserAction.setBadgeTextColor({
+        color: null,
+        tabId: tabIDs[0],
+      });
+      await checkProperty("getBadgeTextColor", GREY, GREY, BLUE, GREY);
+      await checkRealState("badgeTextColor", GREY, BLUE, GREY);
+      await browser.browserAction.setBadgeTextColor({
+        color: null,
+        tabId: tabIDs[1],
+      });
+      await checkProperty("getBadgeTextColor", GREY, GREY, GREY, GREY);
+      await checkRealState("badgeTextColor", GREY, GREY, GREY);
+      await browser.browserAction.setBadgeTextColor({ color: null });
+      await checkProperty("getBadgeTextColor", WHITE, WHITE, WHITE, WHITE);
+      await checkRealState("badgeTextColor", null, null, null);
+
+      // Test badge background color.
+      await checkProperty("getBadgeBackgroundColor", RED, RED, RED, RED);
+      await checkRealState("badgeBackgroundColor", null, null, null);
+      await browser.browserAction.setBadgeBackgroundColor({ color: GREY });
+      await checkProperty("getBadgeBackgroundColor", GREY, GREY, GREY, GREY);
+      await checkRealState("badgeBackgroundColor", GREY, GREY, GREY);
+      await browser.browserAction.setBadgeBackgroundColor({
+        color: GREEN,
+        tabId: tabIDs[0],
+      });
+      await checkProperty("getBadgeBackgroundColor", GREY, GREEN, GREY, GREY);
+      await checkRealState("badgeBackgroundColor", GREEN, GREY, GREY);
+      await browser.browserAction.setBadgeBackgroundColor({ color: null });
+      await checkProperty("getBadgeBackgroundColor", RED, GREEN, RED, RED);
+      await checkRealState("badgeBackgroundColor", GREEN, null, null);
+      await browser.browserAction.setBadgeBackgroundColor({
+        color: BLUE,
+        tabId: tabIDs[1],
+      });
+      await checkProperty("getBadgeBackgroundColor", RED, GREEN, BLUE, RED);
+      await checkRealState("badgeBackgroundColor", GREEN, BLUE, null);
+      await browser.browserAction.setBadgeBackgroundColor({ color: GREY });
+      await checkProperty("getBadgeBackgroundColor", GREY, GREEN, BLUE, GREY);
+      await checkRealState("badgeBackgroundColor", GREEN, BLUE, GREY);
+      await browser.browserAction.setBadgeBackgroundColor({
+        color: null,
+        tabId: tabIDs[0],
+      });
+      await checkProperty("getBadgeBackgroundColor", GREY, GREY, BLUE, GREY);
+      await checkRealState("badgeBackgroundColor", GREY, BLUE, GREY);
+      await browser.browserAction.setBadgeBackgroundColor({
+        color: null,
+        tabId: tabIDs[1],
+      });
+      await checkProperty("getBadgeBackgroundColor", GREY, GREY, GREY, GREY);
+      await checkRealState("badgeBackgroundColor", GREY, GREY, GREY);
+      await browser.browserAction.setBadgeBackgroundColor({ color: null });
+      await checkProperty("getBadgeBackgroundColor", RED, RED, RED, RED);
+      await checkRealState("badgeBackgroundColor", null, null, null);
+
       // Test title property (since a label has not been set, this sets the
       // tooltip and the actual label of the button).
       await checkProperty(
@@ -247,7 +520,7 @@ add_task(async () => {
     },
     "utils.js": await getUtilsJS(),
   };
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files,
     useAddonManager: "temporary",
     manifest: {
@@ -263,7 +536,7 @@ add_task(async () => {
     },
   });
 
-  let tabmail = document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   tabmail.openTab("mail3PaneTab", {
     folderURI: rootFolder.URI,
     background: false,
@@ -273,13 +546,13 @@ add_task(async () => {
     background: false,
   });
 
-  let mailTabs = tabmail.tabInfo;
+  const mailTabs = tabmail.tabInfo;
   is(mailTabs.length, 3, "Expect 3 tabs");
   tabmail.switchToTab(mailTabs[0]);
 
   await extension.startup();
 
-  let button = document.querySelector(
+  const button = document.querySelector(
     `.unified-toolbar [extension="browser_action_properties@mochi.test"]`
   );
 
@@ -308,6 +581,47 @@ add_task(async () => {
             is(button.getAttribute("label"), expected[i], `button ${i} label`);
           }
           break;
+        case "badgeText":
+          is(button.badge, expected[i], `button ${i} badge text`);
+          break;
+        case "badgeTextColor":
+          if (!expected[i]) {
+            is(
+              button.style.getPropertyValue(
+                "--toolbar-button-badge-text-color"
+              ),
+              "",
+              `button ${i} badge text color`
+            );
+          } else {
+            is(
+              button.style.getPropertyValue(
+                "--toolbar-button-badge-text-color"
+              ),
+              `rgba(${expected[i][0]}, ${expected[i][1]}, ${expected[i][2]}, ${
+                expected[i][3] / 255
+              })`,
+              `button ${i} badge text color`
+            );
+          }
+          break;
+        case "badgeBackgroundColor":
+          if (!expected[i]) {
+            is(
+              button.style.getPropertyValue("--toolbar-button-badge-bg-color"),
+              "",
+              `button ${i} badge background color`
+            );
+          } else {
+            is(
+              button.style.getPropertyValue("--toolbar-button-badge-bg-color"),
+              `rgba(${expected[i][0]}, ${expected[i][1]}, ${expected[i][2]}, ${
+                expected[i][3] / 255
+              })`,
+              `button ${i} badge background color`
+            );
+          }
+          break;
       }
     }
 
@@ -332,6 +646,43 @@ add_task(async () => {
           );
         } else {
           is(button.getAttribute("label"), expected[0], `button 0 label`);
+        }
+        break;
+      case "badgeText":
+        is(button.badge, expected[0], `button 0 badge text`);
+        break;
+      case "badgeTextColor":
+        if (!expected[0]) {
+          is(
+            button.style.getPropertyValue("--toolbar-button-badge-text-color"),
+            "",
+            `button 0 badge text color`
+          );
+        } else {
+          is(
+            button.style.getPropertyValue("--toolbar-button-badge-text-color"),
+            `rgba(${expected[0][0]}, ${expected[0][1]}, ${expected[0][2]}, ${
+              expected[0][3] / 255
+            })`,
+            `button 0 badge text color`
+          );
+        }
+        break;
+      case "badgeBackgroundColor":
+        if (!expected[0]) {
+          is(
+            button.style.getPropertyValue("--toolbar-button-badge-bg-color"),
+            "",
+            `button 0 badge background color`
+          );
+        } else {
+          is(
+            button.style.getPropertyValue("--toolbar-button-badge-bg-color"),
+            `rgba(${expected[0][0]}, ${expected[0][1]}, ${expected[0][2]}, ${
+              expected[0][3] / 255
+            })`,
+            `button 0 badge background color`
+          );
         }
         break;
     }

@@ -1,5 +1,6 @@
-use crate::arena::{Arena, Handle, UniqueArena};
-use std::{fmt::Display, num::NonZeroU32, ops};
+use core::{fmt::Display, num::NonZeroU32, ops};
+
+use crate::arena::{Handle, HandleVec};
 
 /// A newtype struct where its only valid values are powers of 2
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -50,7 +51,7 @@ impl Alignment {
 }
 
 impl Display for Alignment {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.0.get().fmt(f)
     }
 }
@@ -108,17 +109,15 @@ impl TypeLayout {
 ///
 /// [WGSL §4.3.7, "Memory Layout"](https://gpuweb.github.io/gpuweb/wgsl/#memory-layouts)
 #[derive(Debug, Default)]
-#[cfg_attr(feature = "serialize", derive(serde::Serialize))]
-#[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
 pub struct Layouter {
-    /// Layouts for types in an arena, indexed by `Handle` index.
-    layouts: Vec<TypeLayout>,
+    /// Layouts for types in an arena.
+    layouts: HandleVec<crate::Type, TypeLayout>,
 }
 
 impl ops::Index<Handle<crate::Type>> for Layouter {
     type Output = TypeLayout;
     fn index(&self, handle: Handle<crate::Type>) -> &TypeLayout {
-        &self.layouts[handle.index()]
+        &self.layouts[handle]
     }
 }
 
@@ -151,10 +150,10 @@ impl Layouter {
         self.layouts.clear();
     }
 
-    /// Extend this `Layouter` with layouts for any new entries in `types`.
+    /// Extend this `Layouter` with layouts for any new entries in `gctx.types`.
     ///
-    /// Ensure that every type in `types` has a corresponding [TypeLayout] in
-    /// [`self.layouts`].
+    /// Ensure that every type in `gctx.types` has a corresponding [TypeLayout]
+    /// in [`self.layouts`].
     ///
     /// Some front ends need to be able to compute layouts for existing types
     /// while module construction is still in progress and new types are still
@@ -165,27 +164,22 @@ impl Layouter {
     /// constant arenas, and then assume that layouts are available for all
     /// types.
     #[allow(clippy::or_fun_call)]
-    pub fn update(
-        &mut self,
-        types: &UniqueArena<crate::Type>,
-        constants: &Arena<crate::Constant>,
-    ) -> Result<(), LayoutError> {
+    pub fn update(&mut self, gctx: super::GlobalCtx) -> Result<(), LayoutError> {
         use crate::TypeInner as Ti;
 
-        for (ty_handle, ty) in types.iter().skip(self.layouts.len()) {
-            let size = ty.inner.size(constants);
+        for (ty_handle, ty) in gctx.types.iter().skip(self.layouts.len()) {
+            let size = ty.inner.size(gctx);
             let layout = match ty.inner {
-                Ti::Scalar { width, .. } | Ti::Atomic { width, .. } => {
-                    let alignment = Alignment::new(width as u32)
+                Ti::Scalar(scalar) | Ti::Atomic(scalar) => {
+                    let alignment = Alignment::new(scalar.width as u32)
                         .ok_or(LayoutErrorInner::NonPowerOfTwoWidth.with(ty_handle))?;
                     TypeLayout { size, alignment }
                 }
                 Ti::Vector {
                     size: vec_size,
-                    width,
-                    ..
+                    scalar,
                 } => {
-                    let alignment = Alignment::new(width as u32)
+                    let alignment = Alignment::new(scalar.width as u32)
                         .ok_or(LayoutErrorInner::NonPowerOfTwoWidth.with(ty_handle))?;
                     TypeLayout {
                         size,
@@ -195,9 +189,9 @@ impl Layouter {
                 Ti::Matrix {
                     columns: _,
                     rows,
-                    width,
+                    scalar,
                 } => {
-                    let alignment = Alignment::new(width as u32)
+                    let alignment = Alignment::new(scalar.width as u32)
                         .ok_or(LayoutErrorInner::NonPowerOfTwoWidth.with(ty_handle))?;
                     TypeLayout {
                         size,
@@ -240,15 +234,15 @@ impl Layouter {
                 }
                 Ti::Image { .. }
                 | Ti::Sampler { .. }
-                | Ti::AccelerationStructure
-                | Ti::RayQuery
+                | Ti::AccelerationStructure { .. }
+                | Ti::RayQuery { .. }
                 | Ti::BindingArray { .. } => TypeLayout {
                     size,
                     alignment: Alignment::ONE,
                 },
             };
             debug_assert!(size <= layout.size);
-            self.layouts.push(layout);
+            self.layouts.insert(ty_handle, layout);
         }
 
         Ok(())

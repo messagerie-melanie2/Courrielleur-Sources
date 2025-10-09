@@ -37,6 +37,8 @@ enum ZoomToRectBehavior : uint32_t {
   DISABLE_ZOOM_OUT = 1 << 0,
   PAN_INTO_VIEW_ONLY = 1 << 1,
   ONLY_ZOOM_TO_DEFAULT_SCALE = 1 << 2,
+  ZOOM_TO_FOCUSED_INPUT = 1 << 3,
+  ZOOM_TO_FOCUSED_INPUT_ON_RESIZES_VISUAL = 1 << 4,
 };
 
 enum class BrowserGestureResponse : bool;

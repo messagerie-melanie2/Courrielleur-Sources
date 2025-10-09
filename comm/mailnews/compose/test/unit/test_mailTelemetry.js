@@ -5,28 +5,23 @@
  * Test telemetry related to mails sent.
  */
 
-let { TelemetryTestUtils } = ChromeUtils.importESModule(
-  "resource://testing-common/TelemetryTestUtils.sys.mjs"
-);
-
 let server;
 
-let kIdentityMail = "identity@foo.invalid";
-let kSender = "from@foo.invalid";
-let kTo = "to@foo.invalid";
+const kIdentityMail = "identity@foo.invalid";
+const kSender = "from@foo.invalid";
+const kTo = "to@foo.invalid";
 
 const NUM_MAILS = 3;
 
-let deliveryListener = {
+const deliveryListener = {
   count: 0,
-  OnStartRunningUrl() {},
-  OnStopRunningUrl() {
+  onSendStart() {},
+  onSendStop() {
     if (++this.count == NUM_MAILS) {
-      let scalars = TelemetryTestUtils.getProcessScalars("parent");
       Assert.equal(
-        scalars["tb.mails.sent"],
+        Glean.compose.mailsSent.testGetValue(),
         NUM_MAILS,
-        "Count of mails sent must be correct."
+        "mails_sent must be correct"
       );
     }
   },
@@ -36,7 +31,7 @@ let deliveryListener = {
  * Check that we're counting mails sent.
  */
 add_task(async function test_mails_sent() {
-  Services.telemetry.clearScalars();
+  Services.fog.testResetFOG();
 
   server = setupServerDaemon();
   registerCleanupFunction(() => {
@@ -44,7 +39,7 @@ add_task(async function test_mails_sent() {
   });
 
   // Test file
-  let testFile = do_get_file("data/message1.eml");
+  const testFile = do_get_file("data/message1.eml");
 
   // Ensure we have at least one mail account
   localAccountUtils.loadLocalMailAccount();
@@ -54,23 +49,25 @@ add_task(async function test_mails_sent() {
   try {
     // Start the fake SMTP server
     server.start();
-    let smtpServer = getBasicSmtpServer(server.port);
-    let identity = getSmtpIdentity(kIdentityMail, smtpServer);
+    const smtpServer = getBasicSmtpServer(server.port);
+    const identity = getSmtpIdentity(kIdentityMail, smtpServer);
+
+    const messageId = Cc["@mozilla.org/messengercompose/computils;1"]
+      .createInstance(Ci.nsIMsgCompUtils)
+      .msgGenerateMessageId(identity, null);
 
     for (let i = 0; i < NUM_MAILS; i++) {
-      MailServices.smtp.sendMailMessage(
+      smtpServer.sendMailMessage(
         testFile,
-        kTo,
+        MailServices.headerParser.parseEncodedHeaderW(kTo),
+        [],
         identity,
         kSender,
         null,
-        deliveryListener,
-        null,
         null,
         false,
-        "",
-        {},
-        {}
+        messageId,
+        deliveryListener
       );
     }
   } catch (e) {

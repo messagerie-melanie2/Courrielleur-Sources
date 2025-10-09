@@ -2,7 +2,7 @@
 *   How to contribute
     *   Code
         * [Style guide](/g3doc/style-guide.md)
-            * [`.h` and `.cc` files come in pairs](g3doc/style-guide/h-cc-pairs.md)
+            * [`.h` and `.cc` files come in pairs](/g3doc/style-guide/h-cc-pairs.md)
         * [How to write code in the `api/` directory](/api/README.md)
         * [Using Abseil in WebRTC](/g3doc/abseil-in-webrtc.md)
     *   [Code of conduct](/CODE_OF_CONDUCT.md)
@@ -43,7 +43,8 @@
     *   [Logging](/logging/g3doc/rtc_event_log.md)
 *   Testing
     *   Media Quality and performance
-        *   [PeerConnection Framework](/test/pc/e2e/g3doc/index.md)
+        *   PeerConnection Framework
+            *   [Overview](/test/pc/e2e/g3doc/index.md)
             *   [Architecture](/test/pc/e2e/g3doc/architecture.md)
             *   [Video analyzer](/test/pc/e2e/g3doc/default_video_quality_analyzer.md)
         *   Call framework

@@ -16,9 +16,11 @@
 #include "Shutdown.h"
 #include "nsCategoryCache.h"
 
-// This is the schema version. Update it at any schema change and add a
-// corresponding migrateVxx method below.
-#define DATABASE_SCHEMA_VERSION 74
+// Filename of the database.
+#define DATABASE_FILENAME u"places.sqlite"_ns
+// Filename of the icons database.
+#define DATABASE_FAVICONS_FILENAME u"favicons.sqlite"_ns
+#define DATABASE_FAVICONS_SCHEMANAME "favicons"_ns
 
 // Fired after Places inited.
 #define TOPIC_PLACES_INIT_COMPLETE "places-init-complete"
@@ -134,15 +136,24 @@ class Database final : public nsIObserver, public nsSupportsWeakReference {
    *
    * @param aEvent
    *        The runnable to be dispatched.
+   * @param nsresult
    */
-  void DispatchToAsyncThread(nsIRunnable* aEvent) {
-    if (mClosed || NS_FAILED(EnsureConnection())) {
-      return;
+  nsresult DispatchToAsyncThread(nsIRunnable* aEvent) {
+    if (mClosed) {
+      return NS_ERROR_NOT_AVAILABLE;
     }
+
+    nsresult rv = EnsureConnection();
+    if (NS_FAILED(rv)) {
+      return rv;
+    }
+
     nsCOMPtr<nsIEventTarget> target = do_GetInterface(mMainConn);
-    if (target) {
-      (void)target->Dispatch(aEvent, NS_DISPATCH_NORMAL);
+    if (!target) {
+      return NS_ERROR_NOT_AVAILABLE;
     }
+
+    return target->Dispatch(aEvent, NS_DISPATCH_NORMAL);
   }
 
   //////////////////////////////////////////////////////////////////////////////
@@ -206,7 +217,11 @@ class Database final : public nsIObserver, public nsSupportsWeakReference {
     mozilla::Unused << EnsureConnection();
     return mTagsRootId;
   }
-  nsresult RecalculateOriginFrecencyStatsInternal();
+
+  /**
+   * Initializes additional SQLite functions, defined in SQLFunctions.h
+   */
+  static nsresult InitFunctions(mozIStorageConnection*);
 
  protected:
   /**
@@ -284,27 +299,15 @@ class Database final : public nsIObserver, public nsSupportsWeakReference {
                                bool shouldReparentRoots);
 
   /**
-   * Initializes additionale SQLite functions, defined in SQLFunctions.h
-   */
-  nsresult InitFunctions();
-
-  /**
    * Initializes temp entities, like triggers, tables, views...
    */
   nsresult InitTempEntities();
 
   /**
    * Helpers used by schema upgrades.
+   * When adding a new function remember to bump up the schema version in
+   * nsINavHistoryService.
    */
-  nsresult MigrateV44Up();
-  nsresult MigrateV45Up();
-  nsresult MigrateV46Up();
-  nsresult MigrateV47Up();
-  nsresult MigrateV48Up();
-  nsresult MigrateV49Up();
-  nsresult MigrateV50Up();
-  nsresult MigrateV51Up();
-  nsresult MigrateV52Up();
   nsresult MigrateV53Up();
   nsresult MigrateV54Up();
   nsresult MigrateV55Up();
@@ -319,15 +322,17 @@ class Database final : public nsIObserver, public nsSupportsWeakReference {
   nsresult MigrateV72Up();
   nsresult MigrateV73Up();
   nsresult MigrateV74Up();
-
-  void MigrateV52OriginFrecencies();
+  nsresult MigrateV75Up();
+  nsresult MigrateV77Up();
+  nsresult MigrateV78Up();
+  nsresult MigrateV79Up();
+  nsresult MigrateV80Up();
 
   nsresult UpdateBookmarkRootTitles();
 
   friend class ConnectionShutdownBlocker;
 
   int64_t CreateMobileRoot();
-  nsresult ConvertOldStyleQuery(nsCString& aURL);
 
  private:
   ~Database();

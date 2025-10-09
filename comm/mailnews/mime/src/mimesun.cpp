@@ -4,6 +4,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mimesun.h"
+#include "mimehdrs.h"
+#include "nsMailHeaders.h"
 #include "prmem.h"
 #include "plstr.h"
 #include "prlog.h"
@@ -25,9 +27,8 @@ static int MimeSunAttachment_parse_child_line(MimeObject*, const char*, int32_t,
 static int MimeSunAttachment_parse_begin(MimeObject*);
 static int MimeSunAttachment_parse_eof(MimeObject*, bool);
 
-static int MimeSunAttachmentClassInitialize(MimeSunAttachmentClass* clazz) {
-  MimeObjectClass* oclass = (MimeObjectClass*)clazz;
-  MimeMultipartClass* mclass = (MimeMultipartClass*)clazz;
+static int MimeSunAttachmentClassInitialize(MimeObjectClass* oclass) {
+  MimeMultipartClass* mclass = (MimeMultipartClass*)oclass;
 
   PR_ASSERT(!oclass->class_initialized);
   oclass->parse_begin = MimeSunAttachment_parse_begin;
@@ -218,8 +219,8 @@ static int MimeSunAttachment_create_child(MimeObject* obj) {
       const char* start = sun_enc_info;
       sun_enc_info = end + 1;
       while (IS_SPACE(*sun_enc_info)) sun_enc_info++;
-      for (prev = end - 1; prev > start && *prev != ','; prev--)
-        ;
+      for (prev = end - 1; prev > start && *prev != ','; prev--) {
+      }
       if (*prev == ',') prev++;
 
       if (!PL_strncasecmp(prev, "uuencode", end - prev))
@@ -266,8 +267,7 @@ static int MimeSunAttachment_create_child(MimeObject* obj) {
    */
   PR_FREEIF(child->content_type);
   PR_FREEIF(child->encoding);
-  PR_ASSERT(mime_ct);
-  child->content_type = (mime_ct ? strdup(mime_ct) : 0);
+  child->content_type = strdup(mime_ct);
   child->encoding = (mime_cte ? strdup(mime_cte) : 0);
 
   status = ((MimeContainerClass*)obj->clazz)->add_child(obj, child);
@@ -309,5 +309,6 @@ static int MimeSunAttachment_parse_child_line(MimeObject* obj, const char* line,
   PR_ASSERT(kid);
   if (!kid) return -1;
 
-  return kid->clazz->parse_buffer(line, length, kid);
+  return kid->clazz->parse_buffer(line, length,
+                                  MimeClosure(MimeClosure::isMimeObject, kid));
 }

@@ -13,6 +13,9 @@ namespace glean {
     // It will return immediately.
     void glean_initialize(InternalConfiguration cfg, ClientInfoMetrics client_info, OnGleanEvents callbacks);
 
+    /// Shuts down Glean in an orderly fashion.
+    void glean_shutdown();
+
     // Creates and initializes a new Glean object for use in a subprocess.
     //
     // Importantly, this will not send any pings at startup, since that
@@ -29,12 +32,31 @@ namespace glean {
     void glean_set_experiment_inactive(string experiment_id);
     RecordedExperiment? glean_test_get_experiment_data(string experiment_id);
 
+    // Experimentation ID API
+    void glean_set_experimentation_id(string experimentation_id);
+    string? glean_test_get_experimentation_id();
+
+    // EXPERIMENTAL: Register a listener to receive notification of event recordings
+    //
+    // tag: String value used later to unregister the listener
+    // listener: An object which implements the GleanEventListener interface
+    void glean_register_event_listener(string tag, GleanEventListener listener);
+    // EXPERIMENTAL: Unregister a previously registered event listener
+    //
+    // tag: The tag used when registering the listener
+    void glean_unregister_event_listener(string tag);
+
     // Server Knobs API
-    void glean_set_metrics_enabled_config(string json);
+    void glean_apply_server_knobs_config(string json);
 
     boolean glean_set_debug_view_tag(string tag);
+    string? glean_get_debug_view_tag();
     boolean glean_set_source_tags(sequence<string> tags);
     void glean_set_log_pings(boolean value);
+    boolean glean_get_log_pings();
+    sequence<string> glean_get_registered_ping_names();
+
+    void glean_persist_ping_lifetime_data();
 
     void glean_handle_client_active();
     void glean_handle_client_inactive();
@@ -49,6 +71,18 @@ namespace glean {
 
     PingUploadTask glean_get_upload_task();
     UploadTaskAction glean_process_ping_upload_response(string uuid, UploadResult result);
+
+    // Updates attribution fields with new values.
+    // AttributionMetrics fields with no values will not overwrite older values.
+    void glean_update_attribution(AttributionMetrics attribution);
+    // Returns the current attribution metrics, if any.
+    AttributionMetrics glean_test_get_attribution();
+
+    // Updates distribution fields with new values.
+    // DistributionMetrics fields with no values will not overwrite older values.
+    void glean_update_distribution(DistributionMetrics distribution);
+    // Returns the current distribution metrics, if any.
+    DistributionMetrics glean_test_get_distribution();
 };
 
 // A `Cow<'static, str>`, but really it's always the owned part.
@@ -70,9 +104,23 @@ dictionary InternalConfiguration {
     boolean use_core_mps;
     boolean trim_data_to_registered_pings;
     LevelFilter? log_level;
+    PingRateLimit? rate_limit;
+    boolean enable_event_timestamps;
+    string? experimentation_id;
+    boolean enable_internal_pings;
+    record<string, sequence<string>> ping_schedule;
+    u64 ping_lifetime_threshold;
+    u64 ping_lifetime_max_time; // in millis
+};
+
+// How to specify the rate pings may be uploaded before they are throttled.
+dictionary PingRateLimit {
+    u64 seconds_per_interval;
+    u32 pings_per_interval;
 };
 
 // An enum representing the different logging levels for the `log` crate.
+[Remote]
 enum LevelFilter {
     "Off",
     "Error",
@@ -100,6 +148,18 @@ dictionary ClientInfoMetrics {
     string? device_model = null;
     string? android_sdk_version = null;
     i64? windows_build_number = null;
+};
+
+dictionary AttributionMetrics {
+    string? source = null;
+    string? medium = null;
+    string? campaign = null;
+    string? term = null;
+    string? content = null;
+};
+
+dictionary DistributionMetrics {
+    string? name = null;
 };
 
 [Error]
@@ -148,6 +208,12 @@ callback interface OnGleanEvents {
     void shutdown();
 };
 
+// A callback handler that receives the IDs of recorded events
+callback interface GleanEventListener {
+    // Called when an event is recorded, indicating the id of the event
+    void on_event_recorded(string id);
+};
+
 // Deserialized experiment data.
 dictionary RecordedExperiment {
     // The experiment's branch.
@@ -169,6 +235,12 @@ dictionary PingRequest {
     sequence<u8> body;
     // A map with all the headers to be sent with the request.
     record<DOMString, string> headers;
+    // Whether the body has {client|ping}_info sections.
+    boolean body_has_info_sections;
+    // The ping's name. Likely also somewhere in `path`.
+    string ping_name;
+    // The capabilities required during this ping's upload.
+    sequence<string> uploader_capabilities;
 };
 
 // An enum representing the possible upload tasks to be performed by an uploader.
@@ -178,6 +250,7 @@ interface PingUploadTask {
     //
     // * request: the ping request for upload
     Upload(PingRequest request);
+
     // A flag signaling that the pending pings directories are not done being processed,
     // thus the requester should wait and come back later.
     //
@@ -208,6 +281,15 @@ interface UploadResult {
     //
     // * unused: _ignored_.
     UnrecoverableFailure(i8 unused);
+
+    // The uploader is not capable of uploading this request due to lack of or
+    // mismatched capabilities.
+    //
+    // e.g. The ping requires upload over OHTTP,
+    //      but the uploader doesn't support OHTTP.
+    //
+    // * unused: _ignored_.
+    Incapable(i8 unused);
 
     // A HTTP response code.
     //
@@ -255,8 +337,21 @@ enum ErrorType {
 };
 
 interface PingType {
-    constructor(string name, boolean include_client_id, boolean send_if_empty, sequence<string> reason_codes);
+    constructor(
+        string name,
+        boolean include_client_id,
+        boolean send_if_empty,
+        boolean precise_timestamps,
+        boolean include_info_sections,
+        boolean enabled,
+        sequence<string> schedules_pings,
+        sequence<string> reason_codes,
+        boolean follows_collection_enabled,
+        sequence<string> uploader_capabilities
+    );
     void submit(optional string? reason = null);
+
+    void set_enabled(boolean enabled);
 };
 
 // The common set of data shared across all different metric types.
@@ -349,8 +444,16 @@ interface StringMetric {
     i32 test_get_num_recorded_errors(ErrorType error);
 };
 
+[Enum]
+interface LabeledMetricData {
+    Common(CommonMetricData cmd);
+    CustomDistribution(CommonMetricData cmd, i64 range_min, i64 range_max, i64 bucket_count, HistogramType histogram_type);
+    MemoryDistribution(CommonMetricData cmd, MemoryUnit unit);
+    TimingDistribution(CommonMetricData cmd, TimeUnit unit);
+};
+
 interface LabeledCounter {
-    constructor(CommonMetricData meta, sequence<CowString>? labels);
+    constructor(LabeledMetricData meta, sequence<CowString>? labels);
 
     CounterMetric get(string label);
 
@@ -358,7 +461,7 @@ interface LabeledCounter {
 };
 
 interface LabeledBoolean {
-    constructor(CommonMetricData meta, sequence<CowString>? labels);
+    constructor(LabeledMetricData meta, sequence<CowString>? labels);
 
     BooleanMetric get(string label);
 
@@ -366,9 +469,17 @@ interface LabeledBoolean {
 };
 
 interface LabeledString {
-    constructor(CommonMetricData meta, sequence<CowString>? labels);
+    constructor(LabeledMetricData meta, sequence<CowString>? labels);
 
     StringMetric get(string label);
+
+    i32 test_get_num_recorded_errors(ErrorType error);
+};
+
+interface LabeledQuantity {
+    constructor(LabeledMetricData meta, sequence<CowString>? labels);
+
+    QuantityMetric get(string label);
 
     i32 test_get_num_recorded_errors(ErrorType error);
 };
@@ -448,6 +559,8 @@ interface TimingDistributionMetric {
 
     void accumulate_samples(sequence<i64> samples);
 
+    void accumulate_single_sample(i64 sample);
+
     DistributionData? test_get_value(optional string? ping_name = null);
 
     i32 test_get_num_recorded_errors(ErrorType error);
@@ -490,6 +603,8 @@ interface CustomDistributionMetric {
     constructor(CommonMetricData meta, i64 range_min, i64 range_max, i64 bucket_count, HistogramType histogram_type);
 
     void accumulate_samples(sequence<i64> samples);
+
+    void accumulate_single_sample(i64 sample);
 
     DistributionData? test_get_value(optional string? ping_name = null);
 
@@ -598,4 +713,20 @@ interface TextMetric {
     string? test_get_value(optional string? ping_name = null);
 
     i32 test_get_num_recorded_errors(ErrorType error);
+};
+
+// JSON data encoded into a string
+[Custom]
+typedef string JsonValue;
+
+interface ObjectMetric {
+    constructor(CommonMetricData meta);
+
+    void set_string(string object);
+
+    JsonValue? test_get_value(optional string? ping_name = null);
+
+    i32 test_get_num_recorded_errors(ErrorType error);
+
+    void record_schema_error();
 };

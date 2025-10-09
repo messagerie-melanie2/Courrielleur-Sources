@@ -1,30 +1,44 @@
 export const description = `
 createRenderBundleEncoder validation tests.
+
+TODO(#3363): Make this into a MaxLimitTest and increase kMaxColorAttachments.
 `;
 
 import { makeTestGroup } from '../../../../common/framework/test_group.js';
 import { range } from '../../../../common/util/util.js';
+import { getDefaultLimits } from '../../../capability_info.js';
 import {
+  computeBytesPerSampleFromFormats,
+  getColorRenderByteCost,
+  isDepthOrStencilTextureFormat,
+  isTextureFormatColorRenderable,
   kAllTextureFormats,
   kDepthStencilFormats,
-  kTextureFormatInfo,
-  kMaxColorAttachments,
-  kRenderableColorTextureFormats,
-} from '../../../capability_info.js';
-import { ValidationTest } from '../validation_test.js';
+  kPossibleColorRenderableTextureFormats,
+} from '../../../format_info.js';
+import { AllFeaturesMaxLimitsGPUTest } from '../../../gpu_test.js';
 
-export const g = makeTestGroup(ValidationTest);
+// MAINTENANCE_TODO: This should be changed to kMaxColorAttachmentsToTest
+// when this is made a MaxLimitTest (see above).
+const kMaxColorAttachments = getDefaultLimits('core').maxColorAttachments.default;
+
+export const g = makeTestGroup(AllFeaturesMaxLimitsGPUTest);
 
 g.test('attachment_state,limits,maxColorAttachments')
   .desc(`Tests that attachment state must have <= device.limits.maxColorAttachments.`)
   .params(u =>
     u.beginSubcases().combine(
       'colorFormatCount',
-      range(kMaxColorAttachments + 1, i => i + 1) // 1-9
+      range(kMaxColorAttachments, i => i + 1)
     )
   )
-  .fn(async t => {
+  .fn(t => {
     const { colorFormatCount } = t.params;
+    const maxColorAttachments = t.device.limits.maxColorAttachments;
+    t.skipIf(
+      colorFormatCount > maxColorAttachments,
+      `${colorFormatCount} > maxColorAttachments: ${maxColorAttachments}`
+    );
     t.expectValidationError(() => {
       t.device.createRenderBundleEncoder({
         colorFormats: Array(colorFormatCount).fill('r8unorm'),
@@ -42,19 +56,24 @@ g.test('attachment_state,limits,maxColorAttachmentBytesPerSample,aligned')
   )
   .params(u =>
     u
-      .combine('format', kRenderableColorTextureFormats)
+      .combine('format', kPossibleColorRenderableTextureFormats)
       .beginSubcases()
       .combine(
         'colorFormatCount',
         range(kMaxColorAttachments, i => i + 1)
       )
   )
-  .fn(async t => {
+  .fn(t => {
     const { format, colorFormatCount } = t.params;
-    const info = kTextureFormatInfo[format];
+    t.skipIfTextureFormatNotSupported(format);
+    const maxColorAttachments = t.device.limits.maxColorAttachments;
+    t.skipIf(
+      colorFormatCount > maxColorAttachments,
+      `${colorFormatCount} > maxColorAttachments: ${maxColorAttachments}`
+    );
     const shouldError =
-      info.renderTargetPixelByteCost === undefined ||
-      info.renderTargetPixelByteCost * colorFormatCount >
+      !isTextureFormatColorRenderable(t.device, format) ||
+      getColorRenderByteCost(format) * colorFormatCount >
         t.device.limits.maxColorAttachmentBytesPerSample;
 
     t.expectValidationError(() => {
@@ -86,7 +105,6 @@ g.test('attachment_state,limits,maxColorAttachmentBytesPerSample,unaligned')
           'rgba32float',
           'r8unorm',
         ] as GPUTextureFormat[],
-        _shouldError: false,
       },
       {
         formats: [
@@ -96,18 +114,25 @@ g.test('attachment_state,limits,maxColorAttachmentBytesPerSample,unaligned')
           'r8unorm',
           'r8unorm',
         ] as GPUTextureFormat[],
-        _shouldError: true,
       },
     ])
   )
-  .fn(async t => {
-    const { formats, _shouldError } = t.params;
+  .fn(t => {
+    const { formats } = t.params;
+
+    t.skipIf(
+      formats.length > t.device.limits.maxColorAttachments,
+      `numColorAttachments: ${formats.length} > maxColorAttachments: ${t.device.limits.maxColorAttachments}`
+    );
+
+    const shouldError =
+      computeBytesPerSampleFromFormats(formats) > t.device.limits.maxColorAttachmentBytesPerSample;
 
     t.expectValidationError(() => {
       t.device.createRenderBundleEncoder({
         colorFormats: formats,
       });
-    }, _shouldError);
+    }, shouldError);
   });
 
 g.test('attachment_state,empty_color_formats')
@@ -115,7 +140,7 @@ g.test('attachment_state,empty_color_formats')
   .params(u =>
     u.beginSubcases().combine('depthStencilFormat', [undefined, 'depth24plus-stencil8'] as const)
   )
-  .fn(async t => {
+  .fn(t => {
     const { depthStencilFormat } = t.params;
     t.expectValidationError(() => {
       t.device.createRenderBundleEncoder({
@@ -139,17 +164,12 @@ g.test('valid_texture_formats')
       .beginSubcases()
       .combine('attachment', ['color', 'depthStencil'])
   )
-  .beforeAllSubcases(t => {
-    const { format } = t.params;
-    t.selectDeviceForTextureFormatOrSkipTestCase(format);
-  })
-  .fn(async t => {
+  .fn(t => {
     const { format, attachment } = t.params;
+    t.skipIfTextureFormatNotSupported(format);
 
-    const colorRenderable =
-      kTextureFormatInfo[format].renderable && kTextureFormatInfo[format].color;
-
-    const depthStencil = kTextureFormatInfo[format].depth || kTextureFormatInfo[format].stencil;
+    const colorRenderable = isTextureFormatColorRenderable(t.device, format);
+    const depthStencil = isDepthOrStencilTextureFormat(format);
 
     switch (attachment) {
       case 'color': {
@@ -177,10 +197,7 @@ g.test('valid_texture_formats')
 g.test('depth_stencil_readonly')
   .desc(
     `
-    Tests that createRenderBundleEncoder validation of depthReadOnly and stencilReadOnly
-      - With depth-only formats
-      - With stencil-only formats
-      - With depth-stencil-combined formats
+      Test that allow combinations of depth-stencil format, depthReadOnly and stencilReadOnly are allowed.
     `
   )
   .params(u =>
@@ -190,50 +207,12 @@ g.test('depth_stencil_readonly')
       .combine('depthReadOnly', [false, true])
       .combine('stencilReadOnly', [false, true])
   )
-  .beforeAllSubcases(t => {
-    const { depthStencilFormat } = t.params;
-    t.selectDeviceForTextureFormatOrSkipTestCase(depthStencilFormat);
-  })
-  .fn(async t => {
+  .fn(t => {
     const { depthStencilFormat, depthReadOnly, stencilReadOnly } = t.params;
-
-    let shouldError = false;
-    if (
-      kTextureFormatInfo[depthStencilFormat].depth &&
-      kTextureFormatInfo[depthStencilFormat].stencil &&
-      depthReadOnly !== stencilReadOnly
-    ) {
-      shouldError = true;
-    }
-
-    t.expectValidationError(() => {
-      t.device.createRenderBundleEncoder({
-        colorFormats: [],
-        depthStencilFormat,
-        depthReadOnly,
-        stencilReadOnly,
-      });
-    }, shouldError);
-  });
-
-g.test('depth_stencil_readonly_with_undefined_depth')
-  .desc(
-    `
-    Tests that createRenderBundleEncoder validation of depthReadOnly and stencilReadOnly is ignored
-    if there is no depthStencilFormat set.
-    `
-  )
-  .params(u =>
-    u //
-      .beginSubcases()
-      .combine('depthReadOnly', [false, true])
-      .combine('stencilReadOnly', [false, true])
-  )
-  .fn(async t => {
-    const { depthReadOnly, stencilReadOnly } = t.params;
-
+    t.skipIfTextureFormatNotSupported(depthStencilFormat);
     t.device.createRenderBundleEncoder({
-      colorFormats: ['bgra8unorm'],
+      colorFormats: [],
+      depthStencilFormat,
       depthReadOnly,
       stencilReadOnly,
     });

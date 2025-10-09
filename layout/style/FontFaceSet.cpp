@@ -35,8 +35,6 @@
 #include "mozilla/ServoStyleSet.h"
 #include "mozilla/ServoUtils.h"
 #include "mozilla/Sprintf.h"
-#include "mozilla/StaticPrefs_layout.h"
-#include "mozilla/Telemetry.h"
 #include "mozilla/LoadInfo.h"
 #include "nsComponentManagerUtils.h"
 #include "nsContentPolicyUtils.h"
@@ -107,13 +105,6 @@ FontFaceSet::~FontFaceSet() {
   Destroy();
 }
 
-/* static */ bool FontFaceSet::IsEnabled() {
-  if (NS_IsMainThread()) {
-    return StaticPrefs::layout_css_font_loading_api_enabled();
-  }
-  return StaticPrefs::layout_css_font_loading_api_workers_enabled();
-}
-
 /* static */ already_AddRefed<FontFaceSet> FontFaceSet::CreateForDocument(
     dom::Document* aDocument) {
   RefPtr<FontFaceSet> set = new FontFaceSet(aDocument->GetScopeObject());
@@ -150,10 +141,17 @@ already_AddRefed<Promise> FontFaceSet::Load(JSContext* aCx,
 
   nsTArray<RefPtr<Promise>> promises;
 
-  nsTArray<FontFace*> faces;
-  mImpl->FindMatchingFontFaces(aFont, aText, faces, aRv);
-  if (aRv.Failed()) {
-    return nullptr;
+  nsTArray<RefPtr<FontFace>> faces;
+  {
+    nsTArray<FontFace*> weakFaces;
+    mImpl->FindMatchingFontFaces(aFont, aText, weakFaces, aRv);
+    if (aRv.Failed()) {
+      return nullptr;
+    }
+    if (!faces.AppendElements(weakFaces, fallible)) {
+      aRv.Throw(NS_ERROR_FAILURE);
+      return nullptr;
+    }
   }
 
   for (FontFace* f : faces) {
@@ -403,20 +401,18 @@ void FontFaceSet::DispatchLoadingEventAndReplaceReadyPromise() {
   (new AsyncEventDispatcher(this, u"loading"_ns, CanBubble::eNo))
       ->PostDOMEvent();
 
-  if (IsEnabled()) {
-    if (mReady && mReady->State() != Promise::PromiseState::Pending) {
-      if (GetParentObject()) {
-        ErrorResult rv;
-        mReady = Promise::Create(GetParentObject(), rv);
-      }
+  if (mReady && mReady->State() != Promise::PromiseState::Pending) {
+    if (GetParentObject()) {
+      ErrorResult rv;
+      mReady = Promise::Create(GetParentObject(), rv);
     }
-
-    // We may previously have been in a state where all fonts had finished
-    // loading and we'd set mResolveLazilyCreatedReadyPromise to make sure that
-    // if we lazily create mReady for a consumer that we resolve it before
-    // returning it.  We're now loading fonts, so we need to clear that flag.
-    mResolveLazilyCreatedReadyPromise = false;
   }
+
+  // We may previously have been in a state where all fonts had finished
+  // loading and we'd set mResolveLazilyCreatedReadyPromise to make sure that
+  // if we lazily create mReady for a consumer that we resolve it before
+  // returning it.  We're now loading fonts, so we need to clear that flag.
+  mResolveLazilyCreatedReadyPromise = false;
 }
 
 void FontFaceSet::MaybeResolve() {
@@ -449,7 +445,6 @@ void FontFaceSet::MaybeResolve() {
           break;
         case FontFaceLoadStatus::Loading:
           // We should've returned above at MightHavePendingFontLoads()!
-        case FontFaceLoadStatus::EndGuard_:
           MOZ_ASSERT_UNREACHABLE("unexpected FontFaceLoadStatus");
           break;
       }
@@ -474,7 +469,7 @@ void FontFaceSet::DispatchLoadingFinishedEvent(
   init.mFontfaces = std::move(aFontFaces);
   RefPtr<FontFaceSetLoadEvent> event =
       FontFaceSetLoadEvent::Constructor(this, aType, init);
-  (new AsyncEventDispatcher(this, event))->PostDOMEvent();
+  (new AsyncEventDispatcher(this, event.forget()))->PostDOMEvent();
 }
 
 void FontFaceSet::FlushUserFontSet() { mImpl->FlushUserFontSet(); }

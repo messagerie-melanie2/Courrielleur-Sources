@@ -28,6 +28,7 @@ using namespace js::gc;
 using mozilla::LinkedList;
 
 using JS::AutoGCRooter;
+using JS::SliceBudget;
 
 using RootRange = RootedValueMap::Range;
 using RootEntry = RootedValueMap::Entry;
@@ -276,7 +277,7 @@ void js::TraceRuntimeWithoutEviction(JSTracer* trc) {
   rt->gc.traceRuntime(trc, session);
 }
 
-void js::gc::GCRuntime::traceRuntime(JSTracer* trc, AutoTraceSession& session) {
+void js::gc::GCRuntime::traceRuntime(JSTracer* trc, AutoHeapSession& session) {
   MOZ_ASSERT(!rt->isBeingDestroyed());
 
   gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::MARK_ROOTS);
@@ -379,9 +380,8 @@ void GCRuntime::traceEmbeddingBlackRoots(JSTracer* trc) {
   // The analysis doesn't like the function pointer below.
   JS::AutoSuppressGCAnalysis nogc;
 
-  for (size_t i = 0; i < blackRootTracers.ref().length(); i++) {
-    const Callback<JSTraceDataOp>& e = blackRootTracers.ref()[i];
-    (*e.op)(trc, e.data);
+  for (const auto& callback : blackRootTracers.ref()) {
+    (*callback.op)(trc, callback.data);
   }
 }
 

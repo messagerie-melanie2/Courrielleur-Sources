@@ -5,16 +5,14 @@
 
 #include "TreeWalker.h"
 
-#include "LocalAccessible.h"
-#include "AccIterator.h"
+#include "ARIAMap.h"
 #include "nsAccessibilityService.h"
 #include "DocAccessible.h"
 
 #include "mozilla/dom/ChildIterator.h"
 #include "mozilla/dom/Element.h"
 
-using namespace mozilla;
-using namespace mozilla::a11y;
+namespace mozilla::a11y {
 
 ////////////////////////////////////////////////////////////////////////////////
 // TreeWalker
@@ -326,18 +324,9 @@ LocalAccessible* TreeWalker::AccessibleFor(nsIContent* aNode, uint32_t aFlags,
   }
 
   // Create an accessible if allowed.
-  if (!(aFlags & eWalkCache) && mContext->IsAcceptableChild(aNode)) {
-    // We may have ARIA owned element in the dependent attributes map, but the
-    // element may be not allowed for this ARIA owns relation, if the relation
-    // crosses out XBL anonymous content boundaries. In this case we won't
-    // create an accessible object for it, when aria-owns is processed, which
-    // may make the element subtree inaccessible. To avoid that let's create
-    // an accessible object now, and later, if allowed, move it in the tree,
-    // when aria-owns relation is processed.
-    if (mDoc->RelocateARIAOwnedIfNeeded(aNode) && !aNode->IsXULElement()) {
-      *aSkipSubtree = true;
-      return nullptr;
-    }
+  if (!(aFlags & eWalkCache) && mContext->IsAcceptableChild(aNode) &&
+      !aria::IsValidARIAHidden(mDoc)) {
+    mDoc->RelocateARIAOwnedIfNeeded(aNode);
     return GetAccService()->CreateAccessible(aNode, mContext, aSkipSubtree);
   }
 
@@ -348,3 +337,5 @@ dom::AllChildrenIterator* TreeWalker::PopState() {
   mStateStack.RemoveLastElement();
   return mStateStack.IsEmpty() ? nullptr : &mStateStack.LastElement();
 }
+
+}  // namespace mozilla::a11y

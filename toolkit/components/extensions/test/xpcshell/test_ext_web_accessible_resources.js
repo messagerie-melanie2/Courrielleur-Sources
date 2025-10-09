@@ -12,7 +12,7 @@ const IMAGE_ARRAYBUFFER = Uint8Array.from(image, byte =>
 ).buffer;
 
 async function testImageLoading(src, expectedAction) {
-  let imageLoadingPromise = new Promise((resolve, reject) => {
+  let imageLoadingPromise = new Promise(resolve => {
     let cleanupListeners;
     let testImage = document.createElement("img");
     // Set the src via wrappedJSObject so the load is triggered with the
@@ -50,7 +50,7 @@ async function testImageLoading(src, expectedAction) {
 
 add_task(async function test_web_accessible_resources_csp() {
   function background() {
-    browser.runtime.onMessage.addListener((msg, sender) => {
+    browser.runtime.onMessage.addListener(msg => {
       if (msg.name === "image-loading") {
         browser.test.assertTrue(msg.success, `Image was ${msg.expectedAction}`);
         browser.test.sendMessage(`image-${msg.expectedAction}`);
@@ -63,7 +63,7 @@ add_task(async function test_web_accessible_resources_csp() {
   }
 
   function content() {
-    window.addEventListener("message", function rcv(event) {
+    window.addEventListener("message", function rcv() {
       browser.runtime.sendMessage("script-ran");
       window.removeEventListener("message", rcv);
     });
@@ -113,18 +113,22 @@ add_task(async function test_web_accessible_resources_csp() {
   let page = await ExtensionTestUtils.loadContentPage(
     `http://example.com/data/file_sample.html`
   );
-  await page.legacySpawn(null, () => {
+  await page.spawn([], () => {
     this.obs = {
       events: [],
-      observe(subject, topic, data) {
+      observe(subject, topic) {
+        if (topic === "test_done_csp_results_please") {
+          Services.obs.removeObserver(this, "csp-on-violate-policy");
+          Services.obs.removeObserver(this, "test_done_csp_results_please");
+          subject.wrappedJSObject.push(...this.events);
+          return;
+        }
         this.events.push(subject.QueryInterface(Ci.nsIURI).spec);
-      },
-      done() {
-        Services.obs.removeObserver(this, "csp-on-violate-policy");
-        return this.events;
       },
     };
     Services.obs.addObserver(this.obs, "csp-on-violate-policy");
+    Services.obs.addObserver(this.obs, "test_done_csp_results_please");
+
     content.location.href = "http://example.com/data/file_csp.html";
   });
 
@@ -134,7 +138,11 @@ add_task(async function test_web_accessible_resources_csp() {
     extension.awaitMessage("script-ran"),
   ]);
 
-  let events = await page.legacySpawn(null, () => this.obs.done());
+  let events = await page.spawn([], () => {
+    let results = [];
+    Services.obs.notifyObservers(results, "test_done_csp_results_please");
+    return results;
+  });
   equal(events.length, 2, "Two items were rejected by CSP");
   for (let url of events) {
     ok(

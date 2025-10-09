@@ -3,8 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { MailE10SUtils } = ChromeUtils.import(
-  "resource:///modules/MailE10SUtils.jsm"
+var { MailE10SUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailE10SUtils.sys.mjs"
 );
 
 var gLogView;
@@ -37,7 +37,7 @@ function clearLog() {
 }
 
 function addStyling() {
-  let style = gLogView.contentDocument.createElement("style");
+  const style = gLogView.contentDocument.createElement("style");
   gLogView.contentDocument.head.appendChild(style);
   style.sheet.insertRule(
     `@media (prefers-color-scheme: dark) {

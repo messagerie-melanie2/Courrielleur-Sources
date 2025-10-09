@@ -11,21 +11,25 @@
 #include "nsISocketProvider.h"
 #include "secerr.h"
 #include "mozilla/Base64.h"
+#include "mozilla/dom/Promise.h"
+#include "mozilla/glean/SecurityManagerSslMetrics.h"
 #include "nsNSSCallbacks.h"
+#include "nsNSSComponent.h"
+#include "nsProxyRelease.h"
 
 using namespace mozilla;
 using namespace mozilla::psm;
 
 extern LazyLogModule gPIPNSSLog;
 
-NSSSocketControl::NSSSocketControl(const nsCString& aHostName, int32_t aPort,
-                                   SharedSSLState& aState,
-                                   uint32_t providerFlags,
-                                   uint32_t providerTlsFlags)
+NSSSocketControl::NSSSocketControl(
+    const nsCString& aHostName, int32_t aPort,
+    already_AddRefed<nsSSLIOLayerHelpers> aSSLIOLayerHelpers,
+    uint32_t providerFlags, uint32_t providerTlsFlags)
     : CommonSocketControl(aHostName, aPort, providerFlags),
       mFd(nullptr),
       mCertVerificationState(BeforeCertVerification),
-      mSharedState(aState),
+      mSSLIOLayerHelpers(aSSLIOLayerHelpers),
       mForSTARTTLS(false),
       mTLSVersionRange{0, 0},
       mHandshakePending(true),
@@ -37,6 +41,8 @@ NSSSocketControl::NSSSocketControl(const nsCString& aHostName, int32_t aPort,
       mIsFullHandshake(false),
       mNotedTimeUntilReady(false),
       mEchExtensionStatus(EchExtensionStatus::kNotPresent),
+      mSentMlkemShare(false),
+      mHasTls13HandshakeSecrets(false),
       mIsShortWritePending(false),
       mShortWritePendingByte(0),
       mShortWriteOriginalAmount(-1),
@@ -47,7 +53,8 @@ NSSSocketControl::NSSSocketControl(const nsCString& aHostName, int32_t aPort,
       mSocketCreationTimestamp(TimeStamp::Now()),
       mPlaintextBytesRead(0),
       mClaimed(!(providerFlags & nsISocketProvider::IS_SPECULATIVE_CONNECTION)),
-      mPendingSelectClientAuthCertificate(nullptr) {}
+      mPendingSelectClientAuthCertificate(nullptr),
+      mBrowserId(0) {}
 
 NS_IMETHODIMP
 NSSSocketControl::GetKEAUsed(int16_t* aKea) {
@@ -84,32 +91,27 @@ void NSSSocketControl::NoteTimeUntilReady() {
   }
   mNotedTimeUntilReady = true;
 
-  auto timestampNow = TimeStamp::Now();
+  auto duration = TimeStamp::Now() - mSocketCreationTimestamp;
   if (!(mProviderFlags & nsISocketProvider::IS_RETRY)) {
-    Telemetry::AccumulateTimeDelta(Telemetry::SSL_TIME_UNTIL_READY_FIRST_TRY,
-                                   mSocketCreationTimestamp, timestampNow);
+    glean::ssl::time_until_ready_first_try.AccumulateRawDuration(duration);
   }
 
   if (mProviderFlags & nsISocketProvider::BE_CONSERVATIVE) {
-    Telemetry::AccumulateTimeDelta(Telemetry::SSL_TIME_UNTIL_READY_CONSERVATIVE,
-                                   mSocketCreationTimestamp, timestampNow);
+    glean::ssl::time_until_ready_conservative.AccumulateRawDuration(duration);
   }
 
   switch (GetEchExtensionStatus()) {
     case EchExtensionStatus::kGREASE:
-      Telemetry::AccumulateTimeDelta(Telemetry::SSL_TIME_UNTIL_READY_ECH_GREASE,
-                                     mSocketCreationTimestamp, timestampNow);
+      glean::ssl::time_until_ready_ech_grease.AccumulateRawDuration(duration);
       break;
     case EchExtensionStatus::kReal:
-      Telemetry::AccumulateTimeDelta(Telemetry::SSL_TIME_UNTIL_READY_ECH,
-                                     mSocketCreationTimestamp, timestampNow);
+      glean::ssl::time_until_ready_ech.AccumulateRawDuration(duration);
       break;
     default:
       break;
   }
   // This will include TCP and proxy tunnel wait time
-  Telemetry::AccumulateTimeDelta(Telemetry::SSL_TIME_UNTIL_READY,
-                                 mSocketCreationTimestamp, timestampNow);
+  glean::ssl::time_until_ready.AccumulateRawDuration(duration);
 
   MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
           ("[%p] NSSSocketControl::NoteTimeUntilReady\n", mFd));
@@ -132,16 +134,17 @@ void NSSSocketControl::SetHandshakeCompleted() {
                                       : NotAllowedToFalseStart;
     // This will include TCP and proxy tunnel wait time
     if (mKeaGroupName.isSome()) {
-      Telemetry::AccumulateTimeDelta(
-          Telemetry::SSL_TIME_UNTIL_HANDSHAKE_FINISHED_KEYED_BY_KA,
-          *mKeaGroupName, mSocketCreationTimestamp, TimeStamp::Now());
+      glean::ssl::time_until_handshake_finished_keyed_by_ka.Get(*mKeaGroupName)
+          .AccumulateRawDuration(TimeStamp::Now() - mSocketCreationTimestamp);
     }
 
     // If the handshake is completed for the first time from just 1 callback
     // that means that TLS session resumption must have been used.
-    Telemetry::Accumulate(Telemetry::SSL_RESUMED_SESSION,
-                          handshakeType == Resumption);
-    Telemetry::Accumulate(Telemetry::SSL_HANDSHAKE_TYPE, handshakeType);
+    glean::ssl::resumed_session
+        .EnumGet(static_cast<glean::ssl::ResumedSessionLabel>(handshakeType ==
+                                                              Resumption))
+        .Add();
+    glean::ssl_handshake::completed.AccumulateSingleSample(handshakeType);
   }
 
   // Remove the plaintext layer as it is not needed anymore.
@@ -198,7 +201,7 @@ NSSSocketControl::GetAlpnEarlySelection(nsACString& aAlpnSelected) {
   unsigned char chosenAlpn[MAX_ALPN_LENGTH];
   unsigned int chosenAlpnLen;
   rv = SSL_GetNextProto(mFd, &alpnState, chosenAlpn, &chosenAlpnLen,
-                        AssertedCast<unsigned int>(ArrayLength(chosenAlpn)));
+                        AssertedCast<unsigned int>(std::size(chosenAlpn)));
 
   if (rv != SECSuccess) {
     return NS_ERROR_NOT_AVAILABLE;
@@ -290,6 +293,58 @@ NSSSocketControl::StartTLS() {
 }
 
 NS_IMETHODIMP
+NSSSocketControl::AsyncStartTLS(JSContext* aCx,
+                                mozilla::dom::Promise** aPromise) {
+  MOZ_RELEASE_ASSERT(NS_IsMainThread());
+  NS_ENSURE_ARG_POINTER(aCx);
+  NS_ENSURE_ARG_POINTER(aPromise);
+
+  nsIGlobalObject* globalObject = xpc::CurrentNativeGlobal(aCx);
+  if (!globalObject) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  ErrorResult result;
+  RefPtr<mozilla::dom::Promise> promise =
+      mozilla::dom::Promise::Create(globalObject, result);
+  if (result.Failed()) {
+    return result.StealNSResult();
+  }
+
+  nsCOMPtr<nsIEventTarget> target(
+      do_GetService(NS_SOCKETTRANSPORTSERVICE_CONTRACTID));
+  if (!target) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  auto promiseHolder = MakeRefPtr<nsMainThreadPtrHolder<dom::Promise>>(
+      "AsyncStartTLS promise", promise);
+
+  nsCOMPtr<nsIRunnable> runnable(NS_NewRunnableFunction(
+      "AsyncStartTLS::StartTLS",
+      [promiseHolder = std::move(promiseHolder), self = RefPtr{this}]() {
+        nsresult rv = self->StartTLS();
+        NS_DispatchToMainThread(NS_NewRunnableFunction(
+            "AsyncStartTLS::Resolve", [rv, promiseHolder]() {
+              dom::Promise* promise = promiseHolder.get()->get();
+              if (NS_FAILED(rv)) {
+                promise->MaybeReject(rv);
+              } else {
+                promise->MaybeResolveWithUndefined();
+              }
+            }));
+      }));
+
+  nsresult rv = target->Dispatch(runnable, NS_DISPATCH_NORMAL);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  promise.forget(aPromise);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 NSSSocketControl::SetNPNList(nsTArray<nsCString>& protocolArray) {
   COMMON_SOCKET_CONTROL_ASSERT_ON_OWNING_THREAD();
   if (!mFd) return NS_ERROR_FAILURE;
@@ -378,11 +433,19 @@ void NSSSocketControl::SetCertVerificationResult(PRErrorCode errorCode) {
   }
 
   if (mPlaintextBytesRead && !errorCode) {
-    Telemetry::Accumulate(Telemetry::SSL_BYTES_BEFORE_CERT_CALLBACK,
-                          AssertedCast<uint32_t>(mPlaintextBytesRead));
+    glean::ssl::bytes_before_cert_callback.Accumulate(
+        AssertedCast<uint32_t>(mPlaintextBytesRead));
   }
 
+  MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
+          ("[%p] SetCertVerificationResult to AfterCertVerification, "
+           "mTlsHandshakeCallback=%p",
+           (void*)mFd, mTlsHandshakeCallback.get()));
+
   mCertVerificationState = AfterCertVerification;
+  if (mTlsHandshakeCallback) {
+    Unused << mTlsHandshakeCallback->CertVerificationDone();
+  }
 }
 
 void NSSSocketControl::ClientAuthCertificateSelected(
@@ -398,6 +461,9 @@ void NSSSocketControl::ClientAuthCertificateSelected(
       const_cast<uint8_t*>(certBytes.Elements()),
       static_cast<unsigned int>(certBytes.Length()),
   };
+  // Ensure that osclientcerts (or ipcclientcerts, in the socket process) will
+  // populate its list of certificates and keys.
+  AutoSearchingForClientAuthCertificates _;
   UniqueCERTCertificate cert(CERT_NewTempCertificate(
       CERT_GetDefaultCertDB(), &certItem, nullptr, false, true));
   UniqueSECKEYPrivateKey key;
@@ -426,24 +492,20 @@ void NSSSocketControl::ClientAuthCertificateSelected(
   bool sendingClientAuthCert = cert && key;
   if (sendingClientAuthCert) {
     mSentClientCert = true;
-    Telemetry::ScalarAdd(Telemetry::ScalarID::SECURITY_CLIENT_AUTH_CERT_USAGE,
-                         u"sent"_ns, 1);
+    glean::security::client_auth_cert_usage.Get("sent"_ns).Add(1);
   }
 
   Unused << SSL_ClientCertCallbackComplete(
       mFd, sendingClientAuthCert ? SECSuccess : SECFailure,
       sendingClientAuthCert ? key.release() : nullptr,
       sendingClientAuthCert ? cert.release() : nullptr);
-}
 
-SharedSSLState& NSSSocketControl::SharedState() {
-  COMMON_SOCKET_CONTROL_ASSERT_ON_OWNING_THREAD();
-  return mSharedState;
-}
-
-void NSSSocketControl::SetSharedOwningReference(SharedSSLState* aRef) {
-  COMMON_SOCKET_CONTROL_ASSERT_ON_OWNING_THREAD();
-  mOwningSharedRef = aRef;
+  MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
+          ("[%p] ClientAuthCertificateSelected mTlsHandshakeCallback=%p",
+           (void*)mFd, mTlsHandshakeCallback.get()));
+  if (mTlsHandshakeCallback) {
+    Unused << mTlsHandshakeCallback->ClientAuthCertificateSelected();
+  }
 }
 
 NS_IMETHODIMP
@@ -695,5 +757,20 @@ void NSSSocketControl::SetPreliminaryHandshakeInfo(
 NS_IMETHODIMP NSSSocketControl::Claim() {
   COMMON_SOCKET_CONTROL_ASSERT_ON_OWNING_THREAD();
   mClaimed = true;
+  return NS_OK;
+}
+
+NS_IMETHODIMP NSSSocketControl::SetBrowserId(uint64_t browserId) {
+  COMMON_SOCKET_CONTROL_ASSERT_ON_OWNING_THREAD();
+  mBrowserId = browserId;
+  return NS_OK;
+}
+
+NS_IMETHODIMP NSSSocketControl::GetBrowserId(uint64_t* browserId) {
+  COMMON_SOCKET_CONTROL_ASSERT_ON_OWNING_THREAD();
+  if (!browserId) {
+    return NS_ERROR_INVALID_ARG;
+  }
+  *browserId = mBrowserId;
   return NS_OK;
 }

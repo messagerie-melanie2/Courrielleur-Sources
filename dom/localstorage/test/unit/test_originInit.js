@@ -3,7 +3,7 @@
  * http://creativecommons.org/publicdomain/zero/1.0/
  */
 
-add_task(async function testSteps() {
+async function testSteps() {
   const storageDirName = "storage";
   const persistenceTypeDefaultDirName = "default";
   const persistenceTypePersistentDirName = "permanent";
@@ -125,7 +125,7 @@ add_task(async function testSteps() {
     }
 
     let usage = await readUsageFromUsageFile(usageFile);
-    ok(usage == data.usage, "Correct usage");
+    Assert.equal(usage, data.usage, "Correct usage");
   }
 
   async function clearTestOrigin() {
@@ -369,4 +369,11 @@ add_task(async function testSteps() {
   ok(exists, "ls directory in permanent origin directory does exist");
 
   await clearPersistentTestOrigin();
-});
+}
+
+add_task(
+  {
+    pref_set: [["dom.quotaManager.loadQuotaFromCache", false]],
+  },
+  testSteps
+);

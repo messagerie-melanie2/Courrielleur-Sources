@@ -7,20 +7,20 @@ import subprocess
 import sys
 import time
 import traceback
-from threading import Event
+from threading import Timer
 
 import mozcrash
 import psutil
 import six
 from mozlog import get_proxy_logger
-from mozprocess import ProcessHandler
+from mozscreenshot import dump_screen
 
 from talos.utils import TalosError
 
 LOG = get_proxy_logger()
 
 
-class ProcessContext(object):
+class ProcessContext:
     """
     Store useful results of the browser execution.
     """
@@ -44,10 +44,8 @@ class ProcessContext(object):
         kids = parentProc and parentProc.is_running() and parentProc.children()
         if self.is_launcher and kids and len(kids) == 1 and kids[0].is_running():
             LOG.debug(
-                (
-                    "Launcher process {} detected. Terminating parent"
-                    " process {} instead."
-                ).format(parentProc, kids[0])
+                f"Launcher process {parentProc} detected. Terminating parent"
+                f" process {kids[0]} instead."
             )
             parentProc = kids[0]
 
@@ -71,28 +69,25 @@ class ProcessContext(object):
                 return parentProc.wait(3)
 
 
-class Reader(object):
-    def __init__(self, event):
+class Reader:
+    def __init__(self):
         self.output = []
         self.got_end_timestamp = False
         self.got_timeout = False
         self.timeout_message = ""
         self.got_error = False
-        self.event = event
         self.proc = None
 
     def __call__(self, line):
         line = six.ensure_str(line)
+        line = line.strip("\r\n")
         if line.find("__endTimestamp") != -1:
             self.got_end_timestamp = True
-            self.event.set()
         elif line == "TART: TIMEOUT":
             self.got_timeout = True
             self.timeout_message = "TART"
-            self.event.set()
         elif line.startswith("TEST-UNEXPECTED-FAIL | "):
             self.got_error = True
-            self.event.set()
 
         if not (
             "JavaScript error:" in line
@@ -112,7 +107,8 @@ def run_browser(
     debug=None,
     debugger=None,
     debugger_args=None,
-    **kwargs
+    utility_path=None,
+    **kwargs,
 ):
     """
     Run the browser using the given `command`.
@@ -132,7 +128,7 @@ def run_browser(
     :param on_started: a callback that can be used to do things just after
                        the browser has been started. The callback must takes
                        an argument, which is the psutil.Process instance
-    :param kwargs: additional keyword arguments for the :class:`ProcessHandler`
+    :param kwargs: additional keyword arguments for the :class:`subprocess.Popen`
                    instance
 
     Returns a ProcessContext instance, with available output and pid used.
@@ -148,51 +144,64 @@ def run_browser(
     context = ProcessContext(is_launcher)
     first_time = int(time.time()) * 1000
     wait_for_quit_timeout = 20
-    event = Event()
-    reader = Reader(event)
+    reader = Reader()
 
     LOG.info("Using env: %s" % pprint.pformat(kwargs["env"]))
 
-    kwargs["storeOutput"] = False
-    kwargs["processOutputLine"] = reader
-    kwargs["onFinish"] = event.set
-    proc = ProcessHandler(command, **kwargs)
+    timed_out = False
+
+    def timeout_handler():
+        nonlocal timed_out
+        timed_out = True
+
+    proc_timer = Timer(timeout, timeout_handler)
+    proc_timer.start()
+
+    proc = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=False, **kwargs
+    )
     reader.proc = proc
-    proc.run()
 
     LOG.process_start(proc.pid, " ".join(command))
     try:
         context.process = psutil.Process(proc.pid)
         if on_started:
             on_started(context.process)
-        # wait until we saw __endTimestamp in the proc output,
-        # or the browser just terminated - or we have a timeout
-        if not event.wait(timeout):
-            LOG.info("Timeout waiting for test completion; killing browser...")
-            # try to extract the minidump stack if the browser hangs
-            kill_and_get_minidump(context, minidump_dir)
-            raise TalosError("timeout")
+
+        # read output until the browser terminates or the timeout is hit
+        for line in proc.stdout:
+            reader(line)
+            if timed_out:
+                LOG.info("Timeout waiting for test completion; killing browser...")
+                # try to extract the minidump stack if the browser hangs
+                dump_screen_on_failure(utility_path)
+                kill_and_get_minidump(context, minidump_dir)
+                raise TalosError("timeout")
+                break
+
         if reader.got_end_timestamp:
-            for i in six.moves.range(1, wait_for_quit_timeout):
-                if proc.wait(1) is not None:
-                    break
+            proc.wait(wait_for_quit_timeout)
             if proc.poll() is None:
                 LOG.info(
-                    "Browser shutdown timed out after {0} seconds, killing"
-                    " process.".format(wait_for_quit_timeout)
+                    f"Browser shutdown timed out after {wait_for_quit_timeout} seconds, killing"
+                    " process."
                 )
+                dump_screen_on_failure(utility_path)
                 kill_and_get_minidump(context, minidump_dir)
                 raise TalosError(
-                    "Browser shutdown timed out after {0} seconds, killed"
-                    " process.".format(wait_for_quit_timeout)
+                    f"Browser shutdown timed out after {wait_for_quit_timeout} seconds, killed"
+                    " process."
                 )
         elif reader.got_timeout:
+            dump_screen_on_failure(utility_path)
             raise TalosError("TIMEOUT: %s" % reader.timeout_message)
         elif reader.got_error:
+            dump_screen_on_failure(utility_path)
             raise TalosError("unexpected error")
     finally:
         # this also handle KeyboardInterrupt
         # ensure early the process is really terminated
+        proc_timer.cancel()
         return_code = None
         try:
             return_code = context.kill_process()
@@ -268,11 +277,14 @@ def kill_and_get_minidump(context, minidump_dir):
         kids = context.process.children()
         if len(kids) == 1:
             LOG.debug(
-                (
-                    "Launcher process {} detected. Killing parent"
-                    " process {} instead."
-                ).format(proc, kids[0])
+                f"Launcher process {proc} detected. Killing parent"
+                f" process {kids[0]} instead."
             )
             proc = kids[0]
     LOG.debug("Killing %s and writing a minidump file" % proc)
     mozcrash.kill_and_get_minidump(proc.pid, minidump_dir)
+
+
+def dump_screen_on_failure(utility_path):
+    if utility_path is not None:
+        dump_screen(utility_path, LOG)

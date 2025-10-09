@@ -3,7 +3,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use std::collections::HashMap;
-use std::ffi::c_char;
 use std::ptr;
 
 use cstr::cstr;
@@ -11,15 +10,16 @@ use url::Url;
 
 use nsstring::nsCString;
 use xpcom::interfaces::{
-    nsIChannel, nsIContentPolicy, nsIHttpChannel, nsIIOService, nsILoadInfo, nsIPrincipal,
-    nsIScriptSecurityManager, nsIStringInputStream, nsIUploadChannel,
+    nsIChannel, nsIContentPolicy, nsIHttpChannel, nsIIOService, nsILoadInfo, nsINSSErrorsService,
+    nsIPrincipal, nsIScriptSecurityManager, nsIStringInputStream, nsITransportSecurityInfo,
+    nsIUploadChannel,
 };
 use xpcom::XpCom;
 use xpcom::{getter_addrefs, RefPtr};
 use xpcom_async::XpComFuture;
 
 use crate::client::Method;
-use crate::error::Error;
+use crate::error::{Error, TransportSecurityInfo};
 use crate::response::Response;
 
 /// The bytes to use as body in a request.
@@ -79,7 +79,7 @@ impl<'rb> RequestBuilder<'rb> {
     }
 
     /// Adds an HTTP header to the request.
-    pub fn header(&'rb mut self, key: &'rb str, value: &'rb str) -> &mut RequestBuilder {
+    pub fn header(&'rb mut self, key: &'rb str, value: &'rb str) -> &'rb mut RequestBuilder<'rb> {
         self.headers.insert(key, value);
 
         self
@@ -97,7 +97,7 @@ impl<'rb> RequestBuilder<'rb> {
         &'rb mut self,
         body: T,
         content_type: &'rb str,
-    ) -> &mut RequestBuilder {
+    ) -> &'rb mut RequestBuilder<'rb> {
         self.body = Some(RequestBody {
             content: body.into(),
             content_type,
@@ -178,7 +178,42 @@ impl<'rb> RequestBuilder<'rb> {
         unsafe { http_channel.SetRequestMethod(&*method).to_result()? }
 
         // Send the request through the nsIChannel.
-        let (_channel, bytes) = XpComFuture::from(channel).await?;
+        let bytes = match XpComFuture::from(channel.clone()).await {
+            Ok((_channel, bytes)) => bytes,
+            Err(err) => {
+                // If we got an error back from Necko, ask the NSS errors
+                // service if it's a security error.
+                let nss_service = xpcom::get_service::<nsINSSErrorsService>(cstr!(
+                    "@mozilla.org/nss_errors_service;1"
+                ))
+                .ok_or(Error::XpComOperationFailure(
+                    "failed to get service nsINSSErrorsService",
+                ))?;
+
+                let sec_info: RefPtr<nsITransportSecurityInfo> =
+                    getter_addrefs(|p| unsafe { channel.GetSecurityInfo(p) })?;
+
+                let mut err_code: i32 = 0;
+                unsafe { sec_info.GetErrorCode(&mut err_code) }.to_result()?;
+
+                let mut is_nss_error: bool = false;
+                unsafe { nss_service.IsNSSErrorCode(err_code, &mut is_nss_error) }.to_result()?;
+
+                // If the NSS service has identified the error as relating to
+                // transport security, include the `nsITransportSecurityInfo`
+                // from the channel in the `Error`.
+                let err = if is_nss_error {
+                    Error::TransportSecurityFailure {
+                        status: err,
+                        transport_security_info: TransportSecurityInfo(sec_info),
+                    }
+                } else {
+                    err.into()
+                };
+
+                return Err(err);
+            }
+        };
 
         // Store the nsIHttpChannel in the `Response` for convenience (since
         // `Response` only uses methods from `nsIHttpChannel`).
@@ -216,16 +251,16 @@ impl<'rb> RequestBuilder<'rb> {
         // We've already checked that self.body is not None, so we can safely
         // unwrap.
         let body = self.body.as_ref().unwrap();
-        let len = <i32>::try_from(body.content.0.len())?;
+        let len = <i64>::try_from(body.content.0.len())?;
         let content_type = nsCString::from(body.content_type);
 
         unsafe {
             // Set the data for the stream.
             //
-            // SAFETY: SetData() makes a copy of the provided buffer to ensure
-            // it's always reading from valid and allocated memory. This isn't
-            // ideal because it means all request bodies are duplicated in
-            // memory.
+            // SAFETY: SetByteStringData() makes a copy of the provided buffer
+            // to ensure it's always reading from valid and allocated memory.
+            // This isn't ideal because it means all request bodies are
+            // duplicated in memory.
             //
             // Ideally we would use ShareData(). However, currently, the
             // nsIChannel is passed to the Response instance (so we can read
@@ -244,13 +279,12 @@ impl<'rb> RequestBuilder<'rb> {
             // be to stick the body onto the Response struct when sending the
             // request, to ensure it stays in scope while the nsIChannel does,
             // and use ShareData() instead.
-            body_stream
-                .SetData(body.content.0.as_ptr() as *const c_char, len)
-                .to_result()?;
+            let body_content = nsCString::from(body.content.0);
+            body_stream.SetByteStringData(&*body_content).to_result()?;
 
             // Set the stream as the channel's upload stream.
             upload_channel
-                .SetUploadStream(body_stream.coerce(), &*content_type, len as i64)
+                .SetUploadStream(body_stream.coerce(), &*content_type, len)
                 .to_result()?
         }
 

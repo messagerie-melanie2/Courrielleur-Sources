@@ -63,26 +63,39 @@ const requiredArchs = ["x64", "x86", "arm64"];
 // ("suffix") to be matched.
 const prefixAndSuffix =
       {x64: {
-           prefix: `48 89 e5        mov %rsp, %rbp`,
+           // The move from r14 to rbp is writing the callee's wasm instance
+           // into the frame for debug checks -- see WasmFrame.h.
+           prefix: `48 89 e5        mov %rsp, %rbp(
+                    4c 89 75 .0     movq %r14, (0x10|0x30)\\(%rbp\\))?`,
            suffix: `5d              pop %rbp`
        },
        x86: {
-           // The mov to e[ac]x is debug code, inserted by the register
-           // allocator to clobber e[ac]x before a move group.  But it is only
-           // present if there is a move group there.
+           // The move from esi to rbp is writing the callee's wasm instance
+           // into the frame for debug checks -- see WasmFrame.h. The mov to
+           // e[ac]x is debug code, inserted by the register allocator to
+           // clobber e[ac]x before a move group.  But it is only present if
+           // there is a move group there.
            prefix: `8b ec           mov %esp, %ebp(
+                    89 75 08        movl %esi, 0x08\\(%rbp\\))?(
                     b. ef be ad de  mov \\$0xDEADBEEF, %e.x)?`,
            // `.bp` because zydis chooses `rbp` even on 32-bit systems.
            suffix: `5d              pop %.bp`
        },
        arm64: {
+           // The move from x23 to x29 is writing the callee's wasm instance
+           // into the frame for debug checks -- see WasmFrame.h.
            prefix: `910003fd        mov x29, sp
-                    910003fc        mov x28, sp`,
-           suffix: `f94003fd        ldr x29, \\[sp\\]`
+                    910003fc        mov x28, sp(
+                    f9000bb7        str x23, \\[x29, #16\\])?`,
+           suffix: `f94007fe        ldr x30, \\[sp, #8\\]
+                    f94003fd        ldr x29, \\[sp\\]`
        },
        arm: {
+           // The move from r9 to fp is writing the callee's wasm instance into
+           // the frame for debug checks -- see WasmFrame.h.
            prefix: `e52db004        str fp, \\[sp, #-4\\]!
-                    e1a0b00d        mov fp, sp`,
+                    e1a0b00d        mov fp, sp(
+                    e58b9008        str r9, \\[fp, #\\+8\\])?`,
            suffix: `e49db004        ldr fp, \\[sp\\], #\\+4`
        }
       };
@@ -135,16 +148,15 @@ function codegenTestMultiplatform_adhoc(module_text, export_name,
 
     // Poke the build-configuration object to find out what target we're
     // generating code for.
-    let conf     = getBuildConfiguration();
-    let genX64   = conf.x64;
-    let genX86   = conf.x86;
-    let genArm64 = conf.arm64;
-    let genArm   = conf.arm;
+    let genX64   = getBuildConfiguration("x64");
+    let genX86   = getBuildConfiguration("x86");
+    let genArm64 = getBuildConfiguration("arm64");
+    let genArm   = getBuildConfiguration("arm");
     // So far so good, except .. X64 or X86 might be emulating something else.
-    if (genX64 && genArm64 && conf['arm64-simulator']) {
+    if (genX64 && genArm64 && getBuildConfiguration("arm64-simulator")) {
         genX64 = false;
     }
-    if (genX86 && genArm && conf['arm-simulator']) {
+    if (genX86 && genArm && getBuildConfiguration("arm-simulator")) {
         genX86 = false;
     }
 

@@ -93,8 +93,7 @@ class GeckoViewSupport final
       -> java::GeckoResult::LocalRef;
 
   void OnShowDynamicToolbar() const;
-
-  void OnUpdateSessionStore(mozilla::jni::Object::Param aBundle);
+  void OnHideDynamicToolbar() const;
 
   void PassExternalResponse(java::WebResponse::Param aResponse);
 

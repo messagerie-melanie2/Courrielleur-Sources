@@ -5,14 +5,15 @@
 
 #include "VP8TrackEncoder.h"
 
+#include <vpx/vp8cx.h>
+#include <vpx/vpx_encoder.h>
+
 #include "DriftCompensation.h"
-#include "ImageToI420.h"
+#include "ImageConversion.h"
 #include "mozilla/gfx/2D.h"
 #include "prsystem.h"
 #include "VideoSegment.h"
 #include "VideoUtils.h"
-#include "vpx/vp8cx.h"
-#include "vpx/vpx_encoder.h"
 #include "WebMWriter.h"
 #include "mozilla/media/MediaUtils.h"
 #include "mozilla/dom/ImageUtils.h"
@@ -673,7 +674,7 @@ nsresult VP8TrackEncoder::PrepareRawFrame(VideoChunk& aChunk) {
                               mVPXImageWrapper.planes[VPX_PLANE_U],
                               mVPXImageWrapper.stride[VPX_PLANE_U],
                               mVPXImageWrapper.planes[VPX_PLANE_V],
-                              mVPXImageWrapper.stride[VPX_PLANE_V]);
+                              mVPXImageWrapper.stride[VPX_PLANE_V], imgSize);
   if (NS_FAILED(rv)) {
     VP8LOG(LogLevel::Error, "Converting to I420 failed");
     return rv;

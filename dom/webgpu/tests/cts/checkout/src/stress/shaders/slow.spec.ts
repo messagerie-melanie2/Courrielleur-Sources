@@ -4,12 +4,13 @@ Stress tests covering robustness in the presence of slow shaders.
 
 import { makeTestGroup } from '../../common/framework/test_group.js';
 import { GPUTest } from '../../webgpu/gpu_test.js';
+import * as ttu from '../../webgpu/texture_test_utils.js';
 
 export const g = makeTestGroup(GPUTest);
 
 g.test('compute')
   .desc(`Tests execution of compute passes with very long-running dispatch operations.`)
-  .fn(async t => {
+  .fn(t => {
     const kDispatchSize = 1000;
     const data = new Uint32Array(kDispatchSize);
     const buffer = t.makeBufferWithContents(data, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
@@ -48,7 +49,7 @@ g.test('compute')
 
 g.test('vertex')
   .desc(`Tests execution of render passes with a very long-running vertex stage.`)
-  .fn(async t => {
+  .fn(t => {
     const module = t.device.createShaderModule({
       code: `
         struct Data { counter: u32, increment: u32, };
@@ -89,7 +90,7 @@ g.test('vertex')
         },
       ],
     });
-    const renderTarget = t.device.createTexture({
+    const renderTarget = t.createTextureTracked({
       size: [3, 3],
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
       format: 'rgba8unorm',
@@ -110,19 +111,17 @@ g.test('vertex')
     pass.draw(1);
     pass.end();
     t.device.queue.submit([encoder.finish()]);
-    t.expectSinglePixelIn2DTexture(
-      renderTarget,
-      'rgba8unorm',
-      { x: 1, y: 1 },
+    ttu.expectSinglePixelComparisonsAreOkInTexture(t, { texture: renderTarget }, [
       {
+        coord: { x: 1, y: 1 },
         exp: new Uint8Array([255, 255, 0, 255]),
-      }
-    );
+      },
+    ]);
   });
 
 g.test('fragment')
   .desc(`Tests execution of render passes with a very long-running fragment stage.`)
-  .fn(async t => {
+  .fn(t => {
     const module = t.device.createShaderModule({
       code: `
         struct Data { counter: u32, increment: u32, };
@@ -163,7 +162,7 @@ g.test('fragment')
         },
       ],
     });
-    const renderTarget = t.device.createTexture({
+    const renderTarget = t.createTextureTracked({
       size: [3, 3],
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
       format: 'rgba8unorm',
@@ -184,12 +183,10 @@ g.test('fragment')
     pass.draw(1);
     pass.end();
     t.device.queue.submit([encoder.finish()]);
-    t.expectSinglePixelIn2DTexture(
-      renderTarget,
-      'rgba8unorm',
-      { x: 1, y: 1 },
+    ttu.expectSinglePixelComparisonsAreOkInTexture(t, { texture: renderTarget }, [
       {
+        coord: { x: 1, y: 1 },
         exp: new Uint8Array([255, 255, 0, 255]),
-      }
-    );
+      },
+    ]);
   });

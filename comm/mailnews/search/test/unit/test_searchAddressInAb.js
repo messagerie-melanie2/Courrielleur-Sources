@@ -12,8 +12,8 @@ load("../../../resources/searchTestUtils.js");
 /* import-globals-from ../../../test/resources/abSetup.js */
 load("../../../resources/abSetup.js");
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var ABUri = kPABData.URI;
@@ -287,16 +287,19 @@ function run_test() {
 
   // Get a message into the local filestore. function testAbSearch() continues the testing after the copy.
   do_test_pending();
-  copyListener.OnStopCopy(null);
+  copyListener.onStopCopy(null);
   return true;
 }
 
+/** @implements {nsIMsgCopyServiceListener} */
 var copyListener = {
-  OnStartCopy() {},
-  OnProgress(aProgress, aProgressMax) {},
-  SetMessageKey(aKey) {},
-  SetMessageId(aMessageId) {},
-  OnStopCopy(aStatus) {
+  onStartCopy() {},
+  onProgress() {},
+  setMessageKey() {},
+  getMessageId() {
+    return null;
+  },
+  onStopCopy() {
     var fileName = Files.shift();
     if (fileName) {
       var file = do_get_file(fileName);

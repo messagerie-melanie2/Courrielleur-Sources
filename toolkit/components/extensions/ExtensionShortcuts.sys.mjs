@@ -1,48 +1,20 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* eslint-disable mozilla/valid-lazy */
 
+import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 import { ExtensionCommon } from "resource://gre/modules/ExtensionCommon.sys.mjs";
 
 import { ExtensionUtils } from "resource://gre/modules/ExtensionUtils.sys.mjs";
 
-const lazy = {};
-
-ChromeUtils.defineESModuleGetters(lazy, {
+const lazy = XPCOMUtils.declareLazy({
   ExtensionParent: "resource://gre/modules/ExtensionParent.sys.mjs",
   ExtensionSettingsStore:
     "resource://gre/modules/ExtensionSettingsStore.sys.mjs",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
   ShortcutUtils: "resource://gre/modules/ShortcutUtils.sys.mjs",
-});
-
-/**
- * These properties cannot be lazy getters otherwise they
- * get defined on first use, at a time when some modules
- * may not have been loaded.  In that case, the getter would
- * become undefined until next app restart.
- */
-Object.defineProperties(lazy, {
-  windowTracker: {
-    get() {
-      return lazy.ExtensionParent.apiManager.global.windowTracker;
-    },
-  },
-  browserActionFor: {
-    get() {
-      return lazy.ExtensionParent.apiManager.global.browserActionFor;
-    },
-  },
-  pageActionFor: {
-    get() {
-      return lazy.ExtensionParent.apiManager.global.pageActionFor;
-    },
-  },
-  sidebarActionFor: {
-    get() {
-      return lazy.ExtensionParent.apiManager.global.sidebarActionFor;
-    },
-  },
+  global: () => lazy.ExtensionParent.apiManager.global,
 });
 
 const { ExtensionError, DefaultMap } = ExtensionUtils;
@@ -108,16 +80,12 @@ export class ExtensionShortcutKeyMap extends DefaultMap {
   // Class internals.
 
   constructor() {
-    super();
+    super(() => new Set());
 
     // Overridden in some unit test to make it easier to cover some
     // platform specific behaviors (in particular the platform specific.
     // normalization of the shortcuts using the Ctrl modifier on macOS).
     this._os = lazy.ExtensionParent.PlatformInfo.os;
-  }
-
-  defaultConstructor() {
-    return new Set();
   }
 
   getPlatformShortcutString(shortcutString) {
@@ -150,7 +118,7 @@ export class ExtensionShortcutKeyMap extends DefaultMap {
 
   delete(shortcutString) {
     const platformShortcut = this.getPlatformShortcutString(shortcutString);
-    super.delete(platformShortcut);
+    return super.delete(platformShortcut);
   }
 }
 
@@ -264,9 +232,37 @@ export class ExtensionShortcuts {
 
     if (storedCommand && storedCommand.value) {
       commands.set(name, { ...manifestCommands.get(name) });
+
       lazy.ExtensionSettingsStore.removeSetting(extension.id, "commands", name);
+      if (
+        name === "_execute_action" &&
+        extension.manifestVersion > 2 &&
+        lazy.ExtensionSettingsStore.hasSetting(
+          extension.id,
+          "commands",
+          "_execute_browser_action"
+        )
+      ) {
+        lazy.ExtensionSettingsStore.removeSetting(
+          extension.id,
+          "commands",
+          "_execute_browser_action"
+        );
+      }
+
       this.registerKeys(commands);
     }
+  }
+
+  async openShortcutSettings() {
+    let window = lazy.global.windowTracker.topWindow;
+    if (!window) {
+      throw new ExtensionError("No browser window available");
+    }
+
+    let { extension } = this;
+    const viewId = `addons://shortcuts/${encodeURIComponent(extension.id)}`;
+    await window.BrowserAddonUI.openAddonsMgr(viewId);
   }
 
   loadCommands() {
@@ -288,6 +284,19 @@ export class ExtensionShortcuts {
       let savedCommands = await this.loadCommandsFromStorage(extension.id);
       savedCommands.forEach((update, name) => {
         let command = commands.get(name);
+        if (
+          name === "_execute_browser_action" &&
+          extension.manifestVersion > 2
+        ) {
+          // Ignore the old _execute_browser_action if there is data stored for
+          // the new _execute_action command. Otherwise use the stored data for
+          // `_execute_action` (since we renamed `_execute_browser_action` to
+          // `_execute_action` in MV3).
+          command = savedCommands.has("_execute_action")
+            ? null
+            : commands.get("_execute_action");
+        }
+
         if (command) {
           // We will only update commands, not add them.
           Object.assign(command, update);
@@ -299,7 +308,7 @@ export class ExtensionShortcuts {
   }
 
   registerKeys(commands) {
-    for (let window of lazy.windowTracker.browserWindows()) {
+    for (let window of lazy.global.windowTracker.browserWindows()) {
       this.registerKeysToDocument(window, commands);
     }
   }
@@ -318,7 +327,7 @@ export class ExtensionShortcuts {
       }
     };
 
-    lazy.windowTracker.addOpenListener(this.windowOpenListener);
+    lazy.global.windowTracker.addOpenListener(this.windowOpenListener);
   }
 
   /**
@@ -326,13 +335,13 @@ export class ExtensionShortcuts {
    * from being registered to windows which are later created.
    */
   unregister() {
-    for (let window of lazy.windowTracker.browserWindows()) {
+    for (let window of lazy.global.windowTracker.browserWindows()) {
       if (this.keysetsMap.has(window)) {
         this.keysetsMap.get(window).remove();
       }
     }
 
-    lazy.windowTracker.removeOpenListener(this.windowOpenListener);
+    lazy.global.windowTracker.removeOpenListener(this.windowOpenListener);
   }
 
   /**
@@ -397,7 +406,7 @@ export class ExtensionShortcuts {
       this.keysetsMap.get(window).remove();
     }
     let sidebarKey;
-    commands.forEach((command, name) => {
+    for (let [name, command] of commands) {
       if (command.shortcut) {
         let parts = command.shortcut.split("+");
 
@@ -419,10 +428,10 @@ export class ExtensionShortcuts {
           sidebarKey = keyElement;
         }
       }
-    });
+    }
     doc.documentElement.appendChild(keyset);
     if (sidebarKey) {
-      window.SidebarUI.updateShortcut({ key: sidebarKey });
+      window.SidebarController.updateShortcut({ keyId: sidebarKey.id });
     }
     this.keysetsMap.set(window, keyset);
   }
@@ -436,14 +445,10 @@ export class ExtensionShortcuts {
    * @param {string} shortcut The shortcut provided in the manifest.
    * @see https://developer.mozilla.org/en-US/docs/Mozilla/Tech/XUL/key
    *
-   * @returns {Document} The newly created Key element.
+   * @returns {Element} The newly created Key element.
    */
   buildKey(doc, name, shortcut) {
     let keyElement = this.buildKeyFromShortcut(doc, name, shortcut);
-
-    // We need to have the attribute "oncommand" for the "command" listener to fire,
-    // and it is currently ignored when set to the empty string.
-    keyElement.setAttribute("oncommand", "//");
 
     /* eslint-disable mozilla/balanced-listeners */
     // We remove all references to the key elements when the extension is shutdown,
@@ -456,9 +461,9 @@ export class ExtensionShortcuts {
           : "_execute_action";
 
       let actionFor = {
-        [_execute_action]: lazy.browserActionFor,
-        _execute_page_action: lazy.pageActionFor,
-        _execute_sidebar_action: lazy.sidebarActionFor,
+        [_execute_action]: lazy.global.browserActionFor,
+        _execute_page_action: lazy.global.pageActionFor,
+        _execute_sidebar_action: lazy.global.sidebarActionFor,
       }[name];
 
       if (actionFor) {
@@ -466,7 +471,6 @@ export class ExtensionShortcuts {
         let win = event.target.ownerGlobal;
         action.triggerAction(win);
       } else {
-        this.extension.tabManager.addActiveTabPermission();
         this.onCommand(name);
       }
     });
@@ -483,7 +487,7 @@ export class ExtensionShortcuts {
    * @param {string} shortcut The shortcut provided in the manifest.
    *
    * @see https://developer.mozilla.org/en-US/docs/Mozilla/Tech/XUL/key
-   * @returns {Document} The newly created Key element.
+   * @returns {Element} The newly created Key element.
    */
   buildKeyFromShortcut(doc, name, shortcut) {
     let keyElement = doc.createXULElement("key");

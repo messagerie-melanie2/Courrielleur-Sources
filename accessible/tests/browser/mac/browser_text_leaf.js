@@ -16,12 +16,8 @@ addAccessibleTask(
     let doc = accDoc.nativeInterface.QueryInterface(
       Ci.nsIAccessibleMacInterface
     );
-    let docChildren = doc.getAttributeValue("AXChildren");
-    is(docChildren.length, 1, "The document contains a root group");
-
-    let rootGroup = docChildren[0];
-    let children = rootGroup.getAttributeValue("AXChildren");
-    is(docChildren.length, 1, "The root group contains 2 children");
+    let children = doc.getAttributeValue("AXChildren");
+    is(children.length, 2, "The document contains 2 children");
 
     // verify first child is correct
     is(
@@ -77,7 +73,29 @@ addAccessibleTask(
       NSRange(3, 8)
     );
 
-    ok(smallBounds.size[0] < largeBounds.size[0], "longer range is wider");
+    Assert.less(
+      smallBounds.size[0],
+      largeBounds.size[0],
+      "longer range is wider"
+    );
   },
   { chrome: true, iframe: true, remoteIframe: true }
+);
+
+// Text leaf inherits container's AXLanguage, and container's default AXLanguage is the doc one.
+addAccessibleTask(
+  `<p id="ar">العربية</p>
+   <p id="es" lang="es">Español</p>`,
+  async (browser, accDoc) => {
+    const es = getNativeInterface(accDoc, "es");
+    const ar = getNativeInterface(accDoc, "ar");
+    const firstChild = a => a.getAttributeValue("AXChildren")[0];
+
+    is(es.getAttributeValue("AXLanguage"), "es");
+    is(firstChild(es).getAttributeValue("AXLanguage"), "es");
+
+    is(ar.getAttributeValue("AXLanguage"), "ar");
+    is(firstChild(ar).getAttributeValue("AXLanguage"), "ar");
+  },
+  { chrome: true, contentDocBodyAttrs: { lang: "ar" } }
 );

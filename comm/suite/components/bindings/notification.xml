@@ -18,7 +18,7 @@
 
   <binding id="browser-notificationbox"
            extends="chrome://global/content/bindings/notification.xml#notificationbox">
-    <implementation implements="nsIObserver, nsIFormSubmitObserver, nsIWebProgressListener, nsIWebProgressListener2, nsIDOMEventListener">
+    <implementation implements="nsIObserver, nsIFormSubmitObserver, nsIWebProgressListener, nsIWebProgressListener2">
       <field name="_stringBundle" readonly="true">
         <![CDATA[
           Services.strings.createBundle("chrome://communicator/locale/notification.properties");
@@ -505,12 +505,7 @@
             }
 
             if (!browserWin) {
-              var browserURL = "chrome://navigator/content/navigator.xul";
-              try {
-                browserURL = Services.prefs.getCharPref("browser.chromeURL");
-              } catch (ex) {}
-
-              window.openDialog(browserURL, "_blank", "chrome,all,dialog=no", url);
+              window.openDialog(AppConstants.BROWSER_CHROME_URL, "_blank", "chrome,all,dialog=no", url);
             } else {
               if (whereToOpen == nsIBrowserDOMWindow.OPEN_CURRENTWINDOW)
                 browserWin.loadURI(url);
@@ -1382,7 +1377,6 @@
       </method>
       <constructor>
         <![CDATA[
-          var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
           var {AppConstants} = ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
           ChromeUtils.import("resource://gre/modules/BrowserUtils.jsm");
 
@@ -1586,8 +1580,9 @@
             // show an updated message when a report is submitted.
             if (doPrompt) {
               let observer = {
-                QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver,
-                                                       Ci.nsISupportsWeakReference]),
+                QueryInterface: ChromeUtils.generateQI([
+                    Ci.nsIObserver,
+                    Ci.nsISupportsWeakReference]),
                 observe: function(subject, topic, data) {
                   let propertyBag = subject;
                   if (!(propertyBag instanceof Ci.nsIPropertyBag2))

@@ -15,10 +15,10 @@
 #include "nsITLSSocketControl.h"
 #include "nsSocketTransportService2.h"
 
-#ifdef DEBUG
+#if defined(MOZ_DIAGNOSTIC_ASSERT_ENABLED)
 #  include "prthread.h"
 #  define COMMON_SOCKET_CONTROL_ASSERT_ON_OWNING_THREAD() \
-    MOZ_ASSERT(mOwningThread == PR_GetCurrentThread())
+    MOZ_DIAGNOSTIC_ASSERT(mOwningThread == PR_GetCurrentThread())
 #else
 #  define COMMON_SOCKET_CONTROL_ASSERT_ON_OWNING_THREAD() \
     do {                                                  \
@@ -82,8 +82,7 @@ class CommonSocketControl : public nsITLSSocketControl {
     COMMON_SOCKET_CONTROL_ASSERT_ON_OWNING_THREAD();
     return mServerCert != nullptr;
   }
-  void SetStatusErrorBits(const nsCOMPtr<nsIX509Cert>& cert,
-                          nsITransportSecurityInfo::OverridableErrorCategory
+  void SetStatusErrorBits(nsITransportSecurityInfo::OverridableErrorCategory
                               overridableErrorCategory);
   bool HasUserOverriddenCertificateError() {
     COMMON_SOCKET_CONTROL_ASSERT_ON_OWNING_THREAD();
@@ -183,7 +182,7 @@ class CommonSocketControl : public nsITLSSocketControl {
   bool mIsBuiltCertChainRootBuiltInRoot;
   nsCString mPeerId;
 
-#ifdef DEBUG
+#if defined(MOZ_DIAGNOSTIC_ASSERT_ENABLED)
   const PRThread* mOwningThread;
 #endif
 };

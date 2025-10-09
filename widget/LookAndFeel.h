@@ -33,6 +33,7 @@ class Document;
 
 namespace widget {
 class FullLookAndFeel;
+class LookAndFeelFont;
 }  // namespace widget
 
 enum class StyleSystemColor : uint8_t;
@@ -53,8 +54,6 @@ class LookAndFeel {
     CaretBlinkCount,
     // pixel width of caret
     CaretWidth,
-    // show the caret when text is selected?
-    ShowCaretDuringSelection,
     // select textfields when focused via tab/accesskey?
     SelectTextfieldsOnKeyFocus,
     // delay before submenus open
@@ -94,8 +93,6 @@ class LookAndFeel {
     TreeScrollDelay,
     // the maximum number of lines to be scrolled at ones
     TreeScrollLinesMax,
-    // What type of tab-order to use
-    TabFocusModel,
     // Should menu items blink when they're chosen?
     ChosenMenuItemsShouldBlink,
 
@@ -108,46 +105,11 @@ class LookAndFeel {
      */
     WindowsAccentColorInTitlebar,
 
-    /*
-     * A Boolean value to determine whether the Windows default theme is
-     * being used.
-     *
-     * The value of this metric is not used on other platforms. These platforms
-     * should return NS_ERROR_NOT_IMPLEMENTED when queried for this metric.
-     */
-    WindowsDefaultTheme,
+    /* Whether Windows mica effect is enabled and available */
+    WindowsMica,
 
-    /*
-     * A Boolean value to determine whether the DWM compositor is being used
-     *
-     * This metric is not used on non-Windows platforms. These platforms
-     * should return NS_ERROR_NOT_IMPLEMENTED when queried for this metric.
-     */
-    DWMCompositor,
-
-    /*
-     * A Boolean value to determine whether Windows is themed (Classic vs.
-     * uxtheme)
-     *
-     * This is Windows-specific and is not implemented on other platforms
-     * (will return the default of NS_ERROR_FAILURE).
-     */
-    WindowsClassic,
-
-    /*
-     * A Boolean value to determine whether the current Windows desktop theme
-     * supports Aero Glass.
-     *
-     * This is Windows-specific and is not implemented on other platforms
-     * (will return the default of NS_ERROR_FAILURE).
-     */
-    WindowsGlass,
-
-    /*
-     * A Boolean value to determine whether the Mac graphite theme is
-     * being used.
-     */
-    MacGraphiteTheme,
+    /* Whether Windows mica effect is enabled and available on popups */
+    WindowsMicaPopups,
 
     /*
      * A Boolean value to determine whether the macOS Big Sur-specific
@@ -159,6 +121,9 @@ class LookAndFeel {
      * A Boolean value to determine whether macOS is in RTL mode or not.
      */
     MacRTL,
+
+    /* Native macOS titlebar height. */
+    MacTitlebarHeight,
 
     /*
      * AlertNotificationOrigin indicates from which corner of the
@@ -204,10 +169,6 @@ class LookAndFeel {
      * 1: scrollbar button repeats to scroll even if cursor is outside of it.
      */
     ScrollbarButtonAutoRepeatBehavior,
-    /**
-     * Delay before showing a tooltip.
-     */
-    TooltipDelay,
     /*
      * A Boolean value to determine whether swipe animations should be used.
      */
@@ -231,12 +192,19 @@ class LookAndFeel {
      */
     ContextMenuOffsetVertical,
     ContextMenuOffsetHorizontal,
+    TooltipOffsetVertical,
 
     /*
      * A boolean value indicating whether client-side decorations are
      * supported by the user's GTK version.
      */
     GTKCSDAvailable,
+
+    /*
+     * A boolean value indicating whether semi-transparent
+     * windows are available.
+     */
+    GTKCSDTransparencyAvailable,
 
     /*
      * A boolean value indicating whether client-side decorations should
@@ -334,6 +302,12 @@ class LookAndFeel {
     /** GTK titlebar radius */
     TitlebarRadius,
 
+    /** GTK button-to-button spacing in the inline axis */
+    TitlebarButtonSpacing,
+
+    /** GTK tooltip radius */
+    TooltipRadius,
+
     /**
      * Corresponding to dynamic-range.
      * https://drafts.csswg.org/mediaqueries-5/#dynamic-range
@@ -341,10 +315,28 @@ class LookAndFeel {
      * 1: High
      */
     DynamicRange,
-    VideoDynamicRange,
 
     /** Whether XUL panel animations are enabled. */
     PanelAnimations,
+
+    /* Whether we should hide the cursor while typing */
+    HideCursorWhileTyping,
+
+    /* The StyleGtkThemeFamily of the current GTK theme. */
+    GTKThemeFamily,
+
+    /* Whether macOS' full keyboard access is enabled */
+    FullKeyboardAccess,
+
+    // TODO(krosylight): This should ultimately be able to replace
+    // IntID::AllPointerCapabilities. (Bug 1918207)
+    //
+    // Note that PrimaryPointerCapabilities may not be replaceable as it has a
+    // bit more system specific heuristic, e.g. IsTabletMode on Windows.
+    PointingDeviceKinds,
+
+    /* Whether the menubar is native / outside the application */
+    NativeMenubar,
 
     /*
      * Not an ID; used to define the range of valid IDs.  Must be last.
@@ -355,6 +347,11 @@ class LookAndFeel {
   // This is a common enough integer that seems worth the shortcut.
   static bool UseOverlayScrollbars() {
     return GetInt(IntID::UseOverlayScrollbars);
+  }
+
+  static constexpr int32_t kDefaultTooltipOffset = 21;
+  static int32_t TooltipOffsetVertical() {
+    return GetInt(IntID::TooltipOffsetVertical, kDefaultTooltipOffset);
   }
 
   // Returns keyCode value of a modifier key which is used for accesskey.
@@ -409,7 +406,12 @@ class LookAndFeel {
 
   using FontID = mozilla::StyleSystemFont;
 
-  static bool WindowsNonNativeMenusEnabled();
+  enum class PointingDeviceKinds : uint8_t {
+    None = 0,
+    Mouse = 1 << 0,
+    Touch = 1 << 1,
+    Pen = 1 << 2,
+  };
 
   static ColorScheme SystemColorScheme() {
     return GetInt(IntID::SystemUsesDarkTheme) ? ColorScheme::Dark
@@ -417,19 +419,6 @@ class LookAndFeel {
   }
 
   static bool IsDarkColor(nscolor);
-
-  enum class ChromeColorSchemeSetting { Light, Dark, System };
-  static ChromeColorSchemeSetting ColorSchemeSettingForChrome();
-  static ColorScheme ThemeDerivedColorSchemeForContent();
-
-  static ColorScheme ColorSchemeForChrome() {
-    MOZ_ASSERT(sColorSchemeInitialized);
-    return sChromeColorScheme;
-  }
-  static ColorScheme PreferredColorSchemeForContent() {
-    MOZ_ASSERT(sColorSchemeInitialized);
-    return sContentColorScheme;
-  }
 
   static ColorScheme ColorSchemeForStyle(
       const dom::Document&, const StyleColorSchemeFlags&,
@@ -524,6 +513,7 @@ class LookAndFeel {
    * @param aStyle Styling to apply to the font.
    */
   static bool GetFont(FontID aID, nsString& aName, gfxFontStyle& aStyle);
+  static void GetFont(FontID, widget::LookAndFeelFont&);
 
   /**
    * GetPasswordCharacter() returns a unicode character which should be used
@@ -538,10 +528,36 @@ class LookAndFeel {
    */
   static bool GetEchoPassword();
 
-  /**
-   * Whether we should be drawing in the titlebar by default.
-   */
+  /** Whether we should be drawing in the titlebar by default. */
   static bool DrawInTitlebar();
+
+  static int32_t CaretBlinkCount() {
+    return GetInt(IntID::CaretBlinkCount, -1);
+  }
+
+  static int32_t CaretBlinkTime() { return GetInt(IntID::CaretBlinkTime, 500); }
+
+  enum class TitlebarAction {
+    None,
+    WindowLower,
+    WindowMenu,
+    WindowMinimize,
+    WindowMaximize,
+    WindowMaximizeToggle,
+    // We don't support more actions (maximize-horizontal, maximize-vertical,..)
+    // as they're implemented as part of Wayland gtk_surface1 protocol
+    // which is not accessible to us.
+  };
+
+  enum class TitlebarEvent {
+    Double_Click,
+    Middle_Click,
+  };
+
+  /**
+   * Get system defined action for titlebar events.
+   */
+  static TitlebarAction GetTitlebarAction(TitlebarEvent aEvent);
 
   /**
    * The millisecond to mask password value.
@@ -559,14 +575,10 @@ class LookAndFeel {
   static void Refresh();
 
   /**
-   * GTK's initialization code can't be run off main thread, call this
-   * if you plan on using LookAndFeel off main thread later.
-   *
-   * This initialized state may get reset due to theme changes, so it
-   * must be called prior to each potential off-main-thread LookAndFeel
-   * call, not just once.
+   * LookAndFeel initialization must be done on the main thread. If you need
+   * LookAndFeel to be initialized OMT then you need to call this first.
    */
-  static void NativeInit();
+  static void EnsureInit();
 
   static void SetData(widget::FullLookAndFeel&& aTables);
   static void NotifyChangedAllWindows(widget::ThemeChangeKind);
@@ -576,26 +588,18 @@ class LookAndFeel {
       DoHandleGlobalThemeChange();
     }
   }
-  static void EnsureColorSchemesInitialized() {
-    if (!sColorSchemeInitialized) {
-      RecomputeColorSchemes();
-    }
-    MOZ_ASSERT(sColorSchemeInitialized);
-  }
 
-  static ColorScheme sChromeColorScheme;
-  static ColorScheme sContentColorScheme;
+  static nsresult GetKeyboardLayout(nsACString& aLayout);
 
  protected:
-  static void RecomputeColorSchemes();
-  static bool sColorSchemeInitialized;
-
   static void DoHandleGlobalThemeChange();
   // Set to true when ThemeChanged needs to be called on mTheme (and other
   // global LookAndFeel.  This is used because mTheme is a service, so there's
   // no need to notify it from more than one prescontext.
   static bool sGlobalThemeChanged;
 };
+
+MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(LookAndFeel::PointingDeviceKinds);
 
 }  // namespace mozilla
 

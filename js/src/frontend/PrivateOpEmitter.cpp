@@ -35,7 +35,7 @@ bool PrivateOpEmitter::emitLoad(TaggedParserAtomIndex name,
 }
 
 bool PrivateOpEmitter::emitLoadPrivateBrand() {
-  return emitLoad(TaggedParserAtomIndex::WellKnown::dotPrivateBrand(),
+  return emitLoad(TaggedParserAtomIndex::WellKnown::dot_privateBrand_(),
                   *brandLoc_);
 }
 
@@ -94,19 +94,6 @@ bool PrivateOpEmitter::emitReference() {
       return false;
     }
   }
-#ifdef DEBUG
-  state_ = State::Reference;
-#endif
-  return true;
-}
-
-bool PrivateOpEmitter::skipReference() {
-  MOZ_ASSERT(state_ == State::Start);
-
-  if (!init()) {
-    return false;
-  }
-
 #ifdef DEBUG
   state_ = State::Reference;
 #endif
@@ -250,7 +237,7 @@ bool PrivateOpEmitter::emitAssignment() {
       }
     }
 
-    JSOp setOp = isFieldInit() ? JSOp::InitElem : JSOp::StrictSetElem;
+    JSOp setOp = isFieldInit() ? JSOp::InitHiddenElem : JSOp::StrictSetElem;
     if (!bce_->emitElemOpBase(setOp)) {
       //            [stack] RHS
       return false;

@@ -3,7 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "msgCore.h"  // for pre-compiled headers
+#include "MailNewsTypes.h"
 #include "nsMimeTypes.h"
 #include "nsImapCore.h"
 #include "nsImapProtocol.h"
@@ -11,7 +11,6 @@
 #include "nsIImapFlagAndUidState.h"
 #include "nsImapNamespace.h"
 #include "nsImapUtils.h"
-#include "nsCRT.h"
 #include "nsMsgUtils.h"
 #include "mozilla/Logging.h"
 
@@ -21,8 +20,7 @@ extern mozilla::LazyLogModule IMAP;  // defined in nsImapProtocol.cpp
 
 nsImapServerResponseParser::nsImapServerResponseParser(
     nsImapProtocol& imapProtocolConnection)
-    : nsImapGenericParser(),
-      fReportingErrors(true),
+    : fReportingErrors(true),
       fCurrentFolderReadOnly(false),
       fCurrentLineContainedFlagInfo(false),
       fServerIsNetscape3xServer(false),
@@ -32,6 +30,7 @@ nsImapServerResponseParser::nsImapServerResponseParser(
       fSizeOfMostRecentMessage(0),
       fTotalDownloadSize(0),
       fCurrentCommandTag(nullptr),
+      mLock("nsImapServerResponseParser.mLock"),
       fSelectedMailboxName(nullptr),
       fIMAPstate(kNonAuthenticated),
       fLastChunk(false),
@@ -59,6 +58,23 @@ nsImapServerResponseParser::nsImapServerResponseParser(
   fReceivedHeaderOrSizeForUID = nsMsgKey_None;
   fUtf8AcceptEnabled = false;
   fStdJunkNotJunkUseOk = false;
+  fUseModSeq = false;
+  fCurrentCommandFailed = false;
+  fUntaggedResponse = false;
+  fFetchingAllFlags = false;
+  fWaitingForMoreClientInput = false;
+  fCurrentCommandIsSingleMessageFetch = false;
+  fSavedFlagInfo = false;
+  fCurrentResponseUID = 0;
+  fHighestRecordedUID = 0;
+  fNumberOfTaggedResponsesExpected = 0;
+  fMsgID = 0;
+  fThreadID = 0;
+  fLabels = nullptr;
+  fFetchResponseIndex = 0;
+  numberOfCharsInThisChunk = 0;
+  charsReadSoFar = 0;
+  fServerUnavailable = false;
 }
 
 nsImapServerResponseParser::~nsImapServerResponseParser() {
@@ -300,22 +316,26 @@ void nsImapServerResponseParser::PreProcessCommandToken(
     if (!openQuote) {  // ill formed select command
       openQuote = PL_strchr(currentCommand, ' ');
     }
-    PR_Free(fSelectedMailboxName);
-    fSelectedMailboxName = PL_strdup(openQuote + 1);
-    if (fSelectedMailboxName) {
-      // strip the escape chars and the ending quote
-      char* currentChar = fSelectedMailboxName;
-      while (*currentChar) {
-        if (*currentChar == '\\') {
-          PL_strcpy(currentChar, currentChar + 1);
-          currentChar++;  // skip what we are escaping
-        } else if (*currentChar == '\"')
-          *currentChar = 0;  // end quote
-        else
-          currentChar++;
+    {
+      mozilla::MutexAutoLock mon(mLock);
+      PR_Free(fSelectedMailboxName);
+      fSelectedMailboxName = PL_strdup(openQuote + 1);
+      if (fSelectedMailboxName) {
+        // strip the escape chars and the ending quote
+        char* currentChar = fSelectedMailboxName;
+        while (*currentChar) {
+          if (*currentChar == '\\') {
+            PL_strcpy(currentChar, currentChar + 1);
+            currentChar++;  // skip what we are escaping
+          } else if (*currentChar == '\"')
+            *currentChar = 0;  // end quote
+          else
+            currentChar++;
+        }
+      } else {
+        HandleMemoryFailure();
       }
-    } else
-      HandleMemoryFailure();
+    }
 
     // we don't want bogus info for this new box
     // delete fFlagState;  // not our object
@@ -343,6 +363,7 @@ void nsImapServerResponseParser::PreProcessCommandToken(
 }
 
 const char* nsImapServerResponseParser::GetSelectedMailboxName() {
+  mozilla::MutexAutoLock mon(mLock);
   return fSelectedMailboxName;
 }
 
@@ -370,9 +391,11 @@ void nsImapServerResponseParser::ProcessOkCommand(const char* commandToken) {
            !PL_strcasecmp(commandToken, "EXAMINE"))
     fIMAPstate = kFolderSelected;
   else if (!PL_strcasecmp(commandToken, "CLOSE")) {
+    mozilla::MutexAutoLock mon(mLock);
     fIMAPstate = kAuthenticated;
     // we no longer have a selected mailbox.
     PR_FREEIF(fSelectedMailboxName);
+    fSelectedMailboxName = nullptr;
   } else if ((!PL_strcasecmp(commandToken, "LIST")) ||
              (!PL_strcasecmp(commandToken, "LSUB")) ||
              (!PL_strcasecmp(commandToken, "XLIST"))) {
@@ -593,8 +616,6 @@ void nsImapServerResponseParser::response_data() {
           xserverinfo_data();
         else if (!PL_strcasecmp(fNextToken, "XMAILBOXINFO"))
           xmailboxinfo_data();
-        else if (!PL_strcasecmp(fNextToken, "XAOL-OPTION"))
-          skip_to_CRLF();
         else if (!PL_strcasecmp(fNextToken, "XLIST"))
           mailbox_data();
         else {
@@ -780,25 +801,26 @@ void nsImapServerResponseParser::mailbox_list(bool discoveredFromLsub) {
 /* mailbox         ::= "INBOX" / astring
  */
 void nsImapServerResponseParser::mailbox(nsImapMailboxSpec* boxSpec) {
-  char* boxname = nullptr;
+  nsCString boxname;
   const char* serverKey = fServerConnection.GetImapServerKey();
   bool xlistInbox = boxSpec->mBoxFlags & kImapInbox;
 
   if (!PL_strcasecmp(fNextToken, "INBOX") || xlistInbox) {
-    boxname = PL_strdup("INBOX");
+    boxname = "INBOX"_ns;
     if (xlistInbox) PR_Free(CreateAstring());
     AdvanceToNextToken();
   } else {
-    boxname = CreateAstring();
+    boxname.Adopt(CreateAstring());
     AdvanceToNextToken();
   }
 
-  if (boxname && fHostSessionList) {
+  if (!boxname.IsEmpty() && fHostSessionList) {
     fHostSessionList->SetNamespaceHierarchyDelimiterFromMailboxForHost(
-        serverKey, boxname, boxSpec->mHierarchySeparator);
+        serverKey, boxname.get(), boxSpec->mHierarchySeparator);
 
     nsImapNamespace* ns = nullptr;
-    fHostSessionList->GetNamespaceForMailboxForHost(serverKey, boxname, ns);
+    fHostSessionList->GetNamespaceForMailboxForHost(serverKey, boxname.get(),
+                                                    ns);
     if (ns) {
       switch (ns->GetType()) {
         case kPersonalNamespace:
@@ -817,12 +839,11 @@ void nsImapServerResponseParser::mailbox(nsImapMailboxSpec* boxSpec) {
     }
   }
 
-  if (!boxname) {
+  if (boxname.IsEmpty()) {
     if (!fServerConnection.DeathSignalReceived()) HandleMemoryFailure();
   } else if (boxSpec->mConnection && boxSpec->mConnection->GetCurrentUrl()) {
     boxSpec->mConnection->GetCurrentUrl()->AllocateCanonicalPath(
-        boxname, boxSpec->mHierarchySeparator,
-        getter_Copies(boxSpec->mAllocatedPathName));
+        boxname, boxSpec->mHierarchySeparator, boxSpec->mAllocatedPathName);
     nsIURI* aURL = nullptr;
     boxSpec->mConnection->GetCurrentUrl()->QueryInterface(NS_GET_IID(nsIURI),
                                                           (void**)&aURL);
@@ -836,8 +857,6 @@ void nsImapServerResponseParser::mailbox(nsImapMailboxSpec* boxSpec) {
     // send more mailboxes their way
     if (NS_FAILED(fServerConnection.GetConnectionStatus())) SetConnected(false);
   }
-
-  if (boxname) PL_strfree(boxname);
 }
 
 /*
@@ -1042,8 +1061,7 @@ void nsImapServerResponseParser::msg_fetch() {
           }
         }
       }
-    } else if (!PL_strcasecmp(fNextToken, "RFC822.SIZE") ||
-               !PL_strcasecmp(fNextToken, "XAOL.SIZE")) {
+    } else if (!PL_strcasecmp(fNextToken, "RFC822.SIZE")) {
       AdvanceToNextToken();
       if (ContinueParse()) {
         bool sendEndMsgDownload =
@@ -1058,13 +1076,10 @@ void nsImapServerResponseParser::msg_fetch() {
 
         if (fSizeOfMostRecentMessage == 0 && CurrentResponseUID()) {
           // on no, bogus Netscape 2.0 mail server bug
-          char uidString[100];
-          sprintf(uidString, "%ld", (long)CurrentResponseUID());
-
           if (!fZeroLengthMessageUidString.IsEmpty())
             fZeroLengthMessageUidString += ",";
 
-          fZeroLengthMessageUidString += uidString;
+          fZeroLengthMessageUidString.AppendInt(CurrentResponseUID());
         }
 
         // if this token ends in ')', then it is the last token
@@ -1151,11 +1166,6 @@ void nsImapServerResponseParser::msg_fetch() {
       if (!bNeedEndMessageDownload) BeginMessageDownload(MESSAGE_RFC822);
       bNeedEndMessageDownload = true;
       internal_date();
-    } else if (!PL_strcasecmp(fNextToken, "XAOL-ENVELOPE")) {
-      fDownloadingHeaders = true;
-      if (!bNeedEndMessageDownload) BeginMessageDownload(MESSAGE_RFC822);
-      bNeedEndMessageDownload = true;
-      xaolenvelope_data();
     } else {
       nsImapAction imapAction;
       if (!fServerConnection.GetCurrentUrl()) return;
@@ -1283,62 +1293,6 @@ void nsImapServerResponseParser::envelope_data() {
   // Now we should be at the end of the envelope and have *fToken == ')'.
   // Skip this last parenthesis.
   AdvanceToNextToken();
-}
-
-void nsImapServerResponseParser::xaolenvelope_data() {
-  // eat the opening '('
-  fNextToken++;
-
-  if (ContinueParse() && (*fNextToken != ')')) {
-    AdvanceToNextToken();
-    fNextToken++;  // eat '('
-    nsAutoCString subject;
-    subject.Adopt(CreateNilString());
-    nsAutoCString subjectLine("Subject: ");
-    subjectLine += subject;
-    fServerConnection.HandleMessageDownLoadLine(subjectLine.get(), false);
-    fNextToken++;  // eat the next '('
-    if (ContinueParse()) {
-      AdvanceToNextToken();
-      if (ContinueParse()) {
-        nsAutoCString fromLine;
-        if (!strcmp(GetSelectedMailboxName(), "Sent Items")) {
-          // xaol envelope switches the From with the To, so we switch them back
-          // and create a fake from line From: user@aol.com
-          fromLine.AppendLiteral("To: ");
-          nsAutoCString fakeFromLine("From: "_ns);
-          fakeFromLine.Append(fServerConnection.GetImapUserName());
-          fakeFromLine.AppendLiteral("@aol.com");
-          fServerConnection.HandleMessageDownLoadLine(fakeFromLine.get(),
-                                                      false);
-        } else {
-          fromLine.AppendLiteral("From: ");
-        }
-        parse_address(fromLine);
-        fServerConnection.HandleMessageDownLoadLine(fromLine.get(), false);
-        if (ContinueParse()) {
-          AdvanceToNextToken();  // ge attachment size
-          int32_t attachmentSize = atoi(fNextToken);
-          if (attachmentSize != 0) {
-            nsAutoCString attachmentLine("X-attachment-size: ");
-            attachmentLine.AppendInt(attachmentSize);
-            fServerConnection.HandleMessageDownLoadLine(attachmentLine.get(),
-                                                        false);
-          }
-        }
-        if (ContinueParse()) {
-          AdvanceToNextToken();  // skip image size
-          int32_t imageSize = atoi(fNextToken);
-          if (imageSize != 0) {
-            nsAutoCString imageLine("X-image-size: ");
-            imageLine.AppendInt(imageSize);
-            fServerConnection.HandleMessageDownLoadLine(imageLine.get(), false);
-          }
-        }
-        if (ContinueParse()) AdvanceToNextToken();  // skip )
-      }
-    }
-  }
 }
 
 void nsImapServerResponseParser::parse_address(nsAutoCString& addressLine) {
@@ -1620,13 +1574,18 @@ void nsImapServerResponseParser::resp_text_code() {
     AdvanceToNextToken();
 
   if (ContinueParse()) {
-    if (!PL_strcasecmp(fNextToken, "ALERT]")) {
-      char* alertMsg = fCurrentTokenPlaceHolder;  // advance past ALERT]
+    if (!PL_strcasecmp(fNextToken, "ALERT]") ||
+        !PL_strcasecmp(fNextToken, "UNAVAILABLE]")) {
+      // Treat ALERT and UNAVAILABLE response codes similarly. Show response
+      // code string in pop-up. See RFC 5530 "IMAP Response Codes".
+      char* alertMsg = fCurrentTokenPlaceHolder;  // advance past ALERT/UNAVAIL
       if (alertMsg && *alertMsg &&
           (!fLastAlert || PL_strcmp(fNextToken, fLastAlert))) {
         fServerConnection.AlertUserEvent(alertMsg);
         PR_Free(fLastAlert);
         fLastAlert = PL_strdup(alertMsg);
+        // If UNAVAILABLE, flag this to prevent a possible password prompt
+        fServerUnavailable = (NS_ToUpper(fNextToken[0]) == 'U');
       }
       AdvanceToNextToken();
     } else if (!PL_strcasecmp(fNextToken, "PARSE]")) {
@@ -1703,6 +1662,7 @@ void nsImapServerResponseParser::resp_text_code() {
           AdvanceToNextToken();
           // clear copy response uid
           fServerConnection.SetCopyResponseUid(fNextToken);
+          fCopyUidSet = fNextToken;  // New UIDs for the copy destination
         }
         if (ContinueParse()) AdvanceToNextToken();
       }
@@ -1937,8 +1897,6 @@ void nsImapServerResponseParser::capability_data() {
         fCapabilityFlag |= kUidplusCapability;
       else if (token.Equals("LITERAL+", nsCaseInsensitiveCStringComparator))
         fCapabilityFlag |= kLiteralPlusCapability;
-      else if (token.Equals("XAOL-OPTION", nsCaseInsensitiveCStringComparator))
-        fCapabilityFlag |= kAOLImapCapability;
       else if (token.Equals("X-GM-EXT-1", nsCaseInsensitiveCStringComparator))
         fCapabilityFlag |= kGmailImapCapability;
       else if (token.Equals("QUOTA", nsCaseInsensitiveCStringComparator))
@@ -2005,6 +1963,7 @@ void nsImapServerResponseParser::xmailboxinfo_data() {
       }
     } while (fNextToken && !fAtEndOfLine && ContinueParse());
   }
+  PR_FREEIF(mailboxName);
 }
 
 void nsImapServerResponseParser::xserverinfo_data() {
@@ -2157,6 +2116,7 @@ void nsImapServerResponseParser::myrights_data(bool unsolicited) {
     // an unsolicited myrights response won't have the mailbox name in
     // the response, so we use the selected mailbox name.
     if (unsolicited) {
+      mozilla::MutexAutoLock mon(mLock);
       mailboxName = strdup(fSelectedMailboxName);
     } else {
       mailboxName = CreateAstring();
@@ -2357,7 +2317,7 @@ bool nsImapServerResponseParser::msg_fetch_literal(bool chunk, int32_t origin) {
             "imapDownloadingMessage");
         if (fTotalDownloadSize > 0)
           fServerConnection.PercentProgressUpdateEvent(
-              ""_ns, u""_ns, charsReadSoFar + origin, fTotalDownloadSize);
+              ""_ns, charsReadSoFar + origin, fTotalDownloadSize);
       }
       if (charsReadSoFar > numberOfCharsInThisChunk) {
         // This is the last line of a chunk. "Literal" here means actual email
@@ -2530,8 +2490,13 @@ already_AddRefed<nsImapMailboxSpec>
 nsImapServerResponseParser::CreateCurrentMailboxSpec(
     const char* mailboxName /* = nullptr */) {
   RefPtr<nsImapMailboxSpec> returnSpec = new nsImapMailboxSpec;
-  const char* mailboxNameToConvert =
-      (mailboxName) ? mailboxName : fSelectedMailboxName;
+  const char* mailboxNameToConvert;
+  if (mailboxName) {
+    mailboxNameToConvert = mailboxName;
+  } else {
+    mozilla::MutexAutoLock mon(mLock);
+    mailboxNameToConvert = fSelectedMailboxName;
+  }
   if (mailboxNameToConvert) {
     const char* serverKey = fServerConnection.GetImapServerKey();
     nsImapNamespace* ns = nullptr;

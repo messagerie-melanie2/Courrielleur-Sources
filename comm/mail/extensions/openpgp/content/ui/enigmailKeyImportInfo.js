@@ -4,23 +4,25 @@
 
 "use strict";
 
-var EnigmailWindows = ChromeUtils.import(
-  "chrome://openpgp/content/modules/windows.jsm"
-).EnigmailWindows;
-var EnigmailKeyRing = ChromeUtils.import(
-  "chrome://openpgp/content/modules/keyRing.jsm"
-).EnigmailKeyRing;
-var EnigmailDialog = ChromeUtils.import(
-  "chrome://openpgp/content/modules/dialog.jsm"
-).EnigmailDialog;
-var EnigmailData = ChromeUtils.import(
-  "chrome://openpgp/content/modules/data.jsm"
-).EnigmailData;
+var { EnigmailWindows } = ChromeUtils.importESModule(
+  "chrome://openpgp/content/modules/windows.sys.mjs"
+);
+var { EnigmailKeyRing } = ChromeUtils.importESModule(
+  "chrome://openpgp/content/modules/keyRing.sys.mjs"
+);
+var { EnigmailDialog } = ChromeUtils.importESModule(
+  "chrome://openpgp/content/modules/dialog.sys.mjs"
+);
+var { EnigmailData } = ChromeUtils.importESModule(
+  "chrome://openpgp/content/modules/data.sys.mjs"
+);
+
+window.addEventListener("load", onLoad);
 
 async function onLoad() {
-  let dlg = document.getElementById("enigmailKeyImportInfo");
+  const dlg = document.getElementById("enigmailKeyImportInfo");
 
-  let keys = [];
+  const keys = [];
 
   if (window.screen.width > 500) {
     dlg.setAttribute("maxwidth", window.screen.width - 150);
@@ -32,8 +34,8 @@ async function onLoad() {
 
   var keyList = window.arguments[0].keyList;
 
-  let onClickFunc = function (event) {
-    let keyId = event.target.getAttribute("keyid");
+  const onClickFunc = function (event) {
+    const keyId = event.target.getAttribute("keyid");
     EnigmailWindows.openKeyDetails(window, keyId, false);
   };
 
@@ -41,9 +43,9 @@ async function onLoad() {
     if (keyId.search(/^0x/) === 0) {
       keyId = keyId.substr(2).toUpperCase();
     }
-    let keyObj = EnigmailKeyRing.getKeyById(keyId);
+    const keyObj = EnigmailKeyRing.getKeyById(keyId);
     if (keyObj && keyObj.fpr) {
-      let keyGroupBox = buildKeyGroupBox(keyObj);
+      const keyGroupBox = buildKeyGroupBox(keyObj);
       keyGroupBox
         .getElementsByClassName("enigmailKeyImportDetails")[0]
         .addEventListener("click", onClickFunc, true);
@@ -54,18 +56,19 @@ async function onLoad() {
   dlg.getButton("accept").focus();
 
   if (keys.length) {
-    let keysInfoBox = document.getElementById("keyInfo"),
+    const keysInfoBox = document.getElementById("keyInfo"),
       keyBox = document.createXULElement("vbox");
 
     keyBox.classList.add("grid-three-column");
-    for (let key of keys) {
+    for (const key of keys) {
       keyBox.appendChild(key);
     }
 
     keysInfoBox.appendChild(keyBox);
   } else {
-    EnigmailDialog.alert(
+    Services.prompt.alert(
       window,
+      null,
       await document.l10n.formatValue("import-info-no-keys")
     );
     setTimeout(window.close, 0);
@@ -77,19 +80,19 @@ async function onLoad() {
 }
 
 function buildKeyGroupBox(keyObj) {
-  let groupBox = document.createXULElement("vbox");
-  let userid = document.createXULElement("label");
+  const groupBox = document.createXULElement("vbox");
+  const userid = document.createXULElement("label");
 
   groupBox.classList.add("enigmailGroupbox", "enigmailGroupboxMargin");
   userid.setAttribute("value", keyObj.userId);
   userid.setAttribute("class", "enigmailKeyImportUserId");
 
-  let infoBox = document.createElement("div");
-  let infoLabelH1 = document.createXULElement("label");
-  let infoLabelH2 = document.createXULElement("label");
-  let infoLabelB1 = document.createXULElement("label");
-  let infoLabelB2 = document.createXULElement("label");
-  let infoLabelB3 = document.createXULElement("label");
+  const infoBox = document.createElement("div");
+  const infoLabelH1 = document.createXULElement("label");
+  const infoLabelH2 = document.createXULElement("label");
+  const infoLabelB1 = document.createXULElement("label");
+  const infoLabelB2 = document.createXULElement("label");
+  const infoLabelB3 = document.createXULElement("label");
 
   document.l10n.setAttributes(infoLabelH1, "import-info-bits");
   document.l10n.setAttributes(infoLabelH2, "import-info-created");
@@ -105,8 +108,8 @@ function buildKeyGroupBox(keyObj) {
   infoBox.appendChild(infoLabelB1);
   infoBox.appendChild(infoLabelB2);
 
-  let fprBox = document.createXULElement("div");
-  let fprLabel = document.createXULElement("label");
+  const fprBox = document.createXULElement("div");
+  const fprLabel = document.createXULElement("label");
   document.l10n.setAttributes(fprLabel, "import-info-fpr");
   fprLabel.setAttribute("class", "enigmailKeyImportHeader");
   let gridTemplateColumns = "";
@@ -167,6 +170,6 @@ function dlgClose(buttonNumber) {
   window.close();
 }
 
-document.addEventListener("dialogaccept", function (event) {
+document.addEventListener("dialogaccept", function () {
   dlgClose(0);
 });

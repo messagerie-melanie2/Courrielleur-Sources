@@ -30,20 +30,16 @@ function urlChecker(url) {
   };
 }
 
-async function runTests(browser, accDoc) {
-  let onLoadEvents = waitForEvents({
-    expected: [
-      [EVENT_REORDER, getAccessible(browser)],
-      [EVENT_DOCUMENT_LOAD_COMPLETE, "body2"],
-      [EVENT_STATE_CHANGE, busyChecker(false)],
-    ],
-    unexpected: [
-      [EVENT_DOCUMENT_LOAD_COMPLETE, inIframeChecker("iframe1")],
-      [EVENT_STATE_CHANGE, inIframeChecker("iframe1")],
-    ],
-  });
+async function runTests(browser) {
+  let onLoadEvents = waitForEvents([
+    [EVENT_REORDER, getAccessible(browser)],
+    [EVENT_DOCUMENT_LOAD_COMPLETE, "body2"],
+    [EVENT_STATE_CHANGE, busyChecker(false)],
+    [EVENT_DOCUMENT_LOAD_COMPLETE, inIframeChecker("iframe1")],
+    [EVENT_STATE_CHANGE, inIframeChecker("iframe1")],
+  ]);
 
-  BrowserTestUtils.loadURIString(
+  BrowserTestUtils.startLoadingURIString(
     browser,
     `data:text/html;charset=utf-8,
     <html><body id="body2">
@@ -59,7 +55,7 @@ async function runTests(browser, accDoc) {
     [EVENT_REORDER, getAccessible(browser)],
   ]);
 
-  BrowserTestUtils.loadURIString(browser, "about:about");
+  BrowserTestUtils.startLoadingURIString(browser, "about:about");
 
   await onLoadEvents;
 
@@ -79,7 +75,7 @@ async function runTests(browser, accDoc) {
     [EVENT_REORDER, getAccessible(browser)],
   ]);
 
-  BrowserTestUtils.loadURIString(browser, "about:mozilla");
+  BrowserTestUtils.startLoadingURIString(browser, "about:mozilla");
 
   await onLoadEvents;
 
@@ -100,8 +96,11 @@ async function runTests(browser, accDoc) {
     [EVENT_REORDER, getAccessible(browser)],
   ]);
 
-  // eslint-disable-next-line @microsoft/sdl/no-insecure-url
-  BrowserTestUtils.loadURIString(browser, "http://www.wronguri.wronguri/");
+  BrowserTestUtils.startLoadingURIString(
+    browser,
+    // eslint-disable-next-line @microsoft/sdl/no-insecure-url
+    "http://www.wronguri.wronguri/"
+  );
 
   await onLoadEvents;
 
@@ -111,12 +110,15 @@ async function runTests(browser, accDoc) {
     [EVENT_REORDER, getAccessible(browser)],
   ]);
 
-  BrowserTestUtils.loadURIString(browser, "https://nocert.example.com:443/");
+  BrowserTestUtils.startLoadingURIString(
+    browser,
+    "https://nocert.example.com:443/"
+  );
 
   await onLoadEvents;
 }
 
 /**
- * Test caching of accessible object states
+ * Test events when a document loads.
  */
-addAccessibleTask("", runTests);
+addAccessibleTask("", runTests, { chrome: true, topLevel: true });

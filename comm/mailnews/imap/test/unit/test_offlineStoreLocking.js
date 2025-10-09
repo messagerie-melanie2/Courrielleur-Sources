@@ -8,37 +8,25 @@
  */
 
 /* import-globals-from ../../../test/resources/alertTestUtils.js */
-load("../../../resources/alertTestUtils.js");
-
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
-var { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 // Globals
 var gIMAPTrashFolder, gMsgImapInboxFolder;
 var gMovedMsgId;
 
-var gAlertResolve;
-var gGotAlert = new Promise(resolve => {
-  gAlertResolve = resolve;
-});
-
-/* exported alert to alertTestUtils.js */
-function alertPS(parent, aDialogTitle, aText) {
-  gAlertResolve(aText);
-}
-
 function addGeneratedMessagesToServer(messages, mailbox) {
   // Create the ImapMessages and store them on the mailbox
   messages.forEach(function (message) {
-    let dataUri = Services.io.newURI(
+    const dataUri = Services.io.newURI(
       "data:text/plain;base64," + btoa(message.toMessageString())
     );
     mailbox.addMessage(new ImapMessage(dataUri.spec, mailbox.uidnext++, []));
@@ -48,7 +36,6 @@ function addGeneratedMessagesToServer(messages, mailbox) {
 var gStreamedHdr = null;
 
 add_setup(async function () {
-  registerAlertTestUtils();
   Services.prefs.setBoolPref(
     "mail.server.default.autosync_offline_stores",
     false
@@ -64,7 +51,7 @@ add_setup(async function () {
   gMsgImapInboxFolder.hierarchyDelimiter = "/";
   gMsgImapInboxFolder.verifiedAsOnlineFolder = true;
 
-  let messageGenerator = new MessageGenerator();
+  const messageGenerator = new MessageGenerator();
   let messages = [];
   let bodyString = "";
   for (let i = 0; i < 100; i++) {
@@ -82,22 +69,22 @@ add_setup(async function () {
 
   addGeneratedMessagesToServer(messages, IMAPPump.daemon.getMailbox("INBOX"));
   // ...and download for offline use.
-  let listener = new PromiseTestUtils.PromiseUrlListener();
+  const listener = new PromiseTestUtils.PromiseUrlListener();
   IMAPPump.inbox.updateFolderWithListener(null, listener);
   await listener.promise;
 });
 
 add_task(async function downloadForOffline() {
   // ...and download for offline use.
-  let listener = new PromiseTestUtils.PromiseUrlListener();
+  const listener = new PromiseTestUtils.PromiseUrlListener();
   IMAPPump.inbox.downloadAllForOffline(listener, null);
   await listener.promise;
 });
 
 add_task(async function deleteOneMsg() {
-  let enumerator = IMAPPump.inbox.msgDatabase.enumerateMessages();
-  let msgHdr = enumerator.getNext().QueryInterface(Ci.nsIMsgDBHdr);
-  let copyListener = new PromiseTestUtils.PromiseCopyListener();
+  const enumerator = IMAPPump.inbox.msgDatabase.enumerateMessages();
+  const msgHdr = enumerator.getNext().QueryInterface(Ci.nsIMsgDBHdr);
+  const copyListener = new PromiseTestUtils.PromiseCopyListener();
   IMAPPump.inbox.deleteMessages(
     [msgHdr],
     null,
@@ -110,25 +97,30 @@ add_task(async function deleteOneMsg() {
 });
 
 add_task(async function compactOneFolder() {
-  let enumerator = IMAPPump.inbox.msgDatabase.enumerateMessages();
-  let msgHdr = enumerator.getNext().QueryInterface(Ci.nsIMsgDBHdr);
+  const enumerator = IMAPPump.inbox.msgDatabase.enumerateMessages();
+  const msgHdr = enumerator.getNext().QueryInterface(Ci.nsIMsgDBHdr);
   gStreamedHdr = msgHdr;
   // Mark the message as not being offline, and then we'll make sure that
   //  streaming the message while we're compacting doesn't result in the
   //  message being marked for offline use.
   //  Luckily, compaction compacts the offline store first, so it should
   //  lock the offline store.
+  // NOTE (BenC, Apr 2024): I'm not sure this test is really testing what it
+  // claims to. There is folder locking, but not really msgStore locking.
+  // This could be an issue, but it really needs a deep dive to explore it
+  // properly. I suspect the test might be borked, but the rationale behind
+  // the test is reasonable.
   IMAPPump.inbox.msgDatabase.markOffline(msgHdr.messageKey, false, null);
-  let msgURI = msgHdr.folder.getUriForMsg(msgHdr);
-  let msgServ = MailServices.messageServiceFromURI(msgURI);
+  const msgURI = msgHdr.folder.getUriForMsg(msgHdr);
+  const msgServ = MailServices.messageServiceFromURI(msgURI);
   // UrlListener will get called when both expunge and offline store
   //  compaction are finished. dummyMsgWindow is required to make the backend
   //  compact the offline store.
-  let compactUrlListener = new PromiseTestUtils.PromiseUrlListener();
-  IMAPPump.inbox.compact(compactUrlListener, gDummyMsgWindow);
+  const compactUrlListener = new PromiseTestUtils.PromiseUrlListener();
+  IMAPPump.inbox.compact(compactUrlListener, null);
   // Stream the message w/o a stream listener in an attempt to get the url
   //  started more quickly, while the compact is still going on.
-  let urlListener = new PromiseTestUtils.PromiseUrlListener({});
+  const urlListener = new PromiseTestUtils.PromiseUrlListener({});
   await PromiseTestUtils.promiseDelay(100); // But don't be too fast.
   msgServ.streamMessage(
     msgURI,
@@ -149,9 +141,9 @@ add_task(async function compactOneFolder() {
 });
 
 add_task(async function deleteAnOtherMsg() {
-  let enumerator = IMAPPump.inbox.msgDatabase.enumerateMessages();
-  let msgHdr = enumerator.getNext().QueryInterface(Ci.nsIMsgDBHdr);
-  let copyListener = new PromiseTestUtils.PromiseCopyListener();
+  const enumerator = IMAPPump.inbox.msgDatabase.enumerateMessages();
+  const msgHdr = enumerator.getNext().QueryInterface(Ci.nsIMsgDBHdr);
+  const copyListener = new PromiseTestUtils.PromiseCopyListener();
   IMAPPump.inbox.deleteMessages(
     [msgHdr],
     null,
@@ -167,7 +159,7 @@ add_task(async function updateTrash() {
   gIMAPTrashFolder = IMAPPump.incomingServer.rootFolder
     .getChildNamed("Trash")
     .QueryInterface(Ci.nsIMsgImapMailFolder);
-  let listener = new PromiseTestUtils.PromiseUrlListener();
+  const listener = new PromiseTestUtils.PromiseUrlListener();
   // hack to force uid validity to get initialized for trash.
   gIMAPTrashFolder.updateFolderWithListener(null, listener);
   await listener.promise;
@@ -175,7 +167,7 @@ add_task(async function updateTrash() {
 
 add_task(async function downloadTrashForOffline() {
   // ...and download for offline use.
-  let listener = new PromiseTestUtils.PromiseUrlListener();
+  const listener = new PromiseTestUtils.PromiseUrlListener();
   gIMAPTrashFolder.downloadAllForOffline(listener, null);
   await listener.promise;
 });
@@ -187,15 +179,15 @@ add_task(async function testOfflineBodyCopy() {
   // hard to test because of the half-second delay.
   IMAPPump.server.stop();
   Services.io.offline = true;
-  let enumerator = gIMAPTrashFolder.msgDatabase.enumerateMessages();
-  let msgHdr = enumerator.getNext().QueryInterface(Ci.nsIMsgDBHdr);
+  const enumerator = gIMAPTrashFolder.msgDatabase.enumerateMessages();
+  const msgHdr = enumerator.getNext().QueryInterface(Ci.nsIMsgDBHdr);
   gMovedMsgId = msgHdr.messageId;
-  let compactionListener = new PromiseTestUtils.PromiseUrlListener();
-  // NOTE: calling compact() even if msgStore doesn't support compaction.
-  // It should be a safe no-op, and we're just testing that the listener is
-  // still invoked.
-  IMAPPump.inbox.compact(compactionListener, gDummyMsgWindow);
-  let copyListener = new PromiseTestUtils.PromiseCopyListener();
+
+  // Lock the folder (using any old nsISupports-based object).
+  const locker = MailServices.accounts;
+  IMAPPump.inbox.acquireSemaphore(locker, "test code");
+
+  const copyListener = new PromiseTestUtils.PromiseCopyListener();
   MailServices.copy.copyMessages(
     gIMAPTrashFolder,
     [msgHdr],
@@ -205,35 +197,18 @@ add_task(async function testOfflineBodyCopy() {
     null,
     true
   );
+  await copyListener.promise;
+
+  IMAPPump.inbox.releaseSemaphore(locker, "test code");
 
   // Verify that the moved Msg is not offline.
   try {
-    let movedMsg =
+    const movedMsg =
       IMAPPump.inbox.msgDatabase.getMsgHdrForMessageID(gMovedMsgId);
     Assert.equal(0, movedMsg.flags & Ci.nsMsgMessageFlags.Offline);
   } catch (ex) {
     throw new Error(ex);
   }
-  await compactionListener.promise;
-  await copyListener.promise;
-});
-
-add_task(async function test_checkAlert() {
-  // Check if testing maildir which doesn't produce an the alert like mbox.
-  // If so, don't wait for an alert.
-  let storageCID = Services.prefs.getCharPref(
-    "mail.serverDefaultStoreContractID"
-  );
-  if (storageCID == "@mozilla.org/msgstore/maildirstore;1") {
-    return;
-  }
-
-  let alertText = await gGotAlert;
-  Assert.ok(
-    alertText.startsWith(
-      "The folder 'Inbox on Mail for ' cannot be compacted because another operation is in progress. Please try again later."
-    )
-  );
 });
 
 add_task(function teardown() {
@@ -244,14 +219,14 @@ add_task(function teardown() {
   IMAPPump.inbox = null;
   try {
     IMAPPump.incomingServer.closeCachedConnections();
-    let serverSink = IMAPPump.incomingServer.QueryInterface(
+    const serverSink = IMAPPump.incomingServer.QueryInterface(
       Ci.nsIImapServerSink
     );
     serverSink.abortQueuedUrls();
   } catch (ex) {
     throw new Error(ex);
   }
-  let thread = gThreadManager.currentThread;
+  const thread = Services.tm.currentThread;
   while (thread.hasPendingEvents()) {
     thread.processNextEvent(true);
   }

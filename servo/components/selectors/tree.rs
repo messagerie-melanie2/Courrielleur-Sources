@@ -6,6 +6,7 @@
 //! between layout and style.
 
 use crate::attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint};
+use crate::bloom::BloomFilter;
 use crate::matching::{ElementSelectorFlags, MatchingContext};
 use crate::parser::SelectorImpl;
 use std::fmt::Debug;
@@ -16,6 +17,9 @@ use std::ptr::NonNull;
 pub struct OpaqueElement(NonNull<()>);
 
 unsafe impl Send for OpaqueElement {}
+// This should be safe given that we do not provide a way to recover
+// the original reference.
+unsafe impl Sync for OpaqueElement {}
 
 impl OpaqueElement {
     /// Creates a new OpaqueElement from an arbitrarily-typed pointer.
@@ -25,6 +29,17 @@ impl OpaqueElement {
                 ptr as *const T as *const () as *mut (),
             ))
         }
+    }
+
+    /// Creates a new OpaqueElement from a type-erased non-null pointer
+    pub fn from_non_null_ptr(ptr: NonNull<()>) -> Self {
+        Self(ptr)
+    }
+
+    /// Returns a const ptr to the contained reference. Unsafe especially
+    /// since Element can be recovered and potentially-mutated.
+    pub unsafe fn as_const_ptr<T>(&self) -> *const T {
+        self.0.as_ptr() as *const T
     }
 }
 
@@ -80,6 +95,17 @@ pub trait Element: Sized + Clone + Debug {
         operation: &AttrSelectorOperation<&<Self::Impl as SelectorImpl>::AttrValue>,
     ) -> bool;
 
+    fn has_attr_in_no_namespace(
+        &self,
+        local_name: &<Self::Impl as SelectorImpl>::LocalName,
+    ) -> bool {
+        self.attr_matches(
+            &NamespaceConstraint::Specific(&crate::parser::namespace_empty_string::<Self::Impl>()),
+            local_name,
+            &AttrSelectorOperation::Exists,
+        )
+    }
+
     fn match_non_ts_pseudo_class(
         &self,
         pc: &<Self::Impl as SelectorImpl>::NonTSPseudoClass,
@@ -122,6 +148,11 @@ pub trait Element: Sized + Clone + Debug {
         case_sensitivity: CaseSensitivity,
     ) -> bool;
 
+    fn has_custom_state(
+        &self,
+        name: &<Self::Impl as SelectorImpl>::Identifier,
+    ) -> bool;
+
     /// Returns the mapping from the `exportparts` attribute in the reverse
     /// direction, that is, in an outer-tree -> inner-tree direction.
     fn imported_part(
@@ -149,4 +180,8 @@ pub trait Element: Sized + Clone + Debug {
     fn ignores_nth_child_selectors(&self) -> bool {
         false
     }
+
+    /// Add hashes unique to this element to the given filter, returning true
+    /// if any got added.
+    fn add_element_unique_hashes(&self, filter: &mut BloomFilter) -> bool;
 }

@@ -14,6 +14,7 @@
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/MediaKeySystemAccessBinding.h"
 #include "mozilla/dom/MediaKeysRequestStatusBinding.h"
+#include "mozilla/KeySystemConfig.h"
 
 #include "js/TypeDecls.h"
 
@@ -24,6 +25,9 @@ class ErrorResult;
 
 namespace dom {
 
+class IPCOriginStatusEntry;
+struct MediaKeySystemAccessRequest;
+
 class MediaKeySystemAccess final : public nsISupports, public nsWrapperCache {
  public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
@@ -33,6 +37,11 @@ class MediaKeySystemAccess final : public nsISupports, public nsWrapperCache {
   explicit MediaKeySystemAccess(nsPIDOMWindowInner* aParent,
                                 const nsAString& aKeySystem,
                                 const MediaKeySystemConfiguration& aConfig);
+
+#ifdef MOZ_WMF_CDM
+  static void UpdateMFCDMOriginEntries(
+      const nsTArray<IPCOriginStatusEntry>& aEntries);
+#endif
 
  protected:
   ~MediaKeySystemAccess();
@@ -50,24 +59,25 @@ class MediaKeySystemAccess final : public nsISupports, public nsWrapperCache {
   already_AddRefed<Promise> CreateMediaKeys(ErrorResult& aRv);
 
   static MediaKeySystemStatus GetKeySystemStatus(
-      const nsAString& aKeySystem, nsACString& aOutExceptionMessage);
+      const MediaKeySystemAccessRequest& aRequest,
+      nsACString& aOutExceptionMessage);
 
   static void NotifyObservers(nsPIDOMWindowInner* aWindow,
                               const nsAString& aKeySystem,
                               MediaKeySystemStatus aStatus);
 
-  static bool GetSupportedConfig(
-      const nsAString& aKeySystem,
-      const Sequence<MediaKeySystemConfiguration>& aConfigs,
-      MediaKeySystemConfiguration& aOutConfig,
-      DecoderDoctorDiagnostics* aDiagnostics, bool aIsPrivateBrowsing,
-      const std::function<void(const char*)>& aDeprecationLogFn);
+  static RefPtr<KeySystemConfig::KeySystemConfigPromise> GetSupportedConfig(
+      MediaKeySystemAccessRequest* aRequest, bool aIsPrivateBrowsing,
+      const Document* aDocument);
 
-  static bool KeySystemSupportsInitDataType(const nsAString& aKeySystem,
-                                            const nsAString& aInitDataType);
+  static RefPtr<GenericPromise> KeySystemSupportsInitDataType(
+      const nsAString& aKeySystem, const nsAString& aInitDataType,
+      bool aIsHardwareDecryption, bool aIsPrivateBrowsing);
 
   static nsCString ToCString(
       const Sequence<MediaKeySystemConfiguration>& aConfig);
+
+  static nsCString ToCString(const MediaKeySystemConfiguration& aConfig);
 
  private:
   nsCOMPtr<nsPIDOMWindowInner> mParent;

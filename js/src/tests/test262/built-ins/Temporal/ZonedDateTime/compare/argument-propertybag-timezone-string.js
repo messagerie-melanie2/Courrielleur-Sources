@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| shell-option(--enable-temporal) skip-if(!this.hasOwnProperty('Temporal')||!xulRuntime.shell) -- Temporal is not enabled unconditionally, requires shell-options
 // Copyright (C) 2022 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -9,7 +9,7 @@ features: [Temporal]
 ---*/
 
 ["UTC", "+01:30"].forEach((timeZone) => {
-  const epoch = new Temporal.ZonedDateTime(0n, new Temporal.TimeZone(timeZone));
+  const epoch = new Temporal.ZonedDateTime(0n, timeZone);
 
   // These should be valid input and not throw
   Temporal.ZonedDateTime.compare({ year: 2020, month: 5, day: 2, timeZone }, epoch);

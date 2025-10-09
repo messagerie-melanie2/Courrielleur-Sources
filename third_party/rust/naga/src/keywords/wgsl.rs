@@ -4,6 +4,10 @@ Keywords for [WGSL][wgsl] (WebGPU Shading Language).
 [wgsl]: https://gpuweb.github.io/gpuweb/wgsl.html
 */
 
+use crate::racy_lock::RacyLock;
+
+use hashbrown::HashSet;
+
 // https://gpuweb.github.io/gpuweb/wgsl/#keyword-summary
 // last sync: https://github.com/gpuweb/gpuweb/blob/39f2321f547c8f0b7f473cf1d47fba30b1691303/wgsl/index.bs
 pub const RESERVED: &[&str] = &[
@@ -14,6 +18,7 @@ pub const RESERVED: &[&str] = &[
     "f32",
     "f16",
     "i32",
+    "i64",
     "mat2x2",
     "mat2x3",
     "mat2x4",
@@ -43,6 +48,7 @@ pub const RESERVED: &[&str] = &[
     "texture_depth_cube_array",
     "texture_depth_multisampled_2d",
     "u32",
+    "u64",
     "vec2",
     "vec3",
     "vec4",
@@ -227,3 +233,16 @@ pub const RESERVED: &[&str] = &[
     "writeonly",
     "yield",
 ];
+
+/// The above set of reserved keywords, turned into a cached HashSet. This saves
+/// significant time during [`Namer::reset`](crate::proc::Namer::reset).
+///
+/// See <https://github.com/gfx-rs/wgpu/pull/7338> for benchmarks.
+pub static RESERVED_SET: RacyLock<HashSet<&'static str>> = RacyLock::new(|| {
+    let mut set = HashSet::default();
+    set.reserve(RESERVED.len());
+    for &word in RESERVED {
+        set.insert(word);
+    }
+    set
+});

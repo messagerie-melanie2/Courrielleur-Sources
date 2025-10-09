@@ -147,10 +147,6 @@ class LegacyServiceWorkersWatcher extends LegacyWorkersWatcher {
     return super._onProcessAvailable({ targetFront });
   }
 
-  _shouldDestroyTargetsOnNavigation() {
-    return !!this.targetCommand.destroyServiceWorkersOnNavigation;
-  }
-
   _onProcessDestroyed({ targetFront }) {
     this._processTargets.delete(targetFront);
     return super._onProcessDestroyed({ targetFront });
@@ -183,18 +179,8 @@ class LegacyServiceWorkersWatcher extends LegacyWorkersWatcher {
       // need to be destroyed.
       if (resource.name === "dom-loading") {
         const allServiceWorkerTargets = this._getAllServiceWorkerTargets();
-        const shouldDestroy = this._shouldDestroyTargetsOnNavigation();
 
         for (const target of allServiceWorkerTargets) {
-          const isRegisteredBefore =
-            this.targetCommand.isTargetRegistered(target);
-          if (shouldDestroy && isRegisteredBefore) {
-            // Instruct the target command to notify about the worker target destruction
-            // but do not destroy the front as we want to keep using it.
-            // We will notify about it again via onTargetAvailable.
-            this.onTargetDestroyed(target, { shouldDestroyTargetFront: false });
-          }
-
           // Note: we call isTargetRegistered again because calls to
           // onTargetDestroyed might have modified the list of registered targets.
           const isRegisteredAfter =
@@ -303,13 +289,12 @@ class LegacyServiceWorkersWatcher extends LegacyWorkersWatcher {
     // For local tabs, we match ServiceWorkerRegistrations and the target
     // if they share the same hostname for their "url" properties.
     const targetDomain = this.#currentTargetURL.hostname;
-    try {
-      const registrationDomain = new URL(registration.url).hostname;
+    const registrationDomain = URL.parse(registration.url)?.hostname;
+    if (registrationDomain) {
       return registrationDomain === targetDomain;
-    } catch (e) {
-      // XXX: Some registrations have an empty URL.
-      return false;
     }
+    // XXX: Some registrations have an empty URL.
+    return false;
   }
 }
 

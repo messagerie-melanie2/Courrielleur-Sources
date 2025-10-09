@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| shell-option(--enable-temporal) skip-if(!this.hasOwnProperty('Temporal')||!xulRuntime.shell) -- Temporal is not enabled unconditionally, requires shell-options
 // Copyright (C) 2022 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -8,10 +8,17 @@ description: Calendar names are case-insensitive
 features: [Temporal]
 ---*/
 
-const instance = new Temporal.ZonedDateTime(1_000_000_000_000_000_000n, "UTC", { id: "replace-me" });
+const instance = new Temporal.ZonedDateTime(1_000_000_000_000_000_000n, "UTC", "iso8601");
 
-const arg = "iSo8601";
+let arg = "iSo8601";
 const result = instance.withCalendar(arg);
-assert.sameValue(result.calendar.id, "iso8601", "Calendar is case-insensitive");
+assert.sameValue(result.calendarId, "iso8601", "Calendar is case-insensitive");
+
+arg = "\u0130SO8601";
+assert.throws(
+  RangeError,
+  () => instance.withCalendar(arg),
+  "calendar ID is ASCII-lowercased, capital dotted I is not lowercased"
+);
 
 reportCompare(0, 0);

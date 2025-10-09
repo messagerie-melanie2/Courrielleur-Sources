@@ -5,7 +5,31 @@
 
 #include "nsISupports.idl"
 
+/**
+ * nsMsgKey is a unique ID for a particular message in a folder. If you want a
+ * handle to a message that will remain valid even after resorting the folder or
+ * otherwise changing their indices, you want one of these rather than a
+ * nsMsgViewIndex. nsMsgKeys don't survive local mail folder compression,
+ * however.
+ *
+ * In cases where the message key is not available yet (e.g. a header waiting to
+ * be persisted), `0xffffffff` is used as a placeholder.
+ */
 typedef unsigned long nsMsgKey;
+
+/**
+ * nsMsgViewIndex is generic index type from which other index types are
+ * derived. All nsMsgViewIndex derived types are zero based.
+ *
+ * The following index types are currently supported:
+ *  - nsMsgViewIndex - an index into the list of messages or folders or groups,
+ *    where zero is the first one to show, one is the second, etc...
+ *  - AB_SelectionIndex
+ *  - AB_NameCompletionIndex
+ *
+ * In cases where this index is not available yet (e.g. a header waiting to be
+ * persisted), `0xffffffff` is used as a placeholder.
+ */
 typedef unsigned long nsMsgViewIndex;
 
 typedef long nsMsgSearchScopeValue;
@@ -34,27 +58,22 @@ interface nsMsgPriority : nsISupports {
 /**
  * Defines whether to use SSL or STARTTLS or not.
  * Used by @see nsIMsgIncomingServer.socketType
- * and @see nsISmtpServer.socketType
+ * and @see nsIMsgOutgoingServer.socketType
  */
 [scriptable, uuid(bc78bc74-1b34-48e8-ac2b-968e8dff1aeb)]
 interface nsMsgSocketType : nsISupports {
     /// No SSL or STARTTLS
     const nsMsgSocketTypeValue plain = 0;
-    /// Use TLS via STARTTLS, but only if server offers it.
-    /// @deprecated This is vulnerable to MITM attacks
-    const nsMsgSocketTypeValue trySTARTTLS = 1;
-    /// Insist on TLS via STARTTLS.
-    /// Uses normal port.
+    /// Insist on TLS via STARTTLS. Uses normal port.
     const nsMsgSocketTypeValue alwaysSTARTTLS = 2;
-    /// Connect via SSL.
-    /// Needs special SSL port.
+    /// Connect via SSL. Needs special SSL port.
     const nsMsgSocketTypeValue SSL = 3;
 };
 
 /**
  * Defines which authentication schemes we should try.
  * Used by @see nsIMsgIncomingServer.authMethod
- * and @see nsISmtpServer.authMethod
+ * and @see nsIMsgOutgoingServer.authMethod
  */
 [scriptable, uuid(4a10e647-d179-4a53-b7ef-df575ff5f405)]
 interface nsMsgAuthMethod : nsISupports {

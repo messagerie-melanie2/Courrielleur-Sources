@@ -1,12 +1,10 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 #
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import contextlib
-import io
 import os
 import shutil
 import sys
@@ -19,47 +17,62 @@ from operator import itemgetter
 UNSUPPORTED_FEATURES = set(
     [
         "tail-call-optimization",
-        "Intl.Segmenter",  # Bug 1423593
         "Intl.Locale-info",  # Bug 1693576
-        "Intl.DurationFormat",  # Bug 1648139
-        "Atomics.waitAsync",  # Bug 1467846
         "legacy-regexp",  # Bug 1306461
-        "json-modules",  # Bug 1670176
-        "resizable-arraybuffer",  # Bug 1670026
-        "Temporal",  # Bug 1519167
-        "regexp-v-flag",  # Bug 1713657
-        "decorators",  # Bug 1435869
-        "regexp-duplicate-named-groups",  # Bug 1773135
-        "symbols-as-weakmap-keys",  # Bug 1710433
-        "arraybuffer-transfer",  # Bug 1519163
-        "json-parse-with-source",  # Bug 1658310
+        "source-phase-imports",
+        "source-phase-imports-module-source",
+        "import-defer",
     ]
 )
 FEATURE_CHECK_NEEDED = {
     "Atomics": "!this.hasOwnProperty('Atomics')",
     "FinalizationRegistry": "!this.hasOwnProperty('FinalizationRegistry')",
     "SharedArrayBuffer": "!this.hasOwnProperty('SharedArrayBuffer')",
+    "Temporal": "!this.hasOwnProperty('Temporal')",
     "WeakRef": "!this.hasOwnProperty('WeakRef')",
-    "array-grouping": "!Array.prototype.group",  # Bug 1792650
-    "change-array-by-copy": "!Array.prototype.with",  # Bug 1811054
-    "Array.fromAsync": "!Array.fromAsync",  # Bug 1746209
-    "String.prototype.isWellFormed": "!String.prototype.isWellFormed",
-    "String.prototype.toWellFormed": "!String.prototype.toWellFormed",
+    "decorators": "!(this.hasOwnProperty('getBuildConfiguration')&&getBuildConfiguration('decorators'))",  # Bug 1435869
+    "iterator-helpers": "!this.hasOwnProperty('Iterator')",  # Bug 1568906
+    "Intl.Segmenter": "!Intl.Segmenter",  # Bug 1423593
+    "Intl.DurationFormat": "!Intl.hasOwnProperty('DurationFormat')",  # Bug 1648139
+    "uint8array-base64": "!Uint8Array.fromBase64",  # Bug 1862220
+    "json-parse-with-source": "!JSON.hasOwnProperty('isRawJSON')",  # Bug 1658310
+    "RegExp.escape": "!RegExp.escape",
+    "promise-try": "!Promise.try",
+    "explicit-resource-management": "!(this.hasOwnProperty('getBuildConfiguration')&&getBuildConfiguration('explicit-resource-management'))",  # Bug 1569081
+    "Atomics.pause": "!this.hasOwnProperty('Atomics')||!Atomics.pause",
+    "Error.isError": "!Error.isError",
+    "iterator-sequencing": "!Iterator.concat",
+    "Math.sumPrecise": "!Math.sumPrecise",  # Bug 1918708
+    "upsert": "!Map.prototype.getOrInsertComputed",
 }
 RELEASE_OR_BETA = set(
     [
-        "Intl.NumberFormat-v3",  # Bug 1795756
+        "regexp-modifiers",
+        "symbols-as-weakmap-keys",
     ]
 )
 SHELL_OPTIONS = {
-    "import-assertions": "--enable-import-assertions",
+    "import-attributes": "--enable-import-attributes",
     "ShadowRealm": "--enable-shadow-realms",
-    "array-grouping": "--enable-array-grouping",
-    "change-array-by-copy": "--enable-change-array-by-copy",
-    "Array.fromAsync": "--enable-array-from-async",
-    "String.prototype.isWellFormed": "--enable-well-formed-unicode-strings",
-    "String.prototype.toWellFormed": "--enable-well-formed-unicode-strings",
+    "iterator-helpers": "--enable-iterator-helpers",
+    "symbols-as-weakmap-keys": "--enable-symbols-as-weakmap-keys",
+    "uint8array-base64": "--enable-uint8array-base64",
+    "json-parse-with-source": "--enable-json-parse-with-source",
+    "regexp-duplicate-named-groups": "--enable-regexp-duplicate-named-groups",
+    "RegExp.escape": "--enable-regexp-escape",
+    "regexp-modifiers": "--enable-regexp-modifiers",
+    "promise-try": "--enable-promise-try",
+    "explicit-resource-management": "--enable-explicit-resource-management",
+    "Atomics.pause": "--enable-atomics-pause",
+    "Temporal": "--enable-temporal",
+    "Error.isError": "--enable-error-iserror",
+    "iterator-sequencing": "--enable-iterator-sequencing",
+    "Math.sumPrecise": "--enable-math-sumprecise",
+    "Atomics.waitAsync": "--setpref=atomics_wait_async",
+    "upsert": "--enable-upsert",
 }
+
+INCLUDE_FEATURE_DETECTED_OPTIONAL_SHELL_OPTIONS = {}
 
 
 @contextlib.contextmanager
@@ -191,7 +204,7 @@ def writeTestFile(test262OutDir, testFileName, source):
     Writes the test source to |test262OutDir|.
     """
 
-    with io.open(os.path.join(test262OutDir, testFileName), "wb") as output:
+    with open(os.path.join(test262OutDir, testFileName), "wb") as output:
         output.write(source)
 
 
@@ -226,7 +239,7 @@ def writeShellAndBrowserFiles(
                 yield include
 
     def readIncludeFile(filePath):
-        with io.open(filePath, "rb") as includeFile:
+        with open(filePath, "rb") as includeFile:
             return b"// file: %s\n%s" % (
                 os.path.basename(filePath).encode("utf-8"),
                 includeFile.read(),
@@ -248,15 +261,13 @@ def writeShellAndBrowserFiles(
     )
 
     # Write the concatenated include sources to shell.js.
-    with io.open(os.path.join(test262OutDir, relPath, "shell.js"), "wb") as shellFile:
+    with open(os.path.join(test262OutDir, relPath, "shell.js"), "wb") as shellFile:
         if includeSource:
             shellFile.write(b"// GENERATED, DO NOT EDIT\n")
             shellFile.write(includeSource)
 
     # The browser.js file is always empty for test262 tests.
-    with io.open(
-        os.path.join(test262OutDir, relPath, "browser.js"), "wb"
-    ) as browserFile:
+    with open(os.path.join(test262OutDir, relPath, "browser.js"), "wb") as browserFile:
         browserFile.write(b"")
 
 
@@ -300,7 +311,7 @@ def convertTestFile(test262parser, testSource, testName, includeSet, strictTests
     # currently ignoring the error phase attribute.
     # testRec["negative"] == {type=<error name>, phase=parse|resolution|runtime}
     isNegative = "negative" in testRec
-    assert not isNegative or type(testRec["negative"]) == dict
+    assert not isNegative or type(testRec["negative"]) is dict
     errorType = testRec["negative"]["type"] if isNegative else None
 
     # Async tests are marked with the "async" attribute.
@@ -376,7 +387,7 @@ def convertTestFile(test262parser, testSource, testName, includeSet, strictTests
                 refTestSkipIf.append(
                     (
                         "(this.hasOwnProperty('getBuildConfiguration')"
-                        "&&getBuildConfiguration()['arm64-simulator'])",
+                        "&&getBuildConfiguration('arm64-simulator'))",
                         "ARM64 Simulator cannot emulate atomics",
                     )
                 )
@@ -387,8 +398,21 @@ def convertTestFile(test262parser, testSource, testName, includeSet, strictTests
             if shellOptions:
                 refTestSkipIf.append(("!xulRuntime.shell", "requires shell-options"))
                 refTestOptions.extend(
-                    ("shell-option({})".format(opt) for opt in sorted(shellOptions))
+                    f"shell-option({opt})" for opt in sorted(shellOptions)
                 )
+
+    # Optional shell options. Some tests use feature detection for additional
+    # test coverage. We want to get this extra coverage without having to skip
+    # these tests in browser builds.
+    if "includes" in testRec:
+        optionalShellOptions = (
+            SHELL_OPTIONS[INCLUDE_FEATURE_DETECTED_OPTIONAL_SHELL_OPTIONS[include]]
+            for include in testRec["includes"]
+            if include in INCLUDE_FEATURE_DETECTED_OPTIONAL_SHELL_OPTIONS
+        )
+        refTestOptions.extend(
+            f"shell-option({opt})" for opt in sorted(optionalShellOptions)
+        )
 
     # Includes for every test file in a directory is collected in a single
     # shell.js file per directory level. This is done to avoid adding all
@@ -515,8 +539,12 @@ def process_test262(test262Dir, test262OutDir, strictTests, externManifests):
         "detachArrayBuffer.js"
     ]
 
+    # We can't include "sm/non262.js", because it conflicts with our test harness,
+    # but some definitions from "sm/non262.js" are still needed.
+    localIncludesMap[os.path.join("staging", "sm")] = ["test262-non262.js"]
+
     # Process all test directories recursively.
-    for (dirPath, dirNames, fileNames) in os.walk(testDir):
+    for dirPath, dirNames, fileNames in os.walk(testDir):
         relPath = os.path.relpath(dirPath, testDir)
         if relPath == ".":
             continue
@@ -549,17 +577,21 @@ def process_test262(test262Dir, test262OutDir, strictTests, externManifests):
             isFixtureFile = fileName.endswith("_FIXTURE.js")
 
             # Read the original test source and preprocess it for the jstests harness.
-            with io.open(filePath, "rb") as testFile:
+            with open(filePath, "rb") as testFile:
                 testSource = testFile.read()
 
             if isFixtureFile:
                 convert = convertFixtureFile(testSource, testName)
             else:
                 convert = convertTestFile(
-                    test262parser, testSource, testName, includeSet, strictTests
+                    test262parser,
+                    testSource,
+                    testName,
+                    includeSet,
+                    strictTests,
                 )
 
-            for (newFileName, newSource, externRefTest) in convert:
+            for newFileName, newSource, externRefTest in convert:
                 writeTestFile(test262OutDir, newFileName, newSource)
 
                 if externRefTest is not None:
@@ -569,6 +601,10 @@ def process_test262(test262Dir, test262OutDir, strictTests, externManifests):
                             "reftest": externRefTest,
                         }
                     )
+
+        # Remove "sm/non262.js" because it overwrites our test harness with stub
+        # functions.
+        includeSet.discard("sm/non262.js")
 
         # Add shell.js and browers.js files for the current directory.
         writeShellAndBrowserFiles(
@@ -591,7 +627,7 @@ def fetch_local_changes(inDir, outDir, srcDir, strictTests):
     # TODO: fail if it's in the default branch? or require a branch name?
     # Checks for unstaged or non committed files. A clean branch provides a clean status.
     status = subprocess.check_output(
-        ("git -C %s status --porcelain" % srcDir).split(" ")
+        ("git -C %s status --porcelain" % srcDir).split(" "), encoding="utf-8"
     )
 
     if status.strip():
@@ -602,31 +638,35 @@ def fetch_local_changes(inDir, outDir, srcDir, strictTests):
 
     # Captures the branch name to be used on the output
     branchName = subprocess.check_output(
-        ("git -C %s rev-parse --abbrev-ref HEAD" % srcDir).split(" ")
+        ("git -C %s rev-parse --abbrev-ref HEAD" % srcDir).split(" "), encoding="utf-8"
     ).split("\n")[0]
 
     # Fetches the file names to import
     files = subprocess.check_output(
-        ("git -C %s diff main --diff-filter=ACMR --name-only" % srcDir).split(" ")
+        ("git -C %s diff main --diff-filter=ACMR --name-only" % srcDir).split(" "),
+        encoding="utf-8",
     )
 
     # Fetches the deleted files to print an output log. This can be used to
     # set up the skip list, if necessary.
     deletedFiles = subprocess.check_output(
-        ("git -C %s diff main --diff-filter=D --name-only" % srcDir).split(" ")
+        ("git -C %s diff main --diff-filter=D --name-only" % srcDir).split(" "),
+        encoding="utf-8",
     )
 
     # Fetches the modified files as well for logging to support maintenance
     # in the skip list.
     modifiedFiles = subprocess.check_output(
-        ("git -C %s diff main --diff-filter=M --name-only" % srcDir).split(" ")
+        ("git -C %s diff main --diff-filter=M --name-only" % srcDir).split(" "),
+        encoding="utf-8",
     )
 
     # Fetches the renamed files for the same reason, this avoids duplicate
     # tests if running the new local folder and the general imported Test262
     # files.
     renamedFiles = subprocess.check_output(
-        ("git -C %s diff main --diff-filter=R --summary" % srcDir).split(" ")
+        ("git -C %s diff main --diff-filter=R --summary" % srcDir).split(" "),
+        encoding="utf-8",
     )
 
     # Print some friendly output
@@ -723,9 +763,7 @@ def fetch_pr_files(inDir, outDir, prNumber, strictTests):
             if not os.path.isdir(filePathDirs):
                 os.makedirs(filePathDirs)
 
-            with io.open(
-                os.path.join(inDir, *filename.split("/")), "wb"
-            ) as output_file:
+            with open(os.path.join(inDir, *filename.split("/")), "wb") as output_file:
                 output_file.write(fileText.encode("utf8"))
 
         hasNext = False
@@ -807,7 +845,7 @@ def general_update(inDir, outDir, strictTests):
     shutil.copyfile(os.path.join(inDir, "LICENSE"), os.path.join(outDir, "LICENSE"))
 
     # Create the git info file.
-    with io.open(os.path.join(outDir, "GIT-INFO"), "w", encoding="utf-8") as info:
+    with open(os.path.join(outDir, "GIT-INFO"), "w", encoding="utf-8") as info:
         subprocess.check_call(["git", "-C", inDir, "log", "-1"], stdout=info)
 
     # Copy the test files.
@@ -815,7 +853,7 @@ def general_update(inDir, outDir, strictTests):
     process_test262(inDir, outDir, strictTests, externManifests)
 
     # Create the external reftest manifest file.
-    with io.open(os.path.join(outDir, "jstests.list"), "wb") as manifestFile:
+    with open(os.path.join(outDir, "jstests.list"), "wb") as manifestFile:
         manifestFile.write(b"# GENERATED, DO NOT EDIT\n\n")
         for externManifest in sorted(externManifests, key=itemgetter("name")):
             (terms, comments) = externManifest["reftest"]

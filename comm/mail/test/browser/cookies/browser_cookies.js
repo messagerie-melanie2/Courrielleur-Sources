@@ -10,11 +10,8 @@
 
 "use strict";
 
-var { open_content_tab_with_url } = ChromeUtils.import(
-  "resource://testing-common/mozmill/ContentTabHelpers.jsm"
-);
-var { mc } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+var { open_content_tab_with_url } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ContentTabHelpers.sys.mjs"
 );
 
 // RELATIVE_ROOT messes with the collector, so we have to bring the path back
@@ -25,13 +22,13 @@ var url = "http://mochi.test:8888/browser/comm/mail/test/browser/cookies/html/";
  * Test deleting junk messages with no messages marked as junk.
  */
 add_task(async function test_load_cookie_page() {
-  open_content_tab_with_url(url + "cookietest1.html");
-  let tab2 = open_content_tab_with_url(url + "cookietest2.html");
+  await open_content_tab_with_url(url + "cookietest1.html");
+  const tab2 = await open_content_tab_with_url(url + "cookietest2.html");
 
   await SpecialPowers.spawn(tab2.browser, [], () => {
     Assert.equal(content.document.title, "Cookie Test 2");
 
-    let cookie = content.wrappedJSObject.theCookie;
+    const cookie = content.wrappedJSObject.theCookie;
 
     dump("Cookie is: " + cookie + "\n");
 

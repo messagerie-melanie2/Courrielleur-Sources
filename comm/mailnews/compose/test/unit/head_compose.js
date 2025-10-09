@@ -1,19 +1,19 @@
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-var { mailTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MailTestUtils.jsm"
+var { mailTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MailTestUtils.sys.mjs"
 );
-var { localAccountUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/LocalAccountUtils.jsm"
+var { localAccountUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/LocalAccountUtils.sys.mjs"
 );
 
 var CC = Components.Constructor;
 
-// WebApps.jsm called by ProxyAutoConfig (PAC) requires a valid nsIXULAppInfo.
+// WebApps.sys.mjs called by ProxyAutoConfig (PAC) requires a valid nsIXULAppInfo.
 var { getAppInfo, newAppInfo, updateAppInfo } = ChromeUtils.importESModule(
   "resource://testing-common/AppInfo.sys.mjs"
 );
@@ -30,19 +30,14 @@ var gDEPTH = "../../../../";
 load("../../../resources/abSetup.js");
 
 // Import the smtp server scripts
-var {
-  nsMailServer,
-  gThreadManager,
-  fsDebugNone,
-  fsDebugAll,
-  fsDebugRecv,
-  fsDebugRecvSend,
-} = ChromeUtils.import("resource://testing-common/mailnews/Maild.jsm");
-var { SmtpDaemon, SMTP_RFC2821_handler } = ChromeUtils.import(
-  "resource://testing-common/mailnews/Smtpd.jsm"
+var { nsMailServer } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/Maild.sys.mjs"
 );
-var { AuthPLAIN, AuthLOGIN, AuthCRAM } = ChromeUtils.import(
-  "resource://testing-common/mailnews/Auth.jsm"
+var { SmtpDaemon, SMTP_RFC2821_handler } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/Smtpd.sys.mjs"
+);
+var { AuthPLAIN, AuthLOGIN, AuthCRAM } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/Auth.sys.mjs"
 );
 
 var gDraftFolder;
@@ -59,11 +54,11 @@ function setupServerDaemon(handler) {
 }
 
 function getBasicSmtpServer(port = 1, hostname = "localhost") {
-  let server = localAccountUtils.create_outgoing_server(
-    port,
+  const server = localAccountUtils.create_outgoing_server(
+    "smtp",
     "user",
     "password",
-    hostname
+    { port, hostname }
   );
 
   // Override the default greeting so we get something predicitable
@@ -75,7 +70,7 @@ function getBasicSmtpServer(port = 1, hostname = "localhost") {
 
 function getSmtpIdentity(senderName, smtpServer) {
   // Set up the identity
-  let identity = MailServices.accounts.createIdentity();
+  const identity = MailServices.accounts.createIdentity();
   identity.email = senderName;
   identity.smtpServerKey = smtpServer.key;
 
@@ -99,26 +94,33 @@ function do_check_transaction(real, expected) {
   dump("Passed test " + test + "\n");
 }
 
-// This listener is designed just to call OnStopCopy() when its OnStopCopy
-// function is called - the rest of the functions are unneeded for a lot of
-// tests (but we can't use asyncCopyListener because we need the
-// nsIMsgSendListener interface as well).
+/**
+ * This listener is designed just to call OnStopCopy() when its onStopCopy
+ * function is called - the rest of the functions are unneeded for a lot of
+ * tests (but we can't use asyncCopyListener because we need the
+ * nsIMsgSendListener interface as well).
+ *
+ * @implements {nsIMsgSendListener}
+ * @implements {nsIMsgCopyServiceListener}
+ */
 var copyListener = {
   // nsIMsgSendListener
-  onStartSending(aMsgID, aMsgSize) {},
-  onProgress(aMsgID, aProgress, aProgressMax) {},
-  onStatus(aMsgID, aMsg) {},
-  onStopSending(aMsgID, aStatus, aMsg, aReturnFile) {},
-  onGetDraftFolderURI(aMsgID, aFolderURI) {},
-  onSendNotPerformed(aMsgID, aStatus) {},
-  onTransportSecurityError(msgID, status, secInfo, location) {},
+  onStartSending() {},
+  onSendProgress() {},
+  onStatus() {},
+  onStopSending() {},
+  onGetDraftFolderURI() {},
+  onSendNotPerformed() {},
+  onTransportSecurityError() {},
 
   // nsIMsgCopyServiceListener
-  OnStartCopy() {},
-  OnProgress(aProgress, aProgressMax) {},
-  SetMessageKey(aKey) {},
-  GetMessageId(aMessageId) {},
-  OnStopCopy(aStatus) {
+  onStartCopy() {},
+  onProgress() {},
+  setMessageKey() {},
+  getMessageId() {
+    return null;
+  },
+  onStopCopy(aStatus) {
     /* globals OnStopCopy */
     OnStopCopy(aStatus);
   },
@@ -130,25 +132,19 @@ var copyListener = {
   ]),
 };
 
+/** @implements {nsIWebProgressListener} */
 var progressListener = {
-  onStateChange(aWebProgress, aRequest, aStateFlags, aStatus) {
+  onStateChange(aWebProgress, aRequest, aStateFlags) {
     if (aStateFlags & Ci.nsIWebProgressListener.STATE_STOP) {
       this.resolve(gDraftFolder && mailTestUtils.firstMsgHdr(gDraftFolder));
     }
   },
 
-  onProgressChange(
-    aWebProgress,
-    aRequest,
-    aCurSelfProgress,
-    aMaxSelfProgress,
-    aCurTotalProgress,
-    aMaxTotalProgress
-  ) {},
-  onLocationChange(aWebProgress, aRequest, aLocation, aFlags) {},
-  onStatusChange(aWebProgress, aRequest, aStatus, aMessage) {},
-  onSecurityChange(aWebProgress, aRequest, state) {},
-  onContentBlockingEvent(aWebProgress, aRequest, aEvent) {},
+  onProgressChange() {},
+  onLocationChange() {},
+  onStatusChange() {},
+  onSecurityChange() {},
+  onContentBlockingEvent() {},
 
   QueryInterface: ChromeUtils.generateQI([
     "nsIWebProgressListener",
@@ -157,14 +153,14 @@ var progressListener = {
 };
 
 function createMessage(aAttachment) {
-  let fields = Cc[
+  const fields = Cc[
     "@mozilla.org/messengercompose/composefields;1"
   ].createInstance(Ci.nsIMsgCompFields);
   fields.from = "Nobody <nobody@tinderbox.test>";
 
   let attachments = [];
   if (aAttachment) {
-    let attachment = Cc[
+    const attachment = Cc[
       "@mozilla.org/messengercompose/attachment;1"
     ].createInstance(Ci.nsIMsgAttachment);
     if (aAttachment instanceof Ci.nsIFile) {
@@ -186,41 +182,37 @@ function richCreateMessage(
   identity = null,
   account = null
 ) {
-  let params = Cc[
+  const params = Cc[
     "@mozilla.org/messengercompose/composeparams;1"
   ].createInstance(Ci.nsIMsgComposeParams);
   params.composeFields = fields;
 
-  let msgCompose = MailServices.compose.initCompose(params);
+  const msgCompose = MailServices.compose.initCompose(params);
   if (identity === null) {
     identity = getSmtpIdentity(null, getBasicSmtpServer());
   }
 
-  let rootFolder = localAccountUtils.rootFolder;
-  gDraftFolder = null;
+  const rootFolder = localAccountUtils.rootFolder;
+  gDraftFolder =
+    rootFolder.getChildNamed("Drafts") ||
+    rootFolder.createLocalSubfolder("Drafts");
   // Make sure the drafts folder is empty
-  try {
-    gDraftFolder = rootFolder.getChildNamed("Drafts");
-  } catch (e) {
-    // we don't have to remove the folder because it doesn't exist yet
-    gDraftFolder = rootFolder.createLocalSubfolder("Drafts");
-  }
   // Clear all messages
-  let msgs = [...gDraftFolder.msgDatabase.enumerateMessages()];
+  const msgs = [...gDraftFolder.msgDatabase.enumerateMessages()];
   if (msgs.length > 0) {
     gDraftFolder.deleteMessages(msgs, null, true, false, null, false);
   }
 
   // Set attachment
   fields.removeAttachments();
-  for (let attachment of attachments) {
+  for (const attachment of attachments) {
     fields.addAttachment(attachment);
   }
 
-  let progress = Cc["@mozilla.org/messenger/progress;1"].createInstance(
+  const progress = Cc["@mozilla.org/messenger/progress;1"].createInstance(
     Ci.nsIMsgProgress
   );
-  let promise = new Promise((resolve, reject) => {
+  const promise = new Promise((resolve, reject) => {
     progressListener.resolve = resolve;
     progressListener.reject = reject;
   });
@@ -237,7 +229,7 @@ function richCreateMessage(
 
 function getAttachmentFromContent(aContent) {
   function getBoundaryStringFromContent() {
-    let found = aContent.match(
+    const found = aContent.match(
       /Content-Type: multipart\/mixed;\s+boundary="(.*?)"/
     );
     Assert.notEqual(found, null);
@@ -246,8 +238,8 @@ function getAttachmentFromContent(aContent) {
     return found[1];
   }
 
-  let boundary = getBoundaryStringFromContent(aContent);
-  let regex = new RegExp(
+  const boundary = getBoundaryStringFromContent(aContent);
+  const regex = new RegExp(
     "\\r\\n\\r\\n--" +
       boundary +
       "\\r\\n" +
@@ -257,7 +249,7 @@ function getAttachmentFromContent(aContent) {
       "--",
     "m"
   );
-  let attachments = aContent.match(regex);
+  const attachments = aContent.match(regex);
   Assert.notEqual(attachments, null);
   Assert.equal(attachments.length, 2);
   return attachments[1];
@@ -270,7 +262,7 @@ function getAttachmentFromContent(aContent) {
  * @returns {string}
  */
 function getMessageBody(content) {
-  let separatorIndex = content.indexOf("\r\n\r\n");
+  const separatorIndex = content.indexOf("\r\n\r\n");
   Assert.equal(content.slice(-2), "\r\n", "Should end with a line break.");
   return content.slice(separatorIndex + 4, -2);
 }

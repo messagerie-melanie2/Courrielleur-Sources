@@ -25,8 +25,8 @@ const TEST_URI = "data:text/html;charset=utf-8," + encodeURI(HTML);
 add_task(async function () {
   const tab = await addTab(TEST_URI);
   await testToolboxInitialization(tab);
-  await testContextMenuInitialization();
-  await testContextMenuInspectorAlreadyOpen();
+  await testContextMenuInitialization(tab);
+  await testContextMenuInspectorAlreadyOpen(tab);
 });
 
 async function testToolboxInitialization(tab) {
@@ -53,23 +53,73 @@ async function testToolboxInitialization(tab) {
   await toolbox.destroy();
 
   ok(true, "'destroyed' notification received.");
-  const toolboxForTab = await gDevTools.getToolboxForTab(tab);
+  const toolboxForTab = gDevTools.getToolboxForTab(tab);
   ok(!toolboxForTab, "Toolbox destroyed.");
 }
 
-async function testContextMenuInitialization() {
+async function testContextMenuInitialization(tab) {
+  // Sanity check
+  const toolboxForTab = gDevTools.getToolboxForTab(tab);
+  ok(!toolboxForTab, "There's not toolbox for the tab");
+
+  const onHighlighterVisible = SpecialPowers.spawn(
+    gBrowser.selectedBrowser,
+    [],
+    () => {
+      const doc = content.document;
+      return ContentTaskUtils.waitForCondition(() => {
+        // Highlighters are rendered in the shadow DOM, let's get the shadow roots first
+        const roots = doc.getConnectedShadowRoots();
+        const getBoxModelHighlighterInfoBarEl = root =>
+          root.querySelector(
+            ".highlighter-container.box-model #box-model-infobar-container"
+          );
+        const boxModelRoot = roots.find(root =>
+          getBoxModelHighlighterInfoBarEl(root)
+        );
+        if (!boxModelRoot) {
+          return false;
+        }
+        const boxModelInfoBarEl = getBoxModelHighlighterInfoBarEl(boxModelRoot);
+        return (
+          // wait for the infobar to be displayed
+          boxModelInfoBarEl.getAttribute("hidden") === null &&
+          // and make sure it's shown for the inspected element
+          boxModelInfoBarEl.querySelector(".box-model-infobar-id")
+            ?.textContent === "#salutation"
+        );
+      }, "wait for hihglighter to be visible");
+    }
+  );
+
   info("Opening inspector by clicking on 'Inspect Element' context menu item");
   await clickOnInspectMenuItem("#salutation");
 
+  info("Wait for the highlighter to be displayed");
+  await onHighlighterVisible;
+  ok(true, "Highlighter was displayed for #salutation element");
+
   info("Checking inspector state.");
+  const inspector = getActiveInspector();
+  const markup = inspector.markup;
+  const rootContainer = markup.getContainer(markup._rootNode);
+  is(
+    inspector.markup.doc.activeElement,
+    rootContainer.elt,
+    "Keyboard focus must be on the markup tree container."
+  );
   await testMarkupView("#salutation");
   await testBreadcrumbs("#salutation");
 }
 
-async function testContextMenuInspectorAlreadyOpen() {
+async function testContextMenuInspectorAlreadyOpen(tab) {
+  // Sanity check
+  const toolboxForTab = gDevTools.getToolboxForTab(tab);
+  ok(toolboxForTab, "There's already a toolbox for the tab");
+
   info("Changing node by clicking on 'Inspect Element' context menu item");
 
-  const inspector = await getActiveInspector();
+  const inspector = getActiveInspector();
   ok(inspector, "Inspector is active");
 
   await clickOnInspectMenuItem("#closing");
@@ -81,7 +131,7 @@ async function testContextMenuInspectorAlreadyOpen() {
 
 async function testMarkupView(selector, inspector) {
   if (!inspector) {
-    inspector = await getActiveInspector();
+    inspector = getActiveInspector();
   }
   const nodeFront = await getNodeFront(selector, inspector);
   try {
@@ -98,14 +148,14 @@ async function testMarkupView(selector, inspector) {
 
 async function testBreadcrumbs(selector, inspector) {
   if (!inspector) {
-    inspector = await getActiveInspector();
+    inspector = getActiveInspector();
   }
   const nodeFront = await getNodeFront(selector, inspector);
 
   const b = inspector.breadcrumbs;
   const expectedText = b.prettyPrintNodeAsText(nodeFront);
-  const button = b.container.querySelector("button[checked=true]");
-  ok(button, "A crumbs is checked=true");
+  const button = b.container.querySelector("button[aria-pressed=true]");
+  ok(button, "A crumbs is pressed");
   is(
     button.getAttribute("title"),
     expectedText,

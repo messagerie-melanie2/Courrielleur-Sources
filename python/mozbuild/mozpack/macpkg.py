@@ -13,12 +13,11 @@ import lzma
 import os
 import struct
 import zlib
+from collections import deque, namedtuple
 from xml.etree.ElementTree import XML
 
-from mozbuild.util import ReadOnlyNamespace
 
-
-class ZlibFile(object):
+class ZlibFile:
     def __init__(self, fileobj):
         self.fileobj = fileobj
         self.decompressor = zlib.decompressobj()
@@ -70,7 +69,10 @@ def unxar(fileobj):
     if len(toc) != uncompressed_toc_len:
         raise Exception("Corrupted XAR?")
     toc = XML(toc).find("toc")
-    for f in toc.findall("file"):
+    queue = deque(toc.findall("file"))
+    while queue:
+        f = queue.pop()
+        queue.extend(f.iterfind("file"))
         if f.find("type").text != "file":
             continue
         filename = f.find("name").text
@@ -95,7 +97,7 @@ def unxar(fileobj):
         yield filename, content
 
 
-class Pbzx(object):
+class Pbzx:
     def __init__(self, fileobj):
         magic = fileobj.read(4)
         if magic != b"pbzx":
@@ -106,6 +108,8 @@ class Pbzx(object):
         # check.
         chunk_size = fileobj.read(8)
         chunk_size = struct.unpack(">Q", chunk_size)[0]
+        # Not using mozbuild.util.cpu_count() because this file is used standalone
+        # to generate system symbols.
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count())
         self.chunk_getter = executor.map(self._uncompress_chunk, self._chunker(fileobj))
         self._init_one_chunk()
@@ -151,7 +155,7 @@ class Pbzx(object):
             return result
 
 
-class Take(object):
+class Take:
     """
     File object wrapper that allows to read at most a certain length.
     """
@@ -168,6 +172,9 @@ class Take(object):
         result = self.fileobj.read(length)
         self.limit -= len(result)
         return result
+
+
+CpioInfo = namedtuple("CpioInfo", ["mode", "nlink", "dev", "ino"])
 
 
 def uncpio(fileobj):
@@ -211,7 +218,7 @@ def uncpio(fileobj):
         if name.startswith(b"/"):
             name = name[1:]
         content = Take(fileobj, filesize)
-        yield name, ReadOnlyNamespace(mode=mode, nlink=nlink, dev=dev, ino=ino), content
+        yield name, CpioInfo(mode=mode, nlink=nlink, dev=dev, ino=ino), content
         # Ensure the content is totally consumed
         while content.read(4096):
             pass

@@ -6,11 +6,107 @@ import os
 
 import mozunit
 import pytest
-from tryselect.tasks import cache_key, filter_tasks_by_paths, resolve_tests_by_suite
+from tryselect.tasks import (
+    cache_key,
+    filter_tasks_by_paths,
+    filter_tasks_by_worker_type,
+    resolve_tests_by_suite,
+)
+
+
+class task:
+    def __init__(self, workerType):
+        self.workerType = workerType
+
+    @property
+    def task(self):
+        return {"workerType": self.workerType}
+
+
+@pytest.mark.parametrize(
+    "tasks, params, expected",
+    (
+        pytest.param(
+            {
+                "foobar/xpcshell-1": task("t-unittest-314"),
+                "foobar/mochitest": task("t-unittest-157"),
+                "foobar/xpcshell-gpu": task("t-unittest-314-gpu"),
+                "foobar/xpcshell": task("t-unittest-314"),
+            },
+            {"try_task_config": {"worker-types": ["t-unittest-314"]}},
+            [
+                "foobar/xpcshell-1",
+                "foobar/xpcshell",
+            ],
+            id="single worker",
+        ),
+        pytest.param(
+            {
+                "foobar/xpcshell-1": task("t-unittest-314"),
+                "foobar/mochitest": task("t-unittest-157"),
+                "foobar/xpcshell-gpu": task("t-unittest-314-gpu"),
+                "foobar/xpcshell": task("t-unittest-314"),
+            },
+            {
+                "try_task_config": {
+                    "worker-types": ["t-unittest-314", "t-unittest-314-gpu"]
+                }
+            },
+            [
+                "foobar/xpcshell-1",
+                "foobar/xpcshell-gpu",
+                "foobar/xpcshell",
+            ],
+            id="multiple workers worker",
+        ),
+        pytest.param(
+            {
+                "foobar/xpcshell-1": task("t-unittest-314"),
+                "foobar/mochitest": task("t-unittest-157"),
+                "foobar/xpcshell-gpu": task("t-unittest-314-gpu"),
+                "foobar/xpcshell": task("t-unittest-314"),
+            },
+            {"try_task_config": {"worker-types": ["t-unittest-157"]}},
+            [
+                "foobar/mochitest",
+            ],
+            id="single task",
+        ),
+        pytest.param(
+            {
+                "foobar/xpcshell-1": task("t-unittest-314"),
+                "foobar/mochitest": task("t-unittest-157"),
+                "foobar/xpcshell-gpu": task("t-unittest-314-gpu"),
+                "foobar/xpcshell": task("t-unittest-314"),
+            },
+            {"try_task_config": {"worker-types": []}},
+            [
+                "foobar/xpcshell-1",
+                "foobar/mochitest",
+                "foobar/xpcshell-gpu",
+                "foobar/xpcshell",
+            ],
+            id="no worker",
+        ),
+        pytest.param(
+            {
+                "foobar/xpcshell-1": task("t-unittest-314"),
+                "foobar/mochitest": task("t-unittest-157"),
+                "foobar/xpcshell-gpu": task("t-unittest-314-gpu"),
+                "foobar/xpcshell": task("t-unittest-314"),
+            },
+            {"try_task_config": {"worker-types": ["fake-worker"]}},
+            [],
+            id="invalid worker",
+        ),
+    ),
+)
+def test_filter_tasks_by_worker_type(patch_resolver, tasks, params, expected):
+    assert list(filter_tasks_by_worker_type(tasks, params)) == expected
 
 
 def test_filter_tasks_by_paths(patch_resolver):
-    tasks = ["foobar/xpcshell-1", "foobar/mochitest", "foobar/xpcshell"]
+    tasks = {"foobar/xpcshell-1": {}, "foobar/mochitest": {}, "foobar/xpcshell": {}}
 
     patch_resolver(["xpcshell"], {})
     assert list(filter_tasks_by_paths(tasks, "dummy")) == []
@@ -75,18 +171,31 @@ def test_resolve_tests_by_suite(patch_resolver, input, tests, expected):
 
 
 @pytest.mark.parametrize(
-    "attr,params,disable_target_task_filter,expected",
+    "attr,params,disable_target_task_filter,target_tasks_method,expected",
     (
-        ("target_task_set", None, False, "target_task_set"),
-        ("target_task_set", {"project": "autoland"}, False, "target_task_set"),
-        ("target_task_set", {"project": "mozilla-central"}, False, "target_task_set"),
-        ("target_task_set", None, True, "target_task_set-uncommon"),
-        ("full_task_set", {"project": "pine"}, False, "full_task_set-pine"),
-        ("full_task_set", None, True, "full_task_set"),
+        ("target_task_set", None, False, None, "target_task_set"),
+        ("target_task_set", {"project": "autoland"}, False, None, "target_task_set"),
+        (
+            "target_task_set",
+            {"project": "mozilla-central"},
+            False,
+            None,
+            "target_task_set",
+        ),
+        ("target_task_set", None, True, None, "target_task_set-uncommon"),
+        ("target_task_set", None, False, "foo", "target_task_set-target_foo"),
+        ("full_task_set", {"project": "pine"}, False, None, "full_task_set-pine"),
+        ("full_task_set", None, True, None, "full_task_set"),
+        ("full_task_set", None, True, "foo", "full_task_set-target_foo"),
     ),
 )
-def test_cache_key(attr, params, disable_target_task_filter, expected):
-    assert cache_key(attr, params, disable_target_task_filter) == expected
+def test_cache_key(
+    attr, params, disable_target_task_filter, target_tasks_method, expected
+):
+    assert (
+        cache_key(attr, params, disable_target_task_filter, target_tasks_method)
+        == expected
+    )
 
 
 if __name__ == "__main__":

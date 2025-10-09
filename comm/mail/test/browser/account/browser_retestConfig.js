@@ -4,17 +4,11 @@
 
 "use strict";
 
-var { openAccountSetup } = ChromeUtils.import(
-  "resource://testing-common/mozmill/AccountManagerHelpers.jsm"
+var { openAccountSetup } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/AccountManagerHelpers.sys.mjs"
 );
-var { mc } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-);
-var { input_value, delete_all_existing } = ChromeUtils.import(
-  "resource://testing-common/mozmill/KeyboardHelpers.jsm"
-);
-var { close_window } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
+var { input_value, delete_all_existing } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/KeyboardHelpers.sys.mjs"
 );
 
 var user = {
@@ -29,7 +23,7 @@ const PREF_VALUE = Services.prefs.getCharPref(PREF_NAME);
 add_setup(function () {
   Services.prefs.setCharPref("mail.setup.loglevel", "All");
 
-  let url =
+  const url =
     "http://mochi.test:8888/browser/comm/mail/test/browser/account/xml/";
   Services.prefs.setCharPref(PREF_NAME, url);
 });
@@ -42,8 +36,8 @@ registerCleanupFunction(function () {
 add_task(async function test_re_test_config() {
   // Opening multiple windows in the same run seems to require letting the stack
   // unwind before opening the next one, so do that here.
-  let tab = await openAccountSetup();
-  let tabDocument = tab.browser.contentWindow.document;
+  const tab = await openAccountSetup();
+  const tabDocument = tab.browser.contentWindow.document;
   // Input user's account information
   EventUtils.synthesizeMouseAtCenter(
     tabDocument.getElementById("realname"),
@@ -53,18 +47,18 @@ add_task(async function test_re_test_config() {
 
   if (tabDocument.getElementById("realname").value) {
     // If any realname is already filled, clear it out, we have our own.
-    delete_all_existing(mc, tabDocument.getElementById("realname"));
+    delete_all_existing(window, tabDocument.getElementById("realname"));
   }
-  input_value(mc, user.name);
-  EventUtils.synthesizeKey("VK_TAB", {}, mc.window);
-  input_value(mc, user.email);
+  input_value(window, user.name);
+  EventUtils.synthesizeKey("VK_TAB", {}, window);
+  input_value(window, user.email);
 
   // Click "continue" button.
-  let nextButton = tabDocument.getElementById("continueButton");
+  const nextButton = tabDocument.getElementById("continueButton");
   EventUtils.synthesizeMouseAtCenter(nextButton, {}, tab.browser.contentWindow);
 
   // Wait for 'edit' button to be enabled.
-  let editButton = tabDocument.getElementById("manualConfigButton");
+  const editButton = tabDocument.getElementById("manualConfigButton");
   await BrowserTestUtils.waitForCondition(
     () => !editButton.hidden && !editButton.disabled,
     "Timeout waiting for edit button to become visible and active"
@@ -73,7 +67,7 @@ add_task(async function test_re_test_config() {
   EventUtils.synthesizeMouseAtCenter(editButton, {}, tab.browser.contentWindow);
 
   // Click "re-test" button.
-  let testButton = tabDocument.getElementById("reTestButton");
+  const testButton = tabDocument.getElementById("reTestButton");
   EventUtils.synthesizeMouseAtCenter(testButton, {}, tab.browser.contentWindow);
 
   await BrowserTestUtils.waitForCondition(
@@ -84,10 +78,10 @@ add_task(async function test_re_test_config() {
   // There used to be a "start over" button (line commented out below). Now just
   // changing the value of the email field does the trick.
   tabDocument.getElementById("realname").focus();
-  EventUtils.synthesizeKey("VK_TAB", {}, mc.window);
+  EventUtils.synthesizeKey("VK_TAB", {}, window);
   tabDocument.getElementById("email").focus();
-  input_value(mc, user.altEmail);
-  EventUtils.synthesizeKey("VK_TAB", {}, mc.window);
+  input_value(window, user.altEmail);
+  EventUtils.synthesizeKey("VK_TAB", {}, window);
 
   // Wait for the "continue" button to be back, which means we're back to the
   // original state.
@@ -106,5 +100,5 @@ add_task(async function test_re_test_config() {
     "We're not back to the original state!"
   );
 
-  mc.window.document.getElementById("tabmail").closeTab(tab);
+  document.getElementById("tabmail").closeTab(tab);
 });

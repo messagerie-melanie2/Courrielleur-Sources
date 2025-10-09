@@ -55,7 +55,6 @@ export class NntpIncomingServer extends MsgIncomingServer {
     this.localStoreType = "news";
     this.localDatabaseType = "news";
     this.canSearchMessages = true;
-    this.sortOrder = 500000000;
 
     Object.defineProperty(this, "defaultCopiesAndFoldersPrefsToServer", {
       // No Draft/Sent folder on news servers, will point to "Local Folders".
@@ -136,11 +135,15 @@ export class NntpIncomingServer extends MsgIncomingServer {
   }
 
   stopPopulating(msgWindow) {
+    // Calling nsISubscribableServer.setAsSubscribed with a path that does not
+    // exist in the tree will add a new node. This must be done before
+    // nsISubscribableServer.stopPopulating, as only then will the internal row
+    // list be updated accordingly.
+    this.updateSubscribed();
     this._subscribable.stopPopulating(msgWindow);
     if (!this._hostInfoLoaded) {
       this._saveHostInfo();
     }
-    this.updateSubscribed();
   }
 
   addTo(name, addAsSubscribed, subscribale, changeIfExists) {
@@ -155,7 +158,7 @@ export class NntpIncomingServer extends MsgIncomingServer {
     } catch (e) {
       // Group names with double dot, like alt.binaries.sounds..mp3.zappa are
       // not working. Bug 1788572.
-      console.error(`Failed to add group ${name}. ${e}`);
+      console.error(`Failed to add group ${name}`, e);
     }
   }
 
@@ -178,7 +181,12 @@ export class NntpIncomingServer extends MsgIncomingServer {
 
   setAsSubscribed(path) {
     this._tmpSubscribed.add(path);
-    this._subscribable.setAsSubscribed(path);
+    // Calling nsISubscribableServer.isSubscribable with a path that does not
+    // exist in the tree will add a new node and return false. These paths will
+    // be displayed grayed out.
+    if (this._subscribable.isSubscribable(path)) {
+      this._subscribable.setAsSubscribed(path);
+    }
   }
 
   updateSubscribed() {
@@ -335,11 +343,11 @@ export class NntpIncomingServer extends MsgIncomingServer {
 
   /** @see nsINntpIncomingServer */
   get charset() {
-    return this.getCharValue("charset") || "UTF-8";
+    return this.getStringValue("charset") || "UTF-8";
   }
 
   set charset(value) {
-    this.setCharValue("charset", value);
+    this.setStringValue("charset", value);
   }
 
   get maximumConnectionsNumber() {
@@ -470,23 +478,6 @@ export class NntpIncomingServer extends MsgIncomingServer {
     for (const folder of newsFolder.subFolders) {
       folder.QueryInterface(Ci.nsIMsgNewsFolder);
       folder.forgetAuthenticationCredentials();
-    }
-  }
-
-  groupNotFound(msgWindow, groupName) {
-    const bundle = Services.strings.createBundle(
-      "chrome://messenger/locale/news.properties"
-    );
-    const result = Services.prompt.confirm(
-      msgWindow,
-      null,
-      bundle.formatStringFromName("autoUnsubscribeText", [
-        groupName,
-        this.hostName,
-      ])
-    );
-    if (result) {
-      this.unsubscribe(groupName);
     }
   }
 

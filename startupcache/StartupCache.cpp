@@ -15,6 +15,7 @@
 #include "mozilla/ResultExtensions.h"
 #include "mozilla/scache/StartupCache.h"
 #include "mozilla/ScopeExit.h"
+#include "mozilla/Try.h"
 
 #include "nsClassHashtable.h"
 #include "nsComponentManagerUtils.h"
@@ -28,7 +29,7 @@
 #include "nsITimer.h"
 #include "mozilla/Omnijar.h"
 #include "prenv.h"
-#include "mozilla/Telemetry.h"
+#include "mozilla/glean/StartupcacheMetrics.h"
 #include "nsThreadUtils.h"
 #include "nsXULAppAPI.h"
 #include "nsIProtocolHandler.h"
@@ -185,8 +186,8 @@ nsresult StartupCache::Init() {
   // cache in.
   char* env = PR_GetEnv("MOZ_STARTUP_CACHE");
   if (env && *env) {
-    rv = NS_NewLocalFile(NS_ConvertUTF8toUTF16(env), false,
-                         getter_AddRefs(mFile));
+    MOZ_TRY(
+        NS_NewNativeLocalFile(nsDependentCString(env), getter_AddRefs(mFile)));
   } else {
     nsCOMPtr<nsIFile> file;
     rv = NS_GetSpecialDirectory("ProfLDS", getter_AddRefs(file));
@@ -203,13 +204,10 @@ nsresult StartupCache::Init() {
     if (NS_FAILED(rv) && rv != NS_ERROR_FILE_ALREADY_EXISTS) return rv;
 
     rv = file->AppendNative(nsLiteralCString(STARTUP_CACHE_NAME));
-
     NS_ENSURE_SUCCESS(rv, rv);
 
-    mFile = file;
+    mFile = file.forget();
   }
-
-  NS_ENSURE_TRUE(mFile, NS_ERROR_UNEXPECTED);
 
   mObserverService = do_GetService("@mozilla.org/observer-service;1");
 
@@ -267,8 +265,6 @@ Result<Ok, nsresult> StartupCache::LoadArchive() {
   MOZ_ASSERT(NS_IsMainThread(), "Can only load startup cache on main thread");
   if (gIgnoreDiskCache) return Err(NS_ERROR_FAILURE);
 
-  mTableLock.AssertCurrentThreadOwns();
-
   MOZ_TRY(mCacheData.init(mFile));
   auto size = mCacheData.size();
   if (CanPrefetchMemory()) {
@@ -298,7 +294,7 @@ Result<Ok, nsresult> StartupCache::LoadArchive() {
     return Err(NS_ERROR_UNEXPECTED);
   }
 
-  Range<uint8_t> header(data, data + headerSize);
+  Range<const uint8_t> header(data, data + headerSize);
   data += headerSize;
 
   mCacheEntriesBaseOffset = sizeof(MAGIC) + sizeof(headerSize) + headerSize;
@@ -381,10 +377,9 @@ nsresult StartupCache::GetBuffer(const char* id, const char** outbuf,
   NS_ASSERTION(NS_IsMainThread(),
                "Startup cache only available on main thread");
 
-  Telemetry::LABELS_STARTUP_CACHE_REQUESTS label =
-      Telemetry::LABELS_STARTUP_CACHE_REQUESTS::Miss;
-  auto telemetry =
-      MakeScopeExit([&label] { Telemetry::AccumulateCategorical(label); });
+  auto label = glean::startup_cache::RequestsLabel::eMiss;
+  auto telemetry = MakeScopeExit(
+      [&label] { glean::startup_cache::requests.EnumGet(label).Add(); });
 
   MutexAutoLock lock(mTableLock);
   decltype(mTable)::Ptr p = mTable.lookup(nsDependentCString(id));
@@ -394,11 +389,19 @@ nsresult StartupCache::GetBuffer(const char* id, const char** outbuf,
 
   auto& value = p->value();
   if (value.mData) {
-    label = Telemetry::LABELS_STARTUP_CACHE_REQUESTS::HitMemory;
+    label = glean::startup_cache::RequestsLabel::eHitmemory;
   } else {
     if (!mCacheData.initialized()) {
       return NS_ERROR_NOT_AVAILABLE;
     }
+    // It is impossible for a write to be pending here. This is because
+    // we just checked mCacheData.initialized(), and this is reset before
+    // writing to the cache. It's not re-initialized unless we call
+    // LoadArchive(), either from Init() (which must have already happened) or
+    // InvalidateCache(). InvalidateCache() locks the mutex, so a write can't be
+    // happening.
+    // Also, WriteToDisk() requires mTableLock, so while it's writing we can't
+    // be here.
 
     size_t totalRead = 0;
     size_t totalWritten = 0;
@@ -428,7 +431,7 @@ nsresult StartupCache::GetBuffer(const char* id, const char** outbuf,
 
     MMAP_FAULT_HANDLER_CATCH(NS_ERROR_FAILURE)
 
-    label = Telemetry::LABELS_STARTUP_CACHE_REQUESTS::HitDisk;
+    label = glean::startup_cache::RequestsLabel::eHitdisk;
   }
 
   if (!value.mRequested) {
@@ -447,7 +450,6 @@ nsresult StartupCache::GetBuffer(const char* id, const char** outbuf,
   return NS_OK;
 }
 
-// Makes a copy of the buffer, client retains ownership of inbuf.
 nsresult StartupCache::PutBuffer(const char* id, UniqueFreePtr<char[]>&& inbuf,
                                  uint32_t len) MOZ_NO_THREAD_SAFETY_ANALYSIS {
   NS_ASSERTION(NS_IsMainThread(),
@@ -515,15 +517,17 @@ Result<Ok, nsresult> StartupCache::WriteToDisk() {
     return Err(NS_ERROR_UNEXPECTED);
   }
 
-  AutoFDClose fd;
+  AutoFDClose raiiFd;
   MOZ_TRY(mFile->OpenNSPRFileDesc(PR_WRONLY | PR_CREATE_FILE | PR_TRUNCATE,
-                                  0644, &fd.rwget()));
+                                  0644, getter_Transfers(raiiFd)));
+  const auto fd = raiiFd.get();
 
-  nsTArray<std::pair<const nsCString*, StartupCacheEntry*>> entries;
+  nsTArray<StartupCacheEntry::KeyValuePair> entries(mTable.count());
   for (auto iter = mTable.iter(); !iter.done(); iter.next()) {
     if (iter.get().value().mRequested) {
-      entries.AppendElement(
-          std::make_pair(&iter.get().key(), &iter.get().value()));
+      StartupCacheEntry::KeyValuePair kv(&iter.get().key(),
+                                         &iter.get().value());
+      entries.AppendElement(kv);
     }
   }
 
@@ -534,8 +538,8 @@ Result<Ok, nsresult> StartupCache::WriteToDisk() {
   entries.Sort(StartupCacheEntry::Comparator());
   loader::OutputBuffer buf;
   for (auto& e : entries) {
-    auto key = e.first;
-    auto value = e.second;
+    auto* key = e.first;
+    auto* value = e.second;
     auto uncompressedSize = value->mUncompressedSize;
     // Set the mHeaderOffsetInFile so we can go back and edit the offset.
     value->mHeaderOffsetInFile = buf.cursor();

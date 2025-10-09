@@ -25,7 +25,6 @@
 #include "secerr.h"
 #include "smime.h"
 #include "mozilla/StaticMutex.h"
-#include "nsIPrefBranch.h"
 
 using namespace mozilla;
 using namespace mozilla::psm;
@@ -93,8 +92,8 @@ NS_IMETHODIMP nsCMSMessage::GetSignerCommonName(char** aName) {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsCMSMessage::ContentIsEncrypted(bool* isEncrypted) {
-  MOZ_LOG(gCMSLog, LogLevel::Debug, ("nsCMSMessage::ContentIsEncrypted"));
+NS_IMETHODIMP nsCMSMessage::GetContentIsEncrypted(bool* isEncrypted) {
+  MOZ_LOG(gCMSLog, LogLevel::Debug, ("nsCMSMessage::GetContentIsEncrypted"));
   NS_ENSURE_ARG(isEncrypted);
 
   if (!m_cmsMsg) return NS_ERROR_FAILURE;
@@ -104,8 +103,8 @@ NS_IMETHODIMP nsCMSMessage::ContentIsEncrypted(bool* isEncrypted) {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsCMSMessage::ContentIsSigned(bool* isSigned) {
-  MOZ_LOG(gCMSLog, LogLevel::Debug, ("nsCMSMessage::ContentIsSigned"));
+NS_IMETHODIMP nsCMSMessage::GetContentIsSigned(bool* isSigned) {
+  MOZ_LOG(gCMSLog, LogLevel::Debug, ("nsCMSMessage::GetContentIsSigned"));
   NS_ENSURE_ARG(isSigned);
 
   if (!m_cmsMsg) return NS_ERROR_FAILURE;
@@ -244,14 +243,14 @@ static SECStatus myExtraVerificationOnCert(CERTCertificate* cert,
     return SECFailure;
   }
 
-  SECCertificateUsage usageForPkix;
+  mozilla::psm::VerifyUsage usageForPkix;
 
   switch (certusage) {
     case certUsageEmailSigner:
-      usageForPkix = certificateUsageEmailSigner;
+      usageForPkix = mozilla::psm::VerifyUsage::EmailSigner;
       break;
     case certUsageEmailRecipient:
-      usageForPkix = certificateUsageEmailRecipient;
+      usageForPkix = mozilla::psm::VerifyUsage::EmailRecipient;
       break;
     default:
       return SECFailure;
@@ -458,7 +457,7 @@ nsresult nsCMSMessage::CommonVerifySignature(
 
   if (!aDigestData.IsEmpty()) {
     SECOidTag oidTag;
-    SECItem digest;
+    SECItem digest = {siBuffer, NULL, 0};
     // NSS_CMSSignedData_SetDigestValue() takes a copy and won't mutate our
     // data, so we're OK to cast away the const here.
     digest.data = const_cast<uint8_t*>(aDigestData.Elements());
@@ -531,10 +530,9 @@ nsresult nsCMSMessage::CommonVerifySignature(
         break;
       }
       // else fall through to failure
-#if defined(__clang__)
-      [[clang::fallthrough]];
+#if defined(__clang__) || defined(__GNUC__)
+      [[fallthrough]];
 #endif
-
     default:
       MOZ_LOG(
           gCMSLog, LogLevel::Debug,

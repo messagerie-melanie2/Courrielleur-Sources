@@ -11,16 +11,9 @@ ChromeUtils.defineESModuleGetters(this, {
   AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
   AddonRepository: "resource://gre/modules/addons/AddonRepository.sys.mjs",
   RemoteSettings: "resource://services-settings/remote-settings.sys.mjs",
+  SelectionChangedMenulist:
+    "resource:///modules/SelectionChangedMenulist.sys.mjs",
 });
-ChromeUtils.defineModuleGetter(
-  this,
-  "SelectionChangedMenulist",
-  "resource:///modules/SelectionChangedMenulist.jsm"
-);
-
-document
-  .getElementById("BrowserLanguagesDialog")
-  .addEventListener("dialoghelp", window.top.openPrefsHelp);
 
 /* This dialog provides an interface for managing what language the browser is
  * displayed in.
@@ -300,10 +293,10 @@ class SortedItemSelectList {
    * reverted with `enableWithMessageId()`.
    */
   disableWithMessageId(messageId) {
-    this.menulist.setAttribute("data-l10n-id", messageId);
+    document.l10n.setAttributes(this.menulist, messageId);
     this.menulist.setAttribute(
       "image",
-      "chrome://browser/skin/tabbrowser/tab-connecting.png"
+      "chrome://global/skin/icons/loading.svg"
     );
     this.menulist.disabled = true;
     this.button.disabled = true;
@@ -314,7 +307,7 @@ class SortedItemSelectList {
    * reverted with `disableWithMessageId()`.
    */
   enableWithMessageId(messageId) {
-    this.menulist.setAttribute("data-l10n-id", messageId);
+    document.l10n.setAttributes(this.menulist, messageId);
     this.menulist.removeAttribute("image");
     this.menulist.disabled = this.menulist.itemCount == 0;
     this.button.disabled = !this.menulist.selectedItem;
@@ -327,8 +320,7 @@ class SortedItemSelectList {
  * @prop {string} id - A unique ID.
  * @prop {string} label - The localized display name.
  * @prop {string} value - The BCP 47 locale identifier or the word "search".
- * @prop {boolean} canRemove - Locales that are part of the packaged locales cannot be
- *                             removed.
+ * @prop {boolean} canRemove - The default locale cannot be removed.
  * @prop {boolean} installed - Whether or not the locale is installed.
  */
 
@@ -338,7 +330,6 @@ class SortedItemSelectList {
  */
 async function getLocaleDisplayInfo(localeCodes) {
   let availableLocales = new Set(await LangPackMatcher.getAvailableLocales());
-  let packagedLocales = new Set(Services.locale.packagedLocales);
   let localeNames = Services.intl.getLocaleDisplayNames(
     undefined,
     localeCodes,
@@ -349,7 +340,7 @@ async function getLocaleDisplayInfo(localeCodes) {
       id: "locale-" + code,
       label: localeNames[i],
       value: code,
-      canRemove: !packagedLocales.has(code),
+      canRemove: code != Services.locale.defaultLocale,
       installed: availableLocales.has(code),
     };
   });
@@ -415,14 +406,9 @@ var gBrowserLanguagesDialog = {
     return Services.prefs.getBoolPref("intl.multilingual.downloadEnabled");
   },
 
-  recordTelemetry(method, extra = null) {
-    Services.telemetry.recordEvent(
-      "intl.ui.browserLanguage",
-      method,
-      "dialog",
-      this._telemetryId,
-      extra
-    );
+  recordTelemetry(method, extra = {}) {
+    extra.value = this._telemetryId;
+    Glean.intlUiBrowserLanguage[method + "Dialog"].record(extra);
   },
 
   async onLoad() {
@@ -729,3 +715,5 @@ var gBrowserLanguagesDialog = {
     };
   },
 };
+
+window.addEventListener("load", () => gBrowserLanguagesDialog.onLoad());

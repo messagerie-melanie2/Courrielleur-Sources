@@ -11,7 +11,10 @@ import { originalToGeneratedId } from "devtools/client/shared/source-map-loader/
 import { prefs } from "../utils/prefs";
 import { createPendingSelectedLocation } from "../utils/location";
 
-export function initialSourcesState(state) {
+export const UNDEFINED_LOCATION = Symbol("Undefined location");
+export const NO_LOCATION = Symbol("No location");
+
+export function initialSourcesState() {
   /* eslint sort-keys: "error" */
   return {
     /**
@@ -30,7 +33,9 @@ export function initialSourcesState(state) {
     /**
      * List of all breakable lines for original sources only.
      *
-     * Map(source id => array<int : breakable line numbers>)
+     * Map(source id => promise or array<int> : breakable line numbers>)
+     *
+     * The value can be a promise to indicate the lines are being loaded.
      */
     mutableOriginalBreakableLines: new Map(),
 
@@ -41,13 +46,6 @@ export function initialSourcesState(state) {
      * Map(source id => array<Original Source ID>)
      */
     mutableOriginalSources: new Map(),
-
-    /**
-     * List of override objects whose sources texts have been locally overridden.
-     *
-     * Object { sourceUrl, path }
-     */
-    mutableOverrideSources: state?.mutableOverrideSources || new Map(),
 
     /**
      * Mapping of source id's to one or more source-actor's.
@@ -98,6 +96,22 @@ export function initialSourcesState(state) {
     selectedLocation: undefined,
 
     /**
+     * When selectedLocation refers to a generated source mapping to an original source
+     * via a source-map, refers to the related original location.
+     *
+     * This is UNDEFINED_LOCATION by default and will switch to NO_LOCATION asynchronously after location
+     * selection if there is no valid original location to map to.
+     */
+    selectedOriginalLocation: UNDEFINED_LOCATION,
+
+    /**
+     * By default, the `selectedLocation` should be highlighted in the editor with a special background.
+     * On demand, this flag can be set to false in order to prevent this.
+     * The location will be shown, but not highlighted.
+     */
+    shouldHighlightSelectedLocation: true,
+
+    /**
      * By default, if we have a source-mapped source, we would automatically try
      * to select and show the content of the original source. But, if we explicitly
      * select a generated source, we remember this choice. That, until we explicitly
@@ -134,8 +148,11 @@ function update(state = initialSourcesState(), action) {
       return {
         ...state,
         selectedLocation: action.location,
+        selectedOriginalLocation: UNDEFINED_LOCATION,
         pendingSelectedLocation,
         shouldSelectOriginalLocation: action.shouldSelectOriginalLocation,
+        shouldHighlightSelectedLocation: action.shouldHighlightSelectedLocation,
+        shouldScrollToSelectedLocation: action.shouldScrollToSelectedLocation,
       };
     }
 
@@ -146,7 +163,31 @@ function update(state = initialSourcesState(), action) {
       return {
         ...state,
         selectedLocation: null,
+        selectedOriginalLocation: UNDEFINED_LOCATION,
         pendingSelectedLocation,
+      };
+    }
+
+    case "SET_ORIGINAL_SELECTED_LOCATION": {
+      if (action.location != state.selectedLocation) {
+        return state;
+      }
+      return {
+        ...state,
+        selectedOriginalLocation: action.originalLocation,
+      };
+    }
+
+    case "SET_DEFAULT_SELECTED_LOCATION": {
+      if (
+        state.shouldSelectOriginalLocation ==
+        action.shouldSelectOriginalLocation
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        shouldSelectOriginalLocation: action.shouldSelectOriginalLocation,
       };
     }
 
@@ -163,8 +204,8 @@ function update(state = initialSourcesState(), action) {
 
     case "SET_ORIGINAL_BREAKABLE_LINES": {
       state.mutableOriginalBreakableLines.set(
-        action.sourceId,
-        action.breakableLines
+        action.source.id,
+        action.promise || action.breakableLines
       );
 
       return {
@@ -188,20 +229,20 @@ function update(state = initialSourcesState(), action) {
       };
     }
 
+    case "CLEAR_BREAKPOINT_POSITIONS": {
+      if (!state.mutableBreakpointPositions.has(action.source.id)) {
+        return state;
+      }
+
+      state.mutableBreakpointPositions.delete(action.source.id);
+
+      return {
+        ...state,
+      };
+    }
+
     case "REMOVE_THREAD": {
       return removeSourcesAndActors(state, action);
-    }
-
-    case "SET_OVERRIDE": {
-      state.mutableOverrideSources.set(action.url, action.path);
-      return state;
-    }
-
-    case "REMOVE_OVERRIDE": {
-      if (state.mutableOverrideSources.has(action.url)) {
-        state.mutableOverrideSources.delete(action.url);
-      }
-      return state;
     }
   }
 
@@ -295,6 +336,7 @@ function removeSourcesAndActors(state, action) {
 
     if (newState.selectedLocation?.source == removedSource) {
       newState.selectedLocation = null;
+      newState.selectedOriginalLocation = UNDEFINED_LOCATION;
     }
   }
 
@@ -319,6 +361,7 @@ function removeSourcesAndActors(state, action) {
 
     if (newState.selectedLocation?.sourceActor == removedActor) {
       newState.selectedLocation = null;
+      newState.selectedOriginalLocation = UNDEFINED_LOCATION;
     }
   }
 

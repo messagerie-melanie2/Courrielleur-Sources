@@ -10,6 +10,7 @@
 #include "nsString.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/SpinEventLoopUntil.h"
+#include "mozilla/StackWalk.h"
 #include "mozilla/StaticPrefs_layout.h"
 #include "nsNetUtil.h"
 
@@ -120,8 +121,8 @@ void test_wait_checkpoint() {
 // These variables are shared between part 1 and part 2 of the test.  Part 2
 // sets the nsCOMPtr's to nullptr, freeing the reference.
 namespace test_unvisited_does_not_notify {
-nsCOMPtr<nsIURI> testURI;
-RefPtr<mock_Link> testLink;
+MOZ_RUNINIT nsCOMPtr<nsIURI> testURI;
+MOZ_RUNINIT RefPtr<mock_Link> testLink;
 }  // namespace test_unvisited_does_not_notify
 void test_unvisited_does_not_notify_part1() {
   using namespace test_unvisited_does_not_notify;
@@ -355,6 +356,77 @@ void test_visituri_creates_visit() {
   run_next_test();
 }
 
+void test_visituri_frecency() {
+  // Adding a visit calculates frecency immediately.
+  nsCOMPtr<IHistory> history = do_get_IHistory();
+  nsCOMPtr<nsIURI> visitedURI = new_test_uri();
+  RefPtr<WaitForNotificationSpinner> spinner =
+      new WaitForNotificationSpinner(PlacesEventType::Pages_rank_changed);
+  history->VisitURI(nullptr, visitedURI, nullptr, mozilla::IHistory::TOP_LEVEL,
+                    0);
+  RefPtr<VisitURIObserver> finisher = new VisitURIObserver();
+  finisher->WaitForNotification();
+  spinner->SpinUntilCompleted();
+  PlaceRecord place;
+  do_get_place(visitedURI, place);
+  do_check_true(place.frecency > 0);
+  run_next_test();
+}
+
+void test_visituri_hidden() {
+  nsCOMPtr<IHistory> history = do_get_IHistory();
+  {
+    // Insert a framed link visit.
+    nsCOMPtr<nsIURI> visitedURI = new_test_uri();
+    nsCOMPtr<nsINavHistoryService> navHistory = do_get_NavHistory();
+    navHistory->MarkPageAsFollowedLink(visitedURI);
+    history->VisitURI(nullptr, visitedURI, nullptr, 0, 0);
+    RefPtr<VisitURIObserver> finisher = new VisitURIObserver();
+    finisher->WaitForNotification();
+    PlaceRecord place;
+    do_get_place(visitedURI, place);
+    do_check_true(place.hidden);
+  }
+
+  // Insert a redirect.
+  nsCOMPtr<nsIURI> visitedURI = new_test_uri();
+  history->VisitURI(nullptr, visitedURI, nullptr,
+                    mozilla::IHistory::TOP_LEVEL | IHistory::REDIRECT_SOURCE,
+                    0);
+  {
+    RefPtr<VisitURIObserver> finisher = new VisitURIObserver();
+    finisher->WaitForNotification();
+    PlaceRecord place;
+    do_get_place(visitedURI, place);
+    do_check_true(place.hidden);
+  }
+
+  // Now add a non-hidden visit to the hidden page, check it gets unhidden.
+  history->VisitURI(nullptr, visitedURI, nullptr, mozilla::IHistory::TOP_LEVEL,
+                    0);
+  {
+    RefPtr<VisitURIObserver> finisher = new VisitURIObserver();
+    finisher->WaitForNotification();
+    PlaceRecord place;
+    do_get_place(visitedURI, place);
+    do_check_false(place.hidden);
+  }
+
+  // Add another hidden visit, it should stay unhidden.
+  history->VisitURI(nullptr, visitedURI, nullptr,
+                    mozilla::IHistory::TOP_LEVEL | IHistory::REDIRECT_SOURCE,
+                    0);
+  {
+    RefPtr<VisitURIObserver> finisher = new VisitURIObserver();
+    finisher->WaitForNotification();
+    PlaceRecord place;
+    do_get_place(visitedURI, place);
+    do_check_false(place.hidden);
+  }
+
+  run_next_test();
+}
+
 void test_visituri_transition_typed() {
   nsCOMPtr<nsINavHistoryService> navHistory = do_get_NavHistory();
   nsCOMPtr<IHistory> history = do_get_IHistory();
@@ -430,16 +502,81 @@ Test gTests[] = {
     PTEST(test_unvisited_does_not_notify_part2),  // Order Important!
     PTEST(test_same_uri_notifies_both),
     PTEST(test_unregistered_visited_does_not_notify),  // Order Important!
+    PTEST(test_new_visit_adds_place_guid),
     PTEST(test_new_visit_notifies_waiting_Link),
     PTEST(test_RegisterVisitedCallback_returns_before_notifying),
     PTEST(test_visituri_inserts),
     PTEST(test_visituri_updates),
     PTEST(test_visituri_preserves_shown_and_typed),
     PTEST(test_visituri_creates_visit),
+    PTEST(test_visituri_frecency),
+    PTEST(test_visituri_hidden),
     PTEST(test_visituri_transition_typed),
     PTEST(test_visituri_transition_embed),
-    PTEST(test_new_visit_adds_place_guid),
 };
 
-#define TEST_NAME "IHistory"
-#include "places_test_harness_tail.h"
+int gTestsIndex = 0;
+
+class RunNextTest : public mozilla::Runnable {
+ public:
+  RunNextTest() : mozilla::Runnable("RunNextTest") {}
+  NS_IMETHOD Run() override {
+    MOZ_RELEASE_ASSERT(NS_IsMainThread(), "Not running on the main thread?");
+    if (gTestsIndex < int(std::size(gTests))) {
+      do_test_pending();
+      Test& test = gTests[gTestsIndex++];
+      (void)fprintf(stderr, TEST_INFO_STR "Running %s.\n", test.name);
+      test.func();
+    }
+
+    do_test_finished();
+    return NS_OK;
+  }
+};
+
+static const bool kDebugRunNextTest = false;
+
+void run_next_test() {
+  if (kDebugRunNextTest) {
+    printf_stderr("run_next_test()\n");
+    MozWalkTheStack(stderr);
+  }
+  nsCOMPtr<nsIRunnable> event = new RunNextTest();
+  do_check_success(NS_DispatchToCurrentThread(event));
+}
+
+int gPendingTests = 0;
+
+void do_test_pending() {
+  MOZ_RELEASE_ASSERT(NS_IsMainThread(), "Not running on the main thread?");
+  if (kDebugRunNextTest) {
+    printf_stderr("do_test_pending()\n");
+    MozWalkTheStack(stderr);
+  }
+  gPendingTests++;
+}
+
+void do_test_finished() {
+  MOZ_RELEASE_ASSERT(NS_IsMainThread(), "Not running on the main thread?");
+  MOZ_RELEASE_ASSERT(gPendingTests > 0, "Invalid pending test count!");
+  gPendingTests--;
+}
+
+TEST(IHistory, Test)
+{
+  RefPtr<WaitForConnectionClosed> spinClose = new WaitForConnectionClosed();
+
+  // Tinderboxes are constantly on idle.  Since idle tasks can interact with
+  // tests, causing random failures, disable the idle service.
+  disable_idle_service();
+
+  do_test_pending();
+  run_next_test();
+
+  // Spin the event loop until we've run out of tests to run.
+  mozilla::SpinEventLoopUntil("places:TEST(IHistory, Test)"_ns,
+                              [&]() { return !gPendingTests; });
+
+  // And let any other events finish before we quit.
+  (void)NS_ProcessPendingEvents(nullptr);
+}

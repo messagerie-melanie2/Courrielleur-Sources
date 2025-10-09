@@ -13,24 +13,18 @@ var {
   get_msg_source,
   open_compose_with_reply,
   save_compose_message,
-} = ChromeUtils.import("resource://testing-common/mozmill/ComposeHelpers.jsm");
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+);
 var {
   be_in_folder,
   get_special_folder,
-  get_about_message,
+
   open_message_from_file,
   press_delete,
   select_click_row,
-  select_none,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-);
-var { close_window } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
-);
-
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 var gDrafts;
@@ -42,18 +36,18 @@ add_setup(async function () {
 });
 
 async function subtest_reply_format_flowed(aFlowed) {
-  let file = new FileUtils.File(getTestFilePath("data/format-flowed.eml"));
-  let msgc = await open_message_from_file(file);
+  const file = new FileUtils.File(getTestFilePath("data/format-flowed.eml"));
+  const msgc = await open_message_from_file(file);
 
   Services.prefs.setBoolPref("mailnews.send_plaintext_flowed", aFlowed);
 
-  let cwc = open_compose_with_reply(msgc);
+  const cwc = await open_compose_with_reply(msgc);
 
-  close_window(msgc);
+  await BrowserTestUtils.closeWindow(msgc);
 
   // Now save the message as a draft.
-  await save_compose_message(cwc.window);
-  close_compose_window(cwc);
+  await save_compose_message(cwc);
+  await close_compose_window(cwc);
 
   await TestUtils.waitForCondition(
     () => gDrafts.getTotalMessages(false) == 1,
@@ -62,8 +56,8 @@ async function subtest_reply_format_flowed(aFlowed) {
 
   // Now check the message content in the drafts folder.
   await be_in_folder(gDrafts);
-  let message = select_click_row(0);
-  let messageContent = await get_msg_source(message);
+  const message = await select_click_row(0);
+  const messageContent = await get_msg_source(message);
 
   // Check for a single line that contains text and make sure there is a
   // space at the end for a flowed reply.
@@ -76,7 +70,7 @@ async function subtest_reply_format_flowed(aFlowed) {
   );
 
   // Delete the outgoing message.
-  press_delete();
+  await press_delete();
 }
 
 add_task(async function test_reply_format_flowed() {

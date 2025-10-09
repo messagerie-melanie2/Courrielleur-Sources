@@ -4,7 +4,12 @@
 
 /* globals msgWindow, nsMsgStatusFeedback */ // From mailWindow.js
 
-var { MailUtils } = ChromeUtils.import("resource:///modules/MailUtils.jsm");
+var { MailUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailUtils.sys.mjs"
+);
+var { UIFontSize } = ChromeUtils.importESModule(
+  "resource:///modules/UIFontSize.sys.mjs"
+);
 
 var gSubscribeTree = null;
 var gSubscribeBody = null;
@@ -13,7 +18,8 @@ var gChangeTable = {};
 var gServerURI = null;
 var gSubscribableServer = null;
 var gNameField = null;
-var gNameFieldLabel = null;
+var gServerContainer = null;
+var gNameContainer = null;
 var gStatusFeedback;
 var gSearchView = null;
 var gSearchTree = null;
@@ -36,17 +42,17 @@ function SetServerTypeSpecificTextValues() {
     return;
   }
 
-  let serverType = MailUtils.getExistingFolder(gServerURI).server.type;
+  const serverType = MailUtils.getExistingFolder(gServerURI).server.type;
 
   // Set the server specific ui elements.
-  let subscribeLabelString = gSubscribeBundle.getString(
+  const subscribeLabelString = gSubscribeBundle.getString(
     "subscribeLabel-" + serverType
   );
-  let currentListTab = "currentListTab-" + serverType;
-  let currentListTabLabel = gSubscribeBundle.getString(
+  const currentListTab = "currentListTab-" + serverType;
+  const currentListTabLabel = gSubscribeBundle.getString(
     currentListTab + ".label"
   );
-  let currentListTabAccesskey = gSubscribeBundle.getString(
+  const currentListTabAccesskey = gSubscribeBundle.getString(
     currentListTab + ".accesskey"
   );
 
@@ -64,7 +70,7 @@ function SetServerTypeSpecificTextValues() {
 
 function onServerClick(aFolder) {
   gServerURI = aFolder.server.serverURI;
-  let serverMenu = document.getElementById("serverMenu");
+  const serverMenu = document.getElementById("serverMenu");
   serverMenu.menupopup.selectFolder(aFolder);
 
   SetServerTypeSpecificTextValues();
@@ -78,6 +84,7 @@ var MySubscribeListener = {
     document.getElementById("refreshButton").disabled = false;
     document.getElementById("currentListTab").disabled = false;
     document.getElementById("newGroupsTab").disabled = false;
+    gSubscribableServer.subscribeListener = null;
   },
 };
 
@@ -94,6 +101,8 @@ function SetUpTree(forceToServer, getOnlyNew) {
     // Enable (or disable) the search related UI.
     EnableSearchUI();
 
+    SetServerTypeSpecificTextValues();
+
     // Clear out the text field when switching server.
     gNameField.value = "";
 
@@ -108,7 +117,6 @@ function SetUpTree(forceToServer, getOnlyNew) {
     document.getElementById("refreshButton").disabled = true;
 
     gStatusFeedback._startMeteors();
-    gStatusFeedback.setStatusString("");
     gStatusFeedback.showStatusString(
       gSubscribeBundle.getString("pleaseWaitString")
     );
@@ -118,12 +126,12 @@ function SetUpTree(forceToServer, getOnlyNew) {
   } catch (e) {
     if (e.result == 0x80550014) {
       // NS_MSG_ERROR_OFFLINE
-      gStatusFeedback.setStatusString(
+      gStatusFeedback.showStatusString(
         gSubscribeBundle.getString("offlineState")
       );
     } else {
-      console.error("Failed to populate subscribe tree: " + e);
-      gStatusFeedback.setStatusString(
+      console.error("Failed to populate subscribe tree: ", e);
+      gStatusFeedback.showStatusString(
         gSubscribeBundle.getString("errorPopulating")
       );
     }
@@ -142,24 +150,19 @@ function SubscribeOnUnload() {
 }
 
 function EnableSearchUI() {
-  if (gSubscribableServer.supportsSubscribeSearch) {
-    gNameField.removeAttribute("disabled");
-    gNameFieldLabel.removeAttribute("disabled");
-  } else {
-    gNameField.setAttribute("disabled", true);
-    gNameFieldLabel.setAttribute("disabled", true);
-  }
+  gNameContainer.hidden = !gSubscribableServer?.supportsSubscribeSearch;
 }
 
 function SubscribeOnLoad() {
+  UIFontSize.registerWindow(window);
   gSubscribeBundle = document.getElementById("bundle_subscribe");
 
   gSubscribeTree = document.getElementById("subscribeTree");
   gSubscribeBody = document.getElementById("subscribeTreeBody");
   gSearchTree = document.getElementById("searchTree");
-  gSearchTree = document.getElementById("searchTree");
   gNameField = document.getElementById("namefield");
-  gNameFieldLabel = document.getElementById("namefieldlabel");
+  gServerContainer = document.getElementById("serverContainer");
+  gNameContainer = document.getElementById("nameContainer");
 
   // eslint-disable-next-line no-global-assign
   msgWindow = Cc["@mozilla.org/messenger/msgwindow;1"].createInstance(
@@ -169,7 +172,6 @@ function SubscribeOnLoad() {
   gStatusFeedback = new nsMsgStatusFeedback();
   msgWindow.statusFeedback = gStatusFeedback;
   msgWindow.rootDocShell.allowAuth = true;
-  msgWindow.rootDocShell.appType = Ci.nsIDocShell.APP_TYPE_MAIL;
 
   // look in arguments[0] for parameters
   if (window.arguments && window.arguments[0]) {
@@ -181,7 +183,7 @@ function SubscribeOnLoad() {
   var serverMenu = document.getElementById("serverMenu");
 
   gServerURI = null;
-  let folder =
+  const folder =
     "folder" in window.arguments[0] ? window.arguments[0].folder : null;
   if (folder && folder.server instanceof Ci.nsISubscribableServer) {
     serverMenu.menupopup.selectFolder(folder.server.rootMsgFolder);
@@ -190,8 +192,6 @@ function SubscribeOnLoad() {
       gSubscribableServer = folder.server.QueryInterface(
         Ci.nsISubscribableServer
       );
-      // Enable (or disable) the search related UI.
-      EnableSearchUI();
       gServerURI = folder.server.serverURI;
     } catch (ex) {
       // dump("not a subscribable server\n");
@@ -208,7 +208,9 @@ function SubscribeOnLoad() {
     serverMenu.selectedIndex = 0;
 
     if (serverMenu.selectedItem) {
-      gServerURI = serverMenu.selectedItem.getAttribute("id");
+      // if we didn't get a gServerURI, yet (maybe by opening this window from calendar tab)
+      // grab it from the selected item
+      gServerURI = serverMenu.selectedItem._folder?.server.serverURI;
     } else {
       // dump("xxx todo none of your servers are subscribable\n");
       // dump("xxx todo fix this by disabling subscribe if no subscribable server or, add a CREATE SERVER button, like in 4.x\n");
@@ -216,9 +218,12 @@ function SubscribeOnLoad() {
     }
   }
 
+  ShowCurrentList();
+
   SetServerTypeSpecificTextValues();
 
-  ShowCurrentList();
+  // Enable (or disable) the search related UI.
+  EnableSearchUI();
 
   gNameField.focus();
 }
@@ -263,17 +268,13 @@ function StateChanged(name, state) {
   }
 }
 
-function InSearchMode() {
-  return !document.getElementById("searchView").hidden;
-}
-
 function SearchOnClick(event) {
   // We only care about button 0 (left click) events.
   if (event.button != 0 || event.target.localName != "treechildren") {
     return;
   }
 
-  let treeCellInfo = gSearchTree.getCellAt(event.clientX, event.clientY);
+  const treeCellInfo = gSearchTree.getCellAt(event.clientX, event.clientY);
   if (treeCellInfo.row == -1 || treeCellInfo.row > gSearchView.rowCount - 1) {
     return;
   }
@@ -291,7 +292,7 @@ function SearchOnClick(event) {
   }
 
   // Invalidate the row.
-  InvalidateSearchTreeRow(treeCellInfo.row);
+  gSearchTree.invalidateRow(treeCellInfo.row);
 }
 
 function ReverseStateFromRow(aRow) {
@@ -300,9 +301,9 @@ function ReverseStateFromRow(aRow) {
   // and look for the "subscribed" property.
   // If the "subscribed" string is in the list of properties
   // we are subscribed.
-  let col = gSearchTree.columns.nameColumn2;
-  let name = gSearchView.getCellValue(aRow, col);
-  let isSubscribed = gSubscribableServer.isSubscribed(name);
+  const col = gSearchTree.columns.nameColumn2;
+  const name = gSearchView.getCellValue(aRow, col);
+  const isSubscribed = gSubscribableServer.isSubscribed(name);
   SetStateFromRow(aRow, !isSubscribed);
 }
 
@@ -312,42 +313,8 @@ function SetStateFromRow(row, state) {
   SetState(name, state);
 }
 
-function SetSubscribeState(state) {
-  try {
-    // We need to iterate over the tree selection, and set the state for
-    // all rows in the selection.
-    var inSearchMode = InSearchMode();
-    var view = inSearchMode ? gSearchView : gSubscribeTree.view;
-    var colId = inSearchMode ? "nameColumn2" : "nameColumn";
-
-    var sel = view.selection;
-    for (var i = 0; i < sel.getRangeCount(); ++i) {
-      var start = {},
-        end = {};
-      sel.getRangeAt(i, start, end);
-      for (var k = start.value; k <= end.value; ++k) {
-        if (inSearchMode) {
-          SetStateFromRow(k, state);
-        } else {
-          let name = view.getCellValue(k, gSubscribeTree.columns[colId]);
-          SetState(name, state, k);
-        }
-      }
-    }
-
-    if (inSearchMode) {
-      // Force a repaint.
-      InvalidateSearchTree();
-    } else {
-      gSubscribeTree.invalidate();
-    }
-  } catch (ex) {
-    dump("SetSubscribedState failed:  " + ex + "\n");
-  }
-}
-
 function ReverseStateFromNode(row) {
-  let name = gSubscribeTree.view.getCellValue(
+  const name = gSubscribeTree.view.getCellValue(
     row,
     gSubscribeTree.columns.nameColumn
   );
@@ -360,7 +327,7 @@ function SubscribeOnClick(event) {
     return;
   }
 
-  let treeCellInfo = gSubscribeTree.getCellAt(event.clientX, event.clientY);
+  const treeCellInfo = gSubscribeTree.getCellAt(event.clientX, event.clientY);
   if (
     treeCellInfo.row == -1 ||
     treeCellInfo.row > gSubscribeTree.view.rowCount - 1
@@ -380,6 +347,9 @@ function SubscribeOnClick(event) {
       ReverseStateFromNode(treeCellInfo.row);
     }
   }
+
+  // Invalidate the row.
+  gSubscribeTree.invalidateRow(treeCellInfo.row);
 }
 
 function Refresh() {
@@ -412,14 +382,6 @@ function ShowNewGroupsList() {
   SetUpTree(true, true);
 }
 
-function InvalidateSearchTreeRow(row) {
-  gSearchTree.invalidateRow(row);
-}
-
-function InvalidateSearchTree() {
-  gSearchTree.invalidate();
-}
-
 /**
  * Toggle the tree panel in the dialog between search view and subscribe view.
  *
@@ -432,7 +394,7 @@ function toggleSubscriptionView(toggle) {
 }
 
 function Search() {
-  let searchValue = gNameField.value;
+  const searchValue = gNameField.value;
   if (
     searchValue.length &&
     gSubscribableServer &&
@@ -472,10 +434,10 @@ function onSearchTreeKeyPress(event) {
     for (let k = start.value; k <= end.value; k++) {
       ReverseStateFromRow(k);
     }
-
-    // Force a repaint.
-    InvalidateSearchTree();
   }
+
+  // Force a repaint.
+  gSearchTree.invalidate();
 }
 
 function onSubscribeTreeKeyPress(event) {
@@ -493,4 +455,7 @@ function onSubscribeTreeKeyPress(event) {
       ReverseStateFromNode(k);
     }
   }
+
+  // Force a repaint.
+  gSubscribeTree.invalidate();
 }

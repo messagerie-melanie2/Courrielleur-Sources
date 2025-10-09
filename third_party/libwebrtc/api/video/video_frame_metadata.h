@@ -12,9 +12,10 @@
 #define API_VIDEO_VIDEO_FRAME_METADATA_H_
 
 #include <cstdint>
+#include <optional>
+#include <vector>
 
 #include "absl/container/inlined_vector.h"
-#include "absl/types/optional.h"
 #include "absl/types/variant.h"
 #include "api/array_view.h"
 #include "api/transport/rtp/dependency_descriptor.h"
@@ -57,8 +58,8 @@ class RTC_EXPORT VideoFrameMetadata {
   VideoContentType GetContentType() const;
   void SetContentType(VideoContentType content_type);
 
-  absl::optional<int64_t> GetFrameId() const;
-  void SetFrameId(absl::optional<int64_t> frame_id);
+  std::optional<int64_t> GetFrameId() const;
+  void SetFrameId(std::optional<int64_t> frame_id);
 
   int GetSpatialIndex() const;
   void SetSpatialIndex(int spatial_index);
@@ -88,6 +89,16 @@ class RTC_EXPORT VideoFrameMetadata {
   void SetRTPVideoHeaderCodecSpecifics(
       RTPVideoHeaderCodecSpecifics codec_specifics);
 
+  uint32_t GetSsrc() const;
+  void SetSsrc(uint32_t ssrc);
+  std::vector<uint32_t> GetCsrcs() const;
+  void SetCsrcs(std::vector<uint32_t> csrcs);
+
+  friend bool operator==(const VideoFrameMetadata& lhs,
+                         const VideoFrameMetadata& rhs);
+  friend bool operator!=(const VideoFrameMetadata& lhs,
+                         const VideoFrameMetadata& rhs);
+
  private:
   VideoFrameType frame_type_ = VideoFrameType::kEmptyFrame;
   int16_t width_ = 0;
@@ -96,7 +107,7 @@ class RTC_EXPORT VideoFrameMetadata {
   VideoContentType content_type_ = VideoContentType::UNSPECIFIED;
 
   // Corresponding to GenericDescriptorInfo.
-  absl::optional<int64_t> frame_id_;
+  std::optional<int64_t> frame_id_;
   int spatial_index_ = 0;
   int temporal_index_ = 0;
   absl::InlinedVector<int64_t, 5> frame_dependencies_;
@@ -106,6 +117,10 @@ class RTC_EXPORT VideoFrameMetadata {
   uint8_t simulcast_idx_ = 0;
   VideoCodecType codec_ = VideoCodecType::kVideoCodecGeneric;
   RTPVideoHeaderCodecSpecifics codec_specifics_;
+
+  // RTP info.
+  uint32_t ssrc_ = 0u;
+  std::vector<uint32_t> csrcs_;
 };
 }  // namespace webrtc
 

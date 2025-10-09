@@ -96,7 +96,6 @@ class MarkupContextMenu {
       return;
     }
 
-    this.telemetry.scalarSet("devtools.copy.full.css.selector.opened", 1);
     this.selection.nodeFront
       .getCssPath()
       .then(path => {
@@ -137,7 +136,6 @@ class MarkupContextMenu {
       return;
     }
 
-    this.telemetry.scalarSet("devtools.copy.unique.css.selector.opened", 1);
     this.selection.nodeFront
       .getUniqueSelector()
       .then(selector => {
@@ -154,7 +152,6 @@ class MarkupContextMenu {
       return;
     }
 
-    this.telemetry.scalarSet("devtools.copy.xpath.opened", 1);
     this.selection.nodeFront
       .getXPath()
       .then(path => {
@@ -371,6 +368,10 @@ class MarkupContextMenu {
 
     const res = await this.toolbox.commands.scriptCommand.execute(evalString, {
       selectedNodeActor: this.selection.nodeFront.actorID,
+      // Prevent any type of breakpoint when evaluating this code
+      disableBreaks: true,
+      // Ensure always overriding "$0" console command, even if the page implements its own "$0" variable.
+      preferConsoleCommandsOverLocalSymbols: true,
     });
     hud.setInputValue(res.result);
     this.inspector.emit("console-var-ready");
@@ -739,7 +740,7 @@ class MarkupContextMenu {
     const isScreenshotable =
       isElement && this.selection.nodeFront.isTreeDisplayed;
 
-    const menu = new Menu();
+    const menu = new Menu({ id: "markup-context-menu" });
     menu.append(
       new MenuItem({
         id: "node-menu-edithtml",
@@ -792,12 +793,7 @@ class MarkupContextMenu {
       })
     );
 
-    if (
-      Services.prefs.getBoolPref(
-        "devtools.markup.mutationBreakpoints.enabled"
-      ) &&
-      this.selection.nodeFront.mutationBreakpoints
-    ) {
+    if (this.selection.nodeFront.mutationBreakpoints) {
       menu.append(
         new MenuItem({
           label: INSPECTOR_L10N.getStr("inspectorBreakpointSubmenu.label"),
@@ -879,7 +875,7 @@ class MarkupContextMenu {
         accesskey: INSPECTOR_L10N.getStr(
           "inspectorScrollNodeIntoView.accesskey"
         ),
-        disabled: !isElement,
+        disabled: !this.inspector.selection.supportsScrollIntoView(),
         click: () => this.markup.scrollNodeIntoView(),
       })
     );

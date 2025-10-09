@@ -29,6 +29,7 @@
 #include "nsComponentManagerUtils.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsDirectoryServiceUtils.h"
+#include "nsGlobalWindowInner.h"
 #include "nsHashKeys.h"
 #include "nsIObserverService.h"
 #include "nsIXULAppInfo.h"
@@ -215,7 +216,10 @@ GeckoMediaPluginService::RunPluginCrashCallbacks(
     event->SetTrusted(true);
     event->WidgetEventPtr()->mFlags.mOnlyChromeDispatch = true;
 
-    EventDispatcher::DispatchDOMEvent(window, nullptr, event, nullptr, nullptr);
+    // MOZ_KnownLive due to bug 1506441
+    EventDispatcher::DispatchDOMEvent(
+        MOZ_KnownLive(nsGlobalWindowInner::Cast(window)), nullptr, event,
+        nullptr, nullptr);
   }
 
   return NS_OK;
@@ -261,7 +265,7 @@ RefPtr<GetCDMParentPromise> GeckoMediaPluginService::GetCDM(
       ->Then(
           thread, __func__,
           [rawHolder, helper, keySystem = nsCString{aKeySystem}](
-              RefPtr<GMPContentParent::CloseBlocker> wrapper) {
+              const RefPtr<GMPContentParentCloseBlocker>& wrapper) {
             RefPtr<GMPContentParent> parent = wrapper->mParent;
             MOZ_ASSERT(
                 parent,
@@ -323,7 +327,7 @@ GeckoMediaPluginService::GetContentParentForTest() {
                    nsLiteralCString(CHROMIUM_CDM_API), tags)
       ->Then(
           thread, __func__,
-          [rawHolder](const RefPtr<GMPContentParent::CloseBlocker>& wrapper) {
+          [rawHolder](const RefPtr<GMPContentParentCloseBlocker>& wrapper) {
             RefPtr<GMPContentParent> parent = wrapper->mParent;
             MOZ_ASSERT(
                 parent,
@@ -364,25 +368,6 @@ void GeckoMediaPluginService::ShutdownGMPThread() {
   if (gmpThread) {
     gmpThread->Shutdown();
   }
-}
-
-/* static */
-nsCOMPtr<nsIAsyncShutdownClient> GeckoMediaPluginService::GetShutdownBarrier() {
-  nsCOMPtr<nsIAsyncShutdownService> svc = services::GetAsyncShutdownService();
-  if (NS_WARN_IF(!svc)) {
-    MOZ_ASSERT_UNREACHABLE("No async shutdown service!");
-    return nullptr;
-  }
-
-  nsCOMPtr<nsIAsyncShutdownClient> barrier;
-  nsresult rv = svc->GetXpcomWillShutdown(getter_AddRefs(barrier));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    MOZ_ASSERT_UNREACHABLE("Could not create shutdown barrier!");
-    return nullptr;
-  }
-
-  MOZ_RELEASE_ASSERT(barrier);
-  return barrier;
 }
 
 nsresult GeckoMediaPluginService::GMPDispatch(nsIRunnable* event,
@@ -470,7 +455,7 @@ GeckoMediaPluginService::GetGMPVideoDecoder(
       ->Then(
           thread, __func__,
           [rawCallback,
-           helper](RefPtr<GMPContentParent::CloseBlocker> wrapper) {
+           helper](const RefPtr<GMPContentParentCloseBlocker>& wrapper) {
             RefPtr<GMPContentParent> parent = wrapper->mParent;
             UniquePtr<GetGMPVideoDecoderCallback> callback(rawCallback);
             GMPVideoDecoderParent* actor = nullptr;
@@ -510,7 +495,7 @@ GeckoMediaPluginService::GetGMPVideoEncoder(
       ->Then(
           thread, __func__,
           [rawCallback,
-           helper](RefPtr<GMPContentParent::CloseBlocker> wrapper) {
+           helper](const RefPtr<GMPContentParentCloseBlocker>& wrapper) {
             RefPtr<GMPContentParent> parent = wrapper->mParent;
             UniquePtr<GetGMPVideoEncoderCallback> callback(rawCallback);
             GMPVideoEncoderParent* actor = nullptr;

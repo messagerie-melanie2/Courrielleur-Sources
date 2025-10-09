@@ -4,15 +4,17 @@
 
 package org.mozilla.geckoview.test
 
-import android.os.Build
 import android.os.SystemClock
 import androidx.test.filters.MediumTest
-import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.hamcrest.MatcherAssert.assertThat
-import org.hamcrest.Matchers.* // ktlint-disable no-wildcard-imports
+import org.hamcrest.Matchers.equalTo
+import org.hamcrest.Matchers.greaterThan
+import org.hamcrest.Matchers.isEmptyOrNullString
+import org.hamcrest.Matchers.not
+import org.hamcrest.Matchers.notNullValue
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertThrows
@@ -21,17 +23,21 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.Parameterized
 import org.mozilla.gecko.util.ThreadUtils
-import org.mozilla.geckoview.* // ktlint-disable no-wildcard-imports
+import org.mozilla.geckoview.GeckoResult
+import org.mozilla.geckoview.GeckoWebExecutor
+import org.mozilla.geckoview.StorageController
+import org.mozilla.geckoview.WebRequest
+import org.mozilla.geckoview.WebRequestError
+import org.mozilla.geckoview.WebResponse
 import org.mozilla.geckoview.test.util.RuntimeCreator
 import org.mozilla.geckoview.test.util.TestServer
 import java.io.IOException
-import java.lang.IllegalStateException
 import java.math.BigInteger
 import java.net.UnknownHostException
 import java.nio.ByteBuffer
 import java.nio.charset.Charset
 import java.security.MessageDigest
-import java.util.* // ktlint-disable no-wildcard-imports
+import java.util.Random
 
 @MediumTest
 @RunWith(Parameterized::class)
@@ -377,7 +383,6 @@ class WebExecutorTest {
     }
 
     @Test
-    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.LOLLIPOP)
     fun testResolveV6() {
         val addresses = executor.resolve("ip6-localhost").pollDefault()!!
         assertThat(

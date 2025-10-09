@@ -9,14 +9,20 @@ package org.mozilla.geckoview.test
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.MediumTest
-import org.hamcrest.Matchers.* // ktlint-disable no-wildcard-imports
+import org.hamcrest.Matchers.containsString
+import org.hamcrest.Matchers.equalTo
+import org.hamcrest.Matchers.not
+import org.hamcrest.Matchers.notNullValue
+import org.hamcrest.Matchers.startsWith
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mozilla.geckoview.ContentBlocking
+import org.mozilla.geckoview.ContentBlocking.AntiTracking
 import org.mozilla.geckoview.ContentBlocking.CookieBannerMode
 import org.mozilla.geckoview.ContentBlockingController
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.test.rule.GeckoSessionTestRule.AssertCalled
+
 @RunWith(AndroidJUnit4::class)
 @MediumTest
 class ContentBlockingControllerTest : BaseSessionTest() {
@@ -266,6 +272,56 @@ class ContentBlockingControllerTest : BaseSessionTest() {
     }
 
     @Test
+    fun cookieBannerGlobalRulesEnabledSettings() {
+        // Check default value
+        val contentBlocking = sessionRule.runtime.settings.contentBlocking
+
+        assertThat(
+            "Expect correct default value which is off",
+            contentBlocking.cookieBannerGlobalRulesEnabled,
+            equalTo(false),
+        )
+
+        // Checks that the pref value is also consistent with the runtime settings
+        val originalPrefs = sessionRule.getPrefs(
+            "cookiebanners.service.enableGlobalRules",
+        )
+
+        assertThat("Actual value is correct", originalPrefs[0] as Boolean, equalTo(contentBlocking.cookieBannerGlobalRulesEnabled))
+
+        contentBlocking.cookieBannerGlobalRulesEnabled = true
+
+        val actualPrefs = sessionRule.getPrefs("cookiebanners.service.enableGlobalRules")
+
+        assertThat("Actual value is correct", actualPrefs[0] as Boolean, equalTo(contentBlocking.cookieBannerGlobalRulesEnabled))
+    }
+
+    @Test
+    fun cookieBannerGlobalRulesSubFramesEnabledSettings() {
+        // Check default value
+        val contentBlocking = sessionRule.runtime.settings.contentBlocking
+
+        assertThat(
+            "Expect correct default value which is off",
+            contentBlocking.cookieBannerGlobalRulesSubFramesEnabled,
+            equalTo(false),
+        )
+
+        // Checks that the pref value is also consistent with the runtime settings
+        val originalPrefs = sessionRule.getPrefs(
+            "cookiebanners.service.enableGlobalRules.subFrames",
+        )
+
+        assertThat("Actual value is correct", originalPrefs[0] as Boolean, equalTo(contentBlocking.cookieBannerGlobalRulesSubFramesEnabled))
+
+        contentBlocking.cookieBannerGlobalRulesSubFramesEnabled = true
+
+        val actualPrefs = sessionRule.getPrefs("cookiebanners.service.enableGlobalRules.subFrames")
+
+        assertThat("Actual value is correct", actualPrefs[0] as Boolean, equalTo(contentBlocking.cookieBannerGlobalRulesSubFramesEnabled))
+    }
+
+    @Test
     fun cookieBannerHandlingDetectOnlyModeSettings() {
         // Check default value
         val contentBlocking = sessionRule.runtime.settings.contentBlocking
@@ -297,6 +353,255 @@ class ContentBlockingControllerTest : BaseSessionTest() {
             "Initial value is correct",
             actualPrefs[0] as Boolean,
             equalTo(contentBlocking.cookieBannerDetectOnlyMode),
+        )
+    }
+
+    @Test
+    fun queryParameterStrippingSettings() {
+        // Check default value
+        val contentBlocking = sessionRule.runtime.settings.contentBlocking
+
+        assertThat(
+            "Expect correct default value which is off",
+            contentBlocking.queryParameterStrippingEnabled,
+            equalTo(false),
+        )
+
+        // Checks that the pref value is also consistent with the runtime settings
+        val originalPrefs = sessionRule.getPrefs(
+            "privacy.query_stripping.enabled",
+        )
+
+        assertThat(
+            "Initial value is correct",
+            originalPrefs[0] as Boolean,
+            equalTo(contentBlocking.queryParameterStrippingEnabled),
+        )
+
+        contentBlocking.queryParameterStrippingEnabled = true
+
+        val actualPrefs = sessionRule.getPrefs(
+            "privacy.query_stripping.enabled",
+        )
+
+        assertThat(
+            "The value is updated",
+            actualPrefs[0] as Boolean,
+            equalTo(contentBlocking.queryParameterStrippingEnabled),
+        )
+    }
+
+    @Test
+    fun queryParameterStrippingPrivateBrowsingSettings() {
+        // Check default value
+        val contentBlocking = sessionRule.runtime.settings.contentBlocking
+
+        assertThat(
+            "Expect correct default value which is off",
+            contentBlocking.queryParameterStrippingPrivateBrowsingEnabled,
+            equalTo(false),
+        )
+
+        // Checks that the pref value is also consistent with the runtime settings
+        val originalPrefs = sessionRule.getPrefs(
+            "privacy.query_stripping.enabled.pbmode",
+        )
+
+        assertThat(
+            "Initial value is correct",
+            originalPrefs[0] as Boolean,
+            equalTo(contentBlocking.queryParameterStrippingPrivateBrowsingEnabled),
+        )
+
+        contentBlocking.queryParameterStrippingPrivateBrowsingEnabled = true
+
+        val actualPrefs = sessionRule.getPrefs(
+            "privacy.query_stripping.enabled.pbmode",
+        )
+
+        assertThat(
+            "The value is updated",
+            actualPrefs[0] as Boolean,
+            equalTo(contentBlocking.queryParameterStrippingPrivateBrowsingEnabled),
+        )
+    }
+
+    @Test
+    fun queryParameterStrippingAllowListSettings() {
+        // Check default value
+        val contentBlocking = sessionRule.runtime.settings.contentBlocking
+
+        assertThat(
+            "Expect correct default value which is empty string",
+            contentBlocking.queryParameterStrippingAllowList.joinToString(","),
+            equalTo(""),
+        )
+
+        // Checks that the pref value is also consistent with the runtime settings
+        val originalPrefs = sessionRule.getPrefs(
+            "privacy.query_stripping.allow_list",
+        )
+
+        assertThat(
+            "Initial value is correct",
+            originalPrefs[0] as String,
+            equalTo(contentBlocking.queryParameterStrippingAllowList.joinToString(",")),
+        )
+
+        contentBlocking.setQueryParameterStrippingAllowList("item_one", "item_two")
+
+        val actualPrefs = sessionRule.getPrefs(
+            "privacy.query_stripping.allow_list",
+        )
+
+        assertThat(
+            "The value is updated",
+            actualPrefs[0] as String,
+            equalTo(contentBlocking.queryParameterStrippingAllowList.joinToString(",")),
+        )
+    }
+
+    @Test
+    fun queryParameterStrippingStripListSettings() {
+        // Check default value
+        val contentBlocking = sessionRule.runtime.settings.contentBlocking
+
+        assertThat(
+            "Expect correct default value which is empty string",
+            contentBlocking.queryParameterStrippingStripList.joinToString(","),
+            equalTo(""),
+        )
+
+        // Checks that the pref value is also consistent with the runtime settings
+        val originalPrefs = sessionRule.getPrefs(
+            "privacy.query_stripping.strip_list",
+        )
+
+        assertThat(
+            "Initial value is correct",
+            originalPrefs[0] as String,
+            equalTo(contentBlocking.queryParameterStrippingStripList.joinToString(",")),
+        )
+
+        contentBlocking.setQueryParameterStrippingAllowList("item_one", "item_two")
+
+        val actualPrefs = sessionRule.getPrefs(
+            "privacy.query_stripping.strip_list",
+        )
+
+        assertThat(
+            "The value is updated",
+            actualPrefs[0] as String,
+            equalTo(contentBlocking.queryParameterStrippingStripList.joinToString(",")),
+        )
+    }
+
+    @Test
+    fun etpCategorySettings() {
+        // Check default value
+        val contentBlocking = sessionRule.runtime.settings.contentBlocking
+
+        assertThat(
+            "Expect correct default value which ETP standard",
+            contentBlocking.getEnhancedTrackingProtectionCategory(),
+            equalTo(ContentBlocking.EtpCategory.STANDARD),
+        )
+
+        // Checks that the pref value is also consistent with the runtime settings
+        val defaultPrefs = sessionRule.getPrefs(
+            "browser.contentblocking.category",
+        )
+
+        assertThat(
+            "Initial value is correct",
+            defaultPrefs[0] as String,
+            equalTo("standard"),
+        )
+
+        contentBlocking.setEnhancedTrackingProtectionCategory(ContentBlocking.EtpCategory.STRICT)
+        assertThat(
+            "The getter returns the updated value for strict",
+            contentBlocking.getEnhancedTrackingProtectionCategory(),
+            equalTo(ContentBlocking.EtpCategory.STRICT),
+        )
+
+        val updatedPrefsStrict = sessionRule.getPrefs(
+            "browser.contentblocking.category",
+        )
+
+        assertThat(
+            "The pref value is updated",
+            updatedPrefsStrict[0] as String,
+            equalTo("strict"),
+        )
+
+        contentBlocking.setEnhancedTrackingProtectionCategory(ContentBlocking.EtpCategory.CUSTOM)
+        assertThat(
+            "The getter returns the updated value for custom",
+            contentBlocking.getEnhancedTrackingProtectionCategory(),
+            equalTo(ContentBlocking.EtpCategory.CUSTOM),
+        )
+
+        val updatedPrefsCustom = sessionRule.getPrefs(
+            "browser.contentblocking.category",
+        )
+
+        assertThat(
+            "The pref value is updated",
+            updatedPrefsCustom[0] as String,
+            equalTo("custom"),
+        )
+    }
+
+    @Test
+    fun toggleEmailTrackingForPrivateBrowsingMode() {
+        // check default value
+        val contentBlocking = sessionRule.runtime.settings.contentBlocking
+
+        val originalPref = sessionRule.getPrefs(
+            "privacy.trackingprotection.emailtracking.pbmode.enabled",
+        )
+        assertThat(
+            "Expect correct default value which is off",
+            originalPref[0] as Boolean,
+            equalTo(false),
+        )
+
+        contentBlocking.setEmailTrackerBlockingPrivateBrowsing(true)
+
+        val updatedPref = sessionRule.getPrefs(
+            "privacy.trackingprotection.emailtracking.pbmode.enabled",
+        )
+        assertThat(
+            "Expect new value which is on",
+            updatedPref[0] as Boolean,
+            equalTo(true),
+        )
+    }
+
+    @Test
+    fun toggleEmailTrackingWhenETBAddedToAntiTrackingList() {
+        // check default value
+        val contentBlocking = sessionRule.runtime.settings.contentBlocking
+
+        val originalPref = sessionRule.getPrefs(
+            "privacy.trackingprotection.emailtracking.enabled",
+        )
+        assertThat(
+            "Expect correct default value which is off",
+            originalPref[0] as Boolean,
+            equalTo(false),
+        )
+
+        contentBlocking.setAntiTracking(AntiTracking.EMAIL)
+
+        val updatedPref = sessionRule.getPrefs(
+            "privacy.trackingprotection.emailtracking.enabled",
+        )
+        assertThat(
+            "Expect new value which is on",
+            updatedPref[0] as Boolean,
+            equalTo(true),
         )
     }
 }

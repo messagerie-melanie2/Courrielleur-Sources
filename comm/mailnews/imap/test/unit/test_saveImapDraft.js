@@ -2,16 +2,19 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/*
+/**
  * This file tests that a message saved as draft in an IMAP folder is correctly
  * marked as unread.
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
+);
+var { setTimeout } = ChromeUtils.importESModule(
+  "resource://gre/modules/Timer.sys.mjs"
 );
 
 var gDraftsFolder;
@@ -29,34 +32,36 @@ add_task(async function createDraftsFolder() {
   await PromiseTestUtils.promiseFolderAdded("Drafts");
   gDraftsFolder = IMAPPump.incomingServer.rootFolder.getChildNamed("Drafts");
   Assert.ok(gDraftsFolder instanceof Ci.nsIMsgImapMailFolder);
-  let listener = new PromiseTestUtils.PromiseUrlListener();
+  const listener = new PromiseTestUtils.PromiseUrlListener();
   gDraftsFolder.updateFolderWithListener(null, listener);
   await listener.promise;
 });
 
 add_task(async function saveDraft() {
-  let msgCompose = Cc["@mozilla.org/messengercompose/compose;1"].createInstance(
-    Ci.nsIMsgCompose
-  );
-  let fields = Cc[
+  const msgCompose = Cc[
+    "@mozilla.org/messengercompose/compose;1"
+  ].createInstance(Ci.nsIMsgCompose);
+  const fields = Cc[
     "@mozilla.org/messengercompose/composefields;1"
   ].createInstance(Ci.nsIMsgCompFields);
   fields.from = "Nobody <nobody@tinderbox.test>";
 
-  let params = Cc[
+  const params = Cc[
     "@mozilla.org/messengercompose/composeparams;1"
   ].createInstance(Ci.nsIMsgComposeParams);
   params.composeFields = fields;
   msgCompose.initialize(params);
 
   // Set up the identity
-  let identity = MailServices.accounts.createIdentity();
-  identity.draftFolder = gDraftsFolder.URI;
+  const identity = MailServices.accounts.getFirstIdentityForServer(
+    IMAPPump.incomingServer
+  );
+  identity.draftsFolderURI = gDraftsFolder.URI;
 
-  let progress = Cc["@mozilla.org/messenger/progress;1"].createInstance(
+  const progress = Cc["@mozilla.org/messenger/progress;1"].createInstance(
     Ci.nsIMsgProgress
   );
-  let progressListener = new ProgressListener();
+  const progressListener = new ProgressListener();
   progress.registerListener(progressListener);
   msgCompose.sendMsg(
     Ci.nsIMsgSend.nsMsgSaveAsDraft,
@@ -66,10 +71,12 @@ add_task(async function saveDraft() {
     progress
   );
   await progressListener.promise;
+  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+  await new Promise(resolve => setTimeout(resolve, 1000));
 });
 
 add_task(async function updateDrafts() {
-  let listener = new PromiseTestUtils.PromiseUrlListener();
+  const listener = new PromiseTestUtils.PromiseUrlListener();
   gDraftsFolder.updateFolderWithListener(null, listener);
   await listener.promise;
 });
@@ -90,24 +97,17 @@ function ProgressListener() {
 }
 
 ProgressListener.prototype = {
-  onStateChange(aWebProgress, aRequest, aStateFlags, aStatus) {
+  onStateChange(aWebProgress, aRequest, aStateFlags) {
     if (aStateFlags & Ci.nsIWebProgressListener.STATE_STOP) {
       this._resolve();
     }
   },
 
-  onProgressChange(
-    aWebProgress,
-    aRequest,
-    aCurSelfProgress,
-    aMaxSelfProgress,
-    aCurTotalProgress,
-    aMaxTotalProgress
-  ) {},
-  onLocationChange(aWebProgress, aRequest, aLocation, aFlags) {},
-  onStatusChange(aWebProgress, aRequest, aStatus, aMessage) {},
-  onSecurityChange(aWebProgress, aRequest, state) {},
-  onContentBlockingEvent(aWebProgress, aRequest, aEvent) {},
+  onProgressChange() {},
+  onLocationChange() {},
+  onStatusChange() {},
+  onSecurityChange() {},
+  onContentBlockingEvent() {},
 
   QueryInterface: ChromeUtils.generateQI([
     "nsIWebProgressListener",

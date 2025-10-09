@@ -1,5 +1,4 @@
-///! Port of C [vtablog](http://www.sqlite.org/cgi/src/finfo?name=ext/misc/vtablog.c)
-use std::default::Default;
+//! Port of C [vtablog](http://www.sqlite.org/cgi/src/finfo?name=ext/misc/vtablog.c)
 use std::marker::PhantomData;
 use std::os::raw::c_int;
 use std::str::FromStr;
@@ -37,7 +36,7 @@ impl VTabLog {
         _: Option<&()>,
         args: &[&[u8]],
         is_create: bool,
-    ) -> Result<(String, VTabLog)> {
+    ) -> Result<(String, Self)> {
         static N_INST: AtomicUsize = AtomicUsize::new(1);
         let i_inst = N_INST.fetch_add(1, Ordering::SeqCst);
         println!(
@@ -56,8 +55,7 @@ impl VTabLog {
                 "schema" => {
                     if schema.is_some() {
                         return Err(Error::ModuleError(format!(
-                            "more than one '{}' parameter",
-                            param
+                            "more than one '{param}' parameter"
                         )));
                     }
                     schema = Some(value.to_owned())
@@ -65,8 +63,7 @@ impl VTabLog {
                 "rows" => {
                     if n_row.is_some() {
                         return Err(Error::ModuleError(format!(
-                            "more than one '{}' parameter",
-                            param
+                            "more than one '{param}' parameter"
                         )));
                     }
                     if let Ok(n) = i64::from_str(value) {
@@ -75,8 +72,7 @@ impl VTabLog {
                 }
                 _ => {
                     return Err(Error::ModuleError(format!(
-                        "unrecognized parameter '{}'",
-                        param
+                        "unrecognized parameter '{param}'"
                     )));
                 }
             }
@@ -84,7 +80,7 @@ impl VTabLog {
         if schema.is_none() {
             return Err(Error::ModuleError("no schema defined".to_owned()));
         }
-        let vtab = VTabLog {
+        let vtab = Self {
             base: ffi::sqlite3_vtab::default(),
             n_row: n_row.unwrap_or(10),
             i_inst,
@@ -109,7 +105,7 @@ unsafe impl<'vtab> VTab<'vtab> for VTabLog {
         aux: Option<&Self::Aux>,
         args: &[&[u8]],
     ) -> Result<(String, Self)> {
-        VTabLog::connect_create(db, aux, args, false)
+        Self::connect_create(db, aux, args, false)
     }
 
     fn best_index(&self, info: &mut IndexInfo) -> Result<()> {
@@ -134,7 +130,7 @@ unsafe impl<'vtab> VTab<'vtab> for VTabLog {
     }
 }
 
-impl<'vtab> CreateVTab<'vtab> for VTabLog {
+impl CreateVTab<'_> for VTabLog {
     const KIND: VTabKind = VTabKind::Default;
 
     fn create(
@@ -142,7 +138,7 @@ impl<'vtab> CreateVTab<'vtab> for VTabLog {
         aux: Option<&Self::Aux>,
         args: &[&[u8]],
     ) -> Result<(String, Self)> {
-        VTabLog::connect_create(db, aux, args, true)
+        Self::connect_create(db, aux, args, true)
     }
 
     fn destroy(&self) -> Result<()> {
@@ -151,9 +147,9 @@ impl<'vtab> CreateVTab<'vtab> for VTabLog {
     }
 }
 
-impl<'vtab> UpdateVTab<'vtab> for VTabLog {
+impl UpdateVTab<'_> for VTabLog {
     fn delete(&mut self, arg: ValueRef<'_>) -> Result<()> {
-        println!("VTabLog::delete({}, {:?})", self.i_inst, arg);
+        println!("VTabLog::delete({}, {arg:?})", self.i_inst);
         Ok(())
     }
 
@@ -163,7 +159,7 @@ impl<'vtab> UpdateVTab<'vtab> for VTabLog {
             self.i_inst,
             args.iter().collect::<Vec<ValueRef<'_>>>()
         );
-        Ok(self.n_row as i64)
+        Ok(self.n_row)
     }
 
     fn update(&mut self, args: &Values<'_>) -> Result<()> {
@@ -246,7 +242,7 @@ unsafe impl VTabCursor for VTabLogCursor<'_> {
                 self.row_id
             )
         } else {
-            format!("{}{}", i, self.row_id)
+            format!("{i}{}", self.row_id)
         };
         println!(
             "VTabLogCursor::column(tab={}, cursor={}, i={}): {}",
@@ -286,13 +282,13 @@ mod test {
         let mut stmt = db.prepare("SELECT * FROM log;")?;
         let mut rows = stmt.query([])?;
         while rows.next()?.is_some() {}
-        db.execute("DELETE FROM log WHERE a = ?", ["a1"])?;
+        db.execute("DELETE FROM log WHERE a = ?1", ["a1"])?;
         db.execute(
-            "INSERT INTO log (a, b, c) VALUES (?, ?, ?)",
+            "INSERT INTO log (a, b, c) VALUES (?1, ?2, ?3)",
             ["a", "b", "c"],
         )?;
         db.execute(
-            "UPDATE log SET b = ?, c = ? WHERE a = ?",
+            "UPDATE log SET b = ?1, c = ?2 WHERE a = ?3",
             ["bn", "cn", "a1"],
         )?;
         Ok(())

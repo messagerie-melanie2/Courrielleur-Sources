@@ -3,6 +3,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import mozlog
@@ -10,7 +11,7 @@ from mozdevice import ADBDevice, ADBError
 
 from mozperftest.layers import Layer
 from mozperftest.system.android_perf_tuner import tune_performance
-from mozperftest.utils import download_file
+from mozperftest.utils import MOBILE_APPS, download_file
 
 HERE = Path(__file__).parent
 
@@ -47,6 +48,12 @@ _PERMALINKS = {
 
 
 class DeviceError(Exception):
+    pass
+
+
+class AndroidSetupError(Exception):
+    """Raised when there's an issue in the android setup."""
+
     pass
 
 
@@ -132,6 +139,34 @@ class AndroidDevice(Layer):
     def custom_apk_exists(self):
         return self.custom_apk_path is not None
 
+    def enable_notifications(self, package_id):
+        """
+        The code block with pm grant enables notifications for the app,
+        otherwise during testing a request to enable/disable notifications will persist
+        through app shutdowns.
+        """
+        self.device.shell(
+            f"pm grant {package_id} android.permission.POST_NOTIFICATIONS"
+        )
+
+    def disable_notifications(self, package_id):
+        self.device.shell(
+            f"pm revoke {package_id} android.permission.POST_NOTIFICATIONS"
+        )
+
+    def skip_app_onboarding(self, package_id):
+        """
+        We skip onboarding for focus in measure_start_up.py because it's stateful
+        and needs to be called for every cold start intent.
+        Onboarding only visibly gets in the way of our MAIN test results.
+        """
+        # This sets mutable state we only need to pass this flag once, before we start the test
+        self.device.shell(
+            f"am start-activity -W -a android.intent.action.MAIN --ez "
+            f"performancetest true -n {package_id}/org.mozilla.fenix.App"
+        )
+        time.sleep(4)  # ensure skip onboarding call has time to propagate.
+
     def setup(self):
         if self.custom_apk_exists():
             self.info(
@@ -158,7 +193,48 @@ class AndroidDevice(Layer):
             return Path(self.get_arg("output"), path)
         return path
 
+    def install_application(self, applications, package_id=None):
+        if not self.app_name:
+            self.app_name = package_id
+
+        # Install APKs
+        for apks in applications:
+            apk = apks
+            self.info("Uninstalling old version")
+            self.device.uninstall_app(self.get_arg("android-app-name"))
+            self.info("Installing %s" % apk)
+            if str(apk) in _PERMALINKS:
+                apk = _PERMALINKS[apk]
+            if str(apk).startswith("http"):
+                with tempfile.TemporaryDirectory() as tmpdirname:
+                    target = Path(tmpdirname, "target.apk")
+                    self.info("Downloading %s" % apk)
+                    download_file(apk, target)
+                    self.info("Installing downloaded APK")
+                    self.device.install_app(str(target))
+            elif "fenix" in self.app_name:
+                self.info("Installing Fenix APK with baseline profile")
+                self.device.install_app_baseline_profile(apk, replace=True)
+                output = self.device.shell_output(
+                    f"dumpsys package dexopt | grep -A 1 {self.app_name}"
+                )
+                self.info(output)
+            else:
+                self.device.install_app(apk, replace=True)
+            self.info("Done.")
+
+        # checking that the app is installed
+        if not self.device.is_app_installed(self.app_name):
+            raise Exception("%s is not installed" % self.app_name)
+
     def run(self, metadata):
+        if self.get_arg("app") not in MOBILE_APPS:
+            raise AndroidSetupError(
+                f"Incorrect app '{self.get_arg('app')}' specified for android test run. "
+                f"Use --app to  set it to one of the following options: "
+                f"{', '.join(MOBILE_APPS)}"
+            )
+
         self.app_name = self.get_arg("android-app-name")
         self.android_activity = self.get_arg("android-activity")
         self.clear_logcat = self.get_arg("clear-logcat")
@@ -166,6 +242,9 @@ class AndroidDevice(Layer):
         self.verbose = self.get_arg("verbose")
         self.capture_adb = self._set_output_path(self.get_arg("capture-adb"))
         self.capture_logcat = self._set_output_path(self.get_arg("capture-logcat"))
+
+        if metadata.binary:
+            self.app_name = metadata.binary
 
         # capture the logs produced by ADBDevice
         logger_name = "mozperftest-adb"
@@ -195,27 +274,7 @@ class AndroidDevice(Layer):
         if self.clear_logcat:
             self.device.clear_logcat()
 
-        # Install APKs
-        for apk in self.get_arg("android-install-apk"):
-            self.info("Uninstalling old version")
-            self.device.uninstall_app(self.get_arg("android-app-name"))
-            self.info("Installing %s" % apk)
-            if str(apk) in _PERMALINKS:
-                apk = _PERMALINKS[apk]
-            if str(apk).startswith("http"):
-                with tempfile.TemporaryDirectory() as tmpdirname:
-                    target = Path(tmpdirname, "target.apk")
-                    self.info("Downloading %s" % apk)
-                    download_file(apk, target)
-                    self.info("Installing downloaded APK")
-                    self.device.install_app(str(target))
-            else:
-                self.device.install_app(apk, replace=True)
-            self.info("Done.")
-
-        # checking that the app is installed
-        if not self.device.is_app_installed(self.app_name):
-            raise Exception("%s is not installed" % self.app_name)
+        self.install_application(self.get_arg("android-install-apk"))
 
         if self.get_arg("android-perf-tuning", False):
             tune_performance(self.device)

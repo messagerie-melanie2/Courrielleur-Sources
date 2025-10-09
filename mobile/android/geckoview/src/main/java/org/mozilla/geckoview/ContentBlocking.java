@@ -59,8 +59,7 @@ public class ContentBlocking {
               "googpub-phish-proto",
               "goog-malware-proto",
               "goog-unwanted-proto",
-              "goog-harmful-proto",
-              "goog-passwordwhite-proto")
+              "goog-harmful-proto")
           .updateUrl(
               "https://safebrowsing.googleapis.com/v4/threatListUpdates:fetch?$ct=application/x-protobuf&key=%GOOGLE_SAFEBROWSING_API_KEY%&$httpMethod=POST")
           .getHashUrl(
@@ -195,6 +194,35 @@ public class ContentBlocking {
       }
 
       /**
+       * Set the ETP behavior category.
+       *
+       * <p>Note that there is a difference between ETP "level" and ETP "category". Level refers to
+       * whether content blocking should use the regular or the strict list, or should be disabled
+       * entirely. While "category" refers to the preset of anti-tracking features under the ETP
+       * umbrella that should be enabled.
+       *
+       * @param category The category of ETP blocking to use.
+       * @return The Builder instance.
+       */
+      public @NonNull Builder enhancedTrackingProtectionCategory(
+          final @CBEtpCategory int category) {
+        getSettings().setEnhancedTrackingProtectionCategory(category);
+        return this;
+      }
+
+      /**
+       * Set whether or not email tracker blocking is enabled in private mode.
+       *
+       * @param enabled A boolean indicating whether or not email tracker blocking should be enabled
+       *     in private mode.
+       * @return The builder instance.
+       */
+      public @NonNull Builder emailTrackerBlockingPrivateMode(final boolean enabled) {
+        getSettings().setEmailTrackerBlockingPrivateBrowsing(enabled);
+        return this;
+      }
+
+      /**
        * Set whether or not strict social tracking protection is enabled. This will block resources
        * from loading if they are on the social tracking protection list, rather than just blocking
        * cookies as with normal social tracking protection.
@@ -230,6 +258,76 @@ public class ContentBlocking {
        */
       public @NonNull Builder cookieBannerHandlingMode(final @CBCookieBannerMode int mode) {
         getSettings().setCookieBannerMode(mode);
+        return this;
+      }
+
+      /**
+       * When set to true, enable the use of global CookieBannerRules.
+       *
+       * @param enabled A boolean indicating whether to enable the use of global CookieBannerRules.
+       * @return The Builder instance.
+       */
+      public @NonNull Builder cookieBannerGlobalRulesEnabled(final boolean enabled) {
+        getSettings().setCookieBannerGlobalRulesEnabled(enabled);
+        return this;
+      }
+
+      /**
+       * When set to true, enable the use of global CookieBannerRules in sub-frames.
+       *
+       * @param enabled A boolean indicating whether to enable the use of global CookieBannerRules
+       *     in sub-frames.
+       * @return The Builder instance.
+       */
+      public @NonNull Builder cookieBannerGlobalRulesSubFramesEnabled(final boolean enabled) {
+        getSettings().setCookieBannerGlobalRulesSubFramesEnabled(enabled);
+        return this;
+      }
+
+      /**
+       * When set to true, query parameter stripping is enabled in normal mode.
+       *
+       * @param enabled A boolean indicating whether to query parameter stripping enabled in normal
+       *     mode.
+       * @return The Builder instance.
+       */
+      public @NonNull Builder queryParameterStrippingEnabled(final boolean enabled) {
+        getSettings().setQueryParameterStrippingEnabled(enabled);
+        return this;
+      }
+
+      /**
+       * When set to true, query parameter stripping is enabled in private mode.
+       *
+       * @param enabled A boolean indicating whether to query parameter stripping enabled in private
+       *     mode.
+       * @return The Builder instance.
+       */
+      public @NonNull Builder queryParameterStrippingPrivateBrowsingEnabled(final boolean enabled) {
+        getSettings().setQueryParameterStrippingPrivateBrowsingEnabled(enabled);
+        return this;
+      }
+
+      /**
+       * The allowed list for the query parameter stripping feature.
+       *
+       * @param list an array of identifiers for query parameter's stripping feature.
+       * @return The Builder instance.
+       */
+      public @NonNull Builder queryParameterStrippingAllowList(final @NonNull String... list) {
+        getSettings().setQueryParameterStrippingAllowList(list);
+        return this;
+      }
+
+      /**
+       * The strip list for the query parameter stripping feature.
+       *
+       * @param list an array of identifiers for the strip list of the query parameter's stripping
+       *     feature.
+       * @return The Builder instance.
+       */
+      public @NonNull Builder queryParameterStrippingStripList(final @NonNull String... list) {
+        getSettings().setQueryParameterStrippingStripList(list);
         return this;
       }
 
@@ -280,17 +378,19 @@ public class ContentBlocking {
     /* package */ final Pref<String> mStList =
         new Pref<String>(
             "urlclassifier.features.socialtracking.annotate.blacklistTables",
-            ContentBlocking.catToStListPref(AntiTracking.NONE));
+            ContentBlocking.catToPref(AntiTracking.NONE, AntiTracking.STP, STP));
 
     /* package */ final Pref<Boolean> mSbMalware =
         new Pref<Boolean>("browser.safebrowsing.malware.enabled", true);
     /* package */ final Pref<Boolean> mSbPhishing =
         new Pref<Boolean>("browser.safebrowsing.phishing.enabled", true);
     /* package */ final Pref<Integer> mCookieBehavior =
-        new Pref<Integer>("network.cookie.cookieBehavior", CookieBehavior.ACCEPT_NON_TRACKERS);
+        new Pref<Integer>(
+            "network.cookie.cookieBehavior", CookieBehavior.ACCEPT_FIRST_PARTY_AND_ISOLATE_OTHERS);
     /* package */ final Pref<Integer> mCookieBehaviorPrivateMode =
         new Pref<Integer>(
-            "network.cookie.cookieBehavior.pbmode", CookieBehavior.ACCEPT_NON_TRACKERS);
+            "network.cookie.cookieBehavior.pbmode",
+            CookieBehavior.ACCEPT_FIRST_PARTY_AND_ISOLATE_OTHERS);
     /* package */ final Pref<Boolean> mCookiePurging =
         new Pref<Boolean>("privacy.purge_trackers.enabled", false);
 
@@ -298,6 +398,9 @@ public class ContentBlocking {
         new Pref<Boolean>("privacy.trackingprotection.annotate_channels", false);
     /* package */ final Pref<Boolean> mEtpStrict =
         new Pref<Boolean>("privacy.annotate_channels.strict_list.enabled", false);
+
+    /* package */ final Pref<String> mEtpCategory =
+        new Pref<String>("browser.contentblocking.category", "standard");
 
     /* package */ final Pref<Integer> mCbhMode =
         new Pref<Integer>(
@@ -309,6 +412,35 @@ public class ContentBlocking {
 
     /* package */ final Pref<Boolean> mChbDetectOnlyMode =
         new Pref<Boolean>("cookiebanners.service.detectOnly", false);
+    /* package */
+    final Pref<Boolean> mCbhGlobalRulesEnabled =
+        new Pref<Boolean>("cookiebanners.service.enableGlobalRules", false);
+
+    final Pref<Boolean> mCbhGlobalRulesSubFramesEnabled =
+        new Pref<Boolean>("cookiebanners.service.enableGlobalRules.subFrames", false);
+
+    /* package */ final Pref<Boolean> mQueryParameterStrippingEnabled =
+        new Pref<Boolean>("privacy.query_stripping.enabled", false);
+
+    /* package */ final Pref<Boolean> mQueryParameterStrippingPrivateBrowsingEnabled =
+        new Pref<Boolean>("privacy.query_stripping.enabled.pbmode", false);
+
+    /* package */ final Pref<String> mQueryParameterStrippingAllowList =
+        new Pref<>("privacy.query_stripping.allow_list", "");
+
+    /* package */ final Pref<String> mQueryParameterStrippingStripList =
+        new Pref<>("privacy.query_stripping.strip_list", "");
+
+    /* package */ final Pref<Boolean> mEtb =
+        new Pref<Boolean>("privacy.trackingprotection.emailtracking.enabled", false);
+
+    /* package */ final Pref<Boolean> mEtbPrivateBrowsing =
+        new Pref<Boolean>("privacy.trackingprotection.emailtracking.pbmode.enabled", false);
+
+    /* package */ final Pref<String> mEtbList =
+        new Pref<String>(
+            "urlclassifier.features.emailtracking.blocklistTables",
+            ContentBlocking.catToPref(AntiTracking.NONE, AntiTracking.EMAIL, EMAIL));
 
     /* package */ final Pref<String> mSafeBrowsingMalwareTable =
         new Pref<>(
@@ -437,6 +569,50 @@ public class ContentBlocking {
     }
 
     /**
+     * Sets the allowed list for the query parameter stripping feature.
+     *
+     * @param list an array of identifiers for the allowed list of the query parameter's stripping
+     *     feature.
+     * @return this {@link Settings} instance.
+     */
+    public @NonNull Settings setQueryParameterStrippingAllowList(final @NonNull String... list) {
+      mQueryParameterStrippingAllowList.commit(ContentBlocking.listsToPref(list));
+      return this;
+    }
+
+    /**
+     * Get the allowed list for the query parameter stripping feature.
+     *
+     * @return an array of identifiers for the allowed list for the query parameter stripping
+     *     feature.
+     */
+    public @NonNull String[] getQueryParameterStrippingAllowList() {
+      return ContentBlocking.prefToLists(mQueryParameterStrippingAllowList.get());
+    }
+
+    /**
+     * Sets the strip list for the query parameter stripping feature.
+     *
+     * @param list an array of identifiers for the strip list of the query parameter's stripping
+     *     feature.
+     * @return this {@link Settings} instance.
+     */
+    public @NonNull Settings setQueryParameterStrippingStripList(final @NonNull String... list) {
+      mQueryParameterStrippingStripList.commit(ContentBlocking.listsToPref(list));
+      return this;
+    }
+
+    /**
+     * Get the strip list for the query parameter stripping feature
+     *
+     * @return an array of identifiers for the allowed list for the query parameter stripping
+     *     feature.
+     */
+    public @NonNull String[] getQueryParameterStrippingStripList() {
+      return ContentBlocking.prefToLists(mQueryParameterStrippingStripList.get());
+    }
+
+    /**
      * Sets the table for SafeBrowsing Malware.
      *
      * @param table an array of identifiers for SafeBrowsing's Malware feature.
@@ -465,12 +641,20 @@ public class ContentBlocking {
       mFpList.commit(ContentBlocking.catToFpListPref(cat));
 
       mSt.commit(ContentBlocking.catToStPref(cat));
-      mStList.commit(ContentBlocking.catToStListPref(cat));
+      mStList.commit(ContentBlocking.catToPref(cat, AntiTracking.STP, STP));
+
+      mEtb.commit(ContentBlocking.catToEtbPref(cat));
+      mEtbList.commit(ContentBlocking.catToPref(cat, AntiTracking.EMAIL, EMAIL));
       return this;
     }
 
     /**
      * Set the ETP behavior level.
+     *
+     * <p>Note that there is a difference between ETP "level" and ETP "category". Level refers to
+     * whether content blocking should use the regular or the strict list, or should be disabled
+     * entirely. While "category" refers to the preset of anti-tracking features under the ETP
+     * umbrella that should be enabled.
      *
      * @param level The level of ETP blocking to use; must be one of {@link
      *     ContentBlocking.EtpLevel} flags. Only takes effect if the cookie behavior is {@link
@@ -482,6 +666,26 @@ public class ContentBlocking {
       mEtpEnabled.commit(
           level == ContentBlocking.EtpLevel.DEFAULT || level == ContentBlocking.EtpLevel.STRICT);
       mEtpStrict.commit(level == ContentBlocking.EtpLevel.STRICT);
+      return this;
+    }
+
+    /**
+     * Set the ETP behavior category.
+     *
+     * @param category The category of ETP blocking to use.
+     * @return This Settings instance.
+     */
+    public @NonNull Settings setEnhancedTrackingProtectionCategory(
+        final @CBEtpCategory int category) {
+
+      if (category == ContentBlocking.EtpCategory.STANDARD) {
+        mEtpCategory.commit("standard");
+      } else if (category == ContentBlocking.EtpCategory.STRICT) {
+        mEtpCategory.commit("strict");
+      } else if (category == ContentBlocking.EtpCategory.CUSTOM) {
+        mEtpCategory.commit("custom");
+      }
+
       return this;
     }
 
@@ -521,7 +725,8 @@ public class ContentBlocking {
       return ContentBlocking.atListToAtCat(mAt.get())
           | ContentBlocking.cmListToAtCat(mCmList.get())
           | ContentBlocking.fpListToAtCat(mFpList.get())
-          | ContentBlocking.stListToAtCat(mStList.get());
+          | ContentBlocking.stListToAtCat(mStList.get())
+          | ContentBlocking.etbListToAtCat(mEtbList.get());
     }
 
     /**
@@ -536,6 +741,22 @@ public class ContentBlocking {
         return ContentBlocking.EtpLevel.DEFAULT;
       }
       return ContentBlocking.EtpLevel.NONE;
+    }
+
+    /**
+     * Get the set ETP behavior category.
+     *
+     * @return The current ETP category; one of {@link ContentBlocking.EtpCategory}.
+     */
+    public @CBEtpCategory int getEnhancedTrackingProtectionCategory() {
+      final String category = mEtpCategory.get();
+      if ("strict".equals(category)) {
+        return ContentBlocking.EtpCategory.STRICT;
+      } else if ("standard".equals(category)) {
+        return ContentBlocking.EtpCategory.STANDARD;
+      } else {
+        return ContentBlocking.EtpCategory.CUSTOM;
+      }
     }
 
     /**
@@ -646,6 +867,109 @@ public class ContentBlocking {
     public @NonNull Settings setCookieBannerDetectOnlyMode(final boolean enabled) {
       mChbDetectOnlyMode.commit(enabled);
       return this;
+    }
+
+    /**
+     * Enables/disables the use of global CookieBannerRules, which apply to all sites. This enable
+     * handling of CMPs across sites without the use of site-specific rules.
+     *
+     * @param enabled A boolean indicating whether or not to enable.
+     * @return This Settings instance.
+     */
+    public @NonNull Settings setCookieBannerGlobalRulesEnabled(final boolean enabled) {
+      mCbhGlobalRulesEnabled.commit(enabled);
+      return this;
+    }
+
+    /**
+     * Indicates if global CookieBannerRules is enabled or not.
+     *
+     * @return Indicates if global CookieBannerRule is enabled or disabled.
+     */
+    public boolean getCookieBannerGlobalRulesEnabled() {
+      return mCbhGlobalRulesEnabled.get();
+    }
+
+    /**
+     * Whether global rules are allowed to run in sub-frames. Running query selectors in every
+     * sub-frame may negatively impact performance, but is required for some CMPs.
+     *
+     * @param enabled A boolean indicating whether or not to enable.
+     * @return This Settings instance.
+     */
+    public @NonNull Settings setCookieBannerGlobalRulesSubFramesEnabled(final boolean enabled) {
+      mCbhGlobalRulesSubFramesEnabled.commit(enabled);
+      return this;
+    }
+
+    /**
+     * Indicates if email tracker blocking is enabled in private mode.
+     *
+     * @return Indicates if email tracker blocking is enabled or disabled in private mode.
+     */
+    public @NonNull Boolean getEmailTrackerBlockingPrivateBrowsingEnabled() {
+      return mEtbPrivateBrowsing.get();
+    }
+
+    /**
+     * Sets whether email tracker blocking is enabled in private mode.
+     *
+     * @param enabled A boolean indicating whether or not to enable.
+     * @return This Settings instance.
+     */
+    public @NonNull Settings setEmailTrackerBlockingPrivateBrowsing(final boolean enabled) {
+      mEtbPrivateBrowsing.commit(enabled);
+      return this;
+    }
+
+    /**
+     * Sets whether query parameter stripping is enabled in normal mode.
+     *
+     * @param enabled A boolean indicating whether or not to enable.
+     * @return This Settings instance.
+     */
+    public @NonNull Settings setQueryParameterStrippingEnabled(final boolean enabled) {
+      mQueryParameterStrippingEnabled.commit(enabled);
+      return this;
+    }
+
+    /**
+     * Indicates if query parameter stripping is enabled in normal mode.
+     *
+     * @return Indicates if query parameter stripping is enabled or disabled in normal mode.
+     */
+    public boolean getQueryParameterStrippingEnabled() {
+      return mQueryParameterStrippingEnabled.get();
+    }
+
+    /**
+     * Sets Whether query parameter stripping is enabled in private mode.
+     *
+     * @param enabled A boolean indicating whether or not to enable in private mode.
+     * @return This Settings instance.
+     */
+    public @NonNull Settings setQueryParameterStrippingPrivateBrowsingEnabled(
+        final boolean enabled) {
+      mQueryParameterStrippingPrivateBrowsingEnabled.commit(enabled);
+      return this;
+    }
+
+    /**
+     * Indicates if query parameter stripping is enabled in private mode.
+     *
+     * @return Indicates if global CookieBannerRules is enabled or disabled in sub-frames.
+     */
+    public boolean getQueryParameterStrippingPrivateBrowsingEnabled() {
+      return mQueryParameterStrippingPrivateBrowsingEnabled.get();
+    }
+
+    /**
+     * Indicates if global CookieBannerRules is enabled or not in sub-frames.
+     *
+     * @return Indicates if global CookieBannerRules is enabled or disabled in sub-frames.
+     */
+    public boolean getCookieBannerGlobalRulesSubFramesEnabled() {
+      return mCbhGlobalRulesSubFramesEnabled.get();
     }
 
     /**
@@ -1221,11 +1545,14 @@ public class ContentBlocking {
     /** Block trackers on the Social Tracking Protection list. */
     public static final int STP = 1 << 8;
 
+    /** Block email trackers */
+    public static final int EMAIL = 1 << 9;
+
     /** Block ad, analytic, social and test trackers. */
     public static final int DEFAULT = AD | ANALYTIC | SOCIAL | TEST;
 
     /** Block all known trackers. May cause issues with some web sites. */
-    public static final int STRICT = DEFAULT | CONTENT | CRYPTOMINING | FINGERPRINTING;
+    public static final int STRICT = DEFAULT | CONTENT | CRYPTOMINING | FINGERPRINTING | EMAIL;
 
     protected AntiTracking() {}
   }
@@ -1244,6 +1571,7 @@ public class ContentBlocking {
         AntiTracking.DEFAULT,
         AntiTracking.STRICT,
         AntiTracking.STP,
+        AntiTracking.EMAIL,
         AntiTracking.NONE
       })
   public @interface CBAntiTracking {}
@@ -1316,9 +1644,12 @@ public class ContentBlocking {
 
   @Retention(RetentionPolicy.SOURCE)
   @IntDef({
-    CookieBehavior.ACCEPT_ALL, CookieBehavior.ACCEPT_FIRST_PARTY,
-    CookieBehavior.ACCEPT_NONE, CookieBehavior.ACCEPT_VISITED,
-    CookieBehavior.ACCEPT_NON_TRACKERS
+    CookieBehavior.ACCEPT_ALL,
+    CookieBehavior.ACCEPT_FIRST_PARTY,
+    CookieBehavior.ACCEPT_NONE,
+    CookieBehavior.ACCEPT_VISITED,
+    CookieBehavior.ACCEPT_NON_TRACKERS,
+    CookieBehavior.ACCEPT_FIRST_PARTY_AND_ISOLATE_OTHERS
   })
   public @interface CBCookieBehavior {}
 
@@ -1338,6 +1669,22 @@ public class ContentBlocking {
      * Enable ETP for all of the default lists as well as the content list. May break many sites!
      */
     public static final int STRICT = 2;
+  }
+
+  @Retention(RetentionPolicy.SOURCE)
+  @IntDef({EtpCategory.STANDARD, EtpCategory.STRICT, EtpCategory.CUSTOM})
+  public @interface CBEtpCategory {}
+
+  /** Possible settings for ETP category. */
+  public static class EtpCategory {
+    // The default ETP category, balancing privacy and web compatibility.
+    public static final int STANDARD = 0;
+    // The strict ETP category, blocking more trackers but potentially breaking
+    // more sites.
+    public static final int STRICT = 1;
+    // The custom ETP category, allowing the user to choose which anti-tracking
+    // to enable.
+    public static final int CUSTOM = 2;
   }
 
   /** Holds content block event details. */
@@ -1413,7 +1760,8 @@ public class ContentBlocking {
           ContentBlocking.atListToAtCat(matchedList)
               | ContentBlocking.cmListToAtCat(matchedList)
               | ContentBlocking.fpListToAtCat(matchedList)
-              | ContentBlocking.stListToAtCat(matchedList),
+              | ContentBlocking.stListToAtCat(matchedList)
+              | ContentBlocking.etbListToAtCat(matchedList),
           ContentBlocking.errorToSbCat(error),
           ContentBlocking.geckoCatToCbCat(category),
           blocking);
@@ -1459,6 +1807,7 @@ public class ContentBlocking {
   private static final String FINGERPRINTING = "base-fingerprinting-track-digest256";
   private static final String STP =
       "social-tracking-protection-facebook-digest256,social-tracking-protection-linkedin-digest256,social-tracking-protection-twitter-digest256";
+  private static final String EMAIL = "base-email-track-digest256";
 
   /* package */ static @CBSafeBrowsing int sbMalwareToSbCat(final boolean enabled) {
     return enabled
@@ -1470,11 +1819,11 @@ public class ContentBlocking {
     return enabled ? SafeBrowsing.PHISHING : SafeBrowsing.NONE;
   }
 
-  /* package */ static boolean catToSbMalware(@CBAntiTracking final int cat) {
+  /* package */ static boolean catToSbMalware(@CBSafeBrowsing final int cat) {
     return (cat & (SafeBrowsing.MALWARE | SafeBrowsing.UNWANTED | SafeBrowsing.HARMFUL)) != 0;
   }
 
-  /* package */ static boolean catToSbPhishing(@CBAntiTracking final int cat) {
+  /* package */ static boolean catToSbPhishing(@CBSafeBrowsing final int cat) {
     return (cat & SafeBrowsing.PHISHING) != 0;
   }
 
@@ -1544,17 +1893,25 @@ public class ContentBlocking {
     return (cat & AntiTracking.STP) != 0;
   }
 
-  /* package */ static String catToStListPref(@CBAntiTracking final int cat) {
-    final StringBuilder builder = new StringBuilder();
+  /* package */ static boolean catToEtbPref(@CBAntiTracking final int cat) {
+    return (cat & AntiTracking.EMAIL) != 0;
+  }
 
-    if ((cat & AntiTracking.STP) != 0) {
-      builder.append(STP).append(",");
-    }
-    if (builder.length() == 0) {
+  /**
+   * Generic method for converting a category of anti-tracking to a Pref.
+   *
+   * @param cat Int representing the enabled anti-tracking blockers.
+   * @param tbCat Int representing the category mask to check for.
+   * @param catPrefString String to return if [cat] contains [tbCat].
+   * @return Pref string if [cat] contains [tbCat] otherwise empty string.
+   */
+  /* package */ static String catToPref(
+      @CBAntiTracking final int cat, final int tbCat, final String catPrefString) {
+    if ((cat & tbCat) != 0) {
+      return catPrefString;
+    } else {
       return "";
     }
-    // Trim final ','.
-    return builder.substring(0, builder.length() - 1);
   }
 
   /* package */ static @CBAntiTracking int atListToAtCat(final String list) {
@@ -1599,6 +1956,17 @@ public class ContentBlocking {
     }
     if (list.indexOf(STP) != -1) {
       cat |= AntiTracking.STP;
+    }
+    return cat;
+  }
+
+  /* package */ static @CBAntiTracking int etbListToAtCat(final String list) {
+    int cat = AntiTracking.NONE;
+    if (list == null) {
+      return cat;
+    }
+    if (list.indexOf(EMAIL) != -1) {
+      cat |= AntiTracking.EMAIL;
     }
     return cat;
   }

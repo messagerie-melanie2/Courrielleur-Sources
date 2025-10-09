@@ -27,11 +27,10 @@ namespace mozilla {
 class JsepTrackNegotiatedDetails {
  public:
   JsepTrackNegotiatedDetails()
-      : mTias(0), mRtpRtcpConf(webrtc::RtcpMode::kCompound) {}
+      : mTias(0), mRtpRtcpConf(webrtc::RtcpMode::kCompound, true) {}
 
   JsepTrackNegotiatedDetails(const JsepTrackNegotiatedDetails& orig)
       : mExtmap(orig.mExtmap),
-        mUniquePayloadTypes(orig.mUniquePayloadTypes),
         mTias(orig.mTias),
         mRtpRtcpConf(orig.mRtpRtcpConf) {
     for (const auto& encoding : orig.mEncodings) {
@@ -66,13 +65,9 @@ class JsepTrackNegotiatedDetails {
   void ForEachRTPHeaderExtension(
       const std::function<void(const SdpExtmapAttributeList::Extmap& extmap)>&
           fn) const {
-    for (auto entry : mExtmap) {
+    for (const auto& entry : mExtmap) {
       fn(entry.second);
     }
-  }
-
-  std::vector<uint8_t> GetUniquePayloadTypes() const {
-    return mUniquePayloadTypes;
   }
 
   uint32_t GetTias() const { return mTias; }
@@ -83,7 +78,6 @@ class JsepTrackNegotiatedDetails {
   friend class JsepTrack;
 
   std::map<std::string, SdpExtmapAttributeList::Extmap> mExtmap;
-  std::vector<uint8_t> mUniquePayloadTypes;
   std::vector<UniquePtr<JsepTrackEncoding>> mEncodings;
   uint32_t mTias;  // bits per second
   RtpRtcpConfig mRtpRtcpConf;
@@ -136,6 +130,13 @@ class JsepTrack {
       mMaxEncodings = rhs.mMaxEncodings;
       mInHaveRemote = rhs.mInHaveRemote;
       mRtxIsAllowed = rhs.mRtxIsAllowed;
+      mUsePreferredCodecsOrder = rhs.mUsePreferredCodecsOrder;
+      mFecCodec = rhs.mFecCodec;
+      mAudioPreferredCodec = rhs.mAudioPreferredCodec;
+      mVideoPreferredCodec = rhs.mVideoPreferredCodec;
+      mUniqueReceivePayloadTypes = rhs.mUniqueReceivePayloadTypes;
+      mReceivePayloadTypes = rhs.mReceivePayloadTypes;
+      mDuplicateReceivePayloadTypes = rhs.mDuplicateReceivePayloadTypes;
 
       mPrototypeCodecs.clear();
       for (const auto& codec : rhs.mPrototypeCodecs) {
@@ -168,10 +169,14 @@ class JsepTrack {
   virtual std::vector<uint32_t> GetRtxSsrcs() const {
     std::vector<uint32_t> result;
     if (mRtxIsAllowed &&
-        Preferences::GetBool("media.peerconnection.video.use_rtx", false)) {
-      std::for_each(
-          mSsrcToRtxSsrc.begin(), mSsrcToRtxSsrc.end(),
-          [&result](const auto& pair) { result.push_back(pair.second); });
+        Preferences::GetBool("media.peerconnection.video.use_rtx", false) &&
+        !mSsrcToRtxSsrc.empty()) {
+      MOZ_ASSERT(mSsrcToRtxSsrc.size() == mSsrcs.size());
+      for (const auto ssrc : mSsrcs) {
+        auto it = mSsrcToRtxSsrc.find(ssrc);
+        MOZ_ASSERT(it != mSsrcToRtxSsrc.end());
+        result.push_back(it->second);
+      }
     }
     return result;
   }
@@ -185,8 +190,13 @@ class JsepTrack {
   bool GetRemoteSetSendBit() const { return mRemoteSetSendBit; }
   bool GetReceptive() const { return mReceptive; }
 
+  void PopulatePreferredCodecs(
+      const std::vector<UniquePtr<JsepCodecDescription>>& aPreferredCodecs,
+      bool aUsePreferredCodecsOrder);
+
   virtual void PopulateCodecs(
-      const std::vector<UniquePtr<JsepCodecDescription>>& prototype);
+      const std::vector<UniquePtr<JsepCodecDescription>>& prototype,
+      bool aUsePreferredCodecsOrder = false);
 
   template <class UnaryFunction>
   void ForEachCodec(UnaryFunction func) {
@@ -207,7 +217,8 @@ class JsepTrack {
   virtual nsresult Negotiate(const SdpMediaSection& answer,
                              const SdpMediaSection& remote,
                              const SdpMediaSection& local);
-  static void SetUniquePayloadTypes(std::vector<JsepTrack*>& tracks);
+  static void SetUniqueReceivePayloadTypes(std::vector<JsepTrack*>& tracks,
+                                           bool localOffer = false);
   virtual void GetNegotiatedPayloadTypes(
       std::vector<uint16_t>* payloadTypes) const;
 
@@ -242,6 +253,22 @@ class JsepTrack {
   void SetMaxEncodings(size_t aMax);
   bool IsInHaveRemote() const { return mInHaveRemote; }
 
+  const std::string& GetFecCodecName() const { return mFecCodec; }
+  const std::string& GetAudioPreferredCodec() const {
+    return mAudioPreferredCodec;
+  }
+  const std::string& GetVideoPreferredCodec() const {
+    return mVideoPreferredCodec;
+  }
+
+  std::vector<uint8_t> GetUniqueReceivePayloadTypes() const {
+    return mUniqueReceivePayloadTypes;
+  }
+
+  std::vector<uint8_t> GetDuplicateReceivePayloadTypes() const {
+    return mDuplicateReceivePayloadTypes;
+  }
+
  private:
   std::vector<UniquePtr<JsepCodecDescription>> GetCodecClones() const;
   static void EnsureNoDuplicatePayloadTypes(
@@ -257,7 +284,9 @@ class JsepTrack {
       const SdpMediaSection& remote,
       const std::vector<UniquePtr<JsepCodecDescription>>& negotiatedCodecs,
       JsepTrackNegotiatedDetails* details);
-
+  // Identifies codecs we want to store for logging purposes.
+  void MaybeStoreCodecToLog(const std::string& codec,
+                            SdpMediaSection::MediaType type);
   virtual std::vector<UniquePtr<JsepCodecDescription>> NegotiateCodecs(
       const SdpMediaSection& remote, bool remoteIsOffer,
       Maybe<const SdpMediaSection&> local);
@@ -298,6 +327,22 @@ class JsepTrack {
 
   // See Bug 1642419, this can be removed when all sites are working with RTX.
   bool mRtxIsAllowed = true;
+
+  // Used with setCodecPreferences to determine if an answer created should
+  // match the order of preferred codecs.
+  bool mUsePreferredCodecsOrder = false;
+
+  // Codec names for logging
+  std::string mFecCodec;
+  std::string mAudioPreferredCodec;
+  std::string mVideoPreferredCodec;
+
+  // Only the unique PTs we are willing to receive, not necessarily all PTs.
+  // Used for matching SSRC to PT as only unique PTs support for this.
+  std::vector<uint8_t> mUniqueReceivePayloadTypes;
+  std::vector<uint16_t> mReceivePayloadTypes;
+  // Payload types that are duplicate
+  std::vector<uint8_t> mDuplicateReceivePayloadTypes;
 };
 
 }  // namespace mozilla

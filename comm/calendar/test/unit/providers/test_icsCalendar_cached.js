@@ -2,7 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { ICSServer } = ChromeUtils.import("resource://testing-common/calendar/ICSServer.jsm");
+var { ICSServer } = ChromeUtils.importESModule(
+  "resource://testing-common/calendar/ICSServer.sys.mjs"
+);
 
 ICSServer.open();
 ICSServer.putICSInternal(
@@ -27,9 +29,9 @@ add_task(async function () {
   // Remove the next line when this is fixed.
   calendarObserver._batchRequired = false;
 
-  calendarObserver._onAddItemPromise = PromiseUtils.defer();
-  calendarObserver._onLoadPromise = PromiseUtils.defer();
-  let calendar = createCalendar("ics", ICSServer.url, true);
+  calendarObserver._onAddItemPromise = Promise.withResolvers();
+  calendarObserver._onLoadPromise = Promise.withResolvers();
+  const calendar = createCalendar("ics", ICSServer.url, true);
   await calendarObserver._onAddItemPromise.promise;
   await calendarObserver._onLoadPromise.promise;
   info("calendar set-up complete");
@@ -37,17 +39,17 @@ add_task(async function () {
   Assert.ok(await calendar.getItem("5a9fa76c-93f3-4ad8-9f00-9e52aedd2821"));
 
   info("creating the item");
-  calendarObserver._onLoadPromise = PromiseUtils.defer();
+  calendarObserver._onLoadPromise = Promise.withResolvers();
   await runAddItem(calendar);
   await calendarObserver._onLoadPromise.promise;
 
   info("modifying the item");
-  calendarObserver._onLoadPromise = PromiseUtils.defer();
+  calendarObserver._onLoadPromise = Promise.withResolvers();
   await runModifyItem(calendar);
   await calendarObserver._onLoadPromise.promise;
 
   info("deleting the item");
-  calendarObserver._onLoadPromise = PromiseUtils.defer();
+  calendarObserver._onLoadPromise = Promise.withResolvers();
   await runDeleteItem(calendar);
   await calendarObserver._onLoadPromise.promise;
 });

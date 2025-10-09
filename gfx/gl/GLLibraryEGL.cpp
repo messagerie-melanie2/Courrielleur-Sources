@@ -12,7 +12,7 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/gfx/Logging.h"
-#include "mozilla/Telemetry.h"
+#include "mozilla/glean/DomCanvasMetrics.h"
 #include "mozilla/Tokenizer.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/StaticPrefs_gfx.h"
@@ -38,9 +38,9 @@
 #include "ScopedGLHelpers.h"
 #ifdef MOZ_WIDGET_GTK
 #  include "mozilla/WidgetUtilsGtk.h"
+#  include "mozilla/widget/DMABufDevice.h"
 #  ifdef MOZ_WAYLAND
 #    include "mozilla/widget/nsWaylandDisplay.h"
-#    include "mozilla/widget/DMABufLibWrapper.h"
 #  endif  // MOZ_WIDGET_GTK
 #  include <gdk/gdk.h>
 #endif  // MOZ_WAYLAND
@@ -169,7 +169,7 @@ static std::shared_ptr<EglDisplay> GetAndInitDisplay(
   return EglDisplay::Create(egl, display, false, aProofOfLock);
 }
 
-#ifdef MOZ_WAYLAND
+#ifdef MOZ_WIDGET_GTK
 static std::shared_ptr<EglDisplay> GetAndInitDeviceDisplay(
     GLLibraryEGL& egl, const StaticMutexAutoLock& aProofOfLock) {
   nsAutoCString drmRenderDevice(gfx::gfxVars::DrmRenderDevice());
@@ -389,7 +389,7 @@ class AngleErrorReporting {
   nsACString* mFailureId;
 };
 
-AngleErrorReporting gAngleErrorReporter;
+MOZ_RUNINIT AngleErrorReporting gAngleErrorReporter;
 
 static std::shared_ptr<EglDisplay> GetAndInitDisplayForAccelANGLE(
     GLLibraryEGL& egl, nsACString* const out_failureId,
@@ -491,17 +491,7 @@ bool GLLibraryEGL::Init(nsACString* const out_failureId) {
 
     do {
       // Windows 8.1+ has d3dcompiler_47.dll in the system directory.
-      // Try it first. Note that _46 will never be in the system
-      // directory. So there is no point trying _46 in the system
-      // directory.
-
       if (LoadLibrarySystem32(L"d3dcompiler_47.dll")) break;
-
-#  ifdef MOZ_D3DCOMPILER_VISTA_DLL
-      if (LoadLibraryForEGLOnWindows(NS_LITERAL_STRING_FROM_CSTRING(
-              MOZ_STRINGIFY(MOZ_D3DCOMPILER_VISTA_DLL))))
-        break;
-#  endif
 
       MOZ_ASSERT(false, "d3dcompiler DLL loading failed.");
     } while (false);
@@ -568,7 +558,9 @@ bool GLLibraryEGL::Init(nsACString* const out_failureId) {
 #define SYMBOL(X)                 \
   {                               \
     (PRFuncPtr*)&mSymbols.f##X, { \
-      { "egl" #X }                \
+      {                           \
+        "egl" #X                  \
+      }                           \
     }                             \
   }
 #define END_OF_SYMBOLS \
@@ -878,26 +870,27 @@ std::shared_ptr<EglDisplay> GLLibraryEGL::DefaultDisplay(
   auto ret = mDefaultDisplay.lock();
   if (ret) return ret;
 
-  ret = CreateDisplayLocked(false, out_failureId, lock);
+  ret = CreateDisplayLocked(false, false, out_failureId, lock);
   mDefaultDisplay = ret;
   return ret;
 }
 
 std::shared_ptr<EglDisplay> GLLibraryEGL::CreateDisplay(
-    const bool forceAccel, nsACString* const out_failureId) {
+    const bool forceAccel, const bool forceSoftware,
+    nsACString* const out_failureId) {
   StaticMutexAutoLock lock(sMutex);
-  return CreateDisplayLocked(forceAccel, out_failureId, lock);
+  return CreateDisplayLocked(forceAccel, forceSoftware, out_failureId, lock);
 }
 
 std::shared_ptr<EglDisplay> GLLibraryEGL::CreateDisplayLocked(
-    const bool forceAccel, nsACString* const out_failureId,
-    const StaticMutexAutoLock& aProofOfLock) {
+    const bool forceAccel, const bool forceSoftware,
+    nsACString* const out_failureId, const StaticMutexAutoLock& aProofOfLock) {
   std::shared_ptr<EglDisplay> ret;
 
   if (IsExtensionSupported(EGLLibExtension::ANGLE_platform_angle_d3d)) {
     nsCString accelAngleFailureId;
     bool accelAngleSupport = IsAccelAngleSupported(&accelAngleFailureId);
-    bool shouldTryAccel = forceAccel || accelAngleSupport;
+    bool shouldTryAccel = (forceAccel || accelAngleSupport) && !forceSoftware;
     bool shouldTryWARP = !forceAccel;  // Only if ANGLE not supported or fails
 
     // If WARP preferred, will override ANGLE support
@@ -917,15 +910,14 @@ std::shared_ptr<EglDisplay> GLLibraryEGL::CreateDisplayLocked(
     // Report the acceleration status to telemetry
     if (!ret) {
       if (accelAngleFailureId.IsEmpty()) {
-        Telemetry::Accumulate(Telemetry::CANVAS_WEBGL_ACCL_FAILURE_ID,
-                              "FEATURE_FAILURE_ACCL_ANGLE_UNKNOWN"_ns);
+        glean::canvas::webgl_accl_failure_id
+            .Get("FEATURE_FAILURE_ACCL_ANGLE_UNKNOWN"_ns)
+            .Add(1);
       } else {
-        Telemetry::Accumulate(Telemetry::CANVAS_WEBGL_ACCL_FAILURE_ID,
-                              accelAngleFailureId);
+        glean::canvas::webgl_accl_failure_id.Get(accelAngleFailureId).Add(1);
       }
     } else {
-      Telemetry::Accumulate(Telemetry::CANVAS_WEBGL_ACCL_FAILURE_ID,
-                            "SUCCESS"_ns);
+      glean::canvas::webgl_accl_failure_id.Get("SUCCESS"_ns).Add(1);
     }
 
     // Fallback to a WARP display if ANGLE fails, or if WARP is forced
@@ -941,18 +933,20 @@ std::shared_ptr<EglDisplay> GLLibraryEGL::CreateDisplayLocked(
     }
   } else {
     void* nativeDisplay = EGL_DEFAULT_DISPLAY;
-#ifdef MOZ_WAYLAND
-    if (!ret && !gfx::gfxVars::WebglUseHardware()) {
+#ifdef MOZ_WIDGET_GTK
+    if (!ret && (!gfx::gfxVars::WebglUseHardware() || forceSoftware)) {
       // Initialize a swrast egl device such as llvmpipe
       ret = GetAndInitSoftwareDisplay(*this, aProofOfLock);
     }
     // Initialize the display the normal way
-    if (!ret && !gdk_display_get_default()) {
+    if (!ret && !gdk_display_get_default() && !forceSoftware) {
       ret = GetAndInitDeviceDisplay(*this, aProofOfLock);
       if (!ret) {
         ret = GetAndInitSurfacelessDisplay(*this, aProofOfLock);
       }
-    } else if (!ret && widget::GdkIsWaylandDisplay()) {
+    }
+#  ifdef MOZ_WAYLAND
+    else if (!ret && widget::GdkIsWaylandDisplay() && !forceSoftware) {
       // Wayland does not support EGL_DEFAULT_DISPLAY
       nativeDisplay = widget::WaylandDisplayGetWLDisplay();
       if (!nativeDisplay) {
@@ -960,8 +954,9 @@ std::shared_ptr<EglDisplay> GLLibraryEGL::CreateDisplayLocked(
         return nullptr;
       }
     }
+#  endif
 #endif
-    if (!ret) {
+    if (!ret && !forceSoftware) {
       ret = GetAndInitDisplay(*this, nativeDisplay, aProofOfLock);
     }
   }

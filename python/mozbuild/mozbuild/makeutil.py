@@ -6,10 +6,8 @@ import os
 import re
 from collections.abc import Iterable
 
-import six
 
-
-class Makefile(object):
+class Makefile:
     """Provides an interface for writing simple makefiles
 
     Instances of this class are created, populated with rules, then
@@ -26,7 +24,7 @@ class Makefile(object):
         """
         targets = list(targets)
         for target in targets:
-            assert isinstance(target, six.text_type)
+            assert isinstance(target, str)
         rule = Rule(targets)
         self._statements.append(rule)
         return rule
@@ -36,7 +34,7 @@ class Makefile(object):
         Add a raw statement in the makefile. Meant to be used for
         simple variable assignments.
         """
-        assert isinstance(statement, six.text_type)
+        assert isinstance(statement, str)
         self._statements.append(statement)
 
     def dump(self, fh, removal_guard=True):
@@ -59,7 +57,7 @@ class Makefile(object):
             guard.dump(fh)
 
 
-class _SimpleOrderedSet(object):
+class _SimpleOrderedSet:
     """
     Simple ordered set, specialized for used in Rule below only.
     It doesn't expose a complete API, and normalizes path separators
@@ -96,7 +94,7 @@ class _SimpleOrderedSet(object):
         self._list.extend(added)
 
 
-class Rule(object):
+class Rule:
     """Class handling simple rules in the form:
     target1 target2 ... : dep1 dep2 ...
     command1 command2 ...
@@ -110,32 +108,28 @@ class Rule(object):
 
     def add_targets(self, targets):
         """Add additional targets to the rule."""
-        assert isinstance(targets, Iterable) and not isinstance(
-            targets, six.string_types
-        )
+        assert isinstance(targets, Iterable) and not isinstance(targets, str)
         targets = list(targets)
         for target in targets:
-            assert isinstance(target, six.text_type)
+            assert isinstance(target, str)
         self._targets.update(targets)
         return self
 
     def add_dependencies(self, deps):
         """Add dependencies to the rule."""
-        assert isinstance(deps, Iterable) and not isinstance(deps, six.string_types)
+        assert isinstance(deps, Iterable) and not isinstance(deps, str)
         deps = list(deps)
         for dep in deps:
-            assert isinstance(dep, six.text_type)
+            assert isinstance(dep, str)
         self._dependencies.update(deps)
         return self
 
     def add_commands(self, commands):
         """Add commands to the rule."""
-        assert isinstance(commands, Iterable) and not isinstance(
-            commands, six.string_types
-        )
+        assert isinstance(commands, Iterable) and not isinstance(commands, str)
         commands = list(commands)
         for command in commands:
-            assert isinstance(command, six.text_type)
+            assert isinstance(command, str)
         self._commands.extend(commands)
         return self
 
@@ -180,7 +174,6 @@ def read_dep_makefile(fh):
 
     rule = ""
     for line in fh.readlines():
-        line = six.ensure_text(line)
         assert not line.startswith("\t")
         line = line.strip()
         if line.endswith("\\"):

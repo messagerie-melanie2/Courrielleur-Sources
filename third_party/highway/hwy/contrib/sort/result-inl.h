@@ -26,18 +26,9 @@
 
 #include "hwy/base.h"
 #include "hwy/nanobenchmark.h"
+#include "hwy/timer.h"
 
 namespace hwy {
-
-struct Timestamp {
-  Timestamp() { t = platform::Now(); }
-  double t;
-};
-
-static inline double SecondsSince(const Timestamp& t0) {
-  const Timestamp t1;
-  return t1.t - t0.t;
-}
 
 // Returns trimmed mean (we don't want to run an out-of-L3-cache sort often
 // enough for the mode to be reliable).
@@ -72,7 +63,7 @@ namespace HWY_NAMESPACE {
 struct Result {
   Result() {}
   Result(const Algo algo, Dist dist, size_t num_keys, size_t num_threads,
-         double sec, size_t sizeof_key, const std::string& key_name)
+         double sec, size_t sizeof_key, const char* key_name)
       : target(HWY_TARGET),
         algo(algo),
         dist(dist),
@@ -86,7 +77,7 @@ struct Result {
     const double bytes = static_cast<double>(num_keys) *
                          static_cast<double>(num_threads) *
                          static_cast<double>(sizeof_key);
-    printf("%10s: %12s: %7s: %9s: %.2E %4.0f MB/s (%2zu threads)\n",
+    printf("%10s: %12s: %7s: %9s: %05g %4.0f MB/s (%2zu threads)\n",
            hwy::TargetName(target), AlgoName(algo), key_name.c_str(),
            DistName(dist), static_cast<double>(num_keys), bytes * 1E-6 / sec,
            num_threads);
@@ -115,12 +106,13 @@ bool VerifySort(Traits st, const InputStats<LaneType>& input_stats,
     if (N1 == 2) output_stats.Notify(out[i + 1]);
     // Reverse order instead of checking !Compare1 so we accept equal keys.
     if (st.Compare1(out + i + N1, out + i)) {
-      printf("%s: i=%d of %d lanes: N1=%d %5.0f %5.0f vs. %5.0f %5.0f\n\n",
-             caller, static_cast<int>(i), static_cast<int>(num_lanes),
-             static_cast<int>(N1), static_cast<double>(out[i + 1]),
-             static_cast<double>(out[i + 0]),
-             static_cast<double>(out[i + N1 + 1]),
-             static_cast<double>(out[i + N1]));
+      fprintf(stderr, "%s: i=%d of %d lanes: N1=%d", caller,
+              static_cast<int>(i), static_cast<int>(num_lanes),
+              static_cast<int>(N1));
+      fprintf(stderr, "%5.0f %5.0f vs. %5.0f %5.0f\n\n",
+              static_cast<double>(out[i + 1]), static_cast<double>(out[i + 0]),
+              static_cast<double>(out[i + N1 + 1]),
+              static_cast<double>(out[i + N1]));
       HWY_ABORT("%d-bit sort is incorrect\n",
                 static_cast<int>(sizeof(LaneType) * 8 * N1));
     }

@@ -97,7 +97,8 @@ static sslOptions ssl_defaults = {
     .enableTls13BackendEch = PR_FALSE,
     .callExtensionWriterOnEchInner = PR_FALSE,
     .enableGrease = PR_FALSE,
-    .enableChXtnPermutation = PR_FALSE
+    .enableChXtnPermutation = PR_FALSE,
+    .dbLoadCertChain = PR_TRUE,
 };
 
 /*
@@ -124,7 +125,8 @@ sslSessionIDLookupFunc ssl_sid_lookup;
 
 static PRDescIdentity ssl_layer_id;
 
-PRBool locksEverDisabled; /* implicitly PR_FALSE */
+static PRCallOnceType ssl_setDefaultsFromEnvironment = { 0 };
+
 PRBool ssl_force_locks;   /* implicitly PR_FALSE */
 int ssl_lock_readers = 1; /* default true. */
 char ssl_debug;
@@ -135,9 +137,6 @@ FILE *ssl_trace_iob;
 FILE *ssl_keylog_iob;
 PZLock *ssl_keylog_lock;
 #endif
-
-char lockStatus[] = "Locks are ENABLED.  ";
-#define LOCKSTATUS_OFFSET 10 /* offset of ENABLED */
 
 /* SRTP_NULL_HMAC_SHA1_80 and SRTP_NULL_HMAC_SHA1_32 are not implemented. */
 static const PRUint16 srtpCiphers[] = {
@@ -167,6 +166,8 @@ const sslNamedGroupDef ssl_named_groups[] = {
     ECGROUP(secp256r1, 256, SECP256R1, PR_TRUE),
     ECGROUP(secp384r1, 384, SECP384R1, PR_TRUE),
     ECGROUP(secp521r1, 521, SECP521R1, PR_TRUE),
+    { ssl_grp_kem_xyber768d00, 256, ssl_kea_ecdh_hybrid, SEC_OID_XYBER768D00, PR_TRUE },
+    { ssl_grp_kem_mlkem768x25519, 256, ssl_kea_ecdh_hybrid, SEC_OID_MLKEM768X25519, PR_TRUE },
     FFGROUP(2048),
     FFGROUP(3072),
     FFGROUP(4096),
@@ -203,6 +204,7 @@ PR_STATIC_ASSERT(SSL_NAMED_GROUP_COUNT == PR_ARRAY_SIZE(ssl_named_groups));
 /* forward declarations. */
 static sslSocket *ssl_NewSocket(PRBool makeLocks, SSLProtocolVariant variant);
 static SECStatus ssl_MakeLocks(sslSocket *ss);
+static PRStatus ssl_SetDefaultsFromEnvironmentCallOnce(void);
 static void ssl_SetDefaultsFromEnvironment(void);
 static PRStatus ssl_PushIOLayer(sslSocket *ns, PRFileDesc *stack,
                                 PRDescIdentity id);
@@ -311,6 +313,13 @@ ssl_DupSocket(sslSocket *os)
     ss->ssl3.downgradeCheckVersion = os->ssl3.downgradeCheckVersion;
 
     ss->ssl3.dheWeakGroupEnabled = os->ssl3.dheWeakGroupEnabled;
+
+    PORT_Memcpy(ss->ssl3.supportedCertCompressionAlgorithms,
+                os->ssl3.supportedCertCompressionAlgorithms,
+                sizeof(ss->ssl3.supportedCertCompressionAlgorithms[0]) *
+                    os->ssl3.supportedCertCompressionAlgorithmsCount);
+    ss->ssl3.supportedCertCompressionAlgorithmsCount =
+        os->ssl3.supportedCertCompressionAlgorithmsCount;
 
     if (ss->opt.useSecurity) {
         PRCList *cursor;
@@ -777,10 +786,7 @@ SSL_OptionSet(PRFileDesc *fd, PRInt32 which, PRIntn val)
             if (val && ssl_force_locks)
                 val = PR_FALSE; /* silent override */
             ss->opt.noLocks = val;
-            if (val) {
-                locksEverDisabled = PR_TRUE;
-                strcpy(lockStatus + LOCKSTATUS_OFFSET, "DISABLED.");
-            } else if (!holdingLocks) {
+            if (!val && !holdingLocks) {
                 rv = ssl_MakeLocks(ss);
                 if (rv != SECSuccess) {
                     ss->opt.noLocks = PR_TRUE;
@@ -899,6 +905,10 @@ SSL_OptionSet(PRFileDesc *fd, PRInt32 which, PRIntn val)
 
         case SSL_ENABLE_CH_EXTENSION_PERMUTATION:
             ss->opt.enableChXtnPermutation = val;
+            break;
+
+        case SSL_DB_LOAD_CERTIFICATE_CHAIN:
+            ss->opt.dbLoadCertChain = val;
             break;
 
         default:
@@ -1058,6 +1068,15 @@ SSL_OptionGet(PRFileDesc *fd, PRInt32 which, PRIntn *pVal)
         case SSL_SUPPRESS_END_OF_EARLY_DATA:
             val = ss->opt.suppressEndOfEarlyData;
             break;
+        case SSL_ENABLE_GREASE:
+            val = ss->opt.enableGrease;
+            break;
+        case SSL_ENABLE_CH_EXTENSION_PERMUTATION:
+            val = ss->opt.enableChXtnPermutation;
+            break;
+        case SSL_DB_LOAD_CERTIFICATE_CHAIN:
+            val = ss->opt.dbLoadCertChain;
+            break;
         default:
             PORT_SetError(SEC_ERROR_INVALID_ARGS);
             rv = SECFailure;
@@ -1175,6 +1194,9 @@ SSL_OptionGetDefault(PRInt32 which, PRIntn *pVal)
         case SSL_ENABLE_SIGNED_CERT_TIMESTAMPS:
             val = ssl_defaults.enableSignedCertTimestamps;
             break;
+        case SSL_REQUIRE_DH_NAMED_GROUPS:
+            val = ssl_defaults.requireDHENamedGroups;
+            break;
         case SSL_ENABLE_0RTT_DATA:
             val = ssl_defaults.enable0RttData;
             break;
@@ -1198,6 +1220,15 @@ SSL_OptionGetDefault(PRInt32 which, PRIntn *pVal)
             break;
         case SSL_SUPPRESS_END_OF_EARLY_DATA:
             val = ssl_defaults.suppressEndOfEarlyData;
+            break;
+        case SSL_ENABLE_GREASE:
+            val = ssl_defaults.enableGrease;
+            break;
+        case SSL_ENABLE_CH_EXTENSION_PERMUTATION:
+            val = ssl_defaults.enableChXtnPermutation;
+            break;
+        case SSL_DB_LOAD_CERTIFICATE_CHAIN:
+            val = ssl_defaults.dbLoadCertChain;
             break;
         default:
             PORT_SetError(SEC_ERROR_INVALID_ARGS);
@@ -1313,10 +1344,6 @@ SSL_OptionSetDefault(PRInt32 which, PRIntn val)
             if (val && ssl_force_locks)
                 val = PR_FALSE; /* silent override */
             ssl_defaults.noLocks = val;
-            if (val) {
-                locksEverDisabled = PR_TRUE;
-                strcpy(lockStatus + LOCKSTATUS_OFFSET, "DISABLED.");
-            }
             break;
 
         case SSL_ENABLE_SESSION_TICKETS:
@@ -1377,7 +1404,9 @@ SSL_OptionSetDefault(PRInt32 which, PRIntn val)
         case SSL_ENABLE_SIGNED_CERT_TIMESTAMPS:
             ssl_defaults.enableSignedCertTimestamps = val;
             break;
-
+        case SSL_REQUIRE_DH_NAMED_GROUPS:
+            ssl_defaults.requireDHENamedGroups = val;
+            break;
         case SSL_ENABLE_0RTT_DATA:
             ssl_defaults.enable0RttData = val;
             break;
@@ -1413,7 +1442,15 @@ SSL_OptionSetDefault(PRInt32 which, PRIntn val)
         case SSL_SUPPRESS_END_OF_EARLY_DATA:
             ssl_defaults.suppressEndOfEarlyData = val;
             break;
-
+        case SSL_ENABLE_GREASE:
+            ssl_defaults.enableGrease = val;
+            break;
+        case SSL_ENABLE_CH_EXTENSION_PERMUTATION:
+            ssl_defaults.enableChXtnPermutation = val;
+            break;
+        case SSL_DB_LOAD_CERTIFICATE_CHAIN:
+            ssl_defaults.dbLoadCertChain = val;
+            break;
         default:
             PORT_SetError(SEC_ERROR_INVALID_ARGS);
             return SECFailure;
@@ -1646,7 +1683,7 @@ SSLExp_CipherSuiteOrderGet(PRFileDesc *fd, PRUint16 *cipherOrder,
  * (Client Hello). */
 SECStatus
 SSLExp_CipherSuiteOrderSet(PRFileDesc *fd, const PRUint16 *cipherOrder,
-                           unsigned int numCiphers)
+                           PRUint16 numCiphers)
 {
     if (!fd) {
         SSL_DBG(("%d: SSL: file descriptor in CipherSuiteOrderGet is null",
@@ -3274,7 +3311,7 @@ ssl_GetPeerName(PRFileDesc *fd, PRNetAddr *addr)
 }
 
 /*
-*/
+ */
 SECStatus
 ssl_GetPeerInfo(sslSocket *ss)
 {
@@ -3906,92 +3943,93 @@ loser:
 
 #define LOWER(x) (x | 0x20) /* cheap ToLower function ignores LOCALE */
 
+static PRStatus
+ssl_SetDefaultsFromEnvironmentCallOnce(void)
+{
+#if defined(NSS_HAVE_GETENV)
+    char *ev;
+#ifdef DEBUG
+    ssl_trace_iob = NULL;
+    ev = PR_GetEnvSecure("SSLDEBUGFILE");
+    if (ev && ev[0]) {
+        ssl_trace_iob = fopen(ev, "w");
+    }
+    if (!ssl_trace_iob) {
+        ssl_trace_iob = stderr;
+    }
+#ifdef TRACE
+    ev = PR_GetEnvSecure("SSLTRACE");
+    if (ev && ev[0]) {
+        ssl_trace = atoi(ev);
+        SSL_TRACE(("SSL: tracing set to %d", ssl_trace));
+    }
+#endif /* TRACE */
+    ev = PR_GetEnvSecure("SSLDEBUG");
+    if (ev && ev[0]) {
+        ssl_debug = atoi(ev);
+        SSL_TRACE(("SSL: debugging set to %d", ssl_debug));
+    }
+#endif /* DEBUG */
+#ifdef NSS_ALLOW_SSLKEYLOGFILE
+    ssl_keylog_iob = NULL;
+    ev = PR_GetEnvSecure("SSLKEYLOGFILE");
+    if (ev && ev[0]) {
+        ssl_keylog_iob = fopen(ev, "a");
+        if (!ssl_keylog_iob) {
+            SSL_TRACE(("SSL: failed to open key log file"));
+        } else {
+            if (ftell(ssl_keylog_iob) == 0) {
+                fputs("# SSL/TLS secrets log file, generated by NSS\n",
+                      ssl_keylog_iob);
+            }
+            SSL_TRACE(("SSL: logging SSL/TLS secrets to %s", ev));
+            ssl_keylog_lock = PR_NewLock();
+            if (!ssl_keylog_lock) {
+                SSL_TRACE(("SSL: failed to create key log lock"));
+                fclose(ssl_keylog_iob);
+                ssl_keylog_iob = NULL;
+            }
+        }
+    }
+#endif
+    ev = PR_GetEnvSecure("SSLFORCELOCKS");
+    if (ev && ev[0] == '1') {
+        ssl_force_locks = PR_TRUE;
+        ssl_defaults.noLocks = 0;
+        SSL_TRACE(("SSL: force_locks set to %d", ssl_force_locks));
+    }
+    ev = PR_GetEnvSecure("NSS_SSL_ENABLE_RENEGOTIATION");
+    if (ev) {
+        if (ev[0] == '1' || LOWER(ev[0]) == 'u')
+            ssl_defaults.enableRenegotiation = SSL_RENEGOTIATE_UNRESTRICTED;
+        else if (ev[0] == '0' || LOWER(ev[0]) == 'n')
+            ssl_defaults.enableRenegotiation = SSL_RENEGOTIATE_NEVER;
+        else if (ev[0] == '2' || LOWER(ev[0]) == 'r')
+            ssl_defaults.enableRenegotiation = SSL_RENEGOTIATE_REQUIRES_XTN;
+        else if (ev[0] == '3' || LOWER(ev[0]) == 't')
+            ssl_defaults.enableRenegotiation = SSL_RENEGOTIATE_TRANSITIONAL;
+        SSL_TRACE(("SSL: enableRenegotiation set to %d",
+                   ssl_defaults.enableRenegotiation));
+    }
+    ev = PR_GetEnvSecure("NSS_SSL_REQUIRE_SAFE_NEGOTIATION");
+    if (ev && ev[0] == '1') {
+        ssl_defaults.requireSafeNegotiation = PR_TRUE;
+        SSL_TRACE(("SSL: requireSafeNegotiation set to %d",
+                   PR_TRUE));
+    }
+    ev = PR_GetEnvSecure("NSS_SSL_CBC_RANDOM_IV");
+    if (ev && ev[0] == '0') {
+        ssl_defaults.cbcRandomIV = PR_FALSE;
+        SSL_TRACE(("SSL: cbcRandomIV set to 0"));
+    }
+#endif /* NSS_HAVE_GETENV */
+    return PR_SUCCESS;
+}
+
 static void
 ssl_SetDefaultsFromEnvironment(void)
 {
-#if defined(NSS_HAVE_GETENV)
-    static int firsttime = 1;
-
-    if (firsttime) {
-        char *ev;
-        firsttime = 0;
-#ifdef DEBUG
-        ssl_trace_iob = NULL;
-        ev = PR_GetEnvSecure("SSLDEBUGFILE");
-        if (ev && ev[0]) {
-            ssl_trace_iob = fopen(ev, "w");
-        }
-        if (!ssl_trace_iob) {
-            ssl_trace_iob = stderr;
-        }
-#ifdef TRACE
-        ev = PR_GetEnvSecure("SSLTRACE");
-        if (ev && ev[0]) {
-            ssl_trace = atoi(ev);
-            SSL_TRACE(("SSL: tracing set to %d", ssl_trace));
-        }
-#endif /* TRACE */
-        ev = PR_GetEnvSecure("SSLDEBUG");
-        if (ev && ev[0]) {
-            ssl_debug = atoi(ev);
-            SSL_TRACE(("SSL: debugging set to %d", ssl_debug));
-        }
-#endif /* DEBUG */
-#ifdef NSS_ALLOW_SSLKEYLOGFILE
-        ssl_keylog_iob = NULL;
-        ev = PR_GetEnvSecure("SSLKEYLOGFILE");
-        if (ev && ev[0]) {
-            ssl_keylog_iob = fopen(ev, "a");
-            if (!ssl_keylog_iob) {
-                SSL_TRACE(("SSL: failed to open key log file"));
-            } else {
-                if (ftell(ssl_keylog_iob) == 0) {
-                    fputs("# SSL/TLS secrets log file, generated by NSS\n",
-                          ssl_keylog_iob);
-                }
-                SSL_TRACE(("SSL: logging SSL/TLS secrets to %s", ev));
-                ssl_keylog_lock = PR_NewLock();
-                if (!ssl_keylog_lock) {
-                    SSL_TRACE(("SSL: failed to create key log lock"));
-                    fclose(ssl_keylog_iob);
-                    ssl_keylog_iob = NULL;
-                }
-            }
-        }
-#endif
-        ev = PR_GetEnvSecure("SSLFORCELOCKS");
-        if (ev && ev[0] == '1') {
-            ssl_force_locks = PR_TRUE;
-            ssl_defaults.noLocks = 0;
-            strcpy(lockStatus + LOCKSTATUS_OFFSET, "FORCED.  ");
-            SSL_TRACE(("SSL: force_locks set to %d", ssl_force_locks));
-        }
-        ev = PR_GetEnvSecure("NSS_SSL_ENABLE_RENEGOTIATION");
-        if (ev) {
-            if (ev[0] == '1' || LOWER(ev[0]) == 'u')
-                ssl_defaults.enableRenegotiation = SSL_RENEGOTIATE_UNRESTRICTED;
-            else if (ev[0] == '0' || LOWER(ev[0]) == 'n')
-                ssl_defaults.enableRenegotiation = SSL_RENEGOTIATE_NEVER;
-            else if (ev[0] == '2' || LOWER(ev[0]) == 'r')
-                ssl_defaults.enableRenegotiation = SSL_RENEGOTIATE_REQUIRES_XTN;
-            else if (ev[0] == '3' || LOWER(ev[0]) == 't')
-                ssl_defaults.enableRenegotiation = SSL_RENEGOTIATE_TRANSITIONAL;
-            SSL_TRACE(("SSL: enableRenegotiation set to %d",
-                       ssl_defaults.enableRenegotiation));
-        }
-        ev = PR_GetEnvSecure("NSS_SSL_REQUIRE_SAFE_NEGOTIATION");
-        if (ev && ev[0] == '1') {
-            ssl_defaults.requireSafeNegotiation = PR_TRUE;
-            SSL_TRACE(("SSL: requireSafeNegotiation set to %d",
-                       PR_TRUE));
-        }
-        ev = PR_GetEnvSecure("NSS_SSL_CBC_RANDOM_IV");
-        if (ev && ev[0] == '0') {
-            ssl_defaults.cbcRandomIV = PR_FALSE;
-            SSL_TRACE(("SSL: cbcRandomIV set to 0"));
-        }
-    }
-#endif /* NSS_HAVE_GETENV */
+    PR_CallOnce(&ssl_setDefaultsFromEnvironment, ssl_SetDefaultsFromEnvironmentCallOnce);
 }
 
 const sslNamedGroupDef *
@@ -4096,6 +4134,8 @@ ssl_NewEphemeralKeyPair(const sslNamedGroupDef *group,
     PR_INIT_CLIST(&pair->link);
     pair->group = group;
     pair->keys = keys;
+    pair->kemKeys = NULL;
+    pair->kemCt = NULL;
 
     return pair;
 }
@@ -4110,9 +4150,19 @@ ssl_CopyEphemeralKeyPair(sslEphemeralKeyPair *keyPair)
         return NULL; /* error already set */
     }
 
+    pair->kemCt = NULL;
+    if (keyPair->kemCt) {
+        pair->kemCt = SECITEM_DupItem(keyPair->kemCt);
+        if (!pair->kemCt) {
+            PORT_Free(pair);
+            return NULL;
+        }
+    }
+
     PR_INIT_CLIST(&pair->link);
     pair->group = keyPair->group;
     pair->keys = ssl_GetKeyPairRef(keyPair->keys);
+    pair->kemKeys = keyPair->kemKeys ? ssl_GetKeyPairRef(keyPair->kemKeys) : NULL;
 
     return pair;
 }
@@ -4125,6 +4175,8 @@ ssl_FreeEphemeralKeyPair(sslEphemeralKeyPair *keyPair)
     }
 
     ssl_FreeKeyPair(keyPair->keys);
+    ssl_FreeKeyPair(keyPair->kemKeys);
+    SECITEM_FreeItem(keyPair->kemCt, PR_TRUE);
     PR_REMOVE_LINK(&keyPair->link);
     PORT_Free(keyPair);
 }
@@ -4361,6 +4413,8 @@ struct {
     EXP(SetResumptionToken),
     EXP(SetServerEchConfigs),
     EXP(SetTimeFunc),
+    EXP(SetCertificateCompressionAlgorithm),
+    EXP(PeerCertificateChainDER),
 #endif
     { "", NULL }
 };

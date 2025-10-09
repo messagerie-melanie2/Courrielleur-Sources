@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 import { IMServices } from "resource:///modules/IMServices.sys.mjs";
 import {
   ClassInfo,
@@ -9,7 +10,6 @@ import {
 } from "resource:///modules/imXPCOMUtils.sys.mjs";
 
 var kQuitApplicationGranted = "quit-application-granted";
-var kProtocolPluginCategory = "im-protocol-plugin";
 
 var kPrefReportIdle = "messenger.status.reportIdle";
 var kPrefUserIconFilename = "messenger.status.userIconFileName";
@@ -18,8 +18,59 @@ var kPrefTimeBeforeIdle = "messenger.status.timeBeforeIdle";
 var kPrefAwayWhenIdle = "messenger.status.awayWhenIdle";
 var kPrefDefaultMessage = "messenger.status.defaultIdleAwayMessage";
 
+const lazy = {};
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () => new Localization(["chat/status.ftl"], true)
+);
+
 var NS_IOSERVICE_GOING_OFFLINE_TOPIC = "network:offline-about-to-go-offline";
 var NS_IOSERVICE_OFFLINE_STATUS_TOPIC = "network:offline-status-changed";
+
+const protocols = {
+  "prpl-facebook": "@mozilla.org/chat/facebook;1",
+  "prpl-gtalk": "@mozilla.org/chat/gtalk;1",
+  "prpl-irc": "@mozilla.org/chat/irc;1",
+  "prpl-jabber": "@mozilla.org/chat/xmpp;1",
+  // prpl-jstest is debug-only
+  "prpl-jstest": "@mozilla.org/chat/jstest;1",
+  "prpl-matrix": "@mozilla.org/chat/matrix;1",
+  "prpl-odnoklassniki": "@mozilla.org/chat/odnoklassniki;1",
+  "prpl-twitter": "@mozilla.org/chat/twitter;1",
+  "prpl-yahoo": "@mozilla.org/chat/yahoo;1",
+};
+const BUILT_IN_PROTOCOLS = new Set(Object.keys(protocols));
+
+/**
+ * Register a new chat protocol. Does nothing if a protocol with the same ID
+ * already exists.
+ * This doesn't handle accounts of the protocol ID, since this is intended for
+ * tests.
+ *
+ * @param {string} id - The internal ID of the protocol.
+ * @param {string} cid - The contract ID of the protocol.
+ */
+export function registerProtocol(id, cid) {
+  if (protocols.hasOwnProperty(id)) {
+    return;
+  }
+  protocols[id] = cid;
+}
+/**
+ * Remove the registration of a custom chat protocol previously registered with
+ * registerProtocol.
+ * This doesn't handle accounts of the protocol ID, since this is intended for
+ * tests.
+ *
+ * @param {string} id
+ */
+export function unregisterProtocol(id) {
+  if (BUILT_IN_PROTOCOLS.has(id)) {
+    return;
+  }
+  delete protocols[id];
+}
 
 function UserStatus() {
   this._observers = [];
@@ -80,14 +131,14 @@ UserStatus.prototype = {
   observe(aSubject, aTopic, aData) {
     if (aTopic == "nsPref:changed") {
       if (aData == kPrefReportIdle) {
-        let reportIdle = Services.prefs.getBoolPref(kPrefReportIdle);
+        const reportIdle = Services.prefs.getBoolPref(kPrefReportIdle);
         if (reportIdle && !this._observingIdleness) {
           this._addIdleObserver();
         } else if (!reportIdle && this._observingIdleness) {
           this._removeIdleObserver();
         }
       } else if (aData == kPrefTimeBeforeIdle) {
-        let timeBeforeIdle = Services.prefs.getIntPref(kPrefTimeBeforeIdle);
+        const timeBeforeIdle = Services.prefs.getIntPref(kPrefTimeBeforeIdle);
         if (timeBeforeIdle != this._timeBeforeIdle) {
           if (this._timeBeforeIdle) {
             this._idleService.removeIdleObserver(this, this._timeBeforeIdle);
@@ -114,8 +165,8 @@ UserStatus.prototype = {
 
   _offlineStatusType: Ci.imIStatusInfo.STATUS_AVAILABLE,
   set offline(aOffline) {
-    let statusType = this.statusType;
-    let statusText = this.statusText;
+    const statusType = this.statusType;
+    const statusText = this.statusText;
     if (aOffline) {
       this._offlineStatusType = Ci.imIStatusInfo.STATUS_OFFLINE;
     } else {
@@ -138,23 +189,27 @@ UserStatus.prototype = {
   _idleStatusText: "",
   _idleStatusType: Ci.imIStatusInfo.STATUS_AVAILABLE,
   _checkIdle() {
-    let idleTime = Math.floor(this._idleService.idleTime / 1000);
-    let idle = this._timeBeforeIdle && idleTime >= this._timeBeforeIdle;
+    const idleTime = Math.floor(this._idleService.idleTime / 1000);
+    const idle = this._timeBeforeIdle && idleTime >= this._timeBeforeIdle;
     if (idle == this._idle) {
       return;
     }
 
-    let statusType = this.statusType;
-    let statusText = this.statusText;
+    const statusType = this.statusType;
+    const statusText = this.statusText;
     this._idle = idle;
     if (idle) {
       this.idleTime = idleTime;
       if (Services.prefs.getBoolPref(kPrefAwayWhenIdle)) {
         this._idleStatusType = Ci.imIStatusInfo.STATUS_AWAY;
-        this._idleStatusText = Services.prefs.getComplexValue(
-          kPrefDefaultMessage,
-          Ci.nsIPrefLocalizedString
-        ).data;
+
+        this._idleStatusText = Services.prefs.prefHasUserValue(
+          kPrefDefaultMessage
+        )
+          ? Services.prefs.getCharValue(kPrefDefaultMessage, "")
+          : lazy.l10n.formatValueSync(
+              "messenger-status-default-idle-away-message"
+            );
       }
     } else {
       this.idleTime = 0;
@@ -190,12 +245,12 @@ UserStatus.prototype = {
 
   _getProfileDir: () => Services.dirsvc.get("ProfD", Ci.nsIFile),
   setUserIcon(aIconFile) {
-    let folder = this._getProfileDir();
+    const folder = this._getProfileDir();
 
     let newName = "";
     if (aIconFile) {
       // Get the extension (remove trailing dots - invalid Windows extension).
-      let ext = aIconFile.leafName.replace(/.*(\.[a-z0-9]+)\.*/i, "$1");
+      const ext = aIconFile.leafName.replace(/.*(\.[a-z0-9]+)\.*/i, "$1");
       // newName = userIcon-<timestamp(now)>.<aIconFile.extension>
       newName = "userIcon-" + Math.floor(Date.now() / 1000) + ext;
 
@@ -204,7 +259,7 @@ UserStatus.prototype = {
     }
 
     // Get the previous file name before saving the new file name.
-    let oldFileName = Services.prefs.getCharPref(kPrefUserIconFilename);
+    const oldFileName = Services.prefs.getCharPref(kPrefUserIconFilename);
     Services.prefs.setCharPref(kPrefUserIconFilename, newName);
 
     // Now that the new icon has been copied to the profile directory
@@ -224,13 +279,13 @@ UserStatus.prototype = {
     this._notifyObservers("user-icon-changed", newName);
   },
   getUserIcon() {
-    let filename = Services.prefs.getCharPref(kPrefUserIconFilename);
+    const filename = Services.prefs.getCharPref(kPrefUserIconFilename);
     if (!filename) {
       // No icon has been set.
       return null;
     }
 
-    let file = this._getProfileDir();
+    const file = this._getProfileDir();
     file.append(filename);
 
     if (!file.exists()) {
@@ -258,20 +313,37 @@ UserStatus.prototype = {
     this._observers = this._observers.filter(o => o !== aObserver);
   },
   _notifyObservers(aTopic, aData) {
-    for (let observer of this._observers) {
+    for (const observer of this._observers) {
       observer.observe(this, aTopic, aData);
     }
   },
 };
 
-export function CoreService() {}
-CoreService.prototype = {
-  globalUserStatus: null,
+/**
+ * @implements {nsIObserver}
+ */
+class CoreService {
+  QueryInterface = ChromeUtils.generateQI(["nsIObserver"]);
 
-  _initialized: false,
+  /**
+   * @type {?imIUserStatusInfo}
+   * @readonly
+   */
+  globalUserStatus = null;
+
+  _initialized = false;
+  /**
+   * @type {boolean}
+   * @readonly
+   */
   get initialized() {
     return this._initialized;
-  },
+  }
+  /**
+   * This will emit a prpl-init notification. After this point the 'initialized'
+   * attribute will be 'true' and it's safe to access the services for accounts,
+   * contacts, conversations and commands.
+   */
   init() {
     if (this._initialized) {
       return;
@@ -292,34 +364,40 @@ CoreService.prototype = {
       },
     });
 
+    // Make sure logger has registered its observers.
+    IMServices.logs;
     IMServices.accounts.initAccounts();
     IMServices.contacts.initContacts();
     IMServices.conversations.initConversations();
-    Services.obs.notifyObservers(this, "prpl-init");
+    Services.obs.notifyObservers(null, "prpl-init");
 
     // Wait with automatic connections until the password service
     // is available.
     if (
       IMServices.accounts.autoLoginStatus ==
-      Ci.imIAccountsService.AUTOLOGIN_ENABLED
+      IMServices.accounts.AUTOLOGIN.ENABLED
     ) {
       Services.logins.initializationPromise.then(() => {
         IMServices.accounts.processAutoLogin();
       });
     }
-  },
-  observe(aObject, aTopic, aData) {
+  }
+  observe(aObject, aTopic) {
     if (aTopic == kQuitApplicationGranted) {
       this.quit();
     }
-  },
+  }
+  /**
+   * This will emit a prpl-quit notification. This is the last opportunity to
+   * use the aforementioned services before they are uninitialized.
+   */
   quit() {
     if (!this._initialized) {
       throw Components.Exception("", Cr.NS_ERROR_NOT_INITIALIZED);
     }
 
     Services.obs.removeObserver(this, kQuitApplicationGranted);
-    Services.obs.notifyObservers(this, "prpl-quit");
+    Services.obs.notifyObservers(null, "prpl-quit");
 
     IMServices.conversations.unInitConversations();
     IMServices.accounts.unInitAccounts();
@@ -330,38 +408,39 @@ CoreService.prototype = {
     delete this.globalUserStatus;
     delete this._protos;
     delete this._initialized;
-  },
+  }
 
+  /**
+   * Returns the available protocols.
+   *
+   * @returns {prplIProtocol[]}
+   */
   getProtocols() {
     if (!this._initialized) {
       throw Components.Exception("", Cr.NS_ERROR_NOT_INITIALIZED);
     }
 
-    let protocols = [];
-    for (let entry of Services.catMan.enumerateCategory(
-      kProtocolPluginCategory
-    )) {
-      let id = entry.data;
+    return (
+      Object.keys(protocols)
+        // If the preference is set to disable this prpl, don't show it in the
+        // full list of protocols.
+        .filter(protocolId => {
+          const pref = `chat.prpls.${protocolId}.disable`;
+          return (
+            Services.prefs.getPrefType(pref) != Services.prefs.PREF_BOOL ||
+            !Services.prefs.getBoolPref(pref)
+          );
+        })
+        .map(protocolId => this.getProtocolById(protocolId))
+        .filter(Boolean)
+    );
+  }
 
-      // If the preference is set to disable this prpl, don't show it in the
-      // full list of protocols.
-      let pref = "chat.prpls." + id + ".disable";
-      if (
-        Services.prefs.getPrefType(pref) == Services.prefs.PREF_BOOL &&
-        Services.prefs.getBoolPref(pref)
-      ) {
-        this.LOG("Disabling prpl: " + id);
-        continue;
-      }
-
-      let proto = this.getProtocolById(id);
-      if (proto) {
-        protocols.push(proto);
-      }
-    }
-    return protocols;
-  },
-
+  /**
+   *
+   * @param {string} aPrplId
+   * @returns {prplIProtocol}
+   */
   getProtocolById(aPrplId) {
     if (!this._initialized) {
       throw Components.Exception("", Cr.NS_ERROR_NOT_INITIALIZED);
@@ -371,19 +450,21 @@ CoreService.prototype = {
       return this._protos[aPrplId];
     }
 
-    let cid;
-    try {
-      cid = Services.catMan.getCategoryEntry(kProtocolPluginCategory, aPrplId);
-    } catch (e) {
+    if (
+      !protocols.hasOwnProperty(aPrplId) ||
+      (aPrplId === "prpl-jstest" && !AppConstants.DEBUG)
+    ) {
       return null; // no protocol registered for this id.
     }
+
+    const cid = protocols[aPrplId];
 
     let proto = null;
     try {
       proto = Cc[cid].createInstance(Ci.prplIProtocol);
     } catch (e) {
       // This is a real error, the protocol is registered and failed to init.
-      let error = "failed to create an instance of " + cid + ": " + e;
+      const error = "failed to create an instance of " + cid + ": " + e;
       dump(error + "\n");
       console.error(error);
     }
@@ -400,8 +481,7 @@ CoreService.prototype = {
 
     this._protos[aPrplId] = proto;
     return proto;
-  },
+  }
+}
 
-  QueryInterface: ChromeUtils.generateQI(["imICoreService"]),
-  classDescription: "Core",
-};
+export const core = new CoreService();

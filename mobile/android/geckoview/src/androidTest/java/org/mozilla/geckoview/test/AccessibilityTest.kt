@@ -9,11 +9,12 @@ import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.text.InputType
-import android.util.SparseLongArray
 import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityNodeInfo.CHECKED_STATE_FALSE
+import android.view.accessibility.AccessibilityNodeInfo.CHECKED_STATE_TRUE
 import android.view.accessibility.AccessibilityNodeProvider
 import android.view.accessibility.AccessibilityRecord
 import android.widget.EditText
@@ -22,8 +23,16 @@ import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.MediumTest
 import androidx.test.platform.app.InstrumentationRegistry
-import org.hamcrest.Matchers.* // ktlint-disable no-wildcard-imports
+import org.hamcrest.Matchers.closeTo
+import org.hamcrest.Matchers.equalTo
+import org.hamcrest.Matchers.greaterThan
+import org.hamcrest.Matchers.hasItem
+import org.hamcrest.Matchers.lessThan
+import org.hamcrest.Matchers.not
+import org.hamcrest.Matchers.notNullValue
+import org.hamcrest.Matchers.startsWith
 import org.junit.After
+import org.junit.Assume.assumeThat
 import org.junit.Before
 import org.junit.Ignore
 import org.junit.Rule
@@ -91,17 +100,10 @@ class AccessibilityTest : BaseSessionTest() {
             return getVirtualDescendantId(id)
         } catch (ex: Exception) {
             return getVirtualDescendantId(
-                if (Build.VERSION.SDK_INT >= 21) {
-                    AccessibilityNodeInfo::class.java.getMethod(
-                        "getChildId",
-                        Int::class.java,
-                    ).invoke(this, index) as Long
-                } else {
-                    (
-                        AccessibilityNodeInfo::class.java.getMethod("getChildNodeIds")
-                            .invoke(this) as SparseLongArray
-                        ).get(index)
-                },
+                AccessibilityNodeInfo::class.java.getMethod(
+                    "getChildId",
+                    Int::class.java,
+                ).invoke(this, index) as Long,
             )
         }
     }
@@ -135,6 +137,7 @@ class AccessibilityTest : BaseSessionTest() {
         mainSession.accessibility.view = view
 
         // Set up an external delegate that will intercept accessibility events.
+        @Suppress("DEPRECATION") // TYPE_ANNOUNCEMENT is deprecated but triggered by live regions
         sessionRule.addExternalDelegateUntilTestEnd(
             EventDelegate::class,
             { newDelegate ->
@@ -370,7 +373,7 @@ class AccessibilityTest : BaseSessionTest() {
         loadTestPage("test-text-entry-node")
         waitForInitialFocus()
 
-        mainSession.evaluateJS("document.querySelector('input[aria-label=Name]').focus()")
+        mainSession.evaluateJS("document.querySelector('input[aria-label=Naame]').focus()")
 
         sessionRule.waitUntilCalled(object : EventDelegate {
             @AssertCalled(count = 1)
@@ -382,13 +385,11 @@ class AccessibilityTest : BaseSessionTest() {
                     node.className.toString(),
                     equalTo("android.widget.EditText"),
                 )
-                if (Build.VERSION.SDK_INT >= 19) {
-                    assertThat(
-                        "Hint has field name",
-                        node.extras.getString("AccessibilityNodeInfo.hint"),
-                        equalTo("Name description"),
-                    )
-                }
+                assertThat(
+                    "Hint has field name",
+                    node.extras.getString("AccessibilityNodeInfo.hint"),
+                    equalTo("Naame description"),
+                )
             }
         })
 
@@ -404,13 +405,11 @@ class AccessibilityTest : BaseSessionTest() {
                     node.className.toString(),
                     equalTo("android.widget.EditText"),
                 )
-                if (Build.VERSION.SDK_INT >= 19) {
-                    assertThat(
-                        "Hint has field name",
-                        node.extras.getString("AccessibilityNodeInfo.hint"),
-                        equalTo("Last, required"),
-                    )
-                }
+                assertThat(
+                    "Hint has field name",
+                    node.extras.getString("AccessibilityNodeInfo.hint"),
+                    equalTo("Last, required"),
+                )
             }
         })
     }
@@ -532,7 +531,14 @@ class AccessibilityTest : BaseSessionTest() {
                 var nodeId = getSourceId(event)
                 var node = createNodeInfo(nodeId)
                 assertThat("Event's checked state matches", event.isChecked, equalTo(checked))
-                assertThat("Checkbox node has correct checked state", node.isChecked, equalTo(checked))
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+                    val checkedState = if (checked) CHECKED_STATE_TRUE else CHECKED_STATE_FALSE
+                    assertThat("Checkbox node has correct checked state", node.checked, equalTo(checkedState))
+                } else {
+                    @Suppress("DEPRECATION")
+                    assertThat("Checkbox node has correct checked state", node.isChecked, equalTo(checked))
+                }
             }
         })
     }
@@ -563,6 +569,8 @@ class AccessibilityTest : BaseSessionTest() {
     }
 
     @Test fun testClipboard() {
+        // disabled for having over 120+ failures in the last 7 days - turned permafailing on Bug 1837126
+        assumeThat(sessionRule.env.isDebugBuild, equalTo(true))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             // Writing clipboard requires foreground on Android 10.
             activityRule.scenario?.onActivity { activity ->
@@ -937,13 +945,11 @@ class AccessibilityTest : BaseSessionTest() {
                 nodeId = getSourceId(event)
                 val node = createNodeInfo(nodeId)
                 assertThat("Accessibility focus on first heading", node.contentDescription as String, startsWith("Fried cheese"))
-                if (Build.VERSION.SDK_INT >= 19) {
-                    assertThat(
-                        "First heading is level 1",
-                        node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
-                        equalTo("heading level 1"),
-                    )
-                }
+                assertThat(
+                    "First heading is level 1",
+                    node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
+                    equalTo("heading level 1"),
+                )
             }
         })
 
@@ -954,13 +960,11 @@ class AccessibilityTest : BaseSessionTest() {
                 nodeId = getSourceId(event)
                 val node = createNodeInfo(nodeId)
                 assertThat("Accessibility focus on second heading", node.contentDescription as String, startsWith("Popcorn shrimp"))
-                if (Build.VERSION.SDK_INT >= 19) {
-                    assertThat(
-                        "Second heading is level 2",
-                        node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
-                        equalTo("heading level 2"),
-                    )
-                }
+                assertThat(
+                    "Second heading is level 2",
+                    node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
+                    equalTo("heading level 2"),
+                )
             }
         })
 
@@ -971,13 +975,11 @@ class AccessibilityTest : BaseSessionTest() {
                 nodeId = getSourceId(event)
                 val node = createNodeInfo(nodeId)
                 assertThat("Accessibility focus on second heading", node.contentDescription as String, startsWith("Chicken fingers"))
-                if (Build.VERSION.SDK_INT >= 19) {
-                    assertThat(
-                        "Third heading is level 3",
-                        node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
-                        equalTo("heading level 3"),
-                    )
-                }
+                assertThat(
+                    "Third heading is level 3",
+                    node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
+                    equalTo("heading level 3"),
+                )
             }
         })
     }
@@ -995,15 +997,20 @@ class AccessibilityTest : BaseSessionTest() {
                 assertThat("Checkbox node is checkable", node.isCheckable, equalTo(true))
                 assertThat("Checkbox node is clickable", node.isClickable, equalTo(true))
                 assertThat("Checkbox node is focusable", node.isFocusable, equalTo(true))
-                assertThat("Checkbox node is not checked", node.isChecked, equalTo(false))
-                assertThat("Checkbox node has correct role", node.text.toString(), equalTo("many option"))
-                if (Build.VERSION.SDK_INT >= 19) {
-                    assertThat(
-                        "Hint has description",
-                        node.extras.getString("AccessibilityNodeInfo.hint"),
-                        equalTo("description"),
-                    )
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+                    assertThat("Checkbox node is not checked", node.checked, equalTo(CHECKED_STATE_FALSE))
+                } else {
+                    @Suppress("DEPRECATION")
+                    assertThat("Checkbox node is not checked", node.isChecked, equalTo(false))
                 }
+
+                assertThat("Checkbox node has correct role", node.text.toString(), equalTo("many option"))
+                assertThat(
+                    "Hint has description",
+                    node.extras.getString("AccessibilityNodeInfo.hint"),
+                    equalTo("description"),
+                )
             }
         })
 
@@ -1023,11 +1030,9 @@ class AccessibilityTest : BaseSessionTest() {
             @AssertCalled(count = 1)
             override fun onAccessibilityFocused(event: AccessibilityEvent) {
                 nodeId = getSourceId(event)
-                if (Build.VERSION.SDK_INT >= 21) {
-                    val node = createNodeInfo(nodeId)
-                    assertThat("button is expandable", node.actionList, hasItem(AccessibilityNodeInfo.AccessibilityAction.ACTION_EXPAND))
-                    assertThat("button is not collapsable", node.actionList, not(hasItem(AccessibilityNodeInfo.AccessibilityAction.ACTION_COLLAPSE)))
-                }
+                val node = createNodeInfo(nodeId)
+                assertThat("button is expandable", node.actionList, hasItem(AccessibilityNodeInfo.AccessibilityAction.ACTION_EXPAND))
+                assertThat("button is not collapsable", node.actionList, not(hasItem(AccessibilityNodeInfo.AccessibilityAction.ACTION_COLLAPSE)))
             }
         })
 
@@ -1036,11 +1041,9 @@ class AccessibilityTest : BaseSessionTest() {
             @AssertCalled(count = 1)
             override fun onClicked(event: AccessibilityEvent) {
                 assertThat("Clicked event is from same node", getSourceId(event), equalTo(nodeId))
-                if (Build.VERSION.SDK_INT >= 21) {
-                    val node = createNodeInfo(nodeId)
-                    assertThat("button is collapsable", node.actionList, hasItem(AccessibilityNodeInfo.AccessibilityAction.ACTION_COLLAPSE))
-                    assertThat("button is not expandable", node.actionList, not(hasItem(AccessibilityNodeInfo.AccessibilityAction.ACTION_EXPAND)))
-                }
+                val node = createNodeInfo(nodeId)
+                assertThat("button is collapsable", node.actionList, hasItem(AccessibilityNodeInfo.AccessibilityAction.ACTION_COLLAPSE))
+                assertThat("button is not expandable", node.actionList, not(hasItem(AccessibilityNodeInfo.AccessibilityAction.ACTION_EXPAND)))
             }
         })
 
@@ -1049,11 +1052,9 @@ class AccessibilityTest : BaseSessionTest() {
             @AssertCalled(count = 1)
             override fun onClicked(event: AccessibilityEvent) {
                 assertThat("Clicked event is from same node", getSourceId(event), equalTo(nodeId))
-                if (Build.VERSION.SDK_INT >= 21) {
-                    val node = createNodeInfo(nodeId)
-                    assertThat("button is expandable", node.actionList, hasItem(AccessibilityNodeInfo.AccessibilityAction.ACTION_EXPAND))
-                    assertThat("button is not collapsable", node.actionList, not(hasItem(AccessibilityNodeInfo.AccessibilityAction.ACTION_COLLAPSE)))
-                }
+                val node = createNodeInfo(nodeId)
+                assertThat("button is expandable", node.actionList, hasItem(AccessibilityNodeInfo.AccessibilityAction.ACTION_EXPAND))
+                assertThat("button is not collapsable", node.actionList, not(hasItem(AccessibilityNodeInfo.AccessibilityAction.ACTION_COLLAPSE)))
             }
         })
     }
@@ -1094,7 +1095,8 @@ class AccessibilityTest : BaseSessionTest() {
             override fun onFocused(event: AccessibilityEvent) {
                 nodeId = getSourceId(event)
                 val node = createNodeInfo(nodeId)
-                assertThat("Focused outsideSelectable", node.text.toString(), equalTo("outside selectable"))
+                val nodeChild = createNodeInfo(node.getChildId(0))
+                assertThat("Focused outsideSelectable", nodeChild.text.toString(), equalTo("outside selectable "))
             }
         })
     }
@@ -1130,6 +1132,12 @@ class AccessibilityTest : BaseSessionTest() {
     @Test fun testLiveRegion() {
         loadTestPage("test-live-region")
         waitForInitialFocus()
+
+        val rootNode = createNodeInfo(View.NO_ID)
+        assertThat("Document has 1 child", rootNode.childCount, equalTo(1))
+
+        val liveRegion = createNodeInfo(rootNode.getChildId(0))
+        assertThat("First node is a label", liveRegion.viewIdResourceName.toString(), equalTo("to_change"))
 
         mainSession.evaluateJS("document.querySelector('#to_change').textContent = 'Hello';")
         sessionRule.waitUntilCalled(object : EventDelegate {
@@ -1220,6 +1228,19 @@ class AccessibilityTest : BaseSessionTest() {
             @AssertCalled(count = 1)
             override fun onAnnouncement(event: AccessibilityEvent) {
                 assertThat("Announcement is correct", event.text[0].toString(), equalTo("Goodbye"))
+            }
+        })
+    }
+
+    @Test fun testLiveRegionStatus() {
+        loadTestPage("test-live-region-status")
+        waitForInitialFocus()
+
+        mainSession.evaluateJS("document.querySelector('#status').textContent = 'hello';")
+        sessionRule.waitUntilCalled(object : EventDelegate {
+            @AssertCalled(count = 1)
+            override fun onAnnouncement(event: AccessibilityEvent) {
+                assertThat("Announcement is correct", event.text[0].toString(), equalTo("hello"))
             }
         })
     }
@@ -1332,20 +1353,10 @@ class AccessibilityTest : BaseSessionTest() {
             "#pass1" to "baz",
             "#user2" to "bar",
             "#pass2" to "baz",
-        ) +
-            if (Build.VERSION.SDK_INT >= 19) {
-                mapOf(
-                    "#email1" to "a@b.c",
-                    "#number1" to "24",
-                    "#tel1" to "42",
-                )
-            } else {
-                mapOf(
-                    "#email1" to "bar",
-                    "#number1" to "",
-                    "#tel1" to "bar",
-                )
-            }
+            "#email1" to "a@b.c",
+            "#number1" to "24",
+            "#tel1" to "42",
+        )
 
         // Set up promises to monitor the values changing.
         val promises = autoFills.flatMap { entry ->
@@ -1378,45 +1389,31 @@ class AccessibilityTest : BaseSessionTest() {
             if (EditText::class.java.name == child.className) {
                 assertThat("Input should be enabled", child.isEnabled, equalTo(true))
                 assertThat("Input should be focusable", child.isFocusable, equalTo(true))
-                if (Build.VERSION.SDK_INT >= 19) {
-                    assertThat(
-                        "Password type should match",
-                        child.isPassword,
-                        equalTo(
-                            child.inputType == InputType.TYPE_CLASS_TEXT or
-                                InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD,
-                        ),
-                    )
-                }
+                assertThat(
+                    "Password type should match",
+                    child.isPassword,
+                    equalTo(
+                        child.inputType == InputType.TYPE_CLASS_TEXT or
+                            InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD,
+                    ),
+                )
 
                 val args = Bundle(1)
                 val value = if (child.isPassword) {
                     "baz"
                 } else {
-                    if (Build.VERSION.SDK_INT < 19) {
-                        "bar"
-                    } else {
-                        when (child.inputType) {
-                            InputType.TYPE_CLASS_TEXT or
-                                InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS,
-                            -> "a@b.c"
-                            InputType.TYPE_CLASS_NUMBER -> "24"
-                            InputType.TYPE_CLASS_PHONE -> "42"
-                            else -> "bar"
-                        }
+                    when (child.inputType) {
+                        InputType.TYPE_CLASS_TEXT or
+                            InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS,
+                        -> "a@b.c"
+                        InputType.TYPE_CLASS_NUMBER -> "24"
+                        InputType.TYPE_CLASS_PHONE -> "42"
+                        else -> "bar"
                     }
                 }
 
-                val ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE = if (Build.VERSION.SDK_INT >= 21) {
-                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE
-                } else {
-                    "ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE"
-                }
-                val ACTION_SET_TEXT = if (Build.VERSION.SDK_INT >= 21) {
-                    AccessibilityNodeInfo.ACTION_SET_TEXT
-                } else {
-                    0x200000
-                }
+                val ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE = AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE
+                val ACTION_SET_TEXT = AccessibilityNodeInfo.ACTION_SET_TEXT
 
                 args.putCharSequence(ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value)
                 assertThat(
@@ -1438,13 +1435,6 @@ class AccessibilityTest : BaseSessionTest() {
 
     @Test
     fun autoFill_navigation() {
-        // Fails with BFCache in the parent.
-        // https://bugzilla.mozilla.org/show_bug.cgi?id=1715480
-        sessionRule.setPrefsUntilTestEnd(
-            mapOf(
-                "fission.bfcacheInParent" to false,
-            ),
-        )
         fun countAutoFillNodes(
             cond: (AccessibilityNodeInfo) -> Boolean =
                 { it.className == "android.widget.EditText" },
@@ -1511,7 +1501,7 @@ class AccessibilityTest : BaseSessionTest() {
         )
 
         // Now wait for the nodes to reappear.
-        mainSession.goBack()
+        mainSession.goBack(false)
         waitForInitialFocus()
         waitForAutoFillNodes()
         assertThat(
@@ -1576,18 +1566,16 @@ class AccessibilityTest : BaseSessionTest() {
         assertThat("Entry has vieIdwResourceName of 'name'", entryNode.viewIdResourceName, equalTo("name"))
         assertThat("Entry value is text", entryNode.text.toString(), equalTo("Julie"))
         assertThat("Entry node is visible to user", entryNode.isVisibleToUser, equalTo(true))
-        if (Build.VERSION.SDK_INT >= 19) {
-            assertThat(
-                "Entry hint is label",
-                entryNode.extras.getString("AccessibilityNodeInfo.hint"),
-                equalTo("Name:"),
-            )
-            assertThat(
-                "Entry input type is correct",
-                entryNode.inputType,
-                equalTo(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_WEB_EDIT_TEXT),
-            )
-        }
+        assertThat(
+            "Entry hint is label",
+            entryNode.extras.getString("AccessibilityNodeInfo.hint"),
+            equalTo("Name:"),
+        )
+        assertThat(
+            "Entry input type is correct",
+            entryNode.inputType,
+            equalTo(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_WEB_EDIT_TEXT),
+        )
 
         val buttonNode = createNodeInfo(rootNode.getChildId(2))
         assertThat("Last node is a button", buttonNode.className.toString(), equalTo("android.widget.Button"))
@@ -1709,6 +1697,8 @@ class AccessibilityTest : BaseSessionTest() {
     @Test
     fun testRemoteIframeTree() {
         testIframeTree(REMOTE_IFRAME)
+        // disabled for frequent failures - on Bug 1769324
+        assumeThat(sessionRule.env.isX86, equalTo(false))
     }
 
     @Test
@@ -1727,25 +1717,19 @@ class AccessibilityTest : BaseSessionTest() {
         val firstList = createNodeInfo(rootNode.getChildId(0))
         assertThat("First list has 2 children", firstList.childCount, equalTo(2))
         assertThat("List is a ListView", firstList.className.toString(), equalTo("android.widget.ListView"))
-        if (Build.VERSION.SDK_INT >= 19) {
-            assertThat("First list should have collectionInfo", firstList.collectionInfo, notNullValue())
-            assertThat("First list has 2 rowCount", firstList.collectionInfo.rowCount, equalTo(2))
-            assertThat("First list should not be hierarchical", firstList.collectionInfo.isHierarchical, equalTo(false))
-        }
+        assertThat("First list should have collectionInfo", firstList.collectionInfo, notNullValue())
+        assertThat("First list has 2 rowCount", firstList.collectionInfo.rowCount, equalTo(2))
+        assertThat("First list should not be hierarchical", firstList.collectionInfo.isHierarchical, equalTo(false))
 
         val firstListFirstItem = createNodeInfo(firstList.getChildId(0))
-        if (Build.VERSION.SDK_INT >= 19) {
-            assertThat("Item has collectionItemInfo", firstListFirstItem.collectionItemInfo, notNullValue())
-            assertThat("Item has correct rowIndex", firstListFirstItem.collectionItemInfo.rowIndex, equalTo(0))
-        }
+        assertThat("Item has collectionItemInfo", firstListFirstItem.collectionItemInfo, notNullValue())
+        assertThat("Item has correct rowIndex", firstListFirstItem.collectionItemInfo.rowIndex, equalTo(0))
 
         val secondList = createNodeInfo(rootNode.getChildId(1))
         assertThat("Second list has 1 child", secondList.childCount, equalTo(1))
-        if (Build.VERSION.SDK_INT >= 19) {
-            assertThat("Second list should have collectionInfo", secondList.collectionInfo, notNullValue())
-            assertThat("Second list has 2 rowCount", secondList.collectionInfo.rowCount, equalTo(1))
-            assertThat("Second list should be hierarchical", secondList.collectionInfo.isHierarchical, equalTo(true))
-        }
+        assertThat("Second list should have collectionInfo", secondList.collectionInfo, notNullValue())
+        assertThat("Second list has 2 rowCount", secondList.collectionInfo.rowCount, equalTo(1))
+        assertThat("Second list should be hierarchical", secondList.collectionInfo.isHierarchical, equalTo(true))
     }
 
     @Test fun testNavigateListItems() {
@@ -1768,13 +1752,11 @@ class AccessibilityTest : BaseSessionTest() {
                     node.text as String,
                     startsWith("One"),
                 )
-                if (Build.VERSION.SDK_INT >= 19) {
-                    assertThat(
-                        "first item is a text leaf",
-                        node.extras.getCharSequence("AccessibilityNodeInfo.geckoRole")!!.toString(),
-                        equalTo("text leaf"),
-                    )
-                }
+                assertThat(
+                    "first item is a text leaf",
+                    node.extras.getCharSequence("AccessibilityNodeInfo.geckoRole")!!.toString(),
+                    equalTo("text leaf"),
+                )
             }
         })
 
@@ -1793,13 +1775,11 @@ class AccessibilityTest : BaseSessionTest() {
                     node.contentDescription as String,
                     startsWith("Two"),
                 )
-                if (Build.VERSION.SDK_INT >= 19) {
-                    assertThat(
-                        "second item is a link",
-                        node.extras.getCharSequence("AccessibilityNodeInfo.geckoRole")!!.toString(),
-                        equalTo("link"),
-                    )
-                }
+                assertThat(
+                    "second item is a link",
+                    node.extras.getCharSequence("AccessibilityNodeInfo.geckoRole")!!.toString(),
+                    equalTo("link"),
+                )
             }
         })
     }
@@ -1815,33 +1795,27 @@ class AccessibilityTest : BaseSessionTest() {
         val firstRange = createNodeInfo(rootNode.getChildId(0))
         assertThat("Range has right label", firstRange.text.toString(), equalTo("Rating"))
         assertThat("Range is SeekBar", firstRange.className.toString(), equalTo("android.widget.SeekBar"))
-        if (Build.VERSION.SDK_INT >= 19) {
-            assertThat("'Rating' has rangeInfo", firstRange.rangeInfo, notNullValue())
-            assertThat("'Rating' has correct value", firstRange.rangeInfo.current, equalTo(4f))
-            assertThat("'Rating' has correct max", firstRange.rangeInfo.max, equalTo(10f))
-            assertThat("'Rating' has correct min", firstRange.rangeInfo.min, equalTo(1f))
-            assertThat("'Rating' has correct range type", firstRange.rangeInfo.type, equalTo(AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_INT))
-        }
+        assertThat("'Rating' has rangeInfo", firstRange.rangeInfo, notNullValue())
+        assertThat("'Rating' has correct value", firstRange.rangeInfo.current, equalTo(4f))
+        assertThat("'Rating' has correct max", firstRange.rangeInfo.max, equalTo(10f))
+        assertThat("'Rating' has correct min", firstRange.rangeInfo.min, equalTo(1f))
+        assertThat("'Rating' has correct range type", firstRange.rangeInfo.type, equalTo(AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_INT))
 
         val secondRange = createNodeInfo(rootNode.getChildId(1))
         assertThat("Range has right label", secondRange.text.toString(), equalTo("Stars"))
-        if (Build.VERSION.SDK_INT >= 19) {
-            assertThat("'Rating' has rangeInfo", secondRange.rangeInfo, notNullValue())
-            assertThat("'Rating' has correct value", secondRange.rangeInfo.current, equalTo(4.5f))
-            assertThat("'Rating' has correct max", secondRange.rangeInfo.max, equalTo(5f))
-            assertThat("'Rating' has correct min", secondRange.rangeInfo.min, equalTo(1f))
-            assertThat("'Rating' has correct range type", secondRange.rangeInfo.type, equalTo(AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_FLOAT))
-        }
+        assertThat("'Rating' has rangeInfo", secondRange.rangeInfo, notNullValue())
+        assertThat("'Rating' has correct value", secondRange.rangeInfo.current, equalTo(4.5f))
+        assertThat("'Rating' has correct max", secondRange.rangeInfo.max, equalTo(5f))
+        assertThat("'Rating' has correct min", secondRange.rangeInfo.min, equalTo(1f))
+        assertThat("'Rating' has correct range type", secondRange.rangeInfo.type, equalTo(AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_FLOAT))
 
         val thirdRange = createNodeInfo(rootNode.getChildId(2))
         assertThat("Range has right label", thirdRange.text.toString(), equalTo("Percent"))
-        if (Build.VERSION.SDK_INT >= 19) {
-            assertThat("'Rating' has rangeInfo", thirdRange.rangeInfo, notNullValue())
-            assertThat("'Rating' has correct value", thirdRange.rangeInfo.current, equalTo(0.83f))
-            assertThat("'Rating' has correct max", thirdRange.rangeInfo.max, equalTo(1f))
-            assertThat("'Rating' has correct min", thirdRange.rangeInfo.min, equalTo(0f))
-            assertThat("'Rating' has correct range type", thirdRange.rangeInfo.type, equalTo(AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_PERCENT))
-        }
+        assertThat("'Rating' has rangeInfo", thirdRange.rangeInfo, notNullValue())
+        assertThat("'Rating' has correct value", thirdRange.rangeInfo.current, equalTo(0.83f))
+        assertThat("'Rating' has correct max", thirdRange.rangeInfo.max, equalTo(1f))
+        assertThat("'Rating' has correct min", thirdRange.rangeInfo.min, equalTo(0f))
+        assertThat("'Rating' has correct range type", thirdRange.rangeInfo.type, equalTo(AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_PERCENT))
     }
 
     @Test fun testLinksMovingByDefault() {
@@ -1860,13 +1834,11 @@ class AccessibilityTest : BaseSessionTest() {
                     node.contentDescription as String,
                     startsWith("a with href"),
                 )
-                if (Build.VERSION.SDK_INT >= 19) {
-                    assertThat(
-                        "a with href is a link",
-                        node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
-                        equalTo("link"),
-                    )
-                }
+                assertThat(
+                    "a with href is a link",
+                    node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
+                    equalTo("link"),
+                )
             }
         })
 
@@ -1881,13 +1853,11 @@ class AccessibilityTest : BaseSessionTest() {
                     node.text as String,
                     startsWith("a with no attributes"),
                 )
-                if (Build.VERSION.SDK_INT >= 19) {
-                    assertThat(
-                        "a with no attributes is not a link",
-                        node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
-                        equalTo(""),
-                    )
-                }
+                assertThat(
+                    "a with no attributes is not a link",
+                    node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
+                    equalTo(""),
+                )
             }
         })
 
@@ -1902,13 +1872,11 @@ class AccessibilityTest : BaseSessionTest() {
                     node.text as String,
                     startsWith("a with name"),
                 )
-                if (Build.VERSION.SDK_INT >= 19) {
-                    assertThat(
-                        "a with name is not a link",
-                        node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
-                        equalTo(""),
-                    )
-                }
+                assertThat(
+                    "a with name is not a link",
+                    node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
+                    equalTo(""),
+                )
             }
         })
 
@@ -1923,13 +1891,11 @@ class AccessibilityTest : BaseSessionTest() {
                     node.contentDescription as String,
                     startsWith("a with onclick"),
                 )
-                if (Build.VERSION.SDK_INT >= 19) {
-                    assertThat(
-                        "a with onclick is a link",
-                        node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
-                        equalTo("link"),
-                    )
-                }
+                assertThat(
+                    "a with onclick is a link",
+                    node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
+                    equalTo("link"),
+                )
             }
         })
 
@@ -1944,13 +1910,11 @@ class AccessibilityTest : BaseSessionTest() {
                     node.contentDescription as String,
                     startsWith("span with role link"),
                 )
-                if (Build.VERSION.SDK_INT >= 19) {
-                    assertThat(
-                        "span with role link is a link",
-                        node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
-                        equalTo("link"),
-                    )
-                }
+                assertThat(
+                    "span with role link is a link",
+                    node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
+                    equalTo("link"),
+                )
             }
         })
     }
@@ -2022,13 +1986,11 @@ class AccessibilityTest : BaseSessionTest() {
                     node.className.toString(),
                     equalTo("android.widget.EditText"),
                 )
-                if (Build.VERSION.SDK_INT >= 19) {
-                    assertThat(
-                        "Accessibility focus on ARIA 1.0 combobox",
-                        node.extras.getString("AccessibilityNodeInfo.hint"),
-                        equalTo("ARIA 1.0 combobox"),
-                    )
-                }
+                assertThat(
+                    "Accessibility focus on ARIA 1.0 combobox",
+                    node.extras.getString("AccessibilityNodeInfo.hint"),
+                    equalTo("ARIA 1.0 combobox"),
+                )
             }
         })
 
@@ -2043,13 +2005,11 @@ class AccessibilityTest : BaseSessionTest() {
                     node.className.toString(),
                     equalTo("android.widget.EditText"),
                 )
-                if (Build.VERSION.SDK_INT >= 19) {
-                    assertThat(
-                        "Accessibility focus on ARIA 1.1 combobox",
-                        node.extras.getString("AccessibilityNodeInfo.hint"),
-                        equalTo("ARIA 1.1 combobox"),
-                    )
-                }
+                assertThat(
+                    "Accessibility focus on ARIA 1.1 combobox",
+                    node.extras.getString("AccessibilityNodeInfo.hint"),
+                    equalTo("ARIA 1.1 combobox"),
+                )
             }
         })
     }
@@ -2073,13 +2033,11 @@ class AccessibilityTest : BaseSessionTest() {
                     node.className.toString(),
                     equalTo("android.widget.EditText"),
                 )
-                if (Build.VERSION.SDK_INT >= 19) {
-                    assertThat(
-                        "Accessibility focus on ARIA 1.0 combobox",
-                        node.extras.getString("AccessibilityNodeInfo.hint"),
-                        equalTo("ARIA 1.0 combobox"),
-                    )
-                }
+                assertThat(
+                    "Accessibility focus on ARIA 1.0 combobox",
+                    node.extras.getString("AccessibilityNodeInfo.hint"),
+                    equalTo("ARIA 1.0 combobox"),
+                )
             }
         })
 
@@ -2094,13 +2052,11 @@ class AccessibilityTest : BaseSessionTest() {
                     node.className.toString(),
                     equalTo("android.widget.EditText"),
                 )
-                if (Build.VERSION.SDK_INT >= 19) {
-                    assertThat(
-                        "Accessibility focus on ARIA 1.1 combobox",
-                        node.extras.getString("AccessibilityNodeInfo.hint"),
-                        equalTo("ARIA 1.1 combobox"),
-                    )
-                }
+                assertThat(
+                    "Accessibility focus on ARIA 1.1 combobox",
+                    node.extras.getString("AccessibilityNodeInfo.hint"),
+                    equalTo("ARIA 1.1 combobox"),
+                )
             }
         })
     }
@@ -2177,13 +2133,11 @@ class AccessibilityTest : BaseSessionTest() {
                     node.text as String,
                     startsWith("a with name"),
                 )
-                if (Build.VERSION.SDK_INT >= 19) {
-                    assertThat(
-                        "a with name is not a link",
-                        node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
-                        equalTo(""),
-                    )
-                }
+                assertThat(
+                    "a with name is not a link",
+                    node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
+                    equalTo(""),
+                )
             }
         })
 
@@ -2198,13 +2152,11 @@ class AccessibilityTest : BaseSessionTest() {
                     node.contentDescription as String,
                     startsWith("a with onclick"),
                 )
-                if (Build.VERSION.SDK_INT >= 19) {
-                    assertThat(
-                        "a with onclick is a link",
-                        node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
-                        equalTo("link"),
-                    )
-                }
+                assertThat(
+                    "a with onclick is a link",
+                    node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
+                    equalTo("link"),
+                )
             }
         })
 
@@ -2229,13 +2181,11 @@ class AccessibilityTest : BaseSessionTest() {
                     node.contentDescription as String,
                     startsWith("span with role link"),
                 )
-                if (Build.VERSION.SDK_INT >= 19) {
-                    assertThat(
-                        "span with role link is a link",
-                        node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
-                        equalTo("link"),
-                    )
-                }
+                assertThat(
+                    "span with role link is a link",
+                    node.extras.getCharSequence("AccessibilityNodeInfo.roleDescription")!!.toString(),
+                    equalTo("link"),
+                )
             }
         })
 
@@ -2250,13 +2200,17 @@ class AccessibilityTest : BaseSessionTest() {
         loadTestPage("test-text-entry-node")
         waitForInitialFocus()
 
-        mainSession.evaluateJS("document.querySelector('input[aria-label=Name]').focus()")
+        mainSession.evaluateJS("document.querySelector('input[aria-label=Naame]').focus()")
         sessionRule.waitUntilCalled(object : EventDelegate {
             @AssertCalled(count = 1)
             override fun onFocused(event: AccessibilityEvent) {}
+
+            // Focus fires a caret moved event which produces this event.
+            @AssertCalled(count = 1)
+            override fun onTextSelectionChanged(event: AccessibilityEvent) {}
         })
 
-        mainSession.evaluateJS("document.querySelector('input[aria-label=Name]').value = 'Tobiasas'")
+        mainSession.evaluateJS("document.querySelector('input[aria-label=Naame]').value = 'Tobiasas'")
 
         sessionRule.waitUntilCalled(object : EventDelegate {
             @AssertCalled(count = 1)

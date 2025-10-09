@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
@@ -11,14 +9,15 @@ ChromeUtils.defineESModuleGetters(lazy, {
   Log: "chrome://remote/content/shared/Log.sys.mjs",
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "disabledExperimentalAPI", () => {
+ChromeUtils.defineLazyGetter(lazy, "disabledExperimentalAPI", () => {
   return !Services.prefs.getBoolPref("remote.experimental.enabled");
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "logger", () => lazy.Log.get());
+ChromeUtils.defineLazyGetter(lazy, "logger", () => lazy.Log.get());
 
 export class Module {
   #messageHandler;
+  #moduleName;
 
   /**
    * Create a new module instance.
@@ -63,12 +62,12 @@ export class Module {
    *
    * @param {string} name
    *     Name of the event.
-   * @param {object} payload
+   * @param {object} _payload
    *    The event's payload.
    * @returns {object}
    *     The modified event payload.
    */
-  interceptEvent(name, payload) {
+  interceptEvent(name, _payload) {
     throw new Error(
       `Could not intercept event ${name}, interceptEvent is not implemented in windowglobal-in-root module`
     );
@@ -133,5 +132,13 @@ export class Module {
 
   static supportsMethod(methodName) {
     return typeof this.prototype[methodName] === "function";
+  }
+
+  get moduleName() {
+    return this.#moduleName;
+  }
+
+  set moduleName(name) {
+    this.#moduleName = name;
   }
 }

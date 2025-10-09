@@ -77,7 +77,7 @@ void HighlightRegistry::MaybeAddRangeToHighlightSelection(
       continue;
     }
 
-    const RefPtr<const nsAtom> highlightName = iter.first();
+    const RefPtr<nsAtom> highlightName = iter.first();
     frameSelection->AddHighlightSelectionRange(highlightName, aHighlight,
                                                aRange);
   }
@@ -96,7 +96,7 @@ void HighlightRegistry::MaybeRemoveRangeFromHighlightSelection(
       continue;
     }
 
-    const RefPtr<const nsAtom> highlightName = iter.first();
+    const RefPtr<nsAtom> highlightName = iter.first();
     frameSelection->RemoveHighlightSelectionRange(highlightName, aRange);
   }
 }
@@ -111,8 +111,23 @@ void HighlightRegistry::RemoveHighlightSelection(Highlight& aHighlight) {
       continue;
     }
 
-    const RefPtr<const nsAtom> highlightName = iter.first();
+    const RefPtr<nsAtom> highlightName = iter.first();
     frameSelection->RemoveHighlightSelection(highlightName);
+  }
+}
+
+void HighlightRegistry::RepaintHighlightSelection(Highlight& aHighlight) {
+  RefPtr<nsFrameSelection> frameSelection = GetFrameSelection();
+  if (!frameSelection) {
+    return;
+  }
+  for (auto const& iter : mHighlightsOrdered) {
+    if (iter.second() != &aHighlight) {
+      continue;
+    }
+
+    const RefPtr<nsAtom> highlightName = iter.first();
+    frameSelection->RepaintHighlightSelection(highlightName);
   }
 }
 
@@ -125,26 +140,36 @@ void HighlightRegistry::AddHighlightSelectionsToFrameSelection() {
     return;
   }
   for (auto const& iter : mHighlightsOrdered) {
-    RefPtr<const nsAtom> highlightName = iter.first();
+    RefPtr<nsAtom> highlightName = iter.first();
     RefPtr<Highlight> highlight = iter.second();
     frameSelection->AddHighlightSelection(highlightName, *highlight);
   }
 }
 
-void HighlightRegistry::Set(const nsAString& aKey, Highlight& aValue,
-                            ErrorResult& aRv) {
+HighlightRegistry* HighlightRegistry::Set(const nsAString& aKey,
+                                          Highlight& aValue, ErrorResult& aRv) {
+  // manually check if the highlight `aKey` is already registered to be able to
+  // provide a fast path later that avoids calling `std::find_if()`.
+  const bool highlightAlreadyPresent =
+      HighlightRegistry_Binding::MaplikeHelpers::Has(this, aKey, aRv);
+  if (aRv.Failed()) {
+    return this;
+  }
   HighlightRegistry_Binding::MaplikeHelpers::Set(this, aKey, aValue, aRv);
   if (aRv.Failed()) {
-    return;
+    return this;
   }
   RefPtr<nsFrameSelection> frameSelection = GetFrameSelection();
   RefPtr<nsAtom> highlightNameAtom = NS_AtomizeMainThread(aKey);
-  auto foundIter =
-      std::find_if(mHighlightsOrdered.begin(), mHighlightsOrdered.end(),
-                   [&highlightNameAtom](auto const& aElm) {
-                     return aElm.first() == highlightNameAtom;
-                   });
-  if (foundIter != mHighlightsOrdered.end()) {
+  if (highlightAlreadyPresent) {
+    // If the highlight named `aKey` was present before, replace its value.
+    auto foundIter =
+        std::find_if(mHighlightsOrdered.begin(), mHighlightsOrdered.end(),
+                     [&highlightNameAtom](auto const& aElm) {
+                       return aElm.first() == highlightNameAtom;
+                     });
+    MOZ_ASSERT(foundIter != mHighlightsOrdered.end(),
+               "webIDL maplike and DOM mirror are not in sync");
     foundIter->second()->RemoveFromHighlightRegistry(*this, *highlightNameAtom);
     if (frameSelection) {
       frameSelection->RemoveHighlightSelection(highlightNameAtom);
@@ -152,13 +177,14 @@ void HighlightRegistry::Set(const nsAString& aKey, Highlight& aValue,
     foundIter->second() = &aValue;
   } else {
     mHighlightsOrdered.AppendElement(
-        CompactPair<RefPtr<const nsAtom>, RefPtr<Highlight>>(highlightNameAtom,
-                                                             &aValue));
+        CompactPair<RefPtr<nsAtom>, RefPtr<Highlight>>(highlightNameAtom,
+                                                       &aValue));
   }
   aValue.AddToHighlightRegistry(*this, *highlightNameAtom);
   if (frameSelection) {
     frameSelection->AddHighlightSelection(highlightNameAtom, aValue);
   }
+  return this;
 }
 
 void HighlightRegistry::Clear(ErrorResult& aRv) {
@@ -170,7 +196,7 @@ void HighlightRegistry::Clear(ErrorResult& aRv) {
   AutoFrameSelectionBatcher batcher(__FUNCTION__);
   batcher.AddFrameSelection(frameSelection);
   for (auto const& iter : mHighlightsOrdered) {
-    const RefPtr<const nsAtom>& highlightName = iter.first();
+    const RefPtr<nsAtom>& highlightName = iter.first();
     const RefPtr<Highlight>& highlight = iter.second();
     highlight->RemoveFromHighlightRegistry(*this, *highlightName);
     if (frameSelection) {

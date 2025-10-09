@@ -121,8 +121,8 @@ def common_package(config, job, taskdesc, distro, version):
         resolver = (
             "aptitude -y --without-recommends -o "
             "Aptitude::ProblemResolver::Hints::KeepBuildDeps="
-            '"reject {}-build-deps :UNINST"'
-        ).format(package)
+            f'"reject {package}-build-deps :UNINST"'
+        )
     else:
         raise RuntimeError("Unreachable")
 
@@ -224,6 +224,7 @@ def docker_worker_debian_package(config, job, taskdesc):
         "stretch": 9,
         "buster": 10,
         "bullseye": 11,
+        "bookworm": 12,
     }[run["dist"]]
     common_package(config, job, taskdesc, "debian", version)
 
@@ -234,5 +235,7 @@ def docker_worker_ubuntu_package(config, job, taskdesc):
     version = {
         "bionic": 1804,
         "focal": 2004,
+        "jammy": 2204,
+        "noble": 2404,
     }[run["dist"]]
     common_package(config, job, taskdesc, "ubuntu", version)

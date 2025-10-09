@@ -69,6 +69,10 @@ mod posix {
 
             target_os = "macos",
             target_os = "ios",
+            target_os = "tvos",
+            target_os = "visionos",
+            target_os = "watchos",
+
             target_os = "freebsd",
             target_os = "dragonfly",
             target_os = "openbsd",
@@ -82,6 +86,8 @@ mod posix {
 
             target_os = "fuchsia",
             target_os = "redox",
+            target_os = "nto",
+            target_os = "hurd",
         ))] {
             pub(super) const RTLD_LAZY: c_int = 1;
         } else {
@@ -101,6 +107,10 @@ mod posix {
 
             target_os = "macos",
             target_os = "ios",
+            target_os = "tvos",
+            target_os = "visionos",
+            target_os = "watchos",
+
             target_os = "freebsd",
             target_os = "dragonfly",
             target_os = "openbsd",
@@ -115,6 +125,8 @@ mod posix {
 
             target_os = "fuchsia",
             target_os = "redox",
+            target_os = "nto",
+            target_os = "hurd",
         ))] {
             pub(super) const RTLD_NOW: c_int = 2;
         } else if #[cfg(all(target_os = "android",target_pointer_width = "32"))] {
@@ -143,6 +155,9 @@ mod posix {
         } else if #[cfg(any(
             target_os = "macos",
             target_os = "ios",
+            target_os = "tvos",
+            target_os = "visionos",
+            target_os = "watchos",
         ))] {
             pub(super) const RTLD_GLOBAL: c_int = 8;
         } else if #[cfg(any(
@@ -162,6 +177,8 @@ mod posix {
 
             target_os = "fuchsia",
             target_os = "redox",
+            target_os = "nto",
+            target_os = "hurd",
         ))] {
             pub(super) const RTLD_GLOBAL: c_int = 0x100;
         } else {
@@ -172,13 +189,19 @@ mod posix {
     }
 
     cfg_if! {
-        if #[cfg(target_os = "netbsd")] {
+        if #[cfg(any(
+           target_os = "netbsd",
+           target_os = "nto",
+        ))] {
             pub(super) const RTLD_LOCAL: c_int = 0x200;
         } else if #[cfg(target_os = "aix")] {
             pub(super) const RTLD_LOCAL: c_int = 0x80000;
         } else if #[cfg(any(
             target_os = "macos",
             target_os = "ios",
+            target_os = "tvos",
+            target_os = "visionos",
+            target_os = "watchos",
         ))] {
             pub(super) const RTLD_LOCAL: c_int = 4;
         } else if #[cfg(any(
@@ -200,6 +223,7 @@ mod posix {
 
             target_os = "fuchsia",
             target_os = "redox",
+            target_os = "hurd",
         ))] {
             pub(super) const RTLD_LOCAL: c_int = 0;
         } else {

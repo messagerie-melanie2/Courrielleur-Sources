@@ -16,7 +16,9 @@ var {
   open_compose_new_mail,
   open_compose_with_reply,
   FormatHelper,
-} = ChromeUtils.import("resource://testing-common/mozmill/ComposeHelpers.jsm");
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+);
 
 var {
   be_in_folder,
@@ -25,8 +27,8 @@ var {
   get_about_message,
   open_message_from_file,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 var sendFormatPreference;
@@ -53,27 +55,27 @@ registerCleanupFunction(async function () {
 });
 
 async function checkMsgFile(aFilePath, aConvertibility) {
-  let file = new FileUtils.File(getTestFilePath(`data/${aFilePath}`));
-  let messageController = await open_message_from_file(file);
+  const file = new FileUtils.File(getTestFilePath(`data/${aFilePath}`));
+  const messageWin = await open_message_from_file(file);
 
   // Creating a reply should not affect convertibility.
-  let composeWindow = open_compose_with_reply(messageController).window;
+  const composeWindow = await open_compose_with_reply(messageWin);
 
   Assert.equal(composeWindow.gMsgCompose.bodyConvertible(), aConvertibility);
 
   await BrowserTestUtils.closeWindow(composeWindow);
-  await BrowserTestUtils.closeWindow(messageController.window);
+  await BrowserTestUtils.closeWindow(messageWin);
 }
 
 /**
  * Tests nodeTreeConvertible() can be called from JavaScript.
  */
 add_task(async function test_msg_nodeTreeConvertible() {
-  let msgCompose = Cc["@mozilla.org/messengercompose/compose;1"].createInstance(
-    Ci.nsIMsgCompose
-  );
+  const msgCompose = Cc[
+    "@mozilla.org/messengercompose/compose;1"
+  ].createInstance(Ci.nsIMsgCompose);
 
-  let textDoc = new DOMParser().parseFromString(
+  const textDoc = new DOMParser().parseFromString(
     "<p>Simple Text</p>",
     "text/html"
   );
@@ -82,7 +84,7 @@ add_task(async function test_msg_nodeTreeConvertible() {
     Ci.nsIMsgCompConvertible.Plain
   );
 
-  let htmlDoc = new DOMParser().parseFromString(
+  const htmlDoc = new DOMParser().parseFromString(
     '<p>Complex <span style="font-weight: bold">Text</span></p>',
     "text/html"
   );
@@ -131,9 +133,9 @@ var sendFormatToMenuitem = new Map([
  * @param {string} msg - A message to use in assertions.
  */
 function assertSendFormatInMenu(composeWindow, expectFormat, msg) {
-  for (let [format, menuitemId] of sendFormatToMenuitem.entries()) {
-    let menuitem = composeWindow.document.getElementById(menuitemId);
-    let checked = expectFormat == format;
+  for (const [format, menuitemId] of sendFormatToMenuitem.entries()) {
+    const menuitem = composeWindow.document.getElementById(menuitemId);
+    const checked = expectFormat == format;
     Assert.equal(
       menuitem.getAttribute("checked") == "true",
       checked,
@@ -158,7 +160,7 @@ const BOLD_MESSAGE_BODY_AS_PLAIN = `*${BOLD_MESSAGE_BODY}*`;
 async function newMessage(preference, useBold) {
   Services.prefs.setIntPref("mail.default_send_format", preference);
 
-  let composeWindow = open_compose_new_mail().window;
+  const composeWindow = await open_compose_new_mail();
   assertSendFormatInMenu(
     composeWindow,
     preference,
@@ -182,7 +184,7 @@ async function newMessage(preference, useBold) {
   await TestUtils.waitForTick();
 
   // Focus should be in the body.
-  let formatHelper = new FormatHelper(composeWindow);
+  const formatHelper = new FormatHelper(composeWindow);
   if (useBold) {
     EventUtils.synthesizeMouseAtCenter(
       formatHelper.boldButton,
@@ -207,21 +209,24 @@ async function newMessage(preference, useBold) {
  */
 async function setSendFormat(composeWindow, sendFormat) {
   async function openMenu(menu) {
-    let openPromise = BrowserTestUtils.waitForEvent(menu, "popupshown");
+    const openPromise = BrowserTestUtils.waitForEvent(menu, "popupshown");
     menu.openMenu(true);
     await openPromise;
   }
-  let optionsMenu = composeWindow.document.getElementById("optionsMenu");
-  let sendFormatMenu =
+  const optionsMenu = composeWindow.document.getElementById("optionsMenu");
+  const sendFormatMenu =
     composeWindow.document.getElementById("outputFormatMenu");
-  let menuitem = composeWindow.document.getElementById(
+  const menuitem = composeWindow.document.getElementById(
     sendFormatToMenuitem.get(sendFormat)
   );
 
   await openMenu(optionsMenu);
   await openMenu(sendFormatMenu);
 
-  let closePromise = BrowserTestUtils.waitForEvent(optionsMenu, "popuphidden");
+  const closePromise = BrowserTestUtils.waitForEvent(
+    optionsMenu,
+    "popuphidden"
+  );
   sendFormatMenu.menupopup.activateItem(menuitem);
   await closePromise;
   assertSendFormatInMenu(
@@ -244,10 +249,10 @@ async function setSendFormat(composeWindow, sendFormat) {
  * @param {string} msg - A message to use in assertions.
  */
 async function assertSentMessage(composeWindow, expectMessage, msg) {
-  let { isBold, plain, html } = expectMessage;
+  const { isBold, plain, html } = expectMessage;
 
   // Send later.
-  let closePromise = BrowserTestUtils.windowClosed(composeWindow);
+  const closePromise = BrowserTestUtils.windowClosed(composeWindow);
   EventUtils.synthesizeKey(
     "KEY_Enter",
     { accelKey: true, shiftKey: true },
@@ -258,13 +263,15 @@ async function assertSentMessage(composeWindow, expectMessage, msg) {
   // Open the "sent" message.
   await be_in_folder(outboxFolder);
   // Should be the last message in the tree.
-  select_click_row(-1);
+  await select_click_row(0);
+  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+  await new Promise(resolve => setTimeout(resolve, 500));
 
   // Test that the sent content type is either text/plain, text/html or
   // multipart/alternative.
   // TODO: Is there a better way to expose the content-type of the displayed
   // message?
-  let contentType =
+  const contentType =
     get_about_message().currentHeaderData["content-type"].headerValue;
   if (plain && html) {
     Assert.ok(
@@ -289,11 +296,11 @@ async function assertSentMessage(composeWindow, expectMessage, msg) {
   // NOTE: We have set the mailnews.display.html_as preference to show all parts
   // of the message, which means it will show both the plain text and html parts
   // if both were sent.
-  let messageBody =
+  const messageBody =
     get_about_message().document.getElementById("messagepane").contentDocument
       .body;
-  let plainBody = messageBody.querySelector(".moz-text-flowed");
-  let htmlBody = messageBody.querySelector(".moz-text-html");
+  const plainBody = messageBody.querySelector(".moz-text-flowed");
+  const htmlBody = messageBody.querySelector(".moz-text-html");
   Assert.equal(
     !!plain,
     !!plainBody,
@@ -307,7 +314,7 @@ async function assertSentMessage(composeWindow, expectMessage, msg) {
 
   if (plain) {
     Assert.ok(
-      BrowserTestUtils.is_visible(plainBody),
+      BrowserTestUtils.isVisible(plainBody),
       `Plain part should be visible: ${msg}`
     );
     Assert.equal(
@@ -319,7 +326,7 @@ async function assertSentMessage(composeWindow, expectMessage, msg) {
 
   if (html) {
     Assert.ok(
-      BrowserTestUtils.is_visible(htmlBody),
+      BrowserTestUtils.isVisible(htmlBody),
       `HTML part should be visible: ${msg}`
     );
     Assert.equal(
@@ -331,7 +338,7 @@ async function assertSentMessage(composeWindow, expectMessage, msg) {
 }
 
 async function saveDraft(composeWindow) {
-  let oldDraftsCounts = draftsFolder.getTotalMessages(false);
+  const oldDraftsCounts = draftsFolder.getTotalMessages(false);
   // Save as draft.
   EventUtils.synthesizeKey("s", { accelKey: true }, composeWindow);
   await TestUtils.waitForCondition(
@@ -351,9 +358,9 @@ async function saveDraft(composeWindow) {
 
 async function assertDraftFormat(expectSavedFormat) {
   await be_in_folder(draftsFolder);
-  select_click_row(0);
+  await select_click_row(0);
 
-  let newComposeWindow = open_compose_from_draft().window;
+  const newComposeWindow = await open_compose_from_draft();
   assertSendFormatInMenu(
     newComposeWindow,
     expectSavedFormat,
@@ -364,7 +371,7 @@ async function assertDraftFormat(expectSavedFormat) {
 
 add_task(async function test_preference_send_format() {
   // Sending a plain message.
-  for (let { preference, sendsPlain, sendsHtml } of [
+  for (const { preference, sendsPlain, sendsHtml } of [
     {
       preference: Ci.nsIMsgCompSendFormat.Auto,
       sendsPlain: true,
@@ -387,7 +394,7 @@ add_task(async function test_preference_send_format() {
     },
   ]) {
     info(`Testing preference ${preference} with a plain message`);
-    let composeWindow = await newMessage(preference, false);
+    const composeWindow = await newMessage(preference, false);
     await assertSentMessage(
       composeWindow,
       { plain: sendsPlain, html: sendsHtml, isBold: false },
@@ -395,7 +402,7 @@ add_task(async function test_preference_send_format() {
     );
   }
   // Sending a bold message.
-  for (let { preference, sendsPlain, sendsHtml } of [
+  for (const { preference, sendsPlain, sendsHtml } of [
     {
       preference: Ci.nsIMsgCompSendFormat.Auto,
       sendsPlain: true,
@@ -418,7 +425,7 @@ add_task(async function test_preference_send_format() {
     },
   ]) {
     info(`Testing preference ${preference} with a bold message`);
-    let composeWindow = await newMessage(preference, true);
+    const composeWindow = await newMessage(preference, true);
     await assertSentMessage(
       composeWindow,
       { plain: sendsPlain, html: sendsHtml, isBold: true },
@@ -428,7 +435,7 @@ add_task(async function test_preference_send_format() {
 });
 
 add_task(async function test_setting_send_format() {
-  for (let { preference, sendFormat, boldMessage, sendsPlain, sendsHtml } of [
+  for (const { preference, sendFormat, boldMessage, sendsPlain, sendsHtml } of [
     {
       preference: Ci.nsIMsgCompSendFormat.Auto,
       boldMessage: true,
@@ -468,7 +475,7 @@ add_task(async function test_setting_send_format() {
     info(
       `Testing changing format from preference ${preference} to ${sendFormat}`
     );
-    let composeWindow = await newMessage(preference, boldMessage);
+    const composeWindow = await newMessage(preference, boldMessage);
     await setSendFormat(composeWindow, sendFormat);
     await assertSentMessage(
       composeWindow,
@@ -476,11 +483,11 @@ add_task(async function test_setting_send_format() {
       `${boldMessage ? "Bold" : "Plain"} message set as ${sendFormat}`
     );
   }
-}).__skipMe = AppConstants.platform == "macosx";
+}).skip(AppConstants.platform == "macosx");
 // Can't click menu bar on Mac to change the send format.
 
 add_task(async function test_saving_draft_with_set_format() {
-  for (let { preference, sendFormat, sendsPlain, sendsHtml } of [
+  for (const { preference, sendFormat, sendsPlain, sendsHtml } of [
     {
       preference: Ci.nsIMsgCompSendFormat.Auto,
       sendFormat: Ci.nsIMsgCompSendFormat.PlainText,
@@ -518,11 +525,11 @@ add_task(async function test_saving_draft_with_set_format() {
       `Bold draft message set as ${sendFormat}`
     );
   }
-}).__skipMe = AppConstants.platform == "macosx";
+}).skip(AppConstants.platform == "macosx");
 // Can't click menu bar on Mac to change the send format.
 
 add_task(async function test_saving_draft_with_new_preference() {
-  for (let { preference, newPreference, sendsPlain, sendsHtml } of [
+  for (const { preference, newPreference, sendsPlain, sendsHtml } of [
     {
       preference: Ci.nsIMsgCompSendFormat.Auto,
       newPreference: Ci.nsIMsgCompSendFormat.HTML,

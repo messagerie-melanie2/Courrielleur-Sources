@@ -5,6 +5,8 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/dom/quota/Client.h"
+#include "mozilla/dom/quota/ClientDirectoryLock.h"
+#include "mozilla/dom/quota/ClientDirectoryLockHandle.h"
 #include "mozilla/dom/quota/CommonMetadata.h"
 #include "mozilla/dom/quota/FileStreams.h"
 #include "mozilla/dom/quota/QuotaManager.h"
@@ -14,6 +16,15 @@
 #include "QuotaManagerDependencyFixture.h"
 
 namespace mozilla::dom::quota::test {
+
+quota::OriginMetadata GetOutputStreamTestOriginMetadata() {
+  return quota::OriginMetadata{""_ns,
+                               "example.com"_ns,
+                               "http://example.com"_ns,
+                               "http://example.com"_ns,
+                               /* aIsPrivate */ false,
+                               quota::PERSISTENCE_TYPE_DEFAULT};
+}
 
 class TestFileOutputStream : public QuotaManagerDependencyFixture {
  public:
@@ -31,6 +42,9 @@ class TestFileOutputStream : public QuotaManagerDependencyFixture {
 
     prefs->ClearUserPref("dom.quotaManager.temporaryStorage.fixedLimit");
 
+    EXPECT_NO_FATAL_FAILURE(
+        ClearStoragesForOrigin(GetOutputStreamTestOriginMetadata()));
+
     ASSERT_NO_FATAL_FAILURE(ShutdownFixture());
   }
 
@@ -38,148 +52,172 @@ class TestFileOutputStream : public QuotaManagerDependencyFixture {
 };
 
 TEST_F(TestFileOutputStream, extendFileStreamWithSetEOF) {
-  auto ioTask = []() {
-    quota::QuotaManager* quotaManager = quota::QuotaManager::Get();
+  auto backgroundTask = []() {
+    auto ioTask = []() {
+      quota::QuotaManager* quotaManager = quota::QuotaManager::Get();
 
-    auto originMetadata =
-        quota::OriginMetadata{""_ns,
-                              "example.com"_ns,
-                              "http://example.com"_ns,
-                              "http://example.com"_ns,
-                              /* aIsPrivate */ false,
-                              quota::PERSISTENCE_TYPE_DEFAULT};
+      auto originMetadata = GetOutputStreamTestOriginMetadata();
 
-    {
-      ASSERT_NS_SUCCEEDED(quotaManager->EnsureStorageIsInitialized());
+      const int64_t groupLimit =
+          static_cast<int64_t>(quotaManager->GetGroupLimit());
+      ASSERT_TRUE(mQuotaLimit * 1024LL == groupLimit);
 
-      ASSERT_NS_SUCCEEDED(quotaManager->EnsureTemporaryStorageIsInitialized());
+      // We don't use the tested stream itself to check the file size as it
+      // may report values which have not been written to disk.
+      RefPtr<quota::FileOutputStream> check =
+          MakeRefPtr<quota::FileOutputStream>(quota::PERSISTENCE_TYPE_DEFAULT,
+                                              originMetadata,
+                                              quota::Client::Type::SDB);
 
-      auto res = quotaManager->EnsureTemporaryOriginIsInitialized(
-          quota::PERSISTENCE_TYPE_DEFAULT, originMetadata);
-      ASSERT_TRUE(res.isOk());
-    }
+      RefPtr<quota::FileOutputStream> stream =
+          MakeRefPtr<quota::FileOutputStream>(quota::PERSISTENCE_TYPE_DEFAULT,
+                                              originMetadata,
+                                              quota::Client::Type::SDB);
 
-    const int64_t groupLimit =
-        static_cast<int64_t>(quotaManager->GetGroupLimit());
-    ASSERT_TRUE(mQuotaLimit * 1024LL == groupLimit);
+      {
+        auto testPathRes =
+            quotaManager->GetOrCreateTemporaryOriginDirectory(originMetadata);
 
-    // We don't use the tested stream itself to check the file size as it
-    // may report values which have not been written to disk.
-    RefPtr<quota::FileOutputStream> check = MakeRefPtr<quota::FileOutputStream>(
-        quota::PERSISTENCE_TYPE_DEFAULT, originMetadata,
-        quota::Client::Type::SDB);
+        ASSERT_TRUE(testPathRes.isOk());
 
-    RefPtr<quota::FileOutputStream> stream =
-        MakeRefPtr<quota::FileOutputStream>(quota::PERSISTENCE_TYPE_DEFAULT,
-                                            originMetadata,
-                                            quota::Client::Type::SDB);
+        nsCOMPtr<nsIFile> testPath = testPathRes.unwrap();
 
-    {
-      auto testPathRes = quotaManager->GetOriginDirectory(originMetadata);
+        ASSERT_NS_SUCCEEDED(testPath->AppendRelativePath(u"sdb"_ns));
 
-      ASSERT_TRUE(testPathRes.isOk());
+        ASSERT_NS_SUCCEEDED(
+            testPath->AppendRelativePath(u"tTestFileOutputStream.txt"_ns));
 
-      nsCOMPtr<nsIFile> testPath = testPathRes.unwrap();
+        bool exists = true;
+        ASSERT_NS_SUCCEEDED(testPath->Exists(&exists));
 
-      ASSERT_NS_SUCCEEDED(testPath->AppendRelativePath(u"sdb"_ns));
+        if (exists) {
+          ASSERT_NS_SUCCEEDED(testPath->Remove(/* recursive */ false));
+        }
 
-      ASSERT_NS_SUCCEEDED(
-          testPath->AppendRelativePath(u"tTestFileOutputStream.txt"_ns));
+        ASSERT_NS_SUCCEEDED(testPath->Exists(&exists));
+        ASSERT_FALSE(exists);
 
-      bool exists = true;
-      ASSERT_NS_SUCCEEDED(testPath->Exists(&exists));
+        ASSERT_NS_SUCCEEDED(testPath->Create(nsIFile::NORMAL_FILE_TYPE, 0666));
 
-      if (exists) {
-        ASSERT_NS_SUCCEEDED(testPath->Remove(/* recursive */ false));
+        ASSERT_NS_SUCCEEDED(testPath->Exists(&exists));
+        ASSERT_TRUE(exists);
+
+        nsCOMPtr<nsIFile> checkPath;
+        ASSERT_NS_SUCCEEDED(testPath->Clone(getter_AddRefs(checkPath)));
+
+        const int32_t IOFlags = -1;
+        const int32_t perm = -1;
+        const int32_t behaviorFlags = 0;
+        ASSERT_NS_SUCCEEDED(
+            stream->Init(testPath, IOFlags, perm, behaviorFlags));
+
+        ASSERT_NS_SUCCEEDED(
+            check->Init(testPath, IOFlags, perm, behaviorFlags));
       }
 
-      ASSERT_NS_SUCCEEDED(testPath->Exists(&exists));
-      ASSERT_FALSE(exists);
+      // Check that we start with an empty file
+      int64_t avail = 42;
+      ASSERT_NS_SUCCEEDED(check->GetSize(&avail));
 
-      ASSERT_NS_SUCCEEDED(testPath->Create(nsIFile::NORMAL_FILE_TYPE, 0666));
+      ASSERT_TRUE(0 == avail);
 
-      ASSERT_NS_SUCCEEDED(testPath->Exists(&exists));
-      ASSERT_TRUE(exists);
+      // Enlarge the file
+      const int64_t toSize = groupLimit;
+      ASSERT_NS_SUCCEEDED(stream->Seek(nsISeekableStream::NS_SEEK_SET, toSize));
 
-      nsCOMPtr<nsIFile> checkPath;
-      ASSERT_NS_SUCCEEDED(testPath->Clone(getter_AddRefs(checkPath)));
+      ASSERT_NS_SUCCEEDED(check->GetSize(&avail));
 
-      const int32_t IOFlags = -1;
-      const int32_t perm = -1;
-      const int32_t behaviorFlags = 0;
-      ASSERT_NS_SUCCEEDED(stream->Init(testPath, IOFlags, perm, behaviorFlags));
+      ASSERT_TRUE(0 == avail);
 
-      ASSERT_NS_SUCCEEDED(check->Init(testPath, IOFlags, perm, behaviorFlags));
+      ASSERT_NS_SUCCEEDED(stream->SetEOF());
+
+      ASSERT_NS_SUCCEEDED(check->GetSize(&avail));
+
+      ASSERT_TRUE(toSize == avail);
+
+      // Try to enlarge the file past the limit
+      const int64_t overGroupLimit = groupLimit + 1;
+
+      // Seeking is allowed
+      ASSERT_NS_SUCCEEDED(
+          stream->Seek(nsISeekableStream::NS_SEEK_SET, overGroupLimit));
+
+      ASSERT_NS_SUCCEEDED(check->GetSize(&avail));
+
+      ASSERT_TRUE(toSize == avail);
+
+      // Setting file size to exceed quota should yield no device space error
+      ASSERT_TRUE(NS_ERROR_FILE_NO_DEVICE_SPACE == stream->SetEOF());
+
+      ASSERT_NS_SUCCEEDED(check->GetSize(&avail));
+
+      ASSERT_TRUE(toSize == avail);
+
+      // Shrink the file
+      const int64_t toHalfSize = toSize / 2;
+      ASSERT_NS_SUCCEEDED(
+          stream->Seek(nsISeekableStream::NS_SEEK_SET, toHalfSize));
+
+      ASSERT_NS_SUCCEEDED(check->GetSize(&avail));
+
+      ASSERT_TRUE(toSize == avail);
+
+      ASSERT_NS_SUCCEEDED(stream->SetEOF());
+
+      ASSERT_NS_SUCCEEDED(check->GetSize(&avail));
+
+      ASSERT_TRUE(toHalfSize == avail);
+
+      // Shrink the file back to nothing
+      ASSERT_NS_SUCCEEDED(stream->Seek(nsISeekableStream::NS_SEEK_SET, 0));
+
+      ASSERT_NS_SUCCEEDED(check->GetSize(&avail));
+
+      ASSERT_TRUE(toHalfSize == avail);
+
+      ASSERT_NS_SUCCEEDED(stream->SetEOF());
+
+      ASSERT_NS_SUCCEEDED(check->GetSize(&avail));
+
+      ASSERT_TRUE(0 == avail);
+    };
+
+    ClientDirectoryLockHandle directoryLockHandle;
+
+    QuotaManager* quotaManager = QuotaManager::Get();
+    ASSERT_TRUE(quotaManager);
+
+    bool done = false;
+
+    quotaManager
+        ->OpenClientDirectory(
+            {GetOutputStreamTestOriginMetadata(), Client::SDB})
+        ->Then(
+            GetCurrentSerialEventTarget(), __func__,
+            [&directoryLockHandle,
+             &done](ClientDirectoryLockHandle&& aResolveValue) {
+              directoryLockHandle = std::move(aResolveValue);
+
+              done = true;
+            },
+            [&done](const nsresult aRejectValue) {
+              ASSERT_TRUE(false);
+
+              done = true;
+            });
+
+    SpinEventLoopUntil("Promise is fulfilled"_ns, [&done]() { return done; });
+
+    ASSERT_TRUE(directoryLockHandle);
+
+    PerformOnIOThread(std::move(ioTask));
+
+    {
+      auto destroyingDirectoryLockHandle = std::move(directoryLockHandle);
     }
-
-    // Check that we start with an empty file
-    int64_t avail = 42;
-    ASSERT_NS_SUCCEEDED(check->GetSize(&avail));
-
-    ASSERT_TRUE(0 == avail);
-
-    // Enlarge the file
-    const int64_t toSize = groupLimit;
-    ASSERT_NS_SUCCEEDED(stream->Seek(nsISeekableStream::NS_SEEK_SET, toSize));
-
-    ASSERT_NS_SUCCEEDED(check->GetSize(&avail));
-
-    ASSERT_TRUE(0 == avail);
-
-    ASSERT_NS_SUCCEEDED(stream->SetEOF());
-
-    ASSERT_NS_SUCCEEDED(check->GetSize(&avail));
-
-    ASSERT_TRUE(toSize == avail);
-
-    // Try to enlarge the file past the limit
-    const int64_t overGroupLimit = groupLimit + 1;
-
-    // Seeking is allowed
-    ASSERT_NS_SUCCEEDED(
-        stream->Seek(nsISeekableStream::NS_SEEK_SET, overGroupLimit));
-
-    ASSERT_NS_SUCCEEDED(check->GetSize(&avail));
-
-    ASSERT_TRUE(toSize == avail);
-
-    // Setting file size to exceed quota should yield no device space error
-    ASSERT_TRUE(NS_ERROR_FILE_NO_DEVICE_SPACE == stream->SetEOF());
-
-    ASSERT_NS_SUCCEEDED(check->GetSize(&avail));
-
-    ASSERT_TRUE(toSize == avail);
-
-    // Shrink the file
-    const int64_t toHalfSize = toSize / 2;
-    ASSERT_NS_SUCCEEDED(
-        stream->Seek(nsISeekableStream::NS_SEEK_SET, toHalfSize));
-
-    ASSERT_NS_SUCCEEDED(check->GetSize(&avail));
-
-    ASSERT_TRUE(toSize == avail);
-
-    ASSERT_NS_SUCCEEDED(stream->SetEOF());
-
-    ASSERT_NS_SUCCEEDED(check->GetSize(&avail));
-
-    ASSERT_TRUE(toHalfSize == avail);
-
-    // Shrink the file back to nothing
-    ASSERT_NS_SUCCEEDED(stream->Seek(nsISeekableStream::NS_SEEK_SET, 0));
-
-    ASSERT_NS_SUCCEEDED(check->GetSize(&avail));
-
-    ASSERT_TRUE(toHalfSize == avail);
-
-    ASSERT_NS_SUCCEEDED(stream->SetEOF());
-
-    ASSERT_NS_SUCCEEDED(check->GetSize(&avail));
-
-    ASSERT_TRUE(0 == avail);
   };
 
-  PerformOnIOThread(std::move(ioTask));
+  PerformOnBackgroundThread(std::move(backgroundTask));
 }
 
 }  // namespace mozilla::dom::quota::test

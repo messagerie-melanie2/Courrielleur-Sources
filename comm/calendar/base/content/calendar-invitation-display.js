@@ -6,7 +6,7 @@
 
 // Wrap in a block to prevent leaking to window scope.
 {
-  const { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
+  const { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
 
   /**
    * CalInvitationDisplay is the controller responsible for the display of the
@@ -110,22 +110,20 @@
       this.currentItipItem = itipItem;
       this.display.replaceChildren();
 
-      let [, rc, actionFunc, foundItems] = await new Promise(resolve =>
-        cal.itip.processItipItem(itipItem, (targetItipItem, rc, actionFunc, foundItems) =>
-          resolve([targetItipItem, rc, actionFunc, foundItems])
-        )
+      const [, rc, actionFunc, foundItems] = await new Promise(resolve =>
+        cal.itip.processItipItem(itipItem, (...args) => resolve([...args]))
       );
 
       if (this.currentItipItem != itipItem || !Components.isSuccessCode(rc)) {
         return;
       }
 
-      let [item] = itipItem.getItemList();
-      let [foundItem] = foundItems;
-      let panel = document.createElement("calendar-invitation-panel");
+      const [item] = itipItem.getItemList();
+      const [foundItem] = foundItems;
+      const panel = document.createElement("calendar-invitation-panel");
       panel.addEventListener("calendar-invitation-panel-action", this);
 
-      let method = actionFunc ? actionFunc.method : itipItem.receivedMethod;
+      const method = actionFunc ? actionFunc.method : itipItem.receivedMethod;
       switch (method) {
         case "REQUEST:UPDATE":
           panel.mode = panel.constructor.MODE_UPDATE_MAJOR;

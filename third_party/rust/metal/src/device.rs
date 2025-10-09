@@ -7,14 +7,23 @@
 
 use super::*;
 
-use block::{Block, ConcreteBlock};
-use foreign_types::ForeignType;
-use objc::runtime::{Object, NO, YES};
+use block::Block;
+use log::warn;
+use objc::runtime::{NO, YES};
 
-use std::{ffi::CStr, os::raw::c_char, path::Path, ptr};
+use std::{
+    ffi::{c_char, CStr},
+    path::Path,
+    ptr,
+};
 
-// Available on macOS 10.11+, iOS 8.0+, tvOS 9.0+
+/// Available on macOS 10.11+, iOS 8.0+, tvOS 9.0+
+///
+/// See <https://developer.apple.com/documentation/metal/mtlfeatureset>
 #[allow(non_camel_case_types)]
+#[deprecated(
+    note = "Since iOS 8.0–16.0 iPadOS 8.0–16.0 macOS 10.11–13.0 Mac Catalyst 13.1–16.0 tvOS 9.0–16.0"
+)]
 #[repr(u64)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum MTLFeatureSet {
@@ -52,7 +61,9 @@ pub enum MTLFeatureSet {
     macOS_GPUFamily2_v1 = 10005,
 }
 
-// Available on macOS 10.15+, iOS 13.0+
+/// Available on macOS 10.15+, iOS 13.0+
+///
+/// See <https://developer.apple.com/documentation/metal/mtlgpufamily>
 #[repr(i64)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[non_exhaustive]
@@ -73,8 +84,10 @@ pub enum MTLGPUFamily {
     Mac2 = 2002,
     MacCatalyst1 = 4001,
     MacCatalyst2 = 4002,
+    Metal3 = 5001,
 }
 
+/// See <https://developer.apple.com/documentation/metal/mtldevicelocation>
 #[repr(u64)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum MTLDeviceLocation {
@@ -84,7 +97,8 @@ pub enum MTLDeviceLocation {
     Unspecified = u64::MAX,
 }
 
-bitflags! {
+bitflags::bitflags! {
+    #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
     pub struct PixelFormatCapabilities: u32 {
         const Filter = 1 << 0;
         const Write = 1 << 1;
@@ -97,7 +111,7 @@ bitflags! {
 
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-enum OS {
+enum Os {
     iOS,
     tvOS,
     macOS,
@@ -108,14 +122,14 @@ const MB: u32 = 1024 * KB;
 const GB: u32 = 1024 * MB;
 
 impl MTLFeatureSet {
-    fn os(&self) -> OS {
+    fn os(&self) -> Os {
         let value = *self as u64;
         if value < 10_000 {
-            OS::iOS
+            Os::iOS
         } else if value < 20_000 {
-            OS::macOS
+            Os::macOS
         } else if value >= 30_000 || value < 40_000 {
-            OS::tvOS
+            Os::tvOS
         } else {
             unreachable!()
         }
@@ -198,369 +212,369 @@ impl MTLFeatureSet {
 
     pub fn supports_metal_performance_shaders(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 2,
-            OS::tvOS => true,
-            OS::macOS => self.os_version() >= 13,
+            Os::iOS => self.gpu_family() >= 2,
+            Os::tvOS => true,
+            Os::macOS => self.os_version() >= 13,
         }
     }
 
     pub fn supports_programmable_blending(&self) -> bool {
-        self.os() != OS::macOS
+        self.os() != Os::macOS
     }
 
     pub fn supports_pvrtc_pixel_formats(&self) -> bool {
-        self.os() != OS::macOS
+        self.os() != Os::macOS
     }
 
     pub fn supports_eac_etc_pixel_formats(&self) -> bool {
-        self.os() != OS::macOS
+        self.os() != Os::macOS
     }
 
     pub fn supports_astc_pixel_formats(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 2,
-            OS::tvOS => true,
-            OS::macOS => false,
+            Os::iOS => self.gpu_family() >= 2,
+            Os::tvOS => true,
+            Os::macOS => false,
         }
     }
 
     pub fn supports_linear_textures(&self) -> bool {
-        self.os() != OS::macOS || self.os_version() >= 13
+        self.os() != Os::macOS || self.os_version() >= 13
     }
 
     pub fn supports_bc_pixel_formats(&self) -> bool {
-        self.os() == OS::macOS
+        self.os() == Os::macOS
     }
 
     pub fn supports_msaa_depth_resolve(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 3,
-            OS::tvOS => self.gpu_family() >= 2,
-            OS::macOS => false,
+            Os::iOS => self.gpu_family() >= 3,
+            Os::tvOS => self.gpu_family() >= 2,
+            Os::macOS => false,
         }
     }
 
     pub fn supports_counting_occlusion_query(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 3,
-            OS::tvOS => self.gpu_family() >= 2,
-            OS::macOS => true,
+            Os::iOS => self.gpu_family() >= 3,
+            Os::tvOS => self.gpu_family() >= 2,
+            Os::macOS => true,
         }
     }
 
     pub fn supports_base_vertex_instance_drawing(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 3,
-            OS::tvOS => self.gpu_family() >= 2,
-            OS::macOS => true,
+            Os::iOS => self.gpu_family() >= 3,
+            Os::tvOS => self.gpu_family() >= 2,
+            Os::macOS => true,
         }
     }
 
     pub fn supports_indirect_buffers(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 3,
-            OS::tvOS => self.gpu_family() >= 2,
-            OS::macOS => true,
+            Os::iOS => self.gpu_family() >= 3,
+            Os::tvOS => self.gpu_family() >= 2,
+            Os::macOS => true,
         }
     }
 
     pub fn supports_cube_map_texture_arrays(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 4,
-            OS::tvOS => false,
-            OS::macOS => true,
+            Os::iOS => self.gpu_family() >= 4,
+            Os::tvOS => false,
+            Os::macOS => true,
         }
     }
 
     pub fn supports_texture_barriers(&self) -> bool {
-        self.os() == OS::macOS
+        self.os() == Os::macOS
     }
 
     pub fn supports_layered_rendering(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 5,
-            OS::tvOS => false,
-            OS::macOS => true,
+            Os::iOS => self.gpu_family() >= 5,
+            Os::tvOS => false,
+            Os::macOS => true,
         }
     }
 
     pub fn supports_tessellation(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 3 && self.os_version() >= 10,
-            OS::tvOS => self.gpu_family() >= 2,
-            OS::macOS => self.os_version() >= 12,
+            Os::iOS => self.gpu_family() >= 3 && self.os_version() >= 10,
+            Os::tvOS => self.gpu_family() >= 2,
+            Os::macOS => self.os_version() >= 12,
         }
     }
 
     pub fn supports_resource_heaps(&self) -> bool {
         match self.os() {
-            OS::iOS => self.os_version() >= 10,
-            OS::tvOS => self.os_version() >= 10,
-            OS::macOS => self.os_version() >= 13,
+            Os::iOS => self.os_version() >= 10,
+            Os::tvOS => self.os_version() >= 10,
+            Os::macOS => self.os_version() >= 13,
         }
     }
 
     pub fn supports_memoryless_render_targets(&self) -> bool {
         match self.os() {
-            OS::iOS => self.os_version() >= 10,
-            OS::tvOS => self.os_version() >= 10,
-            OS::macOS => false,
+            Os::iOS => self.os_version() >= 10,
+            Os::tvOS => self.os_version() >= 10,
+            Os::macOS => false,
         }
     }
 
     pub fn supports_function_specialization(&self) -> bool {
         match self.os() {
-            OS::iOS => self.os_version() >= 10,
-            OS::tvOS => self.os_version() >= 10,
-            OS::macOS => self.os_version() >= 12,
+            Os::iOS => self.os_version() >= 10,
+            Os::tvOS => self.os_version() >= 10,
+            Os::macOS => self.os_version() >= 12,
         }
     }
 
     pub fn supports_function_buffer_read_writes(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 3 && self.os_version() >= 10,
-            OS::tvOS => self.gpu_family() >= 2,
-            OS::macOS => self.os_version() >= 12,
+            Os::iOS => self.gpu_family() >= 3 && self.os_version() >= 10,
+            Os::tvOS => self.gpu_family() >= 2,
+            Os::macOS => self.os_version() >= 12,
         }
     }
 
     pub fn supports_function_texture_read_writes(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 4,
-            OS::tvOS => false,
-            OS::macOS => self.os_version() >= 12,
+            Os::iOS => self.gpu_family() >= 4,
+            Os::tvOS => false,
+            Os::macOS => self.os_version() >= 12,
         }
     }
 
     pub fn supports_array_of_textures(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 3 && self.os_version() >= 10,
-            OS::tvOS => self.gpu_family() >= 2,
-            OS::macOS => self.os_version() >= 13,
+            Os::iOS => self.gpu_family() >= 3 && self.os_version() >= 10,
+            Os::tvOS => self.gpu_family() >= 2,
+            Os::macOS => self.os_version() >= 13,
         }
     }
 
     pub fn supports_array_of_samplers(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 3 && self.os_version() >= 11,
-            OS::tvOS => self.gpu_family() >= 2,
-            OS::macOS => self.os_version() >= 12,
+            Os::iOS => self.gpu_family() >= 3 && self.os_version() >= 11,
+            Os::tvOS => self.gpu_family() >= 2,
+            Os::macOS => self.os_version() >= 12,
         }
     }
 
     pub fn supports_stencil_texture_views(&self) -> bool {
         match self.os() {
-            OS::iOS => self.os_version() >= 10,
-            OS::tvOS => self.os_version() >= 10,
-            OS::macOS => self.os_version() >= 12,
+            Os::iOS => self.os_version() >= 10,
+            Os::tvOS => self.os_version() >= 10,
+            Os::macOS => self.os_version() >= 12,
         }
     }
 
     pub fn supports_depth_16_pixel_format(&self) -> bool {
-        self.os() == OS::macOS && self.os_version() >= 12
+        self.os() == Os::macOS && self.os_version() >= 12
     }
 
     pub fn supports_extended_range_pixel_formats(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 3 && self.os_version() >= 10,
-            OS::tvOS => self.gpu_family() >= 2,
-            OS::macOS => false,
+            Os::iOS => self.gpu_family() >= 3 && self.os_version() >= 10,
+            Os::tvOS => self.gpu_family() >= 2,
+            Os::macOS => false,
         }
     }
 
     pub fn supports_wide_color_pixel_format(&self) -> bool {
         match self.os() {
-            OS::iOS => self.os_version() >= 11,
-            OS::tvOS => self.os_version() >= 11,
-            OS::macOS => self.os_version() >= 13,
+            Os::iOS => self.os_version() >= 11,
+            Os::tvOS => self.os_version() >= 11,
+            Os::macOS => self.os_version() >= 13,
         }
     }
 
     pub fn supports_combined_msaa_store_and_resolve_action(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 3 && self.os_version() >= 10,
-            OS::tvOS => self.gpu_family() >= 2,
-            OS::macOS => self.os_version() >= 12,
+            Os::iOS => self.gpu_family() >= 3 && self.os_version() >= 10,
+            Os::tvOS => self.gpu_family() >= 2,
+            Os::macOS => self.os_version() >= 12,
         }
     }
 
     pub fn supports_deferred_store_action(&self) -> bool {
         match self.os() {
-            OS::iOS => self.os_version() >= 10,
-            OS::tvOS => self.os_version() >= 10,
-            OS::macOS => self.os_version() >= 12,
+            Os::iOS => self.os_version() >= 10,
+            Os::tvOS => self.os_version() >= 10,
+            Os::macOS => self.os_version() >= 12,
         }
     }
 
     pub fn supports_msaa_blits(&self) -> bool {
         match self.os() {
-            OS::iOS => self.os_version() >= 10,
-            OS::tvOS => self.os_version() >= 10,
-            OS::macOS => true,
+            Os::iOS => self.os_version() >= 10,
+            Os::tvOS => self.os_version() >= 10,
+            Os::macOS => true,
         }
     }
 
     pub fn supports_srgb_writes(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 3 || (self.gpu_family() >= 2 && self.version() >= 3),
-            OS::tvOS => self.os_version() >= 10,
-            OS::macOS => self.gpu_family() >= 2,
+            Os::iOS => self.gpu_family() >= 3 || (self.gpu_family() >= 2 && self.version() >= 3),
+            Os::tvOS => self.os_version() >= 10,
+            Os::macOS => self.gpu_family() >= 2,
         }
     }
 
     pub fn supports_16_bit_unsigned_integer_coordinates(&self) -> bool {
         match self.os() {
-            OS::iOS => self.os_version() >= 10,
-            OS::tvOS => self.os_version() >= 10,
-            OS::macOS => self.os_version() >= 12,
+            Os::iOS => self.os_version() >= 10,
+            Os::tvOS => self.os_version() >= 10,
+            Os::macOS => self.os_version() >= 12,
         }
     }
 
     pub fn supports_extract_insert_and_reverse_bits(&self) -> bool {
         match self.os() {
-            OS::iOS => self.os_version() >= 10,
-            OS::tvOS => self.os_version() >= 10,
-            OS::macOS => self.os_version() >= 12,
+            Os::iOS => self.os_version() >= 10,
+            Os::tvOS => self.os_version() >= 10,
+            Os::macOS => self.os_version() >= 12,
         }
     }
 
     pub fn supports_simd_barrier(&self) -> bool {
         match self.os() {
-            OS::iOS => self.os_version() >= 10,
-            OS::tvOS => self.os_version() >= 10,
-            OS::macOS => self.os_version() >= 13,
+            Os::iOS => self.os_version() >= 10,
+            Os::tvOS => self.os_version() >= 10,
+            Os::macOS => self.os_version() >= 13,
         }
     }
 
     pub fn supports_sampler_max_anisotropy(&self) -> bool {
         match self.os() {
-            OS::iOS => self.os_version() >= 10,
-            OS::tvOS => self.os_version() >= 10,
-            OS::macOS => self.os_version() >= 13,
+            Os::iOS => self.os_version() >= 10,
+            Os::tvOS => self.os_version() >= 10,
+            Os::macOS => self.os_version() >= 13,
         }
     }
 
     pub fn supports_sampler_lod_clamp(&self) -> bool {
         match self.os() {
-            OS::iOS => self.os_version() >= 10,
-            OS::tvOS => self.os_version() >= 10,
-            OS::macOS => self.os_version() >= 13,
+            Os::iOS => self.os_version() >= 10,
+            Os::tvOS => self.os_version() >= 10,
+            Os::macOS => self.os_version() >= 13,
         }
     }
 
     pub fn supports_border_color(&self) -> bool {
-        self.os() == OS::macOS && self.os_version() >= 12
+        self.os() == Os::macOS && self.os_version() >= 12
     }
 
     pub fn supports_dual_source_blending(&self) -> bool {
         match self.os() {
-            OS::iOS => self.os_version() >= 11,
-            OS::tvOS => self.os_version() >= 11,
-            OS::macOS => self.os_version() >= 12,
+            Os::iOS => self.os_version() >= 11,
+            Os::tvOS => self.os_version() >= 11,
+            Os::macOS => self.os_version() >= 12,
         }
     }
 
     pub fn supports_argument_buffers(&self) -> bool {
         match self.os() {
-            OS::iOS => self.os_version() >= 11,
-            OS::tvOS => self.os_version() >= 11,
-            OS::macOS => self.os_version() >= 13,
+            Os::iOS => self.os_version() >= 11,
+            Os::tvOS => self.os_version() >= 11,
+            Os::macOS => self.os_version() >= 13,
         }
     }
 
     pub fn supports_programmable_sample_positions(&self) -> bool {
         match self.os() {
-            OS::iOS => self.os_version() >= 11,
-            OS::tvOS => self.os_version() >= 11,
-            OS::macOS => self.os_version() >= 13,
+            Os::iOS => self.os_version() >= 11,
+            Os::tvOS => self.os_version() >= 11,
+            Os::macOS => self.os_version() >= 13,
         }
     }
 
     pub fn supports_uniform_type(&self) -> bool {
         match self.os() {
-            OS::iOS => self.os_version() >= 11,
-            OS::tvOS => self.os_version() >= 11,
-            OS::macOS => self.os_version() >= 13,
+            Os::iOS => self.os_version() >= 11,
+            Os::tvOS => self.os_version() >= 11,
+            Os::macOS => self.os_version() >= 13,
         }
     }
 
     pub fn supports_imageblocks(&self) -> bool {
-        self.os() == OS::iOS && self.gpu_family() >= 4
+        self.os() == Os::iOS && self.gpu_family() >= 4
     }
 
     pub fn supports_tile_shaders(&self) -> bool {
-        self.os() == OS::iOS && self.gpu_family() >= 4
+        self.os() == Os::iOS && self.gpu_family() >= 4
     }
 
     pub fn supports_imageblock_sample_coverage_control(&self) -> bool {
-        self.os() == OS::iOS && self.gpu_family() >= 4
+        self.os() == Os::iOS && self.gpu_family() >= 4
     }
 
     pub fn supports_threadgroup_sharing(&self) -> bool {
-        self.os() == OS::iOS && self.gpu_family() >= 4
+        self.os() == Os::iOS && self.gpu_family() >= 4
     }
 
     pub fn supports_post_depth_coverage(&self) -> bool {
-        self.os() == OS::iOS && self.gpu_family() >= 4
+        self.os() == Os::iOS && self.gpu_family() >= 4
     }
 
     pub fn supports_quad_scoped_permute_operations(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 4,
-            OS::tvOS => false,
-            OS::macOS => self.os_version() >= 13,
+            Os::iOS => self.gpu_family() >= 4,
+            Os::tvOS => false,
+            Os::macOS => self.os_version() >= 13,
         }
     }
 
     pub fn supports_raster_order_groups(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 4,
-            OS::tvOS => false,
-            OS::macOS => self.os_version() >= 13,
+            Os::iOS => self.gpu_family() >= 4,
+            Os::tvOS => false,
+            Os::macOS => self.os_version() >= 13,
         }
     }
 
     pub fn supports_non_uniform_threadgroup_size(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 4,
-            OS::tvOS => false,
-            OS::macOS => self.os_version() >= 13,
+            Os::iOS => self.gpu_family() >= 4,
+            Os::tvOS => false,
+            Os::macOS => self.os_version() >= 13,
         }
     }
 
     pub fn supports_multiple_viewports(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 5,
-            OS::tvOS => false,
-            OS::macOS => self.os_version() >= 13,
+            Os::iOS => self.gpu_family() >= 5,
+            Os::tvOS => false,
+            Os::macOS => self.os_version() >= 13,
         }
     }
 
     pub fn supports_device_notifications(&self) -> bool {
-        self.os() == OS::macOS && self.os_version() >= 13
+        self.os() == Os::macOS && self.os_version() >= 13
     }
 
     pub fn supports_stencil_feedback(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 5,
-            OS::tvOS => false,
-            OS::macOS => self.gpu_family() >= 2,
+            Os::iOS => self.gpu_family() >= 5,
+            Os::tvOS => false,
+            Os::macOS => self.gpu_family() >= 2,
         }
     }
 
     pub fn supports_stencil_resolve(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 5,
-            OS::tvOS => false,
-            OS::macOS => self.gpu_family() >= 2,
+            Os::iOS => self.gpu_family() >= 5,
+            Os::tvOS => false,
+            Os::macOS => self.gpu_family() >= 2,
         }
     }
 
     pub fn supports_binary_archive(&self) -> bool {
         match self.os() {
-            OS::iOS => self.gpu_family() >= 3,
-            OS::tvOS => self.gpu_family() >= 3,
-            OS::macOS => self.gpu_family() >= 1,
+            Os::iOS => self.gpu_family() >= 3,
+            Os::tvOS => self.gpu_family() >= 3,
+            Os::macOS => self.gpu_family() >= 1,
         }
     }
 
@@ -573,7 +587,7 @@ impl MTLFeatureSet {
     }
 
     pub fn max_texture_argument_entries(&self) -> u32 {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             128
         } else {
             31
@@ -589,7 +603,7 @@ impl MTLFeatureSet {
     }
 
     pub fn max_inlined_constant_data_buffers(&self) -> u32 {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             14
         } else {
             31
@@ -601,7 +615,7 @@ impl MTLFeatureSet {
     }
 
     pub fn max_threads_per_threadgroup(&self) -> u32 {
-        if self.os() == OS::macOS || self.gpu_family() >= 4 {
+        if self.os() == Os::macOS || self.gpu_family() >= 4 {
             1024
         } else {
             512
@@ -610,24 +624,24 @@ impl MTLFeatureSet {
 
     pub fn max_total_threadgroup_memory_allocation(&self) -> u32 {
         match (self.os(), self.gpu_family()) {
-            (OS::iOS, 5) => 64 * KB,
-            (OS::iOS, 4) => {
+            (Os::iOS, 5) => 64 * KB,
+            (Os::iOS, 4) => {
                 if self.os_version() >= 12 {
                     64 * KB
                 } else {
                     32 * KB
                 }
             }
-            (OS::iOS, 3) => 16 * KB,
-            (OS::iOS, _) => 16 * KB - 32,
-            (OS::tvOS, 1) => 16 * KB - 32,
-            (OS::tvOS, _) => 16 * KB,
-            (OS::macOS, _) => 32 * KB,
+            (Os::iOS, 3) => 16 * KB,
+            (Os::iOS, _) => 16 * KB - 32,
+            (Os::tvOS, 1) => 16 * KB - 32,
+            (Os::tvOS, _) => 16 * KB,
+            (Os::macOS, _) => 32 * KB,
         }
     }
 
     pub fn max_total_tile_memory_allocation(&self) -> u32 {
-        if self.os() == OS::iOS && self.gpu_family() == 4 {
+        if self.os() == Os::iOS && self.gpu_family() == 4 {
             32 * KB
         } else {
             0
@@ -639,7 +653,7 @@ impl MTLFeatureSet {
     }
 
     pub fn max_constant_buffer_function_memory_allocation(&self) -> Option<u32> {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             Some(64 * KB)
         } else {
             None
@@ -647,7 +661,7 @@ impl MTLFeatureSet {
     }
 
     pub fn max_fragment_inputs(&self) -> u32 {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             32
         } else {
             60
@@ -655,7 +669,7 @@ impl MTLFeatureSet {
     }
 
     pub fn max_fragment_input_components(&self) -> u32 {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             128
         } else {
             60
@@ -664,9 +678,9 @@ impl MTLFeatureSet {
 
     pub fn max_function_constants(&self) -> u32 {
         match self.os() {
-            OS::iOS if self.os_version() >= 11 => 65536,
-            OS::tvOS if self.os_version() >= 10 => 65536,
-            OS::macOS if self.os_version() >= 12 => 65536,
+            Os::iOS if self.os_version() >= 11 => 65536,
+            Os::tvOS if self.os_version() >= 10 => 65536,
+            Os::macOS if self.os_version() >= 12 => 65536,
             _ => 0,
         }
     }
@@ -674,10 +688,10 @@ impl MTLFeatureSet {
     pub fn max_tessellation_factor(&self) -> u32 {
         if self.supports_tessellation() {
             match self.os() {
-                OS::iOS if self.gpu_family() >= 5 => 64,
-                OS::iOS => 16,
-                OS::tvOS => 16,
-                OS::macOS => 64,
+                Os::iOS if self.gpu_family() >= 5 => 64,
+                Os::iOS => 16,
+                Os::tvOS => 16,
+                Os::macOS => 64,
             }
         } else {
             0
@@ -701,7 +715,8 @@ impl MTLFeatureSet {
     }
 
     pub fn max_buffer_length(&self) -> u32 {
-        if self.os() == OS::macOS && self.os_version() >= 12 {
+        #[allow(clippy::identity_op)]
+        if self.os() == Os::macOS && self.os_version() >= 12 {
             1 * GB
         } else {
             256 * MB
@@ -709,7 +724,7 @@ impl MTLFeatureSet {
     }
 
     pub fn min_buffer_offset_alignment(&self) -> u32 {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             256
         } else {
             4
@@ -718,42 +733,42 @@ impl MTLFeatureSet {
 
     pub fn max_1d_texture_size(&self) -> u32 {
         match (self.os(), self.gpu_family()) {
-            (OS::iOS, 1) | (OS::iOS, 2) => {
+            (Os::iOS, 1) | (Os::iOS, 2) => {
                 if self.version() <= 2 {
                     4096
                 } else {
                     8192
                 }
             }
-            (OS::tvOS, 1) => 8192,
+            (Os::tvOS, 1) => 8192,
             _ => 16384,
         }
     }
 
     pub fn max_2d_texture_size(&self) -> u32 {
         match (self.os(), self.gpu_family()) {
-            (OS::iOS, 1) | (OS::iOS, 2) => {
+            (Os::iOS, 1) | (Os::iOS, 2) => {
                 if self.version() <= 2 {
                     4096
                 } else {
                     8192
                 }
             }
-            (OS::tvOS, 1) => 8192,
+            (Os::tvOS, 1) => 8192,
             _ => 16384,
         }
     }
 
     pub fn max_cube_map_texture_size(&self) -> u32 {
         match (self.os(), self.gpu_family()) {
-            (OS::iOS, 1) | (OS::iOS, 2) => {
+            (Os::iOS, 1) | (Os::iOS, 2) => {
                 if self.version() <= 2 {
                     4096
                 } else {
                     8192
                 }
             }
-            (OS::tvOS, 1) => 8192,
+            (Os::tvOS, 1) => 8192,
             _ => 16384,
         }
     }
@@ -768,9 +783,9 @@ impl MTLFeatureSet {
 
     pub fn copy_texture_buffer_alignment(&self) -> u32 {
         match (self.os(), self.gpu_family()) {
-            (OS::iOS, 1) | (OS::iOS, 2) | (OS::tvOS, 1) => 64,
-            (OS::iOS, _) | (OS::tvOS, _) => 16,
-            (OS::macOS, _) => 256,
+            (Os::iOS, 1) | (Os::iOS, 2) | (Os::tvOS, 1) => 64,
+            (Os::iOS, _) | (Os::tvOS, _) => 16,
+            (Os::macOS, _) => 256,
         }
     }
 
@@ -778,7 +793,7 @@ impl MTLFeatureSet {
     /// the buffer alignment can be discovered via API query
     pub fn new_texture_buffer_alignment(&self) -> Option<u32> {
         match self.os() {
-            OS::iOS => {
+            Os::iOS => {
                 if self.os_version() >= 11 {
                     None
                 } else if self.gpu_family() == 3 {
@@ -787,19 +802,19 @@ impl MTLFeatureSet {
                     Some(64)
                 }
             }
-            OS::tvOS => {
+            Os::tvOS => {
                 if self.os_version() >= 11 {
                     None
                 } else {
                     Some(64)
                 }
             }
-            OS::macOS => None,
+            Os::macOS => None,
         }
     }
 
     pub fn max_color_render_targets(&self) -> u32 {
-        if self.os() == OS::iOS && self.gpu_family() == 1 {
+        if self.os() == Os::iOS && self.gpu_family() == 1 {
             4
         } else {
             8
@@ -812,11 +827,11 @@ impl MTLFeatureSet {
 
     pub fn max_total_color_render_target_size(&self) -> Option<u32> {
         match (self.os(), self.gpu_family()) {
-            (OS::iOS, 1) => Some(128),
-            (OS::iOS, 2) | (OS::iOS, 3) => Some(256),
-            (OS::iOS, _) => Some(512),
-            (OS::tvOS, _) => Some(256),
-            (OS::macOS, _) => None,
+            (Os::iOS, 1) => Some(128),
+            (Os::iOS, 2) | (Os::iOS, 3) => Some(256),
+            (Os::iOS, _) => Some(512),
+            (Os::tvOS, _) => Some(256),
+            (Os::macOS, _) => None,
         }
     }
 
@@ -833,7 +848,7 @@ impl MTLFeatureSet {
     }
 
     pub fn r8_unorm_srgb_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             PixelFormatCapabilities::empty()
         } else if self.supports_srgb_writes() {
             PixelFormatCapabilities::all()
@@ -843,7 +858,7 @@ impl MTLFeatureSet {
     }
 
     pub fn r8_snorm_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::iOS && self.gpu_family() == 1 {
+        if self.os() == Os::iOS && self.gpu_family() == 1 {
             !PixelFormatCapabilities::Resolve
         } else {
             PixelFormatCapabilities::all()
@@ -863,7 +878,7 @@ impl MTLFeatureSet {
     }
 
     pub fn r16_unorm_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() != OS::macOS {
+        if self.os() != Os::macOS {
             !PixelFormatCapabilities::Resolve
         } else {
             PixelFormatCapabilities::all()
@@ -871,7 +886,7 @@ impl MTLFeatureSet {
     }
 
     pub fn r16_snorm_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() != OS::macOS {
+        if self.os() != Os::macOS {
             !PixelFormatCapabilities::Resolve
         } else {
             PixelFormatCapabilities::all()
@@ -899,7 +914,7 @@ impl MTLFeatureSet {
     }
 
     pub fn rg8_unorm_srgb_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             PixelFormatCapabilities::empty()
         } else if self.supports_srgb_writes() {
             PixelFormatCapabilities::all()
@@ -909,7 +924,7 @@ impl MTLFeatureSet {
     }
 
     pub fn rg8_snorm_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::iOS && self.gpu_family() == 1 {
+        if self.os() == Os::iOS && self.gpu_family() == 1 {
             !PixelFormatCapabilities::Resolve
         } else {
             PixelFormatCapabilities::all()
@@ -929,7 +944,7 @@ impl MTLFeatureSet {
     }
 
     pub fn b5_g6_r5_unorm_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             PixelFormatCapabilities::empty()
         } else {
             !PixelFormatCapabilities::Write
@@ -937,7 +952,7 @@ impl MTLFeatureSet {
     }
 
     pub fn a1_bgr5_unorm_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             PixelFormatCapabilities::empty()
         } else {
             !PixelFormatCapabilities::Write
@@ -945,7 +960,7 @@ impl MTLFeatureSet {
     }
 
     pub fn abgr4_unorm_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             PixelFormatCapabilities::empty()
         } else {
             !PixelFormatCapabilities::Write
@@ -953,7 +968,7 @@ impl MTLFeatureSet {
     }
 
     pub fn bgr5_a1_unorm_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             PixelFormatCapabilities::empty()
         } else {
             !PixelFormatCapabilities::Write
@@ -961,9 +976,9 @@ impl MTLFeatureSet {
     }
 
     pub fn r32_uint_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::iOS && self.os_version() == 8 {
+        if self.os() == Os::iOS && self.os_version() == 8 {
             PixelFormatCapabilities::Color
-        } else if self.os() == OS::macOS {
+        } else if self.os() == Os::macOS {
             PixelFormatCapabilities::Color
                 | PixelFormatCapabilities::Write
                 | PixelFormatCapabilities::Msaa
@@ -973,9 +988,9 @@ impl MTLFeatureSet {
     }
 
     pub fn r32_sint_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::iOS && self.os_version() == 8 {
+        if self.os() == Os::iOS && self.os_version() == 8 {
             PixelFormatCapabilities::Color
-        } else if self.os() == OS::macOS {
+        } else if self.os() == Os::macOS {
             PixelFormatCapabilities::Color
                 | PixelFormatCapabilities::Write
                 | PixelFormatCapabilities::Msaa
@@ -985,11 +1000,11 @@ impl MTLFeatureSet {
     }
 
     pub fn r32_float_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::iOS && self.os_version() == 8 {
+        if self.os() == Os::iOS && self.os_version() == 8 {
             PixelFormatCapabilities::Color
                 | PixelFormatCapabilities::Blend
                 | PixelFormatCapabilities::Msaa
-        } else if self.os() == OS::macOS {
+        } else if self.os() == Os::macOS {
             PixelFormatCapabilities::all()
         } else {
             PixelFormatCapabilities::Write
@@ -1000,7 +1015,7 @@ impl MTLFeatureSet {
     }
 
     pub fn rg16_unorm_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             PixelFormatCapabilities::all()
         } else {
             !PixelFormatCapabilities::Resolve
@@ -1008,7 +1023,7 @@ impl MTLFeatureSet {
     }
 
     pub fn rg16_snorm_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             PixelFormatCapabilities::all()
         } else {
             !PixelFormatCapabilities::Resolve
@@ -1044,7 +1059,7 @@ impl MTLFeatureSet {
     }
 
     pub fn rgba8_snorm_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::iOS && self.gpu_family() == 1 {
+        if self.os() == Os::iOS && self.gpu_family() == 1 {
             !PixelFormatCapabilities::Resolve
         } else {
             PixelFormatCapabilities::all()
@@ -1077,9 +1092,9 @@ impl MTLFeatureSet {
 
     pub fn rgb10_a2_unorm_capabilities(&self) -> PixelFormatCapabilities {
         let supports_writes = match self.os() {
-            OS::iOS => self.gpu_family() >= 3,
-            OS::tvOS => self.gpu_family() >= 2,
-            OS::macOS => true,
+            Os::iOS => self.gpu_family() >= 3,
+            Os::tvOS => self.gpu_family() >= 2,
+            Os::macOS => true,
         };
         if supports_writes {
             PixelFormatCapabilities::all()
@@ -1090,9 +1105,9 @@ impl MTLFeatureSet {
 
     pub fn rgb10_a2_uint_capabilities(&self) -> PixelFormatCapabilities {
         let supports_writes = match self.os() {
-            OS::iOS => self.gpu_family() >= 3,
-            OS::tvOS => self.gpu_family() >= 2,
-            OS::macOS => true,
+            Os::iOS => self.gpu_family() >= 3,
+            Os::tvOS => self.gpu_family() >= 2,
+            Os::macOS => true,
         };
         if supports_writes {
             PixelFormatCapabilities::Write
@@ -1105,9 +1120,9 @@ impl MTLFeatureSet {
 
     pub fn rg11_b10_float_capabilities(&self) -> PixelFormatCapabilities {
         let supports_writes = match self.os() {
-            OS::iOS => self.gpu_family() >= 3,
-            OS::tvOS => self.gpu_family() >= 2,
-            OS::macOS => true,
+            Os::iOS => self.gpu_family() >= 3,
+            Os::tvOS => self.gpu_family() >= 2,
+            Os::macOS => true,
         };
         if supports_writes {
             PixelFormatCapabilities::all()
@@ -1117,13 +1132,13 @@ impl MTLFeatureSet {
     }
 
     pub fn rgb9_e5_float_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             PixelFormatCapabilities::Filter
         } else {
             let supports_writes = match self.os() {
-                OS::iOS => self.gpu_family() >= 3,
-                OS::tvOS => self.gpu_family() >= 2,
-                OS::macOS => false,
+                Os::iOS => self.gpu_family() >= 3,
+                Os::tvOS => self.gpu_family() >= 2,
+                Os::macOS => false,
             };
             if supports_writes {
                 PixelFormatCapabilities::all()
@@ -1134,9 +1149,9 @@ impl MTLFeatureSet {
     }
 
     pub fn rg32_uint_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::iOS && self.os_version() == 8 {
+        if self.os() == Os::iOS && self.os_version() == 8 {
             PixelFormatCapabilities::Color
-        } else if self.os() == OS::macOS {
+        } else if self.os() == Os::macOS {
             PixelFormatCapabilities::Color
                 | PixelFormatCapabilities::Write
                 | PixelFormatCapabilities::Msaa
@@ -1146,9 +1161,9 @@ impl MTLFeatureSet {
     }
 
     pub fn rg32_sint_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::iOS && self.os_version() == 8 {
+        if self.os() == Os::iOS && self.os_version() == 8 {
             PixelFormatCapabilities::Color
-        } else if self.os() == OS::macOS {
+        } else if self.os() == Os::macOS {
             PixelFormatCapabilities::Color
                 | PixelFormatCapabilities::Write
                 | PixelFormatCapabilities::Msaa
@@ -1158,9 +1173,9 @@ impl MTLFeatureSet {
     }
 
     pub fn rg32_float_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             PixelFormatCapabilities::all()
-        } else if self.os() == OS::iOS && self.os_version() == 8 {
+        } else if self.os() == Os::iOS && self.os_version() == 8 {
             PixelFormatCapabilities::Color | PixelFormatCapabilities::Blend
         } else {
             PixelFormatCapabilities::Write
@@ -1170,7 +1185,7 @@ impl MTLFeatureSet {
     }
 
     pub fn rgba16_unorm_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             PixelFormatCapabilities::all()
         } else {
             !PixelFormatCapabilities::Write
@@ -1178,7 +1193,7 @@ impl MTLFeatureSet {
     }
 
     pub fn rgba16_snorm_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             PixelFormatCapabilities::all()
         } else {
             !PixelFormatCapabilities::Write
@@ -1202,9 +1217,9 @@ impl MTLFeatureSet {
     }
 
     pub fn rgba32_uint_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::iOS && self.os_version() == 8 {
+        if self.os() == Os::iOS && self.os_version() == 8 {
             PixelFormatCapabilities::Color
-        } else if self.os() == OS::macOS {
+        } else if self.os() == Os::macOS {
             PixelFormatCapabilities::Color
                 | PixelFormatCapabilities::Write
                 | PixelFormatCapabilities::Msaa
@@ -1214,9 +1229,9 @@ impl MTLFeatureSet {
     }
 
     pub fn rgba32_sint_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::iOS && self.os_version() == 8 {
+        if self.os() == Os::iOS && self.os_version() == 8 {
             PixelFormatCapabilities::Color
-        } else if self.os() == OS::macOS {
+        } else if self.os() == Os::macOS {
             PixelFormatCapabilities::Color
                 | PixelFormatCapabilities::Write
                 | PixelFormatCapabilities::Msaa
@@ -1226,9 +1241,9 @@ impl MTLFeatureSet {
     }
 
     pub fn rgba32_float_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             PixelFormatCapabilities::all()
-        } else if self.os() == OS::iOS && self.version() == 8 {
+        } else if self.os() == Os::iOS && self.version() == 8 {
             PixelFormatCapabilities::Color
         } else {
             PixelFormatCapabilities::Write | PixelFormatCapabilities::Color
@@ -1286,7 +1301,7 @@ impl MTLFeatureSet {
     }
 
     pub fn depth32_float_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             PixelFormatCapabilities::Filter
                 | PixelFormatCapabilities::Msaa
                 | PixelFormatCapabilities::Resolve
@@ -1302,7 +1317,7 @@ impl MTLFeatureSet {
     }
 
     pub fn depth24_unorm_stencil8_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             PixelFormatCapabilities::Filter
                 | PixelFormatCapabilities::Msaa
                 | PixelFormatCapabilities::Resolve
@@ -1312,7 +1327,7 @@ impl MTLFeatureSet {
     }
 
     pub fn depth32_float_stencil8_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             PixelFormatCapabilities::Filter
                 | PixelFormatCapabilities::Msaa
                 | PixelFormatCapabilities::Resolve
@@ -1324,7 +1339,7 @@ impl MTLFeatureSet {
     }
 
     pub fn x24_stencil8_capabilities(&self) -> PixelFormatCapabilities {
-        if self.os() == OS::macOS {
+        if self.os() == Os::macOS {
             PixelFormatCapabilities::Msaa
         } else {
             PixelFormatCapabilities::empty()
@@ -1369,7 +1384,7 @@ impl MTLFeatureSet {
 
     pub fn bgr10_a2_unorm_capabilities(&self) -> PixelFormatCapabilities {
         if self.supports_wide_color_pixel_format() {
-            if self.os() == OS::macOS {
+            if self.os() == Os::macOS {
                 !PixelFormatCapabilities::Write
             } else {
                 PixelFormatCapabilities::all()
@@ -1380,6 +1395,7 @@ impl MTLFeatureSet {
     }
 }
 
+/// See <https://developer.apple.com/documentation/metal/mtlargumentbufferstier>
 #[repr(u64)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum MTLArgumentBuffersTier {
@@ -1387,6 +1403,7 @@ pub enum MTLArgumentBuffersTier {
     Tier2 = 1,
 }
 
+/// See <https://developer.apple.com/documentation/metal/mtlreadwritetexturetier>
 #[repr(u64)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum MTLReadWriteTextureTier {
@@ -1396,6 +1413,8 @@ pub enum MTLReadWriteTextureTier {
 }
 
 /// Only available on (macos(11.0), ios(14.0))
+///
+/// See <https://developer.apple.com/documentation/metal/mtlcountersamplingpoint>
 #[repr(u64)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum MTLCounterSamplingPoint {
@@ -1407,6 +1426,9 @@ pub enum MTLCounterSamplingPoint {
 }
 
 /// Only available on (macos(11.0), macCatalyst(14.0), ios(13.0))
+/// Kinda a long name!
+///
+/// See <https://developer.apple.com/documentation/metal/mtlsparsetextureregionalignmentmode>
 #[repr(u64)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum MTLSparseTextureRegionAlignmentMode {
@@ -1414,8 +1436,9 @@ pub enum MTLSparseTextureRegionAlignmentMode {
     Inward = 1,
 }
 
-bitflags! {
+bitflags::bitflags! {
     /// Options that determine how Metal prepares the pipeline.
+    #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
     pub struct MTLPipelineOption: NSUInteger {
         /// Do not provide any reflection information.
         const None                      = 0;
@@ -1431,6 +1454,7 @@ bitflags! {
     }
 }
 
+/// See <https://developer.apple.com/documentation/metal/mtlaccelerationstructuresizes>
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 pub struct MTLAccelerationStructureSizes {
@@ -1439,10 +1463,10 @@ pub struct MTLAccelerationStructureSizes {
     pub refit_scratch_buffer_size: NSUInteger,
 }
 
-#[link(name = "Metal", kind = "framework")]
+#[cfg_attr(feature = "link", link(name = "Metal", kind = "framework"))]
 extern "C" {
     fn MTLCreateSystemDefaultDevice() -> *mut MTLDevice;
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "visionos")))]
     fn MTLCopyAllDevices() -> *mut Object; //TODO: Array
 }
 
@@ -1453,17 +1477,25 @@ pub type dispatch_queue_t = *mut Object;
 #[allow(non_camel_case_types)]
 type dispatch_block_t = *const Block<(), ()>;
 
+const DISPATCH_DATA_DESTRUCTOR_DEFAULT: dispatch_block_t = ptr::null();
+
 #[cfg_attr(
-    any(target_os = "macos", target_os = "ios"),
+    all(
+        feature = "link",
+        any(target_os = "macos", target_os = "ios", target_os = "visionos")
+    ),
     link(name = "System", kind = "dylib")
 )]
 #[cfg_attr(
-    not(any(target_os = "macos", target_os = "ios")),
+    all(
+        feature = "link",
+        not(any(target_os = "macos", target_os = "ios", target_os = "visionos"))
+    ),
     link(name = "dispatch", kind = "dylib")
 )]
 #[allow(improper_ctypes)]
 extern "C" {
-    static _dispatch_main_q: dispatch_queue_t;
+    static mut _dispatch_main_q: Object;
 
     fn dispatch_data_create(
         buffer: *const std::ffi::c_void,
@@ -1480,26 +1512,30 @@ type MTLNewRenderPipelineStateWithReflectionCompletionHandler = extern fn(render
 type MTLNewComputePipelineStateCompletionHandler = extern fn(computePipelineState: id, error: id);
 type MTLNewComputePipelineStateWithReflectionCompletionHandler = extern fn(computePipelineState: id, reflection: id, error: id);*/
 
+/// See <https://developer.apple.com/documentation/metal/mtldevice>
 pub enum MTLDevice {}
 
 foreign_obj_type! {
     type CType = MTLDevice;
     pub struct Device;
-    pub struct DeviceRef;
 }
 
 impl Device {
     pub fn system_default() -> Option<Self> {
         // `MTLCreateSystemDefaultDevice` may return null if Metal is not supported
-        unsafe { MTLCreateSystemDefaultDevice().as_mut().map(|x| Self(x)) }
+        unsafe {
+            MTLCreateSystemDefaultDevice()
+                .as_mut()
+                .map(|x| Self(x.into()))
+        }
     }
 
     pub fn all() -> Vec<Self> {
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "visionos"))]
         {
             Self::system_default().into_iter().collect()
         }
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "ios", target_os = "visionos")))]
         unsafe {
             let array = MTLCopyAllDevices();
             let count: NSUInteger = msg_send![array, count];
@@ -1557,54 +1593,24 @@ impl DeviceRef {
     }
 
     pub fn is_low_power(&self) -> bool {
-        unsafe {
-            match msg_send![self, isLowPower] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, isLowPower] }
     }
 
     pub fn is_headless(&self) -> bool {
-        unsafe {
-            match msg_send![self, isHeadless] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, isHeadless] }
     }
 
     pub fn is_removable(&self) -> bool {
-        unsafe {
-            match msg_send![self, isRemovable] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, isRemovable] }
     }
 
     /// Only available on (macos(11.0), ios(14.0))
     pub fn supports_raytracing(&self) -> bool {
-        unsafe {
-            match msg_send![self, supportsRaytracing] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, supportsRaytracing] }
     }
 
     pub fn has_unified_memory(&self) -> bool {
-        unsafe {
-            match msg_send![self, hasUnifiedMemory] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send![self, hasUnifiedMemory] }
     }
 
     pub fn recommended_max_working_set_size(&self) -> u64 {
@@ -1616,95 +1622,41 @@ impl DeviceRef {
     }
 
     pub fn supports_feature_set(&self, feature: MTLFeatureSet) -> bool {
-        unsafe {
-            match msg_send![self, supportsFeatureSet: feature] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, supportsFeatureSet: feature] }
     }
 
     pub fn supports_family(&self, family: MTLGPUFamily) -> bool {
-        unsafe {
-            match msg_send![self, supportsFamily: family] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, supportsFamily: family] }
     }
 
     pub fn supports_vertex_amplification_count(&self, count: NSUInteger) -> bool {
-        unsafe {
-            match msg_send![self, supportsVertexAmplificationCount: count] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, supportsVertexAmplificationCount: count] }
     }
 
     pub fn supports_texture_sample_count(&self, count: NSUInteger) -> bool {
-        unsafe {
-            match msg_send![self, supportsTextureSampleCount: count] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, supportsTextureSampleCount: count] }
     }
 
     pub fn supports_shader_barycentric_coordinates(&self) -> bool {
-        unsafe {
-            match msg_send![self, supportsShaderBarycentricCoordinates] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, supportsShaderBarycentricCoordinates] }
     }
 
     pub fn supports_function_pointers(&self) -> bool {
-        unsafe {
-            match msg_send![self, supportsFunctionPointers] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, supportsFunctionPointers] }
     }
 
     /// Only available on (macos(11.0), ios(14.0))
     pub fn supports_dynamic_libraries(&self) -> bool {
-        unsafe {
-            match msg_send![self, supportsDynamicLibraries] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, supportsDynamicLibraries] }
     }
 
     /// Only available on (macos(11.0), ios(14.0))
     pub fn supports_counter_sampling(&self, sampling_point: MTLCounterSamplingPoint) -> bool {
-        unsafe {
-            match msg_send![self, supportsCounterSampling: sampling_point] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, supportsCounterSampling: sampling_point] }
     }
 
     pub fn d24_s8_supported(&self) -> bool {
-        unsafe {
-            match msg_send![self, isDepth24Stencil8PixelFormatSupported] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, isDepth24Stencil8PixelFormatSupported] }
     }
 
     pub fn new_fence(&self) -> Fence {
@@ -1766,12 +1718,20 @@ impl DeviceRef {
 
     pub fn new_library_with_data(&self, library_data: &[u8]) -> Result<Library, String> {
         unsafe {
-            let destructor_block = ConcreteBlock::new(|| {}).copy();
+            // SAFETY:
+            // `library_data` does not necessarily outlive the dispatch data
+            // in which it will be contained (since the dispatch data will be
+            // contained in the MTLLibrary returned by this function).
+            //
+            // To prevent the MTLLibrary from referencing the data outside of
+            // its lifetime, we use DISPATCH_DATA_DESTRUCTOR_DEFAULT as the
+            // destructor block, which will make `dispatch_data_create` copy
+            // the buffer for us automatically.
             let data = dispatch_data_create(
-                library_data.as_ptr() as *const std::ffi::c_void,
+                library_data.as_ptr().cast(),
                 library_data.len() as crate::c_size_t,
-                &_dispatch_main_q as *const _ as dispatch_queue_t,
-                &*destructor_block.deref(),
+                &raw mut _dispatch_main_q,
+                DISPATCH_DATA_DESTRUCTOR_DEFAULT,
             );
 
             let library: *mut MTLLibrary = try_objc! { err =>
@@ -1878,6 +1838,45 @@ impl DeviceRef {
         }
     }
 
+    /// Only available on (macos(13.0), ios(16.0))
+    pub fn new_mesh_render_pipeline_state_with_reflection(
+        &self,
+        descriptor: &MeshRenderPipelineDescriptorRef,
+        reflection_options: MTLPipelineOption,
+    ) -> Result<(RenderPipelineState, RenderPipelineReflection), String> {
+        unsafe {
+            let mut reflection: *mut Object = ptr::null_mut();
+            let pipeline_state: *mut MTLRenderPipelineState = try_objc! { err =>
+                msg_send![self, newRenderPipelineStateWithMeshDescriptor:descriptor
+                                                             options:reflection_options
+                                                          reflection:&mut reflection
+                                                               error:&mut err]
+            };
+
+            let state = RenderPipelineState::from_ptr(pipeline_state);
+
+            let () = msg_send![reflection, retain];
+            let reflection = RenderPipelineReflection::from_ptr(reflection as _);
+
+            Ok((state, reflection))
+        }
+    }
+
+    /// Only available on (macos(13.0), ios(16.0))
+    pub fn new_mesh_render_pipeline_state(
+        &self,
+        descriptor: &MeshRenderPipelineDescriptorRef,
+    ) -> Result<RenderPipelineState, String> {
+        unsafe {
+            let pipeline_state: *mut MTLRenderPipelineState = try_objc! { err =>
+                msg_send![self, newRenderPipelineStateWithMeshDescriptor:descriptor
+                                                               error:&mut err]
+            };
+
+            Ok(RenderPipelineState::from_ptr(pipeline_state))
+        }
+    }
+
     pub fn new_compute_pipeline_state_with_function(
         &self,
         function: &FunctionRef,
@@ -1966,6 +1965,33 @@ impl DeviceRef {
         }
     }
 
+    pub fn new_counter_sample_buffer_with_descriptor(
+        &self,
+        descriptor: &CounterSampleBufferDescriptorRef,
+    ) -> Result<CounterSampleBuffer, String> {
+        unsafe {
+            let counter_sample_buffer: *mut MTLCounterSampleBuffer = try_objc! { err =>
+                msg_send![self, newCounterSampleBufferWithDescriptor: descriptor error:&mut err]
+            };
+
+            assert!(!counter_sample_buffer.is_null());
+            Ok(CounterSampleBuffer::from_ptr(counter_sample_buffer))
+        }
+    }
+
+    pub fn new_indirect_command_buffer_with_descriptor(
+        &self,
+        descriptor: &IndirectCommandBufferDescriptorRef,
+        max_command_count: NSUInteger,
+        options: MTLResourceOptions,
+    ) -> IndirectCommandBuffer {
+        unsafe {
+            msg_send![self, newIndirectCommandBufferWithDescriptor:descriptor
+                                                   maxCommandCount:max_command_count
+                                                           options:options]
+        }
+    }
+
     pub fn new_texture(&self, descriptor: &TextureDescriptorRef) -> Texture {
         unsafe { msg_send![self, newTextureWithDescriptor: descriptor] }
     }
@@ -1990,68 +2016,32 @@ impl DeviceRef {
     }
 
     pub fn raster_order_groups_supported(&self) -> bool {
-        unsafe {
-            match msg_send![self, rasterOrderGroupsSupported] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, rasterOrderGroupsSupported] }
     }
 
     /// Only available on (macos(11.0), ios(14.0))
     pub fn supports_32bit_float_filtering(&self) -> bool {
-        unsafe {
-            match msg_send![self, supports32BitFloatFiltering] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, supports32BitFloatFiltering] }
     }
 
     /// Only available on (macos(11.0), ios(14.0))
     pub fn supports_32bit_MSAA(&self) -> bool {
-        unsafe {
-            match msg_send![self, supports32BitMSAA] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, supports32BitMSAA] }
     }
 
     /// Only available on (macos(11.0), ios(14.0))
     pub fn supports_query_texture_LOD(&self) -> bool {
-        unsafe {
-            match msg_send![self, supportsQueryTextureLOD] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, supportsQueryTextureLOD] }
     }
 
     /// Only available on (macos(11.0), ios(14.0))
     pub fn supports_BC_texture_compression(&self) -> bool {
-        unsafe {
-            match msg_send![self, supportsBCTextureCompression] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, supportsBCTextureCompression] }
     }
 
     /// Only available on (macos(11.0), ios(14.0))
     pub fn supports_pull_model_interpolation(&self) -> bool {
-        unsafe {
-            match msg_send![self, supportsPullModelInterpolation] {
-                YES => true,
-                NO => false,
-                _ => unreachable!(),
-            }
-        }
+        unsafe { msg_send_bool![self, supportsPullModelInterpolation] }
     }
 
     pub fn new_argument_encoder(
@@ -2079,6 +2069,14 @@ impl DeviceRef {
         options: MTLResourceOptions,
     ) -> MTLSizeAndAlign {
         unsafe { msg_send![self, heapBufferSizeAndAlignWithLength: length options: options] }
+    }
+
+    /// Only available on macos(13.0), ios(16.0)
+    pub fn heap_acceleration_structure_size_and_align_with_size(
+        &self,
+        size: NSUInteger,
+    ) -> MTLSizeAndAlign {
+        unsafe { msg_send![self, heapAccelerationStructureSizeAndAlignWithSize: size] }
     }
 
     pub fn heap_texture_size_and_align(
@@ -2113,5 +2111,34 @@ impl DeviceRef {
     /// Only available on (macos(10.14), ios(12.0), tvos(12.0))
     pub fn max_buffer_length(&self) -> NSUInteger {
         unsafe { msg_send![self, maxBufferLength] }
+    }
+
+    pub fn acceleration_structure_sizes_with_descriptor(
+        &self,
+        desc: &AccelerationStructureDescriptorRef,
+    ) -> MTLAccelerationStructureSizes {
+        unsafe { msg_send![self, accelerationStructureSizesWithDescriptor: desc] }
+    }
+
+    pub fn new_acceleration_structure_with_size(&self, size: NSUInteger) -> AccelerationStructure {
+        unsafe { msg_send![self, newAccelerationStructureWithSize: size] }
+    }
+
+    pub fn sample_timestamps(&self, cpu_timestamp: &mut u64, gpu_timestamp: &mut u64) {
+        unsafe { msg_send![self, sampleTimestamps: cpu_timestamp gpuTimestamp: gpu_timestamp] }
+    }
+
+    pub fn counter_sets(&self) -> Vec<CounterSet> {
+        unsafe {
+            let counter_sets: *mut Object = msg_send![self, counterSets];
+            let count: NSUInteger = msg_send![counter_sets, count];
+            (0..count)
+                .map(|i| {
+                    let csp: *mut MTLCounterSet = msg_send![counter_sets, objectAtIndex: i];
+                    let () = msg_send![csp, retain];
+                    CounterSet::from_ptr(csp)
+                })
+                .collect()
+        }
     }
 }

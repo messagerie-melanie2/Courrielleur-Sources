@@ -29,16 +29,18 @@ using Microsoft::WRL::ComPtr;
 MFMediaSource::MFMediaSource()
     : mPresentationEnded(false), mIsAudioEnded(false), mIsVideoEnded(false) {
   MOZ_COUNT_CTOR(MFMediaSource);
+  LOG("media source created");
 }
 
 MFMediaSource::~MFMediaSource() {
   // TODO : notify cdm about the last key id?
   MOZ_COUNT_DTOR(MFMediaSource);
+  LOG("media source destroyed");
 }
 
 HRESULT MFMediaSource::RuntimeClassInitialize(
     const Maybe<AudioInfo>& aAudio, const Maybe<VideoInfo>& aVideo,
-    nsISerialEventTarget* aManagerThread) {
+    nsISerialEventTarget* aManagerThread, bool aIsEncrytpedCustomInit) {
   // On manager thread.
   MutexAutoLock lock(mMutex);
 
@@ -50,8 +52,8 @@ HRESULT MFMediaSource::RuntimeClassInitialize(
   MOZ_ASSERT(mManagerThread, "manager thread shouldn't be nullptr!");
 
   if (aAudio) {
-    mAudioStream.Attach(
-        MFMediaEngineAudioStream::Create(streamId++, *aAudio, this));
+    mAudioStream.Attach(MFMediaEngineAudioStream::Create(
+        streamId++, *aAudio, aIsEncrytpedCustomInit, this));
     if (!mAudioStream) {
       NS_WARNING("Failed to create audio stream");
       return E_FAIL;
@@ -63,8 +65,8 @@ HRESULT MFMediaSource::RuntimeClassInitialize(
   }
 
   if (aVideo) {
-    mVideoStream.Attach(
-        MFMediaEngineVideoStream::Create(streamId++, *aVideo, this));
+    mVideoStream.Attach(MFMediaEngineVideoStream::Create(
+        streamId++, *aVideo, aIsEncrytpedCustomInit, this));
     if (!mVideoStream) {
       NS_WARNING("Failed to create video stream");
       return E_FAIL;
@@ -288,6 +290,9 @@ IFACEMETHODIMP MFMediaSource::Shutdown() {
   // MF_E_SHUTDOWN.
   RETURN_IF_FAILED(mMediaEventQueue->Shutdown());
   mState = State::Shutdowned;
+#ifdef MOZ_WMF_CDM
+  mCDMProxy = nullptr;
+#endif
   LOG("Shutdowned media source");
   return S_OK;
 }
@@ -331,11 +336,11 @@ IFACEMETHODIMP MFMediaSource::QueueEvent(MediaEventType aType,
                                          REFGUID aExtendedType, HRESULT aStatus,
                                          const PROPVARIANT* aValue) {
   MOZ_ASSERT(mMediaEventQueue);
-  RETURN_IF_FAILED(mMediaEventQueue->QueueEventParamVar(aType, aExtendedType,
-                                                        aStatus, aValue));
   LOG("Queued event %s", MediaEventTypeToStr(aType));
   PROFILER_MARKER_TEXT("MFMediaSource::QueueEvent", MEDIA_PLAYBACK, {},
                        nsPrintfCString("%s", MediaEventTypeToStr(aType)));
+  RETURN_IF_FAILED(mMediaEventQueue->QueueEventParamVar(aType, aExtendedType,
+                                                        aStatus, aValue));
   return S_OK;
 }
 
@@ -576,8 +581,8 @@ MFMediaEngineStream* MFMediaSource::GetStreamByIndentifier(
 
 #ifdef MOZ_WMF_CDM
 void MFMediaSource::SetCDMProxy(MFCDMProxy* aCDMProxy) {
-  // TODO : add threading assertion, not sure what thread it would be running on
-  // now.
+  AssertOnManagerThread();
+  LOG("SetCDMProxy");
   mCDMProxy = aCDMProxy;
   // TODO : ask cdm proxy to refresh trusted input
 }

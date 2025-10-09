@@ -11,9 +11,11 @@
 
 [package]
 edition = "2018"
+rust-version = "1.47.0"
 name = "unicode-bidi"
-version = "0.3.8"
+version = "0.3.15"
 authors = ["The Servo Project Developers"]
+build = false
 exclude = [
     "benches/**",
     "data/**",
@@ -21,6 +23,11 @@ exclude = [
     "tests/**",
     "tools/**",
 ]
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
 description = "Implementation of the Unicode Bidirectional Algorithm"
 documentation = "https://docs.rs/unicode-bidi/"
 readme = "README.md"
@@ -39,25 +46,8 @@ categories = [
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/servo/unicode-bidi"
 
-[lib]
-name = "unicode_bidi"
-
-[dependencies.flame]
-version = "0.2"
-optional = true
-
-[dependencies.flamer]
-version = "0.4"
-optional = true
-
-[dependencies.serde]
-version = ">=0.8, <2.0"
-features = ["derive"]
-optional = true
-default-features = false
-
-[dev-dependencies.serde_test]
-version = ">=0.8, <2.0"
+[badges.appveyor]
+repository = "servo/unicode-bidi"
 
 [features]
 bench_it = []
@@ -74,5 +64,28 @@ std = []
 unstable = []
 with_serde = ["serde"]
 
-[badges.appveyor]
-repository = "servo/unicode-bidi"
+[lib]
+name = "unicode_bidi"
+path = "src/lib.rs"
+
+[dependencies.flame]
+version = "0.2"
+optional = true
+
+[dependencies.flamer]
+version = "0.4"
+optional = true
+
+[dependencies.serde]
+version = ">=0.8, <2.0"
+features = ["derive"]
+optional = true
+default-features = false
+
+[dependencies.smallvec]
+version = ">=1.13"
+features = ["union"]
+optional = true
+
+[dev-dependencies]
+serde_test = ">=0.8, <2.0"

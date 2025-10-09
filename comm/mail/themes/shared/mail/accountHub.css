@@ -2,34 +2,62 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+@import url("chrome://global/skin/menu.css");
+@import url("chrome://global/skin/in-content/common.css");
+@import url("chrome://messenger/skin/variables.css");
 @import url("chrome://messenger/skin/colors.css");
 @import url("chrome://messenger/skin/widgets.css");
-@import url("chrome://global/skin/in-content/common.css");
 @import url("chrome://messenger/skin/inContentDialog.css");
 @import url("chrome://messenger/skin/accountHubForms.css");
 
 dialog {
-  --hub-button-color: var(--color-gray-90);
-  --hub-button-background: var(--color-white);
-  --hub-account-button-background: transparent;
-  --hub-account-button-background-hover: var(--color-ink-10);
-  --hub-account-button-background-hover-active: var(--color-gray-10);
-  --hub-account-button-border-color: var(--color-gray-30);
+  --hub-button-color: light-dark(var(--color-gray-90), var(--color-gray-05));
+  --hub-button-background: light-dark(var(--color-white), var(--color-gray-90));
+  --hub-account-button-background: light-dark(transparent, var(--color-gray-70));
+  --hub-account-button-background-hover: light-dark(var(--color-ink-10), var(--color-gray-80));
+  --hub-account-button-background-hover-active: light-dark(var(--color-gray-10), var(--color-gray-90));
+  --hub-account-button-border-color: light-dark(var(--color-gray-30), var(--color-gray-60));
+  --hub-account-primary-button-color: var(--color-neutral-base);
+  --hub-account-primary-button-background: var(--color-primary-default);
+  --hub-account-primary-button-background-hover: var(--color-primary-hover);
+  --hub-account-primary-button-background-active: var(--color-primary-pressed);
+  --hub-account-primary-button-background-focus: var(--color-primary-hover);
+  --hub-account-primary-button-border: var(--color-primary-hover);
+  --hub-account-primary-button-border-active: var(--color-primary-pressed);
+  --hub-account-secondary-button-color: light-dark(#18181b, #eeeef0);
+  --hub-account-secondary-button-background: var(--color-neutral-subtle);
+  --hub-account-secondary-button-background-hover: light-dark(var(--color-neutral-subtle), var(--color-neutral-base));
+  --hub-account-secondary-button-background-active: light-dark(var(--color-neutral-border), var(--color-neutral-lower));
+  --hub-account-secondary-button-background-focus: light-dark(var(--color-neutral-subtle), var(--color-neutral-base));
+  --hub-account-secondary-button-border: var(--color-neutral-border);
+  --hub-account-secondary-button-border-active: var(--color-neutral-border-intense);
+  --hub-account-button-outline-focus: var(--color-primary-hover);
+  --hub-account-button-hover-active-color:  light-dark(var(--color-neutral-border), var(--color-neutral-lower));
+  --hub-account-footer-link-color: var(--color-primary-default);
+  --hub-border-color: light-dark(var(--color-primary-soft), var(--color-primary-default));
+  --hub-divider-color: var(--color-neutral-base);
+  --hub-loader-background: var(--color-neutral-base);
+  --hub-loader-color: var(--color-primary-default);
+  --hub-floating-button-line-height: 1.3em;
+  --hub-width: 500px;
 
+  --hub-box-shadow: 0 2px 4px rgba(58, 57, 68, 0.3);
   --hub-input-height: 33px;
   --hub-input-border-radius: 3px;
+  --hub-input-border-color: color-mix(in srgb, currentColor 50%, transparent);
+  --hub-close-button-color: light-dark(#18181b, #eeeef0);
+  --hub-close-button-hover-background: var(--color-neutral-subtle);
+  --hub-close-button-active-background:var(--color-text-muted);
+  --hub-close-button-focus-background: var(--color-neutral-subtle);
+  --hub-close-button-focus-outline-color: var(--color-neutral-border-intense);
+
+  --success-illustration: var(--hub-success-illustration);
+  /* TODO: apply dark mode styling */
 }
 
-@media not (prefers-contrast) {
-  @media (prefers-color-scheme: dark) {
-    dialog {
-      --hub-button-color: var(--color-gray-05);
-      --hub-button-background: var(--color-gray-90);
-      --hub-account-button-background: var(--color-gray-70);
-      --hub-account-button-background-hover: var(--color-gray-80);
-      --hub-account-button-background-hover-active: var(--color-gray-90);
-      --hub-account-button-border-color: var(--color-gray-60);
-    }
+@media (prefers-color-scheme: dark) {
+  :host {
+    --success-illustration: var(--hub-success-illustration-dark);
   }
 }
 
@@ -48,93 +76,216 @@ dialog {
 
 .account-hub-dialog {
   display: grid;
-  min-width: 660px;
-  min-height: 360px;
-  max-width: 680px;
-  max-height: 70vh;
+  width: 800px;
+  min-height: 600px;
+  overflow: initial;
+  padding: 0;
+  box-shadow: none;
+
+  &::after {
+    --hub-blur-radius: 15px;
+    content: '';
+    position: absolute;
+    inset-block-end: -2px;
+    inset-inline: calc(2 * var(--hub-blur-radius) + 5px);
+    min-height: calc(3 * var(--hub-blur-radius));
+    background: linear-gradient(to right, rgba(159, 244, 240, 1), rgba(76, 177, 249, 1), rgba(168, 85, 247, 1));
+    filter: blur(var(--hub-blur-radius));
+    z-index: -1;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    &::after {
+      background: linear-gradient(to right, rgb(11, 140, 134, 1), rgba(28, 99, 149, 1));
+    }
+  }
 }
 
-.account-hub-view:not([hidden]),
-.account-hub-form {
+.account-hub-view:not([hidden]) {
   display: grid;
-  grid-template: "header" min-content
-                 "body" minmax(auto, 1fr)
-                 "footer" min-content;
-  gap: 21px;
+  grid-template: "header" min-content "body" 1fr "footer" min-content;
   text-align: center;
+  z-index: 1;
 }
 
-/* Typography */
-
-dialog h1 {
-  font-weight: 300;
-  font-size: 1.8rem;
-  line-height: 1em;
-  margin-block: 0;
+.account-hub-step {
+  grid-area: body;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: var(--hub-header-body-gap);
 }
 
-dialog h1.sub-view-title {
-  font-size: 1.7rem;
-  font-weight: 400;
-  margin-block-start: 9px;
+.account-hub-form,
+.account-hub-success-container,
+.account-hub-address-book-form {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  justify-content: center;
+}
+
+.account-hub-address-book-form {
+  margin-block: -18px;
+  padding-block: 18px;
+  justify-content: start;
+}
+
+.account-hub-view:not([hidden]) {
+  max-height: 90vh;
+  padding-inline: 20px;
+  padding-block-start: 40px;
+  border-radius: inherit;
+  border: 1px solid var(--hub-border-color);
+  /* Background color to better hide loading of the webp (>=100ms) */
+  background-color: var(--color-neutral-base);
+  background-image: url("chrome://messenger/skin/images/accounthub-bg-light.webp");
+  background-position: center center;
+  background-repeat: no-repeat;
+  background-size: cover;
+
+  @media (prefers-color-scheme: dark) {
+    background-image: url("chrome://messenger/skin/images/accounthub-bg-dark.webp");
+  }
+
+  &.busy {
+    cursor: wait;
+  }
+
+  #loadingOverlay {
+    display: none;
+    opacity: 0;
+  }
+
+  &.spinner #loadingOverlay {
+    display: grid;
+    position: absolute;
+    inset: 0;
+    place-items: center;
+    background-color: var(--hub-loader-background);
+    opacity: 0.8;
+    z-index: 2;
+    border-radius: inherit;
+
+    @media (prefers-reduced-motion: no-preference) {
+      animation: 0.5s linear 0s hub-reveal-loader;
+    }
+  }
+}
+
+@keyframes hub-reveal-loader {
+  0% {
+    display: none;
+    opacity: 0;
+  }
+
+  1% {
+    display: grid;
+    opacity: 0;
+  }
+
+  100% {
+    opacity: 0.8;
+  }
+}
+
+@keyframes hub-loader-loading {
+  from {
+    rotate: 0deg;
+  }
+  to {
+    rotate: 360deg;
+  }
+}
+
+.loader-outside {
+  --hub-loader-width: 8px;
+  --hub-loader-size: 64px;
+  --hub-trail-offset: 360deg;
+
+  position: relative;
+  height: var(--hub-loader-size);
+  aspect-ratio: 1;
+  background-image: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    var(--hub-loader-color) 360deg,
+    transparent var(--hub-trail-offset)
+  );
+  border-radius: 50%;
+  pointer-events: none;
+
+
+  @media (prefers-reduced-motion: no-preference) {
+    animation: 1.1s cubic-bezier(0.61, 0.12, 0, 0.99) 0s infinite hub-loader-loading;
+  }
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: var(--hub-loader-width);
+    height: calc(var(--hub-loader-size) - 2 * var(--hub-loader-width));
+    aspect-ratio: 1;
+    background: var(--hub-loader-background);
+    border-radius: 50%;
+  }
+
+  .loader-inside {
+    position: absolute;
+    inset: 0;
+    aspect-ratio: 1;
+    border-radius: 50%;
+
+    &::before {
+      content: '';
+      position: absolute;
+      height: var(--hub-loader-width);
+      aspect-ratio: 1;
+      border-radius: 50%;
+      background: var(--hub-loader-color);
+      inset-block-start: 0;
+      inset-inline: calc(50% - var(--hub-loader-width) / 2);
+    }
+  }
 }
 
 /* Header */
 
-.start-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 15px;
+header {
+  font-weight: 300;
+  font-size: 1.8rem;
+  line-height: 1em;
+  margin-block: 0;
+
+  & .sub-view-title {
+    font-size: 1.7rem;
+    font-weight: 400;
+    margin-block: var(--hub-header-margin-block-start) 0;
+    color: var(--color-primary-pressed);
+  }
 }
 
-.start-header h1 {
+.branding-header {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 11px;
+
+  h1 {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    margin-block: 0 2px;
+    align-self: center;
+  }
 }
 
 #closeButton:not([hidden]) {
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  background-color: transparent;
-  --in-content-button-border-color: transparent;
-}
-
-#closeButton:hover {
-  background-color: var(--in-content-button-background);
-}
-
-#closeButton:hover:active {
-  background-color: var(--in-content-button-background-active);
-}
-
-#closeButton {
   position: absolute;
   inset-inline-end: 15px;
   inset-block-start: 15px;
-  appearance: none;
-  border: none;
-  border-radius: 50%;
-  width: 21px;
-  height: 21px;
-}
-
-#closeButton:hover {
-  background-color: var(--button-hover-background-color);
-}
-#closeButton:hover:active {
-  background-color: var(--button-active-background-color);
-}
-
-#closeButton img {
-  -moz-context-properties: stroke;
-  stroke: currentColor;
-  content: var(--icon-close);
+  z-index: 2;
 }
 
 #welcomeHeader > img {
@@ -142,17 +293,21 @@ dialog h1.sub-view-title {
   height: 90px;
 }
 
-#defaultHeader > img {
-  width: 60px;
-  height: 60px;
+#brandingHeader > img {
+  width: 45px;
+  height: 45px;
 }
 
-#defaultHeader .start-header-brand-name {
+#brandingHeader .branding-header-name {
   font-size: 1.3rem;
+  font-weight: 500;
+  padding-block-end: 2px;
 }
 
-#defaultHeader .start-header-title {
-  font-size: 2rem;
+#brandingHeader .branding-header-title {
+  font-size: 2.8rem;
+  font-weight: 200;
+  letter-spacing: 1px;
 }
 
 #welcomeHeader h1 {
@@ -176,13 +331,88 @@ dialog h1.sub-view-title {
 /* Body */
 
 .hub-body {
-  grid-area: body;
   display: flex;
-  gap: 30px;
   flex-direction: column;
-  align-items: center;
-  justify-content: space-between;
-  margin-inline: 30px;
+  align-items: stretch;
+  justify-content: flex-start;
+  place-self: center;
+  gap: var(--hub-body-elements-column-gap);
+  width: 100%;
+  max-width: var(--hub-width);
+  max-height: 40vh;
+  text-align: start;
+  margin-inline: 0;
+
+  &.flex-direction-row {
+    flex-direction: row;
+  }
+
+  &.auto-config-body {
+    max-width: 650px;
+  }
+
+  &.manual-form-body {
+    gap: 20px;
+
+    & .form-row {
+      display: grid;
+      grid-template-columns: 115px 1fr;
+      gap: 10px;
+
+      .stacked & {
+        grid-template-columns: 1fr;
+      }
+
+      &.responsive-row {
+        grid-template-columns: auto 1fr;
+
+        .stacked & {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      & .expanded {
+        flex: 1;
+      }
+    }
+  }
+
+  &.password-form-body,
+  &.email-form-body,
+  &.option-select-body {
+    max-width: 400px;
+  }
+
+  &.sync-accounts-form-body {
+    & .sync-accounts-container {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+    }
+
+    .stacked & .sync-accounts-container {
+      grid-template-columns: 1fr;
+    }
+
+    .stacked & .sync-type-container {
+      height: auto;
+    }
+  }
+
+  &.option-select-body {
+    gap: var(--hub-address-book-option-select-gap);
+  }
+}
+
+.hub-body-column {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  border-inline-end: 1px solid var(--hub-account-button-border-color);
+  overflow-y: auto;
+  margin-block: 20px;
+  padding-inline: 20px
 }
 
 .hub-body-grid {
@@ -267,6 +497,15 @@ dialog h1.sub-view-title {
   background-image: var(--icon-import-lg);
 }
 
+#hubLoader {
+  width: 16px;
+  min-height: 16px;
+  vertical-align: middle;
+  content: url("chrome://messenger/skin/icons/spinning.svg");
+  -moz-context-properties: fill;
+  fill: var(--selected-item-color);
+}
+
 #hubSyncButton {
   align-self: center;
   position: relative;
@@ -310,26 +549,177 @@ dialog h1.sub-view-title {
 }
 
 #hubSyncButton:hover:active::after {
-  transform: scale(1) translateY(0px);
+  transform: scale(1) translateY(0);
   filter: blur(3px);
+}
+
+.button {
+  &.button-sm {
+    padding: 4px 9px;
+    font-size: 0.8rem;
+    min-width: auto;
+    min-height: auto;
+    text-transform: uppercase;
+    font-weight: bold;
+    line-height: var(--hub-floating-button-line-height);
+  }
+
+  &.primary-button {
+    background-color: var(--hub-account-primary-button-background);
+    color: var(--hub-account-primary-button-color);
+    border-color: var(--hub-account-primary-button-border);
+    box-shadow: 0 6px 3px -4px rgba(21, 66, 124, 0.3);
+
+    &:hover {
+      background-color: var(--hub-account-primary-button-background-hover);
+      color: var(--hub-account-primary-button-color);
+      border-color: var(--hub-account-primary-button-border-active);
+      box-shadow: 0 4px 2px -3px rgba(21, 66, 124, 0.3);
+
+      &:active {
+        background-color: var(--hub-account-primary-button-background-active);
+        color: var(--hub-account-primary-button-color);
+        border-color: var(--hub-account-primary-button-border-active);
+        box-shadow: none;
+      }
+    }
+
+    &:active {
+      background-color: var(--hub-account-primary-button-background-active);
+      color: var(--hub-account-primary-button-color);
+      border-color: var(--hub-account-primary-button-border-active);
+      box-shadow: none;
+    }
+
+    &:focus-visible {
+      outline: var(--focus-outline);
+      outline-offset: var(--focus-outline-offset);
+    }
+  }
+
+  &.secondary-button {
+    background-color: var(--hub-account-secondary-button-background);
+    color: var(--hub-account-secondary-button-color);
+    border-color: var(--hub-account-secondary-button-border);
+    box-shadow: 0 6px 3px -4px rgba(0, 0, 0, 0.1);
+    margin-inline-end: 15px;
+
+    &:hover {
+      background-color: var(--hub-account-secondary-button-background-hover);
+      color: var(--hub-account-secondary-button-color);
+      border-color: var(--hub-account-secondary-button-border);
+      box-shadow: 0 4px 2px -3px rgba(0, 0, 0, 0.1);
+
+      &:active {
+        background-color: var(--hub-account-secondary-button-background-active);
+        color: var(--hub-account-secondary-button-color);
+        border-color: var(--hub-account-secondary-button-border-active);
+        box-shadow: none;
+      }
+    }
+
+    &:active {
+      background-color: var(--hub-account-secondary-button-background-active);
+      color: var(--hub-account-secondary-button-color);
+      border-color: var(--hub-account-secondary-button-border-active);
+      box-shadow: none;
+    }
+
+    &:focus-visible {
+      outline: var(--focus-outline);
+      outline-offset: var(--focus-outline-offset);
+    }
+  }
 }
 
 /* Footer */
 
 .hub-footer {
   grid-area: footer;
+
+  .center-column {
+    justify-content: center;
+  }
+
+  hr {
+    border: none;
+    height: 1px;
+    margin-block-start: var(--hub-footer-margin-block);
+    background: linear-gradient(to right, transparent, rgba(26, 32, 44, 0.2), transparent);
+    color: transparent;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    hr {
+      background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.4), transparent);
+    }
+  }
+
+  .footer-button {
+    font-size: 1.1rem;
+    min-width: 128px;
+    padding: 10px 25px;
+    text-align: center;
+  }
 }
 
 .footer-links {
   display: flex;
   flex-wrap: wrap;
-  gap: 3px 6px;
+  gap: 3px 10px;
   justify-content: center;
+  align-items: baseline;
+  margin-block: var(--hub-footer-margin-block);
+
+  li > a {
+    font-size: 1.1rem;
+    text-decoration: none;
+    letter-spacing: 0.2px;
+    font-weight: 200;
+    color: var(--hub-account-footer-link-color);
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
 }
 
 .footer-links li:not([hidden]) ~ li:not([hidden])::before {
   content: "·";
-  margin-inline-end: 6px;
+  margin-inline-end: 10px;
+  font-size: 1.4rem;
+  font-weight: bold;
+}
+
+/* Success page */
+.account-hub-success-container {
+  align-items: center;
+
+  & .account-hub-success-illustration {
+    background-image: var(--success-illustration);
+    background-size: cover;
+    width: var(--hub-success-hub-illustration-width);
+    height: var(--hub-success-hub-illustration-height)
+  }
+
+  & .account-hub-success-links-title {
+    font-size: 1.2rem;
+    font-weight: bold;
+    margin-block-start: var(--hub-success-link-title-margin-block-start);
+  }
+
+  & .account-hub-link-container {
+    display: flex;
+    flex-direction: column;
+    font-size: 1.1rem;
+    margin-block-start: var(--hub-success-link-container-margin-block-start);
+
+    & button {
+      text-decoration: underline;
+      font-weight: normal;
+      margin: 0;
+    }
+  }
 }
 
 /* Animations */

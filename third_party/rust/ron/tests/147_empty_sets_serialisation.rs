@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
 struct UnitStruct;
@@ -36,7 +37,7 @@ fn empty_sets_arrays() {
 
     let pretty = ron::ser::PrettyConfig::new()
         .enumerate_arrays(true)
-        .new_line("\n".to_string());
+        .new_line("\n");
     let serial = ron::ser::to_string_pretty(&value, pretty).unwrap();
 
     println!("Serialized: {}", serial);

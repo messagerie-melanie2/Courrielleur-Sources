@@ -38,12 +38,12 @@ const {
   setRecordingSettings,
   addPrefObserver,
   removePrefObserver,
-} = ChromeUtils.import(
-  "resource://devtools/client/performance-new/shared/background.jsm.js"
+} = ChromeUtils.importESModule(
+  "resource://devtools/shared/performance-new/prefs-presets.sys.mjs"
 );
 const {
   PureComponent,
-} = require("resource://devtools/client/shared/vendor/react.js");
+} = require("resource://devtools/client/shared/vendor/react.mjs");
 const {
   connect,
 } = require("resource://devtools/client/shared/vendor/react-redux.js");

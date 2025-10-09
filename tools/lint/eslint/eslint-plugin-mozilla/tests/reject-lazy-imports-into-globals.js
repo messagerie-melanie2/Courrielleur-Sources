@@ -26,22 +26,12 @@ ruleTester.run("reject-lazy-imports-into-globals", rule, {
   valid: [
     `
       const lazy = {};
-      XPCOMUtils.defineLazyGetter(lazy, "foo", () => {});
-    `,
-    `
-      const lazy = {};
       ChromeUtils.defineLazyGetter(lazy, "foo", () => {});
     `,
   ],
   invalid: [
-    invalidCode(`XPCOMUtils.defineLazyGetter(globalThis, "foo", () => {});`),
-    invalidCode(`XPCOMUtils.defineLazyGetter(window, "foo", () => {});`),
     invalidCode(`ChromeUtils.defineLazyGetter(globalThis, "foo", () => {});`),
     invalidCode(`ChromeUtils.defineLazyGetter(window, "foo", () => {});`),
-    invalidCode(
-      `XPCOMUtils.defineLazyModuleGetter(globalThis, "foo", "foo.jsm");`
-    ),
-    invalidCode(`XPCOMUtils.defineLazyModuleGetter(window, "foo", "foo.jsm");`),
     invalidCode(
       `XPCOMUtils.defineLazyPreferenceGetter(globalThis, "foo", "foo.bar");`
     ),
@@ -50,7 +40,7 @@ ruleTester.run("reject-lazy-imports-into-globals", rule, {
     ),
     invalidCode(`XPCOMUtils.defineLazyGlobalGetters(globalThis, {});`),
     invalidCode(`XPCOMUtils.defineLazyGlobalGetters(window, {});`),
-    invalidCode(`XPCOMUtils.defineLazyModuleGetters(globalThis, {});`),
+    invalidCode(`ChromeUtils.defineESModuleGetters(globalThis, {});`),
     invalidCode(`ChromeUtils.defineESModuleGetters(window, {});`),
   ],
 });

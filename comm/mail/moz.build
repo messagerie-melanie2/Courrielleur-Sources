@@ -3,6 +3,9 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+with Files("**"):
+    BUG_COMPONENT = ("Thunderbird", "General")
+
 CONFIGURE_SUBST_FILES += ["installer/Makefile"]
 
 # app is always last as it packages up the built files on mac.
@@ -16,6 +19,9 @@ DIRS += [
     "themes",
 ]
 
+if CONFIG["MOZ_UPDATE_AGENT"]:
+    DEFINES["MOZ_UPDATE_AGENT"] = True
+
 if CONFIG["MAKENSISU"]:
     DIRS += ["installer/windows"]
 
@@ -25,11 +31,19 @@ if CONFIG["MOZ_BUNDLED_FONTS"]:
 if CONFIG["NIGHTLY_BUILD"]:
     DIRS += ["services/sync"]
 
+if CONFIG["MOZ_THUNDERBIRD_RUST"]:
+    DEFINES["MOZ_THUNDERBIRD_RUST"] = 1
+
 DIRS += [
     "../python",
     "../taskcluster",
     "../third_party",
 ]
+
+if CONFIG["MOZ_OVERRIDE_GKRUST"]:
+    DIRS += [
+        "../rust",
+    ]
 
 TEST_DIRS += [
     "test/browser",

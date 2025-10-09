@@ -3,9 +3,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "nsCOMPtr.h"
 #include "mimemsg.h"
+#include "mimehdrs.h"
 #include "mimemoz2.h"
+#include "nsMailHeaders.h"
 #include "prmem.h"
 #include "prio.h"
 #include "plstr.h"
@@ -34,7 +35,8 @@ static int MimeMessage_parse_line(const char*, int32_t, MimeObject*);
 static int MimeMessage_parse_eof(MimeObject*, bool);
 static int MimeMessage_close_headers(MimeObject* obj);
 static int MimeMessage_write_headers_html(MimeObject*);
-static char* MimeMessage_partial_message_html(const char* data, void* closure,
+static char* MimeMessage_partial_message_html(const char* data,
+                                              MimeClosure closure,
                                               MimeHeaders* headers);
 
 #ifdef XP_UNIX
@@ -47,9 +49,8 @@ static int MimeMessage_debug_print(MimeObject*, PRFileDesc*, int32_t depth);
 
 extern MimeObjectClass mimeMultipartClass;
 
-static int MimeMessageClassInitialize(MimeMessageClass* clazz) {
-  MimeObjectClass* oclass = (MimeObjectClass*)clazz;
-  MimeContainerClass* cclass = (MimeContainerClass*)clazz;
+static int MimeMessageClassInitialize(MimeObjectClass* oclass) {
+  MimeContainerClass* cclass = (MimeContainerClass*)oclass;
 
   PR_ASSERT(!oclass->class_initialized);
   oclass->initialize = MimeMessage_initialize;
@@ -171,14 +172,17 @@ static int MimeMessage_parse_line(const char* aLine, int32_t aLength,
 #endif /* MIME_DRAFTS */
 
     if (nl)
-      return kid->clazz->parse_buffer(line, length, kid);
+      return kid->clazz->parse_buffer(
+          line, length, MimeClosure(MimeClosure::isMimeObject, kid));
     else {
       /* Hack a newline onto the end. */
       char* s = (char*)PR_MALLOC(length + MSG_LINEBREAK_LEN + 1);
       if (!s) return MIME_OUT_OF_MEMORY;
       memcpy(s, line, length);
       PL_strncpyz(s + length, MSG_LINEBREAK, MSG_LINEBREAK_LEN + 1);
-      status = kid->clazz->parse_buffer(s, length + MSG_LINEBREAK_LEN, kid);
+      status =
+          kid->clazz->parse_buffer(s, length + MSG_LINEBREAK_LEN,
+                                   MimeClosure(MimeClosure::isMimeObject, kid));
       PR_Free(s);
       return status;
     }
@@ -465,7 +469,8 @@ static int MimeMessage_close_headers(MimeObject* obj) {
       char dummy = 0;
       if (sscanf(xmoz, " %x %c", &flags, &dummy) == 1 &&
           flags & nsMsgMessageFlags::Partial) {
-        obj->options->html_closure = obj;
+        obj->options->html_closure =
+            MimeClosure(MimeClosure::isMimeMessage, obj);
         obj->options->generate_footer_html_fn =
             MimeMessage_partial_message_html;
       }
@@ -505,8 +510,12 @@ static int MimeMessage_parse_eof(MimeObject* obj, bool abort_p) {
   if ((outer_p || obj->options->notify_nested_bodies) && obj->options &&
       obj->options->write_html_p) {
     if (obj->options->generate_footer_html_fn) {
-      mime_stream_data* msd = (mime_stream_data*)obj->options->stream_closure;
-      if (msd) {
+      if (obj->options->stream_closure) {
+        mime_stream_data* msd = obj->options->stream_closure.AsMimeStreamData();
+        if (!msd) {
+          return 0;
+        }
+
         char* html = obj->options->generate_footer_html_fn(
             msd->orig_url_name, obj->options->html_closure, msg->hdrs);
         if (html) {
@@ -712,9 +721,14 @@ static int MimeMessage_write_headers_html(MimeObject* obj) {
   return 0;
 }
 
-static char* MimeMessage_partial_message_html(const char* data, void* closure,
+static char* MimeMessage_partial_message_html(const char* data,
+                                              MimeClosure closure,
                                               MimeHeaders* headers) {
-  MimeMessage* msg = (MimeMessage*)closure;
+  MimeMessage* msg = closure.AsMimeMessage();
+  if (!msg) {
+    return nullptr;
+  }
+
   nsAutoCString orig_url(data);
   char* uidl = MimeHeaders_get(headers, HEADER_X_UIDL, false, false);
   char* msgId = MimeHeaders_get(headers, HEADER_MESSAGE_ID, false, false);

@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-window.addEventListener("DOMContentLoaded", event => {
+window.addEventListener("DOMContentLoaded", () => {
   gMigrateWizard.loadMigrators();
 });
 
@@ -13,23 +13,22 @@ var gMigrateWizard = {
    * user can then check these off to migrate the data from those sources.
    */
   loadMigrators() {
-    let wizardPage2 = document.getElementById("wizardPage2");
+    const wizardPage2 = document.getElementById("wizardPage2");
     wizardPage2.addEventListener("pageshow", gMigrateWizard.migrateChecked);
 
-    let listbox = document.getElementById("datasource-list");
+    const listbox = document.getElementById("datasource-list");
 
     // XXX Once we have branding for lightning, this hack can go away
-    let props = Services.strings.createBundle("chrome://calendar/locale/migration.properties");
+    const props = Services.strings.createBundle("chrome://calendar/locale/migration.properties");
 
-    let wizard = document.querySelector("wizard");
-    let desc = document.getElementById("wizard-desc");
+    const wizard = document.querySelector("wizard");
+    const desc = document.getElementById("wizard-desc");
     // Since we don't translate "Lightning"...
     wizard.title = props.formatStringFromName("migrationTitle", ["Lightning"]);
     desc.textContent = props.formatStringFromName("migrationDescription", ["Lightning"]);
 
-    console.debug("migrators: " + window.arguments.length);
-    for (let migrator of window.arguments[0]) {
-      let checkbox = document.createXULElement("checkbox");
+    for (const migrator of window.arguments[0]) {
+      const checkbox = document.createXULElement("checkbox");
       checkbox.setAttribute("checked", true);
       checkbox.setAttribute("label", migrator.title);
       checkbox.migrator = migrator;
@@ -43,10 +42,10 @@ var gMigrateWizard = {
    * progress dialog so the user can see what is happening. (somewhat)
    */
   migrateChecked() {
-    let migrators = [];
+    const migrators = [];
 
     // Get all the checked migrators into an array
-    let listbox = document.getElementById("datasource-list");
+    const listbox = document.getElementById("datasource-list");
     for (let i = listbox.children.length - 1; i >= 0; i--) {
       if (listbox.children[i].getAttribute("checked")) {
         migrators.push(listbox.children[i].migrator);
@@ -61,25 +60,24 @@ var gMigrateWizard = {
     // Don't let the user get away while we're migrating
     // XXX may want to wire this into the 'cancel' function once that's
     //    written
-    let wizard = document.querySelector("wizard");
+    const wizard = document.querySelector("wizard");
     wizard.canAdvance = false;
     wizard.canRewind = false;
 
     // We're going to need this for the progress meter's description
-    let props = Services.strings.createBundle("chrome://calendar/locale/migration.properties");
-    let label = document.getElementById("progress-label");
-    let meter = document.getElementById("migrate-progressmeter");
+    const props = Services.strings.createBundle("chrome://calendar/locale/migration.properties");
+    const label = document.getElementById("progress-label");
+    const meter = document.getElementById("migrate-progressmeter");
 
     let i = 0;
     // Because some of our migrators involve async code, we need this
     // call-back function so we know when to start the next migrator.
     function getNextMigrator() {
       if (migrators[i]) {
-        let mig = migrators[i];
+        const mig = migrators[i];
 
         // Increment i to point to the next migrator
         i++;
-        console.debug("starting migrator: " + mig.title);
         label.value = props.formatStringFromName("migratingApp", [mig.title]);
         meter.value = ((i - 1) / migrators.length) * 100;
         mig.args.push(getNextMigrator);
@@ -87,12 +85,10 @@ var gMigrateWizard = {
         try {
           mig.migrate(...mig.args);
         } catch (e) {
-          console.debug("Failed to migrate: " + mig.title);
-          console.debug(e);
+          console.warn("Failed to migrate: " + mig.title, e);
           getNextMigrator();
         }
       } else {
-        console.debug("migration done");
         wizard.canAdvance = true;
         label.value = props.GetStringFromName("finished");
         meter.value = 100;

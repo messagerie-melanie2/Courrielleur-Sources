@@ -11,6 +11,7 @@
 #include "mozilla/Atomics.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/HashFunctions.h"
+#include "mozilla/LinkedList.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
 
@@ -20,9 +21,9 @@
 #include "jstypes.h"
 #include "NamespaceImports.h"
 
+#include "ds/LifoAlloc.h"
 #include "gc/Barrier.h"
 #include "jit/BaselineIC.h"
-#include "jit/ICStubSpace.h"
 #include "js/TypeDecls.h"
 #include "js/UniquePtr.h"
 #include "js/Vector.h"
@@ -48,26 +49,34 @@ class AllocSite;
 namespace jit {
 
 class BaselineScript;
+class ICStubSpace;
 class InliningRoot;
 class IonScript;
 class JitScript;
 class JitZone;
 
-// Magic BaselineScript value indicating Baseline compilation has been disabled.
-static constexpr uintptr_t BaselineDisabledScript = 0x1;
+// Magic values indicating compilation has been disabled or the script
+// is already scheduled for background compilation.
+static constexpr uintptr_t DisabledScript = 0x1;
+static constexpr uintptr_t QueuedScript = 0x3;
+static constexpr uintptr_t CompilingScript = 0x5;
+
+static constexpr uint32_t SpecialScriptBit = 0x1;
+static_assert((DisabledScript & SpecialScriptBit) != 0);
+static_assert((QueuedScript & SpecialScriptBit) != 0);
+static_assert((CompilingScript & SpecialScriptBit) != 0);
 
 static BaselineScript* const BaselineDisabledScriptPtr =
-    reinterpret_cast<BaselineScript*>(BaselineDisabledScript);
-
-// Magic IonScript values indicating Ion compilation has been disabled or the
-// script is being Ion-compiled off-thread.
-static constexpr uintptr_t IonDisabledScript = 0x1;
-static constexpr uintptr_t IonCompilingScript = 0x2;
+    reinterpret_cast<BaselineScript*>(DisabledScript);
+static BaselineScript* const BaselineQueuedScriptPtr =
+    reinterpret_cast<BaselineScript*>(DisabledScript);
+static BaselineScript* const BaselineCompilingScriptPtr =
+    reinterpret_cast<BaselineScript*>(CompilingScript);
 
 static IonScript* const IonDisabledScriptPtr =
-    reinterpret_cast<IonScript*>(IonDisabledScript);
+    reinterpret_cast<IonScript*>(DisabledScript);
 static IonScript* const IonCompilingScriptPtr =
-    reinterpret_cast<IonScript*>(IonCompilingScript);
+    reinterpret_cast<IonScript*>(CompilingScript);
 
 /* [SMDOC] ICScript Lifetimes
  *
@@ -99,17 +108,30 @@ static IonScript* const IonCompilingScriptPtr =
  * BaselineScript and IonScript/WarpScript to which it
  * corresponds. They can be destroyed and recreated, and the ICScript
  * will remain valid.
+ *
+ * When we discard JIT code, we mark ICScripts that are active on the stack as
+ * active and then purge all of the inactive ICScripts. We also purge ICStubs,
+ * including the CallInlinedFunction stub at the trial inining call site, and
+ * reset the ICStates to allow trial inlining again later.
+ *
+ * If there's a BaselineFrame for an inlined ICScript, we'll preserve both this
+ * ICScript and the IC chain for the call site in the caller's ICScript.
+ * See ICScript::purgeStubs and ICScript::purgeInactiveICScripts.
  */
 
-class alignas(uintptr_t) ICScript final : public TrailingArray {
+class alignas(uintptr_t) ICScript final : public TrailingArray<ICScript> {
  public:
   ICScript(uint32_t warmUpCount, Offset fallbackStubsOffset, Offset endOffset,
-           uint32_t depth, InliningRoot* inliningRoot = nullptr)
+           uint32_t depth, uint32_t bytecodeSize,
+           InliningRoot* inliningRoot = nullptr)
       : inliningRoot_(inliningRoot),
         warmUpCount_(warmUpCount),
         fallbackStubsOffset_(fallbackStubsOffset),
         endOffset_(endOffset),
-        depth_(depth) {}
+        depth_(depth),
+        bytecodeSize_(bytecodeSize) {}
+
+  ~ICScript();
 
   bool isInlined() const { return depth_ > 0; }
 
@@ -139,6 +161,8 @@ class alignas(uintptr_t) ICScript final : public TrailingArray {
   InliningRoot* inliningRoot() const { return inliningRoot_; }
   uint32_t depth() const { return depth_; }
 
+  uint32_t bytecodeSize() const { return bytecodeSize_; }
+
   void resetWarmUpCount(uint32_t count) { warmUpCount_ = count; }
 
   static constexpr size_t offsetOfFirstStub(uint32_t entryIndex) {
@@ -156,6 +180,10 @@ class alignas(uintptr_t) ICScript final : public TrailingArray {
     return numElements<ICEntry>(icEntriesOffset(), fallbackStubsOffset());
   }
 
+  static constexpr Offset offsetOfEnvAllocSite() {
+    return offsetof(ICScript, envAllocSite_);
+  }
+
   ICEntry* interpreterICEntryFromPCOffset(uint32_t pcOffset);
 
   ICEntry& icEntryFromPCOffset(uint32_t pcOffset);
@@ -167,10 +195,23 @@ class alignas(uintptr_t) ICScript final : public TrailingArray {
   void removeInlinedChild(uint32_t pcOffset);
   bool hasInlinedChild(uint32_t pcOffset);
 
-  JitScriptICStubSpace* jitScriptStubSpace();
-  void purgeOptimizedStubs(Zone* zone);
+  void purgeStubs(Zone* zone, ICStubSpace& newStubSpace);
+
+  void purgeInactiveICScripts();
+
+  bool active() const { return active_; }
+  void setActive() { active_ = true; }
+  void resetActive() { active_ = false; }
+
+  gc::AllocSite* getOrCreateAllocSite(JSScript* outerScript, uint32_t pcOffset);
+
+  void ensureEnvAllocSite(JSScript* outerScript);
+  gc::AllocSite* maybeEnvAllocSite() const { return envAllocSite_; }
+
+  void prepareForDestruction(Zone* zone);
 
   void trace(JSTracer* trc);
+  bool traceWeak(JSTracer* trc);
 
 #ifdef DEBUG
   mozilla::HashNumber hash();
@@ -193,6 +234,14 @@ class alignas(uintptr_t) ICScript final : public TrailingArray {
   // ICScripts that have been inlined into this ICScript.
   js::UniquePtr<Vector<CallSite>> inlinedChildren_;
 
+  // List of allocation sites referred to by ICs in this script.
+  static constexpr size_t AllocSiteChunkSize = 256;
+  LifoAlloc allocSitesSpace_{AllocSiteChunkSize, js::BackgroundMallocArena};
+  Vector<gc::AllocSite*, 0, SystemAllocPolicy> allocSites_;
+
+  // Optional alloc site to use when allocating environment chain objects.
+  gc::AllocSite* envAllocSite_ = nullptr;
+
   // Number of times this copy of the script has been called or has had
   // backedges taken.  Reset if the script's JIT code is forcibly discarded.
   // See also the ScriptWarmUpData class.
@@ -207,12 +256,21 @@ class alignas(uintptr_t) ICScript final : public TrailingArray {
   // The inlining depth of this ICScript. 0 for the inlining root.
   uint32_t depth_;
 
+  // Bytecode size of the JSScript corresponding to this ICScript.
+  uint32_t bytecodeSize_;
+
+  // Flag set when discarding JIT code to indicate this script is on the stack
+  // and should not be discarded.
+  bool active_ = false;
+
   Offset icEntriesOffset() const { return offsetOfICEntries(); }
   Offset fallbackStubsOffset() const { return fallbackStubsOffset_; }
   Offset endOffset() const { return endOffset_; }
 
+ public:
   ICEntry* icEntries() { return offsetToPointer<ICEntry>(icEntriesOffset()); }
 
+ private:
   ICFallbackStub* fallbackStubs() {
     return offsetToPointer<ICFallbackStub>(fallbackStubsOffset());
   }
@@ -244,11 +302,6 @@ class alignas(uintptr_t) ICScript final : public TrailingArray {
 // because the JitScript can be reused when we have to recompile the
 // BaselineScript.
 //
-// The JitScript contains a stub space. This stores the "can GC" CacheIR stubs.
-// These stubs are never purged before destroying the JitScript. Other stubs are
-// stored in the optimized stub space stored in JitZone and can be purged more
-// eagerly. See JitScript::purgeOptimizedStubs.
-//
 // An ICScript contains a list of IC entries and a list of fallback stubs.
 // There's one ICEntry and ICFallbackStub for each JOF_IC bytecode op.
 //
@@ -273,17 +326,19 @@ class alignas(uintptr_t) ICScript final : public TrailingArray {
 //     ICFallbackStub[]     | fallbackStubsOffset()
 //
 // These offsets are also used to compute numICEntries.
-class alignas(uintptr_t) JitScript final : public TrailingArray {
+class alignas(uintptr_t) JitScript final
+    : public mozilla::LinkedListElement<JitScript>,
+      public TrailingArray<JitScript> {
   friend class ::JSScript;
-
-  // Allocated space for Can-GC CacheIR stubs.
-  JitScriptICStubSpace jitScriptStubSpace_ = {};
 
   // Profile string used by the profiler for Baseline Interpreter frames.
   const char* profileString_ = nullptr;
 
-  // Baseline code for the script. Either nullptr, BaselineDisabledScriptPtr or
-  // a valid BaselineScript*.
+  HeapPtr<JSScript*> owningScript_;
+
+  // Baseline code for the script. Either nullptr, BaselineDisabledScriptPtr,
+  // BaselineQueuedScriptPtr, BaselineCompilingScriptPtr,
+  // or a valid BaselineScript*.
   GCStructPtr<BaselineScript*> baselineScript_;
 
   // Ion code for this script. Either nullptr, IonDisabledScriptPtr,
@@ -297,18 +352,14 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
   // first time the Baseline JIT compiles this script.
   mozilla::Maybe<HeapPtr<EnvironmentObject*>> templateEnv_;
 
+  // The size of this allocation.
+  Offset endOffset_ = 0;
+
   // Analysis data computed lazily the first time this script is compiled or
   // inlined by WarpBuilder.
   mozilla::Maybe<bool> usesEnvironmentChain_;
 
-  // The size of this allocation.
-  Offset endOffset_ = 0;
-
   struct Flags {
-    // Flag set when discarding JIT code to indicate this script is on the stack
-    // and type information and JIT code should not be discarded.
-    bool active : 1;
-
     // True if this script entered Ion via OSR at a loop header.
     bool hadIonOSR : 1;
   };
@@ -327,8 +378,9 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
   bool hasPurgedStubs_ = false;
 #endif
 
-  // List of allocation sites referred to by ICs in this script.
-  Vector<gc::AllocSite*, 0, SystemAllocPolicy> allocSites_;
+  // Value of the warmup counter when the last IC stub was attached,
+  // used for Ion hints.
+  uint32_t warmUpCountAtLastICStub_ = 0;
 
   ICScript icScript_;
   // End of fields.
@@ -341,6 +393,8 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
 
   ~JitScript();
 
+  JSScript* owningScript() const { return owningScript_; }
+
   [[nodiscard]] bool ensureHasCachedBaselineJitData(JSContext* cx,
                                                     HandleScript script);
   [[nodiscard]] bool ensureHasCachedIonData(JSContext* cx, HandleScript script);
@@ -350,9 +404,10 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
 
   uint32_t numICEntries() const { return icScript_.numICEntries(); }
 
-  bool active() const { return flags_.active; }
-  void setActive() { flags_.active = true; }
-  void resetActive() { flags_.active = false; }
+#ifdef DEBUG
+  bool hasActiveICScript() const;
+#endif
+  void resetAllActiveFlags();
 
   void ensureProfileString(JSContext* cx, JSScript* script);
 
@@ -384,16 +439,8 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
 
   void prepareForDestruction(Zone* zone);
 
-  JitScriptICStubSpace* jitScriptStubSpace() { return &jitScriptStubSpace_; }
-
   void addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, size_t* data,
-                              size_t* fallbackStubs) const {
-    *data += mallocSizeOf(this);
-
-    // |data| already includes the ICStubSpace itself, so use
-    // sizeOfExcludingThis.
-    *fallbackStubs += jitScriptStubSpace_.sizeOfExcludingThis(mallocSizeOf);
-  }
+                              size_t* allocSites) const;
 
   ICEntry& icEntry(size_t index) { return icScript_.icEntry(index); }
 
@@ -409,7 +456,10 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
   }
 
   void trace(JSTracer* trc);
-  void purgeOptimizedStubs(JSScript* script);
+  void traceWeak(JSTracer* trc);
+  void purgeStubs(JSScript* script, ICStubSpace& newStubSpace);
+
+  void purgeInactiveICScripts();
 
   ICEntry& icEntryFromPCOffset(uint32_t pcOffset) {
     return icScript_.icEntryFromPCOffset(pcOffset);
@@ -419,11 +469,18 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
 
   EnvironmentObject* templateEnvironment() const { return templateEnv_.ref(); }
 
+  std::pair<CallObject*, NamedLambdaObject*> functionEnvironmentTemplates(
+      JSFunction* fun) const;
+
   bool usesEnvironmentChain() const { return *usesEnvironmentChain_; }
 
-  gc::AllocSite* createAllocSite(JSScript* script);
-
   bool resetAllocSites(bool resetNurserySites, bool resetPretenuredSites);
+  bool hasPretenuredAllocSites();
+
+  void updateLastICStubCounter() { warmUpCountAtLastICStub_ = warmUpCount(); }
+  uint32_t warmUpCountAtLastICStub() const { return warmUpCountAtLastICStub_; }
+
+  bool hasEnvAllocSite() const { return icScript_.envAllocSite_; }
 
  private:
   // Methods to set baselineScript_ to a BaselineScript*, nullptr, or
@@ -435,7 +492,10 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
  public:
   // Methods for getting/setting/clearing a BaselineScript*.
   bool hasBaselineScript() const {
-    bool res = baselineScript_ && baselineScript_ != BaselineDisabledScriptPtr;
+    bool res = baselineScript_ &&
+               baselineScript_ != BaselineDisabledScriptPtr &&
+               baselineScript_ != BaselineQueuedScriptPtr &&
+               baselineScript_ != BaselineCompilingScriptPtr;
     MOZ_ASSERT_IF(!res, !hasIonScript());
     return res;
   }
@@ -454,6 +514,24 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
     setBaselineScriptImpl(gcx, script, nullptr);
     return baseline;
   }
+  bool isBaselineQueued() const {
+    return baselineScript_ == BaselineQueuedScriptPtr;
+  }
+  void clearIsBaselineQueued(JSScript* script) {
+    MOZ_ASSERT(isBaselineQueued());
+    setBaselineScriptImpl(script, nullptr);
+  }
+  bool isBaselineCompiling() const {
+    return baselineScript_ == BaselineCompilingScriptPtr;
+  }
+  void setIsBaselineCompiling(JSScript* script) {
+    MOZ_ASSERT(baselineScript_ == nullptr);
+    setBaselineScriptImpl(script, BaselineCompilingScriptPtr);
+  }
+  void clearIsBaselineCompiling(JSScript* script) {
+    MOZ_ASSERT(isBaselineCompiling());
+    setBaselineScriptImpl(script, nullptr);
+  }
 
  private:
   // Methods to set ionScript_ to an IonScript*, nullptr, or one of the special
@@ -461,6 +539,13 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
   void setIonScriptImpl(JS::GCContext* gcx, JSScript* script,
                         IonScript* ionScript);
   void setIonScriptImpl(JSScript* script, IonScript* ionScript);
+
+  // Helper that calls the passed function for the outer ICScript and for each
+  // inlined ICScript.
+  template <typename F>
+  void forEachICScript(const F& f);
+  template <typename F>
+  void forEachICScript(const F& f) const;
 
  public:
   // Methods for getting/setting/clearing an IonScript*.
@@ -504,7 +589,15 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
   InliningRoot* inliningRoot() const { return inliningRoot_.get(); }
   InliningRoot* getOrCreateInliningRoot(JSContext* cx, JSScript* script);
 
+  inline void notePurgedStubs() {
 #ifdef DEBUG
+    failedICHash_.reset();
+    hasPurgedStubs_ = true;
+#endif
+  }
+
+#ifdef DEBUG
+  bool hasPurgedStubs() const { return hasPurgedStubs_; }
   bool hasFailedICHash() const { return failedICHash_.isSome(); }
   mozilla::HashNumber getFailedICHash() { return failedICHash_.extract(); }
   void setFailedICHash(mozilla::HashNumber hash) {
@@ -514,6 +607,12 @@ class alignas(uintptr_t) JitScript final : public TrailingArray {
     }
   }
 #endif
+
+  inline void clearFailedICHash() {
+#ifdef DEBUG
+    failedICHash_.reset();
+#endif
+  }
 };
 
 // Ensures no JitScripts are purged in the current zone.
@@ -529,9 +628,9 @@ class MOZ_RAII AutoKeepJitScripts {
   inline ~AutoKeepJitScripts();
 };
 
-// Mark JitScripts on the stack as active, so that they are not discarded
-// during GC.
-void MarkActiveJitScripts(Zone* zone);
+// Mark ICScripts on the stack as active, so that they are not discarded
+// during GC, and copy active Baseline IC stubs to the new stub space.
+void MarkActiveICScriptsAndCopyStubs(Zone* zone, ICStubSpace& newStubSpace);
 
 #ifdef JS_STRUCTURED_SPEW
 void JitSpewBaselineICStats(JSScript* script, const char* dumpReason);

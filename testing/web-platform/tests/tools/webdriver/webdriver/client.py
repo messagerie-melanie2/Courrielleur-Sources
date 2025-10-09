@@ -295,9 +295,7 @@ class Actions:
         return ActionSequence(self.session, *args, **kwargs)
 
 
-class Window:
-    identifier = "window-fcc6-11e5-b4f8-330a88ab9d7f"
-
+class BrowserWindow:
     def __init__(self, session):
         self.session = session
 
@@ -372,59 +370,6 @@ class Window:
     def fullscreen(self):
         return self.session.send_session_command("POST", "window/fullscreen")
 
-    @classmethod
-    def from_json(cls, json, session):
-        uuid = json[Window.identifier]
-        return cls(uuid, session)
-
-
-class Frame:
-    identifier = "frame-075b-4da1-b6ba-e579c2d3230a"
-
-    def __init__(self, session):
-        self.session = session
-
-    @classmethod
-    def from_json(cls, json, session):
-        uuid = json[Frame.identifier]
-        return cls(uuid, session)
-
-
-class ShadowRoot:
-    identifier = "shadow-6066-11e4-a52e-4f735466cecf"
-
-    def __init__(self, session, id):
-        """
-        Construct a new shadow root representation.
-
-        :param id: Shadow root UUID which must be unique across
-            all browsing contexts.
-        :param session: Current ``webdriver.Session``.
-        """
-        self.id = id
-        self.session = session
-
-    @classmethod
-    def from_json(cls, json, session):
-        uuid = json[ShadowRoot.identifier]
-        return cls(session, uuid)
-
-    def send_shadow_command(self, method, uri, body=None):
-        url = f"shadow/{self.id}/{uri}"
-        return self.session.send_session_command(method, url, body)
-
-    @command
-    def find_element(self, strategy, selector):
-        body = {"using": strategy,
-                "value": selector}
-        return self.send_shadow_command("POST", "element", body)
-
-    @command
-    def find_elements(self, strategy, selector):
-        body = {"using": strategy,
-                "value": selector}
-        return self.send_shadow_command("POST", "elements", body)
-
 
 class Find:
     def __init__(self, session):
@@ -440,24 +385,6 @@ class Find:
         body = {"using": strategy,
                 "value": selector}
         return self.session.send_session_command("POST", route, body)
-
-
-class Cookies:
-    def __init__(self, session):
-        self.session = session
-
-    def __getitem__(self, name):
-        self.session.send_session_command("GET", "cookie/%s" % name, {})
-
-    def __setitem__(self, name, value):
-        cookie = {"name": name,
-                  "value": None}
-
-        if isinstance(name, str):
-            cookie["value"] = value
-        elif hasattr(value, "value"):
-            cookie["value"] = value.value
-        self.session.send_session_command("POST", "cookie/%s" % name, {})
 
 
 class UserPrompt:
@@ -512,7 +439,7 @@ class Session:
         self.extension_cls = extension
 
         self.timeouts = Timeouts(self)
-        self.window = Window(self)
+        self.window = BrowserWindow(self)
         self.find = Find(self)
         self.alert = UserPrompt(self)
         self.actions = Actions(self)
@@ -579,6 +506,9 @@ class Session:
         """Try to close the active session."""
         if self.session_id is None:
             return
+
+        if not isinstance(self.session_id, str):
+            raise TypeError("Session.session_id must be a str or None")
 
         try:
             self.send_command("DELETE", "session/%s" % self.session_id)
@@ -654,6 +584,9 @@ class Session:
         :raises error.WebDriverException: If the remote end returns
             an error.
         """
+        if not isinstance(self.session_id, str):
+            raise TypeError("Session.session_id must be a str to send a session command")
+
         url = urlparse.urljoin("session/%s/" % self.session_id, uri)
         return self.send_command(method, url, body, timeout)
 
@@ -734,8 +667,10 @@ class Session:
     def cookies(self, name=None):
         if name is None:
             url = "cookie"
-        else:
+        elif isinstance(name, str):
             url = "cookie/%s" % name
+        else:
+            raise TypeError("cookie name must be a str or None")
         return self.send_session_command("GET", url, {})
 
     @command
@@ -761,8 +696,10 @@ class Session:
     def delete_cookie(self, name=None):
         if name is None:
             url = "cookie"
-        else:
+        elif isinstance(name, str):
             url = "cookie/%s" % name
+        else:
+            raise TypeError("cookie name must be a str or None")
         self.send_session_command("DELETE", url, {})
 
     #[...]
@@ -795,7 +732,73 @@ class Session:
     def screenshot(self):
         return self.send_session_command("GET", "screenshot")
 
-class Element:
+    @command
+    def print(self,
+              background=None,
+              margin=None,
+              orientation=None,
+              page=None,
+              page_ranges=None,
+              scale=None,
+              shrink_to_fit=None):
+        body = {}
+        for prop, value in {
+            "background": background,
+            "margin": margin,
+            "orientation": orientation,
+            "page": page,
+            "pageRanges": page_ranges,
+            "scale": scale,
+            "shrinkToFit": shrink_to_fit,
+        }.items():
+            if value is not None:
+                body[prop] = value
+        return self.send_session_command("POST", "print", body)
+
+
+class ShadowRoot:
+    identifier = "shadow-6066-11e4-a52e-4f735466cecf"
+
+    def __init__(self, session, id):
+        """
+        Construct a new shadow root representation.
+
+        :param id: Shadow root UUID which must be unique across
+            all browsing contexts.
+        :param session: Current ``webdriver.Session``.
+        """
+        self.id = id
+        self.session = session
+
+    @classmethod
+    def from_json(cls, json, session):
+        uuid = json[ShadowRoot.identifier]
+        return cls(session, uuid)
+
+    def send_shadow_command(self, method, uri, body=None):
+        if not isinstance(self.id, str):
+            raise TypeError("self.id must be a str")
+
+        if not isinstance(uri, str):
+            raise TypeError("uri must be a str")
+
+        url = f"shadow/{self.id}/{uri}"
+        return self.session.send_session_command(method, url, body)
+
+    @command
+    def find_element(self, strategy, selector):
+        body = {"using": strategy,
+                "value": selector}
+        return self.send_shadow_command("POST", "element", body)
+
+    @command
+    def find_elements(self, strategy, selector):
+        body = {"using": strategy,
+                "value": selector}
+        return self.send_shadow_command("POST", "elements", body)
+
+
+class WebElement:
     """
     Representation of a web element.
 
@@ -818,15 +821,21 @@ class Element:
         return "<%s %s>" % (self.__class__.__name__, self.id)
 
     def __eq__(self, other):
-        return (isinstance(other, Element) and self.id == other.id and
+        return (isinstance(other, WebElement) and self.id == other.id and
                 self.session == other.session)
 
     @classmethod
     def from_json(cls, json, session):
-        uuid = json[Element.identifier]
+        uuid = json[WebElement.identifier]
         return cls(session, uuid)
 
     def send_element_command(self, method, uri, body=None):
+        if not isinstance(self.id, str):
+            raise TypeError("WebElement.id must be a str")
+
+        if not isinstance(uri, str):
+            raise TypeError("uri must be a str")
+
         url = "element/%s/%s" % (self.id, uri)
         return self.session.send_session_command(method, url, body)
 
@@ -864,6 +873,9 @@ class Element:
 
     @command
     def style(self, property_name):
+        if not isinstance(property_name, str):
+            raise TypeError("property_name must be a str")
+
         return self.send_element_command("GET", "css/%s" % property_name)
 
     @property
@@ -887,6 +899,9 @@ class Element:
 
     @command
     def attribute(self, name):
+        if not isinstance(name, str):
+            raise TypeError("name must be a str")
+
         return self.send_element_command("GET", "attribute/%s" % name)
 
     @command
@@ -901,4 +916,47 @@ class Element:
     # will be overridden by this.
     @command
     def property(self, name):
+        if not isinstance(name, str):
+            raise TypeError("name must be a str")
+
         return self.send_element_command("GET", "property/%s" % name)
+
+
+class WebFrame:
+    identifier = "frame-075b-4da1-b6ba-e579c2d3230a"
+
+    def __init__(self, session, id):
+        self.id = id
+        self.session = session
+
+    def __repr__(self):
+        return "<%s %s>" % (self.__class__.__name__, self.id)
+
+    def __eq__(self, other):
+        return (isinstance(other, WebFrame) and self.id == other.id and
+                self.session == other.session)
+
+    @classmethod
+    def from_json(cls, json, session):
+        uuid = json[WebFrame.identifier]
+        return cls(session, uuid)
+
+
+class WebWindow:
+    identifier = "window-fcc6-11e5-b4f8-330a88ab9d7f"
+
+    def __init__(self, session, id):
+        self.id = id
+        self.session = session
+
+    def __repr__(self):
+        return "<%s %s>" % (self.__class__.__name__, self.id)
+
+    def __eq__(self, other):
+        return (isinstance(other, WebWindow) and self.id == other.id and
+                self.session == other.session)
+
+    @classmethod
+    def from_json(cls, json, session):
+        uuid = json[WebWindow.identifier]
+        return cls(session, uuid)

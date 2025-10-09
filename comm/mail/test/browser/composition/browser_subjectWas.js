@@ -9,19 +9,19 @@
 
 "use strict";
 
-var { close_compose_window, open_compose_with_reply } = ChromeUtils.import(
-  "resource://testing-common/mozmill/ComposeHelpers.jsm"
-);
+var { close_compose_window, open_compose_with_reply } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+  );
 var {
   add_message_to_folder,
   assert_selected_and_displayed,
   be_in_folder,
   create_folder,
   create_message,
-  mc,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 var folder = null;
@@ -47,12 +47,12 @@ add_setup(async function () {
 add_task(async function test_was_reply_subj() {
   await be_in_folder(folder);
 
-  let msg = select_click_row(0);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
-  let cwc = open_compose_with_reply();
+  const cwc = await open_compose_with_reply();
 
-  let msgSubject = cwc.window.document.getElementById("msgSubject").value;
+  const msgSubject = cwc.document.getElementById("msgSubject").value;
 
   // Subject should be Re: <the original subject stripped of the was: part>
   Assert.equal(
@@ -61,5 +61,5 @@ add_task(async function test_was_reply_subj() {
     "was: part of subject should have been removed"
   );
 
-  close_compose_window(cwc);
+  await close_compose_window(cwc);
 });

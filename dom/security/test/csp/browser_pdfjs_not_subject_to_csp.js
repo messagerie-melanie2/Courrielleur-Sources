@@ -6,9 +6,6 @@ const TEST_PATH = getRootDirectory(gTestPath).replace(
 );
 
 add_task(async function () {
-  await SpecialPowers.pushPrefEnv({
-    set: [["pdfjs.eventBusDispatchToDOM", true]],
-  });
   await BrowserTestUtils.withNewTab(
     TEST_PATH + "file_pdfjs_not_subject_to_csp.html",
     async function (browser) {
@@ -42,6 +39,13 @@ add_task(async function () {
         let cspJSON = pdfFrame.contentDocument.cspJSON;
         ok(cspJSON.includes("script-src"), "found script-src directive");
         ok(cspJSON.includes("allowPDF"), "found script-src nonce value");
+      });
+
+      await SpecialPowers.spawn(browser, [], async () => {
+        const pdfFrame = content.document.getElementById("pdfFrame");
+        const viewer =
+          pdfFrame.contentWindow.wrappedJSObject.PDFViewerApplication;
+        await viewer.testingClose();
       });
     }
   );

@@ -13,34 +13,34 @@
 // do this registration before importing `shared-head`, since declaration
 // order matters.
 registerCleanupFunction(async () => {
-  const browser = gBrowser.selectedBrowser;
-  const contexts = browser.browsingContext.getAllBrowsingContextsInSubtree();
-  for (const context of contexts) {
-    await SpecialPowers.spawn(context, [], async () => {
-      const win = content.wrappedJSObject;
-
-      // Some windows (e.g., about: URLs) don't have storage available
-      try {
-        win.localStorage.clear();
-        win.sessionStorage.clear();
-      } catch (ex) {
-        // ignore
-      }
-
-      if (win.clear) {
-        // Do not get hung into win.clear() forever
-        await Promise.race([
-          new Promise(r => win.setTimeout(r, 10000)),
-          win.clear(),
-        ]);
-      }
-    });
-  }
-
   Services.cookies.removeAll();
 
   // Close tabs and force memory collection to happen
   while (gBrowser.tabs.length > 1) {
+    const browser = gBrowser.selectedBrowser;
+    const contexts = browser.browsingContext.getAllBrowsingContextsInSubtree();
+    for (const context of contexts) {
+      await SpecialPowers.spawn(context, [], async () => {
+        const win = content.wrappedJSObject;
+
+        // Some windows (e.g., about: URLs) don't have storage available
+        try {
+          win.localStorage.clear();
+          win.sessionStorage.clear();
+        } catch (ex) {
+          // ignore
+        }
+
+        if (win.clear) {
+          // Do not get hung into win.clear() forever
+          await Promise.race([
+            new Promise(r => win.setTimeout(r, 10000)),
+            win.clear(),
+          ]);
+        }
+      });
+    }
+
     await closeTabAndToolbox(gBrowser.selectedTab);
   }
   forceCollections();
@@ -59,7 +59,6 @@ const {
   LocalTabCommandsFactory,
 } = require("resource://devtools/client/framework/local-tab-commands-factory.js");
 const STORAGE_PREF = "devtools.storage.enabled";
-const DOM_CACHE = "dom.caches.enabled";
 const DUMPEMIT_PREF = "devtools.dump.emit";
 const DEBUGGERLOG_PREF = "devtools.debugger.log";
 
@@ -88,7 +87,6 @@ registerCleanupFunction(() => {
   gToolbox = gPanelWindow = gUI = null;
   Services.prefs.clearUserPref(CACHES_ON_HTTP_PREF);
   Services.prefs.clearUserPref(DEBUGGERLOG_PREF);
-  Services.prefs.clearUserPref(DOM_CACHE);
   Services.prefs.clearUserPref(DUMPEMIT_PREF);
   Services.prefs.clearUserPref(STORAGE_PREF);
 });
@@ -964,9 +962,8 @@ var focusSearchBoxUsingShortcut = async function (panelWin, callback) {
 
   panelWin.focus();
 
-  const shortcut = await panelWin.document.l10n.formatValue(
-    "storage-filter-key"
-  );
+  const shortcut =
+    await panelWin.document.l10n.formatValue("storage-filter-key");
   synthesizeKeyShortcut(shortcut);
 
   await focused;
@@ -976,8 +973,8 @@ var focusSearchBoxUsingShortcut = async function (panelWin, callback) {
   }
 };
 
-function getCookieId(name, domain, path) {
-  return `${name}${SEPARATOR_GUID}${domain}${SEPARATOR_GUID}${path}`;
+function getCookieId(name, domain, path, partitionKey = "") {
+  return `${name}${SEPARATOR_GUID}${domain}${SEPARATOR_GUID}${path}${SEPARATOR_GUID}${partitionKey}`;
 }
 
 function setPermission(url, permission) {
@@ -1010,9 +1007,17 @@ function sidebarToggleVisible() {
  */
 function sidebarParseTreeVisible(state) {
   if (state) {
-    ok(gUI.view._currHierarchy.size > 2, "Parse tree should be visible.");
+    Assert.greater(
+      gUI.view._testOnlyHierarchy.size,
+      2,
+      "Parse tree should be visible."
+    );
   } else {
-    ok(gUI.view._currHierarchy.size <= 2, "Parse tree should not be visible.");
+    Assert.lessOrEqual(
+      gUI.view._testOnlyHierarchy.size,
+      2,
+      "Parse tree should not be visible."
+    );
   }
 }
 
@@ -1021,6 +1026,7 @@ function sidebarParseTreeVisible(state) {
  * @param  {Array} store
  *         An array containing the path to the store to which we wish to add an
  *         item.
+ * @return {Promise} A Promise that resolves to the row id of the added item.
  */
 async function performAdd(store) {
   const storeName = store.join(" > ");
@@ -1037,7 +1043,7 @@ async function performAdd(store) {
       false,
       `performAdd called for ${storeName} but it is not supported`
     );
-    return;
+    return "";
   }
 
   const eventEdit = gUI.table.once("row-edit");
@@ -1052,6 +1058,8 @@ async function performAdd(store) {
   const value = getCellValue(rowId, key);
 
   is(rowId, value, `Row '${rowId}' was successfully added.`);
+
+  return rowId;
 }
 
 // Cell css selector that can be used to count or select cells.

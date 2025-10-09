@@ -19,8 +19,8 @@
   // TypeScript. See devtools/client/performance-new/typescript.md and
   // the section on "Do not overload require" for more information.
 
-  const { BrowserLoader } = ChromeUtils.import(
-    "resource://devtools/shared/loader/browser-loader.js"
+  const { BrowserLoader } = ChromeUtils.importESModule(
+    "resource://devtools/shared/loader/browser-loader.sys.mjs"
   );
   const browserLoader = BrowserLoader({
     baseURI: "resource://devtools/client/performance-new/aboutprofiling",
@@ -37,17 +37,17 @@
 }
 
 /**
- * The background.jsm.js manages the profiler state, and can be loaded multiple time
+ * The background.sys.mjs manages the profiler state, and can be loaded multiple time
  * for various components. This page needs a copy, and it is also used by the
  * profiler shortcuts. In order to do this, the background code needs to live in a
  * JSM module, that can be shared with the DevTools keyboard shortcut manager.
  */
-const { presets } = ChromeUtils.import(
-  "resource://devtools/client/performance-new/shared/background.jsm.js"
+const { presets } = ChromeUtils.importESModule(
+  "resource://devtools/shared/performance-new/prefs-presets.sys.mjs"
 );
 
-const ReactDOM = require("resource://devtools/client/shared/vendor/react-dom.js");
-const React = require("resource://devtools/client/shared/vendor/react.js");
+const ReactDOM = require("resource://devtools/client/shared/vendor/react-dom.mjs");
+const React = require("resource://devtools/client/shared/vendor/react.mjs");
 const FluentReact = require("resource://devtools/client/shared/vendor/fluent-react.js");
 const {
   FluentL10n,
@@ -132,7 +132,10 @@ async function gInit(
 
 async function gDestroy() {
   // This allows all unregister commands to run.
-  ReactDOM.unmountComponentAtNode(document.querySelector("#root"));
+  const root = document.querySelector("#root");
+  if (root) {
+    ReactDOM.unmountComponentAtNode(root);
+  }
 }
 
 // Automatically initialize the page if it's not a remote connection, otherwise

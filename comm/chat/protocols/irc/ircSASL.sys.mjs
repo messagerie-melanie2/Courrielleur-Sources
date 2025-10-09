@@ -10,6 +10,13 @@
 
 import { ircHandlerPriorities } from "resource:///modules/ircHandlerPriorities.sys.mjs";
 
+const lazy = {};
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () => new Localization(["chat/irc.ftl"], true)
+);
+
 export var ircSASL = {
   name: "SASL AUTHENTICATE",
   priority: ircHandlerPriorities.DEFAULT_PRIORITY,
@@ -32,13 +39,13 @@ export var ircSASL = {
 
       // An authentication identity, authorization identity and password are
       // used, separated by null.
-      let data = [
+      const data = [
         this._requestedNickname,
         this._requestedNickname,
         this.imAccount.password,
       ].join("\0");
       // btoa for Unicode, see https://developer.mozilla.org/en-US/docs/DOM/window.btoa
-      let base64Data = btoa(unescape(encodeURIComponent(data)));
+      const base64Data = btoa(unescape(encodeURIComponent(data)));
       this.sendMessage(
         "AUTHENTICATE",
         base64Data,
@@ -47,7 +54,7 @@ export var ircSASL = {
       return true;
     },
 
-    900(aMessage) {
+    900() {
       // RPL_LOGGEDIN
       // <nick>!<ident>@<host> <account> :You are now logged in as <user>
       // Now logged in ("whether by SASL or otherwise").
@@ -55,14 +62,14 @@ export var ircSASL = {
       return true;
     },
 
-    901(aMessage) {
+    901() {
       // RPL_LOGGEDOUT
       // The user's account name is unset (whether by SASL or otherwise).
       this.isAuthenticated = false;
       return true;
     },
 
-    902(aMessage) {
+    902() {
       // ERR_NICKLOCKED
       // Authentication failed because the account is currently locked out,
       // held, or otherwise administratively made unavailable.
@@ -73,7 +80,7 @@ export var ircSASL = {
       return true;
     },
 
-    903(aMessage) {
+    903() {
       // RPL_SASLSUCCESS
       // Authentication was successful.
       this.isAuthenticated = true;
@@ -86,16 +93,19 @@ export var ircSASL = {
       return true;
     },
 
-    904(aMessage) {
+    904() {
       // ERR_SASLFAIL
       // Sent when the SASL authentication fails because of invalid credentials
       // or other errors not explicitly mentioned by other numerics.
-      this.WARN("Authentication with SASL failed.");
-      this.removeCAP("sasl");
+      this.ERROR("Authentication with SASL failed.");
+      this.gotDisconnected(
+        Ci.prplIAccount.ERROR_AUTHENTICATION_FAILED,
+        lazy.l10n.formatValueSync("connection-error-invalid-user-password")
+      );
       return true;
     },
 
-    905(aMessage) {
+    905() {
       // ERR_SASLTOOLONG
       // Sent when credentials are valid, but the SASL authentication fails
       // because the client-sent `AUTHENTICATE` command was too long.
@@ -104,7 +114,7 @@ export var ircSASL = {
       return true;
     },
 
-    906(aMessage) {
+    906() {
       // ERR_SASLABORTED
       // The client completed registration before SASL authentication completed,
       // or because we sent `AUTHENTICATE` with `*` as the parameter.
@@ -119,7 +129,7 @@ export var ircSASL = {
       return true;
     },
 
-    907(aMessage) {
+    907() {
       // ERR_SASLALREADY
       // Response if client attempts to AUTHENTICATE after successful
       // authentication.
@@ -128,7 +138,7 @@ export var ircSASL = {
       return true;
     },
 
-    908(aMessage) {
+    908() {
       // RPL_SASLMECHS
       // <nick> <mechanisms> :are available SASL mechanisms
       // List of SASL mechanisms supported by the server (or network, services).

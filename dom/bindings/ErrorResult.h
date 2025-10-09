@@ -464,6 +464,11 @@ class TErrorResult {
   // hopefully it's all temporary until we sort out the EME bits.
   friend class dom::Promise;
 
+  // Implementation of MaybeSetPendingException for the case when we're a
+  // failure result.  See documentation of MaybeSetPendingException for the
+  // "context" argument.
+  void SetPendingException(JSContext* cx, const char* context);
+
  private:
 #ifdef DEBUG
   enum UnionState {
@@ -566,11 +571,6 @@ class TErrorResult {
   // reinitialize it or change mResult to something that will not involve us
   // touching the union anymore.
   void ClearUnionData();
-
-  // Implementation of MaybeSetPendingException for the case when we're a
-  // failure result.  See documentation of MaybeSetPendingException for the
-  // "context" argument.
-  void SetPendingException(JSContext* cx, const char* context);
 
   // Methods for setting various specific kinds of pending exceptions.  See
   // documentation of MaybeSetPendingException for the "context" argument.
@@ -828,13 +828,47 @@ class CopyableErrorResult
 inline ErrorResult::ErrorResult(CopyableErrorResult&& aRHS)
     : ErrorResult(reinterpret_cast<ErrorResult&&>(aRHS)) {}
 
-namespace dom {
-namespace binding_detail {
+namespace dom::binding_detail {
+
+enum class ErrorFor {
+  getter,
+  setter,
+};
+
+template <ErrorFor ErrorType>
+struct ErrorDescriptionFor {
+  const char* mInterface;
+  const char* mMember;
+};
+
 class FastErrorResult : public mozilla::binding_danger::TErrorResult<
                             mozilla::binding_danger::JustAssertCleanupPolicy> {
+ public:
+  using TErrorResult::MaybeSetPendingException;
+
+  template <ErrorFor ErrorType>
+  [[nodiscard]] bool MaybeSetPendingException(
+      JSContext* aCx, const ErrorDescriptionFor<ErrorType>& aDescription) {
+    WouldReportJSException();
+    if (!Failed()) {
+      return false;
+    }
+
+    nsAutoCString description(aDescription.mInterface);
+    description.Append('.');
+    description.Append(aDescription.mMember);
+    if constexpr (ErrorType == ErrorFor::getter) {
+      description.AppendLiteral(" getter");
+    } else {
+      static_assert(ErrorType == ErrorFor::setter);
+      description.AppendLiteral(" setter");
+    }
+    SetPendingException(aCx, description.get());
+    return true;
+  }
 };
-}  // namespace binding_detail
-}  // namespace dom
+
+}  // namespace dom::binding_detail
 
 // We want an OOMReporter class that has the following properties:
 //
@@ -897,30 +931,16 @@ class MOZ_TEMPORARY_CLASS IgnoreErrors {
  ** Macros for checking results
  ******************************************************************************/
 
-#define ENSURE_SUCCESS(res, ret)                \
-  do {                                          \
-    if (res.Failed()) {                         \
-      nsCString msg;                            \
-      msg.AppendPrintf(                         \
-          "ENSURE_SUCCESS(%s, %s) failed with " \
-          "result 0x%X",                        \
-          #res, #ret, res.ErrorCodeAsInt());    \
-      NS_WARNING(msg.get());                    \
-      return ret;                               \
-    }                                           \
-  } while (0)
-
-#define ENSURE_SUCCESS_VOID(res)                 \
-  do {                                           \
-    if (res.Failed()) {                          \
-      nsCString msg;                             \
-      msg.AppendPrintf(                          \
-          "ENSURE_SUCCESS_VOID(%s) failed with " \
-          "result 0x%X",                         \
-          #res, res.ErrorCodeAsInt());           \
-      NS_WARNING(msg.get());                     \
-      return;                                    \
-    }                                            \
+#define RETURN_NSRESULT_ON_FAILURE(res)                                        \
+  do {                                                                         \
+    (res).WouldReportJSException();                                            \
+    if ((res).Failed()) {                                                      \
+      NS_WARNING(nsPrintfCString(                                              \
+                     "RETURN_NSRESULT_ON_FAILURE(%s) failed with result 0x%X", \
+                     #res, (res).ErrorCodeAsInt())                             \
+                     .get());                                                  \
+      return (res).StealNSResult();                                            \
+    }                                                                          \
   } while (0)
 
 }  // namespace mozilla

@@ -25,7 +25,7 @@
         [
           "metrics"
         ],
-        "application",
+        "ping",
         false,
         {
           "bucket_count": 100,
@@ -129,7 +129,7 @@
         [
           "metrics"
         ],
-        "application",
+        "ping",
         false,
         {
           "memory_unit": "kilobyte"
@@ -180,14 +180,48 @@
         [
           "metrics"
         ],
-        "application",
+        "ping",
         false,
         {
           "time_unit": "nanosecond"
         }
+      ],
+      [
+        "boolean",
+        "unordered_boolean_metric",
+        [
+          "metrics"
+        ],
+        "ping",
+        false,
+        {
+          "permit_non_commutative_operations_over_ipc": true
+        }
+      ],
+      [
+        "labeled_boolean",
+        "unordered_labeled_boolean_metric",
+        [
+          "metrics"
+        ],
+        "ping",
+        false,
+        {
+          "ordered_labels": null,
+          "permit_non_commutative_operations_over_ipc": true
+        }
       ]
     ],
     "test.nested": [
+      [
+        "object",
+        "an_object",
+        [
+          "metrics"
+        ],
+        "ping",
+        false
+      ],
       [
         "datetime",
         "datetime_metric",
@@ -223,7 +257,9 @@
         {
           "allowed_extra_keys": [
             "an_extra_key",
-            "another_extra_key"
+            "another_extra_key",
+            "bool_extra",
+            "quantity_extra"
           ]
         }
       ],
@@ -249,6 +285,24 @@
             ]
           ]
         }
+      ],
+      [
+        "counter",
+        "optimizable_counter_metric",
+        [
+          "metrics"
+        ],
+        "ping",
+        false
+      ],
+      [
+        "counter",
+        "optimizable_disabled_counter_metric",
+        [
+          "metrics"
+        ],
+        "ping",
+        true
       ],
       [
         "quantity",
@@ -293,15 +347,27 @@
       "not-baseline",
       true,
       false,
+      true,
+      true,
+      true,
+      [],
       [
         "background",
         "dirty_startup",
         "foreground"
-      ]
+      ],
+      true,
+      []
     ],
     [
       "not-deletion-request",
       true,
+      true,
+      true,
+      true,
+      true,
+      [],
+      [],
       true,
       []
     ],
@@ -309,23 +375,61 @@
       "not-events",
       true,
       false,
+      true,
+      true,
+      true,
+      [],
       [
         "background",
         "max_capacity",
         "startup"
-      ]
+      ],
+      true,
+      []
     ],
     [
       "not-metrics",
       true,
       false,
+      true,
+      true,
+      true,
+      [],
       [
         "overdue",
         "reschedule",
         "today",
         "tomorrow",
         "upgrade"
+      ],
+      true,
+      []
+    ],
+    [
+      "not-ohttp",
+      false,
+      true,
+      true,
+      false,
+      true,
+      [],
+      [],
+      true,
+      [
+        "ohttp"
       ]
+    ],
+    [
+      "ridealong-test",
+      false,
+      true,
+      true,
+      true,
+      true,
+      [],
+      [],
+      true,
+      []
     ]
   ]
 }

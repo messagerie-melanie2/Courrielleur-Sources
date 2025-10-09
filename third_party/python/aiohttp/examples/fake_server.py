@@ -3,14 +3,16 @@ import asyncio
 import pathlib
 import socket
 import ssl
+from typing import List
 
 import aiohttp
 from aiohttp import web
+from aiohttp.abc import AbstractResolver, ResolveResult
 from aiohttp.resolver import DefaultResolver
 from aiohttp.test_utils import unused_port
 
 
-class FakeResolver:
+class FakeResolver(AbstractResolver):
     _LOCAL_HOST = {0: "127.0.0.1", socket.AF_INET: "127.0.0.1", socket.AF_INET6: "::1"}
 
     def __init__(self, fakes, *, loop):
@@ -18,7 +20,12 @@ class FakeResolver:
         self._fakes = fakes
         self._resolver = DefaultResolver(loop=loop)
 
-    async def resolve(self, host, port=0, family=socket.AF_INET):
+    async def resolve(
+        self,
+        host: str,
+        port: int = 0,
+        family: socket.AddressFamily = socket.AF_INET,
+    ) -> List[ResolveResult]:
         fake_port = self._fakes.get(host)
         if fake_port is not None:
             return [
@@ -34,6 +41,9 @@ class FakeResolver:
         else:
             return await self._resolver.resolve(host, port, family)
 
+    async def close(self) -> None:
+        await self._resolver.close()
+
 
 class FakeFacebook:
     def __init__(self, *, loop):
@@ -45,7 +55,7 @@ class FakeFacebook:
                 web.get("/v2.7/me/friends", self.on_my_friends),
             ]
         )
-        self.runner = None
+        self.runner = web.AppRunner(self.app)
         here = pathlib.Path(__file__)
         ssl_cert = here.parent / "server.crt"
         ssl_key = here.parent / "server.key"

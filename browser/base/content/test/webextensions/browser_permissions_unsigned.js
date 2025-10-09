@@ -21,7 +21,7 @@ add_task(async function test_unsigned() {
 
   let tab = await BrowserTestUtils.openNewForegroundTab(gBrowser);
 
-  BrowserTestUtils.loadURIString(
+  BrowserTestUtils.startLoadingURIString(
     gBrowser.selectedBrowser,
     `${BASE}/file_install_extensions.html`
   );
@@ -41,7 +41,7 @@ add_task(async function test_unsigned() {
   let description = panel.querySelector(
     ".popup-notification-description"
   ).textContent;
-  const expected = formatExtValue("webext-perms-header-unsigned-with-perms", {
+  const expected = formatExtValue("webext-perms-header2", {
     extension: "<>",
   });
   for (let part of expected.split("<>")) {
@@ -54,7 +54,8 @@ add_task(async function test_unsigned() {
   // cancel the install
   let promise = promiseInstallEvent({ id: ID }, "onInstallCancelled");
   panel.secondaryButton.click();
-  await promise;
+  const cancelledByUser = await promise;
+  is(cancelledByUser, true, "Install cancelled by user");
 
   let addon = await AddonManager.getAddonByID(ID);
   is(addon, null, "Extension is not installed");

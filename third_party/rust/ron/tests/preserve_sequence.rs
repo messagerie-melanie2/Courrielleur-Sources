@@ -1,9 +1,10 @@
+use std::collections::BTreeMap;
+
 use ron::{
     de::from_str,
     ser::{to_string_pretty, PrettyConfig},
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct Config {
@@ -30,7 +31,7 @@ fn make_roundtrip(source: &str) -> String {
         .depth_limit(3)
         .separate_tuple_members(true)
         .enumerate_arrays(true)
-        .new_line("\n".into());
+        .new_line("\n");
     to_string_pretty(&config, pretty).expect("Serialization failed")
 }
 

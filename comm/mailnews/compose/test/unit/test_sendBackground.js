@@ -3,8 +3,8 @@
  * Tests sending a message in the background (checks auto-send works).
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var server;
@@ -34,19 +34,9 @@ msll.prototype = {
     Assert.equal(gMsgSendLater.sendingMessages, true);
     Assert.equal(aTotal, 1);
   },
-  onMessageStartSending(
-    aCurrentMessage,
-    aTotalMessageCount,
-    aMessageHeader,
-    aIdentity
-  ) {},
-  onMessageSendProgress(
-    aCurrentMessage,
-    aTotalMessageCount,
-    aMessageSendPercent,
-    aMessageCopyPercent
-  ) {},
-  onMessageSendError(aCurrentMessage, aMessageHeader, aStatus, aMsg) {
+  onMessageStartSending() {},
+  onMessageSendProgress() {},
+  onMessageSendError(aCurrentMessage, aMessageHeader, aStatus) {
     do_throw(
       "onMessageSendError should not have been called, status: " + aStatus
     );
@@ -86,7 +76,7 @@ msll.prototype = {
     } finally {
       server.stop();
 
-      var thread = gThreadManager.currentThread;
+      var thread = Services.tm.currentThread;
       while (thread.hasPendingEvents()) {
         thread.processNextEvent(true);
       }
@@ -115,8 +105,8 @@ add_task(async function run_the_test() {
 
   MailServices.accounts.setSpecialFolders();
 
-  let account = MailServices.accounts.createAccount();
-  let incomingServer = MailServices.accounts.createIncomingServer(
+  const account = MailServices.accounts.createAccount();
+  const incomingServer = MailServices.accounts.createIncomingServer(
     "test",
     "localhost",
     "pop3"
@@ -144,8 +134,6 @@ add_task(async function run_the_test() {
     "@mozilla.org/messengercompose/composefields;1"
   ].createInstance(Ci.nsIMsgCompFields);
 
-  // Setting the compFields sender and recipient to any value is required to
-  // survive mime_sanity_check_fields in nsMsgCompUtils.cpp.
   // Sender and recipient are required for sendMessageFile but SMTP
   // transaction values will be used directly from mail body.
   compFields.from = "irrelevant@foo.invalid";
@@ -215,7 +203,7 @@ add_task(async function run_the_test() {
   } finally {
     server.stop();
 
-    var thread = gThreadManager.currentThread;
+    var thread = Services.tm.currentThread;
     while (thread.hasPendingEvents()) {
       thread.processNextEvent(true);
     }

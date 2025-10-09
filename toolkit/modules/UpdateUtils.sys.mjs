@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
 const lazy = {};
@@ -21,7 +19,7 @@ const PER_INSTALLATION_PREFS_PLATFORMS = ["win"];
 // located in the update directory which makes it a common setting across all
 // application profiles and allows the Background Update Agent to read it.
 const FILE_UPDATE_CONFIG_JSON = "update-config.json";
-const FILE_UPDATE_LOCALE = "update.locale";
+const FILE_DEFAULT_LOCALE = "default.locale";
 const PREF_APP_DISTRIBUTION = "distribution.id";
 const PREF_APP_DISTRIBUTION_VERSION = "distribution.version";
 
@@ -76,40 +74,50 @@ export var UpdateUtils = {
   async formatUpdateURL(url) {
     const locale = await this.getLocale();
 
-    return url
-      .replace(/%(\w+)%/g, (match, name) => {
-        switch (name) {
-          case "PRODUCT":
-            return Services.appinfo.name;
-          case "VERSION":
-            return Services.appinfo.version;
-          case "BUILD_ID":
-            return Services.appinfo.appBuildID;
-          case "BUILD_TARGET":
-            return Services.appinfo.OS + "_" + this.ABI;
-          case "OS_VERSION":
-            return this.OSVersion;
-          case "LOCALE":
-            return locale;
-          case "CHANNEL":
-            return this.UpdateChannel;
-          case "PLATFORM_VERSION":
-            return Services.appinfo.platformVersion;
-          case "SYSTEM_CAPABILITIES":
-            return getSystemCapabilities();
-          case "DISTRIBUTION":
-            return getDistributionPrefValue(PREF_APP_DISTRIBUTION);
-          case "DISTRIBUTION_VERSION":
-            return getDistributionPrefValue(PREF_APP_DISTRIBUTION_VERSION);
-        }
-        return match;
-      })
-      .replace(/\+/g, "%2B");
+    return url.replace(/%(\w+)%/g, (match, name) => {
+      let replacement = match;
+      switch (name) {
+        case "PRODUCT":
+          replacement = Services.appinfo.name;
+          break;
+        case "VERSION":
+          replacement = Services.appinfo.version;
+          break;
+        case "BUILD_ID":
+          replacement = Services.appinfo.appBuildID;
+          break;
+        case "BUILD_TARGET":
+          replacement = Services.appinfo.OS + "_" + this.ABI;
+          break;
+        case "OS_VERSION":
+          replacement = this.OSVersion;
+          break;
+        case "LOCALE":
+          replacement = locale;
+          break;
+        case "CHANNEL":
+          replacement = this.UpdateChannel;
+          break;
+        case "PLATFORM_VERSION":
+          replacement = Services.appinfo.platformVersion;
+          break;
+        case "SYSTEM_CAPABILITIES":
+          replacement = getSystemCapabilities();
+          break;
+        case "DISTRIBUTION":
+          replacement = getDistributionPrefValue(PREF_APP_DISTRIBUTION);
+          break;
+        case "DISTRIBUTION_VERSION":
+          replacement = getDistributionPrefValue(PREF_APP_DISTRIBUTION_VERSION);
+          break;
+      }
+      return encodeURIComponent(replacement);
+    });
   },
 
   /**
-   * Gets the locale from the update.locale file for replacing %LOCALE% in the
-   * update url. The update.locale file can be located in the application
+   * Gets the locale from the default.locale file for replacing %LOCALE% in the
+   * update url. The default.locale file can be located in the application
    * directory or the GRE directory with preference given to it being located in
    * the application directory.
    */
@@ -119,7 +127,7 @@ export var UpdateUtils = {
     }
 
     for (let res of ["app", "gre"]) {
-      const url = "resource://" + res + "/" + FILE_UPDATE_LOCALE;
+      const url = `resource://${res}/${FILE_DEFAULT_LOCALE}`;
       let data;
       try {
         data = await fetch(url);
@@ -131,9 +139,8 @@ export var UpdateUtils = {
         return (this._locale = locale.trim());
       }
     }
-
     console.error(
-      FILE_UPDATE_LOCALE,
+      FILE_DEFAULT_LOCALE,
       " file doesn't exist in either the application or GRE directories"
     );
 
@@ -261,11 +268,10 @@ export var UpdateUtils = {
           initialConfig[prefName] = initialValue;
         } catch (e) {}
 
-        Services.prefs.addObserver(prefName, async (subject, topic, data) => {
+        Services.prefs.addObserver(prefName, async () => {
           let config = { ...gUpdateConfigCache };
-          config[prefName] = await UpdateUtils.readUpdateConfigSetting(
-            prefName
-          );
+          config[prefName] =
+            await UpdateUtils.readUpdateConfigSetting(prefName);
           maybeUpdateConfigChanged(config);
         });
       }
@@ -952,7 +958,7 @@ function getMemoryMB() {
 /**
  * Gets the supported CPU instruction set.
  */
-XPCOMUtils.defineLazyGetter(lazy, "gInstructionSet", function aus_gIS() {
+ChromeUtils.defineLazyGetter(lazy, "gInstructionSet", function aus_gIS() {
   const CPU_EXTENSIONS = [
     "hasSSE4_2",
     "hasSSE4_1",
@@ -976,7 +982,7 @@ XPCOMUtils.defineLazyGetter(lazy, "gInstructionSet", function aus_gIS() {
 });
 
 /* Windows only getter that returns the processor architecture. */
-XPCOMUtils.defineLazyGetter(lazy, "gWinCPUArch", function aus_gWinCPUArch() {
+ChromeUtils.defineLazyGetter(lazy, "gWinCPUArch", function aus_gWinCPUArch() {
   // Get processor architecture
   let arch = "unknown";
 
@@ -1043,7 +1049,7 @@ XPCOMUtils.defineLazyGetter(lazy, "gWinCPUArch", function aus_gWinCPUArch() {
   return arch;
 });
 
-XPCOMUtils.defineLazyGetter(UpdateUtils, "ABI", function () {
+ChromeUtils.defineLazyGetter(UpdateUtils, "ABI", function () {
   let abi = null;
   try {
     abi = Services.appinfo.XPCOMABI;
@@ -1064,7 +1070,7 @@ XPCOMUtils.defineLazyGetter(UpdateUtils, "ABI", function () {
   return abi;
 });
 
-XPCOMUtils.defineLazyGetter(UpdateUtils, "OSVersion", function () {
+ChromeUtils.defineLazyGetter(UpdateUtils, "OSVersion", function () {
   let osVersion;
   try {
     osVersion =

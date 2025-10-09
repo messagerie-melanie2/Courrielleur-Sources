@@ -48,14 +48,12 @@ class VRProcessParent final : public mozilla::ipc::GeckoChildProcessHost {
   void DestroyProcess();
   bool CanShutdown() override { return true; }
 
-  void OnChannelError() override;
   void OnChannelConnected(base::ProcessId peer_pid) override;
   void OnChannelConnectedTask();
   void OnChannelErrorTask();
   void OnChannelClosed();
   bool IsConnected() const;
 
-  base::ProcessId OtherPid();
   VRChild* GetActor() const { return mVRChild.get(); }
   // Return a unique id for this process, guaranteed not to be shared with any
   // past or future instance of VRProcessParent.

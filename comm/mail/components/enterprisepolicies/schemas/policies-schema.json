@@ -370,6 +370,9 @@
             },
             "updates_disabled": {
               "type": "boolean"
+            },
+            "private_browsing": {
+              "type": "boolean"
             }
           }
         }
@@ -422,6 +425,24 @@
 
     "HardwareAcceleration": {
       "type": "boolean"
+    },
+
+    "InAppNotification": {
+      "type": "object",
+      "properties": {
+        "DonationEnabled": {
+          "type": "boolean"
+        },
+        "SurveyEnabled": {
+          "type": "boolean"
+        },
+        "MessageEnabled": {
+          "type": "boolean"
+        },
+        "Disabled": {
+          "type": "boolean"
+        }
+      }
     },
 
     "InstallAddonsPermission": {

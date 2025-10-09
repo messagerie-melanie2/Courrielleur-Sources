@@ -4,29 +4,24 @@
 
 "use strict";
 
-var utils = ChromeUtils.import("resource://testing-common/mozmill/utils.jsm");
-var { close_compose_window, wait_for_compose_window } = ChromeUtils.import(
-  "resource://testing-common/mozmill/ComposeHelpers.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-var { open_content_tab_with_url } = ChromeUtils.import(
-  "resource://testing-common/mozmill/ContentTabHelpers.jsm"
-);
-var { mc } = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-);
-var { input_value } = ChromeUtils.import(
-  "resource://testing-common/mozmill/KeyboardHelpers.jsm"
-);
-var {
-  click_menus_in_sequence,
-  plan_for_modal_dialog,
-  plan_for_new_window,
-  wait_for_modal_dialog,
-  wait_for_window_close,
-} = ChromeUtils.import("resource://testing-common/mozmill/WindowHelpers.jsm");
 
-var folder = null;
-var gMsgNo = 0;
+var { close_compose_window, compose_window_ready } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+);
+var { open_content_tab_with_url } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ContentTabHelpers.sys.mjs"
+);
+var { input_value } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/KeyboardHelpers.sys.mjs"
+);
+var { click_menus_in_sequence, promise_modal_dialog, promise_new_window } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/WindowHelpers.sys.mjs"
+  );
+
 var gCwc;
 var gNewTab;
 var gPreCount;
@@ -34,75 +29,103 @@ var gPreCount;
 var url =
   "http://mochi.test:8888/browser/comm/mail/test/browser/content-policy/html/";
 
+add_setup(async () => {
+  const account = MailServices.accounts.createAccount();
+  const identity = MailServices.accounts.createIdentity();
+  identity.email = "mochitest@localhost";
+  account.addIdentity(identity);
+  account.incomingServer = MailServices.accounts.createIncomingServer(
+    "user",
+    "test",
+    "pop3"
+  );
+  MailServices.accounts.defaultAccount = account;
+  registerCleanupFunction(() => {
+    MailServices.accounts.removeAccount(account, true);
+  });
+});
+
 add_task(async function test_openComposeFromMailToLink() {
-  let tabmail = mc.window.document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   // Open a content tab with the mailto link in it.
   // To open a tab we're going to have to cheat and use tabmail so we can load
   // in the data of what we want.
   gPreCount = tabmail.tabContainer.allTabs.length;
-  gNewTab = open_content_tab_with_url(url + "mailtolink.html");
+  gNewTab = await open_content_tab_with_url(url + "mailtolink.html");
 
-  plan_for_new_window("msgcompose");
+  const composePromise = promise_new_window("msgcompose");
   await BrowserTestUtils.synthesizeMouseAtCenter(
     "#mailtolink",
     {},
     gNewTab.browser
   );
-  gCwc = wait_for_compose_window();
+  const cwc = await compose_window_ready(composePromise);
+  await close_compose_window(cwc);
+});
+
+add_task(async function test_openComposeFromMailToLinkWithMarkup() {
+  const composePromise = promise_new_window("msgcompose");
+  await BrowserTestUtils.synthesizeMouseAtCenter(
+    "#mailtolink_strong",
+    {},
+    gNewTab.browser
+  );
+  gCwc = await compose_window_ready(composePromise);
 });
 
 add_task(async function test_checkInsertImage() {
   // First focus on the editor element
-  gCwc.window.document.getElementById("messageEditor").focus();
+  gCwc.document.getElementById("messageEditor").focus();
 
   // Now open the image window
-  plan_for_modal_dialog("Mail:image", async function insert_image(mwc) {
-    // Insert the url of the image.
-    let srcloc = mwc.window.document.getElementById("srcInput");
-    srcloc.focus();
+  const dialogPromise = promise_modal_dialog(
+    "Mail:image",
+    async function (mwc) {
+      // Insert the url of the image.
+      const srcloc = mwc.document.getElementById("srcInput");
+      srcloc.focus();
 
-    input_value(mwc, url + "pass.png");
-    await new Promise(resolve => setTimeout(resolve));
+      input_value(mwc, url + "pass.png");
+      await new Promise(resolve => setTimeout(resolve));
 
-    let noAlt = mwc.window.document.getElementById("noAltTextRadio");
-    // Don't add alternate text
-    EventUtils.synthesizeMouseAtCenter(noAlt, {}, noAlt.ownerGlobal);
+      const noAlt = mwc.document.getElementById("noAltTextRadio");
+      // Don't add alternate text
+      EventUtils.synthesizeMouseAtCenter(noAlt, {}, noAlt.ownerGlobal);
 
-    // Accept the dialog
-    mwc.window.document.querySelector("dialog").acceptDialog();
-  });
+      // Accept the dialog
+      mwc.document.querySelector("dialog").acceptDialog();
+    }
+  );
 
-  let insertMenu = gCwc.window.document.getElementById("InsertPopupButton");
-  let insertMenuPopup = gCwc.window.document.getElementById("InsertPopup");
+  const insertMenu = gCwc.document.getElementById("InsertPopupButton");
+  const insertMenuPopup = gCwc.document.getElementById("InsertPopup");
   EventUtils.synthesizeMouseAtCenter(insertMenu, {}, insertMenu.ownerGlobal);
   await click_menus_in_sequence(insertMenuPopup, [{ id: "InsertImageItem" }]);
-
-  wait_for_modal_dialog();
-  wait_for_window_close();
+  await dialogPromise;
 
   // Test that the image load has not been denied
-  let childImages = gCwc.window.document
+  const childImages = gCwc.document
     .getElementById("messageEditor")
     .contentDocument.getElementsByTagName("img");
 
   Assert.equal(childImages.length, 1, "Should be one image in the document");
 
-  utils.waitFor(() => childImages[0].complete);
+  await TestUtils.waitForCondition(() => childImages[0].complete);
 
   // Should be the only image, so just check the first.
   Assert.ok(
-    !childImages[0].matches(":-moz-broken"),
-    "Loading of image in a mailto compose window should not be blocked"
+    childImages[0].naturalHeight > 0,
+    "Loading of image (naturalHeight) in a compose window should work"
   );
   Assert.ok(
     childImages[0].naturalWidth > 0,
-    "Non blocked image should have naturalWidth"
+    "Loading of image (naturalWidth) in a compose window should work"
   );
 });
 
-add_task(function test_closeComposeWindowAndTab() {
-  close_compose_window(gCwc);
-  let tabmail = mc.window.document.getElementById("tabmail");
+add_task(async function test_closeComposeWindowAndTab() {
+  await close_compose_window(gCwc);
+  const tabmail = document.getElementById("tabmail");
 
   tabmail.closeTab(gNewTab);
 

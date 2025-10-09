@@ -10,7 +10,6 @@
 #include <cstdint>
 #include <string>
 #include <type_traits>
-#include "build/build_config.h"
 #include "chrome/common/ipc_message.h"
 #include "chrome/common/ipc_message_utils.h"
 #include "mozilla/ipc/IPCCore.h"
@@ -25,7 +24,7 @@ class PickleIterator;
 #  pragma warning(disable : 4800)
 #endif
 
-#if !defined(OS_POSIX)
+#if !defined(XP_UNIX)
 // This condition must be kept in sync with the one in
 // ipc_message_utils.h, but this dummy definition of
 // base::FileDescriptor acts as a static assert that we only get one
@@ -47,36 +46,6 @@ struct VariantTag;
 }  // namespace mozilla
 
 namespace IPC {
-
-/**
- * A helper class for serializing plain-old data (POD) structures.
- * The memory representation of the structure is written to and read from
- * the serialized stream directly, without individual processing of the
- * structure's members.
- *
- * Derive ParamTraits<T> from PlainOldDataSerializer<T> if T is POD.
- *
- * Note: For POD structures with enumeration fields, this will not do
- *   validation of the enum values the way serializing the fields
- *   individually would. Prefer serializing the fields individually
- *   in such cases.
- */
-template <typename T>
-struct PlainOldDataSerializer {
-  static_assert(
-      std::is_trivially_copyable<T>::value,
-      "PlainOldDataSerializer can only be used with trivially copyable types!");
-
-  typedef T paramType;
-
-  static void Write(MessageWriter* aWriter, const paramType& aParam) {
-    aWriter->WriteBytes(&aParam, sizeof(aParam));
-  }
-
-  static bool Read(MessageReader* aReader, paramType* aResult) {
-    return aReader->ReadBytesInto(aResult, sizeof(paramType));
-  }
-};
 
 /**
  * A helper class for serializing empty structs. Since the struct is empty there
@@ -120,7 +89,7 @@ struct ParamTraits<uint8_t> {
   }
 };
 
-#if !defined(OS_POSIX)
+#if !defined(XP_UNIX)
 // See above re: keeping definitions in sync
 template <>
 struct ParamTraits<base::FileDescriptor> {
@@ -133,7 +102,7 @@ struct ParamTraits<base::FileDescriptor> {
     return false;
   }
 };
-#endif  // !defined(OS_POSIX)
+#endif  // !defined(XP_UNIX)
 
 template <>
 struct ParamTraits<mozilla::void_t> {

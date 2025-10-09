@@ -119,8 +119,8 @@ class nsMsgSendLater : public nsIMsgSendLater,
   char* m_to;
   char* m_bcc;
   char* m_fcc;
+  char* m_messageId;
   char* m_newsgroups;
-  char* m_newshost;
   char* m_headers;
   int32_t m_flags;
   int32_t m_headersFP;
@@ -133,6 +133,7 @@ class nsMsgSendLater : public nsIMsgSendLater,
   char* mLeftoverBuffer;
   char* mIdentityKey;
   char* mAccountKey;
+  char* mDraftInfo;
 
   bool mSendingMessages;
   bool mUserInitiated;

@@ -2,10 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
-
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
@@ -13,27 +9,11 @@ ChromeUtils.defineESModuleGetters(lazy, {
   Log: "chrome://remote/content/shared/Log.sys.mjs",
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "logger", () =>
+ChromeUtils.defineLazyGetter(lazy, "logger", () =>
   lazy.Log.get(lazy.Log.TYPES.MARIONETTE)
 );
 
 const { TYPE_ONE_SHOT, TYPE_REPEATING_SLACK } = Ci.nsITimer;
-
-const PROMISE_TIMEOUT = AppConstants.DEBUG ? 4500 : 1500;
-
-/**
- * Dispatch a function to be executed on the main thread.
- *
- * @param {Function} func
- *     Function to be executed.
- */
-export function executeSoon(func) {
-  if (typeof func != "function") {
-    throw new TypeError();
-  }
-
-  Services.tm.dispatchToMainThread(func);
-}
 
 /**
  * Runs a Promise-like function off the main thread until it is resolved
@@ -152,93 +132,6 @@ export function PollPromise(func, { timeout = null, interval = 10 } = {}) {
 }
 
 /**
- * Represents the timed, eventual completion (or failure) of an
- * asynchronous operation, and its resulting value.
- *
- * In contrast to a regular Promise, it times out after ``timeout``.
- *
- * @param {Function} fn
- *     Function to run, which will have its ``reject``
- *     callback invoked after the ``timeout`` duration is reached.
- *     It is given two callbacks: ``resolve(value)`` and
- *     ``reject(error)``.
- * @param {object=} options
- * @param {string} options.errorMessage
- *     Message to use for the thrown error.
- * @param {number=} options.timeout
- *     ``condition``'s ``reject`` callback will be called
- *     after this timeout, given in milliseconds.
- *     By default 1500 ms in an optimised build and 4500 ms in
- *     debug builds.
- * @param {Error=} options.throws
- *     When the ``timeout`` is hit, this error class will be
- *     thrown.  If it is null, no error is thrown and the promise is
- *     instead resolved on timeout with a TimeoutError.
- *
- * @returns {Promise.<*>}
- *     Timed promise.
- *
- * @throws {TypeError}
- *     If `timeout` is not a number.
- * @throws {RangeError}
- *     If `timeout` is not an unsigned integer.
- */
-export function TimedPromise(fn, options = {}) {
-  const {
-    errorMessage = "TimedPromise timed out",
-    timeout = PROMISE_TIMEOUT,
-    throws = lazy.error.TimeoutError,
-  } = options;
-
-  const timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
-
-  if (typeof fn != "function") {
-    throw new TypeError();
-  }
-  if (typeof timeout != "number") {
-    throw new TypeError();
-  }
-  if (!Number.isInteger(timeout) || timeout < 0) {
-    throw new RangeError();
-  }
-
-  return new Promise((resolve, reject) => {
-    let trace;
-
-    // Reject only if |throws| is given.  Otherwise it is assumed that
-    // the user is OK with the promise timing out.
-    let bail = () => {
-      const message = `${errorMessage} after ${timeout} ms`;
-      if (throws !== null) {
-        let err = new throws(message);
-        reject(err);
-      } else {
-        lazy.logger.warn(message, trace);
-        resolve();
-      }
-    };
-
-    trace = lazy.error.stack();
-    timer.initWithCallback({ notify: bail }, timeout, TYPE_ONE_SHOT);
-
-    try {
-      fn(resolve, reject);
-    } catch (e) {
-      reject(e);
-    }
-  }).then(
-    res => {
-      timer.cancel();
-      return res;
-    },
-    err => {
-      timer.cancel();
-      throw err;
-    }
-  );
-}
-
-/**
  * Pauses for the given duration.
  *
  * @param {number} timeout
@@ -315,32 +208,6 @@ export function MessageManagerDestroyedPromise(messageManager) {
 }
 
 /**
- * Throttle until the main thread is idle and `window` has performed
- * an animation frame (in that order).
- *
- * @param {ChromeWindow} win
- *     Window to request the animation frame from.
- *
- * @returns {Promise}
- */
-export function IdlePromise(win) {
-  const animationFramePromise = new Promise(resolve => {
-    executeSoon(() => {
-      win.requestAnimationFrame(resolve);
-    });
-  });
-
-  // Abort if the underlying window gets closed
-  const windowClosedPromise = new PollPromise(resolve => {
-    if (win.closed) {
-      resolve();
-    }
-  });
-
-  return Promise.race([animationFramePromise, windowClosedPromise]);
-}
-
-/**
  * Wraps a callback function, that, as long as it continues to be
  * invoked, will not be triggered.  The given function will be
  * called after the timeout duration is reached, after no more
@@ -369,7 +236,7 @@ export function IdlePromise(win) {
  * Note that it is not possible to use this synchronisation primitive
  * with `addEventListener(..., {once: true})`.
  *
- * @param {function(Event)} fn
+ * @param {function(Event): void} fn
  *     Callback function that is guaranteed to be invoked once only,
  *     after `timeout`.
  * @param {number=} [timeout = 250] timeout
@@ -413,7 +280,7 @@ export class DebounceCallback {
  *     The message to wait for.
  * @param {object=} options
  *     Extra options.
- * @param {function(Message)=} options.checkFn
+ * @param {function(Message): boolean=} options.checkFn
  *     Called with the ``Message`` object as argument, should return ``true``
  *     if the message is the expected one, or ``false`` if it should be
  *     ignored and listening should continue. If not specified, the first
@@ -463,7 +330,7 @@ export function waitForMessage(
  *     The topic to observe.
  * @param {object=} options
  *     Extra options.
- * @param {function(string, object)=} options.checkFn
+ * @param {function(string, object): boolean=} options.checkFn
  *     Called with ``subject``, and ``data`` as arguments, should return true
  *     if the notification is the expected one, or false if it should be
  *     ignored and listening should continue. If not specified, the first
@@ -505,8 +372,8 @@ export function waitForObserverTopic(topic, options = {}) {
       timer?.cancel();
     }
 
-    function observer(subject, topic, data) {
-      lazy.logger.trace(`Received observer notification ${topic}`);
+    function observer(subject, _topic, data) {
+      lazy.logger.trace(`Received observer notification ${_topic}`);
       try {
         if (checkFn && !checkFn(subject, data)) {
           return;

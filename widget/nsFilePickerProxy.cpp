@@ -12,6 +12,7 @@
 #include "mozilla/dom/Directory.h"
 #include "mozilla/dom/File.h"
 #include "mozilla/dom/BrowserChild.h"
+#include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/IPCBlobUtils.h"
 
 using namespace mozilla::dom;
@@ -24,18 +25,19 @@ nsFilePickerProxy::nsFilePickerProxy()
 nsFilePickerProxy::~nsFilePickerProxy() = default;
 
 NS_IMETHODIMP
-nsFilePickerProxy::Init(mozIDOMWindowProxy* aParent, const nsAString& aTitle,
-                        nsIFilePicker::Mode aMode) {
-  BrowserChild* browserChild = BrowserChild::GetFrom(aParent);
+nsFilePickerProxy::Init(BrowsingContext* aBrowsingContext,
+                        const nsAString& aTitle, nsIFilePicker::Mode aMode) {
+  BrowserChild* browserChild =
+      BrowserChild::GetFrom(aBrowsingContext->GetDocShell());
   if (!browserChild) {
     return NS_ERROR_FAILURE;
   }
 
-  mParent = nsPIDOMWindowOuter::From(aParent);
-
+  mBrowsingContext = aBrowsingContext;
   mMode = aMode;
 
-  browserChild->SendPFilePickerConstructor(this, aTitle, aMode);
+  browserChild->SendPFilePickerConstructor(this, aTitle, aMode,
+                                           aBrowsingContext);
 
   mIPCActive = true;
   return NS_OK;
@@ -119,11 +121,6 @@ nsFilePickerProxy::GetFiles(nsISimpleEnumerator** aFiles) {
   return NS_ERROR_FAILURE;
 }
 
-nsresult nsFilePickerProxy::Show(nsIFilePicker::ResultCode* aReturn) {
-  MOZ_ASSERT(false, "Show is unimplemented; use Open");
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
 NS_IMETHODIMP
 nsFilePickerProxy::Open(nsIFilePickerShownCallback* aCallback) {
   mCallback = aCallback;
@@ -146,8 +143,9 @@ nsFilePickerProxy::Open(nsIFilePickerShownCallback* aCallback) {
 
 mozilla::ipc::IPCResult nsFilePickerProxy::Recv__delete__(
     const MaybeInputData& aData, const nsIFilePicker::ResultCode& aResult) {
-  nsPIDOMWindowInner* inner =
-      mParent ? mParent->GetCurrentInnerWindow() : nullptr;
+  auto* inner = mBrowsingContext->GetDOMWindow()
+                    ? mBrowsingContext->GetDOMWindow()->GetCurrentInnerWindow()
+                    : nullptr;
 
   if (NS_WARN_IF(!inner)) {
     return IPC_OK();
@@ -174,7 +172,7 @@ mozilla::ipc::IPCResult nsFilePickerProxy::Recv__delete__(
   } else if (aData.type() == MaybeInputData::TInputDirectory) {
     nsCOMPtr<nsIFile> file;
     const nsAString& path(aData.get_InputDirectory().directoryPath());
-    nsresult rv = NS_NewLocalFile(path, true, getter_AddRefs(file));
+    nsresult rv = NS_NewLocalFile(path, getter_AddRefs(file));
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return IPC_OK();
     }
@@ -184,6 +182,25 @@ mozilla::ipc::IPCResult nsFilePickerProxy::Recv__delete__(
 
     OwningFileOrDirectory* element = mFilesOrDirectories.AppendElement();
     element->SetAsDirectory() = directory;
+
+    const nsTArray<IPCBlob>& blobs =
+        aData.get_InputDirectory().blobsInWebKitDirectory();
+    for (const auto& blob : blobs) {
+      RefPtr<BlobImpl> blobImpl = IPCBlobUtils::Deserialize(blob);
+      NS_ENSURE_TRUE(blobImpl, IPC_OK());
+
+      if (!blobImpl->IsFile()) {
+        return IPC_OK();
+      }
+
+      RefPtr<File> file = File::Create(inner->AsGlobal(), blobImpl);
+      if (NS_WARN_IF(!file)) {
+        return IPC_OK();
+      }
+
+      OwningFileOrDirectory* element = mFilesInWebKitDirectory.AppendElement();
+      element->SetAsFile() = file;
+    }
   }
 
   if (mCallback) {
@@ -284,4 +301,17 @@ nsresult nsFilePickerProxy::ResolveSpecialDirectory(
   // Unfortunately we can't easily verify that `aSpecialDirectory` is usable or
   // even meaningful here, so we just accept anything.
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsFilePickerProxy::GetDomFilesInWebKitDirectory(
+    nsISimpleEnumerator** aDomfiles) {
+#ifdef MOZ_WIDGET_ANDROID
+  RefPtr<SimpleEnumerator> enumerator =
+      new SimpleEnumerator(mFilesInWebKitDirectory);
+  enumerator.forget(aDomfiles);
+  return NS_OK;
+#else
+  return NS_ERROR_NOT_IMPLEMENTED;
+#endif
 }

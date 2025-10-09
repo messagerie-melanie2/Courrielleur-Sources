@@ -19,18 +19,26 @@ interface nsIInputStream;
 
 typedef uint32_t AppTrustedRoot;
 
+[scriptable, builtinclass, uuid(e5795418-86e0-4c0b-9b98-ac7eee0c2af7)]
+interface nsIAppSignatureInfo : nsISupports {
+  // Supported signature algorithms.
+  cenum SignatureAlgorithm : 32 {
+    PKCS7_WITH_SHA1,
+    PKCS7_WITH_SHA256,
+    COSE_WITH_SHA256,
+  };
+
+  // The certificate that created the signature.
+  readonly attribute nsIX509Cert signerCert;
+  readonly attribute nsIAppSignatureInfo_SignatureAlgorithm signatureAlgorithm;
+};
+
 [scriptable, function, uuid(fc2b60e5-9a07-47c2-a2cd-b83b68a660ac)]
 interface nsIOpenSignedAppFileCallback : nsISupports
 {
   void openSignedAppFileFinished(in nsresult rv,
                                  in nsIZipReader aZipReader,
-                                 in nsIX509Cert aSignerCert);
-};
-
-[scriptable, function, uuid(07c08655-8b11-4650-b6c4-0c145595ceb5)]
-interface nsIAsyncBoolCallback : nsISupports
-{
-    void onResult(in bool result);
+                                 in Array<nsIAppSignatureInfo> aSignatureInfos);
 };
 
 /**
@@ -46,7 +54,7 @@ interface nsIAsyncBoolCallback : nsISupports
 interface nsICertVerificationCallback : nsISupports {
   void verifyCertFinished(in int32_t aPRErrorCode,
                           in Array<nsIX509Cert> aVerifiedChain,
-                          in bool aHasEVPolicy);
+                          in boolean aHasEVPolicy);
 };
 
 /**
@@ -283,6 +291,16 @@ interface nsIX509CertDB : nsISupports {
   // Do not fall back to DV verification after attempting EV validation.
   const uint32_t FLAG_MUST_BE_EV = 1 << 1;
 
+  cenum VerifyUsage : 8 {
+    verifyUsageTLSServer = 1,
+    verifyUsageTLSServerCA = 2,
+    verifyUsageTLSClient = 3,
+    verifyUsageTLSClientCA = 4,
+    verifyUsageEmailSigner = 5,
+    verifyUsageEmailRecipient = 6,
+    verifyUsageEmailCA = 7,
+  };
+
   /*
    * Asynchronously verify a certificate given a set of parameters. Calls the
    * `verifyCertFinished` function on the provided `nsICertVerificationCallback`
@@ -290,8 +308,7 @@ interface nsIX509CertDB : nsISupports {
    * See the documentation for  nsICertVerificationCallback.
    *
    * @param aCert the certificate to verify
-   * @param aUsage an integer representing the usage to verify for (see
-   *               SECCertificateUsage in certt.h from NSS)
+   * @param aUsage see VerifyUsage, the usage to verify for
    * @param aFlags flags as described above
    * @param aHostname the (optional) hostname to verify for
    * @param aTime the time at which to verify, in seconds since the epoch
@@ -301,7 +318,7 @@ interface nsIX509CertDB : nsISupports {
    */
   [must_use]
   void asyncVerifyCertAtTime(in nsIX509Cert aCert,
-                             in int64_t /*SECCertificateUsage*/ aUsage,
+                             in nsIX509CertDB_VerifyUsage aUsage,
                              in uint32_t aFlags,
                              in ACString aHostname,
                              in uint64_t aTime,
@@ -342,10 +359,13 @@ interface nsIX509CertDB : nsISupports {
   [must_use]
   ACString asPKCS7Blob(in Array<nsIX509Cert> certList);
 
+  unsigned long countTrustObjects();
+
   /**
-   * Iterates through all the certs and returns false if any of the trusted
-   * CA certs are not built-in roots; and true otherwise.
+   * On Android, returns the client authentication certificate corresponding to
+   * the given alias that was previously returned by a call to
+   * `KeyChain.choosePrivateKeyAlias`.
    */
   [must_use]
-  void asyncHasThirdPartyRoots(in nsIAsyncBoolCallback callback);
+  nsIX509Cert getAndroidCertificateFromAlias(in AString alias);
 };

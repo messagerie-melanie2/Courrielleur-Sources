@@ -17,7 +17,7 @@
 #define TLS_EARLY_DATA_AVAILABLE_BUT_NOT_USED 1
 #define TLS_EARLY_DATA_AVAILABLE_AND_USED 2
 
-#include "mozilla/Telemetry.h"
+#include "mozilla/glean/NetwerkProtocolHttpMetrics.h"
 #include "HttpConnectionBase.h"
 #include "nsHttpHandler.h"
 #include "nsIClassOfService.h"
@@ -58,6 +58,43 @@ void HttpConnectionBase::SetTrafficCategory(HttpTrafficCategory aCategory) {
     return;
   }
   Unused << mTrafficCategory.AppendElement(aCategory);
+}
+
+void HttpConnectionBase::ChangeConnectionState(ConnectionState aState) {
+  LOG(("HttpConnectionBase::ChangeConnectionState this=%p (%d->%d)", this,
+       static_cast<uint32_t>(mConnectionState), static_cast<uint32_t>(aState)));
+
+  // The state can't move backward.
+  if (aState <= mConnectionState) {
+    return;
+  }
+
+  mConnectionState = aState;
+}
+
+void HttpConnectionBase::RecordConnectionCloseTelemetry(nsresult aReason) {
+  /**
+   *
+   * The returned telemetry key has the format:
+   * "Version_EndToEndSSL_IsTrrServiceChannel_ExperienceState_ConnectionState"
+   *
+   * - Version: The HTTP version of the connection.
+   * - EndToEndSSL: Indicates whether SSL encryption is end-to-end.
+   * - IsTrrServiceChannel: Specifies if the connection is used to send TRR
+   *    requests.
+   * - ExperienceState: ConnectionExperienceState
+   * - ConnectionState: The connection state before closing.
+   */
+  auto key = nsPrintfCString("%d_%d_%d_%d_%d", static_cast<uint32_t>(Version()),
+                             mConnInfo->EndToEndSSL(),
+                             mConnInfo->GetIsTrrServiceChannel(),
+                             static_cast<uint32_t>(mExperienceState),
+                             static_cast<uint32_t>(mConnectionState));
+  SetCloseReason(ToCloseReason(aReason));
+  LOG(("RecordConnectionCloseTelemetry key=%s reason=%d\n", key.get(),
+       static_cast<uint32_t>(mCloseReason)));
+  glean::http::connection_close_reason.Get(key).AccumulateSingleSample(
+      static_cast<uint32_t>(mCloseReason));
 }
 
 }  // namespace net

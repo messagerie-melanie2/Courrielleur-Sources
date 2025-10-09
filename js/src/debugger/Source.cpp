@@ -17,7 +17,8 @@
 #include "debugger/Debugger.h"         // for DebuggerSourceReferent, Debugger
 #include "debugger/Script.h"           // for DebuggerScript
 #include "frontend/FrontendContext.h"  // for AutoReportFrontendContext
-#include "gc/Tracer.h"  // for TraceManuallyBarrieredCrossCompartmentEdge
+#include "gc/Tracer.h"        // for TraceManuallyBarrieredCrossCompartmentEdge
+#include "js/ColumnNumber.h"  // JS::WasmFunctionIndex, JS::ColumnNumberOneOrigin
 #include "js/CompilationAndEvaluation.h"  // for Compile
 #include "js/ErrorReport.h"  // for JS_ReportErrorASCII,  JS_ReportErrorNumberASCII
 #include "js/experimental/TypedData.h"  // for JS_NewUint8Array
@@ -67,7 +68,10 @@ const JSClassOps DebuggerSource::classOps_ = {
 };
 
 const JSClass DebuggerSource::class_ = {
-    "Source", JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS), &classOps_};
+    "Source",
+    JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS),
+    &classOps_,
+};
 
 /* static */
 NativeObject* DebuggerSource::initClass(JSContext* cx,
@@ -277,14 +281,13 @@ bool DebuggerSource::CallData::getBinary() {
     return false;
   }
 
-  const wasm::Bytes& bytecode = instance.debug().bytecode();
+  const wasm::BytecodeSource& bytecode = instance.debug().bytecode();
   RootedObject arr(cx, JS_NewUint8Array(cx, bytecode.length()));
   if (!arr) {
     return false;
   }
 
-  memcpy(arr->as<TypedArrayObject>().dataPointerUnshared(), bytecode.begin(),
-         bytecode.length());
+  bytecode.copyTo((uint8_t*)arr->as<TypedArrayObject>().dataPointerUnshared());
 
   args.rval().setObject(*arr);
   return true;
@@ -347,19 +350,22 @@ bool DebuggerSource::CallData::getStartLine() {
 
 class DebuggerSourceGetStartColumnMatcher {
  public:
-  using ReturnType = uint32_t;
+  using ReturnType = JS::LimitedColumnNumberOneOrigin;
 
   ReturnType match(Handle<ScriptSourceObject*> sourceObject) {
     ScriptSource* ss = sourceObject->source();
     return ss->startColumn();
   }
-  ReturnType match(Handle<WasmInstanceObject*> instanceObj) { return 0; }
+  ReturnType match(Handle<WasmInstanceObject*> instanceObj) {
+    return JS::LimitedColumnNumberOneOrigin(
+        JS::WasmFunctionIndex::DefaultBinarySourceColumnNumberOneOrigin);
+  }
 };
 
 bool DebuggerSource::CallData::getStartColumn() {
   DebuggerSourceGetStartColumnMatcher matcher;
-  uint32_t column = referent.match(matcher);
-  args.rval().setNumber(column);
+  JS::LimitedColumnNumberOneOrigin column = referent.match(matcher);
+  args.rval().setNumber(column.oneOriginValue());
   return true;
 }
 
@@ -389,7 +395,11 @@ struct DebuggerSourceGetDisplayURLMatcher {
     return ss->hasDisplayURL() ? ss->displayURL() : nullptr;
   }
   ReturnType match(Handle<WasmInstanceObject*> wasmInstance) {
-    return wasmInstance->instance().metadata().displayURL();
+    return wasmInstance->instance().codeMetaForAsmJS()
+               ? wasmInstance->instance()
+                     .codeMetaForAsmJS()
+                     ->displayURL()  // asm.js
+               : nullptr;            // wasm
   }
 };
 
@@ -620,7 +630,7 @@ static JSScript* ReparseSource(JSContext* cx, Handle<ScriptSourceObject*> sso) {
   JS::CompileOptions options(cx);
   options.setHideScriptFromDebugger(true);
   options.setFileAndLine(ss->filename(), ss->startLine());
-  options.setColumn(ss->startColumn());
+  options.setColumn(JS::ColumnNumberOneOrigin(ss->startColumn()));
 
   UncompressedSourceCache::AutoHoldEntry holder;
 
@@ -683,7 +693,10 @@ const JSPropertySpec DebuggerSource::properties_[] = {
     JS_DEBUG_PSG("introductionType", getIntroductionType),
     JS_DEBUG_PSG("elementAttributeName", getElementProperty),
     JS_DEBUG_PSGS("sourceMapURL", getSourceMapURL, setSourceMapURL),
-    JS_PS_END};
+    JS_PS_END,
+};
 
 const JSFunctionSpec DebuggerSource::methods_[] = {
-    JS_DEBUG_FN("reparse", reparse, 0), JS_FS_END};
+    JS_DEBUG_FN("reparse", reparse, 0),
+    JS_FS_END,
+};

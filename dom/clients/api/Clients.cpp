@@ -14,13 +14,14 @@
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/ServiceWorkerDescriptor.h"
 #include "mozilla/dom/ServiceWorkerManager.h"
+#include "mozilla/dom/ServiceWorkerUtils.h"
 #include "mozilla/dom/WorkerScope.h"
 #include "mozilla/ipc/BackgroundUtils.h"
 #include "mozilla/SchedulerGroup.h"
 #include "mozilla/StaticPrefs_privacy.h"
-#include "mozilla/StorageAccess.h"
 #include "nsIGlobalObject.h"
 #include "nsString.h"
+#include "nsReadableUtils.h"
 
 namespace mozilla::dom {
 
@@ -73,9 +74,7 @@ already_AddRefed<Promise> Clients::Get(const nsAString& aClientID,
   }
 
   const PrincipalInfo& principalInfo = workerPrivate->GetPrincipalInfo();
-  nsCOMPtr<nsISerialEventTarget> target =
-      mGlobal->EventTargetFor(TaskCategory::Other);
-
+  nsCOMPtr<nsISerialEventTarget> target = mGlobal->SerialEventTarget();
   RefPtr<ClientOpPromise> innerPromise = ClientManager::GetInfoAndState(
       ClientGetInfoAndStateArgs(id, principalInfo), target);
 
@@ -89,11 +88,10 @@ already_AddRefed<Promise> Clients::Get(const nsAString& aClientID,
           [outerPromise, holder, scope](const ClientOpResult& aResult) {
             holder->Complete();
             NS_ENSURE_TRUE_VOID(holder->GetParentObject());
-            RefPtr<Client> client = new Client(
-                holder->GetParentObject(), aResult.get_ClientInfoAndState());
-            if (client->GetStorageAccess() == StorageAccess::eAllow ||
-                (StaticPrefs::privacy_partition_serviceWorkers() &&
-                 ShouldPartitionStorage(client->GetStorageAccess()))) {
+            if (ServiceWorkersStorageAllowedForClient(
+                    aResult.get_ClientInfoAndState())) {
+              RefPtr<Client> client = new Client(
+                  holder->GetParentObject(), aResult.get_ClientInfoAndState());
               outerPromise->MaybeResolve(std::move(client));
               return;
             }
@@ -103,7 +101,7 @@ already_AddRefed<Promise> Clients::Get(const nsAString& aClientID,
                       scope, "ServiceWorkerGetClientStorageError",
                       nsTArray<nsString>());
                 });
-            SchedulerGroup::Dispatch(TaskCategory::Other, r.forget());
+            SchedulerGroup::Dispatch(r.forget());
             outerPromise->MaybeResolveWithUndefined();
           },
           [outerPromise, holder](const CopyableErrorResult& aResult) {
@@ -172,14 +170,11 @@ already_AddRefed<Promise> Clients::MatchAll(const ClientQueryOptions& aOptions,
         bool storageDenied = false;
         for (const ClientInfoAndState& value :
              aResult.get_ClientList().values()) {
-          RefPtr<Client> client = new Client(global, value);
-          if (client->GetStorageAccess() != StorageAccess::eAllow &&
-              (!StaticPrefs::privacy_partition_serviceWorkers() ||
-               !ShouldPartitionStorage(client->GetStorageAccess()))) {
+          if (!ServiceWorkersStorageAllowedForClient(value)) {
             storageDenied = true;
             continue;
           }
-          clientList.AppendElement(std::move(client));
+          clientList.AppendElement(new Client(global, value));
         }
         if (storageDenied) {
           nsCOMPtr<nsIRunnable> r = NS_NewRunnableFunction(
@@ -188,7 +183,7 @@ already_AddRefed<Promise> Clients::MatchAll(const ClientQueryOptions& aOptions,
                     scope, "ServiceWorkerGetClientStorageError",
                     nsTArray<nsString>());
               });
-          SchedulerGroup::Dispatch(TaskCategory::Other, r.forget());
+          SchedulerGroup::Dispatch(r.forget());
         }
         clientList.Sort(MatchAllComparator());
         outerPromise->MaybeResolve(clientList);
@@ -214,7 +209,9 @@ already_AddRefed<Promise> Clients::OpenWindow(const nsAString& aURL,
     return outerPromise.forget();
   }
 
-  if (aURL.EqualsLiteral("about:blank")) {
+  if (aURL.EqualsLiteral(u"about:blank") ||
+      StringBeginsWith(aURL, u"about:blank?"_ns) ||
+      StringBeginsWith(aURL, u"about:blank#"_ns)) {
     CopyableErrorResult rv;
     rv.ThrowTypeError(
         "Passing \"about:blank\" to Clients.openWindow is not allowed");

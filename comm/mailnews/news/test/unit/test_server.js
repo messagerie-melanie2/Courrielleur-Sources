@@ -1,17 +1,17 @@
 // Protocol tests for NNTP. These actually aren't too important, but their main
 // purpose is to make sure that maild is working properly and to provide
-// examples for how using maild. They also help make sure that I coded Nntpd.jsm
+// examples for how using maild. They also help make sure that I coded Nntpd.sys.mjs
 // right, both logically and for RFC compliance.
 // TODO:
 // * We need to hook up mochitest,
 // * TLS negotiation.
 
-// The basic daemon to use for testing Nntpd.jsm implementations
+// The basic daemon to use for testing Nntpd.sys.mjs implementations
 var daemon = setupNNTPDaemon();
 
 // NNTP SERVER TESTS
 // -----------------
-// Functions in order as defined in Nntpd.jsm. Each function tests the URLs
+// Functions in order as defined in Nntpd.sys.mjs. Each function tests the URLs
 // that are located over the implementation of nsNNTPProtocol::LoadURL and
 // added in bug 400331. Furthermore, they are tested in rough order as they
 // would be expected to be used in a session. If more URL types are modified,
@@ -67,7 +67,7 @@ function testRFC977() {
   }
   server.stop();
 
-  var thread = gThreadManager.currentThread;
+  var thread = Services.tm.currentThread;
   while (thread.hasPendingEvents()) {
     thread.processNextEvent(true);
   }
@@ -93,7 +93,7 @@ function testConnectionLimit() {
   Assert.ok("us" in server.playTransaction());
   server.stop();
 
-  var thread = gThreadManager.currentThread;
+  var thread = Services.tm.currentThread;
   while (thread.hasPendingEvents()) {
     thread.processNextEvent(true);
   }
@@ -106,10 +106,10 @@ function testReentrantClose() {
   server.start(NNTP_PORT);
 
   var listener = {
-    OnStartRunningUrl(url) {},
-    OnStopRunningUrl(url, rv) {
+    OnStartRunningUrl() {},
+    OnStopRunningUrl() {
       // Spin the event loop (entering nsNNTPProtocol::ProcessProtocolState)
-      let thread = gThreadManager.currentThread;
+      const thread = Services.tm.currentThread;
       while (thread.hasPendingEvents()) {
         thread.processNextEvent(true);
       }
@@ -130,7 +130,7 @@ function testReentrantClose() {
   });
   server.performTest("GROUP");
   dump("Stopping server\n");
-  gThreadManager.currentThread.dispatch(
+  Services.tm.currentThread.dispatch(
     {
       run() {
         _server.closeCachedConnections();
@@ -153,21 +153,21 @@ function testManyConnections() {
   _server.maximumConnectionsNumber = 3;
   var listener = {
     ran: 0,
-    OnStartRunningUrl(url) {},
-    OnStopRunningUrl(url, rv) {
+    OnStartRunningUrl() {},
+    OnStopRunningUrl() {
       if (--this.ran == 0) {
         _server.closeCachedConnections();
       }
     },
   };
-  for (let group of _server.rootFolder.subFolders) {
+  for (const group of _server.rootFolder.subFolders) {
     group.getNewMessages(null, listener);
     listener.ran++;
   }
   server.performTest();
   // The last one that is processed is test.filter, so make sure that
   // test.subscribed.simple is not retrieving the data meant for test.filter
-  let folder = _server.rootFolder.getChildNamed("test.subscribe.simple");
+  const folder = _server.rootFolder.getChildNamed("test.subscribe.simple");
   Assert.equal(folder.getTotalMessages(false), 1);
 }
 

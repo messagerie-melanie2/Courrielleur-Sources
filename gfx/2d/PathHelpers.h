@@ -15,47 +15,6 @@
 namespace mozilla {
 namespace gfx {
 
-struct PathOp {
-  ~PathOp() = default;
-
-  enum OpType {
-    OP_MOVETO = 0,
-    OP_LINETO,
-    OP_BEZIERTO,
-    OP_QUADRATICBEZIERTO,
-    OP_ARC,
-    OP_CLOSE
-  };
-
-  OpType mType;
-  Point mP1;
-#if (!defined(__GNUC__) || __GNUC__ >= 7) && defined(__clang__)
-  PathOp() {}
-
-  union {
-    struct {
-      Point mP2;
-      Point mP3;
-    };
-    struct {
-      float mRadius;
-      float mStartAngle;
-      float mEndAngle;
-      bool mAntiClockwise;
-    };
-  };
-#else
-  PathOp() = default;
-
-  Point mP2;
-  Point mP3;
-  float mRadius;
-  float mStartAngle;
-  float mEndAngle;
-  bool mAntiClockwise;
-#endif
-};
-
 const int32_t sPointCount[] = {1, 1, 3, 2, 0, 0};
 
 // Kappa constant for 90-degree angle
@@ -255,6 +214,15 @@ inline already_AddRefed<Path> MakePathForEllipse(const DrawTarget& aDrawTarget,
                                                  const Size& aDimensions) {
   RefPtr<PathBuilder> builder = aDrawTarget.CreatePathBuilder();
   AppendEllipseToPath(builder, aCenter, aDimensions);
+  return builder->Finish();
+}
+
+inline already_AddRefed<Path> MakePathForCircle(const DrawTarget& aDrawTarget,
+                                                const Point& aCenter,
+                                                float aRadius) {
+  RefPtr<PathBuilder> builder = aDrawTarget.CreatePathBuilder();
+  builder->Arc(aCenter, aRadius, 0.0f, Float(2.0 * M_PI));
+  builder->Close();
   return builder->Finish();
 }
 

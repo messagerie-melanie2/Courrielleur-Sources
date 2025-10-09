@@ -37,20 +37,6 @@ LOCAL_INCLUDES += [
     "/netwerk/base",
 ]
 
-EXTRA_JS_MODULES += [
-    "ImapChannel.jsm",
-    "ImapClient.jsm",
-    "ImapFolderContentHandler.sys.mjs",
-    "ImapIncomingServer.jsm",
-    "ImapMessageService.jsm",
-    "ImapModuleLoader.jsm",
-    "ImapProtocolHandler.jsm",
-    "ImapProtocolInfo.jsm",
-    "ImapResponse.jsm",
-    "ImapService.jsm",
-    "ImapUtils.jsm",
-]
-
 XPCOM_MANIFESTS += [
     "components.conf",
 ]

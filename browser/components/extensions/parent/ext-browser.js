@@ -12,14 +12,9 @@
 
 ChromeUtils.defineESModuleGetters(this, {
   AboutReaderParent: "resource:///actors/AboutReaderParent.sys.mjs",
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
-  PromiseUtils: "resource://gre/modules/PromiseUtils.sys.mjs",
 });
-ChromeUtils.defineModuleGetter(
-  this,
-  "BrowserWindowTracker",
-  "resource:///modules/BrowserWindowTracker.jsm"
-);
 
 var { ExtensionError } = ExtensionUtils;
 
@@ -72,8 +67,12 @@ global.openOptionsPage = extension => {
     return Promise.reject({ message: "No browser window available" });
   }
 
-  if (extension.manifest.options_ui.open_in_tab) {
-    window.switchToTabHavingURI(extension.manifest.options_ui.page, true, {
+  const { optionsPageProperties } = extension;
+  if (!optionsPageProperties) {
+    return Promise.reject({ message: "No options page" });
+  }
+  if (optionsPageProperties.open_in_tab) {
+    window.switchToTabHavingURI(optionsPageProperties.page, true, {
       triggeringPrincipal: extension.principal,
     });
     return Promise.resolve();
@@ -83,7 +82,7 @@ global.openOptionsPage = extension => {
     extension.id
   )}/preferences`;
 
-  return window.BrowserOpenAddonsMgr(viewId);
+  return window.BrowserAddonUI.openAddonsMgr(viewId);
 };
 
 global.makeWidgetId = id => {
@@ -113,7 +112,7 @@ global.clickModifiersFromEvent = event => {
 global.waitForTabLoaded = (tab, url) => {
   return new Promise(resolve => {
     windowTracker.addListener("progress", {
-      onLocationChange(browser, webProgress, request, locationURI, flags) {
+      onLocationChange(browser, webProgress, request, locationURI) {
         if (
           webProgress.isTopLevel &&
           browser.ownerGlobal.gBrowser.getTabForBrowser(browser) == tab &&
@@ -134,6 +133,49 @@ global.replaceUrlInTab = (gBrowser, tab, uri) => {
     triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(), // This is safe from this functions usage however it would be preferred not to dot his.
   });
   return loaded;
+};
+
+// The tabs.Tab.groupId type in the public extension API is an integer,
+// but tabbrowser's tab group ID are strings. This handles the conversion.
+//
+// tabbrowser.addTabGroup() generates the internal tab group ID as follows:
+// internal group id = `${Date.now()}-${Math.round(Math.random() * 100)}`;
+// After dropping the hyphen ("-"), the result can be coerced into a safe
+// integer.
+//
+// As a safeguard, in case the format changes, we fall back to maintaining
+// an internal mapping (that never gets cleaned up).
+// This may change in https://bugzilla.mozilla.org/show_bug.cgi?id=1960104
+const fallbackTabGroupIdMap = new Map();
+let nextFallbackTabGroupId = 1;
+global.getExtTabGroupIdForInternalTabGroupId = groupIdStr => {
+  const parsedTabId = /^(\d{13})-(\d{1,3})$/.exec(groupIdStr);
+  if (parsedTabId) {
+    const groupId = parsedTabId[1] * 1000 + parseInt(parsedTabId[2], 10);
+    if (Number.isSafeInteger(groupId)) {
+      return groupId;
+    }
+  }
+  // Fall back.
+  let fallbackGroupId = fallbackTabGroupIdMap.get(groupIdStr);
+  if (!fallbackGroupId) {
+    fallbackGroupId = nextFallbackTabGroupId++;
+    fallbackTabGroupIdMap.set(groupIdStr, fallbackGroupId);
+  }
+  return fallbackGroupId;
+};
+global.getInternalTabGroupIdForExtTabGroupId = groupId => {
+  if (Number.isSafeInteger(groupId) && groupId >= 1e15) {
+    // 16 digits - this inverts getExtTabGroupIdForInternalTabGroupId.
+    const groupIdStr = `${Math.floor(groupId / 1000)}-${groupId % 1000}`;
+    return groupIdStr;
+  }
+  for (let [groupIdStr, fallbackGroupId] of fallbackTabGroupIdMap) {
+    if (fallbackGroupId === groupId) {
+      return groupIdStr;
+    }
+  }
+  return null;
 };
 
 /**
@@ -242,20 +284,6 @@ global.TabContext = class extends EventEmitter {
     tabTracker.off("tab-adopted", this.tabAdopted);
   }
 };
-
-// This promise is used to wait for the search service to be initialized.
-// None of the code in the WebExtension modules requests that initialization.
-// It is assumed that it is started at some point. That might never happen,
-// e.g. if the application shuts down before the search service initializes.
-XPCOMUtils.defineLazyGetter(global, "searchInitialized", () => {
-  if (Services.search.isInitialized) {
-    return Promise.resolve();
-  }
-  return ExtensionUtils.promiseObserved(
-    "browser-search-service",
-    (_, data) => data == "init-complete"
-  );
-});
 
 class WindowTracker extends WindowTrackerBase {
   addProgressListener(window, listener) {
@@ -444,23 +472,35 @@ class TabTracker extends TabTrackerBase {
   }
 
   /**
-   * Sets the opener of `tab` to the ID `openerTab`. Both tabs must be in the
-   * same window, or this function will throw a type error.
+   * Sets the opener of `tab` to the ID `openerTabId`. Both tabs must be in the
+   * same window, or this function will throw an error. if `openerTabId` is `-1`
+   * the opener tab is cleared.
    *
-   * @param {Element} tab The tab for which to set the owner.
-   * @param {Element} openerTab The opener of <tab>.
+   * @param {Element} nativeTab The tab for which to set the owner.
+   * @param {number} openerTabId The openerTabId of <tab>.
    */
-  setOpener(tab, openerTab) {
-    if (tab.ownerDocument !== openerTab.ownerDocument) {
-      throw new Error("Tab must be in the same window as its opener");
+  setOpener(nativeTab, openerTabId) {
+    let nativeOpenerTab = null;
+
+    if (openerTabId > -1) {
+      nativeOpenerTab = tabTracker.getTab(openerTabId);
+      if (nativeTab.ownerDocument !== nativeOpenerTab.ownerDocument) {
+        throw new ExtensionError(
+          "Opener tab must be in the same window as the tab being updated"
+        );
+      }
     }
-    tab.openerTab = openerTab;
+
+    if (nativeTab.openerTab !== nativeOpenerTab) {
+      nativeTab.openerTab = nativeOpenerTab;
+      this.emit("tab-openerTabId", { nativeTab, openerTabId });
+    }
   }
 
   deferredForTabOpen(nativeTab) {
     let deferred = this._deferredTabOpenEvents.get(nativeTab);
     if (!deferred) {
-      deferred = PromiseUtils.defer();
+      deferred = Promise.withResolvers();
       this._deferredTabOpenEvents.set(nativeTab, deferred);
       deferred.promise.then(() => {
         this._deferredTabOpenEvents.delete(nativeTab);
@@ -724,6 +764,23 @@ class TabTracker extends TabTrackerBase {
     };
   }
 
+  getBrowserDataForContext(context) {
+    if (["tab", "background"].includes(context.viewType)) {
+      return this.getBrowserData(context.xulBrowser);
+    } else if (["popup", "sidebar"].includes(context.viewType)) {
+      // popups and sidebars are nested inside a browser element
+      // (with url "chrome://browser/content/webext-panels.xhtml")
+      // and so we look for the corresponding topChromeWindow to
+      // determine the windowId the panel belongs to.
+      const chromeWindow =
+        context.xulBrowser?.ownerGlobal?.browsingContext?.topChromeWindow;
+      const windowId = chromeWindow ? windowTracker.getId(chromeWindow) : -1;
+      return { tabId: -1, windowId };
+    }
+
+    return { tabId: -1, windowId: -1 };
+  }
+
   get activeTab() {
     let window = windowTracker.topWindow;
     if (window && window.gBrowser) {
@@ -749,6 +806,10 @@ class Tab extends TabBase {
 
   get audible() {
     return this.nativeTab.soundPlaying;
+  }
+
+  get autoDiscardable() {
+    return !this.nativeTab.undiscardable;
   }
 
   get browser() {
@@ -858,6 +919,11 @@ class Tab extends TabBase {
   get successorTabId() {
     const { successor } = this.nativeTab;
     return successor ? tabTracker.getId(successor) : -1;
+  }
+
+  get groupId() {
+    const { group } = this.nativeTab;
+    return group ? getExtTabGroupIdForInternalTabGroupId(group.id) : -1;
   }
 
   /**
@@ -990,7 +1056,8 @@ class Window extends WindowBase {
   }
 
   get alwaysOnTop() {
-    return this.appWindow.zLevel >= Ci.nsIAppWindow.raisedZ;
+    // We never create alwaysOnTop browser windows.
+    return false;
   }
 
   get isLastFocused() {

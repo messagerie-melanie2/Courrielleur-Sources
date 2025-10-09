@@ -7,6 +7,8 @@ ChromeUtils.defineESModuleGetters(this, {
   ClientEnvironmentBase:
     "resource://gre/modules/components-utils/ClientEnvironment.sys.mjs",
   NormandyTestUtils: "resource://testing-common/NormandyTestUtils.sys.mjs",
+  Region: "resource://gre/modules/Region.sys.mjs",
+  RegionTestUtils: "resource://testing-common/RegionTestUtils.sys.mjs",
   TelemetryController: "resource://gre/modules/TelemetryController.sys.mjs",
   updateAppInfo: "resource://testing-common/AppInfo.sys.mjs",
 });
@@ -17,7 +19,14 @@ add_setup(() => {
 
 add_task(async function test_OS_data() {
   const os = ClientEnvironmentBase.os;
-  ok(os !== undefined, "OS data should be available in the context");
+  Assert.notStrictEqual(
+    os,
+    undefined,
+    "OS data should be available in the context"
+  );
+
+  equal(os.name, ClientEnvironmentBase.appinfo.OS);
+  equal(typeof os.version, "string", "Version is a string");
 
   let osCount = 0;
   if (os.isWindows) {
@@ -29,7 +38,7 @@ add_task(async function test_OS_data() {
   if (os.isLinux) {
     osCount += 1;
   }
-  ok(osCount <= 1, "At most one OS should match");
+  Assert.lessOrEqual(osCount, 1, "At most one OS should match");
 
   // if on Windows, Windows versions should be set, and Mac versions should not be
   if (os.isWindows) {
@@ -110,16 +119,19 @@ add_task(async function testLiveTelemetry() {
 });
 
 add_task(function testBuildId() {
-  ok(
-    ClientEnvironmentBase.appinfo !== undefined,
+  Assert.notStrictEqual(
+    ClientEnvironmentBase.appinfo,
+    undefined,
     "appinfo should be available in the context"
   );
-  ok(
-    typeof ClientEnvironmentBase.appinfo === "object",
+  Assert.strictEqual(
+    typeof ClientEnvironmentBase.appinfo,
+    "object",
     "appinfo should be an object"
   );
-  ok(
-    typeof ClientEnvironmentBase.appinfo.appBuildID === "string",
+  Assert.strictEqual(
+    typeof ClientEnvironmentBase.appinfo.appBuildID,
+    "string",
     "buildId should be a string"
   );
 });
@@ -145,3 +157,20 @@ add_task(
     );
   }
 );
+
+add_task(async function test_country() {
+  Region._home = null;
+  RegionTestUtils.setNetworkRegion("FR");
+  await Region._fetchRegion();
+
+  equal(ClientEnvironmentBase.country, "FR");
+});
+
+add_task(async function test_formFactor() {
+  const env = ClientEnvironmentBase;
+  if (["android", "ios"].includes(AppConstants.platform)) {
+    equal(env.formFactor, "phone");
+  } else {
+    equal(env.formFactor, "desktop");
+  }
+});

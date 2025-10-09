@@ -2,8 +2,8 @@
  * Test bug 460636 - nsMsgSaveAsListener sometimes inserts extra LF characters
  */
 
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 var gSavedMsgFile;
@@ -33,7 +33,7 @@ async function setup() {
   IMAPPump.mailbox.addMessage(
     new ImapMessage(msgfileuri.spec, IMAPPump.mailbox.uidnext++, [])
   );
-  let promiseUrlListener = new PromiseTestUtils.PromiseUrlListener();
+  const promiseUrlListener = new PromiseTestUtils.PromiseUrlListener();
   IMAPPump.inbox.updateFolderWithListener(null, promiseUrlListener);
   await promiseUrlListener.promise;
 
@@ -44,21 +44,13 @@ async function setup() {
   gSavedMsgFile = Services.dirsvc.get("IMapMD", Ci.nsIFile);
   gSavedMsgFile.append(gFileName + ".eml");
 
-  // From nsIMsgMessageService.idl:
-  // void SaveMessageToDisk(in string aMessageURI, in nsIFile aFile,
-  //                        in boolean aGenerateDummyEnvelope,
-  //                        in nsIUrlListener aUrlListener, out nsIURI aURL,
-  //                        in boolean canonicalLineEnding,
-  //                        in nsIMsgWindow aMsgWindow);
-  // Enforcing canonicalLineEnding (i.e., CRLF) makes sure that the
-  let promiseUrlListener2 = new PromiseTestUtils.PromiseUrlListener();
-  gIMAPService.SaveMessageToDisk(
+  const promiseUrlListener2 = new PromiseTestUtils.PromiseUrlListener();
+  gIMAPService.saveMessageToDisk(
     "imap-message://user@localhost/INBOX#" + (IMAPPump.mailbox.uidnext - 1),
     gSavedMsgFile,
     false,
     promiseUrlListener2,
-    {},
-    true,
+    true, // Enforcing canonicalLineEnding (i.e., CRLF).
     null
   );
   await promiseUrlListener2.promise;

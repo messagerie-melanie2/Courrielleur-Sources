@@ -6,12 +6,13 @@
 /* import-globals-from calendar-tabs.js */
 /* import-globals-from calendar-views-utils.js */
 
-var { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
+var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
 
 /**
  * Namespace object to hold functions related to the today pane.
  */
 var TodayPane = {
+  _showsToday: false,
   isLoaded: false,
   paneViews: null,
   start: null,
@@ -33,9 +34,9 @@ var TodayPane = {
     this.isLoaded = true;
 
     TodayPane.paneViews = [
-      cal.l10n.getCalString("eventsandtasks"),
-      cal.l10n.getCalString("tasksonly"),
-      cal.l10n.getCalString("eventsonly"),
+      TodayPane.l10n.formatValueSync("events-and-tasks"),
+      TodayPane.l10n.formatValueSync("tasks-only"),
+      TodayPane.l10n.formatValueSync("events-only"),
     ];
 
     this.agenda = document.getElementById("agenda");
@@ -77,7 +78,7 @@ var TodayPane = {
       return;
     }
     let agendaIsVisible = document.getElementById("agenda-panel").isVisible(gCurrentMode);
-    let todoIsVisible = document.getElementById("todo-tab-panel").isVisible(gCurrentMode);
+    const todoIsVisible = document.getElementById("todo-tab-panel").isVisible(gCurrentMode);
     let index = 2;
     if (agendaIsVisible && todoIsVisible) {
       index = 0;
@@ -94,18 +95,33 @@ var TodayPane = {
       document.getElementById("agenda-panel").setVisible(agendaIsVisible);
       index = 2;
     }
-    let todayHeader = document.getElementById("today-pane-header");
+    const todayHeader = document.getElementById("today-pane-header");
     todayHeader.setAttribute("index", index);
     todayHeader.setAttribute("value", this.paneViews[index]);
-    let todayPaneSplitter = document.getElementById("today-pane-splitter");
+
+    const strings = [
+      "calendar-today-pane-show-events-and-tasks",
+      "calendar-today-pane-show-tasks-only",
+      "calendar-today-pane-show-events-only",
+    ];
+    document.l10n.setAttributes(
+      document.getElementById("today-pane-cycler-prev"),
+      strings[(index + 2) % 3]
+    );
+    document.l10n.setAttributes(
+      document.getElementById("today-pane-cycler-next"),
+      strings[(index + 1) % 3]
+    );
+
+    const todayPaneSplitter = document.getElementById("today-pane-splitter");
     todayPaneSplitter.hidden = index != 0;
-    let todayIsVisible = document.getElementById("today-pane-panel").isVisible();
+    const todayIsVisible = document.getElementById("today-pane-panel").isVisible();
 
     // Disable or enable the today pane menuitems that have an attribute
     // name="minidisplay" depending on the visibility of elements.
-    let menupopup = document.getElementById("calTodayPaneMenuPopup");
+    const menupopup = document.getElementById("calTodayPaneMenuPopup");
     if (menupopup) {
-      for (let child of menupopup.children) {
+      for (const child of menupopup.children) {
         if (child.getAttribute("name") == "minidisplay") {
           child.disabled = !todayIsVisible || !agendaIsVisible;
         }
@@ -123,7 +139,7 @@ var TodayPane = {
       }
       if (todoIsVisible) {
         // Add listener to update the date filters.
-        getViewBox().addEventListener("dayselect", event => {
+        getViewBox().addEventListener("dayselect", () => {
           this.updateCalendarToDoUnifinder();
         });
         this.updateCalendarToDoUnifinder();
@@ -139,7 +155,7 @@ var TodayPane = {
    * @param {string} [filter] - The filter name to set.
    */
   updateCalendarToDoUnifinder(filter) {
-    let tree = document.getElementById("unifinder-todo-tree");
+    const tree = document.getElementById("unifinder-todo-tree");
     if (!tree.hasBeenVisible) {
       tree.hasBeenVisible = true;
       tree.refresh();
@@ -159,9 +175,9 @@ var TodayPane = {
         }
       });
 
-    let showCompleted = document.getElementById("show-completed-checkbox").checked;
+    const showCompleted = document.getElementById("show-completed-checkbox").checked;
     if (!showCompleted) {
-      let filterProps = tree.mFilter.getDefinedFilterProperties(filter);
+      const filterProps = tree.mFilter.getDefinedFilterProperties(filter);
       if (filterProps) {
         filterProps.status =
           (filterProps.status || filterProps.FILTER_STATUS_ALL) &
@@ -203,7 +219,7 @@ var TodayPane = {
     if (aEvent.button != 0) {
       return;
     }
-    let element = aEvent.target;
+    const element = aEvent.target;
     if (element.id == "previous-day-button" || element.id == "next-day-button") {
       // Start switching days by pressing, without release, the navigation buttons
       element.addEventListener("mouseout", TodayPane.stopSwitching);
@@ -229,11 +245,11 @@ var TodayPane = {
    */
   onMousemove(aEvent) {
     const MIN_DRAG_DISTANCE_SQ = 49;
-    let x = aEvent.clientX - TodayPane.minidayDrag.startX;
-    let y = aEvent.clientY - TodayPane.minidayDrag.startY;
+    const x = aEvent.clientX - TodayPane.minidayDrag.startX;
+    const y = aEvent.clientY - TodayPane.minidayDrag.startY;
     if (TodayPane.minidayDrag.session) {
       if (x * x + y * y >= MIN_DRAG_DISTANCE_SQ) {
-        let distance = Math.floor(Math.sqrt(x * x + y * y) - Math.sqrt(MIN_DRAG_DISTANCE_SQ));
+        const distance = Math.floor(Math.sqrt(x * x + y * y) - Math.sqrt(MIN_DRAG_DISTANCE_SQ));
         // Dragging on the left/right side, the day date decrease/increase
         TodayPane.minidayDrag.distance = x > 0 ? distance : -distance;
       } else {
@@ -243,11 +259,11 @@ var TodayPane = {
       // move the mouse a bit before starting the drag session
       window.addEventListener("mouseout", TodayPane.stopSwitching);
       TodayPane.minidayDrag.session = true;
-      let dragCenterImage = document.getElementById("dragCenter-image");
+      const dragCenterImage = document.getElementById("dragCenter-image");
       dragCenterImage.removeAttribute("hidden");
       // Move the starting point in the center so we have a fixed
       // point where stopping the day switching while still dragging
-      let centerObj = dragCenterImage.getBoundingClientRect();
+      const centerObj = dragCenterImage.getBoundingClientRect();
       TodayPane.minidayDrag.startX = Math.floor(centerObj.x + centerObj.width / 2);
       TodayPane.minidayDrag.startY = Math.floor(centerObj.y + centerObj.height / 2);
 
@@ -267,11 +283,14 @@ var TodayPane = {
     const SECOND_STEP_TIME = 200;
     if (TodayPane.minidayDrag.session) {
       // Dragging the day label: days switch with cursor distance and time.
-      let dir = (TodayPane.minidayDrag.distance > 0) - (TodayPane.minidayDrag.distance < 0);
+      const dir = (TodayPane.minidayDrag.distance > 0) - (TodayPane.minidayDrag.distance < 0);
       TodayPane.advance(dir);
-      let distance = Math.abs(TodayPane.minidayDrag.distance);
+      const distance = Math.abs(TodayPane.minidayDrag.distance);
       // Linear relation between distance and switching speed
-      let timeInterval = Math.max(Math.ceil(INITIAL_TIME - distance * REL_DISTANCE), MINIMUM_TIME);
+      const timeInterval = Math.max(
+        Math.ceil(INITIAL_TIME - distance * REL_DISTANCE),
+        MINIMUM_TIME
+      );
       TodayPane.minidayTimer = setTimeout(
         TodayPane.updateAdvanceTimer.bind(TodayPane, null, null),
         timeInterval
@@ -301,7 +320,7 @@ var TodayPane = {
    * NOTE: This function is usually called without the correct this pointer.
    */
   stopSwitching(aEvent) {
-    let element = aEvent.target;
+    const element = aEvent.target;
     if (
       TodayPane.minidayDrag.session &&
       aEvent.type == "mouseout" &&
@@ -313,13 +332,13 @@ var TodayPane = {
       clearTimeout(TodayPane.minidayTimer);
       delete TodayPane.minidayTimer;
       if (TodayPane.switchCounter == 0 && !TodayPane.minidayDrag.session) {
-        let dir = element.getAttribute("dir");
+        const dir = element.getAttribute("dir");
         TodayPane.advance(parseInt(dir, 10));
       }
     }
     if (element.id == "previous-day-button" || element.id == "next-day-button") {
       TodayPane.switchCounter = 0;
-      let button = document.getElementById(element.id);
+      const button = document.getElementById(element.id);
       button.removeEventListener("mouseout", TodayPane.stopSwitching);
     }
     if (TodayPane.minidayDrag.session) {
@@ -335,8 +354,8 @@ var TodayPane = {
   /**
    * Cycle the view shown in the today pane (event+task, event, task).
    *
-   * @param aCycleForward     If true, the views are cycled in the forward
-   *                            direction, otherwise in the opposite direction
+   * @param {boolean} aCycleForward - If true, the views are cycled in the
+   *   forward direction, otherwise in the opposite direction.
    */
   cyclePaneView(aCycleForward) {
     if (this.paneViews == null) {
@@ -344,16 +363,16 @@ var TodayPane = {
     }
     let index = parseInt(document.getElementById("today-pane-header").getAttribute("index"), 10);
     index = index + aCycleForward;
-    let nViewLen = this.paneViews.length;
+    const nViewLen = this.paneViews.length;
     if (index >= nViewLen) {
       index = 0;
     } else if (index == -1) {
       index = nViewLen - 1;
     }
-    let agendaPanel = document.getElementById("agenda-panel");
-    let todoPanel = document.getElementById("todo-tab-panel");
-    let isTodoPanelVisible = index != 2 && todoPanel.isVisibleInMode(gCurrentMode);
-    let isAgendaPanelVisible = index != 1 && agendaPanel.isVisibleInMode(gCurrentMode);
+    const agendaPanel = document.getElementById("agenda-panel");
+    const todoPanel = document.getElementById("todo-tab-panel");
+    const isTodoPanelVisible = index != 2 && todoPanel.isVisibleInMode(gCurrentMode);
+    const isAgendaPanelVisible = index != 1 && agendaPanel.isVisibleInMode(gCurrentMode);
     todoPanel.setVisible(isTodoPanelVisible);
     agendaPanel.setVisible(isAgendaPanelVisible);
     this.updateDisplay();
@@ -362,7 +381,7 @@ var TodayPane = {
   /**
    * Sets the shown date from a JSDate.
    *
-   * @param aNewDate      The date to show.
+   * @param {Date} aNewDate - The date to show.
    */
   setDaywithjsDate(aNewDate) {
     let newdatetime = cal.dtz.jsDateToDateTime(aNewDate, cal.dtz.floating);
@@ -374,36 +393,37 @@ var TodayPane = {
   /**
    * Sets the first day shown in the today pane.
    *
-   * @param aNewDate                  The calIDateTime to set.
-   * @param aDontUpdateMinimonth      If true, the minimonth will not be
-   *                                    updated to show the same date.
+   * @param {calIDateTime} aNewDate - The calIDateTime to set.
+   * @param {boolean} aDontUpdateMinimonth - If true, the minimonth will not be
+   *   updated to show the same date.
    */
   setDay(aNewDate, aDontUpdateMinimonth) {
     if (this.setDay.alreadySettingDay) {
       // If we update the mini-month, this function gets called again.
       return;
     }
-    if (!document.getElementById("agenda-panel").isVisible()) {
-      // If the agenda panel isn't visible, there's no need to set the day.
-      return;
-    }
     this.setDay.alreadySettingDay = true;
     this.start = aNewDate.clone();
 
-    let daylabel = document.getElementById("datevalue-label");
+    const today = cal.dtz.now();
+    this._showsToday =
+      aNewDate.year == today.year && aNewDate.month == today.month && aNewDate.day == today.day;
+
+    const daylabel = document.getElementById("datevalue-label");
+    // Only the number of the date is used here. `formatDateOnly` is avoided as
+    // the extra characters in CJK languages won't fit.
     daylabel.value = this.start.day;
 
     document
       .getElementById("weekdayNameLabel")
-      .setAttribute("value", cal.l10n.getDateFmtString(`day.${this.start.weekday + 1}.Mmm`));
+      .setAttribute("value", cal.dtz.formatter.shortWeekdayNames[this.start.weekday]);
 
-    let monthnamelabel = document.getElementById("monthNameContainer");
-    monthnamelabel.value =
-      cal.dtz.formatter.shortMonthName(this.start.month) + " " + this.start.year;
+    const monthnamelabel = document.getElementById("monthNameContainer");
+    monthnamelabel.value = cal.dtz.formatter.formatMonthShort(this.start.year, this.start.month);
 
-    let currentweeklabel = document.getElementById("currentWeek-label");
+    const currentweeklabel = document.getElementById("currentWeek-label");
     currentweeklabel.value =
-      cal.l10n.getCalString("shortcalendarweek") +
+      TodayPane.l10n.formatValueSync("short-calendar-week") +
       " " +
       cal.weekInfoService.getWeekTitle(this.start);
 
@@ -423,8 +443,8 @@ var TodayPane = {
   /**
    * Advance by a given number of days in the today pane.
    *
-   * @param aDir      The number of days to advance. Negative numbers advance
-   *                    backwards in time.
+   * @param {integer} aDir - The number of days to advance. Negative numbers
+   *   advance backwards in time.
    */
   advance(aDir) {
     if (aDir != 0) {
@@ -434,10 +454,11 @@ var TodayPane = {
   },
 
   /**
-   * Checks if the today pane is showing today's date.
+   * If last selected date was the current date at the time. This will remain
+   * true (or false) until a different date is selected, even after midnight.
    */
-  showsToday() {
-    return cal.dtz.sameDay(cal.dtz.now(), this.start);
+  get showsToday() {
+    return this._showsToday;
   },
 
   /**
@@ -454,7 +475,7 @@ var TodayPane = {
   /**
    * Display a certain section in the minday/minimonth part of the todaypane.
    *
-   * @param aSection      The section to display
+   * @param {string} aSection - The section to display.
    */
   displayMiniSection(aSection) {
     document.getElementById("today-minimonth-box").setVisible(aSection == "minimonth");
@@ -469,7 +490,7 @@ var TodayPane = {
   onModeModified() {
     TodayPane.updateDisplay();
     TodayPane.updateSplitterState();
-    let todayPanePanel = document.getElementById("today-pane-panel");
+    const todayPanePanel = document.getElementById("today-pane-panel");
     const currentWidth = todayPanePanel.getModeAttribute("modewidths");
     if (currentWidth != 0) {
       todayPanePanel.style.width = `${currentWidth}px`;
@@ -484,7 +505,7 @@ var TodayPane = {
   /**
    * Toggle the today-pane and update its visual appearance.
    *
-   * @param aEvent        The DOM event occurring on activated command.
+   * @param {Event} aEvent - The DOM event occurring on activated command.
    */
   toggleVisibility(aEvent) {
     document.getElementById("today-pane-panel").togglePane(aEvent);
@@ -496,7 +517,7 @@ var TodayPane = {
    * Update the today-splitter state.
    */
   updateSplitterState() {
-    let splitter = document.getElementById("today-splitter");
+    const splitter = document.getElementById("today-splitter");
     if (this.isVisible) {
       splitter.removeAttribute("hidden");
       splitter.setAttribute("state", "open");
@@ -510,9 +531,9 @@ var TodayPane = {
    * is being collapsed or uncollapsed.
    */
   onCommandTodaySplitter() {
-    let todaypane = document.getElementById("today-pane-panel");
-    let splitter = document.getElementById("today-splitter");
-    let splitterCollapsed = splitter.getAttribute("state") == "collapsed";
+    const todaypane = document.getElementById("today-pane-panel");
+    const splitter = document.getElementById("today-splitter");
+    const splitterCollapsed = splitter.getAttribute("state") == "collapsed";
 
     todaypane.setModeAttribute("modewidths", todaypane.getAttribute("width"));
 
@@ -525,11 +546,17 @@ var TodayPane = {
    * Checks if the todayPaneStatusLabel should be hidden.
    */
   showTodayPaneStatusLabel() {
-    let hideLabel = !Services.prefs.getBoolPref("calendar.view.showTodayPaneStatusLabel", true);
+    const hideLabel = !Services.prefs.getBoolPref("calendar.view.showTodayPaneStatusLabel", true);
     document
       .getElementById("calendar-status-todaypane-button")
       .toggleAttribute("hideLabel", hideLabel);
   },
 };
+
+ChromeUtils.defineLazyGetter(
+  TodayPane,
+  "l10n",
+  () => new Localization(["calendar/calendar.ftl"], true)
+);
 
 window.addEventListener("unload", TodayPane.onUnload, { capture: false, once: true });

@@ -8,12 +8,17 @@
 #include "GPUProcessHost.h"
 #include "GPUProcessManager.h"
 #include "GfxInfoBase.h"
+#include "TelemetryProbesReporter.h"
+#include "VideoUtils.h"
 #include "VRProcessManager.h"
 #include "gfxConfig.h"
 #include "gfxPlatform.h"
 #include "mozilla/Components.h"
 #include "mozilla/FOGIPC.h"
 #include "mozilla/StaticPrefs_dom.h"
+#include "mozilla/StaticPrefs_media.h"
+#include "mozilla/glean/GfxMetrics.h"
+#include "mozilla/glean/IpcMetrics.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/TelemetryIPC.h"
 #include "mozilla/dom/CheckerboardReportService.h"
@@ -97,8 +102,8 @@ bool GPUChild::EnsureGPUReady() {
   // Only import and collect telemetry for the initial GPU process launch.
   if (!mGPUReady) {
     gfxPlatform::GetPlatform()->ImportGPUDeviceData(data);
-    Telemetry::AccumulateTimeDelta(Telemetry::GPU_PROCESS_LAUNCH_TIME_MS_2,
-                                   mHost->GetLaunchTime());
+    glean::gpu_process::launch_time.AccumulateRawDuration(
+        TimeStamp::Now() - mHost->GetLaunchTime());
     mGPUReady = true;
   }
 
@@ -108,6 +113,33 @@ bool GPUChild::EnsureGPUReady() {
 
 void GPUChild::OnUnexpectedShutdown() { mUnexpectedShutdown = true; }
 
+void GPUChild::GeneratePairedMinidump() {
+  // At most generate the paired minidumps twice per session in order to
+  // avoid accumulating a large number of unsubmitted minidumps on disk.
+  if (mCrashReporter && mNumPairedMinidumpsCreated < 2) {
+    nsAutoCString additionalDumps("browser");
+    mCrashReporter->AddAnnotationNSCString(
+        CrashReporter::Annotation::additional_minidumps, additionalDumps);
+
+    nsAutoCString reason("GPUProcessKill");
+    mCrashReporter->AddAnnotationNSCString(
+        CrashReporter::Annotation::ipc_channel_error, reason);
+
+    if (mCrashReporter->GenerateMinidumpAndPair(mHost, "browser"_ns)) {
+      mCrashReporter->FinalizeCrashReport();
+      mCreatedPairedMinidumps = true;
+      mNumPairedMinidumpsCreated++;
+    }
+  }
+}
+
+void GPUChild::DeletePairedMinidump() {
+  if (mCrashReporter && mCreatedPairedMinidumps) {
+    mCrashReporter->DeleteCrashReport();
+    mCreatedPairedMinidumps = false;
+  }
+}
+
 mozilla::ipc::IPCResult GPUChild::RecvInitComplete(const GPUDeviceData& aData) {
   // We synchronously requested GPU parameters before this arrived.
   if (mGPUReady) {
@@ -115,8 +147,8 @@ mozilla::ipc::IPCResult GPUChild::RecvInitComplete(const GPUDeviceData& aData) {
   }
 
   gfxPlatform::GetPlatform()->ImportGPUDeviceData(aData);
-  Telemetry::AccumulateTimeDelta(Telemetry::GPU_PROCESS_LAUNCH_TIME_MS_2,
-                                 mHost->GetLaunchTime());
+  glean::gpu_process::launch_time.AccumulateRawDuration(TimeStamp::Now() -
+                                                        mHost->GetLaunchTime());
   mGPUReady = true;
   return IPC_OK();
 }
@@ -218,9 +250,10 @@ mozilla::ipc::IPCResult GPUChild::RecvRecordDiscardedData(
 }
 
 mozilla::ipc::IPCResult GPUChild::RecvNotifyDeviceReset(
-    const GPUDeviceData& aData) {
+    const GPUDeviceData& aData, const DeviceResetReason& aReason,
+    const DeviceResetDetectPlace& aPlace) {
   gfxPlatform::GetPlatform()->ImportGPUDeviceData(aData);
-  mHost->mListener->OnRemoteProcessDeviceReset(mHost);
+  mHost->mListener->OnRemoteProcessDeviceReset(mHost, aReason, aPlace);
   return IPC_OK();
 }
 
@@ -233,6 +266,11 @@ mozilla::ipc::IPCResult GPUChild::RecvNotifyOverlayInfo(
 mozilla::ipc::IPCResult GPUChild::RecvNotifySwapChainInfo(
     const SwapChainInfo aInfo) {
   gfxPlatform::GetPlatform()->SetSwapChainInfo(aInfo);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult GPUChild::RecvNotifyDisableRemoteCanvas() {
+  gfxPlatform::DisableRemoteCanvas();
   return IPC_OK();
 }
 
@@ -283,13 +321,16 @@ mozilla::ipc::IPCResult GPUChild::RecvAddMemoryReport(
 
 void GPUChild::ActorDestroy(ActorDestroyReason aWhy) {
   if (aWhy == AbnormalShutdown || mUnexpectedShutdown) {
-    nsAutoString dumpId;
-    GenerateCrashReport(OtherPid(), &dumpId);
+    nsAutoCString processType(
+        XRE_GeckoProcessTypeToString(GeckoProcessType_GPU));
+    glean::subprocess::abnormal_abort.Get(processType).Add(1);
 
-    Telemetry::Accumulate(
-        Telemetry::SUBPROCESS_ABNORMAL_ABORT,
-        nsDependentCString(XRE_GeckoProcessTypeToString(GeckoProcessType_GPU)),
-        1);
+    nsAutoString dumpId;
+    if (!mCreatedPairedMinidumps) {
+      GenerateCrashReport(&dumpId);
+    } else if (mCrashReporter) {
+      dumpId = mCrashReporter->MinidumpID();
+    }
 
     // Notify the Telemetry environment so that we can refresh and do a
     // subsession split. This also notifies the crash reporter on geckoview.
@@ -297,6 +338,7 @@ void GPUChild::ActorDestroy(ActorDestroyReason aWhy) {
       RefPtr<nsHashPropertyBag> props = new nsHashPropertyBag();
       props->SetPropertyAsBool(u"abnormal"_ns, true);
       props->SetPropertyAsAString(u"dumpID"_ns, dumpId);
+      props->SetPropertyAsACString(u"processType"_ns, processType);
       obsvc->NotifyObservers((nsIPropertyBag2*)props,
                              "compositor:process-aborted", nullptr);
     }
@@ -336,8 +378,24 @@ mozilla::ipc::IPCResult GPUChild::RecvBHRThreadHang(
 
 mozilla::ipc::IPCResult GPUChild::RecvUpdateMediaCodecsSupported(
     const media::MediaCodecsSupported& aSupported) {
+  if (ContainHardwareCodecsSupported(aSupported)) {
+    mozilla::TelemetryProbesReporter::ReportDeviceMediaCodecSupported(
+        aSupported);
+  }
+#if defined(XP_WIN)
+  // Do not propagate HEVC support if the pref is off
+  media::MediaCodecsSupported trimedSupported = aSupported;
+  if (aSupported.contains(
+          mozilla::media::MediaCodecsSupport::HEVCHardwareDecode) &&
+      !StaticPrefs::media_hevc_enabled()) {
+    trimedSupported -= mozilla::media::MediaCodecsSupport::HEVCHardwareDecode;
+  }
+  dom::ContentParent::BroadcastMediaCodecsSupportedUpdate(
+      RemoteDecodeIn::GpuProcess, trimedSupported);
+#else
   dom::ContentParent::BroadcastMediaCodecsSupportedUpdate(
       RemoteDecodeIn::GpuProcess, aSupported);
+#endif
   return IPC_OK();
 }
 

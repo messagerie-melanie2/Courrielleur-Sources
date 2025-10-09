@@ -27,7 +27,7 @@ local_requirements = {
 requirements_re = re.compile(rb"(%s)[^\w]" % b"|".join(local_requirements.keys()))
 
 
-class ReplaceRequirements(object):
+class ReplaceRequirements:
     def __init__(self, top_src_path, tox_path):
         self.top_src_path = top_src_path
         self.tox_path = tox_path
@@ -49,9 +49,9 @@ class ReplaceRequirements(object):
         parser = configparser.ConfigParser()
         path = os.path.join(self.tox_path, "tox.ini")
         with open(path) as f:
-            parser.readfp(f)
+            parser.read_file(f)
         deps = parser.get("testenv", "deps")
-        dep_re = re.compile("(?:.*:\s*)?-r(.*)")
+        dep_re = re.compile(r"(?:.*:\s*)?-r(.*)")
 
         # This can break if we start using more features of tox
         for dep in deps.splitlines():

@@ -3,31 +3,12 @@
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { CryptoWrapper } from "resource://services-sync/record.sys.mjs";
-import {
-  Store,
-  SyncEngine,
-  Tracker,
-} from "resource://services-sync/engines.sys.mjs";
+import { SyncEngine, Tracker } from "resource://services-sync/engines.sys.mjs";
 import { Utils } from "resource://services-sync/util.sys.mjs";
 
-const { SCORE_INCREMENT_XLARGE } = ChromeUtils.import(
-  "resource://services-sync/constants.js"
-);
-const { cal } = ChromeUtils.import("resource:///modules/calendar/calUtils.jsm");
-
-const SYNCED_PROPERTIES = {
-  cacheEnabled: "cache.enabled",
-  color: "color",
-  displayed: "calendar-main-in-composite",
-  disabled: "disabled",
-  forceEmailScheduling: "forceEmailScheduling",
-  // imipIdentityKey: "imip.identity.key",
-  readOnly: "readOnly",
-  refreshInterval: "refreshInterval",
-  sessionId: "sessionId",
-  suppressAlarms: "suppressAlarms",
-  username: "username",
-};
+import { CachedStore } from "resource://services-sync/CachedStore.sys.mjs";
+import { SCORE_INCREMENT_XLARGE } from "resource://services-sync/constants.sys.mjs";
+import { cal } from "resource:///modules/calendar/calUtils.sys.mjs";
 
 function shouldSyncCalendar(calendar) {
   if (calendar.type == "caldav") {
@@ -58,29 +39,36 @@ export function CalendarRecord(collection, id) {
 }
 
 CalendarRecord.prototype = {
-  __proto__: CryptoWrapper.prototype,
   _logName: "Record.Calendar",
 };
+Object.setPrototypeOf(CalendarRecord.prototype, CryptoWrapper.prototype);
 Utils.deferGetSet(CalendarRecord, "cleartext", [
   "name",
   "type",
-  "uri",
-  "prefs",
+  "url",
+  "username",
 ]);
+
+CalendarRecord.from = function (data) {
+  const record = new CalendarRecord(undefined, data.id);
+  for (const [key, value] of Object.entries(data)) {
+    record.cleartext[key] = value;
+  }
+  return record;
+};
 
 export function CalendarsEngine(service) {
   SyncEngine.call(this, "Calendars", service);
 }
 
 CalendarsEngine.prototype = {
-  __proto__: SyncEngine.prototype,
   _storeObj: CalendarStore,
   _trackerObj: CalendarTracker,
   _recordObj: CalendarRecord,
-  version: 1,
+  version: 2,
   syncPriority: 6,
 
-  /*
+  /**
    * Returns a changeset for this sync. Engine implementations can override this
    * method to bypass the tracker for certain or all changed items.
    */
@@ -88,37 +76,37 @@ CalendarsEngine.prototype = {
     return this._tracker.getChangedIDs();
   },
 };
+Object.setPrototypeOf(CalendarsEngine.prototype, SyncEngine.prototype);
 
 function CalendarStore(name, engine) {
-  Store.call(this, name, engine);
+  CachedStore.call(this, name, engine);
 }
 CalendarStore.prototype = {
-  __proto__: Store.prototype,
-
   /**
    * Create an item in the store from a record.
    *
    * This is called by the default implementation of applyIncoming(). If using
    * applyIncomingBatch(), this won't be called unless your store calls it.
    *
-   * @param record
-   *        The store record to create an item from
+   * @param {object} record - The store record to create an item from.
    */
   async create(record) {
+    await super.create(record);
+
     if (!["caldav", "ics"].includes(record.type)) {
+      this._log.trace(
+        `Skipping creation of unknown item type ("${record.type}"): ${record.id}`
+      );
       return;
     }
 
-    let calendar = cal.manager.createCalendar(
+    const calendar = cal.manager.createCalendar(
       record.type,
-      Services.io.newURI(record.uri)
+      Services.io.newURI(record.url)
     );
     calendar.name = record.name;
-
-    for (let [key, realKey] of Object.entries(SYNCED_PROPERTIES)) {
-      if (key in record.prefs) {
-        calendar.setProperty(realKey, record.prefs[key]);
-      }
+    if (record.username) {
+      calendar.setProperty("username", record.username);
     }
 
     // Set this *after* the properties so it can pick up the session ID or username.
@@ -135,11 +123,11 @@ CalendarStore.prototype = {
    * This is called by the default implementation of applyIncoming(). If using
    * applyIncomingBatch(), this won't be called unless your store calls it.
    *
-   * @param record
-   *        The store record to delete an item from
+   * @param {object} record - The store record to delete an item from.
    */
   async remove(record) {
-    let calendar = cal.manager.getCalendarById(record.id);
+    await super.remove(record);
+    const calendar = cal.manager.getCalendarById(record.id);
     if (!calendar) {
       this._log.trace("Asked to remove record that doesn't exist, ignoring");
       return;
@@ -153,65 +141,47 @@ CalendarStore.prototype = {
    * This is called by the default implementation of applyIncoming(). If using
    * applyIncomingBatch(), this won't be called unless your store calls it.
    *
-   * @param record
-   *        The record to use to update an item from
+   * @param {object} record - The record to use to update an item from.
    */
   async update(record) {
-    let calendar = cal.manager.getCalendarById(record.id);
+    await super.update(record);
+
+    const calendar = cal.manager.getCalendarById(record.id);
     if (!calendar) {
       this._log.trace("Skipping update for unknown item: " + record.id);
       return;
     }
+
     if (calendar.type != record.type) {
       throw new Components.Exception(
         `Refusing to change calendar type from ${calendar.type} to ${record.type}`,
         Cr.NS_ERROR_FAILURE
       );
     }
-    if (calendar.getProperty("cache.enabled") != record.prefs.cacheEnabled) {
-      throw new Components.Exception(
-        `Refusing to change the cache setting`,
-        Cr.NS_ERROR_FAILURE
+
+    if (calendar.uri.spec != record.url) {
+      throw new Error(
+        `Refusing to change calendar URL from "${calendar.uri.spec}" to "${record.url}"`
       );
     }
 
     calendar.name = record.name;
-    if (calendar.uri.spec != record.uri) {
-      calendar.uri = Services.io.newURI(record.uri); // Should this be allowed?
+    if (record.username) {
+      calendar.setProperty("username", record.username);
+    } else {
+      calendar.deleteProperty("username");
     }
-    for (let [key, realKey] of Object.entries(SYNCED_PROPERTIES)) {
-      if (key in record.prefs) {
-        calendar.setProperty(realKey, record.prefs[key]);
-      } else if (calendar.getProperty(key)) {
-        // Only delete properties if they exist. Otherwise bad things happen.
-        calendar.deleteProperty(realKey);
-      }
-    }
-  },
-
-  /**
-   * Determine whether a record with the specified ID exists.
-   *
-   * Takes a string record ID and returns a booleans saying whether the record
-   * exists.
-   *
-   * @param  id
-   *         string record ID
-   * @return boolean indicating whether record exists locally
-   */
-  async itemExists(id) {
-    return id in (await this.getAllIDs());
   },
 
   /**
    * Obtain the set of all known record IDs.
    *
-   * @return Object with ID strings as keys and values of true. The values
-   *         are ignored.
+   * @returns {object} an object with ID strings as keys and values of true.
+   *   The values are ignored.
    */
   async getAllIDs() {
-    let ids = {};
-    for (let c of cal.manager.getCalendars()) {
+    const ids = await super.getAllIDs();
+    for (const c of cal.manager.getCalendars()) {
       if (shouldSyncCalendar(c)) {
         ids[c.id] = true;
       }
@@ -226,57 +196,59 @@ CalendarStore.prototype = {
    * the store. If the ID is not known, the record should be created with the
    * delete field set to true.
    *
-   * @param  id
-   *         string record ID
-   * @param  collection
-   *         Collection to add record to. This is typically passed into the
-   *         constructor for the newly-created record.
-   * @return record type for this engine
+   * @param {string} id - Record ID
+   * @param {object} collection - Collection to add record to. This is typically
+   *   passed into the constructor for the newly-created record.
+   * @returns {object} record type for this engine
    */
   async createRecord(id, collection) {
-    let record = new CalendarRecord(collection, id);
+    const record = new CalendarRecord(collection, id);
 
-    let calendar = cal.manager.getCalendarById(id);
+    const data = await super.getCreateRecordData(id);
+    const calendar = cal.manager.getCalendarById(id);
 
     // If we don't know about this ID, mark the record as deleted.
-    if (!calendar) {
+    if (!calendar && !data) {
       record.deleted = true;
       return record;
     }
 
-    record.name = calendar.name;
-    record.type = calendar.type;
-    record.uri = calendar.uri.spec;
-    record.prefs = {};
-
-    for (let [key, realKey] of Object.entries(SYNCED_PROPERTIES)) {
-      let value = calendar.getProperty(realKey);
-      if (value !== null) {
-        record.prefs[key] = value;
+    if (data) {
+      for (const [key, value] of Object.entries(data)) {
+        record.cleartext[key] = value;
       }
     }
 
+    if (calendar) {
+      record.name = calendar.name;
+      record.type = calendar.type;
+      record.url = calendar.uri.spec;
+      record.username = calendar.getProperty("username") || undefined;
+
+      super.update(record);
+    }
     return record;
   },
 };
+Object.setPrototypeOf(CalendarStore.prototype, CachedStore.prototype);
 
 function CalendarTracker(name, engine) {
   Tracker.call(this, name, engine);
 }
 CalendarTracker.prototype = {
-  __proto__: Tracker.prototype,
-
   QueryInterface: cal.generateQI([
     "calICalendarManagerObserver",
     "nsIObserver",
   ]),
 
   _changedIDs: new Set(),
-  _ignoreAll: false,
+  ignoreAll: false,
+
+  _watchedPrefs: ["name", "username"],
 
   async getChangedIDs() {
-    let changes = {};
-    for (let id of this._changedIDs) {
+    const changes = {};
+    for (const id of this._changedIDs) {
       changes[id] = 0;
     }
     return changes;
@@ -284,14 +256,6 @@ CalendarTracker.prototype = {
 
   clearChangedIDs() {
     this._changedIDs.clear();
-  },
-
-  get ignoreAll() {
-    return this._ignoreAll;
-  },
-
-  set ignoreAll(value) {
-    this._ignoreAll = value;
   },
 
   onStart() {
@@ -305,20 +269,17 @@ CalendarTracker.prototype = {
   },
 
   observe(subject, topic, data) {
-    if (this._ignoreAll) {
+    if (this.ignoreAll) {
       return;
     }
 
-    let id = data.split(".")[2];
-    let prefName = data.substring(id.length + 19);
-    if (
-      prefName != "name" &&
-      !Object.values(SYNCED_PROPERTIES).includes(prefName)
-    ) {
+    const id = data.split(".")[2];
+    const prefName = data.substring(id.length + 19);
+    if (!this._watchedPrefs.includes(prefName)) {
       return;
     }
 
-    let calendar = cal.manager.getCalendarById(id);
+    const calendar = cal.manager.getCalendarById(id);
     if (calendar && shouldSyncCalendar(calendar) && !this._changedIDs.has(id)) {
       this._changedIDs.add(id);
       this.score += SCORE_INCREMENT_XLARGE;
@@ -326,7 +287,7 @@ CalendarTracker.prototype = {
   },
 
   onCalendarRegistered(calendar) {
-    if (this._ignoreAll) {
+    if (this.ignoreAll) {
       return;
     }
 
@@ -335,15 +296,17 @@ CalendarTracker.prototype = {
       this.score += SCORE_INCREMENT_XLARGE;
     }
   },
-  onCalendarUnregistering(calendar) {},
+  onCalendarUnregistering() {},
   onCalendarDeleting(calendar) {
-    if (this._ignoreAll) {
+    if (this.ignoreAll) {
       return;
     }
 
     if (shouldSyncCalendar(calendar)) {
+      this.engine._store.markDeleted(calendar.id);
       this._changedIDs.add(calendar.id);
       this.score += SCORE_INCREMENT_XLARGE;
     }
   },
 };
+Object.setPrototypeOf(CalendarTracker.prototype, Tracker.prototype);

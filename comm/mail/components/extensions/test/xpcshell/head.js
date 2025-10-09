@@ -2,23 +2,25 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+"use strict";
+
 var { ExtensionTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/ExtensionXPCShellUtils.sys.mjs"
 );
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-var { mailTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MailTestUtils.jsm"
+var { mailTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MailTestUtils.sys.mjs"
 );
-var { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-var { fsDebugAll, gThreadManager, nsMailServer } = ChromeUtils.import(
-  "resource://testing-common/mailnews/Maild.jsm"
+var { nsMailServer } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/Maild.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils: MailPromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 // Persistent Listener test functionality
@@ -30,15 +32,15 @@ var IS_IMAP = false;
 var IS_NNTP = false;
 
 function formatVCard(strings, ...values) {
-  let arr = [];
-  for (let str of strings) {
+  const arr = [];
+  for (const str of strings) {
     arr.push(str);
     arr.push(values.shift());
   }
-  let lines = arr.join("").split("\n");
-  let indent = lines[1].length - lines[1].trimLeft().length;
-  let outLines = [];
-  for (let line of lines) {
+  const lines = arr.join("").split("\n");
+  const indent = lines[1].length - lines[1].trimLeft().length;
+  const outLines = [];
+  for (const line of lines) {
     if (line.length > 0) {
       outLines.push(line.substring(indent) + "\r\n");
     }
@@ -46,14 +48,11 @@ function formatVCard(strings, ...values) {
   return outLines.join("");
 }
 
-function createAccount(type = "none") {
+function createAccount(type = "none", options = {}) {
   let account;
 
   if (type == "local") {
-    MailServices.accounts.createLocalMailAccount();
-    account = MailServices.accounts.FindAccountForServer(
-      MailServices.accounts.localFoldersServer
-    );
+    account = MailServices.accounts.createLocalMailAccount();
   } else {
     account = MailServices.accounts.createAccount();
     account.incomingServer = MailServices.accounts.createIncomingServer(
@@ -64,10 +63,14 @@ function createAccount(type = "none") {
   }
 
   if (type == "imap") {
-    IMAPServer.open();
-    account.incomingServer.port = IMAPServer.port;
+    const server = new IMAPServer(options);
+    server.open();
+    account.incomingServer.port = server.port;
     account.incomingServer.username = "user";
     account.incomingServer.password = "password";
+    const inbox = account.incomingServer.rootFolder.getChildNamed("INBOX");
+    inbox.QueryInterface(Ci.nsIMsgImapMailFolder).hierarchyDelimiter = "/";
+    gIMAPServers.set(account.incomingServer.key, server);
   }
 
   if (type == "nntp") {
@@ -79,15 +82,15 @@ function createAccount(type = "none") {
 }
 
 function cleanUpAccount(account) {
-  let serverKey = account.incomingServer.key;
-  let serverType = account.incomingServer.type;
+  const serverKey = account.incomingServer.key;
+  const serverType = account.incomingServer.type;
   info(
     `Cleaning up ${serverType} account ${account.key} and server ${serverKey}`
   );
   MailServices.accounts.removeAccount(account, true);
 
   try {
-    let server = MailServices.accounts.getIncomingServer(serverKey);
+    const server = MailServices.accounts.getIncomingServer(serverKey);
     if (server) {
       info(`Cleaning up leftover ${serverType} server ${serverKey}`);
       MailServices.accounts.removeIncomingServer(server, false);
@@ -97,10 +100,11 @@ function cleanUpAccount(account) {
 
 registerCleanupFunction(() => {
   MailServices.accounts.accounts.forEach(cleanUpAccount);
+  Services.prefs.setStringPref("extensions.webextensions.uuids", "{}");
 });
 
 function addIdentity(account, email = "xpcshell@localhost") {
-  let identity = MailServices.accounts.createIdentity();
+  const identity = MailServices.accounts.createIdentity();
   identity.email = email;
   account.addIdentity(identity);
   if (!account.defaultIdentity) {
@@ -113,18 +117,18 @@ function addIdentity(account, email = "xpcshell@localhost") {
 async function createSubfolder(parent, name) {
   if (parent.server.type == "nntp") {
     createNewsgroup(name);
-    let account = MailServices.accounts.FindAccountForServer(parent.server);
+    const account = MailServices.accounts.findAccountForServer(parent.server);
     subscribeNewsgroup(account, name);
     return parent.getChildNamed(name);
   }
 
-  let promiseAdded = PromiseTestUtils.promiseFolderAdded(name);
+  const promiseAdded = MailPromiseTestUtils.promiseFolderAdded(name);
   parent.createSubfolder(name, null);
   await promiseAdded;
   return parent.getChildNamed(name);
 }
 
-function createMessages(folder, makeMessagesArg) {
+async function createMessages(folder, makeMessagesArg) {
   if (typeof makeMessagesArg == "number") {
     makeMessagesArg = { count: makeMessagesArg };
   }
@@ -132,8 +136,9 @@ function createMessages(folder, makeMessagesArg) {
     createMessages.messageGenerator = new MessageGenerator();
   }
 
-  let messages = createMessages.messageGenerator.makeMessages(makeMessagesArg);
-  return addGeneratedMessages(folder, messages);
+  const messages =
+    createMessages.messageGenerator.makeMessages(makeMessagesArg);
+  await addGeneratedMessages(folder, messages);
 }
 
 class FakeGeneratedMessage {
@@ -143,79 +148,84 @@ class FakeGeneratedMessage {
   toMessageString() {
     return this.msg;
   }
-  toMboxString() {
-    // A cheap hack. It works for existing uses but may not work for future uses.
-    let fromAddress = this.msg.match(/From: .* <(.*@.*)>/)[0];
-    let mBoxString = `From ${fromAddress}\r\n${this.msg}`;
-    // Ensure a trailing empty line.
-    if (!mBoxString.endsWith("\r\n")) {
-      mBoxString = mBoxString + "\r\n";
-    }
-    return mBoxString;
-  }
 }
 
 async function createMessageFromFile(folder, path) {
-  let message = await IOUtils.readUTF8(path);
-  return addGeneratedMessages(folder, [new FakeGeneratedMessage(message)]);
+  const message = await IOUtils.readUTF8(path);
+  await addGeneratedMessages(folder, [new FakeGeneratedMessage(message)]);
 }
 
 async function createMessageFromString(folder, message) {
-  return addGeneratedMessages(folder, [new FakeGeneratedMessage(message)]);
+  await addGeneratedMessages(folder, [new FakeGeneratedMessage(message)]);
 }
 
 async function addGeneratedMessages(folder, messages) {
-  if (folder.server.type == "imap") {
-    return IMAPServer.addMessages(folder, messages);
+  if (folder.server.type == "imap" && gIMAPServers.has(folder.server.key)) {
+    return gIMAPServers.get(folder.server.key).addMessages(folder, messages);
   }
   if (folder.server.type == "nntp") {
     return NNTPServer.addMessages(folder, messages);
   }
 
-  let messageStrings = messages.map(message => message.toMboxString());
+  const messageStrings = messages.map(message => message.toMessageString());
   folder.QueryInterface(Ci.nsIMsgLocalMailFolder);
   folder.addMessageBatch(messageStrings);
   folder.callFilterPlugins(null);
-  return Promise.resolve();
+
+  return new Promise(resolve =>
+    mailTestUtils.updateFolderAndNotify(folder, resolve)
+  );
 }
 
 async function getUtilsJS() {
   return IOUtils.readUTF8(do_get_file("data/utils.js").path);
 }
 
-var IMAPServer = {
-  open() {
-    let { ImapDaemon, ImapMessage, IMAP_RFC3501_handler } = ChromeUtils.import(
-      "resource://testing-common/mailnews/Imapd.jsm"
-    );
-    IMAPServer.ImapMessage = ImapMessage;
+var gIMAPServers = new Map();
+class IMAPServer {
+  constructor(options = {}) {
+    this.extensions = options?.extensions ?? [];
+  }
 
-    this.daemon = new ImapDaemon();
-    this.server = new nsMailServer(
-      daemon => new IMAP_RFC3501_handler(daemon),
-      this.daemon
+  open() {
+    const ImapD = ChromeUtils.importESModule(
+      "resource://testing-common/mailnews/Imapd.sys.mjs"
     );
+    const { IMAP_RFC3501_handler, ImapDaemon, ImapMessage, mixinExtension } =
+      ImapD;
+
+    this.ImapMessage = ImapMessage;
+    this.daemon = new ImapDaemon();
+    this.server = new nsMailServer(daemon => {
+      const handler = new IMAP_RFC3501_handler(daemon);
+      for (const ext of this.extensions) {
+        mixinExtension(handler, ImapD[`IMAP_${ext}_extension`]);
+      }
+      return handler;
+    }, this.daemon);
+
     this.server.start();
 
     registerCleanupFunction(() => this.close());
-  },
+  }
   close() {
     this.server.stop();
-  },
+  }
   get port() {
     return this.server.port;
-  },
+  }
 
   addMessages(folder, messages) {
-    let fakeFolder = IMAPServer.daemon.getMailbox(folder.name);
+    folder.QueryInterface(Ci.nsIMsgImapMailFolder);
+    const fakeFolder = this.daemon.getMailbox(folder.name);
     messages.forEach(message => {
       if (typeof message != "string") {
         message = message.toMessageString();
       }
-      let msgURI = Services.io.newURI(
+      const msgURI = Services.io.newURI(
         "data:text/plain;base64," + btoa(message)
       );
-      let imapMsg = new IMAPServer.ImapMessage(
+      const imapMsg = new this.ImapMessage(
         msgURI.spec,
         fakeFolder.uidnext++,
         []
@@ -223,11 +233,11 @@ var IMAPServer = {
       fakeFolder.addMessage(imapMsg);
     });
 
-    return new Promise(resolve =>
-      mailTestUtils.updateFolderAndNotify(folder, resolve)
-    );
-  },
-};
+    const listener = new MailPromiseTestUtils.PromiseUrlListener();
+    folder.updateFolderWithListener(null, listener);
+    return listener.promise;
+  }
+}
 
 function subscribeNewsgroup(account, group) {
   account.incomingServer.QueryInterface(Ci.nsINntpIncomingServer);
@@ -243,8 +253,8 @@ function createNewsgroup(group) {
 
 var NNTPServer = {
   open() {
-    let { NNTP_RFC977_handler, NntpDaemon } = ChromeUtils.import(
-      "resource://testing-common/mailnews/Nntpd.jsm"
+    const { NNTP_RFC977_handler, NntpDaemon } = ChromeUtils.importESModule(
+      "resource://testing-common/mailnews/Nntpd.sys.mjs"
     );
 
     this.daemon = new NntpDaemon();
@@ -273,11 +283,11 @@ var NNTPServer = {
   },
 
   addMessages(folder, messages) {
-    let { NewsArticle } = ChromeUtils.import(
-      "resource://testing-common/mailnews/Nntpd.jsm"
+    const { NewsArticle } = ChromeUtils.importESModule(
+      "resource://testing-common/mailnews/Nntpd.sys.mjs"
     );
 
-    let group = folder.name;
+    const group = folder.name;
     messages.forEach(message => {
       if (typeof message != "string") {
         message = message.toMessageString();
@@ -286,7 +296,7 @@ var NNTPServer = {
       if (!message.endsWith("\r\n")) {
         message = message + "\r\n";
       }
-      let article = new NewsArticle(message);
+      const article = new NewsArticle(message);
       article.groups = [group];
       this.daemon.addArticle(article);
     });

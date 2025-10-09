@@ -110,7 +110,6 @@ var PAB_CARD_DATA = [
     DisplayName: "d",
     NickName: "ni",
     PrimaryEmail: "ema@foo.invalid",
-    PreferDisplayName: true,
     PopularityIndex: 0,
   },
   {
@@ -119,7 +118,6 @@ var PAB_CARD_DATA = [
     DisplayName: "di",
     NickName: "nic",
     PrimaryEmail: "emai@foo.invalid",
-    PreferDisplayName: true,
     PopularityIndex: 0,
   },
   {
@@ -128,7 +126,6 @@ var PAB_CARD_DATA = [
     DisplayName: "dis",
     NickName: "nick",
     PrimaryEmail: "email@foo.invalid",
-    PreferDisplayName: true,
     PopularityIndex: 0,
   },
   {
@@ -137,7 +134,6 @@ var PAB_CARD_DATA = [
     DisplayName: "disp",
     NickName: "nickn",
     PrimaryEmail: "e@foo.invalid",
-    PreferDisplayName: true,
     PopularityIndex: 0,
   },
   {
@@ -146,7 +142,6 @@ var PAB_CARD_DATA = [
     DisplayName: "displ",
     NickName: "n",
     PrimaryEmail: "em@foo.invalid",
-    PreferDisplayName: true,
     PopularityIndex: 0,
   },
   {
@@ -155,7 +150,6 @@ var PAB_CARD_DATA = [
     DisplayName: "doh, james",
     NickName: "j",
     PrimaryEmail: "DohJames@foo.invalid",
-    PreferDisplayName: true,
     PopularityIndex: 0,
   },
 ];
@@ -190,14 +184,12 @@ var CAB_CARD_DATA = [
     DisplayName: "DisplayName1",
     NickName: "NickName1",
     PrimaryEmail: "PrimaryEmail1@test.invalid",
-    PreferDisplayName: true,
     PopularityIndex: 0,
   },
   {
     FirstName: "Empty",
     LastName: "Email",
     DisplayName: "Empty Email",
-    PreferDisplayName: true,
     PopularityIndex: 0,
   },
 ];
@@ -205,18 +197,18 @@ var CAB_CARD_DATA = [
 var CAB_LIST_DATA = [];
 
 function setupAddressBookData(aDirURI, aCardData, aMailListData) {
-  let ab = MailServices.ab.getDirectory(aDirURI);
+  const ab = MailServices.ab.getDirectory(aDirURI);
 
   // Getting all directories ensures we create all ABs because mailing
   // lists need help initialising themselves
   MailServices.ab.directories;
 
-  for (let card of ab.childCards) {
+  for (const card of ab.childCards) {
     ab.dropCard(card, false);
   }
 
   aCardData.forEach(function (cd) {
-    let card = Cc["@mozilla.org/addressbook/cardproperty;1"].createInstance(
+    const card = Cc["@mozilla.org/addressbook/cardproperty;1"].createInstance(
       Ci.nsIAbCard
     );
     for (var prop in cd) {
@@ -226,7 +218,7 @@ function setupAddressBookData(aDirURI, aCardData, aMailListData) {
   });
 
   aMailListData.forEach(function (ld) {
-    let list = Cc[
+    const list = Cc[
       "@mozilla.org/addressbook/directoryproperty;1"
     ].createInstance(Ci.nsIAbDirectory);
     list.isMailList = true;
@@ -250,16 +242,16 @@ add_task(async () => {
   );
 
   var obs = new acObserver();
-  let obsNews = new acObserver();
-  let obsFollowup = new acObserver();
+  const obsNews = new acObserver();
+  const obsFollowup = new acObserver();
 
   // Test - Check disabling of autocomplete
 
   Services.prefs.setBoolPref("mail.enable_autocomplete", false);
 
-  let param = JSON.stringify({ type: "addr_to" });
-  let paramNews = JSON.stringify({ type: "addr_newsgroups" });
-  let paramFollowup = JSON.stringify({ type: "addr_followup" });
+  const param = JSON.stringify({ type: "addr_to" });
+  const paramNews = JSON.stringify({ type: "addr_newsgroups" });
+  const paramFollowup = JSON.stringify({ type: "addr_followup" });
 
   let resultPromise = obs.waitForResult();
   acs.startSearch("abc", param, null, obs);
@@ -315,7 +307,6 @@ add_task(async () => {
 
   Assert.equal(obs._result.getValueAt(0), "dis <email@foo.invalid>");
   Assert.equal(obs._result.getLabelAt(0), "dis <email@foo.invalid>");
-  Assert.equal(obs._result.getCommentAt(0), "");
   Assert.equal(obs._result.getStyleAt(0), "local-abook");
   Assert.equal(obs._result.getImageAt(0), "");
 
@@ -346,8 +337,10 @@ add_task(async () => {
   Assert.equal(obs._result.defaultIndex, 0);
 
   Assert.equal(obs._result.getValueAt(0), "dis <email@foo.invalid>");
-  Assert.equal(obs._result.getLabelAt(0), "dis <email@foo.invalid>");
-  Assert.equal(obs._result.getCommentAt(0), kPABData.dirName);
+  Assert.equal(
+    obs._result.getLabelAt(0),
+    `dis <email@foo.invalid> — ${kPABData.dirName}`
+  );
   Assert.equal(obs._result.getStyleAt(0), "local-abook");
   Assert.equal(obs._result.getImageAt(0), "");
 
@@ -364,14 +357,16 @@ add_task(async () => {
   Assert.equal(obs._result.defaultIndex, 0);
 
   Assert.equal(obs._result.getValueAt(0), "dis <email@foo.invalid>");
-  Assert.equal(obs._result.getLabelAt(0), "dis <email@foo.invalid>");
-  Assert.equal(obs._result.getCommentAt(0), kPABData.dirName);
+  Assert.equal(
+    obs._result.getLabelAt(0),
+    `dis <email@foo.invalid> — ${kPABData.dirName}`
+  );
   Assert.equal(obs._result.getStyleAt(0), "local-abook");
   Assert.equal(obs._result.getImageAt(0), "");
 
   // Now check multiple matches
   async function checkInputItem(element, index) {
-    let prevRes = obs._result;
+    const prevRes = obs._result;
     print("Search #" + index + ": search=" + element.search);
     resultPromise = obs.waitForResult();
     acs.startSearch(element.search, param, prevRes, obs);
@@ -406,18 +401,14 @@ add_task(async () => {
       );
       Assert.equal(
         obs._result.getLabelAt(i),
-        results[element.expected[i]].email
-      );
-      Assert.equal(
-        obs._result.getCommentAt(i),
-        results[element.expected[i]].dirName
+        `${results[element.expected[i]].email} — ${results[element.expected[i]].dirName}`
       );
       Assert.equal(obs._result.getStyleAt(i), "local-abook");
       Assert.equal(obs._result.getImageAt(i), "");
     }
   }
 
-  for (let inputSet of inputs) {
+  for (const inputSet of inputs) {
     for (let i = 0; i < inputSet.length; i++) {
       await checkInputItem(inputSet[i], i);
     }
@@ -425,9 +416,9 @@ add_task(async () => {
 
   // Test - Popularity Index
   print("Checking by popularity index:");
-  let pab = MailServices.ab.getDirectory(kPABData.URI);
+  const pab = MailServices.ab.getDirectory(kPABData.URI);
 
-  for (let card of pab.childCards) {
+  for (const card of pab.childCards) {
     if (card.isMailList) {
       continue;
     }

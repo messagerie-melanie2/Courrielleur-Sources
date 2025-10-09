@@ -7,14 +7,16 @@
 // are called in the correct order. This also tests that the various
 // HeaderParser methods are run correctly.
 
-const { MimeParser } = ChromeUtils.import("resource:///modules/mimeParser.jsm");
+const { MimeParser } = ChromeUtils.importESModule(
+  "resource:///modules/mimeParser.sys.mjs"
+);
 
 // Utility method to compare objects
 function compare_objects(real, expected) {
   // real is a Map; convert it into an object for uneval purposes
   if (typeof real == "object") {
     var newreal = {};
-    for (let [k, v] of real) {
+    for (const [k, v] of real) {
       newreal[k] = v;
     }
     real = newreal;
@@ -69,27 +71,27 @@ async function read_file(file, start, end) {
  * _eol: The CRLFs in the input file will be replaced with the given line
  *       ending instead.
  *
- * @param test     The name of test
- * @param file     The name of the file to read (relative to mailnews/data)
- * @param opts     Options for the mime parser, as well as a few extras detailed
- *                 above.
- * @param partspec An array of [partnum, line start, line end] detailing the
- *                 expected parts in the body. It will be expected that the
- *                 accumulated body part data for partnum would be the contents
- *                 of the file from [line start, line end) [1-based lines]
+ * @param {string} test - The name of test
+ * @param {string} file - The name of the file to read (relative to mailnews/data)
+ * @param {object} opts - Options for the mime parser, as well as a few extras
+ *   detailed bove.
+ * @param {object[][]} partspec - An array of [partnum, line start, line end]
+ *   detailing the expected parts in the body. It will be expected that the
+ *   accumulated body part data for partnum would be the contents
+ *   of the file from [line start, line end) [1-based lines]
  */
 async function make_body_test(test, file, opts, partspec) {
-  let results = [];
-  for (let p of partspec) {
+  const results = [];
+  for (const p of partspec) {
     results.push([p[0], await read_file(file, p[1], p[2])]);
   }
 
-  let msgcontents = await read_file(file);
+  const msgcontents = await read_file(file);
   return [test, msgcontents, opts, results];
 }
 
 async function make_bodydecode_test(test, file, opts, expected) {
-  let msgcontents = await read_file(file);
+  const msgcontents = await read_file(file);
   return [test, msgcontents, opts, expected];
 }
 
@@ -122,9 +124,9 @@ var parser_tests = [
   make_body_test("Basic multipart", "multipart2", {}, [["1", 8, 11]]),
   make_body_test("Complex multipart", "multipart-complex1", {}, mpart_complex1),
   make_body_test("Truncated multipart", "multipart-complex2", {}, [
-    ["1.1.1.1", 21, 25],
-    ["2", 27, 57],
-    ["3", 60, 62],
+    ["1.1.1.1", 20, 24],
+    ["2", 26, 56],
+    ["3", 59, 61],
   ]),
   make_body_test("No LF multipart", "multipartmalt-detach", {}, [
     ["1", 20, 21],
@@ -300,7 +302,7 @@ var header_tests = [
 ];
 
 function test_header(headerValue, flags, expected) {
-  let result = MimeParser.parseHeaderField(headerValue, flags);
+  const result = MimeParser.parseHeaderField(headerValue, flags);
   Assert.equal(result.preSemi, expected[0]);
   compare_objects(result, expected[1]);
 }
@@ -315,7 +317,7 @@ add_task(async function testit() {
     dump("\n");
     test_parser(test[1], test[2], test[3]);
   }
-  for (let test of header_tests) {
+  for (const test of header_tests) {
     dump("Testing value ->" + test[0] + "<- with flags " + test[1] + "\n");
     test_header(test[0], test[1], test[2]);
   }

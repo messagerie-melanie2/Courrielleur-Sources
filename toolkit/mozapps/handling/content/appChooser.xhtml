@@ -1,12 +1,12 @@
 <?xml version="1.0"?>
-<?xml-stylesheet href="chrome://global/skin/global.css"?>
-<?xml-stylesheet href="chrome://mozapps/content/handling/handler.css"?>
-<?xml-stylesheet href="chrome://mozapps/skin/handling/handling.css"?>
 <!-- This Source Code Form is subject to the terms of the Mozilla Public
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
 <!DOCTYPE window>
+
+<?csp default-src chrome:; style-src chrome: 'unsafe-inline'; img-src http:
+https: moz-icon:; ?>
 
 <window
   persist="width height screenX screenY"
@@ -24,6 +24,16 @@
     data-l10n-attrs="buttonlabelaccept, buttonaccesskeyaccept"
   >
     <linkset>
+      <html:link rel="stylesheet" href="chrome://global/skin/global.css" />
+      <html:link
+        rel="stylesheet"
+        href="chrome://mozapps/content/handling/handler.css"
+      />
+      <html:link
+        rel="stylesheet"
+        href="chrome://mozapps/skin/handling/handling.css"
+      />
+
       <html:link rel="localization" href="branding/brand.ftl" />
       <html:link rel="localization" href="toolkit/global/handlerDialog.ftl" />
     </linkset>
@@ -36,18 +46,10 @@
     <description id="description" />
 
     <vbox id="chooser" flex="1">
-      <richlistbox
-        id="items"
-        flex="1"
-        ondblclick="dialog.onDblClick();"
-        onselect="dialog.updateAcceptButton();"
-      >
+      <richlistbox id="items" flex="1">
         <richlistitem id="item-choose" orient="horizontal" selected="true">
           <label data-l10n-id="choose-other-app-description" flex="1" />
-          <button
-            oncommand="dialog.chooseApplication();"
-            data-l10n-id="choose-app-btn"
-          />
+          <button id="choose-app-btn" data-l10n-id="choose-app-btn" />
         </richlistitem>
       </richlistbox>
     </vbox>

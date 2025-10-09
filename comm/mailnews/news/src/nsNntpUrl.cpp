@@ -11,8 +11,6 @@
 #include "nsNewsUtils.h"
 #include "nsMsgUtils.h"
 
-#include "nntpCore.h"
-
 #include "nsCOMPtr.h"
 #include "nsIMsgFolder.h"
 #include "nsIMsgNewsFolder.h"
@@ -22,7 +20,6 @@
 #include "nsServiceManagerUtils.h"
 
 nsNntpUrl::nsNntpUrl() {
-  m_newsgroupPost = nullptr;
   m_newsAction = nsINntpUrl::ActionUnknown;
   m_addDummyEnvelope = false;
   m_canonicalLineEnding = false;
@@ -311,18 +308,6 @@ NS_IMETHODIMP nsNntpUrl::GetMessageFile(nsIFile** aFile) {
 ////////////////////////////////////////////////////////////////////////////////
 // End nsINntpUrl specific support
 ////////////////////////////////////////////////////////////////////////////////
-
-nsresult nsNntpUrl::SetMessageToPost(nsINNTPNewsgroupPost* post) {
-  m_newsgroupPost = post;
-  if (post) SetNewsAction(nsINntpUrl::ActionPostArticle);
-  return NS_OK;
-}
-
-nsresult nsNntpUrl::GetMessageToPost(nsINNTPNewsgroupPost** aPost) {
-  NS_ENSURE_ARG_POINTER(aPost);
-  NS_IF_ADDREF(*aPost = m_newsgroupPost);
-  return NS_OK;
-}
 
 NS_IMETHODIMP nsNntpUrl::GetMessageHeader(nsIMsgDBHdr** aMsgHdr) {
   nsresult rv;

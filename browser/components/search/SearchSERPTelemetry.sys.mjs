@@ -2,53 +2,65 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
-  BrowserSearchTelemetry: "resource:///modules/BrowserSearchTelemetry.sys.mjs",
+  BrowserSearchTelemetry:
+    "moz-src:///browser/components/search/BrowserSearchTelemetry.sys.mjs",
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
+  Region: "resource://gre/modules/Region.sys.mjs",
   RemoteSettings: "resource://services-settings/remote-settings.sys.mjs",
-  SearchUtils: "resource://gre/modules/SearchUtils.sys.mjs",
+  SearchUtils: "moz-src:///toolkit/components/search/SearchUtils.sys.mjs",
+  SERPCategorization:
+    "moz-src:///browser/components/search/SERPCategorization.sys.mjs",
+  SERPCategorizationRecorder:
+    "moz-src:///browser/components/search/SERPCategorization.sys.mjs",
+  SERPCategorizationEventScheduler:
+    "moz-src:///browser/components/search/SERPCategorization.sys.mjs",
 });
 
-// The various histograms and scalars that we report to.
-const SEARCH_CONTENT_SCALAR_BASE = "browser.search.content.";
-const SEARCH_WITH_ADS_SCALAR_BASE = "browser.search.withads.";
-const SEARCH_AD_CLICKS_SCALAR_BASE = "browser.search.adclicks.";
-const SEARCH_DATA_TRANSFERRED_SCALAR = "browser.search.data_transferred";
-const SEARCH_TELEMETRY_PRIVATE_BROWSING_KEY_SUFFIX = "pb";
-
 // Exported for tests.
+export const ADLINK_CHECK_TIMEOUT_MS = 1000;
+// Unlike the standard adlink check, the timeout for single page apps is not
+// based on a content event within the page, like DOMContentLoaded or load.
+// Thus, we aim for a longer timeout to account for when the server might be
+// slow to update the content on the page.
+export const SPA_ADLINK_CHECK_TIMEOUT_MS = 2500;
 export const TELEMETRY_SETTINGS_KEY = "search-telemetry-v2";
+
+export const SEARCH_TELEMETRY_SHARED = {
+  PROVIDER_INFO: "SearchTelemetry:ProviderInfo",
+  LOAD_TIMEOUT: "SearchTelemetry:LoadTimeout",
+  SPA_LOAD_TIMEOUT: "SearchTelemetry:SPALoadTimeout",
+};
 
 const impressionIdsWithoutEngagementsSet = new Set();
 
-XPCOMUtils.defineLazyGetter(lazy, "logConsole", () => {
+ChromeUtils.defineLazyGetter(lazy, "logConsole", () => {
   return console.createInstance({
     prefix: "SearchTelemetry",
     maxLogLevel: lazy.SearchUtils.loggingEnabled ? "Debug" : "Warn",
   });
 });
 
-XPCOMUtils.defineLazyPreferenceGetter(
-  lazy,
-  "serpEventsEnabled",
-  "browser.search.serpEventTelemetry.enabled",
-  false
-);
-
-export var SearchSERPTelemetryUtils = {
+export const SearchSERPTelemetryUtils = {
   ACTIONS: {
     CLICKED: "clicked",
+    // specific to cookie banner
+    CLICKED_ACCEPT: "clicked_accept",
+    CLICKED_REJECT: "clicked_reject",
+    CLICKED_MORE_OPTIONS: "clicked_more_options",
     EXPANDED: "expanded",
     SUBMITTED: "submitted",
   },
   COMPONENTS: {
     AD_CAROUSEL: "ad_carousel",
+    AD_IMAGE_ROW: "ad_image_row",
     AD_LINK: "ad_link",
     AD_SIDEBAR: "ad_sidebar",
     AD_SITELINK: "ad_sitelink",
+    AD_UNCATEGORIZED: "ad_uncategorized",
+    COOKIE_BANNER: "cookie_banner",
     INCONTENT_SEARCHBOX: "incontent_searchbox",
     NON_ADS_LINK: "non_ads_link",
     REFINED_SEARCH_BUTTONS: "refined_search_buttons",
@@ -65,6 +77,96 @@ export var SearchSERPTelemetryUtils = {
     SEARCHBOX: "follow_on_from_refine_on_incontent_search",
   },
 };
+
+const AD_COMPONENTS = [
+  SearchSERPTelemetryUtils.COMPONENTS.AD_CAROUSEL,
+  SearchSERPTelemetryUtils.COMPONENTS.AD_IMAGE_ROW,
+  SearchSERPTelemetryUtils.COMPONENTS.AD_LINK,
+  SearchSERPTelemetryUtils.COMPONENTS.AD_SIDEBAR,
+  SearchSERPTelemetryUtils.COMPONENTS.AD_SITELINK,
+  SearchSERPTelemetryUtils.COMPONENTS.AD_UNCATEGORIZED,
+];
+
+/**
+ * @typedef {object} FollowOnCookies
+ *
+ * @property {string} codeParamName
+ *   The parameter name within the cookie.
+ * @property {string} extraCodeParamName
+ *   The query parameter name in the URL that indicates this might be a
+ *   follow-on search.
+ * @property {string[]} extraCodePrefixes
+ *   Possible values for the query parameter in the URL that indicates this
+ *   might be a follow-on search.
+ * @property {string} host
+ *   The hostname on which the cookie is stored.
+ * @property {string} name
+ *   The name of the cookie to check.
+ */
+
+/**
+ * @typedef {object} SignedInCookies
+ *
+ * @property {string} host
+ *   The host associated with a given cookie.
+ * @property {string} name
+ *   The name associated with a given cookie.
+ */
+
+/**
+ * @typedef {object} ShoppingTab
+ *
+ * @property {boolean} inspectRegexpInSERP
+ *   Whether the regexp should be used against hrefs the selector matches
+ *   against.
+ * @property {RegExp} regexp
+ *   The regular expression to match against a possible shopping tab. Must be
+ *   provided if using this feature.
+ * @property {string} selector
+ *   The elements on the page to inspect for the shopping tab. Should be anchor
+ *   elements.
+ */
+
+/**
+ * @typedef {object} ProviderInfo
+ *
+ * @property {string} codeParamName
+ *   The name of the query parameter for the partner code.
+ * @property {object[]} components
+ *   An array of components that could be on the SERP.
+ * @property {{key:string, value: string}} defaultPageQueryParam
+ *   Default page query parameter.
+ * @property {string[]} expectedOrganicCodes
+ *   An array of partner codes to match against the parameters in the url.
+ *   Matching these codes will report the SERP as organic:none which means the
+ *   user has done a search through the search engine's website rather than
+ *   through a SAP.
+ * @property {RegExp[]} extraAdServersRegexps
+ *   An array of regular expressions that match URLs of potential ad servers.
+ * @property {FollowOnCookies[]} followOnCookies
+ *   An array of cookie details that are used to identify follow-on searches.
+ * @property {string[]} followOnParamNames
+ *   An array of query parameter names that are used when a follow-on search
+ *   occurs.
+ * @property {boolean} isSPA
+ *   Whether the provider is a single page app.
+ * @property {string[]} organicCodes
+ *   An array of partner codes to match against the parameters in the url.
+ *   Matching these codes will report the SERP as organic:<partner code>, which
+ *   means the search was performed organically rather than through a SAP.
+ * @property {string[]} queryParamNames
+ *   An array of query parameters that may be used for the user's search string.
+ * @property {SignedInCookies[]} signedInCookies
+ *   An array of cookie details that are used to determine whether a client is
+ *   signed in to a provider's account.
+ * @property {ShoppingTab} shoppingTab
+ *   Shopping page parameter.
+ * @property {string[]} taggedCodes
+ *   An array of partner codes to match against the parameters in the url.
+ *   Matching one of these codes will report the SERP as tagged.
+ * @property {string} telemetryId
+ *   The telemetry identifier for the provider.
+ */
 
 /**
  * TelemetryHandler is the main class handling Search Engine Result Page (SERP)
@@ -88,6 +190,9 @@ class TelemetryHandler {
   // An instance of remote settings that is used to access the provider info.
   _telemetrySettings;
 
+  // Callback used when syncing telemetry settings.
+  #telemetrySettingsSync;
+
   // _browserInfoByURL is a map of tracked search urls to objects containing:
   // * {object} info
   //   the search provider information associated with the url.
@@ -103,6 +208,13 @@ class TelemetryHandler {
   // information, but we want to know when we can clean up our associated
   // entry.
   _browserInfoByURL = new Map();
+
+  // Browser objects mapped to the info in _browserInfoByURL.
+  #browserToItemMap = new WeakMap();
+
+  // An array of regular expressions that match urls that could be subframes
+  // on SERPs.
+  #subframeRegexps = [];
 
   // _browserSourceMap is a map of the latest search source for a particular
   // browser - one of the KNOWN_SEARCH_SOURCES in BrowserSearchTelemetry.
@@ -139,8 +251,10 @@ class TelemetryHandler {
   constructor() {
     this._contentHandler = new ContentHandler({
       browserInfoByURL: this._browserInfoByURL,
-      findBrowserItemForURL: (...args) => this._findBrowserItemForURL(...args),
-      checkURLForSerpMatch: (...args) => this._checkURLForSerpMatch(...args),
+      findBrowserItemForURL: this._findBrowserItemForURL.bind(this),
+      checkURLForSerpMatch: this._checkURLForSerpMatch.bind(this),
+      findItemForBrowser: this.findItemForBrowser.bind(this),
+      urlIsKnownSERPSubframe: this.urlIsKnownSERPSubframe.bind(this),
     });
   }
 
@@ -162,6 +276,9 @@ class TelemetryHandler {
       lazy.logConsole.error("Could not get settings:", ex);
     }
 
+    this.#telemetrySettingsSync = event => this.#onSettingsSync(event);
+    this._telemetrySettings.on("sync", this.#telemetrySettingsSync);
+
     // Send the provider info to the child handler.
     this._contentHandler.init(rawProviderInfo);
     this._originalProviderInfo = rawProviderInfo;
@@ -175,6 +292,27 @@ class TelemetryHandler {
     Services.wm.addListener(this);
 
     this._initialized = true;
+  }
+
+  async #onSettingsSync(event) {
+    let current = event.data?.current;
+    if (current) {
+      lazy.logConsole.debug(
+        "Update provider info due to Remote Settings sync."
+      );
+      this._originalProviderInfo = current;
+      this._setSearchProviderInfo(current);
+      Services.ppmm.sharedData.set(
+        SEARCH_TELEMETRY_SHARED.PROVIDER_INFO,
+        current
+      );
+      Services.ppmm.sharedData.flush();
+    } else {
+      lazy.logConsole.debug(
+        "Ignoring Remote Settings sync data due to missing records."
+      );
+    }
+    Services.obs.notifyObservers(null, "search-telemetry-v2-synced");
   }
 
   /**
@@ -191,6 +329,17 @@ class TelemetryHandler {
       this._unregisterWindow(win);
     }
     Services.wm.removeListener(this);
+
+    try {
+      this._telemetrySettings.off("sync", this.#telemetrySettingsSync);
+    } catch (ex) {
+      lazy.logConsole.error(
+        "Failed to shutdown SearchSERPTelemetry Remote Settings.",
+        ex
+      );
+    }
+    this._telemetrySettings = null;
+    this.#telemetrySettingsSync = null;
 
     this._initialized = false;
   }
@@ -251,7 +400,7 @@ class TelemetryHandler {
    */
   handleEvent(event) {
     if (event.type != "TabClose") {
-      console.error(`Received unexpected event type ${event.type}`);
+      console.error("Received unexpected event type", event.type);
       return;
     }
 
@@ -267,7 +416,7 @@ class TelemetryHandler {
    * unit tests can set it to easy to test values.
    *
    * @param {Array} providerInfo
-   *   See {@link https://searchfox.org/mozilla-central/search?q=search-telemetry-schema.json}
+   *   See {@link https://searchfox.org/mozilla-central/search?q=search-telemetry-v2-schema.json}
    *   for type information.
    */
   overrideSearchTelemetryForTests(providerInfo) {
@@ -285,6 +434,7 @@ class TelemetryHandler {
    *   A raw array of provider information to set.
    */
   _setSearchProviderInfo(providerInfo) {
+    this.#subframeRegexps = [];
     this._searchProviderInfo = providerInfo.map(provider => {
       let newProvider = {
         ...provider,
@@ -296,6 +446,10 @@ class TelemetryHandler {
         );
       }
 
+      newProvider.ignoreLinkRegexps = provider.ignoreLinkRegexps?.length
+        ? provider.ignoreLinkRegexps.map(r => new RegExp(r))
+        : [];
+
       newProvider.nonAdsLinkRegexps = provider.nonAdsLinkRegexps?.length
         ? provider.nonAdsLinkRegexps.map(r => new RegExp(r))
         : [];
@@ -305,6 +459,18 @@ class TelemetryHandler {
           regexp: new RegExp(provider.shoppingTab.regexp),
         };
       }
+
+      newProvider.nonAdsLinkQueryParamNames =
+        provider.nonAdsLinkQueryParamNames ?? [];
+
+      newProvider.subframes =
+        provider.subframes?.map(obj => {
+          let regexp = new RegExp(obj.regexp);
+          // Also add the Regexp to the list of urls to observe.
+          this.#subframeRegexps.push(regexp);
+          return { ...obj, regexp };
+        }) ?? [];
+
       return newProvider;
     });
     this._contentHandler._searchProviderInfo = this._searchProviderInfo;
@@ -320,6 +486,10 @@ class TelemetryHandler {
 
   reportPageWithAdImpressions(info, browser) {
     this._contentHandler._reportPageWithAdImpressions(info, browser);
+  }
+
+  async reportPageDomains(info, browser) {
+    await this._contentHandler._reportPageDomains(info, browser);
   }
 
   reportPageImpression(info, browser) {
@@ -363,19 +533,6 @@ class TelemetryHandler {
       this._browserSourceMap.delete(browser);
     }
 
-    // If it's a SERP but doesn't have a browser source, the source might be
-    // from something that happened in content. We keep this separate from
-    // source because legacy telemetry should not change its reporting.
-    let inContentSource;
-    if (
-      lazy.serpEventsEnabled &&
-      info.hasComponents &&
-      this.#browserContentSourceMap.has(browser)
-    ) {
-      inContentSource = this.#browserContentSourceMap.get(browser);
-      this.#browserContentSourceMap.delete(browser);
-    }
-
     let newtabSessionId;
     if (this._browserNewtabSessionMap.has(browser)) {
       newtabSessionId = this._browserNewtabSessionMap.get(browser);
@@ -383,61 +540,159 @@ class TelemetryHandler {
       // until we stop loading SERP pages or the tab is closed.
     }
 
-    let impressionId;
-    if (lazy.serpEventsEnabled && info.hasComponents) {
-      // The UUID generated by Services.uuid contains leading and trailing braces.
-      // Need to trim them first.
-      impressionId = Services.uuid.generateUUID().toString().slice(1, -1);
-
-      impressionIdsWithoutEngagementsSet.add(impressionId);
-    }
+    // Generate metadata for the SERP impression.
+    let { impressionId, impressionInfo } = this._generateImpressionInfo(
+      browser,
+      url,
+      info,
+      source
+    );
 
     this._reportSerpPage(info, source, url);
 
-    let item = this._browserInfoByURL.get(url);
-
-    let impressionInfo;
-    if (lazy.serpEventsEnabled && info.hasComponents) {
-      let partnerCode = "";
-      if (info.code != "none" && info.code != null) {
-        partnerCode = info.code;
-      }
-      impressionInfo = {
-        provider: info.provider,
-        tagged: info.type.startsWith("tagged"),
-        partnerCode,
-        source: inContentSource ?? source,
-        isShoppingPage: info.isShoppingPage,
-      };
-    }
+    // For single page apps, we store the page by its original URI so the
+    // network observers can recover the browser in a context when they only
+    // have access to the originURL.
+    let urlKey =
+      info.isSPA && browser.originalURI?.spec ? browser.originalURI.spec : url;
+    let item = this._browserInfoByURL.get(urlKey);
 
     if (item) {
       item.browserTelemetryStateMap.set(browser, {
         adsReported: false,
         adImpressionsReported: false,
         impressionId,
-        hrefToComponentMap: null,
+        urlToComponentMap: null,
         impressionInfo,
         searchBoxSubmitted: false,
+        categorizationInfo: null,
+        adsClicked: 0,
+        adsHidden: 0,
+        adsLoaded: 0,
+        adsVisible: 0,
+        searchQuery: info.searchQuery,
       });
       item.count++;
       item.source = source;
       item.newtabSessionId = newtabSessionId;
     } else {
-      item = this._browserInfoByURL.set(url, {
+      item = {
         browserTelemetryStateMap: new WeakMap().set(browser, {
           adsReported: false,
           adImpressionsReported: false,
           impressionId,
-          hrefToComponentMap: null,
+          urlToComponentMap: null,
           impressionInfo,
           searchBoxSubmitted: false,
+          categorizationInfo: null,
+          adsClicked: 0,
+          adsHidden: 0,
+          adsLoaded: 0,
+          adsVisible: 0,
+          searchQuery: info.searchQuery,
         }),
         info,
         count: 1,
         source,
         newtabSessionId,
-      });
+        majorVersion: parseInt(Services.appinfo.version),
+        channel: lazy.SearchUtils.MODIFIED_APP_CHANNEL,
+        region: lazy.Region.home,
+        isSPA: info.isSPA,
+      };
+      // For single page apps, we store the page by its original URI so that
+      // network observers can recover the browser in a context when they only
+      // have the originURL to work with.
+      this._browserInfoByURL.set(urlKey, item);
+    }
+    this.#browserToItemMap.set(browser, item);
+  }
+
+  /**
+   * Determines whether or not a browser should be untracked or tracked for
+   * SERPs who have single page app behaviour.
+   *
+   * The over-arching logic:
+   * 1. Only inspect the browser if the url matches a SERP that is a SPA.
+   * 2. Recording an engagement if we're tracking the browser and we're going
+   *    to another page.
+   * 3. Untrack the browser if we're tracking it and switching pages.
+   * 4. Track the browser if we're now on a default search page.
+   *
+   * @param {BrowserElement} browser
+   *   The browser element related to the request.
+   * @param {string} url
+   *   The url of the request.
+   * @param {number} loadType
+   *   The loadtype of a the request.
+   */
+  async updateTrackingSinglePageApp(browser, url, loadType) {
+    let providerInfo = this._getProviderInfoForURL(url);
+    if (!providerInfo?.isSPA) {
+      return;
+    }
+
+    let item = this.findItemForBrowser(browser);
+    let telemetryState = item?.browserTelemetryStateMap.get(browser);
+
+    let previousSearchTerm = telemetryState?.searchQuery ?? "";
+    let searchTerm = this.urlSearchTerms(url, providerInfo);
+    let searchTermChanged = previousSearchTerm !== searchTerm;
+
+    let isSerp = !!this._checkURLForSerpMatch(url);
+    let browserIsTracked = !!telemetryState;
+    let isTabHistory = loadType & Ci.nsIDocShell.LOAD_CMD_HISTORY;
+
+    // Step 2: Maybe record engagement.
+    if (browserIsTracked && !isTabHistory && (searchTermChanged || !isSerp)) {
+      // If we've established we've changed to another SERP, the cause could be
+      // from a submission event inside the content process. The event is
+      // sent to the parent and stored as `telemetryState.searchBoxSubmitted`
+      // but if we check now, it may be too early. Instead, we check with the
+      // content process directly to see if it recorded a submit event.
+      let actor = browser.browsingContext.currentWindowGlobal.getActor(
+        "SearchSERPTelemetry"
+      );
+      let didSubmit = await actor.sendQuery("SearchSERPTelemetry:DidSubmit");
+
+      if (telemetryState && !telemetryState.searchBoxSubmitted && !didSubmit) {
+        impressionIdsWithoutEngagementsSet.delete(telemetryState.impressionId);
+        Glean.serp.engagement.record({
+          impression_id: telemetryState.impressionId,
+          action: SearchSERPTelemetryUtils.ACTIONS.CLICKED,
+          target: SearchSERPTelemetryUtils.COMPONENTS.NON_ADS_LINK,
+        });
+        lazy.logConsole.debug("Counting click:", {
+          impressionId: telemetryState.impressionId,
+          type: SearchSERPTelemetryUtils.COMPONENTS.NON_ADS_LINK,
+          URL: url,
+        });
+      }
+    }
+
+    // Step 3: Maybe untrack the browser.
+    if (browserIsTracked && (searchTermChanged || !isSerp)) {
+      let reason = "";
+      // If we have to untrack it, it might be due to the user using the
+      // back/forward button.
+      if (isTabHistory) {
+        reason = SearchSERPTelemetryUtils.ABANDONMENTS.NAVIGATION;
+      }
+      let actor = browser.browsingContext.currentWindowGlobal.getActor(
+        "SearchSERPTelemetry"
+      );
+      actor.sendAsyncMessage("SearchSERPTelemetry:StopTrackingDocument");
+      this.stopTrackingBrowser(browser, reason);
+      browserIsTracked = false;
+    }
+
+    // Step 4: Maybe track the browser.
+    if (isSerp && !browserIsTracked) {
+      this.updateTrackingStatus(browser, url, loadType);
+      let actor = browser.browsingContext.currentWindowGlobal.getActor(
+        "SearchSERPTelemetry"
+      );
+      actor.sendAsyncMessage("SearchSERPTelemetry:WaitForSPAPageLoad");
     }
   }
 
@@ -447,7 +702,7 @@ class TelemetryHandler {
    *
    * @param {object} browser The browser associated with the tab to stop being
    *   tracked.
-   * @param {string} abandonmentReason
+   * @param {string} [abandonmentReason]
    *   An optional parameter that specifies why the browser is deemed abandoned.
    *   The reason will be recorded as part of Glean abandonment telemetry.
    *   One of SearchSERPTelemetryUtils.ABANDONMENTS.
@@ -455,10 +710,17 @@ class TelemetryHandler {
   stopTrackingBrowser(browser, abandonmentReason) {
     for (let [url, item] of this._browserInfoByURL) {
       if (item.browserTelemetryStateMap.has(browser)) {
-        let impressionId =
-          item.browserTelemetryStateMap.get(browser).impressionId;
+        let telemetryState = item.browserTelemetryStateMap.get(browser);
+        let impressionId = telemetryState.impressionId;
         if (impressionIdsWithoutEngagementsSet.has(impressionId)) {
           this.recordAbandonmentTelemetry(impressionId, abandonmentReason);
+        }
+
+        if (
+          lazy.SERPCategorization.enabled &&
+          telemetryState.categorizationInfo
+        ) {
+          lazy.SERPCategorizationEventScheduler.sendCallback(browser);
         }
 
         item.browserTelemetryStateMap.delete(browser);
@@ -469,6 +731,105 @@ class TelemetryHandler {
         this._browserInfoByURL.delete(url);
       }
     }
+    this.#browserToItemMap.delete(browser);
+  }
+
+  /**
+   * Calculate how close two urls are in equality.
+   *
+   * The scoring system:
+   * - If the URLs look exactly the same, including the ordering of query
+   *   parameters, the score is Infinity.
+   * - If the origin is the same, the score is increased by 1. Otherwise the
+   *   score is 0.
+   * - If the path is the same, the score is increased by 1.
+   * - For each query parameter, if the key exists the score is increased by 1.
+   *   Likewise if the query parameter values match.
+   * - If the hash is the same, the score is increased by 1. This includes if
+   *   the hash is missing in both URLs.
+   *
+   * @param {URL} url1
+   *   Url to compare.
+   * @param {URL} url2
+   *   Other url to compare. Ordering shouldn't matter.
+   * @param {object} [matchOptions]
+   *   Options for checking equality.
+   * @param {boolean} [matchOptions.path]
+   *   Whether the path must match. Default to false.
+   * @param {boolean} [matchOptions.paramValues]
+   *   Whether the values of the query parameters must match if the query
+   *   parameter key exists in the other. Defaults to false.
+   * @returns {number}
+   *   A score of how closely the two URLs match. Returns 0 if there is no
+   *   match or the equality check failed for an enabled match option.
+   */
+  compareUrls(url1, url2, matchOptions = {}) {
+    // In case of an exact match, well, that's an obvious winner.
+    if (url1.href == url2.href) {
+      return Infinity;
+    }
+
+    // Each step we get closer to the two URLs being the same, we increase the
+    // score. The consumer of this method will use these scores to see which
+    // of the URLs is the best match.
+    let score = 0;
+    if (url1.origin == url2.origin) {
+      ++score;
+      if (url1.pathname == url2.pathname) {
+        ++score;
+        for (let [key1, value1] of url1.searchParams) {
+          // Let's not fuss about the ordering of search params, since the
+          // score effect will solve that.
+          if (url2.searchParams.has(key1)) {
+            ++score;
+            if (url2.searchParams.get(key1) == value1) {
+              ++score;
+            } else if (matchOptions.paramValues) {
+              return 0;
+            }
+          }
+        }
+        if (url1.hash == url2.hash) {
+          ++score;
+        }
+      } else if (matchOptions.path) {
+        return 0;
+      }
+    }
+    return score;
+  }
+
+  /**
+   * Extracts the search terms from the URL based on the provider info.
+   *
+   * @param {string} url
+   *  The URL to inspect.
+   * @param {object} providerInfo
+   *  The providerInfo associated with the URL.
+   * @returns {string}
+   *   The search term or if none is found, a blank string.
+   */
+  urlSearchTerms(url, providerInfo) {
+    if (providerInfo?.queryParamNames?.length) {
+      let { searchParams } = new URL(url);
+      for (let queryParamName of providerInfo.queryParamNames) {
+        let value = searchParams.get(queryParamName);
+        if (value) {
+          return value;
+        }
+      }
+    }
+    return "";
+  }
+
+  /**
+   * Finds any SERP data associated with the given browser.
+   *
+   * @param {object} browser
+   * @returns {object}
+   */
+  findItemForBrowser(browser) {
+    return this.#browserToItemMap.get(browser);
   }
 
   /**
@@ -478,7 +839,7 @@ class TelemetryHandler {
    * set, we do optional fuzzy matching of URLs to fetch the most relevant item
    * that contains tracking information.
    *
-   * @param {string} url URL to fetch the tracking data for.
+   * @param {string} urlString URL to fetch the tracking data for.
    * @returns {object} Map containing the following members:
    *   - {WeakMap} browsers
    *     Map of browser elements that belong to `url` and their ad report state.
@@ -488,44 +849,11 @@ class TelemetryHandler {
    *     The number of browser element we can most accurately tell we're
    *     tracking, since they're inside a WeakMap.
    */
-  _findBrowserItemForURL(url) {
-    try {
-      url = new URL(url);
-    } catch (ex) {
+  _findBrowserItemForURL(urlString) {
+    let url = URL.parse(urlString);
+    if (!url) {
       return null;
     }
-
-    const compareURLs = (url1, url2) => {
-      // In case of an exact match, well, that's an obvious winner.
-      if (url1.href == url2.href) {
-        return Infinity;
-      }
-
-      // Each step we get closer to the two URLs being the same, we increase the
-      // score. The consumer of this method will use these scores to see which
-      // of the URLs is the best match.
-      let score = 0;
-      if (url1.hostname == url2.hostname) {
-        ++score;
-        if (url1.pathname == url2.pathname) {
-          ++score;
-          for (let [key1, value1] of url1.searchParams) {
-            // Let's not fuss about the ordering of search params, since the
-            // score effect will solve that.
-            if (url2.searchParams.has(key1)) {
-              ++score;
-              if (url2.searchParams.get(key1) == value1) {
-                ++score;
-              }
-            }
-          }
-          if (url1.hash == url2.hash) {
-            ++score;
-          }
-        }
-      }
-      return score;
-    };
 
     let item;
     let currentBestMatch = 0;
@@ -533,16 +861,15 @@ class TelemetryHandler {
       if (currentBestMatch === Infinity) {
         break;
       }
-      try {
-        // Make sure to cache the parsed URL object, since there's no reason to
-        // do it twice.
-        trackingURL =
-          candidateItem._trackingURL ||
-          (candidateItem._trackingURL = new URL(trackingURL));
-      } catch (ex) {
+      // Make sure to cache the parsed URL object, since there's no reason to
+      // do it twice.
+      trackingURL =
+        candidateItem._trackingURL ||
+        (candidateItem._trackingURL = URL.parse(trackingURL));
+      if (!trackingURL) {
         continue;
       }
-      let score = compareURLs(url, trackingURL);
+      let score = this.compareUrls(url, trackingURL);
       if (score > currentBestMatch) {
         item = candidateItem;
         currentBestMatch = score;
@@ -598,6 +925,22 @@ class TelemetryHandler {
   }
 
   /**
+   * Determines if a URL to be in this SERP's subframes.
+   *
+   * @param {string} url
+   */
+  urlIsKnownSERPSubframe(url) {
+    if (url) {
+      for (let regexp of this.#subframeRegexps) {
+        if (regexp.test(url)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
    * Adds event listeners for the window and registers it with the content handler.
    *
    * @param {object} win The window to register.
@@ -626,8 +969,10 @@ class TelemetryHandler {
   /**
    * Searches for provider information for a given url.
    *
-   * @param {string} url The url to match for a provider.
-   * @returns {Array | null} Returns an array of provider name and the provider information.
+   * @param {string} url
+   *   The url to match for a provider.
+   * @returns {?ProviderInfo}
+   *   Returns a provider or undefined if no provider was found for the url.
    */
   _getProviderInfoForURL(url) {
     return this._searchProviderInfo.find(info =>
@@ -641,20 +986,47 @@ class TelemetryHandler {
    *
    * @param {string} url The url to match.
    * @returns {null|object} Returns null if there is no match found. Otherwise,
-   *   returns an object of strings for provider, code and type.
+   *   returns an object of strings for provider, code, type, whether it's a
+   *   single page app, and the search query used.
    */
   _checkURLForSerpMatch(url) {
     let searchProviderInfo = this._getProviderInfoForURL(url);
     if (!searchProviderInfo) {
       return null;
     }
+
+    let queries = new URL(url).searchParams;
+    queries.forEach((v, k) => {
+      queries.set(k.toLowerCase(), v);
+    });
+
+    let isSPA = !!searchProviderInfo.isSPA;
+    if (isSPA) {
+      // A URL may have a specific query parameter denoting a search page.
+      // If the key was expected but doesn't currently exist, it could be due to
+      // the initial url containing it until after a page load.
+      // In that case, ignore this check since most SERPs missing the query
+      // param will go to the default search page.
+      let { key, value } = searchProviderInfo.defaultPageQueryParam;
+      if (key && queries.has(key) && queries.get(key) != value) {
+        return null;
+      }
+    }
+
     // Some URLs can match provider info but also be the provider's homepage
     // instead of a SERP.
     // e.g. https://example.com/ vs. https://example.com/?foo=bar
-    // To check this, we look for the presence of the query parameter
-    // that contains a search term.
-    let queries = new URLSearchParams(url.split("#")[0].split("?")[1]);
-    if (!queries.get(searchProviderInfo.queryParamName)) {
+    // Look for the presence of the query parameter that contains a search term.
+    let hasQuery = false;
+    let searchQuery = "";
+    for (let queryParamName of searchProviderInfo.queryParamNames) {
+      searchQuery = queries.get(queryParamName);
+      if (searchQuery) {
+        hasQuery = true;
+        break;
+      }
+    }
+    if (!hasQuery) {
       return null;
     }
     // Default to organic to simplify things.
@@ -662,7 +1034,7 @@ class TelemetryHandler {
     let type = "organic";
     let code;
     if (searchProviderInfo.codeParamName) {
-      code = queries.get(searchProviderInfo.codeParamName);
+      code = queries.get(searchProviderInfo.codeParamName.toLowerCase());
       if (code) {
         // The code is only included if it matches one of the specific ones.
         if (searchProviderInfo.taggedCodes.includes(code)) {
@@ -684,7 +1056,9 @@ class TelemetryHandler {
         // Especially Bing requires lots of extra work related to cookies.
         for (let followOnCookie of searchProviderInfo.followOnCookies) {
           if (followOnCookie.extraCodeParamName) {
-            let eCode = queries.get(followOnCookie.extraCodeParamName);
+            let eCode = queries.get(
+              followOnCookie.extraCodeParamName.toLowerCase()
+            );
             if (
               !eCode ||
               !followOnCookie.extraCodePrefixes.some(p => eCode.startsWith(p))
@@ -704,37 +1078,30 @@ class TelemetryHandler {
               continue;
             }
 
-            let [cookieParam, cookieValue] = cookie.value
-              .split("=")
-              .map(p => p.trim());
-            if (
-              cookieParam == followOnCookie.codeParamName &&
-              searchProviderInfo.taggedCodes.includes(cookieValue)
-            ) {
-              type = "tagged-follow-on";
-              code = cookieValue;
-              break;
+            // Cookie values may take the form of "foo=bar&baz=1".
+            let cookieItems = cookie.value
+              ?.split("&")
+              .map(p => p.split("="))
+              .filter(p => p[0] == followOnCookie.codeParamName);
+            if (cookieItems.length == 1) {
+              let cookieValue = cookieItems[0][1];
+              if (searchProviderInfo.taggedCodes.includes(cookieValue)) {
+                type = "tagged-follow-on";
+                code = cookieValue;
+                break;
+              }
             }
           }
         }
       }
     }
-    let isShoppingPage = false;
-    let hasComponents = false;
-    if (lazy.serpEventsEnabled) {
-      if (searchProviderInfo.shoppingTab?.regexp) {
-        isShoppingPage = searchProviderInfo.shoppingTab.regexp.test(url);
-      }
-      if (searchProviderInfo.components?.length) {
-        hasComponents = true;
-      }
-    }
+
     return {
       provider: searchProviderInfo.telemetryId,
       type,
       code,
-      isShoppingPage,
-      hasComponents,
+      searchQuery,
+      isSPA,
     };
   }
 
@@ -750,12 +1117,104 @@ class TelemetryHandler {
    */
   _reportSerpPage(info, source, url) {
     let payload = `${info.provider}:${info.type}:${info.code || "none"}`;
-    Services.telemetry.keyedScalarAdd(
-      SEARCH_CONTENT_SCALAR_BASE + source,
-      payload,
-      1
-    );
+    let name = source.replace(/_([a-z])/g, (m, p) => p.toUpperCase());
+    Glean.browserSearchContent[name][payload].add(1);
     lazy.logConsole.debug("Impression:", payload, url);
+  }
+
+  /**
+   * @typedef {object} ImpressionInfo
+   * @property {string} provider The name of the provider for the impression.
+   * @property {boolean} tagged Whether the search has partner tags.
+   * @property {string} source The search access point.
+   * @property {boolean} isShoppingPage Whether the page is shopping.
+   * @property {boolean} isPrivate Whether the SERP is in a private tab.
+   * @property {boolean} isSignedIn Whether the user is signed on to the SERP.
+   */
+
+  /**
+   * @typedef {object} ImpressionInfoResult
+   * @property {string | null} impressionId The unique id of the impression.
+   * @property {ImpressionInfo | null} impressionInfo General impresison info.
+   */
+
+  /**
+   * If applicable for a tracked SERP provider, generates a unique id and
+   * caches information that shouldn't be changed during the lifetime of the
+   * impression.
+   *
+   * @param {browser} browser
+   *   The browser associated with the SERP.
+   * @param {string} url
+   *   The URL of the SERP.
+   * @param {object} info
+   *   General information about the tracked SERP.
+   * @param {string} source
+   *   The originator of the SERP load.
+   * @returns {ImpressionInfoResult} The result when attempting to generate
+   *   impression info.
+   */
+  _generateImpressionInfo(browser, url, info, source) {
+    let searchProviderInfo = this._getProviderInfoForURL(url);
+    let data = {
+      impressionId: null,
+      impressionInfo: null,
+    };
+
+    if (!searchProviderInfo?.components?.length) {
+      return data;
+    }
+
+    // The UUID generated by Services.uuid contains leading and trailing braces.
+    // Need to trim them first.
+    data.impressionId = Services.uuid.generateUUID().toString().slice(1, -1);
+    impressionIdsWithoutEngagementsSet.add(data.impressionId);
+
+    // If it's a SERP but doesn't have a browser source, the source might be
+    // from something that happened in content.
+    if (this.#browserContentSourceMap.has(browser)) {
+      source = this.#browserContentSourceMap.get(browser);
+      this.#browserContentSourceMap.delete(browser);
+    }
+
+    let partnerCode = "";
+    if (info.code != "none" && info.code != null) {
+      partnerCode = info.code;
+    }
+
+    let isShoppingPage = false;
+    if (searchProviderInfo.shoppingTab?.regexp) {
+      isShoppingPage = searchProviderInfo.shoppingTab.regexp.test(url);
+    }
+
+    let isPrivate =
+      browser.contentPrincipal.originAttributes.privateBrowsingId > 0;
+
+    let isSignedIn = false;
+    // Signed-in status should not be recorded when the client is in a private
+    // window.
+    if (!isPrivate && searchProviderInfo.signedInCookies) {
+      isSignedIn = searchProviderInfo.signedInCookies.some(cookieObj => {
+        return Services.cookies
+          .getCookiesFromHost(
+            cookieObj.host,
+            browser.contentPrincipal.originAttributes
+          )
+          .some(c => c.name == cookieObj.name);
+      });
+    }
+
+    data.impressionInfo = {
+      provider: info.provider,
+      tagged: info.type.startsWith("tagged"),
+      partnerCode,
+      source,
+      isShoppingPage,
+      isPrivate,
+      isSignedIn,
+    };
+
+    return data;
   }
 }
 
@@ -764,6 +1223,9 @@ class TelemetryHandler {
  * when ads detected and when they are selected.
  */
 class ContentHandler {
+  /** @type {ProviderInfo[]} */
+  _searchProviderInfo = null;
+
   /**
    * Constructor.
    *
@@ -771,13 +1233,21 @@ class ContentHandler {
    *   The options for the handler.
    * @param {Map} options.browserInfoByURL
    *   The map of urls from TelemetryHandler.
-   * @param {Function} options.getProviderInfoForURL
-   *   A function that obtains the provider information for a url.
+   * @param {(urlString: string) => object} options.findBrowserItemForURL
+   *   The function for finding a browser item for the URL.
+   * @param {(url: string) => null|object} options.checkURLForSerpMatch
+   *   The function for checking a URL for a SERP match.
+   * @param {(browser: object) => object} options.findItemForBrowser
+   *   The function for finding an item for the browser.
+   * @param {(url: string) => boolean} options.urlIsKnownSERPSubframe
+   *   The function for determining if a URL is a known SERP sub frame.
    */
   constructor(options) {
     this._browserInfoByURL = options.browserInfoByURL;
     this._findBrowserItemForURL = options.findBrowserItemForURL;
     this._checkURLForSerpMatch = options.checkURLForSerpMatch;
+    this._findItemForBrowser = options.findItemForBrowser;
+    this._urlIsKnownSERPSubframe = options.urlIsKnownSERPSubframe;
   }
 
   /**
@@ -788,11 +1258,21 @@ class ContentHandler {
    *  The provider information for the search telemetry to record.
    */
   init(providerInfo) {
-    Services.ppmm.sharedData.set("SearchTelemetry:ProviderInfo", providerInfo);
+    Services.ppmm.sharedData.set(
+      SEARCH_TELEMETRY_SHARED.PROVIDER_INFO,
+      providerInfo
+    );
+    Services.ppmm.sharedData.set(
+      SEARCH_TELEMETRY_SHARED.LOAD_TIMEOUT,
+      ADLINK_CHECK_TIMEOUT_MS
+    );
+    Services.ppmm.sharedData.set(
+      SEARCH_TELEMETRY_SHARED.SPA_LOAD_TIMEOUT,
+      SPA_ADLINK_CHECK_TIMEOUT_MS
+    );
 
     Services.obs.addObserver(this, "http-on-examine-response");
     Services.obs.addObserver(this, "http-on-examine-cached-response");
-    Services.obs.addObserver(this, "http-on-stop-request");
   }
 
   /**
@@ -801,7 +1281,6 @@ class ContentHandler {
   uninit() {
     Services.obs.removeObserver(this, "http-on-examine-response");
     Services.obs.removeObserver(this, "http-on-examine-cached-response");
-    Services.obs.removeObserver(this, "http-on-stop-request");
   }
 
   /**
@@ -814,82 +1293,8 @@ class ContentHandler {
     Services.ppmm.sharedData.set("SearchTelemetry:ProviderInfo", providerInfo);
   }
 
-  /**
-   * Reports bandwidth used by the given channel if it is used by search requests.
-   *
-   * @param {object} aChannel The channel that generated the activity.
-   */
-  _reportChannelBandwidth(aChannel) {
-    if (!(aChannel instanceof Ci.nsIChannel)) {
-      return;
-    }
-    let wrappedChannel = ChannelWrapper.get(aChannel);
-
-    let getTopURL = channel => {
-      // top-level document
-      if (
-        channel.loadInfo &&
-        channel.loadInfo.externalContentPolicyType ==
-          Ci.nsIContentPolicy.TYPE_DOCUMENT
-      ) {
-        return channel.finalURL;
-      }
-
-      // iframe
-      let frameAncestors;
-      try {
-        frameAncestors = channel.frameAncestors;
-      } catch (e) {
-        frameAncestors = null;
-      }
-      if (frameAncestors) {
-        let ancestor = frameAncestors.find(obj => obj.frameId == 0);
-        if (ancestor) {
-          return ancestor.url;
-        }
-      }
-
-      // top-level resource
-      if (channel.loadInfo && channel.loadInfo.loadingPrincipal) {
-        return channel.loadInfo.loadingPrincipal.spec;
-      }
-
-      return null;
-    };
-
-    let topUrl = getTopURL(wrappedChannel);
-    if (!topUrl) {
-      return;
-    }
-
-    let info = this._checkURLForSerpMatch(topUrl);
-    if (!info) {
-      return;
-    }
-
-    let bytesTransferred =
-      wrappedChannel.requestSize + wrappedChannel.responseSize;
-    let { provider } = info;
-
-    let isPrivate =
-      wrappedChannel.loadInfo &&
-      wrappedChannel.loadInfo.originAttributes.privateBrowsingId > 0;
-    if (isPrivate) {
-      provider += `-${SEARCH_TELEMETRY_PRIVATE_BROWSING_KEY_SUFFIX}`;
-    }
-
-    Services.telemetry.keyedScalarAdd(
-      SEARCH_DATA_TRANSFERRED_SCALAR,
-      provider,
-      bytesTransferred
-    );
-  }
-
-  observe(aSubject, aTopic, aData) {
+  observe(aSubject, aTopic) {
     switch (aTopic) {
-      case "http-on-stop-request":
-        this._reportChannelBandwidth(aSubject);
-        break;
       case "http-on-examine-response":
       case "http-on-examine-cached-response":
         this.observeActivity(aSubject);
@@ -915,11 +1320,6 @@ class ContentHandler {
     if (wrappedChannel._adClickRecorded) {
       lazy.logConsole.debug("Ad click already recorded");
       return;
-      // When _adClickRecorded is false but _recordedClick is true, it means we
-      // recorded a non-ad link click, and it is being re-directed.
-    } else if (wrappedChannel._recordedClick) {
-      lazy.logConsole.debug("Non ad-click already recorded");
-      return;
     }
 
     Services.tm.dispatchToMainThread(() => {
@@ -933,166 +1333,43 @@ class ContentHandler {
 
       // The wrapper is consistent across redirects, so we can use it to track state.
       let originURL = wrappedChannel.originURI && wrappedChannel.originURI.spec;
-      let item = this._findBrowserItemForURL(originURL);
-      if (!originURL || !item) {
+      if (!originURL) {
         return;
       }
 
-      let URL = wrappedChannel.finalURL;
+      let eligibleSubframeUrl = this.#getSerpUrlFromPossibleSubframeUrl(
+        originURL,
+        wrappedChannel
+      );
+      let item = this._findBrowserItemForURL(eligibleSubframeUrl || originURL);
+      if (!item) {
+        return;
+      }
+
+      let url = wrappedChannel.finalURL;
 
       let providerInfo = item.info.provider;
       let info = this._searchProviderInfo.find(provider => {
         return provider.telemetryId == providerInfo;
       });
 
-      // Some channels re-direct by loading pages that return 200. The result
-      // is the channel will have an originURL that changes from the SERP to
-      // either a nonAdsRegexp or an extraAdServersRegexps. This is typical
-      // for loading a page in a new tab. The channel will have changed so any
-      // properties attached to them to record state (e.g. _recordedClick)
-      // won't be present.
-      if (
-        info.nonAdsLinkRegexps.some(r => r.test(originURL)) ||
-        info.extraAdServersRegexps.some(r => r.test(originURL))
-      ) {
-        return;
+      // If an error occurs with Glean SERP telemetry logic, avoid
+      // disrupting legacy telemetry.
+      try {
+        this.#maybeRecordSERPTelemetry(wrappedChannel, item, info);
+      } catch (ex) {
+        lazy.logConsole.error(ex);
       }
 
-      // A click event is recorded if a user loads a resource from an
-      // originURL that is a SERP.
-      //
-      // Typically, we only want top level loads containing documents to avoid
-      // recording any event on an in-page resource a SERP might load
-      // (e.g. CSS files).
-      //
-      // The exception to this is if a subframe loads a resource that matches
-      // a non ad link. Some SERPs encode non ad search results with a URL
-      // that gets loaded into an iframe, which then tells the container of
-      // the iframe to change the location of the page.
-      if (
-        lazy.serpEventsEnabled &&
-        channel.isDocument &&
-        (channel.loadInfo.isTopLevelLoad ||
-          info.nonAdsLinkRegexps.some(r => r.test(URL)))
-      ) {
-        let browser = wrappedChannel.browserElement;
-        // If the load is from history, don't record an event.
-        if (
-          browser?.browsingContext.webProgress?.loadType &
-          Ci.nsIDocShell.LOAD_CMD_HISTORY
-        ) {
-          lazy.logConsole.debug("Ignoring load from history");
-          return;
-        }
-
-        // Step 1: Check if the browser associated with the request was a
-        // tracked SERP.
-        let start = Cu.now();
-        let telemetryState;
-        let isFromNewtab = false;
-        if (item.browserTelemetryStateMap.has(browser)) {
-          // Current browser is tracked.
-          telemetryState = item.browserTelemetryStateMap.get(browser);
-        } else if (browser) {
-          // Current browser might have been created by a browser in a
-          // different tab.
-          let tabBrowser = browser.getTabBrowser();
-          let tab = tabBrowser.getTabForBrowser(browser).openerTab;
-          telemetryState = item.browserTelemetryStateMap.get(tab.linkedBrowser);
-          if (telemetryState) {
-            isFromNewtab = true;
-          }
-        }
-
-        // Step 2: If we have telemetryState, the browser object must be
-        // associated with another browser that is tracked. Try to find the
-        // component type on the SERP responsible for the request.
-        // Exceptions:
-        // - If a searchbox was used to initiate the load, don't record another
-        //   engagement because the event was logged elsewhere.
-        // - If the ad impression hasn't been recorded yet, we have no way of
-        //   knowing precisely what kind of component was selected.
-        let isSerp = false;
-        if (
-          telemetryState &&
-          telemetryState.adImpressionsReported &&
-          !telemetryState.searchBoxSubmitted
-        ) {
-          if (info.searchPageRegexp?.test(originURL)) {
-            isSerp = true;
-          }
-
-          // Determine the "type" of the link.
-          let type = telemetryState.hrefToComponentMap?.get(URL);
-          // The SERP provider may have modified the url with different query
-          // parameters, so try checking all the recorded hrefs to see if any
-          // look similar.
-          if (!type) {
-            for (let [
-              href,
-              componentType,
-            ] of telemetryState.hrefToComponentMap.entries()) {
-              if (URL.startsWith(href)) {
-                type = componentType;
-                break;
-              }
-            }
-          }
-
-          // Default value for URLs that don't match any components categorized
-          // on the page.
-          if (!type) {
-            type = SearchSERPTelemetryUtils.COMPONENTS.NON_ADS_LINK;
-          }
-
-          if (
-            type == SearchSERPTelemetryUtils.COMPONENTS.REFINED_SEARCH_BUTTONS
-          ) {
-            SearchSERPTelemetry.setBrowserContentSource(
-              browser,
-              SearchSERPTelemetryUtils.INCONTENT_SOURCES.REFINE_ON_SERP
-            );
-          } else if (isSerp && isFromNewtab) {
-            SearchSERPTelemetry.setBrowserContentSource(
-              browser,
-              SearchSERPTelemetryUtils.INCONTENT_SOURCES.OPENED_IN_NEW_TAB
-            );
-          }
-
-          // Step 3: Record the engagement.
-          impressionIdsWithoutEngagementsSet.delete(
-            telemetryState.impressionId
-          );
-          Glean.serp.engagement.record({
-            impression_id: telemetryState.impressionId,
-            action: SearchSERPTelemetryUtils.ACTIONS.CLICKED,
-            target: type,
-          });
-          lazy.logConsole.debug("Counting click:", {
-            impressionId: telemetryState.impressionId,
-            type,
-            URL,
-          });
-          // Prevent re-directed channels from being examined more than once.
-          wrappedChannel._recordedClick = true;
-        }
-        ChromeUtils.addProfilerMarker(
-          "SearchSERPTelemetry._observeActivity",
-          start,
-          "Maybe record user engagement."
-        );
-      }
-
-      if (!info.extraAdServersRegexps?.some(regex => regex.test(URL))) {
+      if (!info.extraAdServersRegexps?.some(regex => regex.test(url))) {
         return;
       }
 
       try {
-        Services.telemetry.keyedScalarAdd(
-          SEARCH_AD_CLICKS_SCALAR_BASE + item.source,
-          `${info.telemetryId}:${item.info.type}`,
-          1
-        );
+        let name = item.source.replace(/_([a-z])/g, (m, p) => p.toUpperCase());
+        Glean.browserSearchAdclicks[name][
+          `${info.telemetryId}:${item.info.type}`
+        ].add(1);
         wrappedChannel._adClickRecorded = true;
         if (item.newtabSessionId) {
           Glean.newtabSearchAd.click.record({
@@ -1107,12 +1384,289 @@ class ContentHandler {
         lazy.logConsole.debug("Counting ad click in page for:", {
           source: item.source,
           originURL,
-          URL,
+          URL: url,
         });
       } catch (e) {
         console.error(e);
       }
     });
+  }
+
+  /**
+   * Checks if a request should record an ad click if it can be traced to a
+   * browser containing an observed SERP.
+   *
+   * @param {ChannelWrapper} wrappedChannel
+   *   The wrapped channel.
+   * @param {object} item
+   *   The browser item associated with the origin URL of the request.
+   * @param {object} info
+   *   The search provider info associated with the item.
+   */
+  #maybeRecordSERPTelemetry(wrappedChannel, item, info) {
+    if (wrappedChannel._recordedClick) {
+      lazy.logConsole.debug("Click already recorded.");
+      return;
+    }
+
+    let originURL = wrappedChannel.originURI?.spec;
+    let url = wrappedChannel.finalURL;
+
+    if (info.ignoreLinkRegexps.some(r => r.test(url))) {
+      lazy.logConsole.debug("Ignore url.");
+      return;
+    }
+
+    // Some channels re-direct by loading pages that return 200. The result
+    // is the channel will have an originURL that changes from the SERP to
+    // either a nonAdsRegexp or an extraAdServersRegexps. This is typical
+    // for loading a page in a new tab. The channel will have changed so any
+    // properties attached to them to record state (e.g. _recordedClick)
+    // won't be present.
+    if (
+      info.nonAdsLinkRegexps.some(r => r.test(originURL)) ||
+      info.extraAdServersRegexps.some(r => r.test(originURL))
+    ) {
+      lazy.logConsole.debug("Expecting redirect.");
+      return;
+    }
+
+    // A click event is recorded if a user loads a resource from an
+    // originURL that is a SERP.
+    //
+    // Typically, we only want top level loads containing documents to avoid
+    // recording any event on an in-page resource a SERP might load
+    // (e.g. CSS files).
+    //
+    // The exception to this is if a subframe loads a resource that matches
+    // a non ad link. Some SERPs encode non ad search results with a URL
+    // that gets loaded into an iframe, which then tells the container of
+    // the iframe to change the location of the page.
+    if (
+      wrappedChannel.channel.isDocument &&
+      (wrappedChannel.channel.loadInfo.isTopLevelLoad ||
+        info.nonAdsLinkRegexps.some(r => r.test(url)))
+    ) {
+      let browser = wrappedChannel.browserElement;
+
+      // If the load is from history, don't record an event.
+      if (
+        browser?.browsingContext.webProgress?.loadType &
+        Ci.nsIDocShell.LOAD_CMD_HISTORY
+      ) {
+        lazy.logConsole.debug("Ignoring load from history");
+        return;
+      }
+
+      // Step 1: Check if the browser associated with the request was a
+      // tracked SERP.
+      let start = Cu.now();
+      let telemetryState;
+      let isFromNewtab = false;
+      if (item.browserTelemetryStateMap.has(browser)) {
+        // If the map contains the browser, then it means that the request is
+        // the SERP is going from one page to another. We know this because
+        // previous conditions prevent non-top level loads from occuring here.
+        telemetryState = item.browserTelemetryStateMap.get(browser);
+      } else if (browser) {
+        // Alternatively, it could be the case that the request is occuring in
+        // a new tab but was triggered by one of the browsers in the state map.
+        // If only one browser exists in the state map, it must be that one.
+        if (item.count === 1) {
+          let sourceBrowsers = ChromeUtils.nondeterministicGetWeakMapKeys(
+            item.browserTelemetryStateMap
+          );
+          if (sourceBrowsers?.length) {
+            telemetryState = item.browserTelemetryStateMap.get(
+              sourceBrowsers[0]
+            );
+          }
+        } else if (item.count > 1) {
+          // If the count is more than 1, then multiple open SERPs contain the
+          // same search term, so try to find the specific browser that opened
+          // the request.
+          let tabBrowser = browser.getTabBrowser();
+          let tab = tabBrowser.getTabForBrowser(browser).openerTab;
+          // A tab will not always have an openerTab, as first tabs in new
+          // windows don't have an openerTab.
+          // Bug 1867582: We should also handle the case where multiple tabs
+          // contain the same search term.
+          if (tab) {
+            telemetryState = item.browserTelemetryStateMap.get(
+              tab.linkedBrowser
+            );
+          }
+        }
+        if (telemetryState) {
+          isFromNewtab = true;
+        }
+      }
+
+      lazy.logConsole.debug("Telemetry state:", telemetryState);
+
+      // Step 2: If we have telemetryState, the browser object must be
+      // associated with another browser that is tracked. Try to find the
+      // component type on the SERP responsible for the request.
+      // Exceptions:
+      // - If a searchbox was used to initiate the load, don't record another
+      //   engagement because the event was logged elsewhere.
+      // - If the ad impression hasn't been recorded yet, we have no way of
+      //   knowing precisely what kind of component was selected.
+      let isSerp = false;
+      if (
+        telemetryState &&
+        telemetryState.adImpressionsReported &&
+        !telemetryState.searchBoxSubmitted
+      ) {
+        if (info.searchPageRegexp?.test(originURL)) {
+          isSerp = true;
+        }
+
+        let startFindComponent = Cu.now();
+        let parsedUrl = new URL(url);
+
+        // Organic links may contain query param values mapped to links shown
+        // on the SERP at page load. If a stored component depends on that
+        // value, we need to be able to recover it or else we'll always consider
+        // it a non_ads_link.
+        if (
+          info.nonAdsLinkQueryParamNames.length &&
+          info.nonAdsLinkRegexps.some(r => r.test(url))
+        ) {
+          for (let key of info.nonAdsLinkQueryParamNames) {
+            let paramValue = parsedUrl.searchParams.get(key);
+            if (paramValue) {
+              let newParsedUrl = /^https?:\/\//.test(paramValue)
+                ? URL.parse(paramValue)
+                : URL.parse(paramValue, parsedUrl.origin);
+              if (newParsedUrl) {
+                parsedUrl = newParsedUrl;
+                break;
+              }
+            }
+          }
+        }
+
+        // Determine the component type of the link.
+        let type;
+        for (let [
+          storedUrl,
+          componentType,
+        ] of telemetryState.urlToComponentMap.entries()) {
+          // The URL we're navigating to may have more query parameters if
+          // the provider adds query parameters when the user clicks on a link.
+          // On the other hand, the URL we are navigating to may have have
+          // fewer query parameters because of query param stripping.
+          // Thus, if a query parameter is missing, a match can still be made
+          // provided keys that exist in both URLs contain equal values.
+          let score = SearchSERPTelemetry.compareUrls(storedUrl, parsedUrl, {
+            paramValues: true,
+            path: true,
+          });
+          if (score) {
+            type = componentType;
+            break;
+          }
+        }
+        ChromeUtils.addProfilerMarker(
+          "SearchSERPTelemetry._observeActivity",
+          startFindComponent,
+          "Find component for URL"
+        );
+
+        // If no component was found, it's possible the link was added after
+        // components were categorized.
+        if (!type) {
+          let isAd = info.extraAdServersRegexps?.some(regex => regex.test(url));
+          type = isAd
+            ? SearchSERPTelemetryUtils.COMPONENTS.AD_UNCATEGORIZED
+            : SearchSERPTelemetryUtils.COMPONENTS.NON_ADS_LINK;
+        }
+
+        if (
+          type == SearchSERPTelemetryUtils.COMPONENTS.REFINED_SEARCH_BUTTONS
+        ) {
+          SearchSERPTelemetry.setBrowserContentSource(
+            browser,
+            SearchSERPTelemetryUtils.INCONTENT_SOURCES.REFINE_ON_SERP
+          );
+        } else if (isSerp && isFromNewtab) {
+          SearchSERPTelemetry.setBrowserContentSource(
+            browser,
+            SearchSERPTelemetryUtils.INCONTENT_SOURCES.OPENED_IN_NEW_TAB
+          );
+        }
+
+        // Step 3: Record the engagement.
+        impressionIdsWithoutEngagementsSet.delete(telemetryState.impressionId);
+        if (AD_COMPONENTS.includes(type)) {
+          telemetryState.adsClicked += 1;
+        }
+        Glean.serp.engagement.record({
+          impression_id: telemetryState.impressionId,
+          action: SearchSERPTelemetryUtils.ACTIONS.CLICKED,
+          target: type,
+        });
+        lazy.logConsole.debug("Counting click:", {
+          impressionId: telemetryState.impressionId,
+          type,
+          URL: url,
+        });
+        // Prevent re-directed channels from being examined more than once.
+        wrappedChannel._recordedClick = true;
+      }
+      ChromeUtils.addProfilerMarker(
+        "SearchSERPTelemetry._observeActivity",
+        start,
+        "Maybe record user engagement."
+      );
+    }
+  }
+
+  /**
+   * Checks if the url associated with a request is actually coming from a
+   * subframe within a SERP. If so, try to find the best url associated with
+   * the frame.
+   *
+   * @param {string} originURL
+   *   The url associated with the request.
+   * @param {ChannelWrapper} wrappedChannel
+   *   The wrapped channel.
+   * @returns {string?}
+   *   The url associated with the subframe.
+   */
+  #getSerpUrlFromPossibleSubframeUrl(originURL, wrappedChannel) {
+    if (!this._urlIsKnownSERPSubframe(originURL)) {
+      return null;
+    }
+
+    // The sponsored link could be opened in a new tab, in which case the
+    // browser URI may not match a SERP. Thus, try to find a tab that contains
+    // a URI matching a SERP.
+    let browser = wrappedChannel.browserElement;
+    if (browser?.currentURI.spec == "about:blank") {
+      let tabBrowser = browser.getTabBrowser();
+      let tab = tabBrowser.getTabForBrowser(browser).openerTab;
+      if (tab) {
+        return tab.linkedBrowser.currentURI.spec;
+      }
+      // If no opener tab was found, we're likely looking at the first tab of
+      // a new window. As a last resort, check if the window below the newly
+      // opened window contains a tab with a matching SERP.
+      let windows = lazy.BrowserWindowTracker.orderedWindows;
+      let win = windows.at(1);
+      if (win) {
+        let url = win.gBrowser.selectedBrowser.originalURI?.spec;
+        if (url) {
+          return url;
+        }
+      }
+      // If we couldn't find a matching tab or window, then return null to
+      // indicate to the caller we weren't able to find an appropriate SERP.
+      return null;
+    }
+
+    return browser?.currentURI.spec;
   }
 
   /**
@@ -1129,7 +1683,7 @@ class ContentHandler {
    *     The browser associated with the page.
    */
   _reportPageWithAds(info, browser) {
-    let item = this._findBrowserItemForURL(info.url);
+    let item = this._findItemForBrowser(browser);
     if (!item) {
       lazy.logConsole.warn(
         "Expected to report URI for",
@@ -1155,11 +1709,11 @@ class ContentHandler {
       item.source,
       info.url
     );
-    Services.telemetry.keyedScalarAdd(
-      SEARCH_WITH_ADS_SCALAR_BASE + item.source,
-      `${item.info.provider}:${item.info.type}`,
-      1
-    );
+    let name = item.source.replace(/_([a-z])/g, (m, p) => p.toUpperCase());
+    Glean.browserSearchWithads[name][
+      `${item.info.provider}:${item.info.type}`
+    ].add(1);
+    Services.obs.notifyObservers(null, "reported-page-with-ads");
 
     telemetryState.adsReported = true;
 
@@ -1194,18 +1748,24 @@ class ContentHandler {
    *     The browser associated with the page.
    */
   _reportPageWithAdImpressions(info, browser) {
-    let item = this._findBrowserItemForURL(info.url);
+    let item = this._findItemForBrowser(browser);
     if (!item) {
       return;
     }
     let telemetryState = item.browserTelemetryStateMap.get(browser);
     if (
-      lazy.serpEventsEnabled &&
       info.adImpressions &&
       telemetryState &&
       !telemetryState.adImpressionsReported
     ) {
       for (let [componentType, data] of info.adImpressions.entries()) {
+        // Not all ad impressions are sponsored.
+        if (AD_COMPONENTS.includes(componentType)) {
+          telemetryState.adsHidden += data.adsHidden;
+          telemetryState.adsLoaded += data.adsLoaded;
+          telemetryState.adsVisible += data.adsVisible;
+        }
+
         lazy.logConsole.debug("Counting ad:", { type: componentType, ...data });
         Glean.serp.adImpression.record({
           impression_id: telemetryState.impressionId,
@@ -1215,7 +1775,13 @@ class ContentHandler {
           ads_hidden: data.adsHidden,
         });
       }
-      telemetryState.hrefToComponentMap = info.hrefToComponentMap;
+      // Convert hrefToComponentMap to a urlToComponentMap in order to cache
+      // the query parameters of the href.
+      let urlToComponentMap = new Map();
+      for (let [href, adType] of info.hrefToComponentMap) {
+        urlToComponentMap.set(new URL(href), adType);
+      }
+      telemetryState.urlToComponentMap = urlToComponentMap;
       telemetryState.adImpressionsReported = true;
       Services.obs.notifyObservers(null, "reported-page-with-ad-impressions");
     }
@@ -1228,36 +1794,37 @@ class ContentHandler {
    *
    * @param {object} info
    *   The search provider infomation for the page.
-   * @param {string} info.type
-   *   The component type that was clicked on.
+   * @param {string} info.target
+   *   The target component that was interacted with.
    * @param {string} info.action
    *   The action taken on the page.
    * @param {object} browser
    *   The browser associated with the page.
    */
   _reportPageAction(info, browser) {
-    let item = this._findBrowserItemForURL(info.url);
+    let item = this._findItemForBrowser(browser);
     if (!item) {
       return;
     }
     let telemetryState = item.browserTelemetryStateMap.get(browser);
     let impressionId = telemetryState?.impressionId;
-    if (info.type && impressionId) {
+    if (info.target && impressionId) {
       lazy.logConsole.debug(`Recorded page action:`, {
         impressionId: telemetryState.impressionId,
-        type: info.type,
+        target: info.target,
         action: info.action,
       });
       Glean.serp.engagement.record({
         impression_id: impressionId,
         action: info.action,
-        target: info.type,
+        target: info.target,
       });
       impressionIdsWithoutEngagementsSet.delete(impressionId);
       // In-content searches are not be categorized with a type, so they will
       // not be picked up in the network processes.
       if (
-        info.type == SearchSERPTelemetryUtils.COMPONENTS.INCONTENT_SEARCHBOX &&
+        info.target ==
+          SearchSERPTelemetryUtils.COMPONENTS.INCONTENT_SEARCHBOX &&
         info.action == SearchSERPTelemetryUtils.ACTIONS.SUBMITTED
       ) {
         telemetryState.searchBoxSubmitted = true;
@@ -1266,19 +1833,18 @@ class ContentHandler {
           SearchSERPTelemetryUtils.INCONTENT_SOURCES.SEARCHBOX
         );
       }
+      Services.obs.notifyObservers(null, "reported-page-with-action");
     } else {
       lazy.logConsole.warn(
         "Expected to report a",
         info.action,
-        "engagement for",
-        info.url,
-        "but couldn't find an impression id."
+        "engagement but couldn't find an impression id."
       );
     }
   }
 
   _reportPageImpression(info, browser) {
-    let item = this._findBrowserItemForURL(info.url);
+    let item = this._findItemForBrowser(browser);
     let telemetryState = item.browserTelemetryStateMap.get(browser);
     if (!telemetryState?.impressionInfo) {
       lazy.logConsole.debug(
@@ -1297,15 +1863,69 @@ class ContentHandler {
         source: impressionInfo.source,
         shopping_tab_displayed: info.shoppingTabDisplayed,
         is_shopping_page: impressionInfo.isShoppingPage,
+        is_private: impressionInfo.isPrivate,
+        is_signed_in: impressionInfo.isSignedIn,
       });
       lazy.logConsole.debug(`Reported Impression:`, {
         impressionId,
         ...impressionInfo,
         shoppingTabDisplayed: info.shoppingTabDisplayed,
       });
+      Services.obs.notifyObservers(null, "reported-page-with-impression");
     } else {
       lazy.logConsole.debug("Could not find an impression id.");
     }
+  }
+
+  /**
+  * Initiates the categorization and reporting of domains extracted from
+  * SERPs.
+  *
+  * @param {object} info
+  *   The search provider infomation for the page.
+  * @param {Set} info.nonAdDomains
+      The non-ad domains extracted from the page.
+  * @param {Set} info.adDomains
+      The ad domains extracted from the page.
+  * @param {object} browser
+  *   The browser associated with the page.
+  */
+  async _reportPageDomains(info, browser) {
+    let item = this._findItemForBrowser(browser);
+    let telemetryState = item?.browserTelemetryStateMap.get(browser);
+    if (lazy.SERPCategorization.enabled && telemetryState) {
+      lazy.logConsole.debug("Ad domains:", Array.from(info.adDomains));
+      lazy.logConsole.debug("Non ad domains:", Array.from(info.nonAdDomains));
+      let result = await lazy.SERPCategorization.maybeCategorizeSERP(
+        info.nonAdDomains,
+        info.adDomains
+      );
+      if (result) {
+        telemetryState.categorizationInfo = result;
+        let callback = () => {
+          let impressionInfo = telemetryState.impressionInfo;
+          lazy.SERPCategorizationRecorder.recordCategorizationTelemetry({
+            ...telemetryState.categorizationInfo,
+            app_version: item.majorVersion,
+            channel: item.channel,
+            region: item.region,
+            partner_code: impressionInfo.partnerCode,
+            provider: impressionInfo.provider,
+            tagged: impressionInfo.tagged,
+            is_shopping_page: impressionInfo.isShoppingPage,
+            num_ads_clicked: telemetryState.adsClicked,
+            num_ads_hidden: telemetryState.adsHidden,
+            num_ads_loaded: telemetryState.adsLoaded,
+            num_ads_visible: telemetryState.adsVisible,
+          });
+        };
+        lazy.SERPCategorizationEventScheduler.addCallback(browser, callback);
+      }
+    }
+    Services.obs.notifyObservers(
+      null,
+      "reported-page-with-categorized-domains"
+    );
   }
 }
 

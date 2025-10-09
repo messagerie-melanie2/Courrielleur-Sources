@@ -155,7 +155,20 @@ var gSitePermissionsManager = {
       this._isObserving = true;
     }
 
-    document.addEventListener("dialogaccept", () => this.onApplyChanges());
+    document.addEventListener("command", this);
+    document.addEventListener("dialogaccept", this);
+    window.addEventListener("unload", this);
+
+    document
+      .getElementById("siteCol")
+      .addEventListener("click", event =>
+        this.buildPermissionsList(event.target)
+      );
+    document
+      .getElementById("statusCol")
+      .addEventListener("click", event =>
+        this.buildPermissionsList(event.target)
+      );
 
     this._type = params.permissionType;
     this._list = document.getElementById("permissionsBox");
@@ -170,6 +183,11 @@ var gSitePermissionsManager = {
       "permissionsDisableDescription"
     );
     this._setAutoplayPref = document.getElementById("setAutoplayPref");
+
+    this._list.addEventListener("keypress", event =>
+      this.onPermissionKeyPress(event)
+    );
+    this._list.addEventListener("select", () => this.onPermissionSelect());
 
     let permissionsText = document.getElementById("permissionsText");
 
@@ -258,6 +276,33 @@ var gSitePermissionsManager = {
       }
     }
     this.buildPermissionsList();
+  },
+
+  handleEvent(event) {
+    switch (event.type) {
+      case "command":
+        switch (event.target.id) {
+          case "key_close":
+            window.close();
+            break;
+          case "searchBox":
+            this.buildPermissionsList();
+            break;
+          case "removePermission":
+            this.onPermissionDelete();
+            break;
+          case "removeAllPermissions":
+            this.onAllPermissionsDelete();
+            break;
+        }
+        break;
+      case "dialogaccept":
+        this.onApplyChanges();
+        break;
+      case "unload":
+        this.uninit();
+        break;
+    }
   },
 
   _handleCheckboxUIUpdates() {
@@ -412,11 +457,9 @@ var gSitePermissionsManager = {
     richlistitem.setAttribute("origin", permissionGroup.origin);
     let row = document.createXULElement("hbox");
 
-    let hbox = document.createXULElement("hbox");
     let website = document.createXULElement("label");
-    website.setAttribute("value", permissionGroup.origin);
-    hbox.setAttribute("class", "website-name");
-    hbox.appendChild(website);
+    website.textContent = permissionGroup.origin;
+    website.className = "website-name";
 
     let states = SitePermissions.getAvailableStates(this._type).filter(
       state => state != SitePermissions.UNKNOWN
@@ -429,12 +472,14 @@ var gSitePermissionsManager = {
     let siteStatus;
     if (states.length == 1) {
       // Only a single state is available.  Show a label.
-      siteStatus = document.createXULElement("hbox");
-      let label = document.createXULElement("label");
-      siteStatus.appendChild(label);
+      siteStatus = document.createXULElement("label");
       document.l10n.setAttributes(
-        label,
-        this._getCapabilityL10nId(label, this._type, permissionGroup.capability)
+        siteStatus,
+        this._getCapabilityL10nId(
+          siteStatus,
+          this._type,
+          permissionGroup.capability
+        )
       );
     } else {
       // Multiple states are available.  Show a menulist.
@@ -450,10 +495,10 @@ var gSitePermissionsManager = {
         this.onPermissionChange(permissionGroup, Number(siteStatus.value));
       });
     }
-    siteStatus.setAttribute("class", "website-status");
+    siteStatus.className = "website-status";
     siteStatus.value = permissionGroup.capability;
 
-    row.appendChild(hbox);
+    row.appendChild(website);
     row.appendChild(siteStatus);
     richlistitem.appendChild(row);
     return richlistitem;
@@ -677,3 +722,5 @@ var gSitePermissionsManager = {
     column.setAttribute("data-last-sortDirection", sortDirection);
   },
 };
+
+window.addEventListener("load", () => gSitePermissionsManager.onLoad());

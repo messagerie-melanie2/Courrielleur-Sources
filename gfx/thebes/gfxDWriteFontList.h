@@ -12,18 +12,6 @@
 #include "gfxDWriteCommon.h"
 #include "dwrite_3.h"
 
-// Currently, we build with WINVER=0x601 (Win7), which means newer
-// declarations in dwrite_3.h will not be visible. Also, we don't
-// yet have the Fall Creators Update SDK available on build machines,
-// so even with updated WINVER, some of the interfaces we need would
-// not be present.
-// To work around this, until the build environment is updated,
-// we #include an extra header that contains copies of the relevant
-// classes/interfaces we need.
-#if !defined(__MINGW32__) && WINVER < 0x0A00
-#  include "mozilla/gfx/dw-extra.h"
-#endif
-
 #include "gfxFont.h"
 #include "gfxUserFontSet.h"
 #include "cairo-win32.h"
@@ -125,8 +113,8 @@ class gfxDWriteFontEntry final : public gfxFontEntry {
     mStretchRange =
         StretchRange(FontStretchFromDWriteStretch(aFont->GetStretch()));
 
-    int weight = NS_ROUNDUP(aFont->GetWeight() - 50, 100);
-    weight = mozilla::Clamp(weight, 100, 900);
+    int weight = mozilla::RoundUpToMultiple(aFont->GetWeight() - 50, 100);
+    weight = std::clamp(weight, 100, 900);
     mWeightRange = WeightRange(FontWeight::FromInt(weight));
 
     mIsCJK = UNINITIALIZED_VALUE;
@@ -448,6 +436,9 @@ class gfxDWriteFontList final : public gfxPlatformFontList {
                                            FontFamily& aMatchedFamily)
       MOZ_REQUIRES(mLock) override;
 
+  nsTArray<std::pair<const char**, uint32_t>> GetFilteredPlatformFontLists()
+      override;
+
  private:
   friend class gfxDWriteFontFamily;
 
@@ -464,6 +455,10 @@ class gfxDWriteFontList final : public gfxPlatformFontList {
       IDWriteFontCollection* aCollection,
       nsTArray<mozilla::fontlist::Family::InitData>& aFamilies,
       const nsTArray<nsCString>* aForceClassicFams = nullptr)
+      MOZ_REQUIRES(mLock);
+
+  void AddSubstitute(const nsCString& aSubstituteName,
+                     const nsCString& aActualFontName, bool aIsHardcoded)
       MOZ_REQUIRES(mLock);
 
 #ifdef MOZ_BUNDLED_FONTS
@@ -483,6 +478,13 @@ class gfxDWriteFontList final : public gfxPlatformFontList {
    */
   FontFamilyTable mFontSubstitutes;
   nsClassHashtable<nsCStringHashKey, nsCString> mSubstitutions;
+
+  /**
+   * Table of hardcoded font substitutes. We use this instead of the one
+   * generated from the registry when fingerprinting protections are enabled.
+   */
+  FontFamilyTable mHardcodedSubstitutes;
+  nsClassHashtable<nsCStringHashKey, nsCString> mHardcodedSubstitutions;
 
   virtual already_AddRefed<FontInfoData> CreateFontInfoData();
 

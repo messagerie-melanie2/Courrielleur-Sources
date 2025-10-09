@@ -6,6 +6,7 @@
  * Test that we emit network markers accordingly.
  * In this file we'll test the redirect cases.
  */
+
 add_task(async function test_network_markers_service_worker_setup() {
   // Disabling cache makes the result more predictable especially in verify mode.
   await SpecialPowers.pushPrefEnv({
@@ -24,14 +25,14 @@ add_task(async function test_network_markers_redirect_simple() {
     "The profiler is not currently active"
   );
 
-  startProfilerForMarkerTests();
+  await ProfilerTestUtils.startProfilerForMarkerTests();
 
   const targetFileNameWithCacheBust = "simple.html";
   const url =
-    BASE_URL +
+    BASE_URL_HTTPS +
     "redirect.sjs?" +
     encodeURIComponent(targetFileNameWithCacheBust);
-  const targetUrl = BASE_URL + targetFileNameWithCacheBust;
+  const targetUrl = BASE_URL_HTTPS + targetFileNameWithCacheBust;
 
   await BrowserTestUtils.withNewTab(url, async contentBrowser => {
     const contentPid = await SpecialPowers.spawn(
@@ -40,12 +41,13 @@ add_task(async function test_network_markers_redirect_simple() {
       () => Services.appinfo.processID
     );
 
-    const { parentThread, contentThread } = await stopProfilerNowAndGetThreads(
-      contentPid
-    );
+    const { parentThread, contentThread } =
+      await stopProfilerNowAndGetThreads(contentPid);
 
-    const parentNetworkMarkers = getInflatedNetworkMarkers(parentThread);
-    const contentNetworkMarkers = getInflatedNetworkMarkers(contentThread);
+    const parentNetworkMarkers =
+      ProfilerTestUtils.getInflatedNetworkMarkers(parentThread);
+    const contentNetworkMarkers =
+      ProfilerTestUtils.getInflatedNetworkMarkers(contentThread);
     info(JSON.stringify(parentNetworkMarkers, null, 2));
     info(JSON.stringify(contentNetworkMarkers, null, 2));
 
@@ -76,13 +78,18 @@ add_task(async function test_network_markers_redirect_simple() {
         status: "STATUS_REDIRECT",
         URI: url,
         RedirectURI: targetUrl,
+        httpVersion: "http/1.1",
+        classOfService: "UrgentStart",
+        requestStatus: "NS_OK",
         requestMethod: "GET",
+        responseStatus: 301,
         contentType: null,
         startTime: Expect.number(),
         endTime: Expect.number(),
         domainLookupStart: Expect.number(),
         domainLookupEnd: Expect.number(),
         connectStart: Expect.number(),
+        secureConnectionStart: Expect.number(),
         tcpConnectEnd: Expect.number(),
         connectEnd: Expect.number(),
         requestStart: Expect.number(),
@@ -106,13 +113,18 @@ add_task(async function test_network_markers_redirect_simple() {
       type: "Network",
       status: "STATUS_STOP",
       URI: targetUrl,
+      httpVersion: "http/1.1",
+      classOfService: "UrgentStart",
+      requestStatus: "NS_OK",
       requestMethod: "GET",
+      responseStatus: 200,
       contentType: "text/html",
       startTime: Expect.number(),
       endTime: Expect.number(),
       domainLookupStart: Expect.number(),
       domainLookupEnd: Expect.number(),
       connectStart: Expect.number(),
+      secureConnectionStart: Expect.number(),
       tcpConnectEnd: Expect.number(),
       connectEnd: Expect.number(),
       requestStart: Expect.number(),
@@ -147,9 +159,10 @@ add_task(async function test_network_markers_redirect_resources() {
     "The profiler is not currently active"
   );
 
-  startProfilerForMarkerTests();
+  await ProfilerTestUtils.startProfilerForMarkerTests();
 
-  const url = BASE_URL + "page_with_resources.html?cacheBust=" + Math.random();
+  const url =
+    BASE_URL_HTTPS + "page_with_resources.html?cacheBust=" + Math.random();
   await BrowserTestUtils.withNewTab(url, async contentBrowser => {
     const contentPid = await SpecialPowers.spawn(
       contentBrowser,
@@ -157,12 +170,13 @@ add_task(async function test_network_markers_redirect_resources() {
       () => Services.appinfo.processID
     );
 
-    const { parentThread, contentThread } = await stopProfilerNowAndGetThreads(
-      contentPid
-    );
+    const { parentThread, contentThread } =
+      await stopProfilerNowAndGetThreads(contentPid);
 
-    const parentNetworkMarkers = getInflatedNetworkMarkers(parentThread);
-    const contentNetworkMarkers = getInflatedNetworkMarkers(contentThread);
+    const parentNetworkMarkers =
+      ProfilerTestUtils.getInflatedNetworkMarkers(parentThread);
+    const contentNetworkMarkers =
+      ProfilerTestUtils.getInflatedNetworkMarkers(contentThread);
     info(JSON.stringify(parentNetworkMarkers, null, 2));
     info(JSON.stringify(contentNetworkMarkers, null, 2));
 
@@ -190,8 +204,11 @@ add_task(async function test_network_markers_redirect_resources() {
     // We're not interested in the main page, as we test that in other files.
     // In this page we're only interested in the marker for requested resources.
 
-    const parentPairs = getPairsOfNetworkMarkers(parentNetworkMarkers);
-    const contentPairs = getPairsOfNetworkMarkers(contentNetworkMarkers);
+    const parentPairs =
+      ProfilerTestUtils.getPairsOfNetworkMarkers(parentNetworkMarkers);
+    const contentPairs = ProfilerTestUtils.getPairsOfNetworkMarkers(
+      contentNetworkMarkers
+    );
 
     // First, make sure we properly matched all start with stop markers. This
     // means that both arrays should contain only arrays of 2 elements.
@@ -219,12 +236,19 @@ add_task(async function test_network_markers_redirect_resources() {
 
     const expectedCommonDataProperties = {
       type: "Network",
+      httpVersion: "http/1.1",
+      classOfService: "Unset",
+      requestStatus: "NS_OK",
       requestMethod: "GET",
+      responseStatus: 301,
       startTime: Expect.number(),
       endTime: Expect.number(),
       id: Expect.number(),
       pri: Expect.number(),
       innerWindowID: Expect.number(),
+      requestStart: Expect.number(),
+      responseStart: Expect.number(),
+      responseEnd: Expect.number(),
     };
 
     // These properties are present when a connection is fully opened. This is
@@ -237,11 +261,9 @@ add_task(async function test_network_markers_redirect_resources() {
       domainLookupStart: Expect.number(),
       domainLookupEnd: Expect.number(),
       connectStart: Expect.number(),
+      secureConnectionStart: Expect.number(),
       tcpConnectEnd: Expect.number(),
       connectEnd: Expect.number(),
-      requestStart: Expect.number(),
-      responseStart: Expect.number(),
-      responseEnd: Expect.number(),
     };
 
     const expectedPropertiesForStopMarker = {
@@ -250,8 +272,8 @@ add_task(async function test_network_markers_redirect_resources() {
 
     const expectedDataPropertiesForStopMarker = {
       ...expectedCommonDataProperties,
-      ...expectedConnectionProperties,
       status: "STATUS_STOP",
+      responseStatus: 200,
       URI: Expect.stringContains("/firefox-logo-nightly.svg"),
       contentType: "image/svg+xml",
       count: Expect.number(),
@@ -280,6 +302,7 @@ add_task(async function test_network_markers_redirect_resources() {
     );
     Assert.objectContainsOnly(parentFirstStopMarker.data, {
       ...expectedDataPropertiesForStopMarker,
+      ...expectedConnectionProperties,
       // The cache information is missing from the content marker, it's only part
       // of the parent marker. See Bug 1544821.
       // Also, because the request races with the cache, these 2 values are valid:
@@ -292,10 +315,10 @@ add_task(async function test_network_markers_redirect_resources() {
       contentFirstStopMarker,
       expectedPropertiesForStopMarker
     );
-    Assert.objectContainsOnly(
-      contentFirstStopMarker.data,
-      expectedDataPropertiesForStopMarker
-    );
+    Assert.objectContainsOnly(contentFirstStopMarker.data, {
+      ...expectedDataPropertiesForStopMarker,
+      ...expectedConnectionProperties,
+    });
 
     Assert.objectContains(
       parentRedirectMarker,
@@ -321,7 +344,11 @@ add_task(async function test_network_markers_redirect_resources() {
       parentSecondStopMarker,
       expectedPropertiesForStopMarker
     );
-    Assert.objectContainsOnly(parentSecondStopMarker.data, {
+    // In Test-Verify mode, sometimes the properties from
+    // `expectedConnectionProperties` are missing. That's why they're not
+    // included here, and objectContains is used instead of objectContainsOnly
+    // like above.
+    Assert.objectContains(parentSecondStopMarker.data, {
       ...expectedDataPropertiesForStopMarker,
       // The "count" property is absent from the content marker.
       count: Expect.number(),
@@ -333,7 +360,7 @@ add_task(async function test_network_markers_redirect_resources() {
       contentSecondStopMarker,
       expectedPropertiesForStopMarker
     );
-    Assert.objectContainsOnly(
+    Assert.objectContains(
       contentSecondStopMarker.data,
       expectedDataPropertiesForStopMarker
     );

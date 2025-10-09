@@ -8,9 +8,13 @@ with Files("**"):
     BUG_COMPONENT = ("Core", "Widget: Gtk")
 
 SOURCES += [
+    "color-management-v1-protocol.c",
+    "fractional-scale-v1-protocol.c",
     "idle-inhibit-unstable-v1-protocol.c",
+    "kde-appmenu-protocol.c",
     "linux-dmabuf-unstable-v1-protocol.c",
     "pointer-constraints-unstable-v1-protocol.c",
+    "pointer-gestures-unstable-v1-protocol.c",
     "relative-pointer-unstable-v1-protocol.c",
     "viewporter-protocol.c",
     "xdg-activation-v1-protocol.c",
@@ -18,12 +22,14 @@ SOURCES += [
 ]
 
 EXPORTS.mozilla.widget += [
-    "gbm.h",
+    "color-management-v1-client-protocol.h",
+    "fractional-scale-v1-client-protocol.h",
     "idle-inhibit-unstable-v1-client-protocol.h",
+    "kde-appmenu-client-protocol.h",
     "linux-dmabuf-unstable-v1-client-protocol.h",
     "pointer-constraints-unstable-v1-client-protocol.h",
+    "pointer-gestures-unstable-v1-client-protocol.h",
     "relative-pointer-unstable-v1-client-protocol.h",
-    "va_drmcommon.h",
     "viewporter-client-protocol.h",
     "xdg-activation-v1-client-protocol.h",
     "xdg-output-unstable-v1-client-protocol.h",

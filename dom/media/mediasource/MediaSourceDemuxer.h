@@ -13,7 +13,7 @@
 #  include "TrackBuffersManager.h"
 #  include "mozilla/Atomics.h"
 #  include "mozilla/Maybe.h"
-#  include "mozilla/Monitor.h"
+#  include "mozilla/EventTargetAndLockCapability.h"
 #  include "mozilla/TaskQueue.h"
 #  include "mozilla/dom/MediaDebugInfoBinding.h"
 
@@ -45,8 +45,8 @@ class MediaSourceDemuxer : public MediaDataDemuxer,
   bool ShouldComputeStartTime() const override { return false; }
 
   /* interface for TrackBuffersManager */
-  void AttachSourceBuffer(RefPtr<TrackBuffersManager>& aSourceBuffer);
-  void DetachSourceBuffer(RefPtr<TrackBuffersManager>& aSourceBuffer);
+  void AttachSourceBuffer(const RefPtr<TrackBuffersManager>& aSourceBuffer);
+  void DetachSourceBuffer(const RefPtr<TrackBuffersManager>& aSourceBuffer);
   TaskQueue* GetTaskQueue() { return mTaskQueue; }
   void NotifyInitDataArrived();
 
@@ -67,12 +67,10 @@ class MediaSourceDemuxer : public MediaDataDemuxer,
 
   // Largest gap allowed between muxed streams with different
   // start times. The specs suggest up to a "reasonably short" gap of
-  // one second. We conservatively choose to allow a gap up to a bit over
-  // a half-second here, which is still twice our previous effective value
-  // and should resolve embedded playback issues on Twitter, DokiDoki, etc.
+  // one second, which we use here.
   // See: https://www.w3.org/TR/media-source-2/#presentation-start-time
   static constexpr media::TimeUnit EOS_FUZZ_START =
-      media::TimeUnit::FromMicroseconds(550000);
+      media::TimeUnit::FromMicroseconds(1000000);
 
  private:
   ~MediaSourceDemuxer();
@@ -80,8 +78,8 @@ class MediaSourceDemuxer : public MediaDataDemuxer,
   // Scan source buffers and update information.
   bool ScanSourceBuffersForContent();
   RefPtr<TrackBuffersManager> GetManager(TrackInfo::TrackType aType)
-      MOZ_REQUIRES(mMonitor);
-  TrackInfo* GetTrackInfo(TrackInfo::TrackType) MOZ_REQUIRES(mMonitor);
+      MOZ_REQUIRES(mMutex);
+  TrackInfo* GetTrackInfo(TrackInfo::TrackType) MOZ_REQUIRES(mMutex);
   void DoAttachSourceBuffer(RefPtr<TrackBuffersManager>&& aSourceBuffer);
   void DoDetachSourceBuffer(const RefPtr<TrackBuffersManager>& aSourceBuffer);
   bool OnTaskQueue() {
@@ -93,12 +91,12 @@ class MediaSourceDemuxer : public MediaDataDemuxer,
   nsTArray<RefPtr<TrackBuffersManager>> mSourceBuffers;
   MozPromiseHolder<InitPromise> mInitPromise;
 
-  // Monitor to protect members below across multiple threads.
-  mutable Monitor mMonitor;
-  nsTArray<RefPtr<MediaSourceTrackDemuxer>> mDemuxers MOZ_GUARDED_BY(mMonitor);
-  RefPtr<TrackBuffersManager> mAudioTrack MOZ_GUARDED_BY(mMonitor);
-  RefPtr<TrackBuffersManager> mVideoTrack MOZ_GUARDED_BY(mMonitor);
-  MediaInfo mInfo MOZ_GUARDED_BY(mMonitor);
+  // Mutex to protect members below across multiple threads.
+  mutable Mutex mMutex;
+  nsTArray<RefPtr<MediaSourceTrackDemuxer>> mDemuxers MOZ_GUARDED_BY(mMutex);
+  RefPtr<TrackBuffersManager> mAudioTrack MOZ_GUARDED_BY(mMutex);
+  RefPtr<TrackBuffersManager> mVideoTrack MOZ_GUARDED_BY(mMutex);
+  MediaInfo mInfo MOZ_GUARDED_BY(mMutex);
 };
 
 class MediaSourceTrackDemuxer
@@ -108,7 +106,7 @@ class MediaSourceTrackDemuxer
   MediaSourceTrackDemuxer(MediaSourceDemuxer* aParent,
                           TrackInfo::TrackType aType,
                           TrackBuffersManager* aManager)
-      MOZ_REQUIRES(aParent->mMonitor);
+      MOZ_REQUIRES(aParent->mMutex);
 
   UniquePtr<TrackInfo> GetInfo() const override;
 
@@ -133,7 +131,13 @@ class MediaSourceTrackDemuxer
   void DetachManager();
 
  private:
-  bool OnTaskQueue() const { return mTaskQueue->IsCurrentThreadIn(); }
+  mozilla::Mutex& Mutex() MOZ_RETURN_CAPABILITY(mLock.Lock()) {
+    return mLock.Lock();
+  }
+  const EventTargetCapability<mozilla::TaskQueue>& TaskQueue() const
+      MOZ_RETURN_CAPABILITY(mLock.Target()) {
+    return mLock.Target();
+  }
 
   RefPtr<SeekPromise> DoSeek(const media::TimeUnit& aTime);
   RefPtr<SamplesPromise> DoGetSamples(int32_t aNumSamples);
@@ -144,16 +148,15 @@ class MediaSourceTrackDemuxer
   media::TimeUnit GetNextRandomAccessPoint();
 
   RefPtr<MediaSourceDemuxer> mParent;
-  const RefPtr<TaskQueue> mTaskQueue;
 
   TrackInfo::TrackType mType;
-  // Monitor protecting members below accessed from multiple threads.
-  Monitor mMonitor MOZ_UNANNOTATED;
-  media::TimeUnit mNextRandomAccessPoint;
+  // Mutex protecting members below accessed from multiple threads.
+  EventTargetAndLockCapability<mozilla::TaskQueue, mozilla::Mutex> mLock;
+  media::TimeUnit mNextRandomAccessPoint MOZ_GUARDED_BY(mLock);
   // Would be accessed in MFR's demuxer proxy task queue and TaskQueue, and
   // only be set on the TaskQueue. It can be accessed while on TaskQueue without
   // the need for the lock.
-  RefPtr<TrackBuffersManager> mManager;
+  RefPtr<TrackBuffersManager> mManager MOZ_GUARDED_BY(mLock);
 
   // Only accessed on TaskQueue
   Maybe<RefPtr<MediaRawData>> mNextSample;

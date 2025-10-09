@@ -10,6 +10,7 @@
 
 #include "blapit.h"
 #include "mpi.h"
+#include "hasht.h"
 
 /* max block size of supported block ciphers */
 #define MAX_BLOCK_SIZE 16
@@ -82,12 +83,23 @@ SEC_END_PROTOS
 SECStatus RSA_Init();
 SECStatus generate_prime(mp_int *prime, int primeLen);
 
+SECStatus
+RSA_EMSAEncodePSS(unsigned char *em,
+                  unsigned int emLen,
+                  unsigned int emBits,
+                  const unsigned char *mHash,
+                  HASH_HashType hashAlg,
+                  HASH_HashType maskHashAlg,
+                  const unsigned char *salt,
+                  unsigned int saltLen);
+
 /* Freebl state. */
 PRBool aesni_support();
 PRBool clmul_support();
 PRBool sha_support();
 PRBool avx_support();
 PRBool avx2_support();
+PRBool adx_support();
 PRBool ssse3_support();
 PRBool sse4_1_support();
 PRBool sse4_2_support();
@@ -101,10 +113,10 @@ PRBool ppc_crypto_support();
 #ifdef NSS_FIPS_DISABLED
 #define BLAPI_CLEAR_STACK(stack_size)
 #else
-#define BLAPI_CLEAR_STACK(stack_size)                    \
-    {                                                    \
-        volatile char _stkclr[stack_size];               \
-        PORT_Memset((void *)&_stkclr[0], 0, stack_size); \
+#define BLAPI_CLEAR_STACK(stack_size)                   \
+    {                                                   \
+        volatile char _stkclr[stack_size];              \
+        PORT_SafeZero((void *)&_stkclr[0], stack_size); \
     }
 #endif
 

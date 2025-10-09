@@ -20,8 +20,7 @@ libc_bitflags! {
         /// [`mmap(2)`]: https://man7.org/linux/man-pages/man2/mmap.2.html
         ADDR_LIMIT_3GB;
         /// User-space function pointers to signal handlers point to descriptors.
-        #[cfg(not(any(target_env = "musl", target_env = "uclibc")))]
-        #[cfg_attr(docsrs, doc(cfg(all())))]
+        #[cfg(not(any(target_env = "musl", target_env = "uclibc", target_env = "ohos")))]
         FDPIC_FUNCPTRS;
         /// Map page 0 as read-only.
         MMAP_PAGE_ZERO;
@@ -42,8 +41,7 @@ libc_bitflags! {
         /// version number.
         ///
         /// [`uname(2)`]: https://man7.org/linux/man-pages/man2/uname.2.html
-        #[cfg(not(any(target_env = "musl", target_env = "uclibc")))]
-        #[cfg_attr(docsrs, doc(cfg(all())))]
+        #[cfg(not(any(target_env = "musl", target_env = "uclibc", target_env = "ohos")))]
         UNAME26;
         /// No effects.
         WHOLE_SECONDS;
@@ -80,7 +78,10 @@ pub fn get() -> Result<Persona> {
 ///
 /// Example:
 ///
-/// ```
+// Disable test on aarch64 until we know why it fails.
+// https://github.com/nix-rust/nix/issues/2060
+#[cfg_attr(target_arch = "aarch64", doc = " ```no_run")]
+#[cfg_attr(not(target_arch = "aarch64"), doc = " ```")]
 /// # use nix::sys::personality::{self, Persona};
 /// let mut pers = personality::get().unwrap();
 /// assert!(!pers.contains(Persona::ADDR_NO_RANDOMIZE));

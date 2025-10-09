@@ -15,7 +15,6 @@
 #include "mozilla/Unused.h"
 #include "mozilla/Vector.h"
 #include "mozilla/WindowsProcessMitigations.h"
-#include "mozilla/WindowsVersion.h"
 
 #if defined(MOZILLA_INTERNAL_API)
 #  include "mozilla/mscom/EnsureMTA.h"
@@ -254,7 +253,9 @@ void ProcessRuntime::InitInsideApartment() {
     // We are required to initialize security prior to configuring global
     // options.
     mInitResult = InitializeSecurity(mProcessCategory);
-    MOZ_DIAGNOSTIC_ASSERT(SUCCEEDED(mInitResult));
+    // Downgrading from a MOZ_DIAGNOSTIC_ASSERT while investigating
+    // bug 1930846.
+    MOZ_ASSERT(SUCCEEDED(mInitResult));
 
     // Even though this isn't great, we should try to proceed even when
     // CoInitializeSecurity has previously been called: the additional settings
@@ -325,7 +326,9 @@ ProcessRuntime::InitializeSecurity(const ProcessCategory aProcessCategory) {
   HANDLE rawToken = nullptr;
   BOOL ok = ::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &rawToken);
   if (!ok) {
-    return HRESULT_FROM_WIN32(::GetLastError());
+    HRESULT hr = HRESULT_FROM_WIN32(::GetLastError());
+    MOZ_DIAGNOSTIC_ASSERT(SUCCEEDED(hr));
+    return hr;
   }
   nsAutoHandle token(rawToken);
 
@@ -333,21 +336,27 @@ ProcessRuntime::InitializeSecurity(const ProcessCategory aProcessCategory) {
   ok = ::GetTokenInformation(token, TokenUser, nullptr, len, &len);
   DWORD win32Error = ::GetLastError();
   if (!ok && win32Error != ERROR_INSUFFICIENT_BUFFER) {
-    return HRESULT_FROM_WIN32(win32Error);
+    HRESULT hr = HRESULT_FROM_WIN32(win32Error);
+    MOZ_DIAGNOSTIC_ASSERT(SUCCEEDED(hr));
+    return hr;
   }
 
   auto tokenUserBuf = MakeUnique<BYTE[]>(len);
   TOKEN_USER& tokenUser = *reinterpret_cast<TOKEN_USER*>(tokenUserBuf.get());
   ok = ::GetTokenInformation(token, TokenUser, tokenUserBuf.get(), len, &len);
   if (!ok) {
-    return HRESULT_FROM_WIN32(::GetLastError());
+    HRESULT hr = HRESULT_FROM_WIN32(::GetLastError());
+    MOZ_DIAGNOSTIC_ASSERT(SUCCEEDED(hr));
+    return hr;
   }
 
   len = 0;
   ok = ::GetTokenInformation(token, TokenPrimaryGroup, nullptr, len, &len);
   win32Error = ::GetLastError();
   if (!ok && win32Error != ERROR_INSUFFICIENT_BUFFER) {
-    return HRESULT_FROM_WIN32(win32Error);
+    HRESULT hr = HRESULT_FROM_WIN32(::GetLastError());
+    MOZ_DIAGNOSTIC_ASSERT(SUCCEEDED(hr));
+    return hr;
   }
 
   auto tokenPrimaryGroupBuf = MakeUnique<BYTE[]>(len);
@@ -356,44 +365,67 @@ ProcessRuntime::InitializeSecurity(const ProcessCategory aProcessCategory) {
   ok = ::GetTokenInformation(token, TokenPrimaryGroup,
                              tokenPrimaryGroupBuf.get(), len, &len);
   if (!ok) {
-    return HRESULT_FROM_WIN32(::GetLastError());
+    HRESULT hr = HRESULT_FROM_WIN32(::GetLastError());
+    MOZ_DIAGNOSTIC_ASSERT(SUCCEEDED(hr));
+    return hr;
   }
 
   SECURITY_DESCRIPTOR sd;
   if (!::InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION)) {
-    return HRESULT_FROM_WIN32(::GetLastError());
+    HRESULT hr = HRESULT_FROM_WIN32(::GetLastError());
+    MOZ_DIAGNOSTIC_ASSERT(SUCCEEDED(hr));
+    return hr;
   }
 
   BYTE systemSid[SECURITY_MAX_SID_SIZE];
   DWORD systemSidSize = sizeof(systemSid);
   if (!::CreateWellKnownSid(WinLocalSystemSid, nullptr, systemSid,
                             &systemSidSize)) {
-    return HRESULT_FROM_WIN32(::GetLastError());
+    HRESULT hr = HRESULT_FROM_WIN32(::GetLastError());
+    MOZ_DIAGNOSTIC_ASSERT(SUCCEEDED(hr));
+    return hr;
   }
 
   BYTE adminSid[SECURITY_MAX_SID_SIZE];
   DWORD adminSidSize = sizeof(adminSid);
   if (!::CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, adminSid,
                             &adminSidSize)) {
-    return HRESULT_FROM_WIN32(::GetLastError());
+    HRESULT hr = HRESULT_FROM_WIN32(::GetLastError());
+    MOZ_DIAGNOSTIC_ASSERT(SUCCEEDED(hr));
+    return hr;
   }
 
-  const bool allowAppContainers =
-      aProcessCategory == ProcessCategory::GeckoBrowserParent &&
-      IsWin8OrLater();
+  const bool allowAllNonRestrictedAppContainers =
+      aProcessCategory == ProcessCategory::GeckoBrowserParent;
 
   BYTE appContainersSid[SECURITY_MAX_SID_SIZE];
   DWORD appContainersSidSize = sizeof(appContainersSid);
-  if (allowAppContainers) {
+  if (allowAllNonRestrictedAppContainers) {
     if (!::CreateWellKnownSid(WinBuiltinAnyPackageSid, nullptr,
                               appContainersSid, &appContainersSidSize)) {
-      return HRESULT_FROM_WIN32(::GetLastError());
+      HRESULT hr = HRESULT_FROM_WIN32(::GetLastError());
+      MOZ_DIAGNOSTIC_ASSERT(SUCCEEDED(hr));
+      return hr;
     }
   }
 
-  // Grant access to SYSTEM, Administrators, the user, and when running as the
-  // browser process on Windows 8+, all app containers.
-  const size_t kMaxInlineEntries = 4;
+  UniquePtr<BYTE[]> tokenAppContainerInfBuf;
+  len = 0;
+  ::GetTokenInformation(token, TokenAppContainerSid, nullptr, len, &len);
+  if (len) {
+    tokenAppContainerInfBuf = MakeUnique<BYTE[]>(len);
+    ok = ::GetTokenInformation(token, TokenAppContainerSid,
+                               tokenAppContainerInfBuf.get(), len, &len);
+    if (!ok) {
+      // Don't fail if we get an error retrieving an app container SID.
+      tokenAppContainerInfBuf = nullptr;
+    }
+  }
+
+  // Grant access to SYSTEM, Administrators, the user, our app container (if in
+  // one) and when running as the browser process on Windows 8+, all non
+  // restricted app containers.
+  const size_t kMaxInlineEntries = 5;
   mozilla::Vector<EXPLICIT_ACCESS_W, kMaxInlineEntries> entries;
 
   Unused << entries.append(EXPLICIT_ACCESS_W{
@@ -417,7 +449,7 @@ ProcessRuntime::InitializeSecurity(const ProcessCategory aProcessCategory) {
       {nullptr, NO_MULTIPLE_TRUSTEE, TRUSTEE_IS_SID, TRUSTEE_IS_USER,
        reinterpret_cast<LPWSTR>(tokenUser.User.Sid)}});
 
-  if (allowAppContainers) {
+  if (allowAllNonRestrictedAppContainers) {
     Unused << entries.append(
         EXPLICIT_ACCESS_W{COM_RIGHTS_EXECUTE,
                           GRANT_ACCESS,
@@ -427,31 +459,57 @@ ProcessRuntime::InitializeSecurity(const ProcessCategory aProcessCategory) {
                            reinterpret_cast<LPWSTR>(appContainersSid)}});
   }
 
+  if (tokenAppContainerInfBuf) {
+    TOKEN_APPCONTAINER_INFORMATION& tokenAppContainerInf =
+        *reinterpret_cast<TOKEN_APPCONTAINER_INFORMATION*>(
+            tokenAppContainerInfBuf.get());
+
+    // TokenAppContainer will be null if we are not in an app container.
+    if (tokenAppContainerInf.TokenAppContainer) {
+      Unused << entries.append(EXPLICIT_ACCESS_W{
+          COM_RIGHTS_EXECUTE,
+          GRANT_ACCESS,
+          NO_INHERITANCE,
+          {nullptr, NO_MULTIPLE_TRUSTEE, TRUSTEE_IS_SID, TRUSTEE_IS_USER,
+           reinterpret_cast<LPWSTR>(tokenAppContainerInf.TokenAppContainer)}});
+    }
+  }
+
   PACL rawDacl = nullptr;
   win32Error =
       ::SetEntriesInAclW(entries.length(), entries.begin(), nullptr, &rawDacl);
   if (win32Error != ERROR_SUCCESS) {
-    return HRESULT_FROM_WIN32(win32Error);
+    HRESULT hr = HRESULT_FROM_WIN32(win32Error);
+    MOZ_DIAGNOSTIC_ASSERT(SUCCEEDED(hr));
+    return hr;
   }
 
   UniquePtr<ACL, LocalFreeDeleter> dacl(rawDacl);
 
   if (!::SetSecurityDescriptorDacl(&sd, TRUE, dacl.get(), FALSE)) {
-    return HRESULT_FROM_WIN32(::GetLastError());
+    HRESULT hr = HRESULT_FROM_WIN32(win32Error);
+    MOZ_DIAGNOSTIC_ASSERT(SUCCEEDED(hr));
+    return hr;
   }
 
   if (!::SetSecurityDescriptorOwner(&sd, tokenUser.User.Sid, FALSE)) {
-    return HRESULT_FROM_WIN32(::GetLastError());
+    HRESULT hr = HRESULT_FROM_WIN32(win32Error);
+    MOZ_DIAGNOSTIC_ASSERT(SUCCEEDED(hr));
+    return hr;
   }
 
   if (!::SetSecurityDescriptorGroup(&sd, tokenPrimaryGroup.PrimaryGroup,
                                     FALSE)) {
-    return HRESULT_FROM_WIN32(::GetLastError());
+    HRESULT hr = HRESULT_FROM_WIN32(win32Error);
+    MOZ_DIAGNOSTIC_ASSERT(SUCCEEDED(hr));
+    return hr;
   }
 
-  return wrapped::CoInitializeSecurity(
+  HRESULT hr = wrapped::CoInitializeSecurity(
       &sd, -1, nullptr, nullptr, RPC_C_AUTHN_LEVEL_DEFAULT,
       RPC_C_IMP_LEVEL_IDENTIFY, nullptr, EOAC_NONE, nullptr);
+  MOZ_DIAGNOSTIC_ASSERT(SUCCEEDED(hr));
+  return hr;
 }
 
 }  // namespace mscom

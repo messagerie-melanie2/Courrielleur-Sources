@@ -10,12 +10,19 @@ import android.content.Context
 import android.graphics.Point
 import android.graphics.RectF
 import android.os.Build
+import android.util.Base64
+import androidx.core.net.toUri
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.filters.MediumTest
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import org.hamcrest.Matcher
-import org.hamcrest.Matchers.* // ktlint-disable no-wildcard-imports
+import org.hamcrest.Matchers.arrayContainingInAnyOrder
+import org.hamcrest.Matchers.both
+import org.hamcrest.Matchers.containsString
+import org.hamcrest.Matchers.equalTo
+import org.hamcrest.Matchers.hasToString
+import org.hamcrest.Matchers.not
 import org.json.JSONArray
 import org.junit.Assume.assumeThat
 import org.junit.Before
@@ -31,7 +38,21 @@ import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSession.PromptDelegate
 import org.mozilla.geckoview.GeckoSession.SelectionActionDelegate
-import org.mozilla.geckoview.GeckoSession.SelectionActionDelegate.* // ktlint-disable no-wildcard-imports
+import org.mozilla.geckoview.GeckoSession.SelectionActionDelegate.ACTION_COLLAPSE_TO_END
+import org.mozilla.geckoview.GeckoSession.SelectionActionDelegate.ACTION_COLLAPSE_TO_START
+import org.mozilla.geckoview.GeckoSession.SelectionActionDelegate.ACTION_COPY
+import org.mozilla.geckoview.GeckoSession.SelectionActionDelegate.ACTION_CUT
+import org.mozilla.geckoview.GeckoSession.SelectionActionDelegate.ACTION_DELETE
+import org.mozilla.geckoview.GeckoSession.SelectionActionDelegate.ACTION_HIDE
+import org.mozilla.geckoview.GeckoSession.SelectionActionDelegate.ACTION_PASTE
+import org.mozilla.geckoview.GeckoSession.SelectionActionDelegate.ACTION_PASTE_AS_PLAIN_TEXT
+import org.mozilla.geckoview.GeckoSession.SelectionActionDelegate.ACTION_SELECT_ALL
+import org.mozilla.geckoview.GeckoSession.SelectionActionDelegate.ACTION_UNSELECT
+import org.mozilla.geckoview.GeckoSession.SelectionActionDelegate.ClipboardPermission
+import org.mozilla.geckoview.GeckoSession.SelectionActionDelegate.FLAG_IS_COLLAPSED
+import org.mozilla.geckoview.GeckoSession.SelectionActionDelegate.FLAG_IS_EDITABLE
+import org.mozilla.geckoview.GeckoSession.SelectionActionDelegate.HIDE_REASON_NO_SELECTION
+import org.mozilla.geckoview.GeckoSession.SelectionActionDelegate.Selection
 import org.mozilla.geckoview.test.rule.GeckoSessionTestRule.AssertCalled
 import org.mozilla.geckoview.test.rule.GeckoSessionTestRule.NullDelegate
 import org.mozilla.geckoview.test.rule.GeckoSessionTestRule.WithDisplay
@@ -52,7 +73,7 @@ class SelectionActionDelegateTest : BaseSessionTest() {
     companion object {
         @get:Parameters(name = "{0}")
         @JvmStatic
-        val parameters: List<Array<out Any>> = listOf(
+        val parameters: List<Array<Any>> = listOf(
             arrayOf("#text", ContentType.DIV, "lorem", false),
             arrayOf("#input", ContentType.EDITABLE_ELEMENT, "ipsum", true),
             arrayOf("#textarea", ContentType.EDITABLE_ELEMENT, "dolor", true),
@@ -260,6 +281,19 @@ class SelectionActionDelegateTest : BaseSessionTest() {
         }
     }
 
+    @Test
+    fun pasteImage() {
+        assumeThat("Unnecessary to run multiple times", id, equalTo("#contenteditable"))
+
+        val bytes = this.getTestBytes("/assets/www/images/test.gif")
+        val base64Utf8String = Base64.encodeToString(bytes, Base64.NO_WRAP)
+        val result = "<img src=\"data:image/gif;base64,${base64Utf8String}\" alt=\"\">"
+
+        withImageClipboard("/assets/www/images/test.gif", "image/gif") {
+            testThat(selectedContent, withResponse(ACTION_PASTE), changesHtmlContentTo(result))
+        }
+    }
+
     @Test fun delete() = assumingEditable(true) {
         testThat(selectedContent, withResponse(ACTION_DELETE), deletesContent())
     }
@@ -340,7 +374,8 @@ class SelectionActionDelegateTest : BaseSessionTest() {
         )
     }
 
-    @Test fun compareClientRect() {
+    @Test
+    fun compareClientRect() {
         val jsCssReset = """(function() {
             document.querySelector('$id').style.display = "block";
             document.querySelector('$id').style.border = "0";
@@ -364,6 +399,8 @@ class SelectionActionDelegateTest : BaseSessionTest() {
 
         sessionRule.setPrefsUntilTestEnd(mapOf("dom.events.asyncClipboard.readText" to true))
 
+        withClipboard("clipboardReadAllow") {} // Reset clipboard data
+
         val url = createTestUrl(CLIPBOARD_READ_HTML_PATH)
         mainSession.loadUri(url)
         mainSession.waitForPageStop()
@@ -375,9 +412,7 @@ class SelectionActionDelegateTest : BaseSessionTest() {
             override fun onShowClipboardPermissionRequest(
                 session: GeckoSession,
                 perm: ClipboardPermission,
-            ):
-                GeckoResult<AllowOrDeny> {
-                assertThat("URI should match", perm.uri, startsWith(url))
+            ): GeckoResult<AllowOrDeny> {
                 assertThat(
                     "Type should match",
                     perm.type,
@@ -391,8 +426,7 @@ class SelectionActionDelegateTest : BaseSessionTest() {
             override fun onAlertPrompt(
                 session: GeckoSession,
                 prompt: PromptDelegate.AlertPrompt,
-            ):
-                GeckoResult<PromptDelegate.PromptResponse> {
+            ): GeckoResult<PromptDelegate.PromptResponse> {
                 assertThat("Message should match", "allow", equalTo(prompt.message))
                 result.complete(null)
                 return GeckoResult.fromValue(prompt.dismiss())
@@ -410,6 +444,8 @@ class SelectionActionDelegateTest : BaseSessionTest() {
 
         sessionRule.setPrefsUntilTestEnd(mapOf("dom.events.asyncClipboard.readText" to true))
 
+        withClipboard("clipboardReadDeny") {} // Reset clipboard data
+
         val url = createTestUrl(CLIPBOARD_READ_HTML_PATH)
         mainSession.loadUri(url)
         mainSession.waitForPageStop()
@@ -421,9 +457,7 @@ class SelectionActionDelegateTest : BaseSessionTest() {
             override fun onShowClipboardPermissionRequest(
                 session: GeckoSession,
                 perm: ClipboardPermission,
-            ):
-                GeckoResult<AllowOrDeny>? {
-                assertThat("URI should match", perm.uri, startsWith(url))
+            ): GeckoResult<AllowOrDeny>? {
                 assertThat(
                     "Type should match",
                     perm.type,
@@ -436,8 +470,7 @@ class SelectionActionDelegateTest : BaseSessionTest() {
             override fun onAlertPrompt(
                 session: GeckoSession,
                 prompt: PromptDelegate.AlertPrompt,
-            ):
-                GeckoResult<PromptDelegate.PromptResponse> {
+            ): GeckoResult<PromptDelegate.PromptResponse> {
                 assertThat("Message should match", "deny", equalTo(prompt.message))
                 result.complete(null)
                 return GeckoResult.fromValue(prompt.dismiss())
@@ -455,25 +488,27 @@ class SelectionActionDelegateTest : BaseSessionTest() {
 
         sessionRule.setPrefsUntilTestEnd(mapOf("dom.events.asyncClipboard.readText" to true))
 
+        withClipboard("clipboardReadDeactivate") {} // Reset clipboard data
+
         val url = createTestUrl(CLIPBOARD_READ_HTML_PATH)
         mainSession.loadUri(url)
         mainSession.waitForPageStop()
 
         val result = GeckoResult<Void>()
+        val permissionResult = GeckoResult<AllowOrDeny>()
         mainSession.delegateDuringNextWait(object : SelectionActionDelegate {
             @AssertCalled(count = 1)
             override fun onShowClipboardPermissionRequest(
                 session: GeckoSession,
                 perm: ClipboardPermission,
-            ):
-                GeckoResult<AllowOrDeny>? {
+            ): GeckoResult<AllowOrDeny>? {
                 assertThat(
                     "Type should match",
                     perm.type,
                     equalTo(SelectionActionDelegate.PERMISSION_CLIPBOARD_READ),
                 )
                 result.complete(null)
-                return GeckoResult()
+                return permissionResult
             }
         })
 
@@ -483,11 +518,58 @@ class SelectionActionDelegateTest : BaseSessionTest() {
         mainSession.delegateDuringNextWait(object : SelectionActionDelegate {
             @AssertCalled
             override fun onDismissClipboardPermissionRequest(session: GeckoSession) {
+                permissionResult.complete(AllowOrDeny.DENY)
             }
         })
 
         mainSession.loadTestPath(HELLO_HTML_PATH)
+        sessionRule.waitForResult(permissionResult)
         sessionRule.waitForPageStop()
+    }
+
+    @WithDisplay(width = 100, height = 100)
+    @Test
+    fun clipboardReadDismiss() {
+        assumeThat("Unnecessary to run multiple times", id, equalTo("#text"))
+
+        sessionRule.setPrefsUntilTestEnd(mapOf("dom.events.asyncClipboard.readText" to true))
+
+        withClipboard("clipboardReadDismiss") {} // Reset clipboard data
+
+        val url = createTestUrl(CLIPBOARD_READ_HTML_PATH)
+        mainSession.loadUri(url)
+        mainSession.waitForPageStop()
+
+        val result = GeckoResult<Void>()
+        val permissionResult = GeckoResult<AllowOrDeny>()
+        mainSession.delegateDuringNextWait(object : SelectionActionDelegate {
+            @AssertCalled(count = 1)
+            override fun onShowClipboardPermissionRequest(
+                session: GeckoSession,
+                perm: ClipboardPermission,
+            ): GeckoResult<AllowOrDeny>? {
+                assertThat(
+                    "Type should match",
+                    perm.type,
+                    equalTo(SelectionActionDelegate.PERMISSION_CLIPBOARD_READ),
+                )
+                result.complete(null)
+                return permissionResult
+            }
+        })
+
+        mainSession.synthesizeTap(50, 50) // Provides user activation.
+        sessionRule.waitForResult(result)
+
+        mainSession.delegateDuringNextWait(object : SelectionActionDelegate {
+            @AssertCalled
+            override fun onDismissClipboardPermissionRequest(session: GeckoSession) {
+                permissionResult.complete(AllowOrDeny.DENY)
+            }
+        })
+
+        mainSession.synthesizeTap(10, 10) // click to dismiss.
+        sessionRule.waitForResult(permissionResult)
     }
 
     /** Interface that defines behavior for a particular type of content */
@@ -496,6 +578,7 @@ class SelectionActionDelegateTest : BaseSessionTest() {
         fun select() {}
         val initialContent: String
         val content: String
+        val htmlContent: String
         val selectionOffsets: Pair<Int, Int>
     }
 
@@ -559,10 +642,12 @@ class SelectionActionDelegateTest : BaseSessionTest() {
 
         mainSession.loadTestPath(INPUTS_PATH)
         mainSession.waitForPageStop()
+        sessionRule.waitForContentTransformsReceived(mainSession)
 
         val requestClientRect: (String) -> RectF = {
             mainSession.reload()
             mainSession.waitForPageStop()
+            sessionRule.waitForContentTransformsReceived(mainSession)
 
             mainSession.evaluateJS(it)
             content.focus()
@@ -589,7 +674,7 @@ class SelectionActionDelegateTest : BaseSessionTest() {
             fuzzyEqual(screenRectA.height(), screenRectB.height(), expectedDiff.height())
 
         assertThat(
-            "Selection rect is not at expected location. a$screenRectA b$screenRectB",
+            "Selection rect is not at expected location. a$screenRectA b$screenRectB expectedDiff$expectedDiff",
             result,
             equalTo(true),
         )
@@ -640,6 +725,25 @@ class SelectionActionDelegateTest : BaseSessionTest() {
         }
     }
 
+    private fun withImageClipboard(contentPath: String = "", mime: String = "", lambda: () -> Unit) {
+        val oldClip = clipboard.primaryClip
+        try {
+            TestContentProvider.setTestData(this.getTestBytes(contentPath), mime)
+            val clipData = ClipData("image", arrayOf(mime), ClipData.Item("content://org.mozilla.geckoview.test.provider/gif".toUri()))
+            clipboard.setPrimaryClip(clipData)
+
+            sessionRule.addExternalDelegateUntilTestEnd(
+                ClipboardManager.OnPrimaryClipChangedListener::class,
+                clipboard::addPrimaryClipChangedListener,
+                clipboard::removePrimaryClipChangedListener,
+                ClipboardManager.OnPrimaryClipChangedListener {},
+            )
+            lambda()
+        } finally {
+            clipboard.setPrimaryClip(oldClip ?: ClipData.newPlainText("", ""))
+        }
+    }
+
     private fun assumingEditable(editable: Boolean, lambda: (() -> Unit)? = null) {
         assumeThat(
             "Assuming is ${if (editable) "" else "not "}editable",
@@ -667,6 +771,10 @@ class SelectionActionDelegateTest : BaseSessionTest() {
 
         override val content: String get() {
             return mainSession.evaluateJS("document.querySelector('$id').textContent") as String
+        }
+
+        override val htmlContent: String get() {
+            return mainSession.evaluateJS("document.querySelector('$id').innerHTML") as String
         }
 
         override val selectionOffsets: Pair<Int, Int> get() {
@@ -707,6 +815,10 @@ class SelectionActionDelegateTest : BaseSessionTest() {
             return mainSession.evaluateJS("document.querySelector('$id').value") as String
         }
 
+        override val htmlContent: String get() {
+            return content
+        }
+
         override val selectionOffsets: Pair<Int, Int> get() {
             val offsets = mainSession.evaluateJS(
                 """[ document.querySelector('$id').selectionStart,
@@ -745,6 +857,10 @@ class SelectionActionDelegateTest : BaseSessionTest() {
 
         override val content: String get() {
             return mainSession.evaluateJS("document.querySelector('$id').contentDocument.body.textContent") as String
+        }
+
+        override val htmlContent: String get() {
+            return content
         }
 
         override val selectionOffsets: Pair<Int, Int> get() {
@@ -792,6 +908,10 @@ class SelectionActionDelegateTest : BaseSessionTest() {
             """,
             )
             return promise.value as String
+        }
+
+        override val htmlContent: String get() {
+            return content
         }
 
         override val selectionOffsets: Pair<Int, Int> get() {
@@ -909,5 +1029,9 @@ class SelectionActionDelegateTest : BaseSessionTest() {
 
     private fun changesContentTo(content: String) = { it: SelectedContent ->
         assertThat("Changed content should match", it.content, equalTo(content))
+    }
+
+    private fun changesHtmlContentTo(content: String) = { it: SelectedContent ->
+        assertThat("Changed HTML content should match", it.htmlContent, equalTo(content))
     }
 }

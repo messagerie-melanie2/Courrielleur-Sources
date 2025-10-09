@@ -1,20 +1,14 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-const { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
-
 ChromeUtils.defineESModuleGetters(this, {
-  BrowserSearchTelemetry: "resource:///modules/BrowserSearchTelemetry.sys.mjs",
-  SearchSERPTelemetry: "resource:///modules/SearchSERPTelemetry.sys.mjs",
-  SearchUtils: "resource://gre/modules/SearchUtils.sys.mjs",
+  BrowserSearchTelemetry:
+    "moz-src:///browser/components/search/BrowserSearchTelemetry.sys.mjs",
+  NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
+  SearchSERPTelemetry:
+    "moz-src:///browser/components/search/SearchSERPTelemetry.sys.mjs",
   TelemetryTestUtils: "resource://testing-common/TelemetryTestUtils.sys.mjs",
   sinon: "resource://testing-common/Sinon.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(this, {
-  NetUtil: "resource://gre/modules/NetUtil.jsm",
 });
 
 const TESTS = [
@@ -268,10 +262,13 @@ async function testAdUrlClicked(serpUrl, adUrl, expectedAdKey) {
 
 do_get_profile();
 
-add_task(async function setup() {
-  Services.prefs.setBoolPref(SearchUtils.BROWSER_SEARCH_PREF + "log", true);
+add_setup(async function () {
   await SearchSERPTelemetry.init();
   sinon.stub(BrowserSearchTelemetry, "shouldRecordSearchCount").returns(true);
+
+  registerCleanupFunction(async () => {
+    sinon.restore();
+  });
 });
 
 add_task(async function test_parsing_search_urls() {
@@ -283,6 +280,14 @@ add_task(async function test_parsing_search_urls() {
     SearchSERPTelemetry.updateTrackingStatus(
       {
         getTabBrowser: () => {},
+        // There is no concept of browsing in unit tests, so assume in tests that we
+        // are not in private browsing mode. We have browser tests that check when
+        // private browsing is used.
+        contentPrincipal: {
+          originAttributes: {
+            privateBrowsingId: 0,
+          },
+        },
       },
       test.trackingUrl
     );

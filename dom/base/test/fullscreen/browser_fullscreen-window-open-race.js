@@ -11,12 +11,6 @@ Services.scriptloader.loadSubScript(
   this
 );
 
-// This test tends to trigger a race in the fullscreen time telemetry,
-// where the fullscreen enter and fullscreen exit events (which use the
-// same histogram ID) overlap. That causes TelemetryStopwatch to log an
-// error, bug 1742890.
-SimpleTest.ignoreAllUncaughtExceptions(true);
-
 add_setup(async function () {
   await pushPrefs(
     ["full-screen-api.transition-duration.enter", "0 0"],
@@ -27,7 +21,7 @@ add_setup(async function () {
 
 add_task(async () => {
   const url =
-    "http://mochi.test:8888/browser/dom/base/test/fullscreen/dummy_page.html";
+    "https://example.com/browser/dom/base/test/fullscreen/dummy_page.html";
   const name = "foo";
 
   await BrowserTestUtils.withNewTab(

@@ -5,99 +5,39 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const lazy = {};
-ChromeUtils.defineModuleGetter(lazy, "AddonManager", "resource://gre/modules/AddonManager.jsm");
-
-// Immutable for export.
+/**
+ * AppConstants is a set of immutable constants that are defined at build time.
+ * These should not depend on any other JavaScript module.
+ */
 export var AppConstants = Object.freeze({
   // See this wiki page for more details about channel specific build
   // defines: https://wiki.mozilla.org/Platform/Channel-specific_build_defines
-  NIGHTLY_BUILD:
-#ifdef NIGHTLY_BUILD
-  true,
-#else
-  false,
-#endif
+  NIGHTLY_BUILD: @NIGHTLY_BUILD_BOOL@,
 
-  RELEASE_OR_BETA:
-#ifdef RELEASE_OR_BETA
-  true,
-#else
-  false,
-#endif
+  ENABLE_EXPLICIT_RESOURCE_MANAGEMENT: @ENABLE_EXPLICIT_RESOURCE_MANAGEMENT_BOOL@,
 
-  EARLY_BETA_OR_EARLIER:
-#ifdef EARLY_BETA_OR_EARLIER
-  true,
-#else
-  false,
-#endif
+  RELEASE_OR_BETA: @RELEASE_OR_BETA_BOOL@,
 
-  IS_ESR:
-#ifdef MOZ_ESR
-  true,
-#else
-  false,
-#endif
+  EARLY_BETA_OR_EARLIER: @EARLY_BETA_OR_EARLIER_BOOL@,
 
-  ACCESSIBILITY:
-#ifdef ACCESSIBILITY
-  true,
-#else
-  false,
-#endif
+  IS_ESR: @MOZ_ESR_BOOL@,
+
+  ACCESSIBILITY: @ACCESSIBILITY_BOOL@,
 
   // Official corresponds, roughly, to whether this build is performed
   // on Mozilla's continuous integration infrastructure. You should
   // disable developer-only functionality when this flag is set.
-  MOZILLA_OFFICIAL:
-#ifdef MOZILLA_OFFICIAL
-  true,
-#else
-  false,
-#endif
+  MOZILLA_OFFICIAL: @MOZILLA_OFFICIAL_BOOL@,
 
-  MOZ_OFFICIAL_BRANDING:
-#ifdef MOZ_OFFICIAL_BRANDING
-  true,
-#else
-  false,
-#endif
+  MOZ_OFFICIAL_BRANDING: @MOZ_OFFICIAL_BRANDING_BOOL@,
 
-  MOZ_DEV_EDITION:
-#ifdef MOZ_DEV_EDITION
-  true,
-#else
-  false,
-#endif
+  MOZ_DEV_EDITION: @MOZ_DEV_EDITION_BOOL@,
 
-  MOZ_SERVICES_SYNC:
-#ifdef MOZ_SERVICES_SYNC
-  true,
-#else
-  false,
-#endif
+  MOZ_SERVICES_SYNC: @MOZ_SERVICES_SYNC_BOOL@,
 
-  MOZ_SERVICES_HEALTHREPORT:
-#ifdef MOZ_SERVICES_HEALTHREPORT
-  true,
-#else
-  false,
-#endif
+  MOZ_DATA_REPORTING: @MOZ_DATA_REPORTING_BOOL@,
 
-  MOZ_DATA_REPORTING:
-#ifdef MOZ_DATA_REPORTING
-  true,
-#else
-  false,
-#endif
-
-  MOZ_SANDBOX:
-#ifdef MOZ_SANDBOX
-  true,
-#else
-  false,
-#endif
+  MOZ_SANDBOX: @MOZ_SANDBOX_BOOL@,
 
   MOZ_TELEMETRY_REPORTING:
 #ifdef MOZ_TELEMETRY_REPORTING
@@ -106,33 +46,9 @@ export var AppConstants = Object.freeze({
   false,
 #endif
 
-  MOZ_TELEMETRY_ON_BY_DEFAULT:
-#ifdef MOZ_TELEMETRY_ON_BY_DEFAULT
-  true,
-#else
-  false,
-#endif
+  MOZ_UPDATER: @MOZ_UPDATER_BOOL@,
 
-  MOZ_UPDATER:
-#ifdef MOZ_UPDATER
-  true,
-#else
-  false,
-#endif
-
-  MOZ_SWITCHBOARD:
-#ifdef MOZ_SWITCHBOARD
-  true,
-#else
-  false,
-#endif
-
-  MOZ_WEBRTC:
-#ifdef MOZ_WEBRTC
-  true,
-#else
-  false,
-#endif
+  MOZ_WEBRTC: @MOZ_WEBRTC_BOOL@,
 
   MOZ_WIDGET_GTK:
 #ifdef MOZ_WIDGET_GTK
@@ -140,6 +56,8 @@ export var AppConstants = Object.freeze({
 #else
   false,
 #endif
+
+  MOZ_WMF_CDM: @MOZ_WMF_CDM_BOOL@,
 
   XP_UNIX:
 #ifdef XP_UNIX
@@ -157,6 +75,8 @@ export var AppConstants = Object.freeze({
   "win",
 #elif XP_MACOSX
   "macosx",
+#elif XP_IOS
+  "ios",
 #elif MOZ_WIDGET_ANDROID
   "android",
 #elif XP_LINUX
@@ -194,142 +114,45 @@ export var AppConstants = Object.freeze({
            Services.vc.compare(platformVersion, version) <= 0;
   },
 
-  MOZ_CRASHREPORTER:
-#ifdef MOZ_CRASHREPORTER
-  true,
-#else
-  false,
-#endif
+  MOZ_CRASHREPORTER: @MOZ_CRASHREPORTER_BOOL@,
 
-  MOZ_NORMANDY:
-#ifdef MOZ_NORMANDY
-  true,
-#else
-  false,
-#endif
+  MOZ_NORMANDY: @MOZ_NORMANDY_BOOL@,
 
-  MOZ_MAINTENANCE_SERVICE:
-#ifdef MOZ_MAINTENANCE_SERVICE
-  true,
-#else
-  false,
-#endif
+  MOZ_MAINTENANCE_SERVICE: @MOZ_MAINTENANCE_SERVICE_BOOL@,
 
-  MOZ_BACKGROUNDTASKS:
-#ifdef MOZ_BACKGROUNDTASKS
-  true,
-#else
-  false,
-#endif
+  MOZ_BACKGROUNDTASKS: @MOZ_BACKGROUNDTASKS_BOOL@,
 
-  MOZ_UPDATE_AGENT:
-#ifdef MOZ_UPDATE_AGENT
-  true,
-#else
-  false,
-#endif
+  MOZ_UPDATE_AGENT: @MOZ_UPDATE_AGENT_BOOL@,
 
-  MOZ_BITS_DOWNLOAD:
-#ifdef MOZ_BITS_DOWNLOAD
-  true,
-#else
-  false,
-#endif
+  MOZ_BITS_DOWNLOAD: @MOZ_BITS_DOWNLOAD_BOOL@,
 
-  DEBUG:
-#ifdef DEBUG
-  true,
-#else
-  false,
-#endif
+  DEBUG: @MOZ_DEBUG_BOOL@,
 
-  ASAN:
-#ifdef MOZ_ASAN
-  true,
-#else
-  false,
-#endif
+  ASAN: @MOZ_ASAN_BOOL@,
 
-  ASAN_REPORTER:
-#ifdef MOZ_ASAN_REPORTER
-  true,
-#else
-  false,
-#endif
+  ASAN_REPORTER: @MOZ_ASAN_REPORTER_BOOL@,
 
-  TSAN:
-#ifdef MOZ_TSAN
-  true,
-#else
-  false,
-#endif
+  TSAN: @MOZ_TSAN_BOOL@,
 
-  MOZ_SYSTEM_NSS:
-#ifdef MOZ_SYSTEM_NSS
-  true,
-#else
-  false,
-#endif
+  MOZ_SYSTEM_NSS: @MOZ_SYSTEM_NSS_BOOL@,
 
-  MOZ_PLACES:
-#ifdef MOZ_PLACES
-  true,
-#else
-  false,
-#endif
+  MOZ_PLACES: @MOZ_PLACES_BOOL@,
 
-  MOZ_REQUIRE_SIGNING:
-#ifdef MOZ_REQUIRE_SIGNING
-  true,
-#else
-  false,
-#endif
+  MOZ_REQUIRE_SIGNING: @MOZ_REQUIRE_SIGNING_BOOL@,
 
-  get MOZ_UNSIGNED_SCOPES() {
-    let result = 0;
-#ifdef MOZ_UNSIGNED_APP_SCOPE
-    result |= lazy.AddonManager.SCOPE_APPLICATION;
-#endif
-#ifdef MOZ_UNSIGNED_SYSTEM_SCOPE
-    result |= lazy.AddonManager.SCOPE_SYSTEM;
-#endif
-    return result;
-  },
+  MOZ_UNSIGNED_APP_SCOPE: @MOZ_UNSIGNED_APP_SCOPE_BOOL@,
 
-  MOZ_ALLOW_ADDON_SIDELOAD:
-#ifdef MOZ_ALLOW_ADDON_SIDELOAD
-  true,
-#else
-  false,
-#endif
+  MOZ_UNSIGNED_SYSTEM_SCOPE: @MOZ_UNSIGNED_SYSTEM_SCOPE_BOOL@,
 
-  MOZ_WEBEXT_WEBIDL_ENABLED:
-#ifdef MOZ_WEBEXT_WEBIDL_ENABLED
-  true,
-#else
-  false,
-#endif
+  MOZ_ALLOW_ADDON_SIDELOAD: @MOZ_ALLOW_ADDON_SIDELOAD_BOOL@,
 
-  MENUBAR_CAN_AUTOHIDE:
-#ifdef MENUBAR_CAN_AUTOHIDE
-  true,
-#else
-  false,
-#endif
+  MOZ_WEBEXT_WEBIDL_ENABLED: @MOZ_WEBEXT_WEBIDL_ENABLED_BOOL@,
 
-  MOZ_ANDROID_HISTORY:
-#ifdef MOZ_ANDROID_HISTORY
-  true,
-#else
-  false,
-#endif
+  MOZ_GECKOVIEW_HISTORY: @MOZ_GECKOVIEW_HISTORY_BOOL@,
 
-  MOZ_GECKO_PROFILER:
-#ifdef MOZ_GECKO_PROFILER
-  true,
-#else
-  false,
-#endif
+  MOZ_GECKO_PROFILER: @MOZ_GECKO_PROFILER_BOOL@,
+
+  BROWSER_NEWTAB_AS_ADDON: @BROWSER_NEWTAB_AS_ADDON_BOOL@,
 
   DLL_PREFIX: "@DLL_PREFIX@",
   DLL_SUFFIX: "@DLL_SUFFIX@",
@@ -348,7 +171,6 @@ export var AppConstants = Object.freeze({
   MOZ_MACBUNDLE_NAME: "@MOZ_MACBUNDLE_NAME@",
   MOZ_UPDATE_CHANNEL: "@MOZ_UPDATE_CHANNEL@",
   MOZ_WIDGET_TOOLKIT: "@MOZ_WIDGET_TOOLKIT@",
-  ANDROID_PACKAGE_NAME: "@ANDROID_PACKAGE_NAME@",
 
   DEBUG_JS_MODULES: "@DEBUG_JS_MODULES@",
 
@@ -377,35 +199,13 @@ export var AppConstants = Object.freeze({
     false,
 #endif
 
-  HAVE_SHELL_SERVICE:
-#ifdef HAVE_SHELL_SERVICE
-    true,
-#else
-    false,
-#endif
+  HAVE_SHELL_SERVICE: @HAVE_SHELL_SERVICE_BOOL@,
 
-  MOZ_CODE_COVERAGE:
-#ifdef MOZ_CODE_COVERAGE
-    true,
-#else
-    false,
-#endif
+  MOZ_CODE_COVERAGE: @MOZ_CODE_COVERAGE_BOOL@,
 
   TELEMETRY_PING_FORMAT_VERSION: @TELEMETRY_PING_FORMAT_VERSION@,
 
-  MOZ_NEW_NOTIFICATION_STORE:
-#ifdef MOZ_NEW_NOTIFICATION_STORE
-    true,
-#else
-    false,
-#endif
-
-  ENABLE_WEBDRIVER:
-#ifdef ENABLE_WEBDRIVER
-    true,
-#else
-    false,
-#endif
+  ENABLE_WEBDRIVER: @ENABLE_WEBDRIVER_BOOL@,
 
   REMOTE_SETTINGS_SERVER_URL:
 #ifdef MOZ_THUNDERBIRD
@@ -428,20 +228,11 @@ export var AppConstants = Object.freeze({
     "main",
 #endif
 
-  MOZ_GLEAN_ANDROID:
-#ifdef MOZ_GLEAN_ANDROID
-    true,
-#else
-    false,
-#endif
+  MOZ_GLEAN_ANDROID: @MOZ_GLEAN_ANDROID_BOOL@,
 
-  MOZ_JXL:
-#ifdef MOZ_JXL
-    true,
-#else
-    false,
-#endif
+  MOZ_JXL: @MOZ_JXL_BOOL@,
 
+#if defined(MOZ_THUNDERBIRD) || defined(MOZ_SUITE)
   MOZ_CAN_FOLLOW_SYSTEM_TIME:
 #ifdef XP_WIN
     true,
@@ -456,20 +247,25 @@ export var AppConstants = Object.freeze({
 #else
     false,
 #endif
+#endif
 
-  MOZ_SYSTEM_POLICIES:
-#ifdef MOZ_SYSTEM_POLICIES
+  MOZ_SYSTEM_POLICIES: @MOZ_SYSTEM_POLICIES_BOOL@,
+
+  MOZ_SELECTABLE_PROFILES: @MOZ_SELECTABLE_PROFILES_BOOL@,
+
+  SQLITE_LIBRARY_FILENAME:
+#ifdef MOZ_FOLD_LIBS
+  "@DLL_PREFIX@nss3@DLL_SUFFIX@",
+#else
+  "@DLL_PREFIX@mozsqlite3@DLL_SUFFIX@",
+#endif
+
+  MOZ_GECKOVIEW:
+#ifdef MOZ_GECKOVIEW
     true,
 #else
     false,
 #endif
 
-  // Returns true for CN region build when distibution id set as 'MozillaOnline'
-  isChinaRepack() {
-    return (
-      Services.prefs
-      .getDefaultBranch("")
-      .getCharPref("distribution.id", "default") === "MozillaOnline"
-    );
-  },
+  USE_LIBZ_RS: @USE_LIBZ_RS_BOOL@,
 });

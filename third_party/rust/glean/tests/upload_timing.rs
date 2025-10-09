@@ -92,12 +92,16 @@ pub mod metrics {
 }
 
 mod pings {
+    use super::*;
     use glean::private::PingType;
     use once_cell::sync::Lazy;
 
     #[allow(non_upper_case_globals)]
-    pub static validation: Lazy<PingType> =
-        Lazy::new(|| glean::private::PingType::new("validation", true, true, vec![]));
+    pub static validation: Lazy<PingType> = Lazy::new(|| {
+        common::PingBuilder::new("validation")
+            .with_send_if_empty(true)
+            .build()
+    });
 }
 
 // Define a fake uploader that sleeps.
@@ -108,13 +112,10 @@ struct FakeUploader {
 }
 
 impl net::PingUploader for FakeUploader {
-    fn upload(
-        &self,
-        _url: String,
-        body: Vec<u8>,
-        _headers: Vec<(String, String)>,
-    ) -> net::UploadResult {
+    fn upload(&self, upload_request: net::CapablePingUploadRequest) -> net::UploadResult {
+        let upload_request = upload_request.capable(|_| true).unwrap();
         let calls = self.calls.fetch_add(1, Ordering::SeqCst);
+        let body = upload_request.body;
         let decode = |body: Vec<u8>| {
             let mut gzip_decoder = GzDecoder::new(&body[..]);
             let mut s = String::with_capacity(body.len());

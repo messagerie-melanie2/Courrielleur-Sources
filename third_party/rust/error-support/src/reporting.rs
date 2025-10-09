@@ -15,7 +15,7 @@ static BREADCRUMB_COUNTER: AtomicU32 = AtomicU32::new(0);
 fn get_breadcrumb_counter_value() -> u32 {
     // Notes:
     //   - fetch_add is specified to wrap around in case of overflow, which seems okay.
-    //   - By itself, this does not guarentee that breadcrumb logs will be ordered the same way as
+    //   - By itself, this does not guarantee that breadcrumb logs will be ordered the same way as
     //     the counter values.  If two threads are running at the same time, it's very possible
     //     that thread A gets the lower breadcrumb value, but thread B wins the race to report its
     //     breadcrumb. However, if we expect operations to be synchronized, like with places DB,
@@ -28,6 +28,7 @@ fn get_breadcrumb_counter_value() -> u32 {
 /// The application that's consuming application-services implements this via a UniFFI callback
 /// interface, then calls `set_application_error_reporter()` to setup a global
 /// ApplicationErrorReporter.
+#[uniffi::export(callback_interface)]
 pub trait ApplicationErrorReporter: Sync + Send {
     /// Send an error report to a Sentry-like error reporting system
     ///
@@ -49,10 +50,15 @@ lazy_static::lazy_static! {
     pub(crate) static ref APPLICATION_ERROR_REPORTER: RwLock<Box<dyn ApplicationErrorReporter>> = RwLock::new(Box::new(DefaultApplicationErrorReporter));
 }
 
-pub fn set_application_error_reporter(reporter: Box<dyn ApplicationErrorReporter>) {
-    *APPLICATION_ERROR_REPORTER.write() = reporter;
+/// Set the global error reporter.  This is typically done early in startup.
+#[uniffi::export]
+pub fn set_application_error_reporter(error_reporter: Box<dyn ApplicationErrorReporter>) {
+    *APPLICATION_ERROR_REPORTER.write() = error_reporter;
 }
 
+/// Unset the global error reporter.  This is typically done at shutdown for
+/// platforms that want to cleanup references like Desktop.
+#[uniffi::export]
 pub fn unset_application_error_reporter() {
     *APPLICATION_ERROR_REPORTER.write() = Box::new(DefaultApplicationErrorReporter)
 }

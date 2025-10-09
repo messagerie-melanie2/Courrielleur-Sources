@@ -50,7 +50,7 @@ add_task(async function () {
   );
   is(
     tabpanel.querySelector(".status").childNodes[1].textContent,
-    "OK",
+    "", // HTTP/2 and 3 send no status text, only a code
     "The status summary value is incorrect."
   );
   // Version
@@ -74,13 +74,13 @@ add_task(async function () {
     // The Text-Encoding header is not consistently displayed, exclude it from
     // the assertion. See Bug 1830053.
     headers.filter(cell => cell.textContent != "TE").length,
-    25,
-    "There should be 25 header values displayed in this tabpanel."
+    26,
+    "There should be 26 header values displayed in this tabpanel."
   );
 
   const headersTable = tabpanel.querySelector(".accordion");
   const responseHeaders = headersTable.querySelectorAll(
-    "tr[id^='/Response Headers']"
+    "tr[id^='/responseHeaders']"
   );
 
   const expectedHeaders = [
@@ -121,8 +121,8 @@ add_task(async function () {
   info("Assert the content of the raw headers");
 
   // Click the 'Raw headers' toggle to show original headers source.
-  document.querySelector("#raw-request-checkbox").click();
-  document.querySelector("#raw-response-checkbox").click();
+  document.querySelector("#raw-requestHeaders-checkbox").click();
+  document.querySelector("#raw-responseHeaders-checkbox").click();
 
   let rawHeadersElements;
   await waitUntil(() => {
@@ -139,7 +139,7 @@ add_task(async function () {
 
   const responseHeadersText = rawHeadersElements[0].textContent;
   const rawResponseHeaderFirstLine = responseHeadersText.split(/\r\n|\n|\r/)[0];
-  is(rawResponseHeaderFirstLine, "HTTP/3 200 OK");
+  is(rawResponseHeaderFirstLine, "HTTP/3 200 "); // H2/3 send no status text
 
   info("Assert the content of the protocol column");
   const target = document.querySelectorAll(".request-list-item")[0];

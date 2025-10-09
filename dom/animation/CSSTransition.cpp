@@ -21,10 +21,9 @@ JSObject* CSSTransition::WrapObject(JSContext* aCx,
 }
 
 void CSSTransition::GetTransitionProperty(nsString& aRetVal) const {
-  MOZ_ASSERT(eCSSProperty_UNKNOWN != mTransitionProperty,
+  MOZ_ASSERT(mTransitionProperty.IsValid(),
              "Transition Property should be initialized");
-  aRetVal =
-      NS_ConvertUTF8toUTF16(nsCSSProps::GetStringValue(mTransitionProperty));
+  mTransitionProperty.ToString(aRetVal);
 }
 
 AnimationPlayState CSSTransition::PlayStateFromJS() const {
@@ -60,7 +59,7 @@ void CSSTransition::UpdateTiming(SeekFlag aSeekFlag,
 }
 
 void CSSTransition::QueueEvents(const StickyTimeDuration& aActiveTime) {
-  if (!mOwningElement.IsSet()) {
+  if (!mOwningElement.ShouldFireEvents()) {
     return;
   }
 
@@ -121,7 +120,7 @@ void CSSTransition::QueueEvents(const StickyTimeDuration& aActiveTime) {
     }
     events.AppendElement(AnimationEventInfo(
         TransitionProperty(), mOwningElement.Target(), aMessage, elapsedTime,
-        aScheduledEventTimeStamp, this));
+        mAnimationIndex, aScheduledEventTimeStamp, this));
   };
 
   // Handle cancel events first
@@ -137,7 +136,27 @@ void CSSTransition::QueueEvents(const StickyTimeDuration& aActiveTime) {
     case TransitionPhase::Idle:
       if (currentPhase == TransitionPhase::Pending ||
           currentPhase == TransitionPhase::Before) {
-        appendTransitionEvent(eTransitionRun, intervalStartTime, zeroTimeStamp);
+        // When we are replacing a transition and flushing the style in the
+        // meantime, after a timeout, we may tick this transition without a
+        // proper |mPendingReadyTime| because the refresh driver is not in
+        // refresh, i.e. mInRefresh is false. So in the current tick we queue
+        // this event but the transition would be triggered in the next tick.
+        //
+        // In general, we use Animation::EnsurePaintIsScheduled() to assign a
+        // valid time to |mPendingReadyTime| of this transition, and then we
+        // could trigger this transition if this value is set. When triggering,
+        // we set a proper |mStartTime|, which could be used to calculate the
+        // animation time, i.e. |zeroTimeStamp|.
+        //
+        // However, due to this race condition (i.e. the transition hasn't been
+        // triggered yet but we are enqueuing this event), it's posssible to
+        // have a null |zeroTimeStamp|, which breaks the sorting of transition
+        // events. So we use the current time as a fallback way to make sure we
+        // have a reasonable schedule time for sorting.
+        appendTransitionEvent(eTransitionRun, intervalStartTime,
+                              zeroTimeStamp.IsNull()
+                                  ? GetTimelineCurrentTimeAsTimeStamp()
+                                  : zeroTimeStamp);
       } else if (currentPhase == TransitionPhase::Active) {
         appendTransitionEvent(eTransitionRun, intervalStartTime, zeroTimeStamp);
         appendTransitionEvent(eTransitionStart, intervalStartTime,
@@ -189,13 +208,13 @@ void CSSTransition::QueueEvents(const StickyTimeDuration& aActiveTime) {
   }
 }
 
-void CSSTransition::Tick() {
-  Animation::Tick();
+void CSSTransition::Tick(TickState& aState) {
+  Animation::Tick(aState);
   QueueEvents();
 }
 
-nsCSSPropertyID CSSTransition::TransitionProperty() const {
-  MOZ_ASSERT(eCSSProperty_UNKNOWN != mTransitionProperty,
+const AnimatedPropertyID& CSSTransition::TransitionProperty() const {
+  MOZ_ASSERT(mTransitionProperty.IsValid(),
              "Transition property should be initialized");
   return mTransitionProperty;
 }
@@ -206,33 +225,47 @@ AnimationValue CSSTransition::ToValue() const {
   return mTransitionToValue;
 }
 
-bool CSSTransition::HasLowerCompositeOrderThan(
-    const CSSTransition& aOther) const {
-  MOZ_ASSERT(IsTiedToMarkup() && aOther.IsTiedToMarkup(),
+int32_t CSSTransition::CompareCompositeOrder(
+    const Maybe<EventContext>& aContext, const CSSTransition& aOther,
+    const Maybe<EventContext>& aOtherContext,
+    nsContentUtils::NodeIndexCache& aCache) const {
+  MOZ_ASSERT((IsTiedToMarkup() || aContext) &&
+                 (aOther.IsTiedToMarkup() || aOtherContext),
              "Should only be called for CSS transitions that are sorted "
-             "as CSS transitions (i.e. tied to CSS markup)");
+             "as CSS transitions (i.e. tied to CSS markup) or with overridden "
+             "target and animation index");
 
   // 0. Object-equality case
   if (&aOther == this) {
-    return false;
+    return 0;
   }
 
   // 1. Sort by document order
-  if (!mOwningElement.Equals(aOther.mOwningElement)) {
-    return mOwningElement.LessThan(
-        const_cast<CSSTransition*>(this)->CachedChildIndexRef(),
-        aOther.mOwningElement,
-        const_cast<CSSTransition*>(&aOther)->CachedChildIndexRef());
+  const OwningElementRef& owningElement1 =
+      IsTiedToMarkup() ? mOwningElement : OwningElementRef(aContext->mTarget);
+  const OwningElementRef& owningElement2 =
+      aOther.IsTiedToMarkup() ? aOther.mOwningElement
+                              : OwningElementRef(aOtherContext->mTarget);
+  if (!owningElement1.Equals(owningElement2)) {
+    return owningElement1.Compare(owningElement2, aCache);
   }
 
   // 2. (Same element and pseudo): Sort by transition generation
-  if (mAnimationIndex != aOther.mAnimationIndex) {
-    return mAnimationIndex < aOther.mAnimationIndex;
+  const uint64_t index1 = IsTiedToMarkup() ? mAnimationIndex : aContext->mIndex;
+  const uint64_t index2 =
+      aOther.IsTiedToMarkup() ? aOther.mAnimationIndex : aOtherContext->mIndex;
+  if (index1 != index2) {
+    return index1 < index2 ? -1 : 1;
   }
 
   // 3. (Same transition generation): Sort by transition property
-  return nsCSSProps::GetStringValue(TransitionProperty()) <
-         nsCSSProps::GetStringValue(aOther.TransitionProperty());
+  if (mTransitionProperty == aOther.mTransitionProperty) {
+    return 0;
+  }
+  nsAutoString name, otherName;
+  GetTransitionProperty(name);
+  aOther.GetTransitionProperty(otherName);
+  return name < otherName ? -1 : 1;
 }
 
 /* static */
@@ -275,14 +308,14 @@ double CSSTransition::CurrentValuePortion() const {
   return computedTiming.mProgress.Value();
 }
 
-void CSSTransition::UpdateStartValueFromReplacedTransition() {
+bool CSSTransition::UpdateStartValueFromReplacedTransition() {
   MOZ_ASSERT(mEffect && mEffect->AsKeyframeEffect() &&
                  mEffect->AsKeyframeEffect()->HasAnimationOfPropertySet(
                      nsCSSPropertyIDSet::CompositorAnimatables()),
              "Should be called for compositor-runnable transitions");
 
   if (!mReplacedTransition) {
-    return;
+    return false;
   }
 
   // We don't set |mReplacedTransition| if the timeline of this transition is
@@ -295,24 +328,16 @@ void CSSTransition::UpdateStartValueFromReplacedTransition() {
              "Should have a timeline if we are replacing transition start "
              "values");
 
-  ComputedTiming computedTiming = AnimationEffect::GetComputedTimingAt(
-      CSSTransition::GetCurrentTimeAt(*mTimeline, TimeStamp::Now(),
-                                      mReplacedTransition->mStartTime,
-                                      mReplacedTransition->mPlaybackRate),
-      mReplacedTransition->mTiming, mReplacedTransition->mPlaybackRate,
-      Animation::ProgressTimelinePosition::NotBoundary);
-
-  if (!computedTiming.mProgress.IsNull()) {
-    double valuePosition = StyleComputedTimingFunction::GetPortion(
-        mReplacedTransition->mTimingFunction, computedTiming.mProgress.Value(),
-        computedTiming.mBeforeFlag);
-
+  if (Maybe<double> valuePosition =
+          ComputeTransformedProgress(*mTimeline, *mReplacedTransition)) {
+    // FIXME: Bug 1634945. We may have to use the last value on the compositor
+    // to replace the start value.
     const AnimationValue& replacedFrom = mReplacedTransition->mFromValue;
     const AnimationValue& replacedTo = mReplacedTransition->mToValue;
     AnimationValue startValue;
     startValue.mServo =
         Servo_AnimationValues_Interpolate(replacedFrom.mServo,
-                                          replacedTo.mServo, valuePosition)
+                                          replacedTo.mServo, *valuePosition)
             .Consume();
 
     mEffect->AsKeyframeEffect()->ReplaceTransitionStartValue(
@@ -320,6 +345,27 @@ void CSSTransition::UpdateStartValueFromReplacedTransition() {
   }
 
   mReplacedTransition.reset();
+
+  return true;
+}
+
+/* static*/
+Maybe<double> CSSTransition::ComputeTransformedProgress(
+    const AnimationTimeline& aTimeline,
+    const ReplacedTransitionProperties& aProperties) {
+  ComputedTiming computedTiming = AnimationEffect::GetComputedTimingAt(
+      CSSTransition::GetCurrentTimeAt(aTimeline, TimeStamp::Now(),
+                                      aProperties.mStartTime,
+                                      aProperties.mPlaybackRate),
+      aProperties.mTiming, aProperties.mPlaybackRate,
+      Animation::ProgressTimelinePosition::NotBoundary);
+  if (computedTiming.mProgress.IsNull()) {
+    return Nothing();
+  }
+
+  return Some(StyleComputedTimingFunction::GetPortion(
+      aProperties.mTimingFunction, computedTiming.mProgress.Value(),
+      computedTiming.mBeforeFlag));
 }
 
 void CSSTransition::SetEffectFromStyle(KeyframeEffect* aEffect) {

@@ -11,7 +11,6 @@ use crate::values::specified::length::Length as SpecifiedLength;
 use crate::values::specified::length::LengthPercentage as SpecifiedLengthPercentage;
 use crate::values::{computed, CSSFloat};
 use crate::{Zero, ZeroNoPercent};
-use euclid;
 use euclid::default::{Rect, Transform3D};
 use std::fmt::{self, Write};
 use style_traits::{CssWriter, ToCss};
@@ -27,6 +26,7 @@ use style_traits::{CssWriter, ToCss};
     PartialEq,
     Serialize,
     SpecifiedValueInfo,
+    ToAnimatedValue,
     ToComputedValue,
     ToCss,
     ToResolvedValue,
@@ -56,6 +56,7 @@ pub use self::GenericMatrix as Matrix;
     PartialEq,
     Serialize,
     SpecifiedValueInfo,
+    ToAnimatedValue,
     ToComputedValue,
     ToCss,
     ToResolvedValue,
@@ -108,6 +109,7 @@ impl<T: Into<f64>> From<Matrix3D<T>> for Transform3D<f64> {
     MallocSizeOf,
     PartialEq,
     SpecifiedValueInfo,
+    ToAnimatedValue,
     ToAnimatedZero,
     ToComputedValue,
     ToCss,
@@ -151,6 +153,7 @@ fn is_same<N: PartialEq>(x: &N, y: &N) -> bool {
     PartialEq,
     Serialize,
     SpecifiedValueInfo,
+    ToAnimatedValue,
     ToComputedValue,
     ToCss,
     ToResolvedValue,
@@ -184,6 +187,7 @@ pub use self::GenericPerspectiveFunction as PerspectiveFunction;
     PartialEq,
     Serialize,
     SpecifiedValueInfo,
+    ToAnimatedValue,
     ToComputedValue,
     ToCss,
     ToResolvedValue,
@@ -312,6 +316,7 @@ pub use self::GenericTransformOperation as TransformOperation;
     PartialEq,
     Serialize,
     SpecifiedValueInfo,
+    ToAnimatedValue,
     ToComputedValue,
     ToCss,
     ToResolvedValue,
@@ -599,6 +604,14 @@ impl<T: ToMatrix> Transform<T> {
     }
 
     /// Same as Transform::to_transform_3d_matrix but a f64 version.
+    pub fn to_transform_3d_matrix_f64(
+        &self,
+        reference_box: Option<&Rect<ComputedLength>>
+    ) -> Result<(Transform3D<f64>, bool), ()> {
+        Self::components_to_transform_3d_matrix_f64(&self.0, reference_box)
+    }
+
+    /// Same as Transform::components_to_transform_3d_matrix but a f64 version.
     fn components_to_transform_3d_matrix_f64(
         ops: &[T],
         reference_box: Option<&Rect<ComputedLength>>,
@@ -662,6 +675,7 @@ pub fn get_normalized_vector_and_angle<T: Zero>(
     PartialEq,
     Serialize,
     SpecifiedValueInfo,
+    ToAnimatedValue,
     ToAnimatedZero,
     ToComputedValue,
     ToResolvedValue,
@@ -754,6 +768,7 @@ where
     PartialEq,
     Serialize,
     SpecifiedValueInfo,
+    ToAnimatedValue,
     ToAnimatedZero,
     ToComputedValue,
     ToResolvedValue,
@@ -820,6 +835,7 @@ fn y_axis_and_z_axis_are_zero<LengthPercentage: Zero + ZeroNoPercent, Length: Ze
     PartialEq,
     Serialize,
     SpecifiedValueInfo,
+    ToAnimatedValue,
     ToAnimatedZero,
     ToComputedValue,
     ToCss,

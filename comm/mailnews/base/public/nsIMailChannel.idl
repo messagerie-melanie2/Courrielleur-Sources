@@ -5,7 +5,8 @@
 #include "nsISupports.idl"
 #include "calIItipItem.idl"
 #include "nsIPropertyBag2.idl"
-#include "nsIMsgSMIMEHeaderSink.idl"
+#include "nsIMsgOpenPGPSink.idl"
+#include "nsIMsgSMIMESink.idl"
 
 interface nsIMailProgressListener;
 interface nsIWebProgress;
@@ -41,10 +42,10 @@ interface nsIMailChannel : nsISupports {
    * Do not call otherwise.
    */
   void handleAttachmentFromMIME(in AUTF8String contentType,
-                        in AUTF8String url,
-                        in AUTF8String displayName,
-                        in AUTF8String uri,
-                        in boolean aNotDownloaded);
+                                in AUTF8String url,
+                                in AUTF8String displayName,
+                                in AUTF8String uri,
+                                in boolean aNotDownloaded);
 
   /**
    * Called by MIME emitters to add attachment info to this mail channel.
@@ -76,9 +77,16 @@ interface nsIMailChannel : nsISupports {
   attribute calIItipItem imipItem;
 
   /**
-   * Set this in onStartRequest to receive security status notifications.
+   * Set this in onStartRequest. Allows reactions based on OpenPGP
+   * status changes.
    */
-  attribute nsIMsgSMIMEHeaderSink smimeHeaderSink;
+  attribute nsIMsgOpenPGPSink openpgpSink;
+
+  /**
+   * Set this in onStartRequest. Allows reactions based on S/MIME
+   * status changes.
+   */
+  attribute nsIMsgSMIMESink smimeSink;
 
   /**
    * A listener for progress events. This object must also implement

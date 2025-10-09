@@ -10,15 +10,17 @@
 #include "txNodeSetContext.h"
 #include "txExpr.h"
 #include "txStringUtils.h"
-#include "nsQuickSort.h"
 
 #include "mozilla/CheckedInt.h"
 #include "mozilla/UniquePtrExtensions.h"
+#include "nsRFPService.h"
 
 using mozilla::CheckedUint32;
 using mozilla::MakeUnique;
 using mozilla::MakeUniqueFallible;
+using mozilla::RFPTarget;
 using mozilla::UniquePtr;
+using mozilla::nsRFPService;
 
 /*
  * Sorts Nodes as specified by the W3C XSLT 1.0 Recommendation
@@ -76,6 +78,11 @@ nsresult txNodeSorter::addSortElement(Expr* aSelectExpr, Expr* aLangExpr,
       rv = aLangExpr->evaluateToString(aContext, lang);
       NS_ENSURE_SUCCESS(rv, rv);
     }
+    if (lang.IsEmpty() &&
+        aContext->getContextNode().OwnerDoc()->ShouldResistFingerprinting(
+            RFPTarget::JSLocale)) {
+      CopyUTF8toUTF16(nsRFPService::GetSpoofedJSLocale(), lang);
+    }
 
     // Case-order
     bool upperFirst = false;
@@ -93,8 +100,12 @@ nsresult txNodeSorter::addSortElement(Expr* aSelectExpr, Expr* aLangExpr,
       }
     }
 
-    key->mComparator =
-        new txResultStringComparator(ascending, upperFirst, lang);
+    UniquePtr<txResultStringComparator> comparator =
+        MakeUnique<txResultStringComparator>(ascending, upperFirst);
+    rv = comparator->init(lang);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    key->mComparator = comparator.release();
   } else if (TX_StringEqualsAtom(dataType, nsGkAtoms::number)) {
     // Number comparator
     key->mComparator = new txResultNumberComparator(ascending);
@@ -133,37 +144,26 @@ nsresult txNodeSorter::sortNodeSet(txNodeSet* aNodes, txExecutionState* aEs,
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
-  auto indexes = MakeUniqueFallible<uint32_t[]>(len.value());
-  auto sortValues = MakeUniqueFallible<txObject*[]>(numSortValues.value());
-  if (!indexes || !sortValues) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
+  nsTArray<uint32_t> indexes(len.value());
+  indexes.SetLengthAndRetainStorage(len.value());
+  nsTArray<UniquePtr<txObject>> sortValues(numSortValues.value());
+  sortValues.SetLengthAndRetainStorage(numSortValues.value());
 
   uint32_t i;
   for (i = 0; i < len.value(); ++i) {
     indexes[i] = i;
   }
-  memset(sortValues.get(), 0, sortValuesSize.value());
 
   auto nodeSetContext = MakeUnique<txNodeSetContext>(aNodes, aEs);
 
   // Sort the indexarray
-  SortData sortData;
-  sortData.mNodeSorter = this;
-  sortData.mContext = nodeSetContext.get();
-  sortData.mSortValues = sortValues.get();
-  sortData.mRv = NS_OK;
+  SortData sortData{this, nodeSetContext.get(), sortValues.Elements(), NS_OK};
 
   aEs->pushEvalContext(nodeSetContext.release());
 
-  NS_QuickSort(indexes.get(), len.value(), sizeof(uint32_t), compareNodes,
-               &sortData);
-
-  // Delete these here so we don't have to deal with them at every possible
-  // failurepoint
-  for (i = 0; i < numSortValues.value(); ++i) {
-    delete sortValues[i];
-  }
+  indexes.StableSort([&sortData](uint32_t left, uint32_t right) {
+    return compareNodes(left, right, sortData);
+  });
 
   if (NS_FAILED(sortData.mRv)) {
     // The txExecutionState owns the evalcontext so no need to handle it
@@ -186,55 +186,51 @@ nsresult txNodeSorter::sortNodeSet(txNodeSet* aNodes, txExecutionState* aEs,
   return NS_OK;
 }
 
-// static
-int txNodeSorter::compareNodes(const void* aIndexA, const void* aIndexB,
-                               void* aSortData) {
-  SortData* sortData = static_cast<SortData*>(aSortData);
-  NS_ENSURE_SUCCESS(sortData->mRv, -1);
-
-  txListIterator iter(&sortData->mNodeSorter->mSortKeys);
-  uint32_t indexA = *static_cast<const uint32_t*>(aIndexA);
-  uint32_t indexB = *static_cast<const uint32_t*>(aIndexB);
-  txObject** sortValuesA =
-      sortData->mSortValues + indexA * sortData->mNodeSorter->mNKeys;
-  txObject** sortValuesB =
-      sortData->mSortValues + indexB * sortData->mNodeSorter->mNKeys;
+int txNodeSorter::compareNodes(uint32_t aIndexA, uint32_t aIndexB,
+                               SortData& aSortData) {
+  txListIterator iter(&aSortData.mNodeSorter->mSortKeys);
+  UniquePtr<txObject>* sortValuesA =
+      aSortData.mSortValues + aIndexA * aSortData.mNodeSorter->mNKeys;
+  UniquePtr<txObject>* sortValuesB =
+      aSortData.mSortValues + aIndexB * aSortData.mNodeSorter->mNKeys;
 
   unsigned int i;
   // Step through each key until a difference is found
-  for (i = 0; i < sortData->mNodeSorter->mNKeys; ++i) {
+  for (i = 0; i < aSortData.mNodeSorter->mNKeys; ++i) {
     SortKey* key = (SortKey*)iter.next();
     // Lazy create sort values
-    if (!sortValuesA[i] &&
-        !calcSortValue(sortValuesA[i], key, sortData, indexA)) {
-      return -1;
+    if (!sortValuesA[i]) {
+      sortValuesA[i] = calcSortValue(key, &aSortData, aIndexA);
     }
-    if (!sortValuesB[i] &&
-        !calcSortValue(sortValuesB[i], key, sortData, indexB)) {
-      return -1;
+    if (!sortValuesB[i]) {
+      sortValuesB[i] = calcSortValue(key, &aSortData, aIndexB);
     }
 
     // Compare node values
-    int compRes =
-        key->mComparator->compareValues(sortValuesA[i], sortValuesB[i]);
-    if (compRes != 0) return compRes;
+    int compRes = key->mComparator->compareValues(sortValuesA[i].get(),
+                                                  sortValuesB[i].get());
+    if (compRes != 0) {
+      return compRes;
+    }
   }
-  // All keys have the same value for these nodes
 
-  return indexA - indexB;
+  // All keys have the same value for these nodes.
+  return 0;
 }
 
 // static
-bool txNodeSorter::calcSortValue(txObject*& aSortValue, SortKey* aKey,
-                                 SortData* aSortData, uint32_t aNodeIndex) {
+UniquePtr<txObject> txNodeSorter::calcSortValue(SortKey* aKey,
+                                                SortData* aSortData,
+                                                uint32_t aNodeIndex) {
   aSortData->mContext->setPosition(aNodeIndex + 1);  // position is 1-based
 
-  nsresult rv = aKey->mComparator->createSortableValue(
-      aKey->mExpr, aSortData->mContext, aSortValue);
-  if (NS_FAILED(rv)) {
+  UniquePtr<txObject> sortValue;
+  nsresult rv;
+  std::tie(sortValue, rv) =
+      aKey->mComparator->createSortableValue(aKey->mExpr, aSortData->mContext);
+  if (NS_FAILED(rv) && NS_SUCCEEDED(aSortData->mRv)) {
+    // Record the first failure.
     aSortData->mRv = rv;
-    return false;
   }
-
-  return true;
+  return sortValue;
 }

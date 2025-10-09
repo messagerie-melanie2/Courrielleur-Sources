@@ -33,7 +33,7 @@ from .util.workertypes import get_worker_type
 
 here = os.path.abspath(os.path.dirname(__file__))
 logger = logging.getLogger(__name__)
-MAX_ROUTES = 10
+MAX_ROUTES = 64
 
 
 def amend_taskgraph(taskgraph, label_to_taskid, to_add):
@@ -125,6 +125,7 @@ def derive_misc_task(
 # in each Gecko `assume:repo:hg.mozilla.org/...` role.
 SCOPE_SUMMARY_REGEXPS = [
     re.compile(r"(index:insert-task:docker\.images\.v1\.[^.]*\.).*"),
+    re.compile(r"(index:insert-task:gecko\.v2\.trunk\.revision\.).*"),
     re.compile(r"(index:insert-task:gecko\.v2\.[^.]*\.).*"),
     re.compile(r"(index:insert-task:comm\.v2\.[^.]*\.).*"),
 ]
@@ -177,10 +178,9 @@ def make_index_task(
 @register_morph
 def add_index_tasks(taskgraph, label_to_taskid, parameters, graph_config):
     """
-    The TaskCluster queue only allows 10 routes on a task, but we have tasks
-    with many more routes, for purposes of indexing. This graph morph adds
-    "index tasks" that depend on such tasks and do the index insertions
-    directly, avoiding the limits on task.routes.
+    The TaskCluster queue only allows 64 routes on a task. In the event a task
+    exceeds this limit, this graph morph adds "index tasks" that depend on it
+    and do the index insertions directly, avoiding the limit on task.routes.
     """
     logger.debug("Morphing: adding index tasks")
 
@@ -254,10 +254,31 @@ def add_eager_cache_index_tasks(taskgraph, label_to_taskid, parameters, graph_co
 
 @register_morph
 def add_try_task_duplicates(taskgraph, label_to_taskid, parameters, graph_config):
-    try_config = parameters["try_task_config"]
+    return _add_try_task_duplicates(
+        taskgraph, label_to_taskid, parameters, graph_config
+    )
+
+
+# this shim function exists so we can call it from the unittests.
+# this works around an issue with
+# third_party/python/taskcluster_taskgraph/taskgraph/morph.py#40
+def _add_try_task_duplicates(taskgraph, label_to_taskid, parameters, graph_config):
+    try_config = parameters.get("try_task_config", {})
+    tasks = try_config.get("tasks", [])
+    glob_tasks = {x.strip("-*") for x in tasks if x.endswith("-*")}
+    tasks = set(tasks) - glob_tasks
+
     rebuild = try_config.get("rebuild")
     if rebuild:
         for task in taskgraph.tasks.values():
-            if task.label in try_config.get("tasks", []):
+            chunk_index = -1
+            if task.label.endswith("-cf"):
+                chunk_index = -2
+            label_parts = task.label.split("-")
+            label_no_chunk = "-".join(label_parts[:chunk_index])
+
+            if label_parts[chunk_index].isnumeric() and label_no_chunk in glob_tasks:
+                task.attributes["task_duplicates"] = rebuild
+            elif task.label in tasks:
                 task.attributes["task_duplicates"] = rebuild
     return taskgraph, label_to_taskid

@@ -25,6 +25,7 @@
 // libwebrtc includes
 #include "api/audio/audio_frame.h"
 #include "api/call/transport.h"
+#include "api/media_stream_interface.h"
 #include "api/rtp_headers.h"
 #include "api/rtp_parameters.h"
 #include "api/transport/rtp/rtp_source.h"
@@ -55,6 +56,7 @@ enum class MediaSessionConduitLocalDirection : int { kSend, kRecv };
 class VideoSessionConduit;
 class AudioSessionConduit;
 class WebrtcCallWrapper;
+class FrameTransformerProxy;
 
 /**
  * 1. Abstract renderer for video data
@@ -78,19 +80,14 @@ class VideoRenderer {
 
   /**
    * Callback Function reporting decoded frame for processing.
-   * @param buffer: reference to decoded video frame
-   * @param buffer_size: size of the decoded frame
-   * @param time_stamp: Decoder timestamp, typically 90KHz as per RTP
-   * @render_time: Wall-clock time at the decoder for synchronization
-   *                purposes in milliseconds
+   * @param video_frame: reference to decoded video frame
    * NOTE: If decoded video frame is passed through buffer , it is the
    * responsibility of the concrete implementations of this class to own copy
    * of the frame if needed for time longer than scope of this callback.
    * Such implementations should be quick in processing the frames and return
    * immediately.
    */
-  virtual void RenderVideoFrame(const webrtc::VideoFrameBuffer& buffer,
-                                uint32_t time_stamp, int64_t render_time) = 0;
+  virtual void RenderVideoFrame(const webrtc::VideoFrame& video_frame) = 0;
 
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(VideoRenderer)
 };
@@ -133,17 +130,10 @@ class MediaSessionConduit {
   virtual MediaEventSourceExc<MediaPacket>& SenderRtcpSendEvent() = 0;
   virtual MediaEventSourceExc<MediaPacket>& ReceiverRtcpSendEvent() = 0;
 
-  // Receiving packets...
-  // from an rtp-receiving pipeline
+  // Receiving RTP packets
   virtual void ConnectReceiverRtpEvent(
       MediaEventSourceExc<webrtc::RtpPacketReceived, webrtc::RTPHeader>&
           aEvent) = 0;
-  // from an rtp-receiving pipeline
-  virtual void ConnectReceiverRtcpEvent(
-      MediaEventSourceExc<MediaPacket>& aEvent) = 0;
-  // from an rtp-transmitting pipeline
-  virtual void ConnectSenderRtcpEvent(
-      MediaEventSourceExc<MediaPacket>& aEvent) = 0;
 
   // Sts thread only.
   virtual Maybe<uint16_t> RtpSendBaseSeqFor(uint32_t aSsrc) const = 0;
@@ -218,7 +208,7 @@ class MediaSessionConduit {
   class SourceKey {
    public:
     explicit SourceKey(const webrtc::RtpSource& aSource)
-        : SourceKey(aSource.timestamp_ms(), aSource.source_id()) {}
+        : SourceKey(aSource.timestamp().ms(), aSource.source_id()) {}
 
     SourceKey(uint32_t aTimestamp, uint32_t aSrc)
         : mLibwebrtcTimestampMs(aTimestamp), mSrc(aSrc) {}
@@ -251,12 +241,12 @@ class WebrtcSendTransport : public webrtc::Transport {
  public:
   explicit WebrtcSendTransport(MediaSessionConduit* aConduit)
       : mConduit(aConduit) {}
-  bool SendRtp(const uint8_t* aPacket, size_t aLength,
-               const webrtc::PacketOptions& aOptions) override {
-    return mConduit->SendRtp(aPacket, aLength, aOptions);
+  bool SendRtp(rtc::ArrayView<const uint8_t> aPacket,
+               const webrtc::PacketOptions& aOptions) {
+    return mConduit->SendRtp(aPacket.data(), aPacket.size(), aOptions);
   }
-  bool SendRtcp(const uint8_t* aPacket, size_t aLength) override {
-    return mConduit->SendSenderRtcp(aPacket, aLength);
+  bool SendRtcp(rtc::ArrayView<const uint8_t> aPacket) {
+    return mConduit->SendSenderRtcp(aPacket.data(), aPacket.size());
   }
 };
 
@@ -267,12 +257,12 @@ class WebrtcReceiveTransport : public webrtc::Transport {
  public:
   explicit WebrtcReceiveTransport(MediaSessionConduit* aConduit)
       : mConduit(aConduit) {}
-  bool SendRtp(const uint8_t* aPacket, size_t aLength,
-               const webrtc::PacketOptions& aOptions) override {
+  bool SendRtp(rtc::ArrayView<const uint8_t> aPacket,
+               const webrtc::PacketOptions& aOptions) {
     MOZ_CRASH("Unexpected RTP packet");
   }
-  bool SendRtcp(const uint8_t* aPacket, size_t aLength) override {
-    return mConduit->SendReceiverRtcp(aPacket, aLength);
+  bool SendRtcp(rtc::ArrayView<const uint8_t> aPacket) {
+    return mConduit->SendReceiverRtcp(aPacket.data(), aPacket.size());
   }
 };
 
@@ -374,15 +364,7 @@ class VideoSessionConduit : public MediaSessionConduit {
       RefPtr<mozilla::VideoRenderer> aRenderer) = 0;
   virtual void DetachRenderer() = 0;
 
-  /**
-   * Function to deliver a capture video frame for encoding and transport.
-   * If the frame's timestamp is 0, it will be automatcally generated.
-   *
-   * NOTE: ConfigureSendMediaCodec() must be called before this function can
-   *       be invoked. This ensures the inserted video-frames can be
-   *       transmitted by the conduit.
-   */
-  virtual MediaConduitErrorCode SendVideoFrame(webrtc::VideoFrame aFrame) = 0;
+  virtual void SetTrackSource(webrtc::VideoTrackSourceInterface* aSource) = 0;
 
   /**
    * These methods allow unit tests to double-check that the
@@ -396,6 +378,8 @@ class VideoSessionConduit : public MediaSessionConduit {
 
   bool UsingFEC() const { return mUsingFEC; }
 
+  virtual bool LockScaling() const = 0;
+
   virtual Maybe<webrtc::VideoReceiveStreamInterface::Stats> GetReceiverStats()
       const = 0;
   virtual Maybe<webrtc::VideoSendStream::Stats> GetSenderStats() const = 0;
@@ -406,6 +390,12 @@ class VideoSessionConduit : public MediaSessionConduit {
       dom::Sequence<dom::RTCVideoFrameHistoryInternal>* outHistories) const = 0;
 
   virtual Maybe<Ssrc> GetAssociatedLocalRtxSSRC(Ssrc aSsrc) const = 0;
+
+  virtual Maybe<gfx::IntSize> GetLastResolution() const = 0;
+
+  virtual void RequestKeyFrame(FrameTransformerProxy* aProxy) = 0;
+  virtual void GenerateKeyFrame(const Maybe<std::string>& aRid,
+                                FrameTransformerProxy* aProxy) = 0;
 
  protected:
   /* RTCP feedback settings, for unit testing purposes */

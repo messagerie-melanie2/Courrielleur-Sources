@@ -99,9 +99,9 @@ interface prplIAccount: nsISupports {
   void observe(in nsISupports aObj, in string aEvent,
                [optional] in wstring aData);
 
-  // This should only be called by the imIAccountsService
+  // This should only be called by the AccountsService
   // implementation, never directly.  It will call
-  // imIContactsService.accountBuddyRemoved on each buddy of the
+  // ContactsService.accountBuddyRemoved on each buddy of the
   // account and close all prplIConversation instances of the account.
   void remove();
 
@@ -131,9 +131,25 @@ interface prplIAccount: nsISupports {
    */
   void requestBuddyInfo(in AUTF8String aBuddyName);
 
+
+  /*
+   * True if the protocol can join chat rooms.
+   */
   readonly attribute boolean canJoinChat;
+  /*
+   * An array of form fields to display when joining a chat room.
+   */
   Array<prplIChatRoomField> getChatRoomFields();
-  prplIChatRoomFieldValues getChatRoomDefaultFieldValues([optional] in AUTF8String aDefaultChatName);
+  /*
+   * Provide chat room field values to display in the join chat UI by default.
+   */
+  prplIChatRoomFieldValues getChatRoomDefaultFieldValues();
+  /*
+   * Parse a single string to chat room field values.
+   *
+   * Used by the autojoin and /join command.
+   */
+  prplIChatRoomFieldValues getChatRoomFieldValuesFromString(in AUTF8String aString);
 
   /* Request information on available chat rooms, whose names are returned
    * via the callback.

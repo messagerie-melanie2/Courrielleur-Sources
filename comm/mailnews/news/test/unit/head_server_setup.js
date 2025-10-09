@@ -1,16 +1,16 @@
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-var { localAccountUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/LocalAccountUtils.jsm"
+var { localAccountUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/LocalAccountUtils.sys.mjs"
 );
 
 var test = null;
 
-// WebApps.jsm called by ProxyAutoConfig (PAC) requires a valid nsIXULAppInfo.
+// WebApps.sys.mjs called by ProxyAutoConfig (PAC) requires a valid nsIXULAppInfo.
 var { getAppInfo, newAppInfo, updateAppInfo } = ChromeUtils.importESModule(
   "resource://testing-common/AppInfo.sys.mjs"
 );
@@ -22,8 +22,8 @@ do_get_profile();
 var gDEPTH = "../../../../";
 
 // Import the servers
-var { fsDebugAll, gThreadManager, nsMailServer } = ChromeUtils.import(
-  "resource://testing-common/mailnews/Maild.jsm"
+var { nsMailServer } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/Maild.sys.mjs"
 );
 var {
   NewsArticle,
@@ -32,7 +32,9 @@ var {
   NNTP_RFC4643_extension,
   NNTP_RFC977_handler,
   NntpDaemon,
-} = ChromeUtils.import("resource://testing-common/mailnews/Nntpd.jsm");
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/Nntpd.sys.mjs"
+);
 
 var kSimpleNewsArticle =
   "From: John Doe <john.doe@example.com>\n" +
@@ -132,14 +134,14 @@ function setupLocalServer(port, host = "localhost") {
   if (_server != null) {
     return _server;
   }
-  let serverAndAccount = localAccountUtils.create_incoming_server_and_account(
+  const serverAndAccount = localAccountUtils.create_incoming_server_and_account(
     "nntp",
     port,
     null,
     null,
     host
   );
-  let server = serverAndAccount.server;
+  const server = serverAndAccount.server;
   subscribeServer(server);
 
   _server = server;
@@ -178,18 +180,6 @@ function setupProtocolTest(port, newsUrl, incomingServer) {
   newsServer.loadNewsUrl(url, null, listener);
 }
 
-function create_post(baseURL, file) {
-  var url = Services.io.newURI(baseURL);
-  url.QueryInterface(Ci.nsINntpUrl);
-
-  var post = Cc["@mozilla.org/messenger/nntpnewsgrouppost;1"].createInstance(
-    Ci.nsINNTPNewsgroupPost
-  );
-  post.postMessageFile = do_get_file(file);
-  url.messageToPost = post;
-  return url;
-}
-
 function resetFolder(folder) {
   var headers = [...folder.messages];
 
@@ -198,6 +188,7 @@ function resetFolder(folder) {
   for (var header of headers) {
     db.deleteHeader(header, null, true, false);
   }
+  folder.QueryInterface(Ci.nsIMsgNewsFolder).setReadSetFromStr("");
   dump("resetting folder\n");
   folder.msgDatabase = null;
 }

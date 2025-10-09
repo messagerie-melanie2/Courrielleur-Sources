@@ -4,10 +4,10 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 EXTRA_JS_MODULES += [
-    "CalItipEmailTransport.jsm",
-    "CalItipMessageSender.jsm",
-    "CalItipOutgoingMessage.jsm",
-    "CalItipProtocolHandler.jsm",
+    "CalItipEmailTransport.sys.mjs",
+    "CalItipMessageSender.sys.mjs",
+    "CalItipOutgoingMessage.sys.mjs",
+    "CalItipProtocolHandler.sys.mjs",
 ]
 
 XPCOM_MANIFESTS += [

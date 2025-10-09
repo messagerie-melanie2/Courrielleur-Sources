@@ -9,11 +9,11 @@ import copy
 import logging
 
 from taskgraph.transforms.base import TransformSequence
-from taskgraph.util.schema import optionally_keyed_by, resolve_keyed_by
+from taskgraph.util.dependencies import get_primary_dependency
+from taskgraph.util.schema import Schema, optionally_keyed_by, resolve_keyed_by
 from taskgraph.util.treeherder import inherit_treeherder_from_dep
 from voluptuous import Optional, Required
 
-from gecko_taskgraph.loader.single_dep import schema
 from gecko_taskgraph.transforms.beetmover import craft_release_properties
 from gecko_taskgraph.transforms.task import task_description_schema
 from gecko_taskgraph.util.attributes import (
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 transforms = TransformSequence()
 
 
-beetmover_description_schema = schema.extend(
+beetmover_description_schema = Schema(
     {
         # attributes is used for enabling artifact-map by declarative artifacts
         Required("attributes"): {str: object},
@@ -49,9 +49,18 @@ beetmover_description_schema = schema.extend(
         # locale is passed only for l10n beetmoving
         Optional("locale"): str,
         Optional("shipping-phase"): task_description_schema["shipping-phase"],
-        Optional("shipping-product"): task_description_schema["shipping-product"],
+        Optional("task-from"): task_description_schema["task-from"],
+        Optional("dependencies"): task_description_schema["dependencies"],
     }
 )
+
+
+@transforms.add
+def remove_name(config, jobs):
+    for job in jobs:
+        if "name" in job:
+            del job["name"]
+        yield job
 
 
 transforms.add_validate(beetmover_description_schema)
@@ -77,7 +86,9 @@ def resolve_keys(config, jobs):
 @transforms.add
 def make_task_description(config, jobs):
     for job in jobs:
-        dep_job = job["primary-dependency"]
+        dep_job = get_primary_dependency(config, job)
+        assert dep_job
+
         attributes = dep_job.attributes
 
         treeherder = inherit_treeherder_from_dep(job, dep_job)
@@ -138,21 +149,13 @@ def make_task_worker(config, jobs):
 
 
 @transforms.add
-def strip_unused_data(config, jobs):
-    for job in jobs:
-        del job["primary-dependency"]
-
-        yield job
-
-
-@transforms.add
 def yield_all_platform_jobs(config, jobs):
     # Even though langpacks are now platform independent, we keep beetmoving them at old
     # platform-specific locations. That's why this transform exist
     # The linux64 and mac specific ja-JP-mac are beetmoved along with the signing beetmover
     # So while the dependent jobs are linux here, we only yield jobs for other platforms
     for job in jobs:
-        platforms = ("linux", "macosx64", "win32", "win64")
+        platforms = ("linux", "linux64-aarch64", "macosx64", "win32", "win64")
         if "devedition" in job["attributes"]["build_platform"]:
             platforms = (f"{plat}-devedition" for plat in platforms)
         for platform in platforms:
@@ -218,10 +221,12 @@ def _change_platform_data(config, platform_job, platform):
     platform_mapping = {
         "linux64": "linux-x86_64",
         "linux": "linux-i686",
+        "linux64-aarch64": "linux-aarch64",
         "macosx64": "mac",
         "win32": "win32",
         "win64": "win64",
         "linux64-devedition": "linux-x86_64",
+        "linux64-aarch64-devedition": "linux-aarch64",
         "linux-devedition": "linux-i686",
         "macosx64-devedition": "mac",
         "win32-devedition": "win32",

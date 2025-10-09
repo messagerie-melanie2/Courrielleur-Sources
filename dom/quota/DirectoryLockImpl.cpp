@@ -6,72 +6,228 @@
 
 #include "DirectoryLockImpl.h"
 
+#include "nsError.h"
+#include "nsString.h"
+#include "nsThreadUtils.h"
 #include "mozilla/ReverseIterator.h"
-#include "mozilla/dom/quota/Client.h"
+#include "mozilla/dom/quota/QuotaCommon.h"
 #include "mozilla/dom/quota/QuotaManager.h"
 
 namespace mozilla::dom::quota {
 
+namespace {
+
+/**
+ * Automatically log information about a directory lock if acquiring of the
+ * directory lock takes this long. We've chosen a value that is long enough
+ * that it is unlikely for the problem to be falsely triggered by slow system
+ * I/O. We've also chosen a value long enough so that testers can notice the
+ * timeout; we want to know about the timeouts, not hide them. On the other
+ * hand this value is less than 45 seconds which is used by quota manager to
+ * crash a hung quota manager shutdown.
+ */
+const uint32_t kAcquireTimeoutMs = 30000;
+
+}  // namespace
+
 DirectoryLockImpl::DirectoryLockImpl(
     MovingNotNull<RefPtr<QuotaManager>> aQuotaManager,
-    const Nullable<PersistenceType>& aPersistenceType,
-    const nsACString& aSuffix, const nsACString& aGroup,
-    const OriginScope& aOriginScope, const nsACString& aStorageOrigin,
-    bool aIsPrivate, const Nullable<Client::Type>& aClientType,
-    const bool aExclusive, const bool aInternal,
-    const ShouldUpdateLockIdTableFlag aShouldUpdateLockIdTableFlag)
+    const PersistenceScope& aPersistenceScope, const OriginScope& aOriginScope,
+    const ClientStorageScope& aClientStorageScope, const bool aExclusive,
+    const bool aInternal,
+    const ShouldUpdateLockIdTableFlag aShouldUpdateLockIdTableFlag,
+    const DirectoryLockCategory aCategory)
     : mQuotaManager(std::move(aQuotaManager)),
-      mPersistenceType(aPersistenceType),
-      mSuffix(aSuffix),
-      mGroup(aGroup),
+      mPersistenceScope(aPersistenceScope),
       mOriginScope(aOriginScope),
-      mStorageOrigin(aStorageOrigin),
-      mClientType(aClientType),
+      mClientStorageScope(aClientStorageScope),
       mId(mQuotaManager->GenerateDirectoryLockId()),
-      mIsPrivate(aIsPrivate),
       mExclusive(aExclusive),
       mInternal(aInternal),
       mShouldUpdateLockIdTable(aShouldUpdateLockIdTableFlag ==
                                ShouldUpdateLockIdTableFlag::Yes),
+      mCategory(aCategory),
       mRegistered(false) {
   AssertIsOnOwningThread();
   MOZ_ASSERT_IF(aOriginScope.IsOrigin(), !aOriginScope.GetOrigin().IsEmpty());
-  MOZ_ASSERT_IF(!aInternal, !aPersistenceType.IsNull());
+  MOZ_ASSERT_IF(!aInternal, aPersistenceScope.IsValue());
   MOZ_ASSERT_IF(!aInternal,
-                aPersistenceType.Value() != PERSISTENCE_TYPE_INVALID);
-  MOZ_ASSERT_IF(!aInternal, !aGroup.IsEmpty());
+                aPersistenceScope.GetValue() != PERSISTENCE_TYPE_INVALID);
   MOZ_ASSERT_IF(!aInternal, aOriginScope.IsOrigin());
-  MOZ_ASSERT_IF(!aInternal, !aStorageOrigin.IsEmpty());
-  MOZ_ASSERT_IF(!aInternal && !aIsPrivate,
-                aOriginScope.GetOrigin() == aStorageOrigin);
-  MOZ_ASSERT_IF(!aInternal && aIsPrivate,
-                aOriginScope.GetOrigin() != aStorageOrigin);
-  MOZ_ASSERT_IF(!aInternal, !aClientType.IsNull());
-  MOZ_ASSERT_IF(!aInternal, aClientType.Value() < Client::TypeMax());
+  MOZ_ASSERT_IF(!aInternal, aClientStorageScope.IsClient());
+  MOZ_ASSERT_IF(!aInternal,
+                aClientStorageScope.GetClientType() < Client::TypeMax());
 }
 
 DirectoryLockImpl::~DirectoryLockImpl() {
   AssertIsOnOwningThread();
+  MOZ_DIAGNOSTIC_ASSERT(!mRegistered);
+}
 
-  // We must call UnregisterDirectoryLock before unblocking other locks because
-  // UnregisterDirectoryLock also updates the origin last access time and the
-  // access flag (if the last lock for given origin is unregistered). One of the
-  // blocked locks could be requested by the clear/reset operation which stores
-  // cached information about origins in storage.sqlite. So if the access flag
-  // is not updated before unblocking the lock for reset/clear, we might store
-  // invalid information which can lead to omitting origin initialization during
-  // next temporary storage initialization.
-  if (mRegistered) {
-    mQuotaManager->UnregisterDirectoryLock(*this);
-  }
-
+bool DirectoryLockImpl::MustWait() const {
+  AssertIsOnOwningThread();
   MOZ_ASSERT(!mRegistered);
 
-  for (NotNull<RefPtr<DirectoryLockImpl>> blockingLock : mBlocking) {
-    blockingLock->MaybeUnblock(*this);
+  for (const DirectoryLockImpl* const existingLock :
+       mQuotaManager->mDirectoryLocks) {
+    if (MustWaitFor(*existingLock)) {
+      return true;
+    }
   }
 
-  mBlocking.Clear();
+  return false;
+}
+
+nsTArray<RefPtr<DirectoryLockImpl>> DirectoryLockImpl::LocksMustWaitFor()
+    const {
+  AssertIsOnOwningThread();
+
+  return LocksMustWaitForInternal<RefPtr<DirectoryLockImpl>>();
+}
+
+DirectoryLockImpl::PrepareInfo DirectoryLockImpl::Prepare() const {
+  return PrepareInfo{*this};
+}
+
+RefPtr<BoolPromise> DirectoryLockImpl::Acquire() {
+  auto prepareInfo = Prepare();
+
+  return Acquire(std::move(prepareInfo));
+}
+
+RefPtr<BoolPromise> DirectoryLockImpl::Acquire(PrepareInfo&& aPrepareInfo) {
+  AssertIsOnOwningThread();
+
+  RefPtr<BoolPromise> result = mAcquirePromiseHolder.Ensure(__func__);
+
+  AcquireInternal(std::move(aPrepareInfo));
+
+  return result;
+}
+
+void DirectoryLockImpl::AcquireImmediately() {
+  AssertIsOnOwningThread();
+  MOZ_ASSERT(!MustWait());
+
+  mQuotaManager->RegisterDirectoryLock(*this);
+
+  mAcquired.Flip();
+}
+
+#ifdef DEBUG
+void DirectoryLockImpl::AssertIsAcquiredExclusively() {
+  AssertIsOnOwningThread();
+  MOZ_ASSERT(mBlockedOn.IsEmpty());
+  MOZ_ASSERT(mExclusive);
+  MOZ_ASSERT(mInternal);
+  MOZ_ASSERT(mRegistered);
+  MOZ_ASSERT(!mInvalidated);
+  MOZ_ASSERT(mAcquired);
+
+  bool found = false;
+
+  for (const DirectoryLockImpl* const existingLock :
+       mQuotaManager->mDirectoryLocks) {
+    if (existingLock == this) {
+      MOZ_ASSERT(!found);
+      found = true;
+    } else if (existingLock->mAcquired) {
+      MOZ_ASSERT(false);
+    }
+  }
+
+  MOZ_ASSERT(found);
+}
+#endif
+
+RefPtr<BoolPromise> DirectoryLockImpl::Drop() {
+  AssertIsOnOwningThread();
+  MOZ_ASSERT_IF(!mRegistered, mBlocking.IsEmpty());
+
+  mDropped.Flip();
+
+  return InvokeAsync(GetCurrentSerialEventTarget(), __func__,
+                     [self = RefPtr(this)]() {
+                       if (self->mRegistered) {
+                         self->Unregister();
+                       }
+
+                       return BoolPromise::CreateAndResolve(true, __func__);
+                     });
+}
+
+void DirectoryLockImpl::OnInvalidate(std::function<void()>&& aCallback) {
+  mInvalidateCallback = std::move(aCallback);
+}
+
+void DirectoryLockImpl::Log() const {
+  AssertIsOnOwningThread();
+
+  if (!QM_LOG_TEST()) {
+    return;
+  }
+
+  QM_LOG(("DirectoryLockImpl [%p]", this));
+
+  nsCString persistenceScope;
+  if (mPersistenceScope.IsNull()) {
+    persistenceScope.AssignLiteral("null");
+  } else if (mPersistenceScope.IsValue()) {
+    persistenceScope.Assign(
+        PersistenceTypeToString(mPersistenceScope.GetValue()));
+  } else {
+    MOZ_ASSERT(mPersistenceScope.IsSet());
+    for (auto persistenceType : mPersistenceScope.GetSet()) {
+      persistenceScope.Append(PersistenceTypeToString(persistenceType) +
+                              " "_ns);
+    }
+  }
+  QM_LOG(("  mPersistenceScope: %s", persistenceScope.get()));
+
+  nsCString originScope;
+  if (mOriginScope.IsOrigin()) {
+    originScope.AssignLiteral("origin:");
+    originScope.Append(mOriginScope.GetOrigin());
+  } else if (mOriginScope.IsPrefix()) {
+    originScope.AssignLiteral("prefix:");
+    originScope.Append(mOriginScope.GetOriginNoSuffix());
+  } else if (mOriginScope.IsPattern()) {
+    originScope.AssignLiteral("pattern:");
+    // Can't call GetJSONPattern since it only works on the main thread.
+  } else {
+    MOZ_ASSERT(mOriginScope.IsNull());
+    originScope.AssignLiteral("null");
+  }
+  QM_LOG(("  mOriginScope: %s", originScope.get()));
+
+  nsCString clientStorageScope;
+  if (mClientStorageScope.IsNull()) {
+    clientStorageScope.AssignLiteral("null");
+  } else if (mClientStorageScope.IsClient()) {
+    clientStorageScope.Assign(
+        Client::TypeToText(mClientStorageScope.GetClientType()));
+  } else {
+    MOZ_ASSERT(mClientStorageScope.IsMetadata());
+    clientStorageScope.AssignLiteral("metadata");
+  }
+  QM_LOG(("  mClientStorageScope: %s", clientStorageScope.get()));
+
+  nsCString blockedOnString;
+  for (auto blockedOn : mBlockedOn) {
+    blockedOnString.Append(
+        nsPrintfCString(" [%p]", static_cast<void*>(blockedOn)));
+  }
+  QM_LOG(("  mBlockedOn:%s", blockedOnString.get()));
+
+  QM_LOG(("  mExclusive: %d", mExclusive));
+
+  QM_LOG(("  mInternal: %d", mInternal));
+
+  QM_LOG(("  mInvalidated: %d", static_cast<bool>(mInvalidated)));
+
+  for (auto blockedOn : mBlockedOn) {
+    blockedOn->Log();
+  }
 }
 
 #ifdef DEBUG
@@ -86,20 +242,20 @@ bool DirectoryLockImpl::Overlaps(const DirectoryLockImpl& aLock) const {
   AssertIsOnOwningThread();
 
   // If the persistence types don't overlap, the op can proceed.
-  if (!aLock.mPersistenceType.IsNull() && !mPersistenceType.IsNull() &&
-      aLock.mPersistenceType.Value() != mPersistenceType.Value()) {
-    return false;
-  }
-
-  // If the origin scopes don't overlap, the op can proceed.
-  bool match = aLock.mOriginScope.Matches(mOriginScope);
+  bool match = aLock.mPersistenceScope.Matches(mPersistenceScope);
   if (!match) {
     return false;
   }
 
-  // If the client types don't overlap, the op can proceed.
-  if (!aLock.mClientType.IsNull() && !mClientType.IsNull() &&
-      aLock.mClientType.Value() != mClientType.Value()) {
+  // If the origin scopes don't overlap, the op can proceed.
+  match = aLock.mOriginScope.Matches(mOriginScope);
+  if (!match) {
+    return false;
+  }
+
+  // If the client storage scopes don't overlap, the op can proceed.
+  match = aLock.mClientStorageScope.Matches(mClientStorageScope);
+  if (!match) {
     return false;
   }
 
@@ -123,80 +279,97 @@ bool DirectoryLockImpl::MustWaitFor(const DirectoryLockImpl& aLock) const {
 void DirectoryLockImpl::NotifyOpenListener() {
   AssertIsOnOwningThread();
 
+  if (mAcquireTimer) {
+    mAcquireTimer->Cancel();
+    mAcquireTimer = nullptr;
+  }
+
   if (mInvalidated) {
-    if (mOpenListener) {
-      (*mOpenListener)->DirectoryLockFailed();
-    } else {
-      mAcquirePromiseHolder.Reject(NS_ERROR_FAILURE, __func__);
-    }
+    mAcquirePromiseHolder.Reject(NS_ERROR_FAILURE, __func__);
   } else {
-#ifdef DEBUG
     mAcquired.Flip();
-#endif
 
-    if (mOpenListener) {
-      (*mOpenListener)
-          ->DirectoryLockAcquired(static_cast<UniversalDirectoryLock*>(this));
-    } else {
-      mAcquirePromiseHolder.Resolve(true, __func__);
-    }
+    mAcquirePromiseHolder.Resolve(true, __func__);
   }
 
-  if (mOpenListener) {
-    mOpenListener.destroy();
-  } else {
-    MOZ_ASSERT(mAcquirePromiseHolder.IsEmpty());
-  }
+  MOZ_ASSERT(mAcquirePromiseHolder.IsEmpty());
 
   mQuotaManager->RemovePendingDirectoryLock(*this);
 
   mPending.Flip();
+
+  if (mInvalidated) {
+    mDropped.Flip();
+
+    Unregister();
+  }
 }
 
-void DirectoryLockImpl::Acquire(RefPtr<OpenDirectoryListener> aOpenListener) {
+template <typename T>
+nsTArray<T> DirectoryLockImpl::LocksMustWaitForInternal() const {
   AssertIsOnOwningThread();
-  MOZ_ASSERT(aOpenListener);
+  MOZ_ASSERT(!mRegistered);
 
-  mOpenListener.init(WrapNotNullUnchecked(std::move(aOpenListener)));
-
-  AcquireInternal();
-}
-
-RefPtr<BoolPromise> DirectoryLockImpl::Acquire() {
-  AssertIsOnOwningThread();
-
-  RefPtr<BoolPromise> result = mAcquirePromiseHolder.Ensure(__func__);
-
-  AcquireInternal();
-
-  return result;
-}
-
-void DirectoryLockImpl::AcquireInternal() {
-  AssertIsOnOwningThread();
-
-  mQuotaManager->AddPendingDirectoryLock(*this);
-
-  // See if this lock needs to wait.
-  bool blocked = false;
+  nsTArray<T> locks;
 
   // XXX It is probably unnecessary to iterate this in reverse order.
   for (DirectoryLockImpl* const existingLock :
        Reversed(mQuotaManager->mDirectoryLocks)) {
     if (MustWaitFor(*existingLock)) {
-      existingLock->AddBlockingLock(*this);
-      AddBlockedOnLock(*existingLock);
-      blocked = true;
+      if constexpr (std::is_same_v<T, NotNull<DirectoryLockImpl*>>) {
+        locks.AppendElement(WrapNotNull(existingLock));
+      } else {
+        locks.AppendElement(existingLock);
+      }
     }
   }
 
+  return locks;
+}
+
+void DirectoryLockImpl::AcquireInternal(PrepareInfo&& aPrepareInfo) {
+  AssertIsOnOwningThread();
+
+  mQuotaManager->AddPendingDirectoryLock(*this);
+
+  // See if this lock needs to wait. This has to be done before the lock is
+  // registered, we would be comparing the lock against itself otherwise.
+  mBlockedOn = std::move(aPrepareInfo.mBlockedOn);
+
+  // After the traversal of existing locks is done, this lock can be
+  // registered and will become an existing lock as well.
   mQuotaManager->RegisterDirectoryLock(*this);
 
-  // Otherwise, notify the open listener immediately.
-  if (!blocked) {
+  // If this lock is not blocked by some other existing lock, notify the open
+  // listener immediately and return.
+  if (mBlockedOn.IsEmpty()) {
     NotifyOpenListener();
     return;
   }
+
+  // Add this lock as a blocking lock to all locks which block it, so the
+  // locks can update this lock when they are unregistered and eventually
+  // unblock this lock.
+  for (auto& blockedOnLock : mBlockedOn) {
+    blockedOnLock->AddBlockingLock(*this);
+  }
+
+  mAcquireTimer = NS_NewTimer();
+
+  MOZ_ALWAYS_SUCCEEDS(mAcquireTimer->InitWithNamedFuncCallback(
+      [](nsITimer* aTimer, void* aClosure) {
+        if (!QM_LOG_TEST()) {
+          return;
+        }
+
+        auto* const lock = static_cast<DirectoryLockImpl*>(aClosure);
+
+        QM_LOG(("Directory lock [%p] is taking too long to be acquired", lock));
+
+        lock->Log();
+      },
+      this, kAcquireTimeoutMs, nsITimer::TYPE_ONE_SHOT,
+      "quota::DirectoryLockImpl::AcquireInternal"));
 
   if (!mExclusive || !mInternal) {
     return;
@@ -228,154 +401,42 @@ void DirectoryLockImpl::AcquireInternal() {
   mQuotaManager->AbortOperationsForLocks(lockIds);
 }
 
-void DirectoryLockImpl::AcquireImmediately() {
+void DirectoryLockImpl::Invalidate() {
   AssertIsOnOwningThread();
 
-#ifdef DEBUG
-  for (const DirectoryLockImpl* const existingLock :
-       mQuotaManager->mDirectoryLocks) {
-    MOZ_ASSERT(!MustWaitFor(*existingLock));
-  }
-#endif
+  mInvalidated.EnsureFlipped();
 
-  mQuotaManager->RegisterDirectoryLock(*this);
+  if (mInvalidateCallback) {
+    MOZ_ALWAYS_SUCCEEDS(GetCurrentSerialEventTarget()->Dispatch(
+        NS_NewRunnableFunction("DirectoryLockImpl::Invalidate",
+                               [invalidateCallback = mInvalidateCallback]() {
+                                 invalidateCallback();
+                               }),
+        NS_DISPATCH_NORMAL));
+  }
 }
 
-#ifdef DEBUG
-void DirectoryLockImpl::AssertIsAcquiredExclusively() {
+void DirectoryLockImpl::Unregister() {
   AssertIsOnOwningThread();
-  MOZ_ASSERT(mBlockedOn.IsEmpty());
-  MOZ_ASSERT(mExclusive);
-  MOZ_ASSERT(mInternal);
   MOZ_ASSERT(mRegistered);
-  MOZ_ASSERT(!mInvalidated);
-  MOZ_ASSERT(mAcquired);
 
-  bool found = false;
+  // We must call UnregisterDirectoryLock before unblocking other locks because
+  // UnregisterDirectoryLock also updates the origin last access time and the
+  // access flag (if the last lock for given origin is unregistered). One of the
+  // blocked locks could be requested by the clear/reset operation which stores
+  // cached information about origins in storage.sqlite. So if the access flag
+  // is not updated before unblocking the lock for reset/clear, we might store
+  // invalid information which can lead to omitting origin initialization during
+  // next temporary storage initialization.
+  mQuotaManager->UnregisterDirectoryLock(*this);
 
-  for (const DirectoryLockImpl* const existingLock :
-       mQuotaManager->mDirectoryLocks) {
-    if (existingLock == this) {
-      MOZ_ASSERT(!found);
-      found = true;
-    } else if (existingLock->mAcquired) {
-      MOZ_ASSERT(false);
-    }
+  MOZ_ASSERT(!mRegistered);
+
+  for (NotNull<RefPtr<DirectoryLockImpl>> blockingLock : mBlocking) {
+    blockingLock->MaybeUnblock(*this);
   }
 
-  MOZ_ASSERT(found);
-}
-#endif
-
-RefPtr<ClientDirectoryLock> DirectoryLockImpl::SpecializeForClient(
-    PersistenceType aPersistenceType,
-    const quota::OriginMetadata& aOriginMetadata,
-    Client::Type aClientType) const {
-  AssertIsOnOwningThread();
-  MOZ_ASSERT(aPersistenceType != PERSISTENCE_TYPE_INVALID);
-  MOZ_ASSERT(!aOriginMetadata.mGroup.IsEmpty());
-  MOZ_ASSERT(!aOriginMetadata.mOrigin.IsEmpty());
-  MOZ_ASSERT(aClientType < Client::TypeMax());
-  MOZ_ASSERT(!mOpenListener);
-  MOZ_ASSERT(mAcquirePromiseHolder.IsEmpty());
-  MOZ_ASSERT(mBlockedOn.IsEmpty());
-
-  if (NS_WARN_IF(mExclusive)) {
-    return nullptr;
-  }
-
-  RefPtr<DirectoryLockImpl> lock = Create(
-      mQuotaManager, Nullable<PersistenceType>(aPersistenceType),
-      aOriginMetadata.mSuffix, aOriginMetadata.mGroup,
-      OriginScope::FromOrigin(aOriginMetadata.mOrigin),
-      aOriginMetadata.mStorageOrigin, aOriginMetadata.mIsPrivate,
-      Nullable<Client::Type>(aClientType),
-      /* aExclusive */ false, mInternal, ShouldUpdateLockIdTableFlag::Yes);
-  if (NS_WARN_IF(!Overlaps(*lock))) {
-    return nullptr;
-  }
-
-#ifdef DEBUG
-  for (DirectoryLockImpl* const existingLock :
-       Reversed(mQuotaManager->mDirectoryLocks)) {
-    if (existingLock != this && !existingLock->MustWaitFor(*this)) {
-      MOZ_ASSERT(!existingLock->MustWaitFor(*lock));
-    }
-  }
-#endif
-
-  for (const auto& blockedLock : mBlocking) {
-    if (blockedLock->MustWaitFor(*lock)) {
-      lock->AddBlockingLock(*blockedLock);
-      blockedLock->AddBlockedOnLock(*lock);
-    }
-  }
-
-  mQuotaManager->RegisterDirectoryLock(*lock);
-
-  if (mInvalidated) {
-    lock->Invalidate();
-  }
-
-  return lock;
-}
-
-void DirectoryLockImpl::Log() const {
-  AssertIsOnOwningThread();
-
-  if (!QM_LOG_TEST()) {
-    return;
-  }
-
-  QM_LOG(("DirectoryLockImpl [%p]", this));
-
-  nsCString persistenceType;
-  if (mPersistenceType.IsNull()) {
-    persistenceType.AssignLiteral("null");
-  } else {
-    persistenceType.Assign(PersistenceTypeToString(mPersistenceType.Value()));
-  }
-  QM_LOG(("  mPersistenceType: %s", persistenceType.get()));
-
-  QM_LOG(("  mGroup: %s", mGroup.get()));
-
-  nsCString originScope;
-  if (mOriginScope.IsOrigin()) {
-    originScope.AssignLiteral("origin:");
-    originScope.Append(mOriginScope.GetOrigin());
-  } else if (mOriginScope.IsPrefix()) {
-    originScope.AssignLiteral("prefix:");
-    originScope.Append(mOriginScope.GetOriginNoSuffix());
-  } else if (mOriginScope.IsPattern()) {
-    originScope.AssignLiteral("pattern:");
-    // Can't call GetJSONPattern since it only works on the main thread.
-  } else {
-    MOZ_ASSERT(mOriginScope.IsNull());
-    originScope.AssignLiteral("null");
-  }
-  QM_LOG(("  mOriginScope: %s", originScope.get()));
-
-  const auto clientType = mClientType.IsNull()
-                              ? nsAutoCString{"null"_ns}
-                              : Client::TypeToText(mClientType.Value());
-  QM_LOG(("  mClientType: %s", clientType.get()));
-
-  nsCString blockedOnString;
-  for (auto blockedOn : mBlockedOn) {
-    blockedOnString.Append(
-        nsPrintfCString(" [%p]", static_cast<void*>(blockedOn)));
-  }
-  QM_LOG(("  mBlockedOn:%s", blockedOnString.get()));
-
-  QM_LOG(("  mExclusive: %d", mExclusive));
-
-  QM_LOG(("  mInternal: %d", mInternal));
-
-  QM_LOG(("  mInvalidated: %d", static_cast<bool>(mInvalidated)));
-
-  for (auto blockedOn : mBlockedOn) {
-    blockedOn->Log();
-  }
+  mBlocking.Clear();
 }
 
 }  // namespace mozilla::dom::quota

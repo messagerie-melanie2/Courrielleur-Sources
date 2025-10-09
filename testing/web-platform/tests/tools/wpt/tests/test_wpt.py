@@ -1,6 +1,7 @@
 # mypy: allow-untyped-defs
 
 import errno
+import logging
 import os
 import shutil
 import socket
@@ -8,14 +9,14 @@ import subprocess
 import sys
 import tempfile
 import time
-
 from urllib.request import urlopen
 from urllib.error import URLError
 
 import pytest
 
+from tools.wpt import browser, utils, wpt
+
 here = os.path.abspath(os.path.dirname(__file__))
-from tools.wpt import utils, wpt
 
 
 def is_port_8000_in_use():
@@ -53,6 +54,19 @@ def manifest_dir():
         shutil.copyfile(get_persistent_manifest_path(),
                         os.path.join(path, "MANIFEST.json"))
         yield path
+    finally:
+        utils.rmtree(path)
+
+
+@pytest.fixture(scope="module")
+def download_firefox():
+    try:
+        logger = logging.getLogger("download_firefox")
+        path = tempfile.mkdtemp()
+        firefox = browser.Firefox(logger)
+        bin_path = firefox.install(dest=path)
+        assert os.path.exists(bin_path) and os.path.isfile(bin_path)
+        yield bin_path
     finally:
         utils.rmtree(path)
 
@@ -111,6 +125,8 @@ def test_list_tests(manifest_dir):
     with pytest.raises(SystemExit) as excinfo:
         wpt.main(argv=["run", "--metadata", manifest_dir, "--list-tests",
                        "--channel", "dev", "--yes",
+                       # WebTransport server is not needed (web-platform-tests/wpt#41675).
+                       "--no-enable-webtransport-h3",
                        # Taskcluster machines do not have GPUs, so use software rendering via --enable-swiftshader.
                        "--enable-swiftshader",
                        "chrome", "/dom/nodes/Element-tagName.html"])
@@ -118,7 +134,8 @@ def test_list_tests(manifest_dir):
 
 
 @pytest.mark.slow
-def test_list_tests_missing_manifest(manifest_dir):
+@pytest.mark.remote_network
+def test_list_tests_missing_manifest(manifest_dir, download_firefox):
     """The `--list-tests` option should not produce an error in the absence of
     a test manifest file."""
 
@@ -133,15 +150,20 @@ def test_list_tests_missing_manifest(manifest_dir):
                        # drastically reduces the time to execute the test.
                        "--tests", here,
                        "--metadata", manifest_dir,
+                       "--log-mach", "-",
                        "--list-tests",
                        "--yes",
+                       # WebTransport server is not needed (web-platform-tests/wpt#41675).
+                       "--no-enable-webtransport-h3",
+                       "--binary", download_firefox,
                        "firefox", "/dom/nodes/Element-tagName.html"])
 
     assert excinfo.value.code == 0
 
 
 @pytest.mark.slow
-def test_list_tests_invalid_manifest(manifest_dir):
+@pytest.mark.remote_network
+def test_list_tests_invalid_manifest(manifest_dir, download_firefox):
     """The `--list-tests` option should not produce an error in the presence of
     a malformed test manifest file."""
 
@@ -161,8 +183,12 @@ def test_list_tests_invalid_manifest(manifest_dir):
                        # drastically reduces the time to execute the test.
                        "--tests", here,
                        "--metadata", manifest_dir,
+                       "--log-mach", "-",
                        "--list-tests",
                        "--yes",
+                       # WebTransport server is not needed (web-platform-tests/wpt#41675).
+                       "--no-enable-webtransport-h3",
+                       "--binary", download_firefox,
                        "firefox", "/dom/nodes/Element-tagName.html"])
 
     assert excinfo.value.code == 0
@@ -180,6 +206,8 @@ def test_run_zero_tests():
 
     with pytest.raises(SystemExit) as excinfo:
         wpt.main(argv=["run", "--yes", "--no-pause", "--channel", "dev",
+                       # WebTransport server is not needed (web-platform-tests/wpt#41675).
+                       "--no-enable-webtransport-h3",
                        # Taskcluster machines do not have GPUs, so use software rendering via --enable-swiftshader.
                        "--enable-swiftshader",
                        "chrome", "/non-existent-dir/non-existent-file.html"])
@@ -188,6 +216,8 @@ def test_run_zero_tests():
     with pytest.raises(SystemExit) as excinfo:
         wpt.main(argv=["run", "--yes", "--no-pause", "--no-fail-on-unexpected",
                        "--channel", "dev",
+                       # WebTransport server is not needed (web-platform-tests/wpt#41675).
+                       "--no-enable-webtransport-h3",
                        # Taskcluster machines do not have GPUs, so use software rendering via --enable-swiftshader.
                        "--enable-swiftshader",
                        "chrome", "/non-existent-dir/non-existent-file.html"])
@@ -209,6 +239,8 @@ def test_run_failing_test():
 
     with pytest.raises(SystemExit) as excinfo:
         wpt.main(argv=["run", "--yes", "--no-pause", "--channel", "dev",
+                       # WebTransport server is not needed (web-platform-tests/wpt#41675).
+                       "--no-enable-webtransport-h3",
                        # Taskcluster machines do not have GPUs, so use software rendering via --enable-swiftshader.
                        "--enable-swiftshader",
                        "chrome", failing_test])
@@ -217,6 +249,8 @@ def test_run_failing_test():
     with pytest.raises(SystemExit) as excinfo:
         wpt.main(argv=["run", "--yes", "--no-pause", "--no-fail-on-unexpected",
                        "--channel", "dev",
+                       # WebTransport server is not needed (web-platform-tests/wpt#41675).
+                       "--no-enable-webtransport-h3",
                        # Taskcluster machines do not have GPUs, so use software rendering via --enable-swiftshader.
                        "--enable-swiftshader",
                        "chrome", failing_test])
@@ -244,6 +278,8 @@ def test_run_verify_unstable(temp_test):
 
     with pytest.raises(SystemExit) as excinfo:
         wpt.main(argv=["run", "--yes", "--verify", "--channel", "dev",
+                       # WebTransport server is not needed (web-platform-tests/wpt#41675).
+                       "--no-enable-webtransport-h3",
                        # Taskcluster machines do not have GPUs, so use software rendering via --enable-swiftshader.
                        "--enable-swiftshader",
                        "chrome", unstable_test])
@@ -253,6 +289,8 @@ def test_run_verify_unstable(temp_test):
 
     with pytest.raises(SystemExit) as excinfo:
         wpt.main(argv=["run", "--yes", "--verify", "--channel", "dev",
+                       # WebTransport server is not needed (web-platform-tests/wpt#41675).
+                       "--no-enable-webtransport-h3",
                        # Taskcluster machines do not have GPUs, so use software rendering via --enable-swiftshader.
                        "--enable-swiftshader",
                        "chrome", stable_test])

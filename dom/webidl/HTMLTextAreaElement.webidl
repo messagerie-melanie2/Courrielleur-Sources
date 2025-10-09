@@ -22,7 +22,8 @@ interface HTMLTextAreaElement : HTMLElement {
            attribute DOMString autocomplete;
   [CEReactions, SetterThrows, Pure]
            attribute unsigned long cols;
-           // attribute DOMString dirName;
+  [CEReactions, Pure, SetterThrows]
+           attribute DOMString dirName;
   [CEReactions, SetterThrows, Pure]
            attribute boolean disabled;
   [Pure]
@@ -91,4 +92,11 @@ HTMLTextAreaElement includes MozEditableElement;
 partial interface HTMLTextAreaElement {
   [ChromeOnly]
   attribute DOMString previewValue;
+  // A string indicating that the value of the element has been autofilled:
+  // either "filled", "preview" or "".
+  [ChromeOnly]
+  attribute DOMString autofillState;
+
+  [ChromeOnly]
+  AutocompleteInfo getAutocompleteInfo();
 };

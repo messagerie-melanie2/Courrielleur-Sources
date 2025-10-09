@@ -2,8 +2,8 @@
  * Test nsMsgDatabase's cleanup of nsMsgDBEnumerators
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var anyOldMessage = do_get_file("../../../../data/bugmail1");
@@ -13,7 +13,7 @@ var anyOldMessage = do_get_file("../../../../data/bugmail1");
  */
 function test_enumerator_cleanup() {
   let db = localAccountUtils.inboxFolder.msgDatabase;
-  let enumerator = db.enumerateMessages();
+  const enumerator = db.enumerateMessages();
   Cc["@mozilla.org/msgDatabase/msgDBService;1"]
     .getService(Ci.nsIMsgDBService)
     .forceFolderDBClosed(localAccountUtils.inboxFolder);
@@ -45,12 +45,15 @@ function run_test() {
   return true;
 }
 
+/** @implements {nsIMsgCopyServiceListener} */
 var messageHeaderGetterListener = {
-  OnStartCopy() {},
-  OnProgress(aProgress, aProgressMax) {},
-  GetMessageId(aMessageId) {},
-  SetMessageKey(aKey) {},
-  OnStopCopy(aStatus) {
+  onStartCopy() {},
+  onProgress() {},
+  setMessageKey() {},
+  getMessageId() {
+    return null;
+  },
+  onStopCopy() {
     do_timeout(0, test_enumerator_cleanup);
   },
 };

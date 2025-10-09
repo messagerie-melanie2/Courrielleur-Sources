@@ -20,10 +20,12 @@
 #ifdef MALLOC_H
 #  include MALLOC_H
 #endif
+
 #include "mozmemory_wrap.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/Types.h"
 #include "mozjemalloc_types.h"
+#include "malloc_decls.h"
 #include "stdbool.h"
 
 #ifdef MOZ_MEMORY
@@ -50,6 +52,8 @@ static inline size_t _malloc_good_size(size_t size) {
 #  define MALLOC_FUNCS MALLOC_FUNCS_JEMALLOC
 #  include "malloc_decls.h"
 
+// jemalloc_stats may only be called on the main thread so that it can access
+// main thread only arenas.
 #  ifdef __cplusplus
 static inline void jemalloc_stats(jemalloc_stats_t* aStats,
                                   jemalloc_bin_stats_t* aBinStats = nullptr) {

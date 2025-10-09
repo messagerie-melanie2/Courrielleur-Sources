@@ -40,7 +40,7 @@ add_task(async function () {
   execute(hud, "firstCall()");
 
   info("Waiting for a frame to be added");
-  await waitForPaused(dbg);
+  await waitForPaused(dbg, null, { shouldWaitForInlinePreviews: false });
 
   info("frames added, select the console again");
   await openConsole();
@@ -60,17 +60,19 @@ add_task(async function () {
   info(
     "Checking the first command, which is the last to resolve since it paused"
   );
-  ok(
-    firstCallEvaluationResult === unresolvedSymbol,
+  Assert.strictEqual(
+    firstCallEvaluationResult,
+    unresolvedSymbol,
     "firstCall was not evaluated yet"
   );
 
   info("Resuming the thread");
-  dbg.actions.resume(dbg.selectors.getThreadContext());
+  dbg.actions.resume();
 
   await onFirstCallMessageReceived;
-  ok(
-    firstCallEvaluationResult !== unresolvedSymbol,
+  Assert.notStrictEqual(
+    firstCallEvaluationResult,
+    unresolvedSymbol,
     "firstCall() returned correct value"
   );
 });

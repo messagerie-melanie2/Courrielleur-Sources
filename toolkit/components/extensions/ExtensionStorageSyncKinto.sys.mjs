@@ -3,6 +3,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* eslint-disable mozilla/valid-lazy */
 
 // TODO:
 // * find out how the Chrome implementation deals with conflicts
@@ -15,7 +16,6 @@ const KINTO_PROD_SERVER_URL =
   "https://webextensions.settings.services.mozilla.com/v1";
 const KINTO_DEFAULT_SERVER_URL = KINTO_PROD_SERVER_URL;
 
-const STORAGE_SYNC_ENABLED_PREF = "webextensions.storage.sync.enabled";
 const STORAGE_SYNC_SERVER_URL_PREF = "webextensions.storage.sync.serverURL";
 const STORAGE_SYNC_SCOPE = "sync:addon_storage";
 const STORAGE_SYNC_CRYPTO_COLLECTION_NAME = "storage-sync-crypto";
@@ -32,9 +32,7 @@ import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 import { ExtensionUtils } from "resource://gre/modules/ExtensionUtils.sys.mjs";
 
-const lazy = {};
-
-ChromeUtils.defineESModuleGetters(lazy, {
+const lazy = XPCOMUtils.declareLazy({
   AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
   BulkKeyBundle: "resource://services-sync/keys.sys.mjs",
   CollectionKeyManager: "resource://services-sync/record.sys.mjs",
@@ -42,39 +40,34 @@ ChromeUtils.defineESModuleGetters(lazy, {
   CryptoUtils: "resource://services-crypto/utils.sys.mjs",
   ExtensionCommon: "resource://gre/modules/ExtensionCommon.sys.mjs",
   FirefoxAdapter: "resource://services-common/kinto-storage-adapter.sys.mjs",
+  Kinto: "resource://services-common/kinto-offline-client.sys.mjs",
+  KintoHttpClient: "resource://services-common/kinto-http-client.sys.mjs",
   Observers: "resource://services-common/observers.sys.mjs",
   Utils: "resource://services-sync/util.sys.mjs",
+  prefStorageSyncServerURL: {
+    pref: STORAGE_SYNC_SERVER_URL_PREF,
+    default: KINTO_DEFAULT_SERVER_URL,
+  },
+  fxAccounts() {
+    return ChromeUtils.importESModule(
+      "resource://gre/modules/FxAccounts.sys.mjs"
+    ).getFxAccountsSingleton();
+  },
+  WeaveCrypto() {
+    let { WeaveCrypto } = ChromeUtils.importESModule(
+      "resource://services-crypto/WeaveCrypto.sys.mjs"
+    );
+    return new WeaveCrypto();
+  },
 });
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  KintoHttpClient: "resource://services-common/kinto-http-client.js",
-  Kinto: "resource://services-common/kinto-offline-client.js",
-});
-
-XPCOMUtils.defineLazyGetter(lazy, "fxAccounts", () => {
-  return ChromeUtils.importESModule(
-    "resource://gre/modules/FxAccounts.sys.mjs"
-  ).getFxAccountsSingleton();
-});
-
-XPCOMUtils.defineLazyPreferenceGetter(
-  lazy,
-  "prefPermitsStorageSync",
-  STORAGE_SYNC_ENABLED_PREF,
-  true
-);
-XPCOMUtils.defineLazyPreferenceGetter(
-  lazy,
-  "prefStorageSyncServerURL",
-  STORAGE_SYNC_SERVER_URL_PREF,
-  KINTO_DEFAULT_SERVER_URL
-);
-XPCOMUtils.defineLazyGetter(lazy, "WeaveCrypto", function () {
-  let { WeaveCrypto } = ChromeUtils.importESModule(
-    "resource://services-crypto/WeaveCrypto.sys.mjs"
-  );
-  return new WeaveCrypto();
-});
+/**
+ * @typedef {any} Collection
+ * @typedef {any} CollectionKeyManager
+ * @typedef {any} FXAccounts
+ * @typedef {any} KeyBundle
+ * @typedef {any} SyncResultObject
+ */
 
 const { DefaultMap } = ExtensionUtils;
 
@@ -115,11 +108,6 @@ function throwIfNoFxA(fxAccounts, action) {
   }
 }
 
-// Global ExtensionStorageSyncKinto instance that extensions and Fx Sync use.
-// On Android, because there's no FXAccounts instance, any syncing
-// operations will fail.
-export var extensionStorageSyncKinto = null;
-
 /**
  * Utility function to enforce an order of fields when computing an HMAC.
  *
@@ -127,7 +115,7 @@ export var extensionStorageSyncKinto = null;
  * @param {string}    id         The record ID to use when computing the HMAC
  * @param {string}    IV         The IV to use when computing the HMAC
  * @param {string}    ciphertext The ciphertext over which to compute the HMAC
- * @returns {string} The computed HMAC
+ * @returns {Promise<string>} The computed HMAC
  */
 async function ciphertextHMAC(keyBundle, id, IV, ciphertext) {
   const hmacKey = lazy.CommonUtils.byteStringToArrayBuffer(keyBundle.hmacKey);
@@ -144,7 +132,7 @@ async function ciphertextHMAC(keyBundle, id, IV, ciphertext) {
  *
  * @param {FXAccounts} fxaService  The service to use to get the
  *     current user.
- * @returns {string} sha256 of the user's kB as a hex string
+ * @returns {Promise<string>} sha256 of the user's kB as a hex string
  */
 const getKBHash = async function (fxaService) {
   const key = await fxaService.keys.getKeyForScope(STORAGE_SYNC_SCOPE);
@@ -242,7 +230,7 @@ class EncryptionRemoteTransformer {
   /**
    * Retrieve keys to use during encryption.
    *
-   * Returns a Promise<KeyBundle>.
+   * @returns {Promise<KeyBundle>}
    */
   getKeys() {
     throw new Error("override getKeys in a subclass");
@@ -366,6 +354,7 @@ async function storageSyncInit() {
   }
   return storageSyncInit.promise;
 }
+storageSyncInit.promise = undefined;
 
 // Kinto record IDs have two conditions:
 //
@@ -426,7 +415,7 @@ const cryptoCollectionIdSchema = {
     throw new Error("cannot generate IDs for system collection");
   },
 
-  validate(id) {
+  validate() {
     return true;
   },
 };
@@ -552,6 +541,8 @@ class CryptoCollection {
    * "characters" are values, each within [0, 255]. You can produce
    * such a bytestring using e.g. CommonUtils.encodeUTF8.
    *
+   * @typedef {string} bytestring
+   *
    * The returned value is a base64url-encoded string of the hash.
    *
    * @param {bytestring} value The value to be hashed.
@@ -588,6 +579,7 @@ class CryptoCollection {
    */
   async getKeyRing() {
     const cryptoKeyRecord = await this.getKeyRingRecord();
+    /** @type {CollectionKeyManager & {uuid?}} */
     const collectionKeys = new lazy.CollectionKeyManager();
     if (cryptoKeyRecord.keys) {
       collectionKeys.setContents(
@@ -690,7 +682,7 @@ let CollectionKeyEncryptionRemoteTransformer = class extends EncryptionRemoteTra
  *
  * @param {Extension} extension
  *                    The extension whose context just ended.
- * @param {Context} context
+ * @param {BaseContext} context
  *                  The context that just ended.
  */
 function cleanUpForContext(extension, context) {
@@ -731,6 +723,7 @@ export class ExtensionStorageSyncKinto {
     this._fxaService = fxaService;
     this.cryptoCollection = new CryptoCollection(fxaService);
     this.listeners = new WeakMap();
+    this.backend = "kinto";
   }
 
   /**
@@ -903,9 +896,8 @@ export class ExtensionStorageSyncKinto {
         // Our token might have expired. Refresh and retry.
         log.info("Token might have expired");
         await this._fxaService.removeCachedOAuthToken({ token: fxaToken });
-        const newToken = await this._fxaService.getOAuthToken(
-          FXA_OAUTH_OPTIONS
-        );
+        const newToken =
+          await this._fxaService.getOAuthToken(FXA_OAUTH_OPTIONS);
 
         // If this fails too, let it go.
         return f(newToken);
@@ -1193,17 +1185,12 @@ export class ExtensionStorageSyncKinto {
    * @param {Extension} extension
    *                    The extension for which we are seeking
    *                    a collection.
-   * @param {Context} context
+   * @param {BaseContext} context
    *                  The context of the extension, so that we can
    *                  stop syncing the collection when the extension ends.
    * @returns {Promise<Collection>}
    */
   getCollection(extension, context) {
-    if (lazy.prefPermitsStorageSync !== true) {
-      return Promise.reject({
-        message: `Please set ${STORAGE_SYNC_ENABLED_PREF} to true in about:config`,
-      });
-    }
     this.registerInUse(extension, context);
     return openCollection(extension);
   }
@@ -1364,7 +1351,14 @@ export class ExtensionStorageSyncKinto {
   }
 }
 
-extensionStorageSyncKinto = new ExtensionStorageSyncKinto(_fxaService);
+/**
+ * Global ExtensionStorageSyncKinto instance that extensions and Fx Sync use.
+ * On Android, because there's no FXAccounts instance, any syncing
+ * operations will fail.
+ */
+export const extensionStorageSyncKinto = new ExtensionStorageSyncKinto(
+  _fxaService
+);
 
 // For test use only.
 export const KintoStorageTestUtils = {

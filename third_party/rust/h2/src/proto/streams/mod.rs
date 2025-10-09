@@ -7,6 +7,7 @@ mod send;
 mod state;
 mod store;
 mod stream;
+#[allow(clippy::module_inception)]
 mod streams;
 
 pub(crate) use self::prioritize::Prioritized;
@@ -59,9 +60,19 @@ pub struct Config {
     /// Maximum number of locally reset streams to keep at a time
     pub local_reset_max: usize,
 
+    /// Maximum number of remotely reset "pending accept" streams to keep at a
+    /// time. Going over this number results in a connection error.
+    pub remote_reset_max: usize,
+
     /// Initial window size of remote initiated streams
     pub remote_init_window_sz: WindowSize,
 
     /// Maximum number of remote initiated streams
     pub remote_max_initiated: Option<usize>,
+
+    /// Maximum number of locally reset streams due to protocol error across
+    /// the lifetime of the connection.
+    ///
+    /// When this gets exceeded, we issue GOAWAYs.
+    pub local_max_error_reset_streams: Option<usize>,
 }

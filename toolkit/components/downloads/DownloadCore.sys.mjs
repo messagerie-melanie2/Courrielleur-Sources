@@ -18,11 +18,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   DownloadPaths: "resource://gre/modules/DownloadPaths.sys.mjs",
   E10SUtils: "resource://gre/modules/E10SUtils.sys.mjs",
   FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
-  PromiseUtils: "resource://gre/modules/PromiseUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  NetUtil: "resource://gre/modules/NetUtil.jsm",
+  NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
 });
 
 XPCOMUtils.defineLazyServiceGetter(
@@ -122,7 +118,7 @@ const kProgressUpdateIntervalMs = 400;
  * managed by the user interface and persisted across sessions.
  */
 export var Download = function () {
-  this._deferSucceeded = lazy.PromiseUtils.defer();
+  this._deferSucceeded = Promise.withResolvers();
 };
 
 Download.prototype = {
@@ -294,6 +290,12 @@ Download.prototype = {
   launcherPath: null,
 
   /**
+   * This contains application id to be used to launch the file,
+   * or null if the file is not meant to be launched with GIOHandlerApp.
+   */
+  launcherId: null,
+
+  /**
    * Raises the onchange notification.
    */
   _notifyChange: function D_notifyChange() {
@@ -368,10 +370,13 @@ Download.prototype = {
       );
     }
 
-    if (this.error && this.error.becauseBlockedByReputationCheck) {
+    if (
+      this.error?.becauseBlockedByReputationCheck ||
+      this.error?.becauseBlockedByContentAnalysis
+    ) {
       return Promise.reject(
         new DownloadError({
-          message: "Cannot start after being blocked by a reputation check.",
+          message: "Cannot start after being blocked by a safety check.",
         })
       );
     }
@@ -392,7 +397,7 @@ Download.prototype = {
 
     // Create a new deferred object and an associated promise before starting
     // the actual download.  We store it on the download as the current attempt.
-    let deferAttempt = lazy.PromiseUtils.defer();
+    let deferAttempt = Promise.withResolvers();
     let currentAttempt = deferAttempt.promise;
     this._currentAttempt = currentAttempt;
 
@@ -666,9 +671,9 @@ Download.prototype = {
     }
 
     if (this.error?.becauseBlockedByReputationCheck) {
-      Services.telemetry
-        .getKeyedHistogramById("DOWNLOADS_USER_ACTION_ON_BLOCKED_DOWNLOAD")
-        .add(this.error.reputationCheckVerdict, 2); // unblock
+      Glean.downloads.userActionOnBlockedDownload[
+        this.error.reputationCheckVerdict
+      ].accumulateSingleSample(2); // unblock
     }
 
     if (
@@ -706,6 +711,10 @@ Download.prototype = {
       return this._promiseUnblock;
     }
 
+    if (this.error?.becauseBlockedByContentAnalysis) {
+      this.respondToContentAnalysisWarnWithAllow();
+    }
+
     if (!this.hasBlockedData) {
       return Promise.reject(
         new Error("unblock may only be called on Downloads with blocked data.")
@@ -714,7 +723,9 @@ Download.prototype = {
 
     this._promiseUnblock = (async () => {
       try {
-        await IOUtils.move(this.target.partFilePath, this.target.path);
+        if (this.target.partFilePath) {
+          await IOUtils.move(this.target.partFilePath, this.target.path);
+        }
         await this.target.refresh();
       } catch (ex) {
         await this.refresh();
@@ -729,6 +740,44 @@ Download.prototype = {
     })();
 
     return this._promiseUnblock;
+  },
+
+  /**
+   * Indicates that the download should be allowed. Will do nothing
+   * if content analysis was not used.
+   */
+  respondToContentAnalysisWarnWithAllow() {
+    if (this.error?.contentAnalysisWarnRequestToken) {
+      lazy.DownloadIntegration.getContentAnalysisService().respondToWarnDialog(
+        this.error.contentAnalysisWarnRequestToken,
+        true
+      );
+      this.error.contentAnalysisWarnRequestToken = undefined;
+    }
+  },
+
+  /**
+   * Indicates that the download should be blocked. Will do nothing
+   * if content analysis was not used.
+   */
+  async respondToContentAnalysisWarnWithBlock() {
+    if (this.error?.contentAnalysisWarnRequestToken) {
+      lazy.DownloadIntegration.getContentAnalysisService().respondToWarnDialog(
+        this.error.contentAnalysisWarnRequestToken,
+        false
+      );
+      this.error.contentAnalysisWarnRequestToken = undefined;
+      if (!this.target.partFilePath) {
+        // Callers will be finalizing the download after this.
+        // But if the download happened in place, we need to
+        // remove the final target file.
+        try {
+          await this.saver.removeData(true);
+        } catch (ex) {
+          console.error(ex);
+        }
+      }
+    }
   },
 
   /**
@@ -757,9 +806,9 @@ Download.prototype = {
       // and confirmBlock here. The former is for cases where users click
       // "Remove file" in the download panel and the latter is when
       // users click "X" button in about:downloads.
-      Services.telemetry
-        .getKeyedHistogramById("DOWNLOADS_USER_ACTION_ON_BLOCKED_DOWNLOAD")
-        .add(this.error.reputationCheckVerdict, 1); // confirm block
+      Glean.downloads.userActionOnBlockedDownload[
+        this.error.reputationCheckVerdict
+      ].accumulateSingleSample(1); // confirm block
     }
 
     if (!this.hasBlockedData) {
@@ -771,6 +820,9 @@ Download.prototype = {
     }
 
     this._promiseConfirmBlock = (async () => {
+      if (this.error?.becauseBlockedByContentAnalysis) {
+        await this.respondToContentAnalysisWarnWithBlock();
+      }
       // This call never throws exceptions. If the removal fails, the blocked
       // data remains stored on disk in the ".part" file.
       await this.saver.removeData();
@@ -786,7 +838,7 @@ Download.prototype = {
    * Launches the file after download has completed. This can open
    * the file with the default application for the target MIME type
    * or file extension, or with a custom application if launcherPath
-   * is set.
+   * or launcherId is set.
    *
    * @param options.openWhere  Optional string indicating how to open when handling
    *                           download by opening the target file URI.
@@ -810,7 +862,7 @@ Download.prototype = {
     }
 
     if (this._launchedFromPanel) {
-      Services.telemetry.scalarAdd("downloads.file_opened", 1);
+      Glean.downloads.fileOpened.add(1);
     }
 
     return lazy.DownloadIntegration.launchDownload(this, options);
@@ -1189,11 +1241,15 @@ Download.prototype = {
    *        Number of bytes transferred until now.
    * @param aTotalBytes
    *        Total number of bytes to be transferred, or -1 if unknown.
-   * @param aHasPartialData
+   * @param [aHasPartialData]
    *        Indicates whether the partially downloaded data can be used when
    *        restarting the download if it fails or is canceled.
    */
-  _setBytes: function D_setBytes(aCurrentBytes, aTotalBytes, aHasPartialData) {
+  _setBytes: function D_setBytes(
+    aCurrentBytes,
+    aTotalBytes,
+    aHasPartialData = false
+  ) {
     let changeMade = this.hasPartialData != aHasPartialData;
     this.hasPartialData = aHasPartialData;
 
@@ -1339,6 +1395,7 @@ const kPlainSerializableDownloadProperties = [
   "hasBlockedData",
   "tryToKeepPartialData",
   "launcherPath",
+  "launcherId",
   "launchWhenSucceeded",
   "contentType",
   "handleInternally",
@@ -1820,13 +1877,15 @@ DownloadTarget.fromSerializable = function (aSerializable) {
  *        Object which may contain any of the following properties:
  *          {
  *            result: Result error code, defaulting to Cr.NS_ERROR_FAILURE
- *            message: String error message to be displayed, or null to use the
- *                     message associated with the result code.
+ *            message: String error message to be displayed in the console, or
+ *                     null to use the message associated with the result code.
  *            inferCause: If true, attempts to determine if the cause of the
  *                        download is a network failure or a local file failure,
  *                        based on a set of known values of the result code.
  *                        This is useful when the error is received by a
  *                        component that handles both aspects of the download.
+ *            localizedReason: If available, is a localized reason for the error
+ *                             that can be directly displayed in the UI.
  *          }
  *        The properties object may also contain any of the DownloadError's
  *        because properties, which will be set accordingly in the error object.
@@ -1839,12 +1898,14 @@ export var DownloadError = function (aProperties) {
   // Set the error name used by the Error object prototype first.
   this.name = "DownloadError";
   this.result = aProperties.result || Cr.NS_ERROR_FAILURE;
+  this.localizedReason = aProperties.localizedReason;
   if (aProperties.message) {
     this.message = aProperties.message;
   } else if (
     aProperties.becauseBlocked ||
     aProperties.becauseBlockedByParentalControls ||
-    aProperties.becauseBlockedByReputationCheck
+    aProperties.becauseBlockedByReputationCheck ||
+    aProperties.becauseBlockedByContentAnalysis
   ) {
     this.message = "Download blocked.";
   } else {
@@ -1872,6 +1933,13 @@ export var DownloadError = function (aProperties) {
     this.becauseBlocked = true;
     this.becauseBlockedByReputationCheck = true;
     this.reputationCheckVerdict = aProperties.reputationCheckVerdict || "";
+  } else if (aProperties.becauseBlockedByContentAnalysis) {
+    this.becauseBlocked = true;
+    this.becauseBlockedByContentAnalysis = true;
+    this.contentAnalysisCancelError = aProperties.contentAnalysisCancelError;
+    this.contentAnalysisWarnRequestToken =
+      aProperties.contentAnalysisWarnRequestToken;
+    this.reputationCheckVerdict = aProperties.reputationCheckVerdict;
   } else if (aProperties.becauseBlocked) {
     this.becauseBlocked = true;
   }
@@ -1930,6 +1998,17 @@ DownloadError.prototype = {
   becauseBlockedByReputationCheck: false,
 
   /**
+   * Indicates the download was blocked by a local content analysis tool.
+   */
+  becauseBlockedByContentAnalysis: false,
+
+  /**
+   * The cancelError returned by the content analysis tool, which corresponds
+   * to the nsIContentAnalysisResponse.CancelError enum. May be undefined.
+   */
+  contentAnalysisCancelError: undefined,
+
+  /**
    * If becauseBlockedByReputationCheck is true, indicates the detailed reason
    * why the download was blocked, according to the "BLOCK_VERDICT_" constants.
    *
@@ -1953,6 +2032,7 @@ DownloadError.prototype = {
   toSerializable() {
     let serializable = {
       result: this.result,
+      localizedReason: this.localizedReason,
       message: this.message,
       becauseSourceFailed: this.becauseSourceFailed,
       becauseTargetFailed: this.becauseTargetFailed,
@@ -1989,7 +2069,9 @@ DownloadError.fromSerializable = function (aSerializable) {
       property != "becauseBlocked" &&
       property != "becauseBlockedByParentalControls" &&
       property != "becauseBlockedByReputationCheck" &&
-      property != "reputationCheckVerdict"
+      property != "becauseBlockedByContentAnalysis" &&
+      property != "reputationCheckVerdict" &&
+      property != "contentAnalysisCancelError"
   );
 
   return e;
@@ -2031,7 +2113,7 @@ DownloadSaver.prototype = {
    * @resolves When the download has finished successfully.
    * @rejects JavaScript exception if the download failed.
    */
-  async execute(aSetProgressBytesFn, aSetPropertiesFn) {
+  async execute() {
     throw new Error("Not implemented.");
   },
 
@@ -2056,7 +2138,7 @@ DownloadSaver.prototype = {
    * @resolves When the operation has finished successfully.
    * @rejects Never.
    */
-  async removeData(canRemoveFinalTarget) {},
+  async removeData() {},
 
   /**
    * This can be called by the saver implementation when the download is already
@@ -2209,7 +2291,7 @@ DownloadCopySaver.prototype = {
       throw error;
     }
 
-    let deferSaveComplete = lazy.PromiseUtils.defer();
+    let deferSaveComplete = Promise.withResolvers();
 
     if (this._canceled) {
       // Don't create the BackgroundFileSaver object if we have been
@@ -2562,24 +2644,114 @@ DownloadCopySaver.prototype = {
    * @rejects DownloadError if the download should be blocked.
    */
   async _checkReputationAndMove(aSetPropertiesFn) {
+    const REPUTATION_CHECK = 0;
+    const CONTENT_ANALYSIS_CHECK = 1;
+    /**
+     * Maps nsIApplicationReputationService verdicts with the DownloadError ones.
+     */
+    const kVerdictMap = {
+      [Ci.nsIApplicationReputationService.VERDICT_DANGEROUS]:
+        DownloadError.BLOCK_VERDICT_MALWARE,
+      [Ci.nsIApplicationReputationService.VERDICT_UNCOMMON]:
+        DownloadError.BLOCK_VERDICT_UNCOMMON,
+      [Ci.nsIApplicationReputationService.VERDICT_POTENTIALLY_UNWANTED]:
+        DownloadError.BLOCK_VERDICT_POTENTIALLY_UNWANTED,
+      [Ci.nsIApplicationReputationService.VERDICT_DANGEROUS_HOST]:
+        DownloadError.BLOCK_VERDICT_MALWARE,
+    };
+
+    let checkContentAnalysis = download => {
+      // Start an asynchronous content analysis check.
+      return lazy.DownloadIntegration.shouldBlockForContentAnalysis(
+        download
+      ).then(result => {
+        result.check = CONTENT_ANALYSIS_CHECK;
+        return result;
+      });
+    };
+
+    let checkReputation = download => {
+      // Start an asynchronous reputation check.
+      return lazy.DownloadIntegration.shouldBlockForReputationCheck(
+        download
+      ).then(result => {
+        result.check = REPUTATION_CHECK;
+        return result;
+      });
+    };
+
+    let hasMostRestrictiveResult = ([
+      reputationResult,
+      contentAnalysisResult,
+    ]) => {
+      // Verdicts are sorted from least-to-most restrictive.  However, a result that
+      // shouldBlock is always more restrictive than one that does not.  Since
+      // reputation allows shouldBlock to be overridden by prefs but content
+      // analysis does not, we need to be careful of that.
+      if (reputationResult.shouldBlock && !contentAnalysisResult.shouldBlock) {
+        return reputationResult;
+      }
+      if (contentAnalysisResult.shouldBlock) {
+        return contentAnalysisResult;
+      }
+      // Verdicts are in a pre-defined order (see nsIApplicationReputationService),
+      // so find the most restrictive one.
+      const verdictToRestrictiveness = {
+        [Ci.nsIApplicationReputationService.VERDICT_SAFE]: 0,
+        [Ci.nsIApplicationReputationService.VERDICT_POTENTIALLY_UNWANTED]: 1,
+        [Ci.nsIApplicationReputationService.VERDICT_UNCOMMON]: 2,
+        [Ci.nsIApplicationReputationService.VERDICT_DANGEROUS_HOST]: 3,
+        [Ci.nsIApplicationReputationService.VERDICT_DANGEROUS]: 4,
+      };
+      return verdictToRestrictiveness[reputationResult.verdict] >
+        verdictToRestrictiveness[contentAnalysisResult.verdict]
+        ? reputationResult
+        : contentAnalysisResult;
+    };
+
     let download = this.download;
     let targetPath = this.download.target.path;
     let partFilePath = this.download.target.partFilePath;
 
-    let { shouldBlock, verdict } =
-      await lazy.DownloadIntegration.shouldBlockForReputationCheck(download);
-    if (shouldBlock) {
-      Services.telemetry
-        .getKeyedHistogramById("DOWNLOADS_USER_ACTION_ON_BLOCKED_DOWNLOAD")
-        .add(verdict, 0);
+    let reputationPromise = checkReputation(download);
+    let caPromise = checkContentAnalysis(download);
+
+    let permissionResult = await Promise.all([
+      reputationPromise,
+      caPromise,
+    ]).then(hasMostRestrictiveResult);
+
+    let downloadErrorVerdict = kVerdictMap[permissionResult.verdict] || "";
+    permissionResult.verdict = downloadErrorVerdict;
+    if (permissionResult.shouldBlock) {
+      if (permissionResult.check === REPUTATION_CHECK) {
+        Glean.downloads.userActionOnBlockedDownload[
+          downloadErrorVerdict
+        ].accumulateSingleSample(0);
+      }
 
       let newProperties = { progress: 100, hasPartialData: false };
 
       // We will remove the potentially dangerous file if instructed by
       // DownloadIntegration. We will always remove the file when the
       // download did not use a partial file path, meaning it
-      // currently has its final filename.
-      if (!lazy.DownloadIntegration.shouldKeepBlockedData() || !partFilePath) {
+      // currently has its final filename, or if it was blocked by
+      // content analysis.
+      let neverRemoveData = false;
+      let alwaysRemoveData = false;
+      if (permissionResult.check === CONTENT_ANALYSIS_CHECK) {
+        if (downloadErrorVerdict === DownloadError.BLOCK_VERDICT_MALWARE) {
+          alwaysRemoveData = true;
+        } else {
+          neverRemoveData = true;
+        }
+      }
+      let removeData =
+        !neverRemoveData &&
+        (alwaysRemoveData ||
+          !lazy.DownloadIntegration.shouldKeepBlockedData() ||
+          !partFilePath);
+      if (removeData) {
         await this.removeData(!partFilePath);
       } else {
         newProperties.hasBlockedData = true;
@@ -2587,10 +2759,21 @@ DownloadCopySaver.prototype = {
 
       aSetPropertiesFn(newProperties);
 
-      throw new DownloadError({
-        becauseBlockedByReputationCheck: true,
-        reputationCheckVerdict: verdict,
-      });
+      if (permissionResult.check == REPUTATION_CHECK) {
+        throw new DownloadError({
+          becauseBlockedByReputationCheck: true,
+          reputationCheckVerdict: downloadErrorVerdict,
+        });
+      } else {
+        throw new DownloadError({
+          becauseBlockedByContentAnalysis: true,
+          reputationCheckVerdict: downloadErrorVerdict,
+          contentAnalysisCancelError:
+            permissionResult.contentAnalysisCancelError,
+          contentAnalysisWarnRequestToken:
+            permissionResult.contentAnalysisWarnRequestToken,
+        });
+      }
     }
 
     if (partFilePath) {
@@ -2725,8 +2908,8 @@ DownloadCopySaver.fromSerializable = function (aSerializable) {
  * For more background on the process, see the DownloadLegacyTransfer object.
  */
 export var DownloadLegacySaver = function () {
-  this.deferExecuted = lazy.PromiseUtils.defer();
-  this.deferCanceled = lazy.PromiseUtils.defer();
+  this.deferExecuted = Promise.withResolvers();
+  this.deferCanceled = Promise.withResolvers();
 };
 
 DownloadLegacySaver.prototype = {
@@ -2859,16 +3042,22 @@ DownloadLegacySaver.prototype = {
   /**
    * Called by the nsITransfer implementation when the request has finished.
    *
-   * @param aStatus
+   * @param {nsresult} status
    *        Status code received by the nsITransfer implementation.
+   * @param {string} [localizedReason]
+   *        Optional localized error message associated with a failure
    */
-  onTransferFinished: function DLS_onTransferFinished(aStatus) {
-    if (Components.isSuccessCode(aStatus)) {
+  onTransferFinished(status, localizedReason) {
+    if (Components.isSuccessCode(status)) {
       this.deferExecuted.resolve();
     } else {
       // Infer the origin of the error from the failure code, because more
       // specific data is not available through the nsITransfer implementation.
-      let properties = { result: aStatus, inferCause: true };
+      let properties = {
+        result: status,
+        inferCause: true,
+        localizedReason,
+      };
       this.deferExecuted.reject(new DownloadError(properties));
     }
   },

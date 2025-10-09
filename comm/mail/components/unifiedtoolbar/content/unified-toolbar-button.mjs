@@ -2,31 +2,34 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-//TODO keyboard handling, keyboard + commands
-
 /* import-globals-from ../../../base/content/globalOverlay.js */
 
 /**
  * Toolbar button implementation for the unified toolbar.
- * Template ID: unifiedToolbarButtonTemplate
- * Attributes:
- * - command: ID string of the command to execute when the button is pressed.
- * - observes: ID of command to observe for disabled state. Defaults to value of
- *   command attribute.
- * - popup: ID of the popup to open when the button is pressed. The popup is
- *   anchored to the button. Overrides any other click handling.
- * - disabled: When set the button is disabled.
- * - title: Tooltip to show on the button.
- * - label: Label text of the button. Observed for changes.
- * - label-id: A fluent ID for the label instead of the label attribute.
- *   Observed for changes.
- * - badge: When set, the value of the attribute is shown as badge.
- * - aria-pressed: set to "false" to make the button behave like a toggle.
- * Events:
- * - buttondisabled: Fired when the button gets disabled while it is keyboard
- *   navigable.
- * - buttonenabled: Fired when the button gets enabled again but isn't marked to
- *   be keyboard navigable.
+ * Template ID: #unifiedToolbarButtonTemplate
+ *
+ * @tagname unified-toolbar-button
+ * @class UnifiedToolbarButton
+ * @attribute {string} command - ID string of the command to execute when the
+ *   button is pressed.
+ * @attribute {string} observes - ID of command to observe for disabled state.
+ *   Defaults to value of the command attribute.
+ * @attribute {string} popup - ID of the popup to open when the button is
+ *   pressed. The popup is anchored to the button. Overrides any other click
+ *   handling.
+ * @attribute {boolean} disabled - When set the button is disabled.
+ * @attribute {string} title - Tooltip to show on the button.
+ * @attribute {string} label - Label text of the button. Observed for changes.
+ * @attribute {string} label-id - A fluent ID for the label instead of the label
+ *   attribute. Observed for changes.
+ * @attribute {string} badge - When set, the value of the attribute is shown as
+ *   badge.
+ * @attribute {string} aria-pressed - Set to "false" to make the button behave
+ *   like a toggle.
+ * @fires CustomEvent#buttondisabled - Fired on the parent element when the
+ *   button gets disabled while it is keyboard navigable.
+ * @fires CustomEvent#buttonenabled - Fired when the button gets enabled again
+ *   but isn't marked to be keyboard navigable.
  */
 export class UnifiedToolbarButton extends HTMLButtonElement {
   static get observedAttributes() {
@@ -72,21 +75,27 @@ export class UnifiedToolbarButton extends HTMLButtonElement {
           observedAttributes.push("checked");
 
           // Update the pressed state from the command
-          this.setAttribute(
-            "aria-pressed",
-            command.getAttribute("checked") ?? "false"
-          );
+          this.ariaPressed = command.getAttribute("checked") || "false";
         }
         this.#observer.observe(command, {
           attributes: true,
           attributeFilter: observedAttributes,
         });
+      } else {
+        window.addEventListener("commandstate", this);
       }
       // Update the disabled state to match the current state of the command.
       try {
-        this.disabled = !getEnabledControllerForCommand(this.observedCommand);
+        this.disabled =
+          !getEnabledControllerForCommand(this.observedCommand) &&
+          (!command?.hasAttribute("oncommand") ||
+            command.getAttribute("disabled") === "true");
       } catch {
-        this.disabled = true;
+        if (command) {
+          this.disabled = command.getAttribute("disabled") === "true";
+        } else {
+          this.disabled = true;
+        }
       }
     }
     if (this.hasConnected) {
@@ -108,6 +117,8 @@ export class UnifiedToolbarButton extends HTMLButtonElement {
   disconnectedCallback() {
     if (this.#observer) {
       this.#observer.disconnect();
+    } else if (this.observedCommand) {
+      window.removeEventListener("commandstate", this);
     }
   }
 
@@ -123,9 +134,21 @@ export class UnifiedToolbarButton extends HTMLButtonElement {
         }
         if (this.disabled && this.tabIndex !== -1) {
           this.tabIndex = -1;
-          this.dispatchEvent(new CustomEvent("buttondisabled"));
+          // We need to emit the event on the parent element, since it doesn't
+          // get emitted on a disabled button.
+          this.parentElement?.dispatchEvent(new CustomEvent("buttondisabled"));
         } else if (!this.disabled && this.tabIndex === -1) {
           this.dispatchEvent(new CustomEvent("buttonenabled"));
+        }
+        break;
+    }
+  }
+
+  handleEvent(event) {
+    switch (event.type) {
+      case "commandstate":
+        if (event.detail.command === this.observedCommand) {
+          this.disabled = !event.detail.enabled;
         }
         break;
     }
@@ -156,7 +179,7 @@ export class UnifiedToolbarButton extends HTMLButtonElement {
         position: "after_start",
         triggerEvent: event,
       });
-      this.setAttribute("aria-pressed", "true");
+      this.ariaPressed = "true";
       const hideListener = () => {
         if (popup.state === "open") {
           return;
@@ -168,8 +191,8 @@ export class UnifiedToolbarButton extends HTMLButtonElement {
       return;
     }
     if (this.hasAttribute("aria-pressed")) {
-      const isPressed = this.getAttribute("aria-pressed") === "true";
-      this.setAttribute("aria-pressed", (!isPressed).toString());
+      const isPressed = this.ariaPressed === "true";
+      this.ariaPressed = (!isPressed).toString();
     }
     if (this.hasAttribute("command")) {
       const command = this.getAttribute("command");
@@ -204,10 +227,7 @@ export class UnifiedToolbarButton extends HTMLButtonElement {
       if (mutation.attributeName === "disabled") {
         this.disabled = mutation.target.getAttribute("disabled") === "true";
       } else if (mutation.attributeName === "checked") {
-        this.setAttribute(
-          "aria-pressed",
-          mutation.target.getAttribute("checked")
-        );
+        this.ariaPressed = mutation.target.getAttribute("checked") || "false";
       }
     }
   };

@@ -4,6 +4,7 @@
 
 import { MigrationWizardConstants } from "chrome://browser/content/migration/migration-wizard-constants.mjs";
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
+import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
 const lazy = {};
 XPCOMUtils.defineLazyPreferenceGetter(
@@ -22,6 +23,53 @@ export class MigrationWizardChild extends JSWindowActorChild {
   #wizardEl = null;
 
   /**
+   * Retrieves the list of browsers and profiles from the parent process, and then
+   * puts the migration wizard onto the selection page showing the list that they
+   * can import from.
+   *
+   * @param {boolean} [allowOnlyFileMigrators=null]
+   *   Set to true if showing the selection page is allowed if no browser migrators
+   *   are found. If not true, and no browser migrators are found, then the wizard
+   *   will be sent to the NO_BROWSERS_FOUND page.
+   * @param {string} [migratorKey=null]
+   *   If set, this will automatically select the first associated migrator with that
+   *   migratorKey in the selector. If not set, the first item in the retrieved list
+   *   of migrators will be selected.
+   * @param {string} [fileImportErrorMessage=null]
+   *   If set, this will display an error message below the browser / profile selector
+   *   indicating that something had previously gone wrong with an import of type
+   *   MIGRATOR_TYPES.FILE.
+   */
+  async #populateMigrators(
+    allowOnlyFileMigrators,
+    migratorKey,
+    fileImportErrorMessage
+  ) {
+    let migrators = await this.sendQuery("GetAvailableMigrators");
+    let hasBrowserMigrators = migrators.some(migrator => {
+      return migrator.type == MigrationWizardConstants.MIGRATOR_TYPES.BROWSER;
+    });
+    let hasFileMigrators = migrators.some(migrator => {
+      return migrator.type == MigrationWizardConstants.MIGRATOR_TYPES.FILE;
+    });
+    if (!hasBrowserMigrators && !allowOnlyFileMigrators) {
+      this.setComponentState({
+        page: MigrationWizardConstants.PAGES.NO_BROWSERS_FOUND,
+        hasFileMigrators,
+      });
+      this.#sendTelemetryEvent("noBrowsersFound");
+    } else {
+      this.setComponentState({
+        migrators,
+        page: MigrationWizardConstants.PAGES.SELECTION,
+        showImportAll: lazy.SHOW_IMPORT_ALL_PREF,
+        migratorKey,
+        fileImportErrorMessage,
+      });
+    }
+  }
+
+  /**
    * General event handler function for events dispatched from the
    * <migration-wizard> component.
    *
@@ -30,43 +78,12 @@ export class MigrationWizardChild extends JSWindowActorChild {
    * @returns {Promise}
    */
   async handleEvent(event) {
+    this.#wizardEl = event.target;
+
     switch (event.type) {
       case "MigrationWizard:RequestState": {
         this.#sendTelemetryEvent("opened");
-
-        this.#wizardEl = event.target;
-        this.setComponentState({
-          page: MigrationWizardConstants.PAGES.LOADING,
-        });
-
-        let migrators = await this.sendQuery("GetAvailableMigrators");
-        let hasBrowserMigrators = migrators.some(migrator => {
-          return (
-            migrator.type == MigrationWizardConstants.MIGRATOR_TYPES.BROWSER
-          );
-        });
-        let hasFileMigrators = migrators.some(migrator => {
-          return migrator.type == MigrationWizardConstants.MIGRATOR_TYPES.FILE;
-        });
-        if (!hasBrowserMigrators && !event.detail?.allowOnlyFileMigrators) {
-          this.setComponentState({
-            page: MigrationWizardConstants.PAGES.NO_BROWSERS_FOUND,
-            hasFileMigrators,
-          });
-          this.#sendTelemetryEvent("no_browsers_found");
-        } else {
-          this.setComponentState({
-            migrators,
-            page: MigrationWizardConstants.PAGES.SELECTION,
-            showImportAll: lazy.SHOW_IMPORT_ALL_PREF,
-          });
-        }
-
-        this.#wizardEl.dispatchEvent(
-          new this.contentWindow.CustomEvent("MigrationWizard:Ready", {
-            bubbles: true,
-          })
-        );
+        await this.#requestState(event.detail?.allowOnlyFileMigrators);
         break;
       }
 
@@ -80,7 +97,7 @@ export class MigrationWizardChild extends JSWindowActorChild {
 
         if (!hasPermissions) {
           if (event.detail.key == "safari") {
-            this.#sendTelemetryEvent("safari_perms");
+            this.#sendTelemetryEvent("safariPerms");
             this.setComponentState({
               page: MigrationWizardConstants.PAGES.SAFARI_PERMISSION,
             });
@@ -106,10 +123,10 @@ export class MigrationWizardChild extends JSWindowActorChild {
         break;
       }
 
-      case "MigrationWizard:SelectSafariPasswordFile": {
-        let path = await this.sendQuery("SelectSafariPasswordFile");
+      case "MigrationWizard:SelectManualPasswordFile": {
+        let path = await this.sendQuery("SelectManualPasswordFile");
         if (path) {
-          event.detail.safariPasswordFilePath = path;
+          event.detail.manualPasswordFilePath = path;
 
           let passwordResourceIndex = event.detail.resourceTypes.indexOf(
             MigrationWizardConstants.DISPLAYED_RESOURCE_TYPES.PASSWORDS
@@ -121,7 +138,54 @@ export class MigrationWizardChild extends JSWindowActorChild {
         }
         break;
       }
+
+      case "MigrationWizard:OpenAboutAddons": {
+        this.sendAsyncMessage("OpenAboutAddons");
+        break;
+      }
+
+      case "MigrationWizard:PermissionsNeeded": {
+        // In theory, the migrator permissions might be requested on any
+        // platform - but in practice, this only happens on Linux, so that's
+        // why the event is named linux_perms.
+        this.#sendTelemetryEvent("linuxPerms", {
+          migrator_key: event.detail.key,
+        });
+        break;
+      }
+
+      case "MigrationWizard:GetPermissions": {
+        let success = await this.sendQuery("GetPermissions", {
+          key: event.detail.key,
+        });
+        if (success) {
+          await this.#requestState(true /* allowOnlyFileMigrators */);
+        }
+        break;
+      }
+
+      case "MigrationWizard:OpenURL": {
+        this.sendAsyncMessage("OpenURL", {
+          url: event.detail.url,
+          where: event.detail.where,
+        });
+        break;
+      }
     }
+  }
+
+  async #requestState(allowOnlyFileMigrators) {
+    this.setComponentState({
+      page: MigrationWizardConstants.PAGES.LOADING,
+    });
+
+    await this.#populateMigrators(allowOnlyFileMigrators);
+
+    this.#wizardEl.dispatchEvent(
+      new this.contentWindow.CustomEvent("MigrationWizard:Ready", {
+        bubbles: true,
+      })
+    );
   }
 
   /**
@@ -154,6 +218,7 @@ export class MigrationWizardChild extends JSWindowActorChild {
       passwords: "0",
       bookmarks: "0",
       payment_methods: "0",
+      extensions: "0",
       other: 0,
     };
 
@@ -179,6 +244,11 @@ export class MigrationWizardChild extends JSWindowActorChild {
           break;
         }
 
+        case MigrationWizardConstants.DISPLAYED_RESOURCE_TYPES.EXTENSIONS: {
+          extraArgs.extensions = "1";
+          break;
+        }
+
         case MigrationWizardConstants.DISPLAYED_RESOURCE_TYPES
           .PAYMENT_METHODS: {
           extraArgs.payment_methods = "1";
@@ -191,9 +261,6 @@ export class MigrationWizardChild extends JSWindowActorChild {
       }
     }
 
-    // Event Telemetry extra arguments expect strings for every value, so
-    // now we coerce our "other" count into a string.
-    extraArgs.other = String(extraArgs.other);
     return extraArgs;
   }
 
@@ -215,12 +282,12 @@ export class MigrationWizardChild extends JSWindowActorChild {
    * @returns {object}
    */
   #recordBeginMigrationEvent(migrationDetails) {
-    this.#sendTelemetryEvent("browser_selected", {
+    this.#sendTelemetryEvent("browserSelected", {
       migrator_key: migrationDetails.key,
     });
 
     if (migrationDetails.profile) {
-      this.#sendTelemetryEvent("profile_selected", {
+      this.#sendTelemetryEvent("profileSelected", {
         migrator_key: migrationDetails.key,
       });
     }
@@ -228,10 +295,10 @@ export class MigrationWizardChild extends JSWindowActorChild {
     let extraArgs = this.#constructExtraArgs(migrationDetails);
 
     extraArgs.configured = String(Number(migrationDetails.expandedDetails));
-    this.#sendTelemetryEvent("resources_selected", extraArgs);
+    this.#sendTelemetryEvent("resourcesSelected", extraArgs);
     delete extraArgs.configured;
 
-    this.#sendTelemetryEvent("migration_started", extraArgs);
+    this.#sendTelemetryEvent("migrationStarted", extraArgs);
     return extraArgs;
   }
 
@@ -250,22 +317,37 @@ export class MigrationWizardChild extends JSWindowActorChild {
    *   message.
    */
   async beginMigration(migrationDetails, extraArgs) {
+    // We redirect to manual password import for Safari and Chrome on Windows.
     if (
-      migrationDetails.key == "safari" &&
       migrationDetails.resourceTypes.includes(
         MigrationWizardConstants.DISPLAYED_RESOURCE_TYPES.PASSWORDS
       ) &&
-      !migrationDetails.safariPasswordFilePath
+      !migrationDetails.manualPasswordFilePath
     ) {
-      this.#sendTelemetryEvent("safari_password_file");
-      this.setComponentState({
-        page: MigrationWizardConstants.PAGES.SAFARI_PASSWORD_PERMISSION,
-      });
-      return;
+      if (migrationDetails.key == "safari") {
+        this.#sendTelemetryEvent("safariPasswordFile");
+        this.setComponentState({
+          page: MigrationWizardConstants.PAGES.SAFARI_PASSWORD_PERMISSION,
+        });
+        return;
+      } else if (
+        migrationDetails.key == "chrome" &&
+        AppConstants.platform == "win"
+      ) {
+        this.#sendTelemetryEvent("chromePasswordFile");
+        this.setComponentState({
+          page: MigrationWizardConstants.PAGES
+            .CHROME_WINDOWS_PASSWORD_PERMISSION,
+        });
+        return;
+      }
     }
 
-    await this.sendQuery("Migrate", migrationDetails);
-    this.#sendTelemetryEvent("migration_finished", extraArgs);
+    extraArgs = await this.sendQuery("Migrate", {
+      migrationDetails,
+      extraArgs,
+    });
+    this.#sendTelemetryEvent("migrationFinished", extraArgs);
 
     this.#wizardEl.dispatchEvent(
       new this.contentWindow.CustomEvent("MigrationWizard:DoneMigration", {
@@ -297,6 +379,14 @@ export class MigrationWizardChild extends JSWindowActorChild {
           progress: message.data.progress,
           title: message.data.title,
         });
+        break;
+      }
+      case "FileImportProgressError": {
+        this.#populateMigrators(
+          true,
+          message.data.migratorKey,
+          message.data.fileImportErrorMessage
+        );
         break;
       }
     }

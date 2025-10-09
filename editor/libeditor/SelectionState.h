@@ -10,6 +10,7 @@
 #include "mozilla/EditorForwards.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/OwningNonNull.h"
+#include "mozilla/dom/Document.h"
 #include "nsCOMPtr.h"
 #include "nsDirection.h"
 #include "nsINode.h"
@@ -76,7 +77,7 @@ struct RangeItem final {
     return EditorDOMPointType(mEndContainer, mEndOffset);
   }
 
-  NS_INLINE_DECL_MAIN_THREAD_ONLY_CYCLE_COLLECTING_NATIVE_REFCOUNTING(RangeItem)
+  NS_INLINE_DECL_CYCLE_COLLECTING_NATIVE_REFCOUNTING(RangeItem)
   NS_DECL_CYCLE_COLLECTION_NATIVE_CLASS(RangeItem)
 
   nsCOMPtr<nsINode> mStartContainer;
@@ -96,7 +97,7 @@ struct RangeItem final {
 class SelectionState final {
  public:
   SelectionState() = default;
-  explicit SelectionState(const AutoRangeArray& aRanges);
+  explicit SelectionState(const AutoClonedSelectionRangeArray& aRanges);
 
   /**
    * Same as the API as dom::Selection
@@ -129,7 +130,7 @@ class SelectionState final {
   /**
    * Setting aRanges to have all ranges stored by this instance.
    */
-  void ApplyTo(AutoRangeArray& aRanges);
+  void ApplyTo(AutoClonedSelectionRangeArray& aRanges);
 
   /**
    * HasOnlyCollapsedRange() returns true only when there is a positioned range
@@ -219,12 +220,9 @@ class MOZ_STACK_CLASS RangeUpdater final {
    *                            it.
    * @param aNewContent         The new content node which was inserted into
    *                            the DOM tree.
-   * @param aSplitNodeDirection Whether aNewNode was inserted before or after
-   *                            aOriginalContent.
    */
   nsresult SelAdjSplitNode(nsIContent& aOriginalContent, uint32_t aSplitOffset,
-                           nsIContent& aNewContent,
-                           SplitNodeDirection aSplitNodeDirection);
+                           nsIContent& aNewContent);
 
   /**
    * SelAdjJoinNodes() is called immediately after joining aRemovedContent and
@@ -241,8 +239,7 @@ class MOZ_STACK_CLASS RangeUpdater final {
    */
   nsresult SelAdjJoinNodes(const EditorRawDOMPoint& aStartOfRightContent,
                            const nsIContent& aRemovedContent,
-                           const EditorDOMPoint& aOldPointAtRightContent,
-                           JoinNodesDirection aJoinNodesDirection);
+                           const EditorDOMPoint& aOldPointAtRightContent);
   void SelAdjInsertText(const dom::Text& aTextNode, uint32_t aOffset,
                         uint32_t aInsertedLength);
   void SelAdjDeleteText(const dom::Text& aTextNode, uint32_t aOffset,
@@ -295,16 +292,21 @@ class MOZ_STACK_CLASS RangeUpdater final {
 class MOZ_STACK_CLASS AutoTrackDOMPoint final {
  public:
   AutoTrackDOMPoint() = delete;
+
+  AutoTrackDOMPoint(RangeUpdater& aRangeUpdater, CaretPoint* aCaretPoint);
+
   AutoTrackDOMPoint(RangeUpdater& aRangeUpdater, nsCOMPtr<nsINode>* aNode,
                     uint32_t* aOffset)
       : mRangeUpdater(aRangeUpdater),
         mNode(aNode),
         mOffset(aOffset),
-        mRangeItem(do_AddRef(new RangeItem())) {
+        mRangeItem(do_AddRef(new RangeItem())),
+        mWasConnected(aNode && (*aNode)->IsInComposedDoc()) {
     mRangeItem->mStartContainer = *mNode;
     mRangeItem->mEndContainer = *mNode;
     mRangeItem->mStartOffset = *mOffset;
     mRangeItem->mEndOffset = *mOffset;
+    mDocument = (*mNode)->OwnerDoc();
     mRangeUpdater.RegisterRangeItem(mRangeItem);
   }
 
@@ -313,7 +315,8 @@ class MOZ_STACK_CLASS AutoTrackDOMPoint final {
         mNode(nullptr),
         mOffset(nullptr),
         mPoint(Some(aPoint->IsSet() ? aPoint : nullptr)),
-        mRangeItem(do_AddRef(new RangeItem())) {
+        mRangeItem(do_AddRef(new RangeItem())),
+        mWasConnected(aPoint && aPoint->IsInComposedDoc()) {
     if (!aPoint->IsSet()) {
       mIsTracking = false;
       return;  // Nothing should be tracked.
@@ -322,6 +325,7 @@ class MOZ_STACK_CLASS AutoTrackDOMPoint final {
     mRangeItem->mEndContainer = aPoint->GetContainer();
     mRangeItem->mStartOffset = aPoint->Offset();
     mRangeItem->mEndOffset = aPoint->Offset();
+    mDocument = aPoint->GetContainer()->OwnerDoc();
     mRangeUpdater.RegisterRangeItem(mRangeItem);
   }
 
@@ -341,6 +345,15 @@ class MOZ_STACK_CLASS AutoTrackDOMPoint final {
         mPoint.ref()->Clear();
         return;
       }
+      // If the node was removed from the original document, clear the instance
+      // since the user should not keep handling the adopted or orphan node
+      // anymore.
+      if (NS_WARN_IF(mWasConnected &&
+                     !mRangeItem->mStartContainer->IsInComposedDoc()) ||
+          NS_WARN_IF(mRangeItem->mStartContainer->OwnerDoc() != mDocument)) {
+        mPoint.ref()->Clear();
+        return;
+      }
       if (NS_WARN_IF(mRangeItem->mStartContainer->Length() <
                      mRangeItem->mStartOffset)) {
         mPoint.ref()->SetToEndOf(mRangeItem->mStartContainer);
@@ -352,6 +365,17 @@ class MOZ_STACK_CLASS AutoTrackDOMPoint final {
     mRangeUpdater.DropRangeItem(mRangeItem);
     *mNode = mRangeItem->mStartContainer;
     *mOffset = mRangeItem->mStartOffset;
+    if (!(*mNode)) {
+      return;
+    }
+    // If the node was removed from the original document, clear the instances
+    // since the user should not keep handling the adopted or orphan node
+    // anymore.
+    if (NS_WARN_IF(mWasConnected && !(*mNode)->IsInComposedDoc()) ||
+        NS_WARN_IF((*mNode)->OwnerDoc() != mDocument)) {
+      *mNode = nullptr;
+      *mOffset = 0;
+    }
   }
 
   void StopTracking() { mIsTracking = false; }
@@ -363,7 +387,9 @@ class MOZ_STACK_CLASS AutoTrackDOMPoint final {
   uint32_t* mOffset;
   Maybe<EditorDOMPoint*> mPoint;
   OwningNonNull<RangeItem> mRangeItem;
+  RefPtr<dom::Document> mDocument;
   bool mIsTracking = true;
+  bool mWasConnected;
 };
 
 class MOZ_STACK_CLASS AutoTrackDOMRange final {
@@ -382,7 +408,7 @@ class MOZ_STACK_CLASS AutoTrackDOMRange final {
     mEndPointTracker.emplace(aRangeUpdater,
                              const_cast<EditorDOMPoint*>(&aRange->EndRef()));
   }
-  AutoTrackDOMRange(RangeUpdater& aRangeUpdater, RefPtr<nsRange>* aRange)
+  AutoTrackDOMRange(RangeUpdater& aRangeUpdater, const RefPtr<nsRange>* aRange)
       : mStartPoint((*aRange)->StartRef()),
         mEndPoint((*aRange)->EndRef()),
         mRangeRefPtr(aRange),
@@ -390,7 +416,8 @@ class MOZ_STACK_CLASS AutoTrackDOMRange final {
     mStartPointTracker.emplace(aRangeUpdater, &mStartPoint);
     mEndPointTracker.emplace(aRangeUpdater, &mEndPoint);
   }
-  AutoTrackDOMRange(RangeUpdater& aRangeUpdater, OwningNonNull<nsRange>* aRange)
+  AutoTrackDOMRange(RangeUpdater& aRangeUpdater,
+                    const OwningNonNull<nsRange>* aRange)
       : mStartPoint((*aRange)->StartRef()),
         mEndPoint((*aRange)->EndRef()),
         mRangeRefPtr(nullptr),
@@ -414,12 +441,20 @@ class MOZ_STACK_CLASS AutoTrackDOMRange final {
     }
     // Otherwise, update the DOM ranges by ourselves.
     if (mRangeRefPtr) {
+      if (!mStartPoint.IsSet() || !mEndPoint.IsSet()) {
+        (*mRangeRefPtr)->Reset();
+        return;
+      }
       (*mRangeRefPtr)
           ->SetStartAndEnd(mStartPoint.ToRawRangeBoundary(),
                            mEndPoint.ToRawRangeBoundary());
       return;
     }
     if (mRangeOwningNonNull) {
+      if (!mStartPoint.IsSet() || !mEndPoint.IsSet()) {
+        (*mRangeOwningNonNull)->Reset();
+        return;
+      }
       (*mRangeOwningNonNull)
           ->SetStartAndEnd(mStartPoint.ToRawRangeBoundary(),
                            mEndPoint.ToRawRangeBoundary());
@@ -465,8 +500,65 @@ class MOZ_STACK_CLASS AutoTrackDOMRange final {
   Maybe<AutoTrackDOMPoint> mEndPointTracker;
   EditorDOMPoint mStartPoint;
   EditorDOMPoint mEndPoint;
-  RefPtr<nsRange>* mRangeRefPtr;
-  OwningNonNull<nsRange>* mRangeOwningNonNull;
+  const RefPtr<nsRange>* mRangeRefPtr;
+  const OwningNonNull<nsRange>* mRangeOwningNonNull;
+};
+
+class MOZ_STACK_CLASS AutoTrackDOMMoveNodeResult final {
+ public:
+  AutoTrackDOMMoveNodeResult() = delete;
+  AutoTrackDOMMoveNodeResult(RangeUpdater& aRangeUpdater,
+                             MoveNodeResult* aMoveNodeResult);
+
+  void FlushAndStopTracking() {
+    mTrackCaretPoint.FlushAndStopTracking();
+    mTrackNextInsertionPoint.FlushAndStopTracking();
+    mTrackMovedContentRange.FlushAndStopTracking();
+  }
+  void StopTracking() {
+    mTrackCaretPoint.StopTracking();
+    mTrackNextInsertionPoint.StopTracking();
+    mTrackMovedContentRange.StopTracking();
+  }
+
+ private:
+  AutoTrackDOMPoint mTrackCaretPoint;
+  AutoTrackDOMPoint mTrackNextInsertionPoint;
+  AutoTrackDOMRange mTrackMovedContentRange;
+};
+
+class MOZ_STACK_CLASS AutoTrackDOMDeleteRangeResult final {
+ public:
+  AutoTrackDOMDeleteRangeResult() = delete;
+  AutoTrackDOMDeleteRangeResult(RangeUpdater& aRangeUpdater,
+                                DeleteRangeResult* aDeleteRangeResult);
+
+  void FlushAndStopTracking() {
+    mTrackCaretPoint.FlushAndStopTracking();
+    mTrackDeleteRange.FlushAndStopTracking();
+  }
+  void StopTracking() {
+    mTrackCaretPoint.StopTracking();
+    mTrackDeleteRange.StopTracking();
+  }
+
+ private:
+  AutoTrackDOMPoint mTrackCaretPoint;
+  AutoTrackDOMRange mTrackDeleteRange;
+};
+
+class MOZ_STACK_CLASS AutoTrackLineBreak final {
+ public:
+  AutoTrackLineBreak() = delete;
+  AutoTrackLineBreak(RangeUpdater& aRangeUpdater, EditorLineBreak* aLineBreak);
+
+  void FlushAndStopTracking();
+  void StopTracking() { mTracker.StopTracking(); }
+
+ private:
+  EditorLineBreak* mLineBreak;
+  EditorDOMPoint mPoint;
+  AutoTrackDOMPoint mTracker;
 };
 
 /**

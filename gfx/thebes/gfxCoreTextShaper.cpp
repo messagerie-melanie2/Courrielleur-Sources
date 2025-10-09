@@ -39,7 +39,7 @@ CFDictionaryRef gfxCoreTextShaper::CreateAttrDict(bool aRightToLeft) {
   CFTypeRef attrs[] = {kCTFontAttributeName, kCTWritingDirectionAttributeName};
   CFTypeRef values[] = {mCTFont[0], dirArray};
   CFDictionaryRef attrDict = ::CFDictionaryCreate(
-      kCFAllocatorDefault, attrs, values, ArrayLength(attrs),
+      kCFAllocatorDefault, attrs, values, std::size(attrs),
       &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
   ::CFRelease(dirArray);
   return attrDict;
@@ -95,7 +95,7 @@ bool gfxCoreTextShaper::ShapeText(DrawTarget* aDrawTarget,
   // among them.
   const gfxFontStyle* style = mFont->GetStyle();
   gfxFontEntry* entry = mFont->GetFontEntry();
-  auto handleFeatureTag = [](const uint32_t& aTag, uint32_t& aValue,
+  auto handleFeatureTag = [](uint32_t aTag, uint32_t aValue,
                              void* aUserArg) -> void {
     if (aTag == HB_TAG('s', 'm', 'c', 'p') && aValue) {
       *static_cast<bool*>(aUserArg) = true;
@@ -571,7 +571,7 @@ CTFontDescriptorRef gfxCoreTextShaper::CreateFontFeaturesDescriptor(
     CFTypeRef values[] = {type, selector};
     featureSettings[i] = ::CFDictionaryCreate(
         kCFAllocatorDefault, (const void**)keys, (const void**)values,
-        ArrayLength(keys), &kCFTypeDictionaryKeyCallBacks,
+        std::size(keys), &kCFTypeDictionaryKeyCallBacks,
         &kCFTypeDictionaryValueCallBacks);
 
     ::CFRelease(selector);
@@ -580,7 +580,7 @@ CTFontDescriptorRef gfxCoreTextShaper::CreateFontFeaturesDescriptor(
 
   CFArrayRef featuresArray =
       ::CFArrayCreate(kCFAllocatorDefault, (const void**)featureSettings,
-                      aCount,  // not ArrayLength(featureSettings), as we
+                      aCount,  // not std::size(featureSettings), as we
                                // may not have used all the allocated slots
                       &kCFTypeArrayCallBacks);
 
@@ -592,7 +592,7 @@ CTFontDescriptorRef gfxCoreTextShaper::CreateFontFeaturesDescriptor(
   const CFTypeRef attrValues[] = {featuresArray};
   CFDictionaryRef attributesDict = ::CFDictionaryCreate(
       kCFAllocatorDefault, (const void**)attrKeys, (const void**)attrValues,
-      ArrayLength(attrKeys), &kCFTypeDictionaryKeyCallBacks,
+      std::size(attrKeys), &kCFTypeDictionaryKeyCallBacks,
       &kCFTypeDictionaryValueCallBacks);
   ::CFRelease(featuresArray);
 

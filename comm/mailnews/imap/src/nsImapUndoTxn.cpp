@@ -7,17 +7,16 @@
 #include "nsIMsgHdr.h"
 #include "nsImapUndoTxn.h"
 #include "nsIMsgIncomingServer.h"
+#include "nsImapCore.h"
 #include "nsImapMailFolder.h"
 #include "nsIImapService.h"
 #include "nsIDBFolderInfo.h"
 #include "nsIMsgDatabase.h"
 #include "nsMsgUtils.h"
-#include "nsThreadUtils.h"
 #include "nsServiceManagerUtils.h"
-#include "nsComponentManagerUtils.h"
 
 nsImapMoveCopyMsgTxn::nsImapMoveCopyMsgTxn()
-    : m_idsAreUids(false), m_isMove(false), m_srcIsPop3(false) {}
+    : m_idsAreUids(false), m_isMove(false), m_srcIsLocal(false) {}
 
 nsresult nsImapMoveCopyMsgTxn::Init(nsIMsgFolder* srcFolder,
                                     nsTArray<nsMsgKey>* srcKeyArray,
@@ -48,11 +47,12 @@ nsresult nsImapMoveCopyMsgTxn::Init(nsIMsgFolder* srcFolder,
     if (NS_SUCCEEDED(rv)) {
       // ** jt -- only do this for mailbox protocol
       if (protocolType.LowerCaseEqualsLiteral("mailbox")) {
-        m_srcIsPop3 = true;
+        m_srcIsLocal = true;
         uint32_t msgSize;
         rv = srcHdr->GetMessageSize(&msgSize);
         if (NS_SUCCEEDED(rv)) m_srcSizeArray.AppendElement(msgSize);
         if (isMove) {
+          // Copy the src msgHdrs, but don't add to the db.
           rv = srcDB->CopyHdrFromExistingHdr(nsMsgKey_None, srcHdr, false,
                                              getter_AddRefs(copySrcHdr));
           nsMsgKey pseudoKey = nsMsgKey_None;
@@ -63,11 +63,11 @@ nsresult nsImapMoveCopyMsgTxn::Init(nsIMsgFolder* srcFolder,
           m_dupKeyArray[i] = pseudoKey;
         }
       }
-      srcHdr->GetMessageId(getter_Copies(messageId));
+      srcHdr->GetMessageId(messageId);
       m_srcMessageIds.AppendElement(messageId);
     }
   }
-  return nsMsgTxn::Init();
+  return NS_OK;
 }
 
 nsImapMoveCopyMsgTxn::~nsImapMoveCopyMsgTxn() {}
@@ -84,7 +84,7 @@ nsImapMoveCopyMsgTxn::UndoTransaction(void) {
   bool finishInOnStopRunningUrl = false;
 
   if (m_isMove || !m_dstFolder) {
-    if (m_srcIsPop3) {
+    if (m_srcIsLocal) {
       rv = UndoMailboxDelete();
       NS_ENSURE_SUCCESS(rv, rv);
     } else {
@@ -161,7 +161,7 @@ nsImapMoveCopyMsgTxn::RedoTransaction(void) {
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (m_isMove || !m_dstFolder) {
-    if (m_srcIsPop3) {
+    if (m_srcIsLocal) {
       rv = RedoMailboxDelete();
       if (NS_FAILED(rv)) return rv;
     } else if (!m_srcMsgIdString.IsEmpty()) {
@@ -252,7 +252,7 @@ nsresult nsImapMoveCopyMsgTxn::AddDstKey(nsMsgKey aKey) {
 nsresult nsImapMoveCopyMsgTxn::UndoMailboxDelete() {
   nsresult rv = NS_ERROR_FAILURE;
   // ** jt -- only do this for mailbox protocol
-  if (m_srcIsPop3) {
+  if (m_srcIsLocal) {
     nsCOMPtr<nsIMsgFolder> srcFolder = do_QueryReferent(m_srcFolder, &rv);
     if (NS_FAILED(rv) || !srcFolder) return rv;
 
@@ -291,7 +291,7 @@ nsresult nsImapMoveCopyMsgTxn::UndoMailboxDelete() {
 
 nsresult nsImapMoveCopyMsgTxn::RedoMailboxDelete() {
   nsresult rv = NS_ERROR_FAILURE;
-  if (m_srcIsPop3) {
+  if (m_srcIsLocal) {
     nsCOMPtr<nsIMsgDatabase> srcDB;
     nsCOMPtr<nsIMsgFolder> srcFolder = do_QueryReferent(m_srcFolder, &rv);
     if (NS_FAILED(rv) || !srcFolder) return rv;

@@ -312,13 +312,13 @@ async function checkItem(aExpected, aNode) {
       case "url":
         Assert.equal(aNode.uri, aExpected.url);
         break;
-      case "icon":
-        let { data } = await getFaviconDataForPage(aExpected.url);
-        let base64Icon =
-          "data:image/png;base64," +
-          base64EncodeString(String.fromCharCode.apply(String, data));
-        Assert.equal(base64Icon, aExpected.icon);
+      case "icon": {
+        let { dataURI: base64Icon } = await PlacesTestUtils.getFaviconForPage(
+          aExpected.url
+        );
+        Assert.equal(base64Icon.spec, aExpected.icon);
         break;
+      }
       case "keyword": {
         let entry = await PlacesUtils.keywords.fetch({ url: aNode.uri });
         Assert.equal(entry.keyword, aExpected.keyword);
@@ -332,7 +332,7 @@ async function checkItem(aExpected, aNode) {
         Assert.equal(entry.postData, aExpected.postData);
         break;
       }
-      case "charset":
+      case "charset": {
         let pageInfo = await PlacesUtils.history.fetch(aNode.uri, {
           includeAnnotations: true,
         });
@@ -341,7 +341,8 @@ async function checkItem(aExpected, aNode) {
           aExpected.charset
         );
         break;
-      case "children":
+      }
+      case "children": {
         let folder = aNode.QueryInterface(Ci.nsINavHistoryContainerResultNode);
         Assert.equal(folder.hasChildren, !!aExpected.children.length);
         folder.containerOpen = true;
@@ -353,7 +354,8 @@ async function checkItem(aExpected, aNode) {
 
         folder.containerOpen = false;
         break;
-      case "tags":
+      }
+      case "tags": {
         let uri = Services.io.newURI(aNode.uri);
         Assert.deepEqual(
           PlacesUtils.tagging.getTagsForURI(uri),
@@ -361,6 +363,7 @@ async function checkItem(aExpected, aNode) {
           "should have the expected tags"
         );
         break;
+      }
       default:
         throw new Error("Unknown property");
     }

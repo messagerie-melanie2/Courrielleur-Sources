@@ -1,8 +1,5 @@
 "use strict";
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
-});
 // Create a uri for an https site
 const testPath = getRootDirectory(gTestPath).replace(
   "chrome://mochitests/content",
@@ -116,7 +113,7 @@ add_task(async function test_slow_download() {
 
   let downloadsPanelPromise = promisePanelOpened();
   let downloadsPromise = Downloads.getList(Downloads.PUBLIC);
-  BrowserTestUtils.loadURIString(gBrowser, TEST_URI);
+  BrowserTestUtils.startLoadingURIString(gBrowser, TEST_URI);
   // wait for downloadsPanel to open before continuing with test
   await downloadsPanelPromise;
   let downloadList = await downloadsPromise;

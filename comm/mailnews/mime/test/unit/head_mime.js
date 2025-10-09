@@ -6,19 +6,21 @@
  * Utility code for converting encoded MIME data.
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-var { mailTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MailTestUtils.jsm"
+var { mailTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MailTestUtils.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
-const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+const { NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
+);
 
 var CC = Components.Constructor;
 
@@ -31,27 +33,30 @@ registerCleanupFunction(function () {
   load(gDEPTH + "mailnews/resources/mailShutdown.js");
 });
 
-function apply_mime_conversion(msgUri, smimeHeaderSink) {
-  let service = MailServices.messageServiceFromURI(msgUri);
+function apply_mime_conversion(msgUri, smimeSink, openpgpSink = null) {
+  const service = MailServices.messageServiceFromURI(msgUri);
 
   // This is what we listen on in the end.
-  let listener = new PromiseTestUtils.PromiseStreamListener();
+  const listener = new PromiseTestUtils.PromiseStreamListener();
 
   // Make the underlying channel--we need this for the converter parameter.
-  let url = service.getUrlForUri(msgUri);
+  const url = service.getUrlForUri(msgUri);
 
-  let channel = Services.io.newChannelFromURI(
-    url,
-    null,
-    Services.scriptSecurityManager.getSystemPrincipal(),
-    null,
-    Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
-    Ci.nsIContentPolicy.TYPE_OTHER
-  );
-  channel.QueryInterface(Ci.nsIMailChannel).smimeHeaderSink = smimeHeaderSink;
+  const channel = Services.io
+    .newChannelFromURI(
+      url,
+      null,
+      Services.scriptSecurityManager.getSystemPrincipal(),
+      null,
+      Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
+      Ci.nsIContentPolicy.TYPE_OTHER
+    )
+    .QueryInterface(Ci.nsIMailChannel);
+  channel.openpgpSink = openpgpSink;
+  channel.smimeSink = smimeSink;
 
   // Make the MIME converter, using the listener we first set up.
-  let converter = Cc["@mozilla.org/streamConverters;1"]
+  const converter = Cc["@mozilla.org/streamConverters;1"]
     .getService(Ci.nsIStreamConverterService)
     .asyncConvertData("message/rfc822", "text/html", listener, channel);
 

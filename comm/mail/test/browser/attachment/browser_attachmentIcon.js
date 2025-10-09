@@ -5,14 +5,13 @@
 "use strict";
 
 var folder;
-var messenger;
 
 var {
   create_body_part,
   create_deleted_attachment,
   create_detached_attachment,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/AttachmentHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/AttachmentHelpers.sys.mjs"
 );
 var {
   add_message_to_folder,
@@ -20,15 +19,9 @@ var {
   create_folder,
   create_message,
   get_about_message,
-  mc,
-  msgGen,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-);
-
-var { SyntheticPartLeaf, SyntheticPartMultiMixed } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 var textAttachment =
@@ -44,12 +37,10 @@ var imageAttachment =
   "FlzAAAN1wAADdcBQiibeAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAA" +
   "A5SURBVCiRY/z//z8DKYCJJNXkaGBgYGD4D8NQ5zUgiTVAxeBqSLaBkVRPM0KtIhrQ3km0jwe" +
   "SNQAAlmAY+71EgFoAAAAASUVORK5CYII=";
-var imageSize = 188;
 
 var vcardAttachment =
   "YmVnaW46dmNhcmQNCmZuOkppbSBCb2INCm46Qm9iO0ppbQ0KZW1haWw7aW50ZXJuZXQ6Zm9v" +
   "QGJhci5jb20NCnZlcnNpb246Mi4xDQplbmQ6dmNhcmQNCg0K";
-var vcardSize = 90;
 
 var detachedName = "./attachment.txt";
 var missingName = "./nonexistent.txt";
@@ -161,8 +152,6 @@ var messages = [
 ];
 
 add_setup(async function () {
-  messenger = Cc["@mozilla.org/messenger;1"].createInstance(Ci.nsIMessenger);
-
   // Set up our detached/deleted attachments.
   var detachedFile = new FileUtils.File(
     getTestFilePath(`data/${detachedName}`)
@@ -202,13 +191,13 @@ add_setup(async function () {
 /**
  * Make sure that the attachment's icon is what we expect.
  *
- * @param index the attachment's index, starting at 0
- * @param expectedSize the URL of the expected icon of the attachment
+ * @param {integer} index - the attachment's index, starting at 0
+ * @param {string} expectedIcon - The URL of the expected icon of the attachment.
  */
 function check_attachment_icon(index, expectedIcon) {
-  let win = get_about_message();
-  let list = win.document.getElementById("attachmentList");
-  let node = list.querySelectorAll("richlistitem.attachmentItem")[index];
+  const win = get_about_message();
+  const list = win.document.getElementById("attachmentList");
+  const node = list.querySelectorAll("richlistitem.attachmentItem")[index];
 
   Assert.equal(
     node.querySelector("img.attachmentcell-icon").src,
@@ -220,18 +209,18 @@ function check_attachment_icon(index, expectedIcon) {
 /**
  * Make sure that the individual icons are as expected.
  *
- * @param index the index of the message to check in the thread pane
+ * @param {integer} index - The index of the message to check in the thread pane.
  */
 async function help_test_attachment_icon(index) {
   await be_in_folder(folder);
-  select_click_row(index);
+  await select_click_row(index);
   info(`Testing message ${index}: ${messages[index].name}`);
-  let attachments = messages[index].attachments;
+  const attachments = messages[index].attachments;
 
-  let win = get_about_message();
+  const win = get_about_message();
   win.toggleAttachmentList(true);
 
-  let attachmentList = win.document.getElementById("attachmentList");
+  const attachmentList = win.document.getElementById("attachmentList");
   await TestUtils.waitForCondition(
     () => !attachmentList.collapsed,
     "Attachment list is shown"

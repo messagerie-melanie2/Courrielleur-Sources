@@ -4,13 +4,10 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mimetpla.h"
-#include "mimebuf.h"
 #include "prmem.h"
 #include "plstr.h"
 #include "mozITXTToHTMLConv.h"
-#include "nsCOMPtr.h"
 #include "nsString.h"
-#include "nsMimeStringResources.h"
 #include "mimemoz2.h"
 #include "nsIPrefBranch.h"
 #include "prprf.h"
@@ -24,8 +21,7 @@ static int MimeInlineTextPlain_parse_begin(MimeObject*);
 static int MimeInlineTextPlain_parse_line(const char*, int32_t, MimeObject*);
 static int MimeInlineTextPlain_parse_eof(MimeObject*, bool);
 
-static int MimeInlineTextPlainClassInitialize(MimeInlineTextPlainClass* clazz) {
-  MimeObjectClass* oclass = (MimeObjectClass*)clazz;
+static int MimeInlineTextPlainClassInitialize(MimeObjectClass* oclass) {
   NS_ASSERTION(!oclass->class_initialized, "class not initialized");
   oclass->parse_begin = MimeInlineTextPlain_parse_begin;
   oclass->parse_line = MimeInlineTextPlain_parse_line;

@@ -7,6 +7,7 @@
 #include "WinUtils.h"
 
 #include <knownfolders.h>
+#include <psapi.h>
 #include <winioctl.h>
 
 #include "gfxPlatform.h"
@@ -18,6 +19,7 @@
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/BackgroundHangMonitor.h"
 #include "mozilla/ClearOnShutdown.h"
+#include "mozilla/StaticPrefs_widget.h"
 #include "mozilla/dom/MouseEventBinding.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/DataSurfaceHelpers.h"
@@ -27,12 +29,13 @@
 #include "mozilla/ProfilerThreadSleep.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/SchedulerGroup.h"
-#include "mozilla/WinHeaderOnlyUtils.h"
 #include "mozilla/WindowsVersion.h"
+#include "mozilla/WinHeaderOnlyUtils.h"
 #include "mozilla/Unused.h"
 #include "nsIContentPolicy.h"
 #include "WindowsUIUtils.h"
 #include "nsContentUtils.h"
+#include "nsLookAndFeel.h"
 
 #include "mozilla/Logging.h"
 
@@ -45,7 +48,7 @@
 #include "nsNetCID.h"
 #include "prtime.h"
 #ifdef MOZ_PLACES
-#  include "nsIFaviconService.h"
+#  include "mozilla/places/nsFaviconService.h"
 #endif
 #include "nsIDownloader.h"
 #include "nsIChannel.h"
@@ -57,24 +60,20 @@
 #include "WinWindowOcclusionTracker.h"
 
 #include <textstor.h>
-#include "TSFTextStore.h"
+#include "TSFUtils.h"
 
+#include <shellscalingapi.h>
 #include <shlobj.h>
 #include <shlwapi.h>
 
 mozilla::LazyLogModule gWindowsLog("Widget");
 
-#define LOG_E(...) MOZ_LOG(gWindowsLog, LogLevel::Error, (__VA_ARGS__))
-#define LOG_D(...) MOZ_LOG(gWindowsLog, LogLevel::Debug, (__VA_ARGS__))
-
 using namespace mozilla::gfx;
 
-namespace mozilla {
-namespace widget {
+namespace mozilla::widget {
 
 #ifdef MOZ_PLACES
 NS_IMPL_ISUPPORTS(myDownloadObserver, nsIDownloadObserver)
-NS_IMPL_ISUPPORTS(AsyncFaviconDataReady, nsIFaviconDataCallback)
 #endif
 NS_IMPL_ISUPPORTS(AsyncEncodeAndWriteIcon, nsIRunnable)
 NS_IMPL_ISUPPORTS(AsyncDeleteAllFaviconsFromDisk, nsIRunnable)
@@ -99,7 +98,7 @@ void WinUtils::Initialize() {
   // Dpi-Awareness is not supported with Win32k Lockdown enabled, so we don't
   // initialize DPI-related members and assert later that nothing accidently
   // uses these static members
-  if (IsWin10OrLater() && !IsWin32kLockedDown()) {
+  if (!IsWin32kLockedDown()) {
     HMODULE user32Dll = ::GetModuleHandleW(L"user32");
     if (user32Dll) {
       auto getThreadDpiAwarenessContext =
@@ -128,9 +127,7 @@ void WinUtils::Initialize() {
     }
   }
 
-  if (IsWin8OrLater()) {
-    sHasPackageIdentity = mozilla::HasPackageIdentity();
-  }
+  sHasPackageIdentity = mozilla::HasPackageIdentity();
 }
 
 // static
@@ -237,21 +234,6 @@ float WinUtils::SystemDPI() {
 
 // static
 double WinUtils::SystemScaleFactor() { return SystemDPI() / 96.0; }
-
-#if WINVER < 0x603
-typedef enum {
-  MDT_EFFECTIVE_DPI = 0,
-  MDT_ANGULAR_DPI = 1,
-  MDT_RAW_DPI = 2,
-  MDT_DEFAULT = MDT_EFFECTIVE_DPI
-} MONITOR_DPI_TYPE;
-
-typedef enum {
-  PROCESS_DPI_UNAWARE = 0,
-  PROCESS_SYSTEM_DPI_AWARE = 1,
-  PROCESS_PER_MONITOR_DPI_AWARE = 2
-} PROCESS_DPI_AWARENESS;
-#endif
 
 typedef HRESULT(WINAPI* GETDPIFORMONITORPROC)(HMONITOR, MONITOR_DPI_TYPE, UINT*,
                                               UINT*);
@@ -413,8 +395,7 @@ a11y::LocalAccessible* WinUtils::GetRootAccessibleForHWND(HWND aHwnd) {
 /* static */
 bool WinUtils::PeekMessage(LPMSG aMsg, HWND aWnd, UINT aFirstMessage,
                            UINT aLastMessage, UINT aOption) {
-  RefPtr<ITfMessagePump> msgPump = TSFTextStore::GetMessagePump();
-  if (msgPump) {
+  if (const RefPtr<ITfMessagePump> msgPump = TSFUtils::GetMessagePump()) {
     BOOL ret = FALSE;
     HRESULT hr = msgPump->PeekMessageW(aMsg, aWnd, aFirstMessage, aLastMessage,
                                        aOption, &ret);
@@ -427,8 +408,7 @@ bool WinUtils::PeekMessage(LPMSG aMsg, HWND aWnd, UINT aFirstMessage,
 /* static */
 bool WinUtils::GetMessage(LPMSG aMsg, HWND aWnd, UINT aFirstMessage,
                           UINT aLastMessage) {
-  RefPtr<ITfMessagePump> msgPump = TSFTextStore::GetMessagePump();
-  if (msgPump) {
+  if (const RefPtr<ITfMessagePump> msgPump = TSFUtils::GetMessagePump()) {
     BOOL ret = FALSE;
     HRESULT hr =
         msgPump->GetMessageW(aMsg, aWnd, aFirstMessage, aLastMessage, &ret);
@@ -509,54 +489,6 @@ void WinUtils::WaitForMessage(DWORD aTimeoutMs) {
 }
 
 /* static */
-bool WinUtils::GetRegistryKey(HKEY aRoot, char16ptr_t aKeyName,
-                              char16ptr_t aValueName, wchar_t* aBuffer,
-                              DWORD aBufferLength) {
-  MOZ_ASSERT(aKeyName, "The key name is NULL");
-
-  HKEY key;
-  LONG result =
-      ::RegOpenKeyExW(aRoot, aKeyName, 0, KEY_READ | KEY_WOW64_32KEY, &key);
-  if (result != ERROR_SUCCESS) {
-    result =
-        ::RegOpenKeyExW(aRoot, aKeyName, 0, KEY_READ | KEY_WOW64_64KEY, &key);
-    if (result != ERROR_SUCCESS) {
-      return false;
-    }
-  }
-
-  DWORD type;
-  result = ::RegQueryValueExW(key, aValueName, nullptr, &type, (BYTE*)aBuffer,
-                              &aBufferLength);
-  ::RegCloseKey(key);
-  if (result != ERROR_SUCCESS || (type != REG_SZ && type != REG_EXPAND_SZ)) {
-    return false;
-  }
-  if (aBuffer) {
-    aBuffer[aBufferLength / sizeof(*aBuffer) - 1] = 0;
-  }
-  return true;
-}
-
-/* static */
-bool WinUtils::HasRegistryKey(HKEY aRoot, char16ptr_t aKeyName) {
-  MOZ_ASSERT(aRoot, "aRoot must not be NULL");
-  MOZ_ASSERT(aKeyName, "aKeyName must not be NULL");
-  HKEY key;
-  LONG result =
-      ::RegOpenKeyExW(aRoot, aKeyName, 0, KEY_READ | KEY_WOW64_32KEY, &key);
-  if (result != ERROR_SUCCESS) {
-    result =
-        ::RegOpenKeyExW(aRoot, aKeyName, 0, KEY_READ | KEY_WOW64_64KEY, &key);
-    if (result != ERROR_SUCCESS) {
-      return false;
-    }
-  }
-  ::RegCloseKey(key);
-  return true;
-}
-
-/* static */
 HWND WinUtils::GetTopLevelHWND(HWND aWnd, bool aStopIfNotChild,
                                bool aStopIfNotPopup) {
   HWND curWnd = aWnd;
@@ -589,7 +521,7 @@ HWND WinUtils::GetTopLevelHWND(HWND aWnd, bool aStopIfNotChild,
 
 // Map from native window handles to nsWindow structures. Does not AddRef.
 // Inherently unsafe to access outside the main thread.
-static nsTHashMap<HWND, nsWindow*> sExtantNSWindows;
+MOZ_RUNINIT static nsTHashMap<HWND, nsWindow*> sExtantNSWindows;
 
 /* static */
 void WinUtils::SetNSWindowPtr(HWND aWnd, nsWindow* aWindow) {
@@ -605,18 +537,6 @@ void WinUtils::SetNSWindowPtr(HWND aWnd, nsWindow* aWindow) {
 nsWindow* WinUtils::GetNSWindowPtr(HWND aWnd) {
   MOZ_ASSERT(NS_IsMainThread());
   return sExtantNSWindows.Get(aWnd);  // or nullptr
-}
-
-static BOOL CALLBACK AddMonitor(HMONITOR, HDC, LPRECT, LPARAM aParam) {
-  (*(int32_t*)aParam)++;
-  return TRUE;
-}
-
-/* static */
-int32_t WinUtils::GetMonitorCount() {
-  int32_t monitorCount = 0;
-  EnumDisplayMonitors(nullptr, nullptr, AddMonitor, (LPARAM)&monitorCount);
-  return monitorCount;
 }
 
 /* static */
@@ -711,38 +631,6 @@ HWND WinUtils::FindOurWindowAtPoint(const POINT& aPointInScreen) {
 }
 
 /* static */
-UINT WinUtils::GetInternalMessage(UINT aNativeMessage) {
-  switch (aNativeMessage) {
-    case WM_MOUSEWHEEL:
-      return MOZ_WM_MOUSEVWHEEL;
-    case WM_MOUSEHWHEEL:
-      return MOZ_WM_MOUSEHWHEEL;
-    case WM_VSCROLL:
-      return MOZ_WM_VSCROLL;
-    case WM_HSCROLL:
-      return MOZ_WM_HSCROLL;
-    default:
-      return aNativeMessage;
-  }
-}
-
-/* static */
-UINT WinUtils::GetNativeMessage(UINT aInternalMessage) {
-  switch (aInternalMessage) {
-    case MOZ_WM_MOUSEVWHEEL:
-      return WM_MOUSEWHEEL;
-    case MOZ_WM_MOUSEHWHEEL:
-      return WM_MOUSEHWHEEL;
-    case MOZ_WM_VSCROLL:
-      return WM_VSCROLL;
-    case MOZ_WM_HSCROLL:
-      return WM_HSCROLL;
-    default:
-      return aInternalMessage;
-  }
-}
-
-/* static */
 uint16_t WinUtils::GetMouseInputSource() {
   int32_t inputSource = dom::MouseEvent_Binding::MOZ_SOURCE_MOUSE;
   LPARAM lParamExtraInfo = ::GetMessageExtraInfo();
@@ -765,7 +653,7 @@ bool WinUtils::GetIsMouseFromTouch(EventMessage aEventMessage) {
   const uint32_t MOZ_T_I_SIGNATURE = TABLET_INK_TOUCH | TABLET_INK_SIGNATURE;
   const uint32_t MOZ_T_I_CHECK_TCH = TABLET_INK_TOUCH | TABLET_INK_CHECK;
   return ((aEventMessage == eMouseMove || aEventMessage == eMouseDown ||
-           aEventMessage == eMouseUp || aEventMessage == eMouseAuxClick ||
+           aEventMessage == eMouseUp || aEventMessage == ePointerAuxClick ||
            aEventMessage == eMouseDoubleClick) &&
           (GetMessageExtraInfo() & MOZ_T_I_SIGNATURE) == MOZ_T_I_CHECK_TCH);
 }
@@ -781,23 +669,6 @@ MSG WinUtils::InitMSG(UINT aMessage, WPARAM wParam, LPARAM lParam, HWND aWnd) {
 }
 
 #ifdef MOZ_PLACES
-/************************************************************************
- * Constructs as AsyncFaviconDataReady Object
- * @param aIOThread : the thread which performs the action
- * @param aURLShortcut : Differentiates between (false)Jumplistcache and
- *                       (true)Shortcutcache
- * @param aRunnable : Executed in the aIOThread when the favicon cache is
- *                    avaiable
- ************************************************************************/
-
-AsyncFaviconDataReady::AsyncFaviconDataReady(
-    nsIURI* aNewURI, RefPtr<LazyIdleThread>& aIOThread, const bool aURLShortcut,
-    already_AddRefed<nsIRunnable> aRunnable)
-    : mNewURI(aNewURI),
-      mIOThread(aIOThread),
-      mRunnable(aRunnable),
-      mURLShortcut(aURLShortcut) {}
-
 NS_IMETHODIMP
 myDownloadObserver::OnDownloadComplete(nsIDownloader* downloader,
                                        nsIRequest* request, nsresult status,
@@ -805,28 +676,25 @@ myDownloadObserver::OnDownloadComplete(nsIDownloader* downloader,
   return NS_OK;
 }
 
-nsresult AsyncFaviconDataReady::OnFaviconDataNotAvailable(void) {
-  if (!mURLShortcut) {
+static nsresult MaybeDownloadFavicon(nsIURI* aNewURI, const bool aURLShortcut) {
+  if (!aURLShortcut) {
     return NS_OK;
   }
 
   nsCOMPtr<nsIFile> icoFile;
   nsresult rv =
-      FaviconHelper::GetOutputIconPath(mNewURI, icoFile, mURLShortcut);
+      FaviconHelper::GetOutputIconPath(aNewURI, icoFile, aURLShortcut);
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIURI> mozIconURI;
   rv = NS_NewURI(getter_AddRefs(mozIconURI), "moz-icon://.html?size=32");
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
+  NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIChannel> channel;
   rv = NS_NewChannel(getter_AddRefs(channel), mozIconURI,
                      nsContentUtils::GetSystemPrincipal(),
                      nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
                      nsIContentPolicy::TYPE_INTERNAL_IMAGE);
-
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIDownloadObserver> downloadObserver = new myDownloadObserver;
@@ -837,22 +705,38 @@ nsresult AsyncFaviconDataReady::OnFaviconDataNotAvailable(void) {
   return channel->AsyncOpen(listener);
 }
 
-NS_IMETHODIMP
-AsyncFaviconDataReady::OnComplete(nsIURI* aFaviconURI, uint32_t aDataLen,
-                                  const uint8_t* aData,
-                                  const nsACString& aMimeType,
-                                  uint16_t aWidth) {
-  if (!aDataLen || !aData) {
-    if (mURLShortcut) {
-      OnFaviconDataNotAvailable();
-    }
+static nsresult CacheFavicon(
+    const places::FaviconPromise::ResolveOrRejectValue& aPromiseResult,
+    nsIURI* aNewURI, RefPtr<nsISerialEventTarget> aIOThread,
+    const bool aURLShortcut, nsCOMPtr<nsIRunnable> aRunnable,
+    UniquePtr<MozPromiseHolder<ObtainCachedIconFileAsyncPromise>>
+        aPromiseHolder) {
+  nsresult rv = NS_OK;
+  auto guard = MakeScopeExit([&]() {
+    MOZ_ASSERT(NS_FAILED(rv));
 
-    return NS_OK;
+    if (aPromiseHolder) {
+      aPromiseHolder->RejectIfExists(rv, __func__);
+    }
+  });
+
+  nsCOMPtr<nsIFavicon> favicon =
+      aPromiseResult.IsResolve() ? aPromiseResult.ResolveValue() : nullptr;
+  if (!favicon) {
+    MaybeDownloadFavicon(std::move(aNewURI), aURLShortcut);
+    return (rv = NS_ERROR_FAILURE);
   }
 
+  // Get favicon content.
+  nsTArray<uint8_t> rawData;
+  rv = favicon->GetRawData(rawData);
+  NS_ENSURE_SUCCESS(rv, rv);
+  nsAutoCString mimeType;
+  rv = favicon->GetMimeType(mimeType);
+  NS_ENSURE_SUCCESS(rv, rv);
+
   nsCOMPtr<nsIFile> icoFile;
-  nsresult rv =
-      FaviconHelper::GetOutputIconPath(mNewURI, icoFile, mURLShortcut);
+  rv = FaviconHelper::GetOutputIconPath(aNewURI, icoFile, aURLShortcut);
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsAutoString path;
@@ -862,40 +746,43 @@ AsyncFaviconDataReady::OnComplete(nsIURI* aFaviconURI, uint32_t aDataLen,
   // Decode the image from the format it was returned to us in (probably PNG)
   nsCOMPtr<imgIContainer> container;
   nsCOMPtr<imgITools> imgtool = do_CreateInstance("@mozilla.org/image/tools;1");
-  rv = imgtool->DecodeImageFromBuffer(reinterpret_cast<const char*>(aData),
-                                      aDataLen, aMimeType,
-                                      getter_AddRefs(container));
+  rv = imgtool->DecodeImageFromBuffer(
+      reinterpret_cast<const char*>(rawData.Elements()), rawData.Length(),
+      mimeType, getter_AddRefs(container));
   NS_ENSURE_SUCCESS(rv, rv);
 
   RefPtr<SourceSurface> surface = container->GetFrame(
       imgIContainer::FRAME_FIRST,
       imgIContainer::FLAG_SYNC_DECODE | imgIContainer::FLAG_ASYNC_NOTIFY);
-  NS_ENSURE_TRUE(surface, NS_ERROR_FAILURE);
+  if (MOZ_UNLIKELY(!surface)) {
+    return (rv = NS_ERROR_FAILURE);
+  }
 
   RefPtr<DataSourceSurface> dataSurface;
   IntSize size;
 
-  if (mURLShortcut &&
+  if (aURLShortcut &&
       (surface->GetSize().width < 48 || surface->GetSize().height < 48)) {
     // Create a 48x48 surface and paint the icon into the central rect.
     size.width = std::max(surface->GetSize().width, 48);
     size.height = std::max(surface->GetSize().height, 48);
     dataSurface =
         Factory::CreateDataSourceSurface(size, SurfaceFormat::B8G8R8A8);
-    NS_ENSURE_TRUE(dataSurface, NS_ERROR_FAILURE);
+    if (MOZ_UNLIKELY(!dataSurface)) {
+      return (rv = NS_ERROR_FAILURE);
+    }
 
     DataSourceSurface::MappedSurface map;
     if (!dataSurface->Map(DataSourceSurface::MapType::WRITE, &map)) {
-      return NS_ERROR_FAILURE;
+      return (rv = NS_ERROR_FAILURE);
     }
 
     RefPtr<DrawTarget> dt = Factory::CreateDrawTargetForData(
         BackendType::CAIRO, map.mData, dataSurface->GetSize(), map.mStride,
         dataSurface->GetFormat());
     if (!dt) {
-      gfxWarning() << "AsyncFaviconDataReady::OnComplete failed in "
-                      "CreateDrawTargetForData";
-      return NS_ERROR_OUT_OF_MEMORY;
+      gfxWarning() << "CreateDrawTargetForData failed in CacheFavicon";
+      return (rv = NS_ERROR_OUT_OF_MEMORY);
     }
     dt->FillRect(Rect(0, 0, size.width, size.height),
                  ColorPattern(ToDeviceColor(sRGBColor::OpaqueWhite())));
@@ -920,24 +807,26 @@ AsyncFaviconDataReady::OnComplete(nsIURI* aFaviconURI, uint32_t aDataLen,
     size.width = surface->GetSize().width;
     size.height = surface->GetSize().height;
     dataSurface = surface->GetDataSurface();
-    NS_ENSURE_TRUE(dataSurface, NS_ERROR_FAILURE);
+    if (MOZ_UNLIKELY(!dataSurface)) {
+      return (rv = NS_ERROR_FAILURE);
+    }
   }
 
   // Allocate a new buffer that we own and can use out of line in
   // another thread.
   UniquePtr<uint8_t[]> data = SurfaceToPackedBGRA(dataSurface);
   if (!data) {
-    return NS_ERROR_OUT_OF_MEMORY;
+    return (rv = NS_ERROR_OUT_OF_MEMORY);
   }
   int32_t stride = 4 * size.width;
 
-  // AsyncEncodeAndWriteIcon takes ownership of the heap allocated buffer
-  nsCOMPtr<nsIRunnable> event =
-      new AsyncEncodeAndWriteIcon(path, std::move(data), stride, size.width,
-                                  size.height, mRunnable.forget());
-  mIOThread->Dispatch(event, NS_DISPATCH_NORMAL);
+  guard.release();
 
-  return NS_OK;
+  // AsyncEncodeAndWriteIcon takes ownership of the heap allocated buffer
+  nsCOMPtr<nsIRunnable> event = new AsyncEncodeAndWriteIcon(
+      path, std::move(data), stride, size.width, size.height,
+      aRunnable.forget(), std::move(aPromiseHolder));
+  return aIOThread->Dispatch(event, NS_DISPATCH_NORMAL);
 }
 #endif
 
@@ -945,16 +834,31 @@ AsyncFaviconDataReady::OnComplete(nsIURI* aFaviconURI, uint32_t aDataLen,
 // in
 AsyncEncodeAndWriteIcon::AsyncEncodeAndWriteIcon(
     const nsAString& aIconPath, UniquePtr<uint8_t[]> aBuffer, uint32_t aStride,
-    uint32_t aWidth, uint32_t aHeight, already_AddRefed<nsIRunnable> aRunnable)
+    uint32_t aWidth, uint32_t aHeight, already_AddRefed<nsIRunnable> aRunnable,
+    UniquePtr<MozPromiseHolder<ObtainCachedIconFileAsyncPromise>>
+        aPromiseHolder)
     : mIconPath(aIconPath),
       mBuffer(std::move(aBuffer)),
       mRunnable(aRunnable),
+      mPromiseHolder(std::move(aPromiseHolder)),
       mStride(aStride),
       mWidth(aWidth),
       mHeight(aHeight) {}
 
 NS_IMETHODIMP AsyncEncodeAndWriteIcon::Run() {
   MOZ_ASSERT(!NS_IsMainThread(), "Should not be called on the main thread.");
+
+  nsresult rv = NS_OK;
+  auto guard = MakeScopeExit([&]() {
+    if (!mPromiseHolder) {
+      return;
+    }
+    if (NS_SUCCEEDED(rv)) {
+      mPromiseHolder->ResolveIfExists(mIconPath, __func__);
+    } else {
+      mPromiseHolder->RejectIfExists(rv, __func__);
+    }
+  });
 
   // Note that since we're off the main thread we can't use
   // gfxPlatform::GetPlatform()->ScreenReferenceDrawTarget()
@@ -965,30 +869,21 @@ NS_IMETHODIMP AsyncEncodeAndWriteIcon::Run() {
   FILE* file = _wfopen(mIconPath.get(), L"wb");
   if (!file) {
     // Maybe the directory doesn't exist; try creating it, then fopen again.
-    nsresult rv = NS_ERROR_FAILURE;
-    nsCOMPtr<nsIFile> comFile = do_CreateInstance("@mozilla.org/file/local;1");
-    if (comFile) {
-      rv = comFile->InitWithPath(mIconPath);
-      if (NS_SUCCEEDED(rv)) {
-        nsCOMPtr<nsIFile> dirPath;
-        comFile->GetParent(getter_AddRefs(dirPath));
-        if (dirPath) {
-          rv = dirPath->Create(nsIFile::DIRECTORY_TYPE, 0777);
-          if (NS_SUCCEEDED(rv) || rv == NS_ERROR_FILE_ALREADY_EXISTS) {
-            file = _wfopen(mIconPath.get(), L"wb");
-            if (!file) {
-              rv = NS_ERROR_FAILURE;
-            }
-          }
-        }
-      }
-    }
-    if (!file) {
+    nsCOMPtr<nsIFile> comFile;
+    MOZ_TRY(NS_NewLocalFile(mIconPath, getter_AddRefs(comFile)));
+    nsCOMPtr<nsIFile> dirPath;
+    MOZ_TRY(comFile->GetParent(getter_AddRefs(dirPath)));
+    rv = dirPath->Create(nsIFile::DIRECTORY_TYPE, 0777);
+    if (NS_FAILED(rv) && rv != NS_ERROR_FILE_ALREADY_EXISTS) {
       return rv;
     }
+    file = _wfopen(mIconPath.get(), L"wb");
+    if (!file) {
+      return (rv = NS_ERROR_FAILURE);
+    }
   }
-  nsresult rv = gfxUtils::EncodeSourceSurface(surface, ImageType::ICO, u""_ns,
-                                              gfxUtils::eBinaryEncode, file);
+  rv = gfxUtils::EncodeSourceSurface(surface, ImageType::ICO, u""_ns,
+                                     gfxUtils::eBinaryEncode, file);
   fclose(file);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -998,7 +893,11 @@ NS_IMETHODIMP AsyncEncodeAndWriteIcon::Run() {
   return rv;
 }
 
-AsyncEncodeAndWriteIcon::~AsyncEncodeAndWriteIcon() {}
+AsyncEncodeAndWriteIcon::~AsyncEncodeAndWriteIcon() {
+  if (mPromiseHolder) {
+    mPromiseHolder->RejectIfExists(NS_ERROR_FAILURE, __func__);
+  }
+}
 
 AsyncDeleteAllFaviconsFromDisk::AsyncDeleteAllFaviconsFromDisk(
     bool aIgnoreRecent)
@@ -1106,14 +1005,15 @@ nsresult FaviconHelper::ObtainCachedIconFile(
     // the next time we try to build the jump list, the data will be available.
     if (NS_FAILED(rv) || (nowTime - fileModTime) > icoReCacheSecondsTimeout) {
       CacheIconFileFromFaviconURIAsync(aFaviconPageURI, icoFile, aIOThread,
-                                       aURLShortcut, runnable.forget());
+                                       aURLShortcut, runnable.forget(),
+                                       nullptr);
       return NS_ERROR_NOT_AVAILABLE;
     }
   } else {
     // The file does not exist yet, obtain it async from the favicon service so
     // that the next time we try to build the jump list it'll be available.
     CacheIconFileFromFaviconURIAsync(aFaviconPageURI, icoFile, aIOThread,
-                                     aURLShortcut, runnable.forget());
+                                     aURLShortcut, runnable.forget(), nullptr);
     return NS_ERROR_NOT_AVAILABLE;
   }
 
@@ -1122,25 +1022,134 @@ nsresult FaviconHelper::ObtainCachedIconFile(
   return rv;
 }
 
-nsresult FaviconHelper::HashURI(nsCOMPtr<nsICryptoHash>& aCryptoHash,
-                                nsIURI* aUri, nsACString& aUriHash) {
-  if (!aUri) return NS_ERROR_INVALID_ARG;
+/**
+ * (static)
+ * Attempts to obtain a favicon from the nsIFaviconService and cache it on
+ * disk in a place where Win32 utilities (like the jump list) can access them.
+ *
+ * In the event that the favicon was cached recently, the returned MozPromise
+ * will resolve with the cache path. If the cache is expired, it will be
+ * refreshed before returning the path.
+ *
+ * In the event that the favicon cannot be retrieved from the nsIFaviconService,
+ * or something goes wrong writing the cache to disk, the returned MozPromise
+ * will reject with an nsresult code.
+ *
+ * This is similar to the ObtainCachedIconFile method, except that all IO
+ * happens on the aIOThread rather than only some of the IO.
+ *
+ * @param aFaviconPageURI
+ *   The URI of the page to obtain the favicon for.
+ * @param aIOThread
+ *   The thread to perform the cache check and fetch/write on.
+ * @param aCacheDir
+ *   Which cache directory to use for the returned favicon (see
+ *   FaviconHelper::IconCacheDir).
+ * @returns {RefPtr<ObtainCachedIconFileAsyncPromise>}
+ *   Resolves with the path of the cached favicon, or rejects with an nsresult
+ *   in the event that the favicon cannot be retrieved and/or cached.
+ */
+auto FaviconHelper::ObtainCachedIconFileAsync(
+    nsCOMPtr<nsIURI> aFaviconPageURI, RefPtr<LazyIdleThread>& aIOThread,
+    FaviconHelper::IconCacheDir aCacheDir)
+    -> RefPtr<ObtainCachedIconFileAsyncPromise> {
+  bool useShortcutCacheDir =
+      aCacheDir == FaviconHelper::IconCacheDir::ShortcutCacheDir;
 
+  // Obtain the file path that the ICO, if it exists, is expected to be
+  // at for aFaviconPageURI
+  nsCOMPtr<nsIFile> icoFile;
+  nsresult rv =
+      GetOutputIconPath(aFaviconPageURI, icoFile, useShortcutCacheDir);
+  if (NS_FAILED(rv)) {
+    return ObtainCachedIconFileAsyncPromise::CreateAndReject(rv, __func__);
+  }
+
+  int32_t icoReCacheSecondsTimeout = GetICOCacheSecondsTimeout();
+
+  return InvokeAsync(
+      aIOThread, "FaviconHelper::ObtainCachedIconFileAsync disk cache check",
+      [icoFile = std::move(icoFile), icoReCacheSecondsTimeout,
+       pageURI = std::move(aFaviconPageURI), useShortcutCacheDir]() {
+        MOZ_ASSERT(!NS_IsMainThread());
+        bool exists;
+        nsresult rv = icoFile->Exists(&exists);
+
+        if (NS_FAILED(rv)) {
+          return ObtainCachedIconFileAsyncPromise::CreateAndReject(
+              rv, "ObtainCachedIconFileAsync disk cache check: exists failed");
+        }
+
+        if (exists) {
+          // Obtain the file's last modification date in seconds
+          int64_t fileModTime = 0;
+          rv = icoFile->GetLastModifiedTime(&fileModTime);
+          fileModTime /= PR_MSEC_PER_SEC;
+          int64_t nowTime = PR_Now() / int64_t(PR_USEC_PER_SEC);
+
+          // If the file seems to be less than icoReCacheSecondsTimeout old,
+          // then we can go ahead and return its path on the filesystem.
+          if (NS_SUCCEEDED(rv) &&
+              (nowTime - fileModTime) < icoReCacheSecondsTimeout) {
+            nsAutoString icoFilePath;
+            rv = icoFile->GetPath(icoFilePath);
+            if (NS_SUCCEEDED(rv)) {
+              return ObtainCachedIconFileAsyncPromise::CreateAndResolve(
+                  icoFilePath,
+                  "ObtainCachedIconFileAsync disk cache check: found");
+            }
+          }
+        }
+
+        // Now dispatch a runnable to the main thread that will call
+        // CacheIconFileFromFaviconURIAsync to request the favicon.
+        RefPtr<nsISerialEventTarget> currentThread =
+            GetCurrentSerialEventTarget();
+        return InvokeAsync(
+            GetMainThreadSerialEventTarget(),
+            "ObtainCachedIconFileAsync call to "
+            "PromiseCacheIconFileFromFaviconURIAsync",
+            [useShortcutCacheDir, pageURI = std::move(pageURI),
+             icoFile = std::move(icoFile),
+             aIOThread = std::move(currentThread)]() {
+              auto holder = MakeUnique<
+                  MozPromiseHolder<ObtainCachedIconFileAsyncPromise>>();
+              RefPtr<ObtainCachedIconFileAsyncPromise> promise =
+                  holder->Ensure(__func__);
+              CacheIconFileFromFaviconURIAsync(pageURI, icoFile, aIOThread,
+                                               useShortcutCacheDir, nullptr,
+                                               std::move(holder));
+              return promise;
+            });
+      });
+}
+
+// Hash a URI using a cryptographic hash function (currently SHA-256)
+// Output will be a base64-encoded string of the hash.
+static nsresult HashURI(nsIURI* aUri, nsACString& aUriHash) {
   nsAutoCString spec;
   nsresult rv = aUri->GetSpec(spec);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (!aCryptoHash) {
-    aCryptoHash = do_CreateInstance(NS_CRYPTO_HASH_CONTRACTID, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-  }
+  nsCOMPtr<nsICryptoHash> cryptoHash =
+      do_CreateInstance(NS_CRYPTO_HASH_CONTRACTID, &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = aCryptoHash->Init(nsICryptoHash::MD5);
+  rv = cryptoHash->Init(nsICryptoHash::SHA256);
   NS_ENSURE_SUCCESS(rv, rv);
-  rv = aCryptoHash->Update(
-      reinterpret_cast<const uint8_t*>(spec.BeginReading()), spec.Length());
+
+  // Add some context to the hash to even further reduce the chances of
+  // collision. Note that we are hashing this string with its null-terminator.
+  const char kHashUriContext[] = "firefox-uri";
+  rv = cryptoHash->Update(reinterpret_cast<const uint8_t*>(kHashUriContext),
+                          sizeof(kHashUriContext));
   NS_ENSURE_SUCCESS(rv, rv);
-  rv = aCryptoHash->Finish(true, aUriHash);
+
+  rv = cryptoHash->Update(reinterpret_cast<const uint8_t*>(spec.BeginReading()),
+                          spec.Length());
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = cryptoHash->Finish(true, aUriHash);
   NS_ENSURE_SUCCESS(rv, rv);
 
   return NS_OK;
@@ -1149,13 +1158,15 @@ nsresult FaviconHelper::HashURI(nsCOMPtr<nsICryptoHash>& aCryptoHash,
 // (static) Obtains the ICO file for the favicon at page aFaviconPageURI
 // If successful, the file path on disk is in the format:
 // <ProfLDS>\jumpListCache\<hash(aFaviconPageURI)>.ico
+//
+// We generate the name with a cryptographically secure hash function in order
+// to ensure that malicious websites can't intentionally craft URLs to collide
+// with legitimate websites.
 nsresult FaviconHelper::GetOutputIconPath(nsCOMPtr<nsIURI> aFaviconPageURI,
                                           nsCOMPtr<nsIFile>& aICOFile,
                                           bool aURLShortcut) {
-  // Hash the input URI and replace any / with _
   nsAutoCString inputURIHash;
-  nsCOMPtr<nsICryptoHash> cryptoHash;
-  nsresult rv = HashURI(cryptoHash, aFaviconPageURI, inputURIHash);
+  nsresult rv = HashURI(aFaviconPageURI, inputURIHash);
   NS_ENSURE_SUCCESS(rv, rv);
   char* cur = inputURIHash.BeginWriting();
   char* end = inputURIHash.EndWriting();
@@ -1185,20 +1196,25 @@ nsresult FaviconHelper::GetOutputIconPath(nsCOMPtr<nsIURI> aFaviconPageURI,
 // page aFaviconPageURI and stores it to disk at the path of aICOFile.
 nsresult FaviconHelper::CacheIconFileFromFaviconURIAsync(
     nsCOMPtr<nsIURI> aFaviconPageURI, nsCOMPtr<nsIFile> aICOFile,
-    RefPtr<LazyIdleThread>& aIOThread, bool aURLShortcut,
-    already_AddRefed<nsIRunnable> aRunnable) {
+    RefPtr<nsISerialEventTarget> aIOThread, bool aURLShortcut,
+    already_AddRefed<nsIRunnable> aRunnable,
+    UniquePtr<MozPromiseHolder<ObtainCachedIconFileAsyncPromise>>
+        aPromiseHolder) {
+  MOZ_ASSERT(NS_IsMainThread());
   nsCOMPtr<nsIRunnable> runnable = aRunnable;
 #ifdef MOZ_PLACES
   // Obtain the favicon service and get the favicon for the specified page
-  nsCOMPtr<nsIFaviconService> favIconSvc(
-      do_GetService("@mozilla.org/browser/favicon-service;1"));
+  auto* favIconSvc = nsFaviconService::GetFaviconService();
   NS_ENSURE_TRUE(favIconSvc, NS_ERROR_FAILURE);
-
-  nsCOMPtr<nsIFaviconDataCallback> callback =
-      new mozilla::widget::AsyncFaviconDataReady(
-          aFaviconPageURI, aIOThread, aURLShortcut, runnable.forget());
-
-  favIconSvc->GetFaviconDataForPage(aFaviconPageURI, callback, 0);
+  favIconSvc->AsyncGetFaviconForPage(aFaviconPageURI)
+      ->Then(GetMainThreadSerialEventTarget(), __func__,
+             [aFaviconPageURI, aIOThread, aURLShortcut, runnable,
+              promiseHolder = std::move(aPromiseHolder)](
+                 const places::FaviconPromise::ResolveOrRejectValue&
+                     aResult) mutable {
+               CacheFavicon(aResult, aFaviconPageURI, aIOThread, aURLShortcut,
+                            runnable, std::move(promiseHolder));
+             });
 #endif
   return NS_OK;
 }
@@ -1252,9 +1268,40 @@ LayoutDeviceIntRegion WinUtils::ConvertHRGNToRegion(HRGN aRgn) {
   return rgn;
 }
 
+/* static */
+nsAutoRegion WinUtils::RegionToHRGN(const LayoutDeviceIntRegion& aRegion) {
+  const uint32_t count = aRegion.GetNumRects();
+  const size_t regionBytes = count * sizeof(RECT);
+  const size_t regionDataBytes = sizeof(RGNDATAHEADER) + regionBytes;
+  // See:
+  // https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-rgndataheader
+  // https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-extcreateregion
+  auto buffer = MakeUnique<char[]>(regionDataBytes);
+  auto* data = reinterpret_cast<RGNDATA*>(buffer.get());
+  data->rdh.dwSize = sizeof(RGNDATAHEADER);
+  data->rdh.iType = RDH_RECTANGLES;
+  data->rdh.nCount = count;
+  data->rdh.nRgnSize = regionBytes;
+  data->rdh.rcBound = ToWinRect(aRegion.GetBounds());
+  RECT* buf = (RECT*)data->Buffer;
+  for (auto iter = aRegion.RectIter(); !iter.Done(); iter.Next()) {
+    *buf++ = ToWinRect(iter.Get());
+  }
+  return nsAutoRegion(::ExtCreateRegion(nullptr, regionDataBytes, data));
+}
+
 LayoutDeviceIntRect WinUtils::ToIntRect(const RECT& aRect) {
   return LayoutDeviceIntRect(aRect.left, aRect.top, aRect.right - aRect.left,
                              aRect.bottom - aRect.top);
+}
+
+RECT WinUtils::ToWinRect(const LayoutDeviceIntRect& aRect) {
+  return {
+      .left = aRect.x,
+      .top = aRect.y,
+      .right = aRect.XMost(),
+      .bottom = aRect.YMost(),
+  };
 }
 
 /* static */
@@ -1280,14 +1327,14 @@ void WinUtils::SetupKeyModifiersSequence(nsTArray<KeyPair>* aArray,
           KeyPair(VK_CONTROL, VK_LCONTROL, ScanCode::eControlLeft));
       aArray->AppendElement(KeyPair(VK_MENU, VK_RMENU, ScanCode::eAltRight));
     }
-    for (uint32_t i = ArrayLength(sModifierKeyMap); i; --i) {
+    for (uint32_t i = std::size(sModifierKeyMap); i; --i) {
       const uint32_t* map = sModifierKeyMap[i - 1];
       if (aModifiers & map[0]) {
         aArray->AppendElement(KeyPair(map[1], map[2], map[3]));
       }
     }
   } else {
-    for (uint32_t i = 0; i < ArrayLength(sModifierKeyMap); ++i) {
+    for (uint32_t i = 0; i < std::size(sModifierKeyMap); ++i) {
       const uint32_t* map = sModifierKeyMap[i];
       if (aModifiers & map[0]) {
         aArray->AppendElement(KeyPair(map[1], map[2], map[3]));
@@ -1462,17 +1509,48 @@ bool WinUtils::GetAutoRotationState(AR_STATE* aRotationState) {
   return false;
 }
 
+// static
+void WinUtils::GetClipboardFormatAsString(UINT aFormat, nsAString& aOutput) {
+  wchar_t buf[256] = {};
+  // Get registered format name and ensure the existence of a terminating '\0'
+  // if the registered name is more than 256 characters.
+  if (::GetClipboardFormatNameW(aFormat, buf, ARRAYSIZE(buf) - 1)) {
+    aOutput.Append(buf);
+    return;
+  }
+  // Standard clipboard formats
+  // https://learn.microsoft.com/en-us/windows/win32/dataxchg/standard-clipboard-formats
+  switch (aFormat) {
+    case CF_TEXT:  // 1
+      aOutput.Append(u"CF_TEXT"_ns);
+      break;
+    case CF_BITMAP:  // 2
+      aOutput.Append(u"CF_BITMAP"_ns);
+      break;
+    case CF_DIB:  // 8
+      aOutput.Append(u"CF_DIB"_ns);
+      break;
+    case CF_UNICODETEXT:  // 13
+      aOutput.Append(u"CF_UNICODETEXT"_ns);
+      break;
+    case CF_HDROP:  // 15
+      aOutput.Append(u"CF_HDROP"_ns);
+      break;
+    case CF_DIBV5:  // 17
+      aOutput.Append(u"CF_DIBV5"_ns);
+      break;
+    default:
+      aOutput.AppendPrintf("%u", aFormat);
+      break;
+  }
+}
+
 static bool IsTabletDevice() {
   // Guarantees that:
   // - The device has a touch screen.
   // - It is used as a tablet which means that it has no keyboard connected.
-  // On Windows 10 it means that it is verifying with ConvertibleSlateMode.
 
-  if (!IsWin8OrLater()) {
-    return false;
-  }
-
-  if (WindowsUIUtils::GetInTabletMode()) {
+  if (WindowsUIUtils::GetInWin10TabletMode()) {
     return true;
   }
 
@@ -1502,26 +1580,14 @@ static bool IsTabletDevice() {
   return false;
 }
 
-static bool IsMousePresent() {
-  if (!::GetSystemMetrics(SM_MOUSEPRESENT)) {
-    return false;
-  }
-
-  DWORD count = InputDeviceUtils::CountMouseDevices();
-  if (!count) {
-    return false;
-  }
-
-  // If there is a mouse device and if this machine is a tablet or has a
-  // digitizer, that's counted as the mouse device.
-  // FIXME: Bug 1495938:  We should drop this heuristic way once we find out a
-  // reliable way to tell there is no mouse or not.
-  if (count == 1 &&
-      (WinUtils::IsTouchDeviceSupportPresent() || IsTabletDevice())) {
-    return false;
-  }
-
-  return true;
+bool WinUtils::SystemHasMouse() {
+  // As per MSDN, this value is rarely false because of virtual mice, and
+  // some machines report the existance of a mouse port as a mouse.
+  //
+  // We probably could try to distinguish if we wanted, but a virtual mouse
+  // might be there for a reason, and maybe we shouldn't assume we know
+  // better.
+  return !!::GetSystemMetrics(SM_MOUSEPRESENT);
 }
 
 /* static */
@@ -1530,7 +1596,7 @@ PointerCapabilities WinUtils::GetPrimaryPointerCapabilities() {
     return PointerCapabilities::Coarse;
   }
 
-  if (IsMousePresent()) {
+  if (SystemHasMouse()) {
     return PointerCapabilities::Fine | PointerCapabilities::Hover;
   }
 
@@ -1541,24 +1607,41 @@ PointerCapabilities WinUtils::GetPrimaryPointerCapabilities() {
   return PointerCapabilities::None;
 }
 
+bool WinUtils::SystemHasTouch() {
+  int digitizerMetrics = ::GetSystemMetrics(SM_DIGITIZER);
+  return (digitizerMetrics & NID_INTEGRATED_TOUCH) ||
+         (digitizerMetrics & NID_EXTERNAL_TOUCH);
+}
+
+bool WinUtils::SystemHasPen() {
+  int digitizerMetrics = ::GetSystemMetrics(SM_DIGITIZER);
+  return (digitizerMetrics & NID_INTEGRATED_PEN) ||
+         (digitizerMetrics & NID_EXTERNAL_PEN);
+}
+
 /* static */
 PointerCapabilities WinUtils::GetAllPointerCapabilities() {
-  PointerCapabilities result = PointerCapabilities::None;
+  PointerCapabilities pointerCapabilities = PointerCapabilities::None;
 
-  if (IsTabletDevice() || IsTouchDeviceSupportPresent()) {
-    result |= PointerCapabilities::Coarse;
+  if (SystemHasTouch()) {
+    pointerCapabilities |= PointerCapabilities::Coarse;
   }
 
-  if (IsMousePresent()) {
-    result |= PointerCapabilities::Fine | PointerCapabilities::Hover;
+  if (SystemHasPen() || SystemHasMouse()) {
+    pointerCapabilities |=
+        PointerCapabilities::Fine | PointerCapabilities::Hover;
   }
 
-  return result;
+  return pointerCapabilities;
 }
 
 /* static */
 bool WinUtils::ResolveJunctionPointsAndSymLinks(std::wstring& aPath) {
-  LOG_D("ResolveJunctionPointsAndSymLinks: Resolving path: %S", aPath.c_str());
+  static mozilla::LazyLogModule sNTFSLog("NTFS");
+
+  MOZ_LOG(
+      sNTFSLog, LogLevel::Debug,
+      ("ResolveJunctionPointsAndSymLinks: Resolving path: %S", aPath.c_str()));
 
   wchar_t path[MAX_PATH] = {0};
 
@@ -1567,15 +1650,18 @@ bool WinUtils::ResolveJunctionPointsAndSymLinks(std::wstring& aPath) {
       nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr));
 
   if (handle == INVALID_HANDLE_VALUE) {
-    LOG_E("Failed to open file handle to resolve path. GetLastError=%lu",
-          GetLastError());
+    MOZ_LOG(sNTFSLog, LogLevel::Error,
+            ("Failed to open file handle to resolve path. GetLastError=%lu",
+             GetLastError()));
     return false;
   }
 
   DWORD pathLen = GetFinalPathNameByHandleW(
       handle, path, MAX_PATH, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
   if (pathLen == 0 || pathLen >= MAX_PATH) {
-    LOG_E("GetFinalPathNameByHandleW failed. GetLastError=%lu", GetLastError());
+    MOZ_LOG(
+        sNTFSLog, LogLevel::Error,
+        ("GetFinalPathNameByHandleW failed. GetLastError=%lu", GetLastError()));
     return false;
   }
   aPath = path;
@@ -1589,8 +1675,9 @@ bool WinUtils::ResolveJunctionPointsAndSymLinks(std::wstring& aPath) {
     aPath.erase(0, 4);
   }
 
-  LOG_D("ResolveJunctionPointsAndSymLinks: Resolved path to: %S",
-        aPath.c_str());
+  MOZ_LOG(sNTFSLog, LogLevel::Debug,
+          ("ResolveJunctionPointsAndSymLinks: Resolved path to: %S",
+           aPath.c_str()));
   return true;
 }
 
@@ -1654,8 +1741,8 @@ bool WinUtils::MakeLongPath(nsAString& aPath) {
   wchar_t tempPath[MAX_PATH + 1];
   DWORD longResult =
       GetLongPathNameW((char16ptr_t)PromiseFlatString(aPath).get(), tempPath,
-                       ArrayLength(tempPath));
-  if (longResult > ArrayLength(tempPath)) {
+                       std::size(tempPath));
+  if (longResult > std::size(tempPath)) {
     // Our buffer is too short, and we're guaranteeing <= MAX_PATH results.
     return false;
   } else if (longResult) {
@@ -1674,7 +1761,7 @@ bool WinUtils::UnexpandEnvVars(nsAString& aPath) {
   // PathUnExpandEnvStringsW returns false if it doesn't make any
   // substitutions. Silently continue using the unaltered path.
   if (PathUnExpandEnvStringsW((char16ptr_t)PromiseFlatString(aPath).get(),
-                              tempPath, ArrayLength(tempPath))) {
+                              tempPath, std::size(tempPath))) {
     aPath = tempPath;
     MOZ_ASSERT(aPath.Length() <= MAX_PATH);
   }
@@ -1740,10 +1827,8 @@ const WinUtils::WhitelistVec& WinUtils::GetWhitelistedPaths() {
     if (NS_IsMainThread()) {
       setClearFn();
     } else {
-      SchedulerGroup::Dispatch(
-          TaskCategory::Other,
-          NS_NewRunnableFunction("WinUtils::GetWhitelistedPaths",
-                                 std::move(setClearFn)));
+      SchedulerGroup::Dispatch(NS_NewRunnableFunction(
+          "WinUtils::GetWhitelistedPaths", std::move(setClearFn)));
     }
 
     return BuildWhitelist();
@@ -1920,6 +2005,59 @@ bool WinUtils::GetTimezoneName(wchar_t* aBuffer) {
   return true;
 }
 
+static constexpr nsLiteralCString kMicaPrefs[] = {
+    "widget.windows.mica"_ns,
+    "widget.windows.mica.popups"_ns,
+    "widget.windows.mica.toplevel-backdrop"_ns,
+};
+
+static BOOL CALLBACK UpdateMicaInHwnd(HWND aHwnd, LPARAM aLParam) {
+  if (RefPtr<nsWindow> win = WinUtils::GetNSWindowPtr(aHwnd)) {
+    win->UpdateMicaBackdrop(/* aForce = */ true);
+  }
+  return TRUE;
+}
+
+void WinUtils::UpdateMicaInAllWindows() {
+  ::EnumWindows(&UpdateMicaInHwnd, 0);
+  LookAndFeel::NotifyChangedAllWindows(
+      widget::ThemeChangeKind::MediaQueriesOnly);
+}
+
+bool WinUtils::MicaAvailable() {
+  static bool sAvailable = [] {
+    if (!IsWin1122H2OrLater()) {
+      return false;
+    }
+    for (const auto& pref : kMicaPrefs) {
+      Preferences::RegisterCallback(
+          [](const char*, void*) { WinUtils::UpdateMicaInAllWindows(); }, pref);
+    }
+    return true;
+  }();
+  return sAvailable;
+}
+
+bool WinUtils::MicaEnabled() {
+  return MicaAvailable() && StaticPrefs::widget_windows_mica();
+}
+
+bool WinUtils::MicaPopupsEnabled() {
+  if (!MicaAvailable()) {
+    return false;
+  }
+  switch (StaticPrefs::widget_windows_mica_popups()) {
+    case 0:
+      return false;
+    case 1:
+      return true;
+    default:
+      break;
+  }
+  auto* lf = static_cast<nsLookAndFeel*>(nsLookAndFeel::GetInstance());
+  return !lf->NeedsMicaWorkaround();
+}
+
 // There are undocumented APIs to query/change the system DPI settings found by
 // https://github.com/lihas/ . We use those APIs only for testing purpose, i.e.
 // in mochitests or some such. To avoid exposing them in our official release
@@ -1991,10 +2129,6 @@ static LONG SetRelativeScaleStep(LUID aAdapterId, int32_t aRelativeScaleStep) {
 }
 
 nsresult WinUtils::SetHiDPIMode(bool aHiDPI) {
-  if (!IsWin10OrLater()) {
-    return NS_ERROR_NOT_AVAILABLE;
-  }
-
   auto config = GetDisplayConfig();
   if (!config) {
     return NS_ERROR_NOT_AVAILABLE;
@@ -2050,10 +2184,6 @@ nsresult WinUtils::SetHiDPIMode(bool aHiDPI) {
 }
 
 nsresult WinUtils::RestoreHiDPIMode() {
-  if (!IsWin10OrLater()) {
-    return NS_ERROR_NOT_AVAILABLE;
-  }
-
   if (sCurRelativeScaleStep == std::numeric_limits<int>::max()) {
     // The DPI setting hasn't been changed.
     return NS_ERROR_UNEXPECTED;
@@ -2084,6 +2214,23 @@ const char* WinUtils::WinEventToEventName(UINT msg) {
   return eventMsgInfo != mozilla::widget::gAllEvents.end()
              ? eventMsgInfo->second.mStr
              : nullptr;
+}
+
+nsresult WinUtils::GetProcessImageName(DWORD aProcessId, nsAString& aName) {
+  nsAutoHandle procHandle(
+      ::OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, aProcessId));
+  if (!procHandle) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  wchar_t path[MAX_PATH] = {L'\0'};
+  auto len = ::GetProcessImageFileNameW(procHandle, path, std::size(path));
+  if (!len) {
+    return NS_ERROR_FAILURE;
+  }
+
+  aName = path;
+  return NS_OK;
 }
 
 // Note to testers and/or test-authors: on Windows 10, and possibly on other
@@ -2119,5 +2266,4 @@ ScopedRtlShimWindow::~ScopedRtlShimWindow() {
   }
 }
 
-}  // namespace widget
-}  // namespace mozilla
+}  // namespace mozilla::widget

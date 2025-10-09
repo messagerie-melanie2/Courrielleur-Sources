@@ -16,13 +16,14 @@
       lightweightthemes="true">
 <head>
   <meta charset="utf-8" />
-  <title></title>
+  <title id="about3PaneTitle"></title>
 
   <link rel="icon" href="chrome://messenger/skin/icons/new/compact/folder.svg" />
 
   <link rel="stylesheet" href="chrome://messenger/skin/messenger.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/contextMenu.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/icons.css" />
+  <link rel="stylesheet" href="chrome://messenger/skin/containers.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/colors.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/folderColors.css" />
   <link rel="stylesheet" href="chrome://messenger/skin/folderMenus.css" />
@@ -35,6 +36,7 @@
   <link rel="localization" href="messenger/treeView.ftl" />
   <link rel="localization" href="messenger/messenger.ftl" />
   <link rel="localization" href="toolkit/global/textActions.ftl" />
+  <link rel="localization" href="toolkit/main-window/findbar.ftl" />
 
   <script defer="defer" src="chrome://messenger/content/globalOverlay.js"></script>
   <script defer="defer" src="chrome://global/content/editMenuOverlay.js"></script>
@@ -44,16 +46,20 @@
   <script defer="defer" src="chrome://messenger/content/msgViewNavigation.js"></script>
   <script defer="defer" src="chrome://messenger/content/quickFilterBar.js"></script>
   <script defer="defer" src="chrome://messenger/content/pane-splitter.js"></script>
-  <script defer="defer" src="chrome://messenger/content/tree-listbox.js"></script>
-  <script defer="defer" type="module" src="chrome://messenger/content/tree-view.mjs"></script>
-  <script defer="defer" src="chrome://messenger/content/jsTreeView.js"></script>
+  <script type="module" src="chrome://messenger/content/tree-listbox.mjs"></script>
+  <script type="module" src="chrome://messenger/content/thread-card.mjs"></script>
+  <script type="module" src="chrome://messenger/content/thread-row.mjs"></script>
+  <script type="module" src="chrome://messenger/content/folder-tree-row.mjs"></script>
+  <script type="module" src="chrome://messenger/content/tree-view.mjs"></script>
+  <script type="module" src="chrome://messenger/content/pane-layout.mjs"></script>
+  <script type="module" src="chrome://messenger/content/message-pane.mjs"></script>
   <script defer="defer" src="chrome://messenger/content/mailContext.js"></script>
   <script defer="defer" src="chrome://messenger/content/mailCommon.js"></script>
   <script defer="defer" src="chrome://messenger/content/about3Pane.js"></script>
 </head>
-<body class="layout-classic">
-  <div id="folderPane" class="collapsed-by-splitter no-overscroll" tabindex="-1">
-    <div id="folderPaneHeaderBar" hidden="hidden">
+<body id="paneLayout" is="pane-layout" class="layout-classic">
+  <div id="folderPane" class="collapsed-by-splitter" tabindex="-1">
+    <div id="folderPaneHeaderBar" class="sidebar-panel-header" hidden="hidden">
 # Force a reverse tabindex to work alongside the `flex-direction: row-reverse`
 # in order to guarantee a consistent end alignment of the `#folderPaneMoreButton`.
       <button id="folderPaneMoreButton"
@@ -74,7 +80,11 @@
               tabindex="1"
               disabled="disabled"></button>
     </div>
-    <ul id="folderTree" is="tree-listbox" role="tree"></ul>
+    <ul id="folderTree"
+        is="tree-listbox"
+        role="tree"
+        class="sidebar-panel-scroll"
+        aria-multiselectable="true"></ul>
     <template id="modeTemplate">
       <li class="unselectable">
         <div class="mode-container">
@@ -135,7 +145,16 @@
       </div>
     </div>
 #include quickFilterBar.inc.xhtml
-    <tree-view id="threadTree" data-label-id="threadPaneFolderName"/>
+    <tree-view id="threadTree" data-label-id="threadPaneFolderName">
+      <slot name="placeholders">
+        <div id="placeholderNoMessages"
+             hidden="hidden"
+             data-l10n-id="message-list-placeholder-no-messages"></div>
+        <div id="placeholderMultipleFolders"
+             hidden="hidden"
+             data-l10n-id="message-list-placeholder-multiple-folders"></div>
+      </slot>
+    </tree-view>
     <!-- Thread pane templates -->
     <template id="threadPaneApplyColumnMenu">
       <xul:menu class="applyTo-menu"
@@ -188,9 +207,9 @@
       </xul:menu>
     </template>
     <template id="threadPaneRowTemplate">
-      <!-- This template must be kept in sync with thread-pane-columns.mjs. -->
-      <td class="selectcol-column" data-l10n-id="threadpane-cell-select"></td>
-      <td class="tree-view-row-thread threadcol-column button-column" data-l10n-id="threadpane-cell-thread">
+      <!-- This template must be kept in sync with ThreadPaneColumns.mjs. -->
+      <td class="selectcol-column" data-column-name="selectcol"></td>
+      <td class="tree-view-row-thread threadcol-column button-column" data-column-name="threadcol">
         <button type="button"
                 class="button-flat tree-button-thread"
                 aria-hidden="true"
@@ -198,7 +217,7 @@
           <img src="" alt="" />
         </button>
       </td>
-      <td class="tree-view-row-flag flaggedcol-column button-column" data-l10n-id="threadpane-cell-flagged">
+      <td class="tree-view-row-flag flaggedcol-column button-column" data-column-name="flaggedcol">
         <button type="button"
                 class="button-flat tree-button-flag"
                 aria-hidden="true"
@@ -206,10 +225,10 @@
           <img src="" alt="" />
         </button>
       </td>
-      <td class="attachmentcol-column button-column" data-l10n-id="threadpane-cell-attachments">
+      <td class="attachmentcol-column button-column" data-column-name="attachmentcol">
         <img src="" data-l10n-id="tree-list-view-row-attach" />
       </td>
-      <td class="subjectcol-column" data-l10n-id="threadpane-cell-subject">
+      <td class="subjectcol-column" data-column-name="subjectcol">
         <div class="thread-container">
           <button type="button"
                   class="button button-flat button-reset twisty"
@@ -222,7 +241,7 @@
           </div>
         </div>
       </td>
-      <td class="tree-view-row-unread unreadbuttoncolheader-column button-column" data-l10n-id="threadpane-cell-read-status">
+      <td class="tree-view-row-unread unreadbuttoncolheader-column button-column" data-column-name="unreadcol">
         <button type="button"
                 class="button-flat tree-button-unread"
                 aria-hidden="true"
@@ -230,10 +249,10 @@
           <img src="" alt="" />
         </button>
       </td>
-      <td class="sendercol-column" data-l10n-id="threadpane-cell-sender"></td>
-      <td class="recipientcol-column" data-l10n-id="threadpane-cell-recipient"></td>
-      <td class="correspondentcol-column" data-l10n-id="threadpane-cell-correspondents"></td>
-      <td class="tree-view-row-spam junkstatuscol-column button-column" data-l10n-id="threadpane-cell-spam">
+      <td class="sendercol-column" data-column-name="sendercol"></td>
+      <td class="recipientcol-column" data-column-name="recipientcol"></td>
+      <td class="correspondentcol-column" data-column-name="correspondentcol"></td>
+      <td class="tree-view-row-spam junkstatuscol-column button-column" data-column-name="junkstatuscol">
         <button type="button"
                 class="button-flat tree-button-spam"
                 aria-hidden="true"
@@ -241,18 +260,18 @@
           <img src="" alt="" />
         </button>
       </td>
-      <td class="datecol-column" data-l10n-id="threadpane-cell-date"></td>
-      <td class="receivedcol-column" data-l10n-id="threadpane-cell-received"></td>
-      <td class="statuscol-column" data-l10n-id="threadpane-cell-status"></td>
-      <td class="sizecol-column" data-l10n-id="threadpane-cell-size"></td>
-      <td class="tagscol-column" data-l10n-id="threadpane-cell-tags"></td>
-      <td class="accountcol-column" data-l10n-id="threadpane-cell-account"></td>
-      <td class="prioritycol-column" data-l10n-id="threadpane-cell-priority"></td>
-      <td class="unreadcol-column" data-l10n-id="threadpane-cell-unread"></td>
-      <td class="totalcol-column" data-l10n-id="threadpane-cell-total"></td>
-      <td class="locationcol-column" data-l10n-id="threadpane-cell-location"></td>
-      <td class="idcol-column" data-l10n-id="threadpane-cell-id"></td>
-      <td class="tree-view-row-delete deletecol-column button-column" data-l10n-id="threadpane-cell-delete">
+      <td class="datecol-column" data-column-name="datecol"></td>
+      <td class="receivedcol-column" data-column-name="receivedcol"></td>
+      <td class="statuscol-column" data-column-name="statuscol"></td>
+      <td class="sizecol-column" data-column-name="sizecol"></td>
+      <td class="tagscol-column" data-column-name="tagscol"></td>
+      <td class="accountcol-column" data-column-name="accountcol"></td>
+      <td class="prioritycol-column" data-column-name="prioritycol"></td>
+      <td class="unreadcol-column" data-column-name="unreadcol"></td>
+      <td class="totalcol-column" data-column-name="totalcol"></td>
+      <td class="locationcol-column" data-column-name="locationcol"></td>
+      <td class="idcol-column" data-column-name="idcol"></td>
+      <td class="tree-view-row-delete deletecol-column button-column" data-column-name="deletecol">
         <button type="button"
                 class="button-flat tree-button-delete tree-button-request-delete"
                 tabindex="-1"
@@ -271,35 +290,57 @@
     </template>
     <template id="threadPaneCardTemplate">
       <td>
-        <div class="thread-card-container">
-          <div class="thread-card-row">
-            <span class="sender"></span>
-            <img class="state replied" src="" data-l10n-id="threadpane-message-replied" />
-            <img class="state forwarded" src="" data-l10n-id="threadpane-message-forwarded" />
-            <img class="state redirected" src="" data-l10n-id="threadpane-message-redirected" />
-            <button class="button-spam tree-button-spam"
-                    data-l10n-id="tree-list-view-row-spam"
-                    aria-hidden="true"
-                    tabindex="-1">
-            </button>
-            <span class="date"></span>
+        <div class="card-container">
+          <div class="thread-card-column">
+            <img class="read-status" src="" alt="" />
           </div>
-          <div class="thread-card-row">
-            <div class="thread-card-subject-container">
+          <div class="thread-card-column">
+            <div class="thread-card-row">
+              <span class="account-indicator"></span>
+              <span class="sender"></span>
+              <img class="state replied" src="" data-l10n-id="threadpane-message-replied" />
+              <img class="state forwarded" src="" data-l10n-id="threadpane-message-forwarded" />
+              <img class="state redirected" src="" data-l10n-id="threadpane-message-redirected" />
+              <span class="date"></span>
               <button type="button"
-                      class="button button-flat button-reset twisty"
+                      class="button icon-button icon-only tree-button-more"
+                      aria-hidden="true"
+                      data-l10n-id="threadpane-card-menu-button"
+                      tabindex="-1">
+              </button>
+            </div>
+            <div class="thread-card-dynamic-row">
+              <span class="sort-header-details"></span>
+              <button type="button"
+                      class="button button-flat button-reset twisty thread-card-button"
                       aria-hidden="true"
                       tabindex="-1">
+                <img src="" alt="" class="replies-icon" />
+                <span class="thread-replies"></span>
                 <img src="" alt="" class="twisty-icon" />
               </button>
-              <span class="subject"></span>
+              <div class="thread-card-subject-container">
+                <span class="subject"></span>
+              </div>
+              <div class="thread-card-icon-info">
+                <img class="attachment-icon" src="" data-l10n-id="tree-list-view-row-attach" />
+                <div class="thread-card-tags-info">
+                  <img class="tag-icon" src="" alt="" hidden="hidden" />
+                  <img class="tag-icon" src="" alt="" hidden="hidden" />
+                  <img class="tag-icon" src="" alt="" hidden="hidden" />
+                  <span class="tag-more" hidden="hidden"></span>
+                </div>
+                <button class="button-spam tree-button-spam"
+                        data-l10n-id="tree-list-view-row-spam"
+                        aria-hidden="true"
+                        tabindex="-1">
+                </button>
+                <button class="button-star tree-button-flag"
+                        aria-hidden="true"
+                        tabindex="-1">
+                </button>
+              </div>
             </div>
-            <img class="attachment-icon" src="" data-l10n-id="tree-list-view-row-attach" />
-            <img class="tag-icon" src="" alt="" hidden="hidden" />
-            <button class="button-star tree-button-flag"
-                    aria-hidden="true"
-                    tabindex="-1">
-            </button>
           </div>
         </div>
       </td>
@@ -312,25 +353,8 @@
       resize-id="messagePane"
       collapse-width="300"
       collapse-height="100" />
-  <div id="messagePane" class="collapsed-by-splitter">
-    <xul:browser id="webBrowser"
-                 type="content"
-                 hidden="true"
-                 nodefaultsrc="true"
-                 context="browserContext"
-                 autocompletepopup="PopupAutoComplete"
-                 forcemessagemanager="true"
-                 messagemanagergroup="single-page"
-                 maychangeremoteness="true" />
-    <xul:browser id="messageBrowser"
-                 hidden="true"
-                 src="about:message" />
-    <xul:browser id="multiMessageBrowser"
-                 type="content"
-                 hidden="true"
-                 context="aboutPagesContext"
-                 src="chrome://messenger/content/multimessageview.xhtml" />
-  </div>
+#include templates/messagePaneTemplate.inc.xhtml
+  <message-pane id="messagePane" class="collapsed-by-splitter"></message-pane>
   <xul:browser id="accountCentralBrowser" hidden="true"/>
 </body>
 <popupset xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
@@ -391,8 +415,8 @@
                  showAccountsFileHere="true"
                  showFileHereLabel="true"
                  showRecent="true"
-                 recentLabel="&contextMoveCopyMsgRecentMenu.label;"
-                 recentAccessKey="&contextMoveCopyMsgRecentMenu.accesskey;"
+                 recentLabel="&contextMoveCopyMsgRecentDestinationMenu.label;"
+                 recentAccessKey="&contextMoveCopyMsgRecentDestinationMenu.accesskey;"
                  showFavorites="true"
                  favoritesLabel="&contextMoveCopyMsgFavoritesMenu.label;"
                  favoritesAccessKey="&contextMoveCopyMsgFavoritesMenu.accesskey;"
@@ -407,8 +431,8 @@
                  showAccountsFileHere="true"
                  showFileHereLabel="true"
                  showRecent="true"
-                 recentLabel="&contextMoveCopyMsgRecentMenu.label;"
-                 recentAccessKey="&contextMoveCopyMsgRecentMenu.accesskey;"
+                 recentLabel="&contextMoveCopyMsgRecentDestinationMenu.label;"
+                 recentAccessKey="&contextMoveCopyMsgRecentDestinationMenu.accesskey;"
                  showFavorites="true"
                  favoritesLabel="&contextMoveCopyMsgFavoritesMenu.label;"
                  favoritesAccessKey="&contextMoveCopyMsgFavoritesMenu.accesskey;"
@@ -421,8 +445,14 @@
               accesskey="&folderContextCompact.accesskey;"/>
     <menuitem id="folderPaneContext-markMailFolderAllRead"
               class="menuitem-iconic"
-              label="&folderContextMarkMailFolderRead.label;"
-              accesskey="&folderContextMarkMailFolderRead.accesskey;"/>
+              data-l10n-id="folder-pane-context-mark-folder-read"
+              data-l10n-args='{"count": 1}'/>
+    <!--
+      TODO: Remove this following menuitem and migrate the strings to fluent
+      so we can more easily swap the label based on the selection. Both
+      #folderPaneContext-markMailFolderAllRead and #folderPaneContext-markNewsgroupAllRead
+      trigger the same command so we shouldn't need both menuitems.
+    -->
     <menuitem id="folderPaneContext-markNewsgroupAllRead"
               class="menuitem-iconic"
               label="&folderContextMarkNewsgroupRead.label;"
@@ -456,6 +486,10 @@
               class="menuitem-iconic"
               label="&folderContextSettings2.label;"
               accesskey="&folderContextSettings2.accesskey;"/>
+    <menuitem id="folderPaneContext-filters"
+              class="menuitem-iconic"
+              label="&filtersCmd2.label;"
+              accesskey="&filtersCmd2.accesskey;"/>
     <menuitem id="folderPaneContext-manageTags"
               class="menuitem-iconic"
               label="&manageTags.label;"
@@ -535,13 +569,13 @@
               type="checkbox"
               closemenu="none"
               data-l10n-id="folder-pane-header-context-toggle-get-messages"
-              oncommand="folderPane.toggleGetMsgsBtn(event);"/>
+              oncommand="folderPane.toggleHeaderButton(event, 'folderPaneGetMessages');"/>
     <menuitem id="folderPaneHeaderToggleNewMessage"
               class="folder-pane-option"
               type="checkbox"
               closemenu="none"
               data-l10n-id="folder-pane-header-context-toggle-new-message"
-              oncommand="folderPane.toggleNewMsgBtn(event);"/>
+              oncommand="folderPane.toggleHeaderButton(event, 'folderPaneWriteMessage');"/>
     <menuseparator id="separatorAfterToggleButtons"/>
     <menuitem id="folderPaneHeaderToggleTotalCount"
               class="folder-pane-option"
@@ -565,7 +599,7 @@
     <menuseparator id="separatorBeforeHideFolderPaneHeaderOption"/>
     <menuitem id="folderPaneHeaderHideMenuItem"
               data-l10n-id="folder-pane-header-context-hide"
-              oncommand="folderPane.toggleHeader(false);"/>
+              oncommand="folderPane.toggleHeader(true);"/>
   </menupopup>
   <menupopup id="folderPaneModeContext"
              class="no-accel-menupopup"
@@ -599,7 +633,7 @@
               value="table"
               closemenu="none"
               data-l10n-id="thread-pane-header-context-table-view"
-              oncommand="threadPaneHeader.changePaneView(event);"/>
+              oncommand="goDoCommand('cmd_threadPaneViewTable');"/>
     <menuitem id="threadPaneCardsView"
               class="thread-view-option"
               type="radio"
@@ -607,7 +641,7 @@
               value="cards"
               closemenu="none"
               data-l10n-id="thread-pane-header-context-cards-view"
-              oncommand="threadPaneHeader.changePaneView(event);"/>
+              oncommand="goDoCommand('cmd_threadPaneViewCards');"/>
     <menuseparator id="separatorBeforeHideThreadHeaderOption"/>
     <menu id="threadPaneSortMenu"
           accesskey="&sortMenu.accesskey;"
@@ -618,91 +652,91 @@
         <menuitem id="threadPaneSortByDateMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byDate"
+                  value="dateCol"
                   label="&sortByDateCmd.label;"
                   accesskey="&sortByDateCmd.accesskey;"/>
         <menuitem id="threadPaneSortByReceivedMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byReceived"
+                  value="receivedCol"
                   label="&sortByReceivedCmd.label;"
                   accesskey="&sortByReceivedCmd.accesskey;"/>
         <menuitem id="threadPaneSortByFlagMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byFlagged"
+                  value="flaggedCol"
                   label="&sortByStarCmd.label;"
                   accesskey="&sortByStarCmd.accesskey;"/>
         <menuitem id="threadPaneSortByOrderReceivedMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byId"
+                  value="idCol"
                   label="&sortByOrderReceivedCmd.label;"
                   accesskey="&sortByOrderReceivedCmd.accesskey;"/>
         <menuitem id="threadPaneSortByPriorityMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byPriority"
+                  value="priorityCol"
                   label="&sortByPriorityCmd.label;"
                   accesskey="&sortByPriorityCmd.accesskey;"/>
         <menuitem id="threadPaneSortByFromMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byAuthor"
+                  value="senderCol"
                   label="&sortByFromCmd.label;"
                   accesskey="&sortByFromCmd.accesskey;"/>
         <menuitem id="threadPaneSortByRecipientMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byRecipient"
+                  value="recipientCol"
                   label="&sortByRecipientCmd.label;"
                   accesskey="&sortByRecipientCmd.accesskey;"/>
         <menuitem id="threadPaneSortByCorrespondentMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byCorrespondent"
+                  value="correspondentCol"
                   label="&sortByCorrespondentCmd.label;"
                   accesskey="&sortByCorrespondentCmd.accesskey;"/>
         <menuitem id="threadPaneSortBySizeMenuitem"
                   type="radio"
                   name="sortby"
-                  value="bySize"
+                  value="sizeCol"
                   label="&sortBySizeCmd.label;"
                   accesskey="&sortBySizeCmd.accesskey;"/>
         <menuitem id="threadPaneSortByStatusMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byStatus"
+                  value="statusCol"
                   label="&sortByStatusCmd.label;"
                   accesskey="&sortByStatusCmd.accesskey;"/>
         <menuitem id="threadPaneSortBySubjectMenuitem"
                   type="radio"
                   name="sortby"
-                  value="bySubject"
+                  value="subjectCol"
                   label="&sortBySubjectCmd.label;"
                   accesskey="&sortBySubjectCmd.accesskey;"/>
         <menuitem id="threadPaneSortByUnreadMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byUnread"
+                  value="unreadButtonColHeader"
                   label="&sortByUnreadCmd.label;"
                   accesskey="&sortByUnreadCmd.accesskey;"/>
         <menuitem id="threadPaneSortByTagsMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byTags"
+                  value="tagsCol"
                   label="&sortByTagsCmd.label;"
                   accesskey="&sortByTagsCmd.accesskey;"/>
         <menuitem id="threadPaneSortByJunkStatusMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byJunkStatus"
+                  value="junkStatusCol"
                   label="&sortByJunkStatusCmd.label;"
                   accesskey="&sortByJunkStatusCmd.accesskey;"/>
         <menuitem id="threadPaneSortByAttachmentsMenuitem"
                   type="radio"
                   name="sortby"
-                  value="byAttachments"
+                  value="attachmentCol"
                   label="&sortByAttachmentsCmd.label;"
                   accesskey="&sortByAttachmentsCmd.accesskey;"/>
         <menuseparator id="threadPaneSortAfterAttachmentSeparator"/>

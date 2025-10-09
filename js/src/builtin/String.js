@@ -2,26 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-function StringProtoHasNoMatch() {
-  var ObjectProto = GetBuiltinPrototype("Object");
-  var StringProto = GetBuiltinPrototype("String");
-  if (!ObjectHasPrototype(StringProto, ObjectProto)) {
-    return false;
-  }
-  return !(GetBuiltinSymbol("match") in StringProto);
-}
-
-function IsStringMatchOptimizable() {
-  var RegExpProto = GetBuiltinPrototype("RegExp");
-  // If RegExpPrototypeOptimizable succeeds, `exec` and `@@match` are
-  // guaranteed to be data properties.
-  return (
-    RegExpPrototypeOptimizable(RegExpProto) &&
-    RegExpProto.exec === RegExp_prototype_Exec &&
-    RegExpProto[GetBuiltinSymbol("match")] === RegExpMatch
-  );
-}
-
 function ThrowIncompatibleMethod(name, thisv) {
   ThrowTypeError(JSMSG_INCOMPATIBLE_PROTO, "String", name, ToString(thisv));
 }
@@ -36,14 +16,23 @@ function String_match(regexp) {
   // Step 2.
   var isPatternString = typeof regexp === "string";
   if (
-    !(isPatternString && StringProtoHasNoMatch()) &&
+    !(isPatternString && CanOptimizeStringProtoSymbolLookup()) &&
     !IsNullOrUndefined(regexp)
   ) {
+    // Fast path for regular expressions with the original
+    // RegExp.prototype[@@match] function.
+    if (IsObject(regexp) && IsOptimizableRegExpObject(regexp)) {
+      return callFunction(RegExpMatch, regexp, this);
+    }
+
     // Step 2.a.
     var matcher = GetMethod(regexp, GetBuiltinSymbol("match"));
 
     // Step 2.b.
     if (matcher !== undefined) {
+      if (!IsObject(regexp)) {
+        RegExpSymbolProtocolOnPrimitiveCounter();
+      }
       return callContentFunction(matcher, regexp, this);
     }
   }
@@ -51,7 +40,7 @@ function String_match(regexp) {
   // Step 3.
   var S = ToString(this);
 
-  if (isPatternString && IsStringMatchOptimizable()) {
+  if (isPatternString && IsRegExpPrototypeOptimizable()) {
     var flatResult = FlatStringMatch(S, regexp);
     if (flatResult !== undefined) {
       return flatResult;
@@ -62,7 +51,7 @@ function String_match(regexp) {
   var rx = RegExpCreate(regexp);
 
   // Step 5 (optimized case).
-  if (IsStringMatchOptimizable()) {
+  if (IsRegExpPrototypeOptimizable()) {
     return RegExpMatcher(rx, S, 0);
   }
 
@@ -97,11 +86,20 @@ function String_matchAll(regexp) {
       }
     }
 
+    // Fast path for regular expressions with the original
+    // RegExp.prototype[@@matchAll] function.
+    if (IsObject(regexp) && IsOptimizableRegExpObject(regexp)) {
+      return callFunction(RegExpMatchAll, regexp, this);
+    }
+
     // Step 2.c.
     var matcher = GetMethod(regexp, GetBuiltinSymbol("matchAll"));
 
     // Step 2.d.
     if (matcher !== undefined) {
+      if (!IsObject(regexp)) {
+        RegExpSymbolProtocolOnPrimitiveCounter();
+      }
       return callContentFunction(matcher, regexp, this);
     }
   }
@@ -131,11 +129,11 @@ function String_pad(maxLength, fillString, padEnd) {
   }
 
   // Step 2.
-  let str = ToString(this);
+  var str = ToString(this);
 
   // Steps 3-4.
-  let intMaxLength = ToLength(maxLength);
-  let strLen = str.length;
+  var intMaxLength = ToLength(maxLength);
+  var strLen = str.length;
 
   // Step 5.
   if (intMaxLength <= strLen) {
@@ -144,7 +142,7 @@ function String_pad(maxLength, fillString, padEnd) {
 
   // Steps 6-7.
   assert(fillString !== undefined, "never called when fillString is undefined");
-  let filler = ToString(fillString);
+  var filler = ToString(fillString);
 
   // Step 8.
   if (filler === "") {
@@ -158,12 +156,12 @@ function String_pad(maxLength, fillString, padEnd) {
   }
 
   // Step 9.
-  let fillLen = intMaxLength - strLen;
+  var fillLen = intMaxLength - strLen;
 
   // Step 10.
   // Perform an int32 division to ensure String_repeat is not called with a
   // double to avoid repeated bailouts in ToInteger.
-  let truncatedStringFiller = callFunction(
+  var truncatedStringFiller = callFunction(
     String_repeat,
     filler,
     (fillLen / filler.length) | 0
@@ -186,15 +184,6 @@ function String_pad_end(maxLength, fillString = " ") {
   return callFunction(String_pad, this, maxLength, fillString, true);
 }
 
-function StringProtoHasNoReplace() {
-  var ObjectProto = GetBuiltinPrototype("Object");
-  var StringProto = GetBuiltinPrototype("String");
-  if (!ObjectHasPrototype(StringProto, ObjectProto)) {
-    return false;
-  }
-  return !(GetBuiltinSymbol("replace") in StringProto);
-}
-
 // A thin wrapper to call SubstringKernel with int32-typed arguments.
 // Caller should check the range of |from| and |length|.
 function Substring(str, from, length) {
@@ -208,7 +197,11 @@ function Substring(str, from, length) {
     "coercing |length| into int32 should not change the value"
   );
 
-  return SubstringKernel(str, from | 0, length | 0);
+  return SubstringKernel(
+    str,
+    std_Math_max(from, 0) | 0,
+    std_Math_max(length, 0) | 0
+  );
 }
 
 // ES 2016 draft Mar 25, 2016 21.1.3.14.
@@ -220,14 +213,23 @@ function String_replace(searchValue, replaceValue) {
 
   // Step 2.
   if (
-    !(typeof searchValue === "string" && StringProtoHasNoReplace()) &&
+    !(typeof searchValue === "string" && CanOptimizeStringProtoSymbolLookup()) &&
     !IsNullOrUndefined(searchValue)
   ) {
+    // Fast path for regular expressions with the original
+    // RegExp.prototype[@@replace] function.
+    if (IsObject(searchValue) && IsOptimizableRegExpObject(searchValue)) {
+      return callFunction(RegExpReplace, searchValue, this, replaceValue);
+    }
+
     // Step 2.a.
     var replacer = GetMethod(searchValue, GetBuiltinSymbol("replace"));
 
     // Step 2.b.
     if (replacer !== undefined) {
+      if (!IsObject(searchValue)) {
+        RegExpSymbolProtocolOnPrimitiveCounter();
+      }
       return callContentFunction(replacer, searchValue, this, replaceValue);
     }
   }
@@ -309,11 +311,20 @@ function String_replaceAll(searchValue, replaceValue) {
       }
     }
 
+    // Fast path for regular expressions with the original
+    // RegExp.prototype[@@replace] function.
+    if (IsObject(searchValue) && IsOptimizableRegExpObject(searchValue)) {
+      return callFunction(RegExpReplace, searchValue, this, replaceValue);
+    }
+
     // Step 2.c.
     var replacer = GetMethod(searchValue, GetBuiltinSymbol("replace"));
 
     // Step 2.b.
     if (replacer !== undefined) {
+      if (!IsObject(searchValue)) {
+        RegExpSymbolProtocolOnPrimitiveCounter();
+      }
       return callContentFunction(replacer, searchValue, this, replaceValue);
     }
   }
@@ -405,26 +416,6 @@ function String_replaceAll(searchValue, replaceValue) {
   return result;
 }
 
-function StringProtoHasNoSearch() {
-  var ObjectProto = GetBuiltinPrototype("Object");
-  var StringProto = GetBuiltinPrototype("String");
-  if (!ObjectHasPrototype(StringProto, ObjectProto)) {
-    return false;
-  }
-  return !(GetBuiltinSymbol("search") in StringProto);
-}
-
-function IsStringSearchOptimizable() {
-  var RegExpProto = GetBuiltinPrototype("RegExp");
-  // If RegExpPrototypeOptimizable succeeds, `exec` and `@@search` are
-  // guaranteed to be data properties.
-  return (
-    RegExpPrototypeOptimizable(RegExpProto) &&
-    RegExpProto.exec === RegExp_prototype_Exec &&
-    RegExpProto[GetBuiltinSymbol("search")] === RegExpSearch
-  );
-}
-
 // ES 2016 draft Mar 25, 2016 21.1.3.15.
 function String_search(regexp) {
   // Step 1.
@@ -435,14 +426,23 @@ function String_search(regexp) {
   // Step 2.
   var isPatternString = typeof regexp === "string";
   if (
-    !(isPatternString && StringProtoHasNoSearch()) &&
+    !(isPatternString && CanOptimizeStringProtoSymbolLookup()) &&
     !IsNullOrUndefined(regexp)
   ) {
+    // Fast path for regular expressions with the original
+    // RegExp.prototype[@@search] function.
+    if (IsObject(regexp) && IsOptimizableRegExpObject(regexp)) {
+      return callFunction(RegExpSearch, regexp, this);
+    }
+
     // Step 2.a.
     var searcher = GetMethod(regexp, GetBuiltinSymbol("search"));
 
     // Step 2.b.
     if (searcher !== undefined) {
+      if (!IsObject(regexp)) {
+        RegExpSymbolProtocolOnPrimitiveCounter();
+      }
       return callContentFunction(searcher, regexp, this);
     }
   }
@@ -450,7 +450,7 @@ function String_search(regexp) {
   // Step 3.
   var string = ToString(this);
 
-  if (isPatternString && IsStringSearchOptimizable()) {
+  if (isPatternString && IsRegExpPrototypeOptimizable()) {
     var flatResult = FlatStringSearch(string, regexp);
     if (flatResult !== -2) {
       return flatResult;
@@ -468,15 +468,6 @@ function String_search(regexp) {
   );
 }
 
-function StringProtoHasNoSplit() {
-  var ObjectProto = GetBuiltinPrototype("Object");
-  var StringProto = GetBuiltinPrototype("String");
-  if (!ObjectHasPrototype(StringProto, ObjectProto)) {
-    return false;
-  }
-  return !(GetBuiltinSymbol("split") in StringProto);
-}
-
 // ES 2016 draft Mar 25, 2016 21.1.3.17.
 function String_split(separator, limit) {
   // Step 1.
@@ -488,7 +479,7 @@ function String_split(separator, limit) {
   // are constants.  Following sequence of if's cannot be put together in
   // order that IonMonkey sees the constant if present (bug 1246141).
   if (typeof this === "string") {
-    if (StringProtoHasNoSplit()) {
+    if (CanOptimizeStringProtoSymbolLookup()) {
       if (typeof separator === "string") {
         if (limit === undefined) {
           // inlineConstantStringSplitString needs both arguments to
@@ -501,14 +492,23 @@ function String_split(separator, limit) {
 
   // Step 2.
   if (
-    !(typeof separator === "string" && StringProtoHasNoSplit()) &&
+    !(typeof separator === "string" && CanOptimizeStringProtoSymbolLookup()) &&
     !IsNullOrUndefined(separator)
   ) {
+    // Fast path for regular expressions with the original
+    // RegExp.prototype[@@split] function.
+    if (IsObject(separator) && IsOptimizableRegExpObject(separator)) {
+      return callFunction(RegExpSplit, separator, this, limit);
+    }
+
     // Step 2.a.
     var splitter = GetMethod(separator, GetBuiltinSymbol("split"));
 
     // Step 2.b.
     if (splitter !== undefined) {
+      if (!IsObject(separator)) {
+        RegExpSymbolProtocolOnPrimitiveCounter();
+      }
       return callContentFunction(splitter, separator, this, limit);
     }
   }
@@ -717,44 +717,6 @@ function String_slice(start, end) {
 SetIsInlinableLargeFunction(String_slice);
 
 // ES2020 draft rev dc1e21c454bd316810be1c0e7af0131a2d7f38e9
-// 21.1.3.3 String.prototype.codePointAt ( pos )
-function String_codePointAt(pos) {
-  // Step 1.
-  if (IsNullOrUndefined(this)) {
-    ThrowIncompatibleMethod("codePointAt", this);
-  }
-
-  // Step 2.
-  var S = ToString(this);
-
-  // Step 3.
-  var position = ToInteger(pos);
-
-  // Step 4.
-  var size = S.length;
-
-  // Step 5.
-  if (position < 0 || position >= size) {
-    return undefined;
-  }
-
-  // Steps 6-7.
-  var first = callFunction(std_String_charCodeAt, S, position);
-  if (first < 0xd800 || first > 0xdbff || position + 1 === size) {
-    return first;
-  }
-
-  // Steps 8-9.
-  var second = callFunction(std_String_charCodeAt, S, position + 1);
-  if (second < 0xdc00 || second > 0xdfff) {
-    return first;
-  }
-
-  // Step 10.
-  return (first - 0xd800) * 0x400 + (second - 0xdc00) + 0x10000;
-}
-
-// ES2020 draft rev dc1e21c454bd316810be1c0e7af0131a2d7f38e9
 // 21.1.3.16 String.prototype.repeat ( count )
 function String_repeat(count) {
   // Step 1.
@@ -853,23 +815,16 @@ function StringIteratorNext() {
     return result;
   }
 
-  var charCount = 1;
-  var first = callFunction(std_String_charCodeAt, S, index);
-  if (first >= 0xd800 && first <= 0xdbff && index + 1 < size) {
-    var second = callFunction(std_String_charCodeAt, S, index + 1);
-    if (second >= 0xdc00 && second <= 0xdfff) {
-      first = (first - 0xd800) * 0x400 + (second - 0xdc00) + 0x10000;
-      charCount = 2;
-    }
-  }
+  var codePoint = callFunction(std_String_codePointAt, S, index);
+  var charCount = 1 + (codePoint > 0xffff);
 
   UnsafeSetReservedSlot(obj, ITERATOR_SLOT_NEXT_INDEX, index + charCount);
 
-  // Communicate |first|'s possible range to the compiler.
-  result.value = callFunction(std_String_fromCodePoint, null, first & 0x1fffff);
+  result.value = callFunction(std_String_fromCodePoint, null, codePoint);
 
   return result;
 }
+SetIsInlinableLargeFunction(StringIteratorNext);
 
 #if JS_HAS_INTL_API
 var collatorCache = new_Record();
@@ -1053,40 +1008,6 @@ function String_static_raw(callSite /*, ...substitutions*/) {
 
   // Step 9.d.i.
   return resultString;
-}
-
-// https://github.com/tc39/proposal-relative-indexing-method
-// String.prototype.at ( index )
-function String_at(index) {
-  // Step 1.
-  if (IsNullOrUndefined(this)) {
-    ThrowIncompatibleMethod("at", this);
-  }
-
-  // Step 2.
-  var string = ToString(this);
-
-  // Step 3.
-  var len = string.length;
-
-  // Step 4.
-  var relativeIndex = ToInteger(index);
-
-  // Steps 5-6.
-  var k;
-  if (relativeIndex >= 0) {
-    k = relativeIndex;
-  } else {
-    k = len + relativeIndex;
-  }
-
-  // Step 7.
-  if (k < 0 || k >= len) {
-    return undefined;
-  }
-
-  // Step 8.
-  return string[k];
 }
 
 // ES6 draft 2014-04-27 B.2.3.3

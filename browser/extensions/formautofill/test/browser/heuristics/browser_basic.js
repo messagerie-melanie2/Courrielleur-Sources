@@ -29,8 +29,8 @@ add_heuristic_tests(
           fields: [
             { fieldName: "organization" },
             { fieldName: "address-line1" },
-            { fieldName: "address-line2" },
-            { fieldName: "address-line3" },
+            { fieldName: "address-line2", reason: "update-heuristic" },
+            { fieldName: "address-line3", reason: "update-heuristic" },
             { fieldName: "address-level2" },
             { fieldName: "address-level1" },
             { fieldName: "postal-code" },
@@ -59,8 +59,11 @@ add_heuristic_tests(
             { fieldName: "address-level2" },
             { fieldName: "address-line2" },
             { fieldName: "organization" },
-            { fieldName: "address-line3" },
           ],
+        },
+        {
+          invalid: true,
+          fields: [{ fieldName: "address-line1", reason: "update-heuristic" }],
         },
       ],
     },

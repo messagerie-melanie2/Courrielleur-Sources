@@ -1,5 +1,16 @@
+use alloc::{
+    borrow::Cow,
+    boxed::Box,
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
+use core::hash::{Hash, Hasher};
+
+use hashbrown::HashSet;
+use once_cell::race::OnceBox;
+
 use crate::{arena::Handle, FastHashMap, FastHashSet};
-use std::borrow::Cow;
 
 pub type EntryPointIndex = u16;
 const SEPARATOR: char = '_';
@@ -13,19 +24,42 @@ pub enum NameKey {
     Function(Handle<crate::Function>),
     FunctionArgument(Handle<crate::Function>, u32),
     FunctionLocal(Handle<crate::Function>, Handle<crate::LocalVariable>),
+
+    /// A local variable used by ReadZeroSkipWrite bounds-check policy
+    /// when it needs to produce a pointer-typed result for an OOB access.
+    /// These are unique per accessed type, so the second element is a
+    /// type handle. See docs for [`crate::back::msl`].
+    FunctionOobLocal(Handle<crate::Function>, Handle<crate::Type>),
+
     EntryPoint(EntryPointIndex),
     EntryPointLocal(EntryPointIndex, Handle<crate::LocalVariable>),
     EntryPointArgument(EntryPointIndex, u32),
+
+    /// Entry point version of `FunctionOobLocal`.
+    EntryPointOobLocal(EntryPointIndex, Handle<crate::Type>),
 }
 
 /// This processor assigns names to all the things in a module
 /// that may need identifiers in a textual backend.
-#[derive(Default)]
 pub struct Namer {
     /// The last numeric suffix used for each base name. Zero means "no suffix".
     unique: FastHashMap<String, u32>,
-    keywords: FastHashSet<String>,
-    reserved_prefixes: Vec<String>,
+    keywords: &'static HashSet<&'static str>,
+    keywords_case_insensitive: FastHashSet<AsciiUniCase<&'static str>>,
+    reserved_prefixes: Vec<&'static str>,
+}
+
+impl Default for Namer {
+    fn default() -> Self {
+        static DEFAULT_KEYWORDS: OnceBox<HashSet<&'static str>> = OnceBox::new();
+
+        Self {
+            unique: Default::default(),
+            keywords: DEFAULT_KEYWORDS.get_or_init(|| Box::new(HashSet::default())),
+            keywords_case_insensitive: Default::default(),
+            reserved_prefixes: Default::default(),
+        }
+    }
 }
 
 impl Namer {
@@ -34,6 +68,7 @@ impl Namer {
     /// - Drop leading digits.
     /// - Retain only alphanumeric and `_` characters.
     /// - Avoid prefixes in [`Namer::reserved_prefixes`].
+    /// - Replace consecutive `_` characters with a single `_` character.
     ///
     /// The return value is a valid identifier prefix in all of Naga's output languages,
     /// and it never ends with a `SEPARATOR` character.
@@ -44,6 +79,7 @@ impl Namer {
             .trim_end_matches(SEPARATOR);
 
         let base = if !string.is_empty()
+            && !string.contains("__")
             && string
                 .chars()
                 .all(|c: char| c.is_ascii_alphanumeric() || c == '_')
@@ -53,7 +89,13 @@ impl Namer {
             let mut filtered = string
                 .chars()
                 .filter(|&c| c.is_ascii_alphanumeric() || c == '_')
-                .collect::<String>();
+                .fold(String::new(), |mut s, c| {
+                    if s.ends_with('_') && c == '_' {
+                        return s;
+                    }
+                    s.push(c);
+                    s
+                });
             let stripped_len = filtered.trim_end_matches(SEPARATOR).len();
             filtered.truncate(stripped_len);
             if filtered.is_empty() {
@@ -82,7 +124,7 @@ impl Namer {
     /// Guarantee uniqueness by applying a numeric suffix when necessary. If `label_raw`
     /// itself ends with digits, separate them from the suffix with an underscore.
     pub fn call(&mut self, label_raw: &str) -> String {
-        use std::fmt::Write as _; // for write!-ing to Strings
+        use core::fmt::Write as _; // for write!-ing to Strings
 
         let base = self.sanitize(label_raw);
         debug_assert!(!base.is_empty() && !base.ends_with(SEPARATOR));
@@ -102,10 +144,15 @@ impl Namer {
             }
             None => {
                 let mut suffixed = base.to_string();
-                if base.ends_with(char::is_numeric) || self.keywords.contains(base.as_ref()) {
+                if base.ends_with(char::is_numeric)
+                    || self.keywords.contains(base.as_ref())
+                    || self
+                        .keywords_case_insensitive
+                        .contains(&AsciiUniCase(base.as_ref()))
+                {
                     suffixed.push(SEPARATOR);
                 }
-                debug_assert!(!self.keywords.contains(&suffixed));
+                debug_assert!(!self.keywords.contains::<str>(&suffixed));
                 // `self.unique` wants to own its keys. This allocates only if we haven't
                 // already done so earlier.
                 self.unique.insert(base.into_owned(), 0);
@@ -128,7 +175,7 @@ impl Namer {
     /// context for the duration of the call to `body`.
     fn namespace(&mut self, capacity: usize, body: impl FnOnce(&mut Self)) {
         let fresh = FastHashMap::with_capacity_and_hasher(capacity, Default::default());
-        let outer = std::mem::replace(&mut self.unique, fresh);
+        let outer = core::mem::replace(&mut self.unique, fresh);
         body(self);
         self.unique = outer;
     }
@@ -136,22 +183,60 @@ impl Namer {
     pub fn reset(
         &mut self,
         module: &crate::Module,
-        reserved_keywords: &[&str],
-        reserved_prefixes: &[&str],
+        reserved_keywords: &'static HashSet<&'static str>,
+        reserved_keywords_case_insensitive: &[&'static str],
+        reserved_prefixes: &[&'static str],
         output: &mut FastHashMap<NameKey, String>,
     ) {
         self.reserved_prefixes.clear();
-        self.reserved_prefixes
-            .extend(reserved_prefixes.iter().map(|string| string.to_string()));
+        self.reserved_prefixes.extend(reserved_prefixes.iter());
 
         self.unique.clear();
-        self.keywords.clear();
-        self.keywords
-            .extend(reserved_keywords.iter().map(|string| (string.to_string())));
+        self.keywords = reserved_keywords;
+
+        debug_assert!(reserved_keywords_case_insensitive
+            .iter()
+            .all(|s| s.is_ascii()));
+        self.keywords_case_insensitive.clear();
+        self.keywords_case_insensitive.extend(
+            reserved_keywords_case_insensitive
+                .iter()
+                .map(|string| (AsciiUniCase(*string))),
+        );
+
+        // Choose fallback names for anonymous entry point return types.
+        let mut entrypoint_type_fallbacks = FastHashMap::default();
+        for ep in &module.entry_points {
+            if let Some(ref result) = ep.function.result {
+                if let crate::Type {
+                    name: None,
+                    inner: crate::TypeInner::Struct { .. },
+                } = module.types[result.ty]
+                {
+                    let label = match ep.stage {
+                        crate::ShaderStage::Vertex => "VertexOutput",
+                        crate::ShaderStage::Fragment => "FragmentOutput",
+                        crate::ShaderStage::Compute => "ComputeOutput",
+                        crate::ShaderStage::Task | crate::ShaderStage::Mesh => unreachable!(),
+                    };
+                    entrypoint_type_fallbacks.insert(result.ty, label);
+                }
+            }
+        }
+
         let mut temp = String::new();
 
         for (ty_handle, ty) in module.types.iter() {
-            let ty_name = self.call_or(&ty.name, "type");
+            // If the type is anonymous, check `entrypoint_types` for
+            // something better than just `"type"`.
+            let raw_label = match ty.name {
+                Some(ref given_name) => given_name.as_str(),
+                None => entrypoint_type_fallbacks
+                    .get(&ty_handle)
+                    .cloned()
+                    .unwrap_or("type"),
+            };
+            let ty_name = self.call(raw_label);
             output.insert(NameKey::Type(ty_handle), ty_name);
 
             if let crate::TypeInner::Struct { ref members, .. } = ty.inner {
@@ -203,51 +288,42 @@ impl Namer {
             let label = match constant.name {
                 Some(ref name) => name,
                 None => {
-                    use std::fmt::Write;
+                    use core::fmt::Write;
                     // Try to be more descriptive about the constant values
                     temp.clear();
-                    match constant.inner {
-                        crate::ConstantInner::Scalar {
-                            width: _,
-                            value: crate::ScalarValue::Sint(v),
-                        } => write!(temp, "const_{v}i"),
-                        crate::ConstantInner::Scalar {
-                            width: _,
-                            value: crate::ScalarValue::Uint(v),
-                        } => write!(temp, "const_{v}u"),
-                        crate::ConstantInner::Scalar {
-                            width: _,
-                            value: crate::ScalarValue::Float(v),
-                        } => {
-                            let abs = v.abs();
-                            write!(
-                                temp,
-                                "const_{}{}",
-                                if v < 0.0 { "n" } else { "" },
-                                abs.trunc(),
-                            )
-                            .unwrap();
-                            let fract = abs.fract();
-                            if fract == 0.0 {
-                                write!(temp, "f")
-                            } else {
-                                write!(temp, "_{:02}f", (fract * 100.0) as i8)
-                            }
-                        }
-                        crate::ConstantInner::Scalar {
-                            width: _,
-                            value: crate::ScalarValue::Bool(v),
-                        } => write!(temp, "const_{v}"),
-                        crate::ConstantInner::Composite { ty, components: _ } => {
-                            write!(temp, "const_{}", output[&NameKey::Type(ty)])
-                        }
-                    }
-                    .unwrap();
+                    write!(temp, "const_{}", output[&NameKey::Type(constant.ty)]).unwrap();
                     &temp
                 }
             };
             let name = self.call(label);
             output.insert(NameKey::Constant(handle), name);
+        }
+    }
+}
+
+/// A string wrapper type with an ascii case insensitive Eq and Hash impl
+struct AsciiUniCase<S: AsRef<str> + ?Sized>(S);
+
+impl<S: AsRef<str>> PartialEq<Self> for AsciiUniCase<S> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.0.as_ref().eq_ignore_ascii_case(other.0.as_ref())
+    }
+}
+
+impl<S: AsRef<str>> Eq for AsciiUniCase<S> {}
+
+impl<S: AsRef<str>> Hash for AsciiUniCase<S> {
+    #[inline]
+    fn hash<H: Hasher>(&self, hasher: &mut H) {
+        for byte in self
+            .0
+            .as_ref()
+            .as_bytes()
+            .iter()
+            .map(|b| b.to_ascii_lowercase())
+        {
+            hasher.write_u8(byte);
         }
     }
 }
@@ -258,4 +334,6 @@ fn test() {
     assert_eq!(namer.call("x"), "x");
     assert_eq!(namer.call("x"), "x_1");
     assert_eq!(namer.call("x1"), "x1_");
+    assert_eq!(namer.call("__x"), "_x");
+    assert_eq!(namer.call("1___x"), "_x_1");
 }

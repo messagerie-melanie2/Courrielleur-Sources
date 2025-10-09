@@ -6,8 +6,7 @@ import os.path
 import re
 
 
-class TPSTestPhase(object):
-
+class TPSTestPhase:
     lineRe = re.compile(
         r"^(.*?)test phase (?P<matchphase>[^\s]+): (?P<matchstatus>.*)$"
     )
@@ -61,9 +60,8 @@ class TPSTestPhase(object):
 
         # parse the logfile and look for results from the current test phase
         found_test = False
-        f = open(self.logfile, "r")
+        f = open(self.logfile)
         for line in f:
-
             # skip to the part of the log file that deals with the test we're running
             if not found_test:
                 if line.find("Running test %s" % self.testname) > -1:

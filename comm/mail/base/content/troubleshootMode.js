@@ -3,9 +3,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { XPIDatabase } = ChromeUtils.import(
-  "resource://gre/modules/addons/XPIDatabase.jsm"
+var { XPIDatabase } = ChromeUtils.importESModule(
+  "resource://gre/modules/addons/XPIDatabase.sys.mjs"
 );
+
+window.addEventListener("load", () => {
+  onLoad();
+});
 
 function restartApp() {
   Services.startup.quit(
@@ -15,7 +19,7 @@ function restartApp() {
 
 function deleteLocalstore() {
   // Delete the xulstore file.
-  let xulstoreFile = Services.dirsvc.get("ProfD", Ci.nsIFile);
+  const xulstoreFile = Services.dirsvc.get("ProfD", Ci.nsIFile);
   xulstoreFile.append("xulstore.json");
   if (xulstoreFile.exists()) {
     xulstoreFile.remove(false);
@@ -24,8 +28,8 @@ function deleteLocalstore() {
 
 async function disableAddons() {
   XPIDatabase.syncLoadDB(false);
-  let addons = XPIDatabase.getAddons();
-  for (let addon of addons) {
+  const addons = XPIDatabase.getAddons();
+  for (const addon of addons) {
     if (addon.type == "theme") {
       // Setting userDisabled to false on the default theme activates it,
       // disables all other themes and deactivates the applied persona, if

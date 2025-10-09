@@ -33,12 +33,8 @@ struct nsProtocolInfo;
 
 // CID for the nsProtocolProxyService class
 // 091eedd8-8bae-4fe3-ad62-0c87351e640d
-#define NS_PROTOCOL_PROXY_SERVICE_IMPL_CID           \
-  {                                                  \
-    0x091eedd8, 0x8bae, 0x4fe3, {                    \
-      0xad, 0x62, 0x0c, 0x87, 0x35, 0x1e, 0x64, 0x0d \
-    }                                                \
-  }
+#define NS_PROTOCOL_PROXY_SERVICE_IMPL_CID \
+  {0x091eedd8, 0x8bae, 0x4fe3, {0xad, 0x62, 0x0c, 0x87, 0x35, 0x1e, 0x64, 0x0d}}
 
 class nsProtocolProxyService final : public nsIProtocolProxyService2,
                                      public nsIObserver,
@@ -52,7 +48,7 @@ class nsProtocolProxyService final : public nsIProtocolProxyService2,
   NS_DECL_NSITIMERCALLBACK
   NS_DECL_NSINAMED
 
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_PROTOCOL_PROXY_SERVICE_IMPL_CID)
+  NS_INLINE_DECL_STATIC_IID(NS_PROTOCOL_PROXY_SERVICE_IMPL_CID)
 
   nsProtocolProxyService();
 
@@ -79,6 +75,7 @@ class nsProtocolProxyService final : public nsIProtocolProxyService2,
  protected:
   friend class nsAsyncResolveRequest;
   friend class TestProtocolProxyService_LoadHostFilters_Test;  // for gtest
+  friend class AsyncApplyFilters;
 
   ~nsProtocolProxyService();
 
@@ -320,9 +317,20 @@ class nsProtocolProxyService final : public nsIProtocolProxyService2,
   nsresult ResetPACThread();
   nsresult ReloadNetworkPAC();
 
-  nsresult AsyncConfigureFromPAC(bool aForceReload, bool aResetPACThread);
-  nsresult OnAsyncGetPACURI(bool aForceReload, bool aResetPACThread,
-                            nsresult aResult, const nsACString& aUri);
+  nsresult AsyncConfigureWPADOrFromPAC(bool aForceReload, bool aResetPACThread,
+                                       bool aSystemWPADAllowed);
+  nsresult OnAsyncGetPACURIOrSystemWPADSetting(bool aForceReload,
+                                               bool aResetPACThread,
+                                               nsresult aResult,
+                                               const nsACString& aUri,
+                                               bool aSystemWPADSetting);
+
+  static void CallOnProxyAvailableCallback(nsProtocolProxyService* aService,
+                                           nsIProtocolProxyCallback* aCallback,
+                                           nsICancelable* aRequest,
+                                           nsIChannel* aChannel,
+                                           nsIProxyInfo* aProxyInfo,
+                                           nsresult aStatus);
 
  public:
   // The Sun Forte compiler and others implement older versions of the
@@ -389,8 +397,9 @@ class nsProtocolProxyService final : public nsIProtocolProxyService2,
   // or a named-pipe name.
   nsCString mSOCKSProxyTarget;
   int32_t mSOCKSProxyPort{-1};
-  int32_t mSOCKSProxyVersion{4};
-  bool mSOCKSProxyRemoteDNS{false};
+  int32_t mSOCKSProxyVersion{nsIProxyInfo::SOCKS_V4};
+  bool mSOCKS4ProxyRemoteDNS{false};
+  bool mSOCKS5ProxyRemoteDNS{false};
   bool mProxyOverTLS{true};
   bool mWPADOverDHCPEnabled{false};
 
@@ -407,12 +416,14 @@ class nsProtocolProxyService final : public nsIProtocolProxyService2,
                                 nsIProtocolProxyCallback* callback,
                                 nsICancelable** result, bool isSyncOK,
                                 nsISerialEventTarget* mainThreadEventTarget);
+
+  // compute `NewProxyInfo_Internal` parameters based on mSOCKS variables
+  const char* SOCKSProxyType();
+  bool SOCKSRemoteDNS();
+
   bool mIsShutdown{false};
   nsCOMPtr<nsITimer> mReloadPACTimer;
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(nsProtocolProxyService,
-                              NS_PROTOCOL_PROXY_SERVICE_IMPL_CID)
 
 }  // namespace net
 }  // namespace mozilla

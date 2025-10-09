@@ -4,28 +4,27 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.WITHHELD_MESSAGES = exports.PayloadTooLargeError = exports.OlmDevice = void 0;
-var _logger = require("../logger");
-var _indexeddbCryptoStore = require("./store/indexeddb-crypto-store");
-var algorithms = _interopRequireWildcard(require("./algorithms"));
-function _getRequireWildcardCache(nodeInterop) { if (typeof WeakMap !== "function") return null; var cacheBabelInterop = new WeakMap(); var cacheNodeInterop = new WeakMap(); return (_getRequireWildcardCache = function (nodeInterop) { return nodeInterop ? cacheNodeInterop : cacheBabelInterop; })(nodeInterop); }
-function _interopRequireWildcard(obj, nodeInterop) { if (!nodeInterop && obj && obj.__esModule) { return obj; } if (obj === null || typeof obj !== "object" && typeof obj !== "function") { return { default: obj }; } var cache = _getRequireWildcardCache(nodeInterop); if (cache && cache.has(obj)) { return cache.get(obj); } var newObj = {}; var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var key in obj) { if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) { var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null; if (desc && (desc.get || desc.set)) { Object.defineProperty(newObj, key, desc); } else { newObj[key] = obj[key]; } } } newObj.default = obj; if (cache) { cache.set(obj, newObj); } return newObj; }
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(arg) { var key = _toPrimitive(arg, "string"); return typeof key === "symbol" ? key : String(key); }
-function _toPrimitive(input, hint) { if (typeof input !== "object" || input === null) return input; var prim = input[Symbol.toPrimitive]; if (prim !== undefined) { var res = prim.call(input, hint || "default"); if (typeof res !== "object") return res; throw new TypeError("@@toPrimitive must return a primitive value."); } return (hint === "string" ? String : Number)(input); } /*
-                                                                                                                                                                                                                                                                                                                                                                                          Copyright 2016 - 2021 The Matrix.org Foundation C.I.C.
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Licensed under the Apache License, Version 2.0 (the "License");
-                                                                                                                                                                                                                                                                                                                                                                                          you may not use this file except in compliance with the License.
-                                                                                                                                                                                                                                                                                                                                                                                          You may obtain a copy of the License at
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                              http://www.apache.org/licenses/LICENSE-2.0
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Unless required by applicable law or agreed to in writing, software
-                                                                                                                                                                                                                                                                                                                                                                                          distributed under the License is distributed on an "AS IS" BASIS,
-                                                                                                                                                                                                                                                                                                                                                                                          WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-                                                                                                                                                                                                                                                                                                                                                                                          See the License for the specific language governing permissions and
-                                                                                                                                                                                                                                                                                                                                                                                          limitations under the License.
-                                                                                                                                                                                                                                                                                                                                                                                          */
+var _logger = require("../logger.js");
+var _indexeddbCryptoStore = require("./store/indexeddb-crypto-store.js");
+var _index = require("../crypto-api/index.js");
+var _CryptoBackend = require("../common-crypto/CryptoBackend.js");
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
+function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
+Copyright 2016 - 2021 The Matrix.org Foundation C.I.C.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 // The maximum size of an event is 65K, and we base64 the content, so this is a
 // reasonable approximation to the biggest plaintext we can encrypt.
 const MAX_PLAINTEXT_LENGTH = 65536 * 3 / 4;
@@ -125,11 +124,7 @@ class OlmDevice {
    *
    * Reads the device keys from the OlmAccount object.
    *
-   * @param fromExportedDevice - (Optional) data from exported device
-   *     that must be re-created.
-   *     If present, opts.pickleKey is ignored
-   *     (exported data already provides a pickle key)
-   * @param pickleKey - (Optional) pickle key to set instead of default one
+   * @param IInitOpts - opts to initialise the OlmAccount with
    */
   async init({
     pickleKey,
@@ -461,7 +456,7 @@ class OlmDevice {
           session.free();
         }
       });
-    }, _logger.logger.withPrefix("[createOutboundSession]"));
+    }, _logger.logger.getChild("[createOutboundSession]"));
     return newSessionId;
   }
 
@@ -505,7 +500,7 @@ class OlmDevice {
           session.free();
         }
       });
-    }, _logger.logger.withPrefix("[createInboundSession]"));
+    }, _logger.logger.getChild("[createInboundSession]"));
     return result;
   }
 
@@ -517,12 +512,12 @@ class OlmDevice {
    * @returns  a list of known session ids for the device
    */
   async getSessionIdsForDevice(theirDeviceIdentityKey) {
-    const log = _logger.logger.withPrefix("[getSessionIdsForDevice]");
+    const log = _logger.logger.getChild("[getSessionIdsForDevice]");
     if (theirDeviceIdentityKey in this.sessionsInProgress) {
       log.debug(`Waiting for Olm session for ${theirDeviceIdentityKey} to be created`);
       try {
         await this.sessionsInProgress[theirDeviceIdentityKey];
-      } catch (e) {
+      } catch {
         // if the session failed to be created, just fall through and
         // return an empty result
       }
@@ -581,12 +576,12 @@ class OlmDevice {
    * @param log - A possibly customised log
    */
   async getSessionInfoForDevice(deviceIdentityKey, nowait = false, log = _logger.logger) {
-    log = log.withPrefix("[getSessionInfoForDevice]");
+    log = log.getChild("[getSessionInfoForDevice]");
     if (deviceIdentityKey in this.sessionsInProgress && !nowait) {
       log.debug(`Waiting for Olm session for ${deviceIdentityKey} to be created`);
       try {
         await this.sessionsInProgress[deviceIdentityKey];
-      } catch (e) {
+      } catch {
         // if the session failed to be created, then just fall through and
         // return an empty result
       }
@@ -629,7 +624,7 @@ class OlmDevice {
         res = sessionInfo.session.encrypt(payloadString);
         this.saveSession(theirDeviceIdentityKey, sessionInfo, txn);
       });
-    }, _logger.logger.withPrefix("[encryptMessage]"));
+    }, _logger.logger.getChild("[encryptMessage]"));
     return res;
   }
 
@@ -654,7 +649,7 @@ class OlmDevice {
         sessionInfo.lastReceivedMessageTs = Date.now();
         this.saveSession(theirDeviceIdentityKey, sessionInfo, txn);
       });
-    }, _logger.logger.withPrefix("[decryptMessage]"));
+    }, _logger.logger.getChild("[decryptMessage]"));
     return payloadString;
   }
 
@@ -679,7 +674,7 @@ class OlmDevice {
       this.getSession(theirDeviceIdentityKey, sessionId, txn, sessionInfo => {
         matches = sessionInfo.session.matches_inbound(ciphertext);
       });
-    }, _logger.logger.withPrefix("[matchesSession]"));
+    }, _logger.logger.getChild("[matchesSession]"));
     return matches;
   }
   async recordSessionProblem(deviceKey, type, fixed) {
@@ -884,8 +879,7 @@ class OlmDevice {
               // If the sessions have the same index, go ahead and store the new trusted one.
             }
           }
-
-          _logger.logger.info(`Storing megolm session ${senderKey}|${sessionId} with first index ` + session.first_known_index());
+          _logger.logger.debug(`Storing megolm session ${senderKey}|${sessionId} with first index ` + session.first_known_index());
           const sessionData = Object.assign({}, extraSessionData, {
             room_id: roomId,
             session: session.pickle(this.pickleKey),
@@ -900,7 +894,7 @@ class OlmDevice {
           session.free();
         }
       });
-    }, _logger.logger.withPrefix("[addInboundGroupSession]"));
+    }, _logger.logger.getChild("[addInboundGroupSession]"));
   }
 
   /**
@@ -945,7 +939,8 @@ class OlmDevice {
       this.getInboundGroupSession(roomId, senderKey, sessionId, txn, (session, sessionData, withheld) => {
         if (session === null || sessionData === null) {
           if (withheld) {
-            error = new algorithms.DecryptionError("MEGOLM_UNKNOWN_INBOUND_SESSION_ID", calculateWithheldMessage(withheld), {
+            const failureCode = withheld.code === "m.unverified" ? _index.DecryptionFailureCode.MEGOLM_KEY_WITHHELD_FOR_UNVERIFIED_DEVICE : _index.DecryptionFailureCode.MEGOLM_KEY_WITHHELD;
+            error = new _CryptoBackend.DecryptionError(failureCode, calculateWithheldMessage(withheld), {
               session: senderKey + "|" + sessionId
             });
           }
@@ -957,7 +952,8 @@ class OlmDevice {
           res = session.decrypt(body);
         } catch (e) {
           if (e?.message === "OLM.UNKNOWN_MESSAGE_INDEX" && withheld) {
-            error = new algorithms.DecryptionError("MEGOLM_UNKNOWN_INBOUND_SESSION_ID", calculateWithheldMessage(withheld), {
+            const failureCode = withheld.code === "m.unverified" ? _index.DecryptionFailureCode.MEGOLM_KEY_WITHHELD_FOR_UNVERIFIED_DEVICE : _index.DecryptionFailureCode.MEGOLM_KEY_WITHHELD;
+            error = new _CryptoBackend.DecryptionError(failureCode, calculateWithheldMessage(withheld), {
               session: senderKey + "|" + sessionId
             });
           } else {
@@ -997,7 +993,7 @@ class OlmDevice {
           untrusted: !!sessionData.untrusted
         };
       });
-    }, _logger.logger.withPrefix("[decryptGroupMessage]"));
+    }, _logger.logger.getChild("[decryptGroupMessage]"));
     if (error) {
       throw error;
     }
@@ -1028,7 +1024,7 @@ class OlmDevice {
           result = true;
         }
       });
-    }, _logger.logger.withPrefix("[hasInboundSessionKeys]"));
+    }, _logger.logger.getChild("[hasInboundSessionKeys]"));
     return result;
   }
 
@@ -1078,7 +1074,7 @@ class OlmDevice {
           untrusted: untrusted
         };
       });
-    }, _logger.logger.withPrefix("[getInboundGroupSessionKey]"));
+    }, _logger.logger.getChild("[getInboundGroupSessionKey]"));
     return result;
   }
 
@@ -1109,7 +1105,7 @@ class OlmDevice {
     let result;
     await this.cryptoStore.doTxn("readonly", [_indexeddbCryptoStore.IndexedDBCryptoStore.STORE_SHARED_HISTORY_INBOUND_GROUP_SESSIONS], txn => {
       result = this.cryptoStore.getSharedHistoryInboundGroupSessions(roomId, txn);
-    }, _logger.logger.withPrefix("[getSharedHistoryInboundGroupSessionsForRoom]"));
+    }, _logger.logger.getChild("[getSharedHistoryInboundGroupSessionsForRoom]"));
     return result;
   }
 
@@ -1134,7 +1130,7 @@ class OlmDevice {
   }
 }
 exports.OlmDevice = OlmDevice;
-const WITHHELD_MESSAGES = {
+const WITHHELD_MESSAGES = exports.WITHHELD_MESSAGES = {
   "m.unverified": "The sender has disabled encrypting to unverified devices.",
   "m.blacklisted": "The sender has blocked you.",
   "m.unauthorised": "You are not authorised to read the message.",
@@ -1150,7 +1146,6 @@ const WITHHELD_MESSAGES = {
  *
  * @internal
  */
-exports.WITHHELD_MESSAGES = WITHHELD_MESSAGES;
 function calculateWithheldMessage(withheld) {
   if (withheld.code && withheld.code in WITHHELD_MESSAGES) {
     return WITHHELD_MESSAGES[withheld.code];

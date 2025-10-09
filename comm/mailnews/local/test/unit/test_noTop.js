@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 /**
@@ -15,9 +15,9 @@ class NoTopHandler extends POP3_RFC1939_handler {
   }
 }
 
-let daemon = new Pop3Daemon();
-let server = new nsMailServer(d => {
-  let handler = new NoTopHandler(d);
+const daemon = new Pop3Daemon();
+const server = new nsMailServer(d => {
+  const handler = new NoTopHandler(d);
   return handler;
 }, daemon);
 server.start();
@@ -33,7 +33,7 @@ registerCleanupFunction(() => {
 async function getNewMail(incomingServer) {
   daemon.setMessages(["message1.eml"]);
 
-  let urlListener = new PromiseTestUtils.PromiseUrlListener();
+  const urlListener = new PromiseTestUtils.PromiseUrlListener();
   MailServices.pop3.GetNewMail(
     null,
     urlListener,
@@ -47,7 +47,7 @@ async function getNewMail(incomingServer) {
  * Test TOP is sent even if not advertised, and fallback to RETR after failed.
  */
 add_task(async function testNoTop() {
-  let incomingServer = createPop3ServerAndLocalFolders(server.port);
+  const incomingServer = createPop3ServerAndLocalFolders(server.port);
   incomingServer.headersOnly = true;
   await getNewMail(incomingServer);
   do_check_transaction(server.playTransaction(), [

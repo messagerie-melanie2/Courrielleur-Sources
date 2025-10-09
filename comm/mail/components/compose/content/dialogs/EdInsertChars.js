@@ -2,7 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* import-globals-from ../editorUtilities.js */
 /* import-globals-from EdDialogCommon.js */
 
 // ------------------------------------------------------------------
@@ -17,6 +16,8 @@ var TCount = 28;
 var NCount = VCount * TCount;
 // End of Unicode 3.0
 
+window.addEventListener("load", Startup);
+window.addEventListener("focus", onFocus);
 document.addEventListener("dialogaccept", onAccept);
 document.addEventListener("dialogcancel", onClose);
 
@@ -102,7 +103,7 @@ function StartupLatin() {
   CategoryGroup = document.getElementById("CatGrp");
 
   // Initialize which radio button is set from persistent attribute...
-  var category = CategoryGroup.getAttribute("category");
+  category = CategoryGroup.getAttribute("category");
 
   // ...as well as indexes into the letter and character lists
   var index = Number(CategoryGroup.getAttribute("letter_index"));

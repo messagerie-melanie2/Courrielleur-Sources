@@ -30,10 +30,9 @@ let testCases = [
       doorhanger: {
         type: "password-save",
         dismissed: true,
-        anchorExtraAttr: "",
+        anchorExtraAttr: null,
         username: "",
         password: "abcXYZ",
-        toggle: "visible",
       },
     },
   },
@@ -56,10 +55,9 @@ let testCases = [
       doorhanger: {
         type: "password-save",
         dismissed: true,
-        anchorExtraAttr: "",
+        anchorExtraAttr: null,
         username: "",
         password: "pass-changed",
-        toggle: "visible",
       },
     },
   },
@@ -80,7 +78,7 @@ let testCases = [
       doorhanger: {
         type: "password-change",
         dismissed: true,
-        anchorExtraAttr: "",
+        anchorExtraAttr: null,
         username: "user1",
         password: "autopass-changed",
       },
@@ -104,10 +102,9 @@ let testCases = [
       doorhanger: {
         type: "password-save",
         dismissed: true,
-        anchorExtraAttr: "",
+        anchorExtraAttr: null,
         username: "user2",
         password: "pass2",
-        toggle: "visible",
       },
     },
   },
@@ -147,10 +144,9 @@ let testCases = [
       doorhanger: {
         type: "password-save",
         dismissed: true,
-        anchorExtraAttr: "",
+        anchorExtraAttr: null,
         username: "user2",
         password: "pass1",
-        toggle: "visible",
       },
     },
   },
@@ -174,10 +170,9 @@ let testCases = [
       doorhanger: {
         type: "password-change",
         dismissed: true,
-        anchorExtraAttr: "",
+        anchorExtraAttr: null,
         username: "user-saved",
         password: "pass2",
-        toggle: "visible",
       },
     },
   },
@@ -198,10 +193,9 @@ let testCases = [
       doorhanger: {
         type: "password-change",
         dismissed: true,
-        anchorExtraAttr: "",
+        anchorExtraAttr: null,
         username: "user1",
         password: "pass1",
-        toggle: "visible",
       },
     },
   },
@@ -244,10 +238,9 @@ let testCases = [
       doorhanger: {
         type: "password-save",
         dismissed: true,
-        anchorExtraAttr: "",
+        anchorExtraAttr: null,
         username: "",
         password: "a",
-        toggle: "visible",
       },
     },
   },
@@ -271,10 +264,9 @@ let testCases = [
       doorhanger: {
         type: "password-save",
         dismissed: true,
-        anchorExtraAttr: "",
+        anchorExtraAttr: null,
         username: "",
         password: "abc",
-        toggle: "visible",
       },
     },
   },
@@ -296,10 +288,9 @@ let testCases = [
       doorhanger: {
         type: "password-change",
         dismissed: true,
-        anchorExtraAttr: "",
+        anchorExtraAttr: null,
         username: "",
         password: "pass",
-        toggle: "visible",
       },
     },
   },
@@ -391,7 +382,7 @@ async function testPasswordChange(
     await LoginTestUtils.addLogin(login);
   }
 
-  for (let login of Services.logins.getAllLogins()) {
+  for (let login of await Services.logins.getAllLogins()) {
     info(`Saved login: ${login.username}, ${login.password}, ${login.origin}`);
   }
 
@@ -542,21 +533,5 @@ async function openAndVerifyDoorhanger(browser, type, expected) {
   await Promise.resolve();
   await checkDoorhangerUsernamePassword(expected.username, expected.password);
 
-  let notificationElement = PopupNotifications.panel.childNodes[0];
-  let checkbox = notificationElement.querySelector(
-    "#password-notification-visibilityToggle"
-  );
-
-  if (expected.toggle == "visible") {
-    // Bug 1692284
-    // Assert.ok(BrowserTestUtils.is_visible(checkbox), "Toggle checkbox visible as expected");
-  } else if (expected.toggle == "hidden") {
-    Assert.ok(
-      BrowserTestUtils.is_hidden(checkbox),
-      "Toggle checkbox hidden as expected"
-    );
-  } else {
-    info("Not checking toggle checkbox visibility");
-  }
   return notif;
 }

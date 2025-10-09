@@ -9,28 +9,28 @@
  * also the easy thing to do?)
  */
 
-var { glodaTestHelperInitialize } = ChromeUtils.import(
-  "resource://testing-common/gloda/GlodaTestHelper.jsm"
+var { glodaTestHelperInitialize } = ChromeUtils.importESModule(
+  "resource://testing-common/gloda/GlodaTestHelper.sys.mjs"
 );
-var { waitForGlodaDBFlush } = ChromeUtils.import(
-  "resource://testing-common/gloda/GlodaTestHelperFunctions.jsm"
+var { waitForGlodaDBFlush } = ChromeUtils.importESModule(
+  "resource://testing-common/gloda/GlodaTestHelperFunctions.sys.mjs"
 );
-var { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-var { MessageInjection } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageInjection.jsm"
+var { MessageInjection } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageInjection.sys.mjs"
 );
-var { MimeTypeNoun } = ChromeUtils.import(
-  "resource:///modules/gloda/NounMimetype.jsm"
+var { MimeTypeNoun } = ChromeUtils.importESModule(
+  "resource:///modules/gloda/NounMimetype.sys.mjs"
 );
 
 var passResults = [];
 var curPassResults;
 
 add_setup(async function () {
-  let msgGen = new MessageGenerator();
-  let messageInjection = new MessageInjection({ mode: "local" }, msgGen);
+  const msgGen = new MessageGenerator();
+  const messageInjection = new MessageInjection({ mode: "local" }, msgGen);
   glodaTestHelperInitialize(messageInjection);
 });
 
@@ -64,7 +64,7 @@ add_task(function verify_passes_are_the_same() {
 });
 
 add_task(function test_parameters() {
-  let plain = MimeTypeNoun.getMimeType("text/plain");
+  const plain = MimeTypeNoun.getMimeType("text/plain");
   Assert.equal(plain, MimeTypeNoun.getMimeType('text/plain; charset="UTF-8"'));
 });
 
@@ -100,16 +100,16 @@ function test_basics() {
     python = MimeTypeNoun.getMimeType("text/x-python");
   }
 
-  let jpeg = MimeTypeNoun.getMimeType("image/jpeg");
+  const jpeg = MimeTypeNoun.getMimeType("image/jpeg");
   curPassResults.push(jpeg);
 
-  let png = MimeTypeNoun.getMimeType("image/png");
+  const png = MimeTypeNoun.getMimeType("image/png");
   curPassResults.push(png);
 
-  let html = MimeTypeNoun.getMimeType("text/html");
+  const html = MimeTypeNoun.getMimeType("text/html");
   curPassResults.push(html);
 
-  let plain = MimeTypeNoun.getMimeType("text/plain");
+  const plain = MimeTypeNoun.getMimeType("text/plain");
   curPassResults.push(plain);
 
   // If this is for the first time, check for python now (see above).

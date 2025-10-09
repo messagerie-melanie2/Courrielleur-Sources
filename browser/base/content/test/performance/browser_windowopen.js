@@ -17,23 +17,6 @@ const EXPECTED_REFLOWS = [
    */
 ];
 
-// We'll assume the changes we are seeing are due to this focus change if
-// there are at least 5 areas that changed near the top of the screen, or if
-// the toolbar background is involved on OSX, but will only ignore this once.
-function isLikelyFocusChange(rects) {
-  if (rects.length > 5 && rects.every(r => r.y2 < 100)) {
-    return true;
-  }
-  if (
-    Services.appinfo.OS == "Darwin" &&
-    rects.length == 2 &&
-    rects.every(r => r.y1 == 0 && r.h == 33)
-  ) {
-    return true;
-  }
-  return false;
-}
-
 /*
  * This test ensures that there are no unexpected
  * uninterruptible reflows or flickering areas when opening new windows.
@@ -58,14 +41,14 @@ add_task(async function () {
 
   let alreadyFocused = false;
   let inRange = (val, min, max) => min <= val && val <= max;
+  let tabBoundingRect = undefined;
   let expectations = {
     expectedReflows: EXPECTED_REFLOWS,
     frames: {
-      filter(rects, frame, previousFrame) {
+      filter(rects, frame) {
         // The first screenshot we get in OSX / Windows shows an unfocused browser
         // window for some reason. See bug 1445161.
-        if (!alreadyFocused && isLikelyFocusChange(rects)) {
-          alreadyFocused = true;
+        if (!alreadyFocused && isLikelyFocusChange(rects, frame)) {
           todo(
             false,
             "bug 1445161 - the window should be focused at first paint, " +
@@ -73,7 +56,7 @@ add_task(async function () {
           );
           return [];
         }
-
+        alreadyFocused = true;
         return rects;
       },
       exceptions: [
@@ -125,6 +108,22 @@ add_task(async function () {
               bookmarksToolbarRect.top + bookmarksToolbarRect.height / 2
             ) && // in the toolbar
             inRange(r.x1, 30, 90), // close to the left of the screen
+        },
+        {
+          name: "Shadow around active tab should not flicker on macOS (bug 1960967)",
+          condition(r) {
+            const tabRect = tabBoundingRect
+              ? tabBoundingRect
+              : (tabBoundingRect = gBrowser.tabContainer
+                  .querySelector("tab[selected=true] .tab-background")
+                  .getBoundingClientRect());
+            return (
+              inRange(r.x1, tabRect.x - 2, tabRect.x + 2) &&
+              inRange(r.y1, tabRect.y - 2, tabRect.y + 2) &&
+              inRange(r.w, tabRect.width - 4, tabRect.width + 4) &&
+              inRange(r.h, tabRect.height - 4, tabRect.height + 4)
+            );
+          },
         },
       ],
     },

@@ -15,7 +15,6 @@ XULMAP_TYPE(menu, XULMenuitemAccessible)
 XULMAP_TYPE(menubar, XULMenubarAccessible)
 XULMAP_TYPE(menucaption, XULMenuitemAccessible)
 XULMAP_TYPE(menuitem, XULMenuitemAccessible)
-XULMAP_TYPE(menulist, XULComboboxAccessible)
 XULMAP_TYPE(menuseparator, XULMenuSeparatorAccessible)
 XULMAP_TYPE(notification, XULAlertAccessible)
 XULMAP_TYPE(radio, XULRadioButtonAccessible)
@@ -67,6 +66,19 @@ XULMAP(image,
          return new ImageAccessible(aElement, aContext->Document());
        })
 
+XULMAP(menulist,
+       [](Element* aElement, LocalAccessible* aContext) -> LocalAccessible* {
+         nsAutoString domID;
+         if (nsCoreUtils::GetID(aElement, domID)) {
+           if (domID.Equals(u"ContentSelectDropdown"_ns)) {
+             return new XULContentSelectDropdownAccessible(
+                 aElement, aContext->Document());
+           }
+         }
+
+         return new XULComboboxAccessible(aElement, aContext->Document());
+       })
+
 XULMAP(menupopup, [](Element* aElement, LocalAccessible* aContext) {
   return CreateMenupopupAccessible(aElement, aContext);
 })
@@ -90,10 +102,6 @@ XULMAP(panel,
          return new EnumRoleAccessible<roles::PANE>(aElement,
                                                     aContext->Document());
        })
-
-XULMAP(popup, [](Element* aElement, LocalAccessible* aContext) {
-  return CreateMenupopupAccessible(aElement, aContext);
-})
 
 XULMAP(tree,
        [](Element* aElement, LocalAccessible* aContext) -> LocalAccessible* {

@@ -9,17 +9,23 @@ const {
   createRef,
   Fragment,
   PureComponent,
-} = require("resource://devtools/client/shared/vendor/react.js");
+} = require("resource://devtools/client/shared/vendor/react.mjs");
 const dom = require("resource://devtools/client/shared/vendor/react-dom-factories.js");
-const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.js");
+const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.mjs");
+const {
+  getFormatStr,
+  getStr,
+} = require("resource://devtools/client/inspector/layout/utils/l10n.js");
 
 loader.lazyGetter(this, "Rep", function () {
-  return require("resource://devtools/client/shared/components/reps/index.js")
-    .REPS.Rep;
+  return ChromeUtils.importESModule(
+    "resource://devtools/client/shared/components/reps/index.mjs"
+  ).REPS.Rep;
 });
 loader.lazyGetter(this, "MODE", function () {
-  return require("resource://devtools/client/shared/components/reps/index.js")
-    .MODE;
+  return ChromeUtils.importESModule(
+    "resource://devtools/client/shared/components/reps/index.mjs"
+  ).MODE;
 });
 
 loader.lazyRequireGetter(
@@ -141,6 +147,7 @@ class GridItem extends PureComponent {
             type: "checkbox",
             value: grid.id,
             onChange: this.onGridCheckboxClick,
+            title: getStr("layout.toggleGridHighlighter"),
           }),
           Rep({
             defaultRep: Rep.ElementNode,
@@ -155,14 +162,14 @@ class GridItem extends PureComponent {
             },
           })
         ),
-        dom.div({
+        dom.button({
           className: "layout-color-swatch",
           "data-color": grid.color,
           ref: this.swatchEl,
           style: {
             backgroundColor: grid.color,
           },
-          title: grid.color,
+          title: getFormatStr("layout.colorSwatch.tooltip", grid.color),
         })
       ),
       this.renderSubgrids()

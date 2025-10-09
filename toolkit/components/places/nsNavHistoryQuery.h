@@ -19,19 +19,15 @@
 
 #include "mozilla/Attributes.h"
 
-#define NS_NAVHISTORYQUERY_IID                       \
-  {                                                  \
-    0xb10185e0, 0x86eb, 0x4612, {                    \
-      0x95, 0x7c, 0x09, 0x34, 0xf2, 0xb1, 0xce, 0xd7 \
-    }                                                \
-  }
+#define NS_NAVHISTORYQUERY_IID \
+  {0xb10185e0, 0x86eb, 0x4612, {0x95, 0x7c, 0x09, 0x34, 0xf2, 0xb1, 0xce, 0xd7}}
 
 class nsNavHistoryQuery final : public nsINavHistoryQuery {
  public:
   nsNavHistoryQuery();
   nsNavHistoryQuery(const nsNavHistoryQuery& aOther);
 
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_NAVHISTORYQUERY_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_NAVHISTORYQUERY_IID)
   NS_DECL_ISUPPORTS
   NS_DECL_NSINAVHISTORYQUERY
 
@@ -42,12 +38,9 @@ class nsNavHistoryQuery final : public nsINavHistoryQuery {
   PRTime EndTime() { return mEndTime; }
   uint32_t EndTimeReference() { return mEndTimeReference; }
   const nsString& SearchTerms() { return mSearchTerms; }
-  bool OnlyBookmarked() { return mOnlyBookmarked; }
   bool DomainIsHost() { return mDomainIsHost; }
   const nsCString& Domain() { return mDomain; }
   nsIURI* Uri() { return mUri; }  // NOT AddRef-ed!
-  bool AnnotationIsNot() { return mAnnotationIsNot; }
-  const nsCString& Annotation() { return mAnnotation; }
   const nsTArray<nsCString>& Parents() const { return mParents; }
 
   const nsTArray<nsString>& Tags() const { return mTags; }
@@ -57,6 +50,10 @@ class nsNavHistoryQuery final : public nsINavHistoryQuery {
   const nsTArray<uint32_t>& Transitions() const { return mTransitions; }
 
   nsresult Clone(nsNavHistoryQuery** _clone);
+
+  static nsresult QueryStringToQuery(const nsACString& aQueryString,
+                                     nsINavHistoryQuery** _query,
+                                     nsINavHistoryQueryOptions** _options);
 
  private:
   ~nsNavHistoryQuery() = default;
@@ -71,35 +68,26 @@ class nsNavHistoryQuery final : public nsINavHistoryQuery {
   PRTime mEndTime;
   uint32_t mEndTimeReference;
   nsString mSearchTerms;
-  bool mOnlyBookmarked;
   bool mDomainIsHost;
   nsCString mDomain;  // Default is IsVoid, empty string is valid query
   nsCOMPtr<nsIURI> mUri;
-  bool mAnnotationIsNot;
-  nsCString mAnnotation;
   nsTArray<nsCString> mParents;
   nsTArray<nsString> mTags;
   bool mTagsAreNot;
   nsTArray<uint32_t> mTransitions;
 };
 
-NS_DEFINE_STATIC_IID_ACCESSOR(nsNavHistoryQuery, NS_NAVHISTORYQUERY_IID)
-
 // nsNavHistoryQueryOptions
 
-#define NS_NAVHISTORYQUERYOPTIONS_IID                \
-  {                                                  \
-    0x95f8ba3b, 0xd681, 0x4d89, {                    \
-      0xab, 0xd1, 0xfd, 0xae, 0xf2, 0xa3, 0xde, 0x18 \
-    }                                                \
-  }
+#define NS_NAVHISTORYQUERYOPTIONS_IID \
+  {0x95f8ba3b, 0xd681, 0x4d89, {0xab, 0xd1, 0xfd, 0xae, 0xf2, 0xa3, 0xde, 0x18}}
 
 class nsNavHistoryQueryOptions final : public nsINavHistoryQueryOptions {
  public:
   nsNavHistoryQueryOptions();
   nsNavHistoryQueryOptions(const nsNavHistoryQueryOptions& other);
 
-  NS_DECLARE_STATIC_IID_ACCESSOR(NS_NAVHISTORYQUERYOPTIONS_IID)
+  NS_INLINE_DECL_STATIC_IID(NS_NAVHISTORYQUERYOPTIONS_IID)
 
   NS_DECL_ISUPPORTS
   NS_DECL_NSINAVHISTORYQUERYOPTIONS
@@ -136,8 +124,5 @@ class nsNavHistoryQueryOptions final : public nsINavHistoryQueryOptions {
   uint16_t mQueryType;
   bool mAsyncEnabled;
 };
-
-NS_DEFINE_STATIC_IID_ACCESSOR(nsNavHistoryQueryOptions,
-                              NS_NAVHISTORYQUERYOPTIONS_IID)
 
 #endif  // nsNavHistoryQuery_h_

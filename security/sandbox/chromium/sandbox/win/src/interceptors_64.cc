@@ -51,6 +51,14 @@ NTSTATUS WINAPI TargetNtUnmapViewOfSection64(HANDLE process, PVOID base) {
 // -----------------------------------------------------------------------
 
 NTSTATUS WINAPI
+TargetNtImpersonateAnonymousToken64(HANDLE thread) {
+  NtImpersonateAnonymousTokenFunction orig_fn =
+      reinterpret_cast<NtImpersonateAnonymousTokenFunction>(
+          g_originals[IMPERSONATE_ANONYMOUS_TOKEN_ID]);
+  return TargetNtImpersonateAnonymousToken(orig_fn, thread);
+}
+
+NTSTATUS WINAPI
 TargetNtSetInformationThread64(HANDLE thread,
                                NT_THREAD_INFORMATION_CLASS thread_info_class,
                                PVOID thread_information,
@@ -344,6 +352,13 @@ SANDBOX_INTERCEPT HGDIOBJ WINAPI TargetGetStockObject64(int object) {
   GetStockObjectFunction orig_fn =
       reinterpret_cast<GetStockObjectFunction>(g_originals[GETSTOCKOBJECT_ID]);
   return TargetGetStockObject(orig_fn, object);
+}
+
+SANDBOX_INTERCEPT HWND WINAPI TargetGetForegroundWindow64() {
+  GetForegroundWindowFunction orig_fn =
+      reinterpret_cast<GetForegroundWindowFunction>(
+          g_originals[GETFOREGROUNDWINDOW_ID]);
+  return TargetGetForegroundWindow(orig_fn);
 }
 
 SANDBOX_INTERCEPT ATOM WINAPI

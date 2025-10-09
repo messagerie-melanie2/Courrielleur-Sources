@@ -8,6 +8,7 @@
 
 #include <functional>  // For std::function.
 #include "nsIUrlListener.h"
+#include "nsIMsgCopyServiceListener.h"
 class nsIURI;
 
 /**
@@ -46,7 +47,7 @@ class nsIURI;
  *    it's internals. That's all just confusing noise that shouldn't be seen
  *    from outside the class.
  *
- * Just as PromiseTestUtils.jsm brings the Javascript side up from callback
+ * Just as PromiseTestUtils.sys.mjs brings the Javascript side up from callback
  * hell to async lovelyness, this can be used to raise the C++ side from
  * callback-somewhere-else-maybe-in-this-class-but-who-can-really-tell hell
  * up to normal callback hell :-)
@@ -67,6 +68,23 @@ class UrlListener : public nsIUrlListener {
 
  protected:
   virtual ~UrlListener() {}
+};
+
+class CopyServiceListener : public nsIMsgCopyServiceListener {
+ public:
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIMSGCOPYSERVICELISTENER
+
+  CopyServiceListener() {}
+  /**
+   * mStartFn and mStopFn are the OnStartRunning() and OnStopRunningUrl()
+   * handlers. It's fine for them to be null (often you'll only need mStopFn).
+   */
+  std::function<nsresult()> mStartFn;
+  std::function<nsresult(nsresult)> mStopFn;
+
+ protected:
+  virtual ~CopyServiceListener() {}
 };
 
 #endif  // UrlListener_h__

@@ -47,8 +47,6 @@ pref("mail.openpgp.separate_mime_layers", false);
 // If you need to specify a path, use a file:// URL
 pref("mail.openpgp.alias_rules_file", "");
 
-pref("mail.openpgp.key_assistant.enable", true);
-
 // If set to true, enable user interface that allows the user to optionally set
 // and manage individual, user-defined passphrases for OpenPGP secret keys.
 // If set to false, the respective user interface will be hidden.
@@ -112,9 +110,6 @@ pref("temp.openpgp.assignKeysManuallyIfMissing", true);
 // always srats manual dialog for keys
 pref("temp.openpgp.assignKeysManuallyAlways", false);
 
-// enable automatically decrypt/verify
-pref("temp.openpgp.autoDecrypt", true);
-
 // countdown for alerts when composing inline PGP HTML msgs
 pref("temp.openpgp.composeHtmlAlertCount", 3);
 
@@ -148,19 +143,12 @@ pref("temp.openpgp.inlineAttachExt", ".pgp");
 // extension to append for inline-signed attachments
 pref("temp.openpgp.inlineSigAttachExt", ".sig");
 
-// debug log directory (if set, also enabled debugging)
-pref("temp.openpgp.logDirectory", "");
-
 // List of key servers to use (comma separated list), ordered by priority.
 // Only the first supported keyserver will be used for uploading keys.
 pref("mail.openpgp.keyserver_list", "vks://keys.openpgp.org, hkps://keys.mailvelope.com");
 
 // keep passphrase for ... minutes
 pref("temp.openpgp.maxIdleMinutes", 5);
-
-// maximum number of parallel decrypt processes that Enigmaik will handle
-// (requests above the threshold are ignored)
-pref("temp.openpgp.maxNumProcesses", 3);
 
 // GnuPG hash algorithm
 // 0: automatic seletion (i.e. let GnuPG choose)
@@ -169,9 +157,6 @@ pref("temp.openpgp.mimeHashAlgorithm", 0);
 
 // no passphrase for GnuPG key needed
 pref("temp.openpgp.noPassphrase", false);
-
-// show quoted printable warning message (and remember selected state)
-pref("temp.openpgp.quotedPrintableWarn", 0);
 
 // use http proxy settings as set in Mozilla/Thunderbird
 pref("temp.openpgp.respectHttpProxy", true);
@@ -211,10 +196,6 @@ pref("temp.openpgp.warnOnMissingOwnerTrust", true);
 
 // use GnuPG's default instead of Enigmail/Mozilla comment of for signed messages
 pref("temp.openpgp.useDefaultComment", true);
-
-// allow encryption to newsgroups
-pref("temp.openpgp.encryptToNews", false);
-pref("temp.openpgp.warnOnSendingNewsgroups", true);
 
 // holds the timestamp of the last check for GnuPG updates
 pref("temp.openpgp.gpgLastUpdate", "0");

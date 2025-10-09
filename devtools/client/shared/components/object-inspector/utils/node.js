@@ -4,16 +4,16 @@
 
 const {
   maybeEscapePropertyName,
-} = require("resource://devtools/client/shared/components/reps/reps/rep-utils.js");
-const ArrayRep = require("resource://devtools/client/shared/components/reps/reps/array.js");
-const GripArrayRep = require("resource://devtools/client/shared/components/reps/reps/grip-array.js");
-const GripMap = require("resource://devtools/client/shared/components/reps/reps/grip-map.js");
-const GripEntryRep = require("resource://devtools/client/shared/components/reps/reps/grip-entry.js");
-const ErrorRep = require("resource://devtools/client/shared/components/reps/reps/error.js");
-const BigIntRep = require("resource://devtools/client/shared/components/reps/reps/big-int.js");
+} = ChromeUtils.importESModule("resource://devtools/client/shared/components/reps/reps/rep-utils.mjs", {global: "current"});
+const ArrayRep = ChromeUtils.importESModule("resource://devtools/client/shared/components/reps/reps/array.mjs", {global: "current"});
+const GripArrayRep = ChromeUtils.importESModule("resource://devtools/client/shared/components/reps/reps/grip-array.mjs", {global: "current"});
+const GripMap =  ChromeUtils.importESModule("resource://devtools/client/shared/components/reps/reps/grip-map.mjs", {global: "current"});
+const GripEntryRep =  ChromeUtils.importESModule("resource://devtools/client/shared/components/reps/reps/grip-entry.mjs", {global: "current"});
+const ErrorRep =  ChromeUtils.importESModule("resource://devtools/client/shared/components/reps/reps/error.mjs", {global: "current"});
+const BigIntRep =  ChromeUtils.importESModule("resource://devtools/client/shared/components/reps/reps/big-int.mjs", {global: "current"});
 const {
   isLongString,
-} = require("resource://devtools/client/shared/components/reps/reps/string.js");
+} = ChromeUtils.importESModule("resource://devtools/client/shared/components/reps/reps/string.mjs", {global: "current"});
 
 const MAX_NUMERICAL_PROPERTIES = 100;
 
@@ -33,6 +33,7 @@ const NODE_TYPES = {
   SET: Symbol("<set>"),
   PROTOTYPE: Symbol("<prototype>"),
   BLOCK: Symbol("☲"),
+  PRIMITIVE_VALUE: Symbol("<primitive value>")
 };
 
 let WINDOW_PROPERTIES = {};
@@ -280,7 +281,9 @@ function nodeHasEntries(item) {
     className === "Headers" ||
     className === "FormData" ||
     className === "MIDIInputMap" ||
-    className === "MIDIOutputMap"
+    className === "MIDIOutputMap" ||
+    className === "HighlightRegistry" ||
+    className === "CustomStateSet"
   );
 }
 
@@ -376,6 +379,17 @@ function makeNodesForEntries(item) {
     name: nodeName,
     contents: null,
     type: NODE_TYPES.ENTRIES,
+  });
+}
+
+function makeNodeForPrimitiveValue(parent, value) {
+  const nodeName = "<primitive value>";
+
+  return createNode({
+    parent,
+    name: nodeName,
+    contents: {value},
+    type: NODE_TYPES.PRIMITIVE_VALUE,
   });
 }
 
@@ -483,7 +497,7 @@ function makeDefaultPropsBucket(propertiesNames, parent, ownProperties) {
     ownProperties
   );
 
-  if (defaultProperties.length > 0) {
+  if (defaultProperties.length) {
     const defaultPropertiesNode = createNode({
       parent,
       name: "<default properties>",
@@ -530,6 +544,7 @@ function makeNodesForOwnProps(propertiesNames, parent, ownProperties) {
   });
 }
 
+// eslint-disable-next-line complexity
 function makeNodesForProperties(objProps, parent) {
   const {
     ownProperties = {},
@@ -651,6 +666,13 @@ function makeNodesForProperties(objProps, parent) {
         })
       );
     }
+  }
+
+  const preview = parentValue?.preview;
+
+  if (preview && Object.hasOwn(preview, 'wrappedValue')) {
+    const primitiveValue = preview.wrappedValue
+    nodes.push(makeNodeForPrimitiveValue(parentValue, primitiveValue))
   }
 
   // Add the prototype if it exists and is not null

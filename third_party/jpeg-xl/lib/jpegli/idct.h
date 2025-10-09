@@ -6,18 +6,12 @@
 #ifndef LIB_JPEGLI_IDCT_H_
 #define LIB_JPEGLI_IDCT_H_
 
-/* clang-format off */
-#include <stdio.h>
-#include <jpeglib.h>
-#include <stddef.h>
-#include <stdint.h>
-/* clang-format on */
-
-#include "lib/jxl/base/compiler_specific.h"
+#include "lib/jpegli/common.h"
+#include "lib/jxl/base/status.h"
 
 namespace jpegli {
 
-void ChooseInverseTransform(j_decompress_ptr cinfo);
+jxl::Status ChooseInverseTransform(j_decompress_ptr cinfo);
 
 }  // namespace jpegli
 

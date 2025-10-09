@@ -6,23 +6,25 @@ Transform the repackage task into an actual task description.
 """
 
 from taskgraph.transforms.base import TransformSequence
-from taskgraph.util.schema import optionally_keyed_by, resolve_keyed_by
+from taskgraph.util.copy import deepcopy
+from taskgraph.util.dependencies import get_primary_dependency
+from taskgraph.util.schema import Schema, optionally_keyed_by, resolve_keyed_by
 from taskgraph.util.taskcluster import get_artifact_prefix
-from voluptuous import Extra, Optional, Required
+from voluptuous import Any, Extra, Optional, Required
 
-from gecko_taskgraph.loader.single_dep import schema
 from gecko_taskgraph.transforms.job import job_description_schema
 from gecko_taskgraph.util.attributes import copy_attributes_from_dependent_job
-from gecko_taskgraph.util.copy_task import copy_task
 from gecko_taskgraph.util.platforms import architecture, archive_format
 from gecko_taskgraph.util.workertypes import worker_type_implementation
 
-packaging_description_schema = schema.extend(
+packaging_description_schema = Schema(
     {
         # unique label to describe this repackaging task
         Optional("label"): str,
         Optional("worker-type"): str,
         Optional("worker"): object,
+        Optional("attributes"): job_description_schema["attributes"],
+        Optional("dependencies"): job_description_schema["dependencies"],
         # treeherder is allowed here to override any defaults we use for repackaging.  See
         # taskcluster/gecko_taskgraph/transforms/task.py for the schema details, and the
         # below transforms for defaults of various values.
@@ -40,7 +42,7 @@ packaging_description_schema = schema.extend(
         Optional("shipping-product"): job_description_schema["shipping-product"],
         Optional("shipping-phase"): job_description_schema["shipping-phase"],
         Required("package-formats"): optionally_keyed_by(
-            "build-platform", "release-type", [str]
+            "build-platform", "release-type", "build-type", [str]
         ),
         Optional("msix"): {
             Optional("channel"): optionally_keyed_by(
@@ -77,6 +79,22 @@ packaging_description_schema = schema.extend(
             ),
             Optional("vendor"): str,
         },
+        Optional("flatpak"): {
+            Required("name"): optionally_keyed_by(
+                "level",
+                "build-platform",
+                "release-type",
+                "shipping-product",
+                str,
+            ),
+            Required("branch"): optionally_keyed_by(
+                "level",
+                "build-platform",
+                "release-type",
+                "shipping-product",
+                str,
+            ),
+        },
         # All l10n jobs use mozharness
         Required("mozharness"): {
             Extra: object,
@@ -89,8 +107,9 @@ packaging_description_schema = schema.extend(
             # gecko checkout
             Optional("comm-checkout"): bool,
             Optional("run-as-root"): bool,
-            Optional("use-caches"): bool,
+            Optional("use-caches"): Any(bool, [str]),
         },
+        Optional("task-from"): job_description_schema["task-from"],
     }
 )
 
@@ -195,7 +214,24 @@ PACKAGE_FORMATS = {
         "output": "target.store.msix",
     },
     "dmg": {
-        "args": ["dmg"],
+        "args": [
+            "dmg",
+            "--compression",
+            "lzma",
+        ],
+        "inputs": {
+            "input": "target{archive_format}",
+        },
+        "output": "target.dmg",
+    },
+    "dmg-attrib": {
+        "args": [
+            "dmg",
+            "--compression",
+            "lzma",
+            "--attribution_sentinel",
+            "__MOZCUSTOM__",
+        ],
         "inputs": {
             "input": "target{archive_format}",
         },
@@ -243,7 +279,7 @@ PACKAGE_FORMATS = {
             "--arch",
             "{architecture}",
             "--templates",
-            "browser/installer/linux/app/debian",
+            "{deb-templates}",
             "--version",
             "{version_display}",
             "--build-number",
@@ -266,7 +302,9 @@ PACKAGE_FORMATS = {
             "--build-number",
             "{build_number}",
             "--templates",
-            "browser/installer/linux/langpack/debian",
+            "{deb-l10n-templates}",
+            "--release-product",
+            "{release_product}",
         ],
         "inputs": {
             "input-xpi-file": "target.langpack.xpi",
@@ -274,17 +312,79 @@ PACKAGE_FORMATS = {
         },
         "output": "target.langpack.deb",
     },
+    "rpm": {
+        "args": [
+            "rpm",
+            "--arch",
+            "{architecture}",
+            "--templates",
+            "{rpm-templates}",
+            "--version",
+            "{version_display}",
+            "--build-number",
+            "{build_number}",
+            "--release-product",
+            "{release_product}",
+            "--release-type",
+            "{release_type}",
+            "--input-xpi-dir",
+            "{fetch-dir}",
+        ],
+        "inputs": {
+            "input": "target{archive_format}",
+        },
+        "output": "target.rpm",
+    },
+    "flatpak": {
+        "args": [
+            "flatpak",
+            "--name",
+            "{flatpak-name}",
+            "--arch",
+            "{architecture}",
+            "--version",
+            "{version_display}",
+            "--product",
+            "{package-name}",
+            "--release-type",
+            "{release_type}",
+            "--flatpak-branch",
+            "{flatpak-branch}",
+            "--template-dir",
+            "{flatpak-templates}",
+            "--langpack-pattern",
+            "{fetch-dir}/extensions/*/target.langpack.xpi",
+        ],
+        "inputs": {
+            "input": "target{archive_format}",
+        },
+        "output": "target.flatpak.tar.xz",
+    },
 }
 MOZHARNESS_EXPANSIONS = [
     "package-name",
     "installer-tag",
     "fetch-dir",
     "stub-installer-tag",
+    "deb-templates",
+    "rpm-templates",
+    "deb-l10n-templates",
     "sfx-stub",
     "wsx-stub",
+    "flatpak-templates",
 ]
 
 transforms = TransformSequence()
+
+
+@transforms.add
+def remove_name(config, jobs):
+    for job in jobs:
+        if "name" in job:
+            del job["name"]
+        yield job
+
+
 transforms.add_validate(packaging_description_schema)
 
 
@@ -292,9 +392,12 @@ transforms.add_validate(packaging_description_schema)
 def copy_in_useful_magic(config, jobs):
     """Copy attributes from upstream task to be used for keyed configuration."""
     for job in jobs:
-        dep = job["primary-dependency"]
+        dep = get_primary_dependency(config, job)
+        assert dep
+
         job["build-platform"] = dep.attributes.get("build_platform")
         job["shipping-product"] = dep.attributes.get("shipping_product")
+        job["build-type"] = dep.attributes.get("build_type")
         yield job
 
 
@@ -307,9 +410,11 @@ def handle_keyed_by(config, jobs):
         "mozharness.config",
         "package-formats",
         "worker.max-run-time",
+        "flatpak.name",
+        "flatpak.branch",
     ]
     for job in jobs:
-        job = copy_task(job)  # don't overwrite dict values here
+        job = deepcopy(job)  # don't overwrite dict values here
         for field in fields:
             resolve_keyed_by(
                 item=job,
@@ -326,7 +431,8 @@ def handle_keyed_by(config, jobs):
 @transforms.add
 def make_repackage_description(config, jobs):
     for job in jobs:
-        dep_job = job["primary-dependency"]
+        dep_job = get_primary_dependency(config, job)
+        assert dep_job
 
         label = job.get("label", dep_job.label.replace("signing-", "repackage-"))
         job["label"] = label
@@ -337,7 +443,9 @@ def make_repackage_description(config, jobs):
 @transforms.add
 def make_job_description(config, jobs):
     for job in jobs:
-        dep_job = job["primary-dependency"]
+        dep_job = get_primary_dependency(config, job)
+        assert dep_job
+
         dependencies = {dep_job.kind: dep_job.label}
 
         attributes = copy_attributes_from_dependent_job(dep_job)
@@ -431,16 +539,59 @@ def make_job_description(config, jobs):
                     }
                 )
 
-        elif config.kind == "repackage-deb":
-            attributes["repackage_type"] = "repackage-deb"
+        elif config.kind in ("repackage-deb", "repackage-rpm"):
+            attributes["repackage_type"] = config.kind
             description = (
                 "Repackaging the '{build_platform}/{build_type}' "
-                "{version} build into a '.deb' package"
+                "{version} build into a '.{package}' package"
             ).format(
                 build_platform=attributes.get("build_platform"),
                 build_type=attributes.get("build_type"),
                 version=config.params["version"],
+                package=config.kind.split("-")[1],
             )
+
+        elif config.kind == "repackage-flatpak":
+            assert not locale
+
+            if attributes.get("l10n_chunk") or attributes.get("chunk_locales"):
+                # We don't want to produce flatpaks for single-locale repack builds.
+                continue
+
+            fetches = job.setdefault("fetches", {})
+            # The keys are unique, like `shippable-l10n-signing-linux64-shippable-1/opt`, so we
+            # can't ask for the tasks directly, we must filter for them.
+            for t in config.kind_dependencies_tasks.values():
+                if attributes.get("shippable"):
+                    if (
+                        t.kind != "shippable-l10n-signing"
+                        or t.attributes["build_platform"] != "linux64-shippable"
+                    ):
+                        continue
+                elif t.kind != "l10n" or t.attributes["build_platform"] != "linux64":
+                    continue
+                if t.attributes["build_type"] != "opt":
+                    continue
+
+                locales = t.attributes.get(
+                    "chunk_locales", t.attributes.get("all_locales")
+                )
+
+                dependencies.update({t.label: t.label})
+
+                fetches.update(
+                    {
+                        t.label: [
+                            {
+                                "artifact": f"{loc}/target.langpack.xpi",
+                                "extract": False,
+                                # Otherwise we can't disambiguate locales!
+                                "dest": f"extensions/{loc}",
+                            }
+                            for loc in locales
+                        ]
+                    }
+                )
 
         _fetch_subst_locale = "en-US"
         if locale:
@@ -457,7 +608,7 @@ def make_job_description(config, jobs):
             # if repackage_signing_task doesn't exists, generate the stub installer
             package_formats += ["installer-stub"]
         for format in package_formats:
-            command = copy_task(PACKAGE_FORMATS[format])
+            command = deepcopy(PACKAGE_FORMATS[format])
             substs = {
                 "archive_format": archive_format(build_platform),
                 "_locale": _fetch_subst_locale,
@@ -467,6 +618,8 @@ def make_job_description(config, jobs):
                 "build_number": config.params["build_number"],
                 "release_product": config.params["release_product"],
                 "release_type": config.params["release_type"],
+                "flatpak-name": job.get("flatpak", {}).get("name"),
+                "flatpak-branch": job.get("flatpak", {}).get("branch"),
             }
             # Allow us to replace `args` as well, but specifying things expanded in mozharness
             # without breaking .format and without allowing unknown through.
@@ -474,7 +627,7 @@ def make_job_description(config, jobs):
 
             # We need to resolve `msix.*` values keyed by `package-format` for each format, not
             # just once, so we update a temporary copy just for extracting these values.
-            temp_job = copy_task(job)
+            temp_job = deepcopy(job)
             for msix_key in (
                 "channel",
                 "identity-name",
@@ -521,7 +674,6 @@ def make_job_description(config, jobs):
                     "repackage_config": repackage_config,
                 },
                 "run-as-root": run.get("run-as-root", False),
-                "use-caches": run.get("use-caches", True),
             }
         )
 
@@ -616,9 +768,7 @@ def _generate_download_config(
     elif build_platform.startswith("linux") or build_platform.startswith("macosx"):
         signing_fetch = [
             {
-                "artifact": "{}target{}".format(
-                    locale_path, archive_format(build_platform)
-                ),
+                "artifact": f"{locale_path}target{archive_format(build_platform)}",
                 "extract": False,
             },
         ]

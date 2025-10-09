@@ -7,38 +7,44 @@
    Class for handling Berkeley Mailbox stores.
 */
 
+#include "MailNewsTypes.h"
 #include "prlog.h"
 #include "msgCore.h"
 #include "nsMsgBrkMBoxStore.h"
 #include "nsIMsgFolder.h"
-#include "nsMsgFolderFlags.h"
 #include "nsMsgMessageFlags.h"
 #include "nsIMsgLocalMailFolder.h"
 #include "nsIInputStream.h"
+#include "nsIInputStreamPump.h"
+#include "nsIRandomAccessStream.h"
 #include "nsCOMArray.h"
 #include "nsIFile.h"
 #include "nsIDirectoryEnumerator.h"
 #include "nsIMsgHdr.h"
 #include "nsNetUtil.h"
 #include "nsIMsgDatabase.h"
-#include "nsNativeCharsetUtils.h"
 #include "nsMsgUtils.h"
 #include "nsIDBFolderInfo.h"
-#include "nsMsgLocalFolderHdrs.h"
-#include "nsMailHeaders.h"
-#include "nsParseMailbox.h"
-#include "nsIMailboxService.h"
-#include "nsIMsgFolderCompactor.h"
-#include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
 #include "nsPrintfCString.h"
 #include "nsQuarantinedOutputStream.h"
+#include "MboxMsgInputStream.h"
+#include "MboxMsgOutputStream.h"
+#include "MboxCompactor.h"
+#include "MboxScanner.h"
+#include "mozilla/glean/CommMailMetrics.h"
+#include "mozilla/Logging.h"
 #include "mozilla/Preferences.h"
-#include "mozilla/SlicedInputStream.h"
-#include "prprf.h"
+#include "mozilla/ScopeExit.h"
 #include <cstdlib>  // for std::abs(int/long)
 #include <cmath>    // for std::abs(float/double)
 
+mozilla::LazyLogModule gMboxLog("mbox");
+using mozilla::LogLevel;
+
+/****************************************************************************
+ * nsMsgBrkMBoxStore implementation.
+ */
 nsMsgBrkMBoxStore::nsMsgBrkMBoxStore() {}
 
 nsMsgBrkMBoxStore::~nsMsgBrkMBoxStore() {}
@@ -63,43 +69,137 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::DiscoverSubFolders(nsIMsgFolder* aParentFolder,
   return AddSubFolders(aParentFolder, path, aDeep);
 }
 
+// Given a directory structure:
+// ...profile/Mail/localfolders/
+//     foo
+//     foo.sbd/
+//        bar
+//        bar.sbd/
+//          wibble
+//        pibble
+//        shouldnt_be_here/
+//          rubbish
+//
+// Calling this function should yield these results:
+//
+// parent     |  Should return
+// -----------+---------------
+// root       | ["foo"]
+// foo        | ["bar", "pibble"]
+// foo/bar    | ["wibble"]
+// foo/pibble | []
+//
+NS_IMETHODIMP nsMsgBrkMBoxStore::DiscoverChildFolders(
+    nsIMsgFolder* parent, nsTArray<nsCString>& children) {
+  NS_ENSURE_ARG(parent);
+
+  children.ClearAndRetainStorage();
+
+  // Subfolders are in `<parentname>.sbd` dir, if it exists.
+  nsCOMPtr<nsIFile> sbd;
+  {
+    MOZ_TRY(parent->GetFilePath(getter_AddRefs(sbd)));
+    bool isServer;
+    parent->GetIsServer(&isServer);
+    if (!isServer) {
+      nsAutoString name;
+      MOZ_TRY(sbd->GetLeafName(name));
+      name.AppendLiteral(FOLDER_SUFFIX);
+      MOZ_TRY(sbd->SetLeafName(name));
+    }
+    bool exists;
+    MOZ_TRY(sbd->Exists(&exists));
+    if (!exists) {
+      return NS_OK;  // No subfolders.
+    }
+    bool isDir;
+    MOZ_TRY(sbd->IsDirectory(&isDir));
+    if (!isDir) {
+      return NS_OK;  // Confusing, but treat as no subfolders.
+    }
+  }
+
+  // Now look for child folders inside `<parentname>.sbd/`.
+  nsCOMPtr<nsIDirectoryEnumerator> dirEnumerator;
+  MOZ_TRY(sbd->GetDirectoryEntries(getter_AddRefs(dirEnumerator)));
+  while (true) {
+    nsCOMPtr<nsIFile> child;
+    MOZ_TRY(dirEnumerator->GetNextFile(getter_AddRefs(child)));
+    if (!child) {
+      break;  // Finished.
+    }
+
+    bool isDir = false;
+    MOZ_TRY(child->IsDirectory(&isDir));
+    if (isDir) {
+      continue;  // Ignore directories.
+    }
+    if (nsShouldIgnoreFile(child)) {
+      continue;  // Not interested.
+    }
+
+    // If we get this far, we treat it as an mbox file.
+    nsAutoString fileName;
+    MOZ_TRY(child->GetLeafName(fileName));
+
+    children.AppendElement(DecodeFilename(fileName));
+  }
+
+  return NS_OK;
+}
+
 NS_IMETHODIMP nsMsgBrkMBoxStore::CreateFolder(nsIMsgFolder* aParent,
-                                              const nsAString& aFolderName,
+                                              const nsACString& aFolderName,
                                               nsIMsgFolder** aResult) {
   NS_ENSURE_ARG_POINTER(aParent);
   NS_ENSURE_ARG_POINTER(aResult);
   if (aFolderName.IsEmpty()) return NS_MSG_ERROR_INVALID_FOLDER_NAME;
 
-  nsCOMPtr<nsIFile> path;
-  nsCOMPtr<nsIMsgFolder> child;
-  nsresult rv = aParent->GetFilePath(getter_AddRefs(path));
-  if (NS_FAILED(rv)) return rv;
-  // Get a directory based on our current path.
-  rv = CreateDirectoryForFolder(path);
-  if (NS_FAILED(rv)) return rv;
-
-  // Now we have a valid directory or we have returned.
   // Make sure the new folder name is valid
-  nsAutoString safeFolderName(aFolderName);
-  NS_MsgHashIfNecessary(safeFolderName);
+  nsString safeFolderName16 = NS_MsgHashIfNecessary(aFolderName);
+  nsAutoCString safeFolderName = NS_ConvertUTF16toUTF8(safeFolderName16);
 
-  path->Append(safeFolderName);
-  bool exists;
-  path->Exists(&exists);
-  if (exists)  // check this because localized names are different from disk
-               // names
-    return NS_MSG_FOLDER_EXISTS;
-
-  rv = path->Create(nsIFile::NORMAL_FILE_TYPE, 0600);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // GetFlags and SetFlags in AddSubfolder will fail because we have no db at
-  // this point but mFlags is set.
-  rv = aParent->AddSubfolder(safeFolderName, getter_AddRefs(child));
+  // Register the subfolder in memory before creating any on-disk file or
+  // directory for the folder. This way, we don't run the risk of getting in a
+  // situation where `nsMsgBrkMBoxStore::DiscoverSubFolders` (which
+  // `AddSubfolder` ends up indirectly calling) gets confused because there are
+  // files for a folder it doesn't have on record (see Bug 1889653). `GetFlags`
+  // and `SetFlags` in `AddSubfolder` will fail because we have no db at this
+  // point but mFlags is set.
+  nsCOMPtr<nsIMsgFolder> child;
+  nsresult rv = aParent->AddSubfolder(safeFolderName, getter_AddRefs(child));
   if (!child || NS_FAILED(rv)) {
-    path->Remove(false);
     return rv;
   }
+
+  nsCOMPtr<nsIFile> path;
+  rv = aParent->GetFilePath(getter_AddRefs(path));
+  if (NS_FAILED(rv)) {
+    aParent->PropagateDelete(child, false);
+    return rv;
+  }
+  // Get a directory based on our current path.
+  rv = CreateDirectoryForFolder(path);
+  if (NS_FAILED(rv)) {
+    aParent->PropagateDelete(child, false);
+    return rv;
+  }
+
+  path->Append(safeFolderName16);
+  bool exists;
+  path->Exists(&exists);
+  // check this because localized names are different from disk names
+  if (exists) {
+    aParent->PropagateDelete(child, false);
+    return NS_MSG_FOLDER_EXISTS;
+  }
+
+  rv = path->Create(nsIFile::NORMAL_FILE_TYPE, 0600);
+  if (NS_FAILED(rv)) {
+    aParent->PropagateDelete(child, false);
+    return rv;
+  }
+
   // Create an empty database for this mail folder, set its name from the user
   nsCOMPtr<nsIMsgDBService> msgDBService =
       do_GetService("@mozilla.org/msgDatabase/msgDBService;1", &rv);
@@ -120,7 +220,7 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::CreateFolder(nsIMsgFolder* aParent,
       unusedDB->Close(true);
       aParent->UpdateSummaryTotals(true);
     } else {
-      path->Remove(false);
+      aParent->PropagateDelete(child, true);
       rv = NS_MSG_CANT_CREATE_FOLDER;
     }
   }
@@ -270,27 +370,26 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::SetSummaryFileValid(nsIMsgFolder* aFolder,
   return rv;
 }
 
-NS_IMETHODIMP nsMsgBrkMBoxStore::DeleteFolder(nsIMsgFolder* aFolder) {
-  NS_ENSURE_ARG_POINTER(aFolder);
-  bool exists;
+NS_IMETHODIMP nsMsgBrkMBoxStore::DeleteFolder(nsIMsgFolder* folder) {
+  NS_ENSURE_ARG_POINTER(folder);
 
   // Delete mbox file.
   nsCOMPtr<nsIFile> pathFile;
-  nsresult rv = aFolder->GetFilePath(getter_AddRefs(pathFile));
+  nsresult rv = folder->GetFilePath(getter_AddRefs(pathFile));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  exists = false;
-  pathFile->Exists(&exists);
-  if (exists) {
+  bool mboxExists = false;
+  pathFile->Exists(&mboxExists);
+  if (mboxExists) {
     rv = pathFile->Remove(false);
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
   // Delete any subfolders (.sbd-suffixed directories).
   AddDirectorySeparator(pathFile);
-  exists = false;
-  pathFile->Exists(&exists);
-  if (exists) {
+  bool subdirExists = false;
+  pathFile->Exists(&subdirExists);
+  if (subdirExists) {
     rv = pathFile->Remove(true);
     NS_ENSURE_SUCCESS(rv, rv);
   }
@@ -299,15 +398,13 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::DeleteFolder(nsIMsgFolder* aFolder) {
 }
 
 NS_IMETHODIMP nsMsgBrkMBoxStore::RenameFolder(nsIMsgFolder* aFolder,
-                                              const nsAString& aNewName,
+                                              const nsACString& aNewName,
                                               nsIMsgFolder** aNewFolder) {
   NS_ENSURE_ARG_POINTER(aFolder);
   NS_ENSURE_ARG_POINTER(aNewFolder);
 
   uint32_t numChildren;
   aFolder->GetNumSubFolders(&numChildren);
-  nsString existingName;
-  aFolder->GetName(existingName);
 
   nsCOMPtr<nsIFile> oldPathFile;
   nsresult rv = aFolder->GetFilePath(getter_AddRefs(oldPathFile));
@@ -329,11 +426,8 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::RenameFolder(nsIMsgFolder* aFolder,
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  nsAutoString safeName(aNewName);
-  NS_MsgHashIfNecessary(safeName);
-
-  nsAutoCString oldLeafName;
-  oldPathFile->GetNativeLeafName(oldLeafName);
+  nsString safeFolderName16 = NS_MsgHashIfNecessary(aNewName);
+  nsAutoCString safeFolderName = NS_ConvertUTF16toUTF8(safeFolderName16);
 
   nsCOMPtr<nsIFile> parentPathFile;
   parentFolder->GetFilePath(getter_AddRefs(parentPathFile));
@@ -351,38 +445,40 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::RenameFolder(nsIMsgFolder* aFolder,
 
   aFolder->ForceDBClosed();
   // save off dir name before appending .msf
-  rv = oldPathFile->MoveTo(nullptr, safeName);
+  rv = oldPathFile->MoveTo(nullptr, safeFolderName16);
   if (NS_FAILED(rv)) return rv;
 
-  nsString dbName(safeName);
+  nsString dbName(safeFolderName16);
   dbName.AppendLiteral(SUMMARY_SUFFIX);
   oldSummaryFile->MoveTo(nullptr, dbName);
 
   if (numChildren > 0) {
     // rename "*.sbd" directory
-    nsAutoString newNameDirStr(safeName);
+    nsAutoString newNameDirStr(safeFolderName16);
     newNameDirStr.AppendLiteral(FOLDER_SUFFIX);
     dirFile->MoveTo(nullptr, newNameDirStr);
   }
 
-  return parentFolder->AddSubfolder(safeName, aNewFolder);
+  return parentFolder->AddSubfolder(safeFolderName, aNewFolder);
 }
 
 NS_IMETHODIMP nsMsgBrkMBoxStore::CopyFolder(
     nsIMsgFolder* aSrcFolder, nsIMsgFolder* aDstFolder, bool aIsMoveFolder,
     nsIMsgWindow* aMsgWindow, nsIMsgCopyServiceListener* aListener,
-    const nsAString& aNewName) {
+    const nsACString& aNewName) {
   NS_ENSURE_ARG_POINTER(aSrcFolder);
   NS_ENSURE_ARG_POINTER(aDstFolder);
 
-  nsAutoString folderName;
-  if (aNewName.IsEmpty())
+  nsAutoCString folderName;
+  if (aNewName.IsEmpty()) {
     aSrcFolder->GetName(folderName);
-  else
+  } else {
     folderName.Assign(aNewName);
+  }
 
-  nsAutoString safeFolderName(folderName);
-  NS_MsgHashIfNecessary(safeFolderName);
+  nsString safeFolderName16 = NS_MsgHashIfNecessary(folderName);
+  nsAutoCString safeFolderName = NS_ConvertUTF16toUTF8(safeFolderName16);
+
   nsCOMPtr<nsIMsgLocalMailFolder> localSrcFolder(do_QueryInterface(aSrcFolder));
   nsCOMPtr<nsIMsgDatabase> srcDB;
   if (localSrcFolder)
@@ -415,7 +511,7 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::CopyFolder(
   oldPath->Clone(getter_AddRefs(origPath));
 
   // copying necessary for aborting.... if failure return
-  rv = oldPath->CopyTo(newPath, safeFolderName);
+  rv = oldPath->CopyTo(newPath, safeFolderName16);
   NS_ENSURE_SUCCESS(rv, rv);  // Will fail if a file by that name exists
 
   // Copy to dir can fail if filespec does not exist. If copy fails, we test
@@ -423,7 +519,7 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::CopyFolder(
   // without copying it. If it fails and filespec exist and is not zero sized
   // there is real problem
   // Copy the file to the new dir
-  nsAutoString dbName(safeFolderName);
+  nsAutoString dbName(safeFolderName16);
   dbName.AppendLiteral(SUMMARY_SUFFIX);
   rv = summaryFile->CopyTo(newPath, dbName);
   if (NS_FAILED(rv))  // Test if the copy is successful
@@ -454,8 +550,13 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::CopyFolder(
     nsCOMPtr<nsIMsgDBService> msgDBService =
         do_GetService("@mozilla.org/msgDatabase/msgDBService;1", &rv);
     NS_ENSURE_SUCCESS(rv, rv);
-    rv = msgDBService->OpenMailDBFromFile(newPath, newMsgFolder, false, true,
-                                          getter_AddRefs(destDB));
+
+    nsCOMPtr<nsIFile> newDBFile;
+    // "foo/bar/INBOX" -> "foo/bar/INBOX.msf"
+    rv = GetSummaryFileLocation(newPath, getter_AddRefs(newDBFile));
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = msgDBService->OpenDBFromFile(newDBFile, newMsgFolder, false, true,
+                                      getter_AddRefs(destDB));
     if (rv == NS_MSG_ERROR_FOLDER_SUMMARY_OUT_OF_DATE && destDB)
       destDB->SetSummaryValid(true);
   }
@@ -544,141 +645,177 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::CopyFolder(
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsMsgBrkMBoxStore::GetNewMsgOutputStream(nsIMsgFolder* aFolder,
-                                         nsIMsgDBHdr** aNewMsgHdr,
-                                         nsIOutputStream** aResult) {
-  bool quarantining = false;
-  nsCOMPtr<nsIPrefBranch> prefBranch(do_GetService(NS_PREFSERVICE_CONTRACTID));
-  if (prefBranch) {
-    prefBranch->GetBoolPref("mailnews.downloadToTempFile", &quarantining);
+// If the given folder has an write in progress, discard it.
+// NOTE: in theory, we could have multiple writes going if we were using
+// Quarantining. But in practice the protocol => folder interfaces assume a
+// single message at a time for now.
+nsresult nsMsgBrkMBoxStore::InvalidateOngoingWrite(nsIMsgFolder* folder) {
+  MOZ_ASSERT(folder);
+  auto existing = mOngoingWrites.lookup(folder->URI());
+  if (existing) {
+    // boooo....
+    MOZ_LOG(gMboxLog, LogLevel::Error,
+            ("Already writing to folder '%s'", folder->URI().get()));
+    NS_WARNING(
+        nsPrintfCString("Already writing to folder '%s'", folder->URI().get())
+            .get());
+    // Close the old stream - this will roll back everything it wrote.
+    existing->value().stream->Close();
+    mOngoingWrites.remove(existing);
   }
-
-  if (!quarantining) {
-    // Caller will write directly to mbox.
-    return InternalGetNewMsgOutputStream(aFolder, aNewMsgHdr, aResult);
-  }
-
-  // Quarantining is on, so we want to write the new message to a temp file
-  // and let the virus checker have at it before we append it to the mbox.
-  // We'll wrap the mboxStream with an nsQuarantinedOutputStream and return
-  // that.
-  nsCOMPtr<nsIOutputStream> mboxStream;
-  nsresult rv = InternalGetNewMsgOutputStream(aFolder, aNewMsgHdr,
-                                              getter_AddRefs(mboxStream));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  RefPtr<nsQuarantinedOutputStream> qStream =
-      new nsQuarantinedOutputStream(mboxStream);
-  qStream.forget(aResult);
   return NS_OK;
 }
 
-nsresult nsMsgBrkMBoxStore::InternalGetNewMsgOutputStream(
-    nsIMsgFolder* aFolder, nsIMsgDBHdr** aNewMsgHdr,
-    nsIOutputStream** aResult) {
-  NS_ENSURE_ARG_POINTER(aFolder);
-  NS_ENSURE_ARG_POINTER(aNewMsgHdr);
-  NS_ENSURE_ARG_POINTER(aResult);
-
-#ifdef _DEBUG
-  NS_ASSERTION(m_streamOutstandingFolder != aFolder, "didn't finish prev msg");
-  m_streamOutstandingFolder = aFolder;
-#endif
+NS_IMETHODIMP
+nsMsgBrkMBoxStore::GetNewMsgOutputStream(nsIMsgFolder* folder,
+                                         nsIOutputStream** outStream) {
+  NS_ENSURE_ARG(folder);
+  NS_ENSURE_ARG_POINTER(outStream);
 
   nsresult rv;
-  nsCOMPtr<nsIFile> mboxFile;
-  rv = aFolder->GetFilePath(getter_AddRefs(mboxFile));
+  // First, check the mOngoingWrites set to make sure we're not already
+  // writing to this folder. If so, we'll abort and roll back the previous one
+  // before issuing a new stream.
+  rv = InvalidateOngoingWrite(folder);
   NS_ENSURE_SUCCESS(rv, rv);
-  nsCOMPtr<nsIMsgDatabase> db;
-  aFolder->GetMsgDatabase(getter_AddRefs(db));
-  if (!db && !*aNewMsgHdr) NS_WARNING("no db, and no message header");
+
+  nsCOMPtr<nsIFile> mboxFile;
+  rv = folder->GetFilePath(getter_AddRefs(mboxFile));
+  NS_ENSURE_SUCCESS(rv, rv);
+  MOZ_LOG(gMboxLog, LogLevel::Info,
+          ("Opening mbox file '%s' for writing.",
+           mboxFile->HumanReadablePath().get()));
+
   bool exists = false;
   mboxFile->Exists(&exists);
   if (!exists) {
+    MOZ_LOG(gMboxLog, LogLevel::Info,
+            ("'%s' does not exist, so creating it now.",
+             mboxFile->HumanReadablePath().get()));
     rv = mboxFile->Create(nsIFile::NORMAL_FILE_TYPE, 0600);
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  nsCString URI;
-  aFolder->GetURI(URI);
-  nsCOMPtr<nsISeekableStream> seekable;
-  if (m_outputStreams.Get(URI, aResult)) {
-    seekable = do_QueryInterface(*aResult, &rv);
+  // We want a buffered, mbox-aware stream. Some wrapping is required.
+  nsCOMPtr<nsIOutputStream> stream;
+  int64_t filePos = 0;
+  {
+    nsCOMPtr<nsIOutputStream> rawStream;
+    rv = NS_NewLocalFileOutputStream(getter_AddRefs(rawStream), mboxFile,
+                                     PR_WRONLY | PR_CREATE_FILE | PR_APPEND,
+                                     00600);
+    if (NS_FAILED(rv)) {
+      MOZ_LOG(gMboxLog, LogLevel::Error,
+              ("failed opening offline store for %s", folder->URI().get()));
+    }
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // 2**16 buffer size for good performance in 2024?
+    nsCOMPtr<nsIOutputStream> bufferedStream;
+    rv = NS_NewBufferedOutputStream(getter_AddRefs(bufferedStream),
+                                    rawStream.forget(), 65536);
+    if (NS_FAILED(rv)) {
+      MOZ_LOG(gMboxLog, LogLevel::Error,
+              ("failed opening buffered stream for %s", folder->URI().get()));
+    }
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // Jump to the end of the file (and record position for new message).
+    nsCOMPtr<nsISeekableStream> seekable(
+        do_QueryInterface(bufferedStream, &rv));
     NS_ENSURE_SUCCESS(rv, rv);
     rv = seekable->Seek(nsISeekableStream::NS_SEEK_END, 0);
-    if (NS_FAILED(rv)) {
-      m_outputStreams.Remove(URI);
-      NS_RELEASE(*aResult);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = seekable->Tell(&filePos);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // Wrap to handle mbox "From " separator, escaping etc.
+    RefPtr<MboxMsgOutputStream> mboxStream =
+        new MboxMsgOutputStream(bufferedStream, true);
+
+    if (mozilla::Preferences::GetBool("mailnews.downloadToTempFile", false)) {
+      // If quarantining, add another wrapping stream.
+      stream = new nsQuarantinedOutputStream(mboxStream);
+      MOZ_LOG(gMboxLog, LogLevel::Info,
+              ("START-Q MSG stream=0x%p folder=%s offset=%" PRIi64 "",
+               stream.get(), folder->URI().get(), filePos));
+    } else {
+      stream = mboxStream;
+      MOZ_LOG(gMboxLog, LogLevel::Info,
+              ("START MSG stream=0x%p folder=%s offset=%" PRIi64 "",
+               stream.get(), folder->URI().get(), filePos));
     }
   }
-  if (!*aResult) {
-    rv = MsgGetFileStream(mboxFile, aResult);
-    NS_ASSERTION(NS_SUCCEEDED(rv), "failed opening offline store for output");
-    if (NS_FAILED(rv))
-      printf("failed opening offline store for %s\n", URI.get());
-    NS_ENSURE_SUCCESS(rv, rv);
-    seekable = do_QueryInterface(*aResult, &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = seekable->Seek(nsISeekableStream::NS_SEEK_END, 0);
-    NS_ENSURE_SUCCESS(rv, rv);
-    m_outputStreams.InsertOrUpdate(URI, *aResult);
-  }
-  int64_t filePos;
-  seekable->Tell(&filePos);
 
-  if (db && !*aNewMsgHdr) {
-    db->CreateNewHdr(nsMsgKey_None, aNewMsgHdr);
-  }
+  // Up and running - add the stream to the set of ongoing writes.
+  MOZ_ALWAYS_TRUE(mOngoingWrites.putNew(folder->URI(),
+                                        StreamDetails{filePos, stream.get()}));
 
-  if (*aNewMsgHdr) {
-    nsCString storeToken = nsPrintfCString("%" PRId64, filePos);
-    (*aNewMsgHdr)->SetStringProperty("storeToken", storeToken);
-    (*aNewMsgHdr)->SetMessageOffset(filePos);
-  }
-  return rv;
+  stream.forget(outStream);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
-nsMsgBrkMBoxStore::DiscardNewMessage(nsIOutputStream* aOutputStream,
-                                     nsIMsgDBHdr* aNewHdr) {
-  NS_ENSURE_ARG_POINTER(aOutputStream);
-  NS_ENSURE_ARG_POINTER(aNewHdr);
-#ifdef _DEBUG
-  m_streamOutstandingFolder = nullptr;
-#endif
-  nsCOMPtr<nsISafeOutputStream> safe = do_QueryInterface(aOutputStream);
-  if (safe) {
-    // nsISafeOutputStream only writes upon finish(), so no cleanup required.
-    return aOutputStream->Close();
-  }
-  // Truncate the mbox back to where we started writing.
-  uint64_t hdrOffset;
-  aNewHdr->GetMessageOffset(&hdrOffset);
-  aOutputStream->Close();
-  nsCOMPtr<nsIFile> mboxFile;
-  nsCOMPtr<nsIMsgFolder> folder;
-  nsresult rv = aNewHdr->GetFolder(getter_AddRefs(folder));
-  NS_ENSURE_SUCCESS(rv, rv);
-  rv = folder->GetFilePath(getter_AddRefs(mboxFile));
-  NS_ENSURE_SUCCESS(rv, rv);
-  return mboxFile->SetFileSize(hdrOffset);
-}
+nsMsgBrkMBoxStore::FinishNewMessage(nsIMsgFolder* folder,
+                                    nsIOutputStream* outStream,
+                                    nsACString& storeToken) {
+  NS_ENSURE_ARG(folder);
+  NS_ENSURE_ARG(outStream);
 
-NS_IMETHODIMP
-nsMsgBrkMBoxStore::FinishNewMessage(nsIOutputStream* aOutputStream,
-                                    nsIMsgDBHdr* aNewHdr) {
-  NS_ENSURE_ARG_POINTER(aOutputStream);
-#ifdef _DEBUG
-  m_streamOutstandingFolder = nullptr;
-#endif
-  // Quarantining is implemented using a nsISafeOutputStream.
+  auto details = mOngoingWrites.lookup(folder->URI());
+  if (!details) {
+    // We should have a record of the write!
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  // Should be the stream we issued originally!
+  MOZ_ASSERT(outStream == details->value().stream);
+
+  // We are always dealing with nsISafeOutputStream.
   // It requires an explicit commit, or the data will be discarded.
-  nsCOMPtr<nsISafeOutputStream> safe = do_QueryInterface(aOutputStream);
-  if (safe) {
-    return safe->Finish();
+  nsCOMPtr<nsISafeOutputStream> safe = do_QueryInterface(outStream);
+  MOZ_ASSERT(safe);
+  // Commit the write.
+  nsresult rv = safe->Finish();
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  storeToken = nsPrintfCString("%" PRId64, details->value().filePos);
+
+  // The write is all done.
+  mOngoingWrites.remove(details);
+
+  MOZ_LOG(gMboxLog, LogLevel::Info,
+          ("FINISH MSG stream=0x%p folder=%s storeToken=%s", outStream,
+           folder->URI().get(), nsPromiseFlatCString(storeToken).get()));
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsMsgBrkMBoxStore::DiscardNewMessage(nsIMsgFolder* folder,
+                                     nsIOutputStream* outStream) {
+  NS_ENSURE_ARG(folder);
+  NS_ENSURE_ARG(outStream);
+
+  auto details = mOngoingWrites.lookup(folder->URI());
+  if (!details) {
+    // We should have a record of the write!
+    return NS_ERROR_UNEXPECTED;
   }
-  aOutputStream->Close();
+
+  MOZ_LOG(gMboxLog, LogLevel::Info,
+          ("DISCARD MSG stream=0x%p folder=%s filePos=%" PRId64 "", outStream,
+           folder->URI().get(), details->value().filePos));
+
+  // Should be the stream we issued originally!
+  MOZ_ASSERT(outStream == details->value().stream);
+
+  // nsISafeOutputStream only writes upon finish(), so no cleanup required.
+  nsresult rv = outStream->Close();
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Done with the write now.
+  mOngoingWrites.remove(details);
+
   return NS_OK;
 }
 
@@ -696,28 +833,77 @@ nsMsgBrkMBoxStore::MoveNewlyDownloadedMessage(nsIMsgDBHdr* aNewHdr,
 NS_IMETHODIMP
 nsMsgBrkMBoxStore::GetMsgInputStream(nsIMsgFolder* aMsgFolder,
                                      const nsACString& aMsgToken,
+                                     uint32_t aMaxAllowedSize,
                                      nsIInputStream** aResult) {
-  MOZ_ASSERT(aMsgFolder);
-  MOZ_ASSERT(aResult);
+  NS_ENSURE_ARG_POINTER(aMsgFolder);
+  NS_ENSURE_ARG_POINTER(aResult);
   MOZ_ASSERT(!aMsgToken.IsEmpty());
 
   uint64_t offset = ParseUint64Str(PromiseFlatCString(aMsgToken).get());
   nsCOMPtr<nsIFile> mboxFile;
   nsresult rv = aMsgFolder->GetFilePath(getter_AddRefs(mboxFile));
   NS_ENSURE_SUCCESS(rv, rv);
-  nsCOMPtr<nsIInputStream> msgStream;
-  rv = NS_NewLocalFileInputStream(getter_AddRefs(msgStream), mboxFile);
+  nsCOMPtr<nsIInputStream> rawMboxStream;
+  rv = NS_NewLocalFileInputStream(getter_AddRefs(rawMboxStream), mboxFile);
   NS_ENSURE_SUCCESS(rv, rv);
-  nsCOMPtr<nsISeekableStream> seekable(do_QueryInterface(msgStream));
+  nsCOMPtr<nsISeekableStream> seekable(do_QueryInterface(rawMboxStream));
   rv = seekable->Seek(PR_SEEK_SET, offset);
   NS_ENSURE_SUCCESS(rv, rv);
+  // Build stream to return a single message from the msgStore.
+  // NOTE: It turns out that Seek()ing way past the end of the file doesn't
+  // cause an error. And reading from there doesn't return an error either
+  // (just an EOF).
+  // But it's OK - MboxMsgInputStream will handle that case, and its Read()
+  // method will safely return an error (NS_MSG_ERROR_MBOX_MALFORMED).
+  RefPtr<MboxMsgInputStream> msgStream =
+      new MboxMsgInputStream(rawMboxStream, aMaxAllowedSize);
   msgStream.forget(aResult);
   return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgBrkMBoxStore::DeleteMessages(
     const nsTArray<RefPtr<nsIMsgDBHdr>>& aHdrArray) {
-  return ChangeFlags(aHdrArray, nsMsgMessageFlags::Expunged, true);
+  if (aHdrArray.IsEmpty()) {
+    return NS_OK;  // noop.
+  }
+  nsCOMPtr<nsIMsgFolder> folder;
+  nsresult rv = aHdrArray[0]->GetFolder(getter_AddRefs(folder));
+  nsTArray<nsCString> storeTokens;
+  for (nsIMsgDBHdr* msg : aHdrArray) {
+    nsAutoCString tok;
+    rv = msg->GetStoreToken(tok);
+    NS_ENSURE_SUCCESS(rv, rv);
+    storeTokens.AppendElement(tok);
+  }
+  return DeleteStoreMessages(folder, storeTokens);
+}
+
+NS_IMETHODIMP nsMsgBrkMBoxStore::DeleteStoreMessages(
+    nsIMsgFolder* folder, nsTArray<nsCString> const& storeTokens) {
+  NS_ENSURE_ARG(folder);
+  if (storeTokens.IsEmpty()) {
+    return NS_OK;  // Early out, don't need to open file.
+  }
+
+  nsCOMPtr<nsIFile> mboxFile;
+  nsresult rv = folder->GetFilePath(getter_AddRefs(mboxFile));
+  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIRandomAccessStream> stream;
+  rv = NS_NewLocalFileRandomAccessStream(getter_AddRefs(stream), mboxFile);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  for (size_t i = 0; i < storeTokens.Length(); ++i) {
+    // Jump to start of message.
+    uint64_t msgStart = storeTokens[i].ToInteger64(&rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+    // Set Expunged in X-Mozilla-Status.
+    auto details = FindXMozillaStatusHeaders(stream, msgStart);
+    uint32_t newFlags = details.msgFlags | nsMsgMessageFlags::Expunged;
+    rv = PatchXMozillaStatusHeaders(stream, msgStart, details, newFlags);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+  SetDBValid(folder);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -736,133 +922,53 @@ nsMsgBrkMBoxStore::CopyMessages(bool isMove,
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsMsgBrkMBoxStore::GetSupportsCompaction(bool* aSupportsCompaction) {
-  NS_ENSURE_ARG_POINTER(aSupportsCompaction);
-  *aSupportsCompaction = true;
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsMsgBrkMBoxStore::CompactFolder(nsIMsgFolder* aFolder,
-                                               nsIUrlListener* aListener,
-                                               nsIMsgWindow* aMsgWindow) {
-  // Eventually, folder compaction should be managed by nsMsgBrkMBoxStore, but
-  // for now it's separate (see nsMsgFolderCompactor) and invoked via the
-  // folder methods Compact() and CompactAll().
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_IMETHODIMP nsMsgBrkMBoxStore::RebuildIndex(nsIMsgFolder* aFolder,
-                                              nsIMsgDatabase* aMsgDB,
-                                              nsIMsgWindow* aMsgWindow,
-                                              nsIUrlListener* aListener) {
-  NS_ENSURE_ARG_POINTER(aFolder);
-  nsCOMPtr<nsIFile> pathFile;
-  nsresult rv = aFolder->GetFilePath(getter_AddRefs(pathFile));
-  if (NS_FAILED(rv)) return rv;
-
-  bool isLocked;
-  aFolder->GetLocked(&isLocked);
-  if (isLocked) {
-    NS_ASSERTION(false, "Could not get folder lock");
-    return NS_MSG_FOLDER_BUSY;
-  }
-
-  nsCOMPtr<nsIMailboxService> mailboxService =
-      do_GetService("@mozilla.org/messenger/mailboxservice;1", &rv);
+NS_IMETHODIMP nsMsgBrkMBoxStore::AsyncScan(nsIMsgFolder* folder,
+                                           nsIStoreScanListener* scanListener) {
+  nsCOMPtr<nsIFile> mboxPath;
+  nsresult rv = folder->GetFilePath(getter_AddRefs(mboxPath));
   NS_ENSURE_SUCCESS(rv, rv);
-
-  RefPtr<nsMsgMailboxParser> parser = new nsMsgMailboxParser(aFolder);
-  NS_ENSURE_TRUE(parser, NS_ERROR_OUT_OF_MEMORY);
-  rv = parser->Init();
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  rv = mailboxService->ParseMailbox(aMsgWindow, pathFile, parser, aListener,
-                                    nullptr);
-  if (NS_SUCCEEDED(rv)) ResetForceReparse(aMsgDB);
-  return rv;
+  // Fire and forget. MboxScanner will hold itself in existence until finished.
+  RefPtr<MboxScanner> scanner(new MboxScanner());
+  return scanner->BeginScan(mboxPath, scanListener);
 }
 
-nsresult nsMsgBrkMBoxStore::GetOutputStream(
-    nsIMsgDBHdr* aHdr, nsCOMPtr<nsIOutputStream>& outputStream,
-    nsCOMPtr<nsISeekableStream>& seekableStream, int64_t& restorePos) {
-  nsCOMPtr<nsIMsgFolder> folder;
-  nsresult rv = aHdr->GetFolder(getter_AddRefs(folder));
-  NS_ENSURE_SUCCESS(rv, rv);
-  nsCString URI;
-  folder->GetURI(URI);
-  restorePos = -1;
-  if (m_outputStreams.Get(URI, getter_AddRefs(outputStream))) {
-    seekableStream = do_QueryInterface(outputStream);
-    rv = seekableStream->Tell(&restorePos);
-    if (NS_FAILED(rv)) {
-      outputStream = nullptr;
-      m_outputStreams.Remove(URI);
-    }
-  }
-  if (!outputStream) {
-    nsCOMPtr<nsIFile> mboxFile;
-    rv = folder->GetFilePath(getter_AddRefs(mboxFile));
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = MsgGetFileStream(mboxFile, getter_AddRefs(outputStream));
-    seekableStream = do_QueryInterface(outputStream);
-    if (NS_SUCCEEDED(rv)) m_outputStreams.InsertOrUpdate(URI, outputStream);
-  }
-  return rv;
-}
-
-void nsMsgBrkMBoxStore::SetDBValid(nsIMsgDBHdr* aHdr) {
-  nsCOMPtr<nsIMsgFolder> folder;
-  aHdr->GetFolder(getter_AddRefs(folder));
-  if (folder) {
-    nsCOMPtr<nsIMsgDatabase> db;
-    folder->GetMsgDatabase(getter_AddRefs(db));
-    if (db) SetSummaryFileValid(folder, db, true);
+void nsMsgBrkMBoxStore::SetDBValid(nsIMsgFolder* folder) {
+  nsCOMPtr<nsIMsgDatabase> db;
+  folder->GetMsgDatabase(getter_AddRefs(db));
+  if (db) {
+    SetSummaryFileValid(folder, db, true);
   }
 }
 
 NS_IMETHODIMP nsMsgBrkMBoxStore::ChangeFlags(
-    const nsTArray<RefPtr<nsIMsgDBHdr>>& aHdrArray, uint32_t aFlags,
-    bool aSet) {
-  if (aHdrArray.IsEmpty()) return NS_ERROR_INVALID_ARG;
+    nsIMsgFolder* folder, nsTArray<nsCString> const& storeTokens,
+    nsTArray<uint32_t> const& newFlags) {
+  NS_ENSURE_ARG(folder);
+  NS_ENSURE_ARG(storeTokens.Length() == newFlags.Length());
 
-  nsCOMPtr<nsIOutputStream> outputStream;
-  nsCOMPtr<nsISeekableStream> seekableStream;
-  int64_t restoreStreamPos;
-  nsresult rv = GetOutputStream(aHdrArray[0], outputStream, seekableStream,
-                                restoreStreamPos);
+  if (storeTokens.IsEmpty()) {
+    return NS_OK;  // Early out, don't need to open file.
+  }
+
+  nsCOMPtr<nsIFile> mboxFile;
+  nsresult rv = folder->GetFilePath(getter_AddRefs(mboxFile));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIRandomAccessStream> stream;
+  rv = NS_NewLocalFileRandomAccessStream(getter_AddRefs(stream), mboxFile);
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIMsgDBHdr> msgHdr;
-  for (auto msgHdr : aHdrArray) {
-    // Work out the flags we want to write.
-    uint32_t flags = 0;
-    (void)msgHdr->GetFlags(&flags);
-    flags &= ~(nsMsgMessageFlags::RuntimeOnly | nsMsgMessageFlags::Offline);
-    if (aSet) {
-      flags |= aFlags;
-    } else {
-      flags &= ~aFlags;
-    }
-
-    // Rewrite flags into X-Mozilla-Status headers.
-    nsCOMPtr<nsISeekableStream> seekable(do_QueryInterface(outputStream, &rv));
+  for (size_t i = 0; i < storeTokens.Length(); ++i) {
+    // Jump to start of message.
+    uint64_t msgStart = storeTokens[i].ToInteger64(&rv);
     NS_ENSURE_SUCCESS(rv, rv);
-    uint64_t msgOffset;
-    rv = msgHdr->GetMessageOffset(&msgOffset);
+    // Replace flags in X-Mozilla-Status and X-Mozilla-Status2.
+    auto details = FindXMozillaStatusHeaders(stream, msgStart);
+    rv = PatchXMozillaStatusHeaders(stream, msgStart, details, newFlags[i]);
     NS_ENSURE_SUCCESS(rv, rv);
-    seekable->Seek(nsISeekableStream::NS_SEEK_SET, msgOffset);
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = RewriteMsgFlags(seekable, flags);
-    if (NS_FAILED(rv)) {
-      break;
-    }
   }
-  if (restoreStreamPos != -1)
-    seekableStream->Seek(nsISeekableStream::NS_SEEK_SET, restoreStreamPos);
-  else if (outputStream)
-    outputStream->Close();
-  SetDBValid(aHdrArray[0]);
+  SetDBValid(folder);
   return NS_OK;
 }
 
@@ -871,6 +977,7 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::ChangeKeywords(
     bool aAdd) {
   if (aHdrArray.IsEmpty()) return NS_ERROR_INVALID_ARG;
 
+  nsresult rv;
   nsTArray<nsCString> keywordsToAdd;
   nsTArray<nsCString> keywordsToRemove;
   if (aAdd) {
@@ -879,22 +986,29 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::ChangeKeywords(
     ParseString(aKeywords, ' ', keywordsToRemove);
   }
 
-  // Get the (possibly-cached) seekable & writable stream for this mbox.
-  nsCOMPtr<nsIOutputStream> output;
-  nsCOMPtr<nsISeekableStream> seekable;
-  int64_t restoreStreamPos;
-  nsresult rv =
-      GetOutputStream(aHdrArray[0], output, seekable, restoreStreamPos);
+  nsCOMPtr<nsIMsgFolder> folder;
+  rv = aHdrArray[0]->GetFolder(getter_AddRefs(folder));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIFile> mboxFile;
+  rv = folder->GetFilePath(getter_AddRefs(mboxFile));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIRandomAccessStream> stream;
+  rv = NS_NewLocalFileRandomAccessStream(getter_AddRefs(stream), mboxFile);
   NS_ENSURE_SUCCESS(rv, rv);
 
   for (auto msgHdr : aHdrArray) {
-    uint64_t msgStart;
-    msgHdr->GetMessageOffset(&msgStart);
-    seekable->Seek(nsISeekableStream::NS_SEEK_SET, msgStart);
+    nsAutoCString storeToken;
+    rv = msgHdr->GetStoreToken(storeToken);
+    NS_ENSURE_SUCCESS(rv, rv);
+    uint64_t msgStart = storeToken.ToInteger64(&rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+    stream->Seek(nsISeekableStream::NS_SEEK_SET, msgStart);
     NS_ENSURE_SUCCESS(rv, rv);
 
     bool notEnoughRoom;
-    rv = ChangeKeywordsHelper(seekable, keywordsToAdd, keywordsToRemove,
+    rv = ChangeKeywordsHelper(stream, keywordsToAdd, keywordsToRemove,
                               notEnoughRoom);
 
     NS_ENSURE_SUCCESS(rv, rv);
@@ -906,12 +1020,7 @@ NS_IMETHODIMP nsMsgBrkMBoxStore::ChangeKeywords(
     }
   }
 
-  if (restoreStreamPos != -1) {
-    seekable->Seek(nsISeekableStream::NS_SEEK_SET, restoreStreamPos);
-  } else if (output) {
-    output->Close();
-  }
-  SetDBValid(aHdrArray[0]);
+  SetDBValid(folder);
   return NS_OK;
 }
 
@@ -962,21 +1071,23 @@ nsresult nsMsgBrkMBoxStore::AddSubFolders(nsIMsgFolder* parent,
   for (int32_t i = 0; i < count; ++i) {
     nsCOMPtr<nsIFile> currentFile(currentDirEntries[i]);
 
-    nsAutoString leafName;
-    currentFile->GetLeafName(leafName);
     // here we should handle the case where the current file is a .sbd directory
     // w/o a matching folder file, or a directory w/o the name .sbd
-    if (nsShouldIgnoreFile(leafName, currentFile)) continue;
+    if (nsShouldIgnoreFile(currentFile)) continue;
 
+    nsAutoString leafName;
+    currentFile->GetLeafName(leafName);
     nsCOMPtr<nsIMsgFolder> child;
-    rv = parent->AddSubfolder(leafName, getter_AddRefs(child));
+    rv = parent->AddSubfolder(NS_ConvertUTF16toUTF8(leafName),
+                              getter_AddRefs(child));
     if (NS_FAILED(rv) && rv != NS_MSG_FOLDER_EXISTS) {
       return rv;
     }
     if (child) {
-      nsString folderName;
+      nsAutoCString folderName;
       child->GetName(folderName);  // try to get it from cache/db
-      if (folderName.IsEmpty()) child->SetPrettyName(leafName);
+      if (folderName.IsEmpty())
+        child->SetPrettyName(NS_ConvertUTF16toUTF8(leafName));
       if (deep) {
         nsCOMPtr<nsIFile> path;
         rv = child->GetFilePath(getter_AddRefs(path));
@@ -1022,12 +1133,49 @@ nsresult nsMsgBrkMBoxStore::CreateDirectoryForFolder(nsIFile* path) {
   return rv;
 }
 
-NS_IMETHODIMP
-nsMsgBrkMBoxStore::SliceStream(nsIInputStream* inStream, uint64_t start,
-                               uint32_t length, nsIInputStream** result) {
-  nsCOMPtr<nsIInputStream> in(inStream);
-  RefPtr<mozilla::SlicedInputStream> slicedStream =
-      new mozilla::SlicedInputStream(in.forget(), start, uint64_t(length));
-  slicedStream.forget(result);
+// For mbox store, we'll just use mbox file size as our estimate.
+NS_IMETHODIMP nsMsgBrkMBoxStore::EstimateFolderSize(nsIMsgFolder* folder,
+                                                    int64_t* size) {
+  MOZ_ASSERT(size);
+
+  *size = 0;
+  bool isServer = false;
+  nsresult rv = folder->GetIsServer(&isServer);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (isServer) {
+    return NS_OK;
+  }
+  nsCOMPtr<nsIFile> file;
+  rv = folder->GetFilePath(getter_AddRefs(file));
+  NS_ENSURE_SUCCESS(rv, rv);
+  // There can be cases where the mbox file won't exist (e.g. non-offline
+  // IMAP folder). Return 0 size for that case.
+  bool exists;
+  rv = file->Exists(&exists);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (exists) {
+    rv = file->GetFileSize(size);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsMsgBrkMBoxStore::GetSupportsCompaction(bool* aSupportsCompaction) {
+  NS_ENSURE_ARG_POINTER(aSupportsCompaction);
+  *aSupportsCompaction = true;
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsMsgBrkMBoxStore::AsyncCompact(
+    nsIMsgFolder* folder, nsIStoreCompactListener* compactListener,
+    bool patchXMozillaHeaders) {
+  nsCOMPtr<nsIFile> srcMbox;
+  nsresult rv = folder->GetFilePath(getter_AddRefs(srcMbox));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Fire and forget. MboxScanner will hold itself in existence until finished.
+  RefPtr<MboxCompactor> compactor = new MboxCompactor();
+  return compactor->BeginCompaction(srcMbox, compactListener,
+                                    patchXMozillaHeaders);
 }

@@ -14,7 +14,6 @@
 "use strict";
 
 var {
-  assert_folder_tree_focused,
   assert_message_pane_focused,
   assert_messages_in_view,
   assert_nothing_selected,
@@ -23,18 +22,18 @@ var {
   be_in_folder,
   close_tab,
   create_folder,
+  get_about_3pane,
   focus_folder_tree,
   focus_message_pane,
   focus_thread_tree,
   make_message_sets_in_folders,
-  mc,
   open_folder_in_new_tab,
   open_selected_message_in_new_tab,
   select_click_row,
   switch_tab,
   wait_for_blank_content_pane,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
 var folderA, folderB, setA, setB;
@@ -60,7 +59,7 @@ var messageA, messageB;
 add_task(async function test_open_folder_a() {
   tabFolderA = await be_in_folder(folderA);
   assert_messages_in_view(setA);
-  assert_nothing_selected();
+  await assert_nothing_selected();
   // Focus the folder tree here
   focus_folder_tree();
 });
@@ -70,9 +69,9 @@ add_task(async function test_open_folder_a() {
  */
 add_task(async function test_open_folder_b_in_tab() {
   tabFolderB = await open_folder_in_new_tab(folderB);
-  wait_for_blank_content_pane();
+  await wait_for_blank_content_pane();
   assert_messages_in_view(setB);
-  assert_nothing_selected();
+  await assert_nothing_selected();
   focus_thread_tree();
 });
 
@@ -82,8 +81,8 @@ add_task(async function test_open_folder_b_in_tab() {
 add_task(async function test_switch_to_tab_folder_a() {
   await switch_tab(tabFolderA);
   assert_messages_in_view(setA);
-  assert_nothing_selected();
-  assert_folder_tree_focused();
+  await assert_nothing_selected();
+  Assert.equal(get_about_3pane().document.activeElement.id, "folderTree");
 });
 
 /**
@@ -92,11 +91,11 @@ add_task(async function test_switch_to_tab_folder_a() {
  */
 add_task(async function test_open_message_a_in_tab() {
   // (this focuses the thread tree for tabFolderA...)
-  messageA = select_click_row(0);
+  messageA = await select_click_row(0);
   // (...refocus the folder tree for our sticky check below)
   focus_folder_tree();
   tabMessageA = await open_selected_message_in_new_tab();
-  assert_selected_and_displayed(messageA);
+  await assert_selected_and_displayed(messageA);
   assert_message_pane_focused();
 });
 
@@ -106,7 +105,7 @@ add_task(async function test_open_message_a_in_tab() {
 add_task(async function test_switch_to_tab_folder_b() {
   await switch_tab(tabFolderB);
   assert_messages_in_view(setB);
-  assert_nothing_selected();
+  await assert_nothing_selected();
   assert_thread_tree_focused();
 });
 
@@ -115,11 +114,11 @@ add_task(async function test_switch_to_tab_folder_b() {
  *  the displayed message is the right one.
  */
 add_task(async function test_open_message_b_in_tab() {
-  messageB = select_click_row(0);
+  messageB = await select_click_row(0);
   // Let's focus the message pane now
   focus_message_pane();
   tabMessageB = await open_selected_message_in_new_tab();
-  assert_selected_and_displayed(messageB);
+  await assert_selected_and_displayed(messageB);
   assert_message_pane_focused();
 });
 
@@ -128,7 +127,7 @@ add_task(async function test_open_message_b_in_tab() {
  */
 add_task(async function test_switch_to_message_a() {
   await switch_tab(tabMessageA);
-  assert_selected_and_displayed(messageA);
+  await assert_selected_and_displayed(messageA);
   assert_message_pane_focused();
 });
 
@@ -146,30 +145,30 @@ add_task(function test_close_message_a() {
 add_task(async function test_tabs_are_still_happy() {
   await switch_tab(tabFolderB);
   assert_messages_in_view(setB);
-  assert_selected_and_displayed(messageB);
+  await assert_selected_and_displayed(messageB);
   assert_message_pane_focused();
 
   await switch_tab(tabMessageB);
-  assert_selected_and_displayed(messageB);
+  await assert_selected_and_displayed(messageB);
   assert_message_pane_focused();
 
   await switch_tab(tabFolderA);
   assert_messages_in_view(setA);
-  assert_selected_and_displayed(messageA);
+  await assert_selected_and_displayed(messageA);
   // focus restoration uses setTimeout(0) and so we need to give it a chance
   await new Promise(resolve => setTimeout(resolve));
-  assert_folder_tree_focused();
+  Assert.equal(get_about_3pane().document.activeElement.id, "folderTree");
 });
 
 /**
  * Close message tab B (when it's in the background).
  */
-add_task(function test_close_message_b() {
+add_task(async function test_close_message_b() {
   close_tab(tabMessageB);
   // we should still be on folder A
   assert_messages_in_view(setA);
-  assert_selected_and_displayed(messageA);
-  assert_folder_tree_focused();
+  await assert_selected_and_displayed(messageA);
+  Assert.equal(get_about_3pane().document.activeElement.id, "folderTree");
 });
 
 /**
@@ -178,13 +177,13 @@ add_task(function test_close_message_b() {
 add_task(async function test_close_folder_b() {
   await switch_tab(tabFolderB);
   assert_messages_in_view(setB);
-  assert_selected_and_displayed(messageB);
+  await assert_selected_and_displayed(messageB);
   assert_message_pane_focused();
 
   close_tab();
   assert_messages_in_view(setA);
-  assert_selected_and_displayed(messageA);
-  assert_folder_tree_focused();
+  await assert_selected_and_displayed(messageA);
+  Assert.equal(get_about_3pane().document.activeElement.id, "folderTree");
 
   Assert.report(
     false,

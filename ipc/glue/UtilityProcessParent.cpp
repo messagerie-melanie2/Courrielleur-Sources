@@ -148,13 +148,13 @@ void UtilityProcessParent::ActorDestroy(ActorDestroyReason aWhy) {
             actorsName += ", "_ns + GetUtilityActorName(actor);
           }
         }
-        mCrashReporter->AddAnnotation(
+        mCrashReporter->AddAnnotationNSCString(
             CrashReporter::Annotation::UtilityActorsName, actorsName);
       }
 #endif
     }
 
-    GenerateCrashReport(OtherPid(), &dumpID);
+    GenerateCrashReport(&dumpID);
 
     // It's okay for dumpID to be empty if there was no minidump generated
     // tests like ipc/glue/test/browser/browser_utility_crashReporter.js are
@@ -162,6 +162,8 @@ void UtilityProcessParent::ActorDestroy(ActorDestroyReason aWhy) {
     if (!dumpID.IsEmpty()) {
       props->SetPropertyAsAString(u"dumpID"_ns, dumpID);
     }
+
+    MaybeTerminateProcess();
   }
 
   nsAutoString pid;
@@ -175,7 +177,7 @@ void UtilityProcessParent::ActorDestroy(ActorDestroyReason aWhy) {
     NS_WARNING("Could not get a nsIObserverService, ipc:utility-shutdown skip");
   }
 
-  mHost->OnChannelClosed();
+  mHost->OnChannelClosed(aWhy);
 }
 
 // To ensure that IPDL is finished before UtilityParent gets deleted.

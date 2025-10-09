@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/*
+/**
  * Simple tests for retention settings. In particular, we'd like to make
  * sure that applying retention settings works with the new code that avoids
  * opening db's to apply retention settings if the folder doesn't override
@@ -10,9 +10,11 @@
  */
 
 var { MessageGenerator, MessageScenarioFactory, SyntheticMessageSet } =
-  ChromeUtils.import("resource://testing-common/mailnews/MessageGenerator.jsm");
-var { MessageInjection } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageInjection.jsm"
+  ChromeUtils.importESModule(
+    "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
+  );
+var { MessageInjection } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageInjection.sys.mjs"
 );
 
 var gMessageGenerator = new MessageGenerator();
@@ -26,14 +28,14 @@ add_setup(async function () {
   let messages = [];
   messages = messages.concat(gScenarioFactory.directReply(10));
 
-  let msgSet = new SyntheticMessageSet(messages);
+  const msgSet = new SyntheticMessageSet(messages);
 
   gTestFolder = await messageInjection.makeEmptyFolder();
   await messageInjection.addSetsToFolders([gTestFolder], [msgSet]);
 });
 
 add_task(function test_retention() {
-  let numMessages = 10;
+  const numMessages = 10;
   gTestFolder.msgDatabase = null;
   gTestFolder.applyRetentionSettings();
   const gDbService = Cc["@mozilla.org/msgDatabase/msgDBService;1"].getService(
@@ -43,10 +45,14 @@ add_task(function test_retention() {
   // those are cleaned up so the db will get closed.
   Cu.forceGC();
   Cu.forceCC();
-  Assert.equal(gDbService.cachedDBForFolder(gTestFolder), null);
+  Assert.equal(
+    gDbService.cachedDBForFolder(gTestFolder),
+    null,
+    "cached db for testfolder should be gone"
+  );
   // no retention settings, so we should have the same number of messages.
   Assert.equal(numMessages, gTestFolder.msgDatabase.dBFolderInfo.numMessages);
-  let serverSettings = gTestFolder.server.retentionSettings;
+  const serverSettings = gTestFolder.server.retentionSettings;
   serverSettings.retainByPreference =
     Ci.nsIMsgRetentionSettings.nsMsgRetainByNumHeaders;
   serverSettings.numHeadersToKeep = 9;
@@ -54,7 +60,7 @@ add_task(function test_retention() {
   gTestFolder.applyRetentionSettings();
   // no retention settings, so we should have the same number of messages.
   Assert.equal(9, gTestFolder.msgDatabase.dBFolderInfo.numMessages);
-  let folderSettings = gTestFolder.retentionSettings;
+  const folderSettings = gTestFolder.retentionSettings;
   folderSettings.retainByPreference =
     Ci.nsIMsgRetentionSettings.nsMsgRetainByNumHeaders;
   folderSettings.numHeadersToKeep = 8;

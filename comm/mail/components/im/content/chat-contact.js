@@ -70,7 +70,7 @@
 
       this.setAttribute("is", "chat-contact-richlistitem");
 
-      this.addEventListener("blur", event => {
+      this.addEventListener("blur", () => {
         if (!this.hasAttribute("aliasing")) {
           return;
         }
@@ -108,7 +108,7 @@
       // @implements {nsIObserver}
       this.observer = {
         QueryInterface: ChromeUtils.generateQI(["nsIObserver"]),
-        observe: function (subject, topic, data) {
+        observe: function (subject, topic) {
           if (
             topic == "contact-preferred-buddy-changed" ||
             topic == "contact-display-name-changed" ||
@@ -142,10 +142,10 @@
         statusText = " - " + statusText;
       }
       this.setAttribute("statusTextWithDash", statusText);
-      let statusType = this.contact.statusType;
+      const statusType = this.contact.statusType;
 
-      let statusIcon = this.querySelector(".smallStatusIcon");
-      let statusName = Status.toAttribute(statusType);
+      const statusIcon = this.querySelector(".smallStatusIcon");
+      const statusName = Status.toAttribute(statusType);
       statusIcon.setAttribute("src", ChatIcons.getStatusIconURI(statusName));
       statusIcon.setAttribute("alt", Status.toLabel(statusType));
 
@@ -155,7 +155,7 @@
         this.removeAttribute("cansend");
       }
 
-      let protoIcon = this.querySelector(".protoIcon");
+      const protoIcon = this.querySelector(".protoIcon");
       protoIcon.setAttribute(
         "src",
         ChatIcons.getProtocolIconURI(this.contact.preferredBuddy.protocol)
@@ -181,13 +181,13 @@
       }
 
       this.setAttribute("aliasing", "true");
-      let input = this.querySelector(".contactDisplayNameInput");
-      let label = this.querySelector(".contactDisplayName");
+      const input = this.querySelector(".contactDisplayNameInput");
+      const label = this.querySelector(".contactDisplayName");
       input.removeAttribute("hidden");
       label.setAttribute("hidden", "true");
       input.focus();
 
-      this._inputBlurListener = function (event) {
+      this._inputBlurListener = function () {
         this.finishAliasing(true);
       }.bind(this);
       input.addEventListener("blur", this._inputBlurListener);
@@ -207,9 +207,9 @@
       // Cache the parentNode because when we change the contact alias, we
       // trigger a re-order (and a removeContact call), which sets
       // this.parentNode to undefined.
-      let listbox = this.parentNode;
-      let input = this.querySelector(".contactDisplayNameInput");
-      let label = this.querySelector(".contactDisplayName");
+      const listbox = this.parentNode;
+      const input = this.querySelector(".contactDisplayNameInput");
+      const label = this.querySelector(".contactDisplayName");
       input.setAttribute("hidden", "hidden");
       label.removeAttribute("hidden");
       if (save) {
@@ -231,8 +231,8 @@
     }
 
     openConversation() {
-      let prplConv = this.contact.createConversation();
-      let uiConv = IMServices.conversations.getUIConversation(prplConv);
+      const prplConv = this.contact.createConversation();
+      const uiConv = IMServices.conversations.getUIConversation(prplConv);
       chatHandler.focusConversation(uiConv);
     }
 

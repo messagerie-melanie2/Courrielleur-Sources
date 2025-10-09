@@ -4,14 +4,17 @@
 
 const XULNS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
 
-var { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+var { ExtensionSupport } = ChromeUtils.importESModule(
+  "resource:///modules/ExtensionSupport.sys.mjs"
+);
+
 var { XPCOMUtils } = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
-var { migrateMailnews } =
-  ChromeUtils.import("resource:///modules/mailnewsMigrator.js");
-var { ExtensionSupport } = 
-  ChromeUtils.import("resource:///modules/ExtensionSupport.jsm");
-var { LightweightThemeConsumer } =
-  ChromeUtils.import("resource://gre/modules/LightweightThemeConsumer.jsm");
+var { migrateMailnews } = ChromeUtils.import(
+  "resource:///modules/mailnewsMigrator.js"
+);
+var { LightweightThemeConsumer } = ChromeUtils.import(
+  "resource://gre/modules/LightweightThemeConsumer.jsm"
+);
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   AddonManager: "resource://gre/modules/AddonManager.jsm",
@@ -101,7 +104,7 @@ function SuiteGlue() {
                                      "nsIIdleService");
 
   this._init();
-  extensionDefaults(); // extensionSupport.jsm
+  extensionDefaults(); // ExtensionSupport.sys.mjs
 }
 
 SuiteGlue.prototype = {
@@ -1330,10 +1333,8 @@ SuiteGlue.prototype = {
     // Make sure chrome debugging is enabled, no sense in starting otherwise.
     DebuggerServer.allowChromeProcess = true;
 
-    if (!DebuggerServer.initialized) {
-      DebuggerServer.init();
-      DebuggerServer.addBrowserActors();
-    }
+    DebuggerServer.init();
+    DebuggerServer.registerAllActors();
     try {
       let listener = DebuggerServer.createListener();
       listener.portOrPath = port;
@@ -1553,8 +1554,7 @@ SuiteGlue.prototype = {
         var args = Cc["@mozilla.org/supports-string;1"]
                      .createInstance(Ci.nsISupportsString);
         args.data = url;
-        var chromeURL = Services.prefs.getCharPref("browser.chromeURL");
-        Services.ww.openWindow(null, chromeURL, "_blank", "chrome,all,dialog=no", args);
+        Services.ww.openWindow(null, AppConstants.BROWSER_CHROME_URL, "_blank", "chrome,all,dialog=no", args);
       }
     } catch (e) {
       Cu.reportError("Error displaying tab received by Sync: " + e);
@@ -1564,10 +1564,10 @@ SuiteGlue.prototype = {
   // for XPCOM
   classID: Components.ID("{bbbbe845-5a1b-40ee-813c-f84b8faaa07c}"),
 
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver,
-                                         Ci.nsIWebProgressListener,
-                                         Ci.nsISupportsWeakReference,
-                                         Ci.nsISuiteGlue])
+  QueryInterface: ChromeUtils.generateQI([Ci.nsIObserver,
+                                          Ci.nsIWebProgressListener,
+                                          Ci.nsISupportsWeakReference,
+                                          Ci.nsISuiteGlue])
 
 }
 
@@ -1610,9 +1610,7 @@ var ContentPermissionIntegration = {
         return new PermissionUI.DesktopNotificationPermissionPrompt(request);
       }
       case "persistent-storage": {
-        if (Services.prefs.getBoolPref("browser.storageManager.enabled")) {
-          return new PermissionUI.PersistentStoragePermissionPrompt(request);
-        }
+        return new PermissionUI.PersistentStoragePermissionPrompt(request);
       }
     }
     return undefined;
@@ -1624,7 +1622,7 @@ function ContentPermissionPrompt() {}
 ContentPermissionPrompt.prototype = {
   classID: Components.ID("{9d4c845d-3f09-402a-b66d-50f291d7d50f}"),
 
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIContentPermissionPrompt]),
+  QueryInterface: ChromeUtils.generateQI([Ci.nsIContentPermissionPrompt]),
 
   /**
    * This implementation of nsIContentPermissionPrompt.prompt ensures

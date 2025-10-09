@@ -34,8 +34,6 @@ about-private-browsing-focus-promo-text = Our dedicated private browsing mobile 
 
 ## The following strings will be used for experiments in Fx99 and Fx100
 
-about-private-browsing-focus-promo-header-b = Take private browsing to your phone
-about-private-browsing-focus-promo-text-b = Use { -focus-brand-name } for those private searches you don’t want your main mobile browser to see.
 about-private-browsing-focus-promo-header-c = Next-level privacy on mobile
 about-private-browsing-focus-promo-text-c = { -focus-brand-name } clears your history every time while blocking ads and trackers.
 
@@ -67,7 +65,12 @@ about-private-browsing-pin-promo-title = No saved cookies or history, right from
 ## Strings used in a promotion message for cookie banner reduction
 
 # Simplified version of the headline if the original text doesn't work
-# in your language: `See fewer cookie requests`.
-about-private-browsing-cookie-banners-promo-header = Cookie banners begone!
-about-private-browsing-cookie-banners-promo-button = Reduce Cookie Banners
-about-private-browsing-cookie-banners-promo-message = Let { -brand-short-name } automatically answer cookie pop-ups for you so you can get back to distraction-free browsing. { -brand-short-name } will reject all requests if possible.
+# in your language: `{ -brand-short-name } will show fewer cookie requests`
+about-private-browsing-cookie-banners-promo-heading = { -brand-short-name } takes care of cookie banners for you
+about-private-browsing-cookie-banners-promo-body = We now automatically refuse many cookie banners so you can get tracked less and go back to distraction-free browsing.
+
+## Strings for Felt Privacy v1 experiments in 119
+
+about-private-browsing-felt-privacy-v1-info-header = Leave no traces on this device
+about-private-browsing-felt-privacy-v1-info-body = { -brand-short-name} deletes your cookies, history, and site data when you close all your private windows.
+about-private-browsing-felt-privacy-v1-info-link = Who might be able to see my activity?

@@ -7,25 +7,25 @@
 
 #include "AboutRedirector.h"
 #include "nsNetUtil.h"
-#include "nsIAboutNewTabService.h"
+#include "nsIAppStartup.h"
 #include "nsIChannel.h"
 #include "nsIURI.h"
 #include "nsIProtocolHandler.h"
 #include "nsServiceManagerUtils.h"
+#include "mozilla/Components.h"
 #include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/dom/ContentChild.h"
+#include "mozilla/browser/NimbusFeatures.h"
+
+#define PROFILES_ENABLED_PREF "browser.profiles.enabled"
+#define ABOUT_WELCOME_CHROME_URL \
+  "chrome://browser/content/aboutwelcome/aboutwelcome.html"
+#define ABOUT_HOME_URL "about:home"
 
 namespace mozilla {
 namespace browser {
 
 NS_IMPL_ISUPPORTS(AboutRedirector, nsIAboutModule)
-
-static const uint32_t ACTIVITY_STREAM_FLAGS =
-    nsIAboutModule::ALLOW_SCRIPT | nsIAboutModule::ENABLE_INDEXED_DB |
-    nsIAboutModule::URI_MUST_LOAD_IN_CHILD |
-    nsIAboutModule::URI_CAN_LOAD_IN_PRIVILEGEDABOUT_PROCESS |
-    nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
-    nsIAboutModule::ALLOW_UNSANITIZED_CONTENT;
 
 struct RedirEntry {
   const char* id;
@@ -45,11 +45,16 @@ struct RedirEntry {
     browser/components/about/components.conf
 */
 static const RedirEntry kRedirMap[] = {
+    {"asrouter", "chrome://browser/content/asrouter/asrouter-admin.html",
+     nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
+         nsIAboutModule::URI_CAN_LOAD_IN_PRIVILEGEDABOUT_PROCESS |
+         nsIAboutModule::URI_MUST_LOAD_IN_CHILD | nsIAboutModule::ALLOW_SCRIPT |
+         nsIAboutModule::HIDE_FROM_ABOUTABOUT},
     {"blocked", "chrome://browser/content/blockedSite.xhtml",
      nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
          nsIAboutModule::URI_CAN_LOAD_IN_CHILD | nsIAboutModule::ALLOW_SCRIPT |
          nsIAboutModule::HIDE_FROM_ABOUTABOUT},
-    {"certerror", "chrome://global/content/aboutNetError.xhtml",
+    {"certerror", "chrome://global/content/aboutNetError.html",
      nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
          nsIAboutModule::URI_CAN_LOAD_IN_CHILD | nsIAboutModule::ALLOW_SCRIPT |
          nsIAboutModule::HIDE_FROM_ABOUTABOUT},
@@ -73,10 +78,6 @@ static const RedirEntry kRedirMap[] = {
     {"firefoxview", "chrome://browser/content/firefoxview/firefoxview.html",
      nsIAboutModule::ALLOW_SCRIPT | nsIAboutModule::IS_SECURE_CHROME_UI |
          nsIAboutModule::HIDE_FROM_ABOUTABOUT},
-    {"firefoxview-next",
-     "chrome://browser/content/firefoxview/firefoxview-next.html",
-     nsIAboutModule::ALLOW_SCRIPT | nsIAboutModule::IS_SECURE_CHROME_UI |
-         nsIAboutModule::HIDE_FROM_ABOUTABOUT},
     {"policies", "chrome://browser/content/policies/aboutPolicies.html",
      nsIAboutModule::ALLOW_SCRIPT | nsIAboutModule::IS_SECURE_CHROME_UI},
     {"privatebrowsing", "chrome://browser/content/aboutPrivateBrowsing.html",
@@ -84,11 +85,11 @@ static const RedirEntry kRedirMap[] = {
          nsIAboutModule::URI_MUST_LOAD_IN_CHILD | nsIAboutModule::ALLOW_SCRIPT |
          nsIAboutModule::URI_CAN_LOAD_IN_PRIVILEGEDABOUT_PROCESS},
     {"profiling",
-     "chrome://devtools/content/performance-new/aboutprofiling/index.xhtml",
+     "chrome://devtools/content/performance-new/aboutprofiling/index.html",
      nsIAboutModule::ALLOW_SCRIPT | nsIAboutModule::IS_SECURE_CHROME_UI},
-    {"rights", "chrome://global/content/aboutRights.xhtml",
+    {"rights", "https://www.mozilla.org/about/legal/terms/firefox/",
      nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
-         nsIAboutModule::ALLOW_SCRIPT | nsIAboutModule::IS_SECURE_CHROME_UI},
+         nsIAboutModule::URI_MUST_LOAD_IN_CHILD},
     {"robots", "chrome://browser/content/aboutRobots.xhtml",
      nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
          nsIAboutModule::ALLOW_SCRIPT},
@@ -101,10 +102,6 @@ static const RedirEntry kRedirMap[] = {
     {"welcomeback", "chrome://browser/content/aboutWelcomeBack.xhtml",
      nsIAboutModule::ALLOW_SCRIPT | nsIAboutModule::HIDE_FROM_ABOUTABOUT |
          nsIAboutModule::IS_SECURE_CHROME_UI},
-    // Actual activity stream URL for home and newtab are set in channel
-    // creation
-    {"home", "about:blank", ACTIVITY_STREAM_FLAGS},
-    {"newtab", "chrome://browser/content/blanktab.html", ACTIVITY_STREAM_FLAGS},
     {"welcome", "about:blank",
      nsIAboutModule::URI_MUST_LOAD_IN_CHILD |
          nsIAboutModule::URI_CAN_LOAD_IN_PRIVILEGEDABOUT_PROCESS |
@@ -135,6 +132,9 @@ static const RedirEntry kRedirMap[] = {
          nsIAboutModule::URI_MUST_LOAD_IN_CHILD | nsIAboutModule::ALLOW_SCRIPT |
          nsIAboutModule::URI_CAN_LOAD_IN_PRIVILEGEDABOUT_PROCESS |
          nsIAboutModule::HIDE_FROM_ABOUTABOUT},
+    {"settings", "chrome://browser/content/preferences/preferences.xhtml",
+     nsIAboutModule::ALLOW_SCRIPT | nsIAboutModule::IS_SECURE_CHROME_UI |
+         nsIAboutModule::HIDE_FROM_ABOUTABOUT},
     {"preferences", "chrome://browser/content/preferences/preferences.xhtml",
      nsIAboutModule::ALLOW_SCRIPT | nsIAboutModule::IS_SECURE_CHROME_UI},
     {"downloads",
@@ -151,9 +151,26 @@ static const RedirEntry kRedirMap[] = {
          nsIAboutModule::URI_MUST_LOAD_IN_CHILD | nsIAboutModule::ALLOW_SCRIPT |
          nsIAboutModule::URI_CAN_LOAD_IN_PRIVILEGEDABOUT_PROCESS |
          nsIAboutModule::IS_SECURE_CHROME_UI},
-    {"ion", "chrome://browser/content/ion.html",
-     nsIAboutModule::ALLOW_SCRIPT | nsIAboutModule::HIDE_FROM_ABOUTABOUT |
-         nsIAboutModule::IS_SECURE_CHROME_UI},
+#ifdef MOZ_SELECTABLE_PROFILES
+    {"profilemanager", "chrome://browser/content/profiles/profiles.html",
+     nsIAboutModule::ALLOW_SCRIPT | nsIAboutModule::IS_SECURE_CHROME_UI |
+         nsIAboutModule::HIDE_FROM_ABOUTABOUT},
+    {"editprofile", "chrome://browser/content/profiles/edit-profile.html",
+     nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
+         nsIAboutModule::IS_SECURE_CHROME_UI | nsIAboutModule::ALLOW_SCRIPT |
+         nsIAboutModule::URI_MUST_LOAD_IN_CHILD |
+         nsIAboutModule::URI_CAN_LOAD_IN_PRIVILEGEDABOUT_PROCESS},
+    {"deleteprofile", "chrome://browser/content/profiles/delete-profile.html",
+     nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
+         nsIAboutModule::IS_SECURE_CHROME_UI |
+         nsIAboutModule::URI_MUST_LOAD_IN_CHILD | nsIAboutModule::ALLOW_SCRIPT |
+         nsIAboutModule::URI_CAN_LOAD_IN_PRIVILEGEDABOUT_PROCESS},
+    {"newprofile", "chrome://browser/content/profiles/new-profile.html",
+     nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
+         nsIAboutModule::IS_SECURE_CHROME_UI | nsIAboutModule::ALLOW_SCRIPT |
+         nsIAboutModule::URI_MUST_LOAD_IN_CHILD |
+         nsIAboutModule::URI_CAN_LOAD_IN_PRIVILEGEDABOUT_PROCESS},
+#endif
 };
 
 static nsAutoCString GetAboutModuleName(nsIURI* aURI) {
@@ -180,22 +197,19 @@ AboutRedirector::NewChannel(nsIURI* aURI, nsILoadInfo* aLoadInfo,
 
   nsAutoCString path = GetAboutModuleName(aURI);
 
-  nsresult rv;
-  nsCOMPtr<nsIIOService> ioService = do_GetIOService(&rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+  if ((path.EqualsASCII("editprofile") || path.EqualsASCII("deleteprofile") ||
+       path.EqualsASCII("newprofile")) &&
+      !mozilla::Preferences::GetBool(PROFILES_ENABLED_PREF, false)) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
 
-  // If we're accessing about:home in the "privileged about content
-  // process", then we give the nsIAboutNewTabService the responsibility
-  // to return the nsIChannel, since it might be from the about:home
-  // startup cache.
-  if (XRE_IsContentProcess() && path.EqualsLiteral("home")) {
-    auto& remoteType = dom::ContentChild::GetSingleton()->GetRemoteType();
-    if (remoteType == PRIVILEGEDABOUT_REMOTE_TYPE) {
-      nsCOMPtr<nsIAboutNewTabService> aboutNewTabService =
-          do_GetService("@mozilla.org/browser/aboutnewtab-service;1", &rv);
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      return aboutNewTabService->AboutHomeChannel(aURI, aLoadInfo, result);
+  if (path.EqualsASCII("profilemanager") &&
+      !mozilla::Preferences::GetBool(PROFILES_ENABLED_PREF, false)) {
+    bool startingUp;
+    nsCOMPtr<nsIAppStartup> appStartup(
+        mozilla::components::AppStartup::Service());
+    if (NS_FAILED(appStartup->GetStartingUp(&startingUp)) || !startingUp) {
+      return NS_ERROR_NOT_AVAILABLE;
     }
   }
 
@@ -203,24 +217,13 @@ AboutRedirector::NewChannel(nsIURI* aURI, nsILoadInfo* aLoadInfo,
     if (!strcmp(path.get(), redir.id)) {
       nsAutoCString url;
 
-      // Let the aboutNewTabService decide where to redirect for about:home and
-      // enabled about:newtab. Disabled about:newtab page uses fallback.
-      if (path.EqualsLiteral("home") ||
-          (StaticPrefs::browser_newtabpage_enabled() &&
-           path.EqualsLiteral("newtab"))) {
-        nsCOMPtr<nsIAboutNewTabService> aboutNewTabService =
-            do_GetService("@mozilla.org/browser/aboutnewtab-service;1", &rv);
-        NS_ENSURE_SUCCESS(rv, rv);
-        rv = aboutNewTabService->GetDefaultURL(url);
-        NS_ENSURE_SUCCESS(rv, rv);
-      }
-
       if (path.EqualsLiteral("welcome")) {
-        nsCOMPtr<nsIAboutNewTabService> aboutNewTabService =
-            do_GetService("@mozilla.org/browser/aboutnewtab-service;1", &rv);
-        NS_ENSURE_SUCCESS(rv, rv);
-        rv = aboutNewTabService->GetWelcomeURL(url);
-        NS_ENSURE_SUCCESS(rv, rv);
+        NimbusFeatures::RecordExposureEvent("aboutwelcome"_ns, true);
+        if (NimbusFeatures::GetBool("aboutwelcome"_ns, "enabled"_ns, true)) {
+          url.AssignASCII(ABOUT_WELCOME_CHROME_URL);
+        } else {
+          url.AssignASCII(ABOUT_HOME_URL);
+        }
       }
 
       // fall back to the specified url in the map
@@ -230,7 +233,7 @@ AboutRedirector::NewChannel(nsIURI* aURI, nsILoadInfo* aLoadInfo,
 
       nsCOMPtr<nsIChannel> tempChannel;
       nsCOMPtr<nsIURI> tempURI;
-      rv = NS_NewURI(getter_AddRefs(tempURI), url);
+      nsresult rv = NS_NewURI(getter_AddRefs(tempURI), url);
       NS_ENSURE_SUCCESS(rv, rv);
 
       // If tempURI links to an external URI (i.e. something other than

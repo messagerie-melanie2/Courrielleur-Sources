@@ -28,7 +28,7 @@ function setStatus(aAccount, aNick, aStatus) {
     aAccount.removeBuddyInfo(aNick);
   }
 
-  let buddy = aAccount.buddies.get(aNick);
+  const buddy = aAccount.buddies.get(aNick);
   if (!buddy) {
     return false;
   }
@@ -46,12 +46,12 @@ function trackBuddyWatch(aNicks) {
     aNicks = [aNicks];
   }
 
-  let nicks = aNicks.map(aNick => "+" + aNick);
+  const nicks = aNicks.map(aNick => "+" + aNick);
   if (!nicks.length) {
     return;
   }
 
-  let newWatchLength = this.watchLength + nicks.length;
+  const newWatchLength = this.watchLength + nicks.length;
   if (newWatchLength > this.maxWatchLength) {
     this.WARN(
       "Attempting to WATCH " +
@@ -71,11 +71,11 @@ function trackBuddyWatch(aNicks) {
   if (this.watchAwayEnabled) {
     params.push("A");
   }
-  let maxLength =
+  const maxLength =
     this.maxMessageLength -
     2 -
     this.countBytes(this.buildMessage("WATCH", params));
-  for (let nick of nicks) {
+  for (const nick of nicks) {
     if (this.countBytes(params + " " + nick) >= maxLength) {
       // If the message would be too long, first send this message.
       this.sendMessage("WATCH", params);
@@ -106,7 +106,7 @@ export var isupportWATCH = {
       if (!aMessage.isupport.useDefault) {
         this.maxWatchLength = 128;
       } else {
-        let size = parseInt(aMessage.isupport.value, 10);
+        const size = parseInt(aMessage.isupport.value, 10);
         if (isNaN(size)) {
           return false;
         }
@@ -153,7 +153,7 @@ export var ircWATCH = {
   },
 
   commands: {
-    251(aMessage) {
+    251() {
       // RPL_LUSERCLIENT
       // ":There are <integer> users and <integer> services on <integer> servers"
       // Assume that this will always be sent after the 005 handler on
@@ -177,7 +177,7 @@ export var ircWATCH = {
       // RPL_AWAY
       // <nick> :<away message>
       // Set the received away message.
-      let buddy = this.buddies.get(aMessage.params[1]);
+      const buddy = this.buddies.get(aMessage.params[1]);
       if (buddy) {
         buddy.setStatus(Ci.imIStatusInfo.STATUS_AWAY, aMessage.params[2]);
       }
@@ -187,7 +187,7 @@ export var ircWATCH = {
       return false;
     },
 
-    303(aMessage) {
+    303() {
       // RPL_ISON
       // :*1<nick> *( " " <nick> )
       // We don't want ircBase to interfere with us, so override the ISON
@@ -195,7 +195,7 @@ export var ircWATCH = {
       return true;
     },
 
-    512(aMessage) {
+    512() {
       // ERR_TOOMANYWATCH
       // Maximum size for WATCH-list is <watchlimit> entries
       this.ERROR(
@@ -246,13 +246,13 @@ export var ircWATCH = {
       return setStatus(this, aMessage.params[1], "OFFLINE");
     },
 
-    602(aMessage) {
+    602() {
       // RPL_WATCHOFF
       // <nickname> <username> <hostname> <lastnickchange> :stopped watching
       return true;
     },
 
-    603(aMessage) {
+    603() {
       // RPL_WATCHSTAT
       // You have <entrycount> and are on <onlistcount> WATCH entries
       // TODO I don't think we really need to care about this.
@@ -271,21 +271,21 @@ export var ircWATCH = {
       return setStatus(this, aMessage.params[1], "OFFLINE");
     },
 
-    606(aMessage) {
+    606() {
       // RPL_WATCHLIST
       // <entrylist>
       // TODO
       return false;
     },
 
-    607(aMessage) {
+    607() {
       // RPL_ENDOFWATCHLIST
       // End of WATCH <parameter>
       // TODO
       return false;
     },
 
-    608(aMessage) {
+    608() {
       // RPL_CLEARWATCH
       // Your WATCH list is now empty
       // Note that this is optional for servers to send, so ignore it.
@@ -311,7 +311,7 @@ export var isupportMONITOR = {
       if (!aMessage.isupport.useDefault) {
         this.maxMonitorLength = Infinity;
       } else {
-        let size = parseInt(aMessage.isupport.value, 10);
+        const size = parseInt(aMessage.isupport.value, 10);
         if (isNaN(size)) {
           return false;
         }
@@ -342,12 +342,12 @@ function trackBuddyMonitor(aNicks) {
     aNicks = [aNicks];
   }
 
-  let nicks = aNicks;
+  const nicks = aNicks;
   if (!nicks.length) {
     return;
   }
 
-  let newMonitorLength = this.monitorLength + nicks.length;
+  const newMonitorLength = this.monitorLength + nicks.length;
   if (newMonitorLength > this.maxMonitorLength) {
     this.WARN(
       "Attempting to MONITOR " +
@@ -363,11 +363,11 @@ function trackBuddyMonitor(aNicks) {
   this.monitorLength = newMonitorLength;
 
   let params = [];
-  let maxLength =
+  const maxLength =
     this.maxMessageLength -
     2 -
     this.countBytes(this.buildMessage("MONITOR", "+"));
-  for (let nick of nicks) {
+  for (const nick of nicks) {
     if (this.countBytes(params + " " + nick) >= maxLength) {
       // If the message would be too long, first send this message.
       this.sendMessage("MONITOR", ["+", params.join(",")]);
@@ -395,7 +395,7 @@ export var ircMONITOR = {
   },
 
   commands: {
-    251(aMessage) {
+    251() {
       // RPL_LUSERCLIENT
       // ":There are <integer> users and <integer> services on <integer> servers"
       // Assume that this will always be sent after the 005 handler on
@@ -416,7 +416,7 @@ export var ircMONITOR = {
       return false;
     },
 
-    303(aMessage) {
+    303() {
       // RPL_ISON
       // :*1<nick> *( " " <nick> )
       // We don't want ircBase to interfere with us, so override the ISON
@@ -443,19 +443,19 @@ export var ircMONITOR = {
         .every(aResult => aResult);
     },
 
-    732(aMessage) {
+    732() {
       // RPL_MONLIST
       // :<server> 732 <nick> :nick[,nick1]*
       return false;
     },
 
-    733(aMessage) {
+    733() {
       // RPL_ENDOFMONLIST
       // :<server> 733 <nick> :End of MONITOR list
       return false;
     },
 
-    734(aMessage) {
+    734() {
       // ERR_MONLISTFULL
       // :<server> 734 <nick> <limit> <nicks> :Monitor list is full.
       this.ERROR(

@@ -5,15 +5,14 @@
 "use strict";
 
 const TextEditor = require("resource://devtools/client/inspector/markup/views/text-editor.js");
-const {
-  truncateString,
-} = require("resource://devtools/shared/inspector/utils.js");
+const { truncateString } = require("resource://devtools/shared/string.js");
 const {
   editableField,
   InplaceEditor,
 } = require("resource://devtools/client/shared/inplace-editor.js");
 const {
   parseAttribute,
+  ATTRIBUTE_TYPES,
 } = require("resource://devtools/client/shared/node-attribute-parser.js");
 
 loader.lazyRequireGetter(
@@ -160,7 +159,7 @@ ElementEditor.prototype = {
     this.elt.appendChild(open);
 
     this.tag = this.doc.createElement("span");
-    this.tag.classList.add("tag", "theme-fg-color3");
+    this.tag.classList.add("tag", "force-color-on-flash");
     this.tag.setAttribute("tabindex", "-1");
     this.tag.textContent = this.node.displayName;
     open.appendChild(this.tag);
@@ -193,6 +192,7 @@ ElementEditor.prototype = {
     this.newAttr.editMode = editableField({
       element: this.newAttr,
       multiline: true,
+      inputClass: "newattr-input",
       maxWidth: () => getAutocompleteMaxWidth(this.newAttr, this.container.elt),
       trigger: "dblclick",
       stopOnReturn: true,
@@ -233,7 +233,7 @@ ElementEditor.prototype = {
     this.elt.appendChild(close);
 
     this.closeTag = this.doc.createElement("span");
-    this.closeTag.classList.add("tag", "theme-fg-color3");
+    this.closeTag.classList.add("tag", "force-color-on-flash");
     this.closeTag.textContent = this.node.displayName;
     close.appendChild(this.closeTag);
 
@@ -339,6 +339,7 @@ ElementEditor.prototype = {
     this.updateDisplayBadge();
     this.updateCustomBadge();
     this.updateScrollableBadge();
+    this.updateContainerBadge();
     this.updateTextEditor();
     this.updateUnavailableChildren();
     this.updateOverflowBadge();
@@ -356,13 +357,14 @@ ElementEditor.prototype = {
   },
 
   _createEventBadge() {
-    this._eventBadge = this.doc.createElement("div");
+    this._eventBadge = this.doc.createElement("button");
     this._eventBadge.className = "inspector-badge interactive";
     this._eventBadge.dataset.event = "true";
     this._eventBadge.textContent = "event";
     this._eventBadge.title = INSPECTOR_L10N.getStr(
-      "markupView.event.tooltiptext"
+      "markupView.event.tooltiptext2"
     );
+    this._eventBadge.setAttribute("aria-pressed", "false");
     // Badges order is [event][display][custom], insert event badge before others.
     this.elt.insertBefore(
       this._eventBadge,
@@ -387,7 +389,9 @@ ElementEditor.prototype = {
       // overflow causing elements is not supported.
       !this.node.isDocumentElement;
 
-    this._scrollableBadge = this.doc.createElement("div");
+    this._scrollableBadge = this.doc.createElement(
+      isInteractive ? "button" : "div"
+    );
     this._scrollableBadge.className = `inspector-badge scrollable-badge ${
       isInteractive ? "interactive" : ""
     }`;
@@ -406,6 +410,7 @@ ElementEditor.prototype = {
         "click",
         this.onScrollableBadgeClick
       );
+      this._scrollableBadge.setAttribute("aria-pressed", "false");
     }
     this.elt.insertBefore(this._scrollableBadge, this._customBadge);
   },
@@ -430,7 +435,7 @@ ElementEditor.prototype = {
   },
 
   _createDisplayBadge() {
-    this._displayBadge = this.doc.createElement("div");
+    this._displayBadge = this.doc.createElement("button");
     this._displayBadge.className = "inspector-badge";
     this._displayBadge.addEventListener("click", this.onDisplayBadgeClick);
     // Badges order is [event][display][custom], insert display badge before custom.
@@ -454,6 +459,18 @@ ElementEditor.prototype = {
       (isGrid && this.highlighters.canGridHighlighterToggle(this.node));
 
     this._displayBadge.classList.toggle("interactive", isInteractive);
+
+    // Since the badge is a <button>, if it's not interactive we need to indicate
+    // to screen readers that it shouldn't behave like a button.
+    // It's easier to have the badge being a button and "downgrading" it like this,
+    // than having it as a div and adding interactivity.
+    if (isInteractive) {
+      this._displayBadge.removeAttribute("role");
+      this._displayBadge.setAttribute("aria-pressed", "false");
+    } else {
+      this._displayBadge.setAttribute("role", "presentation");
+      this._displayBadge.removeAttribute("aria-pressed");
+    }
   },
 
   updateOverflowBadge() {
@@ -495,7 +512,7 @@ ElementEditor.prototype = {
   },
 
   _createCustomBadge() {
-    this._customBadge = this.doc.createElement("div");
+    this._customBadge = this.doc.createElement("button");
     this._customBadge.className = "inspector-badge interactive";
     this._customBadge.dataset.custom = "true";
     this._customBadge.textContent = "custom…";
@@ -505,6 +522,32 @@ ElementEditor.prototype = {
     this._customBadge.addEventListener("click", this.onCustomBadgeClick);
     // Badges order is [event][display][custom], insert custom badge at the end.
     this.elt.appendChild(this._customBadge);
+  },
+
+  updateContainerBadge() {
+    const showContainerBadge =
+      this.node.containerType === "inline-size" ||
+      this.node.containerType === "size";
+
+    if (this._containerBadge && !showContainerBadge) {
+      this._containerBadge.remove();
+      this._containerBadge = null;
+    } else if (showContainerBadge && !this._containerBadge) {
+      this._createContainerBadge();
+    }
+  },
+
+  _createContainerBadge() {
+    this._containerBadge = this.doc.createElement("div");
+    this._containerBadge.classList.add("inspector-badge");
+    this._containerBadge.dataset.container = "true";
+    this._containerBadge.title = `container-type: ${this.node.containerType}`;
+
+    this._containerBadge.append(this.doc.createTextNode("container"));
+    // TODO: Move the logic to handle badges position in a dedicated helper (See Bug 1837921).
+    // Ideally badges order should be [event][display][container][custom]
+    this.elt.insertBefore(this._containerBadge, this._customBadge);
+    this.markup.emit("badge-added-event");
   },
 
   /**
@@ -655,9 +698,9 @@ ElementEditor.prototype = {
    *   " ",
    *   dom.span(
    *     { className: "editable", tabIndex: 0 },
-   *     dom.span({ className: "attr-name theme-fg-color1" }, attribute.name),
+   *     dom.span({ className: "attr-name" }, attribute.name),
    *     '="',
-   *     dom.span({ className: "attr-value theme-fg-color2" }, attribute.value),
+   *     dom.span({ className: "attr-value" }, attribute.value),
    *     '"'
    *   )
    */
@@ -676,16 +719,14 @@ ElementEditor.prototype = {
     attr.appendChild(inner);
 
     const name = this.doc.createElement("span");
-    name.classList.add("attr-name");
-    name.classList.add("theme-fg-color1");
+    name.classList.add("attr-name", "force-color-on-flash");
     name.textContent = attribute.name;
     inner.appendChild(name);
 
     inner.appendChild(this.doc.createTextNode('="'));
 
     const val = this.doc.createElement("span");
-    val.classList.add("attr-value");
-    val.classList.add("theme-fg-color2");
+    val.classList.add("attr-value", "force-color-on-flash");
     inner.appendChild(val);
 
     inner.appendChild(this.doc.createTextNode('"'));
@@ -832,10 +873,9 @@ ElementEditor.prototype = {
 
     attributeValueEl.innerHTML = "";
 
-    // Create links in the attribute value, and truncate long attribute values if
-    // needed.
+    // Create links in the attribute value, and truncate long attribute values if needed.
     for (const token of parsedLinksData) {
-      if (token.type === "string") {
+      if (token.type === "string" || token.value?.trim() === "") {
         attributeValueEl.appendChild(
           this.doc.createTextNode(this._truncateAttributeValue(token.value))
         );
@@ -845,7 +885,24 @@ ElementEditor.prototype = {
         link.setAttribute("data-type", token.type);
         link.setAttribute("data-link", token.value);
         link.textContent = this._truncateAttributeValue(token.value);
-        attributeValueEl.appendChild(link);
+        attributeValueEl.append(link);
+
+        // Add a "select node" button when we reference element ids
+        if (
+          token.type === ATTRIBUTE_TYPES.TYPE_IDREF ||
+          token.type === ATTRIBUTE_TYPES.TYPE_IDREF_LIST
+        ) {
+          const button = this.doc.createElement("button");
+          button.classList.add("select-node");
+          button.setAttribute(
+            "title",
+            INSPECTOR_L10N.getFormatStr(
+              "inspector.menu.selectElement.label",
+              token.value
+            )
+          );
+          link.append(button);
+        }
       }
     }
   },
@@ -1075,6 +1132,10 @@ ElementEditor.prototype = {
   async onScrollableBadgeClick() {
     this.highlightingOverflowCausingElements =
       this._scrollableBadge.classList.toggle("active");
+    this._scrollableBadge.setAttribute(
+      "aria-pressed",
+      this.highlightingOverflowCausingElements
+    );
 
     const { nodes } = await this.node.walkerFront.getOverflowCausingElements(
       this.node
@@ -1094,31 +1155,60 @@ ElementEditor.prototype = {
       }
     }
 
-    this.markup.telemetry.scalarAdd(
-      "devtools.markup.scrollable.badge.clicked",
-      1
-    );
+    Glean.devtoolsMarkupScrollableBadge.clicked.add(1);
   },
 
   /**
    * Called when the tag name editor has is done editing.
    */
-  onTagEdit(newTagName, isCommit) {
-    if (
-      !isCommit ||
-      newTagName.toLowerCase() === this.node.tagName.toLowerCase() ||
-      !("editTagName" in this.markup.walker)
-    ) {
+  async onTagEdit(inputValue, isCommit) {
+    if (!isCommit) {
+      return;
+    }
+
+    inputValue = inputValue.trim();
+    const spaceIndex = inputValue.indexOf(" ");
+    const newTagName =
+      spaceIndex === -1 ? inputValue : inputValue.substring(0, spaceIndex);
+
+    const shouldUpdateTagName =
+      newTagName.toLowerCase() !== this.node.tagName.toLowerCase();
+
+    // If there is content after the tagName, we could have attributes that we need to set
+    // Changing the tag name removes the node, so set the attributes first, then they
+    // will be copied in `editTagName`
+    const newAttributes =
+      spaceIndex === -1 ? null : inputValue.substring(spaceIndex + 1).trim();
+    if (newAttributes?.length) {
+      const doMods = this._startModifyingAttributes();
+      const undoMods = this._startModifyingAttributes();
+      this._applyAttributes(newAttributes, null, doMods, undoMods);
+      // if the tagName will be changed, a new node will be created, and we don't handle
+      // undo for this, so we can directly set the attributes.
+      if (shouldUpdateTagName) {
+        await doMods.apply();
+        undoMods.destroy();
+      } else {
+        this.container.undo.do(
+          () => doMods.apply(),
+          () => undoMods.apply()
+        );
+      }
+    }
+
+    if (!shouldUpdateTagName) {
       return;
     }
 
     // Changing the tagName removes the node. Make sure the replacing node gets
     // selected afterwards.
     this.markup.reselectOnRemoved(this.node, "edittagname");
-    this.node.walkerFront.editTagName(this.node, newTagName).catch(() => {
+    try {
+      await this.node.walkerFront.editTagName(this.node, newTagName);
+    } catch (e) {
       // Failed to edit the tag name, cancel the reselection.
       this.markup.cancelReselectOnRemoved();
-    });
+    }
   },
 
   destroy() {

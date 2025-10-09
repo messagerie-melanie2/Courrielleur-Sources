@@ -211,7 +211,7 @@ using namespace mozilla::a11y;
 
 - (NSArray*)moxUnignoredChildren {
   if (id rootGroup = [self rootGroup]) {
-    return @[ [self rootGroup] ];
+    return @[ rootGroup ];
   }
 
   // There is no root group, expose the children here directly.
@@ -242,13 +242,9 @@ using namespace mozilla::a11y;
 }
 
 - (id)rootGroup {
-  NSArray* children = [super moxUnignoredChildren];
-  if (mRole == roles::DOCUMENT && [children count] == 1 &&
-      [[[children firstObject] moxUnignoredChildren] count] != 0) {
-    // We only need a root group if our document:
-    // (1) has multiple children, or
-    // (2) a one child that is a leaf, or
-    // (3) has a role other than the default document role
+  if (mRole == roles::DOCUMENT) {
+    // We only need a root group if our document has a role other than the
+    // default document role
     return nil;
   }
 

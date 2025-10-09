@@ -5,19 +5,21 @@
 
 /* import-globals-from AccountWizard.js */
 
-var { cleanUpHostName, isLegalHostNameOrIP } = ChromeUtils.import(
-  "resource:///modules/hostnameUtils.jsm"
+var { cleanUpHostName, isLegalHostNameOrIP } = ChromeUtils.importESModule(
+  "resource:///modules/hostnameUtils.sys.mjs"
 );
-var { NntpUtils } = ChromeUtils.import("resource:///modules/NntpUtils.jsm");
+var { NntpUtils } = ChromeUtils.importESModule(
+  "resource:///modules/NntpUtils.sys.mjs"
+);
 
 function incomingPageValidate() {
-  let hostName = cleanUpHostName(document.getElementById("newsServer").value);
+  const hostName = cleanUpHostName(document.getElementById("newsServer").value);
 
   let hasAccount = false;
-  let server = NntpUtils.findServer(hostName);
+  const server = NntpUtils.findServer(hostName);
   if (server) {
     // It's OK if a server exists, as long as it's not used by any account.
-    hasAccount = MailServices.accounts.FindAccountForServer(server);
+    hasAccount = MailServices.accounts.findAccountForServer(server);
   }
   // Can advance if it's a legal host name and we do not already have a server
   // in use with the same host name.

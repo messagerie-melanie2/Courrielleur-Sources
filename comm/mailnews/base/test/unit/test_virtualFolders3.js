@@ -6,15 +6,14 @@
  * Tests that subfolders added to searched folders are also searched.
  */
 
-const { VirtualFolderHelper } = ChromeUtils.import(
-  "resource:///modules/VirtualFolderWrapper.jsm"
+const { VirtualFolderHelper } = ChromeUtils.importESModule(
+  "resource:///modules/VirtualFolderWrapper.sys.mjs"
 );
 
 let rootFolder;
 
 add_setup(function () {
-  MailServices.accounts.createLocalMailAccount();
-  let account = MailServices.accounts.accounts[0];
+  const account = MailServices.accounts.createLocalMailAccount();
   rootFolder = account.incomingServer.rootFolder;
   rootFolder.QueryInterface(Ci.nsIMsgLocalMailFolder);
 
@@ -32,7 +31,7 @@ add_setup(function () {
           }`
         );
       },
-      onMessageAdded(parentFolder, msg) {},
+      onMessageAdded() {},
       onFolderRemoved(parentFolder, childFolder) {
         console.log(
           `onFolderRemoved: ${
@@ -42,8 +41,8 @@ add_setup(function () {
           }`
         );
       },
-      onMessageRemoved(parentFolder, msg) {},
-      onFolderPropertyChanged(folder, property, oldValue, newValue) {},
+      onMessageRemoved() {},
+      onFolderPropertyChanged() {},
       onFolderIntPropertyChanged(folder, property, oldValue, newValue) {
         if (property == "FolderFlag") {
           console.log(
@@ -55,10 +54,9 @@ add_setup(function () {
           );
         }
       },
-      onFolderBoolPropertyChanged(folder, property, oldValue, newValue) {},
-      onFolderUnicharPropertyChanged(folder, property, oldValue, newValue) {},
-      onFolderPropertyFlagChanged(folder, property, oldFlag, newFlag) {},
-      onFolderEvent(folder, event) {},
+      onFolderBoolPropertyChanged() {},
+      onFolderPropertyFlagChanged() {},
+      onFolderEvent() {},
     },
     Ci.nsIFolderListener.all
   );
@@ -90,12 +88,12 @@ add_task(function testTrash() {
 function subtest(flag) {
   // Create a virtual folder. This is very similar to the code in about3Pane.js.
 
-  let virtualFolder = rootFolder.createLocalSubfolder(`virtual${flag}`);
+  const virtualFolder = rootFolder.createLocalSubfolder(`virtual${flag}`);
   virtualFolder.flags |=
     Ci.nsMsgFolderFlags.Virtual | Ci.nsMsgFolderFlags[flag];
 
-  let msgDatabase = virtualFolder.msgDatabase;
-  let folderInfo = msgDatabase.dBFolderInfo;
+  const msgDatabase = virtualFolder.msgDatabase;
+  const folderInfo = msgDatabase.dBFolderInfo;
 
   folderInfo.setCharProperty("searchStr", "ALL");
   folderInfo.setUint32Property("searchFolderFlag", Ci.nsMsgFolderFlags[flag]);
@@ -104,7 +102,7 @@ function subtest(flag) {
   msgDatabase.close(true);
 
   function checkVirtualFolder(searchFolders, message) {
-    let wrappedVirtualFolder =
+    const wrappedVirtualFolder =
       VirtualFolderHelper.wrapVirtualFolder(virtualFolder);
     Assert.deepEqual(
       wrappedVirtualFolder.searchFolderURIs.split("|").filter(Boolean).sort(),
@@ -125,15 +123,15 @@ function subtest(flag) {
   // add it to the parent. The folder and descendants should all be added to
   // the virtual folder.
 
-  let parent = MailServices.folderLookup.getOrCreateFolderForURL(
+  const parent = MailServices.folderLookup.getOrCreateFolderForURL(
     `${rootFolder.URI}/parent${flag}`
   );
   parent.setFlag(Ci.nsMsgFolderFlags[flag]);
-  let child = MailServices.folderLookup.getOrCreateFolderForURL(
+  const child = MailServices.folderLookup.getOrCreateFolderForURL(
     `${rootFolder.URI}/parent${flag}/child`
   );
   parent.addSubfolder(child.name);
-  let grandchild = MailServices.folderLookup.getOrCreateFolderForURL(
+  const grandchild = MailServices.folderLookup.getOrCreateFolderForURL(
     `${rootFolder.URI}/parent${flag}/child/grandchild`
   );
   child.addSubfolder(grandchild.name);
@@ -151,11 +149,11 @@ function subtest(flag) {
   // Create a subfolder of a real folder with some descendants, then set the
   // flag. The folder and descendants should all be added to the virtual folder.
 
-  let more = rootFolder.createLocalSubfolder(`more${flag}`);
+  const more = rootFolder.createLocalSubfolder(`more${flag}`);
   more.QueryInterface(Ci.nsIMsgLocalMailFolder);
-  let evenMore = more.createLocalSubfolder("even more");
+  const evenMore = more.createLocalSubfolder("even more");
   evenMore.QueryInterface(Ci.nsIMsgLocalMailFolder);
-  let yetMore = evenMore.createLocalSubfolder("yet more");
+  const yetMore = evenMore.createLocalSubfolder("yet more");
   more.setFlag(Ci.nsMsgFolderFlags[flag]);
 
   checkVirtualFolder(
@@ -169,7 +167,7 @@ function subtest(flag) {
   // Other combinations shouldn't really exist, but let's test them anyway.
 
   if (!["SentMail", "Archive"].includes(flag)) {
-    for (let otherFlag of [
+    for (const otherFlag of [
       "Inbox",
       "Drafts",
       "Templates",
@@ -181,7 +179,7 @@ function subtest(flag) {
       if (otherFlag == flag) {
         continue;
       }
-      let otherFlagChild = MailServices.folderLookup.getOrCreateFolderForURL(
+      const otherFlagChild = MailServices.folderLookup.getOrCreateFolderForURL(
         `${rootFolder.URI}/parent${flag}/other${otherFlag}Child`
       );
       otherFlagChild.setFlag(Ci.nsMsgFolderFlags[otherFlag]);

@@ -36,6 +36,10 @@ SANDBOX_INTERCEPT NTSTATUS WINAPI TargetNtUnmapViewOfSection64(HANDLE process,
 // -----------------------------------------------------------------------
 // Interceptors without IPC.
 
+// Interception of NtImpersonateAnonymousToken on the child process.
+SANDBOX_INTERCEPT NTSTATUS WINAPI
+TargetNtImpersonateAnonymousToken64(HANDLE thread);
+
 // Interception of NtSetInformationThread on the child process.
 SANDBOX_INTERCEPT NTSTATUS WINAPI
 TargetNtSetInformationThread64(HANDLE thread,
@@ -232,6 +236,9 @@ SANDBOX_INTERCEPT BOOL WINAPI TargetGdiDllInitialize64(HANDLE dll,
 
 // Interceptor for the GetStockObject function.
 SANDBOX_INTERCEPT HGDIOBJ WINAPI TargetGetStockObject64(int object);
+
+// Interceptor for the GetForegroundWindow function.
+SANDBOX_INTERCEPT HWND WINAPI TargetGetForegroundWindow64();
 
 // Interceptor for the RegisterClassW function.
 SANDBOX_INTERCEPT ATOM WINAPI TargetRegisterClassW64(const WNDCLASS* wnd_class);

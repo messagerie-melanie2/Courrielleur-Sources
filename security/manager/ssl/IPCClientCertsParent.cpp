@@ -7,11 +7,11 @@
 
 #include "IPCClientCertsParent.h"
 #include "ScopedNSSTypes.h"
+#include "nsNetCID.h"
 #include "nsNSSComponent.h"
 #include "nsNSSIOLayer.h"
 
 #include "mozilla/SyncRunnable.h"
-#include "mozilla/ipc/BackgroundParent.h"
 
 namespace mozilla::psm {
 
@@ -42,7 +42,6 @@ mozilla::ipc::IPCResult IPCClientCertsParent::RecvFindObjects(
   CERTCertListNode* n = CERT_LIST_HEAD(certList);
   while (!CERT_LIST_END(n, certList)) {
     nsTArray<uint8_t> certDER(n->cert->derCert.data, n->cert->derCert.len);
-    uint32_t slotType;
     UniqueSECKEYPublicKey pubkey(CERT_ExtractPublicKey(n->cert));
     if (!pubkey) {
       return IPC_OK();
@@ -50,20 +49,16 @@ mozilla::ipc::IPCResult IPCClientCertsParent::RecvFindObjects(
     switch (SECKEY_GetPublicKeyType(pubkey.get())) {
       case rsaKey:
       case rsaPssKey: {
-        slotType = PK11_DoesMechanism(n->cert->slot, CKM_RSA_PKCS_PSS)
-                       ? kIPCClientCertsSlotTypeModern
-                       : kIPCClientCertsSlotTypeLegacy;
         nsTArray<uint8_t> modulus(pubkey->u.rsa.modulus.data,
                                   pubkey->u.rsa.modulus.len);
-        RSAKey rsakey(modulus, certDER, slotType);
+        RSAKey rsakey(modulus, certDER);
         aObjects->AppendElement(std::move(rsakey));
         break;
       }
       case ecKey: {
-        slotType = kIPCClientCertsSlotTypeModern;
         nsTArray<uint8_t> params(pubkey->u.ec.DEREncodedParams.data,
                                  pubkey->u.ec.DEREncodedParams.len);
-        ECKey eckey(params, certDER, slotType);
+        ECKey eckey(params, certDER);
         aObjects->AppendElement(std::move(eckey));
         break;
       }
@@ -71,7 +66,7 @@ mozilla::ipc::IPCResult IPCClientCertsParent::RecvFindObjects(
         n = CERT_LIST_NEXT(n);
         continue;
     }
-    Certificate cert(certDER, slotType);
+    Certificate cert(certDER);
     aObjects->AppendElement(std::move(cert));
 
     n = CERT_LIST_NEXT(n);
@@ -81,8 +76,8 @@ mozilla::ipc::IPCResult IPCClientCertsParent::RecvFindObjects(
 
 // When the IPC client certs module needs to sign data using a key managed by
 // the parent process, it will cause this function to be called in the parent
-// process. The parent process needs to find the key corresponding to the given
-// certificate and sign the given data with the given parameters.
+// process. The parent process needs to find the key corresponding to the
+// given certificate and sign the given data with the given parameters.
 mozilla::ipc::IPCResult IPCClientCertsParent::RecvSign(ByteArray aCert,
                                                        ByteArray aData,
                                                        ByteArray aParams,
@@ -100,6 +95,8 @@ mozilla::ipc::IPCResult IPCClientCertsParent::RecvSign(ByteArray aCert,
   if (!key) {
     return IPC_OK();
   }
+  SECItem hash = {siBuffer, aData.data().Elements(),
+                  static_cast<unsigned int>(aData.data().Length())};
   SECItem params = {siBuffer, aParams.data().Elements(),
                     static_cast<unsigned int>(aParams.data().Length())};
   SECItem* paramsPtr = aParams.data().Length() > 0 ? &params : nullptr;
@@ -109,15 +106,26 @@ mozilla::ipc::IPCResult IPCClientCertsParent::RecvSign(ByteArray aCert,
       mechanism = CKM_ECDSA;
       break;
     case rsaKey:
-      mechanism = aParams.data().Length() > 0 ? CKM_RSA_PKCS_PSS : CKM_RSA_PKCS;
+      // If we have params, this is RSA-PSS.
+      if (aParams.data().Length() > 0) {
+        mechanism = CKM_RSA_PKCS_PSS;
+      } else {
+        // If this is a DigestInfo or a TLS 1.0 MD5/SHA1 hash, this is RSA-PKCS.
+        // Otherwise, this is an emsa-pss-encoded digest that should be signed
+        // with raw RSA.
+        UniqueSGNDigestInfo digestInfo(SGN_DecodeDigestInfo(&hash));
+        if (digestInfo || aData.data().Length() == 36) {
+          mechanism = CKM_RSA_PKCS;
+        } else {
+          mechanism = CKM_RSA_X_509;
+        }
+      }
       break;
     default:
       return IPC_OK();
   }
   uint32_t len = PK11_SignatureLen(key.get());
   UniqueSECItem sig(::SECITEM_AllocItem(nullptr, nullptr, len));
-  SECItem hash = {siBuffer, aData.data().Elements(),
-                  static_cast<unsigned int>(aData.data().Length())};
   SECStatus srv =
       PK11_SignWithMechanism(key.get(), mechanism, paramsPtr, sig.get(), &hash);
   if (srv != SECSuccess) {

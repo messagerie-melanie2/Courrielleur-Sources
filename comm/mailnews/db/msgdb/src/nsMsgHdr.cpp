@@ -3,18 +3,18 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "MailNewsTypes.h"
 #include "msgCore.h"
-#include "mozilla/mailnews/MimeHeaderParser.h"
 #include "nsMsgHdr.h"
 #include "nsMsgDatabase.h"
 #include "nsMsgUtils.h"
 #include "nsMsgMessageFlags.h"
 #include "nsIMsgThread.h"
-#include "mozilla/Attributes.h"
 #include "nsStringEnumerator.h"
 #ifdef DEBUG
 #  include "nsPrintfCString.h"
 #endif
+
 using namespace mozilla::mailnews;
 
 NS_IMPL_ISUPPORTS(nsMsgHdr, nsIMsgDBHdr)
@@ -139,18 +139,10 @@ NS_IMETHODIMP nsMsgHdr::GetFlags(uint32_t* result) {
     *result = m_mdb->GetStatusFlags(this, m_flags);
   else
     *result = m_flags;
-#ifdef DEBUG_bienvenu
-  NS_ASSERTION(!(*result & (nsMsgMessageFlags::Elided)),
-               "shouldn't be set in db");
-#endif
   return NS_OK;
 }
 
 NS_IMETHODIMP nsMsgHdr::SetFlags(uint32_t flags) {
-#ifdef DEBUG_bienvenu
-  NS_ASSERTION(!(flags & (nsMsgMessageFlags::Elided)),
-               "shouldn't set this flag on db");
-#endif
   m_initedValues |= FLAGS_INITED;
   m_flags = flags;
   // don't write out nsMsgMessageFlags::New to MDB.
@@ -255,7 +247,7 @@ nsresult nsMsgHdr::ParseReferences(const char* references) {
   const char* startNextRef = references;
   nsAutoCString resultReference;
   nsCString messageId;
-  GetMessageId(getter_Copies(messageId));
+  GetMessageId(messageId);
 
   while (startNextRef && *startNextRef) {
     startNextRef = GetNextReference(startNextRef, resultReference,
@@ -292,14 +284,21 @@ NS_IMETHODIMP nsMsgHdr::GetDateInSeconds(uint32_t* aResult) {
   return GetUInt32Column(m_mdb->m_dateColumnToken, aResult);
 }
 
-NS_IMETHODIMP nsMsgHdr::SetMessageId(const char* messageId) {
-  if (messageId && *messageId == '<') {
-    nsAutoCString tempMessageID(messageId + 1);
-    if (tempMessageID.CharAt(tempMessageID.Length() - 1) == '>')
-      tempMessageID.SetLength(tempMessageID.Length() - 1);
-    return SetStringColumn(tempMessageID.get(), m_mdb->m_messageIdColumnToken);
+NS_IMETHODIMP nsMsgHdr::SetMessageId(const nsACString& messageId) {
+  if (!messageId.IsEmpty() && messageId.CharAt(0) == '<') {
+    // Trim `<>' from message ID.
+    size_t substrLength = messageId.Length() - 1;
+    if (messageId.CharAt(messageId.Length() - 1) == '>') {
+      substrLength -= 1;
+    }
+
+    const auto toWrite = Substring(messageId, 1, substrLength);
+    return SetStringColumn(PromiseFlatCString(toWrite).get(),
+                           m_mdb->m_messageIdColumnToken);
   }
-  return SetStringColumn(messageId, m_mdb->m_messageIdColumnToken);
+
+  return SetStringColumn(PromiseFlatCString(messageId).get(),
+                         m_mdb->m_messageIdColumnToken);
 }
 
 NS_IMETHODIMP nsMsgHdr::SetSubject(const nsACString& subject) {
@@ -307,8 +306,9 @@ NS_IMETHODIMP nsMsgHdr::SetSubject(const nsACString& subject) {
                          m_mdb->m_subjectColumnToken);
 }
 
-NS_IMETHODIMP nsMsgHdr::SetAuthor(const char* author) {
-  return SetStringColumn(author, m_mdb->m_senderColumnToken);
+NS_IMETHODIMP nsMsgHdr::SetAuthor(const nsACString& author) {
+  return SetStringColumn(PromiseFlatCString(author).get(),
+                         m_mdb->m_senderColumnToken);
 }
 
 NS_IMETHODIMP nsMsgHdr::SetReferences(const nsACString& references) {
@@ -321,17 +321,20 @@ NS_IMETHODIMP nsMsgHdr::SetReferences(const nsACString& references) {
                          m_mdb->m_referencesColumnToken);
 }
 
-NS_IMETHODIMP nsMsgHdr::SetRecipients(const char* recipients) {
+NS_IMETHODIMP nsMsgHdr::SetRecipients(const nsACString& recipients) {
   // need to put in rfc822 address parsing code here (or make caller do it...)
-  return SetStringColumn(recipients, m_mdb->m_recipientsColumnToken);
+  return SetStringColumn(PromiseFlatCString(recipients).get(),
+                         m_mdb->m_recipientsColumnToken);
 }
 
-NS_IMETHODIMP nsMsgHdr::SetCcList(const char* ccList) {
-  return SetStringColumn(ccList, m_mdb->m_ccListColumnToken);
+NS_IMETHODIMP nsMsgHdr::SetCcList(const nsACString& ccList) {
+  return SetStringColumn(PromiseFlatCString(ccList).get(),
+                         m_mdb->m_ccListColumnToken);
 }
 
-NS_IMETHODIMP nsMsgHdr::SetBccList(const char* bccList) {
-  return SetStringColumn(bccList, m_mdb->m_bccListColumnToken);
+NS_IMETHODIMP nsMsgHdr::SetBccList(const nsACString& bccList) {
+  return SetStringColumn(PromiseFlatCString(bccList).get(),
+                         m_mdb->m_bccListColumnToken);
 }
 
 NS_IMETHODIMP nsMsgHdr::SetMessageSize(uint32_t messageSize) {
@@ -385,48 +388,35 @@ NS_IMETHODIMP nsMsgHdr::GetPriority(nsMsgPriorityValue* result) {
 // This might be problematic when a message gets moved...
 // And I'm not sure if we should short circuit it here,
 // or at a higher level where it might be more efficient.
-NS_IMETHODIMP nsMsgHdr::SetAccountKey(const char* aAccountKey) {
-  return SetStringProperty("account", nsDependentCString(aAccountKey));
+NS_IMETHODIMP nsMsgHdr::SetAccountKey(const nsACString& aAccountKey) {
+  return SetStringProperty("account", aAccountKey);
 }
 
-NS_IMETHODIMP nsMsgHdr::GetAccountKey(char** aResult) {
-  NS_ENSURE_ARG_POINTER(aResult);
-
-  nsCString key;
-  nsresult rv = GetStringProperty("account", key);
-  NS_ENSURE_SUCCESS(rv, rv);
-  *aResult = ToNewCString(key);
-  return NS_OK;
+NS_IMETHODIMP nsMsgHdr::GetAccountKey(nsACString& aResult) {
+  return GetStringProperty("account", aResult);
 }
 
-NS_IMETHODIMP nsMsgHdr::GetMessageOffset(uint64_t* result) {
-  NS_ENSURE_ARG(result);
-
-  (void)GetUInt64Column(m_mdb->m_offlineMsgOffsetColumnToken, result,
-                        (unsigned)-1);
-  if (*result == (unsigned)-1) {
-    // It's unset. Unfortunately there's not much we can do here. There's
-    // a lot of code which relies on being able to read .messageOffset,
-    // even if it doesn't require it to return anything sensible.
-    // (For example - in js unit tests - Assert.equals() stringifies the
-    // attributes of it's expected/actual values to produce an error
-    // message even if the assert passes).
-#ifdef DEBUG
-    nsCString tok;
-    GetStringProperty("storeToken", tok);
-    nsPrintfCString err("Missing .messageOffset (key=%u, storeToken='%s')",
-                        m_messageKey, tok.get());
-    NS_WARNING(err.get());
-#endif
-    // Return something obviously broken.
-    *result = 12345678;
+NS_IMETHODIMP nsMsgHdr::GetStoreToken(nsACString& result) {
+  GetStringProperty("storeToken", result);
+  if (result.IsEmpty()) {
+    // If .storeToken is unset, it _might_ be a very old database with a
+    // .messageOffset value we can migrate from instead. Doing it here on the
+    // fly saves us a tricky upfront migration pass.
+    uint64_t offset;
+    GetUInt64Column(m_mdb->m_offlineMsgOffsetColumnToken, &offset,
+                    std::numeric_limits<uint64_t>::max());
+    if (offset != std::numeric_limits<uint64_t>::max()) {
+      result.Truncate();
+      result.AppendInt(offset);
+      // Save the value so we don't have to do this next time.
+      SetStoreToken(result);
+    }
   }
   return NS_OK;
 }
 
-NS_IMETHODIMP nsMsgHdr::SetMessageOffset(uint64_t offset) {
-  SetUInt64Column(offset, m_mdb->m_offlineMsgOffsetColumnToken);
-  return NS_OK;
+NS_IMETHODIMP nsMsgHdr::SetStoreToken(const nsACString& token) {
+  return SetStringProperty("storeToken", token);
 }
 
 NS_IMETHODIMP nsMsgHdr::GetMessageSize(uint32_t* result) {
@@ -444,9 +434,9 @@ NS_IMETHODIMP nsMsgHdr::GetLineCount(uint32_t* result) {
   return res;
 }
 
-NS_IMETHODIMP nsMsgHdr::GetAuthor(char** resultAuthor) {
+NS_IMETHODIMP nsMsgHdr::GetAuthor(nsACString& resultAuthor) {
   return m_mdb->RowCellColumnToCharPtr(GetMDBRow(), m_mdb->m_senderColumnToken,
-                                       resultAuthor);
+                                       getter_Copies(resultAuthor));
 }
 
 NS_IMETHODIMP nsMsgHdr::GetSubject(nsACString& resultSubject) {
@@ -454,24 +444,26 @@ NS_IMETHODIMP nsMsgHdr::GetSubject(nsACString& resultSubject) {
                                        getter_Copies(resultSubject));
 }
 
-NS_IMETHODIMP nsMsgHdr::GetRecipients(char** resultRecipients) {
-  return m_mdb->RowCellColumnToCharPtr(
-      GetMDBRow(), m_mdb->m_recipientsColumnToken, resultRecipients);
+NS_IMETHODIMP nsMsgHdr::GetRecipients(nsACString& resultRecipients) {
+  return m_mdb->RowCellColumnToCharPtr(GetMDBRow(),
+                                       m_mdb->m_recipientsColumnToken,
+                                       getter_Copies(resultRecipients));
 }
 
-NS_IMETHODIMP nsMsgHdr::GetCcList(char** resultCCList) {
+NS_IMETHODIMP nsMsgHdr::GetCcList(nsACString& resultCCList) {
   return m_mdb->RowCellColumnToCharPtr(GetMDBRow(), m_mdb->m_ccListColumnToken,
-                                       resultCCList);
+                                       getter_Copies(resultCCList));
 }
 
-NS_IMETHODIMP nsMsgHdr::GetBccList(char** resultBCCList) {
+NS_IMETHODIMP nsMsgHdr::GetBccList(nsACString& resultBCCList) {
   return m_mdb->RowCellColumnToCharPtr(GetMDBRow(), m_mdb->m_bccListColumnToken,
-                                       resultBCCList);
+                                       getter_Copies(resultBCCList));
 }
 
-NS_IMETHODIMP nsMsgHdr::GetMessageId(char** resultMessageId) {
-  return m_mdb->RowCellColumnToCharPtr(
-      GetMDBRow(), m_mdb->m_messageIdColumnToken, resultMessageId);
+NS_IMETHODIMP nsMsgHdr::GetMessageId(nsACString& resultMessageId) {
+  return m_mdb->RowCellColumnToCharPtr(GetMDBRow(),
+                                       m_mdb->m_messageIdColumnToken,
+                                       getter_Copies(resultMessageId));
 }
 
 NS_IMETHODIMP nsMsgHdr::GetMime2DecodedAuthor(nsAString& resultAuthor) {
@@ -506,13 +498,14 @@ NS_IMETHODIMP nsMsgHdr::GetRecipientsCollationKey(
       GetMDBRow(), m_mdb->m_recipientsColumnToken, resultRecipients);
 }
 
-NS_IMETHODIMP nsMsgHdr::GetCharset(char** aCharset) {
+NS_IMETHODIMP nsMsgHdr::GetCharset(nsACString& aCharset) {
   return m_mdb->RowCellColumnToCharPtr(
-      GetMDBRow(), m_mdb->m_messageCharSetColumnToken, aCharset);
+      GetMDBRow(), m_mdb->m_messageCharSetColumnToken, getter_Copies(aCharset));
 }
 
-NS_IMETHODIMP nsMsgHdr::SetCharset(const char* aCharset) {
-  return SetStringColumn(aCharset, m_mdb->m_messageCharSetColumnToken);
+NS_IMETHODIMP nsMsgHdr::SetCharset(const nsACString& aCharset) {
+  return SetStringColumn(PromiseFlatCString(aCharset).get(),
+                         m_mdb->m_messageCharSetColumnToken);
 }
 
 NS_IMETHODIMP nsMsgHdr::GetEffectiveCharset(nsACString& resultCharset) {
@@ -679,7 +672,7 @@ bool nsMsgHdr::IsParentOf(nsIMsgDBHdr* possibleChild) {
   nsAutoCString reference;
 
   nsCString messageId;
-  GetMessageId(getter_Copies(messageId));
+  GetMessageId(messageId);
 
   while (referenceToCheck > 0) {
     possibleChild->GetStringReference(referenceToCheck - 1, reference);
@@ -706,7 +699,7 @@ bool nsMsgHdr::IsAncestorOf(nsIMsgDBHdr* possibleChild) {
 
   nsCString messageId;
   // should put < > around message id to make strstr strictly match
-  GetMessageId(getter_Copies(messageId));
+  GetMessageId(messageId);
   return (strstr(references, messageId.get()) != nullptr);
 }
 
@@ -933,4 +926,15 @@ NS_IMETHODIMP nsMsgHdr::GetProperties(nsTArray<nsCString>& headers) {
     headers.AppendElement(property);
   }
   return NS_OK;
+}
+
+NS_IMETHODIMP nsMsgHdr::GetUidOnServer(uint32_t* result) {
+  uint32_t uid;
+  nsresult rv = GetUInt32Column(m_mdb->m_uidOnServerColumnToken, &uid);
+  *result = uid;
+  return rv;
+}
+
+NS_IMETHODIMP nsMsgHdr::SetUidOnServer(uint32_t uid) {
+  return SetUInt32Column(uid, m_mdb->m_uidOnServerColumnToken);
 }

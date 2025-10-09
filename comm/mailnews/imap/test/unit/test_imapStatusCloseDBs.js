@@ -5,8 +5,8 @@
 // This file tests that checking folders for new mail with STATUS
 // doesn't leave db's open.
 
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 var gFolder1, gFolder2;
@@ -22,7 +22,7 @@ add_setup(function () {
 
   IMAPPump.server.performTest("SUBSCRIBE");
 
-  let rootFolder = IMAPPump.incomingServer.rootFolder;
+  const rootFolder = IMAPPump.incomingServer.rootFolder;
   gFolder1 = rootFolder.getChildNamed("folder 1");
   gFolder2 = rootFolder.getChildNamed("folder 2");
 

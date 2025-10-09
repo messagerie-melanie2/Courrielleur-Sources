@@ -4,7 +4,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 var {XPCOMUtils} = ChromeUtils.import("resource://gre/modules/XPCOMUtils.jsm");
-var {Services} = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const {GlodaUtils} = ChromeUtils.import("resource:///modules/gloda/utils.js");
 
 
@@ -322,7 +321,7 @@ function OnAddressBookDataChanged(aAction, aParentDir, aItem)
 // through our mime converter.
 
 var messageHeaderSink = {
-    QueryInterface: XPCOMUtils.generateQI(
+    QueryInterface: ChromeUtils.generateQI(
       [Ci.nsIMsgHeaderSink]),
     onStartHeaders: function()
     {
@@ -1889,7 +1888,7 @@ function nsFlavorDataProvider()
 
 nsFlavorDataProvider.prototype =
 {
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIFlavorDataProvider]),
+  QueryInterface: ChromeUtils.generateQI([Ci.nsIFlavorDataProvider]),
 
   getFlavorData : function(aTransferable, aFlavor, aData, aDataLen)
   {

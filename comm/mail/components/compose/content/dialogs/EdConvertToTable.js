@@ -2,9 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* import-globals-from ../editorUtilities.js */
 /* import-globals-from EdDialogCommon.js */
 
+window.addEventListener("load", Startup);
 document.addEventListener("dialogaccept", onAccept);
 document.addEventListener("dialogcancel", onCancel);
 
@@ -15,11 +15,6 @@ var gOtherIndex = "2";
 
 // dialog initialization code
 function Startup() {
-  if (!GetCurrentEditor()) {
-    window.close();
-    return;
-  }
-
   gDialog.sepRadioGroup = document.getElementById("SepRadioGroup");
   gDialog.sepCharacterInput = document.getElementById("SepCharacterInput");
   gDialog.deleteSepCharacter = document.getElementById("DeleteSepCharacter");
@@ -92,7 +87,8 @@ function onAccept() {
   try {
     str = editor.outputToString(
       "text/html",
-      kOutputLFLineBreak | kOutputSelectionOnly
+      Ci.nsIDocumentEncoder.OutputLFLineBreak |
+        Ci.nsIDocumentEncoder.OutputSelectionOnly
     );
   } catch (e) {}
   if (!str) {
@@ -141,7 +137,7 @@ function onAccept() {
     if (start >= 0) {
       end = str.indexOf(">", start + 1);
       if (end > start) {
-        let tagContent = str.slice(start + 1, end).trim();
+        const tagContent = str.slice(start + 1, end).trim();
 
         if (/^ol|^ul|^dl/.test(tagContent)) {
           //  Replace list tag with <BR> to start new row

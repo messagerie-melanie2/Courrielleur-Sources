@@ -5,4 +5,11 @@
 
 JAR_MANIFESTS += ["jar.mn"]
 
+with Files("**"):
+    BUG_COMPONENT = ("Thunderbird", "Message Compose Window")
+
 JS_PREFERENCE_PP_FILES += ["composer.js"]
+
+BROWSER_CHROME_MANIFESTS += [
+    "test/browser/browser.toml",
+]

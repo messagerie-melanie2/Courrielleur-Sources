@@ -34,6 +34,10 @@ class MediaRawData;
 class MediaSourceDemuxer;
 class SourceBufferResource;
 
+namespace dom {
+enum class MediaSourceEndOfStreamError : uint8_t;
+}  // namespace dom
+
 class SourceBufferTaskQueue {
  public:
   SourceBufferTaskQueue() = default;
@@ -74,11 +78,11 @@ class TrackBuffersManager final
     BUFFER_FULL,
   };
 
-  typedef TrackInfo::TrackType TrackType;
-  typedef MediaData::Type MediaType;
-  typedef nsTArray<RefPtr<MediaRawData>> TrackBuffer;
-  typedef SourceBufferTask::AppendPromise AppendPromise;
-  typedef SourceBufferTask::RangeRemovalPromise RangeRemovalPromise;
+  using TrackType = TrackInfo::TrackType;
+  using MediaType = MediaData::Type;
+  using TrackBuffer = nsTArray<RefPtr<MediaRawData>>;
+  using AppendPromise = SourceBufferTask::AppendPromise;
+  using RangeRemovalPromise = SourceBufferTask::RangeRemovalPromise;
 
   // Interface for SourceBuffer
   TrackBuffersManager(MediaSourceDecoder* aParentDecoder,
@@ -108,8 +112,13 @@ class TrackBuffersManager final
   // add aSize bytes.
   // Eviction is done in two steps, first remove data up to aPlaybackTime
   // and if still more space is needed remove from the end.
-  EvictDataResult EvictData(const media::TimeUnit& aPlaybackTime,
-                            int64_t aSize);
+  EvictDataResult EvictData(const media::TimeUnit& aPlaybackTime, int64_t aSize,
+                            TrackType aType);
+
+  // Schedule data eviction if necessary and the size of eviction would be
+  // determined automatically. This is currently used when the buffer's size is
+  // close to full and the normal procedure to evict data is not enough.
+  void EvictDataWithoutSize(TrackType aType, const media::TimeUnit& aTarget);
 
   // Queue a task to run ChangeType
   void ChangeType(const MediaContainerType& aType);
@@ -126,12 +135,18 @@ class TrackBuffersManager final
   int64_t GetSize() const;
 
   // Indicate that the MediaSource parent object got into "ended" state.
-  void Ended();
+  void SetEnded(const dom::Optional<dom::MediaSourceEndOfStreamError>& aError);
 
   // The parent SourceBuffer is about to be destroyed.
   void Detach();
 
-  int64_t EvictionThreshold() const;
+  // Return the eviction threshold, in bytes, for a track type (audio or video).
+  // When the track type isn't passed in (kUndefinedTrack), this returns the
+  // value for video if a video track is present. Specifying the track type
+  // explicitely is useful when initialization hasn't finished, but the track
+  // type is known already.
+  int64_t EvictionThreshold(
+      TrackInfo::TrackType aType = TrackInfo::TrackType::kUndefinedTrack) const;
 
   // Interface for MediaSourceDemuxer
   MediaInfo GetMetadata() const;
@@ -139,7 +154,7 @@ class TrackBuffersManager final
   const media::TimeIntervals& Buffered(TrackInfo::TrackType) const;
   const media::TimeUnit& HighestStartTime(TrackInfo::TrackType) const;
   media::TimeIntervals SafeBuffered(TrackInfo::TrackType) const;
-  bool IsEnded() const { return mEnded; }
+  bool HaveAllData() const { return mHaveAllData; }
   uint32_t Evictable(TrackInfo::TrackType aTrack) const;
   media::TimeUnit Seek(TrackInfo::TrackType aTrack,
                        const media::TimeUnit& aTime,
@@ -176,10 +191,12 @@ class TrackBuffersManager final
   void AddSizeOfResources(MediaSourceDecoder::ResourceSizes* aSizes) const;
 
  private:
-  typedef MozPromise<bool, MediaResult, /* IsExclusive = */ true>
-      CodedFrameProcessingPromise;
+  using CodedFrameProcessingPromise = MozPromise<bool, MediaResult, true>;
 
   ~TrackBuffersManager();
+  // main thread:
+  void Reopen();
+
   // All following functions run on the taskqueue.
   RefPtr<AppendPromise> DoAppendData(already_AddRefed<MediaByteBuffer> aData,
                                      const SourceBufferAttributes& aAttributes);
@@ -200,8 +217,8 @@ class TrackBuffersManager final
   // Called by ResetParserState.
   void CompleteResetParserState() MOZ_REQUIRES(mTaskQueueCapability);
   RefPtr<RangeRemovalPromise> CodedFrameRemovalWithPromise(
-      media::TimeInterval aInterval) MOZ_REQUIRES(mTaskQueueCapability);
-  bool CodedFrameRemoval(media::TimeInterval aInterval)
+      const media::TimeInterval& aInterval) MOZ_REQUIRES(mTaskQueueCapability);
+  bool CodedFrameRemoval(const media::TimeInterval& aInterval)
       MOZ_REQUIRES(mTaskQueueCapability);
   // Removes all coded frames -- this is not to spec and should be used as a
   // last resort to clear buffers only if other methods cannot.
@@ -262,7 +279,7 @@ class TrackBuffersManager final
       MOZ_GUARDED_BY(mTaskQueueCapability);
 
   void OnDemuxerInitDone(const MediaResult& aResult);
-  void OnDemuxerInitFailed(const MediaResult& aFailure);
+  void OnDemuxerInitFailed(const MediaResult& aError);
   void OnDemuxerResetDone(const MediaResult& aResult)
       MOZ_REQUIRES(mTaskQueueCapability);
   MozPromiseRequestHolder<MediaDataDemuxer::InitPromise> mDemuxerInitRequest;
@@ -270,14 +287,16 @@ class TrackBuffersManager final
   void OnDemuxFailed(TrackType aTrack, const MediaResult& aError)
       MOZ_REQUIRES(mTaskQueueCapability);
   void DoDemuxVideo() MOZ_REQUIRES(mTaskQueueCapability);
-  void OnVideoDemuxCompleted(RefPtr<MediaTrackDemuxer::SamplesHolder> aSamples);
+  void OnVideoDemuxCompleted(
+      const RefPtr<MediaTrackDemuxer::SamplesHolder>& aSamples);
   void OnVideoDemuxFailed(const MediaResult& aError) {
     mVideoTracks.mDemuxRequest.Complete();
     mTaskQueueCapability->AssertOnCurrentThread();
     OnDemuxFailed(TrackType::kVideoTrack, aError);
   }
   void DoDemuxAudio() MOZ_REQUIRES(mTaskQueueCapability);
-  void OnAudioDemuxCompleted(RefPtr<MediaTrackDemuxer::SamplesHolder> aSamples);
+  void OnAudioDemuxCompleted(
+      const RefPtr<MediaTrackDemuxer::SamplesHolder>& aSamples);
   void OnAudioDemuxFailed(const MediaResult& aError) {
     mAudioTracks.mDemuxRequest.Complete();
     mTaskQueueCapability->AssertOnCurrentThread();
@@ -289,7 +308,8 @@ class TrackBuffersManager final
   void MaybeDispatchEncryptedEvent(
       const nsTArray<RefPtr<MediaRawData>>& aSamples);
 
-  void DoEvictData(const media::TimeUnit& aPlaybackTime, int64_t aSizeToEvict)
+  void DoEvictData(const media::TimeUnit& aPlaybackTime,
+                   Maybe<int64_t> aSizeToEvict)
       MOZ_REQUIRES(mTaskQueueCapability);
 
   void GetDebugInfo(dom::TrackBuffersManagerDebugInfo& aInfo) const
@@ -381,8 +401,8 @@ class TrackBuffersManager final
         mEvictable = 0;
         mLastIndex = 0;
       }
-      uint32_t mEvictable;
-      uint32_t mLastIndex;
+      uint32_t mEvictable = 0;
+      uint32_t mLastIndex = 0;
     };
     // Size of data that can be safely evicted during the next eviction
     // cycle.
@@ -516,7 +536,7 @@ class TrackBuffersManager final
       MOZ_GUARDED_BY(mTaskQueueCapability);
   // The current sourcebuffer append window. It's content is equivalent to
   // mSourceBufferAttributes.mAppendWindowStart/End
-  media::TimeInterval mAppendWindow MOZ_GUARDED_BY(mTaskQueueCapability);
+  media::Interval<double> mAppendWindow MOZ_GUARDED_BY(mTaskQueueCapability);
 
   // Strong references to external objects.
   nsMainThreadPtrHandle<MediaSourceDecoder> mParentDecoder;
@@ -528,13 +548,15 @@ class TrackBuffersManager final
   media::TimeUnit HighestEndTime(
       nsTArray<const media::TimeIntervals*>& aTracks) const;
 
-  // Set to true if mediasource state changed to ended.
-  Atomic<bool> mEnded;
+  // true if endOfStream() has been called without error.
+  Atomic<bool> mHaveAllData{false};
 
   // Global size of this source buffer content.
   Atomic<int64_t> mSizeSourceBuffer;
   const int64_t mVideoEvictionThreshold;
   const int64_t mAudioEvictionThreshold;
+  // A ratio of buffer fullness that we use for the auto eviction,
+  const double mEvictionBufferWatermarkRatio;
   enum class EvictionState {
     NO_EVICTION_NEEDED,
     EVICTION_NEEDED,
@@ -553,6 +575,8 @@ class TrackBuffersManager final
   media::TimeIntervals mAudioBufferedRanges;
   // MediaInfo of the first init segment read.
   MediaInfo mInfo;
+  // Set to true if MediaSource readyState has changed to ended.
+  bool mEnded MOZ_GUARDED_BY(mMutex) = false;
   // End mutex protected members.
 
   // EventTargetCapability used to ensure we're running on the task queue
@@ -561,6 +585,8 @@ class TrackBuffersManager final
   // mTaskQueue. However, there's special locking around mTaskQueue, so we keep
   // both for now.
   Maybe<EventTargetCapability<TaskQueue>> mTaskQueueCapability;
+
+  Maybe<media::TimeUnit> mFrameEndTimeBeforeRecreateDemuxer;
 };
 
 }  // namespace mozilla

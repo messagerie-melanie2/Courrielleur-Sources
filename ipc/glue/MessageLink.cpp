@@ -9,7 +9,6 @@
 #include "mojo/core/ports/event.h"
 #include "mojo/core/ports/node.h"
 #include "mozilla/ipc/MessageChannel.h"
-#include "mozilla/ipc/BrowserProcessSubThread.h"
 #include "mozilla/ipc/ProtocolUtils.h"
 #include "mozilla/ipc/NodeController.h"
 #include "chrome/common/ipc_channel.h"
@@ -27,6 +26,17 @@ using namespace mozilla;
 
 namespace mozilla {
 namespace ipc {
+
+const char* StringFromIPCSide(Side side) {
+  switch (side) {
+    case ChildSide:
+      return "Child";
+    case ParentSide:
+      return "Parent";
+    default:
+      return "Unknown";
+  }
+}
 
 MessageLink::MessageLink(MessageChannel* aChan) : mChan(aChan) {}
 
@@ -75,7 +85,7 @@ PortLink::PortLink(MessageChannel* aChan, ScopedPort aPort)
   if (aChan->mIsSameThreadChannel) {
     aChan->mWorkerThread->Dispatch(openRunnable.forget());
   } else {
-    XRE_GetIOMessageLoop()->PostTask(openRunnable.forget());
+    XRE_GetAsyncIOEventTarget()->Dispatch(openRunnable.forget());
   }
 }
 
@@ -87,12 +97,13 @@ void PortLink::SendMessage(UniquePtr<Message> aMessage) {
   mChan->mMonitor->AssertCurrentThreadOwns();
 
   if (aMessage->size() > IPC::Channel::kMaximumMessageSize) {
-    CrashReporter::AnnotateCrashReport(
-        CrashReporter::Annotation::IPCMessageName,
-        nsDependentCString(aMessage->name()));
-    CrashReporter::AnnotateCrashReport(
-        CrashReporter::Annotation::IPCMessageSize,
-        static_cast<unsigned int>(aMessage->size()));
+    CrashReporter::RecordAnnotationCString(
+        CrashReporter::Annotation::IPCMessageName, aMessage->name());
+    CrashReporter::RecordAnnotationU32(
+        CrashReporter::Annotation::IPCMessageSize, aMessage->size());
+    CrashReporter::RecordAnnotationU32(
+        CrashReporter::Annotation::IPCMessageLargeBufferShmemFailureSize,
+        aMessage->LargeBufferShmemFailureSize());
     MOZ_CRASH("IPC message size is too large");
   }
   aMessage->AssertAsLargeAsHeader();

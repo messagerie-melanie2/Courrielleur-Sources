@@ -11,12 +11,6 @@ Services.scriptloader.loadSubScript(
   this
 );
 
-// This test tends to trigger a race in the fullscreen time telemetry,
-// where the fullscreen enter and fullscreen exit events (which use the
-// same histogram ID) overlap. That causes TelemetryStopwatch to log an
-// error, bug 1742890.
-SimpleTest.ignoreAllUncaughtExceptions(true);
-
 add_setup(async function () {
   await pushPrefs(
     ["full-screen-api.transition-duration.enter", "0 0"],
@@ -54,7 +48,7 @@ function preventBFCache(aBrowsingContext, aPrevent) {
         await BrowserTestUtils.withNewTab(
           {
             gBrowser,
-            url: "http://mochi.test:8888/browser/dom/base/test/fullscreen/dummy_page.html",
+            url: "https://example.com/browser/dom/base/test/fullscreen/dummy_page.html",
           },
           async function (browser) {
             // Maybe prevent BFCache on initial page.
@@ -66,9 +60,9 @@ function preventBFCache(aBrowsingContext, aPrevent) {
             // Navigate to fullscreen page.
             const url = crossOrigin
               ? "https://example.org/browser/dom/base/test/fullscreen/file_fullscreen-iframe-inner.html"
-              : "http://mochi.test:8888/browser/dom/base/test/fullscreen/file_fullscreen-iframe-inner.html";
+              : "https://example.com/browser/dom/base/test/fullscreen/file_fullscreen-iframe-inner.html";
             const loaded = BrowserTestUtils.browserLoaded(browser, false, url);
-            BrowserTestUtils.loadURIString(browser, url);
+            BrowserTestUtils.startLoadingURIString(browser, url);
             await loaded;
 
             // Maybe prevent BFCache on fullscreen test page.

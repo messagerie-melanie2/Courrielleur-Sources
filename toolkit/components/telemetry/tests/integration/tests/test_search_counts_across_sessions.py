@@ -57,16 +57,14 @@ def test_search_counts(browser, helpers):
     assert scalars1["browser.engagement.tab_open_event_count"] == 1
 
     keyed_histograms1 = ping1["payload"]["keyedHistograms"]
-    search_counts1 = keyed_histograms1["SEARCH_COUNTS"][
-        "{}.urlbar".format(search_engine)
-    ]
+    search_counts1 = keyed_histograms1["SEARCH_COUNTS"][f"{search_engine}.urlbar"]
 
     assert search_counts1 == {
-        u"range": [1, 2],
-        u"bucket_count": 3,
-        u"histogram_type": 4,
-        u"values": {u"1": 0, u"0": 1},
-        u"sum": 1,
+        "range": [1, 2],
+        "bucket_count": 3,
+        "histogram_type": 4,
+        "values": {"1": 0, "0": 1},
+        "sum": 1,
     }
 
     # - Install addon
@@ -153,15 +151,13 @@ def test_search_counts(browser, helpers):
     assert "browser.engagement.window_open_event_count" not in scalars3
 
     keyed_histograms3 = ping3["payload"]["keyedHistograms"]
-    search_counts3 = keyed_histograms3["SEARCH_COUNTS"][
-        "{}.urlbar".format(search_engine)
-    ]
+    search_counts3 = keyed_histograms3["SEARCH_COUNTS"][f"{search_engine}.urlbar"]
     assert search_counts3 == {
-        u"range": [1, 2],
-        u"bucket_count": 3,
-        u"histogram_type": 4,
-        u"values": {u"1": 0, u"0": 3},
-        u"sum": 3,
+        "range": [1, 2],
+        "bucket_count": 3,
+        "histogram_type": 4,
+        "values": {"1": 0, "0": 3},
+        "sum": 3,
     }
 
 

@@ -5,7 +5,13 @@
 /* import-globals-from am-prefs.js */
 /* import-globals-from amUtils.js */
 
-var { MailUtils } = ChromeUtils.import("resource:///modules/MailUtils.jsm");
+var { MailUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailUtils.sys.mjs"
+);
+
+var { OAuth2Providers } = ChromeUtils.importESModule(
+  "resource:///modules/OAuth2Providers.sys.mjs"
+);
 
 var gServer;
 var gOriginalStoreType;
@@ -23,7 +29,7 @@ function clickStoreTypeMenu(aStoreTypeElement) {
   // Response from migration dialog modal. If the conversion is complete
   // 'response.newRootFolder' will hold the path to the new account root folder,
   // otherwise 'response.newRootFolder' will be null.
-  let response = { newRootFolder: null };
+  const response = { newRootFolder: null };
   // Send 'response' as an argument to converterDialog.xhtml.
   window.browsingContext.topChromeWindow.openDialog(
     "converterDialog.xhtml",
@@ -49,9 +55,9 @@ function changeStoreType(aResponse) {
     // Set local path to the new account root folder which is present
     // in 'aResponse.newRootFolder'.
     if (gServer.type == "nntp") {
-      let newRootFolder = aResponse.newRootFolder;
-      let lastSlash = newRootFolder.lastIndexOf("/");
-      let newsrc =
+      const newRootFolder = aResponse.newRootFolder;
+      const lastSlash = newRootFolder.lastIndexOf("/");
+      const newsrc =
         newRootFolder.slice(0, lastSlash) +
         "/newsrc-" +
         newRootFolder.slice(lastSlash + 1);
@@ -72,7 +78,7 @@ function changeStoreType(aResponse) {
 }
 
 function onSave() {
-  let storeContractID = document.getElementById("server.storeTypeMenulist")
+  const storeContractID = document.getElementById("server.storeTypeMenulist")
     .selectedItem.value;
   document
     .getElementById("server.storeContractID")
@@ -86,29 +92,28 @@ function onInit(aPageId, aServerId) {
   onCheckItem("nntp.maxArticles", ["nntp.notifyOn"]);
   setupMailOnServerUI();
   setupFixedUI();
-  let serverType = document.getElementById("server.type").getAttribute("value");
+  const serverType = document
+    .getElementById("server.type")
+    .getAttribute("value");
   if (serverType == "imap") {
     setupImapDeleteUI(aServerId);
   }
-
-  // OAuth2 are only supported on IMAP and POP.
-  document.getElementById("authMethod-oauth2").hidden =
-    serverType != "imap" && serverType != "pop3";
+  // OAuth2 is only supported on certain servers.
+  const details = OAuth2Providers.getHostnameDetails(
+    document.getElementById("server.hostName").value,
+    serverType
+  );
+  document.getElementById("authMethod-oauth2").hidden = !details;
   // TLS Cert (External) only supported on IMAP.
   document.getElementById("authMethod-external").hidden = serverType != "imap";
 
-  // "STARTTLS, if available" is vulnerable to MITM attacks so we shouldn't
-  // allow users to choose it anymore. Hide the option unless the user already
-  // has it set.
-  hideUnlessSelected(document.getElementById("connectionSecurityType-1"));
-
   // UI for account store type.
-  let storeTypeElement = document.getElementById("server.storeTypeMenulist");
+  const storeTypeElement = document.getElementById("server.storeTypeMenulist");
   // set the menuitem to match the account
-  let currentStoreID = document
+  const currentStoreID = document
     .getElementById("server.storeContractID")
     .getAttribute("value");
-  let targetItem = storeTypeElement.getElementsByAttribute(
+  const targetItem = storeTypeElement.getElementsByAttribute(
     "value",
     currentStoreID
   );
@@ -238,7 +243,7 @@ function onAdvanced() {
       .getAttribute("value");
   }
 
-  let onCloseAdvanced = function () {
+  const onCloseAdvanced = function () {
     if (serverType == "imap") {
       document.getElementById("imap.dualUseFolders").checked =
         serverSettings.dualUseFolders;
@@ -267,7 +272,7 @@ function onAdvanced() {
       document
         .getElementById("pop3.deferredToAccount")
         .setAttribute("value", serverSettings.deferredToAccount);
-      let pop3Server = gServer.QueryInterface(Ci.nsIPop3IncomingServer);
+      const pop3Server = gServer.QueryInterface(Ci.nsIPop3IncomingServer);
       // we're explicitly setting this so we'll go through the SetDeferredToAccount method
       pop3Server.deferredToAccount = serverSettings.deferredToAccount;
       // Setting the server to be deferred causes a rebuild of the account tree,
@@ -285,14 +290,14 @@ function onAdvanced() {
       // to that folder (moveOnSpam = true) then moving junk is disabled
       // (so that the user notices it and checks the settings).
       // This is the same sanitization as in am-junk.js, just applied to all POP accounts.
-      let deferredURI =
+      const deferredURI =
         serverSettings.deferredToAccount &&
         MailServices.accounts.getAccount(serverSettings.deferredToAccount)
           .incomingServer.serverURI;
 
-      for (let account of MailServices.accounts.accounts) {
-        let accountValues = parent.getValueArrayFor(account);
-        let type = parent.getAccountValue(
+      for (const account of MailServices.accounts.accounts) {
+        const accountValues = parent.getValueArrayFor(account);
+        const type = parent.getAccountValue(
           account,
           accountValues,
           "server",
@@ -316,7 +321,7 @@ function onAdvanced() {
             accountValues,
             "server",
             "spamActionTargetFolder",
-            "wstring",
+            "string",
             true
           );
           let moveOnSpam = parent.getAccountValue(
@@ -450,20 +455,19 @@ function setupFixedUI() {
 }
 
 function BrowseForNewsrc() {
-  const nsIFilePicker = Ci.nsIFilePicker;
-  const nsIFile = Ci.nsIFile;
-
   var newsrcTextBox = document.getElementById("nntp.newsrcFilePath");
-  var fp = Cc["@mozilla.org/filepicker;1"].createInstance(nsIFilePicker);
+  var fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
   fp.init(
-    window,
+    window.browsingContext,
     document.getElementById("browseForNewsrc").getAttribute("filepickertitle"),
-    nsIFilePicker.modeSave
+    Ci.nsIFilePicker.modeSave
   );
 
   var currentNewsrcFile;
   try {
-    currentNewsrcFile = Cc["@mozilla.org/file/local;1"].createInstance(nsIFile);
+    currentNewsrcFile = Cc["@mozilla.org/file/local;1"].createInstance(
+      Ci.nsIFile
+    );
     currentNewsrcFile.initWithPath(newsrcTextBox.value);
   } catch (e) {
     dump("Failed to create nsIFile instance for the current newsrc file.\n");
@@ -474,10 +478,10 @@ function BrowseForNewsrc() {
     fp.defaultString = currentNewsrcFile.leafName;
   }
 
-  fp.appendFilters(nsIFilePicker.filterAll);
+  fp.appendFilters(Ci.nsIFilePicker.filterAll);
 
   fp.open(rv => {
-    if (rv != nsIFilePicker.returnOK || !fp.file) {
+    if (rv != Ci.nsIFilePicker.returnOK || !fp.file) {
       return;
     }
     newsrcTextBox.value = fp.file.path;
@@ -487,25 +491,25 @@ function BrowseForNewsrc() {
 
 function setupImapDeleteUI(aServerId) {
   // read delete_model preference
-  let deleteModel = document
+  const deleteModel = document
     .getElementById("imap.deleteModel")
     .getAttribute("value");
   selectImapDeleteModel(deleteModel);
 
   // read trash folder path preference
-  let trashFolderName = getTrashFolderName();
+  const trashFolderName = getTrashFolderName();
 
   // set folderPicker menulist
-  let trashPopup = document.getElementById("msgTrashFolderPopup");
+  const trashPopup = document.getElementById("msgTrashFolderPopup");
   trashPopup._teardown();
   trashPopup._parentFolder = MailUtils.getOrCreateFolder(aServerId);
   trashPopup._ensureInitialized();
 
   // Escape backslash and double-quote with another backslash before encoding.
-  let trashEscaped = trashFolderName.replace(/([\\"])/g, "\\$1");
+  const trashEscaped = trashFolderName.replace(/([\\"])/g, "\\$1");
 
   // Convert the folder path from JS Unicode to MUTF-7 if necessary.
-  let imapServer = trashPopup._parentFolder.server.QueryInterface(
+  const imapServer = trashPopup._parentFolder.server.QueryInterface(
     Ci.nsIImapIncomingServer
   );
 
@@ -515,7 +519,7 @@ function setupImapDeleteUI(aServerId) {
     trashFolder = MailUtils.getOrCreateFolder(aServerId + "/" + trashEscaped);
   } else {
     // Traditional MUTF-7.
-    let manager = Cc["@mozilla.org/charset-converter-manager;1"].getService(
+    const manager = Cc["@mozilla.org/charset-converter-manager;1"].getService(
       Ci.nsICharsetConverterManager
     );
     trashFolder = MailUtils.getOrCreateFolder(
@@ -557,32 +561,32 @@ function selectImapDeleteModel(choice) {
 
 // Capture any menulist changes from folderPicker
 function folderPickerChange(aEvent) {
-  let folder = aEvent.target._folder;
+  const folder = aEvent.target._folder;
   // Since we need to deal with localised folder names, we simply use
   // the path of the URI like we do in nsImapIncomingServer::DiscoveryDone().
   // Note that the path is returned with a leading slash which we need to remove.
-  let folderPath = Services.io.newURI(folder.URI).pathQueryRef.substring(1);
-  let folderPathUnescaped = Services.io.unescapeString(
+  const folderPath = Services.io.newURI(folder.URI).pathQueryRef.substring(1);
+  const folderPathUnescaped = Services.io.unescapeString(
     folderPath,
     Ci.nsINetUtil.ESCAPE_URL_PATH
   );
 
   // Convert the folder path from MUTF-7 or UTF-8 to Unicode.
-  let imapServer = folder.server.QueryInterface(Ci.nsIImapIncomingServer);
+  const imapServer = folder.server.QueryInterface(Ci.nsIImapIncomingServer);
 
   let trashUnicode;
   if (imapServer.utf8AcceptEnabled) {
     // UTF8=ACCEPT capability in effect. Unescaping has brought back
     // raw UTF-8 bytes, so convert them to JS Unicode.
-    let typedarray = new Uint8Array(folderPathUnescaped.length);
+    const typedarray = new Uint8Array(folderPathUnescaped.length);
     for (let i = 0; i < folderPathUnescaped.length; i++) {
       typedarray[i] = folderPathUnescaped.charCodeAt(i);
     }
-    let utf8Decoder = new TextDecoder("utf-8");
+    const utf8Decoder = new TextDecoder("utf-8");
     trashUnicode = utf8Decoder.decode(typedarray);
   } else {
     // We need to convert that from MUTF-7 to Unicode.
-    let manager = Cc["@mozilla.org/charset-converter-manager;1"].getService(
+    const manager = Cc["@mozilla.org/charset-converter-manager;1"].getService(
       Ci.nsICharsetConverterManager
     );
     trashUnicode = manager.mutf7ToUnicode(folderPathUnescaped);
@@ -594,22 +598,20 @@ function folderPickerChange(aEvent) {
     .setAttribute("value", trashUnicode);
 
   // Update the widget to show/do correct things even for subfolders.
-  let trashFolderPicker = document.getElementById("msgTrashFolderPicker");
+  const trashFolderPicker = document.getElementById("msgTrashFolderPicker");
   trashFolderPicker.menupopup.selectFolder(folder);
 }
 
-// Get trash_folder_name from prefs. Despite its name this returns
-// a folder path, for example INBOX/Trash.
+/**
+ * Get trash_folder_name from prefs. Despite its name this returns a folder
+ * path, e.g., "INBOX/Deleted" and "[Gmail]/Trash". If pref not set just return
+ * empty string and leave pref not set. This avoids showing a default name
+ * (e.g., "Trash") in trash folder picker when trash folder is something else or
+ * has yet to be determined.
+ */
 function getTrashFolderName() {
-  let trashFolderName = document
+  const trashFolderName = document
     .getElementById("imap.trashFolderName")
     .getAttribute("value");
-  // if the preference hasn't been set, set it to a sane default
-  if (!trashFolderName) {
-    trashFolderName = "Trash"; // XXX Is this a useful default?
-    document
-      .getElementById("imap.trashFolderName")
-      .setAttribute("value", trashFolderName);
-  }
   return trashFolderName;
 }

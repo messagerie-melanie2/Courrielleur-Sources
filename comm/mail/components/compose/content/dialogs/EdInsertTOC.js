@@ -2,7 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* import-globals-from ../editorUtilities.js */
 /* import-globals-from EdDialogCommon.js */
 
 // tocHeadersArray is the array containing the pairs tag/class
@@ -26,6 +25,9 @@ const kMozTocIdPrefixLength = 8;
 const kMozTocClassPrefix = "mozToc";
 const kMozTocClassPrefixLength = 6;
 
+window.addEventListener("load", () => {
+  Startup();
+});
 document.addEventListener("dialogaccept", () => BuildTOC(true));
 
 // Startup() is called when EdInsertTOC.xhtml is opened

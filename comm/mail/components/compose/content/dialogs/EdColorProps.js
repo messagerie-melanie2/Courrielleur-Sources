@@ -12,11 +12,10 @@
  User cannot select "use default" for individual colors
 */
 
-/* import-globals-from ../editorUtilities.js */
 /* import-globals-from EdDialogCommon.js */
+/* global SetAttachCheckbox */ // From EdImageLinkLoader.js
 
-// Cancel() is in EdDialogCommon.js
-
+window.addEventListener("load", Startup);
 document.addEventListener("dialogaccept", onAccept);
 document.addEventListener("dialogcancel", onCancel);
 
@@ -123,8 +122,6 @@ function InitDialog() {
       backImageStyle + gBackgroundImage + ");"
     );
   }
-
-  SetRelativeCheckbox();
 
   customTextColor = GetHTMLOrCSSStyleValue(globalElement, textStr, cssColorStr);
   customTextColor = ConvertRGBColorIntoHEXColor(customTextColor);
@@ -337,14 +334,8 @@ function UseDefaultColors() {
 function chooseFile() {
   // Get a local image file, converted into URL format
   GetLocalFileURL("img").then(fileURL => {
-    // Always try to relativize local file URLs
-    if (gHaveDocumentUrl) {
-      fileURL = MakeRelativeUrl(fileURL);
-    }
-
     gDialog.BackgroundImageInput.value = fileURL;
 
-    SetRelativeCheckbox();
     ValidateAndPreviewImage(true);
     SetTextboxFocus(gDialog.BackgroundImageInput);
   });
@@ -353,10 +344,9 @@ function chooseFile() {
 function ChangeBackgroundImage() {
   // Don't show error message for image while user is typing
   ValidateAndPreviewImage(false);
-  SetRelativeCheckbox();
 }
 
-function ValidateAndPreviewImage(ShowErrorMessage) {
+function ValidateAndPreviewImage() {
   // First make a string with just background color
   var styleValue = backColorStyle + previewBGColor + ";";
 
@@ -369,7 +359,7 @@ function ValidateAndPreviewImage(ShowErrorMessage) {
       gBackgroundImage = image;
 
       // Display must use absolute URL if possible
-      var displayImage = gHaveDocumentUrl ? MakeAbsoluteUrl(image) : image;
+      var displayImage = image;
       styleValue += backImageStyle + displayImage + ");";
     }
   } else {
@@ -443,11 +433,11 @@ function ValidateData() {
 function onAccept(event) {
   // If it's a file, convert to a data URL.
   if (gBackgroundImage && /^file:/i.test(gBackgroundImage)) {
-    let nsFile = Services.io
+    const nsFile = Services.io
       .newURI(gBackgroundImage)
       .QueryInterface(Ci.nsIFileURL).file;
     if (nsFile.exists()) {
-      let reader = new FileReader();
+      const reader = new FileReader();
       reader.addEventListener("load", function () {
         gBackgroundImage = reader.result;
         gDialog.BackgroundImageInput.value = reader.result;

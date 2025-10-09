@@ -10,7 +10,8 @@
 #include "mozilla/dom/WindowBinding.h"
 #include "mozilla/dom/WindowProxyHolder.h"
 #include "nsContentUtils.h"
-#include "nsGlobalWindow.h"
+#include "nsGlobalWindowInner.h"
+#include "nsGlobalWindowOuter.h"
 #include "nsHTMLDocument.h"
 #include "nsJSUtils.h"
 #include "xpcprivate.h"
@@ -152,7 +153,7 @@ bool WindowNamedPropertiesHandler::getOwnPropDescriptor(
   }
 
   ErrorResult rv;
-  bool found = document->ResolveName(aCx, str, &v, rv);
+  bool found = document->ResolveNameForWindow(aCx, str, &v, rv);
   if (rv.MaybeSetPendingException(aCx)) {
     return false;
   }
@@ -215,7 +216,7 @@ bool WindowNamedPropertiesHandler::ownPropNames(
   nsHTMLDocument* document = doc->AsHTMLDocument();
   // Document names are enumerable, so we want to get them no matter what flags
   // is.
-  document->GetSupportedNames(names);
+  document->GetSupportedNamesForWindow(names);
 
   JS::RootedVector<jsid> docProps(aCx);
   if (!AppendNamedPropertyIds(aCx, aProxy, names, false, &docProps)) {
@@ -244,11 +245,9 @@ static const DOMIfaceAndProtoJSClass WindowNamedPropertiesClass = {
     PROXY_CLASS_DEF("WindowProperties", JSCLASS_IS_DOMIFACEANDPROTOJSCLASS |
                                             JSCLASS_HAS_RESERVED_SLOTS(1)),
     eNamedPropertiesObject,
-    false,
     prototypes::id::_ID_Count,
     0,
     &sEmptyNativePropertyHooks,
-    "[object WindowProperties]",
     EventTarget_Binding::GetProtoObject};
 
 // static

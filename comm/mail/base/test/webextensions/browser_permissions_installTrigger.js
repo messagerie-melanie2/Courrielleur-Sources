@@ -11,9 +11,13 @@ async function installTrigger(filename) {
       ["xpinstall.userActivation.required", false],
     ],
   });
-  let gBrowser = document.getElementById("tabmail");
-  BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, INSTALL_PAGE);
-  await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
+  const gBrowser = document.getElementById("tabmail");
+  const loadPromise = BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
+  BrowserTestUtils.startLoadingURIString(
+    gBrowser.selectedBrowser,
+    INSTALL_PAGE
+  );
+  await loadPromise;
 
   SpecialPowers.spawn(
     gBrowser.selectedBrowser,

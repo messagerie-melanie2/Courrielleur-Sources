@@ -6,10 +6,17 @@
 "use strict";
 
 const TEST_URI =
-  "http://example.com/browser/devtools/client/webconsole/" +
+  "https://example.com/browser/devtools/client/webconsole/" +
   "test/browser/test-console-workers.html";
 
 add_task(async function () {
+  // Allow using SharedArrayBuffer in the test without special HTTP Headers
+  await pushPref(
+    "dom.postMessage.sharedArrayBuffer.bypassCOOP_COEP.insecure.enabled",
+    true
+  );
+  await pushPref("devtools.toolbox.footer.height", 500);
+
   info("Run the test with worker events dispatched to main thread");
   await pushPref("dom.worker.console.dispatch_events_to_main_thread", true);
   await testWorkerMessage();
@@ -81,15 +88,42 @@ async function testWorkerMessage(directConnectionToWorkerThread = false) {
     );
 
     info("Check that Symbol are properly logged");
-    await SpecialPowers.spawn(gBrowser.selectedBrowser, [], () => {
-      content.wrappedJSObject.logFromWorker("live-message");
-    });
-
     const symbolMessage = await waitFor(() =>
       findConsoleAPIMessage(hud, 'Symbol("logged-symbol-from-worker")')
     );
     ok(symbolMessage, "Symbol logged from worker is visible in the console");
   }
+
+  const regExpMessage = await waitFor(() =>
+    findConsoleAPIMessage(hud, "regexp-from-worker")
+  );
+  if (!directConnectionToWorkerThread) {
+    Assert.stringContains(regExpMessage.textContent, "/foo/m");
+  } else {
+    // Note that the RegExp will still be debuggable via an twisty on an empty label
+    Assert.stringContains(
+      regExpMessage.textContent,
+      "RegExp with overloaded toString",
+      "RegExp with overloaded toString failed to log from workers"
+    );
+  }
+  Assert.stringContains(regExpMessage.textContent, "/not-overloaded/g");
+
+  const dateMessage = await waitFor(() =>
+    findConsoleAPIMessage(hud, "date-from-worker")
+  );
+  Assert.stringContains(dateMessage.textContent, "Jan 01 2024");
+
+  info("Check that Arrays are properly logged");
+  const arrayMessage = await waitFor(() =>
+    findConsoleAPIMessage(hud, '[ "array-item", 42, {…} ]')
+  );
+  ok(arrayMessage, "Array logged from worker is visible in the console");
+
+  const sabMessage = await waitFor(() =>
+    findConsoleAPIMessage(hud, "sab-from-worker")
+  );
+  ok(sabMessage.textContent.includes("SharedArrayBuffer"));
 
   info("Click on the clear button and wait for messages to be removed");
   const onMessagesCacheCleared = hud.ui.once("messages-cache-cleared");

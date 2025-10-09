@@ -10,10 +10,13 @@
 #include "nsHyphenationManager.h"
 #include "nsHyphenator.h"
 #include "mozilla/AutoRestore.h"
+#include "mozilla/ClearOnShutdown.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/intl/LineBreaker.h"  // for LineBreaker::ComputeBreakPositions
 #include "mozilla/intl/Locale.h"
 #include "mozilla/intl/UnicodeProperties.h"
+#include "mozilla/ScopeExit.h"
+#include "mozilla/StaticPrefs_intl.h"
 
 using mozilla::AutoRestore;
 using mozilla::intl::LineBreaker;
@@ -23,78 +26,116 @@ using mozilla::intl::LocaleParser;
 using mozilla::intl::UnicodeProperties;
 using mozilla::intl::WordBreakRule;
 
+// There is no break opportunity between any pair of characters that has line
+// break class of either AL (Alphabetic), IS (Infix Numeric Separator), NU
+// (Numeric), or QU (Quotation). See
+// https://www.unicode.org/Public/UCD/latest/ucd/LineBreak.txt for Unicode code
+// point and line break class mapping.
+static constexpr uint8_t kNonBreakableASCII[] = {
+    // clang-format off
+// 0x20-0x2f
+0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0,
+// 0x30-0x3f
+1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0,
+// 0x40-0x4f
+1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+// 0x50-0x5f
+1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1,
+// 0x60-0x6f
+1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+// 0x70-0x7f
+1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0,
+    // clang-format on
+};
+
+template <typename T>
+static constexpr bool IsNonBreakableChar(T aChar, bool aLegacyBehavior) {
+  if (aLegacyBehavior) {
+    // If not using ICU4X, line break rules aren't compatible with UAX#14. Use
+    // old way.
+    return (0x0030 <= aChar && aChar <= 0x0039) ||
+           (0x0041 <= aChar && aChar <= 0x005A) ||
+           (0x0061 <= aChar && aChar <= 0x007A) || (0x000a == aChar);
+  }
+  if (aChar < 0x20 || aChar > 0x7f) {
+    return false;
+  }
+  return !!kNonBreakableASCII[aChar - 0x20];
+}
+
 nsLineBreaker::nsLineBreaker()
-    : mCurrentWordLanguage(nullptr),
-      mCurrentWordContainsMixedLang(false),
-      mCurrentWordContainsComplexChar(false),
-      mScriptIsChineseOrJapanese(false),
-      mAfterBreakableSpace(false),
-      mBreakHere(false),
-      mWordBreak(WordBreakRule::Normal),
-      mLineBreak(LineBreakRule::Auto),
-      mWordContinuation(false) {}
+    : mLegacyBehavior(!mozilla::StaticPrefs::intl_icu4x_segmenter_enabled()) {}
 
 nsLineBreaker::~nsLineBreaker() {
   NS_ASSERTION(mCurrentWord.Length() == 0,
                "Should have Reset() before destruction!");
 }
 
+/* static */
+bool nsLineBreaker::ShouldCapitalize(uint32_t aChar, bool& aCapitalizeNext) {
+  using mozilla::intl::GeneralCategory;
+  auto category = UnicodeProperties::CharType(aChar);
+  switch (category) {
+    case GeneralCategory::Uppercase_Letter:
+    case GeneralCategory::Lowercase_Letter:
+    case GeneralCategory::Titlecase_Letter:
+    case GeneralCategory::Modifier_Letter:
+    case GeneralCategory::Other_Letter:
+    case GeneralCategory::Decimal_Number:
+    case GeneralCategory::Letter_Number:
+    case GeneralCategory::Other_Number:
+      if (aCapitalizeNext) {
+        aCapitalizeNext = false;
+        return true;
+      }
+      break;
+    case GeneralCategory::Space_Separator:
+    case GeneralCategory::Line_Separator:
+    case GeneralCategory::Paragraph_Separator:
+    case GeneralCategory::Dash_Punctuation:
+    case GeneralCategory::Initial_Punctuation:
+      /* These punctuation categories are excluded, for examples like
+       *   "what colo[u]r" -> "What Colo[u]r?" (rather than "What Colo[U]R?")
+       * and
+       *   "snake_case" -> "Snake_case" (to match word selection behavior)
+      case GeneralCategory::Open_Punctuation:
+      case GeneralCategory::Close_Punctuation:
+      case GeneralCategory::Connector_Punctuation:
+       */
+      aCapitalizeNext = true;
+      break;
+    case GeneralCategory::Final_Punctuation:
+      /* Special-case: exclude Unicode single-close-quote/apostrophe,
+         for examples like "Lowe’s" etc. */
+      if (aChar != 0x2019) {
+        aCapitalizeNext = true;
+      }
+      break;
+    case GeneralCategory::Other_Punctuation:
+      /* Special-case: exclude ASCII apostrophe, for "Lowe's" etc.,
+         and MIDDLE DOT, for Catalan "l·l". */
+      if (aChar != '\'' && aChar != 0x00B7) {
+        aCapitalizeNext = true;
+      }
+      break;
+    default:
+      break;
+  }
+  return false;
+}
+
 static void SetupCapitalization(const char16_t* aWord, uint32_t aLength,
                                 bool* aCapitalization) {
   // Capitalize the first alphanumeric character after a space or punctuation.
-  using mozilla::intl::GeneralCategory;
   bool capitalizeNextChar = true;
   for (uint32_t i = 0; i < aLength; ++i) {
     uint32_t ch = aWord[i];
     if (i + 1 < aLength && NS_IS_SURROGATE_PAIR(ch, aWord[i + 1])) {
       ch = SURROGATE_TO_UCS4(ch, aWord[i + 1]);
     }
-    auto category = UnicodeProperties::CharType(ch);
-    switch (category) {
-      case GeneralCategory::Uppercase_Letter:
-      case GeneralCategory::Lowercase_Letter:
-      case GeneralCategory::Titlecase_Letter:
-      case GeneralCategory::Modifier_Letter:
-      case GeneralCategory::Other_Letter:
-      case GeneralCategory::Decimal_Number:
-      case GeneralCategory::Letter_Number:
-      case GeneralCategory::Other_Number:
-        if (capitalizeNextChar) {
-          aCapitalization[i] = true;
-          capitalizeNextChar = false;
-        }
-        break;
-      case GeneralCategory::Space_Separator:
-      case GeneralCategory::Line_Separator:
-      case GeneralCategory::Paragraph_Separator:
-      case GeneralCategory::Dash_Punctuation:
-      case GeneralCategory::Initial_Punctuation:
-        /* These punctuation categories are excluded, for examples like
-         *   "what colo[u]r" -> "What Colo[u]r?" (rather than "What Colo[U]R?")
-         * and
-         *   "snake_case" -> "Snake_case" (to match word selection behavior)
-        case GeneralCategory::Open_Punctuation:
-        case GeneralCategory::Close_Punctuation:
-        case GeneralCategory::Connector_Punctuation:
-         */
-        capitalizeNextChar = true;
-        break;
-      case GeneralCategory::Final_Punctuation:
-        /* Special-case: exclude Unicode single-close-quote/apostrophe,
-           for examples like "Lowe’s" etc. */
-        if (ch != 0x2019) {
-          capitalizeNextChar = true;
-        }
-        break;
-      case GeneralCategory::Other_Punctuation:
-        /* Special-case: exclude ASCII apostrophe, for "Lowe's" etc. */
-        if (ch != '\'') {
-          capitalizeNextChar = true;
-        }
-        break;
-      default:
-        break;
-    }
+    aCapitalization[i] =
+        nsLineBreaker::ShouldCapitalize(ch, capitalizeNextChar);
+
     if (!IS_IN_BMP(ch)) {
       ++i;
     }
@@ -102,6 +143,15 @@ static void SetupCapitalization(const char16_t* aWord, uint32_t aLength,
 }
 
 nsresult nsLineBreaker::FlushCurrentWord() {
+  auto cleanup = mozilla::MakeScopeExit([&] {
+    mCurrentWord.Clear();
+    mTextItems.Clear();
+    mCurrentWordMightBeBreakable = false;
+    mCurrentWordContainsMixedLang = false;
+    mCurrentWordLanguage = nullptr;
+    mWordContinuation = false;
+  });
+
   uint32_t length = mCurrentWord.Length();
   AutoTArray<uint8_t, 4000> breakState;
   if (!breakState.AppendElements(length, mozilla::fallible)) {
@@ -112,13 +162,12 @@ nsresult nsLineBreaker::FlushCurrentWord() {
     memset(breakState.Elements(),
            gfxTextRun::CompressedGlyph::FLAG_BREAK_TYPE_NORMAL,
            length * sizeof(uint8_t));
-  } else if (!mCurrentWordContainsComplexChar) {
-    // For break-strict set everything internal to "break", otherwise
-    // to "no break"!
+  } else if (!mCurrentWordMightBeBreakable &&
+             mWordBreak != WordBreakRule::BreakAll) {
+    // word-break: normal or keep-all has no break opportunity if the word
+    // is non-breakable. (See the comment of kNonBreakableASCII).
     memset(breakState.Elements(),
-           mWordBreak == WordBreakRule::BreakAll
-               ? gfxTextRun::CompressedGlyph::FLAG_BREAK_TYPE_NORMAL
-               : gfxTextRun::CompressedGlyph::FLAG_BREAK_TYPE_NONE,
+           gfxTextRun::CompressedGlyph::FLAG_BREAK_TYPE_NONE,
            length * sizeof(uint8_t));
   } else {
     LineBreaker::ComputeBreakPositions(
@@ -172,7 +221,7 @@ nsresult nsLineBreaker::FlushCurrentWord() {
         if (capitalizationState.Length() == 0) {
           if (!capitalizationState.AppendElements(length, mozilla::fallible)) {
             return NS_ERROR_OUT_OF_MEMORY;
-          };
+          }
           memset(capitalizationState.Elements(), false, length * sizeof(bool));
           SetupCapitalization(mCurrentWord.Elements(), length,
                               capitalizationState.Elements());
@@ -185,12 +234,6 @@ nsresult nsLineBreaker::FlushCurrentWord() {
     offset += ti->mLength;
   }
 
-  mCurrentWord.Clear();
-  mTextItems.Clear();
-  mCurrentWordContainsComplexChar = false;
-  mCurrentWordContainsMixedLang = false;
-  mCurrentWordLanguage = nullptr;
-  mWordContinuation = false;
   return NS_OK;
 }
 
@@ -213,10 +256,11 @@ nsresult nsLineBreaker::AppendText(nsAtom* aHyphenationLanguage,
     NS_ASSERTION(!mAfterBreakableSpace && !mBreakHere,
                  "These should not be set");
 
-    while (offset < aLength && !IsSpace(aText[offset])) {
+    while (offset < aLength && !IsSegmentSpace(aText[offset])) {
       mCurrentWord.AppendElement(aText[offset]);
-      if (!mCurrentWordContainsComplexChar && IsComplexChar(aText[offset])) {
-        mCurrentWordContainsComplexChar = true;
+      if (!mCurrentWordMightBeBreakable &&
+          !IsNonBreakableChar<char16_t>(aText[offset], mLegacyBehavior)) {
+        mCurrentWordMightBeBreakable = true;
       }
       UpdateCurrentWordLanguage(aHyphenationLanguage);
       ++offset;
@@ -226,11 +270,15 @@ nsresult nsLineBreaker::AppendText(nsAtom* aHyphenationLanguage,
       mTextItems.AppendElement(TextItem(aSink, 0, offset, aFlags));
     }
 
-    if (offset == aLength) return NS_OK;
+    if (offset == aLength) {
+      return NS_OK;
+    }
 
     // We encountered whitespace, so we're done with this word
     nsresult rv = FlushCurrentWord();
-    if (NS_FAILED(rv)) return rv;
+    if (NS_FAILED(rv)) {
+      return rv;
+    }
   }
 
   AutoTArray<uint8_t, 4000> breakState;
@@ -262,11 +310,13 @@ nsresult nsLineBreaker::AppendText(nsAtom* aHyphenationLanguage,
     offset = aLength;
     while (offset > start) {
       --offset;
-      if (IsSpace(aText[offset])) break;
+      if (IsSegmentSpace(aText[offset])) {
+        break;
+      }
     }
   }
   uint32_t wordStart = offset;
-  bool wordHasComplexChar = false;
+  bool wordMightBeBreakable = false;
 
   RefPtr<nsHyphenator> hyphenator;
   if ((aFlags & BREAK_USE_AUTO_HYPHENATION) &&
@@ -277,7 +327,7 @@ nsresult nsLineBreaker::AppendText(nsAtom* aHyphenationLanguage,
 
   for (;;) {
     char16_t ch = aText[offset];
-    bool isSpace = IsSpace(ch);
+    bool isSpace = IsSegmentSpace(ch);
     bool isBreakableSpace = isSpace && !(aFlags & BREAK_SUPPRESS_INSIDE);
 
     if (aSink && !noBreaksNeeded) {
@@ -298,7 +348,7 @@ nsresult nsLineBreaker::AppendText(nsAtom* aHyphenationLanguage,
             memset(breakState.Elements() + wordStart,
                    gfxTextRun::CompressedGlyph::FLAG_BREAK_TYPE_NORMAL,
                    offset - wordStart);
-          } else if (wordHasComplexChar) {
+          } else if (wordMightBeBreakable) {
             // Save current start-of-word state because ComputeBreakPositions()
             // will set it to false.
             AutoRestore<uint8_t> saveWordStartBreakState(breakState[wordStart]);
@@ -316,29 +366,35 @@ nsresult nsLineBreaker::AppendText(nsAtom* aHyphenationLanguage,
                               capitalizationState.Elements() + wordStart);
         }
       }
-      wordHasComplexChar = false;
+      wordMightBeBreakable = false;
       mWordContinuation = false;
       ++offset;
-      if (offset >= aLength) break;
-      wordStart = offset;
-    } else {
-      if (!wordHasComplexChar && IsComplexChar(ch)) {
-        wordHasComplexChar = true;
-      }
-      ++offset;
       if (offset >= aLength) {
-        // Save this word
-        mCurrentWordContainsComplexChar = wordHasComplexChar;
-        uint32_t len = offset - wordStart;
-        char16_t* elems = mCurrentWord.AppendElements(len);
-        if (!elems) return NS_ERROR_OUT_OF_MEMORY;
-        memcpy(elems, aText + wordStart, sizeof(char16_t) * len);
-        mTextItems.AppendElement(TextItem(aSink, wordStart, len, aFlags));
-        // Ensure that the break-before for this word is written out
-        offset = wordStart + 1;
-        UpdateCurrentWordLanguage(aHyphenationLanguage);
         break;
       }
+      wordStart = offset;
+      continue;
+    }
+
+    if (!wordMightBeBreakable &&
+        !IsNonBreakableChar<char16_t>(ch, mLegacyBehavior)) {
+      wordMightBeBreakable = true;
+    }
+    ++offset;
+    if (offset >= aLength) {
+      // Save this word
+      mCurrentWordMightBeBreakable = wordMightBeBreakable;
+      uint32_t len = offset - wordStart;
+      char16_t* elems = mCurrentWord.AppendElements(len, mozilla::fallible);
+      if (!elems) {
+        return NS_ERROR_OUT_OF_MEMORY;
+      }
+      memcpy(elems, aText + wordStart, sizeof(char16_t) * len);
+      mTextItems.AppendElement(TextItem(aSink, wordStart, len, aFlags));
+      // Ensure that the break-before for this word is written out
+      offset = wordStart + 1;
+      UpdateCurrentWordLanguage(aHyphenationLanguage);
+      break;
     }
   }
 
@@ -358,14 +414,101 @@ void nsLineBreaker::FindHyphenationPoints(nsHyphenator* aHyphenator,
                                           const char16_t* aTextStart,
                                           const char16_t* aTextLimit,
                                           uint8_t* aBreakState) {
+  // Early-return for words that are definitely too short to hyphenate.
+  if (aTextLimit - aTextStart < mHyphenateLimitWord) {
+    return;
+  }
+
   nsDependentSubstring string(aTextStart, aTextLimit);
   AutoTArray<bool, 200> hyphens;
-  if (NS_SUCCEEDED(aHyphenator->Hyphenate(string, hyphens))) {
-    for (uint32_t i = 0; i + 1 < string.Length(); ++i) {
-      if (hyphens[i]) {
-        aBreakState[i + 1] =
-            gfxTextRun::CompressedGlyph::FLAG_BREAK_TYPE_HYPHEN;
+  if (NS_FAILED(aHyphenator->Hyphenate(string, hyphens))) {
+    return;
+  }
+
+  // Keep track of the length seen so far, in terms of characters that are
+  // countable for hyphenate-limit-chars purposes.
+  uint32_t length = 0;
+  // When setting a potential break in aBreakState, we record the previous
+  // value in case we need to restore it because the position turns out to
+  // be too close to the end of the word.
+  struct BreakInfo {
+    uint32_t mPosition;
+    uint32_t mLength;
+    uint8_t mState;
+  };
+  AutoTArray<BreakInfo, 16> oldBreaks;
+  // Don't consider setting any breaks where i >= endLimit, as they will
+  // definitely be too near the end of the word to be accepted.
+  uint32_t endLimit =
+      string.Length() - std::max<uint32_t>(1u, mHyphenateLimitEnd);
+  for (uint32_t i = 0; i < string.Length(); ++i) {
+    // Get current character, converting surrogate pairs to UCS4 for char
+    // category lookup.
+    uint32_t ch = string[i];
+    if (NS_IS_HIGH_SURROGATE(ch) && i + 1 < string.Length() &&
+        NS_IS_LOW_SURROGATE(string[i + 1])) {
+      ch = SURROGATE_TO_UCS4(ch, string[i + 1]);
+    }
+
+    // According to CSS Text, "Nonspacing combining marks (Unicode General
+    // Category Mn) and intra-word punctuation (Unicode General Category P*)
+    // do not count towards the minimum."
+    // (https://drafts.csswg.org/css-text-4/#hyphenate-char-limits)
+    // We also don't count Control or Format categories.
+    using mozilla::intl::GeneralCategory;
+    switch (UnicodeProperties::CharType(ch)) {
+      case GeneralCategory::Nonspacing_Mark:
+      case GeneralCategory::Dash_Punctuation:
+      case GeneralCategory::Open_Punctuation:
+      case GeneralCategory::Close_Punctuation:
+      case GeneralCategory::Connector_Punctuation:
+      case GeneralCategory::Other_Punctuation:
+      case GeneralCategory::Initial_Punctuation:
+      case GeneralCategory::Final_Punctuation:
+      case GeneralCategory::Control:
+      case GeneralCategory::Format:
+      case GeneralCategory::Surrogate:
+        break;
+      default:
+        ++length;
+        break;
+    }
+
+    // Don't accept any breaks until we're far enough into the word, or if
+    // we're too near the end for it to possibly be accepted. (Note that the
+    // check against endLimit is just an initial worst-case check that assumes
+    // all the remaining characters are countable; if there are combining
+    // marks, etc., in the trailing part of the word we may need to reset the
+    // potential break later, after we've fully counted length.)
+    if (hyphens[i] && length >= mHyphenateLimitStart && i < endLimit) {
+      // Keep track of hyphen position and "countable" length of the word.
+      oldBreaks.AppendElement(BreakInfo{i + 1, length, aBreakState[i + 1]});
+      aBreakState[i + 1] = gfxTextRun::CompressedGlyph::FLAG_BREAK_TYPE_HYPHEN;
+    }
+
+    // If the character was outside the BMP, skip past the low surrogate.
+    if (!IS_IN_BMP(ch)) {
+      ++i;
+    }
+  }
+
+  if (length < mHyphenateLimitWord) {
+    // After discounting combining marks, punctuation, controls, etc., the word
+    // was too short for hyphenate-limit-chars. If we've set any hyphen breaks,
+    // forget them.
+    while (!oldBreaks.IsEmpty()) {
+      auto lastBreak = oldBreaks.PopLastElement();
+      aBreakState[lastBreak.mPosition] = lastBreak.mState;
+    }
+  } else {
+    // Check if trailing fragment is too short; if so, remove the last hyphen
+    // break(s) that we set, until the fragment will be long enough.
+    while (!oldBreaks.IsEmpty()) {
+      auto lastBreak = oldBreaks.PopLastElement();
+      if (length - lastBreak.mLength >= mHyphenateLimitEnd) {
+        break;
       }
+      aBreakState[lastBreak.mPosition] = lastBreak.mState;
     }
   }
 }
@@ -390,11 +533,11 @@ nsresult nsLineBreaker::AppendText(nsAtom* aHyphenationLanguage,
     NS_ASSERTION(!mAfterBreakableSpace && !mBreakHere,
                  "These should not be set");
 
-    while (offset < aLength && !IsSpace(aText[offset])) {
+    while (offset < aLength && !IsSegmentSpace(aText[offset])) {
       mCurrentWord.AppendElement(aText[offset]);
-      if (!mCurrentWordContainsComplexChar &&
-          IsComplexASCIIChar(aText[offset])) {
-        mCurrentWordContainsComplexChar = true;
+      if (!mCurrentWordMightBeBreakable &&
+          !IsNonBreakableChar<uint8_t>(aText[offset], mLegacyBehavior)) {
+        mCurrentWordMightBeBreakable = true;
       }
       ++offset;
     }
@@ -410,7 +553,9 @@ nsresult nsLineBreaker::AppendText(nsAtom* aHyphenationLanguage,
 
     // We encountered whitespace, so we're done with this word
     nsresult rv = FlushCurrentWord();
-    if (NS_FAILED(rv)) return rv;
+    if (NS_FAILED(rv)) {
+      return rv;
+    }
   }
 
   AutoTArray<uint8_t, 4000> breakState;
@@ -432,15 +577,17 @@ nsresult nsLineBreaker::AppendText(nsAtom* aHyphenationLanguage,
     offset = aLength;
     while (offset > start) {
       --offset;
-      if (IsSpace(aText[offset])) break;
+      if (IsSegmentSpace(aText[offset])) {
+        break;
+      }
     }
   }
   uint32_t wordStart = offset;
-  bool wordHasComplexChar = false;
+  bool wordMightBeBreakable = false;
 
   for (;;) {
     uint8_t ch = aText[offset];
-    bool isSpace = IsSpace(ch);
+    bool isSpace = IsSegmentSpace(ch);
     bool isBreakableSpace = isSpace && !(aFlags & BREAK_SUPPRESS_INSIDE);
 
     if (aSink) {
@@ -462,7 +609,7 @@ nsresult nsLineBreaker::AppendText(nsAtom* aHyphenationLanguage,
           memset(breakState.Elements() + wordStart,
                  gfxTextRun::CompressedGlyph::FLAG_BREAK_TYPE_NORMAL,
                  offset - wordStart);
-        } else if (wordHasComplexChar) {
+        } else if (wordMightBeBreakable) {
           // Save current start-of-word state because ComputeBreakPositions()
           // will set it to false.
           AutoRestore<uint8_t> saveWordStartBreakState(breakState[wordStart]);
@@ -472,30 +619,37 @@ nsresult nsLineBreaker::AppendText(nsAtom* aHyphenationLanguage,
         }
       }
 
-      wordHasComplexChar = false;
-      ++offset;
-      if (offset >= aLength) break;
-      wordStart = offset;
-    } else {
-      if (!wordHasComplexChar && IsComplexASCIIChar(ch)) {
-        wordHasComplexChar = true;
-      }
+      wordMightBeBreakable = false;
+      mWordContinuation = false;
       ++offset;
       if (offset >= aLength) {
-        // Save this word
-        mCurrentWordContainsComplexChar = wordHasComplexChar;
-        uint32_t len = offset - wordStart;
-        char16_t* elems = mCurrentWord.AppendElements(len);
-        if (!elems) return NS_ERROR_OUT_OF_MEMORY;
-        uint32_t i;
-        for (i = wordStart; i < offset; ++i) {
-          elems[i - wordStart] = aText[i];
-        }
-        mTextItems.AppendElement(TextItem(aSink, wordStart, len, aFlags));
-        // Ensure that the break-before for this word is written out
-        offset = wordStart + 1;
         break;
       }
+      wordStart = offset;
+      continue;
+    }
+
+    if (!wordMightBeBreakable &&
+        !IsNonBreakableChar<uint8_t>(ch, mLegacyBehavior)) {
+      wordMightBeBreakable = true;
+    }
+    ++offset;
+    if (offset >= aLength) {
+      // Save this word
+      mCurrentWordMightBeBreakable = wordMightBeBreakable;
+      uint32_t len = offset - wordStart;
+      char16_t* elems = mCurrentWord.AppendElements(len, mozilla::fallible);
+      if (!elems) {
+        return NS_ERROR_OUT_OF_MEMORY;
+      }
+      uint32_t i;
+      for (i = wordStart; i < offset; ++i) {
+        elems[i - wordStart] = aText[i];
+      }
+      mTextItems.AppendElement(TextItem(aSink, wordStart, len, aFlags));
+      // Ensure that the break-before for this word is written out
+      offset = wordStart + 1;
+      break;
     }
   }
 
@@ -509,8 +663,24 @@ void nsLineBreaker::UpdateCurrentWordLanguage(nsAtom* aHyphenationLanguage) {
   if (mCurrentWordLanguage && mCurrentWordLanguage != aHyphenationLanguage) {
     mCurrentWordContainsMixedLang = true;
     mScriptIsChineseOrJapanese = false;
-  } else {
-    if (aHyphenationLanguage && !mCurrentWordLanguage) {
+    return;
+  }
+
+  if (aHyphenationLanguage && !mCurrentWordLanguage) {
+    static mozilla::StaticRefPtr<nsAtom> sLastHyphenationLanguage;
+    static bool sLastScriptIsChineseOrJapanese = false;
+    static bool sInit = false;
+
+    if (!sInit) {
+      mozilla::ClearOnShutdown(&sLastHyphenationLanguage);
+      sInit = true;
+    }
+
+    if (sLastHyphenationLanguage == aHyphenationLanguage) {
+      MOZ_ASSERT(nsAtomString(sLastHyphenationLanguage)
+                     .Equals(nsAtomString(aHyphenationLanguage)));
+      mScriptIsChineseOrJapanese = sLastScriptIsChineseOrJapanese;
+    } else {
       Locale loc;
       auto result =
           LocaleParser::TryParse(nsAtomCString(aHyphenationLanguage), loc);
@@ -524,14 +694,19 @@ void nsLineBreaker::UpdateCurrentWordLanguage(nsAtom* aHyphenationLanguage) {
       mScriptIsChineseOrJapanese =
           loc.Script().EqualTo("Hans") || loc.Script().EqualTo("Hant") ||
           loc.Script().EqualTo("Jpan") || loc.Script().EqualTo("Hrkt");
+
+      sLastHyphenationLanguage = aHyphenationLanguage;
+      sLastScriptIsChineseOrJapanese = mScriptIsChineseOrJapanese;
     }
-    mCurrentWordLanguage = aHyphenationLanguage;
   }
+  mCurrentWordLanguage = aHyphenationLanguage;
 }
 
 nsresult nsLineBreaker::AppendInvisibleWhitespace(uint32_t aFlags) {
   nsresult rv = FlushCurrentWord();
-  if (NS_FAILED(rv)) return rv;
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
 
   bool isBreakableSpace = !(aFlags & BREAK_SUPPRESS_INSIDE);
   if (mAfterBreakableSpace && !isBreakableSpace) {
@@ -544,7 +719,9 @@ nsresult nsLineBreaker::AppendInvisibleWhitespace(uint32_t aFlags) {
 
 nsresult nsLineBreaker::Reset(bool* aTrailingBreak) {
   nsresult rv = FlushCurrentWord();
-  if (NS_FAILED(rv)) return rv;
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
 
   *aTrailingBreak = mBreakHere || mAfterBreakableSpace;
   mBreakHere = false;

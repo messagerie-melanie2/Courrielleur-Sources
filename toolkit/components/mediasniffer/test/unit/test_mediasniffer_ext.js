@@ -10,8 +10,12 @@ var BinaryOutputStream = CC(
   "setOutputStream"
 );
 
-const { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js");
-const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+const { HttpServer } = ChromeUtils.importESModule(
+  "resource://testing-common/httpd.sys.mjs"
+);
+const { NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
+);
 
 var httpserver = new HttpServer();
 
@@ -57,7 +61,7 @@ var listener = {
     );
   },
 
-  onDataAvailable(request, stream, offset, count) {
+  onDataAvailable(request, stream) {
     try {
       var bis = Cc["@mozilla.org/binaryinputstream;1"].createInstance(
         Ci.nsIBinaryInputStream
@@ -69,7 +73,7 @@ var listener = {
     }
   },
 
-  onStopRequest(request, status) {
+  onStopRequest() {
     testRan++;
     runNext();
   },
@@ -128,4 +132,13 @@ function run_test() {
   } catch (e) {
     print("ERROR - " + e + "\n");
   }
+
+  // audio.ogg is empty but present. Check what mime type is deduced solely from
+  // its extension, when _not_ performing binary sniffing. `application/ogg` is
+  // prefered because the media isn't analyzed to understand if it's audio or
+  // video or both.
+  let mimeSvc = Cc["@mozilla.org/mime;1"].getService(Ci.nsIMIMEService);
+  let file = do_get_file("data/audio.ogg");
+  let type = mimeSvc.getTypeFromFile(file);
+  Assert.equal(type, "application/ogg");
 }

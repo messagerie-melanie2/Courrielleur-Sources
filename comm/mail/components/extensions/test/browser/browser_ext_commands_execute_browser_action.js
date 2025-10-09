@@ -1,15 +1,17 @@
-/* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
-/* vim: set sts=2 sw=2 et tw=80: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
 async function testExecuteBrowserActionWithOptions_mv2(options = {}) {
   // Make sure the mouse isn't hovering over the browserAction widget.
-  let folderTree = document
+  const folderTree = document
     .getElementById("tabmail")
     .currentAbout3Pane.document.getElementById("folderTree");
   EventUtils.synthesizeMouseAtCenter(folderTree, { type: "mouseover" }, window);
 
-  let extensionOptions = {
+  const extensionOptions = {
     useAddonManager: "temporary",
   };
 
@@ -30,18 +32,16 @@ async function testExecuteBrowserActionWithOptions_mv2(options = {}) {
     extensionOptions.manifest.browser_action.default_popup = "popup.html";
 
     extensionOptions.files = {
-      "popup.html": `
-        <!DOCTYPE html>
+      "popup.html": `<!DOCTYPE html>
         <html>
           <head>
             <meta charset="utf-8">
-            <script src="popup.js"></script>
+            <script defer="defer" src="popup.js"></script>
           </head>
           <body>
             Popup
           </body>
-        </html>
-      `,
+        </html>`,
       "popup.js": function () {
         browser.runtime.sendMessage("from-browser-action-popup");
       },
@@ -50,7 +50,7 @@ async function testExecuteBrowserActionWithOptions_mv2(options = {}) {
 
   extensionOptions.background = () => {
     browser.test.onMessage.addListener((message, withPopup) => {
-      browser.commands.onCommand.addListener(commandName => {
+      browser.commands.onCommand.addListener(() => {
         browser.test.fail(
           "The onCommand listener should never fire for a valid _execute_* command."
         );
@@ -77,7 +77,7 @@ async function testExecuteBrowserActionWithOptions_mv2(options = {}) {
     });
   };
 
-  let extension = ExtensionTestUtils.loadExtension(extensionOptions);
+  const extension = ExtensionTestUtils.loadExtension(extensionOptions);
 
   extension.onMessage("send-keys", () => {
     EventUtils.synthesizeKey("j", { altKey: true, shiftKey: true });
@@ -103,6 +103,20 @@ async function testExecuteBrowserActionWithOptions_mv2(options = {}) {
   await extension.unload();
 }
 
+add_setup(async () => {
+  // This test uses default_area in an anction manifest, to ensure we do not
+  // throw but simply ignore this property, which is used by Firefox, but not by
+  // us. However, by default, tests throw when deprecated properties are used,
+  // which can be disabled by setting the following pref to false.
+  Services.prefs.setBoolPref(
+    "extensions.webextensions.warnings-as-errors",
+    false
+  );
+  registerCleanupFunction(async () => {
+    Services.prefs.clearUserPref("extensions.webextensions.warnings-as-errors");
+  });
+});
+
 add_task(async function test_execute_browser_action_with_popup_mv2() {
   await testExecuteBrowserActionWithOptions_mv2({
     withPopup: true,
@@ -115,12 +129,12 @@ add_task(async function test_execute_browser_action_without_popup_mv2() {
 
 async function testExecuteActionWithOptions_mv3(options = {}) {
   // Make sure the mouse isn't hovering over the action widget.
-  let folderTree = document
+  const folderTree = document
     .getElementById("tabmail")
     .currentAbout3Pane.document.getElementById("folderTree");
   EventUtils.synthesizeMouseAtCenter(folderTree, { type: "mouseover" }, window);
 
-  let extensionOptions = {
+  const extensionOptions = {
     useAddonManager: "temporary",
   };
 
@@ -135,6 +149,8 @@ async function testExecuteActionWithOptions_mv3(options = {}) {
     },
     action: {
       browser_style: true,
+      // Ignored in MV3, but should not throw.
+      default_area: "tabstoolbar",
     },
   };
 
@@ -142,18 +158,16 @@ async function testExecuteActionWithOptions_mv3(options = {}) {
     extensionOptions.manifest.action.default_popup = "popup.html";
 
     extensionOptions.files = {
-      "popup.html": `
-        <!DOCTYPE html>
+      "popup.html": `<!DOCTYPE html>
         <html>
           <head>
             <meta charset="utf-8">
-            <script src="popup.js"></script>
+            <script defer="defer" src="popup.js"></script>
           </head>
           <body>
             Popup
           </body>
-        </html>
-      `,
+        </html>`,
       "popup.js": function () {
         browser.runtime.sendMessage("from-action-popup");
       },
@@ -162,7 +176,7 @@ async function testExecuteActionWithOptions_mv3(options = {}) {
 
   extensionOptions.background = () => {
     browser.test.onMessage.addListener((message, withPopup) => {
-      browser.commands.onCommand.addListener(commandName => {
+      browser.commands.onCommand.addListener(() => {
         browser.test.fail(
           "The onCommand listener should never fire for a valid _execute_* command."
         );
@@ -189,7 +203,7 @@ async function testExecuteActionWithOptions_mv3(options = {}) {
     });
   };
 
-  let extension = ExtensionTestUtils.loadExtension(extensionOptions);
+  const extension = ExtensionTestUtils.loadExtension(extensionOptions);
 
   extension.onMessage("send-keys", () => {
     EventUtils.synthesizeKey("j", { altKey: true, shiftKey: true });

@@ -5,6 +5,11 @@
 
 DIRS += [
     "asn1js",
+    "sax-js",
+]
+
+EXTRA_JS_MODULES += [
+    "qrcode/qrcode.mjs",
 ]
 
 if CONFIG["TB_LIBOTR_PREBUILT"]:

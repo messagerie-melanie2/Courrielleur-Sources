@@ -21,8 +21,8 @@ const createParentProcessRequests = async () => {
 const EXPECTED_METHOD_NAME = "createParentProcessRequests";
 const EXPECTED_REQUEST_LINE_1 = 12;
 const EXPECTED_REQUEST_COL_1 = 9;
-const EXPECTED_REQUEST_LINE_2 = 17;
-const EXPECTED_REQUEST_COL_2 = 3;
+// const EXPECTED_REQUEST_LINE_2 = 17;
+// const EXPECTED_REQUEST_COL_2 = 3;
 
 // Test the ResourceCommand API around NETWORK_EVENT for the parent process
 
@@ -46,6 +46,15 @@ add_task(async function testParentProcessRequests() {
   const onAvailable = resources => {
     for (const resource of resources) {
       if (resource.resourceType == resourceCommand.TYPES.NETWORK_EVENT) {
+        if (!resource.url.startsWith("https://example")) {
+          // Skip all URLs which don't start with https://example to avoid
+          // pollution from newtab, file urls etc...
+          info(
+            "Skipping network event resource not starting with https://example: " +
+              resource.url
+          );
+          return;
+        }
         receivedNetworkEvents.push(resource);
       } else if (
         resource.resourceType == resourceCommand.TYPES.NETWORK_EVENT_STACKTRACE
@@ -126,13 +135,20 @@ add_task(async function testParentProcessRequests() {
   ok(!firstImageRequest.fromCache, "The first image request isn't cached");
   ok(firstImageRequest.chromeContext, "The first image request is privileged");
 
-  const firstImageStacktrace = receivedStacktraces[1].lastFrame;
   is(receivedStacktraces[1].resourceId, firstImageRequest.stacktraceResourceId);
+  const firstImageStacktrace = receivedStacktraces[1].lastFrame;
+  // TODO(bug 1911435).
+  todo(
+    !!firstImageStacktrace,
+    "After bug 1076583, image load is async and we can't get a stack trace"
+  );
+  /*
   is(firstImageStacktrace.filename, gTestPath);
   is(firstImageStacktrace.lineNumber, EXPECTED_REQUEST_LINE_2);
   is(firstImageStacktrace.columnNumber, EXPECTED_REQUEST_COL_2);
   is(firstImageStacktrace.functionName, EXPECTED_METHOD_NAME);
   is(firstImageStacktrace.asyncCause, null);
+  */
 
   info("Assert the second image request");
   const secondImageRequest = receivedNetworkEvents[2];
@@ -140,6 +156,10 @@ add_task(async function testParentProcessRequests() {
     secondImageRequest.url,
     IMAGE_URI,
     "The third resource is for the second image request"
+  );
+  await waitFor(
+    () => secondImageRequest.fromCache,
+    "Wait for fromCache attribute to be set asynchronously via a resource update"
   );
   ok(secondImageRequest.fromCache, "The second image request is cached");
   ok(
@@ -166,8 +186,8 @@ add_task(async function testParentProcessRequests() {
     tab.linkedBrowser,
     [requestUrl],
     async function (uri) {
-      const { NetUtil } = ChromeUtils.import(
-        "resource://gre/modules/NetUtil.jsm"
+      const { NetUtil } = ChromeUtils.importESModule(
+        "resource://gre/modules/NetUtil.sys.mjs"
       );
       const channel = NetUtil.newChannel({
         uri,
@@ -198,8 +218,8 @@ add_task(async function testParentProcessRequests() {
     secondTab.linkedBrowser,
     [requestUrl],
     async function (uri) {
-      const { NetUtil } = ChromeUtils.import(
-        "resource://gre/modules/NetUtil.jsm"
+      const { NetUtil } = ChromeUtils.importESModule(
+        "resource://gre/modules/NetUtil.sys.mjs"
       );
       const channel = NetUtil.newChannel({
         uri,

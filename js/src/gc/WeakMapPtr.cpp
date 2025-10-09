@@ -22,22 +22,19 @@ struct DataType {};
 
 template <>
 struct DataType<JSObject*> {
-  using BarrieredType = HeapPtr<JSObject*>;
-  using HasherType = StableCellHasher<BarrieredType>;
   static JSObject* NullValue() { return nullptr; }
 };
 
 template <>
 struct DataType<JS::Value> {
-  using BarrieredType = HeapPtr<Value>;
   static JS::Value NullValue() { return JS::UndefinedValue(); }
 };
 
 template <typename K, typename V>
 struct Utils {
-  using KeyType = typename DataType<K>::BarrieredType;
-  using ValueType = typename DataType<V>::BarrieredType;
-  typedef WeakMap<KeyType, ValueType> Type;
+  using KeyType = K;
+  using ValueType = V;
+  using Type = WeakMap<KeyType, ValueType>;
   using PtrType = Type*;
   static PtrType cast(void* ptr) { return static_cast<PtrType>(ptr); }
 };
@@ -88,7 +85,7 @@ bool JS::WeakMapPtr<K, V>::put(JSContext* cx, const K& key, const V& value) {
 
 template <typename K, typename V>
 V JS::WeakMapPtr<K, V>::removeValue(const K& key) {
-  typedef typename WeakMapDetails::Utils<K, V>::Type Map;
+  using Map = typename WeakMapDetails::Utils<K, V>::Type;
   using Ptr = typename Map::Ptr;
 
   MOZ_ASSERT(initialized());

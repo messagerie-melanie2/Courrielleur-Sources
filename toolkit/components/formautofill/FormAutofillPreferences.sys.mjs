@@ -8,7 +8,6 @@
 
 // Add addresses enabled flag in telemetry environment for recording the number of
 // users who disable/enable the address autofill feature.
-const BUNDLE_URI = "chrome://formautofill/locale/formautofill.properties";
 const MANAGE_ADDRESSES_URL =
   "chrome://formautofill/content/manageAddresses.xhtml";
 const MANAGE_CREDITCARDS_URL =
@@ -16,17 +15,25 @@ const MANAGE_CREDITCARDS_URL =
 
 import { FormAutofill } from "resource://autofill/FormAutofill.sys.mjs";
 import { FormAutofillUtils } from "resource://gre/modules/shared/FormAutofillUtils.sys.mjs";
-import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   OSKeyStore: "resource://gre/modules/OSKeyStore.sys.mjs",
 });
+ChromeUtils.defineLazyGetter(
+  lazy,
+  "l10n",
+  () =>
+    new Localization(
+      ["branding/brand.ftl", "browser/preferences/preferences.ftl"],
+      true
+    )
+);
 
 const {
   ENABLED_AUTOFILL_ADDRESSES_PREF,
   ENABLED_AUTOFILL_CREDITCARDS_PREF,
-  ENABLED_AUTOFILL_CREDITCARDS_REAUTH_PREF,
+  AUTOFILL_CREDITCARDS_REAUTH_PREF,
 } = FormAutofill;
 const {
   MANAGE_ADDRESSES_L10N_IDS,
@@ -39,9 +46,7 @@ const {
 
 const HTML_NS = "http://www.w3.org/1999/xhtml";
 
-export function FormAutofillPreferences() {
-  this.bundle = Services.strings.createBundle(BUNDLE_URI);
-}
+export function FormAutofillPreferences() {}
 
 FormAutofillPreferences.prototype = {
   /**
@@ -96,8 +101,9 @@ FormAutofillPreferences.prototype = {
       return;
     }
 
-    formAutofillGroupBoxLabelHeading.textContent =
-      this.bundle.GetStringFromName("autofillHeader");
+    formAutofillGroupBoxLabelHeading.textContent = lazy.l10n.formatValueSync(
+      "pane-privacy-autofill-header"
+    );
 
     if (showAddressUI) {
       let savedAddressesBtnWrapper = document.createXULElement("hbox");
@@ -120,11 +126,11 @@ FormAutofillPreferences.prototype = {
       addressAutofill.setAttribute("data-subcategory", "address-autofill");
       addressAutofillCheckbox.setAttribute(
         "label",
-        this.bundle.GetStringFromName("autofillAddressesCheckbox")
+        lazy.l10n.formatValueSync("autofill-addresses-checkbox")
       );
       savedAddressesBtn.setAttribute(
         "label",
-        this.bundle.GetStringFromName("savedAddressesBtnLabel")
+        lazy.l10n.formatValueSync("autofill-saved-addresses-button")
       );
       // Align the start to keep the savedAddressesBtn as original size
       // when addressAutofillCheckboxGroup's height is changed by a longer l10n string
@@ -187,12 +193,12 @@ FormAutofillPreferences.prototype = {
       );
       creditCardAutofillCheckbox.setAttribute(
         "label",
-        this.bundle.GetStringFromName("autofillCreditCardsCheckbox")
+        lazy.l10n.formatValueSync("autofill-payment-methods-checkbox-message")
       );
 
       savedCreditCardsBtn.setAttribute(
         "label",
-        this.bundle.GetStringFromName("savedCreditCardsBtnLabel")
+        lazy.l10n.formatValueSync("autofill-saved-payment-methods-button")
       );
       // Align the start to keep the savedCreditCardsBtn as original size
       // when creditCardAutofillCheckboxGroup's height is changed by a longer l10n string
@@ -201,6 +207,17 @@ FormAutofillPreferences.prototype = {
       creditCardAutofillLearnMore.setAttribute(
         "support-page",
         "credit-card-autofill"
+      );
+
+      let creditCardsAutofillDescription =
+        document.createXULElement("description");
+
+      creditCardsAutofillDescription.setAttribute("flex", "1");
+      creditCardsAutofillDescription.className = "indent tip-caption";
+      creditCardsAutofillDescription.setAttribute("data-l10n-attrs", "hidden");
+      creditCardsAutofillDescription.setAttribute(
+        "data-l10n-id",
+        "autofill-payment-methods-checkbox-submessage"
       );
 
       // Add preferences search support
@@ -226,11 +243,15 @@ FormAutofillPreferences.prototype = {
       creditCardAutofillCheckboxGroup.appendChild(creditCardAutofillLearnMore);
       creditCardAutofill.appendChild(savedCreditCardsBtnWrapper);
       savedCreditCardsBtnWrapper.appendChild(savedCreditCardsBtn);
+      formAutofillGroup.appendChild(creditCardsAutofillDescription);
 
       this.refs.creditCardAutofillCheckbox = creditCardAutofillCheckbox;
       this.refs.savedCreditCardsBtn = savedCreditCardsBtn;
 
-      if (lazy.OSKeyStore.canReauth()) {
+      if (
+        lazy.OSKeyStore.canReauth() &&
+        !Services.prefs.getBoolPref("security.nocertdb", false)
+      ) {
         let reauth = document.createXULElement("hbox");
         let reauthCheckboxGroup = document.createXULElement("hbox");
         let reauthCheckbox = document.createXULElement("checkbox");
@@ -240,7 +261,6 @@ FormAutofillPreferences.prototype = {
 
         reauthCheckboxGroup.classList.add("indent");
         reauthCheckbox.classList.add("tail-with-learn-more");
-        reauthCheckbox.setAttribute("flex", "1");
         reauthCheckbox.disabled = !FormAutofill.isAutofillCreditCardsEnabled;
 
         reauth.id = "creditCardReauthenticate";
@@ -248,30 +268,21 @@ FormAutofillPreferences.prototype = {
 
         reauth.setAttribute("data-subcategory", "reauth-credit-card-autofill");
 
-        let autofillReauthCheckboxLabel = "autofillReauthCheckbox";
-        // We reuse the if/else order from wizard markup to increase
-        // odds of consistent behavior.
-        if (AppConstants.platform == "macosx") {
-          autofillReauthCheckboxLabel += "Mac";
-        } else if (AppConstants.platform == "linux") {
-          autofillReauthCheckboxLabel += "Lin";
-        } else {
-          autofillReauthCheckboxLabel += "Win";
-        }
         reauthCheckbox.setAttribute(
           "label",
-          this.bundle.GetStringFromName(autofillReauthCheckboxLabel)
+          lazy.l10n.formatValueSync("autofill-reauth-payment-methods-checkbox")
+        );
+
+        // If target.checked is checked, enable OSAuth. Otherwise, reset the pref value.
+        reauthCheckbox.setAttribute(
+          "checked",
+          FormAutofillUtils.getOSAuthEnabled(AUTOFILL_CREDITCARDS_REAUTH_PREF)
         );
 
         reauthLearnMore.setAttribute(
           "support-page",
           "credit-card-autofill#w_require-authentication-for-autofill"
         );
-
-        // Manually set the checked state
-        if (FormAutofillUtils._reauthEnabledByUser) {
-          reauthCheckbox.setAttribute("checked", true);
-        }
 
         reauthCheckboxGroup.setAttribute("align", "center");
         reauthCheckboxGroup.setAttribute("flex", "1");
@@ -314,38 +325,46 @@ FormAutofillPreferences.prototype = {
             break;
           }
 
-          let messageTextId = "autofillReauthOSDialog";
-          // We reuse the if/else order from wizard markup to increase
-          // odds of consistent behavior.
-          if (AppConstants.platform == "macosx") {
-            messageTextId += "Mac";
-          } else if (AppConstants.platform == "linux") {
-            messageTextId += "Lin";
-          } else {
-            messageTextId += "Win";
-          }
-
-          let messageText = this.bundle.GetStringFromName(messageTextId);
-
-          const brandBundle = Services.strings.createBundle(
-            "chrome://branding/locale/brand.properties"
+          let messageText = await lazy.l10n.formatValueSync(
+            "autofill-creditcard-os-dialog-message"
+          );
+          let captionText = await lazy.l10n.formatValueSync(
+            "autofill-creditcard-os-auth-dialog-caption"
           );
           let win = target.ownerGlobal.docShell.chromeEventHandler.ownerGlobal;
-          let loggedIn = await lazy.OSKeyStore.ensureLoggedIn(
-            messageText,
-            brandBundle.GetStringFromName("brandFullName"),
-            win,
-            false
-          );
-          if (!loggedIn.authenticated) {
+
+          // Calling OSKeyStore.ensureLoggedIn() instead of FormAutofillUtils.verifyOSAuth()
+          // since we want to authenticate user each time this setting is changed.
+
+          // Note on Glean collection: because OSKeyStore.ensureLoggedIn() is not wrapped in
+          // verifyOSAuth(), it will be documenting "success" for unsupported platforms
+          // and won't record "fail_error", only "fail_user_canceled"
+          let isAuthorized = (
+            await lazy.OSKeyStore.ensureLoggedIn(
+              messageText,
+              captionText,
+              win,
+              false
+            )
+          ).authenticated;
+          Glean.formautofill.promptShownOsReauth.record({
+            trigger: "toggle_pref_os_auth",
+            result: isAuthorized ? "success" : "fail_user_canceled",
+          });
+
+          if (!isAuthorized) {
             target.checked = !target.checked;
             break;
           }
 
-          Services.prefs.setBoolPref(
-            ENABLED_AUTOFILL_CREDITCARDS_REAUTH_PREF,
+          // If target.checked is checked, enable OSAuth. Otherwise, reset the pref value.
+          FormAutofillUtils.setOSAuthEnabled(
+            AUTOFILL_CREDITCARDS_REAUTH_PREF,
             target.checked
           );
+          Glean.formautofill.requireOsReauthToggle.record({
+            toggle_state: target.checked,
+          });
         } else if (target == this.refs.savedAddressesBtn) {
           target.ownerGlobal.gSubDialog.open(MANAGE_ADDRESSES_URL);
         } else if (target == this.refs.savedCreditCardsBtn) {

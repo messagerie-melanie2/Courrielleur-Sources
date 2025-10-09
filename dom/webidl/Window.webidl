@@ -17,6 +17,7 @@
  * https://w3c.github.io/requestidlecallback/
  * https://drafts.css-houdini.org/css-paint-api-1/#dom-window-paintworklet
  * https://wicg.github.io/visual-viewport/#the-visualviewport-interface
+ * https://wicg.github.io/cookie-store/#Window
  */
 
 interface Principal;
@@ -26,14 +27,10 @@ interface nsIDOMWindowUtils;
 interface nsIPrintSettings;
 
 // http://www.whatwg.org/specs/web-apps/current-work/
-[Global, LegacyUnenumerableNamedProperties, NeedResolve,
+[Global=Window, LegacyUnenumerableNamedProperties, NeedResolve,
  Exposed=Window,
  InstrumentedProps=(AbsoluteOrientationSensor,
                     Accelerometer,
-                    Atomics,
-                    AudioParamMap,
-                    AudioWorklet,
-                    AudioWorkletNode,
                     BackgroundFetchManager,
                     BackgroundFetchRecord,
                     BackgroundFetchRegistration,
@@ -48,10 +45,10 @@ interface nsIPrintSettings;
                     BluetoothUUID,
                     CanvasCaptureMediaStreamTrack,
                     chrome,
-                    clientInformation,
                     ClipboardItem,
                     CSSImageValue,
                     CSSKeywordValue,
+                    CSSMathClamp,
                     CSSMathInvert,
                     CSSMathMax,
                     CSSMathMin,
@@ -64,6 +61,7 @@ interface nsIPrintSettings;
                     CSSNumericValue,
                     CSSPerspective,
                     CSSPositionValue,
+                    CSSPropertyRule,
                     CSSRotate,
                     CSSScale,
                     CSSSkew,
@@ -85,12 +83,12 @@ interface nsIPrintSettings;
                     DeviceMotionEventAcceleration,
                     DeviceMotionEventRotationRate,
                     DOMError,
+                    EncodedVideoChunk,
                     EnterPictureInPictureEvent,
                     External,
                     FederatedCredential,
                     Gyroscope,
                     HTMLContentElement,
-                    HTMLDialogElement,
                     HTMLShadowElement,
                     ImageCapture,
                     InputDeviceCapabilities,
@@ -98,10 +96,6 @@ interface nsIPrintSettings;
                     Keyboard,
                     KeyboardLayoutMap,
                     LinearAccelerationSensor,
-                    Lock,
-                    LockManager,
-                    MediaMetadata,
-                    MediaSession,
                     MediaSettingsRange,
                     MIDIAccess,
                     MIDIConnectionEvent,
@@ -111,17 +105,16 @@ interface nsIPrintSettings;
                     MIDIOutput,
                     MIDIOutputMap,
                     MIDIPort,
-                    NavigationPreloadManager,
                     NetworkInformation,
                     offscreenBuffering,
-                    OffscreenCanvas,
-                    OffscreenCanvasRenderingContext2D,
                     onbeforeinstallprompt,
                     oncancel,
                     onmousewheel,
+                    onorientationchange,
                     onsearch,
                     onselectionchange,
                     openDatabase,
+                    orientation,
                     OrientationSensor,
                     OverconstrainedError,
                     PasswordCredential,
@@ -132,10 +125,9 @@ interface nsIPrintSettings;
                     PaymentRequest,
                     PaymentRequestUpdateEvent,
                     PaymentResponse,
-                    PerformanceEventTiming,
                     PerformanceLongTaskTiming,
-                    PerformancePaintTiming,
                     PhotoCapabilities,
+                    PictureInPictureEvent,
                     PictureInPictureWindow,
                     Presentation,
                     PresentationAvailability,
@@ -147,28 +139,28 @@ interface nsIPrintSettings;
                     PresentationRequest,
                     RelativeOrientationSensor,
                     RemotePlayback,
+                    Report,
+                    ReportBody,
                     ReportingObserver,
-                    RTCDtlsTransport,
                     RTCError,
                     RTCErrorEvent,
                     RTCIceTransport,
-                    RTCSctpTransport,
+                    RTCPeerConnectionIceErrorEvent,
                     Sensor,
                     SensorErrorEvent,
-                    SharedArrayBuffer,
+                    SpeechRecognitionAlternative,
+                    SpeechRecognitionResult,
+                    SpeechRecognitionResultList,
                     styleMedia,
                     StylePropertyMap,
                     StylePropertyMapReadOnly,
                     SVGDiscardElement,
                     SyncManager,
                     TaskAttributionTiming,
-                    TextDecoderStream,
-                    TextEncoderStream,
                     TextEvent,
                     Touch,
                     TouchEvent,
                     TouchList,
-                    TransformStream,
                     USB,
                     USBAlternateInterface,
                     USBConfiguration,
@@ -183,7 +175,12 @@ interface nsIPrintSettings;
                     USBIsochronousOutTransferResult,
                     USBOutTransferResult,
                     UserActivation,
-                    visualViewport,
+                    VideoColorSpace,
+                    VideoDecoder,
+                    VideoEncoder,
+                    VideoFrame,
+                    WakeLock,
+                    WakeLockSentinel,
                     webkitCancelAnimationFrame,
                     webkitMediaStream,
                     WebKitMutationObserver,
@@ -196,9 +193,7 @@ interface nsIPrintSettings;
                     webkitSpeechRecognition,
                     webkitSpeechRecognitionError,
                     webkitSpeechRecognitionEvent,
-                    webkitStorageInfo,
-                    Worklet,
-                    WritableStream)]
+                    webkitStorageInfo)]
 /*sealed*/ interface Window : EventTarget {
   // the current browsing context
   [LegacyUnforgeable, Constant, StoreInSlot,
@@ -210,6 +205,7 @@ interface nsIPrintSettings;
   [PutForwards=href, LegacyUnforgeable, CrossOriginReadable,
    CrossOriginWritable] readonly attribute Location location;
   [Throws] readonly attribute History history;
+  [Func="Navigation::IsAPIEnabled"] readonly attribute Navigation navigation;
   readonly attribute CustomElementRegistry customElements;
   [Replaceable, Throws] readonly attribute BarProp locationbar;
   [Replaceable, Throws] readonly attribute BarProp menubar;
@@ -223,7 +219,7 @@ interface nsIPrintSettings;
   [Throws] undefined stop();
   [Throws, CrossOriginCallable, NeedsCallerType] undefined focus();
   [Throws, CrossOriginCallable, NeedsCallerType] undefined blur();
-  [Replaceable, Pref="dom.window.event.enabled"] readonly attribute (Event or undefined) event;
+  [Replaceable] readonly attribute (Event or undefined) event;
 
   // other browsing contexts
   [Replaceable, Throws, CrossOriginReadable] readonly attribute WindowProxy frames;
@@ -240,7 +236,7 @@ interface nsIPrintSettings;
 
   // the user agent
   readonly attribute Navigator navigator;
-  [Pref="dom.window.clientinformation.enabled", BinaryName="Navigator"]
+  [Replaceable, BinaryName="Navigator"]
   readonly attribute Navigator clientInformation;
 
   [Replaceable] readonly attribute External external;
@@ -250,7 +246,7 @@ interface nsIPrintSettings;
   [Throws, NeedsSubjectPrincipal] undefined alert(DOMString message);
   [Throws, NeedsSubjectPrincipal] boolean confirm(optional DOMString message = "");
   [Throws, NeedsSubjectPrincipal] DOMString? prompt(optional DOMString message = "", optional DOMString default = "");
-  [Throws, Pref="dom.enable_window_print"]
+  [Throws]
   undefined print();
 
   // Returns a window that you can use for a print preview.
@@ -320,10 +316,8 @@ dictionary ScrollToOptions : ScrollOptions {
 partial interface Window {
   //[Throws, NewObject, NeedsCallerType] MediaQueryList matchMedia(DOMString query);
   [Throws, NewObject, NeedsCallerType] MediaQueryList? matchMedia(UTF8String query);
-  // Per spec, screen is SameObject, but we don't actually guarantee that given
-  // nsGlobalWindow::Cleanup.  :(
-  //[SameObject, Replaceable, Throws] readonly attribute Screen screen;
-  [Replaceable, Throws] readonly attribute Screen screen;
+
+  [SameObject, Replaceable] readonly attribute Screen screen;
 
   // browsing context
   //[Throws] undefined moveTo(double x, double y);
@@ -336,15 +330,8 @@ partial interface Window {
   [Throws, NeedsCallerType] undefined resizeBy(long x, long y);
 
   // viewport
-  // These are writable because we allow chrome to write them.  And they need
-  // to use 'any' as the type, because non-chrome writing them needs to act
-  // like a [Replaceable] attribute would, which needs the original JS value.
-  // TODO: These can be updated to follow the spec exactly a while after we
-  // enable dom.window_position_size_properties_replaceable.enabled=true
-  //[Replaceable, Throws] readonly attribute double innerWidth;
-  //[Replaceable, Throws] readonly attribute double innerHeight;
-  [Throws, NeedsCallerType] attribute any innerWidth;
-  [Throws, NeedsCallerType] attribute any innerHeight;
+  [Replaceable, Throws] readonly attribute double innerWidth;
+  [Replaceable, Throws] readonly attribute double innerHeight;
 
   // viewport scrolling
   undefined scroll(unrestricted double x, unrestricted double y);
@@ -370,19 +357,10 @@ partial interface Window {
   [Replaceable, Throws, NeedsCallerType] readonly attribute double screenTop;
 
   // client
-  // These are writable because we allow chrome to write them.  And they need
-  // to use 'any' as the type, because non-chrome writing them needs to act
-  // like a [Replaceable] attribute would, which needs the original JS value.
-  // TODO: These can be updated to follow the spec exactly a while after we
-  // enable dom.window_position_size_properties_replaceable.enabled=true
-  //[Replaceable, Throws] readonly attribute double screenX;
-  //[Replaceable, Throws] readonly attribute double screenY;
-  //[Replaceable, Throws] readonly attribute double outerWidth;
-  //[Replaceable, Throws] readonly attribute double outerHeight;
-  [Throws, NeedsCallerType] attribute any screenX;
-  [Throws, NeedsCallerType] attribute any screenY;
-  [Throws, NeedsCallerType] attribute any outerWidth;
-  [Throws, NeedsCallerType] attribute any outerHeight;
+  [Replaceable, Throws, NeedsCallerType] readonly attribute double screenX;
+  [Replaceable, Throws, NeedsCallerType] readonly attribute double screenY;
+  [Replaceable, Throws, NeedsCallerType] readonly attribute double outerWidth;
+  [Replaceable, Throws, NeedsCallerType] readonly attribute double outerHeight;
 };
 
 // https://html.spec.whatwg.org/multipage/imagebitmap-and-animations.html#animation-frames
@@ -427,17 +405,13 @@ partial interface Window {
    */
   undefined                 scrollByPages(long numPages, optional ScrollOptions options = {});
 
-  /**
-   * Method for sizing this window to the content in the window.
-   */
-  [Throws, NeedsCallerType] undefined sizeToContent();
-  /**
-   * Chrome-only method for sizing to content with a maximum-size constraint on
-   * either (or both) directions.
-   */
-  [Throws, ChromeOnly] undefined sizeToContentConstrained(optional SizeToContentConstraints constraints = {});
 
-  // XXX Shouldn't this be in nsIDOMChromeWindow?
+  /**
+   * Chrome-only method for sizing to content with an optional
+   * maximum-size constraint on either (or both) directions.
+   */
+  [Throws, ChromeOnly] undefined sizeToContent(optional SizeToContentConstraints constraints = {});
+
   [ChromeOnly, Replaceable, Throws] readonly attribute XULControllers controllers;
 
   [ChromeOnly, Throws] readonly attribute Element? realFrameElement;
@@ -478,10 +452,7 @@ partial interface Window {
 
   [Throws] attribute boolean fullScreen;
 
-  // XXX Should this be in nsIDOMChromeWindow?
-  undefined                 updateCommands(DOMString action,
-                                           optional Selection? sel = null,
-                                           optional short reason = 0);
+  undefined                 updateCommands(DOMString action);
 
   /* Find in page.
    * @param str: the search pattern
@@ -527,7 +498,7 @@ partial interface Window {
                                                optional DOMString options = "",
                                                any... extraArguments);
 
-  [Func="nsGlobalWindowInner::ContentPropertyEnabled",
+  [ChromeOnly,
    NonEnumerable, Replaceable, Throws, NeedsCallerType]
   readonly attribute object? content;
 
@@ -601,13 +572,6 @@ partial interface Window {
            attribute EventHandler onorientationchange;
 };
 #endif
-
-// Mozilla extension
-// Sidebar is deprecated and it will be removed in the next cycles. See bug 1640138.
-partial interface Window {
-  [Replaceable, UseCounter, Pref="dom.window.sidebar.enabled"]
-  readonly attribute (External or WindowProxy) sidebar;
-};
 
 [MOZ_CAN_RUN_SCRIPT_BOUNDARY]
 callback PromiseDocumentFlushedCallback = any ();
@@ -739,9 +703,9 @@ partial interface Window {
   [Func="IsChromeOrUAWidget"]
   readonly attribute boolean isChromeWindow;
 
-  [ChromeOnly]
+  [Func="nsGlobalWindowInner::IsGleanNeeded"]
   readonly attribute GleanImpl Glean;
-  [ChromeOnly]
+  [Func="nsGlobalWindowInner::IsGleanNeeded"]
   readonly attribute GleanPingsImpl GleanPings;
 };
 
@@ -769,10 +733,9 @@ partial interface Window {
 Window includes WindowOrWorkerGlobalScope;
 
 partial interface Window {
-  [Throws, Func="nsGlobalWindowInner::IsRequestIdleCallbackEnabled"]
+  [Throws]
   unsigned long requestIdleCallback(IdleRequestCallback callback,
                                     optional IdleRequestOptions options = {});
-  [Func="nsGlobalWindowInner::IsRequestIdleCallbackEnabled"]
   undefined     cancelIdleCallback(unsigned long handle);
 };
 
@@ -827,7 +790,7 @@ partial interface Window {
 };
 
 partial interface Window {
-  [SameObject, Pref="dom.visualviewport.enabled", Replaceable]
+  [SameObject, Replaceable]
   readonly attribute VisualViewport visualViewport;
 };
 
@@ -842,4 +805,15 @@ partial interface Window {
 
 dictionary WindowPostMessageOptions : StructuredSerializeOptions {
   USVString targetOrigin = "/";
+};
+
+// https://wicg.github.io/cookie-store/#Window
+[SecureContext]
+partial interface Window {
+  [SameObject, Pref="dom.cookieStore.enabled"] readonly attribute CookieStore cookieStore;
+};
+
+// https://html.spec.whatwg.org/multipage/browsers.html#origin-keyed-agent-clusters
+partial interface Window {
+  [Pref="dom.origin_agent_cluster.enabled"] readonly attribute boolean originAgentCluster;
 };

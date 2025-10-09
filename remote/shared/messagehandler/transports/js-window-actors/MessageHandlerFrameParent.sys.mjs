@@ -2,23 +2,40 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  clearTimeout: "resource://gre/modules/Timer.sys.mjs",
+  setTimeout: "resource://gre/modules/Timer.sys.mjs",
+
   error: "chrome://remote/content/shared/messagehandler/Errors.sys.mjs",
+  Log: "chrome://remote/content/shared/Log.sys.mjs",
   RootMessageHandlerRegistry:
     "chrome://remote/content/shared/messagehandler/RootMessageHandlerRegistry.sys.mjs",
   WindowGlobalMessageHandler:
     "chrome://remote/content/shared/messagehandler/WindowGlobalMessageHandler.sys.mjs",
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "WebDriverError", () => {
+ChromeUtils.defineLazyGetter(lazy, "logger", () => lazy.Log.get());
+
+ChromeUtils.defineLazyGetter(lazy, "WebDriverError", () => {
   return ChromeUtils.importESModule(
     "chrome://remote/content/shared/webdriver/Errors.sys.mjs"
   ).error.WebDriverError;
 });
+
+// Set the timeout delay before a command is considered as potentially timing
+// out. This can be customized by a preference mostly for tests. Regular
+// implementation should use DEFAULT_COMMAND_DELAY;
+const DEFAULT_COMMAND_DELAY = 10000;
+const PREF_REMOTE_COMMAND_DELAY = "remote.messagehandler.test.command.delay";
+
+ChromeUtils.defineLazyGetter(lazy, "commandDelay", () =>
+  Services.prefs.getIntPref(PREF_REMOTE_COMMAND_DELAY, DEFAULT_COMMAND_DELAY)
+);
+
+const PING_DELAY = 1000;
+const PING_TIMEOUT = Symbol();
 
 /**
  * Parent actor for the MessageHandlerFrame JSWindowActor. The
@@ -26,6 +43,17 @@ XPCOMUtils.defineLazyGetter(lazy, "WebDriverError", () => {
  * ROOT MessageHandlers and WINDOW_GLOBAL MessageHandlers.
  */
 export class MessageHandlerFrameParent extends JSWindowActorParent {
+  #destroyed;
+
+  constructor() {
+    super();
+    this.#destroyed = false;
+  }
+
+  didDestroy() {
+    this.#destroyed = true;
+  }
+
   async receiveMessage(message) {
     switch (message.name) {
       case "MessageHandlerFrameChild:sendCommand": {
@@ -52,6 +80,11 @@ export class MessageHandlerFrameParent extends JSWindowActorParent {
    *     MessageHandlerFrameChild actor.
    */
   async sendCommand(command, sessionId) {
+    const timer = lazy.setTimeout(
+      () => this.#sendPing(command),
+      lazy.commandDelay
+    );
+
     const result = await this.sendQuery(
       "MessageHandlerFrameParent:sendCommand",
       {
@@ -59,6 +92,8 @@ export class MessageHandlerFrameParent extends JSWindowActorParent {
         sessionId,
       }
     );
+
+    lazy.clearTimeout(timer);
 
     if (result?.error) {
       if (result.isMessageHandlerError) {
@@ -91,6 +126,12 @@ export class MessageHandlerFrameParent extends JSWindowActorParent {
     if (module?.interceptEvent) {
       eventPayload = await module.interceptEvent(name, data);
 
+      if (eventPayload === null) {
+        lazy.logger.trace(
+          `${moduleName}.interceptEvent returned null, skipping event: ${name}, data: ${data}`
+        );
+        return;
+      }
       // Make sure that an event payload is returned.
       if (!eventPayload) {
         throw new Error(
@@ -115,6 +156,49 @@ export class MessageHandlerFrameParent extends JSWindowActorParent {
         };
       }
       throw e;
+    }
+  }
+
+  async #sendPing(command) {
+    const commandName = `${command.moduleName}.${command.commandName}`;
+    const destination = command.destination.id;
+
+    if (this.#destroyed) {
+      // If the JSWindowActor was destroyed already, no need to send a ping.
+      return;
+    }
+
+    lazy.logger.trace(
+      `MessageHandlerFrameParent command ${commandName} to ${destination} ` +
+        `takes more than ${lazy.commandDelay / 1000} seconds to resolve, sending ping`
+    );
+
+    try {
+      const result = await Promise.race([
+        this.sendQuery("MessageHandlerFrameParent:sendPing"),
+        new Promise(r => lazy.setTimeout(() => r(PING_TIMEOUT), PING_DELAY)),
+      ]);
+
+      if (result === PING_TIMEOUT) {
+        lazy.logger.warn(
+          `MessageHandlerFrameParent ping for command ${commandName} to ${destination} timed out`
+        );
+      } else {
+        lazy.logger.trace(
+          `MessageHandlerFrameParent ping for command ${commandName} to ${destination} was successful`
+        );
+      }
+    } catch (e) {
+      if (!this.#destroyed) {
+        // Only swallow errors if the JSWindowActor pair was destroyed while
+        // waiting for the ping response.
+        throw e;
+      }
+
+      lazy.logger.trace(
+        `MessageHandlerFrameParent ping for command ${commandName} to ${destination}` +
+          ` lost after JSWindowActor was destroyed`
+      );
     }
   }
 }

@@ -6,10 +6,9 @@
 
 #include "mozilla/dom/HTMLBRElement.h"
 #include "mozilla/dom/HTMLBRElementBinding.h"
-#include "mozilla/MappedDeclarations.h"
+#include "mozilla/MappedDeclarationsBuilder.h"
 #include "nsAttrValueInlines.h"
 #include "nsStyleConsts.h"
-#include "nsMappedAttributes.h"
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(BR)
 
@@ -23,12 +22,12 @@ HTMLBRElement::~HTMLBRElement() = default;
 
 NS_IMPL_ELEMENT_CLONE(HTMLBRElement)
 
-static const nsAttrValue::EnumTable kClearTable[] = {
+static constexpr nsAttrValue::EnumTableEntry kClearTable[] = {
     {"left", StyleClear::Left},
     {"right", StyleClear::Right},
     {"all", StyleClear::Both},
     {"both", StyleClear::Both},
-    {nullptr, 0}};
+};
 
 bool HTMLBRElement::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
                                    const nsAString& aValue,
@@ -42,14 +41,14 @@ bool HTMLBRElement::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
                                               aMaybeScriptedPrincipal, aResult);
 }
 
-void HTMLBRElement::MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
-                                          MappedDeclarations& aDecls) {
-  if (!aDecls.PropertyIsSet(eCSSProperty_clear)) {
-    const nsAttrValue* value = aAttributes->GetAttr(nsGkAtoms::clear);
-    if (value && value->Type() == nsAttrValue::eEnum)
-      aDecls.SetKeywordValue(eCSSProperty_clear, value->GetEnumValue());
+void HTMLBRElement::MapAttributesIntoRule(MappedDeclarationsBuilder& aBuilder) {
+  if (!aBuilder.PropertyIsSet(eCSSProperty_clear)) {
+    const nsAttrValue* value = aBuilder.GetAttr(nsGkAtoms::clear);
+    if (value && value->Type() == nsAttrValue::eEnum) {
+      aBuilder.SetKeywordValue(eCSSProperty_clear, value->GetEnumValue());
+    }
   }
-  nsGenericHTMLElement::MapCommonAttributesInto(aAttributes, aDecls);
+  nsGenericHTMLElement::MapCommonAttributesInto(aBuilder);
 }
 
 NS_IMETHODIMP_(bool)

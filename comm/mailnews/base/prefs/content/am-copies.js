@@ -5,7 +5,9 @@
 /* import-globals-from am-prefs.js */
 /* import-globals-from amUtils.js */
 
-var { MailUtils } = ChromeUtils.import("resource:///modules/MailUtils.jsm");
+var { MailUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailUtils.sys.mjs"
+);
 
 var gFccRadioElemChoice,
   gDraftsRadioElemChoice,
@@ -15,7 +17,7 @@ var gFccRadioElemChoiceLocked,
   gDraftsRadioElemChoiceLocked,
   gArchivesRadioElemChoiceLocked,
   gTmplRadioElemChoiceLocked;
-var gDefaultPickerMode = "1";
+var gDefaultPickerMode = "0";
 
 var gFccFolderWithDelim,
   gDraftsFolderWithDelim,
@@ -23,6 +25,7 @@ var gFccFolderWithDelim,
   gTemplatesFolderWithDelim;
 var gAccount;
 var gCurrentServerId;
+var gIdentity;
 
 function onPreInit(account, accountValues) {
   gAccount = account;
@@ -43,10 +46,10 @@ function onPreInit(account, accountValues) {
  */
 function onInit(aPageId, aServerId) {
   gCurrentServerId = aServerId;
-  onInitCopiesAndFolders();
+  onInitCopiesAndFolders(null);
 }
 
-function onInitCopiesAndFolders() {
+function onInitCopiesAndFolders(aIdentity) {
   SetGlobalRadioElemChoices();
 
   SetFolderDisplay(
@@ -54,7 +57,7 @@ function onInitCopiesAndFolders() {
     gFccRadioElemChoiceLocked,
     "fcc",
     "msgFccAccountPicker",
-    "identity.fccFolder",
+    "identity.fccFolderURI",
     "msgFccFolderPicker"
   );
 
@@ -63,7 +66,7 @@ function onInitCopiesAndFolders() {
     gArchivesRadioElemChoiceLocked,
     "archive",
     "msgArchivesAccountPicker",
-    "identity.archiveFolder",
+    "identity.archivesFolderURI",
     "msgArchivesFolderPicker"
   );
 
@@ -72,7 +75,7 @@ function onInitCopiesAndFolders() {
     gDraftsRadioElemChoiceLocked,
     "draft",
     "msgDraftsAccountPicker",
-    "identity.draftFolder",
+    "identity.draftsFolderURI",
     "msgDraftsFolderPicker"
   );
 
@@ -80,9 +83,9 @@ function onInitCopiesAndFolders() {
     gTmplRadioElemChoice,
     gTmplRadioElemChoiceLocked,
     "tmpl",
-    "msgStationeryAccountPicker",
-    "identity.stationeryFolder",
-    "msgStationeryFolderPicker"
+    "msgTemplatesAccountPicker",
+    "identity.templatesFolderURI",
+    "msgTemplatesFolderPicker"
   );
 
   setupDoCcBccItems("identity.doCc", "identity.doCcList");
@@ -91,6 +94,8 @@ function onInitCopiesAndFolders() {
   setupArchiveItems();
 
   SetSpecialFolderNamesWithDelims();
+
+  gIdentity = aIdentity;
 }
 
 // Initialize the picker mode choices (account/folder picker) into global vars
@@ -122,7 +127,9 @@ function SetGlobalRadioElemChoices() {
     gDraftsRadioElemChoice = gDefaultPickerMode;
   }
 
-  pickerModeElement = document.getElementById("identity.tmplFolderPickerMode");
+  pickerModeElement = document.getElementById(
+    "identity.templatesFolderPickerMode"
+  );
   gTmplRadioElemChoice = pickerModeElement.getAttribute("value");
   gTmplRadioElemChoiceLocked = pickerModeElement.getAttribute("disabled");
   if (!gTmplRadioElemChoice) {
@@ -157,13 +164,32 @@ function SetFolderDisplay(
   var rg = selectAccountRadioElem.radioGroup;
   var folderPickedElement = document.getElementById(folderPickedField);
   var uri = folderPickedElement.getAttribute("value");
+
   // Get message folder from the given uri.
-  // There is no need to check for the existence of special folders as
-  // these folders are created on demand at runtime in case of imap accounts.
-  // For POP3 accounts, special folders are created at the account creation time.
-  var msgFolder = MailUtils.getOrCreateFolder(uri);
-  InitFolderDisplay(msgFolder.server.rootFolder, accountPicker);
-  InitFolderDisplay(msgFolder, folderPicker);
+  if (!uri) {
+    // No preference set. Set the account picker to the current account and
+    // reset the picker mode to use the account picker.
+    uri = gAccount.incomingServer.rootMsgFolder.URI;
+    pickerMode = "0";
+  }
+  var msgFolder = MailServices.folderLookup.getFolderForURL(uri);
+  if (!msgFolder) {
+    // We had a URI but it points to a non-existent folder. Set the account
+    // picker to the account of the URI, and reset the picker mode to use the
+    // account picker.
+    try {
+      const rootURI = Services.io.newURI(uri).prePath;
+      msgFolder = MailServices.folderLookup.getFolderForURL(rootURI);
+    } catch {
+      // Perhaps the URI was complete nonsense. Ignore it.
+      msgFolder = MailServices.accounts.localFoldersServer.rootFolder;
+    }
+    pickerMode = "0";
+  }
+  if (msgFolder) {
+    InitFolderDisplay(msgFolder.server.rootFolder, accountPicker);
+    InitFolderDisplay(msgFolder, folderPicker);
+  }
 
   switch (pickerMode) {
     case "0":
@@ -232,7 +258,7 @@ function noteSelectionChange(aGroup, aType, aEvent) {
 
     case "messageTemplates":
       gTmplRadioElemChoice = modeValue;
-      picker = document.getElementById("msgStationery" + aType + "Picker");
+      picker = document.getElementById("msgTemplates" + aType + "Picker");
       break;
   }
 
@@ -265,7 +291,7 @@ function onSaveCopiesAndFolders() {
     gFccFolderWithDelim,
     "msgFccAccountPicker",
     "msgFccFolderPicker",
-    "identity.fccFolder",
+    "identity.fccFolderURI",
     "identity.fccFolderPickerMode"
   );
 
@@ -275,7 +301,7 @@ function onSaveCopiesAndFolders() {
     gArchivesFolderWithDelim,
     "msgArchivesAccountPicker",
     "msgArchivesFolderPicker",
-    "identity.archiveFolder",
+    "identity.archivesFolderURI",
     "identity.archivesFolderPickerMode"
   );
 
@@ -285,7 +311,7 @@ function onSaveCopiesAndFolders() {
     gDraftsFolderWithDelim,
     "msgDraftsAccountPicker",
     "msgDraftsFolderPicker",
-    "identity.draftFolder",
+    "identity.draftsFolderURI",
     "identity.draftsFolderPickerMode"
   );
 
@@ -293,10 +319,10 @@ function onSaveCopiesAndFolders() {
     gTmplRadioElemChoice,
     "messageTemplates",
     gTemplatesFolderWithDelim,
-    "msgStationeryAccountPicker",
-    "msgStationeryFolderPicker",
-    "identity.stationeryFolder",
-    "identity.tmplFolderPickerMode"
+    "msgTemplatesAccountPicker",
+    "msgTemplatesFolderPicker",
+    "identity.templatesFolderURI",
+    "identity.templatesFolderPickerMode"
   );
 }
 
@@ -319,13 +345,13 @@ function SaveFolderSettings(
   ) {
     // Default or revert to default if no folder chosen.
     radioElemChoice = "0";
-    uri = document.getElementById(accountPickerId).folder.URI;
+    uri = document.getElementById(accountPickerId).folder?.URI;
     if (uri) {
       // Create Folder URI.
       uri = uri + folderSuffix;
     }
   } else if (radioElemChoice == "1") {
-    uri = document.getElementById(folderPickerId).folder.URI;
+    uri = document.getElementById(folderPickerId).folder?.URI;
   } else {
     dump("Error saving folder preferences.\n");
     return;
@@ -339,7 +365,7 @@ function SaveFolderSettings(
 
 // Check the Fcc Self item and setup associated picker state
 function setupFccItems() {
-  let checked = document.getElementById("identity.doFcc").checked;
+  const checked = document.getElementById("identity.doFcc").checked;
   document.querySelectorAll(".depends-on-do-fcc").forEach(e => {
     if (checked) {
       e.removeAttribute("disabled");
@@ -380,7 +406,7 @@ function setupFccItems() {
  */
 function setupDoCcBccItems(checkboxId, inputId) {
   // Enable address input according to the status of the checkbox.
-  let input = document.getElementById(inputId);
+  const input = document.getElementById(inputId);
   input.disabled = !document.getElementById(checkboxId).checked;
   // Safeguard against space-padded address list to ensure list visibility.
   input.value = input.value.trim();
@@ -394,15 +420,15 @@ function setupDoCcBccItems(checkboxId, inputId) {
  * @param {Event} event - The command event of the checkbox.
  */
 function identityDoCcBccOnCommand(event) {
-  let checkbox = event.target;
-  let checked = checkbox.checked;
+  const checkbox = event.target;
+  const checked = checkbox.checked;
   // For checkboxes #identity.doCc and #identity.doBcc, get the corresponding
   // inputs: #identity.doCcList and #identity.doBccList.
-  let input = document.getElementById(`${checkbox.id}List`);
+  const input = document.getElementById(`${checkbox.id}List`);
   input.disabled = !checked;
 
   // User toggled checkbox.
-  let identityEmailAddress = document.getElementById("identity.email").value;
+  const identityEmailAddress = document.getElementById("identity.email").value;
   if (checked) {
     // If user checks the checkbox and there's no address, default to identity's
     // email address.
@@ -425,7 +451,7 @@ function identityDoCcBccOnCommand(event) {
  * @param {Event} event - The blur event of the checkbox.
  */
 function identityDoCcBccOnBlur(event) {
-  let input = event.target;
+  const input = event.target;
   // Safeguard against space-padded address list to ensure list visibility.
   input.value = input.value.trim();
 }
@@ -472,7 +498,7 @@ function setPickersState(enablePickerId, disablePickerId, event) {
 
 // This routine is to restore the correct radio element
 // state when the fcc self checkbox broadcasts the change
-function SetRadioButtons(selectPickerId, unselectPickerId) {
+function SetRadioButtons(selectPickerId) {
   var activeRadioElem = document.getElementById(selectPickerId);
   activeRadioElem.radioGroup.selectedItem = activeRadioElem;
 }
@@ -486,7 +512,10 @@ function SetRadioButtons(selectPickerId, unselectPickerId) {
  *   archives in
  */
 function updateArchiveHierarchyButton(archiveFolder) {
-  let isGmailImap =
+  if (!archiveFolder) {
+    return;
+  }
+  const isGmailImap =
     archiveFolder.server.type == "imap" &&
     archiveFolder.server.QueryInterface(Ci.nsIImapIncomingServer).isGMailServer;
   document.getElementById("archiveHierarchyButton").disabled = isGmailImap;
@@ -496,7 +525,7 @@ function updateArchiveHierarchyButton(archiveFolder) {
  * Enable or disable (as appropriate) the controls for setting archive options
  */
 function setupArchiveItems() {
-  let checked = document.getElementById("identity.archiveEnabled").checked;
+  const checked = document.getElementById("identity.archiveEnabled").checked;
   document.querySelectorAll(".depends-on-archive").forEach(e => {
     if (checked) {
       e.removeAttribute("disabled");
@@ -544,12 +573,10 @@ function setupArchiveItems() {
  * Open a dialog to edit the folder hierarchy used when archiving messages.
  */
 function ChangeArchiveHierarchy() {
-  let identity = parent.gIdentity || parent.getCurrentAccount().defaultIdentity;
-  let arg = { identity };
-
+  const identity = gIdentity || parent.getCurrentAccount().defaultIdentity;
   parent.gSubDialog.open(
     "chrome://messenger/content/am-archiveoptions.xhtml",
     undefined,
-    arg
+    { identity }
   );
 }

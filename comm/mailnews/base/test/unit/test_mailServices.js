@@ -6,8 +6,8 @@
  * Tests for the MailServices module.
  */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 add_task(function test_services() {
@@ -27,7 +27,7 @@ add_task(function test_services() {
   check_service("pop3", Ci.nsIPop3Service);
   check_service("imap", Ci.nsIImapService);
   check_service("nntp", Ci.nsINntpService);
-  check_service("smtp", Ci.nsISmtpService);
+  check_service("outgoingServer", Ci.nsIMsgOutgoingServerService);
   check_service("compose", Ci.nsIMsgComposeService);
   check_service("ab", Ci.nsIAbManager);
   check_service("copy", Ci.nsIMsgCopyService);
@@ -41,7 +41,7 @@ add_task(function test_services() {
 
 add_task(function test_message_services() {
   function check_message_service(uri) {
-    let service = MailServices.messageServiceFromURI(uri);
+    const service = MailServices.messageServiceFromURI(uri);
     Assert.ok(
       service instanceof Ci.nsIMsgMessageService,
       `message service for ${uri.substring(

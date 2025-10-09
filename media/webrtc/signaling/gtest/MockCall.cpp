@@ -17,21 +17,9 @@ void MockAudioSendStream::Reconfigure(const Config& config,
 
 void MockAudioReceiveStream::SetDecoderMap(
     std::map<int, webrtc::SdpAudioFormat> decoder_map) {
-  MOZ_ASSERT(mCallWrapper->GetMockCall()->mAudioReceiveConfig.isSome());
+  MOZ_RELEASE_ASSERT(mCallWrapper->GetMockCall()->mAudioReceiveConfig.isSome());
   mCallWrapper->GetMockCall()->mAudioReceiveConfig->decoder_map =
       std::move(decoder_map);
-}
-
-void MockAudioReceiveStream::SetRtpExtensions(
-    std::vector<webrtc::RtpExtension> extensions) {
-  MOZ_ASSERT(mCallWrapper->GetMockCall()->mAudioReceiveConfig.isSome());
-  mCallWrapper->GetMockCall()->mAudioReceiveConfig->rtp.extensions =
-      std::move(extensions);
-}
-
-webrtc::RtpHeaderExtensionMap MockAudioReceiveStream::GetRtpExtensionMap()
-    const {
-  return webrtc::RtpHeaderExtensionMap();
 }
 
 void MockVideoSendStream::ReconfigureVideoEncoder(
@@ -45,9 +33,11 @@ void MockVideoSendStream::ReconfigureVideoEncoder(
   ReconfigureVideoEncoder(std::move(config));
 }
 
-webrtc::RtpHeaderExtensionMap MockVideoReceiveStream::GetRtpExtensionMap()
-    const {
-  return webrtc::RtpHeaderExtensionMap();
+void MockVideoSendStream::SetSource(
+    rtc::VideoSourceInterface<webrtc::VideoFrame>* source,
+    const webrtc::DegradationPreference& degradation_preference) {
+  mCallWrapper->GetMockCall()->mConfiguredDegradationPreference =
+      degradation_preference;
 }
 
 }  // namespace test

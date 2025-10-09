@@ -1,10 +1,6 @@
 How to submit a patch
 =====================
 
-+--------------------------------------------------------------------+
-| This page is an import from MDN and the contents might be outdated |
-+--------------------------------------------------------------------+
-
 Submitting a patch, getting it reviewed, and committed to the Firefox
 source tree involves several steps. This article explains how.
 
@@ -72,9 +68,9 @@ the proposed change.
 If module ownership is not clear, ask on the newsgroups or `on
 Matrix <https://chat.mozilla.org>`__. The revision log for the relevant
 file might also be helpful. For example, see the change log for
-``browser/base/content/browser.js``, by clicking the "Hg Log"
+``browser/base/content/browser.js``, by clicking the "Git Log"
 link at the top of `Searchfox <https://searchfox.org/mozilla-central/source/>`__, or
-by running ``hg log browser/base/content/browser.js``. The corresponding
+by running ``git log browser/base/content/browser.js``. The corresponding
 checkin message will contain something like "r=nickname", identifying
 active code submissions, and potential code reviewers.
 
@@ -84,9 +80,7 @@ Working on a patch
 
 Changes to the Firefox source code are presented in the form of a patch.
 A patch is a commit to version control. Firefox and related code is
-stored in our `Mercurial
-server <https://hg.mozilla.org/mozilla-central>`__. We have extensive
-documentation on using Mercurial in our guide, :ref:`Mercurial Overview`.
+stored in our `git repository <https://github.com/mozilla-firefox/firefox>`__.
 
 Each patch should represent a single complete change, separating
 distinct changes into multiple individual patches. If your change
@@ -105,11 +99,6 @@ simple commit message should look like this:
 
    Bug 123456 - Change this thing to work better by doing something. r=reviewers
 
-The ``r=reviewers`` part is optional; if you are using Phabricator,
-Lando will add it automatically based on who actually granted review,
-and in any case the person who does the final check-in of the patch will
-make sure it's added.
-
 The text of the message should be what you did to fix the bug, not a
 description of what the bug was. If it is not obvious why this change is
 appropriate, then `explain why in the commit
@@ -117,8 +106,13 @@ message <https://mozilla-version-control-tools.readthedocs.io/en/latest/mozrevie
 If this does not fit on one line, then leave a blank line and add
 further lines for more detail and/or reasoning.
 
+The ``r=reviewers`` part specifies that ``reviewers`` should review the patch
+and provide feedback before it is integrated into the Firefox codebase. For
+choosing reviewers, and the full reviewer syntax, please see
+:ref:`Getting reviews`.
+
 You can edit the message of the current commit at any time using
-``hg commit --amend`` or ``hg histedit``.
+``git commit --amend`` or ``git rebase -i``.
 
 Also look at our :ref:`Reviewer Checklist` for a list
 of best practices for patch content that reviewers will check for or
@@ -210,7 +204,7 @@ reviewed.
 
 .. note::
 
-   Note: Be sure to build the application with the patch applied. This
+   Be sure to build the application with the patch applied. This
    ensures it runs as expected, passing automated tests, and/or runs
    through the `try
    server <https://wiki.mozilla.org/Build:TryServerAsBranch>`__. In the
@@ -224,7 +218,6 @@ reviewed.
 Ask the reviewer to land the patch for you.
 For more details, see :ref:`push_a_change`
 
-If pushing the patch yourself, please follow :ref:`Committing rules and responsibilities`.
 `Lando <https://moz-conduit.readthedocs.io/en/latest/lando-user.html>`__ is used
 to automatically land your code.
 

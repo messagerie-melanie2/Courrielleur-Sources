@@ -13,13 +13,17 @@ var { XPCOMUtils } = ChromeUtils.importESModule(
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  AMBrowserExtensionsImport: "resource://gre/modules/AddonManager.sys.mjs",
+  AbuseReporter: "resource://gre/modules/AbuseReporter.sys.mjs",
+  ExtensionCommon: "resource://gre/modules/ExtensionCommon.sys.mjs",
   ExtensionParent: "resource://gre/modules/ExtensionParent.sys.mjs",
   ExtensionPermissions: "resource://gre/modules/ExtensionPermissions.sys.mjs",
   OriginControls: "resource://gre/modules/ExtensionPermissions.sys.mjs",
+  PERMISSION_L10N: "resource://gre/modules/ExtensionPermissionMessages.sys.mjs",
   SITEPERMS_ADDON_TYPE:
     "resource://gre/modules/addons/siteperms-addon-utils.sys.mjs",
 });
-XPCOMUtils.defineLazyGetter(lazy, "l10n", function () {
+ChromeUtils.defineLazyGetter(lazy, "l10n", function () {
   return new Localization(
     ["browser/addonNotifications.ftl", "branding/brand.ftl"],
     true
@@ -71,7 +75,436 @@ const ERROR_L10N_IDS = new Map([
     ["addon-install-error-not-signed", "addon-local-install-error-not-signed"],
   ],
   [-8, ["addon-install-error-invalid-domain"]],
+  [
+    -10,
+    ["addon-install-error-hard-blocked", "addon-install-error-hard-blocked"],
+  ],
+  [
+    -11,
+    ["addon-install-error-incompatible", "addon-install-error-incompatible"],
+  ],
+  [
+    -13,
+    [
+      "addon-install-error-admin-install-only",
+      "addon-install-error-admin-install-only",
+    ],
+  ],
+  [
+    -14,
+    ["addon-install-error-soft-blocked", "addon-install-error-soft-blocked"],
+  ],
 ]);
+
+customElements.define(
+  "addon-notification-blocklist-url",
+  class MozAddonNotificationBlocklistURL extends HTMLAnchorElement {
+    connectedCallback() {
+      this.addEventListener("click", this);
+    }
+
+    disconnectedCallback() {
+      this.removeEventListener("click", this);
+    }
+
+    handleEvent(e) {
+      if (e.type == "click") {
+        e.preventDefault();
+        window.openTrustedLinkIn(this.href, "tab", {
+          // Make sure the newly open tab is going to be focused, independently
+          // from general user prefs.
+          forceForeground: true,
+        });
+      }
+    }
+  },
+  { extends: "a" }
+);
+
+customElements.define(
+  "addon-webext-permissions-notification",
+  class MozAddonPermissionsNotification extends customElements.get(
+    "popupnotification"
+  ) {
+    show() {
+      super.show();
+
+      if (!this.notification) {
+        return;
+      }
+
+      if (!this.notification.options?.customElementOptions) {
+        throw new Error(
+          "Mandatory customElementOptions property missing from notification options"
+        );
+      }
+
+      this.textEl = this.querySelector("#addon-webext-perm-text");
+      this.introEl = this.querySelector("#addon-webext-perm-intro");
+      this.permsTitleEl = this.querySelector(
+        "#addon-webext-perm-title-required"
+      );
+      this.permsListEl = this.querySelector("#addon-webext-perm-list-required");
+      this.permsTitleDataCollectionEl = this.querySelector(
+        "#addon-webext-perm-title-data-collection"
+      );
+      this.permsListDataCollectionEl = this.querySelector(
+        "#addon-webext-perm-list-data-collection"
+      );
+      this.permsTitleOptionalEl = this.querySelector(
+        "#addon-webext-perm-title-optional"
+      );
+      this.permsListOptionalEl = this.querySelector(
+        "#addon-webext-perm-list-optional"
+      );
+
+      this.render();
+    }
+
+    get hasNoPermissions() {
+      const {
+        strings,
+        showIncognitoCheckbox,
+        showTechnicalAndInteractionCheckbox,
+      } = this.notification.options.customElementOptions;
+
+      return !(
+        strings.msgs.length ||
+        this.#dataCollectionPermissions?.msg ||
+        showIncognitoCheckbox ||
+        showTechnicalAndInteractionCheckbox
+      );
+    }
+
+    get domainsSet() {
+      if (!this.notification?.options?.customElementOptions) {
+        return undefined;
+      }
+      const { strings } = this.notification.options.customElementOptions;
+      return strings.fullDomainsList?.domainsSet;
+    }
+
+    get hasFullDomainsList() {
+      return this.domainsSet?.size;
+    }
+
+    #isFullDomainsListEntryIndex(idx) {
+      if (!this.hasFullDomainsList) {
+        return false;
+      }
+      const { strings } = this.notification.options.customElementOptions;
+      return strings.fullDomainsList.msgIdIndex === idx;
+    }
+
+    /**
+     * @returns {{idx: number, collectsTechnicalAndInteractionData: boolean}}
+     * An object with information about data collection permissions for the UI.
+     */
+    get #dataCollectionPermissions() {
+      if (!this.notification?.options?.customElementOptions) {
+        return undefined;
+      }
+      const { strings } = this.notification.options.customElementOptions;
+      return strings.dataCollectionPermissions;
+    }
+
+    render() {
+      const {
+        strings,
+        showIncognitoCheckbox,
+        showTechnicalAndInteractionCheckbox,
+        isUserScriptsRequest,
+      } = this.notification.options.customElementOptions;
+
+      const {
+        textEl,
+        introEl,
+        permsTitleEl,
+        permsListEl,
+        permsTitleDataCollectionEl,
+        permsListDataCollectionEl,
+        permsTitleOptionalEl,
+        permsListOptionalEl,
+      } = this;
+
+      const HTML_NS = "http://www.w3.org/1999/xhtml";
+      const doc = this.ownerDocument;
+
+      this.#clearChildElements();
+      // Re-enable "Allow" button if it was disabled by a previous request with
+      // isUserScriptsRequest=true.
+      this.#setAllowButtonEnabled(true);
+
+      if (strings.text) {
+        textEl.textContent = strings.text;
+        // By default, multiline strings don't get formatted properly. These
+        // are presently only used in site permission add-ons, so we treat it
+        // as a special case to avoid unintended effects on other things.
+        if (strings.text.includes("\n\n")) {
+          textEl.classList.add("addon-webext-perm-text-multiline");
+        }
+        textEl.hidden = false;
+      }
+
+      if (strings.listIntro) {
+        introEl.textContent = strings.listIntro;
+        introEl.hidden = false;
+      }
+
+      // "sitepermission" add-ons don't have section headers.
+      if (strings.sectionHeaders) {
+        const { required, dataCollection, optional } = strings.sectionHeaders;
+
+        permsTitleEl.textContent = required;
+        permsTitleDataCollectionEl.textContent = dataCollection;
+        permsTitleOptionalEl.textContent = optional;
+      }
+
+      // Return earlier if there are no permissions to list.
+      if (this.hasNoPermissions) {
+        return;
+      }
+
+      // We only expect a single permission for a userScripts request per
+      // https://searchfox.org/mozilla-central/rev/5fb48bf50516ed2529d533e5dfe49b4752efb8b8/browser/modules/ExtensionsUI.sys.mjs#308-313.
+      if (isUserScriptsRequest) {
+        // The "userScripts" permission cannot be granted until the user has
+        // confirmed again in the notification's content, as described at
+        // https://bugzilla.mozilla.org/show_bug.cgi?id=1917000#c1
+
+        let { checkboxEl, warningEl } = this.#createUserScriptsPermissionItems(
+          // "userScripts" can only be requested with "permissions.request()",
+          // which enforces that it is the only permission in the request.
+          strings.msgs[0]
+        );
+
+        this.#setAllowButtonEnabled(false);
+
+        let item = doc.createElementNS(HTML_NS, "li");
+        item.append(checkboxEl, warningEl);
+        item.classList.add("webext-perm-optional");
+        permsListEl.append(item);
+
+        permsTitleEl.hidden = false;
+        permsListEl.hidden = false;
+      } else {
+        if (strings.msgs.length) {
+          for (let [idx, msg] of strings.msgs.entries()) {
+            let item = doc.createElementNS(HTML_NS, "li");
+            item.classList.add("webext-perm-granted");
+            if (
+              this.hasFullDomainsList &&
+              this.#isFullDomainsListEntryIndex(idx)
+            ) {
+              item.append(this.#createFullDomainsListFragment(msg));
+            } else {
+              item.textContent = msg;
+            }
+            permsListEl.appendChild(item);
+          }
+
+          permsTitleEl.hidden = false;
+          permsListEl.hidden = false;
+        }
+
+        if (this.#dataCollectionPermissions?.msg) {
+          let item = doc.createElementNS(HTML_NS, "li");
+          item.classList.add(
+            "webext-perm-granted",
+            "webext-data-collection-perm-granted"
+          );
+          item.textContent = this.#dataCollectionPermissions.msg;
+          permsListDataCollectionEl.appendChild(item);
+          permsTitleDataCollectionEl.hidden = false;
+          permsListDataCollectionEl.hidden = false;
+        }
+
+        // Add a checkbox for the "technicalAndInteraction" optional data
+        // collection permission.
+        if (showTechnicalAndInteractionCheckbox) {
+          let item = doc.createElementNS(HTML_NS, "li");
+          item.classList.add(
+            "webext-perm-optional",
+            "webext-data-collection-perm-optional"
+          );
+          item.appendChild(this.#createTechnicalAndInteractionDataCheckbox());
+          permsListOptionalEl.appendChild(item);
+          permsTitleOptionalEl.hidden = false;
+          permsListOptionalEl.hidden = false;
+        }
+
+        if (showIncognitoCheckbox) {
+          let item = doc.createElementNS(HTML_NS, "li");
+          item.classList.add(
+            "webext-perm-optional",
+            "webext-perm-privatebrowsing"
+          );
+          item.appendChild(this.#createPrivateBrowsingCheckbox());
+          permsListOptionalEl.appendChild(item);
+          permsTitleOptionalEl.hidden = false;
+          permsListOptionalEl.hidden = false;
+        }
+      }
+    }
+
+    #createFullDomainsListFragment(msg) {
+      const HTML_NS = "http://www.w3.org/1999/xhtml";
+      const doc = this.ownerDocument;
+      const label = doc.createXULElement("label");
+      label.value = msg;
+      const domainsList = doc.createElementNS(HTML_NS, "ul");
+      domainsList.classList.add("webext-perm-domains-list");
+
+      // Enforce max-height and ensure the domains list is
+      // scrollable when there are more than 5 domains.
+      if (this.domainsSet.size > 5) {
+        domainsList.classList.add("scrollable-domains-list");
+      }
+
+      for (const domain of this.domainsSet) {
+        let domainItem = doc.createElementNS(HTML_NS, "li");
+        domainItem.textContent = domain;
+        domainsList.appendChild(domainItem);
+      }
+      const { DocumentFragment } = this.ownerGlobal;
+      const fragment = new DocumentFragment();
+      fragment.append(label);
+      fragment.append(domainsList);
+      return fragment;
+    }
+
+    #clearChildElements() {
+      const {
+        textEl,
+        introEl,
+        permsTitleEl,
+        permsListEl,
+        permsTitleDataCollectionEl,
+        permsListDataCollectionEl,
+        permsTitleOptionalEl,
+        permsListOptionalEl,
+      } = this;
+
+      // Clear all changes to the child elements that may have been changed
+      // by a previous call of the render method.
+      textEl.textContent = "";
+      textEl.hidden = true;
+      textEl.classList.remove("addon-webext-perm-text-multiline");
+
+      introEl.textContent = "";
+      introEl.hidden = true;
+
+      for (const title of [
+        permsTitleEl,
+        permsTitleOptionalEl,
+        permsTitleDataCollectionEl,
+      ]) {
+        title.hidden = true;
+      }
+
+      for (const list of [
+        permsListEl,
+        permsListDataCollectionEl,
+        permsListOptionalEl,
+      ]) {
+        list.textContent = "";
+        list.hidden = true;
+      }
+    }
+
+    #createUserScriptsPermissionItems(userScriptsPermissionMessage) {
+      let checkboxEl = this.ownerDocument.createElement("moz-checkbox");
+      checkboxEl.label = userScriptsPermissionMessage;
+      checkboxEl.checked = false;
+      checkboxEl.addEventListener("change", () => {
+        // The main "Allow" button is disabled until the checkbox is checked.
+        this.#setAllowButtonEnabled(checkboxEl.checked);
+      });
+
+      let warningEl = this.ownerDocument.createElement("moz-message-bar");
+      warningEl.setAttribute("type", "warning");
+      warningEl.setAttribute(
+        "message",
+        lazy.PERMISSION_L10N.formatValueSync(
+          "webext-perms-extra-warning-userScripts-short"
+        )
+      );
+
+      return { checkboxEl, warningEl };
+    }
+
+    #setAllowButtonEnabled(allowed) {
+      let disabled = !allowed;
+      // "mainactiondisabled" mirrors the "disabled" boolean attribute of the
+      // "Allow" button. toggleAttribute("mainactiondisabled", disabled) cannot
+      // be used due to bug 1938481.
+      if (disabled) {
+        this.setAttribute("mainactiondisabled", "true");
+      } else {
+        this.removeAttribute("mainactiondisabled");
+      }
+
+      // The "mainactiondisabled" attribute may also be toggled by the
+      // PopupNotifications._setNotificationUIState() method, which can be
+      // called as a side effect of toggling a checkbox within the notification
+      // (via PopupNotifications._onCommand).
+      //
+      // To prevent PopupNotifications._setNotificationUIState() from setting
+      // the "mainactiondisabled" attribute to a different state, also set the
+      // "invalidselection" attribute, since _setNotificationUIState() mirrors
+      // its value to "mainactiondisabled".
+      //
+      // TODO bug 1938623: Remove this when a better alternative exists.
+      this.toggleAttribute("invalidselection", disabled);
+    }
+
+    #createPrivateBrowsingCheckbox() {
+      const { grantPrivateBrowsingAllowed } =
+        this.notification.options.customElementOptions;
+
+      let checkboxEl = this.ownerDocument.createElement("moz-checkbox");
+      checkboxEl.checked = grantPrivateBrowsingAllowed;
+      checkboxEl.addEventListener("change", () => {
+        // NOTE: the popupnotification instances will be reused
+        // and so the callback function is destructured here to
+        // avoid this custom element to prevent it from being
+        // garbage collected.
+        const { onPrivateBrowsingAllowedChanged } =
+          this.notification.options.customElementOptions;
+        onPrivateBrowsingAllowedChanged?.(checkboxEl.checked);
+      });
+      this.ownerDocument.l10n.setAttributes(
+        checkboxEl,
+        "popup-notification-addon-privatebrowsing-checkbox2"
+      );
+      return checkboxEl;
+    }
+
+    #createTechnicalAndInteractionDataCheckbox() {
+      const { grantTechnicalAndInteractionDataCollection } =
+        this.notification.options.customElementOptions;
+
+      const checkboxEl = this.ownerDocument.createElement("moz-checkbox");
+      this.ownerDocument.l10n.setAttributes(
+        checkboxEl,
+        "popup-notification-addon-technical-and-interaction-checkbox"
+      );
+      checkboxEl.checked = grantTechnicalAndInteractionDataCollection;
+      checkboxEl.addEventListener("change", () => {
+        // NOTE: the popupnotification instances will be reused
+        // and so the callback function is destructured here to
+        // avoid this custom element to prevent it from being
+        // garbage collected.
+        const { onTechnicalAndInteractionDataChanged } =
+          this.notification.options.customElementOptions;
+        onTechnicalAndInteractionDataChanged?.(checkboxEl.checked);
+      });
+
+      return checkboxEl;
+    }
+  },
+  { extends: "popupnotification" }
+);
 
 customElements.define(
   "addon-progress-notification",
@@ -232,7 +665,305 @@ customElements.define(
     onDownloadEnded() {
       this.updateProgress();
     }
+  },
+  { extends: "popupnotification" }
+);
+
+// This custom element wraps the messagebar shown in the extensions panel
+// and used in both ext-browserAction.js and browser-unified-extensions.js
+customElements.define(
+  "unified-extensions-item-messagebar-wrapper",
+  class extends HTMLElement {
+    get extensionPolicy() {
+      return WebExtensionPolicy.getByID(this.extensionId);
+    }
+
+    get extensionName() {
+      return this.extensionPolicy?.name;
+    }
+
+    get isSoftBlocked() {
+      return this.extensionPolicy?.extension?.isSoftBlocked;
+    }
+
+    connectedCallback() {
+      this.messagebar = document.createElement("moz-message-bar");
+      this.messagebar.classList.add("unified-extensions-item-messagebar");
+      this.append(this.messagebar);
+      this.refresh();
+    }
+
+    disconnectedCallback() {
+      this.messagebar?.remove();
+    }
+
+    async refresh() {
+      if (!this.messagebar) {
+        // Nothing to refresh, the custom element has not been
+        // connected to the DOM yet.
+        return;
+      }
+      if (!customElements.get("moz-message-bar")) {
+        document.createElement("moz-message-bar");
+        await customElements.whenDefined("moz-message-bar");
+      }
+      const { messagebar } = this;
+      if (this.isSoftBlocked) {
+        const SOFTBLOCK_FLUENTID =
+          "unified-extensions-item-messagebar-softblocked";
+        if (
+          messagebar.messageL10nId === SOFTBLOCK_FLUENTID &&
+          messagebar.messageL10nArgs?.extensionName === this.extensionName
+        ) {
+          // nothing to refresh.
+          return;
+        }
+        messagebar.removeAttribute("hidden");
+        messagebar.setAttribute("type", "warning");
+        messagebar.messageL10nId = SOFTBLOCK_FLUENTID;
+        messagebar.messageL10nArgs = {
+          extensionName: this.extensionName,
+        };
+      } else {
+        if (messagebar.hasAttribute("hidden")) {
+          // nothing to refresh.
+          return;
+        }
+        messagebar.setAttribute("hidden", "true");
+        messagebar.messageL10nId = null;
+        messagebar.messageL10nArgs = null;
+      }
+      messagebar.requestUpdate();
+    }
   }
+);
+
+class BrowserActionWidgetObserver {
+  #connected = false;
+  /**
+   * @param {string} addonId The ID of the extension
+   * @param {function()} onButtonAreaChanged Callback that is called whenever
+   *   the observer detects the presence, absence or relocation of the browser
+   *   action button for the given extension.
+   */
+  constructor(addonId, onButtonAreaChanged) {
+    this.addonId = addonId;
+    // The expected ID of the browserAction widget. Keep in sync with
+    // actionWidgetId logic in ext-browserAction.js.
+    this.widgetId = `${lazy.ExtensionCommon.makeWidgetId(addonId)}-browser-action`;
+    this.onButtonAreaChanged = onButtonAreaChanged;
+  }
+
+  startObserving() {
+    if (this.#connected) {
+      return;
+    }
+    this.#connected = true;
+    CustomizableUI.addListener(this);
+    window.addEventListener("unload", this);
+  }
+
+  stopObserving() {
+    if (!this.#connected) {
+      return;
+    }
+    this.#connected = false;
+    CustomizableUI.removeListener(this);
+    window.removeEventListener("unload", this);
+  }
+
+  hasBrowserActionUI() {
+    const policy = WebExtensionPolicy.getByID(this.addonId);
+    if (!policy?.canAccessWindow(window)) {
+      // Add-on is not an extension, or extension has not started yet. Or it
+      // was uninstalled/disabled. Or disabled in current (private) window.
+      return false;
+    }
+    if (!gUnifiedExtensions.browserActionFor(policy)) {
+      // Does not have a browser action button.
+      return false;
+    }
+    return true;
+  }
+
+  onWidgetCreated(aWidgetId) {
+    // This is triggered as soon as ext-browserAction registers the button,
+    // shortly after hasBrowserActionUI() above can return true for the first
+    // time since add-on installation.
+    if (aWidgetId === this.widgetId) {
+      this.onButtonAreaChanged();
+    }
+  }
+
+  onWidgetAdded(aWidgetId) {
+    if (aWidgetId === this.widgetId) {
+      this.onButtonAreaChanged();
+    }
+  }
+
+  onWidgetMoved(aWidgetId) {
+    if (aWidgetId === this.widgetId) {
+      this.onButtonAreaChanged();
+    }
+  }
+
+  handleEvent(event) {
+    if (event.type === "unload") {
+      this.stopObserving();
+    }
+  }
+}
+
+customElements.define(
+  "addon-installed-notification",
+  class MozAddonInstalledNotification extends customElements.get(
+    "popupnotification"
+  ) {
+    #shouldIgnoreCheckboxStateChangeEvent = false;
+    #browserActionWidgetObserver;
+    connectedCallback() {
+      this.descriptionEl = this.querySelector("#addon-install-description");
+      this.pinExtensionEl = this.querySelector(
+        "#addon-pin-toolbarbutton-checkbox"
+      );
+
+      this.addEventListener("click", this);
+      this.pinExtensionEl.addEventListener("CheckboxStateChange", this);
+      this.#browserActionWidgetObserver?.startObserving();
+    }
+
+    disconnectedCallback() {
+      this.removeEventListener("click", this);
+      this.pinExtensionEl.removeEventListener("CheckboxStateChange", this);
+      this.#browserActionWidgetObserver?.stopObserving();
+    }
+
+    get #settingsLinkId() {
+      return "addon-install-settings-link";
+    }
+
+    handleEvent(event) {
+      const { target } = event;
+
+      switch (event.type) {
+        case "click": {
+          if (target.id === this.#settingsLinkId) {
+            const { addonId } = this.notification.options.customElementOptions;
+            BrowserAddonUI.openAddonsMgr(
+              "addons://detail/" + encodeURIComponent(addonId)
+            );
+          }
+          break;
+        }
+        case "CheckboxStateChange":
+          // CheckboxStateChange fires whenever the checked value changes.
+          // Ignore the event if triggered by us instead of the user.
+          if (!this.#shouldIgnoreCheckboxStateChangeEvent) {
+            this.#handlePinnedCheckboxStateChange();
+          }
+          break;
+      }
+    }
+
+    show() {
+      super.show();
+
+      if (!this.notification) {
+        return;
+      }
+
+      if (!this.notification.options?.customElementOptions) {
+        throw new Error(
+          "Mandatory customElementOptions property missing from notification options"
+        );
+      }
+
+      this.#browserActionWidgetObserver?.stopObserving();
+      this.#browserActionWidgetObserver = new BrowserActionWidgetObserver(
+        this.notification.options.customElementOptions.addonId,
+        () => this.#renderPinToolbarButtonCheckbox()
+      );
+
+      this.render();
+      if (this.isConnected) {
+        this.#browserActionWidgetObserver.startObserving();
+      }
+    }
+
+    render() {
+      let fluentId = "appmenu-addon-post-install-message3";
+
+      this.ownerDocument.l10n.setAttributes(this.descriptionEl, null);
+      this.querySelector(`#${this.#settingsLinkId}`)?.remove();
+
+      if (this.#dataCollectionPermissionsEnabled) {
+        const HTML_NS = "http://www.w3.org/1999/xhtml";
+        const link = document.createElementNS(HTML_NS, "a");
+        link.setAttribute("id", this.#settingsLinkId);
+        link.setAttribute("data-l10n-name", "settings-link");
+        // Make the link both accessible and keyboard-friendly.
+        link.href = "#";
+        this.descriptionEl.append(link);
+
+        fluentId = "appmenu-addon-post-install-message-with-data-collection";
+      }
+
+      this.ownerDocument.l10n.setAttributes(this.descriptionEl, fluentId);
+      this.#renderPinToolbarButtonCheckbox();
+    }
+
+    get #dataCollectionPermissionsEnabled() {
+      return Services.prefs.getBoolPref(
+        "extensions.dataCollectionPermissions.enabled",
+        false
+      );
+    }
+
+    #renderPinToolbarButtonCheckbox() {
+      // If the extension has a browser action, show the checkbox to allow the
+      // user to customize its location. Hide by default until we know for
+      // certain that the conditions have been met.
+      this.pinExtensionEl.hidden = true;
+
+      if (!this.#browserActionWidgetObserver.hasBrowserActionUI()) {
+        return;
+      }
+      const widgetId = this.#browserActionWidgetObserver.widgetId;
+
+      // Extension buttons appear in AREA_ADDONS by default. There are several
+      // ways for the default to differ for a specific add-on, including the
+      // extension specifying default_area in its manifest.json file, an
+      // enterprise policy having been configured, or the user having moved the
+      // button someplace else. We only show the checkbox if it is either in
+      // AREA_ADDONS or in the toolbar. This covers almost all common cases.
+      const area = CustomizableUI.getPlacementOfWidget(widgetId)?.area;
+      let shouldPinToToolbar = area !== CustomizableUI.AREA_ADDONS;
+      if (shouldPinToToolbar && area !== CustomizableUI.AREA_NAVBAR) {
+        // We only support AREA_ADDONS and AREA_NAVBAR for now.
+        return;
+      }
+      this.#shouldIgnoreCheckboxStateChangeEvent = true;
+      this.pinExtensionEl.checked = shouldPinToToolbar;
+      this.#shouldIgnoreCheckboxStateChangeEvent = false;
+      this.pinExtensionEl.hidden = false;
+    }
+
+    #handlePinnedCheckboxStateChange() {
+      if (!this.#browserActionWidgetObserver.hasBrowserActionUI()) {
+        // Unexpected. #renderPinToolbarButtonCheckbox() should have hidden
+        // the checkbox if there is no widget.
+        const { addonId } = this.notification.options.customElementOptions;
+        throw new Error(`No browser action widget found for ${addonId}!`);
+      }
+      const widgetId = this.#browserActionWidgetObserver.widgetId;
+      const shouldPinToToolbar = this.pinExtensionEl.checked;
+      if (shouldPinToToolbar) {
+        gUnifiedExtensions._maybeMoveWidgetNodeBack(widgetId);
+      }
+      gUnifiedExtensions.pinToToolbar(widgetId, shouldPinToToolbar);
+    }
+  },
+  { extends: "popupnotification" }
 );
 
 // Removes a doorhanger notification if all of the installs it was notifying
@@ -282,31 +1013,6 @@ function buildNotificationAction(msg, callback) {
 }
 
 var gXPInstallObserver = {
-  _findChildShell(aDocShell, aSoughtShell) {
-    if (aDocShell == aSoughtShell) {
-      return aDocShell;
-    }
-
-    var node = aDocShell.QueryInterface(Ci.nsIDocShellTreeItem);
-    for (var i = 0; i < node.childCount; ++i) {
-      var docShell = node.getChildAt(i);
-      docShell = this._findChildShell(docShell, aSoughtShell);
-      if (docShell == aSoughtShell) {
-        return docShell;
-      }
-    }
-    return null;
-  },
-
-  _getBrowser(aDocShell) {
-    for (let browser of gBrowser.browsers) {
-      if (this._findChildShell(browser.docShell, aDocShell)) {
-        return browser;
-      }
-    }
-    return null;
-  },
-
   pendingInstalls: new WeakMap(),
 
   showInstallConfirmation(browser, installInfo, height = undefined) {
@@ -361,11 +1067,9 @@ var gXPInstallObserver = {
       }
       installInfo = null;
 
-      Services.telemetry
-        .getHistogramById("SECURITY_UI")
-        .add(
-          Ci.nsISecurityUITelemetry.WARNING_CONFIRM_ADDON_INSTALL_CLICK_THROUGH
-        );
+      Glean.securityUi.events.accumulateSingleSample(
+        Ci.nsISecurityUITelemetry.WARNING_CONFIRM_ADDON_INSTALL_CLICK_THROUGH
+      );
     };
 
     let cancelInstallation = () => {
@@ -488,12 +1192,16 @@ var gXPInstallObserver = {
 
     removeNotificationOnEnd(popup, installInfo.installs);
 
-    Services.telemetry
-      .getHistogramById("SECURITY_UI")
-      .add(Ci.nsISecurityUITelemetry.WARNING_CONFIRM_ADDON_INSTALL);
+    Glean.securityUi.events.accumulateSingleSample(
+      Ci.nsISecurityUITelemetry.WARNING_CONFIRM_ADDON_INSTALL
+    );
   },
 
-  // IDs of addon install related notifications
+  // IDs of addon install related notifications, passed by this file
+  // (browser-addons.js) to PopupNotifications.show(). The only exception is
+  // "addon-webext-permissions" (from browser/modules/ExtensionsUI.sys.mjs),
+  // which can not only be triggered during add-on installation, but also
+  // later, when the extension uses the browser.permissions.request() API.
   NOTIFICATION_IDS: [
     "addon-install-blocked",
     "addon-install-confirmation",
@@ -533,7 +1241,6 @@ var gXPInstallObserver = {
     consoleMsg.initWithWindowID(
       message,
       gBrowser.currentURI.spec,
-      null,
       0,
       0,
       Ci.nsIScriptError.warningFlag,
@@ -543,7 +1250,7 @@ var gXPInstallObserver = {
     Services.console.logMessage(consoleMsg);
   },
 
-  async observe(aSubject, aTopic, aData) {
+  async observe(aSubject, aTopic) {
     var installInfo = aSubject.wrappedJSObject;
     var browser = installInfo.browser;
 
@@ -567,7 +1274,7 @@ var gXPInstallObserver = {
       case "addon-install-disabled": {
         let msgId, action, secondaryActions;
         if (Services.prefs.prefIsLocked("xpinstall.enabled")) {
-          msgId = "xpinstall-disabled-locked";
+          msgId = "xpinstall-disabled-by-policy";
           action = null;
           secondaryActions = null;
         } else {
@@ -603,7 +1310,7 @@ var gXPInstallObserver = {
       case "addon-install-origin-blocked": {
         const msgId =
           aTopic == "addon-install-policy-blocked"
-            ? "addon-domain-blocked-by-policy"
+            ? "addon-install-domain-blocked-by-policy"
             : "xpinstall-prompt";
         let messageString = await lazy.l10n.formatValue(msgId);
         if (Services.policies) {
@@ -618,9 +1325,7 @@ var gXPInstallObserver = {
 
         options.removeOnDismissal = true;
         options.persistent = false;
-
-        let secHistogram = Services.telemetry.getHistogramById("SECURITY_UI");
-        secHistogram.add(
+        Glean.securityUi.events.accumulateSingleSample(
           Ci.nsISecurityUITelemetry.WARNING_ADDON_ASKING_PREVENTED
         );
         let popup = PopupNotifications.show(
@@ -636,7 +1341,6 @@ var gXPInstallObserver = {
         break;
       }
       case "addon-install-blocked": {
-        await window.ensureCustomElements("moz-support-link");
         // Dismiss the progress notification.  Note that this is bad if
         // there are multiple simultaneous installs happening, see
         // bug 1329884 for a longer explanation.
@@ -714,9 +1418,7 @@ var gXPInstallObserver = {
           let learnMore = doc.getElementById("addon-install-blocked-info");
           learnMore.setAttribute("support-page", article);
         };
-
-        let secHistogram = Services.telemetry.getHistogramById("SECURITY_UI");
-        secHistogram.add(
+        Glean.securityUi.events.accumulateSingleSample(
           Ci.nsISecurityUITelemetry.WARNING_ADDON_ASKING_PREVENTED
         );
 
@@ -733,7 +1435,7 @@ var gXPInstallObserver = {
         ]);
 
         const action = buildNotificationAction(installMsg, () => {
-          secHistogram.add(
+          Glean.securityUi.events.accumulateSingleSample(
             Ci.nsISecurityUITelemetry
               .WARNING_ADDON_ASKING_PREVENTED_CLICK_THROUGH
           );
@@ -775,12 +1477,7 @@ var gXPInstallObserver = {
           // from product about how to approach this for extensions.
           declineActions.push(
             buildNotificationAction(neverAllowAndReportMsg, () => {
-              AMTelemetry.recordEvent({
-                method: "reportSuspiciousSite",
-                object: "suspiciousSite",
-                value: displayURI?.displayHost ?? "(unknown)",
-                extra: {},
-              });
+              AMTelemetry.recordSuspiciousSiteEvent({ displayURI });
               neverAllowCallback();
             })
           );
@@ -879,7 +1576,7 @@ var gXPInstallObserver = {
             !Services.policies.mayInstallAddon(install.addon)
           ) {
             messageString = lazy.l10n.formatValueSync(
-              "addon-install-blocked-by-policy",
+              "addon-installation-blocked-by-policy",
               { addonName: install.name, addonId: install.addon.id }
             );
             let extensionSettings = Services.policies.getExtensionSettings(
@@ -895,17 +1592,16 @@ var gXPInstallObserver = {
             // TODO bug 1834484: simplify computation of isLocal.
             const isLocal = !host;
             let errorId = ERROR_L10N_IDS.get(install.error)?.[isLocal ? 1 : 0];
-            const args = { addonName: install.name };
+            const args = {
+              addonName: install.name,
+              appVersion: Services.appinfo.version,
+            };
+            // TODO: Bug 1846725 - when there is no error ID (which shouldn't
+            // happen but... we never know) we use the "incompatible" error
+            // message for now but we should have a better error message
+            // instead.
             if (!errorId) {
-              if (
-                install.addon.blocklistState ==
-                Ci.nsIBlocklistService.STATE_BLOCKED
-              ) {
-                errorId = "addon-install-error-blocklisted";
-              } else {
-                errorId = "addon-install-error-incompatible";
-                args.appVersion = Services.appinfo.version;
-              }
+              errorId = "addon-install-error-incompatible";
             }
             messageString = lazy.l10n.formatValueSync(errorId, args);
           }
@@ -917,9 +1613,43 @@ var gXPInstallObserver = {
               "unsigned-addons";
           }
 
+          let notificationId = aTopic;
+
+          const isBlocklistError = [
+            AddonManager.ERROR_BLOCKLISTED,
+            AddonManager.ERROR_SOFT_BLOCKED,
+          ].includes(install.error);
+
+          // On blocklist-related install failures:
+          // - use "addon-install-failed-blocklist" as the notificationId
+          //   (which will use the popupnotification with id
+          //   "addon-install-failed-blocklist-notification" defined
+          //   in popup-notification.inc)
+          // - add an eventCallback that will take care of filling in the
+          //   blocklistURL into the href attribute of the link element
+          //   with id "addon-install-failed-blocklist-info"
+          if (isBlocklistError) {
+            const blocklistURL = await install.addon?.getBlocklistURL();
+            notificationId = `${aTopic}-blocklist`;
+            options.eventCallback = topic => {
+              if (topic !== "showing") {
+                return;
+              }
+              let doc = browser.ownerDocument;
+              let blocklistURLEl = doc.getElementById(
+                "addon-install-failed-blocklist-info"
+              );
+              if (blocklistURL) {
+                blocklistURLEl.setAttribute("href", blocklistURL);
+              } else {
+                blocklistURLEl.removeAttribute("href");
+              }
+            };
+          }
+
           PopupNotifications.show(
             browser,
-            aTopic,
+            notificationId,
             messageString,
             gUnifiedExtensions.getPopupAnchorID(browser, window),
             null,
@@ -938,9 +1668,9 @@ var gXPInstallObserver = {
           let height = undefined;
 
           if (PopupNotifications.isPanelOpen) {
-            let rect = document
-              .getElementById("addon-progress-notification")
-              .getBoundingClientRect();
+            let rect = window.windowUtils.getBoundsWithoutFlushing(
+              document.getElementById("addon-progress-notification")
+            );
             height = rect.height;
           }
 
@@ -1004,14 +1734,17 @@ var gExtensionsNotifications = {
   },
 
   _createAddonButton(l10nId, addon, callback) {
-    let text = lazy.l10n.formatValueSync(l10nId, { addonName: addon.name });
+    let text = addon
+      ? lazy.l10n.formatValueSync(l10nId, { addonName: addon.name })
+      : lazy.l10n.formatValueSync(l10nId);
     let button = document.createXULElement("toolbarbutton");
+    button.setAttribute("id", l10nId);
     button.setAttribute("wrap", "true");
     button.setAttribute("label", text);
     button.setAttribute("tooltiptext", text);
     const DEFAULT_EXTENSION_ICON =
       "chrome://mozapps/skin/extensions/extensionGeneric.svg";
-    button.setAttribute("image", addon.iconURL || DEFAULT_EXTENSION_ICON);
+    button.setAttribute("image", addon?.iconURL || DEFAULT_EXTENSION_ICON);
     button.className = "addon-banner-item subviewbutton";
 
     button.addEventListener("command", callback);
@@ -1029,6 +1762,13 @@ var gExtensionsNotifications = {
     }
 
     let items = 0;
+    if (lazy.AMBrowserExtensionsImport.canCompleteOrCancelInstalls) {
+      this._createAddonButton("webext-imported-addons", null, () => {
+        lazy.AMBrowserExtensionsImport.completeInstalls();
+      });
+      items++;
+    }
+
     for (let update of updates) {
       if (++items > 4) {
         break;
@@ -1036,7 +1776,7 @@ var gExtensionsNotifications = {
       this._createAddonButton(
         "webext-perms-update-menu-item",
         update.addon,
-        evt => {
+        () => {
           ExtensionsUI.showUpdate(gBrowser, update);
         }
       );
@@ -1046,7 +1786,7 @@ var gExtensionsNotifications = {
       if (++items > 4) {
         break;
       }
-      this._createAddonButton("webext-perms-sideload-menu-item", addon, evt => {
+      this._createAddonButton("webext-perms-sideload-menu-item", addon, () => {
         // We need to hide the main menu manually because the toolbarbutton is
         // removed immediately while processing this event, and PanelUI is
         // unable to identify which panel should be closed automatically.
@@ -1060,15 +1800,10 @@ var gExtensionsNotifications = {
 var BrowserAddonUI = {
   async promptRemoveExtension(addon) {
     let { name } = addon;
-    let [title, btnTitle, message] = await lazy.l10n.formatValues([
+    let [title, btnTitle] = await lazy.l10n.formatValues([
       { id: "addon-removal-title", args: { name } },
       { id: "addon-removal-button" },
-      { id: "addon-removal-message", args: { name } },
     ]);
-
-    if (Services.prefs.getBoolPref("prompts.windowPromptSubDialog", false)) {
-      message = null;
-    }
 
     let {
       BUTTON_TITLE_IS_STRING: titleString,
@@ -1092,11 +1827,17 @@ var BrowserAddonUI = {
       );
     }
 
+    // If the prompt is being used for ML model removal, use a body message
+    let body = null;
+    if (addon.type === "mlmodel") {
+      body = await lazy.l10n.formatValue("addon-mlmodel-removal-body");
+    }
+
     let checkboxState = { value: false };
     let result = confirmEx(
       window,
       title,
-      message,
+      body,
       btnFlags,
       btnTitle,
       /* button1 */ null,
@@ -1108,18 +1849,21 @@ var BrowserAddonUI = {
     return { remove: result === 0, report: checkboxState.value };
   },
 
-  async reportAddon(addonId, reportEntryPoint) {
+  async reportAddon(addonId, _reportEntryPoint) {
     let addon = addonId && (await AddonManager.getAddonByID(addonId));
     if (!addon) {
       return;
     }
 
-    const win = await BrowserOpenAddonsMgr("addons://list/extension");
-
-    win.openAbuseReport({ addonId, reportEntryPoint });
+    const amoUrl = lazy.AbuseReporter.getAMOFormURL({ addonId });
+    window.openTrustedLinkIn(amoUrl, "tab", {
+      // Make sure the newly open tab is going to be focused, independently
+      // from general user prefs.
+      forceForeground: true,
+    });
   },
 
-  async removeAddon(addonId, eventObject) {
+  async removeAddon(addonId) {
     let addon = addonId && (await AddonManager.getAddonByID(addonId));
     if (!addon || !(addon.permissions & AddonManager.PERM_CAN_UNINSTALL)) {
       return;
@@ -1138,13 +1882,91 @@ var BrowserAddonUI = {
     }
   },
 
-  async manageAddon(addonId, eventObject) {
+  async manageAddon(addonId) {
     let addon = addonId && (await AddonManager.getAddonByID(addonId));
     if (!addon) {
       return;
     }
 
-    BrowserOpenAddonsMgr("addons://detail/" + encodeURIComponent(addon.id));
+    this.openAddonsMgr("addons://detail/" + encodeURIComponent(addon.id));
+  },
+
+  /**
+   * Open about:addons page by given view id.
+   * @param {String} aView
+   *                 View id of page that will open.
+   *                 e.g. "addons://discover/"
+   * @param {Object} options
+   *        {
+   *          selectTabByViewId: If true, if there is the tab opening page having
+   *                             same view id, select the tab. Else if the current
+   *                             page is blank, load on it. Otherwise, open a new
+   *                             tab, then load on it.
+   *                             If false, if there is the tab opening
+   *                             about:addoons page, select the tab and load page
+   *                             for view id on it. Otherwise, leave the loading
+   *                             behavior to switchToTabHavingURI().
+   *                             If no options, handles as false.
+   *        }
+   * @returns {Promise} When the Promise resolves, returns window object loaded the
+   *                    view id.
+   */
+  openAddonsMgr(aView, { selectTabByViewId = false } = {}) {
+    return new Promise(resolve => {
+      let emWindow;
+      let browserWindow;
+
+      const receivePong = function (aSubject) {
+        const browserWin = aSubject.browsingContext.topChromeWindow;
+        if (!emWindow || browserWin == window /* favor the current window */) {
+          if (
+            selectTabByViewId &&
+            aSubject.gViewController.currentViewId !== aView
+          ) {
+            return;
+          }
+
+          emWindow = aSubject;
+          browserWindow = browserWin;
+        }
+      };
+      Services.obs.addObserver(receivePong, "EM-pong");
+      Services.obs.notifyObservers(null, "EM-ping");
+      Services.obs.removeObserver(receivePong, "EM-pong");
+
+      if (emWindow) {
+        if (aView && !selectTabByViewId) {
+          emWindow.loadView(aView);
+        }
+        let tab = browserWindow.gBrowser.getTabForBrowser(
+          emWindow.docShell.chromeEventHandler
+        );
+        browserWindow.gBrowser.selectedTab = tab;
+        emWindow.focus();
+        resolve(emWindow);
+        return;
+      }
+
+      if (selectTabByViewId) {
+        const target = isBlankPageURL(gBrowser.currentURI.spec)
+          ? "current"
+          : "tab";
+        openTrustedLinkIn("about:addons", target);
+      } else {
+        // This must be a new load, else the ping/pong would have
+        // found the window above.
+        switchToTabHavingURI("about:addons", true);
+      }
+
+      Services.obs.addObserver(function observer(aSubject, aTopic) {
+        Services.obs.removeObserver(observer, aTopic);
+        if (aView) {
+          aSubject.loadView(aView);
+        }
+        aSubject.focus();
+        resolve(aSubject);
+      }, "EM-loaded");
+    });
   },
 };
 
@@ -1152,6 +1974,9 @@ var BrowserAddonUI = {
 // "redeclaration" syntax error.
 var gUnifiedExtensions = {
   _initialized: false,
+  // buttonAlwaysVisible: true, -- based on pref, declared later.
+  _buttonShownBeforeButtonOpen: null,
+  _buttonBarHasMouse: false,
 
   // We use a `<deck>` in the extension items to show/hide messages below each
   // extension name. We have a default message for origin controls, and
@@ -1168,13 +1993,14 @@ var gUnifiedExtensions = {
       return;
     }
 
+    // Button is hidden by default, declared in navigator-toolbox.inc.xhtml.
     this._button = document.getElementById("unified-extensions-button");
-    // TODO: Bug 1778684 - Auto-hide button when there is no active extension.
-    this._button.hidden = false;
-
-    document
-      .getElementById("nav-bar")
-      .setAttribute("unifiedextensionsbuttonshown", true);
+    this._navbar = document.getElementById("nav-bar");
+    this.updateButtonVisibility();
+    this._buttonAttrObs = new MutationObserver(() => this.onButtonOpenChange());
+    this._buttonAttrObs.observe(this._button, { attributeFilter: ["open"] });
+    this._button.addEventListener("PopupNotificationsBeforeAnchor", this);
+    this._updateButtonBarListeners();
 
     gBrowser.addTabsProgressListener(this);
     window.addEventListener("TabSelect", () => this.updateAttention());
@@ -1183,8 +2009,14 @@ var gUnifiedExtensions = {
     this.permListener = () => this.updateAttention();
     lazy.ExtensionPermissions.addListener(this.permListener);
 
+    this.onAppMenuShowing = this.onAppMenuShowing.bind(this);
+    PanelUI.mainView.addEventListener("ViewShowing", this.onAppMenuShowing);
     gNavToolbox.addEventListener("customizationstarting", this);
+    gNavToolbox.addEventListener("aftercustomization", this);
     CustomizableUI.addListener(this);
+    AddonManager.addManagerListener(this);
+
+    Glean.extensionsButton.prefersHiddenButton.set(!this.buttonAlwaysVisible);
 
     this._initialized = true;
   },
@@ -1194,13 +2026,52 @@ var gUnifiedExtensions = {
       return;
     }
 
+    this._buttonAttrObs.disconnect();
+    this._button.removeEventListener("PopupNotificationsBeforeAnchor", this);
+
     window.removeEventListener("toolbarvisibilitychange", this);
 
     lazy.ExtensionPermissions.removeListener(this.permListener);
     this.permListener = null;
 
+    PanelUI.mainView.removeEventListener("ViewShowing", this.onAppMenuShowing);
     gNavToolbox.removeEventListener("customizationstarting", this);
+    gNavToolbox.removeEventListener("aftercustomization", this);
     CustomizableUI.removeListener(this);
+    AddonManager.removeManagerListener(this);
+  },
+
+  _updateButtonBarListeners() {
+    // Called from init() and when the buttonAlwaysVisible flag changes.
+    //
+    // We don't expect the user to be interacting with the Extensions Button or
+    // the navbar when the buttonAlwaysVisible flag changes. Still, we reset
+    // the _buttonBarHasMouse flag to false to make sure that the button can be
+    // hidden eventually if there are no other triggers:
+    // - on registration, we don't know whether the mouse is on the navbar.
+    // - after unregistration, the flag is no longer maintained, and false is a
+    //   safe default value.
+    this._buttonBarHasMouse = false;
+    // We need mouse listeners on _navbar to maintain _buttonBarHasMouse,
+    // but only if the button is conditionally visible/hidden.
+    if (this.buttonAlwaysVisible) {
+      this._navbar.removeEventListener("mouseover", this);
+      this._navbar.removeEventListener("mouseout", this);
+    } else {
+      this._navbar.addEventListener("mouseover", this);
+      this._navbar.addEventListener("mouseout", this);
+    }
+  },
+
+  onBlocklistAttentionUpdated() {
+    this.updateAttention();
+  },
+
+  onAppMenuShowing() {
+    document.getElementById("appMenu-extensions-themes-button").hidden =
+      !this.buttonAlwaysVisible;
+    document.getElementById("appMenu-unified-extensions-button").hidden =
+      this.buttonAlwaysVisible;
   },
 
   onLocationChange(browser, webProgress, _request, _uri, flags) {
@@ -1214,29 +2085,114 @@ var gUnifiedExtensions = {
     }
   },
 
-  // Update the attention indicator for the whole unified extensions button.
-  updateAttention() {
-    let attention = false;
-    for (let policy of this.getActivePolicies()) {
-      let widget = this.browserActionFor(policy)?.widget;
+  updateButtonVisibility() {
+    // TODO: Bug 1778684 - Auto-hide button when there is no active extension.
+    let shouldShowButton =
+      this.buttonAlwaysVisible ||
+      // If anything is anchored to the button, keep it visible.
+      this._button.open ||
+      // Button will be open soon - see ensureButtonShownBeforeAttachingPanel.
+      this._buttonShownBeforeButtonOpen ||
+      // Items in the toolbar shift when the button hides. To prevent the user
+      // from clicking on something different than they intended, never hide an
+      // already-visible button while the mouse is still in the toolbar.
+      (!this.button.hidden && this._buttonBarHasMouse) ||
+      // Attention dot - see comment at buttonIgnoresAttention.
+      (!this.buttonIgnoresAttention && this.button.hasAttribute("attention")) ||
+      // Always show when customizing, because even if the button should mostly
+      // be hidden, the user should be able to specify the desired location for
+      // cases where the button is forcibly shown.
+      CustomizationHandler.isCustomizing();
 
-      // Only show for extensions which are not already visible in the toolbar.
-      if (!widget || widget.areaType !== CustomizableUI.TYPE_TOOLBAR) {
-        if (lazy.OriginControls.getAttention(policy, window)) {
-          attention = true;
-          break;
-        }
-      }
+    if (shouldShowButton) {
+      this._button.hidden = false;
+      this._navbar.setAttribute("unifiedextensionsbuttonshown", true);
+    } else {
+      this._button.hidden = true;
+      this._navbar.removeAttribute("unifiedextensionsbuttonshown");
     }
-    this.button.toggleAttribute("attention", attention);
-    this.button.ownerDocument.l10n.setAttributes(
-      this.button,
-      attention
-        ? "unified-extensions-button-permissions-needed"
-        : "unified-extensions-button"
-    );
   },
 
+  ensureButtonShownBeforeAttachingPanel(panel) {
+    if (!this.buttonAlwaysVisible && !this._button.open) {
+      // When the panel is anchored to the button, its "open" attribute will be
+      // set, which visually renders as a "button pressed". Until we get there,
+      // we need to make sure that the button is visible so that it can serve
+      // as anchor.
+      this._buttonShownBeforeButtonOpen = panel;
+      this.updateButtonVisibility();
+    }
+  },
+
+  onButtonOpenChange() {
+    if (this._button.open) {
+      this._buttonShownBeforeButtonOpen = false;
+    }
+    if (!this.buttonAlwaysVisible && !this._button.open) {
+      this.updateButtonVisibility();
+    }
+  },
+
+  // Update the attention indicator for the whole unified extensions button.
+  updateAttention() {
+    let permissionsAttention = false;
+    let quarantinedAttention = false;
+    let blocklistAttention = AddonManager.shouldShowBlocklistAttention();
+
+    // Computing the OriginControls state for all active extensions is potentially
+    // more expensive, and so we don't compute it if we have already determined that
+    // there is a blocklist attention to be shown.
+    if (!blocklistAttention) {
+      for (let policy of this.getActivePolicies()) {
+        let widget = this.browserActionFor(policy)?.widget;
+
+        // Only show for extensions which are not already visible in the toolbar.
+        if (!widget || widget.areaType !== CustomizableUI.TYPE_TOOLBAR) {
+          if (lazy.OriginControls.getAttentionState(policy, window).attention) {
+            permissionsAttention = true;
+            break;
+          }
+        }
+      }
+
+      // If the domain is quarantined and we have extensions not allowed, we'll
+      // show a notification in the panel so we want to let the user know about
+      // it.
+      quarantinedAttention = this._shouldShowQuarantinedNotification();
+    }
+
+    this.button.toggleAttribute(
+      "attention",
+      quarantinedAttention || permissionsAttention || blocklistAttention
+    );
+    let msgId = permissionsAttention
+      ? "unified-extensions-button-permissions-needed"
+      : "unified-extensions-button";
+    // Quarantined state takes precedence over anything else.
+    if (quarantinedAttention) {
+      msgId = "unified-extensions-button-quarantined";
+    }
+    // blocklistAttention state takes precedence over the other ones
+    // because it is dismissible and, once dismissed, the tooltip will
+    // show one of the other messages if appropriate.
+    if (blocklistAttention) {
+      msgId = "unified-extensions-button-blocklisted";
+    }
+    this.button.ownerDocument.l10n.setAttributes(this.button, msgId);
+    if (!this.buttonAlwaysVisible && !this.buttonIgnoresAttention) {
+      if (blocklistAttention) {
+        this.recordButtonTelemetry("attention_blocklist");
+      } else if (permissionsAttention || quarantinedAttention) {
+        this.recordButtonTelemetry("attention_permission_denied");
+      }
+      this.updateButtonVisibility();
+    }
+  },
+
+  // Get the anchor to use with PopupNotifications.show(). If you add a new use
+  // of this method, make sure to update gXPInstallObserver.NOTIFICATION_IDS!
+  // If the new ID is not added in NOTIFICATION_IDS, consider handling the case
+  // in the "PopupNotificationsBeforeAnchor" handler elsewhere in this file.
   getPopupAnchorID(aBrowser, aWindow) {
     const anchorID = "unified-extensions-button";
     const attr = anchorID + "popupnotificationanchor";
@@ -1323,8 +2279,45 @@ var gUnifiedExtensions = {
         this.onPanelViewHiding(event.target);
         break;
 
+      case "PopupNotificationsBeforeAnchor":
+        {
+          const popupnotification = PopupNotifications.panel.firstElementChild;
+          const popupid = popupnotification?.getAttribute("popupid");
+          if (popupid === "addon-webext-permissions") {
+            // "addon-webext-permissions" is also in NOTIFICATION_IDS, but to
+            // distinguish it from other cases, give it a separate reason.
+            this.recordButtonTelemetry("extension_permission_prompt");
+          } else if (gXPInstallObserver.NOTIFICATION_IDS.includes(popupid)) {
+            this.recordButtonTelemetry("addon_install_doorhanger");
+          } else {
+            console.error(`Unrecognized notification ID: ${popupid}`);
+          }
+          this.ensureButtonShownBeforeAttachingPanel(PopupNotifications.panel);
+        }
+        break;
+
+      case "mouseover":
+        this._buttonBarHasMouse = true;
+        break;
+
+      case "mouseout":
+        if (
+          this._buttonBarHasMouse &&
+          !this._navbar.contains(event.relatedTarget)
+        ) {
+          this._buttonBarHasMouse = false;
+          this.updateButtonVisibility();
+        }
+        break;
+
       case "customizationstarting":
         this.panel.hidePopup();
+        this.recordButtonTelemetry("customize");
+        this.updateButtonVisibility();
+        break;
+
+      case "aftercustomization":
+        this.updateButtonVisibility();
         break;
 
       case "toolbarvisibilitychange":
@@ -1344,22 +2337,26 @@ var gUnifiedExtensions = {
       list.appendChild(item);
     }
 
-    const isQuarantinedDomain = this.getActivePolicies().some(
-      policy =>
-        lazy.OriginControls.getState(policy, window.gBrowser.selectedTab)
-          .quarantined
-    );
     const container = panelview.querySelector(
       "#unified-extensions-messages-container"
     );
 
-    if (isQuarantinedDomain) {
+    if (this.blocklistAttentionInfo?.shouldShow) {
+      this._messageBarBlocklist = this._createBlocklistMessageBar(container);
+    } else {
+      this._messageBarBlocklist?.remove();
+      this._messageBarBlocklist = null;
+    }
+
+    const shouldShowQuarantinedNotification =
+      this._shouldShowQuarantinedNotification();
+    if (shouldShowQuarantinedNotification) {
       if (!this._messageBarQuarantinedDomain) {
         this._messageBarQuarantinedDomain = this._makeMessageBar({
-          titleFluentId: "unified-extensions-mb-quarantined-domain-title",
-          messageFluentId: "unified-extensions-mb-quarantined-domain-message",
+          messageBarFluentId:
+            "unified-extensions-mb-quarantined-domain-message-3",
           supportPage: "quarantined-domains",
-          dismissable: false,
+          dismissible: false,
         });
         this._messageBarQuarantinedDomain
           .querySelector("a")
@@ -1370,11 +2367,12 @@ var gUnifiedExtensions = {
 
       container.appendChild(this._messageBarQuarantinedDomain);
     } else if (
-      !isQuarantinedDomain &&
+      !shouldShowQuarantinedNotification &&
       this._messageBarQuarantinedDomain &&
       container.contains(this._messageBarQuarantinedDomain)
     ) {
       container.removeChild(this._messageBarQuarantinedDomain);
+      this._messageBarQuarantinedDomain = null;
     }
   },
 
@@ -1457,7 +2455,9 @@ var gUnifiedExtensions = {
     // This is where we are going to re-insert the extension widgets (DOM
     // nodes) but we need to account for some hidden DOM nodes already present
     // in this container when determining where to put the nodes back.
-    const container = document.getElementById(area);
+    const container = CustomizableUI.getCustomizationTarget(
+      document.getElementById(area)
+    );
 
     let moved = false;
     let currentPosition = 0;
@@ -1512,6 +2512,12 @@ var gUnifiedExtensions = {
       );
       CustomizableUI.addPanelCloseListeners(this._panel);
 
+      this._panel
+        .querySelector("#unified-extensions-manage-extensions")
+        .addEventListener("command", () => {
+          BrowserAddonUI.openAddonsMgr("addons://list/extension");
+        });
+
       // Lazy-load the l10n strings. Those strings are used for the CUI and
       // non-CUI extensions in the unified extensions panel.
       document
@@ -1525,7 +2531,9 @@ var gUnifiedExtensions = {
     return this._panel;
   },
 
-  async togglePanel(aEvent) {
+  // `aEvent` and `reason` are optional. If `reason` is specified, it should be
+  // a valid argument to gUnifiedExtensions.recordButtonTelemetry().
+  async togglePanel(aEvent, reason) {
     if (!CustomizationHandler.isCustomizing()) {
       if (aEvent) {
         if (
@@ -1547,16 +2555,22 @@ var gUnifiedExtensions = {
         if (!this.hasExtensionsInPanel()) {
           let viewID;
           if (
-            Services.prefs.getBoolPref("extensions.getAddons.showPane", true)
+            Services.prefs.getBoolPref("extensions.getAddons.showPane", true) &&
+            // Unconditionally show the list of extensions if the blocklist
+            // attention flag has been shown on the extension panel button.
+            !AddonManager.shouldShowBlocklistAttention()
           ) {
             viewID = "addons://discover/";
           } else {
             viewID = "addons://list/extension";
           }
-          await BrowserOpenAddonsMgr(viewID);
+          await BrowserAddonUI.openAddonsMgr(viewID);
           return;
         }
       }
+
+      this.blocklistAttentionInfo =
+        await AddonManager.getBlocklistAttentionInfo();
 
       let panel = this.panel;
 
@@ -1580,6 +2594,8 @@ var gUnifiedExtensions = {
         }
 
         panel.hidden = false;
+        this.recordButtonTelemetry(reason || "extensions_panel_showing");
+        this.ensureButtonShownBeforeAttachingPanel(panel);
         PanelMultiView.openPopup(panel, this._button, {
           position: "bottomright topright",
           triggerEvent: aEvent,
@@ -1589,6 +2605,24 @@ var gUnifiedExtensions = {
 
     // We always dispatch an event (useful for testing purposes).
     window.dispatchEvent(new CustomEvent("UnifiedExtensionsTogglePanel"));
+  },
+
+  async openPanel(event, reason) {
+    if (this._button.open) {
+      throw new Error("Tried to open panel whilst a panel was already open!");
+    }
+    if (CustomizationHandler.isCustomizing()) {
+      throw new Error("Cannot open panel while in Customize mode!");
+    }
+
+    if (event?.sourceEvent?.target.id === "appMenu-unified-extensions-button") {
+      Glean.extensionsButton.openViaAppMenu.record({
+        is_extensions_panel_empty: !this.hasExtensionsInPanel(),
+        is_extensions_button_visible: !this._button.hidden,
+      });
+    }
+
+    await this.togglePanel(event, reason);
   },
 
   updateContextMenu(menu, event) {
@@ -1715,7 +2749,9 @@ var gUnifiedExtensions = {
 
   _getExtensionId(menu) {
     const { triggerNode } = menu;
-    return triggerNode.dataset.extensionid;
+    return triggerNode
+      .closest(".unified-extensions-item")
+      ?.querySelector("toolbarbutton")?.dataset.extensionid;
   },
 
   _getWidgetId(menu) {
@@ -1795,7 +2831,7 @@ var gUnifiedExtensions = {
     }
   },
 
-  onWidgetAdded(aWidgetId, aArea, aPosition) {
+  onWidgetAdded(aWidgetId, aArea) {
     // When we pin a widget to the toolbar from a narrow window, the widget
     // will be overflowed directly. In this case, we do not want to change the
     // class name since it is going to be changed by `onWidgetOverflow()`
@@ -1810,7 +2846,7 @@ var gUnifiedExtensions = {
     this._updateWidgetClassName(aWidgetId, inPanel);
   },
 
-  onWidgetOverflow(aNode, aContainer) {
+  onWidgetOverflow(aNode) {
     // We register a CUI listener for each window so we make sure that we
     // handle the event for the right window here.
     if (window !== aNode.ownerGlobal) {
@@ -1820,7 +2856,7 @@ var gUnifiedExtensions = {
     this._updateWidgetClassName(aNode.getAttribute("widget-id"), true);
   },
 
-  onWidgetUnderflow(aNode, aContainer) {
+  onWidgetUnderflow(aNode) {
     // We register a CUI listener for each window so we make sure that we
     // handle the event for the right window here.
     if (window !== aNode.ownerGlobal) {
@@ -1874,45 +2910,221 @@ var gUnifiedExtensions = {
     }
   },
 
+  _createBlocklistMessageBar(container) {
+    if (!this.blocklistAttentionInfo) {
+      return null;
+    }
+
+    const { addons, extensionsCount, hasHardBlocked } =
+      this.blocklistAttentionInfo;
+    const type = hasHardBlocked ? "error" : "warning";
+
+    let messageBarFluentId;
+    let extensionName;
+    if (extensionsCount === 1) {
+      extensionName = addons[0].name;
+      messageBarFluentId = hasHardBlocked
+        ? "unified-extensions-mb-blocklist-error-single"
+        : "unified-extensions-mb-blocklist-warning-single";
+    } else {
+      messageBarFluentId = hasHardBlocked
+        ? "unified-extensions-mb-blocklist-error-multiple"
+        : "unified-extensions-mb-blocklist-warning-multiple";
+    }
+
+    const messageBarBlocklist = this._makeMessageBar({
+      dismissible: true,
+      linkToAboutAddons: true,
+      messageBarFluentId,
+      messageBarFluentArgs: {
+        extensionsCount,
+        extensionName,
+      },
+      type,
+    });
+
+    messageBarBlocklist.addEventListener(
+      "message-bar:user-dismissed",
+      () => {
+        if (messageBarBlocklist === this._messageBarBlocklist) {
+          this._messageBarBlocklist = null;
+        }
+        this.blocklistAttentionInfo?.dismiss();
+      },
+      { once: true }
+    );
+
+    if (
+      this._messageBarBlocklist &&
+      container.contains(this._messageBarBlocklist)
+    ) {
+      container.replaceChild(messageBarBlocklist, this._messageBarBlocklist);
+    } else if (container.contains(this._messageBarQuarantinedDomain)) {
+      container.insertBefore(
+        messageBarBlocklist,
+        this._messageBarQuarantinedDomain
+      );
+    } else {
+      container.appendChild(messageBarBlocklist);
+    }
+
+    return messageBarBlocklist;
+  },
+
   _makeMessageBar({
-    messageFluentId,
-    titleFluentId = null,
+    dismissible = false,
+    messageBarFluentId,
+    messageBarFluentArgs,
     supportPage = null,
+    linkToAboutAddons = false,
     type = "warning",
   }) {
-    const messageBar = document.createElement("message-bar");
+    const messageBar = document.createElement("moz-message-bar");
     messageBar.setAttribute("type", type);
     messageBar.classList.add("unified-extensions-message-bar");
 
-    if (titleFluentId) {
-      const titleEl = document.createElement("strong");
-      titleEl.setAttribute("id", titleFluentId);
-      document.l10n.setAttributes(titleEl, titleFluentId);
-      messageBar.append(titleEl);
+    if (dismissible) {
+      // NOTE: the moz-message-bar is currently expected to be called `dismissable`.
+      messageBar.setAttribute("dismissable", dismissible);
     }
 
-    const messageEl = document.createElement("span");
-    messageEl.setAttribute("id", messageFluentId);
-    document.l10n.setAttributes(messageEl, messageFluentId);
-    messageBar.append(messageEl);
+    if (linkToAboutAddons) {
+      const linkToAboutAddonsEl = document.createElement("a");
+      linkToAboutAddonsEl.setAttribute(
+        "class",
+        "unified-extensions-link-to-aboutaddons"
+      );
+      linkToAboutAddonsEl.setAttribute("slot", "support-link");
+      linkToAboutAddonsEl.addEventListener("click", () => {
+        BrowserAddonUI.openAddonsMgr("addons://list/extension");
+        this.togglePanel();
+      });
+      document.l10n.setAttributes(
+        linkToAboutAddonsEl,
+        "unified-extensions-mb-about-addons-link"
+      );
+      messageBar.append(linkToAboutAddonsEl);
+    }
+
+    document.l10n.setAttributes(
+      messageBar,
+      messageBarFluentId,
+      messageBarFluentArgs
+    );
 
     if (supportPage) {
-      window.ensureCustomElements("moz-support-link");
-
       const supportUrl = document.createElement("a", {
         is: "moz-support-link",
       });
       supportUrl.setAttribute("support-page", supportPage);
-      if (titleFluentId) {
-        supportUrl.setAttribute("aria-labelledby", titleFluentId);
-        supportUrl.setAttribute("aria-describedby", messageFluentId);
-      } else {
-        supportUrl.setAttribute("aria-labelledby", messageFluentId);
-      }
+      document.l10n.setAttributes(
+        supportUrl,
+        "unified-extensions-mb-quarantined-domain-learn-more"
+      );
+      supportUrl.setAttribute("data-l10n-attrs", "aria-label");
+      supportUrl.setAttribute("slot", "support-link");
 
       messageBar.append(supportUrl);
     }
 
     return messageBar;
   },
+
+  _shouldShowQuarantinedNotification() {
+    const { currentURI, selectedTab } = window.gBrowser;
+    // We should show the quarantined notification when the domain is in the
+    // list of quarantined domains and we have at least one extension
+    // quarantined. In addition, we check that we have extensions in the panel
+    // until Bug 1778684 is resolved.
+    return (
+      WebExtensionPolicy.isQuarantinedURI(currentURI) &&
+      this.hasExtensionsInPanel() &&
+      this.getActivePolicies().some(
+        policy => lazy.OriginControls.getState(policy, selectedTab).quarantined
+      )
+    );
+  },
+
+  // Records telemetry when the button is about to temporarily be shown,
+  // provided that the button is hidden at the time of invocation.
+  //
+  // `reason` is one of the labels in extensions_button.temporarily_unhidden
+  // in browser/components/extensions/metrics.yaml.
+  //
+  // This is usually immediately before a updateButtonVisibility() call,
+  // sometimes a bit earlier (if the updateButtonVisibility() call is indirect).
+  recordButtonTelemetry(reason) {
+    if (!this.buttonAlwaysVisible && this._button.hidden) {
+      Glean.extensionsButton.temporarilyUnhidden[reason].add();
+    }
+  },
+
+  hideExtensionsButtonFromToolbar() {
+    // All browser windows will observe this and call updateButtonVisibility().
+    Services.prefs.setBoolPref(
+      "extensions.unifiedExtensions.button.always_visible",
+      false
+    );
+    ConfirmationHint.show(
+      document.getElementById("PanelUI-menu-button"),
+      "confirmation-hint-extensions-button-hidden"
+    );
+    Glean.extensionsButton.toggleVisibility.record({
+      is_customizing: CustomizationHandler.isCustomizing(),
+      is_extensions_panel_empty: !this.hasExtensionsInPanel(),
+      // After setting the above pref to false, the button should hide
+      // immediately. If this was not the case, then something caused the
+      // button to be shown temporarily.
+      is_temporarily_shown: !this._button.hidden,
+      should_hide: true,
+    });
+  },
+
+  showExtensionsButtonInToolbar() {
+    let wasShownBefore = !this.buttonAlwaysVisible && !this._button.hidden;
+    // All browser windows will observe this and call updateButtonVisibility().
+    Services.prefs.setBoolPref(
+      "extensions.unifiedExtensions.button.always_visible",
+      true
+    );
+    Glean.extensionsButton.toggleVisibility.record({
+      is_customizing: CustomizationHandler.isCustomizing(),
+      is_extensions_panel_empty: !this.hasExtensionsInPanel(),
+      is_temporarily_shown: wasShownBefore,
+      should_hide: false,
+    });
+  },
 };
+XPCOMUtils.defineLazyPreferenceGetter(
+  gUnifiedExtensions,
+  "buttonAlwaysVisible",
+  "extensions.unifiedExtensions.button.always_visible",
+  true,
+  (prefName, oldValue, newValue) => {
+    if (gUnifiedExtensions._initialized) {
+      gUnifiedExtensions._updateButtonBarListeners();
+      gUnifiedExtensions.updateButtonVisibility();
+      Glean.extensionsButton.prefersHiddenButton.set(!newValue);
+    }
+  }
+);
+// With button.always_visible is false, we still show the button in specific
+// cases when needed. The user is always empowered to dismiss the specific
+// trigger that causes the button to be shown. The attention dot is the
+// exception, where the button cannot easily be hidden. Users who willingly
+// want to ignore the attention dot can set this preference to keep the button
+// hidden even if attention is requested.
+XPCOMUtils.defineLazyPreferenceGetter(
+  gUnifiedExtensions,
+  "buttonIgnoresAttention",
+  "extensions.unifiedExtensions.button.ignore_attention",
+  false,
+  () => {
+    if (
+      gUnifiedExtensions._initialized &&
+      gUnifiedExtensions.buttonAlwaysVisible
+    ) {
+      gUnifiedExtensions.updateButtonVisibility();
+    }
+  }
+);

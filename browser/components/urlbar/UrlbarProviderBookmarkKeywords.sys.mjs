@@ -16,7 +16,6 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   KeywordUtils: "resource://gre/modules/KeywordUtils.sys.mjs",
   UrlbarResult: "resource:///modules/UrlbarResult.sys.mjs",
-  UrlbarTokenizer: "resource:///modules/UrlbarTokenizer.sys.mjs",
 });
 
 /**
@@ -33,9 +32,7 @@ class ProviderBookmarkKeywords extends UrlbarProvider {
   }
 
   /**
-   * Returns the type of this provider.
-   *
-   * @returns {integer} one of the types from UrlbarUtils.PROVIDER_TYPE.*
+   * @returns {Values<typeof UrlbarUtils.PROVIDER_TYPE>}
    */
   get type() {
     return UrlbarUtils.PROVIDER_TYPE.HEURISTIC;
@@ -47,15 +44,13 @@ class ProviderBookmarkKeywords extends UrlbarProvider {
    * with this provider, to save on resources.
    *
    * @param {UrlbarQueryContext} queryContext The query context object
-   * @returns {boolean} Whether this provider should be invoked for the search.
    */
-  isActive(queryContext) {
+  async isActive(queryContext) {
     return (
       (!queryContext.restrictSource ||
-        queryContext.restrictSource ==
-          lazy.UrlbarTokenizer.RESTRICT.BOOKMARK) &&
+        queryContext.restrictSource == UrlbarUtils.RESULT_SOURCE.BOOKMARKS) &&
       !queryContext.searchMode &&
-      queryContext.tokens.length
+      !!queryContext.tokens.length
     );
   }
 
@@ -96,7 +91,7 @@ class ProviderBookmarkKeywords extends UrlbarProvider {
         ]
       );
     } else {
-      title = UrlbarUtils.unEscapeURIForUI(url);
+      title = UrlbarUtils.prepareUrlForDisplay(url);
     }
 
     let result = new lazy.UrlbarResult(

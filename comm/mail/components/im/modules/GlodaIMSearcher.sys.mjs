@@ -2,9 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { Gloda } = ChromeUtils.import(
-  "resource:///modules/gloda/GlodaPublic.jsm"
-);
+import { Gloda } from "resource:///modules/gloda/GlodaPublic.sys.mjs";
 
 /**
  * How much time boost should a 'score point' amount to?  The authoritative,
@@ -135,9 +133,9 @@ var COLUMN_MULTIPLE_MATCH_LIMIT = [10, 0, 0, 0, 0];
 function scoreOffsets(aMessage, aContext) {
   let score = 0;
 
-  let termTemplate = aContext.terms.map(_ => 0);
+  const termTemplate = aContext.terms.map(_ => 0);
   // for each column, a list of the incidence of each term
-  let columnTermIncidence = [
+  const columnTermIncidence = [
     termTemplate.concat(),
     termTemplate.concat(),
     termTemplate.concat(),
@@ -147,17 +145,17 @@ function scoreOffsets(aMessage, aContext) {
 
   // we need a friendlyParseInt because otherwise the radix stuff happens
   //  because of the extra arguments map parses.  curse you, map!
-  let offsetNums = aContext.stashedColumns[aMessage.id][0]
+  const offsetNums = aContext.stashedColumns[aMessage.id][0]
     .split(" ")
     .map(x => parseInt(x));
   for (let i = 0; i < offsetNums.length; i += 4) {
-    let columnIndex = offsetNums[i];
-    let termIndex = offsetNums[i + 1];
+    const columnIndex = offsetNums[i];
+    const termIndex = offsetNums[i + 1];
     columnTermIncidence[columnIndex][termIndex]++;
   }
 
   for (let iColumn = 0; iColumn < COLUMN_ALL_MATCH_SCORES.length; iColumn++) {
-    let termIncidence = columnTermIncidence[iColumn];
+    const termIncidence = columnTermIncidence[iColumn];
     if (termIncidence.every(identityFunc)) {
       // Bestow all match credit.
       score += COLUMN_ALL_MATCH_SCORES[iColumn];
@@ -218,7 +216,7 @@ GlodaIMSearcher.prototype = {
    */
   parseSearchString(aSearchString) {
     aSearchString = aSearchString.trim();
-    let terms = [];
+    const terms = [];
 
     /*
      * Add the term as long as the trim on the way in didn't obliterate it.
@@ -233,7 +231,7 @@ GlodaIMSearcher.prototype = {
 
     while (aSearchString) {
       if (aSearchString.startsWith('"')) {
-        let endIndex = aSearchString.indexOf(aSearchString[0], 1);
+        const endIndex = aSearchString.indexOf(aSearchString[0], 1);
         // eat the quote if it has no friend
         if (endIndex == -1) {
           aSearchString = aSearchString.substring(1);
@@ -245,7 +243,7 @@ GlodaIMSearcher.prototype = {
         continue;
       }
 
-      let spaceIndex = aSearchString.indexOf(" ");
+      const spaceIndex = aSearchString.indexOf(" ");
       if (spaceIndex == -1) {
         addTerm(aSearchString);
         break;
@@ -259,7 +257,7 @@ GlodaIMSearcher.prototype = {
   },
 
   buildFulltextQuery() {
-    let query = Gloda.newQuery(Gloda.lookupNoun("im-conversation"), {
+    const query = Gloda.newQuery(Gloda.lookupNoun("im-conversation"), {
       noMagic: true,
       explicitSQL: NUEVO_FULLTEXT_SQL,
       limitClauseAlreadyIncluded: true,
@@ -270,7 +268,7 @@ GlodaIMSearcher.prototype = {
 
     let fulltextQueryString = "";
 
-    for (let [iTerm, term] of this.fulltextTerms.entries()) {
+    for (const [iTerm, term] of this.fulltextTerms.entries()) {
       if (iTerm) {
         fulltextQueryString += this.andTerms ? " " : " OR ";
       }
@@ -315,7 +313,7 @@ GlodaIMSearcher.prototype = {
   sortBy: "-dascore",
 
   onItemsAdded(aItems, aCollection) {
-    let newScores = Gloda.scoreNounItems(
+    const newScores = Gloda.scoreNounItems(
       aItems,
       {
         terms: this.fulltextTerms,

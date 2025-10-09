@@ -10,46 +10,122 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-edition = "2018"
+edition = "2021"
+rust-version = "1.81"
 name = "askama"
-version = "0.11.1"
+version = "0.13.1"
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
 description = "Type-safe, compiled Jinja-like templates for Rust"
-homepage = "https://github.com/djc/askama"
-documentation = "https://docs.rs/askama"
-readme = "../README.md"
-keywords = ["markup", "template", "jinja2", "html"]
+homepage = "https://askama.readthedocs.io/"
+readme = "README.md"
+keywords = [
+    "markup",
+    "template",
+    "jinja2",
+    "html",
+]
 categories = ["template-engine"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/djc/askama"
+repository = "https://github.com/askama-rs/askama"
+
 [package.metadata.docs.rs]
-features = ["config", "humansize", "num-traits", "serde-json", "serde-yaml"]
-[dependencies.askama_derive]
-version = "0.11.2"
+features = ["full"]
+rustdoc-args = [
+    "--generate-link-to-definition",
+    "--cfg=docsrs",
+]
 
-[dependencies.askama_escape]
-version = "0.10"
-
-[dependencies.askama_shared]
-version = "0.12.1"
-default-features = false
-
-[features]
-config = ["askama_derive/config", "askama_shared/config"]
-default = ["config", "humansize", "num-traits", "urlencode"]
-humansize = ["askama_shared/humansize"]
-markdown = ["askama_shared/markdown"]
-mime = []
-mime_guess = []
-num-traits = ["askama_shared/num-traits"]
-serde-json = ["askama_derive/json", "askama_shared/json"]
-serde-yaml = ["askama_derive/yaml", "askama_shared/yaml"]
-urlencode = ["askama_shared/percent-encoding"]
-with-actix-web = ["askama_derive/actix-web"]
-with-axum = ["askama_derive/axum"]
-with-gotham = ["askama_derive/gotham"]
-with-mendes = ["askama_derive/mendes"]
-with-rocket = ["askama_derive/rocket"]
-with-tide = ["askama_derive/tide"]
-with-warp = ["askama_derive/warp"]
 [badges.maintenance]
 status = "actively-developed"
+
+[features]
+alloc = [
+    "askama_derive?/alloc",
+    "serde?/alloc",
+    "serde_json?/alloc",
+    "percent-encoding?/alloc",
+]
+blocks = ["askama_derive?/blocks"]
+code-in-doc = ["askama_derive?/code-in-doc"]
+config = ["askama_derive?/config"]
+default = [
+    "config",
+    "derive",
+    "std",
+    "urlencode",
+    "askama_derive?/default",
+]
+derive = ["askama_derive"]
+full = [
+    "default",
+    "blocks",
+    "code-in-doc",
+    "serde_json",
+    "askama_derive?/full",
+]
+serde_json = [
+    "std",
+    "askama_derive?/serde_json",
+    "dep:serde",
+    "dep:serde_json",
+]
+std = [
+    "alloc",
+    "askama_derive?/std",
+    "serde?/std",
+    "serde_json?/std",
+    "percent-encoding?/std",
+]
+urlencode = [
+    "askama_derive?/urlencode",
+    "dep:percent-encoding",
+]
+
+[lib]
+name = "askama"
+path = "src/lib.rs"
+
+[[bench]]
+name = "escape"
+path = "benches/escape.rs"
+harness = false
+
+[[bench]]
+name = "to-json"
+path = "benches/to-json.rs"
+harness = false
+required-features = ["serde_json"]
+
+[dependencies.askama_derive]
+version = "=0.13.1"
+optional = true
+default-features = false
+
+[dependencies.itoa]
+version = "1.0.11"
+
+[dependencies.percent-encoding]
+version = "2.1.0"
+optional = true
+default-features = false
+
+[dependencies.serde]
+version = "1.0"
+optional = true
+default-features = false
+
+[dependencies.serde_json]
+version = "1.0"
+optional = true
+default-features = false
+
+[dev-dependencies.assert_matches]
+version = "1.5.0"
+
+[dev-dependencies.criterion]
+version = "0.5"

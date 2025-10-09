@@ -137,7 +137,7 @@ def clear_module_printers(module_name):
         # should remove. (It's not safe to delete entries from a dictionary
         # while we're iterating over it.)
         to_delete = []
-        for (k, v) in d.items():
+        for k, v in d.items():
             if v.__module__ == module_name:
                 to_delete.append(k)
                 remove_from_subprinter_list(v)
@@ -204,7 +204,7 @@ class NotSpiderMonkeyObjfileError(TypeError):
 # metadata in the TypeCache's mod_JSString attribute.
 
 
-class TypeCache(object):
+class TypeCache:
     def __init__(self, objfile):
         self.objfile = objfile
 
@@ -250,7 +250,6 @@ class TypeCache(object):
 
 
 def implemented_types(t):
-
     # Yield all types that follow |t|.
     def followers(t):
         if t.code == gdb.TYPE_CODE_TYPEDEF:
@@ -272,7 +271,7 @@ def implemented_types(t):
         yield t2
 
 
-template_regexp = re.compile("([\w_:]+)<")
+template_regexp = re.compile(r"([\w_:]+)<")
 
 
 def is_struct_or_union(t):
@@ -346,7 +345,7 @@ def lookup_for_objfile(objfile):
         # to scan the whole list, so regexp printers should be used
         # sparingly.
         s = str(value.type)
-        for (r, f) in printers_by_regexp:
+        for r, f in printers_by_regexp:
             if f.enabled:
                 m = r.match(s)
                 if m:
@@ -387,7 +386,7 @@ def lookup_for_objfile(objfile):
 #     including the type name and address, as string contents.
 
 
-class Pointer(object):
+class Pointer:
     def __new__(cls, value, cache):
         # Don't try to provide pretty-printers for NULL pointers.
         if value.type.strip_typedefs().code == gdb.TYPE_CODE_PTR and value == 0:

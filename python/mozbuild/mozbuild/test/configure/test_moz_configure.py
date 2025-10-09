@@ -5,7 +5,7 @@
 from mozunit import main
 
 from common import BaseConfigureTest, ConfigureTestSandbox
-from mozbuild.util import ReadOnlyNamespace, exec_, memoized_property
+from mozbuild.util import ReadOnlyNamespace, memoized_property
 
 
 def sandbox_class(platform):
@@ -13,7 +13,7 @@ def sandbox_class(platform):
         @memoized_property
         def _wrapped_sys(self):
             sys = {}
-            exec_("from sys import *", sys)
+            exec("from sys import *", sys)
             sys["platform"] = platform
             return ReadOnlyNamespace(**sys)
 
@@ -28,8 +28,10 @@ class TargetTest(BaseConfigureTest):
             platform = "win32"
         elif "openbsd6" in self.HOST:
             platform = "openbsd6"
+        elif "apple-darwin" in self.HOST:
+            platform = "darwin"
         else:
-            raise Exception("Missing platform for HOST {}".format(self.HOST))
+            raise Exception(f"Missing platform for HOST {self.HOST}")
         sandbox = self.get_sandbox({}, {}, args, env, cls=sandbox_class(platform))
         return sandbox._value_for(sandbox["target"]).alias
 
@@ -111,7 +113,7 @@ class TestTargetAndroid(TargetTest):
     def test_target(self):
         self.assertEqual(
             self.get_target(["--enable-project=mobile/android"]),
-            "arm-unknown-linux-androideabi",
+            "x86_64-unknown-linux-android",
         )
         self.assertEqual(
             self.get_target(["--enable-project=mobile/android", "--target=i686"]),
@@ -128,6 +130,16 @@ class TestTargetAndroid(TargetTest):
         self.assertEqual(
             self.get_target(["--enable-project=mobile/android", "--target=arm"]),
             "arm-unknown-linux-androideabi",
+        )
+
+
+class TestTargetAndroidAppleSiliconHost(TargetTest):
+    HOST = "aarch64-apple-darwin"
+
+    def test_target(self):
+        self.assertEqual(
+            self.get_target(["--enable-project=mobile/android"]),
+            "aarch64-unknown-linux-android",
         )
 
 
@@ -149,7 +161,7 @@ class TestMozConfigure(BaseConfigureTest):
     def test_nsis_version(self):
         this = self
 
-        class FakeNSIS(object):
+        class FakeNSIS:
             def __init__(self, version):
                 self.version = version
 
@@ -179,6 +191,21 @@ class TestMozConfigure(BaseConfigureTest):
         self.assertEqual(check_nsis_version("v3.0-2"), "3.0")
         self.assertEqual(check_nsis_version("v3.0.1"), "3.0")
         self.assertEqual(check_nsis_version("v3.1"), "3.1")
+
+
+class TestConfVars(BaseConfigureTest):
+    def test_loading(self):
+        sandbox = self.get_sandbox(
+            paths={},
+            config={},
+            args=[
+                "--enable-project=python/mozbuild/mozbuild/test/configure/data/confvars"
+            ],
+        )
+        self.assertEqual(
+            list(sandbox._helper),
+            ["CONFVAR= a b c", "OTHER_CONFVAR=d"],
+        )
 
 
 if __name__ == "__main__":

@@ -2,18 +2,21 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { MailE10SUtils } = ChromeUtils.import(
-  "resource:///modules/MailE10SUtils.jsm"
+var { MailE10SUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailE10SUtils.sys.mjs"
 );
+var { UIFontSize } = ChromeUtils.importESModule(
+  "resource:///modules/UIFontSize.sys.mjs"
+);
+
+window.addEventListener("load", loadRequestedUrl);
+window.addEventListener("close", reportUserClosed);
 
 /* Magic global things the <browser> and its entourage of logic expect. */
 var PopupNotifications = {
   show(browser, id, message) {
     console.warn(
-      "Not showing popup notification",
-      id,
-      "with the message",
-      message
+      `Not showing popup notification ${id} with the message ${message}`
     );
   },
 };
@@ -27,6 +30,9 @@ var gBrowser = {
   },
   get webNavigation() {
     return this.selectedBrowser.webNavigation;
+  },
+  getTabForBrowser() {
+    return null;
   },
 };
 
@@ -43,37 +49,18 @@ var reporterListener = {
     "nsISupportsWeakReference",
   ]),
 
-  onStateChange(
-    /* in nsIWebProgress*/ aWebProgress,
-    /* in nsIRequest*/ aRequest,
-    /* in unsigned long*/ aStateFlags,
-    /* in nsresult*/ aStatus
-  ) {},
-
-  onProgressChange(
-    /* in nsIWebProgress*/ aWebProgress,
-    /* in nsIRequest*/ aRequest,
-    /* in long*/ aCurSelfProgress,
-    /* in long */ aMaxSelfProgress,
-    /* in long */ aCurTotalProgress,
-    /* in long */ aMaxTotalProgress
-  ) {},
-
+  onStateChange() {},
+  onProgressChange() {},
   onLocationChange(
     /* in nsIWebProgress*/ aWebProgress,
     /* in nsIRequest*/ aRequest,
     /* in nsIURI*/ aLocation
   ) {
-    document.getElementById("headerMessage").value = aLocation.spec;
+    if (aWebProgress.isTopLevel) {
+      document.getElementById("headerMessage").value = aLocation.spec;
+    }
   },
-
-  onStatusChange(
-    /* in nsIWebProgress*/ aWebProgress,
-    /* in nsIRequest*/ aRequest,
-    /* in nsresult*/ aStatus,
-    /* in wstring*/ aMessage
-  ) {},
-
+  onStatusChange() {},
   onSecurityChange(
     /* in nsIWebProgress*/ aWebProgress,
     /* in nsIRequest*/ aRequest,
@@ -84,7 +71,7 @@ var reporterListener = {
       Ci.nsIWebProgressListener.STATE_IS_BROKEN |
       Ci.nsIWebProgressListener.STATE_IS_INSECURE;
 
-    let icon = document.getElementById("security-icon");
+    const icon = document.getElementById("security-icon");
     switch (aState & wpl_security_bits) {
       case Ci.nsIWebProgressListener.STATE_IS_SECURE:
         icon.setAttribute(
@@ -111,12 +98,7 @@ var reporterListener = {
         break;
     }
   },
-
-  onContentBlockingEvent(
-    /* in nsIWebProgress*/ aWebProgress,
-    /* in nsIRequest*/ aRequest,
-    /* in unsigned long*/ aEvent
-  ) {},
+  onContentBlockingEvent() {},
 };
 
 function cancelRequest() {
@@ -125,12 +107,23 @@ function cancelRequest() {
 }
 
 function reportUserClosed() {
-  let request = window.arguments[0].wrappedJSObject;
+  const request = window.arguments[0]?.wrappedJSObject;
+  // Bug 1879038: This is also called for WebExtension popup windows, but they do
+  // not send a request.
+  if (!request) {
+    return;
+  }
   request.cancelled();
 }
 
 function loadRequestedUrl() {
-  let request = window.arguments[0].wrappedJSObject;
+  UIFontSize.registerWindow(window);
+  const request = window.arguments[0]?.wrappedJSObject;
+  // Bug 1879038: This is also called for WebExtension popup windows, but they do
+  // not send a request.
+  if (!request) {
+    return;
+  }
 
   var browser = document.getElementById("requestFrame");
   browser.addProgressListener(reporterListener, Ci.nsIWebProgress.NOTIFY_ALL);
@@ -143,3 +136,115 @@ function loadRequestedUrl() {
   }
   request.loaded(window, browser.webProgress);
 }
+
+/**
+ * @implements {nsIBrowserDOMWindow}
+ */
+window.browserDOMWindow = new (class nsBrowserAccess {
+  QueryInterface = ChromeUtils.generateQI(["nsIBrowserDOMWindow"]);
+
+  _openURIInNewTab(
+    aURI,
+    aReferrerInfo,
+    aIsExternal,
+    aOpenWindowInfo = null,
+    aTriggeringPrincipal = null,
+    aCsp = null,
+    aSkipLoad = false,
+    aMessageManagerGroup = null
+  ) {
+    // This is a popup which must not have more than one tab, so open the new tab
+    // in the most recent mail window.
+    const win = Services.wm.getMostRecentWindow("mail:3pane", true);
+
+    if (!win) {
+      // We couldn't find a suitable window, a new one needs to be opened.
+      return null;
+    }
+
+    const loadInBackground = Services.prefs.getBoolPref(
+      "browser.tabs.loadDivertedInBackground"
+    );
+
+    const tabmail = win.document.getElementById("tabmail");
+    const newTab = tabmail.openTab("contentTab", {
+      background: loadInBackground,
+      csp: aCsp,
+      linkHandler: aMessageManagerGroup,
+      openWindowInfo: aOpenWindowInfo,
+      referrerInfo: aReferrerInfo,
+      skipLoad: aSkipLoad,
+      triggeringPrincipal: aTriggeringPrincipal,
+      url: aURI ? aURI.spec : "about:blank",
+    });
+
+    win.focus();
+
+    return newTab.browser;
+  }
+
+  createContentWindow() {
+    throw Components.Exception("Not implemented", Cr.NS_ERROR_NOT_IMPLEMENTED);
+  }
+
+  createContentWindowInFrame(aURI, aParams, aWhere, aFlags, aName) {
+    // Passing a null-URI to only create the content window,
+    // and pass true for aSkipLoad to prevent loading of
+    // about:blank
+    return this.getContentWindowOrOpenURIInFrame(
+      null,
+      aParams,
+      aWhere,
+      aFlags,
+      aName,
+      true
+    );
+  }
+
+  openURI() {
+    throw Components.Exception("Not implemented", Cr.NS_ERROR_NOT_IMPLEMENTED);
+  }
+
+  openURIInFrame() {
+    throw Components.Exception("Not implemented", Cr.NS_ERROR_NOT_IMPLEMENTED);
+  }
+
+  getContentWindowOrOpenURI() {
+    throw Components.Exception("Not implemented", Cr.NS_ERROR_NOT_IMPLEMENTED);
+  }
+
+  getContentWindowOrOpenURIInFrame(
+    aURI,
+    aParams,
+    aWhere,
+    aFlags,
+    aName,
+    aSkipLoad
+  ) {
+    if (aWhere != Ci.nsIBrowserDOMWindow.OPEN_NEWTAB) {
+      console.error("openURIInFrame can only open in new tabs");
+      return null;
+    }
+
+    const isExternal = !!(aFlags & Ci.nsIBrowserDOMWindow.OPEN_EXTERNAL);
+
+    return this._openURIInNewTab(
+      aURI,
+      aParams.referrerInfo,
+      isExternal,
+      aParams.openWindowInfo,
+      aParams.triggeringPrincipal,
+      aParams.csp,
+      aSkipLoad,
+      aParams.openerBrowser?.getAttribute("messagemanagergroup")
+    );
+  }
+
+  canClose() {
+    return true;
+  }
+
+  get tabCount() {
+    return 1;
+  }
+})();

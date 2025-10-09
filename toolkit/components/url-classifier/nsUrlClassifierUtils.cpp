@@ -25,7 +25,7 @@
 #include "mozilla/TextUtils.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
-#include "mozilla/Telemetry.h"
+#include "mozilla/glean/UrlClassifierMetrics.h"
 #include "nsNetUtil.h"
 #include "nsIHttpChannel.h"
 #include "nsIObserverService.h"
@@ -293,7 +293,12 @@ nsUrlClassifierUtils::GetKeyForURI(nsIURI* uri, nsACString& _retval) {
     rv = innerURI->GetQuery(query);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    _retval.AppendPrintf("?%s", query.get());
+    // We have to canonicalize the query too based on
+    // https://developers.google.com/safe-browsing/v4/urls-hashing?hl=en#canonicalization
+    rv = CanonicalizeQuery(query, temp);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    _retval.Append(temp);
   }
 
   return NS_OK;
@@ -318,22 +323,17 @@ static const struct {
     {"goog-badbinurl-proto", MALICIOUS_BINARY},            // 7
     {"goog-downloadwhite-proto", CSD_DOWNLOAD_WHITELIST},  // 9
 
-    // For login reputation
-    {"goog-passwordwhite-proto", CSD_WHITELIST},  // 8
-
     // For testing purpose.
     {"moztest-phish-proto", SOCIAL_ENGINEERING_PUBLIC},  // 2
     {"test-phish-proto", SOCIAL_ENGINEERING_PUBLIC},     // 2
     {"moztest-unwanted-proto", UNWANTED_SOFTWARE},       // 3
     {"test-unwanted-proto", UNWANTED_SOFTWARE},          // 3
-    {"moztest-passwordwhite-proto", CSD_WHITELIST},      // 8
-    {"test-passwordwhite-proto", CSD_WHITELIST},         // 8
 };
 
 NS_IMETHODIMP
 nsUrlClassifierUtils::ConvertThreatTypeToListNames(uint32_t aThreatType,
                                                    nsACString& aListNames) {
-  for (uint32_t i = 0; i < ArrayLength(THREAT_TYPE_CONV_TABLE); i++) {
+  for (uint32_t i = 0; i < std::size(THREAT_TYPE_CONV_TABLE); i++) {
     if (aThreatType == THREAT_TYPE_CONV_TABLE[i].mThreatType) {
       if (!aListNames.IsEmpty()) {
         aListNames.AppendLiteral(",");
@@ -348,7 +348,7 @@ nsUrlClassifierUtils::ConvertThreatTypeToListNames(uint32_t aThreatType,
 NS_IMETHODIMP
 nsUrlClassifierUtils::ConvertListNameToThreatType(const nsACString& aListName,
                                                   uint32_t* aThreatType) {
-  for (uint32_t i = 0; i < ArrayLength(THREAT_TYPE_CONV_TABLE); i++) {
+  for (uint32_t i = 0; i < std::size(THREAT_TYPE_CONV_TABLE); i++) {
     if (aListName.EqualsASCII(THREAT_TYPE_CONV_TABLE[i].mListName)) {
       *aThreatType = THREAT_TYPE_CONV_TABLE[i].mThreatType;
       return NS_OK;
@@ -773,8 +773,8 @@ nsUrlClassifierUtils::ParseFindFullHashResponseV4(
   FindFullHashesResponse r;
   if (!r.ParseFromArray(aResponse.BeginReading(), aResponse.Length())) {
     NS_WARNING("Invalid response");
-    Telemetry::Accumulate(Telemetry::URLCLASSIFIER_COMPLETION_ERROR,
-                          PARSING_FAILURE);
+    glean::urlclassifier::completion_error.AccumulateSingleSample(
+        PARSING_FAILURE);
     return NS_ERROR_FAILURE;
   }
 
@@ -799,8 +799,8 @@ nsUrlClassifierUtils::ParseFindFullHashResponseV4(
 
   aCallback->OnResponseParsed(minWaitDuration, negCacheDurationSec);
 
-  Telemetry::Accumulate(Telemetry::URLCLASSIFIER_COMPLETION_ERROR,
-                        hasUnknownThreatType ? UNKNOWN_THREAT_TYPE : SUCCESS);
+  glean::urlclassifier::completion_error.AccumulateSingleSample(
+      hasUnknownThreatType ? UNKNOWN_THREAT_TYPE : SUCCESS);
   return NS_OK;
 }
 
@@ -918,6 +918,25 @@ nsresult nsUrlClassifierUtils::CanonicalizePath(const nsACString& path,
 
   SpecialEncode(decodedPath, true, _retval);
   // XXX: lowercase the path?
+
+  return NS_OK;
+}
+
+nsresult nsUrlClassifierUtils::CanonicalizeQuery(const nsACString& query,
+                                                 nsACString& _retval) {
+  _retval.Truncate();
+  _retval.Append('?');
+
+  // Unescape the query
+  nsAutoCString unescaped;
+  if (!NS_UnescapeURL(PromiseFlatCString(query).get(),
+                      PromiseFlatCString(query).Length(), 0, unescaped)) {
+    unescaped.Assign(query);
+  }
+
+  // slash folding does not apply to the query parameters, but we need to
+  // percent-escape all characters that are <= ASCII 32, >= 127, "#", or "%"
+  SpecialEncode(unescaped, false, _retval);
 
   return NS_OK;
 }

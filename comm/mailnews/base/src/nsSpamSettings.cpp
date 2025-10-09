@@ -22,7 +22,6 @@
 #include "mozilla/mailnews/MimeHeaderParser.h"
 #include "nsMailDirServiceDefs.h"
 #include "nsDirectoryServiceUtils.h"
-#include "nsDirectoryServiceDefs.h"
 #include "nsISimpleEnumerator.h"
 #include "nsIAbCard.h"
 #include "nsIAbManager.h"
@@ -243,17 +242,17 @@ NS_IMETHODIMP nsSpamSettings::Initialize(nsIMsgIncomingServer* aServer) {
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCString spamActionTargetAccount;
-  rv =
-      aServer->GetCharValue("spamActionTargetAccount", spamActionTargetAccount);
+  rv = aServer->GetStringValue("spamActionTargetAccount",
+                               spamActionTargetAccount);
   NS_ENSURE_SUCCESS(rv, rv);
   rv = SetActionTargetAccount(spamActionTargetAccount);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsString spamActionTargetFolder;
-  rv = aServer->GetUnicharValue("spamActionTargetFolder",
-                                spamActionTargetFolder);
+  nsCString spamActionTargetFolder;
+  rv =
+      aServer->GetStringValue("spamActionTargetFolder", spamActionTargetFolder);
   NS_ENSURE_SUCCESS(rv, rv);
-  rv = SetActionTargetFolder(NS_ConvertUTF16toUTF8(spamActionTargetFolder));
+  rv = SetActionTargetFolder(spamActionTargetFolder);
   NS_ENSURE_SUCCESS(rv, rv);
 
   bool useWhiteList;
@@ -263,7 +262,7 @@ NS_IMETHODIMP nsSpamSettings::Initialize(nsIMsgIncomingServer* aServer) {
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCString whiteListAbURI;
-  rv = aServer->GetCharValue("whiteListAbURI", whiteListAbURI);
+  rv = aServer->GetStringValue("whiteListAbURI", whiteListAbURI);
   NS_ENSURE_SUCCESS(rv, rv);
   rv = SetWhiteListAbURI(whiteListAbURI);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -287,7 +286,7 @@ NS_IMETHODIMP nsSpamSettings::Initialize(nsIMsgIncomingServer* aServer) {
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCString serverFilterName;
-  rv = aServer->GetCharValue("serverFilterName", serverFilterName);
+  rv = aServer->GetStringValue("serverFilterName", serverFilterName);
   if (NS_SUCCEEDED(rv)) SetServerFilterName(serverFilterName);
   int32_t serverFilterTrustFlags = 0;
   rv = aServer->GetIntValue("serverFilterTrustFlags", &serverFilterTrustFlags);
@@ -367,7 +366,7 @@ NS_IMETHODIMP nsSpamSettings::Initialize(nsIMsgIncomingServer* aServer) {
       loopAccount->GetIncomingServer(getter_AddRefs(loopServer));
       nsAutoCString deferredToAccountKey;
       if (loopServer)
-        loopServer->GetCharValue("deferred_to_account", deferredToAccountKey);
+        loopServer->GetStringValue("deferred_to_account", deferredToAccountKey);
 
       // Add the emails for any account that defers to this one, or for the
       // account itself.
@@ -487,7 +486,11 @@ NS_IMETHODIMP nsSpamSettings::GetSpamFolderURI(nsACString& aSpamFolderURI) {
 
   nsCOMPtr<nsIMsgIncomingServer> server;
   rv = folder->GetServer(getter_AddRefs(server));
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (NS_FAILED(rv)) {
+    // Invalid server in the prefs. Reset the server and bail.
+    SetActionTargetAccount(""_ns);
+    return NS_OK;
+  }
 
   // see nsMsgFolder::SetPrettyName() for where the pretty name is set.
 
@@ -565,8 +568,8 @@ NS_IMETHODIMP nsSpamSettings::GetServerFilterFile(nsIFile** aFile) {
           break;
         }
       }  // if file
-    }    // until we find the location of mServerFilterName
-  }      // if we haven't already stored mServerFilterFile
+    }  // until we find the location of mServerFilterName
+  }  // if we haven't already stored mServerFilterFile
 
   NS_IF_ADDREF(*aFile = mServerFilterFile);
   return NS_OK;
@@ -634,7 +637,7 @@ NS_IMETHODIMP nsSpamSettings::LogJunkHit(nsIMsgDBHdr* aMsgHdr,
 
   if (aMoveMessage) {
     nsCString msgId;
-    aMsgHdr->GetMessageId(getter_Copies(msgId));
+    aMsgHdr->GetMessageId(msgId);
 
     nsCString junkFolderURI;
     rv = GetSpamFolderURI(junkFolderURI);
@@ -748,7 +751,7 @@ NS_IMETHODIMP nsSpamSettings::CheckWhiteList(nsIMsgDBHdr* aMsgHdr,
   // do per-message processing
 
   nsCString author;
-  aMsgHdr->GetAuthor(getter_Copies(author));
+  aMsgHdr->GetAuthor(author);
 
   nsAutoCString authorEmailAddress;
   ExtractEmail(EncodedHeader(author), authorEmailAddress);

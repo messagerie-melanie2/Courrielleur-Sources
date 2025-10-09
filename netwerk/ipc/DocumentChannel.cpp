@@ -32,6 +32,7 @@
 #include "nsILoadInfo.h"
 #include "nsIStreamListener.h"
 #include "nsIURI.h"
+#include "nsLoadGroup.h"
 #include "nsMimeTypes.h"
 #include "nsNetUtil.h"
 #include "nsPIDOMWindow.h"
@@ -67,14 +68,15 @@ NS_INTERFACE_MAP_END
 DocumentChannel::DocumentChannel(nsDocShellLoadState* aLoadState,
                                  net::LoadInfo* aLoadInfo,
                                  nsLoadFlags aLoadFlags, uint32_t aCacheKey,
-                                 bool aUriModified, bool aIsXFOError)
+                                 bool aUriModified,
+                                 bool aIsEmbeddingBlockedError)
     : mLoadState(aLoadState),
       mCacheKey(aCacheKey),
       mLoadFlags(aLoadFlags),
       mURI(aLoadState->URI()),
       mLoadInfo(aLoadInfo),
       mUriModified(aUriModified),
-      mIsXFOError(aIsXFOError) {
+      mIsEmbeddingBlockedError(aIsEmbeddingBlockedError) {
   LOG(("DocumentChannel ctor [this=%p, uri=%s]", this,
        aLoadState->URI()->GetSpecOrDefault().get()));
   RefPtr<nsHttpHandler> handler = nsHttpHandler::GetInstance();
@@ -125,13 +127,27 @@ void DocumentChannel::ShutdownListeners(nsresult aStatusCode) {
 void DocumentChannel::DisconnectChildListeners(
     const nsresult& aStatus, const nsresult& aLoadGroupStatus) {
   MOZ_ASSERT(NS_FAILED(aStatus));
-  mStatus = aLoadGroupStatus;
-  // Make sure we remove from the load group before
-  // setting mStatus, as existing tests expect the
-  // status to be successful when we disconnect.
-  if (mLoadGroup) {
-    mLoadGroup->RemoveRequest(this, nullptr, aStatus);
-    mLoadGroup = nullptr;
+
+  // In the case where the channel was redirected to be downloaded by the
+  // nsExternalHelperAppService in the parent process, we'll be called with a
+  // different aLoadGroupStatus and aStatus.
+  //
+  // Before DocumentChannel was implemented, the channel would have been removed
+  // from the load group by the nsExternalHelperAppService. This simulates that
+  // behaviour by removing the load group when the channel is no longer in use.
+  //
+  // We cannot unconditionally remove the channel from the load group here, as
+  // that may unblock load events too early if new navigations will be started
+  // by channel listeners. See bug 1961008.
+  if (aStatus != aLoadGroupStatus) {
+    MOZ_ASSERT(aStatus == NS_BINDING_RETARGETED);
+    MOZ_ASSERT(NS_SUCCEEDED(aLoadGroupStatus));
+
+    mStatus = aLoadGroupStatus;
+    if (mLoadGroup) {
+      mLoadGroup->RemoveRequest(this, nullptr, aStatus);
+      mLoadGroup = nullptr;
+    }
   }
 
   ShutdownListeners(aStatus);
@@ -154,7 +170,7 @@ nsDocShell* DocumentChannel::GetDocShell() {
 }
 
 static bool URIUsesDocChannel(nsIURI* aURI) {
-  if (SchemeIsJavascript(aURI)) {
+  if (aURI->SchemeIs("javascript")) {
     return false;
   }
 
@@ -171,15 +187,16 @@ bool DocumentChannel::CanUseDocumentChannel(nsIURI* aURI) {
 already_AddRefed<DocumentChannel> DocumentChannel::CreateForDocument(
     nsDocShellLoadState* aLoadState, class LoadInfo* aLoadInfo,
     nsLoadFlags aLoadFlags, nsIInterfaceRequestor* aNotificationCallbacks,
-    uint32_t aCacheKey, bool aUriModified, bool aIsXFOError) {
+    uint32_t aCacheKey, bool aUriModified, bool aIsEmbeddingBlockedError) {
   RefPtr<DocumentChannel> channel;
   if (XRE_IsContentProcess()) {
-    channel = new DocumentChannelChild(aLoadState, aLoadInfo, aLoadFlags,
-                                       aCacheKey, aUriModified, aIsXFOError);
-  } else {
     channel =
-        new ParentProcessDocumentChannel(aLoadState, aLoadInfo, aLoadFlags,
-                                         aCacheKey, aUriModified, aIsXFOError);
+        new DocumentChannelChild(aLoadState, aLoadInfo, aLoadFlags, aCacheKey,
+                                 aUriModified, aIsEmbeddingBlockedError);
+  } else {
+    channel = new ParentProcessDocumentChannel(
+        aLoadState, aLoadInfo, aLoadFlags, aCacheKey, aUriModified,
+        aIsEmbeddingBlockedError);
   }
   channel->SetNotificationCallbacks(aNotificationCallbacks);
   return channel.forget();
@@ -292,21 +309,30 @@ DocumentChannel::SetTRRMode(nsIRequest::TRRMode aTRRMode) {
 }
 
 NS_IMETHODIMP DocumentChannel::SetLoadFlags(nsLoadFlags aLoadFlags) {
-  // Setting load flags for TYPE_OBJECT is OK, so long as the channel to parent
-  // isn't opened yet, or we're only setting the `LOAD_DOCUMENT_URI` flag.
-  auto contentPolicy = mLoadInfo->GetExternalContentPolicyType();
-  if (contentPolicy == ExtContentPolicy::TYPE_OBJECT) {
-    if (mWasOpened) {
-      MOZ_DIAGNOSTIC_ASSERT(
-          aLoadFlags == (mLoadFlags | nsIChannel::LOAD_DOCUMENT_URI),
-          "After the channel has been opened, can only set the "
-          "`LOAD_DOCUMENT_URI` flag.");
-    }
+  nsLoadFlags mayChange = 0;
+  if (mLoadInfo->GetExternalContentPolicyType() ==
+      ExtContentPolicy::TYPE_OBJECT) {
+    // Setting load flags for TYPE_OBJECT is OK, so long as the channel to
+    // parent isn't opened yet, or we're only setting the `LOAD_DOCUMENT_URI`
+    // flag.
+    mayChange = mWasOpened ? LOAD_DOCUMENT_URI : ~0u;
+  } else if (!mWasOpened) {
+    // If we haven't been opened yet, allow the LoadGroup to
+    // set cache control flags inherited from the default channel.
+    mayChange = nsLoadGroup::kInheritedLoadFlags;
+  }
+
+  // Check if we're allowed to adjust these flags.
+  if ((mLoadFlags & ~mayChange) == (aLoadFlags & ~mayChange)) {
     mLoadFlags = aLoadFlags;
     return NS_OK;
   }
-
-  MOZ_CRASH("DocumentChannel::SetLoadFlags: Don't set flags after creation");
+  MOZ_CRASH_UNSAFE_PRINTF(
+      "DocumentChannel::SetLoadFlags: Don't set flags after creation "
+      "(differing flags %x != %x)",
+      (mLoadFlags ^ aLoadFlags) & mLoadFlags,
+      (mLoadFlags ^ aLoadFlags) & aLoadFlags);
+  return NS_OK;
 }
 
 NS_IMETHODIMP DocumentChannel::GetOriginalURI(nsIURI** aOriginalURI) {

@@ -14,8 +14,8 @@ def _quote(s):
     As a special case, if given an int, returns a string containing the int,
     not enclosed in quotes.
     """
-    if type(s) == int:
-        return "%d" % s
+    if isinstance(s, int):
+        return f"{s}"
 
     # Empty strings need to be quoted to have any significance
     if s and not SHELL_QUOTE_RE.search(s) and not s.startswith("~"):

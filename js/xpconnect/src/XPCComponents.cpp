@@ -8,7 +8,6 @@
 
 #include "xpcprivate.h"
 #include "xpc_make_class.h"
-#include "JSServices.h"
 #include "XPCJSWeakReference.h"
 #include "AccessCheck.h"
 #include "WrapperFactory.h"
@@ -20,7 +19,6 @@
 #include "js/Array.h"  // JS::IsArrayObject
 #include "js/CallAndConstruct.h"  // JS::IsCallable, JS_CallFunctionName, JS_CallFunctionValue
 #include "js/CharacterEncoding.h"
-#include "js/ContextOptions.h"
 #include "js/friend/WindowProxy.h"  // js::ToWindowProxyIfWindow
 #include "js/Object.h"              // JS::GetClass, JS::GetCompartment
 #include "js/PropertyAndElement.h"  // JS_DefineProperty, JS_DefinePropertyById, JS_Enumerate, JS_GetProperty, JS_GetPropertyById, JS_HasProperty, JS_SetProperty, JS_SetPropertyById
@@ -34,6 +32,7 @@
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/ResultExtensions.h"
+#include "mozilla/Try.h"
 #include "mozilla/URLPreloader.h"
 #include "mozilla/dom/DOMException.h"
 #include "mozilla/dom/DOMExceptionBinding.h"
@@ -48,7 +47,7 @@
 #include "nsIException.h"
 #include "nsIScriptError.h"
 #include "nsPIDOMWindow.h"
-#include "nsGlobalWindow.h"
+#include "nsGlobalWindowInner.h"
 #include "nsScriptError.h"
 #include "GeckoProfiler.h"
 #include "ProfilerControl.h"
@@ -1310,16 +1309,6 @@ nsXPCComponents_Utils::GetSandbox(nsIXPCComponents_utils_Sandbox** aSandbox) {
 }
 
 NS_IMETHODIMP
-nsXPCComponents_Utils::CreateServicesCache(JSContext* aCx,
-                                           MutableHandleValue aServices) {
-  if (JSObject* services = NewJSServices(aCx)) {
-    aServices.setObject(*services);
-    return NS_OK;
-  }
-  return NS_ERROR_FAILURE;
-}
-
-NS_IMETHODIMP
 nsXPCComponents_Utils::PrintStderr(const nsACString& message) {
   printf_stderr("%s", PromiseFlatUTF8String(message).get());
   return NS_OK;
@@ -1359,7 +1348,7 @@ nsXPCComponents_Utils::ReportError(HandleValue error, HandleValue stack,
     }
   }
 
-  nsString fileName;
+  nsCString fileName;
   uint32_t lineNo = 0;
 
   if (!scripterr) {
@@ -1385,7 +1374,7 @@ nsXPCComponents_Utils::ReportError(HandleValue error, HandleValue stack,
       }
 
       RootedString source(cx);
-      nsAutoJSString str;
+      nsAutoJSCString str;
       if (GetSavedFrameSource(cx, principals, stackObj, &source) ==
               SavedFrameResult::Ok &&
           str.init(cx, source)) {
@@ -1420,23 +1409,14 @@ nsXPCComponents_Utils::ReportError(HandleValue error, HandleValue stack,
   JSErrorReport* err = errorObj ? JS_ErrorFromException(cx, errorObj) : nullptr;
   if (err) {
     // It's a proper JS Error
-    nsAutoString fileUni;
-    CopyUTF8toUTF16(mozilla::MakeStringSpan(err->filename), fileUni);
-
-    uint32_t column = err->tokenOffset();
-
-    const char16_t* linebuf = err->linebuf();
     uint32_t flags = err->isWarning() ? nsIScriptError::warningFlag
                                       : nsIScriptError::errorFlag;
-
     nsresult rv = scripterr->InitWithWindowID(
         err->message() ? NS_ConvertUTF8toUTF16(err->message().c_str())
                        : EmptyString(),
-        fileUni,
-        linebuf ? nsDependentString(linebuf, err->linebufLength())
-                : EmptyString(),
-        err->lineno, column, flags, "XPConnect JavaScript", innerWindowID,
-        innerWindowID == 0 ? true : false);
+        nsDependentCString(err->filename ? err->filename.c_str() : ""),
+        err->lineno, err->column.oneOriginValue(), flags,
+        "XPConnect JavaScript", innerWindowID, innerWindowID == 0);
     NS_ENSURE_SUCCESS(rv, NS_OK);
 
     console->LogMessage(scripterr);
@@ -1454,9 +1434,9 @@ nsXPCComponents_Utils::ReportError(HandleValue error, HandleValue stack,
     return NS_OK;
   }
 
-  nsresult rv = scripterr->InitWithWindowID(
-      msg, fileName, u""_ns, lineNo, 0, 0, "XPConnect JavaScript",
-      innerWindowID, innerWindowID == 0 ? true : false);
+  nsresult rv = scripterr->InitWithWindowID(msg, fileName, lineNo, 0, 0,
+                                            "XPConnect JavaScript",
+                                            innerWindowID, innerWindowID == 0);
   NS_ENSURE_SUCCESS(rv, NS_OK);
 
   console->LogMessage(scripterr);
@@ -1483,11 +1463,8 @@ nsXPCComponents_Utils::EvalInSandbox(
     filename.Assign(filenameArg);
   } else {
     // Get the current source info.
-    nsCOMPtr<nsIStackFrame> frame = dom::GetCurrentJSStack();
-    if (frame) {
-      nsString frameFile;
-      frame->GetFilename(cx, frameFile);
-      CopyUTF16toUTF8(frameFile, filename);
+    if (nsCOMPtr<nsIStackFrame> frame = dom::GetCurrentJSStack()) {
+      frame->GetFilename(cx, filename);
       lineNo = frame->GetLineNumber(cx);
     }
   }
@@ -1549,48 +1526,11 @@ nsXPCComponents_Utils::SetSandboxMetadata(HandleValue sandboxVal,
 }
 
 NS_IMETHODIMP
-nsXPCComponents_Utils::Import(const nsACString& registryLocation,
-                              HandleValue targetObj, JSContext* cx,
-                              uint8_t optionalArgc, MutableHandleValue retval) {
-  RefPtr moduleloader = mozJSModuleLoader::Get();
-  MOZ_ASSERT(moduleloader);
-
-  AUTO_PROFILER_LABEL_DYNAMIC_NSCSTRING("nsXPCComponents_Utils::Import", OTHER,
-                                        registryLocation);
-
-  return moduleloader->ImportInto(registryLocation, targetObj, cx, optionalArgc,
-                                  retval);
-}
-
-NS_IMETHODIMP
-nsXPCComponents_Utils::IsModuleLoaded(const nsACString& aResourceURI,
-                                      bool* retval) {
-  RefPtr moduleloader = mozJSModuleLoader::Get();
-  MOZ_ASSERT(moduleloader);
-  return moduleloader->IsModuleLoaded(aResourceURI, retval);
-}
-
-NS_IMETHODIMP
-nsXPCComponents_Utils::IsJSModuleLoaded(const nsACString& aResourceURI,
-                                        bool* retval) {
-  RefPtr moduleloader = mozJSModuleLoader::Get();
-  MOZ_ASSERT(moduleloader);
-  return moduleloader->IsJSModuleLoaded(aResourceURI, retval);
-}
-
-NS_IMETHODIMP
 nsXPCComponents_Utils::IsESModuleLoaded(const nsACString& aResourceURI,
                                         bool* retval) {
   RefPtr moduleloader = mozJSModuleLoader::Get();
   MOZ_ASSERT(moduleloader);
   return moduleloader->IsESModuleLoaded(aResourceURI, retval);
-}
-
-NS_IMETHODIMP
-nsXPCComponents_Utils::Unload(const nsACString& registryLocation) {
-  RefPtr moduleloader = mozJSModuleLoader::Get();
-  MOZ_ASSERT(moduleloader);
-  return moduleloader->Unload(registryLocation);
 }
 
 NS_IMETHODIMP
@@ -1789,7 +1729,7 @@ nsXPCComponents_Utils::GetFunctionSourceLocation(HandleValue funcValue,
     NS_ENSURE_TRUE(func, NS_ERROR_INVALID_ARG);
 
     RootedScript script(cx, JS_GetFunctionScript(cx, func));
-    NS_ENSURE_TRUE(func, NS_ERROR_FAILURE);
+    NS_ENSURE_TRUE(script, NS_ERROR_FAILURE);
 
     AppendUTF8toUTF16(nsDependentCString(JS_GetScriptFilename(script)),
                       filename);
@@ -2062,26 +2002,10 @@ nsXPCComponents_Utils::Dispatch(HandleValue runnableArg, HandleValue scope,
   return NS_DispatchToMainThread(run);
 }
 
-#define GENERATE_JSCONTEXTOPTION_GETTER_SETTER(_attr, _getter, _setter) \
-  NS_IMETHODIMP                                                         \
-  nsXPCComponents_Utils::Get##_attr(JSContext* cx, bool* aValue) {      \
-    *aValue = ContextOptionsRef(cx)._getter();                          \
-    return NS_OK;                                                       \
-  }                                                                     \
-  NS_IMETHODIMP                                                         \
-  nsXPCComponents_Utils::Set##_attr(JSContext* cx, bool aValue) {       \
-    ContextOptionsRef(cx)._setter(aValue);                              \
-    return NS_OK;                                                       \
-  }
-
-GENERATE_JSCONTEXTOPTION_GETTER_SETTER(Strict_mode, strictMode, setStrictMode)
-
-#undef GENERATE_JSCONTEXTOPTION_GETTER_SETTER
-
 NS_IMETHODIMP
 nsXPCComponents_Utils::SetGCZeal(int32_t aValue, JSContext* cx) {
 #ifdef JS_GC_ZEAL
-  JS_SetGCZeal(cx, uint8_t(aValue), JS_DEFAULT_ZEAL_FREQ);
+  JS::SetGCZeal(cx, uint8_t(aValue), JS::BrowserDefaultGCZealFrequency);
 #endif
   return NS_OK;
 }
@@ -2207,13 +2131,6 @@ nsXPCComponents_Utils::GetClassName(HandleValue aObj, bool aUnwrap,
   }
   *aRv = NS_xstrdup(JS::GetClass(obj)->name);
   return NS_OK;
-}
-
-NS_IMETHODIMP
-nsXPCComponents_Utils::GetDOMClassInfo(const nsAString& aClassName,
-                                       nsIClassInfo** aClassInfo) {
-  *aClassInfo = nullptr;
-  return NS_ERROR_NOT_AVAILABLE;
 }
 
 NS_IMETHODIMP
@@ -2496,18 +2413,6 @@ nsXPCComponents_Utils::CreateHTMLCopyEncoder(
 }
 
 NS_IMETHODIMP
-nsXPCComponents_Utils::GetLoadedModules(nsTArray<nsCString>& aLoadedModules) {
-  return mozJSModuleLoader::Get()->GetLoadedJSAndESModules(aLoadedModules);
-}
-
-NS_IMETHODIMP
-nsXPCComponents_Utils::GetLoadedJSModules(
-    nsTArray<nsCString>& aLoadedJSModules) {
-  mozJSModuleLoader::Get()->GetLoadedModules(aLoadedJSModules);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 nsXPCComponents_Utils::GetLoadedESModules(
     nsTArray<nsCString>& aLoadedESModules) {
   return mozJSModuleLoader::Get()->GetLoadedESModules(aLoadedESModules);
@@ -2634,12 +2539,8 @@ NS_IMETHODIMP_(MozExternalRefCountType) ComponentsSH::Release(void) {
 
 NS_IMPL_QUERY_INTERFACE(ComponentsSH, nsIXPCScriptable)
 
-#define NSXPCCOMPONENTS_CID                          \
-  {                                                  \
-    0x3649f405, 0xf0ec, 0x4c28, {                    \
-      0xae, 0xb0, 0xaf, 0x9a, 0x51, 0xe4, 0x4c, 0x81 \
-    }                                                \
-  }
+#define NSXPCCOMPONENTS_CID \
+  {0x3649f405, 0xf0ec, 0x4c28, {0xae, 0xb0, 0xaf, 0x9a, 0x51, 0xe4, 0x4c, 0x81}}
 
 NS_IMPL_CLASSINFO(nsXPCComponents, &ComponentsSH::Get, 0, NSXPCCOMPONENTS_CID)
 NS_IMPL_ISUPPORTS_CI(nsXPCComponents, nsIXPCComponents)

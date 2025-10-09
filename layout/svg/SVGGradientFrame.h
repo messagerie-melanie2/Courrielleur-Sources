@@ -12,6 +12,7 @@
 #include "gfxMatrix.h"
 #include "gfxRect.h"
 #include "nsCOMPtr.h"
+#include "nsCSSRenderingGradients.h"
 #include "nsIFrame.h"
 #include "nsLiteralString.h"
 
@@ -51,9 +52,9 @@ class SVGGradientFrame : public SVGPaintServerFrame {
   // SVGPaintServerFrame methods:
   already_AddRefed<gfxPattern> GetPaintServerPattern(
       nsIFrame* aSource, const DrawTarget* aDrawTarget,
-      const gfxMatrix& aContextMatrix, StyleSVGPaint nsStyleSVG::*aFillOrStroke,
-      float aGraphicOpacity, imgDrawingParams& aImgParams,
-      const gfxRect* aOverrideBounds) override;
+      const gfxMatrix& aContextMatrix,
+      StyleSVGPaint nsStyleSVG::* aFillOrStroke, float aGraphicOpacity,
+      imgDrawingParams& aImgParams, const gfxRect* aOverrideBounds) override;
 
   // nsIFrame interface:
   nsresult AttributeChanged(int32_t aNameSpaceID, nsAtom* aAttribute,
@@ -72,11 +73,9 @@ class SVGGradientFrame : public SVGPaintServerFrame {
    */
   SVGGradientFrame* GetReferencedGradient();
 
-  // Optionally get a stop frame (returns stop index/count)
-  void GetStopFrames(nsTArray<nsIFrame*>* aStopFrames);
+  void GetStops(nsTArray<ColorStop>* aStops, float aGraphicOpacity);
 
-  const SVGAnimatedTransformList* GetGradientTransformList(
-      nsIContent* aDefault);
+  SVGGradientFrame* GetGradientTransformFrame(SVGGradientFrame* aDefault);
   // Will be singular for gradientUnits="objectBoundingBox" with an empty bbox.
   gfxMatrix GetGradientTransform(nsIFrame* aSource,
                                  const gfxRect* aOverrideBounds);

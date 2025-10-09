@@ -10,47 +10,28 @@
 #![crate_type = "rlib"]
 #![deny(unsafe_code, missing_docs)]
 
-extern crate app_units;
-#[macro_use]
-extern crate bitflags;
-#[macro_use]
-extern crate cssparser;
-extern crate euclid;
-#[macro_use]
-extern crate lazy_static;
-extern crate malloc_size_of;
 #[macro_use]
 extern crate malloc_size_of_derive;
-extern crate selectors;
 #[macro_use]
 extern crate serde;
-extern crate servo_arc;
-#[cfg(feature = "servo")]
-extern crate servo_atoms;
-#[cfg(feature = "servo")]
-extern crate servo_url;
-extern crate to_shmem;
 #[macro_use]
 extern crate to_shmem_derive;
 #[cfg(feature = "servo")]
-extern crate webrender_api;
-#[cfg(feature = "servo")]
-pub use webrender_api::units::DevicePixel;
+extern crate url;
 
+use bitflags::bitflags;
 use cssparser::{CowRcStr, Token};
 use selectors::parser::SelectorParseErrorKind;
 #[cfg(feature = "servo")]
-use servo_atoms::Atom;
+use stylo_atoms::Atom;
 
 /// One hardware pixel.
 ///
 /// This unit corresponds to the smallest addressable element of the display hardware.
-#[cfg(not(feature = "servo"))]
 #[derive(Clone, Copy, Debug)]
 pub enum DevicePixel {}
 
 /// Represents a mobile style pinch zoom factor.
-/// TODO(gw): Once WR supports pinch zoom, use a type directly from webrender_api.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "servo", derive(Deserialize, Serialize, MallocSizeOf))]
 pub struct PinchZoomFactor(f32);
@@ -90,8 +71,6 @@ pub mod dom;
 pub mod specified_value_info;
 #[macro_use]
 pub mod values;
-#[macro_use]
-pub mod viewport;
 pub mod owned_slice;
 pub mod owned_str;
 
@@ -135,6 +114,10 @@ pub enum StyleParseErrorKind<'i> {
     UnexpectedFunction(CowRcStr<'i>),
     /// Error encountered parsing a @property's `syntax` descriptor
     PropertySyntaxField(PropertySyntaxParseError),
+    /// Error encountered parsing a @property's `inherits` descriptor.
+    ///
+    /// TODO(zrhoffman, bug 1920365): Include the custom property name in error messages.
+    PropertyInheritsField(PropertyInheritsParseError),
     /// @namespace must be before any rule but @charset and @import
     UnexpectedNamespaceRule,
     /// @import must be before any rule but @charset
@@ -163,13 +146,8 @@ pub enum StyleParseErrorKind<'i> {
     InvalidFilter(CowRcStr<'i>, Token<'i>),
     /// The property declaration contained an invalid value.
     OtherInvalidValue(CowRcStr<'i>),
-    /// The declaration contained an animation property, and we were parsing
-    /// this as a keyframe block (so that property should be ignored).
-    ///
-    /// See: https://drafts.csswg.org/css-animations/#keyframes
-    AnimationPropertyInKeyframeBlock,
-    /// The property is not allowed within a page rule.
-    NotAllowedInPageRule,
+    /// `!important` declarations are disallowed in `@position-try` or keyframes.
+    UnexpectedImportantDeclaration,
 }
 
 impl<'i> From<ValueParseErrorKind<'i>> for StyleParseErrorKind<'i> {
@@ -221,6 +199,11 @@ impl<'i> StyleParseErrorKind<'i> {
 /// Errors that can be encountered while parsing the @property rule's syntax descriptor.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PropertySyntaxParseError {
+    /// The syntax descriptor is required for the @property rule to be valid; if it’s missing, the
+    /// @property rule is invalid.
+    ///
+    /// <https://drafts.css-houdini.org/css-properties-values-api-1/#ref-for-descdef-property-syntax②>
+    NoSyntax,
     /// The string's length was 0.
     EmptyInput,
     /// A non-whitespace, non-pipe character was fount after parsing a component.
@@ -243,20 +226,38 @@ pub enum PropertySyntaxParseError {
     UnknownDataTypeName,
 }
 
+/// Errors that can be encountered while parsing the @property rule's inherits descriptor.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PropertyInheritsParseError {
+    /// The inherits descriptor is required for the @property rule to be valid; if it’s missing,
+    /// the @property rule is invalid.
+    ///
+    /// <https://drafts.css-houdini.org/css-properties-values-api-1/#ref-for-descdef-property-inherits②>
+    NoInherits,
+
+    /// The inherits descriptor must successfully parse as `true` or `false`.
+    InvalidInherits,
+}
+
 bitflags! {
     /// The mode to use when parsing values.
     #[derive(Clone, Copy, Eq, PartialEq)]
+    #[repr(C)]
     pub struct ParsingMode: u8 {
         /// In CSS; lengths must have units, except for zero values, where the unit can be omitted.
         /// <https://www.w3.org/TR/css3-values/#lengths>
-        const DEFAULT = 0x00;
+        const DEFAULT = 0;
         /// In SVG; a coordinate or length value without a unit identifier (e.g., "25") is assumed
         /// to be in user units (px).
         /// <https://www.w3.org/TR/SVG/coords.html#Units>
-        const ALLOW_UNITLESS_LENGTH = 0x01;
+        const ALLOW_UNITLESS_LENGTH = 1;
         /// In SVG; out-of-range values are not treated as an error in parsing.
         /// <https://www.w3.org/TR/SVG/implnote.html#RangeClamping>
-        const ALLOW_ALL_NUMERIC_VALUES = 0x02;
+        const ALLOW_ALL_NUMERIC_VALUES = 1 << 1;
+        /// In CSS Properties and Values, the initial value must be computationally
+        /// independent.
+        /// <https://drafts.css-houdini.org/css-properties-values-api-1/#ref-for-computationally-independent%E2%91%A0>
+        const DISALLOW_COMPUTATIONALLY_DEPENDENT = 1 << 2;
     }
 }
 
@@ -271,6 +272,12 @@ impl ParsingMode {
     #[inline]
     pub fn allows_all_numeric_values(&self) -> bool {
         self.intersects(ParsingMode::ALLOW_ALL_NUMERIC_VALUES)
+    }
+
+    /// Whether the parsing mode allows units or functions that are not computationally independent.
+    #[inline]
+    pub fn allows_computational_dependence(&self) -> bool {
+        !self.intersects(ParsingMode::DISALLOW_COMPUTATIONALLY_DEPENDENT)
     }
 }
 

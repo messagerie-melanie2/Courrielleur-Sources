@@ -41,7 +41,7 @@
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_fission.h"
 #include "mozilla/StaticPrefs_security.h"
-#include "mozilla/Telemetry.h"
+#include "mozilla/glean/DomSecurityMetrics.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/ipc/URIUtils.h"
 #include "mozilla/net/DNS.h"
@@ -115,9 +115,9 @@ static void LogMixedContentMessage(
                                         messageLookupKey.get(), params,
                                         localizedMsg);
 
-  nsContentUtils::ReportToConsoleByWindowID(localizedMsg, severityFlag,
-                                            messageCategory, aInnerWindowID,
-                                            aRequestingLocation);
+  nsContentUtils::ReportToConsoleByWindowID(
+      localizedMsg, severityFlag, messageCategory, aInnerWindowID,
+      SourceLocation(aRequestingLocation));
 }
 
 /* nsIChannelEventSink implementation
@@ -183,9 +183,7 @@ nsMixedContentBlocker::AsyncOnChannelRedirect(
   }
 
   int16_t decision = REJECT_REQUEST;
-  rv = ShouldLoad(newUri, loadInfo,
-                  ""_ns,  // aMimeGuess
-                  &decision);
+  rv = ShouldLoad(newUri, loadInfo, &decision);
   if (NS_FAILED(rv)) {
     autoCallback.DontCallback();
     aOldChannel->Cancel(NS_ERROR_DOM_BAD_URI);
@@ -208,16 +206,13 @@ nsMixedContentBlocker::AsyncOnChannelRedirect(
  */
 NS_IMETHODIMP
 nsMixedContentBlocker::ShouldLoad(nsIURI* aContentLocation,
-                                  nsILoadInfo* aLoadInfo,
-                                  const nsACString& aMimeGuess,
-                                  int16_t* aDecision) {
+                                  nsILoadInfo* aLoadInfo, int16_t* aDecision) {
   // We pass in false as the first parameter to ShouldLoad(), because the
   // callers of this method don't know whether the load went through cached
   // image redirects.  This is handled by direct callers of the static
   // ShouldLoad.
-  nsresult rv =
-      ShouldLoad(false,  // aHadInsecureImageRedirect
-                 aContentLocation, aLoadInfo, aMimeGuess, true, aDecision);
+  nsresult rv = ShouldLoad(false,  // aHadInsecureImageRedirect
+                           aContentLocation, aLoadInfo, true, aDecision);
 
   if (*aDecision == nsIContentPolicy::REJECT_REQUEST) {
     NS_SetRequestBlockingReason(aLoadInfo,
@@ -371,12 +366,33 @@ bool nsMixedContentBlocker::IsPotentiallyTrustworthyOrigin(nsIURI* aURI) {
 }
 
 /* static */
-bool nsMixedContentBlocker::IsUpgradableContentType(nsContentPolicyType aType) {
+bool nsMixedContentBlocker::IsUpgradableContentType(nsContentPolicyType aType,
+                                                    bool aConsiderPrefs) {
   MOZ_ASSERT(NS_IsMainThread());
-  return (aType == nsIContentPolicy::TYPE_INTERNAL_IMAGE ||
-          aType == nsIContentPolicy::TYPE_INTERNAL_IMAGE_PRELOAD ||
-          aType == nsIContentPolicy::TYPE_INTERNAL_AUDIO ||
-          aType == nsIContentPolicy::TYPE_INTERNAL_VIDEO);
+
+  if (aConsiderPrefs &&
+      !StaticPrefs::security_mixed_content_upgrade_display_content()) {
+    return false;
+  }
+
+  switch (aType) {
+    case nsIContentPolicy::TYPE_INTERNAL_IMAGE:
+    case nsIContentPolicy::TYPE_INTERNAL_IMAGE_PRELOAD:
+    case nsIContentPolicy::TYPE_INTERNAL_IMAGE_FAVICON:
+      return !aConsiderPrefs ||
+             StaticPrefs::
+                 security_mixed_content_upgrade_display_content_image();
+    case nsIContentPolicy::TYPE_INTERNAL_AUDIO:
+      return !aConsiderPrefs ||
+             StaticPrefs::
+                 security_mixed_content_upgrade_display_content_audio();
+    case nsIContentPolicy::TYPE_INTERNAL_VIDEO:
+      return !aConsiderPrefs ||
+             StaticPrefs::
+                 security_mixed_content_upgrade_display_content_video();
+    default:
+      return false;
+  }
 }
 
 /*
@@ -385,13 +401,18 @@ bool nsMixedContentBlocker::IsUpgradableContentType(nsContentPolicyType aType) {
  */
 static already_AddRefed<nsIURI> GetPrincipalURIOrPrecursorPrincipalURI(
     nsIPrincipal* aPrincipal) {
-  nsCOMPtr<nsIURI> precursorURI = nullptr;
-  if (aPrincipal->GetIsNullPrincipal()) {
-    nsCOMPtr<nsIPrincipal> precursorPrin = aPrincipal->GetPrecursorPrincipal();
-    precursorURI = precursorPrin ? precursorPrin->GetURI() : nullptr;
-  }
+  nsCOMPtr<nsIPrincipal> precursorPrincipal =
+      aPrincipal->GetPrecursorPrincipal();
 
-  return precursorURI ? precursorURI.forget() : aPrincipal->GetURI();
+#ifdef DEBUG
+  if (precursorPrincipal) {
+    MOZ_ASSERT(aPrincipal->GetIsNullPrincipal(),
+               "Only Null Principals should have a Precursor Principal");
+  }
+#endif
+
+  return precursorPrincipal ? precursorPrincipal->GetURI()
+                            : aPrincipal->GetURI();
 }
 
 /* Static version of ShouldLoad() that contains all the Mixed Content Blocker
@@ -400,7 +421,6 @@ static already_AddRefed<nsIURI> GetPrincipalURIOrPrecursorPrincipalURI(
 nsresult nsMixedContentBlocker::ShouldLoad(bool aHadInsecureImageRedirect,
                                            nsIURI* aContentLocation,
                                            nsILoadInfo* aLoadInfo,
-                                           const nsACString& aMimeGuess,
                                            bool aReportError,
                                            int16_t* aDecision) {
   // Asserting that we are on the main thread here and hence do not have to lock
@@ -472,13 +492,6 @@ nsresult nsMixedContentBlocker::ShouldLoad(bool aHadInsecureImageRedirect,
   // language that gets interpreted by the operating system's font rasterizer.
   // Mixed content web fonts are relatively uncommon, and we can can fall back
   // to built-in fonts with minimal disruption in almost all cases.
-  //
-  // TYPE_OBJECT_SUBREQUEST could actually be either active content (e.g. a
-  // script that a plugin will execute) or display content (e.g. Flash video
-  // content).  Until we have a way to determine active vs passive content
-  // from plugin requests (bug 836352), we will treat this as passive content.
-  // This is to prevent false positives from causing users to become
-  // desensitized to the mixed content blocker.
   //
   // TYPE_CSP_REPORT: High-risk because they directly leak information about
   // the content of the page, and because blocking them does not have any
@@ -561,13 +574,6 @@ nsresult nsMixedContentBlocker::ShouldLoad(bool aHadInsecureImageRedirect,
     case ExtContentPolicy::TYPE_MEDIA:
       classification = eMixedDisplay;
       break;
-    case ExtContentPolicy::TYPE_OBJECT_SUBREQUEST:
-      if (StaticPrefs::security_mixed_content_block_object_subrequest()) {
-        classification = eMixedScript;
-      } else {
-        classification = eMixedDisplay;
-      }
-      break;
 
     // Active content (or content with a low value/risk-of-blocking ratio)
     // that has been explicitly evaluated; listed here for documentation
@@ -589,6 +595,9 @@ nsresult nsMixedContentBlocker::ShouldLoad(bool aHadInsecureImageRedirect,
     case ExtContentPolicy::TYPE_XSLT:
     case ExtContentPolicy::TYPE_OTHER:
     case ExtContentPolicy::TYPE_SPECULATIVE:
+    case ExtContentPolicy::TYPE_WEB_TRANSPORT:
+    case ExtContentPolicy::TYPE_WEB_IDENTITY:
+    case ExtContentPolicy::TYPE_JSON:
       break;
 
     case ExtContentPolicy::TYPE_INVALID:
@@ -652,18 +661,11 @@ nsresult nsMixedContentBlocker::ShouldLoad(bool aHadInsecureImageRedirect,
   // 2) If aLoadingPrincipal does not provide a requestingLocation, then
   // we fall back to to querying the requestingLocation from
   // aTriggeringPrincipal.
-  nsCOMPtr<nsIURI> requestingLocation;
-  auto* baseLoadingPrincipal = BasePrincipal::Cast(loadingPrincipal);
-  if (baseLoadingPrincipal) {
-    requestingLocation =
-        GetPrincipalURIOrPrecursorPrincipalURI(baseLoadingPrincipal);
-  }
+  nsCOMPtr<nsIURI> requestingLocation =
+      GetPrincipalURIOrPrecursorPrincipalURI(loadingPrincipal);
   if (!requestingLocation) {
-    auto* baseTriggeringPrincipal = BasePrincipal::Cast(triggeringPrincipal);
-    if (baseTriggeringPrincipal) {
-      requestingLocation =
-          GetPrincipalURIOrPrecursorPrincipalURI(baseTriggeringPrincipal);
-    }
+    requestingLocation =
+        GetPrincipalURIOrPrecursorPrincipalURI(triggeringPrincipal);
   }
 
   // 3) Giving up. We still don't have a requesting location, therefore we can't
@@ -765,8 +767,7 @@ nsresult nsMixedContentBlocker::ShouldLoad(bool aHadInsecureImageRedirect,
   // be upgraded to https before fetching any data from the netwerk.
   if (isHttpScheme) {
     bool isUpgradableContentType =
-        IsUpgradableContentType(internalContentType) &&
-        StaticPrefs::security_mixed_content_upgrade_display_content();
+        IsUpgradableContentType(internalContentType, /* aConsiderPrefs */ true);
     if (isUpgradableContentType) {
       *aDecision = ACCEPT;
       return NS_OK;
@@ -789,13 +790,13 @@ nsresult nsMixedContentBlocker::ShouldLoad(bool aHadInsecureImageRedirect,
     CopyUTF8toUTF16(spec, *params.AppendElement());
 
     CSP_LogLocalizedStr("blockAllMixedContent", params,
-                        u""_ns,  // aSourceFile
+                        ""_ns,   // aSourceFile
                         u""_ns,  // aScriptSample
                         0,       // aLineNumber
-                        0,       // aColumnNumber
+                        1,       // aColumnNumber
                         nsIScriptError::errorFlag, "blockAllMixedContent"_ns,
                         requestingWindow->Id(),
-                        !!aLoadInfo->GetOriginAttributes().mPrivateBrowsingId);
+                        aLoadInfo->GetOriginAttributes().IsPrivateBrowsing());
     *aDecision = REJECT_REQUEST;
     MOZ_LOG(
         sMCBLog, LogLevel::Verbose,
@@ -809,13 +810,12 @@ nsresult nsMixedContentBlocker::ShouldLoad(bool aHadInsecureImageRedirect,
   // Content
   WindowContext* topWC = requestingWindow->TopWindowContext();
   bool rootHasSecureConnection = topWC->GetIsSecure();
-  bool allowMixedContent = topWC->GetAllowMixedContent();
 
-  // When navigating an iframe, the iframe may be https
-  // but its parents may not be.  Check the parents to see if any of them are
-  // https. If none of the parents are https, allow the load.
+  // When navigating an iframe, the iframe may be https but its parents may not
+  // be. Check the parents to see if any of them are https. If none of the
+  // parents are https, allow the load.
   if (contentType == ExtContentPolicyType::TYPE_SUBDOCUMENT &&
-      !rootHasSecureConnection) {
+      !rootHasSecureConnection && !parentIsHttps) {
     bool httpsParentExists = false;
 
     RefPtr<WindowContext> curWindow = requestingWindow;
@@ -865,25 +865,11 @@ nsresult nsMixedContentBlocker::ShouldLoad(bool aHadInsecureImageRedirect,
     }
   }
 
-  // set hasMixedContentObjectSubrequest on this object if necessary
-  if (contentType == ExtContentPolicyType::TYPE_OBJECT_SUBREQUEST &&
-      aReportError) {
-    if (!StaticPrefs::security_mixed_content_block_object_subrequest()) {
-      nsAutoCString messageLookUpKey(
-          "LoadingMixedDisplayObjectSubrequestDeprecation");
-
-      LogMixedContentMessage(classification, aContentLocation, topWC->Id(),
-                             eUserOverride, requestingLocation,
-                             messageLookUpKey);
-    }
-  }
-
   uint32_t newState = 0;
   // If the content is display content, and the pref says display content should
   // be blocked, block it.
   if (classification == eMixedDisplay) {
-    if (!StaticPrefs::security_mixed_content_block_display_content() ||
-        allowMixedContent) {
+    if (!StaticPrefs::security_mixed_content_block_display_content()) {
       *aDecision = nsIContentPolicy::ACCEPT;
       // User has overriden the pref and the root is not https;
       // mixed display content was allowed on an https subframe.
@@ -901,8 +887,7 @@ nsresult nsMixedContentBlocker::ShouldLoad(bool aHadInsecureImageRedirect,
     MOZ_ASSERT(classification == eMixedScript);
     // If the content is active content, and the pref says active content should
     // be blocked, block it unless the user has choosen to override the pref
-    if (!StaticPrefs::security_mixed_content_block_active_content() ||
-        allowMixedContent) {
+    if (!StaticPrefs::security_mixed_content_block_active_content()) {
       *aDecision = nsIContentPolicy::ACCEPT;
       // User has already overriden the pref and the root is not https;
       // mixed active content was allowed on an https subframe.
@@ -987,7 +972,6 @@ bool nsMixedContentBlocker::URISafeToBeLoadedInSecureContext(nsIURI* aURI) {
 NS_IMETHODIMP
 nsMixedContentBlocker::ShouldProcess(nsIURI* aContentLocation,
                                      nsILoadInfo* aLoadInfo,
-                                     const nsACString& aMimeGuess,
                                      int16_t* aDecision) {
   if (!aContentLocation) {
     // aContentLocation may be null when a plugin is loading without an
@@ -1004,7 +988,7 @@ nsMixedContentBlocker::ShouldProcess(nsIURI* aContentLocation,
     return NS_ERROR_FAILURE;
   }
 
-  return ShouldLoad(aContentLocation, aLoadInfo, aMimeGuess, aDecision);
+  return ShouldLoad(aContentLocation, aLoadInfo, aDecision);
 }
 
 // Record information on when HSTS would have made mixed content not mixed
@@ -1035,19 +1019,19 @@ void nsMixedContentBlocker::AccumulateMixedContentHSTS(
   //
   if (!aActive) {
     if (!hsts) {
-      Telemetry::Accumulate(Telemetry::MIXED_CONTENT_HSTS,
-                            MCB_HSTS_PASSIVE_NO_HSTS);
+      glean::mixed_content::hsts.AccumulateSingleSample(
+          MCB_HSTS_PASSIVE_NO_HSTS);
     } else {
-      Telemetry::Accumulate(Telemetry::MIXED_CONTENT_HSTS,
-                            MCB_HSTS_PASSIVE_WITH_HSTS);
+      glean::mixed_content::hsts.AccumulateSingleSample(
+          MCB_HSTS_PASSIVE_WITH_HSTS);
     }
   } else {
     if (!hsts) {
-      Telemetry::Accumulate(Telemetry::MIXED_CONTENT_HSTS,
-                            MCB_HSTS_ACTIVE_NO_HSTS);
+      glean::mixed_content::hsts.AccumulateSingleSample(
+          MCB_HSTS_ACTIVE_NO_HSTS);
     } else {
-      Telemetry::Accumulate(Telemetry::MIXED_CONTENT_HSTS,
-                            MCB_HSTS_ACTIVE_WITH_HSTS);
+      glean::mixed_content::hsts.AccumulateSingleSample(
+          MCB_HSTS_ACTIVE_WITH_HSTS);
     }
   }
 }

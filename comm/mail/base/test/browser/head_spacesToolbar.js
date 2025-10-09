@@ -3,10 +3,10 @@
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
 async function sub_test_toolbar_alignment(drawInTitlebar, hideMenu) {
-  let menubar = document.getElementById("toolbar-menubar");
-  let tabsInTitlebar =
-    document.documentElement.getAttribute("tabsintitlebar") == "true";
-  Assert.equal(tabsInTitlebar, drawInTitlebar);
+  const menubar = document.getElementById("toolbar-menubar");
+  const customtitlebar =
+    document.documentElement.getAttribute("customtitlebar") == "true";
+  Assert.equal(customtitlebar, drawInTitlebar);
 
   if (hideMenu) {
     menubar.setAttribute("autohide", true);
@@ -17,7 +17,7 @@ async function sub_test_toolbar_alignment(drawInTitlebar, hideMenu) {
   }
   await new Promise(resolve => requestAnimationFrame(resolve));
 
-  let size = document
+  const size = document
     .getElementById("spacesToolbar")
     .getBoundingClientRect().width;
 

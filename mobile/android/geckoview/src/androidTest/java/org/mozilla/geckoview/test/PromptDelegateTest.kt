@@ -4,11 +4,18 @@
 
 package org.mozilla.geckoview.test
 
+import android.view.KeyEvent
+import androidx.core.net.toUri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.MediumTest
-import org.hamcrest.Matchers.* // ktlint-disable no-wildcard-imports
+import androidx.test.platform.app.InstrumentationRegistry
+import org.hamcrest.Matchers.containsString
+import org.hamcrest.Matchers.endsWith
+import org.hamcrest.Matchers.equalTo
+import org.hamcrest.Matchers.isEmptyOrNullString
+import org.hamcrest.Matchers.notNullValue
+import org.hamcrest.Matchers.nullValue
 import org.junit.Assert
-import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mozilla.geckoview.AllowOrDeny
@@ -24,10 +31,21 @@ import org.mozilla.geckoview.GeckoSession.PromptDelegate.PromptResponse
 import org.mozilla.geckoview.test.rule.GeckoSessionTestRule
 import org.mozilla.geckoview.test.rule.GeckoSessionTestRule.AssertCalled
 import org.mozilla.geckoview.test.rule.GeckoSessionTestRule.WithDisplay
+import org.mozilla.geckoview.test.util.TestServer
+import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
 @MediumTest
-class PromptDelegateTest : BaseSessionTest() {
+class PromptDelegateTest : BaseSessionTest(
+    serverCustomHeaders = mapOf(
+        "Access-Control-Allow-Origin" to "*",
+    ),
+    responseModifiers = mapOf(
+        "/assets/www/fedcm_accounts_endpoint.json" to TestServer.ResponseModifier { response ->
+            response.replace("\$RANDOM_ID", UUID.randomUUID().toString())
+        },
+    ),
+) {
     @Test fun popupTestAllow() {
         // Ensure popup blocking is enabled for this test.
         sessionRule.setPrefsUntilTestEnd(mapOf("dom.disable_open_during_load" to true))
@@ -99,18 +117,23 @@ class PromptDelegateTest : BaseSessionTest() {
         mainSession.waitForRoundTrip()
     }
 
-    @Ignore // TODO: Reenable when 1501574 is fixed.
     @Test
     fun alertTest() {
-        mainSession.evaluateJS("alert('Alert!');")
+        mainSession.loadTestPath(HELLO_HTML_PATH)
+        sessionRule.waitForPageStop()
 
-        sessionRule.waitUntilCalled(object : PromptDelegate {
+        val result = GeckoResult<Void>()
+        sessionRule.delegateDuringNextWait(object : PromptDelegate {
             @AssertCalled(count = 1)
             override fun onAlertPrompt(session: GeckoSession, prompt: PromptDelegate.AlertPrompt): GeckoResult<PromptDelegate.PromptResponse> {
                 assertThat("Message should match", "Alert!", equalTo(prompt.message))
+                result.complete(null)
                 return GeckoResult.fromValue(prompt.dismiss())
             }
         })
+
+        mainSession.evaluateJS("alert('Alert!');")
+        sessionRule.waitForResult(result)
     }
 
     // This test checks that saved logins are returned to the app when calling onAuthPrompt
@@ -349,7 +372,7 @@ class PromptDelegateTest : BaseSessionTest() {
         })""",
         )
 
-        mainSession.synthesizeTap(10, 10)
+        mainSession.synthesizeTap(20, 20)
         sessionRule.waitForResult(result)
         assertThat(
             "Events should be as expected",
@@ -378,7 +401,7 @@ class PromptDelegateTest : BaseSessionTest() {
             }
         })
 
-        mainSession.synthesizeTap(10, 10)
+        mainSession.synthesizeTap(20, 20)
         sessionRule.waitForResult(result)
     }
 
@@ -402,8 +425,86 @@ class PromptDelegateTest : BaseSessionTest() {
             }
         })
 
-        mainSession.synthesizeTap(10, 10)
+        mainSession.synthesizeTap(20, 20)
         sessionRule.waitForResult(result)
+    }
+
+    @Test
+    @WithDisplay(width = 100, height = 100)
+    fun selectTestShowPicker() {
+        mainSession.loadTestPath(SELECT_HTML_PATH)
+        sessionRule.waitForPageStop()
+
+        mainSession.evaluateJS(
+            """
+            document.body.focus();
+            document.body.addEventListener('keydown', () => {
+                document.getElementById('simple').showPicker()
+            });
+            """.trimIndent(),
+        )
+        mainSession.pressKey(KeyEvent.KEYCODE_SPACE)
+
+        sessionRule.waitUntilCalled(object : PromptDelegate {
+            @AssertCalled(count = 1)
+            override fun onChoicePrompt(session: GeckoSession, prompt: PromptDelegate.ChoicePrompt): GeckoResult<PromptDelegate.PromptResponse>? {
+                assertThat("Should not be multiple", prompt.type, equalTo(PromptDelegate.ChoicePrompt.Type.SINGLE))
+                assertThat("There should be two choices", prompt.choices.size, equalTo(2))
+                assertThat("First choice is correct", prompt.choices[0].label, equalTo("ABC"))
+                assertThat("Second choice is correct", prompt.choices[1].label, equalTo("DEF"))
+                return null
+            }
+        })
+
+        mainSession.loadTestPath(SELECT_MULTIPLE_HTML_PATH)
+        sessionRule.waitForPageStop()
+
+        mainSession.evaluateJS(
+            """
+            document.body.focus();
+            document.body.addEventListener('keydown', () => {
+                document.getElementById('multiple').showPicker()
+            });
+            """.trimIndent(),
+        )
+        mainSession.pressKey(KeyEvent.KEYCODE_SPACE)
+
+        sessionRule.waitUntilCalled(object : PromptDelegate {
+            @AssertCalled(count = 1)
+            override fun onChoicePrompt(session: GeckoSession, prompt: PromptDelegate.ChoicePrompt): GeckoResult<PromptDelegate.PromptResponse>? {
+                assertThat("Should be multiple", prompt.type, equalTo(PromptDelegate.ChoicePrompt.Type.MULTIPLE))
+                assertThat("There should be three choices", prompt.choices.size, equalTo(3))
+                assertThat("First choice is correct", prompt.choices[0].label, equalTo("ABC"))
+                assertThat("Second choice is correct", prompt.choices[1].label, equalTo("DEF"))
+                assertThat("Third choice is correct", prompt.choices[2].label, equalTo("GHI"))
+                return null
+            }
+        })
+
+        mainSession.loadTestPath(SELECT_LISTBOX_HTML_PATH)
+        sessionRule.waitForPageStop()
+
+        mainSession.evaluateJS(
+            """
+            document.body.focus();
+            document.body.addEventListener('keydown', () => {
+                document.getElementById('multiple').showPicker()
+            });
+            """.trimIndent(),
+        )
+        mainSession.pressKey(KeyEvent.KEYCODE_SPACE)
+
+        sessionRule.waitUntilCalled(object : PromptDelegate {
+            @AssertCalled(count = 1)
+            override fun onChoicePrompt(session: GeckoSession, prompt: PromptDelegate.ChoicePrompt): GeckoResult<PromptDelegate.PromptResponse>? {
+                assertThat("Should not be multiple", prompt.type, equalTo(PromptDelegate.ChoicePrompt.Type.SINGLE))
+                assertThat("There should be three choices", prompt.choices.size, equalTo(3))
+                assertThat("First choice is correct", prompt.choices[0].label, equalTo("ABC"))
+                assertThat("Second choice is correct", prompt.choices[1].label, equalTo("DEF"))
+                assertThat("Third choice is correct", prompt.choices[2].label, equalTo("GHI"))
+                return null
+            }
+        })
     }
 
     @Test
@@ -453,7 +554,7 @@ class PromptDelegateTest : BaseSessionTest() {
             """.trimIndent(),
         )
 
-        mainSession.synthesizeTap(10, 10)
+        mainSession.synthesizeTap(20, 20)
         sessionRule.waitForResult(result)
         assertThat(
             "Selected item should be as expected",
@@ -485,7 +586,7 @@ class PromptDelegateTest : BaseSessionTest() {
             }
         })
 
-        mainSession.synthesizeTap(10, 10)
+        mainSession.synthesizeTap(20, 20)
         sessionRule.waitForResult(result)
     }
 
@@ -572,7 +673,9 @@ class PromptDelegateTest : BaseSessionTest() {
         )
     }
 
-    @Test fun colorTest() {
+    @WithDisplay(width = 100, height = 100)
+    @Test
+    fun colorTest() {
         sessionRule.setPrefsUntilTestEnd(mapOf("dom.disable_open_during_load" to false))
 
         mainSession.loadTestPath(PROMPT_HTML_PATH)
@@ -589,6 +692,7 @@ class PromptDelegateTest : BaseSessionTest() {
 
         mainSession.evaluateJS(
             """
+            document.documentElement.style.paddingTop = "50px";
             this.c = document.getElementById('colorexample');
             """.trimIndent(),
         )
@@ -605,7 +709,8 @@ class PromptDelegateTest : BaseSessionTest() {
             """.trimIndent(),
         )
 
-        mainSession.evaluateJS("this.c.click();")
+        mainSession.evaluateJS("document.addEventListener('click', () => this.c.click(), { once: true });")
+        mainSession.synthesizeTap(1, 1)
 
         assertThat(
             "Value should match",
@@ -614,7 +719,9 @@ class PromptDelegateTest : BaseSessionTest() {
         )
     }
 
-    @Test fun colorTestWithDatalist() {
+    @WithDisplay(width = 100, height = 100)
+    @Test
+    fun colorTestWithDatalist() {
         sessionRule.setPrefsUntilTestEnd(mapOf("dom.disable_open_during_load" to false))
 
         mainSession.loadTestPath(PROMPT_HTML_PATH)
@@ -633,6 +740,7 @@ class PromptDelegateTest : BaseSessionTest() {
 
         mainSession.evaluateJS(
             """
+            document.documentElement.style.paddingTop = "50px";
             this.c = document.getElementById('colorexample');
             this.c.setAttribute('list', 'colorlist');
             """.trimIndent(),
@@ -648,7 +756,9 @@ class PromptDelegateTest : BaseSessionTest() {
             })
             """.trimIndent(),
         )
-        mainSession.evaluateJS("this.c.click();")
+
+        mainSession.evaluateJS("document.addEventListener('click', () => this.c.click(), { once: true });")
+        mainSession.synthesizeTap(1, 1)
 
         assertThat(
             "Value should match",
@@ -665,7 +775,8 @@ class PromptDelegateTest : BaseSessionTest() {
 
         mainSession.evaluateJS(
             """
-            document.body.addEventListener("click", () => {
+            document.documentElement.style.paddingTop = "50px";
+            document.addEventListener("click", () => {
                 document.getElementById('dateexample').showPicker();
             });
             """.trimIndent(),
@@ -697,7 +808,7 @@ class PromptDelegateTest : BaseSessionTest() {
             document.getElementById('dateexample').getBoundingClientRect();
             """.trimIndent(),
         )
-        mainSession.synthesizeTap(10, 10)
+        mainSession.synthesizeTap(20, 20)
 
         sessionRule.waitUntilCalled(object : PromptDelegate {
             @AssertCalled(count = 1)
@@ -725,7 +836,7 @@ class PromptDelegateTest : BaseSessionTest() {
             document.getElementById('weekexample').getBoundingClientRect();
             """.trimIndent(),
         )
-        mainSession.synthesizeTap(10, 10)
+        mainSession.synthesizeTap(20, 20)
 
         sessionRule.waitUntilCalled(object : PromptDelegate {
             @AssertCalled(count = 1)
@@ -753,7 +864,7 @@ class PromptDelegateTest : BaseSessionTest() {
             document.getElementById('dateexample').getBoundingClientRect();
             """.trimIndent(),
         )
-        mainSession.synthesizeTap(10, 10)
+        mainSession.synthesizeTap(20, 20)
 
         sessionRule.waitUntilCalled(object : PromptDelegate {
             @AssertCalled(count = 1)
@@ -792,8 +903,13 @@ class PromptDelegateTest : BaseSessionTest() {
             }
         })
 
-        mainSession.evaluateJS("document.getElementById('selectexample').remove()")
-        mainSession.synthesizeTap(10, 10)
+        mainSession.evaluateJS(
+            """
+            document.getElementById('selectexample').remove();
+            document.getElementById('dateexample').getBoundingClientRect();
+            """.trimIndent(),
+        )
+        mainSession.synthesizeTap(20, 20)
         sessionRule.waitForResult(result)
     }
 
@@ -826,19 +942,89 @@ class PromptDelegateTest : BaseSessionTest() {
             """
             document.getElementById('selectexample').remove();
             document.getElementById('dateexample').remove();
+            document.getElementById('monthexample').getBoundingClientRect();
             """.trimIndent(),
         )
-        mainSession.synthesizeTap(10, 10)
+        mainSession.synthesizeTap(20, 20)
         sessionRule.waitForResult(result)
     }
 
-    @Test fun fileTest() {
+    @WithDisplay(width = 100, height = 100)
+    @Test
+    fun dateMonthTestShowPicker() {
+        mainSession.loadTestPath(PROMPT_HTML_PATH)
+        mainSession.waitForPageStop()
+
+        // type=month and type=week have no custom controls on all platforms.
+        // But mobile has the picker with dom.forms.datetime.others=true
+
+        mainSession.evaluateJS(
+            """
+            document.body.focus();
+            document.body.addEventListener('keydown', () => {
+                document.getElementById('monthexample').showPicker()
+            }, { once: true });
+            """.trimIndent(),
+        )
+        mainSession.pressKey(KeyEvent.KEYCODE_SPACE)
+
+        sessionRule.waitUntilCalled(object : PromptDelegate {
+            @AssertCalled(count = 1)
+            override fun onDateTimePrompt(session: GeckoSession, prompt: PromptDelegate.DateTimePrompt): GeckoResult<PromptDelegate.PromptResponse> {
+                assertThat("showPicker for <input type=month>", prompt.type, equalTo(PromptDelegate.DateTimePrompt.Type.MONTH))
+                return GeckoResult.fromValue(prompt.dismiss())
+            }
+        })
+
+        mainSession.evaluateJS(
+            """
+            document.body.focus();
+            document.body.addEventListener('keydown', () => {
+                document.getElementById('weekexample').showPicker()
+            }, { once: true });
+            """.trimIndent(),
+        )
+        mainSession.pressKey(KeyEvent.KEYCODE_SPACE)
+
+        sessionRule.waitUntilCalled(object : PromptDelegate {
+            @AssertCalled(count = 1)
+            override fun onDateTimePrompt(session: GeckoSession, prompt: PromptDelegate.DateTimePrompt): GeckoResult<PromptDelegate.PromptResponse> {
+                assertThat("showPicker for <input type=week>", prompt.type, equalTo(PromptDelegate.DateTimePrompt.Type.WEEK))
+                return GeckoResult.fromValue(prompt.dismiss())
+            }
+        })
+
+        // desktop has no type=time picker, but mobile has.
+
+        mainSession.evaluateJS(
+            """
+            document.body.focus();
+            document.body.addEventListener('keydown', () => {
+                document.getElementById('timeexample').showPicker()
+            }, { once: true });
+            """.trimIndent(),
+        )
+        mainSession.pressKey(KeyEvent.KEYCODE_SPACE)
+
+        sessionRule.waitUntilCalled(object : PromptDelegate {
+            @AssertCalled(count = 1)
+            override fun onDateTimePrompt(session: GeckoSession, prompt: PromptDelegate.DateTimePrompt): GeckoResult<PromptDelegate.PromptResponse> {
+                assertThat("showPicker for <input type=time>", prompt.type, equalTo(PromptDelegate.DateTimePrompt.Type.TIME))
+                return GeckoResult.fromValue(prompt.dismiss())
+            }
+        })
+    }
+
+    @WithDisplay(width = 100, height = 100)
+    @Test
+    fun fileTest() {
         sessionRule.setPrefsUntilTestEnd(mapOf("dom.disable_open_during_load" to false))
 
         mainSession.loadTestPath(PROMPT_HTML_PATH)
         mainSession.waitForPageStop()
 
-        mainSession.evaluateJS("document.getElementById('fileexample').click();")
+        mainSession.evaluateJS("document.addEventListener('click', () => document.getElementById('fileexample').click(), { once: true });")
+        mainSession.synthesizeTap(1, 1)
 
         sessionRule.waitUntilCalled(object : PromptDelegate {
             @AssertCalled(count = 1)
@@ -847,7 +1033,70 @@ class PromptDelegateTest : BaseSessionTest() {
                 assertThat("First accept attribute should match", "image/*", equalTo(prompt.mimeTypes?.get(0)))
                 assertThat("Second accept attribute should match", ".pdf", equalTo(prompt.mimeTypes?.get(1)))
                 assertThat("Capture attribute should match", PromptDelegate.FilePrompt.Capture.USER, equalTo(prompt.capture))
+                assertThat("Type should match", prompt.type, equalTo(PromptDelegate.FilePrompt.Type.SINGLE))
                 return GeckoResult.fromValue(prompt.dismiss())
+            }
+        })
+    }
+
+    @WithDisplay(width = 100, height = 100)
+    @Test
+    fun fileMultipleTest() {
+        sessionRule.setPrefsUntilTestEnd(mapOf("dom.disable_open_during_load" to false))
+
+        mainSession.loadTestPath(PROMPT_HTML_PATH)
+        mainSession.waitForPageStop()
+
+        mainSession.evaluateJS("document.addEventListener('click', () => document.getElementById('filemultipleexample').click(), { once: true });")
+        mainSession.synthesizeTap(1, 1)
+
+        sessionRule.waitUntilCalled(object : PromptDelegate {
+            @AssertCalled(count = 1)
+            override fun onFilePrompt(session: GeckoSession, prompt: PromptDelegate.FilePrompt): GeckoResult<PromptDelegate.PromptResponse> {
+                assertThat("Length of mimeTypes should match", 2, equalTo(prompt.mimeTypes!!.size))
+                assertThat("First accept attribute should match", "image/*", equalTo(prompt.mimeTypes?.get(0)))
+                assertThat("Second accept attribute should match", ".pdf", equalTo(prompt.mimeTypes?.get(1)))
+                assertThat("Capture attribute should match", PromptDelegate.FilePrompt.Capture.NONE, equalTo(prompt.capture))
+                assertThat("Type should match", prompt.type, equalTo(PromptDelegate.FilePrompt.Type.MULTIPLE))
+                return GeckoResult.fromValue(prompt.dismiss())
+            }
+        })
+    }
+
+    @WithDisplay(width = 100, height = 100)
+    @Test
+    fun directoryTest() {
+        sessionRule.setPrefsUntilTestEnd(
+            mapOf(
+                "dom.disable_open_during_load" to false,
+                "dom.webkitBlink.dirPicker.enabled" to true,
+            ),
+        )
+
+        mainSession.loadTestPath(PROMPT_HTML_PATH)
+        mainSession.waitForPageStop()
+
+        sessionRule.delegateUntilTestEnd(object : PromptDelegate {
+            @AssertCalled(count = 1)
+            override fun onFilePrompt(session: GeckoSession, prompt: PromptDelegate.FilePrompt): GeckoResult<PromptDelegate.PromptResponse> {
+                assertThat("Type should match", prompt.type, equalTo(PromptDelegate.FilePrompt.Type.FOLDER))
+                return GeckoResult.fromValue(
+                    prompt.confirm(
+                        InstrumentationRegistry.getInstrumentation().targetContext,
+                        "file:///storage/emulated/0/Download".toUri(),
+                    ),
+                )
+            }
+        })
+
+        mainSession.evaluateJS("document.addEventListener('click', () => document.getElementById('direxample').click(), { once: true });")
+        mainSession.synthesizeTap(1, 1)
+
+        sessionRule.waitUntilCalled(object : PromptDelegate {
+            @AssertCalled(count = 1)
+            override fun onFolderUploadPrompt(session: GeckoSession, prompt: PromptDelegate.FolderUploadPrompt): GeckoResult<PromptDelegate.PromptResponse>? {
+                assertThat("directoryName should match", prompt.directoryName, equalTo("Download"))
+                return GeckoResult.fromValue(prompt.confirm(AllowOrDeny.ALLOW))
             }
         })
     }

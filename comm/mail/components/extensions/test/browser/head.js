@@ -2,21 +2,31 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-var { MailConsts } = ChromeUtils.import("resource:///modules/MailConsts.jsm");
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+"use strict";
+
+var { MailConsts } = ChromeUtils.importESModule(
+  "resource:///modules/MailConsts.sys.mjs"
 );
-var { MailUtils } = ChromeUtils.import("resource:///modules/MailUtils.jsm");
-var { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-var { getCachedAllowedSpaces, setCachedAllowedSpaces } = ChromeUtils.import(
-  "resource:///modules/ExtensionToolbarButtons.jsm"
+var { mailTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MailTestUtils.sys.mjs"
 );
-const { storeState, getState } = ChromeUtils.importESModule(
+var { MailUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailUtils.sys.mjs"
+);
+var { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
+);
+var { getCachedAllowedSpaces, setCachedAllowedSpaces } =
+  ChromeUtils.importESModule(
+    "resource:///modules/ExtensionToolbarButtons.sys.mjs"
+  );
+var { storeState, getState } = ChromeUtils.importESModule(
   "resource:///modules/CustomizationState.mjs"
 );
-const { getDefaultItemIdsForSpace, getAvailableItemIdsForSpace } =
+var { getDefaultItemIdsForSpace, getAvailableItemIdsForSpace } =
   ChromeUtils.importESModule("resource:///modules/CustomizableItems.sys.mjs");
 
 var { ExtensionCommon } = ChromeUtils.importESModule(
@@ -27,36 +37,24 @@ var { makeWidgetId } = ExtensionCommon;
 // Persistent Listener test functionality
 var { assertPersistentListeners } = ExtensionTestUtils.testAssertions;
 
-// There are shutdown issues for which multiple rejections are left uncaught.
-// This bug should be fixed, but for the moment this directory is whitelisted.
-//
-// NOTE: Entire directory whitelisting should be kept to a minimum. Normally you
-//       should use "expectUncaughtRejection" to flag individual failures.
-const { PromiseTestUtils } = ChromeUtils.importESModule(
-  "resource://testing-common/PromiseTestUtils.sys.mjs"
-);
-PromiseTestUtils.allowMatchingRejectionsGlobally(
-  /Message manager disconnected/
-);
-PromiseTestUtils.allowMatchingRejectionsGlobally(/No matching message handler/);
-PromiseTestUtils.allowMatchingRejectionsGlobally(
-  /Receiving end does not exist/
+var { PromiseTestUtils: MailPromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 // Adjust timeout to take care of code coverage runs and fission runs to be a
 // lot slower.
-let originalRequestLongerTimeout = requestLongerTimeout;
+const originalRequestLongerTimeout = requestLongerTimeout;
 // eslint-disable-next-line no-global-assign
 requestLongerTimeout = factor => {
-  let ccovMultiplier = AppConstants.MOZ_CODE_COVERAGE ? 2 : 1;
-  let fissionMultiplier = SpecialPowers.useRemoteSubframes ? 2 : 1;
+  const ccovMultiplier = AppConstants.MOZ_CODE_COVERAGE ? 2 : 1;
+  const fissionMultiplier = SpecialPowers.useRemoteSubframes ? 2 : 1;
   originalRequestLongerTimeout(ccovMultiplier * fissionMultiplier * factor);
 };
 requestLongerTimeout(1);
 
 add_setup(async () => {
   await check3PaneState(true, true);
-  let tabmail = document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   if (tabmail.tabInfo.length > 1) {
     info(`Will close ${tabmail.tabInfo.length - 1} tabs left over from others`);
     for (let i = tabmail.tabInfo.length - 1; i > 0; i--) {
@@ -66,7 +64,7 @@ add_setup(async () => {
   }
 });
 registerCleanupFunction(() => {
-  let tabmail = document.getElementById("tabmail");
+  const tabmail = document.getElementById("tabmail");
   is(tabmail.tabInfo.length, 1, "Only one tab open at end of test");
 
   while (tabmail.tabInfo.length > 1) {
@@ -78,7 +76,7 @@ registerCleanupFunction(() => {
   Services.focus.focusedWindow = window;
   // Focus an element in the main window, then blur it again to avoid it
   // hijacking keypresses.
-  let mainWindowElement = document.getElementById("button-appmenu");
+  const mainWindowElement = document.getElementById("button-appmenu");
   mainWindowElement.focus();
   mainWindowElement.blur();
 
@@ -89,7 +87,7 @@ registerCleanupFunction(() => {
   // test loaded an extension with a browser_action without setting "useAddonManager"
   // to either "temporary" or "permanent", which triggers onUninstalled to be
   // called on extension unload.
-  let cachedAllowedSpaces = getCachedAllowedSpaces();
+  const cachedAllowedSpaces = getCachedAllowedSpaces();
   is(
     cachedAllowedSpaces.size,
     0,
@@ -99,16 +97,26 @@ registerCleanupFunction(() => {
   );
   setCachedAllowedSpaces(new Map());
   Services.prefs.clearUserPref("mail.pane_config.dynamic");
-  Services.xulStore.removeValue(
-    "chrome://messenger/content/messenger.xhtml",
-    "threadPane",
-    "view"
-  );
+  Services.prefs.clearUserPref("mail.threadpane.listview");
+  Services.prefs.setStringPref("extensions.webextensions.uuids", "{}");
 });
 
 /**
+ * Generate a CSS image-set declaration for the given extension icons.
+ *
+ * @param {string} url - Normal density icon URL, already wrapped in a CSS url().
+ * @param {string} [url2x] - Optional double DPI icon URL, already wrapped in a
+ *   CSS url(). If not provided the normal density value is used.
+ * @returns {string} The CSS image-set declaration as would be found in computed
+ *   styles.
+ */
+const makeIconSet = (url, url2x) =>
+  `image-set(${url} 1dppx, ${url2x || url} 2dppx)`;
+
+/**
  * Enforce a certain state in the unified toolbar.
- * @param {Object} state - A dictionary with arrays of buttons assigned to a space
+ *
+ * @param {object} state - A dictionary with arrays of buttons assigned to a space
  */
 async function enforceState(state) {
   const stateChangeObserved = TestUtils.topicObserved(
@@ -119,8 +127,8 @@ async function enforceState(state) {
 }
 
 async function check3PaneState(folderPaneOpen = null, messagePaneOpen = null) {
-  let tabmail = document.getElementById("tabmail");
-  let tab = tabmail.currentTabInfo;
+  const tabmail = document.getElementById("tabmail");
+  const tab = tabmail.currentTabInfo;
   if (tab.chromeBrowser.contentDocument.readyState != "complete") {
     await BrowserTestUtils.waitForEvent(
       tab.chromeBrowser.contentWindow,
@@ -128,7 +136,7 @@ async function check3PaneState(folderPaneOpen = null, messagePaneOpen = null) {
     );
   }
 
-  let { paneLayout } = tabmail.currentAbout3Pane;
+  const { paneLayout } = tabmail.currentAbout3Pane;
   if (folderPaneOpen !== null) {
     Assert.equal(
       paneLayout.folderPaneVisible,
@@ -148,14 +156,72 @@ async function check3PaneState(folderPaneOpen = null, messagePaneOpen = null) {
   }
 }
 
-function createAccount(type = "none") {
+var gIMAPServers = new Map();
+class IMAPServer {
+  constructor(options = {}) {
+    this.extensions = options?.extensions ?? [];
+  }
+
+  open() {
+    const ImapD = ChromeUtils.importESModule(
+      "resource://testing-common/mailnews/Imapd.sys.mjs"
+    );
+    const { IMAP_RFC3501_handler, ImapDaemon, ImapMessage, mixinExtension } =
+      ImapD;
+    const { nsMailServer } = ChromeUtils.importESModule(
+      "resource://testing-common/mailnews/Maild.sys.mjs"
+    );
+
+    this.ImapMessage = ImapMessage;
+    this.daemon = new ImapDaemon();
+    this.server = new nsMailServer(daemon => {
+      const handler = new IMAP_RFC3501_handler(daemon);
+      for (const ext of this.extensions) {
+        mixinExtension(handler, ImapD[`IMAP_${ext}_extension`]);
+      }
+      return handler;
+    }, this.daemon);
+
+    this.server.start();
+
+    registerCleanupFunction(() => this.close());
+  }
+  close() {
+    this.server.stop();
+  }
+  get port() {
+    return this.server.port;
+  }
+
+  addMessages(folder, messages) {
+    folder.QueryInterface(Ci.nsIMsgImapMailFolder);
+    const fakeFolder = this.daemon.getMailbox(folder.prettyPath);
+    messages.forEach(message => {
+      if (typeof message != "string") {
+        message = message.toMessageString();
+      }
+      const msgURI = Services.io.newURI(
+        "data:text/plain;base64," + btoa(message)
+      );
+      const imapMsg = new this.ImapMessage(
+        msgURI.spec,
+        fakeFolder.uidnext++,
+        []
+      );
+      fakeFolder.addMessage(imapMsg);
+    });
+
+    const listener = new MailPromiseTestUtils.PromiseUrlListener();
+    folder.updateFolderWithListener(null, listener);
+    return listener.promise;
+  }
+}
+
+function createAccount(type = "none", options = {}) {
   let account;
 
   if (type == "local") {
-    MailServices.accounts.createLocalMailAccount();
-    account = MailServices.accounts.FindAccountForServer(
-      MailServices.accounts.localFoldersServer
-    );
+    account = MailServices.accounts.createLocalMailAccount();
   } else {
     account = MailServices.accounts.createAccount();
     account.incomingServer = MailServices.accounts.createIncomingServer(
@@ -163,6 +229,17 @@ function createAccount(type = "none") {
       "localhost",
       type
     );
+  }
+
+  if (type == "imap") {
+    const server = new IMAPServer(options);
+    server.open();
+    account.incomingServer.port = server.port;
+    account.incomingServer.username = "user";
+    account.incomingServer.password = "password";
+    const inbox = account.incomingServer.rootFolder.getChildNamed("INBOX");
+    inbox.QueryInterface(Ci.nsIMsgImapMailFolder).hierarchyDelimiter = "/";
+    gIMAPServers.set(account.incomingServer.key, server);
   }
 
   info(`Created account ${account.toString()}`);
@@ -173,21 +250,21 @@ function cleanUpAccount(account) {
   // If the current displayed message/folder belongs to the account to be removed,
   // select the root folder, otherwise the removal of this account will trigger
   // a "shouldn't have any listeners left" assertion in nsMsgDatabase.cpp.
-  let [folder] = window.GetSelectedMsgFolders();
+  const [folder] = window.GetSelectedMsgFolders();
   if (folder && folder.server && folder.server == account.incomingServer) {
-    let tabmail = document.getElementById("tabmail");
+    const tabmail = document.getElementById("tabmail");
     tabmail.currentAbout3Pane.displayFolder(folder.server.rootFolder.URI);
   }
 
-  let serverKey = account.incomingServer.key;
-  let serverType = account.incomingServer.type;
+  const serverKey = account.incomingServer.key;
+  const serverType = account.incomingServer.type;
   info(
     `Cleaning up ${serverType} account ${account.key} and server ${serverKey}`
   );
   MailServices.accounts.removeAccount(account, true);
 
   try {
-    let server = MailServices.accounts.getIncomingServer(serverKey);
+    const server = MailServices.accounts.getIncomingServer(serverKey);
     if (server) {
       info(`Cleaning up leftover ${serverType} server ${serverKey}`);
       MailServices.accounts.removeIncomingServer(server, false);
@@ -196,7 +273,7 @@ function cleanUpAccount(account) {
 }
 
 function addIdentity(account, email = "mochitest@localhost") {
-  let identity = MailServices.accounts.createIdentity();
+  const identity = MailServices.accounts.createIdentity();
   identity.email = email;
   account.addIdentity(identity);
   if (!account.defaultIdentity) {
@@ -207,11 +284,13 @@ function addIdentity(account, email = "mochitest@localhost") {
 }
 
 async function createSubfolder(parent, name) {
+  const promiseAdded = MailPromiseTestUtils.promiseFolderAdded(name);
   parent.createSubfolder(name, null);
+  await promiseAdded;
   return parent.getChildNamed(name);
 }
 
-function createMessages(folder, makeMessagesArg) {
+async function createMessages(folder, makeMessagesArg) {
   if (typeof makeMessagesArg == "number") {
     makeMessagesArg = { count: makeMessagesArg };
   }
@@ -219,10 +298,20 @@ function createMessages(folder, makeMessagesArg) {
     createMessages.messageGenerator = new MessageGenerator();
   }
 
-  let messages = createMessages.messageGenerator.makeMessages(makeMessagesArg);
-  let messageStrings = messages.map(message => message.toMboxString());
+  const messages =
+    createMessages.messageGenerator.makeMessages(makeMessagesArg);
+
+  if (folder.server.type == "imap" && gIMAPServers.has(folder.server.key)) {
+    return gIMAPServers.get(folder.server.key).addMessages(folder, messages);
+  }
+
+  const messageStrings = messages.map(message => message.toMessageString());
   folder.QueryInterface(Ci.nsIMsgLocalMailFolder);
   folder.addMessageBatch(messageStrings);
+
+  return new Promise(resolve =>
+    mailTestUtils.updateFolderAndNotify(folder, resolve)
+  );
 }
 
 async function createMessageFromFile(folder, path) {
@@ -230,12 +319,20 @@ async function createMessageFromFile(folder, path) {
 
   // A cheap hack to make this acceptable to addMessageBatch. It works for
   // existing uses but may not work for future uses.
-  let fromAddress = message.match(/From: .* <(.*@.*)>/)[0];
+  const fromAddress = message.match(/From: .* <(.*@.*)>/)[0];
   message = `From ${fromAddress}\r\n${message}`;
+
+  if (folder.server.type == "imap" && gIMAPServers.has(folder.server.key)) {
+    return gIMAPServers.get(folder.server.key).addMessages(folder, [message]);
+  }
 
   folder.QueryInterface(Ci.nsIMsgLocalMailFolder);
   folder.addMessageBatch([message]);
   folder.callFilterPlugins(null);
+
+  return new Promise(resolve =>
+    mailTestUtils.updateFolderAndNotify(folder, resolve)
+  );
 }
 
 async function promiseAnimationFrame(win = window) {
@@ -249,7 +346,7 @@ async function focusWindow(win) {
     return;
   }
 
-  let promise = new Promise(resolve => {
+  const promise = new Promise(resolve => {
     win.addEventListener(
       "focus",
       function () {
@@ -263,20 +360,6 @@ async function focusWindow(win) {
   await promise;
 }
 
-function promisePopupShown(popup) {
-  return new Promise(resolve => {
-    if (popup.state == "open") {
-      resolve();
-    } else {
-      let onPopupShown = event => {
-        popup.removeEventListener("popupshown", onPopupShown);
-        resolve();
-      };
-      popup.addEventListener("popupshown", onPopupShown);
-    }
-  });
-}
-
 function getPanelForNode(node) {
   while (node.localName != "panel") {
     node = node.parentNode;
@@ -287,8 +370,8 @@ function getPanelForNode(node) {
 /**
  * Wait until the browser is fully loaded.
  *
- * @param {xul:browser} browser - A xul:browser.
- * @param {string|function} [wantLoad = null] - If a function, takes a URL and
+ * @param {Browser} browser - A xul:browser.
+ * @param {string|function():boolean} [wantLoad = null] - If a function, takes a URL and
  *   returns true if that's the load we're interested in. If a string, gives the
  *   URL of the load we're interested in. If not present, the first load resolves
  *   the promise.
@@ -313,12 +396,8 @@ function awaitBrowserLoaded(browser, wantLoad) {
   );
 }
 
-var awaitExtensionPanel = async function (
-  extension,
-  win = window,
-  awaitLoad = true
-) {
-  let { originalTarget: browser } = await BrowserTestUtils.waitForEvent(
+async function awaitExtensionPanel(extension, win = window, awaitLoad = true) {
+  const { originalTarget: browser } = await BrowserTestUtils.waitForEvent(
     win.document,
     "WebExtPopupLoaded",
     true,
@@ -328,21 +407,17 @@ var awaitExtensionPanel = async function (
   if (awaitLoad) {
     await awaitBrowserLoaded(browser, url => url != "about:blank");
   }
-  await promisePopupShown(getPanelForNode(browser));
-
+  await BrowserTestUtils.waitForPopupEvent(getPanelForNode(browser), "shown");
   return browser;
-};
+}
 
 function getBrowserActionPopup(extension, win = window) {
   return win.top.document.getElementById("webextension-remote-preload-panel");
 }
 
-function closeBrowserAction(extension, win = window) {
-  let popup = getBrowserActionPopup(extension, win);
-  let hidden = BrowserTestUtils.waitForEvent(popup, "popuphidden");
-  popup.hidePopup();
-
-  return hidden;
+async function closeBrowserAction(extension, win = window) {
+  const popup = getBrowserActionPopup(extension, win);
+  await closeMenuPopup(popup);
 }
 
 async function openNewMailWindow(options = {}) {
@@ -353,7 +428,7 @@ async function openNewMailWindow(options = {}) {
     );
   }
 
-  let win = window.openDialog(
+  const win = window.openDialog(
     "chrome://messenger/content/messenger.xhtml",
     "_blank",
     "chrome,all,dialog=no"
@@ -367,17 +442,17 @@ async function openNewMailWindow(options = {}) {
 }
 
 async function openComposeWindow(account) {
-  let params = Cc[
+  const params = Cc[
     "@mozilla.org/messengercompose/composeparams;1"
   ].createInstance(Ci.nsIMsgComposeParams);
-  let composeFields = Cc[
+  const composeFields = Cc[
     "@mozilla.org/messengercompose/composefields;1"
   ].createInstance(Ci.nsIMsgCompFields);
 
   params.identity = account.defaultIdentity;
   params.composeFields = composeFields;
 
-  let composeWindowPromise = BrowserTestUtils.domWindowOpened(
+  const composeWindowPromise = BrowserTestUtils.domWindowOpened(
     undefined,
     async win => {
       await BrowserTestUtils.waitForEvent(win, "load");
@@ -402,7 +477,7 @@ async function openMessageInTab(msgHdr) {
 
   // Ensure the behaviour pref is set to open a new tab. It is the default,
   // but you never know.
-  let oldPrefValue = Services.prefs.getIntPref("mail.openMessageBehavior");
+  const oldPrefValue = Services.prefs.getIntPref("mail.openMessageBehavior");
   Services.prefs.setIntPref(
     "mail.openMessageBehavior",
     MailConsts.OpenMessageBehavior.NEW_TAB
@@ -410,8 +485,8 @@ async function openMessageInTab(msgHdr) {
   MailUtils.displayMessages([msgHdr]);
   Services.prefs.setIntPref("mail.openMessageBehavior", oldPrefValue);
 
-  let win = Services.wm.getMostRecentWindow("mail:3pane");
-  let tab = win.document.getElementById("tabmail").currentTabInfo;
+  const win = Services.wm.getMostRecentWindow("mail:3pane");
+  const tab = win.document.getElementById("tabmail").currentTabInfo;
   await BrowserTestUtils.waitForEvent(tab.chromeBrowser, "MsgLoaded");
   return tab;
 }
@@ -421,7 +496,7 @@ async function openMessageInWindow(msgHdr) {
     throw new Error("No message passed to openMessageInWindow");
   }
 
-  let messageWindowPromise = BrowserTestUtils.domWindowOpenedAndLoaded(
+  const messageWindowPromise = BrowserTestUtils.domWindowOpenedAndLoaded(
     undefined,
     async win =>
       win.document.documentURI ==
@@ -429,7 +504,7 @@ async function openMessageInWindow(msgHdr) {
   );
   MailUtils.openMessageInNewWindow(msgHdr);
 
-  let messageWindow = await messageWindowPromise;
+  const messageWindow = await messageWindowPromise;
   await BrowserTestUtils.waitForEvent(messageWindow, "MsgLoaded");
   return messageWindow;
 }
@@ -449,19 +524,19 @@ async function promiseMessageLoaded(browser, msgHdr) {
  *
  * @param {object} expected - A dictionary of expected headers.
  *    Omit headers that should have no value.
- * @param {string[]} [fields.to]
- * @param {string[]} [fields.cc]
- * @param {string[]} [fields.bcc]
- * @param {string[]} [fields.replyTo]
- * @param {string[]} [fields.followupTo]
- * @param {string[]} [fields.newsgroups]
- * @param {string} [fields.subject]
+ * @param {string[]} [expected.to]
+ * @param {string[]} [expected.cc]
+ * @param {string[]} [expected.bcc]
+ * @param {string[]} [expected.replyTo]
+ * @param {string[]} [expected.followupTo]
+ * @param {string[]} [expected.newsgroups]
+ * @param {string} [expected.subject]
  */
 async function checkComposeHeaders(expected) {
-  let composeWindows = [...Services.wm.getEnumerator("msgcompose")];
+  const composeWindows = [...Services.wm.getEnumerator("msgcompose")];
   is(composeWindows.length, 1);
-  let composeDocument = composeWindows[0].document;
-  let composeFields = composeWindows[0].gMsgCompose.compFields;
+  const composeDocument = composeWindows[0].document;
+  const composeFields = composeWindows[0].gMsgCompose.compFields;
 
   await new Promise(resolve => composeWindows[0].setTimeout(resolve));
 
@@ -477,8 +552,8 @@ async function checkComposeHeaders(expected) {
     );
   }
 
-  let checkField = (fieldName, elementId) => {
-    let pills = composeDocument
+  const checkField = (fieldName, elementId) => {
+    const pills = composeDocument
       .getElementById(elementId)
       .getElementsByTagName("mail-address-pill");
 
@@ -503,49 +578,101 @@ async function checkComposeHeaders(expected) {
   checkField("followupTo", "addressRowFollowup");
   checkField("newsgroups", "addressRowNewsgroups");
 
-  let subject = composeDocument.getElementById("msgSubject").value;
+  const subject = composeDocument.getElementById("msgSubject").value;
   if ("subject" in expected) {
     is(subject, expected.subject, "subject is correct");
   } else {
     is(subject, "", "subject is empty");
   }
 
-  if (expected.overrideDefaultFcc) {
-    if (expected.overrideDefaultFccFolder) {
-      let server = MailServices.accounts.getAccount(
-        expected.overrideDefaultFccFolder.accountId
+  // MV2
+  if (expected.hasOwnProperty("overrideDefaultFcc")) {
+    if (expected.overrideDefaultFcc) {
+      if (expected.overrideDefaultFccFolder) {
+        const server = MailServices.accounts.getAccount(
+          expected.overrideDefaultFccFolder.accountId
+        ).incomingServer;
+        const rootURI = server.rootFolder.URI;
+        is(
+          rootURI + expected.overrideDefaultFccFolder.path,
+          composeFields.fcc,
+          "fcc should be correct"
+        );
+      } else {
+        ok(
+          composeFields.fcc.startsWith("nocopy://"),
+          "fcc should start with nocopy://"
+        );
+      }
+    } else {
+      is("", composeFields.fcc, "fcc should be empty");
+    }
+  }
+
+  // MV2
+  if (expected.hasOwnProperty("additionalFccFolder")) {
+    if (expected.additionalFccFolder) {
+      const server = MailServices.accounts.getAccount(
+        expected.additionalFccFolder.accountId
       ).incomingServer;
-      let rootURI = server.rootFolder.URI;
+      const rootURI = server.rootFolder.URI;
       is(
-        rootURI + expected.overrideDefaultFccFolder.path,
+        rootURI + expected.additionalFccFolder.path,
+        composeFields.fcc2,
+        "fcc2 should be correct"
+      );
+    } else {
+      ok(
+        composeFields.fcc2 == "" || composeFields.fcc2.startsWith("nocopy://"),
+        "fcc2 should not contain a folder uri"
+      );
+    }
+  }
+
+  // MV3
+  if (expected.hasOwnProperty("overrideDefaultFccFolderId")) {
+    if (expected.overrideDefaultFccFolderId) {
+      // We should not use getFolder() here, because we are actually testing that
+      // function, so let's do it manually.
+      const parts = expected.overrideDefaultFccFolderId.split(":/");
+      const accountId = parts.shift();
+      const path = parts.join(":/");
+      const server = MailServices.accounts.getAccount(accountId).incomingServer;
+      is(
+        `${server.rootFolder.URI}${path}`,
         composeFields.fcc,
         "fcc should be correct"
       );
-    } else {
+    } else if (expected.overrideDefaultFccFolderId == "") {
       ok(
         composeFields.fcc.startsWith("nocopy://"),
         "fcc should start with nocopy://"
       );
+    } else {
+      is("", composeFields.fcc, "fcc should be empty");
     }
-  } else {
-    is("", composeFields.fcc, "fcc should be empty");
   }
 
-  if (expected.additionalFccFolder) {
-    let server = MailServices.accounts.getAccount(
-      expected.additionalFccFolder.accountId
-    ).incomingServer;
-    let rootURI = server.rootFolder.URI;
-    is(
-      rootURI + expected.additionalFccFolder.path,
-      composeFields.fcc2,
-      "fcc2 should be correct"
-    );
-  } else {
-    ok(
-      composeFields.fcc2 == "" || composeFields.fcc2.startsWith("nocopy://"),
-      "fcc2 should not contain a folder uri"
-    );
+  // MV3
+  if (expected.hasOwnProperty("additionalFccFolderId")) {
+    if (expected.additionalFccFolderId) {
+      // We should not use getFolder() here, because we are actually testing that
+      // function, so let's do it manually.
+      const parts = expected.additionalFccFolderId.split(":/");
+      const accountId = parts.shift();
+      const path = parts.join(":/");
+      const server = MailServices.accounts.getAccount(accountId).incomingServer;
+      is(
+        `${server.rootFolder.URI}${path}`,
+        composeFields.fcc2,
+        "fcc2 should be correct"
+      );
+    } else {
+      ok(
+        composeFields.fcc2 == "" || composeFields.fcc2.startsWith("nocopy://"),
+        "fcc2 should not contain a folder uri"
+      );
+    }
   }
 
   if (expected.hasOwnProperty("priority")) {
@@ -562,7 +689,7 @@ async function checkComposeHeaders(expected) {
       expected.returnReceipt,
       "returnReceipt in composeFields should be correct"
     );
-    for (let item of composeDocument.querySelectorAll(`menuitem[command="cmd_toggleReturnReceipt"],
+    for (const item of composeDocument.querySelectorAll(`menuitem[command="cmd_toggleReturnReceipt"],
     toolbarbutton[command="cmd_toggleReturnReceipt"]`)) {
       is(
         item.getAttribute("checked") == "true",
@@ -599,14 +726,14 @@ async function checkComposeHeaders(expected) {
       [Ci.nsIMsgCompSendFormat.Both, "format_both"],
       [Ci.nsIMsgCompSendFormat.Auto, "format_auto"],
     ]);
-    let expectedFormat = deliveryFormats[expected.deliveryFormat || "auto"];
+    const expectedFormat = deliveryFormats[expected.deliveryFormat || "auto"];
     is(
       expectedFormat,
       composeFields.deliveryFormat,
       "deliveryFormat in composeFields should be correct"
     );
-    for (let [format, id] of formatToId.entries()) {
-      let menuitem = composeDocument.getElementById(id);
+    for (const [format, id] of formatToId.entries()) {
+      const menuitem = composeDocument.getElementById(id);
       is(
         format == expectedFormat,
         menuitem.getAttribute("checked") == "true",
@@ -616,125 +743,254 @@ async function checkComposeHeaders(expected) {
   }
 }
 
+/**
+ * Click on an item in a browser until the expected event is observed.
+ *
+ * @param {string} selector - A CSS selector to identify the element which should
+ *   be clicked on, inside the provided browser, or a stringified arrow function,
+ *   which will be executed in the content process, returning the to-be-clicked
+ *   element. The stringified arrow function must start with "() => ".
+ * @param {object} [event] - The mouse event to be used to open the menu popup.
+ *   It is an object which may contain the properties:
+ *     `shiftKey`, `ctrlKey`, `altKey`, `metaKey`, `accessKey`, `clickCount`,
+ *     `button`, `type`.
+ *   For valid `type`s see nsIDOMWindowUtils' `sendMouseEvent`.
+ *   If the type is specified, an mouse event of that type is fired. Otherwise,
+ *   a mousedown followed by a mouseup is performed.
+ * @param {Browser} browser - The browser which has the element to be clicked on.
+ *
+ * @returns {Promise} A promise that resolves once the click was observed. Rejects
+ *   if unsucessfull for more then 3 tries.
+ */
 async function synthesizeMouseAtCenterAndRetry(selector, event, browser) {
   let success = false;
-  let type = event.type || "click";
+  const type = event.type || "click";
   for (let retries = 0; !success && retries < 2; retries++) {
-    let clickPromise = BrowserTestUtils.waitForContentEvent(browser, type).then(
-      () => true
-    );
+    const clickPromise = BrowserTestUtils.waitForContentEvent(
+      browser,
+      type
+    ).then(() => true);
     // Linux: Sometimes the actor used to simulate the mouse event in the content process does not
     // react, even though the content page signals to be fully loaded. There is no status signal
     // we could wait for, the loaded page *should* be ready at this point. To mitigate, we wait
     // for the click event and if we do not see it within a certain time, we click again.
     // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
-    let failPromise = new Promise(r =>
+    const failPromise = new Promise(r =>
       browser.ownerGlobal.setTimeout(r, 500)
     ).then(() => false);
 
-    await BrowserTestUtils.synthesizeMouseAtCenter(selector, event, browser);
+    event.centered = true;
+    const browsingContext = BrowserTestUtils.getBrowsingContextFrom(browser);
+
+    // Replicating BrowserTestUtils.synthesizeMouseAtCenter(). However, this
+    // implementation allows the caller to specify the function as a string,
+    // instead of using target.toString() on the specified function.
+    let target = null;
+    let targetFn = null;
+    if (typeof selector == "function") {
+      targetFn = selector.toString();
+    } else if (selector.startsWith("() => ")) {
+      targetFn = selector;
+    } else {
+      target = selector;
+    }
+
+    BrowserTestUtils.sendQuery(browsingContext, "Test:SynthesizeMouse", {
+      target,
+      targetFn,
+      x: 0,
+      y: 0,
+      event,
+    });
+
     success = await Promise.race([clickPromise, failPromise]);
   }
   Assert.ok(success, `Should have received ${type} event.`);
 }
 
-async function openContextMenu(selector = "#img1", win = window) {
-  let contentAreaContextMenu = win.document.getElementById("browserContext");
-  let popupShownPromise = BrowserTestUtils.waitForEvent(
-    contentAreaContextMenu,
-    "popupshown"
-  );
-  let tabmail = document.getElementById("tabmail");
-  await synthesizeMouseAtCenterAndRetry(
-    selector,
-    { type: "mousedown", button: 2 },
-    tabmail.selectedBrowser
-  );
-  await synthesizeMouseAtCenterAndRetry(
-    selector,
-    { type: "contextmenu" },
-    tabmail.selectedBrowser
-  );
-  await popupShownPromise;
-  return contentAreaContextMenu;
+/**
+ * Click on an element inside an action popup.
+ *
+ * @param {Extension} extension - The extension the action popup belongs to.
+ * @param {string} selector - A CSS selector to identify the element which should
+ *   be clicked on, inside the action popup.
+ * @param {Winow} [win] - The window which has the action popup. Defaults to the
+ *   current window.
+ *
+ * @returns {Promise} A promise that resolves once the click was observed. Rejects
+ *   if unsucessfull for more then 3 tries.
+ */
+async function clickElementInActionPopup(extension, selector, win = window) {
+  const stack = getBrowserActionPopup(extension, win);
+  const browser = stack.querySelector("browser");
+  await synthesizeMouseAtCenterAndRetry(selector, {}, browser);
 }
 
-async function openContextMenuInPopup(extension, selector, win = window) {
-  let contentAreaContextMenu =
+/**
+ * Open the standard browser context menu popup inside the current tab.
+ *
+ * @param {string} selector - A CSS selector to identify the element which should
+ *   be clicked on, inside the current tab.
+ * @param {Window} [win] - The window which has the tab. Defaults to the current
+ *   window.
+ *
+ * @returns {Promise<Element>} The opened menu.
+ */
+async function openBrowserContextMenuInTab(selector, win = window) {
+  const contentAreaContextMenu =
     win.top.document.getElementById("browserContext");
-  let stack = getBrowserActionPopup(extension, win);
-  let browser = stack.querySelector("browser");
-  let popupShownPromise = BrowserTestUtils.waitForEvent(
-    contentAreaContextMenu,
-    "popupshown"
-  );
-  await synthesizeMouseAtCenterAndRetry(
-    selector,
-    { type: "mousedown", button: 2 },
-    browser
-  );
-  await synthesizeMouseAtCenterAndRetry(
-    selector,
-    { type: "contextmenu" },
-    browser
-  );
-  await popupShownPromise;
+  const tabmail = document.getElementById("tabmail");
+  const browser = tabmail.selectedBrowser;
+  await openMenuPopupInBrowser(browser, contentAreaContextMenu, selector);
   return contentAreaContextMenu;
 }
 
-async function closeExtensionContextMenu(
-  itemToSelect,
-  modifiers = {},
+/**
+ * Open the standard browser context menu popup inside an action popup.
+ *
+ * @param {Extension} extension - The extension the action popup belongs to.
+ * @param {string} selector - A CSS selector to identify the element which should
+ *   be clicked on, inside the action popup.
+ * @param {Winow} [win] - The window which has the action popup. Defaults to the
+ *   current window.
+ *
+ * @returns {Promise<Element>} The opened menu.
+ */
+async function openBrowserContextMenuInActionPopup(
+  extension,
+  selector,
   win = window
 ) {
-  let contentAreaContextMenu =
+  const contentAreaContextMenu =
     win.top.document.getElementById("browserContext");
-  let popupHiddenPromise = BrowserTestUtils.waitForEvent(
-    contentAreaContextMenu,
-    "popuphidden"
-  );
-  if (itemToSelect) {
-    itemToSelect.closest("menupopup").activateItem(itemToSelect, modifiers);
-  } else {
-    contentAreaContextMenu.hidePopup();
-  }
-  await popupHiddenPromise;
-
-  // Bug 1351638: parent menu fails to close intermittently, make sure it does.
-  contentAreaContextMenu.hidePopup();
+  const stack = getBrowserActionPopup(extension, win);
+  const browser = stack.querySelector("browser");
+  await openMenuPopupInBrowser(browser, contentAreaContextMenu, selector);
+  return contentAreaContextMenu;
 }
 
-async function openSubmenu(submenuItem, win = window) {
-  const submenu = submenuItem.menupopup;
-  const shown = BrowserTestUtils.waitForEvent(submenu, "popupshown");
-  submenuItem.openMenu(true);
-  await shown;
+/**
+ * Click on an element identified by a selector, inside a browser and wait for the
+ * specified menu popup to be shown.
+ *
+ * @param {Browser} browser
+ * @param {Element} menu - The <menu> that should appear.
+ * @param {string} selector - A CSS selector to identify the element which should
+ *   be clicked on, inside the browser.
+ * @returns {Promise} A promise that resolves once the menu was opened. Rejects
+ *   if unsucessfull for more then 3 tries.
+ */
+async function openMenuPopupInBrowser(browser, menu, selector) {
+  await BrowserTestUtils.waitForPopupEvent(menu, "hidden");
+  await synthesizeMouseAtCenterAndRetry(
+    selector,
+    { type: "mousedown", button: 2 },
+    browser
+  );
+  await synthesizeMouseAtCenterAndRetry(
+    selector,
+    { type: "contextmenu" },
+    browser
+  );
+  await BrowserTestUtils.waitForPopupEvent(menu, "shown");
+}
+
+/**
+ * click on the specified element and wait for the specified menu popup to appear.
+ * For elements in the parent process only.
+ *
+ * @param {Element} menu - The <menu> that should appear.
+ * @param {Element} element - The element to be clicked on.
+ * @param {object} [event] - The mouse event to be used to open the menu popup.
+ *   It is an object which may contain the properties:
+ *     `shiftKey`, `ctrlKey`, `altKey`, `metaKey`, `accessKey`, `clickCount`,
+ *     `button`, `type`.
+ *   For valid `type`s see nsIDOMWindowUtils' `sendMouseEvent`.
+ *   If the type is specified, an mouse event of that type is fired. Otherwise,
+ *   a mousedown followed by a mouseup is performed.
+ *
+ * @returns {Promise} A promise that resolves when the menu appears.
+ */
+async function openMenuPopup(menu, element, event = {}) {
+  await BrowserTestUtils.waitForPopupEvent(menu, "hidden");
+  EventUtils.synthesizeMouseAtCenter(element, event, element.ownerGlobal);
+  await BrowserTestUtils.waitForPopupEvent(menu, "shown");
+}
+
+/**
+ * Activate (click) an menu item in a menu popup.
+ *
+ * @param {Element} element - The menu item element to be clicked on.
+ * @param {ActivateMenuItemOptions} [modifiers] - A modifier object.
+ * @see /dom/chrome-webidl/XULPopupElement.webidl
+ *
+ * @returns {Promise} A promise that resolves after the menu popup of the
+ *   clicked item is hidden.
+ */
+async function clickItemInMenuPopup(element, modifiers = {}) {
+  if (element) {
+    const menu = element.parentNode;
+    await BrowserTestUtils.waitForPopupEvent(menu, "shown");
+    element.closest("menupopup").activateItem(element, modifiers);
+    await BrowserTestUtils.waitForPopupEvent(menu, "hidden");
+  } else {
+    throw new Error("clickItemInMenuPopup specified non-existing item");
+  }
+}
+
+/**
+ * Open (click) a sub-menu item in a menu popup.
+ *
+ * @param {Element} element - The sub-menu item element to be clicked on.
+ * @returns {Promise<Element>} The opened sub-menu.
+ */
+async function openSubMenuPopup(element) {
+  const submenu = element.menupopup;
+  await BrowserTestUtils.waitForPopupEvent(submenu, "hidden");
+  element.openMenu(true);
+  await BrowserTestUtils.waitForPopupEvent(submenu, "shown");
   return submenu;
 }
 
-async function closeContextMenu(contextMenu) {
-  let contentAreaContextMenu =
-    contextMenu || document.getElementById("browserContext");
-  let popupHiddenPromise = BrowserTestUtils.waitForEvent(
-    contentAreaContextMenu,
-    "popuphidden"
-  );
-  contentAreaContextMenu.hidePopup();
-  await popupHiddenPromise;
+/**
+ * Close a menu popup.
+ *
+ * @param {Element} menu - The menu popup element to be closed.
+ * @returns {Promise} A promise that resolves after the menu popup is hidden.
+ */
+async function closeMenuPopup(menu) {
+  await BrowserTestUtils.waitForPopupEvent(menu, "shown");
+  menu.hidePopup();
+  await BrowserTestUtils.waitForPopupEvent(menu, "hidden");
+}
+
+/**
+ * Close the standard browser context menu popup.
+ *
+ * @returns {Promise} A promise that resolves after the menu popup is hidden.
+ */
+async function closeBrowserContextMenuPopup() {
+  const contentAreaContextMenu = document.getElementById("browserContext");
+  await closeMenuPopup(contentAreaContextMenu);
 }
 
 async function getUtilsJS() {
-  let response = await fetch(getRootDirectory(gTestPath) + "utils.js");
-  return response.text();
+  return IOUtils.readUTF8(getTestFilePath("utils.js"));
 }
 
 async function checkContent(browser, expected) {
-  await SpecialPowers.spawn(browser, [expected], expected => {
+  // eslint-disable-next-line no-shadow
+  await SpecialPowers.spawn(browser, [expected], async expected => {
     let body = content.document.body;
     Assert.ok(body, "body");
-    let computedStyle = content.getComputedStyle(body);
+    const computedStyle = content.getComputedStyle(body);
 
     if ("backgroundColor" in expected) {
+      if (computedStyle.backgroundColor != expected.backgroundColor) {
+        // Give it a bit more time if things weren't settled.
+        // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+        await new Promise(resolve => content.setTimeout(resolve, 500));
+      }
       Assert.equal(
         computedStyle.backgroundColor,
         expected.backgroundColor,
@@ -742,9 +998,19 @@ async function checkContent(browser, expected) {
       );
     }
     if ("color" in expected) {
+      if (computedStyle.color != expected.color) {
+        // Give it a bit more time if things weren't settled.
+        // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+        await new Promise(resolve => content.setTimeout(resolve, 500));
+      }
       Assert.equal(computedStyle.color, expected.color, "color");
     }
     if ("foo" in expected) {
+      if (body.getAttribute("foo") != expected.foo) {
+        // Give it a bit more time if things weren't settled.
+        // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+        await new Promise(resolve => content.setTimeout(resolve, 500));
+      }
       Assert.equal(body.getAttribute("foo"), expected.foo, "foo");
     }
     if ("textContent" in expected) {
@@ -753,6 +1019,11 @@ async function checkContent(browser, expected) {
       // we can just select an descendant node, since what really matters is
       // whether (or not) a script ran, not the exact result.
       body = body.querySelector(".moz-text-flowed") ?? body;
+      if (body.textContent != expected.textContent) {
+        // Give it a bit more time if things weren't settled.
+        // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+        await new Promise(resolve => content.setTimeout(resolve, 500));
+      }
       Assert.equal(body.textContent, expected.textContent, "textContent");
     }
   });
@@ -760,19 +1031,19 @@ async function checkContent(browser, expected) {
 
 function contentTabOpenPromise(tabmail, url) {
   return new Promise(resolve => {
-    let tabMonitor = {
-      onTabTitleChanged(aTab) {},
-      onTabClosing(aTab) {},
-      onTabPersist(aTab) {},
-      onTabRestored(aTab) {},
-      onTabSwitched(aNewTab, aOldTab) {},
+    const tabMonitor = {
+      onTabTitleChanged() {},
+      onTabClosing() {},
+      onTabPersist() {},
+      onTabRestored() {},
+      onTabSwitched() {},
       async onTabOpened(aTab) {
-        let result = awaitBrowserLoaded(
+        const result = awaitBrowserLoaded(
           aTab.linkedBrowser,
           urlToMatch => urlToMatch == url
         ).then(() => aTab);
 
-        let reporterListener = {
+        const reporterListener = {
           QueryInterface: ChromeUtils.generateQI([
             "nsIWebProgressListener",
             "nsISupportsWeakReference",
@@ -843,18 +1114,19 @@ async function run_popup_test(configData) {
 
   let backend_script = configData.backend_script;
 
-  let extensionDetails = {
+  const extensionDetails = {
     files: {
       "popup.html": `<!DOCTYPE html>
-                      <html>
-                        <head>
-                          <title>Popup</title>
-                        </head>
-                        <body>
-                          <p>Hello</p>
-                          <script src="popup.js"></script>
-                        </body>
-                      </html>`,
+        <html>
+          <head>
+            <title>Popup</title>
+            <meta charset="utf-8">
+            <script defer="defer" src="popup.js"></script>
+          </head>
+          <body>
+            <p>Hello</p>
+          </body>
+        </html>`,
       "popup.js": async function () {
         // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
         await new Promise(resolve => window.setTimeout(resolve, 1000));
@@ -898,15 +1170,16 @@ async function run_popup_test(configData) {
 
   switch (configData.testType) {
     case "open-with-mouse-click":
+      // eslint-disable-next-line no-shadow
       backend_script = async function (extension, configData) {
-        let win = configData.window;
+        const win = configData.window;
 
         await extension.startup();
         await promiseAnimationFrame(win);
         await new Promise(resolve => win.setTimeout(resolve));
         await extension.awaitMessage("ready");
 
-        let buttonId = `${configData.actionType}_mochi_test-${configData.moduleName}-toolbarbutton`;
+        const buttonId = `${configData.actionType}_mochi_test-${configData.moduleName}-toolbarbutton`;
         let toolbarId;
         switch (configData.actionType) {
           case "compose_action":
@@ -963,10 +1236,10 @@ async function run_popup_test(configData) {
             "Button should be available in unified toolbar mail space"
           );
 
-          let icon = button.querySelector(".button-icon");
+          const icon = button.querySelector(".button-icon");
           is(
             getComputedStyle(icon).content,
-            `url("chrome://messenger/content/extension.svg")`,
+            makeIconSet(`url("chrome://messenger/content/extension.svg")`),
             "Default icon"
           );
           label = button.querySelector(".button-label");
@@ -990,10 +1263,10 @@ async function run_popup_test(configData) {
             `Button should have been added to currentset xulStore of toolbar ${toolbarId}`
           );
 
-          let icon = button.querySelector(".toolbarbutton-icon");
+          const icon = button.querySelector(".toolbarbutton-icon");
           is(
             getComputedStyle(icon).listStyleImage,
-            `url("chrome://messenger/content/extension.svg")`,
+            makeIconSet(`url("chrome://messenger/content/extension.svg")`),
             "Default icon"
           );
           label = button.querySelector(".toolbarbutton-text");
@@ -1058,7 +1331,7 @@ async function run_popup_test(configData) {
             );
           }
         } else {
-          let hasFiredBefore = await clickedPromise;
+          const hasFiredBefore = await clickedPromise;
           await promiseAnimationFrame(win);
           await new Promise(resolve => win.setTimeout(resolve));
           if (toolbarId === "unified-toolbar") {
@@ -1140,7 +1413,7 @@ async function run_popup_test(configData) {
         // With popup.
         extensionDetails.files["background.js"] = async function () {
           browser.test.log("popup background script ran");
-          let popupPromise = window.getPopupOpenedPromise();
+          const popupPromise = window.getPopupOpenedPromise();
           browser.test.sendMessage("ready");
           await popupPromise;
           await browser[window.apiName].setTitle({ title: "New title" });
@@ -1150,7 +1423,7 @@ async function run_popup_test(configData) {
         // Without popup and disabled button.
         extensionDetails.files["background.js"] = async function () {
           browser.test.log("nopopup & button disabled background script ran");
-          browser[window.apiName].onClicked.addListener(async (tab, info) => {
+          browser[window.apiName].onClicked.addListener(async () => {
             browser.test.fail(
               "Should not have seen the onClicked event for a disabled button"
             );
@@ -1169,7 +1442,7 @@ async function run_popup_test(configData) {
             browser.test.assertEq(0, info.button);
             browser.test.assertTrue(Array.isArray(info.modifiers));
             browser.test.assertEq(0, info.modifiers.length);
-            let [currentTab] = await browser.tabs.query({
+            const [currentTab] = await browser.tabs.query({
               active: true,
               currentWindow: true,
             });
@@ -1190,9 +1463,10 @@ async function run_popup_test(configData) {
 
     case "open-with-menu-command":
       extensionDetails.manifest.permissions = ["menus"];
+      // eslint-disable-next-line no-shadow
       backend_script = async function (extension, configData) {
-        let win = configData.window;
-        let buttonId = `${configData.actionType}_mochi_test-${configData.moduleName}-toolbarbutton`;
+        const win = configData.window;
+        const buttonId = `${configData.actionType}_mochi_test-${configData.moduleName}-toolbarbutton`;
         let menuId = "toolbar-context-menu";
         let isUnifiedToolbar = false;
         if (
@@ -1222,30 +1496,24 @@ async function run_popup_test(configData) {
         };
 
         extension.onMessage("triggerClick", async () => {
-          let button = getButton(win);
-          let menu = win.document.getElementById(menuId);
-          let onShownPromise = extension.awaitMessage("onShown");
-          let shownPromise = BrowserTestUtils.waitForEvent(menu, "popupshown");
+          const button = getButton(win);
+          const menu = win.document.getElementById(menuId);
+          const onShownPromise = extension.awaitMessage("onShown");
+          await BrowserTestUtils.waitForPopupEvent(menu, "hidden");
           EventUtils.synthesizeMouseAtCenter(
             button,
             { type: "contextmenu" },
             win
           );
-          await shownPromise;
+          await BrowserTestUtils.waitForPopupEvent(menu, "shown");
           await onShownPromise;
           await new Promise(resolve => win.setTimeout(resolve));
 
-          let menuitem = win.document.getElementById(
+          const menuitem = win.document.getElementById(
             `${configData.actionType}_mochi_test-menuitem-_testmenu`
           );
           Assert.ok(menuitem);
-          menuitem.parentNode.activateItem(menuitem);
-
-          // Sometimes, the popup will open then instantly disappear. It seems to
-          // still be hiding after the previous appearance. If we wait a little bit,
-          // this doesn't happen.
-          // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
-          await new Promise(r => win.setTimeout(r, 250));
+          await clickItemInMenuPopup(menuitem);
           extension.sendMessage();
         });
 
@@ -1253,7 +1521,7 @@ async function run_popup_test(configData) {
         await extension.awaitFinish();
 
         // Check the open state of the action button.
-        let button = getButton(win);
+        const button = getButton(win);
         await TestUtils.waitForCondition(
           () => button.getAttribute("open") != "true",
           "Button should not have open state after the popup closed."
@@ -1281,7 +1549,7 @@ async function run_popup_test(configData) {
             browser.test.sendMessage("onShown", args);
           });
 
-          let popupPromise = window.getPopupOpenedPromise();
+          const popupPromise = window.getPopupOpenedPromise();
           await window.sendMessage("triggerClick");
           await popupPromise;
 
@@ -1307,7 +1575,7 @@ async function run_popup_test(configData) {
             browser.test.sendMessage("onShown", args);
           });
 
-          browser[window.apiName].onClicked.addListener(async (tab, info) => {
+          browser[window.apiName].onClicked.addListener(async () => {
             browser.test.fail(
               "Should not have seen the onClicked event for a disabled button"
             );
@@ -1337,8 +1605,8 @@ async function run_popup_test(configData) {
             browser.test.sendMessage("onShown", args);
           });
 
-          let clickPromise = new Promise(resolve => {
-            let listener = async (tab, info) => {
+          const clickPromise = new Promise(resolve => {
+            const listener = async (tab, info) => {
               browser[window.apiName].onClicked.removeListener(listener);
               browser.test.assertEq("object", typeof tab);
               browser.test.assertEq("object", typeof info);
@@ -1381,13 +1649,13 @@ async function run_popup_test(configData) {
       configData.default_windows;
   }
 
-  let extension = ExtensionTestUtils.loadExtension(extensionDetails);
+  const extension = ExtensionTestUtils.loadExtension(extensionDetails);
   await backend_script(extension, configData);
 }
 
 async function run_action_button_order_test(configs, window, actionType) {
   // Get camelCase API names from action type.
-  let apiName = actionType.replace(/_([a-z])/g, function (g) {
+  const apiName = actionType.replace(/_([a-z])/g, function (g) {
     return g[1].toUpperCase();
   });
 
@@ -1395,14 +1663,14 @@ async function run_action_button_order_test(configs, window, actionType) {
     return `${name}_mochi_test-${apiName}-toolbarbutton`;
   }
 
-  function test_buttons(configs, window, toolbars) {
-    for (let toolbarId of toolbars) {
-      let expected = configs.filter(e => e.toolbar == toolbarId);
-      let selector =
+  function test_buttons(confs, win, toolbars) {
+    for (const toolbarId of toolbars) {
+      const expected = confs.filter(e => e.toolbar == toolbarId);
+      const selector =
         toolbarId === "unified-toolbar"
           ? `#unifiedToolbarContent [extension$="@mochi.test"]`
           : `#${toolbarId} toolbarbutton[id$="${get_id("")}"]`;
-      let buttons = window.document.querySelectorAll(selector);
+      const buttons = win.document.querySelectorAll(selector);
       Assert.equal(
         expected.length,
         buttons.length,
@@ -1427,8 +1695,8 @@ async function run_action_button_order_test(configs, window, actionType) {
   }
 
   // Create extension data.
-  let toolbars = new Set();
-  for (let config of configs) {
+  const toolbars = new Set();
+  for (const config of configs) {
     toolbars.add(config.toolbar);
     config.extensionData = {
       useAddonManager: "permanent",
@@ -1453,81 +1721,37 @@ async function run_action_button_order_test(configs, window, actionType) {
   }
 
   // Test order of buttons after first install.
-  for (let config of configs) {
+  for (const config of configs) {
     config.extension = ExtensionTestUtils.loadExtension(config.extensionData);
     await config.extension.startup();
   }
   test_buttons(configs, window, toolbars);
 
   // Disable all buttons.
-  for (let config of configs) {
-    let addon = await AddonManager.getAddonByID(config.extension.id);
+  for (const config of configs) {
+    const addon = await AddonManager.getAddonByID(config.extension.id);
     await addon.disable();
   }
   test_buttons([], window, toolbars);
 
   // Re-enable all buttons in reversed order, displayed order should not change.
-  for (let config of [...configs].reverse()) {
-    let addon = await AddonManager.getAddonByID(config.extension.id);
+  for (const config of [...configs].reverse()) {
+    const addon = await AddonManager.getAddonByID(config.extension.id);
     await addon.enable();
   }
   test_buttons(configs, window, toolbars);
 
   // Re-install all extensions in reversed order, displayed order should not change.
-  for (let config of [...configs].reverse()) {
+  for (const config of [...configs].reverse()) {
     config.extension2 = ExtensionTestUtils.loadExtension(config.extensionData);
     await config.extension2.startup();
   }
   test_buttons(configs, window, toolbars);
 
   // Remove all extensions.
-  for (let config of [...configs].reverse()) {
+  for (const config of [...configs].reverse()) {
     await config.extension.unload();
     await config.extension2.unload();
   }
   test_buttons([], window, toolbars);
-}
-
-/**
- * Helper method to switch to a cards view with vertical layout.
- */
-async function ensure_cards_view() {
-  const { threadTree, threadPane } =
-    document.getElementById("tabmail").currentAbout3Pane;
-
-  Services.prefs.setIntPref("mail.pane_config.dynamic", 2);
-  Services.xulStore.setValue(
-    "chrome://messenger/content/messenger.xhtml",
-    "threadPane",
-    "view",
-    "cards"
-  );
-  threadPane.updateThreadView("cards");
-
-  await BrowserTestUtils.waitForCondition(
-    () => threadTree.getAttribute("rows") == "thread-card",
-    "The tree view switched to a cards layout"
-  );
-}
-
-/**
- * Helper method to switch to a table view with classic layout.
- */
-async function ensure_table_view() {
-  const { threadTree, threadPane } =
-    document.getElementById("tabmail").currentAbout3Pane;
-
-  Services.prefs.setIntPref("mail.pane_config.dynamic", 0);
-  Services.xulStore.setValue(
-    "chrome://messenger/content/messenger.xhtml",
-    "threadPane",
-    "view",
-    "table"
-  );
-  threadPane.updateThreadView("table");
-
-  await BrowserTestUtils.waitForCondition(
-    () => threadTree.getAttribute("rows") == "thread-row",
-    "The tree view switched to a table layout"
-  );
 }

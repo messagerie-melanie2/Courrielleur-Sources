@@ -5,16 +5,16 @@
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  OpenSearchManager:
+    "moz-src:///browser/components/search/OpenSearchManager.sys.mjs",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
-  SearchUIUtils: "resource:///modules/SearchUIUtils.sys.mjs",
+  SearchUIUtils: "moz-src:///browser/components/search/SearchUIUtils.sys.mjs",
 });
-
-const EMPTY_ADD_ENGINES = [];
 
 /**
  * Defines the search one-off button elements. These are displayed at the bottom
  * of the address bar and search bar. The address bar buttons are a subclass in
- * browser/components/urlbar/UrlbarSearchOneOffs.jsm. If you are adding a new
+ * browser/components/urlbar/UrlbarSearchOneOffs.sys.mjs. If you are adding a new
  * subclass, see "Methods for subclasses to override" below.
  */
 export class SearchOneOffs {
@@ -97,7 +97,6 @@ export class SearchOneOffs {
       "nsIObserver",
       "nsISupportsWeakReference",
     ]);
-    Services.prefs.addObserver("browser.search.hiddenOneOffs", this, true);
     Services.obs.addObserver(this, "browser-search-engine-modified", true);
     Services.obs.addObserver(this, "browser-search-service", true);
 
@@ -149,7 +148,7 @@ export class SearchOneOffs {
   }
 
   /**
-   * @returns {boolean}
+   * @returns {Promise<boolean>}
    *   True if we will hide the one-offs when they are requested.
    */
   async willHide() {
@@ -188,7 +187,7 @@ export class SearchOneOffs {
   /**
    * The popup that contains the one-offs.
    *
-   * @param {DOMElement} val
+   * @param {XULPopupElement} val
    *        The new value to set.
    */
   set popup(val) {
@@ -220,7 +219,7 @@ export class SearchOneOffs {
    * can leave it null/undefined, and in that case you should update the
    * query property manually.
    *
-   * @param {DOMElement} val
+   * @param {HTMLInputElement} val
    *        The new value to set.
    */
   set textbox(val) {
@@ -274,10 +273,10 @@ export class SearchOneOffs {
   }
 
   /**
-   * The selected one-off, a xul:button, including the add-engine button
+   * The selected one-off including the add-engine button
    * and the search-settings button.
    *
-   * @param {DOMElement|null} val
+   * @param {XULElement|null} val
    *        The selected one-off button. Null if no one-off is selected.
    */
   set selectedButton(val) {
@@ -286,7 +285,7 @@ export class SearchOneOffs {
       previousButton.removeAttribute("selected");
     }
     if (val) {
-      val.setAttribute("selected", "true");
+      val.toggleAttribute("selected", true);
     }
     this._selectedButton = val;
 
@@ -350,16 +349,13 @@ export class SearchOneOffs {
       currentEngineNameToIgnore = this._engineInfo.default.name;
     }
 
-    let pref = Services.prefs.getStringPref("browser.search.hiddenOneOffs");
-    let hiddenList = pref ? pref.split(",") : [];
-
     this._engineInfo.engines = (
       await Services.search.getVisibleEngines()
     ).filter(e => {
       let name = e.name;
       return (
         (!currentEngineNameToIgnore || name != currentEngineNameToIgnore) &&
-        !hiddenList.includes(name)
+        !e.hideOneOffButton
       );
     });
 
@@ -367,12 +363,12 @@ export class SearchOneOffs {
   }
 
   observe(aEngine, aTopic, aData) {
-    // Make sure the engine list was updated.
-    this.invalidateCache();
-  }
-
-  _getAddEngines() {
-    return this.window.gBrowser.selectedBrowser.engines || EMPTY_ADD_ENGINES;
+    // For the "browser-search-service" topic, we only need to invalidate
+    // the cache on initialization complete or when the engines are reloaded.
+    if (aTopic != "browser-search-service" || aData == "engines-reloaded") {
+      // Make sure the engine list was updated.
+      this.invalidateCache();
+    }
   }
 
   get _maxInlineAddEngines() {
@@ -391,9 +387,10 @@ export class SearchOneOffs {
     try {
       await this.__rebuild();
     } catch (ex) {
-      console.error("Search-one-offs::_rebuild() error: " + ex);
+      console.error("Search-one-offs::_rebuild() error:", ex);
     } finally {
       this._rebuilding = false;
+      this.dispatchEvent(new Event("rebuild"));
     }
   }
 
@@ -406,7 +403,9 @@ export class SearchOneOffs {
       return;
     }
 
-    const addEngines = this._getAddEngines();
+    const addEngines = lazy.OpenSearchManager.getEngines(
+      this.window.gBrowser.selectedBrowser
+    );
 
     // Return early if the engines and panel width have not changed.
     if (this.popup && this._textbox) {
@@ -465,9 +464,7 @@ export class SearchOneOffs {
     this.settingsButton.id = origin + "-anon-search-settings";
 
     let engines = (await this.getEngineInfo()).engines;
-    this._rebuildEngineList(engines, addEngines);
-
-    this.dispatchEvent(new Event("rebuild"));
+    await this._rebuildEngineList(engines, addEngines);
   }
 
   /**
@@ -478,16 +475,16 @@ export class SearchOneOffs {
    * @param {Array} addEngines
    *        The engines that can be added.
    */
-  _rebuildEngineList(engines, addEngines) {
+  async _rebuildEngineList(engines, addEngines) {
     for (let i = 0; i < engines.length; ++i) {
       let engine = engines[i];
       let button = this.document.createXULElement("button");
       button.engine = engine;
       button.id = this._buttonIDForEngine(engine);
-      let iconURI =
-        engine.iconURI?.spec ||
+      let iconURL =
+        (await engine.getIconURL()) ||
         "chrome://browser/skin/search-engine-placeholder.png";
-      button.setAttribute("image", iconURI);
+      button.setAttribute("image", iconURL);
       button.setAttribute("class", "searchbar-engine-one-off-item");
       button.setAttribute("tabindex", "-1");
       this.setTooltipForEngineButton(button);
@@ -508,11 +505,9 @@ export class SearchOneOffs {
       if (engine.icon) {
         button.setAttribute("image", engine.icon);
       }
-      button.setAttribute("data-l10n-id", "search-one-offs-add-engine");
-      button.setAttribute(
-        "data-l10n-args",
-        JSON.stringify({ engineName: engine.title })
-      );
+      this.document.l10n.setAttributes(button, "search-one-offs-add-engine", {
+        engineName: engine.title,
+      });
       button.setAttribute("engine-name", engine.title);
       button.setAttribute("uri", engine.uri);
       this.buttons.appendChild(button);
@@ -565,7 +560,7 @@ export class SearchOneOffs {
     } else {
       let newTabPref = Services.prefs.getBoolPref("browser.search.openintab");
       if (
-        (KeyboardEvent.isInstance(aEvent) && aEvent.altKey) ^ newTabPref &&
+        (KeyboardEvent.isInstance(aEvent) && aEvent.altKey) != newTabPref &&
         !this.window.gBrowser.selectedTab.isEmpty
       ) {
         where = "tab";
@@ -936,7 +931,7 @@ export class SearchOneOffs {
    *
    * @param {event} event
    *        The event that triggered the pick.
-   * @param {nsISearchEngine|SearchEngine} engine
+   * @param {nsISearchEngine} engine
    *        The engine that was picked.
    * @param {boolean} forceNewTab
    *        True if the search results page should be loaded in a new tab.
@@ -950,7 +945,7 @@ export class SearchOneOffs {
    * Sets the tooltip for a one-off button with an engine.  This should set
    * either the `tooltiptext` attribute or the relevant l10n ID.
    *
-   * @param {element} button
+   * @param {XULElement} button
    *        The one-off button.
    */
   setTooltipForEngineButton(button) {
@@ -978,13 +973,19 @@ export class SearchOneOffs {
       return;
     }
 
+    if (!this.textbox.value) {
+      if (event.shiftKey) {
+        this.popup.openSearchForm(event, engine);
+      }
+      return;
+    }
     // Select the clicked button so that consumers can easily tell which
     // button was acted on.
     this.selectedButton = button;
     this.handleSearchCommand(event, engine);
   }
 
-  _on_command(event) {
+  async _on_command(event) {
     let target = event.target;
 
     if (target == this.settingsButton) {
@@ -1017,7 +1018,11 @@ export class SearchOneOffs {
       // Select the context-clicked button so that consumers can easily
       // tell which button was acted on.
       this.selectedButton = target.closest("menupopup")._triggerButton;
-      this.handleSearchCommand(event, this.selectedButton.engine, true);
+      if (this.textbox.value) {
+        this.handleSearchCommand(event, this.selectedButton.engine, true);
+      } else {
+        this.popup.openSearchForm(event, this.selectedButton.engine, true);
+      }
     }
 
     const isPrivateButton = target.classList.contains(
@@ -1045,11 +1050,10 @@ export class SearchOneOffs {
         // Make the target button of the context menu reflect the current
         // search engine first. Doing this as opposed to rebuilding all the
         // one-off buttons avoids flicker.
-        let uri = "chrome://browser/skin/search-engine-placeholder.png";
-        if (currentEngine.iconURI) {
-          uri = currentEngine.iconURI.spec;
-        }
-        button.setAttribute("image", uri);
+        let iconURL =
+          (await currentEngine.getIconURL()) ||
+          "chrome://browser/skin/search-engine-placeholder.png";
+        button.setAttribute("image", iconURL);
         button.setAttribute("tooltiptext", currentEngine.name);
         button.engine = currentEngine;
       }

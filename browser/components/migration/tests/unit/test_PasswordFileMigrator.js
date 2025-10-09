@@ -21,10 +21,8 @@ const { MigrationWizardConstants } = ChromeUtils.importESModule(
  * and delegates to the LoginCSVImport module.
  */
 add_task(async function test_PasswordFileMigrator() {
-  Services.prefs.setBoolPref("signon.management.page.fileImport.enabled", true);
   let sandbox = sinon.createSandbox();
   registerCleanupFunction(() => {
-    Services.prefs.clearUserPref("signon.management.page.fileImport.enabled");
     sandbox.restore();
   });
 
@@ -80,4 +78,32 @@ add_task(async function test_PasswordFileMigrator() {
     EXPECTED_SUCCESS_STATE,
     "Got back the expected success state."
   );
+
+  sandbox.restore();
+});
+
+/**
+ * Tests that the PasswordFileMigrator will throw an exception with a
+ * consistent error message if the LoginCSVImport function rejects.
+ */
+add_task(async function test_PasswordFileMigrator_exception() {
+  let sandbox = sinon.createSandbox();
+  registerCleanupFunction(() => {
+    sandbox.restore();
+  });
+
+  let migrator = new PasswordFileMigrator();
+
+  const FAKE_PATH = "some/fake/path.csv";
+
+  sandbox.stub(LoginCSVImport, "importFromCSV").callsFake(() => {
+    return Promise.reject("Some error");
+  });
+
+  await Assert.rejects(
+    migrator.migrate(FAKE_PATH),
+    /The file doesn’t include any valid password data/
+  );
+
+  sandbox.restore();
 });

@@ -4,6 +4,7 @@ if (typeof classifierHelper == "undefined") {
 
 const CLASSIFIER_COMMON_URL = SimpleTest.getTestFileURL("classifierCommon.js");
 var gScript = SpecialPowers.loadChromeScript(CLASSIFIER_COMMON_URL);
+var gOriginalGetHashURL;
 
 const PREFS = {
   PROVIDER_LISTS: "browser.safebrowsing.provider.mozilla.lists",
@@ -23,10 +24,10 @@ classifierHelper._updatesToCleanup = [];
 
 classifierHelper._initsCB = [];
 
-// This function return a Promise, promise is resolved when SafeBrowsing.jsm
+// This function return a Promise, promise is resolved when SafeBrowsing.sys.mjs
 // is initialized.
 classifierHelper.waitForInit = function () {
-  return new Promise(function (resolve, reject) {
+  return new Promise(function (resolve) {
     classifierHelper._initsCB.push(resolve);
     gScript.sendAsyncMessage("waitForInit");
   });
@@ -111,13 +112,24 @@ classifierHelper.resetDatabase = function () {
 };
 
 classifierHelper.reloadDatabase = function () {
-  return new Promise(function (resolve, reject) {
+  return new Promise(function (resolve) {
     gScript.addMessageListener("reloadSuccess", function handler() {
       gScript.removeMessageListener("reloadSuccess", handler);
       resolve();
     });
 
     gScript.sendAsyncMessage("doReload");
+  });
+};
+
+classifierHelper.getTables = function () {
+  return new Promise(resolve => {
+    gScript.addMessageListener("GetTableSuccess", function handler(tables) {
+      gScript.removeMessageListener("GetTableSuccess", handler);
+      resolve(tables);
+    });
+
+    gScript.sendAsyncMessage("doGetTables");
   });
 };
 
@@ -167,15 +179,20 @@ classifierHelper._setup = function () {
   gScript.addMessageListener("updateError", classifierHelper._updateError);
   gScript.addMessageListener("safeBrowsingInited", classifierHelper._inited);
 
+  // Store the original get hash URL in order to reset it back during clean up.
+  gOriginalGetHashURL = SpecialPowers.getCharPref(PREFS.PROVIDER_GETHASHURL);
+
   // cleanup will be called at end of each testcase to remove all the urls added to database.
   SimpleTest.registerCleanupFunction(classifierHelper._cleanup);
 };
 
 classifierHelper._cleanup = function () {
   // clean all the preferences may touch by helper
-  for (var pref in PREFS) {
-    SpecialPowers.clearUserPref(pref);
-  }
+  Object.values(PREFS).map(pref => SpecialPowers.clearUserPref(pref));
+
+  // Set the getHashURL back, the original value isn't the same as the default
+  // pref value.
+  SpecialPowers.setCharPref(PREFS.PROVIDER_GETHASHURL, gOriginalGetHashURL);
 
   if (!classifierHelper._updatesToCleanup) {
     return Promise.resolve();

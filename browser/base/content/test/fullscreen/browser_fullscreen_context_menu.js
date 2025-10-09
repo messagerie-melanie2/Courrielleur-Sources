@@ -24,11 +24,11 @@ async function testContextMenu() {
   await BrowserTestUtils.withNewTab("about:blank", async () => {
     let panelUIMenuButton = document.getElementById("PanelUI-menu-button");
     let contextMenu = await openContextMenu(panelUIMenuButton);
-    let array1 = AppConstants.MENUBAR_CAN_AUTOHIDE
+    let array1 = !Services.appinfo.nativeMenubar
       ? [
           ".customize-context-moveToPanel",
           ".customize-context-removeFromToolbar",
-          "#toolbarItemsMenuSeparator",
+          "#customizationMenuSeparator",
           "#toggle_toolbar-menubar",
           "#toggle_PersonalToolbar",
           "#viewToolbarsMenuSeparator",
@@ -37,7 +37,7 @@ async function testContextMenu() {
       : [
           ".customize-context-moveToPanel",
           ".customize-context-removeFromToolbar",
-          "#toolbarItemsMenuSeparator",
+          "#customizationMenuSeparator",
           "#toggle_PersonalToolbar",
           "#viewToolbarsMenuSeparator",
           ".viewCustomizeToolbar",
@@ -51,7 +51,7 @@ async function testContextMenu() {
         window,
         "sizemodechange",
         false,
-        e => window.fullScreen
+        () => window.fullScreen
       ),
       BrowserTestUtils.waitForPopupEvent(contextMenu, "hidden"),
     ]);
@@ -60,15 +60,16 @@ async function testContextMenu() {
     info("waiting for fullscreen");
     await onFullscreen;
     // make sure the toolbox is visible if it's autohidden
-    document.getElementById("Browser:OpenLocation").doCommand();
+    FullScreen.showNavToolbox();
+
     info("trigger the context menu");
     let contextMenu2 = await openContextMenu(panelUIMenuButton);
     info("context menu should be open, verify its menu items");
-    let array2 = AppConstants.MENUBAR_CAN_AUTOHIDE
+    let array2 = !Services.appinfo.nativeMenubar
       ? [
           ".customize-context-moveToPanel",
           ".customize-context-removeFromToolbar",
-          "#toolbarItemsMenuSeparator",
+          "#customizationMenuSeparator",
           "#toggle_toolbar-menubar",
           "#toggle_PersonalToolbar",
           "#viewToolbarsMenuSeparator",
@@ -80,7 +81,7 @@ async function testContextMenu() {
       : [
           ".customize-context-moveToPanel",
           ".customize-context-removeFromToolbar",
-          "#toolbarItemsMenuSeparator",
+          "#customizationMenuSeparator",
           "#toggle_PersonalToolbar",
           "#viewToolbarsMenuSeparator",
           ".viewCustomizeToolbar",
@@ -96,7 +97,7 @@ async function testContextMenu() {
         window,
         "sizemodechange",
         false,
-        e => !window.fullScreen
+        () => !window.fullScreen
       ),
       BrowserTestUtils.waitForPopupEvent(contextMenu2, "hidden"),
     ]);
@@ -109,7 +110,7 @@ async function testContextMenu() {
 function verifyContextMenu(contextMenu, itemSelectors) {
   // Ignore hidden nodes
   let items = Array.from(contextMenu.children).filter(n =>
-    BrowserTestUtils.is_visible(n)
+    BrowserTestUtils.isVisible(n)
   );
   let menuAsText = items
     .map(n => {

@@ -3,52 +3,57 @@
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
-exports.algorithmsByName = exports.DefaultAlgorithm = exports.Curve25519 = exports.BackupManager = exports.Aes256 = void 0;
-var _client = require("../client");
-var _logger = require("../logger");
-var _olmlib = require("./olmlib");
-var _key_passphrase = require("./key_passphrase");
-var _utils = require("../utils");
-var _indexeddbCryptoStore = require("./store/indexeddb-crypto-store");
-var _recoverykey = require("./recoverykey");
-var _aes = require("./aes");
-var _NamespacedValue = require("../NamespacedValue");
-var _index = require("./index");
-var _crypto = require("./crypto");
-var _httpApi = require("../http-api");
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(arg) { var key = _toPrimitive(arg, "string"); return typeof key === "symbol" ? key : String(key); }
-function _toPrimitive(input, hint) { if (typeof input !== "object" || input === null) return input; var prim = input[Symbol.toPrimitive]; if (prim !== undefined) { var res = prim.call(input, hint || "default"); if (typeof res !== "object") return res; throw new TypeError("@@toPrimitive must return a primitive value."); } return (hint === "string" ? String : Number)(input); } /*
-                                                                                                                                                                                                                                                                                                                                                                                          Copyright 2021 The Matrix.org Foundation C.I.C.
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Licensed under the Apache License, Version 2.0 (the "License");
-                                                                                                                                                                                                                                                                                                                                                                                          you may not use this file except in compliance with the License.
-                                                                                                                                                                                                                                                                                                                                                                                          You may obtain a copy of the License at
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                              http://www.apache.org/licenses/LICENSE-2.0
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Unless required by applicable law or agreed to in writing, software
-                                                                                                                                                                                                                                                                                                                                                                                          distributed under the License is distributed on an "AS IS" BASIS,
-                                                                                                                                                                                                                                                                                                                                                                                          WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-                                                                                                                                                                                                                                                                                                                                                                                          See the License for the specific language governing permissions and
-                                                                                                                                                                                                                                                                                                                                                                                          limitations under the License.
-                                                                                                                                                                                                                                                                                                                                                                                          */ /**
-                                                                                                                                                                                                                                                                                                                                                                                              * Classes for dealing with key backup.
-                                                                                                                                                                                                                                                                                                                                                                                              */
+exports.algorithmsByName = exports.LibOlmBackupDecryptor = exports.DefaultAlgorithm = exports.Curve25519 = exports.BackupManager = exports.Aes256 = void 0;
+exports.backupTrustInfoFromLegacyTrustInfo = backupTrustInfoFromLegacyTrustInfo;
+var _client = require("../client.js");
+var _logger = require("../logger.js");
+var _olmlib = require("./olmlib.js");
+var _key_passphrase = require("./key_passphrase.js");
+var _utils = require("../utils.js");
+var _indexeddbCryptoStore = require("./store/indexeddb-crypto-store.js");
+var _NamespacedValue = require("../NamespacedValue.js");
+var _index = require("./index.js");
+var _index2 = require("../http-api/index.js");
+var _index3 = require("../crypto-api/index.js");
+var _decryptAESSecretStorageItem = _interopRequireDefault(require("../utils/decryptAESSecretStorageItem.js"));
+var _encryptAESSecretStorageItem = _interopRequireDefault(require("../utils/encryptAESSecretStorageItem.js"));
+var _secretStorage = require("../secret-storage.js");
+function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
+function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
+Copyright 2021 The Matrix.org Foundation C.I.C.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/ /**
+ * Classes for dealing with key backup.
+ */
 const KEY_BACKUP_KEYS_PER_REQUEST = 200;
 const KEY_BACKUP_CHECK_RATE_LIMIT = 5000; // ms
+
+/** @deprecated Prefer {@link BackupTrustInfo} */
 
 /* eslint-disable camelcase */
 
 /* eslint-enable camelcase */
+
 /** A function used to get the secret key for a backup.
  */
+
 /**
  * Manages the key backup.
  */
 class BackupManager {
-  // When did we last try to check the server for a given session id?
-
   constructor(baseApis, getKey) {
     this.baseApis = baseApis;
     this.getKey = getKey;
@@ -60,8 +65,18 @@ class BackupManager {
     _defineProperty(this, "sendingBackups", void 0);
     // Are we currently sending backups?
     _defineProperty(this, "sessionLastCheckAttemptedTime", {});
+    // When did we last try to check the server for a given session id?
+    // The backup manager will schedule backup of keys when active (`scheduleKeyBackupSend`), this allows cancel when client is stopped
+    _defineProperty(this, "clientRunning", true);
     this.checkedForBackup = false;
     this.sendingBackups = false;
+  }
+
+  /**
+   * Stop the backup manager from backing up keys and allow a clean shutdown.
+   */
+  stop() {
+    this.clientRunning = false;
   }
   get version() {
     return this.backupInfo && this.backupInfo.version;
@@ -127,7 +142,7 @@ class BackupManager {
       throw new Error("Unknown backup algorithm");
     }
     const [privateKey, authData] = await Algorithm.prepare(key);
-    const recoveryKey = (0, _recoverykey.encodeRecoveryKey)(privateKey);
+    const recoveryKey = (0, _index3.encodeRecoveryKey)(privateKey);
     return {
       algorithm: Algorithm.algorithmName,
       auth_data: authData,
@@ -137,6 +152,35 @@ class BackupManager {
   }
   async createKeyBackupVersion(info) {
     this.algorithm = await BackupManager.makeAlgorithm(info, this.getKey);
+  }
+
+  /**
+   * Deletes all key backups.
+   *
+   * Will call the API to delete active backup until there is no more present.
+   */
+  async deleteAllKeyBackupVersions() {
+    // there could be several backup versions, delete all to be safe.
+    let current = (await this.baseApis.getKeyBackupVersion())?.version ?? null;
+    while (current != null) {
+      await this.deleteKeyBackupVersion(current);
+      this.disableKeyBackup();
+      current = (await this.baseApis.getKeyBackupVersion())?.version ?? null;
+    }
+  }
+
+  /**
+   * Deletes the given key backup.
+   *
+   * @param version - The backup version to delete.
+   */
+  async deleteKeyBackupVersion(version) {
+    const path = (0, _utils.encodeUri)("/room_keys/version/$version", {
+      $version: version
+    });
+    await this.baseApis.http.authedRequest(_index2.Method.Delete, path, undefined, undefined, {
+      prefix: _index2.ClientPrefix.V3
+    });
   }
 
   /**
@@ -237,7 +281,7 @@ class BackupManager {
       sigs: []
     };
     if (!backupInfo || !backupInfo.algorithm || !backupInfo.auth_data || !backupInfo.auth_data.signatures) {
-      _logger.logger.info("Key backup is absent or missing required data");
+      _logger.logger.info(`Key backup is absent or missing required data: ${JSON.stringify(backupInfo)}`);
       return ret;
     }
     const userId = this.baseApis.getUserId();
@@ -318,6 +362,7 @@ class BackupManager {
    * @param maxDelay - Maximum delay to wait in ms. 0 means no delay.
    */
   async scheduleKeyBackupSend(maxDelay = 10000) {
+    _logger.logger.debug(`Key backup: scheduleKeyBackupSend currentSending:${this.sendingBackups} delay:${maxDelay}`);
     if (this.sendingBackups) return;
     this.sendingBackups = true;
     try {
@@ -326,6 +371,10 @@ class BackupManager {
       // the same time when a new key is sent
       const delay = Math.random() * maxDelay;
       await (0, _utils.sleep)(delay);
+      if (!this.clientRunning) {
+        this.sendingBackups = false;
+        return;
+      }
       let numFailures = 0; // number of consecutive failures
       for (;;) {
         if (!this.algorithm) {
@@ -335,21 +384,26 @@ class BackupManager {
           const numBackedUp = await this.backupPendingKeys(KEY_BACKUP_KEYS_PER_REQUEST);
           if (numBackedUp === 0) {
             // no sessions left needing backup: we're done
+            this.sendingBackups = false;
             return;
           }
           numFailures = 0;
         } catch (err) {
           numFailures++;
           _logger.logger.log("Key backup request failed", err);
-          if (err.data) {
-            if (err.data.errcode == "M_NOT_FOUND" || err.data.errcode == "M_WRONG_ROOM_KEYS_VERSION") {
-              // Re-check key backup status on error, so we can be
-              // sure to present the current situation when asked.
-              await this.checkKeyBackup();
+          if (err instanceof _index2.MatrixError) {
+            const errCode = err.data.errcode;
+            if (errCode == "M_NOT_FOUND" || errCode == "M_WRONG_ROOM_KEYS_VERSION") {
+              // Set to false now as `checkKeyBackup` might schedule a backupsend before this one ends.
+              this.sendingBackups = false;
               // Backup version has changed or this backup version
               // has been deleted
-              this.baseApis.crypto.emit(_index.CryptoEvent.KeyBackupFailed, err.data.errcode);
-              throw err;
+              this.baseApis.crypto.emit(_index.CryptoEvent.KeyBackupFailed, errCode);
+              // Re-check key backup status on error, so we can be
+              // sure to present the current situation when asked.
+              // This call might restart the backup loop if new backup version is trusted
+              await this.checkKeyBackup();
+              return;
             }
           }
         }
@@ -357,8 +411,16 @@ class BackupManager {
           // exponential backoff if we have failures
           await (0, _utils.sleep)(1000 * Math.pow(2, Math.min(numFailures - 1, 4)));
         }
+        if (!this.clientRunning) {
+          _logger.logger.debug("Key backup send loop aborted, client stopped");
+          this.sendingBackups = false;
+          return;
+        }
       }
-    } finally {
+    } catch (err) {
+      // No one actually checks errors on this promise, it's spawned internally.
+      // Just log, apps/client should use events to check status
+      _logger.logger.log(`Backup loop failed ${err}`);
       this.sendingBackups = false;
     }
   }
@@ -515,7 +577,7 @@ class Curve25519 {
     try {
       const backupPubKey = decryption.init_with_private_key(privKey);
       if (backupPubKey !== this.authData.public_key) {
-        throw new _httpApi.MatrixError({
+        throw new _index2.MatrixError({
           errcode: _client.MatrixClient.RESTORE_BACKUP_ERROR_BAD_KEY
         });
       }
@@ -552,7 +614,7 @@ exports.Curve25519 = Curve25519;
 _defineProperty(Curve25519, "algorithmName", "m.megolm_backup.v1.curve25519-aes-sha2");
 function randomBytes(size) {
   const buf = new Uint8Array(size);
-  _crypto.crypto.getRandomValues(buf);
+  globalThis.crypto.getRandomValues(buf);
   return buf;
 }
 const UNSTABLE_MSC3270_NAME = new _NamespacedValue.UnstableValue("m.megolm_backup.v1.aes-hmac-sha2", "org.matrix.msc3270.v1.aes-hmac-sha2");
@@ -569,7 +631,7 @@ class Aes256 {
     if (authData.mac) {
       const {
         mac
-      } = await (0, _aes.calculateKeyCheck)(key, authData.iv);
+      } = await (0, _secretStorage.calculateKeyCheck)(key, authData.iv);
       if (authData.mac.replace(/=+$/g, "") !== mac.replace(/=+/g, "")) {
         throw new Error("Key does not match");
       }
@@ -592,7 +654,7 @@ class Aes256 {
     const {
       iv,
       mac
-    } = await (0, _aes.calculateKeyCheck)(outKey);
+    } = await (0, _secretStorage.calculateKeyCheck)(outKey);
     authData.iv = iv;
     authData.mac = mac;
     return [outKey, authData];
@@ -610,13 +672,13 @@ class Aes256 {
     delete plainText.session_id;
     delete plainText.room_id;
     delete plainText.first_known_index;
-    return (0, _aes.encryptAES)(JSON.stringify(plainText), this.key, data.session_id);
+    return (0, _encryptAESSecretStorageItem.default)(JSON.stringify(plainText), this.key, data.session_id);
   }
   async decryptSessions(sessions) {
     const keys = [];
     for (const [sessionId, sessionData] of Object.entries(sessions)) {
       try {
-        const decrypted = JSON.parse(await (0, _aes.decryptAES)(sessionData.session_data, this.key, sessionId));
+        const decrypted = JSON.parse(await (0, _decryptAESSecretStorageItem.default)(sessionData.session_data, this.key, sessionId));
         decrypted.session_id = sessionId;
         keys.push(decrypted);
       } catch (e) {
@@ -629,7 +691,7 @@ class Aes256 {
     if (this.authData.mac) {
       const {
         mac
-      } = await (0, _aes.calculateKeyCheck)(key, this.authData.iv);
+      } = await (0, _secretStorage.calculateKeyCheck)(key, this.authData.iv);
       return this.authData.mac.replace(/=+$/g, "") === mac.replace(/=+/g, "");
     } else {
       // if we have no information, we have to assume the key is right
@@ -642,10 +704,51 @@ class Aes256 {
 }
 exports.Aes256 = Aes256;
 _defineProperty(Aes256, "algorithmName", UNSTABLE_MSC3270_NAME.name);
-const algorithmsByName = {
+const algorithmsByName = exports.algorithmsByName = {
   [Curve25519.algorithmName]: Curve25519,
   [Aes256.algorithmName]: Aes256
 };
-exports.algorithmsByName = algorithmsByName;
-const DefaultAlgorithm = Curve25519;
-exports.DefaultAlgorithm = DefaultAlgorithm;
+
+// the linter doesn't like this but knip does
+// eslint-disable-next-line tsdoc/syntax
+/** @alias */
+const DefaultAlgorithm = exports.DefaultAlgorithm = Curve25519;
+
+/**
+ * Map a legacy {@link TrustInfo} into a new-style {@link BackupTrustInfo}.
+ *
+ * @param trustInfo - trustInfo to convert
+ */
+function backupTrustInfoFromLegacyTrustInfo(trustInfo) {
+  return {
+    trusted: trustInfo.usable,
+    matchesDecryptionKey: trustInfo.trusted_locally ?? false
+  };
+}
+
+/**
+ * Implementation of {@link BackupDecryptor} for the libolm crypto backend.
+ */
+class LibOlmBackupDecryptor {
+  constructor(algorithm) {
+    _defineProperty(this, "algorithm", void 0);
+    _defineProperty(this, "sourceTrusted", void 0);
+    this.algorithm = algorithm;
+    this.sourceTrusted = !algorithm.untrusted;
+  }
+
+  /**
+   * Implements {@link BackupDecryptor#free}
+   */
+  free() {
+    this.algorithm.free();
+  }
+
+  /**
+   * Implements {@link BackupDecryptor#decryptSessions}
+   */
+  async decryptSessions(sessions) {
+    return await this.algorithm.decryptSessions(sessions);
+  }
+}
+exports.LibOlmBackupDecryptor = LibOlmBackupDecryptor;

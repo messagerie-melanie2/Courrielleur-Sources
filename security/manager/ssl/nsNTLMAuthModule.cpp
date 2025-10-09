@@ -19,7 +19,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/StaticPrefs_network.h"
-#include "mozilla/Telemetry.h"
+#include "mozilla/glean/SecurityManagerSslMetrics.h"
 #include "nsCOMPtr.h"
 #include "nsComponentManagerUtils.h"
 #include "nsICryptoHash.h"
@@ -218,8 +218,8 @@ static void LogToken(const char* name, const void* token, uint32_t tokenLen) {
 //-----------------------------------------------------------------------------
 
 // byte order swapping
-#define SWAP16(x) ((((x)&0xff) << 8) | (((x) >> 8) & 0xff))
-#define SWAP32(x) ((SWAP16((x)&0xffff) << 16) | (SWAP16((x) >> 16)))
+#define SWAP16(x) ((((x) & 0xff) << 8) | (((x) >> 8) & 0xff))
+#define SWAP32(x) ((SWAP16((x) & 0xffff) << 16) | (SWAP16((x) >> 16)))
 
 static void* WriteBytes(void* buf, const void* data, uint32_t dataLen) {
   memcpy(buf, data, dataLen);
@@ -892,10 +892,10 @@ nsNTLMAuthModule::Init(const nsACString& serviceName, uint32_t serviceFlags,
 
   static bool sTelemetrySent = false;
   if (!sTelemetrySent) {
-    mozilla::Telemetry::Accumulate(mozilla::Telemetry::NTLM_MODULE_USED_2,
-                                   serviceFlags & nsIAuthModule::REQ_PROXY_AUTH
-                                       ? NTLM_MODULE_GENERIC_PROXY
-                                       : NTLM_MODULE_GENERIC_DIRECT);
+    mozilla::glean::security::ntlm_module_used.AccumulateSingleSample(
+        serviceFlags & nsIAuthModule::REQ_PROXY_AUTH
+            ? NTLM_MODULE_GENERIC_PROXY
+            : NTLM_MODULE_GENERIC_DIRECT);
     sTelemetrySent = true;
   }
 

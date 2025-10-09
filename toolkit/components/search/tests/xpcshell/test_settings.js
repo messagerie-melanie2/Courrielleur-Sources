@@ -15,13 +15,12 @@ var settingsTemplate;
 /**
  * Test reading from search.json.mozlz4
  */
-add_task(async function setup() {
-  Services.prefs
-    .getDefaultBranch(SearchUtils.BROWSER_SEARCH_PREF + "param.")
-    .setCharPref("test", "expected");
-
-  await SearchTestUtils.useTestEngines("data1");
-  await AddonTestUtils.promiseStartupManager();
+add_setup(async function () {
+  SearchTestUtils.setRemoteSettingsConfig([
+    { identifier: "engine1" },
+    { identifier: "engine2" },
+  ]);
+  await SearchTestUtils.initXPCShellAddonManager();
   await Services.search.init();
 });
 
@@ -81,7 +80,7 @@ async function checkLoadSettingProperties(
   );
   Assert.equal(engines[0].alias, "testAlias", "Should have set the alias");
   Assert.equal(engines[0].hidden, false, "Should have not hidden the engine");
-  Assert.equal(engines[0].id, "engine1@search.mozilla.orgdefault");
+  Assert.equal(engines[0].id, "engine1");
 
   Assert.equal(
     engines[1].name,
@@ -90,15 +89,19 @@ async function checkLoadSettingProperties(
   );
   Assert.equal(engines[1].alias, "", "Should have not set the alias");
   Assert.equal(engines[1].hidden, true, "Should have hidden the engine");
-  Assert.equal(engines[1].id, "engine2@search.mozilla.orgdefault");
+  Assert.equal(engines[1].id, "engine2");
 
   // The extra engine is the second in the list.
-  isSubObjectOf(EXPECTED_ENGINE.engine, engines[2]);
+  isSubObjectOf(EXPECTED_ENGINE.engine, engines[2], prop => {
+    return prop == "_iconURL";
+  });
   Assert.ok(engines[2].id, "test-addon-id@mozilla.orgdefault");
 
   let engineFromSS = ss.getEngineByName(EXPECTED_ENGINE.engine.name);
   Assert.ok(!!engineFromSS);
-  isSubObjectOf(EXPECTED_ENGINE.engine, engineFromSS);
+  isSubObjectOf(EXPECTED_ENGINE.engine, engineFromSS, prop => {
+    return prop == "_iconURL";
+  });
 
   Assert.equal(
     engineFromSS.getSubmission("foo").uri.spec,
@@ -114,10 +117,7 @@ async function checkLoadSettingProperties(
 
   let migratedSettingsFile = await promiseSettingsData();
 
-  Assert.equal(
-    migratedSettingsFile.engines[0].id,
-    "engine1@search.mozilla.orgdefault"
-  );
+  Assert.equal(migratedSettingsFile.engines[0].id, "engine1");
 
   removeSettingsFile();
 }
@@ -126,7 +126,7 @@ add_task(async function test_legacy_setting_engine_properties() {
   Services.prefs.setBoolPref(legacyUseSavedOrderPrefName, true);
 
   let legacySettings = await readJSONFile(
-    do_get_file("data/search-legacy.json")
+    do_get_file("settings/v1-metadata-migration.json")
   );
 
   // Assert the engine ids have not been migrated yet
@@ -136,7 +136,11 @@ add_task(async function test_legacy_setting_engine_properties() {
   Assert.ok(!("defaultEngineId" in legacySettings.metaData));
   Assert.ok(!("privateDefaultEngineId" in legacySettings.metaData));
 
-  await checkLoadSettingProperties("data/search-legacy.json", false, true);
+  await checkLoadSettingProperties(
+    "settings/v1-metadata-migration.json",
+    false,
+    true
+  );
 
   Assert.ok(
     !Services.prefs.prefHasUserValue(legacyUseSavedOrderPrefName),
@@ -148,7 +152,7 @@ add_task(
   async function test_legacy_setting_migration_with_undefined_metaData_current_and_private() {
     let ss = Services.search.wrappedJSObject;
 
-    await loadSettingsFile("data/search-legacy.json", false);
+    await loadSettingsFile("settings/v1-metadata-migration.json", false);
     const settingsFileWritten = promiseAfterSettings();
 
     await ss.reset();
@@ -178,7 +182,7 @@ add_task(
     let ss = Services.search.wrappedJSObject;
 
     await loadSettingsFile(
-      "data/search-legacy-correct-default-engine-hashes.json",
+      "settings/v6-correct-default-engine-hashes.json",
       false,
       true
     );
@@ -193,12 +197,12 @@ add_task(
 
     Assert.equal(
       migratedSettingsFile.metaData.defaultEngineId,
-      "engine2@search.mozilla.orgdefault",
+      "engine2",
       "When the metaData.current and associated hash are correct, the migration should set the defaultEngineId to the engine id."
     );
     Assert.equal(
       migratedSettingsFile.metaData.privateDefaultEngineId,
-      "engine2@search.mozilla.orgdefault",
+      "engine2",
       "When the metaData.private and associated hash are correct, the migration should set the privateDefaultEngineId to the private engine id."
     );
 
@@ -220,7 +224,7 @@ add_task(
     // See SearchService._getEngineDefault for more details.
 
     await loadSettingsFile(
-      "data/search-legacy-wrong-default-engine-hashes.json",
+      "settings/v6-wrong-default-engine-hashes.json",
       false,
       false
     );
@@ -235,7 +239,7 @@ add_task(
 
     Assert.equal(
       migratedSettingsFile.metaData.defaultEngineId,
-      "engine2@search.mozilla.orgdefault",
+      "engine2",
       "Should ignore invalid metaData.hash when the default engine is application provided."
     );
     Assert.equal(
@@ -246,7 +250,7 @@ add_task(
 
     Assert.equal(
       migratedSettingsFile.metaData.privateDefaultEngineId,
-      "engine2@search.mozilla.orgdefault",
+      "engine2",
       "Should ignore invalid metaData.privateHash when the default private engine is application provided."
     );
     Assert.equal(
@@ -268,7 +272,7 @@ add_task(
     // the default engine setting.
 
     await loadSettingsFile(
-      "data/search-legacy-wrong-third-party-engine-hashes.json",
+      "settings/v6-wrong-third-party-engine-hashes.json",
       false,
       false
     );
@@ -308,13 +312,17 @@ add_task(
 );
 
 add_task(async function test_current_setting_engine_properties() {
-  await checkLoadSettingProperties("data/search.json", true, false);
+  await checkLoadSettingProperties(
+    "settings/settings-loading.json",
+    true,
+    false
+  );
 });
 
 add_task(async function test_settings_metadata_properties() {
   let ss = Services.search.wrappedJSObject;
 
-  await loadSettingsFile("data/search.json");
+  await loadSettingsFile("settings/settings-loading.json");
 
   const settingsFileWritten = promiseAfterSettings();
   await ss.reset();
@@ -343,7 +351,7 @@ add_task(async function test_settings_metadata_properties() {
 
 add_task(async function test_settings_write_when_settings_changed() {
   let ss = Services.search.wrappedJSObject;
-  await loadSettingsFile("data/search.json");
+  await loadSettingsFile("settings/settings-loading.json");
 
   const settingsFileWritten = promiseAfterSettings();
   await ss.reset();
@@ -376,7 +384,7 @@ add_task(async function test_settings_write_when_settings_changed() {
 
 add_task(async function test_set_and_get_engine_metadata_attribute() {
   let ss = Services.search.wrappedJSObject;
-  await loadSettingsFile("data/search.json");
+  await loadSettingsFile("settings/settings-loading.json");
 
   const settingsFileWritten = promiseAfterSettings();
   await ss.reset();
@@ -409,7 +417,7 @@ add_task(async function test_set_and_get_engine_metadata_attribute() {
 add_task(
   async function test_settings_write_prevented_when_settings_unchanged() {
     let ss = Services.search.wrappedJSObject;
-    await loadSettingsFile("data/search.json");
+    await loadSettingsFile("settings/settings-loading.json");
 
     const settingsFileWritten = promiseAfterSettings();
     await ss.reset();
@@ -455,7 +463,7 @@ add_task(async function test_settings_write() {
   let ss = Services.search.wrappedJSObject;
   info("test settings writing");
 
-  await loadSettingsFile("data/search.json");
+  await loadSettingsFile("settings/settings-loading.json");
 
   const settingsFileWritten = promiseAfterSettings();
   await ss.reset();
@@ -469,17 +477,20 @@ add_task(async function test_settings_write() {
   delete settingsTemplate.locale;
 
   for (let engine of settingsTemplate.engines) {
-    // Remove _shortName from the settings template, as it is no longer supported,
-    // but older settings used to have it, so we keep it in the template as an
-    // example.
+    // Remove _shortName and description from the settings template, as they are
+    // no longer supported, but older settings used to have them. We keep them
+    // in the template as an example.
     if ("_shortName" in engine) {
       delete engine._shortName;
     }
+    if ("description" in engine) {
+      delete engine.description;
+    }
     if ("_urls" in engine) {
-      // Only app-provided engines support purpose & mozparams, others do not,
+      // Only app-provided engines support purpose, others do not,
       // so filter them out of the expected template.
       for (let urls of engine._urls) {
-        urls.params = urls.params.filter(p => !p.purpose && !p.mozparam);
+        urls.params = urls.params.filter(p => !p.purpose);
         // resultDomain is also no longer supported.
         if ("resultDomain" in urls) {
           delete urls.resultDomain;
@@ -556,12 +567,38 @@ add_task(async function test_settings_write_prevented_during_reload() {
   );
 });
 
+add_task(async function test_correct_change_reason_when_no_default_engine() {
+  Services.fog.initializeFOG();
+
+  let ss = Services.search.wrappedJSObject;
+
+  await loadSettingsFile("settings/settings-loading.json", false, false);
+  const settingsFileWritten = promiseAfterSettings();
+
+  await ss.reset();
+  await Services.search.init();
+
+  await settingsFileWritten;
+
+  sinon.stub(ss, "appDefaultEngine").get(() => null);
+  ss.forceCurrentEngineToBeNull();
+  ss._getEngineDefault(false);
+
+  let snapshot = Glean.searchEngineDefault.changed.testGetValue();
+  Assert.equal(
+    snapshot[0].extra.change_reason,
+    "no-existing-default",
+    "Should have triggered default changed event with reason 'no-existing-default'"
+  );
+
+  removeSettingsFile();
+  sinon.restore();
+});
+
 var EXPECTED_ENGINE = {
   engine: {
     name: "Test search engine",
     alias: "",
-    description: "A test search engine (based on Google search)",
-    searchForm: "http://www.google.com/",
     wrappedJSObject: {
       _extensionID: "test-addon-id@mozilla.org",
       _iconURL:
@@ -595,7 +632,7 @@ var EXPECTED_ENGINE = {
           method: "GET",
           template:
             "http://suggestqueries.google.com/complete/search?output=firefox&client=firefox" +
-            "&hl={moz:locale}&q={searchTerms}",
+            "&q={searchTerms}",
           params: "",
         },
         {

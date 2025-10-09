@@ -45,7 +45,8 @@ export var OSKeyStore = {
   /**
    * Consider the module is initialized as locked. OS might unlock without a
    * prompt.
-   * @type {Boolean}
+   *
+   * @type {boolean}
    */
   _isLocked: true,
 
@@ -70,13 +71,8 @@ export var OSKeyStore = {
   },
 
   canReauth() {
-    // The OS auth dialog is not supported on macOS < 10.12
-    // (Darwin 16) due to various issues (bug 1622304 and bug 1622303).
-    // We have no support on linux (bug 1527745.)
-    if (
-      AppConstants.platform == "win" ||
-      AppConstants.isPlatformAndVersionAtLeast("macosx", "16")
-    ) {
+    // We have no support on linux (bug 1527745)
+    if (AppConstants.platform == "win" || AppConstants.platform == "macosx") {
       lazy.log.debug(
         "canReauth, returning true, this._testReauth:",
         this._testReauth
@@ -157,7 +153,7 @@ export var OSKeyStore = {
    *                                  the key storage. If we start creating keys on macOS by running
    *                                  this code we'll potentially have to do extra work to cleanup
    *                                  the mess later.
-   * @returns {Promise<Object>}       Object with the following properties:
+   * @returns {Promise<object>}       Object with the following properties:
    *                                    authenticated: {boolean} Set to true if the user successfully authenticated.
    *                                    auth_details: {String?} Details of the authentication result.
    */
@@ -347,18 +343,20 @@ export var OSKeyStore = {
   },
 
   /**
-   * Resolve when the login dialogs are closed, immediately if none are open.
+   * Exports the recovery phrase within the native OSKeyStore if authenticated
+   * as a byte string.
    *
-   * An existing MP dialog will be focused and will request attention.
-   *
-   * @returns {Promise<boolean>}
-   *          Resolves with whether the user is logged in to MP.
+   * @returns {Promise<string>}
    */
-  async waitForExistingDialog() {
-    if (this.isUIBusy) {
-      return this._pendingUnlockPromise;
+  async exportRecoveryPhrase() {
+    if (!(await this.ensureLoggedIn()).authenticated) {
+      throw Components.Exception(
+        "User canceled OS unlock entry",
+        Cr.NS_ERROR_ABORT
+      );
     }
-    return this.isLoggedIn;
+
+    return await lazy.nativeOSKeyStore.asyncGetRecoveryPhrase(this.STORE_LABEL);
   },
 
   /**
@@ -369,7 +367,7 @@ export var OSKeyStore = {
   },
 };
 
-XPCOMUtils.defineLazyGetter(lazy, "log", () => {
+ChromeUtils.defineLazyGetter(lazy, "log", () => {
   let { ConsoleAPI } = ChromeUtils.importESModule(
     "resource://gre/modules/Console.sys.mjs"
   );

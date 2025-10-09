@@ -5,12 +5,14 @@
 #ifndef _nsPgpmimeDecrypt_h_
 #define _nsPgpmimeDecrypt_h_
 
-#include "mimecth.h"
+#include "mimecryp.h"
+#include "mime_closure.h"
 #include "nsIPgpMimeProxy.h"
 #include "nsCOMPtr.h"
 #include "nsIStreamListener.h"
 #include "nsIInputStream.h"
 #include "nsILoadGroup.h"
+#include "nsIMailChannel.h"
 
 #define PGPMIME_JS_DECRYPTOR_CONTRACTID \
   "@mozilla.org/mime/pgp-mime-js-decrypt;1"
@@ -51,7 +53,7 @@ class nsPgpMimeProxy : public nsIPgpMimeProxy,
   PRBool mOutputWasRemoved;
 #endif
   MimeDecodeCallbackFun mOutputFun;
-  void* mOutputClosure;
+  MimeClosure mOutputClosure;
 
   nsCOMPtr<nsILoadGroup> mLoadGroup;
   nsLoadFlags mLoadFlags;
@@ -65,9 +67,11 @@ class nsPgpMimeProxy : public nsIPgpMimeProxy,
 
   nsCOMPtr<nsIURI> mMessageURI;
   nsresult Finalize();
+
+  nsCOMPtr<nsIMailChannel> mMailChannel;
 };
 
 #define MimeEncryptedPgpClassInitializer(ITYPE, CSUPER) \
-  { MimeEncryptedClassInitializer(ITYPE, CSUPER) }
+  {MimeEncryptedClassInitializer(ITYPE, CSUPER)}
 
 #endif

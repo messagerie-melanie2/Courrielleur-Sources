@@ -16,25 +16,16 @@ import {
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
-  CONTEXTUAL_SERVICES_PING_TYPES:
-    "resource:///modules/PartnerLinkAttribution.sys.mjs",
-  PartnerLinkAttribution: "resource:///modules/PartnerLinkAttribution.sys.mjs",
+  AboutNewTab: "resource:///modules/AboutNewTab.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
-  TOP_SITES_DEFAULT_ROWS: "resource://activity-stream/common/Reducers.sys.mjs",
-  TOP_SITES_MAX_SITES_PER_ROW:
-    "resource://activity-stream/common/Reducers.sys.mjs",
+  TopSites: "resource:///modules/topsites/TopSites.sys.mjs",
+  TOP_SITES_DEFAULT_ROWS: "resource:///modules/topsites/constants.mjs",
+  TOP_SITES_MAX_SITES_PER_ROW: "resource:///modules/topsites/constants.mjs",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.sys.mjs",
   UrlbarProviderOpenTabs: "resource:///modules/UrlbarProviderOpenTabs.sys.mjs",
   UrlbarResult: "resource:///modules/UrlbarResult.sys.mjs",
   UrlbarSearchUtils: "resource:///modules/UrlbarSearchUtils.sys.mjs",
 });
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  AboutNewTab: "resource:///modules/AboutNewTab.jsm",
-});
-
-// The scalar category of TopSites impression for Contextual Services
-const SCALAR_CATEGORY_TOPSITES = "contextual.services.topsites.impression";
 
 // These prefs must be true for the provider to return results. They are assumed
 // to be booleans. We check `system.topsites` because if it is disabled we would
@@ -43,6 +34,18 @@ const TOP_SITES_ENABLED_PREFS = [
   "browser.urlbar.suggest.topsites",
   "browser.newtabpage.activity-stream.feeds.system.topsites",
 ];
+
+// Helper function to compare 2 URLs without refs.
+function sameUrlIgnoringRef(url1, url2) {
+  if (!url1 || !url2) {
+    return false;
+  }
+
+  let cleanUrl1 = url1.replace(/#.*$/, "");
+  let cleanUrl2 = url2.replace(/#.*$/, "");
+
+  return cleanUrl1 == cleanUrl2;
+}
 
 /**
  * A provider that returns the Top Sites shown on about:newtab.
@@ -53,7 +56,11 @@ class ProviderTopSites extends UrlbarProvider {
 
     this._topSitesListeners = [];
     let callListeners = () => this._callTopSitesListeners();
-    Services.obs.addObserver(callListeners, "newtab-top-sites-changed");
+    if (Services.prefs.getBoolPref("browser.topsites.component.enabled")) {
+      Services.obs.addObserver(callListeners, "topsites-refreshed");
+    } else {
+      Services.obs.addObserver(callListeners, "newtab-top-sites-changed");
+    }
     for (let pref of TOP_SITES_ENABLED_PREFS) {
       Services.prefs.addObserver(pref, callListeners);
     }
@@ -75,9 +82,7 @@ class ProviderTopSites extends UrlbarProvider {
   }
 
   /**
-   * The type of the provider.
-   *
-   * @returns {UrlbarUtils.PROVIDER_TYPE}
+   * @returns {Values<typeof UrlbarUtils.PROVIDER_TYPE>}
    */
   get type() {
     return UrlbarUtils.PROVIDER_TYPE.PROFILE;
@@ -89,9 +94,8 @@ class ProviderTopSites extends UrlbarProvider {
    * with this provider, to save on resources.
    *
    * @param {UrlbarQueryContext} queryContext The query context object
-   * @returns {boolean} Whether this provider should be invoked for the search.
    */
-  isActive(queryContext) {
+  async isActive(queryContext) {
     return (
       !queryContext.restrictSource &&
       !queryContext.searchString &&
@@ -102,10 +106,9 @@ class ProviderTopSites extends UrlbarProvider {
   /**
    * Gets the provider's priority.
    *
-   * @param {UrlbarQueryContext} queryContext The query context object
    * @returns {number} The provider's priority for the given query.
    */
-  getPriority(queryContext) {
+  getPriority() {
     return this.PRIORITY;
   }
 
@@ -133,7 +136,12 @@ class ProviderTopSites extends UrlbarProvider {
       return;
     }
 
-    let sites = lazy.AboutNewTab.getTopSites();
+    let sites;
+    if (Services.prefs.getBoolPref("browser.topsites.component.enabled")) {
+      sites = await lazy.TopSites.getSites();
+    } else {
+      sites = lazy.AboutNewTab.getTopSites();
+    }
 
     let instance = this.queryInstance;
 
@@ -146,7 +154,7 @@ class ProviderTopSites extends UrlbarProvider {
     }
 
     // This is done here, rather than in the global scope, because
-    // TOP_SITES_DEFAULT_ROWS causes the import of Reducers.jsm, and we want to
+    // TOP_SITES_DEFAULT_ROWS causes import of topsites constants.mjs, and we want to
     // do that only when actually querying for Top Sites.
     if (this.topSitesRows === undefined) {
       XPCOMUtils.defineLazyPreferenceGetter(
@@ -166,8 +174,6 @@ class ProviderTopSites extends UrlbarProvider {
     );
     sites = sites.slice(0, numTopSites);
 
-    let sponsoredSites = [];
-    let index = 1;
     sites = sites.map(link => {
       let site = {
         type: link.searchTopSite ? "search" : "url",
@@ -192,17 +198,27 @@ class ProviderTopSites extends UrlbarProvider {
           sponsoredTileId: sponsored_tile_id,
           sponsoredImpressionUrl: sponsored_impression_url,
           sponsoredClickUrl: sponsored_click_url,
-          position: index,
         };
-        sponsoredSites.push(site);
       }
-      index++;
       return site;
     });
 
-    // Store Sponsored Top Sites so we can use it in `onEngagement`
-    if (sponsoredSites.length) {
-      this.sponsoredSites = sponsoredSites;
+    let tabUrlsToContextIds;
+    if (lazy.UrlbarPrefs.get("suggest.openpage")) {
+      if (lazy.UrlbarPrefs.get("switchTabs.searchAllContainers")) {
+        tabUrlsToContextIds = lazy.UrlbarProviderOpenTabs.getOpenTabUrls(
+          queryContext.isPrivate
+        );
+      } else {
+        // Build an object compatible with the output of getOpenTabs.
+        tabUrlsToContextIds = new Map();
+        for (let url of lazy.UrlbarProviderOpenTabs.getOpenTabUrlsForUserContextId(
+          queryContext.userContextId,
+          queryContext.isPrivate
+        )) {
+          tabUrlsToContextIds.set(url, new Set([queryContext.userContextId]));
+        }
+      }
     }
 
     for (let site of sites) {
@@ -214,49 +230,76 @@ class ProviderTopSites extends UrlbarProvider {
             icon: site.favicon,
             isPinned: site.isPinned,
             isSponsored: site.isSponsored,
-            sendAttributionRequest: site.sendAttributionRequest,
           };
-          if (site.isSponsored) {
-            payload = {
-              ...payload,
-              sponsoredTileId: site.sponsoredTileId,
-              sponsoredClickUrl: site.sponsoredClickUrl,
-            };
+
+          // Fuzzy match both the URL as-is, and the URL without ref, then
+          // generate a merged Set.
+          if (tabUrlsToContextIds) {
+            let tabUserContextIds = new Set([
+              ...(tabUrlsToContextIds.get(site.url) ?? []),
+              ...(tabUrlsToContextIds.get(site.url.replace(/#.*$/, "")) ?? []),
+            ]);
+            if (tabUserContextIds.size) {
+              let switchToTabResultAdded = false;
+              for (let userContextId of tabUserContextIds) {
+                // Normally we could skip the whole for loop, but if searchAllContainers
+                // is set then the current page userContextId may differ, then we should
+                // allow switching to other ones.
+                if (
+                  sameUrlIgnoringRef(queryContext.currentPage, site.url) &&
+                  (!lazy.UrlbarPrefs.get("switchTabs.searchAllContainers") ||
+                    queryContext.userContextId == userContextId)
+                ) {
+                  // Don't suggest switching to the current tab.
+                  continue;
+                }
+                payload.userContextId = userContextId;
+                let result = new lazy.UrlbarResult(
+                  UrlbarUtils.RESULT_TYPE.TAB_SWITCH,
+                  UrlbarUtils.RESULT_SOURCE.TABS,
+                  ...lazy.UrlbarResult.payloadAndSimpleHighlights(
+                    queryContext.tokens,
+                    payload
+                  )
+                );
+                addCallback(this, result);
+                switchToTabResultAdded = true;
+              }
+              // Avoid adding url result if Switch to Tab result was added.
+              if (switchToTabResultAdded) {
+                break;
+              }
+            }
           }
+
+          if (site.isSponsored) {
+            payload.sponsoredTileId = site.sponsoredTileId;
+            payload.sponsoredClickUrl = site.sponsoredClickUrl;
+          }
+          payload.sendAttributionRequest = site.sendAttributionRequest;
+
+          let resultSource = UrlbarUtils.RESULT_SOURCE.OTHER_LOCAL;
+          if (lazy.UrlbarPrefs.get("suggest.bookmark")) {
+            let bookmark = await lazy.PlacesUtils.bookmarks.fetch({
+              url: new URL(payload.url),
+            });
+            // Check if query has been cancelled.
+            if (instance != this.queryInstance) {
+              break;
+            }
+            if (bookmark) {
+              resultSource = UrlbarUtils.RESULT_SOURCE.BOOKMARKS;
+            }
+          }
+
           let result = new lazy.UrlbarResult(
             UrlbarUtils.RESULT_TYPE.URL,
-            UrlbarUtils.RESULT_SOURCE.OTHER_LOCAL,
+            resultSource,
             ...lazy.UrlbarResult.payloadAndSimpleHighlights(
               queryContext.tokens,
               payload
             )
           );
-
-          let tabs;
-          if (lazy.UrlbarPrefs.get("suggest.openpage")) {
-            tabs = lazy.UrlbarProviderOpenTabs.getOpenTabs(
-              queryContext.userContextId || 0,
-              queryContext.isPrivate
-            );
-          }
-
-          if (tabs && tabs.includes(site.url.replace(/#.*$/, ""))) {
-            result.type = UrlbarUtils.RESULT_TYPE.TAB_SWITCH;
-            result.source = UrlbarUtils.RESULT_SOURCE.TABS;
-          } else if (lazy.UrlbarPrefs.get("suggest.bookmark")) {
-            let bookmark = await lazy.PlacesUtils.bookmarks.fetch({
-              url: new URL(result.payload.url),
-            });
-            if (bookmark) {
-              result.source = UrlbarUtils.RESULT_SOURCE.BOOKMARKS;
-            }
-          }
-
-          // Our query has been cancelled.
-          if (instance != this.queryInstance) {
-            break;
-          }
-
           addCallback(this, result);
           break;
         }
@@ -265,10 +308,7 @@ class ProviderTopSites extends UrlbarProvider {
 
           if (!engine && site.url) {
             // Look up the engine by its domain.
-            let host;
-            try {
-              host = new URL(site.url).hostname;
-            } catch (err) {}
+            let host = URL.parse(site.url)?.hostname;
             if (host) {
               engine = (
                 await lazy.UrlbarSearchUtils.enginesForDomainPrefix(host)
@@ -311,46 +351,16 @@ class ProviderTopSites extends UrlbarProvider {
     }
   }
 
-  /**
-   * Called when the user starts and ends an engagement with the urlbar. We send
-   * the impression ping for the sponsored TopSites, the impression scalar is
-   * recorded as well.
-   *
-   * Note:
-   *   No telemetry recording in private browsing mode
-   *   The impression is only recorded for the "engagement" and "abandonment"
-   *     states
-   *
-   * @param {boolean} isPrivate True if the engagement is in a private context.
-   * @param {string} state The state of the engagement, one of: start,
-   *        engagement, abandonment, discard.
-   */
-  onEngagement(isPrivate, state) {
-    if (
-      !isPrivate &&
-      this.sponsoredSites &&
-      ["engagement", "abandonment"].includes(state)
-    ) {
-      for (let site of this.sponsoredSites) {
-        Services.telemetry.keyedScalarAdd(
-          SCALAR_CATEGORY_TOPSITES,
-          `urlbar_${site.position}`,
-          1
-        );
-        lazy.PartnerLinkAttribution.sendContextualServicesPing(
-          {
-            source: "urlbar",
-            tile_id: site.sponsoredTileId || -1,
-            position: site.position,
-            reporting_url: site.sponsoredImpressionUrl,
-            advertiser: site.title.toLocaleLowerCase(),
-          },
-          lazy.CONTEXTUAL_SERVICES_PING_TYPES.TOPSITES_IMPRESSION
-        );
-      }
+  onImpression(state, queryContext, controller, providerVisibleResults) {
+    if (queryContext.isPrivate) {
+      return;
     }
 
-    this.sponsoredSites = null;
+    providerVisibleResults.forEach(({ index, result }) => {
+      if (result?.payload.isSponsored) {
+        Glean.contextualServicesTopsites.impression[`urlbar_${index}`].add(1);
+      }
+    });
   }
 
   /**

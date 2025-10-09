@@ -12,6 +12,10 @@ import {
   GenericMessagePrototype,
   TooltipInfo,
 } from "resource:///modules/jsProtoHelper.sys.mjs";
+import {
+  registerProtocol,
+  unregisterProtocol,
+} from "resource:///modules/imCore.sys.mjs";
 
 import { nsSimpleEnumerator } from "resource:///modules/imXPCOMUtils.sys.mjs";
 
@@ -79,6 +83,10 @@ const SharedConversationPrototype = {
    * Close the conversation, including in the UI.
    */
   close() {
+    if (!this._account) {
+      // This conversation is already cleaned up.
+      return;
+    }
     this._disconnected = true;
     this._account._conversations.delete(this);
     GenericConversationPrototype.close.call(this);
@@ -87,9 +95,8 @@ const SharedConversationPrototype = {
    * Send an outgoing message.
    *
    * @param {string} aMsg - Message to send.
-   * @returns
    */
-  dispatchMessage(aMsg, aAction = false, aNotice = false) {
+  dispatchMessage(aMsg, aNotice = false) {
     if (this._disconnected) {
       return;
     }
@@ -99,8 +106,8 @@ const SharedConversationPrototype = {
   /**
    *
    * @param {Array<object>} messages - Array of messages to add to the
-   * conversation. Expects an object with a |who|, |content| and |options|
-   * properties, corresponding to the three params of |writeMessage|.
+   *   conversation. Expects an object with a |who|, |content| and |options|
+   *   properties, corresponding to the three params of |writeMessage|.
    */
   addMessages(messages) {
     for (const message of messages) {
@@ -136,7 +143,6 @@ MUC.prototype = {
    *
    * @param {string} who - Nick of the user to add.
    * @param {string} alias - Display name of the participant.
-   * @returns
    */
   addParticipant(who, alias) {
     if (this._participants.has(who)) {
@@ -149,7 +155,6 @@ MUC.prototype = {
 };
 
 /**
- *
  * @param {prplIAccount} account
  * @param {string} name - Name of the conversation.
  */
@@ -174,7 +179,6 @@ Account.prototype = {
   _conversations: null,
 
   /**
-   *
    * @param {string} name - Name of the conversation.
    * @returns {MUC}
    */
@@ -185,7 +189,6 @@ Account.prototype = {
   },
 
   /**
-   *
    * @param {string} name - Name of the conversation.
    * @returns {DM}
    */
@@ -245,6 +248,7 @@ Account.prototype = {
     for (const conversation of this._conversations) {
       conversation.close();
     }
+    this._conversations = new Set();
   },
   remove() {},
 };
@@ -290,19 +294,9 @@ TestProtocol.prototype = {
 };
 
 export function registerTestProtocol() {
-  Services.catMan.addCategoryEntry(
-    "im-protocol-plugin",
-    TestProtocol.prototype.id,
-    "@mozilla.org/chat/mochitest;1",
-    false,
-    true
-  );
+  registerProtocol(TestProtocol.prototype.id, "@mozilla.org/chat/mochitest;1");
 }
 
 export function unregisterTestProtocol() {
-  Services.catMan.deleteCategoryEntry(
-    "im-protocol-plugin",
-    TestProtocol.prototype.id,
-    true
-  );
+  unregisterProtocol(TestProtocol.prototype.id);
 }

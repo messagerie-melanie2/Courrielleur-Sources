@@ -6,7 +6,6 @@
 #ifndef __MSGATTACHMENTDATA_H__
 #define __MSGATTACHMENTDATA_H__
 
-#include "nsIURL.h"
 #include "nsString.h"
 #include "nsIMsgSend.h"
 
@@ -51,11 +50,6 @@ class nsMsgAttachmentData final : public nsIMsgAttachmentData {
                               // "attachment".
   nsCString m_cloudPartInfo;  // For X-Mozilla-Cloud-Part header, if any
 
-  // Mac-specific data that should show up as optional parameters
-  // to the content-type header.
-  nsCString m_xMacType;
-  nsCString m_xMacCreator;
-
   int32_t m_size;  // The size of the attachment. May be 0.
   nsCString
       m_sizeExternalStr;  // The reported size of an external attachment.
@@ -97,20 +91,9 @@ class nsMsgAttachedFile final : public nsIMsgAttachedFile {
 
   nsCString m_description;    // For Content-Description header
   nsCString m_cloudPartInfo;  // For X-Mozilla-Cloud-Part header, if any
-  nsCString m_xMacType;       // mac-specific info
-  nsCString m_xMacCreator;    // mac-specific info
   nsCString m_realName;       // The real name of the file.
 
-  // Some statistics about the data that was written to the file, so that when
-  // it comes time to compose a MIME message, we can make an informed decision
-  // about what Content-Transfer-Encoding would be best for this attachment.
-  // (If it's encoded already, we ignore this information and ship it as-is.)
   uint32_t m_size;
-  uint32_t m_unprintableCount;
-  uint32_t m_highbitCount;
-  uint32_t m_ctlCount;
-  uint32_t m_nullCount;
-  uint32_t m_maxLineLength;
 };
 
 #undef MOZ_ASSERT_TYPE_OK_FOR_REFCOUNTING

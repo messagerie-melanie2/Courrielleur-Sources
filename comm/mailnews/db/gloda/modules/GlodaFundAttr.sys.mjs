@@ -364,8 +364,8 @@ export var GlodaFundAttr = {
          * Filter out 'me', as we have other facets that deal with that, and the
          *  'me' identities are so likely that they distort things.
          *
-         * @returns true if the identity is not one of my identities, false if it
-         *   is.
+         * @returns {boolean} true if the identity is not one of my identities,
+         *   false if it is.
          */
         filter(aItem) {
           return !(aItem.id in Gloda.myIdentities);
@@ -508,15 +508,14 @@ export var GlodaFundAttr = {
       )
     );
 
-    if (authorIdentities.length != 1) {
+    if (authorIdentities.length < 1) {
       throw new Gloda.BadItemContentsError(
         "Message with subject '" +
           aMsgHdr.mime2DecodedSubject +
           "' somehow lacks a valid author.  Bailing."
       );
     }
-    const authorIdentity = authorIdentities[0];
-    aGlodaMessage.from = authorIdentity;
+    aGlodaMessage.from = authorIdentities[0];
 
     // -- To, Cc, Bcc
     aGlodaMessage.to = toIdentities;
@@ -556,18 +555,18 @@ export var GlodaFundAttr = {
         aGlodaMessage.attachmentTypes = Array.from(attachmentTypes);
       }
 
-      const aMsgHdr = aRawReps.header;
+      const msgHdr = aRawReps.header;
       const wasStreamed =
-        aMsgHdr &&
+        msgHdr &&
         !aGlodaMessage.isEncrypted &&
-        (aMsgHdr.flags & Ci.nsMsgMessageFlags.Offline ||
-          aMsgHdr.folder instanceof Ci.nsIMsgLocalMailFolder);
+        (msgHdr.flags & Ci.nsMsgMessageFlags.Offline ||
+          msgHdr.folder instanceof Ci.nsIMsgLocalMailFolder);
 
       // Clear the flag if it turns out there's no attachment after all and we
       // streamed completely the message (if we didn't, then we have no
       // knowledge of attachments, unless bug 673370 is fixed).
       if (wasStreamed && !aMimeMsg.allAttachments.length) {
-        aMsgHdr.markHasAttachments(false);
+        msgHdr.markHasAttachments(false);
       }
 
       // This is not the same kind of attachments as above. Now, we want to
@@ -624,12 +623,12 @@ export var GlodaFundAttr = {
 
     // for simplicity this is used for both involves and recipients
     const involvesIdentities = {};
-    const involves = aGlodaMessage.involves || [];
-    const recipients = aGlodaMessage.recipients || [];
+    const involves = [];
+    const recipients = [];
 
     // 'me' specialization optimizations
-    const toMe = aGlodaMessage.toMe || [];
-    const fromMe = aGlodaMessage.fromMe || [];
+    const toMe = [];
+    const fromMe = [];
 
     const myIdentities = Gloda.myIdentities; // needless optimization?
     const authorIdentity = aGlodaMessage.from;

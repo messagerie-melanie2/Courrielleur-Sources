@@ -1,9 +1,7 @@
 //! Structured keys.
 
 use std::borrow::Borrow;
-use std::cmp;
 use std::fmt;
-use std::hash;
 
 /// A type that can be converted into a [`Key`](struct.Key.html).
 pub trait ToKey {
@@ -32,62 +30,44 @@ impl ToKey for str {
     }
 }
 
-/// A key in a structured key-value pair.
-#[derive(Clone)]
+/// A key in a key-value.
+// These impls must only be based on the as_str() representation of the key
+// If a new field (such as an optional index) is added to the key they must not affect comparison
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Key<'k> {
+    // NOTE: This may become `Cow<'k, str>`
     key: &'k str,
 }
 
 impl<'k> Key<'k> {
     /// Get a key from a borrowed string.
     pub fn from_str(key: &'k str) -> Self {
-        Key { key: key }
+        Key { key }
     }
 
     /// Get a borrowed string from this key.
+    ///
+    /// The lifetime of the returned string is bound to the borrow of `self` rather
+    /// than to `'k`.
     pub fn as_str(&self) -> &str {
         self.key
     }
-}
 
-impl<'k> fmt::Debug for Key<'k> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.key.fmt(f)
+    /// Try get a borrowed string for the lifetime `'k` from this key.
+    ///
+    /// If the key is a borrow of a longer lived string, this method will return `Some`.
+    /// If the key is internally buffered, this method will return `None`.
+    pub fn to_borrowed_str(&self) -> Option<&'k str> {
+        // NOTE: If the internals of `Key` support buffering this
+        // won't be unconditionally `Some` anymore. We want to keep
+        // this option open
+        Some(self.key)
     }
 }
 
 impl<'k> fmt::Display for Key<'k> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.key.fmt(f)
-    }
-}
-
-impl<'k> hash::Hash for Key<'k> {
-    fn hash<H>(&self, state: &mut H)
-    where
-        H: hash::Hasher,
-    {
-        self.as_str().hash(state)
-    }
-}
-
-impl<'k, 'ko> PartialEq<Key<'ko>> for Key<'k> {
-    fn eq(&self, other: &Key<'ko>) -> bool {
-        self.as_str().eq(other.as_str())
-    }
-}
-
-impl<'k> Eq for Key<'k> {}
-
-impl<'k, 'ko> PartialOrd<Key<'ko>> for Key<'k> {
-    fn partial_cmp(&self, other: &Key<'ko>) -> Option<cmp::Ordering> {
-        self.as_str().partial_cmp(other.as_str())
-    }
-}
-
-impl<'k> Ord for Key<'k> {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.as_str().cmp(other.as_str())
     }
 }
 
@@ -128,28 +108,34 @@ mod std_support {
     }
 }
 
-#[cfg(feature = "kv_unstable_sval")]
+#[cfg(feature = "kv_sval")]
 mod sval_support {
     use super::*;
 
-    extern crate sval;
-
-    use self::sval::value::{self, Value};
+    use sval::Value;
+    use sval_ref::ValueRef;
 
     impl<'a> Value for Key<'a> {
-        fn stream(&self, stream: &mut value::Stream) -> value::Result {
+        fn stream<'sval, S: sval::Stream<'sval> + ?Sized>(
+            &'sval self,
+            stream: &mut S,
+        ) -> sval::Result {
+            self.key.stream(stream)
+        }
+    }
+
+    impl<'a> ValueRef<'a> for Key<'a> {
+        fn stream_ref<S: sval::Stream<'a> + ?Sized>(&self, stream: &mut S) -> sval::Result {
             self.key.stream(stream)
         }
     }
 }
 
-#[cfg(feature = "kv_unstable_serde")]
+#[cfg(feature = "kv_serde")]
 mod serde_support {
     use super::*;
 
-    extern crate serde;
-
-    use self::serde::{Serialize, Serializer};
+    use serde::{Serialize, Serializer};
 
     impl<'a> Serialize for Key<'a> {
         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -168,5 +154,10 @@ mod tests {
     #[test]
     fn key_from_string() {
         assert_eq!("a key", Key::from_str("a key").as_str());
+    }
+
+    #[test]
+    fn key_to_borrowed() {
+        assert_eq!("a key", Key::from_str("a key").to_borrowed_str().unwrap());
     }
 }

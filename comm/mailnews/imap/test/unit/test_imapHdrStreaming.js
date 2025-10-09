@@ -13,11 +13,11 @@
  * because that's not implemented yet, and it's unclear if anyone will want it.
  */
 
-var { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+var { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
-var { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/mailnews/PromiseTestUtils.jsm"
+var { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/PromiseTestUtils.sys.mjs"
 );
 
 setupIMAPPump();
@@ -29,7 +29,7 @@ var gMsgId1 = "200806061706.m56H6RWT004933@mrapp54.mozilla.org";
 function addMessagesToServer(messages, mailbox) {
   // For every message we have, we need to convert it to a file:/// URI.
   messages.forEach(function (message) {
-    let URI = Services.io
+    const URI = Services.io
       .newFileURI(message.file)
       .QueryInterface(Ci.nsIFileURL);
     // Create the ImapMessage and store it on the mailbox.
@@ -49,23 +49,23 @@ add_setup(async function () {
     false
   );
   // Update IMAP Folder.
-  let listenerUpdate = new PromiseTestUtils.PromiseUrlListener();
+  const listenerUpdate = new PromiseTestUtils.PromiseUrlListener();
   IMAPPump.inbox.updateFolderWithListener(null, listenerUpdate);
   await listenerUpdate.promise;
   // Download all for offline.
-  let listenerDownload = new PromiseTestUtils.PromiseUrlListener();
+  const listenerDownload = new PromiseTestUtils.PromiseUrlListener();
   IMAPPump.inbox.downloadAllForOffline(listenerDownload, null);
   await listenerDownload.promise;
 });
 
 add_task(async function test_streamHeaders() {
-  let newMsgHdr = IMAPPump.inbox.GetMessageHeader(1);
-  let msgURI = newMsgHdr.folder.getUriForMsg(newMsgHdr);
-  let msgServ = MailServices.messageServiceFromURI(msgURI);
+  const newMsgHdr = IMAPPump.inbox.GetMessageHeader(1);
+  const msgURI = newMsgHdr.folder.getUriForMsg(newMsgHdr);
+  const msgServ = MailServices.messageServiceFromURI(msgURI);
   // We use this as a display consumer
-  let streamListener = new PromiseTestUtils.PromiseStreamListener();
+  const streamListener = new PromiseTestUtils.PromiseStreamListener();
   msgServ.streamHeaders(msgURI, streamListener, null, true);
-  let data = await streamListener.promise;
+  const data = await streamListener.promise;
   Assert.ok(data.includes("Content-Type"));
 });
 

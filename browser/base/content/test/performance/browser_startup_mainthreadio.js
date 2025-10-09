@@ -118,12 +118,6 @@ const startupPhases = {
       stat: 1,
     },
     {
-      // bug 1541226, bug 1363586, bug 1541593
-      path: "ProfD:",
-      condition: WIN,
-      stat: 1,
-    },
-    {
       path: "ProfLD:.startup-incomplete",
       condition: !WIN, // Visible on Windows with an open marker
       close: 1,
@@ -189,6 +183,7 @@ const startupPhases = {
     {
       // bug 1541601
       path: "PrfDef:channel-prefs.js",
+      condition: !MAC,
       stat: 1,
       read: 1,
       close: 1,
@@ -206,6 +201,12 @@ const startupPhases = {
       stat: 1,
       read: 1,
       close: 1,
+    },
+    {
+      // This is the startup lock used to restrict only one Firefox startup at a time.
+      path: `TmpD:firefox-${AppConstants.MOZ_UPDATE_CHANNEL}/parent.lock`,
+      condition: WIN,
+      stat: 1,
     },
   ],
 
@@ -285,30 +286,6 @@ const startupPhases = {
   // We reach this phase right after showing the first browser window.
   // This means that any I/O at this point delayed first paint.
   "before first paint": [
-    {
-      // bug 1545119
-      path: "OldUpdRootD:",
-      condition: WIN,
-      stat: 1,
-    },
-    {
-      // bug 1446012
-      path: "UpdRootD:updates/0/update.status",
-      condition: WIN,
-      stat: 1,
-    },
-    {
-      path: "XREAppFeat:formautofill@mozilla.org.xpi",
-      condition: !WIN,
-      stat: 1,
-      close: 1,
-    },
-    {
-      path: "XREAppFeat:webcompat@mozilla.org.xpi",
-      condition: LINUX,
-      ignoreIfUnused: true, // Sometimes happens in the previous phase
-      close: 1,
-    },
     {
       // We only hit this for new profiles.
       path: "XREAppDist:distribution.ini",
@@ -407,13 +384,6 @@ const startupPhases = {
       close: 1,
     },
     {
-      path: "XREAppFeat:webcompat-reporter@mozilla.org.xpi",
-      condition: !WIN,
-      ignoreIfUnused: true,
-      stat: 1,
-      close: 1,
-    },
-    {
       // Bug 1660582 - access while running on windows10 hardware.
       path: "ProfD:wmfvpxvideo.guard",
       condition: WIN,
@@ -477,17 +447,6 @@ const startupPhases = {
       path: `ProfD:key4.db-wal`,
       condition: WIN,
       stat: 7,
-    },
-    {
-      path: "XREAppFeat:screenshots@mozilla.org.xpi",
-      ignoreIfUnused: true,
-      close: 1,
-    },
-    {
-      path: "XREAppFeat:webcompat-reporter@mozilla.org.xpi",
-      ignoreIfUnused: true,
-      stat: 1,
-      close: 1,
     },
     {
       // bug 1391590
@@ -656,26 +615,6 @@ add_task(async function () {
   let startupRecorder =
     Cc["@mozilla.org/test/startuprecorder;1"].getService().wrappedJSObject;
   await startupRecorder.done;
-
-  // Add system add-ons to the list of known IO dynamically.
-  // They should go in the omni.ja file (bug 1357205).
-  {
-    let addons = await AddonManager.getAddonsByTypes(["extension"]);
-    for (let addon of addons) {
-      if (addon.isSystem) {
-        startupPhases["before opening first browser window"].push({
-          path: `XREAppFeat:${addon.id}.xpi`,
-          stat: 3,
-          close: 2,
-        });
-        startupPhases["before handling user events"].push({
-          path: `XREAppFeat:${addon.id}.xpi`,
-          condition: WIN,
-          stat: 2,
-        });
-      }
-    }
-  }
 
   // Check for main thread I/O markers in the startup profile.
   let profile = startupRecorder.data.profile.threads[0];
@@ -853,7 +792,7 @@ add_task(async function () {
         } else {
           message += `${entry[op] * -1} more times than expected`;
         }
-        ok(entry[op] >= 0, `${message} ${phase}`);
+        Assert.greaterOrEqual(entry[op], 0, `${message} ${phase}`);
       }
       if (!("_used" in entry) && !entry.ignoreIfUnused) {
         ok(

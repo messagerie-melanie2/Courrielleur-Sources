@@ -3,11 +3,11 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 use parsing::parse;
-use servo_atoms::Atom;
+use stylo_atoms::Atom;
 use style::parser::Parse;
 use style::properties::longhands::animation_name;
-use style::values::{KeyframesName, CustomIdent};
 use style::values::specified::AnimationIterationCount;
+use style::values::{CustomIdent, KeyframesName};
 use style_traits::ToCss;
 
 #[test]

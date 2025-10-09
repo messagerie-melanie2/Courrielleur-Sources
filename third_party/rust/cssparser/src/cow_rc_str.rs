@@ -4,7 +4,7 @@
 
 use std::borrow::{Borrow, Cow};
 use std::rc::Rc;
-use std::{cmp, fmt, hash, marker, mem, ops, slice, str, ptr};
+use std::{cmp, fmt, hash, marker, mem, ops, ptr, slice, str};
 
 /// A string that is either shared (heap-allocated and reference-counted) or borrowed.
 ///
@@ -23,9 +23,9 @@ pub struct CowRcStr<'a> {
     phantom: marker::PhantomData<Result<&'a str, Rc<String>>>,
 }
 
-fn _static_assert_same_size<'a>() {
+fn _static_assert_same_size() {
     // "Instantiate" the generic function without calling it.
-    let _ = mem::transmute::<CowRcStr<'a>, Option<CowRcStr<'a>>>;
+    let _ = mem::transmute::<CowRcStr<'_>, Option<CowRcStr<'_>>>;
 }
 
 impl<'a> From<Cow<'a, str>> for CowRcStr<'a> {
@@ -51,7 +51,7 @@ impl<'a> From<&'a str> for CowRcStr<'a> {
     }
 }
 
-impl<'a> From<String> for CowRcStr<'a> {
+impl From<String> for CowRcStr<'_> {
     #[inline]
     fn from(s: String) -> Self {
         CowRcStr::from_rc(Rc::new(s))
@@ -84,7 +84,7 @@ impl<'a> CowRcStr<'a> {
     }
 }
 
-impl<'a> Clone for CowRcStr<'a> {
+impl Clone for CowRcStr<'_> {
     #[inline]
     fn clone(&self) -> Self {
         match self.unpack() {
@@ -99,7 +99,7 @@ impl<'a> Clone for CowRcStr<'a> {
     }
 }
 
-impl<'a> Drop for CowRcStr<'a> {
+impl Drop for CowRcStr<'_> {
     #[inline]
     fn drop(&mut self) {
         if let Err(ptr) = self.unpack() {
@@ -108,7 +108,7 @@ impl<'a> Drop for CowRcStr<'a> {
     }
 }
 
-impl<'a> ops::Deref for CowRcStr<'a> {
+impl ops::Deref for CowRcStr<'_> {
     type Target = str;
 
     #[inline]
@@ -119,65 +119,65 @@ impl<'a> ops::Deref for CowRcStr<'a> {
 
 // Boilerplate / trivial impls below.
 
-impl<'a> AsRef<str> for CowRcStr<'a> {
+impl AsRef<str> for CowRcStr<'_> {
     #[inline]
     fn as_ref(&self) -> &str {
         self
     }
 }
 
-impl<'a> Borrow<str> for CowRcStr<'a> {
+impl Borrow<str> for CowRcStr<'_> {
     #[inline]
     fn borrow(&self) -> &str {
         self
     }
 }
 
-impl<'a> Default for CowRcStr<'a> {
+impl Default for CowRcStr<'_> {
     #[inline]
     fn default() -> Self {
         Self::from("")
     }
 }
 
-impl<'a> hash::Hash for CowRcStr<'a> {
+impl hash::Hash for CowRcStr<'_> {
     #[inline]
     fn hash<H: hash::Hasher>(&self, hasher: &mut H) {
         str::hash(self, hasher)
     }
 }
 
-impl<'a, T: AsRef<str>> PartialEq<T> for CowRcStr<'a> {
+impl<T: AsRef<str>> PartialEq<T> for CowRcStr<'_> {
     #[inline]
     fn eq(&self, other: &T) -> bool {
         str::eq(self, other.as_ref())
     }
 }
 
-impl<'a, T: AsRef<str>> PartialOrd<T> for CowRcStr<'a> {
+impl<T: AsRef<str>> PartialOrd<T> for CowRcStr<'_> {
     #[inline]
     fn partial_cmp(&self, other: &T) -> Option<cmp::Ordering> {
         str::partial_cmp(self, other.as_ref())
     }
 }
 
-impl<'a> Eq for CowRcStr<'a> {}
+impl Eq for CowRcStr<'_> {}
 
-impl<'a> Ord for CowRcStr<'a> {
+impl Ord for CowRcStr<'_> {
     #[inline]
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         str::cmp(self, other)
     }
 }
 
-impl<'a> fmt::Display for CowRcStr<'a> {
+impl fmt::Display for CowRcStr<'_> {
     #[inline]
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         str::fmt(self, formatter)
     }
 }
 
-impl<'a> fmt::Debug for CowRcStr<'a> {
+impl fmt::Debug for CowRcStr<'_> {
     #[inline]
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         str::fmt(self, formatter)

@@ -1,5 +1,6 @@
 //! Code related to `sqlite3_context` common to `functions` and `vtab` modules.
 
+use libsqlite3_sys::sqlite3_value;
 use std::os::raw::{c_int, c_void};
 #[cfg(feature = "array")]
 use std::rc::Rc;
@@ -16,7 +17,11 @@ use crate::vtab::array::{free_array, ARRAY_TYPE};
 // is often known to the compiler, and thus const prop/DCE can substantially
 // simplify the function.
 #[inline]
-pub(super) unsafe fn set_result(ctx: *mut sqlite3_context, result: &ToSqlOutput<'_>) {
+pub(super) unsafe fn set_result(
+    ctx: *mut sqlite3_context,
+    #[allow(unused_variables)] args: &[*mut sqlite3_value],
+    result: &ToSqlOutput<'_>,
+) {
     let value = match *result {
         ToSqlOutput::Borrowed(v) => v,
         ToSqlOutput::Owned(ref v) => ValueRef::from(v),
@@ -25,6 +30,10 @@ pub(super) unsafe fn set_result(ctx: *mut sqlite3_context, result: &ToSqlOutput<
         ToSqlOutput::ZeroBlob(len) => {
             // TODO sqlite3_result_zeroblob64 // 3.8.11
             return ffi::sqlite3_result_zeroblob(ctx, len);
+        }
+        #[cfg(feature = "functions")]
+        ToSqlOutput::Arg(i) => {
+            return ffi::sqlite3_result_value(ctx, args[i]);
         }
         #[cfg(feature = "array")]
         ToSqlOutput::Array(ref a) => {
@@ -46,10 +55,9 @@ pub(super) unsafe fn set_result(ctx: *mut sqlite3_context, result: &ToSqlOutput<
             if length > c_int::MAX as usize {
                 ffi::sqlite3_result_error_toobig(ctx);
             } else {
-                let (c_str, len, destructor) = match str_for_sqlite(s) {
-                    Ok(c_str) => c_str,
+                let Ok((c_str, len, destructor)) = str_for_sqlite(s) else {
                     // TODO sqlite3_result_error
-                    Err(_) => return ffi::sqlite3_result_error_code(ctx, ffi::SQLITE_MISUSE),
+                    return ffi::sqlite3_result_error_code(ctx, ffi::SQLITE_MISUSE);
                 };
                 // TODO sqlite3_result_text64 // 3.8.7
                 ffi::sqlite3_result_text(ctx, c_str, len, destructor);

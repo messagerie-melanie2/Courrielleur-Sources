@@ -13,6 +13,7 @@
 #include "AnnexB.h"
 #include "BufferStream.h"
 #include "H264.h"
+#include "H265.h"
 #include "MP4Decoder.h"
 #include "MP4Metadata.h"
 #include "MoofParser.h"
@@ -21,7 +22,6 @@
 #include "VPXDecoder.h"
 #include "mozilla/Span.h"
 #include "mozilla/StaticPrefs_media.h"
-#include "mozilla/Telemetry.h"
 #include "nsPrintfCString.h"
 #include "SampleIterator.h"
 
@@ -77,7 +77,7 @@ class MP4TrackDemuxer : public MediaTrackDemuxer,
   // Queued samples extracted by the demuxer, but not yet returned.
   RefPtr<MediaRawData> mQueuedSample;
   bool mNeedReIndex;
-  enum CodecType { kH264, kVP9, kAAC, kOther } mType = kOther;
+  enum CodecType { kH264, kVP9, kAAC, kHEVC, kOther } mType = kOther;
 };
 
 MP4Demuxer::MP4Demuxer(MediaResource* aResource)
@@ -189,6 +189,8 @@ RefPtr<MP4Demuxer::InitPromise> MP4Demuxer::Init() {
         }
         continue;
       }
+      LOG("Created audio track demuxer for info (%s)",
+          info.Ref()->ToString().get());
       RefPtr<MP4TrackDemuxer> demuxer =
           new MP4TrackDemuxer(mResource, std::move(info.Ref()),
                               *indices.Ref().get(), info.Ref()->mTimeScale);
@@ -227,6 +229,8 @@ RefPtr<MP4Demuxer::InitPromise> MP4Demuxer::Init() {
         }
         continue;
       }
+      LOG("Created video track demuxer for info (%s)",
+          info.Ref()->ToString().get());
       RefPtr<MP4TrackDemuxer> demuxer =
           new MP4TrackDemuxer(mResource, std::move(info.Ref()),
                               *indices.Ref().get(), info.Ref()->mTimeScale);
@@ -341,6 +345,16 @@ MP4TrackDemuxer::MP4TrackDemuxer(MediaResource* aResource,
     mType = kVP9;
   } else if (audioInfo && MP4Decoder::IsAAC(mInfo->mMimeType)) {
     mType = kAAC;
+  } else if (videoInfo && MP4Decoder::IsHEVC(mInfo->mMimeType)) {
+    mType = kHEVC;
+    if (auto rv = H265::DecodeSPSFromHVCCExtraData(videoInfo->mExtraData);
+        rv.isOk()) {
+      const auto sps = rv.unwrap();
+      videoInfo->mImage.width = sps.GetImageSize().Width();
+      videoInfo->mImage.height = sps.GetImageSize().Height();
+      videoInfo->mDisplay.width = sps.GetDisplaySize().Width();
+      videoInfo->mDisplay.height = sps.GetDisplaySize().Height();
+    }
   }
 }
 
@@ -400,10 +414,11 @@ already_AddRefed<MediaRawData> MP4TrackDemuxer::GetNextSample() {
     if (mType == kH264 && !sample->mCrypto.IsEncrypted()) {
       H264::FrameType type = H264::GetFrameType(sample);
       switch (type) {
-        case H264::FrameType::I_FRAME:
-          [[fallthrough]];
+        case H264::FrameType::I_FRAME_IDR:
+        case H264::FrameType::I_FRAME_OTHER:
         case H264::FrameType::OTHER: {
-          bool keyframe = type == H264::FrameType::I_FRAME;
+          bool keyframe = type == H264::FrameType::I_FRAME_OTHER ||
+                          type == H264::FrameType::I_FRAME_IDR;
           if (sample->mKeyframe != keyframe) {
             NS_WARNING(nsPrintfCString("Frame incorrectly marked as %skeyframe "
                                        "@ pts:%" PRId64 " dur:%" PRId64
@@ -515,8 +530,8 @@ RefPtr<MP4TrackDemuxer::SamplesPromise> MP4TrackDemuxer::GetSamples(
 
   if (mQueuedSample) {
     NS_ASSERTION(mQueuedSample->mKeyframe, "mQueuedSample must be a keyframe");
-    samples->AppendSample(mQueuedSample);
-    mQueuedSample = nullptr;
+    samples->AppendSample(std::move(mQueuedSample));
+    MOZ_ASSERT(!mQueuedSample);
     aNumSamples--;
   }
   RefPtr<MediaRawData> sample;
@@ -525,7 +540,7 @@ RefPtr<MP4TrackDemuxer::SamplesPromise> MP4TrackDemuxer::GetSamples(
       continue;
     }
     MOZ_DIAGNOSTIC_ASSERT(sample->HasValidTime());
-    samples->AppendSample(sample);
+    samples->AppendSample(std::move(sample));
     aNumSamples--;
   }
 
@@ -599,7 +614,22 @@ TimeIntervals MP4TrackDemuxer::GetBuffered() {
     return TimeIntervals();
   }
 
-  return mIndex->ConvertByteRangesToTimeRanges(byteRanges);
+  TimeIntervals timeRanges = mIndex->ConvertByteRangesToTimeRanges(byteRanges);
+  if (AudioInfo* info = mInfo->GetAsAudioInfo(); info) {
+    // Trim as in GetNextSample().
+    TimeUnit totalMediaDurationIncludingTrimming =
+        info->mDuration - info->mMediaTime;
+    auto end = TimeUnit::FromInfinity();
+    if (mType == kAAC && totalMediaDurationIncludingTrimming.IsPositive()) {
+      end = info->mDuration;
+    }
+    if (timeRanges.GetStart().IsNegative() || timeRanges.GetEnd() > end) {
+      TimeInterval trimming(TimeUnit::Zero(timeRanges.GetStart()), end);
+      timeRanges = timeRanges.Intersection(trimming);
+    }
+  }
+
+  return timeRanges;
 }
 
 void MP4TrackDemuxer::NotifyDataArrived() { mNeedReIndex = true; }

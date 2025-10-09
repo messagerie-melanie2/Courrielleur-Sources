@@ -2,20 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* import-globals-from mail3PaneWindowCommands.js */
-/* import-globals-from mailWindowOverlay.js */
-/* import-globals-from messenger.js */
-
-/* globals contentProgress, statusFeedback */ // From mailWindow.js
-
-XPCOMUtils.defineLazyModuleGetters(this, {
-  FolderUtils: "resource:///modules/FolderUtils.jsm",
-  GlodaSyntheticView: "resource:///modules/gloda/GlodaSyntheticView.jsm",
-  MailUtils: "resource:///modules/MailUtils.jsm",
-  MsgHdrSyntheticView: "resource:///modules/MsgHdrSyntheticView.jsm",
-  MsgHdrToMimeMessage: "resource:///modules/gloda/MimeMessage.jsm",
-});
-
 /**
  * Tabs for displaying mail folders and messages.
  */
@@ -23,10 +9,10 @@ var mailTabType = {
   name: "mailTab",
   perTabPanel: "vbox",
   _cloneTemplate(template, tab, onDOMContentLoaded, onLoad) {
-    let tabmail = document.getElementById("tabmail");
+    const tabmail = document.getElementById("tabmail");
 
-    let clone = document.getElementById(template).content.cloneNode(true);
-    let browser = clone.querySelector("browser");
+    const clone = document.getElementById(template).content.cloneNode(true);
+    const browser = clone.querySelector("browser");
     browser.id = `${tab.mode.name}Browser${tab.mode._nextId}`;
     browser.addEventListener(
       "DOMTitleChanged",
@@ -36,7 +22,7 @@ var mailTabType = {
       },
       true
     );
-    let linkRelIconHandler = event => {
+    const linkRelIconHandler = event => {
       if (event.target.rel != "icon") {
         return;
       }
@@ -78,8 +64,8 @@ var mailTabType = {
     tab.mode._nextId++;
   },
 
-  closeTab(tab) {},
-  saveTabState(tab) {},
+  closeTab() {},
+  saveTabState() {},
 
   modes: {
     mail3PaneTab: {
@@ -91,27 +77,23 @@ var mailTabType = {
           "mail3PaneTabTemplate",
           tab,
           win => {
+            // "DOMContentLoaded" event.
+            win.tabOrWindow = tab;
             // Send the state to the page so it can restore immediately.
             win.openingState = args;
           },
-          async win => {
-            win.tabOrWindow = tab;
-            // onLoad has happened. async activities of scripts running of
-            // that may not have finished. Let's go back to the end of the
-            // event queue giving win.messageBrowser time to get defined.
-            await new Promise(resolve => win.setTimeout(resolve));
-            win.messageBrowser.contentWindow.tabOrWindow = tab;
+          win => {
+            // "load" event.
+            win.document.getElementById(
+              "messageBrowser"
+            ).contentWindow.tabOrWindow = tab;
             if (!args.background) {
               // Update telemetry once the tab has loaded and decided if the
               // panes are visible.
-              Services.telemetry.keyedScalarSet(
-                "tb.ui.configuration.pane_visibility",
-                "folderPane",
+              Glean.mail.uiConfigurationPaneVisibility.folderPane.set(
                 win.paneLayout.folderPaneVisible
               );
-              Services.telemetry.keyedScalarSet(
-                "tb.ui.configuration.pane_visibility",
-                "messagePane",
+              Glean.mail.uiConfigurationPaneVisibility.messagePane.set(
                 win.paneLayout.messagePaneVisible
               );
             }
@@ -165,7 +147,7 @@ var mailTabType = {
         // Content properties.
         Object.defineProperty(tab, "message", {
           get() {
-            let dbView = tab.chromeBrowser.contentWindow.gDBView;
+            const dbView = tab.chromeBrowser.contentWindow.gDBView;
             if (dbView?.selection?.count) {
               return dbView.hdrForFirstSelectedMessage;
             }
@@ -205,9 +187,9 @@ var mailTabType = {
 
         // Manually call onTabRestored, since it is usually called by openTab(),
         // which is skipped for the first tab.
-        let restoreState = tabmail._restoringTabState;
+        const restoreState = tabmail._restoringTabState;
         if (restoreState) {
-          for (let tabMonitor of tabmail.tabMonitors) {
+          for (const tabMonitor of tabmail.tabMonitors) {
             try {
               if (
                 "onTabRestored" in tabMonitor &&
@@ -226,7 +208,7 @@ var mailTabType = {
           }
         }
 
-        let { chromeBrowser, closed } = tabmail.tabInfo[0];
+        const { chromeBrowser, closed } = tabmail.tabInfo[0];
         if (
           chromeBrowser.contentDocument.readyState == "complete" &&
           chromeBrowser.currentURI.spec == "about:3pane"
@@ -243,7 +225,7 @@ var mailTabType = {
           "DOMContentLoaded",
           event => {
             if (!closed && event.target == chromeBrowser.contentDocument) {
-              let about3Pane = event.target.ownerGlobal;
+              const about3Pane = event.target.ownerGlobal;
               about3Pane.openingState = {
                 ...about3Pane.openingState,
                 ...persistedState,
@@ -280,14 +262,10 @@ var mailTabType = {
         // Update telemetry when switching to a 3-pane tab. The telemetry
         // reflects the state of the last 3-pane tab that was shown, but not
         // if the state changed since it was shown.
-        Services.telemetry.keyedScalarSet(
-          "tb.ui.configuration.pane_visibility",
-          "folderPane",
+        Glean.mail.uiConfigurationPaneVisibility.folderPane.set(
           tab.chromeBrowser.contentWindow.paneLayout.folderPaneVisible
         );
-        Services.telemetry.keyedScalarSet(
-          "tb.ui.configuration.pane_visibility",
-          "messagePane",
+        Glean.mail.uiConfigurationPaneVisibility.messagePane.set(
           tab.chromeBrowser.contentWindow.paneLayout.messagePaneVisible
         );
       },
@@ -317,7 +295,7 @@ var mailTabType = {
         mailTabType._cloneTemplate(
           "mailMessageTabTemplate",
           tab,
-          win => {
+          () => {
             // Make tabmail give the message pane focus when this tab becomes
             // the active tab.
             tab.lastActiveElement = tab.browser;
@@ -365,7 +343,7 @@ var mailTabType = {
       restoreTab(tabmail, persistedState) {
         tabmail.openTab("mailMessageTab", persistedState);
       },
-      showTab(tab) {},
+      showTab() {},
       supportsCommand(command, tab) {
         return tab.chromeBrowser?.contentWindow.commandController?.supportsCommand(
           command

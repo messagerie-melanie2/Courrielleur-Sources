@@ -104,11 +104,7 @@ async function addTestTab(url) {
   const doc = win.document;
   const store = win.view.store;
 
-  const enableButton = doc.getElementById("accessibility-enable-button");
-  // If enable button is not found, asume the tool is already enabled.
-  if (enableButton) {
-    EventUtils.sendMouseEvent({ type: "click" }, enableButton, win);
-  }
+  win.focus();
 
   await waitUntilState(
     store,
@@ -808,7 +804,7 @@ async function closeTabToolboxAccessibility(tab = gBrowser.selectedTab) {
  * A wrapper function around add_task that sets up the test environment, runs
  * the test and then disables accessibility tools.
  * @param {String}   msg    a message that is printed for the test
- * @param {String}   uri    test URL
+ * @param {String}   uri    absolute test URL or HTML snippet
  * @param {Function} task   task function containing the tests.
  * @param {Object}   options  options for the test
  */
@@ -816,7 +812,9 @@ function addA11YPanelTask(msg, uri, task, options = {}) {
   add_task(async function a11YPanelTask() {
     info(msg);
 
-    const env = await addTestTab(buildURL(uri, options));
+    const env = await addTestTab(
+      uri.startsWith("http") ? uri : buildURL(uri, options)
+    );
     await task(env);
     await closeTabToolboxAccessibility(env.tab);
   });

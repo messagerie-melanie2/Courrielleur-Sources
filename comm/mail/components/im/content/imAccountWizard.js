@@ -5,14 +5,20 @@
 // chat/content/imAccountOptionsHelper.js
 /* globals accountOptionsHelper */
 
+var { openLinkExternally } = ChromeUtils.importESModule(
+  "resource:///modules/LinkHelper.sys.mjs"
+);
 var { IMServices } = ChromeUtils.importESModule(
   "resource:///modules/IMServices.sys.mjs"
 );
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 var { ChatIcons } = ChromeUtils.importESModule(
   "resource:///modules/chatIcons.sys.mjs"
+);
+var { UIFontSize } = ChromeUtils.importESModule(
+  "resource:///modules/UIFontSize.sys.mjs"
 );
 
 var PREF_EXTENSIONS_GETMOREPROTOCOLSURL = "extensions.getMoreProtocolsURL";
@@ -22,12 +28,12 @@ var accountWizard = {
     document
       .querySelector("wizard")
       .addEventListener("wizardfinish", this.createAccount.bind(this));
-    let accountProtocolPage = document.getElementById("accountprotocol");
+    const accountProtocolPage = document.getElementById("accountprotocol");
     accountProtocolPage.addEventListener(
       "pageadvanced",
       this.selectProtocol.bind(this)
     );
-    let accountUsernamePage = document.getElementById("accountusername");
+    const accountUsernamePage = document.getElementById("accountusername");
     accountUsernamePage.addEventListener(
       "pageshow",
       this.showUsernamePage.bind(this)
@@ -36,12 +42,12 @@ var accountWizard = {
       "pagehide",
       this.hideUsernamePage.bind(this)
     );
-    let accountAdvancedPage = document.getElementById("accountadvanced");
+    const accountAdvancedPage = document.getElementById("accountadvanced");
     accountAdvancedPage.addEventListener(
       "pageshow",
       this.showAdvanced.bind(this)
     );
-    let accountSummaryPage = document.getElementById("accountsummary");
+    const accountSummaryPage = document.getElementById("accountsummary");
     accountSummaryPage.addEventListener(
       "pageshow",
       this.showSummary.bind(this)
@@ -61,15 +67,15 @@ var accountWizard = {
       return a.name > b.name ? 1 : 0;
     });
     protos.forEach(function (proto) {
-      let image = document.createElement("img");
+      const image = document.createElement("img");
       image.setAttribute("src", ChatIcons.getProtocolIconURI(proto));
       image.setAttribute("alt", "");
       image.classList.add("protoIcon");
 
-      let label = document.createXULElement("label");
+      const label = document.createXULElement("label");
       label.setAttribute("value", proto.name);
 
-      let item = document.createXULElement("richlistitem");
+      const item = document.createXULElement("richlistitem");
       item.setAttribute("value", proto.id);
       item.appendChild(image);
       item.appendChild(label);
@@ -83,11 +89,13 @@ var accountWizard = {
 
     Services.obs.addObserver(this, "prpl-quit");
     window.addEventListener("unload", this.unload);
+
+    UIFontSize.registerWindow(window);
   },
   unload() {
     Services.obs.removeObserver(accountWizard, "prpl-quit");
   },
-  observe(aObject, aTopic, aData) {
+  observe(aObject, aTopic) {
     if (aTopic == "prpl-quit") {
       // libpurple is being uninitialized. We can't create any new
       // account so keeping this wizard open would be pointless, close it.
@@ -142,8 +150,8 @@ var accountWizard = {
     if (this.proto.usernamePrefix) {
       usernameBoxIndex = 1;
     }
-    let username = this.userNameBoxes[usernameBoxIndex].value;
-    let splitValues = this.proto.splitUsername(username);
+    const username = this.userNameBoxes[usernameBoxIndex].value;
+    const splitValues = this.proto.splitUsername(username);
     if (!splitValues.length) {
       return;
     }
@@ -189,12 +197,12 @@ var accountWizard = {
     if (aDefaultValue) {
       input.setAttribute("value", aDefaultValue);
     }
-    input.addEventListener("input", event => {
+    input.addEventListener("input", () => {
       this.checkUsername();
     });
     // Only add the split logic to the first input field
     if (!this.userNameBoxes) {
-      input.addEventListener("blur", event => {
+      input.addEventListener("blur", () => {
         this.splitUsername();
       });
     }
@@ -251,7 +259,7 @@ var accountWizard = {
     for (let i = 0; i < splits.length; ++i) {
       this.userNameBoxes.push({ value: splits[i].separator });
       label = bundle.getFormattedString("accountColon", [splits[i].label]);
-      let defaultVal = splits[i].defaultValue;
+      const defaultVal = splits[i].defaultValue;
       this.userNameBoxes.push(
         this.insertUsernameField("username-split-" + i, label, grid, defaultVal)
       );
@@ -278,17 +286,17 @@ var accountWizard = {
     this.populateProtoSpecificBox();
 
     // Make sure the protocol specific options and wizard buttons are visible.
-    let wizard = document.querySelector("wizard");
+    const wizard = document.querySelector("wizard");
     if (wizard.scrollHeight > window.innerHeight) {
       window.resizeBy(0, wizard.scrollHeight - window.innerHeight);
     }
 
-    let alias = document.getElementById("alias");
+    const alias = document.getElementById("alias");
     alias.focus();
   },
 
   populateProtoSpecificBox() {
-    let haveOptions = accountOptionsHelper.addOptions(
+    const haveOptions = accountOptionsHelper.addOptions(
       this.proto.id + "-",
       this.proto.getOptions()
     );
@@ -360,10 +368,10 @@ var accountWizard = {
 
     var id = this.proto.id;
     this.prefs = [];
-    for (let opt of this.proto.getOptions()) {
-      let name = opt.name;
-      let eltName = id + "-" + name;
-      let val = this.getValue(eltName);
+    for (const opt of this.proto.getOptions()) {
+      const name = opt.name;
+      const eltName = id + "-" + name;
+      const val = this.getValue(eltName);
       // The value will be undefined if the proto specific groupbox has never been opened
       if (val === undefined) {
         continue;
@@ -394,10 +402,12 @@ var accountWizard = {
       }
     }
 
-    for (let i = 0; i < this.prefs.length; ++i) {
-      let opt = this.prefs[i];
-      let label = bundle.getFormattedString("accountColon", [opt.opt.label]);
-      this.createSummaryRow(label, opt.value, rows);
+    for (const pref of this.prefs) {
+      this.createSummaryRow(
+        bundle.getFormattedString("accountColon", [pref.opt.label]),
+        pref.value,
+        rows
+      );
     }
   },
 
@@ -411,8 +421,8 @@ var accountWizard = {
     }
 
     for (let i = 0; i < this.prefs.length; ++i) {
-      let option = this.prefs[i];
-      let opt = option.opt;
+      const option = this.prefs[i];
+      const opt = option.opt;
       switch (opt.type) {
         case Ci.prplIPref.typeBool:
           acc.setBool(option.name, option.value);
@@ -490,7 +500,7 @@ var accountWizard = {
   },
 
   *getIter(aEnumerator) {
-    for (let iter of aEnumerator) {
+    for (const iter of aEnumerator) {
       yield iter;
     }
   },
@@ -499,12 +509,11 @@ var accountWizard = {
    *  Stripped down code from preferences/themes.js
    */
   setGetMoreProtocols() {
-    let prefURL = PREF_EXTENSIONS_GETMOREPROTOCOLSURL;
+    const prefURL = PREF_EXTENSIONS_GETMOREPROTOCOLSURL;
     var getMore = document.getElementById("getMoreProtocols");
     var showGetMore = false;
-    const nsIPrefBranch = Ci.nsIPrefBranch;
 
-    if (Services.prefs.getPrefType(prefURL) != nsIPrefBranch.PREF_INVALID) {
+    if (Services.prefs.getPrefType(prefURL) != Ci.nsIPrefBranch.PREF_INVALID) {
       try {
         var getMoreURL = Services.urlFormatter.formatURLPref(prefURL);
         getMore.setAttribute("getMoreURL", getMoreURL);
@@ -515,12 +524,10 @@ var accountWizard = {
   },
 
   openURL(aURL) {
-    Cc["@mozilla.org/uriloader/external-protocol-service;1"]
-      .getService(Ci.nsIExternalProtocolService)
-      .loadURI(Services.io.newURI(aURL));
+    openLinkExternally(aURL, { addToHistory: false });
   },
 };
 
-window.addEventListener("load", event => {
+window.addEventListener("load", () => {
   accountWizard.onload();
 });

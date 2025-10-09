@@ -9,7 +9,6 @@
  */
 
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 /**
  * Fission-compatible JSProcess implementations.
@@ -43,6 +42,25 @@ let JSPROCESSACTORS = {
     includeParent: true,
   },
 
+  HPKEConfigManager: {
+    remoteTypes: ["privilegedabout"],
+    parent: {
+      esModuleURI: "resource://gre/modules/HPKEConfigManager.sys.mjs",
+    },
+  },
+
+  // A single process (shared with translations) that manages machine learning engines.
+  MLEngine: {
+    remoteTypes: ["inference"],
+    parent: {
+      esModuleURI: "resource://gre/actors/MLEngineParent.sys.mjs",
+    },
+    child: {
+      esModuleURI: "resource://gre/actors/MLEngineChild.sys.mjs",
+    },
+    enablePreference: "browser.ml.enable",
+  },
+
   ProcessConduits: {
     parent: {
       esModuleURI: "resource://gre/modules/ConduitsParent.sys.mjs",
@@ -50,6 +68,18 @@ let JSPROCESSACTORS = {
     child: {
       esModuleURI: "resource://gre/modules/ConduitsChild.sys.mjs",
     },
+  },
+
+  // A single process (shared with MLEngine) that controls all of the translations.
+  TranslationsEngine: {
+    remoteTypes: ["inference"],
+    parent: {
+      esModuleURI: "resource://gre/actors/TranslationsEngineParent.sys.mjs",
+    },
+    child: {
+      esModuleURI: "resource://gre/actors/TranslationsEngineChild.sys.mjs",
+    },
+    enablePreference: "browser.translations.enable",
   },
 };
 
@@ -105,7 +135,7 @@ let JSWINDOWACTORS = {
       },
     },
     matches: ["about:translations"],
-
+    remoteTypes: ["privilegedabout"],
     enablePreference: "browser.translations.enable",
   },
 
@@ -127,8 +157,8 @@ let JSWINDOWACTORS = {
       esModuleURI: "resource://gre/actors/AutoCompleteParent.sys.mjs",
       // These two messages are also used, but are currently synchronous calls
       // through the per-process message manager.
-      // "FormAutoComplete:GetSelectedIndex",
-      // "FormAutoComplete:SelectBy"
+      // "AutoComplete:GetSelectedIndex",
+      // "AutoComplete:SelectBy"
     },
 
     child: {
@@ -216,6 +246,54 @@ let JSWINDOWACTORS = {
     allFrames: true,
   },
 
+  CaptchaDetection: {
+    parent: {
+      esModuleURI: "resource://gre/actors/CaptchaDetectionParent.sys.mjs",
+    },
+    child: {
+      esModuleURI: "resource://gre/actors/CaptchaDetectionChild.sys.mjs",
+      events: {
+        DOMContentLoaded: { capture: true },
+        pageshow: {},
+        pagehide: {},
+      },
+    },
+    matches: [
+      // Google reCAPTCHA v2
+      "https://www.google.com/recaptcha/api2/*",
+      "https://www.google.com/recaptcha/enterprise/*",
+      // CF Turnstile
+      "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/*",
+      // DataDome Captcha
+      "https://geo.captcha-delivery.com/captcha/*",
+      // hCaptcha
+      "https://newassets.hcaptcha.com/captcha/v1/*",
+      // Arkose Labs Captcha
+      "https://client-api.arkoselabs.com/fc/assets/ec-game-core/game-core/*",
+      // Mochitest
+      ...(Cu.isInAutomation
+        ? [
+            "https://example.com/tests/toolkit/components/captchadetection/tests/mochitest/*",
+            "https://example.org/tests/toolkit/components/captchadetection/tests/mochitest/*",
+          ]
+        : []),
+    ],
+    messageManagerGroups: ["browsers"],
+    allFrames: true,
+    enablePreference: "captchadetection.actor.enabled",
+  },
+
+  CaptchaDetectionCommunication: {
+    parent: {
+      esModuleURI: "resource://gre/actors/CaptchaDetectionParent.sys.mjs",
+    },
+    child: {
+      esModuleURI:
+        "resource://gre/actors/CaptchaDetectionCommunicationChild.sys.mjs",
+    },
+    allFrames: true,
+  },
+
   CookieBanner: {
     parent: {
       esModuleURI: "resource://gre/actors/CookieBannerParent.sys.mjs",
@@ -233,7 +311,39 @@ let JSWINDOWACTORS = {
     messageManagerGroups: ["browsers"],
     // Cookie banners can be shown in sub-frames so we need to include them.
     allFrames: true,
-    enablePreference: "cookiebanners.bannerClicking.enabled",
+    onAddActor(register, unregister) {
+      let isRegistered = false;
+
+      const maybeRegister = () => {
+        const isEnabled = Services.prefs.getBoolPref(
+          "cookiebanners.bannerClicking.enabled",
+          false
+        );
+        const mode = Services.prefs.getIntPref("cookiebanners.service.mode", 0);
+        const privateBrowsing = Services.prefs.getIntPref(
+          "cookiebanners.service.mode.privateBrowsing"
+        );
+        if (isEnabled && (mode != 0 || privateBrowsing != 0)) {
+          if (!isRegistered) {
+            register();
+            isRegistered = true;
+          }
+        } else if (isRegistered) {
+          unregister();
+          isRegistered = false;
+        }
+      };
+
+      [
+        "cookiebanners.bannerClicking.enabled",
+        "cookiebanners.service.mode",
+        "cookiebanners.service.mode.privateBrowsing",
+      ].forEach(prefName => {
+        Services.prefs.addObserver(prefName, maybeRegister);
+      });
+
+      maybeRegister();
+    },
   },
 
   ExtFind: {
@@ -283,6 +393,20 @@ let JSWINDOWACTORS = {
     allFrames: true,
   },
 
+  FormHandler: {
+    parent: {
+      esModuleURI: "resource://gre/actors/FormHandlerParent.sys.mjs",
+    },
+    child: {
+      esModuleURI: "resource://gre/actors/FormHandlerChild.sys.mjs",
+      events: {
+        DOMFormBeforeSubmit: { createActor: false },
+      },
+    },
+
+    allFrames: true,
+  },
+
   InlineSpellChecker: {
     parent: {
       esModuleURI: "resource://gre/actors/InlineSpellCheckerParent.sys.mjs",
@@ -314,10 +438,10 @@ let JSWINDOWACTORS = {
     child: {
       esModuleURI: "resource://gre/modules/LoginManagerChild.sys.mjs",
       events: {
-        DOMDocFetchSuccess: {},
-        DOMFormBeforeSubmit: {},
+        "form-submission-detected": { createActor: false },
+        "before-form-submission": { createActor: false },
         DOMFormHasPassword: {},
-        DOMFormHasPossibleUsername: {},
+        DOMPossibleUsernameInputAdded: {},
         DOMInputPasswordAdded: {},
       },
     },
@@ -431,6 +555,23 @@ let JSWINDOWACTORS = {
     allFrames: true,
   },
 
+  ReportBrokenSite: {
+    parent: {
+      esModuleURI: "resource://gre/actors/ReportBrokenSiteParent.sys.mjs",
+    },
+    child: {
+      esModuleURI: "resource://gre/actors/ReportBrokenSiteChild.sys.mjs",
+    },
+    matches: [
+      "http://*/*",
+      "https://*/*",
+      "about:certerror?*",
+      "about:neterror?*",
+    ],
+    messageManagerGroups: ["browsers"],
+    allFrames: true,
+  },
+
   // This actor is available for all pages that one can
   // view the source of, however it won't be created until a
   // request to view the source is made via the message
@@ -480,8 +621,8 @@ let JSWINDOWACTORS = {
     },
   },
 
-  // The newer translations feature backed by local machine learning models.
-  // See Bug 971044.
+  // Determines if a page can be translated, and coordinates communication with the
+  // translations engine.
   Translations: {
     parent: {
       esModuleURI: "resource://gre/actors/TranslationsParent.sys.mjs",
@@ -489,12 +630,20 @@ let JSWINDOWACTORS = {
     child: {
       esModuleURI: "resource://gre/actors/TranslationsChild.sys.mjs",
       events: {
-        pageshow: {},
-        DOMHeadElementParsed: {},
-        DOMDocElementInserted: {},
         DOMContentLoaded: {},
       },
     },
+    matches: [
+      "http://*/*",
+      "https://*/*",
+      "file:///*",
+      "moz-extension://*",
+
+      // The actor is explicitly loaded by this page,
+      // so it needs to be allowed for it.
+      "about:translations",
+    ],
+    messageManagerGroups: ["browsers"],
     enablePreference: "browser.translations.enable",
   },
 
@@ -550,22 +699,6 @@ if (!Services.prefs.getBoolPref("browser.pagedata.enabled", false)) {
 }
 
 if (AppConstants.platform != "android") {
-  // For GeckoView support see bug 1776829.
-  JSWINDOWACTORS.ClipboardReadPaste = {
-    parent: {
-      esModuleURI: "resource://gre/actors/ClipboardReadPasteParent.sys.mjs",
-    },
-
-    child: {
-      esModuleURI: "resource://gre/actors/ClipboardReadPasteChild.sys.mjs",
-      events: {
-        MozClipboardReadPaste: {},
-      },
-    },
-
-    allFrames: true,
-  };
-
   // Note that GeckoView has another implementation in mobile/android/actors.
   JSWINDOWACTORS.Select = {
     parent: {
@@ -621,27 +754,34 @@ export var ActorManagerParent = {
         throw new Error("Invalid JSActor kind " + kind);
     }
     for (let [actorName, actor] of Object.entries(actors)) {
+      // The actor defines its own register/unregister logic.
+      if (actor.onAddActor) {
+        actor.onAddActor(
+          () => register(actorName, actor),
+          () => unregister(actorName, actor)
+        );
+        continue;
+      }
+
       // If enablePreference is set, only register the actor while the
       // preference is set to true.
       if (actor.enablePreference) {
-        let actorNameProp = actorName + "_Preference";
-        XPCOMUtils.defineLazyPreferenceGetter(
-          this,
-          actorNameProp,
-          actor.enablePreference,
-          false,
-          (prefName, prevValue, isEnabled) => {
-            if (isEnabled) {
-              register(actorName, actor);
-            } else {
-              unregister(actorName, actor);
-            }
-            if (actor.onPreferenceChanged) {
-              actor.onPreferenceChanged(prefName, prevValue, isEnabled);
-            }
+        Services.prefs.addObserver(actor.enablePreference, () => {
+          const isEnabled = Services.prefs.getBoolPref(
+            actor.enablePreference,
+            false
+          );
+          if (isEnabled) {
+            register(actorName, actor);
+          } else {
+            unregister(actorName, actor);
           }
-        );
-        if (!this[actorNameProp]) {
+          if (actor.onPreferenceChanged) {
+            actor.onPreferenceChanged(isEnabled);
+          }
+        });
+
+        if (!Services.prefs.getBoolPref(actor.enablePreference, false)) {
           continue;
         }
       }

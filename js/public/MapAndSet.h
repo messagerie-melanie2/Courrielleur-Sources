@@ -5,7 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /*
- * Weak Maps.
+ * Maps and Sets.
  */
 
 #ifndef js_MapAndSet_h
@@ -30,6 +30,12 @@ extern JS_PUBLIC_API bool MapHas(JSContext* cx, HandleObject obj,
 
 extern JS_PUBLIC_API bool MapSet(JSContext* cx, HandleObject obj,
                                  HandleValue key, HandleValue val);
+
+#ifdef NIGHTLY_BUILD
+extern JS_PUBLIC_API bool MapGetOrInsert(JSContext* cx, HandleObject obj,
+                                         HandleValue key, HandleValue val,
+                                         MutableHandleValue rval);
+#endif  // #ifdef NIGHTLY_BUILD
 
 extern JS_PUBLIC_API bool MapDelete(JSContext* cx, HandleObject obj,
                                     HandleValue key, bool* rval);

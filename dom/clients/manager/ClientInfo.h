@@ -37,17 +37,19 @@ class ClientInfo final {
   UniquePtr<IPCClientInfo> mData;
 
  public:
-  ClientInfo(const nsID& aId, ClientType aType,
+  ClientInfo(const nsID& aId, const Maybe<nsID>& aAgentClusterId,
+             ClientType aType,
              const mozilla::ipc::PrincipalInfo& aPrincipalInfo,
-             const TimeStamp& aCreationTime);
+             const TimeStamp& aCreationTime, const nsCString& aURL,
+             mozilla::dom::FrameType aFrameType);
 
   ClientInfo(const ClientInfo& aRight);
 
   ClientInfo& operator=(const ClientInfo& aRight);
 
-  ClientInfo(ClientInfo&& aRight);
+  ClientInfo(ClientInfo&& aRight) noexcept;
 
-  ClientInfo& operator=(ClientInfo&& aRight);
+  ClientInfo& operator=(ClientInfo&& aRight) noexcept;
 
   explicit ClientInfo(const IPCClientInfo& aData);
 

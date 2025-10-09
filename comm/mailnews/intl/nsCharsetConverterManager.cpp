@@ -12,15 +12,13 @@
 #include "nsTArray.h"
 #include "mozilla/Components.h"
 
-#include "nsComponentManagerUtils.h"
-#include "nsServiceManagerUtils.h"
 #include "../base/src/nsMsgI18N.h"
 
 // just for CONTRACTIDs
 #include "nsCharsetConverterManager.h"
 
-static nsCOMPtr<nsIStringBundle> sDataBundle;
-static nsCOMPtr<nsIStringBundle> sTitleBundle;
+MOZ_RUNINIT static nsCOMPtr<nsIStringBundle> sDataBundle;
+MOZ_RUNINIT static nsCOMPtr<nsIStringBundle> sTitleBundle;
 
 // Class nsCharsetConverterManager [implementation]
 

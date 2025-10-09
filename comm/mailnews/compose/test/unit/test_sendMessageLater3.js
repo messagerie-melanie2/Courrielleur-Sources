@@ -11,8 +11,8 @@
 /* import-globals-from ../../../test/resources/alertTestUtils.js */
 load("../../../resources/alertTestUtils.js");
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var originalData;
@@ -40,30 +40,19 @@ msll.prototype = {
   _errorRaised: false,
 
   // nsIMsgSendLaterListener
-  onStartSending(aTotal) {
+  onStartSending() {
     this._initialTotal = 1;
     Assert.equal(msgSendLater.sendingMessages, true);
   },
-  onMessageStartSending(
-    aCurrentMessage,
-    aTotalMessageCount,
-    aMessageHeader,
-    aIdentity
-  ) {},
-  onMessageSendProgress(
-    aCurrentMessage,
-    aTotalMessageCount,
-    aMessageSendPercent,
-    aMessageCopyPercent
-  ) {},
-  onMessageSendError(aCurrentMessage, aMessageHeader, aStatus, aMsg) {
+  onMessageStartSending() {},
+  onMessageSendProgress() {},
+  onMessageSendError() {
     this._errorRaised = true;
   },
   onStopSending(aStatus, aMsg, aTotal, aSuccessful) {
     print("msll onStopSending\n");
 
-    // NS_ERROR_SMTP_SEND_FAILED_REFUSED is 2153066798
-    Assert.equal(aStatus, 2153066798);
+    Assert.equal(aStatus, Cr.NS_ERROR_CONNECTION_REFUSED);
     Assert.equal(aTotal, 1);
     Assert.equal(aSuccessful, 0);
     Assert.equal(this._initialTotal, 1);
@@ -84,7 +73,7 @@ function OnStopCopy(aStatus) {
   // Check this is false before we start sending
   Assert.equal(msgSendLater.sendingMessages, false);
 
-  let folder = msgSendLater.getUnsentMessagesFolder(identity);
+  const folder = msgSendLater.getUnsentMessagesFolder(identity);
 
   // Check that the send later service thinks we have messages to send.
   Assert.equal(msgSendLater.hasUnsentMessages(identity), true);
@@ -136,8 +125,8 @@ add_task(async function run_the_test() {
 
   MailServices.accounts.setSpecialFolders();
 
-  let account = MailServices.accounts.createAccount();
-  let incomingServer = MailServices.accounts.createIncomingServer(
+  const account = MailServices.accounts.createAccount();
+  const incomingServer = MailServices.accounts.createIncomingServer(
     "test",
     "localhost",
     "pop3"

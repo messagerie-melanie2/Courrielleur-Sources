@@ -1,5 +1,3 @@
-// |jit-test| skip-if: !wasmGcEnabled()
-
 function typingModule(types, from, to, brParams, branchResults, fallthroughResults) {
   return `(module
     ${types}
@@ -63,7 +61,7 @@ invalidTyping('(rec (type $a (struct)) (type $b (struct)))', '(ref $a)', '(ref $
 // Simple runtime test of casting
 {
   let { makeA, makeB, isA, isB } = wasmEvalText(`(module
-    (type $a (struct))
+    (type $a (sub (struct)))
     (type $b (sub $a (struct (field i32))))
 
     (func (export "makeA") (result eqref)

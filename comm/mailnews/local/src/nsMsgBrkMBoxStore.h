@@ -12,10 +12,11 @@
 
 #include "nsMsgLocalStoreUtils.h"
 #include "nsIMsgPluggableStore.h"
-#include "nsIFile.h"
-#include "nsInterfaceHashtable.h"
-#include "nsISeekableStream.h"
-#include "nsIOutputStream.h"
+#include "nsTStringHasher.h"  // IWYU pragma: keep, mozilla::DefaultHasher<nsCString>
+#include "mozilla/HashTable.h"
+
+class nsIFile;
+class nsIOutputStream;
 
 class nsMsgBrkMBoxStore final : public nsMsgLocalStoreUtils,
                                 nsIMsgPluggableStore {
@@ -29,29 +30,29 @@ class nsMsgBrkMBoxStore final : public nsMsgLocalStoreUtils,
   ~nsMsgBrkMBoxStore();
 
  protected:
+  nsresult InvalidateOngoingWrite(nsIMsgFolder* folder);
   nsresult InternalGetNewMsgOutputStream(nsIMsgFolder* aFolder,
-                                         nsIMsgDBHdr** aNewMsgHdr,
+                                         int64_t& filePos,
                                          nsIOutputStream** aResult);
   nsresult AddSubFolders(nsIMsgFolder* parent, nsCOMPtr<nsIFile>& path,
                          bool deep);
   nsresult CreateDirectoryForFolder(nsIFile* path);
-  nsresult GetOutputStream(nsIMsgDBHdr* aHdr,
-                           nsCOMPtr<nsIOutputStream>& outputStream,
-                           nsCOMPtr<nsISeekableStream>& seekableStream,
-                           int64_t& restorePos);
   void GetMailboxModProperties(nsIMsgFolder* aFolder, int64_t* aSize,
                                uint32_t* aDate);
-  void SetDBValid(nsIMsgDBHdr* aHdr);
+  void SetDBValid(nsIMsgFolder* folder);
 
-  // We don't want to keep re-opening an output stream when downloading
-  // multiple pop3 messages, or adjusting x-mozilla-status headers, so
-  // we cache output streams based on folder uri's. If the caller has closed
-  // the stream, we'll get a new one.
-  nsInterfaceHashtable<nsCStringHashKey, nsIOutputStream> m_outputStreams;
-
-#ifdef _DEBUG
-  nsCOMPtr<nsIMsgFolder> m_streamOutstandingFolder;
-#endif
+  // We'll track details for ongoing output streams, keyed by folder.
+  // Each folder can only have a single ongoing write.
+  // We track:
+  //  - The stream, so we can ditch it if another write preempts it.
+  //    (shouldn't happen but there are still some possible corner cases).
+  //  - The filePos, so we can issue a storeToken to the caller at finishing
+  //    time.
+  struct StreamDetails {
+    int64_t filePos{0};
+    nsCOMPtr<nsIOutputStream> stream;
+  };
+  mozilla::HashMap<nsCString, StreamDetails> mOngoingWrites;
 };
 
 #endif

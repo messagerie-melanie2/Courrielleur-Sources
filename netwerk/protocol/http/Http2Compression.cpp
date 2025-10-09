@@ -17,6 +17,7 @@
 #include "Http2HuffmanIncoming.h"
 #include "Http2HuffmanOutgoing.h"
 #include "mozilla/StaticPtr.h"
+#include "mozilla/glean/NetwerkProtocolHttpMetrics.h"
 #include "nsCharSeparatedTokenizer.h"
 #include "nsIMemoryReporter.h"
 #include "nsHttpHandler.h"
@@ -61,6 +62,7 @@ class HpackDynamicTableReporter final : public nsIMemoryReporter {
   NS_IMETHOD
   CollectReports(nsIHandleReportCallback* aHandleReport, nsISupports* aData,
                  bool aAnonymize) override {
+    MutexAutoLock lock(mMutex);
     if (mCompressor) {
       MOZ_COLLECT_REPORT("explicit/network/hpack/dynamic-tables", KIND_HEAP,
                          UNITS_BYTES,
@@ -75,7 +77,8 @@ class HpackDynamicTableReporter final : public nsIMemoryReporter {
 
   ~HpackDynamicTableReporter() = default;
 
-  Http2BaseCompressor* mCompressor;
+  Mutex mMutex{"HpackDynamicTableReporter"};
+  Http2BaseCompressor* mCompressor MOZ_GUARDED_BY(mMutex);
 
   friend class Http2BaseCompressor;
 };
@@ -187,13 +190,18 @@ nvFIFO::~nvFIFO() { Clear(); }
 void nvFIFO::AddElement(const nsCString& name, const nsCString& value) {
   nvPair* pair = new nvPair(name, value);
   mByteCount += pair->Size();
+  MutexAutoLock lock(mMutex);
   mTable.PushFront(pair);
 }
 
 void nvFIFO::AddElement(const nsCString& name) { AddElement(name, ""_ns); }
 
 void nvFIFO::RemoveElement() {
-  nvPair* pair = mTable.Pop();
+  nvPair* pair = nullptr;
+  {
+    MutexAutoLock lock(mMutex);
+    pair = mTable.Pop();
+  }
   if (pair) {
     mByteCount -= pair->Size();
     delete pair;
@@ -212,6 +220,7 @@ size_t nvFIFO::StaticLength() const { return gStaticHeaders->GetSize(); }
 
 void nvFIFO::Clear() {
   mByteCount = 0;
+  MutexAutoLock lock(mMutex);
   while (mTable.GetSize()) {
     delete mTable.Pop();
   }
@@ -237,27 +246,28 @@ Http2BaseCompressor::Http2BaseCompressor() {
 }
 
 Http2BaseCompressor::~Http2BaseCompressor() {
-  if (mPeakSize) {
-    Telemetry::Accumulate(mPeakSizeID, mPeakSize);
-  }
-  if (mPeakCount) {
-    Telemetry::Accumulate(mPeakCountID, mPeakCount);
-  }
   UnregisterStrongMemoryReporter(mDynamicReporter);
-  mDynamicReporter->mCompressor = nullptr;
+  {
+    MutexAutoLock lock(mDynamicReporter->mMutex);
+    mDynamicReporter->mCompressor = nullptr;
+  }
   mDynamicReporter = nullptr;
+}
+
+size_t nvFIFO::SizeOfDynamicTable(mozilla::MallocSizeOf aMallocSizeOf) const {
+  size_t size = 0;
+  MutexAutoLock lock(mMutex);
+  for (const auto elem : mTable) {
+    size += elem->SizeOfIncludingThis(aMallocSizeOf);
+  }
+  return size;
 }
 
 void Http2BaseCompressor::ClearHeaderTable() { mHeaderTable.Clear(); }
 
 size_t Http2BaseCompressor::SizeOfExcludingThis(
     mozilla::MallocSizeOf aMallocSizeOf) const {
-  size_t size = 0;
-  for (uint32_t i = mHeaderTable.StaticLength(); i < mHeaderTable.Length();
-       ++i) {
-    size += mHeaderTable[i]->SizeOfIncludingThis(aMallocSizeOf);
-  }
-  return size;
+  return mHeaderTable.SizeOfDynamicTable(aMallocSizeOf);
 }
 
 void Http2BaseCompressor::MakeRoom(uint32_t amount, const char* direction) {
@@ -278,20 +288,16 @@ void Http2BaseCompressor::MakeRoom(uint32_t amount, const char* direction) {
   }
 
   if (!strcmp(direction, "decompressor")) {
-    Telemetry::Accumulate(Telemetry::HPACK_ELEMENTS_EVICTED_DECOMPRESSOR,
-                          countEvicted);
-    Telemetry::Accumulate(Telemetry::HPACK_BYTES_EVICTED_DECOMPRESSOR,
-                          bytesEvicted);
-    Telemetry::Accumulate(
-        Telemetry::HPACK_BYTES_EVICTED_RATIO_DECOMPRESSOR,
+    glean::hpack::elements_evicted_decompressor.AccumulateSingleSample(
+        countEvicted);
+    glean::hpack::bytes_evicted_decompressor.Accumulate(bytesEvicted);
+    glean::hpack::bytes_evicted_ratio_decompressor.AccumulateSingleSample(
         (uint32_t)((100.0 * (double)bytesEvicted) / (double)amount));
   } else {
-    Telemetry::Accumulate(Telemetry::HPACK_ELEMENTS_EVICTED_COMPRESSOR,
-                          countEvicted);
-    Telemetry::Accumulate(Telemetry::HPACK_BYTES_EVICTED_COMPRESSOR,
-                          bytesEvicted);
-    Telemetry::Accumulate(
-        Telemetry::HPACK_BYTES_EVICTED_RATIO_COMPRESSOR,
+    glean::hpack::elements_evicted_compressor.AccumulateSingleSample(
+        countEvicted);
+    glean::hpack::bytes_evicted_compressor.Accumulate(bytesEvicted);
+    glean::hpack::bytes_evicted_ratio_compressor.AccumulateSingleSample(
         (uint32_t)((100.0 * (double)bytesEvicted) / (double)amount));
   }
 }
@@ -347,6 +353,15 @@ nsresult Http2BaseCompressor::SetInitialMaxBufferSize(uint32_t maxBufferSize) {
 
 void Http2BaseCompressor::SetDumpTables(bool dumpTables) {
   mDumpTables = dumpTables;
+}
+
+Http2Decompressor::~Http2Decompressor() {
+  if (mPeakSize) {
+    glean::hpack::peak_size_decompressor.Accumulate(mPeakSize);
+  }
+  if (mPeakCount) {
+    glean::hpack::peak_count_decompressor.AccumulateSingleSample(mPeakCount);
+  }
 }
 
 nsresult Http2Decompressor::DecodeHeaderBlock(const uint8_t* data,
@@ -1037,6 +1052,15 @@ nsresult Http2Decompressor::DoContextUpdate() {
 }
 
 /////////////////////////////////////////////////////////////////
+
+Http2Compressor::~Http2Compressor() {
+  if (mPeakSize) {
+    glean::hpack::peak_size_compressor.Accumulate(mPeakSize);
+  }
+  if (mPeakCount) {
+    glean::hpack::peak_count_compressor.AccumulateSingleSample(mPeakCount);
+  }
+}
 
 nsresult Http2Compressor::EncodeHeaderBlock(
     const nsCString& nvInput, const nsACString& method, const nsACString& path,

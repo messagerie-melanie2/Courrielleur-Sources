@@ -9,9 +9,7 @@
 
 use crate::values::computed::percentage::Percentage;
 use crate::values::computed::position::Position;
-use crate::values::computed::url::ComputedImageUrl;
-#[cfg(feature = "gecko")]
-use crate::values::computed::NumberOrPercentage;
+use crate::values::computed::url::ComputedUrl;
 use crate::values::computed::{Angle, Color, Context};
 use crate::values::computed::{
     AngleOrPercentage, LengthPercentage, NonNegativeLength, NonNegativeLengthPercentage,
@@ -28,11 +26,13 @@ pub use specified::ImageRendering;
 
 /// Computed values for an image according to CSS-IMAGES.
 /// <https://drafts.csswg.org/css-images/#image-values>
-pub type Image =
-    generic::GenericImage<Gradient, MozImageRect, ComputedImageUrl, Color, Percentage, Resolution>;
+pub type Image = generic::GenericImage<Gradient, ComputedUrl, Color, Percentage, Resolution>;
 
 // Images should remain small, see https://github.com/servo/servo/pull/18430
+#[cfg(feature = "gecko")]
 size_of_test!(Image, 16);
+#[cfg(feature = "servo")]
+size_of_test!(Image, 40);
 
 /// Computed values for a CSS gradient.
 /// <https://drafts.csswg.org/css-images/#gradients>
@@ -80,24 +80,31 @@ impl ToComputedValue for specified::ImageSet {
 
         let mut supported_image = false;
         let mut selected_index = std::usize::MAX;
-        let mut selected_resolution = items[0].resolution.dppx();
+        let mut selected_resolution = 0.0;
 
         for (i, item) in items.iter().enumerate() {
-            // If the MIME type is not supported, we discard the ImageSetItem
             if item.has_mime_type && !context.device().is_supported_mime_type(&item.mime_type) {
+                // If the MIME type is not supported, we discard the ImageSetItem.
                 continue;
             }
 
             let candidate_resolution = item.resolution.dppx();
+            debug_assert!(
+                candidate_resolution >= 0.0,
+                "Resolutions should be non-negative"
+            );
+            if candidate_resolution == 0.0 {
+                // If the resolution is 0, we also treat it as an invalid image.
+                continue;
+            }
 
             // https://drafts.csswg.org/css-images-4/#image-set-notation:
             //
-            //     Make a UA-specific choice of which to load, based on whatever
-            //     criteria deemed relevant (such as the resolution of the
-            //     display, connection speed, etc).
+            //     Make a UA-specific choice of which to load, based on whatever criteria deemed
+            //     relevant (such as the resolution of the display, connection speed, etc).
             //
-            // For now, select the lowest resolution greater than display
-            // density, otherwise the greatest resolution available
+            // For now, select the lowest resolution greater than display density, otherwise the
+            // greatest resolution available.
             let better_candidate = || {
                 if selected_resolution < dpr && candidate_resolution > selected_resolution {
                     return true;
@@ -129,14 +136,6 @@ impl ToComputedValue for specified::ImageSet {
         }
     }
 }
-
-/// Computed values for `-moz-image-rect(...)`.
-#[cfg(feature = "gecko")]
-pub type MozImageRect = generic::GenericMozImageRect<NumberOrPercentage, ComputedImageUrl>;
-
-/// Empty enum on non-gecko
-#[cfg(not(feature = "gecko"))]
-pub type MozImageRect = specified::MozImageRect;
 
 impl generic::LineDirection for LineDirection {
     fn points_downwards(&self, compat_mode: GradientCompatMode) -> bool {
@@ -204,6 +203,42 @@ impl ToComputedValue for specified::LineDirection {
             LineDirection::Horizontal(x) => specified::LineDirection::Horizontal(x),
             LineDirection::Vertical(y) => specified::LineDirection::Vertical(y),
             LineDirection::Corner(x, y) => specified::LineDirection::Corner(x, y),
+        }
+    }
+}
+
+impl ToComputedValue for specified::Image {
+    type ComputedValue = Image;
+
+    fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
+        match self {
+            Self::None => Image::None,
+            Self::Url(u) => Image::Url(u.to_computed_value(context)),
+            Self::Gradient(g) => Image::Gradient(g.to_computed_value(context)),
+            #[cfg(feature = "gecko")]
+            Self::Element(e) => Image::Element(e.to_computed_value(context)),
+            Self::MozSymbolicIcon(e) => Image::MozSymbolicIcon(e.to_computed_value(context)),
+            #[cfg(feature = "servo")]
+            Self::PaintWorklet(w) => Image::PaintWorklet(w.to_computed_value(context)),
+            Self::CrossFade(f) => Image::CrossFade(f.to_computed_value(context)),
+            Self::ImageSet(s) => Image::ImageSet(s.to_computed_value(context)),
+            Self::LightDark(ld) => ld.compute(context),
+        }
+    }
+
+    fn from_computed_value(computed: &Self::ComputedValue) -> Self {
+        match computed {
+            Image::None => Self::None,
+            Image::Url(u) => Self::Url(ToComputedValue::from_computed_value(u)),
+            Image::Gradient(g) => Self::Gradient(ToComputedValue::from_computed_value(g)),
+            #[cfg(feature = "gecko")]
+            Image::Element(e) => Self::Element(ToComputedValue::from_computed_value(e)),
+            Image::MozSymbolicIcon(e) => Self::MozSymbolicIcon(ToComputedValue::from_computed_value(e)),
+            #[cfg(feature = "servo")]
+            Image::PaintWorklet(w) => Self::PaintWorklet(ToComputedValue::from_computed_value(w)),
+            Image::CrossFade(f) => Self::CrossFade(ToComputedValue::from_computed_value(f)),
+            Image::ImageSet(s) => Self::ImageSet(ToComputedValue::from_computed_value(s)),
+            Image::LightDark(_) => unreachable!("Shouldn't have computed image-set values"),
         }
     }
 }

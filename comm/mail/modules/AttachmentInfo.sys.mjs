@@ -10,12 +10,9 @@ ChromeUtils.defineESModuleGetters(lazy, {
   DownloadPaths: "resource://gre/modules/DownloadPaths.sys.mjs",
   Downloads: "resource://gre/modules/Downloads.sys.mjs",
   FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  GlodaUtils: "resource:///modules/gloda/GlodaUtils.jsm",
-  MailUtils: "resource:///modules/MailUtils.jsm",
-  NetUtil: "resource://gre/modules/NetUtil.jsm",
+  GlodaUtils: "resource:///modules/gloda/GlodaUtils.sys.mjs",
+  MailUtils: "resource:///modules/MailUtils.sys.mjs",
+  NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
 });
 
 XPCOMUtils.defineLazyServiceGetters(lazy, {
@@ -26,7 +23,7 @@ XPCOMUtils.defineLazyServiceGetters(lazy, {
   gMIMEService: ["@mozilla.org/mime;1", "nsIMIMEService"],
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "messengerBundle", () => {
+ChromeUtils.defineLazyGetter(lazy, "messengerBundle", () => {
   return Services.strings.createBundle(
     "chrome://messenger/locale/messenger.properties"
   );
@@ -63,11 +60,11 @@ export class AttachmentInfo {
    *   (usually the filename).
    * @param {string} options.uri - The URI for the message containing the
    *   attachment.
-   * @param {boolean} options.isExternalAttachment - True if the attachment has
+   * @param {boolean} [options.isExternalAttachment] - true if the attachment has
    *   been detached to file or is a link attachment.
-   * @param {object} options.message - The message object associated to this
+   * @param {nsIMsgDBHdr} [options.message] - The message object associated to this
    *   attachment.
-   * @param {function} [updateAttachmentsDisplayFn] - An optional callback
+   * @param {Function} [options.updateAttachmentsDisplayFn] - An optional callback
    *   function that is called to update the attachment display at appropriate
    *   times.
    */
@@ -105,7 +102,7 @@ export class AttachmentInfo {
       this.partID = match && match.split("part=")[1];
       this.url = url.replace(match, "");
     } else {
-      let match = lazy.GlodaUtils.PART_RE.exec(url);
+      const match = lazy.GlodaUtils.PART_RE.exec(url);
       this.partID = match && match[1];
     }
   }
@@ -113,306 +110,380 @@ export class AttachmentInfo {
   /**
    * Save this attachment to a file.
    *
-   * @param {nsIMessenger} messenger
-   *   The messenger object associated with the window.
+   * @param {BrowsingContext} browsingContext - The browsing context to use.
    */
-  async save(messenger) {
+  async save(browsingContext) {
     if (!this.hasFile) {
       return;
     }
 
-    let empty = await this.isEmpty();
+    const empty = await this.isEmpty();
     if (empty) {
       return;
     }
 
-    messenger.saveAttachment(
-      this.contentType,
-      this.url,
-      encodeURIComponent(this.name),
-      this.uri,
-      this.isExternalAttachment
+    const bundle = Services.strings.createBundle(
+      "chrome://messenger/locale/messenger.properties"
     );
+    const title = bundle.GetStringFromName("SaveAttachment");
+
+    const fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
+    fp.init(browsingContext, title, Ci.nsIFilePicker.modeSave);
+    fp.defaultString = this.name.replaceAll(/[/:*?\"<>|]/g, "_");
+    const ext = this.name.includes(".") ? this.name.split(".").pop() : null;
+    if (ext && !ext.includes(" ")) {
+      fp.defaultExtension = ext;
+      try {
+        const mimeInfo = lazy.gMIMEService.getFromTypeAndExtension("", ext);
+        fp.appendFilter(mimeInfo?.description, `*.${ext}`);
+      } catch (e) {} // Nothing registered for that ext.
+    }
+    fp.appendFilters(Ci.nsIFilePicker.filterAll);
+
+    try {
+      const lastSaveDir = Services.prefs.getComplexValue(
+        "messenger.save.dir",
+        Ci.nsIFile
+      );
+      fp.displayDirectory = lastSaveDir;
+    } catch (e) {} // Pref may not be set, yet.
+
+    const result = await new Promise(resolve => fp.open(resolve));
+    if (result == Ci.nsIFilePicker.returnCancel) {
+      return;
+    }
+
+    Services.prefs.setComplexValue(
+      "messenger.save.dir",
+      Ci.nsIFile,
+      fp.file.parent
+    );
+    await this.saveToFile(fp.file.path);
+  }
+
+  /**
+   * Save this attachment to the given path.
+   *
+   * Fetch the attachment.
+   *
+   * @returns {ArrayBuffer} the attachment data.
+   */
+  async fetchAttachment() {
+    let url = this.url;
+    if (!this.isAllowedURL) {
+      throw new Error(`URL not allowed: ${url}`);
+    }
+    if (
+      this.contentType == "message/rfc822" ||
+      /[?&]filename=.*\.eml(&|$)/.test(url)
+    ) {
+      url += url.includes("?") ? "&outputformat=raw" : "?outputformat=raw";
+    }
+    const sourceURI = Services.io.newURI(url);
+    const buffer = await new Promise((resolve, reject) => {
+      lazy.NetUtil.asyncFetch(
+        {
+          uri: sourceURI,
+          loadUsingSystemPrincipal: true,
+        },
+        (inputStream, status) => {
+          if (Components.isSuccessCode(status)) {
+            resolve(lazy.NetUtil.readInputStream(inputStream));
+          } else {
+            reject(new Components.Exception(`Failed to fetch ${url}`, status));
+          }
+        }
+      );
+    });
+    return buffer;
+  }
+
+  /**
+   * @param {string} path - Path to save to.
+   * @param {boolean} [isTmp=false] - Treat it as a temporary file.
+   */
+  async saveToFile(path, isTmp = false) {
+    const buffer = await this.fetchAttachment();
+    await IOUtils.write(path, new Uint8Array(buffer));
+
+    if (!isTmp) {
+      let url = this.url;
+      if (
+        this.contentType == "message/rfc822" ||
+        /[?&]filename=.*\.eml(&|$)/.test(url)
+      ) {
+        url += url.includes("?") ? "&outputformat=raw" : "?outputformat=raw";
+      }
+      // Create a download so that saved files show up under... Saved Files.
+      const file = await IOUtils.getFile(path);
+      lazy.Downloads.createDownload({
+        source: {
+          url,
+        },
+        target: file,
+        startTime: new Date(),
+      })
+        .then(async download => {
+          await download.start();
+          const list = await lazy.Downloads.getList(lazy.Downloads.ALL);
+          await list.add(download);
+        })
+        .catch(console.error);
+    }
+  }
+
+  /**
+   * Create a temp file in an appropriate non-predictable temp folder.
+   *
+   * @param {string} filename - Preferred filename.
+   * @returns {nsIFile} the created file.
+   */
+  async #setupTempFile(filename) {
+    const tmpPath = PathUtils.join(
+      PathUtils.tempDir,
+      "pid-" + Services.appinfo.processID
+    );
+    await IOUtils.makeDirectory(tmpPath, { permissions: 0o700 });
+    const tempFile = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
+    tempFile.initWithPath(tmpPath);
+
+    tempFile.append(filename);
+    tempFile.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, 0o600);
+
+    Cc["@mozilla.org/uriloader/external-helper-app-service;1"]
+      .getService(Ci.nsPIExternalAppLauncher)
+      .deleteTemporaryFileOnExit(tempFile);
+    return tempFile;
   }
 
   /**
    * Open this attachment.
    *
-   * @param {integer} [browsingContextId]
-   *   The browsingContext of the browser that this attachment is being opened
-   *   from.
+   * @param {BrowsingContext} browsingContext - The browsingContext of the
+   *   browser that this attachment is being opened from.
    */
   async open(browsingContext) {
     if (!this.hasFile) {
       return;
     }
 
-    let win = browsingContext.topChromeWindow;
-    let empty = await this.isEmpty();
+    const win = browsingContext.topChromeWindow;
+    const empty = await this.isEmpty();
     if (empty) {
-      let prompt = lazy.messengerBundle.GetStringFromName(
+      const prompt = lazy.messengerBundle.GetStringFromName(
         this.isExternalAttachment
           ? "externalAttachmentNotFound"
           : "emptyAttachment"
       );
       Services.prompt.alert(win, null, prompt);
-    } else {
-      // @see MsgComposeCommands.js which has simililar opening functionality
-      let dotPos = this.name.lastIndexOf(".");
-      let extension =
-        dotPos >= 0 ? this.name.substring(dotPos + 1).toLowerCase() : "";
-      if (this.contentType == "application/pdf" || extension == "pdf") {
-        let handlerInfo = lazy.gMIMEService.getFromTypeAndExtension(
-          this.contentType,
-          extension
-        );
-        // Only open a new tab for pdfs if we are handling them internally.
-        if (
-          !handlerInfo.alwaysAskBeforeHandling &&
-          handlerInfo.preferredAction == Ci.nsIHandlerInfo.handleInternally
-        ) {
-          // Add the content type to avoid a "how do you want to open this?"
-          // dialog. The type may already be there, but that doesn't matter.
-          let url = this.url;
-          if (!url.includes("type=")) {
-            url += url.includes("?") ? "&" : "?";
-            url += "type=application/pdf";
-          }
-          let tabmail = win.document.getElementById("tabmail");
-          if (!tabmail) {
-            // If no tabmail available in this window, try and find it in
-            // another.
-            let win = Services.wm.getMostRecentWindow("mail:3pane");
-            tabmail = win?.document.getElementById("tabmail");
-          }
-          if (tabmail) {
-            tabmail.openTab("contentTab", {
-              url,
-              background: false,
-              linkHandler: "single-page",
-            });
-            tabmail.ownerGlobal.focus();
-            return;
-          }
-          // If no tabmail, open PDF same as other attachments.
+      return;
+    }
+
+    // @see MsgComposeCommands.js which has simililar opening functionality
+    const dotPos = this.name.lastIndexOf(".");
+    const extension =
+      dotPos >= 0 ? this.name.substring(dotPos + 1).toLowerCase() : "";
+    if (this.contentType == "application/pdf" || extension == "pdf") {
+      const handlerInfo = lazy.gMIMEService.getFromTypeAndExtension(
+        this.contentType,
+        extension
+      );
+      // Only open a new tab for pdfs if we are handling them internally.
+      if (
+        !handlerInfo.alwaysAskBeforeHandling &&
+        handlerInfo.preferredAction == Ci.nsIHandlerInfo.handleInternally
+      ) {
+        // Add the content type to avoid a "how do you want to open this?"
+        // dialog. The type may already be there, but that doesn't matter.
+        let url = this.url;
+        if (!url.includes("type=")) {
+          url += url.includes("?") ? "&" : "?";
+          url += "type=application/pdf";
         }
-      }
-
-      // Just use the old method for handling messages, it works.
-
-      let { name, url } = this;
-
-      let sourceURI = Services.io.newURI(url);
-      async function saveToFile(path, isTmp = false) {
-        let buffer = await new Promise((resolve, reject) => {
-          lazy.NetUtil.asyncFetch(
-            {
-              uri: sourceURI,
-              loadUsingSystemPrincipal: true,
-            },
-            (inputStream, status) => {
-              if (Components.isSuccessCode(status)) {
-                resolve(lazy.NetUtil.readInputStream(inputStream));
-              } else {
-                reject(
-                  new Components.Exception(`Failed to fetch ${path}`, status)
-                );
-              }
-            }
-          );
-        });
-        await IOUtils.write(path, new Uint8Array(buffer));
-
-        if (!isTmp) {
-          // Create a download so that saved files show up under... Saved Files.
-          let file = await IOUtils.getFile(path);
-          lazy.Downloads.createDownload({
-            source: {
-              url: sourceURI.spec,
-            },
-            target: file,
-            startTime: new Date(),
-          })
-            .then(async download => {
-              await download.start();
-              let list = await lazy.Downloads.getList(lazy.Downloads.ALL);
-              await list.add(download);
-            })
-            .catch(console.error);
+        let tabmail = win.document.getElementById("tabmail");
+        if (!tabmail) {
+          // If no tabmail available in this window, try and find it in
+          // another.
+          const win2 = Services.wm.getMostRecentWindow("mail:3pane");
+          tabmail = win2?.document.getElementById("tabmail");
         }
-      }
-
-      if (this.contentType == "message/rfc822") {
-        let tempFile = this.#temporaryFiles.get(url);
-        if (!tempFile?.exists()) {
-          tempFile = Services.dirsvc.get("TmpD", Ci.nsIFile);
-          tempFile.append("subPart.eml");
-          tempFile.createUnique(0, 0o600);
-          await saveToFile(tempFile.path, true);
-
-          this.#temporaryFiles.set(url, tempFile);
+        if (tabmail) {
+          tabmail.openTab("contentTab", {
+            url,
+            background: false,
+            linkHandler: "single-page",
+          });
+          tabmail.ownerGlobal.focus();
+          return;
         }
-
-        lazy.MailUtils.openEMLFile(
-          win,
-          tempFile,
-          Services.io.newFileURI(tempFile)
-        );
-        return;
+        // If no tabmail, open PDF same as other attachments.
       }
+    }
 
-      // Get the MIME info from the service.
-
-      let mimeInfo;
-      try {
-        mimeInfo = lazy.gMIMEService.getFromTypeAndExtension(
-          this.contentType,
-          extension
-        );
-      } catch (ex) {
-        // If the call above fails, which can happen on Windows where there's
-        // nothing registered for the file type, assume this generic type.
-        mimeInfo = lazy.gMIMEService.getFromTypeAndExtension(
-          "application/octet-stream",
-          ""
-        );
-      }
-      // The default action is saveToDisk, which is not what we want.
-      // If we don't have a stored handler, ask before handling.
-      if (!lazy.gHandlerService.exists(mimeInfo)) {
-        mimeInfo.alwaysAskBeforeHandling = true;
-        mimeInfo.preferredAction = Ci.nsIHandlerInfo.alwaysAsk;
-      }
-
-      // If we know what to do, do it.
-
-      name = lazy.DownloadPaths.sanitize(name);
-
-      let createTemporaryFileAndOpen = async mimeInfo => {
-        let tmpPath = PathUtils.join(
-          Services.dirsvc.get("TmpD", Ci.nsIFile).path,
-          "pid-" + Services.appinfo.processID
-        );
-        await IOUtils.makeDirectory(tmpPath, { permissions: 0o700 });
-        let tempFile = Cc["@mozilla.org/file/local;1"].createInstance(
-          Ci.nsIFile
-        );
-        tempFile.initWithPath(tmpPath);
-
-        tempFile.append(name);
-        tempFile.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, 0o600);
-        tempFile.remove(false);
-
-        Cc["@mozilla.org/uriloader/external-helper-app-service;1"]
-          .getService(Ci.nsPIExternalAppLauncher)
-          .deleteTemporaryFileOnExit(tempFile);
-
-        await saveToFile(tempFile.path, true);
-        // Before opening from the temp dir, make the file read-only so that
-        // users don't edit and lose their edits...
-        await IOUtils.setPermissions(tempFile.path, 0o400); // Set read-only
-        this._openFile(mimeInfo, tempFile);
-      };
-
-      let openLocalFile = mimeInfo => {
-        let fileHandler = Services.io
-          .getProtocolHandler("file")
-          .QueryInterface(Ci.nsIFileProtocolHandler);
-
-        try {
-          let externalFile = fileHandler.getFileFromURLSpec(this.displayUrl);
-          this._openFile(mimeInfo, externalFile);
-        } catch (ex) {
-          console.error(
-            "AttachmentInfo.open: file - " + this.displayUrl + ", " + ex
-          );
+    if (this.contentType == "message/rfc822") {
+      let tempFile = this.#temporaryFiles.get(this.url);
+      if (!tempFile?.exists()) {
+        // Try to use the name of the attachment for the temporary file, so
+        // that the name is included in the URI of the message that is
+        // opened, and possibly saved as a file later by the user.
+        let sanitizedName = lazy.DownloadPaths.sanitize(this.name);
+        if (!sanitizedName) {
+          sanitizedName = "message.eml";
+        } else if (!/\.eml$/i.test(sanitizedName)) {
+          sanitizedName += ".eml";
         }
-      };
+        tempFile = await this.#setupTempFile(sanitizedName);
+        await this.saveToFile(tempFile.path, true);
 
-      if (!mimeInfo.alwaysAskBeforeHandling) {
-        switch (mimeInfo.preferredAction) {
-          case Ci.nsIHandlerInfo.saveToDisk:
-            if (Services.prefs.getBoolPref("browser.download.useDownloadDir")) {
-              let destFile = new lazy.FileUtils.File(
-                await lazy.Downloads.getPreferredDownloadsDirectory()
-              );
-              destFile.append(name);
-              destFile.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, 0o755);
-              destFile.remove(false);
-              await saveToFile(destFile.path);
-            } else {
-              let filePicker = Cc["@mozilla.org/filepicker;1"].createInstance(
-                Ci.nsIFilePicker
-              );
-              filePicker.defaultString = this.name;
-              filePicker.defaultExtension = extension;
-              filePicker.init(
-                win,
-                lazy.messengerBundle.GetStringFromName("SaveAttachment"),
-                Ci.nsIFilePicker.modeSave
-              );
-              let rv = await new Promise(resolve => filePicker.open(resolve));
-              if (rv != Ci.nsIFilePicker.returnCancel) {
-                await saveToFile(filePicker.file.path);
-              }
-            }
-            return;
-          case Ci.nsIHandlerInfo.useHelperApp:
-          case Ci.nsIHandlerInfo.useSystemDefault:
-            // Attachments can be detached and, if this is the case, opened from
-            // their location on disk instead of copied to a temporary file.
-            if (this.isExternalAttachment) {
-              openLocalFile(mimeInfo);
-              return;
-            }
-
-            await createTemporaryFileAndOpen(mimeInfo);
-            return;
-        }
+        this.#temporaryFiles.set(this.url, tempFile);
       }
 
-      // Ask what to do, then do it.
-      let appLauncherDialog = Cc[
-        "@mozilla.org/helperapplauncherdialog;1"
-      ].createInstance(Ci.nsIHelperAppLauncherDialog);
-      appLauncherDialog.show(
-        {
-          QueryInterface: ChromeUtils.generateQI(["nsIHelperAppLauncher"]),
-          MIMEInfo: mimeInfo,
-          source: Services.io.newURI(this.url),
-          suggestedFileName: this.name,
-          cancel(reason) {},
-          promptForSaveDestination() {
-            appLauncherDialog.promptForSaveToFileAsync(
-              this,
-              win,
-              this.suggestedFileName,
-              "." + extension, // Dot stripped by promptForSaveToFileAsync.
-              false
-            );
-          },
-          launchLocalFile() {
-            openLocalFile(mimeInfo);
-          },
-          async setDownloadToLaunch(handleInternally, file) {
-            await createTemporaryFileAndOpen(mimeInfo);
-          },
-          async saveDestinationAvailable(file) {
-            if (file) {
-              await saveToFile(file.path);
-            }
-          },
-          setWebProgressListener(webProgressListener) {},
-          targetFile: null,
-          targetFileIsExecutable: null,
-          timeDownloadStarted: null,
-          contentLength: this.size,
-          browsingContextId: browsingContext.id,
-        },
+      lazy.MailUtils.openEMLFile(
         win,
-        null
+        tempFile,
+        Services.io.newFileURI(tempFile)
+      );
+      return;
+    }
+
+    // Get the MIME info from the service.
+    let mimeInfo;
+    try {
+      mimeInfo = lazy.gMIMEService.getFromTypeAndExtension(
+        this.contentType,
+        extension
+      );
+    } catch (ex) {
+      // If the call above fails, which can happen on Windows where there's
+      // nothing registered for the file type, assume this generic type.
+      mimeInfo = lazy.gMIMEService.getFromTypeAndExtension(
+        "application/octet-stream",
+        ""
       );
     }
+    // The default action is saveToDisk, which is not what we want.
+    // If we don't have a stored handler, ask before handling.
+    if (!lazy.gHandlerService.exists(mimeInfo)) {
+      mimeInfo.alwaysAskBeforeHandling = true;
+      mimeInfo.preferredAction = Ci.nsIHandlerInfo.alwaysAsk;
+    }
+
+    // If we know what to do, do it.
+
+    const name = lazy.DownloadPaths.sanitize(this.name);
+
+    const createTemporaryFileAndOpen = async fileMimeInfo => {
+      const tempFile = await this.#setupTempFile(name);
+
+      await this.saveToFile(tempFile.path, true);
+      // Before opening from the temp dir, make the file read-only so that
+      // users don't edit and lose their edits...
+      await IOUtils.setPermissions(tempFile.path, 0o400); // Set read-only
+      this._openFile(fileMimeInfo, tempFile);
+    };
+
+    const openLocalFile = fileMimeInfo => {
+      const fileHandler = Services.io
+        .getProtocolHandler("file")
+        .QueryInterface(Ci.nsIFileProtocolHandler);
+
+      try {
+        const externalFile = fileHandler.getFileFromURLSpec(this.displayUrl);
+        this._openFile(fileMimeInfo, externalFile);
+      } catch (ex) {
+        console.error(
+          `Open file for ${this.displayUrl} FAILED; ${ex.message}`,
+          ex
+        );
+      }
+    };
+
+    if (!mimeInfo.alwaysAskBeforeHandling) {
+      switch (mimeInfo.preferredAction) {
+        case Ci.nsIHandlerInfo.saveToDisk:
+          if (Services.prefs.getBoolPref("browser.download.useDownloadDir")) {
+            const destFile = new lazy.FileUtils.File(
+              await lazy.Downloads.getPreferredDownloadsDirectory()
+            );
+            destFile.append(name);
+            destFile.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, 0o755);
+            destFile.remove(false);
+            await this.saveToFile(destFile.path);
+          } else {
+            const filePicker = Cc["@mozilla.org/filepicker;1"].createInstance(
+              Ci.nsIFilePicker
+            );
+            filePicker.defaultString = this.name;
+            filePicker.defaultExtension = extension;
+            filePicker.init(
+              win.browsingContext,
+              lazy.messengerBundle.GetStringFromName("SaveAttachment"),
+              Ci.nsIFilePicker.modeSave
+            );
+            const rv = await new Promise(resolve => filePicker.open(resolve));
+            if (rv != Ci.nsIFilePicker.returnCancel) {
+              await this.saveToFile(filePicker.file.path);
+            }
+          }
+          return;
+        case Ci.nsIHandlerInfo.useHelperApp:
+        case Ci.nsIHandlerInfo.useSystemDefault:
+          // Attachments can be detached and, if this is the case, opened from
+          // their location on disk instead of copied to a temporary file.
+          if (this.isExternalAttachment) {
+            openLocalFile(mimeInfo);
+            return;
+          }
+
+          await createTemporaryFileAndOpen(mimeInfo);
+          return;
+      }
+    }
+
+    // Ask what to do, then do it.
+    const appLauncherDialog = Cc[
+      "@mozilla.org/helperapplauncherdialog;1"
+    ].createInstance(Ci.nsIHelperAppLauncherDialog);
+
+    const attachment = this;
+    appLauncherDialog.show(
+      {
+        QueryInterface: ChromeUtils.generateQI(["nsIHelperAppLauncher"]),
+        MIMEInfo: mimeInfo,
+        source: Services.io.newURI(this.url),
+        suggestedFileName: this.name,
+        cancel() {},
+        promptForSaveDestination() {
+          appLauncherDialog.promptForSaveToFileAsync(
+            this,
+            win,
+            this.suggestedFileName,
+            "." + extension, // Dot stripped by promptForSaveToFileAsync.
+            false
+          );
+        },
+        launchLocalFile() {
+          openLocalFile(mimeInfo);
+        },
+        async setDownloadToLaunch() {
+          await createTemporaryFileAndOpen(mimeInfo);
+        },
+        /** @param {nsIFile} file */
+        async saveDestinationAvailable(file) {
+          if (file) {
+            await attachment.saveToFile(file.path);
+          }
+        },
+        setWebProgressListener() {},
+        targetFile: null,
+        targetFileIsExecutable: null,
+        timeDownloadStarted: null,
+        contentLength: this.size,
+        browsingContextId: browsingContext.id,
+      },
+      win,
+      null
+    );
   }
 
   /**
@@ -446,7 +517,7 @@ export class AttachmentInfo {
   /**
    * This method checks whether the attachment has been deleted or not.
    *
-   * @returns true if the attachment has been deleted, false otherwise.
+   * @returns {boolean} true if the attachment has been deleted, false otherwise.
    */
   get isDeleted() {
     return this.contentType == "text/x-moz-deleted";
@@ -455,16 +526,16 @@ export class AttachmentInfo {
   /**
    * This method checks whether the attachment is a detached file.
    *
-   * @returns true if the attachment is a detached file, false otherwise.
+   * @returns {boolean} true if the attachment is a detached file, false otherwise.
    */
   get isFileAttachment() {
-    return this.isExternalAttachment && this.url.startsWith("file:");
+    return this.isExternalAttachment && /^file:\/\/\//.test(this.url);
   }
 
   /**
    * This method checks whether the attachment is an http link.
    *
-   * @returns true if the attachment is an http link, false otherwise.
+   * @returns {boolean} true if the attachment is an http link, false otherwise.
    */
   get isLinkAttachment() {
     return this.isExternalAttachment && /^https?:/.test(this.url);
@@ -475,10 +546,13 @@ export class AttachmentInfo {
    * Deleted attachments or detached attachments with missing external files
    * do *not* have a file.
    *
-   * @returns true if the attachment has an associated file, false otherwise.
+   * @returns {boolean} true if the attachment has an associated file, false otherwise.
    */
   get hasFile() {
     if (this.sizeResolved && this.size == -1) {
+      return false;
+    }
+    if (!this.isAllowedURL) {
       return false;
     }
 
@@ -502,20 +576,64 @@ export class AttachmentInfo {
   }
 
   /**
+   * @returns {boolean} true if this attachment is allowed to be loaded.
+   */
+  get isAllowedURL() {
+    if (!URL.canParse(this.url)) {
+      return false;
+    }
+
+    // const u = new URL(this.url);
+    // if (u.protocol == "file:" && u.hostname) {
+    //   // Bug 1507354 will make this work, and would be a better way of
+    //   // handling the below.
+    //  return false;
+    // }
+
+    if (/^file:\/\/\/[^A-Za-z]/i.test(this.url)) {
+      // Looks like a non-local (remote UNC) file URL. Don't allow that
+      // unless it's been explicitel allowed for that hostname.
+      const allow = Services.prefs
+        .getStringPref("mail.allowed_attachment_hostnames", "")
+        .split(",")
+        .filter(Boolean)
+        .some(h => new RegExp(`^file:\/+${h}/`, "i").test(this.url));
+      if (!allow) {
+        console.warn(
+          `Attachment blocked for UNC path ${this.url}. To unblock, add the hostname to mail.allowed_attachment_hostnames`
+        );
+        return false;
+      }
+      return true;
+    }
+
+    if (this.message && this.message.flags & Ci.nsMsgMessageFlags.FeedMsg) {
+      // Feed enclosures allow only http.
+      return /^https?:/i.test(this.url);
+    }
+
+    // Don't allow http for other cases.
+    return /^(file|data|mailbox|imap|s?news|ews):/i.test(this.url);
+  }
+
+  /**
    * This method checks whether the attachment url location exists and
    * is accessible. For http and file urls, fetch() will have the size
    * in the content-length header.
    *
-   * @returns {Boolean}
-   *   true if the attachment is empty or error, false otherwise.
+   * @returns {boolean} true if the attachment is empty or error.
    */
   async isEmpty() {
     if (this.isDeleted) {
       return true;
     }
 
+    if (!this.isAllowedURL) {
+      return true;
+    }
+
     const isFetchable = url => {
-      let uri = Services.io.newURI(url);
+      const uri = Services.io.newURI(url);
       return !(uri.username || uri.userPass);
     };
 
@@ -530,9 +648,9 @@ export class AttachmentInfo {
 
     let empty = true;
     let size = -1;
-    let options = { method: "GET" };
+    const options = { method: "GET" };
 
-    let request = new Request(this.url, options);
+    const request = new Request(this.url, options);
 
     if (this.isExternalAttachment && this.#updateAttachmentsDisplayFn) {
       this.#updateAttachmentsDisplayFn(this, true);
@@ -574,8 +692,8 @@ export class AttachmentInfo {
           // stream. We only get here if the url is fetchable.
           // The size for internal attachments is not calculated here but
           // will come from libmime.
-          let reader = response.body.getReader();
-          let result = await reader.read();
+          const reader = response.body.getReader();
+          const result = await reader.read();
           reader.cancel();
           size = result && result.value ? result.value.length : -1;
         }
@@ -612,14 +730,15 @@ export class AttachmentInfo {
 
     // The file url is stored in the attachment info part with unix path and
     // needs to be converted to os path for nsIFile.
-    let fileHandler = Services.io
+    const fileHandler = Services.io
       .getProtocolHandler("file")
       .QueryInterface(Ci.nsIFileProtocolHandler);
     try {
       fileHandler.getFileFromURLSpec(this.displayUrl).reveal();
     } catch (ex) {
       console.error(
-        "AttachmentInfo.openFolder: file - " + this.displayUrl + ", " + ex
+        `Open folder for ${this.displayUrl} FAILED; ${ex.message}`,
+        ex
       );
     }
   }

@@ -5,7 +5,7 @@ use std::convert;
 use super::{Error, Result, Statement};
 use crate::types::{FromSql, FromSqlError, ValueRef};
 
-/// An handle for the resulting rows of a query.
+/// A handle (lazy fallible streaming iterator) for the resulting rows of a query.
 #[must_use = "Rows is lazy and will do nothing unless consumed"]
 pub struct Rows<'stmt> {
     pub(crate) stmt: Option<&'stmt Statement<'stmt>>,
@@ -14,9 +14,11 @@ pub struct Rows<'stmt> {
 
 impl<'stmt> Rows<'stmt> {
     #[inline]
-    fn reset(&mut self) {
+    fn reset(&mut self) -> Result<()> {
         if let Some(stmt) = self.stmt.take() {
-            stmt.reset();
+            stmt.reset()
+        } else {
+            Ok(())
         }
     }
 
@@ -29,10 +31,10 @@ impl<'stmt> Rows<'stmt> {
     /// This interface is not compatible with Rust's `Iterator` trait, because
     /// the lifetime of the returned row is tied to the lifetime of `self`.
     /// This is a fallible "streaming iterator". For a more natural interface,
-    /// consider using [`query_map`](crate::Statement::query_map) or
-    /// [`query_and_then`](crate::Statement::query_and_then) instead, which
+    /// consider using [`query_map`](Statement::query_map) or
+    /// [`query_and_then`](Statement::query_and_then) instead, which
     /// return types that implement `Iterator`.
-    #[allow(clippy::should_implement_trait)] // cannot implement Iterator
+    #[expect(clippy::should_implement_trait)] // cannot implement Iterator
     #[inline]
     pub fn next(&mut self) -> Result<Option<&Row<'stmt>>> {
         self.advance()?;
@@ -88,7 +90,7 @@ impl<'stmt> Rows<'stmt> {
 
 impl<'stmt> Rows<'stmt> {
     #[inline]
-    pub(crate) fn new(stmt: &'stmt Statement<'stmt>) -> Rows<'stmt> {
+    pub(crate) fn new(stmt: &'stmt Statement<'stmt>) -> Self {
         Rows {
             stmt: Some(stmt),
             row: None,
@@ -105,6 +107,7 @@ impl<'stmt> Rows<'stmt> {
 }
 
 impl Drop for Rows<'_> {
+    #[expect(unused_must_use)]
     #[inline]
     fn drop(&mut self) {
         self.reset();
@@ -217,12 +220,12 @@ impl<'stmt> FallibleStreamingIterator for Rows<'stmt> {
                     Ok(())
                 }
                 Ok(false) => {
-                    self.reset();
+                    let r = self.reset();
                     self.row = None;
-                    Ok(())
+                    r
                 }
                 Err(e) => {
-                    self.reset();
+                    let _ = self.reset(); // prevents infinite loop on error
                     self.row = None;
                     Err(e)
                 }
@@ -244,10 +247,10 @@ pub struct Row<'stmt> {
     pub(crate) stmt: &'stmt Statement<'stmt>,
 }
 
-impl<'stmt> Row<'stmt> {
+impl Row<'_> {
     /// Get the value of a particular column of the result row.
     ///
-    /// ## Failure
+    /// # Panics
     ///
     /// Panics if calling [`row.get(idx)`](Row::get) would return an error,
     /// including:
@@ -257,6 +260,7 @@ impl<'stmt> Row<'stmt> {
     /// * If the underlying SQLite integral value is outside the range
     ///   representable by `T`
     /// * If `idx` is outside the range of columns in the returned query
+    #[track_caller]
     pub fn get_unwrap<I: RowIndex, T: FromSql>(&self, idx: I) -> T {
         self.get(idx).unwrap()
     }
@@ -277,6 +281,7 @@ impl<'stmt> Row<'stmt> {
     /// If the result type is i128 (which requires the `i128_blob` feature to be
     /// enabled), and the underlying SQLite column is a blob whose size is not
     /// 16 bytes, `Error::InvalidColumnType` will also be returned.
+    #[track_caller]
     pub fn get<I: RowIndex, T: FromSql>(&self, idx: I) -> Result<T> {
         let idx = idx.idx(self.stmt)?;
         let value = self.stmt.value_ref(idx);
@@ -300,7 +305,7 @@ impl<'stmt> Row<'stmt> {
     /// allowing data to be read out of a row without copying.
     ///
     /// This `ValueRef` is valid only as long as this Row, which is enforced by
-    /// it's lifetime. This means that while this method is completely safe,
+    /// its lifetime. This means that while this method is completely safe,
     /// it can be somewhat difficult to use, and most callers will be better
     /// served by [`get`](Row::get) or [`get_unwrap`](Row::get_unwrap).
     ///
@@ -324,39 +329,66 @@ impl<'stmt> Row<'stmt> {
     /// allowing data to be read out of a row without copying.
     ///
     /// This `ValueRef` is valid only as long as this Row, which is enforced by
-    /// it's lifetime. This means that while this method is completely safe,
+    /// its lifetime. This means that while this method is completely safe,
     /// it can be difficult to use, and most callers will be better served by
     /// [`get`](Row::get) or [`get_unwrap`](Row::get_unwrap).
     ///
-    /// ## Failure
+    /// # Panics
     ///
     /// Panics if calling [`row.get_ref(idx)`](Row::get_ref) would return an
     /// error, including:
     ///
     /// * If `idx` is outside the range of columns in the returned query.
     /// * If `idx` is not a valid column name for this row.
+    #[track_caller]
     pub fn get_ref_unwrap<I: RowIndex>(&self, idx: I) -> ValueRef<'_> {
         self.get_ref(idx).unwrap()
-    }
-
-    /// Renamed to [`get_ref`](Row::get_ref).
-    #[deprecated = "Use [`get_ref`](Row::get_ref) instead."]
-    #[inline]
-    pub fn get_raw_checked<I: RowIndex>(&self, idx: I) -> Result<ValueRef<'_>> {
-        self.get_ref(idx)
-    }
-
-    /// Renamed to [`get_ref_unwrap`](Row::get_ref_unwrap).
-    #[deprecated = "Use [`get_ref_unwrap`](Row::get_ref_unwrap) instead."]
-    #[inline]
-    pub fn get_raw<I: RowIndex>(&self, idx: I) -> ValueRef<'_> {
-        self.get_ref_unwrap(idx)
     }
 }
 
 impl<'stmt> AsRef<Statement<'stmt>> for Row<'stmt> {
     fn as_ref(&self) -> &Statement<'stmt> {
         self.stmt
+    }
+}
+
+/// Debug `Row` like an ordered `Map<Result<&str>, Result<(Type, ValueRef)>>`
+/// with column name as key except that for `Type::Blob` only its size is
+/// printed (not its content).
+impl std::fmt::Debug for Row<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut dm = f.debug_map();
+        for c in 0..self.stmt.column_count() {
+            let name = self.stmt.column_name(c).expect("valid column index");
+            dm.key(&name);
+            let value = self.get_ref(c);
+            match value {
+                Ok(value) => {
+                    let dt = value.data_type();
+                    match value {
+                        ValueRef::Null => {
+                            dm.value(&(dt, ()));
+                        }
+                        ValueRef::Integer(i) => {
+                            dm.value(&(dt, i));
+                        }
+                        ValueRef::Real(f) => {
+                            dm.value(&(dt, f));
+                        }
+                        ValueRef::Text(s) => {
+                            dm.value(&(dt, String::from_utf8_lossy(s)));
+                        }
+                        ValueRef::Blob(b) => {
+                            dm.value(&(dt, b.len()));
+                        }
+                    }
+                }
+                Err(ref _err) => {
+                    dm.value(&value);
+                }
+            }
+        }
+        dm.finish()
     }
 }
 
@@ -391,7 +423,7 @@ impl RowIndex for usize {
 impl RowIndex for &'_ str {
     #[inline]
     fn idx(&self, stmt: &Statement<'_>) -> Result<usize> {
-        stmt.column_index(*self)
+        stmt.column_index(self)
     }
 }
 
@@ -406,7 +438,7 @@ macro_rules! tuple_try_from_row {
             fn try_from(row: &'a Row<'a>) -> Result<Self> {
                 let mut index = 0;
                 $(
-                    #[allow(non_snake_case)]
+                    #[expect(non_snake_case)]
                     let $field = row.get::<_, $field>(index)?;
                     index += 1;
                 )*
@@ -431,7 +463,6 @@ tuples_try_from_row!(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P);
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::redundant_closure)] // false positives due to lifetime issues; clippy issue #5594
     use crate::{Connection, Result};
 
     #[test]
@@ -448,7 +479,7 @@ mod tests {
         let val = conn.query_row("SELECT a FROM test", [], |row| <(u32,)>::try_from(row))?;
         assert_eq!(val, (42,));
         let fail = conn.query_row("SELECT a FROM test", [], |row| <(u32, u32)>::try_from(row));
-        assert!(fail.is_err());
+        fail.unwrap_err();
         Ok(())
     }
 
@@ -466,7 +497,7 @@ mod tests {
         let fail = conn.query_row("SELECT a, b FROM test", [], |row| {
             <(u32, u32, u32)>::try_from(row)
         });
-        assert!(fail.is_err());
+        fail.unwrap_err();
         Ok(())
     }
 
@@ -554,6 +585,57 @@ mod tests {
         assert_eq!(val.15, 15);
 
         // We don't test one bigger because it's unimplemented
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "bundled")]
+    fn pathological_case() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE foo(x);
+        CREATE TRIGGER oops BEFORE INSERT ON foo BEGIN SELECT RAISE(FAIL, 'Boom'); END;",
+        )?;
+        let mut stmt = conn.prepare("INSERT INTO foo VALUES (0) RETURNING rowid;")?;
+        {
+            let iterator_count = stmt.query_map([], |_| Ok(()))?.count();
+            assert_eq!(1, iterator_count); // should be 0
+            use fallible_streaming_iterator::FallibleStreamingIterator;
+            let fallible_iterator_count = stmt.query([])?.count().unwrap_or(0);
+            assert_eq!(0, fallible_iterator_count);
+        }
+        {
+            let iterator_last = stmt.query_map([], |_| Ok(()))?.last();
+            assert!(iterator_last.is_some()); // should be none
+            use fallible_iterator::FallibleIterator;
+            let fallible_iterator_last = stmt.query([])?.map(|_| Ok(())).last();
+            assert!(fallible_iterator_last.is_err());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn as_ref() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        let mut stmt = conn.prepare("SELECT 'Lisa' as name, 1 as id")?;
+        let rows = stmt.query([])?;
+        assert_eq!(rows.as_ref().unwrap().column_count(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn debug() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        let mut stmt = conn.prepare(
+            "SELECT 'Lisa' as name, 1 as id, 3.14 as pi, X'53514C697465' as blob, NULL as void",
+        )?;
+        let mut rows = stmt.query([])?;
+        let row = rows.next()?.unwrap();
+        let s = format!("{row:?}");
+        assert_eq!(
+            s,
+            r#"{"name": (Text, "Lisa"), "id": (Integer, 1), "pi": (Real, 3.14), "blob": (Blob, 6), "void": (Null, ())}"#
+        );
         Ok(())
     }
 }

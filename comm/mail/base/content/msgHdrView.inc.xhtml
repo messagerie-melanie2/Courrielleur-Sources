@@ -133,11 +133,9 @@
                      class="toolbarbutton-1 message-header-view-button hdrJunkButton"
                      oncommand="goDoCommand('cmd_markAsJunk');"/>
       <toolbarbutton id="hdrTrashButton"
-                     label="&hdrTrashButton1.label;"
-                     tooltiptext="&hdrTrashButton1.tooltip;"
+                     data-l10n-id="message-header-delete"
                      observes="cmd_delete"
-                     class="toolbarbutton-1 message-header-view-button hdrTrashButton"
-                     oncommand="goDoCommand(event.shiftKey ? 'cmd_shiftDelete' : 'cmd_delete');"/>
+                     class="toolbarbutton-1 message-header-view-button hdrTrashButton"/>
       <toolbarbutton id="otherActionsButton"
                      type="menu"
                      wantdropmarker="true"
@@ -242,28 +240,23 @@
                 class="menu-iconic"
                 label="&bodyMenu.label;">
             <menupopup id="hdrMessageBodyAsDropdown"
-                       class="menu-iconic"
                        onpopupshowing="InitOtherActionsViewBodyMenu();">
               <menuitem id="otherActionsMenu_bodyAllowHTML"
-                        class="menuitem-iconic"
                         type="radio"
                         name="bodyPlaintextVsHTMLPref"
                         label="&bodyAllowHTML.label;"
                         oncommand="top.MsgBodyAllowHTML()"/>
               <menuitem id="otherActionsMenu_bodySanitized"
-                        class="menuitem-iconic"
                         type="radio"
                         name="bodyPlaintextVsHTMLPref"
                         label="&bodySanitized.label;"
                         oncommand="top.MsgBodySanitized()"/>
               <menuitem id="otherActionsMenu_bodyAsPlaintext"
-                        class="menuitem-iconic"
                         type="radio"
                         name="bodyPlaintextVsHTMLPref"
                         label="&bodyAsPlaintext.label;"
                         oncommand="top.MsgBodyAsPlaintext()"/>
               <menuitem id="otherActionsMenu_bodyAllParts"
-                        class="menuitem-iconic"
                         type="radio"
                         name="bodyPlaintextVsHTMLPref"
                         label="&bodyAllParts.label;"
@@ -274,24 +267,20 @@
                 class="menu-iconic"
                 label="&bodyMenu.label;">
             <menupopup id="hdrFeedBodyAsDropdown"
-                       class="menu-iconic"
-                       onpopupshowing="InitOtherActionsViewBodyMenu();">
+                       onpopupshowing="InitOtherActionsViewBodyMenu(true);">
               <menuitem id="otherActionsMenu_bodyFeedGlobalWebPage"
-                        class="menuitem-iconic"
                         type="radio"
                         name="viewFeedSummaryGroup"
                         label="&viewFeedWebPage.label;"
                         observes="bodyFeedGlobalWebPage"
                         oncommand="FeedMessageHandler.onSelectPref = 0"/>
               <menuitem id="otherActionsMenu_bodyFeedGlobalSummary"
-                        class="menuitem-iconic"
                         type="radio"
                         name="viewFeedSummaryGroup"
                         label="&viewFeedSummary.label;"
                         observes="bodyFeedGlobalSummary"
                         oncommand="FeedMessageHandler.onSelectPref = 1"/>
               <menuitem id="otherActionsMenu_bodyFeedPerFolderPref"
-                        class="menuitem-iconic"
                         type="radio"
                         name="viewFeedSummaryGroup"
                         label="&viewFeedSummaryFeedPropsPref.label;"
@@ -299,23 +288,20 @@
                         oncommand="FeedMessageHandler.onSelectPref = 2"/>
               <menuseparator id="otherActionsMenu_viewFeedSummarySeparator"/>
               <menuitem id="otherActionsMenu_bodyFeedSummaryAllowHTML"
-                        class="menuitem-iconic"
                         type="radio"
                         name="viewFeedBodyHTMLGroup"
                         label="&bodyAllowHTML.label;"
-                        oncommand="top.MsgFeedBodyRenderPrefs(false, 0, 0)"/>
+                        oncommand="top.MsgBodyAllowHTML()"/>
               <menuitem id="otherActionsMenu_bodyFeedSummarySanitized"
-                        class="menuitem-iconic"
                         type="radio"
                         name="viewFeedBodyHTMLGroup"
                         label="&bodySanitized.label;"
-                        oncommand="top.MsgFeedBodyRenderPrefs(false, 3, gDisallow_classes_no_html)"/>
+                        oncommand="top.MsgBodySanitized()"/>
               <menuitem id="otherActionsMenu_bodyFeedSummaryAsPlaintext"
-                        class="menuitem-iconic"
                         type="radio"
                         name="viewFeedBodyHTMLGroup"
                         label="&bodyAsPlaintext.label;"
-                        oncommand="top.MsgFeedBodyRenderPrefs(true, 1, gDisallow_classes_no_html)"/>
+                        oncommand="top.MsgBodyAsPlaintext()"/>
             </menupopup>
           </menu>
           <menuseparator/>
@@ -433,6 +419,13 @@
                class="message-header-datetime"
                aria-readonly="true"
                hidden="hidden"></html:time>
+    <html:div id="darkReaderToggle" xmlns="http://www.w3.org/1999/xhtml">
+      <label for="disableDarkReader" class="toggle-label">
+        <input id="disableDarkReader"
+               type="checkbox"
+               class="toggle-checkbox toggle-checkbox-sm dark-reader-toggle" />
+      </label>
+    </html:div>
   </html:div>
 
   <!-- Tags -->
@@ -451,7 +444,7 @@
               data-header-name="date"></html:div>
   </html:div>
 
-  <!-- Message ID -->
+  <!-- Message-ID -->
   <html:div id="expandedmessage-idRow" class="message-header-row" hidden="hidden">
     <label id="expandedmessage-idLabel" class="message-header-label header-pill-label"
            value="&messageIdField4.label;"/>
@@ -459,7 +452,7 @@
               data-header-name="message-id"></html:div>
   </html:div>
 
-  <!-- In reply to -->
+  <!-- In-Reply-To -->
   <html:div id="expandedin-reply-toRow" class="message-header-row" hidden="hidden">
     <label id="expandedin-reply-toLabel" class="message-header-label header-pill-label"
            value="&inReplyToField4.label;"/>
@@ -467,7 +460,7 @@
               data-header-name="in-reply-to"></html:div>
   </html:div>
 
-  <!-- Reference -->
+  <!-- References -->
   <html:div id="expandedreferencesRow" class="message-header-row" hidden="hidden">
     <label id="expandedreferencesLabel" class="message-header-label header-pill-label"
            value="&referencesField4.label;"/>
@@ -475,7 +468,7 @@
               data-header-name="references"></html:div>
   </html:div>
 
-  <!-- Content base -->
+  <!-- Content-Base -->
   <html:div id="expandedcontent-baseRow" class="message-header-row" hidden="hidden">
     <label id="expandedcontent-baseLabel" class="message-header-label"
            value="&originalWebsite4.label;"/>
@@ -483,12 +476,69 @@
               data-header-name="content-base"></html:div>
   </html:div>
 
-  <!-- User agent -->
+  <!-- User-Agent -->
   <html:div id="expandeduser-agentRow" class="message-header-row" hidden="hidden">
     <label id="expandeduser-agentLabel" class="message-header-label"
            value="&userAgentField4.label;"/>
     <html:div id="expandeduser-agentBox" is="simple-header-row"
               data-header-name="user-agent"></html:div>
+  </html:div>
+
+  <!-- List management -->
+  <html:div id="expandedlist-id" class="message-header-row" hidden="hidden">
+    <html:div id="expandedlist-idLabel" data-l10n-id="message-header-list-id"
+              class="message-header-label"></html:div>
+    <html:div id="expandedlist-idBox" is="list-id-header-row"
+              data-header-name="list-id"></html:div>
+  </html:div>
+  <!-- List-Help -->
+  <html:div id="expandedlist-help" class="message-header-row" hidden="hidden">
+    <html:div id="expandedlist-helpLabel" data-l10n-id="message-header-list-help"
+              class="message-header-label"></html:div>
+    <html:div id="expandedlist-helpBox" is="multi-url-header-row"
+              data-header-name="list-help"></html:div>
+  </html:div>
+  <!-- List-Unsubscribe -->
+  <html:div id="expandedlist-unsubscribe" class="message-header-row" hidden="hidden">
+    <html:div id="expandedlist-unsubscribeLabel" data-l10n-id="message-header-list-unsubscribe"
+              class="message-header-label"></html:div>
+    <html:div id="expandedlist-unsubscribeBox" is="multi-url-header-row"
+              data-header-name="list-unsubscribe"></html:div>
+  </html:div>
+  <!-- List-Subscribe -->
+  <html:div id="expandedlist-subscribe" class="message-header-row" hidden="hidden">
+    <html:div id="expandedlist-subscribeLabel" data-l10n-id="message-header-list-subscribe"
+              class="message-header-label"></html:div>
+    <html:div id="expandedlist-subscribeBox" is="multi-url-header-row"
+              data-header-name="list-subscribe"></html:div>
+  </html:div>
+  <!-- List-Post -->
+  <html:div id="expandedlist-post" class="message-header-row" hidden="hidden">
+    <html:div id="expandedlist-postLabel" data-l10n-id="message-header-list-post"
+              class="message-header-label"></html:div>
+    <html:div id="expandedlist-postBox" is="multi-url-header-row"
+              data-header-name="list-post"></html:div>
+  </html:div>
+  <!-- List-Owner -->
+  <html:div id="expandedlist-owner" class="message-header-row" hidden="hidden">
+    <html:div id="expandedlist-ownerLabel" data-l10n-id="message-header-list-owner"
+              class="message-header-label"></html:div>
+    <html:div id="expandedlist-ownerBox" is="multi-url-header-row"
+              data-header-name="list-owner"></html:div>
+  </html:div>
+  <!-- List-Archive -->
+  <html:div id="expandedlist-archive" class="message-header-row" hidden="hidden">
+    <html:div id="expandedlist-archiveLabel" data-l10n-id="message-header-list-archive"
+              class="message-header-label"></html:div>
+    <html:div id="expandedlist-archiveBox" is="multi-url-header-row"
+              data-header-name="list-archive"></html:div>
+  </html:div>
+  <!-- Archived-At -->
+  <html:div id="expandedarchived-at" class="message-header-row" hidden="hidden">
+    <html:div id="expandedarchived-atLabel" data-l10n-id="message-header-archived-at"
+              class="message-header-label"></html:div>
+    <html:div id="expandedarchived-atBox" is="multi-url-header-row"
+              data-header-name="archived-at"></html:div>
   </html:div>
 
   <!-- All extra headers will be dynamically added here. -->
@@ -545,6 +595,10 @@
         <checkbox id="headerViewAllHeaders"
                   data-l10n-id="message-header-all-headers"
                   oncommand="gHeaderCustomize.toggleAllHeaders(event);"/>
+
+        <checkbox id="headerShowDarkToggle"
+                  data-l10n-id="message-header-dark-message-toggle"
+                  oncommand="gHeaderCustomize.toggleDarkToggle(event);"/>
       </html:div>
     </html:div>
 

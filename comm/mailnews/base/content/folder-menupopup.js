@@ -11,27 +11,16 @@
 
 // Wrap in a block to prevent leaking to window scope.
 {
-  const { MailServices } = ChromeUtils.import(
-    "resource:///modules/MailServices.jsm"
+  const { MailServices } = ChromeUtils.importESModule(
+    "resource:///modules/MailServices.sys.mjs"
   );
 
-  const LazyModules = {};
-
-  ChromeUtils.defineModuleGetter(
-    LazyModules,
-    "FeedUtils",
-    "resource:///modules/FeedUtils.jsm"
-  );
-  ChromeUtils.defineModuleGetter(
-    LazyModules,
-    "FolderUtils",
-    "resource:///modules/FolderUtils.jsm"
-  );
-  ChromeUtils.defineModuleGetter(
-    LazyModules,
-    "MailUtils",
-    "resource:///modules/MailUtils.jsm"
-  );
+  const lazy = {};
+  ChromeUtils.defineESModuleGetters(lazy, {
+    FeedUtils: "resource:///modules/FeedUtils.sys.mjs",
+    FolderUtils: "resource:///modules/FolderUtils.sys.mjs",
+    MailUtils: "resource:///modules/MailUtils.sys.mjs",
+  });
 
   /**
    * Creates an element, sets attributes on it, including always setting the
@@ -64,7 +53,7 @@
    * @param {Class} Base - A class to be extended with shared functionality.
    * @returns {Class} A class that extends the first class.
    */
-  let FolderMenu = Base =>
+  const FolderMenu = Base =>
     class extends Base {
       constructor() {
         super();
@@ -144,7 +133,7 @@
 
           // Folders that are not in a deferred account.
           notDeferred(folder) {
-            let server = folder.server;
+            const server = folder.server;
             return !(
               server instanceof Ci.nsIPop3IncomingServer &&
               server.deferredToAccount
@@ -225,16 +214,18 @@
           onFolderAdded(parentFolder, child) {
             this._folderAddedOrRemoved(child);
           },
-          onMessageAdded(parentFolder, msg) {},
+          onMessageAdded() {},
           onFolderRemoved(parentFolder, child) {
             this._folderAddedOrRemoved(child);
           },
-          onMessageRemoved(parentFolder, msg) {},
+          onMessageRemoved() {},
 
           // xxx I stole this listener list from nsMsgFolderDatasource.cpp, but
           // someone should really document what events are fired when, so that
           // we make sure we're updating at the right times.
-          onFolderPropertyChanged(item, property, old, newItem) {},
+          onFolderPropertyChanged(item) {
+            this._setCssSelectorsForItem(item);
+          },
           onFolderIntPropertyChanged(item, property, old, aNew) {
             if (item instanceof Ci.nsIMsgFolder) {
               if (property == "FolderFlag") {
@@ -255,13 +246,10 @@
             }
             this._setCssSelectorsForItem(item);
           },
-          onFolderBoolPropertyChanged(item, property, old, newItem) {
+          onFolderBoolPropertyChanged(item) {
             this._setCssSelectorsForItem(item);
           },
-          onFolderUnicharPropertyChanged(item, property, old, newItem) {
-            this._setCssSelectorsForItem(item);
-          },
-          onFolderPropertyFlagChanged(item, property, old, newItem) {},
+          onFolderPropertyFlagChanged() {},
 
           onFolderEvent(folder, eventName) {
             if (eventName == "MRMTimeChanged") {
@@ -314,7 +302,7 @@
             ) {
               return null;
             }
-            for (let child of menu.childWrapper.children) {
+            for (const child of menu.childWrapper.children) {
               if (child._folder && child._folder.URI == item.URI) {
                 return child;
               }
@@ -386,7 +374,7 @@
         // note on the _filters field. (Note: empty strings ("") are falsy in JS.)
         const mode = this.getAttribute("mode");
 
-        const filterFunction = mode ? this._filters[mode] : folder => true;
+        const filterFunction = mode ? this._filters[mode] : () => true;
 
         const folders = this._getFolders(
           this._parentFolder,
@@ -425,7 +413,7 @@
           // If we don't have a parent, then we assume we should build the
           // top-level accounts. (Actually we build the fake root folders for
           // those accounts.)
-          let accounts = LazyModules.FolderUtils.allAccountsSorted(true);
+          const accounts = lazy.FolderUtils.allAccountsSorted(true);
 
           // Now generate our folder list. Note that we'll special case this
           // situation elsewhere, to avoid destroying the sort order we just made.
@@ -461,7 +449,7 @@
           if (mode == "deferred") {
             globalInboxFolder =
               MailServices.accounts.localFoldersServer.rootFolder;
-            let localFoldersIndex = folders.indexOf(globalInboxFolder);
+            const localFoldersIndex = folders.indexOf(globalInboxFolder);
             if (localFoldersIndex != -1) {
               folders.splice(localFoldersIndex, 1);
               folders.unshift(globalInboxFolder);
@@ -526,8 +514,7 @@
         const folderURI = Services.prefs.getStringPref(
           "mail.last_msg_movecopy_target_uri"
         );
-        const folder =
-          folderURI && LazyModules.MailUtils.getExistingFolder(folderURI);
+        const folder = folderURI && lazy.MailUtils.getExistingFolder(folderURI);
         if (!folder) {
           return;
         }
@@ -549,7 +536,7 @@
        * @param {Element} submenu - The submenu element, typically a menupopup.
        */
       _populateSpecialSubmenu(menu, submenu) {
-        let specialType = menu.getAttribute("special");
+        const specialType = menu.getAttribute("special");
         if (this._initializedSpecials.has(specialType)) {
           return;
         }
@@ -565,7 +552,7 @@
         switch (specialType) {
           case "recent":
             // Find the most recently modified ones.
-            specialFolders = LazyModules.FolderUtils.getMostRecentFolders(
+            specialFolders = lazy.FolderUtils.getMostRecentFolders(
               specialFolders,
               Services.prefs.getIntPref("mail.folder_widget.max_recent"),
               "MRMTime"
@@ -580,7 +567,7 @@
 
         // Cache the pretty names so that they do not need to be fetched
         // with quadratic complexity when sorting by name.
-        let specialFoldersMap = specialFolders.map(folder => {
+        const specialFoldersMap = specialFolders.map(folder => {
           return {
             folder,
             name: folder.prettyName,
@@ -589,7 +576,7 @@
 
         // Because we're scanning across multiple accounts, we can end up with
         // several folders with the same name. Find those dupes.
-        let dupeNames = new Set();
+        const dupeNames = new Set();
         for (let i = 0; i < specialFoldersMap.length; i++) {
           for (let j = i + 1; j < specialFoldersMap.length; j++) {
             if (specialFoldersMap[i].name == specialFoldersMap[j].name) {
@@ -598,7 +585,7 @@
           }
         }
 
-        for (let folderItem of specialFoldersMap) {
+        for (const folderItem of specialFoldersMap) {
           // If this folder name appears multiple times in the recent list,
           // append the server name to disambiguate.
           // TODO:
@@ -616,12 +603,12 @@
 
         // Make sure the entries are sorted alphabetically.
         specialFoldersMap.sort((a, b) =>
-          LazyModules.FolderUtils.folderNameCompare(a.label, b.label)
+          lazy.FolderUtils.folderNameCompare(a.label, b.label)
         );
 
         // Create entries for each of the recent folders.
-        for (let folderItem of specialFoldersMap) {
-          let attributes = {
+        for (const folderItem of specialFoldersMap) {
+          const attributes = {
             label: folderItem.label,
             ...this._getCssSelectorAttributes(folderItem.folder),
           };
@@ -655,12 +642,14 @@
        * @param {string} mode - The mode attribute.
        */
       _maybeAddParentFolderMenuItem(mode) {
-        let folder = this._parentFolder;
+        const folder = this._parentFolder;
         if (
           folder &&
           (this.getAttribute("showFileHereLabel") == "true" || !mode)
         ) {
-          let showAccountsFileHere = this.getAttribute("showAccountsFileHere");
+          const showAccountsFileHere = this.getAttribute(
+            "showAccountsFileHere"
+          );
           if (
             (!folder.isServer || showAccountsFileHere != "false") &&
             (!mode ||
@@ -669,7 +658,7 @@
               folder.canFileMessages ||
               showAccountsFileHere == "true")
           ) {
-            let attributes = {};
+            const attributes = {};
 
             if (this.hasAttribute("fileHereLabel")) {
               attributes.label = this.getAttribute("fileHereLabel");
@@ -706,17 +695,17 @@
 
         // We need to call this, or hasSubFolders will always return false.
         // Remove this workaround when Bug 502900 is fixed.
-        LazyModules.MailUtils.discoverFolders();
+        lazy.MailUtils.discoverFolders();
         this._serversOnly = true;
 
-        let [shouldExpand, labels] = this._getShouldExpandAndLabels();
+        const [shouldExpand, labels] = this._getShouldExpandAndLabels();
 
-        for (let folder of folders) {
+        for (const folder of folders) {
           if (!folder.isServer) {
             this._serversOnly = false;
           }
 
-          let attributes = {
+          const attributes = {
             label: this._getFolderLabel(mode, globalInboxFolder, folder),
             ...this._getCssSelectorAttributes(folder),
           };
@@ -737,7 +726,7 @@
 
             this._serversOnly = false;
 
-            let submenuAttributes = {};
+            const submenuAttributes = {};
 
             [
               "class",
@@ -823,15 +812,15 @@
           // to create headers to select the servers. If so, then headlabels
           // is a comma-delimited list of labels corresponding to the server
           // types specified in expandFolders.
-          let types = this.getAttribute("expandFolders").split(/ *, */);
+          const types = this.getAttribute("expandFolders").split(/ *, */);
           // Set the labels. labels[type] = label
           if (this.hasAttribute("headlabels")) {
-            let labelNames = this.getAttribute("headlabels").split(/ *, */);
+            const labelNames = this.getAttribute("headlabels").split(/ *, */);
             labels = {};
             // If the length isn't equal, don't give them any of the labels,
             // since any combination will probably be wrong.
             if (labelNames.length == types.length) {
-              for (let index in types) {
+              for (const index in types) {
                 labels[types[index]] = labelNames[index];
               }
             }
@@ -864,15 +853,15 @@
        * @returns {object} Contains the CSS selector attributes.
        */
       _getCssSelectorAttributes(folder) {
-        let attributes = {};
+        const attributes = {};
 
         // First the SpecialFolder attribute.
         attributes.SpecialFolder =
-          LazyModules.FolderUtils.getSpecialFolderString(folder);
+          lazy.FolderUtils.getSpecialFolderString(folder);
 
         // Now the biffState.
-        let biffStates = ["NewMail", "NoMail", "UnknownMail"];
-        for (let state of biffStates) {
+        const biffStates = ["NewMail", "NoMail", "UnknownMail"];
+        for (const state of biffStates) {
           if (folder.biffState == Ci.nsIMsgFolder["nsMsgBiffState_" + state]) {
             attributes.BiffState = state;
             break;
@@ -882,8 +871,7 @@
         attributes.IsServer = folder.isServer;
         attributes.IsSecure = folder.server.isSecure;
         attributes.ServerType = folder.server.type;
-        attributes.IsFeedFolder =
-          !!LazyModules.FeedUtils.getFeedUrlsInFolder(folder);
+        attributes.IsFeedFolder = !!lazy.FeedUtils.getFeedUrlsInFolder(folder);
 
         return attributes;
       }
@@ -912,9 +900,7 @@
         }
 
         if (this._displayformat == "path") {
-          return (
-            LazyModules.FeedUtils.getFolderPrettyPath(folder) || folder.name
-          );
+          return lazy.FeedUtils.getFolderPrettyPath(folder) || folder.name;
         }
 
         return folder.name;
@@ -934,7 +920,7 @@
       selectFolder(inputFolder) {
         // Set the label of the menulist element as if folder had been selected.
         function setupParent(folder, menulist, noFolders) {
-          let menupopup = menulist.menupopup;
+          const menupopup = menulist.menupopup;
           if (folder) {
             menulist.setAttribute("label", menupopup.getDisplayName(folder));
           } else if (noFolders) {
@@ -965,19 +951,17 @@
           );
           menulist.setAttribute(
             "SpecialFolder",
-            folder
-              ? LazyModules.FolderUtils.getSpecialFolderString(folder)
-              : "none"
+            folder ? lazy.FolderUtils.getSpecialFolderString(folder) : "none"
           );
           menulist.setAttribute(
             "IsFeedFolder",
-            Boolean(folder && LazyModules.FeedUtils.getFeedUrlsInFolder(folder))
+            Boolean(folder && lazy.FeedUtils.getFeedUrlsInFolder(folder))
           );
         }
 
         let folder;
         if (inputFolder) {
-          for (let child of this.children) {
+          for (const child of this.children) {
             if (
               child &&
               child._folder &&
@@ -1057,7 +1041,7 @@
    *
    * @augments {MozElements.MozMenuPopup}
    */
-  let MozFolderMenuPopup = FolderMenu(
+  const MozFolderMenuPopup = FolderMenu(
     class extends MozElements.MozMenuPopup {
       constructor() {
         super();
@@ -1065,7 +1049,7 @@
         // To improve performance, only build the menu when it is shown.
         this.addEventListener(
           "popupshowing",
-          event => {
+          () => {
             this._ensureInitialized();
           },
           true
@@ -1221,7 +1205,7 @@
 
         menupopup.addEventListener(
           "popupshowing",
-          event => {
+          () => {
             this._populateSpecialSubmenu(menu, menupopup);
           },
           { once: true }

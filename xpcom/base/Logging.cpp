@@ -6,12 +6,11 @@
 
 #include "mozilla/Logging.h"
 
-#include <algorithm>
-
 #include "base/process_util.h"
 #include "GeckoProfiler.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/FileUtils.h"
+#include "mozilla/GeckoTrace.h"
 #include "mozilla/LateWriteChecks.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/StaticPtr.h"
@@ -27,6 +26,7 @@
 #include "NSPRLogModulesParser.h"
 #include "nsXULAppAPI.h"
 #include "LogCommandLineHandler.h"
+#include "fmt/format.h"
 
 #include "prenv.h"
 #ifdef XP_WIN
@@ -41,7 +41,7 @@
 // NB: Amount determined by performing a typical browsing session and finding
 //     the maximum number of modules instantiated, and padding up to the next
 //     power of 2.
-const uint32_t kInitialModuleCount = 256;
+const uint32_t kInitialModuleCount = 1024;
 // When rotate option is added to the modules list, this is the hardcoded
 // number of files we create and rotate.  When there is rotate:40,
 // we will keep four files per process, each limited to 10MB.  Sum is 40MB,
@@ -72,12 +72,6 @@ void log_print(const LogModule* aModule, LogLevel aLevel, TimeStamp* aStart,
 }
 
 }  // namespace detail
-
-LogLevel ToLogLevel(int32_t aLevel) {
-  aLevel = std::min(aLevel, static_cast<int32_t>(LogLevel::Verbose));
-  aLevel = std::max(aLevel, static_cast<int32_t>(LogLevel::Disabled));
-  return static_cast<LogLevel>(aLevel);
-}
 
 static const char* ToLogStr(LogLevel aLevel) {
   switch (aLevel) {
@@ -176,14 +170,14 @@ bool LimitFileToLessThanSize(const char* aFilename, uint32_t aSize,
       return false;
     }
 
-    if (fseek(file, 0, SEEK_END)) {
+    if (fseek(file.get(), 0, SEEK_END)) {
       // If we can't seek for some reason, better to just not limit the log at
       // all and hope to sort out large logs upon further analysis.
       return false;
     }
 
     // `ftell` returns a positive `long`, which might be more than 32 bits.
-    uint64_t fileSize = static_cast<uint64_t>(ftell(file));
+    uint64_t fileSize = static_cast<uint64_t>(ftell(file.get()));
 
     if (fileSize <= aSize) {
       return true;
@@ -192,14 +186,14 @@ bool LimitFileToLessThanSize(const char* aFilename, uint32_t aSize,
     uint64_t minBytesToDrop = fileSize - aSize;
     uint64_t numBytesDropped = 0;
 
-    if (fseek(file, 0, SEEK_SET)) {
+    if (fseek(file.get(), 0, SEEK_SET)) {
       // Same as above: if we can't seek, hope for the best.
       return false;
     }
 
     ScopedCloseFile temp;
 
-#if defined(OS_WIN)
+#if defined(XP_WIN)
     // This approach was cribbed from
     // https://searchfox.org/mozilla-central/rev/868935867c6241e1302e64cf9be8f56db0fd0d1c/xpcom/build/LateWriteChecks.cpp#158.
     HANDLE hFile;
@@ -222,7 +216,7 @@ bool LimitFileToLessThanSize(const char* aFilename, uint32_t aSize,
     }
 
     temp.reset(_fdopen(fd, "ab"));
-#elif defined(OS_POSIX)
+#elif defined(XP_UNIX)
 
     // Coverity would prefer us to set a secure umask before using `mkstemp`.
     // However, the umask is process-wide, so setting it may lead to difficult
@@ -250,11 +244,12 @@ bool LimitFileToLessThanSize(const char* aFilename, uint32_t aSize,
     // `fgets` always null terminates.  If the line is too long, it won't
     // include a trailing '\n' but will be null-terminated.
     UniquePtr<char[]> line = MakeUnique<char[]>(aLongLineSize + 1);
-    while (fgets(line.get(), aLongLineSize + 1, file)) {
+    while (fgets(line.get(), aLongLineSize + 1, file.get())) {
       if (numBytesDropped >= minBytesToDrop) {
-        if (fputs(line.get(), temp) < 0) {
+        if (fputs(line.get(), temp.get()) < 0) {
           NS_WARNING(
-              nsPrintfCString("fputs failed: ferror %d\n", ferror(temp)).get());
+              nsPrintfCString("fputs failed: ferror %d\n", ferror(temp.get()))
+                  .get());
           failedToWrite = true;
           break;
         }
@@ -273,13 +268,13 @@ bool LimitFileToLessThanSize(const char* aFilename, uint32_t aSize,
     return false;
   }
 
-#if defined(OS_WIN)
+#if defined(XP_WIN)
   if (!::ReplaceFileA(aFilename, tempFilename, nullptr, 0, 0, 0)) {
     NS_WARNING(
         nsPrintfCString("ReplaceFileA failed: %lu\n", GetLastError()).get());
     return false;
   }
-#elif defined(OS_POSIX)
+#elif defined(XP_UNIX)
   if (rename(tempFilename, aFilename)) {
     NS_WARNING(
         nsPrintfCString("rename failed: %s (%d)\n", strerror(errno), errno)
@@ -584,12 +579,43 @@ class LogModuleManager {
              va_list aArgs) MOZ_FORMAT_PRINTF(4, 0) {
     Print(aName, aLevel, nullptr, "", aFmt, aArgs);
   }
+  void PrintFmt(const char* aName, LogLevel aLevel, fmt::string_view aFmt,
+                fmt::format_args aArgs) {
+    PrintFmt(aName, aLevel, nullptr, "", aFmt, aArgs);
+  }
+
+  void PrintFmt(const char* aName, LogLevel aLevel, const TimeStamp* aStart,
+                const char* aPrepend, fmt::string_view aFmt,
+                fmt::format_args aArgs) {
+    AutoSuspendLateWriteChecks suspendLateWriteChecks;
+    const size_t kBuffSize = 1024;
+    char buff[kBuffSize];
+
+    char* buffToWrite = buff;
+    UniquePtr<char[]> allocatedBuff;
+    size_t charsWritten;
+
+    auto [out, size] = fmt::vformat_to_n(buff, kBuffSize - 1, aFmt, aArgs);
+    *out = '\0';
+    charsWritten = size;
+
+    // We may have maxed out, allocate a buffer and re-format
+    if (charsWritten > kBuffSize) {
+      allocatedBuff = MakeUnique<char[]>(charsWritten + 1);  // + final \0
+      auto [out, size] =
+          fmt::vformat_to_n(allocatedBuff.get(), charsWritten, aFmt, aArgs);
+      MOZ_ASSERT(size == charsWritten);
+      *out = '\0';
+      buffToWrite = allocatedBuff.get();
+    }
+    ++charsWritten;  // + final \0
+    ActuallyLog(aName, aLevel, aStart, aPrepend, buffToWrite, charsWritten);
+  }
 
   void Print(const char* aName, LogLevel aLevel, const TimeStamp* aStart,
              const char* aPrepend, const char* aFmt, va_list aArgs)
       MOZ_FORMAT_PRINTF(6, 0) {
     AutoSuspendLateWriteChecks suspendLateWriteChecks;
-    long pid = static_cast<long>(base::GetCurrentProcId());
     const size_t kBuffSize = 1024;
     char buff[kBuffSize];
 
@@ -615,7 +641,13 @@ class LogModuleManager {
       buffToWrite = allocatedBuff.get();
       charsWritten = strlen(buffToWrite);
     }
+    ActuallyLog(aName, aLevel, aStart, aPrepend, buffToWrite, charsWritten);
+  }
 
+  void ActuallyLog(const char* aName, LogLevel aLevel, const TimeStamp* aStart,
+                   const char* aPrepend, const char* aLogMessage,
+                   size_t aLogMessageSize) {
+    long pid = static_cast<long>(base::GetCurrentProcId());
     if (profiler_thread_is_being_profiled_for_markers()) {
       struct LogMarker {
         static constexpr Span<const char> MarkerTypeName() {
@@ -647,12 +679,12 @@ class LogModuleManager {
                   : MarkerTiming::InstantNow(),
            MarkerStack::MaybeCapture(mCaptureProfilerStack)},
           LogMarker{}, ProfilerString8View::WrapNullTerminatedString(aName),
-          ProfilerString8View::WrapNullTerminatedString(buffToWrite));
+          ProfilerString8View::WrapNullTerminatedString(aLogMessage));
     }
 
     // Determine if a newline needs to be appended to the message.
     const char* newline = "";
-    if (charsWritten == 0 || buffToWrite[charsWritten - 1] != '\n') {
+    if (aLogMessageSize == 0 || aLogMessage[aLogMessageSize - 1] != '\n') {
       newline = "\n";
     }
 
@@ -689,10 +721,10 @@ class LogModuleManager {
       if (!mIsRaw) {
         fprintf_stderr(out, "%s[%s %ld: %s]: %s/%s %s%s", aPrepend,
                        nsDebugImpl::GetMultiprocessMode(), pid,
-                       currentThreadName, ToLogStr(aLevel), aName, buffToWrite,
+                       currentThreadName, ToLogStr(aLevel), aName, aLogMessage,
                        newline);
       } else {
-        fprintf_stderr(out, "%s%s%s", aPrepend, buffToWrite, newline);
+        fprintf_stderr(out, "%s%s%s", aPrepend, aLogMessage, newline);
       }
     } else {
       if (aStart) {
@@ -716,7 +748,7 @@ class LogModuleManager {
             start.tm_hour, start.tm_min, start.tm_sec, start.tm_usec,
             now.tm_hour, now.tm_min, now.tm_sec, now.tm_usec,
             duration.ToMilliseconds(), nsDebugImpl::GetMultiprocessMode(), pid,
-            currentThreadName, ToLogStr(aLevel), aName, buffToWrite, newline);
+            currentThreadName, ToLogStr(aLevel), aName, aLogMessage, newline);
       } else {
         PRExplodedTime now;
         PR_ExplodeTime(PR_Now(), PR_GMTParameters, &now);
@@ -726,7 +758,7 @@ class LogModuleManager {
                        aPrepend, now.tm_year, now.tm_month + 1, now.tm_mday,
                        now.tm_hour, now.tm_min, now.tm_sec, now.tm_usec,
                        nsDebugImpl::GetMultiprocessMode(), pid,
-                       currentThreadName, ToLogStr(aLevel), aName, buffToWrite,
+                       currentThreadName, ToLogStr(aLevel), aName, aLogMessage,
                        newline);
       }
     }
@@ -770,6 +802,13 @@ class LogModuleManager {
       // only once on one thread.
       detail::LogFile* release = mToReleaseFile.exchange(nullptr);
       delete release;
+    }
+  }
+
+  void DisableModules() {
+    OffTheBooksMutexAutoLock guard(mModulesLock);
+    for (auto& m : mModules) {
+      (*(m.GetModifiableData()))->SetLevel(LogLevel::Disabled);
     }
   }
 
@@ -840,6 +879,8 @@ void LogModule::SetCaptureStacks(bool aCaptureStacks) {
   sLogModuleManager->SetCaptureStacks(aCaptureStacks);
 }
 
+void LogModule::DisableModules() { sLogModuleManager->DisableModules(); }
+
 // This function is defined in gecko_logger/src/lib.rs
 // We mirror the level in rust code so we don't get forwarded all of the
 // rust logging and have to create an LogModule for each rust component.
@@ -853,6 +894,13 @@ void LogModule::SetLevel(LogLevel level) {
   // to Gecko.
   if (strstr(mName, "::")) {
     set_rust_log_level(mName, static_cast<uint8_t>(level));
+  }
+
+  // The following enables the propagation of runtime-set log levels (for
+  // example configured via `about:logging`) from the Mozilla logging system to
+  // OpenTelemetry's internal logging mechanism.
+  if (strcmp(mName, "opentelemetry") == 0) {
+    gecko_trace::SetOpenTelemetryInternalLogLevel(level);
   }
 }
 
@@ -890,6 +938,14 @@ void LogModule::Printv(LogLevel aLevel, const TimeStamp* aStart,
 
   // Forward to LogModule manager w/ level and name
   sLogModuleManager->Print(Name(), aLevel, aStart, "", aFmt, aArgs);
+}
+
+void LogModule::PrintvFmt(LogLevel aLevel, fmt::string_view aFmt,
+                          fmt::format_args aArgs) const {
+  MOZ_ASSERT(sLogModuleManager != nullptr);
+
+  // Forward to LogModule manager w/ level and name
+  sLogModuleManager->PrintFmt(Name(), aLevel, aFmt, aArgs);
 }
 
 }  // namespace mozilla

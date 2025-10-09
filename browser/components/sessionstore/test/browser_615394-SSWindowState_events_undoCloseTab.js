@@ -5,7 +5,7 @@ const testState = {
     {
       tabs: [
         { entries: [{ url: "about:blank", triggeringPrincipal_base64 }] },
-        { entries: [{ url: "about:rights", triggeringPrincipal_base64 }] },
+        { entries: [{ url: "about:robots", triggeringPrincipal_base64 }] },
       ],
     },
   ],
@@ -24,11 +24,11 @@ add_task(async function test_undoCloseTab() {
 
   ss.setCustomTabValue(tab, "foo", "bar");
 
-  function onSSWindowStateBusy(aEvent) {
+  function onSSWindowStateBusy() {
     busyEventCount++;
   }
 
-  function onSSWindowStateReady(aEvent) {
+  function onSSWindowStateReady() {
     Assert.equal(gBrowser.tabs.length, 2, "Should only have 2 tabs");
     lastTab = gBrowser.tabs[1];
     readyEventCount++;
@@ -56,7 +56,7 @@ add_task(async function test_undoCloseTab() {
   Assert.equal(busyEventCount, 1);
   Assert.equal(readyEventCount, 1);
   Assert.equal(ss.getCustomTabValue(reopenedTab, "baz"), "qux");
-  Assert.equal(reopenedTab.linkedBrowser.currentURI.spec, "about:rights");
+  Assert.equal(reopenedTab.linkedBrowser.currentURI.spec, "about:robots");
 
   window.removeEventListener("SSWindowStateBusy", onSSWindowStateBusy);
   window.removeEventListener("SSWindowStateReady", onSSWindowStateReady);

@@ -11,9 +11,9 @@
 #include "api/jsep_session_description.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 
-#include "absl/types/optional.h"
 #include "p2p/base/p2p_constants.h"
 #include "p2p/base/port.h"
 #include "p2p/base/transport_description.h"
@@ -26,36 +26,14 @@
 #include "rtc_base/net_helper.h"
 #include "rtc_base/socket_address.h"
 
+using cricket::Candidate;
 using cricket::SessionDescription;
 
 namespace webrtc {
 namespace {
 
-// RFC 5245
-// It is RECOMMENDED that default candidates be chosen based on the
-// likelihood of those candidates to work with the peer that is being
-// contacted.  It is RECOMMENDED that relayed > reflexive > host.
-constexpr int kPreferenceUnknown = 0;
-constexpr int kPreferenceHost = 1;
-constexpr int kPreferenceReflexive = 2;
-constexpr int kPreferenceRelayed = 3;
-
 constexpr char kDummyAddress[] = "0.0.0.0";
 constexpr int kDummyPort = 9;
-
-int GetCandidatePreferenceFromType(const std::string& type) {
-  int preference = kPreferenceUnknown;
-  if (type == cricket::LOCAL_PORT_TYPE) {
-    preference = kPreferenceHost;
-  } else if (type == cricket::STUN_PORT_TYPE) {
-    preference = kPreferenceReflexive;
-  } else if (type == cricket::RELAY_PORT_TYPE) {
-    preference = kPreferenceRelayed;
-  } else {
-    preference = kPreferenceUnknown;
-  }
-  return preference;
-}
 
 // Update the connection address for the MediaContentDescription based on the
 // candidates.
@@ -65,7 +43,7 @@ void UpdateConnectionAddress(
   int port = kDummyPort;
   std::string ip = kDummyAddress;
   std::string hostname;
-  int current_preference = kPreferenceUnknown;
+  int current_preference = 0;  // Start with lowest preference.
   int current_family = AF_UNSPEC;
   for (size_t i = 0; i < candidate_collection.count(); ++i) {
     const IceCandidateInterface* jsep_candidate = candidate_collection.at(i);
@@ -77,8 +55,7 @@ void UpdateConnectionAddress(
     if (jsep_candidate->candidate().protocol() != cricket::UDP_PROTOCOL_NAME) {
       continue;
     }
-    const int preference =
-        GetCandidatePreferenceFromType(jsep_candidate->candidate().type());
+    const int preference = jsep_candidate->candidate().type_preference();
     const int family = jsep_candidate->candidate().address().ipaddr().family();
     // See if this candidate is more preferable then the current one if it's the
     // same family. Or if the current family is IPv4 already so we could safely
@@ -121,13 +98,10 @@ void UpdateConnectionAddress(
 
 }  // namespace
 
-const int JsepSessionDescription::kDefaultVideoCodecId = 100;
-const char JsepSessionDescription::kDefaultVideoCodecName[] = "VP8";
-
 // TODO(steveanton): Remove this default implementation once Chromium has been
 // updated.
 SdpType SessionDescriptionInterface::GetType() const {
-  absl::optional<SdpType> maybe_type = SdpTypeFromString(type());
+  std::optional<SdpType> maybe_type = SdpTypeFromString(type());
   if (maybe_type) {
     return *maybe_type;
   } else {
@@ -142,7 +116,7 @@ SdpType SessionDescriptionInterface::GetType() const {
 SessionDescriptionInterface* CreateSessionDescription(const std::string& type,
                                                       const std::string& sdp,
                                                       SdpParseError* error) {
-  absl::optional<SdpType> maybe_type = SdpTypeFromString(type);
+  std::optional<SdpType> maybe_type = SdpTypeFromString(type);
   if (!maybe_type) {
     return nullptr;
   }
@@ -184,7 +158,7 @@ std::unique_ptr<SessionDescriptionInterface> CreateSessionDescription(
 JsepSessionDescription::JsepSessionDescription(SdpType type) : type_(type) {}
 
 JsepSessionDescription::JsepSessionDescription(const std::string& type) {
-  absl::optional<SdpType> maybe_type = SdpTypeFromString(type);
+  std::optional<SdpType> maybe_type = SdpTypeFromString(type);
   if (maybe_type) {
     type_ = *maybe_type;
   } else {
@@ -249,14 +223,14 @@ bool JsepSessionDescription::AddCandidate(
   if (mediasection_index >= number_of_mediasections())
     return false;
   const std::string& content_name =
-      description_->contents()[mediasection_index].name;
+      description_->contents()[mediasection_index].mid();
   const cricket::TransportInfo* transport_info =
       description_->GetTransportInfoByName(content_name);
   if (!transport_info) {
     return false;
   }
 
-  cricket::Candidate updated_candidate = candidate->candidate();
+  Candidate updated_candidate = candidate->candidate();
   if (updated_candidate.username().empty()) {
     updated_candidate.set_username(transport_info->description.ice_ufrag);
   }
@@ -281,7 +255,7 @@ bool JsepSessionDescription::AddCandidate(
 }
 
 size_t JsepSessionDescription::RemoveCandidates(
-    const std::vector<cricket::Candidate>& candidates) {
+    const std::vector<Candidate>& candidates) {
   size_t num_removed = 0;
   for (auto& candidate : candidates) {
     int mediasection_index = GetMediasectionIndex(candidate);
@@ -340,7 +314,7 @@ bool JsepSessionDescription::GetMediasectionIndex(
     bool found = false;
     // Try to match the sdp_mid with content name.
     for (size_t i = 0; i < description_->contents().size(); ++i) {
-      if (candidate->sdp_mid() == description_->contents().at(i).name) {
+      if (candidate->sdp_mid() == description_->contents().at(i).mid()) {
         *index = i;
         found = true;
         break;
@@ -355,12 +329,11 @@ bool JsepSessionDescription::GetMediasectionIndex(
   return true;
 }
 
-int JsepSessionDescription::GetMediasectionIndex(
-    const cricket::Candidate& candidate) {
+int JsepSessionDescription::GetMediasectionIndex(const Candidate& candidate) {
   // Find the description with a matching transport name of the candidate.
   const std::string& transport_name = candidate.transport_name();
   for (size_t i = 0; i < description_->contents().size(); ++i) {
-    if (transport_name == description_->contents().at(i).name) {
+    if (transport_name == description_->contents().at(i).mid()) {
       return static_cast<int>(i);
     }
   }

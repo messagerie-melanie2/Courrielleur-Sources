@@ -4,8 +4,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "nsIThreadRetargetableStreamListener.h"
 #include "nsString.h"
 #include "mozilla/Assertions.h"
+#include "mozilla/Components.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/StaticPrefs_content.h"
 #include "mozilla/StoragePrincipalHelper.h"
@@ -26,6 +28,7 @@
 #include "nsGkAtoms.h"
 #include "nsWhitespaceTokenizer.h"
 #include "nsIChannelEventSink.h"
+#include "nsIDNSService.h"
 #include "nsIAsyncVerifyRedirectCallback.h"
 #include "nsCharSeparatedTokenizer.h"
 #include "nsAsyncRedirectVerifyHelper.h"
@@ -37,6 +40,7 @@
 #include "nsILoadGroup.h"
 #include "nsILoadContext.h"
 #include "nsIConsoleService.h"
+#include "nsICORSPreflightCache.h"
 #include "nsINetworkInterceptController.h"
 #include "nsICorsPreflightCallback.h"
 #include "nsISupportsImpl.h"
@@ -52,11 +56,13 @@
 #include "mozilla/dom/nsHTTPSOnlyUtils.h"
 #include "mozilla/dom/ReferrerInfo.h"
 #include "mozilla/dom/RequestBinding.h"
-#include "mozilla/glean/GleanMetrics.h"
+#include "mozilla/glean/NetwerkProtocolHttpMetrics.h"
 #include <algorithm>
 
 using namespace mozilla;
 using namespace mozilla::net;
+
+struct CORSCacheEntry;
 
 #define PREFLIGHT_CACHE_SIZE 100
 // 5 seconds is chosen to be compatible with Chromium.
@@ -155,74 +161,117 @@ static void LogBlockedRequest(nsIRequest* aRequest, const char* aProperty,
 //////////////////////////////////////////////////////////////////////////
 // Preflight cache
 
-class nsPreflightCache {
+class nsPreflightCache : public nsICORSPreflightCache {
  public:
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSICORSPREFLIGHTCACHE
+
   struct TokenTime {
     nsCString token;
     TimeStamp expirationTime;
   };
 
-  struct CacheEntry : public LinkedListElement<CacheEntry> {
-    explicit CacheEntry(nsCString& aKey, bool aPrivateBrowsing)
-        : mKey(aKey), mPrivateBrowsing(aPrivateBrowsing) {
-      MOZ_COUNT_CTOR(nsPreflightCache::CacheEntry);
-    }
-
-    ~CacheEntry() { MOZ_COUNT_DTOR(nsPreflightCache::CacheEntry); }
-
-    void PurgeExpired(TimeStamp now);
-    bool CheckRequest(const nsCString& aMethod,
-                      const nsTArray<nsCString>& aHeaders);
-
-    nsCString mKey;
-    bool mPrivateBrowsing{false};
-    nsTArray<TokenTime> mMethods;
-    nsTArray<TokenTime> mHeaders;
-  };
-
-  MOZ_COUNTED_DEFAULT_CTOR(nsPreflightCache)
-
-  ~nsPreflightCache() {
-    Clear();
-    MOZ_COUNT_DTOR(nsPreflightCache);
-  }
-
-  bool Initialize() { return true; }
-
-  CacheEntry* GetEntry(nsIURI* aURI, nsIPrincipal* aPrincipal,
-                       bool aWithCredentials,
-                       const OriginAttributes& aOriginAttributes, bool aCreate);
+  already_AddRefed<CORSCacheEntry> GetEntry(
+      nsIURI* aURI, nsIPrincipal* aPrincipal, bool aWithCredentials,
+      const OriginAttributes& aOriginAttributes, bool aCreate);
   void RemoveEntries(nsIURI* aURI, nsIPrincipal* aPrincipal,
                      const OriginAttributes& aOriginAttributes);
   void PurgePrivateBrowsingEntries();
 
   void Clear();
 
+ protected:
+  virtual ~nsPreflightCache() { Clear(); }
+
  private:
-  nsClassHashtable<nsCStringHashKey, CacheEntry> mTable;
-  LinkedList<CacheEntry> mList;
+  nsRefPtrHashtable<nsCStringHashKey, CORSCacheEntry> mTable;
+  LinkedList<CORSCacheEntry> mList;
 };
 
+struct CORSCacheEntry : public LinkedListElement<CORSCacheEntry>,
+                        public nsICORSPreflightCacheEntry {
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSICORSPREFLIGHTCACHEENTRY
+  explicit CORSCacheEntry(nsIURI* aUri,
+                          const OriginAttributes& aOriginAttributes,
+                          nsIPrincipal* aPrincipal, bool withCredentials,
+                          nsCString& aKey)
+      : mURI(aUri),
+        mOA(aOriginAttributes),
+        mPrincipal(aPrincipal),
+        mWithCredentials(withCredentials),
+        mKey(aKey) {}
+
+  void PurgeExpired(TimeStamp now);
+  bool CheckRequest(const nsCString& aMethod,
+                    const nsTArray<nsCString>& aHeaders);
+
+  nsCOMPtr<nsIURI> mURI;
+  const OriginAttributes mOA;
+  nsCOMPtr<nsIPrincipal> mPrincipal;
+  bool mWithCredentials;
+  nsCString mKey;  // serialized key
+  const TimeStamp mCreationTime{TimeStamp::NowLoRes()};
+  bool mDoomed{false};
+  bool mIsProxyUsed{false};
+
+  nsTArray<nsPreflightCache::TokenTime> mMethods;
+  nsTArray<nsPreflightCache::TokenTime> mHeaders;
+
+ private:
+  virtual ~CORSCacheEntry() = default;
+
+  bool CheckDNSCache();
+};
+
+NS_IMPL_ISUPPORTS(nsPreflightCache, nsICORSPreflightCache)
+
+NS_IMETHODIMP
+nsPreflightCache::GetEntries(
+    nsIPrincipal* aPrincipal,
+    nsTArray<RefPtr<nsICORSPreflightCacheEntry>>& aEntries) {
+  for (auto iter = mTable.Iter(); !iter.Done(); iter.Next()) {
+    RefPtr<nsIPrincipal> iterPrincipal;
+    iter.Data()->GetPrincipal(getter_AddRefs(iterPrincipal));
+    if (iterPrincipal->Equals(aPrincipal)) {
+      auto* entry = iter.UserData();
+      aEntries.AppendElement(entry);
+    }
+  }
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsPreflightCache::ClearEntry(nsICORSPreflightCacheEntry* entry) {
+  nsCOMPtr<nsIURI> uri;
+  nsresult rv = entry->GetURI(getter_AddRefs(uri));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIPrincipal> principal;
+  rv = entry->GetPrincipal(getter_AddRefs(principal));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  const OriginAttributes oa = entry->OriginAttributesRef();
+
+  RemoveEntries(uri, principal, oa);
+  return NS_OK;
+}
+
 // Will be initialized in EnsurePreflightCache.
-static nsPreflightCache* sPreflightCache = nullptr;
+static StaticRefPtr<nsPreflightCache> sPreflightCache;
 
 static bool EnsurePreflightCache() {
   if (sPreflightCache) return true;
 
-  UniquePtr<nsPreflightCache> newCache(new nsPreflightCache());
-
-  if (newCache->Initialize()) {
-    sPreflightCache = newCache.release();
-    return true;
-  }
-
-  return false;
+  RefPtr<nsPreflightCache> newCache(new nsPreflightCache());
+  sPreflightCache = newCache;
+  return true;
 }
 
 void nsPreflightCache::PurgePrivateBrowsingEntries() {
   for (auto iter = mTable.Iter(); !iter.Done(); iter.Next()) {
     auto* entry = iter.UserData();
-    if (entry->mPrivateBrowsing) {
+    if (entry->mOA.IsPrivateBrowsing()) {
       // last private browsing window closed, remove preflight cache entries
       entry->removeFrom(sPreflightCache->mList);
       iter.Remove();
@@ -230,7 +279,50 @@ void nsPreflightCache::PurgePrivateBrowsingEntries() {
   }
 }
 
-void nsPreflightCache::CacheEntry::PurgeExpired(TimeStamp now) {
+NS_IMPL_ISUPPORTS(CORSCacheEntry, nsICORSPreflightCacheEntry)
+
+NS_IMETHODIMP
+CORSCacheEntry::GetKey(nsACString& aKey) {
+  aKey = mKey;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+CORSCacheEntry::GetURI(nsIURI** aURI) {
+  *aURI = do_AddRef(mURI).take();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+CORSCacheEntry::GetOriginAttributes(JSContext* aCx,
+                                    JS::MutableHandle<JS::Value> aVal) {
+  if (NS_WARN_IF(!ToJSValue(aCx, mOA, aVal))) {
+    return NS_ERROR_FAILURE;
+  }
+  return NS_OK;
+}
+
+const OriginAttributes& CORSCacheEntry::OriginAttributesRef() { return mOA; }
+
+NS_IMETHODIMP
+CORSCacheEntry::GetPrincipal(nsIPrincipal** aPrincipal) {
+  *aPrincipal = do_AddRef(mPrincipal).take();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+CORSCacheEntry::GetPrivateBrowsing(bool* aPrivateBrowsing) {
+  *aPrivateBrowsing = mOA.IsPrivateBrowsing();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+CORSCacheEntry::GetWithCredentials(bool* aWithCredentials) {
+  *aWithCredentials = mWithCredentials;
+  return NS_OK;
+}
+
+void CORSCacheEntry::PurgeExpired(TimeStamp now) {
   for (uint32_t i = 0, len = mMethods.Length(); i < len; ++i) {
     if (now >= mMethods[i].expirationTime) {
       mMethods.UnorderedRemoveElementAt(i);
@@ -247,13 +339,60 @@ void nsPreflightCache::CacheEntry::PurgeExpired(TimeStamp now) {
   }
 }
 
-bool nsPreflightCache::CacheEntry::CheckRequest(
-    const nsCString& aMethod, const nsTArray<nsCString>& aHeaders) {
+bool CORSCacheEntry::CheckDNSCache() {
+  // When proxy is used, the DNS lookup is done by proxy, so we skip this check.
+  if (mIsProxyUsed) {
+    return true;
+  }
+
+  nsCOMPtr<nsIDNSService> dns;
+  dns = mozilla::components::DNS::Service();
+  if (!dns) {
+    return false;
+  }
+
+  nsAutoCString host;
+  if (NS_FAILED(mURI->GetAsciiHost(host))) {
+    return false;
+  }
+
+  nsCOMPtr<nsIDNSRecord> record;
+  nsresult rv = dns->ResolveNative(host, nsIDNSService::RESOLVE_OFFLINE, mOA,
+                                   getter_AddRefs(record));
+  if (NS_FAILED(rv) || !record) {
+    return false;
+  }
+
+  nsCOMPtr<nsIDNSAddrRecord> addrRec = do_QueryInterface(record);
+  if (!addrRec) {
+    return false;
+  }
+
+  TimeStamp lastUpdate;
+  Unused << addrRec->GetLastUpdate(&lastUpdate);
+
+  if (lastUpdate > mCreationTime) {
+    return false;
+  }
+
+  return true;
+}
+
+bool CORSCacheEntry::CheckRequest(const nsCString& aMethod,
+                                  const nsTArray<nsCString>& aHeaders) {
   PurgeExpired(TimeStamp::NowLoRes());
+
+  if (!CheckDNSCache()) {
+    mMethods.Clear();
+    mHeaders.Clear();
+    mDoomed = true;
+    return false;
+  }
 
   if (!aMethod.EqualsLiteral("GET") && !aMethod.EqualsLiteral("POST")) {
     struct CheckToken {
-      bool Equals(const TokenTime& e, const nsCString& method) const {
+      bool Equals(const nsPreflightCache::TokenTime& e,
+                  const nsCString& method) const {
         return e.token.Equals(method);
       }
     };
@@ -264,7 +403,8 @@ bool nsPreflightCache::CacheEntry::CheckRequest(
   }
 
   struct CheckHeaderToken {
-    bool Equals(const TokenTime& e, const nsCString& header) const {
+    bool Equals(const nsPreflightCache::TokenTime& e,
+                const nsCString& header) const {
       return e.token.Equals(header, nsCaseInsensitiveCStringComparator);
     }
   } checker;
@@ -277,26 +417,28 @@ bool nsPreflightCache::CacheEntry::CheckRequest(
   return true;
 }
 
-nsPreflightCache::CacheEntry* nsPreflightCache::GetEntry(
+already_AddRefed<CORSCacheEntry> nsPreflightCache::GetEntry(
     nsIURI* aURI, nsIPrincipal* aPrincipal, bool aWithCredentials,
     const OriginAttributes& aOriginAttributes, bool aCreate) {
-  nsCString key;
+  nsAutoCString key;
   if (NS_FAILED(aPrincipal->GetPrefLightCacheKey(aURI, aWithCredentials,
                                                  aOriginAttributes, key))) {
     NS_WARNING("Invalid cache key!");
     return nullptr;
   }
 
-  CacheEntry* existingEntry = nullptr;
-
-  if (mTable.Get(key, &existingEntry)) {
-    // Entry already existed so just return it. Also update the LRU list.
-
-    // Move to the head of the list.
-    existingEntry->removeFrom(mList);
-    mList.insertFront(existingEntry);
-
-    return existingEntry;
+  RefPtr<CORSCacheEntry> existingEntry = nullptr;
+  if ((existingEntry = mTable.Get(key))) {
+    if (existingEntry->mDoomed) {
+      existingEntry->removeFrom(mList);
+      mTable.Remove(key);
+    } else {
+      // Entry already existed so just return it. Also update the LRU list.
+      // Move to the head of the list.
+      existingEntry->removeFrom(mList);
+      mList.insertFront(existingEntry);
+      return existingEntry.forget();
+    }
   }
 
   if (!aCreate) {
@@ -305,8 +447,8 @@ nsPreflightCache::CacheEntry* nsPreflightCache::GetEntry(
 
   // This is a new entry, allocate and insert into the table now so that any
   // failures don't cause items to be removed from a full cache.
-  auto newEntry =
-      MakeUnique<CacheEntry>(key, aOriginAttributes.mPrivateBrowsingId != 0);
+  RefPtr<CORSCacheEntry> newEntry = new CORSCacheEntry(
+      aURI, aOriginAttributes, aPrincipal, aWithCredentials, key);
 
   NS_ASSERTION(mTable.Count() <= PREFLIGHT_CACHE_SIZE,
                "Something is borked, too many entries in the cache!");
@@ -329,40 +471,43 @@ nsPreflightCache::CacheEntry* nsPreflightCache::GetEntry(
     // If that didn't remove anything then kick out the least recently used
     // entry.
     if (mTable.Count() == PREFLIGHT_CACHE_SIZE) {
-      CacheEntry* lruEntry = static_cast<CacheEntry*>(mList.popLast());
+      CORSCacheEntry* lruEntry = static_cast<CORSCacheEntry*>(mList.popLast());
       MOZ_ASSERT(lruEntry);
 
       // This will delete 'lruEntry'.
-      mTable.Remove(lruEntry->mKey);
+      nsAutoCString lruKey;
+      lruEntry->GetKey(lruKey);
+      mTable.Remove(lruKey);
 
       NS_ASSERTION(mTable.Count() == PREFLIGHT_CACHE_SIZE - 1,
                    "Somehow tried to remove an entry that was never added!");
     }
   }
-
-  auto* newEntryWeakRef = mTable.InsertOrUpdate(key, std::move(newEntry)).get();
-  mList.insertFront(newEntryWeakRef);
-
-  return newEntryWeakRef;
+  CORSCacheEntry* newEntryWeak = newEntry.get();
+  mTable.InsertOrUpdate(key, newEntry);
+  mList.insertFront(newEntryWeak);
+  return newEntry.forget();
 }
 
 void nsPreflightCache::RemoveEntries(
     nsIURI* aURI, nsIPrincipal* aPrincipal,
     const OriginAttributes& aOriginAttributes) {
-  CacheEntry* entry;
+  RefPtr<CORSCacheEntry> entry;
   nsCString key;
   if (NS_SUCCEEDED(aPrincipal->GetPrefLightCacheKey(aURI, true,
-                                                    aOriginAttributes, key)) &&
-      mTable.Get(key, &entry)) {
-    entry->removeFrom(mList);
-    mTable.Remove(key);
+                                                    aOriginAttributes, key))) {
+    if ((entry = mTable.Get(key))) {
+      entry->removeFrom(mList);
+      mTable.Remove(key);
+    }
   }
 
   if (NS_SUCCEEDED(aPrincipal->GetPrefLightCacheKey(aURI, false,
-                                                    aOriginAttributes, key)) &&
-      mTable.Get(key, &entry)) {
-    entry->removeFrom(mList);
-    mTable.Remove(key);
+                                                    aOriginAttributes, key))) {
+    if ((entry = mTable.Get(key))) {
+      entry->removeFrom(mList);
+      mTable.Remove(key);
+    }
   }
 }
 
@@ -379,10 +524,18 @@ NS_IMPL_ISUPPORTS(nsCORSListenerProxy, nsIStreamListener, nsIRequestObserver,
                   nsIThreadRetargetableStreamListener)
 
 /* static */
-void nsCORSListenerProxy::Shutdown() {
-  delete sPreflightCache;
-  sPreflightCache = nullptr;
+already_AddRefed<nsICORSPreflightCache>
+nsCORSListenerProxy::GetCORSPreflightSingleton() {
+  NS_ASSERTION(!IsNeckoChild(), "not a parent process");
+
+  if (!EnsurePreflightCache()) {
+    NS_ASSERTION(false, "Failed to get the preflightCache");
+  }
+  return do_AddRef(sPreflightCache);
 }
+
+/* static */
+void nsCORSListenerProxy::Shutdown() { sPreflightCache = nullptr; }
 
 /* static */
 void nsCORSListenerProxy::ClearCache() {
@@ -440,7 +593,8 @@ nsresult nsCORSListenerProxy::Init(nsIChannel* aChannel,
       getter_AddRefs(mOuterNotificationCallbacks));
   aChannel->SetNotificationCallbacks(this);
 
-  nsresult rv = UpdateChannel(aChannel, aAllowDataURI, UpdateType::Default);
+  nsresult rv =
+      UpdateChannel(aChannel, aAllowDataURI, UpdateType::Default, false);
   if (NS_FAILED(rv)) {
     {
       MutexAutoLock lock(mMutex);
@@ -642,7 +796,7 @@ nsresult nsCORSListenerProxy::CheckRequestApproved(nsIRequest* aRequest) {
   if (mWithCredentials || !allowedOriginHeader.EqualsLiteral("*")) {
     MOZ_ASSERT(!mOriginHeaderPrincipal->GetIsExpandedPrincipal());
     nsAutoCString origin;
-    mOriginHeaderPrincipal->GetAsciiOrigin(origin);
+    mOriginHeaderPrincipal->GetWebExposedOriginSerialization(origin);
 
     if (!allowedOriginHeader.Equals(origin)) {
       LogBlockedRequest(
@@ -706,6 +860,25 @@ nsCORSListenerProxy::OnDataAvailable(nsIRequest* aRequest,
   return listener->OnDataAvailable(aRequest, aInputStream, aOffset, aCount);
 }
 
+NS_IMETHODIMP
+nsCORSListenerProxy::OnDataFinished(nsresult aStatus) {
+  nsCOMPtr<nsIStreamListener> listener;
+  {
+    MutexAutoLock lock(mMutex);
+    listener = mOuterListener;
+  }
+  if (!listener) {
+    return NS_ERROR_FAILURE;
+  }
+  nsCOMPtr<nsIThreadRetargetableStreamListener> retargetableListener =
+      do_QueryInterface(listener);
+  if (retargetableListener) {
+    return retargetableListener->OnDataFinished(aStatus);
+  }
+
+  return NS_OK;
+}
+
 void nsCORSListenerProxy::SetInterceptController(
     nsINetworkInterceptController* aInterceptController) {
   mInterceptController = aInterceptController;
@@ -745,7 +918,7 @@ nsCORSListenerProxy::AsyncOnChannelRedirect(
     // data URIs should have been blocked before we got to the internal
     // redirect.
     rv = UpdateChannel(aNewChannel, DataURIHandling::Allow,
-                       UpdateType::InternalOrHSTSRedirect);
+                       UpdateType::InternalOrHSTSRedirect, false);
     if (NS_FAILED(rv)) {
       NS_WARNING(
           "nsCORSListenerProxy::AsyncOnChannelRedirect: "
@@ -815,6 +988,12 @@ nsCORSListenerProxy::AsyncOnChannelRedirect(
     }
 
     bool rewriteToGET = false;
+    // We need to strip auth header from preflight request for
+    // cross-origin redirects.
+    // See Bug 1874132
+    bool stripAuthHeader =
+        NS_ShouldRemoveAuthHeaderOnRedirect(aOldChannel, aNewChannel, aFlags);
+
     nsCOMPtr<nsIHttpChannel> oldHttpChannel = do_QueryInterface(aOldChannel);
     if (oldHttpChannel) {
       nsAutoCString method;
@@ -823,9 +1002,10 @@ nsCORSListenerProxy::AsyncOnChannelRedirect(
                                                              &rewriteToGET);
     }
 
-    rv = UpdateChannel(aNewChannel, DataURIHandling::Disallow,
-                       rewriteToGET ? UpdateType::StripRequestBodyHeader
-                                    : UpdateType::Default);
+    rv = UpdateChannel(
+        aNewChannel, DataURIHandling::Disallow,
+        rewriteToGET ? UpdateType::StripRequestBodyHeader : UpdateType::Default,
+        stripAuthHeader);
     if (NS_FAILED(rv)) {
       NS_WARNING(
           "nsCORSListenerProxy::AsyncOnChannelRedirect: "
@@ -910,7 +1090,10 @@ bool CheckInsecureUpgradePreventsCORS(nsIPrincipal* aRequestingPrincipal,
 
 nsresult nsCORSListenerProxy::UpdateChannel(nsIChannel* aChannel,
                                             DataURIHandling aAllowDataURI,
-                                            UpdateType aUpdateType) {
+                                            UpdateType aUpdateType,
+                                            bool aStripAuthHeader) {
+  MOZ_ASSERT_IF(aUpdateType == UpdateType::InternalOrHSTSRedirect,
+                !aStripAuthHeader);
   nsCOMPtr<nsIURI> uri, originalURI;
   nsresult rv = NS_GetFinalChannelURI(aChannel, getter_AddRefs(uri));
   NS_ENSURE_SUCCESS(rv, rv);
@@ -1000,13 +1183,13 @@ nsresult nsCORSListenerProxy::UpdateChannel(nsIChannel* aChannel,
 
   // Check if we need to do a preflight, and if so set one up. This must be
   // called once we know that the request is going, or has gone, cross-origin.
-  rv = CheckPreflightNeeded(aChannel, aUpdateType);
+  rv = CheckPreflightNeeded(aChannel, aUpdateType, aStripAuthHeader);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // It's a cross site load
   mHasBeenCrossSite = true;
 
-  if (mIsRedirect || StaticPrefs::network_cors_preflight_block_userpass_uri()) {
+  if (mIsRedirect) {
     // https://fetch.spec.whatwg.org/#http-redirect-fetch
     // Step 9. If request’s mode is "cors", locationURL includes credentials,
     // and request’s origin is not same origin with locationURL’s origin,
@@ -1029,7 +1212,7 @@ nsresult nsCORSListenerProxy::UpdateChannel(nsIChannel* aChannel,
 
   // Add the Origin header
   nsAutoCString origin;
-  rv = mOriginHeaderPrincipal->GetAsciiOrigin(origin);
+  rv = mOriginHeaderPrincipal->GetWebExposedOriginSerialization(origin);
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIHttpChannel> http = do_QueryInterface(aChannel);
@@ -1042,8 +1225,7 @@ nsresult nsCORSListenerProxy::UpdateChannel(nsIChannel* aChannel,
     }
   }
 
-  rv = http->SetRequestHeader(nsDependentCString(net::nsHttp::Origin), origin,
-                              false);
+  rv = http->SetRequestHeader(net::nsHttp::Origin.val(), origin, false);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Make cookie-less if needed. We don't need to do anything here if the
@@ -1068,7 +1250,8 @@ nsresult nsCORSListenerProxy::UpdateChannel(nsIChannel* aChannel,
 }
 
 nsresult nsCORSListenerProxy::CheckPreflightNeeded(nsIChannel* aChannel,
-                                                   UpdateType aUpdateType) {
+                                                   UpdateType aUpdateType,
+                                                   bool aStripAuthHeader) {
   // If this caller isn't using AsyncOpen, or if this *is* a preflight channel,
   // then we shouldn't initiate preflight for this channel.
   nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
@@ -1135,7 +1318,7 @@ nsresult nsCORSListenerProxy::CheckPreflightNeeded(nsIChannel* aChannel,
 
   internal->SetCorsPreflightParameters(
       headers.IsEmpty() ? loadInfoHeaders : headers,
-      aUpdateType == UpdateType::StripRequestBodyHeader);
+      aUpdateType == UpdateType::StripRequestBodyHeader, aStripAuthHeader);
 
   return NS_OK;
 }
@@ -1231,10 +1414,16 @@ void nsCORSPreflightListener::AddResultToCache(nsIRequest* aRequest) {
   OriginAttributes attrs;
   StoragePrincipalHelper::GetOriginAttributesForNetworkState(http, attrs);
 
-  nsPreflightCache::CacheEntry* entry = sPreflightCache->GetEntry(
+  RefPtr<CORSCacheEntry> entry = sPreflightCache->GetEntry(
       uri, mReferrerPrincipal, mWithCredentials, attrs, true);
   if (!entry) {
     return;
+  }
+
+  nsCOMPtr<nsIHttpChannelInternal> httpChannelInternal(
+      do_QueryInterface(aRequest));
+  if (httpChannelInternal) {
+    Unused << httpChannelInternal->GetIsProxyUsed(&entry->mIsProxyUsed);
   }
 
   // The "Access-Control-Allow-Methods" header contains a comma separated
@@ -1546,10 +1735,14 @@ nsresult nsCORSListenerProxy::StartCORSPreflight(
   bool withCredentials =
       originalLoadInfo->GetCookiePolicy() == nsILoadInfo::SEC_COOKIES_INCLUDE;
 
-  nsPreflightCache::CacheEntry* entry = nullptr;
+  RefPtr<CORSCacheEntry> entry;
 
-  // Disable cache if devtools says so.
-  bool disableCache = Preferences::GetBool("devtools.cache.disabled");
+  nsLoadFlags loadFlags;
+  rv = aRequestChannel->GetLoadFlags(&loadFlags);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Disable preflight cache if devtools says so or on other force reloads
+  bool disableCache = (loadFlags & nsIRequest::LOAD_BYPASS_CACHE);
 
   if (sPreflightCache && !disableCache) {
     OriginAttributes attrs;
@@ -1584,10 +1777,6 @@ nsresult nsCORSListenerProxy::StartCORSPreflight(
   rv = aRequestChannel->GetNotificationCallbacks(getter_AddRefs(callbacks));
   NS_ENSURE_SUCCESS(rv, rv);
   nsCOMPtr<nsILoadContext> loadContext = do_GetInterface(callbacks);
-
-  nsLoadFlags loadFlags;
-  rv = aRequestChannel->GetLoadFlags(&loadFlags);
-  NS_ENSURE_SUCCESS(rv, rv);
 
   // Preflight requests should never be intercepted by service workers and
   // are always anonymous.
@@ -1690,7 +1879,7 @@ void nsCORSListenerProxy::LogBlockedCORSRequest(
 
   // Build the error object and log it to the console
   nsCOMPtr<nsIConsoleService> console(
-      do_GetService(NS_CONSOLESERVICE_CONTRACTID, &rv));
+      mozilla::components::Console::Service(&rv));
   if (NS_FAILED(rv)) {
     NS_WARNING("Failed to log blocked cross-site request (no console)");
     return;
@@ -1710,18 +1899,16 @@ void nsCORSListenerProxy::LogBlockedCORSRequest(
   // the error to the browser console.
   if (aInnerWindowID > 0) {
     rv = scriptError->InitWithSanitizedSource(aMessage,
-                                              u""_ns,  // sourceName
-                                              u""_ns,  // sourceLine
-                                              0,       // lineNumber
-                                              0,       // columnNumber
+                                              ""_ns,  // sourceName
+                                              0,      // lineNumber
+                                              0,      // columnNumber
                                               errorFlag, aCategory,
                                               aInnerWindowID);
   } else {
     rv = scriptError->Init(aMessage,
-                           u""_ns,  // sourceName
-                           u""_ns,  // sourceLine
-                           0,       // lineNumber
-                           0,       // columnNumber
+                           ""_ns,  // sourceName
+                           0,      // lineNumber
+                           0,      // columnNumber
                            errorFlag, aCategory, aPrivateBrowsing,
                            aFromChromeContext);  // From chrome context
   }

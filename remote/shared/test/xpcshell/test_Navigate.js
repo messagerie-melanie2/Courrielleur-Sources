@@ -15,10 +15,12 @@ const {
   "chrome://remote/content/shared/Navigate.sys.mjs"
 );
 
+const LOAD_FLAG_ERROR_PAGE = 0x10000;
+
 const CURRENT_URI = Services.io.newURI("http://foo.bar/");
 const INITIAL_URI = Services.io.newURI("about:blank");
 const TARGET_URI = Services.io.newURI("http://foo.cheese/");
-const TARGET_URI_IS_ERROR_PAGE = Services.io.newURI("doesnotexist://");
+const TARGET_URI_ERROR_PAGE = Services.io.newURI("doesnotexist://");
 const TARGET_URI_WITH_HASH = Services.io.newURI("http://foo.cheese/#foo");
 
 function wait(time) {
@@ -31,9 +33,7 @@ class MockRequest {
     this.originalURI = uri;
   }
 
-  get QueryInterface() {
-    return ChromeUtils.generateQI(["nsIRequest", "nsIChannel"]);
-  }
+  QueryInterface = ChromeUtils.generateQI(["nsIRequest", "nsIChannel"]);
 }
 
 class MockWebProgress {
@@ -43,6 +43,7 @@ class MockWebProgress {
     this.documentRequest = null;
     this.isLoadingDocument = false;
     this.listener = null;
+    this.loadType = 0;
     this.progressListenerRemoved = false;
   }
 
@@ -69,15 +70,15 @@ class MockWebProgress {
     this.documentRequest = null;
 
     if (flag & Ci.nsIWebProgressListener.LOCATION_CHANGE_SAME_DOCUMENT) {
-      this.browsingContext.currentURI = TARGET_URI_WITH_HASH;
+      this.browsingContext.updateURI(TARGET_URI_WITH_HASH);
     } else if (flag & Ci.nsIWebProgressListener.LOCATION_CHANGE_ERROR_PAGE) {
-      this.browsingContext.currentURI = TARGET_URI_IS_ERROR_PAGE;
+      this.browsingContext.updateURI(TARGET_URI_ERROR_PAGE, true);
     }
 
     this.listener?.onLocationChange(
       this,
       this.documentRequest,
-      TARGET_URI_WITH_HASH,
+      this.browsingContext.currentURI,
       flag
     );
 
@@ -98,6 +99,7 @@ class MockWebProgress {
     this.browsingContext.currentWindowGlobal.isInitialDocument = isInitial;
 
     this.isLoadingDocument = true;
+    this.loadType = 0;
     const uri = isInitial ? INITIAL_URI : TARGET_URI;
     this.documentRequest = new MockRequest(uri);
 
@@ -105,14 +107,14 @@ class MockWebProgress {
       this,
       this.documentRequest,
       Ci.nsIWebProgressListener.STATE_START,
-      null
+      0
     );
 
     return new Promise(executeSoon);
   }
 
   sendStopState(options = {}) {
-    const { errorFlag = 0 } = options;
+    const { flag = 0, loadType = 0 } = options;
 
     this.browsingContext.currentURI = this.documentRequest.originalURI;
 
@@ -123,8 +125,15 @@ class MockWebProgress {
       this,
       this.documentRequest,
       Ci.nsIWebProgressListener.STATE_STOP,
-      errorFlag
+      flag
     );
+
+    if (loadType & LOAD_FLAG_ERROR_PAGE) {
+      this.loadType = 0x10000;
+      return this.sendLocationChange({
+        flag: Ci.nsIWebProgressListener.LOCATION_CHANGE_ERROR_PAGE,
+      });
+    }
 
     return new Promise(executeSoon);
   }
@@ -133,28 +142,24 @@ class MockWebProgress {
 class MockTopContext {
   constructor(webProgress = null) {
     this.currentURI = CURRENT_URI;
-    this.currentWindowGlobal = { isInitialDocument: true };
+    this.currentWindowGlobal = {
+      isInitialDocument: true,
+      documentURI: CURRENT_URI,
+    };
     this.id = 7;
     this.top = this;
     this.webProgress = webProgress || new MockWebProgress(this);
   }
+
+  updateURI(uri, isError = false) {
+    this.currentURI = uri;
+    if (isError) {
+      this.currentWindowGlobal.documentURI = "about:neterror?e=errorMessage";
+    } else {
+      this.currentWindowGlobal.documentURI = uri;
+    }
+  }
 }
-
-const hasPromiseResolved = async function (promise) {
-  let resolved = false;
-  promise.finally(() => (resolved = true));
-  // Make sure microtasks have time to run.
-  await new Promise(resolve => Services.tm.dispatchToMainThread(resolve));
-  return resolved;
-};
-
-const hasPromiseRejected = async function (promise) {
-  let rejected = false;
-  promise.catch(() => (rejected = true));
-  // Make sure microtasks have time to run.
-  await new Promise(resolve => Services.tm.dispatchToMainThread(resolve));
-  return rejected;
-};
 
 add_task(
   async function test_waitForInitialNavigation_initialDocumentNoWindowGlobal() {
@@ -440,9 +445,8 @@ add_task(
 
     ok(!webProgress.isLoadingDocument, "Document is not loading");
 
-    const { currentURI, targetURI } = await waitForInitialNavigationCompleted(
-      webProgress
-    );
+    const { currentURI, targetURI } =
+      await waitForInitialNavigationCompleted(webProgress);
 
     ok(!webProgress.isLoadingDocument, "Document is not loading");
     ok(
@@ -775,7 +779,7 @@ add_task(async function test_ProgressListener_ignoreCacheError() {
 
   await webProgress.sendStartState();
   await webProgress.sendStopState({
-    errorFlag: Cr.NS_ERROR_PARSED_DATA_CACHED,
+    flag: Cr.NS_ERROR_PARSED_DATA_CACHED,
   });
 
   ok(await hasPromiseResolved(navigated), "Listener has resolved");
@@ -803,23 +807,50 @@ add_task(async function test_ProgressListener_navigationRejectedOnErrorPage() {
   );
 });
 
-add_task(async function test_ProgressListener_navigationRejectedOnStopState() {
-  const browsingContext = new MockTopContext();
-  const webProgress = browsingContext.webProgress;
+add_task(
+  async function test_ProgressListener_navigationRejectedOnStopStateErrorPage() {
+    const browsingContext = new MockTopContext();
+    const webProgress = browsingContext.webProgress;
 
-  const progressListener = new ProgressListener(webProgress, {
-    waitForExplicitStart: false,
-  });
-  const navigated = progressListener.start();
+    const progressListener = new ProgressListener(webProgress, {
+      waitForExplicitStart: false,
+    });
+    const navigated = progressListener.start();
 
-  await webProgress.sendStartState();
-  await webProgress.sendStopState({ errorFlag: Cr.NS_BINDING_ABORTED });
+    await webProgress.sendStartState();
+    await webProgress.sendStopState({
+      flag: Cr.NS_ERROR_MALWARE_URI,
+      loadType: LOAD_FLAG_ERROR_PAGE,
+    });
 
-  ok(
-    await hasPromiseRejected(navigated),
-    "Listener has rejected in stop state for erroneous navigation"
-  );
-});
+    ok(
+      await hasPromiseRejected(navigated),
+      "Listener has rejected in stop state for erroneous navigation"
+    );
+  }
+);
+
+add_task(
+  async function test_ProgressListener_navigationRejectedOnStopStateAndAborted() {
+    const browsingContext = new MockTopContext();
+    const webProgress = browsingContext.webProgress;
+
+    for (const flag of [Cr.NS_BINDING_ABORTED, Cr.NS_ERROR_ABORT]) {
+      const progressListener = new ProgressListener(webProgress, {
+        waitForExplicitStart: false,
+      });
+      const navigated = progressListener.start();
+
+      await webProgress.sendStartState();
+      await webProgress.sendStopState({ flag });
+
+      ok(
+        await hasPromiseRejected(navigated),
+        "Listener has rejected in stop state for erroneous navigation"
+      );
+    }
+  }
+);
 
 add_task(async function test_ProgressListener_stopIfStarted() {
   const browsingContext = new MockTopContext();

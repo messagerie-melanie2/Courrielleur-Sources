@@ -58,31 +58,31 @@
 //!
 //! ### 3) Generate and include component scaffolding from the UDL file
 //!
-//! First you will need to install `uniffi-bindgen` on your system using `cargo install uniffi_bindgen`.
-//! Then add to your crate `uniffi_build` under `[build-dependencies]`.
-//! Finally, add a `build.rs` script to your crate and have it call `uniffi_build::generate_scaffolding`
+//! Add to your crate `uniffi_build` under `[build-dependencies]`,
+//! then add a `build.rs` script to your crate and have it call `uniffi_build::generate_scaffolding`
 //! to process your `.udl` file. This will generate some Rust code to be included in the top-level source
 //! code of your crate. If your UDL file is named `example.udl`, then your build script would call:
 //!
 //! ```text
-//! uniffi_build::generate_scaffolding("./src/example.udl")
+//! uniffi_build::generate_scaffolding("src/example.udl")
 //! ```
 //!
 //! This would output a rust file named `example.uniffi.rs`, ready to be
 //! included into the code of your rust crate like this:
 //!
 //! ```text
-//! include!(concat!(env!("OUT_DIR"), "/example.uniffi.rs"));
+//! include_scaffolding!("example");
 //! ```
 //!
 //! ### 4) Generate foreign language bindings for the library
 //!
-//! The `uniffi-bindgen` utility provides a command-line tool that can produce code to
+//! You will need ensure a local `uniffi-bindgen` - see <https://mozilla.github.io/uniffi-rs/tutorial/foreign_language_bindings.html>
+//! This utility provides a command-line tool that can produce code to
 //! consume the Rust library in any of several supported languages.
 //! It is done by calling (in kotlin for example):
 //!
 //! ```text
-//! uniffi-bindgen --language kotlin ./src/example.udl
+//! cargo run --bin -p uniffi-bindgen --language kotlin ./src/example.udl
 //! ```
 //!
 //! This will produce a file `example.kt` in the same directory as the .udl file, containing kotlin bindings
@@ -92,119 +92,44 @@
 #![warn(rust_2018_idioms, unused_qualifications)]
 #![allow(unknown_lints)]
 
-const BINDGEN_VERSION: &str = env!("CARGO_PKG_VERSION");
-
 use anyhow::{anyhow, bail, Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use fs_err::{self as fs, File};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::io::prelude::*;
 use std::io::ErrorKind;
-use std::{collections::HashMap, env, process::Command, str::FromStr};
+use std::process::Command;
 
 pub mod backend;
 pub mod bindings;
 pub mod interface;
+pub mod library_mode;
 pub mod macro_metadata;
+pub mod pipeline;
 pub mod scaffolding;
 
+#[cfg(feature = "cargo-metadata")]
+pub mod cargo_metadata;
+
+use crate::interface::{
+    Argument, Constructor, Enum, FfiArgument, FfiField, Field, Function, Method, Object, Record,
+    Variant,
+};
 pub use interface::ComponentInterface;
+pub use library_mode::find_components;
 use scaffolding::RustScaffolding;
+use uniffi_meta::Type;
 
-/// A trait representing a Binding Generator Configuration
-///
-/// External crates that implement binding generators need to implement this trait and set it as
-/// the `BindingGenerator.config` associated type.  `generate_external_bindings()` then uses it to
-/// generate the config that's passed to `BindingGenerator.write_bindings()`
-pub trait BindingGeneratorConfig: for<'de> Deserialize<'de> {
-    /// Get the entry for this config from the `bindings` table.
-    fn get_entry_from_bindings_table(bindings: &toml::Value) -> Option<toml::Value>;
-
-    /// Get default config values from the `ComponentInterface`
-    ///
-    /// These will replace missing entries in the bindings-specific config
-    fn get_config_defaults(ci: &ComponentInterface) -> Vec<(String, toml::Value)>;
-}
-
-fn load_bindings_config<BC: BindingGeneratorConfig>(
-    ci: &ComponentInterface,
-    crate_root: &Utf8Path,
-    config_file_override: Option<&Utf8Path>,
-) -> Result<BC> {
-    // Load the config from the TOML value, falling back to an empty map if it doesn't exist
-    let mut config_map: toml::value::Table =
-        match load_bindings_config_toml::<BC>(crate_root, config_file_override)? {
-            Some(value) => value
-                .try_into()
-                .context("Bindings config must be a TOML table")?,
-            None => toml::map::Map::new(),
-        };
-
-    // Update it with the defaults from the component interface
-    for (key, value) in BC::get_config_defaults(ci) {
-        config_map.entry(key).or_insert(value);
-    }
-
-    // Leverage serde to convert toml::Value into the config type
-    toml::Value::from(config_map)
-        .try_into()
-        .context("Generating bindings config from toml::Value")
-}
-
-/// Binding generator config with no members
-#[derive(Clone, Debug, Hash, PartialEq, PartialOrd, Ord, Eq)]
-pub struct EmptyBindingGeneratorConfig;
-
-impl BindingGeneratorConfig for EmptyBindingGeneratorConfig {
-    fn get_entry_from_bindings_table(_bindings: &toml::Value) -> Option<toml::Value> {
-        None
-    }
-
-    fn get_config_defaults(_ci: &ComponentInterface) -> Vec<(String, toml::Value)> {
-        Vec::new()
-    }
-}
-
-// EmptyBindingGeneratorConfig is a unit struct, so the `derive(Deserialize)` implementation
-// expects a null value rather than the empty map that we pass it.  So we need to implement
-// `Deserialize` ourselves.
-impl<'de> Deserialize<'de> for EmptyBindingGeneratorConfig {
-    fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Ok(EmptyBindingGeneratorConfig)
-    }
-}
-
-// Load the binding-specific config
-//
-// This function calculates the location of the config TOML file, parses it, and returns the result
-// as a toml::Value
-//
-// If there is an error parsing the file then Err will be returned. If the file is missing or the
-// entry for the bindings is missing, then Ok(None) will be returned.
-fn load_bindings_config_toml<BC: BindingGeneratorConfig>(
-    crate_root: &Utf8Path,
-    config_file_override: Option<&Utf8Path>,
-) -> Result<Option<toml::Value>> {
-    let config_path = match config_file_override {
-        Some(cfg) => cfg.to_owned(),
-        None => crate_root.join("uniffi.toml"),
-    };
-
-    if !config_path.exists() {
-        return Ok(None);
-    }
-
-    let contents = fs::read_to_string(&config_path)
-        .with_context(|| format!("Failed to read config file from {config_path}"))?;
-    let full_config = toml::Value::from_str(&contents)
-        .with_context(|| format!("Failed to parse config file {config_path}"))?;
-
-    Ok(full_config
-        .get("bindings")
-        .and_then(BC::get_entry_from_bindings_table))
+/// The options used when creating bindings. Named such
+/// it doesn't cause confusion that it's settings specific to
+/// the generator itself.
+// TODO: We should try and move the public interface of the module to
+// this struct. For now, only the BindingGenerator uses it.
+#[derive(Debug, Default)]
+pub struct GenerationSettings {
+    pub out_dir: Utf8PathBuf,
+    pub try_format_code: bool,
+    pub cdylib: Option<String>,
 }
 
 /// A trait representing a UniFFI Binding Generator
@@ -212,22 +137,141 @@ fn load_bindings_config_toml<BC: BindingGeneratorConfig>(
 /// External crates that implement binding generators, should implement this type
 /// and call the [`generate_external_bindings`] using a type that implements this trait.
 pub trait BindingGenerator: Sized {
-    /// Associated type representing a the bindings-specifig configuration parsed from the
-    /// uniffi.toml
-    type Config: BindingGeneratorConfig;
+    /// Handles configuring the bindings
+    type Config;
+
+    /// Creates a new config.
+    fn new_config(&self, root_toml: &toml::Value) -> Result<Self::Config>;
+
+    /// Update the various config items in preparation to write one or more of them.
+    ///
+    /// # Arguments
+    /// - `cdylib`: The name of the cdylib file, if known.
+    /// - `library_path`: The name of library used to extract the symbols.
+    /// - `components`: A mutable array of [`Component`]s to be updated.
+    fn update_component_configs(
+        &self,
+        settings: &GenerationSettings,
+        components: &mut Vec<Component<Self::Config>>,
+    ) -> Result<()>;
 
     /// Writes the bindings to the output directory
     ///
     /// # Arguments
-    /// - `ci`: A [`ComponentInterface`] representing the interface
-    /// - `config`: A instance of the BindingGeneratorConfig associated with this type
+    /// - `components`: An array of [`Component`]s representing the items to be generated.
     /// - `out_dir`: The path to where the binding generator should write the output bindings
     fn write_bindings(
         &self,
-        ci: ComponentInterface,
-        config: Self::Config,
-        out_dir: &Utf8Path,
+        settings: &GenerationSettings,
+        components: &[Component<Self::Config>],
     ) -> Result<()>;
+}
+
+/// A trait to alter language specific type representations.
+///
+/// It is meant to be implemented by each language oracle. It takes a
+/// ['ComponentInterface'] and uses its own specific language adjustment
+/// functions to be able to generate language specific templates.
+pub trait VisitMut {
+    /// Go through each `Record` of a [`ComponentInterface`] and
+    /// adjust it to language specific naming conventions.
+    fn visit_record(&self, record: &mut Record);
+
+    /// Change the name of an `Object` of a [`ComponentInterface`
+    /// to language specific naming conventions.
+    fn visit_object(&self, object: &mut Object);
+
+    /// Change the name of a `Field` of an `Enum` `Variant`
+    /// to language specific naming conventions.
+    fn visit_field(&self, field: &mut Field);
+
+    /// Change the name of a `FfiField` inside a `FfiStruct`
+    /// to language specific naming conventions.
+    fn visit_ffi_field(&self, ffi_field: &mut FfiField);
+
+    /// Change the `Arugment` of a `FfiFunction` in the [`ComponentInterface`]
+    /// to language specific naming conventions.
+    fn visit_ffi_argument(&self, ffi_argument: &mut FfiArgument);
+
+    /// Go through each `Enum` of a [`ComponentInterface`] and
+    /// adjust it to language specific naming conventions.
+    fn visit_enum(&self, is_error: bool, enum_: &mut Enum);
+
+    /// Change the naming of the key in the [`ComponentInterface`]
+    /// `BTreeMap` where all `Enum`s are stored to reflect the changed
+    /// name of an `Enum`.
+    fn visit_enum_key(&self, key: &mut String) -> String;
+
+    /// Go through each `Variant` of an `Enum` and
+    /// adjust it to language specific naming conventions.
+    fn visit_variant(&self, is_error: bool, variant: &mut Variant);
+
+    /// Go through each `Type` in the `TypeUniverse` of
+    /// a [`ComponentInterface`] and adjust it to language specific
+    /// naming conventions.
+    fn visit_type(&self, type_: &mut Type);
+
+    /// Go through each error name in the interface and adjust it to language specific naming
+    /// conventions.  The new name must match the name of the Enum/Object definition after it's
+    /// visited.
+    fn visit_error_name(&self, name: &mut String);
+
+    /// Go through each `Method` of an `Object` and
+    /// adjust it to language specific naming conventions.
+    fn visit_method(&self, method: &mut Method);
+
+    /// Go through each `Argument` of a `Function` and
+    /// adjust it to language specific naming conventions.
+    fn visit_argument(&self, argument: &mut Argument);
+
+    /// Go through each `Constructor` of a [`ComponentInterface`] and
+    /// adjust it to language specific naming conventions.
+    fn visit_constructor(&self, constructor: &mut Constructor);
+
+    /// Go through each `Function` of a [`ComponentInterface`] and
+    /// adjust it to language specific naming conventions.
+    fn visit_function(&self, function: &mut Function);
+}
+
+/// Everything needed to generate a ComponentInterface.
+#[derive(Debug)]
+pub struct Component<Config> {
+    pub ci: ComponentInterface,
+    pub config: Config,
+}
+
+/// A trait used by the bindgen to obtain config information about a source crate
+/// which was found in the metadata for the library.
+///
+/// This is an abstraction around needing the source directory for a crate.
+/// In most cases `cargo_metadata` can be used, but this should be able to work in
+/// more environments.
+pub trait BindgenCrateConfigSupplier {
+    /// Get a `toml::value::Table` instance for the crate.
+    fn get_toml(&self, _crate_name: &str) -> Result<Option<toml::value::Table>> {
+        Ok(None)
+    }
+
+    /// Get the path to the TOML file for a crate.
+    ///
+    /// This is usually the `uniffi.toml` path in the root of the crate source.
+    fn get_toml_path(&self, _crate_name: &str) -> Option<Utf8PathBuf> {
+        None
+    }
+
+    /// Obtains the contents of the named UDL file which was referenced by the type metadata.
+    fn get_udl(&self, crate_name: &str, udl_name: &str) -> Result<String> {
+        bail!("Crate {crate_name} has no UDL {udl_name}")
+    }
+}
+
+pub struct EmptyCrateConfigSupplier;
+impl BindgenCrateConfigSupplier for EmptyCrateConfigSupplier {}
+
+/// A convenience function for the CLI to help avoid using static libs
+/// in places cdylibs are required.
+pub fn is_cdylib(library_file: impl AsRef<Utf8Path>) -> bool {
+    library_mode::calc_cdylib_name(library_file.as_ref()).is_some()
 }
 
 /// Generate bindings for an external binding generator
@@ -236,7 +280,6 @@ pub trait BindingGenerator: Sized {
 /// Implements an entry point for external binding generators.
 /// The function does the following:
 /// - It parses the `udl` in a [`ComponentInterface`]
-/// - Parses the `uniffi.toml` and loads it into the type that implements [`BindingGeneratorConfig`]
 /// - Creates an instance of [`BindingGenerator`], based on type argument `B`, and run [`BindingGenerator::write_bindings`] on it
 ///
 /// # Arguments
@@ -244,86 +287,162 @@ pub trait BindingGenerator: Sized {
 /// - `udl_file`: The path to the UDL file
 /// - `config_file_override`: The path to the configuration toml file, most likely called `uniffi.toml`. If [`None`], the function will try to guess based on the crate's root.
 /// - `out_dir_override`: The path to write the bindings to. If [`None`], it will be the path to the parent directory of the `udl_file`
-pub fn generate_external_bindings(
-    binding_generator: impl BindingGenerator,
+/// - `library_file`: The path to a dynamic library to attempt to extract the definitions from and extend the component interface with. No extensions to component interface occur if it's [`None`]
+/// - `crate_name`: Override the default crate name that is guessed from UDL file path.
+pub fn generate_external_bindings<T: BindingGenerator>(
+    binding_generator: &T,
     udl_file: impl AsRef<Utf8Path>,
     config_file_override: Option<impl AsRef<Utf8Path>>,
     out_dir_override: Option<impl AsRef<Utf8Path>>,
+    library_file: Option<impl AsRef<Utf8Path>>,
+    crate_name: Option<&str>,
+    try_format_code: bool,
 ) -> Result<()> {
-    let out_dir_override = out_dir_override.as_ref().map(|p| p.as_ref());
+    let crate_name = crate_name
+        .map(|c| Ok(c.to_string()))
+        .unwrap_or_else(|| crate_name_from_cargo_toml(udl_file.as_ref()))?;
+    let mut ci = parse_udl(udl_file.as_ref(), &crate_name)?;
+    if let Some(ref library_file) = library_file {
+        macro_metadata::add_to_ci_from_library(&mut ci, library_file.as_ref())?;
+    }
+    let crate_root = &guess_crate_root(udl_file.as_ref()).context("Failed to guess crate root")?;
+
     let config_file_override = config_file_override.as_ref().map(|p| p.as_ref());
 
-    let crate_root = guess_crate_root(udl_file.as_ref())?;
-    let out_dir = get_out_dir(udl_file.as_ref(), out_dir_override)?;
-    let component = parse_udl(udl_file.as_ref()).context("Error parsing UDL")?;
-    let bindings_config = load_bindings_config(&component, crate_root, config_file_override)?;
-    binding_generator.write_bindings(component, bindings_config, &out_dir)
+    let config = {
+        let crate_config = load_toml_file(Some(&crate_root.join("uniffi.toml")))
+            .context("failed to load {crate_root}/uniffi.toml")?;
+        let toml_value =
+            overridden_config_value(crate_config.unwrap_or_default(), config_file_override)?;
+        binding_generator.new_config(&toml_value)?
+    };
+
+    let settings = GenerationSettings {
+        cdylib: match library_file {
+            Some(ref library_file) => {
+                library_mode::calc_cdylib_name(library_file.as_ref()).map(ToOwned::to_owned)
+            }
+            None => None,
+        },
+        out_dir: get_out_dir(
+            udl_file.as_ref(),
+            out_dir_override.as_ref().map(|p| p.as_ref()),
+        )?,
+        try_format_code,
+    };
+
+    let mut components = vec![Component { ci, config }];
+    binding_generator.update_component_configs(&settings, &mut components)?;
+    binding_generator.write_bindings(&settings, &components)
 }
 
 // Generate the infrastructural Rust code for implementing the UDL interface,
 // such as the `extern "C"` function definitions and record data types.
+// Locates and parses Cargo.toml to determine the name of the crate.
 pub fn generate_component_scaffolding(
     udl_file: &Utf8Path,
-    config_file_override: Option<&Utf8Path>,
     out_dir_override: Option<&Utf8Path>,
     format_code: bool,
 ) -> Result<()> {
-    let component = parse_udl(udl_file)?;
-    let _config = get_config(
-        &component,
-        guess_crate_root(udl_file)?,
-        config_file_override,
-    );
+    let component = parse_udl(udl_file, &crate_name_from_cargo_toml(udl_file)?)
+        .with_context(|| format!("parsing udl file {udl_file}"))?;
+    generate_component_scaffolding_inner(component, udl_file, out_dir_override, format_code)
+}
+
+// Generate the infrastructural Rust code for implementing the UDL interface,
+// such as the `extern "C"` function definitions and record data types, using
+// the specified crate name.
+pub fn generate_component_scaffolding_for_crate(
+    udl_file: &Utf8Path,
+    crate_name: &str,
+    out_dir_override: Option<&Utf8Path>,
+    format_code: bool,
+) -> Result<()> {
+    let component =
+        parse_udl(udl_file, crate_name).with_context(|| format!("parsing udl file {udl_file}"))?;
+    generate_component_scaffolding_inner(component, udl_file, out_dir_override, format_code)
+}
+
+fn generate_component_scaffolding_inner(
+    component: ComponentInterface,
+    udl_file: &Utf8Path,
+    out_dir_override: Option<&Utf8Path>,
+    format_code: bool,
+) -> Result<()> {
     let file_stem = udl_file.file_stem().context("not a file")?;
     let filename = format!("{file_stem}.uniffi.rs");
     let out_path = get_out_dir(udl_file, out_dir_override)?.join(filename);
     let mut f = File::create(&out_path)?;
-    write!(f, "{}", RustScaffolding::new(&component)).context("Failed to write output file")?;
+    write!(f, "{}", RustScaffolding::new(&component, file_stem))
+        .context("Failed to write output file")?;
     if format_code {
-        format_code_with_rustfmt(&out_path)?;
+        format_code_with_rustfmt(&out_path).context("formatting generated Rust code")?;
     }
     Ok(())
 }
 
 // Generate the bindings in the target languages that call the scaffolding
 // Rust code.
-pub fn generate_bindings(
+pub fn generate_bindings<T: BindingGenerator>(
     udl_file: &Utf8Path,
     config_file_override: Option<&Utf8Path>,
-    target_languages: Vec<&str>,
+    binding_generator: T,
     out_dir_override: Option<&Utf8Path>,
     library_file: Option<&Utf8Path>,
+    crate_name: Option<&str>,
     try_format_code: bool,
 ) -> Result<()> {
-    let mut component = parse_udl(udl_file)?;
-    if let Some(library_file) = library_file {
-        macro_metadata::add_to_ci_from_library(&mut component, library_file)?;
-    }
-    let crate_root = &guess_crate_root(udl_file)?;
-
-    let config = get_config(&component, crate_root, config_file_override)?;
-    let out_dir = get_out_dir(udl_file, out_dir_override)?;
-    for language in target_languages {
-        bindings::write_bindings(
-            &config.bindings,
-            &component,
-            &out_dir,
-            language.try_into()?,
-            try_format_code,
-        )?;
-    }
-
-    Ok(())
+    generate_external_bindings(
+        &binding_generator,
+        udl_file,
+        config_file_override,
+        out_dir_override,
+        library_file,
+        crate_name,
+        try_format_code,
+    )
 }
 
-pub fn dump_json(library_path: &Utf8Path) -> Result<String> {
+pub fn print_repr(library_path: &Utf8Path) -> Result<()> {
     let metadata = macro_metadata::extract_from_library(library_path)?;
-    Ok(serde_json::to_string_pretty(&metadata)?)
+    println!("{metadata:#?}");
+    Ok(())
 }
 
-pub fn print_json(library_path: &Utf8Path) -> Result<()> {
-    println!("{}", dump_json(library_path)?);
-    Ok(())
+// Given the path to a UDL file, locate and parse the corresponding Cargo.toml to determine
+// the library crate name.
+// Note that this is largely a copy of code in uniffi_macros/src/util.rs, but sharing it
+// isn't trivial and it's not particularly complicated so we've just copied it.
+fn crate_name_from_cargo_toml(udl_file: &Utf8Path) -> Result<String> {
+    #[derive(Deserialize)]
+    struct CargoToml {
+        package: Package,
+        #[serde(default)]
+        lib: Lib,
+    }
+
+    #[derive(Deserialize)]
+    struct Package {
+        name: String,
+    }
+
+    #[derive(Default, Deserialize)]
+    struct Lib {
+        name: Option<String>,
+    }
+
+    let file = guess_crate_root(udl_file)?.join("Cargo.toml");
+    let cargo_toml_bytes =
+        fs::read(file).context("Can't find Cargo.toml to determine the crate name")?;
+
+    let cargo_toml = toml::from_slice::<CargoToml>(&cargo_toml_bytes)?;
+
+    let lib_crate_name = cargo_toml
+        .lib
+        .name
+        .unwrap_or_else(|| cargo_toml.package.name.replace('-', "_"));
+
+    Ok(lib_crate_name)
 }
 
 /// Guess the root directory of the crate from the path of its UDL file.
@@ -343,30 +462,6 @@ pub fn guess_crate_root(udl_file: &Utf8Path) -> Result<&Utf8Path> {
     Ok(path_guess)
 }
 
-fn get_config(
-    component: &ComponentInterface,
-    crate_root: &Utf8Path,
-    config_file_override: Option<&Utf8Path>,
-) -> Result<Config> {
-    let default_config: Config = component.into();
-
-    let config_file = match config_file_override {
-        Some(cfg) => Some(cfg.to_owned()),
-        None => crate_root.join("uniffi.toml").canonicalize_utf8().ok(),
-    };
-
-    match config_file {
-        Some(path) => {
-            let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read config file from {path}"))?;
-            let loaded_config: Config = toml::de::from_str(&contents)
-                .with_context(|| format!("Failed to generate config from file {path}"))?;
-            Ok(loaded_config.merge_with(&default_config))
-        }
-        None => Ok(default_config),
-    }
-}
-
 fn get_out_dir(udl_file: &Utf8Path, out_dir_override: Option<&Utf8Path>) -> Result<Utf8PathBuf> {
     Ok(match out_dir_override {
         Some(s) => {
@@ -381,10 +476,11 @@ fn get_out_dir(udl_file: &Utf8Path, out_dir_override: Option<&Utf8Path>) -> Resu
     })
 }
 
-fn parse_udl(udl_file: &Utf8Path) -> Result<ComponentInterface> {
+fn parse_udl(udl_file: &Utf8Path, crate_name: &str) -> Result<ComponentInterface> {
     let udl = fs::read_to_string(udl_file)
         .with_context(|| format!("Failed to read UDL from {udl_file}"))?;
-    ComponentInterface::from_webidl(&udl).context("Failed to parse UDL")
+    let group = uniffi_udl::parse_udl(&udl, crate_name)?;
+    ComponentInterface::from_metadata(group)
 }
 
 fn format_code_with_rustfmt(path: &Utf8Path) -> Result<()> {
@@ -401,50 +497,47 @@ fn format_code_with_rustfmt(path: &Utf8Path) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct Config {
-    #[serde(default)]
-    bindings: bindings::Config,
-}
-
-impl From<&ComponentInterface> for Config {
-    fn from(ci: &ComponentInterface) -> Self {
-        Config {
-            bindings: ci.into(),
+/// Load TOML from file if the file exists.
+fn load_toml_file(source: Option<&Utf8Path>) -> Result<Option<toml::value::Table>> {
+    if let Some(source) = source {
+        if source.exists() {
+            let contents =
+                fs::read_to_string(source).with_context(|| format!("read file: {:?}", source))?;
+            return Ok(Some(
+                toml::de::from_str(&contents)
+                    .with_context(|| format!("parse toml: {:?}", source))?,
+            ));
         }
     }
+
+    Ok(None)
 }
 
-pub trait MergeWith {
-    fn merge_with(&self, other: &Self) -> Self;
-}
-
-impl MergeWith for Config {
-    fn merge_with(&self, other: &Self) -> Self {
-        Config {
-            bindings: self.bindings.merge_with(&other.bindings),
-        }
+/// Load the default `uniffi.toml` config, merge TOML trees with `config_file_override` if specified.
+fn overridden_config_value(
+    mut config: toml::value::Table,
+    config_file_override: Option<&Utf8Path>,
+) -> Result<toml::Value> {
+    let override_config = load_toml_file(config_file_override).context("override config")?;
+    if let Some(override_config) = override_config {
+        merge_toml(&mut config, override_config);
     }
+    Ok(toml::Value::from(config))
 }
 
-impl<T: Clone> MergeWith for Option<T> {
-    fn merge_with(&self, other: &Self) -> Self {
-        match (self, other) {
-            (Some(_), _) => self.clone(),
-            (None, Some(_)) => other.clone(),
-            (None, None) => None,
+fn merge_toml(a: &mut toml::value::Table, b: toml::value::Table) {
+    for (key, value) in b.into_iter() {
+        match a.get_mut(&key) {
+            Some(existing_value) => match (existing_value, value) {
+                (toml::Value::Table(ref mut t0), toml::Value::Table(t1)) => {
+                    merge_toml(t0, t1);
+                }
+                (v, value) => *v = value,
+            },
+            None => {
+                a.insert(key, value);
+            }
         }
-    }
-}
-
-impl<V: Clone> MergeWith for HashMap<String, V> {
-    fn merge_with(&self, other: &Self) -> Self {
-        let mut merged = HashMap::new();
-        // Iterate through other first so our keys override theirs
-        for (key, value) in other.iter().chain(self) {
-            merged.insert(key.clone(), value.clone());
-        }
-        merged
     }
 }
 
@@ -471,13 +564,65 @@ mod test {
         let example_crate_root = this_crate_root
             .parent()
             .expect("should have a parent directory")
-            .join("./examples/arithmetic");
+            .join("examples/arithmetic");
         assert_eq!(
-            guess_crate_root(&example_crate_root.join("./src/arthmetic.udl")).unwrap(),
+            guess_crate_root(&example_crate_root.join("src/arthmetic.udl")).unwrap(),
             example_crate_root
         );
 
-        let not_a_crate_root = &this_crate_root.join("./src/templates");
-        assert!(guess_crate_root(&not_a_crate_root.join("./src/example.udl")).is_err());
+        let not_a_crate_root = &this_crate_root.join("src/templates");
+        assert!(guess_crate_root(&not_a_crate_root.join("src/example.udl")).is_err());
+    }
+
+    #[test]
+    fn test_merge_toml() {
+        let default = r#"
+            foo = "foo"
+            bar = "bar"
+
+            [table1]
+            foo = "foo"
+            bar = "bar"
+        "#;
+        let mut default = toml::de::from_str(default).unwrap();
+
+        let override_toml = r#"
+            # update key
+            bar = "BAR"
+            # insert new key
+            baz = "BAZ"
+
+            [table1]
+            # update key
+            bar = "BAR"
+            # insert new key
+            baz = "BAZ"
+
+            # new table
+            [table1.table2]
+            bar = "BAR"
+            baz = "BAZ"
+        "#;
+        let override_toml = toml::de::from_str(override_toml).unwrap();
+
+        let expected = r#"
+            foo = "foo"
+            bar = "BAR"
+            baz = "BAZ"
+
+            [table1]
+            foo = "foo"
+            bar = "BAR"
+            baz = "BAZ"
+
+            [table1.table2]
+            bar = "BAR"
+            baz = "BAZ"
+        "#;
+        let expected: toml::value::Table = toml::de::from_str(expected).unwrap();
+
+        merge_toml(&mut default, override_toml);
+
+        assert_eq!(&expected, &default);
     }
 }

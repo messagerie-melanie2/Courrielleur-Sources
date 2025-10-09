@@ -455,7 +455,7 @@ const TEST_DATA = [
   },
 ];
 
-add_task(function () {
+add_task(async function () {
   // Enable unit conversion.
   Services.prefs.setBoolPref("browser.urlbar.unitConversion.enabled", true);
   registerCleanupFunction(() => {
@@ -466,15 +466,13 @@ add_task(function () {
     for (const { queryString, timezone, expected, assertResult } of cases) {
       info(`Test "${queryString}" in ${category}`);
 
-      let originalTimezone;
       if (timezone) {
-        originalTimezone = Cu.getJSTestingFunctions().getTimeZone();
         info(`Set timezone ${timezone}`);
         Cu.getJSTestingFunctions().setTimeZone(timezone);
       }
 
       const context = createContext(queryString);
-      const isActive = UrlbarProviderUnitConversion.isActive(context);
+      const isActive = await UrlbarProviderUnitConversion.isActive(context);
       Assert.equal(isActive, !!expected || !!assertResult);
 
       if (isActive) {
@@ -492,8 +490,9 @@ add_task(function () {
         });
       }
 
-      if (originalTimezone) {
-        Cu.getJSTestingFunctions().setTimeZone(originalTimezone);
+      if (timezone) {
+        // Reset timezone to default
+        Cu.getJSTestingFunctions().setTimeZone(undefined);
       }
     }
   }

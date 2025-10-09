@@ -8,22 +8,22 @@
 
 "use strict";
 
-var { close_compose_window, open_compose_with_reply } = ChromeUtils.import(
-  "resource://testing-common/mozmill/ComposeHelpers.jsm"
-);
+var { close_compose_window, open_compose_with_reply } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+  );
 var {
   add_message_to_folder,
   assert_selected_and_displayed,
   be_in_folder,
   create_message,
-  mc,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
 
 var testFolder = null;
@@ -113,29 +113,29 @@ add_setup(async function () {
 });
 
 function addIdentitiesAndFolder() {
-  let server = MailServices.accounts.createIncomingServer(
+  const server = MailServices.accounts.createIncomingServer(
     "nobody",
-    "Reply Identity Testing",
+    "ReplyIdentityTesting",
     "pop3"
   );
   testFolder = server.rootFolder
     .QueryInterface(Ci.nsIMsgLocalMailFolder)
     .createLocalSubfolder("Replies");
 
-  let identity = MailServices.accounts.createIdentity();
+  const identity = MailServices.accounts.createIdentity();
   identity.email = identity1Email;
 
-  let identity2 = MailServices.accounts.createIdentity();
+  const identity2 = MailServices.accounts.createIdentity();
   identity2.email = identity2Email;
 
-  let account = MailServices.accounts.createAccount();
+  const account = MailServices.accounts.createAccount();
   account.incomingServer = server;
   account.addIdentity(identity);
   account.addIdentity(identity2);
 }
 
 function checkReply(replyWin, expectedFromEmail) {
-  let identityList = replyWin.window.document.getElementById("msgIdentity");
+  const identityList = replyWin.document.getElementById("msgIdentity");
   if (!identityList.selectedItem.label.includes(expectedFromEmail)) {
     throw new Error(
       "The From address is not correctly selected! Expected: " +
@@ -149,62 +149,62 @@ function checkReply(replyWin, expectedFromEmail) {
 add_task(async function test_reply_no_matching_identity() {
   await be_in_folder(testFolder);
 
-  let msg = select_click_row(0);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(-1);
+  await assert_selected_and_displayed(window, msg);
 
-  let replyWin = open_compose_with_reply();
+  const replyWin = await open_compose_with_reply();
   // Should have selected the default identity.
   checkReply(replyWin, identity1Email);
-  close_compose_window(replyWin);
+  await close_compose_window(replyWin);
 });
 
 add_task(async function test_reply_matching_only_deliveredto() {
   await be_in_folder(testFolder);
 
-  let msg = select_click_row(1);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(-2);
+  await assert_selected_and_displayed(window, msg);
 
-  let replyWin = open_compose_with_reply();
+  const replyWin = await open_compose_with_reply();
   // Should have selected the second id, which is listed in Delivered-To:.
   checkReply(replyWin, identity2Email);
-  close_compose_window(replyWin);
+  await close_compose_window(replyWin);
 }).skip();
 
 add_task(async function test_reply_matching_subaddress() {
   await be_in_folder(testFolder);
 
-  let msg = select_click_row(2);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(-3);
+  await assert_selected_and_displayed(window, msg);
 
-  let replyWin = open_compose_with_reply();
+  const replyWin = await open_compose_with_reply();
   // Should have selected the first id, the email doesn't fully match.
   // other.lenny != "our" lenny
   checkReply(replyWin, identity1Email);
-  close_compose_window(replyWin);
+  await close_compose_window(replyWin);
 });
 
 add_task(async function test_reply_to_matching_second_id() {
   await be_in_folder(testFolder);
 
-  let msg = select_click_row(3);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(-4);
+  await assert_selected_and_displayed(window, msg);
 
-  let replyWin = open_compose_with_reply();
+  const replyWin = await open_compose_with_reply();
   // Should have selected the second id, which was in To;.
   checkReply(replyWin, identity2Email);
-  close_compose_window(replyWin);
+  await close_compose_window(replyWin);
 });
 
 add_task(async function test_deliveredto_to_matching_only_parlty() {
   await be_in_folder(testFolder);
 
-  let msg = select_click_row(4);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(-5);
+  await assert_selected_and_displayed(window, msg);
 
-  let replyWin = open_compose_with_reply();
+  const replyWin = await open_compose_with_reply();
   // Should have selected the (default) first id.
   checkReply(replyWin, identity1Email);
-  close_compose_window(replyWin);
+  await close_compose_window(replyWin);
 });
 
 /**
@@ -214,13 +214,13 @@ add_task(async function test_deliveredto_to_matching_only_parlty() {
 add_task(async function test_reply_to_self_second_id() {
   await be_in_folder(testFolder);
 
-  let msg = select_click_row(5);
-  assert_selected_and_displayed(mc, msg);
+  const msg = await select_click_row(0);
+  await assert_selected_and_displayed(window, msg);
 
-  let replyWin = open_compose_with_reply();
+  const replyWin = await open_compose_with_reply();
   // Should have selected the second id, which was in From.
   checkReply(replyWin, identity2Email);
-  close_compose_window(replyWin, false /* no prompt*/);
+  await close_compose_window(replyWin);
 
   Assert.report(
     false,

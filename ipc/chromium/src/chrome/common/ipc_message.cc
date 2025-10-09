@@ -7,7 +7,6 @@
 #include "chrome/common/ipc_message.h"
 
 #include "base/logging.h"
-#include "build/build_config.h"
 #include "mojo/core/ports/event.h"
 
 #include <utility>
@@ -22,7 +21,7 @@ const mojo::core::ports::UserMessage::TypeInfo Message::kUserMessageTypeInfo{};
 
 Message::~Message() { MOZ_COUNT_DTOR(IPC::Message); }
 
-Message::Message(int32_t routing_id, msgid_t type, uint32_t segment_capacity,
+Message::Message(routeid_t routing_id, msgid_t type, uint32_t segment_capacity,
                  HeaderFlags flags)
     : UserMessage(&kUserMessageTypeInfo),
       Pickle(sizeof(Header), segment_capacity) {
@@ -33,11 +32,12 @@ Message::Message(int32_t routing_id, msgid_t type, uint32_t segment_capacity,
   header()->num_handles = 0;
   header()->txid = -1;
   header()->seqno = 0;
-#if defined(OS_MACOSX)
+#if defined(XP_DARWIN)
   header()->cookie = 0;
   header()->num_send_rights = 0;
 #endif
   header()->event_footer_size = 0;
+  header()->_padding = 0;
 }
 
 Message::Message(const char* data, int data_len)
@@ -47,7 +47,7 @@ Message::Message(const char* data, int data_len)
 }
 
 /*static*/ mozilla::UniquePtr<Message> Message::IPDLMessage(
-    int32_t routing_id, msgid_t type, uint32_t segment_capacity,
+    routeid_t routing_id, msgid_t type, uint32_t segment_capacity,
     HeaderFlags flags) {
   return mozilla::MakeUnique<Message>(routing_id, type, segment_capacity,
                                       flags);
@@ -158,7 +158,7 @@ void Message::SetAttachedPorts(nsTArray<mozilla::ipc::ScopedPort> ports) {
   attached_ports_ = std::move(ports);
 }
 
-#if defined(OS_MACOSX)
+#if defined(XP_DARWIN)
 bool Message::WriteMachSendRight(mozilla::UniqueMachSendRight port) {
   uint32_t index = attached_send_rights_.Length();
   WriteUInt32(index);

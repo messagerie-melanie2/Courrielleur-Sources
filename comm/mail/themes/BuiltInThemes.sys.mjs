@@ -11,22 +11,24 @@ ChromeUtils.defineESModuleGetters(lazy, {
 // List of themes built in to the browser. The themes are represented by objects
 // containing their id, current version, and path relative to
 // resource://builtin-themes/.
-const STANDARD_THEMES = new Map([
+const STANDARD_THEMES_DATA = [
   [
     "thunderbird-compact-light@mozilla.org",
     {
-      version: "1.2",
+      version: "1.3",
       path: "light/",
     },
   ],
   [
     "thunderbird-compact-dark@mozilla.org",
     {
-      version: "1.2",
+      version: "1.3",
       path: "dark/",
     },
   ],
-]);
+];
+
+const STANDARD_THEMES = new Map(STANDARD_THEMES_DATA);
 
 class _BuiltInThemes {
   constructor() {}
@@ -57,14 +59,14 @@ class _BuiltInThemes {
   }
 
   /**
-   * @param {string} id
+   * @param {string} _id
    *   The theme's id.
    * @returns {boolean}
-   *   True if the theme with id `id` is both expired and retained. That is,
+   *   True if the theme with id `_id` is both expired and retained. That is,
    *   the user has the ability to use it after its expiry date.
    *   Or it would - this is just a shim not to break assumptions...
    */
-  isRetainedExpiredTheme(id) {
+  isRetainedExpiredTheme(_id) {
     return false;
   }
 
@@ -73,16 +75,16 @@ class _BuiltInThemes {
    * AddonManager.maybeInstallBuiltinAddon for that theme.
    */
   maybeInstallActiveBuiltInTheme() {
-    let activeThemeID = Services.prefs.getStringPref(
+    const activeThemeID = Services.prefs.getStringPref(
       "extensions.activeThemeID",
       "default-theme@mozilla.org"
     );
-    let activeBuiltInTheme = STANDARD_THEMES.get(activeThemeID);
+    const activeBuiltInTheme = STANDARD_THEMES.get(activeThemeID);
     if (activeBuiltInTheme) {
       lazy.AddonManager.maybeInstallBuiltinAddon(
         activeThemeID,
         activeBuiltInTheme.version,
-        `resource://builtin-themes/${activeBuiltInTheme.path}`
+        activeBuiltInTheme.path
       );
     }
   }
@@ -91,8 +93,8 @@ class _BuiltInThemes {
    * Ensures that all built-in themes are installed.
    */
   async ensureBuiltInThemes() {
-    let installPromises = [];
-    for (let [id, { version, path }] of STANDARD_THEMES.entries()) {
+    const installPromises = [];
+    for (const [id, { version, path }] of STANDARD_THEMES.entries()) {
       installPromises.push(
         lazy.AddonManager.maybeInstallBuiltinAddon(
           id,
@@ -103,6 +105,11 @@ class _BuiltInThemes {
     }
 
     await Promise.all(installPromises);
+  }
+
+  getBuiltInThemesDataMap() {
+    // Expose a clone of the internal data.
+    return new Map(STANDARD_THEMES_DATA);
   }
 }
 

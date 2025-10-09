@@ -8,10 +8,10 @@ set -xe
 test "$VERSION"
 test "$BUILD_NUMBER"
 test "$CANDIDATES_DIR"
-test "$L10N_CHANGESETS"
 test "$FLATPAK_BRANCH"
 test "$RELEASE_NOTES_URL"
-test "$RAW_FILE_URL"
+test "$PKG_LOCALES"
+test "$DESKTOP_LOCALES"
 
 # Optional environment variables
 : WORKSPACE                     "${WORKSPACE:=/home/worker/workspace}"
@@ -47,18 +47,14 @@ rm -rf "$SOURCE_DEST" && mkdir -p "$SOURCE_DEST"
 rm -rf ~/.local/share/flatpak/
 
 # Download en-US linux64 (English, 64-bit Linux) Thunderbird binary
-$CURL -o "${WORKSPACE}/thunderbird.tar.bz2" \
-    "${CANDIDATES_DIR}/${VERSION}-candidates/build${BUILD_NUMBER}/linux-x86_64/en-US/thunderbird-${VERSION}.tar.bz2"
-
-# Download locale information and extract locales to be included in snap
-$CURL -o "${WORKSPACE}/onchange-locales" "${RAW_FILE_URL}/mail/locales/onchange-locales"
-$CURL -o "${WORKSPACE}/l10n-changesets.json" "${RAW_FILE_URL}/mail/locales/l10n-changesets.json"
-locales=$(< "${WORKSPACE}/onchange-locales" sed "s/ja-JP-mac//")
+$CURL -o "${WORKSPACE}/thunderbird.tar.xz" \
+    "${CANDIDATES_DIR}/${VERSION}-candidates/build${BUILD_NUMBER}/linux-x86_64/en-US/thunderbird-${VERSION}.tar.xz"
 
 # Fetch langpack extension for each locale
 mkdir -p "$DISTRIBUTION_DIR"
 mkdir -p "$DISTRIBUTION_DIR/extensions"
-for locale in $locales; do
+readarray -t locales < <(echo "$PKG_LOCALES" | jq -r '.[]')
+for locale in "${locales[@]}"; do
     $CURL -o "$DISTRIBUTION_DIR/extensions/langpack-${locale}@thunderbird.mozilla.org.xpi" \
         "$CANDIDATES_DIR/${VERSION}-candidates/build${BUILD_NUMBER}/linux-x86_64/xpi/${locale}.xpi"
 done
@@ -66,18 +62,25 @@ done
 # Download artifacts from dependencies and build the .desktop file.
 (
 source "${SCRIPT_DIR}/venv/bin/activate"
-python3 "${SCRIPT_DIR}/build_desktop_file.py" -o "${WORKSPACE}/org.mozilla.Thunderbird.desktop" \
+
+python3 /scripts/fetch-content task-artifacts --dest "${WORKSPACE}"
+
+[[ "$FLATPAK_BRANCH" = "stable" ]] && VERSION_FLAG="--esr" || VERSION_FLAG="--beta"
+python3 "${SCRIPT_DIR}/build_desktop_file.py"               \
+  -o "${WORKSPACE}/org.mozilla.Thunderbird.desktop"         \
   -t "${SCRIPT_DIR}/org.mozilla.thunderbird.desktop.jinja2" \
-  -l "${WORKSPACE}/l10n-central" \
-  -L "${WORKSPACE}/l10n-changesets.json" \
-  -f "mail/branding/thunderbird/brand.ftl" \
-  -f "mail/messenger/flatpak.ftl"
+  -l "${WORKSPACE}/l10n-central"                            \
+  -L "$DESKTOP_LOCALES"                                     \
+  -f "mail/branding/thunderbird/brand.ftl"                  \
+  -f "mail/messenger/flatpak.ftl"                           \
+  "${VERSION_FLAG}"
 )
 
 # Generate AppData XML from template, add various 
 envsubst < "$SCRIPT_DIR/org.mozilla.Thunderbird.appdata.xml.in" > "${WORKSPACE}/org.mozilla.Thunderbird.appdata.xml"
 cp -v "$SCRIPT_DIR/distribution.ini" "$WORKSPACE"
 cp -v "$SCRIPT_DIR/launch_script.sh" "$WORKSPACE"
+cp -v "$SCRIPT_DIR/tb_symbolic.svg" "$WORKSPACE"
 cd "${WORKSPACE}"
 
 # Fetch and install Firefox base app (as user, not system-wide)
@@ -118,12 +121,13 @@ EOF
 # Install Thunderbird files into appdir
 appdir=build/files
 install -d "${appdir}/lib/"
-(cd "${appdir}/lib/" && tar jxf "${WORKSPACE}/thunderbird.tar.bz2")
+(cd "${appdir}/lib/" && tar Jxf "${WORKSPACE}/thunderbird.tar.xz")
 install -D -m644 -t "${appdir}/share/appdata" org.mozilla.Thunderbird.appdata.xml
 install -D -m644 -t "${appdir}/share/applications" org.mozilla.Thunderbird.desktop
 for size in 16 32 48 64 128; do
     install -D -m644 "${appdir}/lib/thunderbird/chrome/icons/default/default${size}.png" "${appdir}/share/icons/hicolor/${size}x${size}/apps/org.mozilla.Thunderbird.png"
 done
+install -D -m644 tb_symbolic.svg "${appdir}/share/icons/hicolor/symbolic/apps/org.mozilla.Thunderbird-symbolic.svg"
 
 # Generate AppStream metadata and add screenshots from Flathub
 appstream-compose --prefix="${appdir}" --origin=flatpak --basename=org.mozilla.Thunderbird org.mozilla.Thunderbird
@@ -139,7 +143,7 @@ appstream-util mirror-screenshots "${appdir}"/share/app-info/xmls/org.mozilla.Th
 # of locales configured on the user's system are downloaded, instead of
 # all locales.
 mkdir -p "${appdir}/lib/thunderbird/distribution/extensions"
-for locale in $locales; do
+for locale in "${locales[@]}"; do
     install -D -m644 -t "${appdir}/share/runtime/langpack/${locale%%-*}/" "${DISTRIBUTION_DIR}/extensions/langpack-${locale}@thunderbird.mozilla.org.xpi"
     ln -sf "/app/share/runtime/langpack/${locale%%-*}/langpack-${locale}@thunderbird.mozilla.org.xpi" "${appdir}/lib/thunderbird/distribution/extensions/langpack-${locale}@thunderbird.mozilla.org.xpi"
 done
@@ -162,11 +166,12 @@ flatpak build-finish build                                        \
         --share=network                                           \
         --socket=pulseaudio                                       \
         --socket=wayland                                          \
-        --socket=x11                                              \
+        --socket=fallback-x11                                     \
         --socket=pcsc                                             \
         --socket=cups                                             \
         --require-version=0.10.3                                  \
         --persist=.thunderbird                                    \
+        --env=DICPATH=/usr/share/hunspell                         \
         --filesystem=xdg-download:rw                              \
         --filesystem=~/.gnupg                                     \
         --filesystem=xdg-run/gnupg:ro                             \
@@ -178,7 +183,6 @@ flatpak build-finish build                                        \
         --talk-name="org.gtk.vfs.*"                               \
         --talk-name=org.a11y.Bus                                  \
         --system-talk-name=org.freedesktop.NetworkManager         \
-        --env=TMPDIR=~/.var/app/org.mozilla.Thunderbird/cache/tmp \
         --command=thunderbird
 
 # Export Flatpak build into repo

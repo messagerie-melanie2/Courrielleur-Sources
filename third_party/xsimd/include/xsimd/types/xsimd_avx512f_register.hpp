@@ -18,7 +18,7 @@ namespace xsimd
 {
 
     /**
-     * @ingroup arch
+     * @ingroup architectures
      *
      * AVX512F instructions
      */
@@ -26,13 +26,16 @@ namespace xsimd
     {
         static constexpr bool supported() noexcept { return XSIMD_WITH_AVX512F; }
         static constexpr bool available() noexcept { return true; }
-        static constexpr unsigned version() noexcept { return generic::version(3, 1, 0); }
         static constexpr std::size_t alignment() noexcept { return 64; }
         static constexpr bool requires_alignment() noexcept { return true; }
         static constexpr char const* name() noexcept { return "avx512f"; }
     };
 
 #if XSIMD_WITH_AVX512F
+
+#if !XSIMD_WITH_AVX2
+#error "architecture inconsistency: avx512f requires avx2"
+#endif
 
     namespace types
     {
@@ -53,7 +56,6 @@ namespace xsimd
             using type = simd_avx512_bool_register<T>;
         };
 
-        XSIMD_DECLARE_SIMD_REGISTER(bool, avx512f, __m512i);
         XSIMD_DECLARE_SIMD_REGISTER(signed char, avx512f, __m512i);
         XSIMD_DECLARE_SIMD_REGISTER(unsigned char, avx512f, __m512i);
         XSIMD_DECLARE_SIMD_REGISTER(char, avx512f, __m512i);

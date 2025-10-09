@@ -11,12 +11,14 @@
  * Date             Modified by     Description of modification
  * 04/20/2000       IBM Corp.      OS/2 VisualAge build.
  */
+
+#include "mimehdrs.h"
 #include "nsCOMPtr.h"
+#include "nsMailHeaders.h"
 #include "modmimee.h"
 #include "mimeobj.h"
 #include "modlmime.h"
 #include "mimei.h"
-#include "mimebuf.h"
 #include "mimemoz2.h"
 #include "mimemsg.h"
 #include "nsMimeTypes.h"
@@ -38,10 +40,9 @@
 #include "nsIMsgComposeService.h"
 #include "nsMsgAttachmentData.h"
 #include "nsMsgI18N.h"
-#include "nsNativeCharsetUtils.h"
-#include "nsDirectoryServiceDefs.h"
 #include "nsIMsgMessageService.h"
 #include "nsMsgUtils.h"
+#include "nsMsgCompUtils.h"
 #include "nsCExternalHandlerService.h"
 #include "nsIMIMEService.h"
 #include "nsIMsgAccountManager.h"
@@ -54,7 +55,6 @@ using namespace mozilla::mailnews;
 //
 // Header strings...
 //
-#define HEADER_NNTP_POSTING_HOST "NNTP-Posting-Host"
 #define MIME_HEADER_TABLE                        \
   "<TABLE CELLPADDING=0 CELLSPACING=0 BORDER=0 " \
   "class=\"moz-email-headers-table\">"
@@ -66,18 +66,19 @@ using namespace mozilla::mailnews;
 // Forward declarations...
 //
 extern "C" char* MIME_StripContinuations(char* original);
-int mime_decompose_file_init_fn(void* stream_closure, MimeHeaders* headers);
+int mime_decompose_file_init_fn(MimeClosure stream_closure,
+                                MimeHeaders* headers);
 int mime_decompose_file_output_fn(const char* buf, int32_t size,
-                                  void* stream_closure);
-int mime_decompose_file_close_fn(void* stream_closure);
+                                  MimeClosure stream_closure);
+int mime_decompose_file_close_fn(MimeClosure stream_closure);
 extern int MimeHeaders_build_heads_list(MimeHeaders* hdrs);
 
-#define NS_MSGCOMPOSESERVICE_CID                    \
-  { /* 588595FE-1ADA-11d3-A715-0060B0EB39B5 */      \
-    0x588595fe, 0x1ada, 0x11d3, {                   \
-      0xa7, 0x15, 0x0, 0x60, 0xb0, 0xeb, 0x39, 0xb5 \
-    }                                               \
-  }
+#define NS_MSGCOMPOSESERVICE_CID              \
+  {/* 588595FE-1ADA-11d3-A715-0060B0EB39B5 */ \
+   0x588595fe,                                \
+   0x1ada,                                    \
+   0x11d3,                                    \
+   {0xa7, 0x15, 0x0, 0x60, 0xb0, 0xeb, 0x39, 0xb5}}
 static NS_DEFINE_CID(kCMsgComposeServiceCID, NS_MSGCOMPOSESERVICE_CID);
 
 mime_draft_data::mime_draft_data()
@@ -95,38 +96,6 @@ mime_draft_data::mime_draft_data()
       forwardInlineFilter(false),
       overrideComposeFormat(false),
       autodetectCharset(false) {}
-////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////
-// THIS SHOULD ALL MOVE TO ANOTHER FILE AFTER LANDING!
-////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////
-
-// safe filename for all OSes
-#define SAFE_TMP_FILENAME "nsmime.tmp"
-
-//
-// Create a file for the a unique temp file
-// on the local machine. Caller must free memory
-//
-nsresult nsMsgCreateTempFile(const char* tFileName, nsIFile** tFile) {
-  if (!tFileName || !*tFileName) tFileName = SAFE_TMP_FILENAME;
-
-  nsresult rv =
-      GetSpecialDirectoryWithFileName(NS_OS_TEMP_DIR, tFileName, tFile);
-
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  rv = (*tFile)->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 00600);
-  if (NS_FAILED(rv)) NS_RELEASE(*tFile);
-
-  return rv;
-}
-
-////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////
-// END OF - THIS SHOULD ALL MOVE TO ANOTHER FILE AFTER LANDING!
-////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////
 
 typedef enum {
   nsMsg_RETURN_RECEIPT_BOOL_HEADER_MASK = 0,
@@ -155,9 +124,6 @@ extern "C" void mime_dump_attachments(nsMsgAttachmentData* attachData) {
     printf("Real Type         : %s\n", tmp->m_realType.get());
     printf("Real Encoding     : %s\n", tmp->m_realEncoding.get());
     printf("Description       : %s\n", tmp->m_description.get());
-    printf("Mac Type          : %s\n", tmp->m_xMacType.get());
-    printf("Mac Creator       : %s\n", tmp->m_xMacCreator.get());
-    printf("Size in bytes     : %d\n", tmp->m_size);
     i++;
     tmp++;
   }
@@ -192,12 +158,10 @@ nsresult CreateComposeParams(nsCOMPtr<nsIMsgComposeParams>& pMsgComposeParams,
                                          nameStr);
           if (NS_FAILED(rv))
             CopyASCIItoUTF16(curAttachment->m_realName, nameStr);
-          attachment->SetName(nameStr);
+          attachment->SetName(NS_ConvertUTF16toUTF8(nameStr));
           attachment->SetUrl(spec);
           attachment->SetTemporary(true);
-          attachment->SetContentType(curAttachment->m_realType.get());
-          attachment->SetMacType(curAttachment->m_xMacType.get());
-          attachment->SetMacCreator(curAttachment->m_xMacCreator.get());
+          attachment->SetContentType(curAttachment->m_realType);
           attachment->SetSize(curAttachment->m_size);
           if (!curAttachment->m_cloudPartInfo.IsEmpty()) {
             nsCString provider;
@@ -313,13 +277,15 @@ nsresult ForwardMsgInline(nsIMsgCompFields* compFields,
   return rv;
 }
 
-nsresult CreateCompositionFields(
-    const char* from, const char* reply_to, const char* to, const char* cc,
-    const char* bcc, const char* fcc, const char* newsgroups,
-    const char* followup_to, const char* organization, const char* subject,
-    const char* references, const char* priority, const char* newspost_url,
-    const nsTArray<nsString>& otherHeaders, char* charset,
-    nsIMsgCompFields** _retval) {
+nsresult CreateCompositionFields(const char* from, const char* reply_to,
+                                 const char* to, const char* cc,
+                                 const char* bcc, const char* fcc,
+                                 const char* newsgroups,
+                                 const char* followup_to,
+                                 const char* organization, const char* subject,
+                                 const char* references, const char* priority,
+                                 const nsTArray<nsString>& otherHeaders,
+                                 char* charset, nsIMsgCompFields** _retval) {
   NS_ENSURE_ARG_POINTER(_retval);
 
   nsresult rv;
@@ -414,11 +380,6 @@ nsresult CreateCompositionFields(
     cFields->SetPriority(priorityName.get());
   }
 
-  if (newspost_url) {
-    MIME_DecodeMimeHeader(newspost_url, charset, false, true, val);
-    cFields->SetNewspostUrl(!val.IsEmpty() ? val.get() : newspost_url);
-  }
-
   nsTArray<nsString> cFieldsOtherHeaders;
   cFields->GetOtherHeaders(cFieldsOtherHeaders);
   for (auto otherHeader : otherHeaders) {
@@ -435,23 +396,36 @@ nsresult CreateCompositionFields(
   return rv;
 }
 
-static int dummy_file_write(char* buf, int32_t size, void* fileHandle) {
-  if (!fileHandle) return -1;
+static int dummy_file_write(const char* buf, int32_t size,
+                            MimeClosure draftData) {
+  if (!draftData) return -1;
 
-  nsIOutputStream* tStream = (nsIOutputStream*)fileHandle;
+  mime_draft_data* mdd = draftData.AsMimeDraftData();
+  if (!mdd) {
+    return -1;
+  }
+
   uint32_t bytesWritten;
-  tStream->Write(buf, size, &bytesWritten);
+  mdd->tmpFileStream->Write(buf, size, &bytesWritten);
   return (int)bytesWritten;
 }
 
 static int mime_parse_stream_write(nsMIMESession* stream, const char* buf,
                                    int32_t size) {
-  mime_draft_data* mdd = (mime_draft_data*)stream->data_object;
-  NS_ASSERTION(mdd, "null mime draft data!");
+  NS_ASSERTION(stream->data_object, "null mime data!");
+  if (!stream->data_object) {
+    return -1;
+  }
 
-  if (!mdd || !mdd->obj) return -1;
+  mime_draft_data* mdd = stream->data_object.AsMimeDraftData();
+  if (!mdd) {
+    return -1;
+  }
 
-  return mdd->obj->clazz->parse_buffer((char*)buf, size, mdd->obj);
+  if (!mdd->obj) return -1;
+
+  return mdd->obj->clazz->parse_buffer(
+      (char*)buf, size, MimeClosure(MimeClosure::isMimeObject, mdd->obj));
 }
 
 static void mime_free_attachments(nsTArray<nsMsgAttachedFile*>& attachments) {
@@ -529,8 +503,6 @@ static nsMsgAttachmentData* mime_draft_process_attachments(
     tmp->m_realEncoding = tmpFile->m_encoding;
     tmp->m_description = tmpFile->m_description;
     tmp->m_cloudPartInfo = tmpFile->m_cloudPartInfo;
-    tmp->m_xMacType = tmpFile->m_xMacType;
-    tmp->m_xMacCreator = tmpFile->m_xMacCreator;
     tmp->m_size = tmpFile->m_size;
   }
   return attachData;
@@ -666,8 +638,8 @@ static void mime_insert_all_headers(char** body, MimeHeaders* headers,
 
       /* Back up over whitespace before the colon. */
       ocolon = colon;
-      for (; colon > head && IS_SPACE(colon[-1]); colon--)
-        ;
+      for (; colon > head && IS_SPACE(colon[-1]); colon--) {
+      }
 
       contents = ocolon + 1;
     }
@@ -1138,13 +1110,20 @@ static void convert_plaintext_body_to_html(char** body) {
 }
 
 static void mime_parse_stream_complete(nsMIMESession* stream) {
-  mime_draft_data* mdd = (mime_draft_data*)stream->data_object;
+  NS_ASSERTION(stream->data_object, "null mime data");
+  if (!stream->data_object) {
+    return;
+  }
+
+  mime_draft_data* mdd = stream->data_object.AsMimeDraftData();
+  if (!mdd) {
+    return;
+  }
+
   nsCOMPtr<nsIMsgCompFields> fields;
   int htmlAction = 0;
   int lineWidth = 0;
 
-  char* host = 0;
-  char* news_host = 0;
   char* to_and_cc = 0;
   char* re_subject = 0;
   char* new_refs = 0;
@@ -1169,10 +1148,6 @@ static void mime_parse_stream_complete(nsMIMESession* stream) {
   bool forward_inline = false;
   bool bodyAsAttachment = false;
   bool charsetOverride = false;
-
-  NS_ASSERTION(mdd, "null mime draft data");
-
-  if (!mdd) return;
 
   if (mdd->obj) {
     int status;
@@ -1207,7 +1182,7 @@ static void mime_parse_stream_complete(nsMIMESession* stream) {
       mdd->options = 0;
     }
     if (mdd->stream) {
-      mdd->stream->complete((nsMIMESession*)mdd->stream->data_object);
+      mdd->stream->complete(mdd->stream);
       PR_Free(mdd->stream);
       mdd->stream = 0;
     }
@@ -1251,27 +1226,9 @@ static void mime_parse_stream_complete(nsMIMESession* stream) {
       grps = MimeHeaders_get(mdd->headers, HEADER_NEWSGROUPS, false, true);
       foll = MimeHeaders_get(mdd->headers, HEADER_FOLLOWUP_TO, false, true);
 
-      host = MimeHeaders_get(mdd->headers, HEADER_X_MOZILLA_NEWSHOST, false,
-                             false);
-      if (!host)
-        host = MimeHeaders_get(mdd->headers, HEADER_NNTP_POSTING_HOST, false,
-                               false);
-
       id = MimeHeaders_get(mdd->headers, HEADER_MESSAGE_ID, false, false);
       refs = MimeHeaders_get(mdd->headers, HEADER_REFERENCES, false, true);
       priority = MimeHeaders_get(mdd->headers, HEADER_X_PRIORITY, false, false);
-
-      if (host) {
-        char* secure = NULL;
-
-        secure = PL_strcasestr(host, "secure");
-        if (secure) {
-          *secure = 0;
-          news_host = PR_smprintf("snews://%s", host);
-        } else {
-          news_host = PR_smprintf("news://%s", host);
-        }
-      }
 
       // Other headers via pref.
       nsCString otherHeaders;
@@ -1294,8 +1251,8 @@ static void mime_parse_stream_complete(nsMIMESession* stream) {
     }
 
     CreateCompositionFields(from, repl, to, cc, bcc, fcc, grps, foll, org, subj,
-                            refs, priority, news_host, readOtherHeaders,
-                            mdd->mailcharset, getter_AddRefs(fields));
+                            refs, priority, readOtherHeaders, mdd->mailcharset,
+                            getter_AddRefs(fields));
 
     contentLanguage =
         MimeHeaders_get(mdd->headers, HEADER_CONTENT_LANGUAGE, false, false);
@@ -1429,7 +1386,11 @@ static void mime_parse_stream_complete(nsMIMESession* stream) {
 
           nsresult rv = NS_NewLocalFileInputStream(getter_AddRefs(inputStream),
                                                    mdd->messageBody->m_tmpFile);
-          if (NS_FAILED(rv)) return;
+          if (NS_FAILED(rv)) {
+            delete[] newAttachData;
+            PR_Free(body);
+            return;
+          }
 
           inputStream->Read(body, bodyLen, &bytesRead);
 
@@ -1649,8 +1610,8 @@ static void mime_parse_stream_complete(nsMIMESession* stream) {
     }
   } else {
     CreateCompositionFields(from, repl, to, cc, bcc, fcc, grps, foll, org, subj,
-                            refs, priority, news_host, readOtherHeaders,
-                            mdd->mailcharset, getter_AddRefs(fields));
+                            refs, priority, readOtherHeaders, mdd->mailcharset,
+                            getter_AddRefs(fields));
     if (fields)
       CreateTheComposeWindow(fields, newAttachData, nsIMsgCompType::New,
                              nsIMsgCompFormat::Default, mdd->identity,
@@ -1681,7 +1642,6 @@ static void mime_parse_stream_complete(nsMIMESession* stream) {
   mdd->origMsgHdr = nullptr;
   PR_Free(mdd);
 
-  PR_FREEIF(host);
   PR_FREEIF(to_and_cc);
   PR_FREEIF(re_subject);
   PR_FREEIF(new_refs);
@@ -1702,10 +1662,15 @@ static void mime_parse_stream_complete(nsMIMESession* stream) {
 }
 
 static void mime_parse_stream_abort(nsMIMESession* stream, int status) {
-  mime_draft_data* mdd = (mime_draft_data*)stream->data_object;
-  NS_ASSERTION(mdd, "null mime draft data");
+  NS_ASSERTION(stream->data_object, "null mime data");
+  if (!stream->data_object) {
+    return;
+  }
 
-  if (!mdd) return;
+  mime_draft_data* mdd = stream->data_object.AsMimeDraftData();
+  if (!mdd) {
+    return;
+  }
 
   if (mdd->obj) {
     int status = 0;
@@ -1724,7 +1689,7 @@ static void mime_parse_stream_abort(nsMIMESession* stream, int status) {
     }
 
     if (mdd->stream) {
-      mdd->stream->abort((nsMIMESession*)mdd->stream->data_object, status);
+      mdd->stream->abort(mdd->stream, status);
       PR_Free(mdd->stream);
       mdd->stream = 0;
     }
@@ -1739,12 +1704,14 @@ static void mime_parse_stream_abort(nsMIMESession* stream, int status) {
   PR_Free(mdd);
 }
 
-static int make_mime_headers_copy(void* closure, MimeHeaders* headers) {
-  mime_draft_data* mdd = (mime_draft_data*)closure;
+static int make_mime_headers_copy(MimeClosure closure, MimeHeaders* headers) {
+  NS_ASSERTION(closure && headers, "null mime draft data and/or headers");
+  if (!closure || !headers) return 0;
 
-  NS_ASSERTION(mdd && headers, "null mime draft data and/or headers");
-
-  if (!mdd || !headers) return 0;
+  mime_draft_data* mdd = closure.AsMimeDraftData();
+  if (!mdd) {
+    return 0;
+  }
 
   NS_ASSERTION(mdd->headers == NULL, "non null mime draft data headers");
 
@@ -1754,16 +1721,22 @@ static int make_mime_headers_copy(void* closure, MimeHeaders* headers) {
   return 0;
 }
 
-int mime_decompose_file_init_fn(void* stream_closure, MimeHeaders* headers) {
-  mime_draft_data* mdd = (mime_draft_data*)stream_closure;
+int mime_decompose_file_init_fn(MimeClosure stream_closure,
+                                MimeHeaders* headers) {
+  NS_ASSERTION(stream_closure && headers,
+               "null mime draft data and/or headers");
+  if (!stream_closure || !headers) return -1;
+
+  mime_draft_data* mdd = stream_closure.AsMimeDraftData();
+  if (!mdd) {
+    return -1;
+  }
+
   nsMsgAttachedFile* newAttachment = 0;
   int nAttachments = 0;
   // char *hdr_value = NULL;
   char* parm_value = NULL;
   bool creatingMsgBody = true;
-
-  NS_ASSERTION(mdd && headers, "null mime draft data and/or headers");
-  if (!mdd || !headers) return -1;
 
   if (mdd->options->decompose_init_count) {
     mdd->options->decompose_init_count++;
@@ -1773,8 +1746,9 @@ int mime_decompose_file_init_fn(void* stream_closure, MimeHeaders* headers) {
       mdd->curAttachment->m_type.Adopt(
           MimeHeaders_get(headers, HEADER_CONTENT_TYPE, false, true));
     return 0;
-  } else
-    mdd->options->decompose_init_count++;
+  }
+
+  mdd->options->decompose_init_count++;
 
   nAttachments = mdd->attachments.Length();
 
@@ -1837,10 +1811,6 @@ int mime_decompose_file_init_fn(void* stream_closure, MimeHeaders* headers) {
     boundary = MimeHeaders_get_parameter(parm_value, "boundary", NULL, NULL);
     if (boundary) tmp_value = PR_smprintf("; boundary=\"%s\"", boundary);
     if (tmp_value) newAttachment->m_type = tmp_value;
-    newAttachment->m_xMacType.Adopt(
-        MimeHeaders_get_parameter(parm_value, "x-mac-type", NULL, NULL));
-    newAttachment->m_xMacCreator.Adopt(
-        MimeHeaders_get_parameter(parm_value, "x-mac-creator", NULL, NULL));
     PR_FREEIF(parm_value);
     PR_FREEIF(boundary);
     PR_FREEIF(tmp_value);
@@ -1899,18 +1869,26 @@ int mime_decompose_file_init_fn(void* stream_closure, MimeHeaders* headers) {
       newAttachName.Append(fileExtension);
     }
 
-    nsMsgCreateTempFile(newAttachName.get(), getter_AddRefs(tmpFile));
+    nsresult rv =
+        nsMsgCreateTempFile(newAttachName.get(), getter_AddRefs(tmpFile));
+    NS_ENSURE_SUCCESS(rv, -1);
   }
   nsresult rv;
 
   // This needs to be done so the attachment structure has a handle
   // on the temp file for this attachment...
   if (tmpFile) {
+    bool isDirectory;
+    rv = tmpFile->IsDirectory(&isDirectory);
+    if (NS_FAILED(rv) || isDirectory) {
+      return -1;
+    }
     nsAutoCString fileURL;
     rv = NS_GetURLSpecFromFile(tmpFile, fileURL);
-    if (NS_SUCCEEDED(rv))
-      nsMimeNewURI(getter_AddRefs(newAttachment->m_origUrl), fileURL.get(),
-                   nullptr);
+    NS_ENSURE_SUCCESS(rv, -1);
+    rv = nsMimeNewURI(getter_AddRefs(newAttachment->m_origUrl), fileURL.get(),
+                      nullptr);
+    NS_ENSURE_SUCCESS(rv, -1);
   }
 
   if (!tmpFile) return MIME_OUT_OF_MEMORY;
@@ -1927,7 +1905,7 @@ int mime_decompose_file_init_fn(void* stream_closure, MimeHeaders* headers) {
   // For now, we are always going to decode all of the attachments
   // for the message. This way, we have native data
   if (creatingMsgBody) {
-    MimeDecoderData* (*fn)(MimeConverterOutputCallback, void*) = 0;
+    MimeDecoderData* (*fn)(MimeConverterOutputCallback, MimeClosure) = 0;
 
     //
     // Initialize a decoder if necessary.
@@ -1936,11 +1914,8 @@ int mime_decompose_file_init_fn(void* stream_closure, MimeHeaders* headers) {
       fn = &MimeB64DecoderInit;
     else if (newAttachment->m_encoding.LowerCaseEqualsLiteral(
                  ENCODING_QUOTED_PRINTABLE)) {
-      mdd->decoder_data =
-          MimeQPDecoderInit(/* The (MimeConverterOutputCallback) cast is to turn
-                               the `void' argument into `MimeObject'. */
-                            ((MimeConverterOutputCallback)dummy_file_write),
-                            mdd->tmpFileStream);
+      mdd->decoder_data = MimeQPDecoderInit(
+          dummy_file_write, MimeClosure(MimeClosure::isMimeDraftData, mdd));
       if (!mdd->decoder_data) return MIME_OUT_OF_MEMORY;
     } else if (newAttachment->m_encoding.LowerCaseEqualsLiteral(
                    ENCODING_UUENCODE) ||
@@ -1955,10 +1930,8 @@ int mime_decompose_file_init_fn(void* stream_closure, MimeHeaders* headers) {
       fn = &MimeYDecoderInit;
 
     if (fn) {
-      mdd->decoder_data = fn(/* The (MimeConverterOutputCallback) cast is to
-                                turn the `void' argument into `MimeObject'. */
-                             ((MimeConverterOutputCallback)dummy_file_write),
-                             mdd->tmpFileStream);
+      mdd->decoder_data =
+          fn(dummy_file_write, MimeClosure(MimeClosure::isMimeDraftData, mdd));
       if (!mdd->decoder_data) return MIME_OUT_OF_MEMORY;
     }
   }
@@ -1967,12 +1940,17 @@ int mime_decompose_file_init_fn(void* stream_closure, MimeHeaders* headers) {
 }
 
 int mime_decompose_file_output_fn(const char* buf, int32_t size,
-                                  void* stream_closure) {
-  mime_draft_data* mdd = (mime_draft_data*)stream_closure;
+                                  MimeClosure stream_closure) {
+  NS_ASSERTION(stream_closure && buf, "missing mime draft data and/or buf");
+  if (!stream_closure || !buf) return -1;
+
+  mime_draft_data* mdd = stream_closure.AsMimeDraftData();
+  if (!mdd) {
+    return -1;
+  }
+
   int ret = 0;
 
-  NS_ASSERTION(mdd && buf, "missing mime draft data and/or buf");
-  if (!mdd || !buf) return -1;
   if (!size) return 0;
 
   if (!mdd->tmpFileStream) return 0;
@@ -2002,10 +1980,13 @@ int mime_decompose_file_output_fn(const char* buf, int32_t size,
   return 0;
 }
 
-int mime_decompose_file_close_fn(void* stream_closure) {
-  mime_draft_data* mdd = (mime_draft_data*)stream_closure;
+int mime_decompose_file_close_fn(MimeClosure stream_closure) {
+  if (!stream_closure) return -1;
 
-  if (!mdd) return -1;
+  mime_draft_data* mdd = stream_closure.AsMimeDraftData();
+  if (!mdd) {
+    return -1;
+  }
 
   if (--mdd->options->decompose_init_count > 0) return 0;
 
@@ -2081,8 +2062,8 @@ extern "C" void* mime_bridge_create_draft_stream(
   mdd->options->url = strdup(mdd->url_name);
   mdd->options->format_out = format_out;  // output format
   mdd->options->decompose_file_p = true;  /* new field in MimeDisplayOptions */
-  mdd->options->stream_closure = mdd;
-  mdd->options->html_closure = mdd;
+  mdd->options->stream_closure = MimeClosure(MimeClosure::isMimeDraftData, mdd);
+  mdd->options->html_closure = MimeClosure(MimeClosure::isMimeDraftData, mdd);
   mdd->options->decompose_headers_info_fn = make_mime_headers_copy;
   mdd->options->decompose_file_init_fn = mime_decompose_file_init_fn;
   mdd->options->decompose_file_output_fn = mime_decompose_file_output_fn;
@@ -2114,7 +2095,7 @@ extern "C" void* mime_bridge_create_draft_stream(
   stream->complete = mime_parse_stream_complete;
   stream->abort = mime_parse_stream_abort;
   stream->put_block = mime_parse_stream_write;
-  stream->data_object = mdd;
+  stream->data_object = MimeClosure(MimeClosure::isMimeDraftData, mdd);
 
   status = obj->clazz->initialize(obj);
   if (status >= 0) status = obj->clazz->parse_begin(obj);
@@ -2126,7 +2107,7 @@ FAIL:
   if (mdd) {
     PR_Free(mdd->url_name);
     if (mdd->options) delete mdd->options;
-    PR_Free(mdd);
+    delete mdd;
   }
   PR_Free(stream);
   PR_Free(obj);

@@ -2,21 +2,26 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-let account = createAccount();
-let defaultIdentity = addIdentity(account);
-let nonDefaultIdentity = addIdentity(account);
-let gRootFolder = account.incomingServer.rootFolder;
+"use strict";
 
-gRootFolder.createSubfolder("test", null);
-let gTestFolder = gRootFolder.getChildNamed("test");
-createMessages(gTestFolder, 4);
+add_setup(async () => {
+  createAccount("local");
+  const account = createAccount("pop3");
+  addIdentity(account);
+
+  MailServices.accounts.defaultAccount = account;
+
+  const rootFolder = account.incomingServer.rootFolder;
+  const testFolder = await createSubfolder(rootFolder, "test");
+  await createMessages(testFolder, 4);
+});
 
 add_task(async function testPlainTextBody() {
-  let files = {
+  const files = {
     "background.js": async () => {
       async function checkWindow(expected) {
-        let state = await browser.compose.getComposeDetails(createdTab.id);
-        for (let field of ["isPlainText"]) {
+        const state = await browser.compose.getComposeDetails(createdTab.id);
+        for (const field of ["isPlainText"]) {
           if (field in expected) {
             browser.test.assertEq(
               expected[field],
@@ -25,7 +30,7 @@ add_task(async function testPlainTextBody() {
             );
           }
         }
-        for (let field of ["plainTextBody"]) {
+        for (const field of ["plainTextBody"]) {
           if (field in expected) {
             browser.test.assertEq(
               JSON.stringify(expected[field]),
@@ -37,16 +42,16 @@ add_task(async function testPlainTextBody() {
       }
 
       // Start a new message.
-      let createdWindowPromise = window.waitForEvent("windows.onCreated");
+      const createdWindowPromise = window.waitForEvent("windows.onCreated");
       await browser.compose.beginNew({ isPlainText: true });
-      let [createdWindow] = await createdWindowPromise;
-      let [createdTab] = await browser.tabs.query({
+      const [createdWindow] = await createdWindowPromise;
+      const [createdTab] = await browser.tabs.query({
         windowId: createdWindow.id,
       });
 
       await checkWindow({ isPlainText: true });
 
-      let tests = [
+      const tests = [
         {
           // Set plaintextBody with Windows style newlines. The return value of
           // the API is independent of the used OS and only returns LF endings.
@@ -75,7 +80,7 @@ add_task(async function testPlainTextBody() {
           expected: { isPlainText: true, plainTextBody: "123456 \n Hello \n" },
         },
       ];
-      for (let test of tests) {
+      for (const test of tests) {
         browser.test.log(`Checking input: ${JSON.stringify(test.input)}`);
         await browser.compose.setComposeDetails(createdTab.id, test.input);
         await checkWindow(test.expected);
@@ -95,14 +100,14 @@ add_task(async function testPlainTextBody() {
 
       // Clean up.
 
-      let removedWindowPromise = window.waitForEvent("windows.onRemoved");
+      const removedWindowPromise = window.waitForEvent("windows.onRemoved");
       browser.windows.remove(createdWindow.id);
       await removedWindowPromise;
       browser.test.notifyPass("finished");
     },
     "utils.js": await getUtilsJS(),
   };
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     files,
     manifest: {
       background: { scripts: ["utils.js", "background.js"] },
@@ -126,9 +131,9 @@ add_task(async function testBody() {
   ].createInstance(Ci.nsIMsgCompFields);
   params.composeFields.body = "<p>This is some <i>HTML</i> text.</p>";
 
-  let htmlWindowPromise = BrowserTestUtils.domWindowOpened();
+  const htmlWindowPromise = BrowserTestUtils.domWindowOpened();
   MailServices.compose.OpenComposeWindowWithParams(null, params);
-  let htmlWindow = await htmlWindowPromise;
+  const htmlWindow = await htmlWindowPromise;
   await BrowserTestUtils.waitForEvent(htmlWindow, "load");
 
   // Open another compose window with plain text body.
@@ -142,22 +147,22 @@ add_task(async function testBody() {
   params.format = Ci.nsIMsgCompFormat.PlainText;
   params.composeFields.body = "This is some plain text.";
 
-  let plainTextComposeWindowPromise = BrowserTestUtils.domWindowOpened();
+  const plainTextComposeWindowPromise = BrowserTestUtils.domWindowOpened();
   MailServices.compose.OpenComposeWindowWithParams(null, params);
-  let plainTextWindow = await plainTextComposeWindowPromise;
+  const plainTextWindow = await plainTextComposeWindowPromise;
   await BrowserTestUtils.waitForEvent(plainTextWindow, "load");
 
   // Run the extension.
 
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     background: async () => {
-      let windows = await browser.windows.getAll({
+      const windows = await browser.windows.getAll({
         populate: true,
         windowTypes: ["messageCompose"],
       });
-      let [htmlTabId, plainTextTabId] = windows.map(w => w.tabs[0].id);
+      const [htmlTabId, plainTextTabId] = windows.map(w => w.tabs[0].id);
 
-      let plainTextBodyTag =
+      const plainTextBodyTag =
         '<body style="font-family: -moz-fixed; white-space: pre-wrap; width: 72ch;">';
 
       // Get details, HTML message.
@@ -191,9 +196,8 @@ add_task(async function testBody() {
 
       // Get details, plain text message.
 
-      let plainTextDetails = await browser.compose.getComposeDetails(
-        plainTextTabId
-      );
+      let plainTextDetails =
+        await browser.compose.getComposeDetails(plainTextTabId);
       browser.test.log(JSON.stringify(plainTextDetails));
       browser.test.assertTrue(plainTextDetails.isPlainText);
       browser.test.assertTrue(
@@ -212,9 +216,8 @@ add_task(async function testBody() {
         plainTextBody:
           plainTextDetails.plainTextBody + "\nIndeed, it is plain.",
       });
-      plainTextDetails = await browser.compose.getComposeDetails(
-        plainTextTabId
-      );
+      plainTextDetails =
+        await browser.compose.getComposeDetails(plainTextTabId);
       browser.test.log(JSON.stringify(plainTextDetails));
       browser.test.assertTrue(plainTextDetails.isPlainText);
       browser.test.assertTrue(
@@ -268,7 +271,7 @@ add_task(async function testBody() {
   // Check the HTML message was edited.
 
   ok(htmlWindow.gMsgCompose.composeHTML);
-  let htmlDocument = htmlWindow.GetCurrentEditor().document;
+  const htmlDocument = htmlWindow.GetCurrentEditor().document;
   info(htmlDocument.body.innerHTML);
   is(htmlDocument.querySelectorAll("i").length, 0, "<i> was removed");
   is(htmlDocument.querySelectorAll("code").length, 1, "<code> was added");
@@ -290,7 +293,7 @@ add_task(async function testBody() {
   // Check the plain text message was edited.
 
   ok(!plainTextWindow.gMsgCompose.composeHTML);
-  let plainTextDocument = plainTextWindow.GetCurrentEditor().document;
+  const plainTextDocument = plainTextWindow.GetCurrentEditor().document;
   info(plainTextDocument.body.innerHTML);
   ok(/Indeed, it is plain\./.test(plainTextDocument.body.innerHTML));
 
@@ -309,8 +312,224 @@ add_task(async function testBody() {
   await Promise.all(closePromises);
 });
 
+add_task(async function testModified() {
+  // Open an compose window with HTML body.
+
+  const params = Cc[
+    "@mozilla.org/messengercompose/composeparams;1"
+  ].createInstance(Ci.nsIMsgComposeParams);
+  params.composeFields = Cc[
+    "@mozilla.org/messengercompose/composefields;1"
+  ].createInstance(Ci.nsIMsgCompFields);
+  params.composeFields.body = "<p>Original Content.</p>";
+
+  const htmlWindowPromise = BrowserTestUtils.domWindowOpened();
+  MailServices.compose.OpenComposeWindowWithParams(null, params);
+  const htmlWindow = await htmlWindowPromise;
+  await BrowserTestUtils.waitForEvent(htmlWindow, "load");
+
+  // Run the extension.
+
+  const extension = ExtensionTestUtils.loadExtension({
+    background: async () => {
+      const [composeTab] = await browser.tabs.query({ type: "messageCompose" });
+
+      // Check details.
+      {
+        const details = await browser.compose.getComposeDetails(composeTab.id);
+        browser.test.assertFalse(
+          details.isModified,
+          "Composer should not be marked as modified"
+        );
+        browser.test.assertEq(
+          details.subject,
+          "",
+          "Should get the correct subject"
+        );
+      }
+
+      // Set subject.
+      await browser.compose.setComposeDetails(composeTab.id, {
+        subject: "Test Subject",
+      });
+
+      // Check details.
+      {
+        const details = await browser.compose.getComposeDetails(composeTab.id);
+        browser.test.assertTrue(
+          details.isModified,
+          "Composer should be marked as modified"
+        );
+        browser.test.assertEq(
+          details.subject,
+          "Test Subject",
+          "Should get the correct subject"
+        );
+      }
+
+      // Clear modification flag
+      await browser.compose.setComposeDetails(composeTab.id, {
+        isModified: false,
+      });
+
+      // Check details.
+      {
+        const details = await browser.compose.getComposeDetails(composeTab.id);
+        browser.test.assertFalse(
+          details.isModified,
+          "Composer should not be marked as modified"
+        );
+        browser.test.assertEq(
+          details.subject,
+          "Test Subject",
+          "Should get the correct subject"
+        );
+        browser.test.assertFalse(
+          details.body.includes("Modified Content."),
+          "Body should be correct"
+        );
+      }
+
+      // Set body.
+      await browser.compose.setComposeDetails(composeTab.id, {
+        body: "Modified Content.",
+      });
+
+      // Check details.
+      {
+        const details = await browser.compose.getComposeDetails(composeTab.id);
+        browser.test.assertTrue(
+          details.isModified,
+          "Composer should be marked as modified"
+        );
+        browser.test.assertTrue(
+          details.body.includes("Modified Content."),
+          "Body should be correct"
+        );
+      }
+
+      // Clear modification flag
+      await browser.compose.setComposeDetails(composeTab.id, {
+        isModified: false,
+      });
+
+      // Check details.
+      {
+        const details = await browser.compose.getComposeDetails(composeTab.id);
+        browser.test.assertFalse(
+          details.isModified,
+          "Composer should not be marked as modified"
+        );
+        browser.test.assertTrue(
+          details.body.includes("Modified Content."),
+          "Body should be correct"
+        );
+        browser.test.assertFalse(
+          details.returnReceipt,
+          "ReturnReceipt should see the correct value"
+        );
+      }
+
+      // Set ReturnReceipt.
+      await browser.compose.setComposeDetails(composeTab.id, {
+        returnReceipt: true,
+      });
+
+      // Check details.
+      {
+        const details = await browser.compose.getComposeDetails(composeTab.id);
+        browser.test.assertTrue(
+          details.isModified,
+          "Composer should be marked as modified"
+        );
+        browser.test.assertTrue(
+          details.returnReceipt,
+          "ReturnReceipt should see the correct value"
+        );
+      }
+
+      // Clear modification flag
+      await browser.compose.setComposeDetails(composeTab.id, {
+        isModified: false,
+      });
+
+      // Check details.
+      {
+        const details = await browser.compose.getComposeDetails(composeTab.id);
+        browser.test.assertFalse(
+          details.isModified,
+          "Composer should not be marked as modified"
+        );
+        browser.test.assertTrue(
+          details.returnReceipt,
+          "ReturnReceipt should see the correct value"
+        );
+        browser.test.assertFalse(
+          details.deliveryStatusNotification,
+          "DeliveryStatusNotification should see the correct value"
+        );
+      }
+
+      // Set DeliveryStatusNotification.
+      await browser.compose.setComposeDetails(composeTab.id, {
+        deliveryStatusNotification: true,
+      });
+
+      // Check details.
+      {
+        const details = await browser.compose.getComposeDetails(composeTab.id);
+        browser.test.assertTrue(
+          details.isModified,
+          "Composer should be marked as modified"
+        );
+        browser.test.assertTrue(
+          details.deliveryStatusNotification,
+          "DeliveryStatusNotification should see the correct value"
+        );
+      }
+
+      // Clear modification flag
+      await browser.compose.setComposeDetails(composeTab.id, {
+        isModified: false,
+      });
+
+      // Check details.
+      {
+        const details = await browser.compose.getComposeDetails(composeTab.id);
+        browser.test.assertFalse(
+          details.isModified,
+          "Composer should not be marked as modified"
+        );
+        browser.test.assertTrue(
+          details.deliveryStatusNotification,
+          "DeliveryStatusNotification should see the correct value"
+        );
+      }
+
+      browser.test.notifyPass("finished");
+    },
+    manifest: {
+      permissions: ["compose"],
+    },
+  });
+
+  await extension.startup();
+  await extension.awaitFinish("finished");
+  await extension.unload();
+
+  // Close the HTML message. There should be no pending dialog.
+
+  const closePromises = [BrowserTestUtils.domWindowClosed(htmlWindow)];
+  Assert.ok(
+    htmlWindow.ComposeCanClose(),
+    "compose window should be allowed to close"
+  );
+  htmlWindow.close();
+  await Promise.all(closePromises);
+});
+
 add_task(async function testCJK() {
-  let longCJKString = "안".repeat(400);
+  const longCJKString = "안".repeat(400);
 
   // Open an compose window with HTML body.
 
@@ -322,9 +541,9 @@ add_task(async function testCJK() {
   ].createInstance(Ci.nsIMsgCompFields);
   params.composeFields.body = longCJKString;
 
-  let htmlWindowPromise = BrowserTestUtils.domWindowOpened();
+  const htmlWindowPromise = BrowserTestUtils.domWindowOpened();
   MailServices.compose.OpenComposeWindowWithParams(null, params);
-  let htmlWindow = await htmlWindowPromise;
+  const htmlWindow = await htmlWindowPromise;
   await BrowserTestUtils.waitForEvent(htmlWindow, "load");
 
   // Open another compose window with plain text body.
@@ -338,23 +557,24 @@ add_task(async function testCJK() {
   params.format = Ci.nsIMsgCompFormat.PlainText;
   params.composeFields.body = longCJKString;
 
-  let plainTextComposeWindowPromise = BrowserTestUtils.domWindowOpened();
+  const plainTextComposeWindowPromise = BrowserTestUtils.domWindowOpened();
   MailServices.compose.OpenComposeWindowWithParams(null, params);
-  let plainTextWindow = await plainTextComposeWindowPromise;
+  const plainTextWindow = await plainTextComposeWindowPromise;
   await BrowserTestUtils.waitForEvent(plainTextWindow, "load");
 
   // Run the extension.
 
-  let extension = ExtensionTestUtils.loadExtension({
+  const extension = ExtensionTestUtils.loadExtension({
     background: async () => {
-      let longCJKString = "안".repeat(400);
-      let windows = await browser.windows.getAll({
+      // eslint-disable-next-line no-shadow
+      const longCJKString = "안".repeat(400);
+      const windows = await browser.windows.getAll({
         populate: true,
         windowTypes: ["messageCompose"],
       });
-      let [htmlTabId, plainTextTabId] = windows.map(w => w.tabs[0].id);
+      const [htmlTabId, plainTextTabId] = windows.map(w => w.tabs[0].id);
 
-      let plainTextBodyTag =
+      const plainTextBodyTag =
         '<body style="font-family: -moz-fixed; white-space: pre-wrap; width: 72ch;">';
 
       // Get details, HTML message.
@@ -392,9 +612,8 @@ add_task(async function testCJK() {
 
       // Get details, plain text message.
 
-      let plainTextDetails = await browser.compose.getComposeDetails(
-        plainTextTabId
-      );
+      let plainTextDetails =
+        await browser.compose.getComposeDetails(plainTextTabId);
       browser.test.log(JSON.stringify(plainTextDetails));
       browser.test.assertTrue(plainTextDetails.isPlainText);
       browser.test.assertTrue(
@@ -412,9 +631,8 @@ add_task(async function testCJK() {
       await browser.compose.setComposeDetails(plainTextTabId, {
         plainTextBody: longCJKString,
       });
-      plainTextDetails = await browser.compose.getComposeDetails(
-        plainTextTabId
-      );
+      plainTextDetails =
+        await browser.compose.getComposeDetails(plainTextTabId);
       browser.test.log(JSON.stringify(plainTextDetails));
       browser.test.assertTrue(plainTextDetails.isPlainText);
       browser.test.assertTrue(
@@ -466,4 +684,4 @@ add_task(async function testCJK() {
   );
   plainTextWindow.close();
   await Promise.all(closePromises);
-}).__skipMe = AppConstants.platform == "linux" && AppConstants.DEBUG; // Permanent failure on CI, bug 1766758.
+}).skip(AppConstants.platform == "linux" && AppConstants.DEBUG); // Permanent failure on CI, bug 1766758.

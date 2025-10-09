@@ -12,9 +12,12 @@
   const lazy = {};
 
   ChromeUtils.defineESModuleGetters(lazy, {
+    BrowserSearchTelemetry:
+      "moz-src:///browser/components/search/BrowserSearchTelemetry.sys.mjs",
+    BrowserUtils: "resource://gre/modules/BrowserUtils.sys.mjs",
     FormHistory: "resource://gre/modules/FormHistory.sys.mjs",
     SearchSuggestionController:
-      "resource://gre/modules/SearchSuggestionController.sys.mjs",
+      "moz-src:///toolkit/components/search/SearchSuggestionController.sys.mjs",
   });
 
   /**
@@ -32,14 +35,14 @@
     static get markup() {
       return `
         <stringbundle src="chrome://browser/locale/search.properties"></stringbundle>
-        <hbox class="searchbar-search-button" data-l10n-id="searchbar-icon">
+        <hbox class="searchbar-search-button" data-l10n-id="searchbar-icon" role="button" keyNav="false" aria-expanded="false" aria-controls="PopupSearchAutoComplete" aria-haspopup="true">
           <image class="searchbar-search-icon"></image>
           <image class="searchbar-search-icon-overlay"></image>
         </hbox>
         <html:input class="searchbar-textbox" is="autocomplete-input" type="search" data-l10n-id="searchbar-input" autocompletepopup="PopupSearchAutoComplete" autocompletesearch="search-autocomplete" autocompletesearchparam="searchbar-history" maxrows="10" completeselectedindex="true" minresultsforpopup="0"/>
         <menupopup class="textbox-contextmenu"></menupopup>
         <hbox class="search-go-container" align="center">
-          <image class="search-go-button urlbar-icon" hidden="true" onclick="handleSearchCommand(event);" data-l10n-id="searchbar-submit"></image>
+          <image class="search-go-button urlbar-icon" role="button" keyNav="false" hidden="true" data-l10n-id="searchbar-submit"></image>
         </hbox>
       `;
     }
@@ -53,11 +56,8 @@
       this._setupEventListeners();
       let searchbar = this;
       this.observer = {
-        observe(aEngine, aTopic, aVerb) {
-          if (
-            aTopic == "browser-search-engine-modified" ||
-            (aTopic == "browser-search-service" && aVerb == "init-complete")
-          ) {
+        observe(aEngine, aTopic) {
+          if (aTopic == "browser-search-engine-modified") {
             // Make sure the engine list is refetched next time it's needed
             searchbar._engines = null;
 
@@ -111,7 +111,6 @@
       window.addEventListener("unload", this.destroy);
 
       Services.obs.addObserver(this.observer, "browser-search-engine-modified");
-      Services.obs.addObserver(this.observer, "browser-search-service");
 
       this._initialized = true;
 
@@ -119,19 +118,24 @@
         window.requestIdleCallback(() => {
           Services.search
             .init()
-            .then(aStatus => {
+            .then(() => {
               // Bail out if the binding's been destroyed
               if (!this._initialized) {
                 return;
               }
 
+              // Ensure the popup header is updated if the user has somehow
+              // managed to open the popup before the search service has finished
+              // initializing.
+              this._textbox.popup.updateHeader();
               // Refresh the display (updating icon, etc)
               this.updateDisplay();
-              BrowserSearch.updateOpenSearchBadge();
+              OpenSearchManager.updateOpenSearchBadge(window);
             })
             .catch(status =>
               console.error(
-                "Cannot initialize search service, bailing out: " + status
+                "Cannot initialize search service, bailing out:",
+                status
               )
             );
         });
@@ -154,6 +158,10 @@
           }
         },
         { capture: true, once: true }
+      );
+
+      this.querySelector(".search-go-button").addEventListener("click", event =>
+        this.handleSearchCommand(event)
       );
     }
 
@@ -216,7 +224,6 @@
           this.observer,
           "browser-search-engine-modified"
         );
-        Services.obs.removeObserver(this.observer, "browser-search-service");
       }
 
       // Make sure to break the cycle from _textbox to us. Otherwise we leak
@@ -263,6 +270,8 @@
       }
 
       this._textbox.showHistoryPopup();
+      let searchIcon = document.querySelector(".searchbar-search-button");
+      searchIcon.setAttribute("aria-expanded", "true");
 
       if (this._textbox.value) {
         // showHistoryPopup does a startSearch("") call, ensure the
@@ -303,52 +312,14 @@
     }
 
     handleSearchCommand(aEvent, aEngine, aForceNewTab) {
-      let where = "current";
-      let params;
-      const newTabPref = Services.prefs.getBoolPref("browser.search.openintab");
-
-      // Open ctrl/cmd clicks on one-off buttons in a new background tab.
       if (
         aEvent &&
-        aEvent.originalTarget.classList.contains("search-go-button")
+        aEvent.originalTarget.classList.contains("search-go-button") &&
+        aEvent.button == 2
       ) {
-        if (aEvent.button == 2) {
-          return;
-        }
-        where = whereToOpenLink(aEvent, false, true);
-        if (
-          newTabPref &&
-          !aEvent.altKey &&
-          !aEvent.getModifierState("AltGraph") &&
-          where == "current" &&
-          !gBrowser.selectedTab.isEmpty
-        ) {
-          where = "tab";
-        }
-      } else if (aForceNewTab) {
-        where = "tab";
-        if (Services.prefs.getBoolPref("browser.tabs.loadInBackground")) {
-          where += "-background";
-        }
-      } else {
-        if (
-          (KeyboardEvent.isInstance(aEvent) &&
-            (aEvent.altKey || aEvent.getModifierState("AltGraph"))) ^
-            newTabPref &&
-          !gBrowser.selectedTab.isEmpty
-        ) {
-          where = "tab";
-        }
-        if (
-          MouseEvent.isInstance(aEvent) &&
-          (aEvent.button == 1 || aEvent.getModifierState("Accel"))
-        ) {
-          where = "tab";
-          params = {
-            inBackground: true,
-          };
-        }
+        return;
       }
+      let { where, params } = this._whereToOpen(aEvent, aForceNewTab);
       this.handleSearchCommandWhere(aEvent, aEngine, where, params);
     }
 
@@ -359,9 +330,8 @@
       let selectedIndex = this.telemetrySelectedIndex;
       let isOneOff = false;
 
-      BrowserSearchTelemetry.recordSearchSuggestionSelectionMethod(
+      lazy.BrowserSearchTelemetry.recordSearchSuggestionSelectionMethod(
         aEvent,
-        "searchbar",
         selectedIndex
       );
 
@@ -404,9 +374,7 @@
           value: aData,
           source: engine.name,
         }).catch(error =>
-          console.error(
-            "Saving search to form history failed: " + error.message
-          )
+          console.error("Saving search to form history failed:", error)
         );
       }
 
@@ -416,17 +384,16 @@
       const details = {
         isOneOff,
         isSuggestion: !isOneOff && this.telemetrySelectedIndex != -1,
-        url: submission.uri,
       };
 
       this.telemetrySelectedIndex = -1;
 
-      BrowserSearchTelemetry.recordSearch(
-        gBrowser.selectedBrowser,
-        engine,
-        "searchbar",
-        details
+      // Record when the user uses the search bar
+      Services.prefs.setStringPref(
+        "browser.search.widget.lastUsed",
+        new Date().toISOString()
       );
+
       // null parameter below specifies HTML response for search
       let params = {
         postData: submission.postData,
@@ -439,7 +406,121 @@
           params[key] = aParams[key];
         }
       }
+
+      if (aWhere == "tab") {
+        gBrowser.tabContainer.addEventListener(
+          "TabOpen",
+          event =>
+            lazy.BrowserSearchTelemetry.recordSearch(
+              event.target.linkedBrowser,
+              engine,
+              "searchbar",
+              details
+            ),
+          { once: true }
+        );
+      } else {
+        lazy.BrowserSearchTelemetry.recordSearch(
+          gBrowser.selectedBrowser,
+          engine,
+          "searchbar",
+          details
+        );
+      }
+
       openTrustedLinkIn(submission.uri.spec, aWhere, params);
+    }
+
+    /**
+     * Returns information on where a search results page should be loaded: in the
+     * current tab or a new tab.
+     *
+     * @param {event} aEvent
+     *        The event that triggered the page load.
+     * @param {boolean} [aForceNewTab]
+     *        True to force the load in a new tab.
+     * @returns {object} An object { where, params }.  `where` is a string:
+     *          "current" or "tab".  `params` is an object further describing how
+     *          the page should be loaded.
+     */
+    _whereToOpen(aEvent, aForceNewTab = false) {
+      let where = "current";
+      let params = {};
+      const newTabPref = Services.prefs.getBoolPref("browser.search.openintab");
+
+      // Open ctrl/cmd clicks on one-off buttons in a new background tab.
+      if (aEvent?.originalTarget.classList.contains("search-go-button")) {
+        where = lazy.BrowserUtils.whereToOpenLink(aEvent, false, true);
+        if (
+          newTabPref &&
+          !aEvent.altKey &&
+          !aEvent.getModifierState("AltGraph") &&
+          where == "current" &&
+          !gBrowser.selectedTab.isEmpty
+        ) {
+          where = "tab";
+        }
+      } else if (aForceNewTab) {
+        where = "tab";
+        if (Services.prefs.getBoolPref("browser.tabs.loadInBackground")) {
+          params = {
+            inBackground: true,
+          };
+        }
+      } else {
+        if (
+          (KeyboardEvent.isInstance(aEvent) &&
+            (aEvent.altKey || aEvent.getModifierState("AltGraph"))) ^
+            newTabPref &&
+          !gBrowser.selectedTab.isEmpty
+        ) {
+          where = "tab";
+        }
+        if (
+          MouseEvent.isInstance(aEvent) &&
+          (aEvent.button == 1 || aEvent.getModifierState("Accel"))
+        ) {
+          where = "tab";
+          params = {
+            inBackground: true,
+          };
+        }
+      }
+
+      return { where, params };
+    }
+
+    /**
+     * Opens the search form of the provided engine or the current engine
+     * if no engine was provided.
+     *
+     * @param {event} aEvent
+     *        The event causing the searchForm to be opened.
+     * @param {nsISearchEngine} [aEngine]
+     *        The search engine or undefined to use the current engine.
+     * @param {string} where
+     *        Where the search form should be opened.
+     * @param {object} [params]
+     *        Parameters for URILoadingHelper.openLinkIn.
+     */
+    openSearchFormWhere(aEvent, aEngine, where, params = {}) {
+      let engine = aEngine || this.currentEngine;
+      let searchForm = engine.searchForm;
+
+      if (where === "tab" && !!params.inBackground) {
+        // Keep the focus in the search bar.
+        params.avoidBrowserFocus = true;
+      } else if (
+        where !== "window" &&
+        aEvent.keyCode === KeyEvent.DOM_VK_RETURN
+      ) {
+        // Move the focus to the selected browser when keyup the Enter.
+        params.avoidBrowserFocus = true;
+        this._needBrowserFocusAtEnterKeyUp = true;
+      }
+
+      lazy.BrowserSearchTelemetry.recordSearchForm(engine, "searchbar");
+      openTrustedLinkIn(searchForm, where, params);
     }
 
     disconnectedCallback() {
@@ -464,7 +545,7 @@
     }
 
     _setupEventListeners() {
-      this.addEventListener("click", event => {
+      this.addEventListener("click", () => {
         this._maybeSelectAll();
       });
 
@@ -478,17 +559,17 @@
         true
       );
 
-      this.addEventListener("input", event => {
+      this.addEventListener("input", () => {
         this.updateGoButtonVisibility();
       });
 
-      this.addEventListener("drop", event => {
+      this.addEventListener("drop", () => {
         this.updateGoButtonVisibility();
       });
 
       this.addEventListener(
         "blur",
-        event => {
+        () => {
           // Reset the flag since we can't capture enter keyup event if the event happens
           // after moving the focus.
           this._needBrowserFocusAtEnterKeyUp = false;
@@ -502,7 +583,7 @@
 
       this.addEventListener(
         "focus",
-        event => {
+        () => {
           // Speculatively connect to the current engine's search URI (and
           // suggest URI, if different) to reduce request latency
           this.currentEngine.speculativeConnect({
@@ -559,6 +640,8 @@
         // Hide popup when icon is clicked while popup is open
         if (isIconClick && this.textbox.popup.popupOpen) {
           this.textbox.popup.closePopup();
+          let searchIcon = document.querySelector(".searchbar-search-button");
+          searchIcon.setAttribute("aria-expanded", "false");
         } else if (isIconClick || this._textbox.value) {
           // Open the suggestions whenever clicking on the search icon or if there
           // is text in the textbox.
@@ -568,7 +651,7 @@
     }
 
     _setupTextboxEventListeners() {
-      this.textbox.addEventListener("input", event => {
+      this.textbox.addEventListener("input", () => {
         this.textbox.popup.removeAttribute("showonlysettings");
       });
 
@@ -699,6 +782,8 @@
         }
 
         let popup = this.textbox.popup;
+        let searchIcon = document.querySelector(".searchbar-search-button");
+        searchIcon.setAttribute("aria-expanded", popup.popupOpen);
         if (popup.popupOpen) {
           let suggestionsHidden =
             popup.richlistbox.getAttribute("collapsed") == "true";
@@ -723,11 +808,12 @@
         // Entering customization mode after the search bar had focus causes
         // the popup to appear again, due to focus returning after the
         // hamburger panel closes. Don't open in that spurious event.
-        if (document.documentElement.getAttribute("customizing") == "true") {
+        if (document.documentElement.hasAttribute("customizing")) {
           return;
         }
 
         let popup = this.textbox.popup;
+        let searchIcon = document.querySelector(".searchbar-search-button");
         if (!popup.mPopupOpen) {
           // Initially the panel used for the searchbar (PopupSearchAutoComplete
           // in browser.xhtml) is hidden to avoid impacting startup / new
@@ -759,6 +845,7 @@
           popup.style.setProperty("--panel-width", width + "px");
           popup._invalidate();
           popup.openPopup(this, "after_start");
+          searchIcon.setAttribute("aria-expanded", "true");
         }
       };
 
@@ -780,6 +867,25 @@
             "addengine-menu-button"
         ) {
           this.textbox.selectedButton.open = !this.textbox.selectedButton.open;
+          return true;
+        }
+        // Ignore blank search unless add search engine or
+        // settings button is selected, see bugs 1894910 and 1903608.
+        if (
+          !this.textbox.value &&
+          !(
+            this.textbox.selectedButton?.getAttribute("id") ==
+              "searchbar-anon-search-settings" ||
+            this.textbox.selectedButton?.classList.contains(
+              "searchbar-engine-one-off-add-engine"
+            )
+          )
+        ) {
+          if (event.shiftKey) {
+            let engine = this.textbox.selectedButton?.engine;
+            let { where, params } = this._whereToOpen(event);
+            this.openSearchFormWhere(event, engine, where, params);
+          }
           return true;
         }
         // Otherwise, "call super": do what the autocomplete binding's
@@ -814,7 +920,7 @@
         }
       };
 
-      this.textbox.onkeyup = event => {
+      this.textbox.onkeyup = () => {
         // Pressing Enter key while pressing Meta key, and next, even when
         // releasing Enter key before releasing Meta key, the keyup event is not
         // fired. Therefore, if Enter keydown is detecting, continue the post
@@ -873,12 +979,13 @@
             goDoCommand("cmd_paste");
             this.handleSearchCommand(event);
             break;
-          case clearHistoryItem:
+          case clearHistoryItem: {
             let param = this.textbox.getAttribute("autocompletesearchparam");
             lazy.FormHistory.update({ op: "remove", fieldname: param });
             this.textbox.value = "";
             break;
-          default:
+          }
+          default: {
             let cmd = event.originalTarget.getAttribute("cmd");
             if (cmd) {
               let controller =
@@ -886,6 +993,7 @@
               controller.doCommand(cmd);
             }
             break;
+          }
         }
       });
     }

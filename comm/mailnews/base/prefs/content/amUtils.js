@@ -5,27 +5,28 @@
 
 /* import-globals-from am-smtp.js */
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
 );
-var { MailUtils } = ChromeUtils.import("resource:///modules/MailUtils.jsm");
+var { MailUtils } = ChromeUtils.importESModule(
+  "resource:///modules/MailUtils.sys.mjs"
+);
 
 function BrowseForLocalFolders() {
-  const nsIFilePicker = Ci.nsIFilePicker;
-  const nsIFile = Ci.nsIFile;
-
   var currentFolderTextBox = document.getElementById("server.localPath");
-  var fp = Cc["@mozilla.org/filepicker;1"].createInstance(nsIFilePicker);
+  var fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
 
   fp.init(
-    window,
+    window.browsingContext,
     document
       .getElementById("browseForLocalFolder")
       .getAttribute("filepickertitle"),
-    nsIFilePicker.modeGetFolder
+    Ci.nsIFilePicker.modeGetFolder
   );
 
-  var currentFolder = Cc["@mozilla.org/file/local;1"].createInstance(nsIFile);
+  var currentFolder = Cc["@mozilla.org/file/local;1"].createInstance(
+    Ci.nsIFile
+  );
   try {
     currentFolder.initWithPath(currentFolderTextBox.value);
     fp.displayDirectory = currentFolder;
@@ -36,11 +37,11 @@ function BrowseForLocalFolders() {
   }
 
   fp.open(rv => {
-    if (rv != nsIFilePicker.returnOK || !fp.file) {
+    if (rv != Ci.nsIFilePicker.returnOK || !fp.file) {
       return;
     }
     // Retrieve the selected folder.
-    let selectedFolder = fp.file;
+    const selectedFolder = fp.file;
 
     // Check if the folder can be used for mail storage.
     if (!top.checkDirectoryIsUsable(selectedFolder)) {
@@ -50,27 +51,6 @@ function BrowseForLocalFolders() {
     currentFolderTextBox.value = selectedFolder.path;
     currentFolderTextBox.dispatchEvent(new CustomEvent("change"));
   });
-}
-
-/**
- * Return server/folder name formatted with server name if needed.
- *
- * @param {nsIMsgFolder} aTargetFolder - nsIMsgFolder to format name for
-   @returns {string} THe formatted name.
- *   If target.isServer then only its name is returned.
- *   Otherwise return the name as "<foldername> on <servername>".
- */
-function prettyFolderName(aTargetFolder) {
-  if (aTargetFolder.isServer) {
-    return aTargetFolder.prettyName;
-  }
-
-  return document
-    .getElementById("bundle_messenger")
-    .getFormattedString("verboseFolderFormat", [
-      aTargetFolder.prettyName,
-      aTargetFolder.server.prettyName,
-    ]);
 }
 
 /**
@@ -210,7 +190,7 @@ function openPrefsFromAccountManager(
   aTBOtherArgs,
   aSMPaneId
 ) {
-  let win =
+  const win =
     Services.wm.getMostRecentWindow("mail:3pane") ||
     Services.wm.getMostRecentWindow("mail:messageWindow") ||
     Services.wm.getMostRecentWindow("msgcompose");
@@ -236,7 +216,7 @@ function openPrefsFromAccountManager(
  *   searching the name. If unset, do not skip any account.
  */
 function accountNameExists(aAccountName, aAccountKey) {
-  for (let account of MailServices.accounts.accounts) {
+  for (const account of MailServices.accounts.accounts) {
     if (
       account.key != aAccountKey &&
       account.incomingServer &&
@@ -252,14 +232,14 @@ function accountNameExists(aAccountName, aAccountKey) {
 /**
  * Open a dialog to edit properties of an SMTP server.
  *
- * @param {nsISmtpServer} aServer - The server to edit.
+ * @param {nsIMsgOutgoingServer} aServer - The server to edit.
  * @returns {object} Object with result member to indicate whether 'OK'
  *   was clicked and addSmtpServer with key of newly created server.
  */
 function editSMTPServer(aServer) {
-  let args = { server: aServer, result: false, addSmtpServer: "" };
+  const args = { server: aServer, result: false, addSmtpServer: "" };
 
-  let onCloseSMTPDialog = function () {
+  const onCloseSMTPDialog = function () {
     if (args.result) {
       gSmtpServerListWindow.refreshServerList(aServer, true);
     }

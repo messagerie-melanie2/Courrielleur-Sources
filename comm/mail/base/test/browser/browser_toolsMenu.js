@@ -2,11 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, you can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { MessageGenerator } = ChromeUtils.import(
-  "resource://testing-common/mailnews/MessageGenerator.jsm"
+const { MessageGenerator } = ChromeUtils.importESModule(
+  "resource://testing-common/mailnews/MessageGenerator.sys.mjs"
 );
 
-/** @type MenuData */
+/** @type {MenuData} */
 const toolsMenuData = {
   tasksMenuMail: { hidden: true },
   addressBook: {},
@@ -26,6 +26,7 @@ const toolsMenuData = {
   deleteJunk: { disabled: true },
   menu_import: {},
   menu_export: {},
+  menu_exportmobile: {},
   manageKeysOpenPGP: {},
   devtoolsMenu: {},
   devtoolsToolbox: {},
@@ -37,27 +38,29 @@ if (AppConstants.platform == "win") {
   toolsMenuData.menu_preferences = {};
   toolsMenuData.menu_accountmgr = {};
 }
-let helper = new MenuTestHelper("tasksMenu", toolsMenuData);
+const helper = new MenuTestHelper("tasksMenu", toolsMenuData);
 
-let tabmail = document.getElementById("tabmail");
+const tabmail = document.getElementById("tabmail");
 let rootFolder, testFolder, testMessages;
 
 add_setup(async function () {
   document.getElementById("toolbar-menubar").removeAttribute("autohide");
 
-  let generator = new MessageGenerator();
+  const generator = new MessageGenerator();
 
-  MailServices.accounts.createLocalMailAccount();
-  let account = MailServices.accounts.accounts[0];
+  const account = MailServices.accounts.createLocalMailAccount();
   account.addIdentity(MailServices.accounts.createIdentity());
-  rootFolder = account.incomingServer.rootFolder;
+  rootFolder = account.incomingServer.rootFolder.QueryInterface(
+    Ci.nsIMsgLocalMailFolder
+  );
 
-  rootFolder.createSubfolder("tools menu", null);
   testFolder = rootFolder
-    .getChildNamed("tools menu")
+    .createLocalSubfolder("tools menu")
     .QueryInterface(Ci.nsIMsgLocalMailFolder);
   testFolder.addMessageBatch(
-    generator.makeMessages({ count: 5 }).map(message => message.toMboxString())
+    generator
+      .makeMessages({ count: 5 })
+      .map(message => message.toMessageString())
   );
   testMessages = [...testFolder.messages];
 

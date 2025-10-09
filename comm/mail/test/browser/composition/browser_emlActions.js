@@ -10,26 +10,31 @@
 
 var {
   close_compose_window,
+  compose_window_ready,
   get_compose_body,
   open_compose_with_forward,
   open_compose_with_reply,
   save_compose_message,
-} = ChromeUtils.import("resource://testing-common/mozmill/ComposeHelpers.jsm");
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/ComposeHelpers.sys.mjs"
+);
 var {
   be_in_folder,
+  get_about_message,
   get_special_folder,
   open_message_from_file,
   press_delete,
   select_click_row,
-} = ChromeUtils.import(
-  "resource://testing-common/mozmill/FolderDisplayHelpers.jsm"
-);
-var { close_window } = ChromeUtils.import(
-  "resource://testing-common/mozmill/WindowHelpers.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/mail/FolderDisplayHelpers.sys.mjs"
 );
 
-var { MailServices } = ChromeUtils.import(
-  "resource:///modules/MailServices.jsm"
+var { MailServices } = ChromeUtils.importESModule(
+  "resource:///modules/MailServices.sys.mjs"
+);
+
+var { promise_new_window } = ChromeUtils.importESModule(
+  "resource://testing-common/mail/WindowHelpers.sys.mjs"
 );
 
 var gDrafts;
@@ -44,14 +49,14 @@ add_setup(async function () {
  */
 add_task(async function test_reply_to_eml_save_as_draft() {
   // Open an .eml file.
-  let file = new FileUtils.File(getTestFilePath("data/testmsg.eml"));
-  let msgc = await open_message_from_file(file);
+  const file = new FileUtils.File(getTestFilePath("data/testmsg.eml"));
+  const msgc = await open_message_from_file(file);
 
-  let replyWin = open_compose_with_reply(msgc);
+  const replyWin = await open_compose_with_reply(msgc);
 
   // Ctrl+S saves as draft.
-  await save_compose_message(replyWin.window);
-  close_compose_window(replyWin);
+  await save_compose_message(replyWin);
+  await close_compose_window(replyWin);
 
   await TestUtils.waitForCondition(
     () => gDrafts.getTotalMessages(false) == 1,
@@ -60,13 +65,13 @@ add_task(async function test_reply_to_eml_save_as_draft() {
 
   // Drafts folder should exist now.
   await be_in_folder(gDrafts);
-  let draftMsg = select_click_row(0);
+  const draftMsg = await select_click_row(0);
   if (!draftMsg) {
     throw new Error("No draft saved!");
   }
-  press_delete(); // Delete the draft.
+  await press_delete(); // Delete the draft.
 
-  close_window(msgc); // close base .eml message
+  await BrowserTestUtils.closeWindow(msgc); // close base .eml message
 });
 
 /**
@@ -75,13 +80,13 @@ add_task(async function test_reply_to_eml_save_as_draft() {
  */
 add_task(async function test_forward_eml_save_as_draft() {
   // Open an .eml file.
-  let file = new FileUtils.File(getTestFilePath("data/testmsg.eml"));
-  let msgc = await open_message_from_file(file);
+  const file = new FileUtils.File(getTestFilePath("data/testmsg.eml"));
+  const msgc = await open_message_from_file(file);
 
-  let replyWin = open_compose_with_forward(msgc);
+  const replyWin = await open_compose_with_forward(msgc);
 
-  await save_compose_message(replyWin.window);
-  close_compose_window(replyWin);
+  await save_compose_message(replyWin);
+  await close_compose_window(replyWin);
 
   await TestUtils.waitForCondition(
     () => gDrafts.getTotalMessages(false) == 1,
@@ -90,13 +95,13 @@ add_task(async function test_forward_eml_save_as_draft() {
 
   // Drafts folder should exist now.
   await be_in_folder(gDrafts);
-  let draftMsg = select_click_row(0);
+  const draftMsg = await select_click_row(0);
   if (!draftMsg) {
     throw new Error("No draft saved!");
   }
-  press_delete(); // Delete the draft.
+  await press_delete(); // Delete the draft.
 
-  close_window(msgc); // close base .eml message
+  await BrowserTestUtils.closeWindow(msgc); // close base .eml message
 });
 
 /**
@@ -104,19 +109,19 @@ add_task(async function test_forward_eml_save_as_draft() {
  */
 add_task(async function test_reply_eml_subject() {
   // Open an .eml file whose subject is encoded.
-  let file = new FileUtils.File(
+  const file = new FileUtils.File(
     getTestFilePath("data/mime-encoded-subject.eml")
   );
-  let msgc = await open_message_from_file(file);
+  const msgc = await open_message_from_file(file);
 
-  let replyWin = open_compose_with_reply(msgc);
+  const replyWin = await open_compose_with_reply(msgc);
 
   Assert.equal(
-    replyWin.window.document.getElementById("msgSubject").value,
+    replyWin.document.getElementById("msgSubject").value,
     "Re: \u2200a\u220aA"
   );
-  close_compose_window(replyWin); // close compose window
-  close_window(msgc); // close base .eml message
+  await close_compose_window(replyWin); // close compose window
+  await BrowserTestUtils.closeWindow(msgc); // close base .eml message
 });
 
 /**
@@ -124,14 +129,16 @@ add_task(async function test_reply_eml_subject() {
  */
 add_task(async function test_reply_to_base64_eml() {
   // Open an .eml file.
-  let file = new FileUtils.File(getTestFilePath("data/base64-encoded-msg.eml"));
-  let msgc = await open_message_from_file(file);
-  let compWin = open_compose_with_reply(msgc);
-  let bodyText = get_compose_body(compWin).textContent;
+  const file = new FileUtils.File(
+    getTestFilePath("data/base64-encoded-msg.eml")
+  );
+  const msgc = await open_message_from_file(file);
+  const compWin = await open_compose_with_reply(msgc);
+  const bodyText = get_compose_body(compWin).textContent;
   const TXT = "You have decoded this text from base64.";
   Assert.ok(bodyText.includes(TXT), "body should contain the decoded text");
-  close_compose_window(compWin);
-  close_window(msgc);
+  await close_compose_window(compWin);
+  await BrowserTestUtils.closeWindow(msgc);
 });
 
 /**
@@ -139,14 +146,16 @@ add_task(async function test_reply_to_base64_eml() {
  */
 add_task(async function test_forward_base64_eml() {
   // Open an .eml file.
-  let file = new FileUtils.File(getTestFilePath("data/base64-encoded-msg.eml"));
-  let msgc = await open_message_from_file(file);
-  let compWin = open_compose_with_forward(msgc);
-  let bodyText = get_compose_body(compWin).textContent;
+  const file = new FileUtils.File(
+    getTestFilePath("data/base64-encoded-msg.eml")
+  );
+  const msgc = await open_message_from_file(file);
+  const compWin = await open_compose_with_forward(msgc);
+  const bodyText = get_compose_body(compWin).textContent;
   const TXT = "You have decoded this text from base64.";
   Assert.ok(bodyText.includes(TXT), "body should contain the decoded text");
-  close_compose_window(compWin);
-  close_window(msgc);
+  await close_compose_window(compWin);
+  await BrowserTestUtils.closeWindow(msgc);
 });
 
 /**
@@ -154,22 +163,22 @@ add_task(async function test_forward_base64_eml() {
  */
 add_task(async function test_reply_fwd_to_evil_meta() {
   // Open an .eml file.
-  let file = new FileUtils.File(getTestFilePath("data/evil-meta-msg.eml"));
-  let msgc = await open_message_from_file(file);
+  const file = new FileUtils.File(getTestFilePath("data/evil-meta-msg.eml"));
+  const msgc = await open_message_from_file(file);
 
   const TXT = "KABOOM!";
 
-  let reWin = open_compose_with_reply(msgc);
-  let reText = get_compose_body(reWin).textContent;
+  const reWin = await open_compose_with_reply(msgc);
+  const reText = get_compose_body(reWin).textContent;
   Assert.ok(reText.includes(TXT), "re body should contain the text");
-  close_compose_window(reWin);
+  await close_compose_window(reWin);
 
-  let fwdWin = open_compose_with_forward(msgc);
-  let fwdText = get_compose_body(fwdWin).textContent;
+  const fwdWin = await open_compose_with_forward(msgc);
+  const fwdText = get_compose_body(fwdWin).textContent;
   Assert.ok(fwdText.includes(TXT), "fwd body should contain the text");
-  close_compose_window(fwdWin);
+  await close_compose_window(fwdWin);
 
-  close_window(msgc);
+  await BrowserTestUtils.closeWindow(msgc);
 });
 
 /**
@@ -177,18 +186,142 @@ add_task(async function test_reply_fwd_to_evil_meta() {
  */
 add_task(async function test_forward_eml_catchall() {
   // Open an .eml file.
-  let file = new FileUtils.File(getTestFilePath("data/testmsg.eml"));
-  let msgc = await open_message_from_file(file);
+  const file = new FileUtils.File(getTestFilePath("data/testmsg.eml"));
+  const msgc = await open_message_from_file(file);
 
   MailServices.accounts.defaultAccount.defaultIdentity.catchAll = true;
 
-  let replyWin = open_compose_with_forward(msgc);
-  let bodyText = get_compose_body(replyWin).textContent;
+  const replyWin = await open_compose_with_forward(msgc);
+  const bodyText = get_compose_body(replyWin).textContent;
   const message = "Because they're stupid, that's why";
   Assert.ok(bodyText.includes(message), "Correct message body");
 
   MailServices.accounts.defaultAccount.defaultIdentity.catchAll = false;
 
-  close_compose_window(replyWin); // close compose window
-  close_window(msgc); // close base .eml message
+  await close_compose_window(replyWin); // close compose window
+  await BrowserTestUtils.closeWindow(msgc); // close base .eml message
+});
+
+/**
+ * Test that saving an .eml opened from a file works.
+ */
+add_task(async function test_save_eml_as_file() {
+  const file = new FileUtils.File(getTestFilePath("data/testmsg.eml"));
+  const msgc = await open_message_from_file(file);
+  const pickerPromise = new Promise(resolve => {
+    SpecialPowers.MockFilePicker.init(window.browsingContext);
+    SpecialPowers.MockFilePicker.showCallback = picker => {
+      resolve(picker.defaultString);
+      return Ci.nsIFilePicker.returnOK;
+    };
+  });
+  EventUtils.synthesizeKey("s", { accelKey: true }, msgc);
+  Assert.equal(await pickerPromise, "testmsg.eml");
+  SpecialPowers.MockFilePicker.cleanup();
+  await BrowserTestUtils.closeWindow(msgc);
+});
+
+/**
+ * Test that an attached .eml that has been opened retains the correct filename
+ * when it is subsequently saved.
+ */
+add_task(async function test_save_eml_as_file() {
+  const file = new FileUtils.File(getTestFilePath("data/testmsg-nested.eml"));
+  const msgc = await open_message_from_file(file);
+  const aboutMessage = get_about_message(msgc);
+  const newWindowPromise = promise_new_window("mail:messageWindow");
+  await EventUtils.synthesizeMouseAtCenter(
+    aboutMessage.document.getElementById("attachmentName"),
+    {},
+    aboutMessage
+  );
+  const msgc2 = await newWindowPromise;
+  const pickerPromise = new Promise(resolve => {
+    SpecialPowers.MockFilePicker.init(window.browsingContext);
+    SpecialPowers.MockFilePicker.showCallback = picker => {
+      resolve(picker.defaultString);
+      return Ci.nsIFilePicker.returnOK;
+    };
+  });
+  EventUtils.synthesizeKey("s", { accelKey: true }, msgc2);
+  Assert.ok(
+    /that's why(-(\d)+)?\.eml/.test(await pickerPromise),
+    "Correct filename"
+  );
+  SpecialPowers.MockFilePicker.cleanup();
+  await BrowserTestUtils.closeWindow(msgc2);
+  await BrowserTestUtils.closeWindow(msgc);
+});
+
+/**
+ * Test that clicking on a 'mailto:' link in an .eml opens a compose window.
+ */
+add_task(async function test_mailto_link_in_eml() {
+  // Open an .eml file.
+  const file = new FileUtils.File(getTestFilePath("data/testmsg-html.eml"));
+  const msgc = await open_message_from_file(file);
+  const composePromise = promise_new_window("msgcompose");
+  await BrowserTestUtils.synthesizeMouseAtCenter(
+    "#mailtolink",
+    {},
+    get_about_message(msgc).getMessagePaneBrowser()
+  );
+  const cwc = await compose_window_ready(composePromise);
+  await close_compose_window(cwc);
+  await BrowserTestUtils.closeWindow(msgc); // close base .eml message
+});
+
+/**
+ * Test that forward as attachment works.
+ */
+add_task(async function test_forward_eml_as_attachment() {
+  Services.prefs.setIntPref("mail.forward_message_mode", 0);
+
+  const file = new FileUtils.File(getTestFilePath("data/testmsg.eml"));
+  const msgc = await open_message_from_file(file);
+
+  // Case 1 - with extension.
+  Services.prefs.setBoolPref("mail.forward_add_extension", true);
+  const win = await open_compose_with_forward(msgc);
+  const attachment =
+    win.document.getElementById("attachmentBucket").itemChildren[0]?.attachment;
+  Assert.equal(attachment.name, "why.eml", "should get correct name w/ ext");
+  Assert.equal(
+    attachment.contentType,
+    "message/rfc822",
+    "should get correct mime type w/ ext"
+  );
+  await close_compose_window(win);
+
+  // Case 2 - without extension.
+  Services.prefs.setBoolPref("mail.forward_add_extension", false);
+  const win2 = await open_compose_with_forward(msgc);
+  const attachment2 =
+    win2.document.getElementById("attachmentBucket").itemChildren[0]
+      ?.attachment;
+  Assert.equal(attachment2.name, "why", "should get correct name w/o ext");
+  Assert.equal(
+    attachment2.contentType,
+    "message/rfc822",
+    "should get correct mime type w/o ext"
+  );
+  await save_compose_message(win2);
+  await close_compose_window(win2);
+
+  await TestUtils.waitForCondition(
+    () => gDrafts.getTotalMessages(false) == 1,
+    "message saved to drafts folder"
+  );
+
+  // Drafts folder should exist now.
+  await be_in_folder(gDrafts);
+  const draftMsg = await select_click_row(0);
+  if (!draftMsg) {
+    throw new Error("No draft saved!");
+  }
+  await press_delete(); // Delete the draft.
+
+  await BrowserTestUtils.closeWindow(msgc); // close base .eml message
+  Services.prefs.clearUserPref("mail.forward_add_extension");
+  Services.prefs.clearUserPref("mail.forward_message_mode");
 });

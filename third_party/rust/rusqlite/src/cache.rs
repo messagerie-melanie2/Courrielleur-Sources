@@ -1,7 +1,7 @@
 //! Prepared statements cache for faster execution.
 
 use crate::raw_statement::RawStatement;
-use crate::{Connection, Result, Statement};
+use crate::{Connection, PrepFlags, Result, Statement};
 use hashlink::LruCache;
 use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
@@ -17,13 +17,13 @@ impl Connection {
     /// # use rusqlite::{Connection, Result};
     /// fn insert_new_people(conn: &Connection) -> Result<()> {
     ///     {
-    ///         let mut stmt = conn.prepare_cached("INSERT INTO People (name) VALUES (?)")?;
+    ///         let mut stmt = conn.prepare_cached("INSERT INTO People (name) VALUES (?1)")?;
     ///         stmt.execute(["Joe Smith"])?;
     ///     }
     ///     {
     ///         // This will return the same underlying SQLite statement handle without
     ///         // having to prepare it again.
-    ///         let mut stmt = conn.prepare_cached("INSERT INTO People (name) VALUES (?)")?;
+    ///         let mut stmt = conn.prepare_cached("INSERT INTO People (name) VALUES (?1)")?;
     ///         stmt.execute(["Bob Jones"])?;
     ///     }
     ///     Ok(())
@@ -57,10 +57,9 @@ impl Connection {
 }
 
 /// Prepared statements LRU cache.
-// #[derive(Debug)] // FIXME: https://github.com/kyren/hashlink/pull/4
+#[derive(Debug)]
 pub struct StatementCache(RefCell<LruCache<Arc<str>, RawStatement>>);
 
-#[allow(clippy::non_send_fields_in_send_ty)]
 unsafe impl Send for StatementCache {}
 
 /// Cacheable statement.
@@ -90,7 +89,6 @@ impl<'conn> DerefMut for CachedStatement<'conn> {
 }
 
 impl Drop for CachedStatement<'_> {
-    #[allow(unused_must_use)]
     #[inline]
     fn drop(&mut self) {
         if let Some(stmt) = self.stmt.take() {
@@ -119,8 +117,8 @@ impl CachedStatement<'_> {
 impl StatementCache {
     /// Create a statement cache.
     #[inline]
-    pub fn with_capacity(capacity: usize) -> StatementCache {
-        StatementCache(RefCell::new(LruCache::new(capacity)))
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self(RefCell::new(LruCache::new(capacity)))
     }
 
     #[inline]
@@ -144,7 +142,7 @@ impl StatementCache {
         let mut cache = self.0.borrow_mut();
         let stmt = match cache.remove(trimmed) {
             Some(raw_stmt) => Ok(Statement::new(conn, raw_stmt)),
-            None => conn.prepare(trimmed),
+            None => conn.prepare_with_flags(trimmed, PrepFlags::SQLITE_PREPARE_PERSISTENT),
         };
         stmt.map(|mut stmt| {
             stmt.stmt.set_statement_cache_key(trimmed);
@@ -153,7 +151,7 @@ impl StatementCache {
     }
 
     // Return a statement to the cache.
-    fn cache_stmt(&self, stmt: RawStatement) {
+    fn cache_stmt(&self, mut stmt: RawStatement) {
         if stmt.is_null() {
             return;
         }
@@ -278,10 +276,10 @@ mod test {
     fn test_ddl() -> Result<()> {
         let db = Connection::open_in_memory()?;
         db.execute_batch(
-            r#"
+            r"
             CREATE TABLE foo (x INT);
             INSERT INTO foo VALUES (1);
-        "#,
+        ",
         )?;
 
         let sql = "SELECT * FROM foo";
@@ -292,10 +290,10 @@ mod test {
         }
 
         db.execute_batch(
-            r#"
+            r"
             ALTER TABLE foo ADD COLUMN y INT;
             UPDATE foo SET y = 2;
-        "#,
+        ",
         )?;
 
         {

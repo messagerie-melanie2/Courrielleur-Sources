@@ -2,15 +2,17 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+mod common;
+use crate::common::*;
+
 use std::collections::HashMap;
 use std::io::Read;
 
 use flate2::read::GzDecoder;
-use glean_core::TextMetric;
-use jsonschema_valid::{self, schemas::Draft};
+use jsonschema_valid::schemas::Draft;
 use serde_json::Value;
 
-use glean::net::UploadResult;
+use glean::net::{CapablePingUploadRequest, UploadResult};
 use glean::private::*;
 use glean::{
     traits, ClientInfoMetrics, CommonMetricData, ConfigurationBuilder, HistogramType, MemoryUnit,
@@ -60,13 +62,9 @@ fn validate_against_schema() {
         sender: crossbeam_channel::Sender<Vec<u8>>,
     }
     impl glean::net::PingUploader for ValidatingUploader {
-        fn upload(
-            &self,
-            _url: String,
-            body: Vec<u8>,
-            _headers: Vec<(String, String)>,
-        ) -> UploadResult {
-            self.sender.send(body).unwrap();
+        fn upload(&self, ping_request: CapablePingUploadRequest) -> UploadResult {
+            let ping_request = ping_request.capable(|_| true).unwrap();
+            self.sender.send(ping_request.body).unwrap();
             UploadResult::http_status(200)
         }
     }
@@ -84,6 +82,7 @@ fn validate_against_schema() {
         app_build: env!("CARGO_PKG_VERSION").to_string(),
         app_display_version: env!("CARGO_PKG_VERSION").to_string(),
         channel: Some("testing".to_string()),
+        locale: Some("xx-XX".to_string()),
     };
 
     glean::initialize(cfg, client_info);
@@ -175,7 +174,7 @@ fn validate_against_schema() {
     text_metric.set("loooooong text".repeat(100));
 
     // Define a new ping and submit it.
-    let custom_ping = glean::private::PingType::new(PING_NAME, true, true, vec![]);
+    let custom_ping = PingBuilder::new(PING_NAME).with_send_if_empty(true).build();
     custom_ping.submit(None);
 
     // Wait for the ping to arrive.

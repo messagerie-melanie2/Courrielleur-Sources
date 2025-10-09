@@ -2,7 +2,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from mozbuild.util import ensure_bytes, ensureParentDir
+from mozbuild.dirutils import ensureParentDir
+from mozbuild.util import ensure_bytes
 from mozpack.errors import ErrorMessage, errors
 from mozpack.files import (
     AbsoluteSymlinkFile,
@@ -37,12 +38,11 @@ import random
 import sys
 import tarfile
 import unittest
-from io import BytesIO
+from io import BytesIO, StringIO
 from tempfile import mkdtemp
 
 import mozfile
 import mozunit
-import six
 
 import mozpack.path as mozpath
 from mozpack.chrome.manifest import (
@@ -70,7 +70,7 @@ class TestWithTmpDir(unittest.TestCase):
             try:
                 os.symlink(dummy_path, self.tmppath("dummy_symlink"))
                 os.remove(self.tmppath("dummy_symlink"))
-            except EnvironmentError:
+            except OSError:
                 pass
             finally:
                 os.remove(dummy_path)
@@ -85,7 +85,7 @@ class TestWithTmpDir(unittest.TestCase):
             try:
                 os.link(dummy_path, self.tmppath("dummy_hardlink"))
                 os.remove(self.tmppath("dummy_hardlink"))
-            except EnvironmentError:
+            except OSError:
                 pass
             finally:
                 os.remove(dummy_path)
@@ -152,7 +152,7 @@ class TestDest(TestWithTmpDir):
 
 rand = bytes(
     random.choice(b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-    for i in six.moves.xrange(131597)
+    for i in range(131597)
 )
 samples = [
     b"",
@@ -275,12 +275,12 @@ class TestAbsoluteSymlinkFile(TestWithTmpDir):
     def test_absolute_relative(self):
         AbsoluteSymlinkFile("/foo")
 
-        with self.assertRaisesRegexp(ValueError, "Symlink target not absolute"):
+        with self.assertRaisesRegex(ValueError, "Symlink target not absolute"):
             AbsoluteSymlinkFile("./foo")
 
     def test_symlink_file(self):
         source = self.tmppath("test_path")
-        with open(source, "wt") as fh:
+        with open(source, "w") as fh:
             fh.write("Hello world")
 
         s = AbsoluteSymlinkFile(source)
@@ -300,7 +300,7 @@ class TestAbsoluteSymlinkFile(TestWithTmpDir):
         # If symlinks are supported, an existing file should be replaced by a
         # symlink.
         source = self.tmppath("test_path")
-        with open(source, "wt") as fh:
+        with open(source, "w") as fh:
             fh.write("source")
 
         dest = self.tmppath("dest")
@@ -367,7 +367,7 @@ class TestHardlinkFile(TestWithTmpDir):
 
     def test_hardlink_file(self):
         source = self.tmppath("test_path")
-        with open(source, "wt") as fh:
+        with open(source, "w") as fh:
             fh.write("Hello world")
 
         s = HardlinkFile(source)
@@ -389,7 +389,7 @@ class TestHardlinkFile(TestWithTmpDir):
         # If hardlink are supported, an existing file should be replaced by a
         # symlink.
         source = self.tmppath("test_path")
-        with open(source, "wt") as fh:
+        with open(source, "w") as fh:
             fh.write("source")
 
         dest = self.tmppath("dest")
@@ -580,7 +580,7 @@ class TestPreprocessedFile(TestWithTmpDir):
 
 class TestExistingFile(TestWithTmpDir):
     def test_required_missing_dest(self):
-        with self.assertRaisesRegexp(ErrorMessage, "Required existing file"):
+        with self.assertRaisesRegex(ErrorMessage, "Required existing file"):
             f = ExistingFile(required=True)
             f.copy(self.tmppath("dest"))
 
@@ -911,13 +911,13 @@ class TestMinifiedJavaScript(TestWithTmpDir):
         orig_f = GeneratedFile("\n".join(self.orig_lines))
         min_f = MinifiedJavaScript(orig_f, verify_command=self._verify_command("0"))
 
-        mini_lines = [six.ensure_text(s) for s in min_f.open().readlines()]
+        mini_lines = [s.decode() for s in min_f.open().readlines()]
         self.assertTrue(mini_lines)
         self.assertTrue(len(mini_lines) < len(self.orig_lines))
 
     def test_minified_verify_failure(self):
         orig_f = GeneratedFile("\n".join(self.orig_lines))
-        errors.out = six.StringIO()
+        errors.out = StringIO()
         min_f = MinifiedJavaScript(orig_f, verify_command=self._verify_command("1"))
 
         mini_lines = min_f.open().readlines()
@@ -931,7 +931,7 @@ class TestMinifiedJavaScript(TestWithTmpDir):
         self.assertEqual(mini_lines, orig_f.open().readlines())
 
 
-class MatchTestTemplate(object):
+class MatchTestTemplate:
     def prepare_match_test(self, with_dotfiles=False):
         self.add("bar")
         self.add("foo/bar")
@@ -1053,7 +1053,7 @@ def do_check(test, finder, pattern, result):
 class TestFileFinder(MatchTestTemplate, TestWithTmpDir):
     def add(self, path):
         ensureParentDir(self.tmppath(path))
-        open(self.tmppath(path), "wb").write(six.ensure_binary(path))
+        open(self.tmppath(path), "wb").write(path.encode())
 
     def do_check(self, pattern, result):
         do_check(self, self.finder, pattern, result)
@@ -1217,7 +1217,7 @@ class TestComposedFinder(MatchTestTemplate, TestWithTmpDir):
             real_path = mozpath.join("a", path)
         ensureParentDir(self.tmppath(real_path))
         if not content:
-            content = six.ensure_binary(path)
+            content = path.encode()
         open(self.tmppath(real_path), "wb").write(content)
 
     def do_check(self, pattern, result):
@@ -1245,9 +1245,7 @@ class TestComposedFinder(MatchTestTemplate, TestWithTmpDir):
 
 
 @unittest.skipUnless(hglib, "hglib not available")
-@unittest.skipIf(
-    six.PY3 and os.name == "nt", "Does not currently work in Python3 on Windows"
-)
+@unittest.skipIf(os.name == "nt", "Does not currently work in Python3 on Windows")
 class TestMercurialRevisionFinder(MatchTestTemplate, TestWithTmpDir):
     def setUp(self):
         super(TestMercurialRevisionFinder, self).setUp()
@@ -1272,7 +1270,7 @@ class TestMercurialRevisionFinder(MatchTestTemplate, TestWithTmpDir):
             b'ui.username="Dummy User <dummy@example.com>"',
         )
         client = hglib.open(
-            six.ensure_binary(self.tmpdir),
+            self.tmpdir.encode(),
             encoding=b"UTF-8",  # b'' because py2 needs !unicode
             configs=configs,
         )
@@ -1283,8 +1281,8 @@ class TestMercurialRevisionFinder(MatchTestTemplate, TestWithTmpDir):
         with self._client() as c:
             ensureParentDir(self.tmppath(path))
             with open(self.tmppath(path), "wb") as fh:
-                fh.write(six.ensure_binary(path))
-            c.add(six.ensure_binary(self.tmppath(path)))
+                fh.write(path.encode())
+            c.add(self.tmppath(path).encode())
 
     def do_check(self, pattern, result):
         do_check(self, self.finder, pattern, result)
@@ -1309,14 +1307,14 @@ class TestMercurialRevisionFinder(MatchTestTemplate, TestWithTmpDir):
         with self._client() as c:
             with open(self.tmppath("foo"), "wb") as fh:
                 fh.write(b"foo initial")
-            c.add(six.ensure_binary(self.tmppath("foo")))
+            c.add(self.tmppath("foo").encode())
             c.commit("initial")
 
             with open(self.tmppath("foo"), "wb") as fh:
                 fh.write(b"foo second")
             with open(self.tmppath("bar"), "wb") as fh:
                 fh.write(b"bar second")
-            c.add(six.ensure_binary(self.tmppath("bar")))
+            c.add(self.tmppath("bar").encode())
             c.commit("second")
             # This wipes out the working directory, ensuring the finder isn't
             # finding anything from the filesystem.
@@ -1339,7 +1337,7 @@ class TestMercurialRevisionFinder(MatchTestTemplate, TestWithTmpDir):
         with self._client() as c:
             with open(self.tmppath("foo"), "wb") as fh:
                 fh.write(b"initial")
-            c.add(six.ensure_binary(self.tmppath("foo")))
+            c.add(self.tmppath("foo").encode())
             c.commit("initial")
             c.rawcommand([b"update", b"null"])
 

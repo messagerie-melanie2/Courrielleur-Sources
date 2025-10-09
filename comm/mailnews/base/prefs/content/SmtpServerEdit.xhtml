@@ -3,9 +3,6 @@
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
-<?xml-stylesheet href="chrome://messenger/skin/input-fields.css" type="text/css"?>
-<?xml-stylesheet href="chrome://messenger/skin/accountManage.css" type="text/css"?>
-
 <!DOCTYPE html SYSTEM "chrome://messenger/locale/smtpEditOverlay.dtd">
 
 <html
@@ -16,6 +13,12 @@
 >
   <head>
     <title>&smtpEditTitle.label;</title>
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src chrome:; script-src chrome: 'unsafe-inline'; style-src chrome: 'unsafe-inline'"
+    />
+    <link rel="stylesheet" href="chrome://messenger/skin/input-fields.css" />
+    <link rel="stylesheet" href="chrome://messenger/skin/accountManage.css" />
     <script
       defer="defer"
       src="chrome://messenger/content/globalOverlay.js"
@@ -154,13 +157,6 @@
                       label="&connectionSecurityType-0.label;"
                     />
                     <menuitem
-                      id="connectionSecurityType-1"
-                      value="1"
-                      label="&connectionSecurityType-1.label;"
-                      disabled="true"
-                      hidden="true"
-                    />
-                    <menuitem
                       value="2"
                       label="&connectionSecurityType-2.label;"
                     />
@@ -177,7 +173,10 @@
                   preftype="int"
                   prefstring="mail.smtpserver.%serverkey%.authMethod"
                 >
-                  <menupopup id="smtp.authMethodPopup">
+                  <menupopup
+                    id="smtp.authMethodPopup"
+                    onpopupshowing="onAuthMethodPopupShowing();"
+                  >
                     <menuitem id="authMethod-no" value="1" />
                     <menuitem id="authMethod-password-cleartext" value="3" />
                     <menuitem id="authMethod-password-encrypted" value="4" />

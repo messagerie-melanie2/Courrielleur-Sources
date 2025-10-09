@@ -5,46 +5,56 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.RoomWidgetClient = void 0;
 var _matrixWidgetApi = require("matrix-widget-api");
-var _event = require("./models/event");
-var _event2 = require("./@types/event");
-var _logger = require("./logger");
-var _client = require("./client");
-var _sync = require("./sync");
-var _slidingSyncSdk = require("./sliding-sync-sdk");
-var _user = require("./models/user");
-var _utils = require("./utils");
-function _defineProperty(obj, key, value) { key = _toPropertyKey(key); if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
-function _toPropertyKey(arg) { var key = _toPrimitive(arg, "string"); return typeof key === "symbol" ? key : String(key); }
-function _toPrimitive(input, hint) { if (typeof input !== "object" || input === null) return input; var prim = input[Symbol.toPrimitive]; if (prim !== undefined) { var res = prim.call(input, hint || "default"); if (typeof res !== "object") return res; throw new TypeError("@@toPrimitive must return a primitive value."); } return (hint === "string" ? String : Number)(input); } /*
-                                                                                                                                                                                                                                                                                                                                                                                          Copyright 2022 The Matrix.org Foundation C.I.C.
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Licensed under the Apache License, Version 2.0 (the "License");
-                                                                                                                                                                                                                                                                                                                                                                                          you may not use this file except in compliance with the License.
-                                                                                                                                                                                                                                                                                                                                                                                          You may obtain a copy of the License at
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                              http://www.apache.org/licenses/LICENSE-2.0
-                                                                                                                                                                                                                                                                                                                                                                                          
-                                                                                                                                                                                                                                                                                                                                                                                          Unless required by applicable law or agreed to in writing, software
-                                                                                                                                                                                                                                                                                                                                                                                          distributed under the License is distributed on an "AS IS" BASIS,
-                                                                                                                                                                                                                                                                                                                                                                                          WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-                                                                                                                                                                                                                                                                                                                                                                                          See the License for the specific language governing permissions and
-                                                                                                                                                                                                                                                                                                                                                                                          limitations under the License.
-                                                                                                                                                                                                                                                                                                                                                                                          */
+var _event = require("./models/event.js");
+var _event2 = require("./@types/event.js");
+var _logger = require("./logger.js");
+var _client = require("./client.js");
+var _sync = require("./sync.js");
+var _slidingSyncSdk = require("./sliding-sync-sdk.js");
+var _user = require("./models/user.js");
+var _utils = require("./utils.js");
+function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
+function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
+function _defineProperty(e, r, t) { return (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e; }
+function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == typeof i ? i : i + ""; }
+function _toPrimitive(t, r) { if ("object" != typeof t || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != typeof i) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /*
+Copyright 2022 The Matrix.org Foundation C.I.C.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 /**
  * A MatrixClient that routes its requests through the widget API instead of the
  * real CS API.
  * @experimental This class is considered unstable!
  */
 class RoomWidgetClient extends _client.MatrixClient {
-  constructor(widgetApi, capabilities, roomId, opts) {
+  /**
+   *
+   * @param widgetApi - The widget api to use for communication.
+   * @param capabilities - The capabilities the widget client will request.
+   * @param roomId - The room id the widget is associated with.
+   * @param opts - The configuration options for this client.
+   * @param sendContentLoaded - Whether to send a content loaded widget action immediately after initial setup.
+   *   Set to `false` if the widget uses `waitForIFrameLoad=true` (in this case the client does not expect a content loaded action at all),
+   *   or if the the widget wants to send the `ContentLoaded` action at a later point in time after the initial setup.
+   */
+  constructor(widgetApi, capabilities, roomId, opts, sendContentLoaded) {
     super(opts);
-
-    // Request capabilities for the functionality this client needs to support
     this.widgetApi = widgetApi;
     this.capabilities = capabilities;
     this.roomId = roomId;
     _defineProperty(this, "room", void 0);
-    _defineProperty(this, "widgetApiReady", new Promise(resolve => this.widgetApi.once("ready", resolve)));
+    _defineProperty(this, "widgetApiReady", void 0);
     _defineProperty(this, "lifecycle", void 0);
     _defineProperty(this, "syncState", null);
     _defineProperty(this, "onEvent", async ev => {
@@ -80,6 +90,9 @@ class RoomWidgetClient extends _client.MatrixClient {
       this.setSyncState(_sync.SyncState.Syncing);
       await this.ack(ev);
     });
+    this.widgetApiReady = new Promise(resolve => this.widgetApi.once("ready", resolve));
+
+    // Request capabilities for the functionality this client needs to support
     if (capabilities.sendEvent?.length || capabilities.receiveEvent?.length || capabilities.sendMessage === true || Array.isArray(capabilities.sendMessage) && capabilities.sendMessage.length || capabilities.receiveMessage === true || Array.isArray(capabilities.receiveMessage) && capabilities.receiveMessage.length || capabilities.sendState?.length || capabilities.receiveState?.length) {
       widgetApi.requestCapabilityForRoomTimeline(roomId);
     }
@@ -105,6 +118,12 @@ class RoomWidgetClient extends _client.MatrixClient {
     }) => widgetApi.requestCapabilityToReceiveState(eventType, stateKey));
     capabilities.sendToDevice?.forEach(eventType => widgetApi.requestCapabilityToSendToDevice(eventType));
     capabilities.receiveToDevice?.forEach(eventType => widgetApi.requestCapabilityToReceiveToDevice(eventType));
+    if (capabilities.sendDelayedEvents && (capabilities.sendEvent?.length || capabilities.sendMessage === true || Array.isArray(capabilities.sendMessage) && capabilities.sendMessage.length || capabilities.sendState?.length)) {
+      widgetApi.requestCapability(_matrixWidgetApi.MatrixCapabilities.MSC4157SendDelayedEvent);
+    }
+    if (capabilities.updateDelayedEvents) {
+      widgetApi.requestCapability(_matrixWidgetApi.MatrixCapabilities.MSC4157UpdateDelayedEvent);
+    }
     if (capabilities.turnServers) {
       widgetApi.requestCapability(_matrixWidgetApi.MatrixCapabilities.MSC3846TurnServers);
     }
@@ -113,6 +132,12 @@ class RoomWidgetClient extends _client.MatrixClient {
 
     // Open communication with the host
     widgetApi.start();
+    // Send a content loaded event now we've started the widget API
+    // Note that element-web currently does not use waitForIFrameLoad=false and so
+    // does *not* (yes, that is the right way around) wait for this event. Let's
+    // start sending this, then once this has rolled out, we can change element-web to
+    // use waitForIFrameLoad=false and have a widget API that's less racy.
+    if (sendContentLoaded) widgetApi.sendContentLoaded();
   }
   async startClient(opts = {}) {
     this.lifecycle = new AbortController();
@@ -151,8 +176,15 @@ class RoomWidgetClient extends _client.MatrixClient {
         _logger.logger.info(`Backfilled event ${event.getId()} ${event.getType()} ${event.getStateKey()}`);
       });
     }) ?? []);
+    if (opts.clientWellKnownPollPeriod !== undefined) {
+      this.clientWellKnownIntervalID = setInterval(() => {
+        this.fetchClientWellKnown();
+      }, 1000 * opts.clientWellKnownPollPeriod);
+      this.fetchClientWellKnown();
+    }
     this.setSyncState(_sync.SyncState.Syncing);
     _logger.logger.info("Finished backfilling events");
+    this.matrixRTC.start();
 
     // Watch for TURN servers, if requested
     if (this.capabilities.turnServers) this.watchTurnServers();
@@ -163,30 +195,90 @@ class RoomWidgetClient extends _client.MatrixClient {
     super.stopClient();
     this.lifecycle.abort(); // Signal to other async tasks that the client has stopped
   }
-
   async joinRoom(roomIdOrAlias) {
     if (roomIdOrAlias === this.roomId) return this.room;
     throw new Error(`Unknown room: ${roomIdOrAlias}`);
   }
-  async encryptAndSendEvent(room, event) {
+  async encryptAndSendEvent(room, event, delayOpts) {
+    // We need to extend the content with the redacts parameter
+    // The js sdk uses event.redacts but the widget api uses event.content.redacts
+    // This will be converted back to event.redacts in the widget driver.
+    const content = event.event.redacts ? _objectSpread(_objectSpread({}, event.getContent()), {}, {
+      redacts: event.event.redacts
+    }) : event.getContent();
+    if (delayOpts) {
+      // TODO: updatePendingEvent for delayed events?
+      const response = await this.widgetApi.sendRoomEvent(event.getType(), content, room.roomId, "delay" in delayOpts ? delayOpts.delay : undefined, "parent_delay_id" in delayOpts ? delayOpts.parent_delay_id : undefined);
+      return this.validateSendDelayedEventResponse(response);
+    }
     let response;
     try {
-      response = await this.widgetApi.sendRoomEvent(event.getType(), event.getContent(), room.roomId);
+      response = await this.widgetApi.sendRoomEvent(event.getType(), content, room.roomId);
     } catch (e) {
       this.updatePendingEventStatus(room, event, _event.EventStatus.NOT_SENT);
       throw e;
     }
+
+    // This also checks for an event id on the response
     room.updatePendingEvent(event, _event.EventStatus.SENT, response.event_id);
     return {
       event_id: response.event_id
     };
   }
   async sendStateEvent(roomId, eventType, content, stateKey = "") {
-    return await this.widgetApi.sendStateEvent(eventType, stateKey, content, roomId);
+    const response = await this.widgetApi.sendStateEvent(eventType, stateKey, content, roomId);
+    if (response.event_id === undefined) {
+      throw new Error("'event_id' absent from response to an event request");
+    }
+    return {
+      event_id: response.event_id
+    };
+  }
+
+  /**
+   * @experimental This currently relies on an unstable MSC (MSC4140).
+   */
+  // eslint-disable-next-line
+  async _unstable_sendDelayedStateEvent(roomId, delayOpts, eventType, content, stateKey = "") {
+    if (!(await this.doesServerSupportUnstableFeature(_client.UNSTABLE_MSC4140_DELAYED_EVENTS))) {
+      throw Error("Server does not support the delayed events API");
+    }
+    const response = await this.widgetApi.sendStateEvent(eventType, stateKey, content, roomId, "delay" in delayOpts ? delayOpts.delay : undefined, "parent_delay_id" in delayOpts ? delayOpts.parent_delay_id : undefined);
+    return this.validateSendDelayedEventResponse(response);
+  }
+  validateSendDelayedEventResponse(response) {
+    if (response.delay_id === undefined) {
+      throw new Error("'delay_id' absent from response to a delayed event request");
+    }
+    return {
+      delay_id: response.delay_id
+    };
+  }
+
+  /**
+   * @experimental This currently relies on an unstable MSC (MSC4140).
+   */
+  // eslint-disable-next-line
+  async _unstable_updateDelayedEvent(delayId, action) {
+    if (!(await this.doesServerSupportUnstableFeature(_client.UNSTABLE_MSC4140_DELAYED_EVENTS))) {
+      throw Error("Server does not support the delayed events API");
+    }
+    return await this.widgetApi.updateDelayedEvent(delayId, action);
   }
   async sendToDevice(eventType, contentMap) {
     await this.widgetApi.sendToDevice(eventType, false, (0, _utils.recursiveMapToObject)(contentMap));
     return {};
+  }
+  async getOpenIdToken() {
+    const token = await this.widgetApi.requestOpenIDConnectToken();
+    // the IOpenIDCredentials from the widget-api and IOpenIDToken form the matrix-js-sdk are compatible.
+    // we still recreate the token to make this transparent and catch'able by the linter in case the types change in the future.
+    return {
+      access_token: token.access_token,
+      expires_in: token.expires_in,
+      matrix_server_name: token.matrix_server_name,
+      token_type: token.token_type
+    };
   }
   async queueToDevice({
     eventType,
